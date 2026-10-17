@@ -7,7 +7,7 @@ import {
   listAllMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   step,
@@ -575,7 +575,7 @@ describe('事项更新通知：群', () => {
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
     const c = await makeBot(core, '阿丙');
-    const conv = await makeGroup(core, '项目组', [a.id, b.id, c.id]);
+    const conv = await makeProject(core, '项目组', [a.id, b.id, c.id]);
     llm.script('mock-light', [
       triageStep('阿甲', 'respond'),
       triageStep('阿乙', 'not_mine'),
@@ -717,7 +717,7 @@ describe('事项更新通知：审查修复', () => {
     const { core, llm, clock } = stack;
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '项目组', [a.id, b.id]);
+    const conv = await makeProject(core, '项目组', [a.id, b.id]);
     const triageA = triageStep('阿甲', 'respond');
     triageA.hold();
     llm.script('mock-light', [triageA, triageStep('阿乙', 'not_mine'), ...reflections(6)]);

@@ -74,7 +74,7 @@ import { JobsService } from './domain/jobs.js';
 import { RunsService } from './domain/runs.js';
 import { UsageService } from './domain/usage.js';
 import { LifecycleService } from './domain/lifecycle.js';
-import { GroupsService } from './domain/groups.js';
+import { ProjectsService } from './domain/projects.js';
 import { DelegationsService } from './domain/delegations.js';
 import { ProvidersService } from './domain/providers.js';
 import { AuditService } from './domain/audit.js';
@@ -468,7 +468,7 @@ export interface CoreDomainServices {
   runs: RunsService;
   usage: UsageService;
   lifecycle: LifecycleService;
-  groups: GroupsService;
+  projects: ProjectsService;
   /** 跨 Bot 委派行（D71）。 */
   delegations: DelegationsService;
   providers: ProvidersService;
@@ -1075,21 +1075,39 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const avatars = new BotAvatarService({ paths, clock, bots });
     const conversations = new ConversationsService(mainDb, clock);
     const messages = new MessagesService(mainDb, clock);
-    // 群域服务先于 orchestrator 构造（19/D60 对话内群创建由 orchestrator 调用）；
-    // removeMemberCascade 闭包引用其后的 lifecycle（仅运行期触发，无 TDZ 问题）。
-    // 显式类型标注打断 groups → lifecycle → orchestrator → groups 的推断环。
-    const groups: GroupsService = new GroupsService({
+    // 项目组域服务先于 orchestrator 构造；removeMemberCascade 闭包引用其后的
+    // lifecycle（仅运行期触发，无 TDZ 问题）。显式类型标注打断 projects →
+    // lifecycle → orchestrator → projects 的推断环。
+    const projects: ProjectsService = new ProjectsService({
       db: mainDb,
       clock,
       conversations,
       bots,
       removeMemberCascade: (conversationId, botId) =>
-        lifecycle.removeGroupMember(conversationId, botId),
+        lifecycle.removeProjectMember(conversationId, botId),
       publishConversation: (conversationId) => {
         const conversation = conversations.get(conversationId);
         if (conversation) events.emit('conversation.updated', { conversation });
       },
+      // 可见系统消息（负责人更换 / 成员加入）：与 workdir/service.ts 的
+      // #systemMessage 同一写法与发布方式。
+      appendSystemEvent: ({ conversationId, event, text }) => {
+        const message = messages.append({
+          conversationId,
+          senderType: 'system',
+          kind: 'system_event',
+          event,
+          text,
+        });
+        events.emit('message.created', { conversationId, message });
+      },
+      workdirLabelOf: (conversationId) => {
+        const conversation = conversations.get(conversationId);
+        if (conversation === null || conversation.workdirId === null) return null;
+        return workdirsService.get(conversation.workdirId)?.name ?? null;
+      },
     });
+    bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
@@ -1986,9 +2004,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
       },
       conversations,
-      groups: {
-        rename: (conversationId, title) => {
-          groups.rename(conversationId, title);
+      projects: {
+        update: (conversationId, patch) => {
+          projects.update(conversationId, patch);
         },
       },
       workdirs: {
@@ -2066,7 +2084,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       gateway,
       bots,
       conversations,
-      groups,
+      projects,
       delegations,
       messages,
       attachments,
@@ -2483,6 +2501,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runsDb,
       bots,
       conversations,
+      projects,
       messages,
       attachments,
       jobs,
@@ -2491,8 +2510,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       abortRunsForBot: (id) => orchestrator.abortRunsForBot(id),
       abortRunsForBotInConversation: (botId, conversationId) =>
         orchestrator.abortRunsForBotInConversation(botId, conversationId),
-      onGroupMemberRemoved: (botId, conversationId) =>
-        orchestrator.groupMemberRemoved(botId, conversationId),
+      onProjectMemberRemoved: (botId, conversationId) =>
+        orchestrator.projectMemberRemoved(botId, conversationId),
       delegations: {
         onConversationDeleted: (conversationId) =>
           orchestrator.delegationsOnConversationDeleted(conversationId),
@@ -2514,14 +2533,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         onConversationDeleted: (conversationId) =>
           orchestrator.agentSessionsOnConversationDeleted(conversationId),
         prepareBotDeletion: (botId) => orchestrator.agentSessionsOnBotDeleted(botId),
-        onGroupMemberRemoved: (botId, conversationId) =>
-          orchestrator.agentSessionsOnGroupMemberRemoved(botId, conversationId),
+        onProjectMemberRemoved: (botId, conversationId) =>
+          orchestrator.agentSessionsOnProjectMemberRemoved(botId, conversationId),
       },
       memory: {
         onConversationDeleted: (conversationId, memberBotIds) =>
           memory.onConversationDeleted(conversationId, memberBotIds),
-        onGroupMemberRemoved: (botId, conversationId) =>
-          memory.onGroupMemberRemoved(botId, conversationId),
+        onProjectMemberRemoved: (botId, conversationId) =>
+          memory.onProjectMemberRemoved(botId, conversationId),
         prepareBotDeletion: (botId) => memory.prepareBotDeletion(botId),
         memoryItemCount: (botId) => memory.memoryItemCount(botId),
       },
@@ -2799,7 +2818,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runs,
       usage,
       lifecycle,
-      groups,
+      projects,
       delegations,
       providers,
       audit,

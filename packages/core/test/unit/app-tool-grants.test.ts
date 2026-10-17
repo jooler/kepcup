@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { AppToolGrants } from '../../src/apps/grants.js';
 import { openRealMainDb, type RealMainDb } from '../support/real-secrets.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /** D73 P1 `apps/grants.ts`：(Bot, 连接, 工具) 持续授权的创建 / 命中 / 撤销（真库）。 */
 
@@ -20,10 +21,13 @@ function setup(): { env: RealMainDb; grants: AppToolGrants } {
       )
       .run(id, `x/${id}`, id);
   }
+  env.db
+    .prepare(
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+    )
+    .run();
   for (const id of ['conv_1', 'conv_2']) {
-    env.db
-      .prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)")
-      .run(id);
+    insertProjectConversation(env.db, { id, leadBotId: 'bot_lead' });
   }
   return { env, grants: new AppToolGrants({ db: env.db, clock: env.clock }) };
 }

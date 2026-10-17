@@ -226,7 +226,7 @@ export class DelegationHost implements DelegationToolFacade {
     if (conversation === null || conversation.readOnly) {
       return { ok: false, message: '当前对话不可用，无法委派' };
     }
-    if (conversation.type === 'group') {
+    if (conversation.type === 'project') {
       // 群降级（§3.3）：同群用 @；B 不在群里则首期不支持。
       return this.#deps.conversations.memberBotIds(conversationId).includes(toBotId)
         ? {

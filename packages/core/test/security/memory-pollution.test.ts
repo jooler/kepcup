@@ -3,7 +3,7 @@ import {
   createTestStack,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -47,7 +47,7 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
     try {
       const botA = await makeBot(stack.core, '阿甲');
       const botB = await makeBot(stack.core, '阿乙');
-      const group = await makeGroup(stack.core, '污染测试群', [botA.id, botB.id]);
+      const group = await makeProject(stack.core, '污染测试群', [botA.id, botB.id]);
       // 阿乙通过 send_message 把"关于用户的说法"发给阿甲（Bot 发言，untrusted）。
       stack.llm.script('mock-main', [
         step().expect((req) => req.lastUserText().includes('告诉阿甲')).replyToolCall('send_message', {

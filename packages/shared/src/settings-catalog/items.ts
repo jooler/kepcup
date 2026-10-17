@@ -657,7 +657,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: write('confirm'),
     card: 'group-title',
     deepLink: { surface: 'group-dialog', section: 'group-settings', anchor: 'group-title' },
-    store: { kind: 'service', methods: ['groups.rename'] },
+    store: { kind: 'service', methods: ['projects.update'] },
   }),
   item({
     id: 'group.members',
@@ -670,7 +670,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: write('confirm'),
     card: 'group-members',
     deepLink: { surface: 'group-dialog', section: 'group-settings', anchor: 'group-members' },
-    store: { kind: 'service', methods: ['groups.addMembers', 'groups.removeMember'] },
+    store: { kind: 'service', methods: ['projects.addMembers', 'projects.removeMember'] },
   }),
   item({
     id: 'workdir.protect-rules',

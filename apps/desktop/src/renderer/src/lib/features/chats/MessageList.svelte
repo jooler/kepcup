@@ -187,7 +187,7 @@
         再出现（todo/loop-interim-updates.md）。
       -->
       {#if chat.current}
-        {#if chat.current.conversation.type === 'group'}
+        {#if chat.current.conversation.type === 'project'}
           <GroupTurnStatusLine conversationId={chat.current.conversation.id} />
         {/if}
         {#each turnEntries as entry (entry.run.id)}

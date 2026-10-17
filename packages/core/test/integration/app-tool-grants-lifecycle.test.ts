@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createTestStack, makeBot, makeGroup, openDirect, type TestStack } from '@kepcup/testkit';
+import { createTestStack, makeBot, makeProject, openDirect, type TestStack } from '@kepcup/testkit';
 
 /**
  * D73 P1 app_tool_grants 的清理级联（真实 core）：Bot 删除撤销其全部授权；Bot 被移出群撤销
@@ -48,15 +48,16 @@ describe('app tool grants cleanup', () => {
     const { core, grants, connectionId } = await start();
     const a = await makeBot(core, '甲');
     const b = await makeBot(core, '乙');
-    const g1 = await makeGroup(core, '群一', [a.id, b.id]);
-    const g2 = await makeGroup(core, '群二', [a.id, b.id]);
+    // 甲 gets removed from 群一: 乙 must be that project's lead.
+    const g1 = await makeProject(core, '群一', [a.id, b.id], { leadBotId: b.id });
+    const g2 = await makeProject(core, '群二', [a.id, b.id], { leadBotId: b.id });
     const key = { connectionId, toolName: 'create_issue' };
     const inG1 = grants.create({ botId: a.id, ...key, conversationId: g1.id });
     const inG2 = grants.create({ botId: a.id, ...key, conversationId: g2.id });
     const botWide = grants.create({ botId: a.id, ...key, toolName: 'wide' });
     const otherBot = grants.create({ botId: b.id, ...key, conversationId: g1.id });
 
-    await core.rpc.call('groups.removeMember', { conversationId: g1.id, botId: a.id });
+    await core.rpc.call('projects.removeMember', { conversationId: g1.id, botId: a.id });
 
     expect(grants.get(inG1.id)?.revokedAt).not.toBeNull();
     expect(grants.get(inG2.id)?.revokedAt).toBeNull();
@@ -69,8 +70,9 @@ describe('app tool grants cleanup', () => {
     const { core, grants, connectionId, services } = await start();
     const a = await makeBot(core, '甲');
     const b = await makeBot(core, '乙');
-    const g1 = await makeGroup(core, '群一', [a.id, b.id]);
-    const g2 = await makeGroup(core, '群二', [a.id, b.id]);
+    // 甲 gets removed from 群一: 乙 must be that project's lead.
+    const g1 = await makeProject(core, '群一', [a.id, b.id], { leadBotId: b.id });
+    const g2 = await makeProject(core, '群二', [a.id, b.id], { leadBotId: b.id });
     const key = { connectionId, toolName: 'create_issue' };
     grants.create({ botId: a.id, ...key, conversationId: g1.id });
     const survivor = grants.create({ botId: a.id, ...key, conversationId: g2.id });

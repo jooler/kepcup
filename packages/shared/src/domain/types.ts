@@ -752,31 +752,28 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'group']);
+export const conversationTypeSchema = z.enum(['direct', 'project']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
- * 列表视图里每个群最多带几个成员头像预览（`Conversation.memberPreviews`，按入群
- * 顺序取前 N 个）。群头像堆叠（GroupAvatarStack）在 40px 内画不下更多，渲染端
+ * 列表视图里每个项目组最多带几个成员头像预览（`Conversation.memberPreviews`，按入群
+ * 顺序取前 N 个）。头像堆叠（ProjectAvatarStack）在 40px 内画不下更多，渲染端
  * 自行拼预览时也应按这个上限截断。
  */
-export const GROUP_MEMBER_PREVIEW_MAX = 9;
+export const PROJECT_MEMBER_PREVIEW_MAX = 9;
 
 export const conversationSchema = z.object({
   id: z.string(),
   type: conversationTypeSchema,
   title: z.string().nullable(),
-  /** 群定位（本群主要处理什么事务，docs/design/19 D60）；单聊为空。 */
-  description: z.string().nullable().optional(),
+  /** 项目目标（该项目主要处理什么事务）；单聊恒为空。 */
+  goal: z.string().nullable().optional(),
   directBotId: z.string().nullable(),
+  /** 项目负责人；project 恒非空，direct 恒为空。 */
+  leadBotId: z.string().nullable().optional(),
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),
-  /**
-   * 对话创建流程状态（docs/design/19 D60）：'creating' = 群创建问答进行中
-   * （输入禁用、Bot 不被唤醒）；null/缺省 = 正常。旧数据行无此列。
-   */
-  setupState: z.literal('creating').nullable().optional(),
   summary: z.string().nullable(),
   summaryUptoSeq: z.number(),
   lastSeq: z.number(),
@@ -787,7 +784,7 @@ export const conversationSchema = z.object({
   bot: botSchema.nullable().optional(),
   /**
    * 群成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
-   * 只在列表/详情视图上补，不入库；至多 {@link GROUP_MEMBER_PREVIEW_MAX} 个。
+   * 只在列表/详情视图上补，不入库；至多 {@link PROJECT_MEMBER_PREVIEW_MAX} 个。
    */
   memberPreviews: z
     .array(
@@ -908,11 +905,6 @@ export const systemEventContentSchema = z.object({
    * answer input that the UI always provides.
    */
   options: z.array(z.string()).optional(),
-  /**
-   * Group-creation question step (event = group_setup_question, docs/design/19
-   * D60): which form the card renders — 'title' | 'purpose' | 'members' | 'workdir'.
-   */
-  step: z.string().optional(),
   /**
    * 任务提问卡（D75 §2.4.6，event = task_question）：用户的回答（点选的选项，
    * 或对话轮经 inject_task 转交的自由文本）；未答时缺省。

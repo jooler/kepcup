@@ -44,7 +44,7 @@
       .sort((a, b) => a.createdAt - b.createdAt),
   );
   const ownerName = $derived(
-    task?.botId != null && chat.current?.conversation.type === 'group'
+    task?.botId != null && chat.current?.conversation.type === 'project'
       ? chat.botName(task.botId)
       : '',
   );

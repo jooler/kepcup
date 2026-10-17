@@ -12,6 +12,7 @@ import { SchedulesStore } from '../../src/schedule/store.js';
 import { migrationsUrl } from '../../src/start.js';
 import { MemoStore } from '../../src/workbench/memo-store.js';
 import { TodoStore } from '../../src/workbench/todo-store.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /** D90 workbench stores (todos / todo_runs / memos) and the schedules store changes. */
 
@@ -62,8 +63,9 @@ describe('TodoStore', () => {
 
   it('encodes bot / group / none assignees and reads them back', () => {
     db.prepare(
-      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_g', 'group', null, 0, 0)",
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
+    insertProjectConversation(db, { id: 'conv_g', leadBotId: 'bot_2' });
     const bot = store.insert({
       title: 'a',
       source: 'user',
@@ -98,8 +100,9 @@ describe('TodoStore', () => {
 
   it('keeps the group assignee when the group conversation is deleted (no FK: TodoService / reconcile own that)', () => {
     db.prepare(
-      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_g', 'group', null, 0, 0)",
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
+    insertProjectConversation(db, { id: 'conv_g', leadBotId: 'bot_2' });
     const todo = store.insert({
       title: 'a',
       source: 'user',
@@ -199,8 +202,9 @@ describe('TodoStore', () => {
 
   it('queries by assignee and reassigns a bot (D88 handover)', () => {
     db.prepare(
-      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_g', 'group', null, 0, 0)",
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
+    insertProjectConversation(db, { id: 'conv_g', leadBotId: 'bot_2' });
     const direct = store.insert({
       title: 'a',
       source: 'user',
@@ -427,8 +431,9 @@ describe('SchedulesStore (D90 columns)', () => {
     db = openMainDb();
     store = new SchedulesStore(db, clock);
     db.prepare(
-      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_g', 'group', null, 0, 0)",
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
+    insertProjectConversation(db, { id: 'conv_g', leadBotId: 'bot_2' });
   });
 
   it('defaults todo_id to null and maps pre-workbench inserts as before', () => {

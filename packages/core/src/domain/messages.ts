@@ -105,8 +105,6 @@ export interface AppendMessageInput {
   /** system_event extras (task_question, D87 P4 L2): multi / form question cards. */
   questionMode?: AskUserMode | undefined;
   questionFields?: AskUserField[] | undefined;
-  /** system_event extras: group-creation question step (group_setup_question). */
-  step?: string | undefined;
   /** system_event extras: butler route card target (route_suggestion, D70). */
   route?:
     | {
@@ -473,7 +471,6 @@ export class MessagesService {
                   ? { questionFields: input.questionFields }
                   : {}),
                 ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
-                ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),
                 ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
                 ...(input.offer !== undefined ? { offer: input.offer } : {}),

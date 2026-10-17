@@ -36,7 +36,6 @@ export type AssigneeConversation = {
   directBotId?: string | null;
   bot?: { systemRole?: string | null } | null;
   readOnly: boolean;
-  setupState?: string | null | undefined;
 };
 
 function isButlerConversation(conversation: AssigneeConversation): boolean {
@@ -69,7 +68,7 @@ export function buildAssigneeSections(input: {
         isButler: bot.isButler,
       };
     }
-    if (conversation.type === 'group') {
+    if (conversation.type === 'project') {
       const group = groupById.get(conversation.id);
       if (group === undefined) return null;
       seenGroup.add(conversation.id);

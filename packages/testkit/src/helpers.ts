@@ -178,19 +178,25 @@ export async function openDirect(core: CoreHarness, botId: string): Promise<Conv
   return result.conversation;
 }
 
-export async function makeGroup(
+/**
+ * Creates a project conversation (`projects.create`). `leadBotId` defaults to
+ * the first member (the WP5 UI will pick the lead explicitly).
+ */
+export async function makeProject(
   core: CoreHarness,
   title: string,
-  botIds: string[],
+  memberBotIds: string[],
+  options: { leadBotId?: string } = {},
 ): Promise<Conversation> {
-  const result = (await core.rpc.call('groups.create', {
+  const result = (await core.rpc.call('projects.create', {
     title,
-    memberBotIds: botIds,
+    leadBotId: options.leadBotId ?? memberBotIds[0]!,
+    memberBotIds,
   })) as { conversation: Conversation };
   return result.conversation;
 }
 
-export interface GroupDraft {
+export interface ProjectDraft {
   text: string;
   mentions?: string[];
   replyTo?: string | null;
@@ -204,7 +210,7 @@ export interface GroupDraft {
 export async function sendDrafts(
   core: CoreHarness,
   conversationId: string,
-  drafts: GroupDraft[],
+  drafts: ProjectDraft[],
 ): Promise<Message[]> {
   const sent: Message[] = [];
   for (const draft of drafts) {

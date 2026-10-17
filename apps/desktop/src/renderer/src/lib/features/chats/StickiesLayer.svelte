@@ -82,7 +82,7 @@
   function sourceName(conversationId: string): string {
     const conversation = chat.conversations.find((c) => c.id === conversationId);
     if (conversation === undefined) return '';
-    if (conversation.type === 'group') return conversation.title ?? '';
+    if (conversation.type === 'project') return conversation.title ?? '';
     return conversation.bot?.name || chat.botName(conversation.directBotId ?? '');
   }
 

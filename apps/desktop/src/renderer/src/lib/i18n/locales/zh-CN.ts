@@ -627,13 +627,6 @@ export const zhCN = {
   'group.memberDetailTitle': '成员名片',
   'group.responsibilities': '职责',
   'group.expertise': '擅长',
-  'group.noClaimHint': '点击 Bot 名字，由它处理这批消息',
-  // 对话内群创建（docs/design/19 D60）
-  'groupSetup.creatingTitle': '新建群聊…',
-  'groupSetup.composerHint': '回答完消息列表中的创建问题后，就可以在群里发消息了',
-  'groupSetup.purposePlaceholder': '描述这个群主要处理什么事务',
-  'groupSetup.confirm': '确定',
-  'groupSetup.cancel': '放弃创建',
   'groupCompose.to': 'To:',
   'groupCompose.placeholder': '输入名称，回车新建 Bot',
   'groupCompose.emptyList': '没有可添加的 Bot。输入名称后回车，会新建一个 Bot',

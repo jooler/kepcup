@@ -5,7 +5,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   sendBatch,
   sendDrafts,
   step,
@@ -93,7 +93,7 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     const domain = core.services.domain!;
     const x = await makeBot(core, '阿甲');
     const y = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '斑马调研', [x.id, y.id]);
+    const conv = await makeProject(core, '斑马调研', [x.id, y.id]);
     const cid = conv.id;
     const t1 = 'run_task_one';
     const t2 = 'run_task_two';

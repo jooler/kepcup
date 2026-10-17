@@ -261,7 +261,7 @@ describe('system prompt assembly', () => {
 
     const group = buildSystemPrompt({
       bot,
-      conversation: { ...makeConversation(), type: 'group', directBotId: null, title: '咨询' },
+      conversation: { ...makeConversation(), type: 'project', directBotId: null, title: '咨询' },
       timeZone: TIME_ZONE,
       now,
     });

@@ -3,7 +3,7 @@ import type { Bot, Message } from '@kepcup/shared';
 import {
   createTestStack,
   makeBot,
-  makeGroup,
+  makeProject,
   sendDrafts,
   waitForEvent,
   waitForMessage,
@@ -298,7 +298,7 @@ describe('conversational bot setup (interview)', () => {
       bot: Bot;
     };
     const other = await makeBot(core, '阿乙');
-    const group = await makeGroup(core, '新成员试用', [created.bot.id, other.id]);
+    const group = await makeProject(core, '新成员试用', [created.bot.id, other.id]);
 
     llm.script('mock-main', [step().replyText('我还在熟悉中，先记下了。')]);
     await sendDrafts(core, group.id, [{ text: '你好，介绍一下自己', mentions: [created.bot.id] }]);

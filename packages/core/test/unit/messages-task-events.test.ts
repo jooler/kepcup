@@ -10,6 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { MessagesService, isVisibleToUser } from '../../src/domain/messages.js';
 import type { Clock } from '../../src/infra/clock.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * D75 W0 写接口（docs/design/30 §2.4、§3.2）：task_event 私有条目、终态幂等、
@@ -42,8 +43,9 @@ function makeRig(): Rig {
   const clock: Clock = { now: () => 1_000_000 + tick++ };
   const conversationId = `conv_${rigCount}`;
   db.prepare(
-    "insert into conversations (id, type, last_seq, created_at) values (?, 'group', 0, ?)",
-  ).run(conversationId, clock.now());
+    "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+  ).run();
+  insertProjectConversation(db, { id: conversationId, leadBotId: 'bot_lead' });
   return { db, messages: new MessagesService(db, clock), conversationId };
 }
 

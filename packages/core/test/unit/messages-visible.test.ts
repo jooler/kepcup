@@ -10,6 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { MessagesService, isVisibleToUser } from '../../src/domain/messages.js';
 import type { Clock } from '../../src/infra/clock.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'messages-visible-'));
 afterAll(() => {
@@ -36,8 +37,9 @@ function makeRig(): Rig {
   const clock: Clock = { now: () => 1_000_000 + tick++ };
   const conversationId = `conv_${rigCount}`;
   db.prepare(
-    "insert into conversations (id, type, last_seq, created_at) values (?, 'group', 0, ?)",
-  ).run(conversationId, clock.now());
+    "insert or ignore into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+  ).run();
+  insertProjectConversation(db, { id: conversationId, leadBotId: 'bot_lead' });
   return { db, messages: new MessagesService(db, clock), conversationId };
 }
 
@@ -49,9 +51,7 @@ function append(rig: Rig, input: Parameters<MessagesService['append']>[0]): Mess
 let extraConversationCount = 0;
 function addConversation(rig: Rig): string {
   const id = `conv_extra_${extraConversationCount++}`;
-  rig.db
-    .prepare("insert into conversations (id, type, last_seq, created_at) values (?, 'group', 0, ?)")
-    .run(id, 0);
+  insertProjectConversation(rig.db, { id, leadBotId: 'bot_lead' });
   return id;
 }
 

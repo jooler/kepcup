@@ -9,7 +9,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -700,7 +700,10 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
         });
       const inDirect = create(bot.id, conv.id);
       const other = await makeBot(stack.core, '小二');
-      const group = await makeGroup(stack.core, '群', [bot.id, other.id]);
+      const lead = await makeBot(stack.core, '负责人');
+      const group = await makeProject(stack.core, '群', [bot.id, other.id, lead.id], {
+        leadBotId: lead.id,
+      });
       const inGroupA = create(bot.id, group.id);
       const inGroupB = create(other.id, group.id);
       await watches.whenIdle();
@@ -709,7 +712,7 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
       expect(watches.get(inDirect.id)).toBeNull();
       expect(watches.get(inGroupA.id)).not.toBeNull();
 
-      await stack.core.rpc.call('groups.removeMember', {
+      await stack.core.rpc.call('projects.removeMember', {
         conversationId: group.id,
         botId: other.id,
       });

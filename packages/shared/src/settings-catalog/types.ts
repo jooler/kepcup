@@ -236,7 +236,7 @@ export type SettingDeepLink = z.infer<typeof settingDeepLinkSchema>;
  * 值存在哪里（core 适配器读写、`settings.changed` 映射用）：
  * - `settings`：`settingsSchema` 里的点路径（`capabilityModels.image`）；
  * - `bot`：`BotProfile` 里的点路径（`runtime.model`）；
- * - `service`：只经专用 RPC 写（`unattended.enable`、`groups.rename`……）；
+ * - `service`：只经专用 RPC 写（`unattended.enable`、`projects.update`……）；
  * - `renderer`：渲染层 localStorage；`none`：只读 / 只经专门工具。
  */
 export const settingStoreSchema = z.discriminatedUnion('kind', [

@@ -6,20 +6,17 @@ import type { Bot, Conversation, Message } from '@kepcup/shared';
 import {
   createTestStack,
   listRuns,
-  makeBot,
   step,
   waitForMessage,
   waitForRun,
   type TestStack,
 } from '@kepcup/testkit';
-import { GROUP_SETUP_QUESTIONS, SETUP_PATH_QUESTION } from '../../src/tools/setup-tools.js';
+import { SETUP_PATH_QUESTION } from '../../src/tools/setup-tools.js';
 
 /**
- * 对话工作路径与群创建（docs/design/19，D59/D60）：
- * - D59 目录闸门：访谈首问作答后不触发 LLM——插入确定性的工作目录卡、扣下
- *   投递；作答（选择/跳过）后缓冲消息一次性进入首个响应 run。
- * - D60 群创建对话化：groups.setup.start/answer 全程零模型调用，四问逐步
- *   收集名称、事务描述、成员与工作目录，完成后群数据一次性生效。
+ * 对话工作路径（docs/design/19，D59）：目录闸门——访谈首问作答后不触发
+ * LLM，插入确定性的工作目录卡、扣下投递；作答（选择/跳过）后缓冲消息
+ * 一次性进入首个响应 run。（D60 对话内群创建已在 D92 T1a 删除。）
  */
 
 const stacks: TestStack[] = [];
@@ -172,143 +169,3 @@ describe('setup path gate (D59)', () => {
   }, 20_000);
 });
 
-describe('conversational group creation (D60)', () => {
-  it('walks the four questions with zero model calls and finalizes the group', async () => {
-    const { core, llm } = await start();
-    const a = await makeBot(core, '阿甲');
-    const b = await makeBot(core, '阿乙');
-    const dir = tmpDir();
-
-    const started = (await core.rpc.call('groups.setup.start')) as { conversation: Conversation };
-    const conversationId = started.conversation.id;
-    expect(started.conversation.setupState).toBe('creating');
-
-    // 顺序错答被拒绝；正确作答逐题推进。
-    await expect(
-      core.rpc.call('groups.setup.answer', {
-        conversationId,
-        step: 'members',
-        botIds: [a.id, b.id],
-      }),
-    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-
-    await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'title',
-      text: '项目讨论组',
-    });
-    const purposeCard = await waitForMessage(
-      core,
-      conversationId,
-      (m) => m.kind === 'system_event' && 'step' in m.content && m.content.step === 'purpose',
-    );
-    expect(purposeCard.content).toMatchObject({ text: GROUP_SETUP_QUESTIONS.purpose });
-
-    await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'purpose',
-      text: '每周同步项目进展与风险',
-    });
-    await waitForMessage(
-      core,
-      conversationId,
-      (m) => m.kind === 'system_event' && 'step' in m.content && m.content.step === 'members',
-    );
-
-    const done = (await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'members',
-      botIds: [a.id, b.id],
-    })) as { conversation: Conversation; done: boolean };
-    expect(done.done).toBe(false);
-    // 成员步作答即写入成员行（防中断丢失）。
-    const members = (await core.rpc.call('conversations.members', { conversationId })) as {
-      members: Array<{ bot: { id: string } }>;
-    };
-    expect(members.members.map((m) => m.bot.id).sort()).toEqual([a.id, b.id].sort());
-
-    await waitForMessage(
-      core,
-      conversationId,
-      (m) => m.kind === 'system_event' && 'step' in m.content && m.content.step === 'workdir',
-    );
-    const finished = (await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'workdir',
-      path: dir,
-    })) as { conversation: Conversation; done: boolean };
-    expect(finished.done).toBe(true);
-    expect(finished.conversation.setupState ?? null).toBeNull();
-    expect(finished.conversation.title).toBe('项目讨论组');
-    expect(finished.conversation.description).toBe('每周同步项目进展与风险');
-    expect(finished.conversation.workdirId).not.toBeNull();
-
-    // 全程零模型调用 + 完成后不自动触发任何 run。
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(llm.requestsFor('mock-main')).toHaveLength(0);
-    expect(
-      (await listRuns(core, conversationId)).filter((r) => r.loopType === 'turn'),
-    ).toHaveLength(0);
-
-    // 完成系统消息落库（后续入群的 Bot 可从历史读到）。
-    const all = messagesOf(core, conversationId);
-    expect(
-      all.some(
-        (m) =>
-          m.kind === 'system_event' && 'text' in m.content && m.content.text.includes('创建完成'),
-      ),
-    ).toBe(true);
-
-    rmSync(dir, { recursive: true, force: true });
-  }, 20_000);
-
-  it('cancel deletes the creating conversation with all its messages', async () => {
-    const { core } = await start();
-    const started = (await core.rpc.call('groups.setup.start')) as { conversation: Conversation };
-    const conversationId = started.conversation.id;
-    await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'title',
-      text: '半途而废组',
-    });
-
-    await core.rpc.call('groups.setup.cancel', { conversationId });
-    const conversation = (await core.rpc.call('conversations.get', { id: conversationId })) as {
-      conversation: Conversation | null;
-    };
-    expect(conversation.conversation).toBeNull();
-    expect(messagesOf(core, conversationId)).toHaveLength(0);
-  }, 20_000);
-
-  it('group description lands in the conversation_info prompt section', async () => {
-    const { core, llm } = await start();
-    const a = await makeBot(core, '阿甲');
-    const b = await makeBot(core, '阿乙');
-
-    const started = (await core.rpc.call('groups.setup.start')) as { conversation: Conversation };
-    const conversationId = started.conversation.id;
-    await core.rpc.call('groups.setup.answer', { conversationId, step: 'title', text: '客服群' });
-    await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'purpose',
-      text: '处理用户售后咨询',
-    });
-    await core.rpc.call('groups.setup.answer', {
-      conversationId,
-      step: 'members',
-      botIds: [a.id, b.id],
-    });
-    await core.rpc.call('groups.setup.answer', { conversationId, step: 'workdir', path: null });
-
-    // 首条用户消息触发响应 run：<conversation_info> 携带群定位。
-    llm.script('mock-light', [
-      step().replyJson({ decision: 'respond', confidence: 0.9, reason: '归我' }),
-      step().replyJson({ decision: 'no_action', confidence: 0.2, reason: '无需回应' }),
-    ]);
-    llm.script('mock-main', [step().replyText('收到。')]);
-    await core.rpc.call('messages.send', { conversationId, text: '有条售后问题' });
-    await waitForRun(core, conversationId, 'completed');
-    const body = JSON.stringify(llm.requestsFor('mock-main')[0]!.body.messages);
-    expect(body).toContain('本群主要处理：处理用户售后咨询');
-  }, 20_000);
-});

@@ -1,8 +1,6 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
   import { SETTING_CARD_RESOLVED_EVENT } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
@@ -21,7 +19,6 @@
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
-  import GroupSetupCard from './GroupSetupCard.svelte';
   import ChatMessageRow from './ChatMessageRow.svelte';
 
   /**
@@ -127,17 +124,6 @@
       : null,
   );
   const isSystem = $derived(message.senderType === 'system');
-  /** Structured bot candidates of the no-claim system message (P05). */
-  const noClaimBotIds = $derived(
-    isSystem && message.kind === 'system_event' && 'botIds' in message.content
-      ? (message.content.botIds ?? [])
-      : [],
-  );
-  const noClaimBatchId = $derived(
-    isSystem && message.kind === 'system_event' && 'batchId' in message.content
-      ? (message.content.batchId ?? null)
-      : null,
-  );
   // 初始化访谈的问题卡片（bot_setup_question + 候选答案）：独立于灰色 pill 的专用交互卡。
   const isSetupQuestion = $derived(
     isSystem &&
@@ -154,14 +140,6 @@
       'event' in message.content &&
       message.content.event === 'bot_setup_path_question',
   );
-  // 对话内群创建的问题卡（19/D60）：按 content.step 渲染四问表单。
-  const isGroupSetup = $derived(
-    isSystem &&
-      message.kind === 'system_event' &&
-      'event' in message.content &&
-      message.content.event === 'group_setup_question',
-  );
-
   // D75 任务提问卡（design 30 §2.4.6）：绑定任务，点选直注任务。
   const isTaskQuestion = $derived(
     message.kind === 'system_event' &&
@@ -210,10 +188,6 @@
       'event' in message.content &&
       message.content.event === SETTING_CARD_RESOLVED_EVENT,
   );
-
-  function assign(botId: string): void {
-    if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
-  }
 </script>
 
 {#if isChangesCard}
@@ -286,11 +260,6 @@
   <div class="flex w-full py-1">
     <SetupPathCard {message} />
   </div>
-{:else if isGroupSetup}
-  <!-- 对话内群创建问题卡（19/D60）（群无 bot 左缘） -->
-  <div class="flex w-full py-1">
-    <GroupSetupCard {message} />
-  </div>
 {:else if isTaskQuestion}
   <div class="flex w-full py-1">
     <TaskQuestionCard {message} />
@@ -323,21 +292,6 @@
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">
       {'text' in message.content ? message.content.text : ''}
     </span>
-    {#if noClaimBotIds.length > 0 && noClaimBatchId !== null}
-      <div class="flex max-w-[85%] flex-wrap gap-1" data-testid="no-claim-bots">
-        {#each noClaimBotIds as botId (botId)}
-          <button
-            type="button"
-            class="rounded-full border bg-background px-2.5 py-0.5 text-xs transition-colors hover:bg-accent"
-            onclick={() => assign(botId)}
-            data-testid={`no-claim-bot-${botId}`}
-          >
-            @{chat.botName(botId)}
-          </button>
-        {/each}
-      </div>
-      <span class="text-[11px] text-muted-foreground">{t('group.noClaimHint')}</span>
-    {/if}
   </div>
 {:else}
   <ChatMessageRow {message} {editing} {merge} />

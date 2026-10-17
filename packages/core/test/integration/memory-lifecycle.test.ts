@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createTestStack,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -92,7 +92,9 @@ describe('P07 生命周期级联（docs/dev/03-data-model.md 删除级联）', (
     try {
       const botA = await makeBot(stack.core, '阿群');
       const botB = await makeBot(stack.core, '阿乙');
-      const group = await makeGroup(stack.core, '项目群', [botA.id, botB.id]);
+      const group = await makeProject(stack.core, '项目群', [botA.id, botB.id], {
+        leadBotId: botB.id,
+      });
       stack.llm.script('mock-main', [step().replyText('好的')]);
       stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
       const batch = await sendDrafts(stack.core, group.id, [
@@ -108,7 +110,7 @@ describe('P07 生命周期级联（docs/dev/03-data-model.md 删除级联）', (
       let items = await listMemoryItems(stack, botA.id);
       expect(items.find((item) => item.kind === 'commitment')!.status).toBe('active');
 
-      await stack.core.rpc.call('groups.removeMember', {
+      await stack.core.rpc.call('projects.removeMember', {
         conversationId: group.id,
         botId: botA.id,
       });

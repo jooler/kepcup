@@ -61,7 +61,7 @@
       memberBots: [],
       allBots: contacts.bots,
       groups: chat.conversations
-        .filter((c) => c.type === 'group')
+        .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
     }),
   );

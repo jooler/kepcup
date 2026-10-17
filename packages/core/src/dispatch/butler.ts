@@ -12,7 +12,7 @@ import type { RunIdentity } from '../agent/types.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
-import type { GroupsService } from '../domain/groups.js';
+import type { ProjectsService } from '../domain/projects.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { ApprovalOutcome, ApprovalsService } from '../permissions/approvals.js';
 import type { BotCardLine, ButlerToolFacade, RouteSuggestion } from '../tools/butler-tools.js';
@@ -33,7 +33,7 @@ import {
 export interface ButlerHostDeps {
   bots: BotsService;
   conversations: ConversationsService;
-  groups: GroupsService;
+  projects: ProjectsService;
   approvals: ApprovalsService;
   messages: MessagesService;
   logger: CoreLogger;
@@ -157,7 +157,7 @@ export class ButlerHost implements ButlerToolFacade {
     let targetName: string;
     if (route.kind === 'group') {
       const group = this.#deps.conversations.get(route.conversationId ?? '');
-      if (group === null || group.type !== 'group' || group.readOnly || group.setupState === 'creating') {
+      if (group === null || group.type !== 'project' || group.readOnly) {
         return { ok: false, message: `群 ${route.conversationId ?? ''} 不存在或不可用` };
       }
       targetName = group.title ?? group.id;
@@ -265,7 +265,7 @@ export class ButlerHost implements ButlerToolFacade {
     try {
       const lines =
         proposal.proposalType === 'group'
-          ? this.#createGroup(proposal)
+          ? this.#createProject(proposal)
           : this.#createBots(
               approval.id,
               proposal,
@@ -360,19 +360,25 @@ export class ButlerHost implements ButlerToolFacade {
     ];
   }
 
-  #createGroup(proposal: Extract<ButlerProposalPayload, { proposalType: 'group' }>): string[] {
-    const group = this.#deps.groups.create({
+  #createProject(proposal: Extract<ButlerProposalPayload, { proposalType: 'group' }>): string[] {
+    // WP4: the proposal will carry an explicit lead_bot_id
+    const project = this.#deps.projects.create({
       title: proposal.title,
       memberBotIds: proposal.memberBotIds,
-      description: proposal.description,
+      goal: proposal.description,
+      leadBotId: proposal.memberBotIds[0]!,
     });
     this.#deps.logger.info(
-      { proposalType: 'group', conversationId: group.id, memberCount: proposal.memberBotIds.length },
+      {
+        proposalType: 'group',
+        conversationId: project.id,
+        memberCount: proposal.memberBotIds.length,
+      },
       'butler proposal applied',
     );
     return [
       '提议处理结果（宿主系统注入，不是用户消息）：用户确认了建群提议。',
-      `已创建群「${group.title ?? proposal.title}」（${group.id}），成员 ${proposal.memberBotIds.length} 位。`,
+      `已创建群「${project.title ?? proposal.title}」（${project.id}），成员 ${proposal.memberBotIds.length} 位。`,
       '请用一两句话告诉用户群已建好、可以在群里怎么用；不要复述成员清单。',
     ];
   }

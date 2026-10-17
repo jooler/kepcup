@@ -24,7 +24,6 @@ function conv(partial: Partial<AssigneeConversation> & Pick<AssigneeConversation
     directBotId: partial.directBotId ?? null,
     bot: partial.bot ?? null,
     readOnly: partial.readOnly ?? false,
-    setupState: partial.setupState ?? null,
     ...partial,
   };
 }
@@ -39,7 +38,7 @@ describe('buildAssigneeSections', () => {
         bot: { systemRole: 'butler' },
       }),
       conv({ id: 'c-a', type: 'direct', directBotId: 'a', bot: { systemRole: null } }),
-      conv({ id: 'g1', type: 'group', title: '产品组' }),
+      conv({ id: 'g1', type: 'project', title: '产品组' }),
       conv({ id: 'c-b', type: 'direct', directBotId: 'b', bot: { systemRole: null } }),
     ];
     const layout = buildAssigneeSections({
@@ -75,7 +74,7 @@ describe('buildAssigneeSections', () => {
         bot: { systemRole: 'butler' },
       }),
       conv({ id: 'c-a', type: 'direct', directBotId: 'a', bot: { systemRole: null } }),
-      conv({ id: 'g1', type: 'group', title: '产品组' }),
+      conv({ id: 'g1', type: 'project', title: '产品组' }),
       conv({ id: 'c-b', type: 'direct', directBotId: 'b', bot: { systemRole: null } }),
     ];
     const layout = buildAssigneeSections({
@@ -93,7 +92,7 @@ describe('buildAssigneeSections', () => {
 
   it('只读群不在 groups 名单里时不会出现', () => {
     const conversations: AssigneeConversation[] = [
-      conv({ id: 'g2', type: 'group', title: '只读群', readOnly: true }),
+      conv({ id: 'g2', type: 'project', title: '只读群', readOnly: true }),
     ];
     const layout = buildAssigneeSections({
       bots: [],

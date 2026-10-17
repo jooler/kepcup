@@ -61,7 +61,7 @@ describe('main 0038 workdirs rename', () => {
 
     // Apply 0038 (and everything after it).
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([38]);
+    expect(applied.map((m) => m.version)).toEqual([38, 39, 40]);
 
     // Table renamed, row preserved, old name gone.
     const tables = (

@@ -61,18 +61,18 @@ describe('RRF merge (RRF_K)', () => {
 describe('retrieval filters (群聊注入)', () => {
   it('excludes sensitive entries in groups but keeps them in private chats', () => {
     const sensitive = item({ id: 'm1', sensitivity: 'sensitive' });
-    expect(passesFilters(sensitive, { isGroup: true, now: 100 })).toBe(false);
-    expect(passesFilters(sensitive, { isGroup: false, now: 100 })).toBe(true);
+    expect(passesFilters(sensitive, { isProject: true, now: 100 })).toBe(false);
+    expect(passesFilters(sensitive, { isProject: false, now: 100 })).toBe(true);
   });
 
   it('drops non-active and expired entries', () => {
-    expect(passesFilters(item({ id: 'm', status: 'superseded' }), { isGroup: false, now: 100 })).toBe(false);
-    expect(passesFilters(item({ id: 'm', status: 'void' }), { isGroup: false, now: 100 })).toBe(false);
+    expect(passesFilters(item({ id: 'm', status: 'superseded' }), { isProject: false, now: 100 })).toBe(false);
+    expect(passesFilters(item({ id: 'm', status: 'void' }), { isProject: false, now: 100 })).toBe(false);
     expect(
-      passesFilters(item({ id: 'm', validUntil: 50 }), { isGroup: false, now: 100 }),
+      passesFilters(item({ id: 'm', validUntil: 50 }), { isProject: false, now: 100 }),
     ).toBe(false);
     expect(
-      passesFilters(item({ id: 'm', validUntil: 150 }), { isGroup: false, now: 100 }),
+      passesFilters(item({ id: 'm', validUntil: 150 }), { isProject: false, now: 100 }),
     ).toBe(true);
   });
 
@@ -125,7 +125,7 @@ describe('hybrid retrieval', () => {
       store,
       embedder,
       queryText: '用户喜欢什么',
-      filters: { isGroup: false, now: 1 },
+      filters: { isProject: false, now: 1 },
       topK: 3,
       budgetTokens: 10_000,
     });
@@ -147,7 +147,7 @@ describe('hybrid retrieval', () => {
       store,
       embedder: notReady,
       queryText: '查询',
-      filters: { isGroup: false, now: 1 },
+      filters: { isProject: false, now: 1 },
     });
     expect(result.items.map((entry) => entry.id)).toEqual(['a', 'b']);
     expect(result.text).not.toContain('[z]');
@@ -168,7 +168,7 @@ describe('hybrid retrieval', () => {
       store,
       embedder: failing,
       queryText: '查询',
-      filters: { isGroup: false, now: 1 },
+      filters: { isProject: false, now: 1 },
     });
     expect(result.items.map((entry) => entry.id)).toEqual(['a']);
   });
@@ -190,7 +190,7 @@ describe('hybrid retrieval', () => {
       store,
       embedder: counting,
       queryText: '查询',
-      filters: { isGroup: false, now: 1 },
+      filters: { isProject: false, now: 1 },
     });
     // A vendor embedder whose dim is still null must still retrieve: the gate
     // is the store's vector table, and here there is none → no embed call.
@@ -211,7 +211,7 @@ describe('hybrid retrieval', () => {
       },
       embedder,
       queryText: '查询',
-      filters: { isGroup: false, now: 1 },
+      filters: { isProject: false, now: 1 },
     });
     expect(refreshed).toBe(true);
     expect(result.items.map((entry) => entry.id)).toEqual(['a']);

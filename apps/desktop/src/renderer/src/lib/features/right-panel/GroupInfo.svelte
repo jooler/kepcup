@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { GROUP_MEMBER_PREVIEW_MAX, type Grant } from '@kepcup/shared';
-  import type { GroupMemberView } from '$lib/stores/chat.svelte';
+  import { PROJECT_MEMBER_PREVIEW_MAX, type Grant } from '@kepcup/shared';
+  import type { ProjectMemberView } from '$lib/stores/chat.svelte';
   import { Monitor, Plus, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
@@ -24,11 +24,9 @@
     chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
   );
   const grants = $derived(permissions.grants);
-  // 群创建问答进行中不提供工作目录选择（与原输入坞上方选择器的创建期隐藏一致）。
-  const creating = $derived(chat.current?.conversation.setupState === 'creating');
   const conversation = $derived(chat.current?.conversation ?? null);
 
-  let detail = $state<GroupMemberView | null>(null);
+  let detail = $state<ProjectMemberView | null>(null);
   let titleDraft = $state('');
   /** 上次同步进输入框的标题（只给下面的同步 effect 比对用，不需要响应式）。 */
   let syncedTitle: string | null = null;
@@ -38,7 +36,7 @@
   let addQuery = $state('');
 
   const faces = $derived(
-    members.slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
+    members.slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -80,7 +78,7 @@
     renaming = true;
     try {
       // 失败（已 toast）时退回已保存的标题，不让输入框停在没生效的名字上。
-      if (!(await chat.renameGroup(conversationId, next))) titleDraft = savedTitle();
+      if (!(await chat.renameProject(conversationId, next))) titleDraft = savedTitle();
     } finally {
       renaming = false;
     }
@@ -100,7 +98,7 @@
   }
 
   async function addMember(botId: string): Promise<void> {
-    if (await chat.addGroupMembers(conversationId, [botId])) {
+    if (await chat.addProjectMembers(conversationId, [botId])) {
       addQuery = '';
       addOpen = false;
     }
@@ -184,7 +182,7 @@
             class="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label={t('group.removeMember')}
             title={t('group.removeMember')}
-            onclick={() => void chat.removeGroupMember(conversationId, member.bot.id)}
+            onclick={() => void chat.removeProjectMember(conversationId, member.bot.id)}
             data-testid={`group-info-remove-${member.bot.id}`}
           >
             <X class="size-3.5" aria-hidden="true" />
@@ -257,8 +255,8 @@
     </div>
   </section>
 
-  <!-- 工作目录（P04）：群的工作目录绑定在对话上，创建期隐藏。 -->
-  {#if !creating && conversation}
+  <!-- 工作目录（P04）：项目组的工作目录绑定在对话上。 -->
+  {#if conversation}
     <WorkdirSelector
       conversationId={conversation.id}
       workdirId={conversation.workdirId}

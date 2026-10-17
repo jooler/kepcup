@@ -9,6 +9,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { MessagesService } from '../../src/domain/messages.js';
 import type { Clock } from '../../src/infra/clock.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * D75 W1-B 按视角的读法（docs/design/30 §2.4.3）：Bot X = 共享行 + X 的私有
@@ -41,8 +42,9 @@ function withRig(fn: (rig: Rig) => void): void {
   const clock: Clock = { now: () => 1_000_000 + tick++ };
   const conversationId = `conv_${rigCount}`;
   db.prepare(
-    "insert into conversations (id, type, last_seq, created_at) values (?, 'group', 0, ?)",
-  ).run(conversationId, clock.now());
+    "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+  ).run();
+  insertProjectConversation(db, { id: conversationId, leadBotId: 'bot_lead' });
   try {
     fn({ db, messages: new MessagesService(db, clock), conversationId });
   } finally {

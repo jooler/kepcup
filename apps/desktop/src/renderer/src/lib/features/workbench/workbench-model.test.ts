@@ -334,11 +334,10 @@ describe('成员名单', () => {
     ]);
   });
 
-  it('groupMembers：只要群；创建中的不算；assignableOnly 去掉只读群', () => {
+  it('groupMembers：只要项目组；assignableOnly 去掉只读群', () => {
     const conversations = [
-      { id: 'g1', type: 'group', title: '产品组', readOnly: false },
-      { id: 'g2', type: 'group', title: null, readOnly: true },
-      { id: 'g3', type: 'group', title: '新群', readOnly: false, setupState: 'creating' as const },
+      { id: 'g1', type: 'project', title: '产品组', readOnly: false },
+      { id: 'g2', type: 'project', title: null, readOnly: true },
       { id: 'd1', type: 'direct', title: null, readOnly: false },
     ];
     expect(groupMembers(conversations).map((m) => m.id)).toEqual(['g1', 'g2']);

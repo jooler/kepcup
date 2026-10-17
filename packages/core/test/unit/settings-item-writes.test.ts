@@ -339,13 +339,13 @@ describe('group and workdir setting reads', () => {
         apply: () => ({ bot, changedItemIds: [], settle: async () => undefined }),
       },
       conversations: {
-        get: () => ({ title, type: 'group' }),
+        get: () => ({ title, type: 'project' }),
         memberBotIds: () => members,
       },
-      groups: {
-        rename: (_id, next) => {
-          renamed.push(next);
-          title = next;
+      projects: {
+        update: (_id, patch) => {
+          renamed.push(patch.title ?? '');
+          title = patch.title ?? title;
         },
       },
       workdirs: {

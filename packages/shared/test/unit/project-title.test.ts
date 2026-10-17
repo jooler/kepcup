@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { groupTitleFromMemberNames } from '../../src/domain/group-title.js';
+import { projectTitleFromMemberNames } from '../../src/domain/project-title.js';
 import { botProfileSchema, isSparseBotProfile } from '../../src/domain/types.js';
 
-describe('groupTitleFromMemberNames', () => {
+describe('projectTitleFromMemberNames', () => {
   it('joins member names with a comma and a space', () => {
-    expect(groupTitleFromMemberNames(['KepCup 开发助理', 'InkCop 开发助理'])).toBe(
+    expect(projectTitleFromMemberNames(['KepCup 开发助理', 'InkCop 开发助理'])).toBe(
       'KepCup 开发助理, InkCop 开发助理',
     );
   });
 
   it('drops names that would exceed the title limit', () => {
     const long = '名'.repeat(40);
-    const title = groupTitleFromMemberNames([long, long, long]);
+    const title = projectTitleFromMemberNames([long, long, long]);
     expect(title.length).toBeLessThanOrEqual(100);
     expect(title).toBe(`${long}, ${long}`);
   });
 
   it('truncates a single name that is already over the limit', () => {
-    const title = groupTitleFromMemberNames(['名'.repeat(120)]);
+    const title = projectTitleFromMemberNames(['名'.repeat(120)]);
     expect(title).toHaveLength(100);
   });
 });

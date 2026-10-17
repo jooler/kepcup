@@ -4,7 +4,7 @@ import {
   createFakeBrowserHost,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -148,7 +148,9 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
     try {
       const a = await makeBot(stack.core, '阿甲');
       const b = await makeBot(stack.core, '阿乙');
-      const group = await makeGroup(stack.core, '浏览器群', [a.id, b.id]);
+      const group = await makeProject(stack.core, '浏览器群', [a.id, b.id], {
+        leadBotId: b.id,
+      });
       // 群里只有甲动过浏览器
       stack.browser.calls.length = 0;
       await openWithTool(stack, group.id, 'https://fixture.example/', '收到', {
@@ -156,7 +158,7 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       });
       expect(stack.browser.calls.some((c) => c.method === 'browser.ensurePage')).toBe(true);
 
-      await stack.core.rpc.call('groups.removeMember', { conversationId: group.id, botId: a.id });
+      await stack.core.rpc.call('projects.removeMember', { conversationId: group.id, botId: a.id });
       const close = stack.browser.closedPairs.at(-1);
       expect(close).toEqual({ botId: a.id, conversationId: group.id, permanent: true });
     } finally {

@@ -4,8 +4,6 @@ import nodePath from 'node:path';
 import {
   AppError,
   BOT_SETUP_PATH_QUESTION_EVENT,
-  GROUP_SETUP_QUESTION_EVENT,
-  GROUP_SETUP_STEPS,
   INTERIM_TEXT_MAX_CHARS,
   INTERIM_TEXT_MAX_PER_RUN,
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
@@ -42,7 +40,6 @@ import {
   type Bot,
   type Conversation,
   type Delegation,
-  type GroupSetupStep,
   type Message,
   WATCH_CARD_TYPE,
   WATCH_ALERT_EVENT,
@@ -126,7 +123,7 @@ import {
 } from '../scheduler/mailbox.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
-import type { GroupsService } from '../domain/groups.js';
+import type { ProjectsService } from '../domain/projects.js';
 import type { DelegationsService } from '../domain/delegations.js';
 import { isVisibleToUser, type MessagesService } from '../domain/messages.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -177,7 +174,6 @@ import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
 import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
-  GROUP_SETUP_QUESTIONS,
   SETUP_FIRST_OPTIONS,
   SETUP_FIRST_QUESTION,
   SETUP_GREETING,
@@ -354,7 +350,7 @@ export interface OrchestratorDeps {
   bots: BotsService;
   conversations: ConversationsService;
   /** 群域服务（P05 成员管理 + 19/D60 对话内群创建的 createSetup/finalizeSetup）。 */
-  groups: GroupsService;
+  projects: ProjectsService;
   /** 跨 Bot 委派行（D71，docs/design/27）。 */
   delegations: DelegationsService;
   messages: MessagesService;
@@ -856,7 +852,7 @@ export class Orchestrator {
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
       conversations: deps.conversations,
-      groups: deps.groups,
+      projects: deps.projects,
       approvals: deps.approvals,
       messages: deps.messages,
       logger: deps.logger,
@@ -1003,7 +999,7 @@ export class Orchestrator {
     this.#deps.publish('message.created', { conversationId, message: full });
     this.#publishConversation(conversationId);
 
-    if (conv.type === 'group') {
+    if (conv.type === 'project') {
       // Group dispatch (P05): explicit targets, triage, ordered turns. The
       // runs (if any) are chosen asynchronously; no single run id to report.
       this.#groupTurns.onUserBatch(conversationId, batchId, [full]);
@@ -1056,7 +1052,7 @@ export class Orchestrator {
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });
     this.#publishConversation(input.conversationId);
     input.onAppended?.(message);
-    if (conv.type === 'group') {
+    if (conv.type === 'project') {
       this.#groupTurns.onUserBatch(input.conversationId, batchId, [message]);
       return { message, runId: null, held: false };
     }
@@ -1094,7 +1090,7 @@ export class Orchestrator {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
     let targets: string[] = [];
-    if (conv.type === 'group') {
+    if (conv.type === 'project') {
       const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
       const dispatched =
         input.dispatchMessageId === null
@@ -1129,7 +1125,7 @@ export class Orchestrator {
     });
     this.#deps.publish('message.created', { conversationId: conv.id, message });
     this.#publishConversation(conv.id);
-    if (conv.type === 'group') {
+    if (conv.type === 'project') {
       this.#groupTurns.onUserBatch(conv.id, batchId, [message]);
     } else if (conv.directBotId !== null) {
       this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
@@ -1306,137 +1302,6 @@ export class Orchestrator {
     return message;
   }
 
-  // --- group setup (docs/design/19 D60) ---------------------------------------
-
-  /**
-   * 对话内群创建第一步：创建 `setup_state='creating'` 的群对话并下发第一问
-   * （群名称）。零模型调用——四问全部由 core 确定性下发，完成后 Bot 才进群。
-   */
-  beginGroupSetup(): Conversation {
-    const conversation = this.#deps.groups.createSetup();
-    this.#appendGroupSetupCard(conversation.id, 'title');
-    return conversation;
-  }
-
-  #appendGroupSetupCard(conversationId: string, step: GroupSetupStep): void {
-    this.#appendSystemMessage(
-      conversationId,
-      GROUP_SETUP_QUESTION_EVENT,
-      GROUP_SETUP_QUESTIONS[step],
-      {
-        step,
-      },
-    );
-  }
-
-  /**
-   * 群创建问答推进：每步校验「正是当前待答步骤」（幂等，重复提交拒绝）、
-   * 落 setupAnswer 用户消息（不渲染气泡，卡片显示已答态）、发下一问；成员
-   * 步作答即写成员行，workdir 步绑定后 finalize（名称/定位一次性生效）。
-   * 全程不触发任何 dispatch。
-   */
-  answerGroupSetup(
-    input:
-      | { conversationId: string; step: 'title'; text: string }
-      | { conversationId: string; step: 'purpose'; text: string }
-      | { conversationId: string; step: 'members'; botIds: string[] }
-      | { conversationId: string; step: 'workdir'; path: string | null },
-  ): { conversation: Conversation; done: boolean } {
-    const conversationId = input.conversationId;
-    const conv = this.#deps.conversations.getOrThrow(conversationId);
-    if (conv.type !== 'group' || conv.setupState !== 'creating') {
-      throw new AppError('INVALID_INPUT', '该对话不在群创建流程中');
-    }
-    const current = this.#groupSetupCurrentStep(conversationId);
-    if (current === null || current !== input.step) {
-      throw new AppError('INVALID_INPUT', `当前应回答的步骤是「${current ?? '（已完成）'}」`);
-    }
-    const index = GROUP_SETUP_STEPS.indexOf(input.step);
-    const answerText = (() => {
-      switch (input.step) {
-        case 'title':
-          return input.text.trim();
-        case 'purpose':
-          return input.text.trim();
-        case 'members':
-          return input.botIds.map((id) => this.#deps.bots.get(id)?.name ?? id).join('、');
-        case 'workdir':
-          return input.path ?? SETUP_PATH_SKIP_TEXT;
-      }
-    })();
-    if (answerText.length === 0) {
-      throw new AppError('INVALID_INPUT', '回答不能为空');
-    }
-    const isLast = index === GROUP_SETUP_STEPS.length - 1;
-    // 步骤副作用先于落卡执行（失败即整步失败，不留半答状态）。
-    if (input.step === 'members') {
-      this.#deps.groups.addMembers(conversationId, input.botIds);
-    }
-    if (input.step === 'workdir' && input.path !== null) {
-      this.#deps.workdirs.select(conversationId, input.path);
-    }
-    const message = this.#deps.messages.append({
-      conversationId,
-      senderType: 'user',
-      kind: 'text',
-      text: answerText,
-      setupAnswer: true,
-    });
-    this.#deps.publish('message.created', { conversationId, message });
-    if (!isLast) {
-      this.#appendGroupSetupCard(conversationId, GROUP_SETUP_STEPS[index + 1]!);
-      this.#publishConversation(conversationId);
-      return { conversation: this.#deps.conversations.getOrThrow(conversationId), done: false };
-    }
-    const updated = this.#deps.groups.finalizeSetup(conversationId, {
-      title: this.#groupSetupAnswerText(conversationId, 'title') ?? '',
-      description: this.#groupSetupAnswerText(conversationId, 'purpose') ?? '',
-    });
-    const memberNames = this.#deps.groups
-      .members(conversationId)
-      .map((m) => m.bot.name)
-      .join('、');
-    this.#appendSystemMessage(
-      conversationId,
-      'group_created',
-      `群聊「${updated.title ?? ''}」创建完成，成员：${memberNames}。`,
-    );
-    this.#publishConversation(conversationId);
-    return { conversation: updated, done: true };
-  }
-
-  /** The first not-yet-answered step, or null when the flow has finished. */
-  #groupSetupCurrentStep(conversationId: string): GroupSetupStep | null {
-    for (const step of GROUP_SETUP_STEPS) {
-      const cardSeq = this.#groupSetupCardSeq(conversationId, step);
-      if (cardSeq === null) return step;
-      const answered = this.#deps.messages
-        .userMessagesAfter(conversationId, cardSeq)
-        .some((m) => 'setupAnswer' in m.content && m.content.setupAnswer === true);
-      if (!answered) return step;
-    }
-    return null;
-  }
-
-  /** system_event seq of one group-setup step's card (substring match on step). */
-  #groupSetupCardSeq(conversationId: string, step: GroupSetupStep): number | null {
-    const row = this.#deps.db
-      .prepare(
-        "select seq from messages where conversation_id = ? and kind = 'system_event' and instr(content_json, ?) > 0 order by seq asc limit 1",
-      )
-      .get(conversationId, `"step":"${step}"`) as { seq: number } | undefined;
-    return row?.seq ?? null;
-  }
-
-  /** The setupAnswer text a step received (first user message after its card). */
-  #groupSetupAnswerText(conversationId: string, step: GroupSetupStep): string | null {
-    const cardSeq = this.#groupSetupCardSeq(conversationId, step);
-    if (cardSeq === null) return null;
-    const answers = this.#deps.messages.userMessagesAfter(conversationId, cardSeq);
-    const first = answers[0];
-    return first && 'text' in first.content ? first.content.text : null;
-  }
-
   // --- message lifecycle ---------------------------------------------------
 
   /** Edit notification rules (docs/design/02-execution.md "编辑作为一次新触发"). */
@@ -1448,7 +1313,7 @@ export class Orchestrator {
       // No running loop: the edit becomes a fresh trigger.
       const conv = this.#deps.conversations.getOrThrow(message.conversationId);
       if (conv.readOnly) return message;
-      if (conv.type === 'group') {
+      if (conv.type === 'project') {
         // Group: the edited message (its structured mentions/replyTo survive
         // the edit) goes through the same dispatcher as a fresh batch
         // (BR-P05-004, docs/design/02 "编辑作为一次新触发").
@@ -1746,12 +1611,12 @@ export class Orchestrator {
    * A member left the group (removal or bot deletion): drop it from any turn
    * queue and cancel its runs in this conversation.
    */
-  groupMemberRemoved(botId: string, conversationId: string): void {
+  projectMemberRemoved(botId: string, conversationId: string): void {
     this.#groupTurns.onMemberRemoved(conversationId, botId);
     this.abortRunsForBotInConversation(botId, conversationId);
   }
 
-  /** groups.redistribute: re-dispatch a stored batch as an explicit @. */
+  /** Re-dispatch a stored batch as an explicit @ (kept until WP3 removes the flow). */
   redistributeBatch(conversationId: string, batchId: string, botId: string): void {
     this.#groupTurns.redistribute(conversationId, batchId, botId);
   }
@@ -2574,7 +2439,7 @@ export class Orchestrator {
     // 被模型理解为群聊引用（conversation.ts mentionTokenLabel）。
     const mentionLabels = new Map<string, string>();
     for (const conversation of this.#deps.conversations.list()) {
-      if (conversation.type === 'group' && conversation.title !== null) {
+      if (conversation.type === 'project' && conversation.title !== null) {
         mentionLabels.set(groupMentionToken(conversation.id), conversation.title);
       }
     }
@@ -2916,7 +2781,7 @@ export class Orchestrator {
       const sessionPrompt = buildAgentSessionPrompt({
         bot,
         conversation,
-        ...(conversation.type === 'group' ? { members: this.#memberCards(conversation.id) } : {}),
+        ...(conversation.type === 'project' ? { members: this.#memberCards(conversation.id) } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
           nativeCapabilities: entry.nativeCapabilities,
@@ -3156,7 +3021,7 @@ export class Orchestrator {
     }
   }
 
-  agentSessionsOnGroupMemberRemoved(botId: string, conversationId: string): void {
+  agentSessionsOnProjectMemberRemoved(botId: string, conversationId: string): void {
     for (const row of this.#agentSessions.listByConversation(conversationId)) {
       if (row.botId !== botId) continue;
       this.#discardAgentSession(row, true);
@@ -3836,7 +3701,7 @@ export class Orchestrator {
               triggerReason: batch.reason,
               // 任务的触发是 'task'（不在直改白名单里）：来源消息即使是用户的也不算本人直接发起。
               triggerFromUser: fromUser,
-              isGroup: conv.type === 'group',
+              isGroup: conv.type === 'project',
               isButler: bot.systemRole === 'butler',
               touchedUntrusted: () => untrusted.touched,
               // 外部智能体的原生工具不经宿主分类、会话跨 run 保留：整个 run 按不可信处理。
@@ -4124,7 +3989,7 @@ export class Orchestrator {
           // bot.updated 让 UI 实时反映新名字与 profile。
           ...(bot.setupState === 'interviewing'
             ? {
-                setupSurface: conv.type === 'group' ? ('group' as const) : ('direct' as const),
+                setupSurface: conv.type === 'project' ? ('project' as const) : ('direct' as const),
                 setup: {
                   saveProfile: (
                     setupBotId: string,
@@ -4372,7 +4237,7 @@ export class Orchestrator {
             conversation: conv,
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
-            ...(conv.type === 'group' ? { members: this.#memberCards(conv.id) } : {}),
+            ...(conv.type === 'project' ? { members: this.#memberCards(conv.id) } : {}),
             workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
             workspace: {
               path: workspacePath,
@@ -4474,7 +4339,7 @@ export class Orchestrator {
       const unsubscribeInterim = this.#deliverInterimTexts(
         runId,
         batch,
-        conv.type === 'group',
+        conv.type === 'project',
         handle,
         isTask ? runId : null,
       );

@@ -5,7 +5,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -579,7 +579,7 @@ describe('response loop', () => {
     const { core, llm } = await start();
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '中间消息群', [a.id, b.id]);
+    const conv = await makeProject(core, '中间消息群', [a.id, b.id]);
     const script = Array.from({ length: 5 }, (_, i) =>
       step().replyTextAndToolCall(`群里中间 ${i + 1}`, 'search_messages', { query: `q${i + 1}` }),
     );

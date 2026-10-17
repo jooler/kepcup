@@ -326,11 +326,11 @@ function identityAndPersona(bot: Bot): { identity: string; persona: string } {
 function conversationInfoLines(conversation: Conversation, members?: BotCard[]): string[] {
   const convType = conversation.type === 'direct' ? '单聊（你与用户一对一）' : '群聊';
   return [
-    `对话类型：${convType}${conversation.type === 'group' && conversation.title ? `「${conversation.title}」` : ''}`,
+    `对话类型：${convType}${conversation.type === 'project' && conversation.title ? `「${conversation.title}」` : ''}`,
     // 群定位（docs/design/19 D60）：创建时以对话内问答收集，是成员理解
     // 「归不归我」与自身职责边界的共同依据。
-    ...(conversation.type === 'group' && conversation.description
-      ? [`本群主要处理：${conversation.description}`]
+    ...(conversation.type === 'project' && conversation.goal
+      ? [`本群主要处理：${conversation.goal}`]
       : []),
     ...(members !== undefined && members.length > 0
       ? [
@@ -418,7 +418,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const setupSection =
     bot.setupState === 'interviewing' && isButler
       ? BUTLER_INTERVIEW_GUIDANCE
-      : bot.setupState === 'interviewing' && input.conversation.type === 'group'
+      : bot.setupState === 'interviewing' && input.conversation.type === 'project'
         ? [
             '你还在初始化，画像可能不完整。当前是群聊：不要在群里发初始化问卷，也不要追问用户你自己的定位。',
             '用户在群里让你做事时，正常把那件事做完。',

@@ -111,7 +111,7 @@ describe('my-state assembly (P07 任务 10)', () => {
         run({ id: 'run_4', conversationId: 'conv_4', status: 'waiting_lease', botId: 'bot_2' }),
       ],
       getConversation: (id) =>
-        conversation({ id, type: 'group', title: '项目群' }),
+        conversation({ id, type: 'project', title: '项目群' }),
       getMessage: () => message(long),
     });
     expect(lines).toHaveLength(1);

@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { groupTitleFromMemberNames } from '@kepcup/shared';
+import { projectTitleFromMemberNames } from '@kepcup/shared';
 
 /**
  * 新建群聊：顶部输入里点选成员，空回车创建。群名默认是成员名用逗号拼接；
@@ -19,7 +19,7 @@ export async function createGroupViaUi(
   }
   await page.locator('[data-testid="group-compose-input"]').press('Enter');
 
-  const autoTitle = groupTitleFromMemberNames(memberNames);
+  const autoTitle = projectTitleFromMemberNames(memberNames);
   await expect(
     page.locator('[data-testid="conversation-name"]', { hasText: autoTitle }),
   ).toBeVisible({ timeout: 15_000 });

@@ -99,6 +99,8 @@ export const ERROR_CODES = [
   'MCP_SERVER_FAILED',
   // butler & delegation (D70 / D71)
   'BOT_UNDELETABLE',
+  // project team (D92 T1a, docs/design/41-project-team.md)
+  'PROJECT_LEAD_REQUIRED',
   // external agents (D72)
   'NOT_SUPPORTED',
   'AGENT_UNAVAILABLE',

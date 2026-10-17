@@ -58,7 +58,7 @@ interface StubBot {
 
 interface StubConversation {
   id: string;
-  type: 'direct' | 'group';
+  type: 'direct' | 'project';
   title: string | null;
   directBotId: string | null;
   readOnly: boolean;
@@ -110,11 +110,11 @@ function makeRig() {
   const cancelledJobs: string[] = [];
   let messageSeq = 0;
 
-  const insertConversation = (conv: StubConversation): void => {
+  const insertConversation = (conv: StubConversation, leadBotId?: string): void => {
     conversations.set(conv.id, conv);
     db.prepare(
-      'insert into conversations (id, type, title, direct_bot_id, read_only, created_at) values (?, ?, ?, ?, ?, 0)',
-    ).run(conv.id, conv.type, conv.title, conv.directBotId, conv.readOnly ? 1 : 0);
+      'insert into conversations (id, type, title, direct_bot_id, lead_bot_id, read_only, created_at) values (?, ?, ?, ?, ?, ?, 0)',
+    ).run(conv.id, conv.type, conv.title, conv.directBotId, leadBotId ?? null, conv.readOnly ? 1 : 0);
   };
 
   const rig = {
@@ -147,8 +147,11 @@ function makeRig() {
       return bot;
     },
     addGroup(id: string, title: string, memberIds: string[]): StubConversation {
-      const conv: StubConversation = { id, type: 'group', title, directBotId: null, readOnly: false };
-      insertConversation(conv);
+      const conv: StubConversation = { id, type: 'project', title, directBotId: null, readOnly: false };
+      // The lead defaults to the first member; the row-level lead is only a
+      // schema requirement here (TodoAssignee carries its own leadBotId).
+      const [firstMember] = memberIds;
+      insertConversation(conv, firstMember);
       members.set(id, memberIds);
       return conv;
     },

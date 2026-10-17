@@ -17,7 +17,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   step,
@@ -126,7 +126,7 @@ async function threeBots(core: TestStack['core']) {
   const a = await makeBot(core, '阿甲');
   const b = await makeBot(core, '阿乙');
   const c = await makeBot(core, '阿丙');
-  const conv = await makeGroup(core, '项目组', [a.id, b.id, c.id]);
+  const conv = await makeProject(core, '项目组', [a.id, b.id, c.id]);
   return { a, b, c, conv };
 }
 
@@ -652,7 +652,7 @@ describe('工作台对账：删 Bot / 删对话 / 移出群', () => {
     expect(ledSchedule).toMatchObject({ botId: b.id, conversationId: conv.id, origin: 'workbench' });
     expect(core.services.schedules!.store.get(inGroup.schedule!.id)!.botId).toBeNull();
 
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: b.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
     const afterLeave = (await getTodo(stack, led.id)).todo;
     expect(afterLeave).toMatchObject({
       status: 'draft',
@@ -893,7 +893,12 @@ describe('工作台派发：审查修复', () => {
     const stack = await start();
     const { core } = stack;
     const { a, b, conv } = await threeBots(core);
-    for (const id of [a.id, b.id]) await core.rpc.call('bots.delete', { id });
+    // 负责人守卫（D92 T1a）拦住 RPC 删除；直接把行置为墓碑，模拟遗留 /
+    // 竞态下的「无 active 成员」项目组。
+    await core.rpc.call('bots.delete', { id: b.id });
+    core.services.mainDb!
+      .prepare("update bots set status = 'deleted', updated_at = 0 where id = ?")
+      .run(a.id);
     const { todo } = await createTodo(stack, {
       title: '没人在的群',
       assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
