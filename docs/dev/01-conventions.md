@@ -1,7 +1,5 @@
 # 01 工程规范
 
-> **D92 修订（已定稿，待实施）**：ID 前缀 `prj_` → `wkd_`（工作目录）、`chn_` → `epi_`（协作回合）；新增 / 删除的常量见 todo/project/README.md §4.8。见 [41-project-team.md](../design/41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
-
 ## 技术栈与版本
 
 所有依赖锁定精确版本。下表中“版本要求”是选型约束，具体版本号在 P00 中确定并写入 `package.json`。
@@ -72,7 +70,7 @@ kepcup/
         infra/                 # paths、logger、crypto、keystore、db、migrate、events、clock
         rpc/                   # RPC 路由：把契约方法绑定到服务
         domain/                # bots、conversations、messages、drafts、attachments、workdirs、settings ...
-        dispatch/              # 分发器：@ 解析、群聊判断、顺序执行、Bot 间连锁
+        dispatch/              # 分发器：@ 解析、项目组路由（project-turn.ts：续接判断 + 负责人网关 lead-gate.ts + 轻量判断 light-judgement.ts）、顺序执行、协作回合与熔断（episodes.ts）
         scheduler/             # 优先级调度、mailbox、厂商并发限制、定时触发
         agent/                 # AgentEngine（pi 封装）、上下文组装、提示词模板
         tools/                 # 工具定义与实现
@@ -80,6 +78,7 @@ kepcup/
         permissions/           # grants、审批请求、命令白名单、无人值守模式
         sandbox/               # 沙箱接口、srt 后端、策略生成、逐条确认执行器、WSL 与增强后端
         workdir/               # 写入租约、检查点、保护规则、workdir 上下文
+        wiki/                  # Wiki 引擎：所有者泛化（bot | project）、来源台账、项目级索引（index-store.ts，projects/{id}/wiki.db）、入库 / 体检 / 删除来源 job
         memory/                # 记忆、用户画像、检索、向量服务、各后台 loop 的业务逻辑
         wiki/  skills/  env/  browser/  usage/  schedule/
       migrations/
@@ -131,6 +130,7 @@ kepcup/
 | 技能（库中版本） | `skl_` | |
 | 敏感数据 | `sec_` | |
 | 协作回合（D92 T1a） | `epi_` | |
+| Wiki 来源资产（D85 / D92） | `ast_` | **不是 ULID**：`ast_` + 内容 sha256 前 24 位十六进制，不进 `ID_PREFIXES`；项目 id = 其根会话 id（`conv_…`），没有 `prj_` 的新用法 |
 | 跨 Bot 委派（D71） | `dlg_` | |
 | 外部副作用台账行（D78） | `eff_` | |
 | 应用连接（D73） | `conn_` | 自定义 MCP server 的连接 id 固定为 `custom:{serverId}` |
@@ -154,9 +154,15 @@ kepcup/
 | `DELEGATION_RESULT_MAX_CHARS` | 2000 | 贴回 A 结果卡的截断长度（B 的终回复，或跟随任务时各任务结果拼接的总长） |
 | `DELEGATION_FYI_MAX_PER_RUN` | 3 | A 的同一轮给同一个 Bot 最多发几条 `fyi` 告知（定义在 `dispatch/delegation.ts`） |
 | `DELEGATION_TASK_MAX_CHARS` | 4000 | 单次 `delegate_to_bot` 的 task 文本上限 |
-| `BUTLER_TEAM_SIZE_MIN` / `BUTLER_TEAM_SIZE_MAX` | 3 / 5 | 管家 `propose_team` 的建议 Bot 数量范围 |
-| `TRIAGE_TIMEOUT_MS` | 20000 | 群聊判断超时 |
-| `TRIAGE_RECENT_MESSAGES` | 10 | 群聊判断看的最近消息条数 |
+| `PROPOSE_BOTS_MIN` / `PROPOSE_BOTS_MAX` | 3 / 5 | 管家 `propose_bots` 的建议 Bot 数量范围 |
+| `TRIAGE_TIMEOUT_MS` | 20000 | 轻量判断（项目组路由的续接判断 / 负责人网关、外部智能体路由）超时 |
+| `TRIAGE_RECENT_MESSAGES` | 10 | 轻量判断看的最近消息条数 |
+| `PROJECT_TITLE_MAX` | 100 | 项目组名称长度上限 |
+| `PROJECT_MEMBER_PREVIEW_MAX` | 9 | 侧栏头像堆叠等场景的成员预览上限 |
+| `PROJECT_GOAL_MAX_CHARS` | 4000 | 项目目标（`conversations.goal`）长度上限 |
+| `EPISODE_HOP_BREAKER` | 12 | 一个协作回合内 Bot 发起的触发最多放行 12 次，第 13 次熔断暂停（D92 T1a；集成测试可经 `KEPCUP_EPISODE_HOP_BREAKER` 覆盖） |
+| `EPISODE_PINGPONG_BREAKER` | 8 | 同一无序 Bot 对之间最多放行 8 次触发（约 4 个来回），第 9 次熔断暂停（D92 T1a；测试缝 `KEPCUP_EPISODE_PAIR_BREAKER`，e2e 用 `KEPCUP_TEST_EPISODE_LIMITS`） |
+| `WIKI_TEXT_SOURCE_MAX_CHARS` | 200000 | 项目 wiki 用户粘贴文本（`text` 来源）的正文长度上限（D92 T1b） |
 | `ROUTING_CONTINUATION_WINDOW_MS` | 1800000（30 分钟） | 「上一位回话者」的连续窗口（D92 T1a 路由） |
 | `ROUTING_CONTINUATION_MIN_CONFIDENCE` | 0.6 | 续接判断的认领阈值（初值，待实测） |
 | `ROUTING_ROUTE_TARGETS_MAX` | 3 | 负责人网关 `route` 的目标数上限 |

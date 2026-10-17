@@ -570,7 +570,7 @@
 
 ### DEV-030 UI 新建的群没有群定位与目录：建群后在哪里设置（`0254e1b`）
 
-- 状态：待决定
+- 状态：已落实（2026-10-18，随 D92 项目组实施）
 - 阶段：新建群聊改版（2026-10-15，`0254e1b`；取代设计 19 / D60 的对话内四问）
 - 是否阻塞：否
 - 问题：新建群改为主区域顶部点选成员、空回车即 `groups.create` 直接建群（群名为成员名拼接）后，创建时不再收集「本群主要处理什么事务」与工作目录。UI 新建的群 `description` 恒为空，`<conversation_info>` 的「本群主要处理：…」（D60）不会注入，群内 Bot 判断「归不归我」只剩成员名片与群名可依据。目录可在右栏「群详情」的 project 选择器补绑（无创建期引导）；群定位**没有任何编辑入口**，也没有对应的 RPC（`description` 只在 `groups.setup.answer` 里写）。D60 的后端（`groups.setup.*`、orchestrator 四问、`GroupSetupCard`、store 的 `createGroupViaSetup` / `answerGroupSetup` / `cancelGroupSetup`）保留但 UI 不可达。
@@ -580,8 +580,8 @@
   2. 建群后在群对话里出一张一次性提示卡（定位 + 目录，可跳过），复用 `GroupSetupCard` 的 purpose / project 两步 — 有引导；缺点是又回到部分向导，和「点选即建」的初衷有张力。
   3. 不做，群定位让 Bot 从群名与历史推断，并删除 D60 后端 — 最简；缺点是丢掉已验证有用的群语义，且要删除 D60 的代码路径（`description` 列可保留为空，不需要迁移）。
 - 推荐：1（必要时叠加 2 的轻提示）；在决定前保留 D60 后端不删。
-- 决定：（由人工填写）
-- 已更新的文档：`docs/design/19-work-path-and-group-setup.md`、`docs/design/README.md`（D60 行）、`docs/design/{01-conversation,08-project}.md`、`docs/dev/phases/P16-path-and-group-setup.md`、`todo/conversation-work-path.md`。
+- 决定：采纳方案 1 的 D92 形态——「**详情页编辑项目目标**」：`conversations.description` 随 T1a 改名 `goal`（项目目标），经 `projects.update` 在**项目详情页「概览」**编辑（WP1 落 RPC、WP4 落设置目录条目 `project.goal` 与提示词注入、WP7 落详情页编辑器）；非空才注入 `<conversation_info>`。D60 的四问后端已整体删除（方案 3 的删除部分随之完成）。目录绑定同样落详情页「概览」。
+- 已更新的文档：`docs/design/41-project-team.md`（§11.3 / §18 / DEV-030 引用）、`docs/design/01-conversation.md`、`docs/design/19-work-path-and-group-setup.md`、`docs/design/08-workdir.md`、`docs/design/12-ui-layout.md`、`docs/design/README.md`（D60 / D92 行）；历史类文档（`docs/dev/phases/P16`、`todo/conversation-work-path.md`）正文不动。
 
 ### DEV-031 WP3 的 `forcedTarget`「工作台派发用」前提与代码现实不符
 

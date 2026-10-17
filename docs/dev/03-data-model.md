@@ -1,7 +1,5 @@
 # 03 数据模型
 
-> **D92 修订（已定稿，待实施）**：数据模型变更：`conversations`（`type` 取值 `direct | project`、`lead_bot_id`、`goal`、无 `setup_state`）、`projects` → `workdirs`、`chains` → `episodes`、`todos.assignee_project_id`、`runs.task_cwd` / `episode_id` / `episode_hop`、`memory_items.origin` 取值 `private | project`、项目 wiki 台账与 `projects/{id}/wiki.db`。逐项迁移见 todo/project/README.md §4.3。见 [41-project-team.md](../design/41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
-
 设计依据：[design/11-storage.md](../design/11-storage.md)、[design/04-memory.md](../design/04-memory.md)、[design/01-conversation.md](../design/01-conversation.md)。
 
 ## 通用规则
@@ -42,9 +40,17 @@
 | main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
 | main | `0029_widget_queries.sql` | D81 P2：新表 `widget_queries`（命名只读查询模板）+ `widget_versions.queries_sha256` 列 |
 | main | `0036_bot_handover.sql` | D88 P0：新表 `bot_handovers` / `bot_handover_items`；`approvals` 重建（kind 增 `bot_handover`，带全现有 kind）。D87 在另一分支同占 0035，后合入的一方按 main 实况重排 |
-| main | `0037_workbench.sql` | D90：新表 `todos` / `todo_runs` / `memos`；`schedules` 重建（`bot_id` 可空、`origin` 增 `workbench`、增 `todo_id` 外键与索引 `schedules_todo`）。撰写时 main 最新为 0036，合入 main 时按实况重编 |
+| main | `0037_workbench.sql` | D90：新表 `todos` / `todo_runs` / `memos`；`schedules` 重建（`bot_id` 可空、`origin` 增 `workbench`、增 `todo_id` 外键与索引 `schedules_todo`） |
+| runs | `0013_task_cwd.sql` | D92 T0（WP0-1）：`runs` 的任务执行根目录列改名 `task_cwd` |
+| main | `0038_workdirs_rename.sql` | D92 T0（WP0-2）：目录表改名 `workdirs`，`conversations` / `run_changes` 的目录列改名 `workdir_id` |
+| main | `0039_project_prepare.sql` | D92 T1a（WP1）：在 FK 开启下删除无法转换的旧群（含 `messages_fts` 行；子表经 FK 级联） |
+| main | `0040_project_conversations.sql` | D92 T1a（WP1）：重建 `conversations`（首行 `-- kepcup:foreign-keys=off` 指令，运行器支持见 `infra/migrate.ts`）——`type` 取值 `direct | project`、增 `lead_bot_id`、`description` 改名 `goal`、删 `setup_state`；旧群纯 SQL 转换（负责人取入群最早的非管家成员，无合格成员的删除）；删除项目会话里的管家成员行 |
+| main | `0041_episodes.sql` | D92 T1a（WP2）：删连锁表，建 `episodes`（协作回合） |
+| runs | `0014_episode_columns.sql` | D92 T1a（WP2）：`runs` 的连锁列改名 `episode_id` / `episode_hop` |
+| main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
+| memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
 
-  D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
+  D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
 ### 全文检索与中文
 
@@ -70,7 +76,7 @@ CREATE TABLE settings (
 
 连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。P3 再加 `apps.directorySync`（签名目录索引同步开关，默认 `true`；同一入口写；关闭 → 远端目录条目立即清空，只用打包快照）。签名目录索引的本地缓存不在数据库里，而在数据目录 `cache/directory/`（`index.json`、`index.json.sig`、`state.json`；`state.json` 记最后接受的索引的 `generatedAt`、字节 sha256、`keyId`、ETag 与最近成功时间，是防回滚棘轮，缓存被清也不会放过更旧的索引；缓存启动时重新验签）。
 
-外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 群聊摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, groupMentionOnly=true（经 Agent 的群聊判断需用户关掉此项）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
+外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 项目组对话摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, projectMentionOnly=true（经 Agent 的项目组路由判断需用户关掉此项；D92 T1a WP8 由 groupMentionOnly 改名，无迁移，旧 JSON 缺省值被 `.default(true)` 吸收）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
 MCP 与浏览器资料同在设置 JSON：`mcpServers`（D65，server 列表；每项 `id` 受 `MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/` 约束〔D91 后续：字母 / 数字开头，其后字母、数字、`.` `_` `-`，1–64 个字符；写路径〔`settings.update`、`SettingsService.update`〕不合规直接拒绝，读路径 `SettingsService.get()` 逐条校验、丢弃不合规条目并 warn，不让一条坏数据拖垮整份设置，无迁移；它会拼进工具名 `mcp_{id}_{tool}`、能力 id `mcp:{id}`、`custom:{id}` 连接 id 与 secrets 键〕，每项可带逐工具策略 `toolPolicies?: Record<toolName, {approval?: 'auto'|'ask', enabled?}>`），D91 起每项还可带用途说明 `description?: string`（≤200 字符，扩展中心「MCP」表单填写；进系统提示 `<capabilities>` 目录行〔经 `oneLine` 清洗〕，缺省时目录行写固定缺省文案；只进提示词、不参与任何权限判断；无迁移）、`browserProfiles`（D77，共享浏览器资料 `[{id: 'bpf_…', name, createdAt}]`，缺省 `[]`；只经 `browserProfiles.*` RPC 写，`settings.update` 不接受）。Bot 运行配置 `browser_profile`（`''` = 私有；指向不存在的资料按私有处理）。均无迁移。
 
@@ -113,29 +119,30 @@ CREATE TABLE bots (
 
 ```sql
 CREATE TABLE conversations (
-  id                TEXT PRIMARY KEY,     -- conv_...
-  type              TEXT NOT NULL CHECK (type IN ('direct', 'group')),
-  title             TEXT,                 -- 群聊名称；单聊为空（显示 Bot 名称）
-  description       TEXT,                 -- 群定位（本群主要处理什么事务，19/D60）；单聊为空
-  direct_bot_id     TEXT REFERENCES bots(id),
-  workdir_id        TEXT,                 -- P04 起使用（0038 改名）
-  read_only         INTEGER NOT NULL DEFAULT 0,
-  setup_state       TEXT,                 -- 'creating' = 群创建问答进行中（19/D60）
-  summary           TEXT,                 -- 滚动摘要
-  summary_upto_seq  INTEGER NOT NULL DEFAULT 0,
-  last_seq          INTEGER NOT NULL DEFAULT 0,
-  last_read_seq     INTEGER NOT NULL DEFAULT 0,
-  last_message_at   INTEGER,
-  created_at        INTEGER NOT NULL
+  id               TEXT PRIMARY KEY,      -- conv_...
+  type             TEXT NOT NULL CHECK (type IN ('direct', 'project')),
+  title            TEXT,                  -- 项目组名称；单聊为空（显示 Bot 名称）
+  goal             TEXT,                  -- 项目目标（0040，原 description）；direct 恒 NULL，非空才注入 <conversation_info>
+  direct_bot_id    TEXT REFERENCES bots(id),
+  lead_bot_id      TEXT REFERENCES bots(id),  -- 项目负责人（0040）；direct 恒 NULL，project 恒非空（CHECK 保证）
+  workdir_id       TEXT,                  -- P04 起使用（0038 改名），无 FK
+  read_only        INTEGER NOT NULL DEFAULT 0,
+  summary          TEXT,                  -- 滚动摘要
+  summary_upto_seq INTEGER NOT NULL DEFAULT 0,
+  last_seq         INTEGER NOT NULL DEFAULT 0,
+  last_read_seq    INTEGER NOT NULL DEFAULT 0,
+  last_message_at  INTEGER,
+  created_at       INTEGER NOT NULL,
+  CHECK ((type = 'project') = (lead_bot_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX conversations_one_direct_per_bot
   ON conversations(direct_bot_id) WHERE type = 'direct' AND read_only = 0;
 ```
 
-- `description` 与 `setup_state` 为 19/D60 增量（迁移 `0014_conversation_setup.sql`）：`description` 注入群聊 `<conversation_info>`；`setup_state='creating'` 的群输入禁用、成员作答即写行、完成（`finalizeSetup`）时与 title/description 一起生效。
-- 放弃创建 = 物理删除该对话，走既有删除级联（此时仅有消息与成员行）。
+- 0040 重建（`conversations` 是 12 张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
+- 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
 
-删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。
+删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。项目组没有独立聚合：项目 id = 其根会话 id（`conv_…`），模块数据以它为键。
 
 ### conversation_members（P01）
 
@@ -227,7 +234,7 @@ D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下
 CREATE TABLE jobs (
   id            TEXT PRIMARY KEY,
   type          TEXT NOT NULL,            -- conversation_summary | reflection | memory_consolidation | profile_curation
-                                          -- | wiki_ingest | wiki_lint | skill_authoring | schedule_fire | watch_alert
+                                          -- | wiki_ingest | wiki_lint | wiki_remove_source | skill_authoring | schedule_fire | watch_alert
                                           -- | mail_alert | handover_copy（D88 P2）...
   bot_id        TEXT,
   conversation_id TEXT,
@@ -245,6 +252,8 @@ CREATE INDEX jobs_pending ON jobs(status, run_after, priority);
 CREATE UNIQUE INDEX jobs_dedupe ON jobs(dedupe_key) WHERE status = 'pending';
 ```
 
+- `wiki_ingest`（D92 T1b WP9 起 payload 带 `owner: { kind: 'bot', botId } | { kind: 'project', projectId }`）：项目 wiki 的入库 job `conversation_id` = 项目 id、`bot_id` = **执行者**（成员入库记该成员名下，用户添加的与体检以负责人身份）；去重键 `wiki_ingest:{ownerKey}:{sourceType}:{ref…}`（`wikiOwnerKey` 形态）。
+- `wiki_remove_source`（D92 T1b WP10，无迁移：`type` 没有 CHECK）：删除项目 wiki 来源的异步 job——不调用任何模型（不占模型路由、`JOB_PURPOSES` 不登记，不受预算延后），`payload = { owner, sourceId, actor: { role: 'user'|'lead'|'member', botId? } }`，`bot_id` = 项目负责人（仅记账），去重键 `wiki_remove_source:{ownerKey}:{sourceId}`；ACL / NOT_FOUND / NOT_SUPPORTED 终结为 `done` 不重试（入队时已快败一次，执行时再校验）。
 - `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；后台阶段暂时失败时作业抛 `JobRetryLaterError`，jobs runner 照常记一次失败并把 `run_after` 推后（30 秒 × 已用次数，`JobsService.postpone`），末次失败时条目记失败并结算；作业多次中断而 `failed` 时不再重登，其条目记失败。
 
 启动时把 `running` 改回 `pending`（`attempts + 1`）；超过 3 次标记为 `failed`。
@@ -312,7 +321,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `skill_preset`（P19/D63）：payload `{presetId, name, displayName, summary, version, missingDeps}`——`install_skill` 的预置轻授权卡；`skill_import` 既有 payload（P08）不变，工具路径复用同一 kind（阻塞审批）。无人值守模式下两者同属自动批准类。
 
-`butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分（见 `butlerProposalPayloadSchema`）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）。
+`butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'bots' | 'bot' | 'project'` 区分（见 `butlerProposalPayloadSchema`；D92 T1a WP4 起取值改名，`project` 分支字段 `{ title, goal, leadBotId, memberBotIds, reason }`——`propose_project` 的载荷带负责人）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）与 `leadBotId`（审批卡上改过的负责人，改过才写）。
 
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, workdirPath?, configHash}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：workdir 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、workdir 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
@@ -359,7 +368,7 @@ CREATE TABLE command_allowlist (
 
 ```sql
 CREATE TABLE workdirs (
-  id                  TEXT PRIMARY KEY,   -- prj_...
+  id                  TEXT PRIMARY KEY,   -- wkd_...（0038 起；`prj_` 前缀随之停用）
   path                TEXT NOT NULL UNIQUE,  -- realpath
   name                TEXT NOT NULL,
   protect_rules_json  TEXT NOT NULL,      -- { denyRead: string[], denyWrite: string[] }（glob）
@@ -387,18 +396,27 @@ CREATE TABLE run_changes (
 
 - 一个 run 多次持有租约（D75 审查批 E：被强制收回后不钉住的执行再次写入）时记录**累积**：`before_oid` 是第一个窗口前、`after_oid` 是最后一个窗口后；跨窗口的文件带各自的 `beforeOid`（run 第一次改它之前）/ `afterOid`（run 最后一次改它之后），净改动按两端内容重算；别人在 run 的两个窗口之间改过的文件标 `interleaved`，回退时按冲突处理。回退按文件恢复 `beforeOid ?? before_oid`、冲突检测比对 `afterOid ?? after_oid`；diff 按文件取各自区间。重新记录已回退的 run 时清空 `reverted_at`。
 
-### chains（P05）
+### episodes（协作回合，D92 T1a，main 0041）
+
+Bot 间 `@` 触发的因果树（设计见 [design/41 §7](../design/41-project-team.md#7-协作回合与熔断)）；服务在 `dispatch/episodes.ts`（`EpisodesService`）。
 
 ```sql
-CREATE TABLE chains (
-  id              TEXT PRIMARY KEY,       -- chn_...
+CREATE TABLE episodes (
+  id              TEXT PRIMARY KEY,       -- epi_...
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   root_batch_id   TEXT NOT NULL,
-  max_depth_seen  INTEGER NOT NULL,
-  tokens_used     INTEGER NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'stopped')),
+  hops            INTEGER NOT NULL DEFAULT 0,   -- Bot 发起的触发总数（熔断阈值 EPISODE_HOP_BREAKER = 12）
+  pair_hops_json  TEXT NOT NULL DEFAULT '{}',   -- { "botA|botB": n }，键为字典序排序后的无序对（EPISODE_PINGPONG_BREAKER = 8）
+  pending_json    TEXT NOT NULL DEFAULT '[]',   -- 熔断时未投递的触发：[{ toBotId, fromBotId, messageId, hop }]，resume 补投、stop 丢弃
+  paused_at       INTEGER,                      -- 熔断时间；NULL = 正常
   created_at      INTEGER NOT NULL
 );
+CREATE INDEX episodes_by_conversation ON episodes(conversation_id, created_at);
 ```
+
+- 懒创建：新的用户消息在该轮**首次 Bot 发起 `@`** 时才建行（发起 run 记为根、hop 0）；没有 `@` 就没有回合行。任务结算唤醒的对话轮在**唤醒时**按任务起源轮（`origin_run_id`）解析并继承回合（起源轮没有回合则不绑定）；任务与子代理 run 自身不绑定回合。
+- `resume` 投递 `pending_json` 并清零计数（补投沿用记录的 hop）；`stop` 丢弃 pending 并向相关 Bot 发 internal 系统消息 `episode_stopped`。熔断时对话里出协作暂停卡（`episode_paused`，带 `episodeId`），无人值守不自动继续；应用重启后 pending 随回合行保留。RPC `episodes.get / resume / stop`，事件 `episode.updated`。
 
 ### env_installs（P06）
 
@@ -511,7 +529,7 @@ D88 移交复制技能（P1，`SkillsService.copyForHandover`，无迁移）：�
 ```sql
 CREATE TABLE schedules (
   id              TEXT PRIMARY KEY,       -- sch_...
-  bot_id          TEXT,                   -- D90（main 0037）起可空：仅「派给群、未指定负责 Bot」的工作台事项排期行为空，其余来源仍必填（service 校验）
+  bot_id          TEXT,                   -- D90（main 0037）起可空（口径保留）；派给项目组的事项排期时若能解析到负责人则记该 Bot，派发时再取生效负责人（执行者覆盖项优先，缺省项目负责人）
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   kind            TEXT NOT NULL CHECK (kind IN ('once', 'cron')),
   run_at          INTEGER,                -- once
@@ -576,8 +594,8 @@ CREATE INDEX watches_bot ON watches(bot_id, status);
 - `alert_times_json` 支撑 `WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡。
 - 读行时 `source_json` / `condition_json` 用 zod `safeParse`：解析不了的行在列表 / 上下文里跳过并记日志；到期查询遇到它时直接改 `paused`（`last_error` 说明记录损坏），避免永远到期、空转 worker；删除级联按 SQL 一并删除。
 - 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
-- D88 移交（P1，`WatchService.transferTo`，无迁移）：同一行就地改 `bot_id` / `conversation_id`（`version + 1`，CAS），`last_text` / `last_matched` / `alert_seq` 原样保留，接手方不会把已提醒过的状态再提醒一次；`last_hash` / `last_quiet_hash` 在两边浏览器资料相同时保留，不同时清空（接手方第一次检查只建基线，不因换了资料误报「页面变化」）；私聊里的改到接手方私聊（同一事务在那里补一张 `created` 卡），群里的留在原群；排队中的 `watch_alert` 作业（`dedupe_key like 'watch:{id}:%'`）同一事务改到接手方名下。原对话里的旧卡因 `conversation_id` 不同而显示「已移交给 {B}」。
-- `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
+- D88 移交（P1，`WatchService.transferTo`，无迁移）：同一行就地改 `bot_id` / `conversation_id`（`version + 1`，CAS），`last_text` / `last_matched` / `alert_seq` 原样保留，接手方不会把已提醒过的状态再提醒一次；`last_hash` / `last_quiet_hash` 在两边浏览器资料相同时保留，不同时清空（接手方第一次检查只建基线，不因换了资料误报「页面变化」）；私聊里的改到接手方私聊（同一事务在那里补一张 `created` 卡），项目组里的留在原项目组；排队中的 `watch_alert` 作业（`dedupe_key like 'watch:{id}:%'`）同一事务改到接手方名下。原对话里的旧卡因 `conversation_id` 不同而显示「已移交给 {B}」。
+- `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出项目组时删除。
 
 ### stickies（辅助阅读便签，main 0024）
 
@@ -611,8 +629,8 @@ CREATE TABLE todos (
   id                TEXT PRIMARY KEY,                -- todo_...
   title             TEXT NOT NULL,                   -- <= 120 字（TODO_TITLE_MAX_CHARS）
   notes             TEXT NOT NULL DEFAULT '',        -- <= 4000 字（TODO_NOTES_MAX_CHARS）；派发时给执行者
-  assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
-  assignee_group_id TEXT,                            -- 群执行者；不设 FK（删群由 TodoService / 对账处理）
+  assignee_bot_id     TEXT,                          -- Bot 执行者；项目组执行者时 = 可选的覆盖负责 Bot
+  assignee_project_id TEXT,                          -- 项目组执行者（0042 改名）；不设 FK（删项目组由 TodoService / 对账处理）
   status            TEXT NOT NULL CHECK (status IN
                       ('draft', 'scheduled', 'in_progress', 'delivered', 'done', 'cancelled')),
   source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),   -- 内容出处：管家创建，或管家改写过标题 / 说明
@@ -649,9 +667,9 @@ CREATE TABLE memos (
 CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
 ```
 
-- **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'group', conversationId, leadBotId}` / `null`）。`assignee_bot_id` 与 `assignee_group_id` 都不设 FK：Bot 行是占位行、id 不复用；群若用 `ON DELETE SET NULL`，删群后「群 G + 负责 Bot B」会被读成 Bot B 的执行者、「群已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
+- **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
 - **不变式**：有时间 ⇒ 必有执行者；有排期 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行。时间只存在 schedule 上。
-- **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「群已解散」「群里无人认领」……）。
+- **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
 - 检索用 `LIKE`（量级千条以内）。
@@ -851,9 +869,9 @@ CREATE TABLE app_taint (
 CREATE INDEX app_taint_expires ON app_taint(expires_at);
 ```
 
-不设外键 / CASCADE：对话删除时 `domain/lifecycle.ts` 删掉该对话的全部行，Bot 删除时只删它自己私聊里的行（群聊里的行保留到过期——群里其他成员读到过它的输出）；其余遗留行由 `sweepExpired()`（启动时与每次置位时）清理。
+不设外键 / CASCADE：对话删除时 `domain/lifecycle.ts` 删掉该对话的全部行，Bot 删除时只删它自己私聊里的行（项目组里的行保留到过期——其他成员读到过它的输出）；其余遗留行由 `sweepExpired()`（启动时与每次置位时）清理。
 
-**判定粒度与跨 Bot 传递**：外发拦截按**对话**判定（`TaintService.guard` = 该对话里任一 Bot 的行未过期）——群聊里 Bot B 读到 Bot A 的输出时不能把污点「洗掉」；私聊只有一个 Bot，与按 (Bot, 对话) 等价。跨对话的交接由 `TaintService.inherit` 传递：委派投递（`delegations` 转 `working`）把 A 对话的污点带到 B 的私聊，B 的结果贴回（转 `completed`，非 `fyi`）再把 B 私聊的污点带回 A 的对话；继承保留来源的 `first_at`，`expires_at` 取较晚者（不因传递而延长）。接线在 `DelegationsService.onMoved`（`start.ts`）。
+**判定粒度与跨 Bot 传递**：外发拦截按**对话**判定（`TaintService.guard` = 该对话里任一 Bot 的行未过期）——项目组里 Bot B 读到 Bot A 的输出时不能把污点「洗掉」；私聊只有一个 Bot，与按 (Bot, 对话) 等价。跨对话的交接由 `TaintService.inherit` 传递：委派投递（`delegations` 转 `working`）把 A 对话的污点带到 B 的私聊，B 的结果贴回（转 `completed`，非 `fyi`）再把 B 私聊的污点带回 A 的对话；继承保留来源的 `first_at`，`expires_at` 取较晚者（不因传递而延长）。接线在 `DelegationsService.onMoved`（`start.ts`）。
 
 ### bot_handovers / bot_handover_items（D88，迁移 0036）
 
@@ -916,7 +934,7 @@ CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id
 - 外部智能体会话按任务分（D75，[design/30](../design/30-supervisor-and-tasks.md) §8.5）：唯一键是四元组 `(bot_id, conversation_id, agent_id, task_id)`；`task_id = ''` 是哨兵值——SQLite 唯一索引把 NULL 视为互不相同，用 `''` 才能让非任务 run 的行仍按三元组唯一。每个任务独占自己的行；`continues_task_id` 接续时 `AgentSessionsStore.inheritTask` 单条 `UPDATE` 把旧任务的行改挂新任务（旧任务的执行须已结束）。任务行的会话 / 桥键 = `bot:conv:agent:task:{行 id}`，随行而不随任务 id（DEV-010）；非任务行为 `bot:conv:agent`。只存 id、无外键 / CASCADE。
 - 结算后的任务会话行保留 `CONTINUATION_WINDOW_MS`（自 `last_used_at` 起），之后 reaper（`TaskHost.sweep` 的 `onSweep`）`session/close` 并删行。
 - 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
-- 删除对话 / 删除 Bot / 移出群经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
+- 删除对话 / 删除 Bot / 移出项目组经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
 
 ## runs.db
 
@@ -931,10 +949,10 @@ CREATE TABLE runs (
   status               TEXT NOT NULL CHECK (status IN (
                          'queued', 'running', 'waiting_approval', 'waiting_lease',
                          'completed', 'failed', 'cancelled', 'interrupted')),
-  trigger_reason       TEXT,              -- direct | mention | broadcast | reply | chain | scheduled | event | background | delegation | task（D75：任务结算唤醒对话轮）| watch（D79：监看条件边沿触发）
+  trigger_reason       TEXT,              -- direct | mention | reply | bot_mention | continuation | routing_gate | routed | routed_also | lead_fallback | scheduled | event | background | delegation | task | watch | mail（D92 T1a 起：无 broadcast / chain；routing_gate 只写在负责人网关的轻量调用 run 上）
   trigger_message_ids_json TEXT NOT NULL DEFAULT '[]',
-  chain_id             TEXT,
-  chain_depth          INTEGER,
+  episode_id           TEXT,              -- 0014（D92 T1a）：所属协作回合（main.db episodes，跨库只存 id）
+  episode_hop          INTEGER,           -- 0014（D92 T1a）：回合内的 Bot 发起触发层数
   provider             TEXT,
   model                TEXT,
   output_message_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -946,7 +964,7 @@ CREATE TABLE runs (
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
   task_title           TEXT,           -- 0006（D75）：任务标题；以下任务列在非任务 run 上为 null / 0
   task_writes          INTEGER,        -- 0006：1 = 写任务，0 = 只读任务
-  task_cwd             TEXT,           -- 0006（时名 task_workdir，0013 改名）：解析后的任务执行根目录
+  task_cwd             TEXT,           -- 0006（runs 0013 改名）：解析后的任务执行根目录
   origin_run_id        TEXT,           -- 0006：派出该任务的对话轮
   result_consumed_at   INTEGER,        -- 0006：任务结果被对话轮消费的时间（design/30 §3.2）
   awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
@@ -965,7 +983,7 @@ CREATE INDEX runs_by_parent ON runs(parent_run_id);  -- 0009：台账沿续接�
 
 - 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
 - 任务声明的能力（D91，runs 迁移 0012，[design/40](../design/40-capability-mounting.md) §4）：`task_capabilities` 是 `start_task.capabilities` 校验、去重后的能力 id（`app:{connectorSlug}` / `mcp:{serverId}`）JSON 数组，空数组存 NULL。`continues_task_id` 的新任务存「被接续任务的能力 ∪ 本次声明」；`runs.retry` 沿用行上的值；宿主自己派的任务（design 30 §8.4 降级）不写。任务启动时与当前能力目录求交后才决定挂什么，所以这里只是「声明」，不保证都挂上了。`Run.taskCapabilities: string[] | null` 经 `Run` / `TaskView.capabilities` 暴露给渲染层。
-- 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录（吸收了 @ 连锁批时一并写 `chain_id` / `chain_depth`，审查批 E）。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
+- 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录（吸收了回合批时一并写 `episode_id` / `episode_hop`，取更深 hop——审查批 E / M1；任务结算唤醒的轮次在唤醒时按起源轮解析继承回合，`retry_of` 重建的批沿用原回合绑定）。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 
 ### run_steps（P01）
@@ -1034,7 +1052,7 @@ CREATE TABLE memory_items (
   subject         TEXT,
   source          TEXT NOT NULL CHECK (source IN ('explicit', 'inferred')),
   evidence_json   TEXT NOT NULL,          -- [{ messageId, conversationId, runId }]；D88 移交副本见下
-  origin          TEXT NOT NULL CHECK (origin IN ('private', 'group')),
+  origin          TEXT NOT NULL CHECK (origin IN ('private', 'project')),  -- 0003（D92 T1a WP4）：原 'group' 值转换
   origin_conversation_id TEXT,
   confidence      REAL NOT NULL,
   sensitivity     TEXT NOT NULL CHECK (sensitivity IN ('normal', 'sensitive')),
@@ -1056,8 +1074,8 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(segmented_text, item_id UNINDEXED, to
 -- CREATE VIRTUAL TABLE memory_vec USING vec0(item_rowid INTEGER PRIMARY KEY, embedding float[<dim>]);
 ```
 
-- `void`：承诺因对话删除或 Bot 被移出群而作废；D88 起也包括「承诺随定时任务移交给了别的 Bot」（来源 Bot 的那条置 `void`，不再进 `<my_state>`，联动任务按 `memory.commitment_invalidated` 取消）。
-- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出群时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。承诺联动的定时任务没移交成时，本次移交写给接手方、没接上任何 active 任务的承诺副本置 `void`（不留孤儿承诺）；`findHandoverCopy` 取 active 优先、其次最新的一条。
+- `void`：承诺因对话删除或 Bot 被移出项目组而作废；D88 起也包括「承诺随定时任务移交给了别的 Bot」（来源 Bot 的那条置 `void`，不再进 `<my_state>`，联动任务按 `memory.commitment_invalidated` 取消）。
+- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出项目组时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。承诺联动的定时任务没移交成时，本次移交写给接手方、没接上任何 active 任务的承诺副本置 `void`（不留孤儿承诺）；`findHandoverCopy` 取 active 优先、其次最新的一条。
 
 ### wiki_fts（P09）
 
@@ -1069,7 +1087,23 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 每次 Wiki 维护提交后，按变更的页面增量更新（提交 diff 中被删除的页面同步移除索引行）；界面删除页面走同一条提交通道，`wiki.rollback` 与启动对账则全量重建。
 
-D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进暂存目录 `{cacheDir}/handover-staging/{handoverId}/`（与 `bots/` 同一文件系统；仓外目录是符号链接时不跟随；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。只放复制成功的页所引用的原件与已完成（`derived` / `maintained`）的资产，B 那份清单与 `state.json` 的 `sources` 改为移交来源。落盘前把本次要放的页写进 `bots/{B}/wiki-handover/{handoverId}.json`（续跑时其中的页算已复制），移交到终态时与暂存一起删除，启动时清扫残留。一次复制总量上限 `HANDOVER_WIKI_COPY_MAX_BYTES`。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」；提交之前出错则删掉本次落盘的文件、恢复 log.md 再抛错（不留未提交的文件）。提交之后增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`、给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`），这两步失败只记日志（启动对账兜底）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
+D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进暂存目录 `{cacheDir}/handover-staging/{handoverId}/`（与 `bots/` 同一文件系统；仓外目录是符号链接时不跟随；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。只放复制成功的页所引用的原件与已完成（`derived` / `maintained`）的资产，B 那份清单与 `state.json` 的 `sources` 改为移交来源。落盘前把本次要放的页写进 `bots/{B}/wiki-handover/{handoverId}.json`（续跑时其中的页算已复制），移交到终态时与暂存一起删除，启动时清扫残留。一次复制总量上限 `HANDOVER_WIKI_COPY_MAX_BYTES`。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」；提交之前出错则删掉本次落盘的文件、恢复 log.md 再抛错（不留未提交的文件）。提交之后增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`、给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`），这两步失败只记日志（启动对账兜底）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。**项目 wiki 不在移交范围（D92）。**
+
+### 项目 wiki 的磁盘布局与台账（D92 T1b）
+
+wiki 域按所有者泛化（`WikiOwner = { kind: 'bot', botId } | { kind: 'project', projectId }`，shared 导出）；路径助手在 `infra/paths.ts`：`projectRoot` / `projectWikiRoot` / `projectWikiStoreRoot` / `projectWikiDbPath`。
+
+```text
+projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
+  wiki/                          # git 仓库，布局同 Bot wiki（SCHEMA/index/log/raw/pages）
+    raw/_assets/ast_{24hex}.json # 来源台账（本篇 D85 小节的文本子集 + createdBy）
+  wiki-store/                    # 仓外内容存储（本期项目 wiki 只有文本来源，暂只承载目录形态）
+  wiki.db                        # 项目级 FTS 库：加密 sqlite，仅 wiki_fts；连接池按项目懒开、删除时先关再删目录
+```
+
+- `wiki.db` **不走迁移目录**：DDL 内嵌在 `wiki/index-manager.ts` 并自管 `PRAGMA user_version`（当前 1，`wiki-index-store.test.ts` 保证与 `migrations/memory/0002` 的 `wiki_fts` 形态一致）；启动时对存在库做一次完整性对账，`WikiIndexStore` / `WikiFtsFacade.storeFor(owner)` 按 owner 路由（Bot 的 FTS 仍在其 `memory.db`）。
+- **来源台账** `raw/_assets/{assetId}.json`（`wiki/assets.ts` 的 `WikiAssetEntry`，对齐 D85 §3.2 的文本子集）：`{ id: 'ast_'+sha256 前 24 hex, sha256, kind: 'text'|'html', fileName, bytes, storage: 'git', rawRelPath, createdBy: {kind:'user'} | {kind:'bot', id}, sources: [{ type: 'attachment'|'file'|'url'|'text', ref, conversationId, at }], status: 'maintained', createdAt, updatedAt }`。`text` 是用户粘贴文本（仅用户可提交，`ref` 只存正文前 80 字预览，≤ `WIKI_TEXT_SOURCE_MAX_CHARS`）；同一内容重复提交只在 `sources[]` 追加，不重复入库。Bot 个人 wiki 暂不启用台账（`raw/` 来源保持匿名）。
+- 互斥：项目 wiki 的维护 / 删除共用单写入队列（互斥键 `project:{id}`）；删除项目组时先排空在途维护（`prepareProjectDeletion`）再删行与目录。
 
 ## 删除级联
 
@@ -1090,32 +1124,33 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | app_tool_grants 中该对话的行 | 随外键 `ON DELETE CASCADE` 删除 | D73 P1 |
 | agent_sessions（外部智能体会话行；尽力 `session/delete`，Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（`Orchestrator.agentSessionsOnConversationDeleted`） |
 | run_changes | 删除（workdir 文件与影子仓库不动） | P04 |
-| chains | 删除 | P05 |
+| episodes（协作回合） | 删除（conversations FK 级联） | P05 / D92（main 0041） |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
-| todos 中以该对话为群执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「群已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_group_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
+| todos 中以该对话为项目组执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「项目组已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_project_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
 | 该对话的 Bot 自制组件（D81 `widgets`，scope='conversation'） | 删除（conversations FK 级联；scope='bot' 的行跨对话存活） | D81 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
-| Wiki 中从该对话入库的资料 | **保留** | — |
+| 项目数据目录 `projects/{id}/`（项目 wiki git、wiki-store、`wiki.db`）与该项目的 wiki job | 删除（`lifecycle.deleteConversation`：先 `prepareProjectDeletion` 排空在途维护，再关 `wiki.db` 连接、`rmSync` 整目录；该会话的 jobs 已取消）；仅项目组会话 | D92 T1b |
+| 各 Bot 个人 Wiki 中从该对话入库的资料 | **保留**（项目 wiki 随上一行删除） | — |
 
 ### 删除 Bot
 
-管家（D70，`system_role = 'butler'`）不可删除：`lifecycle.deleteBot` 在任何级联前拒绝。
+管家（D70，`system_role = 'butler'`）不可删除；**项目组负责人不可删除**（D92 T1a，`PROJECT_LEAD_REQUIRED`）：`lifecycle.deleteBot` 在任何级联前拒绝并列出其领导的项目组（渲染层给「去更换」入口，`bots.deletionPreview.ledProjects`）。
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
 | 该 Bot 所有正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBot` 结算为 `cancelled`，不唤醒） | P01 / D75 |
 | bots 行 | 改为占位（见 bots 表说明） | P01 |
 | 单聊对话 | `read_only = 1` | P01 |
-| 群成员关系 | 删除成员行（历史消息保留，发送者显示为 id） | P05 |
+| 项目组成员关系 | 删除成员行（历史消息保留，发送者显示为 id；其项目 wiki 来源保留，见下） | P05 / D92 |
 | 该 Bot 的执行记录 | 删除 | P01 |
 | `bots/{id}/` 整个目录（workspace、maintenance、memory.db、wiki、skills） | 删除 | P01 起，随各阶段补充 |
 | 该 Bot 的浏览器会话分区 `$KEPCUP_HOME/browser/Partitions/bot-{id}`（Cookie/localStorage/缓存等全部会话数据） | 删除（`browser.clearBotData`：关闭页面 → 清分区存储 → 删分区目录，并 tombstone 该 Bot） | P11 |
 | 该 Bot 的 approvals（待确认的先取消）、grants | 删除 | P03 |
-| 该 Bot 的 agent_sessions（尽力 `session/delete`） | 删除 | D72 P5（`agentSessionsOnBotDeleted`；移出群同理 `agentSessionsOnGroupMemberRemoved`） |
+| 该 Bot 的 agent_sessions（尽力 `session/delete`） | 删除 | D72 P5（`agentSessionsOnBotDeleted`；移出项目组同理 `agentSessionsOnProjectMemberRemoved`） |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | todos 中以该 Bot 为执行者 / 负责 Bot 的行 | **保留**（事项归用户所有）；对账退回 `draft` 并写 `blocked_reason`（「负责 Bot 已删除」）等用户改派；`todo_runs`、`memos` 不受影响 | D90 |
@@ -1123,6 +1158,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | mail_account_bots 中该 Bot 的绑定（`mail_accounts` 保留；`mail_alert` 作业随 jobs 取消） | 删除 | D84 |
 | 涉及该 Bot 的 bot_handovers（来源 / 目标） | **保留**作历史；未执行的条目执行时因 Bot 已删除而跳过 | D88 |
 | 该 Bot 的 widgets / widget_versions / widget_queries / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
+| 该 Bot 在各项目 wiki 里的来源 | **保留**（台账 `createdBy` 仍是其 id，界面显示占位 id；仍由用户 / 负责人管理）；其排队中的 wiki job（含 `wiki_remove_source`）随 jobs 取消 | D92 T1b |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
@@ -1139,19 +1175,22 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 > session（应用自身窗口的会话）的磁盘数据也随之迁到 `$KEPCUP_HOME/browser/`
 > 根目录下（`setPath('sessionData')` 是全局的），该目录同时包含应用自身的会话缓存。
 
-### 从群中移除 Bot
+### 从项目组中移除 Bot
+
+移除**负责人**被拒绝（D92 T1a）：`projects.removeMember` 与设置卡 `project.members` 同一道校验，提示「请先更换负责人」（`removeProjectMember` / `onProjectMemberRemoved` 钩子）。
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
-| 该 Bot 在此群正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBotInConversation` 结算为 `cancelled`，不唤醒） | P05 / D75 |
-| 该 Bot 在此群的 agent_sessions 行（含各任务的行） | 尽力 `session/delete` 并删除 | D72 P5 / D75 |
+| 该 Bot 在此项目组正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBotInConversation` 结算为 `cancelled`，不唤醒） | P05 / D75 |
+| 该 Bot 在此项目组的 agent_sessions 行（含各任务的行） | 尽力 `session/delete` 并删除 | D72 P5 / D75 |
 | 成员行 | 删除 | P05 |
-| 该 Bot 在此群的 workspace | 删除 | P05 |
-| 该 Bot 在此群的 grants、待确认 approvals | 撤销 / 取消 | P05 |
-| 该 Bot 在此群的 app_tool_grants（Bot 级授权不受影响） | 撤销（`AppToolGrants.revokeForBotInConversation`） | D73 P1 |
-| 该 Bot 在此群做出的承诺 | 置为 `void` | P07 |
-| 该 Bot 在此群的 schedules | 取消（含以它为负责 Bot 的工作台排期；对应事项由对账退回 `draft`） | P10 / D90 |
-| 该 Bot 在此群的 watches | 删除 | D79 |
+| 该 Bot 在此项目组的 workspace | 删除 | P05 |
+| 该 Bot 在此项目组的 grants、待确认 approvals | 撤销 / 取消 | P05 |
+| 该 Bot 在此项目组的 app_tool_grants（Bot 级授权不受影响） | 撤销（`AppToolGrants.revokeForBotInConversation`） | D73 P1 |
+| 该 Bot 在此项目组做出的承诺 | 置为 `void` | P07 |
+| 该 Bot 在此项目组的 schedules | 取消（含以它为覆盖负责 Bot 的工作台排期；对应事项由对账退回 `draft`） | P10 / D90 |
+| 该 Bot 在此项目组的 watches | 删除 | D79 |
+| 该 Bot 排队中的项目 wiki 入库 job（`wiki_ingest`） | 取消（`jobs.cancelPendingByBotInConversation`，仅该对话）；**已入库来源保留**（执行者付费已支出） | D92 T1b |
 
 ### 撤回消息
 
