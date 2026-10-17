@@ -122,6 +122,18 @@
 - **自检**：遇到「本地 <1s 的用例在全量 CI 里超时」→ 别怀疑功能回归，看它是否起了**第二个实例 / 轮询 /
   fake 服务器**，按该用例的重活程度单独给显式 timeout（30s/120s，与所在文件既有约定一致）。
 
+### L. 内核 abort 链与已释放响应的竞速（Tests 级，r15 ubuntu 命中）
+
+- **现象**：`subagent.test.ts`「aborts the task and its branch when the conversation is deleted」在
+  ubuntu 上 `expected 3 to be 2`：`conversations.delete` 后 `subStep.release()`，300ms 窗内断言
+  LLM 请求数**精确不变**，但满载下释放的 SUB 响应赶在 abort 落定前让分支多推进了一轮。
+- **根因**：释放响应与内核中止链（run 删除 → agent loop 停）的时序在慢节点不收敛；
+  「精确请求数」的断言过度锁定了实现细节（在途响应至多推进一轮是内核真实保证）。
+- **修复**：`ab244fc`——断言改为「释放后 1s / 再 1s 两段 `<= requestsBefore + 1`」+ 删除后
+  `runs.listByConversation` 必须为空（这才是要锁的业务语义）。
+- **自检**：测「删除/取消后不再推进」时，断言应落在**领域状态**（runs 为空）与**收敛边界**
+  （至多一轮），不要断言瞬时计数；300ms 内的 setTimeout 凝固窗在 CI 满载一律不可靠。
+
 ## 方法论（给下一次）
 
 1. **先取证，再修**：失败第一轮不改断言，先加 dump（`console.warn('[tag] …')`，e2e lint 允许
@@ -151,6 +163,7 @@
 | `packages/core/src/skills/registry.ts:1082` | rollback 的 `await` | 迁移中如改 registry 逐行确认每一处 `authoredGitCommit` 的返回 / 等待语义 |
 | `packages/core/src/env/manager.ts:265/352` | system 审批 fire-and-forget 的 `.catch()`（J 类） | 新增审批回调路径照抄该形状 |
 | `packages/core/test/integration/{subagent,mail-service-fixes}.test.ts` | 重活用例显式 timeout（K 类） | 迁移新增的双实例/轮询用例直接带显式 timeout |
+| `packages/core/test/integration/subagent.test.ts:338` | 删除后中止断言 = 领域状态 + 收敛边界，禁瞬时计数（L 类） | 新增「取消/删除不再推进」用例照抄该形状 |
 
 ### 已知但未修（超过本题范围，需另行立项）
 
