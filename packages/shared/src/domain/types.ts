@@ -1438,7 +1438,7 @@ export const runSchema = z.object({
   /** 写任务（租约与网关裁决）；非任务为 null。 */
   taskWrites: z.boolean().nullable().default(null),
   /** 解析后的任务工作目录。 */
-  taskWorkdir: z.string().nullable().default(null),
+  taskCwd: z.string().nullable().default(null),
   /**
    * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
@@ -2827,7 +2827,7 @@ export const taskViewSchema = z.object({
   status: runStatusSchema,
   writes: z.boolean(),
   /** Where it works: the bound project or the bot's workspace. */
-  workdirKind: z.enum(['project', 'workspace']).nullable(),
+  cwdKind: z.enum(['project', 'workspace']).nullable(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */
   queueReason: z.string().nullable(),
   awaitingInput: z.boolean(),

@@ -49,7 +49,7 @@ function taskIdentity(
     triggerMessageIds: [],
     taskTitle: writes ? '写任务' : '只读任务',
     taskWrites: writes,
-    taskWorkdir: null,
+    taskCwd: null,
     originRunId: null,
   });
   runs.update(run.id, { status: 'running' });

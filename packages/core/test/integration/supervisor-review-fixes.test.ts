@@ -112,7 +112,7 @@ function settledTask(stack: TestStack, botId: string, conversationId: string, te
     triggerMessageIds: [],
     taskTitle: `任务-${text.length}`,
     taskWrites: false,
-    taskWorkdir: null,
+    taskCwd: null,
     originRunId: null,
   });
   d.messages.appendTaskEvent({

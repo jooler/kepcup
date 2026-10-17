@@ -731,7 +731,7 @@ describe('group conversations', () => {
     })();
     await core.rpc.call('projects.select', { conversationId: direct.id, path: projectDir });
     await sendDrafts(core, direct.id, [{ text: '你也写一个' }]);
-    // The task host keeps one write task per workdir (across conversations):
+    // The task host keeps one write task per cwd (across conversations):
     // B's task stays submitted, its queue reason names A's task (the old
     // response run showed waiting_lease + lease.waiting instead).
     const bTask = await waitFor(

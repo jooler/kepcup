@@ -141,7 +141,7 @@ describe('D75 shared 枚举与默认值', () => {
     expect(run).toMatchObject({
       taskTitle: null,
       taskWrites: null,
-      taskWorkdir: null,
+      taskCwd: null,
       originRunId: null,
       resultConsumedAt: null,
       awaitingInput: false,

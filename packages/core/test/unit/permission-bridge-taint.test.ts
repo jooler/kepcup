@@ -93,7 +93,7 @@ function makeBridge(customEntries: string[] = []) {
         entry,
         provider: claudeProvider,
         tier,
-        workdir: workspace,
+        cwd: workspace,
         signal: new AbortController().signal,
         bridge: null,
       },

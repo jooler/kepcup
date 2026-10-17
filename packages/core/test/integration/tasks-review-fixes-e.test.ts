@@ -140,7 +140,7 @@ function settledTask(
     triggerMessageIds: [],
     taskTitle: '旧任务',
     taskWrites: false,
-    taskWorkdir: null,
+    taskCwd: null,
     originRunId: null,
   });
   d.messages.appendTaskEvent({

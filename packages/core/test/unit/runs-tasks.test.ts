@@ -45,7 +45,7 @@ function createTask(
     triggerMessageIds: [],
     taskTitle: '补测试',
     taskWrites: true,
-    taskWorkdir: '/ws/conv_a',
+    taskCwd: '/ws/conv_a',
     originRunId: 'run_turn1',
     ...overrides,
   });
@@ -60,7 +60,7 @@ describe('runs 任务字段', () => {
         status: 'queued',
         taskTitle: '补测试',
         taskWrites: true,
-        taskWorkdir: '/ws/conv_a',
+        taskCwd: '/ws/conv_a',
         originRunId: 'run_turn1',
         resultConsumedAt: null,
         awaitingInput: false,
@@ -84,7 +84,7 @@ describe('runs 任务字段', () => {
       expect(run).toMatchObject({
         taskTitle: null,
         taskWrites: null,
-        taskWorkdir: null,
+        taskCwd: null,
         originRunId: null,
         resultConsumedAt: null,
         awaitingInput: false,

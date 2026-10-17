@@ -97,8 +97,8 @@ async function setup(
     };
   } = {},
 ) {
-  const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
-  dirs.push(workdir);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
+  dirs.push(cwd);
   const started: FakeAcpAgentHandle[] = [];
   const host = new AgentHost({
     logger,
@@ -147,7 +147,7 @@ async function setup(
       },
       tools: [],
       limits: { maxTurns: 60 },
-      workdir,
+      cwd,
       ...overrides,
       external: {
         agentId: FAKE.id,
@@ -158,7 +158,7 @@ async function setup(
       },
     };
   };
-  return { engine, host, started, spec, workdir, bridge };
+  return { engine, host, started, spec, cwd, bridge };
 }
 
 function collect(handle: RunHandle): EngineEvent[] {
@@ -807,8 +807,8 @@ describe('scheduler and providers (P5)', () => {
 describe('shim transport (design 28 §10 `connect`)', () => {
   it('drives an in-process ACP agent the provider builds over the agent process', async () => {
     const entry = { ...FAKE, id: 'fake-shim', provider: 'shim-test', transport: 'shim' as const };
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-shim-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-shim-'));
+    dirs.push(cwd);
     const seen: string[] = [];
     const procs: Array<{ kill(): void }> = [];
     const providers: ProviderRegistry = {
@@ -860,7 +860,7 @@ describe('shim transport (design 28 §10 `connect`)', () => {
       messages: [{ role: 'user', content: '经垫片', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: { agentId: entry.id, permission: 'read_only', capabilities: [], sessionKey: 'k' },
     }).done;
     expect(outcome).toMatchObject({ status: 'completed', finalText: '来自垫片' });
@@ -1086,8 +1086,8 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
           });
         }),
     };
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-deadline-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-deadline-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const host = new AgentHost({
       logger,
@@ -1126,7 +1126,7 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],
       tools: [tool],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: {
         agentId: FAKE.id,
         permission: 'read_only',

@@ -84,7 +84,7 @@ function setup(entry: AgentCatalogEntry, script: FakeAgentScript) {
     logger,
     cancelGraceMs: 200,
   });
-  const workdir = tempDir('kepcup-p5-work-');
+  const cwd = tempDir('kepcup-p5-work-');
   const spec = (permission: AgentPermissionTier = 'read_only'): RunSpec => ({
     identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' },
     model: agentModelRef(entry.id, ''),
@@ -92,7 +92,7 @@ function setup(entry: AgentCatalogEntry, script: FakeAgentScript) {
     messages: [{ role: 'user', content: 'HELLO', timestamp: 0 }],
     tools: [],
     limits: { maxTurns: 60 },
-    workdir,
+    cwd,
     external: { agentId: entry.id, permission, capabilities: [], sessionKey: 'k' },
   });
   return { engine, started, launches, spec, stateRoot };

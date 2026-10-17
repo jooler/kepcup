@@ -245,8 +245,8 @@ export interface TaskHostDeps {
    * entry goes to the (bot, conversation) mailbox as a `reason:'task'` batch.
    */
   wake(botId: string, conversationId: string, entry: Message): void;
-  /** Resolves the task's workdir root (bound project or the workspace). */
-  resolveWorkdir(
+  /** Resolves the task's cwd root (bound project or the workspace). */
+  resolveCwd(
     botId: string,
     conversationId: string,
     requested?: 'workspace' | 'project',
@@ -294,7 +294,7 @@ export interface TaskHostDeps {
    * project tasks have a checkpoint summary, workspace tasks only the files
    * their file tools wrote. `changes` null = nothing recorded.
    */
-  describeWorkdir?(
+  describeCwd?(
     task: Run,
     withChanges: boolean,
   ): { kind: 'project' | 'workspace'; changes: TaskChanges | null };
@@ -342,7 +342,7 @@ interface LaunchedTask {
   botId: string;
   conversationId: string;
   writes: boolean;
-  workdir: string | null;
+  cwd: string | null;
   /** The engine slot key (`launchSlot`), null = none. */
   slotKey: string | null;
   launchedAt: number;
@@ -455,10 +455,10 @@ function sourceLines(messages: Message[], options: RenderMessageOptions): string
 export function buildTaskBriefSegment(
   brief: TaskBrief,
   options: RenderMessageOptions,
-  workdir: string | null,
+  cwd: string | null,
 ): string {
   const lines: string[] = [
-    `<task_brief task_id="${brief.task.id}" title="${brief.title.replaceAll('"', "'")}" writes="${brief.writes}"${workdir !== null ? ` workdir="${workdir}"` : ''}>`,
+    `<task_brief task_id="${brief.task.id}" title="${brief.title.replaceAll('"', "'")}" writes="${brief.writes}"${cwd !== null ? ` cwd="${cwd}"` : ''}>`,
     '<instruction>',
     brief.instruction,
     '</instruction>',
@@ -697,7 +697,7 @@ export class TaskHost implements TaskToolFacade {
     const notReady = declared.filter((id) =>
       catalog.some((entry) => entry.id === id && !entry.ready),
     );
-    const workdir = this.#deps.resolveWorkdir(botId, conversationId, input.workdir);
+    const cwd = this.#deps.resolveCwd(botId, conversationId, input.cwd);
     // Persist first (§3.1): a crash after this line leaves a submitted row that
     // is re-queued on restart; a crash before it means no task at all.
     const task = this.#deps.runs.create({
@@ -708,7 +708,7 @@ export class TaskHost implements TaskToolFacade {
       triggerMessageIds: sources.map((message) => message.id),
       taskTitle: title,
       taskWrites: input.writes,
-      taskWorkdir: workdir,
+      taskCwd: cwd,
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: identity.runId,
       ...this.#engineFields(botId),
@@ -1198,15 +1198,15 @@ export class TaskHost implements TaskToolFacade {
         questionMessageId = content.questionMessageId ?? questionMessageId;
       }
     }
-    let workdir: { kind: 'project' | 'workspace'; changes: TaskChanges | null } | null = null;
+    let cwd: { kind: 'project' | 'workspace'; changes: TaskChanges | null } | null = null;
     try {
       // The change summary is shown on terminal write tasks only (审查 L5:
       // views are rebuilt on every publish — no change lookup while running).
-      workdir = this.#deps.describeWorkdir?.(task, terminal && task.taskWrites === true) ?? null;
+      cwd = this.#deps.describeCwd?.(task, terminal && task.taskWrites === true) ?? null;
     } catch (error) {
       this.#deps.logger.warn(
         { taskId, error: error instanceof Error ? error.message : String(error) },
-        'task workdir lookup failed',
+        'task cwd lookup failed',
       );
     }
     const continuedBy =
@@ -1224,7 +1224,7 @@ export class TaskHost implements TaskToolFacade {
       state: taskState(task.status),
       status: task.status,
       writes: task.taskWrites === true,
-      workdirKind: workdir?.kind ?? null,
+      cwdKind: cwd?.kind ?? null,
       queueReason: terminal ? null : summary.queueReason,
       awaitingInput: task.awaitingInput,
       questionMessageId: task.awaitingInput ? questionMessageId : null,
@@ -1235,7 +1235,7 @@ export class TaskHost implements TaskToolFacade {
       cancelReason,
       injects,
       lastProgress: summary.lastProgress,
-      changes: task.taskWrites === true && terminal ? (workdir?.changes ?? null) : null,
+      changes: task.taskWrites === true && terminal ? (cwd?.changes ?? null) : null,
       setup: task.setup ?? null,
       continuesTaskId,
       continuedByTaskId: continuedBy,
@@ -1470,7 +1470,7 @@ export class TaskHost implements TaskToolFacade {
       triggerMessageIds: sourceIds,
       taskTitle: title,
       taskWrites: writes,
-      taskWorkdir: task.taskWorkdir,
+      taskCwd: task.taskCwd,
       // D91: a retry keeps the capabilities the failed task declared (plus the app it just got
       // connected, see #retryCapabilities).
       ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
@@ -2051,9 +2051,9 @@ export class TaskHost implements TaskToolFacade {
     if (inConversation >= this.#limits.perConversation) {
       return `等并发额度（本对话 ${inConversation}/${this.#limits.perConversation}）`;
     }
-    if (task.taskWrites === true && task.taskWorkdir !== null) {
+    if (task.taskWrites === true && task.taskCwd !== null) {
       for (const launched of this.#launched.values()) {
-        if (launched.writes && launched.workdir === task.taskWorkdir) {
+        if (launched.writes && launched.cwd === task.taskCwd) {
           return `等写入租约（任务 ${launched.taskId} 持有）`;
         }
       }
@@ -2104,7 +2104,7 @@ export class TaskHost implements TaskToolFacade {
       botId: task.botId,
       conversationId: task.conversationId,
       writes: task.taskWrites === true,
-      workdir: task.taskWorkdir,
+      cwd: task.taskCwd,
       slotKey: this.#launchSlot(task)?.key ?? null,
       launchedAt: this.#deps.clock.now(),
       attachedAt: null,
@@ -2592,7 +2592,7 @@ export class TaskHost implements TaskToolFacade {
       state: taskState(task.status),
       status: task.status,
       writes: task.taskWrites === true,
-      workdir: task.taskWorkdir,
+      cwd: task.taskCwd,
       createdAt: task.createdAt,
       endedAt: task.endedAt,
       queueReason: terminal ? null : this.#queueReason(task),
