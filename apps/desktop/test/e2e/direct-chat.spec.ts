@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -264,7 +264,7 @@ test('restart reopens the conversation last viewed (not the most recently messag
     }
   } finally {
     await llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 

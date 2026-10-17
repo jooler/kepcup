@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -294,6 +294,6 @@ test('completion persists in settings: a relaunch of the same data home does not
   } finally {
     await relaunched.app.close();
     await session.llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });

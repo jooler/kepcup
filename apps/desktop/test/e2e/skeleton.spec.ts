@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -69,7 +70,7 @@ test('renders the three-column skeleton and reaches the core service', async () 
   await expect(page.locator('[data-testid="right-panel"]')).toBeHidden();
 
   await app.close();
-  await rm(home, { recursive: true, force: true });
+  await rmHomeTolerant(home);
 });
 
 test('input echo is instantaneous (P13 验收标准「按键到字符显示无可感知延迟」)', async () => {
@@ -140,5 +141,5 @@ test('input echo is instantaneous (P13 验收标准「按键到字符显示无�
   }
 
   await app.close();
-  await rm(home, { recursive: true, force: true });
+  await rmHomeTolerant(home);
 });
