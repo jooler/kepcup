@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { PROJECT_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
   import { ChevronLeft, ChevronRight, MessageSquare, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
@@ -9,7 +8,6 @@
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
   import ProjectComposeBar from './ProjectComposeBar.svelte';
@@ -67,13 +65,6 @@
   // Bot 详情走全屏覆盖层：窄屏，或宽屏但窗口放不下并排右栏（sidebar-layout.ts）。
   const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
-  const groupFaces = $derived(
-    (current?.members ?? []).slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
-      id: member.bot.id,
-      name: member.bot.name,
-      avatar: member.bot.avatar,
-    })),
-  );
 
   let composerDockHeight = $state(0);
 </script>
@@ -132,17 +123,13 @@
             : t('chatHeader.collapsePanel')}
         data-testid="right-panel-toggle"
       >
-        {#if isProject}
-          <GroupAvatarStack members={groupFaces} class="size-8" />
-        {:else}
-          <BotAvatar
-            botId={current.conversation.directBotId ?? ''}
-            name={headerTitle}
-            avatar={current.conversation.bot?.avatar ?? null}
-            class="size-7"
-            fallbackClass="text-[10px]"
-          />
-        {/if}
+        <BotAvatar
+          botId={current.conversation.directBotId ?? ''}
+          name={headerTitle}
+          avatar={current.conversation.bot?.avatar ?? null}
+          class="size-7"
+          fallbackClass="text-[10px]"
+        />
         <span class="truncate pr-1.5 {isProject ? 'max-w-md' : 'max-w-48'}">{headerTitle}</span>
         {#if panelCollapsed && !panelOverlay}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。

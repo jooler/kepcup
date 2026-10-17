@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { PROJECT_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
 import {
-  GROUP_AVATAR_USER_ID,
-  groupAvatarFaces,
-  groupAvatarSlots,
+  PROJECT_AVATAR_USER_ID,
+  projectAvatarFaces,
+  projectAvatarSlots,
   shadowOffsetTowardCenter,
-} from './group-avatar-layout';
+} from './project-avatar-layout';
 
-describe('groupAvatarSlots', () => {
+describe('projectAvatarSlots', () => {
   it('places two avatars side by side with overlap room', () => {
-    const slots = groupAvatarSlots(2, 'a|b');
+    const slots = projectAvatarSlots(2, 'a|b');
     expect(slots).toHaveLength(2);
     expect(slots[0]!.y).toBe(slots[1]!.y);
     expect(slots[0]!.x).toBeLessThan(slots[1]!.x);
@@ -17,7 +17,7 @@ describe('groupAvatarSlots', () => {
   });
 
   it('places three avatars in a triangle, one above two', () => {
-    const slots = groupAvatarSlots(3, 'a|b|c');
+    const slots = projectAvatarSlots(3, 'a|b|c');
     expect(slots).toHaveLength(3);
     const [top, left, right] = slots;
     expect(top!.y).toBeLessThan(left!.y);
@@ -28,7 +28,7 @@ describe('groupAvatarSlots', () => {
   });
 
   it('places four avatars in a two-by-two grid', () => {
-    const slots = groupAvatarSlots(4, 'a|b|c|d');
+    const slots = projectAvatarSlots(4, 'a|b|c|d');
     expect(slots.map((slot) => [slot.x, slot.y])).toEqual([
       [32, 32],
       [68, 32],
@@ -39,8 +39,8 @@ describe('groupAvatarSlots', () => {
   });
 
   it('keeps five-or-more sizes within 20% and stable for the same seed', () => {
-    const first = groupAvatarSlots(6, 'm1|m2|m3|m4|m5|m6');
-    const again = groupAvatarSlots(6, 'm1|m2|m3|m4|m5|m6');
+    const first = projectAvatarSlots(6, 'm1|m2|m3|m4|m5|m6');
+    const again = projectAvatarSlots(6, 'm1|m2|m3|m4|m5|m6');
     expect(again).toEqual(first);
     const sizes = first.map((slot) => slot.size);
     const min = Math.min(...sizes);
@@ -53,7 +53,7 @@ describe('groupAvatarSlots', () => {
   it('keeps every tile inside the container for any group size and seed', () => {
     for (let total = 1; total <= PROJECT_MEMBER_PREVIEW_MAX; total += 1) {
       for (const seed of ['a', 'b|c', 'seed-3', 'x'.repeat(20)]) {
-        for (const slot of groupAvatarSlots(total, seed)) {
+        for (const slot of projectAvatarSlots(total, seed)) {
           const half = slot.size / 2;
           expect(slot.x - half).toBeGreaterThanOrEqual(-1e-9);
           expect(slot.x + half).toBeLessThanOrEqual(100 + 1e-9);
@@ -67,10 +67,10 @@ describe('groupAvatarSlots', () => {
   it('caps a large group at PROJECT_MEMBER_PREVIEW_MAX slots', () => {
     expect(PROJECT_MEMBER_PREVIEW_MAX).toBeLessThanOrEqual(9);
     const seed = Array.from({ length: 50 }, (_, i) => `m${i}`).join('|');
-    const slots = groupAvatarSlots(50, seed);
+    const slots = projectAvatarSlots(50, seed);
     expect(slots).toHaveLength(PROJECT_MEMBER_PREVIEW_MAX);
     expect(new Set(slots.map((slot) => slot.z)).size).toBe(PROJECT_MEMBER_PREVIEW_MAX);
-    expect(groupAvatarSlots(0, '')).toEqual([]);
+    expect(projectAvatarSlots(0, '')).toEqual([]);
   });
 });
 
@@ -87,41 +87,41 @@ describe('shadowOffsetTowardCenter', () => {
   });
 });
 
-describe('GROUP_AVATAR_USER_ID', () => {
+describe('PROJECT_AVATAR_USER_ID', () => {
   it('is a stable reserved id', () => {
-    expect(GROUP_AVATAR_USER_ID).toBe('__user__');
+    expect(PROJECT_AVATAR_USER_ID).toBe('__user__');
   });
 });
 
-describe('groupAvatarFaces', () => {
-  const user = { id: GROUP_AVATAR_USER_ID };
+describe('projectAvatarFaces', () => {
+  const user = { id: PROJECT_AVATAR_USER_ID };
   const bot = (id: string) => ({ id });
 
   it('puts the user first, then the bots', () => {
-    expect(groupAvatarFaces([bot('a'), bot('b')], user).map((face) => face.id)).toEqual([
-      GROUP_AVATAR_USER_ID,
+    expect(projectAvatarFaces([bot('a'), bot('b')], user).map((face) => face.id)).toEqual([
+      PROJECT_AVATAR_USER_ID,
       'a',
       'b',
     ]);
   });
 
   it('returns nothing when no bot is known, so the caller draws the default group icon', () => {
-    expect(groupAvatarFaces([], user)).toEqual([]);
-    expect(groupAvatarFaces([user], user)).toEqual([]);
+    expect(projectAvatarFaces([], user)).toEqual([]);
+    expect(projectAvatarFaces([user], user)).toEqual([]);
   });
 
   it('omits the user when none is given and never duplicates one in the members', () => {
-    expect(groupAvatarFaces([bot('a'), user], null).map((face) => face.id)).toEqual(['a']);
-    expect(groupAvatarFaces([user, bot('a')], user).map((face) => face.id)).toEqual([
-      GROUP_AVATAR_USER_ID,
+    expect(projectAvatarFaces([bot('a'), user], null).map((face) => face.id)).toEqual(['a']);
+    expect(projectAvatarFaces([user, bot('a')], user).map((face) => face.id)).toEqual([
+      PROJECT_AVATAR_USER_ID,
       'a',
     ]);
   });
 
   it('caps the total, user included, at PROJECT_MEMBER_PREVIEW_MAX', () => {
     const many = Array.from({ length: PROJECT_MEMBER_PREVIEW_MAX + 5 }, (_, i) => bot(`b${i}`));
-    const faces = groupAvatarFaces(many, user);
+    const faces = projectAvatarFaces(many, user);
     expect(faces).toHaveLength(PROJECT_MEMBER_PREVIEW_MAX);
-    expect(faces[0]!.id).toBe(GROUP_AVATAR_USER_ID);
+    expect(faces[0]!.id).toBe(PROJECT_AVATAR_USER_ID);
   });
 });
