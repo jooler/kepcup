@@ -9,8 +9,8 @@
   /**
    * P10 scheduled-task list (docs/dev/phases/P10-proactive.md 任务 7). One
    * component, three surfaces: the direct-chat right-panel tab (current
-   * conversation), the group-info section (every member bot's tasks) and the
-   * settings overview (no conversationId = all schedules).
+   * conversation), the project details page's schedules section (every member
+   * bot's tasks) and the settings overview (no conversationId = all schedules).
    */
   let {
     conversationId = undefined,
