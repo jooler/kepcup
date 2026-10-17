@@ -204,5 +204,12 @@ rg -n "群聊|群成员|群里|本群|群内|建群|解散群|新建群" apps/de
 ### 遗留（顺延）
 
 - WP10：Wiki tab 真实视图（`project-shell.spec` ① 对 wiki 仍断言占位 `project-module-placeholder`）、删除确认框补 wiki 来源数 / 页面数。
-- WP11：文档同步（`docs/dev/01-conventions.md` 常量 / ID 表、PROGRESS）。
+- WP11：文档同步（`docs/dev/01-conventions.md` 常量 / ID 表、PROGRESS）；另有 `backgroundTasks.groupMentionOnly` 旧字段名残留在 `docs/dev/03-data-model.md`、`docs/dev/04-agent-runtime.md`、`docs/design/28-external-agents-acp.md`、`todo/acp-external-agents.md`（D92 只改了代码，文档同步归 WP11；审查补登）。
 - 既有环境项：`workbench.spec` 的 layout 宽度形态用例在本机失败（WP8 前即失败，见上）；browser / sandbox 等沙箱类按 05-testing 基线口径本机未复跑全部。
+
+### 审查修订（2026-10-18，T1a 收口审查）
+
+- **P1 修复 `cc9c1f2`**：`6d1ebe7` 把提及流收进 `mentionAndSend` 后，`episode-breaker.spec.ts` 的局部 `composer` 不再被使用，HEAD 上 `pnpm lint` 失败——上文验证段「`pnpm lint`：通过」跑在该提交之前，收口口径与 HEAD 不符。已删除该死变量（无断言 / 行为改动），lint 复跑通过、该 spec 单跑通过。
+- **补记 DEV-036**：`c6b15b6` 对 `ProjectTurnStatusLine` 路由阶段可见性的行为修正按 README §1.6 属「WP 假设与代码现实不成立」，执行时只登记在 §8，审查补齐 DEVIATIONS（路由阶段 `currentBotId=null`、`queue=[]`，对照 `dispatch/project-turn.ts` 载荷构造核实缺陷真实）。
+- **设置字段 `groupMentionOnly→projectMentionOnly` 不需 DEV**（审查判定）：属 README §1.2「§4 没写到的新名字」的实施记录登记路径（§8 已登记判断依据）；WP8 §6 rg#1 自身含 `groupMentionOnly` 模式且扫描范围是 `apps packages`，跨包改名是该验收命令的必然要求；无迁移、无行为变化（存储读取走同一 zod schema，旧 JSON 缺省字段被 `.default(true)` 吸收，符合「不迁旧数据」的既定政策）。全部引用点（shared schema、`settings.update` 入参、core llm-router、两处 core 测试、渲染端）核对一致，其余 `backgroundTasks` 触点均为整对象展开无字段名引用，迁移 SQL 零命中。
+- 审查复核结论：§2 i18n 表逐字一致（`usage.loop.triage` 只改值不改 key）；判断规则表「不改」侧（`handover.group.*`/`handover-group-*`、`profile-groups`、`apps-connected-group-*`、`apps.tier.communityGroup`、`contacts.engineGroup*`、侧栏「对话分组」）在 `9449dba..HEAD` 全量 diff 中零触碰；暂停卡四态 / 徽标 / 请求中禁用、审批卡负责人下拉与 decide 第 8 参「改了才带」、测试缝 `__KEPCUP_TEST_HOOKS__ === true` 门控、e2e 五路由场景 + `2,2` 阈值 + shell ①–⑧ 逐项落实；workbench no-claim 为语义替换断言（`no-claim-bots` 计 0 + `项目里无人回应` + run 计数不增），非删除；`6d1ebe7` 的成员行断言收窄是收紧非放宽；§6 两条 rg 复跑与登记一致（例外仅历史迁移 SQL 注释 1 处）；episodes store 6 例与 `episodeLimitsFromEnv` 4 例为真实行为断言；`ffea525`/`7f84790` 无悬挂引用、无生产行为夹带。验证复跑：`pnpm typecheck` 三包 0 错、`pnpm lint` 通过（修复后）、desktop 86 文件 800 例、desktop-svelte 14 文件 88 例、core 定向（episode-limits-from-env 4、llm-router 15）全绿、`episode-breaker.spec` 单跑通过。
