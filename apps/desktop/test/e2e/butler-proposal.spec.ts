@@ -20,7 +20,10 @@ const PROPOSED_BOT = {
   reason: '你选择了工作：写作、文档与汇报',
 };
 
-async function startSession(prefix: string): Promise<{
+async function startSession(
+  prefix: string,
+  options: { onboardingOff?: boolean } = {},
+): Promise<{
   page: Page;
   llm: MockLlmServer;
   home: string;
@@ -38,6 +41,8 @@ async function startSession(prefix: string): Promise<{
       KEPCUP_KEYSTORE: 'file',
       KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
       KEPCUP_MOCK_LLM_URL: llm.url,
+      // P13-B e2e seam：非引导用例不出现首启向导（原用例走向导，不开）。
+      ...(options.onboardingOff === true ? { KEPCUP_ONBOARDING: 'off' } : {}),
     },
   });
   const page = await app.firstWindow();
@@ -132,7 +137,7 @@ test('butler proposal confirm: the new bot lands in the sidebar without a restar
 
 test('butler propose_project: lead can be changed on the card before approving', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-butler-project-');
+  const session = await startSession('kepcup-e2e-butler-project-', { onboardingOff: true });
   const { page, llm } = session;
   try {
     // startSession 已等到 bootstrap 收尾（backdrop 已收）。

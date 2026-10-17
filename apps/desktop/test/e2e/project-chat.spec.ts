@@ -270,13 +270,7 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
       { timeout: 15_000 },
     );
     const composer = page.locator('[data-testid="composer-input"]');
-    await composer.click();
-    await composer.pressSequentially('@阿甲 留个历史');
-    await page
-      .locator('[data-testid="mention-popup"] button')
-      .filter({ hasText: '阿甲' })
-      .first()
-      .click();
+    await mentionAndType(page, '阿甲', ' 留个历史');
     await composer.press('Enter');
     const oldBubble = page.locator('[data-testid="bot-bubble"]').first();
     await expect(oldBubble).toContainText('旧消息', { timeout: 30_000 });
@@ -294,7 +288,7 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     await openConversationByName(page, '新项目名');
     await page.locator('[data-testid="project-settings-button"]').click();
     await expect(settingsPage).toBeVisible({ timeout: 15_000 });
-    const memberRows = page.locator('[data-testid="project-member-list"] li');
+    const memberRows = page.locator('[data-testid="project-member-list"] [data-testid^="project-member-row-"]');
     await expect(memberRows).toHaveCount(2);
     const memberAdd = page.locator('[data-testid="project-member-add"]');
     await memberAdd.fill('阿丙');

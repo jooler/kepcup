@@ -182,18 +182,32 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     await page.locator('[data-testid="project-settings-nav-grants"]').click();
     await expect(page.locator('[data-testid="project-settings-section-grants"]')).toBeVisible();
     await expect(page.locator('[data-testid="project-grants-empty"]')).toBeVisible();
+    // 回沟通：⚙ 是切换键，窄屏段的「点开详情页」要求从沟通视图出发。
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
 
     // ⑦ 窄屏（600×800 < 640 断点）：返回按钮、tab 行横向滚动、⚙ 可用。
     await resizeWindow(app, 600, 800);
     await expect(page.locator('[data-testid="narrow-shell"]')).toBeVisible({ timeout: 15_000 });
-    // 窄屏第一层是列表：点开项目组进详情层。
-    await page.locator('[data-testid^="conversation-item-"]', { hasText: '外壳项目' }).first().click();
-    await expect(page.locator('[data-testid="project-header"]')).toBeVisible({ timeout: 15_000 });
+    // 窄屏保留当前会话：可能直接在详情层；若停在列表层则点开项目组。
+    const projectHeader = page.locator('[data-testid="project-header"]');
+    if (!(await projectHeader.isVisible())) {
+      await page
+        .locator('[data-testid^="conversation-item-"]', { hasText: '外壳项目' })
+        .first()
+        .click();
+    }
+    await expect(projectHeader).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="narrow-back-button"]')).toBeVisible();
+    // tab 行横向滚动：600px 下五个 tab 可能仍放得下，压到 420px（同 WP6 冒烟）
+    // 才必然溢出——overflow-x-auto 的行为断言。
+    await resizeWindow(app, 420, 800);
     await expect(page.locator('[data-testid="narrow-back-button"]')).toBeVisible();
     const scrollable = await page.locator('[data-testid="project-tabs"]').evaluate(
       (el) => el.scrollWidth > el.clientWidth,
     );
     expect(scrollable).toBe(true);
+    await resizeWindow(app, 600, 800);
     await page.locator('[data-testid="project-settings-button"]').click();
     await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
       timeout: 15_000,
