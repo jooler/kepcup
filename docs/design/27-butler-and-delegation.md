@@ -1,33 +1,31 @@
 # 27 管家 Bot 与跨 Bot 委派（Butler + A→B Delegation）
 
-> **D92 修订（已定稿，待实施）**：管家工具改名：`propose_team` → `propose_bots`、`propose_group` → `propose_project`（载荷带负责人，审批卡上可改）、`suggest_route` 的 `group` → `project`；管家**不进项目组**（D70 开放决策 #8 收口为「不加入」）；`BUTLER_TEAM_SIZE_*` → `PROPOSE_BOTS_*`。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
-
 用户面对多个领域 Bot 时，需要一个**固定入口**来组队、分诊与代办；领域 Bot 之间也需要在**不离开当前对话**的前提下把任务交给另一个联系人执行。本文规定：**Butler（管家）** 与 **跨 Bot 委派（A→B）** 两套产品能力。二者**已实现**；委派的 intent 与跟随任务结果见 §3.6。
 
 决策：D70（Butler）、D71（A→B 委派）。执行方案见 [todo/butler-and-delegation.md](../../todo/butler-and-delegation.md)。
 
-相关：D4（群 `@` 连锁，[02-execution.md](02-execution.md)）、D48/D54（消息可见性）、D58（对话内设置 / 审批卡范式，[18-inline-setup.md](18-inline-setup.md)）、D59/D60（访谈与群创建，[19-work-path-and-group-setup.md](19-work-path-and-group-setup.md)）、D66（同 Bot `delegate_task`，[23-mcp-and-subagent.md](23-mcp-and-subagent.md)）、D67（durable journal，[24-durable-execution.md](24-durable-execution.md)）、[01-conversation.md](01-conversation.md)、[03-bot.md](03-bot.md)。
+相关：D4（Bot 间 `@` 触发 / 协作回合，[02-execution.md](02-execution.md)）、D48/D54（消息可见性）、D58（对话内设置 / 审批卡范式，[18-inline-setup.md](18-inline-setup.md)）、D59/D60（访谈与群创建，[19-work-path-and-group-setup.md](19-work-path-and-group-setup.md)）、D66（同 Bot `delegate_task`，[23-mcp-and-subagent.md](23-mcp-and-subagent.md)）、D67（durable journal，[24-durable-execution.md](24-durable-execution.md)）、[01-conversation.md](01-conversation.md)、[03-bot.md](03-bot.md)。
 
 ## 决策
 
-- **D70 Butler（管家）**：每个用户空间有且仅有一个 `bots.system_role='butler'` 的管家 Bot——**唯一、侧栏置顶、不可删除**。入职路径：onboarding / 访谈 → `propose_team` 审批卡（建议 3–5 个领域 Bot）→ 用户确认 → 宿主**确定性** `bots.create` 批量落盘（不经模型再编造）。管家专属工具：`propose_bot`、`propose_group`、`propose_team`、`suggest_route`；只读 `list_bots` 与 `delegate_to_bot` 管家与普通 Bot 共用。路由策略：未知意图 → 管家；单领域 → 直聊对应 Bot；多角色协作 → 建群；「结果留在本对话」→ 走 D71 委派。早期产品：先出路由卡；用户说「你安排」再委派执行。
+- **D70 Butler（管家）**：每个用户空间有且仅有一个 `bots.system_role='butler'` 的管家 Bot——**唯一、侧栏置顶、不可删除**。入职路径：onboarding / 访谈 → `propose_bots` 审批卡（建议 3–5 个领域 Bot）→ 用户确认 → 宿主**确定性** `bots.create` 批量落盘（不经模型再编造）。管家专属工具：`propose_bot`、`propose_project`、`propose_bots`、`suggest_route`；只读 `list_bots` 与 `delegate_to_bot` 管家与普通 Bot 共用。路由策略：未知意图 → 管家；单领域 → 直聊对应 Bot；多角色协作 → 建项目组（`propose_project`，管家自己不加入）；「结果留在本对话」→ 走 D71 委派。早期产品：先出路由卡；用户说「你安排」再委派执行。
 - **D71 A→B 跨 Bot 委派**：主 Bot A 调用 `delegate_to_bot`（可 `cancel_delegation`）把任务交给联系人 B（**异步**：工具立即返回，A 本轮照常收尾，B 的结果稍后以 follow-up 唤醒 A）。落 `delegations` 表，状态机对齐常见 A2A 语义（`submitted` / `working` / `completed` / `failed` / `cancelled`）。A 侧：发出卡 + 结果卡；B 侧：收到**用户代发**消息，带 `origin=delegation` 标签「由 A 代你发出」；**UI 停留在 A 的对话**。B 的最终回复截断（约 2000 字符）贴回 A 为结果卡（原文 + 链到 B 对话）；同时用 follow-up 注入告诉 A 转述实质结果、不要整段复述。结果卡的有用/需重做反馈（feedback）**首期不做**。防环：**首期一律单跳**（被委派 run 不能再委派）、禁止 A→B→A、禁止委派给管家。若 A 与 B **同在一个群**且场景适合群协作 → **降级为 D4 `@`**，不另开委派。`delegate_to_bot` 带 `intent`（`request` / `question` / `fyi`）：`request` 的委派在 B 为此派出任务时跟随这些任务、结果取各任务结果拼接（状态 `awaiting_tasks`），`question` 取 B 的回复，`fyi` 不回贴，见 §3.6。
 
 ## 1 现状与边界（结论）
 
 | 已有 | 覆盖 | 不覆盖 |
 |---|---|---|
-| D4 群 `@` 连锁 | 同群内 Bot→Bot 触发；`BOT_CHAIN_MAX_DEPTH` / `BOT_CHAIN_TOKEN_BUDGET` | 跨私聊、UI 不跳转的「代办」 |
+| D4 协作回合（Bot 间 `@`） | 项目组内 Bot→Bot 触发；回合继承与熔断（D92） | 跨私聊、UI 不跳转的「代办」 |
 | D66 `delegate_task` | **同一 Bot** 内嵌套 SubAgent；后台 follow-up 经 `deliverEventToBot` | 另一个联系人 Bot |
 | follow-up 注入 | SubAgent / mailbox / 定时事件共用投递管道 | 跨 Bot 委派结果回贴（需新建，可复用管道） |
-| 对话式 Bot / 群 setup | `ask_question`、访谈闸门、`groups.setup.*`（均绑定 `bots.setup_state='interviewing'`） | 管家组队审批卡 |
+| 对话式 Bot setup | `ask_question`、访谈闸门（均绑定 `bots.setup_state='interviewing'`） | 管家组队审批卡 |
 | 审批卡（`approvals`） | 阻塞 / 非阻塞（`submitNonBlocking`）两种提交；`decide(id, approve, duration)` | 带「用户微调」的决定（只有 `duration`）；`kind` 受表 CHECK 约束，新增需重建表 |
 | Onboarding step「创建第一个 Bot」 | 模板 `coder` / `writer` / `researcher` → 单个 `bots.create` | 管家身份与批量组队 |
 
 **明确复用、明确不做：**
 
-- **复用**：D66 的 follow-up / `deliverEventToBot` 管道；D4 的深度与预算思路（常量可独立命名）；`ask_question` / 审批卡交互范式；确定性 `bots.create`（批量）；`event_delivery` 的 quiet-hours parking 模式。
-- **不做**：把 SubAgent 当成 Bot↔Bot；把委派注册成群成员；A 与 B 同群时另开一套委派协议（降级 D4）。
+- **复用**：D66 的 follow-up / `deliverEventToBot` 管道；D4 的 Bot 间触发思路（D92 起为协作回合与熔断）；`ask_question` / 审批卡交互范式；确定性 `bots.create`（批量）；`event_delivery` 的 quiet-hours parking 模式。
+- **不做**：把 SubAgent 当成 Bot↔Bot；把委派注册成项目组成员；A 与 B 在同一项目组时另开一套委派协议（降级 D4 `@`）。
 
 ## 2 Butler（D70）
 
@@ -48,47 +46,47 @@
 Onboarding / 首次进入（新用户，尚无领域 Bot）
   → 确保 butler 存在（无则确定性创建，setup_state='interviewing'）
   → 管家访谈：确定性问候 + 固定首问卡 → 管家用 ask_question 追问（≤ SETUP_MAX_QUESTIONS）
-  → 管家调用 propose_team → 审批卡（展示 3–5 个建议 Bot：名、职责、为何需要）；本轮终止，访谈态清除
+  → 管家调用 propose_bots → 审批卡（展示 3–5 个建议 Bot：名、职责、为何需要）；本轮终止，访谈态清除
   → 用户勾选 / 去掉某项 / 全部拒绝
   → 宿主确定性 bots.create 批量（interview=false）
-  → 可选：管家为多角色事务 propose_group
+  → 可选：管家为多角色事务 propose_project
 ```
 
 **访谈机制（实现必须按此落，不要临场发明）**：既有访谈整套机制都绑定 `bots.setup_state='interviewing'`（`ask_question` 与 `save_profile` / `finish_setup` 同一组注册、`bots.interview.*` RPC 与 `answerSetupQuestion` 校验该态、问题卡可点击性由 UI 读该态、目录闸门 D59 对该态扣下投递）。管家访谈复用同一状态位，但是一个**变体**：
 
-- **例行事项（D80）**：访谈问「最常做的几类任务」时候选里带一两个有周期的选项，不单独问「要不要定时任务」；用户说过的周期事项作为对应 Bot 的 `routines: [{title, when, timezone?, note}]`（每 Bot ≤ 3）放进 `propose_team` / `propose_bot`，默认挂到负责这件事的领域 Bot 上，只有跨领域或用户明确要求时才提议专门的例行 Bot。提交时预校验 `when`；卡片上每个 Bot 下列出「例行：每个工作日 09:00 · 工作日早报」可单独勾掉（`approvals.decide.routineSelection`，`"{bot}:{routine}"`）；确认后 `#createBots` 在新 Bot 私聊里建任务（`origin='proposal'`，回执卡就是用户打开该私聊看到的第一样东西），失败只记日志并在给管家的结果通知里列出，不影响建 Bot。
-- 工具面：`ask_question` + `propose_team`；**不注册** `save_profile` / `finish_setup`（管家 Profile 是固定模板，不被访谈改写）。
+- **例行事项（D80）**：访谈问「最常做的几类任务」时候选里带一两个有周期的选项，不单独问「要不要定时任务」；用户说过的周期事项作为对应 Bot 的 `routines: [{title, when, timezone?, note}]`（每 Bot ≤ 3）放进 `propose_bots` / `propose_bot`，默认挂到负责这件事的领域 Bot 上，只有跨领域或用户明确要求时才提议专门的例行 Bot。提交时预校验 `when`；卡片上每个 Bot 下列出「例行：每个工作日 09:00 · 工作日早报」可单独勾掉（`approvals.decide.routineSelection`，`"{bot}:{routine}"`）；确认后 `#createBots` 在新 Bot 私聊里建任务（`origin='proposal'`，回执卡就是用户打开该私聊看到的第一样东西），失败只记日志并在给管家的结果通知里列出，不影响建 Bot。
+- 工具面：`ask_question` + `propose_bots`；**不注册** `save_profile` / `finish_setup`（管家 Profile 是固定模板，不被访谈改写）。
 - **跳过目录闸门**（D59）：管家不绑定 project，首答后直接投递。
 - 首问卡 / 候选项 / 访谈指引用管家版文案（领域与场景，而非「协助哪些事务」）；问题上限沿用 `SETUP_MAX_QUESTIONS`（含固定首问）。
-- 退出：`propose_team` 提交即清 `setup_state`（访谈已完成其使命）；卡片被整体拒绝后管家回到普通对话，可再次提议。不允许管家停留在访谈态无出口。
+- 退出：`propose_bots` 提交即清 `setup_state`（访谈已完成其使命）；卡片被整体拒绝后管家回到普通对话，可再次提议。不允许管家停留在访谈态无出口。
 
 **审批卡约束**：
 
-- **Butler 只通过审批卡创建其他 Bot / 群**（开放决策 §4.4）：模型调用 `propose_team` / `propose_bot` / `propose_group` → 卡片 → 用户确认 → core 执行 `bots.create` / `groups.create`；禁止模型直接写库绕过卡片。
-- **审批 kind**：用单一 `butler_proposal`（payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分）而非三个 kind——`approvals.kind` 有表级 CHECK，每加一个 kind 都要重建表，且 `describe` / `renderContextLine` / UI 卡片 / 排除名单每处都要多一个分支。
+- **Butler 只通过审批卡创建其他 Bot / 项目组**（开放决策 §4.4）：模型调用 `propose_bots` / `propose_bot` / `propose_project` → 卡片 → 用户确认 → core 执行 `bots.create` / `projects.create`；禁止模型直接写库绕过卡片。
+- **审批 kind**：用单一 `butler_proposal`（payload 以 `proposalType: 'bots' | 'bot' | 'project'` 区分）而非三个 kind——`approvals.kind` 有表级 CHECK，每加一个 kind 都要重建表，且 `describe` / `renderContextLine` / UI 卡片 / 排除名单每处都要多一个分支。
 - **非阻塞提交**（`submitNonBlocking` 范式，同 `environment`）：卡片与管家的 run 脱钩——工具提交后 `terminate`，用户几分钟甚至几天后才决定都不占 run；决定落在 core 回调里，而不是回到模型。因此 `cancelPendingForRun` 要像 `environment` 一样把该 kind 排除（否则管家 run 一结束卡片就被取消）；应用重启仍整体 `cancelAllPending`（决定回调只在内存里，不留悬挂卡）。
 - **无人值守不自动批准**：`#autoDecideSync` 对 kind 一律放行，需新增按 kind 排除——`butler_proposal` 在无人值守下照常挂起等用户（防止无人值守刷出一堆联系人）。
-- **「微调」需要新通道**：`approvals.decide` 目前只有 `approve` / `duration`，表达不了「去掉第 2 项」。给 `approvals.decide` 增可选 `selection`（被勾选的条目下标 / id），仅对 `butler_proposal` 有效，由 core 对照 payload 校验（不得出现 payload 之外的条目；一项都不留 = 等价于拒绝）。`BUTLER_TEAM_SIZE_MIN..MAX` 只约束模型的提议，不约束用户勾选——用户只想要其中两个就建两个。落库前以 `selection` 过滤后的条目为准；决定记入 `decision_json`。
+- **「微调」需要新通道**：`approvals.decide` 目前只有 `approve` / `duration`，表达不了「去掉第 2 项」。给 `approvals.decide` 增可选 `selection`（被勾选的条目下标 / id），仅对 `butler_proposal` 有效，由 core 对照 payload 校验（不得出现 payload 之外的条目；一项都不留 = 等价于拒绝）。`PROPOSE_BOTS_MIN..MAX` 只约束模型的提议，不约束用户勾选——用户只想要其中两个就建两个。落库前以 `selection` 过滤后的条目为准；决定记入 `decision_json`。
 - 批准后的回调**确定性**执行（循环 `bots.create`，不经模型）；部分失败时已建的保留、卡片标 `failed` 并列出失败项（对齐 BR-P08-004 的 `approvals.fail`）。成功 / 失败后用 internal follow-up 通知管家（它再对用户说下一步），不另造用户可见消息。
-- `propose_group` 批准后调 `groups.create({ title, memberBotIds })`——**该入参没有 description**（description 只在 D60 的 `finalizeSetup` 路径写入），实现时给 `create` 补可选 `description`，或建后补写一次；成员 ≥ 2 的校验沿用。
+- `propose_project` 批准后调 `projects.create({ title, goal, leadBotId, memberBotIds })`：载荷带项目目标与**负责人**（工具层必填，成员 ≥2 且含负责人），审批卡显示负责人并允许用户改（`approvals.decide` 可带 `leadBotId`，改过才写入决定）；候选与成员排除管家（管家不进项目组，D70 开放决策 #8 已收口）。
 - Onboarding 原 step 5 单 Bot 模板演进为「先落管家，再由管家组队」（设计推荐：**管家优先**）；快速单 Bot 仍可用侧栏「新建」。
 
 ### 2.3 管家工具面
 
-> **D75 说明（非修订）**：`propose_bot` / `propose_team` / `propose_group` / `suggest_route` / `list_bots` / `delegate_to_bot` / `cancel_delegation` 全部属于**对话轮**的工具面——它们正是「立即返回、宿主干活」的那一类，与 D75 的 `start_task` 并列。D71 的异步契约、状态机与结果卡范式被 D75 的任务层直接照搬，§3.5 投递闸门中「B 邮箱空闲」的判定对象是 B 的**对话轮**。**实现期发现**（见 DEV-012）：贴回 A 的结果是 B 那一个**对话轮**的最终回复；需要动手的委派 B 只能派任务并先回复「我去做」，这句话就成了结果，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」（能用只读查询答复的在本轮给完整结果；需要动手的派任务并说明结果稍后在这里给出），「委派跟随任务结算」作为后续独立修订。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。**已修订**（2026-10-09）：`request` 的委派跟随 B 派出的任务，结果取各任务结果拼接，见 §3.6。
+> **D75 说明（非修订）**：`propose_bot` / `propose_bots` / `propose_project` / `suggest_route` / `list_bots` / `delegate_to_bot` / `cancel_delegation` 全部属于**对话轮**的工具面——它们正是「立即返回、宿主干活」的那一类，与 D75 的 `start_task` 并列。D71 的异步契约、状态机与结果卡范式被 D75 的任务层直接照搬，§3.5 投递闸门中「B 邮箱空闲」的判定对象是 B 的**对话轮**。**实现期发现**（见 DEV-012）：贴回 A 的结果是 B 那一个**对话轮**的最终回复；需要动手的委派 B 只能派任务并先回复「我去做」，这句话就成了结果，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」（能用只读查询答复的在本轮给完整结果；需要动手的派任务并说明结果稍后在这里给出），「委派跟随任务结算」作为后续独立修订。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。**已修订**（2026-10-09）：`request` 的委派跟随 B 派出的任务，结果取各任务结果拼接，见 §3.6。
 
 | 工具 | 作用 |
 |---|---|
 | `list_bots` | 列出用户 Bot 名片（id / name / bio / 职责摘要），只读；与 `delegate_to_bot` 同注册范围（所有 Bot） |
 | `propose_bot` | 提议新建一个领域 Bot → 审批卡（D88 起每个 Bot 可带可选 `model`：可用模型列表里的 ref，不填 = 跟随设置默认） |
-| `propose_team` | 提议一组（3–5 个）领域 Bot → 批量审批卡（同上可带 `model`） |
-| `propose_group` | 提议建群（名、事务、成员）→ 审批卡（可对齐 D60 字段） |
-| `suggest_route` | 对用户当前意图给出路由建议（管家 / 直聊某 Bot / 群 / 委派）→ 路由卡 |
+| `propose_bots` | 提议一组（3–5 个）领域 Bot → 批量审批卡（同上可带 `model`） |
+| `propose_project` | 提议建项目组（名、目标、负责人、成员）→ 审批卡（卡上可改负责人） |
+| `suggest_route` | 对用户当前意图给出路由建议（管家 / 直聊某 Bot / 项目组 / 委派）→ 路由卡 |
 | `delegate_to_bot` | 同 D71；管家与普通 Bot 均可具备，管家提示词更强调路由。委派不改变谁负责什么 |
 | `inspect_bot_assets` | D88：只读盘点某个 Bot 名下的资产（模型 / 连接应用 / MCP / 邮箱 / 定时任务）与可用模型列表，见 [37 §4.1](37-bot-asset-handover.md#41-inspect_bot_assets只读) |
 | `propose_handover` | D88：把 A 的资产与职责长期交给已有或新建的 B → 移交卡（`bot_handover`），用户逐项勾选确认后宿主确定性执行，见 [37 §4.2](37-bot-asset-handover.md#42-propose_handover)。P0 仅管家注册；P1 起普通 Bot 的对话轮也注册（只能交出自己的、目标只能是已有 Bot） |
 
-普通领域 Bot **默认不**暴露 `propose_*` / `suggest_route`（避免人人建队）；`delegate_to_bot` 首期：**管家与普通 Bot 默认都开，且都是单跳**。委派目标从哪来：非群对话的提示词里目前没有任何其他 Bot 的名单（`members` 只在群聊注入），普通 Bot 不知道 B 的 `bot_id`——所以**只读的 `list_bots` 与 `delegate_to_bot` 一起注册**给所有 Bot（返回名片：id / name / bio / 职责摘要，不含 Profile 其它内容），不往每个 Bot 的系统提示里塞通讯录。
+普通领域 Bot **默认不**暴露 `propose_*` / `suggest_route`（避免人人建队）；`delegate_to_bot` 首期：**管家与普通 Bot 默认都开，且都是单跳**。委派目标从哪来：非项目组对话的提示词里目前没有任何其他 Bot 的名单（成员名片只在项目组注入），普通 Bot 不知道 B 的 `bot_id`——所以**只读的 `list_bots` 与 `delegate_to_bot` 一起注册**给所有 Bot（返回名片：id / name / bio / 职责摘要，不含 Profile 其它内容），不往每个 Bot 的系统提示里塞通讯录。
 
 ### 2.4 路由策略
 
@@ -96,10 +94,10 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 |---|---|
 | 未知 / 跨域 / 「帮我安排」 | → 管家对话 |
 | 明确单领域且已有对应 Bot | → 直聊该 Bot（路由卡可一键跳转） |
-| 需要多角色协作 | → 建群（或建议已有群） |
+| 需要多角色协作 | → 建项目组（或建议已有项目组） |
 | 用户要停在当前对话看结果 | → D71 委派（结果贴回） |
 
-**早期产品节奏**：先出**路由卡**（说明建议去哪、为何）；用户点跳转或说「你安排」后，管家再 `delegate_to_bot` / 建群。避免未经确认就在后台代办。
+**早期产品节奏**：先出**路由卡**（说明建议去哪、为何）；用户点跳转或说「你安排」后，管家再 `delegate_to_bot` / 建项目组。避免未经确认就在后台代办。
 
 ## 3 A→B 委派（D71）
 
@@ -134,7 +132,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 - **禁止 A→B→A**：被委派 run 内 `to_bot_id` 若等于任何祖先委派的 `from_bot_id` 直接拒绝（单跳下已被「被委派 run 不能委派」覆盖，作为兜底保留）。
 - **禁止委派给管家**：管家是路由入口，委派链指向它没有产品含义且容易成环；`to_bot_id` 为 butler 时拒绝。另拒绝：`to_bot_id == from_bot_id`、B 非 active、B 私聊只读、B 正在 `setup_state='interviewing'`（访谈期间 B 的私聊投递被目录闸门扣下，委派会悬挂）。
 - **单跳怎么落（run 粒度，且要覆盖 steer 场景）**：工具注册是 bot 粒度，不能为单跳把 B 的 `delegate_to_bot` 全局摘掉——否则 B 在自己其他对话里也永远无法委派，与 §2.3 矛盾。主机制是**执行时校验**：`delegate_to_bot.execute` 按 `identity.runId` 反查 `delegations.run_id`，命中活动委派（`working`）即拒绝。注册期摘除（`triggerReason='delegation'` 的 run 构建 toolset 时不注册）只是让模型少看到一个无用工具的优化，不能作为唯一保障：run 一旦启动，toolset 不再变化，而后续 steer 进来的批次不会改变 run 的 `triggerReason`。`triggerReason` 枚举增 `'delegation'`（runs 表 `trigger_reason` 无 CHECK 约束，纯 shared 枚举改动；同时扩 `TriggerBatch.reason` 联合类型）。
-- **群内发起**：当前上下文是群时——A、B 均为成员 → 工具返回指引，改走 `send_message` `@`（D4），不写 `delegations` 行；B 不是该群成员 → 同样拒绝并提示（首期委派只支持从 A 的私聊发起，避免 B 私聊内容回贴到多人可见的群；用户可先把 B 拉进群再 `@`，或由管家建群）。
+- **项目组内发起**：当前上下文是项目组时——A、B 均为成员 → 工具返回指引，改走 `send_message` `@`（计入协作回合），不写 `delegations` 行；B 不是该项目组成员 → 同样拒绝并提示（首期委派只支持从 A 的私聊发起，避免 B 私聊内容回贴到项目组里其他成员可见；用户可先把 B 加入项目组再 `@`，或由管家建项目组）。
 
 ### 3.4 与 D66 SubAgent 的对照
 
@@ -144,7 +142,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | 消息 | 不写用户消息 | B 私聊出现代发用户消息 |
 | 工具 | 只读研究集 | B 的正常工具面（受自身授权） |
 | 回传 | 压缩结论进主 loop | 截断的终回复或任务结果拼接贴 A 为卡 + follow-up |
-| 群 | 不充当群成员 | 同群则降级 D4 |
+| 项目组 | 不充当项目组成员 | 同一项目组则降级 `@` |
 
 ### 3.5 投递闸门（B 忙 / 免打扰时的排队）
 
@@ -198,12 +196,12 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 |---|---|---|---|
 | 1 | B 侧消息形态 | **采纳推荐** | 用户代发 + A 标签「由 A 代你发出」 |
 | 2 | 回贴内容 | **采纳推荐** | 截断原文（~2000）+ 链到 B 消息；feedback 首期不做 |
-| 3 | B 未绑定 workspace 时是否继承 A 对话的 project | **开放** | 首期建议：不自动继承；B 用自己私聊已绑 project，未绑则走 D59「暂不设置」语义；跨 project 读写仍走 D36 授权 |
+| 3 | B 未绑定 workspace 时是否继承 A 对话的工作目录 | **开放** | 首期建议：不自动继承；B 用自己私聊已绑的工作目录，未绑则走 D59「暂不设置」语义；跨对话读写仍走 D36 授权 |
 | 4 | Butler 创建 Bot/群的方式 | **采纳推荐** | 仅审批卡确认后确定性创建 |
 | 5 | B 执行中途的过程消息是否同步到 A | **采纳推荐** | 不同步；仅最终回复（+ 失败/取消） |
 | 6 | 委派是否遵守 B 的 quiet hours | **开放** | 首期建议：遵守 `behavior.quiet_hours`，并入 §3.5 投递闸门（与「B 忙」同一排队机制）；A 卡提示「将在免打扰结束后发送」。注意 user 代发路径当前没有 quiet hours 闸门，需在委派投递点新建；`deliverEventToBot` 的 parking（`event_delivery` job + `deliverParkedEvent` 重检）是现成模板 |
 | 7 | 委派中崩溃恢复：ephemeral vs D67 durable | **开放** | 首期建议：委派行本身持久；B 的 run 仍按 D49/D67 分级。A 侧卡根据 `delegations.status` 重绘；不把整段委派默认升 durable |
-| 8 | Butler 是否加入用户群 | **开放** | 首期建议：允许加入；在群内管家可 `suggest_route` / `@`，但 **A→B 委派仍降级 D4**（与 §3.3 一致） |
+| 8 | Butler 是否加入项目组 | **已收口（D92）** | **不加入**：管家既不当负责人也不当成员——候选列表、`addMembers`、`propose_project` 都拒绝管家 |
 | 9 | 管家是否裁剪通用工具（文件 / 命令 / 浏览器等） | **开放** | 首期不裁剪（管家也是联系人，用户可能直接让它干活），仅靠 `<butler_rules>` 约束路由职责；如需收紧，在 P4 以 Profile / 设置开关处理，不改本设计契约 |
 
 ## 5 非目标（本设计明确不做）
@@ -212,10 +210,10 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 - 多跳委派（A→B→C→…）——首期一律单跳，不论发起者是否管家。
 - 把 B 的工具过程 / 中间 progress 镜像到 A 聊天流。
 - 跨用户 / 多租户管家；云端托管委派总线。
-- 替换 D4 群 `@` 协议。
+- 替换 D4 的 Bot 间 `@` 协作回合协议。
 - 管家可被用户删除或建多个。
 - 结果卡 feedback（有用 / 需重做）。
-- 从群发起的、B 不在群内的委派。
+- 从项目组发起的、B 不是其成员的委派。
 
 ## 6 实现分期（文档级 P1–P4）
 
@@ -223,13 +221,13 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 
 1. **P1 地基**：`system_role`（含 partial unique index）、管家唯一/置顶/不可删、存量用户 `ensureButler`、`delegations` 表与状态枚举、approvals `kind` CHECK 重建（含 `butler_proposal`）、常量、边界测试（与 D4/D66 对照）。
 2. **P2 管家入职与组队**：管家访谈变体、`butler_proposal` 审批卡（非阻塞、无人值守排除、`decide.selection`）、确定性批量创建、`list_bots`（全体 Bot 可用）/ `propose_*`（仅管家）。
-3. **P3 A→B 委派主路径**：`delegate_to_bot` / `cancel_delegation`、投递闸门（B 忙 / quiet hours）、B 代发消息 + 标签、A 发出/结果卡（含上下文渲染）、截断回贴、follow-up 注入、防环与单跳（执行时校验）、同群降级 D4、记忆证据排除、生命周期级联。
+3. **P3 A→B 委派主路径**：`delegate_to_bot` / `cancel_delegation`、投递闸门（B 忙 / quiet hours）、B 代发消息 + 标签、A 发出/结果卡（含上下文渲染）、截断回贴、follow-up 注入、防环与单跳（执行时校验）、同项目组降级 `@`、记忆证据排除、生命周期级联。
 4. **P4 路由与收尾**：`suggest_route` + 路由卡、「你安排」再委派、剩余开放决策默认值落地（workspace 不继承等按上表）、回归与 e2e。
 
 ## 7 验收锚点（设计级）
 
 1. 新装用户完成引导后通讯录有且仅有一个管家，置顶，删除入口不可用或明确拒绝；存量用户升级后同样有管家。
-2. 管家 `propose_team` → 用户确认 → 3–5 个 Bot 落库；用户去掉某项则只建剩余项；未确认不落库（含无人值守模式）。
+2. 管家 `propose_bots` → 用户确认 → 3–5 个 Bot 落库；用户去掉某项则只建剩余项；未确认不落库（含无人值守模式）。
 3. A 委派 B：UI 留在 A；B 私聊出现带标签的用户代发消息；B 回复后 A 出现截断结果卡 + 链接；A 收到 internal follow-up 且不复述全文。
-4. B 正忙时委派排队（`submitted`），B 空闲后才投递且结果对应委派任务而非 B 的其他对话；被委派 run 的 `delegate_to_bot` 调用被拒绝（含 steer 进来的情形）；A→B→A、委派给管家被拒绝；同群 A/B 走 `@` 不写委派行。
-5. `delegate_task`（D66）行为回归不变；群 D4 连锁回归不变。
+4. B 正忙时委派排队（`submitted`），B 空闲后才投递且结果对应委派任务而非 B 的其他对话；被委派 run 的 `delegate_to_bot` 调用被拒绝（含 steer 进来的情形）；A→B→A、委派给管家被拒绝；同一项目组 A/B 走 `@` 不写委派行。
+5. `delegate_task`（D66）行为回归不变；项目组路由与协作回合回归不变。

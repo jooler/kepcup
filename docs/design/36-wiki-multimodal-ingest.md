@@ -1,10 +1,8 @@
 # 36 Wiki 多模态入库与派生血缘
 
-> **D92 修订（已定稿，待实施）**：项目 wiki 首次落地本文 `raw/_assets/*.json` 台账的**文本子集**（`createdBy`、`sources[]`、`storage:'git'`）与 `wiki.deleteAsset` 的文本子集（`removeSource`）；wiki 所有者泛化为 `bot | project`。二进制 / 派生部分仍按本文，未实施。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
-
 用户会把 PDF、图片、视频、音频交给 Bot「学一下」。现有 Wiki 能把附件/文件字节落入 `raw/`，但维护 loop 对非文本几乎读不到内容；PDF 靠 MinerU 技能「人工导出再 enqueue」半闭环，**派生 Markdown 与原始文件没有一等公民血缘**。本篇给出完整、可靠的多模态入库方案：二进制原件存在 git 之外、可真删除；派生文本进 git 并与原件互链；派生由宿主在独立通道确定性执行、可断点续跑，缺环境时阻塞并引导而不是烧掉重试次数。决策：**D85**。
 
-**状态：已定稿，待实施。** 调研与代码摸底：2026-10-12。产品拍板（同日）：P0 视频必须含关键帧；`file` 来源单源上限 **2GB**；MinerU **宿主派生**；`wiki_vec` 留 **P1**；设置提供「Wiki 媒体派生」总开关（默认开）。同日按代码审查修订（见修订记录）：二进制移出 git、按来源拆分上限、ASR 分片进 P0、派生拆为独立 job、按资产状态去重与续跑。
+**状态：已定稿。D92 项目 wiki（[41 §8](41-project-team.md#8-项目-wiki)）已落地本文的**文本子集**——`raw/_assets/*.json` 台账（增 `createdBy`，`sources[].type` 含 `text`，`storage:'git'`）与删除路径的文本子集（工具 `wiki_remove_source` / RPC `wiki.deleteSource`，见 §6）；wiki 所有者泛化为 `bot | project`，RPC 入参从 `{botId}` 改为 `{ owner }`。**二进制与派生部分（`wiki-store/`、`wiki_derive`、`blocked` 状态机、媒体派生开关）仍按本文，未实施。** 调研与代码摸底：2026-10-12。产品拍板（同日）：P0 视频必须含关键帧；`file` 来源单源上限 **2GB**；MinerU **宿主派生**；`wiki_vec` 留 **P1**；设置提供「Wiki 媒体派生」总开关（默认开）。同日按代码审查修订（见修订记录）：二进制移出 git、按来源拆分上限、ASR 分片进 P0、派生拆为独立 job、按资产状态去重与续跑。
 
 相关：D9 / [05](05-wiki-and-skills.md)（LLM Wiki）、D57 / [17](17-mineru-document-parsing.md)（MinerU）、D63 / [22](22-file-skill-routing.md)（文件技能路由）、D68 / [25](25-capability-tools.md)（`understand_image` / `transcribe_audio`）、D61 / [20](20-conversation-media.md)（附件）、D54 / [16](16-capability-models.md)（能力模型与 MediaService）、D13（环境安装审批）、P09。
 
@@ -144,7 +142,8 @@ bots/{id}/
 
 - `assetId = "ast_" + sha256 前 24 位 hex`：同内容同资产，天然幂等；不再另造 ULID。去重以 sha256 为准，文件名里的 hash12 仅作旧命名兼容。
 - `storage`：`"git"`（文本原件在 `rawRelPath`）或 `"store"`（原件在 `wiki-store/{id}/original`）。
-- `sources[]`：同一份内容从多个来源进入时追加记录，不重复派生。
+- `sources[]`：同一份内容从多个来源进入时追加记录，不重复派生；`type` 联合含 `attachment / url / file / text / handover`，D92 起另有用户粘贴文本的 `text`（`ref` 只存正文前 80 字预览）。
+- **D92 落地（项目 wiki）**：台账的文本子集已实现——`createdBy: { kind: 'user' | 'bot', id }` 记录创建者（成员只能删自己的来源，用户与负责人管理全部）；只有项目 wiki 启用台账，Bot 个人 wiki 暂不启用。本节的其余字段（`kind / mime / status / derive / readable` 等）属二进制 / 派生部分，未实施。
 - `kind`：`text | html | document | image | audio | video`，由 §5.1 的 mime 嗅探决定。
 
 **资产状态**
@@ -254,18 +253,20 @@ bots/{id}/
 ### 5.5 RPC、工具与 UX
 
 - `wiki_enqueue` 工具参数不变（不提供让模型绕过开关的 `derive` 参数）。工具说明补充：附件 >30MB 时请用户提供文件路径（file 来源，≤2GB）；入库是后台的、可能需要较长时间。
-- 新增 RPC：
-  - `wiki.assets(botId)`：资产列表（读 `state.json`，含状态、原因、进度）；
+- 新增 RPC（D92 起入参为 `{ owner: WikiOwner }`；`botId` → owner 泛化）：
+  - `wiki.assets(owner)`：资产列表（读 `state.json`，含状态、原因、进度）；
   - `wiki.asset(botId, assetId)`：详情（manifest、派生文本路径）；
   - `wiki.openAssetOriginal(botId, assetId)`：用系统程序打开原件；
   - `wiki.retryAsset(botId, assetId)`、`wiki.deriveStored(botId)`（批量派生已存资产）；
-  - `wiki.deleteAsset(botId, assetId)`（§6）。
+  - `wiki.deleteAsset(owner, assetId)`（§6）。
+- **D92 已落地**：`wiki.sources / addSource / deleteSource`（项目 wiki 的文本来源与删除，[41 §8.5](41-project-team.md#85-工具读写与可信度)）；本列表的资产 RPC 随二进制 / 派生部分仍未实施。
 - UI（P0 最小集）：Wiki 面板「资料」页签列出资产（状态、原因、重试、删除、打开原件）；页面中的资产链接渲染为卡片。
 - 系统提示：即时理解用技能 / `understand_*`；沉淀用 `wiki_enqueue`（宿主派生）。
 
 ## 6 删除、回滚与保留
 
-- **删除资产** `wiki.deleteAsset`（新建，Bot 锁内）：删除 `wiki-store/{id}/`（原件、关键帧、状态）、`raw/_derived/{id}/`、`raw/_assets/{id}.json`，以及文本类资产的 `raw/` 原件；在 log.md 追加记录、提交，然后登记 `wiki_lint` 清理悬空引用。进行中的 `wiki_derive` 在下一步开始前检测到资产被删即中止。
+- **删除资产** `wiki.deleteAsset`（新建，锁内）。**D92 落地（项目 wiki 的文本子集）**：`removeSource` 已实现——工具 `wiki_remove_source` 与 RPC `wiki.deleteSource` 入队 `wiki_remove_source` job（不调模型、不受预算延后），执行时移除原件与台账条目、提交，并登记一次体检清理悬空引用；ACL 入队与执行各校验一次（成员删自己创建的来源，用户与负责人删任意）。二进制 / 派生资产的删除仍按本节未实施。
+- `wiki.deleteAsset`（二进制 / 派生，未实施）：删除 `wiki-store/{id}/`（原件、关键帧、状态）、`raw/_derived/{id}/`、`raw/_assets/{id}.json`，以及文本类资产的 `raw/` 原件；在 log.md 追加记录、提交，然后登记 `wiki_lint` 清理悬空引用。进行中的 `wiki_derive` 在下一步开始前检测到资产被删即中止。
 - **消息撤回**：core 目前没有消息撤回的写路径，只有 ingest 时的来源复核。将来接入撤回时，对「所有 `sources` 都已撤回」的资产调用同一删除函数；仍有其它来源的只移除对应 `sources` 条目。
 - **已知局限**：派生文本（full.md / transcript / caption）与页面一样留在 git 历史中；原件与关键帧在仓外，删除后不可恢复。清洗 git 历史不在本期。
 - **回滚**（`wiki.rollback`）：只作用于 git 仓库，不动 `wiki-store/`。回滚后清单快照在树中消失、但仓外仍存在的资产标为 `derived`（可重新维护）；快照存在、但仓外原件已删除的资产，在 UI 中显示「原件已删除」，lint 报告悬空引用。
@@ -358,3 +359,4 @@ bots/{id}/
 | 2026-10-12 | 初稿：现状摸底、业界对照、派生血缘架构、P0–P2。 |
 | 2026-10-12 | 产品拍板并入正文：P0 视频必须关键帧；上限 2GB；宿主 MinerU；wiki_vec=P1；「Wiki 媒体派生」总开关默认开。 |
 | 2026-10-12 | 按代码审查重写：二进制原件与关键帧移至仓外 `wiki-store/`（git 只存文本与清单，删除即真删）；上限按来源拆分（file 2GB / 附件 30MB / URL 10MB 文本）并改为流式；ASR 分片进 P0；新增 `wiki_derive` job 与独立 derive 通道，派生移出 Bot 锁；去重改为按资产状态（修复「只存后无法再派生」）；步骤级断点续跑；缺环境/能力改为 `blocked` 不耗 attempts，并补 ffmpeg/MinerU catalog 与对话内引导；派生费用计入 usage 与预算；开关文案披露云端上传；撤回级联改为新建 `wiki.deleteAsset`（现网无此逻辑）；关键帧改为场景检测 + 合批 caption；长文本目录 + 源摘要页策略；PDF 降级依赖与沙箱交接方式落地；file 来源 mime 误内联列为先修 bug。 |
+| 2026-10-18 | D92 项目 wiki（WP9 / WP10）落地本文台账的**文本子集**（`createdBy`、`sources[].type` 含 `text`、`storage:'git'`）与 `wiki.deleteAsset` 的文本子集（`removeSource`，经 `wiki_remove_source` job）；wiki 所有者泛化为 `bot | project`，RPC 入参 `{botId}` → `{ owner }`。二进制 / 派生仍未实施。 |
