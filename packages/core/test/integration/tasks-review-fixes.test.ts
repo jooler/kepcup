@@ -113,7 +113,7 @@ function handDrivenHost(stack: TestStack, execute?: (task: Run, control: TaskRun
     wake: (_botId, _conversationId, entry) => {
       woken.push(entry);
     },
-    resolveWorkdir: () => path.join(tmpdir(), 'tasks-review-ws'),
+    resolveCwd: () => path.join(tmpdir(), 'tasks-review-ws'),
     onSettled: () => {},
     releaseExecution: () => {},
     recordVisibleMessage: () => {},
@@ -183,7 +183,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         instruction: 'R-WRITE 请改一下项目',
         sourceMessageIds: [],
         writes: true,
-        workdir: 'workspace',
+        cwd: 'workspace',
       });
       await waitFor(() => (llm.requestsFor('mock-main').some(isR) ? true : null), {
         label: 'R holds a slot',
@@ -207,7 +207,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         instruction: 'TASK-H2 改 README',
         sourceMessageIds: [],
         writes: true,
-        workdir: 'project',
+        cwd: 'project',
       });
       expect(t.state).toBe('submitted');
       const tIdentity: RunIdentity = {

@@ -289,7 +289,7 @@ describe('LlmRouter', () => {
         background: true,
       },
     });
-    expect(backgroundRunSpec(agentRoute, spec).workdir).toBeUndefined();
+    expect(backgroundRunSpec(agentRoute, spec).cwd).toBeUndefined();
     expect(engineKeyOf(agentRoute)).toBe('agent:alpha');
     const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault(
       'wiki_maintenance',

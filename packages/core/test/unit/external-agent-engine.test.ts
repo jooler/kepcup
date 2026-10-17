@@ -460,8 +460,8 @@ describe('ExternalAgentEngine', () => {
     } = {},
   ) {
     const entry = options.entry ?? FAKE;
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-ext-engine-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-ext-engine-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const host = new AgentHost({
       logger,
@@ -488,11 +488,11 @@ describe('ExternalAgentEngine', () => {
       messages: [{ role: 'user', content: 'HELLO', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 60 },
-      workdir,
+      cwd,
       external: { agentId: entry.id, permission: 'read_only', capabilities: [], sessionKey: 'k' },
       ...overrides,
     });
-    return { engine, host, started, spec, workdir };
+    return { engine, host, started, spec, cwd };
   }
 
   it('settles a refusal as failed with no final text', async () => {

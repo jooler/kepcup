@@ -93,14 +93,14 @@ interface Harness {
   host: AgentHost;
   bridge: HostMcpBridge;
   observed(): FakeAgentObservation;
-  workdir: string;
+  cwd: string;
   dispose(): Promise<void>;
 }
 
 async function createHarness(target: ContractTarget, rawScript: FakeAgentScript): Promise<Harness> {
   const script = { ...target.scriptDefaults, ...rawScript };
   const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-contract-'));
-  const workdir = path.join(dir, 'work');
+  const cwd = path.join(dir, 'work');
   const started: FakeAcpAgentHandle[] = [];
   const scriptFile = path.join(dir, 'script.json');
   const recordFile = path.join(dir, 'record.jsonl');
@@ -131,7 +131,7 @@ async function createHarness(target: ContractTarget, rawScript: FakeAgentScript)
     engine,
     host,
     bridge,
-    workdir,
+    cwd,
     observed: () =>
       target.mode === 'in-process' ? started[0]!.observed : readFakeAgentRecord(recordFile),
     dispose: async () => {
@@ -144,7 +144,7 @@ async function createHarness(target: ContractTarget, rawScript: FakeAgentScript)
 
 function runSpec(
   entry: AgentCatalogEntry,
-  workdir: string,
+  cwd: string,
   text = '你好',
   tools: ToolDefinition[] = [],
 ): RunSpec {
@@ -160,7 +160,7 @@ function runSpec(
     messages: [{ role: 'user', content: text, timestamp: 0 }],
     tools,
     limits: { maxTurns: 60 },
-    workdir,
+    cwd,
     external: {
       agentId: entry.id,
       permission: 'read_only',
@@ -176,7 +176,7 @@ function start(
   text?: string,
   tools?: ToolDefinition[],
 ) {
-  const handle: RunHandle = harness.engine.startRun(runSpec(entry, harness.workdir, text, tools));
+  const handle: RunHandle = harness.engine.startRun(runSpec(entry, harness.cwd, text, tools));
   const events: EngineEvent[] = [];
   handle.onEvent((event) => events.push(event));
   return { handle, events };
@@ -225,13 +225,13 @@ export function runAgentProviderContract(target: ContractTarget): void {
       expect(init?.clientCapabilities?.terminal).toBe(false);
     });
 
-    it('opens a session in the run workdir; no host MCP server without host tools', async () => {
+    it('opens a session in the run cwd; no host MCP server without host tools', async () => {
       const harness = await make({ turns: [agentTurn().text('ok')] });
       const { handle } = start(harness, entry);
       await handle.done;
       const sessions = harness.observed().sessions;
       expect(sessions).toHaveLength(1);
-      expect(sessions[0]!.cwd).toBe(harness.workdir);
+      expect(sessions[0]!.cwd).toBe(harness.cwd);
       expect(sessions[0]!.mcpServers).toEqual([]);
       const prompt = harness.observed().prompts[0]!;
       expect(prompt.text).toContain('你好');
@@ -266,7 +266,7 @@ export function runAgentProviderContract(target: ContractTarget): void {
         responseTools: adherenceToolDefinitions('web'),
         capabilities: ['web'],
       });
-      const spec = runSpec(entry, harness.workdir, '查一下 Node.js 的 LTS 版本', tools);
+      const spec = runSpec(entry, harness.cwd, '查一下 Node.js 的 LTS 版本', tools);
       spec.external = {
         ...spec.external!,
         capabilities: ['web'],

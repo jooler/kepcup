@@ -176,7 +176,7 @@ describe('runs 0006 tasks 迁移', () => {
       engine: 'builtin',
       task_title: null,
       task_writes: null,
-      task_workdir: null,
+      task_cwd: null,
       origin_run_id: null,
       result_consumed_at: null,
       awaiting_input: 0,

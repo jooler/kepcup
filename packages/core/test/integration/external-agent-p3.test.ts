@@ -506,7 +506,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const project = makeProject();
     writeFileSync(path.join(project, 'AGENTS.md'), '# agent rules\n');
     const projectPath = await bindProject(stack, conv.id, project);
-    // Read-only tasks: they work in the bound project (their workdir).
+    // Read-only tasks: they work in the bound project (their cwd).
     stack.llm.script('mock-main', [
       ...turnStartsTask(stack, conv.id, { writes: false }),
       ...turnStartsTask(stack, conv.id, { writes: false }),
@@ -517,7 +517,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     expect(card.payload).toMatchObject({ kind: 'config', locations: ['AGENTS.md'] });
     await stack.core.rpc.call('approvals.decide', { id: card.id, approve: true });
     const first = await waitTask(stack, conv.id, 'completed');
-    expect(first.taskWorkdir).toBe(projectPath);
+    expect(first.taskCwd).toBe(projectPath);
     expect(stack.record().sessions[0]!.cwd).toBe(projectPath);
 
     await sendBatch(stack.core, conv.id, ['第二次']);

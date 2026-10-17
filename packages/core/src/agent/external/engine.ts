@@ -924,8 +924,8 @@ class ExternalRunHandle implements RunHandle {
     let phase: AgentErrorPhase = 'initialize';
     try {
       const external = spec.external;
-      if (external === undefined || spec.workdir === undefined) {
-        throw new AppError('INVALID_INPUT', '外部智能体 run 缺少 external / workdir');
+      if (external === undefined || spec.cwd === undefined) {
+        throw new AppError('INVALID_INPUT', '外部智能体 run 缺少 external / cwd');
       }
       const entry = findAgentEntry(this.#deps.catalog(), external.agentId);
       if (entry === null) {
@@ -956,7 +956,7 @@ class ExternalRunHandle implements RunHandle {
       const acceptsImages = init.agentCapabilities?.promptCapabilities?.image === true;
       const sessionOptions = provider.sessionNew({
         entry,
-        cwd: spec.workdir,
+        cwd: spec.cwd,
         permission: external.permission,
         capabilities: external.capabilities,
         sessionPrompt: metaAppend ? parts.session : null,
@@ -964,7 +964,7 @@ class ExternalRunHandle implements RunHandle {
         loadUserConfig: external.loadUserConfig === true,
         ...(external.background === true ? { oneShot: true } : {}),
         ...(this.#deps.permissions !== undefined
-          ? { isolation: this.#deps.permissions.isolationFor(spec.identity, spec.workdir) }
+          ? { isolation: this.#deps.permissions.isolationFor(spec.identity, spec.cwd) }
           : {}),
         // D73 × sandboxed auto-allow (review P0): the host decides every sandboxed
         // command while taint control is on (part of `_meta` → the session
@@ -1160,7 +1160,7 @@ class ExternalRunHandle implements RunHandle {
     lease.checkConfig?.();
     const serverName = external.hostServerName ?? newHostServerName();
     this.#optionsHash = hashOf({
-      cwd: spec.workdir,
+      cwd: spec.cwd,
       meta: sessionOptions._meta ?? null,
       extra: sessionOptions.extraMcpServers ?? [],
       bridge: spec.tools.length > 0 ? serverName : null,
@@ -1245,7 +1245,7 @@ class ExternalRunHandle implements RunHandle {
       const canResume = provider.features.resume && caps?.sessionCapabilities?.resume != null;
       const canLoad = provider.features.loadSession && caps?.loadSession === true;
       if (canResume || canLoad) {
-        const request = { sessionId: reuseId, cwd: spec.workdir!, mcpServers, ...meta };
+        const request = { sessionId: reuseId, cwd: spec.cwd!, mcpServers, ...meta };
         const restoring = canResume
           ? lease.connection.resumeSession(request)
           : lease.connection.loadSession(request);
@@ -1286,7 +1286,7 @@ class ExternalRunHandle implements RunHandle {
         }
       }
     }
-    const creating = lease.connection.newSession({ cwd: spec.workdir!, mcpServers, ...meta });
+    const creating = lease.connection.newSession({ cwd: spec.cwd!, mcpServers, ...meta });
     let session: Awaited<typeof creating>;
     try {
       session = await this.#sessionCall(creating, this.#openBound('建立会话'));
@@ -1766,7 +1766,7 @@ class ExternalRunHandle implements RunHandle {
     this.#tempDir = mkdtempSync(path.join(os.tmpdir(), 'kepcup-agent-bg-'));
     this.#spec = {
       ...this.#spec,
-      workdir: this.#tempDir,
+      cwd: this.#tempDir,
       external: { ...external, permission: 'read_only' },
     };
   }
@@ -1799,7 +1799,7 @@ class ExternalRunHandle implements RunHandle {
                 entry: this.#entry!,
                 provider: this.#provider!,
                 tier: this.#spec.external!.permission,
-                workdir: this.#spec.workdir!,
+                cwd: this.#spec.cwd!,
                 signal: this.#toolAbort.signal,
                 bridge,
               }),

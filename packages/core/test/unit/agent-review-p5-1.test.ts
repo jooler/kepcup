@@ -105,7 +105,7 @@ describe('DeepSeek Harness (H2 / LOW)', () => {
 
   it('a permission request carrying only the id is completed from the call updates', async () => {
     const entry: AgentCatalogEntry = fakeAgentEntry('fake-dsh', { provider: 'dsh' });
-    const workdir = tempDir('kepcup-h2-');
+    const cwd = tempDir('kepcup-h2-');
     const started: FakeAcpAgentHandle[] = [];
     const script: FakeAgentScript = {
       turns: [
@@ -158,7 +158,7 @@ describe('DeepSeek Harness (H2 / LOW)', () => {
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: { agentId: entry.id, permission: 'ask', capabilities: [], sessionKey: 'b:c:dsh' },
     }).done;
     expect(outcome.status).toBe('completed');

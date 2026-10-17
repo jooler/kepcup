@@ -36,7 +36,7 @@ interface RunRow {
   error_json: string | null;
   task_title: string | null;
   task_writes: number | null;
-  task_workdir: string | null;
+  task_cwd: string | null;
   task_capabilities: string | null;
   origin_run_id: string | null;
   result_consumed_at: number | null;
@@ -154,7 +154,7 @@ function rowToRun(row: RunRow): Run {
     ...(error?.dismissed === true ? { failureDismissed: true } : {}),
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
-    taskWorkdir: row.task_workdir,
+    taskCwd: row.task_cwd,
     taskCapabilities: parseCapabilities(row.task_capabilities),
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,
@@ -205,7 +205,7 @@ export class RunsService {
     /** Task fields (D75 §3.4, loop_type 'task'); a task's submitted state is `queued`. */
     taskTitle?: string | null;
     taskWrites?: boolean | null;
-    taskWorkdir?: string | null;
+    taskCwd?: string | null;
     /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
     taskCapabilities?: string[] | null;
     /** The supervisor turn that started the task. */
@@ -221,7 +221,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -243,7 +243,7 @@ export class RunsService {
           : input.taskWrites
             ? 1
             : 0,
-        input.taskWorkdir ?? null,
+        input.taskCwd ?? null,
         input.taskCapabilities !== undefined &&
           input.taskCapabilities !== null &&
           input.taskCapabilities.length > 0

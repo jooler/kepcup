@@ -85,7 +85,7 @@ function settledTask(
     triggerMessageIds: [],
     taskTitle: '旧任务',
     taskWrites: false,
-    taskWorkdir: null,
+    taskCwd: null,
     originRunId: null,
   });
   d.messages.appendTaskEvent({
@@ -127,7 +127,7 @@ function undeliveredNotice(messages: Message[]): Message | null {
 }
 
 describe('M-1: a write task cancelled while waiting on the user unwinds without a slot', () => {
-  it('its lease is free at once: the next write task on the workdir gets it while the slot holder still runs', async () => {
+  it('its lease is free at once: the next write task on the same cwd gets it while the slot holder still runs', async () => {
     const stack = await start();
     const { core, llm } = stack;
     await oneSlot(stack);

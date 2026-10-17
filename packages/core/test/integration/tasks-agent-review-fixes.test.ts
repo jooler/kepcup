@@ -27,7 +27,7 @@ import type { RunHandle, RunIdentity, RunSpec } from '../../src/agent/types.js';
 /**
  * D75 W4 + W2-D66 审查修复（批 C）：M3 外部 Agent 任务按 `agent:{id}` 名额
  * 启动（超出的留在 submitted、不取租约）、L4 steer 确认后剪除 / 被拒按 FIFO
- * 匹配、L5 被 reaper 驱逐但未结束的执行仍算「执行中」、L6 无 workdir 的任务
+ * 匹配、L5 被 reaper 驱逐但未结束的执行仍算「执行中」、L6 无 cwd 的任务
  * 在 workspace 执行（与租约一致）、L8 引擎启动后的崩溃先中止引擎、L10
  * workspace 工作目录的 Agent 任务不带 <project> 段。
  */
@@ -93,7 +93,7 @@ function handDrivenHost(
       controls.set(task.id, control);
     },
     wake: () => {},
-    resolveWorkdir: (_botId, conversationId) =>
+    resolveCwd: (_botId, conversationId) =>
       path.join(tmpdir(), 'tasks-review-c-ws', conversationId),
     onSettled: () => {},
     releaseExecution: () => {},
@@ -141,7 +141,7 @@ describe('M3: external-agent tasks launch only within agent:{id} concurrency', (
         writes: true,
       });
     const first = write(bot.id, convA.id, 'one');
-    // Another conversation, another workdir: only the agent's slot is in the way.
+    // Another conversation, another cwd: only the agent's slot is in the way.
     const second = write(other.id, convB.id, 'two');
     expect([...controls.keys()]).toEqual([first.taskId]);
     expect(host.launchedCount()).toBe(1);
@@ -291,13 +291,13 @@ function userMessage(stack: TestStack, conversationId: string, text: string): Me
 }
 
 describe('L6 / L10: an agent task works where it is leased, and is told so', () => {
-  it('a write task without a recorded workdir runs in the workspace, not the unleased project', async () => {
+  it('a write task without a recorded cwd runs in the workspace, not the unleased project', async () => {
     const { stack, started } = await agentStack({ fake: { turns: [agentTurn().sleep(20)] } });
     const bot = await agentBot(stack, 'fake');
     const conv = await openDirect(stack.core, bot.id);
     const projectPath = await bindProject(stack, conv.id);
     const { runs, messages } = domain(stack);
-    // A task row from before workdirs were recorded (task_workdir null).
+    // A task row from before cwds were recorded (task_cwd null).
     const task = runs.create({
       botId: bot.id,
       conversationId: conv.id,
@@ -306,7 +306,7 @@ describe('L6 / L10: an agent task works where it is leased, and is told so', () 
       triggerMessageIds: [],
       taskTitle: '旧任务',
       taskWrites: true,
-      taskWorkdir: null,
+      taskCwd: null,
       originRunId: 'run_turn_old',
     });
     messages.appendTaskEvent({
@@ -314,19 +314,19 @@ describe('L6 / L10: an agent task works where it is leased, and is told so', () 
       ownerBotId: bot.id,
       taskId: task.id,
       phase: 'brief',
-      text: 'NULL-WORKDIR 改一下',
+      text: 'NULL-CWD 改一下',
       sourceMessageIds: [],
       title: '旧任务',
       writes: true,
     });
     tasksOf(stack).resume();
-    await waitStatus(stack, task.id, ['completed'], 'null-workdir task completed');
+    await waitStatus(stack, task.id, ['completed'], 'null-cwd task completed');
     const cwd = started[0]!.observed.sessions[0]!.cwd;
     expect(cwd).not.toBe(projectPath);
     expect(cwd).toBe(workspaceOf(stack, bot.id, conv.id));
   }, 60_000);
 
-  it('a workspace-workdir task in a project conversation gets no <project> section', async () => {
+  it('a workspace-cwd task in a project conversation gets no <project> section', async () => {
     const { stack, started } = await agentStack({ fake: { turns: [agentTurn().sleep(20)] } });
     const bot = await agentBot(stack, 'fake');
     const conv = await openDirect(stack.core, bot.id);
@@ -337,7 +337,7 @@ describe('L6 / L10: an agent task works where it is leased, and is told so', () 
       instruction: 'WS-TASK 整理',
       sourceMessageIds: [source.id],
       writes: true,
-      workdir: 'workspace',
+      cwd: 'workspace',
     });
     await waitStatus(stack, t.taskId, ['completed'], 'workspace task completed');
     const prompt = started[0]!.observed.prompts[0]!.text;

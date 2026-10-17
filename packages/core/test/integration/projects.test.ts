@@ -252,7 +252,7 @@ function recordingSandbox(core: TestStack['core']): RecordedExec[] {
 }
 
 describe('projects (P04)', () => {
-  // D75 §5.1: writes happen in write tasks that pin the workdir lease before
+  // D75 §5.1: writes happen in write tasks that pin the cwd lease before
   // they start; a second write task on the same project — from another
   // conversation too — is held back by the task layer (submitted, queue
   // reason naming the holder), never reaching the lease (DEV-015). The old

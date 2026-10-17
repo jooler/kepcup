@@ -305,7 +305,7 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
       messages: [{ role: 'user', content: 'TASK', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir: workspace,
+      cwd: workspace,
       external: {
         agentId: entry.id,
         // Background sessions are always read_only, whatever is asked.
@@ -366,7 +366,7 @@ describe('Claude sessions: who auto-allows sandboxed Bash (review P0, D73 × f2b
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir: workspace,
+      cwd: workspace,
       external: { agentId: entry.id, permission: 'ask', capabilities: [], sessionKey: 'k' },
     }).done;
     expect(outcome.status).toBe('completed');

@@ -32,10 +32,10 @@ export interface StartTaskInput {
   instruction: string;
   /** The user's original messages the task works from (verbatim in its brief, §2.4.5). */
   sourceMessageIds: string[];
-  /** Write task: takes the workdir write lease for its whole run (§5.1). */
+  /** Write task: takes the cwd write lease for its whole run (§5.1). */
   writes: boolean;
-  /** Workdir root; default = the bound project when available, else the workspace. */
-  workdir?: 'workspace' | 'project' | undefined;
+  /** Cwd root; default = the bound project when available, else the workspace. */
+  cwd?: 'workspace' | 'project' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
   continuesTaskId?: string | undefined;
   /**
@@ -90,7 +90,7 @@ export interface TaskSummary {
   state: TaskState;
   status: RunStatus;
   writes: boolean;
-  workdir: string | null;
+  cwd: string | null;
   createdAt: number;
   endedAt: number | null;
   queueReason: string | null;
@@ -353,7 +353,7 @@ export function buildTaskTools(input: {
     instruction: string;
     source_message_ids: string[];
     writes: boolean;
-    workdir?: 'workspace' | 'project';
+    cwd?: 'workspace' | 'project';
     continues_task_id?: string;
     capabilities?: string[];
   }> = {
@@ -375,7 +375,7 @@ export function buildTaskTools(input: {
           description: '相关的用户原消息 id（msg_…），任务简报会带上原文',
         }),
         writes: Type.Boolean({ description: 'true = 会修改文件的写任务；false = 只读任务' }),
-        workdir: Type.Optional(
+        cwd: Type.Optional(
           Type.Union([Type.Literal('workspace'), Type.Literal('project')], {
             description: '工作目录：project（对话绑定的项目，缺省时有项目即用项目）或 workspace',
           }),
@@ -402,12 +402,8 @@ export function buildTaskTools(input: {
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
         if (typeof params.writes !== 'boolean') return fail('INVALID_INPUT', 'writes 必须是布尔值');
-        if (
-          params.workdir !== undefined &&
-          params.workdir !== 'workspace' &&
-          params.workdir !== 'project'
-        ) {
-          return fail('INVALID_INPUT', 'workdir 只能是 workspace 或 project');
+        if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'project') {
+          return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 project');
         }
         const capabilities = capabilityIds(params.capabilities);
         if (typeof capabilities === 'string') return fail('INVALID_INPUT', capabilities);
@@ -416,7 +412,7 @@ export function buildTaskTools(input: {
           instruction: nonEmpty(params.instruction, 'instruction', TASK_INSTRUCTION_MAX_CHARS),
           sourceMessageIds: ids,
           writes: params.writes,
-          ...(params.workdir !== undefined ? { workdir: params.workdir } : {}),
+          ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
             : {}),

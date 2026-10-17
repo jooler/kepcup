@@ -154,7 +154,7 @@ describe('D75 task cards (W3)', () => {
         ) ?? null,
       { label: 'running view with status' },
     );
-    expect(running).toMatchObject({ title: '写文件', writes: true, workdirKind: 'workspace' });
+    expect(running).toMatchObject({ title: '写文件', writes: true, cwdKind: 'workspace' });
     const active = (await core.rpc.call('tasks.active', { conversationId: conv.id })) as {
       tasks: TaskView[];
     };

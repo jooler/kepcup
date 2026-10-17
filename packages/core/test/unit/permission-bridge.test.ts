@@ -335,7 +335,7 @@ describe('unattended data-directory floor (agent_tool)', () => {
         'linux',
       ),
     ).toBe(true);
-    // Codex `workdir = ~/.kepcup` + `rm main.db`.
+    // Codex `cwd = ~/.kepcup` + `rm main.db`.
     expect(
       agentToolTouchesDataDir(
         payload({ command: 'rm main.db', cwd: home }),
@@ -526,7 +526,7 @@ describe('AgentPermissionBridge decisions', () => {
     toolCall: AcpRequestPermissionRequest['toolCall'],
     tier: 'read_only' | 'workspace' | 'ask' = 'workspace',
     provider: typeof genericAcpProvider = genericAcpProvider,
-    workdir = project,
+    cwd = project,
   ) =>
     bridge.decide(
       {
@@ -547,7 +547,7 @@ describe('AgentPermissionBridge decisions', () => {
         entry,
         provider,
         tier,
-        workdir,
+        cwd,
         signal: new AbortController().signal,
         bridge: null,
       },
@@ -877,7 +877,7 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
   const project = path.join(root, 'project-m2');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(path.join(project, 'src'), { recursive: true });
-  // A write task whose workdir is the workspace, in a project-bound conversation.
+  // A write task whose cwd is the workspace, in a project-bound conversation.
   const identity = {
     runId: 'run_task_m2',
     botId: 'bot_m2',
@@ -937,7 +937,7 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
         // Codex: its command requests always run outside any sandbox.
         provider: codexProvider,
         tier,
-        workdir: workspace,
+        cwd: workspace,
         signal: new AbortController().signal,
         bridge: null,
       },

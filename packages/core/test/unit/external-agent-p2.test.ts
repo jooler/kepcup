@@ -398,8 +398,8 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
 
   function setup(provider: 'claude' | 'codex', script: FakeAgentScript) {
     const entry = fakeAgentEntry(`fake-${provider}`, { provider });
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p2-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-p2-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const host = new AgentHost({
       logger,
@@ -423,7 +423,7 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
       promptParts: { session: 'SESSION-PROMPT', run: 'RUN-CONTEXT', conversation: 'TRIGGER' },
       tools: [],
       limits: { maxTurns: 42 },
-      workdir,
+      cwd,
       external: {
         agentId: entry.id,
         permission: 'read_only',

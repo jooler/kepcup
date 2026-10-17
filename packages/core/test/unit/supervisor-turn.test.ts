@@ -359,7 +359,7 @@ function summary(over: Partial<TaskSummary>): TaskSummary {
     state: 'running',
     status: 'running',
     writes: true,
-    workdir: '/ws',
+    cwd: '/ws',
     createdAt: 0,
     endedAt: null,
     queueReason: null,

@@ -22,7 +22,7 @@ function view(overrides: Partial<TaskView> = {}): TaskView {
     state: 'running',
     status: 'running',
     writes: true,
-    workdirKind: 'project',
+    cwdKind: 'project',
     queueReason: null,
     awaitingInput: false,
     questionMessageId: null,
@@ -110,7 +110,7 @@ describe('taskCardModel', () => {
       view({
         state: 'cancelled',
         status: 'cancelled',
-        workdirKind: 'workspace',
+        cwdKind: 'workspace',
         changes: { kind: 'workspace', files: ['notes/a.txt'], more: 0 },
       }),
     );

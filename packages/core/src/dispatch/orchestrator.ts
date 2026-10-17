@@ -727,7 +727,7 @@ export class Orchestrator {
           reason: 'task',
         });
       },
-      resolveWorkdir: (botId, conversationId, requested) => {
+      resolveCwd: (botId, conversationId, requested) => {
         const project = deps.projects.boundProject(conversationId);
         const available = project !== null && project.status === 'available';
         if (requested === 'project') {
@@ -809,7 +809,7 @@ export class Orchestrator {
         });
         if (change === 'created') this.#publishConversation(message.conversationId);
       },
-      describeWorkdir: (task, withChanges) => this.#describeTaskWorkdir(task, withChanges),
+      describeCwd: (task, withChanges) => this.#describeTaskCwd(task, withChanges),
       // 审查 M3: an ask_user wait gives the task job's provider slot back (the
       // tool runs inside that job, so the scheduler finds it by run id).
       yieldSlotWhile: (runId, wait, signal) => deps.scheduler.yieldSlotWhile(runId, wait, signal),
@@ -2818,7 +2818,7 @@ export class Orchestrator {
     batch: TriggerBatch;
     renderOptions: RenderMessageOptions;
     triggerContent: string;
-    workdir: string;
+    cwd: string;
     modelRef: string;
     /** Highest seq of the conversation context shown to a new session. */
     contextCutoff: number;
@@ -2826,7 +2826,7 @@ export class Orchestrator {
      * D75 task run (design 30 §8.5): the task owning the session row, the
      * task it continues (inherits that task's row), and whether it may write
      * (a read-only task is forced onto the `read_only` tier — the agent's
-     * writes inside the workdir would pass the tier logic before any gateway).
+     * writes inside the cwd would pass the tier logic before any gateway).
      */
     task?: { id: string; continuesTaskId: string | null; writes: boolean };
   }): Promise<{
@@ -2928,7 +2928,7 @@ export class Orchestrator {
           JSON.stringify({
             v: 1,
             sessionPrompt,
-            cwd: input.workdir,
+            cwd: input.cwd,
             permission,
             model: input.modelRef,
             effort: bot.profile.runtime.agent.effort,
@@ -3343,8 +3343,8 @@ export class Orchestrator {
       const botId = task.botId;
       const conversationId = task.conversationId;
       if (task.taskWrites === true) {
-        // Same fallback as the execution's workdir (#executeRun, 审查 L6).
-        const root = task.taskWorkdir ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        // Same fallback as the execution's cwd (#executeRun, 审查 L6).
+        const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
         control.waiting('等写入租约');
         try {
           await this.#deps.projects.ensureWriteLease(
@@ -3575,7 +3575,7 @@ export class Orchestrator {
         exec.kind === 'task'
           ? [
               this.#effectsBeforeInterrupt(exec.brief),
-              buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskWorkdir),
+              buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskCwd),
             ]
               .filter((part) => part.length > 0)
               .join('\n\n')
@@ -4224,13 +4224,13 @@ export class Orchestrator {
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
       // The agent's cwd: the bound project, else the workspace; a D75 task
-      // works in its resolved workdir (§3.4 task_workdir).
+      // works in its resolved cwd (§3.4 task_cwd).
       const projectPath = project !== null && project.status === 'available' ? project.path : null;
-      // A task without a recorded workdir works in the workspace — the root
+      // A task without a recorded cwd works in the workspace — the root
       // #startTask leased — never in an unleased project (审查 L6).
-      const agentWorkdir =
+      const agentCwd =
         exec.kind === 'task'
-          ? (exec.task.taskWorkdir ?? workspacePath)
+          ? (exec.task.taskCwd ?? workspacePath)
           : (projectPath ?? workspacePath);
       const agentRun =
         agentId.length > 0
@@ -4242,8 +4242,8 @@ export class Orchestrator {
               responseTools,
               workspacePath,
               // The <project> section only when the agent works in it (a
-              // workspace-workdir task does not, 审查 L10).
-              hasProject: projectPath !== null && agentWorkdir === projectPath,
+              // workspace-cwd task does not, 审查 L10).
+              hasProject: projectPath !== null && agentCwd === projectPath,
               memorySections,
               wikiTopics: wikiTopicsSection,
               skills: skillsSection,
@@ -4254,7 +4254,7 @@ export class Orchestrator {
               batch,
               renderOptions,
               triggerContent,
-              workdir: agentWorkdir,
+              cwd: agentCwd,
               modelRef,
               contextCutoff: Math.max(
                 -1,
@@ -4275,9 +4275,9 @@ export class Orchestrator {
       // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
       // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
-      // A D75 task runs there only when its workdir is the project; a write
+      // A D75 task runs there only when its cwd is the project; a write
       // task already holds its (pinned) write lease from #startTask (§5.1).
-      if (agentRun !== null && projectPath !== null && agentWorkdir === projectPath) {
+      if (agentRun !== null && projectPath !== null && agentCwd === projectPath) {
         const gate = await this.#agentProjectGate({
           runId,
           identity,
@@ -4311,7 +4311,7 @@ export class Orchestrator {
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {
-              workdir: agentWorkdir,
+              cwd: agentCwd,
               promptParts: agentRun.promptParts,
               external: {
                 agentId,
@@ -5533,10 +5533,10 @@ export class Orchestrator {
   }
 
   /**
-   * Where a task works and what it left behind (TaskHost.describeWorkdir;
+   * Where a task works and what it left behind (TaskHost.describeCwd;
    * `withChanges` false = the kind only, no lookup).
    */
-  #describeTaskWorkdir(
+  #describeTaskCwd(
     task: Run,
     _withChanges: boolean,
   ): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
@@ -5544,8 +5544,7 @@ export class Orchestrator {
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
-    const kind =
-      task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
+    const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'project' : 'workspace';
     // Change summary / file list / revert on the task card was retired —
     // never attach changes (disk writes still happen).
     return { kind, changes: null };
