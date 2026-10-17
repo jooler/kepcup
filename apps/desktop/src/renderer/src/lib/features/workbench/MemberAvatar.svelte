@@ -1,6 +1,6 @@
 <script lang="ts">
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
+  import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
 
@@ -23,7 +23,7 @@
 </script>
 
 {#if kind === 'project'}
-  <GroupAvatarStack members={previews} class={klass} />
+  <ProjectAvatarStack members={previews} class={klass} />
 {:else}
   <BotAvatar
     botId={id}

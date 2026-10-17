@@ -1,7 +1,7 @@
 import { PROJECT_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
 
 /** 一个成员头像在堆叠容器里的位置。x/y 是中心点占容器边长的百分比。 */
-export interface GroupAvatarSlot {
+export interface ProjectAvatarSlot {
   x: number;
   y: number;
   /** 直径，占容器边长的百分比。 */
@@ -10,7 +10,7 @@ export interface GroupAvatarSlot {
 }
 
 /** 群头像马赛克里代表「当前用户」的固定 id（不入库，仅 UI）。 */
-export const GROUP_AVATAR_USER_ID = '__user__';
+export const PROJECT_AVATAR_USER_ID = '__user__';
 
 /**
  * 群头像堆叠：
@@ -23,7 +23,7 @@ export const GROUP_AVATAR_USER_ID = '__user__';
  * 种子相同则布局稳定，避免每次渲染都跳。count 超过 PROJECT_MEMBER_PREVIEW_MAX（与 core
  * 下发的成员预览同一上限）时只给前这么多个位置：再多既看不清，也白白多渲染元素。
  */
-export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[] {
+export function projectAvatarSlots(total: number, seed: string): ProjectAvatarSlot[] {
   const count = Math.min(total, PROJECT_MEMBER_PREVIEW_MAX);
   if (count <= 0) return [];
   if (count === 1) return [{ x: 50, y: 50, size: 100, z: 1 }];
@@ -50,7 +50,7 @@ export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[]
   }
 
   const rng = mulberry32(hashString(seed));
-  const slots: GroupAvatarSlot[] = [];
+  const slots: ProjectAvatarSlot[] = [];
   for (let i = 0; i < count; i += 1) {
     // 1.00–1.20：最大比最小多 20%。
     const scale = 1 + rng() * 0.2;
@@ -79,11 +79,11 @@ export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[]
  * 总数封顶 PROJECT_MEMBER_PREVIEW_MAX。没有任何 Bot（成员未知）时返回空数组，
  * 调用方据此画默认群图标——只剩一个「用户」头像既不像群也不是成员信息。
  */
-export function groupAvatarFaces<T extends { id: string }>(
+export function projectAvatarFaces<T extends { id: string }>(
   members: readonly T[],
   user: T | null,
 ): T[] {
-  const bots = members.filter((member) => member.id !== GROUP_AVATAR_USER_ID);
+  const bots = members.filter((member) => member.id !== PROJECT_AVATAR_USER_ID);
   if (bots.length === 0) return [];
   return (user === null ? bots : [user, ...bots]).slice(0, PROJECT_MEMBER_PREVIEW_MAX);
 }
@@ -92,7 +92,7 @@ export function groupAvatarFaces<T extends { id: string }>(
  * 字影投影：1px 朝向群头像中心（字素 alpha 投影，不是瓦片容器 box-shadow）。
  * 中心位无方向时略向下。
  */
-export function shadowOffsetTowardCenter(slot: Pick<GroupAvatarSlot, 'x' | 'y'>): {
+export function shadowOffsetTowardCenter(slot: Pick<ProjectAvatarSlot, 'x' | 'y'>): {
   x: number;
   y: number;
 } {

@@ -31,7 +31,7 @@
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { createBotConversational } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
+  import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
@@ -634,7 +634,7 @@
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'project'}
-    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
+    <ProjectAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
       botId={conversation.directBotId ?? conversation.id}

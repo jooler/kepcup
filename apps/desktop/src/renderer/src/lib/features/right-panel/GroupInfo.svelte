@@ -8,7 +8,7 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { browserPages, hasBrowserPage } from '$lib/stores/browser-pages.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
+  import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
@@ -131,7 +131,7 @@
 
 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm" data-testid="group-info">
   <section class="flex flex-col items-center gap-3 pt-2">
-    <GroupAvatarStack members={faces} class="size-20" />
+    <ProjectAvatarStack members={faces} class="size-20" />
     <input
       bind:value={titleDraft}
       maxlength={100}
