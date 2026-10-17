@@ -61,7 +61,7 @@ describe('TodoStore', () => {
     expect(todoSchema.parse(todo)).toEqual(todo);
   });
 
-  it('encodes bot / group / none assignees and reads them back', () => {
+  it('encodes bot / project / none assignees and reads them back', () => {
     db.prepare(
       "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
@@ -73,32 +73,32 @@ describe('TodoStore', () => {
     });
     expect(bot.assignee).toEqual({ kind: 'bot', botId: 'bot_1' });
     const row = db
-      .prepare('select assignee_bot_id, assignee_group_id from todos where id = ?')
+      .prepare('select assignee_bot_id, assignee_project_id from todos where id = ?')
       .get(bot.id);
-    expect(row).toEqual({ assignee_bot_id: 'bot_1', assignee_group_id: null });
+    expect(row).toEqual({ assignee_bot_id: 'bot_1', assignee_project_id: null });
 
     const lead = store.insert({
       title: 'b',
       source: 'butler',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_2' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_2' },
     });
-    expect(lead.assignee).toEqual({ kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_2' });
+    expect(lead.assignee).toEqual({ kind: 'project', projectId: 'conv_g', leadBotId: 'bot_2' });
     const noLead = store.insert({
       title: 'c',
       source: 'user',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
     });
-    expect(noLead.assignee).toEqual({ kind: 'group', conversationId: 'conv_g', leadBotId: null });
+    expect(noLead.assignee).toEqual({ kind: 'project', projectId: 'conv_g', leadBotId: null });
 
     // Clearing the assignee clears both columns.
     const cleared = store.update(lead.id, { assignee: null });
     expect(cleared?.assignee).toBeNull();
     expect(
-      db.prepare('select assignee_bot_id, assignee_group_id from todos where id = ?').get(lead.id),
-    ).toEqual({ assignee_bot_id: null, assignee_group_id: null });
+      db.prepare('select assignee_bot_id, assignee_project_id from todos where id = ?').get(lead.id),
+    ).toEqual({ assignee_bot_id: null, assignee_project_id: null });
   });
 
-  it('keeps the group assignee when the group conversation is deleted (no FK: TodoService / reconcile own that)', () => {
+  it('keeps the project assignee when the project conversation is deleted (no FK: TodoService / reconcile own that)', () => {
     db.prepare(
       "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
     ).run();
@@ -106,23 +106,23 @@ describe('TodoStore', () => {
     const todo = store.insert({
       title: 'a',
       source: 'user',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
     });
     const lead = store.insert({
       title: 'b',
       source: 'user',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_2' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_2' },
     });
     db.prepare("delete from conversations where id = 'conv_g'").run();
-    // Never silently degraded to a bot assignee ("group + lead" read as the lead bot).
+    // Never silently degraded to a bot assignee ("project + lead" read as the lead bot).
     expect(store.get(todo.id)?.assignee).toEqual({
-      kind: 'group',
-      conversationId: 'conv_g',
+      kind: 'project',
+      projectId: 'conv_g',
       leadBotId: null,
     });
     expect(store.get(lead.id)?.assignee).toEqual({
-      kind: 'group',
-      conversationId: 'conv_g',
+      kind: 'project',
+      projectId: 'conv_g',
       leadBotId: 'bot_2',
     });
   });
@@ -166,8 +166,8 @@ describe('TodoStore', () => {
       createdAt: 1_000,
     });
     now = 3_000;
-    const blocked = store.update(todo.id, { status: 'draft', blockedReason: '群里无人认领' });
-    expect(blocked?.blockedReason).toBe('群里无人认领');
+    const blocked = store.update(todo.id, { status: 'draft', blockedReason: '项目里无人回应' });
+    expect(blocked?.blockedReason).toBe('项目里无人回应');
     const done = store.update(todo.id, { status: 'done', blockedReason: null, closedAt: 3_000 });
     expect(done).toMatchObject({ status: 'done', blockedReason: null, closedAt: 3_000 });
     const reopened = store.update(todo.id, { status: 'draft', closedAt: null });
@@ -213,7 +213,7 @@ describe('TodoStore', () => {
     const lead = store.insert({
       title: 'b',
       source: 'user',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_1' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_1' },
     });
     store.insert({ title: 'c', source: 'user', assignee: { kind: 'bot', botId: 'bot_9' } });
     expect(
@@ -222,12 +222,12 @@ describe('TodoStore', () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual([direct.id, lead.id].sort());
-    expect(store.listByAssigneeGroup('conv_g').map((t) => t.id)).toEqual([lead.id]);
+    expect(store.listByAssigneeProject('conv_g').map((t) => t.id)).toEqual([lead.id]);
     expect(store.reassignBot('bot_1', 'bot_2')).toBe(2);
     expect(store.get(direct.id)?.assignee).toEqual({ kind: 'bot', botId: 'bot_2' });
     expect(store.get(lead.id)?.assignee).toEqual({
-      kind: 'group',
-      conversationId: 'conv_g',
+      kind: 'project',
+      projectId: 'conv_g',
       leadBotId: 'bot_2',
     });
     expect(store.listByAssigneeBot('bot_1')).toEqual([]);

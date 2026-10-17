@@ -53,14 +53,14 @@
     parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
   );
   /**
-   * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 群聊）与输入框共用同一
+   * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一
    * 套规则，手动输入的全名同样命中着色。
    */
   const mentionTargets = $derived.by(() =>
     buildMentionTargets({
       memberBots: [],
       allBots: contacts.bots,
-      groups: chat.conversations
+      projects: chat.conversations
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
     }),

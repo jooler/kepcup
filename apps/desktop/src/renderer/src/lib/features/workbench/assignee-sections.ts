@@ -1,5 +1,5 @@
 /**
- * 事项详情「执行者」下拉：按左栏 Bot 列表的分组装桶（不再拆 Bot / 群两组）。
+ * 事项详情「执行者」下拉：按左栏 Bot 列表的分组装桶（不再拆 Bot / 项目组两组）。
  * 管家置顶规则与 AppSidebar 一致；无自定义分组时管家并进唯一列表。
  */
 import {
@@ -11,7 +11,7 @@ import type { MemberInfo } from './workbench-model';
 
 export type AssigneeOption = {
   key: string;
-  kind: 'bot' | 'group';
+  kind: 'bot' | 'project';
   memberId: string;
   name: string;
   isButler?: boolean;
@@ -44,14 +44,14 @@ function isButlerConversation(conversation: AssigneeConversation): boolean {
 
 export function buildAssigneeSections(input: {
   bots: readonly MemberInfo[];
-  groups: readonly MemberInfo[];
+  projects: readonly MemberInfo[];
   conversations: readonly AssigneeConversation[];
   sectionsState: SidebarSectionsState;
 }): AssigneeSectionLayout {
   const botById = new Map(input.bots.map((bot) => [bot.id, bot]));
-  const groupById = new Map(input.groups.map((group) => [group.id, group]));
+  const projectById = new Map(input.projects.map((project) => [project.id, project]));
   const seenBot = new Set<string>();
-  const seenGroup = new Set<string>();
+  const seenProject = new Set<string>();
 
   function fromConversation(conversation: AssigneeConversation): AssigneeOption | null {
     if (conversation.type === 'direct') {
@@ -69,14 +69,14 @@ export function buildAssigneeSections(input: {
       };
     }
     if (conversation.type === 'project') {
-      const group = groupById.get(conversation.id);
-      if (group === undefined) return null;
-      seenGroup.add(conversation.id);
+      const project = projectById.get(conversation.id);
+      if (project === undefined) return null;
+      seenProject.add(conversation.id);
       return {
-        key: `group:${conversation.id}`,
-        kind: 'group',
+        key: `project:${conversation.id}`,
+        kind: 'project',
         memberId: conversation.id,
-        name: group.name,
+        name: project.name,
       };
     }
     return null;
@@ -129,14 +129,14 @@ export function buildAssigneeSections(input: {
       name: bot.name,
     });
   }
-  for (const group of input.groups) {
-    if (seenGroup.has(group.id)) continue;
-    seenGroup.add(group.id);
+  for (const project of input.projects) {
+    if (seenProject.has(project.id)) continue;
+    seenProject.add(project.id);
     unassigned.items.push({
-      key: `group:${group.id}`,
-      kind: 'group',
-      memberId: group.id,
-      name: group.name,
+      key: `project:${project.id}`,
+      kind: 'project',
+      memberId: project.id,
+      name: project.name,
     });
   }
 

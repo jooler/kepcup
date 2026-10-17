@@ -46,7 +46,7 @@ function ctx(toBot: Bot | null = B, handoverId = 'hnd_1'): HandoverContext & { t
 
 const conversations: Record<string, Partial<Conversation>> = {
   conv_a: { id: 'conv_a', type: 'direct', directBotId: 'bot_a', readOnly: false, title: null },
-  conv_g: { id: 'conv_g', type: 'group', directBotId: null, readOnly: false, title: '盯价群' },
+  conv_g: { id: 'conv_g', type: 'project', directBotId: null, readOnly: false, title: '盯价项目组' },
 };
 
 function conversationPort(members: Record<string, string[]>) {
@@ -132,7 +132,7 @@ describe('watch adapter', () => {
       external: true,
     });
     expect(entries[0]!.detail).toContain('私聊');
-    expect(entries[1]!.detail).toContain('群「盯价群」');
+    expect(entries[1]!.detail).toContain('项目组「盯价项目组」');
     expect(entries[1]!.detail).toContain('已暂停');
   });
 
@@ -141,9 +141,9 @@ describe('watch adapter', () => {
     expect(adapter.validate(ctx(), 'watch:wat_d', 'copy')).toBe('网页监看只能移交');
     expect(adapter.validate(ctx(), 'watch:wat_d', 'move')).toContain('上限');
     const fresh = setup();
-    expect(fresh.adapter.validate(ctx(), 'watch:wat_g', 'move')).toBe('B 不在群「盯价群」里');
+    expect(fresh.adapter.validate(ctx(), 'watch:wat_g', 'move')).toBe('B 不在项目组「盯价项目组」里');
     // New target (not created yet): a blank bot is in no group.
-    expect(fresh.adapter.validate(ctx(null), 'watch:wat_g', 'move')).toContain('不在群');
+    expect(fresh.adapter.validate(ctx(null), 'watch:wat_g', 'move')).toContain('不在项目组');
     fresh.members['conv_g'] = ['bot_a', 'bot_b'];
     expect(fresh.adapter.validate(ctx(), 'watch:wat_g', 'move')).toBeNull();
     expect(fresh.adapter.validate(ctx(), 'watch:wat_d', 'move')).toBeNull();

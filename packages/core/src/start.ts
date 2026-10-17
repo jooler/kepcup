@@ -2025,6 +2025,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         update: (conversationId, patch) => {
           projects.update(conversationId, patch);
         },
+        setLead: (conversationId, botId) => {
+          projects.setLead(conversationId, botId);
+        },
       },
       workdirs: {
         get: (id) => workdirsService.get(id),

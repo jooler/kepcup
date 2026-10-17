@@ -93,7 +93,7 @@
   function ownerText(entry: ScheduleEntry): string {
     if (entry.botId !== null) return entry.botName ?? entry.botId;
     const group = chat.conversations.find((conversation) => conversation.id === entry.conversationId);
-    return t('schedules.workbenchGroup', { name: group?.title ?? entry.conversationId });
+    return t('schedules.workbenchProject', { name: group?.title ?? entry.conversationId });
   }
 
   function whenText(entry: ScheduleEntry): string {

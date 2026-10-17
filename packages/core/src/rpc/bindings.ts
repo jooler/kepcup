@@ -1053,6 +1053,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.payloadHash,
           input.routineSelection,
           input.handoverSelection,
+          input.leadBotId,
         ),
       }),
     ),

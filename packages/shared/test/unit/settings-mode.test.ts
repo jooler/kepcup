@@ -203,11 +203,11 @@ describe('effectiveMode: individual rules', () => {
     expect(effectiveMode(item('bot.model'), ctx({ tainted: true })).rules).toEqual(['untrusted']);
   });
 
-  it('group chats only get cards (§5.3 第 3 条)', () => {
+  it('project conversations only get cards (§5.3 第 3 条)', () => {
     expect(effectiveMode(item('models.default-light'), ctx({ isProject: true }))).toMatchObject({
       mode: 'confirm',
-      rules: ['group'],
-      reason: '群聊中只能出卡，不能直接修改',
+      rules: ['project'],
+      reason: '项目组中只能出卡，不能直接修改',
     });
   });
 
@@ -233,7 +233,7 @@ describe('effectiveMode: individual rules', () => {
       }),
     );
     expect(decision.mode).toBe('confirm');
-    expect(decision.rules).toEqual(['trigger', 'untrusted', 'group', 'other-bot']);
+    expect(decision.rules).toEqual(['trigger', 'untrusted', 'project', 'other-bot']);
     expect(decision.reason?.split('；')).toHaveLength(4);
   });
 
@@ -412,7 +412,7 @@ describe('effectiveMode: individual rules', () => {
       mode: 'user-only',
       acceptValues: false,
     });
-    expect(effectiveMode(item('group.title'), ctx())).toMatchObject({
+    expect(effectiveMode(item('project.title'), ctx())).toMatchObject({
       mode: 'confirm',
       acceptValues: true,
     });

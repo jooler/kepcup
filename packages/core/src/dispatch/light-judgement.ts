@@ -90,7 +90,7 @@ export function runLightJudgement<T>(spec: LightJudgementSpec<T>): Promise<T> {
           );
     if (route === null) {
       // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent（或已关闭 /
-      // 选了「群聊仅 @ 响应」）时轻量判断跳过（每个 Bot 只记一次 info，避免
+      // 选了「项目组仅 @ 响应」）时轻量判断跳过（每个 Bot 只记一次 info，避免
       // 每条项目消息刷日志）。
       if (!judgementSkipLogged.has(spec.botId)) {
         judgementSkipLogged.add(spec.botId);

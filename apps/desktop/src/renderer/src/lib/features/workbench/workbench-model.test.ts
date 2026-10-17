@@ -9,8 +9,8 @@ import {
   cutUtf16,
   effectiveStatus,
   filterMemos,
-  groupMembers,
   laneIdOfTodo,
+  projectMembers,
   memoToTodoDraft,
   parseDispatchText,
   runningBotSet,
@@ -75,14 +75,14 @@ const bots: MemberInfo[] = [
   { id: 'd', name: 'D' },
   { id: 'butler', name: '管家', isButler: true },
 ];
-const groups: MemberInfo[] = [{ id: 'g1', name: '产品组' }];
+const projects: MemberInfo[] = [{ id: 'g1', name: '产品组' }];
 
 describe('buildLanes', () => {
-  it('未指派在最前，之后 Bot 在群之前', () => {
+  it('未指派在最前，之后 Bot 在项目组之前', () => {
     const lanes = buildLanes({
       todos: [
         todo('t1', {
-          assignee: { kind: 'group', conversationId: 'g1', leadBotId: null },
+          assignee: { kind: 'project', projectId: 'g1', leadBotId: null },
           assigneeName: '产品组',
         }),
         todo('t2', toBot('a')),
@@ -90,9 +90,9 @@ describe('buildLanes', () => {
       ],
       schedules: [],
       bots,
-      groups,
+      projects,
     });
-    expect(lanes.map((lane) => lane.id)).toEqual(['unassigned', 'bot:a', 'group:g1']);
+    expect(lanes.map((lane) => lane.id)).toEqual(['unassigned', 'bot:a', 'project:g1']);
   });
 
   it('没有未指派事项时不出现未指派道；已结束的事项不进道', () => {
@@ -100,7 +100,7 @@ describe('buildLanes', () => {
       todos: [todo('t1', toBot('a', { status: 'done' })), todo('t2', toBot('b'))],
       schedules: [],
       bots,
-      groups,
+      projects,
     });
     expect(lanes.map((lane) => lane.id)).toEqual(['bot:b']);
   });
@@ -115,7 +115,7 @@ describe('buildLanes', () => {
       ],
       schedules: [],
       bots,
-      groups,
+      projects,
     });
     expect(lanes.map((lane) => lane.memberId)).toEqual(['c', 'b', 'd', 'a']);
   });
@@ -129,7 +129,7 @@ describe('buildLanes', () => {
       ],
       schedules: [],
       bots,
-      groups,
+      projects,
     });
     expect(lanes.map((lane) => lane.memberId)).toEqual(['c', 'a', 'b']);
   });
@@ -146,7 +146,7 @@ describe('buildLanes', () => {
       ],
       schedules: [self('s1', 'a', { nextFireAt: 3_000 })],
       bots,
-      groups,
+      projects,
     });
     const lane = lanes[0]!;
     expect(lane.todos.map((item) => item.id)).toEqual([
@@ -172,7 +172,7 @@ describe('buildLanes', () => {
         self('s4', 'c', { botId: null }),
       ],
       bots,
-      groups,
+      projects,
     });
     expect(lanes.map((lane) => lane.id)).toEqual(['bot:b']);
     expect(lanes[0]!.selfSchedules.map((item) => item.id)).toEqual(['s1']);
@@ -186,20 +186,20 @@ describe('buildLanes', () => {
       ],
       schedules: [],
       bots,
-      groups: [],
+      projects: [],
     });
     expect(lanes.map((lane) => lane.name).sort()).toEqual(['A', 'x']);
   });
 
-  it('群事项的负责 Bot 不另起道', () => {
+  it('项目组事项的负责 Bot 不另起道', () => {
     const t = todo('t1', {
-      assignee: { kind: 'group', conversationId: 'g1', leadBotId: 'a' },
+      assignee: { kind: 'project', projectId: 'g1', leadBotId: 'a' },
       assigneeName: '产品组',
       leadBotName: 'A',
     });
-    expect(laneIdOfTodo(t)).toBe('group:g1');
-    expect(buildLanes({ todos: [t], schedules: [], bots, groups }).map((l) => l.id)).toEqual([
-      'group:g1',
+    expect(laneIdOfTodo(t)).toBe('project:g1');
+    expect(buildLanes({ todos: [t], schedules: [], bots, projects }).map((l) => l.id)).toEqual([
+      'project:g1',
     ]);
   });
 });
@@ -334,15 +334,15 @@ describe('成员名单', () => {
     ]);
   });
 
-  it('groupMembers：只要项目组；assignableOnly 去掉只读群', () => {
+  it('projectMembers：只要项目组；assignableOnly 去掉只读项目组', () => {
     const conversations = [
       { id: 'g1', type: 'project', title: '产品组', readOnly: false },
       { id: 'g2', type: 'project', title: null, readOnly: true },
       { id: 'd1', type: 'direct', title: null, readOnly: false },
     ];
-    expect(groupMembers(conversations).map((m) => m.id)).toEqual(['g1', 'g2']);
-    expect(groupMembers(conversations, true).map((m) => m.id)).toEqual(['g1']);
-    expect(groupMembers(conversations)[1]!.name).toBe('g2');
+    expect(projectMembers(conversations).map((m) => m.id)).toEqual(['g1', 'g2']);
+    expect(projectMembers(conversations, true).map((m) => m.id)).toEqual(['g1']);
+    expect(projectMembers(conversations)[1]!.name).toBe('g2');
   });
 
   it('runningBotSet 取各会话 runningBotIds 的并集', () => {
@@ -385,7 +385,7 @@ describe('周期事项的最近一次执行', () => {
       ],
       schedules: [],
       bots,
-      groups,
+      projects,
     });
     expect(lanes.map((lane) => lane.memberId)).toEqual(['a', 'b']);
     expect(lanes[0]!.counts).toEqual({ draft: 0, scheduled: 0, inProgress: 0, delivered: 1 });
@@ -529,7 +529,7 @@ describe('blockedNotice', () => {
       kind: 'error',
       reason: '执行失败：模型不可用',
     });
-    expect(n('draft', '派发失败：群已只读')?.kind).toBe('error');
+    expect(n('draft', '派发失败：项目组已只读')?.kind).toBe('error');
     expect(n('draft', '执行已被取消')?.kind).toBe('warn');
     expect(n('draft', '对话已删除')?.kind).toBe('warn');
     expect(n('in_progress', '该 Bot 正在设置中，完成设置后才会处理')?.kind).toBe('note');

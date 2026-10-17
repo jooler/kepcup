@@ -63,7 +63,7 @@ export const SETTING_CARD_TERMINAL_STATES: ReadonlySet<SettingCardState> = new S
 ]);
 
 /**
- * 卡片作用对象（条目 `scope` 决定哪个非空）：`bot` 项 → 被修改的 Bot；`group` 项 → 群会话；
+ * 卡片作用对象（条目 `scope` 决定哪个非空）：`bot` 项 → 被修改的 Bot；`project` 项 → 项目组会话；
  * `workdir` 项 → 工作目录；`global` 项全空。卡片所在的对话由消息行给出，不重复。
  */
 export const settingTargetSchema = z.object({
@@ -98,7 +98,7 @@ export const settingCardContentSchema = z.object({
   proposedText: z.string().optional(),
   /** Bot 给的一句话理由（经清洗），显示在卡片上。 */
   reason: z.string(),
-  /** 宿主收紧的原因（`effectiveMode` 的 reason，例如「群聊中只能出卡」）；没有收紧时缺省。 */
+  /** 宿主收紧的原因（`effectiveMode` 的 reason，例如「项目组中只能出卡」）；没有收紧时缺省。 */
   modeReason: z.string().optional(),
   state: settingCardStateSchema,
   /** 实际应用后的值（applied 时；direct 回执卡 = 新值，用于撤销）。 */
@@ -202,7 +202,7 @@ export const settingsReadResultSchema = z.union([
     owner: settingOwnerSchema,
     status: settingItemStatusSchema,
     fields: z.array(settingsReadFieldSchema),
-    /** 本次上下文里实际可用的档位与原因（如「群聊中只能出卡」）。 */
+    /** 本次上下文里实际可用的档位与原因（如「项目组中只能出卡」）。 */
     decision: settingModeDecisionSchema,
   }),
   /** 未知 id：最接近的候选。 */

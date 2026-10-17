@@ -69,9 +69,9 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('general.theme'), context())).toBe(true);
   });
 
-  it('群卡要有群会话，工作目录卡要有工作目录', () => {
-    expect(cardEmbeddable(item('group.title'), context({ conversationId: null }))).toBe(false);
-    expect(cardEmbeddable(item('group.members'), context())).toBe(true);
+  it('项目组卡要有项目组会话，工作目录卡要有工作目录', () => {
+    expect(cardEmbeddable(item('project.title'), context({ conversationId: null }))).toBe(false);
+    expect(cardEmbeddable(item('project.members'), context())).toBe(true);
     expect(cardEmbeddable(item('workdir.ports'), context({ workdirId: null }))).toBe(false);
     expect(cardEmbeddable(item('workdir.protect-rules'), context())).toBe(true);
   });

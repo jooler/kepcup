@@ -13,9 +13,9 @@ const bots: MemberInfo[] = [
   { id: 'b', name: '小贝' },
   { id: 'orphan', name: '未聊过' },
 ];
-const groups: MemberInfo[] = [
+const projects: MemberInfo[] = [
   { id: 'g1', name: '产品组' },
-  { id: 'g2', name: '只读群' },
+  { id: 'g2', name: '只读项目组' },
 ];
 
 function conv(partial: Partial<AssigneeConversation> & Pick<AssigneeConversation, 'id' | 'type'>): AssigneeConversation {
@@ -43,7 +43,7 @@ describe('buildAssigneeSections', () => {
     ];
     const layout = buildAssigneeSections({
       bots,
-      groups: [groups[0]!],
+      projects: [projects[0]!],
       conversations,
       sectionsState: emptySidebarSections(),
     });
@@ -53,7 +53,7 @@ describe('buildAssigneeSections', () => {
     expect(layout.sections[0]!.items.map((item) => item.key)).toEqual([
       'bot:butler',
       'bot:a',
-      'group:g1',
+      'project:g1',
       'bot:b',
       'bot:orphan',
     ]);
@@ -79,24 +79,24 @@ describe('buildAssigneeSections', () => {
     ];
     const layout = buildAssigneeSections({
       bots,
-      groups: [groups[0]!],
+      projects: [projects[0]!],
       conversations,
       sectionsState: state,
     });
     expect(layout.showHeaders).toBe(true);
     expect(layout.butler.map((item) => item.key)).toEqual(['bot:butler']);
     expect(layout.sections.map((section) => section.id)).toEqual(['sec_work', UNASSIGNED_SECTION_ID]);
-    expect(layout.sections[0]!.items.map((item) => item.key)).toEqual(['bot:a', 'group:g1']);
+    expect(layout.sections[0]!.items.map((item) => item.key)).toEqual(['bot:a', 'project:g1']);
     expect(layout.sections[1]!.items.map((item) => item.key)).toEqual(['bot:b', 'bot:orphan']);
   });
 
-  it('只读群不在 groups 名单里时不会出现', () => {
+  it('只读项目组不在 projects 名单里时不会出现', () => {
     const conversations: AssigneeConversation[] = [
-      conv({ id: 'g2', type: 'project', title: '只读群', readOnly: true }),
+      conv({ id: 'g2', type: 'project', title: '只读项目组', readOnly: true }),
     ];
     const layout = buildAssigneeSections({
       bots: [],
-      groups: [],
+      projects: [],
       conversations,
       sectionsState: emptySidebarSections(),
     });

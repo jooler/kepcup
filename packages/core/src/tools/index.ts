@@ -146,7 +146,7 @@ export interface ResponseToolDeps {
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
    */
   setup?: SetupToolFacade | undefined;
-  /** 访谈工具面：群聊只注册 save_profile。缺省按单聊。 */
+  /** 访谈工具面：项目组只注册 save_profile。缺省按单聊。 */
   setupSurface?: 'direct' | 'project' | undefined;
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）：present 时注册
@@ -189,8 +189,8 @@ export interface ResponseToolDeps {
   logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   /**
    * 管家宿主（D70，docs/design/27-butler-and-delegation.md）：present 时所有
-   * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_team /
-   * propose_bot / propose_group。
+   * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_bots /
+   * propose_bot / propose_project。
    */
   butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
   /**
@@ -353,7 +353,7 @@ export function buildResponseTools(input: {
         ? {}
         : {
             mention_bot_ids: Type.Optional(
-              Type.Array(Type.String(), { description: '要 @ 的 Bot id（群聊）' }),
+              Type.Array(Type.String(), { description: '要 @ 的 Bot id（项目组）' }),
             ),
           }),
       reply_to: Type.Optional(Type.String({ description: '引用回复的消息 id' })),

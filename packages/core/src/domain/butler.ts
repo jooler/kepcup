@@ -23,7 +23,7 @@ export function butlerProfileTemplate(): Partial<BotProfile> & { identity: { nam
     role: {
       expertise: '需求分诊、Bot 团队规划、任务路由与转交',
       responsibilities:
-        '了解用户的工作与生活场景，提议需要的领域 Bot 与群组；把用户的请求路由给合适的 Bot，必要时代为转交任务。',
+        '了解用户的工作与生活场景，提议需要的领域 Bot 与项目组；把用户的请求路由给合适的 Bot，必要时代为转交任务。',
     },
   };
 }
@@ -45,4 +45,4 @@ export const BUTLER_SETUP_FIRST_OPTIONS = [
  * 不开访谈，只说明能做什么。
  */
 export const BUTLER_WELCOME_TEXT =
-  '你好，我是你的管家。以后不确定该找哪个 Bot 时，直接告诉我就行：我可以帮你判断该交给谁、替你把任务转交过去，也可以根据你的需要提议新建 Bot 或群组。';
+  '你好，我是你的管家。以后不确定该找哪个 Bot 时，直接告诉我就行：我可以帮你判断该交给谁、替你把任务转交过去，也可以根据你的需要提议新建 Bot 或项目组。';

@@ -8,7 +8,7 @@ import { SETTING_DIRECT_TRIGGERS, type Message, type TriggerReason } from '@kepc
 /**
  * 触发批是否「用户本人发起」：批里每条消息都是用户本人发的普通消息——不是组件回传
  * （`origin: 'widget'`）、不是跨 Bot 代发（`origin: 'delegation'`），也没有系统事件或其他 Bot
- * 的发言（群聊里其他 Bot 的 mention / reply、邮件 / 监看 / 定时唤醒的内部事件都会让它为 false）。
+ * 的发言（项目组里其他 Bot 的 mention / reply、邮件 / 监看 / 定时唤醒的内部事件都会让它为 false）。
  * 合并批（D75 §3.2）的每一部分的触发原因也都必须在直改白名单里。空批 = false。
  */
 export function triggerFromUser(input: {
@@ -57,9 +57,9 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'ask_user',
   'ask_question',
   'propose_profile_change',
-  'propose_team',
+  'propose_bots',
   'propose_bot',
-  'propose_group',
+  'propose_project',
   'propose_handover',
   'suggest_route',
   'save_profile',

@@ -119,7 +119,7 @@ describe('revealSettingsAnchor', () => {
   });
 });
 
-describe('focusSettingsAnchor（群设置 / 工作目录设置对话框）', () => {
+describe('focusSettingsAnchor（项目设置 / 工作目录设置对话框）', () => {
   test('滚进视野并聚焦锚点内第一个输入控件', () => {
     const calls: string[] = [];
     const root = {

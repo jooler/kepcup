@@ -360,7 +360,7 @@ describe('project silent routing (D92 T1a WP3)', () => {
     ]);
     await core.rpc.call('todos.create', {
       title: '盘点库存',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: m.id },
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: m.id },
       when: 'now',
     });
 

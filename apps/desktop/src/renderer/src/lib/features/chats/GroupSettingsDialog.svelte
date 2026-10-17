@@ -15,7 +15,7 @@
   import {
     groupMemberPlan,
     proposedMemberIds,
-  } from '$lib/features/settings-card/group-members';
+  } from '$lib/features/settings-card/project-members';
   let {
     conversationId,
     open = $bindable(false),
@@ -30,7 +30,7 @@
   }: {
     conversationId: string;
     open?: boolean;
-    /** 打开后要聚焦的锚点（对话内设置卡深链：group-title / group-members）；消费后复位。 */
+    /** 打开后要聚焦的锚点（对话内设置卡深链：project-title / project-members）；消费后复位。 */
     anchor?: string | null;
     /** 对话内设置卡：只显示改名或成员，不包对话框、不提供解散群。 */
     embedded?: boolean;
@@ -98,7 +98,7 @@
 
   let cardTitle = $state('');
   let cardTitleReady = false;
-  /** 用户在卡上亲手勾 / 不勾的 Bot（没碰过的跟随当前成员与 Bot 的建议，见 group-members.ts）。 */
+  /** 用户在卡上亲手勾 / 不勾的 Bot（没碰过的跟随当前成员与 Bot 的建议，见 project-members.ts）。 */
   let memberChoices = $state<Record<string, boolean>>({});
   let cardBusy = $state(false);
 
@@ -147,7 +147,7 @@
     cardBusy = true;
     try {
       const out = await applySettingItem({
-        itemId: 'group.title',
+        itemId: 'project.title',
         values: { title: next },
         expected,
         target: { conversationId },

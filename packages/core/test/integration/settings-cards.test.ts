@@ -220,7 +220,7 @@ describe('conversational app settings', () => {
     await sendDrafts(core, conv.id, [{ text: '把默认模型换成轻量的', mentions: [a.id] }]);
     const { card } = await waitForCard(core, conv.id);
     expect(card).toMatchObject({ botId: a.id, mode: 'confirm', state: 'pending' });
-    expect(card.modeReason).toContain('群聊中只能出卡');
+    expect(card.modeReason).toContain('项目组中只能出卡');
     expect((await settingsOf(core)).defaultMainModel).toBe('custom:mock/mock-main');
   }, 30_000);
 

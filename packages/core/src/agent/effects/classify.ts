@@ -179,9 +179,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   finish_setup: 'local',
   list_bots: 'none',
   suggest_route: 'none',
-  propose_team: 'local',
+  propose_bots: 'local',
   propose_bot: 'local',
-  propose_group: 'local',
+  propose_project: 'local',
   /** D88：只读盘点；移交卡只提交审批，执行在用户确认后由宿主完成。 */
   inspect_bot_assets: 'none',
   propose_handover: 'local',

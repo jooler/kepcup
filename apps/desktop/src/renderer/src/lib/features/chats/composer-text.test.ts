@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot } from '@kepcup/shared';
-import { groupMentionToken } from '@kepcup/shared';
+import { projectMentionToken } from '@kepcup/shared';
 import { buildMentionTargets, resolveMentionTokens, segmentComposerText } from './composer-text';
 
 function bot(id: string, name: string, systemRole: Bot['systemRole'] = null): Bot {
@@ -20,9 +20,9 @@ function bot(id: string, name: string, systemRole: Bot['systemRole'] = null): Bo
 const targets = buildMentionTargets({
   memberBots: [bot('bot_jia', '阿甲')],
   allBots: [bot('bot_jia', '阿甲'), bot('bot_bing', '阿丙'), bot('bot_long', '很长很长的名字')],
-  groups: [
+  projects: [
     { id: 'conv_g1', title: '项目讨论组' },
-    { id: 'conv_self', title: '当前群' },
+    { id: 'conv_self', title: '当前项目组' },
   ],
   currentConversationId: 'conv_self',
 });
@@ -33,16 +33,16 @@ describe('buildMentionTargets', () => {
       'bot_jia',
       'bot_bing',
       'bot_long',
-      groupMentionToken('conv_g1'),
+      projectMentionToken('conv_g1'),
     ]);
-    expect(targets.map((t) => t.kind)).toEqual(['bot', 'bot', 'bot', 'group']);
+    expect(targets.map((t) => t.kind)).toEqual(['bot', 'bot', 'bot', 'project']);
   });
 
   it('同名先到先得（成员优先于同名外部 Bot）', () => {
     const merged = buildMentionTargets({
       memberBots: [bot('m1', '同名')],
       allBots: [bot('a1', '同名')],
-      groups: [{ id: 'g1', title: '同名' }],
+      projects: [{ id: 'g1', title: '同名' }],
     });
     expect(merged).toEqual([
       { token: 'm1', name: '同名', kind: 'bot', bio: '同名的简介', butler: false },
@@ -53,7 +53,7 @@ describe('buildMentionTargets', () => {
     const withButler = buildMentionTargets({
       memberBots: [bot('bot_butler', '管家', 'butler'), bot('bot_jia', '阿甲')],
       allBots: [],
-      groups: [],
+      projects: [],
     });
     expect(withButler.map((t) => t.butler)).toEqual([true, false]);
   });
@@ -62,7 +62,7 @@ describe('buildMentionTargets', () => {
     const filtered = buildMentionTargets({
       memberBots: [],
       allBots: [bot('bot_self', '管家'), bot('bot_other', '阿丙')],
-      groups: [],
+      projects: [],
       excludeBotIds: ['bot_self'],
     });
     expect(filtered.map((t) => t.token)).toEqual(['bot_other']);
@@ -115,7 +115,7 @@ describe('segmentComposerText', () => {
 describe('resolveMentionTokens', () => {
   it('手动输入的全名解析为 token', () => {
     const tokens = resolveMentionTokens('@阿甲 @项目讨论组 看看', targets);
-    expect(tokens).toEqual(['bot_jia', groupMentionToken('conv_g1')]);
+    expect(tokens).toEqual(['bot_jia', projectMentionToken('conv_g1')]);
   });
 
   it('无命中返回空', () => {

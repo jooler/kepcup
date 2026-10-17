@@ -45,7 +45,7 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'bot-skills',
   'field-editor',
   'appearance',
-  'group-title',
+  'project-title',
   // 已安装 MCP 的启停：组件经 settings.items.apply（core 写锁 + CAS，锁外收回授权）。
   'mcp-servers',
 ]);
@@ -53,8 +53,8 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
 /**
  * 组件用原来的**条目级**保存 RPC 自己写（都不是整表快照提交），成功后 `onSaved` 让宿主核对结卡。
  * 宿主不另给「应用」：
- * - 群成员：`projects.addMembers` / `projects.removeMember` 按 Bot 增删（移出是异步级联，不能放进
- *   设置写锁）；卡片只提交用户亲手勾 / 不勾的差异，见 `group-members.ts`。
+ * - 项目成员：`projects.addMembers` / `projects.removeMember` 按 Bot 增删（移出是异步级联，不能放进
+ *   设置写锁）；卡片只提交用户亲手勾 / 不勾的差异，见 `project-members.ts`。
  * - 工作目录两项是 user-only，保护规则与风险确认留在组件，宿主不写。
  * - 连接的逐工具策略：`apps.connections.setToolPolicy` 只改这一条工具（同步写一行），策略变严时
  *   中断正在使用该连接的任务。
@@ -63,7 +63,7 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
  * 仍保留「我已设置好」，所以不放进这个集合。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
-  'group-members',
+  'project-members',
   'workdir-settings',
   'tool-policy',
   'browser-profiles',

@@ -46,7 +46,7 @@ export function rrfMerge(
 }
 
 export interface RetrievalFilters {
-  /** Group chats exclude sensitive entries and annotate private origins. */
+  /** Project conversations exclude sensitive entries and annotate private origins. */
   isProject: boolean;
   now: number;
 }

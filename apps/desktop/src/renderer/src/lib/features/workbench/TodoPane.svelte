@@ -12,7 +12,7 @@
     botMembers,
     buildLanes,
     closedTodos,
-    groupMembers,
+    projectMembers,
     runningBotSet,
   } from './workbench-model';
   import { rpcErrorText } from './todo-actions';
@@ -22,20 +22,20 @@
 
   /**
    * 事项栏（D90 §5.2，P0 只有「按成员」视图）：快速新建（回车存为草案）→ 成员道
-   * （未指派在前，其后有事的 Bot 与群）→ 最近结束。
+   * （未指派在前，其后有事的 Bot 与项目组）→ 最近结束。
    */
   const bots = $derived(botMembers(contacts.bots));
-  // 会话列表每条消息都会换新数组：只取成员签名（群 id / 标题、在跑的 Bot），签名不变就不重算分道。
+  // 会话列表每条消息都会换新数组：只取成员签名（项目组 id / 标题、在跑的 Bot），签名不变就不重算分道。
   const SEP = '\u0001';
-  const groupSig = $derived(
-    groupMembers(chat.conversations)
-      .map((group) => `${group.id}${SEP}${group.name}`)
+  const projectSig = $derived(
+    projectMembers(chat.conversations)
+      .map((project) => `${project.id}${SEP}${project.name}`)
       .join(SEP + SEP),
   );
-  const groups = $derived(
-    groupSig === ''
+  const projects = $derived(
+    projectSig === ''
       ? []
-      : groupSig.split(SEP + SEP).map((entry) => {
+      : projectSig.split(SEP + SEP).map((entry) => {
           const [id = '', name = ''] = entry.split(SEP);
           return { id, name };
         }),
@@ -43,7 +43,7 @@
   const runningSig = $derived([...runningBotSet(chat.conversations)].sort().join(','));
   const running = $derived(new Set(runningSig === '' ? [] : runningSig.split(',')));
   const lanes = $derived(
-    buildLanes({ todos: workbench.todos, schedules: workbench.schedules, bots, groups }),
+    buildLanes({ todos: workbench.todos, schedules: workbench.schedules, bots, projects }),
   );
   const closed = $derived(closedTodos(workbench.todos));
 

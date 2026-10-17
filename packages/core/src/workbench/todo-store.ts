@@ -15,7 +15,7 @@ interface TodoRow {
   title: string;
   notes: string;
   assignee_bot_id: string | null;
-  assignee_group_id: string | null;
+  assignee_project_id: string | null;
   status: TodoStatus;
   source: TodoSource;
   memo_id: string | null;
@@ -37,15 +37,15 @@ interface TodoRunRow {
 }
 
 /**
- * Executor encoding (docs/design/39-workbench.md §4.1): a group assignee has
- * `assignee_group_id` set (`assignee_bot_id` = optional lead bot); a bot
- * assignee has only `assignee_bot_id`; both empty = unassigned.
+ * Executor encoding (docs/design/39-workbench.md §4.1; D92 T1a renamed the column): a
+ * project assignee has `assignee_project_id` set (`assignee_bot_id` = optional lead
+ * override); a bot assignee has only `assignee_bot_id`; both empty = unassigned.
  */
 function assigneeFromRow(row: TodoRow): TodoAssignee | null {
-  if (row.assignee_group_id !== null) {
+  if (row.assignee_project_id !== null) {
     return {
-      kind: 'group',
-      conversationId: row.assignee_group_id,
+      kind: 'project',
+      projectId: row.assignee_project_id,
       leadBotId: row.assignee_bot_id,
     };
   }
@@ -55,11 +55,11 @@ function assigneeFromRow(row: TodoRow): TodoAssignee | null {
 
 function assigneeToColumns(assignee: TodoAssignee | null): {
   botId: string | null;
-  groupId: string | null;
+  projectId: string | null;
 } {
-  if (assignee === null) return { botId: null, groupId: null };
-  if (assignee.kind === 'bot') return { botId: assignee.botId, groupId: null };
-  return { botId: assignee.leadBotId, groupId: assignee.conversationId };
+  if (assignee === null) return { botId: null, projectId: null };
+  if (assignee.kind === 'bot') return { botId: assignee.botId, projectId: null };
+  return { botId: assignee.leadBotId, projectId: assignee.projectId };
 }
 
 export function rowToTodo(row: TodoRow): Todo {
@@ -163,11 +163,11 @@ export class TodoStore {
     const id = newId('todo');
     const now = this.clock.now();
     const status = input.status ?? 'draft';
-    const { botId, groupId } = assigneeToColumns(input.assignee ?? null);
+    const { botId, projectId } = assigneeToColumns(input.assignee ?? null);
     this.db
       .prepare(
         `insert into todos
-           (id, title, notes, assignee_bot_id, assignee_group_id, status, source,
+           (id, title, notes, assignee_bot_id, assignee_project_id, status, source,
             memo_id, blocked_reason, created_at, updated_at, closed_at)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -176,7 +176,7 @@ export class TodoStore {
         input.title,
         input.notes ?? '',
         botId,
-        groupId,
+        projectId,
         status,
         input.source,
         input.memoId ?? null,
@@ -204,7 +204,7 @@ export class TodoStore {
     const current = this.get(id);
     if (current === null) return null;
     const assignee = patch.assignee !== undefined ? patch.assignee : current.assignee;
-    const { botId, groupId } = assigneeToColumns(assignee);
+    const { botId, projectId } = assigneeToColumns(assignee);
     // closed_at follows the status: set on entering done / cancelled, cleared on leaving them
     // (an explicit patch value wins).
     const nextStatus = patch.status ?? current.status;
@@ -217,7 +217,7 @@ export class TodoStore {
     const closedAt = patch.closedAt !== undefined ? patch.closedAt : derivedClosedAt;
     this.db
       .prepare(
-        `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_group_id = ?,
+        `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_project_id = ?,
            status = ?, source = ?, blocked_reason = ?, closed_at = ?, updated_at = ?
          where id = ?`,
       )
@@ -225,7 +225,7 @@ export class TodoStore {
         patch.title ?? current.title,
         patch.notes ?? current.notes,
         botId,
-        groupId,
+        projectId,
         nextStatus,
         patch.source ?? current.source,
         patch.blockedReason !== undefined ? patch.blockedReason : current.blockedReason,
@@ -282,7 +282,7 @@ export class TodoStore {
     ).map(rowToTodo);
   }
 
-  /** Todos whose executor is this bot (bot assignee or group lead bot). */
+  /** Todos whose executor is this bot (bot assignee or project lead override). */
   listByAssigneeBot(botId: string): Todo[] {
     return (
       this.db
@@ -291,19 +291,19 @@ export class TodoStore {
     ).map(rowToTodo);
   }
 
-  /** Todos assigned to this group. */
-  listByAssigneeGroup(conversationId: string): Todo[] {
+  /** Todos assigned to this project conversation. */
+  listByAssigneeProject(projectId: string): Todo[] {
     return (
       this.db
         .prepare(
-          'select * from todos where assignee_group_id = ? order by updated_at desc, id desc',
+          'select * from todos where assignee_project_id = ? order by updated_at desc, id desc',
         )
-        .all(conversationId) as TodoRow[]
+        .all(projectId) as TodoRow[]
     ).map(rowToTodo);
   }
 
   /**
-   * D88 handover: move every open todo of `fromBotId` (bot executor or group lead) to `toBotId`.
+   * D88 handover: move every open todo of `fromBotId` (bot executor or lead override) to `toBotId`.
    * Closed (done / cancelled) todos keep their historical executor.
    */
   reassignBot(fromBotId: string, toBotId: string): number {

@@ -495,7 +495,7 @@ export class LifecycleService {
 
   /**
    * Removes one bot from one project and runs the per-conversation cascade
-   * (docs/dev/03-data-model.md "从群中移除 Bot", P05): cancel its runs in this
+   * (docs/dev/03-data-model.md "从项目组中移除 Bot", P05): cancel its runs in this
    * conversation, delete the member row, revoke this pair's grants, delete
    * this pair's workspace. History messages stay (sender keeps its name).
    */
@@ -519,7 +519,7 @@ export class LifecycleService {
     }
 
     // P10: the bot's schedules in this project are cancelled
-    // (03-data-model.md 从群中移除 Bot).
+    // (03-data-model.md 从项目组中移除 Bot).
     try {
       this.deps.schedules?.cancelForBotInConversation(botId, conversationId);
     } catch (error) {

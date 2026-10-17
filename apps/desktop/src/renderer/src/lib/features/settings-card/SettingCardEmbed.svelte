@@ -184,7 +184,8 @@
     onSaved={() => onSaved()}
     {onConflict}
   />
-{:else if item.card === 'group-title' && conversationId !== null}
+{:else if item.card === 'project-title' && conversationId !== null}
+  <!-- WP7 replaces these with ProjectMembersEditor / ProjectSettingsPage embeds -->
   <GroupSettingsDialog
     embedded
     focus="title"
@@ -195,7 +196,25 @@
     onSaved={() => onSaved()}
     {onConflict}
   />
-{:else if item.card === 'group-members' && conversationId !== null}
+{:else if item.card === 'project-members' && conversationId !== null}
+  <GroupSettingsDialog
+    embedded
+    focus="members"
+    {conversationId}
+    {prefill}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'project-goal' && conversationId !== null}
+  <!-- WP4 临时：目标暂在群设置对话框改名段旁边展示不了，先落成员段；WP7 换详情页内嵌 -->
+  <GroupSettingsDialog
+    embedded
+    focus="members"
+    {conversationId}
+    {prefill}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'project-lead' && conversationId !== null}
+  <!-- WP4 临时：负责人暂由群设置对话框代管；WP7 换 ProjectMembersEditor 内嵌 -->
   <GroupSettingsDialog
     embedded
     focus="members"

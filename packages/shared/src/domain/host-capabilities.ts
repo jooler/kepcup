@@ -187,7 +187,7 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
       'inspect_bot_assets',
       'propose_handover',
     ],
-    butlerTools: ['propose_bot', 'propose_group', 'propose_team', 'suggest_route'],
+    butlerTools: ['propose_bot', 'propose_project', 'propose_bots', 'suggest_route'],
   }),
   pack({
     id: 'browser',

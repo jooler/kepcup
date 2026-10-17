@@ -29,7 +29,7 @@ import {
   agentSetupReasonOf,
   agentToolApprovalPayloadSchema,
   findAgentEntry,
-  groupMentionToken,
+  projectMentionToken,
   newId,
   resolveCapabilities,
   resolveCapabilityOptIns,
@@ -332,7 +332,7 @@ export interface OrchestratorDeps {
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
   /**
-   * D72 P6 后台调用路由（群聊判断、续接仲裁、SubAgent 压缩）：无内置模型时
+   * D72 P6 后台调用路由（路由判断、续接仲裁、SubAgent 压缩）：无内置模型时
    * 改走外部 Agent。缺省 = 只用内置模型（P6 之前的行为）。
    */
   llmRouter?: LlmRouter;
@@ -351,7 +351,7 @@ export interface OrchestratorDeps {
   gateway: ToolGateway;
   bots: BotsService;
   conversations: ConversationsService;
-  /** 群域服务（P05 成员管理 + 19/D60 对话内群创建的 createSetup/finalizeSetup）。 */
+  /** 项目组服务（P05 成员管理 + projects.create）。 */
   projects: ProjectsService;
   /** 跨 Bot 委派行（D71，docs/design/27）。 */
   delegations: DelegationsService;
@@ -681,7 +681,7 @@ export class Orchestrator {
   readonly #subagentFacades = new Map<string, SubagentToolFacade>();
   /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
   readonly #taskHost: TaskHost;
-  /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 群。 */
+  /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 项目组。 */
   readonly #butlerHost: ButlerHost;
   /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
   readonly #delegationHost: DelegationHost;
@@ -2271,9 +2271,10 @@ export class Orchestrator {
 
   // --- internals -------------------------------------------------------------
 
-  /** Member cards for <conversation_info> (P05, docs/design/03-bot.md "名片"). */
+  /** Member cards for <conversation_info> (P05, docs/design/03-bot.md "名片"; lead flagged per D92 T1a). */
   #memberCards(conversationId: string): BotCard[] {
     const cards: BotCard[] = [];
+    const leadBotId = this.#deps.conversations.get(conversationId)?.leadBotId ?? null;
     for (const botId of this.#deps.conversations.memberBotIds(conversationId)) {
       const bot = this.#deps.bots.get(botId);
       if (!bot || bot.status !== 'active') continue;
@@ -2282,6 +2283,7 @@ export class Orchestrator {
         name: bot.profile.identity.name || bot.name,
         bio: bot.bio,
         role: bot.profile.role.responsibilities,
+        ...(botId === leadBotId ? { isLead: true } : {}),
       });
     }
     return cards;
@@ -2491,12 +2493,12 @@ export class Orchestrator {
   #renderOptions(): RenderMessageOptions {
     const names = new Map<string, string>();
     for (const bot of this.#deps.bots.listActive()) names.set(bot.id, bot.name);
-    // 群提及图例（`group:<id>` → 群标题）：用户消息正文里的 `@群名` 靠它
-    // 被模型理解为群聊引用（conversation.ts mentionTokenLabel）。
+    // 项目组提及图例（`project:<id>` → 项目标题）：用户消息正文里的 `@项目名`
+    // 靠它被模型理解为项目组引用（conversation.ts mentionTokenLabel）。
     const mentionLabels = new Map<string, string>();
     for (const conversation of this.#deps.conversations.list()) {
       if (conversation.type === 'project' && conversation.title !== null) {
-        mentionLabels.set(groupMentionToken(conversation.id), conversation.title);
+        mentionLabels.set(projectMentionToken(conversation.id), conversation.title);
       }
     }
     return {
@@ -4129,7 +4131,7 @@ export class Orchestrator {
                         message:
                           asked >= SETUP_MAX_QUESTIONS
                             ? variant === 'butler'
-                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_team 提出组队建议，不要再提问。`
+                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_bots 提出组队建议，不要再提问。`
                               : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
                             : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问）。`,
                       };
@@ -4309,6 +4311,11 @@ export class Orchestrator {
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
             ...(conv.type === 'project' ? { members: this.#memberCards(conv.id) } : {}),
+            // D92 T1a: the lead / member rules only in a project conversation's turn loop
+            // (tasks never get them — a task cannot @ members).
+            ...(conv.type === 'project' && !isTask
+              ? { projectRole: bot.id === conv.leadBotId ? ('lead' as const) : ('member' as const) }
+              : {}),
             workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
             workspace: {
               path: workspacePath,

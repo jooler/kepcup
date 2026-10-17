@@ -69,12 +69,12 @@ export function buildSetupTools(input: {
   setup: SetupToolFacade;
   /**
    * 'butler'（D70）：管家访谈是同一机制的变体——只问用户的领域与场景，以
-   * propose_team 收尾；管家 Profile 是固定模板，不注册 save_profile。
+   * propose_bots 收尾；管家 Profile 是固定模板，不注册 save_profile。
    */
   variant?: 'bot' | 'butler';
   /**
-   * 群聊里只留 save_profile：空画像按群里的指令补全，不在群里发问卷、
-   * 也不在群里结束访谈（单聊才问定位）。
+   * 项目组里只留 save_profile：空画像按项目组里的指令补全，不在项目组里发
+   * 问卷、也不在项目组里结束访谈（单聊才问定位）。
    */
   surface?: 'direct' | 'project';
 }): ToolDefinition[] {
@@ -170,7 +170,7 @@ export function buildSetupTools(input: {
   const finishSetup: ToolDefinition<Record<string, never>> = {
     name: 'finish_setup',
     description: butler
-      ? '结束管家访谈但不提议组队：仅在用户明确表示现在不需要组建 Bot 团队时使用（正常情况下用 propose_team 提交提议，访谈会自动结束）。'
+      ? '结束管家访谈但不提议组队：仅在用户明确表示现在不需要组建 Bot 团队时使用（正常情况下用 propose_bots 提交提议，访谈会自动结束）。'
       : '结束你的初始化访谈：调用后你进入正常运行状态（访谈指引与 setup 工具随即失效）。请在向用户确认信息已保存后再调用。',
     parameters: Type.Object({}),
     execute: async () => {
@@ -197,7 +197,7 @@ export function questionCapReached(variant: 'bot' | 'butler' = 'bot'): {
     ok: false,
     message:
       variant === 'butler'
-        ? `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请根据已了解的情况直接调用 propose_team 提出组队建议。`
+        ? `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请根据已了解的情况直接调用 propose_bots 提出组队建议。`
         : `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请直接调用 save_profile 保存已有信息，然后调用 finish_setup 结束访谈。`,
   };
 }

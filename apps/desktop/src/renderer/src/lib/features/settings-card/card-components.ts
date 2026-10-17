@@ -25,8 +25,11 @@ export const SETTING_CARD_COMPONENTS = {
   'background-tasks': 'BackgroundTasksSection',
   unattended: 'UnattendedSection',
   'taint-guard': 'UnattendedSection',
-  'group-title': 'GroupSettingsDialog',
-  'group-members': 'GroupSettingsDialog',
+  // WP7 replaces these with ProjectMembersEditor / ProjectSettingsPage embeds.
+  'project-title': 'GroupSettingsDialog',
+  'project-members': 'GroupSettingsDialog',
+  'project-goal': 'GroupSettingsDialog',
+  'project-lead': 'GroupSettingsDialog',
   'workdir-settings': 'WorkdirSettingsDialog',
   'tool-policy': 'AppConnectionDetail',
   'mcp-servers': 'McpSection',
@@ -71,8 +74,10 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'bot-skills':
     case 'mail-account':
       return context.botId !== null;
-    case 'group-title':
-    case 'group-members':
+    case 'project-title':
+    case 'project-members':
+    case 'project-goal':
+    case 'project-lead':
       return context.conversationId !== null;
     case 'workdir-settings':
       return context.workdirId !== null;

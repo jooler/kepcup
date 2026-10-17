@@ -11,8 +11,8 @@ import { keyId } from './common.js';
 import { embedBestEffort, handoverMemoryCopy, type HandoverMemoryPort } from './memory.js';
 
 /**
- * 定时任务（D88 §3）：只能移交。A 私聊里的 → 在 B 私聊重建；群里的 → B 是该群成员则在
- * 群里改为 B，否则不可执行。保留 title / note / kind / cron / run_at / timezone / origin；
+ * 定时任务（D88 §3）：只能移交。A 私聊里的 → 在 B 私聊重建；项目组里的 → B 是该组成员则在
+ * 项目组里改为 B，否则不可执行。保留 title / note / kind / cron / run_at / timezone / origin；
  * 重建出新回执卡，A 侧取消、原回执卡标「已移交给 {B}」（`ScheduleService.transferTo`，
  * 一个事务）。
  *
@@ -71,7 +71,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     return keyId(key, 'schedule') !== null;
   }
 
-  /** A 私聊里的任务（null = 群里的，或对话已不存在）。 */
+  /** A 私聊里的任务（null = 项目组里的，或对话已不存在）。 */
   #isDirectOf(conversationId: string, botId: string | null): boolean {
     if (botId === null) return false;
     const conversation = this.#deps.conversations.get(conversationId);
@@ -81,7 +81,7 @@ export class ScheduleAdapter implements HandoverAdapter {
   #where(row: Schedule): string {
     if (this.#isDirectOf(row.conversationId, row.botId)) return '私聊';
     const conversation = this.#deps.conversations.get(row.conversationId);
-    return `群「${conversation?.title ?? row.conversationId}」`;
+    return `项目组「${conversation?.title ?? row.conversationId}」`;
   }
 
   #commitment(row: Schedule): MemoryItem | null {
@@ -122,7 +122,7 @@ export class ScheduleAdapter implements HandoverAdapter {
         actions: ['move'],
         defaultAction: 'move',
         blocked: this.#commitmentBlocked(row, '来源 Bot') ?? undefined,
-        // 标题 / 说明 / 承诺内容来自模型或用户；群名来自用户。
+        // 标题 / 说明 / 承诺内容来自模型或用户；项目组名来自用户。
         external: true,
         // 敏感承诺跟记忆一样：卡上标「敏感」、默认不勾。
         ...(sensitive ? { marks: ['sensitive' as const], defaultSelected: false } : {}),
@@ -147,7 +147,9 @@ export class ScheduleAdapter implements HandoverAdapter {
     const member =
       ctx.toBot !== null &&
       this.#deps.conversations.memberBotIds(row.conversationId).includes(ctx.toBot.id);
-    return member ? null : `${ctx.toName} 不在群「${conversation.title ?? conversation.id}」里`;
+    return member
+      ? null
+      : `${ctx.toName} 不在项目组「${conversation.title ?? conversation.id}」里`;
   }
 
   async apply(
@@ -184,7 +186,7 @@ export class ScheduleAdapter implements HandoverAdapter {
           handoverMemoryCopy(
             commitment,
             { handoverId: ctx.handoverId, fromBotId: ctx.fromBot.id },
-            // 承诺随任务所在的对话走（删除对话 / 移出群时按它作废，P07 级联）。
+            // 承诺随任务所在的对话走（删除对话 / 移出项目组时按它作废，P07 级联）。
             conversationId,
           ),
         );
@@ -192,7 +194,7 @@ export class ScheduleAdapter implements HandoverAdapter {
       }
       commitmentId = copy.id;
     }
-    // 2. 重建 + 取消 + 回执卡（一个事务）。没成（用户在 embed 期间取消了任务、B 退群、
+    // 2. 重建 + 取消 + 回执卡（一个事务）。没成（用户在 embed 期间取消了任务、B 退出项目组、
     //    对话变只读……）就作废刚才给 B 的承诺副本，否则 B 的 <my_state> 里会多一条没有
     //    任务、A 也照旧负责的承诺。
     let created: Schedule;

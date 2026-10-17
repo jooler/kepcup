@@ -20,7 +20,7 @@ import {
   BLOCKED_BOT_DELETED,
   BLOCKED_CONVERSATION_DELETED,
   BLOCKED_CONVERSATION_GONE,
-  BLOCKED_GROUP_GONE,
+  BLOCKED_PROJECT_GONE,
   BLOCKED_HELD,
   BLOCKED_LEAD_DELETED,
   BLOCKED_LEAD_LEFT,
@@ -61,6 +61,7 @@ interface StubConversation {
   type: 'direct' | 'project';
   title: string | null;
   directBotId: string | null;
+  leadBotId?: string | null;
   readOnly: boolean;
 }
 
@@ -147,10 +148,17 @@ function makeRig() {
       return bot;
     },
     addGroup(id: string, title: string, memberIds: string[]): StubConversation {
-      const conv: StubConversation = { id, type: 'project', title, directBotId: null, readOnly: false };
-      // The lead defaults to the first member; the row-level lead is only a
-      // schema requirement here (TodoAssignee carries its own leadBotId).
+      // The lead defaults to the first member (D92 T1a: the row-level lead is
+      // what a no-override workbench dispatch @-mentions).
       const [firstMember] = memberIds;
+      const conv: StubConversation = {
+        id,
+        type: 'project',
+        title,
+        directBotId: null,
+        leadBotId: firstMember ?? null,
+        readOnly: false,
+      };
       insertConversation(conv, firstMember);
       members.set(id, memberIds);
       return conv;
@@ -436,7 +444,7 @@ describe('工作台事项：创建与入参校验', () => {
     expect(rig.todos.list({ includeClosed: true })).toHaveLength(0);
   });
 
-  it('执行者校验：Bot 须 active；群须存在、未只读；负责 Bot 须是 active 成员', () => {
+  it('执行者校验：Bot 须 active；项目组须存在、未只读；负责 Bot 须是 active 成员', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addBot('bot_b', '阿乙');
@@ -447,32 +455,32 @@ describe('工作台事项：创建与入参校验', () => {
     expect(codeOf(() => rig.todos.create({ title: 't', assignee: botAssignee('nope') }))).toBe('NOT_FOUND');
     expect(
       codeOf(() =>
-        rig.todos.create({ title: 't', assignee: { kind: 'group', conversationId: 'conv_none', leadBotId: null } }),
+        rig.todos.create({ title: 't', assignee: { kind: 'project', projectId: 'conv_none', leadBotId: null } }),
       ),
     ).toBe('NOT_FOUND');
     expect(
       codeOf(() =>
-        rig.todos.create({ title: 't', assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_out' } }),
+        rig.todos.create({ title: 't', assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_out' } }),
       ),
     ).toBe('INVALID_INPUT');
     expect(
       codeOf(() =>
-        rig.todos.create({ title: 't', assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' } }),
+        rig.todos.create({ title: 't', assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' } }),
       ),
     ).toBe('NOT_FOUND');
     rig.conversations.get('conv_g')!.readOnly = true;
     expect(
       codeOf(() =>
-        rig.todos.create({ title: 't', assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null } }),
+        rig.todos.create({ title: 't', assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null } }),
       ),
     ).toBe('CONVERSATION_READ_ONLY');
-    // 单聊的 id 不能当「群」用。
+    // 单聊的 id 不能当「项目组」用。
     rig.todos.create({ title: 'ok', assignee: botAssignee('bot_a') });
     expect(
       codeOf(() =>
         rig.todos.create({
           title: 't',
-          assignee: { kind: 'group', conversationId: rig.directIdOf('bot_a'), leadBotId: null },
+          assignee: { kind: 'project', projectId: rig.directIdOf('bot_a'), leadBotId: null },
         }),
       ),
     ).toBe('INVALID_INPUT');
@@ -686,23 +694,24 @@ describe('工作台事项：派发', () => {
     expect(rig.lastDispatch()).toMatchObject({ text: '【工作台】查资料（管家代你安排）', viaButler: true });
   });
 
-  it('派给群：带负责 Bot 时结构化 @（leadBotId），未指定时 leadBotId 为空（走 triage）', () => {
+  it('派给项目组：带覆盖项时 @ 覆盖项，未指定时 @ 项目负责人（都不走路由）', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '项目组', ['bot_a', 'bot_b']);
     rig.todos.create({
       title: '带头人',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' },
       when: 'now',
     });
     expect(rig.lastDispatch()).toMatchObject({ conversationId: 'conv_g', leadBotId: 'bot_b' });
     rig.todos.create({
       title: '无人带头',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     });
-    expect(rig.lastDispatch()).toMatchObject({ conversationId: 'conv_g', leadBotId: null });
+    // 未指定覆盖项 → @ 项目负责人。
+    expect(rig.lastDispatch()).toMatchObject({ conversationId: 'conv_g', leadBotId: 'bot_a' });
   });
 
   it('派发失败（路由抛错）时执行记录标 failed 并向上报错', () => {
@@ -823,13 +832,13 @@ describe('工作台事项：交付结算', () => {
     expect(rig.todos.get(cron.id).todo.lastRun).toMatchObject({ status: 'delivered', resultMessageId: 'msg_c' });
   });
 
-  it('settleUnclaimed：事项退回草案，原因「群里无人认领」；已结算的执行记录不被覆盖', () => {
+  it('settleUnclaimed：事项退回草案，原因「项目里无人回应」；已结算的执行记录不被覆盖', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addGroup('conv_g', '项目组', ['bot_a']);
     const todo = rig.todos.create({
       title: '无人领',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     }).todo;
     const runId = rig.lastDispatch().todoRunId;
@@ -926,7 +935,7 @@ describe('工作台事项：交付结算', () => {
     expect(rig.todos.get(once.id).todo.status).toBe('delivered');
   });
 
-  it('派发过程中同步结算（空群 → 无人认领）：事项先进入进行中再被退回草案，不会卡在进行中', () => {
+  it('派发过程中同步结算（空项目组 → 无人认领）：事项先进入进行中再被退回草案，不会卡在进行中', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addGroup('conv_g', '空群', ['bot_a']);
@@ -934,7 +943,7 @@ describe('工作台事项：交付结算', () => {
     rig.flags.onDispatch = (call) => rig.todos.settleUnclaimed(call.todoRunId);
     const { todo } = rig.todos.create({
       title: '没人在的群',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     });
     expect(todo).toMatchObject({ status: 'draft', blockedReason: BLOCKED_UNCLAIMED });
@@ -987,7 +996,7 @@ describe('工作台事项：对账', () => {
     expect(rig.todos.reconcile()).toEqual([]);
   });
 
-  it('群 + 负责 Bot：负责 Bot 被删 → 保留群、清负责人；整个群被删 → 清执行者（不会退化成「Bot 执行者」）', () => {
+  it('项目 + 覆盖项：负责 Bot 被删 → 保留项目组、清覆盖项；整个项目组被删 → 清执行者（不会退化成「Bot 执行者」）', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addBot('bot_b', '阿乙');
@@ -995,31 +1004,31 @@ describe('工作台事项：对账', () => {
     rig.addGroup('conv_h', '另一组', ['bot_a', 'bot_b']);
     const led = rig.todos.create({
       title: 'led',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' },
       when: futureIso(rig),
     }).todo;
     const doomed = rig.todos.create({
       title: 'doomed',
-      assignee: { kind: 'group', conversationId: 'conv_h', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_h', leadBotId: 'bot_b' },
       when: futureIso(rig),
     }).todo;
     rig.removeConversation('conv_h');
     expect(rig.todos.get(doomed.id).todo).toMatchObject({
       status: 'draft',
       assignee: null,
-      blockedReason: BLOCKED_GROUP_GONE,
+      blockedReason: BLOCKED_PROJECT_GONE,
     });
     rig.deleteBot('bot_b');
     rig.todos.onExecutorChanged();
     expect(rig.todos.get(led.id).todo).toMatchObject({
       status: 'draft',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       blockedReason: BLOCKED_LEAD_DELETED,
       schedule: null,
     });
   });
 
-  it('漏掉删群钩子时对账兜底：会话不存在或已只读都退回草案「群已解散」', () => {
+  it('漏掉删除钩子时对账兜底：会话不存在或已只读都退回草案「项目组已解散」', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addBot('bot_b', '阿乙');
@@ -1027,11 +1036,11 @@ describe('工作台事项：对账', () => {
     rig.addGroup('conv_r', '只读组', ['bot_a', 'bot_b']);
     const gone = rig.todos.create({
       title: 'gone',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' },
     }).todo;
     const readOnly = rig.todos.create({
       title: 'ro',
-      assignee: { kind: 'group', conversationId: 'conv_r', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_r', leadBotId: null },
     }).todo;
     // 绕过 TodoService 钩子直接删（无外键置空）。
     rig.db.prepare("delete from conversations where id = 'conv_g'").run();
@@ -1042,7 +1051,7 @@ describe('工作台事项：对账', () => {
       expect(rig.todos.get(id).todo).toMatchObject({
         status: 'draft',
         assignee: null,
-        blockedReason: BLOCKED_GROUP_GONE,
+        blockedReason: BLOCKED_PROJECT_GONE,
       });
     }
   });
@@ -1095,25 +1104,25 @@ describe('工作台事项：对账', () => {
     expect(rig.todos.get(delivered.id).todo.status).toBe('delivered');
   });
 
-  it('删群（外键把 assignee_group_id 置空之前）：群执行者的事项退回草案、清执行者、原因「群已解散」', () => {
+  it('删项目组（外键把 assignee_project_id 置空之前）：项目执行者的事项退回草案、清执行者、原因「项目组已解散」', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addGroup('conv_g', '项目组', ['bot_a']);
     const scheduled = rig.todos.create({
       title: 's',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_a' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_a' },
       when: futureIso(rig),
     }).todo;
     const draft = rig.todos.create({
       title: 'd',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
     }).todo;
     rig.removeConversation('conv_g');
     for (const id of [scheduled.id, draft.id]) {
       expect(rig.todos.get(id).todo).toMatchObject({
         status: 'draft',
         assignee: null,
-        blockedReason: BLOCKED_GROUP_GONE,
+        blockedReason: BLOCKED_PROJECT_GONE,
       });
     }
   });
@@ -1130,14 +1139,14 @@ describe('工作台事项：对账', () => {
     });
   });
 
-  it('负责 Bot 被移出群：保留群、清负责 Bot、事项退回草案', () => {
+  it('负责 Bot 被移出项目组：保留项目组、清覆盖项、事项退回草案', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '项目组', ['bot_a', 'bot_b']);
     const todo = rig.todos.create({
       title: 's',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' },
       when: futureIso(rig),
     }).todo;
     rig.members.set('conv_g', ['bot_a']);
@@ -1145,7 +1154,7 @@ describe('工作台事项：对账', () => {
     rig.todos.onExecutorChanged();
     expect(rig.todos.get(todo.id).todo).toMatchObject({
       status: 'draft',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       blockedReason: BLOCKED_LEAD_LEFT,
     });
   });
@@ -1206,7 +1215,7 @@ describe('工作台事项：列表与来源', () => {
     expect(bot.schedule).not.toBeNull();
     const group = rig.todos.create({
       title: '2',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_b' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_b' },
       when: 'now',
     }).todo;
     expect(group).toMatchObject({ assigneeName: '产品组', leadBotName: '阿乙', schedule: null });
@@ -1243,21 +1252,22 @@ describe('工作台排期：Bot 自己的工具面不能动用户派的活', () 
     expect(rig.schedules.cancelOwn('bot_a', own.id).ok).toBe(true);
   });
 
-  it('群无负责 Bot 的排期行 bot_id 为空：不出现在任何 Bot 的列表里，也能正常到点派发', async () => {
+  it('派给项目组的排期行带项目负责人：按它归榜，也能正常到点派发', async () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addGroup('conv_g', '项目组', ['bot_a']);
     const { todo } = rig.todos.create({
       title: '大家看看',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: futureIso(rig, 60_000),
     });
-    expect(rig.schedules.store.get(todo.schedule!.id)!.botId).toBeNull();
-    expect(rig.schedules.listForBotInConversation('bot_a', 'conv_g')).toHaveLength(0);
-    expect(rig.schedules.listEntries()[0]).toMatchObject({ botName: null, deferredReason: null });
+    // D92 T1a WP4：项目必有负责人，排期行带实际生效的负责 Bot（fixture 的负责人 = 第一个成员）。
+    expect(rig.schedules.store.get(todo.schedule!.id)!.botId).toBe('bot_a');
+    expect(rig.schedules.listForBotInConversation('bot_a', 'conv_g')).toHaveLength(1);
+    expect(rig.schedules.listEntries()[0]).toMatchObject({ botName: '阿甲', deferredReason: null });
     rig.clock.advance(60_000);
     await rig.fireDue();
-    expect(rig.lastDispatch()).toMatchObject({ conversationId: 'conv_g', leadBotId: null });
+    expect(rig.lastDispatch()).toMatchObject({ conversationId: 'conv_g', leadBotId: 'bot_a' });
     expect(rig.schedules.store.get(todo.schedule!.id)!.status).toBe('done');
   });
 });
@@ -1461,12 +1471,12 @@ describe('工作台事项：审查修复', () => {
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '项目组', ['bot_a', 'bot_b']);
     const grp = rig.todos.create({
-      title: '群里在做',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      title: '项目组里在做',
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     }).todo;
     rig.removeConversation('conv_g');
-    expect(rig.todos.get(grp.id).todo).toMatchObject({ status: 'draft', blockedReason: BLOCKED_GROUP_GONE });
+    expect(rig.todos.get(grp.id).todo).toMatchObject({ status: 'draft', blockedReason: BLOCKED_PROJECT_GONE });
     expect(rig.todos.get(grp.id).runs[0]!.status).toBe('failed');
 
     // 删 Bot 后只发一次 todos.changed（reconcile 已发布，onExecutorChanged 不再补发）。
@@ -1856,13 +1866,13 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
     expect(rig.updates).toEqual([]);
   });
 
-  it('群执行者：通知发到群里，带派发消息 id（orchestrator 据它的 @ 与触发过的轮次找实际响应的 Bot）', () => {
+  it('项目执行者：通知发到项目组，带派发消息 id（orchestrator 据它的 @ 与触发过的轮次找实际响应的 Bot）', () => {
     const rig = setup();
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '产品组', ['bot_a', 'bot_b']);
     const { todo } = rig.todos.create({
-      title: '群里的事',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_a' },
+      title: '项目组里的事',
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_a' },
       when: 'now',
     });
     rig.todos.update(todo.id, { notes: '补充' });
@@ -1875,14 +1885,14 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
     expect(rig.updates[0]!.dispatchMessageId).not.toBeNull();
   });
 
-  it('群里派发还没被接手（暂时没人可通知）：发不出去就重试，接手后送达；run 结算了就放弃', () => {
+  it('项目组派发还没被接手（暂时没人可通知）：发不出去就重试，接手后送达；run 结算了就放弃', () => {
     const rig = setup();
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '产品组', ['bot_a', 'bot_b']);
     const { todo } = rig.todos.create({
-      title: '群里的事',
+      title: '项目组里的事',
       notes: '原说明',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     });
     rig.flags.nobodyYet = true;
@@ -1902,7 +1912,7 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
     // 一直没人接手、run 结算了：放弃，不再有定时器。
     const other = rig.todos.create({
       title: '没人接的事',
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
       when: 'now',
     }).todo;
     const runId = rig.lastDispatch().todoRunId;

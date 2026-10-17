@@ -6,16 +6,16 @@
  */
 
 import type { Bot } from '@kepcup/shared';
-import { groupMentionToken } from '@kepcup/shared';
+import { projectMentionToken } from '@kepcup/shared';
 
 // --- @ 提及 -----------------------------------------------------------------
 
-export type MentionKind = 'bot' | 'group';
+export type MentionKind = 'bot' | 'project';
 
 export interface MentionTarget {
-  /** 存进 message.mentions 的 token：Bot 用裸 id，群用 `group:<id>`。 */
+  /** 存进 message.mentions 的 token：Bot 用裸 id，项目组用 `project:<id>`。 */
   token: string;
-  /** 展示名（Bot 名或群标题）。 */
+  /** 展示名（Bot 名或项目组标题）。 */
   name: string;
   kind: MentionKind;
   /** Bot 简介（弹层副标题）。 */
@@ -25,13 +25,13 @@ export interface MentionTarget {
 }
 
 /**
- * 名称注册表：当前群成员优先，其余活跃 Bot 次之，其他群聊最后。同名先到
- * 先得（成员优先于同名的外部 Bot/群）；当前会话自己不作候选。
+ * 名称注册表：当前项目成员优先，其余活跃 Bot 次之，其他项目组最后。同名先到
+ * 先得（成员优先于同名的外部 Bot/项目组）；当前会话自己不作候选。
  */
 export function buildMentionTargets(input: {
   memberBots: Bot[];
   allBots: Bot[];
-  groups: { id: string; title: string | null }[];
+  projects: { id: string; title: string | null }[];
   currentConversationId?: string | null;
   /** 不作候选的 Bot（如单聊里当前对话的 Bot 自己——@ 自己没有意义）。 */
   excludeBotIds?: string[];
@@ -63,9 +63,9 @@ export function buildMentionTargets(input: {
       push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler');
     }
   }
-  for (const group of input.groups) {
-    if (group.id === input.currentConversationId) continue;
-    push(groupMentionToken(group.id), group.title, 'group');
+  for (const project of input.projects) {
+    if (project.id === input.currentConversationId) continue;
+    push(projectMentionToken(project.id), project.title, 'project');
   }
   return targets;
 }
