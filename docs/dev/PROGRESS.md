@@ -1422,3 +1422,21 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - `settings-catalog-host.test.ts` 在 `8c19cb3` 里新增的 recheck `describe` 嵌进了上一个用例（缺 `});` `});`），文件语法错误、整个文件不可执行；补上闭合后该文件 56 例全过。此前记录的「38 例」是更早的状态。
 - 仍整份写 profile 却没带 `base` 的两处调用方（`MainModelSetupBody` 的 Bot 模型、`ConnectAppSetupBody` 的授权兜底）补上 `base`，与其余调用方一致（设计篇 38 §11.3）；`MainModelSetupBody` 改走 `contacts.update`，不再直接 `core.call('bots.update')`。
 - 验证：`settings-catalog-host` + `setup-alias` 定向 62 例通过；core / desktop typecheck 通过（`@kepcup/shared` 先 build，dist 过期会让 core 报一串缺导出）。未跑全量、未跑 e2e。
+
+## 项目组（D92，2026-10-17 ～ 10-18，todo/project WP0-1 ～ WP11）
+
+把「群聊」升级为「项目组」（[todo/project/README.md](../../todo/project/README.md)，设计 41）。WP0-1/WP0-2 两条行为中性的纯改名先行（`workdir→cwd`、目录 `project→workdir`，各自收口全量一次、不超基线），随后 T1a（WP1–WP8 项目组核心）与 T1b（WP9–WP10 项目 wiki）并行推进，WP11 收文档。逐 WP 的提交、定向测试与自检例外见各 WP 文件末尾「实施记录」与 README §7 进度表；偏差 DEV-031–DEV-036（DEV-030 同期落实）。
+
+- **WP1**（schema+domain）：迁移运行器 `-- kepcup:foreign-keys=off` 指令 + main 0039/0040（重建 `conversations`：`type∈{direct,project}`、`lead_bot_id`、`goal`、删 `setup_state`；旧群纯 SQL 转换）、shared 契约、`ProjectsService`、生命周期负责人守卫、`projects.*` RPC、D60 后端删除。关键测试：`migrate-fk-off`、`project-conversations-migration`、`projects-service` 18、`lifecycle-project-lead` 5、`project-chat`。全量 5356 通过 / 0 失败 / 24 skip。
+- **WP2**（episodes）：main 0041 / runs 0014，`EpisodesService`（熔断 12/8、暂停卡、resume/stop）、任务唤醒继承回合、`episode.updated`。关键测试：`episodes-migration`、`episodes-service` 12、`episodes-inheritance`、`episodes-breaker`、`episodes-rpc`。全量 5371 / 2 失败（迁移形态测试漏改，修后单跑过）/ 24 skip。
+- **WP3**（routing）：`ProjectTurnCoordinator`（`project-turn.ts`：续接判断 `light-judgement.ts` + 负责人网关 `lead-gate.ts` + 静默路由 + 兜底不变式）、触发原因新集合、`MUST_REPLY_REASONS` 摘 `skip_reply`。关键测试：`project-turn` 15、`lead-gate` 8、`project-routing` 9、`response-tools-must-reply`。全量 5413 / 0 失败。偏差 DEV-031。
+- **WP4**（prompt+integrations）：`<conversation_info>` 项目分支与负责人 / 成员规则段、`propose_project`/`propose_bots`（卡上改负责人 `approvals.decide.leadBotId`）、工作台 `assignee_project_id` 与生效负责人、设置目录 `project.*` + `project-detail` 深链、`PROJECT_DETAIL_SECTIONS`、memory 0003。关键测试：`butler-project`、`workbench-project`、`system-prompt-project`、`settings-adapters-project`、`memory-origin-migration`。全量 5475 / 2 失败（版本号断言，`748d63d` 修复）/ 23 skip。偏差 DEV-033。
+- **WP5**（双轮创建，分支 `feat/project/wp5-ui-create`）：`project-compose.ts` 纯逻辑 17 例 + `ProjectComposeBar` + store 双轮契约；手工冒烟以一次性 `_electron` spec 覆盖。偏差 DEV-034。
+- **WP6**（外壳）：shell 的 `ProjectView`/`projectSettingsSection`、两行顶栏六组件（`features/project/`）、`ProjectAvatarStack` 纯改名、撤右栏、侧栏右键直达；desktop 85 文件 792 例 + 冒烟 ①–⑧ 全过。
+- **WP7**（详情页）：真实 `ProjectSettingsPage` 五分区、`ProjectMembersEditor`、四个设置卡内嵌、删 Bot 的负责人拦截；desktop 86 文件 800 例；shared 338 例。补记 DEV-035。
+- **WP8**（文案 + e2e，T1a 收口）：`ProjectTurnStatusLine`、协作暂停卡 + episodes store、审批卡负责人下拉、`KEPCUP_TEST_EPISODE_LIMITS` 测试缝、`group-*` spec 全部重写为 `project-chat`/`project-compose`/`project-shell`/`project-routing`/`episode-breaker`；e2e 全绿（workbench 12/13 败者为 WP8 前即失败的 layout 形态环境项）；全量 499 文件 **5526 通过 / 0 失败 / 23 skip** 不超基线。补记 DEV-036。
+- **WP9**（wiki 后端，分支 `feat/project/wp9-wiki-core`）：`WikiOwner` 泛化、`projects/{id}/` 布局与项目级 `wiki.db`（无迁移目录，DDL 内嵌 `wiki/index-manager.ts`）、来源台账 `createdBy`、`removeSource` ACL、维护身份执行者付费、删除级联。关键测试：`wiki-owner`、`wiki-index-store`、`wiki-project` 9、`wiki-remove-source`、`wiki-project-lifecycle`。全量 5406 / 2 失败（旧形态测试漏改，修后单跑过）/ 24 skip。偏差 DEV-032。
+- **WP10**（wiki 工具 / RPC / 界面，T1b 收口）：三工具 `scope` + `wiki_read` 可信度包裹（保守判定）、`wiki_remove_source` 工具与 job（不走模型、不受预算延后）、`text` 来源（仅用户、80 字预览）、`wiki.sources/addSource/deleteSource`、`<project_wiki_topics>` 无预算段（任务与外部智能体会话同步）、项目 Wiki tab（`WikiBrowser` 泛化 + 来源面板）、删除确认框 wiki 数。core 定向 5 文件 37 例、desktop 807 例、e2e `project-wiki` 4/4 + `wiki.spec` 回归；T1b 收口全量 **5560 通过 / 0 失败 / 23 skip**（前两轮 1–2 例负载偶发单跑复核通过）。阶段审查：1 处 P3 缩进回归修复（`bdbea676`），无行为问题。
+- **WP11**（文档同步）：设计与开发文档全面改写为现状、删除 18 个「D92 修订」横幅、41 定稿为正文、DEV-030 落实、常量 / ID 表、删除级联表、本节。纯文档，不改代码。
+
+**与基线的差异**：T1a 收口与 T1b 收口全量均 0 失败（优于 05-testing 记录的沙箱 / skills / wiki-url / workspace-tools 环境基线——本机 macOS 上这些依赖容器环境的用例不在常规全量路径内）；全量过程中的失败均为迁移形态 / 版本号断言的同步问题或负载偶发，单跑复核通过，未放宽或删除任何断言。e2e 基线新增本节所列 project-* spec；`workbench.spec` 的 layout 宽度用例在本机失败（WP8 之前即失败，用旧版 spec 实证与本轮无关）。
