@@ -177,6 +177,11 @@ import {
   wikiDeletePageInputSchema,
   wikiDeletePageOutputSchema,
   wikiOwnerInputSchema,
+  wikiSourcesOutputSchema,
+  wikiAddSourceInputSchema,
+  wikiAddSourceOutputSchema,
+  wikiDeleteSourceInputSchema,
+  wikiDeleteSourceOutputSchema,
   todosListInputSchema,
   todosListOutputSchema,
   todosIdInputSchema,
@@ -1431,6 +1436,81 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       wikiDeletePageOutputSchema,
       async (input) => {
         await services.wiki!.deletePage(wikiOwnerOf(input.owner), input.path);
+        return { ok: true as const };
+      },
+    ),
+
+    // --- wiki sources (D92 T1b WP10): the project wiki's source ledger. The RPC
+    // caller is the USER (no bot-identity checks); bot owners have no ledger.
+    'wiki.sources': method(wikiOwnerInputSchema, wikiSourcesOutputSchema, async (input) => {
+      const owner = wikiOwnerOf(input.owner);
+      if (owner.kind !== 'project') {
+        throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+      }
+      const sources = services.wiki!.listSources(owner).map((entry) => ({
+        id: entry.id,
+        fileName: entry.fileName,
+        bytes: entry.bytes,
+        kind: entry.kind,
+        createdBy:
+          entry.createdBy.kind === 'user'
+            ? { kind: 'user' as const }
+            : {
+                kind: 'bot' as const,
+                id: entry.createdBy.id,
+                name: domain.bots.get(entry.createdBy.id)?.name ?? null,
+              },
+        sources: entry.sources.map((source) => ({
+          type: source.type,
+          ref: source.ref,
+          at: source.at,
+        })),
+        createdAt: entry.createdAt,
+      }));
+      return { sources };
+    }),
+    'wiki.addSource': method(wikiAddSourceInputSchema, wikiAddSourceOutputSchema, async (input) => {
+      const owner = wikiOwnerOf(input.owner);
+      if (owner.kind !== 'project') {
+        throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+      }
+      // 用户来源的执行者是项目负责人（执行者付费，D92 T1b WP9 同一口径）。
+      const leadBotId = domain.conversations.get(owner.id)?.leadBotId ?? null;
+      if (leadBotId === null) {
+        throw new AppError('INVALID_INPUT', '项目组没有负责人');
+      }
+      const outcome = services.wiki!.enqueueIngest({
+        owner,
+        botId: leadBotId,
+        conversationId: owner.id,
+        source: { sourceType: input.sourceType, ref: input.ref, note: input.note ?? '' },
+        createdBy: { kind: 'user' },
+      });
+      if (!outcome.ok) {
+        throw new AppError('INVALID_INPUT', outcome.message);
+      }
+      return { ok: true as const };
+    }),
+    'wiki.deleteSource': method(
+      wikiDeleteSourceInputSchema,
+      wikiDeleteSourceOutputSchema,
+      async (input) => {
+        const owner = wikiOwnerOf(input.owner);
+        if (owner.kind !== 'project') {
+          throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+        }
+        const leadBotId = domain.conversations.get(owner.id)?.leadBotId ?? null;
+        if (leadBotId === null) {
+          throw new AppError('INVALID_INPUT', '项目组没有负责人');
+        }
+        // 异步托管：立即返回，删除由 wiki_remove_source job 在互斥锁内完成。
+        services.wiki!.enqueueRemoveSource({
+          owner,
+          sourceId: input.sourceId,
+          actor: { role: 'user' },
+          leadBotId,
+          conversationId: owner.id,
+        });
         return { ok: true as const };
       },
     ),

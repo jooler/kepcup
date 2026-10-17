@@ -1441,6 +1441,47 @@ export const wikiDeletePageInputSchema = z.object({
 });
 export const wikiDeletePageOutputSchema = z.object({ ok: z.literal(true) });
 
+// --- wiki sources (D92 T1b WP10; project wikis only — bot wikis have no ledger) ---
+
+/** The submitter of one source: the user, or a bot with its current name. */
+export const wikiSourceCreatorViewSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user') }),
+  z.object({ kind: z.literal('bot'), id: z.string().min(1), name: z.string().nullable() }),
+]);
+export type WikiSourceCreatorView = z.infer<typeof wikiSourceCreatorViewSchema>;
+/** `name` is the bot's current name; null when deleted (the UI shows the id). */
+export const wikiSourceViewSchema = z.object({
+  id: z.string(),
+  fileName: z.string(),
+  bytes: z.number().int().nonnegative(),
+  kind: z.enum(['text', 'html']),
+  createdBy: wikiSourceCreatorViewSchema,
+  sources: z.array(
+    z.object({
+      type: z.enum(['attachment', 'file', 'url', 'text']),
+      ref: z.string(),
+      at: z.number(),
+    }),
+  ),
+  createdAt: z.number(),
+});
+export type WikiSourceView = z.infer<typeof wikiSourceViewSchema>;
+export const wikiSourcesOutputSchema = z.object({ sources: z.array(wikiSourceViewSchema) });
+export type WikiSourcesOutput = z.infer<typeof wikiSourcesOutputSchema>;
+/** `ref` is the URL, or the pasted body (≤ WIKI_TEXT_SOURCE_MAX_CHARS). */
+export const wikiAddSourceInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  sourceType: z.enum(['url', 'text']),
+  ref: z.string(),
+  note: z.string().max(2000).optional(),
+});
+export const wikiAddSourceOutputSchema = z.object({ ok: z.literal(true) });
+export const wikiDeleteSourceInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  sourceId: z.string().min(1),
+});
+export const wikiDeleteSourceOutputSchema = z.object({ ok: z.literal(true) });
+
 // --- schedules (P10) -------------------------------------------------------------
 
 /** Omitted conversationId = every schedule (settings-page overview). */
@@ -2133,6 +2174,9 @@ export const rpcMethodSchemas = {
   'wiki.history': { input: wikiOwnerInputSchema, output: wikiHistoryOutputSchema },
   'wiki.rollback': { input: wikiRollbackInputSchema, output: wikiRollbackOutputSchema },
   'wiki.deletePage': { input: wikiDeletePageInputSchema, output: wikiDeletePageOutputSchema },
+  'wiki.sources': { input: wikiOwnerInputSchema, output: wikiSourcesOutputSchema },
+  'wiki.addSource': { input: wikiAddSourceInputSchema, output: wikiAddSourceOutputSchema },
+  'wiki.deleteSource': { input: wikiDeleteSourceInputSchema, output: wikiDeleteSourceOutputSchema },
 
   'schedules.list': { input: schedulesListInputSchema, output: schedulesListOutputSchema },
   'schedules.cancel': { input: schedulesCancelInputSchema, output: schedulesCancelOutputSchema },
@@ -2492,6 +2536,9 @@ const APP_METHODS = [
   'wiki.history',
   'wiki.rollback',
   'wiki.deletePage',
+  'wiki.sources',
+  'wiki.addSource',
+  'wiki.deleteSource',
   'schedules.list',
   'schedules.cancel',
   'todos.list',
