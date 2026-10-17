@@ -105,8 +105,23 @@
 
   /** 「其它」分组：移除 Bot（删除全部数据，历史保留为只读）。 */
   let removeOpen = $state(false);
-  let removePreview = $state({ conversations: 0, messages: 0 });
+  let removePreview = $state({
+    conversations: 0,
+    messages: 0,
+    ledProjects: [] as Array<{ id: string; title: string | null }>,
+  });
   let removing = $state(false);
+
+  /**
+   * The bot leads projects: deletion is blocked (the backend would reject with
+   * PROJECT_LEAD_REQUIRED). Jump to that project's members section so the
+   * user can hand the lead over first.
+   */
+  async function goReplaceLead(conversationId: string): Promise<void> {
+    removeOpen = false;
+    await chat.select(conversationId);
+    shell.openProjectSettings('members');
+  }
 
   /**
    * 最近一次保存到 core 的完整 profile。头像 / 名称 / 简介的点按直编以它为
@@ -652,6 +667,32 @@
         {t('contacts.deleteAgentNote')}
       </p>
     {/if}
+    {#if removePreview.ledProjects.length > 0}
+      <!-- Leading projects block the delete: no confirm button, offer the
+           "go replace" jump into each project's members section instead. -->
+      <div class="space-y-1.5" data-testid="bot-remove-lead-blocked">
+        <p class="text-sm text-muted-foreground">
+          {t('contacts.deleteBlockedLead', { count: removePreview.ledProjects.length })}
+        </p>
+        <ul class="space-y-1.5">
+          {#each removePreview.ledProjects as project (project.id)}
+            <li class="flex items-center gap-2 rounded-md border p-2 text-sm">
+              <span class="min-w-0 flex-1 truncate">
+                {project.title ?? t('project.untitled')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onclick={() => void goReplaceLead(project.id)}
+                data-testid={`bot-remove-go-replace-${project.id}`}
+              >
+                {t('contacts.deleteGoReplace')}
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
     <DialogFooter>
       <Button
         variant="outline"
@@ -660,14 +701,16 @@
       >
         {t('contacts.cancel')}
       </Button>
-      <Button
-        variant="destructive"
-        onclick={confirmRemove}
-        disabled={removing}
-        data-testid="bot-remove-confirm"
-      >
-        {t('contacts.deleteConfirm')}
-      </Button>
+      {#if removePreview.ledProjects.length === 0}
+        <Button
+          variant="destructive"
+          onclick={confirmRemove}
+          disabled={removing}
+          data-testid="bot-remove-confirm"
+        >
+          {t('contacts.deleteConfirm')}
+        </Button>
+      {/if}
     </DialogFooter>
   </DialogContent>
 </Dialog>
