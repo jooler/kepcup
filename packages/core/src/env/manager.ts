@@ -262,7 +262,14 @@ export class EnvManager {
         // callback synchronously before the const initializes.
         if (outcome.decision === 'approved') {
           if (platform.kind === 'system') {
-            void this.#handleSystemApproval(identity, entry);
+            // fire-and-forget：测试/退出的夹缝（db 已关）不能让 rejection 冒成
+            // unhandled —— 记日志后吞掉。
+            this.#handleSystemApproval(identity, entry).catch((error) => {
+              this.#deps.logger.info(
+                { item: entry.item, error: error instanceof Error ? error.message : String(error) },
+                'system approval handler failed (fire-and-forget)',
+              );
+            });
           } else {
             void this.#installAfterApproval(identity, entry, { approvalId: outcome.approval.id });
           }
@@ -349,7 +356,13 @@ export class EnvManager {
       (outcome) => {
         if (outcome.decision === 'approved') {
           if (platform.kind === 'system') {
-            void this.#handleSystemApproval(identity, entry);
+            // fire-and-forget（同上）：db 关闭等收尾阶段的失败只留日志。
+            this.#handleSystemApproval(identity, entry).catch((error) => {
+              this.#deps.logger.info(
+                { item: entry.item, error: error instanceof Error ? error.message : String(error) },
+                'system approval handler failed (fire-and-forget)',
+              );
+            });
           } else {
             void this.#installAfterApproval(identity, entry, { approvalId: outcome.approval.id });
           }
