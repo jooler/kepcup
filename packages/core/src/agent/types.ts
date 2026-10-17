@@ -34,8 +34,6 @@ export interface RunIdentity {
   botId: string | null;
   conversationId: string | null;
   loopType: LoopType;
-  chainId?: string;
-  chainDepth?: number;
 }
 
 export type RunStatus = 'completed' | 'failed' | 'cancelled';

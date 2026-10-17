@@ -73,6 +73,16 @@ describe('runs 0009 tool_effects 迁移', () => {
         expected.task_cwd = expected.task_workdir;
         delete expected.task_workdir;
       }
+      // 0014 renames the episode binding columns (D92 T1a WP2): same — the
+      // keys move, the values survive (old rows carry no binding).
+      if ('chain_id' in expected) {
+        expected.episode_id = expected.chain_id;
+        delete expected.chain_id;
+      }
+      if ('chain_depth' in expected) {
+        expected.episode_hop = expected.chain_depth;
+        delete expected.chain_depth;
+      }
       expect(runsAfter[index]).toMatchObject(expected);
     }
     expect(db.prepare('select * from run_steps').all()).toEqual(stepsBefore);

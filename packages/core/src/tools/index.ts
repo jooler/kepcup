@@ -404,8 +404,8 @@ export function buildResponseTools(input: {
           };
         }
       }
-      // D75 §6.2: a task is no group member — it never @-mentions bots (no
-      // chain either; chain budgets count turns only).
+      // D75 §6.2: a task is no project member — it never @-mentions bots
+      // (episodes count turns' visible @ triggers only, D92 T1a).
       const mentionIds = isTask ? [] : (params.mention_bot_ids ?? []);
       const message = deps.messages.append({
         conversationId: identity.conversationId,

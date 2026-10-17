@@ -89,6 +89,11 @@ export interface AppendMessageInput {
   /** task_id column (task_event only); defaults to `taskEvent.taskId`. */
   taskId?: string | null | undefined;
   event?: string | undefined;
+  /**
+   * system_event extras：协作暂停卡指向的回合（episode_paused，D92 T1a），
+   * 界面上的继续 / 停止按它调用 episodes.resume / episodes.stop。
+   */
+  episodeId?: string | undefined;
   /** system_event extras: clickable bot candidates / related batch (P05). */
   botIds?: string[] | undefined;
   /**
@@ -460,6 +465,7 @@ export class MessagesService {
             : JSON.stringify({
                 event: input.event ?? '',
                 text: input.text ?? '',
+                ...(input.episodeId !== undefined ? { episodeId: input.episodeId } : {}),
                 ...(input.botIds !== undefined ? { botIds: input.botIds } : {}),
                 ...(input.internal ? { internal: true } : {}),
                 ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),

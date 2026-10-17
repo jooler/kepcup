@@ -5,6 +5,7 @@ import {
   conversationSchema,
   delegationSchema,
   envInstallSchema,
+  episodeSchema,
   environmentProgressPayloadSchema,
   grantSchema,
   messageSchema,
@@ -47,6 +48,12 @@ export const conversationUpdatedPayloadSchema = z.object({
 export const conversationDeletedPayloadSchema = z.object({ id: z.string() });
 
 export const runStatusPayloadSchema = z.object({ run: runSchema });
+
+/**
+ * 协作回合状态变化（D92 T1a）：回合新建 / 计数推进 / 熔断暂停 / 继续 / 停止
+ * 时推送；协作暂停卡据此显示 hops 与 pending，并随 episodes.resume / stop 刷新。
+ */
+export const episodeUpdatedPayloadSchema = z.object({ episode: episodeSchema });
 
 export const runProgressPayloadSchema = z.object({
   runId: z.string(),
@@ -348,6 +355,7 @@ export const rpcEventSchemas = {
   'conversation.updated': conversationUpdatedPayloadSchema,
   'conversation.deleted': conversationDeletedPayloadSchema,
   'run.status': runStatusPayloadSchema,
+  'episode.updated': episodeUpdatedPayloadSchema,
   'run.progress': runProgressPayloadSchema,
   'bot.updated': botUpdatedPayloadSchema,
   'bot.deleted': botDeletedPayloadSchema,

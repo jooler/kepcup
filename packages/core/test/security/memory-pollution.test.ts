@@ -55,7 +55,7 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
           mention_bot_ids: [botA.id],
         }),
         step().replyText('转告完毕'),
-        step().replyText('好的'), // 阿甲的连锁 run
+        step().replyText('好的'), // 阿甲的回合触发 run
       ]);
       stack.llm.script('mock-light', [step().replyJson(emptyReflection()), step().replyJson(emptyReflection())]);
       await sendDrafts(stack.core, group.id, [

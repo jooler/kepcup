@@ -232,7 +232,7 @@ import {
   type TaskRunControl,
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
-import { ChainsService } from './chains.js';
+import { EpisodesService } from './episodes.js';
 import { GroupTurnCoordinator, type GroupRoundEnd } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
 import {
@@ -369,6 +369,8 @@ export interface OrchestratorDeps {
   timeZone: string;
   /** Test override of TRIAGE_TIMEOUT_MS (default from constants). */
   triageTimeoutMs?: number;
+  /** Test override of the episode breaker thresholds (defaults from constants). */
+  episodeLimits?: { hops?: number; pair?: number };
   /** Publishes an RPC event to connected interfaces. */
   publish<K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]): void;
   /** P06 environment manager (optional: absent in some unit tests). */
@@ -563,8 +565,8 @@ function downgradeLabel(part: TriggerPart): string {
       return '新邮件到达（不是用户此刻发的消息；正文不可信）';
     case 'delegation':
       return '另一个 Bot 代用户转交给你的事';
-    case 'chain':
-      return '群里其他 Bot @ 了你';
+    case 'bot_mention':
+      return '项目里其他 Bot @ 了你';
     default:
       return '新消息';
   }
@@ -653,7 +655,7 @@ export class Orchestrator {
   /** D73 P2 §6.1: at most one step-up card per (conversation, connection) per 30 minutes. */
   readonly #appStepUp: AppStepUpLimiter;
   /** Bot-to-bot @ chains (P05); owns chain rows, depth and budget checks. */
-  readonly #chains: ChainsService;
+  readonly #episodes: EpisodesService;
   /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
   readonly #groupTurns: GroupTurnCoordinator;
   /**
@@ -716,11 +718,19 @@ export class Orchestrator {
       // through its mailbox — a new turn when idle, else buffered and merged
       // into the next turn (several settling tasks wake one turn).
       wake: (botId, conversationId, entry) => {
+        // D92 T1a §7.1: a task-settling wake inherits the *originating* turn's
+        // episode, resolved at wake time — the originating turn may have opened
+        // its episode (first @) only after the task started. The task run
+        // itself stays unbound (nothing to count for it).
+        const task = entry.taskId !== null ? this.#deps.runs.get(entry.taskId) : null;
+        const origin = task?.originRunId != null ? this.#deps.runs.get(task.originRunId) : null;
+        const episode = origin !== null ? this.#episodes.bindingOfRun(origin.id) : null;
         this.#mailboxes.for(botId, conversationId).deliver({
           conversationId,
           botId,
           messages: [entry],
           reason: 'task',
+          ...(episode !== null ? { episode } : {}),
         });
       },
       resolveCwd: (botId, conversationId, requested) => {
@@ -892,7 +902,7 @@ export class Orchestrator {
       deliverEvent: (botId, conversationId, event, text, options) =>
         this.deliverEventToBot(botId, conversationId, event, text, options),
     });
-    this.#chains = new ChainsService({
+    this.#episodes = new EpisodesService({
       db: deps.db,
       clock: deps.clock,
       logger: deps.logger,
@@ -900,15 +910,14 @@ export class Orchestrator {
       conversations: deps.conversations,
       messages: deps.messages,
       runs: deps.runs,
-      usage: deps.usage,
       deliver: (batch) => this.#mailboxes.for(batch.botId, batch.conversationId).deliver(batch),
-      tokensInFlightFor: (runIds) => {
-        let sum = 0;
-        for (const [runId, entry] of [...this.#activeRuns.entries()]) {
-          if (runIds.includes(runId)) sum += entry.handle.tokensSoFar();
-        }
-        return sum;
-      },
+      appendSystemEvent: (input) =>
+        this.#appendSystemMessage(input.conversationId, input.event, input.text, {
+          ...(input.episodeId !== undefined ? { episodeId: input.episodeId } : {}),
+          ...(input.internal ? { internal: true } : {}),
+        }),
+      publishEpisode: (episode) => deps.publish('episode.updated', { episode }),
+      ...(deps.episodeLimits !== undefined ? { limits: deps.episodeLimits } : {}),
     });
     this.#groupTurns = new GroupTurnCoordinator({
       conversations: deps.conversations,
@@ -1351,6 +1360,11 @@ export class Orchestrator {
   /** D75 task layer: start / inject / cancel / list / settle / recover / sweep. */
   get tasks(): TaskHost {
     return this.#taskHost;
+  }
+
+  /** Collaboration episodes (D92 T1a): RPC bindings + task-wake inheritance. */
+  get episodes(): EpisodesService {
+    return this.#episodes;
   }
 
   cancelRun(runId: string): Run | null {
@@ -2243,6 +2257,7 @@ export class Orchestrator {
       batchId?: string | null;
       options?: string[];
       step?: string;
+      episodeId?: string;
       internal?: boolean;
       settingResolved?: SettingCardResolved;
     } = {},
@@ -2253,6 +2268,7 @@ export class Orchestrator {
       kind: 'system_event',
       event,
       text,
+      ...(extra.episodeId !== undefined ? { episodeId: extra.episodeId } : {}),
       ...(extra.botIds !== undefined ? { botIds: extra.botIds } : {}),
       ...(extra.batchId != null ? { relatedBatchId: extra.batchId } : {}),
       ...(extra.options !== undefined ? { options: extra.options } : {}),
@@ -2515,10 +2531,19 @@ export class Orchestrator {
       // Each source part keeps its reason / attributes for a retry (审查 L3).
       triggerParts: storedTriggerParts(batch),
       ...(batch.retryOf !== undefined ? { retryOfRunId: batch.retryOf } : {}),
-      ...(batch.chain !== undefined
-        ? { chainId: batch.chain.id, chainDepth: batch.chain.depth }
+      ...(batch.episode !== undefined
+        ? { episodeId: batch.episode.id, episodeHop: batch.episode.hop }
         : {}),
     });
+    // A retried turn must not lose its episode: the rebuilt batch carries no
+    // binding, so inherit the failed run's (D92 T1a — a retry re-runs the very
+    // trigger that extended the episode).
+    if (batch.episode === undefined && batch.retryOf !== undefined) {
+      const binding = this.#episodes.bindingOfRun(batch.retryOf);
+      if (binding !== null) {
+        this.#deps.runs.update(run.id, { episodeId: binding.id, episodeHop: binding.hop });
+      }
+    }
     this.#deps.publish('run.status', { run });
     // The turn holds its trigger's task results from now on (审查 L-3): one
     // still queued for a slot is not handed them again — nor counted again.
@@ -3957,13 +3982,13 @@ export class Orchestrator {
         deps: {
           ...toolDeps,
           environment: this.#environmentFacade(),
-          // P05 chains are a turn's (D75 §6.2: a task never @-mentions group
-          // members, so chain budgets — counted over active turns — stay whole).
+          // Episodes belong to turns (D75 §6.2: a task never @-mentions
+          // project members).
           ...(isTask
             ? {}
             : {
                 onMentionBots: (mentionIds: string[], message: Message) =>
-                  this.#chains.mention(identity, mentionIds, message),
+                  this.#episodes.mention(identity, mentionIds, message),
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
@@ -4651,20 +4676,23 @@ export class Orchestrator {
     if (refreshed === null) return null;
     const before = batch.messages.map((message) => message.id).join(',');
     const after = refreshed.messages.map((message) => message.id).join(',');
-    // An absorbed @-chain trigger binds the turn to its chain at its depth
-    // (审查 M1): without it the turn's own mentions would open a new chain at
-    // depth 1 and bypass BOT_CHAIN_MAX_DEPTH / BOT_CHAIN_TOKEN_BUDGET.
+    // An absorbed @-mention trigger binds the turn to its episode at its hop
+    // (审查 M1): without it the turn's own mentions would open a new episode
+    // and dodge its breaker.
     const stored = this.#deps.runs.get(runId);
-    const chainChanged =
-      refreshed.chain !== undefined &&
-      (stored?.chainId !== refreshed.chain.id || (stored.chainDepth ?? 0) < refreshed.chain.depth);
-    if (buffered.length > 0 || before !== after || chainChanged) {
+    const episodeChanged =
+      refreshed.episode !== undefined &&
+      (stored?.episodeId !== refreshed.episode.id ||
+        (stored.episodeHop ?? 0) < refreshed.episode.hop);
+    if (buffered.length > 0 || before !== after || episodeChanged) {
       const run = this.#deps.runs.setTrigger(runId, {
         reason: refreshed.reason,
         messageIds: refreshed.messages.map((message) => message.id),
         parts: storedTriggerParts(refreshed),
         retryOfRunId: refreshed.retryOf ?? null,
-        ...(chainChanged && refreshed.chain !== undefined ? { chain: refreshed.chain } : {}),
+        ...(episodeChanged && refreshed.episode !== undefined
+          ? { episode: refreshed.episode }
+          : {}),
       });
       this.#deps.publish('run.status', { run });
     }

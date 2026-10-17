@@ -22,8 +22,8 @@ interface RunRow {
   status: RunStatus;
   trigger_reason: TriggerReason | null;
   trigger_message_ids_json: string;
-  chain_id: string | null;
-  chain_depth: number | null;
+  episode_id: string | null;
+  episode_hop: number | null;
   parent_run_id: string | null;
   engine: string;
   agent_session_id: string | null;
@@ -134,8 +134,8 @@ function rowToRun(row: RunRow): Run {
     status: row.status,
     triggerReason: row.trigger_reason,
     triggerMessageIds: JSON.parse(row.trigger_message_ids_json) as string[],
-    chainId: row.chain_id,
-    chainDepth: row.chain_depth,
+    episodeId: row.episode_id,
+    episodeHop: row.episode_hop,
     parentRunId: row.parent_run_id,
     engine: row.engine,
     agentSessionId: row.agent_session_id,
@@ -194,8 +194,8 @@ export class RunsService {
     loopType: LoopType;
     triggerReason: TriggerReason | null;
     triggerMessageIds: string[];
-    chainId?: string | null;
-    chainDepth?: number | null;
+    episodeId?: string | null;
+    episodeHop?: number | null;
     /** SubAgent ownership (D66/D67): the delegating parent run, sub runs only. */
     parentRunId?: string | null;
     provider?: string | null;
@@ -221,7 +221,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, episode_id, episode_hop, parent_run_id, provider, model, engine, task_title, task_writes, task_cwd, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -231,8 +231,8 @@ export class RunsService {
         'queued',
         input.triggerReason,
         JSON.stringify(input.triggerMessageIds),
-        input.chainId ?? null,
-        input.chainDepth ?? null,
+        input.episodeId ?? null,
+        input.episodeHop ?? null,
         input.parentRunId ?? null,
         input.provider ?? null,
         input.model ?? null,
@@ -275,23 +275,23 @@ export class RunsService {
       /** An absorbed retry batch (null / omitted = keep the stored one). */
       retryOfRunId?: string | null;
       /**
-       * An absorbed @-chain binding (D75 审查 M1; omitted = keep the stored
-       * one): the turn continues that chain at that depth.
+       * An absorbed @-mention episode binding (D75 审查 M1; omitted = keep the
+       * stored one): the turn continues that episode at that hop.
        */
-      chain?: { id: string; depth: number };
+      episode?: { id: string; hop: number };
     },
   ): Run {
     this.db
       .prepare(
-        'update runs set trigger_reason = ?, trigger_message_ids_json = ?, trigger_parts_json = ?, retry_of_run_id = coalesce(?, retry_of_run_id), chain_id = coalesce(?, chain_id), chain_depth = coalesce(?, chain_depth) where id = ?',
+        'update runs set trigger_reason = ?, trigger_message_ids_json = ?, trigger_parts_json = ?, retry_of_run_id = coalesce(?, retry_of_run_id), episode_id = coalesce(?, episode_id), episode_hop = coalesce(?, episode_hop) where id = ?',
       )
       .run(
         trigger.reason,
         JSON.stringify(trigger.messageIds),
         trigger.parts.length > 0 ? JSON.stringify(trigger.parts) : null,
         trigger.retryOfRunId ?? null,
-        trigger.chain?.id ?? null,
-        trigger.chain?.depth ?? null,
+        trigger.episode?.id ?? null,
+        trigger.episode?.hop ?? null,
         id,
       );
     return this.getOrThrow(id);
@@ -341,8 +341,8 @@ export class RunsService {
         | 'error'
         | 'outputMessageIds'
         | 'continuedFromRunIds'
-        | 'chainId'
-        | 'chainDepth'
+        | 'episodeId'
+        | 'episodeHop'
         | 'engine'
         | 'agentSessionId'
         | 'resultConsumedAt'
@@ -362,7 +362,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, episode_id = ?, episode_hop = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
@@ -379,8 +379,8 @@ export class RunsService {
             : null,
         nextErrorJson(patch, existing),
         JSON.stringify(patch.outputMessageIds ?? existing.outputMessageIds),
-        patch.chainId ?? existing.chainId,
-        patch.chainDepth ?? existing.chainDepth,
+        patch.episodeId ?? existing.episodeId,
+        patch.episodeHop ?? existing.episodeHop,
         patch.resultConsumedAt !== undefined ? patch.resultConsumedAt : existing.resultConsumedAt,
         (patch.awaitingInput ?? existing.awaitingInput) ? 1 : 0,
         now,
@@ -526,14 +526,6 @@ export class RunsService {
       )
       .all() as RunRow[];
     return rows.map(rowToRun);
-  }
-
-  /** Run ids bound to one bot-to-bot chain (chain budget aggregation, P05). */
-  listIdsByChain(chainId: string): string[] {
-    const rows = this.db.prepare('select id from runs where chain_id = ?').all(chainId) as Array<{
-      id: string;
-    }>;
-    return rows.map((r) => r.id);
   }
 
   /**

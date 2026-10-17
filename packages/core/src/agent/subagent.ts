@@ -621,7 +621,8 @@ async function runSubagent(
     conversationId: subRun.conversationId,
     loopType: 'subagent',
   };
-  // 设计（D66）：chain token 预算不含子 run 用量 —— 子 run 不继承 chainId。
+  // 设计（D66 / D92 T1a）：子 run 不绑定协作回合 —— 它是父 run 内部的嵌套，
+  // 不会触发 @，回合计数（现熔断）也只数 Bot 发起的可见触发。
 
   const update = (patch: Parameters<RunsService['update']>[1]) => {
     try {

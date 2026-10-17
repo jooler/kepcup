@@ -64,6 +64,12 @@ import {
   projectsUpdateOutputSchema,
   projectsAddMembersInputSchema,
   projectsRemoveMemberInputSchema,
+  episodesGetInputSchema,
+  episodesGetOutputSchema,
+  episodesResumeInputSchema,
+  episodesResumeOutputSchema,
+  episodesStopInputSchema,
+  episodesStopOutputSchema,
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
@@ -829,6 +835,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+    'episodes.get': method(episodesGetInputSchema, episodesGetOutputSchema, async (input) => {
+      const episode = orchestrator.episodes.get(input.id);
+      if (episode === null) throw new AppError('NOT_FOUND', `协作回合 ${input.id} 不存在`);
+      return { episode };
+    }),
+    'episodes.resume': method(episodesResumeInputSchema, episodesResumeOutputSchema, async (input) => ({
+      episode: orchestrator.episodes.resume(input.id),
+    })),
+    'episodes.stop': method(episodesStopInputSchema, episodesStopOutputSchema, async (input) => ({
+      episode: orchestrator.episodes.stop(input.id),
+    })),
 
     'messages.list': method(messagesListInputSchema, messagesListOutputSchema, async (input) => ({
       // 内部事务事件在 SQL 层（listVisible，isVisibleToUser 的存储层镜像）
