@@ -142,7 +142,6 @@ test('episode breaker: pause card, resume re-delivers, stop ends the round', asy
       return conversations.find((c) => c.type === 'project' && c.title === '熔断项目')?.id ?? '';
     })();
 
-    const composer = page.locator('[data-testid="composer-input"]');
     const cards = page.locator('[data-testid="episode-paused-card"]');
 
     // 第一轮 ping-pong：L@M（1）→ M@L（2）→ L@M 第 3 次触发熔断（2,2 阈值）。
