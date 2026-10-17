@@ -14,13 +14,13 @@
 | 位置 | 默认 |
 |---|---|
 | 当前 workspace | 读写（仓库控制文件除外，见下） |
-| 当前对话的 project | 读写（写入需持有写入租约，见 [08-project.md](08-project.md#并发写入租约)；仓库控制文件除外） |
+| 当前对话的 workdir | 读写（写入需持有写入租约，见 [08-workdir.md](08-workdir.md#并发写入租约)；仓库控制文件除外） |
 | 系统目录、工具链目录 | 只读 |
 | 本机其他位置 | 读、写都需授权 |
 | `~/.ssh`、系统钥匙串、`~/.aws`、`~/.config/gh` 等敏感位置 | 需授权，授权卡片醒目警告 |
 | `~/.kepcup`（应用数据目录） | 永远不可授权 |
 
-- **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `hooks/` 下的文件、`info/attributes`（含子模块的），以及会把 git 指向别的仓库的文件：`.git` 指针文件本身、`commondir`、`worktrees/<名>/gitdir`、`objects/info/alternates`）：即使在 workspace / 持有租约的 project 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks）或改读别的仓库，而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-028）。读取不受影响。
+- **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `hooks/` 下的文件、`info/attributes`（含子模块的），以及会把 git 指向别的仓库的文件：`.git` 指针文件本身、`commondir`、`worktrees/<名>/gitdir`、`objects/info/alternates`）：即使在 workspace / 持有租约的 workdir 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks）或改读别的仓库，而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-028）。读取不受影响。
 
 ## 授权
 
@@ -61,13 +61,13 @@ Grant
 2. 用户选择：仅这一次 / 本对话内一直允许 / 拒绝。
 3. 批准后继续执行；拒绝时工具向 Bot 返回“用户拒绝”，由 Bot 自行调整做法。
 
-- 即使用户在消息中明确要求处理项目外的文件，也仍然弹出授权卡片（一次点击即可），防止 Bot 误解路径。
+- 即使用户在消息中明确要求处理工作目录外的文件，也仍然弹出授权卡片（一次点击即可），防止 Bot 误解路径。
 - Bot 也可以在批量操作前主动调用 `request_access(path, access, reason)` 一次性申请。
 - 等待授权期间 loop 处于暂停状态，不消耗 token；用户的新消息照常在下一步注入。（**D75 修订**：只有**任务**会等审批——对话轮永不等用户，越界读取当场失败（`PATH_OUT_OF_SCOPE`）并提示派任务，不发起审批（见 DEV-014）；任务等审批期间用户的新消息进入下一个对话轮，由 Bot 决定是否 `inject_task`。）
 
 ### 命令行
 
-- 每条命令执行前，按 workspace、project（写入租约）与当前有效授权生成沙箱规则。
+- 每条命令执行前，按 workspace、workdir（写入租约）与当前有效授权生成沙箱规则。
 - 命令因沙箱限制失败时，沙箱会报告被拦截的路径；Bot 据此调用 `request_access` 申请授权，批准后重新执行（选「仅这一次」时，预授权由重跑的那条命令认领；中间若先跑了一条无关命令，预授权会被它用掉，需要重新申请）。
 - 命令的交互执行（交互模式、凭据注入）与各平台的降级规则见 [15-interactive-execution.md](15-interactive-execution.md)。
 
@@ -89,8 +89,8 @@ Grant
 
 Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-agents-acp.md](28-external-agents-acp.md)）时，智能体自带的文件与命令工具在其**自身进程与自身沙箱**中运行，不经工具网关的路径检查，也不在 KepCup 沙箱中执行——这是对 D35 / D27 的明确让渡。规则：
 
-- 同样不成立的还有：project `protectRules` 的禁读 / 禁写、Bot 的 `network_policy`、以及「project 以外的读取需授权」——智能体沙箱一般允许全盘只读，只有智能体主动请求权限时才能拦截。
-- 智能体的工作目录限定为 project（未绑定则 workspace）；智能体自身沙箱必须开启（Claude 原生沙箱、Codex `workspace-write`），**永不**使用其 bypass / auto / full-access 模式；智能体侧的仓库配置（Claude `.claude/settings.json` 的 hooks 与 allow 规则）不加载。
+- 同样不成立的还有：workdir `protectRules` 的禁读 / 禁写、Bot 的 `network_policy`、以及「workdir 以外的读取需授权」——智能体沙箱一般允许全盘只读，只有智能体主动请求权限时才能拦截。
+- 智能体的工作目录限定为 workdir（未绑定则 workspace）；智能体自身沙箱必须开启（Claude 原生沙箱、Codex `workspace-write`），**永不**使用其 bypass / auto / full-access 模式；智能体侧的仓库配置（Claude `.claude/settings.json` 的 hooks 与 allow 规则）不加载。
 - 智能体发起的权限请求（ACP `session/request_permission`）由宿主分级：KepCup 自身工具（经宿主 MCP 桥）直接放行、在桥内另走本文的审批；路径先判「工作目录与技能目录」→「应用数据目录其余部分：一律拒绝」→ 常规访问范围；越界读写走「授权」卡片（审批类型 `agent_tool`，有效期仍为“仅这一次 / 本对话内”）。三个权限档位实际做的事（f2b9627 起；`ask` 档界面名「编辑前确认（沙箱内命令自动）」，键名不变）：
 
   | | 只读 `read_only` | 工作区 `workspace`（默认） | 编辑前确认 `ask` |
@@ -118,7 +118,7 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 - 内置默认白名单只包含只读 / 探测命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`、`echo`、`dirname`、`basename`、`realpath`，`git status` / `diff` / `log` / `show` / `branch`（只豁免列出）/ `rev-parse` / `blame` / `ls-files` 等，以及 `node` / `npm` / `python` / `pip` / `tsc` / `eslint` / `prettier` / `ruby` / `php` 的版本探测。**不**包含会加载项目控制的代码或联网下载工具链的探测：`pnpm` / `yarn`（corepack 按 `packageManager` 下载）、`cargo` / `rustc`（rustup 按 `rust-toolchain.toml`）、`go version`（`GOTOOLCHAIN`）；也不包含 `npm test`、`pnpm build`、`curl`、`rm` 等（用户可自定义添加并自担风险）。内置集合由单测按形状钉住，新增条目要显式决定；旧版本补种过的这些探测在升级后删除。
 - 新版本新增的内置条目在已有安装上默认启用（用户停用过的条目不会被重新启用）；界面暂无「新增」标记（DEV-028）。
-- 豁免执行的命令（沙箱外、无卡片）用加固的环境：`PATH` 只留绝对路径，且去掉位于 workspace / project 内的项（`.`、`node_modules/.bin`、direnv 加的 `bin`）；Windows 另设 `NoDefaultCurrentDirectoryInExePath=1`、PowerShell 用绝对路径（不从工作目录捡同名程序）；关闭 corepack / go / npm / pip 的下载与更新检查，Volta shim 绕过（`VOLTA_BYPASS=1`，探测可能报系统版本或失败；pyenv / rbenv / asdf 等 shim 仍可能按工作目录里的版本文件**选择**已安装的版本，不执行项目代码）；git 不用 pager、不取可选锁、`core.fsmonitor=false`、`diff.ignoreSubmodules=all`（不进子模块）。豁免的 git 命令执行前（异步、5 秒上限，git 从清理后的 PATH 解析为绝对路径）先问 git 两件事，任一不过或问不出来（含 git < 2.26）就改为弹卡：① 要读的仓库——git dir、common dir、`objects/info/alternates` 里的对象目录都必须在可读范围内（防 `.git` 指针文件把 `git show HEAD:secrets.env` 引到别的仓库）；② 仓库级配置（local / worktree）里有没有只读命令真会执行的项：`core.fsmonitor`、`diff.external`、`diff.*.textconv` / `command`、`filter.*`、`include.path` / `includeIf`、`core.worktree`、`gpg.program`。`core.hooksPath`（husky）、`core.editor`、`sequence.editor`、`core.sshCommand`、`merge.*.driver`、`core.pager` / `pager.*` 不算（只读命令不会运行它们；输出不是终端时 git 不分页）。**残留**：检查与执行之间仍有极短窗口，期间另一条并行的、已获批准的沙箱外命令若改了配置或加了 filter 驱动，git 会照新配置执行（文件工具写这些文件要授权，沙箱内命令写不了 `.git/config` / hooks）。
+- 豁免执行的命令（沙箱外、无卡片）用加固的环境：`PATH` 只留绝对路径，且去掉位于 workspace / workdir 内的项（`.`、`node_modules/.bin`、direnv 加的 `bin`）；Windows 另设 `NoDefaultCurrentDirectoryInExePath=1`、PowerShell 用绝对路径（不从工作目录捡同名程序）；关闭 corepack / go / npm / pip 的下载与更新检查，Volta shim 绕过（`VOLTA_BYPASS=1`，探测可能报系统版本或失败；pyenv / rbenv / asdf 等 shim 仍可能按工作目录里的版本文件**选择**已安装的版本，不执行项目代码）；git 不用 pager、不取可选锁、`core.fsmonitor=false`、`diff.ignoreSubmodules=all`（不进子模块）。豁免的 git 命令执行前（异步、5 秒上限，git 从清理后的 PATH 解析为绝对路径）先问 git 两件事，任一不过或问不出来（含 git < 2.26）就改为弹卡：① 要读的仓库——git dir、common dir、`objects/info/alternates` 里的对象目录都必须在可读范围内（防 `.git` 指针文件把 `git show HEAD:secrets.env` 引到别的仓库）；② 仓库级配置（local / worktree）里有没有只读命令真会执行的项：`core.fsmonitor`、`diff.external`、`diff.*.textconv` / `command`、`filter.*`、`include.path` / `includeIf`、`core.worktree`、`gpg.program`。`core.hooksPath`（husky）、`core.editor`、`sequence.editor`、`core.sshCommand`、`merge.*.driver`、`core.pager` / `pager.*` 不算（只读命令不会运行它们；输出不是终端时 git 不分页）。**残留**：检查与执行之间仍有极短窗口，期间另一条并行的、已获批准的沙箱外命令若改了配置或加了 filter 驱动，git 会照新配置执行（文件工具写这些文件要授权，沙箱内命令写不了 `.git/config` / hooks）。
 - `git branch` 只豁免列出形式（`-a` / `-r` / `-v` / `-l` 及其组合、`--list`、`--show-current` 等），按 git 自己的参数规则解析：`--format` / `--sort` / `--points-at` 的取值是**下一个词**（`--format -l evil` 里 `-l` 是格式、`evil` 会新建分支），`--contains` / `--merged` 一类只在下一个词不以 `-` 开头时取值，`--abbrev` / `--color` / `--column` 只认 `=` 形式；取完值之后，剩下的位置参数只有在 `--list` / `-l` 下才是模式，否则就是新建分支、要确认。未知选项、缩写、`-d` / `-D` / `-m` / `-c` / `-f` / `-u` 等及其捆绑写法（如 `-qD`）都要确认。`--submodule` / `--recurse-submodules` / `-O` 在任何 git 命令里都不豁免。
 - 严格匹配，以下情况不豁免：
   - 整条命令中有任何一段不在白名单中（管道、`&&`、`;` 连接的每一段都要命中）

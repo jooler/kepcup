@@ -118,7 +118,7 @@ CREATE TABLE conversations (
   title             TEXT,                 -- 群聊名称；单聊为空（显示 Bot 名称）
   description       TEXT,                 -- 群定位（本群主要处理什么事务，19/D60）；单聊为空
   direct_bot_id     TEXT REFERENCES bots(id),
-  project_id        TEXT,                 -- P04 起使用
+  workdir_id        TEXT,                 -- P04 起使用（0038 改名）
   read_only         INTEGER NOT NULL DEFAULT 0,
   setup_state       TEXT,                 -- 'creating' = 群创建问答进行中（19/D60）
   summary           TEXT,                 -- 滚动摘要
@@ -196,7 +196,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - 任务问题卡（`ask_user`）：共享的 `system_event` 行，`event = 'task_question'`，`content_json` 带 `text`（问题）、`options`、`taskBotId`（提问任务所属的 Bot；上下文渲染为「Bot（任务 t）向用户提问」并包 `<untrusted>`），回答后写入 `answer`（超时为「（超时未回答）」，提问失败作废为「（提问没有成功，问题作废）」）；`task_id` 与 `run_id` = 任务。
 - 问题卡的多选 / 表单（D87 P4 L2）：同一行的 `content_json` 另带 `questionMode`（`single` / `multi` / `form`，缺省视为 `single`，存量卡不变）与 `questionFields`（表单字段 `{name, label, type, options?, required}`，≤8 个）；回答后 `answer` 是卡上显示的可读一行（≤500 字），交给任务的结构化 JSON 只进任务的私有条目。
 - 结果放弃提示：共享的 `system_event` 行，`event = 'task_result_undelivered'`，`task_id` / `run_id` = 任务；用户可见，Bot 上下文渲染为固定文案（不含任务标题）。
-- 设置卡（D89，无迁移）：共享的 `system_event` 行，`event = 'setting_card'`，`sender_type = 'system'`，`run_id` = 出卡的 run；`content_json = { event, text, setting }`，`setting` 为 `SettingCardContent`：`botId`、`runId`、`itemId`（设置目录条目 id）、`mode`（`direct` / `confirm` / `form` / `user-only` / `link`）、`target{botId?, conversationId?, projectId?}`、`proposed`（user-only / link 恒 null）、`before`（出卡时的当前值，也是 `settings.items.apply` 的 `expected`）、`beforeText` / `proposedText`、`reason`、`modeReason?`、`state`（`pending` / `applied` / `dismissed` / `superseded` / `expired` / `reverted`）、`applied?`（direct 回执卡 = 新值，撤销用）、`undoUntil?`（回执 24 小时撤销窗口）、`decidedAt?`。状态写回同 `schedule_offer`：core 用 `json_set` 改 `$.setting` 与 `$.text` 并发 `message.updated`；防刷屏（每 run ≤3 张、拒绝退避）直接对 `run_id` / `$.setting.botId` / `$.setting.itemId` / `$.setting.state` 做 json_extract 查询，不另建表。上下文渲染为一行系统消息，值与理由包 `<untrusted>`。
+- 设置卡（D89，无迁移）：共享的 `system_event` 行，`event = 'setting_card'`，`sender_type = 'system'`，`run_id` = 出卡的 run；`content_json = { event, text, setting }`，`setting` 为 `SettingCardContent`：`botId`、`runId`、`itemId`（设置目录条目 id）、`mode`（`direct` / `confirm` / `form` / `user-only` / `link`）、`target{botId?, conversationId?, workdirId}`、`proposed`（user-only / link 恒 null）、`before`（出卡时的当前值，也是 `settings.items.apply` 的 `expected`）、`beforeText` / `proposedText`、`reason`、`modeReason?`、`state`（`pending` / `applied` / `dismissed` / `superseded` / `expired` / `reverted`）、`applied?`（direct 回执卡 = 新值，撤销用）、`undoUntil?`（回执 24 小时撤销窗口）、`decidedAt?`。状态写回同 `schedule_offer`：core 用 `json_set` 改 `$.setting` 与 `$.text` 并发 `message.updated`；防刷屏（每 run ≤3 张、拒绝退避）直接对 `run_id` / `$.setting.botId` / `$.setting.itemId` / `$.setting.state` 做 json_extract 查询，不另建表。上下文渲染为一行系统消息，值与理由包 `<untrusted>`。
 - 设置卡落定通知（D89）：共享的 `system_event` 行，`event = 'setting_card_resolved'`，`internal = true`（用户界面不显示），`content_json` 带 `text`（给 Bot 的人话）与 `settingResolved{cardMessageId, itemId, outcome: 'applied' | 'dismissed', before, after}`；用户应用 / 不用了时写一次，唤醒出卡 Bot 的对话轮；superseded / expired / reverted 与撤销不写。
 - `MessagesService` 的读法（D75 W1-B）：`listForBot(conversationId, botId)`（共享行 + 该 Bot 的私有行，Bot 上下文）、`listShared`（只共享行：任务的对话层、摘要）、`search(…, viewerBotId)`（FTS join `messages` 按 owner 过滤）、`around`（前后各 N 条可见行）、`unsummarized`（只摘共享行）、`countVisibleAfter`（未读只数用户可见行）；`terminalTaskEvent(taskId)` / `taskEvents(taskId)` 只查 `kind = 'task_event'`。私有行推进对话的 `last_seq`，不推进 `last_message_at`。
 - 0018 重建方式：`messages` 被 `attachments.message_id`（`ON DELETE CASCADE`）引用，迁移又在 `foreign_keys=ON` 的事务内执行，直接 `DROP TABLE messages` 会级联删光附件；因此 `attachments` 一并重建（先建两张新表并复制，先删旧 `attachments` 再删旧 `messages`，再改名——外键开启时改名会同步改写引用）。表结构与本节 / 下节一致。
@@ -314,7 +314,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分（见 `butlerProposalPayloadSchema`）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）。
 
-`agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, projectPath?, configHash?}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：project 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、project 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
+`agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, workdirPath?, configHash}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：workdir 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、workdir 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
 `egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
 
@@ -355,10 +355,10 @@ CREATE TABLE command_allowlist (
 );
 ```
 
-### projects（P04）
+### workdirs（P04）
 
 ```sql
-CREATE TABLE projects (
+CREATE TABLE workdirs (
   id                  TEXT PRIMARY KEY,   -- prj_...
   path                TEXT NOT NULL UNIQUE,  -- realpath
   name                TEXT NOT NULL,
@@ -375,7 +375,7 @@ CREATE TABLE projects (
 ```sql
 CREATE TABLE run_changes (
   run_id          TEXT PRIMARY KEY,
-  project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workdir_id      TEXT NOT NULL REFERENCES workdirs(id) ON DELETE CASCADE,
   conversation_id TEXT,
   before_oid      TEXT NOT NULL,          -- 影子仓库中的提交
   after_oid       TEXT,
@@ -1089,7 +1089,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | 该对话的 approvals（待确认的先取消）、grants | 删除 | P03 |
 | app_tool_grants 中该对话的行 | 随外键 `ON DELETE CASCADE` 删除 | D73 P1 |
 | agent_sessions（外部智能体会话行；尽力 `session/delete`，Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（`Orchestrator.agentSessionsOnConversationDeleted`） |
-| run_changes | 删除（project 文件与影子仓库不动） | P04 |
+| run_changes | 删除（workdir 文件与影子仓库不动） | P04 |
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
@@ -1161,9 +1161,9 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | 只以该消息为证据的记忆与画像条目 | 置为 `retracted` | P07 |
 | 该消息附件已入 Wiki 的原始资料 | 从 `raw/` 删除，登记 Wiki 体检任务 | P09 |
 
-### 从最近列表移除 Project
+### 从最近列表移除 Workdir
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
-| projects 行、run_changes、影子仓库目录 | 删除（project 目录中的文件不动） | P04 |
-| 绑定了该 project 的对话 | `project_id` 置空，插入系统消息 | P04 |
+| workdirs 行、run_changes、影子仓库目录 | 删除（workdir 目录中的文件不动） | P04 |
+| 绑定了该 workdir 的对话 | `workdir_id` 置空，插入系统消息 | P04 |

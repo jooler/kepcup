@@ -53,7 +53,7 @@
 | 数据 | 写入者 |
 |---|---|
 | Workspace | “Bot + 对话”串行队列中的响应 loop |
-| Project | 持有该目录写入租约的 loop（跨对话，见 [08-project.md](08-project.md#并发写入租约)） |
+| Project | 持有该目录写入租约的 loop（跨对话，见 [08-project.md](08-workdir.md#并发写入租约)） |
 | Bot 记忆 | 每个 Bot 一个写入队列 |
 | 用户画像 | 全局唯一的画像整理 loop |
 | Wiki | 本 Bot 的 Wiki 维护 loop（串行） |

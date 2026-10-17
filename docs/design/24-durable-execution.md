@@ -4,7 +4,7 @@
 
 Journal 与 resume 落在 KepCup 自有 `runs` / `run_steps` 与工具网关之上，由 Orchestrator 执行；`PiEngine` 仍只跑 LLM loop。语义参考 Pi Durable 的 effect sandwich、`replay`、`requestId` 与 memo，不整包替换引擎。
 
-相关：D2（soft steer，[02-execution.md](02-execution.md)）、D21（pi 封装在 `AgentEngine` 之后，[09-tech-stack.md](09-tech-stack.md)）、D30（Project 检查点，[08-project.md](08-project.md)）、D48（消息可见性）、D54（中间过程投送）、D56（Loop 续接）、D65/D66（MCP / SubAgent）。
+相关：D2（soft steer，[02-execution.md](02-execution.md)）、D21（pi 封装在 `AgentEngine` 之后，[09-tech-stack.md](09-tech-stack.md)）、D30（Project 检查点，[08-project.md](08-workdir.md)）、D48（消息可见性）、D54（中间过程投送）、D56（Loop 续接）、D65/D66（MCP / SubAgent）。
 
 ## 决策
 

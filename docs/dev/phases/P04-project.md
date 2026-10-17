@@ -10,7 +10,7 @@ P03。
 
 ## 设计依据
 
-- [design/08-project.md](../../design/08-project.md)（全文）
+- [design/08-project.md](../../design/08-workdir.md)（全文）
 - [design/10-sandbox.md](../../design/10-sandbox.md#网络)（本机端口）、[design/10-sandbox.md](../../design/10-sandbox.md#git)（git）
 - [design/12-ui-layout.md](../../design/12-ui-layout.md)（project 选择器、改动摘要卡片）
 - [03-data-model.md](../03-data-model.md)（projects、run_changes）

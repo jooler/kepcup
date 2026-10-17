@@ -48,7 +48,7 @@
 | 结算后回注对话                 | 后台子 run settle → `onFollowUp` → `#injectDelegateFollowUp`              | `packages/core/src/dispatch/orchestrator.ts` `#injectDelegateFollowUp` |
 | 任务状态机 + settle 钩子 + 结果卡      | D71 委派：`submitted/working/completed/failed/cancelled` + `onRunSettled` | `packages/core/src/dispatch/delegation.ts`                             |
 | 执行体 = 可审计单元             | `runs` 表（`loop_type` / `engine` / `continued_from_run_ids`）            | `packages/core/src/domain/runs.ts`                                     |
-| 写互斥 + 排队 + 前后快照         | `ensureWriteLease` / `waiting_lease` / 影子仓库检查点                         | `packages/core/src/project/service.ts`                                 |
+| 写互斥 + 排队 + 前后快照         | `ensureWriteLease` / `waiting_lease` / 影子仓库检查点                         | `packages/core/src/workdir/service.ts`                                 |
 | 任务过程回放                  | D56 的 `buildRunDigest`                                                 | `packages/core/src/agent/context/continuation.ts`                      |
 | Bot 私有时间线的形状           | 同一张消息表两条读路径：Bot 上下文读 `list()`（含内部事务），用户 UI 读 `listVisible()`，内部事务不推 `message.created` | `packages/core/src/domain/messages.ts` `isVisibleToUser` / `listVisible`；orchestrator `#appendSystemMessage` |
 
@@ -98,7 +98,7 @@
 | 组        | 工具                                                                                                                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
-| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） **D91 修订**：这一项改为只读两件套 `capability_search` / `capability_call`（Bot 的外部能力清单在系统提示的 `<capabilities>` 段，对话轮不再逐个挂 MCP / 应用工具、run 开头不再连服务器），见 [40](40-capability-mounting.md) §3、§5。 |
+| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / workdir 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） **D91 修订**：这一项改为只读两件套 `capability_search` / `capability_call`（Bot 的外部能力清单在系统提示的 `<capabilities>` 段，对话轮不再逐个挂 MCP / 应用工具、run 开头不再连服务器），见 [40](40-capability-mounting.md) §3、§5。 |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
 | 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89：档位由宿主裁定，写入与出设置卡均由宿主确定性执行，见 [38](38-conversational-settings.md)）、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；不设步数上限（见 DEV-017）                                                                                       |
@@ -131,7 +131,7 @@
 ### 2.3 一次完整的交互
 
 ```text
-用户：把这个项目的测试补全
+用户：把这个工作目录的测试补全
   → 对话轮 #1（内置引擎，几秒）
       start_task({ title:'补全测试', instruction:…, source_message_ids:[m_101], writes:true })
           → task A（submitted → running）；私有时间线记「你→任务 A（交代）」
@@ -192,7 +192,7 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 - `messages` 增列 `task_id TEXT NULL`（`task_event` 与任务卡、任务问题卡填）：按任务查条目，并建唯一索引 `(task_id) WHERE kind='task_event' AND json_extract(content_json, '$.phase') IN ('result','failure')`（表达式部分索引，加密构建下可用）保证**每个任务至多一条终态条目**（`result` / `failure`），供 §3.2 的幂等写入与启动修复使用。
 - `messages.kind` 增 `'task_event'`（表级 CHECK 需重建表，早期阶段可接受）。内容 `{ taskId, phase: 'brief'|'inject'|'cancel'|'question'|'result'|'failure', text, sourceMessageIds?, status?, error? }`，`sender_type='system'`。
 - 可见的任务进度消息：`textContentSchema` 增 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例落 `content_json`，免加列）。
-- **范围**：`owner_bot_id` 只用于 `task_event`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享、不迁移——它们多数影响群共享的 project / 环境，不是某个 Bot 的思考过程。
+- **范围**：`owner_bot_id` 只用于 `task_event`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享、不迁移——它们多数影响群共享的 workdir / 环境，不是某个 Bot 的思考过程。
 
 #### 2.4.3 读取：按视角的统一读法，所有读路径都走它
 
@@ -222,7 +222,7 @@ Bot X 的上下文里，三类与任务相关的行分别渲染为：
 
 任务不读 X 的完整时间线，只读与自己相关的部分：
 
-- **系统层**：人设、画像、记忆、Wiki 目录、Skills、project / workspace 信息——与对话轮同源；
+- **系统层**：人设、画像、记忆、Wiki 目录、Skills、workdir / workspace 信息——与对话轮同源；
 - **对话层**：共享行（摘要 + 最近窗口），**不含**其他任务的私有往返（任务之间互不干扰；需要别的任务的结论，由对话轮写进交代）；
 - **简报**：本任务的交代条目——`instruction` 加上 `source_message_ids` 指向的**用户原消息原文**，附件与图片（D61）原样带入。`instruction` 是对话轮的转述，转述会丢细节，原文兜底；
 - 本任务后续的追加条目同样带原文；`continues_task_id` 时按 D56 预算回放来源任务的过程（§7.1）。
@@ -306,7 +306,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 | --------------------- | -------------------------------------------- |
 | `task_title`          | 卡片与 `<tasks>` 段的标题（由 `start_task` 给出）        |
 | `task_writes`         | 是否写任务（决定租约与网关裁决）                             |
-| `task_cwd`            | 执行根目录（`workspace` / `project` / 任务私有子目录的解析结果） |
+| `task_cwd`            | 执行根目录（`workspace` / `workdir` / 任务私有子目录的解析结果） |
 | `origin_run_id`       | 派出它的对话轮                                      |
 | `result_consumed_at` | §3.2 的消费标记：触发批含其结果条目、且处理了这次触发的对话轮到达 `completed` / `failed` 时写入 |
 | `awaiting_input`     | 任务在 `running` 下等用户回答问题卡（§2.4.6） |
@@ -378,20 +378,20 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 - **只读任务**：不取租约，受对话级与全局并发封顶。
 - **写任务**：启动前取 `cwd` 根的写租约，**整个任务持有**（与 D72 外部 Agent 的 `pin` 语义一致）；取不到就停在 `submitted`，在卡片与 `<tasks>` 段中显示排队原因。
-- **同一 cwd 同时最多一个写任务**，跨对话生效（D29 的语义不变，只是把适用面从 project 扩到 workspace）。实现上第二个写任务在**任务层**就被拦住（`TaskHost` 按 cwd 判定）：它停在 `submitted`、不去申请租约，卡片、状态行与 `<tasks>` 段显示「等写入租约（任务 … 持有）」；持有方任务结束或被取消后才启动。
+- **同一 cwd 同时最多一个写任务**，跨对话生效（D29 的语义不变，只是把适用面从 workdir 扩到 workspace）。实现上第二个写任务在**任务层**就被拦住（`TaskHost` 按 cwd 判定）：它停在 `submitted`、不去申请租约，卡片、状态行与 `<tasks>` 段显示「等写入租约（任务 … 持有）」；持有方任务结束或被取消后才启动。
 - **「强制收回」对任务层排队不起作用**（见 DEV-015）：D29 / BR-P04-001 的强制收回针对在 `ensureWriteLease` 上排队的等待者；任务层排队的写任务根本不在租约上等，对它点强制收回只会让持有方任务失去写权限，排队任务仍要等持有方结束。因此强制收回只对租约层的等待出现（写任务启动前被非任务持有者——宿主伪身份等——挡住，仍是 `lease.waiting`）；任务层排队的放行方式是在持有方任务的卡片上取消（或等它结束）。跨对话时用户需切到持有方对话去取消；「强制收回 = 取消持有租约的写任务」作为备选。
-- **强制收回 = 持有方任务失去写权限**（审查批 E）：收回立刻关掉持有方写任务的租约窗口（改动记录只含它自己的改动），并把该任务记为「租约已被收回」——之后它的写入（文件工具、命令的可写挂载、`acquire_project_write`、它的子代理）由网关以 `RUN_READ_ONLY`「写入租约已被用户收回」拒绝，任务照常跑完（可以读、可以交回结果，说明哪些改动没做成），**不会**在下一次写入时悄悄重新取得租约。只钉住的租约（写任务、D72 外部 Agent 的 run）如此；不钉住的执行（宿主伪身份等）收回后再写会开新窗口，其改动记录跨窗口累积（`run_changes` 每个文件记首个窗口前 / 末个窗口后的快照，回退恢复前者、按后者检测冲突；别人夹在两个窗口之间改过的文件按冲突处理）。
+- **强制收回 = 持有方任务失去写权限**（审查批 E）：收回立刻关掉持有方写任务的租约窗口（改动记录只含它自己的改动），并把该任务记为「租约已被收回」——之后它的写入（文件工具、命令的可写挂载、`acquire_workdir_write`、它的子代理）由网关以 `RUN_READ_ONLY`「写入租约已被用户收回」拒绝，任务照常跑完（可以读、可以交回结果，说明哪些改动没做成），**不会**在下一次写入时悄悄重新取得租约。只钉住的租约（写任务、D72 外部 Agent 的 run）如此；不钉住的执行（宿主伪身份等）收回后再写会开新窗口，其改动记录跨窗口累积（`run_changes` 每个文件记首个窗口前 / 末个窗口后的快照，回退恢复前者、按后者检测冲突；别人夹在两个窗口之间改过的文件按冲突处理）。
 - 工具网关对 `task_writes=false` 的任务**硬拒写路径**（执行期校验，不只靠不注册工具）。
 
 
 
 ### 5.2 租约要扩到 workspace
 
-今天 `#leaseTarget` 只认 project：不涉及 project 的路径直接抛「该路径不涉及 project，无需写入租约」（`packages/core/src/project/service.ts` `#leaseTarget`）。串行 mailbox 一直在替它兜底——自由对话里同一时刻只有一个 loop，所以 workspace 没有并发写。拆分后这个兜底消失，必须补：
+今天 `#leaseTarget` 只认 workdir：不涉及 workdir 的路径直接抛「该路径不涉及 workdir，无需写入租约」（`packages/core/src/workdir/service.ts` `#leaseTarget`）。串行 mailbox 一直在替它兜底——自由对话里同一时刻只有一个 loop，所以 workspace 没有并发写。拆分后这个兜底消失，必须补：
 
 - 新增租约键 `ws:{botId}:{conversationId}`，对应 `bots/{botId}/workspaces/{conversationId}/`。
 - `waiting_lease` 状态、`lease.waiting` 事件、排队 UI 全部复用。
-- workspace 没有影子仓库检查点（那是 project 的能力），所以 workspace 写任务被取消时只能给出「改了哪些文件」，**不提供整次回退**——这一点要在取消卡上如实说明，不要假装有回退。
+- workspace 没有影子仓库检查点（那是 workdir 的能力），所以 workspace 写任务被取消时只能给出「改了哪些文件」，**不提供整次回退**——这一点要在取消卡上如实说明，不要假装有回退。
 
 
 
@@ -448,7 +448,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 ### 6.3 界面
 
-- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：project 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败或中断的任务可重试——中断且续接链有已完成 / 结果未知的外部副作用时为「检查后重试」，§7.4；缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
+- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：workdir 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败或中断的任务可重试——中断且续接链有已完成 / 结果未知的外部副作用时为「检查后重试」，§7.4；缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
 - 状态行（D55）：对话轮保留自己的一行；进行中的任务合并为另一行——一个任务显示标题 + 当前活动，多个任务显示条数 + 最近活动、可展开；排队中的写任务在**租约层**等待时保留「强制收回」按钮（任务层排队不给，见 §5.1）。任务过程只保留**一条**状态通知（状态行 / 任务卡 `lastProgress`，覆盖写；成功清空、未完成保留）。**已实现**。
 - Bot 详情栏 / 对话头部：进行中任务数。**未实现**。
 - 执行记录页：任务与对话轮分列（`loop_type` 已有），任务详情显示 `origin_run_id` 与 `continues_task_id` 的链路。**未实现**（任务卡已显示接续关系）。
@@ -602,9 +602,9 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 
 「每个任务一个 worktree」看起来能根治并行写。它确实把**物理竞争**转成**merge 冲突**（冲突变得可见、可审查、可延后），但在 KepCup 的具体约束下当不了默认方案，四条理由按严重性排列：
 
-1. **它要写用户的** `.git`**，而这条底线已经画过并付过实现代价。** `git worktree add` 会在用户仓库的 `.git/worktrees/` 下建目录、建 ref/分支，并在新目录写 gitlink。而 [08-project.md](08-project.md#权限与保护) 规定 `.git/config`、`.git/hooks` 沙箱内不可写，`git init` / `git remote add` 这类改写 git 配置的操作必须由核心服务在沙箱外代为执行且**每次用户确认**（D31）；`packages/core/src/project/checkpoints.ts` 的影子仓库为了不往项目里写一个 gitlink，专门绕了 `noDotgitDir` + `core.worktree` 的弯，注释写明「Nothing is ever written inside the project itself」。worktree 不是加个功能，是推翻这条不变量。
-2. **整套路径门禁锚在单个** `project.path` **上。** 沙箱读写挂载（`sandbox/policy.ts`）、网关路径判定、租约目标（`#leaseTarget`）、`protectRules` / `denyRead` 的 glob 拼接、bash 的 cwd——全部从 `boundProject(conversationId)` 的单一路径推导。worktree 在另一个路径，对这套栈来说就是「project 之外」：没有写挂载、没有租约、`denyRead` **规则不匹配**。最后一条是安全问题而非功能缺失：用户给 `.env` 配的 deny-read 在 worktree 副本上静默失效。要支持就得把「project = 一个路径」改造成「project = 一个身份 + 一组路径」，逐处改、逐处补测试，漏一处是一个洞。
-3. **检查点与回退 UX 对不上。** 影子仓库是一个 project 一个、`core.worktree` 指向 `project.path`、per-project mutex 串行；`run_changes` 存影子仓库的 commit oid；改动摘要卡片 / 查看 diff / 整次回退都挂在 project 上。worktree 里的改动不进这套——用户看不见也退不了。要么每个 worktree 一个影子仓库（那「整次回退」退什么？worktree？归并结果？归并前的 project？），要么 worktree 任务没有检查点。
+1. **它要写用户的** `.git`**，而这条底线已经画过并付过实现代价。** `git worktree add` 会在用户仓库的 `.git/worktrees/` 下建目录、建 ref/分支，并在新目录写 gitlink。而 [08-workdir.md](08-workdir.md#权限与保护) 规定 `.git/config`、`.git/hooks` 沙箱内不可写，`git init` / `git remote add` 这类改写 git 配置的操作必须由核心服务在沙箱外代为执行且**每次用户确认**（D31）；`packages/core/src/workdir/checkpoints.ts` 的影子仓库为了不往工作目录里写一个 gitlink，专门绕了 `noDotgitDir` + `core.worktree` 的弯，注释写明「Nothing is ever written inside the workdir itself」。worktree 不是加个功能，是推翻这条不变量。
+2. **整套路径门禁锚在单个** `workdir.path` **上。** 沙箱读写挂载（`sandbox/policy.ts`）、网关路径判定、租约目标（`#leaseTarget`）、`protectRules` / `denyRead` 的 glob 拼接、bash 的 cwd——全部从 `boundWorkdir(conversationId)` 的单一路径推导。worktree 在另一个路径，对这套栈来说就是「workdir 之外」：没有写挂载、没有租约、`denyRead` **规则不匹配**。最后一条是安全问题而非功能缺失：用户给 `.env` 配的 deny-read 在 worktree 副本上静默失效。要支持就得把「workdir = 一个路径」改造成「workdir = 一个身份 + 一组路径」，逐处改、逐处补测试，漏一处是一个洞。
+3. **检查点与回退 UX 对不上。** 影子仓库是一个 workdir 一个、`core.worktree` 指向 `workdir.path`、per-workdir mutex 串行；`run_changes` 存影子仓库的 commit oid；改动摘要卡片 / 查看 diff / 整次回退都挂在 workdir 上。worktree 里的改动不进这套——用户看不见也退不了。要么每个 worktree 一个影子仓库（那「整次回退」退什么？worktree？归并结果？归并前的 workdir？），要么 worktree 任务没有检查点。
 4. **新 worktree 开箱即废。** worktree 只有被跟踪的文件：`node_modules`、`.env`、本地配置、构建产物一个都没有，任务第一步就是 `pnpm install`（分钟级或直接失败），测试因缺 `.env` 跑不起来。更要紧的是 worktree 从某个 commit 起，**用户工作区里未提交的改动不在里面**——而「照着现在这个状态继续改」恰恰是最常见的请求。
 
 次级问题：干扰用户自己的 git（分支已在别处 checkout 则 checkout 不了；崩溃后残留 `.git/worktrees` 需要 prune / reaper）；归并必须成为一等公民（谁解冲突、冲突时任务算成功还是失败、归并失败后 worktree 留还是删）。
@@ -645,7 +645,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | [04-memory.md](04-memory.md)                               | 反思登记时机（§7.2）                                                                                                                                                                                                         |
 | [13-permissions.md](13-permissions.md)                     | D37「仅这一次」收紧为单次工具调用 + 绝对时限（§7.3）                                                                                                                                                                                      |
 | [12-ui-layout.md](12-ui-layout.md)                         | 任务卡、任务列表、状态行语义（§6.3）                                                                                                                                                                                                 |
-| [08-project.md](08-project.md)                             | D29 写租约适用面扩到 workspace（§5.2）                                                                                                                                                                                         |
+| [08-workdir.md](08-workdir.md)                             | D29 写租约适用面扩到 workspace（§5.2）                                                                                                                                                                                         |
 | [01-conversation.md](01-conversation.md) | 「消息原则」扩展：`task_event` 私有条目（`owner_bot_id`）只进 owner Bot 的上下文；现有内部事务保持对话共享；所有读路径按视角过滤，对话摘要只摘共享行（§2.4） |
 
 
@@ -662,7 +662,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/dispatch/orchestrator.ts`      | 已改为 `#startTurn` + 共用执行骨架 `#executeRun(runId, RunExecution)`（`kind: 'turn' \| 'task'`）+ `#startTask`，任务层在新的 `dispatch/tasks.ts`；`#steerRunningRun` / `#pendingSteers` 已删除，任务的注入经 `TaskRunControl` |
 | `packages/core/src/agent/subagent.ts`             | `SubagentHost` 已删除（任务层 `TaskHost` 在 `dispatch/tasks.ts` 新写）；`delegate_task` 的后台模式改为父 run 内的并行分支 + `collect_delegate_results` |
 | `packages/core/src/dispatch/delegation.ts`        | 状态机、settle 钩子、结果卡的**参照实现**（禁止复述 follow-up 不沿用） |
-| `packages/core/src/project/service.ts`            | `#leaseTarget` 支持 workspace 键                                                                                                                                                                  |
+| `packages/core/src/workdir/service.ts`            | `#leaseTarget` 支持 workspace 键                                                                                                                                                                  |
 | `packages/core/src/agent/external/engine.ts`      | `steer()`（D72 P5，已落地）的异步拒绝映射为 `queued`；保留会话匹配与 `discardSession` 按任务键（§8.5）；`features.parallelSessions`（D72 已加）决定 `agent:{id}` 并发 |
 | `agent_sessions`（main 迁移）+ `domain/agent-sessions.ts` + `mcp-bridge.ts` + `domain/lifecycle.ts` | 加 `task_id`、唯一索引与 `upsert` 冲突键含任务；`sessionKey` / 桥 token 按任务键（删除级联已逐行处理，§8.5） |
 | `packages/core/src/agent/context/continuation.ts` | 自动续接（L1 窗口 + L2 仲裁）已整体移除，只留 `buildRunDigest`；`continues_task_id` 的回放经 `dispatch/tasks.ts` `buildTaskReplaySegment` |
