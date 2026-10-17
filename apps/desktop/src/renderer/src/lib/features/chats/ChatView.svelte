@@ -8,6 +8,7 @@
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import ProjectView from '$lib/features/project/ProjectView.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
   import ProjectComposeBar from './ProjectComposeBar.svelte';
@@ -17,9 +18,13 @@
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
 
   /**
-   * 聊天区（参考 Grok Bot）：消息列表占满整个高度并在顶部药丸与底部输入坞
+   * 聊天区（参考 Grok Bot）：消息列表占满整个高度并在顶部浮层与底部输入坞
    * 之下滚动；输入坞绝对定位在底部，其高度经 bind:clientHeight 动态回填给
    * 消息列表的底部 padding（输入多行增高时消息区让位随之变化）。
+   *
+   * 单聊：浮动渐隐药丸（点开右栏 / Bot 详情覆盖层）。项目组：ProjectView 的
+   * 实心两行顶栏 + 模块内容区，不再有药丸与右栏（WP6）。两者的沟通主体是同一
+   * 份 chatBody snippet，一份代码两处渲染。
    */
   const current = $derived(chat.current);
   const hasMessages = $derived((current?.messages.length ?? 0) > 0);
@@ -49,13 +54,11 @@
   const headerTitle = $derived(
     current === null
       ? ''
-      : isProject
-        ? (current.conversation.title ?? '')
-        : // 已删除 Bot 的占位行 name 为空串，回退其 id（设计/01：显示为 id）。
-          current.conversation.bot?.name ||
-          current.conversation.bot?.id ||
-          current.conversation.directBotId ||
-          t('rightPanel.title'),
+      : // 已删除 Bot 的占位行 name 为空串，回退其 id（设计/01：显示为 id）。
+        current.conversation.bot?.name ||
+        current.conversation.bot?.id ||
+        current.conversation.directBotId ||
+        t('rightPanel.title'),
   );
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
   // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
@@ -68,6 +71,133 @@
 
   let composerDockHeight = $state(0);
 </script>
+
+<!--
+  沟通主体：浮动提示条 + 消息列表 + 输入坞 + 便签层 + 媒体灯箱。单聊直接渲染
+  （topInset 56 = 药丸高度）；项目组由 ProjectView 在内容区渲染（顶栏是实心块，
+  只留 12px 呼吸空隙）。snippet 里 current 已由外层分支保证非空。
+-->
+{#snippet chatBody(topInset: number, bannerTopClass: string)}
+  <!-- 浮动提示条（只读 / 确认模式 / 执行失败） -->
+  {#if current!.conversation.readOnly || confirmMode || current!.failedRun}
+    <div
+      class="pointer-events-none absolute inset-x-0 {bannerTopClass} z-30 flex flex-col items-center gap-1.5 px-4"
+    >
+      {#if current!.conversation.readOnly}
+        <div
+          class="pointer-events-auto rounded-full border bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
+          data-testid="readonly-banner"
+        >
+          {t('composer.readOnly')}
+        </div>
+      {/if}
+      {#if confirmMode}
+        <div
+          class="pointer-events-auto rounded-full border border-amber-500/40 bg-background/95 px-3 py-1 text-xs text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
+          data-testid="confirm-mode-banner"
+        >
+          {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
+        </div>
+      {/if}
+      {#if current!.failedRun && !current!.failedRun.setup}
+        <!-- 缺设置的失败（run.setup）由消息列表内的设置卡片接管（18-inline-setup），
+             此处只展示普通失败。 -->
+        <div
+          class="pointer-events-auto flex items-center gap-2 rounded-full border border-destructive/30 bg-background/95 py-1 pr-1.5 pl-3 text-xs text-destructive shadow-sm backdrop-blur"
+          data-testid="run-failed-banner"
+        >
+          <!-- 原因常被截断：悬停可看完整原因。 -->
+          <span
+            class="max-w-md min-w-0 truncate"
+            title={t('chats.runFailed', { reason: current!.failedRun.error ?? '' })}
+          >
+            {t('chats.runFailed', { reason: current!.failedRun.error ?? '' })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-6 rounded-full px-2"
+            onclick={() => void chat.retryRun(current!.failedRun!.id)}
+            data-testid="run-retry"
+          >
+            {t('chats.retry')}
+          </Button>
+          <!-- 关闭把这次失败标成已读（run 保留）；刷新后不再出现。 -->
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 w-6 rounded-full p-0 text-destructive hover:text-destructive"
+            aria-label={t('common.close')}
+            title={t('common.close')}
+            onclick={() => chat.dismissFailedRun(current!.failedRun!.id)}
+            data-testid="run-failed-dismiss"
+          >
+            <X class="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if hasMessages}
+    <MessageList topInset={topInset} bottomInset={composerDockHeight} />
+  {/if}
+
+  <!--
+    底部输入坞：有消息时绝对定位在底部（消息列表按其高度让位）；
+    无消息时垂直居中（docs/design/12-ui-layout.md 焦点一）。
+  -->
+  <div
+    class="absolute z-30 {hasMessages
+      ? 'inset-x-0 bottom-0'
+      : 'top-1/2 right-0 left-0 -translate-y-1/2 px-4'}"
+    bind:clientHeight={composerDockHeight}
+    data-testid="composer-dock"
+    data-centered={hasMessages ? 'false' : 'true'}
+  >
+    <!--
+      底部遮罩（仅消息模式）：上段渐变（背景色→透明）占 1/3、下段实色背景
+      占 2/3，纵向拼满坞体高度，滚入坞后的消息先在渐变段淡出、再被实色段
+      完全盖住。-z-10 垫在坞内交互内容之下（坞 z-30 自成层，仍整体盖住
+      消息列表），pointer-events-none 不拦截任何操作。
+    -->
+    {#if hasMessages}
+      <div
+        class="pointer-events-none absolute inset-x-0 top-0 -z-10 h-1/3 bg-gradient-to-t from-background to-background/0"
+        aria-hidden="true"
+      ></div>
+      <div
+        class="pointer-events-none absolute inset-x-0 top-1/3 bottom-0 -z-10 bg-background"
+        aria-hidden="true"
+      ></div>
+    {/if}
+    <ApprovalDock conversationId={current!.conversation.id} />
+    {#if chat.setupRequirement}
+      <!--
+        缺设置引导卡（docs/design/18-inline-setup.md）：发送门禁置起或最近
+        失败 run 携带结构化 setup 时出现在输入坞上方——对话的注意力位置；
+        无消息（门禁）与有消息（失败改判）两种场景都可见。完成设置后原
+        对话自动继续。
+      -->
+      <div class="pb-2" data-testid="setup-required-wrap">
+        <SetupRequiredCard requirement={chat.setupRequirement} />
+      </div>
+    {/if}
+    <Composer
+      readOnly={current!.conversation.readOnly || pathGateClosed}
+      readOnlyHint={composerHint}
+      centered={!hasMessages}
+    />
+  </div>
+  <!--
+    便签层（辅助阅读）：浮在消息列表上层、顶部浮层与输入坞之下；放在
+    顶栏之后保证卡片的 no-drag 矩形按 DOM 顺序覆盖顶部拖拽区（app.css）。
+  -->
+  <StickiesLayer conversationId={current!.conversation.id} />
+  <!-- 媒体灯箱（docs/design/20-conversation-media.md）：消息附件图片/音视频的放大预览。
+       组件内部 portal 到 body 末尾 + no-drag，否则顶部 drag 区矩形会盖住顶栏按钮 -->
+  <MediaLightbox />
+{/snippet}
 
 {#if chat.composingProject}
   <!-- The whole compose view is a drag area (like the empty state); the compose
@@ -85,6 +215,9 @@
       <p class="text-sm">{t('chats.empty')}</p>
     </div>
   </div>
+{:else if isProject}
+  <!-- 项目组外壳：实心两行顶栏 + 模块内容区；沟通主体是同一份 chatBody（始终挂载）。 -->
+  <ProjectView {chatBody} />
 {:else}
   <!-- h-full：Pane 是块级盒子，聊天区以绝对定位布局，必须显式取满高度 -->
   <div
@@ -130,7 +263,7 @@
           class="size-7"
           fallbackClass="text-[10px]"
         />
-        <span class="truncate pr-1.5 {isProject ? 'max-w-md' : 'max-w-48'}">{headerTitle}</span>
+        <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
         {#if panelCollapsed && !panelOverlay}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
                外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
@@ -148,124 +281,6 @@
       </Button>
     </header>
 
-    <!-- 浮动提示条（只读 / 确认模式 / 执行失败） -->
-    {#if current.conversation.readOnly || confirmMode || current.failedRun}
-      <div
-        class="pointer-events-none absolute inset-x-0 top-14 z-30 flex flex-col items-center gap-1.5 px-4"
-      >
-        {#if current.conversation.readOnly}
-          <div
-            class="pointer-events-auto rounded-full border bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
-            data-testid="readonly-banner"
-          >
-            {t('composer.readOnly')}
-          </div>
-        {/if}
-        {#if confirmMode}
-          <div
-            class="pointer-events-auto rounded-full border border-amber-500/40 bg-background/95 px-3 py-1 text-xs text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
-            data-testid="confirm-mode-banner"
-          >
-            {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
-          </div>
-        {/if}
-        {#if current.failedRun && !current.failedRun.setup}
-          <!-- 缺设置的失败（run.setup）由消息列表内的设置卡片接管（18-inline-setup），
-               此处只展示普通失败。 -->
-          <div
-            class="pointer-events-auto flex items-center gap-2 rounded-full border border-destructive/30 bg-background/95 py-1 pr-1.5 pl-3 text-xs text-destructive shadow-sm backdrop-blur"
-            data-testid="run-failed-banner"
-          >
-            <!-- 原因常被截断：悬停可看完整原因。 -->
-            <span
-              class="max-w-md min-w-0 truncate"
-              title={t('chats.runFailed', { reason: current.failedRun.error ?? '' })}
-            >
-              {t('chats.runFailed', { reason: current.failedRun.error ?? '' })}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-6 rounded-full px-2"
-              onclick={() => void chat.retryRun(current.failedRun!.id)}
-              data-testid="run-retry"
-            >
-              {t('chats.retry')}
-            </Button>
-            <!-- 关闭把这次失败标成已读（run 保留）；刷新后不再出现。 -->
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-6 w-6 rounded-full p-0 text-destructive hover:text-destructive"
-              aria-label={t('common.close')}
-              title={t('common.close')}
-              onclick={() => chat.dismissFailedRun(current.failedRun!.id)}
-              data-testid="run-failed-dismiss"
-            >
-              <X class="size-3.5" aria-hidden="true" />
-            </Button>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if hasMessages}
-      <MessageList bottomInset={composerDockHeight} />
-    {/if}
-
-    <!--
-      底部输入坞：有消息时绝对定位在底部（消息列表按其高度让位）；
-      无消息时垂直居中（docs/design/12-ui-layout.md 焦点一）。
-    -->
-    <div
-      class="absolute z-30 {hasMessages
-        ? 'inset-x-0 bottom-0'
-        : 'top-1/2 right-0 left-0 -translate-y-1/2 px-4'}"
-      bind:clientHeight={composerDockHeight}
-      data-testid="composer-dock"
-      data-centered={hasMessages ? 'false' : 'true'}
-    >
-      <!--
-        底部遮罩（仅消息模式）：上段渐变（背景色→透明）占 1/3、下段实色背景
-        占 2/3，纵向拼满坞体高度，滚入坞后的消息先在渐变段淡出、再被实色段
-        完全盖住。-z-10 垫在坞内交互内容之下（坞 z-30 自成层，仍整体盖住
-        消息列表），pointer-events-none 不拦截任何操作。
-      -->
-      {#if hasMessages}
-        <div
-          class="pointer-events-none absolute inset-x-0 top-0 -z-10 h-1/3 bg-gradient-to-t from-background to-background/0"
-          aria-hidden="true"
-        ></div>
-        <div
-          class="pointer-events-none absolute inset-x-0 top-1/3 bottom-0 -z-10 bg-background"
-          aria-hidden="true"
-        ></div>
-      {/if}
-      <ApprovalDock conversationId={current.conversation.id} />
-      {#if chat.setupRequirement}
-        <!--
-          缺设置引导卡（docs/design/18-inline-setup.md）：发送门禁置起或最近
-          失败 run 携带结构化 setup 时出现在输入坞上方——对话的注意力位置；
-          无消息（门禁）与有消息（失败改判）两种场景都可见。完成设置后原
-          对话自动继续。
-        -->
-        <div class="pb-2" data-testid="setup-required-wrap">
-          <SetupRequiredCard requirement={chat.setupRequirement} />
-        </div>
-      {/if}
-      <Composer
-        readOnly={current.conversation.readOnly || pathGateClosed}
-        readOnlyHint={composerHint}
-        centered={!hasMessages}
-      />
-    </div>
-    <!--
-      便签层（辅助阅读）：浮在消息列表上层、顶部药丸与输入坞之下；放在
-      header 之后保证卡片的 no-drag 矩形按 DOM 顺序覆盖顶部拖拽区（app.css）。
-    -->
-    <StickiesLayer conversationId={current.conversation.id} />
-    <!-- 媒体灯箱（docs/design/20-conversation-media.md）：消息附件图片/音视频的放大预览。
-         组件内部 portal 到 body 末尾 + no-drag，否则顶部 drag 区矩形会盖住顶栏按钮 -->
-    <MediaLightbox />
+    {@render chatBody(56, 'top-14')}
   </div>
 {/if}

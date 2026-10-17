@@ -7,37 +7,28 @@
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
   import SelectionPinToolbar from './SelectionPinToolbar.svelte';
-  import { hiddenFromTranscript } from '$lib/features/approvals/ephemeral-approval';
-  import { isInterimMessage } from './run-status-mute';
+  import { isVisibleInTranscript } from './transcript-visibility';
   import { permissions } from '$lib/stores/permissions.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
-  let { bottomInset = 0 }: { bottomInset?: number } = $props();
+  /**
+   * topInset：顶部浮层（单聊药丸 56px / 项目组顶栏下的留白 12px）让出的空间，
+   * 与 bottomInset 同样以行内 style 写入（WP6 步骤 3）。
+   */
+  let {
+    topInset = 56,
+    bottomInset = 0,
+  }: { topInset?: number; bottomInset?: number } = $props();
 
   let scrollContainer: HTMLElement | undefined = $state();
   let pinnedToBottom = $state(true);
   let showNewMessages = $state(false);
   let suppressScrollHandler = false;
 
-  // 初始化问询的用户回答（setupAnswer）不渲染气泡——回答由问题卡片的已答行
-  // 展示；消息本身仍在（上下文/引用/记忆证据都用得到）。
+  // 会话记录可见性：与沟通 tab 徽标共用 isVisibleInTranscript（WP6 步骤 2），
+  // 各条件的语义见该函数的注释。
   const messages = $derived(
-    (chat.current?.messages ?? []).filter((m) => {
-      if (m.kind === 'text' && 'setupAnswer' in m.content && m.content.setupAnswer === true) {
-        return false;
-      }
-      // Task interim is a single status overlay (task card / status line), not bubbles.
-      if (isInterimMessage(m)) return false;
-      // Retired: local change summary / diff / revert cards are not shown or kept in view.
-      if (m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes') {
-        return false;
-      }
-      // Mid-turn permission popups: the dock is the only user-facing surface;
-      // auto-decided and egress / taint records show folded once resolved.
-      // Import / install / handover cards stay, including failure records.
-      if (hiddenFromTranscript(m, permissions.approvals)) return false;
-      return true;
-    }),
+    (chat.current?.messages ?? []).filter((m) => isVisibleInTranscript(m, permissions.approvals)),
   );
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。
   const statusSignature = $derived(
@@ -151,13 +142,13 @@
   });
 </script>
 
-<!-- 全高滚动：顶部药丸与底部输入坞都浮在本层之上，padding 让出其空间 -->
+<!-- 全高滚动：顶部浮层（单聊药丸 / 项目组顶栏）与底部输入坞都浮在本层之上，padding 让出其空间 -->
 <div class="absolute inset-0 z-10">
   <div
     bind:this={scrollContainer}
     onscroll={onScroll}
-    class="flex h-full flex-col gap-1 overflow-y-auto px-4 pt-14"
-    style="padding-bottom: {bottomInset + 12}px;"
+    class="flex h-full flex-col gap-1 overflow-y-auto px-4"
+    style="padding-top: {topInset}px; padding-bottom: {bottomInset + 12}px;"
     data-testid="message-list"
   >
     {#if chat.current?.hasEarlier}
