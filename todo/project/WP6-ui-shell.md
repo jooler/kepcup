@@ -238,7 +238,7 @@ rg -n "GroupAvatarStack|group-avatar-layout|group-avatar-stack|context-group-set
 
 - 接口 `ProjectAvatarSlot`（原 `GroupAvatarSlot`，随文件改名按相邻风格取）。
 - testid：`project-members-manage`（弹层底部「管理成员…」按钮）、`project-member-option-<botId>`（弹层添加区候选行）。§4.12 已列的 `project-member-row-<botId>` 在顶栏弹层与详情页（WP7）各在自己的容器内使用。
-- `chatTabBadge` 的 approvals 参数口径：徽标场景传空表（`isVisibleInTranscript(message)` 缺省 `{}`）——待审批的回执卡由琥珀色 pending 圆点提示，不计入未读数（WP 固定了 `chatTabBadge` 入参形状，无审批快照可传）。
+- `chatTabBadge` 的 approvals 参数口径：徽标场景传空表（`isVisibleInTranscript(message)` 缺省 `{}`，WP 固定了 `chatTabBadge` 入参形状，无审批快照可传）。据此：**权限弹窗卡**（无 `record`）恒不可见、不计入未读；**回执卡**（`record: true`）按「审批未知」可见、**计入未读**（即便其审批此刻 pending——与消息列表里「已知 pending 则隐藏」存在口径差，属入参形状决定的既定取舍），待确认由琥珀色 pending 圆点另行提示。
 - `ProjectHeader` 内私有常量 `STACK_MAX = 5`（头像堆叠最多画 5 个 + `+N`）。
 - 纯逻辑文件间用相对导入（`../chats/transcript-visibility`）：纯逻辑单测跑在 desktop 项目（无 `$lib` 别名），与 `chat.svelte.ts` 的既有混用风格一致。
 
@@ -273,3 +273,10 @@ rg -n "GroupAvatarStack|group-avatar-layout|group-avatar-stack|context-group-set
 - WP7：真实项目详情页（替换 GroupInfo 过渡壳与 GroupSettingsDialog 的 embedded 模式）、`ProjectMembersEditor`、分区导航 `project-settings-nav-<section>`、深链 anchor 消费、删 Bot 阻止 UI。
 - WP8：`GroupTurnStatusLine` → `ProjectTurnStatusLine` 改名、`group-*` e2e 重写为 `project-*`、文案收尾。
 - WP10：Wiki tab 的真实视图（本 WP 为 `ModulePlaceholder` 的 `wikiSoon`）。
+
+### 审查修订（2026-10-18，阶段审查）
+
+- 修复 `ChatsArea.svelte` 的缩进回归：`rightCollapsed` 重写块被写成 0 缩进（基线该文件是 prettier 干净的，`pnpm fmt:check` 会新增告警），prettier 恢复 2 缩进，无行为变化。
+- 勘误上文「§4 未列出的新名字登记」里回执卡口径一句（原文误写为「不计入未读数」；实际：回执卡在徽标场景按审批未知可见、计入未读，弹窗卡才是不计）。
+- 备案：`51c6d53` 名义上是纯改名提交，但夹带了 ChatView 药丸摘除头像堆叠用法这一**过渡态行为变化**（项目药丸在该提交短暂显示 Bot 兜底头像，下一提交即被 ProjectView 取代；提交信息与上文提交列表均已披露）。不重写历史——四处提交哈希已登记进 README §7 与本文件，为仅存续一个提交的过渡外观改写历史得不偿失。
+- 审查复核结论：四个提交逐个 `pnpm --filter @kepcup/desktop typecheck` 均 0 errors / 0 warnings；§7 自检 rg 为空；§4.12 顶栏/内容两组 testid 与 §2 i18n 表逐字一致；四个新增单测为真实行为断言（23 例）。
