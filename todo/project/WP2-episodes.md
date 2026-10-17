@@ -234,3 +234,39 @@ rg -n "ChainsService|BOT_CHAIN|listIdsByChain|sumForRuns|tokensInFlightFor|chain
 ## 9. 实施记录
 
 （执行智能体在此填写：分支、提交列表、测试结果、偏差编号。）
+
+**分支 / 提交**（`feat/project/migration`，未 push；2026-10-17）：
+
+- `d724a07` feat(shared,core)!: turn bot-to-bot chains into collaboration episodes (D92 T1a WP2)：迁移 `main/0041_episodes.sql` + `runs/0014_episode_columns.sql`、shared 契约（`episodeSchema` / `runSchema.episodeId/episodeHop` / `systemEventContentSchema.episodeId` / 触发原因 `bot_mention` / 常量 / RPC / 事件）、`EpisodesService`（`dispatch/episodes.ts`，`git mv` 自 `chains.ts`）、任务唤醒继承（wake 时按 origin run 解析）、重试继承、`episodes.get/resume/stop` RPC、`episode.updated` 事件、`episode_paused` / internal `episode_stopped` 系统消息、全部测试（重写 + 新增）。
+- 文档提交：本文件实施记录、todo/project/README §7 进度表、`docs/dev/01-conventions.md` ID 表 `chn_` 行 → `epi_`（§4.2 允许 WP 内顺手做；常量表按 §4.8 留给 WP11）。
+
+**迁移编号**：开工时 main 最新 `0040`、runs 最新 `0013`，按任务书编号使用 `0041` / `0014`，无顺延。写死版本号的断言同步：`create-core` main 40 → 41、runs 13 → 14（并把 0013 行补进注释）；`workbench-migration` `[37…40]` → `[37…41]`；`workdirs-rename-migration` `[38…40]` → `[38…41]`；`project-conversations-migration` `[39, 40]` → `[39, 40, 41]`（其余用 `mainVersionsAfter` / `runsVersionsAfter` 的不用改）。
+
+**全量暴露的两处迁移形态测试（已修，属任务书「写死版本号的测试同步更新」范畴）**：
+
+- `public-skills-migration`：它的回拨流程先全量迁移到最新（此时 `chains` 已被 0041 删掉、`episodes` 已建出），再回 `user_version = 12` 原样重放——0041 的 `DROP TABLE chains` 因此扑空。修法与该测试既有模式一致：回拨段里 `drop table episodes` + 按 0006 原形态重建 `chains`（其它新表是「摘除以重建」，0041 反过来要求旧表**存在**）。
+- `tool-effects-migration`：run 行保留断言的键映射补上 0014（`chain_id/chain_depth` → `episode_id/episode_hop`），写法照 0013 的 `task_workdir → task_cwd` 先例。
+
+**测试结果**（2026-10-17，macOS arm64 宿主）：
+
+- typecheck 三包（shared build → core build → desktop tsc + svelte-check）与 `pnpm lint` 通过。
+- 定向全绿：`episodes-migration`（2）、`episodes-service`（12）、`supervisor-turn`（22）、`episodes-inheritance`（2）、`create-core`（9）、`project-chat`（20 过 1 skip，skip 为 WP1 登记的 WP3 项）、`tasks-review-fixes-e`（M1 改为成对熔断 + 暂停卡断言）、`episodes-breaker`（2）、`episodes-rpc`（3）、shared 全部（337）、其余受改动影响的单测 / 安全测试（external-agent-p5、continuation、my-state、workbench-*、workdirs-rename、project-conversations-migration、memory、memory-pollution 等 8 文件 134 例）。
+- 全量 `pnpm test`（收口跑一次）：5371 通过 / 2 失败 / 24 skip；2 个失败即上述两处迁移形态测试，修复后各自单跑通过（按 AGENTS.md 不做连续全量）。失败集合不含沙箱 / skills / wiki-url / workspace-tools 环境基线项，不超基线。
+
+**rg 自检（验收清单第 1 条）**：命令输出仅剩三类，均为例外——
+
+1. `Composer.svelte:424` 的 `.chain()`：TipTap 编辑器命令链，与 Bot 连锁无关（「别的含义」）。
+2. `episodes-migration.test.ts` 里的 `chain_id / chain_depth / 'chn_legacy'`：迁移测试的对象就是旧列名（建旧形态 → 断言改名后旧列不存在），属「0014 里的旧列名」例外。
+3. `tool-effects-migration.test.ts` 键映射里的 `chain_id / chain_depth`：同上，断言旧值在改名后存活。
+
+**实现取舍（由我判断，依据如下）**：
+
+- WP 步骤 3.4 说 `appendSystemEvent` 复用 start.ts 里 WP1 建的同名助手：实际复用的是 orchestrator 自己的 `#appendSystemMessage`（WP1 的 start.ts 助手服务 ProjectsService 生命周期、不支持 `internal` / `episodeId`，且 orchestrator 内已有同一写法、同一发布路径的私有助手，直接给它加了可选 `episodeId` / `internal`）。行为与任务书要求一致（追加 + 发布、internal 不推 `message.created` 且读取侧过滤）。
+- `EpisodesDeps.limits` 的测试注入另有两条通道：`OrchestratorDeps.episodeLimits`（单测直构）与 `start.ts` 的 `KEPCUP_EPISODE_HOP_BREAKER` / `KEPCUP_EPISODE_PAIR_BREAKER` 环境变量（集成测试 / `createTestStack({ env })`，§4 没写到的名字按相邻 `KEPCUP_TRIAGE_TIMEOUT_MS` 风格取，在此登记）。
+- 熔断暂停卡的 `{n}` 取当前 `hops`（不含被暂停的这一次），与 §4.9 文案「协作已自动往返 {n} 次，已暂停」一致；成对熔断先于总数熔断发生时同样按当前 `hops` 计。
+- `resume` 对 pending 项逐条 `messages.getById`，消息已删除（`null`）或 `recalled` 跳过；补投沿用 pending 里记录的 `hop`（不重新计数），与任务书「待投递项不计入新一轮计数」一致。
+- `orchestrator` 新增 `episodes` 只读暴露（getter）供 `rpc/bindings.ts` 使用，与 `taskHost` 的暴露方式相同。
+- 同步点实况：`agent/context/conversation.ts` 的 `<trigger>` 段对 reason 是通用渲染（无 chain 专属文案），无需改动；`SETTING_DIRECT_TRIGGERS` 本就不含 `'chain'`（只有 `workbench-tools.test.ts` 把 `'chain'` 当「非本人触发」例子，已改 `'bot_mention'`），`bot_mention` 未加入该集合——两者任务书均已预见。
+- renderer 无需改动：`rg "chainId|chainDepth|'chain'" apps/desktop/src` 为空（`Run` 新字段名界面不读）。
+
+**偏差**：无（未新增 DEVIATIONS 条目；WP 与代码现实无冲突）。

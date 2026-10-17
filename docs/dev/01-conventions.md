@@ -130,7 +130,7 @@ kepcup/
 | 定时任务 | `sch_` | |
 | 技能（库中版本） | `skl_` | |
 | 敏感数据 | `sec_` | |
-| 连锁（Bot 间触发链） | `chn_` | |
+| 协作回合（D92 T1a） | `epi_` | |
 | 跨 Bot 委派（D71） | `dlg_` | |
 | 外部副作用台账行（D78） | `eff_` | |
 | 应用连接（D73） | `conn_` | 自定义 MCP server 的连接 id 固定为 `custom:{serverId}` |
