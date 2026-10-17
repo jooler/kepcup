@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
 import { createGroupViaUi } from './helpers/create-group';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 工作台（D90，docs/design/39-workbench.md）端到端：真实 Electron + 真实 core，模型用 mock LLM
@@ -61,8 +62,18 @@ async function startSession(prefix: string): Promise<Session> {
   // resolveWindowOptions 把默认窗口钳制到显示器内：CI 的 Xvfb（默认 640×480）
   // 和部分 runner 的显示空间会让窗口落进 WorkbenchView 的 tab 形态（<760px），
   // memo-pane 不渲染。工作台用例统一钉 1280×840 内容尺寸，避免按显示器赌宽窄。
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0]?.setSize(1280, 840);
+  await app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return null;
+    win.setSize(1280, 840);
+    const bounds = win.getBounds();
+    const workArea = screen.getPrimaryDisplay().workArea;
+    return {
+      bounds,
+      workArea,
+      scale: screen.getPrimaryDisplay().scaleFactor,
+      maximized: win.isMaximized(),
+    };
   });
   return { app, page, home, llm };
 }
@@ -70,7 +81,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -90,6 +101,10 @@ async function waitReady(page: Page): Promise<void> {
   // 设置「显示工作台」默认关闭（8b053df）：入口与分隔线隐藏，这里的用例都要先打开它。
   await rpc(page, 'settings.update', { workbenchEnabled: true });
   await expect(page.locator('[data-testid="workbench-nav"]')).toBeVisible({ timeout: 15_000 });
+  // 双栏 seam（WorkbenchView.svelte）：runner 显示空间可以小到 1024×677，
+  // 1280 窗口照样被钳；把 tab 形态强制为双栏，memo 侧断言与显示器解耦。
+  // 要验证 tab 形态的用例自会 removeItem 覆盖这段。
+  await page.evaluate(() => localStorage.setItem('kepcup.e2e.workbenchWide', '1'));
 }
 
 async function openWorkbench(page: Page): Promise<void> {
@@ -901,7 +916,7 @@ test('in progress shows the running state; restart keeps schedules and catches u
   } finally {
     await app.close().catch(() => {});
     await session.llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 
@@ -969,6 +984,13 @@ async function overflowing(page: Page, rootSelector: string): Promise<string[]> 
       // 输入框自己内部滚动，不算撑破。
       if (box.tagName === 'INPUT' || box.tagName === 'TEXTAREA') continue;
       if (style.overflowX === 'auto' || style.overflowX === 'scroll') continue;
+      // 设计内截断（省略号）不是撑破；窄窗口下 lane 名等靠它收敛。
+      if (
+        style.textOverflow === 'ellipsis' &&
+        style.whiteSpace === 'nowrap' &&
+        style.overflowX === 'hidden'
+      )
+        continue;
       if (box.scrollWidth > box.clientWidth + 1 && box.clientWidth > 0) {
         const id = box.getAttribute('data-testid') ?? '';
         found.push(
@@ -1035,10 +1057,18 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0);
 
     // 视图宽度 < 760：折成「事项 / 备忘」两个 tab，各自不溢出。
+    // seam（双栏强制）在挂载时刻生效且贯穿生命周期：本段要 tab 形态，
+    // 先撤掉 waitReady 里的 seam 值、把窗口缩到阈值下，随后「回对话 →
+    // 重新打开工作台」做一次 remount，挂载逻辑按新状态重新起形态。
+    await page.evaluate(() => localStorage.removeItem('kepcup.e2e.workbenchWide'));
     await resizeWindow(app, 900, 760);
+    await openConversationByName(page, '阿长名字特别特别特别特别特别长的助手');
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await page.locator('[data-testid="workbench-nav"]').click();
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,
     });
+
     await expect(page.locator('[data-testid="memo-pane"]')).toHaveCount(0);
     expect(await overflowing(page, '[data-testid="workbench-view"]')).toEqual([]);
     await shot(page, '21-layout-tabbed-todos');

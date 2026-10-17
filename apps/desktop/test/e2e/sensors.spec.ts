@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -71,14 +72,15 @@ test('microphone card: enabled by default, test shows a live level meter', async
     await toggle.click();
     // ensureAccess + getUserMedia 在满载机器上可能超过默认 5s 才翻转文案。
     await expect(toggle).toHaveText('停止测试', { timeout: 15_000 });
-    // 伪麦克风持续发出蜂鸣：电平条宽度应 > 0。
+    // 伪麦克风持续发出蜂鸣：电平条宽度应 > 0（r9 前后证据：无 GPU 的 ubuntu
+    // runner 上整个 UI/音频链可能拖过 15s，30s 才是稳定的窗口）。
     await expect
       .poll(
         async () =>
           page
             .locator('[data-testid="sensor-level-microphone"]')
             .evaluate((el) => parseFloat((el as HTMLElement).style.width) || 0),
-        { timeout: 15_000 },
+        { timeout: 30_000 },
       )
       .toBeGreaterThan(0);
     await expect(page.locator('[data-testid="sensor-permission-microphone"]')).toHaveAttribute(
@@ -91,7 +93,7 @@ test('microphone card: enabled by default, test shows a live level meter', async
     await expect(page.locator('[data-testid="sensor-level-microphone"]')).toHaveCSS('width', '0px');
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 
@@ -151,6 +153,6 @@ test('camera card: off by default, preview works once enabled and releases the d
     ).toBe(true);
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });

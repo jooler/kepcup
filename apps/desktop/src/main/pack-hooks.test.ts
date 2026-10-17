@@ -30,6 +30,7 @@ describe('afterPack forbidden markers', () => {
     for (const marker of [
       'KEPCUP_MOCK_LLM_URL',
       'KEPCUP_ONBOARDING',
+      'KEPCUP_WSL_PROMPT',
       'KEPCUP_FILE_KEYSTORE_PATH',
     ]) {
       expect(hooks.findForbiddenMarker(`x ${marker} y`), marker).toBe(marker);

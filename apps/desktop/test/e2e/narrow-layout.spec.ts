@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -340,7 +341,7 @@ test('narrow layout: single column, bottom tabs, detail layers, fullscreen overl
     expect(pageErrors).toEqual([]);
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
     await llm.stop();
   }
 });
@@ -522,14 +523,16 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await overlay.locator('#tab-other').click();
     await overlay.locator('[data-testid="bot-remove"]').click();
     await page.locator('[data-testid="bot-remove-confirm"]').click();
-    await expect(overlay).toHaveCount(0);
+    // 移除是重 RPC 链（删对话/工作区目录 + 资料分区清场），windows 上
+    // 整条链（含 fs 重试）能拖过 30s：给足 90s。
+    await expect(overlay).toHaveCount(0, { timeout: 90_000 });
     await expect(page.locator('[data-testid="narrow-tab-bar"]')).toBeVisible();
     await expect(page.locator('[data-testid="chat-view"]')).toHaveCount(0);
 
     expect(pageErrors).toEqual([]);
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
     await llm.stop();
   }
 });

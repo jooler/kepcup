@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P13-B 任务 2/3 UI e2e：更新提示横幅（消费 P13-A 的 update:status 推送与
@@ -42,7 +43,7 @@ async function startSession(prefix: string): Promise<Session> {
 
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

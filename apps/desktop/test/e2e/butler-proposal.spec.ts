@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -63,7 +64,7 @@ async function startSession(prefix: string): Promise<{
     close: async () => {
       await app.close();
       await llm.stop();
-      await rm(home, { recursive: true, force: true });
+      await rmHomeTolerant(home);
     },
   };
 }
@@ -84,9 +85,10 @@ test('butler proposal confirm: the new bot lands in the sidebar without a restar
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 认识管家：建立唯一管家并进入组队访谈，首问卡由 core 确定性下发。

@@ -1,10 +1,11 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * D75: conversation turns never wait on the user — an out-of-scope read fails
@@ -72,7 +73,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { groupTitleFromMemberNames } from '@kepcup/shared';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, dismissStartPanel, rpc } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 新建群聊的顶部成员输入（GroupComposeBar，「+」→ 新建群聊）：Esc 取消；不足
@@ -42,7 +43,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 输入框草稿的按会话缓存：文本 / @ 提及 / 引用回复 / 待发送附件随会话保留——
@@ -55,7 +56,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -195,7 +196,7 @@ test.describe('输入框草稿按会话缓存', () => {
         await llm2.stop();
       }
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await rmHomeTolerant(home);
     }
   });
 

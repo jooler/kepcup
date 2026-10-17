@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -14,6 +14,7 @@ import {
   type TestFileServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P06 e2e (docs/dev/phases/P06-environment.md 测试要求): the environment
@@ -69,9 +70,13 @@ async function startSession(prefix: string): Promise<Session> {
   const fixtureDir = mkdtempSync(path.join(tmpdir(), 'kepcup-e2e-env-fixture-'));
   const root = path.join(fixtureDir, `${ITEM}-${VERSION}-bin`);
   mkdirSync(root, { recursive: true });
-  const script = path.join(root, ITEM);
-  writeFileSync(script, '#!/bin/sh\necho "fakeuv 1.0.0"\n');
-  chmodSync(script, 0o755);
+  // Windows 的默认布局按「条目名.exe」解析可执行目录；sh 脚本既不能作为
+  // .exe 也不可被命令验证跑出输出 —— fixture 在 Windows 上改用假 exe +
+  // 文件校验（不必真的执行它，安装流程只查存在性）。
+  const isWin = process.platform === 'win32';
+  const script = path.join(root, isWin ? `${ITEM}.exe` : ITEM);
+  writeFileSync(script, isWin ? 'MZ fakeuv exe stub\r\n' : '#!/bin/sh\necho "fakeuv 1.0.0"\n');
+  if (!isWin) chmodSync(script, 0o755);
   const archive = path.join(fixtureDir, `${ITEM}.tar.gz`);
   execFileSync('tar', ['-czf', archive, '-C', fixtureDir, `${ITEM}-${VERSION}-bin`]);
   const bytes = execFileSync('cat', [archive]);
@@ -91,7 +96,9 @@ async function startSession(prefix: string): Promise<Session> {
           kind: 'archive',
         },
       },
-      verify: { command: '"{bin}" --version', expect: 'fakeuv 1.0.0' },
+      verify: isWin
+        ? { files: [`${ITEM}.exe`] }
+        : { command: '"{bin}" --version', expect: 'fakeuv 1.0.0' },
     },
   ];
   const catalogFile = path.join(fixtureDir, 'catalog.json');
@@ -106,7 +113,7 @@ async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
   await session.fileServer.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

@@ -23,7 +23,9 @@ export function rmSync(target: string, options: RmOptions = {}): void {
     if (!isRetryable(error)) throw error;
   }
   makeWritable(target);
-  nodeRmSync(target, { maxRetries: 5, retryDelay: 100, ...options });
+  // 只读属性之外，Windows 上关闭中的句柄（sqlite/leveldb 收尾）也会短暂
+  // EBUSY：native 的内部重试拉长到 ~6s，把删除级联从竞态里解放出来。
+  nodeRmSync(target, { maxRetries: 24, retryDelay: 250, ...options });
 }
 
 function isRetryable(error: unknown): boolean {

@@ -17,7 +17,16 @@
 
   let width = $state(1200);
   let tab = $state<'todos' | 'memos'>('todos');
-  const tabbed = $derived(width < TABS_BELOW);
+  // E2E seam（同 KEPCUP_* 家族，仅 TEST_HOOKS 产物生效）：CI runner 的显示
+  // 空间可能小于默认窗口（mac runner 只有 1024×677），双栏里 memo 侧收不进
+  // 而走 tab。工作台挂载时刻读一次并贯穿生命周期，断言与显示空间解耦；
+  // 真实产品行为（按宽度取舍）仍由 narrow-layout / workbench 布局用例覆盖。
+  // 布局用例要验证 tab 形态：它先撤 seam、把窗口缩到阈值下、再「退回对话 →
+  // 重新打开工作台」（本质一次 remount），挂载逻辑会按新状态重新起形态。
+  const forcedWide =
+    __KEPCUP_TEST_HOOKS__ === true &&
+    window.localStorage.getItem('kepcup.e2e.workbenchWide') === '1';
+  const tabbed = $derived(!forcedWide && width < TABS_BELOW);
 
   useWorkbenchData();
 </script>

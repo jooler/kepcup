@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P13 任务 6 诊断页 e2e（设置页「诊断」分区）。
@@ -36,7 +37,7 @@ async function startSession(prefix: string): Promise<Session> {
 
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -97,11 +98,19 @@ test('diagnostics section renders every status row; opening the logs directory r
     await expect(page.locator('[data-testid="diagnostics-db-runs-db"]')).toContainText('版本');
     await expect(page.locator('[data-testid="diagnostics-db-memory-db"]')).toContainText('每 Bot');
 
-    // 沙箱行（macOS 无注入：srt 后端）与工具链行（system:git 实时探测）。
-    await expect(page.locator('[data-testid="diagnostics-sandbox"]')).toContainText('srt', {
-      timeout: 60_000,
-    });
-    await expect(page.locator('[data-testid="diagnostics-toolchain"]')).toContainText('git');
+    // 沙箱行（macOS/Linux = srt 后端；Windows = wsl，CI 的发行版未导入时如实
+    // 显示不可用）与工具链行（system:git 实时探测）。
+    await expect(page.locator('[data-testid="diagnostics-sandbox"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 60_000 },
+    );
+    // 工具链行：macOS/Linux 有 kind=system 的 git 目录条目（doctor 实时探测出
+    // system:git）；Windows 目录无 system 条目（git 走 MinGit 包装成安装行），
+    // 全新 home 零安装 → 如实空态。
+    await expect(page.locator('[data-testid="diagnostics-toolchain"]')).toContainText(
+      process.platform === 'win32' ? '没有已安装的工具链条目' : 'git',
+      { timeout: 60_000 },
+    );
 
     // 「在文件管理器中打开」：mock 主进程 shell.showItemInFolder（能力能力面，
     // 与 dialog.showOpenDialog 的 mock 先例同一方式），点击后断言被调用且
