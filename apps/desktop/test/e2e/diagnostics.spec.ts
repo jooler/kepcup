@@ -97,10 +97,12 @@ test('diagnostics section renders every status row; opening the logs directory r
     await expect(page.locator('[data-testid="diagnostics-db-runs-db"]')).toContainText('版本');
     await expect(page.locator('[data-testid="diagnostics-db-memory-db"]')).toContainText('每 Bot');
 
-    // 沙箱行（macOS 无注入：srt 后端）与工具链行（system:git 实时探测）。
-    await expect(page.locator('[data-testid="diagnostics-sandbox"]')).toContainText('srt', {
-      timeout: 60_000,
-    });
+    // 沙箱行（macOS/Linux = srt 后端；Windows = wsl，CI 的发行版未导入时如实
+    // 显示不可用）与工具链行（system:git 实时探测）。
+    await expect(page.locator('[data-testid="diagnostics-sandbox"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 60_000 },
+    );
     await expect(page.locator('[data-testid="diagnostics-toolchain"]')).toContainText('git');
 
     // 「在文件管理器中打开」：mock 主进程 shell.showItemInFolder（能力能力面，

@@ -84,9 +84,10 @@ test('butler proposal confirm: the new bot lands in the sidebar without a restar
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 认识管家：建立唯一管家并进入组队访谈，首问卡由 core 确定性下发。

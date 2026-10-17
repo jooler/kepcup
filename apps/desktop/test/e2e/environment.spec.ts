@@ -69,9 +69,13 @@ async function startSession(prefix: string): Promise<Session> {
   const fixtureDir = mkdtempSync(path.join(tmpdir(), 'kepcup-e2e-env-fixture-'));
   const root = path.join(fixtureDir, `${ITEM}-${VERSION}-bin`);
   mkdirSync(root, { recursive: true });
-  const script = path.join(root, ITEM);
-  writeFileSync(script, '#!/bin/sh\necho "fakeuv 1.0.0"\n');
-  chmodSync(script, 0o755);
+  // Windows 的默认布局按「条目名.exe」解析可执行目录；sh 脚本既不能作为
+  // .exe 也不可被命令验证跑出输出 —— fixture 在 Windows 上改用假 exe +
+  // 文件校验（不必真的执行它，安装流程只查存在性）。
+  const isWin = process.platform === 'win32';
+  const script = path.join(root, isWin ? `${ITEM}.exe` : ITEM);
+  writeFileSync(script, isWin ? 'MZ fakeuv exe stub\r\n' : '#!/bin/sh\necho "fakeuv 1.0.0"\n');
+  if (!isWin) chmodSync(script, 0o755);
   const archive = path.join(fixtureDir, `${ITEM}.tar.gz`);
   execFileSync('tar', ['-czf', archive, '-C', fixtureDir, `${ITEM}-${VERSION}-bin`]);
   const bytes = execFileSync('cat', [archive]);
@@ -91,7 +95,9 @@ async function startSession(prefix: string): Promise<Session> {
           kind: 'archive',
         },
       },
-      verify: { command: '"{bin}" --version', expect: 'fakeuv 1.0.0' },
+      verify: isWin
+        ? { files: [`${ITEM}.exe`] }
+        : { command: '"{bin}" --version', expect: 'fakeuv 1.0.0' },
     },
   ];
   const catalogFile = path.join(fixtureDir, 'catalog.json');

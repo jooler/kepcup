@@ -38,6 +38,15 @@ async function startSession(prefix: string): Promise<Session> {
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), prefix));
   const { app, page } = await launchApp({ home, llmUrl: llm.url });
+  // Windows CI 的沙箱（WSL2 CLI 在、私有发行版未导入）不可用 → 对话顶部
+  // 悬浮「逐条确认模式」banner（z-30，居中），恰好罩住便签默认落点
+  // （chat 宽 - 288 - 24，y 64 + 28n）的手柄；把窗口加宽到 runner 上限让
+  // 落点离开 banner 的横向覆盖带（windows runner 为 1920×1080）。
+  if (process.platform === 'win32') {
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1920, 1080);
+    });
+  }
   return { app, page, home, llm };
 }
 
