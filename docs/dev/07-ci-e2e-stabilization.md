@@ -1,8 +1,10 @@
-# CI 端到端修正备忘（r1–r10 全绿史）
+# CI 端到端修正备忘（r1–r14 全绿史）
 
 - **分支**：`ci/e2e-flaky-fixes`（PR #4）。
-- **终点**：全绿（E2E ubuntu / windows / macos + Tests ×3 + Lint），commit 链
-  `b05ae28 → 71017a2 → 3b0a822 → bdb0efd → 323da2b → 204e2fb → 7c334a1 → deec7a2 → 1f0865b`。
+- **终点**：r10 首次全绿；r11–r13 暴露 Tests 层的两种新失败并在 r14 全部收绿
+  （结论三平台 E2E + Tests ×3 + Lint success）。commit 链
+  `b05ae28 → 71017a2 → 3b0a822 → bdb0efd → 323da2b → 204e2fb → 7c334a1 → deec7a2 →
+  1f0865b → 08c83ae → 90f7deb → 7532485 → 5f4d230`。
 - **写作目的**：另一条重量级分支（含 groups/project 迁移）合并时大概率再次触发同类失败。本文把
   「现象 → 根因 → 修法 → 自检」沉淀成速查，让下一次不需要再走 10 轮 CI。
 
@@ -99,6 +101,27 @@
 - **根因**：删除链（会话/工作区/资料分区清场 + fs 重试）在 windows 上可拖过 30s，`contacts.remove` 的 promise 在此期间不 resolve。
 - **修复**：`7c334a1`——`narrow-layout.spec.ts:533` 的窗口给足 90s（r9/r10 windows 连绿验证）。
 
+### J. teardown 后的 unhandled rejection（Tests 级，r11 macOS 命中）
+
+- **现象**：`Tests 5304 passed` 全过，但汇总出现 `Errors 1 error`：`TypeError: The database connection is not open`
+  从 `EnvManager.#handleSystemApproval → listInstalls` 冒出（environment.test.ts）导致 job 失败。
+- **根因**：审批回调是 `void this.#handleSystemApproval(...)` fire-and-forget；测试/退出的夹缝里 db 已 close，
+  回调仍在跑 `listRows` → `db.prepare` 抛错成 unhandled rejection。
+- **修复**：`90f7deb`——两处 system 分支的 fire-and-forget 全部改为 `.catch()`（记录 `system approval handler failed (fire-and-forget)` 日志后吞掉）。
+- **自检**：**新增 fire-and-forget 的 `void service.method(...)` 时，凡终点可能触碰 db/文件系统，必须带 catch**。
+  vitest 的判定是「Tests 全过 + Errors ≥1」也算 job 失败，别只看用例统计。
+
+### K. 满载 runner 的轮换超时（Tests 级，r12/r13 连续命中三个不同文件）
+
+- **现象**：无规律轮换地「某个一直很快的用例超时」：r12 ubuntu `subagent.test.ts:372`（60s）→
+  r13 ubuntu `mail-service-fixes.test.ts:206`（5s 默认线）；本地单跑分别仅 318ms / 220ms。
+- **根因**：ubuntu runner CPU 竞争 + vitest isolate 每文件新 worker；重链路用例（双实例重启恢复、
+  fake IMAP 断开重连轮询）的 60s/5s 线在满载时被顶穿。
+- **修复**：`7532485` subagent crash-recovery 用例 60→120s；`5f4d230` UIDVALIDITY re-baseline 5→30s。
+  **都是单用例级别、不碰全局 testTimeout**（改全局属跨包公共配置，须全量回归）。
+- **自检**：遇到「本地 <1s 的用例在全量 CI 里超时」→ 别怀疑功能回归，看它是否起了**第二个实例 / 轮询 /
+  fake 服务器**，按该用例的重活程度单独给显式 timeout（30s/120s，与所在文件既有约定一致）。
+
 ## 方法论（给下一次）
 
 1. **先取证，再修**：失败第一轮不改断言，先加 dump（`console.warn('[tag] …')`，e2e lint 允许
@@ -111,6 +134,9 @@
 4. **不要做的**：拿「再上一层 retry」当修复；timeout 一刀切拉满；在 只差一个平台失败时改全平台断言。
 5. **每轮策略**：一 commit 一 push 一轮 CI（~25–40 分钟），期间只做日志分析，不要在 runner 还没
    结论时提前改主代码（避免 mix-in 两个假设）。
+6. **轮换识别**（r11–r13 的教训）：过半后仍红的平台在连续几轮里**换文件/换平台**地失败
+   （mac→ubuntu→ubuntu、wiki→sensors、subagent→mail）= 不是功能回归，是慢节点/夹缝类问题。
+   按 J/K 处理，不动正在绿的断言。
 
 ## 重铺到另一分支时的高危点位
 
@@ -123,6 +149,8 @@
 | `apps/desktop/test/e2e/workbench.spec.ts` | `waitReady` 的 `kepcup.e2e.workbenchWide` 钉栏 + `overflowing()` 的 ellipsis skip | 改布局与 memo 的 logic 时先读 r6 结论 |
 | `apps/desktop/test/e2e/{browser,diagnostics,sensors,narrow-layout}.spec.ts` | 平台分支断言 | 不要「顺手」统一断言 |
 | `packages/core/src/skills/registry.ts:1082` | rollback 的 `await` | 迁移中如改 registry 逐行确认每一处 `authoredGitCommit` 的返回 / 等待语义 |
+| `packages/core/src/env/manager.ts:265/352` | system 审批 fire-and-forget 的 `.catch()`（J 类） | 新增审批回调路径照抄该形状 |
+| `packages/core/test/integration/{subagent,mail-service-fixes}.test.ts` | 重活用例显式 timeout（K 类） | 迁移新增的双实例/轮询用例直接带显式 timeout |
 
 ### 已知但未修（超过本题范围，需另行立项）
 
