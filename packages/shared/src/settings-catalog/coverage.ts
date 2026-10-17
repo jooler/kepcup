@@ -61,6 +61,11 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   { kind: 'action', id: 'wiki.deletePage', reason: '删除知识库页面：破坏性动作' },
   {
     kind: 'action',
+    id: 'wiki.deleteSource',
+    reason: '删除项目 wiki 来源：破坏性动作，入口在项目 Wiki 的来源面板（收录走 wiki_enqueue / wiki.addSource）',
+  },
+  {
+    kind: 'action',
     id: 'grants.revoke',
     reason: '撤销目录授权：在 Bot「访问」页签逐条撤销，不经对话',
   },

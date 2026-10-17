@@ -46,6 +46,7 @@ const TOOL_VERBS: Record<string, string> = {
   wiki_search: '检索 Wiki',
   wiki_read: '阅读 Wiki',
   wiki_enqueue: '整理资料入库',
+  wiki_remove_source: '正在删除项目 wiki 来源…',
   save_profile: '保存 Profile',
   finish_setup: '完成初始化',
   list_bots: '查看通讯录',

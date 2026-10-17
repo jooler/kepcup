@@ -476,11 +476,11 @@ export interface OrchestratorDeps {
 }
 
 /** The slice of the wiki domain the response loop consumes (owner-based since
- * D92 T1b WP9; the loop only ever passes its own bot's owner — tool-level
- * `scope` is WP10). */
+ * D92 T1b WP9; WP10 adds the tool-level scope surface: the source ledger, the
+ * queued removal and the project facts of the running conversation). */
 export interface OrchestratorWikiFacade {
   /** <wiki_topics> section body (index.md titles), '' when no wiki. */
-  topicsSection(owner: WikiOwner): string;
+  topicsSection(owner: WikiOwner, options?: { budget?: number | null }): string;
   /** wiki_search / wiki_read / wiki_enqueue backends. */
   search(
     owner: WikiOwner,
@@ -495,6 +495,24 @@ export interface OrchestratorWikiFacade {
     source: { sourceType: 'attachment' | 'url' | 'file'; ref: string; note: string };
     createdBy: { kind: 'user' } | { kind: 'bot'; id: string };
   }): { ok: boolean; message: string };
+  /** wiki_remove_source registration (fast-fail then queue; WP10). */
+  enqueueRemoveSource(input: {
+    owner: WikiOwner;
+    sourceId: string;
+    actor: { role: 'lead' | 'member' | 'user'; botId?: string };
+    leadBotId: string;
+    conversationId: string;
+  }): void;
+  /** Source ledger for the read-time trust wrap (empty for bot wikis). */
+  listSources(owner: WikiOwner): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
+  /** Display name of a bot (null when deleted). */
+  botName(botId: string): string | null;
+  /** Project facts of one conversation (null when it is not a project). */
+  projectContext(conversationId: string): {
+    conversationId: string;
+    leadBotId: string | null;
+    memberBotIds: readonly string[];
+  } | null;
 }
 
 /** The slice of SkillsService the response loop consumes. */
@@ -2739,6 +2757,8 @@ export class Orchestrator {
       relevantMemories?: string;
     };
     wikiTopics: string;
+    /** D92 T1b WP10: <project_wiki_topics> body ('' = omitted). */
+    projectWikiTopics: string;
     skills: string;
     recommendedSkills: string;
     /** D91: `<capabilities>` body (connected apps + custom MCP servers); '' = omitted. */
@@ -2937,6 +2957,9 @@ export class Orchestrator {
           grants: access.grants,
           ...input.memorySections,
           ...(input.wikiTopics.length > 0 ? { wikiTopics: input.wikiTopics } : {}),
+          ...(input.projectWikiTopics.length > 0
+            ? { projectWikiTopics: input.projectWikiTopics }
+            : {}),
           ...(input.skills.length > 0 ? { skills: input.skills } : {}),
           ...(input.recommendedSkills.length > 0
             ? { recommendedSkills: input.recommendedSkills }
@@ -4019,6 +4042,14 @@ export class Orchestrator {
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection =
         this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
+      // D92 T1b WP10: <project_wiki_topics> — the project's shared wiki index,
+      // injected for turns AND tasks of a project conversation; K15: no budget.
+      // An uninitialized project wiki yields '' (the section is omitted).
+      const projectWikiTopicsSection =
+        conv.type === 'project'
+          ? (this.#deps.wiki?.topicsSection({ kind: 'project', id: conv.id }, { budget: null }) ??
+            '')
+          : '';
       const triggerImages = this.#triggerImages(batch.messages);
       const responseTools = buildResponseTools({
         identity,
@@ -4148,11 +4179,27 @@ export class Orchestrator {
           ...(this.#deps.wiki !== undefined
             ? {
                 wiki: {
-                  // D92 T1b WP9: the loop tools only address the bot's own wiki
-                  // (tool-level scope selection is WP10); the facade is owner-based.
+                  // D92 T1b WP9: owner-based facade; WP10 adds the scope
+                  // surface (ledger, queued removal, project facts).
                   search: (owner, query, limit) => this.#deps.wiki!.search(owner, query, limit),
                   readPage: (owner, pagePath) => this.#deps.wiki!.readPage(owner, pagePath),
                   enqueueIngest: (input) => this.#deps.wiki!.enqueueIngest(input),
+                  enqueueRemoveSource: (input) => this.#deps.wiki!.enqueueRemoveSource(input),
+                  listSources: (owner) =>
+                    this.#deps.wiki!.listSources(owner).map((entry) => ({
+                      id: entry.id,
+                      createdBy: entry.createdBy,
+                    })),
+                  botName: (botId) => this.#deps.bots.get(botId)?.name ?? null,
+                  projectContext: (conversationId) => {
+                    const conversation = this.#deps.conversations.get(conversationId);
+                    if (conversation === null || conversation.type !== 'project') return null;
+                    return {
+                      conversationId,
+                      leadBotId: conversation.leadBotId ?? null,
+                      memberBotIds: this.#deps.conversations.memberBotIds(conversationId),
+                    };
+                  },
                 },
               }
             : {}),
@@ -4184,6 +4231,7 @@ export class Orchestrator {
               hasWorkdir: workdirPath !== null && agentCwd === workdirPath,
               memorySections,
               wikiTopics: wikiTopicsSection,
+              projectWikiTopics: projectWikiTopicsSection,
               skills: skillsSection,
               recommendedSkills: recommendedSkillsSection,
               capabilities: capabilitiesSection,
@@ -4325,6 +4373,9 @@ export class Orchestrator {
             access: await this.#accessPromptInfo(identity),
             ...memorySections,
             ...(wikiTopicsSection.length > 0 ? { wikiTopics: wikiTopicsSection } : {}),
+            ...(projectWikiTopicsSection.length > 0
+              ? { projectWikiTopics: projectWikiTopicsSection }
+              : {}),
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(recommendedSkillsSection.length > 0
               ? { recommendedSkills: recommendedSkillsSection }

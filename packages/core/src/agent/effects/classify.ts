@@ -134,6 +134,8 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   wiki_search: 'none',
   wiki_read: 'none',
   wiki_enqueue: 'local',
+  /** D92 T1b WP10: queues a host-side removal job (receipt only, reversible via git). */
+  wiki_remove_source: 'local',
   schedule: 'local',
   list_schedules: 'none',
   cancel_schedule: 'local',
