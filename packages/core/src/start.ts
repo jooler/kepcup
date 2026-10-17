@@ -2100,7 +2100,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      triageTimeoutMs: parseTriageTimeoutMs(env),
+      judgementTimeoutMs: parseTriageTimeoutMs(env),
       episodeLimits: parseEpisodeLimits(env),
       publish: (event, payload) => events.emit(event, payload as never),
       environment,
@@ -2916,7 +2916,8 @@ function parseCurationDelayMs(env: NodeJS.ProcessEnv): number | undefined {
 }
 
 /**
- * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS (the
+ * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS for the
+ * routing judgements (D92 T1a: the continuation check and the lead gate; the
  * constants.ts default stays the single source of truth for production).
  */
 function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {

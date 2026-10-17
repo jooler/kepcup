@@ -508,7 +508,7 @@ describe('D75 supervisor turns (W2)', () => {
     // The round finished while the task is still running.
     expect(domain(stack).runs.getOrThrow(xTaskRun.id).status).toBe('running');
     await waitFor(
-      () => (core.services.orchestrator!.groupTurnState(conv.id).phase === 'idle' ? true : null),
+      () => (core.services.orchestrator!.projectTurnState(conv.id).phase === 'idle' ? true : null),
       { label: 'round over' },
     );
     xTask.release();

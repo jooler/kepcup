@@ -448,3 +448,19 @@ describe('effectiveMode: individual rules', () => {
     });
   });
 });
+
+describe('routing trigger reasons (D92 T1a WP3)', () => {
+  it('continuation / routed / routed_also / lead_fallback are never direct (宿主挑人，用户没有点名)', () => {
+    const entry = item('bot.model');
+    for (const reason of [
+      'continuation',
+      'routed',
+      'routed_also',
+      'lead_fallback',
+    ] as const) {
+      const decision = effectiveMode(entry, ctx({ triggerReason: reason }));
+      expect(decision.mode, reason).toBe('confirm');
+      expect(decision.rules, reason).toEqual(['trigger']);
+    }
+  });
+});

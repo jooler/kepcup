@@ -23,8 +23,8 @@
     data-testid="group-turn-status"
     data-phase={turn?.phase}
   >
-    {#if turn?.phase === 'triaging'}
-      <span class="animate-pulse">{t('turn.triaging')}</span>
+    {#if turn?.phase === 'routing'}
+      <span class="animate-pulse">{t('turn.routing')}</span>
     {:else if queueNames.length > 0}
       <span data-testid="group-turn-queue">
         {t('turn.running', { current: currentName, queue: queueNames })}

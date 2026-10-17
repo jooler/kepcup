@@ -37,11 +37,6 @@ function systemText(request: { body: { messages?: Array<{ role: string; content?
   return typeof first?.content === 'string' ? first.content : '';
 }
 
-/** Triage requests of one bot (the light-model user message carries the card). */
-function triageRequestsFor(llm: TestStack['llm'], name: string) {
-  return llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes(`你的名片：${name}`));
-}
-
 /** Run of one bot in one conversation with response loopType and status. */
 function waitForBotRun(
   core: TestStack['core'],
@@ -214,166 +209,6 @@ describe('project conversations', () => {
       expect(responseRuns.find((r) => r.botId === id)?.triggerReason).toBe('mention');
     }
   });
-
-  it('no explicit target: responders run by confidence, later bot sees the earlier reply and skip_reply sends nothing', async () => {
-    const { core, llm } = await start();
-    const { a, b, conv } = await threeBots(core);
-
-    // A prior exchange so the triage hint has a "recent interlocutor".
-    llm.script('mock-main', [step().replyText('阿甲打过招呼')]);
-    await sendDrafts(core, conv.id, [{ text: '先在吗', mentions: [a.id] }]);
-    await waitForBotRun(core, conv.id, a.id, 'completed');
-
-    llm.script('mock-light', [
-      step().expect((r) => r.lastUserText().includes('你的名片：阿甲')).replyJson({ decision: 'respond', confidence: 0.9, reason: '归我' }),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿乙')).replyJson({ decision: 'respond', confidence: 0.6, reason: '也可以' }),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿丙')).replyJson({ decision: 'no_action', confidence: 0.2, reason: '无需回应' }),
-    ]);
-    llm.script('mock-main', [
-      step().expect((r) => r.lastUserText().includes('谁来处理一下')).replyText('阿甲先答'),
-      step().expect((r) => r.lastUserText().includes('谁来处理一下')).replyToolCall('skip_reply', { reason: '已经有人回答了' }),
-    ]);
-
-    await sendBatchless(core, conv.id, '大家好，这个问题谁来处理一下');
-    await waitForBotRun(core, conv.id, a.id, 'completed');
-    await waitForBotRun(core, conv.id, b.id, 'completed');
-
-    const responses = llm.requestsFor('mock-main');
-    const aIndex = responses.findIndex((r) => systemText(r).includes('名字：阿甲'));
-    const bIndex = responses.findIndex((r) => systemText(r).includes('名字：阿乙'));
-    expect(bIndex).toBeGreaterThan(aIndex);
-    expect(responses[bIndex]!.lastUserText()).toContain('阿甲先答');
-    expect(responses[bIndex]!.lastUserText()).toContain('在你之前，阿甲已经回复');
-
-    // Triages actually asked the light model, with the designed inputs.
-    const triage = triageRequestsFor(llm, '阿甲').at(-1)!;
-    expect(triage.lastUserText()).toContain('<triage_recent_messages>');
-    expect(triage.lastUserText()).toContain('阿甲打过招呼');
-    expect(triage.lastUserText()).toContain('<triage_batch>');
-    expect(triage.lastUserText()).toContain('最近一次与用户交流的 Bot 是 阿甲');
-    // The own card is trusted input: it sits before the first <untrusted>
-    // (BR-P05-005) while the recent messages stay wrapped.
-    const triageText = triage.lastUserText();
-    expect(triageText.indexOf('你的名片：阿甲')).toBeGreaterThanOrEqual(0);
-    expect(triageText.indexOf('你的名片：阿甲')).toBeLessThan(triageText.indexOf('<untrusted>'));
-    expect(triageText.indexOf('<triage_recent_messages>')).toBeGreaterThan(triageText.indexOf('<untrusted>'));
-
-    const messages = await listMessages(core, conv.id);
-    const bMessages = messages.filter((m) => m.senderBotId === b.id);
-    expect(bMessages).toHaveLength(0); // skip_reply: no message
-
-    const runs = await listRuns(core, conv.id);
-    expect(runs.find((r) => r.botId === a.id && r.loopType === 'turn')?.triggerReason).toBe('broadcast');
-    expect(runs.find((r) => r.botId === b.id && r.loopType === 'turn')?.triggerReason).toBe('broadcast');
-    expect(runs.filter((r) => r.loopType === 'triage')).toHaveLength(3);
-  }, 30_000);
-
-  it('all not_mine inserts the no-claim system message; all no_action stays silent', async () => {
-    const { core, llm } = await start();
-    const { a, b, c, conv } = await threeBots(core);
-
-    const notMine = (reason: string) =>
-      step().expect((r) => r.lastUserText().includes(`你的名片：${reason}`)).replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' });
-    llm.script('mock-light', [
-      notMine('阿甲'),
-      notMine('阿乙'),
-      notMine('阿丙'),
-    ]);
-
-    await sendBatchless(core, conv.id, '这个问题需要有人处理');
-    const systemMessage = await waitForMessage(
-      core,
-      conv.id,
-      (m) => m.kind === 'system_event' && m.content.event === 'group_no_claim',
-    );
-    expect(systemMessage.content.text).toContain('请指定一个 Bot');
-    expect(systemMessage.content.botIds?.sort()).toEqual([a.id, b.id, c.id].sort());
-    expect((systemMessage.content as { batchId?: string }).batchId).toBeTruthy();
-    expect((await botRuns(core, conv.id, a.id)).length).toBe(0);
-
-    // All no_action: no further system message.
-    const systemCount = (await listMessages(core, conv.id)).filter(
-      (m) => m.kind === 'system_event' && m.content.event === 'group_no_claim',
-    ).length;
-    llm.script('mock-light', [
-      step().replyJson({ decision: 'no_action', confidence: 0.3, reason: '寒暄' }),
-      step().replyJson({ decision: 'no_action', confidence: 0.3, reason: '寒暄' }),
-      step().replyJson({ decision: 'no_action', confidence: 0.3, reason: '寒暄' }),
-    ]);
-    await sendBatchless(core, conv.id, '谢谢大家');
-    await waitFor(() => llm.requestsFor('mock-light').length >= 6, { label: 'second triage wave' });
-    // Let the in-flight triage calls settle before cleanup tears the core down.
-    await waitFor(
-      async () => {
-        const triageRuns = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'triage');
-        return triageRuns.length === 6 && triageRuns.every((r) => r.status !== 'running' && r.status !== 'queued')
-          ? true
-          : null;
-      },
-      { label: 'second wave settled' },
-    );
-    await waitFor(
-      async () =>
-        (await listMessages(core, conv.id)).filter(
-          (m) => m.kind === 'system_event' && m.content.event === 'group_no_claim',
-        ).length === systemCount
-          ? true
-          : null,
-      { label: 'no new system message' },
-    );
-  }, 30_000);
-
-  it('triage timeout counts as no_action', async () => {
-    const { core, llm } = await start({ KEPCUP_TRIAGE_TIMEOUT_MS: '400' });
-    const { a, conv } = await threeBots(core);
-
-    llm.script('mock-light', [
-      step().expect((r) => r.lastUserText().includes('你的名片：阿甲')).hold(),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿乙')).replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿丙')).replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-    ]);
-
-    await sendBatchless(core, conv.id, '需要有人看看');
-    // A's triage hangs; timeout -> no_action. B/C are not_mine -> system message.
-    const systemMessage = await waitForMessage(
-      core,
-      conv.id,
-      (m) => m.kind === 'system_event' && m.content.event === 'group_no_claim',
-      { timeoutMs: 8_000 },
-    );
-    expect(systemMessage).toBeTruthy();
-    expect((await botRuns(core, conv.id, a.id)).length).toBe(0);
-    llm.releaseAll();
-  }, 20_000);
-
-  // removed in WP3
-  it.skip('clicking a bot in the no-claim message re-dispatches the batch as an @', async () => {
-    const { core, llm } = await start();
-    const { a, conv } = await threeBots(core);
-
-    llm.script('mock-light', [
-      step().replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step().replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step().replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-    ]);
-    await sendBatchless(core, conv.id, '这个谁来处理');
-    const systemMessage = await waitForMessage(
-      core,
-      conv.id,
-      (m) => m.kind === 'system_event' && m.content.event === 'group_no_claim',
-    );
-
-    llm.script('mock-main', [step().replyText('好吧，我来看看')]);
-    await core.rpc.call('groups.redistribute', {
-      conversationId: conv.id,
-      batchId: (systemMessage.content as { batchId: string }).batchId,
-      botId: a.id,
-    });
-
-    const run = await waitForBotRun(core, conv.id, a.id, 'completed');
-    expect(run.triggerReason).toBe('mention');
-    await waitForMessage(core, conv.id, (m) => m.senderBotId === a.id);
-  }, 30_000);
 
   it('send_message @ B triggers B as a bot_mention turn bound to the episode (hop 1)', async () => {
     const { core, llm } = await start();
@@ -701,7 +536,7 @@ describe('project conversations', () => {
     rmSync(workdirDir, { recursive: true, force: true });
   }, 60_000);
 
-  it('group.turn events report triage, current bot and queue', async () => {
+  it('project.turn events report routing, current bot and queue', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
@@ -711,7 +546,7 @@ describe('project conversations', () => {
     ]);
     const runningEvent = waitForEvent(
       core,
-      'group.turn',
+      'project.turn',
       (p) => p.phase === 'running' && p.currentBotId === a.id && p.queue.includes(b.id),
       {},
     );
@@ -722,7 +557,7 @@ describe('project conversations', () => {
     expect(running.batchId).toBeTruthy();
     const idlePromise = waitForEvent(
       core,
-      'group.turn',
+      'project.turn',
       (p) => p.phase === 'idle' && p.queue.length === 0 && p.currentBotId === null,
       { timeoutMs: 20_000 },
     );
@@ -764,25 +599,23 @@ describe('project conversations', () => {
     llm.releaseAll();
   }, 30_000);
 
-  it('deleting during triage neither posts the no-claim message nor starts a turn', async () => {
+  it('deleting during routing neither delivers nor starts a turn (BR-P05-001)', async () => {
     const { core, llm } = await start();
     const { conv } = await threeBots(core);
 
-    llm.script('mock-light', [
-      step().expect((r) => r.lastUserText().includes('你的名片：阿甲')).hold(),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿乙')).replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step().expect((r) => r.lastUserText().includes('你的名片：阿丙')).replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-    ]);
+    // The lead's gate call (no prior bot reply -> no continuation check) hangs.
+    llm.script('mock-light', [step().expect((r) => r.lastUserText().includes('成员名册：')).hold()]);
     await sendBatchless(core, conv.id, '需要有人处理');
-    await waitFor(() => (llm.requestsFor('mock-light').length >= 3 ? true : null), { label: 'triage wave' });
+    await waitFor(() => (llm.requestsFor('mock-light').length >= 1 ? true : null), { label: 'gate request' });
 
     await core.rpc.call('conversations.delete', { id: conv.id });
     llm.releaseAll();
     await new Promise((r) => setTimeout(r, 1_000));
 
-    // The cleared coordinator must not react to the late triage completion:
-    // no system message, no response run, no model request.
+    // The cleared coordinator must not react to the late gate verdict:
+    // no turn run, no model request on the main model.
     expect(llm.requestsFor('mock-main')).toHaveLength(0);
+    expect((await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn')).toHaveLength(0);
   }, 30_000);
 
   it('an episode-bound run holding the mailbox does not absorb the turn delivery (BR-P05-002)', async () => {
@@ -890,7 +723,7 @@ describe('project conversations', () => {
 // -- helpers ------------------------------------------------------------------
 
 
-/** Flushes a single draft without mentions (group broadcast batch). */
+/** Flushes a single draft without mentions (a silently routed batch). */
 async function sendBatchless(
   core: TestStack['core'],
   conversationId: string,

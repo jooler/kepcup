@@ -1204,10 +1204,19 @@ export function parseMentionToken(token: string): { kind: 'bot' | 'group'; id: s
 export const triggerReasonSchema = z.enum([
   'direct',
   'mention',
-  'broadcast',
   'reply',
   /** 项目组里另一个 Bot @ 了你（Bot 可见 @ 的触发，D92 T1a 协作回合）。 */
   'bot_mention',
+  /** 上一位回话者 P 续接（D92 T1a 路由）：宿主判断消息在延续 P 的对话 / 工作。 */
+  'continuation',
+  /** 负责人网关那次轻量调用对应的 triage 类 run 的 trigger_reason（不是投递原因）。 */
+  'routing_gate',
+  /** 静默路由的首个目标（负责人网关转给成员），必答。 */
+  'routed',
+  /** 同一次路由的其余目标，可 skip_reply。 */
+  'routed_also',
+  /** 负责人兜底（网关 self，或路由产生的整轮无回复），必答。 */
+  'lead_fallback',
   'scheduled',
   'event',
   'background',

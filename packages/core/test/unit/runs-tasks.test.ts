@@ -288,7 +288,7 @@ describe('turnBotIdsTriggeredBy（D90：群里谁接了那条派发）', () => {
       botId: 'bot_a',
       conversationId: 'conv_g',
       loopType: 'turn',
-      triggerReason: 'broadcast',
+      triggerReason: 'routed',
       triggerMessageIds: [],
       ...overrides,
     });
@@ -304,7 +304,7 @@ describe('turnBotIdsTriggeredBy（D90：群里谁接了那条派发）', () => {
         triggerMessageIds: ['msg_9'],
         triggerParts: [
           { reason: 'task', messageIds: ['msg_9'] },
-          { reason: 'broadcast', messageIds: ['msg_1'] },
+          { reason: 'routed', messageIds: ['msg_1'] },
         ],
       });
       // 不算：别的消息、别的对话、任务、id 只是前缀相同（msg_10 ≠ msg_1）。

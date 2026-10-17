@@ -130,12 +130,6 @@ async function threeBots(core: TestStack['core']) {
   return { a, b, c, conv };
 }
 
-function triageStep(name: string, decision: 'respond' | 'not_mine' | 'no_action', confidence = 0.8) {
-  return step()
-    .expect((r) => r.lastUserText().includes(`你的名片：${name}`))
-    .replyJson({ decision, confidence, reason: '测试' });
-}
-
 describe('工作台派发：私聊', () => {
   it('立即开始：私聊出现可见 user 消息（origin=workbench）并触发执行者；回复带「📋 标题」标签；交付后事项进入待验收，普通消息不受影响', async () => {
     const stack = await start();
@@ -427,20 +421,22 @@ describe('工作台派发：群', () => {
     expect(reply.content).toMatchObject({ todoId: todo.id, todoTitle: '评估方案' });
   }, 30_000);
 
-  it('未指定负责 Bot：走 triage，谁认领谁做；交付后待验收', async () => {
+  it('未指定负责 Bot：静默路由（网关 route）给成员；首个目标必答（routed），交付后待验收', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const { a, conv } = await threeBots(core);
-    llm.script('mock-light', [
-      triageStep('阿甲', 'respond', 0.9),
-      triageStep('阿乙', 'not_mine'),
-      triageStep('阿丙', 'no_action'),
-      ...reflections(2),
-    ]);
+    const { a, b, conv } = await threeBots(core);
+
     llm.script('mock-main', [
       step()
         .expect((r) => r.lastUserText().includes('【工作台】盘点库存'))
         .replyText('库存盘点完成。'),
+    ]);
+    llm.script('mock-light', [
+      // The lead 阿甲's gate: route the dispatch to member 阿乙 (b).
+      step()
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' }),
+      ...reflections(2),
     ]);
 
     const { todo } = await createTodo(stack, {
@@ -451,19 +447,28 @@ describe('工作台派发：群', () => {
     const message = await dispatchMessageOf(stack, conv.id);
     expect(message.mentions).toEqual([]);
     await waitForTodoStatus(stack, todo.id, 'delivered');
-    expect(triageRequests(llm).length).toBeGreaterThanOrEqual(3);
+    // One gate call (light model), no continuation check (no prior bot reply).
+    const gateRequests = llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：'));
+    expect(gateRequests).toHaveLength(1);
     const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
-    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([[a.id, 'broadcast']]);
+    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([[b.id, 'routed']]);
+    // The gate's own triage run is on record, run by the lead.
+    expect((await listRuns(core, conv.id)).find((r) => r.loopType === 'triage')).toMatchObject({
+      botId: a.id,
+      triggerReason: 'routing_gate',
+    });
+    const reply = botReplies(await listAllMessages(core, conv.id))[0]!;
+    expect(reply).toMatchObject({ senderBotId: b.id });
   }, 30_000);
 
-  it('群里无人认领（group_no_claim）：执行记录 unclaimed，事项退回草案，原因「群里无人认领」', async () => {
+  it('网关 none（纯致谢类）：整轮静默 → 执行记录 unclaimed，事项退回草案，没有任何消息', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { conv } = await threeBots(core);
     llm.script('mock-light', [
-      triageStep('阿甲', 'not_mine'),
-      triageStep('阿乙', 'not_mine'),
-      triageStep('阿丙', 'not_mine'),
+      step()
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .replyJson({ decision: 'none', targets: [], reason: '无需回应' }),
     ]);
     const { todo } = await createTodo(stack, {
       title: '没人要的活',
@@ -474,36 +479,57 @@ describe('工作台派发：群', () => {
     expect(draft.blockedReason).toBe('群里无人认领');
     expect(draft.lastRun).toMatchObject({ status: 'unclaimed' });
     expect(draft.lastRun!.settledAt).not.toBeNull();
+    // Silent routing leaves no trace: no system message, no turn, no reply.
     expect(
       (await listMessages(core, conv.id)).some(
-        (m) => m.kind === 'system_event' && (m.content as { event?: string }).event === 'group_no_claim',
+        (m) => m.kind === 'system_event' && (m.content as { event?: string }).event !== undefined,
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect((await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn')).toHaveLength(0);
+    expect(
+      llm.requestsFor('mock-main'),
+    ).toHaveLength(0);
     // 退回草案后可以再次开始（改派 / 指定负责 Bot 后重派）。
     expect(draft.assignee).not.toBeNull();
   }, 30_000);
 
-  it('triage 全员 no_action（没有 group_no_claim 提示）同样算无人响应', async () => {
+  it('路由给成员但成员无可见回复：负责人兜底（lead_fallback）恰好一次，兜底回复交付', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const { conv } = await threeBots(core);
+    const { a, b, conv } = await threeBots(core);
     llm.script('mock-light', [
-      triageStep('阿甲', 'no_action'),
-      triageStep('阿乙', 'no_action'),
-      triageStep('阿丙', 'no_action'),
+      step()
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' }),
+      ...reflections(2),
+    ]);
+    llm.script('mock-main', [
+      // 阿乙的必答回合（routed，无 skip_reply）：最终文本为空 = 无可见回复。
+      step()
+        .expect((r) => r.lastUserText().includes('【工作台】寒暄一样的活'))
+        .replyText(''),
+      // 负责人兜底轮（lead_fallback）接住，事项由它的回复交付。
+      step().replyText('这件事由我来回应。'),
     ]);
     const { todo } = await createTodo(stack, {
       title: '寒暄一样的活',
       assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
       when: 'now',
     });
-    const draft = await waitForTodoStatus(stack, todo.id, 'draft');
-    expect(draft.blockedReason).toBe('群里无人认领');
-    expect(
-      (await listMessages(core, conv.id)).some(
-        (m) => (m.content as { event?: string }).event === 'group_no_claim',
-      ),
-    ).toBe(false);
+    const delivered = await waitForTodoStatus(stack, todo.id, 'delivered');
+    // Run ids are time-ordered ULIDs; runs.list is newest-first.
+    const runs = (await listRuns(core, conv.id))
+      .filter((r) => r.loopType === 'turn')
+      .sort((x, y) => (x.id < y.id ? -1 : 1));
+    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([
+      [b.id, 'routed'],
+      [a.id, 'lead_fallback'],
+    ]);
+    expect(delivered.lastRun!.resultMessageId).not.toBeNull();
+    // M's empty final text produced no message; the lead's fallback reply is
+    // the only bot message and the one that delivered the todo.
+    const replies = botReplies(await listAllMessages(core, conv.id));
+    expect(replies.map((m) => m.senderBotId)).toEqual([a.id]);
   }, 30_000);
 });
 

@@ -18,8 +18,8 @@ import {
  * D75 W1-B 泄露契约（docs/design/30 §2.4.3）：群里 X 的私有时间线条目
  * （交代 / 追加 / 提问 / 结果 / 取消 / 失败）在 owner 以外的所有视角、所有读
  * 路径下都不可见——Y 的上下文构建、search_messages、get_messages_around、
- * 对话摘要输入、群聊判断输入、反思输入，以及用户的 messages.list、会话预览、
- * 未读数；X 自己的上下文里看得到，且按 seq 与用户消息交错。
+ * 对话摘要输入、路由判断输入（续接判断与负责人网关）、反思输入，以及用户的
+ * messages.list、会话预览、未读数；X 自己的上下文里看得到，且按 seq 与用户消息交错。
  */
 
 const stacks: TestStack[] = [];
@@ -93,7 +93,7 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     const domain = core.services.domain!;
     const x = await makeBot(core, '阿甲');
     const y = await makeBot(core, '阿乙');
-    const conv = await makeProject(core, '斑马调研', [x.id, y.id]);
+    const conv = await makeProject(core, '斑马调研', [x.id, y.id], { leadBotId: y.id });
     const cid = conv.id;
     const t1 = 'run_task_one';
     const t2 = 'run_task_two';
@@ -179,12 +179,14 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     const triageFor = (name: string) => (r: MockChatRequest) =>
       r.lastUserText().includes(`你的名片：${name}`);
     llm.script('mock-light', [
+      // P = X（共享的进度文本使它是「上一位回话者」）续接判断：不认领。
       step()
         .expect(triageFor('阿甲'))
-        .replyJson({ decision: 'no_action', confidence: 0.1, reason: '不归我' }),
+        .replyJson({ decision: 'not_mine', confidence: 0.9, reason: '不归我' }),
+      // 负责人 Y 的网关：静默收场。
       step()
-        .expect(triageFor('阿乙'))
-        .replyJson({ decision: 'no_action', confidence: 0.1, reason: '不归我' }),
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .replyJson({ decision: 'none', targets: [], reason: '无需回应' }),
       step()
         .expect((r) => r.lastUserText().includes('<previous_summary>'))
         .replyJson({ summary: '用户在调研斑马。' }),
@@ -211,16 +213,6 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     expect(yTools[1]).toContain('user_second');
     // X's private row as an anchor answers like a missing message.
     expect(yTools[2]).toContain('消息不存在');
-
-    // --- triage input (group judgement): Y sees none, X sees its own --------
-    await sendBatch(core, cid, ['broadcast_probe 大家看看']);
-    const yTriage = await waitForRequest(llm, 'mock-light', triageFor('阿乙'), 'Y triage');
-    const xTriage = await waitForRequest(llm, 'mock-light', triageFor('阿甲'), 'X triage');
-    expect(yTriage.lastUserText()).toContain('broadcast_probe');
-    expect(leaksIn(bodyText(yTriage))).toEqual([]);
-    expect(xTriage.lastUserText()).toContain('leak_tail');
-    await waitForBotRun(core, cid, y.id, 'triage');
-    await waitForBotRun(core, cid, x.id, 'triage');
 
     // --- summary job input: shared rows only ----------------------------------
     domain.jobs.enqueue({
@@ -297,6 +289,25 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     expect(xText).toContain(
       `任务 ${t2}→你（失败）] 状态：已取消；错误：leak_error。zebra leak_failure`,
     );
+
+    // --- routing judgement input (D92 T1a): Y (lead) sees none, X its own ----
+    // X 刚回复过（上一段 @X 的轮），是「上一位回话者」且不是负责人。
+    await sendBatch(core, cid, ['routing_probe 大家看看']);
+    // 续接判断跑在 P = X 自己的视角上——私有条目对 owner 可见。
+    const xContinuation = await waitForRequest(llm, 'mock-light', triageFor('阿甲'), 'X continuation');
+    expect(xContinuation.lastUserText()).toContain('routing_probe');
+    expect(xContinuation.lastUserText()).toContain('leak_tail');
+    // X 不认领 → 负责人 Y 的网关跑在 Y 的视角上：看不到 X 的任何私有条目。
+    const yGate = await waitForRequest(
+      llm,
+      'mock-light',
+      (r) => r.lastUserText().includes('成员名册：'),
+      'Y gate request',
+    );
+    expect(yGate.lastUserText()).toContain('routing_probe');
+    expect(leaksIn(bodyText(yGate))).toEqual([]);
+    await waitForBotRun(core, cid, x.id, 'triage');
+    await waitForBotRun(core, cid, y.id, 'triage');
 
     // The user still sees none of it after all the runs.
     expect(leaksIn(JSON.stringify(await listMessages(core, cid)))).toEqual([]);

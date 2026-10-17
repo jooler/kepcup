@@ -636,7 +636,7 @@ export const zhCN = {
   'groupCompose.inputLabel': '群成员',
   'groupCompose.listLabel': '可添加的 Bot',
   'groupCompose.alreadyAdded': '「{name}」已在成员里',
-  'turn.triaging': '正在确认由谁回复…',
+  'turn.routing': '正在确认由谁回复…',
   'turn.running': '{current} 正在回复，{queue} 排队中',
   'turn.single': '{current} 正在回复',
   'composer.replying': '引用 {name}：{text}',

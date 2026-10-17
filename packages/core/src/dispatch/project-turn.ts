@@ -1,4 +1,9 @@
 import { type Message, type Run } from '@kepcup/shared';
+import {
+  ROUTING_CONTINUATION_MIN_CONFIDENCE,
+  ROUTING_CONTINUATION_WINDOW_MS,
+  ROUTING_ROUTE_TARGETS_MAX,
+} from '@kepcup/shared';
 import type { TriggerBatch } from '../scheduler/mailbox.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { BotsService } from '../domain/bots.js';
@@ -7,33 +12,33 @@ import type { CoreLogger } from '../infra/logger.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
   explicitTargets,
-  sortResponders,
+  type ContinuationDecision,
   type DispatchTarget,
-  type TriageDecisionValue,
 } from './dispatcher.js';
+import type { LeadGateDecision } from './lead-gate.js';
 
 /**
- * How a group round ended for the batch that opened it (D90 delivery tracking):
- * - `no_claim`: triage found no responder (the `group_no_claim` prompt, or every bot said
- *   no_action) — nobody took the batch;
- * - `silent`: the targets ran but none produced a visible reply;
+ * How a project round ended for the batch that opened it (D90 delivery
+ * tracking):
+ * - `silent`: the targets ran but none produced a visible reply (a routing
+ *   `none` verdict ends here too — nothing was delivered);
  * - `failed`: nobody replied and an executed turn failed / was cancelled;
  * - `replied`: at least one target replied.
  */
-export type GroupRoundEnd = {
+export type ProjectRoundEnd = {
   conversationId: string;
   batchId: string;
   messages: Message[];
-  /** The runs the round delivered to (empty for `no_claim`). */
+  /** The runs the round delivered to (empty for a silent routing). */
   runIds: string[];
 } & (
-  | { outcome: 'no_claim' | 'silent' | 'replied' }
-  | { outcome: 'failed'; failure: GroupRoundFailure }
+  | { outcome: 'silent' | 'replied' }
+  | { outcome: 'failed'; failure: ProjectRoundFailure }
 );
 
-export type GroupRoundFailure = { kind: 'failed'; error: string | null } | { kind: 'cancelled' };
+export type ProjectRoundFailure = { kind: 'failed'; error: string | null } | { kind: 'cancelled' };
 
-export interface GroupTurnDeps {
+export interface ProjectTurnDeps {
   conversations: ConversationsService;
   bots: BotsService;
   messages: MessagesService;
@@ -47,26 +52,28 @@ export interface GroupTurnDeps {
    */
   deliver(batch: TriggerBatch): string | null;
   isMailboxRunning(botId: string, conversationId: string): boolean;
-  /** Appends + publishes a system message; returns it. */
-  appendSystemMessage(input: {
-    conversationId: string;
-    event: string;
-    text: string;
-    botIds?: string[];
-    batchId?: string | null;
-  }): Message;
   publish<K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]): void;
   /** Reports how a round ended (workbench delivery tracking); optional in stripped setups. */
-  onRoundEnded?: ((info: GroupRoundEnd) => void) | undefined;
-  /** Runs one bot's triage decision through the scheduler (parallel). */
-  triage(input: {
+  onRoundEnded?: ((info: ProjectRoundEnd) => void) | undefined;
+  /** The conversation's lead (`conversations.leadBotId`); null only in transient states. */
+  leadOf(conversationId: string): string | null;
+  /** Latest visible bot reply in the conversation (routing's "last replier"). */
+  lastReplier(conversationId: string): { botId: string; at: number } | null;
+  /** The last replier P's continuation check (a lightweight structured call). */
+  judgeContinuation(input: {
     botId: string;
     conversationId: string;
     batchId: string;
     batchMessages: Message[];
-  }): Promise<{ botId: string; decision: TriageDecisionValue; confidence: number }>;
-  /** Test override of TRIAGE_TIMEOUT_MS. */
-  triageTimeoutMs?: number;
+  }): Promise<ContinuationDecision>;
+  /** The lead's routing gate (a lightweight structured call). */
+  gate(input: {
+    leadBotId: string;
+    conversationId: string;
+    batchId: string;
+    batchMessages: Message[];
+    continuation: ContinuationDecision | null;
+  }): Promise<LeadGateDecision>;
 }
 
 interface Turn {
@@ -77,14 +84,14 @@ interface Turn {
   index: number;
   /**
    * The exact run the current target's batch was delivered to; only its
-   * terminal state advances the turn (BR-P05-002: a same-bot chain run must
+   * terminal state advances the turn (BR-P05-002: a same-bot episode run must
    * not advance it). Null only in the rare buffered-steer window, where the
    * fallback matches by bot id.
    */
   awaitingRunId: string | null;
   /**
-   * The target's mailbox was busy (foreign run, e.g. a chain): the turn waits
-   * for onMailboxIdle so the batch lands as its own run, not a steer.
+   * The target's mailbox was busy (foreign run, e.g. an episode): the turn
+   * waits for onMailboxIdle so the batch lands as its own run, not a steer.
    */
   awaitingIdle: boolean;
   /** Bot ids whose execution already finished inside this turn. */
@@ -94,69 +101,72 @@ interface Turn {
   /** Every run the round delivered to (D90 tracking). */
   runIds: string[];
   /** The latest failed / cancelled turn of the round (D90 tracking). */
-  failure: GroupRoundFailure | null;
+  failure: ProjectRoundFailure | null;
+  /**
+   * The round came out of silent routing (continuation / routed / routed_also):
+   * when it ends with no visible reply and no failure, the lead answers it
+   * once (`lead_fallback`, D92 T1a 兜底不变式).
+   */
+  guarded: boolean;
 }
 
 interface PendingBatch {
   batchId: string;
   messages: Message[];
-  /** Stored no-claim re-dispatch: force this single target (the RPC is gone in WP1; the flow dies in WP3). */
+  /**
+   * Forced single target: beats explicit targets and routing. Kept per the WP3
+   * contract (DEV-031: the workbench dispatch itself aims via a structured @,
+   * so nothing in production passes this today).
+   */
   forcedTarget?: string;
 }
 
 /**
- * Group-chat dispatch (docs/dev/phases/P05-group-chat.md): one conversation
- * holds at most one round ("轮次") — an ordered list of targets delivered one
- * after another, each only after the previous bot's supervisor turn reached a
- * terminal state (D75 design 30 §6.2: a round never waits for the tasks a turn
- * started; tasks take no part in rounds). Batches flushed mid-round wait and
- * are dispatched (mentions / triage) after the round — D75 retired the copy
- * steered into the running bot (D2 revised: a new message goes to the next
- * turn of the bots it is for, and the running bot sees it in its context).
+ * Project-conversation dispatch (D92 T1a routing, design 41 §6): one
+ * conversation holds at most one round ("轮次") — an ordered list of targets
+ * delivered one after another, each only after the previous bot's supervisor
+ * turn reached a terminal state (D75 design 30 §6.2: a round never waits for
+ * the tasks a turn started; tasks take no part in rounds). A batch with no
+ * explicit target (no @ / reply) is routed silently: the last replier P may
+ * claim it (continuation), else the lead's gate picks members (`routed` /
+ * `routed_also`), answers itself (`lead_fallback`) or ends the round silently
+ * (`none`). Batches flushed mid-round wait and are dispatched after the round.
  * Removed/deleted members are skipped, their runs cancelled.
  */
-export class GroupTurnCoordinator {
-  readonly #deps: GroupTurnDeps;
+export class ProjectTurnCoordinator {
+  readonly #deps: ProjectTurnDeps;
   readonly #turns = new Map<string, Turn>();
   readonly #pending = new Map<string, PendingBatch[]>();
-  readonly #triaging = new Set<string>();
+  readonly #routing = new Set<string>();
 
-  constructor(deps: GroupTurnDeps) {
+  constructor(deps: ProjectTurnDeps) {
     this.#deps = deps;
   }
 
-  /** A flushed user batch in a group conversation. */
-  onUserBatch(conversationId: string, batchId: string, messages: Message[]): void {
+  /** A flushed user batch in a project conversation. */
+  onUserBatch(
+    conversationId: string,
+    batchId: string,
+    messages: Message[],
+    options: { forcedTarget?: string } = {},
+  ): void {
+    const pending: PendingBatch = {
+      batchId,
+      messages,
+      ...(options.forcedTarget !== undefined ? { forcedTarget: options.forcedTarget } : {}),
+    };
     const turn = this.#turns.get(conversationId);
     if (turn) {
-      this.#enqueuePending(conversationId, { batchId, messages });
+      this.#enqueuePending(conversationId, pending);
       this.#publishTurnState(conversationId);
       return;
     }
-    if (this.#triaging.has(conversationId)) {
-      this.#enqueuePending(conversationId, { batchId, messages });
+    if (this.#routing.has(conversationId)) {
+      this.#enqueuePending(conversationId, pending);
       this.#publishTurnState(conversationId);
       return;
     }
-    this.#dispatch(conversationId, { batchId, messages });
-  }
-
-  /** Silent-message click: re-dispatch the original batch as an explicit @. */
-  redistribute(conversationId: string, batchId: string, botId: string): void {
-    const messages = this.#deps.messages.listByBatch(batchId).filter((m) => m.status !== 'recalled');
-    if (messages.length === 0) return;
-    const turn = this.#turns.get(conversationId);
-    if (turn) {
-      this.#enqueuePending(conversationId, { batchId, messages, forcedTarget: botId });
-      this.#publishTurnState(conversationId);
-      return;
-    }
-    if (this.#triaging.has(conversationId)) {
-      this.#enqueuePending(conversationId, { batchId, messages, forcedTarget: botId });
-      this.#publishTurnState(conversationId);
-      return;
-    }
-    this.#dispatch(conversationId, { batchId, messages, forcedTarget: botId });
+    this.#dispatch(conversationId, pending);
   }
 
   /**
@@ -225,21 +235,21 @@ export class GroupTurnCoordinator {
 
   /**
    * The conversation is being deleted / aborted: drop every trace so terminal
-   * states and async triage completions cannot advance, deliver or enqueue
+   * states and async routing completions cannot advance, deliver or enqueue
    * anything afterwards (BR-P05-001). Must run BEFORE runs are aborted.
    */
   clear(conversationId: string): void {
     this.#turns.delete(conversationId);
     this.#pending.delete(conversationId);
-    this.#triaging.delete(conversationId);
+    this.#routing.delete(conversationId);
     this.#publishTurnState(conversationId);
   }
 
-  /** Current turn state for queries (same payload as the group.turn event). */
+  /** Current turn state for queries (same payload as the project.turn event). */
   stateOf(conversationId: string): {
     conversationId: string;
     batchId: string | null;
-    phase: 'triaging' | 'running' | 'idle';
+    phase: 'routing' | 'running' | 'idle';
     currentBotId: string | null;
     queue: string[];
     pendingBatches: number;
@@ -248,7 +258,7 @@ export class GroupTurnCoordinator {
     return {
       conversationId,
       batchId: turn?.batchId ?? null,
-      phase: turn ? 'running' : this.#triaging.has(conversationId) ? 'triaging' : 'idle',
+      phase: turn ? 'running' : this.#routing.has(conversationId) ? 'routing' : 'idle',
       currentBotId: turn?.targets[turn.index]?.botId ?? null,
       queue: turn ? turn.targets.slice(turn.index + 1).map((t) => t.botId) : [],
       pendingBatches: this.#pending.get(conversationId)?.length ?? 0,
@@ -261,9 +271,13 @@ export class GroupTurnCoordinator {
     const members = this.#activeMembers(conversationId);
     if (pending.forcedTarget !== undefined) {
       if (members.has(pending.forcedTarget)) {
-        this.#startTurn(conversationId, pending.batchId, pending.messages, [
-          { botId: pending.forcedTarget, reason: 'mention' },
-        ]);
+        this.#startTurn(
+          conversationId,
+          pending.batchId,
+          pending.messages,
+          [{ botId: pending.forcedTarget, reason: 'mention' }],
+          { guarded: false },
+        );
       } else {
         this.#publishTurnState(conversationId);
       }
@@ -273,89 +287,139 @@ export class GroupTurnCoordinator {
       this.#deps.messages.getById(id),
     );
     if (targets.length > 0) {
-      this.#startTurn(conversationId, pending.batchId, pending.messages, targets);
+      this.#startTurn(conversationId, pending.batchId, pending.messages, targets, {
+        guarded: false,
+      });
       return;
     }
-    this.#startTriage(conversationId, pending, members);
+    this.#startRouting(conversationId, pending);
   }
 
-  #startTriage(conversationId: string, pending: PendingBatch, members: Set<string>): void {
-    const candidates = [...members];
-    this.#triaging.add(conversationId);
-    this.#publishTurnState(conversationId);
-    if (candidates.length === 0) {
-      this.#finishTriage(conversationId, pending, []);
+  #startRouting(conversationId: string, pending: PendingBatch): void {
+    const lead = this.#deps.leadOf(conversationId);
+    if (lead === null || !this.#activeMembers(conversationId).has(lead)) {
+      // The DB CHECK guarantees a lead; an inactive one is a transient state —
+      // end the round without a reply.
+      this.#deps.logger.error({ conversationId }, 'project has no usable lead; message not routed');
+      this.#reportRoundEnd({
+        conversationId,
+        batchId: pending.batchId,
+        messages: pending.messages,
+        runIds: [],
+        outcome: 'silent',
+      });
+      this.#drainPending(conversationId);
       return;
     }
-    let settled = 0;
-    const decisions: Array<{ botId: string; decision: TriageDecisionValue; confidence: number }> = [];
-    for (const botId of candidates) {
-      this.#deps
-        .triage({
-          botId,
+    this.#routing.add(conversationId);
+    this.#publishTurnState(conversationId);
+    void this.#route(conversationId, pending, lead);
+  }
+
+  async #route(conversationId: string, pending: PendingBatch, lead: string): Promise<void> {
+    // P: the last replier, if it is a present non-lead member inside the
+    // continuation window. P being the lead / absent / stale skips ①.
+    const members = this.#activeMembers(conversationId);
+    const last = this.#deps.lastReplier(conversationId);
+    const p =
+      last !== null && last.botId !== lead && members.has(last.botId) &&
+      this.#deps.clock.now() - last.at <= ROUTING_CONTINUATION_WINDOW_MS
+        ? last.botId
+        : null;
+
+    let continuation: ContinuationDecision | null = null;
+    if (p !== null) {
+      continuation = await this.#safely(
+        () =>
+          this.#deps.judgeContinuation({
+            botId: p,
+            conversationId,
+            batchId: pending.batchId,
+            batchMessages: pending.messages,
+          }),
+        null,
+      );
+      // Cleared mid-flight (conversation deleted): never touch it again
+      // (BR-P05-001) — no turns, no further dispatch.
+      if (!this.#routing.has(conversationId)) return;
+      if (
+        continuation !== null &&
+        continuation.decision === 'respond' &&
+        continuation.confidence >= ROUTING_CONTINUATION_MIN_CONFIDENCE
+      ) {
+        this.#finishRouting(conversationId, pending, [{ botId: p, reason: 'continuation' }], true);
+        return;
+      }
+    }
+    const gate = await this.#safely(
+      () =>
+        this.#deps.gate({
+          leadBotId: lead,
           conversationId,
           batchId: pending.batchId,
           batchMessages: pending.messages,
-        })
-        .then((decision) => {
-          decisions.push(decision);
-        })
-        .catch((error) => {
-          // triageOneBot never rejects; keep this belt-and-braces.
-          this.#deps.logger.warn(
-            { botId, error: error instanceof Error ? error.message : String(error) },
-            'triage dispatch failed',
-          );
-        })
-        .finally(() => {
-          settled += 1;
-          if (settled === candidates.length) {
-            this.#finishTriage(conversationId, pending, decisions);
-          }
-        });
-    }
-  }
-
-  #finishTriage(
-    conversationId: string,
-    pending: PendingBatch,
-    decisions: Array<{ botId: string; decision: TriageDecisionValue; confidence: number }>,
-  ): void {
-    // Cleared mid-flight (conversation deleted): never touch it again
-    // (BR-P05-001) — no turns, no system messages, no further dispatch.
-    if (!this.#triaging.has(conversationId)) return;
-    this.#triaging.delete(conversationId);
-    const responders = sortResponders(
-      decisions.filter((d): d is typeof d & { decision: 'respond' } => d.decision === 'respond'),
+          continuation,
+        }),
+      { decision: 'self' as const, targets: [] as string[], reason: 'gate failed' },
     );
-    if (responders.length > 0) {
-      this.#startTurn(
+    if (!this.#routing.has(conversationId)) return;
+    // Host-side hardening: the model may name anyone — re-check against the
+    // members present right now (membership may have changed during the call).
+    const nowMembers = this.#activeMembers(conversationId);
+    const targets =
+      gate.decision === 'route'
+        ? gate.targets
+            .filter((id) => id !== lead && nowMembers.has(id))
+            .slice(0, ROUTING_ROUTE_TARGETS_MAX)
+        : [];
+    if (gate.decision === 'none') {
+      // Silent end: nothing was delivered and nothing is owed (纯致谢 / 寒暄).
+      this.#routing.delete(conversationId);
+      this.#reportRoundEnd({
         conversationId,
-        pending.batchId,
-        pending.messages,
-        responders.map((r) => ({ botId: r.botId, reason: 'broadcast' as const })),
+        batchId: pending.batchId,
+        messages: pending.messages,
+        runIds: [],
+        outcome: 'silent',
+      });
+      this.#publishTurnState(conversationId);
+      this.#drainPending(conversationId);
+      return;
+    }
+    if (gate.decision === 'route' && targets.length > 0) {
+      this.#finishRouting(
+        conversationId,
+        pending,
+        targets.map((botId, i) => ({
+          botId,
+          reason: i === 0 ? ('routed' as const) : ('routed_also' as const),
+        })),
+        true,
       );
       return;
     }
-    this.#reportRoundEnd({
-      conversationId,
-      batchId: pending.batchId,
-      messages: pending.messages,
-      outcome: 'no_claim',
-      runIds: [],
+    this.#finishRouting(conversationId, pending, [{ botId: lead, reason: 'lead_fallback' }], false);
+  }
+
+  #safely<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+    return fn().catch((error) => {
+      // The two judgement deps never reject by contract; belt-and-braces.
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'routing judgement failed',
+      );
+      return fallback;
     });
-    if (decisions.some((d) => d.decision === 'not_mine')) {
-      const members = [...this.#activeMembers(conversationId)];
-      this.#deps.appendSystemMessage({
-        conversationId,
-        event: 'group_no_claim',
-        text: '没有 Bot 认领这条消息，请指定一个 Bot',
-        botIds: members,
-        batchId: pending.batchId,
-      });
-    }
-    this.#publishTurnState(conversationId);
-    this.#drainPending(conversationId);
+  }
+
+  #finishRouting(
+    conversationId: string,
+    pending: PendingBatch,
+    targets: DispatchTarget[],
+    guarded: boolean,
+  ): void {
+    this.#routing.delete(conversationId);
+    this.#startTurn(conversationId, pending.batchId, pending.messages, targets, { guarded });
   }
 
   #startTurn(
@@ -363,6 +427,7 @@ export class GroupTurnCoordinator {
     batchId: string,
     messages: Message[],
     targets: DispatchTarget[],
+    options: { guarded: boolean; runIds?: string[] },
   ): void {
     const turn: Turn = {
       conversationId,
@@ -374,8 +439,9 @@ export class GroupTurnCoordinator {
       awaitingIdle: false,
       executed: [],
       lastReplier: null,
-      runIds: [],
+      runIds: options.runIds ? [...options.runIds] : [],
       failure: null,
+      guarded: options.guarded,
     };
     this.#turns.set(conversationId, turn);
     this.#advance(turn);
@@ -394,9 +460,9 @@ export class GroupTurnCoordinator {
       return;
     }
     if (this.#deps.isMailboxRunning(target.botId, turn.conversationId)) {
-      // A foreign run (e.g. a chain triggered mid-turn) holds the mailbox:
-      // wait for it to end so the batch lands as its own run (BR-P05-002)
-      // instead of being steered into that run.
+      // A foreign run (e.g. an episode) holds the mailbox: wait for it to end
+      // so the batch lands as its own run (BR-P05-002) instead of being
+      // steered into that run.
       turn.awaitingIdle = true;
       this.#publishTurnState(turn.conversationId);
       return;
@@ -429,6 +495,23 @@ export class GroupTurnCoordinator {
 
   #endTurn(turn: Turn): void {
     this.#turns.delete(turn.conversationId);
+    // A routed / continued round that produced no visible reply and did not
+    // fail: the lead answers it (once). The fallback round itself is unguarded
+    // — no reply there ends the round as `silent`, never a third turn. A failed
+    // / cancelled round keeps the existing failure UI + retry instead.
+    if (turn.guarded && turn.lastReplier === null && turn.failure === null) {
+      const lead = this.#deps.leadOf(turn.conversationId);
+      if (lead !== null && this.#isDispatchable(turn.conversationId, lead)) {
+        this.#startTurn(
+          turn.conversationId,
+          turn.batchId,
+          turn.messages,
+          [{ botId: lead, reason: 'lead_fallback' }],
+          { guarded: false, runIds: turn.runIds },
+        );
+        return;
+      }
+    }
     const base = {
       conversationId: turn.conversationId,
       batchId: turn.batchId,
@@ -446,20 +529,20 @@ export class GroupTurnCoordinator {
     this.#drainPending(turn.conversationId);
   }
 
-  #reportRoundEnd(info: GroupRoundEnd): void {
+  #reportRoundEnd(info: ProjectRoundEnd): void {
     try {
       this.#deps.onRoundEnded?.(info);
     } catch (error) {
       // Tracking never breaks dispatch.
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'group round end hook failed',
+        'project round end hook failed',
       );
     }
   }
 
   #drainPending(conversationId: string): void {
-    if (this.#turns.has(conversationId) || this.#triaging.has(conversationId)) return;
+    if (this.#turns.has(conversationId) || this.#routing.has(conversationId)) return;
     const queue = this.#pending.get(conversationId);
     const next = queue?.shift();
     if (next) this.#dispatch(conversationId, next);
@@ -490,6 +573,6 @@ export class GroupTurnCoordinator {
   }
 
   #publishTurnState(conversationId: string): void {
-    this.#deps.publish('group.turn', this.stateOf(conversationId));
+    this.#deps.publish('project.turn', this.stateOf(conversationId));
   }
 }

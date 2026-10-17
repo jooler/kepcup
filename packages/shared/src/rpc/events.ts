@@ -110,14 +110,14 @@ export const leaseWaitingPayloadSchema = z.object({
 // --- P05 events (docs/dev/phases/P05-group-chat.md "事件") --------------------
 
 /**
- * Group-conversation turn state: triaging (who should answer?), running (the
- * ordered responses), or idle (nothing in flight for the group right now).
+ * Project-conversation turn state: routing (who should answer?), running (the
+ * ordered responses), or idle (nothing in flight for the project right now).
  */
-export const groupTurnPayloadSchema = z.object({
+export const projectTurnPayloadSchema = z.object({
   conversationId: z.string(),
-  /** The user batch driving the current turn; null while triaging. */
+  /** The user batch driving the current turn; null while routing. */
   batchId: z.string().nullable(),
-  phase: z.enum(['triaging', 'running', 'idle']),
+  phase: z.enum(['routing', 'running', 'idle']),
   currentBotId: z.string().nullable(),
   /** Bot ids still queued behind the current one. */
   queue: z.array(z.string()),
@@ -366,7 +366,7 @@ export const rpcEventSchemas = {
   'workdir.updated': workdirUpdatedPayloadSchema,
   'workdir.removed': workdirRemovedPayloadSchema,
   'lease.waiting': leaseWaitingPayloadSchema,
-  'group.turn': groupTurnPayloadSchema,
+  'project.turn': projectTurnPayloadSchema,
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,
