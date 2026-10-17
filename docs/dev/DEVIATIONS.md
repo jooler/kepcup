@@ -582,3 +582,14 @@
 - 推荐：1（必要时叠加 2 的轻提示）；在决定前保留 D60 后端不删。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/design/19-work-path-and-group-setup.md`、`docs/design/README.md`（D60 行）、`docs/design/{01-conversation,08-project}.md`、`docs/dev/phases/P16-path-and-group-setup.md`、`todo/conversation-work-path.md`。
+
+### DEV-032 项目 wiki（WP9）验收自检 rg#1 非空：`enqueueIngest` 的执行者字段与旧 RPC 入参形态同形（D92 T1b）
+
+- 状态：已按 WP 语义收口（自检解读，非代码缺陷）
+- 阶段：群聊→项目组 WP9（`feat/project/wp9-wiki-core`）
+- 是否阻塞：否
+- 问题：WP9 验收清单要求 `rg -n "wikiBotIdInputSchema|storeFor\(botId|botWikiRoot\(deps|botId: input\.botId" packages/core/src/wiki packages/core/src/rpc` 为空，但 WP §2/§3 同时规定 `enqueueIngest({ owner, botId, … })` 保留 `botId` 为**执行者**字段（成员入库记在该成员名下）。该服务层入参（`wiki/service.ts` 的 `botId: input.botId`）与自检模式同形，自检按字面不可能为空。另有两处同形命中均为预期：`wiki/ingest.ts` 的 `resolveSource` 内部 identity（执行者传给 gateway 的自有入参，非旧 RPC 形态残留）、`rpc/bindings.ts` 的 `skills.import`（非 wiki 方法）。
+- 影响范围：仅验收自检的解读；`wiki_ingest:${wikiOwnerKey(owner)}:…` 去重键、payload `owner`、RPC `wikiOwnerInputSchema` 均已按新形态落地（自检 rg#2 为空）。
+- 处理：自检按「无旧形态残留」解读——rg#1 的三处命中逐一核对为 WP 明文保留的执行者字段或无关方法；`wikiBotIdInputSchema`、`storeFor(botId`、`botWikiRoot(deps` 在 wiki/ 与 rpc/ 下均为零命中。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP9-wiki-core.md` §9 实施记录。
