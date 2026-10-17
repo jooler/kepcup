@@ -179,7 +179,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 5 | `<my_state>` | 到期的承诺、进行中事项的标题（跨对话） | `MY_STATE_TOKEN_BUDGET` | P07 |
 | 6 | `<relevant_memories>` | 相关记忆 top-k，每条带 id，标注“可能已过时”；项目组中来自私聊的条目标注 `origin="private"` | `RELEVANT_MEMORY_TOKEN_BUDGET` | P07 |
 | 7 | `<conversation_info>` | 对话类型（项目组带项目目标 `goal`）、成员名片（名字、简介、职责、bot id、负责人标记）、当前时间与时区 | — | P01（成员 P05；D92 项目分支） |
-| 7.5 | 项目规则段（无标签，紧跟 `<conversation_info>`） | D92：项目组的对话轮按身份注入——负责人 `PROJECT_LEAD_RULES`（未 @ 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；权力限于本项目组）/ 成员 `PROJECT_MEMBER_RULES`（负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报；共享结论用 `wiki_enqueue scope=project`，只能删自己添加的来源） | — | D92（WP4 / WP10） |
+| 7.5 | `<project_lead_rules>` / `<project_member_rules>`（紧跟 `<conversation_info>`、在 `<workdir>` 之前） | D92：项目组的对话轮按身份注入——负责人 `PROJECT_LEAD_RULES`（未 @ 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；权力限于本项目组）/ 成员 `projectMemberRules(leadName)`（`agent/context/system-prompt.ts` 的函数，代入负责人名字：负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报；共享结论用 `wiki_enqueue scope=project`，只能删自己添加的来源） | — | D92（WP4 / WP10） |
 | 8 | `<workdir>` | 路径、顶层结构、git 状态、`AGENTS.md` / `CLAUDE.md` | `WORKDIR_CONTEXT_TOKEN_BUDGET` | P04 |
 | 9 | `<workspace>` | workspace 路径与顶层文件列表（对话轮注明「这一轮只读，任务可读写」） | — | P02 |
 | 10 | `<access>` | 有效授权；沙箱状态（正常 / 逐条确认模式）只在任务版出现 | — | P03 |
@@ -361,10 +361,10 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `mention` | 项目组中被 @ | — |
 | `reply` | 项目组中被引用回复 | — |
 | `continuation` | 上一位回话者 P 续接（可 `skip_reply`） | — |
-| `routed` | 静默路由的首个目标（负责人网关转给成员；必答，工具面摘掉 `skip_reply`）；段末宿主说明「负责人判断这条消息与你有关…不要提及被转交」 | `routed_by`（负责人 bot id） |
-| `routed_also` | 同一次路由的其余目标（可 `skip_reply`） | `routed_by` |
+| `routed` | 静默路由的首个目标（负责人网关转给成员；必答，工具面摘掉 `skip_reply`）；段末宿主说明「负责人判断这条消息与你有关…不要提及被转交」 | — |
+| `routed_also` | 同一次路由的其余目标（可 `skip_reply`） | — |
 | `lead_fallback` | 负责人兜底（网关 `self` 或整轮无回复；必答）；段末宿主说明「没有成员认领，这条消息由你处理」 | — |
-| `bot_mention` | 被其他 Bot @（项目组协作回合内） | `from_bot` |
+| `bot_mention` | 被其他 Bot @（项目组协作回合内） | `from_bot`（发起 Bot 名字）、`hop`（回合内层数） |
 | `scheduled` | 定时任务 | `schedule_id`、`late_by`（迟到时长，未迟到则省略） |
 | `event` | 事件（环境安装完成、Wiki 入库完成、`profile_change_result`、对话轮读过的消息被编辑 `message_edited` 等） | `event` |
 | `delegation` | 另一个 Bot 代用户转交的任务（D71，B 私聊里的代发消息；渲染为「用户（由 A 代为转交）」；段末追加按 intent 的宿主说明 `delegationWakeHint`） | `from_bot`、`delegation_id`、`intent` |

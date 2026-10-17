@@ -650,3 +650,14 @@
 - 处理：`c6b15b6` 把条件改为「routing 阶段恒显示；运行阶段至少一个目标（当前或排队）才显示」，e2e 断言按 WP 表落实；WP8 §8 已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
 - 决定：（由人工确认）
 - 已更新的文档：`todo/project/WP8-ui-copy-e2e.md` §8 实施记录。
+
+### DEV-037 设计 41 §6.3 的触发段属性 `routed_by` 未实现：路由留痕 = 触发原因 + 段末宿主说明 + 网关 `reason`（审查补记）
+
+- 状态：已落实（审查补记：文档按现状修正，不补实现）
+- 阶段：群聊→项目组 WP11 阶段审查（2026-10-18；分歧产生于 WP3 实现）
+- 是否阻塞：否
+- 问题：设计 41 §6.3（定稿时）写「路由留痕在执行记录里：触发原因 `routed`、`routed_by`、网关的 `reason`」，即 `routed` / `routed_also` 的 `<trigger>` 段带 `routed_by`（负责人 bot id）属性。实现（WP3，`dispatch/project-turn.ts`）的静默路由投递批只带 `{botId, reason}`（`routed_also` 另有段后纯文本 `afterNote`「在你之前，{名字}已经回复…」），触发段**没有**任何负责人属性；全仓无 `routed_by`。WP3 实施记录未登记该取舍，WP11 改写 `docs/dev/04-agent-runtime.md` 触发原因表时照抄了设计里的属性，审查对照代码发现。
+- 影响范围：仅文档与审计口径；无契约 / 行为变化。负责人身份实际可从网关那次轻量调用的 run（`trigger_reason='routing_gate'`，其 bot 即负责人）与成员名片推得。
+- 处理：不补实现——该属性对模型提示与用户界面均不可见，审计已可推得，后补属性会动 `TriggerBatch` / 触发段形状，收益为零。文档按现状修正：`docs/dev/04-agent-runtime.md` 触发原因表 `routed` / `routed_also` 行「附加属性」改 `—`（顺带补 `bot_mention` 实际带的 `hop`）、提示词段表 7.5 行按实现修正为 `<project_lead_rules>` / `<project_member_rules>`（成员段是 `agent/context/system-prompt.ts` 的函数 `projectMemberRules(leadName)`，不是常量）；`docs/design/41-project-team.md` §6.3 留痕句同步。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/dev/04-agent-runtime.md`、`docs/design/41-project-team.md`（见「处理」）。
