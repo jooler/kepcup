@@ -163,4 +163,18 @@ pnpm test                       # T1b 收口：全量跑一次，失败集合不
 
 ## 8. 实施记录
 
-（执行智能体在此填写：分支、提交列表、注册点核对结果、测试与 e2e 结果、偏差编号。）
+> **交接说明**：执行代理完成了全部六个步骤的代码与测试（6 个提交），但在文档收口前因平台错误（off-peak ticket 过期）中断；验证、注册点核对与本记录由总调度会话补齐。**阶段审查未做**，由下会话先行补做（范围 `626067d..HEAD`）。
+
+- **分支**：`feat/project/migration`（无并行项，直接在集成分支开发）。
+- **提交列表**（自 `626067d`）：
+  - `fe9ebf6` feat(shared,core) 步骤 1：`text` 来源（仅用户、台账 ref 存 80 字预览）+ `wiki_remove_source` job（不走模型、不重试、不受预算延后）+ `WIKI_TEXT_SOURCE_MAX_CHARS` + 单测/集成测试；
+  - `f776d16` feat(shared,core,desktop) 步骤 2+4：`resolveWikiScope`、三工具 `scope`（搜索结果 `[project]`/`[mine]` 前缀且项目在前）、`wiki_read` 可信度包裹（保守判定）、`wiki_remove_source` 工具（仅项目会话注册）、全部注册点同步、`project_wiki_topics` 无预算段（任务面与外部智能体会话同步）+ 两段规则句 + 工具描述；
+  - `0a6b6f4` feat(shared,core) 步骤 3：`wiki.sources`/`addSource`/`deleteSource` RPC + `WikiSourceView`（已删 Bot 名字为 null）+ 集成测试；
+  - `7a409ba` refactor(desktop)! 步骤 5 纯改名：`WikiTab.svelte` → `features/wiki/WikiBrowser.svelte`（prop `owner`，单聊 testid 未动）；
+  - `585383f` feat(desktop) 步骤 5：项目 Wiki tab（`ProjectWikiView`，占位与 `project.module.wikiSoon` 删除）+ `WikiSourcesPanel` + `wiki-sources-model.ts` + store 按 owner 键分区 + 删除项目组确认框 wiki 数量行；
+  - `2bd2ce5` test(desktop) 步骤 6：`project-wiki.spec.ts`（4 用例）+ `project-shell.spec.ts` 适配 + WikiBrowser 加载态修正。
+- **注册点核对**（§6 自检）：`host-capabilities.ts`（能力包 tools）✓、`classify.ts`（`'local'`，未进 `READ_ONLY_TOOLS`）✓、`tools/index.ts` 经 `buildWikiTools` 门面注册（工具本体 `wiki-tools.ts`）✓、`tool-labels.ts`（「正在删除项目 wiki 来源…」）✓；settings-context / settings-catalog coverage / system-prompt 规则文字随 `f776d16` 一并落位。
+- **testid 清单**（§2 授权本 WP 定义，已全数落地）：`project-wiki-view`（`data-owner-kind="project"`）、`wiki-sources-toggle`、`wiki-sources-panel`、`wiki-source-row-<assetId>`、`wiki-source-creator-<assetId>`、`wiki-source-delete-<assetId>`、`wiki-source-add-url`、`wiki-source-add-url-submit`、`wiki-source-add-text`、`wiki-source-add-text-submit`；单聊 `WikiTab` 原有 testid 全部保持（`wiki.spec.ts` 回归通过）。
+- **测试结果**：typecheck 三包 0 errors/0 warnings、`pnpm lint` 通过；core 定向 5 文件 **37 例全绿**（wiki-tools / wiki-text-source / wiki-remove-source-job / wiki-rpc / system-prompt-project）；desktop **87 文件 807 例全绿**（新增 7 例）；`pnpm build` 后 e2e：`project-wiki.spec.ts` **4/4**、`wiki.spec.ts` **1/1**（单聊回归）、`project-shell.spec.ts` **1/1**；T1b 收口全量 `pnpm test` 跑三轮：前两轮出现 1–2 例负载偶发（`wiki-remove-source` 级联、mail 并行工具调用），两文件单跑复核 22/22 通过，末轮 **5560 通过 / 0 失败 / 23 skip**，不超基线。
+- **偏差**：无新增 DEVIATIONS（编号停在 DEV-036）。
+- **遗留**：① 阶段审查（含逐提交可构建复核）由下会话补做；② WP11 文档同步。
