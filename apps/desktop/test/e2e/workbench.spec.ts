@@ -437,7 +437,7 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
   }
 });
 
-test('group dispatch: nobody claims → back to draft; lead bot → @ route delivers', async () => {
+test('project dispatch: @ always lands on the lead; skipped reply returns to draft; lead answer delivers', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-wb-group-');
   const { page, llm } = session;
@@ -447,37 +447,39 @@ test('group dispatch: nobody claims → back to draft; lead bot → @ route deli
     await createBotAndOpenChat(page, '阿乙');
     await createProjectViaUi(page, '项目组', ['阿甲', '阿乙']);
 
-    // 全员 triage 都不认领。
-    llm.script('mock-light', [
+    // D92 T1a：派给项目组的事项总是带对负责人的 @（不指定时 = 项目组负责人
+    // 阿甲），不再有全员认领判断。负责人跳过回复 → 事项退回草案。
+    llm.script('mock-main', [
       step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿甲'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿乙'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
+        .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
+        .replyToolCall('skip_reply', { reason: '这轮我不回' }),
     ]);
+    reflections(llm);
 
     await openWorkbench(page);
     await quickAdd(page, '整理竞品报告');
     await todoCard(page, '整理竞品报告').click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toBeVisible();
     await pickAssignee(page, '项目组');
-    // 选群后出现负责 Bot 选择器，默认「不指定」。
+    // 选项目组后出现负责 Bot 选择器，默认「不指定」（= 项目组负责人）。
     await expect(page.locator('[data-testid="todo-lead-bot"]')).toContainText('不指定');
     await page.locator('[data-testid="todo-when-now"]').click();
     await shot(page, '09-todo-drawer-group');
     await page.locator('[data-testid="todo-save"]').click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0, { timeout: 15_000 });
 
-    // 无人认领 → 退回草案，卡片显示原因，所在分道是未指派或群道的草案。
+    // 负责人 skip_reply → 无可见回复 → 退回草案，原因「项目里无人回应」。
     const card = todoCard(page, '整理竞品报告');
-    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText('群里无人认领', {
-      timeout: 60_000,
-    });
+    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText(
+      '项目里无人回应',
+      {
+        timeout: 60_000,
+      },
+    );
     await expect(card).toHaveAttribute('data-status', 'draft');
-    await shot(page, '10-todo-unclaimed');
+    await shot(page, '10-todo-unanswered');
 
-    // 群对话里：工作台派发卡 + 无人认领提示。
+    // 项目组沟通里：工作台派发卡存在（@ 负责人）；「无人认领」点选卡已不存在。
     await card.locator('[data-testid="todo-card-start"]').scrollIntoViewIfNeeded();
     await page
       .locator('[data-testid^="conversation-item-"]')
@@ -485,9 +487,9 @@ test('group dispatch: nobody claims → back to draft; lead bot → @ route deli
       .first()
       .click();
     await expect(page.locator('[data-testid="dispatch-card"]')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="no-claim-bots"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="no-claim-bots"]')).toHaveCount(0);
 
-    // 回工作台：指定负责 Bot 阿甲，立即开始 → 走 @ 显式目标，阿甲回复 → 待验收。
+    // 回工作台：指定负责 Bot 阿甲，立即开始 → @ 显式目标，阿甲回复 → 待验收。
     llm.script('mock-main', [
       step()
         .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))

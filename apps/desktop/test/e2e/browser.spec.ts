@@ -125,14 +125,18 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
   }, dir);
-  // 工作目录选择器在右栏：群对话是群信息面板（选择器直接可见），单聊在「配置」tab
-  // （右栏收起时先展开）。
-  const groupInfo = page.locator('[data-testid="group-info"]');
-  const tabs = page.locator('[data-testid="right-panel-tabs"]');
-  if (!(await groupInfo.isVisible()) && !(await tabs.isVisible())) {
-    await page.locator('[data-testid="right-panel-toggle"]').click();
-  }
-  if (!(await groupInfo.isVisible())) {
+  // 工作目录选择器的位置：项目组在 ⚙ 详情页的概览分区（无右栏）；单聊在右栏
+  // 「配置」tab（右栏收起时先展开）。
+  let inProjectSettings = false;
+  if (await page.locator('[data-testid="project-header"]').isVisible()) {
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await expect(page.locator('[data-testid="project-workdir"]')).toBeVisible({ timeout: 15_000 });
+    inProjectSettings = true;
+  } else {
+    const tabs = page.locator('[data-testid="right-panel-tabs"]');
+    if (!(await tabs.isVisible())) {
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    }
     await tabs.locator('text=配置').click();
   }
   await page.locator('[data-testid="workdir-selector-trigger"]').click();
@@ -141,12 +145,21 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
     path.basename(dir),
     { timeout: 15_000 },
   );
+  // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
+  // 项目组随后回沟通视图（输入坞只在沟通里）——「已绑定」系统消息在沟通里才渲染。
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+  if (inProjectSettings) {
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
+      'data-view',
+      'chat',
+      { timeout: 15_000 },
+    );
+  }
   await expect(
     page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
   ).toHaveCount(1, { timeout: 15_000 });
-  // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
-  await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
 }
 
 function makeWorkdirDir(prefix: string): string {
@@ -583,22 +596,22 @@ test('不同 Bot 的 cookie 互不可见；同一 Bot 跨对话共享登录', as
       '乙看不到',
     );
 
-    // 同一 Bot（阿甲）跨对话：群对话共享同一分区。
+    // 同一 Bot（阿甲）跨对话：项目组会话共享同一分区。
     await createProjectViaUi(page, '浏览组', ['阿甲', '阿乙']);
-    await bindWorkdir(session.app, page, workdir); // 群对话
+    await bindWorkdir(session.app, page, workdir); // 项目组会话
     llm.script(
       'mock-main',
       toolRun(
         'browser_open',
         { url: `${web.url}/cookie-read` },
         'fixture_sid=SID1234',
-        '群里也共享',
+        '项目组里也共享',
       ),
     );
     await mentionAndType(page, '阿甲', ' 再读一次');
     await page.locator('[data-testid="composer-input"]').press('Meta+Enter');
     await expect(
-      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '群里也共享' }),
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '项目组里也共享' }),
     ).toBeVisible({ timeout: 90_000 });
   } catch (error) {
     dumpRequests(llm, testInfo);

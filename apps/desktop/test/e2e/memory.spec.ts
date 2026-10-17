@@ -261,15 +261,17 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
       timeout: 30_000,
     });
 
-    // Delete the group conversation (group settings via the context menu).
+    // Delete the project conversation (project details via the context menu).
     await page
       .locator('li', { hasText: '产品组' })
       .locator('[data-testid^="conversation-row-"]')
       .click({ button: 'right' });
-    await page.locator('[data-testid="context-group-settings"]').click();
-    await expect(page.locator('[data-testid="group-settings-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="group-delete-begin"]').click();
-    await page.locator('[data-testid="group-delete-confirm"]').click();
+    await page.locator('[data-testid="context-project-settings"]').click();
+    await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="project-delete-begin"]').click();
+    await page.locator('[data-testid="project-delete-confirm"]').click();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 15_000 });
 
     // Open 阿乙's direct chat; the memory survives with its group evidence.

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
 
 /**
  * D70 回归（首启向导 → 管家访谈 → 组队提议 → 确认 → 左栏即时出现新 Bot）：
@@ -124,6 +125,75 @@ test('butler proposal confirm: the new bot lands in the sidebar without a restar
     await expect(
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '文书已经建好了' }).first(),
     ).toBeVisible({ timeout: 60_000 });
+  } finally {
+    await session.close();
+  }
+});
+
+test('butler propose_project: lead can be changed on the card before approving', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-butler-project-');
+  const { page, llm } = session;
+  try {
+    // startSession 已等到 bootstrap 收尾（backdrop 已收）。
+    const alpha = await createBotAndOpenChat(page, '阿甲');
+    const beta = await createBotAndOpenChat(page, '阿乙');
+    // 管家（D70）：不经首启向导，直接 ensure 一个普通管家并打开其私聊。
+    await rpc(page, 'butler.ensure', {});
+    await openConversationByName(page, '管家');
+
+    // 管家提议建项目组（D92 T1a）：默认负责人 阿甲。
+    llm.script('mock-main', [
+      step().replyToolCall('propose_project', {
+        title: '内容协作组',
+        goal: '围绕内容协作：选题、写作与发布',
+        lead_bot_id: alpha.botId,
+        member_bot_ids: [alpha.botId, beta.botId],
+        reason: '两人的职责互补',
+      }),
+    ]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('帮我组一个项目组');
+    await composer.press('ControlOrMeta+Enter');
+
+    // 提议卡：项目组名称 / 目标 / 负责人下拉（默认提议的 阿甲）/ 成员。
+    const card = page.locator(
+      '[data-testid^="approval-card-"][data-approval-kind="butler_proposal"]',
+    );
+    await expect(card).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="approval-butler-project"]')).toBeVisible();
+    await expect(page.locator('[data-testid="approval-butler-project-title"]')).toHaveText(
+      '内容协作组',
+    );
+    const leadSelect = page.locator('[data-testid="approval-butler-project-lead"]');
+    await expect(leadSelect).toHaveValue(alpha.botId);
+
+    // 批准前把负责人改成 阿乙：decide 带 leadBotId，建出的项目组负责人是改后的。
+    await leadSelect.selectOption(beta.botId);
+    await expect(leadSelect).toHaveValue(beta.botId);
+    llm.script('mock-main', [step().replyText('项目组已经按新负责人建好了。')]);
+    await card.locator('[data-testid="approval-approve"]').click();
+
+    await expect
+      .poll(
+        async () => {
+          const { conversations } = (await rpc(page, 'conversations.list')) as {
+            conversations: Array<{
+              id: string;
+              type: string;
+              title: string | null;
+              leadBotId: string | null;
+            }>;
+          };
+          return (
+            conversations.find(
+              (conversation) => conversation.type === 'project' && conversation.title === '内容协作组',
+            ) ?? null
+          );
+        },
+        { timeout: 30_000 },
+      )
+      .toMatchObject({ leadBotId: beta.botId });
   } finally {
     await session.close();
   }
