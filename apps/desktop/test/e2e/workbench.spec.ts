@@ -103,6 +103,10 @@ async function waitReady(page: Page): Promise<void> {
   // 设置「显示工作台」默认关闭（8b053df）：入口与分隔线隐藏，这里的用例都要先打开它。
   await rpc(page, 'settings.update', { workbenchEnabled: true });
   await expect(page.locator('[data-testid="workbench-nav"]')).toBeVisible({ timeout: 15_000 });
+  // 双栏 seam（WorkbenchView.svelte）：runner 显示空间可以小到 1024×677，
+  // 1280 窗口照样被钳；把 tab 形态强制为双栏，memo 侧断言与显示器解耦。
+  // 要验证 tab 形态的用例自会 removeItem 覆盖这段。
+  await page.evaluate(() => localStorage.setItem('kepcup.e2e.workbenchWide', '1'));
 }
 
 async function openWorkbench(page: Page): Promise<void> {
@@ -1063,6 +1067,8 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0);
 
     // 视图宽度 < 760：折成「事项 / 备忘」两个 tab，各自不溢出。
+    // 先撤掉 waitReady 里的双栏 seam（本段就是要断言 tab 形态）。
+    await page.evaluate(() => localStorage.removeItem('kepcup.e2e.workbenchWide'));
     await resizeWindow(app, 900, 760);
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,

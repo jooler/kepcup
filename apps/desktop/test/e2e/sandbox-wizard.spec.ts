@@ -124,7 +124,8 @@ test('settings page shows the current backend and the enhanced (Lima) state; wiz
     await page.locator('[data-testid="settings-nav-environment"]').click();
     const section = page.locator('[data-testid="settings-sandbox"]');
     await expect(section).toBeVisible();
-    await expect(page.locator('[data-testid="sandbox-backend"]')).toContainText(/srt|wsl/, {
+    // Windows 的后端文案是「WSL2」；/srt|wsl/ 大小写敏感匹配不到，大小写不敏感。
+    await expect(page.locator('[data-testid="sandbox-backend"]')).toContainText(/srt|wsl/i, {
       timeout: 60_000,
     });
     if (process.platform !== 'win32') {

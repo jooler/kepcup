@@ -114,11 +114,13 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
 
-    // ④ 沙箱：macOS 自动检测（srt 后端），无 Windows 内容。
+    // ④ 沙箱：macOS/Linux 自动检测（srt 后端）；Windows CI 的 WSL2 CLI 可用
+    // 但应用私有发行版未导入，向导如实呈现 wsl（不可用）。
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 认识管家（D70）：建立唯一管家并进入组队访谈。
@@ -197,9 +199,10 @@ test('model step saves key + default main model: the first bot chats right away 
     // ③④ 权限 → 沙箱（macOS 自动检测）。
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 管家（D70）：建好后直接可对话——对话走的是向导写入的默认主模型
