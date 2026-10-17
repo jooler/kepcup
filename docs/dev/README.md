@@ -12,6 +12,7 @@
 | [04-agent-runtime.md](04-agent-runtime.md) | pi 的封装方式、上下文组装、工具目录与规范、各类提示词与结构化输出 | 涉及 loop、工具、提示词的任务 |
 | [05-testing.md](05-testing.md) | 测试分层、模拟模型服务、端到端测试、平台测试、CI 矩阵 | 所有阶段 |
 | [06-release.md](06-release.md) | 发行渠道、分支与版本、发版步骤、签名与商店凭据、各渠道的更新方式 | 发版、改打包或更新相关代码时 |
+| [07-ci-e2e-stabilization.md](07-ci-e2e-stabilization.md) | CI 端到端失败的根因目录（Windows 句柄/Linux 回环/动效窗口）、平台断言分类、取证方法 | E2E/CI 失败排查与跨平台测试改动 |
 | [phases/](phases/) | 分阶段开发计划，每个阶段一份文档 | 执行对应阶段时 |
 | [PROGRESS.md](PROGRESS.md) | 阶段进度与验收记录 | 每个阶段开始与结束时更新 |
 | [DEVIATIONS.md](DEVIATIONS.md) | 偏差与待确认问题 | 发现问题时记录 |
