@@ -24,7 +24,7 @@ import {
   type TestWebServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 // P11 浏览器工具 e2e（docs/dev/phases/P11-browser.md 测试要求）：真实 Electron +
@@ -584,7 +584,7 @@ test('不同 Bot 的 cookie 互不可见；同一 Bot 跨对话共享登录', as
     );
 
     // 同一 Bot（阿甲）跨对话：群对话共享同一分区。
-    await createGroupViaUi(page, '浏览组', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '浏览组', ['阿甲', '阿乙']);
     await bindWorkdir(session.app, page, workdir); // 群对话
     llm.script(
       'mock-main',

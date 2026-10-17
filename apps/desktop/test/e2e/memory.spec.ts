@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
@@ -235,7 +235,7 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
     await createBotAndOpenChat(page, '阿乙');
     // A second bot so the group can be created (needs >= 2 members).
     await createBotAndOpenChat(page, '阿丙');
-    await createGroupViaUi(page, '产品组', ['阿乙', '阿丙']);
+    await createProjectViaUi(page, '产品组', ['阿乙', '阿丙']);
 
     // 阿乙 remembers something in the group (evidence lives in the group).
     llm.script('mock-main', [

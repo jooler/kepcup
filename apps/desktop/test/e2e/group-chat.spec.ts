@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 interface LaunchedApp {
@@ -97,7 +97,7 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
     await waitReady(page);
     await createBotAndOpenChat(page, '阿甲');
     await createBotAndOpenChat(page, '阿乙');
-    await createGroupViaUi(page, '项目讨论组', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '项目讨论组', ['阿甲', '阿乙']);
 
     // Right panel shows the group info and member cards（右栏默认收起，先展开）。
     if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
@@ -245,7 +245,7 @@ test('group settings: rename, member management, delete', async () => {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿甲');
     await createBotAndOpenChat(page, '阿乙');
-    await createGroupViaUi(page, '旧群名', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '旧群名', ['阿甲', '阿乙']);
     // 右栏（群信息）默认收起，先经顶部药丸展开，后续改名/成员管理断言用它。
     if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
       await page.locator('[data-testid="right-panel-toggle"]').click();

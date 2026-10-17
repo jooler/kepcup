@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockChatRequest, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
@@ -172,7 +172,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
 
     // --- ② 群聊：同类白名单项被收紧为 confirm → 卡上应用 → Bot 被唤醒续答 -------------------
     await createBotAndOpenChat(page, '阿乙');
-    await createGroupViaUi(page, '设置讨论组', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '设置讨论组', ['阿甲', '阿乙']);
 
     llm.script('mock-main', [
       step()

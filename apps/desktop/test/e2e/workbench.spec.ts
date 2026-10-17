@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
@@ -445,7 +445,7 @@ test('group dispatch: nobody claims → back to draft; lead bot → @ route deli
     await waitReady(page);
     await createBotAndOpenChat(page, '阿甲');
     await createBotAndOpenChat(page, '阿乙');
-    await createGroupViaUi(page, '项目组', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '项目组', ['阿甲', '阿乙']);
 
     // 全员 triage 都不认领。
     llm.script('mock-light', [
