@@ -177,4 +177,17 @@ pnpm test                       # T1b 收口：全量跑一次，失败集合不
 - **testid 清单**（§2 授权本 WP 定义，已全数落地）：`project-wiki-view`（`data-owner-kind="project"`）、`wiki-sources-toggle`、`wiki-sources-panel`、`wiki-source-row-<assetId>`、`wiki-source-creator-<assetId>`、`wiki-source-delete-<assetId>`、`wiki-source-add-url`、`wiki-source-add-url-submit`、`wiki-source-add-text`、`wiki-source-add-text-submit`；单聊 `WikiTab` 原有 testid 全部保持（`wiki.spec.ts` 回归通过）。
 - **测试结果**：typecheck 三包 0 errors/0 warnings、`pnpm lint` 通过；core 定向 5 文件 **37 例全绿**（wiki-tools / wiki-text-source / wiki-remove-source-job / wiki-rpc / system-prompt-project）；desktop **87 文件 807 例全绿**（新增 7 例）；`pnpm build` 后 e2e：`project-wiki.spec.ts` **4/4**、`wiki.spec.ts` **1/1**（单聊回归）、`project-shell.spec.ts` **1/1**；T1b 收口全量 `pnpm test` 跑三轮：前两轮出现 1–2 例负载偶发（`wiki-remove-source` 级联、mail 并行工具调用），两文件单跑复核 22/22 通过，末轮 **5560 通过 / 0 失败 / 23 skip**，不超基线。
 - **偏差**：无新增 DEVIATIONS（编号停在 DEV-036）。
-- **遗留**：① 阶段审查（含逐提交可构建复核）由下会话补做；② WP11 文档同步。
+- **遗留**：① ~~阶段审查（含逐提交可构建复核）由下会话补做~~（已完成，见下「审查修订」）；② WP11 文档同步。
+
+### 审查修订（T1b 阶段审查，2026-10-18）
+
+独立复核范围 `626067d..2bd2ce5`（6 提交）+ 文档收口提交 `7ef4a57`（核对为纯文档：HANDOFF / README / 本文件）。**结论：审查确认，1 处 P3 修复，零行为问题。**
+
+- **逐项复核通过**：①契约——工具参数与注册范围同 README §4.10（`wiki_remove_source` 仅项目会话注册、`wiki_enqueue` 的 `source_type` 枚举无 `text`）；RPC 三方法 input/output 与 zod 同 §2 表；`WikiSourceView` 已删 Bot 名字为 null；§2 i18n 表 16 个 key 逐字一致；十个 testid 全部落地且被 e2e 真实使用。②可信度保守判定（§7 陷阱 1）——`cited.length > 0 && 全部用户创建` 才原样返回；Bot 出处 / 无出处引用 / **悬空引用**（台账中已不存在的 `ast_` id）均包 `untrustedBlock`，单测四种情形（全用户 / 含 Bot / 无引用 / 已删 Bot 显示 id）全部有真断言。③`wiki_remove_source` job——`JOB_PURPOSES` 未登记、`#providerFor` 返回 `host:wiki_remove_source` 不占模型槽、`NO_MODEL_JOBS` 豁免预算延后（有专项测试）、ACL/NOT_FOUND/NOT_SUPPORTED 终结为 done 不重试（`attempts=1` 断言）、`enqueueRemoveSource` 入队即校验（NOT_SUPPORTED / 会话不符 / NOT_FOUND / ACL，测试覆盖）。④text 来源仅用户、台账 ref 80 字预览、`WIKI_TEXT_SOURCE_MAX_CHARS=200_000`。⑤注册点 rg 全量命中：host-capabilities、classify（`'local'`，未进 external `READ_ONLY_TOOLS`）、tools/index 经 `buildWikiTools`、tool-labels、settings-context（TRUSTED_TOOLS）、settings-catalog coverage、system-prompt（HOST_POLICY_LINES 规则文字）、orchestrator 门面、start.ts 门面。⑥提示词——`project_wiki_topics` 仅有值时出现且在 `wiki_topics` 之后、项目调用 `topicsSection(owner, { budget: null })` 无预算、Bot 个人仍受 `WIKI_TOPICS_TOKEN_BUDGET`；两条规则句与 WP10 §4 步骤 4 原文逐字一致。⑦界面——单聊 28 个既有 testid 与 `wiki-tab` 行为不变；store 按 `wikiOwnerKey` 分区、`wiki_changed` 按 owner 键过滤；删除中状态机（30s 超时还原 + 失败 toast）；删除确认框并行调 `wiki.sources`+`wiki.tree`、两者皆 0 时该行隐藏；`project.module.wikiSoon` 与 ModulePlaceholder wiki 分支已删。⑧**逐提交可构建**：6 个提交逐个 checkout，shared 改动按序 build 后 shared/core/desktop typecheck 全过；`7a409ba` 核对为纯 `git mv`（仅 RightPanel import 与组件名两行）。⑨六个测试文件均为真断言（含 e2e 4 用例走真实维护 loop）。
+- **修复**：`ModulePlaceholder.svelte` 的文档注释与 `let { module }` 两行在 `585383f` 中被意外顶格（缩进回归，无行为影响）——已恢复缩进（审查提交 `bdbea676`）。
+- **§1.2 新名字补登记**（§4 未列、按相邻风格取，此前漏记）：
+  - i18n：`project.wiki.hint`（项目 Wiki tab 头部提示「项目 wiki 是项目组共享的知识库。」；Bot 个人页签沿用原 `wiki.tabHint`）。
+  - testid：`wiki-sources-loading`、`wiki-sources-empty`、`wiki-sources-list`（面板内态）、`wiki-source-deleting-<assetId>`（删除中徽标，e2e 用）、`project-delete-wiki-count`(删除确认框数量行，e2e 用)。
+  - 落地取舍：WP10 §4 步骤 4 写「`buildAgentSessionPrompt` 同步」；实现落在其 run 级姊妹函数 `buildAgentRunContext`——外部智能体会话的 `<wiki_topics>` 本就注入在该 run 级段（会话级提示词从不携带 wiki 段），任务面与外部智能体会话因此都拿到 `<project_wiki_topics>`，意图达成且与既有注入点一致，不改。
+- **DEVIATIONS**：复核后无「WP 与代码现实冲突」级问题，无需 DEV-037；上述新名字按 README §1.2 在本节登记即视为合规。
+- **验证复跑**（审查提交后）：`pnpm lint`、desktop typecheck、core 定向 5 文件（wiki-tools / wiki-text-source / wiki-remove-source-job / wiki-rpc / system-prompt-project）、desktop `wiki-sources-model` 定向——全绿。全量维持收口轮结论（5560/0/23），本审查未改跨包公共部分，不重跑。
