@@ -147,10 +147,23 @@ async function dumpWikiDiag(page: Page): Promise<void> {
     for (const bot of bots) {
       const tree = (await rpc(page, 'wiki.tree', { botId: bot.id })) as unknown;
       console.warn(`[wiki-diag] bot ${bot.name}(${bot.status}) tree ${JSON.stringify(tree)}`);
+      const history = (await rpc(page, 'wiki.history', { botId: bot.id })) as unknown;
+      console.warn(`[wiki-diag] bot ${bot.name} history ${JSON.stringify(history)}`);
     }
     const { conversations } = (await rpc(page, 'conversations.list')) as {
       conversations: Array<{ id: string; botId: string | null; title?: string }>;
     };
+    for (const conversation of conversations.slice(-3)) {
+      const { runs } = (await rpc(page, 'runs.list', {
+        conversationId: conversation.id,
+        limit: 20,
+      })) as {
+        runs: Array<{ loopType: string; status: string; error: string | null; summary: string | null }>;
+      };
+      for (const run of runs) {
+        console.warn(`[wiki-diag] run ${run.loopType} ${run.status} ${run.error ?? ''} ${run.summary ?? ''}`);
+      }
+    }
     for (const conversation of conversations.slice(-3)) {
       const { messages } = (await rpc(page, 'messages.list', {
         conversationId: conversation.id,
