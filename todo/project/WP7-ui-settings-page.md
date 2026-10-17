@@ -224,7 +224,7 @@ rg -n "GroupInfo|GroupSettingsDialog|groupMemberPlan|GroupMemberPlan|group-membe
 
 ### 偏差
 
-无新增 DEVIATIONS（编号仍停在 DEV-034）。两处超出 WP 字面的落地决定（均已在上面登记）：`approval-butler-group*` testid 改名（§7 自检为空的必经改写）、`group-members.ts` 的 `git mv` 因文件已在前序 WP 改名而替换为「导出名纯改名独立提交」。
+补记 **DEV-035**（审查补记）：`group-members.ts` 的 `git mv` 因文件已在前序 WP（WP4 `e7013fa`，见 DEV-033）改名而替换为「导出名纯改名独立提交」（`f6c747d`）——README §1.6 的「假设不成立」应登记 DEVIATIONS，执行时只落在 §9，审查时补齐。另一处超出 WP 字面的落地决定（`approval-butler-group*` testid 改名，§7 自检为空的必经改写）属 §1.2 的「新名字登记」，已在上节登记，不需 DEVIATIONS。
 
 ### 遗留（顺延）
 

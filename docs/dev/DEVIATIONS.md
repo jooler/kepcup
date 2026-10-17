@@ -628,3 +628,14 @@
 - 处理：自检按「`apps/desktop/src` 与其余非 e2e 路径无旧名残留」解读执行；e2e 两个文件的旧名属 WP5 §5 明令保留，WP8 重写时消除。
 - 决定：（由人工确认）
 - 已更新的文档：`todo/project/WP5-ui-create.md` §9 实施记录。
+
+### DEV-035 WP7 步骤 6 的 `git mv group-members.* → project-members.*` 无从执行：文件已在前序 WP（WP4）改名（D92 T1a）
+
+- 状态：已落实（审查补记）
+- 阶段：群聊→项目组 WP7（`feat/project/migration`，`f6c747d`，2026-10-18）
+- 是否阻塞：否
+- 问题：WP7 §4 步骤 6 要求 `group-members.ts` / `group-members.test.ts` → `project-members.ts` / `project-members.test.ts` 以 `git mv` + 改名完成；但 WP4（`e7013fa`，见 DEV-033 处理段）已把这两个文件改名到位，只剩导出名 `groupMemberPlan` / `GroupMemberPlan` 是旧名，`git mv` 无从执行。
+- 影响范围：仅步骤 6 的执行方式；§4 契约的最终命名（`projectMemberPlan` / `ProjectMemberPlan`、文件名、测试断言不变）全部达成。
+- 处理：改为独立提交 `f6c747d` 完成**导出名纯改名**（无任何行为改动，符合 README §1.5「纯改名独立提交」）；WP7 §9 实施记录已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP7-ui-settings-page.md` §9 实施记录（提交列表与偏差段）。
