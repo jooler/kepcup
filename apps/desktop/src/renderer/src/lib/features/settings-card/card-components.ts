@@ -25,9 +25,11 @@ export const SETTING_CARD_COMPONENTS = {
   'background-tasks': 'BackgroundTasksSection',
   unattended: 'UnattendedSection',
   'taint-guard': 'UnattendedSection',
-  'group-title': 'GroupSettingsDialog',
-  'group-members': 'GroupSettingsDialog',
-  'project-settings': 'ProjectSettingsDialog',
+  'project-title': 'ProjectTitleCard',
+  'project-goal': 'ProjectGoalCard',
+  'project-lead': 'ProjectLeadCard',
+  'project-members': 'ProjectMembersCard',
+  'workdir-settings': 'WorkdirSettingsDialog',
   'tool-policy': 'AppConnectionDetail',
   'mcp-servers': 'McpSection',
   'browser-profiles': 'BrowserProfilesSection',
@@ -42,8 +44,8 @@ export interface EmbedContext {
   botId: string | null;
   /** 群范围条目的群会话。 */
   conversationId: string | null;
-  /** 项目范围条目的项目。 */
-  projectId: string | null;
+  /** 工作目录范围条目的工作目录。 */
+  workdirId: string | null;
   prefill: SettingValues | null;
   /** 外部智能体目录（未加载为 null）。 */
   agent(id: string): AgentView | null;
@@ -71,11 +73,13 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'bot-skills':
     case 'mail-account':
       return context.botId !== null;
-    case 'group-title':
-    case 'group-members':
+    case 'project-title':
+    case 'project-members':
+    case 'project-goal':
+    case 'project-lead':
       return context.conversationId !== null;
-    case 'project-settings':
-      return context.projectId !== null;
+    case 'workdir-settings':
+      return context.workdirId !== null;
     case 'field-editor':
     case 'embedding':
     case 'appearance':

@@ -15,20 +15,19 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs as ui } from './sidebar-dialogs.svelte';
 
   /**
-   * 侧栏触发的模态对话框（重命名 / 删除会话 / 群设置），挂在 App 根；
-   * 状态在 sidebar-dialogs store（宽窄切换时 AppSidebar 整个重挂载，状态不能放在它里面）。
+   * 侧栏触发的模态对话框（重命名 / 删除会话），挂在 App 根；状态在
+   * sidebar-dialogs store（宽窄切换时 AppSidebar 整个重挂载，状态不能放在它里面）。
    * Tooltip.Provider 自带：宽屏由 Sidebar.Provider 隐式提供、窄屏由 NarrowShell 提供，
    * 挂在 App 根这两者都不覆盖。
    */
   const deleteTargetName = $derived.by(() => {
     const conversation = chat.conversations.find((c) => c.id === ui.deleteTargetId);
     if (conversation === undefined) return ui.deleteTargetId ?? '';
-    return conversation.type === 'group'
+    return conversation.type === 'project'
       ? (conversation.title ?? ui.deleteTargetId ?? '')
       : (conversation.bot?.name ?? conversation.directBotId ?? '');
   });
@@ -70,12 +69,6 @@
 </script>
 
 <Tooltip.Provider delayDuration={0}>
-  <GroupSettingsDialog
-    conversationId={ui.groupSettingsId ?? ''}
-    bind:open={ui.groupSettingsOpen}
-    bind:anchor={ui.groupSettingsAnchor}
-  />
-
   <Dialog
     open={ui.deleteTargetId !== null}
     onOpenChange={(open) => (ui.deleteTargetId = open ? ui.deleteTargetId : null)}

@@ -17,7 +17,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   step,
@@ -28,9 +28,9 @@ import {
 } from '@kepcup/testkit';
 
 /**
- * D90 工作台（集成，真实 core + mock 模型）：事项派发（私聊 / 群）、不受主动消息护栏约束、
- * 交付追踪（直接回复 / 派生任务后再回复 / 群无人认领）、回执卡与改期、Bot 工具面不能动用户派的活、
- * 删 Bot / 删对话 / 移出群后的对账、D88 移交带走事项。
+ * D90 工作台（集成，真实 core + mock 模型）：事项派发（私聊 / 项目组）、不受主动消息护栏约束、
+ * 交付追踪（直接回复 / 派生任务后再回复 / 项目组无人认领）、回执卡与改期、Bot 工具面不能动用户派的活、
+ * 删 Bot / 删对话 / 移出项目组后的对账、D88 移交带走事项。
  */
 
 const stacks: TestStack[] = [];
@@ -126,14 +126,8 @@ async function threeBots(core: TestStack['core']) {
   const a = await makeBot(core, '阿甲');
   const b = await makeBot(core, '阿乙');
   const c = await makeBot(core, '阿丙');
-  const conv = await makeGroup(core, '项目组', [a.id, b.id, c.id]);
+  const conv = await makeProject(core, '项目组', [a.id, b.id, c.id]);
   return { a, b, c, conv };
-}
-
-function triageStep(name: string, decision: 'respond' | 'not_mine' | 'no_action', confidence = 0.8) {
-  return step()
-    .expect((r) => r.lastUserText().includes(`你的名片：${name}`))
-    .replyJson({ decision, confidence, reason: '测试' });
 }
 
 describe('工作台派发：私聊', () => {
@@ -395,7 +389,7 @@ describe('工作台派发：私聊', () => {
   }, 30_000);
 });
 
-describe('工作台派发：群', () => {
+describe('工作台派发：项目组', () => {
   it('指定负责 Bot：消息带结构化 @，走显式目标（不做 triage），只有负责 Bot 响应；交付后待验收', async () => {
     const stack = await start();
     const { core, llm } = stack;
@@ -409,7 +403,7 @@ describe('工作台派发：群', () => {
 
     const { todo } = await createTodo(stack, {
       title: '评估方案',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: b.id },
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: b.id },
       when: 'now',
     });
     expect(todo).toMatchObject({ status: 'in_progress', assigneeName: '项目组', leadBotName: '阿乙' });
@@ -427,83 +421,99 @@ describe('工作台派发：群', () => {
     expect(reply.content).toMatchObject({ todoId: todo.id, todoTitle: '评估方案' });
   }, 30_000);
 
-  it('未指定负责 Bot：走 triage，谁认领谁做；交付后待验收', async () => {
+  it('未指定负责 Bot：默认 @ 项目负责人（D92 T1a WP4），不经路由（没有网关轮），交付后待验收', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { a, conv } = await threeBots(core);
-    llm.script('mock-light', [
-      triageStep('阿甲', 'respond', 0.9),
-      triageStep('阿乙', 'not_mine'),
-      triageStep('阿丙', 'no_action'),
-      ...reflections(2),
-    ]);
+
     llm.script('mock-main', [
       step()
         .expect((r) => r.lastUserText().includes('【工作台】盘点库存'))
         .replyText('库存盘点完成。'),
     ]);
+    llm.script('mock-light', reflections(2));
 
     const { todo } = await createTodo(stack, {
       title: '盘点库存',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
       when: 'now',
     });
     const message = await dispatchMessageOf(stack, conv.id);
-    expect(message.mentions).toEqual([]);
+    // 派给项目组总是带对项目负责人的结构化 @（项目必有负责人）。
+    expect(message.mentions).toEqual([a.id]);
     await waitForTodoStatus(stack, todo.id, 'delivered');
-    expect(triageRequests(llm).length).toBeGreaterThanOrEqual(3);
+    // 不经路由：没有负责人网关的 triage 轮，也没有成员名册请求。
+    expect(
+      (await listRuns(core, conv.id)).find(
+        (r) => r.loopType === 'triage' && r.triggerReason === 'routing_gate',
+      ),
+    ).toBeUndefined();
+    expect(
+      llm.requestsFor('mock-light').some((r) => r.lastUserText().includes('成员名册：')),
+    ).toBe(false);
     const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
-    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([[a.id, 'broadcast']]);
+    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([[a.id, 'mention']]);
+    const reply = botReplies(await listAllMessages(core, conv.id))[0]!;
+    expect(reply).toMatchObject({ senderBotId: a.id });
   }, 30_000);
 
-  it('群里无人认领（group_no_claim）：执行记录 unclaimed，事项退回草案，原因「群里无人认领」', async () => {
+  it('负责 Bot 空回复（整轮静默）：执行记录 unclaimed，事项退回草案', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const { conv } = await threeBots(core);
-    llm.script('mock-light', [
-      triageStep('阿甲', 'not_mine'),
-      triageStep('阿乙', 'not_mine'),
-      triageStep('阿丙', 'not_mine'),
+    const { a, conv } = await threeBots(core);
+    // 被 @ 的负责人回了空文本：整轮无可见回复 = 没人接。
+    llm.script('mock-main', [
+      step()
+        .expect((r) => r.lastUserText().includes('【工作台】没人要的活'))
+        .replyText(''),
     ]);
+    llm.script('mock-light', reflections(2));
     const { todo } = await createTodo(stack, {
       title: '没人要的活',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
       when: 'now',
     });
     const draft = await waitForTodoStatus(stack, todo.id, 'draft');
-    expect(draft.blockedReason).toBe('群里无人认领');
+    expect(draft.blockedReason).toBe('项目里无人回应');
     expect(draft.lastRun).toMatchObject({ status: 'unclaimed' });
     expect(draft.lastRun!.settledAt).not.toBeNull();
+    // 静默轮不留系统消息，也没有其他成员的轮次。
     expect(
       (await listMessages(core, conv.id)).some(
-        (m) => m.kind === 'system_event' && (m.content as { event?: string }).event === 'group_no_claim',
+        (m) => m.kind === 'system_event' && (m.content as { event?: string }).event !== undefined,
       ),
+    ).toBe(false);
+    expect(
+      (await listRuns(core, conv.id))
+        .filter((r) => r.loopType === 'turn')
+        .every((r) => r.botId === a.id),
     ).toBe(true);
     // 退回草案后可以再次开始（改派 / 指定负责 Bot 后重派）。
     expect(draft.assignee).not.toBeNull();
   }, 30_000);
 
-  it('triage 全员 no_action（没有 group_no_claim 提示）同样算无人响应', async () => {
+  it('覆盖项生效：@ 覆盖的负责 Bot 而不是项目负责人；它回复交付', async () => {
     const stack = await start();
     const { core, llm } = stack;
-    const { conv } = await threeBots(core);
-    llm.script('mock-light', [
-      triageStep('阿甲', 'no_action'),
-      triageStep('阿乙', 'no_action'),
-      triageStep('阿丙', 'no_action'),
+    const { a, b, conv } = await threeBots(core);
+    llm.script('mock-main', [
+      step()
+        .expect((r) => r.lastUserText().includes('【工作台】插队的活'))
+        .replyText('阿乙来做完了。'),
     ]);
+    llm.script('mock-light', reflections(2));
     const { todo } = await createTodo(stack, {
-      title: '寒暄一样的活',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      title: '插队的活',
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: b.id },
       when: 'now',
     });
-    const draft = await waitForTodoStatus(stack, todo.id, 'draft');
-    expect(draft.blockedReason).toBe('群里无人认领');
-    expect(
-      (await listMessages(core, conv.id)).some(
-        (m) => (m.content as { event?: string }).event === 'group_no_claim',
-      ),
-    ).toBe(false);
+    const message = await dispatchMessageOf(stack, conv.id);
+    expect(message.mentions).toEqual([b.id]);
+    const delivered = await waitForTodoStatus(stack, todo.id, 'delivered');
+    expect(delivered.lastRun!.resultMessageId).not.toBeNull();
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
+    expect(runs.map((r) => [r.botId, r.triggerReason])).toEqual([[b.id, 'mention']]);
+    expect(runs.some((r) => r.botId === a.id)).toBe(false);
   }, 30_000);
 });
 
@@ -597,7 +607,7 @@ describe('工作台排期：Bot 自己的工具面不能动用户派的活', () 
   }, 30_000);
 });
 
-describe('工作台对账：删 Bot / 删对话 / 移出群', () => {
+describe('工作台对账：删 Bot / 删对话 / 移出项目组', () => {
   it('删 Bot：其排期事项退回草案并写原因；待验收的保留', async () => {
     const stack = await start();
     const { core, llm } = stack;
@@ -629,45 +639,46 @@ describe('工作台对账：删 Bot / 删对话 / 移出群', () => {
     expect(core.services.schedules!.store.listActiveForTodo(scheduled.id)).toHaveLength(0);
   }, 30_000);
 
-  it('删群：群执行者的事项退回草案（原因「群已解散」）；移出负责 Bot：保留群、清负责人', async () => {
+  it('删项目组：项目执行者的事项退回草案（原因「项目组已解散」）；移出负责 Bot：保留项目组、清负责人', async () => {
     const stack = await start();
     const { core } = stack;
     const { a, b, conv } = await threeBots(core);
     const when = new Date(Date.now() + 3_600_000).toISOString();
-    const inGroup = (
+    const inProject = (
       await createTodo(stack, {
-        title: '群里的活',
-        assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+        title: '项目组里的活',
+        assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
         when,
       })
     ).todo;
     const led = (
       await createTodo(stack, {
         title: '有人带头',
-        assignee: { kind: 'group', conversationId: conv.id, leadBotId: b.id },
+        assignee: { kind: 'project', projectId: conv.id, leadBotId: b.id },
         when,
       })
     ).todo;
     const ledSchedule = core.services.schedules!.store.get(led.schedule!.id)!;
     expect(ledSchedule).toMatchObject({ botId: b.id, conversationId: conv.id, origin: 'workbench' });
-    expect(core.services.schedules!.store.get(inGroup.schedule!.id)!.botId).toBeNull();
+    // D92 T1a WP4：派给项目组的排期行也带实际生效的负责 Bot（项目自己的负责人）。
+    expect(core.services.schedules!.store.get(inProject.schedule!.id)!.botId).toBe(a.id);
 
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: b.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
     const afterLeave = (await getTodo(stack, led.id)).todo;
     expect(afterLeave).toMatchObject({
       status: 'draft',
-      blockedReason: '负责 Bot 已移出群',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      blockedReason: '负责 Bot 已移出项目组',
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
     });
-    expect((await getTodo(stack, inGroup.id)).todo.status).toBe('scheduled');
+    expect((await getTodo(stack, inProject.id)).todo.status).toBe('scheduled');
 
     await core.rpc.call('conversations.delete', { id: conv.id });
-    for (const id of [inGroup.id, led.id]) {
+    for (const id of [inProject.id, led.id]) {
       expect((await getTodo(stack, id)).todo).toMatchObject({
         status: 'draft',
         assignee: null,
         schedule: null,
-        blockedReason: '群已解散',
+        blockedReason: '项目组已解散',
       });
     }
     expect(a.id).toBeTruthy();
@@ -889,14 +900,19 @@ describe('工作台派发：审查修复', () => {
     await waitForTodoStatus(stack, b.id, 'delivered');
   }, 40_000);
 
-  it('空群（没有 active Bot 成员）：同步走到无人认领，事项退回草案而不是卡在进行中', async () => {
+  it('空项目组（没有 active Bot 成员）：同步走到无人认领，事项退回草案而不是卡在进行中', async () => {
     const stack = await start();
     const { core } = stack;
     const { a, b, conv } = await threeBots(core);
-    for (const id of [a.id, b.id]) await core.rpc.call('bots.delete', { id });
+    // 负责人守卫（D92 T1a）拦住 RPC 删除；直接把行置为墓碑，模拟遗留 /
+    // 竞态下的「无 active 成员」项目组。
+    await core.rpc.call('bots.delete', { id: b.id });
+    core.services.mainDb!
+      .prepare("update bots set status = 'deleted', updated_at = 0 where id = ?")
+      .run(a.id);
     const { todo } = await createTodo(stack, {
-      title: '没人在的群',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      title: '没人在的项目组',
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
       when: 'now',
     });
     const settled = await waitFor(
@@ -906,7 +922,7 @@ describe('工作台派发：审查修复', () => {
       },
       { label: 'unclaimed draft' },
     );
-    expect(settled).toMatchObject({ blockedReason: '群里无人认领' });
+    expect(settled).toMatchObject({ blockedReason: '项目里无人回应' });
     expect(settled.lastRun).toMatchObject({ status: 'unclaimed' });
   }, 30_000);
 
@@ -957,16 +973,16 @@ describe('工作台派发：审查修复', () => {
     held.release();
   }, 40_000);
 
-  it('群里指定负责 Bot 且它的 run 失败：按执行失败结算，而不是误报「群里无人认领」', async () => {
+  it('项目组里指定负责 Bot 且它的 run 失败：按执行失败结算，而不是误报「无人回应」', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { b, conv } = await threeBots(core);
     llm.script('mock-main', [
-      step().expect((r) => r.lastUserText().includes('【工作台】群里会失败')).failWith(500, 'group boom'),
+      step().expect((r) => r.lastUserText().includes('【工作台】项目组里会失败')).failWith(500, 'group boom'),
     ]);
     const { todo } = await createTodo(stack, {
-      title: '群里会失败',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: b.id },
+      title: '项目组里会失败',
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: b.id },
       when: 'now',
     });
     const draft = await waitForTodoStatus(stack, todo.id, 'draft');

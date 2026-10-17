@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P13 任务 4 首次启动引导 e2e（docs/dev/phases/P13-release.md 任务 4）。
@@ -54,7 +55,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -114,11 +115,13 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     await expect(wizard).toHaveAttribute('data-step', 'permissions');
     await page.locator('[data-testid="onboarding-next"]').click();
 
-    // ④ 沙箱：macOS 自动检测（srt 后端），无 Windows 内容。
+    // ④ 沙箱：macOS/Linux 自动检测（srt 后端）；Windows CI 的 WSL2 CLI 可用
+    // 但应用私有发行版未导入，向导如实呈现 wsl（不可用）。
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 认识管家（D70）：建立唯一管家并进入组队访谈。
@@ -197,9 +200,10 @@ test('model step saves key + default main model: the first bot chats right away 
     // ③④ 权限 → 沙箱（macOS 自动检测）。
     await page.locator('[data-testid="onboarding-next"]').click();
     await expect(wizard).toHaveAttribute('data-step', 'sandbox');
-    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText('srt', {
-      timeout: 30_000,
-    });
+    await expect(page.locator('[data-testid="onboarding-sandbox-state"]')).toContainText(
+      process.platform === 'win32' ? 'wsl' : 'srt',
+      { timeout: 30_000 },
+    );
     await page.locator('[data-testid="onboarding-next"]').click();
 
     // ⑤ 管家（D70）：建好后直接可对话——对话走的是向导写入的默认主模型

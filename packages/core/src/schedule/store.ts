@@ -249,7 +249,7 @@ export class SchedulesStore {
     ).map(rowToSchedule);
   }
 
-  /** 移出群：该 Bot 在此群的任务取消（03-data-model 删除级联）；返回被取消的行。 */
+  /** 移出项目组：该 Bot 在此项目组的任务取消（03-data-model 删除级联）；返回被取消的行。 */
   cancelForBotInConversation(botId: string, conversationId: string): Schedule[] {
     return (
       this.db

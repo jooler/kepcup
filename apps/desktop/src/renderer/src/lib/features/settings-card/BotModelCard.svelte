@@ -42,7 +42,7 @@
 
   const light = $derived(itemId === 'bot.light-model');
 
-  /** 会话快照里的 Bot（群成员 / 单聊 Bot），兜底通讯录（core 推 bot.updated 后更新）。 */
+  /** 会话快照里的 Bot（项目组成员 / 单聊 Bot），兜底通讯录（core 推 bot.updated 后更新）。 */
   const bot = $derived.by((): Bot | null => {
     const current = chat.current;
     return (

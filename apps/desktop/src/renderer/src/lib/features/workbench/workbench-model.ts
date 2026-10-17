@@ -39,7 +39,7 @@ export function blockedNotice(
   return { kind: todo.status === 'draft' ? 'warn' : 'note', reason };
 }
 
-export type LaneKind = 'unassigned' | 'bot' | 'group';
+export type LaneKind = 'unassigned' | 'bot' | 'project';
 
 export const UNASSIGNED_LANE_ID = 'unassigned';
 
@@ -47,18 +47,20 @@ export function botLaneId(botId: string): string {
   return `bot:${botId}`;
 }
 
-export function groupLaneId(conversationId: string): string {
-  return `group:${conversationId}`;
+export function projectLaneId(projectId: string): string {
+  return `project:${projectId}`;
 }
 
-/** 事项落在哪条道：未指派 / Bot / 群（负责 Bot 只是群道里的卡片标注，不另起道）。 */
+/** 事项落在哪条道：未指派 / Bot / 项目组（负责 Bot 只是项目组道里的卡片标注，不另起道）。 */
 export function laneIdOfTodo(todo: Pick<TodoEntry, 'assignee'>): string {
   const assignee = todo.assignee;
   if (assignee === null) return UNASSIGNED_LANE_ID;
-  return assignee.kind === 'bot' ? botLaneId(assignee.botId) : groupLaneId(assignee.conversationId);
+  return assignee.kind === 'bot'
+    ? botLaneId(assignee.botId)
+    : projectLaneId(assignee.projectId);
 }
 
-/** 成员（Bot / 群）的最小信息：道名、管家标记。 */
+/** 成员（Bot / 项目组）的最小信息：道名、管家标记。 */
 export interface MemberInfo {
   id: string;
   name: string;
@@ -69,11 +71,11 @@ export interface MemberInfo {
 export interface WorkbenchLane {
   id: string;
   kind: LaneKind;
-  /** Bot id（kind = bot）或群会话 id（kind = group）；未指派为 null。 */
+  /** Bot id（kind = bot）或项目组会话 id（kind = project）；未指派为 null。 */
   memberId: string | null;
   name: string;
   todos: TodoEntry[];
-  /** 该 Bot 自己安排的定时任务（只有 Bot 道有；群道恒空）。 */
+  /** 该 Bot 自己安排的定时任务（只有 Bot 道有；项目组道恒空）。 */
   selfSchedules: ScheduleEntry[];
   counts: { draft: number; scheduled: number; inProgress: number; delivered: number };
   /** 最近的下一次触发（事项排期与自排任务取最早）；没有为 null。 */
@@ -86,7 +88,7 @@ export interface LaneInput {
   schedules: readonly ScheduleEntry[];
   /** 名称兜底：事项 `assigneeName` 缺失（执行者已删）时查这里。 */
   bots: readonly MemberInfo[];
-  groups: readonly MemberInfo[];
+  projects: readonly MemberInfo[];
 }
 
 /**
@@ -138,8 +140,8 @@ export function selfSchedulesOf(schedules: readonly ScheduleEntry[]): ScheduleEn
 }
 
 /**
- * 按成员分道。顺序：「未指派」在最前（有事项才出现）；之后是有事的 Bot，再是有事的群；
- * Bot / 群各自按「有待验收 → 有进行中 → 下次时间最近（无下次的靠后）→ 名称」排序。
+ * 按成员分道。顺序：「未指派」在最前（有事项才出现）；之后是有事的 Bot，再是有事的项目组；
+ * Bot / 项目组各自按「有待验收 → 有进行中 → 下次时间最近（无下次的靠后）→ 名称」排序。
  * 「有事」= 有未结束的事项，或（仅 Bot）有自排的 active 定时任务。
  */
 export function buildLanes(input: LaneInput): WorkbenchLane[] {
@@ -154,7 +156,7 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
 
   const lanes = new Map<string, WorkbenchLane>();
   const botNames = new Map(input.bots.map((bot) => [bot.id, bot.name]));
-  const groupNames = new Map(input.groups.map((group) => [group.id, group.name]));
+  const projectNames = new Map(input.projects.map((project) => [project.id, project.name]));
 
   function laneFor(todo: TodoEntry): WorkbenchLane {
     const id = laneIdOfTodo(todo);
@@ -173,11 +175,11 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
             )
           : emptyLane(
               id,
-              'group',
-              assignee.conversationId,
+              'project',
+              assignee.projectId,
               todo.assigneeName ??
-                groupNames.get(assignee.conversationId) ??
-                assignee.conversationId,
+                projectNames.get(assignee.projectId) ??
+                assignee.projectId,
             );
     lanes.set(id, created);
     return created;
@@ -238,7 +240,7 @@ function emptyLane(
   };
 }
 
-/** Bot 道在前、群道在后；同类内：有待验收 → 有进行中 → 下次时间近 → 名称。 */
+/** Bot 道在前、项目组道在后；同类内：有待验收 → 有进行中 → 下次时间近 → 名称。 */
 export function compareLanes(a: WorkbenchLane, b: WorkbenchLane): number {
   if (a.kind !== b.kind) return a.kind === 'bot' ? -1 : 1;
   const delivered = Number(b.counts.delivered > 0) - Number(a.counts.delivered > 0);
@@ -272,25 +274,22 @@ export function botMembers(
 }
 
 /**
- * 群成员名单：群会话（创建问答进行中的不算）。`assignableOnly` 为真时再去掉只读的群
- * （执行者选择器只列非只读群；道头需要显示所有有事项的群，不过滤）。
+ * 项目组成员名单：项目会话（创建问答进行中的不算）。`assignableOnly` 为真时再去掉只读的
+ * 项目组（执行者选择器只列非只读项目组；道头需要显示所有有事项的项目组，不过滤）。
  */
-export function groupMembers(
+export function projectMembers(
   conversations: ReadonlyArray<{
     id: string;
     type: string;
     title: string | null;
     readOnly: boolean;
-    setupState?: string | null | undefined;
   }>,
   assignableOnly = false,
 ): MemberInfo[] {
   return conversations
     .filter(
       (conversation) =>
-        conversation.type === 'group' &&
-        conversation.setupState !== 'creating' &&
-        (!assignableOnly || !conversation.readOnly),
+        conversation.type === 'project' && (!assignableOnly || !conversation.readOnly),
     )
     .map((conversation) => ({ id: conversation.id, name: conversation.title ?? conversation.id }));
 }
@@ -420,7 +419,7 @@ const LATE_NOTE = /（原定[^\n]*?延迟派发）/;
  *   `【工作台】标题` + 空行 + 说明
  *   管家来源：第一行是 `【工作台】标题（管家代你安排）`
  *   补发迟到：末尾再空一行加 `（原定 X，延迟派发）`
- * 容错：没有前缀 / 没有说明 / 标注在任意行都能解析；群派发的 @ 提及不影响标题。
+ * 容错：没有前缀 / 没有说明 / 标注在任意行都能解析；项目组派发的 @ 提及不影响标题。
  * 事项更新通知（`update`，D90）：`【工作台】事项更新：标题` + 空行 + 说明 + 空行 + `（由用户 / 管家修改；…）`，
  * 末尾那一行取出为 `updatedBy` 不进说明。
  */

@@ -20,7 +20,7 @@ import {
   routeStillCurrent,
   type LlmPurpose,
 } from '../../src/agent/llm-router.js';
-import { triageOneBot } from '../../src/dispatch/dispatcher.js';
+import { judgeContinuation } from '../../src/dispatch/dispatcher.js';
 import type { AgentEngine, RunSpec } from '../../src/agent/types.js';
 
 /** D72 P6 `agent/llm-router.ts`：后台调用路由、降配与降频。 */
@@ -91,9 +91,9 @@ function router(
 
 /** An explicitly chosen background agent (routes bot-less purposes too). */
 const CHOSEN = { backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
-/** Agent triage opted in (groupMentionOnly is on by default, 审查 C2). */
+/** Agent triage opted in (projectMentionOnly is on by default, 审查 C2). */
 const TRIAGE_ON = {
-  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: false },
+  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: false },
 } satisfies Partial<Settings>;
 
 describe('LlmRouter', () => {
@@ -200,7 +200,7 @@ describe('LlmRouter', () => {
   it('agent-only degradations: skill authoring opt-in, triage opt-in + budget, off switch', () => {
     const r = router(CHOSEN);
     expect(r.resolveDefault('skill_authoring')).toBeNull();
-    // Agent triage is off by default (groupMentionOnly defaults to on).
+    // Agent triage is off by default (projectMentionOnly defaults to on).
     expect(r.resolveDefault('triage')).toBeNull();
     expect(router({ ...CHOSEN, ...TRIAGE_ON }).resolveDefault('triage')).not.toBeNull();
     // Daily background budget used up: agent triage skipped for that bot.
@@ -214,7 +214,7 @@ describe('LlmRouter', () => {
     expect(
       router({
         ...CHOSEN,
-        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, groupMentionOnly: true },
+        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, projectMentionOnly: true },
       }).resolveDefault('skill_authoring'),
     ).not.toBeNull();
     expect(
@@ -223,7 +223,7 @@ describe('LlmRouter', () => {
         backgroundTasks: {
           agentEnabled: false,
           agentSkillAuthoring: true,
-          groupMentionOnly: false,
+          projectMentionOnly: false,
         },
       }).resolveDefault('reflection'),
     ).toBeNull();
@@ -289,7 +289,7 @@ describe('LlmRouter', () => {
         background: true,
       },
     });
-    expect(backgroundRunSpec(agentRoute, spec).workdir).toBeUndefined();
+    expect(backgroundRunSpec(agentRoute, spec).cwd).toBeUndefined();
     expect(engineKeyOf(agentRoute)).toBe('agent:alpha');
     const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault(
       'wiki_maintenance',
@@ -310,7 +310,7 @@ describe('LlmRouter', () => {
   });
 });
 
-describe('triageOneBot through the router (P6)', () => {
+describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -371,6 +371,7 @@ describe('triageOneBot through the router (P6)', () => {
         conversationId: 'conv_1',
         batchId: 'b1',
         batchMessages: [],
+        goal: null,
         timeZone: 'UTC',
         logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} } as never,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -388,8 +389,13 @@ describe('triageOneBot through the router (P6)', () => {
     const agentEngine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
     const r = agentRouter(agentEngine);
     const { input, scheduler, usage } = triageDeps(r);
-    const decision = await triageOneBot(input);
-    expect(decision).toEqual({ botId: 'bot_1', decision: 'respond', confidence: 0.9 });
+    const decision = await judgeContinuation(input);
+    expect(decision).toEqual({
+      botId: 'bot_1',
+      decision: 'respond',
+      confidence: 0.9,
+      reason: '被点名',
+    });
     expect(scheduler.submit.mock.calls[0]![0].provider).toBe('agent:alpha');
     const [req] = complete.mock.calls[0]! as unknown as [
       { model: string; tools?: unknown; systemPrompt: string },
@@ -414,9 +420,14 @@ describe('triageOneBot through the router (P6)', () => {
       submit: vi.fn((job: { key: string }) => void queued.push(job)),
       cancelQueued,
     };
-    const pending = triageOneBot({ ...input, scheduler: scheduler as never });
+    const pending = judgeContinuation({ ...input, scheduler: scheduler as never });
     await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS + 1);
-    expect(await pending).toEqual({ botId: 'bot_1', decision: 'no_action', confidence: 0 });
+    expect(await pending).toEqual({
+      botId: 'bot_1',
+      decision: 'no_action',
+      confidence: 0,
+      reason: 'judgement failed',
+    });
     expect(cancelQueued).toHaveBeenCalledWith(queued[0]!.key);
     expect(complete).not.toHaveBeenCalled();
   });
@@ -428,10 +439,11 @@ describe('triageOneBot through the router (P6)', () => {
     } as unknown as AgentEngine;
     const r = agentRouter(agentEngine);
     const { input } = triageDeps(r, 30);
-    expect(await triageOneBot(input)).toEqual({
+    expect(await judgeContinuation(input)).toEqual({
       botId: 'bot_1',
       decision: 'no_action',
       confidence: 0,
+      reason: 'judgement failed',
     });
   });
 
@@ -441,7 +453,7 @@ describe('triageOneBot through the router (P6)', () => {
     const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
     const { input } = triageDeps(r);
     let decided = false;
-    const pending = triageOneBot(input).then((decision) => {
+    const pending = judgeContinuation(input).then((decision) => {
       decided = true;
       return decision;
     });
@@ -450,7 +462,7 @@ describe('triageOneBot through the router (P6)', () => {
     await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS - TRIAGE_TIMEOUT_MS);
     expect(await pending).toMatchObject({ decision: 'no_action' });
     // Same bot + group right after: throttled — no second agent call.
-    expect(await triageOneBot(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
+    expect(await judgeContinuation(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
     expect(complete).toHaveBeenCalledTimes(1);
   });
 });

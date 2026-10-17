@@ -37,12 +37,12 @@ import type { RunIdentity } from '../../src/agent/types.js';
  * 外部智能体 P3：权限与隔离（todo/acp-external-agents.md §6.2，D72）。真库 +
  * 子进程假 Agent：权限桥分级（工作目录内写放行、越界写弹卡 → 拒绝 →
  * reject_once、数据目录拒绝、无人值守底线、命令白名单、无 OS 沙箱命令逐条
- * 弹卡）、模式纠偏、project 内 Agent 配置确认、显式租约与检查点。
+ * 弹卡）、模式纠偏、workdir 内 Agent 配置确认、显式租约与检查点。
  *
  * D75（docs/design/30-supervisor-and-tasks.md §8.1）：外部 Agent 只作任务引擎。
  * 每批用户消息由内置模型（脚本）的对话轮派出任务，权限桥 / 配置确认 / 租约
  * 都作用在 Agent 上执行的**任务** run 上：写任务用 Bot 自己的档位、只读任务
- * 强制 read_only（§5.1）；写任务的 project 租约由任务层在开工前取、整任务
+ * 强制 read_only（§5.1）；写任务的 workdir 租约由任务层在开工前取、整任务
  * pin 住（§5.1–§5.2），排队的写任务停在 submitted（等写入租约）。
  */
 
@@ -187,7 +187,7 @@ function outcomes(record: ReturnType<typeof readFakeAgentRecord>) {
   );
 }
 
-function makeProject(): string {
+function makeWorkdir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'p3-proj-'));
   dirs.push(dir);
   execFileSync('git', ['init', '-q', dir]);
@@ -195,11 +195,11 @@ function makeProject(): string {
   return dir;
 }
 
-async function bindProject(stack: TestStack, conversationId: string, dir: string): Promise<string> {
-  const result = (await stack.core.rpc.call('projects.select', { conversationId, path: dir })) as {
-    project: { path: string };
+async function bindWorkdir(stack: TestStack, conversationId: string, dir: string): Promise<string> {
+  const result = (await stack.core.rpc.call('workdirs.select', { conversationId, path: dir })) as {
+    workdir: { path: string };
   };
-  return result.project.path;
+  return result.workdir.path;
 }
 
 describe('external agent permission bridge (P3, fake agent, real db)', () => {
@@ -496,17 +496,17 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
   }, 60_000);
 });
 
-describe('external agents in a project (P3: config confirmation, explicit lease, checkpoints)', () => {
-  it('asks once per conversation before a task runs with project-side agent config', async () => {
+describe('external agents in a workdir (P3: config confirmation, explicit lease, checkpoints)', () => {
+  it('asks once per conversation before a task runs with workdir-side agent config', async () => {
     const stack = await startWithFakeAgent({
       turns: [agentTurn().text('一'), agentTurn().text('二')],
     });
     const bot = await agentBot(stack, '外援', 'read_only');
     const conv = await openDirect(stack.core, bot.id);
-    const project = makeProject();
-    writeFileSync(path.join(project, 'AGENTS.md'), '# agent rules\n');
-    const projectPath = await bindProject(stack, conv.id, project);
-    // Read-only tasks: they work in the bound project (their workdir).
+    const workdir = makeWorkdir();
+    writeFileSync(path.join(workdir, 'AGENTS.md'), '# agent rules\n');
+    const workdirPath = await bindWorkdir(stack, conv.id, workdir);
+    // Read-only tasks: they work in the bound workdir (their cwd).
     stack.llm.script('mock-main', [
       ...turnStartsTask(stack, conv.id, { writes: false }),
       ...turnStartsTask(stack, conv.id, { writes: false }),
@@ -517,8 +517,8 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     expect(card.payload).toMatchObject({ kind: 'config', locations: ['AGENTS.md'] });
     await stack.core.rpc.call('approvals.decide', { id: card.id, approve: true });
     const first = await waitTask(stack, conv.id, 'completed');
-    expect(first.taskWorkdir).toBe(projectPath);
-    expect(stack.record().sessions[0]!.cwd).toBe(projectPath);
+    expect(first.taskCwd).toBe(workdirPath);
+    expect(stack.record().sessions[0]!.cwd).toBe(workdirPath);
 
     await sendBatch(stack.core, conv.id, ['第二次']);
     await waitTasksIn(stack, conv.id, 'completed', 2, 'second task');
@@ -527,15 +527,15 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     );
   }, 60_000);
 
-  it('agent config above the project up to the git root is confirmed too (P5 review H1)', async () => {
+  it('agent config above the workdir up to the git root is confirmed too (P5 review H1)', async () => {
     const stack = await startWithFakeAgent({ turns: [agentTurn().text('一')] });
     const bot = await agentBot(stack, '外援', 'read_only');
     const conv = await openDirect(stack.core, bot.id);
-    const repo = makeProject();
+    const repo = makeWorkdir();
     writeFileSync(path.join(repo, 'AGENTS.md'), '# repo-wide agent rules\n');
     const sub = path.join(repo, 'packages', 'app');
     mkdirSync(sub, { recursive: true });
-    await bindProject(stack, conv.id, sub);
+    await bindWorkdir(stack, conv.id, sub);
 
     stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: false }));
     await sendBatch(stack.core, conv.id, ['在子目录里干活']);
@@ -555,9 +555,9 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const stack = await startWithFakeAgent({ turns: [agentTurn().text('不该运行')] });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
-    const project = makeProject();
-    writeFileSync(path.join(project, 'AGENTS.md'), '# agent rules\n');
-    await bindProject(stack, conv.id, project);
+    const workdir = makeWorkdir();
+    writeFileSync(path.join(workdir, 'AGENTS.md'), '# agent rules\n');
+    await bindWorkdir(stack, conv.id, workdir);
     stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['开始']);
     const card = await pendingAgentTool(stack, conv.id);
@@ -583,9 +583,9 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
-    const project = makeProject();
-    writeFileSync(path.join(project, 'AGENTS.md'), '# v1\n');
-    await bindProject(stack, conv.id, project);
+    const workdir = makeWorkdir();
+    writeFileSync(path.join(workdir, 'AGENTS.md'), '# v1\n');
+    await bindWorkdir(stack, conv.id, workdir);
     // Write tasks (the agent's own write to AGENTS.md must reach the bridge).
     stack.llm.script('mock-main', [
       ...turnStartsTask(stack, conv.id, { writes: true }),
@@ -622,7 +622,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     await stack.core.rpc.call('approvals.decide', { id: writeCard.id, approve: false });
     await completed(2);
     // 3) Content changed → asked once more.
-    writeFileSync(path.join(project, 'AGENTS.md'), '# v2 — changed\n');
+    writeFileSync(path.join(workdir, 'AGENTS.md'), '# v2 — changed\n');
     await sendBatch(stack.core, conv.id, ['三']);
     const third = await waitFor(
       async () => (await configCards()).find((a) => a.status === 'pending') ?? null,
@@ -642,12 +642,12 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const stack = await startWithFakeAgent({
       turns: [agentTurn().sleep(2_500).text('完成')],
     });
-    const project = makeProject();
+    const workdir = makeWorkdir();
     const other = mkdtempSync(path.join(tmpdir(), 'p3-other-'));
     dirs.push(other);
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
-    const projectPath = await bindProject(stack, conv.id, project);
+    const workdirPath = await bindWorkdir(stack, conv.id, workdir);
     stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['开始']);
     const run = await waitTask(stack, conv.id, 'running');
@@ -667,32 +667,32 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       access: 'write',
       duration: 'conversation',
     });
-    const runtime = stack.core.services.projectRuntime!;
+    const runtime = stack.core.services.workdirRuntime!;
     await expect(
       runtime.ensureWriteLease(identity, path.join(realpathSync(other), 'x.txt')),
     ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
-    // The project itself is still held by this run.
+    // The workdir itself is still held by this run.
     await expect(
-      runtime.ensureWriteLease(identity, path.join(projectPath, 'a')),
+      runtime.ensureWriteLease(identity, path.join(workdirPath, 'a')),
     ).resolves.toBeTruthy();
     await waitTask(stack, conv.id, 'completed');
   }, 60_000);
 
-  it('an agent write task holds the project lease throughout: a built-in write task waits; changes diff and revert', async () => {
+  it('an agent write task holds the workdir lease throughout: a built-in write task waits; changes diff and revert', async () => {
     const stack = await startWithFakeAgent({
       turns: [agentTurn().writeFile('agent.txt', 'from agent\n').sleep(2_500).text('写好了')],
     });
-    const project = makeProject();
+    const workdir = makeWorkdir();
     const agent = await agentBot(stack, '外援');
     const agentConv = await openDirect(stack.core, agent.id);
-    const projectPath = await bindProject(stack, agentConv.id, project);
+    const workdirPath = await bindWorkdir(stack, agentConv.id, workdir);
     const builtin = await makeBot(stack.core, '内置');
     const builtinConv = await openDirect(stack.core, builtin.id);
-    await bindProject(stack, builtinConv.id, project);
+    await bindWorkdir(stack, builtinConv.id, workdir);
 
     stack.llm.script('mock-main', turnStartsTask(stack, agentConv.id, { writes: true }));
     await sendBatch(stack.core, agentConv.id, ['写一个文件']);
-    await waitFor(async () => (existsSync(path.join(project, 'agent.txt')) ? true : null), {
+    await waitFor(async () => (existsSync(path.join(workdir, 'agent.txt')) ? true : null), {
       label: 'agent wrote',
       timeoutMs: 30_000,
     });
@@ -715,7 +715,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       conversationId: builtinConv.id,
       loopType: 'turn',
     };
-    // The built-in write task stays submitted, waiting for the project lease.
+    // The built-in write task stays submitted, waiting for the workdir lease.
     const waiting = await waitFor(
       () =>
         tasks
@@ -729,19 +729,19 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       status: 'queued',
     });
     // The agent task still holds the lease: the built-in file is not there yet.
-    expect(existsSync(path.join(project, 'builtin.txt'))).toBe(false);
+    expect(existsSync(path.join(workdir, 'builtin.txt'))).toBe(false);
 
     const agentDone: Run = await waitTask(stack, agentConv.id, 'completed');
     expect(agentDone.id).toBe(agentTask.id);
     await waitTask(stack, builtinConv.id, 'completed');
-    expect(readFileSync(path.join(projectPath, 'builtin.txt'), 'utf8')).toBe('from builtin');
+    expect(readFileSync(path.join(workdirPath, 'builtin.txt'), 'utf8')).toBe('from builtin');
 
     // Change tracking retired: both agents' disk writes remain; no run_changes.
-    const diff = (await stack.core.rpc.call('projects.diff', { runId: agentTask.id })) as {
+    const diff = (await stack.core.rpc.call('workdirs.diff', { runId: agentTask.id })) as {
       change: { files: Array<{ path: string; change: string }> } | null;
     };
     expect(diff.change).toBeNull();
-    expect(existsSync(path.join(project, 'agent.txt'))).toBe(true);
-    expect(existsSync(path.join(project, 'builtin.txt'))).toBe(true);
+    expect(existsSync(path.join(workdir, 'agent.txt'))).toBe(true);
+    expect(existsSync(path.join(workdir, 'builtin.txt'))).toBe(true);
   }, 120_000);
 });

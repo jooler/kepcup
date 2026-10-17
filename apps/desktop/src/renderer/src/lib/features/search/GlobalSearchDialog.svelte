@@ -279,7 +279,7 @@
   const QUICK_BOT_CAP = 8;
 
   function conversationTitle(conversation: ConversationView): string {
-    return conversation.type === 'group'
+    return conversation.type === 'project'
       ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
   }
@@ -317,7 +317,7 @@
     const conversations = chat.conversations
       .filter(
         (conversation) =>
-          (conversation.type === 'group' || !botIds.has(conversation.directBotId ?? '')) &&
+          (conversation.type === 'project' || !botIds.has(conversation.directBotId ?? '')) &&
           matches([
             conversationTitle(conversation),
             conversation.summary ?? '',
@@ -468,7 +468,7 @@
           {/if}
         </span>
       {:else if row.kind === 'conversation'}
-        {#if row.conversation.type === 'group'}
+        {#if row.conversation.type === 'project'}
           <Avatar.Root class="size-10">
             <Avatar.Fallback class="bg-emerald-600 text-primary-foreground">
               <Users class="size-5" aria-hidden="true" />

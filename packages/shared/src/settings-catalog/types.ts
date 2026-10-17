@@ -18,8 +18,8 @@ export const settingGroupSchema = z.enum([
   'schedules',
   'profile',
   'browser',
-  'group',
   'project',
+  'workdir',
   'hardware',
   'general',
   'background',
@@ -30,8 +30,8 @@ export const settingGroupSchema = z.enum([
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
-/** 作用范围：全局 / 某个 Bot / 某个群 / 某个项目。 */
-export const settingScopeSchema = z.enum(['global', 'bot', 'group', 'project']);
+/** 作用范围：全局 / 某个 Bot / 某个项目组 / 某个工作目录。 */
+export const settingScopeSchema = z.enum(['global', 'bot', 'project', 'workdir']);
 export type SettingScope = z.infer<typeof settingScopeSchema>;
 
 /**
@@ -186,12 +186,16 @@ export const CARD_KEYS = [
   'unattended',
   /** 污点防护开关（`UnattendedSection` 的对应行）。 */
   'taint-guard',
-  /** 群名（`GroupSettingsDialog` 的改名片段）。 */
-  'group-title',
-  /** 群成员（`GroupSettingsDialog` 的成员片段；组件自己调 groups RPC）。 */
-  'group-members',
-  /** 项目保护规则 / 放行端口（`ProjectSettingsDialog`，user-only，组件自己保存）。 */
-  'project-settings',
+  /** 项目名称（项目详情页概览的标题输入，设置卡走 `ProjectTitleCard` 内嵌）。 */
+  'project-title',
+  /** 项目成员（详情页成员分区；卡片组件自己调 projects RPC）。 */
+  'project-members',
+  /** 项目目标（详情页概览的目标输入，设置卡走 `ProjectGoalCard` 内嵌）。 */
+  'project-goal',
+  /** 项目负责人（详情页成员分区，设置卡走 `ProjectLeadCard` 内嵌）。 */
+  'project-lead',
+  /** 工作目录保护规则 / 放行端口（`WorkdirSettingsDialog`，user-only，组件自己保存）。 */
+  'workdir-settings',
   /** 一条连接工具的策略（`AppConnectionDetail` 片段；组件自己 `setToolPolicy`）。 */
   'tool-policy',
   /** 一个已安装 MCP 服务的启用开关（`McpSection` 片段；组件自己 `settings.update`）。 */
@@ -213,15 +217,16 @@ export type CardKey = z.infer<typeof cardKeySchema>;
  * - `settings`：`shell.openSettings(section, anchor)`，section 是设置弹框分区 id；
  * - `extension-center`：`openExtensionCenter(section)`，section 是扩展中心页签；
  * - `bot-panel`：右栏 Bot 详情，section 是页签 value；
- * - `group-dialog` / `project-dialog`：群设置 / 项目设置对话框（section 固定为对话框名）。
+ * - `project-detail`：项目详情页（内容区页面，不是对话框；section ∈ `PROJECT_DETAIL_SECTIONS`）；
+ * - `workdir-dialog`：工作目录设置对话框（section 固定为对话框名）。
  * anchor 是 `data-settings-anchor` 的值；缺省 = 只到分区。
  */
 export const settingSurfaceSchema = z.enum([
   'settings',
   'extension-center',
   'bot-panel',
-  'group-dialog',
-  'project-dialog',
+  'project-detail',
+  'workdir-dialog',
 ]);
 export type SettingSurface = z.infer<typeof settingSurfaceSchema>;
 
@@ -236,7 +241,7 @@ export type SettingDeepLink = z.infer<typeof settingDeepLinkSchema>;
  * 值存在哪里（core 适配器读写、`settings.changed` 映射用）：
  * - `settings`：`settingsSchema` 里的点路径（`capabilityModels.image`）；
  * - `bot`：`BotProfile` 里的点路径（`runtime.model`）；
- * - `service`：只经专用 RPC 写（`unattended.enable`、`groups.rename`……）；
+ * - `service`：只经专用 RPC 写（`unattended.enable`、`projects.update`……）；
  * - `renderer`：渲染层 localStorage；`none`：只读 / 只经专门工具。
  */
 export const settingStoreSchema = z.discriminatedUnion('kind', [

@@ -406,22 +406,22 @@ describe('create_todo', () => {
       source: 'butler',
     });
 
-    const group = await call('create_todo', {
+    const project = await call('create_todo', {
       title: '周会纪要',
-      assignee: { group_id: 'conv_g', lead_bot_id: 'bot_2' },
+      assignee: { project_id: 'conv_g', lead_bot_id: 'bot_2' },
       when: '2026-10-16T09:00:00+08:00',
     });
-    expect(group.ok).toBe(true);
+    expect(project.ok).toBe(true);
     expect(rig.calls[2]!.args[0]).toMatchObject({
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_2' },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_2' },
     });
-    const groupNoLead = await call('create_todo', {
-      title: '群事项',
-      assignee: { group_id: 'conv_g' },
+    const projectNoLead = await call('create_todo', {
+      title: '项目组事项',
+      assignee: { project_id: 'conv_g' },
     });
-    expect(groupNoLead.ok).toBe(true);
+    expect(projectNoLead.ok).toBe(true);
     expect(rig.calls[3]!.args[0]).toMatchObject({
-      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null },
     });
   });
 
@@ -443,9 +443,9 @@ describe('create_todo', () => {
     for (const params of [
       { title: '   ' },
       { title: 'x', assignee: {} },
-      { title: 'x', assignee: { bot_id: 'a', group_id: 'b' } },
+      { title: 'x', assignee: { bot_id: 'a', project_id: 'b' } },
       { title: 'x', assignee: { bot_id: '' } },
-      { title: 'x', assignee: { group_id: 'g', lead_bot_id: '' } },
+      { title: 'x', assignee: { project_id: 'g', lead_bot_id: '' } },
       { title: 'x', assignee: 'bot_1' },
       { title: 'x', assignee: { bot_id: 'a' }, when: '  ' },
     ]) {
@@ -495,11 +495,11 @@ describe('create_todo', () => {
         { type: 'toolCall', id: '1', name: 'create_todo', arguments: args } as never,
       );
     expect(check({ title: 'x', assignee: { bot_id: 'a' } })).not.toThrow();
-    expect(check({ title: 'x', assignee: { group_id: 'g', lead_bot_id: 'b' } })).not.toThrow();
+    expect(check({ title: 'x', assignee: { project_id: 'g', lead_bot_id: 'b' } })).not.toThrow();
     expect(check({ assignee: { bot_id: 'a' } })).toThrow();
     // 混合形状通过 schema，但 execute 拒绝。
     for (const assignee of [
-      { bot_id: 'a', group_id: 'g' },
+      { bot_id: 'a', project_id: 'g' },
       { bot_id: 'a', lead_bot_id: 'b' },
       {},
     ]) {
@@ -708,7 +708,7 @@ describe('权限边界矩阵（§6.2，宿主强制）', () => {
     refused(
       await call('create_todo', {
         title: 'x',
-        assignee: { group_id: 'conv_g' },
+        assignee: { project_id: 'conv_g' },
         when: '0 9 * * 1',
       }),
     );
@@ -904,7 +904,7 @@ describe('用户本人触发的判据（与设置工具同一口径）', () => {
     expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'delegation')).toBe(
       false,
     );
-    expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'chain')).toBe(false);
+    expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'bot_mention')).toBe(false);
     expect(fromUser([message({})], 'task')).toBe(false);
     expect(fromUser([message({})], 'scheduled')).toBe(false);
     expect(fromUser([], 'direct')).toBe(false);
@@ -938,7 +938,7 @@ describe('update_todo：扁平的 clear_* 与周期事项的 when="now"', () => 
       { id: 'todo_1', clear_assignee: true, assignee: { bot_id: 'bot_2' } },
       { id: 'todo_1', clear_when: true, when: 'now' },
       { id: 'todo_1', when: '  ' },
-      { id: 'todo_1', assignee: { bot_id: 'a', group_id: 'g' } },
+      { id: 'todo_1', assignee: { bot_id: 'a', project_id: 'g' } },
       // null 不是「清空」：明确提示用 clear_*，而不是静默当成没填。
       { id: 'todo_1', assignee: null },
       { id: 'todo_1', when: null },
@@ -1476,7 +1476,7 @@ describe('第二轮审查修复：改事项的文字（D90 更新通知后放宽
         { createdAt: NOW - 121_000 },
         { title: '另一件事' },
         { assignee: { kind: 'bot', botId: 'bot_2' } },
-        { assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null } },
+        { assignee: { kind: 'project', projectId: 'conv_g', leadBotId: null } },
         { source: 'user' },
         { status: 'draft' },
         { status: 'done' },
@@ -1500,21 +1500,21 @@ describe('第二轮审查修复：改事项的文字（D90 更新通知后放宽
       expect(scheduled.content).toContain('已创建事项');
     });
 
-    it('群执行者按群 id + 负责 Bot 比较；去重发生在闸门之后（被拒的调用不会借去重绕过）', async () => {
+    it('项目执行者按项目组 id + 负责 Bot 比较；去重发生在闸门之后（被拒的调用不会借去重绕过）', async () => {
       const rig = makeRig();
       rig.state.todos = [
-        dispatched({ assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_1' } }),
+        dispatched({ assignee: { kind: 'project', projectId: 'conv_g', leadBotId: 'bot_1' } }),
       ];
       const user = toolsFor(rig, { triggerFromUser: true });
       const dup = await user.call('create_todo', {
         title: '整理竞品报告',
-        assignee: { group_id: 'conv_g', lead_bot_id: 'bot_1' },
+        assignee: { project_id: 'conv_g', lead_bot_id: 'bot_1' },
         when: 'now',
       });
       expect(dup.content).toContain('未重复派发');
       const different = await user.call('create_todo', {
         title: '整理竞品报告',
-        assignee: { group_id: 'conv_g' },
+        assignee: { project_id: 'conv_g' },
         when: 'now',
       });
       expect(different.content).toContain('已创建事项');
@@ -1522,7 +1522,7 @@ describe('第二轮审查修复：改事项的文字（D90 更新通知后放宽
       expect(
         await nonUser.call('create_todo', {
           title: '整理竞品报告',
-          assignee: { group_id: 'conv_g', lead_bot_id: 'bot_1' },
+          assignee: { project_id: 'conv_g', lead_bot_id: 'bot_1' },
           when: 'now',
         }),
       ).toMatchObject({ ok: false, errorCode: 'NOT_FROM_USER' });

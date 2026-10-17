@@ -50,7 +50,9 @@ function indexNames(db: SqliteDatabase, table: string): string[] {
 
 function seedOldMainDb(db: SqliteDatabase): void {
   db.exec(`
+    insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_x', 'X', '{}', 'active', 0, 0);
     insert into conversations (id, type, last_seq, created_at) values ('conv_a', 'group', 3, 1);
+    insert into conversation_members (conversation_id, bot_id, joined_at) values ('conv_a', 'bot_x', 1);
     insert into messages (id, conversation_id, seq, sender_type, sender_bot_id, kind, content_json, reply_to, mentions_json, batch_id, run_id, status, edited_at, created_at)
       values ('msg_1', 'conv_a', 1, 'user', null, 'text', '{"text":"你好 世界"}', null, '["bot_x"]', 'bat_1', null, 'edited', 7, 2),
              ('msg_2', 'conv_a', 2, 'bot', 'bot_x', 'text', '{"text":"收到"}', 'msg_1', '[]', null, 'run_1', 'normal', null, 3),
@@ -176,7 +178,7 @@ describe('runs 0006 tasks 迁移', () => {
       engine: 'builtin',
       task_title: null,
       task_writes: null,
-      task_workdir: null,
+      task_cwd: null,
       origin_run_id: null,
       result_consumed_at: null,
       awaiting_input: 0,

@@ -21,7 +21,7 @@ function conversation(overrides: Partial<Conversation>): Conversation {
     type: 'direct',
     title: null,
     directBotId: 'bot_1',
-    projectId: null,
+    workdirId: null,
     readOnly: false,
     summary: null,
     summaryUptoSeq: 0,
@@ -46,8 +46,8 @@ function run(overrides: Partial<Run> & { id: string }): Run {
     outputMessageIds: [],
     summary: null,
     error: null,
-    chainId: null,
-    chainDepth: null,
+    episodeId: null,
+    episodeHop: null,
     createdAt: 0,
     startedAt: null,
     endedAt: null,
@@ -111,7 +111,7 @@ describe('my-state assembly (P07 任务 10)', () => {
         run({ id: 'run_4', conversationId: 'conv_4', status: 'waiting_lease', botId: 'bot_2' }),
       ],
       getConversation: (id) =>
-        conversation({ id, type: 'group', title: '项目群' }),
+        conversation({ id, type: 'project', title: '项目群' }),
       getMessage: () => message(long),
     });
     expect(lines).toHaveLength(1);

@@ -125,7 +125,7 @@ export interface CatalogFlowHost {
   }): Promise<CatalogSettleResult>;
   /**
    * 用户确认（或无需复核）：批准全部待复核工具、置 connected、授权 Bot。`grantBotIds` 是本流程
-   * 收集到的全部 Bot（发起者 + 并发去重接入的后到者；群聊里两个 Bot 的连接卡片走同一流程）。
+   * 收集到的全部 Bot（发起者 + 并发去重接入的后到者；项目组里两个 Bot 的连接卡片走同一流程）。
    */
   confirm(input: { connectionId: string; grantBotIds: readonly string[] }): Promise<void>;
   /** 令牌已发出但复核被拒绝 / 超时 / 取消 / 出错：新建的连接吊销并清除。 */

@@ -26,6 +26,11 @@ export function shortHash(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, RAW_HASH_CHARS);
 }
 
+/** Full content sha256 (64 hex): the project wiki ledger keys assets by it (D92 T1b WP9). */
+export function contentSha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
 /** `2026-10-01` → `20261001`. */
 export function localDateStamp(date: Date): string {
   return date.toISOString().slice(0, 10).replaceAll('-', '');
@@ -76,7 +81,7 @@ export function isLoopbackHost(host: string): boolean {
  * The bot's Profile policy gates the target host; the sandbox policy is then
  * the least-privilege intersection (allowlist with exactly this host, loopback
  * only for loopback targets — the sandbox denies loopback otherwise, exactly
- * like project-bound conversations).
+ * like workdir-bound conversations).
  */
 export function fetchPolicyFor(
   url: string,

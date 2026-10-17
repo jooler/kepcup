@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Message } from '@kepcup/shared';
 import {
   canShareTurn,
+  isUserFacingReason,
   Mailbox,
   MailboxRegistry,
   mergeTriggerBatches,
@@ -117,24 +118,24 @@ describe('Mailbox (D75: buffer, never steer)', () => {
 });
 
 describe('mergeTriggerBatches', () => {
-  it('collapses parts with the same reason, de-duplicates messages, keeps chain / afterNote', () => {
+  it('collapses parts with the same reason, de-duplicates messages, keeps episode / afterNote', () => {
     const r1 = message('结果 1');
     const r2 = message('结果 2');
     const u = message('用户');
     const merged = mergeTriggerBatches([
       batch('task', [r1]),
-      batch('chain', [u], { chain: { id: 'chn_1', depth: 1 }, extraAttributes: { from_bot: 'X' } }),
+      batch('bot_mention', [u], { episode: { id: 'epi_1', hop: 1 }, extraAttributes: { from_bot: 'X' } }),
       batch('task', [r2]),
-      batch('broadcast', [u], { afterNote: '在你之前…' }),
+      batch('routed', [u], { afterNote: '在你之前…' }),
     ]);
     expect(merged.parts).toEqual([
       { reason: 'task', messages: [r1, r2] },
-      { reason: 'chain', messages: [u], extraAttributes: { from_bot: 'X' } },
+      { reason: 'bot_mention', messages: [u], extraAttributes: { from_bot: 'X' } },
     ]);
     expect(merged.messages).toEqual([r1, r2, u]);
     // First user-facing part decides the turn's reason ('task' results are user-facing).
     expect(merged.reason).toBe('task');
-    expect(merged.chain).toEqual({ id: 'chn_1', depth: 1 });
+    expect(merged.episode).toEqual({ id: 'epi_1', hop: 1 });
     expect(merged.afterNote).toBe('在你之前…');
   });
 
@@ -156,24 +157,24 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
       },
     });
 
-  it('a merged chain binding is the deepest one of that chain', () => {
+  it('a merged episode binding is the deepest one of that episode', () => {
     const merged = mergeTriggerBatches([
-      batch('chain', [message('浅')], { chain: { id: 'chn_1', depth: 1 } }),
+      batch('bot_mention', [message('浅')], { episode: { id: 'epi_1', hop: 1 } }),
       batch('direct', [message('用户')]),
-      batch('chain', [message('深')], { chain: { id: 'chn_1', depth: 3 } }),
+      batch('bot_mention', [message('深')], { episode: { id: 'epi_1', hop: 3 } }),
     ]);
-    expect(merged.chain).toEqual({ id: 'chn_1', depth: 3 });
+    expect(merged.episode).toEqual({ id: 'epi_1', hop: 3 });
   });
 
-  it('delegations and different chains never share a turn', () => {
+  it('delegations and different episodes never share a turn', () => {
     const delegation = batch('delegation', [message('代发')]);
     const user = batch('direct', [message('用户')]);
-    const chainA = batch('chain', [message('A')], { chain: { id: 'chn_a', depth: 1 } });
-    const chainB = batch('chain', [message('B')], { chain: { id: 'chn_b', depth: 2 } });
+    const episodeA = batch('bot_mention', [message('A')], { episode: { id: 'epi_a', hop: 1 } });
+    const episodeB = batch('bot_mention', [message('B')], { episode: { id: 'epi_b', hop: 2 } });
     expect(canShareTurn(delegation, user)).toBe(false);
     expect(canShareTurn(user, delegation)).toBe(false);
-    expect(canShareTurn(chainA, chainB)).toBe(false);
-    expect(canShareTurn(chainA, { ...chainA, messages: [message('A2')] })).toBe(true);
+    expect(canShareTurn(episodeA, episodeB)).toBe(false);
+    expect(canShareTurn(episodeA, { ...episodeA, messages: [message('A2')] })).toBe(true);
   });
 
   it('D90 workbench: a dispatch batch has a turn of its own; update notices of the same todo may merge, nothing else', () => {
@@ -238,29 +239,29 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
     expect(started[3]!.messages).toEqual(dispatch.messages);
   });
 
-  it("a person's words never join a chain-bound batch; system batches may (审查 L-5)", () => {
+  it("a person's words never join an episode-bound batch; system batches may (审查 L-5)", () => {
     const user = batch('direct', [message('用户')]);
     const edit = batch('event', [message('改过的')], { extraAttributes: { event: 'message_edited' } });
-    const chainA = batch('chain', [message('A', { senderType: 'bot', senderBotId: 'bot_2' })], {
-      chain: { id: 'chn_a', depth: 4 },
+    const episodeA = batch('bot_mention', [message('A', { senderType: 'bot', senderBotId: 'bot_2' })], {
+      episode: { id: 'epi_a', hop: 4 },
     });
     const taskResult = batch('task', [
       message('结果', { senderType: 'system', kind: 'task_event', taskId: 'run_t1' }),
     ]);
-    expect(canShareTurn(chainA, user)).toBe(false);
-    expect(canShareTurn(user, chainA)).toBe(false);
-    expect(canShareTurn(chainA, edit)).toBe(false);
-    expect(canShareTurn(chainA, taskResult)).toBe(true);
+    expect(canShareTurn(episodeA, user)).toBe(false);
+    expect(canShareTurn(user, episodeA)).toBe(false);
+    expect(canShareTurn(episodeA, edit)).toBe(false);
+    expect(canShareTurn(episodeA, taskResult)).toBe(true);
     expect(canShareTurn(user, taskResult)).toBe(true);
-    // A chain turn that absorbed a task result still keeps the user apart.
-    const merged = mergeTriggerBatches([chainA, taskResult]);
+    // An episode's turn that absorbed a task result still keeps the user apart.
+    const merged = mergeTriggerBatches([episodeA, taskResult]);
     expect(canShareTurn(merged, user)).toBe(false);
-    // A chain turn beginning absorbs the buffered task result, not the user's message.
+    // An episode's turn beginning absorbs the buffered task result, not the user's message.
     const box = mailbox();
-    box.deliver(chainA);
+    box.deliver(episodeA);
     box.deliver(user);
     box.deliver(taskResult);
-    expect(box.takeBuffered(chainA)).toEqual([taskResult]);
+    expect(box.takeBuffered(episodeA)).toEqual([taskResult]);
     expect(box.bufferedCount).toBe(1);
   });
 
@@ -270,27 +271,27 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
     const delegated = batch('delegation', [message('代发')]);
     box.deliver(delegated);
     const user = batch('direct', [message('用户插话')]);
-    const chainA = batch('chain', [message('A 接力')], { chain: { id: 'chn_a', depth: 1 } });
-    const chainB = batch('chain', [message('B 接力')], { chain: { id: 'chn_b', depth: 2 } });
+    const episodeA = batch('bot_mention', [message('A 接力')], { episode: { id: 'epi_a', hop: 1 } });
+    const episodeB = batch('bot_mention', [message('B 接力')], { episode: { id: 'epi_b', hop: 2 } });
     box.deliver(user);
-    box.deliver(chainA);
-    box.deliver(chainB);
+    box.deliver(episodeA);
+    box.deliver(episodeB);
     // The delegated turn absorbs nothing.
     expect(box.takeBuffered(delegated)).toEqual([]);
     expect(box.bufferedCount).toBe(3);
-    // Next turn: the user message alone (unchained, 审查 L-5); each chain gets a turn after.
+    // Next turn: the user message alone (episode-less, 审查 L-5); each episode gets a turn after.
     box.release();
     expect(started[1]!.messages.map((m) => (m.content as { text: string }).text)).toEqual([
       '用户插话',
     ]);
-    expect(started[1]!.chain).toBeUndefined();
+    expect(started[1]!.episode).toBeUndefined();
     expect(box.bufferedCount).toBe(2);
     expect(box.takeBuffered(started[1]!)).toEqual([]);
     box.release();
-    expect(started[2]!.chain).toEqual({ id: 'chn_a', depth: 1 });
+    expect(started[2]!.episode).toEqual({ id: 'epi_a', hop: 1 });
     expect(box.bufferedCount).toBe(1);
     box.release();
-    expect(started[3]!.chain).toEqual({ id: 'chn_b', depth: 2 });
+    expect(started[3]!.episode).toEqual({ id: 'epi_b', hop: 2 });
     expect(box.bufferedCount).toBe(0);
   });
 });
@@ -359,7 +360,7 @@ function summary(over: Partial<TaskSummary>): TaskSummary {
     state: 'running',
     status: 'running',
     writes: true,
-    workdir: '/ws',
+    cwd: '/ws',
     createdAt: 0,
     endedAt: null,
     queueReason: null,
@@ -472,7 +473,7 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('这一轮只读，任务可读写');
     expect(prompt).not.toContain('沙箱状态');
     expect(prompt).not.toContain('<recommended_skills>');
-    expect(prompt).not.toContain('acquire_project_write');
+    expect(prompt).not.toContain('acquire_workdir_write');
   });
 
   it('turn: 媒体生成路由——真实媒体文件派任务经工具产出，不推第三方工具', () => {
@@ -528,9 +529,29 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('本次执行结束时未取回的分支会被中止');
     expect(prompt).not.toContain('自动送回对话');
     expect(prompt).not.toContain('delegate_to_bot');
-    expect(prompt).toContain('acquire_project_write');
+    expect(prompt).toContain('acquire_workdir_write');
     expect(prompt).toContain('沙箱状态：可用');
     expect(prompt).toContain('<recommended_skills>');
     expect(prompt).not.toContain('forward_task_result');
+  });
+});
+
+describe('trigger reasons (D92 T1a routing)', () => {
+  it('the four routing delivery reasons are user-facing (priority 0)', () => {
+    for (const reason of ['continuation', 'routed', 'routed_also', 'lead_fallback'] as const) {
+      expect(isUserFacingReason(reason), reason).toBe(true);
+    }
+    expect(isUserFacingReason('bot_mention')).toBe(false);
+    expect(isUserFacingReason('event')).toBe(false);
+  });
+
+  it('routing_gate is not a delivery reason (mailbox union excludes it)', () => {
+    // It exists only on the gate's triage run row (`trigger_reason`), never as
+    // a delivered batch reason.
+    const notADeliveryReason = (): TriggerBatch['reason'] => {
+      // @ts-expect-error routing_gate must stay outside the mailbox union
+      return 'routing_gate';
+    };
+    expect(notADeliveryReason.length).toBe(0);
   });
 });

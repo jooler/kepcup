@@ -22,7 +22,23 @@ wiki-store/            -- 仓外内容存储（不进 git）：二进制原件�
 
 - **单一写入者**：响应 loop 对 Wiki 只读，通过 `wiki_search`、`wiki_read` 查询；需要入库时调用 `wiki_enqueue(source, note)` 排队，由独立的 Wiki 维护 loop 串行执行。
 - Wiki 中不得出现用户的个人信息（那是记忆的职责），体检时检查这一条。
-- Bot 之间的 Wiki **完全隔离**，分享知识通过消息附件。唯一的跨 Bot 写入是用户确认过的资产移交（D88 P2，[37](37-bot-asset-handover.md) §3.2）：按页 / 目录把页面连同引用的原件**复制**进接手方的 Wiki（接手方的维护锁内落盘、同路径不覆盖、一次提交、之后排一次体检），来源不变。
+- Bot 之间的 Wiki **完全隔离**（D9）。唯一的跨 Bot 写入是用户确认过的资产移交（D88 P2，[37](37-bot-asset-handover.md) §3.2）：按页 / 目录把页面连同引用的原件**复制**进接手方的 Wiki（接手方的维护锁内落盘、同路径不覆盖、一次提交、之后排一次体检），来源不变。项目内的共享知识不走 Bot wiki，走下一节的**项目 wiki**——它是项目内唯一被许可的共享通道。
+
+### 项目 wiki（D92 T1b）
+
+项目组有一个项目所有的共享知识库，复用上面的引擎（git 布局、维护 loop、体检）；所有者是项目（`WikiOwner = bot | project`），随项目删除而删除，成员变动不影响它。
+
+| 项 | 规则 |
+|---|---|
+| 存储与索引 | `projects/{id}/wiki/`（git）、`projects/{id}/wiki-store/`；FTS 是**项目级** `projects/{id}/wiki.db`（加密 sqlite，仅 `wiki_fts`），不进任何成员的 `memory.db` |
+| 来源台账 | `raw/_assets/{assetId}.json` 对齐 D85 结构并增 `createdBy: { kind: 'user' \| 'bot', id }`；本期落地的是文本子集（`sources[].type` 含 `text`，`storage:'git'`），二进制 / 派生仍按 [36](36-wiki-multimodal-ingest.md) 未实施；Bot 个人 wiki 暂不启用台账。来源资产 id = `ast_` + 内容 sha256 前 24 位十六进制 |
+| 单写入队列 | 每个项目 wiki 一个串行维护队列（互斥键 `project:{id}`）；多个成员同时 `wiki_enqueue` 只是入队 |
+| 执行者付费 | 成员入库的维护 loop 以**该成员**身份运行（模型、用量与后台预算记其名下）；用户添加的来源与定期体检以**负责人**身份运行 |
+| 删除来源 | 成员只能删自己创建的来源（`wiki_remove_source`，经 job 异步执行）；用户与负责人管理全部。Bot 被删后其来源保留（创建者显示为 id） |
+| 工具 `scope` | 项目对话里 `wiki_search { scope: 'mine' \| 'project' \| 'all' }`（默认 `all`，结果带 `[project]` / `[mine]` 前缀且项目在前）、`wiki_read { scope }`（默认 `mine`）、`wiki_enqueue { scope }`（**默认 `mine`**——发布到共享空间必须有意为之）；`wiki_remove_source { source_id }` 仅项目对话注册 |
+| 可信度 | 用户创建的来源可信；Bot 创建的来源及其参与的页面，其他 Bot 读取时整段包进 `<untrusted source="project_wiki">` 并标注提交者；页面全部出处为用户才原样返回 |
+| 提示词 | 项目对话注入项目 wiki 主题段 `<project_wiki_topics>`（取自项目 `index.md`，**不设预算**）；Bot 个人主题段仍受 `WIKI_TOPICS_TOKEN_BUDGET` 约束 |
+| 移交（D88） | 项目 wiki **不在**移交范围；Bot wiki 的移交不变 |
 
 ### 维护操作
 

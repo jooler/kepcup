@@ -1224,7 +1224,7 @@ function safeHead(repo: Repository): string | null {
 /**
  * Commits the current state of the authored-skills repository. The repo is
  * our own data (`bots/{id}/skills/.git`), so a plain init is fine here (the
- * DEV-006 "no .git in the worktree" rule targets USER project directories);
+ * DEV-006 "no .git in the worktree" rule targets USER workdir directories);
  * `_drafts/` stays out of history via `.gitignore`.
  */
 export async function authoredGitCommit(

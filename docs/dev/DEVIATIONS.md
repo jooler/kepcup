@@ -87,7 +87,7 @@
 - 状态：待决定
 - 阶段：P04
 - 是否阻塞：否（设计的默认行为"默认不限"完整实现并验证；端口范围是可选的收紧配置）
-- 问题：[08-project.md](../design/08-project.md)（"每个 project 可以限定允许的端口范围（默认不限）"）与 P04 任务 8 要求按 `allowed_ports` 限制沙箱可访问的本机端口。srt 0.0.78 的网络配置只有 `allowLocalBinding` 布尔值（seatbelt 规则 `(allow network-bind (local ip "*:*"))` + `(allow network-outbound (remote ip "localhost:*"))`），不存在端口范围字段；且沙箱子进程环境含 `NO_PROXY=localhost,127.0.0.1,...`，回环访问完全绕过 srt 代理直连（由 seatbelt 规则裁决），代理层的 `filterRequest` 回调对回环流量不可见，无法按端口过滤。
+- 问题：[08-project.md](../design/08-workdir.md)（"每个 project 可以限定允许的端口范围（默认不限）"）与 P04 任务 8 要求按 `allowed_ports` 限制沙箱可访问的本机端口。srt 0.0.78 的网络配置只有 `allowLocalBinding` 布尔值（seatbelt 规则 `(allow network-bind (local ip "*:*"))` + `(allow network-outbound (remote ip "localhost:*"))`），不存在端口范围字段；且沙箱子进程环境含 `NO_PROXY=localhost,127.0.0.1,...`，回环访问完全绕过 srt 代理直连（由 seatbelt 规则裁决），代理层的 `filterRequest` 回调对回环流量不可见，无法按端口过滤。
 - 影响范围：`packages/core/src/sandbox/policy.ts`、`packages/core/src/sandbox/backend-srt.ts`、projects 表的 `allowed_ports_json` 列与项目设置界面。
 - 可选方案：
   1. 端口范围存入 projects 表并在设置界面可配置，当前版本不强制（当前实现；界面注明"当前沙箱版本不强制端口范围，仅记录配置"）— 优点：数据模型与设计一致，升级 srt 后即可接入；缺点：配置了范围的 project 实际不受限。
@@ -570,7 +570,7 @@
 
 ### DEV-030 UI 新建的群没有群定位与目录：建群后在哪里设置（`0254e1b`）
 
-- 状态：待决定
+- 状态：已落实（2026-10-18，随 D92 项目组实施）
 - 阶段：新建群聊改版（2026-10-15，`0254e1b`；取代设计 19 / D60 的对话内四问）
 - 是否阻塞：否
 - 问题：新建群改为主区域顶部点选成员、空回车即 `groups.create` 直接建群（群名为成员名拼接）后，创建时不再收集「本群主要处理什么事务」与工作目录。UI 新建的群 `description` 恒为空，`<conversation_info>` 的「本群主要处理：…」（D60）不会注入，群内 Bot 判断「归不归我」只剩成员名片与群名可依据。目录可在右栏「群详情」的 project 选择器补绑（无创建期引导）；群定位**没有任何编辑入口**，也没有对应的 RPC（`description` 只在 `groups.setup.answer` 里写）。D60 的后端（`groups.setup.*`、orchestrator 四问、`GroupSetupCard`、store 的 `createGroupViaSetup` / `answerGroupSetup` / `cancelGroupSetup`）保留但 UI 不可达。
@@ -580,5 +580,84 @@
   2. 建群后在群对话里出一张一次性提示卡（定位 + 目录，可跳过），复用 `GroupSetupCard` 的 purpose / project 两步 — 有引导；缺点是又回到部分向导，和「点选即建」的初衷有张力。
   3. 不做，群定位让 Bot 从群名与历史推断，并删除 D60 后端 — 最简；缺点是丢掉已验证有用的群语义，且要删除 D60 的代码路径（`description` 列可保留为空，不需要迁移）。
 - 推荐：1（必要时叠加 2 的轻提示）；在决定前保留 D60 后端不删。
-- 决定：（由人工填写）
-- 已更新的文档：`docs/design/19-work-path-and-group-setup.md`、`docs/design/README.md`（D60 行）、`docs/design/{01-conversation,08-project}.md`、`docs/dev/phases/P16-path-and-group-setup.md`、`todo/conversation-work-path.md`。
+- 决定：采纳方案 1 的 D92 形态——「**详情页编辑项目目标**」：`conversations.description` 随 T1a 改名 `goal`（项目目标），经 `projects.update` 在**项目详情页「概览」**编辑（WP1 落 RPC、WP4 落设置目录条目 `project.goal` 与提示词注入、WP7 落详情页编辑器）；非空才注入 `<conversation_info>`。D60 的四问后端已整体删除（方案 3 的删除部分随之完成）。目录绑定同样落详情页「概览」。
+- 已更新的文档：`docs/design/41-project-team.md`（§11.3 / §18 / DEV-030 引用）、`docs/design/01-conversation.md`、`docs/design/19-work-path-and-group-setup.md`、`docs/design/08-workdir.md`、`docs/design/12-ui-layout.md`、`docs/design/README.md`（D60 / D92 行）；历史类文档（`docs/dev/phases/P16`、`todo/conversation-work-path.md`）正文不动。
+
+### DEV-031 WP3 的 `forcedTarget`「工作台派发用」前提与代码现实不符
+
+- 状态：已落实
+- 阶段：项目组 T1a（WP3，2026-10-17）
+- 是否阻塞：否
+- 问题：[WP3-routing.md](../../todo/project/WP3-routing.md) §1 流程图、§5 步骤 5 与 §8 陷阱都说 `PendingBatch.forcedTarget` 「保留（工作台派发还在用，只删 `redistribute` 方法）」。代码现实：自 WP1 起 `dispatchWorkbenchMessage` 用**结构化 @**（`mentions: [leadBotId]`，见 todo-service `#dispatch` 的 `leadBotId` 入参）指定目标，`forcedTarget` 在 HEAD 上唯一的入口是被删除的 `groups.redistribute`（group_no_claim 点选重发）。删除 `redistribute` 后，`forcedTarget` 分支在生产代码中已无调用方。
+- 影响范围：`packages/core/src/dispatch/project-turn.ts`（`PendingBatch.forcedTarget`、`#dispatch` 首分支）、`dispatchWorkbenchMessage`。
+- 处理：按 WP 字面要求**保留** `forcedTarget` 分支（工作台「指定负责 Bot」语义的快路径，行为与结构化 @ 等价），并给 `onUserBatch` 增加可选 `options.forcedTarget` 入参使 WP §5 场景 b（forcedTarget 优先）可测；`dispatchWorkbenchMessage` 维持结构化 @ 路径不变（零行为漂移）。后续若工作台派发要绕开显式 @ 语义，可改传 `forcedTarget`（WP8/WP4 一并评估）。
+- 已更新的文档：`todo/project/WP3-routing.md`（实施记录）。
+
+### DEV-032 项目 wiki（WP9）验收自检 rg#1 非空：`enqueueIngest` 的执行者字段与旧 RPC 入参形态同形（D92 T1b）
+
+- 状态：已按 WP 语义收口（自检解读，非代码缺陷）
+- 阶段：群聊→项目组 WP9（`feat/project/wp9-wiki-core`）
+- 是否阻塞：否
+- 问题：WP9 验收清单要求 `rg -n "wikiBotIdInputSchema|storeFor\(botId|botWikiRoot\(deps|botId: input\.botId" packages/core/src/wiki packages/core/src/rpc` 为空，但 WP §2/§3 同时规定 `enqueueIngest({ owner, botId, … })` 保留 `botId` 为**执行者**字段（成员入库记在该成员名下）。该服务层入参（`wiki/service.ts` 的 `botId: input.botId`）与自检模式同形，自检按字面不可能为空。另有两处同形命中均为预期：`wiki/ingest.ts` 的 `resolveSource` 内部 identity（执行者传给 gateway 的自有入参，非旧 RPC 形态残留）、`rpc/bindings.ts` 的 `skills.import`（非 wiki 方法）。
+- 影响范围：仅验收自检的解读；`wiki_ingest:${wikiOwnerKey(owner)}:…` 去重键、payload `owner`、RPC `wikiOwnerInputSchema` 均已按新形态落地（自检 rg#2 为空）。
+- 处理：自检按「无旧形态残留」解读——rg#1 的三处命中逐一核对为 WP 明文保留的执行者字段或无关方法；`wikiBotIdInputSchema`、`storeFor(botId`、`botWikiRoot(deps` 在 wiki/ 与 rpc/ 下均为零命中。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP9-wiki-core.md` §9 实施记录。
+
+### DEV-033 WP4 验收自检 rg#1 无法按字面清零：四处命中均为 WP7/WP8 待办或迁移夹具（D92 T1a）
+
+- 状态：已按 WP 语义收口（自检解读 + 临时处理登记）
+- 阶段：群聊→项目组 WP4（`feat/project/migration`）
+- 是否阻塞：否
+- 问题：WP4 验收清单要求 `rg -n "propose_team|propose_group|BUTLER_TEAM_SIZE|assignee_group_id|listByAssigneeGroup|group_id|group-title|group-members|group-dialog|groups\.delete|isGroup" packages apps` 全空（允许项仅 query-gate 与 items.ts 的 `group:` 分类字段），但四处命中在 WP4 的范围内无法消除：
+  1. `GroupSettingsDialog.svelte` 的 `data-settings-anchor="group-title"` / `"group-members"` 与 `anchor-scroll.test.ts` 夹具——该对话框 WP7 才删除；若现在改成 `project-*` 会撞上 `PENDING_DESKTOP_ANCHORS`（覆盖率测试断言「列在 pending 里的锚点确实还不存在」）。
+  2. `ApprovalCard.svelte` 的 `approval-butler-group-title` / `-members` testid——WP4 §3.B.4 明文「审批卡只做编译修复」，文案与卡上改负责人的 UI 归 WP8。
+  3. `test/fixtures/connectors/linear.tools.json` 的 `isGroup`——Linear 连接器的外部 API 字段（WP0-2 已确立连接器夹具不改的先例）。
+  4. `workbench-project.test.ts` 的 0042 迁移夹具——迁移测试必须用旧列名 `assignee_group_id` 造数（与 main 0040 迁移测试同形）。
+- 影响范围：仅验收自检的解读；core / shared 源码内旧名（`propose_team`、`proposalType: 'group'`、`assignee_group_id`、`GROUP_MENTION_PREFIX`、`isGroup`、`origin: 'group'` 等）均已清零（rg#2、rg#3 为空）。
+- 处理：rg#1 剩余 13 处逐一核对为上述四类；`tool-labels.ts` 的 `propose_team` 键、`group-members.ts` 文件名等渲染层可安全改名处已在本 WP 内一并改掉。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP4-prompt-and-integrations.md` §8 实施记录。
+### DEV-034 WP5 创建自检 rg 非空：命中的全部是 WP5 §5 明令留下的两个 e2e 旧名文件（D92 T1a）
+
+- 状态：已按 WP 语义收口（自检解读，非代码缺陷）
+- 阶段：群聊→项目组 WP5（`feat/project/wp5-ui-create`，2026-10-17）
+- 是否阻塞：否
+- 问题：WP5 验收清单要求 `rg -n "composingGroup|beginGroupCompose|cancelGroupCompose|commitGroupCompose|GroupComposeBar|group-compose|groupCompose\.|sidebar\.createGroup|start-chat-create-group|WP5 replaces" apps/desktop -g '!node_modules' -g '!**/dist/**' -g '!test/**'` 自检为空，但 rg 的 glob 语义里 `!test/**` 只匹配仓库根下的 `test/**`，排除不了 `apps/desktop/test/e2e/`；而 WP5 §5 又明确规定 `group-compose.spec.ts` 与 `helpers/create-group.ts` 不改、留到 WP8 统一重写。二者叠加使该自检按字面永远非空（现行命中 16 处，全部在这两个文件）。
+- 影响范围：仅验收自检的解读；renderer / store / i18n 源码（`apps/desktop/src`）对该模式为零命中，两个 e2e 文件本 WP 未触碰。
+- 处理：自检按「`apps/desktop/src` 与其余非 e2e 路径无旧名残留」解读执行；e2e 两个文件的旧名属 WP5 §5 明令保留，WP8 重写时消除。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP5-ui-create.md` §9 实施记录。
+
+### DEV-035 WP7 步骤 6 的 `git mv group-members.* → project-members.*` 无从执行：文件已在前序 WP（WP4）改名（D92 T1a）
+
+- 状态：已落实（审查补记）
+- 阶段：群聊→项目组 WP7（`feat/project/migration`，`f6c747d`，2026-10-18）
+- 是否阻塞：否
+- 问题：WP7 §4 步骤 6 要求 `group-members.ts` / `group-members.test.ts` → `project-members.ts` / `project-members.test.ts` 以 `git mv` + 改名完成；但 WP4（`e7013fa`，见 DEV-033 处理段）已把这两个文件改名到位，只剩导出名 `groupMemberPlan` / `GroupMemberPlan` 是旧名，`git mv` 无从执行。
+- 影响范围：仅步骤 6 的执行方式；§4 契约的最终命名（`projectMemberPlan` / `ProjectMemberPlan`、文件名、测试断言不变）全部达成。
+- 处理：改为独立提交 `f6c747d` 完成**导出名纯改名**（无任何行为改动，符合 README §1.5「纯改名独立提交」）；WP7 §9 实施记录已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP7-ui-settings-page.md` §9 实施记录（提交列表与偏差段）。
+
+### DEV-036 WP8 步骤 5 表 ① 要求断言路由阶段状态行，但 WP6 落地的可见性条件使该阶段永不显示：随断言修复了组件行为（审查补记）
+
+- 状态：已落实（审查补记）
+- 阶段：群聊→项目组 WP8（`feat/project/migration`，`c6b15b6`，2026-10-18）
+- 是否阻塞：否
+- 问题：WP8 §4 步骤 5 表 ① 要求断言 `project-turn-status` 在路由阶段可见且文案「正在确认由谁回复」；但 WP6 落地的 `ProjectTurnStatusLine` 可见性条件 `phase!=='idle' && (currentBotId!==null || queue.length>0)` 与 WP3 的 `project.turn` 载荷矛盾——路由阶段恰是 `currentBotId=null`、`queue=[]`（`dispatch/project-turn.ts` 载荷构造），状态行在路由阶段永不渲染。属 README §1.6「WP 假设与代码现实不成立」。
+- 影响范围：仅该组件的可见性行为；无命名 / 契约 / 后端变化。
+- 处理：`c6b15b6` 把条件改为「routing 阶段恒显示；运行阶段至少一个目标（当前或排队）才显示」，e2e 断言按 WP 表落实；WP8 §8 已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP8-ui-copy-e2e.md` §8 实施记录。
+
+### DEV-037 设计 41 §6.3 的触发段属性 `routed_by` 未实现：路由留痕 = 触发原因 + 段末宿主说明 + 网关 `reason`（审查补记）
+
+- 状态：已落实（审查补记：文档按现状修正，不补实现）
+- 阶段：群聊→项目组 WP11 阶段审查（2026-10-18；分歧产生于 WP3 实现）
+- 是否阻塞：否
+- 问题：设计 41 §6.3（定稿时）写「路由留痕在执行记录里：触发原因 `routed`、`routed_by`、网关的 `reason`」，即 `routed` / `routed_also` 的 `<trigger>` 段带 `routed_by`（负责人 bot id）属性。实现（WP3，`dispatch/project-turn.ts`）的静默路由投递批只带 `{botId, reason}`（`routed_also` 另有段后纯文本 `afterNote`「在你之前，{名字}已经回复…」），触发段**没有**任何负责人属性；全仓无 `routed_by`。WP3 实施记录未登记该取舍，WP11 改写 `docs/dev/04-agent-runtime.md` 触发原因表时照抄了设计里的属性，审查对照代码发现。
+- 影响范围：仅文档与审计口径；无契约 / 行为变化。负责人身份实际可从网关那次轻量调用的 run（`trigger_reason='routing_gate'`，其 bot 即负责人）与成员名片推得。
+- 处理：不补实现——该属性对模型提示与用户界面均不可见，审计已可推得，后补属性会动 `TriggerBatch` / 触发段形状，收益为零。文档按现状修正：`docs/dev/04-agent-runtime.md` 触发原因表 `routed` / `routed_also` 行「附加属性」改 `—`（顺带补 `bot_mention` 实际带的 `hop`）、提示词段表 7.5 行按实现修正为 `<project_lead_rules>` / `<project_member_rules>`（成员段是 `agent/context/system-prompt.ts` 的函数 `projectMemberRules(leadName)`，不是常量）；`docs/design/41-project-team.md` §6.3 留痕句同步。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/dev/04-agent-runtime.md`、`docs/design/41-project-team.md`（见「处理」）。

@@ -84,7 +84,7 @@ export class TaintService {
 
   /**
    * 对话级污点：该对话里**任一** Bot 的行未过期即算（最早的 `first_at`、最晚的 `expires_at`）。
-   * 群聊里 Bot B 会读到 Bot A 的输出（上下文、@ 转交），按 (Bot, 对话) 单看会被「洗掉」污点；
+   * 项目组里 Bot B 会读到 Bot A 的输出（上下文、@ 转交），按 (Bot, 对话) 单看会被「洗掉」污点；
    * 私聊只有一个 Bot，两者等价。
    */
   conversationState(
@@ -103,7 +103,7 @@ export class TaintService {
 
   /**
    * 外发拦截点的统一入口：开关开着且该对话处于污点状态才返回状态，否则 null。判定按**对话**
-   * （见 {@link conversationState}）：群里任一成员读过应用数据，所有成员的外发都要确认。
+   * （见 {@link conversationState}）：项目组里任一成员读过应用数据，所有成员的外发都要确认。
    */
   guard(botId: string | null, conversationId: string | null): TaintState | null {
     if (botId === null || conversationId === null) return null;
@@ -141,8 +141,8 @@ export class TaintService {
   }
 
   /**
-   * Bot 删除：只删它在 `conversationIds`（它自己的私聊）里的行。它在群聊里的行保留到过期——
-   * 群里其他成员读到过它的输出，对话级污点不能因它被删而消失。
+   * Bot 删除：只删它在 `conversationIds`（它自己的私聊）里的行。它在项目组里的行保留到过期——
+   * 项目组里其他成员读到过它的输出，对话级污点不能因它被删而消失。
    */
   deleteForBotInConversations(botId: string, conversationIds: readonly string[]): number {
     let removed = 0;

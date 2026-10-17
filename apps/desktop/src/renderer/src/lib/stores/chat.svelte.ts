@@ -1,19 +1,19 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
 import {
-  GROUP_MEMBER_PREVIEW_MAX,
-  groupTitleFromMemberNames,
+  PROJECT_MEMBER_PREVIEW_MAX,
+  projectTitleFromMemberNames,
   isSparseBotProfile,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
-export interface GroupMemberView {
+export interface ProjectMemberView {
   bot: Bot;
   joinedAt: number;
 }
 
-export interface GroupTurnState {
+export interface ProjectTurnState {
   batchId: string | null;
-  phase: 'triaging' | 'running' | 'idle';
+  phase: 'routing' | 'running' | 'idle';
   currentBotId: string | null;
   queue: string[];
   pendingBatches: number;
@@ -26,6 +26,13 @@ import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
 import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
+import {
+  composeAddMember,
+  composeBackToLead,
+  composeRemoveMember,
+  composeSelectLead,
+  type ComposeState,
+} from '../features/chats/project-compose';
 import {
   clearLastConversationId,
   loadLastConversationId,
@@ -74,7 +81,7 @@ interface CurrentChat {
   loadingEarlier: boolean;
   hasEarlier: boolean;
   /** Group members (group conversations only). */
-  members: GroupMemberView[];
+  members: ProjectMemberView[];
 }
 
 const PAGE_SIZE = 60;
@@ -82,13 +89,20 @@ const PAGE_SIZE = 60;
 class ChatState {
   conversations = $state<ConversationView[]>([]);
   currentId = $state<string | null>(null);
-  /** 新建群聊：主区域顶部的成员输入，尚未落库。 */
-  composingGroup = $state(false);
+  /**
+   * New-project compose: the two-round input at the top of the main area,
+   * not yet persisted. Round 1 picks the lead (single), round 2 the members
+   * (multi). `composeMemberIds` does NOT include the lead; both are merged
+   * only in the projects.create payload.
+   */
+  composingProject = $state(false);
+  composePhase = $state<ComposeState['phase']>('lead');
+  composeLeadId = $state<string | null>(null);
   composeMemberIds = $state<string[]>([]);
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
   /** Group turn state (P05), per conversation. */
-  turnByConversation = $state<Record<string, GroupTurnState>>({});
+  turnByConversation = $state<Record<string, ProjectTurnState>>({});
   /**
    * The message being quoted in the composer (引用回复)：轻量引用快照而非
    * Message 全量——与 composer 草稿缓存（按会话持久化）共用形状，切换会话/
@@ -129,11 +143,12 @@ class ChatState {
   }
 
   /**
-   * 左栏高亮的会话：组群输入打开时主区域不再是 currentId 那个会话，不高亮它
-   * （currentId 本身保留，取消组群后回到原会话）。
+   * Conversation highlighted in the sidebar: while the project compose is open
+   * the main area no longer shows the currentId conversation, so do not
+   * highlight it (currentId itself is kept; cancelling returns to it).
    */
   get activeId(): string | null {
-    return this.composingGroup ? null : this.currentId;
+    return this.composingProject ? null : this.currentId;
   }
 
   /**
@@ -161,7 +176,7 @@ class ChatState {
       this.#upsertConversation(this.#withDirectBot(data.conversation));
       // Membership may have changed; member cards drive the @ popup and the
       // group info panel, so refresh them for the open group.
-      if (data.conversation.type === 'group' && data.conversation.id === this.currentId) {
+      if (data.conversation.type === 'project' && data.conversation.id === this.currentId) {
         void this.reloadMembers();
       }
     });
@@ -221,15 +236,18 @@ class ChatState {
     core.onEvent('bot.deleted', (payload) => {
       const data = payload as { id: string };
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
-      // 删除效果）；群聊历史里它经 botName 回退为其 id。
+      // 删除效果）；项目组历史里它经 botName 回退为其 id。
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
       this.#pruneSidebarSections();
       if (this.#chat?.conversation.directBotId === data.id) this.close();
-      // 正在组群的成员里有它：移出，免得用一个已删除的 Bot 建群。
+      // It is part of an in-flight project compose: a picked lead goes back to
+      // round 1 (chosen members kept), members are dropped — never build the
+      // project around a deleted bot.
+      if (this.composeLeadId === data.id) this.backToLeadPhase();
       if (this.composeMemberIds.includes(data.id)) this.removeComposeMember(data.id);
     });
-    core.onEvent('group.turn', (payload) => {
-      const data = payload as GroupTurnState & { conversationId: string };
+    core.onEvent('project.turn', (payload) => {
+      const data = payload as ProjectTurnState & { conversationId: string };
       this.turnByConversation[data.conversationId] = {
         batchId: data.batchId,
         phase: data.phase,
@@ -287,7 +305,7 @@ class ChatState {
   }
 
   /**
-   * 启动恢复：优先精确恢复上次查看的会话（私聊或群聊，localStorage 记忆，
+   * 启动恢复：优先精确恢复上次查看的会话（私聊或项目组，localStorage 记忆，
    * last-conversation-persist）；id 已失效（会话被删/Bot 被删转只读）或从未
    * 打开过则退回「最近 lastMessageAt」启发式；从没聊过则打开第一个 Bot 的
    * 直聊；一个 Bot 都没有（跳过了初始化向导）时不打开任何会话，交由调用方
@@ -319,7 +337,7 @@ class ChatState {
       conversation: ConversationView | null;
     };
     if (!result.conversation) return;
-    this.cancelGroupCompose();
+    this.cancelProjectCompose();
     this.#upsertConversation(result.conversation);
     const messages = await this.#loadLatest(conversationId);
     // D75: several tasks may be in flight next to the turns — look further back.
@@ -355,9 +373,12 @@ class ChatState {
     // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
     // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。
     if (shell.workbenchIntent === workbenchIntent) shell.mainView = 'chats';
+    // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
+    shell.projectView = 'chat';
+    shell.projectSettingsSection = 'overview';
     this.replyTo = null;
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
-    // 或群聊），而不是按最近消息时间挑一个。
+    // 或项目组），而不是按最近消息时间挑一个。
     saveLastConversationId(globalThis.localStorage ?? null, conversationId);
     // 重新打开对话：对 pending 的 link 卡核对一次（P2，design 38 §4.3）。
     this.#recheckPendingLinkCards(messages);
@@ -369,7 +390,7 @@ class ChatState {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
-    if (result.conversation.type === 'group') await this.reloadMembers();
+    if (result.conversation.type === 'project') await this.reloadMembers();
     else await this.#startSparseInterview(result.conversation);
     await this.#markRead();
     await permissions.loadForConversation(conversationId);
@@ -378,10 +399,10 @@ class ChatState {
   /** Reloads the current group's member cards. */
   async reloadMembers(): Promise<void> {
     const chatState = this.#chat;
-    if (!chatState || chatState.conversation.type !== 'group') return;
+    if (!chatState || chatState.conversation.type !== 'project') return;
     const result = (await core.call('conversations.members', {
       conversationId: chatState.conversation.id,
-    })) as { members: GroupMemberView[] };
+    })) as { members: ProjectMemberView[] };
     chatState.members = result.members;
     this.#syncMemberPreviews(chatState.conversation.id, result.members);
   }
@@ -397,9 +418,9 @@ class ChatState {
     }
   }
 
-  #syncMemberPreviews(conversationId: string, members: GroupMemberView[]): void {
+  #syncMemberPreviews(conversationId: string, members: ProjectMemberView[]): void {
     // 与 core 下发的 memberPreviews 同一上限（左栏群头像只画这么多）。
-    const memberPreviews = members.slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
+    const memberPreviews = members.slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -412,94 +433,84 @@ class ChatState {
     }
   }
 
-  // --- group management (P05) --------------------------------------------------
+  // --- project compose (D92 §11.1: two-round creation, lead first) -------------
 
-  /**
-   * 新建群聊：主区域顶部展开成员输入，点选已有 Bot，或回车用输入的名字
-   * 新建一个画像为空的 Bot。空回车才真正创建群。
-   */
-  beginGroupCompose(): void {
-    // 组群输入条在对话区里：工作台开着时先回到对话区，否则点「新建群聊」看不到任何反应。
-    shell.mainView = 'chats';
-    this.composingGroup = true;
-    this.composeMemberIds = [];
+  #composeState(): ComposeState {
+    return { phase: this.composePhase, leadId: this.composeLeadId, memberIds: this.composeMemberIds };
   }
 
-  cancelGroupCompose(): void {
-    this.composingGroup = false;
-    this.composeMemberIds = [];
+  #setComposeState(next: ComposeState): void {
+    this.composePhase = next.phase;
+    this.composeLeadId = next.leadId;
+    this.composeMemberIds = next.memberIds;
+  }
+
+  /**
+   * New project: open the two-round compose at the top of the main area —
+   * round 1 picks the lead (single), round 2 the members (multi). Pick an
+   * existing bot, or press Enter on a typed name to create an empty-profile
+   * bot.
+   */
+  beginProjectCompose(): void {
+    // The compose view lives in the chats area: leave the workbench first,
+    // otherwise clicking "new project" would show no reaction at all.
+    shell.mainView = 'chats';
+    this.composingProject = true;
+    this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
+  }
+
+  cancelProjectCompose(): void {
+    this.composingProject = false;
+    this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
+  }
+
+  /** Round-1 pick: enter the members round (a bot picked from the members leaves them). */
+  selectComposeLead(botId: string): void {
+    this.#setComposeState(composeSelectLead(this.#composeState(), botId));
+  }
+
+  /** Back to round 1 to re-pick the lead; the chosen members are kept. */
+  backToLeadPhase(): void {
+    this.#setComposeState(composeBackToLead(this.#composeState()));
   }
 
   addComposeMember(botId: string): void {
-    if (this.composeMemberIds.includes(botId)) return;
-    this.composeMemberIds = [...this.composeMemberIds, botId];
+    this.#setComposeState(composeAddMember(this.#composeState(), botId));
   }
 
   removeComposeMember(botId: string): void {
-    this.composeMemberIds = this.composeMemberIds.filter((id) => id !== botId);
+    this.#setComposeState(composeRemoveMember(this.#composeState(), botId));
   }
 
   /**
-   * 空回车：用成员名拼接群名并创建。只算通讯录里还在的 Bot（删除事件与
-   * 通讯录刷新之间可能有残留 id），不足 2 人时不创建。
+   * Empty-Enter commit: only bots still in the roster count (a deletion event
+   * may land before the roster refresh); without the lead or with fewer than
+   * one valid member, do not create. The title joins "lead, members…" with the
+   * lead first. `memberBotIds` includes the lead.
    */
-  async commitGroupCompose(): Promise<boolean> {
+  async commitProjectCompose(): Promise<boolean> {
+    const lead =
+      this.composeLeadId === null
+        ? undefined
+        : contacts.bots.find((bot) => bot.id === this.composeLeadId);
     const members = this.composeMemberIds
       .map((id) => contacts.bots.find((bot) => bot.id === id))
       .filter((bot) => bot !== undefined);
-    if (members.length < 2) return false;
-    const ids = members.map((bot) => bot.id);
-    const names = members.map((bot) => bot.name);
-    const title = groupTitleFromMemberNames(names);
+    if (lead === undefined || members.length < 1) return false;
+    const title = projectTitleFromMemberNames([lead.name, ...members.map((bot) => bot.name)]);
     try {
-      const result = (await core.call('groups.create', {
+      const result = (await core.call('projects.create', {
         title,
-        memberBotIds: ids,
+        leadBotId: lead.id,
+        memberBotIds: [lead.id, ...members.map((bot) => bot.id)],
       })) as { conversation: Conversation };
-      this.cancelGroupCompose();
+      this.cancelProjectCompose();
       await this.refresh();
       await this.select(result.conversation.id);
       return true;
     } catch (error) {
-      toast.error(errorText(errorCode(error), t('group.createFailed')));
+      toast.error(errorText(errorCode(error), t('project.createFailed')));
       return false;
-    }
-  }
-
-  /*
-   * 对话内群创建（19/D60）的入口已由 GroupComposeBar 取代；下面两个方法只服务
-   * 库里遗留的「创建中」群对话（GroupSetupCard 仍渲染这些卡片）。
-   */
-  async answerGroupSetup(
-    conversationId: string,
-    step: 'title' | 'purpose' | 'members' | 'project',
-    value: string | string[] | null,
-  ): Promise<boolean> {
-    const payload =
-      step === 'members'
-        ? { conversationId, step, botIds: value as string[] }
-        : step === 'project'
-          ? { conversationId, step, path: value as string | null }
-          : { conversationId, step, text: value as string };
-    try {
-      await core.call('groups.setup.answer', payload);
-      await this.reloadMembers();
-      return true;
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-      return false;
-    }
-  }
-
-  /** 放弃创建：级联删除该「创建中」的群对话（消息极少，无历史负担）。 */
-  async cancelGroupSetup(conversationId: string): Promise<void> {
-    try {
-      await core.call('groups.setup.cancel', { conversationId });
-      this.conversations = this.conversations.filter((c) => c.id !== conversationId);
-      this.#pruneSidebarSections();
-      if (this.currentId === conversationId) this.close();
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }
   }
 
@@ -515,9 +526,9 @@ class ChatState {
     }
   }
 
-  async renameGroup(conversationId: string, title: string): Promise<boolean> {
+  async renameProject(conversationId: string, title: string): Promise<boolean> {
     try {
-      const result = (await core.call('groups.rename', { conversationId, title })) as {
+      const result = (await core.call('projects.update', { conversationId, title })) as {
         conversation: Conversation;
       };
       this.#upsertConversation(result.conversation);
@@ -528,9 +539,32 @@ class ChatState {
     }
   }
 
-  async addGroupMembers(conversationId: string, botIds: string[]): Promise<boolean> {
+  /**
+   * Update the project goal (D92 §11.3 overview section). `goal: null` clears
+   * it. The returned conversation flows into the sidebar list; the open chat
+   * follows it via the same upsert (the `conversation.updated` event repeats it).
+   */
+  async updateProjectGoal(conversationId: string, goal: string | null): Promise<boolean> {
     try {
-      await core.call('groups.addMembers', { conversationId, botIds });
+      const result = (await core.call('projects.update', { conversationId, goal })) as {
+        conversation: Conversation;
+      };
+      this.#upsertConversation(result.conversation);
+      return true;
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
+    }
+  }
+
+  /** Hand the lead crown to another member bot (D92 §5: every project has one). */
+  async setProjectLead(conversationId: string, botId: string): Promise<boolean> {
+    try {
+      const result = (await core.call('projects.setLead', { conversationId, botId })) as {
+        conversation: Conversation;
+      };
+      this.#upsertConversation(result.conversation);
+      // The lead badge sits on member rows; refresh them right away.
       await this.reloadMembers();
       return true;
     } catch (error) {
@@ -539,9 +573,9 @@ class ChatState {
     }
   }
 
-  async removeGroupMember(conversationId: string, botId: string): Promise<boolean> {
+  async addProjectMembers(conversationId: string, botIds: string[]): Promise<boolean> {
     try {
-      await core.call('groups.removeMember', { conversationId, botId });
+      await core.call('projects.addMembers', { conversationId, botIds });
       await this.reloadMembers();
       return true;
     } catch (error) {
@@ -550,18 +584,14 @@ class ChatState {
     }
   }
 
-  /** Silent-message click: re-dispatch the stored batch as an explicit @. */
-  async redistribute(batchId: string, botId: string): Promise<void> {
-    const chatState = this.#chat;
-    if (!chatState) return;
+  async removeProjectMember(conversationId: string, botId: string): Promise<boolean> {
     try {
-      await core.call('groups.redistribute', {
-        conversationId: chatState.conversation.id,
-        batchId,
-        botId,
-      });
+      await core.call('projects.removeMember', { conversationId, botId });
+      await this.reloadMembers();
+      return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 
@@ -570,7 +600,7 @@ class ChatState {
     this.currentId = null;
     this.replyTo = null;
     this.highlightMessageId = null;
-    // 会话消失（删除会话/删除 Bot/放弃建群）才走到这里：记忆一并清除，
+    // 会话消失（删除会话/删除 Bot/放弃建项目组）才走到这里：记忆一并清除，
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
     // 门禁置起的缺设置卡是「本次发送动作」的即时引导：离开会话即撤销
@@ -589,6 +619,9 @@ class ChatState {
     this.replyTo = null;
     this.highlightMessageId = null;
     this.#pendingSetup = null;
+    // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
+    shell.projectView = 'chat';
+    shell.projectSettingsSection = 'overview';
   }
 
   /**
@@ -759,7 +792,7 @@ class ChatState {
 
   /**
    * 卡片内完成设置后的继续：core 失败路径（failedRun.setup）→ 收起横幅并
-   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 群聊 / 图像工具）。
+   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 项目组 / 图像工具）。
    * 发送门禁路径无事可做——消息内容一直留在输入框，用户再按一次发送。
    */
   async continueAfterSetup(): Promise<void> {

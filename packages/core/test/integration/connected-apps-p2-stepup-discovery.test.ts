@@ -6,7 +6,7 @@ import {
   createTestStack,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -306,7 +306,7 @@ describe('§6.1 step-up', () => {
     //    (The runtime flagged the connection `needs_scope`; put it back so the tool is offered.)
     services.apps!.store.setStatus(connectionId, 'connected');
     const other = await makeBot(core, '旁观');
-    const group = await makeGroup(core, '项目群', [bot.id, other.id]);
+    const group = await makeProject(core, '项目群', [bot.id, other.id]);
     llm.script('mock-main', [
       ...viaTask({
         capabilities: ['app:notes'],

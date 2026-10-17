@@ -34,7 +34,7 @@ export interface MaintenanceToolDeps {
  * into `pages/`, `index.md` and `log.md` (`SCHEMA.md` and `raw/` are not
  * writable), and page deletion only under `pages/`. No gateway, no grants: the
  * directory is app-owned, the loop is background, and everything outside the
- * wiki root is refused — the loop can never touch project or workspace
+ * wiki root is refused — the loop can never touch workdir or workspace
  * (任务书 注意事项).
  */
 export function buildMaintenanceTools(deps: MaintenanceToolDeps): ToolDefinition[] {

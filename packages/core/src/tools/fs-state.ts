@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 /**
- * Staleness detection (docs/design/08-project.md "过期检测"): file tools
+ * Staleness detection (docs/design/08-workdir.md "过期检测"): file tools
  * record the content hash of every file they read; write/edit compares the
  * on-disk hash before writing and fails with STALE_FILE when the file changed
  * underneath (e.g. the user edited it in an external editor). Files never

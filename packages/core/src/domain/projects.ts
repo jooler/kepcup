@@ -1,281 +1,261 @@
 import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from 'node:fs';
-import { rmSync } from '../infra/fs-rm.js';
-import path from 'node:path';
-import {
   AppError,
+  PROJECT_GOAL_MAX_CHARS,
+  PROJECT_MEMBER_PREVIEW_MAX,
   newId,
-  PROJECT_DEFAULT_PROTECT_RULES,
-  PROJECTS_RECENT_LIMIT,
-  type Project,
-  type ProjectProtectRules,
-  type RunChange,
+  type Bot,
+  type Conversation,
 } from '@kepcup/shared';
-import { canonicalPath } from '../infra/paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import type { BotsService } from './bots.js';
+import type { ConversationsService } from './conversations.js';
 
-interface ProjectRow {
-  id: string;
-  path: string;
-  name: string;
-  protect_rules_json: string;
-  allowed_ports_json: string | null;
-  status: 'available' | 'missing';
-  created_at: number;
-  last_used_at: number;
+export interface ProjectMember {
+  bot: Bot;
+  joinedAt: number;
 }
 
-interface RunChangeRow {
-  run_id: string;
-  project_id: string;
-  conversation_id: string | null;
-  before_oid: string;
-  after_oid: string | null;
-  files_json: string | null;
-  reverted_at: number | null;
-  created_at: number;
+export interface ProjectsDeps {
+  db: SqliteDatabase;
+  clock: Clock;
+  conversations: ConversationsService;
+  bots: BotsService;
+  /** Removal cascade (workspace / grants / approvals / runs) lives in lifecycle. */
+  removeMemberCascade(conversationId: string, botId: string): Promise<void>;
+  publishConversation(conversationId: string): void;
+  /** Visible (non-internal) system message in the conversation; Bots see it in context. */
+  appendSystemEvent(input: { conversationId: string; event: string; text: string }): void;
+  /** Label of the conversation's bound workdir (for the "member joined" message), or null. */
+  workdirLabelOf(conversationId: string): string | null;
 }
 
-function parseProtectRules(raw: string): ProjectProtectRules {
-  // On-disk JSON written only through this service; fall closed to defaults.
-  try {
-    const parsed = JSON.parse(raw) as Partial<ProjectProtectRules>;
-    return {
-      denyRead: Array.isArray(parsed.denyRead) ? parsed.denyRead : [...PROJECT_DEFAULT_PROTECT_RULES.denyRead],
-      denyWrite: Array.isArray(parsed.denyWrite) ? parsed.denyWrite : [],
-    };
-  } catch {
-    return { denyRead: [...PROJECT_DEFAULT_PROTECT_RULES.denyRead], denyWrite: [] };
-  }
-}
-
-function rowToProject(row: ProjectRow): Project {
-  return {
-    id: row.id,
-    path: row.path,
-    name: row.name,
-    protectRules: parseProtectRules(row.protect_rules_json),
-    allowedPorts: row.allowed_ports_json ? (JSON.parse(row.allowed_ports_json) as Project['allowedPorts']) : null,
-    status: row.status,
-    createdAt: row.created_at,
-    lastUsedAt: row.last_used_at,
-  };
+interface MemberRow {
+  conversation_id: string;
+  bot_id: string;
+  joined_at: number;
 }
 
 /**
- * Projects (docs/design/08-project.md "实体"): local directories bound to
- * conversations. One row per realpath; the selector lists recent ones.
+ * Project conversations (D92 T1a, docs/design/41-project-team.md): one goal,
+ * a mandatory non-butler lead among the members, membership changes. Deletion
+ * reuses the conversation cascade. The butler is never a participant.
  */
 export class ProjectsService {
-  readonly #db: SqliteDatabase;
-  readonly #clock: Clock;
+  constructor(private readonly deps: ProjectsDeps) {}
 
-  constructor(deps: { db: SqliteDatabase; clock: Clock }) {
-    this.#db = deps.db;
-    this.#clock = deps.clock;
+  create(input: {
+    title: string;
+    goal?: string | null;
+    leadBotId: string;
+    memberBotIds: string[];
+  }): Conversation {
+    const title = input.title.trim();
+    if (title.length === 0) {
+      throw new AppError('INVALID_INPUT', '项目组名称不能为空');
+    }
+    this.#validateGoal(input.goal);
+    const unique = [...new Set(input.memberBotIds)];
+    if (unique.length < 2) {
+      throw new AppError('INVALID_INPUT', '项目组至少需要 2 个成员（含负责人）');
+    }
+    if (!unique.includes(input.leadBotId)) {
+      throw new AppError('INVALID_INPUT', '负责人必须是项目成员');
+    }
+    for (const botId of unique) {
+      const bot = this.deps.bots.get(botId);
+      if (!bot || bot.status !== 'active') {
+        throw new AppError('NOT_FOUND', `Bot ${botId} 不存在或已删除`);
+      }
+      if (bot.systemRole === 'butler') {
+        throw new AppError('INVALID_INPUT', '管家不能加入项目组');
+      }
+    }
+
+    const id = newId('conv');
+    const now = this.deps.clock.now();
+    const run = this.deps.db.transaction(() => {
+      this.deps.db
+        .prepare(
+          "insert into conversations (id, type, title, goal, lead_bot_id, created_at) values (?, 'project', ?, ?, ?, ?)",
+        )
+        .run(id, title, input.goal?.trim() || null, input.leadBotId, now);
+      for (const botId of unique) {
+        this.deps.db
+          .prepare(
+            'insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, ?)',
+          )
+          .run(id, botId, now);
+      }
+    });
+    run.immediate();
+    const conversation = this.deps.conversations.getOrThrow(id);
+    this.deps.publishConversation(id);
+    return conversation;
+  }
+
+  /** Replaces the lead with an existing member (a visible system event follows). */
+  setLead(conversationId: string, botId: string): Conversation {
+    const conversation = this.#requireProject(conversationId);
+    const bot = this.deps.bots.get(botId);
+    if (!bot || bot.status !== 'active') {
+      throw new AppError('NOT_FOUND', `Bot ${botId} 不存在或已删除`);
+    }
+    if (bot.systemRole === 'butler') {
+      throw new AppError('INVALID_INPUT', '管家不能加入项目组');
+    }
+    if (!this.deps.conversations.memberBotIds(conversationId).includes(botId)) {
+      throw new AppError('NOT_FOUND', '该 Bot 不是项目成员');
+    }
+    if (conversation.leadBotId === botId) return conversation;
+
+    this.deps.db
+      .prepare('update conversations set lead_bot_id = ? where id = ?')
+      .run(botId, conversationId);
+    const name = bot.profile.identity.name || bot.name;
+    this.deps.appendSystemEvent({
+      conversationId,
+      event: 'project_lead_changed',
+      text: `负责人已更换为 ${name}`,
+    });
+    const updated = this.deps.conversations.getOrThrow(conversationId);
+    this.deps.publishConversation(conversationId);
+    return updated;
+  }
+
+  update(conversationId: string, patch: { title?: string; goal?: string | null }): Conversation {
+    this.#requireProject(conversationId);
+    if (patch.title !== undefined) {
+      const title = patch.title.trim();
+      if (title.length === 0) {
+        throw new AppError('INVALID_INPUT', '项目组名称不能为空');
+      }
+      this.deps.db
+        .prepare('update conversations set title = ? where id = ?')
+        .run(title, conversationId);
+    }
+    if (patch.goal !== undefined) {
+      this.#validateGoal(patch.goal);
+      this.deps.db
+        .prepare('update conversations set goal = ? where id = ?')
+        .run(patch.goal?.trim() || null, conversationId);
+    }
+    const conversation = this.deps.conversations.getOrThrow(conversationId);
+    this.deps.publishConversation(conversationId);
+    return conversation;
+  }
+
+  addMembers(conversationId: string, botIds: string[]): ProjectMember[] {
+    this.#requireProject(conversationId);
+    const existing = new Set(this.deps.conversations.memberBotIds(conversationId));
+    const now = this.deps.clock.now();
+    const joined: string[] = [];
+    const run = this.deps.db.transaction(() => {
+      for (const botId of [...new Set(botIds)]) {
+        if (existing.has(botId)) continue;
+        const bot = this.deps.bots.get(botId);
+        if (!bot || bot.status !== 'active') {
+          throw new AppError('NOT_FOUND', `Bot ${botId} 不存在或已删除`);
+        }
+        if (bot.systemRole === 'butler') {
+          throw new AppError('INVALID_INPUT', '管家不能加入项目组');
+        }
+        this.deps.db
+          .prepare(
+            'insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, ?)',
+          )
+          .run(conversationId, botId, now);
+        joined.push(botId);
+      }
+    });
+    run.immediate();
+    // One visible system event per new member (Bots see it in context).
+    const workdirLabel = this.deps.workdirLabelOf(conversationId);
+    for (const botId of joined) {
+      const bot = this.deps.bots.get(botId);
+      const name = bot ? (bot.profile.identity.name || bot.name) : botId;
+      const text =
+        workdirLabel === null
+          ? `${name} 已加入项目组`
+          : `${name} 已加入项目组，获得工作目录「${workdirLabel}」的读写权限`;
+      this.deps.appendSystemEvent({ conversationId, event: 'project_member_joined', text });
+    }
+    const members = this.members(conversationId);
+    this.deps.publishConversation(conversationId);
+    return members;
+  }
+
+  /** Validates membership, then runs the removal cascade (03-data-model.md). */
+  async removeMember(conversationId: string, botId: string): Promise<void> {
+    const conversation = this.#requireProject(conversationId);
+    if (!this.deps.conversations.memberBotIds(conversationId).includes(botId)) {
+      throw new AppError('NOT_FOUND', '该 Bot 不是项目成员');
+    }
+    if (conversation.leadBotId === botId) {
+      throw new AppError('PROJECT_LEAD_REQUIRED', '请先更换项目负责人');
+    }
+    await this.deps.removeMemberCascade(conversationId, botId);
+    this.deps.publishConversation(conversationId);
+  }
+
+  members(conversationId: string): ProjectMember[] {
+    const rows = this.deps.db
+      .prepare(
+        // bot_id breaks join-time ties (a project's founders share one joined_at)
+        // so this order matches memberPreviews() — the avatar layout seeds on it.
+        'select m.bot_id as bot_id, m.joined_at as joined_at from conversation_members m where m.conversation_id = ? order by m.joined_at, m.bot_id',
+      )
+      .all(conversationId) as MemberRow[];
+    const members: ProjectMember[] = [];
+    for (const row of rows) {
+      const bot = this.deps.bots.get(row.bot_id);
+      if (bot) members.push({ bot, joinedAt: row.joined_at });
+    }
+    return members;
   }
 
   /**
-   * Finds the record for `dir` (realpath'd) or creates it. Status reflects
-   * the current disk state. The directory must exist and must not live
-   * inside the application data directory.
+   * Avatar previews for list views (`Conversation.memberPreviews`): the first
+   * `limit` members in join order, from one joined query — no per-member
+   * `bots.get` / profile parse on every `conversations.list`.
    */
-  ensureByPath(dir: string, dataHome: string): Project {
-    const resolved = canonicalPath(dir);
-    let stats;
-    try {
-      stats = statSync(resolved);
-    } catch {
-      throw new AppError('PROJECT_MISSING', `目录不存在或不可访问：${dir}`);
-    }
-    if (!stats.isDirectory()) {
-      throw new AppError('INVALID_INPUT', 'project 必须是一个目录');
-    }
-    if (resolved === dataHome || resolved.startsWith(dataHome.endsWith('/') ? dataHome : `${dataHome}/`)) {
-      throw new AppError('PATH_OUT_OF_SCOPE', '应用数据目录不能作为 project');
-    }
-
-    const now = this.#clock.now();
-    const existing = this.#db.prepare('select * from projects where path = ?').get(resolved) as
-      | ProjectRow
-      | undefined;
-    if (existing) {
-      if (existing.status !== 'available') {
-        this.#db.prepare("update projects set status = 'available' where id = ?").run(existing.id);
-      }
-      this.#db.prepare('update projects set last_used_at = ? where id = ?').run(now, existing.id);
-      // 名称固定为文件夹名（不再可改）：把改名功能时期留下的自定义名一并矫正。
-      if (existing.name !== path.basename(resolved)) {
-        this.#db
-          .prepare('update projects set name = ? where id = ?')
-          .run(path.basename(resolved), existing.id);
-      }
-      return this.getOrThrow(existing.id);
-    }
-    const id = newId('prj');
-    this.#db
+  memberPreviews(
+    conversationId: string,
+    limit: number = PROJECT_MEMBER_PREVIEW_MAX,
+  ): Array<{ id: string; name: string; avatar: string | null }> {
+    return this.deps.db
       .prepare(
-        'insert into projects (id, path, name, protect_rules_json, allowed_ports_json, status, created_at, last_used_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'select b.id as id, b.name as name, b.avatar as avatar from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
       )
-      .run(
-        id,
-        resolved,
-        path.basename(resolved),
-        JSON.stringify(PROJECT_DEFAULT_PROTECT_RULES),
-        null,
-        'available',
-        now,
-        now,
-      );
-    return this.getOrThrow(id);
+      .all(conversationId, limit) as Array<{ id: string; name: string; avatar: string | null }>;
   }
 
-  get(id: string): Project | null {
-    const row = this.#db.prepare('select * from projects where id = ?').get(id) as
-      | ProjectRow
-      | undefined;
-    return row ? rowToProject(row) : null;
+  leadOf(conversationId: string): string | null {
+    const row = this.deps.db
+      .prepare('select lead_bot_id as lead_bot_id from conversations where id = ?')
+      .get(conversationId) as { lead_bot_id: string | null } | undefined;
+    return row?.lead_bot_id ?? null;
   }
 
-  getOrThrow(id: string): Project {
-    const project = this.get(id);
-    if (!project) throw new AppError('NOT_FOUND', `Project ${id} does not exist`);
-    return project;
-  }
-
-  /** Most recently used projects (selector). */
-  listRecent(limit: number = PROJECTS_RECENT_LIMIT): Project[] {
-    const rows = this.#db
-      .prepare('select * from projects order by last_used_at desc limit ?')
-      .all(limit) as ProjectRow[];
-    return rows.map(rowToProject);
-  }
-
-  /** Refreshes `status` from disk; returns the updated record. */
-  refreshStatus(id: string): Project {
-    const project = this.getOrThrow(id);
-    const available = existsSync(project.path) && statSync(project.path).isDirectory();
-    if ((available && project.status !== 'available') || (!available && project.status !== 'missing')) {
-      this.#db
-        .prepare('update projects set status = ? where id = ?')
-        .run(available ? 'available' : 'missing', id);
-      return this.getOrThrow(id);
-    }
-    return project;
-  }
-
-  // 名称不可改：固定为所选文件夹的名字（ensureByPath 写入 basename）。
-  update(
-    id: string,
-    patch: { protectRules?: ProjectProtectRules; allowedPorts?: Project['allowedPorts'] },
-  ): Project {
-    this.getOrThrow(id);
-    if (patch.protectRules !== undefined) {
-      this.#db
-        .prepare('update projects set protect_rules_json = ? where id = ?')
-        .run(JSON.stringify(patch.protectRules), id);
-    }
-    if (patch.allowedPorts !== undefined) {
-      this.#db
-        .prepare('update projects set allowed_ports_json = ? where id = ?')
-        .run(patch.allowedPorts === null ? null : JSON.stringify(patch.allowedPorts), id);
-    }
-    return this.getOrThrow(id);
-  }
-
-  /** Removes the record (run_changes cascade via FK; files untouched). */
-  remove(id: string): void {
-    this.getOrThrow(id);
-    this.#db.prepare('delete from projects where id = ?').run(id);
-  }
-
-  /** Ids of conversations still bound to this project (unbind on remove). */
-  conversationsBound(id: string): string[] {
-    const rows = this.#db
-      .prepare('select id from conversations where project_id = ?')
-      .all(id) as Array<{ id: string }>;
-    return rows.map((r) => r.id);
-  }
-
-  // --- run changes ----------------------------------------------------------
-
-  recordChange(change: {
-    runId: string;
-    projectId: string;
-    conversationId: string | null;
-    beforeOid: string;
-    afterOid: string | null;
-    files: Array<{ path: string; change: 'added' | 'modified' | 'deleted' }>;
-  }): RunChange {
-    this.#db
+  ledProjectsOf(botId: string): Array<{ id: string; title: string | null }> {
+    return this.deps.db
       .prepare(
-        'insert into run_changes (run_id, project_id, conversation_id, before_oid, after_oid, files_json, created_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(run_id) do update set project_id = excluded.project_id, conversation_id = excluded.conversation_id, before_oid = excluded.before_oid, after_oid = excluded.after_oid, files_json = excluded.files_json, reverted_at = null',
+        "select id, title from conversations where type = 'project' and lead_bot_id = ? order by created_at",
       )
-      .run(
-        change.runId,
-        change.projectId,
-        change.conversationId,
-        change.beforeOid,
-        change.afterOid,
-        JSON.stringify(change.files),
-        this.#clock.now(),
-      );
-    return this.getChangeOrThrow(change.runId);
+      .all(botId) as Array<{ id: string; title: string | null }>;
   }
 
-  markReverted(runId: string): void {
-    this.#db.prepare('update run_changes set reverted_at = ? where run_id = ?').run(this.#clock.now(), runId);
+  #requireProject(conversationId: string): Conversation {
+    const conversation = this.deps.conversations.getOrThrow(conversationId);
+    if (conversation.type !== 'project') {
+      throw new AppError('INVALID_INPUT', '该会话不是项目组');
+    }
+    return conversation;
   }
 
-  getChange(runId: string): RunChange | null {
-    const row = this.#db.prepare('select * from run_changes where run_id = ?').get(runId) as
-      | RunChangeRow
-      | undefined;
-    if (!row) return null;
-    return {
-      runId: row.run_id,
-      projectId: row.project_id,
-      conversationId: row.conversation_id,
-      beforeOid: row.before_oid,
-      afterOid: row.after_oid,
-      files: row.files_json ? (JSON.parse(row.files_json) as RunChange['files']) : [],
-      revertedAt: row.reverted_at,
-      createdAt: row.created_at,
-    };
+  #validateGoal(goal: string | null | undefined): void {
+    if (goal !== undefined && goal !== null && goal.length > PROJECT_GOAL_MAX_CHARS) {
+      throw new AppError('INVALID_INPUT', `项目目标不能超过 ${PROJECT_GOAL_MAX_CHARS} 字`);
+    }
   }
-
-  getChangeOrThrow(runId: string): RunChange {
-    const change = this.getChange(runId);
-    if (!change) throw new AppError('NOT_FOUND', `没有 ${runId} 的改动记录`);
-    return change;
-  }
-
-  deleteChangesForConversation(conversationId: string): void {
-    this.#db.prepare('delete from run_changes where conversation_id = ?').run(conversationId);
-  }
-}
-
-/** Creates the parent directory of a checkpoint repo (data-dir side only). */
-export function ensureCheckpointsParent(checkpointsPath: string): void {
-  const parent = path.dirname(checkpointsPath);
-  if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
-}
-
-/** Lists top-level names of a directory (context injection helper). */
-export function topLevelEntries(dir: string, limit: number): string[] {
-  try {
-    return readdirSync(dir, { withFileTypes: true }).slice(0, limit).map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name));
-  } catch {
-    return [];
-  }
-}
-
-/** Removes a directory tree if it exists (checkpoint cleanup). */
-export function removeTree(dir: string): void {
-  rmSync(dir, { recursive: true, force: true });
 }

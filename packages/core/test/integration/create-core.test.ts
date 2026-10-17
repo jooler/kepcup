@@ -116,8 +116,11 @@ describe('createCore (integration)', () => {
     // （widget_versions.check_status / check_summary_json）；0036 = D88 Bot 资产移交
     // （bot_handovers / bot_handover_items，approvals.kind 增加 bot_handover）；
     // 0037 = D90 工作台（todos / todo_runs / memos，schedules 重建：bot_id 可空、
-    // origin 加 workbench、todo_id）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(37);
+    // origin 加 workbench、todo_id）；0038 = D92 T0-2（projects 改名 workdirs，
+    // project_id 改名 workdir_id）；0039 = D92 T1a（删除无法转换的旧群）；
+    // 0040 = D92 T1a（conversations 重建：type 'project'、lead_bot_id、goal、
+    // 删 setup_state）；0041 = D92 T1a WP2（chains 删除，episodes 协作回合）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(42);
     const versionColumns = (
       services.mainDb!.prepare('pragma table_info(widget_versions)').all() as Array<{
         name: string;
@@ -134,8 +137,10 @@ describe('createCore (integration)', () => {
     // + 0009 外部副作用台账 tool_effects（borrowings W2）
     // + 0010 tool_effects.approval_id 部分索引（borrowings W4 复查）
     // + 0011 task last_progress（单一状态通知）
-    // + 0012 task_capabilities（D91 任务声明能力）。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(12);
+    // + 0012 task_capabilities（D91 任务声明能力）
+    // + 0013 task_cwd（D92 T0-1，D75 任务执行根目录改名）
+    // + 0014 runs 的连锁绑定两列改名 episode_id/episode_hop（D92 T1a WP2）。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(14);
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

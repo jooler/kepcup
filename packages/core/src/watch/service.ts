@@ -67,7 +67,7 @@ export interface WatchServiceDeps {
   fetcher: WatchFetcher;
   /** W8: the bot's effective browser profile key (`bot:{id}` / `shared:{id}`). */
   profileKeyFor: (botId: string) => string;
-  /** Browser network rule: loopback only with a bound project (design 14 网络). */
+  /** Browser network rule: loopback only with a bound workdir (design 14 网络). */
   allowLoopback: (conversationId: string) => boolean;
   /** Wakes one turn of the bot (internal `watch_alert` event, reason `watch`). */
   deliverAlert: (input: { botId: string; conversationId: string; text: string }) => void;
@@ -392,8 +392,8 @@ export class WatchService {
   }
 
   /**
-   * D88 移交（docs/design/37 §3）：把监看交给另一个 Bot。私聊里的改到接手方的私聊，群里的
-   * 留在原群（接手方必须是成员——由移交适配器校验，这里再按 `#assertTarget` 兜底）。行就地
+   * D88 移交（docs/design/37 §3）：把监看交给另一个 Bot。私聊里的改到接手方的私聊，项目组里的
+   * 留在原项目组（接手方必须是成员——由移交适配器校验，这里再按 `#assertTarget` 兜底）。行就地
    * 改归属（同一个 id），last_hash / last_quiet_hash / 提醒序号原样保留：接手方不会把旧变化
    * 再提醒一次。换了对话时在接手方对话里补一张「已创建」卡（与行同一事务），排队中的
    * `watch_alert` 作业一并改到接手方名下。可重入：已经在目标名下 = 直接返回。CAS：与进行中
@@ -472,7 +472,7 @@ export class WatchService {
     return this.#deps.profileKeyFor(botId);
   }
 
-  /** D88 校验：在这个对话里检查网页时能否访问本机地址（项目绑定决定）。 */
+  /** D88 校验：在这个对话里检查网页时能否访问本机地址（工作目录绑定决定）。 */
   allowsLoopback(conversationId: string): boolean {
     return this.#deps.allowLoopback(conversationId);
   }
@@ -842,7 +842,7 @@ export class WatchService {
     return rows.length + this.store.deleteRemaining({ botId });
   }
 
-  /** 移出群：该 Bot 在此群的监看删除。 */
+  /** 移出项目组：该 Bot 在此项目组的监看删除。 */
   removeForBotInConversation(botId: string, conversationId: string): number {
     const rows = this.store.listForBot(botId, conversationId);
     for (const row of rows) this.#remove(row);

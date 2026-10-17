@@ -7,7 +7,7 @@ import type { SettingFieldSpec, SettingItem } from './types.js';
  * 的 `normalize` 里。
  */
 
-/** 单个字符串值的上限（群名、域名、模型 id、智能体 id……都远小于它）。 */
+/** 单个字符串值的上限（项目名、域名、模型 id、智能体 id……都远小于它）。 */
 export const SETTING_TEXT_MAX = 500;
 /** 多值字段的条数上限。 */
 export const SETTING_LIST_MAX = 200;

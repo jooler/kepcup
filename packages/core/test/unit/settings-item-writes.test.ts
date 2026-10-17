@@ -106,7 +106,7 @@ function harness(
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
-  const target = { botId: 'bot_a', conversationId: null, projectId: null };
+  const target = { botId: 'bot_a', conversationId: null, workdirId: null };
   return {
     adapters,
     target,
@@ -310,9 +310,9 @@ describe('P1 setting item writes', () => {
   });
 });
 
-describe('group and project setting reads', () => {
+describe('project and workdir setting reads', () => {
   function rig() {
-    let title = '旧群名';
+    let title = '旧项目名';
     const renamed: string[] = [];
     const members = ['bot_a', 'bot_b'];
     const settingsUpdates: string[] = [];
@@ -339,16 +339,16 @@ describe('group and project setting reads', () => {
         apply: () => ({ bot, changedItemIds: [], settle: async () => undefined }),
       },
       conversations: {
-        get: () => ({ title, type: 'group' }),
+        get: () => ({ title, type: 'project' }),
         memberBotIds: () => members,
       },
-      groups: {
-        rename: (_id, next) => {
-          renamed.push(next);
-          title = next;
+      projects: {
+        update: (_id, patch) => {
+          renamed.push(patch.title ?? '');
+          title = patch.title ?? title;
         },
       },
-      projects: {
+      workdirs: {
         get: () => ({
           protectRules: { denyRead: ['.env*'], denyWrite: ['secrets/**'] },
           allowedPorts: [[3000, 3010]],
@@ -357,31 +357,31 @@ describe('group and project setting reads', () => {
       publish: () => undefined,
     };
     const adapters = buildItemAdapters(deps);
-    const target = { botId: null, conversationId: 'conv_group', projectId: 'proj_1' };
+    const target = { botId: null, conversationId: 'conv_group', workdirId: 'proj_1' };
     return { adapters, target, renamed, members, settingsUpdates, title: () => title };
   }
 
-  it('renaming a group only changes the title', () => {
+  it('renaming a project only changes the title', () => {
     const rigged = rig();
-    const adapter = rigged.adapters(item('group.title'));
-    expect(adapter.read(item('group.title'), rigged.target).values).toEqual({ title: '旧群名' });
+    const adapter = rigged.adapters(item('project.title'));
+    expect(adapter.read(item('project.title'), rigged.target).values).toEqual({ title: '旧项目名' });
     adapter.write!(
-      item('group.title'),
-      { next: { title: '  新群名  ' }, secrets: {} },
+      item('project.title'),
+      { next: { title: '  新项目名  ' }, secrets: {} },
       rigged.target,
     );
-    expect(rigged.renamed).toEqual(['新群名']);
-    expect(rigged.title()).toBe('新群名');
+    expect(rigged.renamed).toEqual(['新项目名']);
+    expect(rigged.title()).toBe('新项目名');
     expect(rigged.members).toEqual(['bot_a', 'bot_b']);
     expect(rigged.settingsUpdates).toEqual([]);
     expect(() =>
-      adapter.write!(item('group.title'), { next: { title: '   ' }, secrets: {} }, rigged.target),
-    ).toThrow(/群名不能为空/);
+      adapter.write!(item('project.title'), { next: { title: '   ' }, secrets: {} }, rigged.target),
+    ).toThrow(/项目名称不能为空/);
   });
 
   it('a bot proposal can only add members: the proposal keeps every existing member', () => {
     const rigged = rig();
-    const entry = item('group.members');
+    const entry = item('project.members');
     const members = rigged.adapters(entry);
     const snapshot = members.read(entry, rigged.target);
     expect(members.proposal!(entry, { bots: ['bot_new'] }, snapshot)).toEqual({
@@ -393,28 +393,28 @@ describe('group and project setting reads', () => {
     });
   });
 
-  it('member and project reads do not expose a host write', () => {
+  it('member and workdir reads do not expose a host write', () => {
     const rigged = rig();
-    const members = rigged.adapters(item('group.members'));
+    const members = rigged.adapters(item('project.members'));
     expect(members.write).toBeUndefined();
-    expect(members.read(item('group.members'), rigged.target).values).toEqual({
+    expect(members.read(item('project.members'), rigged.target).values).toEqual({
       bots: ['bot_a', 'bot_b'],
     });
-    const rules = rigged.adapters(item('project.protect-rules'));
-    const ports = rigged.adapters(item('project.ports'));
+    const rules = rigged.adapters(item('workdir.protect-rules'));
+    const ports = rigged.adapters(item('workdir.ports'));
     expect(rules.write).toBeUndefined();
     expect(ports.write).toBeUndefined();
-    expect(rules.read(item('project.protect-rules'), rigged.target).values).toEqual({
+    expect(rules.read(item('workdir.protect-rules'), rigged.target).values).toEqual({
       denyRead: ['.env*'],
       denyWrite: ['secrets/**'],
     });
-    expect(ports.read(item('project.ports'), rigged.target).values).toEqual({
+    expect(ports.read(item('workdir.ports'), rigged.target).values).toEqual({
       ports: ['3000-3010'],
     });
   });
 });
 
-describe('project protect-rule redaction', () => {
+describe('workdir protect-rule redaction', () => {
   function rules(denyRead: string[], denyWrite: string[]) {
     const deps: AdapterDeps = {
       settings: {
@@ -429,7 +429,7 @@ describe('project protect-rule redaction', () => {
           throw new Error('no bot');
         },
       },
-      projects: {
+      workdirs: {
         get: () => ({
           path: '/home/alice/work/site',
           protectRules: { denyRead, denyWrite },
@@ -439,15 +439,15 @@ describe('project protect-rule redaction', () => {
       homeDir: '/home/alice',
       publish: () => undefined,
     };
-    const entry = item('project.protect-rules');
+    const entry = item('workdir.protect-rules');
     return buildItemAdapters(deps)(entry).read(entry, {
       botId: null,
       conversationId: null,
-      projectId: 'proj_1',
+      workdirId: 'proj_1',
     });
   }
 
-  it('replaces project, home and other absolute prefixes; keeps relative globs; caps length and count', () => {
+  it('replaces workdir, home and other absolute prefixes; keeps relative globs; caps length and count', () => {
     const snapshot = rules(
       [
         '/home/alice/work/site/config/prod.env',
@@ -460,7 +460,7 @@ describe('project protect-rule redaction', () => {
       Array.from({ length: 30 }, (_, index) => `secrets/${index}/**`),
     );
     expect(snapshot.values?.denyRead).toEqual([
-      '<project>/config/prod.env',
+      '<workdir>/config/prod.env',
       '~/.ssh/id_ed25519',
       '…/shadow',
       '…/token.txt',
@@ -478,7 +478,7 @@ describe('project protect-rule redaction', () => {
 });
 
 describe('connection tool policy reads', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
 
   function rig(peek: AdapterDeps['appConnections']) {
     const deps: AdapterDeps = {
@@ -585,7 +585,7 @@ describe('connection tool policy reads', () => {
 });
 
 describe('installed MCP server reads', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
 
   function rig() {
     const { adapters, settings } = harness({
@@ -724,7 +724,7 @@ describe('installed MCP server reads', () => {
 });
 
 describe('browser shared profiles', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
 
   it('reads a name-only snapshot and does not write', () => {
     const { adapters, settings } = harness();
@@ -788,7 +788,7 @@ describe('browser shared profiles', () => {
 });
 
 describe('environment toolchains read adapter', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
   const rows = [
     { id: 'env_row_installed', status: 'installed' },
     { id: 'env_row_failed', status: 'failed' },
@@ -875,7 +875,7 @@ describe('environment toolchains read adapter', () => {
 });
 
 describe('environment sandbox read adapter', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
   const leaked = {
     available: false,
     fixHint: 'sudo apt install bubblewrap socat',
@@ -932,7 +932,7 @@ describe('environment sandbox read adapter', () => {
 });
 
 describe('environment allowlist read adapter', () => {
-  const target = { botId: null, conversationId: null, projectId: null };
+  const target = { botId: null, conversationId: null, workdirId: null };
   const leaked = [
     { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true },
     { id: 'alw_off', pattern: 'curl http://evil.example', enabled: false },

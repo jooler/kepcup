@@ -9,7 +9,7 @@ import {
   createTestStack,
   fakeAgentSpawner,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   step,
@@ -308,7 +308,7 @@ describe('W3 revoke → interrupt running tasks', () => {
     const botA = await makeBot(core, '小撤');
     const botB = await makeBot(core, '小旁');
     const conv = await openDirect(core, botA.id);
-    const group = await makeGroup(core, '旁观群', [botA.id, botB.id]);
+    const group = await makeProject(core, '旁观群', [botA.id, botB.id]);
     const interrupted: Array<{ count: number; scope: string }> = [];
     core.onEvent('tasks.interrupted', (payload) => interrupted.push(payload));
 
@@ -745,7 +745,7 @@ describe('W8 browser profile switch → interrupt (scope browser_profile)', () =
     const botA = await makeBot(core, '小资');
     const botB = await makeBot(core, '小邻');
     const conv = await openDirect(core, botA.id);
-    const group = await makeGroup(core, '资料群', [botA.id, botB.id]);
+    const group = await makeProject(core, '资料群', [botA.id, botB.id]);
     const interrupted: Array<{ count: number; reason: string; scope: string }> = [];
     core.onEvent('tasks.interrupted', (payload) => interrupted.push(payload));
 

@@ -5,10 +5,11 @@ import {
   conversationSchema,
   delegationSchema,
   envInstallSchema,
+  episodeSchema,
   environmentProgressPayloadSchema,
   grantSchema,
   messageSchema,
-  projectSchema,
+  workdirSchema,
   runSchema,
   taskViewSchema,
   unattendedStateSchema,
@@ -22,6 +23,7 @@ import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
 import { mailAccountSchema } from '../domain/mail.js';
 import { handoverViewSchema } from '../domain/handover.js';
+import { wikiOwnerSchema } from '../domain/wiki.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -47,6 +49,12 @@ export const conversationUpdatedPayloadSchema = z.object({
 export const conversationDeletedPayloadSchema = z.object({ id: z.string() });
 
 export const runStatusPayloadSchema = z.object({ run: runSchema });
+
+/**
+ * 协作回合状态变化（D92 T1a）：回合新建 / 计数推进 / 熔断暂停 / 继续 / 停止
+ * 时推送；协作暂停卡据此显示 hops 与 pending，并随 episodes.resume / stop 刷新。
+ */
+export const episodeUpdatedPayloadSchema = z.object({ episode: episodeSchema });
 
 export const runProgressPayloadSchema = z.object({
   runId: z.string(),
@@ -80,12 +88,12 @@ export const unattendedChangedPayloadSchema = z.object({
 
 // --- P04 events (docs/dev/phases/P04-project.md) -----------------------------
 
-export const projectUpdatedPayloadSchema = z.object({ project: projectSchema });
-export const projectRemovedPayloadSchema = z.object({ id: z.string() });
+export const workdirUpdatedPayloadSchema = z.object({ workdir: workdirSchema });
+export const workdirRemovedPayloadSchema = z.object({ id: z.string() });
 
 /**
  * A run started waiting for the write lease. `holder` names the bot+run that
- * currently holds it, so the interface can show "等待 X 完成对项目的修改"
+ * currently holds it, so the interface can show "等待 X 完成对工作目录的修改"
  * with a force-revoke button.
  */
 export const leaseWaitingPayloadSchema = z.object({
@@ -103,14 +111,14 @@ export const leaseWaitingPayloadSchema = z.object({
 // --- P05 events (docs/dev/phases/P05-group-chat.md "事件") --------------------
 
 /**
- * Group-conversation turn state: triaging (who should answer?), running (the
- * ordered responses), or idle (nothing in flight for the group right now).
+ * Project-conversation turn state: routing (who should answer?), running (the
+ * ordered responses), or idle (nothing in flight for the project right now).
  */
-export const groupTurnPayloadSchema = z.object({
+export const projectTurnPayloadSchema = z.object({
   conversationId: z.string(),
-  /** The user batch driving the current turn; null while triaging. */
+  /** The user batch driving the current turn; null while routing. */
   batchId: z.string().nullable(),
-  phase: z.enum(['triaging', 'running', 'idle']),
+  phase: z.enum(['routing', 'running', 'idle']),
   currentBotId: z.string().nullable(),
   /** Bot ids still queued behind the current one. */
   queue: z.array(z.string()),
@@ -182,6 +190,9 @@ export const memosChangedPayloadSchema = z.object({ memoId: z.string() });
  * tells the user the material has been read (docs 任务 3).
  */
 export const wikiIngestedPayloadSchema = z.object({
+  /** The wiki that received the material (D92 T1b WP9). */
+  owner: wikiOwnerSchema,
+  /** The executor that ran the ingest (the submitting member for a project wiki). */
   botId: z.string(),
   /** Conversation that requested the ingest; null when it had none. */
   conversationId: z.string().nullable(),
@@ -192,10 +203,11 @@ export const wikiIngestedPayloadSchema = z.object({
 });
 
 /**
- * The bot's wiki content changed in any way (BR-P09-012): ingest completion,
- * dedupe skip or lint commit. The renderer refreshes the open Wiki tab on it.
+ * One wiki's content changed in any way (BR-P09-012): ingest completion,
+ * dedupe skip, lint commit or source removal. The renderer refreshes the open
+ * Wiki tab on it (filtered to the owner it is showing).
  */
-export const wikiChangedPayloadSchema = z.object({ botId: z.string() });
+export const wikiChangedPayloadSchema = z.object({ owner: wikiOwnerSchema });
 
 /** MCP server 连接状态（D65）：设置页状态展示与失败告警。 */
 export const mcpServerStatusPayloadSchema = z.object({
@@ -348,6 +360,7 @@ export const rpcEventSchemas = {
   'conversation.updated': conversationUpdatedPayloadSchema,
   'conversation.deleted': conversationDeletedPayloadSchema,
   'run.status': runStatusPayloadSchema,
+  'episode.updated': episodeUpdatedPayloadSchema,
   'run.progress': runProgressPayloadSchema,
   'bot.updated': botUpdatedPayloadSchema,
   'bot.deleted': botDeletedPayloadSchema,
@@ -355,10 +368,10 @@ export const rpcEventSchemas = {
   'approval.resolved': approvalResolvedPayloadSchema,
   'grant.changed': grantChangedPayloadSchema,
   'unattended.changed': unattendedChangedPayloadSchema,
-  'project.updated': projectUpdatedPayloadSchema,
-  'project.removed': projectRemovedPayloadSchema,
+  'workdir.updated': workdirUpdatedPayloadSchema,
+  'workdir.removed': workdirRemovedPayloadSchema,
   'lease.waiting': leaseWaitingPayloadSchema,
-  'group.turn': groupTurnPayloadSchema,
+  'project.turn': projectTurnPayloadSchema,
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,

@@ -126,7 +126,9 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await expect(background).toBeVisible();
   await background.selectOption('off');
   await expect(page.locator('[data-testid="background-tasks-skill-authoring"]')).toHaveCount(0);
-  await expect(page.locator('[data-testid="background-tasks-group-mention-only"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="background-tasks-project-mention-only"]')).toHaveCount(
+    0,
+  );
   await closeSettings(page);
   await openSettings(page, 'agents');
   await expect(page.locator('[data-testid="background-tasks-agent-select"]')).toHaveValue('off');

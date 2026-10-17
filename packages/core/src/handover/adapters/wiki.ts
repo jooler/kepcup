@@ -290,7 +290,10 @@ export class WikiAdapter implements HandoverAdapter {
         results.set(key, { status: 'done', result });
       }
     }
-    if (outcome.copied.length > 0) this.#deps.publish('wiki_changed', { botId: ctx.toBot.id });
+    if (outcome.copied.length > 0) {
+      // D92 T1b WP9: the payload is owner-shaped (the renderer filters by owner).
+      this.#deps.publish('wiki_changed', { owner: { kind: 'bot', id: ctx.toBot.id } });
+    }
     return results;
   }
 

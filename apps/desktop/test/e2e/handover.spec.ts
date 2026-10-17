@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { botProfile, startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { openConversationByName, rpc } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * D88 移交卡（docs/design/37 §2.2，todo/bot-handover.md §3.6 / §3.7）：真实 core 栈里
@@ -56,7 +57,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 test('handover card: uncheck one item, confirm, progress and results render', async () => {
@@ -375,7 +376,9 @@ test('handover P2: wiki copied in the background, then the retire button deletes
     await expect(progress.locator('[data-testid="handover-item-copied"]')).toHaveText(
       '已复制 2 页',
     );
-    const tree = (await rpc(page, 'wiki.tree', { botId: beta.bot.id })) as {
+    const tree = (await rpc(page, 'wiki.tree', {
+      owner: { kind: 'bot', id: beta.bot.id },
+    })) as {
       pages: Array<{ path: string }>;
     };
     expect(tree.pages.map((entry) => entry.path).sort()).toEqual([
@@ -391,10 +394,14 @@ test('handover P2: wiki copied in the background, then the retire button deletes
     await expect(dialog).toBeVisible();
     await dialog.locator('[data-testid="handover-retire-confirm"]').click();
     await expect
-      .poll(async () => {
-        const { bots } = (await rpc(page, 'bots.list')) as { bots: Array<{ id: string }> };
-        return bots.some((bot) => bot.id === alpha.bot.id);
-      })
+      .poll(
+        async () => {
+          const { bots } = (await rpc(page, 'bots.list')) as { bots: Array<{ id: string }> };
+          return bots.some((bot) => bot.id === alpha.bot.id);
+        },
+        // 退役（删除）RPC 的级联在 windows 上慢（runs/jobs/wiki/browser wipe）。
+        { timeout: 60_000 },
+      )
       .toBe(false);
   } finally {
     await closeSession(session);

@@ -21,11 +21,10 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
-  import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
-  import GroupInfo from './GroupInfo.svelte';
+  import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
-  import WikiTab from './WikiTab.svelte';
+  import WikiBrowser from '../wiki/WikiBrowser.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WidgetsTab from './WidgetsTab.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
@@ -37,7 +36,6 @@
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
 
   const conversation = $derived(chat.current?.conversation ?? null);
-  const isGroup = $derived(conversation?.type === 'group');
   const bot = $derived(chat.current?.conversation.bot ?? null);
   browserPages.start();
   // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。
@@ -107,8 +105,23 @@
 
   /** 「其它」分组：移除 Bot（删除全部数据，历史保留为只读）。 */
   let removeOpen = $state(false);
-  let removePreview = $state({ conversations: 0, messages: 0 });
+  let removePreview = $state({
+    conversations: 0,
+    messages: 0,
+    ledProjects: [] as Array<{ id: string; title: string | null }>,
+  });
   let removing = $state(false);
+
+  /**
+   * The bot leads projects: deletion is blocked (the backend would reject with
+   * PROJECT_LEAD_REQUIRED). Jump to that project's members section so the
+   * user can hand the lead over first.
+   */
+  async function goReplaceLead(conversationId: string): Promise<void> {
+    removeOpen = false;
+    await chat.select(conversationId);
+    shell.openProjectSettings('members');
+  }
 
   /**
    * 最近一次保存到 core 的完整 profile。头像 / 名称 / 简介的点按直编以它为
@@ -297,7 +310,7 @@
   >
     <div class="app-no-drag flex items-center gap-1">
       <!-- P11 任务 5: 查看该 Bot 在当前对话中的浏览器页面（直聊才有单一 Bot）。 -->
-      {#if !isGroup && bot?.status === 'active' && conversation && browserOpen}
+      {#if bot?.status === 'active' && conversation && browserOpen}
         <Button
           variant="outline"
           size="sm"
@@ -324,9 +337,7 @@
     </div>
   </header>
 
-  {#if isGroup}
-    <GroupInfo conversationId={conversation!.id} />
-  {:else if !bot}
+  {#if !bot}
     <div class="flex flex-1 items-center justify-center p-6">
       <p class="text-sm text-muted-foreground">{t('rightPanel.placeholder')}</p>
     </div>
@@ -465,12 +476,12 @@
         data-testid="profile-tab"
       >
         <div class="space-y-4">
-          <!-- 项目目录（P04）：绑定在对话上，配置 tab 内手动选择/切换；
+          <!-- 工作目录（P04）：绑定在对话上，配置 tab 内手动选择/切换；
                执行中切换由选择器内部禁用。 -->
           {#if conversation}
-            <ProjectSelector
+            <WorkdirSelector
               conversationId={conversation.id}
-              projectId={conversation.projectId}
+              workdirId={conversation.workdirId}
               disabled={conversation.readOnly}
             />
           {/if}
@@ -582,7 +593,7 @@
         hidden={activeTab !== 'wiki'}
       >
         {#if bot}
-          <WikiTab botId={bot.id} active={activeTab === 'wiki'} />
+          <WikiBrowser owner={{ kind: 'bot', id: bot.id }} active={activeTab === 'wiki'} />
         {/if}
       </div>
       <div
@@ -656,6 +667,32 @@
         {t('contacts.deleteAgentNote')}
       </p>
     {/if}
+    {#if removePreview.ledProjects.length > 0}
+      <!-- Leading projects block the delete: no confirm button, offer the
+           "go replace" jump into each project's members section instead. -->
+      <div class="space-y-1.5" data-testid="bot-remove-lead-blocked">
+        <p class="text-sm text-muted-foreground">
+          {t('contacts.deleteBlockedLead', { count: removePreview.ledProjects.length })}
+        </p>
+        <ul class="space-y-1.5">
+          {#each removePreview.ledProjects as project (project.id)}
+            <li class="flex items-center gap-2 rounded-md border p-2 text-sm">
+              <span class="min-w-0 flex-1 truncate">
+                {project.title ?? t('project.untitled')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onclick={() => void goReplaceLead(project.id)}
+                data-testid={`bot-remove-go-replace-${project.id}`}
+              >
+                {t('contacts.deleteGoReplace')}
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
     <DialogFooter>
       <Button
         variant="outline"
@@ -664,14 +701,16 @@
       >
         {t('contacts.cancel')}
       </Button>
-      <Button
-        variant="destructive"
-        onclick={confirmRemove}
-        disabled={removing}
-        data-testid="bot-remove-confirm"
-      >
-        {t('contacts.deleteConfirm')}
-      </Button>
+      {#if removePreview.ledProjects.length === 0}
+        <Button
+          variant="destructive"
+          onclick={confirmRemove}
+          disabled={removing}
+          data-testid="bot-remove-confirm"
+        >
+          {t('contacts.deleteConfirm')}
+        </Button>
+      {/if}
     </DialogFooter>
   </DialogContent>
 </Dialog>

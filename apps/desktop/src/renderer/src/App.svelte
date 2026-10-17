@@ -8,7 +8,8 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
-  import { projects } from '$lib/stores/projects.svelte';
+  import { episodes } from '$lib/stores/episodes.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
@@ -135,13 +136,15 @@
     contacts.start();
     settingsStore.start();
     permissions.start();
-    projects.start();
+    // 协作回合（暂停卡的 episode.updated 事件接线）。
+    episodes.start();
+    workdirs.start();
     environmentStore.start();
     void bootstrap();
   });
 
   /**
-   * 初始加载 + 启动恢复：优先回到上次查看的会话（私聊或群聊，localStorage
+   * 初始加载 + 启动恢复：优先回到上次查看的会话（私聊或项目组，localStorage
    * 记忆，见 last-conversation-persist）；没有记忆/记忆失效则按最近消息挑
    * （从没聊过则打开第一个 Bot，初始化向导创建的即第一个）；一个 Bot 都
    * 没有（跳过了向导）时停在空态、右栏默认收起、左栏「+」面板自动下拉
@@ -154,7 +157,7 @@
       settingsStore.refresh(),
       permissions.refreshUnattended(),
       permissions.refreshSandbox(),
-      projects.refresh(),
+      workdirs.refresh(),
       stickies.load(),
     ]);
     const restored = await chat.restoreLast();

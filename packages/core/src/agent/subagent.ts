@@ -145,15 +145,15 @@ const COMPRESSOR_SYSTEM_PROMPT = [
 export function buildSubagentSystemPrompt(input: {
   botName: string;
   workspacePath: string | null;
-  projectPath: string | null;
+  workdirPath: string | null;
   timeZone: string;
   now: Date;
 }): string {
   const workspaceLines: string[] = [];
   if (input.workspacePath !== null)
     workspaceLines.push(`workspace（可读写）：${input.workspacePath}`);
-  if (input.projectPath !== null) {
-    workspaceLines.push(`当前 project（只读研究，命令以它为工作目录）：${input.projectPath}`);
+  if (input.workdirPath !== null) {
+    workspaceLines.push(`当前 workdir（只读研究，命令以它为工作目录）：${input.workdirPath}`);
   }
   return [
     `你是 Bot「${input.botName}」的研究子代理，正在替它完成一次委派任务。你不与用户对话：不发送消息、不进入聊天记录，只有你的结论会被转达给主 Bot。当前时间 ${input.now.toISOString().replace('T', ' ').slice(0, 19)}（${input.timeZone}）。`,
@@ -621,7 +621,8 @@ async function runSubagent(
     conversationId: subRun.conversationId,
     loopType: 'subagent',
   };
-  // 设计（D66）：chain token 预算不含子 run 用量 —— 子 run 不继承 chainId。
+  // 设计（D66 / D92 T1a）：子 run 不绑定协作回合 —— 它是父 run 内部的嵌套，
+  // 不会触发 @，回合计数（现熔断）也只数 Bot 发起的可见触发。
 
   const update = (patch: Parameters<RunsService['update']>[1]) => {
     try {

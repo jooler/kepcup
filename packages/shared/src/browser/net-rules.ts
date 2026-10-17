@@ -1,7 +1,7 @@
 /**
  * Browser network rules (docs/dev/phases/P11-browser.md 任务 2, docs/design/
  * 14-models-and-browser.md 网络): public internet is reachable; loopback is
- * only reachable when the page's conversation has a bound project (local dev
+ * only reachable when the page's conversation has a bound workdir (local dev
  * servers); every other private, link-local and cloud-metadata address is
  * blocked. The browser does not go through the sandbox, so these rules are an
  * independent implementation (NOT srt) — the classification mirrors the always-
@@ -28,7 +28,7 @@ export type AddressClass =
   | 'unrecognized';
 
 export interface BrowserNetworkContext {
-  /** True when the page's conversation has a bound project (local ports). */
+  /** True when the page's conversation has a bound workdir (local ports). */
   allowLoopback: boolean;
 }
 
@@ -216,7 +216,7 @@ const REASON_TEXT: Record<NonNullable<RequestDecision['reason']>, string> = {
   'private-address': '内网地址',
   'metadata-address': '云服务器元数据地址',
   'link-local-address': '链路本地地址',
-  'loopback-not-allowed': '本机地址（当前对话未绑定 project）',
+  'loopback-not-allowed': '本机地址（当前对话未绑定 workdir）',
   'unresolvable-host': '无法解析的主机',
   'unsupported-scheme': '不支持的协议',
 };

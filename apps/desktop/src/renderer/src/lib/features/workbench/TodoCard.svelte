@@ -121,19 +121,19 @@
         {#if todo.assignee !== null}
           <MemberAvatar
             kind={todo.assignee.kind}
-            id={todo.assignee.kind === 'bot' ? todo.assignee.botId : todo.assignee.conversationId}
+            id={todo.assignee.kind === 'bot' ? todo.assignee.botId : todo.assignee.projectId}
             name={todo.assigneeName ?? ''}
             class="size-4"
           />
           {todo.assigneeName ?? ''}
-          {#if todo.assignee.kind === 'group' && todo.leadBotName !== null}
+          {#if todo.assignee.kind === 'project' && todo.leadBotName !== null}
             · {t('workbench.card.leadBot', { name: todo.leadBotName })}
           {/if}
         {:else}
           {t('workbench.card.unassigned')}
         {/if}
       </span>
-    {:else if todo.assignee?.kind === 'group' && todo.leadBotName !== null}
+    {:else if todo.assignee?.kind === 'project' && todo.leadBotName !== null}
       <span data-testid="todo-card-assignee">
         {t('workbench.card.leadBot', { name: todo.leadBotName })}
       </span>

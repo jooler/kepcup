@@ -55,7 +55,7 @@ export async function revealSettingsAnchor(options: {
   return found;
 }
 
-/** 对话框里的锚点落点（群设置 / 项目设置）：最小结构面，便于单测。 */
+/** 对话框里的锚点落点（群设置 / 工作目录设置）：最小结构面，便于单测。 */
 export interface AnchorFocusRoot {
   querySelector(selector: string): AnchorFocusTarget | null;
 }

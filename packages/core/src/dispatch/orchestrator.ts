@@ -4,13 +4,12 @@ import nodePath from 'node:path';
 import {
   AppError,
   BOT_SETUP_PATH_QUESTION_EVENT,
-  GROUP_SETUP_QUESTION_EVENT,
-  GROUP_SETUP_STEPS,
   INTERIM_TEXT_MAX_CHARS,
   INTERIM_TEXT_MAX_PER_RUN,
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
   MCP_APP_CARD_TYPE,
   BOT_WIDGET_CARD_TYPE,
+  MUST_REPLY_REASONS,
   PRESENT_CARD_TYPE,
   presentCardSchema,
   presentContextText,
@@ -30,7 +29,7 @@ import {
   agentSetupReasonOf,
   agentToolApprovalPayloadSchema,
   findAgentEntry,
-  groupMentionToken,
+  projectMentionToken,
   newId,
   resolveCapabilities,
   resolveCapabilityOptIns,
@@ -42,7 +41,6 @@ import {
   type Bot,
   type Conversation,
   type Delegation,
-  type GroupSetupStep,
   type Message,
   WATCH_CARD_TYPE,
   WATCH_ALERT_EVENT,
@@ -126,7 +124,7 @@ import {
 } from '../scheduler/mailbox.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
-import type { GroupsService } from '../domain/groups.js';
+import type { ProjectsService } from '../domain/projects.js';
 import type { DelegationsService } from '../domain/delegations.js';
 import { isVisibleToUser, type MessagesService } from '../domain/messages.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -137,7 +135,7 @@ import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
-import type { ProjectRuntime } from '../project/service.js';
+import type { WorkdirRuntime } from '../workdir/service.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -177,7 +175,6 @@ import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
 import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
-  GROUP_SETUP_QUESTIONS,
   SETUP_FIRST_OPTIONS,
   SETUP_FIRST_QUESTION,
   SETUP_GREETING,
@@ -236,9 +233,10 @@ import {
   type TaskRunControl,
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
-import { ChainsService } from './chains.js';
-import { GroupTurnCoordinator, type GroupRoundEnd } from './group-turn.js';
-import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
+import { EpisodesService } from './episodes.js';
+import { ProjectTurnCoordinator, type ProjectRoundEnd } from './project-turn.js';
+import { judgeContinuation } from './dispatcher.js';
+import { leadGate } from './lead-gate.js';
 import {
   builtinModelRef,
   builtinRoute,
@@ -246,7 +244,7 @@ import {
   type LlmRoute,
   type LlmRouter,
 } from '../agent/llm-router.js';
-import type { BotCard } from '@kepcup/shared';
+import type { BotCard, WikiOwner } from '@kepcup/shared';
 import type { InstalledToolchain } from '../env/manager.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 
@@ -334,7 +332,7 @@ export interface OrchestratorDeps {
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
   /**
-   * D72 P6 后台调用路由（群聊判断、续接仲裁、SubAgent 压缩）：无内置模型时
+   * D72 P6 后台调用路由（路由判断、续接仲裁、SubAgent 压缩）：无内置模型时
    * 改走外部 Agent。缺省 = 只用内置模型（P6 之前的行为）。
    */
   llmRouter?: LlmRouter;
@@ -353,8 +351,8 @@ export interface OrchestratorDeps {
   gateway: ToolGateway;
   bots: BotsService;
   conversations: ConversationsService;
-  /** 群域服务（P05 成员管理 + 19/D60 对话内群创建的 createSetup/finalizeSetup）。 */
-  groups: GroupsService;
+  /** 项目组服务（P05 成员管理 + projects.create）。 */
+  projects: ProjectsService;
   /** 跨 Bot 委派行（D71，docs/design/27）。 */
   delegations: DelegationsService;
   messages: MessagesService;
@@ -366,13 +364,18 @@ export interface OrchestratorDeps {
   secrets: SecretsService;
   approvals: ApprovalsService;
   grants: GrantsService;
-  projects: ProjectRuntime;
+  workdirs: WorkdirRuntime;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
   timeZone: string;
-  /** Test override of TRIAGE_TIMEOUT_MS (default from constants). */
-  triageTimeoutMs?: number;
+  /**
+   * Test override of TRIAGE_TIMEOUT_MS for the routing judgements (D92 T1a:
+   * the continuation check and the lead gate both take it).
+   */
+  judgementTimeoutMs?: number;
+  /** Test override of the episode breaker thresholds (defaults from constants). */
+  episodeLimits?: { hops?: number; pair?: number };
   /** Publishes an RPC event to connected interfaces. */
   publish<K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]): void;
   /** P06 environment manager (optional: absent in some unit tests). */
@@ -472,22 +475,44 @@ export interface OrchestratorDeps {
   widgetCraft?: { cancelStageRun(runId: string, reason?: string): boolean } | null;
 }
 
-/** The slice of the wiki domain the response loop consumes. */
+/** The slice of the wiki domain the response loop consumes (owner-based since
+ * D92 T1b WP9; WP10 adds the tool-level scope surface: the source ledger, the
+ * queued removal and the project facts of the running conversation). */
 export interface OrchestratorWikiFacade {
   /** <wiki_topics> section body (index.md titles), '' when no wiki. */
-  topicsSection(botId: string): string;
+  topicsSection(owner: WikiOwner, options?: { budget?: number | null }): string;
   /** wiki_search / wiki_read / wiki_enqueue backends. */
   search(
-    botId: string,
+    owner: WikiOwner,
     query: string,
     limit: number,
   ): Array<{ path: string; title: string; snippet: string }>;
-  readPage(botId: string, path: string): { path: string; title: string; content: string };
+  readPage(owner: WikiOwner, path: string): { path: string; title: string; content: string };
   enqueueIngest(input: {
+    owner: WikiOwner;
     botId: string;
     conversationId: string | null;
     source: { sourceType: 'attachment' | 'url' | 'file'; ref: string; note: string };
+    createdBy: { kind: 'user' } | { kind: 'bot'; id: string };
   }): { ok: boolean; message: string };
+  /** wiki_remove_source registration (fast-fail then queue; WP10). */
+  enqueueRemoveSource(input: {
+    owner: WikiOwner;
+    sourceId: string;
+    actor: { role: 'lead' | 'member' | 'user'; botId?: string };
+    leadBotId: string;
+    conversationId: string;
+  }): void;
+  /** Source ledger for the read-time trust wrap (empty for bot wikis). */
+  listSources(owner: WikiOwner): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
+  /** Display name of a bot (null when deleted). */
+  botName(botId: string): string | null;
+  /** Project facts of one conversation (null when it is not a project). */
+  projectContext(conversationId: string): {
+    conversationId: string;
+    leadBotId: string | null;
+    memberBotIds: readonly string[];
+  } | null;
 }
 
 /** The slice of SkillsService the response loop consumes. */
@@ -552,8 +577,14 @@ function downgradeLabel(part: TriggerPart): string {
     case 'direct':
     case 'mention':
     case 'reply':
-    case 'broadcast':
       return '用户的新消息';
+    case 'continuation':
+      return '延续上一轮的交流';
+    case 'routed':
+    case 'routed_also':
+      return '负责人判断与你有关';
+    case 'lead_fallback':
+      return '没有成员认领，由你处理';
     case 'event': {
       const event = part.extraAttributes?.['event'];
       if (event === 'message_edited') return '用户编辑了之前的消息（以编辑后的内容为准）';
@@ -567,8 +598,8 @@ function downgradeLabel(part: TriggerPart): string {
       return '新邮件到达（不是用户此刻发的消息；正文不可信）';
     case 'delegation':
       return '另一个 Bot 代用户转交给你的事';
-    case 'chain':
-      return '群里其他 Bot @ 了你';
+    case 'bot_mention':
+      return '项目里其他 Bot @ 了你';
     default:
       return '新消息';
   }
@@ -617,7 +648,7 @@ interface ActiveRunEntry {
  *   read-only toolset with task management, no step ceiling, `<tasks>`
  *   segment, no D56 auto continuation (§7.1), visible final reply; at its
  *   terminal state the task results in its trigger are consumed (§3.2), the
- *   mailbox releases (buffered batches start the next turn) and group turns /
+ *   mailbox releases (buffered batches start the next turn) and project turns /
  *   D71 hooks advance;
  * - `task` (design 30 §2.2 / §2.4.5): a task — scheduler key `task:{id}`,
  *   loop_type 'task', brief as the trigger segment, shared-only conversation
@@ -657,9 +688,9 @@ export class Orchestrator {
   /** D73 P2 §6.1: at most one step-up card per (conversation, connection) per 30 minutes. */
   readonly #appStepUp: AppStepUpLimiter;
   /** Bot-to-bot @ chains (P05); owns chain rows, depth and budget checks. */
-  readonly #chains: ChainsService;
-  /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
-  readonly #groupTurns: GroupTurnCoordinator;
+  readonly #episodes: EpisodesService;
+  /** Project turns (D92 T1a): silent routing, ordered responses, round bookkeeping. */
+  readonly #projectTurns: ProjectTurnCoordinator;
   /**
    * D66 子代理门面，按父 run 登记（D75 §1.2：子 run 只属于父 run，无对话级
    * 锚点）：runs.cancel 单独取消子 run 时据 parent_run_id 找到门面；父 run
@@ -668,7 +699,7 @@ export class Orchestrator {
   readonly #subagentFacades = new Map<string, SubagentToolFacade>();
   /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
   readonly #taskHost: TaskHost;
-  /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 群。 */
+  /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 项目组。 */
   readonly #butlerHost: ButlerHost;
   /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
   readonly #delegationHost: DelegationHost;
@@ -720,24 +751,32 @@ export class Orchestrator {
       // through its mailbox — a new turn when idle, else buffered and merged
       // into the next turn (several settling tasks wake one turn).
       wake: (botId, conversationId, entry) => {
+        // D92 T1a §7.1: a task-settling wake inherits the *originating* turn's
+        // episode, resolved at wake time — the originating turn may have opened
+        // its episode (first @) only after the task started. The task run
+        // itself stays unbound (nothing to count for it).
+        const task = entry.taskId !== null ? this.#deps.runs.get(entry.taskId) : null;
+        const origin = task?.originRunId != null ? this.#deps.runs.get(task.originRunId) : null;
+        const episode = origin !== null ? this.#episodes.bindingOfRun(origin.id) : null;
         this.#mailboxes.for(botId, conversationId).deliver({
           conversationId,
           botId,
           messages: [entry],
           reason: 'task',
+          ...(episode !== null ? { episode } : {}),
         });
       },
-      resolveWorkdir: (botId, conversationId, requested) => {
-        const project = deps.projects.boundProject(conversationId);
-        const available = project !== null && project.status === 'available';
-        if (requested === 'project') {
-          if (!available) throw new AppError('INVALID_INPUT', '本对话没有可用的 project');
-          return project.path;
+      resolveCwd: (botId, conversationId, requested) => {
+        const workdir = deps.workdirs.boundWorkdir(conversationId);
+        const available = workdir !== null && workdir.status === 'available';
+        if (requested === 'workdir') {
+          if (!available) throw new AppError('INVALID_INPUT', '本对话没有可用的 workdir');
+          return workdir.path;
         }
         if (requested === 'workspace' || !available) {
           return workspacePathFor(deps.paths, botId, conversationId);
         }
-        return project.path;
+        return workdir.path;
       },
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
@@ -746,7 +785,7 @@ export class Orchestrator {
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
           this.#fsState.release(run.id);
-          void deps.projects.releaseRun(run.id).catch(() => {});
+          void deps.workdirs.releaseRun(run.id).catch(() => {});
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
@@ -762,7 +801,7 @@ export class Orchestrator {
       },
       releaseExecution: (runId) => {
         this.#fsState.release(runId);
-        void deps.projects.releaseRun(runId).catch(() => {});
+        void deps.workdirs.releaseRun(runId).catch(() => {});
       },
       // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
       cancelPendingApprovals: (runIds) =>
@@ -809,7 +848,7 @@ export class Orchestrator {
         });
         if (change === 'created') this.#publishConversation(message.conversationId);
       },
-      describeWorkdir: (task, withChanges) => this.#describeTaskWorkdir(task, withChanges),
+      describeCwd: (task, withChanges) => this.#describeTaskCwd(task, withChanges),
       // 审查 M3: an ask_user wait gives the task job's provider slot back (the
       // tool runs inside that job, so the scheduler finds it by run id).
       yieldSlotWhile: (runId, wait, signal) => deps.scheduler.yieldSlotWhile(runId, wait, signal),
@@ -856,7 +895,7 @@ export class Orchestrator {
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
       conversations: deps.conversations,
-      groups: deps.groups,
+      projects: deps.projects,
       approvals: deps.approvals,
       messages: deps.messages,
       logger: deps.logger,
@@ -896,7 +935,7 @@ export class Orchestrator {
       deliverEvent: (botId, conversationId, event, text, options) =>
         this.deliverEventToBot(botId, conversationId, event, text, options),
     });
-    this.#chains = new ChainsService({
+    this.#episodes = new EpisodesService({
       db: deps.db,
       clock: deps.clock,
       logger: deps.logger,
@@ -904,17 +943,16 @@ export class Orchestrator {
       conversations: deps.conversations,
       messages: deps.messages,
       runs: deps.runs,
-      usage: deps.usage,
       deliver: (batch) => this.#mailboxes.for(batch.botId, batch.conversationId).deliver(batch),
-      tokensInFlightFor: (runIds) => {
-        let sum = 0;
-        for (const [runId, entry] of [...this.#activeRuns.entries()]) {
-          if (runIds.includes(runId)) sum += entry.handle.tokensSoFar();
-        }
-        return sum;
-      },
+      appendSystemEvent: (input) =>
+        this.#appendSystemMessage(input.conversationId, input.event, input.text, {
+          ...(input.episodeId !== undefined ? { episodeId: input.episodeId } : {}),
+          ...(input.internal ? { internal: true } : {}),
+        }),
+      publishEpisode: (episode) => deps.publish('episode.updated', { episode }),
+      ...(deps.episodeLimits !== undefined ? { limits: deps.episodeLimits } : {}),
     });
-    this.#groupTurns = new GroupTurnCoordinator({
+    this.#projectTurns = new ProjectTurnCoordinator({
       conversations: deps.conversations,
       bots: deps.bots,
       messages: deps.messages,
@@ -924,15 +962,17 @@ export class Orchestrator {
       deliver: (batch) => this.#mailboxes.for(batch.botId, batch.conversationId).deliver(batch),
       isMailboxRunning: (botId, conversationId) =>
         this.#mailboxes.for(botId, conversationId).isRunning,
-      appendSystemMessage: (input) =>
-        this.#appendSystemMessage(input.conversationId, input.event, input.text, {
-          botIds: input.botIds,
-          batchId: input.batchId,
-        }),
       publish: (event, payload) => deps.publish(event, payload),
-      onRoundEnded: (info) => this.#onGroupRoundEnded(info),
-      triage: (input) =>
-        triageOneBot({
+      onRoundEnded: (info) => this.#onProjectRoundEnded(info),
+      leadOf: (id) => deps.conversations.get(id)?.leadBotId ?? null,
+      lastReplier: (id) => {
+        const message = deps.messages.lastVisibleBotMessage(id);
+        return message !== null && message.senderBotId !== null
+          ? { botId: message.senderBotId, at: message.createdAt }
+          : null;
+      },
+      judgeContinuation: (input) =>
+        judgeContinuation({
           engine: deps.engine,
           ...(deps.llmRouter !== undefined ? { router: deps.llmRouter } : {}),
           scheduler: deps.scheduler,
@@ -945,9 +985,34 @@ export class Orchestrator {
           conversationId: input.conversationId,
           batchId: input.batchId,
           batchMessages: input.batchMessages,
+          goal: deps.conversations.get(input.conversationId)?.goal ?? null,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.triageTimeoutMs !== undefined ? { timeoutMs: deps.triageTimeoutMs } : {}),
+          ...(deps.judgementTimeoutMs !== undefined
+            ? { timeoutMs: deps.judgementTimeoutMs }
+            : {}),
+        }),
+      gate: (input) =>
+        leadGate({
+          engine: deps.engine,
+          ...(deps.llmRouter !== undefined ? { router: deps.llmRouter } : {}),
+          scheduler: deps.scheduler,
+          runs: deps.runs,
+          usage: deps.usage,
+          settings: deps.settings,
+          bots: deps.bots,
+          messages: deps.messages,
+          conversations: deps.conversations,
+          leadBotId: input.leadBotId,
+          conversationId: input.conversationId,
+          batchId: input.batchId,
+          batchMessages: input.batchMessages,
+          continuation: input.continuation,
+          timeZone: deps.timeZone,
+          logger: deps.logger,
+          ...(deps.judgementTimeoutMs !== undefined
+            ? { timeoutMs: deps.judgementTimeoutMs }
+            : {}),
         }),
     });
   }
@@ -1003,10 +1068,11 @@ export class Orchestrator {
     this.#deps.publish('message.created', { conversationId, message: full });
     this.#publishConversation(conversationId);
 
-    if (conv.type === 'group') {
-      // Group dispatch (P05): explicit targets, triage, ordered turns. The
-      // runs (if any) are chosen asynchronously; no single run id to report.
-      this.#groupTurns.onUserBatch(conversationId, batchId, [full]);
+    if (conv.type === 'project') {
+      // Project dispatch (D92 T1a): explicit targets or silent routing, then
+      // ordered turns. The runs (if any) are chosen asynchronously; no single
+      // run id to report.
+      this.#projectTurns.onUserBatch(conversationId, batchId, [full]);
       return { message: full, runId: null };
     }
     if (conv.directBotId !== null) {
@@ -1019,8 +1085,9 @@ export class Orchestrator {
   /**
    * D90 workbench dispatch: the host appends a visible user message on the user's behalf
    * (`origin: 'workbench'`, with the todo and its run) and routes it exactly like a typed one —
-   * direct chat through the delivery gate, a group through GroupTurnCoordinator (a lead bot is
-   * a structured @, so the round has an explicit target; otherwise triage decides). It is the
+   * direct chat through the delivery gate, a project through ProjectTurnCoordinator (a lead bot is
+   * a structured @, so the round has an explicit target; otherwise silent
+   * routing decides). It is the
    * user's instruction: no proactive switch, quiet hours or daily cap apply, but the turn is
    * not "the user themselves" (`triggerFromUser` false, like a D71 delegation).
    */
@@ -1056,8 +1123,8 @@ export class Orchestrator {
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });
     this.#publishConversation(input.conversationId);
     input.onAppended?.(message);
-    if (conv.type === 'group') {
-      this.#groupTurns.onUserBatch(input.conversationId, batchId, [message]);
+    if (conv.type === 'project') {
+      this.#projectTurns.onUserBatch(input.conversationId, batchId, [message]);
       return { message, runId: null, held: false };
     }
     // `held`: the setup-interview gate keeps the delivery back until the bot's setup is done.
@@ -1094,7 +1161,7 @@ export class Orchestrator {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
     let targets: string[] = [];
-    if (conv.type === 'group') {
+    if (conv.type === 'project') {
       const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
       const dispatched =
         input.dispatchMessageId === null
@@ -1129,8 +1196,8 @@ export class Orchestrator {
     });
     this.#deps.publish('message.created', { conversationId: conv.id, message });
     this.#publishConversation(conv.id);
-    if (conv.type === 'group') {
-      this.#groupTurns.onUserBatch(conv.id, batchId, [message]);
+    if (conv.type === 'project') {
+      this.#projectTurns.onUserBatch(conv.id, batchId, [message]);
     } else if (conv.directBotId !== null) {
       this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
     }
@@ -1212,7 +1279,7 @@ export class Orchestrator {
   #setupPathGateClosed(conversationId: string, botId: string): boolean {
     const bot = this.#deps.bots.get(botId);
     if (bot?.setupState !== 'interviewing') return false;
-    // 管家访谈（D70）不绑定 project：没有目录卡，首答直接投递。
+    // 管家访谈（D70）不绑定 workdir：没有目录卡，首答直接投递。
     if (bot.systemRole === 'butler') return false;
     // 访谈尚未开始（interview.start 未跑，如创建后立刻打字的极端竞态）：
     // 无首问可缓冲，不设闸。
@@ -1240,7 +1307,7 @@ export class Orchestrator {
   }
 
   /**
-   * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 project（复用手动
+   * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 workdir（复用手动
    * 绑定的系统消息通路）；随后落 setupAnswer 用户消息（选择或跳过），并把
    * 首问卡之后缓冲的全部用户消息一次性投递——首个响应 run 由此开始。
    */
@@ -1272,7 +1339,7 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '目录问题已作答，不能重复提交');
     }
     if (path !== null) {
-      this.#deps.projects.select(conversationId, path);
+      this.#deps.workdirs.select(conversationId, path);
     }
     const message = this.#deps.messages.append({
       conversationId,
@@ -1306,137 +1373,6 @@ export class Orchestrator {
     return message;
   }
 
-  // --- group setup (docs/design/19 D60) ---------------------------------------
-
-  /**
-   * 对话内群创建第一步：创建 `setup_state='creating'` 的群对话并下发第一问
-   * （群名称）。零模型调用——四问全部由 core 确定性下发，完成后 Bot 才进群。
-   */
-  beginGroupSetup(): Conversation {
-    const conversation = this.#deps.groups.createSetup();
-    this.#appendGroupSetupCard(conversation.id, 'title');
-    return conversation;
-  }
-
-  #appendGroupSetupCard(conversationId: string, step: GroupSetupStep): void {
-    this.#appendSystemMessage(
-      conversationId,
-      GROUP_SETUP_QUESTION_EVENT,
-      GROUP_SETUP_QUESTIONS[step],
-      {
-        step,
-      },
-    );
-  }
-
-  /**
-   * 群创建问答推进：每步校验「正是当前待答步骤」（幂等，重复提交拒绝）、
-   * 落 setupAnswer 用户消息（不渲染气泡，卡片显示已答态）、发下一问；成员
-   * 步作答即写成员行，project 步绑定后 finalize（名称/定位一次性生效）。
-   * 全程不触发任何 dispatch。
-   */
-  answerGroupSetup(
-    input:
-      | { conversationId: string; step: 'title'; text: string }
-      | { conversationId: string; step: 'purpose'; text: string }
-      | { conversationId: string; step: 'members'; botIds: string[] }
-      | { conversationId: string; step: 'project'; path: string | null },
-  ): { conversation: Conversation; done: boolean } {
-    const conversationId = input.conversationId;
-    const conv = this.#deps.conversations.getOrThrow(conversationId);
-    if (conv.type !== 'group' || conv.setupState !== 'creating') {
-      throw new AppError('INVALID_INPUT', '该对话不在群创建流程中');
-    }
-    const current = this.#groupSetupCurrentStep(conversationId);
-    if (current === null || current !== input.step) {
-      throw new AppError('INVALID_INPUT', `当前应回答的步骤是「${current ?? '（已完成）'}」`);
-    }
-    const index = GROUP_SETUP_STEPS.indexOf(input.step);
-    const answerText = (() => {
-      switch (input.step) {
-        case 'title':
-          return input.text.trim();
-        case 'purpose':
-          return input.text.trim();
-        case 'members':
-          return input.botIds.map((id) => this.#deps.bots.get(id)?.name ?? id).join('、');
-        case 'project':
-          return input.path ?? SETUP_PATH_SKIP_TEXT;
-      }
-    })();
-    if (answerText.length === 0) {
-      throw new AppError('INVALID_INPUT', '回答不能为空');
-    }
-    const isLast = index === GROUP_SETUP_STEPS.length - 1;
-    // 步骤副作用先于落卡执行（失败即整步失败，不留半答状态）。
-    if (input.step === 'members') {
-      this.#deps.groups.addMembers(conversationId, input.botIds);
-    }
-    if (input.step === 'project' && input.path !== null) {
-      this.#deps.projects.select(conversationId, input.path);
-    }
-    const message = this.#deps.messages.append({
-      conversationId,
-      senderType: 'user',
-      kind: 'text',
-      text: answerText,
-      setupAnswer: true,
-    });
-    this.#deps.publish('message.created', { conversationId, message });
-    if (!isLast) {
-      this.#appendGroupSetupCard(conversationId, GROUP_SETUP_STEPS[index + 1]!);
-      this.#publishConversation(conversationId);
-      return { conversation: this.#deps.conversations.getOrThrow(conversationId), done: false };
-    }
-    const updated = this.#deps.groups.finalizeSetup(conversationId, {
-      title: this.#groupSetupAnswerText(conversationId, 'title') ?? '',
-      description: this.#groupSetupAnswerText(conversationId, 'purpose') ?? '',
-    });
-    const memberNames = this.#deps.groups
-      .members(conversationId)
-      .map((m) => m.bot.name)
-      .join('、');
-    this.#appendSystemMessage(
-      conversationId,
-      'group_created',
-      `群聊「${updated.title ?? ''}」创建完成，成员：${memberNames}。`,
-    );
-    this.#publishConversation(conversationId);
-    return { conversation: updated, done: true };
-  }
-
-  /** The first not-yet-answered step, or null when the flow has finished. */
-  #groupSetupCurrentStep(conversationId: string): GroupSetupStep | null {
-    for (const step of GROUP_SETUP_STEPS) {
-      const cardSeq = this.#groupSetupCardSeq(conversationId, step);
-      if (cardSeq === null) return step;
-      const answered = this.#deps.messages
-        .userMessagesAfter(conversationId, cardSeq)
-        .some((m) => 'setupAnswer' in m.content && m.content.setupAnswer === true);
-      if (!answered) return step;
-    }
-    return null;
-  }
-
-  /** system_event seq of one group-setup step's card (substring match on step). */
-  #groupSetupCardSeq(conversationId: string, step: GroupSetupStep): number | null {
-    const row = this.#deps.db
-      .prepare(
-        "select seq from messages where conversation_id = ? and kind = 'system_event' and instr(content_json, ?) > 0 order by seq asc limit 1",
-      )
-      .get(conversationId, `"step":"${step}"`) as { seq: number } | undefined;
-    return row?.seq ?? null;
-  }
-
-  /** The setupAnswer text a step received (first user message after its card). */
-  #groupSetupAnswerText(conversationId: string, step: GroupSetupStep): string | null {
-    const cardSeq = this.#groupSetupCardSeq(conversationId, step);
-    if (cardSeq === null) return null;
-    const answers = this.#deps.messages.userMessagesAfter(conversationId, cardSeq);
-    const first = answers[0];
-    return first && 'text' in first.content ? first.content.text : null;
-  }
-
   // --- message lifecycle ---------------------------------------------------
 
   /** Edit notification rules (docs/design/02-execution.md "编辑作为一次新触发"). */
@@ -1448,11 +1384,11 @@ export class Orchestrator {
       // No running loop: the edit becomes a fresh trigger.
       const conv = this.#deps.conversations.getOrThrow(message.conversationId);
       if (conv.readOnly) return message;
-      if (conv.type === 'group') {
+      if (conv.type === 'project') {
         // Group: the edited message (its structured mentions/replyTo survive
         // the edit) goes through the same dispatcher as a fresh batch
         // (BR-P05-004, docs/design/02 "编辑作为一次新触发").
-        this.#groupTurns.onUserBatch(message.conversationId, `edit:${message.id}`, [message]);
+        this.#projectTurns.onUserBatch(message.conversationId, `edit:${message.id}`, [message]);
       } else if (conv.directBotId !== null) {
         // 同样过目录闸门：访谈期间编辑旧消息不绕过「先定目录」。
         this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'event', {
@@ -1488,6 +1424,11 @@ export class Orchestrator {
     return this.#taskHost;
   }
 
+  /** Collaboration episodes (D92 T1a): RPC bindings + task-wake inheritance. */
+  get episodes(): EpisodesService {
+    return this.#episodes;
+  }
+
   cancelRun(runId: string): Run | null {
     const run = this.#deps.runs.get(runId);
     if (!run) return null;
@@ -1503,7 +1444,7 @@ export class Orchestrator {
       this.#deps.approvals.cancelPendingForRun(runId);
       // Checkpoint after-snapshot + lease release; the run's own unwind is
       // idempotent on both.
-      void this.#deps.projects.releaseRun(runId).catch(() => {});
+      void this.#deps.workdirs.releaseRun(runId).catch(() => {});
       return run;
     }
     // D66：子 run 不在 #activeRuns，经父 run 的门面中止；它自己的 unwind
@@ -1515,7 +1456,7 @@ export class Orchestrator {
         this.#subagentFacades.get(run.parentRunId)?.abortSubRun(runId, 'user cancelled');
       }
       this.#deps.approvals.cancelPendingForRun(runId);
-      void this.#deps.projects.releaseRun(runId).catch(() => {});
+      void this.#deps.workdirs.releaseRun(runId).catch(() => {});
       return this.#deps.runs.get(runId) ?? run;
     }
     // D87：制作 loop 的阶段 run 由制作服务持有：取消它 = 中止整次制作，阶段 run 由自己的
@@ -1532,7 +1473,7 @@ export class Orchestrator {
     // Queued but not started: cancel directly.
     this.#cancelledBeforeStart.add(runId);
     this.#deps.approvals.cancelPendingForRun(runId);
-    void this.#deps.projects.releaseRun(runId).catch(() => {});
+    void this.#deps.workdirs.releaseRun(runId).catch(() => {});
     return this.#settleRun(runId, 'cancelled', null);
   }
 
@@ -1673,7 +1614,7 @@ export class Orchestrator {
   async abortRunsForConversation(conversationId: string): Promise<void> {
     // Drop the group-turn state BEFORE settling: a settle during teardown must
     // not advance the turn and start new runs (BR-P05-001).
-    this.#groupTurns.clear(conversationId);
+    this.#projectTurns.clear(conversationId);
     // D75: tasks settle (cancelled, no wake) before the blanket settle below.
     this.#taskHost.abortForConversation(conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
@@ -1737,23 +1678,18 @@ export class Orchestrator {
     }
   }
 
-  /** Group-turn coordinator hook for the interface: current/queued bots. */
-  groupTurnState(conversationId: string) {
-    return this.#groupTurns.stateOf(conversationId);
+  /** Project-turn coordinator hook for the interface: current/queued bots. */
+  projectTurnState(conversationId: string) {
+    return this.#projectTurns.stateOf(conversationId);
   }
 
   /**
    * A member left the group (removal or bot deletion): drop it from any turn
    * queue and cancel its runs in this conversation.
    */
-  groupMemberRemoved(botId: string, conversationId: string): void {
-    this.#groupTurns.onMemberRemoved(conversationId, botId);
+  projectMemberRemoved(botId: string, conversationId: string): void {
+    this.#projectTurns.onMemberRemoved(conversationId, botId);
     this.abortRunsForBotInConversation(botId, conversationId);
-  }
-
-  /** groups.redistribute: re-dispatch a stored batch as an explicit @. */
-  redistributeBatch(conversationId: string, batchId: string, botId: string): void {
-    this.#groupTurns.redistribute(conversationId, batchId, botId);
   }
 
   /**
@@ -2172,11 +2108,12 @@ export class Orchestrator {
   }
 
   /**
-   * A group round ended (GroupTurnCoordinator): nobody claimed the dispatch (triage found no
-   * responder / `group_no_claim`), the executed turns failed or were cancelled, or every executed
-   * turn stayed silent without starting a task.
+   * A project round ended (ProjectTurnCoordinator): the executed turns failed or
+   * were cancelled, the round stayed silent without starting a task (silent
+   * routing's `none` included — nobody took the batch), or the guarded round
+   * fell through to the lead and the lead went silent too.
    */
-  #onGroupRoundEnded(info: GroupRoundEnd): void {
+  #onProjectRoundEnded(info: ProjectRoundEnd): void {
     const facade = this.#deps.todos;
     if (facade === undefined || info.outcome === 'replied') return;
     try {
@@ -2198,7 +2135,7 @@ export class Orchestrator {
     } catch (error) {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'group round tracking failed',
+        'project round tracking failed',
       );
     }
   }
@@ -2352,9 +2289,10 @@ export class Orchestrator {
 
   // --- internals -------------------------------------------------------------
 
-  /** Member cards for <conversation_info> (P05, docs/design/03-bot.md "名片"). */
+  /** Member cards for <conversation_info> (P05, docs/design/03-bot.md "名片"; lead flagged per D92 T1a). */
   #memberCards(conversationId: string): BotCard[] {
     const cards: BotCard[] = [];
+    const leadBotId = this.#deps.conversations.get(conversationId)?.leadBotId ?? null;
     for (const botId of this.#deps.conversations.memberBotIds(conversationId)) {
       const bot = this.#deps.bots.get(botId);
       if (!bot || bot.status !== 'active') continue;
@@ -2363,6 +2301,7 @@ export class Orchestrator {
         name: bot.profile.identity.name || bot.name,
         bio: bot.bio,
         role: bot.profile.role.responsibilities,
+        ...(botId === leadBotId ? { isLead: true } : {}),
       });
     }
     return cards;
@@ -2378,6 +2317,7 @@ export class Orchestrator {
       batchId?: string | null;
       options?: string[];
       step?: string;
+      episodeId?: string;
       internal?: boolean;
       settingResolved?: SettingCardResolved;
     } = {},
@@ -2388,6 +2328,7 @@ export class Orchestrator {
       kind: 'system_event',
       event,
       text,
+      ...(extra.episodeId !== undefined ? { episodeId: extra.episodeId } : {}),
       ...(extra.botIds !== undefined ? { botIds: extra.botIds } : {}),
       ...(extra.batchId != null ? { relatedBatchId: extra.batchId } : {}),
       ...(extra.options !== undefined ? { options: extra.options } : {}),
@@ -2570,12 +2511,12 @@ export class Orchestrator {
   #renderOptions(): RenderMessageOptions {
     const names = new Map<string, string>();
     for (const bot of this.#deps.bots.listActive()) names.set(bot.id, bot.name);
-    // 群提及图例（`group:<id>` → 群标题）：用户消息正文里的 `@群名` 靠它
-    // 被模型理解为群聊引用（conversation.ts mentionTokenLabel）。
+    // 项目组提及图例（`project:<id>` → 项目标题）：用户消息正文里的 `@项目名`
+    // 靠它被模型理解为项目组引用（conversation.ts mentionTokenLabel）。
     const mentionLabels = new Map<string, string>();
     for (const conversation of this.#deps.conversations.list()) {
-      if (conversation.type === 'group' && conversation.title !== null) {
-        mentionLabels.set(groupMentionToken(conversation.id), conversation.title);
+      if (conversation.type === 'project' && conversation.title !== null) {
+        mentionLabels.set(projectMentionToken(conversation.id), conversation.title);
       }
     }
     return {
@@ -2650,10 +2591,19 @@ export class Orchestrator {
       // Each source part keeps its reason / attributes for a retry (审查 L3).
       triggerParts: storedTriggerParts(batch),
       ...(batch.retryOf !== undefined ? { retryOfRunId: batch.retryOf } : {}),
-      ...(batch.chain !== undefined
-        ? { chainId: batch.chain.id, chainDepth: batch.chain.depth }
+      ...(batch.episode !== undefined
+        ? { episodeId: batch.episode.id, episodeHop: batch.episode.hop }
         : {}),
     });
+    // A retried turn must not lose its episode: the rebuilt batch carries no
+    // binding, so inherit the failed run's (D92 T1a — a retry re-runs the very
+    // trigger that extended the episode).
+    if (batch.episode === undefined && batch.retryOf !== undefined) {
+      const binding = this.#episodes.bindingOfRun(batch.retryOf);
+      if (binding !== null) {
+        this.#deps.runs.update(run.id, { episodeId: binding.id, episodeHop: binding.hop });
+      }
+    }
     this.#deps.publish('run.status', { run });
     // The turn holds its trigger's task results from now on (审查 L-3): one
     // still queued for a slot is not handed them again — nor counted again.
@@ -2689,7 +2639,7 @@ export class Orchestrator {
     }
     return builtinRoute(
       this.#deps.engine,
-      lightModelRefForBot(this.#deps.bots, this.#deps.settings, botId),
+      builtinModelRef('triage', this.#deps.settings.get(), this.#deps.bots.get(botId)),
     );
   }
 
@@ -2787,7 +2737,7 @@ export class Orchestrator {
    * D72 外部 Agent run 的准备（design 28 §4–§5）：按能力包过滤宿主工具，生成
    * 会话级提示词（ACP 版平台规则 + `<tool_policy>` + 身份 / 人设 / 对话信息，
    * 工具名经 Provider 映射）与 run 级动态段（只读上下文与能力包解耦，照常
-   * 注入；`<project>` 跳过 Agent 自己会读的约定文件）。
+   * 注入；`<workdir>` 跳过 Agent 自己会读的约定文件）。
    */
   async #agentRunSetup(input: {
     bot: Bot;
@@ -2796,7 +2746,7 @@ export class Orchestrator {
     identity: RunIdentity;
     responseTools: ToolDefinition[];
     workspacePath: string;
-    hasProject: boolean;
+    hasWorkdir: boolean;
     memorySections: {
       userProfile?: string;
       myState?: string;
@@ -2807,6 +2757,8 @@ export class Orchestrator {
       relevantMemories?: string;
     };
     wikiTopics: string;
+    /** D92 T1b WP10: <project_wiki_topics> body ('' = omitted). */
+    projectWikiTopics: string;
     skills: string;
     recommendedSkills: string;
     /** D91: `<capabilities>` body (connected apps + custom MCP servers); '' = omitted. */
@@ -2818,7 +2770,7 @@ export class Orchestrator {
     batch: TriggerBatch;
     renderOptions: RenderMessageOptions;
     triggerContent: string;
-    workdir: string;
+    cwd: string;
     modelRef: string;
     /** Highest seq of the conversation context shown to a new session. */
     contextCutoff: number;
@@ -2826,7 +2778,7 @@ export class Orchestrator {
      * D75 task run (design 30 §8.5): the task owning the session row, the
      * task it continues (inherits that task's row), and whether it may write
      * (a read-only task is forced onto the `read_only` tier — the agent's
-     * writes inside the workdir would pass the tier logic before any gateway).
+     * writes inside the cwd would pass the tier logic before any gateway).
      */
     task?: { id: string; continuesTaskId: string | null; writes: boolean };
   }): Promise<{
@@ -2916,7 +2868,7 @@ export class Orchestrator {
       const sessionPrompt = buildAgentSessionPrompt({
         bot,
         conversation,
-        ...(conversation.type === 'group' ? { members: this.#memberCards(conversation.id) } : {}),
+        ...(conversation.type === 'project' ? { members: this.#memberCards(conversation.id) } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
           nativeCapabilities: entry.nativeCapabilities,
@@ -2928,7 +2880,7 @@ export class Orchestrator {
           JSON.stringify({
             v: 1,
             sessionPrompt,
-            cwd: input.workdir,
+            cwd: input.cwd,
             permission,
             model: input.modelRef,
             effort: bot.profile.runtime.agent.effort,
@@ -2960,8 +2912,8 @@ export class Orchestrator {
         hostToolOf,
       );
     const access = await this.#accessPromptInfo(input.identity);
-    const project = input.hasProject
-      ? await this.#deps.projects.promptSection(conversation.id, {
+    const workdir = input.hasWorkdir
+      ? await this.#deps.workdirs.promptSection(conversation.id, {
           skipGuideFiles: provider.agentSideConfigFiles,
         })
       : null;
@@ -2996,7 +2948,7 @@ export class Orchestrator {
           timeZone: this.#deps.timeZone,
           now: new Date(this.#deps.clock.now()),
           permission,
-          ...(project !== null ? { project } : {}),
+          ...(workdir !== null ? { workdir } : {}),
           workspace: {
             path: input.workspacePath,
             entries: this.#deps.gateway.workspaceTopLevel(input.workspacePath),
@@ -3005,6 +2957,9 @@ export class Orchestrator {
           grants: access.grants,
           ...input.memorySections,
           ...(input.wikiTopics.length > 0 ? { wikiTopics: input.wikiTopics } : {}),
+          ...(input.projectWikiTopics.length > 0
+            ? { projectWikiTopics: input.projectWikiTopics }
+            : {}),
           ...(input.skills.length > 0 ? { skills: input.skills } : {}),
           ...(input.recommendedSkills.length > 0
             ? { recommendedSkills: input.recommendedSkills }
@@ -3156,7 +3111,7 @@ export class Orchestrator {
     }
   }
 
-  agentSessionsOnGroupMemberRemoved(botId: string, conversationId: string): void {
+  agentSessionsOnProjectMemberRemoved(botId: string, conversationId: string): void {
     for (const row of this.#agentSessions.listByConversation(conversationId)) {
       if (row.botId !== botId) continue;
       this.#discardAgentSession(row, true);
@@ -3165,32 +3120,32 @@ export class Orchestrator {
   }
 
   /**
-   * D72 P3 project 闸门（design 28 §6）：
-   * 1. Agent 侧配置确认——project 根下有 Provider 声明的、Agent 自己会读且
-   *    无法关闭的配置（AGENTS.md、.codex/ …）时，首次在此 project 运行前弹
+   * D72 P3 workdir 闸门（design 28 §6）：
+   * 1. Agent 侧配置确认——workdir 根下有 Provider 声明的、Agent 自己会读且
+   *    无法关闭的配置（AGENTS.md、.codex/ …）时，首次在此 workdir 运行前弹
    *    `agent_tool`（子类型 config）卡；批准记住到对话（同 Bot、同 Agent、
-   *    同 project，文件集合未增加即不再问）；
-   * 2. 显式租约——档位可写时 run 开工前取 project 写入租约（排队时 run 进
+   *    同 workdir，文件集合未增加即不再问）；
+   * 2. 显式租约——档位可写时 run 开工前取 workdir 写入租约（排队时 run 进
    *    waiting_lease），整 run 持有，结算照常 releaseRun（前后快照 → 改动卡 /
    *    回退可用）。
    * 返回 'cancelled' 时 run 已被 cancelRun 结算。
    */
-  async #agentProjectGate(input: {
+  async #agentWorkdirGate(input: {
     runId: string;
     identity: RunIdentity;
     botId: string;
     conversationId: string;
     agentId: string;
     agentName: string;
-    projectPath: string;
+    workdirPath: string;
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
     // Agents look for their config from the session directory up to the git
     // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
-    const searchRoot = gitRootAbove(input.projectPath) ?? input.projectPath;
+    const searchRoot = gitRootAbove(input.workdirPath) ?? input.workdirPath;
     const found: string[] = [];
-    for (const dir of directoryChain(searchRoot, input.projectPath)) {
+    for (const dir of directoryChain(searchRoot, input.workdirPath)) {
       for (const name of input.configFiles) {
         const bare = name.replace(/[\\/]+$/, '');
         if (!existsSync(nodePath.join(dir, bare))) continue;
@@ -3212,7 +3167,7 @@ export class Orchestrator {
           return (
             payload.success &&
             payload.data.agentId === input.agentId &&
-            payload.data.projectPath === input.projectPath &&
+            payload.data.workdirPath === input.workdirPath &&
             payload.data.configHash === configHash
           );
         });
@@ -3220,22 +3175,22 @@ export class Orchestrator {
         const payload: AgentToolApprovalPayload = {
           agentId: input.agentId,
           agentName: input.agentName,
-          title: '加载项目内的智能体配置',
+          title: '加载工作目录内的智能体配置',
           kind: 'config',
           toolKind: '',
           locations:
-            searchRoot === input.projectPath
+            searchRoot === input.workdirPath
               ? found
               : found.map((name) => nodePath.join(searchRoot, name)),
-          cwd: input.projectPath,
+          cwd: input.workdirPath,
           options: [],
           durations: ['conversation'],
           reason:
             '这些文件由智能体自己读取（可能包含指令、钩子或权限规则，可能放宽智能体的权限），KepCup 无法关闭' +
-            (searchRoot === input.projectPath ? '' : '；含项目上层直到 git 根目录中的同类文件'),
+            (searchRoot === input.workdirPath ? '' : '；含工作目录上层直到 git 根目录中的同类文件'),
           sensitive: false,
           exemptDirs: [],
-          projectPath: input.projectPath,
+          workdirPath: input.workdirPath,
           configHash,
         };
         const outcome = await this.#deps.approvals.request(input.identity, 'agent_tool', payload);
@@ -3246,8 +3201,8 @@ export class Orchestrator {
     }
     if (!input.writable) return 'ok';
     try {
-      await this.#deps.projects.ensureWriteLease(input.identity, input.projectPath, {
-        reason: '外部智能体在 project 内执行（整 run 持有写入租约）',
+      await this.#deps.workdirs.ensureWriteLease(input.identity, input.workdirPath, {
+        reason: '外部智能体在 workdir 内执行（整 run 持有写入租约）',
         // No other lease target may replace it during the run (review M6).
         pin: true,
       });
@@ -3256,7 +3211,7 @@ export class Orchestrator {
       throw error;
     }
     if (this.#cancelledBeforeStart.delete(input.runId)) {
-      await this.#deps.projects.releaseRun(input.runId).catch(() => {});
+      await this.#deps.workdirs.releaseRun(input.runId).catch(() => {});
       return 'cancelled';
     }
     return 'ok';
@@ -3343,11 +3298,11 @@ export class Orchestrator {
       const botId = task.botId;
       const conversationId = task.conversationId;
       if (task.taskWrites === true) {
-        // Same fallback as the execution's workdir (#executeRun, 审查 L6).
-        const root = task.taskWorkdir ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        // Same fallback as the execution's cwd (#executeRun, 审查 L6).
+        const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
         control.waiting('等写入租约');
         try {
-          await this.#deps.projects.ensureWriteLease(
+          await this.#deps.workdirs.ensureWriteLease(
             { runId: task.id, botId, conversationId, loopType: 'task' },
             root,
             { pin: true, signal: control.signal, reason: `任务「${brief.title}」` },
@@ -3355,7 +3310,7 @@ export class Orchestrator {
         } catch (error) {
           // Cancelled while waiting: the host already settled the task.
           if (control.signal.aborted) return;
-          // Project roots and the bot's own workspace both have lease targets
+          // Workdir roots and the bot's own workspace both have lease targets
           // (design 30 §5.2); anything else must fail rather than run unleased.
           throw error;
         }
@@ -3367,7 +3322,7 @@ export class Orchestrator {
       // write lease and the task's place now, not when the job would start.
       const onAbort = (): void => {
         if (started || !this.#deps.scheduler.cancelQueued(key)) return;
-        void this.#deps.projects
+        void this.#deps.workdirs
           .releaseRun(task.id)
           .catch(() => {})
           .finally(() => control.finish());
@@ -3408,7 +3363,7 @@ export class Orchestrator {
     } finally {
       if (!submitted) {
         // Lease taken before a stop / failure: release it with the slot.
-        await this.#deps.projects.releaseRun(task.id).catch(() => {});
+        await this.#deps.workdirs.releaseRun(task.id).catch(() => {});
         control.finish();
       }
     }
@@ -3575,7 +3530,7 @@ export class Orchestrator {
         exec.kind === 'task'
           ? [
               this.#effectsBeforeInterrupt(exec.brief),
-              buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskWorkdir),
+              buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskCwd),
             ]
               .filter((part) => part.length > 0)
               .join('\n\n')
@@ -3620,7 +3575,7 @@ export class Orchestrator {
 
       const workspacePath = workspacePathFor(this.#deps.paths, batch.botId, batch.conversationId);
       this.#deps.gateway.ensureWorkspace(identity);
-      const project = this.#deps.projects.boundProject(batch.conversationId);
+      const workdir = this.#deps.workdirs.boundWorkdir(batch.conversationId);
       const network = {
         mode: bot.profile.runtime.network_policy,
         allowDomains: bot.profile.runtime.network_allowlist,
@@ -3836,7 +3791,7 @@ export class Orchestrator {
               triggerReason: batch.reason,
               // 任务的触发是 'task'（不在直改白名单里）：来源消息即使是用户的也不算本人直接发起。
               triggerFromUser: fromUser,
-              isGroup: conv.type === 'group',
+              isProject: conv.type === 'project',
               isButler: bot.systemRole === 'butler',
               touchedUntrusted: () => untrusted.touched,
               // 外部智能体的原生工具不经宿主分类、会话跨 run 保留：整个 run 按不可信处理。
@@ -3859,8 +3814,8 @@ export class Orchestrator {
         renderOptions,
         gateway: this.#deps.gateway,
         workspacePath,
-        projectPath: project !== null && project.status === 'available' ? project.path : null,
-        projects: this.#deps.projects,
+        workdirPath: workdir !== null && workdir.status === 'available' ? workdir.path : null,
+        workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
         environment: environmentFacade,
@@ -3988,8 +3943,8 @@ export class Orchestrator {
                   deps: {
                     gateway: this.#deps.gateway,
                     workspacePath,
-                    projectPath:
-                      project !== null && project.status === 'available' ? project.path : null,
+                    workdirPath:
+                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
                     network,
                     secrets: this.#deps.secrets,
                     fsState: this.#fsState,
@@ -4028,8 +3983,8 @@ export class Orchestrator {
                   buildSubagentSystemPrompt({
                     botName: bot.profile.identity.name || bot.name,
                     workspacePath,
-                    projectPath:
-                      project !== null && project.status === 'available' ? project.path : null,
+                    workdirPath:
+                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
                     timeZone: this.#deps.timeZone,
                     now: new Date(this.#deps.clock.now()),
                   }),
@@ -4085,20 +4040,32 @@ export class Orchestrator {
       // D63：未安装的预置技能列表（install_skill 的匹配来源）。
       const recommendedSkillsSection = this.#deps.skills?.recommendedSkillsSection() ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
-      const wikiTopicsSection = this.#deps.wiki?.topicsSection(batch.botId) ?? '';
+      const wikiTopicsSection =
+        this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
+      // D92 T1b WP10: <project_wiki_topics> — the project's shared wiki index,
+      // injected for turns AND tasks of a project conversation; K15: no budget.
+      // An uninitialized project wiki yields '' (the section is omitted).
+      const projectWikiTopicsSection =
+        conv.type === 'project'
+          ? (this.#deps.wiki?.topicsSection({ kind: 'project', id: conv.id }, { budget: null }) ??
+            '')
+          : '';
       const triggerImages = this.#triggerImages(batch.messages);
       const responseTools = buildResponseTools({
         identity,
         deps: {
           ...toolDeps,
           environment: this.#environmentFacade(),
-          // P05 chains are a turn's (D75 §6.2: a task never @-mentions group
-          // members, so chain budgets — counted over active turns — stay whole).
+          // D92 T1a 必答回合：触发批里只要有一个必答部分（routed /
+          // lead_fallback），这一轮的工具面就没有 skip_reply。
+          mustReply: triggerParts(batch).some((part) => MUST_REPLY_REASONS.includes(part.reason)),
+          // Episodes belong to turns (D75 §6.2: a task never @-mentions
+          // project members).
           ...(isTask
             ? {}
             : {
                 onMentionBots: (mentionIds: string[], message: Message) =>
-                  this.#chains.mention(identity, mentionIds, message),
+                  this.#episodes.mention(identity, mentionIds, message),
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
@@ -4124,7 +4091,7 @@ export class Orchestrator {
           // bot.updated 让 UI 实时反映新名字与 profile。
           ...(bot.setupState === 'interviewing'
             ? {
-                setupSurface: conv.type === 'group' ? ('group' as const) : ('direct' as const),
+                setupSurface: conv.type === 'project' ? ('project' as const) : ('direct' as const),
                 setup: {
                   saveProfile: (
                     setupBotId: string,
@@ -4195,7 +4162,7 @@ export class Orchestrator {
                         message:
                           asked >= SETUP_MAX_QUESTIONS
                             ? variant === 'butler'
-                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_team 提出组队建议，不要再提问。`
+                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_bots 提出组队建议，不要再提问。`
                               : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
                             : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问）。`,
                       };
@@ -4212,9 +4179,27 @@ export class Orchestrator {
           ...(this.#deps.wiki !== undefined
             ? {
                 wiki: {
-                  search: (botId, query, limit) => this.#deps.wiki!.search(botId, query, limit),
-                  readPage: (botId, pagePath) => this.#deps.wiki!.readPage(botId, pagePath),
+                  // D92 T1b WP9: owner-based facade; WP10 adds the scope
+                  // surface (ledger, queued removal, project facts).
+                  search: (owner, query, limit) => this.#deps.wiki!.search(owner, query, limit),
+                  readPage: (owner, pagePath) => this.#deps.wiki!.readPage(owner, pagePath),
                   enqueueIngest: (input) => this.#deps.wiki!.enqueueIngest(input),
+                  enqueueRemoveSource: (input) => this.#deps.wiki!.enqueueRemoveSource(input),
+                  listSources: (owner) =>
+                    this.#deps.wiki!.listSources(owner).map((entry) => ({
+                      id: entry.id,
+                      createdBy: entry.createdBy,
+                    })),
+                  botName: (botId) => this.#deps.bots.get(botId)?.name ?? null,
+                  projectContext: (conversationId) => {
+                    const conversation = this.#deps.conversations.get(conversationId);
+                    if (conversation === null || conversation.type !== 'project') return null;
+                    return {
+                      conversationId,
+                      leadBotId: conversation.leadBotId ?? null,
+                      memberBotIds: this.#deps.conversations.memberBotIds(conversationId),
+                    };
+                  },
                 },
               }
             : {}),
@@ -4223,15 +4208,15 @@ export class Orchestrator {
       // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
-      // The agent's cwd: the bound project, else the workspace; a D75 task
-      // works in its resolved workdir (§3.4 task_workdir).
-      const projectPath = project !== null && project.status === 'available' ? project.path : null;
-      // A task without a recorded workdir works in the workspace — the root
-      // #startTask leased — never in an unleased project (审查 L6).
-      const agentWorkdir =
+      // The agent's cwd: the bound workdir, else the workspace; a D75 task
+      // works in its resolved cwd (§3.4 task_cwd).
+      const workdirPath = workdir !== null && workdir.status === 'available' ? workdir.path : null;
+      // A task without a recorded cwd works in the workspace — the root
+      // #startTask leased — never in an unleased workdir (审查 L6).
+      const agentCwd =
         exec.kind === 'task'
-          ? (exec.task.taskWorkdir ?? workspacePath)
-          : (projectPath ?? workspacePath);
+          ? (exec.task.taskCwd ?? workspacePath)
+          : (workdirPath ?? workspacePath);
       const agentRun =
         agentId.length > 0
           ? await this.#agentRunSetup({
@@ -4241,11 +4226,12 @@ export class Orchestrator {
               identity,
               responseTools,
               workspacePath,
-              // The <project> section only when the agent works in it (a
-              // workspace-workdir task does not, 审查 L10).
-              hasProject: projectPath !== null && agentWorkdir === projectPath,
+              // The <workdir> section only when the agent works in it (a
+              // workspace-cwd task does not, 审查 L10).
+              hasWorkdir: workdirPath !== null && agentCwd === workdirPath,
               memorySections,
               wikiTopics: wikiTopicsSection,
+              projectWikiTopics: projectWikiTopicsSection,
               skills: skillsSection,
               recommendedSkills: recommendedSkillsSection,
               capabilities: capabilitiesSection,
@@ -4254,7 +4240,7 @@ export class Orchestrator {
               batch,
               renderOptions,
               triggerContent,
-              workdir: agentWorkdir,
+              cwd: agentCwd,
               modelRef,
               contextCutoff: Math.max(
                 -1,
@@ -4272,20 +4258,20 @@ export class Orchestrator {
                 : {}),
             })
           : null;
-      // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
-      // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
+      // D72 P3（design 28 §6）：workdir 内有 Agent 自己会读、无法关闭的配置
+      // 文件时，首次在此 workdir 运行前确认（记住到对话）；workdir 绑定且档位
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
-      // A D75 task runs there only when its workdir is the project; a write
+      // A D75 task runs there only when its cwd is the workdir; a write
       // task already holds its (pinned) write lease from #startTask (§5.1).
-      if (agentRun !== null && projectPath !== null && agentWorkdir === projectPath) {
-        const gate = await this.#agentProjectGate({
+      if (agentRun !== null && workdirPath !== null && agentCwd === workdirPath) {
+        const gate = await this.#agentWorkdirGate({
           runId,
           identity,
           botId: batch.botId,
           conversationId: batch.conversationId,
           agentId,
           agentName: agentRun.agentName,
-          projectPath,
+          workdirPath,
           configFiles: agentRun.agentSideConfigFiles,
           writable: !isTask && agentRun.permission !== 'read_only',
         });
@@ -4293,8 +4279,8 @@ export class Orchestrator {
           // Cancelled while waiting: cancelRun already settled a turn;
           // a stopped task is settled by its host (this settle is a no-op then).
           if (gate === 'denied') {
-            await this.#deps.projects.releaseRun(runId).catch(() => {});
-            settle('failed', '用户未确认在此项目中加载智能体自身的配置文件，本次未执行');
+            await this.#deps.workdirs.releaseRun(runId).catch(() => {});
+            settle('failed', '用户未确认在此工作目录中加载智能体自身的配置文件，本次未执行');
           } else if (isTask) {
             settle('cancelled', null);
           }
@@ -4311,7 +4297,7 @@ export class Orchestrator {
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {
-              workdir: agentWorkdir,
+              cwd: agentCwd,
               promptParts: agentRun.promptParts,
               external: {
                 agentId,
@@ -4372,8 +4358,13 @@ export class Orchestrator {
             conversation: conv,
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
-            ...(conv.type === 'group' ? { members: this.#memberCards(conv.id) } : {}),
-            project: (await this.#deps.projects.promptSection(batch.conversationId)) ?? undefined,
+            ...(conv.type === 'project' ? { members: this.#memberCards(conv.id) } : {}),
+            // D92 T1a: the lead / member rules only in a project conversation's turn loop
+            // (tasks never get them — a task cannot @ members).
+            ...(conv.type === 'project' && !isTask
+              ? { projectRole: bot.id === conv.leadBotId ? ('lead' as const) : ('member' as const) }
+              : {}),
+            workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
             workspace: {
               path: workspacePath,
               entries: this.#deps.gateway.workspaceTopLevel(workspacePath),
@@ -4382,6 +4373,9 @@ export class Orchestrator {
             access: await this.#accessPromptInfo(identity),
             ...memorySections,
             ...(wikiTopicsSection.length > 0 ? { wikiTopics: wikiTopicsSection } : {}),
+            ...(projectWikiTopicsSection.length > 0
+              ? { projectWikiTopics: projectWikiTopicsSection }
+              : {}),
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(recommendedSkillsSection.length > 0
               ? { recommendedSkills: recommendedSkillsSection }
@@ -4474,7 +4468,7 @@ export class Orchestrator {
       const unsubscribeInterim = this.#deliverInterimTexts(
         runId,
         batch,
-        conv.type === 'group',
+        conv.type === 'project',
         handle,
         isTask ? runId : null,
       );
@@ -4540,7 +4534,7 @@ export class Orchestrator {
       // Close the lease window before settling: the after-snapshot writes the
       // changes summary card, which must land after the bot's final message.
       try {
-        await this.#deps.projects.releaseRun(runId);
+        await this.#deps.workdirs.releaseRun(runId);
       } catch (error) {
         this.#deps.logger.warn(
           { runId, error: error instanceof Error ? error.message : String(error) },
@@ -4605,7 +4599,7 @@ export class Orchestrator {
       }
       // No-op when the run got past handle.done (closed there).
       await this.#closeSubagents(runId).catch(() => {});
-      await this.#deps.projects.releaseRun(runId).catch(() => {});
+      await this.#deps.workdirs.releaseRun(runId).catch(() => {});
       this.#fsState.release(runId);
       settle('failed', error instanceof Error ? error.message : String(error));
     } finally {
@@ -4613,7 +4607,7 @@ export class Orchestrator {
       await this.#closeSubagents(runId).catch(() => {});
       if (exec.kind === 'task') {
         // Idempotent; covers the early returns. Then the slot / write target frees.
-        await this.#deps.projects.releaseRun(runId).catch(() => {});
+        await this.#deps.workdirs.releaseRun(runId).catch(() => {});
         this.#fsState.release(runId);
         exec.control.finish();
       } else {
@@ -4786,20 +4780,23 @@ export class Orchestrator {
     if (refreshed === null) return null;
     const before = batch.messages.map((message) => message.id).join(',');
     const after = refreshed.messages.map((message) => message.id).join(',');
-    // An absorbed @-chain trigger binds the turn to its chain at its depth
-    // (审查 M1): without it the turn's own mentions would open a new chain at
-    // depth 1 and bypass BOT_CHAIN_MAX_DEPTH / BOT_CHAIN_TOKEN_BUDGET.
+    // An absorbed @-mention trigger binds the turn to its episode at its hop
+    // (审查 M1): without it the turn's own mentions would open a new episode
+    // and dodge its breaker.
     const stored = this.#deps.runs.get(runId);
-    const chainChanged =
-      refreshed.chain !== undefined &&
-      (stored?.chainId !== refreshed.chain.id || (stored.chainDepth ?? 0) < refreshed.chain.depth);
-    if (buffered.length > 0 || before !== after || chainChanged) {
+    const episodeChanged =
+      refreshed.episode !== undefined &&
+      (stored?.episodeId !== refreshed.episode.id ||
+        (stored.episodeHop ?? 0) < refreshed.episode.hop);
+    if (buffered.length > 0 || before !== after || episodeChanged) {
       const run = this.#deps.runs.setTrigger(runId, {
         reason: refreshed.reason,
         messageIds: refreshed.messages.map((message) => message.id),
         parts: storedTriggerParts(refreshed),
         retryOfRunId: refreshed.retryOf ?? null,
-        ...(chainChanged && refreshed.chain !== undefined ? { chain: refreshed.chain } : {}),
+        ...(episodeChanged && refreshed.episode !== undefined
+          ? { episode: refreshed.episode }
+          : {}),
       });
       this.#deps.publish('run.status', { run });
     }
@@ -4869,8 +4866,8 @@ export class Orchestrator {
         'starting the next turn failed',
       );
     }
-    // A group turn waiting for this mailbox to free up delivers now (BR-P05-002).
-    this.#groupTurns.onMailboxIdle(batch.botId, batch.conversationId);
+    // A project turn waiting for this mailbox to free up delivers now (BR-P05-002).
+    this.#projectTurns.onMailboxIdle(batch.botId, batch.conversationId);
     // D71：B 的私聊邮箱空了——排队中的委派（若有）可以投递了。
     try {
       this.#delegationHost.onMailboxIdle(batch.botId, batch.conversationId);
@@ -5398,13 +5395,13 @@ export class Orchestrator {
   #deliverInterimTexts(
     runId: string,
     batch: TriggerBatch,
-    isGroup: boolean,
+    isProject: boolean,
     handle: RunHandle,
     /** D75 §6.1: non-null = task run; status overlay instead of chat bubbles. */
     taskId: string | null = null,
   ): () => void {
     let delivered = 0;
-    const max = isGroup ? INTERIM_TEXT_MAX_PER_RUN_GROUP : INTERIM_TEXT_MAX_PER_RUN;
+    const max = isProject ? INTERIM_TEXT_MAX_PER_RUN_GROUP : INTERIM_TEXT_MAX_PER_RUN;
     return handle.onEvent((event) => {
       if (event.type !== 'assistant') return;
       const { text, stopReason } = event.payload as { text?: string; stopReason?: string };
@@ -5472,7 +5469,7 @@ export class Orchestrator {
     this.#deps.publish('run.status', { run });
     // Group turns advance on any terminal state (cancelled/failed included)
     // of a supervisor turn — never on a task (D75 design 30 §6.2).
-    if (isTerminal(status) && run.loopType === 'turn') this.#groupTurns.onRunSettled(run);
+    if (isTerminal(status) && run.loopType === 'turn') this.#projectTurns.onRunSettled(run);
     // D90: a todo's dispatched turn (or the turn relaying its tasks' results) delivers the todo.
     if (isTerminal(status) && run.loopType === 'turn') this.#trackTodoDelivery(run);
     // D71：被委派 run 的终态 → A 侧结果卡 + follow-up（按 run_id 匹配）。
@@ -5533,19 +5530,18 @@ export class Orchestrator {
   }
 
   /**
-   * Where a task works and what it left behind (TaskHost.describeWorkdir;
+   * Where a task works and what it left behind (TaskHost.describeCwd;
    * `withChanges` false = the kind only, no lookup).
    */
-  #describeTaskWorkdir(
+  #describeTaskCwd(
     task: Run,
     _withChanges: boolean,
-  ): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
+  ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
-    const kind =
-      task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
+    const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'workdir' : 'workspace';
     // Change summary / file list / revert on the task card was retired —
     // never attach changes (disk writes still happen).
     return { kind, changes: null };

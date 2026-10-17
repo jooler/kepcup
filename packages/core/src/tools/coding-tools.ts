@@ -31,8 +31,8 @@ import type { FileReadState } from './fs-state.js';
 export interface CodingToolDeps {
   gateway: ToolGateway;
   workspacePath: string;
-  /** Bound project directory; the base for relative paths and bash (P04). */
-  projectPath: string | null;
+  /** Bound workdir directory; the base for relative paths and bash (P04). */
+  workdirPath: string | null;
   network: SandboxNetworkPolicy;
   /** Redacts stored secret values from every tool output (BR-P02-003). */
   secrets: SecretsService;
@@ -247,16 +247,16 @@ export function buildCodingTools(
   options?: {
     /**
      * Subagent 减配（D66）：只读研究集——不含 write / edit，避免子 run 与主
-     * run 的 project 写租约竞争；写需求走主 loop 自己完成。
+     * run 的 workdir 写租约竞争；写需求走主 loop 自己完成。
      */
     excludeWriteTools?: boolean;
   },
 ): ToolDefinition[] {
   const { gateway, workspacePath, network, secrets, fsState } = deps;
-  // Relative paths and bash default to the project when one is bound
-  // (docs/design/08-project.md "上下文注入"); the workspace remains the
+  // Relative paths and bash default to the workdir when one is bound
+  // (docs/design/08-workdir.md "上下文注入"); the workspace remains the
   // bot's private scratch area.
-  const baseDir = deps.projectPath ?? workspacePath;
+  const baseDir = deps.workdirPath ?? workspacePath;
   const runId = identity.runId;
 
   const readOps = {

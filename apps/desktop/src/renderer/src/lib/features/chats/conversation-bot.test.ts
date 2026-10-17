@@ -28,7 +28,7 @@ function directConversation(): Conversation {
     type: 'direct',
     title: null,
     directBotId: 'bot_writer',
-    projectId: null,
+    workdirId: null,
     readOnly: false,
     summary: null,
     summaryUptoSeq: 0,
@@ -59,7 +59,7 @@ describe('resolveConversationBot (D70: 管家提议创建的 Bot 只经事件进
   });
 
   it('ignores group conversations and direct rows without a bot id', () => {
-    const group = { ...directConversation(), type: 'group' as const, directBotId: null };
+    const group = { ...directConversation(), type: 'project' as const, directBotId: null };
     expect(resolveConversationBot(group, []).refetch).toBe(false);
     const noBot = { ...directConversation(), directBotId: null };
     expect(resolveConversationBot(noBot, []).refetch).toBe(false);

@@ -23,7 +23,9 @@ import { runSkillAuthoringJob } from '../skills/authoring.js';
 import type { SkillsService } from '../skills/registry.js';
 import { runWikiIngestJob } from '../wiki/ingest.js';
 import { runWikiLintJob } from '../wiki/lint.js';
+import { runWikiRemoveSourceJob } from '../wiki/remove-source-job.js';
 import type { WikiService } from '../wiki/service.js';
+import type { WikiIndexFor } from '../wiki/fts.js';
 import type { ScheduleService } from '../schedule/service.js';
 import type { WatchService } from '../watch/service.js';
 import type { MailService } from '../mail/service.js';
@@ -66,6 +68,8 @@ export interface JobsRunnerDeps {
   skills?: SkillsService | undefined;
   /** P09 wiki domain (wiki_ingest / wiki_lint / wiki_suggestion consumers). */
   wiki?: WikiService | undefined;
+  /** Per-owner wiki_fts resolver (D92 T1b: bot memory.db / project wiki.db). */
+  wikiIndexFor?: WikiIndexFor | undefined;
   /** P10 schedule domain (schedule_fire consumer). */
   schedules?: ScheduleService | undefined;
   /** W7 watch domain (watch_alert consumer). */
@@ -164,6 +168,7 @@ export class JobsRunner {
     const budgetBotId = provider.startsWith('agent:') ? this.#routeBotId(job) : job.bot_id;
     if (
       !RESPONSE_TRIGGER_JOBS.has(job.type) &&
+      !NO_MODEL_JOBS.has(job.type) &&
       this.#deps.budget !== undefined &&
       budgetBotId !== null &&
       this.#deps.budget.exceeded(budgetBotId)
@@ -278,6 +283,7 @@ export class JobsRunner {
           return;
         }
         const outcome = wiki.enqueueIngest({
+          owner: { kind: 'bot', id: job.bot_id },
           botId: job.bot_id,
           conversationId: job.conversation_id,
           source: {
@@ -285,6 +291,7 @@ export class JobsRunner {
             ref: payload.ref ?? '',
             note: payload.note ?? '',
           },
+          createdBy: { kind: 'bot', id: job.bot_id },
         });
         if (!outcome.ok) {
           this.#deps.logger.info(
@@ -314,7 +321,7 @@ export class JobsRunner {
           secrets: this.#deps.secrets,
           usage: this.#deps.usage,
           gateway: this.#deps.gateway,
-          memory: this.#deps.memory,
+          indexFor: this.#requireWikiIndexFor(),
           wiki: this.#deps.wiki,
           orchestrator: this.#deps.orchestrator,
           publish: (event, payload) => {
@@ -341,7 +348,8 @@ export class JobsRunner {
           secrets: this.#deps.secrets,
           usage: this.#deps.usage,
           gateway: this.#deps.gateway,
-          memory: this.#deps.memory,
+          indexFor: this.#requireWikiIndexFor(),
+          conversations: this.#deps.conversations,
           wiki: this.#deps.wiki,
           jobs: this.#deps.jobs,
           publish: (event, payload) => {
@@ -382,6 +390,14 @@ export class JobsRunner {
         }
         await this.#deps.handover.runCopyJob(job);
         return;
+      case 'wiki_remove_source':
+        // D92 T1b WP10: delete one project-wiki source under the maintenance
+        // mutex. Calls no model; ACL / NOT_FOUND failures settle as done.
+        if (this.#deps.wiki === undefined) {
+          throw new Error('wiki domain not wired; cannot run wiki_remove_source');
+        }
+        await runWikiRemoveSourceJob({ wiki: this.#deps.wiki, logger: this.#deps.logger, job });
+        return;
       case 'event_delivery':
         // P10 (BR-P10-006): an event response trigger parked for quiet hours —
         // persistent across restarts; re-checks happen in the orchestrator.
@@ -405,6 +421,13 @@ export class JobsRunner {
     return this.#deps.wiki;
   }
 
+  #requireWikiIndexFor(): WikiIndexFor {
+    if (this.#deps.wikiIndexFor === undefined) {
+      throw new Error('wiki domain not wired; cannot resolve the wiki index');
+    }
+    return this.#deps.wikiIndexFor;
+  }
+
   /**
    * Scheduler concurrency key of a job: `agent:{id}` only when the D72 P6
    * router sends its model calls to an external agent; built-in routes keep
@@ -413,6 +436,8 @@ export class JobsRunner {
   #providerFor(job: JobRow): string {
     // D88 P2: the handover copy makes no model calls — never take a model provider's slot.
     if (job.type === 'handover_copy') return 'host:handover_copy';
+    // D92 T1b WP10: same for wiki_remove_source — a file/git-only action.
+    if (job.type === 'wiki_remove_source') return 'host:wiki_remove_source';
     const purpose = JOB_PURPOSES[job.type];
     const router = this.#deps.router;
     if (purpose !== undefined && router !== undefined) {
@@ -458,6 +483,13 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'watch_alert',
   'mail_alert',
 ]);
+
+/**
+ * D92 T1b WP10: jobs that run no model at all (file / git work only). Their
+ * `bot_id` is attribution, not billing — exempt from the daily background
+ * budget so an exhausted lead budget never delays a source removal.
+ */
+const NO_MODEL_JOBS: ReadonlySet<string> = new Set(['wiki_remove_source']);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */
 const JOBS_LEFT_PENDING: readonly string[] = [];

@@ -30,9 +30,10 @@
    * 窄屏不渲染它——消息行等处的 Tooltip.Root 需要这里补一个，否则取上下文
    * 直接抛错（Context "Tooltip.Provider" not found）。
    */
-  // 组群输入（chat.composingGroup）与打开的会话一样占据详情层：列表页点「新建群聊」
-  // 时 currentId 为 null，只看 currentId 会让点击没有任何反应。
-  const showDetail = $derived(chat.currentId !== null || chat.composingGroup);
+  // The project compose (chat.composingProject) occupies the detail layer like
+  // an open conversation: on the list page currentId is null, so looking at
+  // currentId alone would make the "new project" click do nothing.
+  const showDetail = $derived(chat.currentId !== null || chat.composingProject);
   const showTabBar = $derived(
     showNarrowTabBar(narrowLayout.tab, showDetail, narrowLayout.botDetailOpen),
   );

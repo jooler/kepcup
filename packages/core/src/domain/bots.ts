@@ -80,10 +80,17 @@ export interface AppConnectionDirectory {
   get(connectionId: string): { id: string; connectorId: string } | null;
 }
 
+/** D92 T1a：`markDeleted` 的负责人后盾守卫（lifecycle 先拦，这里兜底）。 */
+export type LeadProjectGuard = (
+  botId: string,
+) => Array<{ id: string; title: string | null }> | null;
+
 /** Bots CRUD. Deleted bots keep a placeholder row (id never reused). */
 export class BotsService {
   /** D73：start.ts 在连接服务构造后接入；未接入时 `app_connection_ids` 只能为空。 */
   #connections: AppConnectionDirectory | null = null;
+  /** D92 T1a：start.ts 在 projects 服务构造后接入。 */
+  #leadProjectGuard: LeadProjectGuard | null = null;
 
   constructor(
     private readonly db: SqliteDatabase,
@@ -94,6 +101,11 @@ export class BotsService {
   /** D73：接入连接目录，`create` / `update` / `grantConnection` 据此校验授权。 */
   attachAppConnections(connections: AppConnectionDirectory): void {
     this.#connections = connections;
+  }
+
+  /** D92 T1a：接入负责人守卫（`markDeleted` 的后盾）。 */
+  attachLeadProjectGuard(guard: LeadProjectGuard): void {
+    this.#leadProjectGuard = guard;
   }
 
   /**
@@ -402,6 +414,16 @@ export class BotsService {
     if (bot.systemRole === 'butler') {
       // Lifecycle rejects first (before any cascade); this is the backstop.
       throw new AppError('BOT_UNDELETABLE', '管家不能删除');
+    }
+    const ledProjects = this.#leadProjectGuard?.(id) ?? [];
+    if (ledProjects.length > 0) {
+      const names = ledProjects.map((project) => project.title ?? project.id).join('、');
+      // Same backstop position as the butler guard (lifecycle rejects first).
+      throw new AppError(
+        'PROJECT_LEAD_REQUIRED',
+        `该 Bot 是 ${ledProjects.length} 个项目组的负责人，请先更换：${names}`,
+        { projects: ledProjects },
+      );
     }
     const now = this.clock.now();
     this.db

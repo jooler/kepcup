@@ -233,7 +233,7 @@ describe('D75 task layer (TaskHost)', () => {
     expect(wakeRuns(stack, conv.id)).toHaveLength(0);
   }, 30_000);
 
-  it('two write tasks on the same workdir: the second stays submitted until the first settles', async () => {
+  it('two write tasks on the same cwd: the second stays submitted until the first settles', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
@@ -265,7 +265,7 @@ describe('D75 task layer (TaskHost)', () => {
     expect(w1.queueReason).toContain('写入租约');
     expect(w2.state).toBe('submitted');
     expect(w2.queueReason).toContain(`等写入租约（任务 ${w1.taskId} 持有）`);
-    expect(runOf(stack, w1.taskId).taskWorkdir).toBe(runOf(stack, w2.taskId).taskWorkdir);
+    expect(runOf(stack, w1.taskId).taskCwd).toBe(runOf(stack, w2.taskId).taskCwd);
     await waitRun(stack, w1.taskId, ['running'], 'w1 running');
     await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
       label: 'w1 request held',

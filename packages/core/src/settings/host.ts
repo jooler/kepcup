@@ -54,7 +54,7 @@ import type { SettingsWriteLock } from './write-lock.js';
 /**
  * 对话内应用设置的宿主（todo/conversational-app-setup.md §4.1 适配器 / §5 三个工具 / §6 卡片）：
  *
- * - 工具门面（`forRun`）：按 run 绑定档位裁定的上下文（触发源、是否读过不可信内容、群聊、管家……）；
+ * - 工具门面（`forRun`）：按 run 绑定档位裁定的上下文（触发源、是否读过不可信内容、项目组、管家……）；
  * - 条目级 CAS 写入（`#writeItem`）：设置写锁内「读 → 只比对本条目字段 → 只改本条目字段 → 写回」，
  *   成功后广播 `settings.changed`；
  * - 卡片（system_event `setting_card`，写回方式同 D80 `schedule_offer`）：出卡、顶替、过期、
@@ -87,9 +87,9 @@ export interface SettingsCatalogHostDeps extends AdapterDeps {
   clock: Clock;
   logger: CoreLogger;
   lock: SettingsWriteLock;
-  /** 群聊 / 项目范围的对象（scope = group / project）。 */
+  /** 项目组 / 工作目录范围的对象（scope = project / workdir）。 */
   conversations: {
-    get(id: string): { title: string | null; type: string; projectId: string | null } | null;
+    get(id: string): { title: string | null; type: string; workdirId: string | null } | null;
   };
   /** D73 污点（按（Bot, 对话）计）：与本 run 的「接触过不可信内容」取并集。 */
   taint?: { isTainted(botId: string, conversationId: string): boolean } | undefined;
@@ -111,7 +111,7 @@ export interface SettingsRunContext {
   triggerReason: TriggerReason | null;
   /** 触发批的发送者是用户本人（`triggerFromUser`，settings/context.ts）。 */
   triggerFromUser: boolean;
-  isGroup: boolean;
+  isProject: boolean;
   isButler: boolean;
   /** 本 run 已调用过读取不可信内容的工具（随 run 推进而变；触发批带附件时一开始就为真）。 */
   touchedUntrusted: () => boolean;
@@ -235,8 +235,8 @@ export class SettingsCatalogHost {
       conversationId !== null ? this.#deps.conversations.get(conversationId) : null;
     return {
       botId: item.scope === 'bot' ? (botId ?? ctx.identity.botId) : null,
-      conversationId: item.scope === 'group' || item.scope === 'bot' ? conversationId : null,
-      projectId: item.scope === 'project' ? (conversation?.projectId ?? null) : null,
+      conversationId: item.scope === 'project' || item.scope === 'bot' ? conversationId : null,
+      workdirId: item.scope === 'workdir' ? (conversation?.workdirId ?? null) : null,
     };
   }
 
@@ -262,7 +262,7 @@ export class SettingsCatalogHost {
       triggerFromUser: ctx.triggerFromUser,
       runTouchedUntrusted: ctx.externalEngine === true || ctx.touchedUntrusted(),
       tainted,
-      isGroup: ctx.isGroup,
+      isProject: ctx.isProject,
       targetsOtherBot: item.scope === 'bot' && target.botId !== null && target.botId !== botId,
       isButler: ctx.isButler,
       loopType: ctx.identity.loopType as SharedLoopType,
@@ -463,7 +463,7 @@ export class SettingsCatalogHost {
     }
     // 按键寻址的条目（如 agents.external）读本次涉及的那个键。
     const snapshot = adapter.read(item, target, values ?? undefined);
-    // Bot 的提议再按条目整理（群成员只能加、不能借预填移除）。
+    // Bot 的提议再按条目整理（项目成员只能加、不能借预填移除）。
     if (values !== null && adapter.proposal !== undefined) {
       values = adapter.proposal(item, values, snapshot);
     }
@@ -752,7 +752,7 @@ export class SettingsCatalogHost {
       throw new AppError('INVALID_INPUT', '设置卡与设置项不一致');
     }
     if (row !== null && input.target !== undefined) {
-      // 带卡片时作用对象以卡为准：调用方给的 target 只能与卡一致（不能借卡改别的 Bot / 群）。
+      // 带卡片时作用对象以卡为准：调用方给的 target 只能与卡一致（不能借卡改别的 Bot / 项目组）。
       const cardTarget = row.card.target ?? {};
       const mismatch = (Object.keys(input.target) as Array<keyof SettingTarget>).some(
         (key) => input.target![key] !== undefined && input.target![key] !== cardTarget[key],
@@ -1048,7 +1048,7 @@ export class SettingsCatalogHost {
     return {
       ...(target.botId !== null ? { botId: target.botId } : {}),
       ...(target.conversationId !== null ? { conversationId: target.conversationId } : {}),
-      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      ...(target.workdirId !== null ? { workdirId: target.workdirId } : {}),
     };
   }
 
@@ -1067,7 +1067,7 @@ export class SettingsCatalogHost {
     return {
       botId: target.botId ?? null,
       conversationId: target.conversationId ?? conversationId,
-      projectId: target.projectId ?? conversation?.projectId ?? null,
+      workdirId: target.workdirId ?? conversation?.workdirId ?? null,
     };
   }
 

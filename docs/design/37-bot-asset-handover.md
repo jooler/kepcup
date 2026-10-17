@@ -139,7 +139,7 @@ propose_handover({
 
 - 宿主校验：发起权（§决策 7）；`from ≠ to`；目标 active、不在访谈中；每个 key 必须在**当下**的盘点里存在、动作合法、未被过滤（编造的 key 直接退回并说明）；同一对话已有待定的移交卡或管家提议卡 → 拒绝叠加。
 - 提交即本轮结束（`terminate`），与 `propose_*` 一致；卡片非阻塞，决定落在 core 回调里。
-- `new_bot.model`：`inherit` / `default` / 可用模型列表里的 ref。`propose_bot` / `propose_team` 的每个 Bot 同步增加可选 `model`（P0），让「新建一个用 X 模型的 Bot」也能一步完成。
+- `new_bot.model`：`inherit` / `default` / 可用模型列表里的 ref。`propose_bot` / `propose_bots` 的每个 Bot 同步增加可选 `model`（P0；D92 起批量提议工具名为 `propose_bots`），让「新建一个用 X 模型的 Bot」也能一步完成。
 
 ### 4.3 提示词
 
@@ -202,7 +202,7 @@ P2 在接口上增加两项：`background`（后台条目：确认后的同步�
 
 | 期 | 范围 |
 |---|---|
-| **P0** | 迁移（两表 + approvals kind）、适配器框架与 `HandoverHost`、`inspect_bot_assets` / `propose_handover`（仅管家；目标可新建）、`propose_bot` / `propose_team` 增 `model`；适配器：模型、连接应用、MCP、邮箱、定时任务（不含承诺联动）、职责改写、交接说明；移交卡（渲染端）；提示词；触发事件的端到端用例 |
+| **P0** | 迁移（两表 + approvals kind）、适配器框架与 `HandoverHost`、`inspect_bot_assets` / `propose_handover`（仅管家；目标可新建）、`propose_bot` / `propose_bots`（原 `propose_team`）增 `model`；适配器：模型、连接应用、MCP、邮箱、定时任务（不含承诺联动）、职责改写、交接说明；移交卡（渲染端）；提示词；触发事件的端到端用例 |
 | **P1** | 普通 Bot 发起（来源只能是自己）、网页监看、Skill、记忆（按条复制 + 承诺随定时任务迁移） |
 | **P2** | Wiki（后台作业）、组件；「退役」流程：全部资产移交后结果卡给出「删除 {A}」按钮（走既有 D18 删除确认，不自动删）；`deletionPreview` 改用适配器汇总（未采用，DEV-024）——已实施（`t/handover-p2`） |
 

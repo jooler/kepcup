@@ -4,7 +4,8 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 工作台（D90，docs/design/39-workbench.md）端到端：真实 Electron + 真实 core，模型用 mock LLM
@@ -61,16 +62,29 @@ async function startSession(prefix: string): Promise<Session> {
   // resolveWindowOptions 把默认窗口钳制到显示器内：CI 的 Xvfb（默认 640×480）
   // 和部分 runner 的显示空间会让窗口落进 WorkbenchView 的 tab 形态（<760px），
   // memo-pane 不渲染。工作台用例统一钉 1280×840 内容尺寸，避免按显示器赌宽窄。
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0]?.setSize(1280, 840);
+  const pinned = await app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return null;
+    win.setSize(1280, 840);
+    const bounds = win.getBounds();
+    const workArea = screen.getPrimaryDisplay().workArea;
+    return {
+      bounds,
+      workArea,
+      scale: screen.getPrimaryDisplay().scaleFactor,
+      maximized: win.isMaximized(),
+      // 诊断（临时）：mac runner 上 tab 形态之谜——钉完后实测窗口与显示空间。
+      dpr: win.webContents.getZoomFactor(),
+    };
   });
+  console.warn('[workbench-pin]', JSON.stringify(pinned));
   return { app, page, home, llm };
 }
 
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -90,11 +104,30 @@ async function waitReady(page: Page): Promise<void> {
   // 设置「显示工作台」默认关闭（8b053df）：入口与分隔线隐藏，这里的用例都要先打开它。
   await rpc(page, 'settings.update', { workbenchEnabled: true });
   await expect(page.locator('[data-testid="workbench-nav"]')).toBeVisible({ timeout: 15_000 });
+  // 双栏 seam（WorkbenchView.svelte）：runner 显示空间可以小到 1024×677，
+  // 1280 窗口照样被钳；把 tab 形态强制为双栏，memo 侧断言与显示器解耦。
+  // 要验证 tab 形态的用例自会 removeItem 覆盖这段。
+  await page.evaluate(() => localStorage.setItem('kepcup.e2e.workbenchWide', '1'));
 }
 
 async function openWorkbench(page: Page): Promise<void> {
   await page.locator('[data-testid="workbench-nav"]').click();
   await expect(page.locator('[data-testid="workbench-view"]')).toBeVisible({ timeout: 15_000 });
+  // 诊断（临时）：runner 上 dual-pane 与 tab 形态之争用实测宽度裁决。
+  const dims = await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>('[data-testid="workbench-view"]');
+    const probe = (testid: string): number | null => {
+      const node = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
+      return node === null ? null : node.clientWidth;
+    };
+    return {
+      inner: { w: window.innerWidth, h: window.innerHeight },
+      workbench: el?.clientWidth ?? null,
+      sidebar: probe('sidebar'),
+      tablist: document.querySelector('[role="tablist"]')?.clientWidth ?? null,
+    };
+  });
+  console.warn('[workbench-dims]', JSON.stringify(dims));
 }
 
 /** 左栏点会话行（按 id）。 */
@@ -404,7 +437,7 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
   }
 });
 
-test('group dispatch: nobody claims → back to draft; lead bot → @ route delivers', async () => {
+test('project dispatch: @ always lands on the lead; skipped reply returns to draft; lead answer delivers', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-wb-group-');
   const { page, llm } = session;
@@ -412,39 +445,41 @@ test('group dispatch: nobody claims → back to draft; lead bot → @ route deli
     await waitReady(page);
     await createBotAndOpenChat(page, '阿甲');
     await createBotAndOpenChat(page, '阿乙');
-    await createGroupViaUi(page, '项目组', ['阿甲', '阿乙']);
+    await createProjectViaUi(page, '项目组', ['阿甲', '阿乙']);
 
-    // 全员 triage 都不认领。
-    llm.script('mock-light', [
+    // D92 T1a：派给项目组的事项总是带对负责人的 @（不指定时 = 项目组负责人
+    // 阿甲），不再有全员认领判断。负责人跳过回复 → 事项退回草案。
+    llm.script('mock-main', [
       step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿甲'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿乙'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
+        .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
+        .replyToolCall('skip_reply', { reason: '这轮我不回' }),
     ]);
+    reflections(llm);
 
     await openWorkbench(page);
     await quickAdd(page, '整理竞品报告');
     await todoCard(page, '整理竞品报告').click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toBeVisible();
     await pickAssignee(page, '项目组');
-    // 选群后出现负责 Bot 选择器，默认「不指定」。
+    // 选项目组后出现负责 Bot 选择器，默认「不指定」（= 项目组负责人）。
     await expect(page.locator('[data-testid="todo-lead-bot"]')).toContainText('不指定');
     await page.locator('[data-testid="todo-when-now"]').click();
     await shot(page, '09-todo-drawer-group');
     await page.locator('[data-testid="todo-save"]').click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0, { timeout: 15_000 });
 
-    // 无人认领 → 退回草案，卡片显示原因，所在分道是未指派或群道的草案。
+    // 负责人 skip_reply → 无可见回复 → 退回草案，原因「项目里无人回应」。
     const card = todoCard(page, '整理竞品报告');
-    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText('群里无人认领', {
-      timeout: 60_000,
-    });
+    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText(
+      '项目里无人回应',
+      {
+        timeout: 60_000,
+      },
+    );
     await expect(card).toHaveAttribute('data-status', 'draft');
-    await shot(page, '10-todo-unclaimed');
+    await shot(page, '10-todo-unanswered');
 
-    // 群对话里：工作台派发卡 + 无人认领提示。
+    // 项目组沟通里：工作台派发卡存在（@ 负责人）；「无人认领」点选卡已不存在。
     await card.locator('[data-testid="todo-card-start"]').scrollIntoViewIfNeeded();
     await page
       .locator('[data-testid^="conversation-item-"]')
@@ -452,9 +487,9 @@ test('group dispatch: nobody claims → back to draft; lead bot → @ route deli
       .first()
       .click();
     await expect(page.locator('[data-testid="dispatch-card"]')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="no-claim-bots"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="no-claim-bots"]')).toHaveCount(0);
 
-    // 回工作台：指定负责 Bot 阿甲，立即开始 → 走 @ 显式目标，阿甲回复 → 待验收。
+    // 回工作台：指定负责 Bot 阿甲，立即开始 → @ 显式目标，阿甲回复 → 待验收。
     llm.script('mock-main', [
       step()
         .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
@@ -1035,9 +1070,24 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0);
 
     // 视图宽度 < 760：折成「事项 / 备忘」两个 tab，各自不溢出。
+    // 先撤掉 waitReady 里的双栏 seam（本段就是要断言 tab 形态）。
+    await page.evaluate(() => localStorage.removeItem('kepcup.e2e.workbenchWide'));
     await resizeWindow(app, 900, 760);
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,
+    }).catch(async (error) => {
+      const probe = await page.evaluate(() => ({
+        seam: window.localStorage.getItem('kepcup.e2e.workbenchWide'),
+        inner: window.innerWidth,
+        view: document.querySelector('[data-testid="workbench-view"]')?.clientWidth,
+        attrs: (() => {
+          const el = document.querySelector('[data-testid="workbench-view"]');
+          if (!el) return null;
+          return { width: el.getAttribute('data-width'), tabbed: el.getAttribute('data-tabbed') };
+        })(),
+      }));
+      console.warn(`[layout-probe] ${JSON.stringify(probe)}`);
+      throw error;
     });
     await expect(page.locator('[data-testid="memo-pane"]')).toHaveCount(0);
     expect(await overflowing(page, '[data-testid="workbench-view"]')).toEqual([]);

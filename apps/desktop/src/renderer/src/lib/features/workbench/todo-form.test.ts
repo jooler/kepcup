@@ -105,16 +105,16 @@ describe('buildUpdateInput', () => {
     });
   });
 
-  it('群执行者改负责 Bot：带整个 assignee', () => {
-    const group = (lead: string): TodoFormValues =>
+  it('项目组执行者改负责 Bot：带整个 assignee', () => {
+    const project = (lead: string): TodoFormValues =>
       base({
-        assigneeKey: 'group:g',
+        assigneeKey: 'project:g',
         leadBotId: lead,
-        assignee: { kind: 'group', conversationId: 'g', leadBotId: lead === '' ? null : lead },
+        assignee: { kind: 'project', projectId: 'g', leadBotId: lead === '' ? null : lead },
       });
-    expect(buildUpdateInput('t1', group(''), group('b'), free)).toEqual({
+    expect(buildUpdateInput('t1', project(''), project('b'), free)).toEqual({
       id: 't1',
-      assignee: { kind: 'group', conversationId: 'g', leadBotId: 'b' },
+      assignee: { kind: 'project', projectId: 'g', leadBotId: 'b' },
     });
   });
 });

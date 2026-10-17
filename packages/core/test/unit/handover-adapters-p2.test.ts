@@ -204,7 +204,8 @@ describe('wiki adapter', () => {
       result: { copiedCount: 0, skippedPaths: ['pages/a.md'] },
     });
     expect((outcomes.get('wiki:pages/a.md') as { reason: string }).reason).toContain('pages/a.md');
-    expect(published).toEqual([{ botId: 'bot_b' }]);
+    // D92 T1b WP9: wiki_changed payloads are owner-shaped.
+    expect(published).toEqual([{ owner: { kind: 'bot', id: 'bot_b' } }]);
   });
 
   it('applyBatch: a directory with some same-path pages is done and lists the skipped ones', async () => {

@@ -59,7 +59,7 @@
       cardEmbeddable(item, {
         botId,
         conversationId: chat.currentId,
-        projectId: chat.current?.conversation.projectId ?? null,
+        workdirId: chat.current?.conversation.workdirId ?? null,
         prefill,
         agent: (id) => agentsStore.get(id),
         defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -106,7 +106,7 @@
       {prefill}
       {botId}
       conversationId={chat.currentId}
-      projectId={chat.current?.conversation.projectId ?? null}
+      workdirId={chat.current?.conversation.workdirId ?? null}
       expected={setting.before ?? null}
       testidPrefix="setup-card-setting"
       onSaved={proceed}

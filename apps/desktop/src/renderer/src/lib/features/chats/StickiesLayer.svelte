@@ -76,13 +76,13 @@
   });
 
   /**
-   * 便签来源会话的显示名（全局便签标注「来自 X」）：群聊取群名，单聊取
+   * 便签来源会话的显示名（全局便签标注「来自 X」）：项目组取项目名，单聊取
    * Bot 名（bot 缺失时经 botName 兜底，设计/01：已删 Bot 显示其 id）。
    */
   function sourceName(conversationId: string): string {
     const conversation = chat.conversations.find((c) => c.id === conversationId);
     if (conversation === undefined) return '';
-    if (conversation.type === 'group') return conversation.title ?? '';
+    if (conversation.type === 'project') return conversation.title ?? '';
     return conversation.bot?.name || chat.botName(conversation.directBotId ?? '');
   }
 

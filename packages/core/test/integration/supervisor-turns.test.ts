@@ -9,7 +9,7 @@ import {
   isTaskRequest,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -206,7 +206,7 @@ describe('D75 supervisor turns (W2)', () => {
         'forward_task_result',
       ]),
     );
-    for (const name of ['write', 'edit', 'bash', 'request_access', 'acquire_project_write']) {
+    for (const name of ['write', 'edit', 'bash', 'request_access', 'acquire_workdir_write']) {
       expect(turnTools).not.toContain(name);
     }
     expect(firstUserText(turn1Request)).not.toContain('<tasks>');
@@ -476,7 +476,7 @@ describe('D75 supervisor turns (W2)', () => {
     const { core, llm } = stack;
     const x = await makeBot(core, '阿甲');
     const y = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '测试群', [x.id, y.id]);
+    const conv = await makeProject(core, '测试群', [x.id, y.id]);
     const xTask = step().inTask().hold().replyText('RESULT-X 查好了');
     llm.script('mock-main', [
       // X's turn (first target) starts a task and replies at once.
@@ -508,7 +508,7 @@ describe('D75 supervisor turns (W2)', () => {
     // The round finished while the task is still running.
     expect(domain(stack).runs.getOrThrow(xTaskRun.id).status).toBe('running');
     await waitFor(
-      () => (core.services.orchestrator!.groupTurnState(conv.id).phase === 'idle' ? true : null),
+      () => (core.services.orchestrator!.projectTurnState(conv.id).phase === 'idle' ? true : null),
       { label: 'round over' },
     );
     xTask.release();

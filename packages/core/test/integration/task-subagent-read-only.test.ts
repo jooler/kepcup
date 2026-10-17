@@ -92,7 +92,7 @@ describe('delegate_task inside a task follows the task write rule (D75 review H1
     );
 
     // The rule resolves through parent_run_id to the read-only task.
-    expect(core.services.projectRuntime!.writeDenial(subIdentity(sub))).toContain('只读任务');
+    expect(core.services.workdirRuntime!.writeDenial(subIdentity(sub))).toContain('只读任务');
     // The sub run's bash wrote nothing (RUN_READ_ONLY without a sandbox, or a
     // read-only mount with one).
     const workspace = workspacePathFor(core.services.paths, bot.id, conv.id);
@@ -133,7 +133,7 @@ describe('delegate_task inside a task follows the task write rule (D75 review H1
     await waitFor(() => (llm.requestsFor('mock-main').some(isSubRequest('SUB-RW')) ? true : null), {
       label: 'sub run request held',
     });
-    expect(core.services.projectRuntime!.writeDenial(subIdentity(sub))).toBeNull();
+    expect(core.services.workdirRuntime!.writeDenial(subIdentity(sub))).toBeNull();
     held.release();
     await waitFor(
       () => {
@@ -142,7 +142,7 @@ describe('delegate_task inside a task follows the task write rule (D75 review H1
       },
       { label: 'task completed', timeoutMs: 20_000 },
     );
-    expect(core.services.projectRuntime!.writeDenial(subIdentity(sub))).toContain('写任务已经结束');
+    expect(core.services.workdirRuntime!.writeDenial(subIdentity(sub))).toContain('写任务已经结束');
   }, 40_000);
 });
 

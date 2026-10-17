@@ -12,7 +12,7 @@
 - **D89 对话内应用设置**：
   1. **一份设置目录是唯一事实来源**。`packages/shared/src/settings-catalog/` 纯数据登记 KepCup 自身的全部设置项（id、作用、范围、字段、最宽松档位、卡片组件、深链）；工具、卡片、提示词、覆盖率测试都读它，不做第二份清单。否决「每个设置项一个工具」（工具面随设置线性膨胀，且会与 `app_{slug}_{tool}` 碰撞）。
   2. **三个通用工具，渐进披露**：`settings_search`（概览 / 检索）→ `settings_read`（详情）→ `settings_change`（修改或出卡）。常驻提示词只有一条规则；工具描述只写用法、不写设置清单。
-  3. **修改方式由宿主裁定，Bot 不能自选**。档位五级 `direct` / `confirm` / `form` / `user-only` / `link`，目录给出条目的最宽松档，宿主按触发源、不可信内容、群聊、跨 Bot、放宽权限、渲染层、缺密钥等条件**只收紧不放宽**；提示词不教模型风险分档。
+  3. **修改方式由宿主裁定，Bot 不能自选**。档位五级 `direct` / `confirm` / `form` / `user-only` / `link`，目录给出条目的最宽松档，宿主按触发源、不可信内容、项目组、跨 Bot、放宽权限、渲染层、缺密钥等条件**只收紧不放宽**；提示词不教模型风险分档。
   4. **direct 白名单只有两组**：默认主 / 轻量模型（限已配置 Key 的厂商）、本 Bot 的主 / 轻量模型（`DIRECT_ITEM_IDS`，测试强制）。direct 必出**回执卡**，24 小时内可一键撤销。
   5. **卡片是消息流里的 `system_event`（`setting_card`），不是审批**。同一对话可并存多张；同一项只留最新一张 pending；每 run ≤3 张；同一 Bot 对同一项 7 天内被拒 2 次后宿主拒绝再出。设置卡与 D58 输入坞上方的单张失败续跑卡并存、互不替代。
   6. **提议卡落定后唤醒 Bot 续答，每张一次**（有意不同于 D80 的「不唤醒」：设置卡只是用户原始需求的前置步骤）；撤销回执卡不唤醒。
@@ -25,7 +25,7 @@
 
 ### 1.1 形态
 
-每个条目（`SettingItem`）：`id`（`组.名字`，小写短横线）、`group`（20 组：models / search / connections / mcp / mail / agents / bot / skills / schedules / profile / browser / group / project / hardware / general / background / unattended / environment / developer / diagnostics；`developer` 组 2026-10-15 起无条目，类型保留）、`title` / `summary` / `enables` / `keywords`（供搜索与「检查能力」）、`scope`（global / bot / group / project）、`owner`（`core` 或 `renderer`——主题、语言、麦克风只存在渲染层 localStorage，core 读不到也写不了）、`fields`（`FieldSpec`：name / label / type `text|number|select|toggle|model|secret|oauth|account` / sensitive / options 来源 / 多选）、`write`（`maxMode`、`via`、`widensPermission`、`wideningMode`）、`card`（`CardKey | null`）、`deepLink`（surface + section + anchor）、`store`（值存在哪：`settings` 点路径 / `bot` / `service` RPC / `renderer` / `none`）、`readOnly`。
+每个条目（`SettingItem`）：`id`（`组.名字`，小写短横线）、`group`（20 组：models / search / connections / mcp / mail / agents / bot / skills / schedules / profile / browser / project / workdir / hardware / general / background / unattended / environment / developer / diagnostics；`developer` 组 2026-10-15 起无条目，类型保留）、`title` / `summary` / `enables` / `keywords`（供搜索与「检查能力」）、`scope`（global / bot / project / workdir）、`owner`（`core` 或 `renderer`——主题、语言、麦克风只存在渲染层 localStorage，core 读不到也写不了）、`fields`（`FieldSpec`：name / label / type `text|number|select|toggle|model|secret|oauth|account` / sensitive / options 来源 / 多选）、`write`（`maxMode`、`via`、`widensPermission`、`wideningMode`）、`card`（`CardKey | null`）、`deepLink`（surface + section + anchor）、`store`（值存在哪：`settings` 点路径 / `bot` / `service` RPC / `renderer` / `none`）、`readOnly`。
 
 - `write.via` 指向专门工具的项（`app_request_connection` / `mail_request_setup` / `install_skill` / `request_access` / `schedule` / `watch_create` / `propose_profile_change`）：`settings_read` 告诉 Bot 改用哪个工具，`settings_change` 只回「请改用某工具」、**不代为调用**，各工具自己的门控与审批不被绕过。
 - `write.maxMode` 记**目标**档位；条目没有内嵌组件（`card = null`）时宿主一律兜底成 `link`（见 §3 第 4 步）。`widensPermission` 的条目永不 direct；`wideningMode: 'user-only'` 的条目在**本次值是放宽方向**时升到 user-only（如 Bot 网络策略放开、MCP / 连接逐工具策略放开；放宽与否由适配器按旧值 → 新值判定，未知按放宽）。
@@ -50,7 +50,8 @@
 | Bot | `bot.identity`（via `propose_profile_change`）/ `bot.file-access`（via `request_access`） | — | 无 |
 | 技能 / 定时 | `skills.install`（via `install_skill`）/ `schedules.schedule`（via `schedule`）/ `schedules.watch`（via `watch_create`） | — | 无 |
 | 画像 / 浏览器 | `profile.user-facts`（link，永久）/ `browser.shared-profiles`（confirm） | link / confirm | 无 / `browser-profiles` |
-| 群 / 项目 | `group.title` / `group.members`（confirm）；`project.protect-rules` / `project.ports`（user-only） | — | `group-title` / `group-members` / `project-settings` |
+| 项目组 / 工作目录 | `project.title` / `project.goal` / `project.members` / `project.lead`（均 confirm，卡 `project-title` / `project-goal` / `project-members` / `project-lead`）；`workdir.protect-rules` / `workdir.ports`（user-only，卡 `workdir-settings`） | — | `project-title` / `project-goal` / `project-members` / `project-lead` / `workdir-settings` |
+| 深链落点 | 项目组条目 `surface: 'project-detail'`（内容区页面，`section ∈ PROJECT_DETAIL_SECTIONS = ['overview','members','grants','schedules','danger']`，锚点 `project-title` / `project-goal` / `project-members` / `project-lead`）；工作目录条目 `surface: 'workdir-dialog'` | — | — |
 | 硬件 | `hardware.microphone` / `hardware.camera`（renderer） | confirm | `sensor` |
 | 通用 | `general.theme` / `general.language`（renderer，语言只认 `zh-CN` 等已注册的）/ `general.launch-at-login` | confirm | `appearance` / `field-editor` |
 | 后台 | `background.tasks` / `background.budget` | confirm | `background-tasks` / `field-editor` |
@@ -59,11 +60,11 @@
 | MCP 管理 | `developer.custom-mcp` / `.oauth-clients` / `.mcpb`（2026-10-15 起 `group: 'mcp'`、深链扩展中心「MCP」；`developer.*` id 为兼容保留。原 `developer.mode` 随「设置 → 开发者模式」分区移除，见设计 29 §16.2） | link（永久） | 无 |
 | 诊断 | `diagnostics.status` / `diagnostics.usage` | 只读 | 无 |
 
-删除类动作（删 Bot / 会话 / 浏览器资料 / 邮箱 / MCP / 技能 / 工具链、断开连接、解散群、移除项目、撤销授权、删画像条目）**不是设置**，不入目录，在 `EXCLUDED_SETTING_LOCATIONS` 显式排除表里逐条写明理由；记忆 / 组件 / 知识库 / 「其它」页签是数据或产出物，同样排除。
+删除类动作（删 Bot / 会话 / 浏览器资料 / 邮箱 / MCP / 技能 / 工具链、断开连接、删除项目组、撤销授权、删画像条目）**不是设置**，不入目录，在 `EXCLUDED_SETTING_LOCATIONS` 显式排除表里逐条写明理由；记忆 / 组件 / 知识库 / 「其它」页签是数据或产出物，同样排除。
 
 ### 1.3 覆盖率与完整性测试（让「全部能成卡」可验证）
 
-- **测试一（UI → 条目）**：设置弹框每个分区与 `data-settings-anchor`、扩展中心每个页签、Bot 面板每个 Tab、群设置与项目设置对话框（P0 给后三者补了锚点），都必须对应至少一个条目或在排除表里写明理由；新增设置分区不登记就过不了。扫描 Svelte 源码在 `settings-ui-scan.ts`，判定是纯函数 `settingsCoverageProblems`。`PENDING_DESKTOP_ANCHORS`（计划中尚未加的锚点）当前为空，且测试强制其中的锚点必须仍不存在。
+- **测试一（UI → 条目）**：设置弹框每个分区与 `data-settings-anchor`、扩展中心每个页签、Bot 面板每个 Tab、项目详情页与工作目录设置对话框，都必须对应至少一个条目或在排除表里写明理由；新增设置分区不登记就过不了。扫描 Svelte 源码在 `settings-ui-scan.ts`，判定是纯函数 `settingsCoverageProblems`。`PENDING_DESKTOP_ANCHORS`（计划中尚未加的锚点）当前为空，且测试强制其中的锚点必须仍不存在。
 - **测试二（条目 → 组件 / 锚点）**：每个 `card !== null` 的条目在渲染层 `SETTING_CARD_COMPONENTS` 映射里必须有组件（`cardComponentProblems`），每个条目的 `deepLink` 必须指向真实存在的分区与锚点（顺手修掉 `models-default` 这类死锚点）。
 - **测试三（direct 白名单）**：`maxMode = 'direct'` 的条目必须在 `DIRECT_ITEM_IDS` 里，且白名单条目都是 core 拥有、带内嵌卡、不含敏感字段的模型选择器；敏感类型字段必须 `sensitive`，含敏感字段的条目不得 direct；渲染层条目最多 confirm 且没有 core store；user-only 安全开关（无人值守开启、沙箱、白名单、项目保护规则、放宽网络）档位被钉死。
 
@@ -75,8 +76,8 @@
 - **写**调用设置页用的同一批服务，只改本条目字段（`capabilityModels` / `webSearch` / `agents` / `backgroundTasks` / `apps` / `mcpServers` 等整对象一律在**最新**设置上按字段合并，不发整对象）。写必须是同步的；需要 await 的收尾（中断任务、关浏览器页面、收回授权）以 `ItemWriteEffects.afterUnlock` 返回，宿主在释放写锁之后执行并补发 `settings.changed`；只要写已经发生，即使写之后的读 / 标卡抛错，收尾也在 `finally` 里照样执行，失败只记日志。有写实现的条目以 `adapters.ts` 里带 `write` 的适配器为准（todo §8.2 有清单）。
 - **Bot 配置的写入只有一条路径**：所有 Bot runtime 条目（模型、浏览器资料、网络、MCP、连接、任务引擎）经 `deps.botProfiles.apply`，生产装配为 `settings/bot-profile-update.ts` 的 `applyBotProfileUpdate`——`bots.update` RPC 用的是同一个函数：写之前 `assertAgentSelectable`（换外部智能体时的实验开关与目录）与 `browserProfiles.assertSelectable`，写后发 `bot.updated`，锁外依次 `revokeMcp`（从 Bot 拿掉的 MCP 服务、连接 → 中断它的任务，排在最前）与 `browserProfiles.onBotProfileChanged`（有效资料变了 → 中断用过浏览器的任务、关页面）；每一步各自兜错、互不影响，`settle()` 不抛，返回失败说明由调用方记日志——关页面失败不会让授权留在 Bot 手里。适配器的依赖里没有 `bots.update`，绕不过去。
 - **`values` 形状校验**：`settings_change` 与 `settings.items.apply` 在 core 写入前都过 `settingValuesProblems`（shared `validate.ts`）：只认目录字段，按字段类型核对（toggle 布尔、number 有限数、text / model 字符串 ≤500、多值 ≤200 条），静态选项以外的值拒绝；语义校验（厂商 id 是否已接入、并发 1–16、智能体在目录里、MCP 服务存在……）在各适配器的 `normalize`，写锁里再核对一次。
-- **Bot 的提议只能「加」的条目**：适配器可带 `proposal`，只作用于 `settings_change` 的建议值（用户在卡上保存不经过它）。`group.members` 的建议值 = 现有成员 ∪ Bot 给的，Bot 不能借预填移出成员；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选。
-- **值格式**（`values` 的键 = 字段名）：对话模型字段为 `{model: "厂商/模型id"}`（`''` = 跟随默认，仅限 Bot 模型与组件审查模型；写入前补全 / 校验厂商前缀并核对该厂商下确有此模型）；能力模型 `{provider, model: "厂商/模型id"}`（厂商须支持该能力）；联网 `{provider}`；开关类 `{enabled: boolean}`；预算 `{tokens: 非负整数, 0 = 不限}`；后台任务 `{agentEnabled, agent}`；外部智能体 `{agent, enabled}`；Bot 网络策略 `{policy, allowlist}`（白名单只在 `allowlist` 策略下写入）；Bot 技能 `{skill, enabled}`（快照另带 `scope`）；MCP 服务 `{server, enabled}`；群成员 `{bots}`。
+- **Bot 的提议只能「加」的条目**：适配器可带 `proposal`，只作用于 `settings_change` 的建议值（用户在卡上保存不经过它）。`project.members` 的建议值 = 现有成员 ∪ Bot 给的，Bot 不能借预填移出成员；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选。
+- **值格式**（`values` 的键 = 字段名）：对话模型字段为 `{model: "厂商/模型id"}`（`''` = 跟随默认，仅限 Bot 模型与组件审查模型；写入前补全 / 校验厂商前缀并核对该厂商下确有此模型）；能力模型 `{provider, model: "厂商/模型id"}`（厂商须支持该能力）；联网 `{provider}`；开关类 `{enabled: boolean}`；预算 `{tokens: 非负整数, 0 = 不限}`；后台任务 `{agentEnabled, agent}`；外部智能体 `{agent, enabled}`；Bot 网络策略 `{policy, allowlist}`（白名单只在 `allowlist` 策略下写入）；Bot 技能 `{skill, enabled}`（快照另带 `scope`）；MCP 服务 `{server, enabled}`；项目成员 `{bots}`。
 - **needsSensitiveInput**：缺 Key、要新增厂商、外部智能体需登录 → 至少 form（例如种子 mock 厂商无 Key 时，换模型从 direct 收紧为 form）。
 - **选项**：已配置厂商下的对话模型、能力的可选厂商 / 模型（已有 Key 的排前）、检索供应商、智能体目录等，≤30 个。
 
@@ -94,7 +95,7 @@
 | 工具 | 输入 | 返回（上限） |
 |---|---|---|
 | `settings_search` | `query?`（关键词或需求描述，如「生成图片」） | 无 query：每组一行就绪概况（配好 / 部分 / 未配 / 未知）；有 query：≤10 条 `id｜标题｜作用｜当前状态｜本次可用的修改方式`。≤2KB |
-| `settings_read` | `id`、`bot_id?` | 字段（敏感字段只说已配置 / 未配置）、当前值（脱敏）、可选值（≤30）、**本次上下文里实际可用的档位与原因**（如「群聊中只能出卡」）；`via` 项直接说改用哪个工具；未知 id 给最接近的 3 个候选。≤4KB，字段与值放进 `<untrusted>` |
+| `settings_read` | `id`、`bot_id?` | 字段（敏感字段只说已配置 / 未配置）、当前值（脱敏）、可选值（≤30）、**本次上下文里实际可用的档位与原因**（如「项目组中只能出卡」）；`via` 项直接说改用哪个工具；未知 id 给最接近的 3 个候选。≤4KB，字段与值放进 `<untrusted>` |
 | `settings_change` | `id`、`values?`（只含非敏感字段）、`reason`（≤200 字，显示在卡上）、`required?`（仅任务）、`bot_id?` | 结果档位与人话（「已改为 X，用户可在回执卡上撤销」/「已出设置卡，处理后你会收到通知」/「这一项由用户亲手设置，已出空白卡」） |
 
 - 三个描述加起来约 600 字，只写用法。`bot_id` 只对 Bot 范围条目有意义：默认自己，管家可填别的 Bot。
@@ -111,7 +112,7 @@
 2. **下限（逐条取最严）**：
    - **触发源**：只有 `triggerReason ∈ {direct, mention, reply}` 且**触发批的发送者是用户本人**才允许 direct，其余至少 confirm。用户本人 = 批里每条消息都是 `senderType = user` 的普通文本、不带 `origin`（组件回传 `widget`、跨 Bot 代发 `delegation` 都不算），合并批各部分的触发原因也都在白名单内；任务的触发是 `task`，不在白名单；scheduled / event / watch / mail / chain / broadcast / background / 其他 Bot 的 mention / reply 都被排除。
    - **不可信内容**：本 run 读过不可信内容 → 至少 confirm。判定是**可信白名单**（`settings/context.ts` 的 `TRUSTED_TOOLS`：发消息、出卡 / 提议、设置、定时、记忆写入、任务与委派的管理动作、宿主侧的写与申请等只回执不回外部内容的工具）——**不在白名单里的工具一律按不可信**，含 `mcp_*` / `app_*` 动态工具与以后新增的工具；显式登记为不可信的有网页、邮件、浏览器、附件、`read` / `grep` / `ls` / `find` 与命令输出、历史消息、记忆、知识库、任务 / 子代理结果（`list_tasks`、`get_run`、`delegate_task` …）。每个内置工具都必须在两个集合之一显式登记（单测对照效果分类的全部工具名），新工具不登记过不了测试。`tool_call` 一发生就置位（同步并行的调用，模型决定它们时还没看到返回内容）。另外两种情况本 run **一开始就算不可信**：触发批带附件（图片进视觉通道、附件正文随时可读）；本 run 由**外部智能体（ACP）**执行（它的原生工具——抓网页、读文件、命令、自带 MCP——不经宿主分类，会话还跨 run 保留，所以整个 run 最多 confirm）。与 D73 污点（按（Bot, 对话）计，目前只有 `app_*` 读取置位）取**并集**——污点单独防不住网页、邮件里的注入。
-   - **群聊** → 至少 confirm（群聊里只能出卡）。
+   - **项目组** → 至少 confirm（项目组里只能出卡）。
    - **别的 Bot 的配置**（只有管家能走到这一步）→ 至少 confirm，不允许直改。
    - **`widensPermission`** → 至少 confirm（永不 direct）。
    - **`owner = renderer`** → 至少 confirm（core 写不了，由渲染层的卡写）。
@@ -119,7 +120,7 @@
    - **放宽方向**（条目带 `wideningMode` 且 `valuesWiden !== false`）→ `user-only`。
 3. **user-only 不采用 `values`**：工具返回「此项由用户亲手设置，已出空白卡」，卡上只显示 `reason` 与组件初始状态；风险确认之类步骤全留在组件里。direct / confirm / form 采用 `values`（预填），link / redirect / refused 不涉及值。
 4. **无内嵌组件兜底**：收紧后不是 direct / link 而条目 `card = null` → `link`（跳转卡）。所以第一天就覆盖全部条目，每把一个组件嵌入化只需加 `CardKey` 并填 `card`。
-5. `decision.rules` 记各自就足以收紧的规则代号（`trigger` / `untrusted` / `group` / `other-bot` / `widens` / `renderer` / `sensitive-input` / `widening-values` / `not-whitelisted` / `no-card` ……），`reason` 是给 Bot 和卡片看的人话，多条以「；」连接，随 `settings_read` 返回，也写入卡片的 `modeReason`。
+5. `decision.rules` 记各自就足以收紧的规则代号（`trigger` / `untrusted` / `project` / `other-bot` / `widens` / `renderer` / `sensitive-input` / `widening-values` / `not-whitelisted` / `no-card` ……），`reason` 是给 Bot 和卡片看的人话，多条以「；」连接，随 `settings_read` 返回，也写入卡片的 `modeReason`。
 6. **无人值守**：设置卡不是审批，不进 approvals 表，本来就不会被自动批准，只能由用户点击结算；无人值守期间的 run 由定时 / 事件等唤醒，第 2 步已把它们收紧到 confirm，不会发生 direct。
 
 ## 4 设置卡
@@ -146,7 +147,7 @@
 - `cardEmbeddable` 判断当前上下文能否内嵌，不能就退回跳转卡：能力 / 传感器条目 id 要能对上；`bot-model` / `mail-account` 要有作用 Bot；`connect-app` 要预填 `app`；`agent` 要预填 `agent` 或有默认智能体且目录里有它。
 - **自带 CAS 保存**的卡（`default-models`、`bot-model`）组件自己的「应用」就是宿主的应用（带 `expected` 与 `messageId`），宿主不再给第二个按钮（`SELF_APPLYING_CARD_KEYS`）；其余 confirm 卡由宿主经 `settings.items.apply` 写入。
 - **渲染层条目**（麦克风 / 摄像头）core 写不了：confirm 卡「应用」时在本机写（`applyRendererValues`），再 `settings.cards.complete` 让 core 标 applied（无法核对，按用户所说）。
-- **深链**（`deep-link.ts` + `open-deep-link.ts`）：settings → `shell.openSettings(section, anchor)`；extension-center → 扩展中心页签；bot-panel → `shell.openBotPanel(tab, anchor)`（窄屏 / 放不下并排右栏时是覆盖层）；group-dialog / project-dialog → 对应对话框。分区不认识时退回分区首页，不抛错。P0 给 `BotProfileForm`、`GroupSettingsDialog`、`ProjectSettingsDialog` 补了 `data-settings-anchor`，`RightPanel` 切页签后滚到锚点。
+- **深链**（`deep-link.ts` + `open-deep-link.ts`）：settings → `shell.openSettings(section, anchor)`；extension-center → 扩展中心页签；bot-panel → `shell.openBotPanel(tab, anchor)`（窄屏 / 放不下并排右栏时是覆盖层）；`workdir-dialog` → 工作目录设置对话框；`project-detail` → 项目详情页（必要时 `chat.select` → `shell.openProjectSettings(section)`，section 校验 ∈ `PROJECT_DETAIL_SECTIONS`、不认识退 `overview`；anchor 由详情页滚到对应 `data-settings-anchor`）。分区不认识时退回分区首页，不抛错。设置卡内嵌锚点：`project-title` / `project-goal` / `project-members` / `project-lead`（详情页静态锚点，D92 起 `PENDING_DESKTOP_ANCHORS` 已清空）。
 
 ### 4.3 RPC 与事件
 
@@ -198,14 +199,14 @@
 失败续跑卡（`SetupRequiredCard`）不再逐 kind 自带分支，body 选择统一交给 `SettingSetupBody`；旧 kind 在 `setupRequirementSchema` 里**原样保留为兼容别名**（库里的 run 与测试仍有旧值，core 产生路径不改），只在渲染层归并：
 
 - **一对一映射的三个 kind 转成 `kind:'setting'` 再渲染**（`chats/setup-alias.ts` 的 `setupAliasOf`）：`capability-model` → `capability.{能力}`、`web-search` → `search.provider`、`mail-account` → `mail.account`（`provider` 映到 `prefill.provider`，`reason` 原样展示；厂商预填仍只是初选，用户可改）。原卡片的 hint 文案转作 reason 行，标题统一为 `settingCard.setupTitle` + 条目名。
-- **`agent` 与 `connect-app` 不压平**。两者虽有目录条目（`agents.external` / `connections.connect`），但旧载荷的字段与随附行为表达不进通用分发：`agent` 的 `reason` / `detail`（`agentSetupReasonSchema`）、实验开关、config_unsafe 详情框、沙箱提示、「不可用 → 可用」自动续跑基线（`stepAutoContinue`）；`connect-app` 的自定义 `target`、`connectionId` 重连、`scopes` 并集、已在别处连好时的一键继续（含 needsGrant 补写 Profile）与群聊 `onDone` 补授权。通用分发只认 `onSaved`，压平会丢这些已验收行为（开工约定不改失败续跑链的结果），且 `reason` / `detail` / `target` 不得写进设置目录字段。这两个 kind 由 `SettingSetupBody` 分发到各自的别名 body（`AgentSetupBody` / `ConnectAppSetupBody`，内嵌组件仍是目录登记的 `AgentCard` / `ConnectAppPanel`）；`confirm-local-connector` 添加成功后接上的连接步骤仍由 `ConnectAppSetupBody` 承载，链路不变。
+- **`agent` 与 `connect-app` 不压平**。两者虽有目录条目（`agents.external` / `connections.connect`），但旧载荷的字段与随附行为表达不进通用分发：`agent` 的 `reason` / `detail`（`agentSetupReasonSchema`）、实验开关、config_unsafe 详情框、沙箱提示、「不可用 → 可用」自动续跑基线（`stepAutoContinue`）；`connect-app` 的自定义 `target`、`connectionId` 重连、`scopes` 并集、已在别处连好时的一键继续（含 needsGrant 补写 Profile）与项目组 `onDone` 补授权。通用分发只认 `onSaved`，压平会丢这些已验收行为（开工约定不改失败续跑链的结果），且 `reason` / `detail` / `target` 不得写进设置目录字段。这两个 kind 由 `SettingSetupBody` 分发到各自的别名 body（`AgentSetupBody` / `ConnectAppSetupBody`，内嵌组件仍是目录登记的 `AgentCard` / `ConnectAppPanel`）；`confirm-local-connector` 添加成功后接上的连接步骤仍由 `ConnectAppSetupBody` 承载，链路不变。
 - **`main-model` 与 `confirm-local-connector` 保留独立 kind**。`main-model` 不是单条目录条目，是两段式：没有已配置厂商时先嵌 `models.provider` 的供应商表单（`ProviderSetupForm`），**保存后**才进第二段选 `models.default-main`（可顺带 `bots.update` 写当前 Bot 的模型）；切段只认「保存」、不认「测试连接」（测试会先落盘 Key，据此切段会让测试失败也自动跳段）。两段与「顺带改 Bot 模型」都不压进一个扁平的 `kind:'setting'`（`MainModelSetupBody`）。发送门禁走 `chat.svelte.ts` 的 `pendingSetup` 而不是失败 run；放弃时 `orchestrator.notifySetupDismissed` 对 `main-model` 不唤醒 Bot——对话轮本就跑不起来，通知只会原样失败并再弹同一张卡。`confirm-local-connector` 不是设置目录条目：payload 是 `proposalId` + core 探测生成的 `card`（`localConnectorCardSchema`），用户点的是 `apps.localConnectors.confirm` / `reject` 而不是 `settings.items.apply`，**不并入 `SettingCard`**，保持独立 kind 与独立的 `ConfirmLocalConnectorBody`。
 - 收拢后 `SetupRequiredCard` 只是外壳（关闭按钮 + 分发），失败续跑卡全部 kind 的 body 选择与旧 kind 别名转换集中在 `SettingSetupBody`（`chats/setup-alias.ts` 的 `setupAliasOf`）。发送门禁、失败续跑（`runs.retry`）与放弃（`runs.setupDismissed`）的行为与 D58 验收时一致；密钥仍只在组件里填。
 
 ## 6 安全与边界
 
 - **密钥永不经模型**：`values` 带敏感字段直接拒；`settings_read` 只回已配置 / 未配置；提示词有「不要让用户贴令牌 / 密钥」；用户在卡里填的 Key 只经 `settings.items.apply` 到 secrets，永不回显、不进快照、不进 `before` / `applied`。
-- **读也要脱敏**：不返回本机路径、日志、画像原文；诊断只给概要；用户自填的名称（厂商名、智能体名、群名）过 `sanitizeDisplayText`；工具返回里的字段值放 `<untrusted>`。
+- **读也要脱敏**：不返回本机路径、日志、画像原文；诊断只给概要；用户自填的名称（厂商名、智能体名、项目组名）过 `sanitizeDisplayText`；工具返回里的字段值放 `<untrusted>`。
 - **注入防护靠宿主裁定，不靠提示词**（§3 的触发源、不可信内容、user-only、无人值守几条）。
 - **渲染层拥有的项**（主题、语言、麦克风、摄像头）core 读不到也写不了：`settings_read` 报「状态未知」，最多 confirm，由渲染层的卡在本机写。
 - **不做「先检查再执行」的硬门禁**：执行前先检查能力是提示词纪律；缺配置时的确定性兜底仍由各工具入口自己检查（媒体网关、联网检索、连接、邮件），走失败续跑链。
@@ -224,10 +225,10 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 
 - **shared**（`settings-catalog.test.ts` / `settings-mode.test.ts` / `settings-contracts.test.ts` / `settings-ui-scan.ts`）：目录完整性、direct 白名单双向、敏感字段、搜索与概览、UI 覆盖率（测试一 / 二）、`effectiveMode` 在 direct 白名单条目上的全矩阵与对每个目录条目的不变量（只收紧不放宽）、`setting_card` / `setting_card_resolved` / `kind:'setting'` / RPC / 工具结果形状、能力包 `settings` 与选项。
 - **core 单测**（`settings-catalog-host.test.ts`、`settings-prompt-acp.test.ts`）：上下文辅助（`triggerFromUser`、不可信读取工具）、`settings_search` / `settings_read` 脱敏与字节上限、`settings_change` 与卡片（条目级 CAS、撤销不覆盖兄弟字段、顶替 / 过期 / 每 run 上限 / 拒绝退避、唤醒一次）、提示词门控、ACP 包默认不含 `settings_change`。
-- **core 集成**（`settings-cards.test.ts`，对应方案 §八 P0 的八个场景）：「换个默认模型」走 direct → 回执 → 撤销复原；「帮我生成图片」search → form 卡 → 用户应用 → 对话轮被唤醒后接着做；邮件唤醒的轮次请求改设置被收紧到 confirm；用户触发的轮次先 `web_fetch` 再改被收紧到 confirm；群聊里白名单项被收紧到 confirm；「开启无人值守」出空白 user-only 卡且 `values` 不被采用；设置页原有保存路径补发 `settings.changed`；任务 + `required` → 失败带 `kind:'setting'` 的 setup，应用后重试续跑。
+- **core 集成**（`settings-cards.test.ts`，对应方案 §八 P0 的八个场景）：「换个默认模型」走 direct → 回执 → 撤销复原；「帮我生成图片」search → form 卡 → 用户应用 → 对话轮被唤醒后接着做；邮件唤醒的轮次请求改设置被收紧到 confirm；用户触发的轮次先 `web_fetch` 再改被收紧到 confirm；项目组里白名单项被收紧到 confirm；「开启无人值守」出空白 user-only 卡且 `values` 不被采用；设置页原有保存路径补发 `settings.changed`；任务 + `required` → 失败带 `kind:'setting'` 的 setup，应用后重试续跑。
 - **desktop**：`setting-card-model.test.ts`（形态、对比行、预填过滤、撤销窗口、link 自标 applied）、`card-components.test.ts`（映射与 `cardEmbeddable`）、`deep-link.test.ts`、`anchor-scroll.test.ts`、`settings-changed.svelte.test.ts`、`shell.svelte.test.ts`、`agent-capabilities.test.ts`。
-- **e2e**（`setting-card.spec.ts`）：单聊 direct 回执卡撤销；群聊 confirm 卡应用后唤醒 Bot 续答。
-- **审查修复（§12）**：shared `settings-merge-validate.test.ts`（三方合并、形状校验、契约）；core `settings-item-writes.test.ts`（公共技能、网络放宽、脱敏、MCP 写入、并发校验、Bot 写入收尾交给宿主）、`settings-catalog-host.test.ts`「D89 review round 2」（真实 `applyBotProfileUpdate` 下的 MCP / 连接收回、浏览器资料 / 外部智能体校验报错、project / environment 空白卡、群成员只加、形状校验、required 带 before、allowlist 自动核对）、集成 `settings-cards.test.ts` (9)–(12)（卡片收回 MCP 中断运行中任务、校验报错、`base` 三方合并）；desktop `group-members.test.ts`、`settings.svelte.test.ts`（base）、`deep-link.test.ts`（语言）。
+- **e2e**（`setting-card.spec.ts`）：单聊 direct 回执卡撤销；项目组 confirm 卡应用后唤醒 Bot 续答。
+- **审查修复（§12）**：shared `settings-merge-validate.test.ts`（三方合并、形状校验、契约）；core `settings-item-writes.test.ts`（公共技能、网络放宽、脱敏、MCP 写入、并发校验、Bot 写入收尾交给宿主）、`settings-catalog-host.test.ts`「D89 review round 2」（真实 `applyBotProfileUpdate` 下的 MCP / 连接收回、浏览器资料 / 外部智能体校验报错、project / environment 空白卡、项目成员只加、形状校验、required 带 before、allowlist 自动核对）、集成 `settings-cards.test.ts` (9)–(12)（卡片收回 MCP 中断运行中任务、校验报错、`base` 三方合并）；desktop `project-members.test.ts`（原 `group-members.test.ts`，D92 改名）、`settings.svelte.test.ts`（base）、`deep-link.test.ts`（语言）。
 
 ## 9 非目标
 
@@ -247,7 +248,7 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 - `unattended.enable` / `unattended.disable`（`UnattendedSection`；开启的风险确认步骤留在组件里）；
 - 渲染层 `general.theme` / `general.language`（`AppearanceSection`）与 `general.launch-at-login`（`GeneralSection`）；
 - `background.tasks` / `background.budget`（`BackgroundTasksSection`、用量预算）；
-- `group.title` / `group.members`、`project.protect-rules` / `project.ports`（群 / 项目设置对话框片段）；
+- `project.title` / `project.goal` / `project.members` / `project.lead`（项目详情页与设置卡内嵌）、`workdir.protect-rules` / `workdir.ports`（工作目录设置对话框片段）；
 - `connections.tool-policy`（`AppConnectionDetail` 工具策略片段）、`connections.taint-guard`、`mcp.servers`、`agents.default`、`browser.shared-profiles`；
 - `environment.toolchains`（`EnvironmentSection`，user-only 空白卡 `environment-toolchains`）；`environment.sandbox`（`SandboxSection`，user-only 空白卡 `environment-sandbox`）；`environment.allowlist`（`AllowlistSection`，user-only 空白卡 `environment-allowlist`：添加与启停由组件自存，宿主不预填、不代写）。
 
@@ -311,11 +312,11 @@ P2 任务 6 原评估倾向给 `settings.update` / `bots.update` 加 `expected`�
 - **Bot 配置写入只有一条路径**（§1.4）：设置卡 / Bot 直改 / 撤销与 `bots.update` 共用 `applyBotProfileUpdate`；从 Bot 拿掉 MCP 服务、连接或切换共享浏览器资料时，它正在跑的任务被中断（此前适配器直接调服务，跳过了这些）。
 - **`bot.skills` 只管这个 Bot 自己的技能**：公共技能（没有私有行）启停会改全局，适配器拒绝并指向技能页；快照带 `scope`（public / private），卡片对公共技能只给「在技能页管理」。
 - **`bot.network`**：给出任何一个现在没有的域名都算放宽（与策略无关）→ user-only；策略不是白名单时不存卡上看不见的域名。
-- **`group.members`**：Bot 的提议只能加人（§1.4 `proposal`）；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选；用户的勾选按 Bot 记，卡片挂着时别处新拉进群的 Bot 不会被移出。
+- **`project.members`**：Bot 的提议只能加人（§1.4 `proposal`）；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选；用户的勾选按 Bot 记，卡片挂着时别处新加入项目组的 Bot 不会被移出。
 - **`mcp.servers` 改为宿主写**：锁内读最新列表、CAS 比对 `enabled`、只改这一个服务，锁外 `mcpRevocationsBetween`；卡片组件经 `settings.items.apply`，不再从渲染层缓存整表提交。启停不改 URL / 认证方式，不需要 `reconcileServers`。
-- **仍由组件调用原 RPC 保存的条目**（都是条目级操作，不是整表快照）：`connections.tool-policy`（`setToolPolicy` 同步改一行）、`browser.shared-profiles`（`create` 读当前列表再追加）、`group.members`（`addMembers` / `removeMember` 按 Bot 增删）、项目两项（user-only，风险确认在组件里），以及环境三项的重新检测 / 重装 / 白名单增改。理由见 DEVIATIONS DEV-029。
+- **仍由组件调用原 RPC 保存的条目**（都是条目级操作，不是整表快照）：`connections.tool-policy`（`setToolPolicy` 同步改一行）、`browser.shared-profiles`（`create` 读当前列表再追加）、`project.members`（`projects.addMembers` / `removeMember` 按 Bot 增删）、`workdir.protect-rules` / `workdir.ports` 两项（user-only，风险确认在组件里），以及环境三项的重新检测 / 重装 / 白名单增改。理由见 DEVIATIONS DEV-029。
 - **`environment.allowlist` 状态恒为 `unknown`**：内置条目默认就是启用的，「有启用的条目」说明不了 Bot 要的那条命令能否免审批；因此 `required:true` 不再被「已配置」直接放行，「我已设置好」按用户所说结卡，自动核对只在名单变过时结卡。
-- **`project.protect-rules` 读取脱敏**：项目目录下 → `<project>/…`、家目录下 → `~/…`、其余绝对路径只留最后一段，每条 ≤60 字、每类最多列 20 条，条数在概要里。
+- **`workdir.protect-rules` 读取脱敏**：工作目录下 → `<workdir>/…`、家目录下 → `~/…`、其余绝对路径只留最后一段，每条 ≤60 字、每类最多列 20 条，条数在概要里。
 - **失败续跑卡带 `before`**：`setupRequirement` 的 `kind:'setting'` 增 `before`（出卡时快照），`SettingSetupBody` 把它作为 `expected` 交给组件，靠它定位目标的组件（逐工具策略、MCP 服务）在 required:true 下不再显示「缺目标」。
 - **整份快照保存的三方合并**（§1.5）与 **`values` 形状校验**（§1.4），界面语言只认已注册的语言（目录静态选项与 i18n `localeOptions` 一致，desktop 单测核对）。
 - **打开对话时核对待处理卡**（§4.3 `auto`）。

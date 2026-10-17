@@ -12,6 +12,7 @@ import { resolvePaths } from '../../src/infra/paths.js';
 import { UnavailableSandboxBackend } from '../../src/sandbox/types.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 import { openRealMainDb, type RealMainDb } from '../support/real-secrets.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * D73 P1 §5.6：应用工具的网关决策——持续授权命中免卡；写入卡三档时长、破坏性只有「仅这一次」
@@ -66,10 +67,13 @@ async function harness(options: {
       "insert into app_connections (id, connector_id, label, status, created_at, updated_at) values ('conn_gh', 'github', 'g', 'connected', 1, 1)",
     )
     .run();
+  env.db
+    .prepare(
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+    )
+    .run();
   for (const id of ['conv_1', 'conv_2']) {
-    env.db
-      .prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)")
-      .run(id);
+    insertProjectConversation(env.db, { id, leadBotId: 'bot_lead' });
   }
   const grants = new AppToolGrants({ db: env.db, clock: env.clock });
   const requests: Array<{ kind: string; payload: Record<string, unknown> }> = [];
@@ -102,7 +106,7 @@ async function harness(options: {
     grants: {} as GatewayDeps['grants'],
     allowlist: {} as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
-    projects: {} as GatewayDeps['projects'],
+    workdirs: {} as GatewayDeps['workdirs'],
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],

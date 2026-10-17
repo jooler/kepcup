@@ -21,11 +21,11 @@ const logger = { info: () => {}, warn: () => {}, error: () => {} } as never;
 
 // 测试目录放在宿主家目录下：mounts.ts 的 isSystemRoot 会把家目录外的绝对路径
 // 当作「镜像自带系统目录」跳过（真实 Linux 上 /home/user 在家目录内）。
-const PROJECT = path.join(homedir(), 'kepcup-container-test', 'proj');
+const WORKDIR = path.join(homedir(), 'kepcup-container-test', 'proj');
 
 function policy(overrides: Partial<SandboxPolicy> = {}): SandboxPolicy {
   return {
-    readWrite: [PROJECT],
+    readWrite: [WORKDIR],
     readOnly: [],
     denyRead: [homedir()],
     network: { mode: 'none', allowDomains: [] },
@@ -35,7 +35,7 @@ function policy(overrides: Partial<SandboxPolicy> = {}): SandboxPolicy {
 }
 
 function execRequest(overrides: Partial<SandboxExecRequest> = {}): SandboxExecRequest {
-  return { command: 'echo hi', cwd: PROJECT, policy: policy(), timeoutMs: 30_000, ...overrides };
+  return { command: 'echo hi', cwd: WORKDIR, policy: policy(), timeoutMs: 30_000, ...overrides };
 }
 
 interface Captured {
@@ -77,7 +77,7 @@ function podmanBackend(capture: Captured): PodmanSandboxBackend {
   return new PodmanSandboxBackend({
     logger,
     platform: 'linux',
-    registration: { registeredWindowsPaths: () => [PROJECT] },
+    registration: { registeredWindowsPaths: () => [WORKDIR] },
     dataHome: path.join(homedir(), 'kepcup-container-test', '.kepcup'),
     runner,
   });

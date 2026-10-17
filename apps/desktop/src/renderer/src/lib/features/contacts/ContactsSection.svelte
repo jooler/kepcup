@@ -21,7 +21,11 @@
    * 新建不再在这里提供入口——只保留主界面左栏「+」一个入口。
    */
   let deleteTarget = $state<Bot | null>(null);
-  let deletePreview = $state({ conversations: 0, messages: 0 });
+  let deletePreview = $state({
+    conversations: 0,
+    messages: 0,
+    ledProjects: [] as Array<{ id: string; title: string | null }>,
+  });
   let deleting = $state(false);
 
   async function openChat(bot: Bot): Promise<void> {
@@ -32,6 +36,18 @@
   async function askDelete(bot: Bot): Promise<void> {
     deletePreview = await contacts.deletionPreview(bot.id);
     deleteTarget = bot;
+  }
+
+  /**
+   * The bot leads projects: deletion is blocked (the backend would reject it
+   * with PROJECT_LEAD_REQUIRED anyway). Jump to the members section of that
+   * project so the user can hand the lead over first.
+   */
+  async function goReplaceLead(conversationId: string): Promise<void> {
+    deleteTarget = null;
+    shell.closeSettings();
+    await chat.select(conversationId);
+    shell.openProjectSettings('members');
   }
 
   async function confirmDelete(): Promise<void> {
@@ -120,6 +136,32 @@
           {t('contacts.deleteAgentNote')}
         </p>
       {/if}
+      {#if deletePreview.ledProjects.length > 0}
+        <!-- Leading projects block the delete: no confirm button, offer the
+             "go replace" jump into each project's members section instead. -->
+        <div class="space-y-1.5" data-testid="bot-delete-lead-blocked">
+          <p class="text-sm text-muted-foreground">
+            {t('contacts.deleteBlockedLead', { count: deletePreview.ledProjects.length })}
+          </p>
+          <ul class="space-y-1.5">
+            {#each deletePreview.ledProjects as project (project.id)}
+              <li class="flex items-center gap-2 rounded-md border p-2 text-sm">
+                <span class="min-w-0 flex-1 truncate">
+                  {project.title ?? t('project.untitled')}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onclick={() => void goReplaceLead(project.id)}
+                  data-testid={`bot-delete-go-replace-${project.id}`}
+                >
+                  {t('contacts.deleteGoReplace')}
+                </Button>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       <DialogFooter>
         <Button
           variant="outline"
@@ -128,14 +170,16 @@
         >
           {t('contacts.cancel')}
         </Button>
-        <Button
-          variant="destructive"
-          onclick={confirmDelete}
-          disabled={deleting}
-          data-testid="bot-delete-confirm"
-        >
-          {t('contacts.deleteConfirm')}
-        </Button>
+        {#if deletePreview.ledProjects.length === 0}
+          <Button
+            variant="destructive"
+            onclick={confirmDelete}
+            disabled={deleting}
+            data-testid="bot-delete-confirm"
+          >
+            {t('contacts.deleteConfirm')}
+          </Button>
+        {/if}
       </DialogFooter>
     </DialogContent>
   </Dialog>

@@ -101,7 +101,7 @@
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const isGroup = $derived(chat.current?.conversation.type === 'group');
+  const isProject = $derived(chat.current?.conversation.type === 'project');
   const replyTo = $derived(chat.replyTo);
   const replyToName = $derived(
     replyTo === null
@@ -134,33 +134,33 @@
   const stacked = $derived(multiline || pendingUploads.length > 0);
 
   const placeholder = $derived(
-    isGroup ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
+    isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
   );
 
   /**
-   * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前群成员优先，
-   * 其余活跃 Bot 次之，其他群聊最后；当前会话自己不作候选。单聊同样可用
-   * ——提及非成员 Bot / 群是「引用」，不参与群聊路由。
+   * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前项目组成员优先，
+   * 其余活跃 Bot 次之，其他项目组最后；当前会话自己不作候选。单聊同样可用
+   * ——提及非成员 Bot / 项目组是「引用」，不参与项目组路由。
    */
   const mentionTargets = $derived.by(() =>
     buildMentionTargets({
       memberBots: (chat.current?.members ?? []).map((m) => m.bot),
       allBots: contacts.bots,
-      groups: chat.conversations
-        .filter((c) => c.type === 'group')
+      projects: chat.conversations
+        .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
       currentConversationId: chat.current?.conversation.id ?? null,
-      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；群聊的成员是
+      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
       // 主力候选，不排除。
       excludeBotIds:
-        isGroup || chat.current?.conversation.directBotId == null
+        isProject || chat.current?.conversation.directBotId == null
           ? []
           : [chat.current.conversation.directBotId],
     }),
   );
 
   /**
-   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；群聊无单一 Bot、上传
+   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；项目组无单一 Bot、上传
    * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
    * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
    */
@@ -284,11 +284,11 @@
         name.className = 'min-w-0 flex-1 truncate';
         name.textContent = `@${target.name}`;
         button.append(name);
-        // 群聊候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
-        if (target.kind === 'group') {
+        // 项目组候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
+        if (target.kind === 'project') {
           const badge = document.createElement('span');
           badge.className = 'shrink-0 text-xs text-muted-foreground';
-          badge.textContent = t('composer.mentionGroup');
+          badge.textContent = t('composer.mentionProject');
           button.append(badge);
         }
         li.append(button);

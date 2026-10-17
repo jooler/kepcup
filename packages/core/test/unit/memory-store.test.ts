@@ -168,7 +168,7 @@ describe('memory store (memory.db 领域层)', () => {
       store,
       embedder,
       queryText: '用户喜欢什么样的回复',
-      filters: { isGroup: false, now: clock() + 10_000 },
+      filters: { isProject: false, now: clock() + 10_000 },
     });
     expect(result.items.map((entry) => entry.id)).toContain(stored.id);
     expect(stored.useCount).toBe(0); // markUsed mutates the DB, not the snapshot

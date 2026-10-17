@@ -1,76 +1,113 @@
-import type { WikiHistoryEntry, WikiPage, WikiSearchHit } from '@kepcup/shared';
+import type {
+  WikiHistoryEntry,
+  WikiOwner,
+  WikiPage,
+  WikiSearchHit,
+  WikiSourceView,
+} from '@kepcup/shared';
+import { wikiOwnerKey } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 
 /**
- * P09 right-panel state: the viewed bot's wiki page tree. Loads on demand when
- * the tab opens; `wiki_changed` events refresh the loaded tree live (the same
- * pattern as `skills.changed` in P08 — ingest completions, dedupe skips and
- * lint commits all publish it, BR-P09-012).
+ * Wiki browsing state (P09 right panel; owner-partitioned in D92 T1b WP10 so
+ * the bot panel and a project's Wiki tab can be open at the same time): one
+ * page-tree slot per `wikiOwnerKey(owner)`, loaded on demand; `wiki_changed`
+ * events refresh every loaded owner (ingest completions, dedupe skips, lint
+ * commits and source removals all publish it, BR-P09-012).
  */
 class WikiState {
-	botId = $state<string | null>(null);
-	pages = $state<WikiPage[]>([]);
-	loading = $state(false);
-	#loadedFor: string | null = null;
+	pages = $state<Record<string, WikiPage[]>>({});
+	loading = $state<Record<string, boolean>>({});
+	#loaded = new Set<string>();
 	#started = false;
 
 	start(): void {
 		if (this.#started) return;
 		this.#started = true;
 		core.onEvent('wiki_changed', (payload) => {
-			const data = payload as { botId: string };
-			if (data.botId === this.#loadedFor) void this.load(data.botId, true);
+			const data = payload as { owner?: { kind: 'bot' | 'project'; id: string } };
+			if (data.owner === undefined) return;
+			const key = wikiOwnerKey(data.owner);
+			if (this.#loaded.has(key)) void this.load(data.owner, true);
 		});
 	}
 
-	async load(botId: string, force = false): Promise<void> {
-		if (!force && this.#loadedFor === botId && this.botId === botId) return;
-		this.loading = true;
+	pagesOf(owner: WikiOwner): WikiPage[] {
+		return this.pages[wikiOwnerKey(owner)] ?? [];
+	}
+
+	loadingOf(owner: WikiOwner): boolean {
+		return this.loading[wikiOwnerKey(owner)] === true;
+	}
+
+	async load(owner: WikiOwner, force = false): Promise<void> {
+		const key = wikiOwnerKey(owner);
+		if (!force && this.#loaded.has(key)) return;
+		this.loading[key] = true;
 		try {
-			const result = (await core.call('wiki.tree', { botId })) as { pages: WikiPage[] };
-			this.pages = result.pages;
-			this.botId = botId;
-			this.#loadedFor = botId;
+			const result = (await core.call('wiki.tree', { owner })) as { pages: WikiPage[] };
+			this.pages[key] = result.pages;
+			this.#loaded.add(key);
 		} finally {
-			this.loading = false;
+			this.loading[key] = false;
 		}
 	}
 
 	async page(
-		botId: string,
+		owner: WikiOwner,
 		path: string,
 	): Promise<{ path: string; title: string; content: string }> {
-		return (await core.call('wiki.page', { botId, path })) as {
+		return (await core.call('wiki.page', { owner, path })) as {
 			path: string;
 			title: string;
 			content: string;
 		};
 	}
 
-	async search(botId: string, query: string): Promise<WikiSearchHit[]> {
-		const result = (await core.call('wiki.search', { botId, query })) as {
+	async search(owner: WikiOwner, query: string): Promise<WikiSearchHit[]> {
+		const result = (await core.call('wiki.search', { owner, query })) as {
 			hits: WikiSearchHit[];
 		};
 		return result.hits;
 	}
 
-	async history(botId: string): Promise<WikiHistoryEntry[]> {
-		const result = (await core.call('wiki.history', { botId })) as {
+	async history(owner: WikiOwner): Promise<WikiHistoryEntry[]> {
+		const result = (await core.call('wiki.history', { owner })) as {
 			history: WikiHistoryEntry[];
 		};
 		return result.history;
 	}
 
 	/** Rollback creates a NEW commit (history grows); the tree reloads after. */
-	async rollback(botId: string, commitOid: string): Promise<void> {
-		await core.call('wiki.rollback', { botId, commitOid });
-		await this.load(botId, true);
+	async rollback(owner: WikiOwner, commitOid: string): Promise<void> {
+		await core.call('wiki.rollback', { owner, commitOid });
+		await this.load(owner, true);
 	}
 
 	/** Delete creates a NEW commit too (recoverable via rollback); reload after. */
-	async deletePage(botId: string, path: string): Promise<void> {
-		await core.call('wiki.deletePage', { botId, path });
-		await this.load(botId, true);
+	async deletePage(owner: WikiOwner, path: string): Promise<void> {
+		await core.call('wiki.deletePage', { owner, path });
+		await this.load(owner, true);
+	}
+
+	// --- project source ledger (D92 T1b WP10) -----------------------------------
+
+	async sources(owner: WikiOwner): Promise<WikiSourceView[]> {
+		const result = (await core.call('wiki.sources', { owner })) as { sources: WikiSourceView[] };
+		return result.sources;
+	}
+
+	/** Enqueues the user-submitted ingest; the page appears on wiki_changed. */
+	async addSource(
+		owner: WikiOwner,
+		input: { sourceType: 'url' | 'text'; ref: string; note?: string },
+	): Promise<void> {
+		await core.call('wiki.addSource', { owner, ...input });
+	}
+
+	/** Registers the async removal; the row disappears on wiki_changed. */
+	async deleteSource(owner: WikiOwner, sourceId: string): Promise<void> {
+		await core.call('wiki.deleteSource', { owner, sourceId });
 	}
 }
 

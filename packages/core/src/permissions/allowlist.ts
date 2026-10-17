@@ -32,17 +32,17 @@ function rowToEntry(row: AllowlistRow): AllowlistEntry {
 /**
  * docs/design/13-permissions.md "只读命令白名单" built-ins.
  *
- * Every entry must be read-only AND unable to load project-controlled code or
+ * Every entry must be read-only AND unable to load workdir-controlled code or
  * reach the network when run unsandboxed in confirm mode (review P0):
  * package-manager / toolchain-proxy probes are excluded on purpose — `pnpm` /
  * `yarn --version` go through corepack (downloads the `packageManager`
  * version), `cargo` / `rustc` through rustup (`rust-toolchain.toml`), `go
  * version` through `GOTOOLCHAIN` (may download a toolchain). The remaining
  * probes resolve whatever the cleaned PATH yields (exempt runs drop relative
- * entries and entries inside the workspace / project, see `exemptCommandEnv`),
+ * entries and entries inside the workspace / workdir, see `exemptCommandEnv`),
  * so never a Bot-written executable. That is not always a plain global binary:
  * a version-manager shim (pyenv / rbenv / nodenv / asdf) may pick an installed
- * version from files in the working directory — it runs no project code;
+ * version from files in the working directory — it runs no workdir code;
  * Volta shims, which can download a pinned toolchain, are bypassed
  * (`VOLTA_BYPASS=1`), so a probe may then report the system version or fail.
  * The shape is pinned by `allowlist-match.test.ts` ("built-in patterns"):
@@ -85,7 +85,7 @@ export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
 
 /**
  * Built-ins seeded by an earlier version and since retired (review P0: they
- * could run project-controlled code or download toolchains). `#seed` deletes
+ * could run workdir-controlled code or download toolchains). `#seed` deletes
  * their built-in rows so an upgraded install does not keep exempting them.
  */
 export const RETIRED_BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
@@ -132,7 +132,7 @@ export class AllowlistService {
     // Insert any missing built-ins (first install and later list expansions).
     // Never re-enable a built-in the user turned off: match on platform+pattern.
     // A new built-in on an existing install starts enabled (DEVIATIONS: the
-    // list holds only read-only, project-code-free entries, pinned by test).
+    // list holds only read-only, workdir-code-free entries, pinned by test).
     const insert = this.#db.prepare(
       'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, 1, 1, ?)',
     );

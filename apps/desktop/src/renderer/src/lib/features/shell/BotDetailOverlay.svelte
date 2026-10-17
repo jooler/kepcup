@@ -34,6 +34,12 @@
     if (open && chat.currentId === null) narrowLayout.closeBotDetail();
   });
 
+  // 项目组会话没有药丸，也不打开 Bot 详情覆盖层（WP6 §4 步骤 5）：切换到项目组
+  // 时开着的话立即收起，不留空壳。
+  $effect(() => {
+    if (open && chat.current?.conversation.type === 'project') narrowLayout.closeBotDetail();
+  });
+
   $effect(() => {
     if (!open) return;
     return registerEscapeLayer({

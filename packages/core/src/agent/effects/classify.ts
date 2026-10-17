@@ -65,7 +65,7 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   /** git push / pull / fetch / clone…：沙箱外、用用户凭据访问远端。 */
   git_remote: 'external',
   request_access: 'local',
-  acquire_project_write: 'local',
+  acquire_workdir_write: 'local',
   request_environment: 'local',
   /** 连接应用（D73）：只记下本 run 的 setup 需求（run 中断、对话出连接卡），与 request_* 同类。 */
   app_request_connection: 'local',
@@ -134,6 +134,8 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   wiki_search: 'none',
   wiki_read: 'none',
   wiki_enqueue: 'local',
+  /** D92 T1b WP10: queues a host-side removal job (receipt only, reversible via git). */
+  wiki_remove_source: 'local',
   schedule: 'local',
   list_schedules: 'none',
   cancel_schedule: 'local',
@@ -179,9 +181,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   finish_setup: 'local',
   list_bots: 'none',
   suggest_route: 'none',
-  propose_team: 'local',
+  propose_bots: 'local',
   propose_bot: 'local',
-  propose_group: 'local',
+  propose_project: 'local',
   /** D88：只读盘点；移交卡只提交审批，执行在用户确认后由宿主完成。 */
   inspect_bot_assets: 'none',
   propose_handover: 'local',

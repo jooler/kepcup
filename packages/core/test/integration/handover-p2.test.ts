@@ -61,7 +61,11 @@ const ASSET = 'ast_00112233445566778899aabb';
 /** A wiki with pages (one in a topic directory), raw originals and a D85 asset. */
 async function seedWiki(stack: TestStack, bot: Bot): Promise<void> {
   const paths = stack.core.services.paths;
-  await initWiki(paths, bot.id, { info() {}, warn() {}, error() {}, debug() {} } as never);
+  await initWiki(
+    paths,
+    { kind: 'bot', id: bot.id },
+    { info() {}, warn() {}, error() {}, debug() {} } as never,
+  );
   const root = botWikiRoot(paths, bot.id);
   write(
     root,
@@ -84,17 +88,21 @@ async function seedWiki(stack: TestStack, bot: Bot): Promise<void> {
   write(root, `raw/_derived/${ASSET}/full.md`, 'deck 全文');
   write(path.join(botWikiStoreRoot(paths, bot.id), ASSET), 'original', Buffer.from('%PDF-1.7'));
   await commitWikiTree(root, 'seed');
-  stack.core.services.wiki!.reconcileFtsFor(bot.id);
+  stack.core.services.wiki!.reconcileFtsFor({ kind: 'bot', id: bot.id });
 }
 
 /** B's own wiki: a different page at a path A also has. */
 async function seedTargetWiki(stack: TestStack, bot: Bot): Promise<void> {
   const paths = stack.core.services.paths;
-  await initWiki(paths, bot.id, { info() {}, warn() {}, error() {}, debug() {} } as never);
+  await initWiki(
+    paths,
+    { kind: 'bot', id: bot.id },
+    { info() {}, warn() {}, error() {}, debug() {} } as never,
+  );
   const root = botWikiRoot(paths, bot.id);
   write(root, 'pages/shared.md', `# 共享\n\n${bot.name} 自己的版本。\n`);
   await commitWikiTree(root, 'b seed');
-  stack.core.services.wiki!.reconcileFtsFor(bot.id);
+  stack.core.services.wiki!.reconcileFtsFor({ kind: 'bot', id: bot.id });
 }
 
 /** A bot-scope widget with two versions (v2 has a query template), docs and a conversation widget. */
@@ -315,7 +323,7 @@ describe('bot asset handover P2 (D88)', () => {
     expect(betaHistory.filter((message) => message.startsWith('从 阿尔法'))).toHaveLength(1);
     expect(await headMessages(alphaRoot)).toEqual(alphaHistory);
     const hits = (await core.rpc.call('wiki.search', {
-      botId: beta.id,
+      owner: { kind: 'bot', id: beta.id },
       query: 'RunbookKeyword',
     })) as {
       hits: Array<{ path: string }>;
@@ -394,7 +402,7 @@ describe('bot asset handover P2 (D88)', () => {
     core.services
       .mainDb!.prepare("update jobs set status = 'running', attempts = 1 where id = ?")
       .run(job.id);
-    await initWiki(core.services.paths, beta.id, {
+    await initWiki(core.services.paths, { kind: 'bot', id: beta.id }, {
       info() {},
       warn() {},
       error() {},
@@ -425,7 +433,7 @@ describe('bot asset handover P2 (D88)', () => {
     expect(history.filter((message) => message === '从 阿尔法 复制 1 页')).toHaveLength(1);
     expect(existsSync(path.join(betaRoot, 'raw/20261001-aaaaaaaaaaaa-guide.md'))).toBe(true);
     const hits = (await core.rpc.call('wiki.search', {
-      botId: beta.id,
+      owner: { kind: 'bot', id: beta.id },
       query: 'GuideKeyword',
     })) as {
       hits: Array<{ path: string }>;
@@ -518,7 +526,7 @@ describe('bot asset handover P2 (D88)', () => {
     // Hold B's wiki maintenance lock so the copy's phase 2 queues behind it.
     let release!: () => void;
     const gate = core.services.wiki!.runExclusively(
-      beta.id,
+      { kind: 'bot', id: beta.id },
       () => new Promise<void>((resolve) => (release = resolve)),
     );
     const copying = host.runCopyJob({ payload_json: payloadJson, attempts: 1 }).then(

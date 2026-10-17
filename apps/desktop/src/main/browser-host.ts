@@ -119,6 +119,24 @@ export function partitionDirs(root: string, partition: string): string[] {
   return raw === lower ? [lower] : [lower, raw];
 }
 
+/**
+ * Windows 上 Chromium 的磁盘存储句柄可能清空后仍短暂持锁（EBUSY/EPERM）：
+ * 递归删除失败就退避重试到窗口耗尽（正常第一拍即成功）。删除失败本身不
+ * 阻断删除 Bot 的 UX —— 调用方不把删除目录的失败视为删除失败。
+ */
+async function removeDirTolerant(dir: string): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
 /** A visible viewer window: the page view below a toolbar view (W8). */
 interface Viewer {
   win: BrowserWindow;
@@ -739,7 +757,7 @@ export class BrowserHost {
     }
     if (options.removeDir) {
       for (const dir of partitionDirs(this.#sessionRoot, partition)) {
-        rmSync(dir, { recursive: true, force: true });
+        await removeDirTolerant(dir);
       }
     }
   }
@@ -870,7 +888,7 @@ export class BrowserHost {
         // -20 ERR_BLOCKED_BY_CLIENT: our own network rules cancelled the load.
         reject(
           code === -20
-            ? new AppError('BROWSER_BLOCKED', '该地址被网络规则拦截（内网地址，或未绑定 project 的本机地址）')
+            ? new AppError('BROWSER_BLOCKED', '该地址被网络规则拦截（内网地址，或未绑定工作目录的本机地址）')
             : new AppError('BROWSER_NAVIGATION_FAILED', `页面加载失败：${description || code}`),
         );
       };

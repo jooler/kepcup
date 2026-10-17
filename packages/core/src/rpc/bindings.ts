@@ -56,18 +56,20 @@ import {
   conversationsMarkReadOutputSchema,
   conversationIdInputSchema,
   conversationsMembersOutputSchema,
-  groupsCreateInputSchema,
-  groupsCreateOutputSchema,
-  groupsSetupStartInputSchema,
-  groupsSetupStartOutputSchema,
-  groupsSetupAnswerInputSchema,
-  groupsSetupAnswerOutputSchema,
-  groupsSetupCancelInputSchema,
-  groupsRenameInputSchema,
-  groupsRenameOutputSchema,
-  groupsAddMembersInputSchema,
-  groupsRemoveMemberInputSchema,
-  groupsRedistributeInputSchema,
+  projectsCreateInputSchema,
+  projectsCreateOutputSchema,
+  projectsSetLeadInputSchema,
+  projectsSetLeadOutputSchema,
+  projectsUpdateInputSchema,
+  projectsUpdateOutputSchema,
+  projectsAddMembersInputSchema,
+  projectsRemoveMemberInputSchema,
+  episodesGetInputSchema,
+  episodesGetOutputSchema,
+  episodesResumeInputSchema,
+  episodesResumeOutputSchema,
+  episodesStopInputSchema,
+  episodesStopOutputSchema,
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
@@ -118,20 +120,20 @@ import {
   unattendedEnableInputSchema,
   unattendedSummaryInputSchema,
   unattendedSummaryOutputSchema,
-  projectsListOutputSchema,
-  projectsGetInputSchema,
-  projectsGetOutputSchema,
-  projectsSelectInputSchema,
-  projectsSelectOutputSchema,
-  projectsUnbindInputSchema,
-  projectsUpdateInputSchema,
-  projectsRemoveInputSchema,
-  projectsDiffInputSchema,
-  projectsDiffOutputSchema,
-  projectsRevertInputSchema,
-  projectsRevertOutputSchema,
-  projectsRevokeLeaseInputSchema,
-  projectsRevokeLeaseOutputSchema,
+  workdirsListOutputSchema,
+  workdirsGetInputSchema,
+  workdirsGetOutputSchema,
+  workdirsSelectInputSchema,
+  workdirsSelectOutputSchema,
+  workdirsUnbindInputSchema,
+  workdirsUpdateInputSchema,
+  workdirsRemoveInputSchema,
+  workdirsDiffInputSchema,
+  workdirsDiffOutputSchema,
+  workdirsRevertInputSchema,
+  workdirsRevertOutputSchema,
+  workdirsRevokeLeaseInputSchema,
+  workdirsRevokeLeaseOutputSchema,
   environmentListOutputSchema,
   environmentInstallIdInputSchema,
   environmentReinstallOutputSchema,
@@ -164,7 +166,6 @@ import {
   skillsPresetsInstallOutputSchema,
   skillsPurgeMissingInputSchema,
   skillsPurgeMissingOutputSchema,
-  wikiBotIdInputSchema,
   wikiTreeOutputSchema,
   wikiPageInputSchema,
   wikiPageOutputSchema,
@@ -175,6 +176,12 @@ import {
   wikiRollbackOutputSchema,
   wikiDeletePageInputSchema,
   wikiDeletePageOutputSchema,
+  wikiOwnerInputSchema,
+  wikiSourcesOutputSchema,
+  wikiAddSourceInputSchema,
+  wikiAddSourceOutputSchema,
+  wikiDeleteSourceInputSchema,
+  wikiDeleteSourceOutputSchema,
   todosListInputSchema,
   todosListOutputSchema,
   todosIdInputSchema,
@@ -253,7 +260,7 @@ import {
   withSettingsChangedEvents,
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
-import type { LoopType } from '@kepcup/shared';
+import type { LoopType, WikiOwner } from '@kepcup/shared';
 
 const voidInput = z.void();
 
@@ -305,6 +312,19 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
   /**
+   * D92 T1b WP9: a project wiki owner must be a live project conversation —
+   * anything else is NOT_FOUND (bot owners need no lookup).
+   */
+  const wikiOwnerOf = (owner: WikiOwner): WikiOwner => {
+    if (owner.kind === 'project') {
+      const conversation = domain.conversations.get(owner.id);
+      if (conversation === null || conversation.type !== 'project') {
+        throw new AppError('NOT_FOUND', '项目组不存在');
+      }
+    }
+    return owner;
+  };
+  /**
    * W3 / W8：收回授权 → 中断受影响的任务并推「已中断 N 个进行中的任务」。与设置目录的条目适配器
    * 共用同一份实现（settings/bot-profile-update.ts）。
    */
@@ -344,9 +364,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversation.directBotId !== null
         ? (domain.bots.get(conversation.directBotId) ?? null)
         : null,
-    ...(conversation.type === 'group'
+    ...(conversation.type === 'project'
       ? {
-          memberPreviews: domain.groups.memberPreviews(conversation.id),
+          memberPreviews: domain.projects.memberPreviews(conversation.id),
         }
       : {}),
   });
@@ -671,7 +691,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
     /**
-     * 访谈目录卡作答（19/D59）：选择目录则先绑定 project，然后把首答与目录
+     * 访谈目录卡作答（19/D59）：选择目录则先绑定 workdir，然后把首答与目录
      * 决定一起投递给 Bot（首个响应 run 开始）。
      */
     'bots.interview.answerPath': method(
@@ -719,17 +739,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
     'bots.delete': method(botIdInputSchema, okOutputSchema, async (input) => {
       // Captured BEFORE deleteBot: the cascade drops the member rows, so the
-      // affected groups are unenumerable afterwards — their open member lists
+      // affected projects are unenumerable afterwards — their open member lists
       // still need the push (deleted bot leaves the cards / @ popup and its
       // history messages render under its id, docs/design/01-conversation.md).
-      const groupIds = domain.lifecycle.groupConversationIdsOf(input.id);
+      const projectIds = domain.lifecycle.projectConversationIdsOf(input.id);
       await domain.lifecycle.deleteBot(input.id);
       publish('bot.deleted', { id: input.id });
       // Direct conversations just turned read-only; push their new state.
       for (const conversation of domain.conversations.listDirectByBot(input.id)) {
         publish('conversation.updated', { conversation });
       }
-      for (const conversationId of groupIds) {
+      for (const conversationId of projectIds) {
         const conversation = domain.conversations.get(conversationId);
         if (conversation) publish('conversation.updated', { conversation });
       }
@@ -793,54 +813,57 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'conversations.members': method(
       conversationIdInputSchema,
       conversationsMembersOutputSchema,
-      async (input) => ({ members: domain.groups.members(input.conversationId) }),
+      async (input) => ({ members: domain.projects.members(input.conversationId) }),
     ),
 
-    'groups.create': method(groupsCreateInputSchema, groupsCreateOutputSchema, async (input) => ({
-      conversation: domain.groups.create(input),
-    })),
-    /**
-     * 对话内群创建（19/D60）：start 创建创建中的群并下发第一问；answer 按
-     * 步推进（零模型调用）；cancel 级联删除该对话。
-     */
-    'groups.setup.start': method(
-      groupsSetupStartInputSchema,
-      groupsSetupStartOutputSchema,
-      async () => ({
-        conversation: conversationView(orchestrator.beginGroupSetup()),
+    'projects.create': method(
+      projectsCreateInputSchema,
+      projectsCreateOutputSchema,
+      async (input) => ({ conversation: domain.projects.create(input) }),
+    ),
+    'projects.setLead': method(
+      projectsSetLeadInputSchema,
+      projectsSetLeadOutputSchema,
+      async (input) => ({
+        conversation: domain.projects.setLead(input.conversationId, input.botId),
       }),
     ),
-    'groups.setup.answer': method(
-      groupsSetupAnswerInputSchema,
-      groupsSetupAnswerOutputSchema,
-      async (input) => {
-        const { conversation, done } = orchestrator.answerGroupSetup(input);
-        return { conversation: conversationView(conversation), done };
-      },
+    'projects.update': method(
+      projectsUpdateInputSchema,
+      projectsUpdateOutputSchema,
+      async (input) => ({
+        conversation: domain.projects.update(input.conversationId, {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        }),
+      }),
     ),
-    'groups.setup.cancel': method(groupsSetupCancelInputSchema, okOutputSchema, async (input) => {
-      await domain.lifecycle.deleteConversation(input.conversationId);
-      publish('conversation.deleted', { id: input.conversationId });
-      return { ok: true as const };
-    }),
-    'groups.rename': method(groupsRenameInputSchema, groupsRenameOutputSchema, async (input) => ({
-      conversation: domain.groups.rename(input.conversationId, input.title),
-    })),
-    'groups.addMembers': method(
-      groupsAddMembersInputSchema,
+    'projects.addMembers': method(
+      projectsAddMembersInputSchema,
       conversationsMembersOutputSchema,
       async (input) => ({
-        members: await domain.groups.addMembers(input.conversationId, input.botIds),
+        members: await domain.projects.addMembers(input.conversationId, input.botIds),
       }),
     ),
-    'groups.removeMember': method(groupsRemoveMemberInputSchema, okOutputSchema, async (input) => {
-      await domain.groups.removeMember(input.conversationId, input.botId);
-      return { ok: true as const };
+    'projects.removeMember': method(
+      projectsRemoveMemberInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await domain.projects.removeMember(input.conversationId, input.botId);
+        return { ok: true as const };
+      },
+    ),
+    'episodes.get': method(episodesGetInputSchema, episodesGetOutputSchema, async (input) => {
+      const episode = orchestrator.episodes.get(input.id);
+      if (episode === null) throw new AppError('NOT_FOUND', `协作回合 ${input.id} 不存在`);
+      return { episode };
     }),
-    'groups.redistribute': method(groupsRedistributeInputSchema, okOutputSchema, async (input) => {
-      orchestrator.redistributeBatch(input.conversationId, input.batchId, input.botId);
-      return { ok: true as const };
-    }),
+    'episodes.resume': method(episodesResumeInputSchema, episodesResumeOutputSchema, async (input) => ({
+      episode: orchestrator.episodes.resume(input.id),
+    })),
+    'episodes.stop': method(episodesStopInputSchema, episodesStopOutputSchema, async (input) => ({
+      episode: orchestrator.episodes.stop(input.id),
+    })),
 
     'messages.list': method(messagesListInputSchema, messagesListOutputSchema, async (input) => ({
       // 内部事务事件在 SQL 层（listVisible，isVisibleToUser 的存储层镜像）
@@ -1035,6 +1058,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.payloadHash,
           input.routineSelection,
           input.handoverSelection,
+          input.leadBotId,
         ),
       }),
     ),
@@ -1129,59 +1153,59 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => ({ items: domain.approvals.summary(input.since) }),
     ),
 
-    'projects.list': method(voidInput, projectsListOutputSchema, async () => ({
-      projects: domain.projects.listRecent(),
+    'workdirs.list': method(voidInput, workdirsListOutputSchema, async () => ({
+      workdirs: domain.workdirs.listRecent(),
     })),
-    'projects.get': method(projectsGetInputSchema, projectsGetOutputSchema, async (input) => {
-      const project = domain.projects.get(input.id);
-      return { project: project !== null ? domain.projects.refreshStatus(project.id) : null };
+    'workdirs.get': method(workdirsGetInputSchema, workdirsGetOutputSchema, async (input) => {
+      const workdir = domain.workdirs.get(input.id);
+      return { workdir: workdir !== null ? domain.workdirs.refreshStatus(workdir.id) : null };
     }),
-    'projects.select': method(
-      projectsSelectInputSchema,
-      projectsSelectOutputSchema,
+    'workdirs.select': method(
+      workdirsSelectInputSchema,
+      workdirsSelectOutputSchema,
       async (input) => {
-        const project = services.projectRuntime!.select(input.conversationId, input.path);
+        const workdir = services.workdirRuntime!.select(input.conversationId, input.path);
         publish('conversation.updated', {
           conversation: domain.conversations.getOrThrow(input.conversationId),
         });
-        publish('project.updated', { project });
-        return { project };
+        publish('workdir.updated', { workdir });
+        return { workdir };
       },
     ),
-    'projects.unbind': method(projectsUnbindInputSchema, okOutputSchema, async (input) => {
-      services.projectRuntime!.unbind(input.conversationId);
+    'workdirs.unbind': method(workdirsUnbindInputSchema, okOutputSchema, async (input) => {
+      services.workdirRuntime!.unbind(input.conversationId);
       publish('conversation.updated', {
         conversation: domain.conversations.getOrThrow(input.conversationId),
       });
       return { ok: true as const };
     }),
-    'projects.update': method(
-      projectsUpdateInputSchema,
-      projectsGetOutputSchema,
+    'workdirs.update': method(
+      workdirsUpdateInputSchema,
+      workdirsGetOutputSchema,
       async (input) => ({
-        project: services.projectRuntime!.update(input.id, {
+        workdir: services.workdirRuntime!.update(input.id, {
           ...(input.protectRules !== undefined ? { protectRules: input.protectRules } : {}),
           ...(input.allowedPorts !== undefined ? { allowedPorts: input.allowedPorts } : {}),
         }),
       }),
     ),
-    'projects.remove': method(projectsRemoveInputSchema, okOutputSchema, async (input) => {
-      await services.projectRuntime!.remove(input.id);
+    'workdirs.remove': method(workdirsRemoveInputSchema, okOutputSchema, async (input) => {
+      await services.workdirRuntime!.remove(input.id);
       return { ok: true as const };
     }),
-    'projects.diff': method(projectsDiffInputSchema, projectsDiffOutputSchema, async (input) =>
-      services.projectRuntime!.diff(input.runId),
+    'workdirs.diff': method(workdirsDiffInputSchema, workdirsDiffOutputSchema, async (input) =>
+      services.workdirRuntime!.diff(input.runId),
     ),
-    'projects.revert': method(
-      projectsRevertInputSchema,
-      projectsRevertOutputSchema,
-      async (input) => services.projectRuntime!.revert(input.runId, input.force === true),
+    'workdirs.revert': method(
+      workdirsRevertInputSchema,
+      workdirsRevertOutputSchema,
+      async (input) => services.workdirRuntime!.revert(input.runId, input.force === true),
     ),
-    'projects.revokeLease': method(
-      projectsRevokeLeaseInputSchema,
-      projectsRevokeLeaseOutputSchema,
+    'workdirs.revokeLease': method(
+      workdirsRevokeLeaseInputSchema,
+      workdirsRevokeLeaseOutputSchema,
       async (input) => ({
-        revoked: await services.projectRuntime!.revokeLease(input.conversationId),
+        revoked: await services.workdirRuntime!.revokeLease(input.conversationId),
       }),
     ),
 
@@ -1387,21 +1411,23 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => ({ purged: services.skills!.purgeMissing(input.name) }),
     ),
 
-    // --- wiki (P09) --------------------------------------------------------
-    'wiki.tree': method(wikiBotIdInputSchema, wikiTreeOutputSchema, async (input) => ({
-      pages: services.wiki!.tree(input.botId),
+    // --- wiki (P09; owner-generalized D92 T1b WP9 — a project owner must be a
+    // live project conversation; from RPC the actor is the user, so the
+    // entry-level ACL does not apply to deletePage / rollback) ----------------
+    'wiki.tree': method(wikiOwnerInputSchema, wikiTreeOutputSchema, async (input) => ({
+      pages: services.wiki!.tree(wikiOwnerOf(input.owner)),
     })),
     'wiki.page': method(wikiPageInputSchema, wikiPageOutputSchema, async (input) =>
-      services.wiki!.readPage(input.botId, input.path),
+      services.wiki!.readPage(wikiOwnerOf(input.owner), input.path),
     ),
     'wiki.search': method(wikiSearchInputSchema, wikiSearchOutputSchema, async (input) => ({
-      hits: services.wiki!.search(input.botId, input.query, input.limit ?? 20),
+      hits: services.wiki!.search(wikiOwnerOf(input.owner), input.query, input.limit ?? 20),
     })),
-    'wiki.history': method(wikiBotIdInputSchema, wikiHistoryOutputSchema, async (input) => ({
-      history: await services.wiki!.history(input.botId),
+    'wiki.history': method(wikiOwnerInputSchema, wikiHistoryOutputSchema, async (input) => ({
+      history: await services.wiki!.history(wikiOwnerOf(input.owner)),
     })),
     'wiki.rollback': method(wikiRollbackInputSchema, wikiRollbackOutputSchema, async (input) => {
-      await services.wiki!.rollback(input.botId, input.commitOid);
+      await services.wiki!.rollback(wikiOwnerOf(input.owner), input.commitOid);
       return { ok: true as const };
     }),
     // 用户在右栏删除一页：同样是追加式新提交（可回滚恢复），与维护互斥。
@@ -1409,7 +1435,82 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       wikiDeletePageInputSchema,
       wikiDeletePageOutputSchema,
       async (input) => {
-        await services.wiki!.deletePage(input.botId, input.path);
+        await services.wiki!.deletePage(wikiOwnerOf(input.owner), input.path);
+        return { ok: true as const };
+      },
+    ),
+
+    // --- wiki sources (D92 T1b WP10): the project wiki's source ledger. The RPC
+    // caller is the USER (no bot-identity checks); bot owners have no ledger.
+    'wiki.sources': method(wikiOwnerInputSchema, wikiSourcesOutputSchema, async (input) => {
+      const owner = wikiOwnerOf(input.owner);
+      if (owner.kind !== 'project') {
+        throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+      }
+      const sources = services.wiki!.listSources(owner).map((entry) => ({
+        id: entry.id,
+        fileName: entry.fileName,
+        bytes: entry.bytes,
+        kind: entry.kind,
+        createdBy:
+          entry.createdBy.kind === 'user'
+            ? { kind: 'user' as const }
+            : {
+                kind: 'bot' as const,
+                id: entry.createdBy.id,
+                name: domain.bots.get(entry.createdBy.id)?.name ?? null,
+              },
+        sources: entry.sources.map((source) => ({
+          type: source.type,
+          ref: source.ref,
+          at: source.at,
+        })),
+        createdAt: entry.createdAt,
+      }));
+      return { sources };
+    }),
+    'wiki.addSource': method(wikiAddSourceInputSchema, wikiAddSourceOutputSchema, async (input) => {
+      const owner = wikiOwnerOf(input.owner);
+      if (owner.kind !== 'project') {
+        throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+      }
+      // 用户来源的执行者是项目负责人（执行者付费，D92 T1b WP9 同一口径）。
+      const leadBotId = domain.conversations.get(owner.id)?.leadBotId ?? null;
+      if (leadBotId === null) {
+        throw new AppError('INVALID_INPUT', '项目组没有负责人');
+      }
+      const outcome = services.wiki!.enqueueIngest({
+        owner,
+        botId: leadBotId,
+        conversationId: owner.id,
+        source: { sourceType: input.sourceType, ref: input.ref, note: input.note ?? '' },
+        createdBy: { kind: 'user' },
+      });
+      if (!outcome.ok) {
+        throw new AppError('INVALID_INPUT', outcome.message);
+      }
+      return { ok: true as const };
+    }),
+    'wiki.deleteSource': method(
+      wikiDeleteSourceInputSchema,
+      wikiDeleteSourceOutputSchema,
+      async (input) => {
+        const owner = wikiOwnerOf(input.owner);
+        if (owner.kind !== 'project') {
+          throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+        }
+        const leadBotId = domain.conversations.get(owner.id)?.leadBotId ?? null;
+        if (leadBotId === null) {
+          throw new AppError('INVALID_INPUT', '项目组没有负责人');
+        }
+        // 异步托管：立即返回，删除由 wiki_remove_source job 在互斥锁内完成。
+        services.wiki!.enqueueRemoveSource({
+          owner,
+          sourceId: input.sourceId,
+          actor: { role: 'user' },
+          leadBotId,
+          conversationId: owner.id,
+        });
         return { ok: true as const };
       },
     ),

@@ -9,7 +9,7 @@
 
   /**
    * 管家路由卡（D70 §2.4，event = route_suggestion）：建议这件事交给谁。
-   * 「去聊 / 打开群」一键跳转；「交给它处理」（delegate）以一条用户消息
+   * 「去聊 / 打开项目组」一键跳转；「交给它处理」（delegate）以一条用户消息
    * 让管家去委派——早期产品「先卡后办」，用户不点就不会在后台代办。
    */
   let { message }: { message: Message } = $props();
@@ -17,12 +17,12 @@
   const content = $derived(
     message.content as {
       text?: string;
-      route?: { kind: 'bot' | 'group' | 'delegate'; botId?: string; conversationId?: string };
+      route?: { kind: 'bot' | 'project' | 'delegate'; botId?: string; conversationId?: string };
     },
   );
   const route = $derived(content.route ?? null);
   const botName = $derived(route?.botId ? chat.botName(route.botId) : '');
-  const groupTitle = $derived(
+  const projectTitle = $derived(
     route?.conversationId
       ? (chat.conversations.find((c) => c.id === route.conversationId)?.title ?? '')
       : '',
@@ -34,7 +34,7 @@
     if (route?.botId) await chat.openDirect(route.botId);
   }
 
-  async function openGroup(): Promise<void> {
+  async function openProject(): Promise<void> {
     if (route?.conversationId) await chat.select(route.conversationId);
   }
 
@@ -62,9 +62,9 @@
   </div>
   {#if route !== null}
     <div class="mt-2 flex flex-wrap justify-end gap-2">
-      {#if route.kind === 'group'}
-        <Button size="sm" class="h-7" onclick={() => void openGroup()} data-testid="route-open-group"
-          >{t('route.openGroup', { name: groupTitle })}</Button
+      {#if route.kind === 'project'}
+        <Button size="sm" class="h-7" onclick={() => void openProject()} data-testid="route-open-project"
+          >{t('route.openProject', { name: projectTitle })}</Button
         >
       {:else if route.kind === 'bot'}
         <Button size="sm" class="h-7" onclick={() => void openBot()} data-testid="route-open-bot"

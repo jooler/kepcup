@@ -65,15 +65,15 @@ describe('todo schemas', () => {
     expect(todoRunStatusSchema.options).toEqual(['dispatched', 'delivered', 'unclaimed', 'failed']);
   });
 
-  it('assignee is a bot or a group with an optional lead bot', () => {
+  it('assignee is a bot or a project with an optional lead override', () => {
     expect(todoAssigneeSchema.parse({ kind: 'bot', botId: 'bot_1' })).toEqual({
       kind: 'bot',
       botId: 'bot_1',
     });
     expect(
-      todoAssigneeSchema.parse({ kind: 'group', conversationId: 'conv_1', leadBotId: null }),
-    ).toEqual({ kind: 'group', conversationId: 'conv_1', leadBotId: null });
-    expect(todoAssigneeSchema.safeParse({ kind: 'group', conversationId: 'conv_1' }).success).toBe(
+      todoAssigneeSchema.parse({ kind: 'project', projectId: 'conv_1', leadBotId: null }),
+    ).toEqual({ kind: 'project', projectId: 'conv_1', leadBotId: null });
+    expect(todoAssigneeSchema.safeParse({ kind: 'project', projectId: 'conv_1' }).success).toBe(
       false,
     );
     expect(todoAssigneeSchema.safeParse({ kind: 'bot' }).success).toBe(false);
@@ -91,7 +91,7 @@ describe('todo schemas', () => {
   it('todo entry adds assignee names, schedule and last run', () => {
     const entry = {
       ...todo,
-      assignee: { kind: 'group', conversationId: 'conv_1', leadBotId: 'bot_1' },
+      assignee: { kind: 'project', projectId: 'conv_1', leadBotId: 'bot_1' },
       assigneeName: '产品组',
       leadBotName: '研究员',
       schedule: {

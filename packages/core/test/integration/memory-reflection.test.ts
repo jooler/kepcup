@@ -4,7 +4,7 @@ import {
   listAllMessages,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -286,7 +286,7 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       expect(result.items.find((item) => item.content.includes('年糕'))).toBeDefined();
 
       // 群聊注入：敏感排除；私聊来源条目带 origin="private" 标注。
-      const group = await makeGroup(stack.core, '测试群', [botA.id, botB.id]);
+      const group = await makeProject(stack.core, '测试群', [botA.id, botB.id]);
       await sendDrafts(stack.core, group.id, [{ text: '聊聊用户的猫吧', mentions: [botA.id] }]);
       await waitFor(
         () =>

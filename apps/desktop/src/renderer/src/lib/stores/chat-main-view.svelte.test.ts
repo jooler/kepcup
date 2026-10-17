@@ -22,7 +22,7 @@ const conversation = (id: string) => ({
   type: 'direct',
   title: null,
   directBotId: `bot_${id}`,
-  projectId: null,
+  workdirId: null,
   readOnly: false,
   summary: null,
   summaryUptoSeq: 0,
@@ -74,7 +74,7 @@ const { shell } = await import('./shell.svelte');
 
 beforeEach(() => {
   shell.mainView = 'chats';
-  chat.cancelGroupCompose();
+  chat.cancelProjectCompose();
 });
 
 describe('shell.mainView 与 chat.select', () => {
@@ -104,11 +104,11 @@ describe('shell.mainView 与 chat.select', () => {
     expect(shell.mainView).toBe('workbench');
   });
 
-  it('新建群聊的组群输入在对话区里，会先回到对话视图', () => {
+  it('新建项目组的创建输入在对话区里，会先回到对话视图', () => {
     shell.openWorkbench();
-    chat.beginGroupCompose();
+    chat.beginProjectCompose();
     expect(shell.mainView).toBe('chats');
-    expect(chat.composingGroup).toBe(true);
+    expect(chat.composingProject).toBe(true);
   });
 });
 

@@ -24,7 +24,7 @@ export type LoopType =
   /** D75 任务（task_writes=false 时只读）。 */
   | 'task'
   /**
-   * Host-side pseudo identity (never a runs row): a project revert, an install
+   * Host-side pseudo identity (never a runs row): a workdir revert, an install
    * or skill import the system requests on the user's behalf. Not read-only.
    */
   | 'host';
@@ -34,8 +34,6 @@ export interface RunIdentity {
   botId: string | null;
   conversationId: string | null;
   loopType: LoopType;
-  chainId?: string;
-  chainDepth?: number;
 }
 
 export type RunStatus = 'completed' | 'failed' | 'cancelled';
@@ -122,8 +120,8 @@ export interface RunSpec {
   //
   // —— 以下为外部智能体引擎（D72，docs/design/28-external-agents-acp.md）的
   // 可选字段；PiEngine 一律忽略。——
-  /** Agent 会话的工作目录（`session/new.cwd`）：绑定的 project，否则 workspace。 */
-  workdir?: string;
+  /** Agent 会话的工作目录（`session/new.cwd`）：绑定的 workdir，否则 workspace。 */
+  cwd?: string;
   /**
    * 分层提示词（§5）：会话级（相对静态，按 Provider 的 instructionMode 下发）、
    * run 级动态段、对话段（首个 prompt 为完整上下文 + 触发段；会话复用时为
@@ -194,8 +192,8 @@ export interface ExternalRunSpec {
   /**
    * 后台精简会话（P6，design 28 §8）：`complete()` 与无内置模型时改走外部
    * Agent 的后台 loop（Wiki 维护、技能生成）。引擎强制：只读档（忽略
-   * `permission`）；cwd 为引擎新建的空私有临时目录（忽略 `RunSpec.workdir`，
-   * 结束即删除——永不是用户的 workspace / project）；不复用会话（忽略
+   * `permission`）；cwd 为引擎新建的空私有临时目录（忽略 `RunSpec.cwd`，
+   * 结束即删除——永不是用户的 workspace / workdir）；不复用会话（忽略
    * `session`，结束即 `session/close`）；权限请求不走权限桥与审批卡——只放行
    * 本 run 注入的桥工具，其余一律拒绝（无人值守）；Provider 收到
    * `oneShot`（Claude：替换式系统提示词、`tools: []`）。

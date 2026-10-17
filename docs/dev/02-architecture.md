@@ -62,13 +62,11 @@ interface RunIdentity {
   botId: string | null;          // 画像整理等全局 loop 为 null
   conversationId: string | null; // 后台 loop 为 null
   loopType: LoopType;
-  chainId?: string;              // Bot 间 @ 连锁
-  chainDepth?: number;
 }
 ```
 
 - shared 的 `loopTypeSchema` 没有 `'host'`（它从不出现在 runs 行与 RPC 里）；`'response'` 已改名 `'turn'`、不保留别名（runs 迁移 0007、main 迁移 0020 改写旧行）。
-- 写权限由 `ProjectRuntime.writeDenial(identity)` 统一裁决：`turn` 恒只读；`task` 仅 `task_writes === true` 可写（行缺失或为 null 时 fail closed）；`subagent` 沿 `parentRunId` 继承根 run 的规则；被拒的写返回 `RUN_READ_ONLY`。
+- 写权限由 `WorkdirRuntime.writeDenial(identity)` 统一裁决：`turn` 恒只读；`task` 仅 `task_writes === true` 可写（行缺失或为 null 时 fail closed）；`subagent` 沿 `parentRunId` 继承根 run 的规则；被拒的写返回 `RUN_READ_ONLY`。
 
 ### AgentEngine（pi 的封装）
 
@@ -77,7 +75,7 @@ interface RunIdentity {
 ```ts
 interface AgentEngine {
   startRun(spec: RunSpec): RunHandle;
-  complete(req: CompletionRequest): Promise<CompletionResult>; // 单次调用：群聊判断、结构化提取（外部 Agent：一次性精简会话，P6）
+  complete(req: CompletionRequest): Promise<CompletionResult>; // 单次调用：项目组路由判断（续接 / 网关）、结构化提取（外部 Agent：一次性精简会话，P6）
 }
 
 interface RunSpec {
@@ -89,7 +87,7 @@ interface RunSpec {
   limits: { maxTurns: number };
   // 取消走 RunHandle.abort()（无 signal 字段）
   // —— D72 外部智能体的可选字段，PiEngine 一律忽略 ——
-  workdir?: string;                      // Agent 会话 cwd：绑定的 project，否则 workspace
+  cwd?: string;                          // Agent 会话根目录：绑定的 workdir，否则 workspace
   promptParts?: { session: string; run: string; conversation: string }; // 会话级 / run 级 / 对话（增量）
   external?: {
     agentId: string;                     // 目录 id
@@ -107,7 +105,7 @@ interface RunHandle {
   steer(text: string): boolean;          // 下一步注入（D75：只用于任务的 inject）；false = 收不下（任务层把 inject 记为 queued）
   abort(reason: string): void;
   onEvent(listener: (e: EngineEvent) => void): () => void;
-  tokensSoFar(): number;                 // 连锁预算与任务的 TASK_TOKEN_BUDGET（外部 Agent：已报用量 + 未报轮数 × AGENT_TURN_BUDGET_TOKENS）
+  tokensSoFar(): number;                 // 任务的 TASK_TOKEN_BUDGET（外部 Agent：已报用量 + 未报轮数 × AGENT_TURN_BUDGET_TOKENS）
   done: Promise<RunOutcome>;             // { status, finalText, skipReply, usage[], error? }
 }
 ```
@@ -201,7 +199,7 @@ P0 是自定义 Streamable HTTP MCP server 的 OAuth 授权地基（设计 [29](
 | `apps/connections.ts` | `AppConnectionsService`：目录连接（`apps.connect({target:{kind:'catalog', connectorId}, grantBotId?, connectionId?})`，多账号 = 同一 connector 多行，`conn_` 前缀 id 保留给目录连接）；账号识别 `id_token` / userinfo → 条目 `whoami` 只读工具 → `"{title} #{n}"`，同 `account_sub` 已有连接则复用旧行（临时行令牌搬过去后删除），`connectionId` 重新授权要求账号一致、scopes 取现有 ∪ 请求；首连 `reviewing_tools` → `apps.connect.confirmTools` 后批准工具、置 `connected`、经 `BotsService.grantConnection` 授权流程收集的全部 Bot（并发去重并入的 `grantBotId`，`Flow.ending` 后不追溯，见 DEV-020）；连接管理 RPC 的实现 |
 | `apps/policy.ts` | 纯函数：`classifyAppToolRisk` = W5 `mcp/risk.ts classifyRiskDetailed` + 目录 `toolPolicy` 叠加（只能调高）；`toolDefinitionHash`（`{name,title,description,inputSchema,annotations}` 规范化 JSON 的 sha256） |
 | `apps/tool-lock.ts` | `ToolLockService`（`app_connection_tools`）：对**所有** MCP server 生效（自定义 server 用 `custom:{serverId}` 行，stdio 的 `server_url` 为 NULL），经 `mcp.toolFilter` 在列工具时过滤——新增（`approved_hash NULL`）/ 定义变化（`current_hash ≠ approved_hash`）的工具不暴露，删除的删行；有待复核项时 `connected → tools_changed`，全部复核完回 `connected`；存量基线（`baseline_pending`，一次性）与测试注入 `toolLockTrustFirstList`；`reviewTools` / `approveAfterTest` 写批准 |
-| `apps/grants.ts` | `AppToolGrants`（`app_tool_grants`）：写工具的「本对话内」（带 `conversation_id`）/「对该 Bot 总是允许」（NULL）授权；`gateway` 的 `mcpToolDecision` 为 `ask` 时先查这里，命中免卡，批准时长为 `conversation` / `bot` 时写入；撤销经 `apps.grants.revoke`、`domain/lifecycle.ts`（删 Bot / 移出群）、断开连接 |
+| `apps/grants.ts` | `AppToolGrants`（`app_tool_grants`）：写工具的「本对话内」（带 `conversation_id`）/「对该 Bot 总是允许」（NULL）授权；`gateway` 的 `mcpToolDecision` 为 `ask` 时先查这里，命中免卡，批准时长为 `conversation` / `bot` 时写入；撤销经 `apps.grants.revoke`、`domain/lifecycle.ts`（删 Bot / 移出项目组）、断开连接 |
 | `apps/exposure.ts` | `ConnectedApps`：只读解析 Bot 勾选的目录连接（`runtime.app_connection_ids`）→ 合成 server（`id = connectionId`）、每连接绑定（slug / 账号 / 风险决定）与提示词数据；只有 `connected` / `tools_changed` / `error` 参与列工具，`expired` / `needs_scope` / `disabled` 不暴露任何工具、只进 `<capabilities>` 状态行 |
 | `apps/naming.ts` | `appToolName(slug, tool)`：`app_{slug}_{tool}`，sanitize `[A-Za-z0-9_-]`，≤ `APP_TOOL_NAME_MAX`（50）；超长截断 + `_` + 8 位哈希（取自原始名） |
 | `apps/prompt.ts` | `<available_apps>` 正文、`APP_REQUEST_CONNECTION_RULE`（仅当注册了 `app_request_connection` 时进系统提示词）、`REASON_TEXT`、`oneLine`（远端字符串进提示词前的清洗）；`<capabilities>` 段在 `capabilities/prompt.ts` |
@@ -245,14 +243,14 @@ interface SandboxPolicy {
 }
 ```
 
-策略由 `sandbox/policy.ts` 根据执行身份、workspace、project（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。
+策略由 `sandbox/policy.ts` 根据执行身份、workspace、workdir（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。
 
 ### 调度（`scheduler/scheduler.ts`）
 
 ```ts
 type Priority = 0 | 1 | 2;
-// 0：用户触发的对话轮（任一来源批为 direct / mention / reply / broadcast / delegation / task）、群聊判断、已持租约的写任务
-// 1：定时 / 事件 / 连锁触发的对话轮、只读任务；2：后台 loop
+// 0：用户触发的对话轮（任一来源批为 direct / mention / reply / continuation / routed / routed_also / lead_fallback / delegation / task）、项目组路由判断、已持租约的写任务
+// 1：定时 / 事件 / 协作回合内 @ 触发的对话轮、只读任务；2：后台 loop
 
 interface SchedulerJob {
   priority: Priority;
@@ -290,14 +288,15 @@ interface TriggerBatch {
   conversationId; botId; messages: Message[];    // 全部触发消息（去重，按 seq）
   reason: TriggerReason;                         // 合并批取第一个面向用户的来源段的 reason
   parts?: TriggerPart[];                         // 合并批的各来源段（各自 reason / extraAttributes，各占一个 <trigger>）
-  chain?; retryOf?; afterNote?; extraAttributes?;
+  episode?: { id: string; hop: number };         // Bot @ 触发的协作回合绑定（D92 T1a）
+  retryOf?; afterNote?; extraAttributes?;
 }
 ```
 
-- 同一 mailbox 同一时刻最多一个对话轮；对话轮运行中到达的批**不 steer**，缓冲到下一轮（D2 修订）。`mergeTriggerBatches`：同 reason 与属性的段合并，同一消息只出现一次且取最新快照，`chain` 取层数最深的、`afterNote` 取最后一个。只有 `canShareTurn` 的批才合并 / 吸收（审查批 E）：委派批（任一段 reason 为 `delegation`）独占一轮；绑定到不同连锁的批不同轮；带用户消息（`senderType='user'`，含编辑通知）的未绑定批不与连锁批同轮（最终审查 L-5）。`Mailbox.hasBuffered(match)` 供对账判断结果是否已在缓冲里。
-- 对话轮开始执行（`#executeRun` 先 `await Promise.resolve()` 让同一时刻的投递落进缓冲）时 `#absorbIntoTurn`：`takeBuffered` + 合并 + `refreshTriggerBatch`（重读每条消息，撤回的移除），触发变化时 `runs.setTrigger` 更新行（`trigger_parts_json`；吸收了连锁批时连同 `chain_id` / `chain_depth`）。已被消费的任务结果条目在这里丢弃（重试的对话轮自己的触发除外）；吸收后的触发里带的任务 id 记为「被该对话轮持有」，对账不补投它们，直到 `#releaseTurnMailbox`。
-- 对话轮终态时 `#releaseTurnMailbox`：先按 DEV-014 规则 `TaskHost.markConsumed`，再 `release()`，然后通知群轮次与 D71 投递闸门「邮箱空闲」。
-- `deliver` 的调用方：用户批（单聊直投、群聊经 `GroupTurnCoordinator`）、事件 / 定时（`deliverEventToBot` / `deliverScheduleToBot`）、D71 代发、任务结算唤醒（`TaskHost` 的 `wake` = 以 `reason:'task'` 投递结果 / 失败条目）、`runs.retry`（按 `trigger_parts_json` 重建）。
+- 同一 mailbox 同一时刻最多一个对话轮；对话轮运行中到达的批**不 steer**，缓冲到下一轮（D2 修订）。`mergeTriggerBatches`：同 reason 与属性的段合并，同一消息只出现一次且取最新快照，`episode` 取 hop 最深的、`afterNote` 取最后一个。只有 `canShareTurn` 的批才合并 / 吸收（审查批 E / M1）：委派批（任一段 reason 为 `delegation`）独占一轮；绑定到不同协作回合的批不同轮；带用户消息（`senderType='user'`，含编辑通知）的未绑定批不与回合批同轮（最终审查 L-5）。`Mailbox.hasBuffered(match)` 供对账判断结果是否已在缓冲里。
+- 对话轮开始执行（`#executeRun` 先 `await Promise.resolve()` 让同一时刻的投递落进缓冲）时 `#absorbIntoTurn`：`takeBuffered` + 合并 + `refreshTriggerBatch`（重读每条消息，撤回的移除），触发变化时 `runs.setTrigger` 更新行（`trigger_parts_json`；吸收了回合批时连同 `episode_id` / `episode_hop`，取更深 hop）。已被消费的任务结果条目在这里丢弃（重试的对话轮自己的触发除外）；吸收后的触发里带的任务 id 记为「被该对话轮持有」，对账不补投它们，直到 `#releaseTurnMailbox`。
+- 对话轮终态时 `#releaseTurnMailbox`：先按 DEV-014 规则 `TaskHost.markConsumed`，再 `release()`，然后通知项目组轮次（`ProjectTurnCoordinator` 的回合结算）与 D71 投递闸门「邮箱空闲」。
+- `deliver` 的调用方：用户批（单聊直投、项目组经 `ProjectTurnCoordinator`）、事件 / 定时（`deliverEventToBot` / `deliverScheduleToBot`）、D71 代发、任务结算唤醒（`TaskHost` 的 `wake` = 以 `reason:'task'` 投递结果 / 失败条目，唤醒轮在唤醒时继承协作回合）、`runs.retry`（按 `trigger_parts_json` 重建）。
 
 ### TaskHost（D75 任务层，`core/src/dispatch/tasks.ts`，`orchestrator.tasks`）
 
@@ -306,7 +305,7 @@ interface TriggerBatch {
 ```ts
 class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的门面
   // 路由（对话轮的工具；深度 1：任务内调用一律 NOT_SUPPORTED）
-  start(identity, { title, instruction, sourceMessageIds, writes, workdir?, continuesTaskId? })
+  start(identity, { title, instruction, sourceMessageIds, writes, cwd?, continuesTaskId? })
     : { taskId; state: 'running' | 'submitted'; queueReason: string | null; alreadyStarted? };
   inject(identity, { taskId, text, sourceMessageIds? }, { onNotDelivered? }): { delivery: 'delivered' | 'queued' };
   cancel(identity, { taskId, reason }): { taskId; state; message };
@@ -331,8 +330,8 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
 }
 ```
 
-- **配额与排队**（`#blockedBy`，FIFO 启动）：全局 `TASK_CONCURRENCY_GLOBAL`、对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（计已启动、含等租约 / 等名额的执行）；同一 `task_workdir` 已有写任务在执行 → 「等写入租约（任务 … 持有）」；`launchSlot`（外部智能体 `agent:{id}` 的并发上限）已满 → 「等智能体并发额度」。每个发起对话轮（`origin_run_id`）最多 `TASK_START_MAX_PER_TURN` 个，超限 `TASK_LIMIT_REACHED`；重试出来的对话轮（`retry_of_run_id` 链）再派同名任务时返回已有任务（`alreadyStarted`）。
-- **启动**（orchestrator `#startTask`，`TaskRunControl`）：取简报（缺失 = 派出时崩溃 → `failed`）；写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（排队原因「等写入租约」，行仍是 `queued`），再以 `task:{id}` 提交调度器（写任务优先级 0 + `leaseHeld`，只读任务优先级 1；provider 为 Bot 的任务引擎）；排队期间被取消 → `cancelQueued` 并释放租约。执行用 `#executeRun(runId, { kind: 'task', batch, task, brief, control })`：触发段 = `buildTaskBriefSegment`，对话层只取共享行，`continues_task_id` 时 `buildTaskReplaySegment`；引擎 run 启动后 `control.attach(handle)`（之前缓冲的注入此时 steer），结束 `detach` / `finish`。
+- **配额与排队**（`#blockedBy`，FIFO 启动）：全局 `TASK_CONCURRENCY_GLOBAL`、对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（计已启动、含等租约 / 等名额的执行）；同一 `task_cwd` 已有写任务在执行 → 「等写入租约（任务 … 持有）」；`launchSlot`（外部智能体 `agent:{id}` 的并发上限）已满 → 「等智能体并发额度」。每个发起对话轮（`origin_run_id`）最多 `TASK_START_MAX_PER_TURN` 个，超限 `TASK_LIMIT_REACHED`；重试出来的对话轮（`retry_of_run_id` 链）再派同名任务时返回已有任务（`alreadyStarted`）。
+- **启动**（orchestrator `#startTask`，`TaskRunControl`）：取简报（缺失 = 派出时崩溃 → `failed`）；写任务先 `workdirs.ensureWriteLease(identity, cwd 根, { pin: true, signal })`（排队原因「等写入租约」，行仍是 `queued`），再以 `task:{id}` 提交调度器（写任务优先级 0 + `leaseHeld`，只读任务优先级 1；provider 为 Bot 的任务引擎）；排队期间被取消 → `cancelQueued` 并释放租约。执行用 `#executeRun(runId, { kind: 'task', batch, task, brief, control })`：触发段 = `buildTaskBriefSegment`，对话层只取共享行，`continues_task_id` 时 `buildTaskReplaySegment`；引擎 run 启动后 `control.attach(handle)`（之前缓冲的注入此时 steer），结束 `detach` / `finish`。
 - **注入**：已 attach → `handle.steer(buildTaskInjection(...))`，失败即 `queued`；启动前 → 并入简报（`TaskBrief.injects`）；已收尾 → `queued`。外部智能体异步拒绝 / 确认经 `control.steerRefused` / `steerConfirmed`（FIFO 按文本匹配），未送达的条目改写为 `queued` 并运行调用方的 `onNotDelivered`（§8.4 降级用它另起任务）。任务正在 `ask_user` 时，注入就是回答（`buildTaskAnswer`：转交文本 + 原消息）。
 - **结算次序**：终态条目（`appendTaskEvent`，唯一索引幂等；写失败而对话仍在 → 留在 `#unsettled`，由 sweep 重试，任务保持非终态）→ runs 终态 → `onSettled`（once 授权、挂起审批、未在执行时释放租约）→ 唤醒判定 → `wake(botId, conversationId, entry)`（orchestrator：`mailbox.deliver({ reason: 'task', messages: [entry] })`）或直接 `markConsumed`。宿主主动停下的任务当场结算，其执行在 `finish()` 前仍占名额与写入目标。
 - **sweep**（start.ts 每 `TASK_SETTLE_SWEEP_MS`）：重试 `#unsettled`；驱逐结算后超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行（`releaseExecution`）；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`TASK_MAX_WALL_MS`（扣除等问题回答的时间）/ `TASK_TOKEN_BUDGET` 超限强制 `failed`；`#pump`；对账（未消费终态任务重投，已投递未消费超过 `TASK_REDELIVER_AFTER_MS` 才重投；被 Bot 持有的不投——进行中或已创建仍在调度器排队的对话轮的触发（`#startTurn` 起记入 `#turnTaskHolds`）、或该 mailbox 的缓冲（`heldByTurn`）；每次成功的投递（`wake` 未抛错）在终态条目的 `deliveries` 上计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 标记消费并发可见的 `task_result_undelivered` 提示）；`onSweep`（orchestrator 关闭超过 `CONTINUATION_WINDOW_MS` 的任务外部智能体会话）。
@@ -397,7 +396,7 @@ stateDiagram-v2
   running --> completed
   running --> failed
   queued --> cancelled
-  running --> cancelled: 用户取消 / Bot 被删除或移出群
+  running --> cancelled: 用户取消 / Bot 被删除或移出项目组
   waiting_approval --> cancelled
   waiting_lease --> cancelled
   running --> interrupted: 应用退出或核心服务崩溃

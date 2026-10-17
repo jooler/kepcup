@@ -38,16 +38,31 @@ function migrationsUpTo(maxVersion: number): string {
   return target;
 }
 
-function seedBotAndConversation(db: SqliteDatabase): void {
+/**
+ * Seeds one direct chat plus a second conversation. `legacy` = pre-0040 shape
+ * ('group', seeded before the 0039/0040 migrations run, so it must carry a
+ * member row to survive 0039's lead-candidate check); otherwise the current
+ * 'project' shape with a lead.
+ */
+function seedBotAndConversation(db: SqliteDatabase, legacy: boolean): void {
   db.prepare(
     "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_1', 'a', '{}', 'active', 0, 0)",
   ).run();
   db.prepare(
     "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_1', 'direct', 'bot_1', 0, 0)",
   ).run();
-  db.prepare(
-    "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_2', 'group', null, 0, 0)",
-  ).run();
+  if (legacy) {
+    db.prepare(
+      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_2', 'group', null, 0, 0)",
+    ).run();
+    db.prepare(
+      "insert into conversation_members (conversation_id, bot_id, joined_at) values ('conv_2', 'bot_1', 0)",
+    ).run();
+  } else {
+    db.prepare(
+      "insert into conversations (id, type, direct_bot_id, lead_bot_id, read_only, created_at) values ('conv_2', 'project', null, 'bot_1', 0, 0)",
+    ).run();
+  }
 }
 
 interface ScheduleSeed {
@@ -141,7 +156,7 @@ describe('main 0037 workbench', () => {
   it('rebuilds schedules keeping every old row, index and foreign key', () => {
     const db = openMainDb();
     runMigrations(db, migrationsUpTo(36));
-    seedBotAndConversation(db);
+    seedBotAndConversation(db, true);
     insertSchedule(db, { id: 'sch_tool', bot_id: 'bot_1' }, false);
     insertSchedule(
       db,
@@ -175,7 +190,7 @@ describe('main 0037 workbench', () => {
     expect(before[0]).not.toHaveProperty('todo_id');
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([37]);
+    expect(applied.map((m) => m.version)).toEqual([37, 38, 39, 40, 41, 42]);
 
     const after = db.prepare('select * from schedules order by id').all() as Array<
       Record<string, unknown>
@@ -200,7 +215,7 @@ describe('main 0037 workbench', () => {
   it("accepts origin 'workbench', rejects unknown origins, allows a null bot_id", () => {
     const db = openMainDb();
     runMigrations(db, migrationsUrl('main'));
-    seedBotAndConversation(db);
+    seedBotAndConversation(db, false);
     db.prepare(
       "insert into todos (id, title, status, source, created_at, updated_at) values ('todo_1', 't', 'scheduled', 'user', 0, 0)",
     ).run();

@@ -15,7 +15,7 @@ import type { SandboxPolicy } from '../types.js';
  * mount plan decides what the sandbox can touch at all:
  *
  * 红线：only directories that a `MountRegistration` has explicitly allowed
- * (the app-owned data home, the bound project, effective grants) may ever be
+ * (the app-owned data home, the bound workdir, effective grants) may ever be
  * mounted. A policy path without a registered ancestor is NOT mounted and
  * the whole exec fails closed — a silently narrower policy would look like
  * success while the command runs against a different filesystem view.
@@ -35,7 +35,7 @@ import type { SandboxPolicy } from '../types.js';
 
 /**
  * The directories mounting is allowed for, provided by start.ts from the
- * domain state (bound projects, active grants) plus the app-owned roots.
+ * domain state (bound workdirs, active grants) plus the app-owned roots.
  * Windows paths compare case-insensitively with both separators; POSIX
  * paths via isInsidePath.
  */
@@ -149,7 +149,7 @@ export function resolvePolicyMounts(policy: SandboxPolicy, options: ResolveOptio
       rejections.push({
         path: entry,
         kind: 'readWrite',
-        reason: '路径未登记（未绑定的 project、未授权目录或数据目录之外的路径不能进入沙箱）',
+        reason: '路径未登记（未绑定的 workdir、未授权目录或数据目录之外的路径不能进入沙箱）',
       });
       continue;
     }

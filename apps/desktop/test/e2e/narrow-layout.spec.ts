@@ -522,7 +522,8 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await overlay.locator('#tab-other').click();
     await overlay.locator('[data-testid="bot-remove"]').click();
     await page.locator('[data-testid="bot-remove-confirm"]').click();
-    await expect(overlay).toHaveCount(0);
+    // 移除是重 RPC 链（删对话/工作区目录）+ 覆盖层收启动画，慢机器 5s 默认窗不够。
+    await expect(overlay).toHaveCount(0, { timeout: 30_000 });
     await expect(page.locator('[data-testid="narrow-tab-bar"]')).toBeVisible();
     await expect(page.locator('[data-testid="chat-view"]')).toHaveCount(0);
 
