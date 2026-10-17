@@ -310,6 +310,18 @@ rg -n "P04-workdir" .                                                           
 
 `apps/desktop/src/renderer/src/lib/features/workbench/WorkbenchView.svelte` 与 `apps/desktop/test/e2e/workbench.spec.ts` 在实施期间被另一会话修改（内容为 workbench tab seam 的另一种实现，时间戳 17:03–17:04）。两者不含 project 字样、与本 WP 无交集，已排除在三个提交之外，保留在工作区由其作者处置。
 
+### 阶段审查补漏（2026-10-17，Phase A 审查提交）
+
+审查发现任务书 §5 步骤 9.2 的文档清单漏了三份**无 D92 提示、也不在任何后续 WP 清单**的当前规格文档，目录含义的 `project` / 旧常量名残留其中，已按 §4.1 通则修正：
+
+- `docs/dev/04-agent-runtime.md` 段落顺序表：`PROJECT_CONTEXT_TOKEN_BUDGET` → `WORKDIR_CONTEXT_TOKEN_BUDGET`（该文件在清单内但此常量漏改）。
+- `docs/design/06-isolation-and-storage.md`：表格 / 数据流图里的 `project`/`Project`（目录含义）→ `workdir`/`Workdir`。
+- `docs/design/24-durable-execution.md`：`project 写租约` / `Project 检查点` → workdir 措辞。
+- 链接文字补齐：当前规格文档（01 / 02 / 06 / 24）里 `[08-project.md](08-workdir.md…)` 的**文字**改为 `08-workdir.md`（任务书只要求改链接目标，文字残留会被 WP11 的核对正则漏掉）；历史文档（DEVIATIONS / P04 / P16）按任务书只改目标不动文字。
+- `docs/dev/DEVIATIONS.md` 一处链接目标相对路径修正：`(08-workdir.md)` → `(../design/08-workdir.md)`（原链接在改名前后都指向 `docs/dev/` 下的不存在路径，本次补成可达路径，文字仍为历史名）。
+
+其余逐项核对（§4.1 对照与「不改」清单、迁移 0038 语义、历史迁移零改动、批量替换事故的还原、纯度反向映射、21 testid / 23 i18n key、残留自检 1–5）全部通过。
+
 ### 偏差
 
 - 无新增 DEVIATIONS（编号仍至 DEV-030）：改名未迫使任何行为改动；`public-skills-migration` 的回拨补丁是测试对新增迁移的适配（同 WP0-1 对 `tool-effects-migration` 的处理）。

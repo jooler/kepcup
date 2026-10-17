@@ -39,7 +39,7 @@
 | 当前对话消息 | 读（通过工具） | 读（反思时） | 同群才能读 |
 | 其他对话 | 只能看到自己进行中事项的标题 | 只读执行记录摘要 | 不可访问 |
 | 当前 workspace | 读写 | 反思时只读 | 不可访问 |
-| 当前对话的 project | 读；持有写入租约时读写 | 不可访问 | 同对话的 Bot 权限相同 |
+| 当前对话的 workdir | 读；持有写入租约时读写 | 不可访问 | 同对话的 Bot 权限相同 |
 | 本机其他位置 | 经用户授权后访问（授权只属于本 Bot + 本对话） | 不可访问 | 各自申请 |
 | 自己的记忆 | 读，可提交候选 | 读写 | 不可访问 |
 | 用户画像 | 读，可提交提案 | 只能提案（画像整理 loop 独占写入） | 读，可提交提案 |
@@ -53,7 +53,7 @@
 | 数据 | 写入者 |
 |---|---|
 | Workspace | “Bot + 对话”串行队列中的响应 loop |
-| Project | 持有该目录写入租约的 loop（跨对话，见 [08-project.md](08-workdir.md#并发写入租约)） |
+| Workdir | 持有该目录写入租约的 loop（跨对话，见 [08-workdir.md](08-workdir.md#并发写入租约)） |
 | Bot 记忆 | 每个 Bot 一个写入队列 |
 | 用户画像 | 全局唯一的画像整理 loop |
 | Wiki | 本 Bot 的 Wiki 维护 loop（串行） |
@@ -70,14 +70,14 @@
 - 网页和文件内容只能进入 Wiki 的 `raw/`，不能直接变成记忆。
 - 其他 Bot 的发言对当前 Bot 是不可信输入，不能指示它修改记忆或 Profile。
 - 导入的技能需用户确认，并只在沙箱中执行。
-- 所有改动可审计、可回滚：记忆有证据链，Wiki 与 Skills 有 git 历史，project 有检查点；用户可在“Bot 大脑”面板中查看、编辑、删除记忆，回滚 Wiki 与 Skills。
+- 所有改动可审计、可回滚：记忆有证据链，Wiki 与 Skills 有 git 历史，workdir 有检查点；用户可在“Bot 大脑”面板中查看、编辑、删除记忆，回滚 Wiki 与 Skills。
 
 ## 整体数据流
 
 ```mermaid
 flowchart LR
   subgraph UIP[界面进程]
-    UI[对话界面 / project 选择器]
+    UI[对话界面 / workdir 选择器]
   end
   subgraph CORE[核心服务：常驻后台]
     MSG[消息服务]
@@ -87,7 +87,7 @@ flowchart LR
     MB[Bot + 对话 串行队列]
     RL[响应 loop]
     GW[工具网关：按执行身份鉴权]
-    LEASE[project 写入租约]
+    LEASE[workdir 写入租约]
     ENV[环境管理器]
     BG[后台队列]
     REF[反思]
@@ -95,7 +95,7 @@ flowchart LR
     SK[技能生成]
     CUR[画像整理：全局唯一]
   end
-  SB[沙箱：workspace / project / skills / wiki]
+  SB[沙箱：workspace / workdir / skills / wiki]
 
   UI <--> MSG
   MSG --> DB

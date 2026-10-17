@@ -55,7 +55,7 @@
 ### 写互斥：租约，而不是物理隔离
 
 - 只读任务不取租约、不限 cwd 并发（仍受上述配额封顶）。
-- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-project.md](08-workdir.md#并发写入租约)）。
+- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-workdir.md](08-workdir.md#并发写入租约)）。
 - 同一 cwd 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
 - workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；workdir 写任务照常有改动摘要与整次回退（D30）。
 - git worktree / CoW 隔离明确不做（[30 §9](30-supervisor-and-tasks.md#9-非目标)）。

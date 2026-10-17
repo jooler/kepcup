@@ -181,7 +181,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 5 | `<my_state>` | 到期的承诺、进行中事项的标题（跨对话） | `MY_STATE_TOKEN_BUDGET` | P07 |
 | 6 | `<relevant_memories>` | 相关记忆 top-k，每条带 id，标注“可能已过时”；群聊中来自私聊的条目标注 `origin="private"` | `RELEVANT_MEMORY_TOKEN_BUDGET` | P07 |
 | 7 | `<conversation_info>` | 对话类型、群名、成员名片（名字、简介、职责、bot id）、当前时间与时区 | — | P01（成员 P05） |
-| 8 | `<workdir>` | 路径、顶层结构、git 状态、`AGENTS.md` / `CLAUDE.md` | `PROJECT_CONTEXT_TOKEN_BUDGET` | P04 |
+| 8 | `<workdir>` | 路径、顶层结构、git 状态、`AGENTS.md` / `CLAUDE.md` | `WORKDIR_CONTEXT_TOKEN_BUDGET` | P04 |
 | 9 | `<workspace>` | workspace 路径与顶层文件列表（对话轮注明「这一轮只读，任务可读写」） | — | P02 |
 | 10 | `<access>` | 有效授权；沙箱状态（正常 / 逐条确认模式）只在任务版出现 | — | P03 |
 | 11 | `<wiki_topics>` | Wiki 主题目录 | `WIKI_TOPICS_TOKEN_BUDGET` | P09 |
