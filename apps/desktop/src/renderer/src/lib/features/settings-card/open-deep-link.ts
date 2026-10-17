@@ -1,6 +1,7 @@
 import type { SettingItem, SettingTarget } from '@kepcup/shared';
 import { shell } from '$lib/stores/shell.svelte';
 import { chat } from '$lib/stores/chat.svelte';
+import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
 import { settingDeepLinkAction } from './deep-link';
 
 /**
@@ -28,13 +29,14 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       return;
     }
     case 'project-detail': {
-      // 项目详情页（内容区，WP6 起为过渡壳，WP7 换真实页面并消费 anchor）。
-      // 卡片只出现在它所在的会话里；会话不是当前会话时先切过去（select 会把视图
-      // 收回沟通，随后的 openProjectSettings 落到详情分区）。
+      // 项目详情页（内容区，WP7 起为真实页面）。卡片只出现在它所在的会话里；
+      // 会话不是当前会话时先切过去（select 会把视图收回沟通，随后的
+      // openProjectSettings 落到详情分区），页面渲染后把锚点滚入视野并聚焦。
       if (action.conversationId !== null && action.conversationId !== chat.current?.conversation.id) {
         await chat.select(action.conversationId);
       }
       shell.openProjectSettings(action.section);
+      if (action.anchor !== null) await revealDialogAnchor(document, action.anchor);
       return;
     }
     case 'workdir-dialog':

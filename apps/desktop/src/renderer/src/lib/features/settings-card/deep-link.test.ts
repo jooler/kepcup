@@ -51,6 +51,21 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
       section: 'members',
       anchor: 'project-members',
     });
+    // 概览的目标锚点与成员分区的负责人锚点（WP7 真实详情页里的 data-settings-anchor）。
+    const goal = getSettingItem('project.goal')!;
+    expect(settingDeepLinkAction(goal.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'overview',
+      anchor: 'project-goal',
+    });
+    const lead = getSettingItem('project.lead')!;
+    expect(settingDeepLinkAction(lead.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'members',
+      anchor: 'project-lead',
+    });
     expect(
       settingDeepLinkAction(project.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
     ).toMatchObject({

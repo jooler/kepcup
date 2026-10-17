@@ -26,7 +26,10 @@
   import AppearanceSection from '$lib/features/settings/AppearanceSection.svelte';
   import BackgroundTasksSection from '$lib/features/settings/BackgroundTasksSection.svelte';
   import UnattendedSection from '$lib/features/settings/UnattendedSection.svelte';
-  import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
+  import ProjectTitleCard from './ProjectTitleCard.svelte';
+  import ProjectGoalCard from './ProjectGoalCard.svelte';
+  import ProjectLeadCard from './ProjectLeadCard.svelte';
+  import ProjectMembersCard from './ProjectMembersCard.svelte';
   import WorkdirSettingsDialog from '$lib/features/workdirs/WorkdirSettingsDialog.svelte';
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { embeddedAgentId } from './card-components';
@@ -185,10 +188,25 @@
     {onConflict}
   />
 {:else if item.card === 'project-title' && conversationId !== null}
-  <!-- WP7 replaces these with ProjectMembersEditor / ProjectSettingsPage embeds -->
-  <GroupSettingsDialog
-    embedded
-    focus="title"
+  <ProjectTitleCard
+    {conversationId}
+    {prefill}
+    {expected}
+    {messageId}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'project-goal' && conversationId !== null}
+  <ProjectGoalCard
+    {conversationId}
+    {prefill}
+    {expected}
+    {messageId}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'project-lead' && conversationId !== null}
+  <ProjectLeadCard
     {conversationId}
     {prefill}
     {expected}
@@ -197,31 +215,7 @@
     {onConflict}
   />
 {:else if item.card === 'project-members' && conversationId !== null}
-  <GroupSettingsDialog
-    embedded
-    focus="members"
-    {conversationId}
-    {prefill}
-    onSaved={() => onSaved()}
-  />
-{:else if item.card === 'project-goal' && conversationId !== null}
-  <!-- WP4 临时：目标暂在群设置对话框改名段旁边展示不了，先落成员段；WP7 换详情页内嵌 -->
-  <GroupSettingsDialog
-    embedded
-    focus="members"
-    {conversationId}
-    {prefill}
-    onSaved={() => onSaved()}
-  />
-{:else if item.card === 'project-lead' && conversationId !== null}
-  <!-- WP4 临时：负责人暂由群设置对话框代管；WP7 换 ProjectMembersEditor 内嵌 -->
-  <GroupSettingsDialog
-    embedded
-    focus="members"
-    {conversationId}
-    {prefill}
-    onSaved={() => onSaved()}
-  />
+  <ProjectMembersCard {conversationId} {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'tool-policy'}
   <AppConnectionDetail
     embedded
