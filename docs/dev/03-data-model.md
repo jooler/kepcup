@@ -946,7 +946,7 @@ CREATE TABLE runs (
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
   task_title           TEXT,           -- 0006（D75）：任务标题；以下任务列在非任务 run 上为 null / 0
   task_writes          INTEGER,        -- 0006：1 = 写任务，0 = 只读任务
-  task_workdir         TEXT,           -- 0006：解析后的任务工作目录
+  task_cwd             TEXT,           -- 0006（时名 task_workdir，0013 改名）：解析后的任务执行根目录
   origin_run_id        TEXT,           -- 0006：派出该任务的对话轮
   result_consumed_at   INTEGER,        -- 0006：任务结果被对话轮消费的时间（design/30 §3.2）
   awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
