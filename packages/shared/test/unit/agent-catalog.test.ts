@@ -110,7 +110,7 @@ describe('capability resolution (P2)', () => {
     expect(capabilityOfTool('send_message')?.id).toBe('core');
     expect(capabilityOfTool('browser_click')?.id).toBe('browser');
     expect(capabilityOfTool('mcp_srv1_lookup')?.id).toBe('mcp');
-    expect(capabilityOfTool('propose_team')?.id).toBe('collaboration');
+    expect(capabilityOfTool('propose_bots')?.id).toBe('collaboration');
     expect(capabilityOfTool('save_profile')).toBeNull();
     expect(capabilityOfTool('bash')).toBeNull();
   });

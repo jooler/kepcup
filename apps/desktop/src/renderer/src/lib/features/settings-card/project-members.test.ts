@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupMemberPlan, proposedMemberIds } from './group-members';
+import { groupMemberPlan, proposedMemberIds } from './project-members';
 
 describe('group member card plan (D89 review)', () => {
   it('a bot prefill only adds: existing members stay checked, nothing is removed', () => {

@@ -408,8 +408,7 @@ export class MemoryService {
       subject: null,
       source: 'explicit',
       evidence: this.#evidenceFrom(input.triggerMessages, null),
-      // stored value stays 'group' until WP4 migrates memory.db
-      origin: conversation?.type === 'project' ? 'group' : 'private',
+      origin: conversation?.type === 'project' ? 'project' : 'private',
       originConversationId: conversationId,
       confidence: 1,
       sensitivity: 'normal',
@@ -484,8 +483,7 @@ export class MemoryService {
       subject: candidate.subject ?? null,
       source: candidate.source,
       evidence: this.#evidenceFrom(messages, candidate.evidenceRunId),
-      // stored value stays 'group' until WP4 migrates memory.db
-      origin: conversation?.type === 'project' ? 'group' : 'private',
+      origin: conversation?.type === 'project' ? 'project' : 'private',
       originConversationId: conversationId,
       confidence: candidate.confidence,
       sensitivity: candidate.sensitivity,

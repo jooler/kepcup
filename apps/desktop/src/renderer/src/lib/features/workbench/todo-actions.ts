@@ -22,12 +22,12 @@ function codeOf(error: unknown): string | undefined {
 }
 
 /**
- * RPC 错误的展示文案：INVALID_INPUT 带服务端的具体原因（如「时间在过去」「群已只读」），
+ * RPC 错误的展示文案：INVALID_INPUT 带服务端的具体原因（如「时间在过去」「项目组已只读」），
  * 直接展示；其余按错误码映射。
  */
 export function rpcErrorText(error: unknown, fallback: string): string {
   const { code, message } = (error ?? {}) as { code?: string; message?: string };
-  if (code === 'CONVERSATION_READ_ONLY') return t('workbench.error.groupReadOnly');
+  if (code === 'CONVERSATION_READ_ONLY') return t('workbench.error.projectReadOnly');
   if (code === 'NOT_FOUND') return t('workbench.error.targetGone');
   if (code === 'INVALID_INPUT' && typeof message === 'string' && message.trim().length > 0) {
     return message.trim();
@@ -76,7 +76,7 @@ export async function openConversation(
   }
 }
 
-/** 事项对应的对话：最近一次派发的对话；否则群执行者的群、Bot 执行者的私聊（幂等打开）。 */
+/** 事项对应的对话：最近一次派发的对话；否则项目执行者的项目组、Bot 执行者的私聊（幂等打开）。 */
 export async function openTodoConversation(todo: TodoEntry): Promise<void> {
   if (todo.lastRun !== null) {
     await openConversation(todo.lastRun.conversationId);
@@ -84,8 +84,8 @@ export async function openTodoConversation(todo: TodoEntry): Promise<void> {
   }
   const assignee = todo.assignee;
   if (assignee === null) return;
-  if (assignee.kind === 'group') {
-    await openConversation(assignee.conversationId);
+  if (assignee.kind === 'project') {
+    await openConversation(assignee.projectId);
     return;
   }
   try {

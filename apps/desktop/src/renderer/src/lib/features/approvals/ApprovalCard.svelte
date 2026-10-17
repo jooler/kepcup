@@ -143,7 +143,7 @@
     if (autofocus && pending && cardEl) cardEl.focus();
   });
 
-  // D70 butler_proposal payload: 组队 / 建 Bot / 建群提议（条目可勾选）。
+  // D70 butler_proposal payload: 组队 / 建 Bot / 建项目组提议（组队条目可勾选）。
   const butlerProposal = $derived.by(() => {
     if (approval.kind !== 'butler_proposal') return null;
     const parsed = butlerProposalPayloadSchema.safeParse(approval.payload);
@@ -152,7 +152,7 @@
   /** Indexes of proposed bots the user unchecked (default: keep everything). */
   let butlerDropped = $state<number[]>([]);
   const butlerKept = $derived(
-    butlerProposal !== null && butlerProposal.proposalType !== 'group'
+    butlerProposal !== null && butlerProposal.proposalType !== 'project'
       ? butlerProposal.bots
           .map((_, index) => index)
           .filter((index) => !butlerDropped.includes(index))
@@ -207,7 +207,7 @@
 
   /** Kept routine keys of the kept bots; undefined when the proposal has none. */
   const routinesKept = $derived.by(() => {
-    if (butlerProposal === null || butlerProposal.proposalType === 'group') return undefined;
+    if (butlerProposal === null || butlerProposal.proposalType === 'project') return undefined;
     const keys = butlerProposal.bots.flatMap((bot, botIndex) =>
       bot.routines.map((_, routineIndex) => `${botIndex}:${routineIndex}`),
     );
@@ -218,7 +218,7 @@
   });
 
   function approve(): void {
-    if (butlerProposal !== null && butlerProposal.proposalType !== 'group') {
+    if (butlerProposal !== null && butlerProposal.proposalType !== 'project') {
       // 一项都不留 = 拒绝（core 同样按拒绝处理）。
       void permissions.decide(
         approval.id,
@@ -423,7 +423,7 @@
                   : approval.kind === 'agent_tool'
                     ? agentToolTitle
                     : approval.kind === 'butler_proposal'
-                      ? butlerProposal?.proposalType === 'group'
+                      ? butlerProposal?.proposalType === 'project'
                         ? t('approvals.butlerGroupTitle')
                         : butlerProposal?.proposalType === 'bot'
                           ? t('approvals.butlerBotTitle')
@@ -503,7 +503,7 @@
                   : approval.kind === 'agent_tool'
                     ? `${agentToolAgentName} · ${agentTool?.command ?? (agentTool?.locations.join('、') || agentTool?.title) ?? ''}`
                     : approval.kind === 'butler_proposal'
-                      ? butlerProposal?.proposalType === 'group'
+                      ? butlerProposal?.proposalType === 'project'
                         ? butlerProposal.title
                         : (butlerProposal?.bots
                             .filter(
@@ -830,14 +830,20 @@
       </p>
     {:else if approval.kind === 'butler_proposal' && butlerProposal !== null}
       <!-- 管家提议卡（D70）：组队 / 建 Bot 的条目可勾选，确认后由系统确定性创建 -->
-      {#if butlerProposal.proposalType === 'group'}
+      {#if butlerProposal.proposalType === 'project'}
+        <!-- WP4 编译修复：负责人一行只读展示，卡上改负责人的下拉与文案归 WP8 -->
         <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-butler-group">
           <span class="text-muted-foreground">{t('approvals.butlerGroupName')}</span>
           <span data-testid="approval-butler-group-title">{butlerProposal.title}</span>
-          {#if butlerProposal.description.length > 0}
+          {#if butlerProposal.goal.length > 0}
             <span class="text-muted-foreground">{t('approvals.butlerGroupPurpose')}</span>
-            <span class="break-all">{butlerProposal.description}</span>
+            <span class="break-all">{butlerProposal.goal}</span>
           {/if}
+          <span class="text-muted-foreground">{t('approvals.butlerGroupLead')}</span>
+          <span data-testid="approval-butler-group-lead">
+            {contacts.bots.find((bot) => bot.id === butlerProposal.leadBotId)?.name ??
+              butlerProposal.leadBotId}
+          </span>
           <span class="text-muted-foreground">{t('approvals.butlerGroupMembers')}</span>
           <span data-testid="approval-butler-group-members">
             {butlerProposal.memberBotIds
@@ -1264,7 +1270,7 @@
           onclick={approve}
           disabled={approval.kind === 'butler_proposal' &&
             butlerProposal !== null &&
-            butlerProposal.proposalType !== 'group' &&
+            butlerProposal.proposalType !== 'project' &&
             butlerKept.length === 0}
           data-testid="approval-approve"
           >{approval.kind === 'butler_proposal'

@@ -170,7 +170,7 @@ export const presentCardSchema = z.object({
   data: z.unknown(),
   /**
    * 发卡的 Bot（审查修复）：上下文回放标明「谁展示的」，并把数据包进 `<untrusted>`——数据可能来自
-   * 网页等外部内容，群里别的 Bot 不能把它当系统指令。存量卡缺省。
+   * 网页等外部内容，项目组里别的 Bot 不能把它当系统指令。存量卡缺省。
    */
   botId: z.string().optional(),
 });

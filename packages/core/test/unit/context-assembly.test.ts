@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot, Conversation, Message } from '@kepcup/shared';
-import { botProfileSchema, groupMentionToken } from '@kepcup/shared';
+import { botProfileSchema, projectMentionToken } from '@kepcup/shared';
 import { buildSystemPrompt } from '../../src/agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -98,7 +98,7 @@ describe('system prompt assembly', () => {
     const task = buildSystemPrompt(base);
     expect(task).toContain('<butler_rules>');
     expect(task).toContain('都在对话轮工具面');
-    expect(task).toContain('不要声称已经创建了任何 Bot 或群');
+    expect(task).toContain('不要声称已经创建了任何 Bot 或项目组');
     expect(task).not.toContain('这一轮直接用 propose_* 提交提议卡');
     expect(task).not.toContain('用 suggest_route 出一张路由卡');
   });
@@ -265,7 +265,7 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now,
     });
-    expect(group).toContain('不要在群里发初始化问卷');
+    expect(group).toContain('不要在项目组里发初始化问卷');
     expect(group).toContain('save_profile');
     expect(group).not.toContain('ask_question');
   });
@@ -394,7 +394,7 @@ describe('trigger segment', () => {
 describe('user message mention legend', () => {
   const optionsWithGroups: RenderMessageOptions = {
     ...renderOptions,
-    mentionLabels: new Map([[groupMentionToken('conv_g1'), '项目讨论组']]),
+    mentionLabels: new Map([[projectMentionToken('conv_g1'), '项目讨论组']]),
   };
 
   it('appends the mention legend: bots by name, groups labeled as group chats', () => {
@@ -403,11 +403,11 @@ describe('user message mention legend', () => {
         id: 'msg_9',
         seq: 9,
         content: { text: '@别人 @项目讨论组 看看这个' },
-        mentions: ['bot_other', groupMentionToken('conv_g1'), 'bot_gone'],
+        mentions: ['bot_other', projectMentionToken('conv_g1'), 'bot_gone'],
       }),
       optionsWithGroups,
     );
-    expect(line).toContain('（提及：@别人、@项目讨论组（群聊）、@bot_gone）');
+    expect(line).toContain('（提及：@别人、@项目讨论组（项目组）、@bot_gone）');
     expect(line).toContain('@别人 @项目讨论组 看看这个');
     // 图例跟在正文后、是宿主生成的元数据（顺序：正文 → 图例）。
     expect(line.indexOf('看看这个')).toBeLessThan(line.indexOf('（提及：'));
@@ -419,11 +419,11 @@ describe('user message mention legend', () => {
         id: 'msg_10',
         seq: 10,
         content: { text: 'x' },
-        mentions: [groupMentionToken('conv_missing')],
+        mentions: [projectMentionToken('conv_missing')],
       }),
       renderOptions,
     );
-    expect(line).toContain('（提及：@某群聊）');
+    expect(line).toContain('（提及：@某项目组）');
   });
 
   it('bot/system messages without mentions stay unchanged', () => {

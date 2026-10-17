@@ -189,7 +189,7 @@ export class AppToolGrants {
       .run(this.#clock.now(), botId).changes;
   }
 
-  /** Bot 被移出群：撤销它在该对话的授权（Bot 级授权不受影响）。 */
+  /** Bot 被移出项目组：撤销它在该对话的授权（Bot 级授权不受影响）。 */
   revokeForBotInConversation(botId: string, conversationId: string): number {
     return this.#db
       .prepare(

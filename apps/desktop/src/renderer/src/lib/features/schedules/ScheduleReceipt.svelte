@@ -58,7 +58,7 @@
         {schedule.title}
       </p>
       <p class="text-xs text-muted-foreground" data-testid="schedule-receipt-when">
-        {when}{#if schedule.botId === null && groupName !== null} · <span data-testid="schedule-receipt-group">{t('schedules.workbenchGroup', { name: groupName })}</span>{:else if showBot && schedule.botId !== null} · {chat.botName(schedule.botId)}{/if}
+        {when}{#if schedule.botId === null && groupName !== null} · <span data-testid="schedule-receipt-project">{t('schedules.workbenchProject', { name: groupName })}</span>{:else if showBot && schedule.botId !== null} · {chat.botName(schedule.botId)}{/if}
         {#if schedule.status === 'cancelled' && schedule.handedOverTo !== undefined}
           · <span data-testid="schedule-receipt-handed-over"
             >{t('schedules.receiptHandedOver', { name: schedule.handedOverTo.name })}</span

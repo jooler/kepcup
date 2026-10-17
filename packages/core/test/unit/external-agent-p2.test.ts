@@ -103,7 +103,7 @@ const RESPONSE_TOOL_NAMES = [
   'delegate_to_bot',
   'cancel_delegation',
   'list_bots',
-  'propose_team',
+  'propose_bots',
   'mcp_srv1_lookup',
   'save_profile',
 ];
@@ -162,7 +162,7 @@ describe('capability packs (buildExternalAgentTools)', () => {
     const remember = tools.find((tool) => tool.name === 'remember')!;
     expect(remember.description).toBe('remember 原描述');
     // Butler-only tools ride with the collaboration pack.
-    expect(names).toContain('propose_team');
+    expect(names).toContain('propose_bots');
   });
 
   it('D91: the capability pair is injected when either mcp or apps is selected, without the supplement prefix', () => {

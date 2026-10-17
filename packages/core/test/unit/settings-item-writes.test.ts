@@ -310,9 +310,9 @@ describe('P1 setting item writes', () => {
   });
 });
 
-describe('group and workdir setting reads', () => {
+describe('project and workdir setting reads', () => {
   function rig() {
-    let title = '旧群名';
+    let title = '旧项目名';
     const renamed: string[] = [];
     const members = ['bot_a', 'bot_b'];
     const settingsUpdates: string[] = [];
@@ -361,27 +361,27 @@ describe('group and workdir setting reads', () => {
     return { adapters, target, renamed, members, settingsUpdates, title: () => title };
   }
 
-  it('renaming a group only changes the title', () => {
+  it('renaming a project only changes the title', () => {
     const rigged = rig();
-    const adapter = rigged.adapters(item('group.title'));
-    expect(adapter.read(item('group.title'), rigged.target).values).toEqual({ title: '旧群名' });
+    const adapter = rigged.adapters(item('project.title'));
+    expect(adapter.read(item('project.title'), rigged.target).values).toEqual({ title: '旧项目名' });
     adapter.write!(
-      item('group.title'),
-      { next: { title: '  新群名  ' }, secrets: {} },
+      item('project.title'),
+      { next: { title: '  新项目名  ' }, secrets: {} },
       rigged.target,
     );
-    expect(rigged.renamed).toEqual(['新群名']);
-    expect(rigged.title()).toBe('新群名');
+    expect(rigged.renamed).toEqual(['新项目名']);
+    expect(rigged.title()).toBe('新项目名');
     expect(rigged.members).toEqual(['bot_a', 'bot_b']);
     expect(rigged.settingsUpdates).toEqual([]);
     expect(() =>
-      adapter.write!(item('group.title'), { next: { title: '   ' }, secrets: {} }, rigged.target),
-    ).toThrow(/群名不能为空/);
+      adapter.write!(item('project.title'), { next: { title: '   ' }, secrets: {} }, rigged.target),
+    ).toThrow(/项目名称不能为空/);
   });
 
   it('a bot proposal can only add members: the proposal keeps every existing member', () => {
     const rigged = rig();
-    const entry = item('group.members');
+    const entry = item('project.members');
     const members = rigged.adapters(entry);
     const snapshot = members.read(entry, rigged.target);
     expect(members.proposal!(entry, { bots: ['bot_new'] }, snapshot)).toEqual({
@@ -395,9 +395,9 @@ describe('group and workdir setting reads', () => {
 
   it('member and workdir reads do not expose a host write', () => {
     const rigged = rig();
-    const members = rigged.adapters(item('group.members'));
+    const members = rigged.adapters(item('project.members'));
     expect(members.write).toBeUndefined();
-    expect(members.read(item('group.members'), rigged.target).values).toEqual({
+    expect(members.read(item('project.members'), rigged.target).values).toEqual({
       bots: ['bot_a', 'bot_b'],
     });
     const rules = rigged.adapters(item('workdir.protect-rules'));

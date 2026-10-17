@@ -107,9 +107,9 @@ export const DELEGATION_TASK_MAX_CHARS = 4000;
  * conversations may still hold such internal system messages.)
  */
 export const DELEGATION_FOLLOWUP_EVENT = 'delegation_result';
-/** Bounds of a butler `propose_team` proposal (D70). */
-export const BUTLER_TEAM_SIZE_MIN = 3;
-export const BUTLER_TEAM_SIZE_MAX = 5;
+/** Bounds of a butler `propose_bots` proposal (D70; D92 T1a renamed the tool). */
+export const PROPOSE_BOTS_MIN = 3;
+export const PROPOSE_BOTS_MAX = 5;
 /** system_event name of the butler's route card (D70 suggest_route). */
 export const ROUTE_SUGGESTION_EVENT = 'route_suggestion';
 /** system_event name of the follow-up injected into the butler after a proposal is decided (D70). */

@@ -262,7 +262,7 @@ export class HandoverHost implements HandoverToolFacade {
     }
     const memoryQuery = input.memoryQuery?.trim() ?? '';
     const wikiQuery = input.wikiQuery?.trim() ?? '';
-    // 群聊里盘点：敏感记忆不作候选（同检索的群聊过滤，passesFilters）——候选内容会进群里的
+    // 项目组里盘点：敏感记忆不作候选（同检索的项目组过滤，passesFilters）——候选内容会进项目组的
     // 上下文。
     const isProject = this.#deps.conversations.get(initiator.conversationId)?.type === 'project';
     const entries = this.#deps.registry

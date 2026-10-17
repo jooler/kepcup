@@ -26,7 +26,7 @@ import {
 /**
  * 管家提议的宿主侧（D70，docs/design/27-butler-and-delegation.md §2.2）：
  * 提议卡走非阻塞审批（`submitNonBlocking`，卡片与管家的 run 脱钩），用户
- * 决定后在回调里**确定性**创建 Bot / 群——不经模型再编造任何字段；结果以
+ * 决定后在回调里**确定性**创建 Bot / 项目组——不经模型再编造任何字段；结果以
  * internal follow-up 唤醒管家，由它对用户说下一步。
  */
 
@@ -104,7 +104,7 @@ export class ButlerHost implements ButlerToolFacade {
     }
     const butler = this.#deps.bots.get(botId);
     if (butler?.systemRole !== 'butler') {
-      return { ok: false, message: '只有管家可以提议组队 / 建 Bot / 建群' };
+      return { ok: false, message: '只有管家可以提议组队 / 建 Bot / 建项目组' };
     }
     // D88: a pending handover card blocks a proposal too (one pending proposal per chat).
     if (
@@ -116,7 +116,7 @@ export class ButlerHost implements ButlerToolFacade {
         message: '已有一张提议卡在等用户确认：等用户处理完再提新的，不要叠加提议。',
       };
     }
-    if (payload.proposalType === 'group') {
+    if (payload.proposalType === 'project') {
       const missing = payload.memberBotIds.filter((id) => {
         const bot = this.#deps.bots.get(id);
         return bot === null || bot.status !== 'active';
@@ -126,6 +126,21 @@ export class ButlerHost implements ButlerToolFacade {
           ok: false,
           message: `这些 bot_id 不存在或已删除：${missing.join('、')}（先用 list_bots 查看通讯录）`,
         };
+      }
+      // D92 T1a (design 41 §5): the butler never joins a project — lead and members are
+      // domain bots. The tool layer checks the flat shape; the roster check lives here
+      // where the bot table is reachable (failures come back as the tool result).
+      const butlerMembers = payload.memberBotIds.filter(
+        (id) => this.#deps.bots.get(id)?.systemRole === 'butler',
+      );
+      if (butlerMembers.length > 0) {
+        return {
+          ok: false,
+          message: `管家不能加入项目组：${butlerMembers.join('、')} 是管家，负责人与成员都从领域 Bot 里选`,
+        };
+      }
+      if (!payload.memberBotIds.includes(payload.leadBotId)) {
+        return { ok: false, message: '负责人必须在成员列表（member_bot_ids）里' };
       }
     }
     this.#deps.approvals.submitNonBlocking(
@@ -155,12 +170,12 @@ export class ButlerHost implements ButlerToolFacade {
       return { ok: false, message: '只有管家可以给出路由建议' };
     }
     let targetName: string;
-    if (route.kind === 'group') {
-      const group = this.#deps.conversations.get(route.conversationId ?? '');
-      if (group === null || group.type !== 'project' || group.readOnly) {
-        return { ok: false, message: `群 ${route.conversationId ?? ''} 不存在或不可用` };
+    if (route.kind === 'project') {
+      const project = this.#deps.conversations.get(route.conversationId ?? '');
+      if (project === null || project.type !== 'project' || project.readOnly) {
+        return { ok: false, message: `项目组 ${route.conversationId ?? ''} 不存在或不可用` };
       }
-      targetName = group.title ?? group.id;
+      targetName = project.title ?? project.id;
     } else {
       const target = this.#deps.bots.get(route.botId ?? '');
       if (target === null || target.status !== 'active' || target.id === botId) {
@@ -172,8 +187,8 @@ export class ButlerHost implements ButlerToolFacade {
     const headline =
       route.kind === 'bot'
         ? `管家建议：直接去和 ${targetName} 聊`
-        : route.kind === 'group'
-          ? `管家建议：去群「${targetName}」里处理`
+        : route.kind === 'project'
+          ? `管家建议：去项目组「${targetName}」里处理`
           : `管家建议：交给 ${targetName} 处理，结果贴回这里`;
     const message = this.#deps.messages.append({
       conversationId,
@@ -264,8 +279,8 @@ export class ButlerHost implements ButlerToolFacade {
     }
     try {
       const lines =
-        proposal.proposalType === 'group'
-          ? this.#createProject(proposal)
+        proposal.proposalType === 'project'
+          ? this.#createProject(proposal, approval.decision?.leadBotId)
           : this.#createBots(
               approval.id,
               proposal,
@@ -287,7 +302,7 @@ export class ButlerHost implements ButlerToolFacade {
 
   #createBots(
     approvalId: string,
-    proposal: Extract<ButlerProposalPayload, { proposalType: 'team' | 'bot' }>,
+    proposal: Extract<ButlerProposalPayload, { proposalType: 'bots' | 'bot' }>,
     selection: number[] | undefined,
     routineSelection: string[] | undefined,
   ): string[] {
@@ -356,30 +371,35 @@ export class ButlerHost implements ButlerToolFacade {
         ? [`例行事项设置失败：${routineFailures.join('、')}（Bot 已建好，用户可以之后再让它设）。`]
         : []),
       ...modelNotes.map((note) => `注意：${note}。`),
-      '请用一两句话告诉用户结果和接下来怎么用（例如直接去找对应的 Bot 聊，需要多角色协作时可以建群；设了例行事项的顺带说一句它会到点主动找用户）；不要再把完整清单复述一遍。',
+      '请用一两句话告诉用户结果和接下来怎么用（例如直接去找对应的 Bot 聊，需要多角色协作时可以建项目组；设了例行事项的顺带说一句它会到点主动找用户）；不要再把完整清单复述一遍。',
     ];
   }
 
-  #createProject(proposal: Extract<ButlerProposalPayload, { proposalType: 'group' }>): string[] {
-    // WP4: the proposal will carry an explicit lead_bot_id
+  #createProject(
+    proposal: Extract<ButlerProposalPayload, { proposalType: 'project' }>,
+    decisionLeadBotId: string | undefined,
+  ): string[] {
+    // D92 T1a WP4: the card carries the lead; the user's decision may override it
+    // (approvals.decide validates it stays one of the proposal's members).
     const project = this.#deps.projects.create({
       title: proposal.title,
       memberBotIds: proposal.memberBotIds,
-      goal: proposal.description,
-      leadBotId: proposal.memberBotIds[0]!,
+      goal: proposal.goal,
+      leadBotId: decisionLeadBotId ?? proposal.leadBotId,
     });
     this.#deps.logger.info(
       {
-        proposalType: 'group',
+        proposalType: 'project',
         conversationId: project.id,
+        leadBotId: project.leadBotId,
         memberCount: proposal.memberBotIds.length,
       },
       'butler proposal applied',
     );
     return [
-      '提议处理结果（宿主系统注入，不是用户消息）：用户确认了建群提议。',
-      `已创建群「${project.title ?? proposal.title}」（${project.id}），成员 ${proposal.memberBotIds.length} 位。`,
-      '请用一两句话告诉用户群已建好、可以在群里怎么用；不要复述成员清单。',
+      '提议处理结果（宿主系统注入，不是用户消息）：用户确认了建项目组提议。',
+      `已创建项目组「${project.title ?? proposal.title}」（${project.id}），成员 ${proposal.memberBotIds.length} 位。`,
+      '请用一两句话告诉用户项目组已建好、可以在里面怎么用；不要复述成员清单。',
     ];
   }
 

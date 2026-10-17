@@ -22,10 +22,10 @@ import {
 import { BUTLER_SETUP_FIRST_QUESTION } from '../../src/domain/butler.js';
 
 /**
- * 管家入职与组队（D70，docs/design/27 §2.2，todo P2）：管家访谈是对话式
- * 新建访谈的变体（ask_question + propose_team，无 save_profile、无目录闸门）；
- * butler_proposal 审批卡非阻塞、无人值守不自动批、可勾掉条目；确认后宿主
- * 确定性创建并以 internal follow-up 通知管家。全程 mock LLM。
+ * 管家入职与组队（D70，docs/design/27 §2.2，todo P2；D92 T1a 改名 propose_bots）：
+ * 管家访谈是对话式新建访谈的变体（ask_question + propose_bots，无 save_profile、
+ * 无目录闸门）；butler_proposal 审批卡非阻塞、无人值守不自动批、可勾掉条目；
+ * 确认后宿主确定性创建并以 internal follow-up 通知管家。全程 mock LLM。
  */
 
 const stacks: TestStack[] = [];
@@ -84,7 +84,7 @@ function plainBots(stack: TestStack): Bot[] {
   return stack.core.services.domain!.bots.listActive().filter((b) => b.systemRole !== 'butler');
 }
 
-/** Drives the interview to a pending propose_team card. */
+/** Drives the interview to a pending propose_bots card. */
 async function proposeTeam(stack: TestStack): Promise<{
   butler: Bot;
   conversationId: string;
@@ -92,7 +92,7 @@ async function proposeTeam(stack: TestStack): Promise<{
 }> {
   const { core, llm } = stack;
   const { butler, conversationId } = await startButlerInterview(stack);
-  llm.script('mock-main', [step().replyToolCall('propose_team', { bots: TEAM, note: '按你说的场景' })]);
+  llm.script('mock-main', [step().replyToolCall('propose_bots', { bots: TEAM, note: '按你说的场景' })]);
   await core.rpc.call('bots.interview.answer', { conversationId, text: '工作：编程与技术' });
   const approval = await waitFor(
     () => butlerApprovals(stack, conversationId).find((a) => a.status === 'pending') ?? null,
@@ -135,7 +135,7 @@ describe('butler interview + team proposal (D70 P2)', () => {
       (tool) => tool.function.name,
     );
     expect(tools).toEqual(
-      expect.arrayContaining(['ask_question', 'finish_setup', 'propose_team', 'list_bots']),
+      expect.arrayContaining(['ask_question', 'finish_setup', 'propose_bots', 'list_bots']),
     );
     expect(tools).not.toContain('save_profile');
     const prompt = JSON.stringify(request.body.messages);
@@ -143,7 +143,7 @@ describe('butler interview + team proposal (D70 P2)', () => {
     expect(prompt).toContain('入门访谈');
   }, 30_000);
 
-  it('propose_team：卡片挂起、零新 Bot、访谈结束；勾掉一项确认后只建剩余项并通知管家', async () => {
+  it('propose_bots：卡片挂起、零新 Bot、访谈结束；勾掉一项确认后只建剩余项并通知管家', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { butler, conversationId, approval } = await proposeTeam(stack);
@@ -151,7 +151,7 @@ describe('butler interview + team proposal (D70 P2)', () => {
     // 未确认：零领域 Bot；访谈态已清；run 以 terminate 结束（无终回复气泡）。
     expect(plainBots(stack)).toHaveLength(0);
     expect(core.services.domain!.bots.get(butler.id)!.setupState ?? null).toBeNull();
-    expect(approval.payload).toMatchObject({ proposalType: 'team' });
+    expect(approval.payload).toMatchObject({ proposalType: 'bots' });
 
     llm.script('mock-main', [step().replyText('团队建好了，去找他们聊吧。')]);
     const decided = (await core.rpc.call('approvals.decide', {
@@ -244,7 +244,7 @@ describe('butler interview + team proposal (D70 P2)', () => {
     expect(plainBots(stack)).toHaveLength(0);
 
     // 越界的勾选被拒绝。
-    llm.script('mock-main', [step().replyToolCall('propose_team', { bots: TEAM })]);
+    llm.script('mock-main', [step().replyToolCall('propose_bots', { bots: TEAM })]);
     await sendBatch(core, conversationId, ['还是按刚才的来吧']);
     const second = await waitFor(
       () => butlerApprovals(stack, conversationId).find((a) => a.status === 'pending') ?? null,
@@ -281,9 +281,9 @@ describe('butler interview + team proposal (D70 P2)', () => {
       (tool) => tool.function.name,
     );
     expect(tools).toContain('list_bots');
-    expect(tools).not.toContain('propose_team');
+    expect(tools).not.toContain('propose_bots');
     expect(tools).not.toContain('propose_bot');
-    expect(tools).not.toContain('propose_group');
+    expect(tools).not.toContain('propose_project');
     const toolResult = JSON.stringify(requests[1]!.body.messages);
     expect(toolResult).toContain(other.id);
     expect(toolResult).toContain('（管家）');
@@ -329,8 +329,8 @@ describe('butler interview + team proposal (D70 P2)', () => {
     );
     expect(taskTools).toContain('list_bots');
     expect(taskTools).not.toContain('propose_bot');
-    expect(taskTools).not.toContain('propose_team');
-    expect(taskTools).not.toContain('propose_group');
+    expect(taskTools).not.toContain('propose_bots');
+    expect(taskTools).not.toContain('propose_project');
     expect(taskTools).not.toContain('suggest_route');
     const taskPrompt = JSON.stringify(taskRequests[0]!.body.messages);
     expect(taskPrompt).toContain('<butler_rules>');
@@ -345,7 +345,7 @@ describe('butler interview + team proposal (D70 P2)', () => {
     await waitFor(() => (plainBots(stack).length === 1 ? plainBots(stack) : null));
   }, 40_000);
 
-  it('propose_group：确认后建群（含定位描述与成员）', async () => {
+  it('propose_project：确认后建项目组（含目标、负责人与成员）', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { conversationId } = (await core.rpc.call('butler.ensure', {})) as {
@@ -354,26 +354,31 @@ describe('butler interview + team proposal (D70 P2)', () => {
     const a = await makeBot(core, '甲');
     const b = await makeBot(core, '乙');
     llm.script('mock-main', [
-      step().replyToolCall('propose_group', {
-        title: '发布小组',
-        description: '负责版本发布的准备与复盘',
+      step().replyToolCall('propose_project', {
+        title: '发布项目组',
+        goal: '负责版本发布的准备与复盘',
+        lead_bot_id: b.id,
         member_bot_ids: [a.id, b.id],
         reason: '发布要多人配合',
       }),
     ]);
-    await sendBatch(core, conversationId, ['帮我张罗一个发布小组']);
+    await sendBatch(core, conversationId, ['帮我张罗一个发布项目组']);
     const approval = await waitFor(
       () => butlerApprovals(stack, conversationId).find((x) => x.status === 'pending') ?? null,
     );
-    llm.script('mock-main', [step().replyText('群建好了。')]);
+    expect(approval.payload).toMatchObject({
+      proposalType: 'project',
+      leadBotId: b.id,
+      memberBotIds: [a.id, b.id],
+    });
+    llm.script('mock-main', [step().replyText('项目组建好了。')]);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
-    const group = await waitFor(() =>
-      core.services.domain!.conversations.list().find((c) => c.type === 'project' && c.title === '发布小组'),
+    const project = await waitFor(() =>
+      core.services.domain!.conversations.list().find((c) => c.type === 'project' && c.title === '发布项目组'),
     );
-    expect(group.goal).toBe('负责版本发布的准备与复盘');
-    // WP1 temporary: the proposal carries no lead yet — the first member leads.
-    expect(group.leadBotId).toBe(a.id);
-    expect(core.services.domain!.conversations.memberBotIds(group.id).sort()).toEqual(
+    expect(project.goal).toBe('负责版本发布的准备与复盘');
+    expect(project.leadBotId).toBe(b.id);
+    expect(core.services.domain!.conversations.memberBotIds(project.id).sort()).toEqual(
       [a.id, b.id].sort(),
     );
   }, 30_000);
@@ -395,10 +400,10 @@ describe('butler interview + team proposal (D70 P2)', () => {
     ];
     // 先提交一个 when 非法的：工具直接退回，不出卡；再提交合法的。
     llm.script('mock-main', [
-      step().replyToolCall('propose_team', {
+      step().replyToolCall('propose_bots', {
         bots: [{ ...TEAM[0]!, routines: [{ title: 'x', when: 'banana', note: 'y' }] }, TEAM[1]!, TEAM[2]!],
       }),
-      step().replyToolCall('propose_team', { bots: team }),
+      step().replyToolCall('propose_bots', { bots: team }),
     ]);
     await core.rpc.call('bots.interview.answer', { conversationId, text: '工作：编程与技术' });
     const approval = await waitFor(

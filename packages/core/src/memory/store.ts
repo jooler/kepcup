@@ -55,7 +55,7 @@ interface MemoryItemRow {
   subject: string | null;
   source: MemorySource;
   evidence_json: string;
-  origin: 'private' | 'group';
+  origin: 'private' | 'project';
   origin_conversation_id: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;
@@ -101,7 +101,7 @@ export interface NewMemoryItem {
   subject?: string | null;
   source: MemorySource;
   evidence: MemoryEvidence[];
-  origin: 'private' | 'group';
+  origin: 'private' | 'project';
   originConversationId?: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;

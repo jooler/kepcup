@@ -34,12 +34,12 @@
     type WhenDraft,
   } from './when-presets';
   import { buildUpdateInput, isInfoWarning, type TodoFormValues } from './todo-form';
-  import { blockedNotice, botMembers, groupMembers, type MemberInfo } from './workbench-model';
+  import { blockedNotice, botMembers, projectMembers, type MemberInfo } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
    * 事项详情弹框（D90 §5.2）：居中 Dialog，新建与编辑共用。
-   * 标题 / 说明 / 执行者（按左栏分组；群可选负责 Bot）/ 时间（WhenPicker）/
+   * 标题 / 说明 / 执行者（按左栏分组；项目组可选负责 Bot）/ 时间（WhenPicker）/
    * 执行记录 / 底部状态迁移。保存后把 `warnings` 就地显示；没有提示就直接关闭。
    * 已开始执行（进行中 / 待验收）的事项锁定执行者与时间，已结束的整体只读（恢复后再改）。
    */
@@ -62,7 +62,7 @@
 
   let title = $state('');
   let notes = $state('');
-  /** '' = 未指派；`bot:<id>` / `group:<conversationId>`。 */
+  /** '' = 未指派；`bot:<id>` / `project:<conversationId>`。 */
   let assigneeKey = $state('');
   let leadBotId = $state('');
   let whenDraft = $state<WhenDraft>(emptyWhenDraft());
@@ -80,7 +80,7 @@
   let saving = $state(false);
   let formError = $state<string | null>(null);
   let confirmCancel = $state(false);
-  let groupMembersOf = $state<Record<string, MemberInfo[]>>({});
+  let projectMembersOf = $state<Record<string, MemberInfo[]>>({});
 
   const isNew = $derived(drawer?.kind === 'new');
   const status = $derived(entry?.status ?? 'draft');
@@ -104,16 +104,16 @@
 
   // --- 名单 -----------------------------------------------------------------
   const botOptions = $derived(botMembers(contacts.bots));
-  const groupOptions = $derived(groupMembers(chat.conversations, true));
+  const projectOptions = $derived(projectMembers(chat.conversations, true));
   const assigneeLayout = $derived(
     buildAssigneeSections({
       bots: botOptions,
-      groups: groupOptions,
+      projects: projectOptions,
       conversations: chat.conversations,
       sectionsState: sidebarSections.state,
     }),
   );
-  /** 事项上已有、但已不在可选名单里的执行者（Bot 已删 / 群只读）：保留原值，标注不可用。 */
+  /** 事项上已有、但已不在可选名单里的执行者（Bot 已删 / 项目组只读）：保留原值，标注不可用。 */
   const goneAssignee = $derived.by((): { key: string; name: string } | null => {
     const assignee = entry?.assignee;
     if (assignee === null || assignee === undefined) return null;
@@ -121,25 +121,27 @@
     const known =
       assignee.kind === 'bot'
         ? botOptions.some((bot) => bot.id === assignee.botId)
-        : groupOptions.some((group) => group.id === assignee.conversationId);
+        : projectOptions.some((project) => project.id === assignee.projectId);
     return known ? null : { key, name: entry?.assigneeName ?? '' };
   });
-  const selectedGroupId = $derived(assigneeKey.startsWith('group:') ? assigneeKey.slice(6) : null);
+  const selectedProjectId = $derived(
+    assigneeKey.startsWith('project:') ? assigneeKey.slice(8) : null,
+  );
   const leadOptions = $derived(
-    selectedGroupId === null ? [] : (groupMembersOf[selectedGroupId] ?? []),
+    selectedProjectId === null ? [] : (projectMembersOf[selectedProjectId] ?? []),
   );
 
   function keyOf(assignee: TodoAssignee | null): string {
     if (assignee === null) return '';
-    return assignee.kind === 'bot' ? `bot:${assignee.botId}` : `group:${assignee.conversationId}`;
+    return assignee.kind === 'bot' ? `bot:${assignee.botId}` : `project:${assignee.projectId}`;
   }
 
   function assigneeFromForm(): TodoAssignee | null {
     if (assigneeKey.startsWith('bot:')) return { kind: 'bot', botId: assigneeKey.slice(4) };
-    if (assigneeKey.startsWith('group:')) {
+    if (assigneeKey.startsWith('project:')) {
       return {
-        kind: 'group',
-        conversationId: assigneeKey.slice(6),
+        kind: 'project',
+        projectId: assigneeKey.slice(8),
         leadBotId: leadBotId === '' ? null : leadBotId,
       };
     }
@@ -179,7 +181,7 @@
     const option = findAssigneeOption(assigneeKey);
     if (option !== null) return optionLabel(option);
     const id = assigneeKey.slice(assigneeKey.indexOf(':') + 1);
-    const pool = assigneeKey.startsWith('bot:') ? botOptions : groupOptions;
+    const pool = assigneeKey.startsWith('bot:') ? botOptions : projectOptions;
     const member = pool.find((item) => item.id === id);
     return member === undefined ? id : memberLabel(member);
   });
@@ -198,13 +200,20 @@
     );
   }
 
-  const leadLabel = $derived(
-    leadBotId === ''
+  const leadLabel = $derived.by(() => {
+    if (leadBotId !== '') {
+      return (
+        leadOptions.find((member) => member.id === leadBotId)?.name ??
+        entry?.leadBotName ??
+        leadBotId
+      );
+    }
+    // 不覆盖 = 项目负责人（D92 T1a：项目必有负责人；leadBotName 就是实际生效的负责 Bot 名）。
+    const name = entry?.leadBotName ?? null;
+    return name === null
       ? t('workbench.drawer.leadNone')
-      : (leadOptions.find((member) => member.id === leadBotId)?.name ??
-          entry?.leadBotName ??
-          leadBotId),
-  );
+      : t('workbench.drawer.leadProjectDefault', { name });
+  });
 
   // --- 载入 / 重置 -------------------------------------------------------------
   function applyForm(source: {
@@ -216,7 +225,7 @@
     title = source.title;
     notes = source.notes;
     assigneeKey = keyOf(source.assignee);
-    leadBotId = source.assignee?.kind === 'group' ? (source.assignee.leadBotId ?? '') : '';
+    leadBotId = source.assignee?.kind === 'project' ? (source.assignee.leadBotId ?? '') : '';
     whenDraft = draftFromSchedule(source.schedule);
     base = {
       title,
@@ -263,7 +272,7 @@
     notFound = false;
     loadFailed = false;
     pendingDiscard = null;
-    groupMembersOf = {};
+    projectMembersOf = {};
     warnings = [];
     formError = null;
     confirmCancel = false;
@@ -308,18 +317,18 @@
     });
   });
 
-  // 选了群：取成员给「负责 Bot」用（取不到退回会话上的成员预览）。
+  // 选了项目组：取成员给「负责 Bot」用（取不到退回会话上的成员预览）。
   $effect(() => {
-    const groupId = selectedGroupId;
-    if (groupId === null || groupMembersOf[groupId] !== undefined) return;
-    untrack(() => void loadGroupMembers(groupId));
+    const projectId = selectedProjectId;
+    if (projectId === null || projectMembersOf[projectId] !== undefined) return;
+    untrack(() => void loadProjectMembers(projectId));
   });
 
-  // 群成员变了（会话更新 / Bot 增删）：丢掉缓存的成员名单，选着的群重新取。
+  // 项目成员变了（会话更新 / Bot 增删）：丢掉缓存的成员名单，选着的项目组重新取。
   $effect(() => {
     if (drawer === null) return;
     const invalidate = (): void => {
-      groupMembersOf = {};
+      projectMembersOf = {};
     };
     const offs = [
       core.onEvent('conversation.updated', invalidate),
@@ -329,20 +338,20 @@
     return () => offs.forEach((off) => off());
   });
 
-  async function loadGroupMembers(groupId: string): Promise<void> {
+  async function loadProjectMembers(projectId: string): Promise<void> {
     let members: MemberInfo[];
     try {
-      const result = (await core.call('conversations.members', { conversationId: groupId })) as {
+      const result = (await core.call('conversations.members', { conversationId: projectId })) as {
         members: Array<{ bot: Bot }>;
       };
       members = result.members.map((member) => ({ id: member.bot.id, name: member.bot.name }));
     } catch {
       const previews =
-        chat.conversations.find((conversation) => conversation.id === groupId)?.memberPreviews ??
+        chat.conversations.find((conversation) => conversation.id === projectId)?.memberPreviews ??
         [];
       members = previews.map((member) => ({ id: member.id, name: member.name }));
     }
-    groupMembersOf = { ...groupMembersOf, [groupId]: members };
+    projectMembersOf = { ...projectMembersOf, [projectId]: members };
   }
 
   /** 关闭（遮罩 / Esc / 关闭按钮）：表单脏了先确认；确认条开着时 Esc 只收起确认条。 */
@@ -740,10 +749,15 @@
                     <MemberAvatar kind="bot" id={botId} name={assigneeLabel} class="size-5" />
                     <span class="truncate" style:color={botNameColor(botId)}>{assigneeLabel}</span>
                   </span>
-                {:else if assigneeKey.startsWith('group:')}
-                  {@const groupId = assigneeKey.slice(6)}
+                {:else if assigneeKey.startsWith('project:')}
+                  {@const projectId = assigneeKey.slice(8)}
                   <span class="flex min-w-0 flex-1 items-center gap-2">
-                    <MemberAvatar kind="group" id={groupId} name={assigneeLabel} class="size-5" />
+                    <MemberAvatar
+                      kind="project"
+                      id={projectId}
+                      name={assigneeLabel}
+                      class="size-5"
+                    />
                     <span class="truncate">{assigneeLabel}</span>
                   </span>
                 {:else}
@@ -797,7 +811,7 @@
                         label={optionLabel(option)}
                         data-testid={option.kind === 'bot'
                           ? `todo-assignee-bot-${option.memberId}`
-                          : `todo-assignee-group-${option.memberId}`}
+                          : `todo-assignee-project-${option.memberId}`}
                       >
                         <span class="flex min-w-0 items-center gap-2">
                           <!-- 头像首字是装饰：role=option 的可访问名须等于执行者名。 -->
@@ -824,7 +838,7 @@
                 {/each}
               </Select.Content>
             </Select.Root>
-            {#if selectedGroupId !== null}
+            {#if selectedProjectId !== null}
               <div class="space-y-1.5 pt-1">
                 <span class="text-xs font-medium">{t('workbench.drawer.fieldLead')}</span>
                 <Select.Root
@@ -841,7 +855,9 @@
                     {leadLabel}
                   </Select.Trigger>
                   <Select.Content>
-                    <Select.Item value={NONE}>{t('workbench.drawer.leadNone')}</Select.Item>
+                    <Select.Item value={NONE}>
+                      {t('workbench.drawer.leadProjectOption')}
+                    </Select.Item>
                     {#each leadOptions as member (member.id)}
                       <Select.Item value={member.id}>{member.name}</Select.Item>
                     {/each}

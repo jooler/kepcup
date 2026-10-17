@@ -1,7 +1,7 @@
 import {
   BOT_HANDED_OVER_EVENT,
   BOT_HANDOVER_EVENT,
-  GROUP_MENTION_PREFIX,
+  PROJECT_MENTION_PREFIX,
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
   SCHEDULE_CREATED_EVENT,
@@ -261,14 +261,14 @@ function renderTaskQuestionLine(
 }
 
 /**
- * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），群出
- * 「标题（群聊）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
- * 不在本群的 Bot 或其他群聊的场合。
+ * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），项目组出
+ * 「标题（项目组）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
+ * 不在本项目组的 Bot 或其他项目组的场合。
  */
 function mentionTokenLabel(token: string, options: RenderMessageOptions): string {
-  if (token.startsWith(GROUP_MENTION_PREFIX)) {
+  if (token.startsWith(PROJECT_MENTION_PREFIX)) {
     const title = options.mentionLabels?.get(token);
-    return title !== undefined ? `${title}（群聊）` : '某群聊';
+    return title !== undefined ? `${title}（项目组）` : '某项目组';
   }
   return options.botNames.get(token) ?? token;
 }
@@ -388,8 +388,8 @@ export function renderMessageLine(
           )
           .join('、')}）`
       : '';
-  // 提及图例：结构化 mentions（Bot id / group:<会话 id>）补成显式说明，
-  // 模型不用猜 `@名字` 各指什么（composer 侧约定见 shared GROUP_MENTION_PREFIX）。
+  // 提及图例：结构化 mentions（Bot id / project:<会话 id>）补成显式说明，
+  // 模型不用猜 `@名字` 各指什么（composer 侧约定见 shared PROJECT_MENTION_PREFIX）。
   const mentionSuffix =
     message.senderType === 'user' && message.mentions.length > 0
       ? `（提及：${message.mentions

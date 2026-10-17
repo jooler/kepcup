@@ -6,7 +6,7 @@ import { settingDeepLinkAction } from './deep-link';
 
 /**
  * 设置卡「在设置中打开」（todo/conversational-app-setup.md §6.1）：按目录条目的深链跳到设置
- * 弹框 / 扩展中心 / 右栏 Bot 详情 / 群设置 / 工作目录设置的对应锚点。窄屏的重路由由各入口自己
+ * 弹框 / 扩展中心 / 右栏 Bot 详情 / 项目设置 / 工作目录设置的对应锚点。窄屏的重路由由各入口自己
  * 处理（`shell.openSettings` → NarrowSettings；扩展中心 → 扩展 tab；右栏 → 覆盖层）。
  */
 export async function openSettingDeepLink(item: SettingItem, target: SettingTarget): Promise<void> {
@@ -28,7 +28,8 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       shell.openBotPanel(action.tab, action.anchor ?? undefined);
       return;
     }
-    case 'group-dialog':
+    case 'project-detail':
+      // WP7 replaces this with the project detail page.
       if (action.conversationId !== null) {
         sidebarDialogs.openGroupSettings(action.conversationId, action.anchor ?? undefined);
       }

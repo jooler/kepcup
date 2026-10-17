@@ -8,7 +8,7 @@ import type { SqliteDatabase } from '../infra/db.js';
  * 覆盖会话级参数（提示词、cwd、
  * 档位、模型 / effort、能力集合、工具集合、桥 server 名），变化即新建会话；
  * 桥 server 名由行 id 派生（`hostServerNameFor(id)`），换会话 = 换行 id。
- * 不设外键：删除对话 / Bot / 移出群时由 lifecycle 经 orchestrator 清理（并尽力
+ * 不设外键：删除对话 / Bot / 移出项目组时由 lifecycle 经 orchestrator 清理（并尽力
  * `session/delete`）。
  */
 export interface AgentSessionRow {

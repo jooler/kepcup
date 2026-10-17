@@ -67,7 +67,7 @@ export type SettingModeRule =
   | 'not-whitelisted'
   | 'trigger'
   | 'untrusted'
-  | 'group'
+  | 'project'
   | 'other-bot'
   | 'widens'
   | 'renderer'
@@ -98,7 +98,7 @@ const RULE_TEXT: Record<SettingModeRule, string> = {
   'not-whitelisted': '这一项不在可直接修改的范围内，只能出卡请用户确认',
   trigger: '这一轮不是用户本人直接发起的，只能出卡请用户确认',
   untrusted: '本轮读过网页、邮件等外部内容，只能出卡请用户确认',
-  group: '群聊中只能出卡，不能直接修改',
+  project: '项目组中只能出卡，不能直接修改',
   'other-bot': '修改的是别的 Bot 的配置，只能出卡请用户确认',
   widens: '这一项会放宽权限或安全边界，不能直接修改',
   renderer: '这一项只存在本机界面，只能出卡由用户在卡上修改',
@@ -135,7 +135,7 @@ export function isDirectItemId(id: string): boolean {
  * 1. 只读项 → link；`via` 专门工具 → redirect；非对话轮 / 任务 → refused；
  *    改别的 Bot 而自己不是管家 → refused。
  * 2. 起点 = `maxMode`；不在 `DIRECT_ITEM_IDS` 的 direct 降为 confirm（防有人加条目时顺手放宽）。
- * 3. 收紧到至少 confirm：触发源不在白名单、读过不可信内容 / 污点、群聊、改别的 Bot（管家）、
+ * 3. 收紧到至少 confirm：触发源不在白名单、读过不可信内容 / 污点、项目组、改别的 Bot（管家）、
  *    条目可放宽权限、渲染层条目。需要用户自填敏感字段 → 至少 form；本次是放宽方向且条目带
  *    `wideningMode` → user-only。
  * 4. 收紧后不是 direct 而条目没有内嵌组件 → link（跳转卡兜底）。
@@ -160,7 +160,7 @@ export function effectiveMode(item: SettingItem, ctx: SettingModeContext): Setti
   const floors: Array<[SettingModeRule, boolean, SettingWriteMode]> = [
     ['trigger', !userTriggered, 'confirm'],
     ['untrusted', ctx.runTouchedUntrusted || ctx.tainted, 'confirm'],
-    ['group', ctx.isProject, 'confirm'],
+    ['project', ctx.isProject, 'confirm'],
     ['other-bot', ctx.targetsOtherBot, 'confirm'],
     ['widens', item.write.widensPermission, 'confirm'],
     ['renderer', item.owner === 'renderer', 'confirm'],

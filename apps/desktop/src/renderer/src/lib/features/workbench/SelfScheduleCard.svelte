@@ -27,8 +27,8 @@
       ? describeAt(schedule.nextFireAt)
       : null,
   );
-  /** 在群里安排的任务：标注来源群（私聊里的不标）。 */
-  const groupName = $derived.by(() => {
+  /** 在项目组里安排的任务：标注来源项目组（私聊里的不标）。 */
+  const projectName = $derived.by(() => {
     const conversation = chat.conversations.find((item) => item.id === schedule.conversationId);
     return conversation?.type === 'project' ? (conversation.title ?? conversation.id) : null;
   });
@@ -71,9 +71,9 @@
   </div>
   <p class="mt-1 text-xs text-muted-foreground" data-testid="self-schedule-when">
     {whenText}{#if nextText !== null}
-      · {t('schedules.nextFire', { time: nextText })}{/if}{#if groupName !== null}
-      · <span data-testid="self-schedule-group"
-        >{t('workbench.self.fromGroup', { name: groupName })}</span
+      · {t('schedules.nextFire', { time: nextText })}{/if}{#if projectName !== null}
+      · <span data-testid="self-schedule-project"
+        >{t('workbench.self.fromProject', { name: projectName })}</span
       >{/if}
   </p>
   {#if schedule.deferredReason !== null}

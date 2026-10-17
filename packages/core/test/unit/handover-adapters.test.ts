@@ -366,7 +366,7 @@ describe('schedule adapter', () => {
     ]);
     const conversations: Record<string, Partial<Conversation>> = {
       conv_a: { id: 'conv_a', type: 'direct', directBotId: 'bot_a', readOnly: false, title: null },
-      conv_g: { id: 'conv_g', type: 'group', directBotId: null, readOnly: false, title: '周报群' },
+      conv_g: { id: 'conv_g', type: 'project', directBotId: null, readOnly: false, title: '周报项目组' },
     };
     const members: Record<string, string[]> = { conv_a: ['bot_a'], conv_g: ['bot_a'] };
     const transfers: string[] = [];
@@ -405,7 +405,7 @@ describe('schedule adapter', () => {
       detail: '每天 09:00，私聊',
       actions: ['move'],
     });
-    expect(entries[1]!.detail).toContain('群「周报群」');
+    expect(entries[1]!.detail).toContain('项目组「周报项目组」');
     expect(entries[2]!.blocked).toContain('承诺');
   });
 
@@ -417,7 +417,7 @@ describe('schedule adapter', () => {
     ]);
     const conversations: Record<string, Partial<Conversation>> = {
       conv_a: { id: 'conv_a', type: 'direct', directBotId: 'bot_a', readOnly: false, title: null },
-      conv_g: { id: 'conv_g', type: 'group', directBotId: null, readOnly: false, title: '周报群' },
+      conv_g: { id: 'conv_g', type: 'project', directBotId: null, readOnly: false, title: '周报项目组' },
     };
     const world = botWorld([makeBot('bot_a', 'A'), makeBot('bot_b', 'B')]);
     const adapter = new ScheduleAdapter({
@@ -447,7 +447,7 @@ describe('schedule adapter', () => {
     expect(entries.map((e) => e.key)).toEqual(['schedule:sch_w', 'schedule:sch_n']);
     expect(entries[0]!.detail).toBe('工作台事项，周五 09:00，私聊');
     // 空 botId：不当成「私聊」，也不属于任何 Bot。
-    expect(entries[1]!.detail).toBe('工作台事项，周五 09:00，群「周报群」');
+    expect(entries[1]!.detail).toBe('工作台事项，周五 09:00，项目组「周报项目组」');
     const ctx = ctxOf(world, 'bot_a', 'bot_b');
     expect(adapter.validate(ctx, 'schedule:sch_n', 'move')).toContain('已不属于');
     expect(adapter.validate(ctx, 'schedule:sch_w', 'move')).toBeNull();
@@ -458,9 +458,9 @@ describe('schedule adapter', () => {
   it('a group schedule needs B in the group; a direct one moves to B’s direct chat once', async () => {
     const { world, adapter, transfers, members } = setup();
     const ctx = () => ctxOf(world, 'bot_a', 'bot_b');
-    expect(adapter.validate(ctx(), 'schedule:sch_g', 'move')).toBe('B 不在群「周报群」里');
+    expect(adapter.validate(ctx(), 'schedule:sch_g', 'move')).toBe('B 不在项目组「周报项目组」里');
     expect(adapter.validate(ctxOf(world, 'bot_a', null), 'schedule:sch_g', 'move')).toContain(
-      '不在群',
+      '不在项目组',
     );
     members['conv_g'] = ['bot_a', 'bot_b'];
     expect(adapter.validate(ctx(), 'schedule:sch_g', 'move')).toBeNull();

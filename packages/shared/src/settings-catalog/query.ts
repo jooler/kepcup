@@ -24,7 +24,7 @@ export const SETTING_GROUP_TITLES: Readonly<Record<SettingGroup, string>> = {
   schedules: '定时与监看',
   profile: '用户画像',
   browser: '浏览器',
-  group: '群设置',
+  project: '项目组设置',
   workdir: '工作目录设置',
   hardware: '硬件',
   general: '通用',

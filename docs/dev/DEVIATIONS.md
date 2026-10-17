@@ -603,3 +603,18 @@
 - 处理：自检按「无旧形态残留」解读——rg#1 的三处命中逐一核对为 WP 明文保留的执行者字段或无关方法；`wikiBotIdInputSchema`、`storeFor(botId`、`botWikiRoot(deps` 在 wiki/ 与 rpc/ 下均为零命中。
 - 决定：（由人工确认）
 - 已更新的文档：`todo/project/WP9-wiki-core.md` §9 实施记录。
+
+### DEV-033 WP4 验收自检 rg#1 无法按字面清零：四处命中均为 WP7/WP8 待办或迁移夹具（D92 T1a）
+
+- 状态：已按 WP 语义收口（自检解读 + 临时处理登记）
+- 阶段：群聊→项目组 WP4（`feat/project/migration`）
+- 是否阻塞：否
+- 问题：WP4 验收清单要求 `rg -n "propose_team|propose_group|BUTLER_TEAM_SIZE|assignee_group_id|listByAssigneeGroup|group_id|group-title|group-members|group-dialog|groups\.delete|isGroup" packages apps` 全空（允许项仅 query-gate 与 items.ts 的 `group:` 分类字段），但四处命中在 WP4 的范围内无法消除：
+  1. `GroupSettingsDialog.svelte` 的 `data-settings-anchor="group-title"` / `"group-members"` 与 `anchor-scroll.test.ts` 夹具——该对话框 WP7 才删除；若现在改成 `project-*` 会撞上 `PENDING_DESKTOP_ANCHORS`（覆盖率测试断言「列在 pending 里的锚点确实还不存在」）。
+  2. `ApprovalCard.svelte` 的 `approval-butler-group-title` / `-members` testid——WP4 §3.B.4 明文「审批卡只做编译修复」，文案与卡上改负责人的 UI 归 WP8。
+  3. `test/fixtures/connectors/linear.tools.json` 的 `isGroup`——Linear 连接器的外部 API 字段（WP0-2 已确立连接器夹具不改的先例）。
+  4. `workbench-project.test.ts` 的 0042 迁移夹具——迁移测试必须用旧列名 `assignee_group_id` 造数（与 main 0040 迁移测试同形）。
+- 影响范围：仅验收自检的解读；core / shared 源码内旧名（`propose_team`、`proposalType: 'group'`、`assignee_group_id`、`GROUP_MENTION_PREFIX`、`isGroup`、`origin: 'group'` 等）均已清零（rg#2、rg#3 为空）。
+- 处理：rg#1 剩余 13 处逐一核对为上述四类；`tool-labels.ts` 的 `propose_team` 键、`group-members.ts` 文件名等渲染层可安全改名处已在本 WP 内一并改掉。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP4-prompt-and-integrations.md` §8 实施记录。

@@ -113,7 +113,7 @@ export interface AppendMessageInput {
   /** system_event extras: butler route card target (route_suggestion, D70). */
   route?:
     | {
-        kind: 'bot' | 'group' | 'delegate';
+        kind: 'bot' | 'project' | 'delegate';
         botId?: string | undefined;
         conversationId?: string | undefined;
         task?: string | undefined;
@@ -319,7 +319,7 @@ function userVisibleFilter(): { sql: string; params: string[] } {
  * wiki 入库、环境安装、技能导入、调度触发、凭据处理——不是对话内容。带
  * `internal` 标记或属于 INTERNAL_SYSTEM_EVENTS（历史存量行没有标记）的
  * system_event 只进 Bot 的上下文与触发，不进用户可见的消息流；其余消息
- * （用户/Bot 发言、移交进度卡、访谈卡、群聊认领提示、执行中断等）都可见。
+ * （用户/Bot 发言、移交进度卡、访谈卡、项目组认领提示、执行中断等）都可见。
  * 中途权限弹窗（访问、命令、MCP 等）只在输入区上方弹出，不进用户可见流；
  * 例外是带 `record` 标记的折叠记录：自动决定的卡（无人值守，用户从没在 dock
  * 里见过它）与外发 / 污点相关的卡（D73 留痕）。技能导入、环境安装、移交等

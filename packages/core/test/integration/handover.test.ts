@@ -320,7 +320,7 @@ describe('bot asset handover (D88 P0)', () => {
     expect(fresh).toEqual([{ bot_id: helper.id }]);
   }, 40_000);
 
-  it('已有目标：连接应用共享（A 保留）、私聊定时任务在 B 私聊重建并出回执卡、A 的原卡标已移交；群任务 B 不在群里置灰；职责改写', async () => {
+  it('已有目标：连接应用共享（A 保留）、私聊定时任务在 B 私聊重建并出回执卡、A 的原卡标已移交；项目组任务 B 不在组里置灰；职责改写', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { conversationId } = await ensureButler(stack);
@@ -344,7 +344,7 @@ describe('bot asset handover (D88 P0)', () => {
       },
     });
     const alphaDirect = await openDirect(core, alpha.id);
-    const group = await makeProject(core, '周报群', [alpha.id, other.id]);
+    const group = await makeProject(core, '周报项目组', [alpha.id, other.id]);
     const schedules = core.services.schedules!;
     const daily = schedules.createFromWhen({
       botId: alpha.id,
@@ -383,7 +383,7 @@ describe('bot asset handover (D88 P0)', () => {
       action: 'share',
     });
     expect(payload.items.find((item) => item.key === `schedule:${weekly.id}`)?.blocked).toContain(
-      '不在群',
+      '不在项目组',
     );
     expect(payload.responsibilities).toMatchObject({
       to: '写日报；用 Notion 记笔记',
@@ -411,7 +411,7 @@ describe('bot asset handover (D88 P0)', () => {
     expect(betaNow.profile.runtime.app_connection_ids).toEqual(['conn_nt']);
     expect(betaNow.profile.role.responsibilities).toBe('写日报；用 Notion 记笔记');
     expect(alphaNow.profile.role.responsibilities).toBe('管 Notion 笔记');
-    // 日报：A 侧取消，在 B 私聊重建（原字段）；群里的周报不动。
+    // 日报：A 侧取消，在 B 私聊重建（原字段）；项目组里的周报不动。
     expect(schedules.store.get(daily.id)!.status).toBe('cancelled');
     expect(schedules.store.get(weekly.id)!.status).toBe('active');
     const betaDirect = domain.conversations.listDirectByBot(beta.id)[0]!;

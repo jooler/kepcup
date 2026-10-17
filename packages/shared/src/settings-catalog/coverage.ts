@@ -32,6 +32,12 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     reason: 'AgentCard 按智能体生成的动态锚点；由 agents.external 经分区锚点 agents 覆盖',
   },
   {
+    kind: 'anchor',
+    id: 'group-*',
+    reason:
+      '项目设置对话框（GroupSettingsDialog，WP7 前代管）的临时锚点；换成项目详情页的 project-* 锚点后删除',
+  },
+  {
     kind: 'settings-section',
     id: 'contacts',
     reason:
@@ -65,7 +71,11 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     reason: '撤销目录授权：在 Bot「访问」页签逐条撤销，不经对话',
   },
   { kind: 'action', id: 'workdirs.remove', reason: '移除工作目录：破坏性动作（工作目录设置对话框内）' },
-  { kind: 'action', id: 'groups.delete', reason: '解散群：破坏性动作（群设置对话框内）' },
+  {
+    kind: 'action',
+    id: 'projects.delete',
+    reason: '删除项目组：破坏性动作（项目详情页「危险区」内）',
+  },
   {
     kind: 'action',
     id: 'profile.retract',
@@ -75,16 +85,27 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
 
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
- * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。P0 desktop 已给 Bot 面板、群设置、
- * 工作目录设置对话框补齐锚点（§4.3「给它们补上锚点」），目前为空。
+ * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 登记项目详情页的四个锚点，
+ * WP7 在 `ProjectSettingsPage` 里补上后删除。
  */
-export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
+  'project-title',
+  'project-goal',
+  'project-members',
+  'project-lead',
+];
 
 /** 对话框类深链的固定 section 名。 */
 export const DIALOG_SURFACE_SECTIONS = {
-  'group-dialog': 'group-settings',
   'workdir-dialog': 'workdir-settings',
 } as const;
+
+/**
+ * 项目详情页的分区（README §4.11 的 `ProjectSettingsSection`，shared 与渲染层共用一份）。
+ * `project-detail` 不是对话框：section 必须属于这里，而不是 `DIALOG_SURFACE_SECTIONS`。
+ */
+export const PROJECT_DETAIL_SECTIONS = ['overview', 'members', 'grants', 'schedules', 'danger'] as const;
+export type ProjectSettingsSection = (typeof PROJECT_DETAIL_SECTIONS)[number];
 
 /** 从渲染层源码扫出来的界面位置。 */
 export interface SettingsUiScan {
@@ -159,16 +180,25 @@ export function settingsCoverageProblems(
 
   for (const entry of items) {
     const { surface, section, anchor } = entry.deepLink;
-    const sections: readonly string[] =
-      surface === 'settings'
-        ? scan.settingsSections
-        : surface === 'extension-center'
-          ? scan.extensionCenterTabs
-          : surface === 'bot-panel'
-            ? scan.botPanelTabs
-            : [DIALOG_SURFACE_SECTIONS[surface]];
-    if (!sections.includes(section)) {
-      problems.push(`${entry.id}：深链 ${surface}/${section} 的 section 不存在`);
+    if (surface === 'project-detail') {
+      // 项目详情页是内容区页面（不是对话框）：section 必须是固定五分区之一。
+      if (!(PROJECT_DETAIL_SECTIONS as readonly string[]).includes(section)) {
+        problems.push(
+          `${entry.id}：深链 project-detail/${section} 的 section 不属于 PROJECT_DETAIL_SECTIONS`,
+        );
+      }
+    } else {
+      const sections: readonly string[] =
+        surface === 'settings'
+          ? scan.settingsSections
+          : surface === 'extension-center'
+            ? scan.extensionCenterTabs
+            : surface === 'bot-panel'
+              ? scan.botPanelTabs
+              : [DIALOG_SURFACE_SECTIONS[surface]];
+      if (!sections.includes(section)) {
+        problems.push(`${entry.id}：深链 ${surface}/${section} 的 section 不存在`);
+      }
     }
     if (anchor === undefined) continue;
     if (!anchors.has(anchor) && !pending.has(anchor)) {

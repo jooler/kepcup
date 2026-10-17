@@ -140,13 +140,13 @@
   /**
    * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前群成员优先，
    * 其余活跃 Bot 次之，其他群聊最后；当前会话自己不作候选。单聊同样可用
-   * ——提及非成员 Bot / 群是「引用」，不参与群聊路由。
+   * ——提及非成员 Bot / 项目组是「引用」，不参与项目组路由。
    */
   const mentionTargets = $derived.by(() =>
     buildMentionTargets({
       memberBots: (chat.current?.members ?? []).map((m) => m.bot),
       allBots: contacts.bots,
-      groups: chat.conversations
+      projects: chat.conversations
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
       currentConversationId: chat.current?.conversation.id ?? null,
@@ -284,8 +284,8 @@
         name.className = 'min-w-0 flex-1 truncate';
         name.textContent = `@${target.name}`;
         button.append(name);
-        // 群聊候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
-        if (target.kind === 'group') {
+        // 项目组候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
+        if (target.kind === 'project') {
           const badge = document.createElement('span');
           badge.className = 'shrink-0 text-xs text-muted-foreground';
           badge.textContent = t('composer.mentionGroup');

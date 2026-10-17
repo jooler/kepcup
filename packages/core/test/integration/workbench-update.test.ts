@@ -22,7 +22,7 @@ import {
  * 派发所在对话追加一条可见的 user 消息（`todoUpdate`，带那次派发的 todoRunId），走用户消息的
  * 现有路径进执行者的 mailbox。不打断：对话轮在跑时更新批次缓冲到下一轮（D75），任务继续跑，下一轮对话轮
  * 从 <tasks> 看到在跑的任务并自行决定 inject_task；更新只在链路上没有未结算任务时才可能被当作交付，
- * 一句确认不会被误判。群里只 @ 实际响应过派发的 Bot，不再 triage。
+ * 一句确认不会被误判。项目组里只 @ 实际响应过派发的 Bot，不再 triage。
  */
 
 const stacks: TestStack[] = [];
@@ -558,21 +558,15 @@ describe('事项更新通知：不打断正在跑的对话轮', () => {
   }, 60_000);
 });
 
-describe('事项更新通知：群', () => {
-  it('更新只 @ 原来被路由到的 Bot（网关 route 的目标），不再路由，别的成员不被打扰', async () => {
+describe('事项更新通知：项目组', () => {
+  it('更新 @ 实际生效的负责 Bot（结构化 @），别的成员不被打扰', async () => {
     const stack = await startClocked();
     const { core, llm, clock } = stack;
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
     const c = await makeBot(core, '阿丙');
     const conv = await makeProject(core, '项目组', [a.id, b.id, c.id]);
-    llm.script('mock-light', [
-      // The lead 阿甲's gate routes the dispatch to member 阿乙.
-      step()
-        .expect((r) => r.lastUserText().includes('成员名册：'))
-        .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' }),
-      ...reflections(4),
-    ]);
+    llm.script('mock-light', reflections(4));
     const taskHeld = step().inTask().hold().replyText('完成');
     llm.script('mock-main', [
       step().inTurn().expect(turnWith('【工作台】盘点库存')).replyToolCall('start_task', {
@@ -589,43 +583,79 @@ describe('事项更新通知：群', () => {
     const todo = await createTodo(stack, {
       title: '盘点库存',
       notes: '只盘 A 仓',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
       when: 'now',
     });
     await visibleReply(stack, conv.id, 'ACK');
     await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
     await waitForRun(core, conv.id, 'completed');
-    // 恰好一次网关调用（轻量模型），没有续接判断（此前没有任何 Bot 回复）。
-    const gateRequests = llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：'));
-    expect(gateRequests).toHaveLength(1);
+    // D92 T1a WP4：派发不经路由，没有任何网关（成员名册）调用。
+    expect(
+      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
+    ).toHaveLength(0);
 
     await updateTodo(stack, { id: todo.id, notes: '改盘 B 仓' });
     clock.advance(DEBOUNCE);
     const [update] = await waitForUpdateMessage(stack, conv.id);
-    expect(update!.mentions).toEqual([b.id]);
+    expect(update!.mentions).toEqual([a.id]);
     expect(update!.content).toMatchObject({ todoUpdate: true, todoRunId: todo.lastRun!.id });
     await visibleReply(stack, conv.id, 'UPDATE-ACK');
 
-    // 没有新的路由调用；更新轮只有阿乙，是显式 @。
+    // 没有路由调用；更新轮只有负责人，是显式 @。
     expect(
       llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     const turns = turnRuns(await listRuns(core, conv.id));
     expect(turns.map((r) => [r.botId, r.triggerReason])).toEqual([
-      [b.id, 'routed'],
-      [b.id, 'mention'],
+      [a.id, 'mention'],
+      [a.id, 'mention'],
     ]);
-    // 确认不是交付：任务还在跑；事项仍在进行中，没有因更新轮「无人认领 / 静默」退回草案。
-    await new Promise((r) => setTimeout(r, 300));
-    const after = await getTodo(stack, todo.id);
-    expect(after.todo.status).toBe('in_progress');
-    expect(after.runs[0]!.status).toBe('dispatched');
+    expect(turns.some((r) => r.botId === b.id || r.botId === c.id)).toBe(false);
+  }, 40_000);
+
+  it('M2 负责人这轮还在执行（任务挂起）时改说明：通知照发并 @ 负责人，不打断任务', async () => {
+    const stack = await startClocked();
+    const { core, llm, clock } = stack;
+    const a = await makeBot(core, '阿甲');
+    const b = await makeBot(core, '阿乙');
+    const conv = await makeProject(core, '项目组', [a.id, b.id]);
+    llm.script('mock-light', reflections(6));
+    const taskHeld = step().inTask().hold().replyText('完成');
+    llm.script('mock-main', [
+      step().inTurn().expect(turnWith('【工作台】盘点')).replyToolCall('start_task', {
+        title: '盘点',
+        instruction: '盘点',
+        source_message_ids: [],
+        writes: true,
+      }),
+      step().inTurn().replyText('ACK 我来盘点'),
+      taskHeld,
+      step().inTurn().expect(turnWith('事项更新：盘点')).replyText('UPDATE-ACK 看到了'),
+    ]);
+    const todo = await createTodo(stack, {
+      title: '盘点',
+      notes: '旧',
+      assignee: { kind: 'project', projectId: conv.id, leadBotId: null },
+      when: 'now',
+    });
+    await visibleReply(stack, conv.id, 'ACK');
+    await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
+    // 任务还挂着：改说明，静默期过后通知 @ 负责人送达（派发消息的 @ 就是接手人）。
+    expect((await updateTodo(stack, { id: todo.id, notes: '新' })).notified).toBe(true);
+    clock.advance(DEBOUNCE);
+    const [update] = await waitForUpdateMessage(stack, conv.id);
+    expect(update!.mentions).toEqual([a.id]);
+    expect(update!.content).toMatchObject({ todoUpdate: true, todoRunId: todo.lastRun!.id });
+    expect(textOf(update!)).toContain('新');
+    await visibleReply(stack, conv.id, 'UPDATE-ACK');
+    expect(
+      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
+    ).toHaveLength(0);
+    expect((await getTodo(stack, todo.id)).todo.status).toBe('in_progress');
   }, 60_000);
-});
 
 const WRITE_ARGS = { path: 'notes/a.txt', content: 'A' };
 
-/** A dispatched todo with a held task (turn 1 starts it, acks); returns what the tests need. */
 async function dispatchWithHeldTask(
   stack: TestStack & { clock: TestClock },
   options: {
@@ -665,98 +695,6 @@ async function dispatchWithHeldTask(
   await waitForRun(stack.core, direct.id, 'completed');
   return { bot, direct, todo, taskHeld };
 }
-
-describe('事项更新通知：审查修复', () => {
-  it('M1 更新轮运行期间任务完成：更新轮的确认不交付，结果轮才交付', async () => {
-    const stack = await startClocked();
-    const { core, llm, clock } = stack;
-    const updateHeld = step()
-      .inTurn()
-      .expect(turnWith('事项更新'))
-      .hold()
-      .replyText('UPDATE-ACK 收到');
-    const relayHeld = step().inTurn().expect(isWake).hold().replyText('RELAY 报告完成');
-    const { direct, todo, taskHeld } = await dispatchWithHeldTask(stack, {
-      title: '写报告',
-      extraMain: [updateHeld, relayHeld],
-    });
-    await updateTodo(stack, { id: todo.id, notes: '改一下' });
-    clock.advance(DEBOUNCE);
-    await waitFor(() => (updateHeld.consumed ? true : null), { label: 'update turn running' });
-    // 更新轮在跑时任务完成：结果批次缓冲，等更新轮结束后另起一轮。
-    taskHeld.release();
-    await waitFor(
-      () =>
-        core.services.domain!.runs.get(onlyTaskId(stack, direct.id))!.status === 'completed'
-          ? true
-          : null,
-      { label: 'task completed' },
-    );
-    updateHeld.release();
-    await visibleReply(stack, direct.id, 'UPDATE-ACK');
-    await waitFor(() => (relayHeld.consumed ? true : null), { label: 'result turn running' });
-    await new Promise((r) => setTimeout(r, 300));
-    // 更新轮已经结算，但它不是交付：事项仍在进行中，没有结果消息。
-    const mid = await getTodo(stack, todo.id);
-    expect(mid.todo.status).toBe('in_progress');
-    expect(mid.runs[0]).toMatchObject({ status: 'dispatched', resultMessageId: null });
-    relayHeld.release();
-    const delivered = await waitForTodoStatus(stack, todo.id, 'delivered');
-    const relay = await visibleReply(stack, direct.id, 'RELAY');
-    expect(delivered.lastRun).toMatchObject({ status: 'delivered', resultMessageId: relay.id });
-    expect(llm.requestsFor('mock-main').length).toBeGreaterThan(4);
-  }, 60_000);
-
-  it('M2 群里派发还没被接手（网关判断进行中）时改说明：通知不丢，接手后送达（只 @ 接手的 Bot）', async () => {
-    const stack = await startClocked();
-    const { core, llm, clock } = stack;
-    const a = await makeBot(core, '阿甲');
-    const b = await makeBot(core, '阿乙');
-    const conv = await makeProject(core, '项目组', [a.id, b.id]);
-    const gateHeld = step()
-      .expect((r) => r.lastUserText().includes('成员名册：'))
-      .hold()
-      .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' });
-    llm.script('mock-light', [gateHeld, ...reflections(6)]);
-    const taskHeld = step().inTask().hold().replyText('完成');
-    llm.script('mock-main', [
-      step().inTurn().expect(turnWith('【工作台】盘点')).replyToolCall('start_task', {
-        title: '盘点',
-        instruction: '盘点',
-        source_message_ids: [],
-        writes: true,
-      }),
-      step().inTurn().replyText('ACK 我来盘点'),
-      taskHeld,
-      step().inTurn().expect(turnWith('事项更新：盘点')).replyText('UPDATE-ACK 看到了'),
-    ]);
-    const todo = await createTodo(stack, {
-      title: '盘点',
-      notes: '旧',
-      assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
-      when: 'now',
-    });
-    await waitFor(() => (gateHeld.consumed ? true : null), { label: 'gate pending' });
-    // 网关还没出结论、没有 Bot 接手：改说明，通知发不出去，但没丢。
-    expect((await updateTodo(stack, { id: todo.id, notes: '新' })).notified).toBe(true);
-    clock.advance(DEBOUNCE);
-    clock.advance(DEBOUNCE);
-    expect(updateMessages(await listAllMessages(core, conv.id))).toEqual([]);
-    // 网关路由给阿乙、阿乙开始做：下一次重试送达。
-    gateHeld.release();
-    await visibleReply(stack, conv.id, 'ACK');
-    await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
-    clock.advance(DEBOUNCE);
-    const [update] = await waitForUpdateMessage(stack, conv.id);
-    expect(update!.mentions).toEqual([b.id]);
-    expect(update!.content).toMatchObject({ todoUpdate: true, todoRunId: todo.lastRun!.id });
-    expect(textOf(update!)).toContain('新');
-    await visibleReply(stack, conv.id, 'UPDATE-ACK');
-    expect(
-      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
-    ).toHaveLength(1);
-    expect((await getTodo(stack, todo.id)).todo.status).toBe('in_progress');
-  }, 60_000);
 
   it('M3 纯更新轮：不带派活规则只带更新规则；事项已有任务在跑时 start_task 被拒，inject_task 放行；先 cancel_task 再 start_task 仍允许', async () => {
     const stack = await startClocked();

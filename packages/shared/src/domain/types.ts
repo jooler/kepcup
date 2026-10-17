@@ -135,7 +135,7 @@ export type BotProfile = z.infer<typeof botProfileSchema>;
 
 /**
  * 画像还是空壳：除了名字（和头像）之外，简介、性格、职责、边界都没写。
- * 群里随手建的 Bot 会是这种状态，单聊里要主动问定位，群聊里则按指令慢慢补。
+ * 项目组里随手建的 Bot 会是这种状态，单聊里要主动问定位，项目组里则按指令慢慢补。
  */
 export function isSparseBotProfile(profile: BotProfile): boolean {
   const texts = [
@@ -189,6 +189,8 @@ export interface BotCard {
   name: string;
   bio: string;
   role: string;
+  /** D92 T1a: true on the project lead's card inside a project conversation. */
+  isLead?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -601,8 +603,8 @@ export const backgroundTasksSettingsSchema = z
     /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
     agentSkillAuthoring: z.boolean().default(false).catch(false),
     /**
-     * 只有外部 Agent 时群聊只在被 @ / 回复时响应（不跑群聊判断）。默认开
-     * （审查 C2）：群聊判断经 Agent 只在用户明确关掉此项后运行。
+     * 只有外部 Agent 时项目组只在被 @ / 回复时响应（不跑路由判断）。默认开
+     * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
      */
     groupMentionOnly: z.boolean().default(true).catch(true),
   })
@@ -731,7 +733,7 @@ export const settingsSchema = z.object({
   experimental: experimentalSettingsSchema.prefault({}),
   /**
    * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
-   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、群聊
+   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、项目组
    * 摘要）只在这里明确指定了 Agent 时运行。
    */
   backgroundAgentId: z.string().optional().catch(undefined),
@@ -783,7 +785,7 @@ export const conversationSchema = z.object({
   /** Present in list output: the direct bot (single chat). */
   bot: botSchema.nullable().optional(),
   /**
-   * 群成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
+   * 项目成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
    * 只在列表/详情视图上补，不入库；至多 {@link PROJECT_MEMBER_PREVIEW_MAX} 个。
    */
   memberPreviews: z
@@ -934,11 +936,11 @@ export const systemEventContentSchema = z.object({
   internal: z.boolean().optional(),
   /**
    * 管家路由卡（D70，event = route_suggestion）：建议去哪——直聊某个 Bot、
-   * 去某个已有群，或由管家转交（delegate，需用户点「交给它处理」确认）。
+   * 去某个已有项目组，或由管家转交（delegate，需用户点「交给它处理」确认）。
    */
   route: z
     .object({
-      kind: z.enum(['bot', 'group', 'delegate']),
+      kind: z.enum(['bot', 'project', 'delegate']),
       botId: z.string().optional(),
       conversationId: z.string().optional(),
       /** delegate 时要转交的事（用户确认后管家据此委派）。 */
@@ -952,7 +954,7 @@ export const systemEventContentSchema = z.object({
   schedule: z
     .object({
       id: z.string(),
-      /** Null for a workbench todo assigned to a group without a lead bot (D90). */
+      /** Null for a workbench todo assigned to a project (its dispatch @-mentions the lead). */
       botId: z.string().nullable(),
       title: z.string(),
       note: z.string(),
@@ -1180,19 +1182,19 @@ export const messageSchema = z.object({
 export type Message = z.infer<typeof messageSchema>;
 
 /**
- * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id（dispatcher 据此
- * 路由），群聊提及带前缀（群不是响应者，只作引用展示——`members.has` 查不到
- * 该 token，调度层天然忽略；AI 文本渲染时经它补「（群聊）」图例）。
+ * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id，项目组提及带前缀
+ * （项目组不是响应者，只作引用展示——`members.has` 查不到该 token，调度层天然
+ * 忽略；AI 文本渲染时经它补「（项目组）」图例）。
  */
-export const GROUP_MENTION_PREFIX = 'group:';
+export const PROJECT_MENTION_PREFIX = 'project:';
 
-export function groupMentionToken(conversationId: string): string {
-  return `${GROUP_MENTION_PREFIX}${conversationId}`;
+export function projectMentionToken(conversationId: string): string {
+  return `${PROJECT_MENTION_PREFIX}${conversationId}`;
 }
 
-export function parseMentionToken(token: string): { kind: 'bot' | 'group'; id: string } {
-  if (token.startsWith(GROUP_MENTION_PREFIX)) {
-    return { kind: 'group', id: token.slice(GROUP_MENTION_PREFIX.length) };
+export function parseMentionToken(token: string): { kind: 'bot' | 'project'; id: string } {
+  if (token.startsWith(PROJECT_MENTION_PREFIX)) {
+    return { kind: 'project', id: token.slice(PROJECT_MENTION_PREFIX.length) };
   }
   return { kind: 'bot', id: token };
 }
@@ -1646,7 +1648,7 @@ export const approvalKindSchema = z.enum([
   'profile_change',
   /** MCP 工具调用审批（D65）：server 名 + 工具名 + 参数摘要。 */
   'mcp_tool',
-  /** 管家提议（D70）：组队 / 建 Bot / 建群，用户确认后确定性创建。 */
+  /** 管家提议（D70）：组队 / 建 Bot / 建项目组，用户确认后确定性创建。 */
   'butler_proposal',
   /**
    * 外部智能体的工具权限请求（D72 P3，design 28 §6）：ACP
@@ -1947,12 +1949,14 @@ export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
 
 /**
  * Payload of a `butler_proposal` approval (D70, docs/design/27): one kind for
- * the three proposal shapes — `team` (BUTLER_TEAM_SIZE_MIN..MAX bots), `bot`
- * (exactly one) and `group` (title / description / existing member bots).
+ * the three proposal shapes — `bots` (PROPOSE_BOTS_MIN..MAX bots), `bot`
+ * (exactly one) and `project` (title / goal / lead bot / existing member bots;
+ * D92 T1a WP4: the card carries the lead and the user may change it via
+ * `approvals.decide` with `leadBotId`).
  */
 export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', [
   z.object({
-    proposalType: z.literal('team'),
+    proposalType: z.literal('bots'),
     bots: z.array(butlerProposedBotSchema),
     note: z.string().default(''),
   }),
@@ -1962,9 +1966,11 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
     note: z.string().default(''),
   }),
   z.object({
-    proposalType: z.literal('group'),
+    proposalType: z.literal('project'),
     title: z.string(),
-    description: z.string().default(''),
+    goal: z.string().default(''),
+    /** The proposed lead; the user's decision may override it (must stay a member). */
+    leadBotId: z.string(),
     memberBotIds: z.array(z.string()),
     reason: z.string().default(''),
   }),
@@ -2019,6 +2025,11 @@ export const approvalDecisionSchema = z.object({
    * selectable on the card.
    */
   handoverSelection: z.array(z.string()).optional(),
+  /**
+   * `butler_proposal` with `proposalType: 'project'` only (D92 T1a WP4): the lead the user
+   * picked on the card, overriding `payload.leadBotId` (always a payload member).
+   */
+  leadBotId: z.string().optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });
@@ -2279,7 +2290,7 @@ export type MemoryStatus = z.infer<typeof memoryStatusSchema>;
 
 export const memorySourceSchema = z.enum(['explicit', 'inferred']);
 export const memorySensitivitySchema = z.enum(['normal', 'sensitive']);
-export const memoryOriginSchema = z.enum(['private', 'group']);
+export const memoryOriginSchema = z.enum(['private', 'project']);
 export type MemorySource = z.infer<typeof memorySourceSchema>;
 export type MemorySensitivity = z.infer<typeof memorySensitivitySchema>;
 export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
@@ -2611,7 +2622,7 @@ export type ScheduleOrigin = z.infer<typeof scheduleOriginSchema>;
 export const scheduleSchema = z.object({
   id: z.string(),
   /**
-   * Null only for a workbench todo assigned to a group without a lead bot
+   * Null only for a workbench todo assigned to a project
    * (D90); every other origin keeps it set (service-level check).
    */
   botId: z.string().nullable(),
@@ -2672,15 +2683,16 @@ export const todoSourceSchema = z.enum(['user', 'butler']);
 export type TodoSource = z.infer<typeof todoSourceSchema>;
 
 /**
- * Executor of a todo. `bot` = that bot's direct chat; `group` = that group
- * (`leadBotId` = optional lead bot, which the dispatch message @-mentions).
- * No assignee at all = unassigned draft (the todo's `assignee` is null).
+ * Executor of a todo. `bot` = that bot's direct chat; `project` = that project
+ * conversation (`leadBotId` = optional override of the lead bot the dispatch
+ * message @-mentions; null = the project's own lead — D92 T1a WP4). No
+ * assignee at all = unassigned draft (the todo's `assignee` is null).
  */
 export const todoAssigneeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('bot'), botId: z.string().min(1) }),
   z.object({
-    kind: z.literal('group'),
-    conversationId: z.string().min(1),
+    kind: z.literal('project'),
+    projectId: z.string().min(1),
     leadBotId: z.string().min(1).nullable(),
   }),
 ]);
@@ -2697,7 +2709,7 @@ export const todoSchema = z.object({
   source: todoSourceSchema,
   /** Memo this todo was converted from (no FK: memo purge does not touch it). */
   memoId: z.string().nullable(),
-  /** Why the todo fell back to draft ("群里无人认领" / "负责 Bot 已删除"…); display only. */
+  /** Why the todo fell back to draft ("项目里无人回应" / "负责 Bot 已删除"…); display only. */
   blockedReason: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -2727,9 +2739,9 @@ export type TodoRun = z.infer<typeof todoRunSchema>;
 
 /** todos.list / get row: the todo plus what the workbench renders alongside. */
 export const todoEntrySchema = todoSchema.extend({
-  /** Bot name (bot assignee) or group title (group assignee); null when unassigned / gone. */
+  /** Bot name (bot assignee) or project title (project assignee); null when unassigned / gone. */
   assigneeName: z.string().nullable(),
-  /** Name of the lead bot of a group assignee. */
+  /** Name of the lead bot actually in effect (the assignee override, else the project lead). */
   leadBotName: z.string().nullable(),
   /** The active schedule of the todo (time lives only there); null = not scheduled. */
   schedule: z

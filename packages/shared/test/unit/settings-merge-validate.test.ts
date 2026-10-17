@@ -131,7 +131,7 @@ describe('settingValuesProblems', () => {
     expect(settingValuesProblems(item('background.budget'), { tokens: 1, extra: true })).toEqual([
       '没有字段 extra',
     ]);
-    expect(settingValuesProblems(item('group.title'), { title: 'x'.repeat(501) })).toEqual([
+    expect(settingValuesProblems(item('project.title'), { title: 'x'.repeat(501) })).toEqual([
       'title 应为字符串',
     ]);
     expect(settingValuesProblems(item('workdir.ports'), { ports: [1, 'x'] })).toEqual([

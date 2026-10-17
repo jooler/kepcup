@@ -52,11 +52,11 @@ const STATUS_LABEL: Record<TodoStatus, string> = {
 /** Blocked reasons shown on a todo that fell back to draft (docs/design/39-workbench.md §2.1). */
 export const BLOCKED_BOT_DELETED = '执行者 Bot 已删除';
 export const BLOCKED_LEAD_DELETED = '负责 Bot 已删除';
-export const BLOCKED_LEAD_LEFT = '负责 Bot 已移出群';
-export const BLOCKED_GROUP_GONE = '群已解散';
+export const BLOCKED_LEAD_LEFT = '负责 Bot 已移出项目组';
+export const BLOCKED_PROJECT_GONE = '项目组已解散';
 export const BLOCKED_SCHEDULE_CANCELLED = '排期已取消';
 export const BLOCKED_CONVERSATION_DELETED = '对话已删除，排期已取消';
-export const BLOCKED_UNCLAIMED = '群里无人认领';
+export const BLOCKED_UNCLAIMED = '项目里无人回应';
 export const BLOCKED_CONVERSATION_GONE = '对话已删除';
 export const BLOCKED_RUN_CANCELLED = '执行已被取消';
 export const BLOCKED_RUN_FAILED_PREFIX = '执行失败：';
@@ -86,7 +86,7 @@ export interface WorkbenchMessagePort {
     viaButler: boolean;
     /** The todo was drafted by the butler (`source='butler'`): its notes may carry external content. */
     butlerDrafted: boolean;
-    /** Group assignee's lead bot: the message @-mentions it (explicit target). */
+    /** Project assignee's effective lead bot: the message @-mentions it (explicit target). */
     leadBotId: string | null;
     /** Runs after the message is stored + published, before it is routed to a bot. */
     onAppended?: ((message: Message) => void) | undefined;
@@ -99,8 +99,9 @@ export interface WorkbenchMessagePort {
   /**
    * D90 事项更新通知: a visible user message in the conversation of an in-flight dispatch
    * (`todoUpdate: true`, carrying that dispatch's `todoRunId`), routed like a typed one into the
-   * executor's mailbox — buffered behind a running turn, never steered into it. Group: @ the bots
-   * that actually answered the dispatch, no triage. Null = nobody to tell yet (nothing was sent).
+   * executor's mailbox — buffered behind a running turn, never steered into it. Project: @ the
+   * bots that actually answered the dispatch, no triage. Null = nobody to tell yet (nothing was
+   * sent).
    */
   dispatchUpdate(input: {
     conversationId: string;
@@ -110,7 +111,7 @@ export interface WorkbenchMessagePort {
     viaButler: boolean;
     butlerDrafted: boolean;
     /**
-     * The dispatch message the update follows. A group update is @-ed to whoever took THAT dispatch
+     * The dispatch message the update follows. A project update is @-ed to whoever took THAT dispatch
      * (its @ mentions at the time, plus the bots whose turn it triggered) — never the todo's
      * current assignee, which may have changed since (periodic todos).
      */
@@ -260,9 +261,12 @@ export class TodoService implements WorkbenchDispatchPort {
     let leadBotName: string | null = null;
     if (assignee?.kind === 'bot') {
       assigneeName = this.#botName(assignee.botId);
-    } else if (assignee?.kind === 'group') {
-      assigneeName = this.#deps.conversations.get(assignee.conversationId)?.title ?? null;
-      leadBotName = assignee.leadBotId === null ? null : this.#botName(assignee.leadBotId);
+    } else if (assignee?.kind === 'project') {
+      const project = this.#deps.conversations.get(assignee.projectId);
+      assigneeName = project?.title ?? null;
+      // D92 T1a: the lead actually in effect — the assignee's override, else the project's own lead.
+      const effectiveLeadBotId = assignee.leadBotId ?? project?.leadBotId ?? null;
+      leadBotName = effectiveLeadBotId === null ? null : this.#botName(effectiveLeadBotId);
     }
     const schedule = this.#activeSchedule(todo.id);
     return {
@@ -496,7 +500,7 @@ export class TodoService implements WorkbenchDispatchPort {
   /**
    * Quiet period over: sends the notice if the dispatch is still in flight and the text still
    * differs. "What the executor knows" (`base*`) only advances once the notice was delivered: when
-   * nobody could be told yet (a group dispatch nobody has taken up) the timer is re-armed and the
+   * nobody could be told yet (a project dispatch nobody has taken up) the timer is re-armed and the
    * retry goes on until the run settles; a failed send keeps the base for the next edit.
    */
   #flushUpdateNotice(todoId: string): void {
@@ -666,7 +670,7 @@ export class TodoService implements WorkbenchDispatchPort {
       if (
         existing !== null &&
         existing.conversationId === target.conversationId &&
-        existing.botId === target.botId
+        existing.botId === target.leadBotId
       ) {
         this.#deps.schedules.reschedule(existing.id, when, timezone);
       } else {
@@ -674,7 +678,7 @@ export class TodoService implements WorkbenchDispatchPort {
         // schedule is still intact.
         this.#deps.schedules.createForTodo({
           todoId: todo.id,
-          botId: target.botId,
+          botId: target.leadBotId,
           conversationId: target.conversationId,
           when,
           ...(timezone !== undefined ? { timezone } : {}),
@@ -777,7 +781,7 @@ export class TodoService implements WorkbenchDispatchPort {
     const viaButler = context.actor === 'butler';
     const butlerDrafted = todo.source === 'butler';
     // A periodic todo keeps its `scheduled` parking spot; a one-off becomes in_progress. It
-    // moves BEFORE routing: routing can settle synchronously (an empty group → silent →
+    // moves BEFORE routing: routing can settle synchronously (an unanswered project → silent →
     // unclaimed), and that settlement must find the todo in progress.
     const periodic =
       context.consumeSchedule !== true && this.#activeSchedule(todo.id)?.kind === 'cron';
@@ -792,7 +796,9 @@ export class TodoService implements WorkbenchDispatchPort {
           todoRunId: run.id,
           viaButler,
           butlerDrafted,
-          leadBotId: assignee.kind === 'group' ? assignee.leadBotId : null,
+          // D92 T1a: a project always has a lead, so a project dispatch always carries the
+          // structured @ (the assignee's override, else the project's own lead) — no routing.
+          leadBotId: assignee.kind === 'project' ? (assignee.leadBotId ?? target.leadBotId) : null,
           onAppended: (message) => {
             this.store.updateRun(run.id, { messageId: message.id });
           },
@@ -850,7 +856,7 @@ export class TodoService implements WorkbenchDispatchPort {
     this.#changed(run.todoId);
   }
 
-  /** The group round ended without anyone taking the dispatch: back to draft. */
+  /** The project round ended without anyone taking the dispatch: back to draft. */
   settleUnclaimed(todoRunId: string): void {
     const run = this.store.getRun(todoRunId);
     if (run === null || run.status !== 'dispatched') return;
@@ -988,10 +994,11 @@ export class TodoService implements WorkbenchDispatchPort {
     this.#cancelSchedules(todo.id);
     this.#failOpenRuns(todo.id);
     const assignee = todo.assignee;
-    const keepGroup =
-      assignee?.kind === 'group' && (problem === BLOCKED_LEAD_DELETED || problem === BLOCKED_LEAD_LEFT);
+    const keepProject =
+      assignee?.kind === 'project' &&
+      (problem === BLOCKED_LEAD_DELETED || problem === BLOCKED_LEAD_LEFT);
     return this.#move(todo, 'draft', {
-      assignee: keepGroup ? { ...assignee, leadBotId: null } : null,
+      assignee: keepProject ? { ...assignee, leadBotId: null } : null,
       blockedReason: problem,
     });
   }
@@ -1012,8 +1019,8 @@ export class TodoService implements WorkbenchDispatchPort {
       return true;
     }
     if (
-      assignee.kind === 'group' &&
-      assignee.conversationId === schedule.conversationId &&
+      assignee.kind === 'project' &&
+      assignee.projectId === schedule.conversationId &&
       assignee.leadBotId !== schedule.botId
     ) {
       this.store.update(todo.id, { assignee: { ...assignee, leadBotId: schedule.botId } });
@@ -1030,13 +1037,13 @@ export class TodoService implements WorkbenchDispatchPort {
       const bot = this.#deps.bots.get(assignee.botId);
       return bot === null || bot.status !== 'active' ? BLOCKED_BOT_DELETED : null;
     }
-    // No FK on assignee_group_id: a missing (or since dissolved = read-only) group is found here.
-    const group = this.#deps.conversations.get(assignee.conversationId);
-    if (group === null || group.readOnly) return BLOCKED_GROUP_GONE;
+    // No FK on assignee_project_id: a missing (or since deleted = read-only) project is found here.
+    const project = this.#deps.conversations.get(assignee.projectId);
+    if (project === null || project.readOnly) return BLOCKED_PROJECT_GONE;
     if (assignee.leadBotId !== null) {
       const lead = this.#deps.bots.get(assignee.leadBotId);
       if (lead === null || lead.status !== 'active') return BLOCKED_LEAD_DELETED;
-      if (!this.#deps.conversations.memberBotIds(assignee.conversationId).includes(assignee.leadBotId)) {
+      if (!this.#deps.conversations.memberBotIds(assignee.projectId).includes(assignee.leadBotId)) {
         return BLOCKED_LEAD_LEFT;
       }
     }
@@ -1046,21 +1053,21 @@ export class TodoService implements WorkbenchDispatchPort {
   // --- lifecycle hooks (domain/lifecycle.ts) --------------------------------------------
 
   /**
-   * Runs BEFORE the conversation row goes: `todos.assignee_group_id` is `ON DELETE SET NULL`,
-   * which would silently turn a group assignee into a bare lead bot.
+   * Runs BEFORE the conversation row goes: `todos.assignee_project_id` is `ON DELETE SET NULL`,
+   * which would silently turn a project assignee into a bare lead bot.
    */
   onConversationDeleting(conversationId: string): void {
     this.#guard(() =>
       this.#tx(() => {
         const touched = new Set<string>();
-        for (const todo of this.store.listByAssigneeGroup(conversationId)) {
+        for (const todo of this.store.listByAssigneeProject(conversationId)) {
           if (todo.status === 'done' || todo.status === 'cancelled' || todo.status === 'delivered') {
-            // Closed / awaiting acceptance: keep the record, just drop the dangling group.
+            // Closed / awaiting acceptance: keep the record, just drop the dangling project.
             this.store.update(todo.id, { assignee: null });
           } else {
             this.#cancelSchedules(todo.id);
             this.#failOpenRuns(todo.id);
-            this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_GROUP_GONE });
+            this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_PROJECT_GONE });
           }
           touched.add(todo.id);
         }
@@ -1075,7 +1082,7 @@ export class TodoService implements WorkbenchDispatchPort {
           }
         }
         // Dispatched into this conversation and still waiting for the executor: it can never
-        // answer now (a private chat, or a todo whose group was handled above).
+        // answer now (a private chat, or a todo whose project was handled above).
         for (const run of this.store.listOpenRunsForConversation(conversationId)) {
           this.store.updateRun(run.id, { status: 'failed' });
           const todo = this.store.get(run.todoId);
@@ -1089,7 +1096,7 @@ export class TodoService implements WorkbenchDispatchPort {
     );
   }
 
-  /** After a bot or a group membership went away: reconcile picks up (and publishes) the consequences. */
+  /** After a bot or a project membership went away: reconcile picks up (and publishes) the consequences. */
   onExecutorChanged(): void {
     this.reconcile();
   }
@@ -1104,17 +1111,21 @@ export class TodoService implements WorkbenchDispatchPort {
 
   // --- helpers --------------------------------------------------------------------------
 
-  /** Where a dispatch for `assignee` lands: [bot id for the schedule, conversation]. */
-  #targetOf(assignee: TodoAssignee): { botId: string | null; conversationId: string } {
+  /** Where a dispatch for `assignee` lands: [lead override for the schedule, conversation]. */
+  #targetOf(assignee: TodoAssignee): { leadBotId: string | null; conversationId: string } {
     if (assignee.kind === 'bot') {
       const { conversation, created } = this.#deps.conversations.openDirect(assignee.botId);
       if (created) this.#deps.publish?.('conversation.updated', { conversation });
-      return { botId: assignee.botId, conversationId: conversation.id };
+      return { leadBotId: assignee.botId, conversationId: conversation.id };
     }
-    return { botId: assignee.leadBotId, conversationId: assignee.conversationId };
+    const leadBotId =
+      assignee.leadBotId ??
+      this.#deps.conversations.get(assignee.projectId)?.leadBotId ??
+      null;
+    return { leadBotId, conversationId: assignee.projectId };
   }
 
-  /** Bot active; group writable; lead bot an active member. */
+  /** Bot active; project writable; lead override an active member. */
   #validateAssignee(assignee: TodoAssignee): void {
     if (assignee.kind === 'bot') {
       const bot = this.#deps.bots.get(assignee.botId);
@@ -1123,17 +1134,19 @@ export class TodoService implements WorkbenchDispatchPort {
       }
       return;
     }
-    const conversation: Conversation | null = this.#deps.conversations.get(assignee.conversationId);
-    if (conversation === null) throw new AppError('NOT_FOUND', '群不存在或已解散');
-    if (conversation.type !== 'project') throw new AppError('INVALID_INPUT', '只能派给群聊或 Bot');
-    if (conversation.readOnly) throw new AppError('CONVERSATION_READ_ONLY', '该群已只读，不能派发');
+    const conversation: Conversation | null = this.#deps.conversations.get(assignee.projectId);
+    if (conversation === null) throw new AppError('NOT_FOUND', '项目组不存在或已删除');
+    if (conversation.type !== 'project') throw new AppError('INVALID_INPUT', '只能派给项目组或 Bot');
+    if (conversation.readOnly) {
+      throw new AppError('CONVERSATION_READ_ONLY', '该项目组已只读，不能派发');
+    }
     if (assignee.leadBotId !== null) {
       const lead = this.#deps.bots.get(assignee.leadBotId);
       if (lead === null || lead.status !== 'active') {
         throw new AppError('NOT_FOUND', '负责 Bot 不存在或已删除');
       }
-      if (!this.#deps.conversations.memberBotIds(assignee.conversationId).includes(assignee.leadBotId)) {
-        throw new AppError('INVALID_INPUT', '负责 Bot 不在该群中');
+      if (!this.#deps.conversations.memberBotIds(assignee.projectId).includes(assignee.leadBotId)) {
+        throw new AppError('INVALID_INPUT', '负责 Bot 不在该项目组中');
       }
     }
   }
@@ -1143,7 +1156,10 @@ export class TodoService implements WorkbenchDispatchPort {
     const warnings: string[] = [];
     const assignee = todo.assignee;
     if (assignee === null) return warnings;
-    const executorBotId = assignee.kind === 'bot' ? assignee.botId : assignee.leadBotId;
+    const executorBotId =
+      assignee.kind === 'bot'
+        ? assignee.botId
+        : (assignee.leadBotId ?? this.#deps.conversations.get(assignee.projectId)?.leadBotId ?? null);
     if (executorBotId !== null && !this.#deps.dispatcher.hasTurnModel(executorBotId)) {
       warnings.push('该 Bot 未配置模型，派发后无法执行：请先在设置里选择默认主模型或在 Bot 配置中指定。');
     }
@@ -1303,8 +1319,8 @@ function cleanNotes(notes: string | undefined): string {
 function sameAssignee(a: TodoAssignee | null, b: TodoAssignee | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.kind === 'bot' && b.kind === 'bot') return a.botId === b.botId;
-  if (a.kind === 'group' && b.kind === 'group') {
-    return a.conversationId === b.conversationId && a.leadBotId === b.leadBotId;
+  if (a.kind === 'project' && b.kind === 'project') {
+    return a.projectId === b.projectId && a.leadBotId === b.leadBotId;
   }
   return false;
 }

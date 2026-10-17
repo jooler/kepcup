@@ -1148,6 +1148,11 @@ export const approvalsDecideInputSchema = z.object({
    * bot = a denial.
    */
   handoverSelection: z.array(z.string().min(1)).optional(),
+  /**
+   * `butler_proposal` with `proposalType: 'project'` only (D92 T1a WP4): the lead the user
+   * picked on the card; must be one of the payload's `memberBotIds`.
+   */
+  leadBotId: z.string().min(1).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -1489,7 +1494,7 @@ export const todosUpdateInputSchema = z.object({
   assignee: todoAssigneeSchema.nullable().optional(),
   when: todoWhenSchema.optional(),
 });
-/** `warnings`: pre-dispatch hints rendered in place ("该 Bot 未配置模型" / "群已只读"). */
+/** `warnings`: pre-dispatch hints rendered in place ("该 Bot 未配置模型" / "项目组已只读"). */
 export const todosWriteOutputSchema = z.object({
   todo: todoEntrySchema,
   warnings: z.array(z.string()),
@@ -2140,7 +2145,7 @@ export const rpcMethodSchemas = {
     output: schedulesDeclineOfferOutputSchema,
   },
 
-  // D90 工作台：事项（派给 Bot / 群，到点由宿主代发）与备忘。
+  // D90 工作台：事项（派给 Bot / 项目组，到点由宿主代发）与备忘。
   'todos.list': { input: todosListInputSchema, output: todosListOutputSchema },
   'todos.get': { input: todosIdInputSchema, output: todosGetOutputSchema },
   'todos.create': { input: todosCreateInputSchema, output: todosWriteOutputSchema },

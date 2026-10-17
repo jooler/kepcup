@@ -36,7 +36,7 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
     });
   });
 
-  it('Bot 面板带作用 Bot；群设置缺省用卡片所在会话；工作目录设置带锚点', () => {
+  it('Bot 面板带作用 Bot；项目设置缺省用卡片所在会话；工作目录设置带锚点', () => {
     const bot = getSettingItem('bot.network')!;
     expect(settingDeepLinkAction(bot.deepLink, { botId: 'bot_b' }, 'conv_1')).toEqual({
       kind: 'bot-panel',
@@ -44,14 +44,14 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
       anchor: 'bot-network',
       botId: 'bot_b',
     });
-    const group = getSettingItem('group.members')!;
-    expect(settingDeepLinkAction(group.deepLink, {}, 'conv_g')).toEqual({
-      kind: 'group-dialog',
+    const project = getSettingItem('project.members')!;
+    expect(settingDeepLinkAction(project.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
       conversationId: 'conv_g',
-      anchor: 'group-members',
+      anchor: 'project-members',
     });
     expect(
-      settingDeepLinkAction(group.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
+      settingDeepLinkAction(project.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
     ).toMatchObject({
       conversationId: 'conv_x',
     });

@@ -227,15 +227,15 @@ export class DelegationHost implements DelegationToolFacade {
       return { ok: false, message: '当前对话不可用，无法委派' };
     }
     if (conversation.type === 'project') {
-      // 群降级（§3.3）：同群用 @；B 不在群里则首期不支持。
+      // 同组降级（§3.3）：同组用 @；B 不在组里则首期不支持。
       return this.#deps.conversations.memberBotIds(conversationId).includes(toBotId)
         ? {
             ok: false,
-            message: `${target.name} 就在这个群里：直接用 send_message 并在 mention_bot_ids 里 @ 它，不需要委派。`,
+            message: `${target.name} 就在这个项目组里：直接用 send_message 并在 mention_bot_ids 里 @ 它，不需要委派。`,
           }
         : {
             ok: false,
-            message: `${target.name} 不在这个群里。群聊里不支持跨对话委派：可以建议用户把它拉进群后再 @，或请用户去私聊里处理。`,
+            message: `${target.name} 不在这个项目组里。项目组里不支持跨对话委派：可以建议用户把它加进项目组后再 @，或请用户去私聊里处理。`,
           };
     }
     if (intent === 'fyi') {

@@ -1749,12 +1749,12 @@ describe('settings catalog host: D89 review round 2', () => {
     });
   });
 
-  it('group.members: a bot proposal never drops an existing member', async () => {
+  it('project.members: a bot proposal never drops an existing member', async () => {
     const rig = makeRig();
     const result = await rig.host.forRun(runCtx(rig, { conversationId: rig.groupId })).change({
-      id: 'group.members',
+      id: 'project.members',
       values: { bots: ['bot_b'] },
-      reason: '把 bot_b 拉进群',
+      reason: '把 bot_b 拉进项目组',
     });
     expect(cardOf(rig, messageIdIn(result.content))).toMatchObject({
       mode: 'confirm',

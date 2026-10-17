@@ -297,7 +297,7 @@ describe('DelegationHost (D71)', () => {
       task: 'x',
     });
     expect(outside.ok).toBe(false);
-    expect(outside.message).toContain('不在这个群里');
+    expect(outside.message).toContain('不在这个项目组里');
     expect(rig.delegations.listActive()).toHaveLength(0);
   });
 

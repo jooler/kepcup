@@ -18,7 +18,7 @@ export const settingGroupSchema = z.enum([
   'schedules',
   'profile',
   'browser',
-  'group',
+  'project',
   'workdir',
   'hardware',
   'general',
@@ -30,8 +30,8 @@ export const settingGroupSchema = z.enum([
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
-/** 作用范围：全局 / 某个 Bot / 某个群 / 某个工作目录。 */
-export const settingScopeSchema = z.enum(['global', 'bot', 'group', 'workdir']);
+/** 作用范围：全局 / 某个 Bot / 某个项目组 / 某个工作目录。 */
+export const settingScopeSchema = z.enum(['global', 'bot', 'project', 'workdir']);
 export type SettingScope = z.infer<typeof settingScopeSchema>;
 
 /**
@@ -186,10 +186,14 @@ export const CARD_KEYS = [
   'unattended',
   /** 污点防护开关（`UnattendedSection` 的对应行）。 */
   'taint-guard',
-  /** 群名（`GroupSettingsDialog` 的改名片段）。 */
-  'group-title',
-  /** 群成员（`GroupSettingsDialog` 的成员片段；组件自己调 groups RPC）。 */
-  'group-members',
+  /** 项目名称（项目详情页 / 暂由 `GroupSettingsDialog` 的改名片段代管，WP7 换专属内嵌）。 */
+  'project-title',
+  /** 项目成员（同上；组件自己调 projects RPC）。 */
+  'project-members',
+  /** 项目目标（WP7 的 `ProjectSettingsPage` 内嵌；WP4 暂走 link 兜底）。 */
+  'project-goal',
+  /** 项目负责人（WP7 的 `ProjectMembersEditor` 内嵌；WP4 暂走 link 兜底）。 */
+  'project-lead',
   /** 工作目录保护规则 / 放行端口（`WorkdirSettingsDialog`，user-only，组件自己保存）。 */
   'workdir-settings',
   /** 一条连接工具的策略（`AppConnectionDetail` 片段；组件自己 `setToolPolicy`）。 */
@@ -213,14 +217,15 @@ export type CardKey = z.infer<typeof cardKeySchema>;
  * - `settings`：`shell.openSettings(section, anchor)`，section 是设置弹框分区 id；
  * - `extension-center`：`openExtensionCenter(section)`，section 是扩展中心页签；
  * - `bot-panel`：右栏 Bot 详情，section 是页签 value；
- * - `group-dialog` / `workdir-dialog`：群设置 / 工作目录设置对话框（section 固定为对话框名）。
+ * - `project-detail`：项目详情页（内容区页面，不是对话框；section ∈ `PROJECT_DETAIL_SECTIONS`）；
+ * - `workdir-dialog`：工作目录设置对话框（section 固定为对话框名）。
  * anchor 是 `data-settings-anchor` 的值；缺省 = 只到分区。
  */
 export const settingSurfaceSchema = z.enum([
   'settings',
   'extension-center',
   'bot-panel',
-  'group-dialog',
+  'project-detail',
   'workdir-dialog',
 ]);
 export type SettingSurface = z.infer<typeof settingSurfaceSchema>;
