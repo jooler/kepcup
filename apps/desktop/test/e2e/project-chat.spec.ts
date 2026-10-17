@@ -3,9 +3,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
-import { createBotAndOpenChat } from './helpers/create-bot';
+import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
 import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
+
+/**
+ * 项目组沟通（D92 T1a WP8）：创建、@ 提及、引用回复、轮次状态行；详情页的
+ * 改名 / 目标 / 成员 / 负责人 / 删除。全员静默的点选（no-claim）已随路由重写
+ * 移除（WP3），不再覆盖。
+ */
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -89,9 +95,9 @@ async function mentionAndType(page: Page, botName: string, text: string): Promis
   await composer.pressSequentially(text);
 }
 
-test('group chat: create, @ mention, reply-quote, turn status, no-claim click', async () => {
+test('project chat: create, @ mention, reply-quote, turn status', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-group-');
+  const session = await startSession('kepcup-e2e-project-chat-');
   const { page, llm } = session;
   try {
     await waitReady(page);
@@ -99,13 +105,10 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
     await createBotAndOpenChat(page, '阿乙');
     await createProjectViaUi(page, '项目讨论组', ['阿甲', '阿乙']);
 
-    // Right panel shows the group info and member cards（右栏默认收起，先展开）。
-    if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
-      await page.locator('[data-testid="right-panel-toggle"]').click();
-    }
-    await expect(page.locator('[data-testid="group-info"]')).toBeVisible();
-    await expect(page.locator('[data-testid="group-info-title"]')).toHaveValue('项目讨论组');
-    await expect(page.locator('[data-testid^="group-member-card-"]')).toHaveCount(2);
+    // 项目组外壳已就位：两行顶栏 + 模块 tab；右栏与单聊药丸不再渲染。
+    await expect(page.locator('[data-testid="project-header"]')).toBeVisible();
+    await expect(page.locator('[data-testid="project-tabs"]')).toBeVisible();
+    await expect(page.locator('[data-testid="right-panel-toggle"]')).toHaveCount(0);
 
     const composer = page.locator('[data-testid="composer-input"]');
 
@@ -192,7 +195,7 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
     await mentionAndType(page, '阿乙', ' 第二个问题');
     await composer.press('Enter');
 
-    const status = page.locator('[data-testid="group-turn-status"]');
+    const status = page.locator('[data-testid="project-turn-status"]');
     await expect(status).toBeVisible({ timeout: 15_000 });
     await expect(status).toHaveAttribute('data-phase', 'running');
     await expect(status).toContainText('阿甲');
@@ -204,116 +207,127 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
     await expect(page.locator('[data-testid="bot-bubble"]').nth(3)).toContainText('乙再答', {
       timeout: 30_000,
     });
-    await expect(page.locator('[data-testid="group-turn-status"]')).toHaveCount(0, {
+    await expect(page.locator('[data-testid="project-turn-status"]')).toHaveCount(0, {
       timeout: 15_000,
-    });
-
-    // --- 全员静默: system message with clickable bots -------------------------
-    llm.script('mock-light', [
-      step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿甲'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-      step()
-        .expect((r) => r.lastUserText().includes('你的名片：阿乙'))
-        .replyJson({ decision: 'not_mine', confidence: 0.5, reason: '不归我' }),
-    ]);
-    llm.script('mock-main', [
-      step()
-        .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
-        .replyText('好吧我来处理'),
-    ]);
-    await composer.click();
-    await composer.pressSequentially('这个问题总得有人处理吧');
-    await composer.press('Meta+Enter');
-
-    const noClaim = page.locator('[data-testid="no-claim-bots"]');
-    await expect(noClaim).toBeVisible({ timeout: 30_000 });
-    await noClaim.locator('button', { hasText: '阿甲' }).click();
-    await expect(page.locator('[data-testid="bot-bubble"]').last()).toContainText('好吧我来处理', {
-      timeout: 30_000,
     });
   } finally {
     await closeSession(session);
   }
 });
 
-test('group settings: rename, member management, delete', async () => {
+test('project settings: rename, goal, members, set lead, delete', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-group-settings-');
+  const session = await startSession('kepcup-e2e-project-settings-');
   const { page, llm } = session;
   try {
     await waitReady(page);
-    await createBotAndOpenChat(page, '阿甲');
-    await createBotAndOpenChat(page, '阿乙');
-    await createProjectViaUi(page, '旧群名', ['阿甲', '阿乙']);
-    // 右栏（群信息）默认收起，先经顶部药丸展开，后续改名/成员管理断言用它。
-    if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
-      await page.locator('[data-testid="right-panel-toggle"]').click();
-    }
+    const alpha = await createBotAndOpenChat(page, '阿甲');
+    const beta = await createBotAndOpenChat(page, '阿乙');
+    await createProjectViaUi(page, '旧项目名', ['阿甲', '阿乙']);
 
-    // One exchange so a message from 阿甲 exists before its removal.
+    // 经 ⚙ 打开详情页（内容区页面，不是弹框）。
+    await page.locator('[data-testid="project-settings-button"]').click();
+    const settingsPage = page.locator('[data-testid="project-settings-page"]');
+    await expect(settingsPage).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
+      'data-view',
+      'settings',
+    );
+
+    // Rename（回车保存，顶栏标题即时更新）。
+    const titleInput = page.locator('[data-testid="project-title-input"]');
+    await titleInput.fill('新项目名');
+    await titleInput.press('Enter');
+    await expect(page.locator('[data-testid="project-title"]')).toContainText('新项目名', {
+      timeout: 10_000,
+    });
+
+    // Goal：填写并保存，经 RPC 核对落库。
+    await page.locator('[data-testid="project-goal-input"]').fill('把官网改版做完');
+    await page.locator('[data-testid="project-goal-save"]').click();
+    await expect
+      .poll(
+        async () => {
+          const { conversations } = (await rpc(page, 'conversations.list')) as {
+            conversations: Array<{ title: string | null; goal: string | null }>;
+          };
+          return conversations.find((c) => c.title === '新项目名')?.goal ?? null;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe('把官网改版做完');
+
+    // One exchange so a message from 阿甲 exists before member churn.
     llm.script('mock-main', [
       step()
         .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
         .replyText('旧消息'),
     ]);
-    await mentionAndType(page, '阿甲', ' 留个历史');
-    await page.locator('[data-testid="composer-input"]').press('Meta+Enter');
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
+      'data-view',
+      'chat',
+      { timeout: 15_000 },
+    );
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.click();
+    await composer.pressSequentially('@阿甲 留个历史');
+    await page
+      .locator('[data-testid="mention-popup"] button')
+      .filter({ hasText: '阿甲' })
+      .first()
+      .click();
+    await composer.press('Enter');
     const oldBubble = page.locator('[data-testid="bot-bubble"]').first();
     await expect(oldBubble).toContainText('旧消息', { timeout: 30_000 });
-    // 群聊消息保留发送者头像（UI 改版：名字/时间行已移除，头像即身份）。
+    // 项目组消息保留发送者头像（头像即身份，UI 改版后无名字行）。
     await expect(page.locator('[data-testid="bot-avatar"]').first()).toBeVisible();
 
-    // Open group settings from the sidebar item menu.
+    // 添加成员：新建 阿丙，回到项目详情页，用底部选择器搜索加入。
+    const gammaId = await (async () => {
+      await createBotAndOpenChat(page, '阿丙');
+      const { bots } = (await rpc(page, 'bots.list')) as {
+        bots: Array<{ id: string; name: string }>;
+      };
+      return bots.find((bot) => bot.name === '阿丙')?.id ?? '';
+    })();
+    await openConversationByName(page, '新项目名');
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await expect(settingsPage).toBeVisible({ timeout: 15_000 });
+    const memberRows = page.locator('[data-testid="project-member-list"] li');
+    await expect(memberRows).toHaveCount(2);
+    const memberAdd = page.locator('[data-testid="project-member-add"]');
+    await memberAdd.fill('阿丙');
     await page
-      .locator('li', { hasText: '旧群名' })
-      .locator('[data-testid^="conversation-row-"]')
-      .click({ button: 'right' });
-    await page.locator('[data-testid="context-group-settings"]').click();
-    await expect(page.locator('[data-testid="group-settings-dialog"]')).toBeVisible();
-
-    // Rename.
-    await page.locator('[data-testid="group-rename-input"]').fill('新群名');
-    await page.locator('[data-testid="group-rename-save"]').click();
-    await expect(page.locator('[data-testid="group-info-title"]')).toHaveValue('新群名', {
-      timeout: 10_000,
-    });
-
-    // Add a member (create one more bot first).
-    await page.keyboard.press('Escape');
-    await createBotAndOpenChat(page, '阿丙');
-    await page
-      .locator('li', { hasText: '新群名' })
-      .locator('[data-testid^="conversation-row-"]')
-      .click({ button: 'right' });
-    await page.locator('[data-testid="context-group-settings"]').click();
-    await page.locator('[data-testid="group-add-member-select"]').selectOption({ label: '阿丙' });
-    await page.locator('[data-testid="group-add-member-confirm"]').click();
-    await expect(page.locator('[data-testid="group-member-list"] li')).toHaveCount(3, {
-      timeout: 10_000,
-    });
-
-    // Remove a member (joined first -> 阿甲).
-    await page.locator('[data-testid^="group-member-remove-"]').first().click();
-    await expect(page.locator('[data-testid="group-member-list"] li')).toHaveCount(2, {
-      timeout: 10_000,
-    });
-    // History of the removed member stays renderable (avatar kept, no name row).
+      .locator('[data-testid^="project-member-add-option-"]')
+      .filter({ hasText: '阿丙' })
+      .click();
+    await expect(memberRows).toHaveCount(3, { timeout: 10_000 });
+    // 被移出成员的历史消息仍可渲染（头像保留）。
     await expect(oldBubble).toContainText('旧消息');
-    await expect(page.locator('[data-testid="bot-avatar"]').first()).toBeVisible();
 
-    // Delete the whole group (two-step confirm).
-    await page.keyboard.press('Escape');
-    await page
-      .locator('li', { hasText: '新群名' })
-      .locator('[data-testid^="conversation-row-"]')
-      .click({ button: 'right' });
-    await page.locator('[data-testid="context-group-settings"]').click();
-    await page.locator('[data-testid="group-delete-begin"]').click();
-    await page.locator('[data-testid="group-delete-confirm"]').click();
+    // 设为负责人：阿乙 接任；负责人的移出按钮置灰，旧负责人恢复可移出。
+    await page.locator(`[data-testid="project-make-lead-${beta.botId}"]`).click();
+    const overview = page.locator('[data-testid="project-settings-section-overview"]');
+    await expect(overview).toContainText('阿乙', { timeout: 10_000 });
+    await expect(page.locator(`[data-testid="project-member-remove-${beta.botId}"]`)).toBeDisabled();
+    await expect(
+      page.locator(`[data-testid="project-member-remove-${alpha.botId}"]`),
+    ).toBeEnabled();
+
+    // 移出成员：阿丙（非负责人）移出后成员行回到 2。
+    await page.locator(`[data-testid="project-member-remove-${gammaId}"]`).click();
+    await expect(memberRows).toHaveCount(2, { timeout: 10_000 });
+
+    // 删除项目组（两步确认）回到空态；成员的私聊仍在侧栏。
+    await page.locator('[data-testid="project-delete-begin"]').click();
+    await expect(page.locator('[data-testid="project-delete-confirm-box"]')).toBeVisible();
+    await page.locator('[data-testid="project-delete-confirm"]').click();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 15_000 });
-    // The group disappears from the sidebar; the members' direct chats remain.
-    await expect(page.locator('li', { hasText: '新群名' })).toHaveCount(0);
+    await expect(page.locator('li', { hasText: '新项目名' })).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid="conversation-name"]').filter({ hasText: '阿甲' }),
+    ).toHaveCount(1);
   } finally {
     await closeSession(session);
   }
