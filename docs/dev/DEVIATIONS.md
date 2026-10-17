@@ -582,3 +582,13 @@
 - 推荐：1（必要时叠加 2 的轻提示）；在决定前保留 D60 后端不删。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/design/19-work-path-and-group-setup.md`、`docs/design/README.md`（D60 行）、`docs/design/{01-conversation,08-project}.md`、`docs/dev/phases/P16-path-and-group-setup.md`、`todo/conversation-work-path.md`。
+
+### DEV-031 WP3 的 `forcedTarget`「工作台派发用」前提与代码现实不符
+
+- 状态：已落实
+- 阶段：项目组 T1a（WP3，2026-10-17）
+- 是否阻塞：否
+- 问题：[WP3-routing.md](../../todo/project/WP3-routing.md) §1 流程图、§5 步骤 5 与 §8 陷阱都说 `PendingBatch.forcedTarget` 「保留（工作台派发还在用，只删 `redistribute` 方法）」。代码现实：自 WP1 起 `dispatchWorkbenchMessage` 用**结构化 @**（`mentions: [leadBotId]`，见 todo-service `#dispatch` 的 `leadBotId` 入参）指定目标，`forcedTarget` 在 HEAD 上唯一的入口是被删除的 `groups.redistribute`（group_no_claim 点选重发）。删除 `redistribute` 后，`forcedTarget` 分支在生产代码中已无调用方。
+- 影响范围：`packages/core/src/dispatch/project-turn.ts`（`PendingBatch.forcedTarget`、`#dispatch` 首分支）、`dispatchWorkbenchMessage`。
+- 处理：按 WP 字面要求**保留** `forcedTarget` 分支（工作台「指定负责 Bot」语义的快路径，行为与结构化 @ 等价），并给 `onUserBatch` 增加可选 `options.forcedTarget` 入参使 WP §5 场景 b（forcedTarget 优先）可测；`dispatchWorkbenchMessage` 维持结构化 @ 路径不变（零行为漂移）。后续若工作台派发要绕开显式 @ 语义，可改传 `forcedTarget`（WP8/WP4 一并评估）。
+- 已更新的文档：`todo/project/WP3-routing.md`（实施记录）。
