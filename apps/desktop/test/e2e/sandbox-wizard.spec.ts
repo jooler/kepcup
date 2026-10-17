@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P12-B e2e（docs/dev/phases/P12-windows-and-enhanced-sandbox.md 任务 7）：
@@ -71,7 +72,7 @@ async function startSession(
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
