@@ -13,7 +13,7 @@
   import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
   import { applySettingItem } from '$lib/features/settings-card/apply';
   import {
-    groupMemberPlan,
+    projectMemberPlan,
     proposedMemberIds,
   } from '$lib/features/settings-card/project-members';
   let {
@@ -121,7 +121,7 @@
   // Bot 的预填只表示「建议拉进群的 Bot」：现有成员默认勾选，预填只会多勾、不会预先取消勾选谁。
   const proposedIds = $derived(proposedMemberIds(prefill));
   const memberIds = $derived(members.map((member) => member.bot.id));
-  const memberPlan = $derived(groupMemberPlan(memberIds, proposedIds, memberChoices));
+  const memberPlan = $derived(projectMemberPlan(memberIds, proposedIds, memberChoices));
 
   const roster = $derived.by(() => {
     const rows = contacts.bots.map((bot) => ({ id: bot.id, name: bot.name }));
