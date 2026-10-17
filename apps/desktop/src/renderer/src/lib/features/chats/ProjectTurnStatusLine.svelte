@@ -20,17 +20,17 @@
 {#if visible}
   <div
     class="flex items-center gap-2 py-1 text-xs text-muted-foreground"
-    data-testid="group-turn-status"
+    data-testid="project-turn-status"
     data-phase={turn?.phase}
   >
     {#if turn?.phase === 'routing'}
       <span class="animate-pulse">{t('turn.routing')}</span>
     {:else if queueNames.length > 0}
-      <span data-testid="group-turn-queue">
+      <span data-testid="project-turn-queue">
         {t('turn.running', { current: currentName, queue: queueNames })}
       </span>
     {:else}
-      <span data-testid="group-turn-single">{t('turn.single', { current: currentName })}</span>
+      <span data-testid="project-turn-single">{t('turn.single', { current: currentName })}</span>
     {/if}
   </div>
 {/if}
