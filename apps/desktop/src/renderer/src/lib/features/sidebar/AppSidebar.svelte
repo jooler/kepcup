@@ -236,9 +236,9 @@
     await createBotConversational();
   }
 
-  async function openCreateGroup(): Promise<void> {
+  async function openCreateProject(): Promise<void> {
     plusOpen = false;
-    chat.beginGroupCompose();
+    chat.beginProjectCompose();
   }
 
   /**
@@ -1106,13 +1106,13 @@
     <button
       type="button"
       class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={openCreateGroup}
-      data-testid="start-chat-create-group"
+      onclick={openCreateProject}
+      data-testid="start-chat-create-project"
     >
       <span class="flex size-7 items-center justify-center rounded-full bg-muted">
         <Users class="size-4" />
       </span>
-      {t('sidebar.createGroup')}
+      {t('sidebar.createProject')}
     </button>
   </div>
   {#if plusBots.length > 0}
