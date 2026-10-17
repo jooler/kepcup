@@ -8,8 +8,9 @@
   import { applySettingItem } from './apply';
 
   /**
-   * 对话内设置卡的「项目名称」内嵌（D89 / D92 WP7 §4 步骤 5，迁自 GroupSettingsDialog
-   * 的 embedded 分支）：`expected` / `onConflict` / `messageId` 的并发语义与旧实现一致。
+   * "Project title" embed of the in-conversation setting card (D89 / D92 WP7
+   * step 5, ported from the old dialog's embedded branch): the `expected` /
+   * `onConflict` / `messageId` concurrency semantics are unchanged.
    */
   let {
     conversationId,
@@ -33,7 +34,7 @@
 
   const conversation = $derived(chat.conversations.find((c) => c.id === conversationId) ?? null);
 
-  // 预填（Bot 建议）优先；没有就用当前标题。
+  // Prefill (the bot's suggestion) first; fall back to the current title.
   $effect(() => {
     if (cardTitleReady) return;
     const wanted = prefill?.title;

@@ -8,8 +8,10 @@
   import { applySettingItem } from './apply';
 
   /**
-   * 对话内设置卡的「项目负责人」内嵌（D92 WP7 §4 步骤 5）：成员单选，当前负责人预选，
-   * 预填 `botId` 优先。负责人必须是成员，所以名册就是当前成员表。
+   * "Project lead" embed of the in-conversation setting card (D92 WP7 step 5):
+   * a single-choice member list with the current lead preselected and the
+   * prefilled `botId` taking precedence. The lead must be a member, so the
+   * roster is exactly the current member table.
    */
   let {
     conversationId,
@@ -36,7 +38,7 @@
     chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
   );
 
-  // 预填（Bot 建议）优先；没有就选当前负责人。
+  // Prefill (the bot's suggestion) first; fall back to the current lead.
   $effect(() => {
     if (selectedReady) return;
     const wanted = prefill?.botId;

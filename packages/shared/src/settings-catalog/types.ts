@@ -186,13 +186,13 @@ export const CARD_KEYS = [
   'unattended',
   /** 污点防护开关（`UnattendedSection` 的对应行）。 */
   'taint-guard',
-  /** 项目名称（项目详情页 / 暂由 `GroupSettingsDialog` 的改名片段代管，WP7 换专属内嵌）。 */
+  /** 项目名称（项目详情页概览的标题输入，设置卡走 `ProjectTitleCard` 内嵌）。 */
   'project-title',
-  /** 项目成员（同上；组件自己调 projects RPC）。 */
+  /** 项目成员（详情页成员分区；卡片组件自己调 projects RPC）。 */
   'project-members',
-  /** 项目目标（WP7 的 `ProjectSettingsPage` 内嵌；WP4 暂走 link 兜底）。 */
+  /** 项目目标（详情页概览的目标输入，设置卡走 `ProjectGoalCard` 内嵌）。 */
   'project-goal',
-  /** 项目负责人（WP7 的 `ProjectMembersEditor` 内嵌；WP4 暂走 link 兜底）。 */
+  /** 项目负责人（详情页成员分区，设置卡走 `ProjectLeadCard` 内嵌）。 */
   'project-lead',
   /** 工作目录保护规则 / 放行端口（`WorkdirSettingsDialog`，user-only，组件自己保存）。 */
   'workdir-settings',

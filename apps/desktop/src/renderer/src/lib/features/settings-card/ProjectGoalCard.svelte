@@ -8,8 +8,10 @@
   import { applySettingItem } from './apply';
 
   /**
-   * 对话内设置卡的「项目目标」内嵌（D92 WP7 §4 步骤 5；WP4 时暂由成员段代管）。
-   * 目标不能经卡清空（core 的 adapter 拒绝空目标）——清空走详情页。
+   * "Project goal" embed of the in-conversation setting card (D92 WP7 step 5;
+   * WP4 had parked it on the members branch). The goal cannot be cleared via
+   * the card (the core adapter rejects an empty goal) — clearing goes through
+   * the details page.
    */
   let {
     conversationId,
@@ -33,7 +35,7 @@
 
   const conversation = $derived(chat.conversations.find((c) => c.id === conversationId) ?? null);
 
-  // 预填（Bot 建议）优先；没有就用当前目标。
+  // Prefill (the bot's suggestion) first; fall back to the current goal.
   $effect(() => {
     if (cardGoalReady) return;
     const wanted = prefill?.goal;

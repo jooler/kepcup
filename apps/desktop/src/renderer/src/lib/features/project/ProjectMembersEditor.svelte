@@ -12,9 +12,9 @@
   /**
    * Members section of the project details page (D92 §11.3): the lead on top
    * with the crown badge, per-row make-lead / remove actions, the member
-   * profile dialog (ported from the old right-panel GroupInfo) and the shared
-   * member picker. The lead's remove button is disabled — the backend would
-   * reject it with PROJECT_LEAD_REQUIRED; replace the lead first.
+   * profile dialog (ported from the old right-panel member info) and the
+   * shared member picker. The lead's remove button is disabled — the backend
+   * would reject it with PROJECT_LEAD_REQUIRED; replace the lead first.
    */
   let { conversationId }: { conversationId: string } = $props();
 
@@ -40,7 +40,8 @@
   const memberIds = $derived(members.map((member) => member.bot.id));
 
   let detail = $state<ProjectMemberView | null>(null);
-  // 成员名片：仅当该 Bot 在本项目组对话已拉起浏览器时显示「查看浏览器」。
+  // Member profile dialog: show "view browser" only when this bot has a live
+  // browser page in this project conversation.
   const detailBrowserOpen = $derived(
     detail !== null && hasBrowserPage(browserPages.pages, detail.bot.id, conversationId),
   );
@@ -99,7 +100,8 @@
   >
     <X class="size-3.5" aria-hidden="true" />
   </button>
-  <!-- 与单聊右栏同一套 botId×conversationId：仅该成员在本项目组开着页面时显示。 -->
+  <!-- Same botId×conversationId pair as the direct-chat right panel: the show
+       button appears only while this member keeps a browser page open here. -->
   {#if memberBrowserOpen}
     <Button
       variant="outline"
@@ -118,7 +120,8 @@
   <ul class="space-y-1">
     {#each members as member (member.bot.id)}
       {#if member.bot.id === leadBotId}
-        <!-- 设置目录深链 project.lead 的落点（负责人行；静态字面量供锚点扫描识别）。 -->
+        <!-- Deep-link target of the settings-catalog item project.lead (the
+             lead's row; a static literal so the anchor scan picks it up). -->
         <li
           class="flex items-center gap-1 rounded-md border p-1.5"
           data-testid={`project-member-row-${member.bot.id}`}

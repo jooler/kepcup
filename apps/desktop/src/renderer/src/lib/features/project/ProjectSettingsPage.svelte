@@ -21,10 +21,12 @@
   import { planGoalSave, planTitleSave } from './project-settings-model';
 
   /**
-   * 项目详情页（D92 41 §11.3，WP7）：内容区页面（不是对话框）。五个分区——概览 /
-   * 成员 / 授权 / 定时与监看 / 危险区——取代旧右栏 GroupInfo 与群设置弹框。
-   * `shell.projectSettingsSection` 驱动滚动（深链 / 导航 / 成员弹层的「管理成员…」
-   * 都汇到它）；访问授权的撤销保持一步可达（安全控制）。
+   * Project details page (D92 41 §11.3, WP7): a content-area page, not a
+   * dialog. Five sections — overview / members / grants / schedules & watches /
+   * danger — replacing the old right-panel member info and the group settings
+   * dialog. `shell.projectSettingsSection` drives scrolling (deep links, the
+   * nav and the members menu's "manage members" all converge on it); revoking
+   * access grants stays one step away (a security control).
    */
   let { conversationId }: { conversationId: string } = $props();
 
@@ -40,16 +42,17 @@
     return leadBotId === null ? null : (members.find((m) => m.bot.id === leadBotId) ?? null);
   });
 
-  // 会话已切走 / 不是项目组：不留空详情页，内容区收回到沟通。
+  // Conversation switched away / not a project: drop the empty page and fold
+  // the content area back to the chat view.
   $effect(() => {
     if (!valid) shell.projectView = 'chat';
   });
 
-  // --- 分区导航与滚动 -------------------------------------------------------------
+  // --- Section navigation and scrolling -----------------------------------------
 
   const sectionEls: Partial<Record<ProjectSettingsSection, HTMLElement>> = {};
 
-  /** 分区变化（含首次挂载）滚到对应分区；点导航也走这里。 */
+  /** Scroll to the section whenever it changes (mount included); nav clicks go through here too. */
   $effect(() => {
     const section = shell.projectSettingsSection;
     sectionEls[section]?.scrollIntoView({ block: 'start' });
@@ -60,12 +63,13 @@
     sectionEls[section]?.scrollIntoView({ block: 'start' });
   }
 
-  // --- 项目名称（失焦 / 回车保存；空串还原；沿用 GroupInfo 的 renaming 防抖） -------
+  // --- Title (save on blur / Enter; empty restores; the in-flight guard keeps
+  // Enter-then-blur from submitting twice — same trick as the old right panel) ---
 
   let titleDraft = $state('');
-  /** 上次同步进输入框的标题（只给同步 effect 比对用，不需要响应式）。 */
+  /** Last title synced into the input (comparison only, not reactive). */
   let syncedTitle: string | null = null;
-  /** 保存请求在途：回车后紧跟的 blur 不再重复提交。 */
+  /** Save request in flight: the blur right after Enter must not resubmit. */
   let renaming = false;
 
   $effect(() => {
@@ -89,7 +93,8 @@
     if (plan.kind === 'skip') return;
     renaming = true;
     try {
-      // 失败（已 toast）时退回已保存的标题，不让输入框停在没生效的名字上。
+      // On failure (already toasted) fall back to the saved title so the
+      // input never sticks at a name that did not take effect.
       if (!(await chat.renameProject(conversationId, plan.value))) titleDraft = savedTitle();
     } finally {
       renaming = false;
@@ -99,7 +104,7 @@
   function onTitleKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
     if (event.isComposing) return;
     if (event.key === 'Enter') {
-      // 交给 blur 统一保存，回车 + 失焦只提交一次。
+      // Leave the save to blur: Enter + blur submits exactly once.
       event.preventDefault();
       event.currentTarget.blur();
     } else if (event.key === 'Escape') {
@@ -109,10 +114,10 @@
     }
   }
 
-  // --- 项目目标（失焦保存；清空 = 清除目标） ----------------------------------------
+  // --- Goal (save on blur; emptying clears the goal) ----------------------------
 
   let goalDraft = $state('');
-  /** 上次同步进输入框的目标（同 syncedTitle，非响应式）。 */
+  /** Last goal synced into the textarea (like syncedTitle, not reactive). */
   let syncedGoal: string | null = null;
   let savingGoal = false;
 
@@ -139,7 +144,7 @@
     }
   }
 
-  // --- 授权（照搬 GroupInfo 的按 Bot 分组，一步可达的安全控制） ----------------------
+  // --- Grants (grouped per bot like the old right panel; one step away) ----------
 
   const grants = $derived(permissions.grants);
   const grantGroups = $derived.by(() => {
@@ -156,7 +161,7 @@
     return members.find((m) => m.bot.id === botId)?.bot.name ?? chat.botName(botId);
   }
 
-  // --- 危险区（两步确认删除） --------------------------------------------------------
+  // --- Danger zone (two-step delete confirmation) ---------------------------------
 
   let confirmDelete = $state(false);
   let deleting = $state(false);
@@ -165,7 +170,8 @@
     if (deleting) return;
     deleting = true;
     try {
-      // store 侧 close() 清掉 current，页面随视图收口回到会话列表。
+      // The store's close() clears current; the view invariant folds the
+      // shell back to the conversation list.
       await chat.deleteConversation(conversationId);
     } finally {
       deleting = false;
@@ -174,7 +180,8 @@
 </script>
 
 {#if !(conversation !== null && conversation.type === 'project')}
-  <!-- 会话切走 / 非项目组的过渡帧：effect 会把视图收回沟通，这里不画内容。 -->
+  <!-- Transitional frame while the conversation switches away: the effect
+       above folds the view back to chat; render nothing here. -->
   <div class="h-full" data-testid="project-settings-page"></div>
 {:else}
   <div class="flex h-full min-h-0 flex-col" data-testid="project-settings-page">
@@ -196,7 +203,7 @@
       </nav>
 
       <div class="min-h-0 flex-1 space-y-8 overflow-y-auto p-4 text-sm">
-        <!-- 概览 -->
+        <!-- Overview -->
         <section
           class="space-y-6"
           data-testid="project-settings-section-overview"
@@ -297,7 +304,7 @@
           </div>
         </section>
 
-        <!-- 成员 -->
+        <!-- Members -->
         <section
           data-testid="project-settings-section-members"
           bind:this={sectionEls.members}
@@ -305,7 +312,7 @@
           <ProjectMembersEditor {conversationId} />
         </section>
 
-        <!-- 授权（安全控制：顶栏 ⚙ 一步可达，撤销不藏深） -->
+        <!-- Grants (security control: one step from the header gear) -->
         <section class="space-y-2" data-testid="project-settings-section-grants" bind:this={sectionEls.grants}>
           <p class="text-sm font-medium">{t('projectSettings.grantsTitle')}</p>
           {#if grants.length === 0}
@@ -340,7 +347,7 @@
           {/if}
         </section>
 
-        <!-- 定时与监看 -->
+        <!-- Schedules & watches -->
         <section
           class="space-y-2"
           data-testid="project-settings-section-schedules"
@@ -352,7 +359,7 @@
           <WatchesPanel {conversationId} testid="project-watches" />
         </section>
 
-        <!-- 危险区 -->
+        <!-- Danger zone -->
         <section
           class="space-y-2"
           data-testid="project-settings-section-danger"
