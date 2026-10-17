@@ -70,8 +70,8 @@ describe('settings catalog integrity', () => {
       'profile.user-facts',
       'group.title',
       'group.members',
-      'project.protect-rules',
-      'project.ports',
+      'workdir.protect-rules',
+      'workdir.ports',
       'hardware.microphone',
       'hardware.camera',
       'general.theme',
@@ -124,8 +124,8 @@ describe('settings catalog integrity', () => {
         'environment.allowlist',
         'environment.sandbox',
         'environment.toolchains',
-        'project.ports',
-        'project.protect-rules',
+        'workdir.ports',
+        'workdir.protect-rules',
         'unattended.enable',
       ].sort(),
     );
@@ -170,7 +170,7 @@ describe('settings catalog integrity', () => {
   it('matches the store scope: bot items store on the bot, global items never do', () => {
     for (const entry of items) {
       if (entry.store.kind === 'bot') expect(entry.scope, entry.id).toBe('bot');
-      if (entry.scope === 'group' || entry.scope === 'project') {
+      if (entry.scope === 'group' || entry.scope === 'workdir') {
         expect(entry.store.kind, entry.id).toBe('service');
       }
     }

@@ -25,7 +25,7 @@ const TOOL_VERBS: Record<string, string> = {
   get_run: '查看执行记录',
   request_access: '申请访问授权',
   request_unsandboxed: '申请沙箱外执行',
-  acquire_project_write: '申请项目写入',
+  acquire_workdir_write: '申请工作目录写入',
   git_remote: '执行 git 操作',
   request_environment: '安装运行环境',
   create_skill: '生成技能',

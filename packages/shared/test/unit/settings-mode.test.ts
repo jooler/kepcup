@@ -342,7 +342,7 @@ describe('effectiveMode: individual rules', () => {
     for (const id of [
       'environment.sandbox',
       'environment.allowlist',
-      'project.protect-rules',
+      'workdir.protect-rules',
       'connections.taint-guard',
     ]) {
       expect(effectiveMode(withCard(item(id)), ctx()).acceptValues, id).toBe(false);
@@ -420,11 +420,11 @@ describe('effectiveMode: individual rules', () => {
       mode: 'confirm',
       acceptValues: true,
     });
-    expect(effectiveMode(item('project.protect-rules'), ctx())).toMatchObject({
+    expect(effectiveMode(item('workdir.protect-rules'), ctx())).toMatchObject({
       mode: 'user-only',
       acceptValues: false,
     });
-    expect(effectiveMode(item('project.ports'), ctx()).acceptValues).toBe(false);
+    expect(effectiveMode(item('workdir.ports'), ctx()).acceptValues).toBe(false);
     expect(effectiveMode(item('developer.custom-mcp'), ctx())).toMatchObject({
       mode: 'link',
       rules: [],

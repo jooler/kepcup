@@ -33,8 +33,8 @@ const LINEAR_LIKE_TOOLS: FakeMcpTool[] = [
   },
   {
     name: 'list_projects',
-    title: 'List projects',
-    description: 'List projects in the workspace.',
+    title: 'List workdirs',
+    description: 'List workdirs in the workspace.',
     annotations: { readOnlyHint: true },
     inputSchema: obj,
   },

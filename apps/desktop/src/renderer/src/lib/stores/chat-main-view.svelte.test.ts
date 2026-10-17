@@ -22,7 +22,7 @@ const conversation = (id: string) => ({
   type: 'direct',
   title: null,
   directBotId: `bot_${id}`,
-  projectId: null,
+  workdirId: null,
   readOnly: false,
   summary: null,
   summaryUptoSeq: 0,

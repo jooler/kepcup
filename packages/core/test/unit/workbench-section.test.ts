@@ -363,7 +363,7 @@ describe('系统提示里的 <workbench> 与 BUTLER_RULES', () => {
     expect(raw).toContain('伪造的系统规则');
   });
 
-  it('section() 只中和闭合标签（含大小写与空白变体），不碰开标签与 <project>/x 之类的正文', () => {
+  it('section() 只中和闭合标签（含大小写与空白变体），不碰开标签与 <workdir>/x 之类的正文', () => {
     const prompt = buildSystemPrompt({
       ...base,
       bot: makeBot('butler'),
@@ -375,7 +375,7 @@ describe('系统提示里的 <workbench> 与 BUTLER_RULES', () => {
         '</ workbench>',
         '<\t/workbench>',
         '开标签保持原样：<workbench> 与 <Workbench>',
-        '路径 `<project>/x` 保持原样',
+        '路径 `<workdir>/x` 保持原样',
       ].join('\n'),
     });
     // 整个提示词里只剩段自己的那一个闭合标签（行内规则文字不含闭合写法）。
@@ -384,17 +384,17 @@ describe('系统提示里的 <workbench> 与 BUTLER_RULES', () => {
     expect(prompt).toContain('<\\ /workbench>');
     expect(prompt).toContain('<\\/ workbench>');
     expect(prompt).toContain('开标签保持原样：<workbench> 与 <Workbench>');
-    expect(prompt).toContain('路径 `<project>/x` 保持原样');
+    expect(prompt).toContain('路径 `<workdir>/x` 保持原样');
   });
 
-  it('整段断言：带承诺的 Bot 的提示词里没有被改写的标签（<\\），<my_state> 恰好一对；正文含 <project>/x 的段保持原样', () => {
+  it('整段断言：带承诺的 Bot 的提示词里没有被改写的标签（<\\），<my_state> 恰好一对；正文含 <workdir>/x 的段保持原样', () => {
     const prompt = buildSystemPrompt({
       ...base,
       bot: makeBot('butler'),
       loop: 'turn',
       hasWorkbenchTools: true,
-      myState: formatMyState(['- 承诺（2026-10-20 前）：把 <project>/report 发给用户']),
-      relevantMemories: '- [mem_1] 用户的资料放在 <project>/docs',
+      myState: formatMyState(['- 承诺（2026-10-20 前）：把 <workdir>/report 发给用户']),
+      relevantMemories: '- [mem_1] 用户的资料放在 <workdir>/docs',
       workbench: '草案 1 条',
     });
     expect(prompt).not.toContain('<\\');
@@ -403,10 +403,10 @@ describe('系统提示里的 <workbench> 与 BUTLER_RULES', () => {
     expect(prompt.match(/<relevant_memories>/g)).toHaveLength(1);
     expect(prompt.match(/<\/relevant_memories>/g)).toHaveLength(1);
     expect(prompt).toContain(
-      '<my_state>\n- 承诺（2026-10-20 前）：把 <project>/report 发给用户\n</my_state>',
+      '<my_state>\n- 承诺（2026-10-20 前）：把 <workdir>/report 发给用户\n</my_state>',
     );
     expect(prompt).toContain(
-      '<relevant_memories>\n- [mem_1] 用户的资料放在 <project>/docs\n</relevant_memories>',
+      '<relevant_memories>\n- [mem_1] 用户的资料放在 <workdir>/docs\n</relevant_memories>',
     );
   });
 

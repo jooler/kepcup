@@ -206,7 +206,7 @@ describe('D75 supervisor turns (W2)', () => {
         'forward_task_result',
       ]),
     );
-    for (const name of ['write', 'edit', 'bash', 'request_access', 'acquire_project_write']) {
+    for (const name of ['write', 'edit', 'bash', 'request_access', 'acquire_workdir_write']) {
       expect(turnTools).not.toContain(name);
     }
     expect(firstUserText(turn1Request)).not.toContain('<tasks>');

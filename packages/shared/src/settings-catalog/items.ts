@@ -645,7 +645,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'service', methods: ['browserProfiles.create', 'browserProfiles.rename'] },
   }),
 
-  // --- 群 / 项目 ----------------------------------------------------------
+  // --- 群 / 工作目录 ----------------------------------------------------------
   item({
     id: 'group.title',
     group: 'group',
@@ -673,33 +673,33 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'service', methods: ['groups.addMembers', 'groups.removeMember'] },
   }),
   item({
-    id: 'project.protect-rules',
-    group: 'project',
-    title: '项目保护规则',
-    summary: '项目里哪些文件不许读、不许写（denyRead / denyWrite）',
+    id: 'workdir.protect-rules',
+    group: 'workdir',
+    title: '工作目录保护规则',
+    summary: '工作目录里哪些文件不许读、不许写（denyRead / denyWrite）',
     keywords: ['保护规则', 'denyRead', 'denyWrite', '敏感文件'],
-    scope: 'project',
+    scope: 'workdir',
     fields: [
       field('denyRead', '禁止读取', 'text', { multiple: true }),
       field('denyWrite', '禁止写入', 'text', { multiple: true }),
     ],
     write: write('user-only', { widensPermission: true }),
-    card: 'project-settings',
-    deepLink: { surface: 'project-dialog', section: 'project-settings', anchor: 'project-protect' },
-    store: { kind: 'service', methods: ['projects.update'] },
+    card: 'workdir-settings',
+    deepLink: { surface: 'workdir-dialog', section: 'workdir-settings', anchor: 'workdir-protect' },
+    store: { kind: 'service', methods: ['workdirs.update'] },
   }),
   item({
-    id: 'project.ports',
-    group: 'project',
-    title: '项目放行端口',
-    summary: '项目里允许访问的本机端口',
+    id: 'workdir.ports',
+    group: 'workdir',
+    title: '工作目录放行端口',
+    summary: '工作目录里允许访问的本机端口',
     keywords: ['端口', '放行', 'localhost'],
-    scope: 'project',
+    scope: 'workdir',
     fields: [field('ports', '端口', 'number', { multiple: true })],
     write: write('user-only', { widensPermission: true }),
-    card: 'project-settings',
-    deepLink: { surface: 'project-dialog', section: 'project-settings', anchor: 'project-ports' },
-    store: { kind: 'service', methods: ['projects.update'] },
+    card: 'workdir-settings',
+    deepLink: { surface: 'workdir-dialog', section: 'workdir-settings', anchor: 'workdir-ports' },
+    store: { kind: 'service', methods: ['workdirs.update'] },
   }),
 
   // --- 硬件（渲染层）------------------------------------------------------

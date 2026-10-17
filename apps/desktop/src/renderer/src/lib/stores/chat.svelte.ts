@@ -472,13 +472,13 @@ class ChatState {
    */
   async answerGroupSetup(
     conversationId: string,
-    step: 'title' | 'purpose' | 'members' | 'project',
+    step: 'title' | 'purpose' | 'members' | 'workdir',
     value: string | string[] | null,
   ): Promise<boolean> {
     const payload =
       step === 'members'
         ? { conversationId, step, botIds: value as string[] }
-        : step === 'project'
+        : step === 'workdir'
           ? { conversationId, step, path: value as string | null }
           : { conversationId, step, text: value as string };
     try {

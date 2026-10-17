@@ -472,7 +472,7 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('这一轮只读，任务可读写');
     expect(prompt).not.toContain('沙箱状态');
     expect(prompt).not.toContain('<recommended_skills>');
-    expect(prompt).not.toContain('acquire_project_write');
+    expect(prompt).not.toContain('acquire_workdir_write');
   });
 
   it('turn: 媒体生成路由——真实媒体文件派任务经工具产出，不推第三方工具', () => {
@@ -528,7 +528,7 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('本次执行结束时未取回的分支会被中止');
     expect(prompt).not.toContain('自动送回对话');
     expect(prompt).not.toContain('delegate_to_bot');
-    expect(prompt).toContain('acquire_project_write');
+    expect(prompt).toContain('acquire_workdir_write');
     expect(prompt).toContain('沙箱状态：可用');
     expect(prompt).toContain('<recommended_skills>');
     expect(prompt).not.toContain('forward_task_result');

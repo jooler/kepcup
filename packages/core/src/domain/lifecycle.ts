@@ -264,7 +264,7 @@ export class LifecycleService {
     // Approvals have no FK; clean them by hand. Pending ones were already
     // cancelled by abortRunsForConversation. Grants cascade via FK.
     mainDb.prepare('delete from approvals where conversation_id = ?').run(conversationId);
-    // Run-change records (P04) have no FK on conversation_id; the project's
+    // Run-change records (P04) have no FK on conversation_id; the workdir's
     // files and shadow repository are untouched (docs/dev/03-data-model.md).
     mainDb.prepare('delete from run_changes where conversation_id = ?').run(conversationId);
     // Chains cascade via FK (P05).

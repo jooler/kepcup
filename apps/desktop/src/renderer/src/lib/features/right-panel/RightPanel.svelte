@@ -21,7 +21,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
-  import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
+  import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import GroupInfo from './GroupInfo.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
@@ -465,12 +465,12 @@
         data-testid="profile-tab"
       >
         <div class="space-y-4">
-          <!-- 项目目录（P04）：绑定在对话上，配置 tab 内手动选择/切换；
+          <!-- 工作目录（P04）：绑定在对话上，配置 tab 内手动选择/切换；
                执行中切换由选择器内部禁用。 -->
           {#if conversation}
-            <ProjectSelector
+            <WorkdirSelector
               conversationId={conversation.id}
-              projectId={conversation.projectId}
+              workdirId={conversation.workdirId}
               disabled={conversation.readOnly}
             />
           {/if}

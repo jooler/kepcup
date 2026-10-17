@@ -41,7 +41,7 @@
     change = null;
     pendingText = null;
     try {
-      const result = (await core.call('projects.diff', { runId: id })) as {
+      const result = (await core.call('workdirs.diff', { runId: id })) as {
         change: RunChange | null;
         diffText: string;
       };

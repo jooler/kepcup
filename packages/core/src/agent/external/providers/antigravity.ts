@@ -25,7 +25,7 @@ import { switchToMode } from './mode-tier.js';
  *   私有 home 同时隔离了全局 `config/mcp_config.json` 合并、全局 hooks 与
  *   工作区信任表；
  * - **工作区信任**：不设 `AGY_ACP_DISABLE_WORKSPACE_TRUST`（设了等于信任所有
- *   工作区，project 里的 `.agents/` / `.gemini/` hooks.json 会在沙箱外自动执行）；
+ *   工作区，workdir 里的 `.agents/` / `.gemini/` hooks.json 会在沙箱外自动执行）；
  *   ACP 会话加载 hooks 时不弹信任询问，未知信任状态的工作区 hooks 被抑制——
  *   私有 home 下信任表为空，等于全部抑制；
  * - 档位（modes：default / auto_edit / yolo）：**一律 `default`**（每个工具调用都

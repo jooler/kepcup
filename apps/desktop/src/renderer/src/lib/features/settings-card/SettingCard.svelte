@@ -100,7 +100,7 @@
     const context = {
       botId: targetBotId,
       conversationId: content.target.conversationId ?? chat.currentId,
-      projectId: content.target.projectId ?? chat.current?.conversation.projectId ?? null,
+      workdirId: content.target.workdirId ?? chat.current?.conversation.workdirId ?? null,
       prefill,
       agent: (id: string) => agentsStore.get(id),
       defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -330,7 +330,7 @@
           {prefill}
           botId={targetBotId}
           conversationId={content.target.conversationId ?? chat.currentId}
-          projectId={content.target.projectId ?? chat.current?.conversation.projectId ?? null}
+          workdirId={content.target.workdirId ?? chat.current?.conversation.workdirId ?? null}
           expected={before}
           messageId={message.id}
           onSaved={embedSaved}

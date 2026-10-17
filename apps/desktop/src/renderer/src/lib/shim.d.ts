@@ -23,7 +23,7 @@ declare global {
       portNonce: string;
       platform: {
         info(): Promise<PlatformInfo>;
-        /** System directory picker (project selector, P04); null when cancelled. */
+        /** System directory picker (workdir selector, P04); null when cancelled. */
         selectDirectory(): Promise<string | null>;
         /** System file picker (D73 P2 MCPB install); null when cancelled. */
         selectFile(extensions: string[]): Promise<string | null>;

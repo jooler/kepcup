@@ -27,8 +27,8 @@
   import BackgroundTasksSection from '$lib/features/settings/BackgroundTasksSection.svelte';
   import UnattendedSection from '$lib/features/settings/UnattendedSection.svelte';
   import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
-  import ProjectSettingsDialog from '$lib/features/projects/ProjectSettingsDialog.svelte';
-  import { projects } from '$lib/stores/projects.svelte';
+  import WorkdirSettingsDialog from '$lib/features/workdirs/WorkdirSettingsDialog.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import { embeddedAgentId } from './card-components';
   import { capabilityOfItem, prefillString, sensorOfItem } from './setting-card-model';
 
@@ -46,7 +46,7 @@
     prefill,
     botId,
     conversationId = null,
-    projectId = null,
+    workdirId = null,
     expected = null,
     messageId,
     testidPrefix = 'setting-card',
@@ -60,8 +60,8 @@
     botId: string | null;
     /** 群范围条目的群会话。 */
     conversationId?: string | null;
-    /** 项目范围条目的项目。 */
-    projectId?: string | null;
+    /** 工作目录范围条目的工作目录。 */
+    workdirId?: string | null;
     expected?: SettingValues | null;
     messageId?: string | undefined;
     testidPrefix?: string;
@@ -75,7 +75,7 @@
     embeddedAgentId({
       botId,
       conversationId,
-      projectId,
+      workdirId,
       prefill,
       agent: (id) => agentsStore.get(id),
       defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -93,8 +93,8 @@
     return { id: botId, name: bot !== undefined && bot.name.length > 0 ? bot.name : botId };
   });
 
-  const project = $derived(
-    projectId === null ? null : projects.boundOf(conversationId, projectId),
+  const workdir = $derived(
+    workdirId === null ? null : workdirs.boundOf(conversationId, workdirId),
   );
 
   $effect(() => {
@@ -104,9 +104,9 @@
   });
 
   $effect(() => {
-    if (item.card !== 'project-settings') return;
-    projects.start();
-    if (projects.recent.length === 0) void projects.refresh().catch(() => undefined);
+    if (item.card !== 'workdir-settings') return;
+    workdirs.start();
+    if (workdirs.recent.length === 0) void workdirs.refresh().catch(() => undefined);
   });
 </script>
 
@@ -227,11 +227,11 @@
   <SandboxSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-allowlist'}
   <AllowlistSection embedded {prefill} onSaved={() => onSaved()} />
-{:else if item.card === 'project-settings' && project !== null}
-  <ProjectSettingsDialog
+{:else if item.card === 'workdir-settings' && workdir !== null}
+  <WorkdirSettingsDialog
     embedded
-    focus={item.id === 'project.ports' ? 'ports' : 'protect'}
-    {project}
+    focus={item.id === 'workdir.ports' ? 'ports' : 'protect'}
+    {workdir}
     onSaved={() => onSaved()}
   />
 {:else if item.card === 'provider-setup'}

@@ -88,20 +88,20 @@ async function mockDirectoryPicker(app: ElectronApplication, dir: string): Promi
   }, dir);
 }
 
-function makeProjectDir(prefix: string): string {
+function makeWorkdirDir(prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n');
   writeFileSync(path.join(dir, 'README.md'), '# demo\n');
   return dir;
 }
 
-/** 项目选择器已移入右栏「配置」tab：右栏收起时先展开再切 tab，然后打开选择器。 */
-async function openProjectSelector(page: Page): Promise<void> {
+/** 工作目录选择器已移入右栏「配置」tab：右栏收起时先展开再切 tab，然后打开选择器。 */
+async function openWorkdirSelector(page: Page): Promise<void> {
   if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
   await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await page.locator('[data-testid="project-selector-trigger"]').click();
+  await page.locator('[data-testid="workdir-selector-trigger"]').click();
 }
 
 // D75 W3（docs/design/30-supervisor-and-tasks.md §4.3 / §6 / §2.4.6）：派任务 →
@@ -241,45 +241,45 @@ test('start a task → task card → progress attributed → inject line → res
   }
 });
 
-test('a project write task cancelled from its card leaves disk changes and no revert UI', async () => {
+test('a workdir write task cancelled from its card leaves disk changes and no revert UI', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-tasks-project-');
+  const session = await startSession('kepcup-e2e-tasks-workdir-');
   const { page, app, llm } = session;
-  const project = makeProjectDir('kepcup-e2e-tasks-proj-');
+  const workdir = makeWorkdirDir('kepcup-e2e-tasks-proj-');
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小项任');
-    await mockDirectoryPicker(app, project);
-    await openProjectSelector(page);
-    await page.locator('[data-testid="project-pick-new"]').click();
+    await mockDirectoryPicker(app, workdir);
+    await openWorkdirSelector(page);
+    await page.locator('[data-testid="workdir-pick-new"]').click();
     await expect(
-      page.locator('[data-testid="system-message"]').filter({ hasText: '项目已绑定' }),
+      page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="project-picker-dialog"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
 
     const held = step().inTask().hold().replyText('不会走到这里');
     llm.script('mock-main', [
-      startTask('改项目', true),
-      step().inTurn().replyText('好的，开始改项目'),
+      startTask('改工作目录', true),
+      step().inTurn().replyText('好的，开始改工作目录'),
       step().inTask().replyToolCall('write', { path: 'demo.txt', content: 'demo' }),
       held,
     ]);
-    await send(page, '改项目');
-    const card = taskCard(page, '改项目');
+    await send(page, '改工作目录');
+    const card = taskCard(page, '改工作目录');
     await expect(card).toHaveAttribute('data-task-state', 'running', { timeout: 60_000 });
     await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
-    expect(existsSync(path.join(project, 'demo.txt'))).toBe(true);
+    expect(existsSync(path.join(workdir, 'demo.txt'))).toBe(true);
 
     await card.locator('[data-testid="task-cancel"]').click();
     await expect(card).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(card.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card.locator('[data-testid="task-revert"]')).toHaveCount(0);
-    expect(existsSync(path.join(project, 'demo.txt'))).toBe(true);
-    expect(readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# demo\n');
+    expect(existsSync(path.join(workdir, 'demo.txt'))).toBe(true);
+    expect(readFileSync(path.join(workdir, 'README.md'), 'utf8')).toBe('# demo\n');
   } finally {
     llm.releaseAll();
-    rmSync(project, { recursive: true, force: true });
+    rmSync(workdir, { recursive: true, force: true });
     await closeSession(session);
   }
 });

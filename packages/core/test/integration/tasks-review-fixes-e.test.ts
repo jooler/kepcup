@@ -461,10 +461,10 @@ describe('M4: bounded re-delivery; no re-delivery to a live turn', () => {
     const { core } = stack;
     const bot = await makeBot(core, '阿崩');
     const conv = await openDirect(core, bot.id);
-    const runtime = stack.core.services.projectRuntime!;
-    const original = runtime.boundProject.bind(runtime);
+    const runtime = stack.core.services.workdirRuntime!;
+    const original = runtime.boundWorkdir.bind(runtime);
     // Every turn throws while building its context (before the engine starts).
-    runtime.boundProject = () => {
+    runtime.boundWorkdir = () => {
       throw new Error('boom before the engine');
     };
     try {
@@ -497,7 +497,7 @@ describe('M4: bounded re-delivery; no re-delivery to a live turn', () => {
       orchestrator(stack).tasks.sweep(now + TASK_REDELIVER_AFTER_MS + 60_000);
       expect(runsOf(stack, conv.id, 'turn')).toHaveLength(TASK_REDELIVER_MAX_ATTEMPTS);
     } finally {
-      runtime.boundProject = original;
+      runtime.boundWorkdir = original;
     }
   }, 60_000);
 

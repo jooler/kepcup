@@ -90,28 +90,28 @@ describe('option selection (optionId whitelist)', () => {
 });
 
 describe('agent config hash (review round 2)', () => {
-  it('stable for the same content; links out of the project and oversized trees never match', () => {
-    const project = mkdtempSync(path.join(root, 'cfg-'));
-    writeFileSync(path.join(project, 'AGENTS.md'), 'v1');
-    mkdirSync(path.join(project, '.codex'));
-    writeFileSync(path.join(project, '.codex', 'config.toml'), 'a=1');
-    const first = hashAgentConfigFiles(project, ['AGENTS.md', '.codex/']);
-    expect(hashAgentConfigFiles(project, ['AGENTS.md', '.codex/'])).toBe(first);
-    writeFileSync(path.join(project, '.codex', 'config.toml'), 'a=2');
-    expect(hashAgentConfigFiles(project, ['AGENTS.md', '.codex/'])).not.toBe(first);
-    // A link inside the project hashes its target's content.
-    writeFileSync(path.join(project, 'real.md'), 'inner');
-    symlinkSync(path.join(project, 'real.md'), path.join(project, '.codex', 'linked.md'));
-    const linked = hashAgentConfigFiles(project, ['.codex/']);
-    expect(hashAgentConfigFiles(project, ['.codex/'])).toBe(linked);
-    writeFileSync(path.join(project, 'real.md'), 'changed');
-    expect(hashAgentConfigFiles(project, ['.codex/'])).not.toBe(linked);
-    // A link out of the project: never rememberable.
+  it('stable for the same content; links out of the workdir and oversized trees never match', () => {
+    const workdir = mkdtempSync(path.join(root, 'cfg-'));
+    writeFileSync(path.join(workdir, 'AGENTS.md'), 'v1');
+    mkdirSync(path.join(workdir, '.codex'));
+    writeFileSync(path.join(workdir, '.codex', 'config.toml'), 'a=1');
+    const first = hashAgentConfigFiles(workdir, ['AGENTS.md', '.codex/']);
+    expect(hashAgentConfigFiles(workdir, ['AGENTS.md', '.codex/'])).toBe(first);
+    writeFileSync(path.join(workdir, '.codex', 'config.toml'), 'a=2');
+    expect(hashAgentConfigFiles(workdir, ['AGENTS.md', '.codex/'])).not.toBe(first);
+    // A link inside the workdir hashes its target's content.
+    writeFileSync(path.join(workdir, 'real.md'), 'inner');
+    symlinkSync(path.join(workdir, 'real.md'), path.join(workdir, '.codex', 'linked.md'));
+    const linked = hashAgentConfigFiles(workdir, ['.codex/']);
+    expect(hashAgentConfigFiles(workdir, ['.codex/'])).toBe(linked);
+    writeFileSync(path.join(workdir, 'real.md'), 'changed');
+    expect(hashAgentConfigFiles(workdir, ['.codex/'])).not.toBe(linked);
+    // A link out of the workdir: never rememberable.
     const outside = mkdtempSync(path.join(root, 'outside-'));
     writeFileSync(path.join(outside, 'x'), 'x');
-    symlinkSync(path.join(outside, 'x'), path.join(project, 'AGENTS.md.link'));
-    expect(hashAgentConfigFiles(project, ['AGENTS.md.link'])).not.toBe(
-      hashAgentConfigFiles(project, ['AGENTS.md.link']),
+    symlinkSync(path.join(outside, 'x'), path.join(workdir, 'AGENTS.md.link'));
+    expect(hashAgentConfigFiles(workdir, ['AGENTS.md.link'])).not.toBe(
+      hashAgentConfigFiles(workdir, ['AGENTS.md.link']),
     );
   });
 });
@@ -344,7 +344,7 @@ describe('unattended data-directory floor (agent_tool)', () => {
         'linux',
       ),
     ).toBe(true);
-    // A project cwd elsewhere: relative tokens stay outside.
+    // A workdir cwd elsewhere: relative tokens stay outside.
     expect(
       agentToolTouchesDataDir(
         payload({ command: 'rm -rf build', cwd: '/srv/proj' }),
@@ -394,9 +394,9 @@ describe('unattended data-directory floor (agent_tool)', () => {
     const userHome = path.join(root, 'u');
     const dataHome = path.join(userHome, '.kepcup');
     const workspace = path.join(dataHome, 'bots', 'b', 'workspaces', 'c');
-    const project = path.join(userHome, 'proj');
+    const workdir = path.join(userHome, 'proj');
     mkdirSync(path.join(workspace, 's', 't'), { recursive: true });
-    mkdirSync(path.join(project, 'sub'), { recursive: true });
+    mkdirSync(path.join(workdir, 'sub'), { recursive: true });
     if (!existsSync(path.join(workspace, 'l'))) symlinkSync(dataHome, path.join(workspace, 'l'));
     const verdict = (command: string, cwd: string) =>
       unattendedCommandVerdict(command, {
@@ -410,33 +410,33 @@ describe('unattended data-directory floor (agent_tool)', () => {
       ['mkdir -p s/t; cd s/t && rm -rf ../../../../../../skills', workspace],
       ['env -C s rm ../../../../../x', workspace],
       ['rm ../../../../main.db', workspace],
-      ['cd sub && rm ../../.kepcup/main.db', project],
-      ["cat ~/.kep'cup'/main.db", project],
-      [`cat ${userHome}/.kep""cup/main.db`, project],
-      ['cat ~/.kep*/main.db', project],
-      [`cat ${userHome}/.kepcu?/main.db`, project],
+      ['cd sub && rm ../../.kepcup/main.db', workdir],
+      ["cat ~/.kep'cup'/main.db", workdir],
+      [`cat ${userHome}/.kep""cup/main.db`, workdir],
+      ['cat ~/.kep*/main.db', workdir],
+      [`cat ${userHome}/.kepcu?/main.db`, workdir],
       ['cat l/main.db', workspace],
-      ['cp x "$HOME"/.kepcup/a', project],
-      ['cat ~/.kepcup/main.db', project],
-      ['git -C ../.. status', project],
-      ['make --directory=/tmp', project],
-      ['bash -c "rm x"', project],
-      ['xargs rm < list', project],
-      ['cat {a,b}', project],
-      ['cat ~root/x', project],
-      ['FOO=1 ls', project],
-      ['(cd .. && ls)', project],
+      ['cp x "$HOME"/.kepcup/a', workdir],
+      ['cat ~/.kepcup/main.db', workdir],
+      ['git -C ../.. status', workdir],
+      ['make --directory=/tmp', workdir],
+      ['bash -c "rm x"', workdir],
+      ['xargs rm < list', workdir],
+      ['cat {a,b}', workdir],
+      ['cat ~root/x', workdir],
+      ['FOO=1 ls', workdir],
+      ['(cd .. && ls)', workdir],
       ['rm x', dataHome],
     ];
     for (const [command, cwd] of bypasses) {
       expect({ command, safe: verdict(command, cwd).safe }).toEqual({ command, safe: false });
     }
     for (const [command, cwd] of [
-      ['npm test', project],
-      ['git status', project],
+      ['npm test', workdir],
+      ['git status', workdir],
       ['ls -la', workspace],
       ['cat notes.md | grep x > out.txt', workspace],
-      ['rm -rf build && mkdir build', project],
+      ['rm -rf build && mkdir build', workdir],
     ] as Array<[string, string]>) {
       expect({ command, safe: verdict(command, cwd).safe }).toEqual({ command, safe: true });
     }
@@ -465,10 +465,10 @@ describe('AgentPermissionBridge decisions', () => {
   const paths = resolvePaths(path.join(root, 'home'));
   const workspace = path.join(paths.home, 'bots', 'bot_a', 'workspaces', 'conv_a');
   const skillDir = path.join(paths.home, 'skills-library', 'demo@1');
-  const project = path.join(root, 'project');
+  const workdir = path.join(root, 'workdir');
   mkdirSync(workspace, { recursive: true });
   mkdirSync(skillDir, { recursive: true });
-  mkdirSync(project, { recursive: true });
+  mkdirSync(workdir, { recursive: true });
   const identity = {
     runId: 'run_a',
     botId: 'bot_a',
@@ -484,7 +484,7 @@ describe('AgentPermissionBridge decisions', () => {
     gateway: {
       checkPath: (_identity, input) =>
         gatewayKind === 'needs_lease'
-          ? { kind: 'needs_lease', resolvedPath: input, reason: 'project 写入需要先取得写入租约' }
+          ? { kind: 'needs_lease', resolvedPath: input, reason: 'workdir 写入需要先取得写入租约' }
           : {
               kind: 'needs_grant',
               resolvedPath: input,
@@ -526,7 +526,7 @@ describe('AgentPermissionBridge decisions', () => {
     toolCall: AcpRequestPermissionRequest['toolCall'],
     tier: 'read_only' | 'workspace' | 'ask' = 'workspace',
     provider: typeof genericAcpProvider = genericAcpProvider,
-    cwd = project,
+    cwd = workdir,
   ) =>
     bridge.decide(
       {
@@ -842,7 +842,7 @@ describe('AgentPermissionBridge decisions', () => {
         await decide({
           toolCallId: 'lease',
           kind: 'edit',
-          locations: [{ path: '/srv/other-project/a' }],
+          locations: [{ path: '/srv/other-workdir/a' }],
         })
       ).decision,
     ).toBe('rejected');
@@ -867,17 +867,17 @@ describe('AgentPermissionBridge decisions', () => {
     expect(inside.allowRead).toEqual(expect.arrayContaining([workspace, skillDir]));
     expect(inside.denyWrite).toContain(paths.toolchainsDir);
     expect(inside.denyWrite).not.toContain(paths.home);
-    expect(bridge.isolationFor(identity, project).denyWrite).toEqual([paths.home]);
+    expect(bridge.isolationFor(identity, workdir).denyWrite).toEqual([paths.home]);
   });
 });
 
-describe('unsandboxed commands without the bound project lease (D75 审查 M2)', () => {
+describe('unsandboxed commands without the bound workdir lease (D75 审查 M2)', () => {
   const paths = resolvePaths(path.join(root, 'home-m2'));
   const workspace = path.join(paths.home, 'bots', 'bot_m2', 'workspaces', 'conv_m2');
-  const project = path.join(root, 'project-m2');
+  const workdir = path.join(root, 'workdir-m2');
   mkdirSync(workspace, { recursive: true });
-  mkdirSync(path.join(project, 'src'), { recursive: true });
-  // A write task whose cwd is the workspace, in a project-bound conversation.
+  mkdirSync(path.join(workdir, 'src'), { recursive: true });
+  // A write task whose cwd is the workspace, in a workdir-bound conversation.
   const identity = {
     runId: 'run_task_m2',
     botId: 'bot_m2',
@@ -885,7 +885,7 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
     loopType: 'task' as const,
   };
   const requested: Array<Record<string, unknown>> = [];
-  let unleased: () => string | null = () => project;
+  let unleased: () => string | null = () => workdir;
   const bridge = new AgentPermissionBridge({
     paths,
     gateway: {
@@ -911,7 +911,7 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
     grants: { create: () => ({}) as never, listActive: () => [], hasEffectiveGrant: () => null },
     allowlist: { match: () => ({ exempt: false }) as never },
     skillDirs: () => [],
-    unleasedProject: () => unleased(),
+    unleasedWorkdir: () => unleased(),
     homeDir: path.join(root, 'user-home'),
     logger: { debug() {}, info() {}, warn() {}, error() {} } as never,
     platform: 'linux',
@@ -943,37 +943,37 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
       },
     );
 
-  it.skipIf(process.platform === 'win32')('refuses (no card) commands that reach into the project, run in it, or cannot be analysed', async () => {
+  it.skipIf(process.platform === 'win32')('refuses (no card) commands that reach into the workdir, run in it, or cannot be analysed', async () => {
     requested.length = 0;
-    unleased = () => project;
+    unleased = () => workdir;
     for (const [command, cwd] of [
-      [`rm -rf ${project}/src`, undefined],
-      ['touch notes.md', project],
-      ['touch src/x', path.join(project, 'src')],
-      [`cp out.txt ${path.dirname(project)}`, undefined],
+      [`rm -rf ${workdir}/src`, undefined],
+      ['touch notes.md', workdir],
+      ['touch src/x', path.join(workdir, 'src')],
+      [`cp out.txt ${path.dirname(workdir)}`, undefined],
       ['cd .. && touch x', undefined],
-      ['rm -rf "$PROJECT"', undefined],
+      ['rm -rf "$WORKDIR"', undefined],
     ] as const) {
       expect((await exec(command, cwd)).decision, command).toBe('rejected');
     }
     // Also in the workspace tier (Codex: unsandboxed → would have been a card).
-    expect((await exec(`rm ${project}/README.md`, undefined, 'workspace')).decision).toBe(
+    expect((await exec(`rm ${workdir}/README.md`, undefined, 'workspace')).decision).toBe(
       'rejected',
     );
     expect(requested).toEqual([]);
   });
 
-  it('still asks for commands that provably stay out of the project', async () => {
+  it('still asks for commands that provably stay out of the workdir', async () => {
     requested.length = 0;
-    unleased = () => project;
+    unleased = () => workdir;
     expect((await exec('touch result.md')).decision).toBe('allowed');
     expect(requested).toHaveLength(1);
   });
 
-  it('holding the lease (or no bound project) keeps the card; a failing lookup fails closed', async () => {
+  it('holding the lease (or no bound workdir) keeps the card; a failing lookup fails closed', async () => {
     requested.length = 0;
     unleased = () => null;
-    expect((await exec(`rm -rf ${project}/src`)).decision).toBe('allowed');
+    expect((await exec(`rm -rf ${workdir}/src`)).decision).toBe('allowed');
     expect(requested).toHaveLength(1);
     unleased = () => {
       throw new Error('db closed');

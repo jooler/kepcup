@@ -22,7 +22,7 @@ function view(overrides: Partial<TaskView> = {}): TaskView {
     state: 'running',
     status: 'running',
     writes: true,
-    cwdKind: 'project',
+    cwdKind: 'workdir',
     queueReason: null,
     awaitingInput: false,
     questionMessageId: null,
@@ -93,18 +93,18 @@ describe('taskCardModel', () => {
   });
 
   it('cancelled write tasks no longer show a change summary or revert', () => {
-    const project = taskCardModel(
+    const workdir = taskCardModel(
       view({
         state: 'cancelled',
         status: 'cancelled',
         cancelReason: '用户改主意',
-        changes: { kind: 'project', added: 1, modified: 2, deleted: 0, reverted: false },
+        changes: { kind: 'workdir', added: 1, modified: 2, deleted: 0, reverted: false },
       }),
     );
-    expect(project.cancelReason).toBe('用户改主意');
-    expect(project.changes).toBeNull();
-    expect(project.canRevert).toBe(false);
-    expect(project.canCancel).toBe(false);
+    expect(workdir.cancelReason).toBe('用户改主意');
+    expect(workdir.changes).toBeNull();
+    expect(workdir.canRevert).toBe(false);
+    expect(workdir.canCancel).toBe(false);
 
     const workspace = taskCardModel(
       view({
@@ -216,7 +216,7 @@ describe('taskCardModel', () => {
       view({
         state: 'completed',
         status: 'completed',
-        changes: { kind: 'project', added: 1, modified: 0, deleted: 0, reverted: false },
+        changes: { kind: 'workdir', added: 1, modified: 0, deleted: 0, reverted: false },
       }),
     );
     expect(model.changes).toBeNull();

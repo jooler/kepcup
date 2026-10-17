@@ -52,7 +52,7 @@ export const GROUP_SETUP_QUESTIONS: Record<GroupSetupStep, string> = {
   title: '请给这个群起个名字。',
   purpose: '这个群主要用来处理什么事务？（群里的 Bot 会以此了解自己的定位）',
   members: '请选择加入这个群的成员（至少 2 个）。',
-  project: '最后，请为这个群选择一个工作目录（之后随时可以再改）。',
+  workdir: '最后，请为这个群选择一个工作目录（之后随时可以再改）。',
 };
 
 /** The slice of BotsService (plus event publishing) the setup tools need. */

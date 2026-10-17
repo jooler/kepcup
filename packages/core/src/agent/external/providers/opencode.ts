@@ -14,25 +14,25 @@ import { switchToMode } from './mode-tier.js';
  *
  * - 指令：`prompt-prefix`；
  * - 配置加载顺序（1.18.35 `Config.loadInstanceState`）：全局配置（`$XDG_CONFIG_HOME/
- *   opencode`）→ `OPENCODE_CONFIG` → project 的 opencode.json（从会话目录向上到
+ *   opencode`）→ `OPENCODE_CONFIG` → workdir 的 opencode.json（从会话目录向上到
  *   git worktree 根）→ 各 `.opencode/` 目录（agent / mode / command / plugin，
  *   并后台往其中安装 `@opencode-ai/plugin`）→ `OPENCODE_CONFIG_CONTENT`（最后的
  *   local 合并）→ 托管配置 → `mode.*` 并入 `agent.*` → `OPENCODE_PERMISSION` 并入
  *   顶层 permission；每个 agent 的有效权限 = 顶层 permission 再合并该 agent 的
- *   `permission`（agent 级优先）。审查 H1：project / 全局配置里的
+ *   `permission`（agent 级优先）。审查 H1：workdir / 全局配置里的
  *   `agent.build.permission.bash:"allow"`、`.opencode/agent/*.md` 的 frontmatter
  *   或经 `task` 调用的自定义子代理都能让命令不发 request_permission。因此：
- *   - `OPENCODE_DISABLE_PROJECT_CONFIG=1`：project 的 opencode.json、`.opencode/`
- *     目录（含 agent / plugin，也就不再往 project 里装插件）与 AGENTS.md 一概
+ *   - `OPENCODE_DISABLE_PROJECT_CONFIG=1`：workdir 的 opencode.json、`.opencode/`
+ *     目录（含 agent / plugin，也就不再往 workdir 里装插件）与 AGENTS.md 一概
  *     不读（`ConfigPaths.directories` / `Instruction.systemPaths` 均受它控制）——
- *     AGENTS.md 改由宿主 `<project>` 段注入（`agentSideConfigFiles` 为空）；
+ *     AGENTS.md 改由宿主 `<workdir>` 段注入（`agentSideConfigFiles` 为空）；
  *   - 权限块只用**字符串**动作、`"*":"ask"` 打头（`findLast` 下未点名的权限
  *     一律询问）：`edit` / `bash` / `external_directory` / `task` / 联网一律
  *     `ask`——写入、命令、
  *     工作目录外的路径（数据目录由宿主权限桥拒绝）与子代理启动都经 ACP
  *     `request_permission` 交宿主按档位裁决；同一权限块既写顶层，也写进
  *     `agent.{build,plan,general,explore}.permission` 与 `mode.{build,plan}.permission`
- *     （CONTENT 晚于 project / `.opencode` 合并，同名覆盖；mode 在其后并入
+ *     （CONTENT 晚于 workdir / `.opencode` 合并，同名覆盖；mode 在其后并入
  *     agent，也带同样的块）；`plan` / `explore` 的 `edit` 保持 `deny`（不放宽其
  *     只读语义）；顶层再经 `OPENCODE_PERMISSION` 合并一次；
  *   - 未开启「加载我的个人配置」时 `XDG_CONFIG_HOME` 指向私有目录（登录凭据在
@@ -80,7 +80,7 @@ import { switchToMode } from './mode-tier.js';
  *     `share:'disabled'`：会话永不公开分享；
  *   - 残留（无配置项可关）：全局配置目录（私有目录或用户的 `~/.config/opencode`）
  *     与 `~/.opencode` 仍会被后台安装 `@opencode-ai/plugin`（桥外写入，不在
- *     project 里），设置页条款提示中说明；
+ *     workdir 里），设置页条款提示中说明；
  * - 档位（session config option `mode`：build / plan）：read_only → `plan`，
  *   ask / workspace → `build`；
  * - 权限选项：`once` / `always` / `reject`（只选 once / reject）；
@@ -647,7 +647,7 @@ export const opencodeProvider: AgentProvider = {
     httpMcp: true,
     parallelSessions: true,
   },
-  // OPENCODE_DISABLE_PROJECT_CONFIG：project 内的配置（opencode.json、.opencode/、
-  // AGENTS.md）一概不读——AGENTS.md 由宿主 <project> 段注入。
+  // OPENCODE_DISABLE_PROJECT_CONFIG：workdir 内的配置（opencode.json、.opencode/、
+  // AGENTS.md）一概不读——AGENTS.md 由宿主 <workdir> 段注入。
   agentSideConfigFiles: [],
 };

@@ -9,7 +9,7 @@ const GIT_SIGNATURE = { name: 'kepcup', email: 'wiki@localhost' } as const;
 /**
  * es-git helpers of one bot's wiki repository. Same layout conclusions as the
  * P04/P08 precedents: a plain init inside the app-owned data directory
- * (DEV-006's "no .git in the worktree" rule targets USER project directories),
+ * (DEV-006's "no .git in the worktree" rule targets USER workdir directories),
  * commits are append-only, and diff text never uses Diff.print (DEV-006) —
  * only tree diffs for changed-path discovery, which are unaffected.
  */

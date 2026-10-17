@@ -245,11 +245,11 @@ export interface TaskHostDeps {
    * entry goes to the (bot, conversation) mailbox as a `reason:'task'` batch.
    */
   wake(botId: string, conversationId: string, entry: Message): void;
-  /** Resolves the task's cwd root (bound project or the workspace). */
+  /** Resolves the task's cwd root (bound workdir or the workspace). */
   resolveCwd(
     botId: string,
     conversationId: string,
-    requested?: 'workspace' | 'project',
+    requested?: 'workspace' | 'workdir',
   ): string;
   /**
    * Terminal cleanup of the run (once-grants, pending approvals, run.status).
@@ -291,13 +291,13 @@ export interface TaskHostDeps {
   publishMessage?(message: Message, change: 'created' | 'updated'): void;
   /**
    * Where the task works and what it left behind (cancel card, §4.3 / §5.2):
-   * project tasks have a checkpoint summary, workspace tasks only the files
+   * workdir tasks have a checkpoint summary, workspace tasks only the files
    * their file tools wrote. `changes` null = nothing recorded.
    */
   describeCwd?(
     task: Run,
     withChanges: boolean,
-  ): { kind: 'project' | 'workspace'; changes: TaskChanges | null };
+  ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null };
   /**
    * Awaits `wait` without holding the task's provider slot (Scheduler
    * .yieldSlotWhile with the task's run id; 审查 M3): ask_user waits on the
@@ -1198,7 +1198,7 @@ export class TaskHost implements TaskToolFacade {
         questionMessageId = content.questionMessageId ?? questionMessageId;
       }
     }
-    let cwd: { kind: 'project' | 'workspace'; changes: TaskChanges | null } | null = null;
+    let cwd: { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } | null = null;
     try {
       // The change summary is shown on terminal write tasks only (审查 L5:
       // views are rebuilt on every publish — no change lookup while running).

@@ -134,7 +134,7 @@ describe('settingValuesProblems', () => {
     expect(settingValuesProblems(item('group.title'), { title: 'x'.repeat(501) })).toEqual([
       'title 应为字符串',
     ]);
-    expect(settingValuesProblems(item('project.ports'), { ports: [1, 'x'] })).toEqual([
+    expect(settingValuesProblems(item('workdir.ports'), { ports: [1, 'x'] })).toEqual([
       'ports 应为数字列表',
     ]);
   });

@@ -1,7 +1,7 @@
 /**
  * Per-key async mutex: serializes async operations that share one mutable
  * resource identified by a string key. Same chaining pattern as the P04
- * checkpoint queue (project/checkpoints.ts #chain) extracted so later
+ * checkpoint queue (workdir/checkpoints.ts #chain) extracted so later
  * consumers reuse one implementation — P08 per-bot authored-skill git
  * repositories here, P09 wiki maintenance next.
  *

@@ -233,20 +233,20 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
     }
   });
 
-  it('绑定 project 的对话：ensurePage 的网络上下文允许本机地址（allowLoopback=true）', async () => {
+  it('绑定 workdir 的对话：ensurePage 的网络上下文允许本机地址（allowLoopback=true）', async () => {
     const stack = await startStack();
     try {
       const bot = await makeBot(stack.core, '阿本');
       const conv = await openDirect(stack.core, bot.id);
       const { mkdirSync, writeFileSync } = await import('node:fs');
-      const projectDir = await (async () => {
+      const workdirDir = await (async () => {
         const { mkdtemp } = await import('node:fs/promises');
         const { tmpdir } = await import('node:os');
         return mkdtemp(`${tmpdir()}/p11-proj-`);
       })();
-      writeFileSync(`${projectDir}/README.md`, '# demo\n');
-      mkdirSync(projectDir, { recursive: true });
-      await stack.core.rpc.call('projects.select', { conversationId: conv.id, path: projectDir });
+      writeFileSync(`${workdirDir}/README.md`, '# demo\n');
+      mkdirSync(workdirDir, { recursive: true });
+      await stack.core.rpc.call('workdirs.select', { conversationId: conv.id, path: workdirDir });
 
       stack.llm.script(
         'mock-main',
@@ -279,13 +279,13 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
         allowLoopback: true,
       });
       // 解绑后打开着的页面立即失去本机访问：setNetworkContext(false) 推送
-      await stack.core.rpc.call('projects.unbind', { conversationId: conv.id });
+      await stack.core.rpc.call('workdirs.unbind', { conversationId: conv.id });
       const ctxUpdate = stack.browser.calls
         .filter((c) => c.method === 'browser.setNetworkContext')
         .map((c) => (c.input as { networkContext: { allowLoopback: boolean } }).networkContext);
       expect(ctxUpdate).toContainEqual({ allowLoopback: false });
       const { rmSync } = await import('node:fs');
-      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(workdirDir, { recursive: true, force: true });
     } finally {
       await stack.cleanup();
     }

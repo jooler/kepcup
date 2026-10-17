@@ -118,20 +118,20 @@ import {
   unattendedEnableInputSchema,
   unattendedSummaryInputSchema,
   unattendedSummaryOutputSchema,
-  projectsListOutputSchema,
-  projectsGetInputSchema,
-  projectsGetOutputSchema,
-  projectsSelectInputSchema,
-  projectsSelectOutputSchema,
-  projectsUnbindInputSchema,
-  projectsUpdateInputSchema,
-  projectsRemoveInputSchema,
-  projectsDiffInputSchema,
-  projectsDiffOutputSchema,
-  projectsRevertInputSchema,
-  projectsRevertOutputSchema,
-  projectsRevokeLeaseInputSchema,
-  projectsRevokeLeaseOutputSchema,
+  workdirsListOutputSchema,
+  workdirsGetInputSchema,
+  workdirsGetOutputSchema,
+  workdirsSelectInputSchema,
+  workdirsSelectOutputSchema,
+  workdirsUnbindInputSchema,
+  workdirsUpdateInputSchema,
+  workdirsRemoveInputSchema,
+  workdirsDiffInputSchema,
+  workdirsDiffOutputSchema,
+  workdirsRevertInputSchema,
+  workdirsRevertOutputSchema,
+  workdirsRevokeLeaseInputSchema,
+  workdirsRevokeLeaseOutputSchema,
   environmentListOutputSchema,
   environmentInstallIdInputSchema,
   environmentReinstallOutputSchema,
@@ -671,7 +671,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
     /**
-     * 访谈目录卡作答（19/D59）：选择目录则先绑定 project，然后把首答与目录
+     * 访谈目录卡作答（19/D59）：选择目录则先绑定 workdir，然后把首答与目录
      * 决定一起投递给 Bot（首个响应 run 开始）。
      */
     'bots.interview.answerPath': method(
@@ -1129,59 +1129,59 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => ({ items: domain.approvals.summary(input.since) }),
     ),
 
-    'projects.list': method(voidInput, projectsListOutputSchema, async () => ({
-      projects: domain.projects.listRecent(),
+    'workdirs.list': method(voidInput, workdirsListOutputSchema, async () => ({
+      workdirs: domain.workdirs.listRecent(),
     })),
-    'projects.get': method(projectsGetInputSchema, projectsGetOutputSchema, async (input) => {
-      const project = domain.projects.get(input.id);
-      return { project: project !== null ? domain.projects.refreshStatus(project.id) : null };
+    'workdirs.get': method(workdirsGetInputSchema, workdirsGetOutputSchema, async (input) => {
+      const workdir = domain.workdirs.get(input.id);
+      return { workdir: workdir !== null ? domain.workdirs.refreshStatus(workdir.id) : null };
     }),
-    'projects.select': method(
-      projectsSelectInputSchema,
-      projectsSelectOutputSchema,
+    'workdirs.select': method(
+      workdirsSelectInputSchema,
+      workdirsSelectOutputSchema,
       async (input) => {
-        const project = services.projectRuntime!.select(input.conversationId, input.path);
+        const workdir = services.workdirRuntime!.select(input.conversationId, input.path);
         publish('conversation.updated', {
           conversation: domain.conversations.getOrThrow(input.conversationId),
         });
-        publish('project.updated', { project });
-        return { project };
+        publish('workdir.updated', { workdir });
+        return { workdir };
       },
     ),
-    'projects.unbind': method(projectsUnbindInputSchema, okOutputSchema, async (input) => {
-      services.projectRuntime!.unbind(input.conversationId);
+    'workdirs.unbind': method(workdirsUnbindInputSchema, okOutputSchema, async (input) => {
+      services.workdirRuntime!.unbind(input.conversationId);
       publish('conversation.updated', {
         conversation: domain.conversations.getOrThrow(input.conversationId),
       });
       return { ok: true as const };
     }),
-    'projects.update': method(
-      projectsUpdateInputSchema,
-      projectsGetOutputSchema,
+    'workdirs.update': method(
+      workdirsUpdateInputSchema,
+      workdirsGetOutputSchema,
       async (input) => ({
-        project: services.projectRuntime!.update(input.id, {
+        workdir: services.workdirRuntime!.update(input.id, {
           ...(input.protectRules !== undefined ? { protectRules: input.protectRules } : {}),
           ...(input.allowedPorts !== undefined ? { allowedPorts: input.allowedPorts } : {}),
         }),
       }),
     ),
-    'projects.remove': method(projectsRemoveInputSchema, okOutputSchema, async (input) => {
-      await services.projectRuntime!.remove(input.id);
+    'workdirs.remove': method(workdirsRemoveInputSchema, okOutputSchema, async (input) => {
+      await services.workdirRuntime!.remove(input.id);
       return { ok: true as const };
     }),
-    'projects.diff': method(projectsDiffInputSchema, projectsDiffOutputSchema, async (input) =>
-      services.projectRuntime!.diff(input.runId),
+    'workdirs.diff': method(workdirsDiffInputSchema, workdirsDiffOutputSchema, async (input) =>
+      services.workdirRuntime!.diff(input.runId),
     ),
-    'projects.revert': method(
-      projectsRevertInputSchema,
-      projectsRevertOutputSchema,
-      async (input) => services.projectRuntime!.revert(input.runId, input.force === true),
+    'workdirs.revert': method(
+      workdirsRevertInputSchema,
+      workdirsRevertOutputSchema,
+      async (input) => services.workdirRuntime!.revert(input.runId, input.force === true),
     ),
-    'projects.revokeLease': method(
-      projectsRevokeLeaseInputSchema,
-      projectsRevokeLeaseOutputSchema,
+    'workdirs.revokeLease': method(
+      workdirsRevokeLeaseInputSchema,
+      workdirsRevokeLeaseOutputSchema,
       async (input) => ({
-        revoked: await services.projectRuntime!.revokeLease(input.conversationId),
+        revoked: await services.workdirRuntime!.revokeLease(input.conversationId),
       }),
     ),
 

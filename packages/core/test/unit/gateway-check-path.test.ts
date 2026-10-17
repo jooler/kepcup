@@ -46,19 +46,19 @@ function makeGateway(platform = 'linux'): ToolGateway {
     unattended: {
       effective: () => ({ enabled: false, until: null, enabledAt: null }),
     } as unknown as GatewayDeps['unattended'],
-    projects: {
-      boundProject: () => null,
+    workdirs: {
+      boundWorkdir: () => null,
       holdsLease: () => false,
       matchesProtectRule: () => false,
       policyInfo: () => null,
       denyReadGlobs: () => [],
       ensureWriteLease: async () => {
-        throw new Error('no project in this fixture');
+        throw new Error('no workdir in this fixture');
       },
       gitRemote: async () => {
-        throw new Error('no project in this fixture');
+        throw new Error('no workdir in this fixture');
       },
-    } as unknown as GatewayDeps['projects'],
+    } as unknown as GatewayDeps['workdirs'],
     platform,
     readOnlyRootsOverride: [toolchainDir],
     sensitiveOverride: [sensitiveDir],

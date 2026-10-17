@@ -1,5 +1,5 @@
 import type { RunIdentity } from '../agent/types.js';
-import { LeaseService, type LeaseWaitHooks } from '../project/lease.js';
+import { LeaseService, type LeaseWaitHooks } from '../workdir/lease.js';
 import type { Scheduler } from './scheduler.js';
 
 /**

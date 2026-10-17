@@ -191,13 +191,13 @@ export function botWikiStoreRoot(paths: AppPaths, botId: string): string {
 }
 
 /**
- * Checkpoint (shadow) repository of one project:
- * `projects/{projectId}/checkpoints.git` (docs/dev/phases/P04-project.md).
- * Its `core.worktree` points at the project directory; nothing of the shadow
- * repo ever lives inside the project itself.
+ * Checkpoint (shadow) repository of one workdir:
+ * `workdirs/{workdirId}/checkpoints.git` (docs/dev/phases/P04-project.md).
+ * Its `core.worktree` points at the workdir directory; nothing of the shadow
+ * repo ever lives inside the workdir itself.
  */
-export function projectCheckpointsPath(paths: AppPaths, projectId: string): string {
-  return path.join(paths.home, 'projects', projectId, 'checkpoints.git');
+export function workdirCheckpointsPath(paths: AppPaths, workdirId: string): string {
+  return path.join(paths.home, 'workdirs', workdirId, 'checkpoints.git');
 }
 
 /** Every workspace directory of a bot (all conversations). */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LeaseService, leaseKeysConflict } from '../../src/project/lease.js';
+import { LeaseService, leaseKeysConflict } from '../../src/workdir/lease.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 
 const idA: RunIdentity = { runId: 'run_a', botId: 'bot_a', conversationId: 'conv_a', loopType: 'turn' };
@@ -15,7 +15,7 @@ describe('lease conflict rule (相同 / 祖先 / 兄弟)', () => {
     expect(leaseKeysConflict('/proj', '/proj/sub')).toBe(true);
     expect(leaseKeysConflict('/proj/sub', '/proj')).toBe(true);
     // Prefix strings that are not path ancestors do not conflict.
-    expect(leaseKeysConflict('/project', '/proj')).toBe(false);
+    expect(leaseKeysConflict('/workdir', '/proj')).toBe(false);
   });
 
   it('treats siblings as non-conflicting', () => {

@@ -8,7 +8,7 @@ import {
   environmentProgressPayloadSchema,
   grantSchema,
   messageSchema,
-  projectSchema,
+  workdirSchema,
   runSchema,
   taskViewSchema,
   unattendedStateSchema,
@@ -80,12 +80,12 @@ export const unattendedChangedPayloadSchema = z.object({
 
 // --- P04 events (docs/dev/phases/P04-project.md) -----------------------------
 
-export const projectUpdatedPayloadSchema = z.object({ project: projectSchema });
-export const projectRemovedPayloadSchema = z.object({ id: z.string() });
+export const workdirUpdatedPayloadSchema = z.object({ workdir: workdirSchema });
+export const workdirRemovedPayloadSchema = z.object({ id: z.string() });
 
 /**
  * A run started waiting for the write lease. `holder` names the bot+run that
- * currently holds it, so the interface can show "等待 X 完成对项目的修改"
+ * currently holds it, so the interface can show "等待 X 完成对工作目录的修改"
  * with a force-revoke button.
  */
 export const leaseWaitingPayloadSchema = z.object({
@@ -355,8 +355,8 @@ export const rpcEventSchemas = {
   'approval.resolved': approvalResolvedPayloadSchema,
   'grant.changed': grantChangedPayloadSchema,
   'unattended.changed': unattendedChangedPayloadSchema,
-  'project.updated': projectUpdatedPayloadSchema,
-  'project.removed': projectRemovedPayloadSchema,
+  'workdir.updated': workdirUpdatedPayloadSchema,
+  'workdir.removed': workdirRemovedPayloadSchema,
   'lease.waiting': leaseWaitingPayloadSchema,
   'group.turn': groupTurnPayloadSchema,
   'environment.progress': environmentProgressPayload,

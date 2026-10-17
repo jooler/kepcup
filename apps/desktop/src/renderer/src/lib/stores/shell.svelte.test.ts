@@ -140,12 +140,12 @@ describe('窄屏断点滞回（宽度 → narrow，真实 store）', () => {
   });
 });
 
-describe('对话内设置卡深链：Bot 详情 / 项目设置（todo/conversational-app-setup.md §6.1）', () => {
+describe('对话内设置卡深链：Bot 详情 / 工作目录设置（todo/conversational-app-setup.md §6.1）', () => {
   beforeEach(() => {
     shell.rightPanelCollapsed = true;
     shell.rightPanelTabRequest = null;
     shell.botPanelAnchor = null;
-    shell.projectSettingsRequest = null;
+    shell.workdirSettingsRequest = null;
   });
 
   it('宽屏：展开右栏、请求页签与锚点', () => {
@@ -165,10 +165,10 @@ describe('对话内设置卡深链：Bot 详情 / 项目设置（todo/conversati
     expect(shell.botPanelAnchor).toBeNull();
   });
 
-  it('项目设置：先到 Bot 配置页签，再留一个带锚点的请求给 ProjectSelector', () => {
-    shell.openProjectSettings('project-ports');
+  it('工作目录设置：先到 Bot 配置页签，再留一个带锚点的请求给 WorkdirSelector', () => {
+    shell.openWorkdirSettings('workdir-ports');
     expect(shell.rightPanelTabRequest).toBe('profile');
-    expect(shell.projectSettingsRequest).toEqual({ anchor: 'project-ports' });
+    expect(shell.workdirSettingsRequest).toEqual({ anchor: 'workdir-ports' });
   });
 });
 

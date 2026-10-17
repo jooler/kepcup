@@ -240,7 +240,7 @@ export interface AgentProvider {
    * 的 `forbiddenModes` 优先。
    */
   safeModes?: readonly string[];
-  /** 无法关闭、需确认的 project 内 Agent 配置文件（P3）。 */
+  /** 无法关闭、需确认的 workdir 内 Agent 配置文件（P3）。 */
   agentSideConfigFiles: string[];
   /**
    * 错误分类（todo 附录 A.4 第 1 条）：各家「未登录 / 未安装 / 不兼容」的

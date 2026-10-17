@@ -9,17 +9,17 @@ import path from 'node:path';
 import {
   AppError,
   newId,
-  PROJECT_DEFAULT_PROTECT_RULES,
-  PROJECTS_RECENT_LIMIT,
-  type Project,
-  type ProjectProtectRules,
+  WORKDIR_DEFAULT_PROTECT_RULES,
+  WORKDIRS_RECENT_LIMIT,
+  type Workdir,
+  type WorkdirProtectRules,
   type RunChange,
 } from '@kepcup/shared';
 import { canonicalPath } from '../infra/paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
-interface ProjectRow {
+interface WorkdirRow {
   id: string;
   path: string;
   name: string;
@@ -32,7 +32,7 @@ interface ProjectRow {
 
 interface RunChangeRow {
   run_id: string;
-  project_id: string;
+  workdir_id: string;
   conversation_id: string | null;
   before_oid: string;
   after_oid: string | null;
@@ -41,26 +41,26 @@ interface RunChangeRow {
   created_at: number;
 }
 
-function parseProtectRules(raw: string): ProjectProtectRules {
+function parseProtectRules(raw: string): WorkdirProtectRules {
   // On-disk JSON written only through this service; fall closed to defaults.
   try {
-    const parsed = JSON.parse(raw) as Partial<ProjectProtectRules>;
+    const parsed = JSON.parse(raw) as Partial<WorkdirProtectRules>;
     return {
-      denyRead: Array.isArray(parsed.denyRead) ? parsed.denyRead : [...PROJECT_DEFAULT_PROTECT_RULES.denyRead],
+      denyRead: Array.isArray(parsed.denyRead) ? parsed.denyRead : [...WORKDIR_DEFAULT_PROTECT_RULES.denyRead],
       denyWrite: Array.isArray(parsed.denyWrite) ? parsed.denyWrite : [],
     };
   } catch {
-    return { denyRead: [...PROJECT_DEFAULT_PROTECT_RULES.denyRead], denyWrite: [] };
+    return { denyRead: [...WORKDIR_DEFAULT_PROTECT_RULES.denyRead], denyWrite: [] };
   }
 }
 
-function rowToProject(row: ProjectRow): Project {
+function rowToWorkdir(row: WorkdirRow): Workdir {
   return {
     id: row.id,
     path: row.path,
     name: row.name,
     protectRules: parseProtectRules(row.protect_rules_json),
-    allowedPorts: row.allowed_ports_json ? (JSON.parse(row.allowed_ports_json) as Project['allowedPorts']) : null,
+    allowedPorts: row.allowed_ports_json ? (JSON.parse(row.allowed_ports_json) as Workdir['allowedPorts']) : null,
     status: row.status,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
@@ -68,10 +68,10 @@ function rowToProject(row: ProjectRow): Project {
 }
 
 /**
- * Projects (docs/design/08-project.md "实体"): local directories bound to
+ * Workdirs (docs/design/08-workdir.md "实体"): local directories bound to
  * conversations. One row per realpath; the selector lists recent ones.
  */
-export class ProjectsService {
+export class WorkdirsService {
   readonly #db: SqliteDatabase;
   readonly #clock: Clock;
 
@@ -85,48 +85,48 @@ export class ProjectsService {
    * the current disk state. The directory must exist and must not live
    * inside the application data directory.
    */
-  ensureByPath(dir: string, dataHome: string): Project {
+  ensureByPath(dir: string, dataHome: string): Workdir {
     const resolved = canonicalPath(dir);
     let stats;
     try {
       stats = statSync(resolved);
     } catch {
-      throw new AppError('PROJECT_MISSING', `目录不存在或不可访问：${dir}`);
+      throw new AppError('WORKDIR_MISSING', `目录不存在或不可访问：${dir}`);
     }
     if (!stats.isDirectory()) {
-      throw new AppError('INVALID_INPUT', 'project 必须是一个目录');
+      throw new AppError('INVALID_INPUT', 'workdir 必须是一个目录');
     }
     if (resolved === dataHome || resolved.startsWith(dataHome.endsWith('/') ? dataHome : `${dataHome}/`)) {
-      throw new AppError('PATH_OUT_OF_SCOPE', '应用数据目录不能作为 project');
+      throw new AppError('PATH_OUT_OF_SCOPE', '应用数据目录不能作为 workdir');
     }
 
     const now = this.#clock.now();
-    const existing = this.#db.prepare('select * from projects where path = ?').get(resolved) as
-      | ProjectRow
+    const existing = this.#db.prepare('select * from workdirs where path = ?').get(resolved) as
+      | WorkdirRow
       | undefined;
     if (existing) {
       if (existing.status !== 'available') {
-        this.#db.prepare("update projects set status = 'available' where id = ?").run(existing.id);
+        this.#db.prepare("update workdirs set status = 'available' where id = ?").run(existing.id);
       }
-      this.#db.prepare('update projects set last_used_at = ? where id = ?').run(now, existing.id);
+      this.#db.prepare('update workdirs set last_used_at = ? where id = ?').run(now, existing.id);
       // 名称固定为文件夹名（不再可改）：把改名功能时期留下的自定义名一并矫正。
       if (existing.name !== path.basename(resolved)) {
         this.#db
-          .prepare('update projects set name = ? where id = ?')
+          .prepare('update workdirs set name = ? where id = ?')
           .run(path.basename(resolved), existing.id);
       }
       return this.getOrThrow(existing.id);
     }
-    const id = newId('prj');
+    const id = newId('wkd');
     this.#db
       .prepare(
-        'insert into projects (id, path, name, protect_rules_json, allowed_ports_json, status, created_at, last_used_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into workdirs (id, path, name, protect_rules_json, allowed_ports_json, status, created_at, last_used_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
         resolved,
         path.basename(resolved),
-        JSON.stringify(PROJECT_DEFAULT_PROTECT_RULES),
+        JSON.stringify(WORKDIR_DEFAULT_PROTECT_RULES),
         null,
         'available',
         now,
@@ -135,54 +135,54 @@ export class ProjectsService {
     return this.getOrThrow(id);
   }
 
-  get(id: string): Project | null {
-    const row = this.#db.prepare('select * from projects where id = ?').get(id) as
-      | ProjectRow
+  get(id: string): Workdir | null {
+    const row = this.#db.prepare('select * from workdirs where id = ?').get(id) as
+      | WorkdirRow
       | undefined;
-    return row ? rowToProject(row) : null;
+    return row ? rowToWorkdir(row) : null;
   }
 
-  getOrThrow(id: string): Project {
-    const project = this.get(id);
-    if (!project) throw new AppError('NOT_FOUND', `Project ${id} does not exist`);
-    return project;
+  getOrThrow(id: string): Workdir {
+    const workdir = this.get(id);
+    if (!workdir) throw new AppError('NOT_FOUND', `Workdir ${id} does not exist`);
+    return workdir;
   }
 
-  /** Most recently used projects (selector). */
-  listRecent(limit: number = PROJECTS_RECENT_LIMIT): Project[] {
+  /** Most recently used workdirs (selector). */
+  listRecent(limit: number = WORKDIRS_RECENT_LIMIT): Workdir[] {
     const rows = this.#db
-      .prepare('select * from projects order by last_used_at desc limit ?')
-      .all(limit) as ProjectRow[];
-    return rows.map(rowToProject);
+      .prepare('select * from workdirs order by last_used_at desc limit ?')
+      .all(limit) as WorkdirRow[];
+    return rows.map(rowToWorkdir);
   }
 
   /** Refreshes `status` from disk; returns the updated record. */
-  refreshStatus(id: string): Project {
-    const project = this.getOrThrow(id);
-    const available = existsSync(project.path) && statSync(project.path).isDirectory();
-    if ((available && project.status !== 'available') || (!available && project.status !== 'missing')) {
+  refreshStatus(id: string): Workdir {
+    const workdir = this.getOrThrow(id);
+    const available = existsSync(workdir.path) && statSync(workdir.path).isDirectory();
+    if ((available && workdir.status !== 'available') || (!available && workdir.status !== 'missing')) {
       this.#db
-        .prepare('update projects set status = ? where id = ?')
+        .prepare('update workdirs set status = ? where id = ?')
         .run(available ? 'available' : 'missing', id);
       return this.getOrThrow(id);
     }
-    return project;
+    return workdir;
   }
 
   // 名称不可改：固定为所选文件夹的名字（ensureByPath 写入 basename）。
   update(
     id: string,
-    patch: { protectRules?: ProjectProtectRules; allowedPorts?: Project['allowedPorts'] },
-  ): Project {
+    patch: { protectRules?: WorkdirProtectRules; allowedPorts?: Workdir['allowedPorts'] },
+  ): Workdir {
     this.getOrThrow(id);
     if (patch.protectRules !== undefined) {
       this.#db
-        .prepare('update projects set protect_rules_json = ? where id = ?')
+        .prepare('update workdirs set protect_rules_json = ? where id = ?')
         .run(JSON.stringify(patch.protectRules), id);
     }
     if (patch.allowedPorts !== undefined) {
       this.#db
-        .prepare('update projects set allowed_ports_json = ? where id = ?')
+        .prepare('update workdirs set allowed_ports_json = ? where id = ?')
         .run(patch.allowedPorts === null ? null : JSON.stringify(patch.allowedPorts), id);
     }
     return this.getOrThrow(id);
@@ -191,13 +191,13 @@ export class ProjectsService {
   /** Removes the record (run_changes cascade via FK; files untouched). */
   remove(id: string): void {
     this.getOrThrow(id);
-    this.#db.prepare('delete from projects where id = ?').run(id);
+    this.#db.prepare('delete from workdirs where id = ?').run(id);
   }
 
-  /** Ids of conversations still bound to this project (unbind on remove). */
+  /** Ids of conversations still bound to this workdir (unbind on remove). */
   conversationsBound(id: string): string[] {
     const rows = this.#db
-      .prepare('select id from conversations where project_id = ?')
+      .prepare('select id from conversations where workdir_id = ?')
       .all(id) as Array<{ id: string }>;
     return rows.map((r) => r.id);
   }
@@ -206,7 +206,7 @@ export class ProjectsService {
 
   recordChange(change: {
     runId: string;
-    projectId: string;
+    workdirId: string;
     conversationId: string | null;
     beforeOid: string;
     afterOid: string | null;
@@ -214,11 +214,11 @@ export class ProjectsService {
   }): RunChange {
     this.#db
       .prepare(
-        'insert into run_changes (run_id, project_id, conversation_id, before_oid, after_oid, files_json, created_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(run_id) do update set project_id = excluded.project_id, conversation_id = excluded.conversation_id, before_oid = excluded.before_oid, after_oid = excluded.after_oid, files_json = excluded.files_json, reverted_at = null',
+        'insert into run_changes (run_id, workdir_id, conversation_id, before_oid, after_oid, files_json, created_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(run_id) do update set workdir_id = excluded.workdir_id, conversation_id = excluded.conversation_id, before_oid = excluded.before_oid, after_oid = excluded.after_oid, files_json = excluded.files_json, reverted_at = null',
       )
       .run(
         change.runId,
-        change.projectId,
+        change.workdirId,
         change.conversationId,
         change.beforeOid,
         change.afterOid,
@@ -239,7 +239,7 @@ export class ProjectsService {
     if (!row) return null;
     return {
       runId: row.run_id,
-      projectId: row.project_id,
+      workdirId: row.workdir_id,
       conversationId: row.conversation_id,
       beforeOid: row.before_oid,
       afterOid: row.after_oid,

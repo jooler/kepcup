@@ -76,7 +76,7 @@ export function isLoopbackHost(host: string): boolean {
  * The bot's Profile policy gates the target host; the sandbox policy is then
  * the least-privilege intersection (allowlist with exactly this host, loopback
  * only for loopback targets — the sandbox denies loopback otherwise, exactly
- * like project-bound conversations).
+ * like workdir-bound conversations).
  */
 export function fetchPolicyFor(
   url: string,

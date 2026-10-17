@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { Project, SettingValues } from '@kepcup/shared';
+  import type { Workdir, SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
-  import { projects } from '$lib/stores/projects.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -10,7 +10,7 @@
 
   let {
     open = $bindable(false),
-    project,
+    workdir,
     anchor = $bindable(null),
     embedded = false,
     focus = 'protect' as 'protect' | 'ports',
@@ -18,8 +18,8 @@
     onSaved,
   }: {
     open?: boolean;
-    project: Project | null;
-    /** 打开后要聚焦的锚点（对话内设置卡深链：project-protect / project-ports）；消费后复位。 */
+    workdir: Workdir | null;
+    /** 打开后要聚焦的锚点（对话内设置卡深链：workdir-protect / workdir-ports）；消费后复位。 */
     anchor?: string | null;
     /** 对话内设置卡：只显示保护规则或端口，并要求亲手确认。不采用 Bot 的预填。 */
     embedded?: boolean;
@@ -30,7 +30,7 @@
 
   $effect(() => {
     const target = anchor;
-    if (!open || target === null || project === null) return;
+    if (!open || target === null || workdir === null) return;
     anchor = null;
     void revealDialogAnchor(document, target);
   });
@@ -43,22 +43,22 @@
   let acknowledged = $state(false);
   let saving = $state(false);
 
-  function loadFromProject(current: Project): void {
+  function loadFromWorkdir(current: Workdir): void {
     denyRead = current.protectRules.denyRead.join('\n');
     denyWrite = current.protectRules.denyWrite.join('\n');
     ports = (current.allowedPorts ?? []).map(([from, to]) => (from === to ? `${from}` : `${from}-${to}`)).join('\n');
   }
 
   $effect(() => {
-    if (embedded || !open || project === null || loadedFor === project.id) return;
-    loadFromProject(project);
-    loadedFor = project.id;
+    if (embedded || !open || workdir === null || loadedFor === workdir.id) return;
+    loadFromWorkdir(workdir);
+    loadedFor = workdir.id;
   });
 
   $effect(() => {
-    if (!embedded || project === null || loadedEmbedded === project.id) return;
-    loadFromProject(project);
-    loadedEmbedded = project.id;
+    if (!embedded || workdir === null || loadedEmbedded === workdir.id) return;
+    loadFromWorkdir(workdir);
+    loadedEmbedded = workdir.id;
     acknowledged = false;
   });
 
@@ -69,7 +69,7 @@
       .filter((line) => line.length > 0);
   }
 
-  function parsePorts(raw: string): Project['allowedPorts'] {
+  function parsePorts(raw: string): Workdir['allowedPorts'] {
     const ranges: Array<[number, number]> = [];
     for (const line of parseLines(raw)) {
       const match = /^(\d+)(?:-(\d+))?$/.exec(line);
@@ -83,8 +83,8 @@
   }
 
   async function save(): Promise<void> {
-    if (project === null) return;
-    await projects.update(project.id, {
+    if (workdir === null) return;
+    await workdirs.update(workdir.id, {
       protectRules: { denyRead: parseLines(denyRead), denyWrite: parseLines(denyWrite) },
       allowedPorts: parsePorts(ports),
     });
@@ -92,19 +92,19 @@
   }
 
   async function saveEmbedded(): Promise<void> {
-    if (project === null || !acknowledged || saving) return;
+    if (workdir === null || !acknowledged || saving) return;
     saving = true;
     try {
       if (focus === 'ports') {
-        await projects.update(project.id, { allowedPorts: parsePorts(ports) });
+        await workdirs.update(workdir.id, { allowedPorts: parsePorts(ports) });
       } else {
-        await projects.update(project.id, {
+        await workdirs.update(workdir.id, {
           protectRules: { denyRead: parseLines(denyRead), denyWrite: parseLines(denyWrite) },
         });
       }
       onSaved?.();
     } catch {
-      // projects.update 已经 toast 过失败原因。
+      // workdirs.update 已经 toast 过失败原因。
     } finally {
       saving = false;
     }
@@ -126,40 +126,40 @@
   }
 
   async function remove(): Promise<void> {
-    if (project === null) return;
-    await projects.remove(project.id);
+    if (workdir === null) return;
+    await workdirs.remove(workdir.id);
     open = false;
   }
 </script>
 
-{#if embedded && project !== null}
-  <div class="grid gap-2" data-testid="project-settings-embedded">
+{#if embedded && workdir !== null}
+  <div class="grid gap-2" data-testid="workdir-settings-embedded">
     {#if focus === 'protect'}
       <label class="block space-y-1">
-        <span class="text-xs text-muted-foreground">{t('projects.settingsDenyRead')}</span>
-        <Textarea bind:value={denyRead} rows={4} class="font-mono text-xs" data-testid="project-card-deny-read" />
+        <span class="text-xs text-muted-foreground">{t('workdirs.settingsDenyRead')}</span>
+        <Textarea bind:value={denyRead} rows={4} class="font-mono text-xs" data-testid="workdir-card-deny-read" />
       </label>
       <label class="block space-y-1">
-        <span class="text-xs text-muted-foreground">{t('projects.settingsDenyWrite')}</span>
-        <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="project-card-deny-write" />
+        <span class="text-xs text-muted-foreground">{t('workdirs.settingsDenyWrite')}</span>
+        <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="workdir-card-deny-write" />
       </label>
     {:else}
       <label class="block space-y-1">
-        <span class="text-xs text-muted-foreground">{t('projects.settingsPorts')}</span>
-        <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="project-card-ports" />
-        <span class="block text-[10px] text-muted-foreground">{t('projects.settingsPortsHint')}</span>
+        <span class="text-xs text-muted-foreground">{t('workdirs.settingsPorts')}</span>
+        <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="workdir-card-ports" />
+        <span class="block text-[10px] text-muted-foreground">{t('workdirs.settingsPortsHint')}</span>
       </label>
     {/if}
     <label class="flex items-start gap-2 text-sm">
-      <Checkbox bind:checked={acknowledged} data-testid="project-card-ack" />
-      <span>{focus === 'ports' ? t('settingCard.project.portsAck') : t('settingCard.project.protectAck')}</span>
+      <Checkbox bind:checked={acknowledged} data-testid="workdir-card-ack" />
+      <span>{focus === 'ports' ? t('settingCard.workdir.portsAck') : t('settingCard.workdir.protectAck')}</span>
     </label>
     <div class="flex justify-end">
       <Button
         size="sm"
         disabled={!acknowledged || saving}
         onclick={() => void saveEmbedded()}
-        data-testid="project-card-save"
+        data-testid="workdir-card-save"
       >
         {t('settingCard.apply')}
       </Button>
@@ -167,28 +167,28 @@
   </div>
 {:else}
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-w-lg" data-testid="project-settings-dialog">
+  <Dialog.Content class="max-w-lg" data-testid="workdir-settings-dialog">
     <Dialog.Header>
-      <Dialog.Title>{t('projects.settingsTitle')}</Dialog.Title>
-      <Dialog.Description class="font-mono text-xs">{project?.path ?? ''}</Dialog.Description>
+      <Dialog.Title>{t('workdirs.settingsTitle')}</Dialog.Title>
+      <Dialog.Description class="font-mono text-xs">{workdir?.path ?? ''}</Dialog.Description>
     </Dialog.Header>
-    {#if project !== null}
+    {#if workdir !== null}
       <div class="space-y-3">
         <!-- data-settings-anchor：对话内设置卡「在设置中打开」的落点（settings-catalog 深链）。 -->
-        <div class="space-y-3" data-settings-anchor="project-protect">
+        <div class="space-y-3" data-settings-anchor="workdir-protect">
           <label class="block space-y-1">
-            <span class="text-xs text-muted-foreground">{t('projects.settingsDenyRead')}</span>
-            <Textarea bind:value={denyRead} rows={5} class="font-mono text-xs" data-testid="project-deny-read-input" />
+            <span class="text-xs text-muted-foreground">{t('workdirs.settingsDenyRead')}</span>
+            <Textarea bind:value={denyRead} rows={5} class="font-mono text-xs" data-testid="workdir-deny-read-input" />
           </label>
           <label class="block space-y-1">
-            <span class="text-xs text-muted-foreground">{t('projects.settingsDenyWrite')}</span>
-            <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="project-deny-write-input" />
+            <span class="text-xs text-muted-foreground">{t('workdirs.settingsDenyWrite')}</span>
+            <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="workdir-deny-write-input" />
           </label>
         </div>
-        <label class="block space-y-1" data-settings-anchor="project-ports">
-          <span class="text-xs text-muted-foreground">{t('projects.settingsPorts')}</span>
-          <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="project-ports-input" />
-          <span class="block text-[10px] text-muted-foreground">{t('projects.settingsPortsHint')}</span>
+        <label class="block space-y-1" data-settings-anchor="workdir-ports">
+          <span class="text-xs text-muted-foreground">{t('workdirs.settingsPorts')}</span>
+          <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="workdir-ports-input" />
+          <span class="block text-[10px] text-muted-foreground">{t('workdirs.settingsPortsHint')}</span>
         </label>
       </div>
       <Dialog.Footer class="mt-2 flex items-center gap-2">
@@ -196,14 +196,14 @@
           variant={removeArmed ? 'destructive' : 'outline'}
           size="sm"
           onclick={armRemove}
-          data-testid="project-remove"
-          title={t('projects.removeBody', { name: project.name })}
+          data-testid="workdir-remove"
+          title={t('workdirs.removeBody', { name: workdir.name })}
         >
-          {removeArmed ? t('projects.removeConfirm') : t('projects.removeCurrent')}
+          {removeArmed ? t('workdirs.removeConfirm') : t('workdirs.removeCurrent')}
         </Button>
         <div class="flex-1"></div>
         <Button variant="outline" size="sm" onclick={() => (open = false)}>{t('contacts.cancel')}</Button>
-        <Button size="sm" onclick={() => void save()} data-testid="project-save">{t('projects.save')}</Button>
+        <Button size="sm" onclick={() => void save()} data-testid="workdir-save">{t('workdirs.save')}</Button>
       </Dialog.Footer>
     {/if}
   </Dialog.Content>

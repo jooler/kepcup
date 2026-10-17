@@ -34,7 +34,7 @@
   async function load(): Promise<void> {
     const ticket = ++loads;
     try {
-      const result = (await core.call('projects.diff', { runId })) as { change: RunChange | null };
+      const result = (await core.call('workdirs.diff', { runId })) as { change: RunChange | null };
       if (ticket === loads) change = result.change;
     } catch {
       if (ticket === loads) change = null;
@@ -44,7 +44,7 @@
   async function revert(force: boolean): Promise<void> {
     reverting = true;
     try {
-      const result = (await core.call('projects.revert', { runId, force })) as {
+      const result = (await core.call('workdirs.revert', { runId, force })) as {
         ok: boolean;
         conflicts: string[];
         reverted: string[];

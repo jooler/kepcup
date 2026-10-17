@@ -87,9 +87,9 @@ export interface SettingsCatalogHostDeps extends AdapterDeps {
   clock: Clock;
   logger: CoreLogger;
   lock: SettingsWriteLock;
-  /** 群聊 / 项目范围的对象（scope = group / project）。 */
+  /** 群聊 / 工作目录范围的对象（scope = group / workdir）。 */
   conversations: {
-    get(id: string): { title: string | null; type: string; projectId: string | null } | null;
+    get(id: string): { title: string | null; type: string; workdirId: string | null } | null;
   };
   /** D73 污点（按（Bot, 对话）计）：与本 run 的「接触过不可信内容」取并集。 */
   taint?: { isTainted(botId: string, conversationId: string): boolean } | undefined;
@@ -236,7 +236,7 @@ export class SettingsCatalogHost {
     return {
       botId: item.scope === 'bot' ? (botId ?? ctx.identity.botId) : null,
       conversationId: item.scope === 'group' || item.scope === 'bot' ? conversationId : null,
-      projectId: item.scope === 'project' ? (conversation?.projectId ?? null) : null,
+      workdirId: item.scope === 'workdir' ? (conversation?.workdirId ?? null) : null,
     };
   }
 
@@ -1048,7 +1048,7 @@ export class SettingsCatalogHost {
     return {
       ...(target.botId !== null ? { botId: target.botId } : {}),
       ...(target.conversationId !== null ? { conversationId: target.conversationId } : {}),
-      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      ...(target.workdirId !== null ? { workdirId: target.workdirId } : {}),
     };
   }
 
@@ -1067,7 +1067,7 @@ export class SettingsCatalogHost {
     return {
       botId: target.botId ?? null,
       conversationId: target.conversationId ?? conversationId,
-      projectId: target.projectId ?? conversation?.projectId ?? null,
+      workdirId: target.workdirId ?? conversation?.workdirId ?? null,
     };
   }
 

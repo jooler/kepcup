@@ -33,8 +33,8 @@ export const RELEVANT_MEMORY_TOKEN_BUDGET = 600;
 export const WIKI_TOPICS_TOKEN_BUDGET = 200;
 /** Skills list token budget. */
 export const SKILLS_LIST_TOKEN_BUDGET = 500;
-/** Project info budget (incl. AGENTS.md). */
-export const PROJECT_CONTEXT_TOKEN_BUDGET = 1500;
+/** Workdir info budget (incl. AGENTS.md). */
+export const WORKDIR_CONTEXT_TOKEN_BUDGET = 1500;
 /** Max characters of a single tool output returned to the model. */
 export const TOOL_OUTPUT_MAX_CHARS = 30_000;
 /**
@@ -257,7 +257,7 @@ export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';
 /** system_event name of a group-creation question card (content carries the step). */
 export const GROUP_SETUP_QUESTION_EVENT = 'group_setup_question';
 /** Ordered steps of the conversational group creation (docs/design/19, D60). */
-export const GROUP_SETUP_STEPS = ['title', 'purpose', 'members', 'project'] as const;
+export const GROUP_SETUP_STEPS = ['title', 'purpose', 'members', 'workdir'] as const;
 export type GroupSetupStep = (typeof GROUP_SETUP_STEPS)[number];
 /**
  * Bot 内部事务事件名集合（docs/design/01-conversation.md 消息原则）：这些事件
@@ -309,8 +309,8 @@ export const SKILL_PROMPT_DESCRIPTION_MAX_CHARS = 200;
 export const SKILL_SCAN_FILES_MAX = 200;
 /** Checkpoint retention in days. */
 export const CHECKPOINT_RETENTION_DAYS = 30;
-/** Default per-project protection rules (docs/dev/phases/P04-project.md). */
-export const PROJECT_DEFAULT_PROTECT_RULES = {
+/** Default per-workdir protection rules (docs/dev/phases/P04-project.md). */
+export const WORKDIR_DEFAULT_PROTECT_RULES = {
   denyRead: ['.env', '.env.*', '*.pem', '*.key', '*.p12', 'id_rsa*'],
   denyWrite: [],
 } as const;
@@ -326,10 +326,10 @@ export const MEMORY_DB_POOL_MAX = 8;
 export const CONSOLIDATION_LOCAL_HOUR = 3;
 /** Items per consolidation batch (docs/dev/04-agent-runtime.md "记忆整理"). */
 export const MEMORY_CONSOLIDATION_BATCH = 50;
-/** Cap for the <project> context top-level listing (two levels). */
-export const PROJECT_CONTEXT_MAX_ENTRIES = 200;
-/** Max recent projects shown in the selector. */
-export const PROJECTS_RECENT_LIMIT = 10;
+/** Cap for the <workdir> context top-level listing (two levels). */
+export const WORKDIR_CONTEXT_MAX_ENTRIES = 200;
+/** Max recent workdirs shown in the selector. */
+export const WORKDIRS_RECENT_LIMIT = 10;
 /** Max proactive messages per bot per day (Profile may override). */
 export const MAX_PROACTIVE_PER_DAY = 5;
 /**

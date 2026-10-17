@@ -170,15 +170,15 @@ const CONFIG_HASH_MAX_ENTRIES = 5_000;
 const CONFIG_HASH_MAX_BYTES = 32 * 1024 * 1024;
 
 /**
- * project 内 Agent 侧配置（AGENTS.md、`.codex/` …）的内容哈希（安全审查
+ * workdir 内 Agent 侧配置（AGENTS.md、`.codex/` …）的内容哈希（安全审查
  * M2 / 复核第 2 轮）：文件内容与目录树计入；符号链接按 realpath 跟随、哈希
  * 被指向的内容。凡是无法完整确认的——超出上限（5000 项 / 32MB）、链接指向
- * project 之外、读不到——返回一次性的随机值：永不与已记住的哈希相等，即
+ * workdir 之外、读不到——返回一次性的随机值：永不与已记住的哈希相等，即
  * 每次运行都重新确认（fail closed）。
  */
 export function hashAgentConfigFiles(root: string, names: readonly string[]): string {
   const hash = createHash('sha256');
-  const projectRoot = canonicalPath(root);
+  const workdirRoot = canonicalPath(root);
   const seen = new Set<string>();
   let entries = 0;
   let bytes = 0;
@@ -205,12 +205,12 @@ export function hashAgentConfigFiles(root: string, names: readonly string[]): st
         unverifiable = true;
         return;
       }
-      // A link out of the project (or a cycle) cannot be vouched for.
-      if (!isInsidePath(target, projectRoot) || seen.has(target)) {
+      // A link out of the workdir (or a cycle) cannot be vouched for.
+      if (!isInsidePath(target, workdirRoot) || seen.has(target)) {
         unverifiable = true;
         return;
       }
-      hash.update(`link:${relative}:${path.relative(projectRoot, target)}\n`);
+      hash.update(`link:${relative}:${path.relative(workdirRoot, target)}\n`);
       seen.add(target);
       visit(target, relative);
       return;
@@ -321,12 +321,12 @@ export interface AgentPermissionBridgeDeps {
   /** secrets.redact：卡片上的命令 / 标题先脱敏（L1）。 */
   redact?(text: string): string;
   /**
-   * 对话绑定的可用 project 根——仅当该身份**不持有**它的写入租约时（D75 审查
-   * M2：工作目录为 workspace 的写任务、只读 run 等）；持有或没有 project →
-   * null。沙箱外命令一经批准就能写任何地方，可能触及这个 project 的命令
-   * 一律拒绝（不弹卡），否则 project 会在没有租约与检查点的情况下被改写。
+   * 对话绑定的可用 workdir 根——仅当该身份**不持有**它的写入租约时（D75 审查
+   * M2：工作目录为 workspace 的写任务、只读 run 等）；持有或没有 workdir →
+   * null。沙箱外命令一经批准就能写任何地方，可能触及这个 workdir 的命令
+   * 一律拒绝（不弹卡），否则 workdir 会在没有租约与检查点的情况下被改写。
    */
-  unleasedProject?(identity: RunIdentity): string | null;
+  unleasedWorkdir?(identity: RunIdentity): string | null;
   /**
    * D73 P2 污点外发控制（design 29 §8.3）：(Bot, 对话) 读取过连接应用数据后，网络类请求
    * （fetch 类工具、agent 沙箱内自动放行的命令）降为逐次确认（`egress` 卡）。缺省 = 不降级。
@@ -349,7 +349,7 @@ export interface PermissionRequestContext {
   entry: AgentCatalogEntry;
   provider: AgentProvider;
   tier: AgentPermissionTier;
-  /** 会话 cwd（project 或 workspace）。 */
+  /** 会话 cwd（workdir 或 workspace）。 */
   cwd: string;
   /** run 的取消信号：挂起的审批随之 cancelled。 */
   signal: AbortSignal;
@@ -658,7 +658,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         // target cannot be written during an external run.
         return {
           kind: 'reject',
-          reason: '外部智能体 run 只能写入其工作目录（其他 project 需要另取写入租约）',
+          reason: '外部智能体 run 只能写入其工作目录（其他 workdir 需要另取写入租约）',
         };
     }
   }
@@ -760,13 +760,13 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       );
     }
     // Past here the command runs outside any sandbox once approved. Without
-    // the bound project's lease (审查 M2) it must provably stay out of the
-    // project — the same fail-closed analysis, with the project as the
+    // the bound workdir's lease (审查 M2) it must provably stay out of the
+    // workdir — the same fail-closed analysis, with the workdir as the
     // forbidden root (cwd inside it, an argument into / above it, or anything
     // it cannot vouch for: refused, no card).
-    const unleased = this.#unleasedProject(ctx.identity);
+    const unleased = this.#unleasedWorkdir(ctx.identity);
     if (unleased === 'unknown') {
-      return reject('auto', '无法确认本次执行是否持有 project 写入租约：沙箱外命令不予执行', {
+      return reject('auto', '无法确认本次执行是否持有 workdir 写入租约：沙箱外命令不予执行', {
         command,
         cwd: commandCwd,
       });
@@ -782,7 +782,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       if (!touches.safe) {
         return reject(
           'auto',
-          '本次执行没有持有对话 project 的写入租约：可能触及该 project（或无法静态分析）的沙箱外命令不予执行',
+          '本次执行没有持有对话 workdir 的写入租约：可能触及该 workdir（或无法静态分析）的沙箱外命令不予执行',
           { command, cwd: commandCwd },
         );
       }
@@ -892,14 +892,14 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       : reject(via, '污点期间的网络类请求被拒绝', extra);
   }
 
-  /** The unleased bound project (see deps); 'unknown' = the lookup failed (fail closed). */
-  #unleasedProject(identity: RunIdentity): string | null | 'unknown' {
+  /** The unleased bound workdir (see deps); 'unknown' = the lookup failed (fail closed). */
+  #unleasedWorkdir(identity: RunIdentity): string | null | 'unknown' {
     try {
-      return this.#deps.unleasedProject?.(identity) ?? null;
+      return this.#deps.unleasedWorkdir?.(identity) ?? null;
     } catch (error) {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'agent permission project lookup failed',
+        'agent permission workdir lookup failed',
       );
       return 'unknown';
     }

@@ -888,7 +888,7 @@ export class BrowserHost {
         // -20 ERR_BLOCKED_BY_CLIENT: our own network rules cancelled the load.
         reject(
           code === -20
-            ? new AppError('BROWSER_BLOCKED', '该地址被网络规则拦截（内网地址，或未绑定 project 的本机地址）')
+            ? new AppError('BROWSER_BLOCKED', '该地址被网络规则拦截（内网地址，或未绑定工作目录的本机地址）')
             : new AppError('BROWSER_NAVIGATION_FAILED', `页面加载失败：${description || code}`),
         );
       };

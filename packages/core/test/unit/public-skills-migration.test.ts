@@ -93,6 +93,10 @@ describe('0013 public_skills 迁移', () => {
     // main 0036（D88 资产移交）的两张表同样摘除（先子后父）。
     db.exec('drop table bot_handover_items;');
     db.exec('drop table bot_handovers;');
+    // main 0038（D92 T0-2）的改名同样回退，回放时才能原样重放。
+    db.exec('alter table workdirs rename to projects;');
+    db.exec('alter table conversations rename column workdir_id to project_id;');
+    db.exec('alter table run_changes rename column workdir_id to project_id;');
     // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，
     // 而 0018 的 attachments 重建按列名引用 draft_id——按 0002 的原始形态补回，
     // 才能原样重放 0013 之后的迁移。

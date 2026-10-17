@@ -101,9 +101,9 @@ function makeRig(
     sandbox?: AdapterDeps['sandbox'];
     allowlist?: AdapterDeps['allowlist'];
     skills?: AdapterDeps['skills'];
-    /** 直聊会话绑定的项目（project.* 条目的作用对象）。 */
-    projectId?: string;
-    projects?: AdapterDeps['projects'];
+    /** 直聊会话绑定的工作目录（workdir.* 条目的作用对象）。 */
+    workdirId?: string;
+    workdirs?: AdapterDeps['workdirs'];
     /** Bot 条目写入走真实的 `applyBotProfileUpdate`（校验 + 锁外中断 / 收回授权）。 */
     realBotProfiles?: boolean;
     experimentalAgents?: boolean;
@@ -267,9 +267,9 @@ function makeRig(
     conversations: {
       get: (id) =>
         id === conversationId
-          ? { title: null, type: 'direct', projectId: extras.projectId ?? null }
+          ? { title: null, type: 'direct', workdirId: extras.workdirId ?? null }
           : id === groupId
-            ? { title: '项目群', type: 'group', projectId: null }
+            ? { title: '项目群', type: 'group', workdirId: null }
             : null,
       memberBotIds: (id) => (id === groupId ? ['bot_a'] : []),
     },
@@ -293,7 +293,7 @@ function makeRig(
     ...(extras.sandbox !== undefined ? { sandbox: extras.sandbox } : {}),
     ...(extras.allowlist !== undefined ? { allowlist: extras.allowlist } : {}),
     ...(extras.skills !== undefined ? { skills: extras.skills } : {}),
-    ...(extras.projects !== undefined ? { projects: extras.projects } : {}),
+    ...(extras.workdirs !== undefined ? { workdirs: extras.workdirs } : {}),
     ...(extras.oauthClients !== undefined ? { oauthClients: extras.oauthClients } : {}),
     ...(extras.fileGrants !== undefined ? { fileGrants: extras.fileGrants } : {}),
     ...(extras.schedules !== undefined ? { schedules: extras.schedules } : {}),
@@ -1494,7 +1494,7 @@ describe('settings catalog host: review fixes', () => {
       agents: { ...rig.settings.get().agents, 'agent-a': { enabled: true } } as never,
     });
     expect(
-      rig.host.read('agents.external', { botId: null, conversationId: null, projectId: null }),
+      rig.host.read('agents.external', { botId: null, conversationId: null, workdirId: null }),
     ).toMatchObject({
       values: { agent: 'agent-a,agent-b', enabled: true },
       summary: '已启用：agent-a、agent-b',
@@ -1644,10 +1644,10 @@ describe('settings catalog host: D89 review round 2', () => {
     });
   });
 
-  it('project.* with values: a blank user-only card, the values are not used', async () => {
+  it('workdir.* with values: a blank user-only card, the values are not used', async () => {
     const rig = makeRig({
-      projectId: 'proj_1',
-      projects: {
+      workdirId: 'proj_1',
+      workdirs: {
         get: () => ({
           path: '/home/alice/site',
           protectRules: { denyRead: ['/home/alice/site/.env'], denyWrite: [] },
@@ -1656,8 +1656,8 @@ describe('settings catalog host: D89 review round 2', () => {
       },
     });
     for (const [id, values] of [
-      ['project.protect-rules', { denyRead: [], denyWrite: [] }],
-      ['project.ports', { ports: [1, 65535] }],
+      ['workdir.protect-rules', { denyRead: [], denyWrite: [] }],
+      ['workdir.ports', { ports: [1, 65535] }],
     ] as const) {
       const result = await rig.host.forRun(runCtx(rig)).change({
         id,
@@ -1671,7 +1671,7 @@ describe('settings catalog host: D89 review round 2', () => {
       expect(card).toMatchObject({
         mode: 'user-only',
         proposed: null,
-        target: { projectId: 'proj_1' },
+        target: { workdirId: 'proj_1' },
       });
       expect(JSON.stringify(card)).not.toContain('/home/alice');
     }
@@ -2068,7 +2068,7 @@ describe('settings catalog host: recheck pending link cards on conversation reop
       rig.host.read('profile.user-facts', {
         botId: null,
         conversationId: null,
-        projectId: null,
+        workdirId: null,
       }),
     ).toMatchObject({ status: 'configured', values: null });
     expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
@@ -2092,7 +2092,7 @@ describe('settings catalog host: recheck pending link cards on conversation reop
       rig.host.read('diagnostics.status', {
         botId: null,
         conversationId: null,
-        projectId: null,
+        workdirId: null,
       }),
     ).toMatchObject({ status: 'readonly', values: null });
   });
@@ -2153,8 +2153,8 @@ describe('settings catalog host: recheck pending link cards on conversation reop
       ] as never,
     });
 
-    const globalTarget = { botId: null, conversationId: null, projectId: null };
-    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, projectId: null };
+    const globalTarget = { botId: null, conversationId: null, workdirId: null };
+    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, workdirId: null };
     const custom = rig.host.read('developer.custom-mcp', globalTarget);
     const oauth = rig.host.read('developer.oauth-clients', globalTarget);
     const mcpb = rig.host.read('developer.mcpb', globalTarget);
@@ -2233,7 +2233,7 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(JSON.stringify(cardOf(rig, mcpCard.id))).not.toContain('sk-env-SECRETVALUE');
     expect(rig.wakes).toHaveLength(1);
 
-    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, projectId: null };
+    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, workdirId: null };
     const before = rig.host.read('bot.identity', botTarget);
     const identityCard = appendCard(rig, {
       itemId: 'bot.identity',

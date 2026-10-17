@@ -58,11 +58,11 @@ export const zhCN = {
   'chats.errorCode.PROVIDER_UNREACHABLE': '无法连接模型服务，请检查网络或接口地址',
   'chats.errorCode.PROVIDER_UNAVAILABLE': '模型服务暂不可用，请稍后重试',
   'chats.errorCode.CONTEXT_TOO_LARGE': '上下文超出模型限制',
-  'chats.errorCode.PROJECT_MISSING': '项目目录不存在（可能被移动或删除）',
-  'chats.errorCode.PROJECT_SWITCH_BLOCKED': '有 Bot 正在执行，无法切换项目',
+  'chats.errorCode.WORKDIR_MISSING': '工作目录不存在（可能被移动或删除）',
+  'chats.errorCode.WORKDIR_SWITCH_BLOCKED': '有 Bot 正在执行，无法切换工作目录',
   'chats.errorCode.GIT_CLI_MISSING': '本机未安装 git 命令行',
   'chats.errorCode.STALE_FILE': '文件已被外部修改，请让 Bot 重新读取',
-  'chats.errorCode.LEASE_HELD': 'Bot 正在修改该项目，请稍后再试',
+  'chats.errorCode.LEASE_HELD': 'Bot 正在修改该工作目录，请稍后再试',
   'chats.errorCode.INTERNAL': '内部错误',
   // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
   'chats.errorCode.RUN_READ_ONLY':
@@ -572,27 +572,27 @@ export const zhCN = {
   'allowlist.addFailed': '无法加入白名单',
   'settings.sandboxNoteP03': '沙箱不可用时进入逐条确认模式：每条命令经你确认后在沙箱外执行。',
 
-  // --- P04 Project --------------------------------------------------------------
-  'projects.selector': '项目',
-  'projects.none': '选择项目目录…',
-  'projects.missingWarning': '目录不可用（已被移动或删除）',
-  'projects.pickNew': '选择新目录…',
-  'projects.manage': '权限设置…',
-  'projects.removeCurrent': '移除当前目录',
-  'projects.switchBlocked': '有 Bot 正在执行，无法切换项目',
-  'projects.settingsTitle': '权限设置',
-  'projects.settingsDenyRead': '禁止读取（glob，每行一条）',
-  'projects.settingsDenyWrite': '禁止写入（glob，每行一条）',
-  'projects.settingsPorts': '允许的本机端口范围（可选，如 3000-3010，每行一条）',
-  'projects.settingsPortsHint': '留空表示不限制；当前沙箱版本不强制端口范围，仅记录配置。',
-  'projects.save': '保存',
-  'projects.removeBody':
-    '将删除项目的改动记录与检查点，并取消所有对话的绑定。project 目录中的文件不会被改动。此操作不可恢复。',
-  'projects.removeConfirm': '移除',
-  'projects.leaseWaiting': '等待 {name} 完成对项目的修改',
-  'projects.leaseRevoke': '强制收回',
-  'projects.leaseRevoked': '已收回租约',
-  'projects.leaseNothing': '当前没有可收回的租约',
+  // --- P04 Workdir --------------------------------------------------------------
+  'workdirs.selector': '工作目录',
+  'workdirs.none': '选择工作目录…',
+  'workdirs.missingWarning': '目录不可用（已被移动或删除）',
+  'workdirs.pickNew': '选择新目录…',
+  'workdirs.manage': '权限设置…',
+  'workdirs.removeCurrent': '移除当前目录',
+  'workdirs.switchBlocked': '有 Bot 正在执行，无法切换工作目录',
+  'workdirs.settingsTitle': '权限设置',
+  'workdirs.settingsDenyRead': '禁止读取（glob，每行一条）',
+  'workdirs.settingsDenyWrite': '禁止写入（glob，每行一条）',
+  'workdirs.settingsPorts': '允许的本机端口范围（可选，如 3000-3010，每行一条）',
+  'workdirs.settingsPortsHint': '留空表示不限制；当前沙箱版本不强制端口范围，仅记录配置。',
+  'workdirs.save': '保存',
+  'workdirs.removeBody':
+    '将删除工作目录的改动记录与检查点，并取消所有对话的绑定。工作目录中的文件不会被改动。此操作不可恢复。',
+  'workdirs.removeConfirm': '移除',
+  'workdirs.leaseWaiting': '等待 {name} 完成对工作目录的修改',
+  'workdirs.leaseRevoke': '强制收回',
+  'workdirs.leaseRevoked': '已收回租约',
+  'workdirs.leaseNothing': '当前没有可收回的租约',
   'changes.title': '本次执行的改动',
   'changes.added': '新增',
   'changes.modified': '修改',
@@ -887,7 +887,7 @@ export const zhCN = {
   'approvals.agentToolReadTitle': '智能体申请读取',
   'approvals.agentToolWriteTitle': '智能体申请写入',
   'approvals.agentToolExecuteTitle': '智能体申请执行命令',
-  'approvals.agentToolConfigTitle': '加载项目内的智能体配置',
+  'approvals.agentToolConfigTitle': '加载工作目录内的智能体配置',
   'approvals.agentToolAgent': '智能体',
   'approvals.agentToolTool': '工具',
   'approvals.agentToolCategory': '类别',
@@ -1252,8 +1252,8 @@ export const zhCN = {
   'settingCard.skills.publicHint':
     '「{name}」是公共技能，所有 Bot 共用，启停会影响每个 Bot，请到技能页管理。',
   'settingCard.skills.openSkillsPage': '在技能页管理',
-  'settingCard.project.protectAck': '我确认按这些规则限制本项目的读取和写入',
-  'settingCard.project.portsAck': '我确认放行这些本机端口（留空表示不限制）',
+  'settingCard.workdir.protectAck': '我确认按这些规则限制本工作目录的读取和写入',
+  'settingCard.workdir.portsAck': '我确认放行这些本机端口（留空表示不限制）',
   'settingCard.toolPolicy.missing': '这张卡没有带上要改的连接和工具。',
   'settingCard.toolPolicy.notFound': '这条连接上没有这个工具。',
   'settingCard.mcp.missing': '这张卡没有带上要改的 MCP 服务。',
@@ -1413,7 +1413,7 @@ export const zhCN = {
     '用你已有的订阅给 Bot 干活：选一个智能体作为 Bot 的任务引擎，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
   'onboarding.subscriptionEnable': '开启外部智能体（实验）并继续',
   'onboarding.subscriptionExperimental':
-    '这是实验功能：继续会开启「外部智能体（实验）」（改用 API key 时会关回）。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
+    '这是实验功能：继续会开启「外部智能体（实验）」（改用 API key 时会关回）。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',
   'onboarding.subscriptionEmpty': '当前版本没有支持订阅登录的智能体。',
   'onboarding.subscriptionChoose': '由 {name} 执行管家和新建 Bot 的任务',
   'onboarding.subscriptionEnableFirst': '先在上方卡片中启用并登录这个智能体，再继续。',
@@ -1900,7 +1900,7 @@ export const zhCN = {
     '默认开启。关闭后由智能体判断是否接话：每条群消息批次一次会话（同一群每 2 分钟至多一次），计入每日后台预算；判断超时按不响应处理。',
   'agents.experimental': '外部智能体（实验）',
   'agents.experimentalHint':
-    '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
+    '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',
   'agents.empty': '当前版本没有可用的智能体',
   'agents.tier.supported': '已适配',
   'agents.tier.preview': '预览',
@@ -1921,7 +1921,7 @@ export const zhCN = {
     '「Claude Agent」使用你本人的 Claude 订阅或 Console 账号，经 Anthropic 官方程序登录；请遵守 Anthropic 的使用条款。',
   'agents.terms.codex': 'Codex 使用你的 ChatGPT 订阅或 OpenAI API key，经 OpenAI 官方程序登录。',
   'agents.terms.opencode':
-    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。KepCup 不让 OpenCode 读取项目内的 opencode.json / .opencode/ 与外部插件；OpenCode 仍会在其全局配置目录后台安装 @opencode-ai/plugin。未开启「加载我的个人配置」时，OpenCode 及其执行的命令（如 gh、git）使用独立的配置目录（XDG_CONFIG_HOME），读不到你 ~/.config 下的配置。',
+    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。KepCup 不让 OpenCode 读取工作目录内的 opencode.json / .opencode/ 与外部插件；OpenCode 仍会在其全局配置目录后台安装 @opencode-ai/plugin。未开启「加载我的个人配置」时，OpenCode 及其执行的命令（如 gh、git）使用独立的配置目录（XDG_CONFIG_HOME），读不到你 ~/.config 下的配置。',
   'agents.terms.dsh': 'DeepSeek Harness 为官方预览版，按 DeepSeek API key 计费。',
   'agents.terms.cursor':
     'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',
@@ -2021,7 +2021,7 @@ export const zhCN = {
   'agents.capabilities.skills.name': '技能',
   'agents.capabilities.skills.description': '安装与创建技能',
   'agents.capabilities.host_ops.name': '宿主操作',
-  'agents.capabilities.host_ops.description': '申请安装环境、项目的 Git 远程操作',
+  'agents.capabilities.host_ops.description': '申请安装环境、工作目录的 Git 远程操作',
   'agents.capabilities.mcp.name': 'MCP 工具',
   'agents.capabilities.mcp.description': '该 Bot 已勾选的 MCP 服务器的工具',
   'agents.capabilities.apps.name': '连接应用',
@@ -2066,7 +2066,7 @@ export const zhCN = {
   'contacts.agentSwitchIntro':
     '换的是任务引擎，不是 Bot：由它执行该 Bot 派出的任务（对话本身仍由内置模型进行），人设、记忆、审批照旧，但任务里以下几点会改变：',
   'contacts.agentSwitchTools':
-    '文件与命令由智能体自带的工具完成，在它自己的沙箱中运行；KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
+    '文件与命令由智能体自带的工具完成，在它自己的沙箱中运行；KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',
   'contacts.agentSwitchPrompt':
     '任务的系统提示词每个任务只刷新一次；订阅制没有单价，只记录 token 与轮数。',
   'contacts.agentSwitchFeatures':

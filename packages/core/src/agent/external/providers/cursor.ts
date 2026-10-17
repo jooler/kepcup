@@ -60,7 +60,7 @@ async function applyCursorTier(
  * 用户的 `~/.cursor/cli-config.json` 里的命令 allowlist 会让命令不经权限请求
  * 直接执行。登录凭据在 `auth.json`（Linux `$XDG_CONFIG_HOME/cursor`、macOS
  * `~/.cursor`、Windows `%APPDATA%/Cursor`），路径不随 `CURSOR_CONFIG_DIR`
- * 变化（bundle `getAuthFilePath`），登录不受影响——待登录实测。project 的
+ * 变化（bundle `getAuthFilePath`），登录不受影响——待登录实测。workdir 的
  * `.cursor/cli.json` 按 Agent **进程** cwd 向上查找（git 根 → process.cwd），
  * 进程 cwd 是 KepCup 私有目录（审查 M1）。
  */
@@ -128,7 +128,7 @@ export const cursorProvider: AgentProvider = {
     httpMcp: true,
     parallelSessions: false,
   },
-  // project 内 Cursor 会读的配置：.cursor/（rules、cli.json 权限、mcp.json、
+  // workdir 内 Cursor 会读的配置：.cursor/（rules、cli.json 权限、mcp.json、
   // hooks）、AGENTS.md、CLAUDE.md。
   agentSideConfigFiles: ['.cursor/', 'AGENTS.md', 'CLAUDE.md'],
   extRequests: {

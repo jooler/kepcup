@@ -31,8 +31,8 @@ export function leaseKeysConflict(a: string, b: string): boolean {
 }
 
 /**
- * Write leases (docs/design/08-project.md "并发：写入租约"), in-memory per the
- * phase doc: one holder per lease key (the project root or an authorized
+ * Write leases (docs/design/08-workdir.md "并发：写入租约"), in-memory per the
+ * phase doc: one holder per lease key (the workdir root or an authorized
  * directory), FIFO queue of waiters, at most one lease per run — acquiring a
  * second key first releases the current one (the caller snapshots `after`
  * through the released-run hook). Holders re-acquiring their own key pass

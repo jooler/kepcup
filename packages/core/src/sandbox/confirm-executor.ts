@@ -50,7 +50,7 @@ export interface UnsandboxedExecRequest {
  * confirmation (confirm mode: they run unsandboxed without a card). Review P0:
  *
  * - PATH loses empty / relative entries (`.`, `node_modules/.bin`) and absolute
- *   entries inside the workspace / project: a bare `tsc --version` must never
+ *   entries inside the workspace / workdir: a bare `tsc --version` must never
  *   resolve to an executable the Bot can write;
  * - corepack / yarn / go / npm / pip are told not to fetch anything
  *   (`COREPACK_ENABLE_NETWORK=0`, `YARN_IGNORE_PATH=1`, `GOTOOLCHAIN=local`,
@@ -69,7 +69,7 @@ export function exemptCommandEnv(
   overlay: Record<string, string>,
   platform: string = process.platform,
   /**
-   * Directories the Bot can write (workspace, bound project): absolute PATH
+   * Directories the Bot can write (workspace, bound workdir): absolute PATH
    * entries inside them are dropped too (direnv `PATH_add bin`, a venv's
    * `bin` …) — review P2.
    */

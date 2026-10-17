@@ -116,7 +116,7 @@
       approval.payload['tainted'] === true,
   );
 
-  // D72 P3 agent_tool payload：外部智能体的工具权限请求 / 项目内 Agent 配置确认。
+  // D72 P3 agent_tool payload：外部智能体的工具权限请求 / 工作目录内 Agent 配置确认。
   const agentTool = $derived.by(() => {
     if (approval.kind !== 'agent_tool') return null;
     const parsed = agentToolApprovalPayloadSchema.safeParse(approval.payload);
@@ -960,9 +960,9 @@
             {/each}
           </span>
         {/if}
-        {#if agentTool.kind === 'config' && agentTool.projectPath !== undefined}
+        {#if agentTool.kind === 'config' && agentTool.workdirPath !== undefined}
           <span class="text-muted-foreground">{t('approvals.cwd')}</span>
-          <code class="break-all">{agentTool.projectPath}</code>
+          <code class="break-all">{agentTool.workdirPath}</code>
         {/if}
         {#if agentTool.reason.length > 0}
           <span class="text-muted-foreground">{t('approvals.reason')}</span>

@@ -10,7 +10,7 @@ import type { SqliteDatabase } from './db.js';
  *
  * Scope rationale (docs/dev/03-data-model.md 迁移):
  * - main.db holds every structured user datum (settings, bots, conversations,
- *   approvals, projects, skills, schedules) and migrates in the startup
+ *   approvals, workdirs, skills, schedules) and migrates in the startup
  *   sequence — it is the one database backed up, BEFORE any migration runs.
  * - runs.db holds execution history only (run rows + redacted steps) —
  *   log-like, rebuildable data; a failed migration fails closed (per-migration

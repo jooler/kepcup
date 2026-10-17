@@ -193,7 +193,7 @@ describe('watch adapter', () => {
     // A public URL still moves; the card says the loopback rule now follows B's DM.
     const entry = local.adapter.inventory('bot_a').find((e) => e.key === 'watch:wat_d')!;
     expect(local.adapter.validate(ctx(), 'watch:wat_d', 'move')).toBeNull();
-    expect(local.adapter.warnings(ctx(), entry).join('\n')).toContain('项目绑定');
+    expect(local.adapter.warnings(ctx(), entry).join('\n')).toContain('工作目录绑定');
     expect(isLoopbackUrl('http://[::1]:3000/')).toBe(true);
     expect(isLoopbackUrl('http://dev.localhost/')).toBe(true);
     expect(isLoopbackUrl('https://shop.test/')).toBe(false);

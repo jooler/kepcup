@@ -11,7 +11,7 @@
   import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
-  import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
+  import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import { showBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
@@ -24,7 +24,7 @@
     chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
   );
   const grants = $derived(permissions.grants);
-  // 群创建问答进行中不提供项目选择（与原输入坞上方选择器的创建期隐藏一致）。
+  // 群创建问答进行中不提供工作目录选择（与原输入坞上方选择器的创建期隐藏一致）。
   const creating = $derived(chat.current?.conversation.setupState === 'creating');
   const conversation = $derived(chat.current?.conversation ?? null);
 
@@ -257,11 +257,11 @@
     </div>
   </section>
 
-  <!-- 项目目录（P04）：群目录绑定在对话上，创建期隐藏。 -->
+  <!-- 工作目录（P04）：群的工作目录绑定在对话上，创建期隐藏。 -->
   {#if !creating && conversation}
-    <ProjectSelector
+    <WorkdirSelector
       conversationId={conversation.id}
-      projectId={conversation.projectId}
+      workdirId={conversation.workdirId}
       disabled={conversation.readOnly}
     />
   {/if}

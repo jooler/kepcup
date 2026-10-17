@@ -7,7 +7,7 @@ import type { Message, Run } from '@kepcup/shared';
 
 import { canonicalPath, resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, type GatewayDeps } from '../../src/gateway/index.js';
-import { ProjectRuntime } from '../../src/project/service.js';
+import { WorkdirRuntime } from '../../src/workdir/service.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { buildCodingTools } from '../../src/tools/coding-tools.js';
 import { buildResponseTools } from '../../src/tools/index.js';
@@ -51,7 +51,7 @@ function makeGateway(): ToolGateway {
     ['run_turn', { id: 'run_turn', loopType: 'turn', taskWrites: null, parentRunId: null, status: 'running' }],
     ['run_task', { id: 'run_task', loopType: 'task', taskWrites: false, parentRunId: null, status: 'running' }],
   ]);
-  const projects = new ProjectRuntime({
+  const workdirs = new WorkdirRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
     leases: { keyOf: () => null },
@@ -76,7 +76,7 @@ function makeGateway(): ToolGateway {
     grants,
     allowlist: { match: () => ({ exempt: false, reason: 'stub' }) } as unknown as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
-    projects,
+    workdirs,
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [sensitive],
@@ -123,8 +123,8 @@ function responseTools(identity: RunIdentity, runs: Run[] = []): Harness {
       renderOptions: {},
       gateway: makeGateway(),
       workspacePath: workspace(),
-      projectPath: null,
-      projects: {},
+      workdirPath: null,
+      workdirs: {},
       network: { mode: 'none', allowDomains: [] },
       fsState: new FileReadState(),
       onBotMessage: () => {},
@@ -231,7 +231,7 @@ describe('a turn never waits for an access approval (审查 M4)', () => {
     const tools = buildCodingTools(identity, {
       gateway: makeGateway(),
       workspacePath: workspace(),
-      projectPath: null,
+      workdirPath: null,
       network: { mode: 'none', allowDomains: [] },
       secrets: { redact: (text: string) => text } as never,
       fsState: new FileReadState(),

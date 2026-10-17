@@ -58,7 +58,7 @@
     try {
       await chat.answerGroupSetup(
         conversationId,
-        step as 'title' | 'purpose' | 'members' | 'project',
+        step as 'title' | 'purpose' | 'members' | 'workdir',
         value,
       );
     } finally {
@@ -146,7 +146,7 @@
     >
       {t('groupSetup.confirm')}
     </Button>
-  {:else if step === 'project'}
+  {:else if step === 'workdir'}
     <div class="flex gap-2">
       <Button
         size="sm"

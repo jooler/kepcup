@@ -6,12 +6,12 @@ import { sensitivePaths, readOnlyRoots } from './sensitive-paths.js';
 import type { SandboxNetworkPolicy, SandboxPolicy } from './types.js';
 import type { Grant } from '@kepcup/shared';
 
-export interface PolicyProject {
-  /** Canonical project directory. */
+export interface PolicyWorkdir {
+  /** Canonical workdir directory. */
   path: string;
-  /** True when this run holds the project write lease. */
+  /** True when this run holds the workdir write lease. */
   hasLease: boolean;
-  /** Absolute glob patterns that stay unread (project protect rules). */
+  /** Absolute glob patterns that stay unread (workdir protect rules). */
   denyReadGlobs: string[];
 }
 
@@ -23,8 +23,8 @@ export interface PolicyInput {
   network: SandboxNetworkPolicy;
   /** Active grants of the executing bot in the current conversation (P03). */
   grants?: Grant[];
-  /** The conversation's bound project (P04). */
-  project?: PolicyProject;
+  /** The conversation's bound workdir (P04). */
+  workdir?: PolicyWorkdir;
   /**
    * P06 installed toolchains: PATH prefix (bin dirs, platform-delimited) and
    * the toolchains root (read-only inside the sandbox, docs 任务 5).
@@ -39,7 +39,7 @@ export interface PolicyInput {
   skillReadOnlyDirs?: string[];
   /**
    * D75 §2.1 / §5.1: the executing run may not write (a supervisor turn, or
-   * a task created with `writes: false`). The workspace and the project are
+   * a task created with `writes: false`). The workspace and the workdir are
    * mounted read-only and write grants only grant reading; the app caches
    * stay writable (package-manager / bytecode caches, not user files).
    */
@@ -53,7 +53,7 @@ export interface PolicyInput {
  * the rest of the user home — is denied. Effective grants join the policy for
  * every command (docs/design/13-permissions.md "命令行"): write grants into
  * `readWrite`, read grants into `readOnly`; a granted sensitive path is
- * removed from `denyRead`. The bound project is read-only without the write
+ * removed from `denyRead`. The bound workdir is read-only without the write
  * lease and read-write with it; its protect-rule globs stay denied inside
  * (srt resolves leaf-shaped globs against directory allows, last match wins).
  */
@@ -86,16 +86,16 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
     denyRead = denyRead.filter((denied) => !isAncestor(dir, denied));
   }
 
-  const project = input.project;
-  if (project !== undefined) {
-    if (project.hasLease && !readOnlyRun) readWrite.push(project.path);
-    else readOnly.push(project.path);
-    // The project re-exposes its slice of the denied home; protect-rule globs
+  const workdir = input.workdir;
+  if (workdir !== undefined) {
+    if (workdir.hasLease && !readOnlyRun) readWrite.push(workdir.path);
+    else readOnly.push(workdir.path);
+    // The workdir re-exposes its slice of the denied home; protect-rule globs
     // re-deny inside it (srt read model: deny-then-allow, last match wins).
     denyRead = denyRead.filter(
-      (denied) => !(denied === project.path || isAncestor(project.path, denied)),
+      (denied) => !(denied === workdir.path || isAncestor(workdir.path, denied)),
     );
-    denyRead.push(...project.denyReadGlobs);
+    denyRead.push(...workdir.denyReadGlobs);
   }
 
   for (const grant of input.grants ?? []) {

@@ -11,7 +11,7 @@ interface ConversationRow {
   title: string | null;
   description: string | null;
   direct_bot_id: string | null;
-  project_id: string | null;
+  workdir_id: string | null;
   read_only: 0 | 1;
   setup_state: string | null;
   summary: string | null;
@@ -29,7 +29,7 @@ export function conversationRowToConversation(row: ConversationRow): Conversatio
     title: row.title,
     ...(row.description !== null ? { description: row.description } : {}),
     directBotId: row.direct_bot_id,
-    projectId: row.project_id,
+    workdirId: row.workdir_id,
     readOnly: row.read_only === 1,
     ...(row.setup_state === CONVERSATION_SETUP_CREATING
       ? { setupState: CONVERSATION_SETUP_CREATING }
@@ -111,11 +111,11 @@ export class ConversationsService {
       .run(readOnly ? 1 : 0, conversationId);
   }
 
-  /** Binds or unbinds the conversation's project (P04; null clears). */
-  setProject(conversationId: string, projectId: string | null): void {
+  /** Binds or unbinds the conversation's workdir (P04; null clears). */
+  setWorkdir(conversationId: string, workdirId: string | null): void {
     this.db
-      .prepare('update conversations set project_id = ? where id = ?')
-      .run(projectId, conversationId);
+      .prepare('update conversations set workdir_id = ? where id = ?')
+      .run(workdirId, conversationId);
   }
 
   /** Marks (or clears) the conversational creation flow state (design/19 D60). */

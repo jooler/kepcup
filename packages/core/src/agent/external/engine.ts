@@ -1755,7 +1755,7 @@ class ExternalRunHandle implements RunHandle {
 
   /**
    * Background session (P6, `external.background`): read-only tier, a fresh
-   * private empty directory as cwd (never the user's workspace / project),
+   * private empty directory as cwd (never the user's workspace / workdir),
    * no session reuse. Permission requests skip the permission bridge (see
    * `#sink`): only this run's bridge tools are allowed, nothing asks the user.
    */

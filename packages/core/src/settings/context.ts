@@ -84,7 +84,7 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'edit',
   'delete',
   'request_access',
-  'acquire_project_write',
+  'acquire_workdir_write',
   'request_environment',
   'create_skill',
   'generate_image',

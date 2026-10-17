@@ -256,7 +256,7 @@ export const claudeProvider: AgentProvider = {
     httpMcp: true,
     parallelSessions: true,
   },
-  // settingSources: [] → Claude 不读仓库内的 CLAUDE.md / .claude/：由 <project> 段注入。
+  // settingSources: [] → Claude 不读仓库内的 CLAUDE.md / .claude/：由 <workdir> 段注入。
   agentSideConfigFiles: [],
   classifyError: (error) =>
     error.code === ACP_AUTH_REQUIRED

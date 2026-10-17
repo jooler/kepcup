@@ -36,7 +36,7 @@ import type { CoreLogger } from '../infra/logger.js';
  *    probe() requires the VM to exist and run.
  *
  * 红线 (same as the WSL backend): every host path the policy needs visible
- * inside the VM must be registered (data home / bound project / active
+ * inside the VM must be registered (data home / bound workdir / active
  * grants) or belong to the static read-only roots — resolvePolicyMounts
  * fails the whole command otherwise.
  *
