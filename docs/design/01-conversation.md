@@ -58,7 +58,7 @@
 
 - 右栏「配置」tab 内有 project 选择器（群聊在群信息面板），选择一个本地目录作为该对话的 project。
 - 选定后，该对话中所有 Bot 都可以读写该目录，并以它作为默认工作目录。
-- 详见 [08-project.md](08-workdir.md)。
+- 详见 [08-workdir.md](08-workdir.md)。
 
 ## 消息模型
 

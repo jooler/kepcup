@@ -180,6 +180,10 @@ rg -n "task_workdir" packages -g '!**/dist/**'     # 只允许出现在历史迁
 - 新迁移与 `task-cwd-migration.test.ts` 存在并通过；`create-core.test.ts` runs 版本断言为 13。
 - `git diff --stat` 核对：源码改动全部为标识符 / 注释 / SQL 列名改名，无逻辑增删；新增文件仅迁移、迁移测试与记录。
 
+### 阶段审查补漏（2026-10-17，Phase A 审查提交）
+
+- 审查发现 `docs/design/40-capability-mounting.md` §1 现状表里 `start_task` 参数仍写 `workdir`（D75 含义；该文件不在任务书 §5 步骤 9 的文档清单内，WP11 的核对正则也不覆盖裸 `workdir`）→ 已改为 `cwd`。其余逐项核对（§4.1 对照、「不改」清单、迁移 SQL、纯度、残留自检）全部通过。
+
 ### 偏差
 
 - 无新增 DEVIATIONS（编号仍至 DEV-030）：改名未迫使任何行为改动。
