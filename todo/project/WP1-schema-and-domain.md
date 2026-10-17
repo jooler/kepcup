@@ -286,11 +286,11 @@ node scripts/run-tests.mjs run --project desktop
 
 ## 5. 验收清单
 
-- [ ] 迁移运行器支持 `-- kepcup:foreign-keys=off`，4 条运行器测试通过；`0039`、`0040` 与迁移测试通过，`create-core` 版本断言为 main 40。
-- [ ] `conversations` 的 `CHECK` 生效；旧群转换结果正确；子表数据无丢失。
-- [ ] shared：契约与 §4 一致；`project-modules` 表驱动测试通过；`groups.*` 与 D60 契约已删除。
-- [ ] core：`ProjectsService` 全部行为与错误码如上；`deleteBot` 对负责人被拒；`deletionPreview` 有 `ledProjects`；D60 四问后端（orchestrator、setup-tools、messages、bindings、测试）已删除。
-- [ ] 自检命令输出为空（允许项见下）：
+- [x] 迁移运行器支持 `-- kepcup:foreign-keys=off`，4 条运行器测试通过；`0039`、`0040` 与迁移测试通过，`create-core` 版本断言为 main 40。
+- [x] `conversations` 的 `CHECK` 生效；旧群转换结果正确；子表数据无丢失。
+- [x] shared：契约与 §4 一致；`project-modules` 表驱动测试通过；`groups.*` 与 D60 契约已删除。
+- [x] core：`ProjectsService` 全部行为与错误码如上；`deleteBot` 对负责人被拒；`deletionPreview` 有 `ledProjects`；D60 四问后端（orchestrator、setup-tools、messages、bindings、测试）已删除。
+- [x] 自检命令输出为空（允许项见下）：
 
 ```bash
 rg -n "type === 'group'|type !== 'group'|GroupsService|groups\.(create|rename|addMembers|removeMember|setup|redistribute)" packages apps -g '!node_modules' -g '!**/dist/**' -g '!**/migrations/**'
@@ -298,9 +298,10 @@ rg -n "setupState|setup_state|GROUP_SETUP|group_setup_question|group_created|Gro
 ```
 
   允许项：`widgets/query-gate.ts` 的 SQL 关键字 `'group'`；`memory` 里持久化取值 `'group'`（WP4 迁移）；`project-chat.test.ts` 里那条 `it.skip`（WP3 删）；`GroupTurnCoordinator` 相关名字（WP3 改）。
+  2026-10-17 实测：第一条命令仅剩 `project-chat.test.ts` 的 `it.skip` 内一处 `groups.redistribute`（允许项）；第二条命令的剩余命中全部是 **bots.setup_state**（Bot 访谈 `'interviewing'`，另一概念，保留）与描述迁移本身的注释 / 迁移测试。
 
-- [ ] desktop `typecheck`、`lint`、desktop 单测绿；全量失败集合不超出基线。
-- [ ] 实施记录已填（含所有临时处理的位置清单：`butler.ts` 临时 lead、`chat.svelte.ts` 临时 lead、`it.skip`、设置目录的 `store.methods` 临时改名）。
+- [x] desktop `typecheck`、`lint`、desktop 单测绿；全量失败集合不超出基线。
+- [x] 实施记录已填（含所有临时处理的位置清单：`butler.ts` 临时 lead、`chat.svelte.ts` 临时 lead、`it.skip`、设置目录的 `store.methods` 临时改名）。
 
 ## 6. 陷阱
 
@@ -314,4 +315,42 @@ rg -n "setupState|setup_state|GROUP_SETUP|group_setup_question|group_created|Gro
 
 ## 7. 实施记录
 
-（执行智能体在此填写：分支、提交列表、临时处理清单、测试结果、偏差编号。）
+**分支 / 提交**（`feat/project/migration`，未 push）：
+
+- `8926bd7` feat(core): migration runner FK-off mode and main 0039/0040 project conversations migrations（`infra/migrate.ts` 指令支持 + `migrate-fk-off.test.ts` + `0039` / `0040` + `project-conversations-migration.test.ts` + `workbench-migration` / `create-core` 版本断言更新）。
+- `ea36bf8` feat(shared,core,desktop)!: group -> project team domain（shared 契约、`ProjectsService`、生命周期负责人守卫、RPC、D60 后端删除、renderer 最小修复、testkit `makeProject`、全部测试改造与新增）。
+- 文档提交：本文件实施记录 + todo/project/README §7 进度表。
+
+**迁移编号**：开工时 main 最新为 `0038`，故 `0039_project_prepare.sql` / `0040_project_conversations.sql` 按任务书编号使用，无顺延。`create-core` main 断言 38 → 40；`workbench-migration` `[37, 38]` → `[37, 38, 39, 40]`；另 `workdirs-rename-migration` 的 `toEqual([38])` → `[38, 39, 40]`（以实况为准）。
+
+**临时处理清单**（后续 WP 的替换点）：
+
+| 位置 | 临时处理 | 替换者 |
+|---|---|---|
+| `packages/core/src/dispatch/butler.ts` `#createProject` | `leadBotId: proposal.memberBotIds[0]`，注释 `// WP4: the proposal will carry an explicit lead_bot_id`；`proposal.description` 暂映射为 `goal` | WP4 |
+| `apps/desktop/.../stores/chat.svelte.ts` `commitProjectCompose` | `leadBotId = ids[0]`，注释 `// WP5 replaces this with the two-round lead selection` | WP5 |
+| `packages/core/test/integration/project-chat.test.ts` | redistribute 用例 `it.skip` + `// removed in WP3`（本 WP 唯一允许的跳过）；`threeBots` 显式 `leadBotId: 阿丙`（多个用例删除 / 移出阿甲 / 阿乙） | WP3 |
+| `packages/shared/src/settings-catalog/items.ts` | 目录条目 `group.title` / `group.members` 的 `store.methods` 改为 `projects.update` / `projects.addMembers` / `projects.removeMember`；**条目 id / scope / surface 未动** | WP4 |
+| `packages/core/src/dispatch/group-turn.ts` | 仍产生 `group_no_claim`；渲染层只显示文字（`MessageBubble.svelte` 的点选重发 UI 已删，`t('group.noClaimHint')` i18n 键随之删除） | WP3 |
+| 渲染层文件名 | `GroupComposeBar` / `group-compose` / `GroupAvatarStack` / `group-avatar-layout` / `GroupInfo` / `GroupSettingsDialog` 文件名未改（WP5–WP7）；仅类型 `GroupMemberView` → `ProjectMemberView`、常量 `PROJECT_MEMBER_PREVIEW_MAX` | WP5–WP7 |
+| 提示词 / 管家 / 工作台 / 记忆库 | `suggest_route` 的 `route: 'group'`、`butlerProposalPayloadSchema` 的 `'group'` 分支、`TodoAssignee` 的 `'group'`、`memory_items.origin` 持久化 `'group'`、`<conversation_info>` 的「群聊」文案与 `my-state` 的「群聊」标签均未动（比较对象已改为 `'project'`） | WP4 |
+
+**测试结果**（2026-10-17，macOS arm64 宿主）：
+
+- typecheck 三包（shared build → core build → desktop tsc + svelte-check）与 `pnpm lint` 通过。
+- 定向：`migrate-fk-off`、`project-conversations-migration`、`projects-service`（18 例）、`lifecycle-project-lead`（5 例）、`projects-rpc`（7 例）、`project-chat`（22 过 1 skip）、`create-core`、`setup-path-gate`（D60 块删除后 5 例）、shared 全部（337 例）、desktop 单测（767 例）全绿；core unit 208 文件 2725 过 1 skip；core integration 110 文件 919 例全绿。
+- 全量 `pnpm test`：见 README §7 WP1 行（失败集合不超基线；沙箱 / 环境基线项按 05-testing 记录比对）。
+- desktop e2e 按任务书允许为红（临时负责人 + 旧创建流程），WP8 统一处理；`group-compose.spec` 已改读 `type === 'project'` 保证可编译。
+
+**旧库模拟测试的处理**：建到旧版本、**不再升级**的测试（`attachments-sweep`（v31）、`media-delivery`（v31）、`reap-unbound-attachments-migration`（v31 + 手动 0033）、`watches-migration`（v22））里的 `'group'` 行按任务书保留；**升级到最新**的迁移测试里给旧群补了成员行使其可转换（`task-events-migration` 的 `conv_a` + `bot_x`；`workbench-migration` 的 `conv_2` + `bot_1`，并为迁移后插入提供 `'project'` + `lead_bot_id` 形态）；`public-skills-migration` 的全量回拨改为 FK 关闭下把 `conversations` 重建回 0002 形态（`project_id` 直接恢复，`run_changes` 仍按列改名回拨）。
+
+**实现取舍（由我判断，依据如下）**：
+
+- `bots.markDeleted` 的负责人后盾用 `BotsService.attachLeadProjectGuard`（start.ts 装配时注入 `projects.ledProjectsOf`）实现，与 `attachAppConnections` 同一模式——直接依赖 `ProjectsService` 会形成 bots → projects → bots 的构造环。
+- `workbench.test.ts`「空群」用例：负责人守卫使「删光成员」经 RPC 不可达，用例改为 `bots.delete` 非负责人 + 直接 SQL 墓碑负责人，模拟遗留 / 竞态下的无 active 成员状态（服务层断言不变）。
+- `ProjectsService.setLead` 对「目标非成员 / 管家 / 非 active」分别给 `NOT_FOUND 该 Bot 不是项目成员`、`INVALID_INPUT 管家不能加入项目组`、`NOT_FOUND Bot {id} 不存在或已删除`；「同一个人」原样返回不发消息（任务书明确）。
+- `create` / `addMembers` 均在校验通过后于事务内写行；`addMembers` 的事务外按新增成员逐个写 `project_member_joined` 系统消息（写法参照 `workdir/service.ts` `#systemMessage`：`messages.append` + `events.emit('message.created')`，由 start.ts 的 `appendSystemEvent` 闭包注入）。
+- `agents.ts` 的 `'group' in item`（Agent 目录的分组形态）、`widgets/check/report.ts` 的 `groups` 局部变量、UI 库 `*-group` 组件等「别的含义的 group」按 README §4.1 未动。
+- `GROUP_MENTION_PREFIX`（`'group:'` @ 群提及 token，**持久化在 mentions_json 里的数据格式**）本 WP 未改名：任务书未列，且改名需要数据迁移，留给后续 WP 决定。
+
+**偏差**：无（未新增 DEVIATIONS 条目；WP 与代码现实无冲突）。
