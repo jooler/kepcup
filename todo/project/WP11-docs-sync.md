@@ -91,4 +91,37 @@ pnpm fmt:check                                           # 仓库的 prettier �
 
 ## 7. 实施记录
 
-（执行智能体在此填写：分支、提交列表、自检命令输出、例外说明。）
+**2026-10-18 · 直接在集成分支 `feat/project/migration` 上开发（调度方指定，本 WP 无并行项），未 push。** 只改文档，未改任何代码、未跑测试；HEAD 基点 `a1f8e1f9`。
+
+### 提交列表
+
+| 提交 | 内容 |
+|---|---|
+| `docs(design)` | 设计文档同步：01 / 02 / 05 / 08 / 10 / 12 / 13 / 19 / 27 / 28 / 30 / 36 / 37 / 38 / 39 按现状改写并删除 18 个「D92 修订」横幅；41 状态改「已实施（2026-10-18）」、§18 按实施结果校正、DEV-031–DEV-036 与 WP9 / WP10 实施取舍写进相应章节（§6.2 / §6.3 / §6.5 / §7.3 / §8.4–§8.7 / §12.1 / §17.5）；设计 README：索引行更新、D4 / D5 / D9 / D28 / D60 / D70 / D75 / D90 决策行末尾补「（D92 修订：…）」、D92 行补实施状态 |
+| `docs(dev)` | 开发文档同步：01-conventions（仓库结构注释 / ID 表 `ast_` 行 / 常量表——删 `BUTLER_TEAM_SIZE_*` 旧行，加 `PROJECT_TITLE_MAX`、`PROJECT_MEMBER_PREVIEW_MAX`、`PROJECT_GOAL_MAX_CHARS`、`EPISODE_HOP_BREAKER`、`EPISODE_PINGPONG_BREAKER`、`WIKI_TEXT_SOURCE_MAX_CHARS`，`PROPOSE_BOTS_*` 改名）、02-architecture（RunIdentity / TriggerBatch 形状、mailbox 合并与吸收规则、调度优先级行）、03-data-model（迁移表补 0038–0042 / 0013 / 0014 / memory 0003；`conversations` / `episodes` 新 DDL、`runs` / `todos` / `memory_items` 列、jobs 两类 wiki job、项目 wiki 磁盘布局与台账 JSON；**删除级联表三条更新**——删项目组增 `episodes` FK 级联与 `projects/{id}/` 目录 + wiki job 取消，删 Bot 增负责人拒绝与来源保留 / job 取消，移出成员增负责人拒绝与入库 job 取消）、04-agent-runtime（提示词段落表 7.5 项目规则段 / 11.5 `<project_wiki_topics>`、触发原因表新六行、`skip_reply` 摘除条件、「续接判断 + 负责人网关」小节按 `runLightJudgement` / `normalizeGateDecision` 重写、wiki 工具 `scope` 与 `wiki_remove_source` 行）、05-testing（熔断测试缝、项目组 e2e spec 清单）、DEVIATIONS（**DEV-030 状态改「已落实」，决定 = 采纳「详情页编辑项目目标」（`projects.update`，项目详情页「概览」）**）、PROGRESS（新增「## 项目组（D92，2026-10-17 ～ 10-18…）」一节） |
+| `docs(todo)`（收口提交） | 本文件 §7、todo/project/README §7 WP11 行与顶部状态「已实施」 |
+
+### 自检命令输出（§4）
+
+1. `rg -n "D92 修订" docs` → **10 处，均为例外**（不是顶部横幅；18 个横幅已全部删除）：
+   - `docs/design/README.md` 9 处：D4 / D5 / D9 / D28 / D60 / D70 / D75 / D90 决策行末尾的「（D92 修订：…）」与 39 索引行标注——§3 明文要求补的**修订标注格式本身**（「沿用 D75 / D89 修订其它决策时的写法」）；要字面满足「0 个」就必须改掉任务书指定的标注文字，按 §3 优先。
+   - `docs/dev/PROGRESS.md` 1 处：新增节的 WP11 行写明「删除 18 个『D92 修订』横幅」——历史记录类文档（§1 明令不改既有内容，本句即记录）。
+2. `rg -n "group_no_claim|GroupTurnCoordinator|…|createGroupViaUi" docs（排除 phases / PROGRESS / DEVIATIONS / releases）` → **34 处，5 个文件，逐类说明**：
+   - `docs/design/41-project-team.md`（26）：41 是**变更规格本身**——§2 术语与改名、§3 实施前现状快照、§4.2 结构变更表、§7.2 移除清单（必须点名被删的 `BOT_CHAIN_*` / `ChainsService`）、§7.4 迁移注释、§11.3–§11.4 / §12.2 / §12.5「旧 → 新」对照、§13 改名与迁移方案、§16 影响表。这些句子的语义就是「旧名 → 新名」，不属可改写为现状的正文。
+   - `docs/design/README.md`（5）：D70 / D75 / D88 / D90 / D92 决策行——决策记录保存**当时的决定原文**，修订经行末「（D92 修订：…）」表达（D75 / D89 既有写法）。
+   - `docs/design/02-execution.md`（1）：「`BOT_CHAIN_MAX_DEPTH` / `BOT_CHAIN_TOKEN_BUDGET` 已删除」——说明删除了什么必须点名。
+   - `docs/design/19-work-path-and-group-setup.md`（1）：开头说明「D60 的…（含 `conversations.setup_state`、`groups.setup.*`、`GroupSetupCard`）已整体删除」——同上。
+   - `docs/design/37-bot-asset-handover.md`（1）：P0 分期表「`propose_bot` / `propose_bots`（原 `propose_team`）增 `model`」——历史分期计划 + 修订注；37 不在本 WP 改写清单，仅把现行行为描述里的旧工具名改为 `propose_bots`（原句已是不换名就失真的现状描述）。
+3. `rg -n "\]\([^)]*08-project" -g '*.md' docs todo | rg -v "docs/dev/phases|PROGRESS|DEVIATIONS"` → **空**（WP0-2 已改，核对通过）。
+4. `pnpm fmt:check`（仓库全量 prettier）：本 WP 改动的全部文件（25 个 md + 本文件 + HANDOFF）`npx prettier --check` **全部通过**；仓库全量检查报 533 个 `[warn]`，逐一对照 `git status` **无一在本 WP 改动集内**（均为既有 .ts / .mjs 文件的存量告警，与 WP7「与基线 diff 为零」同口径），按要求只对改过的 md 修格式——实际无需修。
+5. §3 进度与偏差第 4 条：`rg -n "WP[0-9]+ replaces|Transitional shell|removed in WP3|stored value stays" packages apps` → **空**（无未删的临时提示，无需回头报告）。
+
+### 例外说明
+
+- **WP8 审查顺延的 `groupMentionOnly` 旧名文档残留**：`docs/dev/03-data-model.md`（settings 行）、`docs/dev/04-agent-runtime.md`（settings 行）、`docs/design/28-external-agents-acp.md`（P6 后台路由节）已按本 WP 正常改写为 `projectMentionOnly`（不在历史豁免清单）；**`todo/acp-external-agents.md`（4 处）不改**——属 §1 通则「`todo/*.md` 除 `todo/project/**` 不改正文」的豁免范围，该残留在此登记备案，留待该 todo 被正式执行或归档时处理。
+- `todo/project/HANDOFF.md` 按调度方要求未动。
+- 设计 37（资产移交）与 30 §2.2 的两处现状描述旧工具名（`propose_team` / `propose_group`）不在 §3 清单内，但属「文档与代码一致」的事实性错误，已做最小改名（见提交 `docs(design)`）；未做无关格式整理。
+
+### 遗留
+
+- 无阻塞性遗留。可选后续：37 / 40 等未列入 §3 的设计文档如需全面「项目组」措辞清扫（非旧名残留，仅中文措辞），可另行小任务处理。
