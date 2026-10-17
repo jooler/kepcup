@@ -373,6 +373,9 @@ class ChatState {
     // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
     // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。
     if (shell.workbenchIntent === workbenchIntent) shell.mainView = 'chats';
+    // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
+    shell.projectView = 'chat';
+    shell.projectSettingsSection = 'overview';
     this.replyTo = null;
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
     // 或群聊），而不是按最近消息时间挑一个。
@@ -582,6 +585,9 @@ class ChatState {
     this.replyTo = null;
     this.highlightMessageId = null;
     this.#pendingSetup = null;
+    // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
+    shell.projectView = 'chat';
+    shell.projectSettingsSection = 'overview';
   }
 
   /**
