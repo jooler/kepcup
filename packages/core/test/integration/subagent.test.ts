@@ -409,7 +409,9 @@ describe('delegate_task background branches inside the task (D66 mode B, D75 §1
     } finally {
       await rm(home, { recursive: true, force: true });
     }
-  }, 60_000);
+    // 本地 ~0.3s；这是文件里唯一要起第二个实例（重启 journal replay）的用例，
+    // 满载 CI runner 上 60s 默认线不稳定（r12 ubuntu 命中）。
+  }, 120_000);
 });
 
 describe('delegate_task fan-out inside the task (D66 mode C)', () => {
