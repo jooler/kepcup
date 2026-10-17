@@ -226,14 +226,14 @@ rg -n "P04-workdir" .                                                           
 
 ## 7. 验收清单
 
-- [ ] 迁移 `0038` 与迁移测试存在并通过；`create-core` / `workbench-migration` 的版本断言已更新。
-- [ ] `ids.ts` 键为 `wkd`；`workdirCheckpointsPath` 路径为 `workdirs/{id}/checkpoints.git`。
-- [ ] 残留自检 1–4 全部满足；`start_task.cwd` 取值为 `'workspace' | 'workdir'`。
-- [ ] 用户可见的目录字样全部是「工作目录」；系统消息为「工作目录已绑定为 …」等。
-- [ ] 21 个 `data-testid` 与 24 个 i18n key 已改名；3 个 e2e spec 通过。
-- [ ] `08-workdir.md` 与全仓链接正确；当前规格类文档已更新术语；历史文档未改正文。
-- [ ] `typecheck` / `lint` 通过，全量失败集合不超出基线，**无行为改动**。
-- [ ] 实施记录已填（含步骤 5 的判断表、冲突处理）。
+- [x] 迁移 `0038` 与迁移测试存在并通过；`create-core` / `workbench-migration` 的版本断言已更新。
+- [x] `ids.ts` 键为 `wkd`；`workdirCheckpointsPath` 路径为 `workdirs/{id}/checkpoints.git`。
+- [x] 残留自检 1–4 全部满足；`start_task.cwd` 取值为 `'workspace' | 'workdir'`。
+- [x] 用户可见的目录字样全部是「工作目录」；系统消息为「工作目录已绑定为 …」等。
+- [x] 21 个 `data-testid` 与 24 个 i18n key 已改名；3 个 e2e spec 通过。
+- [x] `08-workdir.md` 与全仓链接正确；当前规格类文档已更新术语；历史文档未改正文。
+- [x] `typecheck` / `lint` 通过，全量失败集合不超出基线，**无行为改动**。
+- [x] 实施记录已填（含步骤 5 的判断表、冲突处理）。
 
 ## 8. 陷阱
 
@@ -247,4 +247,71 @@ rg -n "P04-workdir" .                                                           
 
 ## 9. 实施记录
 
-（执行智能体在此填写：分支、提交列表、步骤 5 的判断表、命名冲突、测试结果、偏差编号。）
+### 分支与提交
+
+- 分支：`feat/project/migration`（按派工指示直接在该集成分支实施，未另拉任务书头部的 `feat/project/wp0-2-workdir`；不 push）。
+- 提交（3 个，均为纯改名 / 记录，无行为改动）：
+  1. `f162702 refactor(core,shared): rename D28 shared directory project to workdir (D92 T0-2)`——迁移 `main/0038_workdirs_rename.sql`、`ids.ts` wkd、全部代码标识符 / 字面量 / 文案 / testid / i18n / 测试与 e2e、新增迁移测试与版本断言更新；
+  2. `32472fe docs(design,dev): follow project to workdir rename in current-spec docs (D92 T0-2)`——`08-project.md` → `08-workdir.md` 与全仓链接、当前规格文档术语、`01-conventions` ID 表 / 仓库结构 / 常量表；
+  3. 本记录与 README §7。
+
+### 开工核对（§3）
+
+- `git status` 干净；WP0-1 合入确认：`workdir` 残留仅为允许项（es-git `repo.workdir()`、Lima `--workdir`、`workDir`、新迁移测试内的旧列名字符串）。
+- main 最新 `0037_workbench.sql`，`0038_workdirs_rename.sql` 编号可用，内容与任务书 §5.2 逐字一致。
+- 基线计数：`1299 hits in 158 files`；收口后 `110 hits in 25 files`（逐文件核对，全部为 §4.2 允许项：连接器分类与 Linear/Notion fixtures、`P04-project.md` 文档引用、vitest `--project`、迁移测试与 create-core 注释里的旧表名、`sec_projects`、`pyproject`、`projection` 家族、第三方环境变量）。
+
+### 步骤 5 判断表（`'project'` 字面量逐处）
+
+| 位置 | 判断 |
+|---|---|
+| `start_task.cwd` 取值、`resolveCwd` 的 `requested === 'workdir'`、校验文案 `cwd 只能是 workspace 或 workdir`（`task-tools.ts` / `tasks.ts` / `orchestrator.ts`） | 改（目录含义） |
+| `TaskView.cwdKind` / `#describeTaskCwd` 的 `kind: 'workdir'`（`shared/types.ts`、orchestrator、渲染层任务卡与测试） | 改 |
+| 设置目录 `scope: 'workdir'`、`surface: 'workdir-dialog'`、`DIALOG_SURFACE_SECTIONS` 的 `'workdir-settings'`、条目 id `workdir.protect-rules` / `workdir.ports`、group 分类值 `'workdir'`、锚点 `workdir-protect` / `workdir-ports`（`settings-catalog/{items,types,coverage,query}.ts`、`settings/host.ts`） | 改 |
+| 内联设置 `kind: z.literal('workdir')`（`shared/types.ts` 约 l.2796） | 改 |
+| `groups.setup.answer` 的 `step: z.literal('workdir')` 与 `GROUP_SETUP_STEPS` 末项（`rpc/methods.ts` 约 l.904、`constants.ts` l.260） | 改（WP1 将整体删除 D60 后端） |
+| `zh-CN.ts` `apps.catalog.category.project` 键与值、`app-catalog.ts` 的 `ConnectorCategory 'project'` 与键映射、`shared/connector-catalog.ts:36`、`app-validator/manifest.ts:45` 描述串及其测试夹具（`app-catalog.test.ts`、`manifest-checks.test.ts`、`support.ts`、`acceptance-listed-app.test.ts`、`linear-listed.server.json`、`linear/notion.tools.json`、`connectors/catalog.json`） | **不改**（SaaS 连接器分类「项目」） |
+| `scripts/run-tests.mjs` | 实测无 `project` 字样，无需排除；各 `package.json` 的 `--project` 经排除 glob 未触及 |
+| `OPENCODE_DISABLE_PROJECT_CONFIG`（opencode.ts + 测试）、`GOOGLE_CLOUD_PROJECT`（antigravity.ts 注释） | 不改（第三方环境变量） |
+| `sec_projects`（sidebar-sections 测试的自定义分组 id）、`pyproject.toml`（skills/scan.ts）、`projection` 家族（npx-lockfiles.generated.ts 等） | 不改（别的含义；词边界天然不命中） |
+
+### 批量替换事故与修复（重要，后续 WP 引以为戒）
+
+任务书 §5 步骤 4 给出的 rg 命令把 `--` 放在 `-g` 参数**之前**：`--` 之后的所有 `-g` 都被当作路径参数，glob 过滤整体失效（stderr 又被 `2>/dev/null` 吞掉）。perl 因此跑遍了 packages/apps/scripts 下所有非 gitignored 文件。受影响并已 `git checkout --` 还原 / 重写的文件：
+
+- 历史迁移 `main/0002`、`0005`、`0017`（**已恢复原样，最终 diff 不含任何历史迁移改动**）；新写的 `0038` 被改坏后重写为正确内容；
+- `connectors/catalog.json`、`linear/notion.tools.json`、`linear-listed.server.json`、`connector-spike/reports/2026-10-09.json`（第三方 schema / 历史报告）；
+- 4 个 `package.json`（`--project` → `--workdir`）、`pack-hooks.cjs`（electron-builder `context.packager.projectDir` 是第三方 API，且 `workdirDir` 命名荒谬）、`mineru/SKILL.md`（示例路径）；
+- `app-validator` 两个测试的 `category: 'workdir'` 夹具回补为 `'project'`。
+
+还原后重跑残留自检 1–3（连接器分类、vitest、OpenCode 环境变量）全部通过。`node_modules/` 与 `renderer/out/` 为 gitignored，未受影响。
+
+### 命名与迁移登记
+
+- 无作用域占用冲突：`workdir` 一词 WP0-1 后只剩共享目录含义；`projectRoot`（`permission-bridge.ts` 局部、`settings/adapters.ts` 参数）→ `workdirRoot`、`projectMount` → `workdirMount`、`agentProjectGate` → `agentWorkdirGate`、`unleasedProject` → `unleasedWorkdir`、`boundProject` → `boundWorkdir` 等均按通则替换。WP0-1 登记的 `normalizedCwd` / `sessionCwd` / `commandCwd` 未受影响。
+- `newId('prj')` → `newId('wkd')`（字符串字面量不被标识符替换覆盖，单独改；`isId('prj')` 全仓无调用，旧库已有 `prj_…` id 仅作外键值继续有效）。
+- 旧开发库 `<home>/projects/{id}/checkpoints.git` 成为孤儿，不迁移（早期阶段预期行为）；`workdirCheckpointsPath` 现指向 `<home>/workdirs/{id}/checkpoints.git`。
+- `08-workdir.md` 正文重写时顺带把其 D75 引用块里残留的旧「任务执行根」含义的 `workdir` 措辞改为 `cwd`（WP0-1 文档清单未包含 08，属补漏）。
+
+### 迁移与版本断言
+
+- 新增 `packages/core/test/unit/workdirs-rename-migration.test.ts`：建到 main 37 → 插入 `projects` / `conversations.project_id` / `run_changes.project_id` 行 → 应用 0038 → 断言表名 `workdirs`、行列值保留、`PRAGMA foreign_key_list(run_changes)` 指向 `workdirs`、`foreign_key_check` 为空、级联删除仍生效。
+- `create-core.test.ts` main 版本 `toBe(37)` → `toBe(38)`；`workbench-migration.test.ts` `toEqual([37])` → `toEqual([37, 38])`。
+- `public-skills-migration.test.ts`：该测试用「全量迁移后手工回拨到 v12」构造旧库，回拨脚本需补 0038 改名的回退（`workdirs` → `projects`、两列改回 `project_id`），否则回放 0013+ 时 0038 重复执行失败。已补，单跑通过。
+
+### 测试结果
+
+- typecheck：shared build+typecheck、core build+typecheck、desktop typecheck（含 svelte-check，i18n `MessageKey` 全量核对）通过；`pnpm lint` 通过。
+- 定向（全绿）：迁移三件套（workdirs-rename-migration 1 / workbench-migration 3 / create-core 9）；workdirs + workdir-lease-windows（20）；workdir-lease + workdir-rules（24）；shared 全包（320）；desktop 单测（767）；改动集单测两批（314 + 239）；agent-providers contract（170）；集成两批（73 + 68）；`pnpm build` 后 e2e `workdirs.spec.ts`（2）+ `tasks.spec.ts` / `browser.spec.ts`（17）。
+- 全量（收口一次，`node scripts/run-tests.mjs run`）：**5304 通过 / 2 失败 / 23 跳过**。两例：`public-skills-migration`（0038 引起，按上述补回拨后单跑通过）；`permission-bridge`「unattended data-directory floor (agent_tool) > exempts the workspace / skill dirs」1 例（单跑 29/29 通过，负载偶发，属基线处理方式）。修正后未再跑第二轮全量（按测试规则）。失败集合不超出基线。
+- 验收清单 i18n 计数勘误：`projects.*` 实际 **19** 个（任务书写 20）、连同 `chats.errorCode.PROJECT_*` 2 个与 `settingCard.project.*` 2 个共 **23** 个（任务书写 24）——已全部改名，任务书为计数笔误。`data-testid` 21 个与实际一致。
+
+### 外部并发改动（非本 WP）
+
+`apps/desktop/src/renderer/src/lib/features/workbench/WorkbenchView.svelte` 与 `apps/desktop/test/e2e/workbench.spec.ts` 在实施期间被另一会话修改（内容为 workbench tab seam 的另一种实现，时间戳 17:03–17:04）。两者不含 project 字样、与本 WP 无交集，已排除在三个提交之外，保留在工作区由其作者处置。
+
+### 偏差
+
+- 无新增 DEVIATIONS（编号仍至 DEV-030）：改名未迫使任何行为改动；`public-skills-migration` 的回拨补丁是测试对新增迁移的适配（同 WP0-1 对 `tool-effects-migration` 的处理）。
+- 分支名与任务书头部不同（`feat/project/migration` vs `feat/project/wp0-2-workdir`）：用户派工明确指示，同 WP0-1，不记 DEVIATIONS。
+
