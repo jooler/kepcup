@@ -1068,25 +1068,18 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0);
 
     // 视图宽度 < 760：折成「事项 / 备忘」两个 tab，各自不溢出。
-    // 先撤掉 waitReady 里的双栏 seam（本段就是要断言 tab 形态）。
+    // seam（双栏强制）在挂载时刻生效且贯穿生命周期：本段要 tab 形态，
+    // 先撤掉 waitReady 里的 seam 值、把窗口缩到阈值下，随后「回对话 →
+    // 重新打开工作台」做一次 remount，挂载逻辑按新状态重新起形态。
     await page.evaluate(() => localStorage.removeItem('kepcup.e2e.workbenchWide'));
     await resizeWindow(app, 900, 760);
+    await openConversationByName(page, '阿长名字特别特别特别特别特别长的助手');
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await page.locator('[data-testid="workbench-nav"]').click();
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,
-    }).catch(async (error) => {
-      const probe = await page.evaluate(() => ({
-        seam: window.localStorage.getItem('kepcup.e2e.workbenchWide'),
-        inner: window.innerWidth,
-        view: document.querySelector('[data-testid="workbench-view"]')?.clientWidth,
-        attrs: (() => {
-          const el = document.querySelector('[data-testid="workbench-view"]');
-          if (!el) return null;
-          return { width: el.getAttribute('data-width'), tabbed: el.getAttribute('data-tabbed') };
-        })(),
-      }));
-      console.warn(`[layout-probe] ${JSON.stringify(probe)}`);
-      throw error;
     });
+
     await expect(page.locator('[data-testid="memo-pane"]')).toHaveCount(0);
     expect(await overflowing(page, '[data-testid="workbench-view"]')).toEqual([]);
     await shot(page, '21-layout-tabbed-todos');
