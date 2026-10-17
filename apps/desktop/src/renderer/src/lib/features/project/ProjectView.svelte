@@ -5,6 +5,7 @@
   import ModulePlaceholder from './ModulePlaceholder.svelte';
   import ProjectHeader from './ProjectHeader.svelte';
   import ProjectSettingsPage from './ProjectSettingsPage.svelte';
+  import ProjectWikiView from './ProjectWikiView.svelte';
 
   /**
    * 项目组外壳（WP6 §1）：实心两行顶栏 + 内容区。沟通内容（chatBody snippet，由
@@ -30,6 +31,9 @@
     </div>
     {#if view === 'settings'}
       <ProjectSettingsPage conversationId={current?.conversation.id ?? ''} />
+    {:else if view === 'wiki'}
+      <!-- D92 T1b WP10: the Wiki tab's real view replaces the WP6 placeholder. -->
+      <ProjectWikiView conversationId={current?.conversation.id ?? ''} />
     {:else if view !== 'chat'}
       <ModulePlaceholder module={view} />
     {/if}

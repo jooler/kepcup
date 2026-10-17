@@ -4,11 +4,12 @@
   import type { ProjectModuleId } from '@kepcup/shared';
   import { t } from '$lib/i18n';
 
-  /**
-   * 模块占位页（WP6 §4 步骤 4）：Wiki 的真实视图 WP10 接（先 wikiSoon 文案），
-   * 看板 / OKR / 日历是 planned 模块（soonBody）。正常不会以 'chat' 渲染。
-   */
-  let { module }: { module: ProjectModuleId } = $props();
+/**
+ * 模块占位页（WP6 §4 步骤 4）：看板 / OKR / 日历是 planned 模块（soonBody）；
+ * Wiki 的真实视图由 WP10 的 ProjectWikiView 接管（wikiSoon 文案已删）。
+ * 正常不会以 'chat' / 'wiki' 渲染。
+ */
+let { module }: { module: ProjectModuleId } = $props();
 
   type IconProps = { class?: string; 'aria-hidden'?: boolean };
   const ICONS: Record<ProjectModuleId, Component<IconProps>> = {
@@ -28,7 +29,5 @@
   data-module={module}
 >
   <Icon class="size-8 text-muted-foreground/60" aria-hidden={true} />
-  <p class="text-sm text-muted-foreground">
-    {t(module === 'wiki' ? 'project.module.wikiSoon' : 'project.module.soonBody')}
-  </p>
+  <p class="text-sm text-muted-foreground">{t('project.module.soonBody')}</p>
 </div>

@@ -593,7 +593,7 @@
         hidden={activeTab !== 'wiki'}
       >
         {#if bot}
-          <WikiBrowser botId={bot.id} active={activeTab === 'wiki'} />
+          <WikiBrowser owner={{ kind: 'bot', id: bot.id }} active={activeTab === 'wiki'} />
         {/if}
       </div>
       <div

@@ -26,7 +26,7 @@
 
   let entries = $state<ScheduleEntry[]>([]);
   let loading = $state(false);
-  /** Two-step cancel: the entry awaiting confirmation (WikiTab rollback precedent). */
+  /** Two-step cancel: the entry awaiting confirmation (WikiBrowser rollback precedent). */
   let cancelTarget = $state<string | null>(null);
   let cancelling = $state(false);
 

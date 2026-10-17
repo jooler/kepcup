@@ -241,7 +241,7 @@ html.platform-mac main {
  * streamdown 列表缩进：包里给 ul/ol 写的工具类（ml-4/list-outside/marker:hidden
  * 等）位于 node_modules 的 dist，Tailwind 扫描不到、不会生成；preflight 又把
  * ul/ol 的 margin/padding 清零，outside 标记便悬挂在气泡边框之外。这里按包
- * 输出的 data 标记直接补齐缩进（消息气泡与 WikiTab 两处 Markdown 均生效）。
+ * 输出的 data 标记直接补齐缩进（消息气泡与 WikiBrowser 两处 Markdown 均生效）。
  */
 [data-streamdown-ul],
 [data-streamdown-ol] {

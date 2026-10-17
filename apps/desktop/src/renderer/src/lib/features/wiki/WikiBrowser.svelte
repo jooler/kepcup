@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { WikiHistoryEntry, WikiSearchHit } from '@kepcup/shared';
-  import { ArrowLeft, History, Trash2 } from '@lucide/svelte';
+  import type { WikiHistoryEntry, WikiOwner, WikiSearchHit } from '@kepcup/shared';
+  import { BookOpen, ArrowLeft, History, Trash2 } from '@lucide/svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { lazyMarkdown } from '$lib/features/chats/markdown-lazy.svelte';
   import { wikiStore } from '$lib/stores/wiki.svelte';
+  import WikiSourcesPanel from './WikiSourcesPanel.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import {
@@ -16,7 +17,15 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
 
-  let { botId, active }: { botId: string; active: boolean } = $props();
+  /**
+   * The browsed wiki (D92 T1b WP10): a bot's own wiki in the right panel, the
+   * project's shared wiki in the project Wiki tab. Testids are shared between
+   * both surfaces — the bot panel's e2e (wiki.spec.ts) must keep passing.
+   */
+  let { owner, active }: { owner: WikiOwner; active: boolean } = $props();
+
+  /** The sources sub-view (project wikis only — bot wikis have no ledger). */
+  let sourcesOpen = $state(false);
 
   /** Search box content; empty string means "not searching" (tree shown). */
   let search = $state('');
@@ -45,7 +54,7 @@
   // tab is visible, and refetch on every activation (MemoryTab precedent).
   $effect(() => {
     wikiStore.start();
-    if (active) void wikiStore.load(botId, true);
+    if (active) void wikiStore.load(owner, true);
   });
 
   // P13 任务 7: markdown pipeline loads on first page view (startup cost).
@@ -53,7 +62,7 @@
     if (selected !== null) lazyMarkdown.start();
   });
 
-  const pages = $derived(wikiStore.pages);
+  const pages = $derived(wikiStore.pagesOf(owner));
 
   function queueSearch(): void {
     clearTimeout(searchTimer);
@@ -70,7 +79,7 @@
 
   async function runSearch(query: string): Promise<void> {
     try {
-      const result = await wikiStore.search(botId, query);
+      const result = await wikiStore.search(owner, query);
       // A newer edit superseded this request; keep its pending result.
       if (query !== search.trim()) return;
       hits = result;
@@ -86,7 +95,7 @@
     deleteArmed = false;
     selected = { path, title: '', content: '' };
     try {
-      selected = await wikiStore.page(botId, path);
+      selected = await wikiStore.page(owner, path);
     } catch (error) {
       toast.error(errorText((error as { code?: string } | undefined)?.code, t('wiki.actionFailed')));
       selected = null;
@@ -100,7 +109,7 @@
     if (selected === null) return;
     deleting = true;
     try {
-      await wikiStore.deletePage(botId, selected.path);
+      await wikiStore.deletePage(owner, selected.path);
       toast.success(t('wiki.deleteDone'));
       deleteArmed = false;
       selected = null;
@@ -124,7 +133,7 @@
     historyLoading = true;
     rollbackTarget = null;
     try {
-      history = await wikiStore.history(botId);
+      history = await wikiStore.history(owner);
     } catch (error) {
       toast.error(errorText((error as { code?: string } | undefined)?.code, t('wiki.actionFailed')));
       history = [];
@@ -139,10 +148,10 @@
     rollingBack = true;
     try {
       // wiki.rollback records a NEW commit — history grows by one entry.
-      await wikiStore.rollback(botId, target.oid);
+      await wikiStore.rollback(owner, target.oid);
       toast.success(t('wiki.rollbackDone'));
       rollbackTarget = null;
-      history = await wikiStore.history(botId);
+      history = await wikiStore.history(owner);
     } catch (error) {
       toast.error(errorText((error as { code?: string } | undefined)?.code, t('wiki.actionFailed')));
     } finally {
@@ -161,12 +170,28 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="wiki-tab">
-  <div class="flex items-center justify-between">
-    <p class="text-xs text-muted-foreground">{t('wiki.tabHint')}</p>
-    <Button size="sm" variant="outline" onclick={() => void openHistory()} data-testid="wiki-history">
-      <History class="size-3.5" aria-hidden="true" />
-      {t('wiki.history')}
-    </Button>
+  <div class="flex items-center justify-between gap-2">
+    <p class="text-xs text-muted-foreground">
+      {t(owner.kind === 'project' ? 'project.wiki.hint' : 'wiki.tabHint')}
+    </p>
+    <span class="flex shrink-0 gap-1">
+      {#if owner.kind === 'project'}
+        <Button
+          size="sm"
+          variant={sourcesOpen ? 'secondary' : 'outline'}
+          onclick={() => (sourcesOpen = !sourcesOpen)}
+          data-testid="wiki-sources-toggle"
+          aria-pressed={sourcesOpen}
+        >
+          <BookOpen class="size-3.5" aria-hidden="true" />
+          {t('wiki.sources.title')}
+        </Button>
+      {/if}
+      <Button size="sm" variant="outline" onclick={() => void openHistory()} data-testid="wiki-history">
+        <History class="size-3.5" aria-hidden="true" />
+        {t('wiki.history')}
+      </Button>
+    </span>
   </div>
 
   {#if selected}
@@ -235,6 +260,8 @@
         {/if}
       </div>
     </div>
+  {:else if sourcesOpen && owner.kind === 'project'}
+    <WikiSourcesPanel {owner} />
   {:else}
     <Input
       placeholder={t('wiki.searchPlaceholder')}
@@ -266,8 +293,10 @@
     {:else if wikiStore.loading && pages.length === 0}
       <p class="text-sm text-muted-foreground" data-testid="wiki-loading">…</p>
     {:else if pages.length === 0}
-      <!-- 页面树（wiki.tree）为空：Bot 还没有整理过任何资料 -->
-      <p class="text-sm text-muted-foreground" data-testid="wiki-empty">{t('wiki.empty')}</p>
+      <!-- 页面树（wiki.tree）为空：项目 wiki 未初始化 / Bot 还没有整理过资料 -->
+      <p class="text-sm text-muted-foreground" data-testid="wiki-empty">
+        {t(owner.kind === 'project' ? 'project.wiki.empty' : 'wiki.empty')}
+      </p>
     {:else}
       <!-- 页面树（wiki.tree：pages/ 下的页面）+ 目录入口 -->
       <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" data-testid="wiki-tree">
