@@ -34,8 +34,9 @@
   let open = $state(false);
   let root: HTMLElement | undefined = $state();
 
-  // 打开时焦点落到搜索框（点候选、Esc 关闭都不用手再碰鼠标）；搜索输入在
-  // ProjectMemberPicker 里，这里按 testid 找到它聚焦。
+  // Focus lands on the search box when the menu opens (no extra mouse move
+  // for picking or Esc-closing); the input lives inside ProjectMemberPicker,
+  // so reach it here by its testid.
   $effect(() => {
     if (open)
       queueMicrotask(() =>
@@ -66,8 +67,9 @@
   }
 
   /**
-   * 搜索输入的按键被 picker 全部拦下（不外泄给全局快捷键）；Esc 在捕获阶段先到这里，
-   * 保持「搜索框里按 Esc 关闭弹层」。
+   * The picker stops all keystrokes from leaking (global shortcuts listen at
+   * the window level); Esc is intercepted here on the capture phase so
+   * pressing it in the search box still closes the menu.
    */
   function onPickerKeydownCapture(event: KeyboardEvent): void {
     if (event.key === 'Escape') close();
@@ -75,7 +77,7 @@
 
   async function addMember(botId: string): Promise<void> {
     if (!conversation) return;
-    // 成员列表经 conversation.updated 事件自动刷新。
+    // The member list refreshes itself via the conversation.updated event.
     await chat.addProjectMembers(conversation.id, [botId]);
   }
 

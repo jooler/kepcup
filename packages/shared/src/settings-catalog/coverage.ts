@@ -32,12 +32,6 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     reason: 'AgentCard 按智能体生成的动态锚点；由 agents.external 经分区锚点 agents 覆盖',
   },
   {
-    kind: 'anchor',
-    id: 'group-*',
-    reason:
-      '项目设置对话框（GroupSettingsDialog，WP7 前代管）的临时锚点；换成项目详情页的 project-* 锚点后删除',
-  },
-  {
     kind: 'settings-section',
     id: 'contacts',
     reason:

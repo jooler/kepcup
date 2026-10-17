@@ -29,9 +29,11 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       return;
     }
     case 'project-detail': {
-      // 项目详情页（内容区，WP7 起为真实页面）。卡片只出现在它所在的会话里；
-      // 会话不是当前会话时先切过去（select 会把视图收回沟通，随后的
-      // openProjectSettings 落到详情分区），页面渲染后把锚点滚入视野并聚焦。
+      // Project details page (a content-area page since WP7). Cards only
+      // appear in their own conversation; select it first when it is not the
+      // current one (select folds the view back to chat, so the following
+      // openProjectSettings lands on the details section), then scroll the
+      // anchor into view and focus it once the page has rendered.
       if (action.conversationId !== null && action.conversationId !== chat.current?.conversation.id) {
         await chat.select(action.conversationId);
       }

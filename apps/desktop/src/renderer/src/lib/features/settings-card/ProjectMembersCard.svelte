@@ -9,9 +9,12 @@
   import { projectMemberPlan, proposedMemberIds } from './project-members';
 
   /**
-   * 对话内设置卡的「项目成员」内嵌（D92 WP7 §4 步骤 5，迁自 GroupSettingsDialog 的
-   * embedded 成员分支）：勾选计划由 `project-members.ts` 算——现有成员默认勾选、预填
-   * 只会多勾、移出只来自用户亲手取消勾选；「将加入 / 将移出」分列。名册不含管家。
+   * "Project members" embed of the in-conversation setting card (D92 WP7 step
+   * 5, ported from the old dialog's embedded members branch): the checkbox
+   * plan comes from `project-members.ts` — current members default to
+   * checked, prefill only adds checks, removals only come from the user's own
+   * unchecking, and "will add / will remove" are listed separately. The
+   * roster never contains butlers.
    */
   let {
     conversationId,
@@ -23,7 +26,7 @@
     onSaved?: () => void;
   } = $props();
 
-  /** 用户在卡上亲手勾 / 不勾的 Bot（没碰过的跟随当前成员与 Bot 的建议）。 */
+  /** Bots the user explicitly (un)checked; untouched ones follow membership and the bot's proposal. */
   let memberChoices = $state<Record<string, boolean>>({});
   let cardBusy = $state(false);
 
@@ -31,12 +34,14 @@
     chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
   );
 
-  // Bot 的预填只表示「建议拉进项目组的 Bot」：现有成员默认勾选，预填只会多勾。
+  // The bot's prefill only suggests bots to pull in: current members stay
+  // checked by default, prefill only adds checks.
   const proposedIds = $derived(proposedMemberIds(prefill));
   const memberIds = $derived(members.map((member) => member.bot.id));
   const memberPlan = $derived(projectMemberPlan(memberIds, proposedIds, memberChoices));
 
-  // 名册：通讯录去管家（管家不加入项目组），并上还在成员表里的 Bot。
+  // Roster: the contact list without butlers (they never join a project),
+  // plus bots still present in the member table.
   const roster = $derived.by(() => {
     const rows = composePool(contacts.bots).map((bot) => ({ id: bot.id, name: bot.name }));
     for (const member of members) {
@@ -59,7 +64,9 @@
     if (cardBusy) return;
     cardBusy = true;
     try {
-      // 按当前成员重新算：卡片挂着期间别处拉进项目组的 Bot 不会被移出，移出只来自用户亲手取消勾选。
+      // Recompute against live membership: a bot pulled in elsewhere while the
+      // card hangs around is not removed; removals only come from the user's
+      // own unchecking.
       const { toAdd, toRemove } = memberPlan;
       if (toAdd.length > 0 && !(await chat.addProjectMembers(conversationId, toAdd))) return;
       for (const id of toRemove) {
