@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -137,7 +137,24 @@ async function openProfileTab(page: Page): Promise<void> {
  * 诊断（临时）：树项等到超时仍不出现 → 把沙箱状态与会话尾部消息 dump 进
  * CI 日志报复酒（入库管线任何一环失败都会在 internal 事件里留痕）。
  */
-async function dumpWikiDiag(page: Page): Promise<void> {
+async function dumpWikiDiag(page: Page, home: string): Promise<void> {
+  try {
+    // 入库终态失败的 Bot 交代不带技术细节：真实原因只写进 home/logs。
+    const logFiles = (await readdir(path.join(home, 'logs'), { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.startsWith('kepcup'))
+      .map((entry) => entry.name);
+    for (const file of logFiles) {
+      const content = await readFile(path.join(home, 'logs', file), 'utf8');
+      const lines = content.split('\n').slice(-500);
+      for (const line of lines) {
+        if (/wiki|ingest/i.test(line)) {
+          console.warn(`[wiki-diag-log] ${file} ${line.slice(-500)}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`[wiki-diag] log dump failed: ${String(error)}`);
+  }
   try {
     const sandbox = await rpc(page, 'sandbox.status', { probe: false });
     console.warn(`[wiki-diag] sandbox.status ${JSON.stringify(sandbox)}`);
@@ -191,7 +208,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
   // 树项等待也从 30s 放宽到 90s（validation/fixtures 全走同样管线）。
   test.setTimeout(360_000);
   const session = await startSession('kepcup-e2e-wiki-');
-  const { page, llm, server } = session;
+  const { page, llm, server, home } = session;
   const url = `${server.url}/deploy.html`;
   try {
     await waitReady(page);
@@ -251,7 +268,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     try {
       await expect(pageItem).toBeVisible({ timeout: 90_000 });
     } catch (error) {
-      await dumpWikiDiag(page);
+      await dumpWikiDiag(page, home);
       throw error;
     }
     await expect(pageItem).toHaveAttribute('data-page-path', 'pages/deploy.md');
