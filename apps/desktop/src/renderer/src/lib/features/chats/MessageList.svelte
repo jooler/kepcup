@@ -3,7 +3,7 @@
   import { ChevronDown } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
-  import GroupTurnStatusLine from './GroupTurnStatusLine.svelte';
+  import ProjectTurnStatusLine from './ProjectTurnStatusLine.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
   import SelectionPinToolbar from './SelectionPinToolbar.svelte';
@@ -179,7 +179,7 @@
       -->
       {#if chat.current}
         {#if chat.current.conversation.type === 'project'}
-          <GroupTurnStatusLine conversationId={chat.current.conversation.id} />
+          <ProjectTurnStatusLine conversationId={chat.current.conversation.id} />
         {/if}
         {#each turnEntries as entry (entry.run.id)}
           <RunStatusLine {entry} />
