@@ -36,16 +36,11 @@ import type {
   ToolDefinition,
 } from '../../src/agent/types.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
-import { openDatabase } from '../../src/infra/db.js';
-import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
-import { migrationsUrl } from '../../src/start.js';
-import { runMigrations } from '../../src/infra/migrate.js';
-import { UsageService } from '../../src/domain/usage.js';
 
 /**
  * 外部智能体 P5 第二部分（todo §8.1）：steering、会话复用（同进程 / resume /
  * load / 新建、指纹、桥 token 随会话）、用量（turn / session 口径、缺失记轮数、
- * 连锁预算）、子代理调用不切分、状态行标题、桥工具转入后台 + follow-up、
+ * 零用量行按轮记账）、子代理调用不切分、状态行标题、桥工具转入后台 + follow-up、
  * 丢弃会话、调度器并发缺省。
  */
 
@@ -548,7 +543,7 @@ describe('external agent usage (P5)', () => {
     ]);
   });
 
-  it('missing usage records one zero entry per model round; the chain budget counts rounds', async () => {
+  it('missing usage records one zero entry per model round, charged at AGENT_TURN_BUDGET_TOKENS', async () => {
     const { engine, started, spec } = await setup({
       turns: [
         agentTurn()
@@ -568,54 +563,6 @@ describe('external agent usage (P5)', () => {
     expect(handle.tokensSoFar()).toBe(2 * AGENT_TURN_BUDGET_TOKENS);
   });
 
-  it('UsageService.sumForRuns charges token-less agent rows per round', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-usage-'));
-    dirs.push(dir);
-    const db = openDatabase({
-      path: path.join(dir, 'main.db'),
-      key: deriveKey(Buffer.alloc(32, 7), KEY_INFO.mainDb),
-    });
-    try {
-      runMigrations(db, migrationsUrl('main'));
-      const usage = new UsageService(db, { now: () => 1 } as never);
-      const base = { botId: null, conversationId: null, loopType: 'turn' as const };
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 30,
-        outputTokens: 5,
-      });
-      usage.record({
-        ...base,
-        runId: 'r2',
-        provider: 'openai',
-        model: 'x',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      expect(usage.sumForRuns(['r1', 'r2'])).toBe(2 * AGENT_TURN_BUDGET_TOKENS + 35);
-    } finally {
-      db.close();
-    }
-  });
 });
 
 describe('event mapping details (P5)', () => {

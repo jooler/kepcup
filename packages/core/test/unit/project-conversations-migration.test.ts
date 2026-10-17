@@ -120,13 +120,10 @@ describe('main 0039 + 0040 project conversations', () => {
       schedules: db
         .prepare("select count(*) as n from schedules where conversation_id = 'conv_group'")
         .get() as { n: number },
-      chains: db
-        .prepare("select count(*) as n from chains where conversation_id = 'conv_group'")
-        .get() as { n: number },
     };
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([39, 40]);
+    expect(applied.map((m) => m.version)).toEqual([39, 40, 41]);
 
     // Direct chat untouched: type direct, no lead.
     const direct = db
@@ -173,9 +170,6 @@ describe('main 0039 + 0040 project conversations', () => {
           .prepare('select count(*) as n from schedules where conversation_id = ?')
           .get(conversationId),
       ).toEqual({ n: 0 });
-      expect(
-        db.prepare('select count(*) as n from chains where conversation_id = ?').get(conversationId),
-      ).toEqual({ n: 0 });
     }
 
     // The kept conversation's child rows all survived (same counts as before).
@@ -188,9 +182,10 @@ describe('main 0039 + 0040 project conversations', () => {
     expect(
       db.prepare("select count(*) as n from schedules where conversation_id = 'conv_group'").get(),
     ).toEqual(before.schedules);
+    // 0041 replaced chains with episodes: the legacy table is gone for good.
     expect(
-      db.prepare("select count(*) as n from chains where conversation_id = 'conv_group'").get(),
-    ).toEqual(before.chains);
+      db.prepare("select count(*) as n from sqlite_master where type = 'table' and name = 'chains'").get(),
+    ).toEqual({ n: 0 });
     expect(
       db
         .prepare("select count(*) as n from messages_fts where conversation_id = 'conv_group'")

@@ -2101,6 +2101,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       triageTimeoutMs: parseTriageTimeoutMs(env),
+      episodeLimits: parseEpisodeLimits(env),
       publish: (event, payload) => events.emit(event, payload as never),
       environment,
       memory,
@@ -2923,6 +2924,23 @@ function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
   if (raw === undefined || raw.length === 0) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Test hook (D92 T1a WP2): KEPCUP_EPISODE_HOP_BREAKER / KEPCUP_EPISODE_PAIR_BREAKER
+ * override the episode breaker thresholds (integration tests script a short
+ * ping-pong instead of 12/8 live mentions). Unset parts fall back to the
+ * shared constants.
+ */
+function parseEpisodeLimits(
+  env: NodeJS.ProcessEnv,
+): { hops?: number; pair?: number } | undefined {
+  const hops = Number(env.KEPCUP_EPISODE_HOP_BREAKER);
+  const pair = Number(env.KEPCUP_EPISODE_PAIR_BREAKER);
+  const limits: { hops?: number; pair?: number } = {};
+  if (Number.isFinite(hops) && hops > 0) limits.hops = Math.floor(hops);
+  if (Number.isFinite(pair) && pair > 0) limits.pair = Math.floor(pair);
+  return limits.hops !== undefined || limits.pair !== undefined ? limits : undefined;
 }
 
 /**

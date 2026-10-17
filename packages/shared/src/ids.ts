@@ -21,7 +21,8 @@ export const ID_PREFIXES = {
   sch: 'sch_',
   skl: 'skl_',
   sec: 'sec_',
-  chn: 'chn_',
+  /** 协作回合（D92 T1a，main.db episodes）。 */
+  epi: 'epi_',
   env: 'env_',
   job: 'job_',
   use: 'use_',

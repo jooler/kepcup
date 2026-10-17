@@ -895,6 +895,11 @@ export const textContentSchema = z.object({
 export const systemEventContentSchema = z.object({
   event: z.string(),
   text: z.string(),
+  /**
+   * 协作暂停卡（event = episode_paused，D92 T1a）：指向被熔断暂停的回合，
+   * 界面上的「继续 / 停止」据此调用 episodes.resume / episodes.stop。
+   */
+  episodeId: z.string().optional(),
   /** Bot candidates rendered as clickable actions (e.g. group no-claim prompt). */
   botIds: z.array(z.string()).optional(),
   /** The user batch this event refers to (e.g. re-dispatch after a click). */
@@ -1201,7 +1206,8 @@ export const triggerReasonSchema = z.enum([
   'mention',
   'broadcast',
   'reply',
-  'chain',
+  /** 项目组里另一个 Bot @ 了你（Bot 可见 @ 的触发，D92 T1a 协作回合）。 */
+  'bot_mention',
   'scheduled',
   'event',
   'background',
@@ -1412,9 +1418,12 @@ export const runSchema = z.object({
    * 刷新后不再恢复提示；缺省表示未关闭。
    */
   failureDismissed: z.boolean().optional(),
-  /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
-  chainId: z.string().nullable(),
-  chainDepth: z.number().nullable(),
+  /**
+   * 协作回合（episode）绑定（D92 T1a）：本 run 属于哪个回合、在该回合的
+   * 第几跳（发起 @ 的根 run 为 0，每次 Bot 发起的触发 +1）；回合外的 run 为 null。
+   */
+  episodeId: z.string().nullable(),
+  episodeHop: z.number().nullable(),
   /**
    * Delegating parent run of a SubAgent sub run（D66/D67 ownership，
    * docs/design/24-durable-execution.md journal「subagent: child_run_id +
@@ -1447,6 +1456,31 @@ export const runSchema = z.object({
   endedAt: z.number().nullable(),
 });
 export type Run = z.infer<typeof runSchema>;
+
+// ---------------------------------------------------------------------------
+// Episodes (D92 T1a collaboration rounds)
+// ---------------------------------------------------------------------------
+
+export const episodeStatusSchema = z.enum(['active', 'paused', 'stopped']);
+export type EpisodeStatus = z.infer<typeof episodeStatusSchema>;
+
+/**
+ * 协作回合（episode，D92 T1a）：一条用户消息批引出的全部 run 的因果树。
+ * `hops` 是本回合已放行的 Bot 发起触发数；熔断（总数 / 同对往还超限）后
+ * 回合进入 `paused`，未投递的触发记在 `pending_json`，等用户继续或停止。
+ */
+export const episodeSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  status: episodeStatusSchema,
+  /** Bot 发起的触发总数（放行计数，熔断清零后重新累计）。 */
+  hops: z.number(),
+  pausedAt: z.number().nullable(),
+  /** 熔断时未投递的触发条数（resume 时按序投递）。 */
+  pendingCount: z.number(),
+  createdAt: z.number(),
+});
+export type Episode = z.infer<typeof episodeSchema>;
 
 export const runStepSchema = z.object({
   id: z.string(),

@@ -102,6 +102,7 @@ import {
   embeddingStatusSchema,
   envInstallSchema,
   envSystemStatusSchema,
+  episodeSchema,
   grantSchema,
   memoryItemSchema,
   messageSchema,
@@ -921,6 +922,15 @@ export const conversationsMembersInputSchema = z.object({ conversationId: z.stri
 export const conversationsMembersOutputSchema = z.object({
   members: z.array(projectMemberSchema),
 });
+
+// --- episodes (D92 T1a collaboration rounds) ----------------------------------
+
+export const episodesGetInputSchema = z.object({ id: z.string().min(1) });
+export const episodesGetOutputSchema = z.object({ episode: episodeSchema });
+export const episodesResumeInputSchema = episodesGetInputSchema;
+export const episodesResumeOutputSchema = episodesGetOutputSchema;
+export const episodesStopInputSchema = episodesGetInputSchema;
+export const episodesStopOutputSchema = episodesGetOutputSchema;
 
 // --- messages -------------------------------------------------------------
 
@@ -1969,6 +1979,9 @@ export const rpcMethodSchemas = {
     output: conversationsMembersOutputSchema,
   },
   'projects.removeMember': { input: projectsRemoveMemberInputSchema, output: okOutput },
+  'episodes.get': { input: episodesGetInputSchema, output: episodesGetOutputSchema },
+  'episodes.resume': { input: episodesResumeInputSchema, output: episodesResumeOutputSchema },
+  'episodes.stop': { input: episodesStopInputSchema, output: episodesStopOutputSchema },
 
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },

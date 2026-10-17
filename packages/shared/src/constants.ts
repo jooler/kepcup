@@ -9,10 +9,17 @@ export const RECENT_MESSAGES_MAX = 30;
 export const RECENT_MESSAGES_TOKEN_BUDGET = 4000;
 /** Update the rolling summary when unsummarized messages exceed this count. */
 export const SUMMARY_TRIGGER_UNSUMMARIZED = 50;
-/** Max depth of bot-to-bot @ chains. */
-export const BOT_CHAIN_MAX_DEPTH = 3;
-/** Total token budget shared by one bot-to-bot chain. */
-export const BOT_CHAIN_TOKEN_BUDGET = 200_000;
+/**
+ * Circuit breaker of one collaboration episode (D92 T1a): at most this many
+ * bot-initiated triggers are delivered per round; the next one pauses the
+ * episode (the pending trigger is kept, not dropped).
+ */
+export const EPISODE_HOP_BREAKER = 12;
+/**
+ * Same-pair breaker: at most this many bot-initiated triggers between one
+ * unordered bot pair per round (≈ 4 ping-pong rounds); the next one pauses.
+ */
+export const EPISODE_PINGPONG_BREAKER = 8;
 /** Group-chat triage timeout in ms. */
 export const TRIAGE_TIMEOUT_MS = 20_000;
 /** Recent messages considered by group-chat triage. */
@@ -281,6 +288,9 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   'watch_alert',
   // D84：新邮件唤醒 Bot 的触发消息（用户看到的是邮件卡）。
   'mail_alert',
+  // D92 T1a：用户停止了协作回合（episode_stopped）——只进 Bot 的上下文，
+  // 用户看到的是自己点过的停止按钮，不再需要一条消息。
+  'episode_stopped',
 ]);
 /** Hard cap of questions one setup interview may ask (soft target: 3~5). */
 export const SETUP_MAX_QUESTIONS = 5;
@@ -563,9 +573,10 @@ export const AGENT_CANCEL_GRACE_MS = 10_000;
  */
 export const AGENT_DEFAULT_CONCURRENCY = 2;
 /**
- * Chain-budget equivalent of one external-agent model round whose tokens the
- * agent did not report (subscription agents often report none, P5): the bot
- * chain budget (BOT_CHAIN_TOKEN_BUDGET) then allows about 20 such rounds.
+ * Bookkeeping value for one external-agent model round that reported no
+ * tokens (subscription agents often report none, P5): the agent engine's
+ * zero-usage rows charge one round at this value. It is not a budget of any
+ * kind — episode breakers (D92 T1a) count triggers, not tokens.
  */
 export const AGENT_TURN_BUDGET_TOKENS = 10_000;
 /**

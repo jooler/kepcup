@@ -5,7 +5,8 @@ export type TriggerReason =
   | 'mention'
   | 'broadcast'
   | 'reply'
-  | 'chain'
+  /** D92 T1a：项目组里另一个 Bot @ 了你（Bot 可见 @ 的触发）。 */
+  | 'bot_mention'
   | 'scheduled'
   | 'event'
   /** 'delegation'（D71）：A 代用户转交给 B 的任务（B 私聊里的代发消息）。 */
@@ -38,8 +39,8 @@ export interface TriggerBatch {
    * attributes in the trigger segment. Absent for a single batch.
    */
   parts?: TriggerPart[];
-  /** Bot-to-bot @ chain binding (P05): stored on the created run. */
-  chain?: { id: string; depth: number };
+  /** Collaboration episode binding of a bot @ trigger (D92 T1a): stored on the created run. */
+  episode?: { id: string; hop: number };
   /** A retried failed turn (D75 审查 L6): stored on the created run. */
   retryOf?: string;
   /**
@@ -134,13 +135,14 @@ function updateOnlyTodoOf(batch: TriggerBatch): string | null {
  *   user message or task result folded into it would be posted back to the
  *   delegating bot as the result — and a delegation folded into another turn
  *   would get that turn's reply;
- * - batches bound to different bot-to-bot @ chains stay apart (审查 M1): one
- *   turn carries one chain binding (its depth and token budget);
- * - a person's own words (an unchained batch carrying a user message, an edit
- *   notice included) stay apart from a chain-bound batch (审查 L-5): folded
- *   into a chain turn they would inherit its depth and budget — at the depth
- *   limit the bot's @ mentions answering the user would be dropped. Unchained
- *   system batches (task results, events) may still join a chain turn.
+ * - batches bound to different collaboration episodes stay apart (审查 M1):
+ *   one turn carries one episode binding;
+ * - a person's own words (an episode-less batch carrying a user message, an
+ *   edit notice included) stay apart from an episode-bound batch (审查 L-5):
+ *   folded into an episode's turn, the @ mentions answering the user would
+ *   come under that episode's pause state — a paused round would swallow the
+ *   user's answer. Episode-less system batches (task results, events) may
+ *   still join an episode's turn.
  */
 export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
   if (isDelegationBatch(a) || isDelegationBatch(b)) return false;
@@ -149,10 +151,10 @@ export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
     if (todoId === null || todoId !== updateOnlyTodoOf(b)) return false;
     // Same todo's updates: fall through to the chain rules (they carry no chain).
   }
-  if (a.chain !== undefined && b.chain !== undefined) return a.chain.id === b.chain.id;
-  if (a.chain === undefined && b.chain === undefined) return true;
-  const unchained = a.chain === undefined ? a : b;
-  return !unchained.messages.some((message) => message.senderType === 'user');
+  if (a.episode !== undefined && b.episode !== undefined) return a.episode.id === b.episode.id;
+  if (a.episode === undefined && b.episode === undefined) return true;
+  const unbound = a.episode === undefined ? a : b;
+  return !unbound.messages.some((message) => message.senderType === 'user');
 }
 
 /**
@@ -178,7 +180,7 @@ function takeShareable(buffer: TriggerBatch[], withBatch?: TriggerBatch): Trigge
  * once, in the first part that carried it, as its latest snapshot (a later
  * batch carrying the same message — an edit notice — holds the newer text,
  * 审查 M3). The turn's reason is the first user-facing part's (else the first
- * part's); the chain binding is the deepest one (callers only merge batches
+ * part's); the episode binding is the deepest one (callers only merge batches
  * that `canShareTurn`); the group-order hint is the latest one.
  */
 export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
@@ -217,19 +219,22 @@ export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
     }
   }
   const primary = parts.find((part) => isUserFacingReason(part.reason)) ?? parts[0];
-  // The deepest binding (审查 M1): several triggers of one chain merged into
-  // a turn continue it from its furthest point — never from a shallower one.
-  let chain: TriggerBatch['chain'];
+  // The deepest binding (审查 M1): several triggers of one episode merged
+  // into a turn continue it from its furthest point — never from a shallower one.
+  let episode: TriggerBatch['episode'];
   for (const batch of batches) {
-    if (batch.chain !== undefined && (chain === undefined || batch.chain.depth > chain.depth)) {
-      chain = batch.chain;
+    if (
+      batch.episode !== undefined &&
+      (episode === undefined || batch.episode.hop > episode.hop)
+    ) {
+      episode = batch.episode;
     }
   }
   const retryOf = batches.find((batch) => batch.retryOf !== undefined)?.retryOf;
   const afterNote = [...batches].reverse().find((batch) => batch.afterNote !== undefined)?.afterNote;
   return {
     ...batchFromParts(first, parts, primary?.reason ?? first.reason),
-    ...(chain !== undefined ? { chain } : {}),
+    ...(episode !== undefined ? { episode } : {}),
     ...(retryOf !== undefined ? { retryOf } : {}),
     ...(afterNote !== undefined ? { afterNote } : {}),
   };
@@ -257,7 +262,7 @@ function batchFromParts(
  * The batch with every message re-read (`lookup`, the database) as the turn
  * begins (审查 M3): edits made while it waited show their latest text,
  * recalled or deleted messages drop out (parts left empty go too). Keeps the
- * chain binding and the group-order hint; null = no trigger message is left.
+ * episode binding and the group-order hint; null = no trigger message is left.
  */
 export function refreshTriggerBatch(
   batch: TriggerBatch,
@@ -279,7 +284,7 @@ export function refreshTriggerBatch(
   const primary = parts.find((part) => isUserFacingReason(part.reason)) ?? parts[0];
   return {
     ...batchFromParts(batch, parts, primary?.reason ?? batch.reason),
-    ...(batch.chain !== undefined ? { chain: batch.chain } : {}),
+    ...(batch.episode !== undefined ? { episode: batch.episode } : {}),
     ...(batch.retryOf !== undefined ? { retryOf: batch.retryOf } : {}),
     ...(batch.afterNote !== undefined ? { afterNote: batch.afterNote } : {}),
   };

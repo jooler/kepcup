@@ -904,7 +904,7 @@ describe('用户本人触发的判据（与设置工具同一口径）', () => {
     expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'delegation')).toBe(
       false,
     );
-    expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'chain')).toBe(false);
+    expect(fromUser([message({ senderType: 'bot', senderBotId: 'bot_x' })], 'bot_mention')).toBe(false);
     expect(fromUser([message({})], 'task')).toBe(false);
     expect(fromUser([message({})], 'scheduled')).toBe(false);
     expect(fromUser([], 'direct')).toBe(false);

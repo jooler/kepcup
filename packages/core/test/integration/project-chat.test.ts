@@ -375,7 +375,7 @@ describe('project conversations', () => {
     await waitForMessage(core, conv.id, (m) => m.senderBotId === a.id);
   }, 30_000);
 
-  it('send_message @ B triggers B as a chain run (depth 1)', async () => {
+  it('send_message @ B triggers B as a bot_mention turn bound to the episode (hop 1)', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
@@ -391,9 +391,9 @@ describe('project conversations', () => {
     await sendDrafts(core, conv.id, [{ text: '阿甲你来', mentions: [a.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
     const bRun = await waitForBotRun(core, conv.id, b.id, 'completed');
-    expect(bRun.triggerReason).toBe('chain');
-    expect(bRun.chainId).toBeTruthy();
-    expect(bRun.chainDepth).toBe(1);
+    expect(bRun.triggerReason).toBe('bot_mention');
+    expect(bRun.episodeId).toBeTruthy();
+    expect(bRun.episodeHop).toBe(1);
 
     const mentionsMessage = await waitForMessage(
       core,
@@ -403,82 +403,6 @@ describe('project conversations', () => {
     expect(bRun.triggerMessageIds).toContain(mentionsMessage.id);
     await waitForMessage(core, conv.id, (m) => m.senderBotId === b.id);
   }, 30_000);
-
-  it('chains stop after 3 levels', async () => {
-    const { core, llm } = await start();
-    const { a, b, c, conv } = await threeBots(core);
-    const d = await makeBot(core, '阿丁');
-    const e = await makeBot(core, '阿戊');
-    await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [d.id, e.id] });
-
-    const chainStep = (name: string, targetId: string) =>
-      step()
-        .expect((r) => systemText(r).includes(`名字：${name}`))
-        .replyToolCall('send_message', { text: '请接力', mention_bot_ids: [targetId] });
-    const finalStep = (name: string) =>
-      step().expect((r) => systemText(r).includes(`名字：${name}`)).replyText(`${name}完成`);
-
-    llm.script('mock-main', [
-      chainStep('阿甲', b.id),
-      finalStep('阿甲'),
-      chainStep('阿乙', c.id),
-      finalStep('阿乙'),
-      chainStep('阿丙', d.id),
-      finalStep('阿丙'),
-      chainStep('阿丁', e.id),
-      finalStep('阿丁'),
-    ]);
-
-    await sendDrafts(core, conv.id, [{ text: '开始接力', mentions: [a.id] }]);
-    await waitForBotRun(core, conv.id, d.id, 'completed');
-    await waitFor(
-      async () => ((await botRuns(core, conv.id, e.id)).length === 0 ? true : null),
-      { label: 'E never triggered' },
-    );
-
-    for (const [bot, depth] of [[b, 1], [c, 2], [d, 3]] as const) {
-      const runs = await botRuns(core, conv.id, bot.id);
-      expect(runs[0]?.chainDepth).toBe(depth);
-      expect(runs[0]?.chainId).toBeTruthy();
-    }
-    // The depth-limit note is visible in the tool result of D's run.
-    const dRun = (await botRuns(core, conv.id, d.id))[0]!;
-    const steps = await stepsOf(core, dRun.id);
-    const toolResults = steps.filter((s) => s['type'] === 'tool_result');
-    expect(
-      toolResults.some((s) => String(s['content']).includes('已达连锁层数上限')),
-    ).toBe(true);
-  }, 40_000);
-
-  it('chain token budget stops the chain', async () => {
-    const { core, llm } = await start();
-    const { a, b, c, conv } = await threeBots(core);
-
-    llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('send_message', {
-        text: '请阿乙接手',
-        mention_bot_ids: [b.id],
-      }),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('阿甲完成'),
-      step()
-        .expect((r) => systemText(r).includes('名字：阿乙'))
-        .replyToolCall('send_message', { text: '请阿丙接手', mention_bot_ids: [c.id] }, { prompt_tokens: 150_000, completion_tokens: 60_000 }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙完成'),
-    ]);
-
-    await sendDrafts(core, conv.id, [{ text: '预算测试', mentions: [a.id] }]);
-    await waitForBotRun(core, conv.id, a.id, 'completed');
-    await waitForBotRun(core, conv.id, b.id, 'completed');
-    await waitFor(
-      async () => ((await botRuns(core, conv.id, c.id)).length === 0 ? true : null),
-      { label: 'C never triggered' },
-    );
-    const bRun = (await botRuns(core, conv.id, b.id))[0]!;
-    const steps = await stepsOf(core, bRun.id);
-    expect(
-      steps.some((s) => s['type'] === 'tool_result' && String(s['content']).includes('预算已用尽')),
-    ).toBe(true);
-  }, 40_000);
 
   it('an @ inside the final text does not trigger anyone', async () => {
     const { core, llm } = await start();
@@ -861,19 +785,19 @@ describe('project conversations', () => {
     expect(llm.requestsFor('mock-main')).toHaveLength(0);
   }, 30_000);
 
-  it('a chain run holding the mailbox does not absorb the turn delivery (BR-P05-002)', async () => {
+  it('an episode-bound run holding the mailbox does not absorb the turn delivery (BR-P05-002)', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
     const aFinal = step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('甲完成');
-    const bChain = step().expect((r) => systemText(r).includes('名字：阿乙')).hold().replyText('乙连锁');
+    const bHeld = step().expect((r) => systemText(r).includes('名字：阿乙')).hold().replyText('乙的回合触发');
     llm.script('mock-main', [
       step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('send_message', {
-        text: '请阿乙先看连锁',
+        text: '请阿乙先看这条',
         mention_bot_ids: [b.id],
       }),
       aFinal,
-      bChain,
+      bHeld,
       step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('乙轮次'),
     ]);
 
@@ -881,66 +805,28 @@ describe('project conversations', () => {
       { text: '轮次批次给乙', mentions: [a.id, b.id] },
     ]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 3 ? true : null), { label: 'A final + B chain held' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 3 ? true : null), { label: 'A final + B held' });
 
-    // A finishes while B's chain run still holds B's mailbox.
+    // A finishes while B's episode-bound run still holds B's mailbox.
     aFinal.release();
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await new Promise((r) => setTimeout(r, 800));
-    // The turn waits (no fresh delivery steered into the chain run).
+    // The turn waits (no fresh delivery steered into the episode's run).
     expect(await botRuns(core, conv.id, b.id)).toHaveLength(1);
-    // The chain run was never steered: no <new_messages> injection anywhere.
-    const chainRequests = llm.requestsFor('mock-main').filter((r) => systemText(r).includes('名字：阿乙'));
-    expect(chainRequests.length).toBeGreaterThanOrEqual(1);
-    expect(chainRequests.every((r) => !r.lastUserText().includes('<new_messages>'))).toBe(true);
+    // The episode's run was never steered: no <new_messages> injection anywhere.
+    const episodeRequests = llm.requestsFor('mock-main').filter((r) => systemText(r).includes('名字：阿乙'));
+    expect(episodeRequests.length).toBeGreaterThanOrEqual(1);
+    expect(episodeRequests.every((r) => !r.lastUserText().includes('<new_messages>'))).toBe(true);
 
-    // Chain run ends -> mailbox idle -> the turn delivers as its own run.
-    bChain.release();
+    // The episode's run ends -> mailbox idle -> the turn delivers as its own run.
+    bHeld.release();
     const bRuns = await waitForBotRunCount(core, conv.id, b.id, 2, { timeoutMs: 20_000 });
     const turnRun = bRuns[0]!; // newest first
     expect(turnRun.triggerReason).toBe('mention');
-    expect(turnRun.chainId).toBe(null);
+    expect(turnRun.episodeId).toBe(null);
     expect(turnRun.triggerMessageIds).toEqual(batch.map((m) => m.id));
-    const chainRun = bRuns[1]!;
-    expect(chainRun.triggerReason).toBe('chain');
-  }, 40_000);
-
-  it('chain budget counts the root run usage across runs (BR-P05-003)', async () => {
-    const { core, llm } = await start();
-    const { a, b, c, conv } = await threeBots(core);
-
-    llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('send_message', {
-        text: '请阿乙接手',
-        mention_bot_ids: [b.id],
-      }, { prompt_tokens: 100_000, completion_tokens: 50_000 }),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('甲完成'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('send_message', {
-        text: '请阿丙接手',
-        mention_bot_ids: [c.id],
-      }, { prompt_tokens: 60_000, completion_tokens: 0 }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('乙完成'),
-    ]);
-
-    await sendDrafts(core, conv.id, [{ text: '预算含根 run', mentions: [a.id] }]);
-    await waitForBotRun(core, conv.id, a.id, 'completed');
-    await waitForBotRun(core, conv.id, b.id, 'completed');
-    await waitFor(
-      async () => ((await botRuns(core, conv.id, c.id)).length === 0 ? true : null),
-      { label: 'C never triggered' },
-    );
-
-    // The root run is bound to the chain (depth 0) with the same chain id.
-    const aRun = (await botRuns(core, conv.id, a.id))[0]!;
-    const bRun = (await botRuns(core, conv.id, b.id))[0]!;
-    expect(aRun.chainId).toBeTruthy();
-    expect(aRun.chainDepth).toBe(0);
-    expect(bRun.chainId).toBe(aRun.chainId);
-    expect(bRun.chainDepth).toBe(1);
-    const bSteps = await stepsOf(core, bRun.id);
-    expect(
-      bSteps.some((s) => s['type'] === 'tool_result' && String(s['content']).includes('预算已用尽')),
-    ).toBe(true);
+    const episodeRun = bRuns[1]!;
+    expect(episodeRun.triggerReason).toBe('bot_mention');
   }, 40_000);
 
   it('editing a delivered user message in a group re-dispatches it (BR-P05-004)', async () => {

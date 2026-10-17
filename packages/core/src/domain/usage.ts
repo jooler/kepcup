@@ -1,4 +1,4 @@
-import { AGENT_TURN_BUDGET_TOKENS, newId, type LoopType } from '@kepcup/shared';
+import { newId, type LoopType } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
@@ -52,22 +52,6 @@ export class UsageService {
       )
       .get(runId) as { i: number; o: number };
     return { input: row.i, output: row.o };
-  }
-
-  /**
-   * Input+output tokens across runs (chain budget aggregation, P05). An
-   * external-agent row without tokens is one model round charged at
-   * AGENT_TURN_BUDGET_TOKENS (D72 P5「连锁预算按轮数折算」).
-   */
-  sumForRuns(runIds: string[]): number {
-    if (runIds.length === 0) return 0;
-    const placeholders = runIds.map(() => '?').join(',');
-    const row = this.db
-      .prepare(
-        `select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where run_id in (${placeholders})`,
-      )
-      .get(AGENT_TURN_BUDGET_TOKENS, ...runIds) as { n: number };
-    return row.n;
   }
 
   /** Raw entries since a point in time (usage.summary aggregation, P07). */

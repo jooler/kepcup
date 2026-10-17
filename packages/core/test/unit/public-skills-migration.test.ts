@@ -126,6 +126,19 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table workdirs rename to projects;');
     // conversations 的 project_id 已在上面的回退重建中恢复；这里只回退 run_changes。
     db.exec('alter table run_changes rename column workdir_id to project_id;');
+    // main 0041（D92 T1a WP2）DROP 掉 chains 换成 episodes：与其它新表相反，
+    // 回放要求 chains 以 0006 的原形态**存在**、episodes **不存在**——首轮全量
+    // 已经把 chains 删掉、把 episodes 建了出来，这里恢复 / 摘除。
+    db.exec('drop table episodes;');
+    db.exec(`create table chains (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      root_batch_id   TEXT NOT NULL,
+      max_depth_seen  INTEGER NOT NULL,
+      tokens_used     INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL
+    );`);
+    db.exec('create index chains_by_conversation on chains(conversation_id);');
     // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，
     // 而 0018 的 attachments 重建按列名引用 draft_id——按 0002 的原始形态补回，
     // 才能原样重放 0013 之后的迁移。
