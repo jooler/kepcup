@@ -150,7 +150,6 @@ kepcup/
 | `RECENT_MESSAGES_MAX` | 30 | 注入的最近消息条数上限 |
 | `RECENT_MESSAGES_TOKEN_BUDGET` | 4000 | 最近消息的 token 预算 |
 | `SUMMARY_TRIGGER_UNSUMMARIZED` | 50 | 未被摘要覆盖的消息超过该数量时更新滚动摘要 |
-| `BOT_CHAIN_MAX_DEPTH` | 3 | Bot 间 @ 连锁的最大层数 |
 | `DELEGATION_MAX_DEPTH` | 1 | 跨 Bot 委派深度（D71；首期一律单跳，被委派 run 不能再委派） |
 | `DELEGATION_RESULT_MAX_CHARS` | 2000 | 贴回 A 结果卡的截断长度（B 的终回复，或跟随任务时各任务结果拼接的总长） |
 | `DELEGATION_FYI_MAX_PER_RUN` | 3 | A 的同一轮给同一个 Bot 最多发几条 `fyi` 告知（定义在 `dispatch/delegation.ts`） |
@@ -158,6 +157,10 @@ kepcup/
 | `BUTLER_TEAM_SIZE_MIN` / `BUTLER_TEAM_SIZE_MAX` | 3 / 5 | 管家 `propose_team` 的建议 Bot 数量范围 |
 | `TRIAGE_TIMEOUT_MS` | 20000 | 群聊判断超时 |
 | `TRIAGE_RECENT_MESSAGES` | 10 | 群聊判断看的最近消息条数 |
+| `ROUTING_CONTINUATION_WINDOW_MS` | 1800000（30 分钟） | 「上一位回话者」的连续窗口（D92 T1a 路由） |
+| `ROUTING_CONTINUATION_MIN_CONFIDENCE` | 0.6 | 续接判断的认领阈值（初值，待实测） |
+| `ROUTING_ROUTE_TARGETS_MAX` | 3 | 负责人网关 `route` 的目标数上限 |
+| `MUST_REPLY_REASONS` | `['routed','lead_fallback']` | 必答原因：该轮工具面摘掉 skip_reply（D92 T1a） |
 | `MEMORY_TOPK` | 8 | 注入的相关记忆条数 |
 | `RRF_K` | 60 | 混合检索的 RRF 参数 |
 | `PROFILE_CARD_TOKEN_BUDGET` | 400 | 画像卡片预算 |
