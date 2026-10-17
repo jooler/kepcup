@@ -158,6 +158,19 @@
           .filter((index) => !butlerDropped.includes(index))
       : [],
   );
+  /**
+   * D92 T1a WP8: the lead the user picked on a project proposal (null =
+   * unchanged, keep the proposed lead). Only offered while the card is pending.
+   */
+  let projectLeadPick = $state<string | null>(null);
+  const projectLeadId = $derived.by(() => {
+    if (butlerProposal === null || butlerProposal.proposalType !== 'project') return null;
+    if (!pending) return approval.decision?.leadBotId ?? butlerProposal.leadBotId;
+    return projectLeadPick ?? butlerProposal.leadBotId;
+  });
+  function butlerBotName(botId: string): string {
+    return contacts.bots.find((bot) => bot.id === botId)?.name ?? botId;
+  }
 
   /** D88: display label of a proposed bot's model ref (stale refs are marked unavailable). */
   function proposedModelLabel(ref: string): string {
@@ -230,6 +243,11 @@
       );
       return;
     }
+    // Project proposal: forward the lead only when the user changed it (D92 WP8).
+    const changedLead =
+      butlerProposal !== null && butlerProposal.proposalType === 'project'
+        ? projectLeadPick
+        : undefined;
     void permissions.decide(
       approval.id,
       true,
@@ -240,6 +258,9 @@
         : undefined,
       undefined,
       boundHash,
+      undefined,
+      undefined,
+      changedLead ?? undefined,
     );
   }
 
@@ -831,7 +852,7 @@
     {:else if approval.kind === 'butler_proposal' && butlerProposal !== null}
       <!-- 管家提议卡（D70）：组队 / 建 Bot 的条目可勾选，确认后由系统确定性创建 -->
       {#if butlerProposal.proposalType === 'project'}
-        <!-- WP4 编译修复：负责人一行只读展示，卡上改负责人的下拉与文案归 WP8 -->
+        <!-- 建项目组提议（D92 WP8）：负责人可在批准前改选（下拉 = 提议成员）。 -->
         <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-butler-project">
           <span class="text-muted-foreground">{t('approvals.butlerProjectName')}</span>
           <span data-testid="approval-butler-project-title">{butlerProposal.title}</span>
@@ -840,15 +861,32 @@
             <span class="break-all">{butlerProposal.goal}</span>
           {/if}
           <span class="text-muted-foreground">{t('approvals.butlerProjectLead')}</span>
-          <span data-testid="approval-butler-project-lead">
-            {contacts.bots.find((bot) => bot.id === butlerProposal.leadBotId)?.name ??
-              butlerProposal.leadBotId}
-          </span>
+          {#if pending}
+            <select
+              class="h-8 w-full max-w-56 rounded-md border border-input bg-background px-2 text-sm"
+              value={projectLeadId}
+              onchange={(event) =>
+                (projectLeadPick = (event.currentTarget as HTMLSelectElement).value)}
+              data-testid="approval-butler-project-lead"
+            >
+              {#each butlerProposal.memberBotIds as botId (botId)}
+                <option value={botId}>{butlerBotName(botId)}</option>
+              {/each}
+            </select>
+          {:else}
+            <span data-testid="approval-butler-project-lead">{butlerBotName(projectLeadId ?? '')}</span>
+          {/if}
           <span class="text-muted-foreground">{t('approvals.butlerProjectMembers')}</span>
-          <span data-testid="approval-butler-project-members">
-            {butlerProposal.memberBotIds
-              .map((id) => contacts.bots.find((bot) => bot.id === id)?.name ?? id)
-              .join('、')}
+          <span class="flex flex-wrap gap-x-2 gap-y-0.5" data-testid="approval-butler-project-members">
+            {#each butlerProposal.memberBotIds as botId (botId)}
+              <span>
+                {butlerBotName(botId)}{#if botId === projectLeadId}
+                  <span class="ml-0.5 text-xs text-amber-600 dark:text-amber-400">
+                    （{t('approvals.butlerProjectLead')}）
+                  </span>
+                {/if}
+              </span>
+            {/each}
           </span>
           {#if butlerProposal.reason.length > 0}
             <span class="text-muted-foreground">{t('approvals.reason')}</span>
