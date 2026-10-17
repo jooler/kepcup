@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -91,7 +92,7 @@ test('microphone card: enabled by default, test shows a live level meter', async
     await expect(page.locator('[data-testid="sensor-level-microphone"]')).toHaveCSS('width', '0px');
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 
@@ -151,6 +152,6 @@ test('camera card: off by default, preview works once enabled and releases the d
     ).toBe(true);
   } finally {
     await app.close();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
