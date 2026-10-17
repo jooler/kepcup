@@ -3,10 +3,17 @@ import type { Message } from '@kepcup/shared';
 export type TriggerReason =
   | 'direct'
   | 'mention'
-  | 'broadcast'
   | 'reply'
   /** D92 T1a：项目组里另一个 Bot @ 了你（Bot 可见 @ 的触发）。 */
   | 'bot_mention'
+  /** D92 T1a 路由：上一位回话者 P 续接（宿主判断消息在延续 P 的对话 / 工作）。 */
+  | 'continuation'
+  /** D92 T1a 路由：静默路由的首个目标（必答）。 */
+  | 'routed'
+  /** D92 T1a 路由：同一次路由的其余目标（可 skip_reply）。 */
+  | 'routed_also'
+  /** D92 T1a 路由：负责人兜底（必答）。 */
+  | 'lead_fallback'
   | 'scheduled'
   | 'event'
   /** 'delegation'（D71）：A 代用户转交给 B 的任务（B 私聊里的代发消息）。 */
@@ -55,7 +62,10 @@ const USER_FACING_REASONS: ReadonlySet<TriggerReason> = new Set([
   'direct',
   'mention',
   'reply',
-  'broadcast',
+  'continuation',
+  'routed',
+  'routed_also',
+  'lead_fallback',
   'delegation',
   'task',
 ]);

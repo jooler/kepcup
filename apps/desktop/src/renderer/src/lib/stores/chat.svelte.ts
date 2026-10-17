@@ -11,9 +11,9 @@ export interface ProjectMemberView {
   joinedAt: number;
 }
 
-export interface GroupTurnState {
+export interface ProjectTurnState {
   batchId: string | null;
-  phase: 'triaging' | 'running' | 'idle';
+  phase: 'routing' | 'running' | 'idle';
   currentBotId: string | null;
   queue: string[];
   pendingBatches: number;
@@ -88,7 +88,7 @@ class ChatState {
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
   /** Group turn state (P05), per conversation. */
-  turnByConversation = $state<Record<string, GroupTurnState>>({});
+  turnByConversation = $state<Record<string, ProjectTurnState>>({});
   /**
    * The message being quoted in the composer (引用回复)：轻量引用快照而非
    * Message 全量——与 composer 草稿缓存（按会话持久化）共用形状，切换会话/
@@ -228,8 +228,8 @@ class ChatState {
       // 正在组群的成员里有它：移出，免得用一个已删除的 Bot 建群。
       if (this.composeMemberIds.includes(data.id)) this.removeComposeMember(data.id);
     });
-    core.onEvent('group.turn', (payload) => {
-      const data = payload as GroupTurnState & { conversationId: string };
+    core.onEvent('project.turn', (payload) => {
+      const data = payload as ProjectTurnState & { conversationId: string };
       this.turnByConversation[data.conversationId] = {
         batchId: data.batchId,
         phase: data.phase,

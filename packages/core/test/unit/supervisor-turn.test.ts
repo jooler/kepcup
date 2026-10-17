@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Message } from '@kepcup/shared';
 import {
   canShareTurn,
+  isUserFacingReason,
   Mailbox,
   MailboxRegistry,
   mergeTriggerBatches,
@@ -125,7 +126,7 @@ describe('mergeTriggerBatches', () => {
       batch('task', [r1]),
       batch('bot_mention', [u], { episode: { id: 'epi_1', hop: 1 }, extraAttributes: { from_bot: 'X' } }),
       batch('task', [r2]),
-      batch('broadcast', [u], { afterNote: '在你之前…' }),
+      batch('routed', [u], { afterNote: '在你之前…' }),
     ]);
     expect(merged.parts).toEqual([
       { reason: 'task', messages: [r1, r2] },
@@ -532,5 +533,25 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('沙箱状态：可用');
     expect(prompt).toContain('<recommended_skills>');
     expect(prompt).not.toContain('forward_task_result');
+  });
+});
+
+describe('trigger reasons (D92 T1a routing)', () => {
+  it('the four routing delivery reasons are user-facing (priority 0)', () => {
+    for (const reason of ['continuation', 'routed', 'routed_also', 'lead_fallback'] as const) {
+      expect(isUserFacingReason(reason), reason).toBe(true);
+    }
+    expect(isUserFacingReason('bot_mention')).toBe(false);
+    expect(isUserFacingReason('event')).toBe(false);
+  });
+
+  it('routing_gate is not a delivery reason (mailbox union excludes it)', () => {
+    // It exists only on the gate's triage run row (`trigger_reason`), never as
+    // a delivered batch reason.
+    const notADeliveryReason = (): TriggerBatch['reason'] => {
+      // @ts-expect-error routing_gate must stay outside the mailbox union
+      return 'routing_gate';
+    };
+    expect(notADeliveryReason.length).toBe(0);
   });
 });

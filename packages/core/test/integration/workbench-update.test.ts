@@ -151,16 +151,6 @@ function systemText(request: MockChatRequest): string {
   return typeof first?.content === 'string' ? first.content : '';
 }
 
-function triageRequests(llm: TestStack['llm']) {
-  return llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('你的名片'));
-}
-
-function triageStep(name: string, decision: 'respond' | 'not_mine' | 'no_action') {
-  return step()
-    .expect((r) => r.lastUserText().includes(`你的名片：${name}`))
-    .replyJson({ decision, confidence: 0.8, reason: '测试' });
-}
-
 describe('事项更新通知：执行者的任务在跑', () => {
   it('改说明 → 去抖后私聊出现更新消息（todoUpdate、同一 todoRunId）；任务不被打断，下一轮对话轮 inject_task 转给任务；确认回复不算交付，任务结果的转述才交付', async () => {
     const stack = await startClocked();
@@ -569,7 +559,7 @@ describe('事项更新通知：不打断正在跑的对话轮', () => {
 });
 
 describe('事项更新通知：群', () => {
-  it('更新只 @ 原来响应派发的 Bot（triage 里认领的那个），不再 triage，别的成员不被打扰', async () => {
+  it('更新只 @ 原来被路由到的 Bot（网关 route 的目标），不再路由，别的成员不被打扰', async () => {
     const stack = await startClocked();
     const { core, llm, clock } = stack;
     const a = await makeBot(core, '阿甲');
@@ -577,9 +567,10 @@ describe('事项更新通知：群', () => {
     const c = await makeBot(core, '阿丙');
     const conv = await makeProject(core, '项目组', [a.id, b.id, c.id]);
     llm.script('mock-light', [
-      triageStep('阿甲', 'respond'),
-      triageStep('阿乙', 'not_mine'),
-      triageStep('阿丙', 'no_action'),
+      // The lead 阿甲's gate routes the dispatch to member 阿乙.
+      step()
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' }),
       ...reflections(4),
     ]);
     const taskHeld = step().inTask().hold().replyText('完成');
@@ -604,21 +595,25 @@ describe('事项更新通知：群', () => {
     await visibleReply(stack, conv.id, 'ACK');
     await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
     await waitForRun(core, conv.id, 'completed');
-    expect(triageRequests(llm)).toHaveLength(3);
+    // 恰好一次网关调用（轻量模型），没有续接判断（此前没有任何 Bot 回复）。
+    const gateRequests = llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：'));
+    expect(gateRequests).toHaveLength(1);
 
     await updateTodo(stack, { id: todo.id, notes: '改盘 B 仓' });
     clock.advance(DEBOUNCE);
     const [update] = await waitForUpdateMessage(stack, conv.id);
-    expect(update!.mentions).toEqual([a.id]);
+    expect(update!.mentions).toEqual([b.id]);
     expect(update!.content).toMatchObject({ todoUpdate: true, todoRunId: todo.lastRun!.id });
     await visibleReply(stack, conv.id, 'UPDATE-ACK');
 
-    // 没有新的 triage；更新轮只有阿甲，是显式 @。
-    expect(triageRequests(llm)).toHaveLength(3);
+    // 没有新的路由调用；更新轮只有阿乙，是显式 @。
+    expect(
+      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
+    ).toHaveLength(1);
     const turns = turnRuns(await listRuns(core, conv.id));
     expect(turns.map((r) => [r.botId, r.triggerReason])).toEqual([
-      [a.id, 'broadcast'],
-      [a.id, 'mention'],
+      [b.id, 'routed'],
+      [b.id, 'mention'],
     ]);
     // 确认不是交付：任务还在跑；事项仍在进行中，没有因更新轮「无人认领 / 静默」退回草案。
     await new Promise((r) => setTimeout(r, 300));
@@ -712,15 +707,17 @@ describe('事项更新通知：审查修复', () => {
     expect(llm.requestsFor('mock-main').length).toBeGreaterThan(4);
   }, 60_000);
 
-  it('M2 群里派发还没被接手时改说明：通知不丢，接手后送达（只 @ 接手的 Bot）', async () => {
+  it('M2 群里派发还没被接手（网关判断进行中）时改说明：通知不丢，接手后送达（只 @ 接手的 Bot）', async () => {
     const stack = await startClocked();
     const { core, llm, clock } = stack;
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
     const conv = await makeProject(core, '项目组', [a.id, b.id]);
-    const triageA = triageStep('阿甲', 'respond');
-    triageA.hold();
-    llm.script('mock-light', [triageA, triageStep('阿乙', 'not_mine'), ...reflections(6)]);
+    const gateHeld = step()
+      .expect((r) => r.lastUserText().includes('成员名册：'))
+      .hold()
+      .replyJson({ decision: 'route', targets: [b.id], reason: '归阿乙' });
+    llm.script('mock-light', [gateHeld, ...reflections(6)]);
     const taskHeld = step().inTask().hold().replyText('完成');
     llm.script('mock-main', [
       step().inTurn().expect(turnWith('【工作台】盘点')).replyToolCall('start_task', {
@@ -739,23 +736,25 @@ describe('事项更新通知：审查修复', () => {
       assignee: { kind: 'group', conversationId: conv.id, leadBotId: null },
       when: 'now',
     });
-    await waitFor(() => (triageA.consumed ? true : null), { label: 'triage pending' });
-    // triage 还没出结果、没有 Bot 接手：改说明，通知发不出去，但没丢。
+    await waitFor(() => (gateHeld.consumed ? true : null), { label: 'gate pending' });
+    // 网关还没出结论、没有 Bot 接手：改说明，通知发不出去，但没丢。
     expect((await updateTodo(stack, { id: todo.id, notes: '新' })).notified).toBe(true);
     clock.advance(DEBOUNCE);
     clock.advance(DEBOUNCE);
     expect(updateMessages(await listAllMessages(core, conv.id))).toEqual([]);
-    // 阿甲认领、开始做：下一次重试送达。
-    triageA.release();
+    // 网关路由给阿乙、阿乙开始做：下一次重试送达。
+    gateHeld.release();
     await visibleReply(stack, conv.id, 'ACK');
     await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
     clock.advance(DEBOUNCE);
     const [update] = await waitForUpdateMessage(stack, conv.id);
-    expect(update!.mentions).toEqual([a.id]);
+    expect(update!.mentions).toEqual([b.id]);
     expect(update!.content).toMatchObject({ todoUpdate: true, todoRunId: todo.lastRun!.id });
     expect(textOf(update!)).toContain('新');
     await visibleReply(stack, conv.id, 'UPDATE-ACK');
-    expect(triageRequests(llm)).toHaveLength(2);
+    expect(
+      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('成员名册：')),
+    ).toHaveLength(1);
     expect((await getTodo(stack, todo.id)).todo.status).toBe('in_progress');
   }, 60_000);
 

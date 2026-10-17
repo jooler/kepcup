@@ -9,6 +9,7 @@ import {
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
   MCP_APP_CARD_TYPE,
   BOT_WIDGET_CARD_TYPE,
+  MUST_REPLY_REASONS,
   PRESENT_CARD_TYPE,
   presentCardSchema,
   presentContextText,
@@ -233,8 +234,9 @@ import {
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { EpisodesService } from './episodes.js';
-import { GroupTurnCoordinator, type GroupRoundEnd } from './group-turn.js';
-import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
+import { ProjectTurnCoordinator, type ProjectRoundEnd } from './project-turn.js';
+import { judgeContinuation } from './dispatcher.js';
+import { leadGate } from './lead-gate.js';
 import {
   builtinModelRef,
   builtinRoute,
@@ -367,8 +369,11 @@ export interface OrchestratorDeps {
   clock: Clock;
   logger: CoreLogger;
   timeZone: string;
-  /** Test override of TRIAGE_TIMEOUT_MS (default from constants). */
-  triageTimeoutMs?: number;
+  /**
+   * Test override of TRIAGE_TIMEOUT_MS for the routing judgements (D92 T1a:
+   * the continuation check and the lead gate both take it).
+   */
+  judgementTimeoutMs?: number;
   /** Test override of the episode breaker thresholds (defaults from constants). */
   episodeLimits?: { hops?: number; pair?: number };
   /** Publishes an RPC event to connected interfaces. */
@@ -550,8 +555,14 @@ function downgradeLabel(part: TriggerPart): string {
     case 'direct':
     case 'mention':
     case 'reply':
-    case 'broadcast':
       return '用户的新消息';
+    case 'continuation':
+      return '延续上一轮的交流';
+    case 'routed':
+    case 'routed_also':
+      return '负责人判断与你有关';
+    case 'lead_fallback':
+      return '没有成员认领，由你处理';
     case 'event': {
       const event = part.extraAttributes?.['event'];
       if (event === 'message_edited') return '用户编辑了之前的消息（以编辑后的内容为准）';
@@ -615,7 +626,7 @@ interface ActiveRunEntry {
  *   read-only toolset with task management, no step ceiling, `<tasks>`
  *   segment, no D56 auto continuation (§7.1), visible final reply; at its
  *   terminal state the task results in its trigger are consumed (§3.2), the
- *   mailbox releases (buffered batches start the next turn) and group turns /
+ *   mailbox releases (buffered batches start the next turn) and project turns /
  *   D71 hooks advance;
  * - `task` (design 30 §2.2 / §2.4.5): a task — scheduler key `task:{id}`,
  *   loop_type 'task', brief as the trigger segment, shared-only conversation
@@ -656,8 +667,8 @@ export class Orchestrator {
   readonly #appStepUp: AppStepUpLimiter;
   /** Bot-to-bot @ chains (P05); owns chain rows, depth and budget checks. */
   readonly #episodes: EpisodesService;
-  /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
-  readonly #groupTurns: GroupTurnCoordinator;
+  /** Project turns (D92 T1a): silent routing, ordered responses, round bookkeeping. */
+  readonly #projectTurns: ProjectTurnCoordinator;
   /**
    * D66 子代理门面，按父 run 登记（D75 §1.2：子 run 只属于父 run，无对话级
    * 锚点）：runs.cancel 单独取消子 run 时据 parent_run_id 找到门面；父 run
@@ -919,7 +930,7 @@ export class Orchestrator {
       publishEpisode: (episode) => deps.publish('episode.updated', { episode }),
       ...(deps.episodeLimits !== undefined ? { limits: deps.episodeLimits } : {}),
     });
-    this.#groupTurns = new GroupTurnCoordinator({
+    this.#projectTurns = new ProjectTurnCoordinator({
       conversations: deps.conversations,
       bots: deps.bots,
       messages: deps.messages,
@@ -929,15 +940,17 @@ export class Orchestrator {
       deliver: (batch) => this.#mailboxes.for(batch.botId, batch.conversationId).deliver(batch),
       isMailboxRunning: (botId, conversationId) =>
         this.#mailboxes.for(botId, conversationId).isRunning,
-      appendSystemMessage: (input) =>
-        this.#appendSystemMessage(input.conversationId, input.event, input.text, {
-          botIds: input.botIds,
-          batchId: input.batchId,
-        }),
       publish: (event, payload) => deps.publish(event, payload),
-      onRoundEnded: (info) => this.#onGroupRoundEnded(info),
-      triage: (input) =>
-        triageOneBot({
+      onRoundEnded: (info) => this.#onProjectRoundEnded(info),
+      leadOf: (id) => deps.conversations.get(id)?.leadBotId ?? null,
+      lastReplier: (id) => {
+        const message = deps.messages.lastVisibleBotMessage(id);
+        return message !== null && message.senderBotId !== null
+          ? { botId: message.senderBotId, at: message.createdAt }
+          : null;
+      },
+      judgeContinuation: (input) =>
+        judgeContinuation({
           engine: deps.engine,
           ...(deps.llmRouter !== undefined ? { router: deps.llmRouter } : {}),
           scheduler: deps.scheduler,
@@ -950,9 +963,34 @@ export class Orchestrator {
           conversationId: input.conversationId,
           batchId: input.batchId,
           batchMessages: input.batchMessages,
+          goal: deps.conversations.get(input.conversationId)?.goal ?? null,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.triageTimeoutMs !== undefined ? { timeoutMs: deps.triageTimeoutMs } : {}),
+          ...(deps.judgementTimeoutMs !== undefined
+            ? { timeoutMs: deps.judgementTimeoutMs }
+            : {}),
+        }),
+      gate: (input) =>
+        leadGate({
+          engine: deps.engine,
+          ...(deps.llmRouter !== undefined ? { router: deps.llmRouter } : {}),
+          scheduler: deps.scheduler,
+          runs: deps.runs,
+          usage: deps.usage,
+          settings: deps.settings,
+          bots: deps.bots,
+          messages: deps.messages,
+          conversations: deps.conversations,
+          leadBotId: input.leadBotId,
+          conversationId: input.conversationId,
+          batchId: input.batchId,
+          batchMessages: input.batchMessages,
+          continuation: input.continuation,
+          timeZone: deps.timeZone,
+          logger: deps.logger,
+          ...(deps.judgementTimeoutMs !== undefined
+            ? { timeoutMs: deps.judgementTimeoutMs }
+            : {}),
         }),
     });
   }
@@ -1009,9 +1047,10 @@ export class Orchestrator {
     this.#publishConversation(conversationId);
 
     if (conv.type === 'project') {
-      // Group dispatch (P05): explicit targets, triage, ordered turns. The
-      // runs (if any) are chosen asynchronously; no single run id to report.
-      this.#groupTurns.onUserBatch(conversationId, batchId, [full]);
+      // Project dispatch (D92 T1a): explicit targets or silent routing, then
+      // ordered turns. The runs (if any) are chosen asynchronously; no single
+      // run id to report.
+      this.#projectTurns.onUserBatch(conversationId, batchId, [full]);
       return { message: full, runId: null };
     }
     if (conv.directBotId !== null) {
@@ -1024,8 +1063,9 @@ export class Orchestrator {
   /**
    * D90 workbench dispatch: the host appends a visible user message on the user's behalf
    * (`origin: 'workbench'`, with the todo and its run) and routes it exactly like a typed one —
-   * direct chat through the delivery gate, a group through GroupTurnCoordinator (a lead bot is
-   * a structured @, so the round has an explicit target; otherwise triage decides). It is the
+   * direct chat through the delivery gate, a project through ProjectTurnCoordinator (a lead bot is
+   * a structured @, so the round has an explicit target; otherwise silent
+   * routing decides). It is the
    * user's instruction: no proactive switch, quiet hours or daily cap apply, but the turn is
    * not "the user themselves" (`triggerFromUser` false, like a D71 delegation).
    */
@@ -1062,7 +1102,7 @@ export class Orchestrator {
     this.#publishConversation(input.conversationId);
     input.onAppended?.(message);
     if (conv.type === 'project') {
-      this.#groupTurns.onUserBatch(input.conversationId, batchId, [message]);
+      this.#projectTurns.onUserBatch(input.conversationId, batchId, [message]);
       return { message, runId: null, held: false };
     }
     // `held`: the setup-interview gate keeps the delivery back until the bot's setup is done.
@@ -1135,7 +1175,7 @@ export class Orchestrator {
     this.#deps.publish('message.created', { conversationId: conv.id, message });
     this.#publishConversation(conv.id);
     if (conv.type === 'project') {
-      this.#groupTurns.onUserBatch(conv.id, batchId, [message]);
+      this.#projectTurns.onUserBatch(conv.id, batchId, [message]);
     } else if (conv.directBotId !== null) {
       this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
     }
@@ -1326,7 +1366,7 @@ export class Orchestrator {
         // Group: the edited message (its structured mentions/replyTo survive
         // the edit) goes through the same dispatcher as a fresh batch
         // (BR-P05-004, docs/design/02 "编辑作为一次新触发").
-        this.#groupTurns.onUserBatch(message.conversationId, `edit:${message.id}`, [message]);
+        this.#projectTurns.onUserBatch(message.conversationId, `edit:${message.id}`, [message]);
       } else if (conv.directBotId !== null) {
         // 同样过目录闸门：访谈期间编辑旧消息不绕过「先定目录」。
         this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'event', {
@@ -1552,7 +1592,7 @@ export class Orchestrator {
   async abortRunsForConversation(conversationId: string): Promise<void> {
     // Drop the group-turn state BEFORE settling: a settle during teardown must
     // not advance the turn and start new runs (BR-P05-001).
-    this.#groupTurns.clear(conversationId);
+    this.#projectTurns.clear(conversationId);
     // D75: tasks settle (cancelled, no wake) before the blanket settle below.
     this.#taskHost.abortForConversation(conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
@@ -1616,9 +1656,9 @@ export class Orchestrator {
     }
   }
 
-  /** Group-turn coordinator hook for the interface: current/queued bots. */
-  groupTurnState(conversationId: string) {
-    return this.#groupTurns.stateOf(conversationId);
+  /** Project-turn coordinator hook for the interface: current/queued bots. */
+  projectTurnState(conversationId: string) {
+    return this.#projectTurns.stateOf(conversationId);
   }
 
   /**
@@ -1626,13 +1666,8 @@ export class Orchestrator {
    * queue and cancel its runs in this conversation.
    */
   projectMemberRemoved(botId: string, conversationId: string): void {
-    this.#groupTurns.onMemberRemoved(conversationId, botId);
+    this.#projectTurns.onMemberRemoved(conversationId, botId);
     this.abortRunsForBotInConversation(botId, conversationId);
-  }
-
-  /** Re-dispatch a stored batch as an explicit @ (kept until WP3 removes the flow). */
-  redistributeBatch(conversationId: string, batchId: string, botId: string): void {
-    this.#groupTurns.redistribute(conversationId, batchId, botId);
   }
 
   /**
@@ -2051,11 +2086,12 @@ export class Orchestrator {
   }
 
   /**
-   * A group round ended (GroupTurnCoordinator): nobody claimed the dispatch (triage found no
-   * responder / `group_no_claim`), the executed turns failed or were cancelled, or every executed
-   * turn stayed silent without starting a task.
+   * A project round ended (ProjectTurnCoordinator): the executed turns failed or
+   * were cancelled, the round stayed silent without starting a task (silent
+   * routing's `none` included — nobody took the batch), or the guarded round
+   * fell through to the lead and the lead went silent too.
    */
-  #onGroupRoundEnded(info: GroupRoundEnd): void {
+  #onProjectRoundEnded(info: ProjectRoundEnd): void {
     const facade = this.#deps.todos;
     if (facade === undefined || info.outcome === 'replied') return;
     try {
@@ -2077,7 +2113,7 @@ export class Orchestrator {
     } catch (error) {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'group round tracking failed',
+        'project round tracking failed',
       );
     }
   }
@@ -2579,7 +2615,7 @@ export class Orchestrator {
     }
     return builtinRoute(
       this.#deps.engine,
-      lightModelRefForBot(this.#deps.bots, this.#deps.settings, botId),
+      builtinModelRef('triage', this.#deps.settings.get(), this.#deps.bots.get(botId)),
     );
   }
 
@@ -3982,6 +4018,9 @@ export class Orchestrator {
         deps: {
           ...toolDeps,
           environment: this.#environmentFacade(),
+          // D92 T1a 必答回合：触发批里只要有一个必答部分（routed /
+          // lead_fallback），这一轮的工具面就没有 skip_reply。
+          mustReply: triggerParts(batch).some((part) => MUST_REPLY_REASONS.includes(part.reason)),
           // Episodes belong to turns (D75 §6.2: a task never @-mentions
           // project members).
           ...(isTask
@@ -4762,8 +4801,8 @@ export class Orchestrator {
         'starting the next turn failed',
       );
     }
-    // A group turn waiting for this mailbox to free up delivers now (BR-P05-002).
-    this.#groupTurns.onMailboxIdle(batch.botId, batch.conversationId);
+    // A project turn waiting for this mailbox to free up delivers now (BR-P05-002).
+    this.#projectTurns.onMailboxIdle(batch.botId, batch.conversationId);
     // D71：B 的私聊邮箱空了——排队中的委派（若有）可以投递了。
     try {
       this.#delegationHost.onMailboxIdle(batch.botId, batch.conversationId);
@@ -5365,7 +5404,7 @@ export class Orchestrator {
     this.#deps.publish('run.status', { run });
     // Group turns advance on any terminal state (cancelled/failed included)
     // of a supervisor turn — never on a task (D75 design 30 §6.2).
-    if (isTerminal(status) && run.loopType === 'turn') this.#groupTurns.onRunSettled(run);
+    if (isTerminal(status) && run.loopType === 'turn') this.#projectTurns.onRunSettled(run);
     // D90: a todo's dispatched turn (or the turn relaying its tasks' results) delivers the todo.
     if (isTerminal(status) && run.loopType === 'turn') this.#trackTodoDelivery(run);
     // D71：被委派 run 的终态 → A 侧结果卡 + follow-up（按 run_id 匹配）。

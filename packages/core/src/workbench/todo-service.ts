@@ -765,7 +765,7 @@ export class TodoService implements WorkbenchDispatchPort {
 
   /**
    * Appends the visible dispatch message in the executor's conversation and routes it like a
-   * typed user message (direct → delivery gate, group → GroupTurnCoordinator). Not subject to
+   * typed user message (direct → delivery gate, project → ProjectTurnCoordinator). Not subject to
    * the proactive switch, quiet hours or the daily cap (it is the user's instruction).
    */
   #dispatch(todo: Todo, context: DispatchContext): Todo {
@@ -777,8 +777,8 @@ export class TodoService implements WorkbenchDispatchPort {
     const viaButler = context.actor === 'butler';
     const butlerDrafted = todo.source === 'butler';
     // A periodic todo keeps its `scheduled` parking spot; a one-off becomes in_progress. It
-    // moves BEFORE routing: routing can settle synchronously (an empty group → no_claim), and
-    // that settlement must find the todo in progress.
+    // moves BEFORE routing: routing can settle synchronously (an empty group → silent →
+    // unclaimed), and that settlement must find the todo in progress.
     const periodic =
       context.consumeSchedule !== true && this.#activeSchedule(todo.id)?.kind === 'cron';
     if (!periodic) this.#move(todo, 'in_progress', { blockedReason: null });

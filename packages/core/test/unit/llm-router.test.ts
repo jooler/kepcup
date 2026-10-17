@@ -20,7 +20,7 @@ import {
   routeStillCurrent,
   type LlmPurpose,
 } from '../../src/agent/llm-router.js';
-import { triageOneBot } from '../../src/dispatch/dispatcher.js';
+import { judgeContinuation } from '../../src/dispatch/dispatcher.js';
 import type { AgentEngine, RunSpec } from '../../src/agent/types.js';
 
 /** D72 P6 `agent/llm-router.ts`：后台调用路由、降配与降频。 */
@@ -310,7 +310,7 @@ describe('LlmRouter', () => {
   });
 });
 
-describe('triageOneBot through the router (P6)', () => {
+describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -371,6 +371,7 @@ describe('triageOneBot through the router (P6)', () => {
         conversationId: 'conv_1',
         batchId: 'b1',
         batchMessages: [],
+        goal: null,
         timeZone: 'UTC',
         logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} } as never,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -388,8 +389,13 @@ describe('triageOneBot through the router (P6)', () => {
     const agentEngine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
     const r = agentRouter(agentEngine);
     const { input, scheduler, usage } = triageDeps(r);
-    const decision = await triageOneBot(input);
-    expect(decision).toEqual({ botId: 'bot_1', decision: 'respond', confidence: 0.9 });
+    const decision = await judgeContinuation(input);
+    expect(decision).toEqual({
+      botId: 'bot_1',
+      decision: 'respond',
+      confidence: 0.9,
+      reason: '被点名',
+    });
     expect(scheduler.submit.mock.calls[0]![0].provider).toBe('agent:alpha');
     const [req] = complete.mock.calls[0]! as unknown as [
       { model: string; tools?: unknown; systemPrompt: string },
@@ -414,9 +420,14 @@ describe('triageOneBot through the router (P6)', () => {
       submit: vi.fn((job: { key: string }) => void queued.push(job)),
       cancelQueued,
     };
-    const pending = triageOneBot({ ...input, scheduler: scheduler as never });
+    const pending = judgeContinuation({ ...input, scheduler: scheduler as never });
     await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS + 1);
-    expect(await pending).toEqual({ botId: 'bot_1', decision: 'no_action', confidence: 0 });
+    expect(await pending).toEqual({
+      botId: 'bot_1',
+      decision: 'no_action',
+      confidence: 0,
+      reason: 'judgement failed',
+    });
     expect(cancelQueued).toHaveBeenCalledWith(queued[0]!.key);
     expect(complete).not.toHaveBeenCalled();
   });
@@ -428,10 +439,11 @@ describe('triageOneBot through the router (P6)', () => {
     } as unknown as AgentEngine;
     const r = agentRouter(agentEngine);
     const { input } = triageDeps(r, 30);
-    expect(await triageOneBot(input)).toEqual({
+    expect(await judgeContinuation(input)).toEqual({
       botId: 'bot_1',
       decision: 'no_action',
       confidence: 0,
+      reason: 'judgement failed',
     });
   });
 
@@ -441,7 +453,7 @@ describe('triageOneBot through the router (P6)', () => {
     const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
     const { input } = triageDeps(r);
     let decided = false;
-    const pending = triageOneBot(input).then((decision) => {
+    const pending = judgeContinuation(input).then((decision) => {
       decided = true;
       return decision;
     });
@@ -450,7 +462,7 @@ describe('triageOneBot through the router (P6)', () => {
     await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS - TRIAGE_TIMEOUT_MS);
     expect(await pending).toMatchObject({ decision: 'no_action' });
     // Same bot + group right after: throttled — no second agent call.
-    expect(await triageOneBot(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
+    expect(await judgeContinuation(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
     expect(complete).toHaveBeenCalledTimes(1);
   });
 });

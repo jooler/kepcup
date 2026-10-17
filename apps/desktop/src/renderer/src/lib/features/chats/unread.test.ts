@@ -46,7 +46,7 @@ describe('isSilentOnArrival', () => {
     expect(isSilentOnArrival(receipt('tool'))).toBe(false);
     expect(isSilentOnArrival({ senderType: 'bot', kind: 'text', content: { text: 'x' } })).toBe(false);
     expect(
-      isSilentOnArrival({ senderType: 'system', kind: 'system_event', content: { event: 'group_no_claim' } }),
+      isSilentOnArrival({ senderType: 'system', kind: 'system_event', content: { event: 'run_interrupted' } }),
     ).toBe(false);
   });
 });

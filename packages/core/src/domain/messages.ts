@@ -669,6 +669,26 @@ export class MessagesService {
     return message;
   }
 
+  /**
+   * Latest visible (shared, non-recalled) text message sent by a bot: routing's
+   * "last replier" (D92 T1a). Private task_event-style rows are excluded by the
+   * shared filter; a task's interim progress text (`origin:'task'`) counts —
+   * it means the bot is working for the user. Null when the conversation has
+   * no bot message.
+   */
+  lastVisibleBotMessage(conversationId: string): Message | null {
+    const row = this.db
+      .prepare(
+        "select * from messages where conversation_id = ? and sender_type = 'bot' and kind = 'text' " +
+          'and owner_bot_id is null and status != \'recalled\' order by seq desc limit 1',
+      )
+      .get(conversationId) as MessageRow | undefined;
+    if (!row) return null;
+    const message = messageRowToMessage(row);
+    message.attachments = this.attachmentsFor(message.id);
+    return message;
+  }
+
   getOrThrow(id: string): Message {
     const message = this.getById(id);
     if (!message) throw new AppError('NOT_FOUND', `Message ${id} does not exist`);

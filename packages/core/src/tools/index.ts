@@ -84,6 +84,12 @@ export interface ResponseToolDeps {
    */
   onMentionBots?: (mentionBotIds: string[], message: Message) => string;
   /**
+   * D92 T1a routing (design 41 §6.3 必答回合): a must-reply turn (its trigger
+   * has a `MUST_REPLY_REASONS` part — `routed` / `lead_fallback`) gets no
+   * `skip_reply`: the host guarantees a visible reply or a failure state.
+   */
+  mustReply?: boolean | undefined;
+  /**
    * P06 environment manager facade: request host-level tool installs.
    * Narrow interface so tools never touch the DB layer directly.
    */
@@ -1139,7 +1145,8 @@ export function buildResponseTools(input: {
         : [];
     return finalize([
       sendMessage,
-      skipReply,
+      // A must-reply routed turn (D92 T1a) gets no skip_reply at all.
+      ...(deps.mustReply === true ? [] : [skipReply]),
       searchMessages,
       getMessagesAround,
       getAttachment,

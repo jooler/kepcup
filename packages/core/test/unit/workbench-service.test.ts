@@ -930,7 +930,7 @@ describe('工作台事项：交付结算', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     rig.addGroup('conv_g', '空群', ['bot_a']);
-    // 路由同步走到 no_claim：编排器在 dispatch 返回之前就调了 settleUnclaimed。
+    // 路由同步走到静默收场：编排器在 dispatch 返回之前就调了 settleUnclaimed。
     rig.flags.onDispatch = (call) => rig.todos.settleUnclaimed(call.todoRunId);
     const { todo } = rig.todos.create({
       title: '没人在的群',

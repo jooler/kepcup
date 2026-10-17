@@ -3,6 +3,8 @@
  * These constants must not be duplicated elsewhere in code.
  */
 
+import type { TriggerReason } from './domain/types.js';
+
 /** Max number of recent messages injected into context. */
 export const RECENT_MESSAGES_MAX = 30;
 /** Token budget for injected recent messages. */
@@ -254,6 +256,17 @@ export const CONTINUATION_TEXT_MAX_CHARS = 160;
 
 /** 项目目标（conversations.goal）的长度上限（projects.create / projects.update）。 */
 export const PROJECT_GOAL_MAX_CHARS = 4000;
+/**
+ * 「上一位回话者」P 的连续窗口（D92 T1a 路由）：P 的最近一条可见 Bot 回复距今
+ * 超过它就不做续接判断，直接进负责人网关。
+ */
+export const ROUTING_CONTINUATION_WINDOW_MS = 30 * 60_000;
+/** 续接判断的认领阈值：P 说 respond 且置信度 ≥ 它才算续接（初值，待实测）。 */
+export const ROUTING_CONTINUATION_MIN_CONFIDENCE = 0.6;
+/** 负责人网关 `route` 一次最多路由到的成员数（超出截断）。 */
+export const ROUTING_ROUTE_TARGETS_MAX = 3;
+/** 必答原因（D92 T1a 路由）：该轮工具面摘掉 skip_reply，宿主保证必有可见回复或失败态。 */
+export const MUST_REPLY_REASONS: readonly TriggerReason[] = ['routed', 'lead_fallback'];
 
 // --- Conversational bot setup (setup interview) ---------------------------------
 
