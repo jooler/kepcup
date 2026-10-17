@@ -20,6 +20,7 @@
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
   import ChatMessageRow from './ChatMessageRow.svelte';
+  import EpisodePausedCard from './EpisodePausedCard.svelte';
 
   /**
    * 消息渲染调度层：按消息种类分发——改动摘要卡 / 审批卡 / 初始化访谈
@@ -188,6 +189,14 @@
       'event' in message.content &&
       message.content.event === SETTING_CARD_RESOLVED_EVENT,
   );
+
+  // 协作暂停卡（D92 T1a WP8）：熔断暂停的回合，带「继续 / 停止」的交互卡。
+  const isEpisodePaused = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      message.content.event === 'episode_paused',
+  );
 </script>
 
 {#if isChangesCard}
@@ -284,6 +293,11 @@
 {:else if isSettingCard}
   <div class="flex w-full py-1">
     <SettingCard {message} />
+  </div>
+{:else if isEpisodePaused}
+  <!-- 协作暂停卡：居中系统卡（样式与其它信息卡一致），按钮在组件内 -->
+  <div class="flex w-full justify-center py-1">
+    <EpisodePausedCard {message} />
   </div>
 {:else if isSettingResolved}
   <!-- setting_card_resolved：唤醒 Bot 的内部事件，不显示 -->
