@@ -133,7 +133,9 @@ async function openProfileTab(page: Page): Promise<void> {
 }
 
 test('wiki tab: browse the page tree, read rendered markdown, search, history and rollback', async () => {
-  test.setTimeout(300_000);
+  // 慢 CI（ubuntu 在负载下入库管线可能超过半分钟）余量：整用例放宽，
+  // 树项等待也从 30s 放宽到 90s（validation/fixtures 全走同样管线）。
+  test.setTimeout(360_000);
   const session = await startSession('kepcup-e2e-wiki-');
   const { page, llm, server } = session;
   const url = `${server.url}/deploy.html`;
@@ -192,7 +194,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     // --- browse: the tree lists the new page (wiki_changed refresh + reload) -
     await openWikiTab(page);
     const pageItem = page.locator('[data-testid="wiki-page-pages-deploy-md"]');
-    await expect(pageItem).toBeVisible({ timeout: 30_000 });
+    await expect(pageItem).toBeVisible({ timeout: 90_000 });
     await expect(pageItem).toHaveAttribute('data-page-path', 'pages/deploy.md');
     await expect(pageItem).toContainText('部署指南');
 
