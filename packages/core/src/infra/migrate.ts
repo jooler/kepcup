@@ -5,6 +5,19 @@ import type { SqliteDatabase } from './db.js';
 
 const MIGRATION_FILE_PATTERN = /^(\d{4})_[a-z0-9_]+\.sql$/;
 
+/**
+ * First-line directive: the file must run with `PRAGMA foreign_keys = OFF`
+ * (SQLite's official 12-step rebuild flow for a parent table referenced by
+ * many children — with FKs on, `DROP TABLE` cascade-deletes every child row,
+ * and the pragma is a no-op inside a transaction).
+ */
+const FK_OFF_DIRECTIVE = '-- kepcup:foreign-keys=off';
+
+function isFkOffMigration(sql: string): boolean {
+  const firstLine = sql.split('\n', 1)[0] ?? '';
+  return firstLine.trim() === FK_OFF_DIRECTIVE;
+}
+
 export interface AppliedMigration {
   version: number;
   file: string;
@@ -34,6 +47,12 @@ export function readUserVersion(db: SqliteDatabase): number {
  * Applies `NNNN_name.sql` files from `dir` in order, tracking progress in
  * `PRAGMA user_version`. Idempotent: files at or below the current version
  * are skipped. Version numbers must be contiguous starting at 1.
+ *
+ * A file whose first line is exactly `-- kepcup:foreign-keys=off` runs with
+ * `PRAGMA foreign_keys = OFF` (toggled outside the transaction) and must
+ * leave the database free of foreign-key violations (`foreign_key_check`
+ * runs inside the transaction; failures roll back). The pragma is restored
+ * to ON afterwards whether the file succeeded or failed.
  */
 export function runMigrations(
   db: SqliteDatabase,
@@ -63,16 +82,44 @@ export function runMigrations(
   for (const file of files) {
     if (file.version <= currentVersion) continue;
     const sql = readFileSync(path.join(dir, file.name), 'utf8');
-    const run = db.transaction(() => {
-      db.exec(sql);
-      db.pragma(`user_version = ${file.version}`);
-    });
-    try {
-      run.immediate();
-    } catch (error) {
-      throw new AppError('MIGRATION_FAILED', `Migration ${file.name} failed`, {
-        reason: error instanceof Error ? error.message : String(error),
+    if (isFkOffMigration(sql)) {
+      // FK-off migrations turn the pragma off OUTSIDE the transaction (it is a
+      // no-op inside one), run the SQL inside it, then verify the whole
+      // database still satisfies its foreign keys before committing.
+      db.pragma('foreign_keys = OFF');
+      try {
+        const run = db.transaction(() => {
+          db.exec(sql);
+          const violations = db.pragma('foreign_key_check') as unknown[];
+          if (violations.length > 0) {
+            throw new Error(
+              `foreign_key_check failed: ${JSON.stringify(violations.slice(0, 5))}`,
+            );
+          }
+          db.pragma(`user_version = ${file.version}`);
+        });
+        try {
+          run.immediate();
+        } catch (error) {
+          throw new AppError('MIGRATION_FAILED', `Migration ${file.name} failed`, {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    } else {
+      const run = db.transaction(() => {
+        db.exec(sql);
+        db.pragma(`user_version = ${file.version}`);
       });
+      try {
+        run.immediate();
+      } catch (error) {
+        throw new AppError('MIGRATION_FAILED', `Migration ${file.name} failed`, {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     applied.push({ version: file.version, file: file.name });
     options.logger?.info({ file: file.name, version: file.version }, 'migration applied');

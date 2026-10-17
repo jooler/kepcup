@@ -117,8 +117,10 @@ describe('createCore (integration)', () => {
     // （bot_handovers / bot_handover_items，approvals.kind 增加 bot_handover）；
     // 0037 = D90 工作台（todos / todo_runs / memos，schedules 重建：bot_id 可空、
     // origin 加 workbench、todo_id）；0038 = D92 T0-2（projects 改名 workdirs，
-    // project_id 改名 workdir_id）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(38);
+    // project_id 改名 workdir_id）；0039 = D92 T1a（删除无法转换的旧群）；
+    // 0040 = D92 T1a（conversations 重建：type 'project'、lead_bot_id、goal、
+    // 删 setup_state）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(40);
     const versionColumns = (
       services.mainDb!.prepare('pragma table_info(widget_versions)').all() as Array<{
         name: string;
