@@ -3,6 +3,8 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { chat } from '$lib/stores/chat.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
   import {
     Dialog,
@@ -48,7 +50,11 @@
       .join('、'),
   );
   let open = $state(false);
-  let preview = $state({ conversations: 0, messages: 0 });
+  let preview = $state({
+    conversations: 0,
+    messages: 0,
+    ledProjects: [] as Array<{ id: string; title: string | null }>,
+  });
   let deleting = $state(false);
 
   async function ask(): Promise<void> {
@@ -58,6 +64,17 @@
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /**
+   * The bot leads projects: deletion is blocked (the backend would reject
+   * with PROJECT_LEAD_REQUIRED). Jump to that project's members section so
+   * the user can hand the lead over first.
+   */
+  async function goReplaceLead(conversationId: string): Promise<void> {
+    open = false;
+    await chat.select(conversationId);
+    shell.openProjectSettings('members');
   }
 
   async function confirm(): Promise<void> {
@@ -111,6 +128,32 @@
       {#if bot.profile.runtime.agent.id.length > 0}
         <p class="text-xs text-muted-foreground">{t('contacts.deleteAgentNote')}</p>
       {/if}
+      {#if preview.ledProjects.length > 0}
+        <!-- Leading projects block the delete: no confirm button, offer the
+             "go replace" jump into each project's members section instead. -->
+        <div class="space-y-1.5" data-testid="handover-retire-lead-blocked">
+          <p class="text-sm text-muted-foreground">
+            {t('contacts.deleteBlockedLead', { count: preview.ledProjects.length })}
+          </p>
+          <ul class="space-y-1.5">
+            {#each preview.ledProjects as project (project.id)}
+              <li class="flex items-center gap-2 rounded-md border p-2 text-sm">
+                <span class="min-w-0 flex-1 truncate">
+                  {project.title ?? t('project.untitled')}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onclick={() => void goReplaceLead(project.id)}
+                  data-testid={`handover-retire-go-replace-${project.id}`}
+                >
+                  {t('contacts.deleteGoReplace')}
+                </Button>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       <DialogFooter>
         <Button
           variant="outline"
@@ -119,14 +162,16 @@
         >
           {t('contacts.cancel')}
         </Button>
-        <Button
-          variant="destructive"
-          onclick={confirm}
-          disabled={deleting}
-          data-testid="handover-retire-confirm"
-        >
-          {t('contacts.deleteConfirm')}
-        </Button>
+        {#if preview.ledProjects.length === 0}
+          <Button
+            variant="destructive"
+            onclick={confirm}
+            disabled={deleting}
+            data-testid="handover-retire-confirm"
+          >
+            {t('contacts.deleteConfirm')}
+          </Button>
+        {/if}
       </DialogFooter>
     </DialogContent>
   </Dialog>

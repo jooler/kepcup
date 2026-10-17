@@ -47,12 +47,14 @@ class ContactsState {
     return result.bot;
   }
 
+  /** Projects this bot currently leads (deleting it is blocked until replaced). */
   async deletionPreview(id: string): Promise<{
     conversations: number;
     messages: number;
     memoryItems: number;
     wikiPages: number;
     skills: number;
+    ledProjects: Array<{ id: string; title: string | null }>;
   }> {
     return (await core.call('bots.deletionPreview', { id })) as {
       conversations: number;
@@ -60,6 +62,7 @@ class ContactsState {
       memoryItems: number;
       wikiPages: number;
       skills: number;
+      ledProjects: Array<{ id: string; title: string | null }>;
     };
   }
 

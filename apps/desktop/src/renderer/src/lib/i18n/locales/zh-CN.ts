@@ -456,6 +456,8 @@ export const zhCN = {
   'contacts.deleteBody':
     '将清理：{conversations} 个对话、{messages} 条消息、0 条记忆、0 个 Wiki 页面、0 个技能，以及全部执行记录与 Bot 数据目录。历史消息保留为只读。此操作不可恢复。',
   'contacts.deleteConfirm': '确认删除',
+  'contacts.deleteBlockedLead': '该 Bot 是 {count} 个项目组的负责人，需先更换负责人才能删除：',
+  'contacts.deleteGoReplace': '去更换',
   'contacts.deleteAgentNote':
     '该 Bot 使用外部智能体：KepCup 会尽量通知智能体删除对应会话，但智能体自己保存在本机的会话记录不归 KepCup 管理，需要时请在该智能体中自行清理。',
   'rightPanel.title': 'Bot 详情',
