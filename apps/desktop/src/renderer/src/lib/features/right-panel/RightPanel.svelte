@@ -24,7 +24,7 @@
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
-  import WikiTab from './WikiTab.svelte';
+  import WikiBrowser from '../wiki/WikiBrowser.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WidgetsTab from './WidgetsTab.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
@@ -593,7 +593,7 @@
         hidden={activeTab !== 'wiki'}
       >
         {#if bot}
-          <WikiTab botId={bot.id} active={activeTab === 'wiki'} />
+          <WikiBrowser botId={bot.id} active={activeTab === 'wiki'} />
         {/if}
       </div>
       <div
