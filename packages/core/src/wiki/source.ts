@@ -26,6 +26,11 @@ export function shortHash(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, RAW_HASH_CHARS);
 }
 
+/** Full content sha256 (64 hex): the project wiki ledger keys assets by it (D92 T1b WP9). */
+export function contentSha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
 /** `2026-10-01` → `20261001`. */
 export function localDateStamp(date: Date): string {
   return date.toISOString().slice(0, 10).replaceAll('-', '');
