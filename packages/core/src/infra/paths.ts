@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { WikiOwner } from '@kepcup/shared';
 
 /**
  * Single source of truth for every path inside the data directory.
@@ -164,7 +165,49 @@ export function botWidgetDraftDir(paths: AppPaths, botId: string, craftId: strin
   return path.join(botWidgetDraftsDir(paths, botId), craftId);
 }
 
-// --- wiki (P09) ---------------------------------------------------------------
+// --- wiki (P09; owners generalized in D92 T1b WP9) ------------------------------
+
+/** Data root of one project team (D92 §4.14): `projects/{projectId}/`. The project id is its root conversation id. */
+export function projectRoot(paths: AppPaths, projectId: string): string {
+  return path.join(paths.home, 'projects', projectId);
+}
+
+/** Root of a project's shared wiki (es-git versioned): `projects/{id}/wiki/`. */
+export function projectWikiRoot(paths: AppPaths, projectId: string): string {
+  return path.join(projectRoot(paths, projectId), 'wiki');
+}
+
+/** Out-of-git binary asset store of a project's wiki (D85): `projects/{id}/wiki-store/`. Reserved; unused this phase. */
+export function projectWikiStoreRoot(paths: AppPaths, projectId: string): string {
+  return path.join(projectRoot(paths, projectId), 'wiki-store');
+}
+
+/** Project-level encrypted FTS database of a project's wiki: `projects/{id}/wiki.db` (only `wiki_fts`). */
+export function projectWikiDbPath(paths: AppPaths, projectId: string): string {
+  return path.join(projectRoot(paths, projectId), 'wiki.db');
+}
+
+/** Root of one owner's wiki (es-git versioned): bots `bots/{id}/wiki/`, projects `projects/{id}/wiki/`. */
+export function wikiRoot(paths: AppPaths, owner: WikiOwner): string {
+  return owner.kind === 'bot' ? botWikiRoot(paths, owner.id) : projectWikiRoot(paths, owner.id);
+}
+
+/** Raw source material (append-only): `{wikiRoot}/raw/`. */
+export function wikiRawDir(paths: AppPaths, owner: WikiOwner): string {
+  return path.join(wikiRoot(paths, owner), 'raw');
+}
+
+/** LLM-maintained knowledge pages: `{wikiRoot}/pages/`. */
+export function wikiPagesDir(paths: AppPaths, owner: WikiOwner): string {
+  return path.join(wikiRoot(paths, owner), 'pages');
+}
+
+/** Out-of-git binary asset store of one owner's wiki (D85): bots `bots/{id}/wiki-store/`, projects `projects/{id}/wiki-store/`. */
+export function wikiStoreRoot(paths: AppPaths, owner: WikiOwner): string {
+  return owner.kind === 'bot'
+    ? botWikiStoreRoot(paths, owner.id)
+    : projectWikiStoreRoot(paths, owner.id);
+}
 
 /** Root of a bot's wiki (es-git versioned): `bots/{id}/wiki/`. */
 export function botWikiRoot(paths: AppPaths, botId: string): string {
