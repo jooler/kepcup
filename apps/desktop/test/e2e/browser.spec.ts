@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -718,7 +718,6 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
       await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
     }
   } catch (error) {
-    console.warn(`[delete-wipe-diag] bot 分区残留 ${partitionLeftover(home, partition)}`);
     dumpRequests(llm, testInfo);
     throw error;
   } finally {
@@ -1223,45 +1222,6 @@ function partitionEntries(home: string, name: string): string[] {
   return readdirSync(root).filter((entry) => entry.toLowerCase() === name.toLowerCase());
 }
 
-/**
- * 诊断（临时）：分区清不掉时把残留目录内容 dump 进 CI 日志——判断是
- * 「句柄锁定的文件」（内容仍在）还是「晚到的 flush 重建」（目录刚出）。
- */
-function partitionLeftover(home: string, name: string): string {
-  const root = path.join(home, 'browser', 'Partitions');
-  if (!existsSync(root)) return '<Partitions 目录都不存在>';
-  const dirs = readdirSync(root).filter((entry) => entry.toLowerCase() === name.toLowerCase());
-  if (dirs.length === 0) return '<无残留>';
-  const dir = path.join(root, dirs[0]!);
-  const lines: string[] = [dirs[0]!];
-  const walk = (current: string, prefix: string, depth: number): void => {
-    if (depth > 3) return;
-    let entries;
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      lines.push(`${prefix} <readdir 失败>`);
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(full, `${prefix}/${entry.name}/`, depth + 1);
-      } else {
-        let size: string;
-        try {
-          size = ` size=${statSync(full).size}`;
-        } catch {
-          size = ' <stat 失败>';
-        }
-        lines.push(`${prefix}/${entry.name}${size}`);
-      }
-    }
-  };
-  walk(dir, '', 0);
-  return lines.join(' | ');
-}
-
 test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie，私有 Bot 看不到；删除资料后目录被清', async () => {
   const testInfo = test.info();
   test.setTimeout(420_000);
@@ -1378,7 +1338,6 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
       page.locator('[data-testid="profile-tab"] [data-testid="bot-browser-profile"]'),
     ).toHaveValue('');
   } catch (error) {
-    console.warn(`[delete-wipe-diag] shared 分区残留 ${partitionLeftover(home, `shared-${profileId}`)}`);
     dumpRequests(llm, testInfo);
     throw error;
   } finally {
