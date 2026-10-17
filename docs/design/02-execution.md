@@ -9,7 +9,7 @@
 - **两层 loop**：对话轮（`loop_type='turn'`）由消息 / 定时 / 事件 / 任务结算触发，秒级，发完回复即结算；任务（`loop_type='task'`）只由对话轮的 `start_task` 派出，分钟到小时级，多条可并行。**对话轮永不等待任务**——任务结算是一个事件，按宿主的确定性条件唤醒下一个对话轮。
 - **职责切分即权限切分**：写操作与长时工作只发生在任务里；对话轮只读，执行期由工具网关硬拒一切写路径（`RUN_READ_ONLY`），不只靠不注册工具。只读任务（`task_writes=false`）同样硬拒写。
 - 对话记录与执行过程分离：过程存入执行记录（Run / `run_steps`），只有 Bot 发出的消息进入对话；Bot 与自己任务之间的往返作为**私有条目**进对话消息表，只给该 Bot 看（见「上下文注入」）。
-- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的 project 范围内工作；任务的工作目录（`task_workdir`）在派出时确定：缺省为绑定且可用的 project，否则 workspace，也可由 `start_task({workdir})` 指定。
+- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的 project 范围内工作；任务的工作目录（`task_cwd`）在派出时确定：缺省为绑定且可用的 project，否则 workspace，也可由 `start_task({cwd})` 指定。
 - Loop 框架使用 pi（[09-tech-stack.md](09-tech-stack.md#agent-looppi)）。**对话轮固定走内置引擎**（Bot 的内置主模型）；任务走 Bot 配置的引擎——内置 pi，或外部智能体（D72，`runtime.agent` 即 Bot 的**任务引擎**，见 [28-external-agents-acp.md](28-external-agents-acp.md)）。
 
 ## 对话轮与任务
@@ -17,7 +17,7 @@
 | 项 | 对话轮（turn） | 任务（task） |
 |---|---|---|
 | 触发 | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
-| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 workdir 同时最多一个写任务 |
+| 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 cwd 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
 | 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
@@ -32,7 +32,7 @@
 
 | 工具 | 作用 | 要点 |
 |---|---|---|
-| `start_task` | 派出任务：`title`、`instruction`、`source_message_ids`、`writes`、`workdir?`、`continues_task_id?` | 先写 runs 行（`queued` = submitted）与私有 `brief` 条目、再按配额启动；返回 `running` 或 `submitted` + 排队原因；超过本轮起数报 `TASK_LIMIT_REACHED` |
+| `start_task` | 派出任务：`title`、`instruction`、`source_message_ids`、`writes`、`cwd?`、`continues_task_id?` | 先写 runs 行（`queued` = submitted）与私有 `brief` 条目、再按配额启动；返回 `running` 或 `submitted` + 排队原因；超过本轮起数报 `TASK_LIMIT_REACHED` |
 | `inject_task` | 把新指令转给进行中 / 排队中的任务 | 已在跑：经 steering 注入（`delivered`）；尚未启动：并入简报；引擎收不下（外部智能体不支持或异步拒绝 steering、执行已收尾）：条目记为 `queued`（「未送达」），对话轮可改为取消后接续重做 |
 | `cancel_task` | 取消 submitted / running 的任务 | 写 `cancel` 条目后当场结算为 `cancelled`；不唤醒对话轮 |
 | `list_tasks` | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS`（24 小时）内已结算的任务 | 平时不必调用，`<tasks>` 段已列出进行中的任务 |
@@ -54,9 +54,9 @@
 
 ### 写互斥：租约，而不是物理隔离
 
-- 只读任务不取租约、不限 workdir 并发（仍受上述配额封顶）。
-- 写任务启动前取 workdir 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 project 是项目根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-project.md](08-project.md#并发写入租约)）。
-- 同一 workdir 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
+- 只读任务不取租约、不限 cwd 并发（仍受上述配额封顶）。
+- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 project 是项目根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-project.md](08-project.md#并发写入租约)）。
+- 同一 cwd 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
 - workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；project 写任务照常有改动摘要与整次回退（D30）。
 - git worktree / CoW 隔离明确不做（[30 §9](30-supervisor-and-tasks.md#9-非目标)）。
 
@@ -127,7 +127,7 @@ Run
   output_message_ids[]
   summary
   continued_from_run_ids[]  -- 任务：continues_task_id 的回放来源
-  task_title / task_writes / task_workdir / origin_run_id / result_consumed_at / awaiting_input  -- 任务列
+  task_title / task_writes / task_cwd / origin_run_id / result_consumed_at / awaiting_input  -- 任务列
 ```
 
 - 每次 loop 结束都会留下执行记录。表结构见 [dev/03-data-model.md](../dev/03-data-model.md#runsp01)。
@@ -186,7 +186,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 | Loop | 触发 | 可写入 | 优先级 |
 |---|---|---|---|
 | 对话轮 | 用户消息、定时、事件、委派、任务结算 | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、技能生成请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89，[38](38-conversational-settings.md)：改设置由宿主按目录与情境裁定档位并出回执卡 / 设置卡，对话轮与任务都有）等异步托管动作；**不可写文件、不可执行命令** | 0 / 1 |
-| 任务 | 对话轮 `start_task` | 消息（中间说明）；私有时间线（结果 / 失败 / 提问）；写任务：workdir 内文件与授权范围内的其他路径 | 写任务 0，只读任务 1 |
+| 任务 | 对话轮 `start_task` | 消息（中间说明）；私有时间线（结果 / 失败 / 提问）；写任务：cwd 内文件与授权范围内的其他路径 | 写任务 0，只读任务 1 |
 | SubAgent 子代理 | 任务内调用 `delegate_task`（前台 / 后台分支 / fan-out） | 不写用户消息；只读研究工具；过程落执行记录（`loop_type='subagent'`） | 随父任务 |
 | 群聊判断 | 群消息未 @ 任何 Bot | 不写，仅返回判断结果 | 0 |
 | 反思 | 对话轮或任务 `completed` 后 | 本 Bot 记忆、用户画像提案 | 2 |
