@@ -232,7 +232,7 @@ class ShellState {
     this.rightPanelCollapsed = !this.rightPanelCollapsed;
   }
 
-  /** 展开右栏并切到「定时任务」（群聊右栏是群信息，定时任务分区在其中）。 */
+  /** 展开右栏并切到「定时任务」（单聊右栏；项目组的定时任务在项目详情页分区里）。 */
   openSchedules(): void {
     this.rightPanelCollapsed = false;
     this.rightPanelTabRequest = 'schedules';

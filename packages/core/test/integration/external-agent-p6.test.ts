@@ -239,7 +239,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       agentEnabled: false,
       agentSkillAuthoring: true,
       // Agent triage is opt-in (审查 C2).
-      groupMentionOnly: true,
+      projectMentionOnly: true,
     });
     await expect(
       stack.core.rpc.call('settings.update', { backgroundAgentId: 'nope' }),

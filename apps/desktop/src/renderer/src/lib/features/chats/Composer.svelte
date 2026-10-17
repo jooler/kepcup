@@ -138,8 +138,8 @@
   );
 
   /**
-   * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前群成员优先，
-   * 其余活跃 Bot 次之，其他群聊最后；当前会话自己不作候选。单聊同样可用
+   * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前项目组成员优先，
+   * 其余活跃 Bot 次之，其他项目组最后；当前会话自己不作候选。单聊同样可用
    * ——提及非成员 Bot / 项目组是「引用」，不参与项目组路由。
    */
   const mentionTargets = $derived.by(() =>
@@ -150,7 +150,7 @@
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
       currentConversationId: chat.current?.conversation.id ?? null,
-      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；群聊的成员是
+      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
       // 主力候选，不排除。
       excludeBotIds:
         isProject || chat.current?.conversation.directBotId == null
@@ -160,7 +160,7 @@
   );
 
   /**
-   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；群聊无单一 Bot、上传
+   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；项目组无单一 Bot、上传
    * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
    * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
    */
@@ -288,7 +288,7 @@
         if (target.kind === 'project') {
           const badge = document.createElement('span');
           badge.className = 'shrink-0 text-xs text-muted-foreground';
-          badge.textContent = t('composer.mentionGroup');
+          badge.textContent = t('composer.mentionProject');
           button.append(badge);
         }
         li.append(button);

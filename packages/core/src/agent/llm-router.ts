@@ -35,7 +35,7 @@ import type { AgentEngine, RunSpec } from './types.js';
  *
  * 只有外部 Agent 时的降配：技能生成默认关
  * （`backgroundTasks.agentSkillAuthoring`）；路由判断默认不跑
- * （`backgroundTasks.groupMentionOnly` 默认开），用户关掉后也受每日后台预算
+ * （`backgroundTasks.projectMentionOnly` 默认开），用户关掉后也受每日后台预算
  * 与节流约束（`admit`）；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑。
  */
 
@@ -247,7 +247,7 @@ export class LlmRouter {
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
     if (purpose === 'triage') {
       // Opt-in only (审查 C2), and charged to the bot's daily background budget.
-      if (tasks.groupMentionOnly) return null;
+      if (tasks.projectMentionOnly) return null;
       if (bot !== null && this.#deps.budgetExceeded?.(bot.id) === true) return null;
     }
     const viewOf = this.#deps.agentView;

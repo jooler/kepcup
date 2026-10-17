@@ -91,9 +91,9 @@ function router(
 
 /** An explicitly chosen background agent (routes bot-less purposes too). */
 const CHOSEN = { backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
-/** Agent triage opted in (groupMentionOnly is on by default, 审查 C2). */
+/** Agent triage opted in (projectMentionOnly is on by default, 审查 C2). */
 const TRIAGE_ON = {
-  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: false },
+  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: false },
 } satisfies Partial<Settings>;
 
 describe('LlmRouter', () => {
@@ -200,7 +200,7 @@ describe('LlmRouter', () => {
   it('agent-only degradations: skill authoring opt-in, triage opt-in + budget, off switch', () => {
     const r = router(CHOSEN);
     expect(r.resolveDefault('skill_authoring')).toBeNull();
-    // Agent triage is off by default (groupMentionOnly defaults to on).
+    // Agent triage is off by default (projectMentionOnly defaults to on).
     expect(r.resolveDefault('triage')).toBeNull();
     expect(router({ ...CHOSEN, ...TRIAGE_ON }).resolveDefault('triage')).not.toBeNull();
     // Daily background budget used up: agent triage skipped for that bot.
@@ -214,7 +214,7 @@ describe('LlmRouter', () => {
     expect(
       router({
         ...CHOSEN,
-        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, groupMentionOnly: true },
+        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, projectMentionOnly: true },
       }).resolveDefault('skill_authoring'),
     ).not.toBeNull();
     expect(
@@ -223,7 +223,7 @@ describe('LlmRouter', () => {
         backgroundTasks: {
           agentEnabled: false,
           agentSkillAuthoring: true,
-          groupMentionOnly: false,
+          projectMentionOnly: false,
         },
       }).resolveDefault('reflection'),
     ).toBeNull();

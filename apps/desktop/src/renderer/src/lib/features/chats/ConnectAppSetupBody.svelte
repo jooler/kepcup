@@ -24,7 +24,7 @@
    * （chat.continueAfterSetup）。授权流程**只在用户点「连接」后**才会打开浏览器——
    * run 内部从不弹浏览器。
    *
-   * 群聊多个 Bot 同时请求同一应用：store 按目标键流程，后到的卡片加入同一流程；core 只认
+   * 项目组多个 Bot 同时请求同一应用：store 按目标键流程，后到的卡片加入同一流程；core 只认
    * 第一个 `apps.connect` 的 `grantBotId`，所以 `done` 后若本卡的 Bot 仍未持有该连接，
    * 这里经 `bots.update` 自行补写 `app_connection_ids`（core 在 `done` 前已推 `bot.updated`，
    * 第一张卡据此判定无需再写）。
@@ -59,7 +59,7 @@
     return entry?.title ?? target.connectorId;
   });
 
-  /** 发起失败 run 的 Bot（群聊取成员，单聊取对话 Bot，兜底通讯录）。 */
+  /** 发起失败 run 的 Bot（项目组取成员，单聊取对话 Bot，兜底通讯录）。 */
   const runBot = $derived.by((): Bot | null => {
     const current = chat.current;
     if (current === null) return null;
