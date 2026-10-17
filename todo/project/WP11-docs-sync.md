@@ -125,3 +125,13 @@ pnpm fmt:check                                           # 仓库的 prettier �
 ### 遗留
 
 - 无阻塞性遗留。可选后续：37 / 40 等未列入 §3 的设计文档如需全面「项目组」措辞清扫（非旧名残留，仅中文措辞），可另行小任务处理。
+
+### 审查修订（2026-10-18，阶段审查）
+
+三处事实性 / 格式修复 + DEV-037 补记，纯文档：
+
+1. `docs/design/02-execution.md`：§「上一轮」路由判断与反思两个表行在改写时被并成一行（`| 0 ||`），反思行被吞——拆回两行。
+2. `docs/dev/04-agent-runtime.md`：触发原因表 `routed` / `routed_also` 行照抄了设计的 `routed_by` 属性，实现（`dispatch/project-turn.ts`）没有该属性——改 `—`，并补 `bot_mention` 实际带的 `hop`；提示词段表 7.5 行「项目规则段（无标签）」按实现修正为 `<project_lead_rules>` / `<project_member_rules>`（成员段是函数 `projectMemberRules(leadName)`，原写的常量 `PROJECT_MEMBER_RULES` 不存在）。分歧与取舍记 **DEV-037**。
+3. `docs/design/41-project-team.md` §6.3：留痕句同步去掉 `routed_by`（见 DEV-037）。
+
+复核：§4 三条自检命令与 `pnpm fmt:check`（改动 md）复跑通过，命中集合与上方记录一致。

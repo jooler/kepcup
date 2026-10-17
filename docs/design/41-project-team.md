@@ -185,7 +185,7 @@ CREATE TABLE conversations (
 **界面反馈。**
 
 - 路由阶段（P 判断、网关判断）显示「正在确认由谁回复」状态行（`project.turn` 的 `routing` 阶段）；`route` 之后只显示目标成员的状态行，**全程不出现负责人**。实施修正（DEV-036）：状态行组件最初把路由阶段（`currentBotId=null`、`queue=[]`）挡成永不显示，随 e2e 断言修复为「routing 阶段恒显示」。
-- 不出现任何「负责人转交」的消息或卡片。路由留痕在**执行记录**里：触发原因 `routed`、`routed_by`、网关的 `reason`——对用户不可见，可审计、可据此调参。
+- 不出现任何「负责人转交」的消息或卡片。路由留痕在**执行记录**里：触发原因 `routed` / `routed_also`、段末的宿主说明（`projectWakeHint`）与网关的 `reason`——对用户不可见，可审计、可据此调参（负责人身份可从 run 的网关调用记录与成员名片推得，不单独落 `routed_by` 属性）。
 - `group_no_claim` 卡与「点选成员重新分发」（`groups.redistribute`）一并删除。
 
 **可见交办仍在。** 负责人在自己的完整对话轮里仍可 `send_message(mention_bot_ids)` 做可见 `@` 交办（写清交付物，计入协作回合与熔断）。两者分工：
