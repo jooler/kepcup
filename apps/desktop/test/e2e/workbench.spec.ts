@@ -76,7 +76,7 @@ async function startSession(prefix: string): Promise<Session> {
       dpr: win.webContents.getZoomFactor(),
     };
   });
-  console.log('[workbench-pin]', JSON.stringify(pinned));
+  console.warn('[workbench-pin]', JSON.stringify(pinned));
   return { app, page, home, llm };
 }
 
@@ -122,7 +122,7 @@ async function openWorkbench(page: Page): Promise<void> {
       tablist: document.querySelector('[role="tablist"]')?.clientWidth ?? null,
     };
   });
-  console.log('[workbench-dims]', JSON.stringify(dims));
+  console.warn('[workbench-dims]', JSON.stringify(dims));
 }
 
 /** 左栏点会话行（按 id）。 */
