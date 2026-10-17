@@ -123,7 +123,7 @@ describe('main 0039 + 0040 project conversations', () => {
     };
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([39, 40, 41]);
+    expect(applied.map((m) => m.version)).toEqual([39, 40, 41, 42]);
 
     // Direct chat untouched: type direct, no lead.
     const direct = db
