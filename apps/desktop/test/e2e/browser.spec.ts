@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -668,6 +668,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-browser-del-');
   const { page, llm, web, home, app } = session;
+  let partition = '';
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿删');
@@ -689,7 +690,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     expect(botId).toBeTruthy();
     // Electron lower-cases the partition directory name (Linux is case-sensitive,
     // macOS is not): match it case-insensitively (partitionEntries, W8).
-    const partition = `bot-${botId}`;
+    partition = `bot-${botId}`;
     // Force pending storage writes so the directory is observably present.
     await app.evaluate(async ({ session }, id) => {
       const botSession = session.fromPartition(`persist:bot-${id as string}`);
@@ -711,6 +712,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
     await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
   } catch (error) {
+    console.warn(`[delete-wipe-diag] bot 分区残留 ${partitionLeftover(home, partition)}`);
     dumpRequests(llm, testInfo);
     throw error;
   } finally {
@@ -1215,11 +1217,51 @@ function partitionEntries(home: string, name: string): string[] {
   return readdirSync(root).filter((entry) => entry.toLowerCase() === name.toLowerCase());
 }
 
+/**
+ * 诊断（临时）：分区清不掉时把残留目录内容 dump 进 CI 日志——判断是
+ * 「句柄锁定的文件」（内容仍在）还是「晚到的 flush 重建」（目录刚出）。
+ */
+function partitionLeftover(home: string, name: string): string {
+  const root = path.join(home, 'browser', 'Partitions');
+  if (!existsSync(root)) return '<Partitions 目录都不存在>';
+  const dirs = readdirSync(root).filter((entry) => entry.toLowerCase() === name.toLowerCase());
+  if (dirs.length === 0) return '<无残留>';
+  const dir = path.join(root, dirs[0]!);
+  const lines: string[] = [dirs[0]!];
+  const walk = (current: string, prefix: string, depth: number): void => {
+    if (depth > 3) return;
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      lines.push(`${prefix} <readdir 失败>`);
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, `${prefix}/${entry.name}/`, depth + 1);
+      } else {
+        let size: string;
+        try {
+          size = ` size=${statSync(full).size}`;
+        } catch {
+          size = ' <stat 失败>';
+        }
+        lines.push(`${prefix}/${entry.name}${size}`);
+      }
+    }
+  };
+  walk(dir, '', 0);
+  return lines.join(' | ');
+}
+
 test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie，私有 Bot 看不到；删除资料后目录被清', async () => {
   const testInfo = test.info();
   test.setTimeout(420_000);
   const session = await startSession('kepcup-e2e-browser-shared-');
   const { page, llm, web, home, app } = session;
+  let profileId = '';
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '共甲');
@@ -1234,7 +1276,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     await page.locator('[data-testid="browser-profile-create"]').click();
     const item = page.locator('li[data-testid^="browser-profile-bpf_"]');
     await expect(item).toHaveCount(1, { timeout: 15_000 });
-    const profileId = (await item.getAttribute('data-testid'))!.replace('browser-profile-', '');
+    profileId = (await item.getAttribute('data-testid'))!.replace('browser-profile-', '');
     await closeSettings(page);
 
     // Bot 详情：共甲、共乙挂到共享资料（选中即出现警示），自动保存。
@@ -1326,6 +1368,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
       page.locator('[data-testid="profile-tab"] [data-testid="bot-browser-profile"]'),
     ).toHaveValue('');
   } catch (error) {
+    console.warn(`[delete-wipe-diag] shared 分区残留 ${partitionLeftover(home, `shared-${profileId}`)}`);
     dumpRequests(llm, testInfo);
     throw error;
   } finally {

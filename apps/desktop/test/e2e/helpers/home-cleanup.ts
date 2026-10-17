@@ -6,7 +6,7 @@ import { rm } from 'node:fs/promises';
  * 一问题的 spec 侧版本），仍失败则最后一次报销给上层（不能吞掉清理失败，
  * 否则盘满/锁死类问题会被掩盖）。
  */
-export async function rmHomeTolerant(home: string, deadlineMs = 8_000): Promise<void> {
+export async function rmHomeTolerant(home: string, deadlineMs = 30_000): Promise<void> {
   const start = Date.now();
   for (;;) {
     try {
