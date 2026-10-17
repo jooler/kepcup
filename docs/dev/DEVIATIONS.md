@@ -603,3 +603,14 @@
 - 处理：自检按「无旧形态残留」解读——rg#1 的三处命中逐一核对为 WP 明文保留的执行者字段或无关方法；`wikiBotIdInputSchema`、`storeFor(botId`、`botWikiRoot(deps` 在 wiki/ 与 rpc/ 下均为零命中。
 - 决定：（由人工确认）
 - 已更新的文档：`todo/project/WP9-wiki-core.md` §9 实施记录。
+
+### DEV-033 WP5 创建自检 rg 非空：命中的全部是 WP5 §5 明令留下的两个 e2e 旧名文件（D92 T1a）
+
+- 状态：已按 WP 语义收口（自检解读，非代码缺陷）
+- 阶段：群聊→项目组 WP5（`feat/project/wp5-ui-create`，2026-10-17）
+- 是否阻塞：否
+- 问题：WP5 验收清单要求 `rg -n "composingGroup|beginGroupCompose|cancelGroupCompose|commitGroupCompose|GroupComposeBar|group-compose|groupCompose\.|sidebar\.createGroup|start-chat-create-group|WP5 replaces" apps/desktop -g '!node_modules' -g '!**/dist/**' -g '!test/**'` 自检为空，但 rg 的 glob 语义里 `!test/**` 只匹配仓库根下的 `test/**`，排除不了 `apps/desktop/test/e2e/`；而 WP5 §5 又明确规定 `group-compose.spec.ts` 与 `helpers/create-group.ts` 不改、留到 WP8 统一重写。二者叠加使该自检按字面永远非空（现行命中 16 处，全部在这两个文件）。
+- 影响范围：仅验收自检的解读；renderer / store / i18n 源码（`apps/desktop/src`）对该模式为零命中，两个 e2e 文件本 WP 未触碰。
+- 处理：自检按「`apps/desktop/src` 与其余非 e2e 路径无旧名残留」解读执行；e2e 两个文件的旧名属 WP5 §5 明令保留，WP8 重写时消除。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP5-ui-create.md` §9 实施记录。
