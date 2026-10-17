@@ -290,7 +290,7 @@
           {/each}
         {/if}
       </div>
-    {:else if wikiStore.loading && pages.length === 0}
+    {:else if wikiStore.loadingOf(owner) && pages.length === 0}
       <p class="text-sm text-muted-foreground" data-testid="wiki-loading">…</p>
     {:else if pages.length === 0}
       <!-- 页面树（wiki.tree）为空：项目 wiki 未初始化 / Bot 还没有整理过资料 -->
