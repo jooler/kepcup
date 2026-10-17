@@ -85,15 +85,10 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
 
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
- * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 登记项目详情页的四个锚点，
- * WP7 在 `ProjectSettingsPage` 里补上后删除。
+ * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 曾登记项目详情页的四个锚点，
+ * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除（当前为空）。
  */
-export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
-  'project-title',
-  'project-goal',
-  'project-members',
-  'project-lead',
-];
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
 
 /** 对话框类深链的固定 section 名。 */
 export const DIALOG_SURFACE_SECTIONS = {
