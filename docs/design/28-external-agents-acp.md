@@ -1,5 +1,7 @@
 # 28 外部智能体引擎（ACP）
 
+> **D92 修订（已定稿，待实施）**：术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 许多用户已经订阅了 Claude Pro/Max、ChatGPT Plus/Pro、GitHub Copilot、GLM Coding Plan 等，却拿不到通用的 `base_url` / `api_key`，无法使用基于 pi 的内置 loop。本文规定：**用户可在设置中像 ACP Registry 那样启用外部编码智能体（Agent），并为某个 Bot 指定由哪个 Agent 驱动其执行 loop**；外部 Agent 主要通过 [ACP（Agent Client Protocol）](https://agentclientprotocol.com) 驱动，内置 pi loop 保持默认与不变。
 
 决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-10-08）**：P1–P6 已实现（实验开关下）；待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。

@@ -1,5 +1,7 @@
 # 02 执行模型
 
+> **D92 修订（已定稿，待实施）**：「群聊响应」整节被重写：没有 `@` 的用户消息 → 上一位回话者续接判断 → 负责人网关（`self` / 静默 `route` / `none`），取消全员广播判断与 `group_no_claim`；Bot 间 `@` 连锁（深度 3 / 200k 预算）改为**协作回合 + 熔断**（任务结算唤醒的轮次继承回合）；D5 修订。触发原因 `broadcast`、`chain` 删除，新增 `continuation / routed / routed_also / lead_fallback / bot_mention`。术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 > **D75 重写（2026-10-08）**：Bot 的一次响应拆为**对话轮**（沟通与调度，只读，每〔Bot, 对话〕串行）与**任务**（执行，完整工具面，可并行）两层。本文描述已实现的执行模型；拆分的决策与理由见 [30-supervisor-and-tasks.md](30-supervisor-and-tasks.md)，实现细节见 [dev/02-architecture.md](../dev/02-architecture.md) 与 [dev/04-agent-runtime.md](../dev/04-agent-runtime.md)。标「待确认」的条目是实现期的细化，记在 [dev/DEVIATIONS.md](../dev/DEVIATIONS.md)，尚待用户确认。
 
 ## 基本原则

@@ -1,5 +1,7 @@
 # 38 对话内应用设置（Conversational Settings）
 
+> **D92 修订（已定稿，待实施）**：设置目录：`group.title` / `group.members` → `project.title` / `project.members`，新增 `project.goal` / `project.lead`（均 `confirm` 档）；深链落点 `group-dialog` → `project-detail`（内容区页面）；原 `project.protect-rules` / `project.ports` 随目录改名为 `workdir.*`。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
 **状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14；2026-10-15 e75b950 移除 `developer.mode` 后为 57 个条目、无内嵌卡 11 个）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。

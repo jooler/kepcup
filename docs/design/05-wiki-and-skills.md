@@ -1,5 +1,7 @@
 # 05 Wiki 与 Skills
 
+> **D92 修订（已定稿，待实施）**：D9 修订：Bot 个人 wiki 仍完全隔离；新增**项目 wiki**（项目所有的共享知识库，复用本引擎）：来源条目有创建者（`raw/_assets/*.json` 台账），共享单写入维护队列，成员只能删自己的来源，用户与负责人管理全部；索引在 `projects/{id}/wiki.db`。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 ## Wiki：Bot 的大脑
 
 每个 Bot 挂载一个自己维护的 LLM Wiki，采用 Karpathy 提出的 LLM Wiki 模式。

@@ -1,5 +1,7 @@
 # 03 数据模型
 
+> **D92 修订（已定稿，待实施）**：数据模型变更：`conversations`（`type` 取值 `direct | project`、`lead_bot_id`、`goal`、无 `setup_state`）、`projects` → `workdirs`、`chains` → `episodes`、`todos.assignee_project_id`、`runs.task_cwd` / `episode_id` / `episode_hop`、`memory_items.origin` 取值 `private | project`、项目 wiki 台账与 `projects/{id}/wiki.db`。逐项迁移见 todo/project/README.md §4.3。见 [41-project-team.md](../design/41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 设计依据：[design/11-storage.md](../design/11-storage.md)、[design/04-memory.md](../design/04-memory.md)、[design/01-conversation.md](../design/01-conversation.md)。
 
 ## 通用规则
