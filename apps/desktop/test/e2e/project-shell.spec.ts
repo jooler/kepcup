@@ -114,7 +114,12 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     }
     await page.locator('[data-testid="project-tab-wiki"]').click();
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'wiki');
-    await expect(page.locator('[data-testid="project-module-placeholder"]')).toBeVisible();
+    // D92 T1b WP10：Wiki tab 的真实视图（原占位符已被 ProjectWikiView 取代）。
+    await expect(page.locator('[data-testid="project-wiki-view"]')).toBeVisible();
+    await expect(page.locator('[data-testid="project-wiki-view"]')).toHaveAttribute(
+      'data-owner-kind',
+      'project',
+    );
 
     // ② 项目组不渲染右栏（药丸与面板都不存在）。
     await expect(page.locator('[data-testid="right-panel"]')).toHaveCount(0);
