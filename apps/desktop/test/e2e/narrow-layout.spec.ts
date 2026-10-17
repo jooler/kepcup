@@ -522,26 +522,10 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await expect(overlay).toBeVisible();
     await overlay.locator('#tab-other').click();
     await overlay.locator('[data-testid="bot-remove"]').click();
-    const consoleErrors: string[] = [];
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 400));
-    });
-    try {
-      await page.locator('[data-testid="bot-remove-confirm"]').click();
-      // 移除是重 RPC 链（删对话/工作区目录 + 资料分区清场），windows 上
-      // 整条链（含 fs 重试）能拖过 30s：给足 90s。
-      await expect(overlay).toHaveCount(0, { timeout: 90_000 });
-    } catch (error) {
-      const confirm = page.locator('[data-testid="bot-remove-confirm"]');
-      console.warn(
-        `[narrow-diag] overlay=${await overlay.count()} removeBtn=${await page.locator('[data-testid="bot-remove"]').count()} confirmBtn=${await confirm.count()} confirmDisabled=${JSON.stringify(await confirm.getAttribute('disabled'))}`,
-      );
-      console.warn(`[narrow-diag] overlayText=${JSON.stringify(await overlay.innerText().catch(() => ''))}`);
-      console.warn(`[narrow-diag] dialogText=${JSON.stringify(await page.locator('[data-testid="bot-remove-dialog"]').innerText().catch(() => '<无>'))}`);
-      console.warn(`[narrow-diag] consoleErrors=${JSON.stringify(consoleErrors.slice(-8))}`);
-      console.warn(`[narrow-diag] pageErrors=${JSON.stringify(pageErrors.slice(-5))}`);
-      throw error;
-    }
+    await page.locator('[data-testid="bot-remove-confirm"]').click();
+    // 移除是重 RPC 链（删对话/工作区目录 + 资料分区清场），windows 上
+    // 整条链（含 fs 重试）能拖过 30s：给足 90s。
+    await expect(overlay).toHaveCount(0, { timeout: 90_000 });
     await expect(page.locator('[data-testid="narrow-tab-bar"]')).toBeVisible();
     await expect(page.locator('[data-testid="chat-view"]')).toHaveCount(0);
 

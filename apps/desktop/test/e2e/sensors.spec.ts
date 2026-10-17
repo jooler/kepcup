@@ -69,48 +69,20 @@ test('microphone card: enabled by default, test shows a live level meter', async
     );
 
     const toggle = page.locator('[data-testid="sensor-test-toggle-microphone"]');
-    try {
-      await toggle.click();
-      // ensureAccess + getUserMedia 在满载机器上可能超过默认 5s 才翻转文案。
-      await expect(toggle).toHaveText('停止测试', { timeout: 15_000 });
-      // 伪麦克风持续发出蜂鸣：电平条宽度应 > 0。
-      await expect
-        .poll(
-          async () =>
-            page
-              .locator('[data-testid="sensor-level-microphone"]')
-              .evaluate((el) => parseFloat((el as HTMLElement).style.width) || 0),
-          { timeout: 30_000 },
-        )
-        .toBeGreaterThan(0);
-    } catch (error) {
-      // 无 GPU 的 xvfb runner 上 rAF 帧率可能拖到个位数；音频样本能否被
-      // 刷进电平条全看 rAF —— 诊断把帧率/电平/错误文本一次带出。
-      const rafHz = await page.evaluate(
-        () =>
-          new Promise<number>((resolve) => {
-            let count = 0;
-            const t0 = performance.now();
-            const loop = (): void => {
-              count += 1;
-              if (performance.now() - t0 >= 1000) resolve(count);
-              else requestAnimationFrame(loop);
-            };
-            requestAnimationFrame(loop);
-          }),
-      );
-      console.warn(`[mic-diag] rafHz=${rafHz}`);
-      console.warn(
-        `[mic-diag] level=${await page.locator('[data-testid="sensor-level-microphone"]').evaluate((el) => (el as HTMLElement).style.width)}`,
-      );
-      console.warn(
-        `[mic-diag] errorText=${JSON.stringify(await page.locator('[data-testid="sensor-test-error-microphone"]').innerText().catch(() => '<无>'))}`,
-      );
-      console.warn(
-        `[mic-diag] toggleText=${JSON.stringify(await toggle.innerText().catch(() => '<无>'))}`,
-      );
-      throw error;
-    }
+    await toggle.click();
+    // ensureAccess + getUserMedia 在满载机器上可能超过默认 5s 才翻转文案。
+    await expect(toggle).toHaveText('停止测试', { timeout: 15_000 });
+    // 伪麦克风持续发出蜂鸣：电平条宽度应 > 0（r9 前后证据：无 GPU 的 ubuntu
+    // runner 上整个 UI/音频链可能拖过 15s，30s 才是稳定的窗口）。
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator('[data-testid="sensor-level-microphone"]')
+            .evaluate((el) => parseFloat((el as HTMLElement).style.width) || 0),
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
     await expect(page.locator('[data-testid="sensor-permission-microphone"]')).toHaveAttribute(
       'data-status',
       'granted',

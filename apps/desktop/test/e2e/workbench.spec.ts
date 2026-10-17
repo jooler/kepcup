@@ -62,7 +62,7 @@ async function startSession(prefix: string): Promise<Session> {
   // resolveWindowOptions 把默认窗口钳制到显示器内：CI 的 Xvfb（默认 640×480）
   // 和部分 runner 的显示空间会让窗口落进 WorkbenchView 的 tab 形态（<760px），
   // memo-pane 不渲染。工作台用例统一钉 1280×840 内容尺寸，避免按显示器赌宽窄。
-  const pinned = await app.evaluate(({ BrowserWindow, screen }) => {
+  await app.evaluate(({ BrowserWindow, screen }) => {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return null;
     win.setSize(1280, 840);
@@ -73,11 +73,8 @@ async function startSession(prefix: string): Promise<Session> {
       workArea,
       scale: screen.getPrimaryDisplay().scaleFactor,
       maximized: win.isMaximized(),
-      // 诊断（临时）：mac runner 上 tab 形态之谜——钉完后实测窗口与显示空间。
-      dpr: win.webContents.getZoomFactor(),
     };
   });
-  console.warn('[workbench-pin]', JSON.stringify(pinned));
   return { app, page, home, llm };
 }
 
@@ -113,21 +110,6 @@ async function waitReady(page: Page): Promise<void> {
 async function openWorkbench(page: Page): Promise<void> {
   await page.locator('[data-testid="workbench-nav"]').click();
   await expect(page.locator('[data-testid="workbench-view"]')).toBeVisible({ timeout: 15_000 });
-  // 诊断（临时）：runner 上 dual-pane 与 tab 形态之争用实测宽度裁决。
-  const dims = await page.evaluate(() => {
-    const el = document.querySelector<HTMLElement>('[data-testid="workbench-view"]');
-    const probe = (testid: string): number | null => {
-      const node = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
-      return node === null ? null : node.clientWidth;
-    };
-    return {
-      inner: { w: window.innerWidth, h: window.innerHeight },
-      workbench: el?.clientWidth ?? null,
-      sidebar: probe('sidebar'),
-      tablist: document.querySelector('[role="tablist"]')?.clientWidth ?? null,
-    };
-  });
-  console.warn('[workbench-dims]', JSON.stringify(dims));
 }
 
 /** 左栏点会话行（按 id）。 */
