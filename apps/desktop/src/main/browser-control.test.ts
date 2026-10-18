@@ -1,4 +1,4 @@
-import { AppError, BROWSER_USER_CONTROL_IDLE_MS } from '@kepcup/shared';
+import { AppError, BROWSER_PAGE_IDLE_RELEASE_MS, BROWSER_USER_CONTROL_IDLE_MS } from '@kepcup/shared';
 import { describe, expect, test } from 'vitest';
 import {
   ControlLease,
@@ -6,6 +6,7 @@ import {
   HANDBACK_TITLE_PREFIX,
   classifyKeyInput,
   classifyMouseInput,
+  idleReleaseKeys,
   parseProfileKey,
   parseViewerLabels,
   partitionDirName,
@@ -149,6 +150,47 @@ describe('W8 ControlLease (自动接管租约)', () => {
     expect(l.userInput('takeover')).toBe(false);
     timers.advance(10_000);
     expect(changes).toEqual([['user', null]]);
+  });
+});
+
+describe('空闲页面自动释放 (idleReleaseKeys)', () => {
+  const base = {
+    closed: false,
+    lastUsedAt: 0,
+    viewerOpen: false,
+    control: 'agent' as PageControl,
+  };
+  const idle = 600_000;
+
+  test('久无活动、无查看窗口、控制权在 Bot 侧的页面被选中', () => {
+    const keys = idleReleaseKeys(
+      [
+        { ...base, key: 'a|c1', lastUsedAt: 0 },
+        { ...base, key: 'a|c2', lastUsedAt: idle - 1 },
+        { ...base, key: 'a|c3', lastUsedAt: 1 },
+      ],
+      idle,
+    );
+    expect(keys).toEqual(['a|c1']);
+  });
+
+  test('用户接管中 / 查看窗口开着 / 已关闭的页面永不自动关', () => {
+    const keys = idleReleaseKeys(
+      [
+        { ...base, key: 'a|user', lastUsedAt: 0, control: 'user' as PageControl },
+        { ...base, key: 'a|viewer', lastUsedAt: 0, viewerOpen: true },
+        { ...base, key: 'a|gone', lastUsedAt: 0, closed: true },
+      ],
+      idle,
+    );
+    expect(keys).toEqual([]);
+  });
+
+  test('新活动重置窗口；默认窗口是 BROWSER_PAGE_IDLE_RELEASE_MS（10 分钟）', () => {
+    expect(BROWSER_PAGE_IDLE_RELEASE_MS).toBe(600_000);
+    const pages = [{ ...base, key: 'a|c', lastUsedAt: 300_000 }];
+    expect(idleReleaseKeys(pages, 300_000 + idle - 1)).toEqual([]);
+    expect(idleReleaseKeys(pages, 300_000 + idle)).toEqual(['a|c']);
   });
 });
 

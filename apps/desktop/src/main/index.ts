@@ -305,6 +305,10 @@ function bootstrap(): void {
       browserHost?.show({ botId, conversationId, title, labels });
     },
   );
+  // 强制释放（UI 按钮）：接管中也直接关（force），会话数据保留（非 permanent）。
+  ipcMain.handle('browser:close', (_event, botId: string, conversationId: string) => {
+    void browserHost?.close({ botId, conversationId, force: true }).catch(() => {});
+  });
 
   // D73 P3 §7.5 MCP Apps: `kepcup-app://` pages are served from core-registered resources only
   // (the scheme itself is registered before ready, below); the handler lives on the window's session.

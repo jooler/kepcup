@@ -30,7 +30,7 @@
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
-  import { showBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
+  import { showBrowser, closeBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
@@ -321,6 +321,18 @@
         >
           <Monitor class="size-3.5" aria-hidden="true" />
           {t('rightPanel.browserShow')}
+        </Button>
+        <!-- 强制释放：Bot 用完没调 browser_close / 卡住时，手动释放页面资源。 -->
+        <Button
+          variant="outline"
+          size="sm"
+          class={BROWSER_SHOW_BTN_CLASS}
+          title={t('rightPanel.browserCloseHint')}
+          onclick={() => void closeBrowser(bot.id, conversation.id)}
+          data-testid="browser-close"
+        >
+          <X class="size-3.5" aria-hidden="true" />
+          {t('rightPanel.browserClose')}
         </Button>
       {/if}
       <!-- 关闭按钮与对话列表页的搜索 / 新增同款（圆形带边框，33-narrow-layout）。 -->

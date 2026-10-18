@@ -717,7 +717,7 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
   const browserClose: ToolDefinition<Record<string, never>> = {
     name: 'browser_close',
     description:
-      '关闭当前浏览器页面（会话数据保留，重新打开后登录状态仍在）。不再需要浏览器时调用以释放资源。',
+      '关闭当前浏览器页面（会话数据保留，重新打开后登录状态仍在）。不再需要浏览器时调用以释放资源；用户让你关闭 / 释放浏览器时也用本工具。',
     parameters: Type.Object({}),
     execute: async (_params, ctx) => {
       ctx.progress('正在关闭浏览器页面');

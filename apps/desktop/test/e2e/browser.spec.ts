@@ -1448,3 +1448,47 @@ test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦�
     await closeSession(session);
   }
 });
+
+test('强制释放：右栏「释放浏览器」按钮直接关掉 Bot 的页面（接管中也行），会话数据保留', async () => {
+  const testInfo = test.info();
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-browser-force-close-');
+  const { page, llm, web } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '阿放');
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-close-proj-'));
+
+    // Bot 打开页面（任务 run 结束，页面在空闲窗口内仍常驻）。
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/` }, 'fixture-home-marker', '首页打开了'),
+      '首页打开了',
+    );
+    // 右栏头部出现「查看浏览器」与「释放浏览器」。
+    if (!(await page.locator('[data-testid="browser-show"]').isVisible())) {
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    }
+    await expect(page.locator('[data-testid="browser-show"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="browser-close"]')).toBeVisible();
+
+    // 点击「释放浏览器」→ 页面被强制关闭，两个按钮都消失。
+    await page.locator('[data-testid="browser-close"]').click();
+    await expect(page.locator('[data-testid="browser-show"]')).toBeHidden({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="browser-close"]')).toBeHidden({ timeout: 15_000 });
+
+    // 会话数据保留（分区仍在）：重开页面照常可用。
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/` }, 'fixture-home-marker', '重开后还能用'),
+      '重开后还能用',
+    );
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});

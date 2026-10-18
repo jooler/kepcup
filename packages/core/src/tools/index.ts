@@ -1167,6 +1167,10 @@ export function buildResponseTools(input: {
         ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
         : []),
       ...webTools,
+      // D75：对话轮不给浏览器工具，唯一例外是 browser_close——释放页面是收尾
+      // 动作，不读不写外部世界（effects none）。用户在对话里说「把浏览器关了」
+      // 时轮里就能办，不必为此发起任务。
+      ...browserTools.filter((tool) => tool.name === 'browser_close'),
       ...delegationTools,
       ...butlerTools,
       ...workbenchTools,
