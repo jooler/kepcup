@@ -2,7 +2,6 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { localDateKey } from '../../src/memory/local-date.js';
 import {
   createTestStack,
   listMessages,
@@ -475,58 +474,6 @@ describe('P07 记忆与画像（集成）', () => {
     }
   }, 40_000);
 
-  it('后台预算超出后当天的反思任务推迟（不执行、推迟到次日）', async () => {
-    const stack = await createTestStack({ env: TEST_ENV });
-    try {
-      const bot = await makeBot(stack.core, '阿预');
-      const conv = await openDirect(stack.core, bot.id);
-      await stack.core.rpc.call('budget.update', { tokens: 100 });
-      const budget = (await stack.core.rpc.call('budget.get')) as { tokens: number };
-      expect(budget.tokens).toBe(100);
-
-      stack.core.services.domain!.usage.record({
-        runId: 'run_seed',
-        botId: bot.id,
-        conversationId: conv.id,
-        loopType: 'reflection',
-        provider: 'mock',
-        model: 'mock-main',
-        inputTokens: 50_000,
-        outputTokens: 60_000,
-      });
-
-      stack.llm.script('mock-main', [step().replyText('好')]);
-      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
-      await sendDrafts(stack.core, conv.id, [{ text: '触发一次反思登记' }]);
-      await completedRun(stack.core, conv.id);
-
-      // 等到任务被认领并推迟（run_after 推到次日）而不是刚注册的瞬间。
-      // BR-P09-011: the deferral target is the next local midnight — its local
-      // date must be strictly after the deferral moment's local date. A
-      // "run_after > now + 12h" assertion only holds before local noon.
-      const job = await waitFor(
-        () => {
-          const row = stack.core.services
-            .mainDb!.prepare(
-              "select * from jobs where type = 'reflection' order by created_at desc limit 1",
-            )
-            .get() as { status: string; run_after: number; updated_at: number } | undefined;
-          if (row === undefined) return null;
-          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-          const deferredDay = localDateKey(new Date(row.updated_at), timeZone);
-          const targetDay = localDateKey(new Date(row.run_after), timeZone);
-          return targetDay > deferredDay && row.run_after >= row.updated_at ? row : null;
-        },
-        { label: 'reflection job deferred to next day' },
-      );
-      expect(job.status).toBe('pending');
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      expect(stack.llm.requestsFor('mock-light')).toHaveLength(0); // 推迟：没有执行
-    } finally {
-      await stack.cleanup();
-    }
-  }, 40_000);
-
   it('embedding.configure 切换来源并登记重建任务；未就绪时任务自我延后', async () => {
     const stack = await createTestStack({ env: TEST_ENV });
     try {
@@ -646,17 +593,12 @@ describe('P07 记忆与画像（集成）', () => {
       expect(reflectionRow).toBeDefined();
       expect(/^\d{4}-\d{2}-\d{2}$/.test(reflectionRow!.date)).toBe(true);
 
-      // 媒体调用行（token 为 0）按行数计入 calls；voice_input 不计入后台预算，
-      // memory 属后台（有 token 时计入）。
+      // 媒体调用行（token 为 0）按行数计入 calls；memory 行带 token。
       const usage = stack.core.services.domain!.usage;
       const base = { runId: 'media_x', botId: bot.id, conversationId: null, provider: 'dashscope', model: 'm', costUsd: null };
-      const budget = stack.core.services.budget!;
-      const usedBefore = budget.usedToday(bot.id);
       usage.record({ ...base, loopType: 'voice_input', inputTokens: 500, outputTokens: 500 });
-      expect(budget.usedToday(bot.id)).toBe(usedBefore);
       usage.record({ ...base, loopType: 'memory', inputTokens: 7, outputTokens: 0 });
       usage.record({ ...base, loopType: 'memory', inputTokens: 0, outputTokens: 0 });
-      expect(budget.usedToday(bot.id)).toBe(usedBefore + 7);
       const again = (await stack.core.rpc.call('usage.summary', { days: 3 })) as {
         entries: Array<{ botId: string | null; loopType: string; calls?: number }>;
       };

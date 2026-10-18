@@ -131,8 +131,8 @@ export class JobsService {
   }
 
   /**
-   * Pushes a claimed job back to pending with a later run_after (P07: budget
-   * deferral to the next day; vec rebuild waiting for a ready embedder).
+   * Pushes a claimed job back to pending with a later run_after
+   * (vec rebuild waiting for a ready embedder).
    */
   defer(id: string, runAfter: number): void {
     this.db

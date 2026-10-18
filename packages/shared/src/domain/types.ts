@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { BACKGROUND_DAILY_BUDGET_DEFAULT } from '../constants.js';
 import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.js';
 import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
 import { agentSetupReasonSchema } from './agent-status.js';
@@ -682,8 +681,6 @@ export const settingsSchema = z.object({
   unattended: unattendedStateSchema.prefault({}),
   /** Embedding (vector) source (P07, settings key `embedding` in 03-data-model). */
   embedding: embeddingConfigSchema.prefault({}),
-  /** Per-bot daily background-loop token budget (P07; 0 = unlimited). */
-  backgroundBudgetTokens: z.number().int().min(0).default(BACKGROUND_DAILY_BUDGET_DEFAULT),
   /**
    * 联网检索供应商（docs/design/21-web-search.md）：web_search 工具按此路由；
    * key 存密钥表 `websearch:{provider}`，null = 未配置（工具返回结构化
@@ -2808,13 +2805,6 @@ export const usageSummaryOutputSchema = z.object({
   entries: z.array(usageSummaryEntrySchema),
 });
 export type UsageSummaryOutput = z.infer<typeof usageSummaryOutputSchema>;
-
-/** Per-bot daily background budget (budget.get / budget.update RPC). */
-export const budgetSchema = z.object({
-  /** Max background tokens per bot per local day; 0 = unlimited. */
-  tokens: z.number().int().min(0),
-});
-export type Budget = z.infer<typeof budgetSchema>;
 
 /** Embedding status for the settings page (embedding.status RPC). */
 export const embeddingStatusSchema = z.object({
