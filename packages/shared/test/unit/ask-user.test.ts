@@ -16,8 +16,24 @@ describe('checkAskUserAnswer', () => {
       structured: ['甲', '丙'],
     });
     expect(checkAskUserAnswer(q, [])).toMatchObject({ ok: false });
-    expect(checkAskUserAnswer(q, ['丁'])).toMatchObject({ ok: false });
     expect(checkAskUserAnswer(q, 'ab')).toMatchObject({ ok: false });
+  });
+
+  it('multi: custom entries are allowed and trail the card options', () => {
+    const q = { mode: 'multi' as const, options: ['甲', '乙', '丙'], fields: [] };
+    expect(checkAskUserAnswer(q, ['丙', '自定义一', ' 甲 '])).toEqual({
+      ok: true,
+      display: '甲、丙、自定义一',
+      structured: ['甲', '丙', '自定义一'],
+    });
+    // 候选之外但超长：拒。
+    expect(checkAskUserAnswer(q, ['x'.repeat(201)])).toMatchObject({ ok: false });
+    // 空白条目：拒。
+    expect(checkAskUserAnswer(q, ['甲', '  '])).toMatchObject({ ok: false });
+    // 超过条目上限（含自定义）：拒。
+    expect(
+      checkAskUserAnswer(q, Array.from({ length: 13 }, (_, i) => `第${i}项`)),
+    ).toMatchObject({ ok: false });
   });
 
   it('form: required, number, date, select, unknown keys', () => {

@@ -2320,6 +2320,7 @@ export class Orchestrator {
       episodeId?: string;
       internal?: boolean;
       settingResolved?: SettingCardResolved;
+      questionMode?: 'single' | 'multi';
     } = {},
   ): Message {
     const message = this.#deps.messages.append({
@@ -2335,6 +2336,7 @@ export class Orchestrator {
       ...(extra.step !== undefined ? { step: extra.step } : {}),
       ...(extra.internal ? { internal: true } : {}),
       ...(extra.settingResolved !== undefined ? { settingResolved: extra.settingResolved } : {}),
+      ...(extra.questionMode !== undefined ? { questionMode: extra.questionMode } : {}),
     });
     // 内部事务事件不是对话内容：不向 UI 推送（读取侧也会过滤）。
     if (!extra.internal) {
@@ -2382,7 +2384,11 @@ export class Orchestrator {
       conversationId,
       SETUP_QUESTION_EVENT,
       butler ? BUTLER_SETUP_FIRST_QUESTION : SETUP_FIRST_QUESTION,
-      { options: butler ? [...BUTLER_SETUP_FIRST_OPTIONS] : [...SETUP_FIRST_OPTIONS] },
+      {
+        options: butler ? [...BUTLER_SETUP_FIRST_OPTIONS] : [...SETUP_FIRST_OPTIONS],
+        // 首问是「有哪些/要哪些」的列举题，天然多选；用户也可以自行补充条目。
+        questionMode: 'multi',
+      },
     );
   }
 
@@ -4134,6 +4140,7 @@ export class Orchestrator {
                       acknowledgement?: string;
                       question: string;
                       options: string[];
+                      mode?: 'single' | 'multi';
                     },
                   ) => {
                     try {
@@ -4155,7 +4162,10 @@ export class Orchestrator {
                         batch.conversationId,
                         SETUP_QUESTION_EVENT,
                         askInput.question,
-                        { options: askInput.options },
+                        {
+                          options: askInput.options,
+                          ...(askInput.mode === 'multi' ? { questionMode: 'multi' } : {}),
+                        },
                       );
                       return {
                         ok: true,

@@ -154,13 +154,13 @@ export function buildAskUserTool(input: {
     description:
       '任务无法继续、必须由用户做决定时向用户提问：问题与候选答案以卡片形式出现在对话里，本次调用会一直等到用户回答（用户点选的选项，或在对话里自由回答后由对话中的你转交），返回用户的回答。' +
       '只问真正需要用户拍板的事，一次一个问题；能自己判断的不要问。' +
-      `mode：single（缺省，单选）/ multi（多选，回答是选中项的 JSON 列表）/ form（简单表单，fields 至多 ${ASK_USER_FIELDS_MAX} 个字段，回答是「字段名 → 值」的 JSON）。只需补充几项信息时用 form，别连续问多次。`,
+      `mode：single（缺省，单选）/ multi（多选，回答是选中项的 JSON 列表；用户也可以自行输入新条目加入多选）/ form（简单表单，fields 至多 ${ASK_USER_FIELDS_MAX} 个字段，回答是「字段名 → 值」的 JSON）。只需补充几项信息时用 form，别连续问多次。`,
     parameters: Type.Object(
       {
         question: Type.String({ description: '要问用户的问题（说明背景与影响）' }),
         options: Type.Optional(
           Type.Array(Type.String(), {
-            description: `single / multi 的候选答案，1~${ASK_USER_OPTIONS_MAX} 个（多选至少 2 个）、每个不超过 ${ASK_USER_OPTION_MAX_CHARS} 字；用户也可以在对话里另行回答`,
+            description: `single / multi 的候选答案，1~${ASK_USER_OPTIONS_MAX} 个（多选至少 2 个）、每个不超过 ${ASK_USER_OPTION_MAX_CHARS} 字；multi 下用户还可以自行补充候选之外的新条目，也可以在对话里另行回答`,
           }),
         ),
         mode: Type.Optional(

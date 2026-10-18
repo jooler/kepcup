@@ -36,6 +36,9 @@ export const zhCN = {
   'chats.runFailed': '执行失败：{reason}',
   'chats.setupCustomPlaceholder': '或输入你的回答…',
   'chats.setupCustomSubmit': '提交回答',
+  'chats.setupCustomTag': '自定义',
+  'chats.setupCustomAdd': '添加',
+  'chats.setupMultiSubmit': '提交选中项',
   'chats.setupAnswerFailed': '回答提交失败，请重试',
   // 选中文本钉便签（辅助阅读）
   'chats.pinToConversation': '固定到当前对话',
