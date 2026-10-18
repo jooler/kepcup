@@ -29,14 +29,9 @@
       aria-selected={active}
       data-active={active ? 'true' : undefined}
       data-testid={`project-tab-${tab.id}`}
-      disabled={tab.disabled}
-      data-disabled={tab.disabled ? 'true' : undefined}
-      title={tab.disabled ? t('project.module.soon') : undefined}
-      class="shrink-0 rounded-full px-2.5 py-0.5 text-[13px] transition-colors {active
+      class="app-no-drag shrink-0 cursor-pointer rounded-full px-2.5 py-0.5 text-[13px] transition-colors {active
         ? 'bg-muted font-medium text-foreground'
-        : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'} {tab.disabled
-        ? 'cursor-default opacity-40'
-        : ''}"
+        : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'}"
       onclick={() => shell.openProjectModule(tab.id)}
     >
       {t(tab.labelKey)}

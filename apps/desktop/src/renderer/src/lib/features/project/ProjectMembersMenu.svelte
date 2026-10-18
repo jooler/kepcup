@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Crown } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -9,7 +8,7 @@
   /**
    * 成员头像堆叠 + 下拉（WP6 §4 步骤 4）。自建轻量弹层，不用 bits-ui
    * DropdownMenu——里面要放搜索输入框，菜单的 typeahead 会吃掉按键；仓库也没有
-   * popover 组件。堆叠是重叠式（后一个压前一个、负责人在最前带冠标），与侧栏的
+   * popover 组件。堆叠是重叠式（后一个压前一个，负责人排最前不加冠标），与侧栏的
    * ProjectAvatarStack 马赛克语义不同，不复用它。
    */
   const STACK_MAX = 5;
@@ -32,13 +31,15 @@
   const overflow = $derived(Math.max(0, members.length - STACK_MAX));
 
   let open = $state(false);
+  /** 添加成员区块默认收起，点全宽「添加成员」按钮才展开。 */
+  let pickerOpen = $state(false);
   let root: HTMLElement | undefined = $state();
 
-  // Focus lands on the search box when the menu opens (no extra mouse move
-  // for picking or Esc-closing); the input lives inside ProjectMemberPicker,
-  // so reach it here by its testid.
+  // Focus lands on the search box when the picker is revealed (no extra mouse
+  // move for picking or Esc-closing); the input lives inside
+  // ProjectMemberPicker, so reach it here by its testid.
   $effect(() => {
-    if (open)
+    if (open && pickerOpen)
       queueMicrotask(() =>
         root?.querySelector<HTMLInputElement>('input[data-testid="project-member-add"]')?.focus(),
       );
@@ -48,6 +49,7 @@
 
   function close(): void {
     open = false;
+    pickerOpen = false;
   }
 
   function toggle(): void {
@@ -92,7 +94,7 @@
 <div class="relative" bind:this={root}>
   <button
     type="button"
-    class="flex items-center -space-x-2 rounded-md p-0.5 transition-colors hover:bg-accent/60"
+    class="flex cursor-pointer items-center -space-x-4 rounded-full p-0.5 transition-colors hover:bg-accent/60"
     onclick={toggle}
     aria-haspopup="true"
     aria-expanded={open}
@@ -100,17 +102,15 @@
     data-testid="project-members-trigger"
   >
     {#each shown as member (member.bot.id)}
-      <span class="relative shrink-0">
+      <!-- flex：BotAvatar 是 inline-block，inline 布局的基线会导致头像不垂直居中。 -->
+      <span class="relative flex shrink-0">
         <BotAvatar
           botId={member.bot.id}
           name={member.bot.name}
           avatar={member.bot.avatar ?? null}
-          class="size-7 rounded-full ring-2 ring-background"
+          class="size-7"
           animated={false}
         />
-        {#if member.bot.id === leadBotId}
-          <Crown class="absolute -right-0.5 -bottom-0.5 size-3 text-amber-500" aria-hidden="true" />
-        {/if}
       </span>
     {/each}
     {#if overflow > 0}
@@ -143,31 +143,38 @@
               class="size-7 shrink-0"
               animated={false}
             />
-            <span class="min-w-0 flex-1">
-              <span class="flex min-w-0 items-center gap-1">
-                <span class="truncate text-sm">{member.bot.name}</span>
-                {#if member.bot.id === leadBotId}
-                  <span
-                    class="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
-                  >
-                    {t('project.members.leadBadge')}
-                  </span>
-                {/if}
+            <span class="min-w-0 flex-1 truncate text-sm">{member.bot.name}</span>
+            {#if member.bot.id === leadBotId}
+              <span
+                class="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                {t('project.members.leadBadge')}
               </span>
-              <span class="block truncate text-xs text-muted-foreground">
-                {member.bot.profile.role.responsibilities || member.bot.bio}
-              </span>
-            </span>
+            {/if}
           </li>
         {/each}
       </ul>
 
       <div class="my-1.5 border-t" role="separator"></div>
 
-      <p class="px-1 pb-1 text-xs font-medium">{t('project.members.add')}</p>
-      <div onkeydowncapture={onPickerKeydownCapture}>
-        <ProjectMemberPicker excludeIds={memberIds} onPick={addMember} testid="project-member-add" />
-      </div>
+      {#if pickerOpen}
+        <div onkeydowncapture={onPickerKeydownCapture}>
+          <ProjectMemberPicker
+            excludeIds={memberIds}
+            onPick={addMember}
+            testid="project-member-add"
+          />
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="w-full rounded-md px-1 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onclick={() => (pickerOpen = true)}
+          data-testid="project-members-add"
+        >
+          {t('project.members.add')}
+        </button>
+      {/if}
 
       <button
         type="button"

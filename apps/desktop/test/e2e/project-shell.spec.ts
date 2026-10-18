@@ -86,9 +86,7 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     await createBotAndOpenChat(page, '阿丙');
     await createProjectViaUi(page, '外壳项目', ['阿甲', '阿乙']);
 
-    // ① 两行顶栏：项目名 + 模块 tab；沟通激活，Wiki 可点（占位），下期模块禁用。
-    const projectTitle = page.locator('[data-testid="project-title"]');
-    await expect(projectTitle).toContainText('外壳项目');
+    // ① 单行顶栏：模块 tab；沟通激活，Wiki 可点；planned 模块不渲染。
     const tabs = page.locator('[data-testid="project-tabs"]');
     await expect(tabs).toBeVisible();
     await expect(page.locator('[data-testid="project-tab-chat"]')).toHaveAttribute(
@@ -97,14 +95,7 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     );
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
     for (const id of ['board', 'okr', 'calendar']) {
-      const tab = page.locator(`[data-testid="project-tab-${id}"]`);
-      await expect(tab).toHaveAttribute('data-disabled', 'true');
-      await expect(tab).toBeDisabled();
-      await tab.click({ force: true }).catch(() => undefined);
-      await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
-        'data-view',
-        'chat',
-      );
+      await expect(page.locator(`[data-testid="project-tab-${id}"]`)).toHaveCount(0);
     }
     await page.locator('[data-testid="project-tab-wiki"]').click();
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'wiki');
@@ -157,6 +148,10 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     await expect(menuRows).toHaveCount(2);
     await expect(menuRows.first()).toContainText('阿甲');
     await expect(menuRows.first()).toContainText('负责人');
+    // 添加成员区块默认收起，点全宽按钮展开后再搜索添加。
+    await expect(menu.locator('[data-testid="project-members-add"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="project-member-add"]')).toHaveCount(0);
+    await menu.locator('[data-testid="project-members-add"]').click();
     const memberAdd = menu.locator('[data-testid="project-member-add"]');
     await memberAdd.fill('阿丙');
     await menu
