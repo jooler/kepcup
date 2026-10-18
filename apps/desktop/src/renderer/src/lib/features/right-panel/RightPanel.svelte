@@ -304,7 +304,8 @@
   data-testid="right-panel"
 >
   <header
-    class="app-drag wco-inset-end relative z-30 flex h-12 shrink-0 items-center justify-end {narrow && isMac
+    class="app-drag wco-inset-end @container relative z-30 flex h-12 shrink-0 items-center justify-end {narrow &&
+      isMac
       ? 'pr-2 pl-20'
       : 'px-4'}"
   >
@@ -320,7 +321,8 @@
           data-testid="browser-show"
         >
           <Monitor class="size-3.5" aria-hidden="true" />
-          {t('rightPanel.browserShow')}
+          <!-- 顶栏放不下文字（win 三键让位 + 窄 pane）就退成纯图标，hint 走 title。 -->
+          <span class="@max-[380px]:hidden">{t('rightPanel.browserShow')}</span>
         </Button>
         <!-- 强制释放：Bot 用完没调 browser_close / 卡住时，手动释放页面资源。 -->
         <Button
@@ -332,7 +334,7 @@
           data-testid="browser-close"
         >
           <X class="size-3.5" aria-hidden="true" />
-          {t('rightPanel.browserClose')}
+          <span class="@max-[380px]:hidden">{t('rightPanel.browserClose')}</span>
         </Button>
       {/if}
       <!-- 关闭按钮与对话列表页的搜索 / 新增同款（圆形带边框，33-narrow-layout）。 -->
