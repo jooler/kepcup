@@ -50,7 +50,11 @@ function ledgerFiles(projectId: string): string[] {
 }
 
 /** Seeds one ledgered source (raw file + ledger entry) and returns its entry. */
-function seedSource(projectId: string, key: string, createdBy: WikiAssetEntry['createdBy']): WikiAssetEntry {
+function seedSource(
+  projectId: string,
+  key: string,
+  createdBy: WikiAssetEntry['createdBy'],
+): WikiAssetEntry {
   const root = wikiRootOf(projectId);
   const content = `# ${key} 的原始资料\n\n${key}SourceKeyword：仅供删除测试的内容。`;
   const bytes = Buffer.from(content, 'utf8');
@@ -67,21 +71,31 @@ function seedSource(projectId: string, key: string, createdBy: WikiAssetEntry['c
     rawRelPath,
     createdBy,
     sources: [
-      { type: 'attachment', ref: `att_${key}`, conversationId: projectId, at: stack.core.services.clock.now() },
+      {
+        type: 'attachment',
+        ref: `att_${key}`,
+        conversationId: projectId,
+        at: stack.core.services.clock.now(),
+      },
     ],
     status: 'maintained',
     createdAt: stack.core.services.clock.now(),
     updatedAt: stack.core.services.clock.now(),
-  };  writeLedgerEntry(root, entry);
+  };
+  writeLedgerEntry(root, entry);
   return entry;
 }
 
 async function commitCount(projectId: string): Promise<number> {
   const root = wikiRootOf(projectId);
   const { spawnSync } = await import('node:child_process');
-  const rev = spawnSync('git', ['--git-dir', path.join(root, '.git'), 'rev-list', '--count', 'HEAD'], {
-    encoding: 'utf8',
-  });
+  const rev = spawnSync(
+    'git',
+    ['--git-dir', path.join(root, '.git'), 'rev-list', '--count', 'HEAD'],
+    {
+      encoding: 'utf8',
+    },
+  );
   return Number(rev.stdout.trim()) || 0;
 }
 
@@ -124,11 +138,13 @@ beforeAll(async () => {
     '# 已有页面\n\nSeededPageKeyword：删除来源不动 FTS 的对照页。',
     'utf8',
   );
-  stack.core.services.wikiIndexes!.forProject(project.id).wikiUpsertPage(
-    'pages/seeded.md',
-    '已有页面',
-    '# 已有页面\n\nSeededPageKeyword：删除来源不动 FTS 的对照页。',
-  );
+  stack.core.services
+    .wikiIndexes!.forProject(project.id)
+    .wikiUpsertPage(
+      'pages/seeded.md',
+      '已有页面',
+      '# 已有页面\n\nSeededPageKeyword：删除来源不动 FTS 的对照页。',
+    );
   await commitWikiTree(root, 'seed');
 });
 
@@ -234,7 +250,7 @@ describe('D92 T1b WP9：项目 wiki 来源删除（removeSource）', () => {
     // source_removed 体检已入队：执行者是负责人、会话是项目 id。
     const lintJob = stack.core.services
       .mainDb!.prepare(
-        "select bot_id, conversation_id, payload_json from jobs where dedupe_key = ? order by created_at desc limit 1",
+        'select bot_id, conversation_id, payload_json from jobs where dedupe_key = ? order by created_at desc limit 1',
       )
       .get(`wiki_lint:project:${project.id}:source_removed`) as {
       bot_id: string;
@@ -248,15 +264,18 @@ describe('D92 T1b WP9：项目 wiki 来源删除（removeSource）', () => {
       trigger: 'source_removed',
     });
     // FTS 行不变（索引只覆盖 pages/，不索引 raw/ 与台账）。
-    expect(stack.core.services.wikiIndexes!.forProject(project.id).wikiPagePaths()).toEqual(ftsBefore);
+    expect(stack.core.services.wikiIndexes!.forProject(project.id).wikiPagePaths()).toEqual(
+      ftsBefore,
+    );
 
     // 去重：占住 pending 的同名去重键后再删一份，不再产生第二行。
+    // 先冻住 jobs runner（500ms tick 在慢节点 / Windows fs 级联的秒级窗口内
+    // 会抢走 pending 行，去重便没有对照对象了）——观察窗内行数不得增加。
+    stack.core.services.jobsRunner!.stop();
     blockSourceRemovedLint(project.id);
     const rowsBefore = (
       stack.core.services
-        .mainDb!.prepare(
-          "select count(*) as n from jobs where dedupe_key = ?",
-        )
+        .mainDb!.prepare('select count(*) as n from jobs where dedupe_key = ?')
         .get(`wiki_lint:project:${project.id}:source_removed`) as { n: number }
     ).n;
     const second = seedSource(project.id, 'cascade-2', { kind: 'bot', id: memberM });
