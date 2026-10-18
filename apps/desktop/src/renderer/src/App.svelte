@@ -43,6 +43,7 @@
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
   import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
   import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
+  import { mountImeEnterGuard } from '$lib/features/shell/ime-enter-guard';
   import {
     hasOpenModal,
     isSearchShortcut,
@@ -52,6 +53,10 @@
 
   // 全局弹层拖拽带：任何全屏浮层打开时窗口仍可从顶部拖动（模块头注释）。
   $effect(() => mountWindowDragBand());
+
+  // IME 回车守卫：拼音等输入法在候选浮窗里按 Enter 是选词确认，不是业务确认；
+  // 全局捕获阶段截停，避免各输入框的 `key === 'Enter'` 确认逻辑误触发（模块头注释）。
+  $effect(() => mountImeEnterGuard());
 
   let started = false;
   $effect(() => {
