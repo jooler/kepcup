@@ -357,7 +357,9 @@ describe('timer', () => {
     publish(h, [entry('alpha')], T1);
     const sync = h.make({ initialDelayMs: 5, intervalMs: 20, random: () => 0.5 });
     sync.start();
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // 真实定时器的窗口：满载 runner（windows r17 命中）上 150ms 内可能只轮到
+    // 首拉一次；400ms 足以让 20ms 间隔的重复轮至少发生两轮。
+    await new Promise((resolve) => setTimeout(resolve, 400));
     sync.stop();
     const pulls = h.server.requests.filter((r) => r.path === 'index.json').length;
     expect(pulls).toBeGreaterThanOrEqual(2);
