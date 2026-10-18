@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import type { AddressInfo } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -143,6 +144,6 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     await llm.stop();
     hold.closeAllConnections();
     await new Promise<void>((resolve) => hold.close(() => resolve()));
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });

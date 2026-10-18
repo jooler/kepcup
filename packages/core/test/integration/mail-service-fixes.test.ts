@@ -226,7 +226,9 @@ describe('UIDVALIDITY (review #7)', () => {
     await waitFor(() => (local.jobs.length === before + 1 ? true : null), { label: 'new mail alerted' });
     expect(local.jobs.at(-1)?.payload['subject']).toBe('fresh after rebuild');
     expect(local.mail.store.get(id)?.lastUid).toBe(1);
-  });
+    // 本地 ~0.2s；链路含 fake IMAP 重连轮询，满载 runner 上 5s 默认线不稳
+    // （r13 ubuntu 命中）。
+  }, 30_000);
 
   it('keeps the cursor when only the label or password changes, and clears it when the inbox identity changes', async () => {
     const local = await setup();

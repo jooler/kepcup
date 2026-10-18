@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -50,7 +51,7 @@ test('closing the window hides it; the app keeps running in the tray', async () 
   expect(pid !== undefined && processAlive(pid)).toBe(true);
 
   await app.close();
-  await rm(home, { recursive: true, force: true });
+  await rmHomeTolerant(home);
 });
 
 test('a killed core service restarts automatically and the UI recovers', async () => {
@@ -89,5 +90,5 @@ test('a killed core service restarts automatically and the UI recovers', async (
   });
 
   await app.close();
-  await rm(home, { recursive: true, force: true });
+  await rmHomeTolerant(home);
 });

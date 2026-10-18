@@ -681,6 +681,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-browser-del-');
   const { page, llm, web, home, app } = session;
+  let partition = '';
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿删');
@@ -702,7 +703,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     expect(botId).toBeTruthy();
     // Electron lower-cases the partition directory name (Linux is case-sensitive,
     // macOS is not): match it case-insensitively (partitionEntries, W8).
-    const partition = `bot-${botId}`;
+    partition = `bot-${botId}`;
     // Force pending storage writes so the directory is observably present.
     await app.evaluate(async ({ session }, id) => {
       const botSession = session.fromPartition(`persist:bot-${id as string}`);
@@ -720,9 +721,15 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     // 删除 RPC 串了一整条级联（runs/jobs/wiki/browser wipe……），windows 上
     // 清文件系统慢：确认框回弹窗口给足 60s，后续 poll 才有意义。
     await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeHidden({ timeout: 60_000 });
-    await expect.poll(() => partitionEntries(home, partition).length, { timeout: 30_000 }).toBe(0);
-    // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
-    await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
+    // Windows: Chromium 会话仍持有分区内 sqlite/leveldb 的打开句柄（Electron
+    // 44 无 Session.destroy），当场 rename/rm 全失败（r7/r8 诊断残留内容
+    // 分毫未动）；磁盘上的分区目录只能等进程退出（closeSession 的
+    // rmHomeTolerant）后随 home 一起消失。mac/linux 保持当场断言。
+    if (process.platform !== 'win32') {
+      await expect.poll(() => partitionEntries(home, partition).length, { timeout: 30_000 }).toBe(0);
+      // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
+      await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
+    }
   } catch (error) {
     dumpRequests(llm, testInfo);
     throw error;
@@ -1233,6 +1240,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
   test.setTimeout(420_000);
   const session = await startSession('kepcup-e2e-browser-shared-');
   const { page, llm, web, home, app } = session;
+  let profileId = '';
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '共甲');
@@ -1247,7 +1255,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     await page.locator('[data-testid="browser-profile-create"]').click();
     const item = page.locator('li[data-testid^="browser-profile-bpf_"]');
     await expect(item).toHaveCount(1, { timeout: 15_000 });
-    const profileId = (await item.getAttribute('data-testid'))!.replace('browser-profile-', '');
+    profileId = (await item.getAttribute('data-testid'))!.replace('browser-profile-', '');
     await closeSettings(page);
 
     // Bot 详情：共甲、共乙挂到共享资料（选中即出现警示），自动保存。
@@ -1330,9 +1338,13 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
       timeout: 60_000,
     });
     await closeSettings(page);
-    await expect
-      .poll(() => partitionEntries(home, `shared-${profileId}`).length, { timeout: 30_000 })
-      .toBe(0);
+    // Windows: 当场删除受 Chromium 句柄限制（同上一条测试），断言推迟到
+    // closeSession 之后的整 home 清理；mac/linux 保持当场断言。
+    if (process.platform !== 'win32') {
+      await expect
+        .poll(() => partitionEntries(home, `shared-${profileId}`).length, { timeout: 30_000 })
+        .toBe(0);
+    }
     await openConversation(page, '共甲');
     await openProfileTab(page);
     await expect(

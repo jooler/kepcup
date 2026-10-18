@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { AppError, WIKI_SOURCE_MAX_BYTES } from '@kepcup/shared';
@@ -124,6 +126,71 @@ export function fetchPolicyFor(
 
 const FETCH_TIMEOUT_MS = 60_000;
 const CURL_MAX_TIME_SECONDS = 45;
+const HOST_HTTP_REDIRECTS = 5;
+
+/**
+ * Host-side direct HTTP fetch for loopback targets. The Linux srt backend
+ * wraps commands in a bwrap network namespace where 127.0.0.1 belongs to a
+ * fresh loopback — the host's mock/dev server is unreachable (curl exit 7
+ * immediately), and `allowLocalBinding` is a macOS-profile concept only. A
+ * loopback target is a service of the kara's own machine; fetching it with
+ * the host HTTP stack keeps size/UTF-8 gates identical without involving
+ * the sandbox transport. Redirects follow curl -L's default ceiling.
+ */
+async function fetchViaHostHttp(originalUrl: string): Promise<Buffer> {
+  let target: URL;
+  try {
+    target = new URL(originalUrl);
+  } catch {
+    throw new AppError('INVALID_INPUT', 'URL 无法解析');
+  }
+  for (let redirects = 0; redirects <= HOST_HTTP_REDIRECTS; redirects += 1) {
+    const chunk = await new Promise<{ status: number; location: string | null; bytes: Buffer }>((resolve, reject) => {
+      const request = (target.protocol === 'https:' ? https : http).get(
+        target,
+        { headers: { 'User-Agent': 'curl/8' }, timeout: CURL_MAX_TIME_SECONDS },
+        (res) => {
+          const parts: Buffer[] = [];
+          let size = 0;
+          res.on('data', (piece: Buffer) => {
+            size += piece.length;
+            if (size <= WIKI_SOURCE_MAX_BYTES) {
+              parts.push(piece);
+              return;
+            }
+            res.destroy(new AppError('INVALID_INPUT', '网页内容超过大小上限，已放弃入库'));
+          });
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, location: (res.headers.location as string | undefined) ?? null, bytes: Buffer.concat(parts) }));
+        },
+      );
+      request.on('timeout', () => request.destroy(new AppError('INVALID_INPUT', '网页抓取超时')));
+      request.on('error', (error) => reject(new AppError('INVALID_INPUT', `网页抓取失败：${error.message}`)));
+    });
+    if (chunk.status >= 300 && chunk.status < 400 && chunk.location) {
+      target = new URL(chunk.location, target);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        throw new AppError('INVALID_INPUT', '重定向目标协议必须是 http/https');
+      }
+      continue;
+    }
+    if (chunk.status >= 400) {
+      throw new AppError('INVALID_INPUT', `网页抓取失败（HTTP ${chunk.status}）`);
+    }
+    return chunk.bytes;
+  }
+  throw new AppError('INVALID_INPUT', '网页重定向次数过多，已放弃入库');
+}
+
+/** Shared gates for a fetched body: text-only, non-empty, bounded. */
+function wikiBodyOrThrow(body: Buffer): Buffer {
+  const reason = fetchableTextVerdict(body.toString('utf8'));
+  if (reason !== null) throw new AppError('INVALID_INPUT', reason);
+  if (body.length === 0) throw new AppError('INVALID_INPUT', '网页抓取结果为空');
+  if (body.length > WIKI_SOURCE_MAX_BYTES) {
+    throw new AppError('INVALID_INPUT', '网页内容超过大小上限，已放弃入库');
+  }
+  return body;
+}
 
 /**
  * Fetches one URL inside the sandbox with `curl` (fail-closed: no sandbox, no
@@ -148,6 +215,15 @@ export async function fetchUrlInSandbox(input: {
 }): Promise<Buffer> {
   const verdict = fetchPolicyFor(input.url, input.botNetwork);
   if (!verdict.ok) throw new AppError('INVALID_INPUT', verdict.reason);
+
+  if (isLoopbackHost(verdict.host)) {
+    const body = wikiBodyOrThrow(await fetchViaHostHttp(input.url));
+    input.logger.info(
+      { host: verdict.host, bytes: body.length, transport: 'host-http (loopback)' },
+      'wiki URL fetched',
+    );
+    return body;
+  }
 
   const availability = await input.sandbox.probe();
   if (!availability.available) {
@@ -180,17 +256,7 @@ export async function fetchUrlInSandbox(input: {
       `网页抓取失败（curl 退出码 ${result.exitCode ?? 'unknown'}）：${detail.slice(0, 300) || '无输出'}`,
     );
   }
-  const reason = fetchableTextVerdict(result.stdout);
-  if (reason !== null) {
-    throw new AppError('INVALID_INPUT', reason);
-  }
-  const body = Buffer.from(result.stdout, 'utf8');
-  if (body.length === 0) {
-    throw new AppError('INVALID_INPUT', '网页抓取结果为空');
-  }
-  if (body.length > WIKI_SOURCE_MAX_BYTES) {
-    throw new AppError('INVALID_INPUT', '网页内容超过大小上限，已放弃入库');
-  }
+  const body = wikiBodyOrThrow(Buffer.from(result.stdout, 'utf8'));
   input.logger.info({ host: verdict.host, bytes: body.length }, 'wiki URL fetched in sandbox');
   return body;
 }
