@@ -275,6 +275,18 @@ describe('D92 T1b WP10：scope 解析与注册（resolveWikiScope / buildWikiToo
     });
   });
 
+  it('wiki_enqueue 的描述指明 file / attachment 来源必须是单个文件、目录要先列目录再逐文件登记', async () => {
+    fresh({ project: null }, BOT, DIRECT);
+    const enqueue = toolOf('wiki_enqueue');
+    expect(enqueue.description).toContain('必须是单个文件，不能是目录');
+    expect(enqueue.description).toContain('先用 ls 列出其中的文件，再逐文件登记');
+    const refDescription = (
+      enqueue.parameters as { properties: { ref: { description: string } } }
+    ).properties.ref.description;
+    expect(refDescription).toContain('单个文件的路径');
+    expect(refDescription).toContain('先 ls 列出再逐文件登记');
+  });
+
   it('wiki_remove_source 的 ACL：成员删他人失败；负责人删他人入队；成员删自己入队', async () => {
     // 成员删他人 → 服务端快速失败 → 工具失败结果（带人话原因）。
     fresh({
