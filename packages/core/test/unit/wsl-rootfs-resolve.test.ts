@@ -39,9 +39,11 @@ function repoFixture(repoRelativeFiles: string[]): { searchRoot: string; repoRoo
 
 describe('resolveRootfsTarPath', () => {
   it('KEPCUP_WSL_ROOTFS override wins over any layout', () => {
-    const overrideTar = path.join(tmpdir(), 'kepcup-rootfs-override.tar');
+    const overrideTar = path.join(tmpdir(), `kepcup-rootfs-override-${process.pid}-${Date.now()}.tar`);
     writeFileSync(overrideTar, '#override');
-    CLEANUP.push(path.dirname(overrideTar));
+    // 只登记文件本身：dirname 是 tmpdir()，误登记会把系统临时目录整个删掉（CI 上
+    // 曾把 runner 的 $TMPDIR 清空，引发全量 ENOENT / EACCES）。
+    CLEANUP.push(overrideTar);
     const { searchRoot } = repoFixture(['apps/desktop/resources/wsl/arm64/rootfs.tar']);
     expect(
       resolveRootfsTarPath({ env: { KEPCUP_WSL_ROOTFS: overrideTar }, searchRoot, arch: 'arm64' }),
