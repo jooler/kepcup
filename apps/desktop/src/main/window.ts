@@ -3,6 +3,7 @@ import {
   app,
   BrowserWindow,
   nativeImage,
+  nativeTheme,
   screen,
   type BrowserWindowConstructorOptions,
 } from 'electron';
@@ -68,9 +69,31 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     // (the frosted-glass look). The renderer keeps html/body transparent and
     // paints only the sidebar translucent so the material shows through there
     // (app.css "vibrancy" block); everything else stays opaque.
+    //
+    // Windows: same shape as the mac side (title bar hidden, content drags via
+    // the renderer's app-region classes), but the window stays a framed window
+    // — NOT frame:false — so the OS border, rounded corners and drop shadow
+    // are untouched. The three caption buttons come from the Window Controls
+    // Overlay (titleBarOverlay): Chromium draws them as native caption buttons
+    // (native hover/click behavior, and on Win11 hovering the maximize button
+    // pops the Snap Layouts flyout because the hit-test returns HTMAXBUTTON —
+    // self-drawn buttons cannot do this). The overlay background is fully
+    // transparent so the buttons sit on top of whatever the window paints
+    // there (headers, gradients, overlays) with no color seam; the glyph color
+    // follows nativeTheme, resynced in main/index.ts when the app theme moves.
+    // Renderer-side geometry inset for content under the button strip:
+    // app.css "wco-inset-end" block + window-controls-overlay.ts.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, vibrancy: 'sidebar' as const }
-      : {}),
+      : process.platform === 'win32'
+        ? {
+            titleBarStyle: 'hidden' as const,
+            titleBarOverlay: {
+              color: '#00000000',
+              symbolColor: nativeTheme.shouldUseDarkColors ? '#FFFFFF' : '#000000',
+            },
+          }
+        : {}),
     webPreferences,
   });
 

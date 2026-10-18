@@ -63,9 +63,9 @@
 </script>
 
 <header
-  class="app-drag flex shrink-0 items-center justify-between gap-3 border-b bg-background py-2 {narrow
+  class="app-drag wco-inset-end flex shrink-0 items-center justify-between gap-3 border-b bg-background py-2 {narrow
     ? isMac
-      ? 'pl-20 pr-3'
+      ? 'pr-3 pl-20'
       : 'px-3'
     : 'px-4'}"
   data-testid="project-header"

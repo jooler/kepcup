@@ -177,6 +177,22 @@ function bootstrap(): void {
     }
   });
 
+  // Windows WCO（window.ts 的 titleBarOverlay）：caption 字形颜色跟应用主题。
+  // 主题模式由渲染层经上面的 window:setThemeSource 写进 nativeTheme，这里订阅
+  // updated（themeSource 切换 / 跟随系统翻转）重设字形色即可。Overlay 底色是
+  // 全透明（透明度由 Blink 颜色解析器保留），只有字形需要跟色。
+  nativeTheme.on('updated', () => {
+    if (process.platform !== 'win32') return;
+    if (window === null || window.isDestroyed()) return;
+    try {
+      window.setTitleBarOverlay({
+        symbolColor: nativeTheme.shouldUseDarkColors ? '#FFFFFF' : '#000000',
+      });
+    } catch {
+      // Overlay 未落下（理论上仅在构造期）/ 窗口正在销毁——等下一个事件再同步。
+    }
+  });
+
   // P13 任务 6 诊断页「日志目录：在文件管理器中打开」. The renderer never
   // joins data-directory paths; the main process resolves the same logs dir
   // the core logger writes to (KEPCUP_HOME override honored, as with the

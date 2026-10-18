@@ -549,7 +549,7 @@
     data-testid="global-search-layer"
   >
     <div
-      class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
+      class="app-drag wco-inset-end flex h-14 shrink-0 items-center gap-1 border-b {isMac
         ? 'pr-3 pl-20'
         : 'px-3'}"
     >

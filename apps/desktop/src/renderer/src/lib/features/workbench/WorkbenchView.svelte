@@ -39,7 +39,7 @@
   <!-- 详情弹框是模态：打开时弹框之外的工作台内容不可聚焦（inert）。 -->
   <div class="flex min-h-0 flex-1 flex-col" inert={workbench.drawer !== null}>
     <!-- 顶部带：窗口拖拽区（与聊天区顶部一致），标题与 tab 自身 no-drag。 -->
-    <header class="app-drag flex h-14 shrink-0 items-center gap-3 px-5">
+    <header class="app-drag wco-inset-end flex h-14 shrink-0 items-center gap-3 px-5">
       <h1 class="text-base font-semibold">{t('workbench.title')}</h1>
       {#if tabbed}
         <div
