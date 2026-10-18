@@ -147,8 +147,6 @@ import {
   profileCardOutputSchema,
   usageSummaryInputSchema,
   usageSummaryOutputSchema,
-  budgetGetOutputSchema,
-  budgetUpdateInputSchema,
   embeddingStatusOutputSchema,
   embeddingConfigureInputSchema,
   skillsListInputSchema,
@@ -1328,14 +1326,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { entries: [...buckets.values()] };
     }),
 
-    'budget.get': method(voidInput, budgetGetOutputSchema, async () => ({
-      tokens: services.budget!.limit(),
-    })),
-    'budget.update': method(budgetUpdateInputSchema, budgetGetOutputSchema, async (input) => {
-      services.domain!.settings.update({ backgroundBudgetTokens: input.tokens });
-      return { tokens: services.budget!.limit() };
-    }),
-
     'embedding.status': method(voidInput, embeddingStatusOutputSchema, async () =>
       services.memory!.embeddingStatus(),
     ),
@@ -1707,7 +1697,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
   };
-  // 设置页原有的专用保存路径（providers.setKey、unattended.*、budget.update……）成功后补发
+  // 设置页原有的专用保存路径（providers.setKey、unattended.*……）成功后补发
   // settings.changed（settings.update / bots.update 已在上面按差异补发）。
   return withSettingsChangedEvents(methods, publishSettingsChanged);
 }

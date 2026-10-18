@@ -1,6 +1,6 @@
-/** Local calendar helpers for daily schedules (consolidation, budget days). */
+/** Local calendar helpers for daily schedules (consolidation, schedule guards). */
 
-/** YYYY-MM-DD of `date` in `timeZone` (budget days, consolidation days). */
+/** YYYY-MM-DD of `date` in `timeZone` (usage summary days, consolidation days). */
 export function localDateKey(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -56,7 +56,7 @@ export function localDayStart(now: number, timeZone: string): number {
   return start;
 }
 
-/** UTC ms of the next local midnight after `now` (budget deferral). */
+/** UTC ms of the next local midnight after `now` (schedule guard retry target). */
 export function nextLocalMidnight(now: number, timeZone: string): number {
   const todayStart = localDayStart(now, timeZone);
   return localDayStart(todayStart + 36 * 60 * 60 * 1000, timeZone);

@@ -128,9 +128,9 @@ describe('settingValuesProblems', () => {
     expect(settingValuesProblems(item('general.language'), { language: 'xx' })).toEqual([
       'language 只能是 zh-CN',
     ]);
-    expect(settingValuesProblems(item('background.budget'), { tokens: 1, extra: true })).toEqual([
-      '没有字段 extra',
-    ]);
+    expect(settingValuesProblems(item('general.language'), { language: 'zh-CN', extra: true })).toEqual(
+      ['没有字段 extra'],
+    );
     expect(settingValuesProblems(item('project.title'), { title: 'x'.repeat(501) })).toEqual([
       'title 应为字符串',
     ]);

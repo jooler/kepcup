@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGENT_TURN_BUDGET_TOKENS, type Bot } from '@kepcup/shared';
+import { type Bot } from '@kepcup/shared';
 import {
   agentTurn,
   createTestStack,
@@ -138,10 +138,8 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       { loopType: 'reflection', provider: 'agent:fake', model: 'default' },
     ]);
 
-    // The daily background budget charges a token-less agent round as
-    // AGENT_TURN_BUDGET_TOKENS — the reflection row and (审查 C5) the direct
-    // chat's summary row, both charged to the bot.
-    expect(stack.core.services.budget!.usedToday(bot.id)).toBe(2 * AGENT_TURN_BUDGET_TOKENS);
+    // Zero-token rows per background call, charged to the owning bot (审查 C5):
+    // the reflection row and the direct chat's summary row.
     const owners = stack.core.services
       .mainDb!.prepare(
         "select distinct bot_id as botId from usage_ledger where loop_type in ('reflection', 'conversation_summary')",

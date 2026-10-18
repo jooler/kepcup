@@ -839,9 +839,8 @@ export const zhCN = {
   'settings.profileSaved': '已保存',
   'settings.profileDeleted': '已删除',
 
-  'settings.usageSection': '用量与预算',
-  'settings.usageNote':
-    '按 Bot、loop 类型与本地日期汇总的模型用量（最近 7 天）。预算只约束后台任务；对话响应与路由判断不受限制。',
+  'settings.usageSection': '用量',
+  'settings.usageNote': '按 Bot、loop 类型与本地日期汇总的模型用量（最近 7 天）。',
   'settings.usageEmpty': '最近 7 天没有模型用量。',
   'settings.usageColumnDay': '日期',
   'settings.usageColumnLoop': '类型',
@@ -854,10 +853,6 @@ export const zhCN = {
   'settings.usageColumnAgent': '智能体',
   'settings.usageColumnTurns': '轮数',
   'settings.usageGlobalBots': '（全局任务，无所属 Bot）',
-  'settings.usageExceeded': '已超出今日预算：该 Bot 今天的后台任务已推迟到明天',
-  'settings.budgetLabel': '每个 Bot 每天后台用量上限（token）',
-  'settings.budgetHint': '0 表示不限制；超出后当天不再执行该 Bot 的后台任务。',
-  'settings.budgetSaved': '已保存',
   'usage.loop.triage': '路由判断',
   'usage.loop.reflection': '反思',
   'usage.loop.memory_consolidation': '记忆整理',

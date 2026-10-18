@@ -7,9 +7,9 @@ export interface LoopUsageDeps {
 
 /**
  * Records one structured call's usage against the loop's own run row.
- * `botId`: the bot the row is charged to (daily background budget) — set for
- * external-agent rows whose owning bot is known (审查 C5); built-in rows keep
- * the pre-P6 bot-less attribution.
+ * `botId`: the bot the row is charged to (attribution / usage summary) — set
+ * for external-agent rows whose owning bot is known (审查 C5); built-in rows
+ * keep the pre-P6 bot-less attribution.
  */
 export function recordLoopUsage(
   deps: LoopUsageDeps,

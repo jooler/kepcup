@@ -9,13 +9,10 @@ import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { UsageService } from '../../src/domain/usage.js';
-import { BudgetService } from '../../src/usage/budget.js';
-import type { SettingsService } from '../../src/domain/settings.js';
 
 /**
  * main 0020_usage_turn_loop_type（D75 W2 审查 H1）：usage_ledger 里 D75 之前的
- * 'response' 行改为 'turn'——usage.summary 的输出能过 loopTypeSchema，且每日
- * 后台预算不再把它们算作后台用量。
+ * 'response' 行改为 'turn'——usage.summary 的输出能过 loopTypeSchema。
  */
 
 const dir = mkdtempSync(path.join(tmpdir(), 'usage-turn-migration-'));
@@ -43,7 +40,7 @@ function migrationsUpTo(maxVersion: number): string {
 }
 
 describe('main 0020 usage_ledger loop_type response → turn', () => {
-  it('rewrites the pre-D75 response rows; summary validates and the budget skips them', () => {
+  it('rewrites the pre-D75 response rows and the summary validates', () => {
     const db = openMainDb();
     runMigrations(db, migrationsUpTo(19));
     const now = Date.now();
@@ -63,15 +60,6 @@ describe('main 0020 usage_ledger loop_type response → turn', () => {
     ]);
     const summary = new UsageService(db, { now: () => now }).entriesSince(0);
     for (const entry of summary) expect(loopTypeSchema.safeParse(entry.loopType).success).toBe(true);
-
-    const budget = new BudgetService({
-      db,
-      settings: { get: () => ({ backgroundBudgetTokens: 1_000 }) } as unknown as SettingsService,
-      clock: { now: () => now },
-      timeZone: 'UTC',
-    });
-    // Only the reflection row is background usage.
-    expect(budget.usedToday('bot_a')).toBe(10);
     closeDatabase(db);
   });
 });

@@ -128,7 +128,6 @@ import { SearchService } from './search/service.js';
 import { McpService } from './mcp/service.js';
 import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
-import { BudgetService } from './usage/budget.js';
 import { SkillImporter } from './skills/library.js';
 import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
@@ -533,8 +532,6 @@ export interface CoreServices {
   agentsService: AgentsService | null;
   /** D72 P6 后台调用路由（null while locked / errored）。 */
   llmRouter: LlmRouter | null;
-  /** P07 per-bot daily background budget (null while locked / errored). */
-  budget: BudgetService | null;
   /** P08 skills domain (null while locked / errored). */
   skills: SkillsService | null;
   /** P08 git import pipeline (null while locked / errored). */
@@ -829,7 +826,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     agents: null,
     agentsService: null,
     llmRouter: null,
-    budget: null,
     skills: null,
     skillImporter: null,
     skillPresets: null,
@@ -1519,12 +1515,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
     memoryForEnv = memory;
-    const budget = new BudgetService({
-      db: mainDb,
-      settings,
-      clock,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    });
     // P08 skills: registry first (the gateway needs readableDirs), the
     // importer afterwards (needs approvals + registry).
     const skills = new SkillsService({
@@ -1807,8 +1797,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           return null;
         }
       },
-      // 审查 C2: agent triage is charged to the daily background budget.
-      budgetExceeded: (botId) => budget.exceeded(botId),
+      // 审查 C2: agent triage is opt-in via backgroundTasks.projectMentionOnly.
     });
     services.llmRouter = llmRouter;
     // D72: `agent:{id}` limits follow features.parallelSessions (unverified
@@ -2660,7 +2649,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       orchestrator,
       logger,
       memory,
-      budget,
       clock,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       skills,
@@ -2891,7 +2879,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.memory = memory;
     services.media = media;
     services.search = search;
-    services.budget = budget;
     services.skills = skills;
     services.skillImporter = skillImporter;
     services.skillPresets = skillPresets;

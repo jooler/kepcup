@@ -1794,13 +1794,6 @@ describe('settings catalog host: D89 review round 2', () => {
     await expect(
       rig.host.applyItem({ itemId: 'general.theme', values: { theme: 'neon' }, expected: null }),
     ).rejects.toThrow(/theme 只能是/);
-    await expect(
-      rig.host.applyItem({
-        itemId: 'background.budget',
-        values: { tokens: 10, extra: 1 },
-        expected: null,
-      }),
-    ).rejects.toThrow(/没有字段 extra/);
     expect(cards(rig)).toHaveLength(0);
   });
 
