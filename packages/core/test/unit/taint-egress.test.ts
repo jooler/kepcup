@@ -390,12 +390,12 @@ describe('gateway egress: app and MCP tools', () => {
     expect(JSON.parse(String(h.requests[0]!.payload['argsFull']))).toEqual({ title: 'x' });
   });
 
-  it('an egress card never offers a longer duration and never creates a grant', async () => {
+  it('an egress card offers the conversation durations, degrades "bot" to once and never creates a grant', async () => {
     const h = await harness({ duration: 'bot', decision: decision({ approval: 'auto' }) });
     h.taint.mark(BOT, CONV);
     const result = await callApp(h);
     expect(h.requests[0]!.kind).toBe('egress');
-    expect(h.requests[0]!.payload['durations']).toBeUndefined();
+    expect(h.requests[0]!.payload['durations']).toEqual(['once', 'conversation']);
     expect(result.grantId).toBeUndefined();
     expect(
       h.grants.find({
@@ -409,9 +409,10 @@ describe('gateway egress: app and MCP tools', () => {
 });
 
 describe('gateway egressCheck', () => {
+  const input = { channel: 'web_fetch' as const, target: 'https://x.example/', summary: 's' };
+
   it('returns null without taint; cards with taint; truncates huge targets', async () => {
     const h = await harness();
-    const input = { channel: 'web_fetch' as const, target: 'https://x.example/', summary: 's' };
     expect(await h.gateway.egressCheck(task, input)).toBeNull();
     h.taint.mark(BOT, CONV);
     await expect(h.gateway.egressCheck(task, input)).resolves.toEqual({ approvedBy: 'user' });
@@ -433,6 +434,60 @@ describe('gateway egressCheck', () => {
     await expect(auto.gateway.egressCheck(turn, input)).resolves.toEqual({
       approvedBy: 'unattended',
     });
+  });
+
+  it('a "conversation" choice covers every channel until the taint window ends; a renewed taint re-cards', async () => {
+    const h = await harness({ duration: 'conversation' });
+    env!.clock.set(5_000);
+    h.taint.mark(BOT, CONV);
+    await h.gateway.egressCheck(task, input);
+    expect(h.requests).toHaveLength(1);
+    // bypassed: no further cards, any channel — even a turn, which would not wait
+    await expect(h.gateway.egressCheck(task, input)).resolves.toEqual({ approvedBy: 'user' });
+    await expect(
+      h.gateway.egressCheck(turn, { ...input, channel: 'web_search', target: 'q' }),
+    ).resolves.toEqual({ approvedBy: 'user' });
+    expect(h.requests).toHaveLength(1);
+    // the window ends → card again; a fresh approval re-arms the allowance
+    env!.clock.set(5_000 + APP_TAINT_TTL_MS - 1);
+    h.taint.mark(BOT, CONV); // re-read wipes the allowance and renews the taint
+    await h.gateway.egressCheck(task, input);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('a "command" choice covers only the same bash command; other commands and channels keep asking', async () => {
+    const h = await harness({ duration: 'command' });
+    h.taint.mark(BOT, CONV);
+    const bash = (command: string) =>
+      h.gateway.egressCheck(task, { channel: 'bash', target: command, summary: 's' });
+    await bash('node scripts/run-tests.mjs');
+    expect(h.requests).toHaveLength(1);
+    await expect(bash('node scripts/run-tests.mjs')).resolves.toEqual({ approvedBy: 'user' });
+    expect(h.requests).toHaveLength(1);
+    await bash('node other.mjs');
+    await h.gateway.egressCheck(task, input);
+    expect(h.requests).toHaveLength(3);
+    expect(h.requests.slice(1).map((r) => r.payload['channel'])).toEqual(['bash', 'web_fetch']);
+    // a "command" choice on a non-bash channel records nothing
+    const web = await harness({ duration: 'command' });
+    web.taint.mark(BOT, CONV);
+    await web.gateway.egressCheck(task, input);
+    await web.gateway.egressCheck(task, input);
+    expect(web.requests).toHaveLength(2);
+  });
+
+  it('the allowance does not survive a switch-off window or the conversation being deleted', async () => {
+    const h = await harness({ duration: 'conversation' });
+    h.taint.mark(BOT, CONV);
+    await h.gateway.egressCheck(task, input);
+    expect(h.requests).toHaveLength(1);
+    await expect(h.gateway.egressCheck(task, input)).resolves.toEqual({ approvedBy: 'user' });
+    // deleting the conversation clears the allowance (taint rows and egress_allows together)
+    h.taint.mark(BOT, CONV);
+    expect(h.taint.deleteForConversation(CONV)).toBe(1);
+    h.taint.mark(BOT, CONV);
+    await h.gateway.egressCheck(task, input);
+    expect(h.requests).toHaveLength(2);
   });
 });
 

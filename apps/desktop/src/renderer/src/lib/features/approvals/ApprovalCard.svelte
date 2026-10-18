@@ -136,8 +136,18 @@
     mcpTool !== null ? mcpDurationOptions(mcpTool) : ['once'],
   );
   const mcpChoosesDur = $derived(mcpTool !== null && mcpChoosesDuration(mcpTool));
+  /**
+   * D73 P2 后续：egress 卡按 `payload.durations` 渲染时长（bash 三档：仅这一次 / 本对话内
+   * 相同命令 / 本对话内一直允许；其余两档）。
+   */
+  const egressDurations = $derived<ApprovalDuration[]>(
+    egress !== null ? mcpDurationOptions(egress) : ['once'],
+  );
+  const egressChoosesDur = $derived(egress !== null && mcpChoosesDuration(egress));
   /** 卡片是否显示时长选择（access：仅这一次 / 本对话内；agent_tool 路径类；应用工具按 durations）。 */
-  const choosesDuration = $derived(access !== null || agentToolDurations || mcpChoosesDur);
+  const choosesDuration = $derived(
+    access !== null || agentToolDurations || mcpChoosesDur || egressChoosesDur,
+  );
 
   $effect(() => {
     if (autofocus && pending && cardEl) cardEl.focus();
@@ -254,7 +264,9 @@
       choosesDuration
         ? mcpChoosesDur
           ? clampDuration(duration, mcpDurations)
-          : duration
+          : egressChoosesDur
+            ? clampDuration(duration, egressDurations)
+            : duration
         : undefined,
       undefined,
       boundHash,
@@ -336,6 +348,9 @@
       deny();
     } else if (mcpChoosesDur) {
       const picked = durationForKey(mcpDurations, event.key);
+      if (picked !== null) duration = picked;
+    } else if (egressChoosesDur) {
+      const picked = durationForKey(egressDurations, event.key);
       if (picked !== null) duration = picked;
     } else if (choosesDuration && event.key === '1') {
       duration = 'once';
@@ -471,6 +486,8 @@
         <span>{title} · {t(foldedApprovedKey(approval.decision.duration))}</span>
       {:else if choosesDuration && approval.decision?.duration === 'conversation'}
         <span>{title} · {t('approvals.foldedApprovedConversation')}</span>
+      {:else if choosesDuration && approval.decision?.duration === 'command'}
+        <span>{title} · {t('approvals.foldedApprovedCommand')}</span>
       {:else}
         <span>{title} · {t('approvals.foldedApprovedOnce')}</span>
       {/if}
@@ -1178,6 +1195,22 @@
       >
         {t('approvals.egress.explain')}
       </p>
+      {#if egressChoosesDur}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each egressDurations as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.gitRemoteOperation')}</span>
@@ -1314,7 +1347,9 @@
           >{approval.kind === 'butler_proposal'
             ? t('approvals.butlerConfirm')
             : approval.kind === 'egress'
-              ? t('approvals.egress.allowOnce')
+              ? egressChoosesDur
+                ? t('approvals.approve')
+                : t('approvals.egress.allowOnce')
               : t('approvals.approve')}</Button
         >
         <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"

@@ -661,3 +661,14 @@
 - 处理：不补实现——该属性对模型提示与用户界面均不可见，审计已可推得，后补属性会动 `TriggerBatch` / 触发段形状，收益为零。文档按现状修正：`docs/dev/04-agent-runtime.md` 触发原因表 `routed` / `routed_also` 行「附加属性」改 `—`（顺带补 `bot_mention` 实际带的 `hop`）、提示词段表 7.5 行按实现修正为 `<project_lead_rules>` / `<project_member_rules>`（成员段是 `agent/context/system-prompt.ts` 的函数 `projectMemberRules(leadName)`，不是常量）；`docs/design/41-project-team.md` §6.3 留痕句同步。
 - 决定：（由人工确认）
 - 已更新的文档：`docs/dev/04-agent-runtime.md`、`docs/design/41-project-team.md`（见「处理」）。
+
+### DEV-038 设计 29 §8.3 的污点外发「逐次确认、只有允许一次」按用户决定放宽：egress 卡提供对话级放行时长（本功能迭代，2026-10-19）
+
+- 状态：已落实
+- 阶段：连接应用 P2 后续迭代（用户报告高频确认负担）
+- 是否阻塞：否
+- 问题：design 29 §8.3 规定污点期间外发「每次确认」、`egress` 卡只有「允许一次 / 拒绝」（`decide()` 把更长时长降为 once；`03-data-model.md` 同口径）。实际使用中重复的外发动作（如反复跑同一条测试命令）逐次弹卡，用户要求增加「始终允许」式的放宽。这与设计的防注入初衷（放行后的命令可能把污点数据带出去）相悖，属安全取舍，不能静默更改。
+- 影响范围：`egress` 审批（payload 增 `durations`，`decide()` 接受 `conversation` / bash 的 `command`）、网关 `egressCheck`（出卡前查放行、批准后写放行）、`TaintService`（`egress_allows` 表与 `allowEgress` / `egressAllowed`，`mark` 与对话删除清行）、shared 类型、渲染端 `ApprovalCard` 的 egress 时长选择与文案；迁移 `0043_egress_allow.sql`。带污点标记的 `mcp_tool` / `command` / `git_remote` 卡与无人值守审计口径不变（被放行免卡的调用不再产生 `egress` 审批 / `egress_tainted` 审计）。
+- 处理：按用户拍板「两个都要」落实——bash 通道三档（仅这一次 / 本对话内相同命令 / 本对话内一直允许）、其余通道两档；放行按对话计、有效期不超过批准时刻的污点窗口，污点被新的应用读取置位 / 续期时清空放行并重新出卡（一次「一直允许」至多放行一个污点窗口）。安全边界收窄为「用户逐窗口确认」，总开关 `taintGuard` 维持不变。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/design/29-connected-apps.md` §8.3 后续修订注、`docs/dev/03-data-model.md`（`egress` payload 与 `egress_allows`）、`docs/dev/04-agent-runtime.md`（污点外发段）、`docs/dev/05-testing.md` 用例计数。

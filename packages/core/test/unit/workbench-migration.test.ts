@@ -7,6 +7,7 @@ import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * main 0037_workbench（D90，todo/workbench.md §4.1 / §4.2）：新表 todos /
@@ -190,7 +191,7 @@ describe('main 0037 workbench', () => {
     expect(before[0]).not.toHaveProperty('todo_id');
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([37, 38, 39, 40, 41, 42]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(36));
 
     const after = db.prepare('select * from schedules order by id').all() as Array<
       Record<string, unknown>
