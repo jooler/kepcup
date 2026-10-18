@@ -304,7 +304,7 @@
   data-testid="right-panel"
 >
   <header
-    class="app-drag wco-inset-end flex h-12 shrink-0 items-center justify-end {narrow && isMac
+    class="app-drag wco-inset-end relative z-30 flex h-12 shrink-0 items-center justify-end {narrow && isMac
       ? 'pr-2 pl-20'
       : 'px-4'}"
   >

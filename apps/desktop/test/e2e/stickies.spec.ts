@@ -110,9 +110,13 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     );
 
     // 选中 Bot 气泡文本 → 浮动工具栏出现，只有一个 pin 按钮（钉当前对话）。
-    await selectBotBubbleText(page);
+    // 选中期间流式气泡可能整体重挂、清掉刚做的选区，选中+出现放进重试到稳态为止。
     const toolbar = page.locator('[data-testid="selection-toolbar"]');
-    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+    await expect(async () => {
+      await selectBotBubbleText(page);
+      await expect(toolbar).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    await expect(toolbar.locator('[data-testid="pin-conversation"]')).toBeVisible();
     await expect(toolbar.locator('[data-testid="pin-conversation"]')).toBeVisible();
     await expect(toolbar.locator('[data-testid="pin-global"]')).toHaveCount(0);
 
@@ -126,8 +130,12 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     await expect(page.locator('[data-testid="selection-toolbar"]')).toHaveCount(0);
 
     // 再 pin 第二张：两张按创建序级联错开 28px（第一张的手柄条未被盖住）。
-    await selectBotBubbleText(page);
-    await expect(page.locator('[data-testid="selection-toolbar"]')).toBeVisible();
+    await expect(async () => {
+      await selectBotBubbleText(page);
+      await expect(page.locator('[data-testid="selection-toolbar"]')).toBeVisible({
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 30_000 });
     await page.locator('[data-testid="pin-conversation"]').click();
     await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(2);
 

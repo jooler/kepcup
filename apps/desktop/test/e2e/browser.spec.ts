@@ -80,6 +80,63 @@ async function closeSession(session: Session): Promise<void> {
   await rmHomeTolerant(session.home);
 }
 
+/**
+ * 点击右栏「查看浏览器」；点击被拦（Windows 布局回归诊断）时 dump 关键几何：
+ * 各 pane、聊天区拖拽横幅、右栏顶栏按钮行的实际盒子与命中元素。
+ */
+async function clickBrowserShow(page: Page): Promise<void> {
+  try {
+    await page.locator('[data-testid="browser-show"]').click({ timeout: 30_000 });
+  } catch (error) {
+    await page
+      .evaluate(() => {
+        const rect = (el: Element | null | undefined) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return {
+            x: Math.round(r.x),
+            y: Math.round(r.y),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          };
+        };
+        const btn = document.querySelector('[data-testid="browser-show"]');
+        const rightPanel = document.querySelector('[data-testid="right-panel"]');
+        const header = rightPanel?.querySelector('header') ?? null;
+        const row = header?.firstElementChild ?? null;
+        const band = Array.from(document.querySelectorAll('header')).find((h) =>
+          h.className.includes('app-drag'),
+        );
+        const r = btn?.getBoundingClientRect();
+        const center =
+          r === undefined
+            ? []
+            : document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return {
+          panes: Array.from(document.querySelectorAll('[data-pane]')).map((p) => ({
+            id: p.getAttribute('data-pane-id'),
+            rect: rect(p),
+          })),
+          wcoInset: getComputedStyle(document.documentElement).getPropertyValue('--wco-inset-end'),
+          hasWco: document.documentElement.classList.contains('wco'),
+          band: { rect: rect(band), cls: band?.className ?? null },
+          rightPanel: rect(rightPanel),
+          rightHeader: rect(header),
+          row: { rect: rect(row), scrollW: row?.scrollWidth ?? null },
+          browserShow: rect(btn),
+          hits: center.map((el) => ({
+            tag: el.tagName,
+            cls: (el.className ?? '').toString().slice(0, 120),
+            testid: el.getAttribute?.('data-testid'),
+          })),
+        };
+      })
+      .then((dump) => console.warn('GEOM-DUMP ' + JSON.stringify(dump)))
+      .catch(() => {});
+    throw error;
+  }
+}
+
 async function waitReady(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="app-shell"]')).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('[data-testid="ping-result"]')).toContainText('ping ✓', {
@@ -783,7 +840,7 @@ test('查看窗口显示 Bot 当前页面；关闭后回到隐藏托管且不中
     if (!(await page.locator('[data-testid="browser-show"]').isVisible())) {
       await page.locator('[data-testid="right-panel-toggle"]').click();
     }
-    await page.locator('[data-testid="browser-show"]').click();
+    await clickBrowserShow(page);
 
     // 查看窗口可见，且其子视图就是 Bot 的当前页面（夹具 URL）。
     await expect
@@ -1018,7 +1075,7 @@ async function openViewer(
   if (!(await page.locator('[data-testid="browser-show"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="browser-show"]').click();
+  await clickBrowserShow(page);
   await expect
     .poll(
       () =>
