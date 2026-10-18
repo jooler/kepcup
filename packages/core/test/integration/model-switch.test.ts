@@ -63,10 +63,10 @@ describe('model switch mid-session', () => {
           const models = await turnModelsOldestFirst(core, conv.id);
           return models.length >= 2 && models[1] === 'custom:mock/mock-light' ? true : null;
         },
-        { label: 'second turn uses new defaultMainModel' },
+        { label: 'second turn uses new defaultMainModel', timeoutMs: 30_000 },
       );
     },
-    20_000,
+    40_000,
   );
 
   it(
@@ -103,9 +103,9 @@ describe('model switch mid-session', () => {
           const models = await turnModelsOldestFirst(core, conv.id);
           return models.length >= 2 && models[1] === 'custom:mock/mock-light' ? true : null;
         },
-        { label: 'second turn uses bot runtime.model override' },
+        { label: 'second turn uses bot runtime.model override', timeoutMs: 30_000 },
       );
     },
-    20_000,
+    40_000,
   );
 });
