@@ -1440,3 +1440,24 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **WP11**（文档同步）：设计与开发文档全面改写为现状、删除 18 个「D92 修订」横幅、41 定稿为正文、DEV-030 落实、常量 / ID 表、删除级联表、本节。纯文档，不改代码。
 
 **与基线的差异**：T1a 收口与 T1b 收口全量均 0 失败（优于 05-testing 记录的沙箱 / skills / wiki-url / workspace-tools 环境基线——本机 macOS 上这些依赖容器环境的用例不在常规全量路径内）；全量过程中的失败均为迁移形态 / 版本号断言的同步问题或负载偶发，单跑复核通过，未放宽或删除任何断言。e2e 基线新增本节所列 project-* spec；`workbench.spec` 的 layout 宽度用例在本机失败（WP8 之前即失败，用旧版 spec 实证与本轮无关）。
+
+### CI 修正栈并入 project-team 主线（2026-10-18）
+
+`ci/e2e-flaky-fixes`（r1–r16 全绿史）文本无冲突并入 main（merge `fa0ed25`），随后对照
+07 备忘的「高危点位表」逐项审计合并结果：10 个点位全部在位（rmHomeTolerant / fs-rm 重试 /
+browser-host 分区改名清扫 / wiki loopback 宿主直连 / workbench seam 挂载定格 /
+registry 回滚 await / env-manager 审批 catch / 各平台分支断言 / 重活用例 timeout /
+删除后中止收敛断言）。两处语义缝合修正：合并后 wiki diag 的 `wiki.history` 补 owner 形状
+（`ac54685`）； WorkbenchView 用 main 的 WP6 重写吸收 3b0a822 的挂载定格语义（自动合并所得）。
+
+本地定向：core/desktop typecheck、lint、subagent / mail / env / skills / wiki 单测 107 例
+全过；e2e 定向 wiki(5) / browser(14) / workbench+narrow(15) 全绿。推送后按 07 方法论走
+4 轮 CI：r17-1 收 wiki-owner 的 POSIX join 期望路径（M 类）、网关计数基线快照点（N 类）与
+project-shell tabs 取证 dump；r17-2 三平台 E2E 全绿但 win Tests 换命中
+wiki-remove-source 去重观察窗被 jobs runner 抢行（O 类，`b315a3d` 冻 runner）与
+project-shell 布局指标平台差（P 类，改断机制）；r17-3 model-switch 双栈链超时（Q/K 类，
+`e218a89`）；r17-4 ubuntu 换命中 UIDVALIDITY 链预算不足（K 类，`5e6d794` 三段 waitFor
+独立计时 + 用例线 240s）、windows 换命中 directory-sync 真定时器窗口（K 类，`97cc0d4`
+150→400ms）。第 5 轮（run 39105852113，commit `60341532`）7 job 全绿。途中仅 mac 命中
+一次 workdirs 任务唤醒轮 relay 缺席（复试未复现，`[task-relay-diag]` 取证 dump 已固化），
+列入 07 备忘「已知但未修」。未改任何产品代码；全部修正均为测试与文档。
