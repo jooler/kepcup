@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -66,7 +67,7 @@ async function startSession(
     record: () => readFakeAgentRecord(recordFile),
     close: async () => {
       await app.close();
-      await rm(home, { recursive: true, force: true });
+      await rmHomeTolerant(home);
       await rm(outside, { recursive: true, force: true });
     },
   };

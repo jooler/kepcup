@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -194,7 +195,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await app?.close();
     await fake.stop();
     await llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 
@@ -261,6 +262,6 @@ test('local connectors: a cross-site authorization server gets a red warning and
     await fake.stop();
     await authServer.stop();
     await llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });

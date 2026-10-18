@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -196,7 +196,7 @@ test.describe('输入框草稿按会话缓存', () => {
         await llm2.stop();
       }
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await rmHomeTolerant(home);
     }
   });
 

@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -69,7 +70,7 @@ async function startSession(
     close: async () => {
       await app.close();
       await llm.stop();
-      await rm(home, { recursive: true, force: true });
+      await rmHomeTolerant(home);
     },
   };
 }

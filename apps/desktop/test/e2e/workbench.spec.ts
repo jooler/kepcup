@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -62,7 +62,7 @@ async function startSession(prefix: string): Promise<Session> {
   // resolveWindowOptions 把默认窗口钳制到显示器内：CI 的 Xvfb（默认 640×480）
   // 和部分 runner 的显示空间会让窗口落进 WorkbenchView 的 tab 形态（<760px），
   // memo-pane 不渲染。工作台用例统一钉 1280×840 内容尺寸，避免按显示器赌宽窄。
-  const pinned = await app.evaluate(({ BrowserWindow, screen }) => {
+  await app.evaluate(({ BrowserWindow, screen }) => {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return null;
     win.setSize(1280, 840);
@@ -73,11 +73,8 @@ async function startSession(prefix: string): Promise<Session> {
       workArea,
       scale: screen.getPrimaryDisplay().scaleFactor,
       maximized: win.isMaximized(),
-      // 诊断（临时）：mac runner 上 tab 形态之谜——钉完后实测窗口与显示空间。
-      dpr: win.webContents.getZoomFactor(),
     };
   });
-  console.warn('[workbench-pin]', JSON.stringify(pinned));
   return { app, page, home, llm };
 }
 
@@ -113,21 +110,6 @@ async function waitReady(page: Page): Promise<void> {
 async function openWorkbench(page: Page): Promise<void> {
   await page.locator('[data-testid="workbench-nav"]').click();
   await expect(page.locator('[data-testid="workbench-view"]')).toBeVisible({ timeout: 15_000 });
-  // 诊断（临时）：runner 上 dual-pane 与 tab 形态之争用实测宽度裁决。
-  const dims = await page.evaluate(() => {
-    const el = document.querySelector<HTMLElement>('[data-testid="workbench-view"]');
-    const probe = (testid: string): number | null => {
-      const node = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
-      return node === null ? null : node.clientWidth;
-    };
-    return {
-      inner: { w: window.innerWidth, h: window.innerHeight },
-      workbench: el?.clientWidth ?? null,
-      sidebar: probe('sidebar'),
-      tablist: document.querySelector('[role="tablist"]')?.clientWidth ?? null,
-    };
-  });
-  console.warn('[workbench-dims]', JSON.stringify(dims));
 }
 
 /** 左栏点会话行（按 id）。 */
@@ -936,7 +918,7 @@ test('in progress shows the running state; restart keeps schedules and catches u
   } finally {
     await app.close().catch(() => {});
     await session.llm.stop();
-    await rm(home, { recursive: true, force: true });
+    await rmHomeTolerant(home);
   }
 });
 
@@ -1004,6 +986,13 @@ async function overflowing(page: Page, rootSelector: string): Promise<string[]> 
       // 输入框自己内部滚动，不算撑破。
       if (box.tagName === 'INPUT' || box.tagName === 'TEXTAREA') continue;
       if (style.overflowX === 'auto' || style.overflowX === 'scroll') continue;
+      // 设计内截断（省略号）不是撑破；窄窗口下 lane 名等靠它收敛。
+      if (
+        style.textOverflow === 'ellipsis' &&
+        style.whiteSpace === 'nowrap' &&
+        style.overflowX === 'hidden'
+      )
+        continue;
       if (box.scrollWidth > box.clientWidth + 1 && box.clientWidth > 0) {
         const id = box.getAttribute('data-testid') ?? '';
         found.push(
@@ -1070,25 +1059,18 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0);
 
     // 视图宽度 < 760：折成「事项 / 备忘」两个 tab，各自不溢出。
-    // 先撤掉 waitReady 里的双栏 seam（本段就是要断言 tab 形态）。
+    // seam（双栏强制）在挂载时刻生效且贯穿生命周期：本段要 tab 形态，
+    // 先撤掉 waitReady 里的 seam 值、把窗口缩到阈值下，随后「回对话 →
+    // 重新打开工作台」做一次 remount，挂载逻辑按新状态重新起形态。
     await page.evaluate(() => localStorage.removeItem('kepcup.e2e.workbenchWide'));
     await resizeWindow(app, 900, 760);
+    await openConversationByName(page, '阿长名字特别特别特别特别特别长的助手');
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await page.locator('[data-testid="workbench-nav"]').click();
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,
-    }).catch(async (error) => {
-      const probe = await page.evaluate(() => ({
-        seam: window.localStorage.getItem('kepcup.e2e.workbenchWide'),
-        inner: window.innerWidth,
-        view: document.querySelector('[data-testid="workbench-view"]')?.clientWidth,
-        attrs: (() => {
-          const el = document.querySelector('[data-testid="workbench-view"]');
-          if (!el) return null;
-          return { width: el.getAttribute('data-width'), tabbed: el.getAttribute('data-tabbed') };
-        })(),
-      }));
-      console.warn(`[layout-probe] ${JSON.stringify(probe)}`);
-      throw error;
     });
+
     await expect(page.locator('[data-testid="memo-pane"]')).toHaveCount(0);
     expect(await overflowing(page, '[data-testid="workbench-view"]')).toEqual([]);
     await shot(page, '21-layout-tabbed-todos');
