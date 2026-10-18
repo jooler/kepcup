@@ -737,8 +737,9 @@
        图标模式下按钮整体隐藏，只剩红绿灯拖拽区。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
   <div
-    class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2
-      {isMac ? 'pr-2 pl-20' : 'px-2'}"
+    class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 {narrow
+      ? 'wco-inset-end'
+      : ''} {isMac ? 'pr-2 pl-20' : 'px-2'}"
   >
     {#if !collapsed}
       <div class="flex-1"></div>

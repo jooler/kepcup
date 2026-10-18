@@ -304,7 +304,7 @@
   data-testid="right-panel"
 >
   <header
-    class="app-drag flex h-12 shrink-0 items-center justify-end {narrow && isMac
+    class="app-drag wco-inset-end flex h-12 shrink-0 items-center justify-end {narrow && isMac
       ? 'pr-2 pl-20'
       : 'px-4'}"
   >
@@ -582,7 +582,11 @@
         hidden={activeTab !== 'widgets'}
       >
         {#if bot}
-          <WidgetsTab botId={bot.id} conversationId={conversation?.id} active={activeTab === 'widgets'} />
+          <WidgetsTab
+            botId={bot.id}
+            conversationId={conversation?.id}
+            active={activeTab === 'widgets'}
+          />
         {/if}
       </div>
       <div

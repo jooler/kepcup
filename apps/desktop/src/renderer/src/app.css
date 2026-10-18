@@ -134,7 +134,6 @@ html.platform-mac main {
   --text-sm: 0.875rem;
 }
 
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -194,6 +193,20 @@ html.platform-mac main {
 [data-slot='tooltip-content'],
 [data-sonner-toaster] {
   -webkit-app-region: no-drag;
+}
+
+/*
+ * Windows 原生 caption 三键（titleBarOverlay，main/window.ts）：三键是
+ * Chromium 绘制的非 DOM 控件，永远盖在窗口右上角，网页在其下收不到点击。
+ * 几何由 lib/features/shell/window-controls-overlay.ts 发现后写成 :root 的
+ * --wco-inset-end（右端被占宽度）并给 html 打 wco 标；这里是唯一消费点——
+ * 只有 html.wco（overlay 生效窗口）才有这条规则，需要让位的顶栏直接挂
+ * .wco-inset-end 即可，mac / linux / e2e 浏览器环境里类是死规则，元素无感。
+ * 与上面 .app-drag 同理放非 layer：压过顶栏既有的右 padding 工具类（px-x 的
+ * pr 部分 / pr-x，语义相同、只在让位时更大）。
+ */
+html.wco .wco-inset-end {
+  padding-inline-end: var(--wco-inset-end, 0px);
 }
 
 /*

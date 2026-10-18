@@ -48,17 +48,15 @@
     if (card === undefined) return false;
     return !c.messages.some((m) => m.seq > card.seq && m.senderType === 'user');
   });
-  const composerHint = $derived(
-    pathGateClosed ? t('chats.setupPathGateHint') : undefined,
-  );
+  const composerHint = $derived(pathGateClosed ? t('chats.setupPathGateHint') : undefined);
   const headerTitle = $derived(
     current === null
       ? ''
       : // 已删除 Bot 的占位行 name 为空串，回退其 id（设计/01：显示为 id）。
         current.conversation.bot?.name ||
-        current.conversation.bot?.id ||
-        current.conversation.directBotId ||
-        t('rightPanel.title'),
+          current.conversation.bot?.id ||
+          current.conversation.directBotId ||
+          t('rightPanel.title'),
   );
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
   // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
@@ -140,7 +138,7 @@
   {/if}
 
   {#if hasMessages}
-    <MessageList topInset={topInset} bottomInset={composerDockHeight} />
+    <MessageList {topInset} bottomInset={composerDockHeight} />
   {/if}
 
   <!--
@@ -204,7 +202,9 @@
        bar and its candidate list are app-no-drag themselves, declared later so
        no-drag wins where they overlap. -->
   <div class="app-drag relative h-full min-h-0 min-w-0 flex-1" data-testid="project-compose-view">
-    <div class="absolute inset-x-0 top-0 z-30 px-4 pt-3 {narrow && isMac ? 'pl-20' : ''}">
+    <div
+      class="wco-inset-end absolute inset-x-0 top-0 z-30 px-4 pt-3 {narrow && isMac ? 'pl-20' : ''}"
+    >
       <ProjectComposeBar />
     </div>
   </div>
@@ -230,7 +230,9 @@
          点击打开 Bot 详情覆盖层（NarrowShell）。 -->
     <header
       class="app-drag absolute inset-x-0 top-0 z-30 flex h-16 items-center gap-2 bg-gradient-to-b from-background to-background/0
-        {narrow ? 'justify-start ' + (isMac ? 'pr-3 pl-20' : 'px-3') : 'justify-center'}"
+        {narrow
+        ? 'wco-inset-end justify-start ' + (isMac ? 'pr-3 pl-20' : 'px-3')
+        : 'justify-center'}"
     >
       {#if narrow}
         <Button
