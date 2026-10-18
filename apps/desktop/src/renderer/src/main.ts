@@ -10,7 +10,7 @@ if (/Mac/i.test(navigator.platform)) {
   document.documentElement.classList.add('platform-mac');
 }
 
-// Windows 原生 caption 三键（titleBarOverlay，window-controls-overlay.ts）：
+// Windows / Linux 原生 caption 三键（titleBarOverlay，window-controls-overlay.ts）：
 // 同样在 mount 前发布几何（--wco-inset-end / html.wco），首帧顶栏就让位。
 setupWindowControlsOverlay();
 
