@@ -87,7 +87,8 @@ test('conversational create: fixed first question card, option/custom answers, p
     );
     // 首问是列举题 → 多选卡（check 项 + 自定义输入 + 提交）。
     await expect(firstCard.locator('[data-testid^="setup-question-check-"]')).toHaveCount(4);
-    await expect(firstCard.locator('[data-testid="setup-question-check-0"]')).toHaveText(
+    // 多选卡：testid 挂在 checkbox 输入框上，选项文案在同一个 label 里。
+    await expect(firstCard.locator('label:has([data-testid="setup-question-check-0"])')).toHaveText(
       '写作与文档',
     );
     await expect(firstCard.locator('[data-testid="setup-custom-input"]')).toBeVisible();
