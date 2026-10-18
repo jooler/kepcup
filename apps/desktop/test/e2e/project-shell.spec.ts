@@ -202,30 +202,22 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     // 才必然溢出——overflow-x-auto 的行为断言。
     await resizeWindow(app, 420, 800);
     await expect(page.locator('[data-testid="narrow-back-button"]')).toBeVisible();
-    let scrollable = false;
-    // 诊断（临时）：overflow-x-auto 在不同平台的 metrics 上可能量出不同答案；
-    // 先取证再修——只在失败分支 dump 实测宽窄。
-    try {
-      scrollable = await page
-        .locator('[data-testid="project-tabs"]')
-        .evaluate((el) => el.scrollWidth > el.clientWidth);
-      expect(scrollable).toBe(true);
-    } catch (error) {
-      const diag = await page.evaluate(() => {
-        const row = document.querySelector<HTMLElement>('[data-testid="project-tabs"]');
-        const tabs = Array.from(row?.querySelectorAll('button') ?? []).map((button) => ({
-          text: (button.textContent ?? '').trim(),
-          width: Math.round(button.getBoundingClientRect().width * 10) / 10,
-        }));
-        return {
-          inner: { w: window.innerWidth, h: window.innerHeight },
-          row: row === null ? null : { scrollWidth: row.scrollWidth, clientWidth: row.clientWidth },
-          fontScale: getComputedStyle(document.documentElement).fontSize,
-          tabs,
-        };
-      });
-      console.warn(`[tabs-diag] ${JSON.stringify(diag)}`);
-      throw error;
+    // tab 行为断言走「机制」不走「指标」：实测三平台 420px 下行宽各不相同
+    // （ubuntu 272 恰好放下、win 256 放下、mac 同窗标题图标占位后 204×239 溢出），
+    // 「必然溢出」与「必然放下」都不成立。可跨平台恒真的契约是：行根
+    // overflow-x-auto（真溢出时可滚）+ nowrap 不换行 + 每枚按钮 shrink-0。
+    const tabsProbe = await page.locator('[data-testid="project-tabs"]').evaluate((el) => {
+      const style = getComputedStyle(el);
+      const buttons = Array.from(el.querySelectorAll('button')).map((button) => ({
+        shrink: getComputedStyle(button).flexShrink,
+      }));
+      return { overflowX: style.overflowX, whiteSpace: style.whiteSpace, buttons };
+    });
+    expect(tabsProbe.overflowX).toBe('auto');
+    expect(tabsProbe.whiteSpace).not.toBe('normal');
+    expect(tabsProbe.buttons.length).toBeGreaterThan(0);
+    for (const button of tabsProbe.buttons) {
+      expect(button.shrink).toBe('0');
     }
     await resizeWindow(app, 600, 800);
     await page.locator('[data-testid="project-settings-button"]').click();
