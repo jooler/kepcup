@@ -34,9 +34,11 @@ export async function createProjectViaUi(
     leadName,
     ...memberNames.filter((name) => name !== leadName),
   ]);
-  await expect(page.locator('[data-testid="project-title"]')).toContainText(autoTitle, {
-    timeout: 15_000,
-  });
+  // 顶栏不再显示项目名，标题经侧栏当前会话名断言。
+  const activeName = page.locator(
+    '[data-testid^="conversation-item-"][data-active="true"] [data-testid="conversation-name"]',
+  );
+  await expect(activeName).toContainText(autoTitle, { timeout: 15_000 });
   if (title === autoTitle) return;
 
   // 自定义标题：经 ⚙ 打开详情页改名（回车保存），再回沟通。
@@ -45,9 +47,7 @@ export async function createProjectViaUi(
   await expect(titleInput).toBeVisible({ timeout: 15_000 });
   await titleInput.fill(title);
   await titleInput.press('Enter');
-  await expect(page.locator('[data-testid="project-title"]')).toContainText(title, {
-    timeout: 15_000,
-  });
+  await expect(activeName).toContainText(title, { timeout: 15_000 });
   await page.locator('[data-testid="project-tab-chat"]').click();
   await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
     'data-view',
