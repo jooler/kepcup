@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
+import { isTaskRequest, startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
@@ -190,7 +190,10 @@ test("a write task queued behind another conversation's write task shows the wai
 
     // D75：甲的写任务启动前取得工作目录租约并整任务持有（挂在工具调用上保持执行中）。
     const held = step().hold().replyToolCall('bash', { command: 'sleep 30' });
-    llm.script('mock-main', viaTask({ title: '占用工作目录', ack: '甲开始工作', taskSteps: [held] }));
+    llm.script(
+      'mock-main',
+      viaTask({ title: '占用工作目录', ack: '甲开始工作', taskSteps: [held] }),
+    );
     await page.locator('[data-testid="composer-input"]').fill('开始工作');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
     await expect(
@@ -243,9 +246,24 @@ test("a write task queued behind another conversation's write task shows the wai
     expect(readFileSync(path.join(workdir, '乙.txt'), 'utf8')).toBe('from-b');
     await page.locator('[data-testid^="conversation-item-"]', { hasText: '乙' }).first().click();
     await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
-    await expect(
-      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
-    ).toBeVisible({ timeout: 60_000 });
+    // 诊断（临时）：唤醒轮的 relay 应答若被别的 inTurn 请求提前消费，「写完了」
+    // 就永远不出现；失败分支 dump mock-main 的整轮请求序列先取证。
+    try {
+      await expect(
+        page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
+      ).toBeVisible({ timeout: 60_000 });
+    } catch (error) {
+      const requests = llm.requestsFor('mock-main');
+      for (const [index, request] of requests.entries()) {
+        const toolCalls = JSON.stringify(request.body.messages ?? [])
+          .match(/"name":"(start_task|bash|write|delegate_task)"/)
+          ?.at(1);
+        console.warn(
+          `[task-relay-diag] #${index} task=${isTaskRequest(request)} tool=${toolCalls ?? '-'} last=${request.lastUserText().slice(0, 120)}`,
+        );
+      }
+      throw error;
+    }
   } finally {
     rmSync(workdir, { recursive: true, force: true });
     await closeSession(session);
