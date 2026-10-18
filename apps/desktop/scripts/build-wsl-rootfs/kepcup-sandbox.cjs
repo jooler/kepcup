@@ -142,7 +142,8 @@ function run(request) {
 
 async function main() {
   if (process.argv.includes('--selfcheck')) {
-    const run = await run({
+    // 顶层已有 run 函数：局部再叫 run 会在初始化前引用自身（TDZ）。
+    const outcome = await run({
       command: 'true',
       cwd: '/tmp',
       timeoutMs: 30_000,
@@ -150,9 +151,9 @@ async function main() {
       network: { allowedDomains: [], deniedDomains: ['localhost'], deniedResolvedAddresses: ['127.0.0.0/8'], strictAllowlist: true, allowLocalBinding: false },
       env: { PATH: '/opt/kepcup/bin:/usr/local/bin:/usr/bin:/bin', HOME: '/home/kepcup' },
     });
-    process.stdout.write(run.stdout);
-    process.stderr.write(run.stderr);
-    if (run.result.exitCode !== 0) {
+    process.stdout.write(outcome.stdout);
+    process.stderr.write(outcome.stderr);
+    if (outcome.result.exitCode !== 0) {
       process.stderr.write('selfcheck failed: sandboxed `true` exited non-zero\n');
       process.exit(1);
     }
@@ -165,14 +166,14 @@ async function main() {
     process.stderr.write('bad request: command/cwd required\n');
     process.exit(2);
   }
-  const run = await run(request);
+  const outcome = await run(request);
   // Command output first (the host accumulates it), result record last. The
   // record echoes the request's one-time nonce (BR-P12-005): the host only
   // accepts the record carrying the nonce of ITS request, so the command's
   // own output cannot forge a result by printing marker text.
-  process.stdout.write(run.stdout);
-  process.stderr.write(run.stderr);
-  emitResult(typeof request.nonce === 'string' ? { ...run.result, nonce: request.nonce } : run.result);
+  process.stdout.write(outcome.stdout);
+  process.stderr.write(outcome.stderr);
+  emitResult(typeof request.nonce === 'string' ? { ...outcome.result, nonce: request.nonce } : outcome.result);
 }
 
 main().catch((error) => {

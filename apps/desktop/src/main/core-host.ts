@@ -154,6 +154,7 @@ export class CoreHost implements CoreHostEvents {
         ...this.bundledBinEnv(),
         ...this.presetSkillsEnv(),
         ...this.connectorsEnv(),
+        ...this.wslRootfsEnv(),
       },
     });
     this.proc = proc;
@@ -215,6 +216,17 @@ export class CoreHost implements CoreHostEvents {
   private connectorsEnv(): NodeJS.ProcessEnv {
     const dir = join(process.resourcesPath ?? '', 'connectors');
     return existsSync(dir) ? { KEPCUP_CONNECTORS: dir } : {};
+  }
+
+  /**
+   * WSL 私有发行版 rootfs（P12/P13；extraResources 落在 Resources/wsl）。
+   * core 只内置 repo-checkout 布局的探测（从自身位置向上找
+   * apps/desktop/resources/wsl/rootfs.tar），打包后必须显式指向
+   * Resources/wsl——resolver 对 packaged 布局一无所知。
+   */
+  private wslRootfsEnv(): NodeJS.ProcessEnv {
+    const tar = join(process.resourcesPath ?? '', 'wsl', 'rootfs.tar');
+    return existsSync(tar) ? { KEPCUP_WSL_ROOTFS: tar } : {};
   }
 
   private handleExit(): void {

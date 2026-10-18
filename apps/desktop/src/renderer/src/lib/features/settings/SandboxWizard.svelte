@@ -140,7 +140,10 @@
   {open}
   onOpenChange={(value) => (value ? sandboxWizard.show() : sandboxWizard.close())}
 >
-  <DialogContent class="max-w-lg" data-testid="sandbox-wizard">
+  <!-- overlay 和 content 一并压到 z-[60]：向导与设置弹框同为 z-50，两个独立
+      portal 的叠放只由挂载顺序决定——「向导开着再开设置」时设置 portal 后
+      挂载就会盖住向导（沙箱准备被设置弹框挡住的成因）。显式让向导永远在上。 -->
+  <DialogContent class="max-w-lg z-[60]" overlayClass="z-[60]" data-testid="sandbox-wizard">
     <DialogHeader>
       <DialogTitle>{t('wizard.title')}</DialogTitle>
       <DialogDescription>{t('wizard.description')}</DialogDescription>
