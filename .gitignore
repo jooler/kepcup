@@ -28,6 +28,11 @@ playwright-report/
 # packaging artifacts (P13)
 apps/desktop/release/
 apps/desktop/release-store/
+# WSL rootfs 产物：CI rootfs job 产出，本地 dist.mjs 自建（P12/P13），
+# 仓库只保留 .gitkeep 与脚本。旧单文件布局（wsl/rootfs.*）一并覆盖。
+apps/desktop/resources/wsl/*/rootfs.tar
+apps/desktop/resources/wsl/*/rootfs-manifest.json
+apps/desktop/resources/wsl/rootfs.*
 
 # ZCode session-local state (plans etc.) and its sync file
 .zcode/

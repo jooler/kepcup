@@ -102,7 +102,7 @@
 - [ ] （P10）Intl 时区数据一致性：schedule-guard/schedule-cron 的时区用例在 Ubuntu/Windows 随 CI 首跑 — 详见下文 P10 小节对应条目
 - [ ] （P11）网络拦截 OS/Chromium 矩阵 Windows/Linux 复验 + DNS 解析器差异与 measure-browser-dns.mjs 复跑（macOS 已覆盖，公网放行由判定函数覆盖） — 详见下文 P11 小节对应条目
 - [ ] （P11）CDP `webContents.debugger` 三平台 Chromium 抽验：DOM.resolveNode/callFunctionOn/带 text 键需 `type:"keyDown"` — 详见下文 P11 小节对应条目
-- [ ] （P12）rootfs 构建流水线接入 CI：debian:12-slim 产 rootfs.tar+manifest、钉基础镜像 digest、`kepcup-sandbox --selfcheck` 通过 — 详见下文 P12 小节对应条目
+- [ ] （P12）rootfs 构建流水线接入 CI：~~debian:12-slim 产 rootfs.tar+manifest、钉基础镜像 digest、`kepcup-sandbox --selfcheck` 通过~~ — **P12 流水线已于 P13 接线（release.yml rootfs job），双架构产物落 `resources/wsl/{x64,arm64}/`；2026-10-18 x64 Windows 真机自检通过（BR-P12-005 修后）；剩余：基础镜像 digest 钉入 CI 与 arm64 真机自检（见 P12 小节与 digest 项）**
 - [ ] （P13）CI release 矩阵首跑：rootfs job + 6 组平台×架构全绿、arm64 runner 可用性、三平台原生模块 rebuild — 详见下文 P13 小节对应条目
 
 小计：18 条。
@@ -243,7 +243,7 @@
 ## P12（2026-10-01 核心侧与界面/e2e 完成于 macOS——全部 WSL 代码盲写 + fixture/注入 runner 测试 + e2e 注入驱动向导；以下为真机/跨系统项）
 
 - [ ] **WSL 真机全套（Windows 11）**：`wsl --status` / `wsl --list --verbose` 输出编码与本地化形态抽查（fixture 按文档格式自造——BOM有无、zh-CN 标签变体；已知弱点：BOM-less UTF-16 中文输出解析会落入 needs_enable 幂等流程，不静默，真机确认实际形态后按需收紧 decode 启发式）；`requestEnable` 的 UAC 提权真机行为（PowerShell Start-Process -Verb RunAs 弹窗、取消授权的非零退出码路径）；重启后状态机续导（awaiting_reboot → probe → ensureDistro）；`wsl --import Kepcup --version 2` 真实导入 + wsl.conf（automount/interop 关）生效验证（terminate 后 C 盘不可见、cmd.exe 不在 PATH）。
-- [ ] **rootfs 构建流水线接入 CI**（任务 1，脚本已写好不执行）：CI（ubuntu runner + debian:12-slim 容器）产出 `resources/wsl/rootfs.tar` + manifest（版本/sha256）；钉住基础镜像 digest；产物随 Windows 安装包分发（P13 打包阶段接线）。发行版内 `kepcup-sandbox --selfcheck` 通过 = srt 依赖（bwrap）在该发行版 + WSL2 内核可用的首个自动化验证点（任务书需验证技术点①；失败时的 rootfs 调整也在这里做）。
+- [ ] **rootfs 构建流水线接入 CI**（任务 1；**2026-10-18 已接线**：release.yml rootfs job 双架构产出 `resources/wsl/{x64,arm64}/`＋镜像内 shim 语法守卫（node --check/bash -n）＋大小/成员守卫；electron-builder `from: resources/wsl/${arch}`；dist.mjs 本地 win 打包缺产物默认自建）。剩余：**基础镜像 digest 钉进 CI**（docker pull + 每架构 docker image inspect）与 **arm64 真机自检**（x64 Windows 真机于 2026-10-18 通过：导入 Kepcup 发行版 → `kepcup-sandbox --selfcheck ok`，srt/bwrap 在 Debian 12 slim + WSL2 内核可用）。
 - [ ] **安全用例集在 WSL 后端**（任务书测试要求）：`packages/core/test/sandbox/sandbox-isolation.test.ts` + P03 确认模式/授权用例在 Windows 真机（已导入发行版）全绿——win32 skipIf 集成块（wsl-backend.test.ts 文件尾）先行冒烟（probe + `echo kepcup-e2e-ok`）；C 盘未挂载目录在发行版内不可见；发行版内无法启动 Windows 程序（cmd.exe 不存在于 PATH 且 interop 关闭）。
 - [ ] **drvfs 动态挂载真机验证**（需验证技术点②；语义按修复轮 BR-P12-001/008 修复后表述）：挂载 project 后读写正常；未挂载的 Windows 路径在发行版中不可见；授权撤销后「本命令不可读」（发行版 srt 配置对 /mnt/kepcup 与 /home/kepcup 整树 deny、计划内路径 last-match-wins 重暴露）+「命令结束即清理」（引用计数归零触发 kepcup-mount umount——真机复核 drvfs umount/重挂的耗时与 busy 行为）；kepcup-mount 模式变更（rw↔ro）remount 真机复核（busy 时非零退出 → SANDBOX_MOUNT_FAILED）；`\\wsl$` 9P 共享路径被 isWindowsAbsolutePath 拒绝挂载的真机复核。
 - [ ] **workspace 落位裁决的真机输入**（需验证技术点③）：`\\wsl$\Kepcup\...` 访问发行版内目录的 1000 小文件读写耗时实测；与 drvfs 挂载方案（当前交付默认：workspace 留 Windows 侧 + 挂载进发行版）的读写耗时对比；`\\wsl$` 可靠性（文件锁、重命名、删除竞态）——若显著优于 drvfs 则按 `distroWorkspacePath`/`wslUncPath`（已实现并有单测）一次切换并在 PROGRESS 记录。

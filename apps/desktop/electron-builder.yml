@@ -109,9 +109,14 @@ win:
       to: tray
     - from: resources/bin/win-${arch}
       to: bin/win-${arch}
-    # WSL 私有发行版 rootfs（CI 产出，P12）：文件不存在时该 glob 不打包任何内容
-    # （existsSync 条件打包等价），不阻塞构建——pack 钩子会给出警告。
-    - from: resources/wsl
+    # WSL 私有发行版 rootfs（CI 产出，P12/P13）：按本 pass 目标架构取子目录
+    # （x64|arm64 各含 rootfs.tar + manifest；打包后经 core-host 的
+    # KEPCUP_WSL_ROOTFS 注入被 core 读取）。原单文件 resources/wsl 整目录
+    # 打包会让 arm64 机器带上 x64 rootfs——执行不了还占体量；改 ${arch}
+    # 子目录后合并 NSIS 各架构负载只装匹配 WSL2 内核的 rootfs。子目录缺失
+    # 由 pack 钩子建 .keep 兜底（空 source dir 会被 electron-builder 跳过），
+    # ${arch} 插值模式与上方 resources/bin/${os}-${arch} 一致。
+    - from: resources/wsl/${arch}
       to: wsl
     - from: resources/preset-skills
       to: preset-skills

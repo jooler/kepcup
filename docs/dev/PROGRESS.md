@@ -1461,3 +1461,19 @@ project-shell 布局指标平台差（P 类，改断机制）；r17-3 model-swit
 150→400ms）。第 5 轮（run 39105852113，commit `60341532`）7 job 全绿。途中仅 mac 命中
 一次 workdirs 任务唤醒轮 relay 缺席（复试未复现，`[task-relay-diag]` 取证 dump 已固化），
 列入 07 备忘「已知但未修」。未改任何产品代码；全部修正均为测试与文档。
+## Windows x64 真机沙箱向导修复 + rootfs 双架构（2026-10-18，P12/P13）
+
+Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐一修复，链路最终在真机闭环（发行版导入 + `kepcup-sandbox --selfcheck ok`，即 srt/bwrap 在 Debian 12 slim + WSL2 内核可用的首个真机验证点）：
+
+- **BR-P12-005（P0，已修）**：`kepcup-sandbox.cjs` 的 `main()` 两处 `const run = await run({...})` 局部遮蔽顶层 `run` 函数 → TDZ `ReferenceError`，rootfs 导入后自检必炸（wsl.exe 的 UTF-16 输出乱码曾使报错难以直读）。修复为 `outcome`；`install-inside-debian.sh` 新增镜像内守卫（`node --check` shim / `bash -n` mount，进 tar 前爆语法类损坏）。真机：`wsl -d Kepcup -u root` 以 base64 管道就地替换 shim（sha256 `855a2a8b…295c3` 与 repo 一致）后 `selfcheck ok`。
+- **P13 packaged 布局断点（已修）**：packed 布局下 `resolveRootfsTar()` 只认 repo 布局而找不到产物；`core-host.ts` 新增 `wslRootfsEnv()`，与 bundled-bin / preset-skills 同模式注入 `KEPCUP_WSL_ROOTFS`。
+- **向导遮挡（已修）**：SandboxWizard 与设置弹框同为 z-50 portal，DOM 后者覆盖前者 → `DialogContent` 新增 `overlayClass` 透传，SandboxWizard 提升到 `z-[60]`。
+- **CI 产物缺席（已修为「可自建」）**：向导曾因 rootfs 不存在直接失败；除 release.yml rootfs job 外，`dist.mjs` 对本地 `pnpm dist --win` 缺产物时默认自建（`KEPCUP_DIST_SKIP_ROOTFS=1` 跳过）。
+
+**rootfs 双架构接线（P13）**：`build-rootfs.sh` 重写为双架构循环——容器平台与目标架构一一对应（x64→`linux/amd64`、arm64→`linux/arm64`，apt 基座的二进制架构跟容器走，混架构 tar 成员守卫抓不出来，只能靠导入后自检暴露）；产物改 `resources/wsl/{x64,arm64}/rootfs.tar + rootfs-manifest.json`，脚本支持指定单架构（缺省双架构）。配套：release.yml rootfs job 接 `docker/setup-qemu-action@v3`（amd64 runner 跑 arm64 容器）；electron-builder win 的 `from: resources/wsl/${arch}`（与 `bin/${os}-${arch}` 同模式）保证合并 NSIS 每架构负载只带匹配 rootfs、不双份膨胀；pack 钩子 `ensureWslRootfsSource()`（arch 目录缺 .keep 兜底 + 缺产物按架构告警；legacy 单文件只救 x64 pass，4 例单测）；core 抽出可单测的 `resolveRootfsTarPath()`（override → arch 子目录 → legacy 兼容，按 `process.arch` 选），wsl-setup 集成新增「import 用宿主架构 tar」用例。
+
+**本机 rootfs 重建与校验**：旧单文件产物（CI run #38911569329 artifact，sha256 `b5ccfe12…19196`，已验证导入 + 真 patch 后自检）按「旧文件不保留」决定移除；用脚本本地重建 x64（docker linux/amd64 原生容器，debian:12-slim digest `sha256:7c7b2c966bc9…c587`，钉 CI 时可直接引用）：459,376,640 字节，sha256 `acb0f61dd750470f60ed43a69fefee0f0a05dabb8d9974f3c633479d5feaa9f6`；tar 内 `kepcup-sandbox`（`855a2a8b…`）与 `kepcup-mount`（`152bafcf…`）逐字节等于 repo 源文件，即真机验证过的修复版。产物为本地开发资源（`.gitignore` 已加规则，不入库）。
+
+**文档**：P12 phase / 06-release / todo/cross-platform-acceptance 同步双架构与真机自检结论；arm64 WSL2 真机自检与基础镜像 digest 钉 CI 仍留 todo（rootfs job 产双架构已就绪）。
+
+**验证**：core 定向——`wsl-rootfs-resolve`（新，7 例）+ `wsl-setup` 集成 16 例（含新增用例）31/31；desktop `pack-hooks.test`（+4 例）与上轮共 15/15；两包 typecheck（含 svelte-check）0 错；`sandbox-wizard` e2e 4/4（其中一轮全量跑出现单例 30s locator 超时，单跑复核 11.5s 通过，判定负载抖动未改断言）；两个 shell 脚本 `bash -n` 与 `pack-hooks.cjs`/`dist.mjs` `node --check` 通过。

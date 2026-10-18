@@ -196,15 +196,59 @@ function beforePack(context) {
   }
   if (dirName === 'win') {
     const wslDir = path.join(projectDir, 'resources', 'wsl');
-    const rootfs = path.join(wslDir, 'rootfs.tar');
-    if (!existsSync(rootfs)) {
-      mkdirSync(wslDir, { recursive: true });
-      console.warn(
-        '[pack] resources/wsl/rootfs.tar 不存在——WSL 发行版 rootfs 由 CI 产出' +
-          '（apps/desktop/scripts/build-wsl-rootfs，P12），本次打包不含该文件（条件打包，不阻塞）。',
-      );
-    }
+    ensureWslRootfsSource(wslDir, archName(context), projectDir);
   }
+}
+
+/**
+ * Win 打包前把 resources/wsl/<arch> 备货成 extraResources 可用的 source dir
+ * （P13）：
+ *  - electron-builder 的 `from: resources/wsl/${arch}` 在整目录缺失或为空时
+ *    什么都不拷（空 source dir 会被跳过），package 里连 Resources/wsl 这层
+ *    都不建——core 的 KEPCUP_WSL_ROOTFS 注入会缺席，报错形态变成「安装包
+ *    不完整」。所以这里兜底建目录 + 写 .keep（bin 目录同法，见上）。
+ *  - 迁移期兼容：CI 产出的旧布局是单文件 resources/wsl/rootfs.tar（只有
+ *    x64 架构语义）。新布局没到位（arch 子目录缺 rootfs.tar）且旧文件在，
+ *    x64 pass 仍可出包（core 侧 resolveRootfsTarPath 有 legacy 回退），
+ *    因此只警告不阻塞；arm64 pass 的警告按缺失处理——旧布局不能被 arm64
+ *    打包误用（导入能过但 distro 里二进制跑不了）。
+ *  - 返回 { kept, warnMissing } 便于单测断言。
+ */
+function ensureWslRootfsSource(wslDir, targetArch, projectDir) {
+  if (!existsSync(wslDir)) {
+    mkdirSync(wslDir, { recursive: true });
+    console.warn(`[pack] created empty WSL rootfs source dir: ${path.relative(projectDir, wslDir)}`);
+  }
+  const archDir = path.join(wslDir, targetArch);
+  mkdirSync(archDir, { recursive: true });
+  if (readdirSync(archDir).length === 0) {
+    writeFileSync(path.join(archDir, '.keep'), '');
+    console.warn(
+      `[pack] wrote .keep under ${path.relative(projectDir, path.dirname(path.join(archDir, '.keep')))} ` +
+        'so extraResources copies the (empty) wsl dir',
+    );
+  }
+  const archTar = path.join(archDir, 'rootfs.tar');
+  if (existsSync(archTar)) {
+    return { kept: path.relative(projectDir, archTar), warnMissing: false };
+  }
+  const legacyTar = path.join(wslDir, 'rootfs.tar');
+  if (targetArch === 'x64' && existsSync(legacyTar)) {
+    console.warn(
+      '[pack] 新双架构布局缺位，回退旧单文件 resources/wsl/rootfs.tar（x64 语义）出包——' +
+        'CI 需重跑根 rootfs job 产 x64/arm64 双目录；arm64 安装包将不含 rootfs。',
+    );
+    return { kept: path.relative(projectDir, legacyTar), warnMissing: false };
+  }
+  console.warn(
+    `[pack] resources/wsl/${targetArch}/rootfs.tar 不存在——WSL 发行版 rootfs 由 CI 产出` +
+      '（apps/desktop/scripts/build-wsl-rootfs，P12/P13）' +
+      (targetArch === 'arm64' && existsSync(legacyTar)
+        ? '，旧单文件 rootfs.tar 是 x64 语义，不能给 arm64 打包（导入后 distro 内二进制跑不了），'
+        : '') +
+      '；本次打包不含该文件（不阻塞），用户端沙箱准备向导会报「安装包不完整」。',
+  );
+  return { kept: null, warnMissing: true };
 }
 
 function afterPack(context) {
@@ -284,6 +328,7 @@ function afterPack(context) {
 module.exports = {
   beforePack,
   afterPack,
+  ensureWslRootfsSource,
   FORBIDDEN_MARKERS,
   findForbiddenMarker,
   assertQueryDriverUnpacked,

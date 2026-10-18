@@ -38,6 +38,43 @@ import {
  *          confirm mode with a structured reason (任务书: 保持逐条确认模式).
  */
 
+export interface RootfsResolveOptions {
+  env: NodeJS.ProcessEnv;
+  /** 向上查找的起点（生产 = setup 模块所在目录；单测注入 fixture 布局）。 */
+  searchRoot: string;
+  /** 目标 WSL2 内核架构（'x64' | 'arm64'），rootfs 的二进制必须与之匹配。 */
+  arch: string;
+}
+
+/**
+ * 打包 rootfs 产物的解析：KEPCUP_WSL_ROOTFS 精确覆盖（e2e seam / packaged
+ * 注入，见 core-host.ts wslRootfsEnv）→ 新双架构布局 resources/wsl/<arch>/
+ * rootfs.tar → 旧单文件 resources/wsl/rootfs.tar（历史上只有 x64 语义，
+ * arm64 上命中旧文件时 imported distro 的二进制跑不了，但保留兼容让
+ * 未重跑 CI 的旧产物可继续在 x64 机器迁移）。逐级向上找 repo checkout 布局
+ * （mirrors resolveBundledBinDir）；纯路径逻辑，单独成函数以便单测——
+ * wsl-setup 集成套件是 win-only,gate 这里不能靠它覆盖。
+ */
+export function resolveRootfsTarPath(options: RootfsResolveOptions): string | null {
+  const override = options.env.KEPCUP_WSL_ROOTFS;
+  if (override !== undefined && override.length > 0) return existsSync(override) ? override : null;
+  let legacy: string | null = null;
+  let current = options.searchRoot;
+  for (let i = 0; i < 8; i += 1) {
+    const wslDir = path.join(current, 'apps', 'desktop', 'resources', 'wsl');
+    const archSpecific = path.join(wslDir, options.arch, 'rootfs.tar');
+    if (existsSync(archSpecific)) return archSpecific;
+    if (legacy === null) {
+      const candidate = path.join(wslDir, 'rootfs.tar');
+      if (existsSync(candidate)) legacy = candidate;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return legacy;
+}
+
 export type WslSetupPhase =
   | 'idle'
   | 'enabling'
@@ -99,13 +136,26 @@ export class WslSetup {
   readonly #runner: WslRunner;
   readonly #now: () => number;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #rootfsSearchRoot: string | null;
   #snapshot: WslSetupSnapshot | null = null;
 
-  constructor(input: { paths: AppPaths; runner: WslRunner; now?: () => number; env?: NodeJS.ProcessEnv }) {
+  /**
+   * `rootfsSearchRoot`：resolveRootfsTar 的 repo 布局向上查找起点（默认 = 本
+   * 模块目录）。产线永缺省；注入只为隔离测试——默认起点下「仓库里恰好有
+   * 产物」会让缺失分支没法在测试里构造。
+   */
+  constructor(input: {
+    paths: AppPaths;
+    runner: WslRunner;
+    now?: () => number;
+    env?: NodeJS.ProcessEnv;
+    rootfsSearchRoot?: string;
+  }) {
     this.#paths = input.paths;
     this.#runner = input.runner;
     this.#now = input.now ?? Date.now;
     this.#env = input.env ?? process.env;
+    this.#rootfsSearchRoot = input.rootfsSearchRoot ?? null;
     this.#snapshot = this.#loadSnapshot();
   }
 
@@ -236,21 +286,16 @@ export class WslSetup {
 
   // --- import & configure (任务 3) ---------------------------------------------
 
-  /** Path of the bundled rootfs artifact (resources/wsl/rootfs.tar, CI 产出). */
+  /** Path of the bundled rootfs artifact (resources/wsl, CI 产出). */
   resolveRootfsTar(env: NodeJS.ProcessEnv = this.#env): string | null {
-    const override = env.KEPCUP_WSL_ROOTFS;
-    if (override !== undefined && override.length > 0) return existsSync(override) ? override : null;
-    // Repo checkout layout: apps/desktop/resources/wsl/rootfs.tar, resolved
-    // from this module's location (mirrors resolveBundledBinDir).
-    let current = path.dirname(wslSetupModuleDir());
-    for (let i = 0; i < 8; i += 1) {
-      const candidate = path.join(current, 'apps', 'desktop', 'resources', 'wsl', 'rootfs.tar');
-      if (existsSync(candidate)) return candidate;
-      const parent = path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-    return null;
+    // WSL2 内核架构跟宿主 Windows 架构走：x64 tar 导进 ARM64 Windows 的
+    // distro 里 node/bwrap 全部 Exec format error，反之亦然——必须按 arch 选。
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    return resolveRootfsTarPath({
+      env,
+      arch,
+      searchRoot: this.#rootfsSearchRoot ?? path.dirname(wslSetupModuleDir()),
+    });
   }
 
   /**

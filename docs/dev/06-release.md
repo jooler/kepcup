@@ -110,7 +110,7 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
 `.github/workflows/release.yml`：
 
 1. **prepare**：读版本号，判定是否发布（见上文）。
-2. **rootfs**：构建 Windows 包里的 WSL rootfs（P12）。
+2. **rootfs**：构建 Windows 包里的 WSL rootfs（P12/P13）——x64 + arm64 双架构（arm64 走 `docker/setup-qemu-action`），产物按架构落 `apps/desktop/resources/wsl/{x64,arm64}/`，由 win build job 经 artifact 消费；electron-builder `from: resources/wsl/${arch}` 保证合并 NSIS 的每个架构负载只带匹配的 rootfs。本地 `pnpm dist --win` 缺产物时默认自建（`scripts/dist.mjs` 步骤 0；`KEPCUP_DIST_SKIP_ROOTFS=1` 跳过）。
 3. **build**（5 个 job，统一 `--publish never`，只出文件）：
    - `macos-latest`（arm64）和 `macos-15-intel`（x64）：dmg + zip，签名 + 公证。
    - `windows-latest`：`--x64 --arm64` 在同一次构建里出合并的 NSIS 安装包和唯一的 `latest.yml`（分开构建的话，两个 `latest.yml` 会互相覆盖）。配了商店变量时再单独构建一次 x64 MSIX：不签名（用 Windows 证书签会因为发布者和商店身份不符而失败），输出到 `release-store/`。
@@ -151,7 +151,7 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
 - [ ] **自动更新端到端**：装 `0.1.0` → 发 `0.1.1` → 三平台确认能收到更新并安装（[todo/cross-platform-acceptance.md](../../todo/cross-platform-acceptance.md) P13「自动更新端到端」）。
 - [ ] **商店版开机自启**：MSIX 里 `app.setLoginItemSettings` 不生效，需要在清单里声明 StartupTask（electron-builder `appx.customExtensionsPath`），运行时改用 StartupTask API。在此之前，商店版设置页的「开机自启」开关不起作用。
 - [ ] **商店版更新界面**：应用内更新关闭后状态一直是 idle，点「检查更新」会显示「已是最新」，容易误导。商店/Flatpak 版应该显示「由 Microsoft Store 更新」。
-- [ ] **Windows arm64 的 WSL rootfs**：rootfs job 只构建 x64 的 Debian rootfs，合并安装包里的 arm64 版本也带着它；arm64 机器上的 WSL 需要 arm64 rootfs。
+- [x] **Windows arm64 的 WSL rootfs**（2026-10-18 双架构接线解决）：rootfs job 现产 `resources/wsl/{x64,arm64}/` 双目录（arm64 容器跑在 qemu 上，`--platform` 与目标架构一一对应），electron-builder 按 `${arch}` 子目录取件；arm64 安装包不再带 x64 rootfs。**arm64 WSL2 真机自检仍留验证**——见 [todo/cross-platform-acceptance.md](../../todo/cross-platform-acceptance.md) P12。
 - [ ] **品牌信息统一**：`apps/desktop/package.json` 的 `homepage`/`author.email` 用的是 `kepcup.app`，官方域名是 `kepcup.com`。商店和 Linux 包的元数据都会显示这些值。
 - [ ] **隐私政策 URL**：Microsoft Store 提交要求提供（应用会访问网络、调用用户配置的模型服务）。
 - [ ] 可选：winget（`wingetcreate` / Komac 可以在 CI 里自动给 winget-pkgs 提 PR）、Homebrew Cask。两者都会自动跟踪 GitHub Release 的新版本。

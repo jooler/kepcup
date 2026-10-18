@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,11 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     electronPlatformName?: string;
     packager?: { platform?: string | { name?: string } };
   }): string;
+  ensureWslRootfsSource(
+    wslDir: string,
+    targetArch: string,
+    projectDir: string,
+  ): { kept: string | null; warnMissing: boolean };
 };
 
 describe('afterPack forbidden markers', () => {
@@ -104,5 +109,48 @@ describe('platformDirName', () => {
     expect(hooks.platformDirName({ packager: { platform: { name: 'mac' } } })).toBe('darwin');
     expect(hooks.platformDirName({ packager: { platform: 'win32' } })).toBe('win');
     expect(() => hooks.platformDirName({})).toThrow(/unknown platform/);
+  });
+});
+
+// P13：win pass 的 WSL rootfs 备货——${arch} 子目录存在即用、空目录写 .keep
+// 兜底（否则 extraResources 不拷、package 里连 Resources/wsl 都没有）、
+// 缺产物按架构告警（legacy 单文件只救 x64 pass）。
+describe('ensureWslRootfsSource', () => {
+  function projectWithWsl(files: string[] = []): string {
+    const project = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-wsl-'));
+    for (const rel of files) {
+      const target = path.join(project, rel);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, '#fixture');
+    }
+    return project;
+  }
+
+  test('arch-specific tar exists: kept, no dir mutation beyond no-op', () => {
+    const project = projectWithWsl(['resources/wsl/x64/rootfs.tar']);
+    const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'x64', project);
+    expect(result).toEqual({ kept: path.join('resources', 'wsl', 'x64', 'rootfs.tar'), warnMissing: false });
+    // 不会在 x64 子目录里偷偷塞 .keep（产物目录必须保持 CI 语义）。
+    expect(readdirSync(path.join(project, 'resources', 'wsl', 'x64'))).toEqual(['rootfs.tar']);
+  });
+
+  test('missing arch layout: .keep is written so extraResources still copies the dir', () => {
+    const project = projectWithWsl();
+    const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'x64', project);
+    expect(result.kept).toBeNull();
+    expect(result.warnMissing).toBe(true);
+    expect(readdirSync(path.join(project, 'resources', 'wsl', 'x64'))).toContain('.keep');
+  });
+
+  test('legacy single file rescues an x64 pass', () => {
+    const project = projectWithWsl(['resources/wsl/rootfs.tar']);
+    const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'x64', project);
+    expect(result).toEqual({ kept: path.join('resources', 'wsl', 'rootfs.tar'), warnMissing: false });
+  });
+
+  test('legacy single file does NOT rescue an arm64 pass', () => {
+    const project = projectWithWsl(['resources/wsl/rootfs.tar']);
+    const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'arm64', project);
+    expect(result).toEqual({ kept: null, warnMissing: true });
   });
 });

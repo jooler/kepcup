@@ -19,7 +19,7 @@ P04、P06。
 
 包含：
 
-- Linux 根文件系统的构建流水线：精简发行版（建议 Debian slim 或 Alpine，**需验证** srt 依赖在其上可用），包含 bash、coreutils、git、ripgrep、bubblewrap、socat、ca-certificates，以及 srt 运行所需的 Node；产物为 tar，随 Windows 安装包分发（`resources/wsl/rootfs.tar`）。
+- Linux 根文件系统的构建流水线：精简发行版（建议 Debian slim 或 Alpine，**需验证** srt 依赖在其上可用），包含 bash、coreutils、git、ripgrep、bubblewrap、socat、ca-certificates，以及 srt 运行所需的 Node；产物为按架构分目录的 tar（`resources/wsl/{x64,arm64}/rootfs.tar`，见上），随 Windows 安装包按架构分发。
 - WSL 启用流程：检测 WSL2 状态（未安装 / 已安装但未启用虚拟机平台 / 可用）；引导启用（需要管理员授权与重启）；企业策略禁用时的说明。
 - 发行版导入：`wsl --import Kepcup <~/.kepcup/sandbox/wsl> rootfs.tar --version 2`；`wsl.conf`：`automount.enabled = false`、`interop.enabled = false`、`interop.appendWindowsPath = false`。
 - `wsl` 沙箱后端（`sandbox/backend-wsl.ts`）：在发行版中以普通用户运行 srt 包装的命令；策略中的 Windows 路径转换为发行版中的挂载路径。
@@ -36,7 +36,7 @@ P04、P06。
 
 ## 任务
 
-1. **rootfs 构建**（`apps/desktop/scripts/build-wsl-rootfs`）：可重复构建；在 CI 中产出并缓存；记录版本与校验值。
+1. **rootfs 构建**（`apps/desktop/scripts/build-wsl-rootfs`）：可重复构建；每架构各跑一个对应平台架构的 debian:12 容器（apt 基座架构跟容器走，`--platform linux/amd64`/`linux/arm64`——混架构 tar 成员守卫抓不出来，shim 导入后才炸，见 BR-P12-005）；产物守卫（大小下限 + 关键成员 + 镜像内 shim `node --check`/`bash -n`）；在 CI 中产出并缓存；记录版本与校验值（per-arch rootfs-manifest.json）。
 2. **WSL 状态检测与启用**（`sandbox/wsl/setup.ts`）
    - 检测：`wsl --status`、`wsl --list --verbose` 的输出解析（输出为 UTF-16，注意编码）。
    - 启用：以管理员身份运行 `wsl --install --no-distribution`（经 UAC 提示），提示用户重启；重启后自动继续导入。
