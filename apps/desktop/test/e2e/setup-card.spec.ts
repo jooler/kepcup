@@ -89,7 +89,9 @@ test('setup card on interview answer: structured failure, provider form in the c
     // 回答首问 → 先被目录闸门扣下（19/D59，无 run）→ 跳过目录后响应 run
     // 无模型可用 → 结构化失败 + 设置卡片（无失败横幅）。
     llm.script('mock-main', [step().replyText('模型已配置，我们继续。')]);
-    await firstCard.locator('[data-testid="setup-option-0"]').click();
+    // 首问是多选卡：勾一项再提交。
+    await firstCard.locator('[data-testid="setup-question-check-0"]').click();
+    await firstCard.locator('[data-testid="setup-question-submit"]').click();
     const pathCard = page.locator('[data-testid="setup-path-card"]');
     await expect(pathCard).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="composer-readonly"]')).toBeVisible();
@@ -133,7 +135,9 @@ test('setup card: failed test connection neither advances the card nor lets save
     await page.locator('[data-testid="start-chat-create-bot"]').click();
     const firstCard = page.locator('[data-testid="setup-question-card"]').first();
     await expect(firstCard).toBeVisible({ timeout: 30_000 });
-    await firstCard.locator('[data-testid="setup-option-0"]').click();
+    // 首问是多选卡：勾一项再提交。
+    await firstCard.locator('[data-testid="setup-question-check-0"]').click();
+    await firstCard.locator('[data-testid="setup-question-submit"]').click();
     const pathCard = page.locator('[data-testid="setup-path-card"]');
     await expect(pathCard).toBeVisible({ timeout: 15_000 });
     await pathCard.locator('[data-testid="setup-path-skip"]').click();
