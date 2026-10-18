@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import { wikiOwnerKey, wikiOwnerSchema } from '@kepcup/shared';
 import {
   botWikiPagesDir,
@@ -27,7 +28,10 @@ const home = paths.home; // resolvePaths 会 realpath（macOS /tmp → /private/
 
 describe('wikiOwnerSchema', () => {
   it('接受 bot / project 两种 owner', () => {
-    expect(wikiOwnerSchema.parse({ kind: 'bot', id: 'bot_1' })).toEqual({ kind: 'bot', id: 'bot_1' });
+    expect(wikiOwnerSchema.parse({ kind: 'bot', id: 'bot_1' })).toEqual({
+      kind: 'bot',
+      id: 'bot_1',
+    });
     expect(wikiOwnerSchema.parse({ kind: 'project', id: 'conv_1' })).toEqual({
       kind: 'project',
       id: 'conv_1',
@@ -77,8 +81,8 @@ describe('wiki 路径助手', () => {
 });
 
 function path_a(botId: string, ...rest: string[]): string {
-  return [home, 'bots', botId, ...rest].join('/');
+  return path.join(home, 'bots', botId, ...rest);
 }
 function path_p(projectId: string, ...rest: string[]): string {
-  return [home, 'projects', projectId, ...rest].join('/');
+  return path.join(home, 'projects', projectId, ...rest);
 }

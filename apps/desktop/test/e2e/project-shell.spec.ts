@@ -1,13 +1,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  expect,
-  test,
-  type ElectronApplication,
-  type Page,
-  _electron,
-} from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, openConversationByName } from './helpers/create-bot';
 import { createProjectViaUi } from './helpers/create-project';
@@ -208,10 +202,31 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     // 才必然溢出——overflow-x-auto 的行为断言。
     await resizeWindow(app, 420, 800);
     await expect(page.locator('[data-testid="narrow-back-button"]')).toBeVisible();
-    const scrollable = await page.locator('[data-testid="project-tabs"]').evaluate(
-      (el) => el.scrollWidth > el.clientWidth,
-    );
-    expect(scrollable).toBe(true);
+    let scrollable = false;
+    // 诊断（临时）：overflow-x-auto 在不同平台的 metrics 上可能量出不同答案；
+    // 先取证再修——只在失败分支 dump 实测宽窄。
+    try {
+      scrollable = await page
+        .locator('[data-testid="project-tabs"]')
+        .evaluate((el) => el.scrollWidth > el.clientWidth);
+      expect(scrollable).toBe(true);
+    } catch (error) {
+      const diag = await page.evaluate(() => {
+        const row = document.querySelector<HTMLElement>('[data-testid="project-tabs"]');
+        const tabs = Array.from(row?.querySelectorAll('button') ?? []).map((button) => ({
+          text: (button.textContent ?? '').trim(),
+          width: Math.round(button.getBoundingClientRect().width * 10) / 10,
+        }));
+        return {
+          inner: { w: window.innerWidth, h: window.innerHeight },
+          row: row === null ? null : { scrollWidth: row.scrollWidth, clientWidth: row.clientWidth },
+          fontScale: getComputedStyle(document.documentElement).fontSize,
+          tabs,
+        };
+      });
+      console.warn(`[tabs-diag] ${JSON.stringify(diag)}`);
+      throw error;
+    }
     await resizeWindow(app, 600, 800);
     await page.locator('[data-testid="project-settings-button"]').click();
     await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({

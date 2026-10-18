@@ -2,7 +2,13 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm, step, type MockChatRequest, type MockLlmStep, type MockLlmServer } from '@kepcup/testkit';
+import {
+  startMockLlm,
+  step,
+  type MockChatRequest,
+  type MockLlmStep,
+  type MockLlmServer,
+} from '@kepcup/testkit';
 import { createBotAndOpenChat, rpc } from './helpers/create-bot';
 import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
@@ -159,6 +165,9 @@ test('project routing: gate routes to member, continuation claims, gate self/non
 
     // --- ④ 网关 none（纯致谢）：无回复、无卡片；输入框仍可发送 -------------------
     const bubblesBefore = await bubbles.count();
+    // 基线在发送前取证（③ 已含一次网关 self 调用，① 的快照不能代表当前值；
+    // 慢节点的样本窗口里只能断言「确有一次新增」，不能锚定绝对值）。
+    const gateCallsBefore4 = llm.requestsFor('mock-light').filter(isGate).length;
     llm.script('mock-light', [
       step().expect(isGate).replyJson({ decision: 'none', targets: [], reason: '纯致谢' }),
     ]);
@@ -166,15 +175,15 @@ test('project routing: gate routes to member, continuation claims, gate self/non
     // 网关请求已应答、回合静默收口：状态行回到消失（idle）。
     await expect
       .poll(() => llm.requestsFor('mock-light').filter(isGate).length, { timeout: 30_000 })
-      .toBe(gateCallsAfter1 + 1);
+      .toBe(gateCallsBefore4 + 1);
     await expect(status).toHaveCount(0, { timeout: 15_000 });
     await expect(bubbles).toHaveCount(bubblesBefore);
     await expect(page.locator('[data-testid="system-message"]')).toHaveCount(0);
 
     // --- ⑤ 显式 @N：只有 N 回复，没有路由 / 续接调用 ----------------------------
-    const continuationCalls = llm.requestsFor('mock-light').filter((r) =>
-      r.lastUserText().includes('你的名片：'),
-    ).length;
+    const continuationCalls = llm
+      .requestsFor('mock-light')
+      .filter((r) => r.lastUserText().includes('你的名片：')).length;
     const gateCalls = llm.requestsFor('mock-light').filter(isGate).length;
     llm.script('mock-main', [
       step()
@@ -193,9 +202,9 @@ test('project routing: gate routes to member, continuation claims, gate self/non
     await expect(bubbles.filter({ hasText: '丙直达' })).toBeVisible({ timeout: 60_000 });
     expect(bubbles).toHaveCount(bubblesBefore + 1);
     // 路由与续接判断都没跑（显式目标直接开轮）。
-    expect(llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('你的名片：')).length).toBe(
-      continuationCalls,
-    );
+    expect(
+      llm.requestsFor('mock-light').filter((r) => r.lastUserText().includes('你的名片：')).length,
+    ).toBe(continuationCalls);
     expect(llm.requestsFor('mock-light').filter(isGate).length).toBe(gateCalls);
   } finally {
     await closeSession(session);
