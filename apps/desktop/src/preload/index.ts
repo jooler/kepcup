@@ -15,7 +15,16 @@ ipcRenderer.on('core-port', (event) => {
   window.postMessage({ type: 'core-port', nonce: portNonce }, window.location.origin, event.ports);
 });
 
+// 窗口衬底材质标记（main/window.ts 的 acrylic 注释）：Win11 22H2+ 主进程经
+// webPreferences.additionalArguments 写进 process.argv，同步可读 —— 渲染层
+// 首帧即可据此把侧栏透明化，不走异步 IPC（否则 startup 会有闪色跳变）。
+const windowMaterial = process.argv.includes('--kepcup-window-material=acrylic')
+  ? ('acrylic' as const)
+  : ('opaque' as const);
+
 const api = {
+  /** 窗口衬底材质（sync 常量）：'acrylic' = Win11 22H2+ 已开原生亚克力。 */
+  windowMaterial,
   /** Secret accompanying the core port message (see above); never sent anywhere else. */
   portNonce,
   platform: {

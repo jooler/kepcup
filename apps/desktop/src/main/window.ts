@@ -1,3 +1,4 @@
+import { release } from 'node:os';
 import { join } from 'node:path';
 import {
   app,
@@ -25,12 +26,27 @@ export interface MainWindowOptions {
 
 const SAVE_DEBOUNCE_MS = 400;
 
+/**
+ * Windows 11 22H2+（build 22621）才有 DWM 亚克力材质，低版本下 backgroundMaterial
+ * 会被 Electron 静默忽略，需按 build 号判定。os.release() 返回 "10.0.22631" 形态。
+ */
+function windowsBackdropMaterial(): 'acrylic' | 'opaque' {
+  if (process.platform !== 'win32') return 'opaque';
+  const build = Number.parseInt(release().split('.')[2] ?? '', 10);
+  return Number.isFinite(build) && build >= 22621 ? 'acrylic' : 'opaque';
+}
+
 export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   const webPreferences: BrowserWindowConstructorOptions['webPreferences'] = {
     preload: options.preloadPath,
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
+    // Windows 亚克力（下面 win32 分支开启后）经 additionalArguments 同步传标记给
+    // 渲染层 preload —— 渲染层首帧即可打标，避免异步 IPC 造成的透明化闪色。
+    ...(windowsBackdropMaterial() === 'acrylic'
+      ? { additionalArguments: ['--kepcup-window-material=acrylic'] }
+      : {}),
   };
 
   const statePath = join(app.getPath('userData'), WINDOW_STATE_FILE);
@@ -86,6 +102,14 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     // Windows 可定制，字形色随系统主题，故构造时只给透明底色）.
     // Renderer-side geometry inset for content under the button strip:
     // app.css "wco-inset-end" block + window-controls-overlay.ts.
+    //
+    // Windows: Win11 22H2+ 衬一层原生亚克力（对应 mac 的 vibrancy 毛玻璃，能实
+    // 时模糊看到下层内容；Mica/云母只取桌面壁纸，不是这里要的）。不要
+    // transparent:true —— 会失去最大化，且首帧不生效/黑帧（electron#39959）；
+    // backgroundColor 全透明让未绘制的合成区透出材质即可。系统「透明效果」关
+    // 闭/省电/低配硬件时 DWM 自动作纯色，渲染层由 prefers-reduced-transparency
+    // 降级回不透明（app.css「acrylic」块）。已知边界：拖拽最大化/还原路径上
+    // 材质偶发丢失、圆角不一致（electron#46753），上游 bug，回退不致命。
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, vibrancy: 'sidebar' as const }
       : {
@@ -97,6 +121,9 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
                   symbolColor: nativeTheme.shouldUseDarkColors ? '#FFFFFF' : '#000000',
                 }
               : { color: '#00000000' },
+          ...(windowsBackdropMaterial() === 'acrylic'
+            ? { backgroundColor: '#00000000' as const, backgroundMaterial: 'acrylic' as const }
+            : {}),
         }),
     webPreferences,
   });
