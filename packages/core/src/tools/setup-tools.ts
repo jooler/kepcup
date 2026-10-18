@@ -55,10 +55,17 @@ export interface SetupToolFacade {
   /**
    * Persists one interview question (optional acknowledgement bubble + question
    * card with candidate options) and reports progress against the question cap.
+   * `mode: 'multi'` = multi-select (the user may also add custom entries); the
+   * answer comes back as one joined line of user text.
    */
   askQuestion(
     botId: string,
-    input: { acknowledgement?: string; question: string; options: string[] },
+    input: {
+      acknowledgement?: string;
+      question: string;
+      options: string[];
+      mode?: 'single' | 'multi';
+    },
   ): { ok: boolean; message: string };
 }
 
@@ -121,10 +128,11 @@ export function buildSetupTools(input: {
     acknowledgement?: string;
     question: string;
     options: string[];
+    mode?: 'single' | 'multi';
   }> = {
     name: 'ask_question',
     description:
-      '向用户提出下一个初始化问题（访谈中提问只能用这个工具）。会以卡片形式展示问题与候选答案，用户点选或自行输入后回答你。acknowledgement 是对上一条回答的简短确认（可选）。options 给 2~4 个贴合用户情况的候选答案——不必放「其他」之类兜底项，界面会自动提供自定义输入。调用后本轮立即结束，所以它必须是本轮最后一个动作。',
+      '向用户提出下一个初始化问题（访谈中提问只能用这个工具）。会以卡片形式展示问题与候选答案，用户点选或自行输入后回答你。acknowledgement 是对上一条回答的简短确认（可选）。options 给 2~4 个贴合用户情况的候选答案——不必放「其他」之类兜底项，界面会自动提供自定义输入（多选下用户输入的自定义内容也会成为选中的条目）。mode：single（缺省，单选，适合只有一个答案的决定）/ multi（多选，适合「有哪些/要哪些」这类可多项并存的列举问题，如要处理的事务、要建的 Bot 职责）。调用后本轮立即结束，所以它必须是本轮最后一个动作。',
     parameters: Type.Object({
       acknowledgement: Type.Optional(
         Type.String({ description: '对用户上一条回答的简短确认，可为空' }),
@@ -133,6 +141,11 @@ export function buildSetupTools(input: {
       options: Type.Array(Type.String(), {
         description: `候选答案，${SETUP_QUESTION_OPTIONS_MIN}~${SETUP_QUESTION_OPTIONS_MAX} 个`,
       }),
+      mode: Type.Optional(
+        Type.Union([Type.Literal('single'), Type.Literal('multi')], {
+          description: '提问方式，缺省 single；列举类问题用 multi',
+        }),
+      ),
     }),
     execute: async (params) => {
       if (identity.botId === null) {
@@ -140,6 +153,7 @@ export function buildSetupTools(input: {
       }
       const question = params.question.trim();
       const acknowledgement = params.acknowledgement?.trim() || undefined;
+      const mode = params.mode ?? 'single';
       const options = params.options.map((option) => option.trim()).filter((o) => o.length > 0);
       if (question.length === 0) {
         return { ok: false, content: '问题不能为空', errorCode: 'INVALID_INPUT' };
@@ -158,6 +172,7 @@ export function buildSetupTools(input: {
         ...(acknowledgement !== undefined ? { acknowledgement } : {}),
         question,
         options,
+        mode,
       });
       if (!result.ok) {
         return { ok: false, content: result.message, errorCode: 'INVALID_INPUT' };

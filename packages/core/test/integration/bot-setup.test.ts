@@ -113,6 +113,8 @@ describe('conversational bot setup (interview)', () => {
       event: 'bot_setup_question',
       text: SETUP_FIRST_QUESTION,
       options: [...SETUP_FIRST_OPTIONS],
+      // 首问是「有哪些」的列举题：卡片按多选渲染，用户也可自行补充条目。
+      questionMode: 'multi',
     });
     expect(card.seq).toBeGreaterThan(greeting.seq);
 

@@ -355,6 +355,64 @@ describe('D75 task cards (W3)', () => {
     await waitVisible(stack, conv.id, 'RELAY');
   }, 60_000);
 
+  it('ask_user multi: custom entries typed by the user are valid picks and reach the task as untrusted JSON', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小多');
+    const conv = await openDirect(core, bot.id);
+    const final = step()
+      .inTask()
+      .expect((req) => contextText(req).includes('用户在问题卡上的回答（多选'))
+      .replyText('RESULT 已照单全收');
+    llm.script('mock-main', [
+      step().inTurn().expect(turnWith('买点水果')).replyToolCall('start_task', {
+        title: '买水果',
+        instruction: '买水果',
+        source_message_ids: [],
+        writes: false,
+      }),
+      step().inTurn().replyText('ACK 去买'),
+      step()
+        .inTask()
+        .replyToolCall('ask_user', {
+          question: '买哪些？',
+          mode: 'multi',
+          options: ['苹果', '橙子', '香蕉'],
+        }),
+      final,
+      step().inTurn().expect(isWake).replyText('RELAY 买好了'),
+    ]);
+
+    await sendBatch(core, conv.id, ['买点水果']);
+    const question = await waitFor(
+      async () =>
+        (await listMessages(core, conv.id)).find(
+          (m) =>
+            m.kind === 'system_event' &&
+            'event' in m.content &&
+            m.content.event === 'task_question',
+        ) ?? null,
+      { label: 'multi question card' },
+    );
+    expect(question.content).toMatchObject({ questionMode: 'multi', options: ['苹果', '橙子', '香蕉'] });
+    // 自定义条目（用户手输、不在候选里）与候选一起提交；按候选序在前、自定义在后整理。
+    await core.rpc.call('tasks.answer', {
+      messageId: question.id,
+      answer: '（卡片会重新生成显示行）',
+      values: ['芒果', '苹果', ' 芒果 '],
+    });
+    const taskId = onlyTaskId(stack, conv.id);
+    await waitRun(stack, taskId, ['completed'], 'task completed');
+    const result = domain(stack)
+      .runs.stepsFor(taskId)
+      .find((step) => step.type === 'tool_result' && step.payload['toolName'] === 'ask_user');
+    expect(String(result?.payload['content'])).toContain(
+      '<untrusted>["苹果","芒果"]</untrusted>',
+    );
+    const card = domain(stack).messages.getById(question.id)!;
+    expect(card.content).toMatchObject({ answer: '苹果、芒果' });
+  }, 60_000);
+
   it("a free-text answer relayed by the turn's inject_task answers the open question", async () => {
     const stack = await start();
     const { core, llm } = stack;
