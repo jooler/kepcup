@@ -180,7 +180,9 @@ function bootstrap(): void {
   // Windows WCO（window.ts 的 titleBarOverlay）：caption 字形颜色跟应用主题。
   // 主题模式由渲染层经上面的 window:setThemeSource 写进 nativeTheme，这里订阅
   // updated（themeSource 切换 / 跟随系统翻转）重设字形色即可。Overlay 底色是
-  // 全透明（透明度由 Blink 颜色解析器保留），只有字形需要跟色。
+  // 全透明（透明度由 Blink 颜色解析器保留），只有字形需要跟色。linux 端
+  // symbolColor 不可定制（官方文档标注仅 Windows），不做同步，无 win32 时提前
+  // 返回。
   nativeTheme.on('updated', () => {
     if (process.platform !== 'win32') return;
     if (window === null || window.isDestroyed()) return;
