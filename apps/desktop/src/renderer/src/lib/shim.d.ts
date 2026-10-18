@@ -21,6 +21,8 @@ declare global {
     kepcup: {
       /** Secret nonce of the core-port window message (preload ↔ this page only). */
       portNonce: string;
+      /** 窗口衬底材质（sync，来自 preload 的 argv 标记）：'acrylic' 仅 Win11 22H2+。 */
+      windowMaterial: 'acrylic' | 'opaque';
       platform: {
         info(): Promise<PlatformInfo>;
         /** System directory picker (workdir selector, P04); null when cancelled. */
