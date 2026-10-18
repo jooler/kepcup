@@ -166,7 +166,9 @@ async function dumpWikiDiag(page: Page, home: string): Promise<void> {
         owner: { kind: 'bot', id: bot.id },
       })) as unknown;
       console.warn(`[wiki-diag] bot ${bot.name}(${bot.status}) tree ${JSON.stringify(tree)}`);
-      const history = (await rpc(page, 'wiki.history', { botId: bot.id })) as unknown;
+      const history = (await rpc(page, 'wiki.history', {
+        owner: { kind: 'bot', id: bot.id },
+      })) as unknown;
       console.warn(`[wiki-diag] bot ${bot.name} history ${JSON.stringify(history)}`);
     }
     const { conversations } = (await rpc(page, 'conversations.list')) as {
