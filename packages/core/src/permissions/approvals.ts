@@ -542,18 +542,22 @@ export class ApprovalsService {
     }
     // D73 duration degradation: a wider choice is honoured only where the card
     // offered it (`payload.durations`). `bot` ("always for this bot") exists for
-    // `mcp_tool` only; `grants` and `agent_tool` never see anything but
+    // `mcp_tool` only; `command` (egress: the same bash command again) only for
+    // `egress`; `grants` and `agent_tool` never see anything but
     // once | conversation. An unavailable choice degrades to「仅这一次」.
-    if (duration === 'bot' || duration === 'conversation') {
+    if (duration === 'bot' || duration === 'conversation' || duration === 'command') {
       if (
         (approval.kind === 'agent_tool' ||
           approval.kind === 'mcp_tool' ||
-          // D73 P2: egress cards offer「允许一次 / 拒绝」only.
+          // D73 P2: egress cards offer「允许一次 / 拒绝」plus the payload's
+          // durations (conversation / bash-same-command) where the gateway offered them.
           approval.kind === 'egress') &&
         !offeredDurations(approval.payload).includes(duration)
       ) {
         duration = 'once';
       } else if (duration === 'bot' && approval.kind !== 'mcp_tool') {
+        duration = 'once';
+      } else if (duration === 'command' && approval.kind !== 'egress') {
         duration = 'once';
       }
     }
@@ -1103,10 +1107,17 @@ export class ApprovalsService {
       switch (approval.status) {
         case 'pending':
           return `[系统] 等待用户确认：${actor}${label}`;
-        case 'approved':
-          return approval.autoApproved === true
-            ? `[系统] 无人值守自动批准：${actor}${label}`
-            : `[系统] 用户允许${actor}${label}（仅这一次）`;
+        case 'approved': {
+          const suffix =
+            approval.autoApproved === true
+              ? '（无人值守自动批准）'
+              : approval.decision?.duration === 'conversation'
+                ? '（本对话内一直允许）'
+                : approval.decision?.duration === 'command'
+                  ? '（本对话内相同命令）'
+                  : '（仅这一次）';
+          return `[系统] 用户允许${actor}${label}${suffix}`;
+        }
         case 'denied':
           return `[系统] 用户拒绝${actor}${label}`;
         case 'cancelled':

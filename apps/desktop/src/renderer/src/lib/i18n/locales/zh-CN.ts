@@ -723,9 +723,12 @@ export const zhCN = {
   'approvals.egress.since': '读取应用数据自',
   'approvals.egress.allowOnce': '允许一次',
   'approvals.egress.explain':
-    '本对话中该 Bot 读取过连接应用的数据。为防止被注入的指令把数据带出去，外发操作需要你逐次确认；上面是将要发出的完整内容。',
+    '本对话中该 Bot 读取过连接应用的数据。为防止被注入的指令把数据带出去，外发操作需要你逐次确认；上面是将要发出的完整内容。也可以选择更长的允许时长（本对话内一直允许 / 相同命令不再确认），它们只在本对话有效，且应用数据再次读取后需重新确认。',
   'approvals.egress.taintedHint':
     '本对话中该 Bot 读取过连接应用的数据——请特别留意这次操作是否会把这些数据发到外部。',
+  // 污点外发的对话级放行（D73 P2 后续）：bash 通道「本对话内相同命令」
+  'approvals.commandDuration': '本对话内相同命令',
+  'approvals.foldedApprovedCommand': '已允许（本对话内相同命令）',
 
   // --- P06 环境管理器 -------------------------------------------------------------
   'approvals.environmentTitle': '环境安装请求',

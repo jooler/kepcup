@@ -7,6 +7,7 @@ import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * main 0038_workdirs_rename（D92 T0-2，D28「共享目录」project → workdir）：
@@ -61,7 +62,7 @@ describe('main 0038 workdirs rename', () => {
 
     // Apply 0038 (and everything after it).
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([38, 39, 40, 41, 42]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(37));
 
     // Table renamed, row preserved, old name gone.
     const tables = (

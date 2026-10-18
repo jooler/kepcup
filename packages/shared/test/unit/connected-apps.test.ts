@@ -188,8 +188,8 @@ describe('连接应用 schema', () => {
     ).not.toThrow();
   });
 
-  it('approvalDurationSchema 新增 bot，grantDurationSchema 保持不变', () => {
-    expect(approvalDurationSchema.options).toEqual(['once', 'conversation', 'bot']);
+  it('approvalDurationSchema 新增 bot 与 egress 的 command，grantDurationSchema 保持不变', () => {
+    expect(approvalDurationSchema.options).toEqual(['once', 'conversation', 'bot', 'command']);
     expect(grantDurationSchema.options).toEqual(['once', 'conversation']);
   });
 

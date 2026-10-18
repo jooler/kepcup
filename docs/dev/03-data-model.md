@@ -49,6 +49,7 @@
 | runs | `0014_episode_columns.sql` | D92 T1a（WP2）：`runs` 的连锁列改名 `episode_id` / `episode_hop` |
 | main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
 | memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
+| main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -325,7 +326,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, workdirPath?, configHash}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：workdir 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、workdir 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
-`egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
+`egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?, durations?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长缺省只有 `once`，payload 可带 `durations`（网关写入）：`['once','conversation']` 或 bash 通道的 `['once','command','conversation']`（D73 P2 后续，见 `egress_allows`）。选 `conversation` = 本对话的污点窗口内所有外发不再确认；选 `command` = 本对话内**完全相同**的 bash 命令不再确认；`decide()` 仍把未提供的时长（含 `bot`）降为 once。放行的有效期不超过批准时刻的污点窗口：污点被新的读取续期（`mark`）即清空该对话的放行并重新出卡。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示（这几类不受对话级放行影响，仍按各自的卡语义）。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`（已有对话级放行时直接放行，不受此限）。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总（被对话级放行免卡的调用不再产生该审批与审计）。
 
 `bot_handover`（D88，迁移 `0036_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?, marks[]（P1：`external_import` / `sensitive`）, defaultSelected（P1：敏感记忆为 false）}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝；不带时按卡上的默认勾选 `defaultHandoverKeys`，敏感记忆不在其中）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
 
@@ -857,6 +858,18 @@ ALTER TABLE app_connections ADD COLUMN baseline_pending INTEGER NOT NULL DEFAULT
 ### app_taint（D73 P2，迁移 0027）
 
 污点状态（[design/29](../design/29-connected-apps.md) §8.3 / §12；`core/apps/taint.ts` 的 `TaintService`）：某 Bot 在某对话里**成功读取过目录应用（`conn_…`）的工具结果**后置位，之后 24 小时（`APP_TAINT_TTL_MS`）内该 (Bot, 对话) 的外发通道降级为逐次确认（`egress` 审批）。每次成功读取续期（`first_at` 在未过期时保持，过期后重新开始）；按 (Bot, 对话) 计而不按 run 计，`runs.retry`、后续对话轮与任务共用同一行。自定义 MCP 工具**不是来源**（只是通道）。`settings.apps.taintGuard`（默认 true，设置「无人值守 / 高级」）关闭时仍置位、只是不再拦截。
+
+对话级外发放行（D73 P2 后续，同服务的 `allowEgress` / `egressAllowed`）：用户在 `egress` 卡上选了更长时长（`conversation` / bash 的 `command`）时由网关写入；按**对话**计（与污点判定同级，项目组共享），`scope` 为 `'all'` 或 `'cmd:<sha256(命令原文)>'`。网关 `egressCheck` 在出卡前查它，命中（未过期）即直接放行；`mark`（新的应用读取）与对话删除（`deleteForConversation`）清行，`sweepExpired` 回收过期行。
+
+```sql
+CREATE TABLE egress_allows (
+  conversation_id TEXT NOT NULL,
+  scope           TEXT NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, scope)
+);
+CREATE INDEX egress_allows_expires ON egress_allows(expires_at);
+```
 
 ```sql
 CREATE TABLE app_taint (

@@ -117,4 +117,30 @@ describe('0027 egress_approval 迁移', () => {
     db.prepare("insert into app_taint values ('b', 'c2', 1, 2)").run();
     closeDatabase(db);
   });
+
+  it('0043 egress_allows：主键 (conversation_id, scope)，放行可写与覆盖', () => {
+    const db = openMainDb();
+    runMigrations(db, migrationsUrl('main'));
+    const columns = db.prepare('pragma table_info(egress_allows)').all() as Array<{
+      name: string;
+      notnull: number;
+      pk: number;
+    }>;
+    expect(columns.map((c) => c.name)).toEqual(['conversation_id', 'scope', 'expires_at']);
+    expect(columns.filter((c) => c.pk > 0).map((c) => c.name)).toEqual([
+      'conversation_id',
+      'scope',
+    ]);
+    expect(columns.every((c) => c.notnull === 1)).toBe(true);
+    db.prepare("insert into egress_allows values ('c', 'all', 100)").run();
+    // upsert path (on conflict): same scope overwrites instead of throwing
+    db.prepare(
+      "insert into egress_allows values ('c', 'all', 200) on conflict(conversation_id, scope) do update set expires_at = excluded.expires_at",
+    ).run();
+    expect(
+      db.prepare("select expires_at from egress_allows where conversation_id = 'c'").get(),
+    ).toEqual({ expires_at: 200 });
+    db.prepare("insert into egress_allows values ('c', 'cmd:abc', 100)").run();
+    closeDatabase(db);
+  });
 });

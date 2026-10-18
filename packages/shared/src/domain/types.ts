@@ -1629,11 +1629,12 @@ export type GrantDuration = z.infer<typeof grantDurationSchema>;
 
 /**
  * 审批时长（D73 P1，design 29 §8.1）：`bot` = 对该 Bot 总是允许。只用于
- * `ApprovalDecision.duration` 与 `mcp_tool` 的 `payload.durations`；`grants` 表与
+ * `ApprovalDecision.duration` 与 `mcp_tool` / `egress` 的 `payload.durations`；`grants` 表与
  * `agent_tool` 仍用 `grantDurationSchema`（不要直接扩展它）。P0 只定义并导出，
- * 尚未接入审批流程。
+ * 尚未接入审批流程。`command` 仅 `egress` 出现（污点外发，D73 P2 后续）：本对话内
+ * **完全相同的命令**（bash 通道）不再逐次确认。
  */
-export const approvalDurationSchema = z.enum(['once', 'conversation', 'bot']);
+export const approvalDurationSchema = z.enum(['once', 'conversation', 'bot', 'command']);
 export type ApprovalDuration = z.infer<typeof approvalDurationSchema>;
 
 /**
@@ -1662,7 +1663,8 @@ export const approvalKindSchema = z.enum([
   /**
    * 污点期间的外发确认（D73 P2，design 29 §8.3）：Bot 读取过连接应用数据后，web_fetch /
    * web_search / 浏览器 / 应用与自定义 MCP 写工具 / 沙箱 bash / git 远程 / ACP 网络请求
-   * 的逐次确认。时长只有 `once`。
+   * 的逐次确认。时长缺省只有 `once`；`payload.durations` 可再提供 `conversation`
+   * （本对话污点窗口内不再确认）与 `command`（仅 bash，相同命令不再确认）。
    */
   'egress',
   /** 邮件发送（D84）：完整收件人与正文，用户确认后才 SMTP 发出。 */
@@ -1867,6 +1869,12 @@ export const egressApprovalPayloadSchema = z.object({
   summary: z.string(),
   /** 污点开始时间（毫秒时间戳；卡片显示「自 … 起」）。 */
   taintedSince: z.number().optional(),
+  /**
+   * 卡片提供的时长选项（缺省 = 只有「仅这一次」）：`conversation` = 本对话的污点窗口内
+   * 所有外发不再确认；`command` = 仅 bash 通道，本对话内完全相同的命令不再确认。
+   * 有效期都不超过批准时刻的污点窗口（应用数据再次读取后需重新确认）。
+   */
+  durations: z.array(approvalDurationSchema).optional(),
 });
 export type EgressApprovalPayload = z.infer<typeof egressApprovalPayloadSchema>;
 
@@ -2007,9 +2015,10 @@ export type ApprovalPriorEffect = z.infer<typeof approvalPriorEffectSchema>;
 
 export const approvalDecisionSchema = z.object({
   /**
-   * Only meaningful for `access` approvals, path-type `agent_tool` ones (D72) and
+   * Only meaningful for `access` approvals, path-type `agent_tool` ones (D72),
    * `mcp_tool` ones that offered `payload.durations` (D73；`bot` = 对该 Bot 总是允许，
-   * 仅 `mcp_tool` 可能出现)。
+   * 仅 `mcp_tool` 可能出现) and `egress` ones that offered `payload.durations`
+   * (`conversation` / `command`，见 `egressApprovalPayloadSchema`)。
    */
   duration: approvalDurationSchema.optional(),
   /**
