@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -221,12 +221,21 @@ describe('WslSetup 状态机（注入 runner）', () => {
     expect(selfcheck!.args.join(' ')).not.toContain('-u root');
   });
 
-  it('ensureDistro 幂等：已导入时不再 import', async () => {
+  it('ensureDistro 幂等：已导入时不再 import（rootfs 取自新双架构布局）', async () => {
     const paths = tempPaths();
     const record: Recorded[] = [];
-    const rootfs = path.join(paths.home, 'rootfs.tar');
-    writeFileSync(rootfs, 'fake-rootfs');
-    const setup = new WslSetup({ paths, runner: fakeRunner({ record }) }); // 默认 list 已含发行版
+    // fixture 布局：新双架构 rootfs（arch 目录按宿主 arch）；不设 env
+    // override——按 repo 布局解析也要能走到导入步，而不是靠 env 缝。
+    const searchRoot = path.join(paths.home, 'src-kepcup', 'packages', 'core', 'dist', 'sandbox', 'wsl');
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    mkdirSync(path.join(searchRoot, '..', '..', '..', '..', '..', 'apps', 'desktop', 'resources', 'wsl', arch), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(searchRoot, '..', '..', '..', '..', '..', 'apps', 'desktop', 'resources', 'wsl', arch, 'rootfs.tar'),
+      'fake-rootfs',
+    );
+    const setup = new WslSetup({ paths, runner: fakeRunner({ record }), rootfsSearchRoot: searchRoot }); // 默认 list 已含发行版
     const report = await setup.ensureDistro();
     expect(report.phase).toBe('ready');
     expect(record.some((entry) => entry.args[0] === '--import')).toBe(false);
@@ -255,14 +264,55 @@ describe('WslSetup 状态机（注入 runner）', () => {
   it('缺少 rootfs 产物 → failed（安装包不完整，不伪造导入）', async () => {
     const paths = tempPaths();
     const record: Recorded[] = [];
+    // 隔离：rootfsSearchRoot 指向空 fixture——默认起点是真实模块目录，本仓库
+    // 自带 legacy 产物时该分支无法构造成缺失。
     const setup = new WslSetup({
       paths,
       runner: fakeRunner({ list: { exitCode: 0, text: '  NAME            STATE           VERSION\r\n' }, record }),
+      rootfsSearchRoot: path.join(paths.home, 'empty-src'),
     });
     const report = await setup.ensureDistro();
     expect(report.phase).toBe('failed');
     expect(report.reason).toContain('rootfs');
     expect(record.some((entry) => entry.args[0] === '--import')).toBe(false);
+  });
+
+  it('双架构布局：import 用宿主架构的 rootfs.tar', async () => {
+    const paths = tempPaths();
+    const record: Recorded[] = [];
+    const searchRoot = path.join(paths.home, 'src-kepcup', 'packages', 'core', 'dist', 'sandbox', 'wsl');
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    const archWslDir = path.join(
+      searchRoot,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'apps',
+      'desktop',
+      'resources',
+      'wsl',
+      arch,
+    );
+    mkdirSync(archWslDir, { recursive: true });
+    writeFileSync(path.join(archWslDir, 'rootfs.tar'), 'fake-rootfs');
+    // fresh distro（list 为空）→ 走完整导入流程
+    const setup = new WslSetup({
+      paths,
+      runner: fakeRunner({
+        list: { exitCode: 0, text: '  NAME            STATE           VERSION\r\n' },
+        record,
+      }),
+      rootfsSearchRoot: searchRoot,
+    });
+    const report = await setup.ensureDistro();
+    expect(report.phase).toBe('ready');
+    const imported = record.find((entry) => entry.args[0] === '--import');
+    expect(imported).toBeDefined();
+    // 导入的 tar 必须是架构子目录里那一份（x64 机器不拿 arm64 的，反之亦然）。
+    expect(imported!.args[1]).toBe(WSL_DISTRO_NAME);
+    expect(path.dirname(imported!.args[3])).toBe(archWslDir);
   });
 
   it('decodeWslOutput 与 runner 输出的衔接：UTF-16 fixture 端到端可解析', async () => {

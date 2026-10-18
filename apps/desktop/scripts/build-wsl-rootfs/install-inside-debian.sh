@@ -75,6 +75,11 @@ rm -rf "/tmp/${UV_TAR}" "/tmp/${UV_TAR}.sha256" "/tmp/uv-${UV_TRIPLET}"
 echo "[4/5] shim scripts"
 install -m 0755 /src/kepcup-sandbox.cjs /opt/kepcup/bin/kepcup-sandbox
 install -m 0755 /src/kepcup-mount /opt/kepcup/bin/kepcup-mount
+# 进镜像前的语法守卫（BR-P12-005 教训）：外层成员存在性守卫抓不到脚本内
+# 逻辑损坏（曾产出的 shim 带 TDZ 引用，导入后自检才炸），镜像内逐文件校验
+# ——shim 走 node --check（用刚解包的官方 node），mount 走 bash -n。
+/opt/kepcup/node/bin/node --check /opt/kepcup/bin/kepcup-sandbox
+bash -n /opt/kepcup/bin/kepcup-mount
 
 echo "[5/5] node symlink (shim shebang target)"
 ln -sf /opt/kepcup/node/bin/node /opt/kepcup/bin/node

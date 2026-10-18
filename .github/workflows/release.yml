@@ -66,17 +66,22 @@ jobs:
             fi
           fi
 
-  # rootfs.tar 是 Windows 安装包的一部分（P12 CI 产出方案接线，P13 落地）。
+  # rootfs.tar 双架构产物是 Windows 安装包的一部分（P12 CI 产出方案接线，P13 落地）。
   rootfs:
-    name: WSL rootfs (Debian 12, for Windows targets)
+    name: WSL rootfs (Debian 12, Windows x64 + arm64)
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # 依赖 docker（ubuntu runner 自带）。脚本把 rootfs.tar + rootfs-manifest.json
-      # 直接写入 apps/desktop/resources/wsl/（产物守卫内置：大小下限 + 关键成员校验）。
-      - name: Build rootfs.tar
+      # arm64 的 Debian apt 基座必须来自 arm64 容器（容器平台决定二进制架构，
+      # NODE_ARCH 只挑 Node/uv 下载产物——见 build-rootfs.sh 头注释），amd64
+      # runner 需要 binfmt/qemu 才能跑 arm64 容器。
+      - uses: docker/setup-qemu-action@v3
+      # 脚本把 rootfs.tar + rootfs-manifest.json 按架构写入
+      # apps/desktop/resources/wsl/{x64,arm64}/（产物守卫内置：大小下限 +
+      # 关键成员校验；镜像内另有 node --check / bash -n 的 shim 语法守卫）。
+      - name: Build rootfs tars (x64 + arm64)
         run: bash apps/desktop/scripts/build-wsl-rootfs/build-rootfs.sh
       - uses: actions/upload-artifact@v4
         with:

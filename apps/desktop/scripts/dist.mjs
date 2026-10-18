@@ -14,6 +14,8 @@ import esbuild from 'esbuild';
  *   pnpm dist --linux --arm64      # Linux（CI）
  *
  * 步骤：
+ *  0. Windows 目标的 WSL rootfs 自检（缺失时默认自建，启动 build-rootfs.sh
+ *     的对应架构；KEPCUP_DIST_SKIP_ROOTFS=1 可跳过）；
  *  1. electron-vite build（KEPCUP_PACKAGE_BUILD=1 →
  *     __KEPCUP_TEST_HOOKS__=false，见 electron.vite.config.ts）；
  *  2. 用 esbuild 把 @kepcup/core（dist）整体并进 out/main/core-entry/index.js，
@@ -65,6 +67,42 @@ function runPackageBin(packageName, binRelative, args, env = {}) {
   const pkgJson = require.resolve(`${packageName}/package.json`);
   const cli = path.join(path.dirname(pkgJson), binRelative);
   run(process.execPath, [cli, ...args], env);
+}
+
+/**
+ * 0. Windows 目标的 WSL rootfs（P12/P13）。
+ *
+ *    CI：rootfs job 先产双架构（见 release.yml）；win build job 直接消费。
+ *    本地：electron-builder 从 `resources/wsl/${arch}` 取子目录，缺了才会走
+ *    pack 钩子的警告与非阻塞路径——为了让本地 `pnpm dist --win` 出的包也
+ *    开箱可用，这里默认自建缺失架构的 rootfs（`bash
+ *    apps/desktop/scripts/build-wsl-rootfs/build-rootfs.sh <arch>`，机制与
+ *    CI 相同；本地通常是 amd64 原生容器，无需 qemu）。要求 docker + bash；
+ *    `KEPCUP_DIST_SKIP_ROOTFS=1` 显式跳过（出包警告由 pack 钩子给出）。
+ */
+function winArchsFromArgs() {
+  if (!builderArgs.includes('--win')) return [];
+  const archs = [];
+  if (builderArgs.includes('--x64')) archs.push('x64');
+  if (builderArgs.includes('--arm64')) archs.push('arm64');
+  if (archs.length === 0) {
+    // 无架构参数：electron-builder 的 win target 用宿主架构（config 无 arch
+    // 列表时的默认），这里对齐——桌面主机的 process.arch 即 WSL2 内核架构。
+    archs.push(process.arch === 'arm64' ? 'arm64' : 'x64');
+  }
+  return archs;
+}
+
+if (process.env.KEPCUP_DIST_SKIP_ROOTFS !== '1') {
+  for (const arch of winArchsFromArgs()) {
+    const tarPath = path.join(appDir, 'resources', 'wsl', arch, 'rootfs.tar');
+    if (existsSync(tarPath)) continue;
+    console.log(`[dist] resources/wsl/${arch}/rootfs.tar 缺失——构建 rootfs（P12/P13；docker + bash）`);
+    run('bash', ['scripts/build-wsl-rootfs/build-rootfs.sh', arch]);
+    if (!existsSync(tarPath)) {
+      throw new Error(`[dist] build-rootfs.sh 运行成功但产物仍缺失：${tarPath}`);
+    }
+  }
 }
 
 // 1. electron-vite build with the packaged define.

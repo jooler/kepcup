@@ -1,1 +1,5 @@
-# CI builds rootfs.tar + rootfs-manifest.json into this directory (see scripts/build-wsl-rootfs).
+# WSL rootfs 产物目录（P12/P13）：CI 按 architecture 产出
+#   x64/rootfs.tar + rootfs-manifest.json
+#   arm64/rootfs.tar + rootfs-manifest.json
+# 详见 scripts/build-wsl-rootfs。electron-builder 的 win extraResources 以
+# `from: resources/wsl/${arch}` 取本 pass 目标架构的子目录。
