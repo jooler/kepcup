@@ -1,0 +1,30 @@
+<!-- KepCup 品牌图形（无背景稿，与 resources/KepCup.svg 同一几何）：镂空气泡 +
+     左右耳标 + 中心点，裁剪到图形外接范围（x 56–456 / y 100–411）。
+     暗色主题（侧栏深底）用白色字形，与 workbench-dark.svg 同色。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="56 100 400 311" aria-hidden="true">
+  <!-- 镂空气泡：中心线描边，外轮廓 (101,100)–(410,348)，尾尖外缘 ~y=411 -->
+  <path fill="none" stroke="#ffffff" stroke-width="22"
+        stroke-linejoin="round" stroke-linecap="round"
+        d="
+    M 149 111
+    H 362
+    A 37 37 0 0 1 399 148
+    V 300
+    A 37 37 0 0 1 362 337
+    H 286
+    L 192 400
+    L 214 337
+    H 149
+    A 37 37 0 0 1 112 300
+    V 148
+    A 37 37 0 0 1 149 111
+    Z
+  "/>
+  <!-- 左右耳标：24×73, rx=12 -->
+  <rect x="56" y="188" width="24" height="73" rx="12" fill="#ffffff"/>
+  <rect x="432" y="188" width="24" height="73" rx="12" fill="#ffffff"/>
+  <!-- 内部竖胶囊：24×110 @ (168, 169.5), rx=12 -->
+  <rect x="168" y="169.5" width="24" height="110" rx="12" fill="#ffffff"/>
+  <!-- 中心点：91×91 @ (244, 177.5), rx=45.5 -->
+  <rect x="244" y="177.5" width="91" height="91" rx="45.5" fill="#ffffff"/>
+</svg>

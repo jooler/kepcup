@@ -23,6 +23,7 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { stripMarkdown } from '$lib/strip-markdown';
+  import { logoDarkUrl, logoLightUrl } from './sidebar-icons';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
@@ -733,14 +734,34 @@
   class="relative {sidebarLayout.transitionClass}"
   data-testid="sidebar"
 >
-  <!-- 头部：拖拽区 + 搜索/新增（macOS 红绿灯让出左侧空间）；
-       图标模式下按钮整体隐藏，只剩红绿灯拖拽区。 -->
+  <!-- 头部：拖拽区 + 搜索/新增。macOS 红绿灯让出左侧空间；win/linux 左上放
+       品牌 logo（无背景稿，明暗主题各一，按 html.dark 切换——工作台入口
+       图标同口径），搜索/「+」贴右；图标模式下按钮整体隐藏，mac 剩红绿灯
+       拖拽区、win/linux 剩 logo + 三键。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
   <div
-    class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 {narrow
+    class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
       ? 'wco-inset-end'
-      : ''} {isMac ? 'pr-2 pl-20' : 'px-2'}"
+      : ''} {isMac ? 'pl-20' : 'pl-4'}"
   >
+    {#if !isMac}
+      <!-- 在 drag 区内不做按钮：按住 logo 拖动窗口是自然行为。深浅两稿各自只
+           在对应主题渲染（dark:hidden / dark:block，与 workbenchIcon 同口径）。 -->
+      <img
+        src={logoLightUrl}
+        alt=""
+        draggable="false"
+        class="h-4.5 shrink-0 object-contain dark:hidden"
+        data-testid="sidebar-app-logo"
+      />
+      <img
+        src={logoDarkUrl}
+        alt=""
+        draggable="false"
+        class="hidden h-4.5 shrink-0 object-contain dark:block"
+        data-testid="sidebar-app-logo"
+      />
+    {/if}
     {#if !collapsed}
       <div class="flex-1"></div>
       <Button
