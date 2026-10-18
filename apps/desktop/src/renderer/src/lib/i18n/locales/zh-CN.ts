@@ -1103,6 +1103,9 @@ export const zhCN = {
   'task.questionFromBot': '{name} 的任务需要你决定',
   'task.questionExpired': '任务已结束，这个问题不再需要回答。',
   'task.questionFreeText': '也可以直接在输入框里回答，Bot 会转给这个任务。',
+  'task.questionCustomTag': '自定义',
+  'task.questionCustomPlaceholder': '输入自定义选项…',
+  'task.questionCustomAdd': '添加',
   'task.answerFailed': '回答没有送达',
   'task.statusOne': '任务「{title}」：{activity}',
   'task.statusMany': '{count} 个任务进行中 · 「{title}」：{activity}',
@@ -1367,6 +1370,12 @@ export const zhCN = {
     '打开窗口查看该 Bot 在当前对话中的页面，可在其中手动登录；关闭窗口后页面回到后台继续执行。',
   'rightPanel.browserWindowTitle': '{name} 的浏览器',
   'rightPanel.browserShowFailed': '无法打开浏览器窗口（页面未打开或已关闭）',
+  // 强制释放（UI 按钮）：Bot 用完没关 / 卡住时，手动释放页面资源
+  'rightPanel.browserClose': '释放浏览器',
+  'rightPanel.browserCloseHint':
+    '强制关闭该 Bot 在当前对话中的浏览器页面并释放资源；登录等会话数据保留。',
+  'rightPanel.browserCloseFailed': '无法释放浏览器页面',
+  'rightPanel.browserCloseUnavailable': '释放功能尚未生效，请重启应用后再试',
   // W8 自动接管：查看窗口工具条
   'rightPanel.browserToolbarAgent': '{name} 正在使用此页面 · 在页面里点击或键入即可接管',
   'rightPanel.browserToolbarUser': '你正在操作 · {name} 的浏览器动作已暂停，完成后请交还',

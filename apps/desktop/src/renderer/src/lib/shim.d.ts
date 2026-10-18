@@ -39,6 +39,8 @@ declare global {
         title: string,
         labels?: { agent: string; user: string; handback: string },
       ): Promise<void>;
+      /** 强制释放该 (Bot, 对话) 的浏览器页面（接管中也直接关；会话数据保留）。 */
+      closeBotBrowser(botId: string, conversationId: string): Promise<void>;
       getBotBrowserPages(): Promise<Array<{ botId: string; conversationId: string }>>;
       onBotBrowserPagesChanged(
         callback: (pages: Array<{ botId: string; conversationId: string }>) => void,

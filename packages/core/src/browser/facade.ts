@@ -55,7 +55,7 @@ export interface BrowserHostRpc {
   scroll(input: BrowserPageKey & { direction: 'up' | 'down'; amount: number }): Promise<BrowserActionOutput>;
   screenshot(input: BrowserPageKey): Promise<BrowserScreenshotOutput>;
   back(input: BrowserPageKey): Promise<BrowserActionOutput>;
-  close(input: BrowserPageKey & { permanent?: boolean }): Promise<{ ok: true }>;
+  close(input: BrowserPageKey & { permanent?: boolean; force?: boolean }): Promise<{ ok: true }>;
   setNetworkContext(input: BrowserPageKey & { networkContext: BrowserNetworkContext }): Promise<{ ok: true }>;
   clearBotData(input: { botId: string }): Promise<{ ok: true }>;
   /** W8: closes every page of the bot (its browser profile was switched). */
