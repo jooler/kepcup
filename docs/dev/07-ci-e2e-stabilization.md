@@ -1,12 +1,15 @@
-# CI 端到端修正备忘（r1–r14 全绿史）
+# CI 端到端修正备忘（r1–r14 全绿史 + r17 合并轮）
 
 - **分支**：`ci/e2e-flaky-fixes`（PR #4）。
-- **终点**：r10 首次全绿；r11–r13 暴露 Tests 层的两种新失败并在 r14 全部收绿
-  （结论三平台 E2E + Tests ×3 + Lint success）。commit 链
+- **终点**：r10 首次全绿；r11–r13 暴露 Tests 层的两种新失败并在 r14 全部收绿；r15–r16
+  收口 Tests 层第 L 类（结论三平台 E2E + Tests ×3 + Lint success）。commit 链
   `b05ae28 → 71017a2 → 3b0a822 → bdb0efd → 323da2b → 204e2fb → 7c334a1 → deec7a2 →
   1f0865b → 08c83ae → 90f7deb → 7532485 → 5f4d230`。
 - **写作目的**：另一条重量级分支（含 groups/project 迁移）合并时大概率再次触发同类失败。本文把
   「现象 → 根因 → 修法 → 自检」沉淀成速查，让下一次不需要再走 10 轮 CI。
+- **r17 合并轮（2026-10-18）**：本栈按高危点位表全文并入 project-team main
+  （merge `fa0ed25`），逐项审计全过；随后三轮 CI 收掉 main 迁移自己新引入的四处
+  （M/N/O/P 类，见下），r17 第 4 轮（run 39105852113，commit `6034153`）7 job 全绿。
 
 ## 平台特性速查（必须内化）
 
@@ -134,6 +137,55 @@
 - **自检**：测「删除/取消后不再推进」时，断言应落在**领域状态**（runs 为空）与**收敛边界**
   （至多一轮），不要断言瞬时计数；300ms 内的 setTimeout 凝固窗在 CI 满载一律不可靠。
 
+### M. 测试自建的期望路径用了 POSIX join（Tests 级，r17 windows 命中）
+
+- **现象**：`wiki-owner.test.ts` 两例只挂在 win32：`expected 'D:\tmp\...\bots\bot_a\wiki' to be 'D:\tmp\.../bots/bot_a/wiki'`。
+- **根因**：期望值 helper 用 `[...].join('/')` 手拼 POSIX 分隔符；被测助手（paths.ts）走 `path.join`
+  输出平台原生分隔符。「与改动前逐字相同」的意图没错，但两端必须用同一个 join。
+- **修复**：`68aaa87`——期望 helper 改 `path.join(home, 'bots', botId, ...)`。
+- **自检**：新增路径断言一律 `path.join` 造期望值；手写 `/` 串等于锁死 POSIX。
+
+### N. E2E 的轮内计数基线要在使用点取样（E2E 级，r17 ubuntu 命中）
+
+- **现象**：`project-routing.spec.ts` ④「谢谢」静默收口轮 `expected 2 to be 3`：
+  poll 断言网关调用数 = ①之后拍的快照 +1，但 ③ 的 self 网关已把计数抬到 2。
+- **根因**：断言作者拿早段快照锚定绝对值；轮次语义上 ④ 期间恰好多一次网关调用。
+  慢节点的样本窗口决定它在**谁先到**的竞速下偶然成立（mac 前 4 轮都绿）。
+- **修复**：`68aaa87`——④ 的基线改在 `sendPlain('谢谢')` 前取样（`gateCallsBefore4 + 1`），
+  `expect.poll` 语义变为「确有一次新增」，不再竞速。
+- **自检**：`expect.poll(...).toBe(N)` 的 N 若含「此后还会再变」的量，必须以**发送前**的取样为基线；
+  拍照点距使用点之间有任何一轮交互（哪怕静默收口）就重拍。
+
+### O. jobs runner 会把「占位 pending」抢走——去重观察窗要先冻住它（Tests 级，r17 windows 命中）
+
+- **现象**：`wiki-remove-source.test.ts` 去重断言 `expected 2 to be 1`（占位后删第二份仍多出一行）。
+- **根因**：jobs runner 500ms tick 会 claim 首删产生的 pending 行；Windows 的删除链
+  （fs 级联重试）让「占位 → 再删 → 查数」之间的窗口有数秒，runner 恰在此窗内把首行
+  claim 出 pending 态，第二次入队就没有冲突对象了。本地毫秒级窗口，永远命不中。
+- **修复**：`b315a3d`——占位前 `services.jobsRunner!.stop()` 冻住 runner，观察窗内行数不得增加。
+- **自检**：凡「入队去重 / pending 冲突」类的观察窗，先冻结 runner 或用不可 claim 的 `run_after`，
+  且要意识到「占位行 pending 与否」本身是被 worker 抢的瞬态——用 stop() 换确定性。
+
+### P. 布局类断言按平台 metrics 会翻脸——断「机制」不断「指标」（E2E 级，r17 windows+ubuntu 命中）
+
+- **现象**：`project-shell.spec.ts` 420px 断言「五枚 tab 必然横向溢出」在 win/ubuntu 量出
+  256/272 行宽、恰好放下（mac 反而 204×239 溢出——三平台行宽都不一样）。
+- **根因**：WP6 冒烟时凭单平台量出的「必然溢出」阈值，与各平台字体/窗口装饰差异不互锁；
+  这类 CSS 行为契约的正确断言是机制本身（overflow-x-auto + nowrap + shrink-0）。
+- **修复**：`b315a3d`——改为断 `overflowX === 'auto'`、`whiteSpace !== 'normal'`、
+  每枚按钮 `flexShrink === '0'`（任何 metrics 下恒真）。
+- **自检**：写「某宽度下必然溢出/必然放下」前先问：这个宽度是**设计契约**还是**本平台实测**？
+  是契约就走样式机制断言；确要指标就必须分平台，参照 memo 的 `{browser,diagnostics,sensors,narrow-layout}` 形状。
+
+### Q. 载波例第二弹：模型切换的双栈双轮链（Tests 级，r17 windows 命中；K 类同型）
+
+- **现象**：`model-switch.test.ts`「second turn uses new defaultMainModel」windows 上
+  15s 的 waitFor 先超时（本地 <1s）。
+- **根因**：链路含两整栈（每个用例 new 一个 TestStack）+ 两轮 agent 运行；20s 用例线里
+  塞 15s 默认 waitFor，满载 runner 顶穿。
+- **修复**：`e218a89`——waitFor 显式 30s、it 40s（单用例级，未动全局 testTimeout）。
+- **自检**：同 K 类——「本地 <1s、CI 超时」先查该用例是不是起了第二个实例/轮询/fake 服务器。
+
 ## 方法论（给下一次）
 
 1. **先取证，再修**：失败第一轮不改断言，先加 dump（`console.warn('[tag] …')`，e2e lint 允许
@@ -162,8 +214,11 @@
 | `apps/desktop/test/e2e/{browser,diagnostics,sensors,narrow-layout}.spec.ts` | 平台分支断言 | 不要「顺手」统一断言 |
 | `packages/core/src/skills/registry.ts:1082` | rollback 的 `await` | 迁移中如改 registry 逐行确认每一处 `authoredGitCommit` 的返回 / 等待语义 |
 | `packages/core/src/env/manager.ts:265/352` | system 审批 fire-and-forget 的 `.catch()`（J 类） | 新增审批回调路径照抄该形状 |
-| `packages/core/test/integration/{subagent,mail-service-fixes}.test.ts` | 重活用例显式 timeout（K 类） | 迁移新增的双实例/轮询用例直接带显式 timeout |
+| `packages/core/test/integration/{subagent,mail-service-fixes}.test.ts` | 重活用例显式 timeout（K/Q 类） | 迁移新增的双实例/轮询用例直接带显式 timeout（`model-switch.test.ts` 同型） |
 | `packages/core/test/integration/subagent.test.ts:338` | 删除后中止断言 = 领域状态 + 收敛边界，禁瞬时计数（L 类） | 新增「取消/删除不再推进」用例照抄该形状 |
+| `apps/desktop/test/e2e/project-routing.spec.ts` | 轮内计数基线在使用点取样（N 类） | 新增「网关/续接被调了几次」断言照抄该形状 |
+| `packages/core/test/integration/wiki-remove-source.test.ts` | 去重观察窗先冻住 jobs runner（O 类） | 新增「入队去重」观察窗照抄该形状 |
+| `apps/desktop/test/e2e/{project-shell,workbench}.spec.ts` | 布局契约断机制不断指标（P/F 类） | 改外壳布局时先读本节与 r6 结论 |
 
 ### 已知但未修（超过本题范围，需另行立项）
 
@@ -171,3 +226,5 @@
   已用「loopback 宿主直连」级别的 workaround；若上游补齐可收缩。
 - Windows 分区目录的「当场彻底删除」只能通过进程退出实现；产品文案可提示「删除将在重启时完全生效」。
 - ubuntu runner 的 Xvfb 无 GPU 慢帧——只在动效断言上用可得时窗保护，没有系统性解法。
+- `workdirs.spec.ts` 任务唤醒轮的 relay 偶发缺席（r17 mac 单轮命中、复试未复现）：失败分支
+  `[task-relay-diag]` 已固化（dump mock-main 请求序列与 lane 消费），再命中时按它取证。
