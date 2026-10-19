@@ -32,6 +32,7 @@ export const en = {
   hero: {
     eyebrow: 'Local-first multi-Bot · Open source + OpenMind',
     slogan: 'Build a team. Only for you.',
+    imageAlt: 'The KepCup desktop app',
     lede: 'KepCup is a desktop app where you create Bots on your machine, give them permissions and a working directory, and they collaborate with you — and with each other — without shipping your data to a host you do not control.',
     download: 'Download',
     github: 'View on GitHub',
@@ -40,8 +41,7 @@ export const en = {
   shots: {
     id: 'product',
     title: 'Where the work sits',
-    lede: 'Three surfaces. Product screenshots are not in this release yet — these frames mark the place they will go, and they are not pictures of the app.',
-    pending: 'Screenshot coming',
+    lede: 'Three surfaces. Here is how each one looks.',
     items: [
       {
         key: 'chat',
