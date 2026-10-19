@@ -136,18 +136,20 @@ describe('access approvals for file tools (P03)', () => {
     await core.rpc.call('approvals.decide', { id: again.id, approve: true, duration: 'once' });
     await waitForRelay(core, conv.id, 'RELAY-READ-1');
 
-    // Two approval cards for run 1 (one per tool call); nothing outlives the
-    // calls. (The task's own card — D75 W3 — is not an approval card.)
-    // (ef2a565: they are rows for the bot's context, not transcript content.)
+    // The card notifications are in-memory only (no persisted row, no bot
+    // context): nothing outlives the calls in the message stream. (The task's
+    // own card — D75 W3 — is not an approval card.)
     const messages1 = await listAllMessages(core, conv.id);
     const approvalCards = messages1.filter(
-      (m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType !== 'task',
+      (m) =>
+        m.kind === 'card' && (m.content as { cardType?: string }).cardType === 'access',
     );
-    expect(approvalCards.length).toBe(2);
-    // User-answered popups leave no transcript record (the dock was the surface).
-    for (const card of approvalCards) {
-      expect((card.content as { record?: boolean }).record).toBeUndefined();
-    }
+    expect(approvalCards).toEqual([]);
+    // The approvals themselves still persist (approvals.list keeps them).
+    const listed = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+      approvals: Array<{ kind: string; status: string }>;
+    };
+    expect(listed.approvals.filter((a) => a.kind === 'access' && a.status !== 'pending')).toHaveLength(2);
     const visible1 = await listMessages(core, conv.id);
     expect(
       visible1.filter((m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType === 'access'),
@@ -464,14 +466,15 @@ describe('access approvals for file tools (P03)', () => {
     };
     const auto = approvals.approvals.filter((a) => a.autoApproved);
     expect(new Set(auto.map((a) => a.kind))).toEqual(new Set(['access', 'unsandboxed', 'command']));
-    // Auto-decided cards never reach the dock: each keeps a folded transcript record.
+    // Auto-decided cards never reach the dock; their record lines are in-memory
+    // session hints — no card row is persisted (the audit trail below records
+    // each auto-approval instead).
     const autoCards = (await listMessages(core, conv.id)).filter(
       (m) =>
         m.kind === 'card' &&
         auto.some((a) => a.id === (m.content as { approvalId?: string }).approvalId),
     );
-    expect(autoCards).toHaveLength(auto.length);
-    for (const card of autoCards) expect((card.content as { record?: boolean }).record).toBe(true);
+    expect(autoCards).toEqual([]);
 
     // Audit trail for every auto-approval.
     const audit = core.services.domain!.audit.listByConversation(conv.id, 100);
@@ -531,7 +534,7 @@ describe('access approvals for file tools (P03)', () => {
     expect(line).toContain('tool_write');
   }, 60_000);
 
-  it('returns approval cards in conversation context lines (system render)', async () => {
+  it('keeps approval records out of conversation context lines (system render)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小卡');
     const conv = await openDirect(core, bot.id);
@@ -567,22 +570,14 @@ describe('access approvals for file tools (P03)', () => {
     await waitForTask(core, conv.id, 'completed');
     await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-CARD');
 
-    // The folded line appears in the next run's request context.
-    llm.script('mock-main', [step().replyText('看到卡片记录了')]);
-    const second = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '继续' })) as { message: Message; runId: string | null };
-    expect(second.runId).not.toBeNull();
-    await waitFor(
-      async () => {
-        const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
-          runs: Run[];
-        };
-        const run = runs.runs.find((r) => r.id === second.runId);
-        return run && run.status === 'completed' ? run : null;
-      },
-      { label: 'second run completes', timeoutMs: 60_000 },
-    );
+    // The card notifications never enter the bot's context: the continued
+    // request shows no folded approval record line (user turns still do).
     const bodies = llm.requests();
-    expect(bodies.some((r) => r.lastUserText().includes('用户允许'))).toBe(true);
+    expect(bodies.length).toBeGreaterThanOrEqual(2);
+    expect(bodies.some((r) => r.lastUserText().includes('申请写权限'))).toBe(true);
+    expect(bodies.some((r) => r.lastUserText().includes('用户允许'))).toBe(false);
+    expect(bodies.some((r) => r.lastUserText().includes('等待用户确认'))).toBe(false);
+    expect(bodies.some((r) => r.lastUserText().includes('自动批准'))).toBe(false);
   }, 120_000);
 });
 

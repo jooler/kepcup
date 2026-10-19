@@ -313,7 +313,7 @@ CREATE TABLE approvals (
   status          TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'cancelled', 'failed')),
   decision_json   TEXT,                   -- 例如 { duration: 'once' | 'conversation' } / { error: '…' }
   auto_approved   INTEGER NOT NULL DEFAULT 0,  -- 无人值守模式自动批准
-  message_id      TEXT,                   -- 对话中的卡片消息
+  message_id      TEXT,                   -- 卡片消息（中途权限卡的内存态通知不写 messages 表，此列为空）
   created_at      INTEGER NOT NULL,
   decided_at      INTEGER
 );
