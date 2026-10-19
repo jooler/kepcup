@@ -36,6 +36,7 @@ kepcup/
   tsconfig.base.json
   .github/workflows/           # CI（仓库托管在其他平台时按同等内容改写）
   apps/
+    website/                   # 官网脚手架（@kepcup/website）：营销界面未实现；部署目标 kepcup.com（Cloudflare Pages，以后）。设计见 apps/website/docs/official-site-design.md
     desktop/
       electron.vite.config.ts
       electron-builder.yml
