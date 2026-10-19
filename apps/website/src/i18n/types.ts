@@ -39,6 +39,7 @@ export interface Copy {
   hero: {
     eyebrow: string;
     slogan: string;
+    imageAlt: string;
     lede: string;
     download: string;
     github: string;
@@ -48,7 +49,6 @@ export interface Copy {
     id: string;
     title: string;
     lede: string;
-    pending: string;
     items: readonly Shot[];
   };
   openMind: {

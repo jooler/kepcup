@@ -32,6 +32,7 @@ export const zh = {
   hero: {
     eyebrow: '本地优先的多 Bot · 开源 + OpenMind',
     slogan: '创建一个团队，只为你服务！',
+    imageAlt: 'KepCup 桌面应用界面',
     lede: 'KepCup 是一个桌面应用。你在自己的电脑上创建 Bot，给他们权限和工作目录，他们与你协作，也彼此协作——不必把数据交给一个你无法掌控的主机。',
     download: '下载',
     github: '在 GitHub 查看',
@@ -40,8 +41,7 @@ export const zh = {
   shots: {
     id: 'product',
     title: '工作放在哪里',
-    lede: '三个界面。这一版还没有产品截图——下面的框只标出截图将来的位置，并不是应用本身的画面。',
-    pending: '截图待补',
+    lede: '三个界面。下面是它们各自的样子。',
     items: [
       {
         key: 'chat',

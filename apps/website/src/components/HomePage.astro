@@ -14,12 +14,22 @@ interface Props {
 
 const { copy, homePath, alternatePath, privacyPath, termsPath } = Astro.props;
 
+const shotImages = {
+  chat: { src: '/images/Chat.png', width: 1024, height: 727 },
+  team: { src: '/images/Team_group.png', width: 1024, height: 727 },
+  bench: { src: '/images/Workbench.png', width: 1024, height: 727 },
+} as const;
+
 const comma = copy.hero.slogan.indexOf('，');
 const dot = copy.hero.slogan.indexOf('. ');
 const splitAt = comma >= 0 ? comma : dot;
-const sep = comma >= 0 ? '，' : '. ';
-const lead = splitAt >= 0 ? copy.hero.slogan.slice(0, splitAt) : copy.hero.slogan;
-const rest = splitAt >= 0 ? copy.hero.slogan.slice(splitAt + sep.length) : '';
+const lead = splitAt >= 0
+  ? copy.hero.slogan.slice(0, comma >= 0 ? comma : dot + 1)
+  : copy.hero.slogan;
+const rest = splitAt >= 0
+  ? copy.hero.slogan.slice(comma >= 0 ? comma + 1 : dot + 2)
+  : '';
+const joiner = comma >= 0 ? '' : ' ';
 ---
 
 <Base
@@ -45,19 +55,24 @@ const rest = splitAt >= 0 ? copy.hero.slogan.slice(splitAt + sep.length) : '';
       </nav>
 
       <section class="hero section" aria-labelledby="slogan">
-        <div>
-          <p class="kicker">{copy.hero.eyebrow}</p>
-          <h1 id="slogan">
-            {lead}{splitAt >= 0 ? sep : ''}{rest ? <span class="emphasis">{rest}</span> : null}
-          </h1>
-          <p class="lede">{copy.hero.lede}</p>
-          <div class="actions">
-            <a class="btn btn-primary" href="#download">{copy.hero.download}</a>
-            <a class="btn btn-ghost" href={links.github} rel="noopener noreferrer">{copy.hero.github}</a>
-          </div>
-          <p class="note">{copy.hero.note}</p>
+        <p class="kicker">{copy.hero.eyebrow}</p>
+        <h1 id="slogan">
+          {lead}
+          {rest ? <>{joiner}<span class="emphasis">{rest}</span></> : null}
+        </h1>
+        <p class="lede">{copy.hero.lede}</p>
+        <img
+          class="hero-mark"
+          src="/images/Meet_KepCup.png"
+          width="1024"
+          height="726"
+          alt={copy.hero.imageAlt}
+        />
+        <div class="actions">
+          <a class="btn btn-primary" href="#download">{copy.hero.download}</a>
+          <a class="btn btn-ghost" href={links.github} rel="noopener noreferrer">{copy.hero.github}</a>
         </div>
-        <img class="hero-mark" src="/brand/KepCup.svg" width="512" height="512" alt="" />
+        <p class="note">{copy.hero.note}</p>
       </section>
 
       <section class="section" id={copy.shots.id} aria-labelledby="shots-title">
@@ -65,54 +80,25 @@ const rest = splitAt >= 0 ? copy.hero.slogan.slice(splitAt + sep.length) : '';
         <p class="lede">{copy.shots.lede}</p>
         <div class="shots">
           {
-            copy.shots.items.map((item) => (
-              <figure class="shot">
-                <div class:list={['frame', `frame-${item.key}`]} aria-hidden="true">
-                  {item.key === 'chat' && (
-                    <>
-                      <div class="col">
-                        <span class="bar" />
-                        <span class="bar short" />
-                        <span class="bar" />
-                      </div>
-                      <div class="col">
-                        <span class="bar" />
-                        <span class="bar" />
-                        <span class="bar short" />
-                        <span class="bar" />
-                      </div>
-                      <div class="col">
-                        <span class="bar short" />
-                        <span class="bar" />
-                      </div>
-                    </>
-                  )}
-                  {item.key === 'team' && (
-                    <>
-                      <span class="chip" />
-                      <span class="chip" />
-                      <span class="chip" />
-                      <span class="chip" />
-                    </>
-                  )}
-                  {item.key === 'bench' && (
-                    <>
-                      <div class="col">
-                        <span class="bar" />
-                        <span class="bar" />
-                        <span class="bar short" />
-                      </div>
-                      <span class="note-block" />
-                    </>
-                  )}
-                </div>
-                <figcaption>
-                  <p class="pending">{copy.shots.pending}</p>
-                  <h3>{item.title}</h3>
-                  <p>{item.body}</p>
-                </figcaption>
-              </figure>
-            ))
+            copy.shots.items.map((item) => {
+              const image = shotImages[item.key];
+              return (
+                <figure class="shot">
+                  <img
+                    src={image.src}
+                    width={image.width}
+                    height={image.height}
+                    loading="lazy"
+                    decoding="async"
+                    alt={item.title}
+                  />
+                  <figcaption>
+                    <h3>{item.title}</h3>
+                    <p>{item.body}</p>
+                  </figcaption>
+                </figure>
+              );
+            })
           }
         </div>
       </section>
