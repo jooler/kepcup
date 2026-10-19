@@ -95,7 +95,6 @@ import {
   taskViewSchema,
   toolEffectSchema,
   effectStatusSchema,
-  budgetSchema,
   conversationSchema,
   customProviderSchema,
   capabilityModelsSchema,
@@ -1321,14 +1320,12 @@ export const profileUpdateInputSchema = z.object({
 export const profileRetractInputSchema = z.object({ id: z.string().min(1) });
 export const profileCardOutputSchema = z.object({ card: profileCardSchema });
 
-// --- usage & budget (P07) ------------------------------------------------------
+// --- usage (P07) ------------------------------------------------------
 
 export const usageSummaryInputSchema = z.object({
   /** Local-day window ending today; default 7. */
   days: z.number().int().min(1).max(90).optional(),
 });
-export const budgetGetOutputSchema = budgetSchema;
-export const budgetUpdateInputSchema = budgetSchema;
 
 // --- embedding (P07) -----------------------------------------------------------
 
@@ -2136,8 +2133,6 @@ export const rpcMethodSchemas = {
   'profile.card': { input: voidInput, output: profileCardOutputSchema },
 
   'usage.summary': { input: usageSummaryInputSchema, output: usageSummaryOutputSchema },
-  'budget.get': { input: voidInput, output: budgetGetOutputSchema },
-  'budget.update': { input: budgetUpdateInputSchema, output: budgetGetOutputSchema },
 
   'embedding.status': { input: voidInput, output: embeddingStatusOutputSchema },
   'embedding.configure': {
@@ -2515,8 +2510,6 @@ const APP_METHODS = [
   'profile.retract',
   'profile.card',
   'usage.summary',
-  'budget.get',
-  'budget.update',
   'embedding.status',
   'embedding.configure',
   'embedding.download',

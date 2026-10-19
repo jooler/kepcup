@@ -11,8 +11,7 @@ import { ledgerPath, writeLedgerEntry, type WikiAssetEntry } from '../../src/wik
 /**
  * D92 T1b WP10 步骤 1：`wiki_remove_source` job（异步托管动作）。入队即时的
  * ACL 快速失败；job 执行真正删除（互斥锁内、wiki_changed 事件）；执行时 ACL
- * 因身份变化失败 → 终结为 done 不重试；负责人后台预算耗尽也不延后（该 job
- * 不调用任何模型）。
+ * 因身份变化失败 → 终结为 done 不重试（该 job 不调用任何模型）。
  */
 
 let stack: TestStack;
@@ -187,42 +186,6 @@ describe('D92 T1b WP10：wiki_remove_source job', () => {
     // 来源原样保留。
     expect(existsSync(ledgerPath(wikiRootOf(project.id), entry.id))).toBe(true);
     expect(existsSync(path.join(wikiRootOf(project.id), entry.rawRelPath))).toBe(true);
-  }, 60_000);
-
-  it('负责人后台预算耗尽也不延后（job 不走模型）', async () => {
-    const settingsBefore = stack.core.services.domain!.settings.get().backgroundBudgetTokens;
-    stack.core.services.domain!.settings.update({ backgroundBudgetTokens: 1 });
-    try {
-      // 预算口径：非 turn/task 的后台用量。给负责人记一笔超额的 reflection 用量。
-      stack.core.services.domain!.usage.record({
-        runId: 'run_budget_seed',
-        botId: lead,
-        conversationId: null,
-        loopType: 'reflection',
-        provider: 'openai',
-        model: 'gpt-test',
-        inputTokens: 100,
-        outputTokens: 0,
-      });
-      expect(stack.core.services.budget).not.toBeNull();
-      expect(stack.core.services.budget!.exceeded(lead)).toBe(true);
-
-      const entry = seedSource(project.id, 'budgetproof', { kind: 'bot', id: memberM });
-      const changed = waitForEvent<{ owner: { kind: string; id: string } }>(
-        stack.core,
-        'wiki_changed',
-        (p) => p.owner.kind === 'project' && p.owner.id === project.id,
-        { timeoutMs: 30_000 },
-      );
-      enqueueRemoval({ sourceId: entry.id, actor: { role: 'lead', botId: lead } });
-      expect(await changed).toEqual({ owner: projectOwner(project.id) });
-      await waitForJobDone(`wiki_remove_source:project:${project.id}:${entry.id}`);
-      expect(existsSync(ledgerPath(wikiRootOf(project.id), entry.id))).toBe(false);
-    } finally {
-      stack.core.services.domain!.settings.update({
-        backgroundBudgetTokens: settingsBefore,
-      });
-    }
   }, 60_000);
 
   it('收尾：剩余 seed 清理后台账为空', async () => {

@@ -36,6 +36,9 @@ export const zhCN = {
   'chats.runFailed': '执行失败：{reason}',
   'chats.setupCustomPlaceholder': '或输入你的回答…',
   'chats.setupCustomSubmit': '提交回答',
+  'chats.setupCustomTag': '自定义',
+  'chats.setupCustomAdd': '添加',
+  'chats.setupMultiSubmit': '提交选中项',
   'chats.setupAnswerFailed': '回答提交失败，请重试',
   // 选中文本钉便签（辅助阅读）
   'chats.pinToConversation': '固定到当前对话',
@@ -723,9 +726,12 @@ export const zhCN = {
   'approvals.egress.since': '读取应用数据自',
   'approvals.egress.allowOnce': '允许一次',
   'approvals.egress.explain':
-    '本对话中该 Bot 读取过连接应用的数据。为防止被注入的指令把数据带出去，外发操作需要你逐次确认；上面是将要发出的完整内容。',
+    '本对话中该 Bot 读取过连接应用的数据。为防止被注入的指令把数据带出去，外发操作需要你逐次确认；上面是将要发出的完整内容。也可以选择更长的允许时长（本对话内一直允许 / 相同命令不再确认），它们只在本对话有效，且应用数据再次读取后需重新确认。',
   'approvals.egress.taintedHint':
     '本对话中该 Bot 读取过连接应用的数据——请特别留意这次操作是否会把这些数据发到外部。',
+  // 污点外发的对话级放行（D73 P2 后续）：bash 通道「本对话内相同命令」
+  'approvals.commandDuration': '本对话内相同命令',
+  'approvals.foldedApprovedCommand': '已允许（本对话内相同命令）',
 
   // --- P06 环境管理器 -------------------------------------------------------------
   'approvals.environmentTitle': '环境安装请求',
@@ -836,9 +842,8 @@ export const zhCN = {
   'settings.profileSaved': '已保存',
   'settings.profileDeleted': '已删除',
 
-  'settings.usageSection': '用量与预算',
-  'settings.usageNote':
-    '按 Bot、loop 类型与本地日期汇总的模型用量（最近 7 天）。预算只约束后台任务；对话响应与路由判断不受限制。',
+  'settings.usageSection': '用量',
+  'settings.usageNote': '按 Bot、loop 类型与本地日期汇总的模型用量（最近 7 天）。',
   'settings.usageEmpty': '最近 7 天没有模型用量。',
   'settings.usageColumnDay': '日期',
   'settings.usageColumnLoop': '类型',
@@ -851,10 +856,6 @@ export const zhCN = {
   'settings.usageColumnAgent': '智能体',
   'settings.usageColumnTurns': '轮数',
   'settings.usageGlobalBots': '（全局任务，无所属 Bot）',
-  'settings.usageExceeded': '已超出今日预算：该 Bot 今天的后台任务已推迟到明天',
-  'settings.budgetLabel': '每个 Bot 每天后台用量上限（token）',
-  'settings.budgetHint': '0 表示不限制；超出后当天不再执行该 Bot 的后台任务。',
-  'settings.budgetSaved': '已保存',
   'usage.loop.triage': '路由判断',
   'usage.loop.reflection': '反思',
   'usage.loop.memory_consolidation': '记忆整理',
@@ -1105,6 +1106,9 @@ export const zhCN = {
   'task.questionFromBot': '{name} 的任务需要你决定',
   'task.questionExpired': '任务已结束，这个问题不再需要回答。',
   'task.questionFreeText': '也可以直接在输入框里回答，Bot 会转给这个任务。',
+  'task.questionCustomTag': '自定义',
+  'task.questionCustomPlaceholder': '输入自定义选项…',
+  'task.questionCustomAdd': '添加',
   'task.answerFailed': '回答没有送达',
   'task.statusOne': '任务「{title}」：{activity}',
   'task.statusMany': '{count} 个任务进行中 · 「{title}」：{activity}',
@@ -1369,6 +1373,12 @@ export const zhCN = {
     '打开窗口查看该 Bot 在当前对话中的页面，可在其中手动登录；关闭窗口后页面回到后台继续执行。',
   'rightPanel.browserWindowTitle': '{name} 的浏览器',
   'rightPanel.browserShowFailed': '无法打开浏览器窗口（页面未打开或已关闭）',
+  // 强制释放（UI 按钮）：Bot 用完没关 / 卡住时，手动释放页面资源
+  'rightPanel.browserClose': '释放浏览器',
+  'rightPanel.browserCloseHint':
+    '强制关闭该 Bot 在当前对话中的浏览器页面并释放资源；登录等会话数据保留。',
+  'rightPanel.browserCloseFailed': '无法释放浏览器页面',
+  'rightPanel.browserCloseUnavailable': '释放功能尚未生效，请重启应用后再试',
   // W8 自动接管：查看窗口工具条
   'rightPanel.browserToolbarAgent': '{name} 正在使用此页面 · 在页面里点击或键入即可接管',
   'rightPanel.browserToolbarUser': '你正在操作 · {name} 的浏览器动作已暂停，完成后请交还',

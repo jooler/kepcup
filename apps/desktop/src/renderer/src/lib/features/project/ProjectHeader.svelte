@@ -13,8 +13,9 @@
   import ProjectTabs from './ProjectTabs.svelte';
 
   /**
-   * 项目组两行实心顶栏（WP6 §4 步骤 4）：左两行（项目名 / 模块 tab），右一行
-   * （成员头像堆叠 + 设置按钮）。整块是拖拽区，交互子元素 no-drag。
+   * 项目组单行实心顶栏（WP6 §4 步骤 4）：左侧（窄屏返回 + 模块 tab），右侧
+   * （成员头像堆叠 + 设置按钮）。header 整块是拖拽区，交互子元素各自 no-drag
+   * （header 矩形先于子元素收集，子元素矩形胜出），剩余空间仍是拖拽区。
    */
   const current = $derived(chat.current);
   const narrow = $derived(narrowLayout.narrow);
@@ -63,41 +64,34 @@
 </script>
 
 <header
-  class="app-drag wco-inset-end flex shrink-0 items-center justify-between gap-3 border-b bg-background py-2 {narrow
+  class="app-drag wco-inset-end flex h-10 shrink-0 items-center justify-between gap-3 border-b bg-background {narrow
     ? isMac
       ? 'pr-3 pl-20'
       : 'px-3'
     : 'px-4'}"
   data-testid="project-header"
 >
-  <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-    <div class="flex min-w-0 items-center gap-1">
-      {#if narrow}
-        <Button
-          variant="ghost"
-          size="icon"
-          class="app-no-drag size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-          onclick={() => chat.leaveCurrent()}
-          aria-label={t('narrow.back')}
-          title={t('narrow.back')}
-          data-testid="narrow-back-button"
-        >
-          <ChevronLeft class="size-5" aria-hidden="true" />
-        </Button>
-      {/if}
-      <h1 class="truncate text-base font-medium" data-testid="project-title">
-        {current?.conversation.title ?? t('project.untitled')}
-      </h1>
-    </div>
-    <!-- tab 行窄屏横向滚动（overflow-x-auto 在 ProjectTabs 根上），不换行。 -->
-    <ProjectTabs {badge} />
-  </div>
+  {#if narrow}
+    <Button
+      variant="ghost"
+      size="icon"
+      class="app-no-drag size-8 shrink-0 cursor-pointer rounded-full text-muted-foreground hover:text-foreground"
+      onclick={() => chat.leaveCurrent()}
+      aria-label={t('narrow.back')}
+      title={t('narrow.back')}
+      data-testid="narrow-back-button"
+    >
+      <ChevronLeft class="size-5" aria-hidden="true" />
+    </Button>
+  {/if}
+  <!-- tab 行：min-w-0 收缩，窄屏时如需横向滚动在 ProjectTabs 根上。 -->
+  <ProjectTabs {badge} />
   <div class="app-no-drag flex shrink-0 items-center gap-2">
     <ProjectMembersMenu />
     <Button
       variant="ghost"
       size="icon"
-      class="size-8 {settingsActive ? 'bg-accent' : ''}"
+      class="size-8 cursor-pointer {settingsActive ? 'bg-accent' : ''}"
       onclick={toggleSettings}
       aria-pressed={settingsActive}
       title={t('project.header.settings')}

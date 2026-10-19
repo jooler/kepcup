@@ -162,7 +162,7 @@ test('project compose: Esc cancels; lead phase needs a lead; pick lead enters me
     await input.press('Enter');
     await expect(view).toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="project-title"]')).toContainText(title, {
+    await expect(activeName).toContainText(title, {
       timeout: 15_000,
     });
     const projects = await projectConversations(page);

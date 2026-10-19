@@ -110,7 +110,9 @@ test('butler proposal confirm: the new bot lands in the sidebar without a restar
     llm.script('mock-main', [
       step().replyToolCall('propose_bot', { bot: PROPOSED_BOT, note: '按你选的方向' }),
     ]);
-    await firstCard.locator('[data-testid="setup-option-1"]').click();
+    // 首问是多选卡：勾一项再提交。
+    await firstCard.locator('[data-testid="setup-question-check-1"]').click();
+    await firstCard.locator('[data-testid="setup-question-submit"]').click();
 
     const card = page.locator(
       '[data-testid^="approval-card-"][data-approval-kind="butler_proposal"]',
@@ -193,7 +195,8 @@ test('butler propose_project: lead can be changed on the card before approving',
           };
           return (
             conversations.find(
-              (conversation) => conversation.type === 'project' && conversation.title === '内容协作组',
+              (conversation) =>
+                conversation.type === 'project' && conversation.title === '内容协作组',
             ) ?? null
           );
         },

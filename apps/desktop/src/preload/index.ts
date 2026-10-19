@@ -91,6 +91,9 @@ const api = {
     title: string,
     labels?: { agent: string; user: string; handback: string },
   ): Promise<void> => ipcRenderer.invoke('browser:show', botId, conversationId, title, labels),
+  /** 强制释放该 (Bot, 对话) 的浏览器页面（接管中也直接关；会话数据保留）。 */
+  closeBotBrowser: (botId: string, conversationId: string): Promise<void> =>
+    ipcRenderer.invoke('browser:close', botId, conversationId),
   /** Open bot browser pages (bot × conversation); pushed on every open / close. */
   getBotBrowserPages: (): Promise<Array<{ botId: string; conversationId: string }>> =>
     ipcRenderer.invoke('browser:pages'),

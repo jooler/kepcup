@@ -60,7 +60,6 @@ function router(
     bot?: Bot;
     ready?: string[];
     withExternal?: boolean;
-    budgetExceeded?: (botId: string) => boolean;
     now?: () => number;
   } = {},
 ) {
@@ -84,7 +83,6 @@ function router(
         status: ready.includes(id) ? 'ready' : 'needs_auth',
         statusDetail: null,
       }) as Pick<AgentView, 'enabled' | 'status' | 'statusDetail'>,
-    ...(options.budgetExceeded !== undefined ? { budgetExceeded: options.budgetExceeded } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
   });
 }
@@ -197,20 +195,12 @@ describe('LlmRouter', () => {
     ).toBeNull();
   });
 
-  it('agent-only degradations: skill authoring opt-in, triage opt-in + budget, off switch', () => {
+  it('agent-only degradations: skill authoring opt-in, triage opt-in, off switch', () => {
     const r = router(CHOSEN);
     expect(r.resolveDefault('skill_authoring')).toBeNull();
     // Agent triage is off by default (projectMentionOnly defaults to on).
     expect(r.resolveDefault('triage')).toBeNull();
     expect(router({ ...CHOSEN, ...TRIAGE_ON }).resolveDefault('triage')).not.toBeNull();
-    // Daily background budget used up: agent triage skipped for that bot.
-    const own = bot({}, { id: 'alpha' });
-    expect(
-      router(TRIAGE_ON, { bot: own, budgetExceeded: () => true }).resolveForBot(own, 'triage'),
-    ).toBeNull();
-    expect(
-      router(TRIAGE_ON, { bot: own, budgetExceeded: () => false }).resolveForBot(own, 'triage'),
-    ).not.toBeNull();
     expect(
       router({
         ...CHOSEN,

@@ -737,8 +737,11 @@
   <!-- 头部：拖拽区 + 搜索/新增。macOS 红绿灯让出左侧空间；win/linux 左上放
        品牌 logo（无背景稿，明暗主题各一，按 html.dark 切换——工作台入口
        图标同口径），搜索/「+」贴右；图标模式下按钮整体隐藏，mac 剩红绿灯
-       拖拽区、win/linux 剩 logo + 三键。 -->
+       拖拽区、win/linux 剩 logo + 三键。
+       win/linux 图标模式（collapsed）连 logo 一起隐藏：头部容器整个不渲染，
+       第一个 Bot 头像顶到上缘。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
+  {#if !isMac || !collapsed}
   <div
     class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
       ? 'wco-inset-end'
@@ -790,6 +793,7 @@
       </Button>
     {/if}
   </div>
+  {/if}
 
   <Sidebar.Content class="px-2">
     <Sidebar.Group>

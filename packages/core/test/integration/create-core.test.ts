@@ -5,6 +5,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCore, createMemoryKeystore, type CoreHarness } from '../../src/index.js';
 import { resolvePaths } from '../../src/infra/paths.js';
+import { migrationTargetVersion } from '../../src/infra/migrate.js';
+import { migrationsUrl } from '../../src/start.js';
 
 const harnesses: CoreHarness[] = [];
 const homes: string[] = [];
@@ -119,8 +121,11 @@ describe('createCore (integration)', () => {
     // origin 加 workbench、todo_id）；0038 = D92 T0-2（projects 改名 workdirs，
     // project_id 改名 workdir_id）；0039 = D92 T1a（删除无法转换的旧群）；
     // 0040 = D92 T1a（conversations 重建：type 'project'、lead_bot_id、goal、
-    // 删 setup_state）；0041 = D92 T1a WP2（chains 删除，episodes 协作回合）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(42);
+    // 删 setup_state）；0041 = D92 T1a WP2（chains 删除，episodes 协作回合）；
+    // 0042 = D92 T1a WP4（todos 执行者列）；0043 = D73 P2 后续（egress_allows）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(
+      migrationTargetVersion(migrationsUrl('main')),
+    );
     const versionColumns = (
       services.mainDb!.prepare('pragma table_info(widget_versions)').all() as Array<{
         name: string;

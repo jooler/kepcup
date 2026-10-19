@@ -275,14 +275,15 @@ export function buildWikiTools(input: {
   }> = {
     name: 'wiki_enqueue',
     description:
-      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 workdir 中的文件路径）。后台维护 loop 会阅读资料、更新页面并提交；这是你自己的知识库整理，完成后无需向用户播报，wiki_search 直接就能检索到新内容。scope 可选：mine（默认，沉淀到你自己的 Wiki）、project（写入项目组共享的项目 wiki——发布到共享空间必须是有意为之）。',
+      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 workdir 中的单个文件路径）。file / attachment 来源必须是单个文件，不能是目录：要入库一个目录，先用 ls 列出其中的文件，再逐文件登记。后台维护 loop 会阅读资料、更新页面并提交；这是你自己的知识库整理，完成后无需向用户播报，wiki_search 直接就能检索到新内容。scope 可选：mine（默认，沉淀到你自己的 Wiki）、project（写入项目组共享的项目 wiki——发布到共享空间必须是有意为之）。',
     parameters: Type.Object({
       source_type: Type.Union(
         ['attachment', 'url', 'file'].map((t) => Type.Literal(t)),
         { description: '来源类型' },
       ),
       ref: Type.String({
-        description: '来源引用：附件 id（att_...）/ 完整 URL / 文件路径',
+        description:
+          '来源引用：附件 id（att_...）/ 完整 URL / 单个文件的路径（目录不能直接入库，先 ls 列出再逐文件登记）',
       }),
       note: Type.String({ description: '一句话说明这份资料是什么、为什么要入库' }),
       scope: Type.Optional(

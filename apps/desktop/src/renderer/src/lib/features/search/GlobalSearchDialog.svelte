@@ -233,7 +233,7 @@
         icon: BarChart3,
         label: t('settings.navUsage'),
         subtitle: parent,
-        keywords: 'usage budget',
+        keywords: 'usage',
         section: 'usage',
       },
       {

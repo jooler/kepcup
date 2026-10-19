@@ -17,6 +17,7 @@ import { openDatabase as openSqlite, type SqliteDatabase } from '../../src/infra
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * WP4 §4.3（D92 T1a）：事项派给项目组总是结构化 @ 实际生效的负责 Bot
@@ -217,7 +218,7 @@ describe('main 0042 assignee_project（WP4 §4.3）', () => {
     ).run();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([42]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(41));
 
     const columns = (
       db.prepare('pragma table_info(todos)').all() as Array<{ name: string }>

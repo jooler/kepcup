@@ -30,6 +30,12 @@
       ? (message.content.options ?? [])
       : [],
   );
+  /** 多选卡（questionMode = 'multi'）：勾选多项 + 自定义输入也成一条，提交合并成一句。 */
+  const multi = $derived(
+    message.kind === 'system_event' &&
+      'questionMode' in message.content &&
+      message.content.questionMode === 'multi',
+  );
 
   // 已答判定：访谈一问一答，本条之后的第一条用户文本消息即本次回答
   //（setupAnswer 标记消息 / 用户在输入框自由输入的普通消息都算）。
@@ -46,6 +52,7 @@
   );
 
   let customText = $state('');
+  let picked = $state<string[]>([]);
   let submitting = $state(false);
 
   async function submit(text: string): Promise<void> {
@@ -64,8 +71,29 @@
     }
   }
 
+  function toggle(option: string): void {
+    picked = picked.includes(option) ? picked.filter((o) => o !== option) : [...picked, option];
+  }
+
+  /** 多选：自定义输入也加为一条选中的条目（与候选一样可勾选 / 取消）。 */
+  function addCustom(): void {
+    const value = customText.trim();
+    if (value === '' || submitting || !interactive) return;
+    if (!picked.includes(value)) picked = [...picked, value];
+    customText = '';
+  }
+
   function submitCustom(): void {
+    if (multi) {
+      addCustom();
+      return;
+    }
     void submit(customText);
+  }
+
+  function submitMulti(): Promise<void> {
+    const ordered = [...options.filter((o) => picked.includes(o)), ...picked.filter((o) => !options.includes(o))];
+    return submit(ordered.join('、'));
   }
 </script>
 
@@ -85,6 +113,67 @@
       <span class="min-w-0 truncate">{answeredText}</span>
       <Check class="size-4 shrink-0 text-primary" aria-hidden="true" />
     </div>
+  {:else if multi}
+    <div class="flex flex-col gap-1.5" data-testid="setup-question-multi">
+      {#each options as option, index (option)}
+        <label
+          class="flex cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm hover:bg-accent"
+        >
+          <input
+            type="checkbox"
+            checked={picked.includes(option)}
+            disabled={submitting}
+            onchange={() => toggle(option)}
+            data-testid={`setup-question-check-${index}`}
+          />
+          <span class="min-w-0 truncate">{option}</span>
+        </label>
+      {/each}
+      {#each picked.filter((o) => !options.includes(o)) as custom (custom)}
+        <label
+          class="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed bg-background px-3 py-2 text-sm hover:bg-accent"
+          data-testid="setup-question-custom-entry"
+        >
+          <input type="checkbox" checked={true} disabled={submitting} onchange={() => toggle(custom)} />
+          <span class="min-w-0 truncate">{custom}</span>
+          <span class="ml-auto shrink-0 text-xs text-muted-foreground"
+            >{t('chats.setupCustomTag')}</span
+          >
+        </label>
+      {/each}
+    </div>
+    <div class="flex items-center gap-2">
+      <Input
+        bind:value={customText}
+        placeholder={t('chats.setupCustomPlaceholder')}
+        disabled={submitting}
+        class="h-9 bg-background"
+        data-testid="setup-custom-input"
+        onkeydown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            addCustom();
+          }
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-9 shrink-0"
+        disabled={submitting || customText.trim().length === 0}
+        onclick={addCustom}
+        aria-label={t('chats.setupCustomAdd')}
+        data-testid="setup-custom-add"
+      >
+        <Check class="size-4" aria-hidden="true" />
+      </Button>
+    </div>
+    <Button
+      class="h-9 shrink-0"
+      disabled={submitting || picked.length === 0}
+      onclick={() => void submitMulti()}
+      data-testid="setup-question-submit">{t('chats.setupMultiSubmit')}</Button
+    >
   {:else}
     <div class="flex flex-col gap-1.5">
       {#each options as option, index (option)}

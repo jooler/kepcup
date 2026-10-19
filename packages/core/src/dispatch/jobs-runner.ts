@@ -18,7 +18,6 @@ import { runProfileCurationJob } from '../memory/profile-curation.js';
 import { runConsolidationJob } from '../memory/consolidation.js';
 import { runVecRebuildJob } from '../memory/vec-rebuild.js';
 import type { MemoryService } from '../memory/service.js';
-import type { BudgetService } from '../usage/budget.js';
 import { runSkillAuthoringJob } from '../skills/authoring.js';
 import type { SkillsService } from '../skills/registry.js';
 import { runWikiIngestJob } from '../wiki/ingest.js';
@@ -62,8 +61,6 @@ export interface JobsRunnerDeps {
   orchestrator: Orchestrator;
   logger: CoreLogger;
   memory: MemoryService;
-  /** P07 per-bot daily background budget (0 = unlimited). */
-  budget: BudgetService;
   /** P08 skills domain (skill_authoring / skill_suggestion consumers). */
   skills?: SkillsService | undefined;
   /** P09 wiki domain (wiki_ingest / wiki_lint / wiki_suggestion consumers). */
@@ -100,8 +97,6 @@ export interface JobsRunnerDeps {
  * (create_skill) both drive the skill generation loop. P09: `wiki_suggestion`
  * registers a `wiki_ingest` job; `wiki_ingest` / `wiki_lint` run the wiki
  * maintenance loop (serialized per bot through the wiki service mutex).
- * Bot-scoped jobs defer to the next local day once the bot's daily background
- * budget is exhausted.
  */
 export class JobsRunner {
   readonly #deps: JobsRunnerDeps;
@@ -159,24 +154,6 @@ export class JobsRunner {
     // One claim per tick keeps the loop responsive to shutdown.
     const job = this.#deps.jobs.claimNext(JOBS_LEFT_PENDING);
     if (!job || this.#inFlight.has(job.id)) return;
-    // 每日预算超出后当天推迟该 Bot 的后台任务（任务 12）。schedule_fire /
-    // event_delivery are priority-1 response triggers, not background loops,
-    // so they are exempt.
-    // A job routed to an external agent is charged to (and gated by) its
-    // owning bot where determinable — a direct chat's summary (审查 C5).
-    const provider = this.#providerFor(job);
-    const budgetBotId = provider.startsWith('agent:') ? this.#routeBotId(job) : job.bot_id;
-    if (
-      !RESPONSE_TRIGGER_JOBS.has(job.type) &&
-      !NO_MODEL_JOBS.has(job.type) &&
-      this.#deps.budget !== undefined &&
-      budgetBotId !== null &&
-      this.#deps.budget.exceeded(budgetBotId)
-    ) {
-      this.#deps.jobs.defer(job.id, this.#deps.budget.nextDayStart());
-      this.#deps.logger.info({ botId: budgetBotId, jobId: job.id }, 'job deferred: daily budget');
-      return;
-    }
     this.#inFlight.add(job.id);
     this.#deps.scheduler.submit({
       // Response triggers (schedule_fire / event_delivery) submit at priority
@@ -184,7 +161,7 @@ export class JobsRunner {
       // background-loop cap (BACKGROUND_LOOP_CONCURRENCY) must not gate a
       // due schedule behind long background loops (BR-P10-004).
       priority: RESPONSE_TRIGGER_JOBS.has(job.type) ? 1 : 2,
-      provider,
+      provider: this.#providerFor(job),
       key: `job:${job.id}`,
       run: async () => {
         try {
@@ -473,8 +450,8 @@ const JOB_PURPOSES: Readonly<Record<string, LlmPurpose>> = {
 
 /**
  * Response-trigger jobs (schedule_fire / event_delivery / D71 delegation_delivery):
- * priority 1 like their run-layer triggers and exempt from the daily background
- * budget — they are not background loops.
+ * priority 1 like their run-layer triggers — they are not background loops
+ * (BR-P10-004).
  */
 const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'schedule_fire',
@@ -483,13 +460,6 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'watch_alert',
   'mail_alert',
 ]);
-
-/**
- * D92 T1b WP10: jobs that run no model at all (file / git work only). Their
- * `bot_id` is attribution, not billing — exempt from the daily background
- * budget so an exhausted lead budget never delays a source removal.
- */
-const NO_MODEL_JOBS: ReadonlySet<string> = new Set(['wiki_remove_source']);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */
 const JOBS_LEFT_PENDING: readonly string[] = [];

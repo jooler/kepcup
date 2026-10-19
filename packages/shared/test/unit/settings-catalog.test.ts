@@ -80,7 +80,6 @@ describe('settings catalog integrity', () => {
       'general.language',
       'general.launch-at-login',
       'background.tasks',
-      'background.budget',
       'unattended.enable',
       'unattended.disable',
       'environment.toolchains',

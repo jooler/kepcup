@@ -11,8 +11,8 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  * P07 e2e (docs/dev/phases/P07-memory.md 测试要求「端到端」): the right-panel
  * memory tab (view / search / edit / private toggle / evidence jump / delete),
  * the "deleted source conversation" evidence state, the settings profile page
- * (curation-produced entry, card preview, edit, delete) and the usage & budget
- * page (per bot/loop/day tokens, budget edit, exceeded hint).
+ * (curation-produced entry, card preview, edit, delete) and the usage page
+ * (per bot/loop/day tokens).
  * Mock data flows through the REAL core stack: the scripted model calls the
  * remember tool; the profile entry comes from the real curation loop
  * (KEPCUP_PROFILE_CURATION_DELAY_MS collapses its merge delay).
@@ -402,7 +402,7 @@ test('profile page: curation entry with contributor, card preview, edit, delete'
   }
 });
 
-test('usage page: per bot/loop/day tokens, budget edit, exceeded hint', async () => {
+test('usage page: per bot/loop/day tokens', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-usage-', '60000');
   const { page, llm } = session;
@@ -448,19 +448,6 @@ test('usage page: per bot/loop/day tokens, budget edit, exceeded hint', async ()
     await expect(
       rows.filter({ hasText: '对话轮' }).locator('[data-testid="usage-entry-tokens"]'),
     ).toHaveText('400 / 100');
-
-    // Budget: the default 200000 is shown; saving a new limit persists.
-    const budgetInput = page.locator('[data-testid="budget-input"]');
-    await expect(budgetInput).toHaveValue('200000');
-    await budgetInput.fill('1');
-    await page.locator('[data-testid="budget-save"]').click();
-    await expect(budgetInput).toHaveValue('1', { timeout: 15_000 });
-
-    // 今日后台用量（5500）>= 1 → the per-bot exceeded hint appears (任务 12).
-    await section.locator('[data-testid="usage-refresh"]').click();
-    await expect(section.locator('[data-testid="usage-exceeded"]')).toBeVisible({
-      timeout: 15_000,
-    });
   } finally {
     await closeSession(session);
   }

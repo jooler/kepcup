@@ -131,3 +131,35 @@ describe('JobsService.cancelPendingByBotInConversation', () => {
     expect(byId.get(otherConv)).toBe('pending');
   });
 });
+
+describe('JobsService.resetRunningToPending（启动恢复）', () => {
+  function statuses(jobs: JobsService): Map<string, string> {
+    const rows = (jobs as unknown as { db: SqliteDatabase }).db
+      .prepare('select id, status from jobs order by id')
+      .all() as Array<{ id: string; status: string }>;
+    return new Map(rows.map((r) => [r.id, r.status]));
+  }
+
+  it('无冲突的 running 行复位为 pending', () => {
+    const jobs = makeJobs();
+    const id = jobs.enqueue({ type: 'wiki_lint', payload: {}, priority: 2, dedupeKey: 'k1' });
+    jobs.claimNext();
+    expect(statuses(jobs).get(id)).toBe('running');
+    jobs.resetRunningToPending();
+    expect(statuses(jobs).get(id)).toBe('pending');
+  });
+
+  it('同 dedupe_key 已有新的 pending 行时不复位（cancelled 让位），启动不再撞 jobs_dedupe', () => {
+    const jobs = makeJobs();
+    const stale = jobs.enqueue({ type: 'wiki_lint', payload: {}, priority: 2, dedupeKey: 'k2' });
+    jobs.claimNext(); // stale → running（崩溃遗留状态）
+    // 启动 wiring 在 reset 之前用同一个 dedupe_key 入队的新行：索引只约束
+    // pending，插入成功——此刻两行同 key，复位 stale 就会 UNIQUE 冲突。
+    const fresh = jobs.enqueue({ type: 'wiki_lint', payload: {}, priority: 2, dedupeKey: 'k2' });
+    expect(fresh).not.toBe(stale);
+    expect(() => jobs.resetRunningToPending()).not.toThrow();
+    const byId = statuses(jobs);
+    expect(byId.get(stale)).toBe('cancelled');
+    expect(byId.get(fresh)).toBe('pending');
+  });
+});

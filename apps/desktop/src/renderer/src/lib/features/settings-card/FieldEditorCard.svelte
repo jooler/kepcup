@@ -13,7 +13,7 @@
 
   /**
    * 目录里字段简单、设置页控件又嵌在大分区里的条目（审查模型、并发、默认智能体、
-   * 开机启动、用量预算）。选项与设置页同一份 store，保存走 `settings.items.apply`
+   * 开机启动）。选项与设置页同一份 store，保存走 `settings.items.apply`
    * （条目级 CAS，与设置页落到同一个 core 服务）。右栏 / 设置页原有分区不用它。
    */
   let {
@@ -45,8 +45,6 @@
         return { agent: settings?.defaultAgentId ?? '' };
       case 'general.launch-at-login':
         return { enabled: settings?.launchAtLogin ?? true };
-      case 'background.budget':
-        return { tokens: settings?.backgroundBudgetTokens ?? 0 };
       default:
         return {};
     }
@@ -58,7 +56,6 @@
   let limit = $state(typeof seeded.limit === 'number' ? seeded.limit : 4);
   let agent = $state(typeof seeded.agent === 'string' ? seeded.agent : '');
   let enabled = $state(seeded.enabled !== false);
-  let tokens = $state(typeof seeded.tokens === 'number' ? seeded.tokens : 0);
   let busy = $state(false);
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   let synced = false;
@@ -72,7 +69,6 @@
     if (typeof current.limit === 'number') limit = current.limit;
     if (typeof current.agent === 'string') agent = current.agent;
     if (typeof current.enabled === 'boolean') enabled = current.enabled;
-    if (typeof current.tokens === 'number') tokens = current.tokens;
   });
 
   const needsAgents = $derived(item.fields.some((field) => field.options === 'agents'));
@@ -98,7 +94,6 @@
       else if (field.name === 'limit') out.limit = limit;
       else if (field.name === 'agent') out.agent = agent;
       else if (field.name === 'enabled') out.enabled = enabled;
-      else if (field.name === 'tokens') out.tokens = tokens;
     }
     return out;
   }
@@ -179,17 +174,6 @@
           <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
         </span>
       </label>
-    {:else if field.name === 'tokens'}
-      <Label for={`${testid}-tokens`}>{t('settings.budgetLabel')}</Label>
-      <input
-        id={`${testid}-tokens`}
-        type="number"
-        min="0"
-        class="flex h-9 w-32 rounded-md border border-input bg-background px-3 py-1 text-sm"
-        bind:value={tokens}
-        data-testid={`${testid}-tokens`}
-      />
-      <p class="text-xs text-muted-foreground">{t('settings.budgetHint')}</p>
     {/if}
   {/each}
   <div class="flex justify-end">

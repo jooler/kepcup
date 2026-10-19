@@ -337,8 +337,7 @@ export const WORKDIR_DEFAULT_PROTECT_RULES = {
   denyRead: ['.env', '.env.*', '*.pem', '*.key', '*.p12', 'id_rsa*'],
   denyWrite: [],
 } as const;
-/** Per-bot daily background-loop token budget default (docs/dev/phases/P07-memory.md 任务 12). */
-export const BACKGROUND_DAILY_BUDGET_DEFAULT = 200_000;
+
 /** Delay before the profile curation job runs, to batch proposals (P07 任务 8). */
 export const PROFILE_CURATION_DELAY_MS = 60_000;
 /** Commitments due within this horizon appear in <my_state> (P07 任务 10). */
@@ -469,6 +468,12 @@ export const BROWSER_NO_PROGRESS_LIMIT = 3;
  * 任何输入即自动交还给 Bot（与「交还给 Bot」按钮、关闭查看窗口同样通知任务）。
  */
 export const BROWSER_USER_CONTROL_IDLE_MS = 600_000;
+/**
+ * 空闲页面自动释放：页面这么久没有任何工具活动、查看窗口没开、控制权在 Bot
+ * 侧，宿主就自动关闭它（释放 WebContentsView 资源；磁盘分区与会话数据保留，
+ * 下次 ensurePage 重开即恢复）。兜底「Bot 用完没调 browser_close 导致页面常驻」。
+ */
+export const BROWSER_PAGE_IDLE_RELEASE_MS = 600_000;
 /** W8: a task gets at most one handback notice per this window (repeated takeovers). */
 export const BROWSER_HANDBACK_COALESCE_MS = 30_000;
 /** W8 共享浏览器资料：名称长度上限。 */
