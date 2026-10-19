@@ -169,6 +169,7 @@ import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { AppToolGrants } from './apps/grants.js';
+import { GitRemoteGrants } from './permissions/git-remote-grants.js';
 import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
@@ -1268,6 +1269,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       );
     }
     const appToolGrants = new AppToolGrants({ db: mainDb, clock });
+    const gitRemoteGrants = new GitRemoteGrants({ db: mainDb, clock });
     // D73 P2 (design 29 §8.3): taint state for egress control; expired rows swept at start.
     const taint = new TaintService({ db: mainDb, clock, settings });
     taint.sweepExpired();
@@ -1613,6 +1615,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // user switched off, or the bot no longer selects, is refused (enabled
       // false) so running tasks stop calling it.
       appGrants: appToolGrants,
+      gitRemoteGrants,
       taint,
       mcpToolDecision: async ({ botId, serverId, toolName, signal }) => {
         // D73 P1: a catalog connection's tool (server id = connection id). Same gates as a
@@ -2564,6 +2567,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         revokeForBot: (botId) => appToolGrants.revokeForBot(botId),
         revokeForBotInConversation: (botId, conversationId) =>
           appToolGrants.revokeForBotInConversation(botId, conversationId),
+      },
+      // git 远程操作的持续授权同上（本对话内 / 对该 Bot）。
+      gitRemoteGrants: {
+        revokeForBot: (botId) => gitRemoteGrants.revokeForBot(botId),
+        revokeForBotInConversation: (botId, conversationId) =>
+          gitRemoteGrants.revokeForBotInConversation(botId, conversationId),
       },
       // D72 P5: kept agent sessions die with their conversation / bot / membership.
       agentSessions: {

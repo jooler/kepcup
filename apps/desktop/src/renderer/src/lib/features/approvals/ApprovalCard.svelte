@@ -144,9 +144,22 @@
     egress !== null ? mcpDurationOptions(egress) : ['once'],
   );
   const egressChoosesDur = $derived(egress !== null && mcpChoosesDuration(egress));
+  /**
+   * git_remote 卡按 `payload.durations` 渲染时长（可持续授权的操作三档：仅这一次 /
+   * 本对话内 / 对该 Bot；其余只有「仅这一次」）。
+   */
+  const gitRemoteDurations = $derived<ApprovalDuration[]>(
+    approval.kind === 'git_remote'
+      ? mcpDurationOptions(approval.payload as { durations?: ApprovalDuration[] })
+      : ['once'],
+  );
+  const gitRemoteChoosesDur = $derived(
+    approval.kind === 'git_remote' &&
+      mcpChoosesDuration(approval.payload as { durations?: ApprovalDuration[] }),
+  );
   /** 卡片是否显示时长选择（access：仅这一次 / 本对话内；agent_tool 路径类；应用工具按 durations）。 */
   const choosesDuration = $derived(
-    access !== null || agentToolDurations || mcpChoosesDur || egressChoosesDur,
+    access !== null || agentToolDurations || mcpChoosesDur || egressChoosesDur || gitRemoteChoosesDur,
   );
 
   $effect(() => {
@@ -266,7 +279,9 @@
           ? clampDuration(duration, mcpDurations)
           : egressChoosesDur
             ? clampDuration(duration, egressDurations)
-            : duration
+            : gitRemoteChoosesDur
+              ? clampDuration(duration, gitRemoteDurations)
+              : duration
         : undefined,
       undefined,
       boundHash,
@@ -351,6 +366,9 @@
       if (picked !== null) duration = picked;
     } else if (egressChoosesDur) {
       const picked = durationForKey(egressDurations, event.key);
+      if (picked !== null) duration = picked;
+    } else if (gitRemoteChoosesDur) {
+      const picked = durationForKey(gitRemoteDurations, event.key);
       if (picked !== null) duration = picked;
     } else if (choosesDuration && event.key === '1') {
       duration = 'once';
@@ -486,6 +504,8 @@
         <span>{title} · {t(foldedApprovedKey(approval.decision.duration))}</span>
       {:else if choosesDuration && approval.decision?.duration === 'conversation'}
         <span>{title} · {t('approvals.foldedApprovedConversation')}</span>
+      {:else if choosesDuration && approval.decision?.duration === 'bot'}
+        <span>{title} · {t('approvals.foldedApprovedBot')}</span>
       {:else if choosesDuration && approval.decision?.duration === 'command'}
         <span>{title} · {t('approvals.foldedApprovedCommand')}</span>
       {:else}
@@ -1234,6 +1254,22 @@
       >
         {t('approvals.gitRemoteRisk')}
       </p>
+      {#if gitRemoteChoosesDur}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each gitRemoteDurations as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if taintedHint}
         <p
           class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"

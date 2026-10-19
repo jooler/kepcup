@@ -21,10 +21,11 @@ import type { AuditService } from '../domain/audit.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { CoreLogger } from '../infra/logger.js';
-import type { ApprovalsService } from '../permissions/approvals.js';
+import type { ApprovalsService, ApprovalOutcome } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
 import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
+import { gitRemoteGrantTarget, type GitRemoteGrants } from '../permissions/git-remote-grants.js';
 import type { WorkdirRuntime } from '../workdir/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
@@ -102,6 +103,11 @@ export interface GatewayDeps {
    * (every `ask` shows a card).
    */
   appGrants?: Pick<AppToolGrants, 'find' | 'create'> | undefined;
+  /**
+   * git 远程操作的持续授权（「本对话内一直允许」/「对该 Bot 总是允许」，push / pull /
+   * fetch 且参数不带选项）。命中即免卡；用户批准时选了时长才落新授权。缺省 = 每次弹卡。
+   */
+  gitRemoteGrants?: Pick<GitRemoteGrants, 'find' | 'create'> | undefined;
   /**
    * D73 P2 污点外发控制（design 29 §8.3）：应用数据读取后置位；外发通道（web_fetch / web_search /
    * 浏览器 / 非只读 MCP 工具 / 沙箱 bash / git_remote）据此降级为逐次确认。缺省 = 不做污点控制。
@@ -241,6 +247,9 @@ export function resolveStandingPath(target: string): string {
 
 /** 破坏性应用工具审批卡展示的完整参数上限（字符；超出截断）。 */
 const MCP_APPROVAL_ARGS_FULL_MAX = 20_000;
+
+/** 可持续授权的 git 远程操作卡上提供的时长（与 mcp_tool 写入档同形；D73 P1）。 */
+const GIT_REMOTE_DURATIONS: ApprovalDuration[] = ['once', 'conversation', 'bot'];
 
 const MCP_RISK_LABELS: Record<McpToolDecision['risk'], string> = {
   read: '只读',
@@ -990,8 +999,12 @@ export class ToolGateway {
   }
 
   /**
-   * `git_remote` (P04): per-operation approval card, then the system git CLI
-   * runs outside the sandbox with the user's own credentials environment.
+   * `git_remote` (P04): an approval card per operation, then the system git CLI
+   * runs outside the sandbox with the user's own credentials environment. A
+   * standing grant (「本对话内一直允许」/「对该 Bot 总是允许」, for push / pull /
+   * fetch with option-free args) skips the card; unattended mode auto-approves
+   * subject to the data-directory floor. Neither mints a grant — only a user
+   * decision with a duration does.
    */
   async gitRemote(
     identity: RunIdentity,
@@ -1007,20 +1020,76 @@ export class ToolGateway {
     if (readOnlyReason !== null) {
       throw new AppError('RUN_READ_ONLY', `${readOnlyReason}（不能执行 git 远程操作）`);
     }
-    return this.#deps.workdirs.gitRemote(identity, input, {
+    const target = gitRemoteGrantTarget(input.operation, input.args);
+    const standingGrant =
+      target !== null && identity.botId !== null
+        ? (this.#deps.gitRemoteGrants?.find({
+            botId: identity.botId,
+            conversationId: identity.conversationId,
+            operation: target.operation,
+            remote: target.remote,
+          }) ?? null)
+        : null;
+    // The closure below writes it; an array defeats the null-flow narrowing.
+    const decided: ApprovalOutcome[] = [];
+    const result = await this.#deps.workdirs.gitRemote(identity, input, {
       signal: options.signal,
       requestApproval: async (payload) => {
-        // D73 P2: git_remote already asks every time — while tainted the card says so.
+        if (standingGrant !== null) return 'approved';
+        // D73 P2: git_remote asks every time unless a standing grant covers it —
+        // while tainted the card says so. Grantable operations offer durations.
         const taint = this.taintOf(identity);
-        const outcome = await this.#deps.approvals.request(
+        const withDurations =
+          target !== null && identity.conversationId !== null
+            ? { ...payload, durations: GIT_REMOTE_DURATIONS }
+            : payload;
+        const decision = await this.#deps.approvals.request(
           identity,
           'git_remote',
-          taint !== null ? { ...payload, tainted: true, taintedSince: taint.firstAt } : payload,
+          taint !== null
+            ? { ...withDurations, tainted: true, taintedSince: taint.firstAt }
+            : withDurations,
           { signal: options.signal },
         );
-        return outcome.decision;
+        decided.push(decision);
+        return decision.decision;
       },
     });
+    const approvedOutcome = decided[0] ?? null;
+    const chosen = approvedOutcome?.approval.decision?.duration;
+    if (
+      standingGrant === null &&
+      approvedOutcome !== null &&
+      approvedOutcome.decision === 'approved' &&
+      approvedOutcome.approval.autoApproved !== true &&
+      target !== null &&
+      identity.botId !== null &&
+      (chosen === 'conversation' || chosen === 'bot')
+    ) {
+      const grantId = this.#deps.gitRemoteGrants?.create({
+        botId: identity.botId,
+        conversationId: chosen === 'conversation' ? identity.conversationId : null,
+        operation: target.operation,
+        remote: target.remote,
+        approvalId: approvedOutcome.approval.id,
+      }).id;
+      this.#deps.logger.info(
+        { grantId, operation: target.operation, remote: target.remote },
+        'git remote standing grant created',
+      );
+    }
+    this.audit(identity, 'git_remote_call', {
+      operation: input.operation,
+      args: this.#deps.secrets.redact(input.args.join(' ')),
+      approvedBy:
+        standingGrant !== null
+          ? 'grant'
+          : approvedOutcome?.approval.autoApproved === true
+            ? 'unattended'
+            : 'user',
+      ...(standingGrant !== null ? { grantId: standingGrant.id } : {}),
+    });
+    return { exitCode: result.exitCode, output: result.output };
   }
 
   /** `{ tainted: true }` for approval payloads raised while the identity is tainted. */

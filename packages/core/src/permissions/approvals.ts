@@ -549,7 +549,7 @@ export class ApprovalsService {
     }
     // D73 duration degradation: a wider choice is honoured only where the card
     // offered it (`payload.durations`). `bot` ("always for this bot") exists for
-    // `mcp_tool` only; `command` (egress: the same bash command again) only for
+    // `mcp_tool` and `git_remote`; `command` (egress: the same bash command again) only for
     // `egress`; `grants` and `agent_tool` never see anything but
     // once | conversation. An unavailable choice degrades to「仅这一次」.
     if (duration === 'bot' || duration === 'conversation' || duration === 'command') {
@@ -558,11 +558,17 @@ export class ApprovalsService {
           approval.kind === 'mcp_tool' ||
           // D73 P2: egress cards offer「允许一次 / 拒绝」plus the payload's
           // durations (conversation / bash-same-command) where the gateway offered them.
-          approval.kind === 'egress') &&
+          approval.kind === 'egress' ||
+          // git_remote 卡按 gateway 提供的 durations（仅这一次 / 本对话内 / 对该 Bot）。
+          approval.kind === 'git_remote') &&
         !offeredDurations(approval.payload).includes(duration)
       ) {
         duration = 'once';
-      } else if (duration === 'bot' && approval.kind !== 'mcp_tool') {
+      } else if (
+        duration === 'bot' &&
+        approval.kind !== 'mcp_tool' &&
+        approval.kind !== 'git_remote'
+      ) {
         duration = 'once';
       } else if (duration === 'command' && approval.kind !== 'egress') {
         duration = 'once';
