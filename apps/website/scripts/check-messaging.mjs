@@ -31,25 +31,25 @@ function requireIn(label, text, needles) {
 
 requireIn('en', en, [
   'Build a team. Only for you.',
-  'Open source is the foundation',
-  'does not replace open source',
-  'not an in-app Bot',
-  'supplement',
+  'OpenMind supplements open source; it does not replace it',
+  'independent implementation',
+  'not an official derivative',
   'Grok Bot',
-  'Muse / Dot',
-  'Rakazo / OpenDots',
+  'Muse',
+  'Rakazo',
+  'OpenDots',
   'GPL-3.0',
 ]);
 
 requireIn('zh', zh, [
   '创建一个团队，只为你服务！',
-  '开源是根基',
-  '不是来取代开源',
-  '不是应用内的 Bot',
-  '补充',
+  'OpenMind 补充开源，而不是取代开源',
+  '独立实现',
+  '不是官方衍生',
   'Grok Bot',
-  'Muse / Dot',
-  'Rakazo / OpenDots',
+  'Muse',
+  'Rakazo',
+  'OpenDots',
   'GPL-3.0',
 ]);
 

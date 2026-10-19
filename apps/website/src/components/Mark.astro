@@ -1,0 +1,32 @@
+---
+/**
+ * KepCup brand mark (bubble + ear bars + center dot), drawn with
+ * currentColor so it adapts to any background and theme.
+ */
+interface Props {
+  size?: number;
+  class?: string;
+}
+
+const { size = 24, class: className } = Astro.props;
+---
+
+<svg
+  class={className}
+  width={size}
+  height={Math.round((size * 311) / 400)}
+  viewBox="56 100 400 311"
+  fill="none"
+  aria-hidden="true"
+>
+  <path
+    d="M 149 111 H 362 A 37 37 0 0 1 399 148 V 300 A 37 37 0 0 1 362 337 H 286 L 192 400 L 214 337 H 149 A 37 37 0 0 1 112 300 V 148 A 37 37 0 0 1 149 111 Z"
+    stroke="currentColor"
+    stroke-width="22"
+    stroke-linejoin="round"
+    stroke-linecap="round"></path>
+  <rect x="56" y="188" width="24" height="73" rx="12" fill="currentColor"></rect>
+  <rect x="432" y="188" width="24" height="73" rx="12" fill="currentColor"></rect>
+  <rect x="168" y="169.5" width="24" height="110" rx="12" fill="currentColor"></rect>
+  <rect x="244" y="177.5" width="91" height="91" rx="45.5" fill="currentColor"></rect>
+</svg>

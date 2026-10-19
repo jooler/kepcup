@@ -7,278 +7,143 @@ export const en = {
   ogLocale: 'en_US',
   metaTitle: 'KepCup — Build a team. Only for you.',
   metaDescription:
-    'KepCup is a local-first multi-Bot assistant. Open source is the foundation. OpenMind supplements it by opening the thinking. Your data stays on your machine.',
+    'KepCup is an open-source team of Bots that runs on your machine: Bots behave like people, all data stays local, and every model provider is yours to choose. Open source, plus open thinking — OpenMind.',
   nav: {
     skip: 'Skip to content',
     docs: 'Docs',
     github: 'GitHub',
     download: 'Download',
     langName: '中文',
-    onThisPage: 'On this page',
     primary: 'Primary',
   },
-  toc: [
-    { href: '#product', label: 'Product' },
-    { href: '#openmind', label: 'OpenMind' },
-    { href: '#why-local', label: 'Why local' },
-    { href: '#dual-loop', label: 'Dual loop' },
-    { href: '#teams', label: 'Project teams' },
-    { href: '#capabilities', label: 'Capabilities' },
-    { href: '#trust', label: 'Trust' },
-    { href: '#download', label: 'Download' },
-    { href: '#looking-for', label: 'Looking for' },
-    { href: '#thanks', label: 'Thanks' },
-  ],
   hero: {
-    eyebrow: 'Local-first multi-Bot · Open source + OpenMind',
-    slogan: 'Build a team. Only for you.',
-    imageAlt: 'The KepCup desktop app',
-    lede: 'KepCup is a desktop app where you create Bots on your machine, give them permissions and a working directory, and they collaborate with you — and with each other — without shipping your data to a host you do not control.',
-    download: 'Download',
-    github: 'View on GitHub',
-    note: 'GPL-3.0 · Bring your own model · A Steward walks you through the first setup.',
+    eyebrow: 'Open source · OpenMind · Fully local',
+    title: 'Build a team. Only for you.',
+    lede: 'KepCup is an open-source desktop app: create a team of Bots on your own machine, and they communicate, work, and report like real teammates — your data never leaves it, and the models are yours to choose.',
+    primary: 'Download KepCup',
+    secondary: 'View on GitHub',
+    note: 'GPL-3.0 · macOS / Windows / Linux · No account',
+    imageAlt:
+      'The KepCup desktop app: a Bot list on the left, a conversation with the Steward and a running task in the middle, and a Bot profile on the right.',
   },
-  shots: {
-    id: 'product',
-    title: 'Where the work sits',
-    lede: 'Three surfaces. Here is how each one looks.',
-    items: [
+  loopBand: {
+    title: 'Bots behave like people',
+    body: 'Hand a task to a human teammate: they reply “Got it, on it”, then do the work, then come back and report. KepCup splits that into two independent loops — one talks, one works.',
+    points: [
+      { title: 'Reply loop', body: 'Second-level responses; read-only, for talking and dispatching.' },
+      { title: 'Task loop', body: 'Real execution; tools and files stay inside the task, and tasks run in parallel.' },
+      { title: 'The settle', body: 'Results return to the conversation, delivered by the Bot.' },
+    ],
+    caption:
+      'Context is injected on demand — only the newest messages and the few most relevant ones. Conversations can grow forever.',
+    imageAlt:
+      'A KepCup conversation: the Bot replies first, dispatches a task, and reports the result back into the conversation.',
+  },
+  crew: {
+    title: 'A team, each in its role',
+    lede: 'Create Bots, give them permissions and a working directory; project teams collaborate, the workbench oversees.',
+    cards: [
       {
-        key: 'chat',
-        title: 'Conversation',
-        body: 'A three-column chat: your Bots, the thread, and the work beside it.',
+        title: 'Project teams, not group chat',
+        body: 'A lead who routes, a shared wiki, a circuit breaker — Bots hand work to each other around a goal.',
+        image: 'team',
+        imageAlt:
+          'The KepCup project page: project goal, lead and member permissions, the working directory, and scheduled tasks.',
       },
       {
-        key: 'team',
-        title: 'Project team',
-        body: 'A shared board for a team that ships work. Not a group chat.',
-      },
-      {
-        key: 'bench',
         title: 'Workbench',
-        body: 'Items you hand to Bots, and memos that stay fleeting notes.',
+        body: 'Items dispatch on schedule with delivery tracked; memos stay fleeting until you promote one.',
+        image: 'bench',
+        imageAlt: 'The KepCup workbench: items assigned to Bots on the left, memos on the right.',
+      },
+      {
+        title: 'Memory and wiki',
+        body: 'A Bot remembers who you are and what it promised; its wiki is its brain — docs, audio, and video all belong in it.',
+        image: 'wiki',
+        imageAlt: 'A KepCup Bot’s wiki tab: the knowledge base the Bot maintains itself.',
+      },
+      {
+        title: 'Connections and extensions',
+        body: 'Connect Notion, Linear, Cloudflare, and friends; skills, MCP, and mail on demand.',
+        image: 'extensions',
+        imageAlt: 'The Extension Center’s connections tab: one-click app authorization for Bots.',
       },
     ],
+  },
+  localBand: {
+    title: 'Fully local. Your models.',
+    body: 'Conversations, memory, wikis, and skills live in an encrypted database on your machine; model calls go straight to the providers you configured. KepCup never sees or stores them.',
+    points: [
+      { title: 'Any provider', body: 'OpenAI-compatible, Ollama, Chinese vendors; every Bot can override.' },
+      { title: 'Subscriptions work', body: 'Claude Code, Codex, and friends join over ACP; credentials never touch KepCup.' },
+      { title: 'You draw the lines', body: 'Sandboxed execution, per-path approval, dangerous commands blocked by default.' },
+    ],
+    chips: ['OpenAI-compatible', 'Ollama', 'Alibaba Bailian', 'Volcano Ark', 'Claude Code', 'Codex', 'Cursor', 'MCP', 'ACP'],
   },
   openMind: {
-    id: 'openmind',
-    title: 'Open source, and an open mind',
+    kicker: 'OpenMind',
+    title: 'Open thinking, not just open code',
     paragraphs: [
-      'KepCup is an OpenMind product. Open source is the foundation: the code is GPL-3.0, free to use and free to read. OpenMind is the necessary supplement in the AI era. It opens the thinking — product intent, the hard problems, and how the modules fit — so someone else can rebuild these ideas, or fold them into their own product, with coding models and agents.',
-      'OpenMind supplements open source. OpenMind does not replace open source. The public line is open source + open mind.',
-      'OpenMind is not an in-app Bot, and it is not a capability you turn on inside a conversation. The Steward that helps you set up the first Bots is a Bot. OpenMind is the decision to publish the thinking next to the code.',
-      `The writing lives in the [repository docs](${links.docs}). Much of the design notes are in Chinese today.`,
+      `In the AI era, code can be rebuilt; thinking is hard to copy. KepCup publishes [40+ design documents and 92 numbered decision records](${links.docs}) next to the GPL-3.0 code — readable, quotable, rebuildable.`,
+      'OpenMind supplements open source; it does not replace it — open source is the foundation, OpenMind is the thinking opened on top of it.',
     ],
-    linkLabel: 'Where we are looking for your OpenMind',
-  },
-  why: {
-    id: 'why-local',
-    title: 'Why local',
-    lede: 'Hosted teammate products are a real category. KepCup is the local-first take on the same job: a team that works for you, with the computer and the data staying yours. This is a contrast of emphasis, not a dismissal.',
-    caption: 'What each product emphasizes. KepCup is an independent implementation.',
-    colPeer: 'Peer',
-    colThem: 'Their emphasis',
-    colUs: 'KepCup’s emphasis',
-    rows: [
-      {
-        peer: 'Grok Bot',
-        them: 'Cloud computer, always on, subscription.',
-        us: 'Runs on your machine. Data stays local. Bring your own model. Auth and sandbox are yours to set.',
-      },
-      {
-        peer: 'Muse / Dot',
-        them: 'Hosted “ask and done”.',
-        us: 'A teammate feel, plus project teams that get work done — not a social chat.',
-      },
-      {
-        peer: 'Rakazo / OpenDots',
-        them: 'Self-hosted, in the Grok Bot direction, with container computers.',
-        us: 'A desktop app: Steward onboarding, a Workbench, and an OpenMind narrative beside the code.',
-      },
-    ],
-  },
-  dual: {
-    id: 'dual-loop',
-    title: 'Dual loop',
-    lede: 'A Bot’s dual loop mirrors how people work. The message list is what you agreed to remember. The reply does not drag the whole raw transcript in as its working context. The task keeps its own tools and files.',
-    steps: [
-      {
-        title: 'Message list',
-        body: 'A long-term, distilled board — the conversation you and the Bot meant to keep.',
-      },
-      {
-        title: 'Reply loop',
-        body: 'Each user message starts an independent reply. It does not stack cumulative raw history as its context.',
-      },
-      {
-        title: 'Task loop',
-        body: 'Tool use, files, and intermediate state stay inside that task, then settle back to the board.',
-      },
-    ],
-    historyTitle: 'One conversation, infinite history',
-    historyBody:
-      'The UI keeps a thin history board. The dual loop injects only the context that turn needs, so a conversation can grow without every reply replaying the entire transcript.',
-  },
-  teams: {
-    id: 'teams',
-    title: 'Project teams, not group chat',
-    lede: 'A project team is not a room where Bots chat. It has three cores, and the point is shipping work.',
-    roles: [
-      {
-        title: 'Centralized communication',
-        body: 'You and the Bots in one place.',
-      },
-      {
-        title: 'Plans and collaboration',
-        body: 'Who owns what, and how work moves.',
-      },
-      {
-        title: 'Shared knowledge and delivery',
-        body: 'A shared wiki, and getting the work done.',
-      },
-    ],
-    roadmap:
-      'Shared message board and project wiki are in. Board, OKR, and date planning are still on the roadmap.',
-  },
-  capabilities: {
-    id: 'capabilities',
-    title: 'What is already in the app',
-    lede: 'A short map of the desktop app as it stands. Items still on the roadmap are called out above, not hidden in this grid.',
-    items: [
-      {
-        title: 'Dual-loop core',
-        body: 'Distilled board, independent reply, separate task loop.',
-      },
-      {
-        title: 'Bots that talk',
-        body: 'Conversation logic, including how Bots communicate with each other.',
-      },
-      {
-        title: 'Bot details',
-        body: 'Config, memory, skills, wiki, and schedules on each Bot.',
-      },
-      {
-        title: 'Your models',
-        body: 'Provider configuration, and multimodal input and output.',
-      },
-      {
-        title: 'Web and browser',
-        body: 'Web access, and a browser a Bot can use.',
-      },
-      {
-        title: 'Mic and camera',
-        body: 'Hardware sensor path for microphone and camera, with permission.',
-      },
-      {
-        title: 'Other agents',
-        body: 'Connect third-party coding agents through ACP when you install them.',
-      },
-      {
-        title: 'Extension Center',
-        body: 'Skills, connections, MCP, and mail — used when a Bot needs them.',
-      },
-      {
-        title: 'Bounds',
-        body: 'Auth, sandbox, unattended mode, and a command allowlist.',
-      },
-      {
-        title: 'Schedules',
-        body: 'One-shot and recurring.',
-      },
-      {
-        title: 'Workbench',
-        body: 'Items you assign to Bots, and memos for fleeting notes.',
-      },
-      {
-        title: 'Project teams',
-        body: 'Shared communication and a project wiki. Board and OKR are still ahead.',
-      },
-    ],
-  },
-  trust: {
-    id: 'trust',
-    title: 'You set the bounds',
-    lede: 'Local-first only matters if the Bot cannot quietly outrun the permissions you gave it.',
-    items: [
-      {
-        title: 'Auth',
-        body: 'A Bot asks before it crosses a line you have not granted.',
-      },
-      {
-        title: 'Sandbox',
-        body: 'Commands run in a sandbox you control.',
-      },
-      {
-        title: 'Unattended',
-        body: 'When you allow it, a Bot can continue without you sitting beside it.',
-      },
-      {
-        title: 'Allowlist',
-        body: 'Dangerous commands stay blocked by default.',
-      },
-    ],
-    note: 'Mid-run permission prompts still interrupt too often. That is an open OpenMind question: fewer interruptions, while dangerous commands stay blocked by default. If you have a better design, it belongs in the discussion below.',
+    cta: 'Read the design docs',
   },
   download: {
-    id: 'download',
-    title: 'Download',
-    lede: 'Installers are published on GitHub Releases for jooler/kepcup. After you install, the app can check for updates itself. There is no account to create on this website.',
+    title: 'Download KepCup',
+    lede: 'Installers are published on GitHub Releases. Install and go; the app updates itself.',
     platforms: [
-      {
-        title: 'macOS',
-        body: 'Disk images for Apple Silicon and Intel. Release builds are signed and notarized when the Apple credentials are configured. An unsigned build is stopped by Gatekeeper, and automatic update needs a signed app.',
-      },
-      {
-        title: 'Windows',
-        body: 'One NSIS installer for x64 and arm64. Without a code-signing certificate, SmartScreen warns on first launch (“Windows protected your PC”) — More info, then Run anyway. Microsoft Store builds, when they are published, are signed by the store.',
-      },
-      {
-        title: 'Linux',
-        body: 'AppImage and deb for x64 and arm64. AppImage updates in place. The deb updater asks for a password through pkexec.',
-      },
+      { name: 'macOS', sub: 'Apple Silicon · Intel', href: links.releases },
+      { name: 'Windows', sub: 'x64 · arm64', href: links.releases },
+      { name: 'Linux', sub: 'AppImage · deb', href: links.releases },
     ],
-    cta: 'GitHub Releases',
-    source: 'Source on GitHub',
-    license: 'GPL-3.0',
+    more: { name: 'Source and license', sub: 'GPL-3.0 · GitHub', href: links.github },
   },
-  looking: {
-    id: 'looking-for',
-    title: 'We are looking for your OpenMind',
-    lede: 'Open an issue, a discussion, or a pull request — especially on these four. This is the OpenMind ask. It is not a feature request form inside the app.',
+  faq: {
+    title: 'FAQs',
     items: [
       {
-        title: 'Better authorization',
-        body: 'Mid-run prompts interrupt too often. We want less interruption while still blocking dangerous commands by default.',
+        q: 'Is KepCup a cloud service?',
+        a: 'No. A desktop app whose core service runs locally — close the window and the Bots keep working. None of our servers take part, and there is no account.',
       },
       {
-        title: 'Multimodal vendor APIs',
-        body: 'Providers disagree. We want one layer in front of them.',
+        q: 'Is my data uploaded anywhere?',
+        a: 'No. Everything lives in an encrypted database under ~/.kepcup/, with the master key in the system keychain. Model calls go straight to the providers you configured.',
       },
       {
-        title: 'Project teams',
-        body: 'Beyond board, OKR, and planning — what else should a team have?',
+        q: 'Which models can I use?',
+        a: 'Any OpenAI-compatible endpoint, Ollama local models, or Chinese vendors — with multimodal capabilities configurable per vendor. KepCup is free; model usage is billed by your provider.',
       },
       {
-        title: 'Workbench',
-        body: 'It should surface work in one place and cut the load of remembering which Bot or team. What is missing?',
+        q: 'How is this different from Grok Bot or Muse?',
+        a: 'It is the local-first take on the same job: they host the team in their cloud, KepCup runs it on your machine. An independent implementation — inspiration credited in the footer.',
+      },
+      {
+        q: 'Can a Bot mess with my computer?',
+        a: 'Not by default: commands run in a sandbox, file access is granted per path, dangerous commands are blocked, and approvals can be revoked anytime.',
       },
     ],
-    issue: 'Open an issue',
-    discussion: 'Start a discussion',
+  },
+  cta: {
+    title: 'Meet your first Bot',
+    lede: 'The Steward walks you through building the initial team.',
+    primary: 'Download free',
+    secondary: 'Read the docs',
   },
   thanks: {
-    id: 'thanks',
-    title: 'Thanks',
-    disclaimer:
-      'KepCup stands on open-source projects and on product ideas we learned from. This note does not imply endorsement or affiliation. Marks and names belong to their owners.',
-    grok: 'Thanks to Grok Bot (xAI / Cursor product line) for product inspiration — conversational Bots, a three-column layout, and a flat UI. KepCup is an independent implementation, not an official derivative or affiliate.',
-    peers: `Ideas were also informed by [Rakazo](${links.rakazo}), [OpenMuse](${links.openmuse}), and [OpenDots](${links.opendots}). They are not runtime dependencies of this repository.`,
-    ossTitle: 'Open-source dependencies',
-    ossNote:
-      'Names and upstream links only. No third-party logos on this site. The repository README keeps the longer tier list.',
+    body: `Thanks to [Grok Bot](https://x.ai/bot) (xAI / Cursor product line) for product inspiration — KepCup is an independent implementation, not an official derivative or affiliate; ideas were also informed by [Rakazo](${links.rakazo}), [OpenMuse](${links.openmuse}), and [OpenDots](${links.opendots}). Marks and names belong to their owners.`,
+    ossNote: 'Open-source dependencies:',
     names: oss,
   },
   footer: {
+    product: 'Resources',
+    community: 'Community',
+    legal: 'Legal',
+    docs: 'Docs',
+    releases: 'Releases',
+    source: 'Source',
+    issues: 'Issues',
+    discussions: 'Discussions',
     privacy: 'Privacy',
     terms: 'Terms',
     license: 'GPL-3.0',
