@@ -184,6 +184,8 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
+  apps/website: {}
+
   packages/app-validator:
     dependencies:
       '@earendil-works/pi-mcp':
