@@ -58,7 +58,6 @@ sequenceDiagram
 与 Bot 的对话，只是沟通的消息列表，用户的指令是什么，关键信息是什么，最终结果是什么，内容本身就很轻量，同时，回复 loop 启动时注入的消息，只提取最近若干条和历史中最相关的若干条，完整的消息历史并不注入。
 
 ```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
 flowchart TB
   Send["用户发送消息"]
 
