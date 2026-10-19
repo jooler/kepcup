@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/out/**',
+      '**/.astro/**',
       '**/node_modules/**',
       '**/*.svelte-check/**',
       'docs/**',

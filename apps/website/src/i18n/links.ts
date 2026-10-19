@@ -1,0 +1,38 @@
+export const links = {
+  github: 'https://github.com/jooler/kepcup',
+  releases: 'https://github.com/jooler/kepcup/releases',
+  docs: 'https://github.com/jooler/kepcup/tree/v0.1.1/docs',
+  issues: 'https://github.com/jooler/kepcup/issues',
+  discussions: 'https://github.com/jooler/kepcup/discussions',
+  license: 'https://github.com/jooler/kepcup/blob/v0.1.1/LICENSE',
+  cloudflarePrivacy: 'https://www.cloudflare.com/privacypolicy/',
+  email: 'mailto:kepcup-app@kepcup.app',
+  rakazo: 'https://github.com/elie222/rakazo',
+  openmuse: 'https://github.com/CopilotKit/OpenMuse',
+  opendots: 'https://github.com/CopilotKit/OpenDots',
+} as const;
+
+/** Names and upstream links only. No third-party logos. */
+export const oss = [
+  { name: 'Electron', href: 'https://github.com/electron/electron' },
+  { name: 'Svelte', href: 'https://svelte.dev' },
+  { name: 'TypeScript', href: 'https://www.typescriptlang.org' },
+  { name: 'Vite', href: 'https://vite.dev' },
+  { name: 'Tailwind CSS', href: 'https://tailwindcss.com' },
+  { name: 'shadcn-svelte', href: 'https://www.shadcn-svelte.com' },
+  { name: 'TipTap', href: 'https://tiptap.dev' },
+  { name: 'Lucide', href: 'https://lucide.dev' },
+  { name: 'pi', href: 'https://github.com/earendil-works/pi' },
+  { name: 'MCP', href: 'https://modelcontextprotocol.io' },
+  { name: 'ACP', href: 'https://agentclientprotocol.com' },
+  { name: 'Anthropic Sandbox Runtime', href: 'https://github.com/anthropics/sandbox-runtime' },
+  { name: 'SQLite', href: 'https://sqlite.org' },
+  { name: 'sqlite-vec', href: 'https://github.com/asg017/sqlite-vec' },
+  { name: 'ONNX Runtime', href: 'https://onnxruntime.ai' },
+  { name: 'Jina Embeddings v2 base-zh', href: 'https://huggingface.co/jinaai/jina-embeddings-v2-base-zh' },
+  { name: 'Zod', href: 'https://zod.dev' },
+  { name: 'electron-builder', href: 'https://github.com/electron-userland/electron-builder' },
+  { name: 'MinerU', href: 'https://github.com/opendatalab/MinerU' },
+  { name: 'Nodemailer', href: 'https://nodemailer.com' },
+  { name: 'es-git', href: 'https://github.com/toss/es-git' },
+] as const;

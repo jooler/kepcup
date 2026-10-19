@@ -1,0 +1,44 @@
+---
+import Base from './Base.astro';
+import Rich from '../components/Rich.astro';
+import type { Copy } from '../i18n/types';
+
+interface Props {
+  copy: Copy;
+  page: Copy['privacy'];
+  currentPath: string;
+  alternatePath: string;
+  homePath: string;
+  privacyPath: string;
+  termsPath: string;
+}
+
+const { copy, page, currentPath, alternatePath, homePath, privacyPath, termsPath } = Astro.props;
+---
+
+<Base
+  copy={copy}
+  currentPath={currentPath}
+  alternatePath={alternatePath}
+  homePath={homePath}
+  privacyPath={privacyPath}
+  termsPath={termsPath}
+  pageTitle={`${page.title} · KepCup`}
+  pageDescription={page.paragraphs[0]}
+>
+  <main id="main">
+    <article class="wrap article">
+      <h1>{page.title}</h1>
+      <p class="updated">{page.updated}</p>
+      <div class="prose">
+        {
+          page.paragraphs.map((paragraph) => (
+            <p>
+              <Rich text={paragraph} />
+            </p>
+          ))
+        }
+      </div>
+    </article>
+  </main>
+</Base>
