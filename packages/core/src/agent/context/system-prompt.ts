@@ -767,7 +767,8 @@ const HOST_POLICY_LINES: ReadonlyArray<{
   },
   {
     tools: ['git_remote'],
-    text: (names) => `与 git 远端交互（push / pull / fetch）用 ${names}，它会处理授权与凭据。`,
+    text: (names) =>
+      `git 远端操作（push / pull / fetch / clone / remote add）一律用 ${names}，例如 operation: "push"、args: ["origin", "main"]。沙箱里没有远端网络与凭据：不要在沙箱内跑 git push / pull / fetch，失败也不要换代理 / SOCKS 或去读钥匙串、~/.config/gh、.tok 等凭据来源——直接改用 ${names}（已授权过的操作会自动放行），它在沙箱外用本机凭据执行。`,
   },
   {
     tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],

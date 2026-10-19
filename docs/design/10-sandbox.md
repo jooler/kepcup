@@ -75,4 +75,4 @@
 ## git
 
 - workdir 中的本地 git 操作（status、diff、commit 等）在沙箱内执行；git 命令行作为宿主层环境按申请流程安装。
-- 远程操作（push / pull / fetch）以及改写 git 配置的操作（`git init`、`git remote add` 等），由核心服务在沙箱外代为执行，每次需用户确认。代为执行时使用用户本机已有的 git 凭据配置，凭据不进入沙箱。
+- 远程操作（push / pull / fetch）以及改写 git 配置的操作（`git init`、`git remote add` 等），由核心服务在沙箱外代为执行（`git_remote` 工具），使用用户本机已有的 git 凭据配置，凭据不进入沙箱——沙箱内没有远端网络与凭据，push / pull / fetch 必然失败，Bot 也不应为绕过它走代理 / SOCKS 或读取凭据来源，而是改用 `git_remote`。每次需用户确认；push / pull / fetch（后续参数不带选项）的审批卡可选「本对话内一直允许 / 对该 Bot 总是允许」，选了即落持续授权（`git_remote_grants`，键为 Bot + 操作 + 远端），命中后免卡（撤销随对话删除 / Bot 删除、移出群级联）；`clone` / `remote_add` / `init` 与带选项（`--force` / `--delete` 等）的调用始终逐次确认。无人值守模式下 git 远程操作按 [13 §无人值守](13-permissions.md) 自动批准（数据目录底线同样适用），但自动批准不落持续授权。

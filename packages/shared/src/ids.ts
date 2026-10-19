@@ -39,6 +39,8 @@ export const ID_PREFIXES = {
   conn: 'conn_',
   /** 应用工具的持续授权（D73，main.db app_tool_grants）。 */
   atg: 'atg_',
+  /** git 远程操作的持续授权（main.db git_remote_grants）。 */
+  grg: 'grg_',
   /** 共享浏览器资料（W8，settings.browserProfiles）。 */
   bpf: 'bpf_',
   /** 确定性监看（W7，main.db watches）。 */

@@ -58,6 +58,16 @@ export interface LifecycleDeps {
       }
     | undefined;
   /**
+   * git 远程操作的持续授权（`git_remote_grants`）：与 app-tool grants 同级联——删除 Bot
+   * 撤销全部，移出项目组撤销该对话范围（Bot 级保留）。No-op when absent.
+   */
+  gitRemoteGrants?:
+    | {
+        revokeForBot(botId: string): number;
+        revokeForBotInConversation(botId: string, conversationId: string): number;
+      }
+    | undefined;
+  /**
    * D73 P2 taint rows (`app_taint`, no foreign keys): a deleted conversation loses all of its
    * rows, a deleted bot the rows of its own direct conversations (its project rows keep the
    * project's taint until they expire). No-op when absent.
@@ -376,6 +386,9 @@ export class LifecycleService {
     this.#cascade('app tool grant bot cascade failed', { botId }, () =>
       this.deps.appGrants?.revokeForBot(botId),
     );
+    this.#cascade('git remote grant bot cascade failed', { botId }, () =>
+      this.deps.gitRemoteGrants?.revokeForBot(botId),
+    );
     this.#cascade('taint bot cascade failed', { botId }, () =>
       this.deps.taint?.deleteForBotInConversations(
         botId,
@@ -560,6 +573,11 @@ export class LifecycleService {
     this.deps.grants.revokeForBotInConversation(botId, conversationId);
     this.#cascade('app tool grant project-removal cascade failed', { botId, conversationId }, () =>
       this.deps.appGrants?.revokeForBotInConversation(botId, conversationId),
+    );
+    this.#cascade(
+      'git remote grant project-removal cascade failed',
+      { botId, conversationId },
+      () => this.deps.gitRemoteGrants?.revokeForBotInConversation(botId, conversationId),
     );
     this.deps.mainDb
       .prepare('update approvals set bot_id = null where bot_id = ? and conversation_id = ?')
