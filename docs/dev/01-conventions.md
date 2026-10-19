@@ -36,6 +36,7 @@ kepcup/
   tsconfig.base.json
   .github/workflows/           # CI（仓库托管在其他平台时按同等内容改写）
   apps/
+    website/                   # 官网（@kepcup/website，Astro 静态站）。公开站点部署到 kepcup.app（Cloudflare Workers 静态资源）。设计见 apps/website/docs/official-site-design.md。kepcup.com 的 /oauth/*、dl.、registry. 不由本包接管。
     desktop/
       electron.vite.config.ts
       electron-builder.yml

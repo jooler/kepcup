@@ -1,0 +1,291 @@
+---
+import Base from '../layouts/Base.astro';
+import Rich from './Rich.astro';
+import type { Copy } from '../i18n/types';
+import { links } from '../i18n/links';
+
+interface Props {
+  copy: Copy;
+  homePath: string;
+  alternatePath: string;
+  privacyPath: string;
+  termsPath: string;
+}
+
+const { copy, homePath, alternatePath, privacyPath, termsPath } = Astro.props;
+
+const comma = copy.hero.slogan.indexOf('，');
+const dot = copy.hero.slogan.indexOf('. ');
+const splitAt = comma >= 0 ? comma : dot;
+const sep = comma >= 0 ? '，' : '. ';
+const lead = splitAt >= 0 ? copy.hero.slogan.slice(0, splitAt) : copy.hero.slogan;
+const rest = splitAt >= 0 ? copy.hero.slogan.slice(splitAt + sep.length) : '';
+---
+
+<Base
+  copy={copy}
+  currentPath={homePath}
+  alternatePath={alternatePath}
+  homePath={homePath}
+  privacyPath={privacyPath}
+  termsPath={termsPath}
+>
+  <main id="main">
+    <div class="wrap">
+      <nav aria-label={copy.nav.onThisPage}>
+        <ul class="toc">
+          {
+            copy.toc.map((item) => (
+              <li>
+                <a href={item.href}>{item.label}</a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+
+      <section class="hero section" aria-labelledby="slogan">
+        <div>
+          <p class="kicker">{copy.hero.eyebrow}</p>
+          <h1 id="slogan">
+            {lead}{splitAt >= 0 ? sep : ''}{rest ? <span class="emphasis">{rest}</span> : null}
+          </h1>
+          <p class="lede">{copy.hero.lede}</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="#download">{copy.hero.download}</a>
+            <a class="btn btn-ghost" href={links.github} rel="noopener noreferrer">{copy.hero.github}</a>
+          </div>
+          <p class="note">{copy.hero.note}</p>
+        </div>
+        <img class="hero-mark" src="/brand/KepCup.svg" width="512" height="512" alt="" />
+      </section>
+
+      <section class="section" id={copy.shots.id} aria-labelledby="shots-title">
+        <h2 id="shots-title">{copy.shots.title}</h2>
+        <p class="lede">{copy.shots.lede}</p>
+        <div class="shots">
+          {
+            copy.shots.items.map((item) => (
+              <figure class="shot">
+                <div class:list={['frame', `frame-${item.key}`]} aria-hidden="true">
+                  {item.key === 'chat' && (
+                    <>
+                      <div class="col">
+                        <span class="bar" />
+                        <span class="bar short" />
+                        <span class="bar" />
+                      </div>
+                      <div class="col">
+                        <span class="bar" />
+                        <span class="bar" />
+                        <span class="bar short" />
+                        <span class="bar" />
+                      </div>
+                      <div class="col">
+                        <span class="bar short" />
+                        <span class="bar" />
+                      </div>
+                    </>
+                  )}
+                  {item.key === 'team' && (
+                    <>
+                      <span class="chip" />
+                      <span class="chip" />
+                      <span class="chip" />
+                      <span class="chip" />
+                    </>
+                  )}
+                  {item.key === 'bench' && (
+                    <>
+                      <div class="col">
+                        <span class="bar" />
+                        <span class="bar" />
+                        <span class="bar short" />
+                      </div>
+                      <span class="note-block" />
+                    </>
+                  )}
+                </div>
+                <figcaption>
+                  <p class="pending">{copy.shots.pending}</p>
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                </figcaption>
+              </figure>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="section" id={copy.openMind.id} aria-labelledby="openmind-title">
+        <h2 id="openmind-title">{copy.openMind.title}</h2>
+        <div class="prose">
+          {
+            copy.openMind.paragraphs.map((paragraph) => (
+              <p>
+                <Rich text={paragraph} />
+              </p>
+            ))
+          }
+          <p><a href="#looking-for">{copy.openMind.linkLabel}</a></p>
+        </div>
+      </section>
+
+      <section class="section" id={copy.why.id} aria-labelledby="why-title">
+        <h2 id="why-title">{copy.why.title}</h2>
+        <p class="lede">{copy.why.lede}</p>
+        <div class="table-wrap">
+          <table class="compare">
+            <caption>{copy.why.caption}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{copy.why.colPeer}</th>
+                <th scope="col">{copy.why.colThem}</th>
+                <th scope="col">{copy.why.colUs}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {
+                copy.why.rows.map((row) => (
+                  <tr>
+                    <th scope="row" data-label={copy.why.colPeer}>
+                      {row.peer}
+                    </th>
+                    <td data-label={copy.why.colThem}>{row.them}</td>
+                    <td data-label={copy.why.colUs}>{row.us}</td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" id={copy.dual.id} aria-labelledby="dual-title">
+        <h2 id="dual-title">{copy.dual.title}</h2>
+        <p class="lede">{copy.dual.lede}</p>
+        <ol class="steps">
+          {
+            copy.dual.steps.map((step, index) => (
+              <li class="step">
+                <p class="kicker">{String(index + 1).padStart(2, '0')}</p>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+              </li>
+            ))
+          }
+        </ol>
+        <div class="history">
+          <h3>{copy.dual.historyTitle}</h3>
+          <p>{copy.dual.historyBody}</p>
+        </div>
+      </section>
+
+      <section class="section" id={copy.teams.id} aria-labelledby="teams-title">
+        <h2 id="teams-title">{copy.teams.title}</h2>
+        <p class="lede">{copy.teams.lede}</p>
+        <ul class="roles">
+          {
+            copy.teams.roles.map((role) => (
+              <li class="role">
+                <h3>{role.title}</h3>
+                <p>{role.body}</p>
+              </li>
+            ))
+          }
+        </ul>
+        <p class="roadmap">{copy.teams.roadmap}</p>
+      </section>
+
+      <section class="section" id={copy.capabilities.id} aria-labelledby="cap-title">
+        <h2 id="cap-title">{copy.capabilities.title}</h2>
+        <p class="lede">{copy.capabilities.lede}</p>
+        <ul class="cap-grid">
+          {
+            copy.capabilities.items.map((item) => (
+              <li class="card">
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </li>
+            ))
+          }
+        </ul>
+      </section>
+
+      <section class="section" id={copy.trust.id} aria-labelledby="trust-title">
+        <h2 id="trust-title">{copy.trust.title}</h2>
+        <p class="lede">{copy.trust.lede}</p>
+        <ul class="trust-grid">
+          {
+            copy.trust.items.map((item) => (
+              <li class="trust-item">
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </li>
+            ))
+          }
+        </ul>
+        <p class="callout">{copy.trust.note}</p>
+      </section>
+
+      <section class="section" id={copy.download.id} aria-labelledby="download-title">
+        <h2 id="download-title">{copy.download.title}</h2>
+        <p class="lede">{copy.download.lede}</p>
+        <ul class="platforms">
+          {
+            copy.download.platforms.map((item) => (
+              <li class="platform">
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </li>
+            ))
+          }
+        </ul>
+        <div class="actions">
+          <a class="btn btn-primary" href={links.releases} rel="noopener noreferrer">{copy.download.cta}</a>
+          <a class="btn btn-ghost" href={links.github} rel="noopener noreferrer">{copy.download.source}</a>
+          <a class="btn btn-ghost" href={links.license} rel="noopener noreferrer">{copy.download.license}</a>
+        </div>
+      </section>
+
+      <section class="section" id={copy.looking.id} aria-labelledby="looking-title">
+        <h2 id="looking-title">{copy.looking.title}</h2>
+        <p class="lede">{copy.looking.lede}</p>
+        <ol class="questions">
+          {
+            copy.looking.items.map((item) => (
+              <li class="question">
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </li>
+            ))
+          }
+        </ol>
+        <div class="actions">
+          <a class="btn btn-primary" href={links.issues} rel="noopener noreferrer">{copy.looking.issue}</a>
+          <a class="btn btn-ghost" href={links.discussions} rel="noopener noreferrer">{copy.looking.discussion}</a>
+        </div>
+      </section>
+
+      <section class="section" id={copy.thanks.id} aria-labelledby="thanks-title">
+        <h2 id="thanks-title">{copy.thanks.title}</h2>
+        <p class="disclaimer">{copy.thanks.disclaimer}</p>
+        <p>{copy.thanks.grok}</p>
+        <p class="peers"><Rich text={copy.thanks.peers} /></p>
+        <h3>{copy.thanks.ossTitle}</h3>
+        <p class="oss-note">{copy.thanks.ossNote}</p>
+        <ul class="oss">
+          {
+            copy.thanks.names.map((item) => (
+              <li>
+                <a href={item.href} rel="noopener noreferrer">
+                  {item.name}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </section>
+    </div>
+  </main>
+</Base>
