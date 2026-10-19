@@ -36,7 +36,7 @@ kepcup/
   tsconfig.base.json
   .github/workflows/           # CI（仓库托管在其他平台时按同等内容改写）
   apps/
-    website/                   # 官网脚手架（@kepcup/website）：营销界面未实现；部署目标 kepcup.com（Cloudflare Pages，以后）。设计见 apps/website/docs/official-site-design.md
+    website/                   # 官网（@kepcup/website，Astro 静态站）。公开站点部署到 kepcup.app（Cloudflare Workers 静态资源）。设计见 apps/website/docs/official-site-design.md。kepcup.com 的 /oauth/*、dl.、registry. 不由本包接管。
     desktop/
       electron.vite.config.ts
       electron-builder.yml
@@ -126,7 +126,6 @@ kepcup/
 | 画像条目 | `prf_` | |
 | 工作目录 | `wkd_` | |
 | 授权 | `grt_` | |
-| git 远程操作持续授权 | `grg_` | |
 | 审批请求 | `apr_` | |
 | 定时任务 | `sch_` | |
 | 技能（库中版本） | `skl_` | |

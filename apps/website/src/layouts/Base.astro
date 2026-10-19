@@ -1,0 +1,76 @@
+---
+import '../styles/global.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import type { Copy } from '../i18n/types';
+
+interface Props {
+  copy: Copy;
+  currentPath: string;
+  alternatePath: string;
+  homePath: string;
+  privacyPath: string;
+  termsPath: string;
+  pageTitle?: string;
+  pageDescription?: string;
+}
+
+const {
+  copy,
+  currentPath,
+  alternatePath,
+  homePath,
+  privacyPath,
+  termsPath,
+  pageTitle,
+  pageDescription,
+} = Astro.props;
+
+const title = pageTitle ?? copy.metaTitle;
+const description = pageDescription ?? copy.metaDescription;
+const canonical = new URL(currentPath, Astro.site);
+const enPath = copy.locale === 'en' ? currentPath : alternatePath;
+const zhPath = copy.locale === 'zh' ? currentPath : alternatePath;
+const ogImage = new URL('/brand/og.png', Astro.site);
+---
+
+<!doctype html>
+<html lang={copy.htmlLang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="en" href={new URL(enPath, Astro.site)} />
+    <link rel="alternate" hreflang="zh-CN" href={new URL(zhPath, Astro.site)} />
+    <link rel="alternate" hreflang="x-default" href={new URL(enPath, Astro.site)} />
+    <meta name="theme-color" content="#37005C" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content={copy.ogLocale} />
+    <meta property="og:locale:alternate" content={copy.locale === 'en' ? 'zh_CN' : 'en_US'} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <link rel="icon" href="/brand/KepCup.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch.png" />
+  </head>
+  <body>
+    <Nav copy={copy} homePath={homePath} alternatePath={alternatePath} />
+    <slot />
+    <Footer
+      copy={copy}
+      privacyPath={privacyPath}
+      termsPath={termsPath}
+      alternatePath={alternatePath}
+    />
+  </body>
+</html>

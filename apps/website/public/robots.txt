@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kepcup.app/sitemap-index.xml

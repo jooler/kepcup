@@ -1,11 +1,13 @@
 # KepCup Official Website Design Plan
 
-Status: Approved direction by Pengfei (2026-10-19). Implementation of the marketing UI may follow; this document is the source of truth for IA and messaging.
+Status: Approved direction by Pengfei (2026-10-19). The marketing UI in this package implements the v1 information architecture below.
+
+Public site: **https://kepcup.app** (Cloudflare Workers static assets, Worker name `kepcup-website`).
 
 ## Goals
 
-- Light marketing single-page site (EN default + Chinese switch), hosted on **kepcup.com**.
-- Primary conversion: **Download + GitHub** (adjust to Waitlist if repo still private).
+- Light marketing single-page site (EN default + Chinese at `/zh/`), hosted on **kepcup.app**.
+- Primary conversion: **Download + GitHub**.
 - Narrative aligned with root README; OpenMind emphasized as messaging layer, **not** an in-app Bot feature.
 - Local-first, open-source + OpenMind, BYO models — not a cloud-subscription funnel like hosted teammates.
 
@@ -35,51 +37,49 @@ Include: Grok Bot, Muse / Dot, Rakazo / OpenDots (personal/team Bot assistants).
 
 ## Domain & infra
 
-- Prefer unify brand on **kepcup.com** (oauth / dl. / registry. already there). `kepcup.app` in README currently does not resolve — either fix DNS or use as redirect only.
-- Apex: Cloudflare Pages (or Workers Assets). Do **not** break `/oauth/*`, `dl.`, `registry.`.
+- Public marketing site: **kepcup.app**, confirmed purchased and on Cloudflare (2026-10-19). Prefer kepcup.app over kepcup.com for the public site.
+- Apex is a Workers static-asset deploy (`apps/website/wrangler.jsonc`), not a Cloudflare Pages project. `workers.dev` is disabled.
+- **kepcup.com stays the OAuth / download / registry host.** Do not move or replace `/oauth/*`, `dl.kepcup.com`, or `registry.kepcup.com`. Those Workers live under `infra/cloudflare/` and assume the kepcup.com zone. Desktop package metadata may already say `kepcup.app`; this site does not retarget those other packages.
+- `www.kepcup.app` is not a second site. Redirect it to the apex with a zone rule if you want both names.
 
 ## Information architecture (v1)
 
-1. Nav — Logo, Docs, GitHub, Download, EN/中文  
-2. Hero — Slogan + one-line what (local multi-Bot / OpenMind); CTA Download + GitHub  
-3. Product shots — three-column chat / project team board / workbench (new screenshots needed)  
-4. OpenMind — open source foundation + open thinking supplement; link to “looking for”  
-5. Why local — honest contrast to hosted teammates (no disparagement)  
-6. Dual loop + one conversation infinite history  
-7. Project teams — three core roles; boards/OKRs/planning still roadmap  
-8. Capability grid — 8–12 items from Done roadmap  
-9. Trust — auth, sandbox, unattended, allowlist; honest that auth nagging is an open OpenMind question  
-10. Download — platform matrix; signing / SmartScreen notes; GitHub Releases  
-11. Looking for OpenMind — four questions → Issues/Discussions  
-12. Thanks — text thanks to Grok Bot; OSS name matrix (no unauthorized logos)  
-13. Footer — GPL-3.0, Privacy, Terms, language, GitHub  
+1. Nav — Logo, Docs, GitHub, Download, EN/中文
+2. Hero — Slogan + one-line what (local multi-Bot / OpenMind); CTA Download + GitHub
+3. Product shots — three-column chat / project team board / workbench (placeholders until real screenshots exist)
+4. OpenMind — open source foundation + open thinking supplement; link to “looking for”
+5. Why local — honest contrast to hosted teammates (no disparagement)
+6. Dual loop + one conversation infinite history
+7. Project teams — three core roles; boards/OKRs/planning still roadmap
+8. Capability grid — 12 items from the Done roadmap
+9. Trust — auth, sandbox, unattended, allowlist; honest that auth nagging is an open OpenMind question
+10. Download — platform matrix; signing / SmartScreen notes; GitHub Releases `jooler/kepcup`
+11. Looking for OpenMind — four questions → Issues/Discussions
+12. Thanks — text thanks to Grok Bot; OSS name matrix (no unauthorized logos)
+13. Footer — GPL-3.0, Privacy, Terms, language, GitHub
 
-Phase-2 pages: `/download`, `/privacy`, `/terms` (privacy recommended in v1 — OAuth already references it).
+Also in v1: `/privacy` and `/terms` (and `/zh/privacy`, `/zh/terms`). A separate `/download` page is not required; Download jumps to the section and then to GitHub Releases.
 
 ## Visual
 
-- Existing: bubble SVG (`#37005C`), sidebar light/dark icons.  
-- Missing: horizontal wordmark, OG image, marketing screenshots.  
-- Do **not** place unauthorized Grok Bot logos.  
-- Site may use brand purple as accent; product UI stays neutral/flat (D46). Avoid looking like a Grok Bot skin clone.
+- Existing: bubble SVG (`#37005C`), sidebar light/dark icons, copied into `public/brand/`.
+- Missing: horizontal wordmark (the site sets the name in text next to the glyph), marketing screenshots (CSS placeholders until then).
+- OG image: `public/brand/og.png` (generated card, not a third-party logo).
+- Do **not** place unauthorized Grok Bot logos.
+- Site uses brand purple as accent. Flat and editorial, not a Grok Bot skin clone. Product UI stays neutral/flat (D46).
 
-## Tech suggestions (not mandatory for scaffold)
+## Tech
 
-- Cloudflare Pages + Astro (or SvelteKit static) + EN default / zh-CN.  
-- Analytics: Cloudflare Web Analytics.  
-- No heavy CMS / account system in v1.
+- Astro static output (`output: 'static'`), no Cloudflare adapter, no server routes.
+- EN at `/`, Chinese at `/zh/` (Astro i18n, default locale not prefixed).
+- No analytics snippet in v1. No CMS. No accounts.
+- Deploy notes: [../README.md](../README.md).
 
 ## Open decisions (for Pengfei)
 
-1. Confirm kepcup.com vs kepcup.app  
-2. Same-day public GitHub + site?  
-3. Download vs Waitlist CTA  
-4. Desktop EN i18n milestone vs site-first EN  
-5. Community: GitHub only vs Discord/WeChat  
-6. Who implements Pages deploy
-
-## Scaffold expectations for this package
-
-- `apps/<site-package>/` monorepo package (name chosen to match repo conventions, e.g. `website` or `site`).  
-- `docs/` under that package holding this design plan (and short README pointing to it).  
-- Minimal package scaffolding so the workspace knows the package exists; full marketing UI can come later unless already trivial.
+1. **Decided:** public site is kepcup.app. kepcup.com remains oauth / dl / registry.
+2. Same-day public GitHub + site?
+3. **Decided for v1:** Download + GitHub, not a waitlist.
+4. Desktop EN i18n milestone vs site-first EN — the site ships EN + zh; the desktop app is unchanged.
+5. Community: GitHub only vs Discord/WeChat — v1 links Issues and Discussions only.
+6. **Decided:** Pengfei deploys from a credentialed machine after this package is ready. The agent does not deploy.

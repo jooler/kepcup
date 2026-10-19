@@ -255,6 +255,7 @@ The default sandbox is Anthropic Sandbox Runtime. Platforms may also use [Lima](
 ```text
 kepcup/
 ├── apps/desktop/     # Electron desktop app (product entry)
+├── apps/website/     # Official marketing site (kepcup.app)
 ├── packages/core/    # Business logic & data (separate process)
 ├── packages/shared/  # Cross-process contracts & types
 ├── packages/testkit/ # Test infrastructure
