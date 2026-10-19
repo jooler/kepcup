@@ -131,8 +131,8 @@ export class JobsService {
   }
 
   /**
-   * Pushes a claimed job back to pending with a later run_after (P07: budget
-   * deferral to the next day; vec rebuild waiting for a ready embedder).
+   * Pushes a claimed job back to pending with a later run_after
+   * (vec rebuild waiting for a ready embedder).
    */
   defer(id: string, runAfter: number): void {
     this.db
@@ -165,9 +165,20 @@ export class JobsService {
 
   /** Startup recovery + cancel support. Returns the number of affected rows. */
   resetRunningToPending(): number {
+    // 上次会话崩溃遗留的 running 行复位为 pending；但同 dedupe_key 已有新的
+    // pending 行时（启动 wiring 在本调用之前入队）不能复位——部分唯一索引
+    // jobs_dedupe（unique on dedupe_key where pending）会拒绝，整个 core 启动
+    // 失败。这类行是新行的重复，置 cancelled 让出 dedupe 名额。
     const result = this.db
       .prepare(
-        `update jobs set status = case when attempts >= ${JOB_MAX_ATTEMPTS} then 'failed' else 'pending' end, updated_at = ? where status = 'running'`,
+        `update jobs set status = case
+           when attempts >= ${JOB_MAX_ATTEMPTS} then 'failed'
+           when dedupe_key is not null and exists (
+             select 1 from jobs other
+             where other.dedupe_key = jobs.dedupe_key and other.status = 'pending'
+           ) then 'cancelled'
+           else 'pending'
+         end, updated_at = ? where status = 'running'`,
       )
       .run(this.clock.now());
     return result.changes;

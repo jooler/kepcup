@@ -1,13 +1,10 @@
 <script lang="ts">
   import type { UsageSummaryEntry } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
-  import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
 
   const LOOP_KEYS: Record<UsageSummaryEntry['loopType'], MessageKey> = {
     triage: 'usage.loop.triage',
@@ -25,22 +22,12 @@
     voice_input: 'usage.loop.voice_input',
   };
 
-  let budgetTokens = $state<number | null>(null);
-  let budgetDraft = $state('');
   let entries = $state<UsageSummaryEntry[]>([]);
   let loading = $state(false);
-  let savingBudget = $state(false);
 
   $effect(() => {
     void refresh();
   });
-
-  /** Local calendar date in the same shape the core reports (YYYY-MM-DD). */
-  function todayKey(): string {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    }).format(new Date());
-  }
 
   function botName(botId: string | null): string {
     if (botId === null) return t('settings.usageGlobalBots');
@@ -49,12 +36,10 @@
   }
 
   /**
-   * Bot rows in bot-then-name order; background usage vs the budget mirrors
-   * BudgetService (turns, tasks, voice input and built-in triage never count; agent rows
-   * are listed separately).
+   * Bot rows in bot-then-name order (subscription / external-agent usage is
+   * listed separately per D72 P5).
    */
   const botRows = $derived.by(() => {
-    const today = todayKey();
     const ids = [...new Set(entries.map((entry) => entry.botId ?? ''))];
     return ids
       .map((id) => {
@@ -64,15 +49,6 @@
         const agentRows = all
           .filter((entry) => entry.agentId !== undefined)
           .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-        const backgroundToday = rows
-          .filter(
-            (entry) =>
-              entry.date === today && entry.loopType !== 'turn' &&
-                entry.loopType !== 'task' &&
-                entry.loopType !== 'voice_input' &&
-                entry.loopType !== 'triage',
-          )
-          .reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0);
         return {
           botId: id === '' ? null : id,
           name: botName(id === '' ? null : id),
@@ -80,8 +56,6 @@
             a.date < b.date ? 1 : a.date > b.date ? -1 : a.loopType < b.loopType ? -1 : 1,
           ),
           agentRows,
-          backgroundToday,
-          exceeded: budgetTokens !== null && budgetTokens > 0 && backgroundToday >= budgetTokens,
         };
       })
       .sort((a, b) =>
@@ -92,36 +66,12 @@
   async function refresh(): Promise<void> {
     loading = true;
     try {
-      const [summary, budget] = await Promise.all([
-        core.call('usage.summary', { days: 7 }) as Promise<{ entries: UsageSummaryEntry[] }>,
-        core.call('budget.get') as Promise<{ tokens: number }>,
-      ]);
+      const summary = (await core.call('usage.summary', {
+        days: 7,
+      })) as { entries: UsageSummaryEntry[] };
       entries = summary.entries;
-      // 编辑中的草稿不被刷新覆盖（慢返回的旧值会顶掉刚保存的新值）：
-      // draft 仍等于上次已知预算（或首次加载前的空态）时视为未编辑，才允许
-      // 跟随服务端值。
-      if (budgetTokens === null || budgetDraft === String(budgetTokens)) {
-        budgetDraft = String(budget.tokens);
-      }
-      budgetTokens = budget.tokens;
     } finally {
       loading = false;
-    }
-  }
-
-  async function saveBudget(): Promise<void> {
-    const parsed = Number.parseInt(budgetDraft, 10);
-    if (!Number.isInteger(parsed) || parsed < 0) return;
-    savingBudget = true;
-    try {
-      const result = (await core.call('budget.update', { tokens: parsed })) as { tokens: number };
-      budgetTokens = result.tokens;
-      budgetDraft = String(result.tokens);
-      toast.success(t('settings.budgetSaved'));
-    } catch {
-      toast.error(t('common.actionFailed'));
-    } finally {
-      savingBudget = false;
     }
   }
 
@@ -159,30 +109,6 @@
   </div>
   <p class="text-xs text-muted-foreground">{t('settings.usageNote')}</p>
 
-  <div class="flex flex-wrap items-end gap-3" data-testid="budget-editor">
-    <div class="grid gap-1.5">
-      <Label for="budget-tokens">{t('settings.budgetLabel')}</Label>
-      <Input
-        id="budget-tokens"
-        type="number"
-        min="0"
-        class="w-40"
-        bind:value={budgetDraft}
-        data-testid="budget-input"
-      />
-    </div>
-    <Button
-      variant="outline"
-      size="sm"
-      disabled={savingBudget}
-      onclick={() => void saveBudget()}
-      data-testid="budget-save"
-    >
-      {t('common.save')}
-    </Button>
-    <p class="text-xs text-muted-foreground">{t('settings.budgetHint')}</p>
-  </div>
-
   {#if loading && entries.length === 0}
     <p class="text-sm text-muted-foreground" data-testid="usage-loading">…</p>
   {:else if entries.length === 0}
@@ -195,14 +121,6 @@
         <div class="rounded-md border p-3" data-testid={`usage-bot-${row.botId ?? 'global'}`}>
           <div class="flex flex-wrap items-center gap-2">
             <span class="text-sm font-medium" data-testid="usage-bot-name">{row.name}</span>
-            {#if row.exceeded}
-              <span
-                class="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-                data-testid="usage-exceeded"
-              >
-                {t('settings.usageExceeded')}
-              </span>
-            {/if}
           </div>
           {#if row.rows.length > 0}
             <table class="mt-2 w-full text-left text-xs">

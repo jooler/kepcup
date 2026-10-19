@@ -1,4 +1,4 @@
-import { AppError, BROWSER_USER_CONTROL_IDLE_MS } from '@kepcup/shared';
+import { AppError, BROWSER_PAGE_IDLE_RELEASE_MS, BROWSER_USER_CONTROL_IDLE_MS } from '@kepcup/shared';
 
 /**
  * Electron-free parts of W8（todo/borrowings-from-personal-agents.md W8）, unit
@@ -133,6 +133,41 @@ export function userControlError(): AppError {
     '用户正在浏览器窗口里操作这个页面，Bot 的动作暂停，等用户交还',
     { phase: 'pre' },
   );
+}
+
+// --- 空闲页面自动释放 -----------------------------------------------------------
+
+/** The sweep's view of one page (BrowserHost maps PageEntry onto this). */
+export interface IdleReleaseView {
+  /** pairKey(botId, conversationId). */
+  key: string;
+  closed: boolean;
+  /** Last tool activity (ensurePage / action / snapshot / screenshot). */
+  lastUsedAt: number;
+  /** A visible viewer window exists for the page. */
+  viewerOpen: boolean;
+  control: PageControl;
+}
+
+/**
+ * 空闲页面自动释放的候选（host 周期清扫后逐个销毁）：页面活着、控制权在
+ * Bot 侧（用户接管中的页面永不自动关）、查看窗口没开（正在看的页面也不关）、
+ * 且已这么久没有任何工具活动。兜底「Bot 用完没调 browser_close 导致页面常驻」。
+ */
+export function idleReleaseKeys(
+  pages: readonly IdleReleaseView[],
+  now: number,
+  idleMs: number = BROWSER_PAGE_IDLE_RELEASE_MS,
+): string[] {
+  return pages
+    .filter(
+      (page) =>
+        !page.closed &&
+        page.control === 'agent' &&
+        !page.viewerOpen &&
+        page.lastUsedAt <= now - idleMs,
+    )
+    .map((page) => page.key);
 }
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set([

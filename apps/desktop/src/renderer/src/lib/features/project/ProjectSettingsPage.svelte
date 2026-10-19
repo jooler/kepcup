@@ -294,7 +294,6 @@
           </div>
 
           <div class="space-y-1.5" data-testid="project-workdir">
-            <p class="text-sm font-medium">{t('projectSettings.workdir')}</p>
             <WorkdirSelector
               {conversationId}
               workdirId={conversation.workdirId}

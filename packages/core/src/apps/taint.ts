@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { AppError, APP_TAINT_TTL_MS, type EgressChannel } from '@kepcup/shared';
 import type { ToolResult } from '../agent/types.js';
 import type { SqliteDatabase } from '../infra/db.js';
@@ -48,7 +49,9 @@ export class TaintService {
 
   /**
    * 置位 / 续期：已有未过期的行保留 `first_at` 并顺延 `expires_at`；过期的行当作新的污点
-   * 重新开始。顺带清掉所有已过期的行（有索引，便宜）。
+   * 重新开始。顺带清掉所有已过期的行（有索引，便宜）。污点每次（重新）出现都会清掉该对话的
+   * 外发放行（`egress_allows`）——「本对话内一直允许」等只对批准时的那个污点窗口有效，
+   * 应用数据被再次读取后需要重新确认。
    */
   mark(botId: string, conversationId: string): void {
     const now = this.#deps.clock.now();
@@ -61,6 +64,9 @@ export class TaintService {
            expires_at = excluded.expires_at`,
       )
       .run(botId, conversationId, now, now + APP_TAINT_TTL_MS, now);
+    this.#deps.db
+      .prepare('delete from egress_allows where conversation_id = ?')
+      .run(conversationId);
   }
 
   /** 该 (Bot, 对话) 此刻是否处于未过期的污点状态（不看开关）。 */
@@ -102,6 +108,49 @@ export class TaintService {
   }
 
   /**
+   * 对话级外发放行（D73 P2 后续）：用户在 `egress` 卡上选了更长时长时由网关写入。
+   * `scope` 为 `'all'`（本对话所有外发通道）或 bash 通道的同一命令（按命令原文哈希）。
+   * `expiresAt` 传批准时刻的污点窗口到期时间；`mark()`（应用数据再次读取，污点置位或
+   * 续期）会清掉该对话的全部放行——放行不会越过任何一个污点窗口。
+   */
+  allowEgress(
+    conversationId: string,
+    scope: 'all' | { command: string },
+    expiresAt: number,
+  ): void {
+    this.#deps.db
+      .prepare(
+        `insert into egress_allows (conversation_id, scope, expires_at) values (?, ?, ?)
+         on conflict(conversation_id, scope) do update set
+           expires_at = max(egress_allows.expires_at, excluded.expires_at)`,
+      )
+      .run(
+        conversationId,
+        scope === 'all' ? 'all' : `cmd:${createHash('sha256').update(scope.command).digest('hex')}`,
+        expiresAt,
+      );
+  }
+
+  /**
+   * 该对话此刻是否已有覆盖这次外发的放行（`'all'` 行，或 bash 通道的同一命令行，均未过期）。
+   * 只看放行表本身；调用方（网关 `egressCheck`）已先确认污点与开关。
+   */
+  egressAllowed(
+    conversationId: string,
+    channel: EgressChannel,
+    target: string,
+    now: number = this.#deps.clock.now(),
+  ): boolean {
+    const rows = this.#deps.db
+      .prepare('select scope from egress_allows where conversation_id = ? and expires_at > ?')
+      .all(conversationId, now) as Array<{ scope: string }>;
+    if (rows.some((row) => row.scope === 'all')) return true;
+    if (channel !== 'bash') return false;
+    const commandScope = `cmd:${createHash('sha256').update(target).digest('hex')}`;
+    return rows.some((row) => row.scope === commandScope);
+  }
+
+  /**
    * 外发拦截点的统一入口：开关开着且该对话处于污点状态才返回状态，否则 null。判定按**对话**
    * （见 {@link conversationState}）：项目组里任一成员读过应用数据，所有成员的外发都要确认。
    */
@@ -133,8 +182,11 @@ export class TaintService {
     return true;
   }
 
-  /** 对话删除：该对话所有 Bot 的行一并删除。 */
+  /** 对话删除：该对话所有 Bot 的污点行与外发放行一并删除。 */
   deleteForConversation(conversationId: string): number {
+    this.#deps.db
+      .prepare('delete from egress_allows where conversation_id = ?')
+      .run(conversationId);
     return this.#deps.db
       .prepare('delete from app_taint where conversation_id = ?')
       .run(conversationId).changes;
@@ -154,8 +206,9 @@ export class TaintService {
     return removed;
   }
 
-  /** 删除已过期的行，返回删除数。 */
+  /** 删除已过期的污点行与放行行，返回污点行删除数。 */
   sweepExpired(now: number = this.#deps.clock.now()): number {
+    this.#deps.db.prepare('delete from egress_allows where expires_at <= ?').run(now);
     return this.#deps.db.prepare('delete from app_taint where expires_at <= ?').run(now).changes;
   }
 }

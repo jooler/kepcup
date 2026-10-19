@@ -51,6 +51,18 @@ describe('mcpDurationOptions', () => {
     expect(clampDuration('bot', ['once'])).toBe('once');
     expect(clampDuration('conversation', ['once', 'conversation'])).toBe('conversation');
   });
+
+  it('renders the egress durations the same way (bash offers the same-command scope)', () => {
+    expect(mcpDurationOptions({ durations: ['once', 'command', 'conversation'] })).toEqual([
+      'once',
+      'command',
+      'conversation',
+    ]);
+    expect(mcpDurationOptions({ durations: ['once', 'conversation'] })).toEqual([
+      'once',
+      'conversation',
+    ]);
+  });
 });
 
 describe('appToolIdentity', () => {
@@ -102,6 +114,7 @@ describe('foldedApprovedKey', () => {
   it('maps the recorded duration to the folded record text', () => {
     expect(foldedApprovedKey('bot')).toBe('approvals.foldedApprovedBot');
     expect(foldedApprovedKey('conversation')).toBe('approvals.foldedApprovedConversation');
+    expect(foldedApprovedKey('command')).toBe('approvals.foldedApprovedCommand');
     expect(foldedApprovedKey(undefined)).toBe('approvals.foldedApprovedOnce');
   });
 });

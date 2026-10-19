@@ -36,6 +36,7 @@ import {
   VIEWER_TOOLBAR_HEIGHT,
   classifyKeyInput,
   classifyMouseInput,
+  idleReleaseKeys,
   parseProfileKey,
   parseViewerLabels,
   partitionDirName,
@@ -95,6 +96,11 @@ interface PageEntry {
   /** DOM agent re-initialized for the current document. */
   domReady: boolean;
   closed: boolean;
+  /**
+   * 空闲自动释放：最后一次工具活动（ensurePage / 动作 / 快照 / 截图）的时刻。
+   * 每次活动刷新；空闲清扫只关「无活动 + 无查看窗口 + 控制权在 Bot 侧」的页面。
+   */
+  lastUsedAt: number;
   /**
    * W7: a watch's background page (`botId|watch:{id}`): never shown, no
    * downloads, closed right after its text was read.
@@ -216,6 +222,8 @@ export class BrowserHost {
   /** Per-page visible viewer windows (ipc browser.show, docs 任务 5). */
   readonly #viewers = new Map<string, Viewer>();
   readonly #options: BrowserHostOptions;
+  /** 空闲页面自动释放的周期清扫（closeAll 时清掉）。 */
+  #idleSweep: NodeJS.Timeout | null = null;
 
   constructor(env: NodeJS.ProcessEnv, options: BrowserHostOptions = {}) {
     this.#sessionRoot = sessionDataRoot(env);
@@ -227,6 +235,8 @@ export class BrowserHost {
 
   /** Closes every page (app quit); in-flight operations reject. */
   closeAll(): void {
+    if (this.#idleSweep !== null) clearInterval(this.#idleSweep);
+    this.#idleSweep = null;
     for (const page of [...this.#pages.values()]) {
       this.#destroyPage(page, { permanent: false });
     }
@@ -239,6 +249,35 @@ export class BrowserHost {
 
   #notifyPages(): void {
     this.#options.onPagesChanged?.(this.openPages());
+  }
+
+  // --- 空闲页面自动释放 ---------------------------------------------------------
+
+  /**
+   * 兜底释放：Bot 用完没调 browser_close 时，页面不能再无限常驻。周期清扫，
+   * 只关「长时间无工具活动 + 查看窗口没开 + 控制权在 Bot 侧」的页面——用户正
+   * 在看 / 正在操作的页面永不自动关（接管租约与查看窗口由 W8 机制各自保活）。
+   * 会话数据在磁盘分区里，重开即恢复。
+   */
+  #sweepIdlePages(): void {
+    for (const key of idleReleaseKeys(
+      [...this.#pages.values()].map((page) => ({
+        key: pairKey(page.botId, page.conversationId),
+        closed: page.closed,
+        lastUsedAt: page.lastUsedAt,
+        viewerOpen: this.#viewers.has(pairKey(page.botId, page.conversationId)),
+        control: page.lease.control,
+      })),
+      Date.now(),
+    )) {
+      const page = this.#pages.get(key);
+      if (page !== undefined && !page.closed) this.#destroyPage(page, { permanent: false });
+    }
+  }
+
+  /** 记录一次工具活动（幂等）：页面只因被使用而保活。 */
+  #touchPage(page: PageEntry): void {
+    page.lastUsedAt = Date.now();
   }
 
   // --- port B methods ---------------------------------------------------------
@@ -269,6 +308,7 @@ export class BrowserHost {
     if (existing && existing.profileKey === input.profileKey) {
       existing.context = input.networkContext;
       existing.downloadsDir = input.downloadsDir;
+      this.#touchPage(existing);
       return { ok: true };
     }
     // W8: the bot's profile changed under an open page (core closes pages on
@@ -331,11 +371,17 @@ export class BrowserHost {
       navigationSeq: 0,
       domReady: false,
       closed: false,
+      lastUsedAt: Date.now(),
       background: false,
     };
     this.#pages.set(key, page);
     this.#pagesByWebContents.set(wc.id, page);
     this.#notifyPages();
+    // 空闲清扫随第一个页面启动（应用退出经 closeAll 清掉）。
+    if (this.#idleSweep === null) {
+      this.#idleSweep = setInterval(() => this.#sweepIdlePages(), 60_000);
+      this.#idleSweep.unref();
+    }
     return { ok: true };
   }
 
@@ -583,12 +629,14 @@ export class BrowserHost {
     botId: string;
     conversationId: string;
     permanent?: boolean;
+    /** UI 强制释放：用户明确要求，跳过接管租约检查（接管中的页面也直接关）。 */
+    force?: boolean;
   }): Promise<{ ok: true }> {
     const key = pairKey(input.botId, input.conversationId);
     const page = this.#pages.get(key);
     // W8: the bot's own browser_close waits for the user's handback like any
     // action; deletion cascades (permanent) always go through.
-    if (page && input.permanent !== true) page.lease.assertAgent();
+    if (page && input.permanent !== true && input.force !== true) page.lease.assertAgent();
     if (page) this.#destroyPage(page, { permanent: input.permanent === true });
     if (input.permanent === true) this.#tombstonedPairs.add(key);
     return { ok: true };
@@ -773,6 +821,7 @@ export class BrowserHost {
     if (!page) {
       throw new AppError('BROWSER_PAGE_CLOSED', '浏览器页面未打开或已关闭');
     }
+    this.#touchPage(page);
     return page;
   }
 

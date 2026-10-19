@@ -857,19 +857,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     deepLink: { surface: 'settings', section: 'agents', anchor: 'background-tasks' },
     store: { kind: 'settings', paths: ['backgroundTasks', 'backgroundAgentId'] },
   }),
-  item({
-    id: 'background.budget',
-    group: 'background',
-    title: '后台用量预算',
-    summary: '每个 Bot 每天后台工作可用的 token 上限',
-    keywords: ['预算', '用量上限', 'token', '后台'],
-    scope: 'global',
-    fields: [field('tokens', '每日上限', 'number')],
-    write: write('confirm'),
-    card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'usage' },
-    store: { kind: 'service', methods: ['budget.update'] },
-  }),
 
   // --- 无人值守 -----------------------------------------------------------
   item({

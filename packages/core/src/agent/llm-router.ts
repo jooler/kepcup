@@ -160,11 +160,6 @@ export interface LlmRouterDeps {
   agentView?: (agentId: string) => Pick<AgentView, 'enabled' | 'status' | 'statusDetail'> | null;
   /** Provider 登记表（后台合格判断）；缺省 PROVIDERS。 */
   providers?: ProviderRegistry;
-  /**
-   * 该 Bot 今日后台预算是否已用完（审查 C2：经 Agent 的路由判断计入每日后台
-   * 预算，用完即只响应 @ / 回复）；缺省不检查。
-   */
-  budgetExceeded?: (botId: string) => boolean;
   /** 节流时钟（测试注入）；缺省 Date.now。 */
   now?: () => number;
 }
@@ -246,9 +241,8 @@ export class LlmRouter {
     if (!tasks.agentEnabled) return null;
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
     if (purpose === 'triage') {
-      // Opt-in only (审查 C2), and charged to the bot's daily background budget.
+      // Opt-in only (审查 C2).
       if (tasks.projectMentionOnly) return null;
-      if (bot !== null && this.#deps.budgetExceeded?.(bot.id) === true) return null;
     }
     const viewOf = this.#deps.agentView;
     // No state view for an entry (should not happen) = not usable in the background.

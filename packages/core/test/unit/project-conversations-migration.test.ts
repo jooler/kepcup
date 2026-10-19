@@ -7,6 +7,7 @@ import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * main 0039 + 0040（D92 T1a，todo/project/WP1-schema-and-domain.md 步骤 2）：
@@ -123,7 +124,7 @@ describe('main 0039 + 0040 project conversations', () => {
     };
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([39, 40, 41, 42]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(38));
 
     // Direct chat untouched: type direct, no lead.
     const direct = db

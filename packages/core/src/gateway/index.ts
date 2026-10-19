@@ -106,7 +106,7 @@ export interface GatewayDeps {
    * D73 P2 污点外发控制（design 29 §8.3）：应用数据读取后置位；外发通道（web_fetch / web_search /
    * 浏览器 / 非只读 MCP 工具 / 沙箱 bash / git_remote）据此降级为逐次确认。缺省 = 不做污点控制。
    */
-  taint?: Pick<TaintService, 'mark' | 'guard'> | undefined;
+  taint?: Pick<TaintService, 'mark' | 'guard' | 'egressAllowed' | 'allowEgress'> | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -654,10 +654,13 @@ export class ToolGateway {
 
   /**
    * D73 P2 外发闸门：污点期间，外发通道（`web_fetch` / `web_search` / 浏览器 / 沙箱 bash /
-   * 非只读工具……）在执行前调用它。没有污点（或开关关闭）→ 返回 null，调用方照原规则继续；
-   * 有污点 → 弹 `egress` 卡（外发内容全文，只有「允许一次 / 拒绝」；无人值守按 D41 自动批准，
-   * 审计 `egress_tainted`），拒绝抛 `APPROVAL_DENIED`。对话轮 / 子代理不等审批（D75：不占住
-   * mailbox）：非无人值守时直接失败并引导用 `start_task` 在任务里做。
+   * 非只读工具……）在执行前调用它。没有污点（或开关关闭）→ 返回 null，调用方照原规则继续。
+   * 有污点时先看对话级放行（用户在 `egress` 卡上选过「本对话内一直允许」或 bash 的
+   * 「本对话内相同命令」，且仍处批准时的污点窗口内）→ 命中则直接放行。
+   * 否则弹 `egress` 卡（外发内容全文；payload 带时长选项：bash 三档、其余两档——选中的时长
+   * 在批准后由这里写入放行表；无人值守按 D41 自动批准，审计 `egress_tainted`），拒绝抛
+   * `APPROVAL_DENIED`。对话轮 / 子代理不等审批（D75：不占住 mailbox）：非无人值守时直接失败
+   * 并引导用 `start_task` 在任务里做（已有对话级放行时不受此限）。
    */
   async egressCheck(
     identity: RunIdentity,
@@ -666,6 +669,13 @@ export class ToolGateway {
   ): Promise<{ approvedBy: 'user' | 'unattended' } | null> {
     const taint = this.taintOf(identity);
     if (taint === null) return null;
+    const conversationId = identity.conversationId;
+    if (
+      conversationId !== null &&
+      (this.#deps.taint?.egressAllowed(conversationId, input.channel, input.target) ?? false)
+    ) {
+      return { approvedBy: 'user' };
+    }
     const unattendedOn = this.#deps.unattended.effective?.().enabled === true;
     if ((identity.loopType === 'turn' || identity.loopType === 'subagent') && !unattendedOn) {
       throw new AppError(
@@ -678,6 +688,8 @@ export class ToolGateway {
       redacted.length > EGRESS_TARGET_MAX_CHARS
         ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
         : redacted;
+    const durations: ApprovalDuration[] =
+      input.channel === 'bash' ? ['once', 'command', 'conversation'] : ['once', 'conversation'];
     const outcome = await this.#deps.approvals.request(
       identity,
       'egress',
@@ -686,11 +698,20 @@ export class ToolGateway {
         target,
         summary: input.summary,
         taintedSince: taint.firstAt,
+        durations,
       },
       { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
     );
     if (outcome.decision !== 'approved') {
       throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该外发操作');
+    }
+    // 用户选了更长时长 → 写对话级放行（有效期不超过批准时刻的污点窗口）。无人值守自动
+    // 批准没有用户时长（decision 为 null），不写。
+    const duration = outcome.approval.decision?.duration;
+    if (conversationId !== null && duration === 'conversation') {
+      this.#deps.taint?.allowEgress(conversationId, 'all', taint.expiresAt);
+    } else if (conversationId !== null && duration === 'command' && input.channel === 'bash') {
+      this.#deps.taint?.allowEgress(conversationId, { command: input.target }, taint.expiresAt);
     }
     return { approvedBy: outcome.approval.autoApproved === true ? 'unattended' : 'user' };
   }

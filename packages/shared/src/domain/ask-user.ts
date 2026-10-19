@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ASK_USER_OPTION_MAX_CHARS } from '../constants.js';
+
 /**
  * `ask_user` 表单化（D87 P4 L2，设计 32 §12.2）：任务向用户提问时除了单选，还可以多选或填一张简单
  * 表单。缺省 `single`，与 D75 的现状一致。回答经问题卡提交（`tasks.answer` 的 `values`），core 按卡
@@ -9,6 +11,9 @@ import { z } from 'zod';
 
 export const askUserModeSchema = z.enum(['single', 'multi', 'form']);
 export type AskUserMode = z.infer<typeof askUserModeSchema>;
+
+/** 多选最多选中的条目数（含自定义条目）。 */
+export const ASK_USER_MULTI_MAX = 12;
 
 /** 表单字段上限。 */
 export const ASK_USER_FIELDS_MAX = 8;
@@ -55,9 +60,9 @@ export const askUserFieldsSchema = z
     message: '字段 name 不能重复',
   });
 
-/** 卡片提交的结构化回答：多选 = 选中的候选；表单 = 字段名 → 文本。 */
+/** 卡片提交的结构化回答：多选 = 选中的条目（含自定义）；表单 = 字段名 → 文本。 */
 export const askUserValuesSchema = z.union([
-  z.array(z.string().max(200)).max(12),
+  z.array(z.string().max(ASK_USER_OPTION_MAX_CHARS)).max(ASK_USER_MULTI_MAX),
   z.record(z.string(), z.string().max(ASK_USER_FIELD_VALUE_MAX_CHARS)),
 ]);
 export type AskUserValues = z.infer<typeof askUserValuesSchema>;
@@ -77,13 +82,29 @@ export function checkAskUserAnswer(
     if (!Array.isArray(values) || values.some((v) => typeof v !== 'string')) {
       return { ok: false, message: '多选的回答必须是候选答案的列表' };
     }
-    const picked = [...new Set(values as string[])];
-    if (picked.length === 0) return { ok: false, message: '至少选一项' };
-    if (picked.some((v) => !question.options.includes(v))) {
-      return { ok: false, message: '只能选卡片上的候选答案' };
+    // 自定义输入也算一条：先去空格再去重；卡片上的候选原样收录，其余的算自定义条目。
+    const trimmed = (values as string[]).map((v) => v.trim());
+    if (trimmed.length === 0 || trimmed.every((v) => v === '')) {
+      return { ok: false, message: '至少选一项' };
     }
-    // 按卡片上的顺序（不按点击顺序）。
-    const ordered = question.options.filter((option) => picked.includes(option));
+    if (trimmed.some((v) => v === '')) {
+      return { ok: false, message: '自定义选项不能是空白' };
+    }
+    const picked = [...new Set(trimmed)];
+    if (picked.length > ASK_USER_MULTI_MAX) {
+      return { ok: false, message: `最多选 ${ASK_USER_MULTI_MAX} 项` };
+    }
+    if (picked.some((v) => !question.options.includes(v) && v.length > ASK_USER_OPTION_MAX_CHARS)) {
+      return {
+        ok: false,
+        message: `自定义选项最多 ${ASK_USER_OPTION_MAX_CHARS} 字`,
+      };
+    }
+    // 按卡片上的顺序（不按点击顺序），自定义条目按给出顺序跟在后面。
+    const ordered = [
+      ...question.options.filter((option) => picked.includes(option)),
+      ...picked.filter((v) => !question.options.includes(v)),
+    ];
     return { ok: true, display: clipDisplay(ordered.join('、')), structured: ordered };
   }
   if (question.mode === 'form') {

@@ -85,8 +85,12 @@ test('conversational create: fixed first question card, option/custom answers, p
     await expect(firstCard.locator('[data-testid="setup-question-text"]')).toHaveText(
       '您希望我协助您处理哪些事务？',
     );
-    await expect(firstCard.locator('[data-testid^="setup-option-"]')).toHaveCount(4);
-    await expect(firstCard.locator('[data-testid="setup-option-0"]')).toHaveText('写作与文档');
+    // 首问是列举题 → 多选卡（check 项 + 自定义输入 + 提交）。
+    await expect(firstCard.locator('[data-testid^="setup-question-check-"]')).toHaveCount(4);
+    // 多选卡：testid 挂在 checkbox 输入框上，选项文案在同一个 label 里。
+    await expect(firstCard.locator('label:has([data-testid="setup-question-check-0"])')).toHaveText(
+      '写作与文档',
+    );
     await expect(firstCard.locator('[data-testid="setup-custom-input"]')).toBeVisible();
 
     // Bot（mock LLM）确认 + ask_question 出第二张问题卡片。脚本必须先于
@@ -100,10 +104,11 @@ test('conversational create: fixed first question card, option/custom answers, p
         options: ['小启', '阿文', '笔杆'],
       }),
     ]);
-    await firstCard.locator('[data-testid="setup-option-0"]').click();
+    await firstCard.locator('[data-testid="setup-question-check-0"]').click();
+    await firstCard.locator('[data-testid="setup-question-submit"]').click();
     await expect(firstCard).toHaveAttribute('data-answered', 'true');
     await expect(firstCard.locator('[data-testid="setup-answer"]')).toHaveText('写作与文档');
-    await expect(firstCard.locator('[data-testid^="setup-option-"]')).toHaveCount(0);
+    await expect(firstCard.locator('[data-testid^="setup-question-check-"]')).toHaveCount(0);
     await expect(firstCard.locator('[data-testid="setup-custom-input"]')).toHaveCount(0);
 
     // 工作目录卡（19/D59）：确定性插入、无候选；未答期间输入被禁用。

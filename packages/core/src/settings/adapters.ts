@@ -732,27 +732,6 @@ function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function budgetAdapter(deps: AdapterDeps): ItemAdapter {
-  return {
-    read: () => {
-      const tokens = deps.settings.get().backgroundBudgetTokens;
-      return snapshot('configured', { tokens }, tokens === 0 ? '不限' : `每天 ${tokens} tokens`);
-    },
-    normalize: (_item, values) => {
-      if (!('tokens' in values)) return { ok: true, values };
-      const tokens = values.tokens;
-      return typeof tokens === 'number' && Number.isInteger(tokens) && tokens >= 0
-        ? { ok: true, values }
-        : { ok: false, message: 'tokens 应为非负整数（0 = 不限）' };
-    },
-    write: (_item, { next }) => {
-      const tokens = next.tokens;
-      if (typeof tokens !== 'number') throw new AppError('INVALID_INPUT', '需要填写每日上限');
-      deps.settings.update({ backgroundBudgetTokens: tokens });
-    },
-  };
-}
-
 function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
@@ -2039,7 +2018,6 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'general.launch-at-login': launchAtLoginAdapter(deps),
     'general.workbench': workbenchEnabledAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),
-    'background.budget': budgetAdapter(deps),
     'unattended.enable': unattendedAdapter(deps, 'enable'),
     'unattended.disable': unattendedAdapter(deps, 'disable'),
     'environment.toolchains': environmentToolchainsAdapter(deps),

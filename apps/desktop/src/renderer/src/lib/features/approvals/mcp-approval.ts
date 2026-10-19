@@ -13,12 +13,11 @@ export const APPROVAL_DURATION_LABEL_KEYS: Record<ApprovalDuration, MessageKey> 
   once: 'approvals.once',
   conversation: 'approvals.conversation',
   bot: 'approvals.durationBot',
+  command: 'approvals.commandDuration',
 };
 
 /** 卡片可选的时长（缺省 = 只有「仅这一次」，与 core 的 `decide()` 同一默认）。 */
-export function mcpDurationOptions(
-  payload: Pick<McpToolApprovalPayload, 'durations'>,
-): ApprovalDuration[] {
+export function mcpDurationOptions(payload: { durations?: ApprovalDuration[] }): ApprovalDuration[] {
   const options = payload.durations ?? [];
   const unique = options.filter((duration, index) => options.indexOf(duration) === index);
   // `once` 恒可选且排第一，其余保持 core 给出的顺序。
@@ -26,7 +25,7 @@ export function mcpDurationOptions(
 }
 
 /** 是否显示时长选择（只有一个选项时不显示，批准即「仅这一次」）。 */
-export function mcpChoosesDuration(payload: Pick<McpToolApprovalPayload, 'durations'>): boolean {
+export function mcpChoosesDuration(payload: { durations?: ApprovalDuration[] }): boolean {
   return mcpDurationOptions(payload).length > 1;
 }
 
@@ -89,10 +88,13 @@ export function foldedApprovedKey(
 ):
   | 'approvals.foldedApprovedOnce'
   | 'approvals.foldedApprovedConversation'
-  | 'approvals.foldedApprovedBot' {
+  | 'approvals.foldedApprovedBot'
+  | 'approvals.foldedApprovedCommand' {
   return duration === 'bot'
     ? 'approvals.foldedApprovedBot'
     : duration === 'conversation'
       ? 'approvals.foldedApprovedConversation'
-      : 'approvals.foldedApprovedOnce';
+      : duration === 'command'
+        ? 'approvals.foldedApprovedCommand'
+        : 'approvals.foldedApprovedOnce';
 }

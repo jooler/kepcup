@@ -28,7 +28,8 @@ import { fakeCatalogEntry, until } from '../support/catalog-connect-env.js';
  * D73 P2 §6.2 污点外发控制（design 29 §8.3），假服务 + 真 core：
  *
  * 读取应用数据（`list_notes`）→ (Bot, 对话) 进入污点 → web_fetch / web_search / 浏览器导航 /
- * 非只读应用工具（即使策略是 auto）弹 `egress` 卡（外发内容全文，只有「允许一次」）；
+ * 非只读应用工具（即使策略是 auto）弹 `egress` 卡（外发内容全文，缺省只有「允许一次」；
+ * 卡片可提供「本对话内一直允许」/ bash「本对话内相同命令」的更长时长）；
  * `runs.retry` 与后续任务沿用同一污点；别的对话不受影响；关闭开关后不弹；无人值守自动批准
  * 但审计 `egress_tainted` 并汇总到 Bot 详情（`apps.egressSummary`）。24 小时过期与各通道细节
  * 见 `unit/taint-egress.test.ts`。
@@ -208,7 +209,8 @@ describe('§6.2 污点外发控制', () => {
     const seen = new Set<string>();
 
     // 1. Read app data, then web_fetch: egress card with the full URL; the auto-policy write
-    //    tool is carded as well (channel app_tool); both only offer 「允许一次」.
+    //    tool is carded as well (channel app_tool); both offer「允许一次」by default (a plain
+    //    approval takes「仅这一次」and arms nothing).
     llm.script(
       'mock-main',
       viaTask({
@@ -227,20 +229,16 @@ describe('§6.2 污点外发控制', () => {
     const fetchCard = await pendingEgress(env, conv.id, 'web_fetch');
     expect(fetchCard.payload).toMatchObject({ channel: 'web_fetch', target: LEAK_URL });
     expect(typeof fetchCard.payload['taintedSince']).toBe('number');
-    expect(fetchCard.payload['durations']).toBeUndefined();
-    await env.call('approvals.decide', {
-      id: fetchCard.id,
-      approve: true,
-      duration: 'conversation',
-    });
+    expect(fetchCard.payload['durations']).toEqual(['once', 'conversation']);
+    await env.call('approvals.decide', { id: fetchCard.id, approve: true });
     const writeCard = await pendingEgress(env, conv.id, 'app_tool');
     expect(String(writeCard.payload['target'])).toContain('"create_note"');
     expect(String(writeCard.payload['target'])).toContain('外发');
     await env.call('approvals.decide', { id: writeCard.id, approve: true });
     await nextTask(env, conv.id, 'completed', seen);
-    // A「conversation」choice never widens an egress approval.
+    // A plain approval is「仅这一次」: no duration recorded, no allowance armed.
     const decided = await egressCards(env, conv.id);
-    expect(decided.find((a) => a.id === fetchCard.id)!.decision).toEqual({ duration: 'once' });
+    expect(decided.find((a) => a.id === fetchCard.id)!.decision).toBeNull();
     expect(services.taint!.isTainted(bot.id, conv.id)).toBe(true);
 
     // 2. A later task of the same conversation: still tainted → web_search carded; deny stops it.
@@ -414,6 +412,63 @@ describe('§6.2 污点外发控制', () => {
     expect(
       ((await env.call('apps.egressSummary', { botId: other.id })) as { total: number }).total,
     ).toBe(0);
+  }, 300_000);
+
+  it('「本对话内一直允许」arms a conversation-wide allowance; a fresh read of app data re-cards', async () => {
+    const env = await start();
+    const { core, llm } = env;
+    const bot = await makeBot(core, '小应');
+    await connectApp(env, bot.id);
+    const conv = await openDirect(core, bot.id);
+    const seen = new Set<string>();
+
+    // Read app data, then two egress calls: the first is carded; choosing「本对话内一直允许」
+    // lets the second (another web_fetch) and everything else in this taint window through
+    // uncarded.
+    llm.script(
+      'mock-main',
+      viaTask({
+        capabilities: ['app:notes'],
+        writes: false,
+        taskSteps: [
+          READ(),
+          step().replyToolCall('web_fetch', { url: LEAK_URL }),
+          step().replyToolCall('web_fetch', { url: 'http://127.0.0.1:9/second' }),
+          step().replyText('完成'),
+        ],
+        relay: '第一轮完成',
+      }),
+    );
+    await sendBatch(core, conv.id, ['读一下笔记再发出去']);
+    const fetchCard = await pendingEgress(env, conv.id, 'web_fetch');
+    await env.call('approvals.decide', { id: fetchCard.id, approve: true, duration: 'conversation' });
+    await nextTask(env, conv.id, 'completed', seen);
+    const decided = await egressCards(env, conv.id);
+    expect(decided.find((a) => a.id === fetchCard.id)!.decision).toEqual({
+      duration: 'conversation',
+    });
+    // the second web_fetch ran without a second card.
+    expect(decided).toHaveLength(1);
+
+    // The allowance is bound to the taint window: a fresh read wipes it and re-cards.
+    llm.script(
+      'mock-main',
+      viaTask({
+        capabilities: ['app:notes'],
+        writes: false,
+        taskSteps: [
+          READ(),
+          step().replyToolCall('web_fetch', { url: LEAK_URL }),
+          step().replyText('完成'),
+        ],
+        relay: '第二轮完成',
+      }),
+    );
+    await sendBatch(core, conv.id, ['再读再发']);
+    const again = await pendingEgress(env, conv.id, 'web_fetch');
+    expect(again.id).not.toBe(fetchCard.id);
+    await env.call('approvals.decide', { id: again.id, approve: true });
+    await nextTask(env, conv.id, 'completed', seen);
   }, 300_000);
 
   it('identical tainted browser clicks in one task chain are plain per-call cards (no dedupe flag), and unattended still auto-approves them', async () => {

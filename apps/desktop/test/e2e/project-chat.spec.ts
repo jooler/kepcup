@@ -234,11 +234,15 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
       'settings',
     );
 
-    // Rename（回车保存，顶栏标题即时更新）。
+    // Rename（回车保存，侧栏当前会话名即时更新）。
     const titleInput = page.locator('[data-testid="project-title-input"]');
     await titleInput.fill('新项目名');
     await titleInput.press('Enter');
-    await expect(page.locator('[data-testid="project-title"]')).toContainText('新项目名', {
+    await expect(
+      page.locator(
+        '[data-testid^="conversation-item-"][data-active="true"] [data-testid="conversation-name"]',
+      ),
+    ).toContainText('新项目名', {
       timeout: 10_000,
     });
 
