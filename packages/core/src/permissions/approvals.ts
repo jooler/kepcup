@@ -7,6 +7,7 @@ import {
   selectableHandoverKeys,
   egressApprovalPayloadSchema,
   environmentApprovalPayloadSchema,
+  isEphemeralApprovalCardType,
   profileChangeApprovalPayloadSchema,
   skillImportApprovalPayloadSchema,
   mcpToolApprovalPayloadSchema,
@@ -147,10 +148,16 @@ const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal', 'bot_han
 
 /**
  * The approval mechanism (docs/dev/phases/P03-permissions.md "审批框架").
- * Requests persist before anything else happens: approvals row → card message
- * → waiting_approval → user decision → resolved promise. The promise only
- * bridges the in-memory wait; the row is the source of truth (a restart
- * cancels pending approvals and the cards render as cancelled).
+ * Requests persist the approvals row before anything else happens: approvals
+ * row → card notification → waiting_approval → user decision → resolved
+ * promise. The promise only bridges the in-memory wait; the row is the source
+ * of truth (a restart cancels pending approvals). The card notification of a
+ * mid-turn permission kind (access, command, MCP, egress, …) is an in-memory
+ * message for the open UI only (cardsAppend goes through
+ * `messages.appendEphemeralCard`): nothing is persisted, so switching
+ * conversations / restarting drops the record lines, and the bot's context
+ * never contains them. Other kinds (environment, skill import, proposals,
+ * mail, handover) keep a persisted card message as their folded record.
  */
 export class ApprovalsService {
   readonly #deps: ApprovalsDeps;
@@ -273,7 +280,7 @@ export class ApprovalsService {
   ): Promise<ApprovalOutcome> {
     const approval = this.#insert(identity, kind, payload, { status: 'pending' });
     const card = this.#insertCard(approval);
-    const withCard = this.#updateRow(approval.id, { messageId: card.id });
+    const withCard = this.#linkCard(approval, card);
     this.#publishApproval('approval.created', withCard);
     this.#publishConversation(approval.conversationId);
     this.#deps.notify(withCard, this.describe(withCard));
@@ -326,7 +333,7 @@ export class ApprovalsService {
     }
     const approval = this.#insert(identity, kind, payload, { status: 'pending' });
     const card = this.#insertCard(approval);
-    const withCard = this.#updateRow(approval.id, { messageId: card.id });
+    const withCard = this.#linkCard(approval, card);
     this.#publishApproval('approval.created', withCard);
     this.#publishConversation(approval.conversationId);
     this.#deps.notify(withCard, this.describe(withCard));
@@ -425,7 +432,7 @@ export class ApprovalsService {
           : null,
     });
     const card = this.#insertCard(approval);
-    const withCard = this.#updateRow(approval.id, { messageId: card.id });
+    const withCard = this.#linkCard(approval, card);
     this.#publishApproval('approval.created', withCard);
     this.#publishApproval('approval.resolved', withCard);
     this.#deps.audit(identity, 'approval_auto', {
@@ -1365,36 +1372,45 @@ export class ApprovalsService {
     return this.getOrThrow(id);
   }
 
-  /** Card message: content links to the approval; payload stays in the row. */
+  /** Card notification: content links to the approval; payload stays on the row. */
   #insertCard(approval: Approval) {
-    // Mid-turn permission cards are hidden from the transcript (the dock is the
-    // popup) unless they are a record the user must be able to find later: an
-    // automatic decision (unattended — it never reached the dock) or an egress /
-    // taint-flagged card (D73 trail). Other kinds ignore the flag.
+    // Mid-turn permission cards never become conversation content. While the
+    // decision waits the dock is the popup; afterwards an automatic decision
+    // (unattended — it never reached the dock) or an egress / taint-flagged
+    // card (D73 trail) keeps a folded record line — in the current session
+    // only: notifyEphemeral sends an in-memory message that is never persisted
+    // and never enters the bot's context. Other kinds ignore the flag and keep
+    // their persisted card (import / install / handover folded records).
     const record =
       approval.autoApproved === true ||
       approval.kind === 'egress' ||
       approval.payload['tainted'] === true;
-    const card = this.#deps.messages.append({
+    const input = {
       conversationId: approval.conversationId ?? '',
-      senderType: 'system',
-      kind: 'card',
+      senderType: 'system' as const,
+      kind: 'card' as const,
       event: 'approval',
       text: '',
       runId: approval.runId,
       approvalId: approval.id,
       cardType: approval.kind,
       ...(record ? { cardRecord: true } : {}),
-    });
-    // The row feeds the bot's context. Mid-turn permission cards (access,
-    // command, …) are hidden from the transcript except the records above.
-    // Import, install, and handover cards stay, so a failed finalize still
-    // has a folded record.
+    };
+    const ephemeral = isEphemeralApprovalCardType(approval.kind);
+    const card = ephemeral
+      ? this.#deps.messages.appendEphemeralCard(input)
+      : this.#deps.messages.append(input);
     this.#deps.publish('message.created', {
       conversationId: card.conversationId,
       message: card,
     });
     return card;
+  }
+
+  /** Stores the persisted card's message id (in-memory cards stay unlinkable). */
+  #linkCard(approval: Approval, card: { id: string }): Approval {
+    if (isEphemeralApprovalCardType(approval.kind)) return approval;
+    return this.#updateRow(approval.id, { messageId: card.id });
   }
 
   #setRunStatus(runId: string, status: Run['status']): void {

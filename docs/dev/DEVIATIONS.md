@@ -672,3 +672,14 @@
 - 处理：按用户拍板「两个都要」落实——bash 通道三档（仅这一次 / 本对话内相同命令 / 本对话内一直允许）、其余通道两档；放行按对话计、有效期不超过批准时刻的污点窗口，污点被新的应用读取置位 / 续期时清空放行并重新出卡（一次「一直允许」至多放行一个污点窗口）。安全边界收窄为「用户逐窗口确认」，总开关 `taintGuard` 维持不变。
 - 决定：（由人工确认）
 - 已更新的文档：`docs/design/29-connected-apps.md` §8.3 后续修订注、`docs/dev/03-data-model.md`（`egress` payload 与 `egress_allows`）、`docs/dev/04-agent-runtime.md`（污点外发段）、`docs/dev/05-testing.md` 用例计数。
+
+### DEV-039 中途权限卡通知改为内存态：不写 messages 表、不进 Bot 上下文（用户决定，2026-10-19）
+
+- 状态：已落实
+- 阶段：日常使用反馈（用户发现权限申请记录通知长期留在对话流里，既污染 Bot 预读上下文，切换对话 / 重启后仍然可见）
+- 是否阻塞：否
+- 问题：与既定设计相悖——ef2a565 与 2026-10-18 前的口径是：中途权限卡（access / unsandboxed / command / git_remote / mcp_tool / agent_tool / egress）的消息行**仍写入** `messages` 表（`record` 折叠记录随对话留痕），且「the message row still feeds the bot's context」（`packages/shared/src/domain/types.ts` 原注释）。用户拍板改为相反的产品决策：这类通知只是用户操作时留在当前界面的内存态提示，不持久化、不进 Bot 取数（listForBot / listShared / around），切换对话或重启应用后自然消失。
+- 影响范围：`ApprovalsService.#insertCard`（ephemeral kinds 改走 `MessagesService.appendEphemeralCard`——只推进 `conversations.last_seq`、不发消息行，仍发 `message.created` 事件；`approvals.message_id` 不再回链，approval 行照旧持久化以支撑待确认流与审计）；`MessagesService`（`listVisible` / `isVisibleToUser` / `listForBot` / `listShared` / `around` 全部排除该类卡，旧版本存量的 `record` 行也一并从读取路径消失；`userVisibleFilter` 去掉 record 例外）；`#insertCard` 保持 record 标记计算，渲染端（`chat.svelte.ts` ingest、`transcript-visibility`）无需改动即保持「pending 在 dock、决定后当前会话折叠一行」的会话内行为。
+- 处理：按上述落实。设计文档同步改写：`docs/design/12-ui-layout.md` 焦点三、`docs/design/13-permissions.md`（执行回执、无人值守、界面节）、`docs/dev/03-data-model.md` `approvals.message_id` 注释；`packages/shared/src/domain/types.ts` 类型注释与集成测试口径（`approvals.test.ts` 三处、`messages-visible.test.ts`）更新。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/design/12-ui-layout.md`、`docs/design/13-permissions.md`、`docs/dev/03-data-model.md`。

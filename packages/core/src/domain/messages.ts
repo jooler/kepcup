@@ -3,7 +3,6 @@ import {
   EPHEMERAL_APPROVAL_CARD_TYPES,
   INTERNAL_SYSTEM_EVENTS,
   isEphemeralApprovalCardType,
-  isHiddenApprovalCard,
   TERMINAL_TASK_EVENT_PHASES,
   newId,
   taskEventContentSchema,
@@ -292,8 +291,30 @@ function viewerFilter(viewerBotId: string | null, alias = ''): { sql: string; pa
 }
 
 /**
+ * Bot 上下文排除：中途权限卡（含 record 折叠记录）只是当前会话界面的内存态
+ * 提示，从不属于进入模型的对话内容——读取路径与旧版本留下的存量行都不受影响。
+ */
+function ephemeralCardExcludeFilter(alias = ''): { sql: string; params: string[] } {
+  const ephemeralCards = [...EPHEMERAL_APPROVAL_CARD_TYPES];
+  return {
+    sql: `not (${alias}kind = 'card' and coalesce(json_extract(${alias}content_json, '$.cardType'), '') in (${ephemeralCards.map(() => '?').join(', ')}))`,
+    params: [...ephemeralCards],
+  };
+}
+
+/** 连接多个行过滤：SQL 顺序与 params 顺序保持一致。 */
+function composeFilter(...parts: Array<{ sql: string; params: string[] }>): {
+  sql: string;
+  params: string[];
+} {
+  return { sql: parts.map((p) => `(${p.sql})`).join(' and '), params: parts.flatMap((p) => p.params) };
+}
+
+/**
  * 用户视角（`isVisibleToUser` 的 SQL 镜像）：非 task_event、非私有，且不是
- * 内部事务事件（带 internal 标记或属于 INTERNAL_SYSTEM_EVENTS）。
+ * 内部事务事件（带 internal 标记或属于 INTERNAL_SYSTEM_EVENTS）。中途权限
+ * 卡（含 record 折叠记录）一律不在此列：它们是发到当前会话界面的内存态
+ * 提示，从不落库，切对话 / 重启后自然消失。
  */
 function userVisibleFilter(): { sql: string; params: string[] } {
   const eventNames = [...INTERNAL_SYSTEM_EVENTS];
@@ -306,10 +327,10 @@ function userVisibleFilter(): { sql: string; params: string[] } {
       `not (sender_type = 'system' and kind = 'system_event' and (` +
       `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
       `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')}))) and ` +
-      // Mid-turn permission cards: dock popup only, not transcript history — except
-      // the folded records (auto-decided, egress / taint-flagged: `record`).
-      `not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') in (${ephemeralCards.map(() => '?').join(', ')}) ` +
-      `and coalesce(json_extract(content_json, '$.record'), 0) != 1)`,
+      // Mid-turn permission cards (dock popup + in-session folded records):
+      // never conversation content, even legacy `record` rows from older
+      // versions.
+      `not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') in (${ephemeralCards.map(() => '?').join(', ')}))`,
     params: [...eventNames, ...ephemeralCards],
   };
 }
@@ -321,9 +342,9 @@ function userVisibleFilter(): { sql: string; params: string[] } {
  * system_event 只进 Bot 的上下文与触发，不进用户可见的消息流；其余消息
  * （用户/Bot 发言、移交进度卡、访谈卡、项目组认领提示、执行中断等）都可见。
  * 中途权限弹窗（访问、命令、MCP 等）只在输入区上方弹出，不进用户可见流；
- * 例外是带 `record` 标记的折叠记录：自动决定的卡（无人值守，用户从没在 dock
- * 里见过它）与外发 / 污点相关的卡（D73 留痕）。技能导入、环境安装、移交等
- * 卡片留在对话里，失败与进度靠折叠记录。
+ * 自动决定 / 外发 / 污点相关的折叠记录也是只发到当前会话的内存态提示
+ * （从不落库），全部排除。技能导入、环境安装、移交等卡片留在对话里，
+ * 失败与进度靠折叠记录。
  */
 export function isVisibleToUser(message: Message): boolean {
   // D75 §2.4.3: task_event rows and bot-owned private rows never reach the user.
@@ -333,8 +354,11 @@ export function isVisibleToUser(message: Message): boolean {
     const content = message.content as { interim?: unknown };
     if (content.interim === true) return false;
   }
-  if (message.kind === 'card' && isHiddenApprovalCard(message.content as { cardType?: unknown })) {
-    return false;
+  if (message.kind === 'card') {
+    const content = message.content as { cardType?: unknown };
+    if (typeof content.cardType === 'string' && isEphemeralApprovalCardType(content.cardType)) {
+      return false;
+    }
   }
   if (message.senderType !== 'system' || message.kind !== 'system_event') return true;
   const content = message.content as { internal?: boolean; event?: string };
@@ -586,6 +610,61 @@ export class MessagesService {
   }
 
   /**
+   * 中途权限卡的内存态通知（改自消息原则的修订）：不写 messages /
+   * messages_fts，唯一落库动作是推进 `conversations.last_seq`——让这张卡在
+   * 当前会话里带着真实 seq 出现在它到达的位置。消息只随 `message.created`
+   * 事件到达打开的界面；用户切换对话或重启应用重新加载消息后自然消失，
+   * Bot 的读取路径（listForBot / listShared / around）也不包含它。
+   * 仅权限弹窗类卡（access / command / MCP / egress …）使用。
+   */
+  appendEphemeralCard(input: AppendMessageInput): Message {
+    if (input.kind !== 'card') {
+      throw new AppError('INVALID_INPUT', 'appendEphemeralCard expects a card message');
+    }
+    const now = input.at ?? this.clock.now();
+    const id = newId('msg');
+    const content = {
+      cardType: input.cardType ?? '',
+      approvalId: input.approvalId ?? '',
+      ...(input.cardRecord === true ? { record: true } : {}),
+    } as Message['content'];
+    let message: Message;
+    const run = this.db.transaction(() => {
+      const row = this.db
+        .prepare('select last_seq from conversations where id = ?')
+        .get(input.conversationId) as { last_seq: number } | undefined;
+      if (!row)
+        throw new AppError('NOT_FOUND', `Conversation ${input.conversationId} does not exist`);
+      const seq = row.last_seq + 1;
+      // 只推进 last_seq：内存态卡不移动用户的预览时间。
+      this.db
+        .prepare('update conversations set last_seq = ? where id = ?')
+        .run(seq, input.conversationId);
+      message = {
+        id,
+        conversationId: input.conversationId,
+        seq,
+        senderType: input.senderType,
+        senderBotId: input.senderBotId ?? null,
+        kind: 'card',
+        content,
+        replyTo: input.replyTo ?? null,
+        mentions: input.mentions ?? [],
+        batchId: input.batchId ?? null,
+        runId: input.runId ?? null,
+        status: 'normal',
+        editedAt: null,
+        createdAt: now,
+        attachments: [],
+        ownerBotId: input.ownerBotId ?? null,
+        taskId: input.taskId ?? input.taskEvent?.taskId ?? null,
+      };
+    });
+    run.immediate();
+    return message!;
+  }
+
+  /**
    * Writes one private task_event entry (D75 §2.4.1, `sender_type='system'`,
    * owned by the task's bot). Terminal phases (result / failure) are
    * idempotent per task (§3.2, unique index messages_task_terminal): a second
@@ -715,7 +794,11 @@ export class MessagesService {
     botId: string,
     options: { beforeSeq?: number; limit?: number } = {},
   ): Message[] {
-    return this.#listWhere(conversationId, viewerFilter(botId), options);
+    return this.#listWhere(
+      conversationId,
+      composeFilter(viewerFilter(botId), ephemeralCardExcludeFilter()),
+      options,
+    );
   }
 
   /**
@@ -726,7 +809,11 @@ export class MessagesService {
     conversationId: string,
     options: { beforeSeq?: number; limit?: number } = {},
   ): Message[] {
-    return this.#listWhere(conversationId, viewerFilter(null), options);
+    return this.#listWhere(
+      conversationId,
+      composeFilter(viewerFilter(null), ephemeralCardExcludeFilter()),
+      options,
+    );
   }
 
   #listWhere(
@@ -912,7 +999,7 @@ export class MessagesService {
    * Rows hidden from the viewer neither appear nor use up the N.
    */
   around(conversationId: string, seq: number, n: number, viewerBotId: string | null): Message[] {
-    const viewer = viewerFilter(viewerBotId);
+    const viewer = composeFilter(viewerFilter(viewerBotId), ephemeralCardExcludeFilter());
     const base = `conversation_id = ? and status != 'recalled' and ${viewer.sql}`;
     const before = this.db
       .prepare(`select * from messages where ${base} and seq < ? order by seq desc limit ?`)

@@ -1032,8 +1032,8 @@ export const cardContentSchema = z.object({
   cardType: z.string(),
   approvalId: z.string().default(''),
   /**
-   * Mid-turn permission cards only: keep a folded record in the transcript
-   * (auto-decided, egress or taint-flagged; see `isApprovalRecordCard`).
+   * Mid-turn permission cards only: an in-session folded record hint (the
+   * message itself is in-memory only — see `isApprovalRecordCard`).
    */
   record: z.boolean().optional(),
   /** Run-changes cards only: the run the changes belong to. */
@@ -1676,7 +1676,12 @@ export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
 /**
  * Mid-turn permission popups. The dock above the composer is their only
- * user-facing surface; the message row still feeds the bot's context.
+ * user-facing surface while a decision waits; afterwards (an automatic
+ * decision, or an egress / taint-flagged card) the user keeps a one-line
+ * folded record **in the current session only**: the message is delivered
+ * in memory and never persisted, so it does not reappear after the user
+ * switches conversations or restarts the app, and the bot's context never
+ * contains it.
  * Skill import, environment install, presets, mail, proposals, profile
  * changes, and handover stay in the transcript — their folded record is the
  * failure / progress surface.
@@ -1696,12 +1701,13 @@ export function isEphemeralApprovalCardType(cardType: string): boolean {
 }
 
 /**
- * Whether a mid-turn permission card stays in the transcript as a one-line
- * folded record (card content `record: true`, set by the approvals service
- * when the card is created): cards decided automatically (unattended mode —
- * they never reach the dock, so the record is the user's only trace) and
- * egress / taint-flagged cards (the D73 trail). The renderer still hides a
- * record while it is pending: the dock is the popup.
+ * Whether a mid-turn permission card stays as a one-line folded record (card
+ * content `record: true`, set by the approvals service when the card is
+ * created): cards decided automatically (unattended mode — they never reach
+ * the dock) and egress / taint-flagged cards (the D73 trail). The record is
+ * an in-session hint only: while its approval is pending the popup lives in
+ * the dock; after the decision the renderer shows the folded line from the
+ * in-memory message. Nothing is persisted and the bot's context excludes it.
  */
 export function isApprovalRecordCard(content: { cardType?: unknown; record?: unknown }): boolean {
   return (

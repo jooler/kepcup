@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { INTERNAL_SYSTEM_EVENTS, messageSchema, type Message } from '@kepcup/shared';
+import {
+  INTERNAL_SYSTEM_EVENTS,
+  isEphemeralApprovalCardType,
+  messageSchema,
+  type Message,
+} from '@kepcup/shared';
 import { closeDatabase, openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
@@ -91,7 +96,10 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
         text: '标记生效',
         internal: true,
       });
-      // 中途权限弹窗：不进用户可见流。导入 / 安装 / 移交卡留在对话里。
+      // 中途权限弹窗与其 record 折叠记录（自动决定 / 外发 / 污点）都不进用户
+      // 可见流：卡片通知是只发到当前会话的内存态提示，从不落库（这里直接用
+      // append 铺存量行是为了断言读取路径把旧版本遗留行也一并排除）。
+      // 导入 / 安装 / 移交卡留在对话里。
       append(rig, { senderType: 'system', kind: 'card', cardType: 'access' });
       append(rig, { senderType: 'system', kind: 'card', cardType: 'environment' });
       append(rig, { senderType: 'system', kind: 'card', cardType: 'skill_import' });
@@ -100,17 +108,17 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
       append(rig, { senderType: 'system', kind: 'card', cardType: 'task' });
       // 空 event 名的 system_event：可见（与谓词的 `?? ''` 行为一致）
       append(rig, { senderType: 'system', kind: 'system_event', event: '', text: '无名事件' });
-      // 折叠记录：自动决定 / 外发 / 污点相关的中途权限卡（record）留在对话里。
+      // 折叠记录：自动决定 / 外发 / 污点相关的中途权限卡（record）同样排除。
       append(rig, { senderType: 'system', kind: 'card', cardType: 'command', cardRecord: true });
       append(rig, { senderType: 'system', kind: 'card', cardType: 'egress', cardRecord: true });
-      // 普通中途权限卡（用户在 dock 里处理过的）仍不进用户可见流；非权限卡的 record 不影响。
+      // 普通中途权限卡（用户在 dock 里处理过的）也不进用户可见流；非权限卡的 record 不影响。
       append(rig, { senderType: 'system', kind: 'card', cardType: 'mcp_tool' });
 
       const all = rig.messages.list(rig.conversationId, { limit: 200 });
       expect(all).toHaveLength(15);
       const visible = rig.messages.listVisible(rig.conversationId, { limit: 200 });
       expect(visible).toEqual(all.filter(isVisibleToUser));
-      expect(visible).toHaveLength(10);
+      expect(visible).toHaveLength(8);
       expect(
         visible.map((m) =>
           m.kind === 'card' ? (m.content as { cardType: string }).cardType : m.kind,
@@ -124,14 +132,25 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
         'bot_handover',
         'task',
         'system_event',
-        'command',
-        'egress',
       ]);
+      // Bot 上下文同样排除全部中途权限卡（含 record 折叠记录）
+      const botView = rig.messages.listForBot(rig.conversationId, 'bot_lead', {
+        limit: 200,
+      });
+      const noEphemeral = (view: Message[]) =>
+        view.every(
+          (m) =>
+            m.kind !== 'card' ||
+            !isEphemeralApprovalCardType((m.content as { cardType?: string }).cardType ?? ''),
+        );
+      expect(noEphemeral(botView)).toBe(true);
       expect(
-        visible
+        botView
           .filter((m) => m.kind === 'card')
-          .map((m) => (m.content as { record?: boolean }).record ?? false),
-      ).toEqual([false, false, false, false, true, true]);
+          .map((m) => (m.content as { cardType: string }).cardType),
+      ).toEqual(['environment', 'skill_import', 'bot_handover', 'task']);
+      const sharedView = rig.messages.listShared(rig.conversationId, { limit: 200 });
+      expect(noEphemeral(sharedView)).toBe(true);
       // list 不变：Bot 上下文仍含内部事件。
       expect(all.filter((m) => m.kind === 'system_event')).toHaveLength(5);
     } finally {
