@@ -255,6 +255,7 @@ v1 仅用**名称 + 上游链接**（权属与品牌授权未单独确认前，�
 ```text
 kepcup/
 ├── apps/desktop/     # Electron 桌面应用（产品入口）
+├── apps/website/     # 官方营销站（kepcup.app）
 ├── packages/core/    # 业务逻辑与数据（独立进程）
 ├── packages/shared/  # 跨进程契约与类型
 ├── packages/testkit/ # 测试基建

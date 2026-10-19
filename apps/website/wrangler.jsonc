@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // KepCup public marketing site. Static Astro output only — no Worker script.
+  // Deploy target: kepcup.app. Do not attach this Worker to kepcup.com.
+  // kepcup.com keeps /oauth/*, dl.kepcup.com, and registry.kepcup.com.
+  "name": "kepcup-website",
+  "compatibility_date": "2026-10-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    // Astro `build.format: directory` emits page/index.html.
+    // auto-trailing-slash serves those indexes at /page/ and redirects /page.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "kepcup.app", "custom_domain": true }]
+}

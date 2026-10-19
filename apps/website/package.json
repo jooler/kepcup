@@ -2,12 +2,28 @@
   "name": "@kepcup/website",
   "version": "0.0.0",
   "private": true,
-  "description": "KepCup official marketing site (kepcup.com). Scaffold only; marketing UI is not implemented.",
+  "description": "KepCup official marketing site (kepcup.app).",
   "type": "module",
   "license": "GPL-3.0",
-  "homepage": "https://kepcup.com",
+  "homepage": "https://kepcup.app",
   "author": {
     "name": "kepcup-app",
     "email": "kepcup-app@kepcup.app"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "prebuild": "node scripts/check-messaging.mjs",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro check",
+    "deploy": "pnpm run build && wrangler deploy",
+    "deploy:dry-run": "pnpm run build && wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@astrojs/sitemap": "3.7.4",
+    "astro": "7.3.8",
+    "typescript": "5.8.3",
+    "wrangler": "4.151.1"
   }
 }

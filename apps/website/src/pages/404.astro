@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro';
+import { en } from '../i18n/en';
+import { zh } from '../i18n/zh';
+---
+
+<Base
+  copy={en}
+  currentPath="/404/"
+  alternatePath="/zh/"
+  homePath="/"
+  privacyPath="/privacy/"
+  termsPath="/terms/"
+  pageTitle={`${en.notFound.title} · KepCup`}
+  pageDescription={en.notFound.body}
+>
+  <main id="main">
+    <div class="wrap not-found">
+      <h1>{en.notFound.title}</h1>
+      <p>{en.notFound.body}</p>
+      <p lang="zh-CN">{zh.notFound.title}。{zh.notFound.body}</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="/">{en.notFound.home}</a>
+        <a class="btn btn-ghost" href="/zh/" hreflang="zh-CN" lang="zh-CN">{zh.notFound.home}</a>
+      </div>
+    </div>
+  </main>
+</Base>

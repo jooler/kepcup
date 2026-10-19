@@ -1,0 +1,32 @@
+---
+import type { Copy } from '../i18n/types';
+import { links } from '../i18n/links';
+
+interface Props {
+  copy: Copy;
+  privacyPath: string;
+  termsPath: string;
+  alternatePath: string;
+}
+
+const { copy, privacyPath, termsPath, alternatePath } = Astro.props;
+---
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <nav aria-label={copy.footer.navLabel}>
+      <a href={links.license} rel="noopener noreferrer">{copy.footer.license}</a>
+      <a href={privacyPath}>{copy.footer.privacy}</a>
+      <a href={termsPath}>{copy.footer.terms}</a>
+      <a href={links.github} rel="noopener noreferrer">GitHub</a>
+      <a
+        href={alternatePath}
+        hreflang={copy.locale === 'en' ? 'zh-CN' : 'en'}
+        lang={copy.locale === 'en' ? 'zh-CN' : 'en'}
+      >
+        {copy.nav.langName}
+      </a>
+    </nav>
+    <p class="rights">{copy.footer.rights}</p>
+  </div>
+</footer>

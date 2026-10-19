@@ -1,0 +1,26 @@
+---
+import { linkParts } from '../lib/inline';
+
+interface Props {
+  text: string;
+}
+
+const parts = linkParts(Astro.props.text);
+---
+
+{
+  parts.map((part) =>
+    part.href ? (
+      <a
+        href={part.href}
+        {...(part.href.startsWith('http')
+          ? { target: '_blank', rel: 'noopener noreferrer' }
+          : {})}
+      >
+        {part.text}
+      </a>
+    ) : (
+      part.text
+    ),
+  )
+}
