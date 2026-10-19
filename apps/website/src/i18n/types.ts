@@ -1,18 +1,25 @@
-export interface Named {
+export interface FaqItem {
+  q: string;
+  a: string;
+}
+
+export interface BandPoint {
   title: string;
   body: string;
 }
 
-export interface Shot {
-  key: 'chat' | 'team' | 'bench';
+export interface CrewCard {
   title: string;
   body: string;
+  /** Screenshot key resolved in HomePage.astro. */
+  image: 'team' | 'bench' | 'wiki' | 'extensions';
+  imageAlt: string;
 }
 
-export interface CompareRow {
-  peer: string;
-  them: string;
-  us: string;
+export interface PlatformCard {
+  name: string;
+  sub: string;
+  href: string;
 }
 
 export interface OssLink {
@@ -32,97 +39,71 @@ export interface Copy {
     github: string;
     download: string;
     langName: string;
-    onThisPage: string;
     primary: string;
   };
-  toc: { href: string; label: string }[];
   hero: {
     eyebrow: string;
-    slogan: string;
-    imageAlt: string;
-    lede: string;
-    download: string;
-    github: string;
-    note: string;
-  };
-  shots: {
-    id: string;
     title: string;
     lede: string;
-    items: readonly Shot[];
+    primary: string;
+    secondary: string;
+    note: string;
+    imageAlt: string;
+  };
+  loopBand: {
+    title: string;
+    body: string;
+    points: readonly BandPoint[];
+    caption: string;
+    imageAlt: string;
+  };
+  crew: {
+    title: string;
+    lede: string;
+    cards: readonly CrewCard[];
+  };
+  localBand: {
+    title: string;
+    body: string;
+    points: readonly BandPoint[];
+    chips: readonly string[];
   };
   openMind: {
-    id: string;
+    kicker: string;
     title: string;
     paragraphs: readonly string[];
-    linkLabel: string;
-  };
-  why: {
-    id: string;
-    title: string;
-    lede: string;
-    caption: string;
-    colPeer: string;
-    colThem: string;
-    colUs: string;
-    rows: readonly CompareRow[];
-  };
-  dual: {
-    id: string;
-    title: string;
-    lede: string;
-    steps: readonly Named[];
-    historyTitle: string;
-    historyBody: string;
-  };
-  teams: {
-    id: string;
-    title: string;
-    lede: string;
-    roles: readonly Named[];
-    roadmap: string;
-  };
-  capabilities: {
-    id: string;
-    title: string;
-    lede: string;
-    items: readonly Named[];
-  };
-  trust: {
-    id: string;
-    title: string;
-    lede: string;
-    items: readonly Named[];
-    note: string;
+    cta: string;
   };
   download: {
-    id: string;
     title: string;
     lede: string;
-    platforms: readonly Named[];
-    cta: string;
-    source: string;
-    license: string;
+    platforms: readonly PlatformCard[];
+    more: PlatformCard;
   };
-  looking: {
-    id: string;
+  faq: {
+    title: string;
+    items: readonly FaqItem[];
+  };
+  cta: {
     title: string;
     lede: string;
-    items: readonly Named[];
-    issue: string;
-    discussion: string;
+    primary: string;
+    secondary: string;
   };
   thanks: {
-    id: string;
-    title: string;
-    disclaimer: string;
-    grok: string;
-    peers: string;
-    ossTitle: string;
+    body: string;
     ossNote: string;
     names: readonly OssLink[];
   };
   footer: {
+    product: string;
+    community: string;
+    legal: string;
+    docs: string;
+    releases: string;
+    source: string;
+    issues: string;
+    discussions: string;
     privacy: string;
     terms: string;
     license: string;

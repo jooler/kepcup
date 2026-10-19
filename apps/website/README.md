@@ -46,7 +46,7 @@ Pengfei deploys from a machine that already has Cloudflare credentials for the a
 Worker name: `kepcup-website`. Config: `wrangler.jsonc`.
 
 ```bash
-pnpm --filter @kepcup/website deploy
+pnpm --filter @kepcup/website run deploy
 ```
 
 That builds, then runs `wrangler deploy`. The route is a [custom domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/) on `kepcup.app`. The first deploy creates or updates the DNS record on that zone. `workers.dev` and preview URLs are off, so the site is not also published on a `*.workers.dev` hostname.
@@ -59,7 +59,7 @@ pnpm --filter @kepcup/website deploy:dry-run
 
 A dry run needs the same API credentials as a real deploy. It uploads nothing.
 
-Token: use the account that can see the **kepcup.app** zone. The recipe in [infra/cloudflare/README.md](../../infra/cloudflare/README.md) was written for kepcup.com (`oauth-cimd`, `directory`, `registry`). Reuse that flow, and include kepcup.app in the token’s zone resources. Useful permissions: Account / Workers Scripts Edit, Account Settings Read, Zone / Read, Zone / DNS Edit, Zone / Workers Routes Edit. Run Wrangler through `infra/cloudflare/with-env.sh` if the shell already has a token for a different zone — that script clears `CLOUDFLARE_*` and reads the repo `.env`.
+Token: use the account that can see the **kepcup.app** zone. The recipe in [infra/cloudflare/README.md](../../infra/cloudflare/README.md) was written for kepcup.com (`oauth-cimd`, `directory`, `registry`). Reuse that flow, and include kepcup.app in the token’s zone resources. Useful permissions: Account / Workers Scripts Edit, Account Settings Read, Zone / Read, Zone / DNS Edit, Zone / Workers Routes Edit. Run Wrangler through `infra/cloudflare/with-env.sh` if the shell already has a token for a different zone — that script clears `CLOUDFLARE_`* and reads the repo `.env`.
 
 `www.kepcup.app` is not attached. A custom domain matches one hostname. To send `www` to the apex, add a proxied DNS record for `www` and a [redirect rule](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#redirect-between-www-and-root-domain) in the kepcup.app zone. Do not point `www` at a second copy of the site.
 

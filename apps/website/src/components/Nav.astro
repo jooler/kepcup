@@ -1,6 +1,7 @@
 ---
 import type { Copy } from '../i18n/types';
 import { links } from '../i18n/links';
+import Mark from './Mark.astro';
 
 interface Props {
   copy: Copy;
@@ -12,25 +13,16 @@ const { copy, homePath, alternatePath } = Astro.props;
 const downloadHref = `${homePath}#download`;
 ---
 
-<div class="topbar"></div>
 <a class="skip" href="#main">{copy.nav.skip}</a>
 <header class="header">
   <div class="wrap header-inner">
-    <a class="brand" href={homePath}>
-      <img
-        class="mark mark-light"
-        src="/brand/logo-light.svg"
-        width="34"
-        height="26"
-        alt=""
-      />
-      <img class="mark mark-dark" src="/brand/logo-dark.svg" width="34" height="26" alt="" />
+    <a class="brand" href={homePath} aria-label="KepCup">
+      <Mark size={30} class="brand-mark" />
       <span>KepCup</span>
     </a>
     <nav class="nav-links" aria-label={copy.nav.primary}>
       <a href={links.docs} rel="noopener noreferrer">{copy.nav.docs}</a>
       <a href={links.github} rel="noopener noreferrer">{copy.nav.github}</a>
-      <a class="nav-download" href={downloadHref}>{copy.nav.download}</a>
       <a
         href={alternatePath}
         hreflang={copy.locale === 'en' ? 'zh-CN' : 'en'}
@@ -38,6 +30,7 @@ const downloadHref = `${homePath}#download`;
       >
         {copy.nav.langName}
       </a>
+      <a class="btn btn-dark btn-sm" href={downloadHref}>{copy.nav.download}</a>
     </nav>
   </div>
 </header>

@@ -1,6 +1,7 @@
 ---
 import type { Copy } from '../i18n/types';
 import { links } from '../i18n/links';
+import Rich from './Rich.astro';
 
 interface Props {
   copy: Copy;
@@ -13,20 +14,50 @@ const { copy, privacyPath, termsPath, alternatePath } = Astro.props;
 ---
 
 <footer class="footer">
-  <div class="wrap footer-inner">
-    <nav aria-label={copy.footer.navLabel}>
-      <a href={links.license} rel="noopener noreferrer">{copy.footer.license}</a>
-      <a href={privacyPath}>{copy.footer.privacy}</a>
-      <a href={termsPath}>{copy.footer.terms}</a>
-      <a href={links.github} rel="noopener noreferrer">GitHub</a>
-      <a
-        href={alternatePath}
-        hreflang={copy.locale === 'en' ? 'zh-CN' : 'en'}
-        lang={copy.locale === 'en' ? 'zh-CN' : 'en'}
-      >
-        {copy.nav.langName}
-      </a>
-    </nav>
-    <p class="rights">{copy.footer.rights}</p>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <span class="footer-wordmark">KepCup</span>
+        <p class="footer-tagline">{copy.hero.eyebrow}</p>
+      </div>
+      <nav class="footer-col" aria-label={copy.footer.product}>
+        <h3>{copy.footer.product}</h3>
+        <a href={links.docs} rel="noopener noreferrer">{copy.footer.docs}</a>
+        <a href={links.releases} rel="noopener noreferrer">{copy.footer.releases}</a>
+        <a href={links.github} rel="noopener noreferrer">{copy.footer.source}</a>
+      </nav>
+      <nav class="footer-col" aria-label={copy.footer.community}>
+        <h3>{copy.footer.community}</h3>
+        <a href={links.issues} rel="noopener noreferrer">{copy.footer.issues}</a>
+        <a href={links.discussions} rel="noopener noreferrer">{copy.footer.discussions}</a>
+      </nav>
+      <nav class="footer-col" aria-label={copy.footer.legal}>
+        <h3>{copy.footer.legal}</h3>
+        <a href={privacyPath}>{copy.footer.privacy}</a>
+        <a href={termsPath}>{copy.footer.terms}</a>
+        <a href={links.license} rel="noopener noreferrer">{copy.footer.license}</a>
+        <a
+          href={alternatePath}
+          hreflang={copy.locale === 'en' ? 'zh-CN' : 'en'}
+          lang={copy.locale === 'en' ? 'zh-CN' : 'en'}
+        >
+          {copy.nav.langName}
+        </a>
+      </nav>
+    </div>
+    <div class="footer-thanks">
+      <p><Rich text={copy.thanks.body} /></p>
+      <p class="footer-oss">
+        <span>{copy.thanks.ossNote}</span>
+        {
+          copy.thanks.names.map((item) => (
+            <a href={item.href} rel="noopener noreferrer">
+              {item.name}
+            </a>
+          ))
+        }
+      </p>
+      <p class="footer-rights">{copy.footer.rights}</p>
+    </div>
   </div>
 </footer>
