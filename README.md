@@ -58,7 +58,6 @@ sequenceDiagram
 A conversation with a Bot is just a message list for communication: what the user asked, what the key information was, what the final result was—the content itself is lightweight. And when the reply loop starts, the messages it injects are only a few of the most recent messages plus a few of the most relevant messages from history; the full message history is never injected.
 
 ```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
 flowchart TB
   Send["User sends a message"]
 
