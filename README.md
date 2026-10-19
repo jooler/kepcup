@@ -2,30 +2,23 @@
 
 [中文](README.zh-CN.md)
 
-<p align="center">
-  <img src="apps/desktop/resources/sidebar/logo-light.svg" alt="KepCup" width="120" />
-</p>
+![KepCup](apps/website/public/images/Meet_KepCup.png)
 
-<p align="center"><strong>Build a team. Only for you.</strong></p>
+**Build a team. Only for you.**
 
-<p align="center">
-  <a href="https://kepcup.app">kepcup.app</a> ·
-  <a href="docs/README.md">Docs</a> ·
-  <a href="docs/releases/v0.1.0.md">v0.1.0 release notes</a> ·
-  <a href="LICENSE">GPL-3.0</a>
-</p>
+[kepcup.app](https://kepcup.app) · [Docs](docs/README.md) · [v0.1.0 release notes](docs/releases/v0.1.0.md) · [GPL-3.0](LICENSE)
 
 ## OpenMind
 
 KepCup is an **OpenMind** product.
 
-OpenMind means opening the *thinking*—product intent, the hard problems, and how the modules fit together—not only the source tree. In the AI era that goes further than code alone: anyone can rebuild these ideas, or fold them into their own product, with coding models and agents. KepCup is free to use, and the design is meant to be reusable.
+OpenMind means opening the *thinking*—product intent, the hard problems themselves, and how the modules fit together—not just the source tree. In the AI era, that goes further than "just open code": anyone can rebuild these ideas, or fold them into their own product, with coding models and agents. KepCup is free to use, and the design itself is deliberately reusable.
 
 ## What is KepCup
 
-KepCup is a **local-first multi-Bot assistant**. It can stand in for hosted teammate products such as Grok Bot, Muse, or Dot: you create Bots on your machine, give them permissions and a working directory, and they collaborate with you—and with each other—without shipping your data to a host you do not control.
+KepCup is a **local-first multi-Bot assistant**. It can stand in for hosted teammate products such as Grok Bot, Muse, or Dot: you create Bots on your machine, give them permissions and a working directory, and they collaborate with you—and with each other—without handing your data to a host you do not control.
 
-Bots are designed like real people. Collaboration should feel human: shared context, clear roles, and work that actually ships—not endless Bot chitchat.
+Bots are designed to be like real people. Collaboration should feel human: shared context, clear roles, and work that actually gets done—not endless Bot small talk.
 
 - Product & architecture decisions: [docs/design/](docs/design/README.md)
 - Engineering guidance: [docs/dev/](docs/dev/README.md)
@@ -33,13 +26,15 @@ Bots are designed like real people. Collaboration should feel human: shared cont
 - Homepage: [https://kepcup.app](https://kepcup.app)
 - License: [GPL-3.0](LICENSE)
 
-## Dual loop
+## Dual loop design
 
-A Bot’s dual loop mirrors how people work.
+A Bot's behavior follows how real people work. Think about how you collaborate with a real person: if I were the one receiving your instructions, here is how I would behave:
 
-- The **message list** is a long-term, distilled communication surface—what you and the Bot agreed to remember as the conversation.
-- Each user message starts an independent **reply** loop. That loop does **not** stack cumulative raw chat history as its working context.
-- **Task execution** is a separate loop. Tool use, files, and intermediate state stay inside that task.
+1. First I think through what you have asked. If the instruction is clear, I reply to you right away, then get to work. If it is unclear or needs other resources, I still reply first and work out the coordination with you.
+2. Only after that first round of communication do I start working. On a team I can call on unlimited resources: I just need to provide the right plan and standards, and the executors actually carry out the task.
+3. After that I keep waiting for your next instruction and can take on other tasks. Tasks I have sent out come back with results when they finish, and I then report the outcome back to you.
+
+Throughout this flow I have two responsibilities: 1. communicate with you; 2. produce plans and drive task execution. In KepCup's design, these two responsibilities are implemented as two loops, each calling the LLM. Every incoming message starts a reply loop; task loops start on demand. All loops run independently, powered underneath by a built-in agent (currently Pi Agent) or third-party agents (Claude Code, Codex, OpenCode, Cursor, and others via ACP). Context stays strictly focused and is designed to stay well clear of the context window limits of mainstream models.
 
 ```mermaid
 sequenceDiagram
@@ -51,40 +46,69 @@ sequenceDiagram
   U->>Board: Send message
   Board->>Reply: Start independent reply loop
   Note over Reply: Selective context injection<br/>(not full cumulative history)
-  Reply->>Task: Start / route work as needed
-  Note over Task: Tools, files, state<br/>stay inside the task
+  Reply->>Task: Start / route work on demand
+  Note over Task: Tools, files, state<br/>stay within the task
   Task-->>Reply: Result / settlement
-  Reply-->>Board: Distilled reply on the board
+  Reply-->>Board: Distilled reply posted to board
   Board-->>U: Visible update
 ```
 
-## One conversation, infinite history
+## How conversations with a Bot achieve "infinite history"
 
-The UI keeps a **thin history board**. The dual loop injects only the context that turn needs—so a conversation can grow without every reply replaying the entire transcript.
+A conversation with a Bot is just a message list for communication: what the user asked, what the key information was, what the final result was—the content itself is lightweight. And when the reply loop starts, the messages it injects are only a few of the most recent messages plus a few of the most relevant messages from history; the full message history is never injected.
 
 ```mermaid
-flowchart LR
-  subgraph Board["Thin history board"]
-    M1[Older turns]
-    M2[Recent distilled turns]
-    M3[Latest user message]
+%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+flowchart TB
+  Send["User sends a message"]
+
+  subgraph List["Message list"]
+    direction TB
+    Gap1["…"]
+    Rel1["Relevant"]
+    Gap2["…"]
+    Rel2["Relevant"]
+    Gap3["…"]
+    Rel3["Relevant"]
+    Tail3["3rd from last"]
+    Tail2["2nd from last"]
+    Newest["Newest"]
+    Gap1 --- Rel1 --- Gap2 --- Rel2 --- Gap3 --- Rel3 --- Tail3 --- Tail2 --- Newest
   end
-  M3 --> Inject[Selective context injection]
-  Inject --> Reply[Reply loop]
-  Reply --> Task[Task loop]
-  Task --> Reply
-  Reply --> Board
+
+  Scattered["3 relevant but non-contiguous messages"]
+  Recent["Last 3 messages"]
+  Context["Latest message + relevant past conversation"]
+  Dual["Dual-loop system"]
+
+  Send -->|Appended as the last item| Newest
+  Rel1 --> Scattered
+  Rel2 --> Scattered
+  Rel3 --> Scattered
+  Tail3 --> Recent
+  Tail2 --> Recent
+  Newest --> Recent
+  Scattered --> Context
+  Recent --> Context
+  Context -->|Injected into the Bot| Dual
+
+  classDef idle fill:#f4f4f5,stroke:#d4d4d8,color:#71717a
+  classDef related fill:#eff6ff,stroke:#2563eb,color:#1e3a8a
+  classDef recent fill:#fff7ed,stroke:#c2410c,color:#9a3412
+  class Gap1,Gap2,Gap3 idle
+  class Rel1,Rel2,Rel3 related
+  class Tail3,Tail2,Newest recent
 ```
 
-## Project teams (not group chat)
+## Why a project team, not a group chat
 
-A **project team** is not a group chat. It has three cores:
+**Group chat is a human social need; Bots do not have that need. The real scenario is gathering several Bots with different responsibilities to achieve a set goal or maintain some state.** It has three cores:
 
-1. **Centralized communication** — you and the Bots in one place  
-2. **Plans & collaboration** — who owns what, and how work moves  
-3. **Shared knowledge and delivery** — shared wiki / knowledge, and getting work done  
+1. **Centralized communication** — the user and multiple Bots share one message list
+2. **Planning and collaboration** — take in inbound information, whether from user input or automation triggers such as a new email: who executes it, and who needs to pick it up next
+3. **Shared knowledge and delivery** — shared wiki / knowledge
 
-Shared message board and project wiki are in; board / OKR / date planning are still on the roadmap. The product is about **shipping work**, not Bot small talk. See [docs/design/41-project-team.md](docs/design/41-project-team.md).
+The shared message board and project wiki are ready; board / OKR / schedule planning are still on the roadmap. The product cares about **orchestrating multiple Bots to collaborate at high quality**, not Bot small talk. See [docs/design/41-project-team.md](docs/design/41-project-team.md).
 
 ## Development roadmap
 
@@ -92,7 +116,7 @@ Shared message board and project wiki are in; board / OKR / date planning are st
 
 - [x] Dual-loop core
 - [x] Bot conversation logic
-- [x] Bots’ internal communications
+- [x] Bots' internal communications
 - [x] Bot details (config, memory, skills, wiki, schedules)
 - [x] LLM provider configuration
 - [x] Multimodal I/O capability configuration
@@ -105,12 +129,12 @@ Shared message board and project wiki are in; board / OKR / date planning are st
 - [x] Extension Center — connections (Notion, Linear, Cloudflare, and more)
 - [x] Extension Center — MCP
 - [x] Extension Center — mail
-- [x] Bot on-demand Extension Center capabilities
-- [x] Bot auth, sandbox, unattended mode, command allowlist
+- [x] Bot on-demand use of Extension Center capabilities
+- [x] Bot authorization, sandbox, unattended mode, command allowlist
 - [x] Schedules — one-shot & recurring
 - [x] Bot micro-app widgets
-- [x] Special Bot — Butler (env init, create initial Bots)
-- [x] Workbench — Items (tasks to Bots) & Memos (fleeting notes)
+- [x] Special Bot — Butler (environment setup, create initial Bots)
+- [x] Workbench — Items (tasks assigned to Bots) & Memos (fleeting thoughts)
 - [x] Project teams — basics & communication
 - [x] Project teams — wiki
 
@@ -118,40 +142,30 @@ Shared message board and project wiki are in; board / OKR / date planning are st
 
 - [ ] Project teams — board
 - [ ] Project teams — OKR
-- [ ] Project teams — dates & planning
+- [ ] Project teams — schedule & planning
 - [ ] Plugin system
 - [ ] Bot message protocol
 
 ## We are looking for your OpenMind
 
-Open issues, discussions, or PRs—especially around:
+Issues, discussions, and PRs are welcome—especially around:
 
-1. **Better authorization** — mid-run prompts interrupt too often; we want less interruption while still blocking dangerous commands by default.  
-2. **Multimodal vendor APIs** — providers disagree; we want a unified layer.  
-3. **Project teams** — what else should they have beyond board / OKR / planning?  
-4. **Workbench** — it should surface work in one UI and cut the “remember which Bots / teams” load. What’s missing?
+1. **Better authorization** — mid-execution confirmation interruptions happen too often; we want fewer interruptions while still blocking dangerous commands by default.
+2. **Multimodal vendor APIs** — every vendor does it differently; we want a unified abstraction layer.
+3. **Project teams** — beyond board / OKR / planning, what else should there be?
+4. **Workbench** — it should bring work together in one interface and reduce the mental load of "remembering which Bot / which team." What's missing, and what ideas do you have?
 
 ## Thanks
 
-KepCup stands on many open-source projects and product inspirations. This acknowledgment **does not imply** endorsement or affiliation by any trademark holder; marks and names belong to their respective owners.
+KepCup stands on many open-source projects and product inspirations. The acknowledgments below **do not imply** endorsement or affiliation by any trademark holder; logos and names belong to their respective owners.
 
 ### Product inspiration
 
-Thanks to **Grok Bot** (xAI / Cursor product line) for product inspiration—conversational Bots, the three-column layout, and a flat UI (see design decision [D46](docs/design/README.md) and [12-ui-layout.md](docs/design/12-ui-layout.md)). KepCup is an independent implementation, not an official derivative or affiliate of Grok Bot.
+Thanks to **Grok Bot** (xAI / Cursor product line) for the product inspiration—conversational Bots, the three-column layout, and a flat UI (see design decisions [D46](docs/design/README.md) and [12-ui-layout.md](docs/design/12-ui-layout.md)). KepCup is an independent implementation and is not an official derivative or affiliate of Grok Bot.
 
-<!-- PENDING_GROK_BOT_LOGO: full-width horizontal Grok Bot logo.
-     Awaiting an official asset confirmed for third-party README use
-     (xAI/Cursor brand guidelines: official provided assets only, no
-     alteration, no endorsement implication). Do not substitute
-     unofficial SVGs (e.g. asvg.app) or reconstructed marks. -->
+![Meet Grok Bot](apps/website/public/images/grok_bot.png)
 
-*PENDING — Full-width horizontal Grok Bot logo: replace this placeholder once Pengfei supplies an officially confirmed asset cleared for third-party README use.*
-
-Ideas were also informed by [Rakazo](https://github.com/elie222/rakazo), [OpenMuse](https://github.com/CopilotKit/OpenMuse), and [OpenDots](https://github.com/CopilotKit/OpenDots) (local / self-hosted assistant directions). They are **not** runtime dependencies of this repository and are omitted from the open-source matrix below.
-
-### Open-source dependencies (logo matrix)
-
-For v1 we use **names + upstream links only** (no embedded third-party marks until brand clearance is confirmed; no unofficial logo CDNs):
+### Open-source dependencies
 
 [Electron](https://github.com/electron/electron) ·
 [Svelte](https://svelte.dev) ·
@@ -179,76 +193,76 @@ For v1 we use **names + upstream links only** (no embedded third-party marks unt
 
 #### Tier 1 — Platform & build
 
-| | Project | Why |
-| --- | --- | --- |
-| | [Electron](https://github.com/electron/electron) | Desktop shell; Bot browser via `webContents` + CDP |
-| | [Node.js](https://nodejs.org) | Runtime (`engines.node` ≥ 22.19) |
-| | [TypeScript](https://www.typescriptlang.org) | Whole codebase |
-| | [Vite](https://vite.dev) + [electron-vite](https://electron-vite.org) | Desktop build / HMR |
-| | [pnpm](https://pnpm.io) | Monorepo (`pnpm@11.22.0`) |
-| | [electron-builder](https://github.com/electron-userland/electron-builder) / electron-updater | Packaging + auto-update |
+| Project | Purpose |
+| --- | --- |
+| [Electron](https://github.com/electron/electron) | Desktop shell; Bot browser via `webContents` + CDP |
+| [Node.js](https://nodejs.org) | Runtime (`engines.node` ≥ 22.19) |
+| [TypeScript](https://www.typescriptlang.org) | Language across the repo |
+| [Vite](https://vite.dev) + [electron-vite](https://electron-vite.org) | Desktop build & HMR |
+| [pnpm](https://pnpm.io) | Monorepo (`pnpm@11.22.0`) |
+| [electron-builder](https://github.com/electron-userland/electron-builder) / electron-updater | Packaging & in-app updates |
 
-(Chromium ships with Electron—no separate cell.)
+(Chromium ships with Electron and is not listed separately.)
 
 #### Tier 2 — UI
 
-| | Project | Why |
-| --- | --- | --- |
-| | [Svelte 5](https://svelte.dev) | Renderer UI |
-| | [Tailwind CSS 4](https://tailwindcss.com) | Styling |
-| | [shadcn-svelte](https://www.shadcn-svelte.com) ([+ bits-ui](https://github.com/huntabyte/bits-ui)) | Component base |
-| | [Lucide](https://lucide.dev) | Icons |
-| | [TipTap](https://tiptap.dev) | Composer / rich text |
-| | [streamdown-svelte](https://github.com/PacificStudio/streamdown-svelte) | Streaming Markdown |
-| | [Paneforge](https://github.com/svecosystem/paneforge) | Resizable panes |
-| | [mode-watcher](https://github.com/svecosystem/mode-watcher) / [svelte-sonner](https://github.com/wobsoriano/svelte-sonner) | Theme + toasts |
-| | [@pierre/diffs](https://www.npmjs.com/package/@pierre/diffs) (+ Shiki) | Diff UI |
+| Project | Purpose |
+| --- | --- |
+| [Svelte 5](https://svelte.dev) | Renderer UI |
+| [Tailwind CSS 4](https://tailwindcss.com) | Styling |
+| [shadcn-svelte](https://www.shadcn-svelte.com) ([+ bits-ui](https://github.com/huntabyte/bits-ui)) | Component foundation |
+| [Lucide](https://lucide.dev) | Icons |
+| [TipTap](https://tiptap.dev) | Composer / rich text |
+| [streamdown-svelte](https://github.com/PacificStudio/streamdown-svelte) | Streaming Markdown |
+| [Paneforge](https://github.com/svecosystem/paneforge) | Resizable panes |
+| [mode-watcher](https://github.com/svecosystem/mode-watcher) / [svelte-sonner](https://github.com/wobsoriano/svelte-sonner) | Theme & toasts |
+| [@pierre/diffs](https://www.npmjs.com/package/@pierre/diffs) (+ Shiki) | Diff display |
 
 #### Tier 3 — AI / protocol / sandbox
 
-| | Project | Why |
-| --- | --- | --- |
-| | [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-*`) | Built-in dual-loop / tools / MCP wrapper |
-| | [ACP](https://agentclientprotocol.com) (`@agentclientprotocol/sdk`) | External agent protocol |
-| | [MCP](https://modelcontextprotocol.io) (`@modelcontextprotocol/sdk`) | Tool servers & connected apps |
-| | [Anthropic Sandbox Runtime](https://github.com/anthropics/sandbox-runtime) | Default sandbox backend (srt) |
-| | [ONNX Runtime](https://onnxruntime.ai) | Local embeddings (on-demand install) |
-| | [Jina Embeddings v2 base-zh](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh) | Default local memory vectors (Apache-2.0) |
+| Project | Purpose |
+| --- | --- |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-*`) | Built-in dual loop, tools & MCP wrapper |
+| [ACP](https://agentclientprotocol.com) (`@agentclientprotocol/sdk`) | External agent protocol |
+| [MCP](https://modelcontextprotocol.io) (`@modelcontextprotocol/sdk`) | Tool servers & connected apps |
+| [Anthropic Sandbox Runtime](https://github.com/anthropics/sandbox-runtime) | Default sandbox backend (srt) |
+| [ONNX Runtime](https://onnxruntime.ai) | Local embedding inference (installed on demand) |
+| [Jina Embeddings v2 base-zh](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh) | Default local memory vectors (Apache-2.0) |
 
-#### Tier 4 — Data / mail / utilities
+#### Tier 4 — Data / mail / utility libraries
 
-| | Project | Why |
-| --- | --- | --- |
-| | [SQLite](https://sqlite.org) (+ [better-sqlite3-multiple-ciphers](https://github.com/m4heshd/better-sqlite3-multiple-ciphers)) | Encrypted local DBs / FTS5 |
-| | [sqlite-vec](https://github.com/asg017/sqlite-vec) | Vector extension |
-| | [es-git](https://github.com/toss/es-git) | Wiki / skills / checkpoints |
-| | [@napi-rs/keyring](https://github.com/napi-rs/keyring) | OS keychain for DB master key |
-| | [ImapFlow](https://imapflow.com) / [Nodemailer](https://nodemailer.com) / [mailparser](https://github.com/nodemailer/mailparser) | Extension Center email |
-| | [Zod](https://zod.dev) | Runtime validation & RPC contracts |
-| | [birpc](https://github.com/antfu-collective/birpc) | Main ↔ core RPC |
-| | [undici](https://undici.nodejs.org) | HTTP |
-| | [MinerU](https://github.com/opendatalab/MinerU) | Document-parsing preset skill (AGPL-3.0; see [NOTICE](apps/desktop/resources/preset-skills/NOTICE.md)) |
-| | [cron-parser](https://github.com/harrisiirak/cron-parser); [bash-parser](https://github.com/vorpaljs/bash-parser) + [acorn](https://github.com/acornjs/acorn); [pino](https://github.com/pinojs/pino) / [ulid](https://github.com/ulid/javascript) | Schedules, command parsing, logging & IDs |
+| Project | Purpose |
+| --- | --- |
+| [SQLite](https://sqlite.org) (+ [better-sqlite3-multiple-ciphers](https://github.com/m4heshd/better-sqlite3-multiple-ciphers)) | Encrypted local databases & FTS5 |
+| [sqlite-vec](https://github.com/asg017/sqlite-vec) | Vector extension |
+| [es-git](https://github.com/toss/es-git) | Git operations for wiki / skills / checkpoints |
+| [@napi-rs/keyring](https://github.com/napi-rs/keyring) | OS keychain for the DB master key |
+| [ImapFlow](https://imapflow.com) / [Nodemailer](https://nodemailer.com) / [mailparser](https://github.com/nodemailer/mailparser) | Extension Center mail channel |
+| [Zod](https://zod.dev) | Runtime validation & RPC contracts |
+| [birpc](https://github.com/antfu-collective/birpc) | Main process ↔ core RPC |
+| [undici](https://undici.nodejs.org) | HTTP |
+| [MinerU](https://github.com/opendatalab/MinerU) | Document-parsing preset skill (AGPL-3.0; see [NOTICE](apps/desktop/resources/preset-skills/NOTICE.md)) |
+| [cron-parser](https://github.com/harrisiirak/cron-parser); [bash-parser](https://github.com/vorpaljs/bash-parser) + [acorn](https://github.com/acornjs/acorn); [pino](https://github.com/pinojs/pino) / [ulid](https://github.com/ulid/javascript) | Scheduling, command parsing, logging & IDs |
 
-…and the maintainers of our transitive dependencies (ESLint / Prettier / Vitest / `@types`, small helpers such as `clsx` / `tailwind-merge`, and similar are intentionally not listed one-by-one; Playwright is e2e-only—the in-product browser is Electron CDP).
+And to the maintainers of our transitive dependencies (ESLint / Prettier / Vitest / `@types`, and pure utility libraries such as `clsx` / `tailwind-merge`; Playwright is used for e2e, while the in-product browser is Electron CDP).
 
 ### Optional ACP agents (user-installed peers)
 
-These are **not** npm dependencies and are **not** in the open-source logo matrix. Users may install them locally and connect them through ACP as optional peer CLIs (see [docs/design/28-external-agents-acp.md](docs/design/28-external-agents-acp.md)):
+The products below are **not** npm dependencies. Users can install them locally and connect them to KepCup via ACP as optional peer CLIs (see [docs/design/28-external-agents-acp.md](docs/design/28-external-agents-acp.md)):
 
 - Claude Code  
 - Codex  
 - Cursor  
 - OpenCode  
-- DeepSeek Harness  
+- DeepSeek Harness
 
 ### Optional sandbox enhancements (not npm)
 
-The default sandbox is Anthropic Sandbox Runtime. Platforms may also use [Lima](https://lima-vm.io) (macOS), rootless [Podman](https://podman.io) (Linux), or [bubblewrap](https://github.com/containers/bubblewrap) on Linux as optional enhancements—guided by environment detection / docs, not package dependencies. See [docs/design/10-sandbox.md](docs/design/10-sandbox.md).
+The default sandbox is Anthropic Sandbox Runtime. Platforms can also opt into enhancement paths such as [Lima](https://lima-vm.io) (macOS), rootless [Podman](https://podman.io) (Linux), or [bubblewrap](https://github.com/containers/bubblewrap) on Linux; these are guided by environment detection / docs and are not package dependencies of this repository. See [docs/design/10-sandbox.md](docs/design/10-sandbox.md).
 
 ---
 
-## Appendix — Develop, layout, license
+## Appendix — Development, layout, license
 
 ### Repository layout (short)
 
@@ -260,18 +274,18 @@ kepcup/
 ├── packages/shared/  # Cross-process contracts & types
 ├── packages/testkit/ # Test infrastructure
 ├── docs/             # design / dev / guides / releases
-└── infra/            # Cloudflare helpers and related
+└── infra/            # Cloudflare and related infrastructure
 ```
 
 Details: [docs/dev/01-conventions.md](docs/dev/01-conventions.md), [docs/README.md](docs/README.md).
 
-### Develop
+### Development
 
 Requires **Node.js ≥ 22.19** and **pnpm@11.22.0** (see root `packageManager`).
 
 ```bash
 pnpm install
-pnpm dev          # build shared/core, then start the desktop app
+pnpm dev          # build shared/core first, then start the desktop app
 pnpm test         # unit / integration (prefer targeted runs while iterating — see AGENTS.md)
 pnpm test:e2e     # Playwright e2e (@kepcup/desktop)
 ```
@@ -280,4 +294,4 @@ Agent conventions: [AGENTS.md](AGENTS.md).
 
 ### License
 
-Root license: [GPL-3.0](LICENSE). The vendored MinerU preset skill is redistributed under AGPL-3.0—see [apps/desktop/resources/preset-skills/NOTICE.md](apps/desktop/resources/preset-skills/NOTICE.md). A repository-wide NOTICE file is not yet published.
+The root license is [GPL-3.0](LICENSE). The MinerU skill vendored in the preset skills is redistributed separately under AGPL-3.0—see [apps/desktop/resources/preset-skills/NOTICE.md](apps/desktop/resources/preset-skills/NOTICE.md). A repository-wide NOTICE file is not yet published.
