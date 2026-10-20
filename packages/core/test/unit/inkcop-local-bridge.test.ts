@@ -14,10 +14,13 @@ import {
   InkcopOfflineError,
   InkcopAuthError,
   InkcopHttpError,
+  InkcopAgentNotExposedError,
   INKCOP_OFFLINE_TIP_ZH,
   INKCOP_AUTH_TIP_ZH,
+  INKCOP_AGENT_NOT_EXPOSED_TIP_ZH,
   inkcopOfflineTip,
   inkcopAuthTip,
+  inkcopAgentNotExposedTip,
 } from '../../src/inkcop/client.js';
 import {
   INKCOP_LOCAL_TRANSPORT,
@@ -609,6 +612,34 @@ describe('inkcop tool handoff (v0.4)', () => {
       text: '写一句',
     });
     expect(result).toEqual({ ok: true, text: '桥接结果', connectionId: 'conn_h' });
+  });
+
+  it('handoffToInkcopAgent surfaces agent_not_exposed (403) with Chinese tip', async () => {
+    const fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: false, error: 'agent_not_exposed' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { version: 4, port: 9, token: 'g'.repeat(32), baseUrl: 'http://127.0.0.1:9' },
+      fetch: fetch as never,
+    });
+    await expect(client.ensureConnection({ externalId: 'x', name: 'n', agentKey: 'stale' })).rejects.toBeInstanceOf(
+      InkcopAgentNotExposedError,
+    );
+    const result = await handoffToInkcopAgent(client, {
+      botId: 'bot_1',
+      botName: '测',
+      agentKey: 'stale_key',
+      text: '写一句',
+    });
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'not_exposed',
+      message: INKCOP_AGENT_NOT_EXPOSED_TIP_ZH,
+    });
+    expect(inkcopAgentNotExposedTip(null)).toBe(INKCOP_AGENT_NOT_EXPOSED_TIP_ZH);
   });
 
   it('listAgents parses description when present', async () => {
