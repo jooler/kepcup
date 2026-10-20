@@ -482,6 +482,27 @@ html.wco .wco-inset-end {
   padding: 0 2px;
 }
 
+/* 本地文件/文件夹提及：icon + 名称，左右各留 4px（图标与文字间距也是 4px）。 */
+.composer-mention-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  vertical-align: baseline;
+}
+.composer-mention-icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  opacity: 0.85;
+}
+.composer-mention-label {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 编辑器空态占位符（@tiptap/extensions Placeholder）。 */
 .composer-editor p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

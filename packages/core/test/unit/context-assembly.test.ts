@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot, Conversation, Message } from '@kepcup/shared';
-import { botProfileSchema, projectMentionToken } from '@kepcup/shared';
+import {
+  botProfileSchema,
+  fileMentionToken,
+  folderMentionToken,
+  projectMentionToken,
+} from '@kepcup/shared';
 import { buildSystemPrompt } from '../../src/agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -429,6 +434,20 @@ describe('user message mention legend', () => {
       renderOptions,
     );
     expect(line).toContain('（提及：@某项目组）');
+  });
+
+  it('local file/folder mentions expose the absolute path to the model', () => {
+    const line = renderMessageLine(
+      makeMessage({
+        id: 'msg_12',
+        seq: 12,
+        content: { text: '@/.tmp/report.md 和 @/.tmp/assets 请处理' },
+        mentions: [fileMentionToken('/Users/me/report.md'), folderMentionToken('/Users/me/assets')],
+      }),
+      optionsWithGroups,
+    );
+    expect(line).toContain('@report.md（路径：/Users/me/report.md，文件）');
+    expect(line).toContain('@assets（路径：/Users/me/assets，文件夹）');
   });
 
   it('bot/system messages without mentions stay unchanged', () => {

@@ -11,6 +11,7 @@ import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import { BulletList, ListItem, OrderedList } from '@tiptap/extension-list';
 import Mention from '@tiptap/extension-mention';
+import { parseLocalPathMentionToken } from '@kepcup/shared';
 import type { MentionTarget } from './composer-text';
 import { resolveMentionTokens } from './composer-text';
 
@@ -34,9 +35,15 @@ export const composerNodes = [
   ListItem,
 ];
 
-/** mention 节点（component 侧再 .configure 挂 suggestion 弹层）。 */
+/**
+ * mention 节点（component 侧再 .configure 挂 suggestion 弹层）。本地文件/文件夹
+ * 提及序列化成 `@绝对路径`（正文里必须带路径，Bot 才拿得到地址）；Bot/项目组
+ * 仍序列化成 `@名字`。
+ */
 export const composerMention = Mention.extend({
   renderMarkdown(node: JSONContent) {
+    const local = parseLocalPathMentionToken(String(node.attrs?.id ?? ''));
+    if (local !== null) return `@${local.path}`;
     const label = node.attrs?.label ?? node.attrs?.id ?? '';
     return `@${label}`;
   },

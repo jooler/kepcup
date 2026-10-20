@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MarkdownManager } from '@tiptap/markdown';
-import { projectMentionToken } from '@kepcup/shared';
+import { fileMentionToken, folderMentionToken, projectMentionToken } from '@kepcup/shared';
 import { buildMentionTargets, type MentionTarget } from './composer-text';
 import {
   collectMentionTokens,
@@ -62,6 +62,24 @@ describe('composer markdown round-trip', () => {
       ],
     };
     expect(manager.serialize(json)).toBe('请问 @阿甲 看看');
+  });
+
+  it('本地文件/文件夹 mention 序列化为 @绝对路径（不上传文件）', () => {
+    const json = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: '处理 ' },
+            { type: 'mention', attrs: { id: fileMentionToken('/tmp/报告.md'), label: '报告.md' } },
+            { type: 'text', text: ' 和 ' },
+            { type: 'mention', attrs: { id: folderMentionToken('/tmp/素材'), label: '素材' } },
+          ],
+        },
+      ],
+    };
+    expect(manager.serialize(json)).toBe('处理 @/tmp/报告.md 和 @/tmp/素材');
   });
 
   it('硬换行序列化为单个换行', () => {

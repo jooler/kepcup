@@ -1182,18 +1182,48 @@ export type Message = z.infer<typeof messageSchema>;
 /**
  * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id，项目组提及带前缀
  * （项目组不是响应者，只作引用展示——`members.has` 查不到该 token，调度层天然
- * 忽略；AI 文本渲染时经它补「（项目组）」图例）。
+ * 忽略；AI 文本渲染时经它补「（项目组）」图例）。本地文件/文件夹提及也用前缀
+ * token 携带绝对路径：消息正文里是路径，`mentions` 里是结构化引用，不上传文件
+ * 字节（AI 需要时用自己的文件工具按路径读取）。
  */
 export const PROJECT_MENTION_PREFIX = 'project:';
+export const FILE_MENTION_PREFIX = 'file:';
+export const FOLDER_MENTION_PREFIX = 'folder:';
+
+export type LocalPathMentionKind = 'file' | 'folder';
+export type MentionTokenKind = 'bot' | 'project' | LocalPathMentionKind;
 
 export function projectMentionToken(conversationId: string): string {
   return `${PROJECT_MENTION_PREFIX}${conversationId}`;
 }
 
-export function parseMentionToken(token: string): { kind: 'bot' | 'project'; id: string } {
+export function fileMentionToken(path: string): string {
+  return `${FILE_MENTION_PREFIX}${path}`;
+}
+
+export function folderMentionToken(path: string): string {
+  return `${FOLDER_MENTION_PREFIX}${path}`;
+}
+
+/** 本地路径提及的反解；不是文件/文件夹 token 时返回 null。 */
+export function parseLocalPathMentionToken(
+  token: string,
+): { kind: LocalPathMentionKind; path: string } | null {
+  if (token.startsWith(FILE_MENTION_PREFIX)) {
+    return { kind: 'file', path: token.slice(FILE_MENTION_PREFIX.length) };
+  }
+  if (token.startsWith(FOLDER_MENTION_PREFIX)) {
+    return { kind: 'folder', path: token.slice(FOLDER_MENTION_PREFIX.length) };
+  }
+  return null;
+}
+
+export function parseMentionToken(token: string): { kind: MentionTokenKind; id: string } {
   if (token.startsWith(PROJECT_MENTION_PREFIX)) {
     return { kind: 'project', id: token.slice(PROJECT_MENTION_PREFIX.length) };
   }
+  const local = parseLocalPathMentionToken(token);
+  if (local !== null) return { kind: local.kind, id: local.path };
   return { kind: 'bot', id: token };
 }
 

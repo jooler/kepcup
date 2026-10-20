@@ -6,22 +6,67 @@
  */
 
 import type { Bot } from '@kepcup/shared';
-import { projectMentionToken } from '@kepcup/shared';
+import { parseLocalPathMentionToken, projectMentionToken } from '@kepcup/shared';
 
 // --- @ 提及 -----------------------------------------------------------------
 
-export type MentionKind = 'bot' | 'project';
+/**
+ * 候选/提及种类。`pick-file` 是 @ 菜单里的动作项（选择本地文件或文件夹），
+ * 不会进入消息 mentions；`file` / `folder` 是已选中的本地路径提及。
+ */
+export type MentionKind = 'bot' | 'project' | 'file' | 'folder' | 'pick-file';
 
 export interface MentionTarget {
-  /** 存进 message.mentions 的 token：Bot 用裸 id，项目组用 `project:<id>`。 */
+  /** 存进 message.mentions 的 token：Bot 用裸 id，项目组用 `project:<id>`，本地路径用 `file:`/`folder:` 前缀。 */
   token: string;
-  /** 展示名（Bot 名或项目组标题）。 */
+  /**
+   * 匹配/展示名：Bot 名、项目组标题；本地路径提及存完整路径（正文里就是
+   * `@完整路径`，气泡里换成 basename + 图标展示）。
+   */
   name: string;
   kind: MentionKind;
   /** Bot 简介（弹层副标题）。 */
   bio?: string;
   /** 管家（特殊成员：弹层里行下加分隔线分区）。 */
   butler?: boolean;
+  /** Bot 头像值（preset:/upload:）；弹层用它与名称着色。 */
+  avatar?: string;
+  /** 本地文件/文件夹的绝对路径（kind 为 file/folder 时有值）。 */
+  path?: string;
+}
+
+/** @ 菜单里的「选择文件或文件夹」动作项 token（只用于弹层，不发送）。 */
+export const PICK_FILE_MENTION_TOKEN = '__kepcup_pick_local_path__';
+
+export function createPickFileTarget(name: string): MentionTarget {
+  return { token: PICK_FILE_MENTION_TOKEN, name, kind: 'pick-file' };
+}
+
+/** 本地路径的展示名（basename；根目录等退化时回退完整路径）。 */
+export function localPathName(path: string): string {
+  return (
+    path
+      .split(/[\\/]/)
+      .filter((part) => part.length > 0)
+      .at(-1) ?? path
+  );
+}
+
+/**
+ * 从消息 mentions 里还原本地路径提及的展示目标。正文是 `@完整路径`，因此
+ * name 用路径本身（分词匹配用），展示层再换成 basename + 图标。
+ */
+export function buildLocalPathMentionTargets(tokens: readonly string[]): MentionTarget[] {
+  const targets: MentionTarget[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    if (seen.has(token)) continue;
+    const local = parseLocalPathMentionToken(token);
+    if (local === null) continue;
+    seen.add(token);
+    targets.push({ token, name: local.path, kind: local.kind, path: local.path });
+  }
+  return targets;
 }
 
 /**
@@ -46,21 +91,29 @@ export function buildMentionTargets(input: {
     kind: MentionKind,
     bio?: string,
     butler = false,
+    avatar?: string | null,
   ): void => {
     const trimmed = (rawName ?? '').trim();
     if (trimmed.length === 0 || seenNames.has(trimmed) || seenTokens.has(token)) return;
     seenNames.add(trimmed);
     seenTokens.add(token);
-    targets.push({ token, name: trimmed, kind, bio, butler });
+    targets.push({
+      token,
+      name: trimmed,
+      kind,
+      bio,
+      butler,
+      ...(avatar === null || avatar === undefined ? {} : { avatar }),
+    });
   };
   for (const bot of input.memberBots) {
     if (!excluded.has(bot.id)) {
-      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler');
+      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler', bot.avatar);
     }
   }
   for (const bot of input.allBots) {
     if (!excluded.has(bot.id)) {
-      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler');
+      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler', bot.avatar);
     }
   }
   for (const project of input.projects) {
@@ -100,11 +153,33 @@ export type ComposerSegment =
  * 把纯文本切成可分别着色的片段：@提及（按注册表精确匹配，手动输入的
  * 全名同样命中）、行首列表标记、其余纯文本。片段首尾相接还原原文。
  * 用于用户气泡（MessageBody）的提及着色——气泡是纯文本渲染。
+ *
+ * 本地文件/文件夹的正文是 `@绝对路径`：按 token 里的路径做**字面**匹配，
+ * 不套用 Bot/项目组的边界规则（用户常写成「看@/tmp/a.md」，`@` 前是中文，
+ * 边界规则会漏掉）。
  */
 export function segmentComposerText(text: string, targets: MentionTarget[]): ComposerSegment[] {
+  const localByText = new Map<string, MentionTarget>();
+  for (const target of targets) {
+    if (
+      (target.kind === 'file' || target.kind === 'folder') &&
+      target.path !== undefined &&
+      target.path.length > 0
+    ) {
+      localByText.set(`@${target.path}`, target);
+    }
+  }
+  const localPatterns = [...localByText.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp);
+
   const byName = new Map<string, MentionTarget>();
-  for (const target of targets) byName.set(target.name, target);
-  const mentionRegex = byName.size > 0 ? buildMentionRegex([...byName.keys()]) : null;
+  for (const target of targets) {
+    if (target.kind !== 'file' && target.kind !== 'folder') byName.set(target.name, target);
+  }
+  const nameRegex = byName.size > 0 ? buildMentionRegex([...byName.keys()]) : null;
+  const sources = [...localPatterns, ...(nameRegex === null ? [] : [nameRegex.source])];
+  const mentionRegex = sources.length > 0 ? new RegExp(sources.join('|'), 'gu') : null;
 
   // 先按提及切开，再在纯文本片段里逐行标出列表标记。
   const mentionPass: ComposerSegment[] = [];
@@ -117,7 +192,8 @@ export function segmentComposerText(text: string, targets: MentionTarget[]): Com
       if (match.index > cursor) {
         mentionPass.push({ kind: 'text', text: text.slice(cursor, match.index) });
       }
-      const target = byName.get(match[1] ?? '');
+      const target =
+        match[1] !== undefined ? byName.get(match[1] ?? '') : localByText.get(match[0]);
       mentionPass.push(
         target ? { kind: 'mention', text: match[0], target } : { kind: 'text', text: match[0] },
       );
