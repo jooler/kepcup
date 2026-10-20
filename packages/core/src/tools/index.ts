@@ -46,6 +46,7 @@ import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
 import { buildCapabilityTools } from './capability-tools.js';
+import { buildInkcopAgentTools, type InkcopToolFacade } from './inkcop-tools.js';
 import type { CapabilityDiscovery } from '../capabilities/discovery.js';
 import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
 import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
@@ -252,6 +253,11 @@ export interface ResponseToolDeps {
    * 执行，档位由宿主裁定）。orchestrator 已按 run 绑定好上下文。
    */
   settings?: SettingsToolFacade | undefined;
+  /**
+   * InkCop 同机协作（design 41 / 契约 v0.4）：present 时注册 call_inkcop_agent。
+   * 关联智能体以工具移交，不切换整轮 message_transport。
+   */
+  inkcop?: InkcopToolFacade | undefined;
 }
 
 /**
@@ -1108,6 +1114,10 @@ export function buildResponseTools(input: {
   const mcpTools = deps.mcp?.tools ?? [];
   const capabilityTools =
     deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
+  const inkcopTools =
+    deps.inkcop !== undefined
+      ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop })
+      : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
 
@@ -1210,6 +1220,7 @@ export function buildResponseTools(input: {
       // D91: a turn mounts no external tool one by one — the read-only quick path is the
       // capability pair (call-time re-check in the gateway).
       ...capabilityTools,
+      ...inkcopTools,
       ...appTools,
       ...setupTools,
     ]);
@@ -1255,6 +1266,7 @@ export function buildResponseTools(input: {
       : []),
     ...mcpTools,
     ...capabilityTools,
+    ...inkcopTools,
     ...appTools,
     ...setupTools,
   ]);
@@ -1359,3 +1371,6 @@ function browserProfileKeyOption(
 ): { profileKey?: () => string } {
   return resolve !== undefined && botId !== null ? { profileKey: () => resolve(botId) } : {};
 }
+
+export type { InkcopToolFacade } from './inkcop-tools.js';
+export { buildInkcopAgentTools } from './inkcop-tools.js';

@@ -122,8 +122,14 @@ import {
   type TriggerBatch,
   type TriggerPart,
 } from '../scheduler/mailbox.js';
-import { inkcopClientFromSettings, shouldUseInkcopBridge } from '../inkcop/index.js';
-import { executeInkcopBridgeTurn } from '../inkcop/bridge-turn.js';
+import {
+  inkcopAgentKeys,
+  inkcopAgentToolsEnabled,
+  inkcopClientFromSettings,
+  handoffToInkcopAgent,
+} from '../inkcop/index.js';
+import type { InkcopAgentInfo } from '../inkcop/client.js';
+import type { InkcopToolFacade } from '../tools/inkcop-tools.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { ProjectsService } from '../domain/projects.js';
@@ -1209,7 +1215,7 @@ export class Orchestrator {
   /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
   hasTurnModel(botId: string): boolean {
     const bot = this.#deps.bots.get(botId);
-    if (shouldUseInkcopBridge(bot, this.#deps.settings.get())) return true;
+    // InkCop 关联智能体是工具，不替代主模型；整轮 divert 已移除（契约 v0.4）。
     if (this.#turnModelRef(botId).length > 0) return true;
     return this.#agentIdOf(bot).length > 0;
   }
@@ -2628,41 +2634,17 @@ export class Orchestrator {
   }
 
   #submitTurn(runId: string, batch: TriggerBatch): void {
-    const bot = this.#deps.bots.get(batch.botId);
-    const inkcop = shouldUseInkcopBridge(bot, this.#deps.settings.get());
     this.#deps.scheduler.submit({
       // Chain / scheduled / event turns are priority 1; user-facing ones are 0
       // (docs/dev/04-agent-runtime.md "各类 loop 的配置") — D71 delegations
       // (the user waits in A's conversation) and task results (the user asked
       // for them) included. A merged batch counts as user-facing if any part is.
       priority: triggerParts(batch).some((part) => isUserFacingReason(part.reason)) ? 0 : 1,
-      // InkCop 同机桥不占 LLM provider 槽；单独键便于限流与诊断。
-      provider: inkcop ? 'inkcop-local' : this.#providerForRef(this.#turnModelRef(batch.botId)),
+      provider: this.#providerForRef(this.#turnModelRef(batch.botId)),
       key: this.#mailboxKey(batch.botId, batch.conversationId),
       // Lease waits of this run give the slot back (D75 审查 H2).
       runId,
-      run: () =>
-        inkcop && bot !== null
-          ? this.#executeInkcopBridgeTurn(runId, batch, bot)
-          : this.#executeRun(runId, { kind: 'turn', batch }),
-    });
-  }
-
-  /**
-   * InkCop 同机桥对话轮（契约 v0.1 §5）：消息经 HTTP+SSE 交给 InkCop，
-   * 不经内置引擎 / ACP。ACP `agent:inkcop` 仍为调试旁路。
-   */
-  async #executeInkcopBridgeTurn(runId: string, batch: TriggerBatch, bot: Bot): Promise<void> {
-    await executeInkcopBridgeTurn(runId, batch, bot, {
-      runs: this.#deps.runs,
-      messages: this.#deps.messages,
-      logger: this.#deps.logger,
-      publish: (event, payload) => this.#deps.publish(event as never, payload as never),
-      publishConversation: (conversationId) => this.#publishConversation(conversationId),
-      settleRun: (id, status, error) => this.#settleRun(id, status, error),
-      releaseTurnMailbox: (id, b, handled) => this.#releaseTurnMailbox(id, b, handled),
-      uiLanguage: () => null,
-      client: inkcopClientFromSettings(this.#deps.settings.get()),
+      run: () => this.#executeRun(runId, { kind: 'turn', batch }),
     });
   }
 
@@ -4085,6 +4067,50 @@ export class Orchestrator {
             '')
           : '';
       const triggerImages = this.#triggerImages(batch.messages);
+      // InkCop v0.4：关联智能体 → call_inkcop_agent 工具（非整轮 divert）。
+      let inkcopFacade: InkcopToolFacade | undefined;
+      const settingsSnap = this.#deps.settings.get();
+      if (inkcopAgentToolsEnabled(bot, settingsSnap)) {
+        const agentKeys = inkcopAgentKeys(bot);
+        const client = inkcopClientFromSettings(settingsSnap);
+        const botName = bot.profile.identity.name || bot.name;
+        let agents: InkcopAgentInfo[] = agentKeys.map((key) => ({
+          key,
+          name: key === 'main_agent' ? '主智能体' : key,
+          kind: key === 'main_agent' ? ('main' as const) : ('app' as const),
+        }));
+        try {
+          const listed = await client.listAgents();
+          const byKey = new Map(listed.agents.map((a) => [a.key, a]));
+          agents = agentKeys.map(
+            (key) =>
+              byKey.get(key) ?? {
+                key,
+                name: key === 'main_agent' ? '主智能体' : key,
+                kind: key === 'main_agent' ? ('main' as const) : ('app' as const),
+              },
+          );
+        } catch (error) {
+          this.#deps.logger.warn(
+            { err: error, botId: bot.id },
+            'inkcop listAgents failed; registering tools with key fallbacks',
+          );
+        }
+        inkcopFacade = {
+          botId: bot.id,
+          botName,
+          agentKeys,
+          agents,
+          handoff: (input, signal) =>
+            handoffToInkcopAgent(client, {
+              botId: bot.id,
+              botName,
+              agentKey: input.agentKey,
+              text: input.task,
+              signal,
+            }),
+        };
+      }
       const responseTools = buildResponseTools({
         identity,
         deps: {
@@ -4103,6 +4129,7 @@ export class Orchestrator {
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+          ...(inkcopFacade !== undefined ? { inkcop: inkcopFacade } : {}),
           // D90 工作台：事项 / 备忘工具（仅管家、仅对话轮；权限边界看 fromUser）。
           ...(this.#deps.workbench !== undefined
             ? {

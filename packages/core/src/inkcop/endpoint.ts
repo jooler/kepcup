@@ -6,14 +6,21 @@ import { z } from 'zod';
 /**
  * InkCop ↔ KepCup Agent Bridge：endpoint.json 发现（契约 §2 / v0.3）。
  * 路径约定在用户目录固定位置，与 KepCup `userData` 无关。
- * `version`：1 = v0.1；≥2 = 含 GET /v1/agents；≥3 = 用户密钥 + 可选局域网。
+ * `version`：1 = v0.1；≥2 = 含 GET /v1/agents；≥3 = 用户密钥 + 可选局域网；≥4 = agents.description。
  */
 
 /** endpoint.version 达到此值即表示 /v1/agents 可用。 */
 export const INKCOP_AGENTS_API_MIN_VERSION = 2;
 
+/** endpoint.version ≥ 4：agents 项含 description（契约 v0.4）。 */
+export const INKCOP_AGENT_DESCRIPTION_MIN_VERSION = 4;
+
 export function inkcopAgentsApiAvailable(endpoint: { version: number }): boolean {
   return endpoint.version >= INKCOP_AGENTS_API_MIN_VERSION;
+}
+
+export function inkcopAgentDescriptionsAvailable(endpoint: { version: number }): boolean {
+  return endpoint.version >= INKCOP_AGENT_DESCRIPTION_MIN_VERSION;
 }
 
 export const inkcopEndpointSchema = z.object({

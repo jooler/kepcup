@@ -114,13 +114,14 @@ describe('sendGateRequirement', () => {
     ).toEqual({ kind: 'main-model' });
   });
 
-  it('inkcop-local transport: allow send without main model or agent', () => {
+  it('inkcop agent keys alone do not bypass main-model gate', () => {
     const inkcopBot = {
       setupState: null,
       profile: {
         runtime: {
           model: '',
-          message_transport: 'inkcop-local',
+          message_transport: '',
+          inkcop_agent_keys: ['main_agent'],
           agent: { ...BUILTIN_AGENT_RUNTIME },
         },
       },
@@ -132,7 +133,7 @@ describe('sendGateRequirement', () => {
         settings: settings(),
         agents: agents({}),
       }),
-    ).toBeNull();
+    ).toEqual({ kind: 'main-model' });
   });
 
 });

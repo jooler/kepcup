@@ -1,6 +1,6 @@
 # InkCop 同机应用协作（KepCup 侧）
 
-契约对齐 InkCop `docs/PLANs/InkCop-KepCup 同机 Connection 桥接契约.md`（**v0.3**）。
+契约对齐 InkCop `docs/PLANs/InkCop-KepCup 同机 Connection 桥接契约.md`（**v0.4**）。
 
 ## 版本
 
@@ -9,13 +9,15 @@
 | 1 | health / connections / messages SSE（v0.1） |
 | ≥ 2 | 另含 `GET /v1/agents`（v0.2） |
 | ≥ 3 | 用户 API 密钥 + 可选局域网；`token` = 设置页密钥（v0.3） |
+| ≥ 4 | agents 项含 `description`（主智能体 = 主对话角色定义）（v0.4） |
 
 ## 产品面（KepCup）
 
 1. **扩展中心 →「本机应用协作」**：InkCop 卡片 = 启停勾选（标题后桥状态 chip）+ 说明「启用之后，Bot 详情中可以设置连接 InkCop 智能体」+ **API 密钥** + 可选 **服务地址**。不预置系统 Bot。
-2. **协作开启时**：任意 Bot 详情可多选「关联 InkCop 智能体」= `GET /v1/agents`。勾选后该 Bot 对话轮经桥直连对应 `agentKey`。
-3. **协作关闭时**：Bot 详情隐藏关联设置；不发现、不驱动桥。
-4. ACP `agent:inkcop` 仍为调试旁路。知识库仍直连 LoomVec。
+2. **协作开启时**：任意 Bot 详情可多选「关联 InkCop 智能体」= `GET /v1/agents`（展示 name / kind / description）。勾选只写入 `runtime.inkcop_agent_keys`，**不**切换 `message_transport`，**不**整轮直连。
+3. **运行时**：Bot 仍走原 LLM。关联智能体注册工具 `call_inkcop_agent`（`agent_key` 枚举为已勾选 keys；说明注入 description）。用户点名或 Bot 判断需要时调用 → `connections` + `messages` SSE → 工具结果回传 → Bot 整理后回复。
+4. **协作关闭时**：Bot 详情隐藏关联设置；不发现、不注册工具、不调桥。
+5. ACP `agent:inkcop` 仍为调试旁路。知识库仍直连 LoomVec。
 
 ## 设置
 
@@ -29,10 +31,12 @@
 
 - 解析：`baseUrl = settings.baseUrl || endpoint.baseUrl`；`apiKey = settings.apiKey || endpoint.token`。无密钥不发请求。
 - 所有 `/v1/*` 带 `Authorization: Bearer <apiKey>`；**401** → 提示「密钥无效或未配置」。
-- Orchestrator：`shouldUseInkcopBridge(bot, settings)` = 协作已启用 **且** Bot 已关联智能体（或 legacy `message_transport`）。
-- `runtime.inkcop_agent_keys[0]`（缺省 `main_agent`）作为 `agentKey`。
+- **整轮 divert 已移除**：`shouldUseInkcopBridge` 恒为 false（兼容旧调用点）。
+- **工具门控**：`inkcopAgentToolsEnabled(bot, settings)` = 协作已启用 **且** `inkcop_agent_keys` 非空。
+- Legacy `runtime.message_transport === 'inkcop-local'` 不再改变发信路径；保存关联时应清空该字段。
 
 ## API（客户端）
 
-- `GET /v1/health` / `agents` / `POST /v1/connections` / `messages`（SSE）
+- `GET /v1/health` / `agents`（含 optional `description`）/ `POST /v1/connections` / `messages`（SSE）
+- 移交：`handoffToInkcopAgent`（工具内部）
 - RPC：`inkcop.health`（含 `discoveredApiKey` / `discoveredBaseUrl` / `authError`）、`inkcop.listAgents`

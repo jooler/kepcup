@@ -29,8 +29,7 @@ export function sendGateRequirement(input: {
   if (input.conversationType !== 'direct' || bot === null || bot === undefined) return null;
   if (settings === null) return null;
   const agentId = bot.setupState === 'interviewing' ? '' : bot.profile.runtime.agent.id;
-  // InkCop 同机桥：消息不经内置模型 / ACP，不要求主模型（契约 v0.1 §5）。
-  if (bot.profile.runtime.message_transport === 'inkcop-local') return null;
+  // InkCop 关联智能体是工具移交，仍需要主模型（契约 v0.4）。
   if (agentId.length > 0) {
     const view = input.agents.loaded
       ? input.agents.get(agentId)
