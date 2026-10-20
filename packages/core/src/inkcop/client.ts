@@ -22,6 +22,11 @@ export const INKCOP_AUTH_TIP_ZH = 'InkCop 密钥无效或未配置，请在扩�
 export const INKCOP_AUTH_TIP_EN =
   'InkCop API key is missing or invalid. Set it in Extension Center.';
 
+export const INKCOP_AGENT_NOT_EXPOSED_TIP_ZH =
+  '该 InkCop 智能体未对外暴露，请在 InkCop「本机 Agent 桥接」中勾选后再试';
+export const INKCOP_AGENT_NOT_EXPOSED_TIP_EN =
+  'This InkCop agent is not exposed. Enable it under Local Agent Bridge in InkCop settings.';
+
 export type InkcopFetch = typeof globalThis.fetch;
 
 export interface InkcopClientOptions extends InkcopAuthOverrides {
@@ -98,6 +103,26 @@ export class InkcopHttpError extends Error {
   }
 }
 
+/** InkCop v0.5：agentKey 未在「对外暴露智能体」中勾选。 */
+export class InkcopAgentNotExposedError extends Error {
+  readonly code = 'agent_not_exposed' as const;
+  constructor(message: string = INKCOP_AGENT_NOT_EXPOSED_TIP_ZH) {
+    super(message);
+    this.name = 'InkcopAgentNotExposedError';
+  }
+}
+
+function parseBridgeErrorCode(body: string): string | undefined {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) return undefined;
+  try {
+    const json = JSON.parse(trimmed) as { error?: unknown };
+    return typeof json.error === 'string' ? json.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function authHeaders(token: string, withJson = false): Record<string, string> {
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (withJson) headers['Content-Type'] = 'application/json';
@@ -149,6 +174,9 @@ export class InkcopLocalBridgeClient {
   #throwForStatus(status: number, body: string): never {
     if (status === 401) throw new InkcopAuthError();
     if (status === 503) throw new InkcopOfflineError();
+    if (status === 403 && parseBridgeErrorCode(body) === 'agent_not_exposed') {
+      throw new InkcopAgentNotExposedError();
+    }
     throw new InkcopHttpError(status, body);
   }
 
@@ -359,6 +387,11 @@ export function inkcopOfflineTip(language: string | undefined | null): string {
 /** 鉴权失败提示。 */
 export function inkcopAuthTip(language: string | undefined | null): string {
   return language === 'en' ? INKCOP_AUTH_TIP_EN : INKCOP_AUTH_TIP_ZH;
+}
+
+/** 智能体未对外暴露提示（契约 v0.5）。 */
+export function inkcopAgentNotExposedTip(language: string | undefined | null): string {
+  return language === 'en' ? INKCOP_AGENT_NOT_EXPOSED_TIP_EN : INKCOP_AGENT_NOT_EXPOSED_TIP_ZH;
 }
 
 /** 从 settings.inkcopLocalCollab 构造客户端。 */

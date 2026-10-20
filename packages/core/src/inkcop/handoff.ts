@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import {
+  InkcopAgentNotExposedError,
   InkcopAuthError,
   InkcopHttpError,
   InkcopLocalBridgeClient,
   InkcopOfflineError,
+  inkcopAgentNotExposedTip,
   inkcopAuthTip,
   inkcopOfflineTip,
 } from './client.js';
@@ -27,7 +29,11 @@ export interface InkcopHandoffInput {
 
 export type InkcopHandoffResult =
   | { ok: true; text: string; connectionId: string }
-  | { ok: false; errorCode: 'offline' | 'auth' | 'empty' | 'http' | 'error'; message: string };
+  | {
+      ok: false;
+      errorCode: 'offline' | 'auth' | 'empty' | 'http' | 'error' | 'not_exposed';
+      message: string;
+    };
 
 /**
  * ensureConnection → POST /v1/messages（SSE）→ 收集 complete 全文。
@@ -38,6 +44,7 @@ export async function handoffToInkcopAgent(
 ): Promise<InkcopHandoffResult> {
   const offlineTip = inkcopOfflineTip(input.uiLanguage);
   const authTip = inkcopAuthTip(input.uiLanguage);
+  const notExposedTip = inkcopAgentNotExposedTip(input.uiLanguage);
   const text = input.text.trim();
   if (text.length === 0) {
     return { ok: false, errorCode: 'empty', message: '任务内容为空，未发送到 InkCop' };
@@ -61,6 +68,9 @@ export async function handoffToInkcopAgent(
     }
     if (error instanceof InkcopOfflineError) {
       return { ok: false, errorCode: 'offline', message: offlineTip };
+    }
+    if (error instanceof InkcopAgentNotExposedError) {
+      return { ok: false, errorCode: 'not_exposed', message: notExposedTip };
     }
     const msg = error instanceof Error ? error.message : String(error);
     return { ok: false, errorCode: 'http', message: `连接 InkCop 失败：${msg}` };
@@ -95,6 +105,9 @@ export async function handoffToInkcopAgent(
     }
     if (error instanceof InkcopOfflineError) {
       return { ok: false, errorCode: 'offline', message: offlineTip };
+    }
+    if (error instanceof InkcopAgentNotExposedError) {
+      return { ok: false, errorCode: 'not_exposed', message: notExposedTip };
     }
     if (error instanceof InkcopHttpError) {
       return { ok: false, errorCode: 'http', message: `InkCop 通讯失败：${error.message}` };

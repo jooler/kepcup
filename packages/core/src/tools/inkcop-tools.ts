@@ -60,7 +60,9 @@ function handoffToToolResult(result: InkcopHandoffResult): ToolResult {
       ? 'INKCOP_AUTH'
       : result.errorCode === 'offline'
         ? 'INKCOP_OFFLINE'
-        : 'INKCOP_HANDOFF_FAILED';
+        : result.errorCode === 'not_exposed'
+          ? 'INKCOP_AGENT_NOT_EXPOSED'
+          : 'INKCOP_HANDOFF_FAILED';
   return { ok: false, content: result.message, errorCode: code };
 }
 
