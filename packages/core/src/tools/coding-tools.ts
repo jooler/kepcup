@@ -413,7 +413,12 @@ export function buildCodingTools(
             // A task/subagent may ask the user right here: a sandbox denial is
             // otherwise just a hint the model can silently ignore. A turn only
             // gets the hint (a turn never holds its mailbox for a card).
-            if (identity.loopType !== 'turn') {
+            //
+            // Only a failed command is worth a card: runtimes probe their own
+            // config on startup (macOS python3 reads ~/.CFUserTextEncoding), and
+            // blocking a task on a denial the command did not need would hold
+            // the mailbox for nothing. A successful command keeps the hint.
+            if (identity.loopType !== 'turn' && result.exitCode !== 0) {
               const granted: string[] = [];
               const refused: string[] = [];
               for (const violation of blocked) {

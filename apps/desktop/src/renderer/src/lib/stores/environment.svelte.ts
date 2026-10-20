@@ -33,9 +33,12 @@ class EnvironmentState {
     if (this.#started) return;
     this.#started = true;
     core.onEvent('environment.changed', (payload) => {
-      const data = payload as EnvironmentList;
-      this.installs = data.installs;
-      this.system = data.system;
+      // The event carries `installs` only (packages/shared/src/rpc/events.ts);
+      // `system` arrives with the list RPC. Assigning an undefined `system`
+      // crashed the environment section on the next render.
+      const data = payload as Partial<EnvironmentList>;
+      if (data.installs !== undefined) this.installs = data.installs;
+      if (data.system !== undefined) this.system = data.system;
     });
     core.onEvent('environment.progress', (payload) => {
       const data = payload as EnvironmentProgress;
