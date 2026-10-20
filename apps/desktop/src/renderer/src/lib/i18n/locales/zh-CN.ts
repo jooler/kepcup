@@ -1200,15 +1200,9 @@ export const zhCN = {
   'extensionCenter.tabs.localCollab': '本机应用协作',
   'extensionCenter.localCollab.hint':
     '与同一台电脑上的其它应用直接协作（不经云端）。',
-  'extensionCenter.localCollab.inkcop.title': 'InkCop',
-  'extensionCenter.localCollab.inkcop.description':
-    '开启后，Bot 可设置连接的 InkCop 智能体',
   'extensionCenter.localCollab.inkcop.enable': '启用 InkCop 协作',
-  'extensionCenter.localCollab.inkcop.enableHint':
-    '启用后可在 Bot 详情中关联 InkCop 智能体',
   'extensionCenter.localCollab.inkcop.online': '桥已连通',
   'extensionCenter.localCollab.inkcop.offline': '桥未连通',
-  'extensionCenter.localCollab.inkcop.probe': '重新探测',
   'extensionCenter.localCollab.inkcop.enabledToast': '已启用 InkCop 本机协作',
   'extensionCenter.localCollab.inkcop.offlineToast':
     '已启用，但尚未连上 InkCop 本机桥。请启动 InkCop 并打开「本机 KepCup 连接」。',
