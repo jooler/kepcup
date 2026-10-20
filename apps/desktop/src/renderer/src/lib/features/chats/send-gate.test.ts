@@ -113,4 +113,26 @@ describe('sendGateRequirement', () => {
       }),
     ).toEqual({ kind: 'main-model' });
   });
+
+  it('inkcop-local transport: allow send without main model or agent', () => {
+    const inkcopBot = {
+      setupState: null,
+      profile: {
+        runtime: {
+          model: '',
+          message_transport: 'inkcop-local',
+          agent: { ...BUILTIN_AGENT_RUNTIME },
+        },
+      },
+    } as never;
+    expect(
+      sendGateRequirement({
+        conversationType: 'direct',
+        bot: inkcopBot,
+        settings: settings(),
+        agents: agents({}),
+      }),
+    ).toBeNull();
+  });
+
 });
