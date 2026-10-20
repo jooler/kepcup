@@ -38,7 +38,8 @@ npmRebuild: true
 
 # --- 自动更新源（P13 任务 2；发行流程见 docs/dev/06-release.md） ----------------
 # 写进 app-update.yml，electron-updater 匿名读公开仓库的 Releases（仓库必须公开）。
-# 运行时可用 KEPCUP_UPDATE_URL 环境变量指向任意 generic HTTPS 源，无需重打包。
+# 运行时可用 KEPCUP_UPDATE_URL 环境变量指向任意 generic HTTPS 源，无需重打包；
+# 默认走多源探测选源（GitHub → R2 → OSS，src/main/update-sources.ts）。
 # 上传不由 electron-builder 做：scripts/dist.mjs 固定 --publish never，
 # release.yml 的 publish job 合并清单后用 gh 一次性发布。
 publish:
