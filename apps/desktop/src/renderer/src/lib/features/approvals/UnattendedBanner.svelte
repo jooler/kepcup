@@ -31,20 +31,23 @@
 <svelte:window onfocus={onWindowFocus} />
 
 {#if active}
-  <div
-    class="flex items-center gap-3 border-b border-amber-700/40 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white"
-    data-testid="unattended-banner"
-  >
-    <span class="min-w-0 flex-1">{t('unattended.banner')}</span>
-    <Button
-      variant="outline"
-      size="sm"
-      class="h-6 border-white/60 bg-transparent px-2 text-white hover:bg-white/20"
-      onclick={() => void permissions.disableUnattended()}
-      data-testid="unattended-banner-off"
+  <!-- 浮动横幅：不占主布局高度，避免把应用区域撑出滚动条（绝对定位在顶层）。 -->
+  <div class="pointer-events-none fixed inset-x-0 top-3 z-40 flex justify-center px-4">
+    <div
+      class="app-no-drag pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-full border border-amber-700/40 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white shadow-lg"
+      data-testid="unattended-banner"
     >
-      {t('unattended.bannerOff')}
-    </Button>
+      <span class="min-w-0 flex-1">{t('unattended.banner')}</span>
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-6 border-white/60 bg-transparent px-2 text-white hover:bg-white/20"
+        onclick={() => void permissions.disableUnattended()}
+        data-testid="unattended-banner-off"
+      >
+        {t('unattended.bannerOff')}
+      </Button>
+    </div>
   </div>
 {/if}
 
