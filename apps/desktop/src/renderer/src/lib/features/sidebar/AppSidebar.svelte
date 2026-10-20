@@ -819,11 +819,11 @@
        win/linux 图标模式（collapsed）连 logo 一起隐藏：头部容器整个不渲染，
        第一个 Bot 头像顶到上缘。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
-  {#if !isMac || !collapsed}
+  {#if isMac || !collapsed}
   <div
     class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
       ? 'wco-inset-end'
-      : ''} {isMac ? 'pl-20' : 'pl-4'}"
+      : ''} {isMac ? (collapsed ? 'pl-0' : 'pl-20') : 'pl-4'}"
   >
     {#if !isMac}
       <!-- 在 drag 区内不做按钮：按住 logo 拖动窗口是自然行为。深浅两稿各自只
