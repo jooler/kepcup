@@ -224,7 +224,6 @@
   {#if core.connection === 'reconnecting'}
     <ReconnectBanner />
   {/if}
-  <UnattendedBanner />
   <UpdateBanner />
 
   <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
@@ -271,6 +270,10 @@
   {#if __KEPCUP_TEST_HOOKS__}
     <CoreStatusBar />
   {/if}
+
+  <!-- 无人值守浮动横幅：挂在主布局之后，压过各栏顶部（app-drag）的窗口拖拽矩形，
+       关闭按钮才点得到；z-40 仍低于全屏浮层（z-50）。 -->
+  <UnattendedBanner />
 
   <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
   {#if coreReady}
