@@ -51,7 +51,7 @@ export const zh = {
         title: '工作台',
         body: '事项可定时派发、交付可追踪；备忘先记下，随时转成事项。',
         image: 'bench',
-        imageAlt: 'KepCup 工作台：左边是派给 Bot 的事项，右边是备忘闪念。',
+        imageAlt: 'KepCup 工作台：左边是备忘闪念，右边是派给 Bot 的事项。',
       },
       {
         title: '记忆与 Wiki',

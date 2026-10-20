@@ -8,7 +8,7 @@
 
   /**
    * 工作台（D90，docs/design/39-workbench.md §4）：宽屏主区的第二个视图，不进任何对话也能
-   * 统筹全局。双栏——左事项（按成员分道）、右备忘；窄于阈值时折成「事项 / 备忘」两个 tab。
+   * 统筹全局。双栏——左备忘（更宽）、右事项（按成员分道）；窄于阈值时折成「事项 / 备忘」两个 tab。
    * 事项详情以居中弹框打开。数据由 `workbench` store 拉取并订阅
    * todos / memos / schedules 的 changed 事件，只在本视图挂载期间有效。
    */
@@ -78,24 +78,9 @@
     {/if}
 
     <div class="flex min-h-0 flex-1 gap-8 px-5 pb-4">
-      {#if !tabbed || tab === 'todos'}
-        <section
-          class="flex min-h-0 min-w-0 flex-[3] flex-col gap-3"
-          aria-label={t('workbench.todos.title')}
-        >
-          {#if !tabbed}
-            <h2
-              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
-            >
-              {t('workbench.todos.title')}
-            </h2>
-          {/if}
-          <TodoPane />
-        </section>
-      {/if}
       {#if !tabbed || tab === 'memos'}
         <section
-          class="flex min-h-0 min-w-0 flex-[2] flex-col gap-3 {tabbed ? '' : 'max-w-md'}"
+          class="flex min-h-0 min-w-0 flex-[3] flex-col gap-3"
           aria-label={t('workbench.memo.title')}
         >
           {#if !tabbed}
@@ -106,6 +91,21 @@
             </h2>
           {/if}
           <MemoPane />
+        </section>
+      {/if}
+      {#if !tabbed || tab === 'todos'}
+        <section
+          class="flex min-h-0 min-w-0 flex-[2] flex-col gap-3"
+          aria-label={t('workbench.todos.title')}
+        >
+          {#if !tabbed}
+            <h2
+              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
+            >
+              {t('workbench.todos.title')}
+            </h2>
+          {/if}
+          <TodoPane />
         </section>
       {/if}
     </div>
