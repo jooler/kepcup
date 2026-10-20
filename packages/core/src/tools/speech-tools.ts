@@ -305,7 +305,7 @@ export function buildSpeechTools(input: {
       let audioBase64: string;
       let audioMime: string;
       try {
-        const resolved = resolveMediaSource({
+        const resolved = await resolveMediaSource({
           identity,
           gateway: input.gateway,
           attachments: input.attachments,

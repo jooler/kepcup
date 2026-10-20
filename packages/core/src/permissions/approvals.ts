@@ -23,6 +23,7 @@ import {
   type ApprovalPriorEffect,
   type Run,
   type ToolEffect,
+  APPROVAL_TTL_MS,
 } from '@kepcup/shared';
 import path from 'node:path';
 import { AppError, newId } from '@kepcup/shared';
@@ -31,7 +32,7 @@ import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import { literalCommandSegments, optionValuePath } from './allowlist-match.js';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
-import type { Clock } from '../infra/clock.js';
+import { realTimerScheduler, type Clock, type TimerScheduler } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -94,11 +95,15 @@ export interface ApprovalOutcome {
    * is replaced by the gate's (executeToolSafely).
    */
   duplicate?: 'completed' | 'denied';
+  /** The waiting window elapsed (APPROVAL_TTL_MS): cancelled, not user-refused. */
+  expired?: true;
 }
 
 export interface ApprovalsDeps {
   db: SqliteDatabase;
   clock: Clock;
+  /** Test hook: virtual timers (the approval TTL). Defaults to real timers. */
+  timers?: TimerScheduler | undefined;
   logger: CoreLogger;
   paths: AppPaths;
   /** The real user home, for home-variable detection in the unattended floor. */
@@ -161,6 +166,7 @@ const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal', 'bot_han
  */
 export class ApprovalsService {
   readonly #deps: ApprovalsDeps;
+  readonly #timers: TimerScheduler;
   readonly #waiters = new Map<string, Resolver>();
   /**
    * Non-blocking decisions (P06 `request_environment`): the caller submitted
@@ -173,6 +179,7 @@ export class ApprovalsService {
 
   constructor(deps: ApprovalsDeps) {
     this.#deps = deps;
+    this.#timers = deps.timers ?? realTimerScheduler;
   }
 
   get #db(): SqliteDatabase {
@@ -290,8 +297,10 @@ export class ApprovalsService {
     }
 
     return new Promise<ApprovalOutcome>((resolve) => {
+      let cancelTtl: (() => void) | null = null;
       const onAbort = () => {
         options.signal?.removeEventListener('abort', onAbort);
+        cancelTtl?.();
         let cancelled: Approval;
         try {
           cancelled = this.#markCancelled(approval.id);
@@ -308,8 +317,45 @@ export class ApprovalsService {
       }
       this.#waiters.set(approval.id, (outcome) => {
         options.signal?.removeEventListener('abort', onAbort);
+        cancelTtl?.();
         this.#afterResolution(outcome);
         resolve(outcome);
+      });
+      // A card the user never sees must not hang the run (or burn a task's
+      // wall clock): expire it into a normal cancelled outcome whose tool
+      // result says the wait timed out.
+      cancelTtl = this.#timers.setTimer(APPROVAL_TTL_MS, () => {
+        cancelTtl = null;
+        if (!this.#db.open) return;
+        const current = this.get(approval.id);
+        if (current === null || current.status !== 'pending') return;
+        let cancelled: Approval;
+        try {
+          cancelled = this.#markCancelled(approval.id);
+        } catch (error) {
+          this.#deps.logger.warn(
+            {
+              approvalId: approval.id,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            'approval TTL cancel failed',
+          );
+          return;
+        }
+        this.#deps.audit(identity, 'approval_timeout', {
+          approvalId: approval.id,
+          kind,
+          ttlMs: APPROVAL_TTL_MS,
+        });
+        this.#deps.logger.info(
+          { approvalId: approval.id, kind, ttlMs: APPROVAL_TTL_MS },
+          'approval expired while waiting for the user',
+        );
+        this.#resolvePending(approval.id, {
+          approval: cancelled,
+          decision: 'cancelled',
+          expired: true,
+        });
       });
     });
   }
@@ -662,7 +708,7 @@ export class ApprovalsService {
     this.#publishConversation(outcome.approval.conversationId);
     if (
       outcome.approval.runId !== null &&
-      outcome.approval.status !== 'cancelled' &&
+      (outcome.approval.status !== 'cancelled' || outcome.expired === true) &&
       this.#deps.runs.get(outcome.approval.runId)?.status === 'waiting_approval'
     ) {
       this.#setRunStatus(outcome.approval.runId, 'running');

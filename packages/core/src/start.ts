@@ -1340,6 +1340,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const approvals = new ApprovalsService({
       db: mainDb,
       clock,
+      ...(options.timers !== undefined ? { timers: options.timers } : {}),
       logger,
       paths,
       homeDir: os.homedir(),

@@ -55,14 +55,15 @@ async function checked(
   p: string,
   mode: 'read' | 'write',
   toolName: string,
+  options: { signal?: AbortSignal; preauthorize?: boolean } = {},
 ): Promise<string> {
-  return gateway.ensurePathAccess(identity, p, mode, `执行 ${toolName} 需要访问该路径`);
+  return gateway.ensurePathAccess(identity, p, mode, `执行 ${toolName} 需要访问该路径`, options);
 }
 
 /**
- * ls / find existence probe: a path outside the authorized range reads as
- * missing — except in a supervisor turn, which gets the gateway's fail-fast
- * explanation (start a task) instead of a misleading "not found" (审查 M4).
+ * ls / find existence probe. A grantable path requests access (in a turn the
+ * gateway still fails fast with the start_task explanation, 审查 M4); only a
+ * hard `forbidden` path reads as missing.
  */
 async function existsChecked(
   identity: ToolContext['identity'],
@@ -71,8 +72,9 @@ async function existsChecked(
   toolName: string,
 ): Promise<boolean> {
   const decision = gateway.checkPath(identity, p, 'read');
-  if (decision.kind === 'needs_grant' && identity.loopType === 'turn') {
-    await checked(identity, gateway, p, 'read', toolName);
+  if (decision.kind === 'needs_grant') {
+    const resolved = await checked(identity, gateway, p, 'read', toolName);
+    return existsSync(resolved);
   }
   return decision.kind === 'allowed' && existsSync(decision.resolvedPath);
 }
@@ -226,18 +228,36 @@ function shortCommand(command: string): string {
 }
 
 /** srt violation lines: `cat(x) deny(1) file-read-data /path`. */
-const VIOLATION_PATH_PATTERN = /\bfile-(?:read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
+const VIOLATION_PATH_PATTERN = /\bfile-(read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
+
+export interface SandboxViolationAccess {
+  path: string;
+  mode: 'read' | 'write';
+}
+
+/**
+ * Unique blocked paths with the access the sandbox denied; a write violation
+ * for the same path wins over a read one. At most 5 (one card each).
+ */
+export function extractViolationAccesses(
+  violations: Array<{ line: string }>,
+): SandboxViolationAccess[] {
+  const found = new Map<string, 'read' | 'write'>();
+  for (const violation of violations) {
+    const match = VIOLATION_PATH_PATTERN.exec(violation.line);
+    const target = match?.[2]?.trim();
+    if (target === undefined || target.length === 0) continue;
+    const mode = match?.[1] === 'write' ? 'write' : 'read';
+    if (found.get(target) === 'write') continue;
+    found.set(target, mode);
+    if (found.size >= 5) break;
+  }
+  return [...found].map(([path, mode]) => ({ path, mode }));
+}
 
 /** Unique paths the sandbox blocked, for the request_access hint. */
 export function extractViolationPaths(violations: Array<{ line: string }>): string[] {
-  const found: string[] = [];
-  for (const violation of violations) {
-    const match = VIOLATION_PATH_PATTERN.exec(violation.line);
-    const target = match?.[1]?.trim();
-    if (target && !found.includes(target)) found.push(target);
-    if (found.length >= 5) break;
-  }
-  return found;
+  return extractViolationAccesses(violations).map((violation) => violation.path);
 }
 
 /** read / write / edit / ls / find / grep / bash wired through the gateway. */
@@ -384,12 +404,51 @@ export function buildCodingTools(
           const notes = [
             `\n[被沙箱拦截 ${result.violations.length} 次，示例]\n${samples.join('\n')}`,
           ];
-          const blockedPaths = extractViolationPaths(result.violations);
-          if (blockedPaths.length > 0) {
+          const blocked = extractViolationAccesses(result.violations);
+          if (blocked.length > 0) {
             notes.push(
-              `[提示] 以下路径在可访问范围之外：${blockedPaths.join('、')}。` +
+              `[提示] 以下路径在可访问范围之外：${blocked.map((item) => item.path).join('、')}。` +
                 '可调用 request_access 工具申请对这些路径的访问授权，批准后重新执行命令。',
             );
+            // A task/subagent may ask the user right here: a sandbox denial is
+            // otherwise just a hint the model can silently ignore. A turn only
+            // gets the hint (a turn never holds its mailbox for a card).
+            if (identity.loopType !== 'turn') {
+              const granted: string[] = [];
+              const refused: string[] = [];
+              for (const violation of blocked) {
+                const verdict = gateway.checkPath(identity, violation.path, violation.mode);
+                if (verdict.kind !== 'needs_grant') continue;
+                const what = violation.mode === 'write' ? '读写' : '读取';
+                try {
+                  await checked(identity, gateway, violation.path, violation.mode, 'bash', {
+                    ...(options.signal !== undefined ? { signal: options.signal } : {}),
+                    // The command already ended: leave the grant for the retry.
+                    preauthorize: true,
+                  });
+                  granted.push(violation.path);
+                } catch (error) {
+                  if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+                    const expired = (error.details as { expired?: boolean } | undefined)?.expired;
+                    refused.push(
+                      `${violation.path}（${expired === true ? '授权超时' : `用户拒绝${what}`}）`,
+                    );
+                    continue;
+                  }
+                  throw error;
+                }
+              }
+              if (granted.length > 0) {
+                notes.push(
+                  `[授权] 用户已允许${granted.join('、')}；授权仅对下一次工具调用有效，请重新执行命令。`,
+                );
+              }
+              if (refused.length > 0) {
+                notes.push(
+                  `[未授权] ${refused.join('；')}。不要重复尝试，改用其他做法或询问用户。`,
+                );
+              }
+            }
           }
           options.onData(Buffer.from(`${notes.join('\n')}\n`, 'utf8'));
         }
