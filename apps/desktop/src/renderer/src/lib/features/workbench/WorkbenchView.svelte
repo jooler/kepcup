@@ -85,7 +85,7 @@
         >
           {#if !tabbed}
             <h2
-              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
+              class="mx-auto w-full max-w-4xl shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
             >
               {t('workbench.memo.title')}
             </h2>
@@ -100,7 +100,7 @@
         >
           {#if !tabbed}
             <h2
-              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
+              class="mx-auto w-full max-w-4xl shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
             >
               {t('workbench.todos.title')}
             </h2>

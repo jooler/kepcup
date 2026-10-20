@@ -65,7 +65,7 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="memo-pane">
+<div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3" data-testid="memo-pane">
   {#if workbench.trashOpen}
     <div class="flex shrink-0 items-center gap-2">
       <Button
@@ -79,7 +79,7 @@
     </div>
     <p class="shrink-0 text-xs text-muted-foreground">{t('workbench.memo.trashHint')}</p>
     <div
-      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fit,minmax(15rem,22rem))] justify-center gap-2 overflow-y-auto pr-1"
+      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2 overflow-y-auto"
       data-testid="memo-trash-list"
     >
       {#if trashed.length === 0}
@@ -137,7 +137,7 @@
       />
     </div>
     <div
-      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fit,minmax(15rem,22rem))] justify-center gap-2 overflow-y-auto pr-1"
+      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2 overflow-y-auto"
       data-testid="memo-list"
     >
       {#if workbench.memos.length === 0 && (workbench.loadState === 'loading' || workbench.loadState === 'idle')}
