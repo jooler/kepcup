@@ -315,12 +315,30 @@
   );
   /**
    * 图标模式没有组名可点，折叠会把对话藏起来且无法展开，所以这里忽略折叠，
-   * 只沿用分组顺序。管家仍在最前。
+   * 只沿用分组顺序。管家仍在最前。组名隐藏后分组之间用分隔线区分（样式同
+   * 工作台下方的分隔线）；只有「未指定」时不显示线。
    */
-  const iconConversations = $derived([
-    ...butlerConversations,
-    ...sectionLayout.groups.flatMap((group) => group.conversations),
-  ]);
+  const iconGroups = $derived.by(() => {
+    if (!sectionLayout.showHeaders) {
+      return [
+        {
+          id: UNASSIGNED_SECTION_ID,
+          conversations: [
+            ...butlerConversations,
+            ...sectionLayout.groups.flatMap((group) => group.conversations),
+          ],
+        },
+      ];
+    }
+    return [
+      ...(butlerConversations.length > 0
+        ? [{ id: 'butler', conversations: butlerConversations }]
+        : []),
+      ...sectionLayout.groups
+        .filter((group) => group.conversations.length > 0)
+        .map((group) => ({ id: group.id, conversations: group.conversations })),
+    ];
+  });
   const contextIsButler = $derived(isButlerConversation(contextConversation ?? undefined));
   const contextPinned = $derived(
     contextMenu === null
@@ -930,59 +948,69 @@
         {:else if collapsed}
           <!-- 图标模式：只剩头像，名称/预览走 hover 提示；未读/待确认/执行中
                叠在头像角上（待确认优先于未读，都是必须看见的信号）。 -->
-          <Sidebar.Menu class="items-center">
-            {#each iconConversations as conversation (conversation.id)}
-              <Sidebar.MenuItem class="w-auto">
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.16_0_0)]"
-                    data-active={activeConversationId === conversation.id ? 'true' : undefined}
-                    onclick={() => void selectConversation(conversation.id)}
-                    oncontextmenu={(event) => openContextMenu(event, conversation.id)}
-                    data-testid={`conversation-item-${conversation.id}`}
-                  >
-                    {@render conversationAvatar(conversation)}
-                    {#if (conversation.runningBotIds?.length ?? 0) > 0}
-                      <span
-                        class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
-                        title={t('sidebar.runningSuffix')}
-                        data-testid="running-dot"
-                      ></span>
-                    {/if}
-                    {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-                      <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
-                        title={t('sidebar.pendingSuffix')}
-                        data-testid="pending-badge"
-                      >
-                        {permissions.pendingByConversation[conversation.id]}
-                      </span>
-                    {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
-                      <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
-                        data-testid="unread-badge"
-                      >
-                        {conversation.unreadCount}
-                      </span>
-                    {/if}
-                  </Tooltip.Trigger>
-                  <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
-                       名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
-                  <Tooltip.Content
-                    side="right"
-                    class="flex max-w-64 flex-col items-stretch gap-0.5"
-                  >
-                    <span class="truncate text-sm">{nameOf(conversation)}</span>
-                    {#if previewOf(conversation).length > 0}
-                      <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
-                    {/if}
-                  </Tooltip.Content>
-                </Tooltip.Root>
-              </Sidebar.MenuItem>
-            {/each}
-          </Sidebar.Menu>
+          {#each iconGroups as group, groupIndex (group.id)}
+            <!-- 组名在图标模式隐藏，分组之间用分隔线区分（同工作台下方的分隔线）。 -->
+            {#if groupIndex > 0}
+              <div
+                role="separator"
+                class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+                data-testid="sidebar-group-separator"
+              ></div>
+            {/if}
+            <Sidebar.Menu class="items-center">
+              {#each group.conversations as conversation (conversation.id)}
+                <Sidebar.MenuItem class="w-auto">
+                  <Tooltip.Root>
+                    <Tooltip.Trigger
+                      class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
+                        transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+                        dark:data-active:bg-[oklch(0.16_0_0)]"
+                      data-active={activeConversationId === conversation.id ? 'true' : undefined}
+                      onclick={() => void selectConversation(conversation.id)}
+                      oncontextmenu={(event) => openContextMenu(event, conversation.id)}
+                      data-testid={`conversation-item-${conversation.id}`}
+                    >
+                      {@render conversationAvatar(conversation)}
+                      {#if (conversation.runningBotIds?.length ?? 0) > 0}
+                        <span
+                          class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
+                          title={t('sidebar.runningSuffix')}
+                          data-testid="running-dot"
+                        ></span>
+                      {/if}
+                      {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+                        <span
+                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
+                          title={t('sidebar.pendingSuffix')}
+                          data-testid="pending-badge"
+                        >
+                          {permissions.pendingByConversation[conversation.id]}
+                        </span>
+                      {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                        <span
+                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
+                          data-testid="unread-badge"
+                        >
+                          {conversation.unreadCount}
+                        </span>
+                      {/if}
+                    </Tooltip.Trigger>
+                    <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
+                         名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
+                    <Tooltip.Content
+                      side="right"
+                      class="flex max-w-64 flex-col items-stretch gap-0.5"
+                    >
+                      <span class="truncate text-sm">{nameOf(conversation)}</span>
+                      {#if previewOf(conversation).length > 0}
+                        <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
+                      {/if}
+                    </Tooltip.Content>
+                  </Tooltip.Root>
+                </Sidebar.MenuItem>
+              {/each}
+            </Sidebar.Menu>
+          {/each}
         {:else}
           {#if sectionLayout.showHeaders && butlerConversations.length > 0}
             <!-- 管家不归属任何分组，固定在分组标题之上。 -->
