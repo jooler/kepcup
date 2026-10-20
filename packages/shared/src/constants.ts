@@ -721,6 +721,14 @@ export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
  * continues on its own judgement.
  */
 export const TASK_QUESTION_TTL_MS = 24 * 60 * 60_000;
+/**
+ * How long a run waits on a blocking approval card (access / command / MCP /
+ * egress / mail …). After this the approval is cancelled and the tool gets an
+ * explicit denial, so a card the user never saw can neither hang the run nor
+ * keep a task's wall clock running forever. `request_environment` and other
+ * non-blocking submissions keep their card (they never hold a run).
+ */
+export const APPROVAL_TTL_MS = 30 * 60_000;
 /** Max characters of one ask_user candidate answer (the card renders each as a button). */
 export const ASK_USER_OPTION_MAX_CHARS = 200;
 /**

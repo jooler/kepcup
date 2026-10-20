@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  APPROVAL_TTL_MS,
   AppError,
   BASH_TIMEOUT_DEFAULT_MS,
   EGRESS_TARGET_MAX_CHARS,
@@ -620,7 +621,14 @@ export class ToolGateway {
       { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
     );
     if (outcome.decision !== 'approved') {
-      throw new AppError('APPROVAL_DENIED', '用户拒绝或审批已取消，无法访问该路径');
+      const expired = outcome.expired === true;
+      throw new AppError(
+        'APPROVAL_DENIED',
+        expired
+          ? `等待用户授权超时（${Math.round(APPROVAL_TTL_MS / 60_000)} 分钟），无法访问该路径；任务未被阻塞，请调整做法或稍后重试`
+          : '用户拒绝或审批已取消，无法访问该路径',
+        { expired, approvalId: outcome.approval.id },
+      );
     }
     // `grants` only ever see once | conversation (decide() confines `bot` to mcp_tool cards).
     const duration =

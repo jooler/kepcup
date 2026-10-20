@@ -45,12 +45,12 @@ export interface ResolvedMediaSource {
   label: string;
 }
 
-export function resolveMediaSource(input: {
+export async function resolveMediaSource(input: {
   identity: RunIdentity;
   gateway: ToolGateway;
   attachments: AttachmentsService;
   source: string;
-}): ResolvedMediaSource {
+}): Promise<ResolvedMediaSource> {
   const { identity, gateway, attachments, source } = input;
   if (source.startsWith('att_')) {
     const attachment: Attachment | null = attachments.get(source);
@@ -67,21 +67,22 @@ export function resolveMediaSource(input: {
       label: source,
     };
   }
-  const decision = gateway.checkPath(identity, source, 'read');
-  if (decision.kind === 'forbidden') {
-    throw new AppError(
-      'PATH_OUT_OF_SCOPE',
-      `来源不在可访问范围内：${source}（${decision.reason}）`,
-    );
-  }
+  // Gateway check + access approval: a task may wait on the card; a turn (which
+  // has no media tools) fails fast. Never read a grantable path unapproved.
+  const resolved = await gateway.ensurePathAccess(
+    identity,
+    source,
+    'read',
+    '读取媒体素材需要访问该路径',
+  );
   let bytes: Buffer;
   try {
-    bytes = readFileSync(decision.resolvedPath);
+    bytes = readFileSync(resolved);
   } catch (error) {
     throw new AppError(
       'INVALID_INPUT',
       `读取文件失败：${source}（${error instanceof Error ? error.message : String(error)}）`,
     );
   }
-  return { bytes, mime: guessMediaMime(decision.resolvedPath), label: decision.resolvedPath };
+  return { bytes, mime: guessMediaMime(resolved), label: resolved };
 }
