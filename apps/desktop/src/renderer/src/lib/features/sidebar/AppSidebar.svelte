@@ -103,8 +103,10 @@
   const workbenchNavVisible = $derived(settingsStore.settings?.workbenchEnabled === true);
 
   $effect(() => {
-    if (workbenchNavVisible) return;
-    if (shell.mainView === 'workbench') shell.mainView = 'chats';
+    // 设置快照未到时不要抢先复位：启动恢复可能已经按记忆切到工作台，
+    // 等开关真正加载后再判断是否关闭入口。
+    if (settingsStore.settings === null || workbenchNavVisible) return;
+    if (shell.mainView === 'workbench') shell.showChats();
   });
 
   /**

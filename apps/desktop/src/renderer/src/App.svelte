@@ -29,6 +29,7 @@
   import SidebarDialogs from '$lib/features/sidebar/SidebarDialogs.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+  import { loadLastMainView } from '$lib/features/shell/last-main-view-persist';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
@@ -153,9 +154,13 @@
    * 记忆，见 last-conversation-persist）；没有记忆/记忆失效则按最近消息挑
    * （从没聊过则打开第一个 Bot，初始化向导创建的即第一个）；一个 Bot 都
    * 没有（跳过了向导）时停在空态、右栏默认收起、左栏「+」面板自动下拉
-   * 展开引导新建。
+   * 展开引导新建。主内容区在 shell 初始化时直接按上次落点载入（工作台 /
+   * 对话）；落在工作台时会话仍在后台恢复，但主区不切回对话，不会先闪一下上一会话。
    */
   async function bootstrap(): Promise<void> {
+    // 主区落点已在 shell 初始化时读回；这里先记下，避免 restoreLast 的 select 覆盖记忆。
+    const lastView = loadLastMainView(globalThis.localStorage ?? null);
+
     await Promise.all([
       chat.refresh(),
       contacts.refresh(),
@@ -165,7 +170,15 @@
       workdirs.refresh(),
       stickies.load(),
     ]);
-    const restored = await chat.restoreLast();
+    // 工作台入口关掉时退回对话，并修正记忆，避免下次再冒出来。
+    const workbenchUsable =
+      lastView === 'workbench' && settingsStore.settings?.workbenchEnabled === true;
+    if (!workbenchUsable) shell.showChats();
+
+    // 落在工作台时会话仍后台装好，但不把主区拉回对话。
+    const restored = await chat.restoreLast({ keepMainView: workbenchUsable });
+    // 没有对话/Bot 可恢复（如跳过向导的首次启动）时不进工作台，留给空态引导。
+    if (workbenchUsable && restored === 'empty') shell.showChats();
     if (restored === 'empty' && !onboarding.open) {
       // 名单复核：极端负载下 contacts.refresh 可能在第一个 Bot 创建前就返回
       // 过空名单（store 是旧的），restoreLast 因此误判 'empty'。拉起全屏引导

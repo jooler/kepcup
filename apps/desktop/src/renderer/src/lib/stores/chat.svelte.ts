@@ -56,6 +56,14 @@ export type ConversationView = Conversation & {
   bot?: Bot | null;
 };
 
+export interface SelectOptions {
+  /**
+   * 启动恢复落在工作台时保持主区不动：后台把会话装好，但不把 `shell.mainView`
+   * 拉回对话（否则刷新时会先露出上一会话再跳到工作台）。
+   */
+  keepMainView?: boolean;
+}
+
 export interface ActiveRunView {
   run: Run;
   /** Latest tool self-reported progress text (run.progress text tick). */
@@ -298,11 +306,11 @@ class ChatState {
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
-  async openDirect(botId: string): Promise<void> {
+  async openDirect(botId: string, options: SelectOptions = {}): Promise<void> {
     const result = (await core.call('conversations.openDirect', { botId })) as {
       conversation: ConversationView;
     };
-    await this.select(result.conversation.id);
+    await this.select(result.conversation.id, options);
   }
 
   /**
@@ -312,27 +320,27 @@ class ChatState {
    * 直聊；一个 Bot 都没有（跳过了初始化向导）时不打开任何会话，交由调用方
    * 进入「选择 Bot」的引导态。
    */
-  async restoreLast(): Promise<'conversation' | 'bot' | 'empty'> {
+  async restoreLast(options: SelectOptions = {}): Promise<'conversation' | 'bot' | 'empty'> {
     const lastViewed = loadLastConversationId(globalThis.localStorage ?? null);
     if (lastViewed !== null && this.conversations.some((c) => c.id === lastViewed)) {
-      await this.select(lastViewed);
+      await this.select(lastViewed, options);
       return 'conversation';
     }
     if (this.conversations.length > 0) {
       const latest = [...this.conversations].sort(
         (a, b) => (b.lastMessageAt ?? b.createdAt ?? 0) - (a.lastMessageAt ?? a.createdAt ?? 0),
       )[0]!;
-      await this.select(latest.id);
+      await this.select(latest.id, options);
       return 'conversation';
     }
     if (contacts.bots.length > 0) {
-      await this.openDirect(contacts.bots[0]!.id);
+      await this.openDirect(contacts.bots[0]!.id, options);
       return 'bot';
     }
     return 'empty';
   }
 
-  async select(conversationId: string): Promise<void> {
+  async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
     const result = (await core.call('conversations.get', { id: conversationId })) as {
       conversation: ConversationView | null;
@@ -372,8 +380,9 @@ class ChatState {
     };
     this.currentId = conversationId;
     // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
-    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。
-    if (shell.workbenchIntent === workbenchIntent) shell.mainView = 'chats';
+    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。启动恢复要落在
+    // 工作台时同样不动主区（keepMainView）。
+    if (!options.keepMainView && shell.workbenchIntent === workbenchIntent) shell.showChats();
     // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
@@ -459,7 +468,7 @@ class ChatState {
   beginProjectCompose(): void {
     // The compose view lives in the chats area: leave the workbench first,
     // otherwise clicking "new project" would show no reaction at all.
-    shell.mainView = 'chats';
+    shell.showChats();
     this.composingProject = true;
     this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
   }
