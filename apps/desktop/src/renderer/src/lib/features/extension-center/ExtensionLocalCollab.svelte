@@ -8,23 +8,20 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
   import { core } from '$lib/rpc/client.svelte';
-  import { chat } from '$lib/stores/chat.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
-  import { shell } from '$lib/stores/shell.svelte';
   import {
     inkcopCollabEnabled,
     setInkcopCollabEnabled,
   } from '$lib/features/inkcop-collab';
 
   /**
-   * 扩展中心 →「本机应用协作」（InkCop 同机桥 v0.2）：
-   * 启停 InkCop；开启后探测桥并自动确保侧栏系统 Bot「InkCop」。
+   * 扩展中心 →「本机应用协作」（契约 v0.2.1）：
+   * InkCop 卡片仅启停 + 桥状态；不预置系统 Bot。
    */
 
   let busy = $state(false);
   let probing = $state(false);
   let online = $state<boolean | null>(null);
-  let bridgeTip = $state<string | null>(null);
   let enableOverride = $state<boolean | null>(null);
 
   const enabled = $derived(
@@ -46,14 +43,10 @@
     try {
       const health = (await core.call('inkcop.health', {})) as {
         online: boolean;
-        tip?: string;
-        version?: number;
       };
       online = health.online === true;
-      bridgeTip = health.tip ?? null;
-    } catch (error) {
+    } catch {
       online = false;
-      bridgeTip = error instanceof Error ? error.message : String(error);
     } finally {
       probing = false;
     }
@@ -70,7 +63,6 @@
     try {
       const result = await setInkcopCollabEnabled(next);
       online = result.online;
-      bridgeTip = result.tip ?? null;
       if (next && !result.online) {
         toast.message(t('extensionCenter.localCollab.inkcop.offlineToast'));
       } else if (next) {
@@ -86,16 +78,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  async function openSystemBot(): Promise<void> {
-    const id = settingsStore.settings?.inkcopLocalCollab.systemBotId?.trim() ?? '';
-    if (id.length === 0) {
-      toast.message(t('extensionCenter.localCollab.inkcop.noBotYet'));
-      return;
-    }
-    shell.extensionCenterOpen = false;
-    await chat.openDirect(id);
   }
 </script>
 
@@ -113,7 +95,7 @@
       >
         <Laptop class="size-4" />
       </div>
-      <div class="min-w-0 flex-1 space-y-1">
+      <div class="min-w-0 flex-1 space-y-1.5">
         <div class="flex flex-wrap items-center gap-1.5">
           <span class="text-sm font-medium">{t('extensionCenter.localCollab.inkcop.title')}</span>
           {#if online === true}
@@ -137,11 +119,6 @@
         <p class="text-xs text-muted-foreground">
           {t('extensionCenter.localCollab.inkcop.description')}
         </p>
-        {#if bridgeTip}
-          <p class="text-[11px] text-muted-foreground" data-testid="local-collab-inkcop-tip">
-            {bridgeTip}
-          </p>
-        {/if}
       </div>
     </div>
 
@@ -171,17 +148,6 @@
         <RefreshCw class="size-3.5 {probing ? 'animate-spin' : ''}" />
         {t('extensionCenter.localCollab.inkcop.probe')}
       </Button>
-      {#if enabled}
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={busy}
-          onclick={() => void openSystemBot()}
-          data-testid="local-collab-inkcop-open"
-        >
-          {t('extensionCenter.localCollab.inkcop.openBot')}
-        </Button>
-      {/if}
     </div>
   </div>
 </div>

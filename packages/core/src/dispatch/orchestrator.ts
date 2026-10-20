@@ -122,7 +122,7 @@ import {
   type TriggerBatch,
   type TriggerPart,
 } from '../scheduler/mailbox.js';
-import { isInkcopLocalBot } from '../inkcop/index.js';
+import { shouldUseInkcopBridge } from '../inkcop/index.js';
 import { executeInkcopBridgeTurn } from '../inkcop/bridge-turn.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -1209,7 +1209,7 @@ export class Orchestrator {
   /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
   hasTurnModel(botId: string): boolean {
     const bot = this.#deps.bots.get(botId);
-    if (isInkcopLocalBot(bot)) return true;
+    if (shouldUseInkcopBridge(bot, this.#deps.settings.get())) return true;
     if (this.#turnModelRef(botId).length > 0) return true;
     return this.#agentIdOf(bot).length > 0;
   }
@@ -2629,7 +2629,7 @@ export class Orchestrator {
 
   #submitTurn(runId: string, batch: TriggerBatch): void {
     const bot = this.#deps.bots.get(batch.botId);
-    const inkcop = isInkcopLocalBot(bot);
+    const inkcop = shouldUseInkcopBridge(bot, this.#deps.settings.get());
     this.#deps.scheduler.submit({
       // Chain / scheduled / event turns are priority 1; user-facing ones are 0
       // (docs/dev/04-agent-runtime.md "各类 loop 的配置") — D71 delegations

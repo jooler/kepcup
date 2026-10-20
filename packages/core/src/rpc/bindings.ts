@@ -712,7 +712,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         // InkCop 同机桥 Bot 不走默认外部 Agent（契约：不暴露为外部智能体）。
         skipDefaultAgent:
           input.skipDefaultAgent === true ||
-          input.profile.runtime.message_transport === 'inkcop-local',
+          input.profile.runtime.message_transport === 'inkcop-local' ||
+          (input.profile.runtime.inkcop_agent_keys?.length ?? 0) > 0,
       });
       publish('bot.updated', { bot });
       return { bot };

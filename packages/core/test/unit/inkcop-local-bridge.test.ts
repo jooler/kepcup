@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   inkcopBaseUrl,
   inkcopEndpointPath,
@@ -17,11 +17,13 @@ import {
 } from '../../src/inkcop/client.js';
 import {
   INKCOP_LOCAL_TRANSPORT,
+  botHasInkcopAgents,
   inkcopAgentsApiAvailable,
   inkcopAgentKeyForBot,
   inkcopExternalId,
   inkcopMessageId,
   isInkcopLocalBot,
+  shouldUseInkcopBridge,
 } from '../../src/inkcop/index.js';
 import { executeInkcopBridgeTurn } from '../../src/inkcop/bridge-turn.js';
 import type { Bot, Message, Run } from '@kepcup/shared';
@@ -91,6 +93,22 @@ describe('inkcop helpers', () => {
       true,
     );
     expect(isInkcopLocalBot({ profile: { runtime: { message_transport: '' } } })).toBe(false);
+    expect(
+      botHasInkcopAgents({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } }),
+    ).toBe(true);
+    expect(isInkcopLocalBot({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } })).toBe(true);
+    expect(
+      shouldUseInkcopBridge(
+        { profile: { runtime: { inkcop_agent_keys: ['writer'] } } },
+        { inkcopLocalCollab: { enabled: true } },
+      ),
+    ).toBe(true);
+    expect(
+      shouldUseInkcopBridge(
+        { profile: { runtime: { inkcop_agent_keys: ['writer'] } } },
+        { inkcopLocalCollab: { enabled: false } },
+      ),
+    ).toBe(false);
     expect(inkcopExternalId('bot_1')).toBe('kepcup-bot-bot_1');
     expect(inkcopExternalId('bot_1', 'main_agent')).toBe('kepcup-bot-bot_1');
     expect(inkcopExternalId('bot_1', 'writer')).toBe('kepcup-bot-bot_1--writer');

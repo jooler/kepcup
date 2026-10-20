@@ -32,7 +32,7 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { createBotConversational, createInkCopWritingBot } from '$lib/features/bot-setup';
+  import { createBotConversational } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
@@ -193,11 +193,9 @@
   onDestroy(clearActivityTimers);
 
   const plusBots = $derived.by(() => {
-    const settings = settingsStore.settings;
-    const visible = contacts.bots.filter((bot) => !isHiddenInkcopBot(bot, settings));
     const query = plusQuery.trim().toLowerCase();
-    if (query.length === 0) return visible;
-    return visible.filter(
+    if (query.length === 0) return contacts.bots;
+    return contacts.bots.filter(
       (bot) =>
         bot.name.toLowerCase().includes(query) ||
         bot.bio.toLowerCase().includes(query) ||
@@ -296,19 +294,6 @@
     await createBotConversational();
   }
 
-  async function startInkCopWritingBot(): Promise<void> {
-    plusOpen = false;
-    try {
-      if (!inkcopCollabEnabled(settingsStore.settings)) {
-        await setInkcopCollabEnabled(true);
-      }
-      const bot = await ensureInkcopSystemBot();
-      await chat.openDirect(bot.id);
-    } catch {
-      // ensureInkcopSystemBot / setInkcopCollabEnabled already toast
-    }
-  }
-
   async function openCreateProject(): Promise<void> {
     plusOpen = false;
     chat.beginProjectCompose();
@@ -318,11 +303,7 @@
    * 管家不进入任何分组，单独排在列表最前。其余对话保持 store 的时间顺序，
    * 再按分组装桶。
    */
-  const sidebarConversations = $derived(
-    chat.conversations.filter(
-      (conversation) => !isHiddenInkcopConversation(conversation, settingsStore.settings),
-    ),
-  );
+  const sidebarConversations = $derived(chat.conversations);
   const butlerConversations = $derived(
     sidebarConversations.filter((conversation) => isButlerConversation(conversation)),
   );
@@ -1257,17 +1238,6 @@
         <Plus class="size-4" />
       </span>
       {t('sidebar.createBot')}
-    </button>
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={() => void startInkCopWritingBot()}
-      data-testid="start-chat-create-inkcop-bot"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <Pencil class="size-4" />
-      </span>
-      {t('sidebar.createInkCopBot')}
     </button>
     <button
       type="button"
