@@ -23,6 +23,9 @@
   /**
    * 事项栏（D90 §5.2，P0 只有「按成员」视图）：快速新建（回车存为草案）→ 成员道
    * （未指派在前，其后有事的 Bot 与项目组）→ 最近结束。
+   *
+   * 快速新建的草稿存在 `workbench` store 里（不是组件 `$state`）：切到对话会把工作台
+   * 整棵卸载，放组件里切回来就没了（见 workbench.svelte.ts 的字段注释）。
    */
   const bots = $derived(botMembers(contacts.bots));
   // 会话列表每条消息都会换新数组：只取成员签名（项目组 id / 标题、在跑的 Bot），签名不变就不重算分道。
@@ -47,19 +50,18 @@
   );
   const closed = $derived(closedTodos(workbench.todos));
 
-  let draft = $state('');
   let saving = $state(false);
   let input = $state<HTMLInputElement | null>(null);
   let closedOpen = $state(false);
 
   async function quickAdd(): Promise<void> {
-    const title = draft.trim();
+    const title = workbench.todoDraft.trim();
     if (title.length === 0 || saving) return;
     saving = true;
     try {
       const result = (await core.call('todos.create', { title })) as { todo: TodoEntry };
       workbench.upsertTodo(result.todo);
-      draft = '';
+      workbench.todoDraft = '';
     } catch (error) {
       toast.error(rpcErrorText(error, t('workbench.todos.quickAddFailed')));
     } finally {
@@ -79,7 +81,7 @@
 <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3" data-testid="todo-pane">
   <Input
     bind:ref={input}
-    bind:value={draft}
+    bind:value={workbench.todoDraft}
     maxlength={TODO_TITLE_MAX_CHARS}
     placeholder={t('workbench.todos.quickAddPlaceholder')}
     class="h-9 shrink-0"

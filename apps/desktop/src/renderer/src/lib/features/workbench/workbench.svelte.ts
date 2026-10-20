@@ -46,6 +46,17 @@ export class WorkbenchState {
   /** 每次 todos 重拉后 +1：抽屉据此重读自己打开的事项。 */
   todosVersion = $state(0);
 
+  /**
+   * 面板上常驻输入框的文本（备忘草稿 / 备忘搜索词 / 事项快速新建草稿）。宽屏主区
+   * 在对话与工作台之间二选一（App.svelte），切到对话会把整棵工作台卸载，组件里的
+   * `$state` 随之丢失——放 store 才能「切走再切回」后原样还在（与对话输入框的
+   * composerDrafts 同一思路，区别是不落盘：随手写的东西重启后从空开始更干净）。
+   * 与抽屉无关：抽屉是模态，仍按原设计在离开工作台时关闭（`#unsubscribe`）。
+   */
+  memoDraft = $state('');
+  memoQuery = $state('');
+  todoDraft = $state('');
+
   #attachCount = 0;
   #detach: Array<() => void> = [];
   #timers: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
