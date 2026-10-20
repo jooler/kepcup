@@ -777,6 +777,10 @@ export const botsCreateInputSchema = z
      * profile，完成后自行结束（setup_state 清空）。默认 false 走原路径。
      */
     interview: z.boolean().default(false),
+    /**
+     * 不套用 onboarding 默认外部 Agent（InkCop 同机桥预设等：消息不经 ACP）。
+     */
+    skipDefaultAgent: z.boolean().default(false),
   })
   .refine((input) => input.interview || input.profile.identity.name.trim().length > 0, {
     path: ['profile', 'identity', 'name'],

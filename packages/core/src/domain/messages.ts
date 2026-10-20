@@ -895,6 +895,31 @@ export class MessagesService {
     return ids;
   }
 
+  /**
+   * 流式改写 Bot 文本气泡（InkCop 同机桥 SSE chunk）：只动 content.text + FTS，
+   * 不改 status（不标 edited）。仅允许 bot + kind=text。
+   */
+  updateStreamingText(id: string, text: string): Message {
+    const message = this.getOrThrow(id);
+    if (message.senderType !== 'bot' || message.kind !== 'text') {
+      throw new AppError('INVALID_INPUT', 'Only bot text messages can be stream-updated');
+    }
+    if (message.status === 'recalled') {
+      throw new AppError('MESSAGE_NOT_RECALLABLE', 'A recalled message cannot be updated');
+    }
+    const content = { ...(message.content as Record<string, unknown>), text };
+    this.db
+      .prepare('update messages set content_json = ? where id = ?')
+      .run(JSON.stringify(content), id);
+    this.db.prepare('delete from messages_fts where message_id = ?').run(id);
+    this.db
+      .prepare(
+        'insert into messages_fts (segmented_text, message_id, conversation_id) values (?, ?, ?)',
+      )
+      .run(segmentForFts(text), id, message.conversationId);
+    return this.getOrThrow(id);
+  }
+
   /** Edit a user message: content replaced, marked `edited`, FTS updated. */
   edit(id: string, text: string): Message {
     const message = this.getOrThrow(id);

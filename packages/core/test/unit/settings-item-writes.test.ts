@@ -38,6 +38,7 @@ function harness(
       mcp_server_ids: ['srv'],
       app_connection_ids: ['conn-1'],
       browser_profile: '',
+      message_transport: '',
       ...runtime,
     },
   });

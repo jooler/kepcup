@@ -1557,6 +1557,7 @@ export const zhCN = {
   'sidebar.startChatTitle': '开始新对话',
   'sidebar.startChatPlaceholder': '搜索 Bot…',
   'sidebar.createBot': '新建 Bot',
+  'sidebar.createInkCopBot': '新建 InkCop 写作助理',
   'sidebar.createProject': '新建项目组',
   'sidebar.projectDetail': '项目详情',
   'sidebar.renameBot': '重命名 Bot',
