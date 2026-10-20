@@ -10,7 +10,7 @@ import { executeToolSafely } from '../../src/agent/tool-execution.js';
 
 const blocked = '/tmp/outside/secret.txt';
 
-function toolsFor(loopType: RunIdentity['loopType']) {
+function toolsFor(loopType: RunIdentity['loopType'], exitCode = 1) {
   const requested: Array<{ path: string; mode: string; preauthorize?: boolean }> = [];
   const identity: RunIdentity = {
     runId: `run_${loopType}`,
@@ -20,7 +20,7 @@ function toolsFor(loopType: RunIdentity['loopType']) {
   };
   const gateway = {
     exec: async () => ({
-      exitCode: 1,
+      exitCode,
       timedOut: false,
       violations: [{ line: `cat(x) deny(1) file-read-data ${blocked}` }],
     }),
@@ -68,6 +68,14 @@ describe('sandbox violations request access in a task', () => {
     expect(requested).toEqual([{ path: blocked, mode: 'read', preauthorize: true }]);
     expect(result.content).toContain('用户已允许');
     expect(result.content).toContain('重新执行命令');
+  });
+
+  it('a successful task does not hold a card for an incidental denial', async () => {
+    const { bash, requested, ctx } = toolsFor('task', 0);
+    const result = await executeToolSafely(bash, { command: 'cat /tmp/outside/secret.txt' }, ctx);
+    expect(requested).toEqual([]);
+    expect(result.content).toContain('request_access');
+    expect(result.content).not.toContain('用户已允许');
   });
 
   it('a turn keeps the old hint and never holds a card', async () => {

@@ -93,6 +93,7 @@ async function waitReady(page: Page): Promise<void> {
     page
       .locator('[data-testid="chat-view"]')
       .or(page.locator('[data-testid="start-chat-panel"]'))
+      .or(page.locator('[data-testid="workbench-view"]'))
       .or(page.locator('[data-testid="onboarding"]')),
   ).toBeVisible({ timeout: 60_000 });
   const startBackdrop = page.locator('[data-testid="start-chat-backdrop"]');
