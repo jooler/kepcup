@@ -6,14 +6,18 @@ import {
   inkcopBaseUrl,
   inkcopEndpointPath,
   readInkcopEndpoint,
+  resolveInkcopTarget,
 } from '../../src/inkcop/endpoint.js';
 import { consumeSseBuffer } from '../../src/inkcop/sse.js';
 import {
   InkcopLocalBridgeClient,
   InkcopOfflineError,
+  InkcopAuthError,
   InkcopHttpError,
   INKCOP_OFFLINE_TIP_ZH,
+  INKCOP_AUTH_TIP_ZH,
   inkcopOfflineTip,
+  inkcopAuthTip,
 } from '../../src/inkcop/client.js';
 import {
   INKCOP_LOCAL_TRANSPORT,
@@ -73,6 +77,69 @@ describe('inkcop endpoint discovery', () => {
   });
 });
 
+describe('resolveInkcopTarget (v0.3)', () => {
+  it('prefers settings apiKey and baseUrl over endpoint', () => {
+    const endpoint = {
+      version: 3,
+      port: 9,
+      token: 'e'.repeat(32),
+      baseUrl: 'http://127.0.0.1:9',
+    };
+    const resolved = resolveInkcopTarget(
+      { apiKey: 'user-key-from-settings', baseUrl: 'http://192.168.1.10:54321' },
+      { endpoint },
+    );
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.target.apiKey).toBe('user-key-from-settings');
+      expect(resolved.target.baseUrl).toBe('http://192.168.1.10:54321');
+    }
+  });
+
+  it('falls back to endpoint.token when apiKey empty', () => {
+    const endpoint = {
+      version: 3,
+      port: 9,
+      token: 'f'.repeat(32),
+      baseUrl: 'http://127.0.0.1:9',
+    };
+    const resolved = resolveInkcopTarget({ apiKey: '', baseUrl: '' }, { endpoint });
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.target.apiKey).toBe('f'.repeat(32));
+      expect(resolved.target.baseUrl).toBe('http://127.0.0.1:9');
+    }
+  });
+
+  it('works with only settings (no endpoint) for LAN', () => {
+    const resolved = resolveInkcopTarget(
+      { apiKey: 'lan-key', baseUrl: 'http://10.0.0.2:1234/' },
+      { endpoint: null },
+    );
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.target.apiKey).toBe('lan-key');
+      expect(resolved.target.baseUrl).toBe('http://10.0.0.2:1234');
+      expect(resolved.target.endpoint).toBeNull();
+    }
+  });
+
+  it('fails with no_api_key when neither settings nor endpoint has a key', () => {
+    const resolved = resolveInkcopTarget(
+      { apiKey: '', baseUrl: 'http://127.0.0.1:9' },
+      { endpoint: null },
+    );
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) expect(resolved.reason).toBe('no_api_key');
+  });
+
+  it('fails with no_base_url when nowhere to connect', () => {
+    const resolved = resolveInkcopTarget({ apiKey: 'k', baseUrl: '' }, { endpoint: null });
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) expect(resolved.reason).toBe('no_base_url');
+  });
+});
+
 describe('inkcop SSE parser', () => {
     it('parses event frames across chunk boundaries', () => {
     const part1 = 'event: chunk\ndata: {"turnId":"t1","text":"he';
@@ -115,6 +182,7 @@ describe('inkcop helpers', () => {
     expect(inkcopMessageId('abc')).toBe('kepcup-msg-abc');
     expect(inkcopOfflineTip(null)).toBe(INKCOP_OFFLINE_TIP_ZH);
     expect(inkcopOfflineTip('en')).toMatch(/InkCop/);
+    expect(inkcopAuthTip(null)).toBe(INKCOP_AUTH_TIP_ZH);
     expect(inkcopAgentsApiAvailable({ version: 1 })).toBe(false);
     expect(inkcopAgentsApiAvailable({ version: 2 })).toBe(true);
     expect(inkcopAgentKeyForBot({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } })).toBe(
@@ -157,6 +225,55 @@ describe('InkcopLocalBridgeClient', () => {
       fetch: vi.fn(async () => new Response(JSON.stringify({ ok: false }), { status: 503 })) as never,
     });
     await expect(client.health()).rejects.toBeInstanceOf(InkcopOfflineError);
+  });
+
+  it('health 401 → auth error', async () => {
+    const client = new InkcopLocalBridgeClient({
+      endpoint,
+      fetch: vi.fn(async () => new Response('unauthorized', { status: 401 })) as never,
+    });
+    await expect(client.health()).rejects.toBeInstanceOf(InkcopAuthError);
+  });
+
+  it('uses settings apiKey/baseUrl override in request', async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({ ok: true, version: 3, app: 'inkcop', connections: [] }),
+    );
+    const client = new InkcopLocalBridgeClient({
+      endpoint,
+      apiKey: 'override-key',
+      baseUrl: 'http://192.168.0.5:9999',
+      fetch: fetch as never,
+    });
+    await client.health();
+    expect(fetch).toHaveBeenCalledWith(
+      'http://192.168.0.5:9999/v1/health',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer override-key' }),
+      }),
+    );
+  });
+
+  it('missing key without endpoint → auth error before fetch', async () => {
+    const fetch = vi.fn();
+    const client = new InkcopLocalBridgeClient({
+      endpoint: undefined,
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:9',
+      fetch: fetch as never,
+      // force no file: inject null via resolve by using empty overrides and no endpoint —
+      // constructor with only baseUrl still needs endpoint or we pass a fake path.
+    });
+    // Without fixed endpoint and without readable file, resolve uses disk; instead inject via resolveInkcopTarget path:
+    const bare = new InkcopLocalBridgeClient({
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:9',
+      endpointPath: '/no/such/inkcop-endpoint.json',
+      fetch: fetch as never,
+    });
+    await expect(bare.health()).rejects.toBeInstanceOf(InkcopAuthError);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('ensureConnection posts body', async () => {

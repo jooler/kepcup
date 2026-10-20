@@ -5,15 +5,17 @@ import type { RunsService } from '../domain/runs.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { TriggerBatch } from '../scheduler/mailbox.js';
 import {
+  InkcopAuthError,
   InkcopHttpError,
   InkcopLocalBridgeClient,
   InkcopOfflineError,
+  inkcopAuthTip,
   inkcopOfflineTip,
 } from './client.js';
 import { inkcopAgentKeyForBot, inkcopExternalId, inkcopMessageId } from './index.js';
 
 /**
- * InkCop 同机桥对话轮（契约 §5 / v0.2）：不走内置 LLM / ACP；按 Bot 勾选 agentKey 建连。
+ * InkCop 同机桥对话轮（契约 §5 / v0.3）：不走内置 LLM / ACP；按 Bot 勾选 agentKey 建连。
  * mailbox 仍负责串行；本模块只负责一次 run 的 HTTP+SSE 落地与收尾。
  */
 
@@ -101,14 +103,21 @@ export async function executeInkcopBridgeTurn(
     markRunning();
     progress(inProgress);
 
-    const tip = inkcopOfflineTip(deps.uiLanguage());
+    const offlineTip = inkcopOfflineTip(deps.uiLanguage());
+    const authTip = inkcopAuthTip(deps.uiLanguage());
     try {
       await client.health();
     } catch (error) {
+      if (error instanceof InkcopAuthError) {
+        handled = true;
+        appendBot(authTip);
+        deps.settleRun(runId, 'failed', authTip);
+        return;
+      }
       if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
         handled = true;
-        appendBot(tip);
-        deps.settleRun(runId, 'failed', tip);
+        appendBot(offlineTip);
+        deps.settleRun(runId, 'failed', offlineTip);
         return;
       }
       throw error;
@@ -132,10 +141,16 @@ export async function executeInkcopBridgeTurn(
       });
       connectionId = connection.connectionId;
     } catch (error) {
+      if (error instanceof InkcopAuthError) {
+        handled = true;
+        appendBot(authTip);
+        deps.settleRun(runId, 'failed', authTip);
+        return;
+      }
       if (error instanceof InkcopOfflineError) {
         handled = true;
-        appendBot(tip);
-        deps.settleRun(runId, 'failed', tip);
+        appendBot(offlineTip);
+        deps.settleRun(runId, 'failed', offlineTip);
         return;
       }
       handled = true;
@@ -192,9 +207,14 @@ export async function executeInkcopBridgeTurn(
         },
       );
     } catch (error) {
+      if (error instanceof InkcopAuthError) {
+        appendBot(authTip);
+        deps.settleRun(runId, 'failed', authTip);
+        return;
+      }
       if (error instanceof InkcopOfflineError) {
-        appendBot(tip);
-        deps.settleRun(runId, 'failed', tip);
+        appendBot(offlineTip);
+        deps.settleRun(runId, 'failed', offlineTip);
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);

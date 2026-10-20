@@ -262,11 +262,15 @@ import {
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
 import type { LoopType, WikiOwner } from '@kepcup/shared';
 import {
+  InkcopAuthError,
   InkcopHttpError,
-  InkcopLocalBridgeClient,
+  inkcopAuthTip,
+  inkcopBaseUrl,
+  inkcopClientFromSettings,
   InkcopOfflineError,
   inkcopOfflineTip,
-} from '../inkcop/client.js';
+  readInkcopEndpoint,
+} from '../inkcop/index.js';
 
 const voidInput = z.void();
 
@@ -639,29 +643,55 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
 
     'inkcop.health': method(z.object({}).default({}), inkcopHealthOutputSchema, async () => {
-      const client = new InkcopLocalBridgeClient();
+      const settings = domain.settings.get();
+      const discovered = readInkcopEndpoint();
+      const discoveredApiKey = discovered.ok ? discovered.endpoint.token : undefined;
+      const discoveredBaseUrl = discovered.ok ? inkcopBaseUrl(discovered.endpoint) : undefined;
+      const discoverFields = {
+        ...(discoveredApiKey !== undefined ? { discoveredApiKey } : {}),
+        ...(discoveredBaseUrl !== undefined ? { discoveredBaseUrl } : {}),
+      };
+      const client = inkcopClientFromSettings(settings);
       try {
         const health = await client.health();
         return {
           online: true as const,
           version: health.version,
           app: health.app,
+          ...discoverFields,
         };
       } catch (error) {
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            authError: true as const,
+            tip: inkcopAuthTip(null),
+            ...discoverFields,
+          };
+        }
         if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
           return {
             online: false as const,
             tip: inkcopOfflineTip(null),
+            ...discoverFields,
           };
         }
         throw error;
       }
     }),
     'inkcop.listAgents': method(z.object({}).default({}), inkcopListAgentsOutputSchema, async () => {
-      const client = new InkcopLocalBridgeClient();
+      const client = inkcopClientFromSettings(domain.settings.get());
       try {
         await client.health();
       } catch (error) {
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            agents: [],
+            authError: true as const,
+            tip: inkcopAuthTip(null),
+          };
+        }
         if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
           return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
         }
@@ -677,6 +707,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             online: true as const,
             agents: [{ key: 'main_agent', name: '主智能体', kind: 'main' as const }],
             tip: 'InkCop 尚未提供 /v1/agents，暂仅列出主智能体',
+          };
+        }
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            agents: [],
+            authError: true as const,
+            tip: inkcopAuthTip(null),
           };
         }
         if (error instanceof InkcopOfflineError) {

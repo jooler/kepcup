@@ -301,11 +301,13 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
-  /** InkCop 同机协作（v0.2.1）：部分 patch；systemBotId 仅兼容旧配置。 */
+  /** InkCop 同机协作（v0.3）：部分 patch；systemBotId 仅兼容旧配置。 */
   inkcopLocalCollab: z
     .object({
       enabled: z.boolean().optional(),
       systemBotId: z.string().optional(),
+      apiKey: z.string().optional(),
+      baseUrl: z.string().optional(),
     })
     .optional(),
   /** P13 任务 4: first-run wizard completion flags (partial patch). */
@@ -781,11 +783,18 @@ export const inkcopHealthOutputSchema = z.object({
   version: z.number().optional(),
   app: z.string().optional(),
   tip: z.string().optional(),
+  /** v0.3：401 / 未配置密钥。 */
+  authError: z.boolean().optional(),
+  /** 同机 endpoint.json 探测到的 token，供 UI 预填。 */
+  discoveredApiKey: z.string().optional(),
+  /** 同机 endpoint.json 的 baseUrl（或拼出的 loopback）。 */
+  discoveredBaseUrl: z.string().optional(),
 });
 export const inkcopListAgentsOutputSchema = z.object({
   online: z.boolean(),
   agents: z.array(inkcopAgentSchema),
   tip: z.string().optional(),
+  authError: z.boolean().optional(),
 });
 
 // --- bots -----------------------------------------------------------------

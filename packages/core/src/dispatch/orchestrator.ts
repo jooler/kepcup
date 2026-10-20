@@ -122,7 +122,7 @@ import {
   type TriggerBatch,
   type TriggerPart,
 } from '../scheduler/mailbox.js';
-import { shouldUseInkcopBridge } from '../inkcop/index.js';
+import { inkcopClientFromSettings, shouldUseInkcopBridge } from '../inkcop/index.js';
 import { executeInkcopBridgeTurn } from '../inkcop/bridge-turn.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -2662,6 +2662,7 @@ export class Orchestrator {
       settleRun: (id, status, error) => this.#settleRun(id, status, error),
       releaseTurnMailbox: (id, b, handled) => this.#releaseTurnMailbox(id, b, handled),
       uiLanguage: () => null,
+      client: inkcopClientFromSettings(this.#deps.settings.get()),
     });
   }
 

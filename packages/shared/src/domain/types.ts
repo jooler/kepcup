@@ -672,7 +672,7 @@ export const browserProfileSchema = z.object({
 export type BrowserProfile = z.infer<typeof browserProfileSchema>;
 
 /**
- * InkCop 同机协作（契约 v0.2.1）：扩展中心「本机应用协作」启停。
+ * InkCop 同机协作（契约 v0.3）：扩展中心「本机应用协作」启停 + API 密钥 + 可选服务地址。
  * 开启后任意 Bot 详情可关联 InkCop 智能体；不预置系统 Bot。
  * `systemBotId` 仅兼容旧配置，读写忽略。
  */
@@ -681,8 +681,12 @@ export const inkcopLocalCollabSettingsSchema = z
     enabled: z.boolean().default(false).catch(false),
     /** @deprecated 不再使用；保留以免旧 settings 解析失败。 */
     systemBotId: z.string().default('').catch(''),
+    /** v0.3：Bearer API 密钥；空则同机探测时回落 endpoint.token。 */
+    apiKey: z.string().default('').catch(''),
+    /** v0.3：可选服务 baseUrl（局域网/跨机）；空则用 endpoint / 127.0.0.1。 */
+    baseUrl: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, systemBotId: '' });
+  .catch({ enabled: false, systemBotId: '', apiKey: '', baseUrl: '' });
 export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettingsSchema>;
 
 export const settingsSchema = z.object({
@@ -739,7 +743,7 @@ export const settingsSchema = z.object({
    */
   workbenchNudgeDismissed: z.boolean().default(false),
   /**
-   * InkCop 同机协作（v0.2）：扩展中心启停 + 自动系统 Bot id。
+   * InkCop 同机协作（v0.3）：扩展中心启停 + apiKey + 可选 baseUrl。
    */
   inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
   /**

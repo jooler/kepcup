@@ -1209,6 +1209,13 @@ export const zhCN = {
   'extensionCenter.localCollab.inkcop.offlineToast':
     '已启用，但尚未连上 InkCop 本机桥。请启动 InkCop 并打开「本机 KepCup 连接」。',
   'extensionCenter.localCollab.inkcop.toggleFailed': '切换失败：{reason}',
+  'extensionCenter.localCollab.inkcop.apiKey': 'API 密钥',
+  'extensionCenter.localCollab.inkcop.apiKeyPlaceholder': '与 InkCop 设置中生成的密钥一致',
+  'extensionCenter.localCollab.inkcop.baseUrl': '服务地址（可选）',
+  'extensionCenter.localCollab.inkcop.baseUrlPlaceholder': '留空则用本机 endpoint；局域网示例 http://192.168.1.10:54321',
+  'extensionCenter.localCollab.inkcop.authError': '密钥无效',
+  'extensionCenter.localCollab.inkcop.authToast':
+    'InkCop 密钥无效或未配置，请填写与 InkCop 设置中一致的 API 密钥。',
   'contacts.inkcopAgents': '关联 InkCop 智能体',
   'contacts.inkcopAgentsHint':
     '勾选后，本 Bot 经同机桥直接与对应 InkCop 智能体通讯（主智能体 +「智能体」微应用可见项）。',
