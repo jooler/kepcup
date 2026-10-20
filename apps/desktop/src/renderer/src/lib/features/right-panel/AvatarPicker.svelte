@@ -17,7 +17,7 @@
     formatPresetAvatar,
     parsePresetAvatar,
   } from '$lib/avatars/presets';
-  import { fileToScaledPngBase64 } from '$lib/avatars/upload-image';
+  import { fileToAvatarPayload } from '$lib/avatars/upload-image';
   import BotPresetAvatar from '$lib/avatars/BotPresetAvatar.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
@@ -83,8 +83,8 @@
     if (!file) return;
     uploading = true;
     try {
-      const bytesBase64 = await fileToScaledPngBase64(file);
-      await core.call('bots.avatar.upload', { id: bot.id, mime: 'image/png', bytesBase64 });
+      const { mime, bytesBase64 } = await fileToAvatarPayload(file);
+      await core.call('bots.avatar.upload', { id: bot.id, mime, bytesBase64 });
       open = false;
     } catch (error) {
       toast.error(
@@ -194,7 +194,7 @@
         <span>{t('rightPanel.avatarUploadHint')}</span>
         <input
           type="file"
-          accept="image/png,image/jpeg,image/webp"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
           class="hidden"
           onchange={onPickFile}
           data-testid="avatar-upload-input"

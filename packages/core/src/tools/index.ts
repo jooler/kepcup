@@ -361,7 +361,7 @@ export function buildResponseTools(input: {
         Type.Array(Type.String(), { description: '附件路径（workspace 内的文件）' }),
       ),
     }),
-    execute: async (params) => {
+    execute: async (params, ctx) => {
       if (identity.conversationId === null || identity.botId === null) {
         return {
           ok: false,
@@ -372,9 +372,10 @@ export function buildResponseTools(input: {
       const uploaded = [];
       for (const filePath of params.attachment_paths ?? []) {
         // Only a path this run may read right now: a grantable one (outside the
-        // workspace / workdir, sensitive locations) is never read and uploaded
-        // without the user's approval (审查 pre-existing HIGH).
-        const decision = gateway.checkPath(identity, filePath, 'read');
+        // workspace / workdir, sensitive locations) asks the user first
+        // (审查 pre-existing HIGH). A turn still fails fast — only a task may
+        // hold on an approval card.
+        let decision = gateway.checkPath(identity, filePath, 'read');
         if (decision.kind === 'forbidden') {
           return {
             ok: false,
@@ -383,14 +384,39 @@ export function buildResponseTools(input: {
           };
         }
         if (decision.kind !== 'allowed') {
-          return {
-            ok: false,
-            content:
-              identity.loopType === 'turn'
-                ? `附件不在授权范围内：${filePath}（${decision.reason}）。需要发送它请派任务（start_task），在任务里先用 request_access 申请读取。`
-                : `附件不在授权范围内：${filePath}（${decision.reason}）。先用 request_access 申请读取该路径，用户批准后再发送。`,
-            errorCode: 'PATH_OUT_OF_SCOPE',
-          };
+          if (identity.loopType === 'turn') {
+            return {
+              ok: false,
+              content: `附件不在授权范围内：${filePath}（${decision.reason}）。需要发送它请派任务（start_task），在任务里用 request_access 申请读取。`,
+              errorCode: 'PATH_OUT_OF_SCOPE',
+            };
+          }
+          try {
+            await gateway.ensurePathAccess(identity, filePath, 'read', '发送附件需要读取该路径', {
+              signal: ctx.signal,
+            });
+            decision = gateway.checkPath(identity, filePath, 'read');
+          } catch (error) {
+            if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+              const expired = (error.details as { expired?: boolean } | undefined)?.expired;
+              return {
+                ok: false,
+                content:
+                  expired === true
+                    ? `等待用户授权超时，未发送附件：${filePath}。任务未被阻塞，请改用其他做法或稍后重试。`
+                    : `用户拒绝或取消了附件授权：${filePath}。请改用其他文件或询问用户。`,
+                errorCode: 'APPROVAL_DENIED',
+              };
+            }
+            throw error;
+          }
+          if (decision.kind !== 'allowed') {
+            return {
+              ok: false,
+              content: `附件仍不在授权范围内：${filePath}（${decision.reason}）`,
+              errorCode: 'PATH_OUT_OF_SCOPE',
+            };
+          }
         }
         try {
           const bytes = readFileSync(decision.resolvedPath);
@@ -655,9 +681,13 @@ export function buildResponseTools(input: {
         };
       } catch (error) {
         if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          const expired = (error.details as { expired?: boolean } | undefined)?.expired;
           return {
             ok: false,
-            content: '用户拒绝或取消了该授权请求。请调整做法，例如改用 workspace 内的路径。',
+            content:
+              expired === true
+                ? '等待用户授权超时，审批已取消。请改用其他做法，或稍后再试。'
+                : '用户拒绝或取消了该授权请求。请调整做法，例如改用 workspace 内的路径。',
             errorCode: 'APPROVAL_DENIED',
           };
         }
@@ -763,7 +793,10 @@ export function buildResponseTools(input: {
           signal: ctx.signal,
           reason: params.reason ?? '申请 workdir 写入租约',
         });
-        return { ok: true, content: `已取得 ${workdir.name} 的写入租约，可以执行改动工作目录的命令。` };
+        return {
+          ok: true,
+          content: `已取得 ${workdir.name} 的写入租约，可以执行改动工作目录的命令。`,
+        };
       } catch (error) {
         if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
           return { ok: false, content: '执行已取消，未取得租约', errorCode: 'APPROVAL_DENIED' };

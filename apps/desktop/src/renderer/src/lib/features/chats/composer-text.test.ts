@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot } from '@kepcup/shared';
-import { projectMentionToken } from '@kepcup/shared';
-import { buildMentionTargets, resolveMentionTokens, segmentComposerText } from './composer-text';
+import { fileMentionToken, folderMentionToken, projectMentionToken } from '@kepcup/shared';
+import {
+  buildLocalPathMentionTargets,
+  buildMentionTargets,
+  localPathName,
+  resolveMentionTokens,
+  segmentComposerText,
+} from './composer-text';
 
 function bot(id: string, name: string, systemRole: Bot['systemRole'] = null): Bot {
   return {
@@ -47,6 +53,16 @@ describe('buildMentionTargets', () => {
     expect(merged).toEqual([
       { token: 'm1', name: '同名', kind: 'bot', bio: '同名的简介', butler: false },
     ]);
+  });
+
+  it('Bot 候选带头像值（无头像不产生空字段）', () => {
+    const withAvatar = buildMentionTargets({
+      memberBots: [{ ...bot('m1', '带头像'), avatar: 'preset:orb:red' }],
+      allBots: [bot('a1', '无头像')],
+      projects: [],
+    });
+    expect(withAvatar[0]).toMatchObject({ token: 'm1', avatar: 'preset:orb:red' });
+    expect('avatar' in withAvatar[1]!).toBe(false);
   });
 
   it('butler Bot 带 butler 标记（弹层加分区线用）', () => {
@@ -120,5 +136,49 @@ describe('resolveMentionTokens', () => {
 
   it('无命中返回空', () => {
     expect(resolveMentionTokens('普通文本', targets)).toEqual([]);
+  });
+});
+
+describe('本地文件/文件夹提及', () => {
+  it('localPathName 取 basename（兼容 / 与 \\）', () => {
+    expect(localPathName('/Users/me/报告.md')).toBe('报告.md');
+    expect(localPathName('C:\\Users\\me\\报告.md')).toBe('报告.md');
+    expect(localPathName('/')).toBe('/');
+  });
+
+  it('从消息 mentions 还原 file/folder 目标，忽略 Bot/项目组 token', () => {
+    expect(
+      buildLocalPathMentionTargets([
+        fileMentionToken('/Users/me/报告.md'),
+        'bot_jia',
+        folderMentionToken('/Users/me/素材'),
+        projectMentionToken('conv_g1'),
+        fileMentionToken('/Users/me/报告.md'),
+      ]),
+    ).toEqual([
+      {
+        token: fileMentionToken('/Users/me/报告.md'),
+        name: '/Users/me/报告.md',
+        kind: 'file',
+        path: '/Users/me/报告.md',
+      },
+      {
+        token: folderMentionToken('/Users/me/素材'),
+        name: '/Users/me/素材',
+        kind: 'folder',
+        path: '/Users/me/素材',
+      },
+    ]);
+  });
+
+  it('正文里的 @绝对路径 字面命中（紧贴中文也能切开）', () => {
+    const fileTarget = buildLocalPathMentionTargets([fileMentionToken('/tmp/a.md')])[0]!;
+    const segments = segmentComposerText('看@/tmp/a.md 和 @阿甲', [...targets, fileTarget]);
+    expect(segments).toEqual([
+      { kind: 'text', text: '看' },
+      { kind: 'mention', text: '@/tmp/a.md', target: fileTarget },
+      { kind: 'text', text: ' 和 ' },
+      { kind: 'mention', text: '@阿甲', target: targets[0] },
+    ]);
   });
 });

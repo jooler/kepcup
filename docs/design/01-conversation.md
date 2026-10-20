@@ -50,6 +50,7 @@
 触发发送（发送按钮或 Enter，`Cmd/Ctrl+Enter` 等效）即**直发**：消息落库并投递给 Bot，输入框清空。不做基于等待时间的防抖，也没有待发送队列——未发送的内容就是输入框里还在编辑的草稿（按会话保留，见输入框草稿缓存）。
 
 - 附件随消息直发：上传链路、媒体内联渲染与模型生成媒体见 [20-conversation-media.md](20-conversation-media.md)。
+- @ 菜单可选本地文件/文件夹，只发送**绝对路径**（正文 `@路径` + `mentions` 结构化 token），不上传文件字节；Bot 需要内容时用自己的文件工具按路径读取。
 - 每次发送 = 一条独立消息 = 一个触发批次，执行记录记录该条触发消息。
 - 项目组中，这一条消息里的所有 @ 合并计算。
 - Bot 执行期间用户可以照常继续发送；发出后的消息在 loop 的下一步注入（单聊），或作为待处理批次在当前轮次结束后接续（项目组）。
@@ -71,7 +72,7 @@ Message
   type                -- text | image | file | system_event ...
   content
   reply_to            -- 引用回复的消息 id
-  mentions[]          -- 被 @ 的 Bot
+  mentions[]          -- 被 @ 的 Bot / 项目组 / 本地文件或文件夹（路径 token）
   attachments[]
   status              -- normal | recalled | edited
 ```

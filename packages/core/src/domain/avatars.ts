@@ -12,6 +12,7 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
+  'image/svg+xml': '.svg',
 };
 
 /** Plain file-name characters only — blocks path traversal into the data home. */

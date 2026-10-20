@@ -172,7 +172,6 @@ function harness(
     model?: string;
     preview?: WidgetPreviewRunner | null;
     timeoutMs?: number;
-    tokenBudget?: number;
     checkTimeoutMs?: number;
     deliverFails?: string;
     reviewModel?: string;
@@ -256,9 +255,6 @@ function harness(
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.checkTimeoutMs !== undefined ? { checkTimeoutMs: options.checkTimeoutMs } : {}),
     ...(options.modelUsable !== undefined ? { modelUsable: options.modelUsable } : {}),
-    ...(options.tokenBudget !== undefined
-      ? { tokenBudget: options.tokenBudget, tokenPollMs: 5 }
-      : {}),
   });
   return { service, runs, mainDb, paths, engine, deliveries, target, clock };
 }
@@ -532,14 +528,6 @@ describe('widget craft loop (D87)', () => {
     const result = await craft(h, { brief: '计数器', title: '计数器' });
     expect(result.ok).toBe(true);
     expect(result.content).toContain('超过时限');
-  });
-
-  it('token 预算用尽：没有任何源码 → 如实失败', async () => {
-    const h = harness({ tokenBudget: 100 });
-    h.engine.add('SPEC', async () => undefined, { hold: true, tokens: 1_000 });
-    const result = await craft(h, { brief: '计数器', title: '计数器' });
-    expect(result).toMatchObject({ ok: false, errorCode: 'WIDGET_CRAFT_FAILED' });
-    expect(result.content).toContain('token 预算');
   });
 
   it('回执关卡：检查之后文件被改动（快照也被改）→ 宿主拒绝交付', async () => {

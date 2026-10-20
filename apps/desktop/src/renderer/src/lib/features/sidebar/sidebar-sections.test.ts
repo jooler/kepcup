@@ -16,8 +16,10 @@ import {
   pruneSidebarSections,
   renameSection,
   saveSidebarSections,
+  isConversationPinned,
   sectionIdOf,
   sectionStepTarget,
+  togglePinned,
   toggleSectionCollapsed,
   unassignConversation,
   type SectionStorage,
@@ -208,6 +210,90 @@ describe('清理与键盘排序', () => {
     expect(toEnd.order).toEqual(['sec_a', UNASSIGNED_SECTION_ID, 'sec_b']);
     const up = moveSectionBefore(toEnd, 'sec_b', sectionStepTarget(toEnd.order, 'sec_b', 'up')!);
     expect(up.order).toEqual(['sec_a', 'sec_b', UNASSIGNED_SECTION_ID]);
+  });
+});
+
+describe('活动排序与置顶', () => {
+  const active = [
+    { id: 'a', lastMessageAt: 10 },
+    { id: 'b', lastMessageAt: 40 },
+    { id: 'c', lastMessageAt: 30 },
+  ];
+
+  test('组内按最后消息时间倒序；没有消息时用创建时间', () => {
+    const items = [
+      { id: 'old', lastMessageAt: 10 },
+      { id: 'new', lastMessageAt: 40 },
+      { id: 'fresh', createdAt: 50 },
+      { id: 'never', createdAt: 1 },
+    ];
+    const layout = layoutSidebarSections(items, emptySidebarSections());
+    expect(layout.groups[0]?.conversations.map((item) => item.id)).toEqual([
+      'fresh',
+      'new',
+      'old',
+      'never',
+    ]);
+  });
+
+  test('置顶排在最前，多个置顶内部仍按时间倒序', () => {
+    let state = togglePinned(emptySidebarSections(), 'a');
+    state = togglePinned(state, 'c');
+    expect(isConversationPinned(state, 'a')).toBe(true);
+    const layout = layoutSidebarSections(active, state);
+    expect(layout.groups[0]?.conversations.map((item) => item.id)).toEqual(['c', 'a', 'b']);
+    // 取消置顶后回到活动时间顺序
+    const unpinned = togglePinned(state, 'c');
+    expect(
+      layoutSidebarSections(active, unpinned).groups[0]?.conversations.map((i) => i.id),
+    ).toEqual(['a', 'b', 'c']);
+  });
+
+  test('置顶只作用于所在分组，不改变分组归属', () => {
+    let state = createSection(emptySidebarSections(), '甲', 'sec_a')!.state;
+    state = assignConversation(state, 'a', 'sec_a');
+    state = togglePinned(state, 'a');
+    let layout = layoutSidebarSections(active, state);
+    expect(layout.groups.map((group) => group.conversations.map((item) => item.id))).toEqual([
+      ['a'],
+      ['b', 'c'],
+    ]);
+    // 另一组的 c 置顶只影响它自己的组
+    state = togglePinned(state, 'c');
+    layout = layoutSidebarSections(active, state);
+    expect(layout.groups.map((group) => group.conversations.map((item) => item.id))).toEqual([
+      ['a'],
+      ['c', 'b'],
+    ]);
+    expect(sectionIdOf(state, 'a')).toBe('sec_a');
+  });
+
+  test('活动时间相同时保持传入顺序（稳定排序）', () => {
+    const items = [
+      { id: 'a', lastMessageAt: 5 },
+      { id: 'b', lastMessageAt: 5 },
+      { id: 'c', lastMessageAt: 5 },
+    ];
+    expect(
+      layoutSidebarSections(items, emptySidebarSections()).groups[0]?.conversations.map(
+        (i) => i.id,
+      ),
+    ).toEqual(['a', 'b', 'c']);
+  });
+
+  test('togglePinned 忽略空 id；prune 清掉已删除对话的置顶', () => {
+    const state = togglePinned(emptySidebarSections(), '');
+    expect(state.pinned).toEqual({});
+    const pinned = togglePinned(togglePinned(emptySidebarSections(), 'a'), 'b');
+    const pruned = pruneSidebarSections(pinned, ['b']);
+    expect(pruned.pinned).toEqual({ b: true });
+  });
+
+  test('normalize 只保留值为 true 的置顶', () => {
+    const state = normalizeSidebarSections({
+      pinned: { a: true, b: false, c: 'yes', '': true, d: 1 },
+    });
+    expect(state.pinned).toEqual({ a: true });
   });
 });
 

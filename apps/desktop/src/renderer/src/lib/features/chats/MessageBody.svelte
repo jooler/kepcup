@@ -1,12 +1,18 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
+  import { File as FileIcon, Folder as FolderIcon } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
-  import { buildMentionTargets, segmentComposerText } from './composer-text';
+  import {
+    buildLocalPathMentionTargets,
+    buildMentionTargets,
+    localPathName,
+    segmentComposerText,
+  } from './composer-text';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
 
@@ -54,17 +60,19 @@
   );
   /**
    * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一
-   * 套规则，手动输入的全名同样命中着色。
+   * 套规则，手动输入的全名同样命中着色。本地文件/文件夹提及从消息的 mentions
+   * token 还原（正文里是 `@完整路径`，气泡里换成 icon + basename 展示）。
    */
-  const mentionTargets = $derived.by(() =>
-    buildMentionTargets({
+  const mentionTargets = $derived.by(() => [
+    ...buildMentionTargets({
       memberBots: [],
       allBots: contacts.bots,
       projects: chat.conversations
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
     }),
-  );
+    ...buildLocalPathMentionTargets(message.mentions),
+  ]);
   const userText = $derived('text' in message.content ? message.content.text : '');
   const userSegments = $derived(
     message.senderType === 'user' ? segmentComposerText(userText, mentionTargets) : [],
@@ -95,7 +103,7 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+      class="my-2 rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
         {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleColor?.hex}
@@ -105,9 +113,27 @@
       {#each userSegments as segment, index (index)}
         {#if segment.kind === 'mention'}
           <!-- 边框取 currentColor（= 气泡文字色，跟随任意预置头像色/主色），
-               不再用背景色 -->
-          <span class="mx-1 rounded-sm border border-current/30 px-1" data-testid="user-mention">
-            {segment.text}
+               不再用背景色。本地文件/文件夹用 icon + 名称，左右各留 4px。 -->
+          <span
+            class="mx-1 inline-flex items-center gap-1 rounded-sm border border-current/30 px-1 align-baseline"
+            data-testid="user-mention"
+            data-kind={segment.target.kind === 'file' || segment.target.kind === 'folder'
+              ? segment.target.kind
+              : undefined}
+            title={segment.target.kind === 'file' || segment.target.kind === 'folder'
+              ? segment.target.path
+              : undefined}
+          >
+            {#if segment.target.kind === 'folder'}
+              <FolderIcon class="size-3 shrink-0" aria-hidden="true" />
+            {:else if segment.target.kind === 'file'}
+              <FileIcon class="size-3 shrink-0" aria-hidden="true" />
+            {/if}
+            <span class="max-w-48 truncate">
+              {segment.target.kind === 'file' || segment.target.kind === 'folder'
+                ? localPathName(segment.target.path ?? segment.target.name)
+                : segment.text}
+            </span>
           </span>
         {:else}
           {segment.text}

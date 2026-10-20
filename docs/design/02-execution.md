@@ -17,7 +17,7 @@
 | 触发 | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
 | 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 cwd 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
-| 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
+| 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）也无用量上限；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）超限由 reaper 强制 `failed` |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
 | 最终文本 | 自动作为可见消息发出（D48） | 写入私有 `result` 条目，**不直接发给用户** |
 | 深度 | — | 1：任务内 `start_task` 一律拒绝 |
@@ -106,7 +106,7 @@ queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额�
 
 ### Reaper
 
-`TaskHost.sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次：重试写条目失败的结算；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`running` 超过 `TASK_MAX_WALL_MS`（扣除等问题回答的时间）或用量超过 `TASK_TOKEN_BUDGET` 的任务先写 `failure` 条目再强制 `failed`；已结算但执行体超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行被驱逐（释放名额与写租约，外部智能体会话仍视为在用，不被接续继承）；再做对账；最后清理超过 `CONTINUATION_WINDOW_MS` 未用的任务外部智能体会话（`session/close` + 删行）。宿主主动停下的任务（取消、超时、删除）当场结算，但其执行在退场前仍占名额与写入目标。
+`TaskHost.sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次：重试写条目失败的结算；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`running` 超过 `TASK_MAX_WALL_MS`（扣除等问题回答的时间）的任务先写 `failure` 条目再强制 `failed`；已结算但执行体超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行被驱逐（释放名额与写租约，外部智能体会话仍视为在用，不被接续继承）；再做对账；最后清理超过 `CONTINUATION_WINDOW_MS` 未用的任务外部智能体会话（`session/close` + 删行）。宿主主动停下的任务（取消、超时、删除）当场结算，但其执行在退场前仍占名额与写入目标。
 
 ## 执行记录（Run）
 

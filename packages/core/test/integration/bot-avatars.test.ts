@@ -18,6 +18,7 @@ const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
 );
+const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>');
 
 describe('bot avatars (upload / read / validation)', () => {
   it('upload writes bots/{id}/avatar/, points identity.avatar at it and reads back the bytes', async () => {
@@ -51,6 +52,32 @@ describe('bot avatars (upload / read / validation)', () => {
     })) as { mime: string; base64: string };
     expect(data.mime).toBe('image/png');
     expect(Buffer.from(data.base64, 'base64')).toEqual(PNG_1PX);
+  });
+
+  it('stores SVG avatars as-is and reads them back with the SVG mime', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
+    const core = await createTestCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { KEPCUP_MOCK_LLM_URL: 'http://mock.invalid' },
+    });
+    cores.push(core);
+    homes.push(home);
+    const bot = await makeBot(core, '小启');
+
+    const uploaded = (await core.rpc.call('bots.avatar.upload', {
+      id: bot.id,
+      mime: 'image/svg+xml',
+      bytesBase64: SVG.toString('base64'),
+    })) as { bot: Bot };
+    expect(uploaded.bot.avatar).toMatch(/^upload:avatar-\d+\.svg$/);
+
+    const data = (await core.rpc.call('bots.avatar.data', {
+      id: bot.id,
+      file: uploaded.bot.avatar!.slice('upload:'.length),
+    })) as { mime: string; base64: string };
+    expect(data.mime).toBe('image/svg+xml');
+    expect(Buffer.from(data.base64, 'base64')).toEqual(SVG);
   });
 
   it('a second upload replaces the file, resets the slot and rejects reads of the stale name', async () => {

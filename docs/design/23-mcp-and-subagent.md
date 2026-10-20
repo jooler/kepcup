@@ -92,7 +92,7 @@ OAuth（首期不做；已单排为 D73，P0 已实现自定义 HTTP server 的 
 | 归属 | 同 Bot、同对话：workspace / project / 网关授权边界原样继承，不扩大沙箱 |
 | 工具集 | 只读研究集：`read` / `grep` / `find` / `ls` / `bash`（沙箱）/ `web_search` / `web_fetch`，以及只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个）；**D91 修订**：这一项改为「任务内联条目中的只读 + 免审批子集（至多 `SUBAGENT_MCP_READ_TOOLS_MAX`=20，由 `TURN_MCP_READ_TOOLS_MAX` 改名）+ 子代理面的只读 `capability_search` / `capability_call`（覆盖任务可达的全部能力中只读 + 免审批的工具）」，不再依赖对话轮的解析结果，见 [40](40-capability-mounting.md) §3、§4.3；无 `write` / `edit`、无 `send_message` / `skip_reply`、无再委派、无 memory / schedule / browser |
 | 结果压缩 | 轻量模型把子 run 过程摘要压缩为 ≤ 4000 字符的结论；子 transcript 全文只落 `run_steps` |
-| 预算 | 每个子 run 独立封顶：轮数、超时、token；超限中止并把已有内容压缩返回 |
+| 预算 | 每个子 run 独立封顶：轮数、超时；超限中止并把已有内容压缩返回（用量不设上限） |
 | 可见性 | 对话流不出现子 transcript；`get_run` / run 详情与其他执行记录同级可查 |
 
 pi 1.x 无产品级 SubAgent API，宿主以「工具 + 嵌套 Agent」实现；上游日后提供一等 API 时再评估减薄封装，工具名与契约保持稳定。

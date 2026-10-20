@@ -131,6 +131,18 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
 - **GitHub 渠道**（dmg/zip、NSIS、AppImage、deb）：electron-updater 读 `electron-builder.yml` 里 `publish` 写入的 `app-update.yml`（`jooler/kepcup`），启动后延迟检查、之后定时检查，后台下载；有执行在进行时由 update-gate 等它结束或请用户确认后再重启安装（P13 任务 2）。`KEPCUP_UPDATE_URL` 环境变量可以在运行时改成任意 generic HTTPS 源。
 - **商店 / Flatpak 渠道**：`externalUpdateChannel()` 检测到 `process.windowsStore`、`process.mas` 或 `FLATPAK_ID` 时不配置更新源、不检查，更新状态一直是 idle。
 
+## 更新镜像与选源（R2 + OSS）
+
+GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资产同步成两个只读副本（`scripts/release/sync-mirrors.mjs`）：**R2**（`updates.kepcup.com`，国际第二源，流出免费）与**阿里云 OSS**（bucket 默认域名即可用、无需备案，国内首选）。OSS bucket 必须开**公共读**；账号若开启了「阻止公共访问」（Block Public Access），bucket 级和对象级的公共 ACL 都会被拦（报 `Put public bucket acl is not allowed`），需先在 OSS 控制台「权限控制」里关闭再设公共读。同步失败不阻塞发布（GitHub 渠道已就绪），step summary 里会留警告，本地 `node scripts/release/sync-mirrors.mjs <tag>` 幂等重跑即可。凭据在 `.env.release`「CI · 更新镜像」段，经 `sync-github-secrets.mjs` 同步为 GitHub 机密；全空时该步骤自动跳过。
+
+三条自洽保障：
+
+1. **顺序红线**：安装包与 blockmap 先传、`latest*.yml` 最后传——镜像上的清单永远不会指向缺失文件，半同步状态表现为「探测失败」（客户端落回别的源）而不是让用户下到坏包。
+2. **内容校验**：每个对象 PUT 后 HEAD 回读比大小，清单再逐字节比对并校验 `version:` 等于本次 tag。
+3. **完整性兜底**：`latest.yml` 里的 sha512 由客户端校验，镜像内容本身不被信任；写权限只给 CI（R2 限定 scope 的 API 令牌、OSS 只能写该 bucket 的 RAM 子账号）。
+
+客户端不按地理位置硬切，按**实际可达性**选源（`apps/desktop/src/main/update-sources.ts`）：每次选源按优先级（github → r2 → oss）发轻量探测（GitHub 打 `api.github.com/rate_limit` 免费端点，镜像直接拉 `latest.yml`，各 4 秒超时），第一个可用者胜出并持久化到 `<userData>/update-source.json`，之后检查直达不再探测；失败一次才重新探测并排除坏源。国内用户自然落到 OSS，能直连 GitHub 的用户零开销。`KEPCUP_UPDATE_MIRRORS`（逗号分隔 generic 基 URL，首位 r2 次位 oss）整体替换烘焙镜像，本地调选源逻辑用；`KEPCUP_UPDATE_URL` 仍是最高优先级的整源覆盖。main 进程日志已接 `autoUpdater.logger`，差量下载的块数/字节数看 `[updater]` 前缀日志。
+
 ## Linux 与 Flathub
 
 原设想是「推 main 后 Flathub 自动构建并更新」。这条路目前走不通，原因按严重程度排列：

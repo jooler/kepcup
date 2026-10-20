@@ -7,10 +7,17 @@ import {
   pruneSidebarSections,
   renameSection,
   saveSidebarSections,
+  togglePinned,
   toggleSectionCollapsed,
   unassignConversation,
   type SidebarSectionsState,
 } from './sidebar-sections';
+
+function sameKeys(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  return aKeys.every((key) => Object.hasOwn(b, key));
+}
 
 /**
  * 左栏对话分组（响应式状态必须在 .svelte.ts 中，$state 才会被编译）。
@@ -34,13 +41,21 @@ class SidebarSectionsStore {
     this.#write(unassignConversation(this.state, conversationId));
   }
 
-  /** 列表刷新 / 删除后丢掉已不存在对话的归属；没有变化时不落盘。 */
+  /** 列表刷新 / 删除后丢掉已不存在对话的归属与置顶；没有变化时不落盘。 */
   prune(existingConversationIds: Iterable<string>): void {
     const next = pruneSidebarSections(this.state, existingConversationIds);
-    if (Object.keys(next.assignments).length === Object.keys(this.state.assignments).length) {
+    if (
+      sameKeys(next.assignments, this.state.assignments) &&
+      sameKeys(next.pinned, this.state.pinned)
+    ) {
       return;
     }
     this.#write(next);
+  }
+
+  /** 置顶 / 取消置顶；排序立即生效（只有消息驱动的重排需要去抖）。 */
+  togglePin(conversationId: string): void {
+    this.#write(togglePinned(this.state, conversationId));
   }
 
   /** 新建分组并把当前对话立刻放进去。名称无效时返回 null。 */

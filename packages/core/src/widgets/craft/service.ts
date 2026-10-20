@@ -11,8 +11,6 @@ import {
   WIDGET_CRAFT_PHASE_MAX_TURNS,
   WIDGET_CRAFT_RESULT_MAX_CHARS,
   WIDGET_CRAFT_TIMEOUT_MS,
-  WIDGET_CRAFT_TOKEN_BUDGET,
-  WIDGET_CRAFT_TOKEN_POLL_MS,
   WIDGET_CHECK_TIMEOUT_MS,
   BOT_WIDGET_TITLE_MAX_CHARS,
   newId,
@@ -33,7 +31,6 @@ import {
 import type {
   AgentEngine,
   EngineUsage,
-  RunHandle,
   RunIdentity,
   RunOutcome,
   ToolResult,
@@ -181,13 +178,11 @@ export interface WidgetCraftDeps {
     (WidgetPreviewRunner & { screenshots?(): Array<{ mimeType: string; base64: string }> }) | null;
   /** 测试注入（真实默认值为 WIDGET_CRAFT_* 常量）。 */
   timeoutMs?: number;
-  tokenBudget?: number;
   /** 单次检查的兜底时限（缺省 WIDGET_CHECK_TIMEOUT_MS + 余量）。 */
   checkTimeoutMs?: number;
-  tokenPollMs?: number;
 }
 
-type StopReason = 'cancelled' | 'timeout' | 'budget' | 'stage_failed';
+type StopReason = 'cancelled' | 'timeout' | 'stage_failed';
 
 /** 一次 `widget_craft` 调用的运行时状态（不落盘的部分；落盘的在 manifest）。 */
 interface CraftSession {
@@ -197,9 +192,6 @@ interface CraftSession {
   controller: AbortController;
   stop: StopReason | null;
   stageError: string | null;
-  /** 本次调用已花掉的 token（已结束的阶段 run）；在跑的阶段另加 handle.tokensSoFar()。 */
-  tokens: number;
-  handle: RunHandle | null;
   progress: (text: string) => void;
   resumeNote: string | null;
   /** 已为「只剩警告」花过一轮修复（警告最多修一次，设计 32 §6 风险表）。 */
@@ -222,7 +214,6 @@ const WIDGET_CHECK_GRACE_MS = 5_000;
 const STOP_TEXT: Readonly<Record<StopReason, string>> = {
   cancelled: '制作被取消',
   timeout: '制作超过时限',
-  budget: '制作用尽了 token 预算',
   stage_failed: '模型调用失败',
 };
 
@@ -357,8 +348,6 @@ export class WidgetCraftService {
       controller: new AbortController(),
       stop: null,
       stageError: null,
-      tokens: 0,
-      handle: null,
       progress: (text) => {
         try {
           input.progress(text);
@@ -388,14 +377,6 @@ export class WidgetCraftService {
       session.controller.abort('widget craft timeout');
     }, this.#deps.timeoutMs ?? WIDGET_CRAFT_TIMEOUT_MS);
     timer.unref?.();
-    const budget = this.#deps.tokenBudget ?? WIDGET_CRAFT_TOKEN_BUDGET;
-    const poll = setInterval(() => {
-      if (session.tokens + (session.handle?.tokensSoFar() ?? 0) > budget) {
-        session.stop ??= 'budget';
-        session.controller.abort('widget craft token budget exceeded');
-      }
-    }, this.#deps.tokenPollMs ?? WIDGET_CRAFT_TOKEN_POLL_MS);
-    poll.unref?.();
 
     try {
       await this.#runPhases(session);
@@ -407,7 +388,6 @@ export class WidgetCraftService {
       return this.#failure(session, [`制作过程出错：${clip(message, 200)}`]);
     } finally {
       clearTimeout(timer);
-      clearInterval(poll);
       input.signal.removeEventListener('abort', onParentAbort);
       this.#active.delete(manifest.craftId);
       for (const [runId, craftId] of this.#stageRuns) {
@@ -993,7 +973,6 @@ export class WidgetCraftService {
         limits: { maxTurns: WIDGET_CRAFT_PHASE_MAX_TURNS[stage] },
       }),
     );
-    session.handle = handle;
     const onAbort = () =>
       handle.abort(String(session.controller.signal.reason ?? 'widget craft aborted'));
     if (session.controller.signal.aborted) onAbort();
@@ -1010,8 +989,6 @@ export class WidgetCraftService {
       session.controller.signal.removeEventListener('abort', onAbort);
       unsubscribe();
       const spent = handle.tokensSoFar();
-      session.tokens += spent;
-      session.handle = null;
       try {
         draft.updateManifest((m) => ({
           ...m,

@@ -104,6 +104,16 @@ describe('shell.mainView 与 chat.select', () => {
     expect(shell.mainView).toBe('workbench');
   });
 
+  it('keepMainView：启动恢复装好会话，但主区留在工作台', async () => {
+    shell.openWorkbench();
+    await chat.select('c1', { keepMainView: true });
+    expect(shell.mainView).toBe('workbench');
+    expect(chat.currentId).toBe('c1');
+    // 之后用户主动点会话行（普通 select）照常回到对话。
+    await chat.select('c2');
+    expect(shell.mainView).toBe('chats');
+  });
+
   it('新建项目组的创建输入在对话区里，会先回到对话视图', () => {
     shell.openWorkbench();
     chat.beginProjectCompose();
@@ -178,6 +188,42 @@ describe('工作台期间的未读与已读', () => {
     expect(chat.isViewing('cu')).toBe(true);
     narrowLayout.windowWidth = 1280;
     flushSync();
+  });
+});
+
+describe('侧栏最后一条消息预览', () => {
+  it('卡片消息整理成「icon + 标题 + 摘要」，与启动时的列表预览同源', () => {
+    emit('message.created', {
+      conversationId: 'preview',
+      message: {
+        id: 'card-1',
+        conversationId: 'preview',
+        seq: 1,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'card',
+        content: {
+          cardType: 'mail',
+          approvalId: '',
+          mailEvent: 'arrived',
+          mailFrom: '"CSDN" <csdn@example.com>',
+          mailSubject: '大会报名中',
+        },
+        status: 'normal',
+        runId: null,
+        replyTo: null,
+        attachments: [],
+        mentions: [],
+        batchId: null,
+        editedAt: null,
+        ownerBotId: null,
+        taskId: null,
+        createdAt: 1,
+      },
+    });
+    expect(chat.lastMessageText['preview']).toBe(
+      '✉️ 新邮件 "CSDN" <csdn@example.com> · 大会报名中',
+    );
   });
 });
 

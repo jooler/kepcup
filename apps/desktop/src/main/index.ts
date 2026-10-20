@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
   app,
@@ -35,6 +36,7 @@ import {
   sensorSettingsUrl,
 } from './sensor-permission';
 import { wireUpdater } from './updater';
+import { createFileUpdateSourceStore } from './update-sources';
 
 let window: BrowserWindow | null = null;
 let quitting = false;
@@ -294,6 +296,39 @@ function bootstrap(): void {
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });
 
+  // 对话里 @ 本地文件/文件夹（只传路径，不上传字节）：macOS 面板可同时选
+  // 文件或目录；Windows/Linux 的原生面板不支持二合一，先让用户选类型。
+  ipcMain.handle('dialog:selectLocalPath', async () => {
+    if (window === null) return null;
+    let mode: 'both' | 'file' | 'folder' = 'both';
+    if (process.platform !== 'darwin') {
+      const choice = await dialog.showMessageBox(window, {
+        type: 'question',
+        message: '选择文件或文件夹',
+        buttons: ['选择文件', '选择文件夹', '取消'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      if (choice.response === 2) return null;
+      mode = choice.response === 1 ? 'folder' : 'file';
+    }
+    const result = await dialog.showOpenDialog(window, {
+      properties:
+        mode === 'both'
+          ? ['openFile', 'openDirectory']
+          : [mode === 'folder' ? 'openDirectory' : 'openFile'],
+      message: '选择文件或文件夹',
+    });
+    const picked = result.canceled ? undefined : result.filePaths[0];
+    if (picked === undefined) return null;
+    try {
+      const info = await stat(picked);
+      return { path: picked, kind: info.isDirectory() ? 'folder' : 'file' } as const;
+    } catch {
+      return null;
+    }
+  });
+
   // P11 任务 5 (查看窗口): moves the bot's page for this conversation into a
   // visible window. Capability only — whether showing is appropriate is the
   // renderer's / core's decision, not the main process's.
@@ -410,6 +445,12 @@ function bootstrap(): void {
     cancelActiveRuns: async (reason) => {
       await coreHost?.callPlatform('update.cancelActive', { reason });
     },
+    // 选源赢家的持久化（GitHub/R2/OSS 探测的结果）：跨启动记住可达的源，
+    // 之后每次检查直达，不再探测。
+    store: createFileUpdateSourceStore(() => app.getPath('userData')),
+    // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
+    // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
+    forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
   });
   // 托盘「检查更新…」: opens the window (the banner / settings row live
   // there) and runs a manual check; failures stay silent (P13-A semantics).

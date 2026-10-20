@@ -17,6 +17,15 @@ import type { CoreHarness } from '@kepcup/core';
 
 const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '50' };
 
+/**
+ * 真正注入的 `<user_profile>` 段（标签后紧跟换行）。平台规则的画像查询引导文本
+ * 里也写着 `<user_profile>`（73cc2e0a），裸子串会把规则文本当成注入段定位到错
+ * 的请求；序列化后的换行是 `\n` 两个字符，故按它区分。
+ */
+function hasProfileSection(req: { body: { messages?: unknown } }): boolean {
+  return JSON.stringify(req.body.messages ?? []).includes('<user_profile>\\n');
+}
+
 function emptyReflection() {
   return {
     runSummary: '无新记忆',
@@ -235,17 +244,10 @@ describe('P07 记忆与画像（集成）', () => {
       stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
       await sendDrafts(stack.core, convB.id, [{ text: '在忙吗' }]);
       await waitFor(
-        () =>
-          stack.llm
-            .requestsFor('mock-main')
-            .some((req) => JSON.stringify(req.body).includes('<user_profile>'))
-            ? true
-            : null,
+        () => (stack.llm.requestsFor('mock-main').some(hasProfileSection) ? true : null),
         { label: 'user_profile injection' },
       );
-      const injected = stack.llm
-        .requestsFor('mock-main')
-        .find((req) => JSON.stringify(req.body).includes('<user_profile>'));
+      const injected = stack.llm.requestsFor('mock-main').find(hasProfileSection);
       expect(JSON.stringify(injected?.body)).toContain('画像卡片：后端工程师');
     } finally {
       await stack.cleanup();

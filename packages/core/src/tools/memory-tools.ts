@@ -163,12 +163,16 @@ export function buildMemoryTools(input: {
 
   const getUserProfile: ToolDefinition<{ category?: (typeof CATEGORIES)[number] }> = {
     name: 'get_user_profile',
-    description: '查询共享用户画像的完整条目（所有 Bot 共享；平时注入的是摘要卡片）。',
+    description:
+      '查询共享用户画像的完整条目（所有 Bot 共享）。系统提示词里的 <user_profile> 只是约 400 token 的摘要，可能被截断；需要沟通偏好、工作、兴趣、边界、近况等具体细节时按分类查询，不要凭摘要猜测。',
     parameters: Type.Object({
       category: Type.Optional(
         Type.Union(
           CATEGORIES.map((c) => Type.Literal(c)),
-          { description: '只看某一分类' },
+          {
+            description:
+              '只看某一分类：basic=基本信息，communication=沟通偏好，work=工作，interests=兴趣，boundaries=边界，recent=近况；不传则返回全部条目。',
+          },
         ),
       ),
     }),

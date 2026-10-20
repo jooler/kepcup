@@ -778,7 +778,9 @@ describe('workdirs (P04)', () => {
     await bindWorkdir(core, convA.id, makeWorkdir());
 
     const port = 20000 + Math.floor(Math.random() * 20000);
-    const probe = `python3 -m http.server ${port} --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/; kill %1`;
+    // `kill` reports failure when the server already exited; keep the probe's exit
+    // status about reachability so a denial does not mask the curl result.
+    const probe = `python3 -m http.server ${port} --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/; kill %1 2>/dev/null; true`;
 
     llm.script(
       'mock-main',

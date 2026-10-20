@@ -268,6 +268,8 @@ describe('ACP prompts', () => {
     expect(session).toContain('<platform_rules>');
     expect(session).toContain('mcp__kepcup__remember');
     expect(session).toContain('mcp__kepcup__skip_reply');
+    expect(session).toContain('mcp__kepcup__get_user_profile');
+    expect(session).toContain('只是约 400 token 的摘要');
     expect(session).not.toMatch(/(?<![\w])remember(?![\w])/);
     for (const banned of ['request_access', 'acquire_workdir_write', 'delegate_task']) {
       expect(session).not.toContain(banned);
@@ -303,6 +305,7 @@ describe('ACP prompts', () => {
     });
     expect(run).toContain('<relevant_memories>\n- 用户喜欢猫');
     expect(run).toContain('<user_profile>');
+    expect(run).toContain('这是根据完整画像条目编译的摘要（约 400 token，可能被截断）');
     expect(run).toContain('当前时间：2026-10-07 08:00:00');
     expect(run).toContain('只读');
   });
@@ -323,6 +326,8 @@ describe('ACP prompts', () => {
     expect(codexPolicy).toContain('识别图片内容：若你自带同类能力，优先使用自带的');
     // Host-first lines.
     expect(claudePolicy).toContain('mcp__kepcup__remember');
+    expect(claudePolicy).toContain('mcp__kepcup__get_user_profile');
+    expect(claudePolicy).toContain('查询用户画像的完整条目用');
     expect(claudePolicy).toContain('不要写入 CLAUDE.md / AGENTS.md');
     expect(claudePolicy).toContain('不要用 cron');
     expect(claudePolicy).toContain('mcp__kepcup__request_environment');

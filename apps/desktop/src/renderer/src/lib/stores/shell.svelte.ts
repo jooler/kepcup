@@ -14,6 +14,7 @@ import {
   settingsSectionOpensExtensionMcp,
 } from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
+import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
 
 export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
@@ -25,12 +26,14 @@ export type ProjectView = 'chat' | 'wiki' | 'board' | 'okr' | 'calendar' | 'sett
 
 class ShellState {
   /**
-   * 宽屏主区当前视图（D90 §5.1，不持久化：启动恒为对话）。收口不变式：只有
-   * `chat.select()` 把它置回 'chats'——侧栏、搜索、通知、深链、卡片跳转都经 select，
-   * 自然回到对话；`openWorkbench` 只改这个值，不清 `chat.currentId`，草稿 / 已读 /
-   * 右栏状态都不受影响。侧栏对话行的选中高亮据此派生（工作台打开时没有对话高亮）。
+   * 宽屏主区当前视图（D90 §5.1）。收口不变式：只有 `chat.select()` 把它置回 'chats'——
+   * 侧栏、搜索、通知、深链、卡片跳转都经 select，自然回到对话；`openWorkbench` 只改
+   * 这个值，不清 `chat.currentId`，草稿 / 已读 / 右栏状态都不受影响。侧栏对话行的
+   * 选中高亮据此派生（工作台打开时没有对话高亮）。落点持久化到 localStorage：
+   * 初始化时直接读回上次关闭时的视图，重启/刷新不会先渲染对话再跳转；bootstrap
+   * 再按工作台开关 / 是否有可恢复会话兜底修正。
    */
-  mainView = $state<MainView>('chats');
+  mainView = $state<MainView>(loadLastMainView(globalThis.localStorage ?? null) ?? 'chats');
 
   /** 工作台此刻真的盖在对话区上：窄屏没有工作台，`mainView` 在窄屏不生效。 */
   get workbenchShown(): boolean {
@@ -47,6 +50,13 @@ class ShellState {
   openWorkbench(): void {
     this.workbenchIntent += 1;
     this.mainView = 'workbench';
+    saveLastMainView(globalThis.localStorage ?? null, 'workbench');
+  }
+
+  /** 收口回对话视图并记住落点（`chat.select()` / 新建项目组）；启动时据此恢复。 */
+  showChats(): void {
+    this.mainView = 'chats';
+    saveLastMainView(globalThis.localStorage ?? null, 'chats');
   }
 
   /** 设置弹框是否打开。 */

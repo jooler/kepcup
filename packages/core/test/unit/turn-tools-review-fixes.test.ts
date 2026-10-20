@@ -153,33 +153,49 @@ beforeEach(() => {
 });
 
 describe('send_message attachments need an allowed path (审查 pre-existing HIGH)', () => {
-  for (const identity of [turn, task]) {
-    it(`${identity.loopType}: a path outside the workspace or a sensitive one is never read and uploaded`, async () => {
-      const { tools, uploads, appended } = responseTools(identity);
-      const send = tools.get('send_message')!;
-      for (const file of [path.join(outside, 'data.txt'), path.join(sensitive, 'id_rsa')]) {
-        const result = await executeToolSafely(
-          send,
-          { text: '给你文件', attachment_paths: [file] },
-          ctxFor(identity),
-        );
-        expect(result.ok).toBe(false);
-        expect(result.errorCode).toBe('PATH_OUT_OF_SCOPE');
-        expect(result.content).toContain('授权范围');
-      }
-      expect(uploads).toEqual([]);
-      expect(appended).toEqual([]);
-      expect(approvalRequests).toEqual([]);
-      // A workspace file still goes out.
-      const ok = await executeToolSafely(
+  it('turn: a grantable path is refused without reading or uploading', async () => {
+    const { tools, uploads, appended } = responseTools(turn);
+    const send = tools.get('send_message')!;
+    for (const file of [path.join(outside, 'data.txt'), path.join(sensitive, 'id_rsa')]) {
+      const result = await executeToolSafely(
         send,
-        { text: '报告', attachment_paths: ['report.md'] },
-        ctxFor(identity),
+        { text: '给你文件', attachment_paths: [file] },
+        ctxFor(turn),
       );
-      expect(ok.ok).toBe(true);
-      expect(uploads).toEqual(['report.md']);
-    });
-  }
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe('PATH_OUT_OF_SCOPE');
+      expect(result.content).toContain('授权范围');
+    }
+    expect(uploads).toEqual([]);
+    expect(appended).toEqual([]);
+    expect(approvalRequests).toEqual([]);
+  });
+
+  it('task: asks for access first, then uploads only after approval', async () => {
+    const { tools, uploads, appended } = responseTools(task);
+    const send = tools.get('send_message')!;
+    const result = await executeToolSafely(
+      send,
+      {
+        text: '给你文件',
+        attachment_paths: [path.join(outside, 'data.txt'), path.join(sensitive, 'id_rsa')],
+      },
+      ctxFor(task),
+    );
+    expect(result.ok).toBe(true);
+    expect(approvalRequests.map((request) => request.kind)).toEqual(['access', 'access']);
+    expect(uploads).toEqual(['data.txt', 'id_rsa']);
+    expect(appended).toEqual([{ text: '给你文件', mentions: [] }]);
+    // A workspace file still goes out without a new request.
+    const ok = await executeToolSafely(
+      send,
+      { text: '报告', attachment_paths: ['report.md'] },
+      ctxFor(task),
+    );
+    expect(ok.ok).toBe(true);
+    expect(uploads).toEqual(['data.txt', 'id_rsa', 'report.md']);
+    expect(approvalRequests).toHaveLength(2);
+  });
 });
 
 describe('tasks never @-mention group members (审查 L1)', () => {
@@ -261,5 +277,15 @@ describe('a turn never waits for an access approval (审查 M4)', () => {
     expect(read.ok).toBe(true);
     expect(read.content).toContain('outside-data');
     expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
+
+    // ls probes existence before stat/readdir: the probe used to answer
+    // "missing" for a grantable path in a task, so the tool silently reported
+    // an empty directory and never raised a card.
+    approvalRequests = [];
+    const ls = await executeToolSafely(taskTools.get('ls')!, { path: outside }, ctxFor(task));
+    expect(ls.ok).toBe(true);
+    expect(ls.content).toContain('data.txt');
+    expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
+    expect(approvalRequests[0]!.payload['path']).toBe(outside);
   });
 });
