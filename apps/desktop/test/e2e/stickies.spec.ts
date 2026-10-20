@@ -112,12 +112,14 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     // 选中 Bot 气泡文本 → 浮动工具栏出现，只有一个 pin 按钮（钉当前对话）。
     // 选中期间流式气泡可能整体重挂、清掉刚做的选区，选中+出现放进重试到稳态为止。
     const toolbar = page.locator('[data-testid="selection-toolbar"]');
+    const pinConversation = toolbar.locator('[data-testid="pin-conversation"]');
+    // 选中期间流式气泡可能整体重挂：工具栏可能先闪一下再拆掉，或选区丢失后只剩空壳。
+    // 等到 pin 按钮真正可见再往下走，而不是只看到 toolbar 容器。
     await expect(async () => {
       await selectBotBubbleText(page);
       await expect(toolbar).toBeVisible({ timeout: 2_000 });
+      await expect(pinConversation).toBeVisible({ timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
-    await expect(toolbar.locator('[data-testid="pin-conversation"]')).toBeVisible();
-    await expect(toolbar.locator('[data-testid="pin-conversation"]')).toBeVisible();
     await expect(toolbar.locator('[data-testid="pin-global"]')).toHaveCount(0);
 
     // pin：便签出现在当前对话，内容即选中文本。
