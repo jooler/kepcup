@@ -222,7 +222,7 @@ export function buildImageTools(input: {
         let bytes: Buffer;
         let mime: string;
         try {
-          const resolved = resolveMediaSource({
+          const resolved = await resolveMediaSource({
             identity,
             gateway: input.gateway,
             attachments: input.attachments,

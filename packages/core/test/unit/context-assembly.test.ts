@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot, Conversation, Message } from '@kepcup/shared';
-import { botProfileSchema, projectMentionToken } from '@kepcup/shared';
+import {
+  botProfileSchema,
+  fileMentionToken,
+  folderMentionToken,
+  projectMentionToken,
+} from '@kepcup/shared';
 import { buildSystemPrompt } from '../../src/agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -194,9 +199,14 @@ describe('system prompt assembly', () => {
     expect(prompt).toContain('10. 注入的记忆可能已过时');
     expect(prompt).not.toContain('mention_bot_ids');
     expect(prompt).toContain('memory_feedback');
+    // 画像卡片是摘要：规则 + 注入点都提示按分类查全文。
+    expect(prompt).toContain('11. 用户画像：注入的 <user_profile> 只是约 400 token 的摘要');
+    expect(prompt).toContain('get_user_profile 按分类查询完整条目');
+    expect(prompt).toContain('这是根据完整画像条目编译的摘要（约 400 token，可能被截断）');
     // 段落顺序：persona → user_profile → my_state → relevant_memories → conversation_info。
     const personaIndex = prompt.indexOf('<persona>');
-    const profileIndex = prompt.indexOf('<user_profile>');
+    // 规则文本也会提到 <user_profile>；这里只定位真正注入的段。
+    const profileIndex = prompt.indexOf('<user_profile>\n');
     const myStateIndex = prompt.indexOf('<my_state>');
     const memoriesIndex = prompt.indexOf('<relevant_memories>');
     const infoIndex = prompt.indexOf('<conversation_info>');
@@ -212,7 +222,7 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
     });
-    expect(bare).not.toContain('<user_profile>');
+    expect(bare).not.toContain('<user_profile>\n');
     expect(bare).not.toContain('<my_state>');
     expect(bare).not.toContain('<relevant_memories>');
   });
@@ -424,6 +434,20 @@ describe('user message mention legend', () => {
       renderOptions,
     );
     expect(line).toContain('（提及：@某项目组）');
+  });
+
+  it('local file/folder mentions expose the absolute path to the model', () => {
+    const line = renderMessageLine(
+      makeMessage({
+        id: 'msg_12',
+        seq: 12,
+        content: { text: '@/.tmp/report.md 和 @/.tmp/assets 请处理' },
+        mentions: [fileMentionToken('/Users/me/report.md'), folderMentionToken('/Users/me/assets')],
+      }),
+      optionsWithGroups,
+    );
+    expect(line).toContain('@report.md（路径：/Users/me/report.md，文件）');
+    expect(line).toContain('@assets（路径：/Users/me/assets，文件夹）');
   });
 
   it('bot/system messages without mentions stay unchanged', () => {

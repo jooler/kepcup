@@ -61,13 +61,22 @@ function attachmentsFake(byId: Record<string, FakeAttachment>): AttachmentsServi
 }
 
 function gatewayFake(allowedPrefix: string): ToolGateway {
+  const check = (target: string) =>
+    path.resolve(target).startsWith(path.resolve(allowedPrefix))
+      ? { kind: 'allowed' as const, resolvedPath: path.resolve(target) }
+      : { kind: 'forbidden' as const, reason: '测试网关：路径越界' };
   return {
     // D75: generation tools refuse read-only runs up front (covered in gateway-read-only).
     writeDenial: () => null,
-    checkPath: (_identity: RunIdentity, target: string) =>
-      path.resolve(target).startsWith(path.resolve(allowedPrefix))
-        ? { kind: 'allowed', resolvedPath: path.resolve(target) }
-        : { kind: 'forbidden', reason: '测试网关：路径越界' },
+    checkPath: (_identity: RunIdentity, target: string) => check(target),
+    ensurePathAccess: async (_identity: RunIdentity, target: string) => {
+      const decision = check(target);
+      if (decision.kind === 'allowed') return decision.resolvedPath;
+      throw new AppError(
+        'PATH_OUT_OF_SCOPE',
+        `来源不在可访问范围内：${target}（${decision.reason}）`,
+      );
+    },
   } as unknown as ToolGateway;
 }
 

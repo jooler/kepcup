@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, type Component } from 'svelte';
+  import { onDestroy, tick, type Component } from 'svelte';
   import {
     ArrowDown,
     ArrowUp,
@@ -18,6 +18,8 @@
     Folder,
     FolderPlus,
     Check,
+    Pin,
+    PinOff,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -46,12 +48,20 @@
   import {
     UNASSIGNED_SECTION_ID,
     SECTION_NAME_MAX,
+    conversationActivityOf,
     dropBeforeId,
+    isConversationPinned,
     isSectionMoveNoop,
     layoutSidebarSections,
     sectionIdOf,
     sectionStepTarget,
   } from './sidebar-sections';
+  import {
+    SIDEBAR_SORT_DEBOUNCE_MS,
+    SIDEBAR_SORT_MAX_WAIT_MS,
+    activitySnapshotOf,
+    sameActivitySnapshot,
+  } from './sidebar-activity';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -63,8 +73,9 @@
    * 是本组对话数），组名可拖拽排序。管家私聊不参与分组，始终在列表第一位。
    * 条目是头像 + 名称 + 最后一条消息的单行
    * 预览（无消息且无未读/执行中/待确认信号时预览行整行不渲染，只剩名称与头像
-   * 垂直居中）。管理操作（移动到分组 / 重命名 / 复制会话 id / 群设置 / 删除）
-   * 收进右键上下文菜单，不再有常驻「…」按钮。
+   * 垂直居中）。组内按最后消息时间自动排序（去抖提交，避免频繁更新时闪烁），
+   * 置顶条目固定在组内最前。管理操作（置顶 / 移动到分组 / 重命名 /
+   * 复制会话 id / 群设置 / 删除）收进右键上下文菜单，不再有常驻「…」按钮。
    * 新建只保留「+」面板里的对话式新建和新建项目组。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
@@ -92,8 +103,10 @@
   const workbenchNavVisible = $derived(settingsStore.settings?.workbenchEnabled === true);
 
   $effect(() => {
-    if (workbenchNavVisible) return;
-    if (shell.mainView === 'workbench') shell.mainView = 'chats';
+    // 设置快照未到时不要抢先复位：启动恢复可能已经按记忆切到工作台，
+    // 等开关真正加载后再判断是否关闭入口。
+    if (settingsStore.settings === null || workbenchNavVisible) return;
+    if (shell.mainView === 'workbench') shell.showChats();
   });
 
   /**
@@ -134,6 +147,50 @@
       ? null
       : (chat.conversations.find((c) => c.id === contextMenu?.conversationId) ?? null),
   );
+
+  /**
+   * 自动排序的活动时间快照（见 sidebar-activity）：多个 Bot 同时执行时，
+   * 消息事件会频繁改 lastMessageAt。这里先攒着，安静 900ms 后一次性提交；
+   * 持续更新则最多 4s 强制提交一次。提交前布局继续用旧快照，列表不会闪。
+   */
+  let activitySnapshot = $state<Record<string, number>>({});
+  let activityTimer: ReturnType<typeof setTimeout> | null = null;
+  let activityDeadline: ReturnType<typeof setTimeout> | null = null;
+  let activityFirstPendingAt = 0;
+
+  function clearActivityTimers(): void {
+    if (activityTimer !== null) clearTimeout(activityTimer);
+    if (activityDeadline !== null) clearTimeout(activityDeadline);
+    activityTimer = null;
+    activityDeadline = null;
+    activityFirstPendingAt = 0;
+  }
+
+  function commitActivitySnapshot(): void {
+    clearActivityTimers();
+    const next = activitySnapshotOf(chat.conversations);
+    if (!sameActivitySnapshot(next, activitySnapshot)) activitySnapshot = next;
+  }
+
+  $effect(() => {
+    const next = activitySnapshotOf(chat.conversations);
+    if (sameActivitySnapshot(next, activitySnapshot)) {
+      clearActivityTimers();
+      return;
+    }
+    const now = Date.now();
+    if (activityFirstPendingAt === 0) activityFirstPendingAt = now;
+    if (activityTimer !== null) clearTimeout(activityTimer);
+    activityTimer = setTimeout(commitActivitySnapshot, SIDEBAR_SORT_DEBOUNCE_MS);
+    if (activityDeadline === null) {
+      activityDeadline = setTimeout(
+        commitActivitySnapshot,
+        Math.max(0, SIDEBAR_SORT_MAX_WAIT_MS - (now - activityFirstPendingAt)),
+      );
+    }
+  });
+
+  onDestroy(clearActivityTimers);
 
   const plusBots = $derived.by(() => {
     const query = plusQuery.trim().toLowerCase();
@@ -253,17 +310,41 @@
     layoutSidebarSections(
       chat.conversations.filter((conversation) => !isButlerConversation(conversation)),
       sidebarSections.state,
+      (conversation) => activitySnapshot[conversation.id] ?? conversationActivityOf(conversation),
     ),
   );
   /**
    * 图标模式没有组名可点，折叠会把对话藏起来且无法展开，所以这里忽略折叠，
-   * 只沿用分组顺序。管家仍在最前。
+   * 只沿用分组顺序。管家仍在最前。组名隐藏后分组之间用分隔线区分（样式同
+   * 工作台下方的分隔线）；只有「未指定」时不显示线。
    */
-  const iconConversations = $derived([
-    ...butlerConversations,
-    ...sectionLayout.groups.flatMap((group) => group.conversations),
-  ]);
+  const iconGroups = $derived.by(() => {
+    if (!sectionLayout.showHeaders) {
+      return [
+        {
+          id: UNASSIGNED_SECTION_ID,
+          conversations: [
+            ...butlerConversations,
+            ...sectionLayout.groups.flatMap((group) => group.conversations),
+          ],
+        },
+      ];
+    }
+    return [
+      ...(butlerConversations.length > 0
+        ? [{ id: 'butler', conversations: butlerConversations }]
+        : []),
+      ...sectionLayout.groups
+        .filter((group) => group.conversations.length > 0)
+        .map((group) => ({ id: group.id, conversations: group.conversations })),
+    ];
+  });
   const contextIsButler = $derived(isButlerConversation(contextConversation ?? undefined));
+  const contextPinned = $derived(
+    contextMenu === null
+      ? false
+      : isConversationPinned(sidebarSections.state, contextMenu.conversationId),
+  );
 
   // 管家不能留在分组里。之前若被移入过，这里把归属清掉（不展开「未指定」：
   // 这不是用户的移动操作）。
@@ -366,6 +447,13 @@
   function moveConversationTo(sectionId: string): void {
     if (!contextMenu || contextIsButler) return;
     sidebarSections.assign(contextMenu.conversationId, sectionId);
+    closeContextMenu();
+  }
+
+  /** 右键置顶 / 取消置顶：只影响所在分组内的先后，立即生效。 */
+  function togglePinFromContext(): void {
+    if (!contextMenu || contextIsButler) return;
+    sidebarSections.togglePin(contextMenu.conversationId);
     closeContextMenu();
   }
 
@@ -686,6 +774,14 @@
             <span class="truncate text-sm" data-testid="conversation-name">
               {nameOf(conversation)}
             </span>
+            {#if isConversationPinned(sidebarSections.state, conversation.id)}
+              <Pin
+                size={12}
+                class="mr-1 shrink-0 rotate-[30deg] text-muted-foreground"
+                aria-hidden="true"
+                data-testid="conversation-pinned"
+              />
+            {/if}
           </span>
           <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
           {#if showMetaRow}
@@ -741,11 +837,11 @@
        win/linux 图标模式（collapsed）连 logo 一起隐藏：头部容器整个不渲染，
        第一个 Bot 头像顶到上缘。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
-  {#if !isMac || !collapsed}
+  {#if isMac || !collapsed}
   <div
     class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
       ? 'wco-inset-end'
-      : ''} {isMac ? 'pl-20' : 'pl-4'}"
+      : ''} {isMac ? (collapsed ? 'pl-0' : 'pl-20') : 'pl-4'}"
   >
     {#if !isMac}
       <!-- 在 drag 区内不做按钮：按住 logo 拖动窗口是自然行为。深浅两稿各自只
@@ -852,59 +948,69 @@
         {:else if collapsed}
           <!-- 图标模式：只剩头像，名称/预览走 hover 提示；未读/待确认/执行中
                叠在头像角上（待确认优先于未读，都是必须看见的信号）。 -->
-          <Sidebar.Menu class="items-center">
-            {#each iconConversations as conversation (conversation.id)}
-              <Sidebar.MenuItem class="w-auto">
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.16_0_0)]"
-                    data-active={activeConversationId === conversation.id ? 'true' : undefined}
-                    onclick={() => void selectConversation(conversation.id)}
-                    oncontextmenu={(event) => openContextMenu(event, conversation.id)}
-                    data-testid={`conversation-item-${conversation.id}`}
-                  >
-                    {@render conversationAvatar(conversation)}
-                    {#if (conversation.runningBotIds?.length ?? 0) > 0}
-                      <span
-                        class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
-                        title={t('sidebar.runningSuffix')}
-                        data-testid="running-dot"
-                      ></span>
-                    {/if}
-                    {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-                      <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
-                        title={t('sidebar.pendingSuffix')}
-                        data-testid="pending-badge"
-                      >
-                        {permissions.pendingByConversation[conversation.id]}
-                      </span>
-                    {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
-                      <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
-                        data-testid="unread-badge"
-                      >
-                        {conversation.unreadCount}
-                      </span>
-                    {/if}
-                  </Tooltip.Trigger>
-                  <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
-                       名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
-                  <Tooltip.Content
-                    side="right"
-                    class="flex max-w-64 flex-col items-stretch gap-0.5"
-                  >
-                    <span class="truncate text-sm">{nameOf(conversation)}</span>
-                    {#if previewOf(conversation).length > 0}
-                      <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
-                    {/if}
-                  </Tooltip.Content>
-                </Tooltip.Root>
-              </Sidebar.MenuItem>
-            {/each}
-          </Sidebar.Menu>
+          {#each iconGroups as group, groupIndex (group.id)}
+            <!-- 组名在图标模式隐藏，分组之间用分隔线区分（同工作台下方的分隔线）。 -->
+            {#if groupIndex > 0}
+              <div
+                role="separator"
+                class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+                data-testid="sidebar-group-separator"
+              ></div>
+            {/if}
+            <Sidebar.Menu class="items-center">
+              {#each group.conversations as conversation (conversation.id)}
+                <Sidebar.MenuItem class="w-auto">
+                  <Tooltip.Root>
+                    <Tooltip.Trigger
+                      class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
+                        transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+                        dark:data-active:bg-[oklch(0.16_0_0)]"
+                      data-active={activeConversationId === conversation.id ? 'true' : undefined}
+                      onclick={() => void selectConversation(conversation.id)}
+                      oncontextmenu={(event) => openContextMenu(event, conversation.id)}
+                      data-testid={`conversation-item-${conversation.id}`}
+                    >
+                      {@render conversationAvatar(conversation)}
+                      {#if (conversation.runningBotIds?.length ?? 0) > 0}
+                        <span
+                          class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
+                          title={t('sidebar.runningSuffix')}
+                          data-testid="running-dot"
+                        ></span>
+                      {/if}
+                      {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+                        <span
+                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
+                          title={t('sidebar.pendingSuffix')}
+                          data-testid="pending-badge"
+                        >
+                          {permissions.pendingByConversation[conversation.id]}
+                        </span>
+                      {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                        <span
+                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
+                          data-testid="unread-badge"
+                        >
+                          {conversation.unreadCount}
+                        </span>
+                      {/if}
+                    </Tooltip.Trigger>
+                    <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
+                         名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
+                    <Tooltip.Content
+                      side="right"
+                      class="flex max-w-64 flex-col items-stretch gap-0.5"
+                    >
+                      <span class="truncate text-sm">{nameOf(conversation)}</span>
+                      {#if previewOf(conversation).length > 0}
+                        <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
+                      {/if}
+                    </Tooltip.Content>
+                  </Tooltip.Root>
+                </Sidebar.MenuItem>
+              {/each}
+            </Sidebar.Menu>
+          {/each}
         {:else}
           {#if sectionLayout.showHeaders && butlerConversations.length > 0}
             <!-- 管家不归属任何分组，固定在分组标题之上。 -->
@@ -1267,6 +1373,14 @@
         <span class="min-w-0 flex-1 truncate">{t('sidebar.moveTo')}</span>
         <ChevronRight class="size-3.5 text-muted-foreground" />
       </button>
+    {/if}
+    {#if !contextIsButler}
+      {@render contextItem(
+        contextPinned ? PinOff : Pin,
+        contextPinned ? t('sidebar.unpin') : t('sidebar.pin'),
+        togglePinFromContext,
+        'context-toggle-pin',
+      )}
     {/if}
     {#if contextConversation?.type === 'project'}
       {@render contextItem(

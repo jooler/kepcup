@@ -203,7 +203,7 @@
 </script>
 
 <div
-  class="group/memo rounded-lg border bg-card p-3 text-sm"
+  class="group/memo min-w-0 rounded-lg border bg-card p-3 text-sm"
   data-testid="memo-card"
   data-memo-id={memo.id}
   data-pinned={memo.pinned ? 'true' : 'false'}

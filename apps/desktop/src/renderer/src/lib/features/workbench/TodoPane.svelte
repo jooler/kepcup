@@ -76,7 +76,7 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="todo-pane">
+<div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3" data-testid="todo-pane">
   <Input
     bind:ref={input}
     bind:value={draft}

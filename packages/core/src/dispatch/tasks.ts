@@ -18,7 +18,6 @@ import {
   TASK_REDELIVER_MAX_ATTEMPTS,
   TASK_SETTLE_SWEEP_MS,
   TASK_START_MAX_PER_TURN,
-  TASK_TOKEN_BUDGET,
   type Message,
   type Run,
   type RunStatus,
@@ -71,7 +70,7 @@ import type {
  *   两库不能同一事务，次序固定；中途崩溃由 `recover()` 收敛。
  * - **消费**：唤醒的对话层到达终态时调 `markConsumed`；`sweep()`（reaper）与
  *   `resume()`（启动对账）补投「终态且未消费」且应唤醒的任务，并强制结束超过
- *   TASK_MAX_WALL_MS / TASK_TOKEN_BUDGET 的任务。
+ *   TASK_MAX_WALL_MS 的任务。
  *
  * 执行本身由注入的 `execute` 完成（orchestrator 的执行骨架，`kind:'task'`）：
  * 它经 `TaskRunControl` 取简报、挂上 RunHandle（steering = inject），结束时
@@ -83,7 +82,6 @@ import type {
 export interface TaskRunHandle {
   steer(text: string): boolean;
   abort(reason: string): void;
-  tokensSoFar(): number;
 }
 
 /** The brief a task starts from (§2.4.5), rebuilt from its private entries. */
@@ -218,7 +216,6 @@ export interface TaskHostLimits {
   global: number;
   perTurn: number;
   maxWallMs: number;
-  tokenBudget: number;
   questionTtlMs: number;
   redeliverMaxAttempts: number;
 }
@@ -598,7 +595,6 @@ export class TaskHost implements TaskToolFacade {
       global: deps.limits?.global ?? TASK_CONCURRENCY_GLOBAL,
       perTurn: deps.limits?.perTurn ?? TASK_START_MAX_PER_TURN,
       maxWallMs: deps.limits?.maxWallMs ?? TASK_MAX_WALL_MS,
-      tokenBudget: deps.limits?.tokenBudget ?? TASK_TOKEN_BUDGET,
       questionTtlMs: deps.limits?.questionTtlMs ?? TASK_QUESTION_TTL_MS,
       redeliverMaxAttempts: deps.limits?.redeliverMaxAttempts ?? TASK_REDELIVER_MAX_ATTEMPTS,
     };
@@ -1628,7 +1624,7 @@ export class TaskHost implements TaskToolFacade {
 
   /**
    * Reaper (every TASK_SETTLE_SWEEP_MS): forces running tasks over the wall
-   * clock / token budget to `failed`, then reconciles unconsumed results.
+   * clock to `failed`, then reconciles unconsumed results.
    * `now` overrides the clock (tests).
    */
   sweep(now: number = this.#deps.clock.now()): void {
@@ -1677,13 +1673,6 @@ export class TaskHost implements TaskToolFacade {
           `任务运行超过时限（${Math.round(this.#limits.maxWallMs / 60_000)} 分钟），已强制结束`,
         );
         continue;
-      }
-      if (launched.handle !== null && launched.handle.tokensSoFar() > this.#limits.tokenBudget) {
-        this.#stop(
-          launched.taskId,
-          'failed',
-          `任务用量超过 token 预算（${this.#limits.tokenBudget}），已强制结束`,
-        );
       }
     }
     this.#pump();

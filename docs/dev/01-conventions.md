@@ -186,8 +186,7 @@ kepcup/
 | `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 任务并发：对话级 / 全局 |
 | `TASK_START_MAX_PER_TURN` | 2 | 单个对话轮最多起的任务数 |
-| `TASK_MAX_WALL_MS` | 4 小时 | 单个任务的墙钟上限（reaper 强制 `failed`） |
-| `TASK_TOKEN_BUDGET` | 2000000 | 单个任务的 token 预算（输入 + 输出累计） |
+| `TASK_MAX_WALL_MS` | 4 小时 | 单个任务的墙钟上限（reaper 强制 `failed`；任务不设用量上限） |
 | `TASK_SETTLE_SWEEP_MS` | 60000 | 任务结算对账 / reaper 周期 |
 | `TASK_EVENT_CONTEXT_MAX_CHARS` | 600 | 最近窗口里任务进度与较早任务条目的截断长度 |
 | `TASK_TRIGGER_RESULT_MAX_CHARS` | 12000 | 触发段里任务结果全文的硬顶 |

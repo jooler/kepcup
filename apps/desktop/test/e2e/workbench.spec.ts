@@ -93,6 +93,7 @@ async function waitReady(page: Page): Promise<void> {
     page
       .locator('[data-testid="chat-view"]')
       .or(page.locator('[data-testid="start-chat-panel"]'))
+      .or(page.locator('[data-testid="workbench-view"]'))
       .or(page.locator('[data-testid="onboarding"]')),
   ).toBeVisible({ timeout: 60_000 });
   const startBackdrop = page.locator('[data-testid="start-chat-backdrop"]');
@@ -207,6 +208,42 @@ test('workbench entry: switching keeps composer drafts, no conversation highligh
     await expect(composer).toHaveText('甲的草稿还没发');
     await openRow(page, b.conversationId);
     await expect(composer).toHaveText('乙的草稿也没发');
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('restart restore: reload lands on the last main view (workbench or chats)', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-wb-restore-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    const { conversationId } = await createBotAndOpenChat(page, '阿回');
+    await openWorkbench(page);
+
+    // 记录刷新过程中对话区是否出现过：应直接渲染工作台，不能先露出上一会话。
+    await page.addInitScript(() => {
+      const w = window as unknown as { __sawChatView?: boolean };
+      w.__sawChatView = false;
+      new MutationObserver(() => {
+        if (document.querySelector('[data-testid="chat-view"]')) w.__sawChatView = true;
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    // 刷新后仍停在最后访问的工作台，而不是自动载入上次的 Bot 对话。
+    await page.reload();
+    await expect(page.locator('[data-testid="workbench-view"]')).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="chat-view"]')).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { __sawChatView?: boolean }).__sawChatView),
+    ).toBe(false);
+
+    // 回到对话作为最后落点：刷新后恢复对话，不再回到工作台。
+    await openRow(page, conversationId);
+    await page.reload();
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="workbench-view"]')).toHaveCount(0);
   } finally {
     await closeSession(session);
   }

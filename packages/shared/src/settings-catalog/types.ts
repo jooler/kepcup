@@ -174,7 +174,7 @@ export const CARD_KEYS = [
   'bot-skills',
   /** `SensorCard{kind}`。 */
   'sensor',
-  /** 目录字段编辑（审查模型、并发、默认智能体、开机启动、预算）。 */
+  /** 目录字段编辑（审查模型、并发、默认智能体、开机启动）。 */
   'field-editor',
   /** `EmbeddingSection`。 */
   'embedding',

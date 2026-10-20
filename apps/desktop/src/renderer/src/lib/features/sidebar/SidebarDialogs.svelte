@@ -77,7 +77,10 @@
       <DialogHeader>
         <DialogTitle>{t('chats.deleteConversationTitle', { name: deleteTargetName })}</DialogTitle>
       </DialogHeader>
-      <p class="text-sm text-muted-foreground">{t('chats.deleteConversationBody')}</p>
+      <ul class="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+        <li>{t('chats.deleteConversationBody')}</li>
+        <li>{t('chats.deleteConversationKeepsBot')}</li>
+      </ul>
       {#if deleteTargetUsesAgent}
         <p class="text-xs text-muted-foreground" data-testid="conversation-delete-agent-note">
           {t('contacts.deleteAgentNote')}

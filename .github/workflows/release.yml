@@ -15,6 +15,9 @@
 #   APPLE_API_KEY_BASE64 / APPLE_API_KEY_ID / APPLE_API_ISSUER   公证（App Store Connect API 密钥）
 #   WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD          Windows 代码签名证书（可选）
 #   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET      打进产物的 Google OAuth 桌面客户端（可选，dist.mjs 读取）
+#   R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET   更新镜像 Cloudflare R2（可选，四项一起填）
+#   OSS_ACCESS_KEY_ID / OSS_SECRET_ACCESS_KEY / OSS_BUCKET / OSS_ENDPOINT 更新镜像阿里云 OSS（可选，四项一起填）
+#     两者都空时 publish job 的镜像同步步骤自动跳过（docs/dev/06-release.md「更新镜像与选源」）。
 # 变量（Settings → Variables → Actions，公开信息）：
 #   MSSTORE_IDENTITY_NAME / MSSTORE_PUBLISHER / MSSTORE_PUBLISHER_DISPLAY_NAME
 #     Partner Center「产品标识」三项；设置后 Windows job 额外产出商店用 MSIX（workflow 工件 store-msix）。
@@ -300,3 +303,21 @@ jobs:
           gh release upload "$TAG" assets/*
           gh release edit "$TAG" --draft=false --latest
           echo "已发布 [$TAG](https://github.com/$GH_REPO/releases/tag/$TAG)。商店上传：本地运行 node scripts/release/store-upload.mjs ${TAG#v}" >> "$GITHUB_STEP_SUMMARY"
+      # 更新镜像（R2 / OSS，docs/dev/06-release.md「更新镜像与选源」）：GitHub 是
+      # 唯一写入口，发布后把资产同步成只读副本（国际第二源 + 国内首选）。凭据缺失
+      # 时脚本自动跳过；同步失败不阻塞发布（GitHub 渠道已就绪），本地可幂等重跑。
+      - name: Sync update mirrors (R2 / OSS)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_SECRET_ACCESS_KEY: ${{ secrets.OSS_SECRET_ACCESS_KEY }}
+          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+        run: |
+          if ! node scripts/release/sync-mirrors.mjs "$TAG"; then
+            echo "::warning::更新镜像（R2/OSS）同步失败——GitHub 渠道已发布，国内/备份源仍是旧版本"
+            echo "⚠️ 镜像同步失败：本地跑 \`node scripts/release/sync-mirrors.mjs $TAG\` 重试（幂等）" >> "$GITHUB_STEP_SUMMARY"
+          fi

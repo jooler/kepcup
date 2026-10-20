@@ -29,6 +29,8 @@ declare global {
         selectDirectory(): Promise<string | null>;
         /** System file picker (D73 P2 MCPB install); null when cancelled. */
         selectFile(extensions: string[]): Promise<string | null>;
+        /** 对话里 @ 本地文件/文件夹：只返回路径与类型，不上传文件字节。 */
+        selectLocalPath(): Promise<{ path: string; kind: 'file' | 'folder' } | null>;
       };
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;

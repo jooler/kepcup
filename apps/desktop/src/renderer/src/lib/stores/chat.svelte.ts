@@ -3,6 +3,7 @@ import {
   PROJECT_MEMBER_PREVIEW_MAX,
   projectTitleFromMemberNames,
   isSparseBotProfile,
+  messagePreviewText,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
@@ -54,6 +55,14 @@ export type ConversationView = Conversation & {
   runningBotIds?: string[];
   bot?: Bot | null;
 };
+
+export interface SelectOptions {
+  /**
+   * 启动恢复落在工作台时保持主区不动：后台把会话装好，但不把 `shell.mainView`
+   * 拉回对话（否则刷新时会先露出上一会话再跳到工作台）。
+   */
+  keepMainView?: boolean;
+}
 
 export interface ActiveRunView {
   run: Run;
@@ -297,11 +306,11 @@ class ChatState {
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
-  async openDirect(botId: string): Promise<void> {
+  async openDirect(botId: string, options: SelectOptions = {}): Promise<void> {
     const result = (await core.call('conversations.openDirect', { botId })) as {
       conversation: ConversationView;
     };
-    await this.select(result.conversation.id);
+    await this.select(result.conversation.id, options);
   }
 
   /**
@@ -311,27 +320,27 @@ class ChatState {
    * 直聊；一个 Bot 都没有（跳过了初始化向导）时不打开任何会话，交由调用方
    * 进入「选择 Bot」的引导态。
    */
-  async restoreLast(): Promise<'conversation' | 'bot' | 'empty'> {
+  async restoreLast(options: SelectOptions = {}): Promise<'conversation' | 'bot' | 'empty'> {
     const lastViewed = loadLastConversationId(globalThis.localStorage ?? null);
     if (lastViewed !== null && this.conversations.some((c) => c.id === lastViewed)) {
-      await this.select(lastViewed);
+      await this.select(lastViewed, options);
       return 'conversation';
     }
     if (this.conversations.length > 0) {
       const latest = [...this.conversations].sort(
         (a, b) => (b.lastMessageAt ?? b.createdAt ?? 0) - (a.lastMessageAt ?? a.createdAt ?? 0),
       )[0]!;
-      await this.select(latest.id);
+      await this.select(latest.id, options);
       return 'conversation';
     }
     if (contacts.bots.length > 0) {
-      await this.openDirect(contacts.bots[0]!.id);
+      await this.openDirect(contacts.bots[0]!.id, options);
       return 'bot';
     }
     return 'empty';
   }
 
-  async select(conversationId: string): Promise<void> {
+  async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
     const result = (await core.call('conversations.get', { id: conversationId })) as {
       conversation: ConversationView | null;
@@ -371,8 +380,9 @@ class ChatState {
     };
     this.currentId = conversationId;
     // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
-    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。
-    if (shell.workbenchIntent === workbenchIntent) shell.mainView = 'chats';
+    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。启动恢复要落在
+    // 工作台时同样不动主区（keepMainView）。
+    if (!options.keepMainView && shell.workbenchIntent === workbenchIntent) shell.showChats();
     // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
@@ -385,8 +395,8 @@ class ChatState {
     // 切换会话撤销门禁缺设置卡（与 close 同理；失败 run 的 setup 卡随
     // failedRun 天然按会话生效，无需处理）。
     this.#pendingSetup = null;
-    // 末尾可能是 system_event（如环境安装批准提示），预览要重建到最后一「文本」
-    // 消息——与 #ingestMessage 逐条事件记录的行为对齐。
+    // 末尾可能是不可预览的 system_event（如环境安装批准提示），预览要重建到
+    // 最后一条文本或卡片消息——与 #ingestMessage 逐条事件记录的行为对齐。
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
@@ -436,7 +446,11 @@ class ChatState {
   // --- project compose (D92 §11.1: two-round creation, lead first) -------------
 
   #composeState(): ComposeState {
-    return { phase: this.composePhase, leadId: this.composeLeadId, memberIds: this.composeMemberIds };
+    return {
+      phase: this.composePhase,
+      leadId: this.composeLeadId,
+      memberIds: this.composeMemberIds,
+    };
   }
 
   #setComposeState(next: ComposeState): void {
@@ -454,7 +468,7 @@ class ChatState {
   beginProjectCompose(): void {
     // The compose view lives in the chats area: leave the workbench first,
     // otherwise clicking "new project" would show no reaction at all.
-    shell.mainView = 'chats';
+    shell.showChats();
     this.composingProject = true;
     this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
   }
@@ -867,11 +881,15 @@ class ChatState {
     sidebarSections.prune(this.conversations.map((c) => c.id));
   }
 
-  /** Records the sidebar's single-line「最后一条消息」preview (text messages only). */
+  /**
+   * Records the sidebar's single-line「最后一条消息」preview. Text messages keep
+   * their body; cards are folded into「icon + 标题 + 摘要」(same helper as
+   * conversations.list, so startup and live events agree).
+   */
   #noteLastMessage(conversationId: string, message: Message | null): boolean {
-    if (message === null || message.status === 'recalled' || message.kind !== 'text') return false;
-    const text = 'text' in message.content ? message.content.text.trim() : '';
-    if (text.length === 0) return false;
+    if (message === null) return false;
+    const text = messagePreviewText(message);
+    if (text === null || text.length === 0) return false;
     this.lastMessageText = { ...this.lastMessageText, [conversationId]: text };
     return true;
   }

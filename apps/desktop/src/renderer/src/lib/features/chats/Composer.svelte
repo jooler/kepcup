@@ -5,7 +5,8 @@
   import { Markdown } from '@tiptap/markdown';
   import { Placeholder } from '@tiptap/extensions';
   import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion';
-  import { untrack } from 'svelte';
+  import { fileMentionToken, folderMentionToken, parseLocalPathMentionToken } from '@kepcup/shared';
+  import { mount, unmount, untrack } from 'svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Button, buttonVariants } from '$lib/components/ui/button';
@@ -15,7 +16,12 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { resolveComposerAction } from './key-handling';
-  import { buildMentionTargets, type MentionTarget } from './composer-text';
+  import {
+    buildMentionTargets,
+    createPickFileTarget,
+    localPathName,
+    type MentionTarget,
+  } from './composer-text';
   import { createSendGuard, performComposerSend } from './composer-send';
   import {
     collectMentionTokens,
@@ -23,6 +29,7 @@
     composerNodes,
     mergeMentionTokens,
   } from './composer-editor';
+  import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
@@ -159,6 +166,9 @@
     }),
   );
 
+  /** @ 菜单末尾的「选择文件或文件夹」动作项（不进入 mention 注册表，避免被当成员解析）。 */
+  const pickFileTarget = $derived(createPickFileTarget(t('composer.mentionPickFile')));
+
   /**
    * 当前会话 Bot 的预置头像色（单聊取 direct Bot；项目组无单一 Bot、上传
    * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
@@ -181,13 +191,91 @@
       : null,
   );
 
+  // --- 本地文件/文件夹提及 -----------------------------------------------------
+  // 只把绝对路径写进消息（正文 @路径 + mentions token），不上传文件字节。
+  // 图标走内联 SVG：TipTap 的 renderHTML 与 suggestion 弹层都是纯 DOM，不能挂
+  // Svelte 组件；沿用 lucide 的路径数据保持视觉一致。
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const MENTION_ICON_PATHS: Record<'file' | 'folder' | 'pick-file' | 'project', readonly string[]> =
+    {
+      file: [
+        'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z',
+        'M14 2v4a2 2 0 0 0 2 2h4',
+      ],
+      folder: [
+        'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
+      ],
+      'pick-file': [
+        'm6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2',
+      ],
+      // lucide `users`：项目组在头像位显示，避免一大块空白。
+      project: [
+        'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',
+        'M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+        'M22 21v-2a4 4 0 0 0-3-3.87',
+        'M16 3.13a4 4 0 0 1 0 7.75',
+      ],
+    };
+
+  function createMentionIcon(
+    kind: 'file' | 'folder' | 'pick-file' | 'project',
+    className = 'composer-mention-icon',
+  ): SVGSVGElement {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', className);
+    for (const d of MENTION_ICON_PATHS[kind]) {
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    }
+    return svg;
+  }
+
+  /**
+   * @ 菜单「选择文件或文件夹」：先删掉触发中的 @query 关闭弹层，再拉起原生
+   * 面板；选中后把文件/文件夹 mention 节点插回原位置（取消则什么都不留）。
+   */
+  async function insertLocalPathMention(
+    ed: Editor,
+    range: { from: number; to: number },
+  ): Promise<void> {
+    const insertAt = range.from;
+    ed.chain().focus().deleteRange(range).run();
+    let picked: { path: string; kind: 'file' | 'folder' } | null;
+    try {
+      picked = (await window.kepcup?.platform?.selectLocalPath?.()) ?? null;
+    } catch {
+      picked = null;
+    }
+    if (ed.isDestroyed || picked === null) return;
+    const token =
+      picked.kind === 'folder' ? folderMentionToken(picked.path) : fileMentionToken(picked.path);
+    const at = Math.min(insertAt, ed.state.doc.content.size);
+    ed.chain()
+      .focus()
+      .insertContentAt(at, [
+        { type: 'mention', attrs: { id: token, label: localPathName(picked.path) } },
+        { type: 'text', text: ' ' },
+      ])
+      .run();
+  }
+
   // --- TipTap 编辑器 -----------------------------------------------------------
 
   /** 元素内容区宽度（clientWidth 去掉左右内边距）。 */
   function contentBoxWidth(el: HTMLElement): number {
     const style = getComputedStyle(el);
     return (
-      el.clientWidth - (Number.parseFloat(style.paddingLeft) || 0) -
+      el.clientWidth -
+      (Number.parseFloat(style.paddingLeft) || 0) -
       (Number.parseFloat(style.paddingRight) || 0)
     );
   }
@@ -259,40 +347,119 @@
     let unmountPopup: (() => void) | null = null;
     let items: MentionTarget[] = [];
     let selectedIndex = 0;
-    /** 方向键导航后才显示选中背景：首项不默认加背景（Enter 仍以其为目标）。 */
-    let navigated = false;
     let currentCommand: ((target: MentionTarget) => void) | null = null;
+    /** 与 items 一一对应的行元素（分隔线不入列），用于切换高亮与滚动。 */
+    let itemEls: HTMLLIElement[] = [];
+    /** 纯 DOM 弹层里挂载的 Bot 头像；列表重建/关闭前统一卸载。 */
+    let mountedAvatars: Array<ReturnType<typeof mount>> = [];
+    const clearAvatars = (): void => {
+      for (const avatar of mountedAvatars) void unmount(avatar);
+      mountedAvatars = [];
+    };
+
+    /** 只把选中的行滚进弹层视口，避免 scrollIntoView 连带滚动页面/编辑器。 */
+    const scrollItemIntoView = (li: HTMLLIElement): void => {
+      if (popup === null) return;
+      const viewport = popup.getBoundingClientRect();
+      const item = li.getBoundingClientRect();
+      if (item.top < viewport.top) {
+        popup.scrollTop -= viewport.top - item.top;
+      } else if (item.bottom > viewport.bottom) {
+        popup.scrollTop += item.bottom - viewport.bottom;
+      }
+    };
+
+    /** 只更新高亮 + 滚动，不重建列表（重建会把滚动位置重置到顶部）。 */
+    const paintSelection = (): void => {
+      itemEls.forEach((li, index) => {
+        li.firstElementChild?.classList.toggle('bg-accent', index === selectedIndex);
+      });
+      const selected = itemEls[selectedIndex];
+      if (selected !== undefined) scrollItemIntoView(selected);
+    };
 
     const renderList = (): void => {
       if (popup === null) return;
+      clearAvatars();
       popup.textContent = '';
+      itemEls = [];
       if (items.length === 0) {
         popup.style.display = 'none';
         return;
       }
       popup.style.display = '';
       items.forEach((target, index) => {
+        const isPickFile = target.kind === 'pick-file';
+        // 文件选择是动作项，与 @ 成员/项目组之间用分隔线隔开。
+        if (isPickFile && index > 0) {
+          const divider = document.createElement('li');
+          divider.setAttribute('aria-hidden', 'true');
+          divider.className = 'mx-2 my-1 border-t border-border';
+          popup?.append(divider);
+        }
         const li = document.createElement('li');
         const button = document.createElement('button');
         button.type = 'button';
         button.className =
-          'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent' +
-          (navigated && index === selectedIndex ? ' bg-accent' : '');
-        button.dataset.testid = `mention-candidate-${target.token}`;
+          'flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent';
+        button.dataset.testid = isPickFile
+          ? 'mention-candidate-pick-file'
+          : `mention-candidate-${target.token}`;
         button.onclick = () => currentCommand?.(target);
+        if (isPickFile) {
+          // 与 Bot 头像同宽的头像位，名称列保持对齐。
+          const iconHost = document.createElement('span');
+          iconHost.className = 'flex size-5 shrink-0 items-center justify-center';
+          iconHost.append(createMentionIcon('pick-file', 'size-4'));
+          button.append(iconHost);
+        }
+        if (target.kind === 'bot') {
+          const avatarHost = document.createElement('span');
+          avatarHost.className = 'flex shrink-0 items-center';
+          button.append(avatarHost);
+          mountedAvatars.push(
+            mount(BotAvatar, {
+              target: avatarHost,
+              props: {
+                botId: target.token,
+                name: target.name,
+                avatar: target.avatar ?? null,
+                class: 'size-5',
+                animated: false,
+              },
+            }),
+          );
+        } else if (target.kind === 'project') {
+          // 项目组没有头像：头像位放群组图标，名称仍与 Bot 名称对齐。
+          const iconHost = document.createElement('span');
+          iconHost.className =
+            'flex size-5 shrink-0 items-center justify-center text-muted-foreground';
+          iconHost.append(createMentionIcon('project', 'size-4'));
+          button.append(iconHost);
+        }
         const name = document.createElement('span');
-        name.className = 'min-w-0 flex-1 truncate';
-        name.textContent = `@${target.name}`;
+        name.className = 'min-w-0 flex-1 truncate pr-8';
+        name.textContent = target.name;
+        // Bot 名称与它的预置头像同色；上传头像/占位没有单一主色，保持默认前景。
+        const avatarColor = target.kind === 'bot' ? parsePresetAvatar(target.avatar)?.color : null;
+        if (avatarColor !== undefined && avatarColor !== null) name.style.color = avatarColor.hex;
         button.append(name);
-        // 项目组候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
-        if (target.kind === 'project') {
+        // 最右侧固定显示类型；Bot 简介不再展示（弹层保持紧凑固定宽度）。
+        const kindLabel =
+          target.kind === 'bot'
+            ? t('composer.mentionKindBot')
+            : target.kind === 'project'
+              ? t('composer.mentionKindProject')
+              : null;
+        if (kindLabel !== null) {
           const badge = document.createElement('span');
           badge.className = 'shrink-0 text-xs text-muted-foreground';
-          badge.textContent = t('composer.mentionProject');
+          badge.textContent = kindLabel;
           button.append(badge);
         }
         li.append(button);
         popup?.append(li);
+        itemEls.push(li);
         // 管家是特殊成员：行下加分隔线与普通候选分区（列表末尾不加）。
         if (target.butler === true && index < items.length - 1) {
           const divider = document.createElement('li');
@@ -301,31 +468,30 @@
           popup?.append(divider);
         }
       });
+      paintSelection();
     };
 
     return {
       onStart: (props) => {
         popup = document.createElement('ul');
         popup.className =
-          'absolute z-50 max-h-48 overflow-x-hidden overflow-y-auto rounded-md border bg-background p-1 shadow-md';
+          'absolute z-50 max-h-64 overflow-x-hidden overflow-y-auto rounded-md border bg-background p-1 shadow-md';
         popup.style.zIndex = '50';
         // 浮层定位脚本会把宽度撑成 max-content（长简介把弹层拉满屏），固定
         // 宽度 + 文本截断（inline style 压过定位脚本写入的样式）。
-        popup.style.width = '18rem';
+        popup.style.width = '22rem';
         popup.dataset.testid = 'mention-popup';
         items = props.items as MentionTarget[];
         selectedIndex = 0;
         currentCommand = props.command as (target: MentionTarget) => void;
         suggestionState.active = true;
         suggestionState.count = items.length;
-        navigated = false;
         renderList();
         unmountPopup = props.mount(popup);
       },
       onUpdate: (props) => {
         items = props.items as MentionTarget[];
         selectedIndex = 0;
-        navigated = false;
         currentCommand = props.command as (target: MentionTarget) => void;
         suggestionState.count = items.length;
         renderList();
@@ -335,15 +501,15 @@
         // IME 组合中的按键（含候选确认的 Enter）不参与提及选择。
         if (props.event.isComposing || props.event.keyCode === 229) return false;
         if (props.event.key === 'ArrowDown') {
-          navigated = true;
+          // 默认选中首项；向下按列表循环。
           selectedIndex = (selectedIndex + 1) % items.length;
-          renderList();
+          paintSelection();
           return true;
         }
         if (props.event.key === 'ArrowUp') {
-          navigated = true;
+          // 首项再向上绕到末项。
           selectedIndex = (selectedIndex - 1 + items.length) % items.length;
-          renderList();
+          paintSelection();
           return true;
         }
         if (props.event.key === 'Enter' || props.event.key === 'Tab') {
@@ -363,6 +529,7 @@
       onExit: () => {
         suggestionState.active = false;
         suggestionState.count = 0;
+        clearAvatars();
         unmountPopup?.();
         unmountPopup = null;
         popup?.remove();
@@ -393,33 +560,60 @@
               // mention 节点，不会逐字删除。
               deleteTriggerWithBackspace: false,
               renderText: ({ node }) => `@${node.attrs.label ?? node.attrs.id}`,
-              renderHTML: ({ node, options }) => [
-                'span',
-                {
-                  ...options.HTMLAttributes,
-                  'data-type': 'mention',
-                  class: 'composer-mention',
-                  'data-testid': 'composer-mention',
-                },
-                `@${node.attrs.label ?? node.attrs.id}`,
-              ],
+              renderHTML: ({ node, options }) => {
+                const token = String(node.attrs.id ?? '');
+                const local = parseLocalPathMentionToken(token);
+                const label = String(node.attrs.label ?? node.attrs.id ?? '');
+                // 本地文件/文件夹：icon + 名称，替换掉常规的 `@名字` 文本。
+                if (local !== null) {
+                  return [
+                    'span',
+                    {
+                      ...options.HTMLAttributes,
+                      'data-type': 'mention',
+                      class: 'composer-mention composer-mention-path',
+                      'data-testid': 'composer-mention',
+                      'data-kind': local.kind,
+                      title: local.path,
+                    },
+                    createMentionIcon(local.kind),
+                    ['span', { class: 'composer-mention-label' }, label],
+                  ];
+                }
+                return [
+                  'span',
+                  {
+                    ...options.HTMLAttributes,
+                    'data-type': 'mention',
+                    class: 'composer-mention',
+                    'data-testid': 'composer-mention',
+                  },
+                  `@${label}`,
+                ];
+              },
               suggestion: {
                 char: '@',
                 placement: 'top-start',
                 items: ({ query }) => {
                   const q = query.trim().toLowerCase();
-                  return mentionTargets.filter(
+                  const matched = mentionTargets.filter(
                     (target) =>
                       q.length === 0 ||
                       target.name.toLowerCase().includes(q) ||
                       target.token.toLowerCase().includes(q),
                   );
+                  // 文件/文件夹选择是固定动作项：不过滤，始终在列表末尾。
+                  return [...matched, pickFileTarget];
                 },
                 render: suggestionRender,
                 command: ({ editor: targetEditor, range, props }) => {
                   // suggestion 的选中项泛型默认是节点 attrs；我们的选中项是
                   // MentionTarget（token + name），在边界收窄一次。
                   const target = props as unknown as MentionTarget;
+                  if (target.kind === 'pick-file') {
+                    void insertLocalPathMention(targetEditor, range);
+                    return;
+                  }
                   targetEditor
                     .chain()
                     .focus()
@@ -616,9 +810,8 @@
           composerDrafts.inspectAttachments(conversationId, attachmentIds),
         onAttachmentIssue: (issue) => {
           const nameOf = (id: string): string =>
-            composerDrafts
-              .uploadsOf(conversationId)
-              .find((upload) => upload.attachmentId === id)?.fileName ?? id;
+            composerDrafts.uploadsOf(conversationId).find((upload) => upload.attachmentId === id)
+              ?.fileName ?? id;
           composerDrafts.discardAttachments(conversationId, issue);
           if (issue.sent.length > 0) {
             toast.error(

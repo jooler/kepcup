@@ -3,6 +3,7 @@ import {
   EPHEMERAL_APPROVAL_CARD_TYPES,
   INTERNAL_SYSTEM_EVENTS,
   isEphemeralApprovalCardType,
+  messagePreviewText,
   TERMINAL_TASK_EVENT_PHASES,
   newId,
   taskEventContentSchema,
@@ -307,7 +308,10 @@ function composeFilter(...parts: Array<{ sql: string; params: string[] }>): {
   sql: string;
   params: string[];
 } {
-  return { sql: parts.map((p) => `(${p.sql})`).join(' and '), params: parts.flatMap((p) => p.params) };
+  return {
+    sql: parts.map((p) => `(${p.sql})`).join(' and '),
+    params: parts.flatMap((p) => p.params),
+  };
 }
 
 /**
@@ -759,7 +763,7 @@ export class MessagesService {
     const row = this.db
       .prepare(
         "select * from messages where conversation_id = ? and sender_type = 'bot' and kind = 'text' " +
-          'and owner_bot_id is null and status != \'recalled\' order by seq desc limit 1',
+          "and owner_bot_id is null and status != 'recalled' order by seq desc limit 1",
       )
       .get(conversationId) as MessageRow | undefined;
     if (!row) return null;
@@ -952,27 +956,37 @@ export class MessagesService {
   }
 
   /**
-   * 每个会话最后一条可预览的文本消息（conversations.list 随列表一并下发，
-   * 左栏启动即有「最后一条消息」预览，不必逐个打开会话）。可见性口径与
-   * 渲染端 #noteLastMessage 对齐：text 且未撤回且正文非空。索引
-   * messages_conv_seq 让 group by + max(seq) 走一趟索引扫描。
+   * 每个会话最后一条可预览的消息（conversations.list 随列表一并下发，左栏
+   * 启动即有「最后一条消息」预览，不必逐个打开会话）。文本消息取正文；卡片
+   * 消息由 `messagePreviewText` 整理成「icon + 标题 + 摘要」单行。可见性口径
+   * 与渲染端 #noteLastMessage 对齐：未撤回、非私有、非中途权限卡；空白文本
+   * 与内部事务事件不算预览，落到更早的一条。
    */
-  latestTextByConversation(): Record<string, string> {
+  latestPreviewByConversation(): Record<string, string> {
+    const ephemeral = [...EPHEMERAL_APPROVAL_CARD_TYPES];
+    const candidate = [
+      'owner_bot_id is null',
+      "status != 'recalled'",
+      "kind in ('text', 'card')",
+      // trim 的字符集对齐 JS 的 String#trim（ASCII 部分）：纯空白不算预览。
+      "not (kind = 'text' and coalesce(trim(json_extract(content_json, '$.text'), ' \t\n\r'), '') = '')",
+      // 任务中间进度只是状态浮层，不是对话气泡（与 userVisibleFilter 同口径）。
+      "not (kind = 'text' and coalesce(json_extract(content_json, '$.interim'), 0) = 1)",
+      `not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') in (${ephemeral.map(() => '?').join(', ')}))`,
+      // 改动摘要卡已退役、对话里不再显示，也不该占侧栏预览。
+      "not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') = 'run_changes')",
+    ].join(' and ');
     const rows = this.db
       .prepare(
-        'select conversation_id, content_json, max(seq) from messages ' +
-          // D75 §2.4.3: private rows never become the user's preview.
-          "where kind = 'text' and status != 'recalled' and owner_bot_id is null " +
-          // trim 的字符集对齐 JS 的 String#trim（ASCII 部分）：纯空白不算预览，
-          // 且它被排除后 max(seq) 落到上一条真实文本（与打开会话时的重建一致）。
-          "and coalesce(trim(json_extract(content_json, '$.text'), ' \t\n\r'), '') != '' " +
-          'group by conversation_id',
+        `select m.* from messages m join (` +
+          `select conversation_id, max(seq) as seq from messages where ${candidate} group by conversation_id` +
+          `) latest on latest.conversation_id = m.conversation_id and latest.seq = m.seq`,
       )
-      .all() as Array<{ conversation_id: string; content_json: string }>;
+      .all(...ephemeral) as MessageRow[];
     const result: Record<string, string> = {};
     for (const row of rows) {
-      const content = JSON.parse(row.content_json) as { text?: string };
-      if (typeof content.text === 'string') result[row.conversation_id] = content.text;
+      const preview = messagePreviewText(messageRowToMessage(row));
+      if (preview !== null) result[row.conversation_id] = preview;
     }
     return result;
   }

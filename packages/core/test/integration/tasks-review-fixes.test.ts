@@ -130,7 +130,6 @@ function fakeHandle(steerOk: boolean): TaskRunHandle & { steered: string[] } {
       return steerOk;
     },
     abort() {},
-    tokensSoFar: () => 0,
   };
 }
 
