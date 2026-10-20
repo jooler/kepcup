@@ -769,12 +769,14 @@ export const mediaUnderstandImageInputSchema = z.object({
 export const mediaUnderstandImageOutputSchema = z.object({ text: z.string() });
 
 
-// --- inkcop local bridge (v0.2) -------------------------------------------
+// --- inkcop local bridge (v0.4) -------------------------------------------
 
 export const inkcopAgentSchema = z.object({
   key: z.string().min(1),
   name: z.string(),
   kind: z.enum(['main', 'app']),
+  /** 契约 v0.4：能力说明；主智能体 = 主对话角色定义。 */
+  description: z.string().optional(),
 });
 export type InkcopAgent = z.infer<typeof inkcopAgentSchema>;
 

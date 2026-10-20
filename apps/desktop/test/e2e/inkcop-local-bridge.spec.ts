@@ -100,10 +100,10 @@ test('ordinary Bot with linked InkCop agent: send → in-progress → final bubb
 
     await rpc(page, 'settings.update', { inkcopLocalCollab: { enabled: true } });
 
+    // v0.4：关联 keys 不切换 transport；整轮直连已移除，回复需 Bot 调 call_inkcop_agent。
     const profile = botProfile({
       name: botName,
       runtime: {
-        message_transport: 'inkcop-local',
         inkcop_agent_keys: ['main_agent'],
       },
     });
@@ -121,42 +121,15 @@ test('ordinary Bot with linked InkCop agent: send → in-progress → final bubb
     await expect(page.locator('[data-testid="start-chat-create-inkcop-bot"]')).toHaveCount(0);
     await dismissStartPanel(page);
 
-    const composer = page.locator('[data-testid="composer-input"]');
-    await expect(composer).toBeVisible({ timeout: 15_000 });
-    const prompt = '请用一句话介绍你自己（UI 对联自检）';
-    await composer.fill(prompt);
-    await composer.press('Enter');
-
-    await expect(page.locator('[data-testid="user-bubble"]').first()).toContainText(prompt, {
-      timeout: 15_000,
-    });
-
-    const status = page.locator('[data-testid="run-status-text"]');
-    const botBubble = page.locator('[data-testid="bot-bubble"]').first();
-    await expect
-      .poll(
-        async () => {
-          if (await botBubble.isVisible().catch(() => false)) return 'bubble';
-          if (await status.isVisible().catch(() => false)) {
-            const t = await status.innerText().catch(() => '');
-            if (t.includes('InkCop') || t.includes('处理')) return 'status';
-          }
-          return 'wait';
-        },
-        { timeout: 30_000 },
-      )
-      .not.toBe('wait');
-
-    shots.push(await shot(page, '03-in-progress-or-early-bubble.png'));
-
-    await expect(botBubble).toBeVisible({ timeout: 120_000 });
-    const reply = (await botBubble.innerText()).trim();
-    expect(reply.length).toBeGreaterThan(0);
-    expect(reply).not.toMatch(/未返回内容|离线|无法连接|通讯失败|桥接异常/);
-    shots.push(await shot(page, '04-final-bot-bubble.png'));
-
-    console.warn('[inkcop-ui-pair] bot reply:', reply.slice(0, 500));
-    console.warn('[inkcop-ui-pair] screenshots:', shots.join(', '));
+    // v0.4 tool handoff: live reply needs LLM to call call_inkcop_agent — covered by unit tests.
+    // Here only verify association profile sticks and system Bot entry stays gone.
+    const got = (await rpc(page, 'bots.get', { id: created.bot.id })) as {
+      bot: { profile: { runtime: { inkcop_agent_keys?: string[]; message_transport?: string } } };
+    };
+    expect(got.bot.profile.runtime.inkcop_agent_keys).toEqual(['main_agent']);
+    expect(got.bot.profile.runtime.message_transport ?? '').toBe('');
+    shots.push(await shot(page, '03-associated-bot-no-divert.png'));
+    console.warn('[inkcop-ui-pair] association ok; screenshots:', shots.join(', '));
   } finally {
     await session.app.close();
     await rmHomeTolerant(session.home);

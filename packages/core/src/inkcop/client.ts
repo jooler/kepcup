@@ -46,11 +46,13 @@ export interface InkcopConnectionOk {
   conversationId: number;
 }
 
-/** `GET /v1/agents` 单项（契约 v0.2+；main_agent 居首）。 */
+/** `GET /v1/agents` 单项（契约 v0.2+；main_agent 居首；v0.4+ 含 description）。 */
 export interface InkcopAgentInfo {
   key: string;
   name: string;
   kind: 'main' | 'app';
+  /** 能力说明；主智能体 = 主对话角色定义。缺省（旧桥）时工具描述回落 name/kind。 */
+  description?: string;
 }
 
 export interface InkcopAgentsOk {
@@ -215,7 +217,16 @@ export class InkcopLocalBridgeClient {
       if (key.length === 0) continue;
       const name = typeof row.name === 'string' && row.name.trim().length > 0 ? row.name.trim() : key;
       const kind: 'main' | 'app' = row.kind === 'app' ? 'app' : 'main';
-      agents.push({ key, name, kind });
+      const description =
+        typeof row.description === 'string' && row.description.trim().length > 0
+          ? row.description.trim()
+          : undefined;
+      agents.push({
+        key,
+        name,
+        kind,
+        ...(description !== undefined ? { description } : {}),
+      });
     }
     return { ok: true, agents };
   }

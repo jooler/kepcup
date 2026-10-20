@@ -475,8 +475,8 @@
       ? [...current.filter((entry) => entry !== key), key]
       : current.filter((entry) => entry !== key);
     profile.runtime.inkcop_agent_keys = next;
-    // 勾选即走同机桥；清空则恢复普通对话路径。
-    profile.runtime.message_transport = next.length > 0 ? 'inkcop-local' : '';
+    // v0.4：关联只存 keys，供 call_inkcop_agent 工具；不切换整轮 message_transport。
+    profile.runtime.message_transport = '';
   }
 </script>
 
@@ -1028,6 +1028,9 @@
                     : t('contacts.inkcopAgentKindApp')}
                   · {agent.key}
                 </span>
+                {#if agent.description}
+                  <span class="text-[11px] text-muted-foreground line-clamp-3">{agent.description}</span>
+                {/if}
               </span>
             </label>
           {/each}

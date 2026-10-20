@@ -23,13 +23,18 @@ import {
   INKCOP_LOCAL_TRANSPORT,
   botHasInkcopAgents,
   inkcopAgentsApiAvailable,
+  inkcopAgentDescriptionsAvailable,
   inkcopAgentKeyForBot,
+  inkcopAgentKeys,
+  inkcopAgentToolsEnabled,
   inkcopExternalId,
   inkcopMessageId,
   isInkcopLocalBot,
   shouldUseInkcopBridge,
+  handoffToInkcopAgent,
 } from '../../src/inkcop/index.js';
 import { executeInkcopBridgeTurn } from '../../src/inkcop/bridge-turn.js';
+import { buildInkcopAgentTools } from '../../src/tools/inkcop-tools.js';
 import type { Bot, Message, Run } from '@kepcup/shared';
 import type { TriggerBatch } from '../../src/scheduler/mailbox.js';
 
@@ -164,18 +169,31 @@ describe('inkcop helpers', () => {
       botHasInkcopAgents({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } }),
     ).toBe(true);
     expect(isInkcopLocalBot({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } })).toBe(true);
+    // v0.4：整轮 divert 已关闭；工具门控用 inkcopAgentToolsEnabled。
     expect(
       shouldUseInkcopBridge(
         { profile: { runtime: { inkcop_agent_keys: ['writer'] } } },
         { inkcopLocalCollab: { enabled: true } },
       ),
+    ).toBe(false);
+    expect(
+      inkcopAgentToolsEnabled(
+        { profile: { runtime: { inkcop_agent_keys: ['writer'] } } },
+        { inkcopLocalCollab: { enabled: true } },
+      ),
     ).toBe(true);
     expect(
-      shouldUseInkcopBridge(
+      inkcopAgentToolsEnabled(
         { profile: { runtime: { inkcop_agent_keys: ['writer'] } } },
         { inkcopLocalCollab: { enabled: false } },
       ),
     ).toBe(false);
+    expect(inkcopAgentKeys({ profile: { runtime: { inkcop_agent_keys: ['a', '', 'a', 'b'] } } })).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(inkcopAgentDescriptionsAvailable({ version: 3 })).toBe(false);
+    expect(inkcopAgentDescriptionsAvailable({ version: 4 })).toBe(true);
     expect(inkcopExternalId('bot_1')).toBe('kepcup-bot-bot_1');
     expect(inkcopExternalId('bot_1', 'main_agent')).toBe('kepcup-bot-bot_1');
     expect(inkcopExternalId('bot_1', 'writer')).toBe('kepcup-bot-bot_1--writer');
@@ -521,5 +539,92 @@ describe('executeInkcopBridgeTurn', () => {
       agentKey: 'writer',
     });
     expect(h.status).toBe('completed');
+  });
+});
+
+
+describe('inkcop tool handoff (v0.4)', () => {
+  it('buildInkcopAgentTools registers call_inkcop_agent when keys present', () => {
+    const tools = buildInkcopAgentTools({
+      identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'turn' },
+      inkcop: {
+        botId: 'b',
+        botName: 'Bot',
+        agentKeys: ['main_agent', 'writer'],
+        agents: [
+          { key: 'main_agent', name: '主智能体', kind: 'main', description: '角色：写作助手' },
+          { key: 'writer', name: '写作', kind: 'app' },
+        ],
+        handoff: async () => ({ ok: true, text: 'done', connectionId: 'c1' }),
+      },
+    });
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.name).toBe('call_inkcop_agent');
+    expect(tools[0]?.description).toContain('角色：写作助手');
+    expect(tools[0]?.description).toContain('writer');
+  });
+
+  it('does not register tools when agentKeys empty', () => {
+    const tools = buildInkcopAgentTools({
+      identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'turn' },
+      inkcop: {
+        botId: 'b',
+        botName: 'Bot',
+        agentKeys: [],
+        agents: [],
+        handoff: async () => ({ ok: true, text: 'x', connectionId: 'c' }),
+      },
+    });
+    expect(tools).toHaveLength(0);
+  });
+
+  it('handoffToInkcopAgent collects SSE complete text', async () => {
+    const sse =
+      'event: accepted\ndata: {"turnId":"t","connectionId":"c"}\n\n' +
+      'event: complete\ndata: {"turnId":"t","text":"桥接结果"}\n\n';
+    const fetch = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/v1/connections')) {
+        return Response.json({
+          ok: true,
+          connectionId: 'conn_h',
+          agentKey: 'main_agent',
+          conversationId: 1,
+        });
+      }
+      return new Response(sse, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { version: 4, port: 9, token: 'e'.repeat(32), baseUrl: 'http://127.0.0.1:9' },
+      fetch: fetch as never,
+    });
+    const result = await handoffToInkcopAgent(client, {
+      botId: 'bot_1',
+      botName: '测',
+      agentKey: 'main_agent',
+      text: '写一句',
+    });
+    expect(result).toEqual({ ok: true, text: '桥接结果', connectionId: 'conn_h' });
+  });
+
+  it('listAgents parses description when present', async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({
+        ok: true,
+        agents: [
+          { key: 'main_agent', name: '主', kind: 'main', description: '角色文本' },
+          { key: 'w', name: 'W', kind: 'app' },
+        ],
+      }),
+    );
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { version: 4, port: 9, token: 'f'.repeat(32), baseUrl: 'http://127.0.0.1:9' },
+      fetch: fetch as never,
+    });
+    const listed = await client.listAgents();
+    expect(listed.agents[0]).toMatchObject({ key: 'main_agent', description: '角色文本' });
+    expect(listed.agents[1]?.description).toBeUndefined();
   });
 });
