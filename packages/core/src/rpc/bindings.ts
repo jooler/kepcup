@@ -642,7 +642,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       // W8: only an existing shared browser profile ('' = private).
       domain.browserProfiles.assertSelectable(input.profile.runtime.browser_profile);
-      const bot = domain.bots.create(input.profile, { interview: input.interview });
+      const bot = domain.bots.create(input.profile, {
+        interview: input.interview,
+        // InkCop 同机桥 Bot 不走默认外部 Agent（契约：不暴露为外部智能体）。
+        skipDefaultAgent:
+          input.skipDefaultAgent === true ||
+          input.profile.runtime.message_transport === 'inkcop-local',
+      });
       publish('bot.updated', { bot });
       return { bot };
     }),

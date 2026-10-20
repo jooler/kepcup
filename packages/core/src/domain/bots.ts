@@ -46,6 +46,7 @@ function emptyProfile(): BotProfile {
       mcp_server_ids: [],
       app_connection_ids: [],
       browser_profile: '',
+      message_transport: '',
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
