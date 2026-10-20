@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
   app,
@@ -293,6 +294,39 @@ function bootstrap(): void {
         : {}),
     });
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
+  });
+
+  // 对话里 @ 本地文件/文件夹（只传路径，不上传字节）：macOS 面板可同时选
+  // 文件或目录；Windows/Linux 的原生面板不支持二合一，先让用户选类型。
+  ipcMain.handle('dialog:selectLocalPath', async () => {
+    if (window === null) return null;
+    let mode: 'both' | 'file' | 'folder' = 'both';
+    if (process.platform !== 'darwin') {
+      const choice = await dialog.showMessageBox(window, {
+        type: 'question',
+        message: '选择文件或文件夹',
+        buttons: ['选择文件', '选择文件夹', '取消'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      if (choice.response === 2) return null;
+      mode = choice.response === 1 ? 'folder' : 'file';
+    }
+    const result = await dialog.showOpenDialog(window, {
+      properties:
+        mode === 'both'
+          ? ['openFile', 'openDirectory']
+          : [mode === 'folder' ? 'openDirectory' : 'openFile'],
+      message: '选择文件或文件夹',
+    });
+    const picked = result.canceled ? undefined : result.filePaths[0];
+    if (picked === undefined) return null;
+    try {
+      const info = await stat(picked);
+      return { path: picked, kind: info.isDirectory() ? 'folder' : 'file' } as const;
+    } catch {
+      return null;
+    }
   });
 
   // P11 任务 5 (查看窗口): moves the bot's page for this conversation into a

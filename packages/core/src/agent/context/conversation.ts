@@ -1,6 +1,7 @@
 import {
   BOT_HANDED_OVER_EVENT,
   BOT_HANDOVER_EVENT,
+  parseLocalPathMentionToken,
   PROJECT_MENTION_PREFIX,
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
@@ -262,13 +263,23 @@ function renderTaskQuestionLine(
 
 /**
  * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），项目组出
- * 「标题（项目组）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
- * 不在本项目组的 Bot 或其他项目组的场合。
+ * 「标题（项目组）」，本地文件/文件夹出「名字（路径：…，文件/文件夹）」。正文里
+ * 的 `@名字` / `@路径` 靠它被模型准确理解——尤其是引用了不在本项目组的 Bot、
+ * 其他项目组，或用户指定的本地路径（路径是 AI 用文件工具访问的凭据）。
  */
 function mentionTokenLabel(token: string, options: RenderMessageOptions): string {
   if (token.startsWith(PROJECT_MENTION_PREFIX)) {
     const title = options.mentionLabels?.get(token);
     return title !== undefined ? `${title}（项目组）` : '某项目组';
+  }
+  const local = parseLocalPathMentionToken(token);
+  if (local !== null) {
+    const name =
+      local.path
+        .split(/[\\/]/)
+        .filter((part) => part.length > 0)
+        .at(-1) ?? local.path;
+    return `${name}（路径：${local.path}，${local.kind === 'folder' ? '文件夹' : '文件'}）`;
   }
   return options.botNames.get(token) ?? token;
 }
