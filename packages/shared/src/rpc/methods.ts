@@ -794,11 +794,12 @@ export const botsUpdateInputSchema = z.object({
 /**
  * Upload an avatar image for a bot. The renderer sends the (already
  * downscaled) bytes; core writes the file under `bots/{id}/avatar/` and
- * points `identity.avatar` at it (`upload:{fileName}`).
+ * points `identity.avatar` at it (`upload:{fileName}`). SVG stays vector, so
+ * it is uploaded as-is rather than rasterized.
  */
 export const botsAvatarUploadInputSchema = z.object({
   id: z.string().min(1),
-  mime: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  mime: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']),
   bytesBase64: z.string().min(1),
 });
 export const botsAvatarUploadOutputSchema = botGetOutputSchema;
