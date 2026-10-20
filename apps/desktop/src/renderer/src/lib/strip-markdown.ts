@@ -117,6 +117,9 @@ function stripLinks(text: string): string {
   s = s.replace(/!\[([^\]]*)\]\[[^\]]*\]/g, '$1');
   s = s.replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1');
   s = s.replace(/<((?:https?|mailto):[^>\s]+)>/gi, '$1');
+  // CommonMark 的邮箱自动链接：保留地址本身，别让后面的 HTML 标签规则把整段吃掉
+  // （侧栏卡片预览会带 `"某发件人" <a@b.com>`）。
+  s = s.replace(/<([^\s<>]+@[^\s<>]+)>/g, '$1');
   return s;
 }
 

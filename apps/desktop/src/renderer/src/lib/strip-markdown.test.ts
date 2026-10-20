@@ -16,6 +16,13 @@ describe('stripMarkdown', () => {
     );
   });
 
+  it('keeps the address of an angle-bracket email autolink', () => {
+    expect(stripMarkdown('"CSDN" <csdn@example.com> · 大会报名中')).toBe(
+      '"CSDN" csdn@example.com · 大会报名中',
+    );
+    expect(stripMarkdown('<b>粗体</b>')).toBe('粗体');
+  });
+
   it('keeps link text and image alt, drops the url', () => {
     expect(
       stripMarkdown('看 [文档](https://example.com/a) 和 ![图](https://example.com/b.png)'),
