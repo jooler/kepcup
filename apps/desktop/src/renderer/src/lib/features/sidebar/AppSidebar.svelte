@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, type Component } from 'svelte';
+  import { onDestroy, tick, type Component } from 'svelte';
   import {
     ArrowDown,
     ArrowUp,
@@ -18,6 +18,8 @@
     Folder,
     FolderPlus,
     Check,
+    Pin,
+    PinOff,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -46,12 +48,20 @@
   import {
     UNASSIGNED_SECTION_ID,
     SECTION_NAME_MAX,
+    conversationActivityOf,
     dropBeforeId,
+    isConversationPinned,
     isSectionMoveNoop,
     layoutSidebarSections,
     sectionIdOf,
     sectionStepTarget,
   } from './sidebar-sections';
+  import {
+    SIDEBAR_SORT_DEBOUNCE_MS,
+    SIDEBAR_SORT_MAX_WAIT_MS,
+    activitySnapshotOf,
+    sameActivitySnapshot,
+  } from './sidebar-activity';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -63,8 +73,9 @@
    * 是本组对话数），组名可拖拽排序。管家私聊不参与分组，始终在列表第一位。
    * 条目是头像 + 名称 + 最后一条消息的单行
    * 预览（无消息且无未读/执行中/待确认信号时预览行整行不渲染，只剩名称与头像
-   * 垂直居中）。管理操作（移动到分组 / 重命名 / 复制会话 id / 群设置 / 删除）
-   * 收进右键上下文菜单，不再有常驻「…」按钮。
+   * 垂直居中）。组内按最后消息时间自动排序（去抖提交，避免频繁更新时闪烁），
+   * 置顶条目固定在组内最前。管理操作（置顶 / 移动到分组 / 重命名 /
+   * 复制会话 id / 群设置 / 删除）收进右键上下文菜单，不再有常驻「…」按钮。
    * 新建只保留「+」面板里的对话式新建和新建项目组。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
@@ -134,6 +145,50 @@
       ? null
       : (chat.conversations.find((c) => c.id === contextMenu?.conversationId) ?? null),
   );
+
+  /**
+   * 自动排序的活动时间快照（见 sidebar-activity）：多个 Bot 同时执行时，
+   * 消息事件会频繁改 lastMessageAt。这里先攒着，安静 900ms 后一次性提交；
+   * 持续更新则最多 4s 强制提交一次。提交前布局继续用旧快照，列表不会闪。
+   */
+  let activitySnapshot = $state<Record<string, number>>({});
+  let activityTimer: ReturnType<typeof setTimeout> | null = null;
+  let activityDeadline: ReturnType<typeof setTimeout> | null = null;
+  let activityFirstPendingAt = 0;
+
+  function clearActivityTimers(): void {
+    if (activityTimer !== null) clearTimeout(activityTimer);
+    if (activityDeadline !== null) clearTimeout(activityDeadline);
+    activityTimer = null;
+    activityDeadline = null;
+    activityFirstPendingAt = 0;
+  }
+
+  function commitActivitySnapshot(): void {
+    clearActivityTimers();
+    const next = activitySnapshotOf(chat.conversations);
+    if (!sameActivitySnapshot(next, activitySnapshot)) activitySnapshot = next;
+  }
+
+  $effect(() => {
+    const next = activitySnapshotOf(chat.conversations);
+    if (sameActivitySnapshot(next, activitySnapshot)) {
+      clearActivityTimers();
+      return;
+    }
+    const now = Date.now();
+    if (activityFirstPendingAt === 0) activityFirstPendingAt = now;
+    if (activityTimer !== null) clearTimeout(activityTimer);
+    activityTimer = setTimeout(commitActivitySnapshot, SIDEBAR_SORT_DEBOUNCE_MS);
+    if (activityDeadline === null) {
+      activityDeadline = setTimeout(
+        commitActivitySnapshot,
+        Math.max(0, SIDEBAR_SORT_MAX_WAIT_MS - (now - activityFirstPendingAt)),
+      );
+    }
+  });
+
+  onDestroy(clearActivityTimers);
 
   const plusBots = $derived.by(() => {
     const query = plusQuery.trim().toLowerCase();
@@ -253,6 +308,7 @@
     layoutSidebarSections(
       chat.conversations.filter((conversation) => !isButlerConversation(conversation)),
       sidebarSections.state,
+      (conversation) => activitySnapshot[conversation.id] ?? conversationActivityOf(conversation),
     ),
   );
   /**
@@ -264,6 +320,11 @@
     ...sectionLayout.groups.flatMap((group) => group.conversations),
   ]);
   const contextIsButler = $derived(isButlerConversation(contextConversation ?? undefined));
+  const contextPinned = $derived(
+    contextMenu === null
+      ? false
+      : isConversationPinned(sidebarSections.state, contextMenu.conversationId),
+  );
 
   // 管家不能留在分组里。之前若被移入过，这里把归属清掉（不展开「未指定」：
   // 这不是用户的移动操作）。
@@ -366,6 +427,13 @@
   function moveConversationTo(sectionId: string): void {
     if (!contextMenu || contextIsButler) return;
     sidebarSections.assign(contextMenu.conversationId, sectionId);
+    closeContextMenu();
+  }
+
+  /** 右键置顶 / 取消置顶：只影响所在分组内的先后，立即生效。 */
+  function togglePinFromContext(): void {
+    if (!contextMenu || contextIsButler) return;
+    sidebarSections.togglePin(contextMenu.conversationId);
     closeContextMenu();
   }
 
@@ -686,6 +754,14 @@
             <span class="truncate text-sm" data-testid="conversation-name">
               {nameOf(conversation)}
             </span>
+            {#if isConversationPinned(sidebarSections.state, conversation.id)}
+              <Pin
+                size={12}
+                class="mr-1 shrink-0 rotate-[30deg] text-muted-foreground"
+                aria-hidden="true"
+                data-testid="conversation-pinned"
+              />
+            {/if}
           </span>
           <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
           {#if showMetaRow}
@@ -1267,6 +1343,14 @@
         <span class="min-w-0 flex-1 truncate">{t('sidebar.moveTo')}</span>
         <ChevronRight class="size-3.5 text-muted-foreground" />
       </button>
+    {/if}
+    {#if !contextIsButler}
+      {@render contextItem(
+        contextPinned ? PinOff : Pin,
+        contextPinned ? t('sidebar.unpin') : t('sidebar.pin'),
+        togglePinFromContext,
+        'context-toggle-pin',
+      )}
     {/if}
     {#if contextConversation?.type === 'project'}
       {@render contextItem(

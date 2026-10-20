@@ -1559,6 +1559,8 @@ export const zhCN = {
   'sidebar.renameBot': '重命名 Bot',
   'sidebar.copyConversationId': '复制会话 ID',
   'sidebar.copiedConversationId': '已复制会话 ID',
+  'sidebar.pin': '置顶',
+  'sidebar.unpin': '取消置顶',
   'sidebar.moveTo': '移动到',
   'sidebar.sectionUnassigned': '未指定',
   'sidebar.createSection': '新建分组',
