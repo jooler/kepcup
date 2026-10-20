@@ -29,6 +29,8 @@ export const zhCN = {
   'chats.deleteConversation': '删除对话',
   'chats.deleteConversationTitle': '删除与 {name} 的对话',
   'chats.deleteConversationBody': '对话的消息、附件与执行记录将一并删除，此操作不可恢复。',
+  'chats.deleteConversationKeepsBot':
+    'Bot 将继续保留在您的通讯录中，之后还能再次对话，删除 Bot 请在 设置 - 通讯录 中操作。',
   'chats.edit': '编辑',
   'chats.saveEdit': '保存',
   'chats.cancelEdit': '取消',
