@@ -28,6 +28,8 @@ export interface SidebarSectionsState {
   assignments: Record<string, string>;
   /** 值为 true 的分组处于折叠。缺省 = 展开。 */
   collapsed: Record<string, boolean>;
+  /** 置顶的 conversationId（值为 true）。缺省 = 未置顶。 */
+  pinned: Record<string, boolean>;
 }
 
 export interface SectionGroup<T> {
@@ -57,6 +59,7 @@ export function emptySidebarSections(): SidebarSectionsState {
     order: [UNASSIGNED_SECTION_ID],
     assignments: {},
     collapsed: {},
+    pinned: {},
   };
 }
 
@@ -135,7 +138,15 @@ export function normalizeSidebarSections(input: unknown): SidebarSectionsState {
     }
   }
 
-  return { sections, order, assignments, collapsed };
+  const pinned: Record<string, boolean> = {};
+  if (raw.pinned !== null && typeof raw.pinned === 'object' && !Array.isArray(raw.pinned)) {
+    for (const [conversationId, value] of Object.entries(raw.pinned)) {
+      if (value !== true || conversationId.length === 0) continue;
+      pinned[conversationId] = true;
+    }
+  }
+
+  return { sections, order, assignments, collapsed, pinned };
 }
 
 export function loadSidebarSections(storage: SectionStorage | null): SidebarSectionsState {
@@ -169,24 +180,61 @@ export function sectionIdOf(state: SidebarSectionsState, conversationId: string)
   return UNASSIGNED_SECTION_ID;
 }
 
+export interface SidebarActivityItem {
+  id: string;
+  lastMessageAt?: number | null;
+  createdAt?: number;
+}
+
+/** 会话活跃时间：最后一条消息，没有消息时用创建时间。 */
+export function conversationActivityOf(item: SidebarActivityItem): number {
+  const at = item.lastMessageAt ?? item.createdAt ?? 0;
+  return Number.isFinite(at) ? at : 0;
+}
+
+export function isConversationPinned(state: SidebarSectionsState, conversationId: string): boolean {
+  return state.pinned[conversationId] === true;
+}
+
 /**
- * 按分组装桶。桶内保持传入顺序。管家由调用方排除，不进任何一组。
+ * 组内排序：置顶的在前，置顶内部与其余条目都按最后消息时间倒序。
+ * 时间相同时保持传入顺序（Array.prototype.sort 稳定），避免无意义的重排。
+ */
+function sortConversations<T extends { id: string }>(
+  items: readonly T[],
+  pinned: Record<string, boolean>,
+  activityOf: (item: T) => number,
+): T[] {
+  return [...items].sort((a, b) => {
+    const aPinned = pinned[a.id] === true;
+    const bPinned = pinned[b.id] === true;
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    return activityOf(b) - activityOf(a);
+  });
+}
+
+/**
+ * 按分组装桶。桶内先按置顶、再按最后消息时间倒序（管家由调用方排除，不进任何一组）。
+ * `activityOf` 可传入一个已去抖的时间快照：频繁更新时布局保持稳定，只在快照提交后
+ * 重排一次；缺省直接读条目自身的 lastMessageAt / createdAt。
  * 只有「未指定」时不标折叠，避免组名隐藏后列表被收起且无法展开。
  */
 export function layoutSidebarSections<T extends { id: string }>(
   items: readonly T[],
   state: SidebarSectionsState,
+  activityOf: (item: T) => number = (item) => conversationActivityOf(item),
 ): SectionLayout<T> {
   const normalized = normalizeSidebarSections(state);
+  const sorted = sortConversations(items, normalized.pinned, activityOf);
   if (normalized.sections.length === 0) {
     return {
       showHeaders: false,
       groups: [
         {
           id: UNASSIGNED_SECTION_ID,
-          conversations: [...items],
+          conversations: sorted,
           collapsed: false,
-          count: items.length,
+          count: sorted.length,
         },
       ],
     };
@@ -194,7 +242,7 @@ export function layoutSidebarSections<T extends { id: string }>(
 
   const buckets = new Map<string, T[]>();
   for (const id of normalized.order) buckets.set(id, []);
-  for (const item of items) {
+  for (const item of sorted) {
     const sectionId = sectionIdOf(normalized, item.id);
     const bucket = buckets.get(sectionId) ?? buckets.get(UNASSIGNED_SECTION_ID);
     bucket?.push(item);
@@ -286,8 +334,21 @@ export function unassignConversation(
   return { ...normalized, assignments };
 }
 
+/** 切换置顶。置顶只影响所在分组内的先后，不改变分组归属。 */
+export function togglePinned(
+  state: SidebarSectionsState,
+  conversationId: string,
+): SidebarSectionsState {
+  const normalized = normalizeSidebarSections(state);
+  if (conversationId.length === 0) return normalized;
+  const pinned = { ...normalized.pinned };
+  if (pinned[conversationId] === true) delete pinned[conversationId];
+  else pinned[conversationId] = true;
+  return { ...normalized, pinned };
+}
+
 /**
- * 丢掉指向已不存在对话的归属（对话被删、Bot 被删后直聊不再列出）。
+ * 丢掉指向已不存在对话的归属与置顶（对话被删、Bot 被删后直聊不再列出）。
  * existingConversationIds 必须是完整列表：调用方只在列表刷新完成后调用。
  */
 export function pruneSidebarSections(
@@ -297,10 +358,13 @@ export function pruneSidebarSections(
   const normalized = normalizeSidebarSections(state);
   const existing = new Set(existingConversationIds);
   const stale = Object.keys(normalized.assignments).filter((id) => !existing.has(id));
-  if (stale.length === 0) return normalized;
+  const stalePinned = Object.keys(normalized.pinned).filter((id) => !existing.has(id));
+  if (stale.length === 0 && stalePinned.length === 0) return normalized;
   const assignments = { ...normalized.assignments };
   for (const id of stale) delete assignments[id];
-  return { ...normalized, assignments };
+  const pinned = { ...normalized.pinned };
+  for (const id of stalePinned) delete pinned[id];
+  return { ...normalized, assignments, pinned };
 }
 
 export function renameSection(

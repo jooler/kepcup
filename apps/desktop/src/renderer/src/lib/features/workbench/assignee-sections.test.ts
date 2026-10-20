@@ -65,6 +65,7 @@ describe('buildAssigneeSections', () => {
       order: ['sec_work', UNASSIGNED_SECTION_ID],
       assignments: { 'c-a': 'sec_work', g1: 'sec_work' },
       collapsed: {},
+      pinned: {},
     };
     const conversations: AssigneeConversation[] = [
       conv({
