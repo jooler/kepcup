@@ -15,7 +15,7 @@ import {
 import { inkcopAgentKeyForBot, inkcopExternalId, inkcopMessageId } from './index.js';
 
 /**
- * InkCop 同机桥对话轮（契约 §5 / v0.3）：不走内置 LLM / ACP；按 Bot 勾选 agentKey 建连。
+ * InkCop 同机桥对话轮（契约 §5 / v0.3）：legacy 整轮 divert（v0.4 起 orchestrator 不再调用）；仅单测保留。
  * mailbox 仍负责串行；本模块只负责一次 run 的 HTTP+SSE 落地与收尾。
  */
 
@@ -53,7 +53,7 @@ export async function executeInkcopBridgeTurn(
 ): Promise<void> {
   const client = deps.client ?? new InkcopLocalBridgeClient();
   let handled = false;
-  const inProgress = deps.inProgressText ?? 'InkCop 处理中…';
+  const inProgress = deps.inProgressText ?? '正在调用 InkCop 智能体…';
 
   const markRunning = (): void => {
     const run = deps.runs.update(runId, { status: 'running' });

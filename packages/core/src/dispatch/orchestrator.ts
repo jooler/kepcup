@@ -4451,6 +4451,7 @@ export class Orchestrator {
             ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
             ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
             // the 「新派发：做完给结论」 rule would read the notice as a new assignment.

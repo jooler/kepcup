@@ -561,6 +561,8 @@ describe('inkcop tool handoff (v0.4)', () => {
     expect(tools).toHaveLength(1);
     expect(tools[0]?.name).toBe('call_inkcop_agent');
     expect(tools[0]?.description).toContain('角色：写作助手');
+    expect(tools[0]?.description).toContain('【默认禁止调用】');
+    expect(tools[0]?.description).toContain('禁止');
     expect(tools[0]?.description).toContain('writer');
   });
 
@@ -626,5 +628,70 @@ describe('inkcop tool handoff (v0.4)', () => {
     const listed = await client.listAgents();
     expect(listed.agents[0]).toMatchObject({ key: 'main_agent', description: '角色文本' });
     expect(listed.agents[1]?.description).toBeUndefined();
+  });
+
+  it('registering tools does not call handoff (turn start must not bridge)', async () => {
+    let handoffCalls = 0;
+    const tools = buildInkcopAgentTools({
+      identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'turn' },
+      inkcop: {
+        botId: 'b',
+        botName: 'Bot',
+        agentKeys: ['main_agent'],
+        agents: [{ key: 'main_agent', name: '主智能体', kind: 'main', description: '写作' }],
+        handoff: async () => {
+          handoffCalls += 1;
+          return { ok: true, text: 'should-not-run', connectionId: 'c1' };
+        },
+      },
+    });
+    expect(tools).toHaveLength(1);
+    expect(handoffCalls).toBe(0);
+    // Legacy transport + keys still must not imply whole-turn divert.
+    expect(
+      shouldUseInkcopBridge(
+        {
+          profile: {
+            runtime: { message_transport: INKCOP_LOCAL_TRANSPORT, inkcop_agent_keys: ['main_agent'] },
+          },
+        },
+        { inkcopLocalCollab: { enabled: true } },
+      ),
+    ).toBe(false);
+  });
+
+  it('progress text only appears when call_inkcop_agent execute runs', async () => {
+    const progress: string[] = [];
+    let handoffCalls = 0;
+    const tools = buildInkcopAgentTools({
+      identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'turn' },
+      inkcop: {
+        botId: 'b',
+        botName: 'Bot',
+        agentKeys: ['main_agent'],
+        agents: [{ key: 'main_agent', name: '主', kind: 'main' }],
+        handoff: async () => {
+          handoffCalls += 1;
+          return { ok: true, text: 'ok', connectionId: 'c1' };
+        },
+      },
+    });
+    expect(handoffCalls).toBe(0);
+    expect(progress).toEqual([]);
+    const tool = tools[0]!;
+    const result = await tool.execute(
+      { agent_key: 'main_agent', task: '写一句测试' },
+      {
+        identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'turn' },
+        signal: new AbortController().signal,
+        terminate: () => undefined,
+        progress: (text: string) => {
+          progress.push(text);
+        },
+      },
+    );
+    expect(handoffCalls).toBe(1);
+    expect(progress).toEqual(['正在调用 InkCop 智能体…']);
+    expect(result.ok).toBe(true);
   });
 });

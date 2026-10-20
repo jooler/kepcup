@@ -80,12 +80,13 @@ export function buildInkcopAgentTools(input: {
   const tool: ToolDefinition<{ agent_key: string; task: string }> = {
     name: 'call_inkcop_agent',
     description:
-      '把任务交给已关联的本机 InkCop 智能体执行（像拉起外部任务；由 InkCop 侧跑，结果回到这里）。' +
-      'Bot 平时仍用自己的能力回复；仅在以下情况调用：' +
-      '（1）用户明确要求使用 InkCop / 某个 InkCop 智能体；' +
-      '（2）你判断需要其写作或应用能力才能完成。' +
-      '不要把每一轮用户消息都转交。调用后根据返回内容整理成对用户的回复。\n' +
-      `可选智能体：\n${listing}`,
+      '【默认禁止调用】把任务交给已关联的本机 InkCop 智能体（可选移交，不是默认回复通道）。' +
+      '你必须先用自己的能力直接回复用户；绝大多数轮次都不要调用本工具。' +
+      '仅当同时满足时才可调用：（1）用户本轮消息明确点名 InkCop、某个已关联智能体名称，' +
+      '或明确说「交给 / 让 / 用 … 智能体」；（2）该任务确实需要对方专长。' +
+      '禁止：把普通闲聊、寒暄、问答、调度、确认类消息转交；禁止把用户原话原样当 task 整轮直通。' +
+      '调用后根据工具返回整理成你的回复，不要假装自己直连了 InkCop。\n' +
+      `可选智能体（仅供上述移交场景参考）：\n${listing}`,
     parameters: Type.Object(
       {
         agent_key: agentKeyParamSchema(keys),
@@ -97,7 +98,7 @@ export function buildInkcopAgentTools(input: {
       { additionalProperties: false },
     ),
     execute: async (params, ctx) => {
-      ctx.progress('InkCop 处理中…');
+      ctx.progress('正在调用 InkCop 智能体…');
       const agentKey = (params.agent_key ?? '').trim();
       if (!keys.includes(agentKey)) {
         return {

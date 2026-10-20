@@ -33,7 +33,8 @@
 - 所有 `/v1/*` 带 `Authorization: Bearer <apiKey>`；**401** → 提示「密钥无效或未配置」。
 - **整轮 divert 已移除**：`shouldUseInkcopBridge` 恒为 false（兼容旧调用点）。
 - **工具门控**：`inkcopAgentToolsEnabled(bot, settings)` = 协作已启用 **且** `inkcop_agent_keys` 非空。
-- Legacy `runtime.message_transport === 'inkcop-local'` 不再改变发信路径；保存关联时应清空该字段。
+- Legacy `runtime.message_transport === 'inkcop-local'` 不再改变发信路径；读出/写入 Bot 时清空该字段。
+- `call_inkcop_agent`：**默认禁止调用**（工具描述 + 系统规则）；仅用户明确点名 / 要求移交时由模型调用。进度文案「正在调用 InkCop 智能体…」只在工具 `execute` 时出现，禁止在回合开始时出现。
 
 ## API（客户端）
 

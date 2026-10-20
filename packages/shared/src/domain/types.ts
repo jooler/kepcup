@@ -74,16 +74,14 @@ export const botRuntimeSchema = z.object({
    */
   browser_profile: z.string().default('').catch(''),
   /**
-   * 对话消息传输（InkCop 同机桥，契约 v0.1）：'' = 内置引擎；
-   * `inkcop-local` = 用户消息经本机 HTTP+SSE 交给 InkCop Connection（非 mailbox、
-   * 非 ACP 主入口；ACP `agent:inkcop` 仍为调试旁路）。知识检索仍走 LoomVec MCP。
-   * Profile JSON，无迁移；未知值按 ''。
+   * Legacy（契约 v0.4 起废弃）：曾用 `inkcop-local` 把整轮用户消息 divert 到本机桥。
+   * 现恒应为空；关联智能体只走 `inkcop_agent_keys` + `call_inkcop_agent` 工具移交。
+   * 读出/写入时 core 会清空残留的 `inkcop-local`。未知值按 ''。
    */
   message_transport: z.enum(['', 'inkcop-local']).default('').catch(''),
   /**
-   * InkCop 同机桥 v0.2：本 Bot 关联的 InkCop 智能体 key 列表（多选）。
-   * 空 = 未关联；系统 InkCop Bot 发信时取首项（缺省 `main_agent`）；其它 Bot
-   * 存关联供显式移交。Profile JSON，无迁移。
+   * InkCop 同机协作：本 Bot 可调用的 InkCop 智能体 key 列表（多选）。
+   * 空 = 未关联；非空且扩展中心已启协作时注册 `call_inkcop_agent`（非整轮 divert）。
    */
   inkcop_agent_keys: z.array(z.string().min(1)).default([]).catch([]),
   /**
