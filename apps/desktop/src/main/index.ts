@@ -35,6 +35,7 @@ import {
   sensorSettingsUrl,
 } from './sensor-permission';
 import { wireUpdater } from './updater';
+import { createFileUpdateSourceStore } from './update-sources';
 
 let window: BrowserWindow | null = null;
 let quitting = false;
@@ -410,6 +411,12 @@ function bootstrap(): void {
     cancelActiveRuns: async (reason) => {
       await coreHost?.callPlatform('update.cancelActive', { reason });
     },
+    // 选源赢家的持久化（GitHub/R2/OSS 探测的结果）：跨启动记住可达的源，
+    // 之后每次检查直达，不再探测。
+    store: createFileUpdateSourceStore(() => app.getPath('userData')),
+    // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
+    // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
+    forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
   });
   // 托盘「检查更新…」: opens the window (the banner / settings row live
   // there) and runs a manual check; failures stay silent (P13-A semantics).
