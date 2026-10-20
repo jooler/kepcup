@@ -95,7 +95,7 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+      class="rounded-[18px] px-3 py-2 my-2 text-sm whitespace-pre-wrap
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
         {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleColor?.hex}
