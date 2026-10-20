@@ -7,6 +7,8 @@ function settings(partial: Partial<Settings['inkcopLocalCollab']>): Settings {
     inkcopLocalCollab: {
       enabled: false,
       systemBotId: '',
+      apiKey: '',
+      baseUrl: '',
       ...partial,
     },
   } as Settings;
