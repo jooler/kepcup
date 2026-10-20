@@ -79,12 +79,12 @@
     </div>
     <p class="shrink-0 text-xs text-muted-foreground">{t('workbench.memo.trashHint')}</p>
     <div
-      class="flex min-h-0 flex-1 flex-wrap content-start justify-center gap-2 overflow-y-auto pr-1"
+      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fit,minmax(15rem,22rem))] justify-center gap-2 overflow-y-auto pr-1"
       data-testid="memo-trash-list"
     >
       {#if trashed.length === 0}
         <p
-          class="w-full py-6 text-center text-sm text-muted-foreground"
+          class="col-span-full py-6 text-center text-sm text-muted-foreground"
           data-testid="memo-trash-empty"
         >
           {t('workbench.memo.trashEmpty')}
@@ -92,7 +92,7 @@
       {/if}
       {#each trashed as memo (memo.id)}
         <div
-          class="max-w-[22rem] min-w-0 grow basis-[15rem] rounded-lg border bg-card p-3 text-sm"
+          class="min-w-0 rounded-lg border bg-card p-3 text-sm"
           data-testid="memo-trash-item"
           data-memo-id={memo.id}
         >
@@ -137,22 +137,28 @@
       />
     </div>
     <div
-      class="flex min-h-0 flex-1 flex-wrap content-start justify-center gap-2 overflow-y-auto pr-1"
+      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fit,minmax(15rem,22rem))] justify-center gap-2 overflow-y-auto pr-1"
       data-testid="memo-list"
     >
       {#if workbench.memos.length === 0 && (workbench.loadState === 'loading' || workbench.loadState === 'idle')}
-        <p class="w-full py-6 text-center text-sm text-muted-foreground" data-testid="memo-loading">
+        <p
+          class="col-span-full py-6 text-center text-sm text-muted-foreground"
+          data-testid="memo-loading"
+        >
           {t('workbench.loading')}
         </p>
       {:else if workbench.memos.length === 0 && workbench.loadState === 'error'}
         <!-- 错误提示在视图顶部（带重试），这里不显示「空」 -->
       {:else if workbench.memos.length === 0}
-        <p class="w-full py-6 text-center text-sm text-muted-foreground" data-testid="memo-empty">
+        <p
+          class="col-span-full py-6 text-center text-sm text-muted-foreground"
+          data-testid="memo-empty"
+        >
           {t('workbench.memo.empty')}
         </p>
       {:else if visible.length === 0}
         <p
-          class="w-full py-6 text-center text-sm text-muted-foreground"
+          class="col-span-full py-6 text-center text-sm text-muted-foreground"
           data-testid="memo-no-match"
         >
           {t('workbench.memo.noMatch')}
