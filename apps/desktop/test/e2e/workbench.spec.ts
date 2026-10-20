@@ -213,6 +213,44 @@ test('workbench entry: switching keeps composer drafts, no conversation highligh
   }
 });
 
+test('workbench inputs: memo draft, memo search and quick-add survive a round trip to a bot', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-wb-inputs-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    const bot = await createBotAndOpenChat(page, '阿丙');
+    await openWorkbench(page);
+
+    const memoInput = page.locator('[data-testid="memo-input"]');
+    const memoSearch = page.locator('[data-testid="memo-search"]');
+    const quickAdd = page.locator('[data-testid="todo-quick-add"]');
+    await memoInput.fill('还没想好的念头');
+    await memoSearch.fill('咖啡');
+    await quickAdd.fill('还没定人的事');
+
+    // 切到 Bot 会话：主区换成对话，工作台整棵卸载（组件里的 $state 都丢了）。
+    await openRow(page, bot.conversationId);
+    await expect(page.locator('[data-testid="workbench-view"]')).toHaveCount(0);
+
+    // 切回工作台：三处文本原样还在（草稿在 store 里，重挂时水合回来）。
+    await openWorkbench(page);
+    await expect(memoInput).toHaveValue('还没想好的念头');
+    await expect(memoSearch).toHaveValue('咖啡');
+    await expect(quickAdd).toHaveValue('还没定人的事');
+    await shot(page, '23-workbench-inputs-kept');
+
+    // 存下备忘后草稿才清空（清空是保存的结果，不是切视图的结果）。搜索词也一并保留，
+    // 先清掉过滤再看新备忘落进列表。
+    await memoSearch.fill('');
+    await memoInput.press('Enter');
+    await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(1, { timeout: 15_000 });
+    await expect(memoInput).toHaveValue('');
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('restart restore: reload lands on the last main view (workbench or chats)', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-wb-restore-');

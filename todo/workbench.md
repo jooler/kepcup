@@ -739,3 +739,9 @@ shared 新增（均向后兼容）：`textContent.todoUpdate?: boolean`；`todos
 1. `apps/desktop/test/e2e/workbench.spec.ts` 全部 13 例。其中「重启补发」一例有意等待约 70 秒（迟到超过 `SCHEDULE_LATE_BY_MIN_MS` = 60 秒才标注「延迟派发」），其余单步操作应在 5 秒内有反馈。
 2. 全量 e2e 回归。已知 main 基线失败 3 条：`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description…」、`wiki.spec`「wiki tab: browse the page tree…」（这三条在 Linux 容器里失败，Mac 上可能通过）。
 3. 人工看一遍：工作台全貌（按成员分道）、事项抽屉（新建 / 已排期 / 进行中 / 待验收）、备忘栏与最近删除、对话里的派发卡与更新卡、明暗主题。
+
+**输入草稿跨视图保留（2026-10-21，分支 `v0.1.2`）**
+
+- 问题：主区在对话与工作台之间二选一（§5.1 / 设计 39 §4.1），切到任一 Bot 会话会把工作台整棵卸载；备忘输入框、备忘搜索框、事项快速新建框的文本原本是组件 `$state`，切回来就空了。
+- 改法：三处草稿移入 `workbench` store（`memoDraft` / `memoQuery` / `todoDraft`，内存、不落盘，与对话输入框的 `composerDrafts` 同一思路），组件 `bind:value` 直连 store，保存成功才清空。事项详情弹框是模态，仍按原设计在离开工作台时关闭（脏表单先经放弃确认），本次不动；`tab` / 「最近结束」展开态 / 回收站视图属导航态，也不随视图缓存。
+- 测试：单测 `workbench.svelte.test.ts`「输入草稿（切到对话再切回不丢）」（18 例全过）；e2e `workbench.spec.ts`「workbench inputs: memo draft, memo search and quick-add survive a round trip to a bot」。该 e2e 在未打补丁的构建上按预期失败（`memo-input` 切回后为空），打上补丁后通过——Mac 本机定向跑该 spec 的 4 例（入口、输入草稿、备忘 CRUD、布局）全过。
