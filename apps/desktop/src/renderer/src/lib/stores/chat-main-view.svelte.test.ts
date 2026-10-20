@@ -181,6 +181,42 @@ describe('工作台期间的未读与已读', () => {
   });
 });
 
+describe('侧栏最后一条消息预览', () => {
+  it('卡片消息整理成「icon + 标题 + 摘要」，与启动时的列表预览同源', () => {
+    emit('message.created', {
+      conversationId: 'preview',
+      message: {
+        id: 'card-1',
+        conversationId: 'preview',
+        seq: 1,
+        senderType: 'system',
+        senderBotId: null,
+        kind: 'card',
+        content: {
+          cardType: 'mail',
+          approvalId: '',
+          mailEvent: 'arrived',
+          mailFrom: '"CSDN" <csdn@example.com>',
+          mailSubject: '大会报名中',
+        },
+        status: 'normal',
+        runId: null,
+        replyTo: null,
+        attachments: [],
+        mentions: [],
+        batchId: null,
+        editedAt: null,
+        ownerBotId: null,
+        taskId: null,
+        createdAt: 1,
+      },
+    });
+    expect(chat.lastMessageText['preview']).toBe(
+      '✉️ 新邮件 "CSDN" <csdn@example.com> · 大会报名中',
+    );
+  });
+});
+
 describe('慢 select 与用户主动打开工作台', () => {
   it('select 进行期间用户打开了工作台：结算时不把视图拉回对话', async () => {
     let release: () => void = () => undefined;

@@ -3,6 +3,7 @@ import {
   PROJECT_MEMBER_PREVIEW_MAX,
   projectTitleFromMemberNames,
   isSparseBotProfile,
+  messagePreviewText,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
@@ -385,8 +386,8 @@ class ChatState {
     // 切换会话撤销门禁缺设置卡（与 close 同理；失败 run 的 setup 卡随
     // failedRun 天然按会话生效，无需处理）。
     this.#pendingSetup = null;
-    // 末尾可能是 system_event（如环境安装批准提示），预览要重建到最后一「文本」
-    // 消息——与 #ingestMessage 逐条事件记录的行为对齐。
+    // 末尾可能是不可预览的 system_event（如环境安装批准提示），预览要重建到
+    // 最后一条文本或卡片消息——与 #ingestMessage 逐条事件记录的行为对齐。
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
@@ -436,7 +437,11 @@ class ChatState {
   // --- project compose (D92 §11.1: two-round creation, lead first) -------------
 
   #composeState(): ComposeState {
-    return { phase: this.composePhase, leadId: this.composeLeadId, memberIds: this.composeMemberIds };
+    return {
+      phase: this.composePhase,
+      leadId: this.composeLeadId,
+      memberIds: this.composeMemberIds,
+    };
   }
 
   #setComposeState(next: ComposeState): void {
@@ -867,11 +872,15 @@ class ChatState {
     sidebarSections.prune(this.conversations.map((c) => c.id));
   }
 
-  /** Records the sidebar's single-line「最后一条消息」preview (text messages only). */
+  /**
+   * Records the sidebar's single-line「最后一条消息」preview. Text messages keep
+   * their body; cards are folded into「icon + 标题 + 摘要」(same helper as
+   * conversations.list, so startup and live events agree).
+   */
   #noteLastMessage(conversationId: string, message: Message | null): boolean {
-    if (message === null || message.status === 'recalled' || message.kind !== 'text') return false;
-    const text = 'text' in message.content ? message.content.text.trim() : '';
-    if (text.length === 0) return false;
+    if (message === null) return false;
+    const text = messagePreviewText(message);
+    if (text === null || text.length === 0) return false;
     this.lastMessageText = { ...this.lastMessageText, [conversationId]: text };
     return true;
   }

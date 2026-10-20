@@ -52,7 +52,7 @@ function append(rig: Rig, input: Parameters<MessagesService['append']>[0]): Mess
   return rig.messages.append({ conversationId: rig.conversationId, ...input });
 }
 
-/** 在 rig 上追加一个新会话（latestTextByConversation 的多会话用例）。 */
+/** 在 rig 上追加一个新会话（latestPreviewByConversation 的多会话用例）。 */
 let extraConversationCount = 0;
 function addConversation(rig: Rig): string {
   const id = `conv_extra_${extraConversationCount++}`;
@@ -164,9 +164,9 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
       append(rig, { senderType: 'user', kind: 'text', text: '你好', at: 5_000 });
       const readAt = () =>
         (
-          rig.db.prepare('select last_message_at as at from conversations where id = ?').get(
-            rig.conversationId,
-          ) as { at: number }
+          rig.db
+            .prepare('select last_message_at as at from conversations where id = ?')
+            .get(rig.conversationId) as { at: number }
         ).at;
       expect(readAt()).toBe(5_000);
       append(rig, { senderType: 'system', kind: 'card', cardType: 'access', at: 9_000 });
@@ -235,24 +235,38 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
           text: `${event} 无标记存量行`,
         });
       }
-      append(rig, { senderType: 'system', kind: 'system_event', event: 'run_interrupted', text: '可见' });
+      append(rig, {
+        senderType: 'system',
+        kind: 'system_event',
+        event: 'run_interrupted',
+        text: '可见',
+      });
       const visible = rig.messages.listVisible(rig.conversationId, { limit: 200 });
-      expect(visible.map((m) => (m.content as { event?: string }).event)).toEqual(['run_interrupted']);
+      expect(visible.map((m) => (m.content as { event?: string }).event)).toEqual([
+        'run_interrupted',
+      ]);
     } finally {
       closeDatabase(rig.db);
     }
   });
 });
 
-describe('latestTextByConversation（左栏「最后一条消息」预览）', () => {
-  it('每个会话取最后一条非空文本消息；卡/系统事件/撤回/空文本不进预览', () => {
+describe('latestPreviewByConversation（左栏「最后一条消息」预览）', () => {
+  it('每个会话取最后一条可预览消息：文本取正文，卡片整理成单行，撤回/空文本/内部事件跳过', () => {
     const rig = makeRig();
     try {
       const other = addConversation(rig);
-      // 会话 1：文本 → 卡 → 系统事件（尾部非文本，预览停在文本）。
+      // 会话 1：文本 → 卡片（最新，预览取卡片）→ 系统事件（不算预览）。
       append(rig, { senderType: 'user', kind: 'text', text: '第一条' });
       append(rig, { senderType: 'bot', kind: 'text', text: '**最后一条**' });
       append(rig, { senderType: 'system', kind: 'card', cardType: 'environment' });
+      // 任务中间进度不算对话内容，跳到更早的卡片。
+      append(rig, {
+        senderType: 'bot',
+        kind: 'text',
+        text: '正在执行',
+        taskOrigin: { taskId: 'run_t', interim: true },
+      });
       append(rig, {
         senderType: 'system',
         kind: 'system_event',
@@ -276,15 +290,79 @@ describe('latestTextByConversation（左栏「最后一条消息」预览）', (
       append(rig, { conversationId: other, senderType: 'user', kind: 'text', text: '   ' });
       append(rig, { conversationId: other, senderType: 'user', kind: 'text', text: '\t\n' });
 
-      const result = rig.messages.latestTextByConversation();
-      expect(result[rig.conversationId]).toBe('**最后一条**');
+      const result = rig.messages.latestPreviewByConversation();
+      expect(result[rig.conversationId]).toBe('📦 环境安装请求');
       expect(result[other]).toBe('会话二的预览');
     } finally {
       closeDatabase(rig.db);
     }
   });
 
-  it('没有任何文本消息的会话不出现在结果里', () => {
+  it('邮件 / 监看 / 展示 / 组件卡都整理成「icon + 标题 + 摘要」单行', () => {
+    const rig = makeRig();
+    try {
+      const conversation = addConversation(rig);
+      append(rig, {
+        conversationId: conversation,
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'mail',
+        cardMail: {
+          mailEvent: 'arrived',
+          mailAccountId: 'acc',
+          mailKey: 'm1',
+          mailFrom: '"CSDN" <csdn@example.com>',
+          mailSubject: '2026 CSDN 1024 Builder 大会报名火热进行中！',
+        },
+      });
+      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe(
+        '✉️ 新邮件 "CSDN" <csdn@example.com> · 2026 CSDN 1024 Builder 大会报名火热进行中！',
+      );
+
+      append(rig, {
+        conversationId: conversation,
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'watch',
+        cardWatch: { watchId: 'w1', watchEvent: 'alert', watchSummary: '价格从 99 降到 79' },
+      });
+      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe(
+        '👁️ 网页监看提醒 价格从 99 降到 79',
+      );
+
+      append(rig, {
+        conversationId: conversation,
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'present',
+        cardPresent: { kind: 'bar', title: '各渠道销量', data: {} },
+      });
+      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe('📊 各渠道销量');
+
+      append(rig, {
+        conversationId: conversation,
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'bot_widget',
+        cardWidget: {
+          widgetId: 'w',
+          version: 1,
+          title: '销售看板',
+          description: '按周查看',
+          scope: 'conversation',
+          sha256: 'a',
+          sizeBytes: 10,
+          botId: null,
+          createdAt: 1,
+        },
+      });
+      expect(rig.messages.latestPreviewByConversation()[conversation]).toBe('🧩 销售看板 按周查看');
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('只有中途权限卡 / 内部事件的会话不出现在结果里', () => {
     const rig = makeRig();
     try {
       const other = addConversation(rig);
@@ -292,9 +370,16 @@ describe('latestTextByConversation（左栏「最后一条消息」预览）', (
         conversationId: other,
         senderType: 'system',
         kind: 'card',
-        cardType: 'approval',
+        cardType: 'access',
       });
-      const result = rig.messages.latestTextByConversation();
+      append(rig, {
+        conversationId: rig.conversationId,
+        senderType: 'system',
+        kind: 'system_event',
+        event: 'wiki_ingested',
+        text: '内部事件',
+      });
+      const result = rig.messages.latestPreviewByConversation();
       expect(result[other]).toBeUndefined();
       expect(result[rig.conversationId]).toBeUndefined();
     } finally {

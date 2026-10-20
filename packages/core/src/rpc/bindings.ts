@@ -760,13 +760,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
 
     'conversations.list': method(voidInput, conversationsListOutputSchema, async () => {
-      // 左栏预览（每个会话最后一条文本消息）随列表一并下发：启动时不逐个
-      // 打开会话也能看到「最后一条消息」。
-      const lastTexts = domain.messages.latestTextByConversation();
+      // 左栏预览（每个会话最后一条可预览消息：文本或卡片摘要）随列表一并
+      // 下发：启动时不逐个打开会话也能看到「最后一条消息」。
+      const previews = domain.messages.latestPreviewByConversation();
       return {
         conversations: domain.conversations.list().map((conversation) => {
           const view = conversationView(conversation);
-          const text = lastTexts[conversation.id];
+          const text = previews[conversation.id];
           return text === undefined ? view : { ...view, lastMessageText: text };
         }),
       };
@@ -856,9 +856,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (episode === null) throw new AppError('NOT_FOUND', `协作回合 ${input.id} 不存在`);
       return { episode };
     }),
-    'episodes.resume': method(episodesResumeInputSchema, episodesResumeOutputSchema, async (input) => ({
-      episode: orchestrator.episodes.resume(input.id),
-    })),
+    'episodes.resume': method(
+      episodesResumeInputSchema,
+      episodesResumeOutputSchema,
+      async (input) => ({
+        episode: orchestrator.episodes.resume(input.id),
+      }),
+    ),
     'episodes.stop': method(episodesStopInputSchema, episodesStopOutputSchema, async (input) => ({
       episode: orchestrator.episodes.stop(input.id),
     })),

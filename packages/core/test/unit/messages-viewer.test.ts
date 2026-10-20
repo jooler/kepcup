@@ -177,7 +177,7 @@ describe('摘要、预览、未读', () => {
     });
   });
 
-  it('latestTextByConversation 不取私有行；私有行不推进 last_message_at', () => {
+  it('latestPreviewByConversation 不取私有行；私有行不推进 last_message_at', () => {
     withRig((rig) => {
       rig.messages.append({
         conversationId: rig.conversationId,
@@ -204,7 +204,7 @@ describe('摘要、预览、未读', () => {
         phase: 'result',
         text: '私有结果',
       });
-      expect(rig.messages.latestTextByConversation()[rig.conversationId]).toBe('最后一句可见');
+      expect(rig.messages.latestPreviewByConversation()[rig.conversationId]).toBe('最后一句可见');
       const after = rig.db
         .prepare('select last_message_at as t, last_seq as s from conversations where id = ?')
         .get(rig.conversationId) as { t: number; s: number };
