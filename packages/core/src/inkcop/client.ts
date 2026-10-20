@@ -1,4 +1,5 @@
 import {
+  inkcopAgentsApiAvailable,
   inkcopBaseUrl,
   readInkcopEndpoint,
   type InkcopEndpoint,
@@ -7,7 +8,7 @@ import {
 import { readSseStream } from './sse.js';
 
 /**
- * InkCop 同机桥 HTTP 客户端（契约 v0.1 §3）：health / connections / messages SSE。
+ * InkCop 同机桥 HTTP 客户端（契约 v0.2）：health / agents / connections / messages SSE。
  * 仅连 `127.0.0.1`；鉴权用 endpoint.token Bearer。
  */
 
@@ -37,6 +38,18 @@ export interface InkcopConnectionOk {
   connectionId: string;
   agentKey: string;
   conversationId: number;
+}
+
+/** `GET /v1/agents` 单项（契约 v0.2；main_agent 居首，其余同 Connect 可见过滤）。 */
+export interface InkcopAgentInfo {
+  key: string;
+  name: string;
+  kind: 'main' | 'app';
+}
+
+export interface InkcopAgentsOk {
+  ok: true;
+  agents: InkcopAgentInfo[];
 }
 
 export interface InkcopStreamHandlers {
@@ -121,6 +134,58 @@ export class InkcopLocalBridgeClient {
     const json = (await response.json()) as InkcopHealthOk;
     if (json.ok !== true) throw new InkcopOfflineError();
     return json;
+  }
+
+
+  /**
+   * GET /v1/agents（契约 v0.2 / InkCop endpoint.version >= 2）。
+   * 形状：`{ ok, agents: [{ key, name, kind: 'main'|'app' }] }`（main_agent 居首）。
+   * version < 2 → InkcopHttpError(501)；离线同 health。
+   */
+  async listAgents(signal?: AbortSignal): Promise<InkcopAgentsOk> {
+    const resolved = this.resolveEndpoint();
+    if (!resolved.ok) throw new InkcopOfflineError();
+    const { endpoint } = resolved;
+    if (!inkcopAgentsApiAvailable(endpoint)) {
+      throw new InkcopHttpError(
+        501,
+        '',
+        `InkCop agents API requires endpoint.version >= 2 (got ${endpoint.version})`,
+      );
+    }
+    const url = `${inkcopBaseUrl(endpoint)}/v1/agents`;
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: 'GET',
+        headers: authHeaders(endpoint.token),
+        signal,
+      });
+    } catch {
+      throw new InkcopOfflineError();
+    }
+    if (response.status === 401 || response.status === 503) {
+      throw new InkcopOfflineError();
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new InkcopHttpError(response.status, body);
+    }
+    const json = (await response.json()) as { ok?: boolean; agents?: unknown };
+    if (json.ok !== true || !Array.isArray(json.agents)) {
+      throw new InkcopHttpError(response.status, JSON.stringify(json), 'InkCop /v1/agents malformed');
+    }
+    const agents: InkcopAgentInfo[] = [];
+    for (const item of json.agents) {
+      if (typeof item !== 'object' || item === null) continue;
+      const row = item as Record<string, unknown>;
+      const key = typeof row.key === 'string' ? row.key.trim() : '';
+      if (key.length === 0) continue;
+      const name = typeof row.name === 'string' && row.name.trim().length > 0 ? row.name.trim() : key;
+      const kind: 'main' | 'app' = row.kind === 'app' ? 'app' : 'main';
+      agents.push({ key, name, kind });
+    }
+    return { ok: true, agents };
   }
 
   /** POST /v1/connections（幂等；同一 externalId 复用 connectionId）。 */

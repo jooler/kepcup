@@ -81,6 +81,12 @@ export const botRuntimeSchema = z.object({
    */
   message_transport: z.enum(['', 'inkcop-local']).default('').catch(''),
   /**
+   * InkCop 同机桥 v0.2：本 Bot 关联的 InkCop 智能体 key 列表（多选）。
+   * 空 = 未关联；系统 InkCop Bot 发信时取首项（缺省 `main_agent`）；其它 Bot
+   * 存关联供显式移交。Profile JSON，无迁移。
+   */
+  inkcop_agent_keys: z.array(z.string().min(1)).default([]).catch([]),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -665,6 +671,18 @@ export const browserProfileSchema = z.object({
 });
 export type BrowserProfile = z.infer<typeof browserProfileSchema>;
 
+/**
+ * InkCop 同机协作（契约 v0.2）：扩展中心「本机应用协作」启停。
+ * `systemBotId` 为开启后自动确保的系统 Bot；关闭时隐藏不删历史。
+ */
+export const inkcopLocalCollabSettingsSchema = z
+  .object({
+    enabled: z.boolean().default(false).catch(false),
+    systemBotId: z.string().default('').catch(''),
+  })
+  .catch({ enabled: false, systemBotId: '' });
+export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettingsSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -718,6 +736,10 @@ export const settingsSchema = z.object({
    * 之后不再弹出任一层引导。
    */
   workbenchNudgeDismissed: z.boolean().default(false),
+  /**
+   * InkCop 同机协作（v0.2）：扩展中心启停 + 自动系统 Bot id。
+   */
+  inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
   /**
    * First-run onboarding state (P13 任务 4), stored in the existing settings
    * row — no new migration. `modelSkipped` drives the persistent "no model

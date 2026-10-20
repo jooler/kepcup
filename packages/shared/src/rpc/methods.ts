@@ -301,6 +301,13 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
+  /** InkCop 同机协作（v0.2）：部分 patch，与已存值合并。 */
+  inkcopLocalCollab: z
+    .object({
+      enabled: z.boolean().optional(),
+      systemBotId: z.string().optional(),
+    })
+    .optional(),
   /** P13 任务 4: first-run wizard completion flags (partial patch). */
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
@@ -758,6 +765,28 @@ export const mediaUnderstandImageInputSchema = z.object({
   prompt: z.string().min(1).max(8000),
 });
 export const mediaUnderstandImageOutputSchema = z.object({ text: z.string() });
+
+
+// --- inkcop local bridge (v0.2) -------------------------------------------
+
+export const inkcopAgentSchema = z.object({
+  key: z.string().min(1),
+  name: z.string(),
+  kind: z.enum(['main', 'app']),
+});
+export type InkcopAgent = z.infer<typeof inkcopAgentSchema>;
+
+export const inkcopHealthOutputSchema = z.object({
+  online: z.boolean(),
+  version: z.number().optional(),
+  app: z.string().optional(),
+  tip: z.string().optional(),
+});
+export const inkcopListAgentsOutputSchema = z.object({
+  online: z.boolean(),
+  agents: z.array(inkcopAgentSchema),
+  tip: z.string().optional(),
+});
 
 // --- bots -----------------------------------------------------------------
 
@@ -1822,6 +1851,8 @@ export const rpcMethodSchemas = {
 
   'settings.get': { input: voidInput, output: settingsGetOutputSchema },
   'settings.update': { input: settingsUpdateInputSchema, output: settingsGetOutputSchema },
+  'inkcop.health': { input: z.object({}).default({}), output: inkcopHealthOutputSchema },
+  'inkcop.listAgents': { input: z.object({}).default({}), output: inkcopListAgentsOutputSchema },
   'settings.items.apply': {
     input: settingsItemsApplyInputSchema,
     output: settingsItemsApplyOutputSchema,
@@ -2364,6 +2395,8 @@ const APP_METHODS = [
   'diagnostics.get',
   'settings.get',
   'settings.update',
+  'inkcop.health',
+  'inkcop.listAgents',
   'settings.items.apply',
   'settings.cards.dismiss',
   'settings.cards.complete',

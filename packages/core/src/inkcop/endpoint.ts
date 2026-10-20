@@ -4,9 +4,17 @@ import path from 'node:path';
 import { z } from 'zod';
 
 /**
- * InkCop ↔ KepCup 同机 Connection 桥：endpoint.json 发现（契约 v0.1 §2）。
+ * InkCop ↔ KepCup 同机 Connection 桥：endpoint.json 发现（契约 §2）。
  * 路径约定在用户目录固定位置，与 KepCup `userData` 无关。
+ * `version`：1 = v0.1（health/connections/messages）；>=2 = v0.2 另含 GET /v1/agents。
  */
+
+/** endpoint.version 达到此值即表示 /v1/agents 可用（InkCop 952be5a58）。 */
+export const INKCOP_AGENTS_API_MIN_VERSION = 2;
+
+export function inkcopAgentsApiAvailable(endpoint: { version: number }): boolean {
+  return endpoint.version >= INKCOP_AGENTS_API_MIN_VERSION;
+}
 
 export const inkcopEndpointSchema = z.object({
   version: z.number().int().positive(),
