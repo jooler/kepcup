@@ -32,7 +32,7 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { createBotConversational } from '$lib/features/bot-setup';
+  import { createBotConversational, createInkCopWritingBot } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
@@ -292,6 +292,11 @@
   async function startConversationalCreate(): Promise<void> {
     plusOpen = false;
     await createBotConversational();
+  }
+
+  async function startInkCopWritingBot(): Promise<void> {
+    plusOpen = false;
+    await createInkCopWritingBot();
   }
 
   async function openCreateProject(): Promise<void> {
@@ -1237,6 +1242,17 @@
         <Plus class="size-4" />
       </span>
       {t('sidebar.createBot')}
+    </button>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+      onclick={() => void startInkCopWritingBot()}
+      data-testid="start-chat-create-inkcop-bot"
+    >
+      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+        <Pencil class="size-4" />
+      </span>
+      {t('sidebar.createInkCopBot')}
     </button>
     <button
       type="button"

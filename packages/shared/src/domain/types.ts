@@ -74,6 +74,13 @@ export const botRuntimeSchema = z.object({
    */
   browser_profile: z.string().default('').catch(''),
   /**
+   * 对话消息传输（InkCop 同机桥，契约 v0.1）：'' = 内置引擎；
+   * `inkcop-local` = 用户消息经本机 HTTP+SSE 交给 InkCop Connection（非 mailbox、
+   * 非 ACP 主入口；ACP `agent:inkcop` 仍为调试旁路）。知识检索仍走 LoomVec MCP。
+   * Profile JSON，无迁移；未知值按 ''。
+   */
+  message_transport: z.enum(['', 'inkcop-local']).default('').catch(''),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
