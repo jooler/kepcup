@@ -54,7 +54,7 @@ export const en = {
         title: 'Workbench',
         body: 'Items dispatch on schedule with delivery tracked; memos stay fleeting until you promote one.',
         image: 'bench',
-        imageAlt: 'The KepCup workbench: items assigned to Bots on the left, memos on the right.',
+        imageAlt: 'The KepCup workbench: memos on the left, items assigned to Bots on the right.',
       },
       {
         title: 'Memory and wiki',
