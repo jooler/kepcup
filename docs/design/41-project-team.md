@@ -232,7 +232,7 @@ CREATE TABLE conversations (
 ### 7.2 移除什么、保留什么
 
 - **移除**：`BOT_CHAIN_TOKEN_BUDGET`（200k）、`BOT_CHAIN_MAX_DEPTH`（3）、`tokensInFlightFor`、`usage.sumForRuns(chain)`、`chains.tokens_used`，以及 `ChainsService.mention` 里的丢弃逻辑。
-- **保留（不是连锁上限，是单次运行的成本保险）**：`TASK_TOKEN_BUDGET`、`SUBAGENT_TOKEN_BUDGET`、后台每日预算 `BACKGROUND_DAILY_BUDGET_DEFAULT`。
+- **保留（不是连锁上限，是单次运行的成本保险）**：无。（`TASK_TOKEN_BUDGET`、`SUBAGENT_TOKEN_BUDGET`、`WIDGET_CRAFT_TOKEN_BUDGET` 与后台每日预算 `BACKGROUND_DAILY_BUDGET_DEFAULT` 后续已按用户要求全部移除；单次运行只剩时限。）
 - **不在本文范围**：Bot 提示词各段的预算（`PERSONA_TOKEN_BUDGET`、`RECENT_MESSAGES_TOKEN_BUDGET`、`TOOL_OUTPUT_MAX_CHARS` 等）。移除它们要先有「按模型窗口压缩」的机制，是对整个上下文装配的改造，单独评估（K15）。本文新增的项目上下文段（项目目标、成员名片、负责人标记、项目 wiki 主题）**不设人为预算**。
 
 ### 7.3 熔断

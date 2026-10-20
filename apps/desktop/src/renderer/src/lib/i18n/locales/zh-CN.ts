@@ -1971,7 +1971,7 @@ export const zhCN = {
   'agents.background.skillAuthoringHint': '起草并验证技能需要多轮调用，较耗额度，默认关闭。',
   'agents.background.projectMentionOnly': '项目组里只在被 @ 或回复时响应',
   'agents.background.projectMentionOnlyHint':
-    '默认开启。关闭后由智能体判断是否接话：每条项目组消息批次一次会话（同一项目组每 2 分钟至多一次），计入每日后台预算；判断超时按不响应处理。',
+    '默认开启。关闭后由智能体判断是否接话：每条项目组消息批次一次会话（同一项目组每 2 分钟至多一次）；判断超时按不响应处理。',
   'agents.experimental': '外部智能体（实验）',
   'agents.experimentalHint':
     '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',

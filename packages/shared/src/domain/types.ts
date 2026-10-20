@@ -1254,7 +1254,7 @@ export const loopTypeSchema = z.enum([
   'task',
   /** 记忆向量化 / 重排的媒体调用（无 run 上下文时的归属，每次调用一行、token 常为 0）。 */
   'memory',
-  /** 语音输入转写（用户前台行为，不计入后台预算）。 */
+  /** 语音输入转写（用户前台行为）。 */
   'voice_input',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;

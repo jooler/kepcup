@@ -63,12 +63,8 @@ export const SUBAGENT_TIMEOUT_MS = 600_000;
 export const SUBAGENT_RESULT_MAX_CHARS = 4_000;
 /** Max delegations a single response run may perform (serial execution). */
 export const SUBAGENT_MAX_PER_RUN = 3;
-/** Token budget (input+output) of one delegated subagent run. */
-export const SUBAGENT_TOKEN_BUDGET = 150_000;
 /** Light-model compression call timeout; failure falls back to truncation. */
 export const SUBAGENT_COMPRESS_TIMEOUT_MS = 20_000;
-/** Poll interval for the subagent token-budget check (engine has no budget hook). */
-export const SUBAGENT_TOKEN_POLL_MS = 5_000;
 /**
  * Max lanes one `delegate_task({ tasks })` fan-out call may start (D66 mode C,
  * docs/design/23-mcp-and-subagent.md); a larger request is rejected outright.
@@ -657,8 +653,8 @@ export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;
 export const TURN_MAX_TURNS = 0;
 /**
  * Max model turns of one task Agent loop (`loop_type='task'`). `0` = no step
- * ceiling: coding / long Agent work is bounded by TASK_MAX_WALL_MS and
- * TASK_TOKEN_BUDGET only (pi-engine and Claude omit maxTurns when ≤ 0).
+ * ceiling: coding / long Agent work is bounded by TASK_MAX_WALL_MS only
+ * (pi-engine and Claude omit maxTurns when ≤ 0).
  */
 export const TASK_MAX_TURNS = 0;
 /** Max simultaneously running tasks per conversation (§2.2); more wait as `queued` (submitted). */
@@ -669,14 +665,6 @@ export const TASK_CONCURRENCY_GLOBAL = 8;
 export const TASK_START_MAX_PER_TURN = 2;
 /** Wall-clock cap of one task (§3.2 reaper): a running task over it is forced to `failed`. */
 export const TASK_MAX_WALL_MS = 4 * 60 * 60_000;
-/**
- * Token budget (input+output, cumulative over all model calls) of one task
- * (§2.2). Tasks have no step ceiling (TASK_MAX_TURNS = 0); this budget and
- * TASK_MAX_WALL_MS are the hard stops. Sized for a long coding Agent run
- * (~2M ≈ many tens of tool turns at typical context sizes); SUBAGENT_TOKEN_BUDGET
- * (150k for 20 turns) is far too small for that.
- */
-export const TASK_TOKEN_BUDGET = 2_000_000;
 /**
  * Settlement reconciliation period (§3.2): the reaper re-delivers terminal,
  * unconsumed task results and enforces TASK_MAX_WALL_MS.

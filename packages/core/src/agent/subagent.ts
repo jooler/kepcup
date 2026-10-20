@@ -7,8 +7,6 @@ import {
   SUBAGENT_MAX_TURNS,
   SUBAGENT_RESULT_MAX_CHARS,
   SUBAGENT_TIMEOUT_MS,
-  SUBAGENT_TOKEN_BUDGET,
-  SUBAGENT_TOKEN_POLL_MS,
   parseAgentModelRef,
   type Run,
 } from '@kepcup/shared';
@@ -90,7 +88,6 @@ export interface SubagentRunnerDeps {
   publishRunStatus: (run: Run) => void;
   /** DI overrides for tests (real defaults are the SUBAGENT_* constants). */
   timeoutMs?: number;
-  tokenPollMs?: number;
   closeGraceMs?: number;
 }
 
@@ -566,7 +563,7 @@ interface SubagentLaneOutcome {
   result: ToolResult;
   /** 原始压缩结论（无 <untrusted> 包裹）；失败/取消为 null。 */
   conclusion: string | null;
-  /** 达到时间 / token 预算被中止：结论只是已完成部分。 */
+  /** 达到时限被中止：结论只是已完成部分。 */
   partial: boolean;
 }
 
@@ -597,7 +594,7 @@ function branchResult(runIds: string[], outcomes: SubagentLaneOutcome[]): ToolRe
       : { child_run_id: runIds[index], ok: false, error: outcome.result.content },
   );
   const notes = outcomes.some((outcome) => outcome.partial)
-    ? ['partial=true 的分支达到时间或 token 预算上限，结论只是已完成部分。']
+    ? ['partial=true 的分支达到时间上限，结论只是已完成部分。']
     : [];
   return {
     ok: outcomes.some((outcome) => outcome.result.ok),
@@ -656,7 +653,7 @@ async function runSubagent(
       partial: false,
     };
   }
-  // 时限 / token 预算触发的内部中止：与显式取消区分（超限仍要产出已有内容）。
+  // 时限触发的内部中止：与显式取消区分（超限仍要产出已有内容）。
   let hitLimit = false;
   const onAbort = () => handle?.abort('subagent cancelled');
   params.signal.addEventListener('abort', onAbort, { once: true });
@@ -665,14 +662,6 @@ async function runSubagent(
     handle?.abort('subagent timeout');
   }, deps.timeoutMs ?? SUBAGENT_TIMEOUT_MS);
   timeout.unref?.();
-  // engine 没有预算钩子：轮询 tokensSoFar() 封顶（input+output）。
-  const budgetPoll = setInterval(() => {
-    if ((handle?.tokensSoFar() ?? 0) > SUBAGENT_TOKEN_BUDGET) {
-      hitLimit = true;
-      handle?.abort('subagent token budget exceeded');
-    }
-  }, deps.tokenPollMs ?? SUBAGENT_TOKEN_POLL_MS);
-  budgetPoll.unref?.();
 
   let handle: RunHandle | null = null;
   let unsubscribeSteps: (() => void) | null = null;
@@ -696,7 +685,6 @@ async function runSubagent(
     outcome = await handle.done;
   } finally {
     clearTimeout(timeout);
-    clearInterval(budgetPoll);
     params.signal.removeEventListener('abort', onAbort);
     unsubscribeSteps?.();
     input.onSubRunSettled?.(subRun.id);
@@ -764,7 +752,7 @@ function clipChars(text: string): string {
 
 function wrapConclusion(conclusion: string, hitLimit: boolean): string {
   const note = hitLimit
-    ? '\n[注意：子任务未跑完（达到时间或 token 预算上限），以上为已完成部分的结论]'
+    ? '\n[注意：子任务未跑完（达到时间上限），以上为已完成部分的结论]'
     : '';
   return `<untrusted>\n${conclusion}${note}\n</untrusted>`;
 }

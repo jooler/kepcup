@@ -19,10 +19,6 @@ export const WIDGET_CRAFT_FIX_ROUNDS_MAX = 4;
 export const WIDGET_CRAFT_REVIEW_ROUNDS_MAX = 2;
 /** 整次制作的时限。 */
 export const WIDGET_CRAFT_TIMEOUT_MS = 900_000;
-/** 全部阶段 run 合计（input+output）的 token 预算。 */
-export const WIDGET_CRAFT_TOKEN_BUDGET = 400_000;
-/** token 预算的轮询间隔（引擎没有预算钩子，同 subagent）。 */
-export const WIDGET_CRAFT_TOKEN_POLL_MS = 1_000;
 /** 每个任务 run 至多发起几次制作。 */
 export const WIDGET_CRAFTS_PER_RUN_MAX = 3;
 /** 给发起任务的工具回执上限（字符）。 */

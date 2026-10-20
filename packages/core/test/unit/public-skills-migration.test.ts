@@ -113,6 +113,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table app_taint;');
     // main 0043（污点外发的对话级放行）同样摘除（纯新增，回放时重建）。
     db.exec('drop table egress_allows;');
+    // main 0044（git 远程持续授权）同样摘除（纯新增，回放时重建）。
+    db.exec('drop table git_remote_grants;');
     // main 0028（D81 bot widgets）的三表与 0029（P2 查询模板）同样摘除（先子后父）。
     db.exec('drop table widget_queries;');
     db.exec('drop table widget_docs;');
