@@ -55,8 +55,7 @@ const secrets = { redact: (text: string) => text } as never;
 interface FakeRunScript {
   outcome: RunOutcome;
   events?: EngineEvent[];
-  tokensSoFar?: number;
-  /** true = 不自动结算，只有 abort()（预算轮询 / 级联取消）能结束 run。 */
+  /** true = 不自动结算，只有 abort()（时限 / 级联取消）能结束 run。 */
   holdUntilAbort?: boolean;
   /** true = abort() is ignored (a stuck engine / tool): only release() ends it. */
   ignoreAbort?: boolean;
@@ -110,7 +109,7 @@ class FakeEngine {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      tokensSoFar: () => script.tokensSoFar ?? 0,
+      tokensSoFar: () => 0,
       done,
     };
   }
@@ -220,15 +219,14 @@ describe('subagent facade', () => {
     expect(result.content.length).toBeLessThan(4_100);
   });
 
-  it('returns the partial result with a note when the token budget aborts the sub run', async () => {
+  it('returns the partial result with a note when the time limit aborts the sub run', async () => {
     const engine = new FakeEngine();
-    const deps = makeDeps(engine, { tokenPollMs: 5 });
+    const deps = makeDeps(engine, { timeoutMs: 5 });
     const facade = createSubagentFacade(deps, makeInput(engine, { lightModelRef: '' }));
     const { ctx } = makeCtx();
 
     engine.completed.push({
       outcome: { status: 'cancelled', finalText: '已完成部分的结论', skipReply: false, usage: [] },
-      tokensSoFar: 1_000_000_000,
       holdUntilAbort: true,
     });
 
@@ -479,14 +477,13 @@ describe('subagent background branches (D66 mode B, D75 §1.2)', () => {
     expect(facade.abortSubRun(okId!, 'late')).toBe(false);
   });
 
-  it('marks a budget-aborted branch as partial', async () => {
+  it('marks a time-limited branch as partial', async () => {
     const engine = new FakeEngine();
-    const deps = makeDeps(engine, { tokenPollMs: 5 });
+    const deps = makeDeps(engine, { timeoutMs: 5 });
     const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
     engine.completed.push({
       outcome: { status: 'cancelled', finalText: '已完成部分', skipReply: false, usage: [] },
-      tokensSoFar: 1_000_000_000,
       holdUntilAbort: true,
       events: [{ type: 'assistant', payload: { text: '过程输出', stopReason: 'stop' } }],
     });
@@ -499,7 +496,7 @@ describe('subagent background branches (D66 mode B, D75 §1.2)', () => {
       conclusion: '压缩后的结论',
       partial: true,
     });
-    expect(result.content).toContain('预算上限');
+    expect(result.content).toContain('时间上限');
   });
 
   it('reports a failed branch as an error slot', async () => {

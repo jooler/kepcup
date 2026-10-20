@@ -14,7 +14,7 @@
 | `abort(reason)` | `agent.abort()`；`AbortSignal` 传入每个工具 |
 | 工具网关 | 工具的 `execute` 内部调用网关；`beforeToolCall` 只做最后一道校验（工具是否属于本 loop 的工具集） |
 | 执行步骤持久化 | 订阅事件（`message_end`、`tool_execution_start`、`tool_execution_end`、`turn_end`、`agent_end`），**等待写库完成**后再继续（pi 的事件订阅支持异步屏障） |
-| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS=0`、任务 `TASK_MAX_TURNS=0`，即不设步数上限；任务另有墙钟与 token 预算。对话轮是否派任务只由提示词引导，不因步数失败） |
+| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS=0`、任务 `TASK_MAX_TURNS=0`，即不设步数上限；任务另有墙钟上限。对话轮是否派任务只由提示词引导，不因步数失败） |
 | 用量 | 每条助手消息的 usage 写入 usage_ledger |
 | 单次调用 `complete()` | `@earendil-works/pi-ai` 的单次请求接口 |
 | 模型与厂商 | `pi-ai` 的模型注册表；自定义接口通过 `baseUrl`；API key 通过自定义 `CredentialStore` 提供——`read(providerId)` 在每次请求的鉴权解析时从 secrets 表解密（DEV-002，不用 `Agent` 的 `getApiKey` 覆盖） |
@@ -489,7 +489,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | loop | 模型 | 方式 | 工具 | 优先级 | 阶段 |
 |---|---|---|---|---|---|
 | 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS=0`，不设步数上限） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、协作回合内 `@`） | D75（原「响应」，P01） |
-| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`RUN_MAX_TURNS`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
+| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`RUN_MAX_TURNS`、`TASK_MAX_WALL_MS`） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
 | 项目组路由判断（续接 / 网关） | 轻量模型（负责人网关用负责人的轻量模型） | 单次结构化调用（`runLightJudgement`） | — | 0 | P05 / D92 |
 | 对话摘要 | 轻量模型 | 单次结构化调用 | — | 2 | P01 |
 | 反思 | 轻量模型 | 单次结构化调用 | — | 2 | P07 |
@@ -511,7 +511,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 已启动任务的对话级 / 全局封顶 |
 | `TASK_START_MAX_PER_TURN` | 2 | 一个对话轮最多派出的任务数（按 `origin_run_id`） |
-| `TASK_MAX_WALL_MS` / `TASK_TOKEN_BUDGET` | 4 h / 2,000,000 | reaper 强制 `failed` 的时长 / 用量上限 |
+| `TASK_MAX_WALL_MS` | 4 h | reaper 强制 `failed` 的时长上限 |
 | `TASK_SETTLE_SWEEP_MS` | 60 s | reaper 周期；结算后执行体未退场的驱逐阈值 |
 | `TASK_REDELIVER_AFTER_MS` | 10 min | 已投递未消费的结果多久后重投 |
 | `TASK_REDELIVER_MAX_ATTEMPTS` | 5 | 一个结果最多投递次数；超过即标记消费并发用户可见提示（审查批 E） |
@@ -533,7 +533,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 - **阶段 run**：每个阶段一个 pi run，`loop_type='widget_authoring'`、`parent_run_id` = 发起的任务 run，步骤落 run_steps、用量按 `widget_authoring` 入账，不产生对话消息（同 subagent）；`runs.cancel` 落到阶段 run = 中止整次制作（orchestrator `cancelRun` 经 `widgetCraft.cancelStageRun`），父任务取消同样级联。阶段输入由宿主从草稿文件重建（`craft/prompts.ts`：平台事实 + 由检查规则注册表生成的沙箱雷区清单 + 文件约定 + 阶段要求），不累积上下文。
 - **草稿目录** `bots/{botId}/widget-drafts/{craftId}/`（`craft/draft.ts`）：`manifest.json`（宿主独占，原子写）、`spec.md`、`acceptance.json`、`index.html`、`queries.json`、`fixtures.json`、`reports/check-{n}.json`、`snapshots/round-{n}/`。交付即删；未交付保留 `WIDGET_CRAFT_DRAFT_TTL_DAYS`（7）天供 `resume_craft_id`，core 启动时与新建制作时清理过期草稿。
 - **阶段工具**（`craft/tools.ts`）：read / ls 全阶段；write 按阶段白名单（SPEC 只写 spec.md / acceptance.json；BUILD / FIX 只写 index.html / queries.json / fixtures.json），FIX 的 write 拒绝覆盖已存在的文件（逼出 edit 补丁）；manifest 恒只读；`widget_check` 自查（同一检查器，不留回执）；`widget_template`（BUILD，P3a 只有 `blank`）；`stage_done` 终止本阶段。没有 bash、网络与任何宿主副作用工具。
-- **GATE** 由宿主执行 `runWidgetCheck`（`widgets/check/`：S0 静态 + S1 JS + S2 预览——`widgets/preview.ts` 按视口〔360 亮 / 720 暗〕注入垫片与探针〔`preview-probe.ts`，单行，行号与原文一致〕，经端口 B 调主进程 `widgetPreview.run`〔`apps/desktop/src/main/widget-preview.ts`：隐藏窗口 + 内存分区 `widget-preview` + `file://` 外壳页 + 与正式卡片相同的沙箱 iframe 与 CSP，模拟能力桥以 `fixtures.json` 为数据〕；未绑定时 skipped）：先快照再检查，报告与回执 `{round, htmlSha256, queriesSha256, verdict, score, previewed}` 记入 manifest。有错误（含必需验收点失败）→ FIX（只给 error 清单）；只剩警告最多修一轮。分数比最佳快照差 → 回滚到最佳快照并在 FIX 输入写明新增问题；同一组错误签名连续两轮 → 收缩模式。修复轮数 `WIDGET_CRAFT_FIX_ROUNDS_MAX`（4）、时限 `WIDGET_CRAFT_TIMEOUT_MS`（15 分钟）、token 预算 `WIDGET_CRAFT_TOKEN_BUDGET`（40 万，轮询 `tokensSoFar()`）任一用尽即按最佳快照判定。
+- **GATE** 由宿主执行 `runWidgetCheck`（`widgets/check/`：S0 静态 + S1 JS + S2 预览——`widgets/preview.ts` 按视口〔360 亮 / 720 暗〕注入垫片与探针〔`preview-probe.ts`，单行，行号与原文一致〕，经端口 B 调主进程 `widgetPreview.run`〔`apps/desktop/src/main/widget-preview.ts`：隐藏窗口 + 内存分区 `widget-preview` + `file://` 外壳页 + 与正式卡片相同的沙箱 iframe 与 CSP，模拟能力桥以 `fixtures.json` 为数据〕；未绑定时 skipped）：先快照再检查，报告与回执 `{round, htmlSha256, queriesSha256, verdict, score, previewed}` 记入 manifest。有错误（含必需验收点失败）→ FIX（只给 error 清单）；只剩警告最多修一轮。分数比最佳快照差 → 回滚到最佳快照并在 FIX 输入写明新增问题；同一组错误签名连续两轮 → 收缩模式。修复轮数 `WIDGET_CRAFT_FIX_ROUNDS_MAX`（4）、时限 `WIDGET_CRAFT_TIMEOUT_MS`（15 分钟）任一用尽即按最佳快照判定（用量不设上限）。
 - **REVIEW**（P3c）：GATE 合格后的独立审查 run（`craft/prompts.ts` 的 `reviewSystemPrompt`，工具只有 read / ls / `submit_review`，路由 `widget_review` = 设置「组件审查模型」或 Bot 主模型）；同一份文件只审一次，至多 `WIDGET_CRAFT_REVIEW_ROUNDS_MAX`（2）轮，P0 / P1 进 FIX，P2 只记 `reports/review-{n}.json`；用尽仍有 P0 / P1 → 交付为 `issues` 并列入已知问题；没交结论 → skipped。
 - **DELIVER**：可交付回执里分数最低的一条（都阻断 → 不交付，回执给原因 ≤5 条 + craftId，草稿保留）；复算当前文件摘要，必须与一条非阻断回执一致才调 `WidgetService.create` / `update`（带 `check{status, summary}`），状态 = 未运行 S2 → `unverified`，否则 `passed` / `issues`。
 

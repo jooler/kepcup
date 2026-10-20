@@ -293,15 +293,14 @@ snapshots/round-{n}/   每次 GATE 时的 index.html + queries.json 快照（回
 SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────────► REVIEW ─┬─ 无 P0/P1 ─► DELIVER(passed)
                        │                                └─ 有 P0/P1 ─► FIX ─► GATE（全量）…
                        └─ 不合格 ─► FIX ─► GATE …
-任一时刻：修复轮数 / 审查轮数 / 时限 / token 预算用尽 ─► 按「最佳快照」判定 DELIVER(issues) 或 FAILED
+任一时刻：修复轮数 / 审查轮数 / 时限用尽 ─► 按「最佳快照」判定 DELIVER(issues) 或 FAILED
 ```
 
 | 参数 | 值（shared 常量） | 说明 |
 |---|---|---|
 | `WIDGET_CRAFT_FIX_ROUNDS_MAX` | 4 | GATE 与 REVIEW 触发的 FIX 合计轮数 |
 | `WIDGET_CRAFT_REVIEW_ROUNDS_MAX` | 2 | 第二轮审查只核对上一轮 P0/P1 是否修好，再看有无新 P0 |
-| `WIDGET_CRAFT_TIMEOUT_MS` | 900 000（15 分钟） | 整次制作 |
-| `WIDGET_CRAFT_TOKEN_BUDGET` | 400 000 | 全部阶段 run 合计（input+output），宿主轮询各 handle 的 `tokensSoFar()` 封顶，同 subagent |
+| `WIDGET_CRAFT_TIMEOUT_MS` | 900 000（15 分钟） | 整次制作；用量不设上限 |
 | 各阶段 `maxTurns` | SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 | 单阶段兜底 |
 
 - **GATE 先快照再检查**（快照与检查读到的是同一份文件）。**合格** = 没有错误（含必需验收点失败）；只剩警告时最多花一轮 FIX（警告不进 FIX 清单，除非已经没有错误）。检查器自身出错（S0 / S1 记 skipped）合成一条阻断项 `checker.failed`：没检查过的代码不能当作合格。
