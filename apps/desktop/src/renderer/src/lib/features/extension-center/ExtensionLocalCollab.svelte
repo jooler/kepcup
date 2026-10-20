@@ -14,7 +14,7 @@
 
   /**
    * 扩展中心 →「本机应用协作」（契约 v0.2.1）：
-   * InkCop 卡片仅保留启停勾选行；桥状态 chip 跟在启用标题后。
+   * InkCop 卡片：启停勾选行（桥状态 chip 跟在标题后）+ 一行说明。
    */
 
   let busy = $state(false);
@@ -79,7 +79,7 @@
   <p class="text-xs text-muted-foreground">{t('extensionCenter.localCollab.hint')}</p>
 
   <div
-    class="rounded-xl border px-4 py-3.5"
+    class="flex flex-col gap-1.5 rounded-xl border px-4 py-3.5"
     data-testid="local-collab-inkcop-card"
   >
     <label class="flex items-center gap-3" data-testid="local-collab-inkcop-enable">
@@ -110,5 +110,11 @@
         {/if}
       </span>
     </label>
+    <p
+      class="pl-8 text-xs text-muted-foreground"
+      data-testid="local-collab-inkcop-description"
+    >
+      {t('extensionCenter.localCollab.inkcop.description')}
+    </p>
   </div>
 </div>

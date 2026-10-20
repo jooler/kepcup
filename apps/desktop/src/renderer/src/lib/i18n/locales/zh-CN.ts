@@ -1201,6 +1201,8 @@ export const zhCN = {
   'extensionCenter.localCollab.hint':
     '与同一台电脑上的其它应用直接协作（不经云端）。',
   'extensionCenter.localCollab.inkcop.enable': '启用 InkCop 协作',
+  'extensionCenter.localCollab.inkcop.description':
+    '启用之后，Bot 详情中可以设置连接 InkCop 智能体',
   'extensionCenter.localCollab.inkcop.online': '桥已连通',
   'extensionCenter.localCollab.inkcop.offline': '桥未连通',
   'extensionCenter.localCollab.inkcop.enabledToast': '已启用 InkCop 本机协作',
