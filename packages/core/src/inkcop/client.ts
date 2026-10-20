@@ -272,7 +272,7 @@ export class InkcopLocalBridgeClient {
     await readSseStream(
       response.body,
       async (frame) => {
-        let data: Record<string, unknown> = {};
+        let data: Record<string, unknown>;
         try {
           data = JSON.parse(frame.data) as Record<string, unknown>;
         } catch {

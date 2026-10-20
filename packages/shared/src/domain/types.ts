@@ -672,12 +672,14 @@ export const browserProfileSchema = z.object({
 export type BrowserProfile = z.infer<typeof browserProfileSchema>;
 
 /**
- * InkCop 同机协作（契约 v0.2）：扩展中心「本机应用协作」启停。
- * `systemBotId` 为开启后自动确保的系统 Bot；关闭时隐藏不删历史。
+ * InkCop 同机协作（契约 v0.2.1）：扩展中心「本机应用协作」启停。
+ * 开启后任意 Bot 详情可关联 InkCop 智能体；不预置系统 Bot。
+ * `systemBotId` 仅兼容旧配置，读写忽略。
  */
 export const inkcopLocalCollabSettingsSchema = z
   .object({
     enabled: z.boolean().default(false).catch(false),
+    /** @deprecated 不再使用；保留以免旧 settings 解析失败。 */
     systemBotId: z.string().default('').catch(''),
   })
   .catch({ enabled: false, systemBotId: '' });

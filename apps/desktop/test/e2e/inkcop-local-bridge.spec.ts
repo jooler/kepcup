@@ -2,13 +2,13 @@ import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { botProfile } from '@kepcup/testkit';
 import { rmHomeTolerant } from './helpers/home-cleanup';
-import { dismissStartPanel } from './helpers/create-bot';
+import { dismissStartPanel, openConversationByName, rpc } from './helpers/create-bot';
 
 /**
- * UI 级对联（契约 v0.1）：侧栏「新建 InkCop 写作助理」→ 发短消息 →
- * 本机 InkCop sidecar（需源码 InkCop + 开关）经 HTTP/SSE 回包。
- * P0 可无 chunk：run-status「处理中」直到 complete 落 bot-bubble。
+ * UI 级对联（契约 v0.2.1）：扩展中心启用协作 → 普通 Bot 勾选 InkCop 智能体 →
+ * 发短消息经本机桥回包。不预置系统 Bot / 「+」菜单入口。
  *
  * 依赖宿主机已写入 ~/Library/Application Support/inkcop-local-bridge/endpoint.json
  * 且 /v1/health 可用；CI 无 sidecar 时跳过。
@@ -56,7 +56,7 @@ async function startSession(prefix: string): Promise<Session> {
       KEPCUP_KEYSTORE: 'file',
       KEPCUP_ONBOARDING: 'off',
       KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
-      // 无内置模型：InkCop Bot 走 message_transport，不依赖 mock LLM。
+      // 无内置模型：InkCop 桥 Bot 不依赖 mock LLM。
       KEPCUP_MOCK_LLM_URL: '',
     },
   });
@@ -85,7 +85,7 @@ async function shot(page: Page, name: string): Promise<string> {
   return file;
 }
 
-test('sidebar InkCop writing bot: send → in-progress → final bubble via local bridge', async () => {
+test('ordinary Bot with linked InkCop agent: send → in-progress → final bubble', async () => {
   test.setTimeout(180_000);
   if (!(await bridgeHealthy())) {
     test.skip(true, 'InkCop local bridge endpoint/health not available on this machine');
@@ -94,23 +94,32 @@ test('sidebar InkCop writing bot: send → in-progress → final bubble via loca
   const session = await startSession('kepcup-e2e-inkcop-ui-');
   const { page } = session;
   const shots: string[] = [];
+  const botName = 'InkCop Collab Bot';
   try {
     await waitReady(page);
 
-    // 「+」→ 新建 InkCop 写作助理
-    await page.locator('[data-testid="new-chat-button"]').click();
-    const createBtn = page.locator('[data-testid="start-chat-create-inkcop-bot"]');
-    await expect(createBtn).toBeVisible({ timeout: 15_000 });
-    shots.push(await shot(page, '01-start-panel-inkcop.png'));
-    await createBtn.click();
+    await rpc(page, 'settings.update', { inkcopLocalCollab: { enabled: true } });
 
+    const profile = botProfile({
+      name: botName,
+      runtime: {
+        message_transport: 'inkcop-local',
+        inkcop_agent_keys: ['main_agent'],
+      },
+    });
+    const created = (await rpc(page, 'bots.create', {
+      profile,
+      skipDefaultAgent: true,
+    })) as { bot: { id: string } };
+    await rpc(page, 'conversations.openDirect', { botId: created.bot.id });
+    await openConversationByName(page, botName);
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 20_000 });
-    await expect(
-      page.locator(
-        '[data-testid^="conversation-item-"][data-active="true"] [data-testid="conversation-name"]',
-      ),
-    ).toContainText('InkCop', { timeout: 15_000 });
-    shots.push(await shot(page, '02-inkcop-chat-open.png'));
+    shots.push(await shot(page, '02-linked-bot-chat-open.png'));
+
+    // 「+」面板不应再有系统 InkCop 入口
+    await page.locator('[data-testid="new-chat-button"]').click();
+    await expect(page.locator('[data-testid="start-chat-create-inkcop-bot"]')).toHaveCount(0);
+    await dismissStartPanel(page);
 
     const composer = page.locator('[data-testid="composer-input"]');
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -122,7 +131,6 @@ test('sidebar InkCop writing bot: send → in-progress → final bubble via loca
       timeout: 15_000,
     });
 
-    // P0：可能没有 chunk，状态行「InkCop 处理中…」直到 complete。
     const status = page.locator('[data-testid="run-status-text"]');
     const botBubble = page.locator('[data-testid="bot-bubble"]').first();
     await expect
@@ -144,13 +152,11 @@ test('sidebar InkCop writing bot: send → in-progress → final bubble via loca
     await expect(botBubble).toBeVisible({ timeout: 120_000 });
     const reply = (await botBubble.innerText()).trim();
     expect(reply.length).toBeGreaterThan(0);
-    // 不应停在离线提示 / 空答占位
     expect(reply).not.toMatch(/未返回内容|离线|无法连接|通讯失败|桥接异常/);
     shots.push(await shot(page, '04-final-bot-bubble.png'));
 
-    // 留给调试：把回复写进环境日志
-    console.log('[inkcop-ui-pair] bot reply:', reply.slice(0, 500));
-    console.log('[inkcop-ui-pair] screenshots:', shots.join(', '));
+    console.warn('[inkcop-ui-pair] bot reply:', reply.slice(0, 500));
+    console.warn('[inkcop-ui-pair] screenshots:', shots.join(', '));
   } finally {
     await session.app.close();
     await rmHomeTolerant(session.home);

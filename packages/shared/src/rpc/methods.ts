@@ -301,7 +301,7 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
-  /** InkCop 同机协作（v0.2）：部分 patch，与已存值合并。 */
+  /** InkCop 同机协作（v0.2.1）：部分 patch；systemBotId 仅兼容旧配置。 */
   inkcopLocalCollab: z
     .object({
       enabled: z.boolean().optional(),
@@ -807,7 +807,7 @@ export const botsCreateInputSchema = z
      */
     interview: z.boolean().default(false),
     /**
-     * 不套用 onboarding 默认外部 Agent（InkCop 同机桥预设等：消息不经 ACP）。
+     * 不套用 onboarding 默认外部 Agent（InkCop 同机桥绑定等：消息不经 ACP）。
      */
     skipDefaultAgent: z.boolean().default(false),
   })

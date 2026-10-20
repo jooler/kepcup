@@ -471,12 +471,12 @@
 
   function toggleInkcopAgent(key: string, checked: boolean): void {
     const current = profile.runtime.inkcop_agent_keys ?? [];
-    const next = current.filter((entry) => entry !== key);
-    profile.runtime.inkcop_agent_keys = checked ? [...next, key] : next;
-  }
-
-  function openLocalCollab(): void {
-    shell.openExtensionCenter('localCollab');
+    const next = checked
+      ? [...current.filter((entry) => entry !== key), key]
+      : current.filter((entry) => entry !== key);
+    profile.runtime.inkcop_agent_keys = next;
+    // 勾选即走同机桥；清空则恢复普通对话路径。
+    profile.runtime.message_transport = next.length > 0 ? 'inkcop-local' : '';
   }
 </script>
 
@@ -981,10 +981,10 @@
       {/if}
     </div>
   {/if}
-  <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">
-    <div class="flex items-center justify-between gap-2">
-      <Label>{t('contacts.inkcopAgents')}</Label>
-      {#if inkcopCollabOn}
+  {#if inkcopCollabOn}
+    <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">
+      <div class="flex items-center justify-between gap-2">
+        <Label>{t('contacts.inkcopAgents')}</Label>
         <Button
           size="sm"
           variant="ghost"
@@ -994,59 +994,47 @@
         >
           {t('contacts.inkcopAgentsRefresh')}
         </Button>
+      </div>
+      <p class="text-xs text-muted-foreground">{t('contacts.inkcopAgentsHint')}</p>
+      {#if inkcopAgentsLoading}
+        <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-loading">
+          {t('contacts.inkcopAgentsLoading')}
+        </p>
+      {:else if inkcopAgentsOnline === false}
+        <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="bot-inkcop-agents-offline">
+          {inkcopAgentsTip ?? t('contacts.inkcopAgentsOffline')}
+        </p>
+      {:else if inkcopAgents.length === 0}
+        <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-empty">
+          {inkcopAgentsTip ?? t('contacts.inkcopAgentsEmpty')}
+        </p>
+      {:else}
+        <div class="space-y-1.5" data-testid="bot-inkcop-agents-list">
+          {#each inkcopAgents as agent (agent.key)}
+            <label
+              class="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm"
+              data-testid={`bot-inkcop-agent-${agent.key}`}
+            >
+              <Checkbox
+                checked={inkcopAgentChecked(agent.key)}
+                onCheckedChange={(checked) => toggleInkcopAgent(agent.key, checked === true)}
+                data-testid={`bot-inkcop-agent-check-${agent.key}`}
+              />
+              <span class="grid min-w-0 gap-0.5">
+                <span class="font-medium">{agent.name}</span>
+                <span class="text-[11px] text-muted-foreground">
+                  {agent.kind === 'main'
+                    ? t('contacts.inkcopAgentKindMain')
+                    : t('contacts.inkcopAgentKindApp')}
+                  · {agent.key}
+                </span>
+              </span>
+            </label>
+          {/each}
+        </div>
       {/if}
     </div>
-    <p class="text-xs text-muted-foreground">{t('contacts.inkcopAgentsHint')}</p>
-    {#if !inkcopCollabOn}
-      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-disabled">
-        {t('contacts.inkcopCollabDisabled')}
-        <button
-          type="button"
-          class="ml-1 underline underline-offset-2 hover:text-foreground"
-          onclick={openLocalCollab}
-          data-testid="bot-inkcop-agents-open-collab"
-        >
-          {t('extensionCenter.tabs.localCollab')}
-        </button>
-      </p>
-    {:else if inkcopAgentsLoading}
-      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-loading">
-        {t('contacts.inkcopAgentsLoading')}
-      </p>
-    {:else if inkcopAgentsOnline === false}
-      <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="bot-inkcop-agents-offline">
-        {inkcopAgentsTip ?? t('contacts.inkcopAgentsOffline')}
-      </p>
-    {:else if inkcopAgents.length === 0}
-      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-empty">
-        {inkcopAgentsTip ?? t('contacts.inkcopAgentsEmpty')}
-      </p>
-    {:else}
-      <div class="space-y-1.5" data-testid="bot-inkcop-agents-list">
-        {#each inkcopAgents as agent (agent.key)}
-          <label
-            class="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm"
-            data-testid={`bot-inkcop-agent-${agent.key}`}
-          >
-            <Checkbox
-              checked={inkcopAgentChecked(agent.key)}
-              onCheckedChange={(checked) => toggleInkcopAgent(agent.key, checked === true)}
-              data-testid={`bot-inkcop-agent-check-${agent.key}`}
-            />
-            <span class="grid min-w-0 gap-0.5">
-              <span class="font-medium">{agent.name}</span>
-              <span class="text-[11px] text-muted-foreground">
-                {agent.kind === 'main'
-                  ? t('contacts.inkcopAgentKindMain')
-                  : t('contacts.inkcopAgentKindApp')}
-                · {agent.key}
-              </span>
-            </span>
-          </label>
-        {/each}
-      </div>
-    {/if}
-  </div>
+  {/if}
 
   <BotMailBindings {botId} />
 </div>
