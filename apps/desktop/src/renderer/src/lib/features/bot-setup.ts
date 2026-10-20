@@ -22,6 +22,7 @@ export function emptyProfile(): BotProfile {
       app_connection_ids: [],
       browser_profile: '',
       message_transport: '',
+      inkcop_agent_keys: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     // P10 guardrail defaults — mirrors botBehaviorSchema.prefault({}) (proactive
@@ -101,6 +102,7 @@ export async function createInkCopWritingBot(): Promise<Bot | null> {
     responsibilities: '协助用户完成写作任务。知识检索仍直连 LoomVec，不经本桥。',
   };
   profile.runtime.message_transport = 'inkcop-local';
+  profile.runtime.inkcop_agent_keys = ['main_agent'];
   try {
     const created = (await core.call('bots.create', {
       profile,

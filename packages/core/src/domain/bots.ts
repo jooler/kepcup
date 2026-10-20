@@ -47,6 +47,7 @@ function emptyProfile(): BotProfile {
       app_connection_ids: [],
       browser_profile: '',
       message_transport: '',
+      inkcop_agent_keys: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },

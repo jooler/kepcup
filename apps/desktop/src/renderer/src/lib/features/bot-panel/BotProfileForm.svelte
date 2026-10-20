@@ -1,12 +1,14 @@
 <script lang="ts">
   /** Shared profile form fields for bot create (dialog) and edit (right panel). */
   import { untrack } from 'svelte';
-  import type { BotProfile } from '@kepcup/shared';
+  import type { BotProfile, HostCapabilityId, HostCapabilityPrerequisite, InkcopAgent } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
+  import { core } from '$lib/rpc/client.svelte';
+  import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import {
@@ -17,7 +19,6 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import type { HostCapabilityId, HostCapabilityPrerequisite } from '@kepcup/shared';
   import type { MessageKey } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -424,6 +425,58 @@
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
+  }
+
+  // --- InkCop 同机智能体关联（契约 v0.2） ---------------------------------
+  const inkcopCollabOn = $derived(inkcopCollabEnabled(settingsStore.settings));
+  let inkcopAgents = $state<InkcopAgent[]>([]);
+  let inkcopAgentsLoading = $state(false);
+  let inkcopAgentsOnline = $state<boolean | null>(null);
+  let inkcopAgentsTip = $state<string | null>(null);
+
+  async function refreshInkcopAgents(): Promise<void> {
+    if (!inkcopCollabOn) {
+      inkcopAgents = [];
+      inkcopAgentsOnline = null;
+      inkcopAgentsTip = null;
+      return;
+    }
+    inkcopAgentsLoading = true;
+    try {
+      const result = (await core.call('inkcop.listAgents', {})) as {
+        online: boolean;
+        agents: InkcopAgent[];
+        tip?: string;
+      };
+      inkcopAgentsOnline = result.online;
+      inkcopAgents = result.agents ?? [];
+      inkcopAgentsTip = result.tip ?? null;
+    } catch (error) {
+      inkcopAgentsOnline = false;
+      inkcopAgents = [];
+      inkcopAgentsTip = error instanceof Error ? error.message : String(error);
+    } finally {
+      inkcopAgentsLoading = false;
+    }
+  }
+
+  $effect(() => {
+    void inkcopCollabOn;
+    void refreshInkcopAgents();
+  });
+
+  function inkcopAgentChecked(key: string): boolean {
+    return (profile.runtime.inkcop_agent_keys ?? []).includes(key);
+  }
+
+  function toggleInkcopAgent(key: string, checked: boolean): void {
+    const current = profile.runtime.inkcop_agent_keys ?? [];
+    const next = current.filter((entry) => entry !== key);
+    profile.runtime.inkcop_agent_keys = checked ? [...next, key] : next;
+  }
+
+  function openLocalCollab(): void {
+    shell.openExtensionCenter('localCollab');
   }
 </script>
 
@@ -928,6 +981,73 @@
       {/if}
     </div>
   {/if}
+  <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">
+    <div class="flex items-center justify-between gap-2">
+      <Label>{t('contacts.inkcopAgents')}</Label>
+      {#if inkcopCollabOn}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={inkcopAgentsLoading}
+          onclick={() => void refreshInkcopAgents()}
+          data-testid="bot-inkcop-agents-refresh"
+        >
+          {t('contacts.inkcopAgentsRefresh')}
+        </Button>
+      {/if}
+    </div>
+    <p class="text-xs text-muted-foreground">{t('contacts.inkcopAgentsHint')}</p>
+    {#if !inkcopCollabOn}
+      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-disabled">
+        {t('contacts.inkcopCollabDisabled')}
+        <button
+          type="button"
+          class="ml-1 underline underline-offset-2 hover:text-foreground"
+          onclick={openLocalCollab}
+          data-testid="bot-inkcop-agents-open-collab"
+        >
+          {t('extensionCenter.tabs.localCollab')}
+        </button>
+      </p>
+    {:else if inkcopAgentsLoading}
+      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-loading">
+        {t('contacts.inkcopAgentsLoading')}
+      </p>
+    {:else if inkcopAgentsOnline === false}
+      <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="bot-inkcop-agents-offline">
+        {inkcopAgentsTip ?? t('contacts.inkcopAgentsOffline')}
+      </p>
+    {:else if inkcopAgents.length === 0}
+      <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-empty">
+        {inkcopAgentsTip ?? t('contacts.inkcopAgentsEmpty')}
+      </p>
+    {:else}
+      <div class="space-y-1.5" data-testid="bot-inkcop-agents-list">
+        {#each inkcopAgents as agent (agent.key)}
+          <label
+            class="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm"
+            data-testid={`bot-inkcop-agent-${agent.key}`}
+          >
+            <Checkbox
+              checked={inkcopAgentChecked(agent.key)}
+              onCheckedChange={(checked) => toggleInkcopAgent(agent.key, checked === true)}
+              data-testid={`bot-inkcop-agent-check-${agent.key}`}
+            />
+            <span class="grid min-w-0 gap-0.5">
+              <span class="font-medium">{agent.name}</span>
+              <span class="text-[11px] text-muted-foreground">
+                {agent.kind === 'main'
+                  ? t('contacts.inkcopAgentKindMain')
+                  : t('contacts.inkcopAgentKindApp')}
+                · {agent.key}
+              </span>
+            </span>
+          </label>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
   <BotMailBindings {botId} />
 </div>
 

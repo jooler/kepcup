@@ -193,9 +193,11 @@
   onDestroy(clearActivityTimers);
 
   const plusBots = $derived.by(() => {
+    const settings = settingsStore.settings;
+    const visible = contacts.bots.filter((bot) => !isHiddenInkcopBot(bot, settings));
     const query = plusQuery.trim().toLowerCase();
-    if (query.length === 0) return contacts.bots;
-    return contacts.bots.filter(
+    if (query.length === 0) return visible;
+    return visible.filter(
       (bot) =>
         bot.name.toLowerCase().includes(query) ||
         bot.bio.toLowerCase().includes(query) ||
@@ -296,7 +298,15 @@
 
   async function startInkCopWritingBot(): Promise<void> {
     plusOpen = false;
-    await createInkCopWritingBot();
+    try {
+      if (!inkcopCollabEnabled(settingsStore.settings)) {
+        await setInkcopCollabEnabled(true);
+      }
+      const bot = await ensureInkcopSystemBot();
+      await chat.openDirect(bot.id);
+    } catch {
+      // ensureInkcopSystemBot / setInkcopCollabEnabled already toast
+    }
   }
 
   async function openCreateProject(): Promise<void> {
@@ -308,12 +318,17 @@
    * 管家不进入任何分组，单独排在列表最前。其余对话保持 store 的时间顺序，
    * 再按分组装桶。
    */
+  const sidebarConversations = $derived(
+    chat.conversations.filter(
+      (conversation) => !isHiddenInkcopConversation(conversation, settingsStore.settings),
+    ),
+  );
   const butlerConversations = $derived(
-    chat.conversations.filter((conversation) => isButlerConversation(conversation)),
+    sidebarConversations.filter((conversation) => isButlerConversation(conversation)),
   );
   const sectionLayout = $derived(
     layoutSidebarSections(
-      chat.conversations.filter((conversation) => !isButlerConversation(conversation)),
+      sidebarConversations.filter((conversation) => !isButlerConversation(conversation)),
       sidebarSections.state,
       (conversation) => activitySnapshot[conversation.id] ?? conversationActivityOf(conversation),
     ),

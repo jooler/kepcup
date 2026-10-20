@@ -11,11 +11,14 @@ import { consumeSseBuffer } from '../../src/inkcop/sse.js';
 import {
   InkcopLocalBridgeClient,
   InkcopOfflineError,
+  InkcopHttpError,
   INKCOP_OFFLINE_TIP_ZH,
   inkcopOfflineTip,
 } from '../../src/inkcop/client.js';
 import {
   INKCOP_LOCAL_TRANSPORT,
+  inkcopAgentsApiAvailable,
+  inkcopAgentKeyForBot,
   inkcopExternalId,
   inkcopMessageId,
   isInkcopLocalBot,
@@ -89,9 +92,19 @@ describe('inkcop helpers', () => {
     );
     expect(isInkcopLocalBot({ profile: { runtime: { message_transport: '' } } })).toBe(false);
     expect(inkcopExternalId('bot_1')).toBe('kepcup-bot-bot_1');
+    expect(inkcopExternalId('bot_1', 'main_agent')).toBe('kepcup-bot-bot_1');
+    expect(inkcopExternalId('bot_1', 'writer')).toBe('kepcup-bot-bot_1--writer');
     expect(inkcopMessageId('abc')).toBe('kepcup-msg-abc');
     expect(inkcopOfflineTip(null)).toBe(INKCOP_OFFLINE_TIP_ZH);
     expect(inkcopOfflineTip('en')).toMatch(/InkCop/);
+    expect(inkcopAgentsApiAvailable({ version: 1 })).toBe(false);
+    expect(inkcopAgentsApiAvailable({ version: 2 })).toBe(true);
+    expect(inkcopAgentKeyForBot({ profile: { runtime: { inkcop_agent_keys: ['writer'] } } })).toBe(
+      'writer',
+    );
+    expect(inkcopAgentKeyForBot({ profile: { runtime: { inkcop_agent_keys: [] } } })).toBe(
+      'main_agent',
+    );
   });
 });
 
@@ -143,6 +156,39 @@ describe('InkcopLocalBridgeClient', () => {
       externalId: 'kepcup-bot-x',
       agentKey: 'main_agent',
     });
+  });
+
+  it('listAgents requires endpoint.version >= 2', async () => {
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { ...endpoint, version: 1 },
+      fetch: vi.fn() as never,
+    });
+    await expect(client.listAgents()).rejects.toBeInstanceOf(InkcopHttpError);
+  });
+
+  it('listAgents parses v0.2 payload', async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({
+        ok: true,
+        agents: [
+          { key: 'main_agent', name: '主智能体', kind: 'main' },
+          { key: 'writer', name: '写作', kind: 'app' },
+        ],
+      }),
+    );
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { ...endpoint, version: 2 },
+      fetch: fetch as never,
+    });
+    const result = await client.listAgents();
+    expect(result.agents).toEqual([
+      { key: 'main_agent', name: '主智能体', kind: 'main' },
+      { key: 'writer', name: '写作', kind: 'app' },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9/v1/agents',
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('sendMessage streams SSE events', async () => {
@@ -299,6 +345,46 @@ describe('executeInkcopBridgeTurn', () => {
     await executeInkcopBridgeTurn('run_1', batch, bot, h.deps as never);
     expect(h.messages).toHaveLength(1);
     expect(h.messages[0]?.content).toMatchObject({ text: '一二' });
+    expect(h.status).toBe('completed');
+  });
+
+  it('posts selected inkcop_agent_keys as agentKey', async () => {
+    const keyedBot = {
+      ...bot,
+      profile: { runtime: { message_transport: 'inkcop-local', inkcop_agent_keys: ['writer'] } },
+    } as unknown as Bot;
+    const bodies: unknown[] = [];
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/v1/health')) {
+        return Response.json({ ok: true, version: 2, app: 'inkcop', connections: [] });
+      }
+      if (String(url).endsWith('/v1/connections')) {
+        bodies.push(JSON.parse(String(init?.body ?? '{}')));
+        return Response.json({
+          ok: true,
+          connectionId: 'conn_w',
+          agentKey: 'writer',
+          conversationId: 2,
+        });
+      }
+      const sse =
+        'event: accepted\ndata: {"turnId":"t","connectionId":"c"}\n\n' +
+        'event: complete\ndata: {"turnId":"t","text":"ok"}\n\n';
+      return new Response(sse, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const client = new InkcopLocalBridgeClient({
+      endpoint: { version: 2, port: 9, token: 'd'.repeat(32), baseUrl: 'http://127.0.0.1:9' },
+      fetch: fetch as never,
+    });
+    const h = harness(client);
+    await executeInkcopBridgeTurn('run_1', batch, keyedBot, h.deps as never);
+    expect(bodies[0]).toMatchObject({
+      externalId: 'kepcup-bot-bot_ink--writer',
+      agentKey: 'writer',
+    });
     expect(h.status).toBe('completed');
   });
 });

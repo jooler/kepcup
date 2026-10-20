@@ -10,17 +10,10 @@ import {
   InkcopOfflineError,
   inkcopOfflineTip,
 } from './client.js';
-
-function inkcopExternalId(botId: string): string {
-  return `kepcup-bot-${botId}`;
-}
-
-function inkcopMessageId(uuid: string): string {
-  return `kepcup-msg-${uuid}`;
-}
+import { inkcopAgentKeyForBot, inkcopExternalId, inkcopMessageId } from './index.js';
 
 /**
- * InkCop 同机桥对话轮（契约 §5）：不走内置 LLM / ACP。
+ * InkCop 同机桥对话轮（契约 §5 / v0.2）：不走内置 LLM / ACP；按 Bot 勾选 agentKey 建连。
  * mailbox 仍负责串行；本模块只负责一次 run 的 HTTP+SSE 落地与收尾。
  */
 
@@ -129,11 +122,13 @@ export async function executeInkcopBridgeTurn(
       return;
     }
 
+    const agentKey = inkcopAgentKeyForBot(bot);
     let connectionId: string;
     try {
       const connection = await client.ensureConnection({
-        externalId: inkcopExternalId(bot.id),
+        externalId: inkcopExternalId(bot.id, agentKey),
         name: `KepCup · ${bot.name}`,
+        agentKey,
       });
       connectionId = connection.connectionId;
     } catch (error) {

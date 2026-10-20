@@ -11,6 +11,8 @@ import {
   browserProfileIdInputSchema,
   browserProfilesMutateOutputSchema,
   settingsUpdateInputSchema,
+  inkcopHealthOutputSchema,
+  inkcopListAgentsOutputSchema,
   providersSetKeyInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
@@ -259,6 +261,12 @@ import {
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
 import type { LoopType, WikiOwner } from '@kepcup/shared';
+import {
+  InkcopHttpError,
+  InkcopLocalBridgeClient,
+  InkcopOfflineError,
+  inkcopOfflineTip,
+} from '../inkcop/client.js';
 
 const voidInput = z.void();
 
@@ -441,6 +449,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             apps: appsPatch,
             agents: agentsPatch,
             backgroundTasks: backgroundTasksPatch,
+            inkcopLocalCollab: inkcopLocalCollabPatch,
             ...rest
           } = resolve(current);
           const latestApps = current.apps;
@@ -489,6 +498,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             // P6 后台任务：部分 patch，与已存值合并。
             ...(backgroundTasksPatch !== undefined
               ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
+              : {}),
+            // InkCop 同机协作 v0.2：部分 patch。
+            ...(inkcopLocalCollabPatch !== undefined
+              ? {
+                  inkcopLocalCollab: {
+                    ...current.inkcopLocalCollab,
+                    ...inkcopLocalCollabPatch,
+                  },
+                }
               : {}),
           });
           return { current, next };
@@ -620,6 +638,53 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { ok: true as const };
     }),
 
+    'inkcop.health': method(z.object({}).default({}), inkcopHealthOutputSchema, async () => {
+      const client = new InkcopLocalBridgeClient();
+      try {
+        const health = await client.health();
+        return {
+          online: true as const,
+          version: health.version,
+          app: health.app,
+        };
+      } catch (error) {
+        if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
+          return {
+            online: false as const,
+            tip: inkcopOfflineTip(null),
+          };
+        }
+        throw error;
+      }
+    }),
+    'inkcop.listAgents': method(z.object({}).default({}), inkcopListAgentsOutputSchema, async () => {
+      const client = new InkcopLocalBridgeClient();
+      try {
+        await client.health();
+      } catch (error) {
+        if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
+          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+        }
+        throw error;
+      }
+      try {
+        const listed = await client.listAgents();
+        return { online: true as const, agents: listed.agents };
+      } catch (error) {
+        // Server not yet on v0.2: fall back to main_agent stub so UI can still bind.
+        if (error instanceof InkcopHttpError && (error.status === 404 || error.status === 501)) {
+          return {
+            online: true as const,
+            agents: [{ key: 'main_agent', name: '主智能体', kind: 'main' as const }],
+            tip: 'InkCop 尚未提供 /v1/agents，暂仅列出主智能体',
+          };
+        }
+        if (error instanceof InkcopOfflineError) {
+          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+        }
+        throw error;
+      }
+    }),
     'bots.list': method(voidInput, botsListOutputSchema, async () => ({
       bots: domain.bots.listActive(),
     })),
