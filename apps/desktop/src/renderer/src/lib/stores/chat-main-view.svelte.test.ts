@@ -104,6 +104,16 @@ describe('shell.mainView 与 chat.select', () => {
     expect(shell.mainView).toBe('workbench');
   });
 
+  it('keepMainView：启动恢复装好会话，但主区留在工作台', async () => {
+    shell.openWorkbench();
+    await chat.select('c1', { keepMainView: true });
+    expect(shell.mainView).toBe('workbench');
+    expect(chat.currentId).toBe('c1');
+    // 之后用户主动点会话行（普通 select）照常回到对话。
+    await chat.select('c2');
+    expect(shell.mainView).toBe('chats');
+  });
+
   it('新建项目组的创建输入在对话区里，会先回到对话视图', () => {
     shell.openWorkbench();
     chat.beginProjectCompose();
