@@ -194,9 +194,14 @@ describe('system prompt assembly', () => {
     expect(prompt).toContain('10. 注入的记忆可能已过时');
     expect(prompt).not.toContain('mention_bot_ids');
     expect(prompt).toContain('memory_feedback');
+    // 画像卡片是摘要：规则 + 注入点都提示按分类查全文。
+    expect(prompt).toContain('11. 用户画像：注入的 <user_profile> 只是约 400 token 的摘要');
+    expect(prompt).toContain('get_user_profile 按分类查询完整条目');
+    expect(prompt).toContain('这是根据完整画像条目编译的摘要（约 400 token，可能被截断）');
     // 段落顺序：persona → user_profile → my_state → relevant_memories → conversation_info。
     const personaIndex = prompt.indexOf('<persona>');
-    const profileIndex = prompt.indexOf('<user_profile>');
+    // 规则文本也会提到 <user_profile>；这里只定位真正注入的段。
+    const profileIndex = prompt.indexOf('<user_profile>\n');
     const myStateIndex = prompt.indexOf('<my_state>');
     const memoriesIndex = prompt.indexOf('<relevant_memories>');
     const infoIndex = prompt.indexOf('<conversation_info>');
@@ -212,7 +217,7 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
     });
-    expect(bare).not.toContain('<user_profile>');
+    expect(bare).not.toContain('<user_profile>\n');
     expect(bare).not.toContain('<my_state>');
     expect(bare).not.toContain('<relevant_memories>');
   });
