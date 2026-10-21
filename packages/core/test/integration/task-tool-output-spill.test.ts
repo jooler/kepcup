@@ -66,7 +66,7 @@ describe('task tool output spill (D93 P3)', () => {
     );
     expect(result).toBeDefined();
     const content = String(result!.payload['content']);
-    expect(content).toContain(`.tool-output/${run.id}/0.txt`);
+    expect(content).toContain(path.join('.tool-output', run.id, '0.txt'));
     expect(content).toMatch(/共 \d{5} 字符/);
     expect(content).not.toContain('BIG-MIDDLE');
 
