@@ -292,7 +292,8 @@ CREATE TABLE episodes (
 
 ### 8.5 工具、读写与可信度
 
-- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read { path, scope? }`（项目对话里不传就是先读项目 wiki、那一页不在项目 wiki 时再读自己的 wiki；其它对话默认读自己的 wiki）、`wiki_enqueue { scope }`（**项目对话里默认** `project`——群聊里沉淀的东西留在项目 wiki，不散落到成员的个人 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`）。仅在项目对话里出现 `project` / `all`。
+- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read { path, scope? }`（项目对话里不传就是先读项目 wiki、那一页不在项目 wiki 时再读自己的 wiki；显式传 `scope` 则不回落；其它对话默认读自己的 wiki）、`wiki_enqueue { scope }`（**项目对话里默认** `project`——群聊里沉淀的东西留在项目 wiki，不散落到成员的个人 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`）。仅在项目对话里出现 `project` / `all`。
+- **归属：谁决定写进哪个 wiki**——① 对话轮里 Bot 调 `wiki_enqueue`：缺省按会话取（项目对话 → 项目 wiki，否则自己的 wiki），显式 `scope` 按显式值；② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job）：反思发生在项目对话里且该 Bot 仍是成员时同样进项目 wiki，否则进它自己的 wiki（群聊里沉淀的知识留在项目 wiki）；③ 用户从界面添加来源：进项目 wiki，执行者为负责人。
 - **新增** `wiki_remove_source`（异步托管动作，同 `wiki_enqueue` 的非阻塞范式）：Bot 只能删自己创建的来源，负责人删任意；入队时与执行时各校验一次 ACL；执行 = 移除原件 + 台账，提交，并登记一次体检清理悬空引用（即 D85 §6 的 `wiki.deleteAsset` 的文本子集，本期首次实现）。**走 job（`wiki_remove_source`，不调用模型、不受预算延后）而不是同步执行**：删除要拿项目 wiki 的互斥锁，而锁可能正被一次几分钟的维护持有，工具与 RPC 都不能阻塞等它；界面靠 `wiki_changed` 刷新。
 - 用户从界面添加来源：网址或**粘贴文本**（`text` 来源类型**只给用户**：`wiki_enqueue` 工具的 `source_type` 枚举不含它，`enqueueIngest` 对 `text` 要求 `createdBy.kind==='user'`；台账 `sources[].type` 联合含 `text`，`ref` 只存正文前 80 字预览，长度上限 `WIKI_TEXT_SOURCE_MAX_CHARS` = 200 000）；本期不做界面上传文件——用户要入库文件，对 Bot 说「存到项目 wiki」，由 Bot 用 `wiki_enqueue` 的 file / attachment 类型入库。
 - **可信度**：用户创建的来源可信；Bot 创建的来源，以及由它参与综合的页面，其他 Bot 读取时包进 `<untrusted source="project_wiki">` 并标注创建者；页面按出处判定——全部出处为用户才算可信。

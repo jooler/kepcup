@@ -432,7 +432,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `git_remote` | host | K | P04 | 在沙箱外代为执行 git 远程操作；参数 `operation`（push / pull / fetch / clone / remote_add / init）、`args`、`reason` |
 | `request_environment` | host | K | P06 | 申请安装宿主层环境；参数 `item`、`version?`、`reason` |
 | `remember` / `recall_memory` / `get_user_profile` / `list_commitments` / `memory_feedback` / `forget` | conversation | T、K | P07 | 见 [phases/P07-memory.md](phases/P07-memory.md) |
-| `wiki_search` / `wiki_read` / `wiki_enqueue` | conversation | T、K | P09 | Bot 个人 wiki；D92 T1b 起带 `scope`：`wiki_search{query, limit?, scope?: 'mine'|'project'|'all'}`（项目组里默认 `all`，其它默认 `mine`；结果逐条前缀 `[project]` / `[mine]` 且项目在前）、`wiki_read{path, scope?}`（项目组里不传 scope 先读项目 wiki、那一页不在项目 wiki 时回落自己的 wiki，其它对话默认 `mine`，搜索结果原样传回；项目 wiki 页面按出处可信度包裹——全部出处为用户才原样返回，否则整段 `<untrusted source="project_wiki">` 并在最前标注提交者）、`wiki_enqueue{source_type, ref, note, scope?}`（**项目组里默认 `project`**——群聊里的沉淀留在项目 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`；`source_type` 枚举 `attachment | url | file`，无 `text`） |
+| `wiki_search` / `wiki_read` / `wiki_enqueue` | conversation | T、K | P09 | Bot 个人 wiki；D92 T1b 起带 `scope`（D92 T1b 收口：项目组对话里的沉淀默认留在项目 wiki）：`wiki_search{query, limit?, scope?: 'mine'|'project'|'all'}`（项目组里默认 `all`，其它默认 `mine`；结果逐条前缀 `[project]` / `[mine]` 且项目在前）、`wiki_read{path, scope?}`（项目组里不传 scope 先读项目 wiki、那一页不在项目 wiki 时回落自己的 wiki，显式传 scope 则不回落；其它对话默认 `mine`，搜索结果原样传回；项目 wiki 页面按出处可信度包裹——全部出处为用户才原样返回，否则整段 `<untrusted source="project_wiki">` 并在最前标注提交者）、`wiki_enqueue{source_type, ref, note, scope?}`（**项目组里默认 `project`**——群聊里的沉淀留在项目 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`；`source_type` 枚举 `attachment | url | file`，无 `text`） |
 | `wiki_remove_source` | conversation | T、K | D92 T1b | **仅项目组会话注册**；`{source_id}`（`ast_…`）。删除自己创建的项目 wiki 来源（负责人删任意）；异步托管动作——入队 `wiki_remove_source` job 立即返回「已登记删除，稍后生效」，ACL / 来源不存在返回失败结果，不走审批 |
 | `schedule` / `list_schedules` / `cancel_schedule` | conversation | T、K | P10 / D80 | 见 [phases/P10-proactive.md](phases/P10-proactive.md)；D80：`schedule` 增 `title?`，返回人话时间与护栏提示，创建后对话里出回执卡 |
 | `offer_schedule` | conversation | T | D80 | 定时提议卡：参数 `when`、`title`、`note`、`question`、`timezone?`；宿主校验时间、同名重复与拒绝退避（7 天 2 次），旧的待定提议标为 superseded；用户点「设置」由宿主确定性创建（`origin='offer'`），不唤醒 Bot（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)） |
@@ -603,6 +603,8 @@ D75 常量（`packages/shared/src/constants.ts`）：
   skillSuggestion?: { name: string, description: string, reason: string }
 }
 ```
+
+`wikiSuggestions` 的**目标 wiki 由会话决定**（D92 T1b 收口）：反思发生在项目组对话里且该 Bot 仍是成员时进**项目 wiki**，否则进它自己的 wiki（`wiki_suggestion` job 被消费时解析 owner，见 [03-data-model.md](03-data-model.md) 的 `wiki_ingest` 条目）。
 
 代码层面的强制校验（不依赖模型自觉）见 [phases/P07-memory.md](phases/P07-memory.md#写入校验)。
 

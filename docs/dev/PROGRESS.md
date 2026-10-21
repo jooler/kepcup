@@ -1491,3 +1491,18 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - 文档：`docs/design/01-conversation.md`（通讯录 / 单聊 / 项目组 / 移除与删除两节）、`docs/design/41-project-team.md`（§4.1 数据模型、§12.4 生命周期、§12.5 RPC）、`docs/dev/03-data-model.md`（conversations 列与删除口径）、`docs/dev/DEVIATIONS.md`（DEV-040）、`packages/shared/src/settings-catalog/coverage.ts`（`conversations.archive / unarchive` 登记为对象管理动作）。
 
 **验证**：core 单测 230 文件 / 2892 例全过（新增 `conversation-archive.test.ts` 6 例：归档语义、幂等、项目组归档不删成员、域层不自动恢复、恢复后同一对话）；core 集成新增 `conversation-archive.test.ts` 2 例（RPC 口径：列表/名册/恢复、打开归档直聊 = 恢复同 id）；渲染层 93 文件 / 794 例全过（新增 `contacts.svelte.test.ts` 5 例）；desktop svelte-check 0 新增错误（余 4 处为进行中的 inkcop 本地协作改动，与本次无关）；eslint 干净。e2e `direct-chat.spec.ts` 随语义改为「移除 → 通讯录恢复」。
+
+### 项目 wiki 归属：群聊里的沉淀默认留在项目 wiki（2026-10-21）
+
+用户要求：项目组（群聊）里 Bot 沉淀的 wiki 内容不进各 Bot 的个人 wiki，留在**项目 wiki**。核实原实现：`wiki_enqueue` 的 `scope` 缺省是 `mine`（设计 41 §8.5 当时定的「发布到共享空间必须是有意为之」），`wiki_read` 缺省也是 `mine`——项目对话里注入的 `<project_wiki_topics>` 路径按 `mine` 读必然 NOT_FOUND；反思 loop 提出的 wiki 建议（`wiki_suggestion`）也恒定进个人 wiki。
+
+改口径（收口修正，D92 T1b）：
+
+- **写**：`wiki_enqueue` 缺省 `scope` 按会话取——项目对话 → `project`（共享的项目 wiki），其它对话 → `mine`；显式 `scope=mine` 仍写个人 wiki（纯个人经验）。
+- **读**：`wiki_read` 缺省 `scope` 在项目对话里先读项目 wiki、该页不在时回落到自己的 wiki；显式 `scope` 不回落。
+- **反思建议**：`wiki_suggestion` 被消费时，反思发生在项目对话里且该 Bot 仍是成员 → 进项目 wiki，否则进自己的 wiki（`jobs-runner` 的 `#wikiSuggestionOwner`）。
+- **提示词**：负责人 / 成员规则段改为「项目组对话里 wiki_enqueue 默认就写进共享的项目 wiki，纯个人经验才显式传 `scope=mine`」。
+
+文档同步（本轮）：`design/05-wiki-and-skills.md`（读写规则、`scope` 行、新增「归属（谁选目标 wiki）」行、触发来源与事务口径、开篇定位）、`design/41-project-team.md` §8.5（归属规则 + `wiki_read` 不回落）、`design/02-execution.md` loop 表、`design/03-bot.md` 存储边界、`design/06-isolation-and-storage.md` 隔离矩阵与写入者表、`design/10-sandbox.md` 沙箱路径表、`design/11-storage.md` 磁盘布局、`design/30-supervisor-and-tasks.md` §7.2、`design/36-wiki-multimodal-ingest.md` §5.5、`dev/03-data-model.md`（jobs 类型 + `wiki_ingest` owner 的选择规则 + `wiki_suggestion` 条目）、`dev/04-agent-runtime.md`（工具行与反思输出契约）、`dev/phases/P07-memory.md`、`dev/phases/P09-wiki.md`（D92 修订注记）、`dev/05-testing.md`（回归登记）。
+
+**验证**：core 定向——`wiki-tools` / `system-prompt-project` 单测、`wiki-project-default-scope`（新集成 3 例：群聊里不传 `scope` 落项目 wiki 且个人 wiki 全程没被写；单聊里不传 `scope` 仍写自己的；反思建议也落项目 wiki，还原旧行为即失败）、`wiki-project` / `memory-reflection` 集成全绿；core typecheck 与 eslint 干净。
