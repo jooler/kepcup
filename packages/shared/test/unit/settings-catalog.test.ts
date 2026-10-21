@@ -324,7 +324,13 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
       expect.arrayContaining(['default-models', 'web-search', 'apps-connected', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
-    expect(scan.extensionCenterTabs).toEqual(['skills', 'connections', 'mcp', 'mail']);
+    expect(scan.extensionCenterTabs).toEqual([
+      'skills',
+      'connections',
+      'mcp',
+      'mail',
+      'localCollab',
+    ]);
     expect(scan.botPanelTabs).toEqual(expect.arrayContaining(['profile', 'skills', 'schedules']));
   });
 

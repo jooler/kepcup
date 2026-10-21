@@ -1083,6 +1083,12 @@ AGENTS.md 的「设置：只走设置目录」小节在实施时已同步更新�
   「我已设置好」仍结卡（`verified: null`，与渲染层条目同语义）。
 - **`general.workbench` 的读摘要**由通用适配器生成（单布尔开关下与原自定义适配器逐字一致）。
 
+### 后续修复（2026-10-21）
+
+- InkCop 的 `localCollab` 扩展页签与 `bot-inkcop-agents` 锚点已补登记：`agents.inkcop-local-collab` / `bot.inkcop-agents`（link 卡 + core 只读适配器）；`settings-catalog` UI 覆盖恢复全绿。
+- `systemBotId` 从 `inkcopLocalCollabSettingsSchema` 移除（RPC patch 仍兼容旧字段），桌面端 svelte-check 恢复 0 error。
+- 本节下方「测试结果」中记录的 5 个基线失败与 4 个 desktop 错误已随之消除。
+
 ### 测试结果（2026-10-21）
 
 定向矩阵（`node scripts/run-tests.mjs run ...`）：

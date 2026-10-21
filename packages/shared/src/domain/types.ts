@@ -721,14 +721,12 @@ export type BrowserProfile = z.infer<typeof browserProfileSchema>;
 export const inkcopLocalCollabSettingsSchema = z
   .object({
     enabled: z.boolean().default(false).catch(false),
-    /** @deprecated 不再使用；保留以免旧 settings 解析失败。 */
-    systemBotId: z.string().default('').catch(''),
     /** v0.3：Bearer API 密钥；空则同机探测时回落 endpoint.token。 */
     apiKey: z.string().default('').catch(''),
     /** v0.3：可选服务 baseUrl（局域网/跨机）；空则用 endpoint / 127.0.0.1。 */
     baseUrl: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, systemBotId: '', apiKey: '', baseUrl: '' });
+  .catch({ enabled: false, apiKey: '', baseUrl: '' });
 export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettingsSchema>;
 
 /** UI language selected in the renderer; core mirrors it for prompts and deterministic copy. */

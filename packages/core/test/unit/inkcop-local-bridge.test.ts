@@ -278,14 +278,6 @@ describe('InkcopLocalBridgeClient', () => {
 
   it('missing key without endpoint → auth error before fetch', async () => {
     const fetch = vi.fn();
-    const client = new InkcopLocalBridgeClient({
-      endpoint: undefined,
-      apiKey: '',
-      baseUrl: 'http://127.0.0.1:9',
-      fetch: fetch as never,
-      // force no file: inject null via resolve by using empty overrides and no endpoint —
-      // constructor with only baseUrl still needs endpoint or we pass a fake path.
-    });
     // Without fixed endpoint and without readable file, resolve uses disk; instead inject via resolveInkcopTarget path:
     const bare = new InkcopLocalBridgeClient({
       apiKey: '',

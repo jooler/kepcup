@@ -89,7 +89,8 @@
     await settingsStore.update({
       inkcopLocalCollab: {
         enabled: settings.inkcopLocalCollab.enabled,
-        ...patch,
+        apiKey: patch.apiKey ?? settings.inkcopLocalCollab.apiKey,
+        baseUrl: settings.inkcopLocalCollab.baseUrl,
       },
     });
   }
