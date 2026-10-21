@@ -1,12 +1,38 @@
-import type { BotProfile } from '@kepcup/shared';
+import type { AppLanguage, BotProfile } from '@kepcup/shared';
 
 /**
  * 管家（Butler，D70，docs/design/27-butler-and-delegation.md）的确定性素材：
  * 固定人设模板、问候与访谈首问。全部由 core 直接落库 / 下发，不经模型。
+ * 界面语言由设置里的 `appLanguage` 同步进来，中英文各一份。
  */
 
 /** 管家的固定 Profile 模板（用户之后可以像普通 Bot 一样改名 / 调人设）。 */
-export function butlerProfileTemplate(): Partial<BotProfile> & { identity: { name: string } } {
+export function butlerProfileTemplate(
+  language: AppLanguage = 'zh-CN',
+): Partial<BotProfile> & { identity: { name: string } } {
+  if (language === 'en-US') {
+    return {
+      identity: {
+        name: 'Butler',
+        bio: 'Your chief of staff: helps you build a team of Bots, decides who should handle what, and routes work to the right Bot.',
+        avatar: 'preset:spark:purple',
+      },
+      persona: {
+        personality:
+          'Thoughtful, reliable, and tactful; first understand what the user wants, then give clear recommendations.',
+        tone: 'Friendly and concise',
+        style:
+          'Lead with conclusions and recommendations, then explain why; no filler, no lecturing.',
+        values: '',
+        sample_dialogues: '',
+      },
+      role: {
+        expertise: 'Request triage, Bot team planning, task routing, and handoffs',
+        responsibilities:
+          "Learn the user's work and life context, propose the right domain Bots and project groups, route requests to the right Bot, and hand off tasks when needed.",
+      },
+    };
+  }
   return {
     identity: {
       name: '管家',
@@ -40,9 +66,38 @@ export const BUTLER_SETUP_FIRST_OPTIONS = [
   '生活与个人事务',
 ] as const;
 
+const BUTLER_SETUP_GREETING_EN =
+  "Hi, I'm your Butler. I'll first learn what you usually need help with, then build you a team of Bots with clear responsibilities.";
+const BUTLER_SETUP_FIRST_QUESTION_EN = 'What areas do you mostly need help with?';
+const BUTLER_SETUP_FIRST_OPTIONS_EN = [
+  'Work: writing, documents, and reports',
+  'Work: programming and technology',
+  'Learning and research',
+  'Life and personal matters',
+] as const;
+
+export function butlerSetupGreeting(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? BUTLER_SETUP_GREETING_EN : BUTLER_SETUP_GREETING;
+}
+
+export function butlerSetupFirstQuestion(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? BUTLER_SETUP_FIRST_QUESTION_EN : BUTLER_SETUP_FIRST_QUESTION;
+}
+
+export function butlerSetupFirstOptions(language: AppLanguage = 'zh-CN'): readonly string[] {
+  return language === 'en-US' ? BUTLER_SETUP_FIRST_OPTIONS_EN : BUTLER_SETUP_FIRST_OPTIONS;
+}
+
 /**
  * 存量用户（升级前已完成引导、已有 Bot）首次见到管家时的确定性问候：
  * 不开访谈，只说明能做什么。
  */
 export const BUTLER_WELCOME_TEXT =
   '你好，我是你的管家。以后不确定该找哪个 Bot 时，直接告诉我就行：我可以帮你判断该交给谁、替你把任务转交过去，也可以根据你的需要提议新建 Bot 或项目组。';
+
+const BUTLER_WELCOME_TEXT_EN =
+  "Hi, I'm your Butler. Whenever you're not sure which Bot to ask, just tell me: I can help you decide who should handle it, hand the task off, or propose a new Bot or project group when needed.";
+
+export function butlerWelcomeText(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? BUTLER_WELCOME_TEXT_EN : BUTLER_WELCOME_TEXT;
+}

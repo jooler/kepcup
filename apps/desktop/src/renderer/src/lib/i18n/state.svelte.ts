@@ -1,3 +1,4 @@
+import { detectLocale } from './locale-detect';
 import { enUS } from './locales/en-US';
 import { zhCN, type MessageKey } from './locales/zh-CN';
 
@@ -23,14 +24,16 @@ export const localeOptions: LocaleOption[] = [
 
 const LOCALE_STORAGE_KEY = 'kepcup.locale';
 
+export { detectLocale, type LocaleId } from './locale-detect';
+
 function initialLocale(): string {
   try {
     const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
     if (stored && stored in dicts) return stored;
   } catch {
-    // localStorage 不可用时用默认语言
+    // localStorage 不可用时按系统语言推断
   }
-  return 'zh-CN';
+  return detectLocale();
 }
 
 function applyDocumentLang(locale: string): void {
@@ -109,6 +112,43 @@ export function settingOptionText(
   fallback: string,
 ): string {
   return lookup(`settingsItem.${itemId}.option.${fieldName}.${value}`) ?? fallback;
+}
+
+/** 沙箱状态原因（core 生成的中文说明）→ 当前语言；认不出的原样返回。 */
+export function sandboxReasonText(reason: string | null | undefined): string | null {
+  if (reason === null || reason === undefined || reason.length === 0) return null;
+  if (reason.includes('未安装 Lima')) return t('sandbox.reason.limaMissing');
+  if (reason.includes('Lima 已安装但增强沙箱虚拟机尚未创建')) {
+    return t('sandbox.reason.limaNotCreated');
+  }
+  if (reason.includes('增强沙箱虚拟机未在运行')) return t('sandbox.reason.vmNotRunning');
+  if (reason.includes('增强沙箱镜像尚未导入')) return t('sandbox.reason.imageMissing');
+  if (reason.includes('未安装 rootless Podman')) return t('sandbox.reason.podmanMissing');
+  const platform = /^当前平台（(.+)）暂不支持沙箱/.exec(reason);
+  if (platform !== null) return t('sandbox.reason.platformUnsupported', { platform: platform[1]! });
+  const depsMissing = /^沙箱依赖缺失：(.+)$/.exec(reason);
+  if (depsMissing !== null) return t('sandbox.reason.depsMissing', { deps: depsMissing[1]! });
+  const depsCheck = /^沙箱依赖检测失败：(.+)$/.exec(reason);
+  if (depsCheck !== null) return t('sandbox.reason.depsCheckFailed', { error: depsCheck[1]! });
+  const selfTest = /^沙箱自检命令失败（退出码 (.+)）$/.exec(reason);
+  if (selfTest !== null) return t('sandbox.reason.selfTestFailed', { code: selfTest[1]! });
+  const init = /^沙箱初始化失败：(.+)$/.exec(reason);
+  if (init !== null) return t('sandbox.reason.initFailed', { error: init[1]! });
+  const wslMissing = /^WSL2 未安装（(.+)）$/.exec(reason);
+  if (wslMissing !== null) return t('sandbox.reason.wslMissing', { detail: wslMissing[1]! });
+  const wslDisabled = /^WSL2 组件未启用（(.+)）$/.exec(reason);
+  if (wslDisabled !== null) return t('sandbox.reason.wslDisabled', { detail: wslDisabled[1]! });
+  const wsl1 = /^(.+) 发行版被注册为 WSL1/.exec(reason);
+  if (wsl1 !== null) return t('sandbox.reason.wsl1', { distro: wsl1[1]! });
+  if (reason.includes('管理员授权已完成，请重启 Windows 后继续')) {
+    return t('sandbox.reason.wslReboot');
+  }
+  if (reason.includes('WSL 启用命令已完成')) return t('sandbox.reason.wslEnableReboot');
+  if (reason.includes('WSL2 已就绪，应用私有发行版尚未导入')) {
+    return t('sandbox.reason.wslDistroMissing');
+  }
+  if (reason.includes('发行版配置未完成')) return t('sandbox.reason.wslConfigIncomplete');
+  return reason;
 }
 
 /** 连接应用目录条目：按 connector slug 覆盖描述，缺省回退目录数据。 */

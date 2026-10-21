@@ -4,6 +4,7 @@ import {
   HOST_CAPABILITIES,
   PERSONA_TOKEN_BUDGET,
   type AgentPermissionTier,
+  type AppLanguage,
   type Bot,
   type BotCard,
   type Conversation,
@@ -28,6 +29,8 @@ export interface AccessPromptInfo {
 }
 
 export interface SystemPromptInput {
+  /** UI language: controls user-facing output language and setup/interview copy. */
+  language?: AppLanguage | undefined;
   /**
    * Which loop the prompt drives (D75): `turn` — the supervisor turn
    * (communication and routing, read-only; turn version of <platform_rules>);
@@ -238,6 +241,41 @@ const BUTLER_INTERVIEW_GUIDANCE = [
   '用户明确表示现在不需要组队时，调用 finish_setup 结束访谈，然后正常对话。',
 ].join('\n');
 
+const BUTLER_INTERVIEW_GUIDANCE_EN = [
+  'This is a new-user onboarding interview: learn what the user usually needs to handle in 2–4 questions, then propose a team of 3–5 domain Bots.',
+  "The first question (which areas the user needs help with, with options) has already been shown by the UI and the user has just answered — continue from there and don't repeat it.",
+  'Each turn: briefly acknowledge the user\'s answer in one sentence (put it in ask_question\'s acknowledgement parameter), then ask the next question with ask_question. Ask one question at a time and give 2–4 concrete options tailored to the user\'s situation; the UI always provides a custom answer input (in multi-select, custom answers also become selected entries), so don\'t add fallback options like "Other".',
+  'Mode: use single-select (default) for decisions with one answer; use mode:"multi" for enumerable questions such as tasks to handle, Bot responsibilities, and common task types. Use single-select when unsure and don\'t use multi-select repeatedly.',
+  "Question plan: prioritize specific work/life scenarios, the most common task types, and how much the user wants Bots to handle; don't repeat what the user has already answered. When asking about common tasks, include one or two options with a fixed cadence (e.g., 'read industry news every morning', 'compile the weekly report every Monday') instead of asking about scheduled tasks separately.",
+  "When the user mentions something with a fixed cadence or time: if the time is unclear, clarify it in the next question with concrete options (e.g., 'weekdays at 9am', 'Monday morning'); include it in the matching Bot's routines in the proposal (when uses cron, e.g. \"0 9 * * 1-5\"), keep the title short and user-friendly (e.g., 'Weekday morning briefing'), and describe what to do in note. If not mentioned, don't add it.",
+  "When you have enough information (or receive the question-limit notice): call propose_bots with a proposal; each Bot should have distinct, non-overlapping responsibilities, reasons grounded in what the user said, and any recurring items the user mentioned in the matching Bot's routines. The interview ends after the call.",
+  "If the user explicitly says they don't need a team right now, call finish_setup to end the interview and continue the conversation normally.",
+].join('\n');
+
+const PROJECT_SETUP_GUIDANCE_EN = [
+  'You are still being set up; your profile may be incomplete. This is a project group: don\'t send setup questionnaires or ask the user to define you here.',
+  'When the user asks you to do something in the project group, just do it.',
+  'If bio, expertise, or responsibilities are still empty, use save_profile to record what you can determine from your name and the instructions the user explicitly gave you in this project (addressing you, @-mentioning you, or clearly asking you).',
+  "Only record what the instructions make clear; don't invent. If one instruction isn't enough, write what is certain and fill in more later.",
+  'Don\'t finish the interview in a project group. When the user talks to you privately, clarify the remaining role questions.',
+].join('\n');
+
+const SETUP_INTERVIEW_GUIDANCE_EN = [
+  'You have just been created and your profile is empty: this is a setup interview. Your goal is to learn what kind of assistant the user wants through 3–5 questions and fill in your Profile.',
+  'If your bio, responsibilities, expertise, or personality are still empty, proactively ask about your role (what to help with, boundaries, tone) instead of waiting for the user to define you.',
+  'The first question (what the user wants help with, with options) has already been shown by the UI and the user has just answered — continue from there and don\'t repeat it.',
+  "Don't ask about the working directory: the UI asks once after the first answer (choose a directory or skip); by the time this turn starts it is already settled (see <workdir> and the system message). Don't ask again.",
+  'Each turn, do three things:',
+  "1. Briefly acknowledge the user's answer in one sentence (put it in ask_question's acknowledgement parameter; don't send a separate message).",
+  '2. Save the fields you extracted from this answer with save_profile first (incremental saves are fine; you don\'t need all information at once).',
+  "3. Then ask the next question with ask_question: one question at a time, with 2–4 concrete options tailored to the user's business so far; the UI provides a custom answer input automatically (custom entries become selected in multi-select), so don't add fallback options like 'Other'.",
+  'Mode: use single-select (default) for decisions with one answer; use mode:"multi" for enumerable questions (tasks to assist with, responsibility scope, tone/style). Use single-select when unsure and don\'t use multi-select repeatedly.',
+  "Question plan (finish within 3–5 questions; don't repeat answered ones): prioritize the name the user wants, specific responsibilities and typical work scenarios, tone and communication style, and boundaries or special requirements; skip dimensions the user already covered.",
+  "Recurring work: if the user's responsibilities include a fixed cadence or time ('every day', 'every week', 'keep an eye on it', 'end of month'), confirm with one question whether you should act proactively at that time — phrase it concretely (e.g., 'Should I send you an industry briefing every weekday at 9:00?') with options 'That time works', 'A different time (e.g., …)', 'Not for now'; if the user agrees, create it with schedule before finish_setup (short title, note describing what to do) and mention it in the summary. Don't ask if the user didn't mention a cadence.",
+  'When you have enough information (or receive the question-limit notice): use save_profile to fill remaining fields (create any agreed recurring items with schedule), call finish_setup to end the interview, then use your final reply to summarize what you remembered and how the user can use you. Don\'t ask more questions at this point.',
+  "Constraints: save_profile should only contain information extracted from the user's answers — never invent things the user didn't say. If an answer is vague, offer more concrete options to reduce effort; don't dump a long questionnaire at once.",
+].join('\n');
+
 /**
  * `<platform_rules>` of a task's execution (D75 design 30 §2.2; the P01+
  * rules of docs/dev/04-agent-runtime.md as revised): 1 (persona), 2 (the final
@@ -251,7 +289,7 @@ const BUTLER_INTERVIEW_GUIDANCE = [
  * no routing to other bots from a task).
  */
 const PLATFORM_RULES = [
-  '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
+  '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言以 <language_rules> 为准。',
   '你正在执行自己在这个对话中派出的一项任务。你的最终回复不会直接发给用户，而是作为任务结果交回给对话中的你，由你决定怎么告诉用户：写清做了什么、结论、产出文件的路径与没完成的事；没有需要交回的内容时调用 skip_reply。',
   '执行任务时同步进展：第一次调用工具前，先用一两句话在带工具调用的回复文本里说明你打算怎么做（这段文字会作为消息直接展示给用户）；中途在关键节点（更换思路、拿到重要中间结果、遇到阻碍）再用一两句话同步进展；其余工具调用不要附带文字，不要把完整结果提前倾倒进中间说明。',
   '中间进展直接写在回复文本里，不要用 send_message 发进度；send_message 只用于发附件或主动分多条消息。',
@@ -298,7 +336,7 @@ export const WORKBENCH_UPDATE_RULE =
  * memory) keep the task rules' wording.
  */
 const TURN_PLATFORM_RULES = [
-  '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
+  '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言以 <language_rules> 为准。',
   '你的最终回复会自动作为一条聊天消息发出；回复保持聊天风格，不要写成报告，除非用户要求。',
   '你在这里负责沟通与调度。先自行估计这件事的工作量再决定怎么做：轻的（闲聊、依据对话记录 / 记忆 / 少量只读查询就能答的）直接在这一轮回答；重的——需要动手（改文件、执行命令、用浏览器、生成图片 / 语音 / 视频、安装环境或技能、调用外部工具），或预计要连续多步、通读大量材料、做多步调研——用 start_task 派成后台任务，然后在回复里简短告诉用户你去做了什么。',
   '你在这一轮里是只读的：只能查看消息、附件、执行记录与文件（read / ls / find / grep），写文件和执行命令只能在任务里进行，不要尝试绕过。',
@@ -499,33 +537,40 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // 项目组里不发问卷：空画像的 Bot 按自己的名字和用户点名下达的指令，用
   // save_profile 慢慢补全；单聊才主动问定位。
   const isButler = bot.systemRole === 'butler';
+  const english = input.language === 'en-US';
   const setupSection =
     bot.setupState === 'interviewing' && isButler
-      ? BUTLER_INTERVIEW_GUIDANCE
+      ? english
+        ? BUTLER_INTERVIEW_GUIDANCE_EN
+        : BUTLER_INTERVIEW_GUIDANCE
       : bot.setupState === 'interviewing' && input.conversation.type === 'project'
-        ? [
-            '你还在初始化，画像可能不完整。当前是项目组：不要在项目组里发初始化问卷，也不要追问用户你自己的定位。',
-            '用户在项目组里让你做事时，正常把那件事做完。',
-            '若简介、擅长或职责仍是空的，根据你的名字，以及用户在本项目组明确下达给你的指令（点名、@ 你、或显然在吩咐你），用 save_profile 逐步写下能确定的简介、擅长与职责。',
-            '只写指令里能确定的内容，不要编造。一次指令不够就先写确定的部分，之后的指令再补。',
-            '不要在项目组里结束访谈。等用户与你单独对话时，再把还空着的定位问清楚。',
-          ].join('\n')
-        : bot.setupState === 'interviewing'
-          ? [
-              '你刚刚被创建，profile 还是空的：这是一个初始化访谈。你的目标是通过 3~5 个问题了解用户希望你成为什么样的助手，并把自己的 Profile 填好。',
-              '若简介、职责、擅长或性格仍为空，主动询问你的定位（协助哪些事务、职责边界、语气），不要等用户先来定义你。',
-              '第一个问题（用户希望你协助处理哪些事务，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
-              '工作目录不用你过问：界面会在首答之后固定问一次（选择目录或暂不设置），你开始本轮时这件事已是既成事实（看 <workdir> 段与对话里的系统消息即可），不要重复询问。',
-              '每一轮固定做三件事：',
-              '1. 用一句话简短确认用户的回答（放进 ask_question 的 acknowledgement 参数，不要单独发消息）；',
-              '2. 先用 save_profile 把从这条回答中提炼的字段写入 profile（增量保存，不必等全部信息齐备）；',
-              '3. 再用 ask_question 提出下一个问题：一次只问一个，给 2~4 个贴合用户已透露业务的具体候选答案；自定义回答输入框由界面自动提供（多选下用户输入的自定义内容也会成为选中的条目），不要在选项里放「其他/自定义」之类的兜底项。',
-              'mode 的选择：答案只有一项的抉择题用单选（缺省）；「有哪些/要哪些」这类可多项并存的列举题（要协助的事务、职责范围、语气风格选项）用 mode:"multi"，让用户一次勾选多项并自行补充。不确定时用单选，不要连续多问都用多选。',
-              '问题规划（3~5 问内完成，用户已经回答的不重复问）：优先覆盖——希望给你起什么名字、具体职责与典型工作场景、语气与交流风格、职责边界或特别要求；某维度用户已说清楚就直接跳过。',
-              '周期性的事：用户描述的职责里有固定周期或时间点（「每天」「每周」「定期盯着」「月底」）时，用一问确认要不要你到点主动做——问题写成具体的一句（如「要我每个工作日 9:00 主动给你发行业早报吗？」），候选给「就这个时间」「换个时间（如 …）」「先不用」；用户同意就在 finish_setup 之前用 schedule 建好（title 写短名，note 写到点要做什么），总结里提一句。用户没提周期就不要问。',
-              '信息足够（或收到已达问题上限的提示）时：用 save_profile 补齐剩余字段（用户同意的周期事项此时已用 schedule 建好），调用 finish_setup 结束访谈，再用你的最终回复向用户总结你记住了什么、之后可以怎么使唤你。此时不要再提问。',
-              '约束：save_profile 只写你从用户回答中提炼的内容，不要编造用户没说过的东西；用户回答含糊时用更具体的选项降低回答成本，不要一次抛出长问卷。',
+        ? english
+          ? PROJECT_SETUP_GUIDANCE_EN
+          : [
+              '你还在初始化，画像可能不完整。当前是项目组：不要在项目组里发初始化问卷，也不要追问用户你自己的定位。',
+              '用户在项目组里让你做事时，正常把那件事做完。',
+              '若简介、擅长或职责仍是空的，根据你的名字，以及用户在本项目组明确下达给你的指令（点名、@ 你、或显然在吩咐你），用 save_profile 逐步写下能确定的简介、擅长与职责。',
+              '只写指令里能确定的内容，不要编造。一次指令不够就先写确定的部分，之后的指令再补。',
+              '不要在项目组里结束访谈。等用户与你单独对话时，再把还空着的定位问清楚。',
             ].join('\n')
+        : bot.setupState === 'interviewing'
+          ? english
+            ? SETUP_INTERVIEW_GUIDANCE_EN
+            : [
+                '你刚刚被创建，profile 还是空的：这是一个初始化访谈。你的目标是通过 3~5 个问题了解用户希望你成为什么样的助手，并把自己的 Profile 填好。',
+                '若简介、职责、擅长或性格仍为空，主动询问你的定位（协助哪些事务、职责边界、语气），不要等用户先来定义你。',
+                '第一个问题（用户希望你协助处理哪些事务，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
+                '工作目录不用你过问：界面会在首答之后固定问一次（选择目录或暂不设置），你开始本轮时这件事已是既成事实（看 <workdir> 段与对话里的系统消息即可），不要重复询问。',
+                '每一轮固定做三件事：',
+                '1. 用一句话简短确认用户的回答（放进 ask_question 的 acknowledgement 参数，不要单独发消息）；',
+                '2. 先用 save_profile 把从这条回答中提炼的字段写入 profile（增量保存，不必等全部信息齐备）；',
+                '3. 再用 ask_question 提出下一个问题：一次只问一个，给 2~4 个贴合用户已透露业务的具体候选答案；自定义回答输入框由界面自动提供（多选下用户输入的自定义内容也会成为选中的条目），不要在选项里放「其他/自定义」之类的兜底项。',
+                'mode 的选择：答案只有一项的抉择题用单选（缺省）；「有哪些/要哪些」这类可多项并存的列举题（要协助的事务、职责范围、语气风格选项）用 mode:"multi"，让用户一次勾选多项并自行补充。不确定时用单选，不要连续多问都用多选。',
+                '问题规划（3~5 问内完成，用户已经回答的不重复问）：优先覆盖——希望给你起什么名字、具体职责与典型工作场景、语气与交流风格、职责边界或特别要求；某维度用户已说清楚就直接跳过。',
+                '周期性的事：用户描述的职责里有固定周期或时间点（「每天」「每周」「定期盯着」「月底」）时，用一问确认要不要你到点主动做——问题写成具体的一句（如「要我每个工作日 9:00 主动给你发行业早报吗？」），候选给「就这个时间」「换个时间（如 …）」「先不用」；用户同意就在 finish_setup 之前用 schedule 建好（title 写短名，note 写到点要做什么），总结里提一句。用户没提周期就不要问。',
+                '信息足够（或收到已达问题上限的提示）时：用 save_profile 补齐剩余字段（用户同意的周期事项此时已用 schedule 建好），调用 finish_setup 结束访谈，再用你的最终回复向用户总结你记住了什么、之后可以怎么使唤你。此时不要再提问。',
+                '约束：save_profile 只写你从用户回答中提炼的内容，不要编造用户没说过的东西；用户回答含糊时用更具体的选项降低回答成本，不要一次抛出长问卷。',
+              ].join('\n')
           : '';
 
   // D73 / D91: the app rule follows the app_request_connection tool registration (same source).
@@ -554,6 +599,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     return rules;
   })();
   return [
+    section(
+      'language_rules',
+      english
+        ? "Reply in the same language as the user's most recent message (questions, acknowledgements, progress notes, summaries, and final replies). If there is no user message — for example, a scheduled or system-triggered turn — reply in English."
+        : '使用用户最近一条消息的语言回复（包括问题、确认语、进度说明、总结与最终回复）。没有用户消息时（例如定时任务或系统触发的一轮），使用简体中文。',
+    ),
     section('platform_rules', platformRules.join('\n')),
     // 管家规则按循环面取版本：propose_* / suggest_route / delegate_to_bot 只在
     // 对话轮工具面（design 30 §1.2），任务里注入对话轮版会指挥模型调用不存在的工具。
@@ -690,7 +741,7 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{
   unlessTools?: readonly string[];
 }> = [
   {
-    text: '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
+    text: '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言以 <language_rules> 为准。',
   },
   {
     text: '你正在执行自己在这个对话中派出的一项任务。你的最终回复不会直接发给用户，而是作为任务结果交回给对话中的你，由你决定怎么告诉用户：写清做了什么、结论、产出文件的路径与没完成的事。',

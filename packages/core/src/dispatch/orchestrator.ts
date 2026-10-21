@@ -185,12 +185,12 @@ import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
 import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
-  SETUP_FIRST_OPTIONS,
-  SETUP_FIRST_QUESTION,
-  SETUP_GREETING,
-  SETUP_PATH_QUESTION,
-  SETUP_PATH_SKIP_TEXT,
   questionCapReached,
+  setupFirstOptions,
+  setupFirstQuestion,
+  setupGreeting,
+  setupPathQuestion,
+  setupPathSkipText,
 } from '../tools/setup-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profiles.js';
@@ -222,11 +222,11 @@ import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import {
-  BUTLER_SETUP_FIRST_OPTIONS,
-  BUTLER_SETUP_FIRST_QUESTION,
-  BUTLER_SETUP_GREETING,
-  BUTLER_WELCOME_TEXT,
   butlerProfileTemplate,
+  butlerSetupFirstOptions,
+  butlerSetupFirstQuestion,
+  butlerSetupGreeting,
+  butlerWelcomeText,
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
 import type { HandoverToolFacade } from '../tools/handover-tools.js';
@@ -1301,7 +1301,11 @@ export class Orchestrator {
     if (
       this.#deps.messages.countSystemEvents(conversationId, BOT_SETUP_PATH_QUESTION_EVENT) === 0
     ) {
-      this.#appendSystemMessage(conversationId, BOT_SETUP_PATH_QUESTION_EVENT, SETUP_PATH_QUESTION);
+      this.#appendSystemMessage(
+        conversationId,
+        BOT_SETUP_PATH_QUESTION_EVENT,
+        setupPathQuestion(this.#deps.settings.get().appLanguage),
+      );
     }
     const cardSeq = this.#deps.messages.systemEventSeq(
       conversationId,
@@ -1357,7 +1361,7 @@ export class Orchestrator {
       conversationId,
       senderType: 'user',
       kind: 'text',
-      text: path ?? SETUP_PATH_SKIP_TEXT,
+      text: path ?? setupPathSkipText(this.#deps.settings.get().appLanguage),
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
     });
@@ -2387,17 +2391,20 @@ export class Orchestrator {
     // 管家访谈（D70）是同一机制的变体：问的是用户的领域与场景，不是「这个
     // 助手要做什么」。
     const butler = this.#deps.bots.get(botId)?.systemRole === 'butler';
+    const language = this.#deps.settings.get().appLanguage;
     this.#appendBotTextMessage(
       botId,
       conversationId,
-      butler ? BUTLER_SETUP_GREETING : SETUP_GREETING,
+      butler ? butlerSetupGreeting(language) : setupGreeting(language),
     );
     this.#appendSystemMessage(
       conversationId,
       SETUP_QUESTION_EVENT,
-      butler ? BUTLER_SETUP_FIRST_QUESTION : SETUP_FIRST_QUESTION,
+      butler ? butlerSetupFirstQuestion(language) : setupFirstQuestion(language),
       {
-        options: butler ? [...BUTLER_SETUP_FIRST_OPTIONS] : [...SETUP_FIRST_OPTIONS],
+        options: butler
+          ? [...butlerSetupFirstOptions(language)]
+          : [...setupFirstOptions(language)],
         // 首问是「有哪些/要哪些」的列举题，天然多选；用户也可以自行补充条目。
         questionMode: 'multi',
       },
@@ -2415,8 +2422,9 @@ export class Orchestrator {
     conversationId: string;
     created: boolean;
   } {
+    const language = this.#deps.settings.get().appLanguage;
     const { bot, created } = this.#deps.bots.ensureButler(
-      butlerProfileTemplate(),
+      butlerProfileTemplate(language),
       options.interview === true ? { interview: true } : {},
     );
     if (created) this.#deps.publish('bot.updated', { bot });
@@ -2426,7 +2434,7 @@ export class Orchestrator {
     if (conversationCreated) this.#publishConversation(conversation.id);
     if (created) {
       if (bot.setupState === 'interviewing') this.beginSetupInterview(bot.id, conversation.id);
-      else this.#appendBotTextMessage(bot.id, conversation.id, BUTLER_WELCOME_TEXT);
+      else this.#appendBotTextMessage(bot.id, conversation.id, butlerWelcomeText(language));
     }
     return { bot, conversationId: conversation.id, created };
   }
@@ -4474,6 +4482,7 @@ export class Orchestrator {
         buildSystemPrompt: async () =>
           buildSystemPrompt({
             loop: isTask ? 'task' : 'turn',
+            language: this.#deps.settings.get().appLanguage,
             bot,
             conversation: conv,
             timeZone: this.#deps.timeZone,
