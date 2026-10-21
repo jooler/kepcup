@@ -12,8 +12,7 @@
   /**
    * 外观（参考 Grok Bot 设置弹框）：明暗主题 + 语言，各占一整行——标签在
    * 左、控件在右。主题经 mode-watcher 持久化（写 userPrefersMode 即生效并
-   * 落 localStorage）；语言注册表当前只有简体中文，选择器先就位，新增语言
-   * 时无需改动此组件。
+   * 落 localStorage）；语言注册表包含简体中文与英文，选择器自动跟随 `localeOptions`。
    *
    * `embedded`：对话内设置卡只显示 `focus` 那一项，先改草稿，点「应用」才写入
    * 本机并结卡。设置页不传这些 props，仍是选中即生效。

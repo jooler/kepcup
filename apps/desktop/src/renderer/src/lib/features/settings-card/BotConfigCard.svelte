@@ -373,7 +373,9 @@
       <datalist id={`${testid}-model-options`}>
         {#each agentChoices?.models ?? [] as choice (choice.value)}
           <option value={choice.value}
-            >{choice.name}{choice.description.length > 0 ? `（${choice.description}）` : ''}</option
+            >{choice.name}{choice.description.length > 0
+              ? t('common.parenthesized', { text: choice.description })
+              : ''}</option
           >
         {/each}
       </datalist>

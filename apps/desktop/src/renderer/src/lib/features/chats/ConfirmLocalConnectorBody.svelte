@@ -94,7 +94,10 @@
         errorMessage = error instanceof Error ? error.message : String(error);
       } else {
         if (view.stale) staleReported = true;
-        errorMessage = t(view.key) + (view.detail !== undefined ? `：${view.detail}` : '');
+        errorMessage =
+          view.detail === undefined
+            ? t(view.key)
+            : t('common.labelValue', { label: t(view.key), value: view.detail });
       }
     } finally {
       busy = false;

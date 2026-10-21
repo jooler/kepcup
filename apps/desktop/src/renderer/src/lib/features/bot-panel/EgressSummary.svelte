@@ -54,16 +54,17 @@
     data-count={total}
   >
     <p class="font-medium">
-      {t('bot.egressSummary', { count: total })}{#if refused > 0}（{t('bot.egressSummaryRefused', {
-          count: refused,
-        })}）{/if}
+      {t('bot.egressSummary', { count: total })}{#if refused > 0}{t('common.parenthesized', {
+          text: t('bot.egressSummaryRefused', { count: refused }),
+        })}{/if}
     </p>
     <p class="text-muted-foreground">{t('bot.egressRecentTitle')}</p>
     <ul class="grid gap-0.5">
       {#each recent as entry, index (index)}
         <li class="truncate" title={entry.target}>
           <span class="text-muted-foreground">{new Date(entry.at).toLocaleString()}</span>
-          · <span data-approved={entry.approved}
+          ·
+          <span data-approved={entry.approved}
             >{t(entry.approved ? 'bot.egressApproved' : 'bot.egressRefused')}</span
           >
           · {t(`approvals.egress.channel.${entry.channel}` as never)} · <code>{entry.target}</code>

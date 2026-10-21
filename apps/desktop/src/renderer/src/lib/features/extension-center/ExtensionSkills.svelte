@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SkillPresetInfo } from '@kepcup/shared';
-  import { errorText, t } from '$lib/i18n';
+  import { errorText, t, listSeparator } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Search } from '@lucide/svelte';
   import { skillMarket } from './market.svelte';
@@ -131,7 +131,9 @@
                       class="shrink-0 text-amber-700 dark:text-amber-400"
                       data-testid={`skill-market-deps-${preset.id}`}
                     >
-                      {t('skillMarket.needsEnv', { deps: preset.missingDeps.join('、') })}
+                      {t('skillMarket.needsEnv', {
+                        deps: preset.missingDeps.join(listSeparator()),
+                      })}
                     </Badge>
                   {:else}
                     <Badge variant="secondary" class="shrink-0">

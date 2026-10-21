@@ -1,8 +1,13 @@
 <script lang="ts">
   /** Shared profile form fields for bot create (dialog) and edit (right panel). */
   import { untrack } from 'svelte';
-  import type { BotProfile, HostCapabilityId, HostCapabilityPrerequisite, InkcopAgent } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import type {
+    BotProfile,
+    HostCapabilityId,
+    HostCapabilityPrerequisite,
+    InkcopAgent,
+  } from '@kepcup/shared';
+  import { t, listSeparator } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
@@ -848,12 +853,16 @@
                   {t(`agents.capabilities.${row.id}.name` as MessageKey)}
                   {#if row.required}
                     <span class="text-xs text-muted-foreground"
-                      >（{t('contacts.agentCapabilityRequired')}）</span
+                      >{t('common.parenthesized', {
+                        text: t('contacts.agentCapabilityRequired'),
+                      })}</span
                     >
                   {/if}
                   {#if row.unconfigured}
                     <span class="text-xs text-amber-600 dark:text-amber-400"
-                      >（{t('contacts.agentCapabilityUnconfigured')}）</span
+                      >{t('common.parenthesized', {
+                        text: t('contacts.agentCapabilityUnconfigured'),
+                      })}</span
                     >
                   {/if}
                 </span>
@@ -862,7 +871,9 @@
                 >
                 {#if row.nativeTools.length > 0}
                   <span class="block text-xs text-muted-foreground"
-                    >{t('contacts.agentCapabilityNative')}（{row.nativeTools.join('、')}）</span
+                    >{t('contacts.agentCapabilityNative')}{t('common.parenthesized', {
+                      text: row.nativeTools.join(listSeparator()),
+                    })}</span
                   >
                 {/if}
               </span>
@@ -1082,7 +1093,10 @@
           {t('contacts.inkcopAgentsLoading')}
         </p>
       {:else if inkcopAgentsOnline === false}
-        <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="bot-inkcop-agents-offline">
+        <p
+          class="text-xs text-amber-700 dark:text-amber-400"
+          data-testid="bot-inkcop-agents-offline"
+        >
           {inkcopAgentsTip ?? t('contacts.inkcopAgentsOffline')}
         </p>
       {:else if inkcopAgents.length === 0}
@@ -1110,7 +1124,9 @@
                   · {agent.key}
                 </span>
                 {#if agent.description}
-                  <span class="text-[11px] text-muted-foreground line-clamp-3">{agent.description}</span>
+                  <span class="line-clamp-3 text-[11px] text-muted-foreground"
+                    >{agent.description}</span
+                  >
                 {/if}
               </span>
             </label>

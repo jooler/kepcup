@@ -2,7 +2,7 @@
   import type { SettingItem, SettingValues } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { t } from '$lib/i18n';
+  import { settingFieldText, t } from '$lib/i18n';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -130,7 +130,7 @@
       <ModelSelectField bind:value={model} id={`${testid}-model`} testid={`${testid}-model`} />
       <p class="text-xs text-muted-foreground">{t('settings.widgetReviewModelHint')}</p>
     {:else if field.name === 'provider'}
-      <Label for={`${testid}-provider`}>{field.label}</Label>
+      <Label for={`${testid}-provider`}>{settingFieldText(item.id, field.name, field.label)}</Label>
       <select
         id={`${testid}-provider`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"

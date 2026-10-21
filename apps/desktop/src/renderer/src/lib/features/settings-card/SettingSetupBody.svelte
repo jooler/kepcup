@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getSettingItem, type SetupRequirement } from '@kepcup/shared';
   import { ExternalLink } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { settingItemText, t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -94,7 +94,9 @@
 {:else if setting !== null}
   <div class="space-y-0.5 pr-6">
     <p class="text-sm font-medium" data-testid="setup-card-title">
-      {t('settingCard.setupTitle', { title: item?.title ?? setting.itemId })}
+      {t('settingCard.setupTitle', {
+        title: item === null ? setting.itemId : settingItemText(item.id, 'title', item.title),
+      })}
     </p>
     <p class="text-xs break-words text-muted-foreground" data-testid="setup-card-setting-reason">
       {setting.reason}

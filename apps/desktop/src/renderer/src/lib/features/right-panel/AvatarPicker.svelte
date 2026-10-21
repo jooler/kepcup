@@ -6,7 +6,7 @@
    */
   import { ImagePlus, RotateCcw } from '@lucide/svelte';
   import type { Bot } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { t, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -22,6 +22,9 @@
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
   let { bot, open = $bindable() }: { bot: Bot; open?: boolean } = $props();
+
+  const shapeLabel = (id: string): string => t(`avatars.shape.${id}` as MessageKey);
+  const colorLabel = (id: string): string => t(`avatars.color.${id}` as MessageKey);
 
   let tab = $state<'preset' | 'upload'>('preset');
   let uploading = $state(false);
@@ -149,8 +152,8 @@
               .shape.id === shape.id
               ? 'bg-accent ring-2 ring-ring'
               : ''}"
-            title={shape.label}
-            aria-label={shape.label}
+            title={shapeLabel(shape.id)}
+            aria-label={shapeLabel(shape.id)}
             onclick={() => void applyAvatar(formatPresetAvatar(shape.id, activeColor.id))}
             data-testid={`avatar-shape-${shape.id}`}
           >
@@ -175,8 +178,8 @@
               ? 'ring-2 ring-ring ring-offset-2 ring-offset-popover'
               : ''}"
             style="background: {color.hex};"
-            title={color.label}
-            aria-label={color.label}
+            title={colorLabel(color.id)}
+            aria-label={colorLabel(color.id)}
             onclick={() => void applyAvatar(formatPresetAvatar(selected.shape.id, color.id))}
             data-testid={`avatar-color-${color.id}`}
           ></button>

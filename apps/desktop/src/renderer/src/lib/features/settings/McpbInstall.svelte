@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { McpbInspectOutput } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -260,7 +260,7 @@
         {/if}
         {#if missing.length > 0}
           <p class="text-xs text-muted-foreground" data-testid="mcpb-missing">
-            {t('settings.mcpbRequiredMissing', { names: missing.join('、') })}
+            {t('settings.mcpbRequiredMissing', { names: missing.join(listSeparator()) })}
           </p>
         {/if}
       </div>

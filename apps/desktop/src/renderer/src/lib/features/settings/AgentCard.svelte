@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentStatus, AgentTestResult, AgentView, SettingValues } from '@kepcup/shared';
-  import { t, type MessageKey } from '$lib/i18n';
+  import { t, type MessageKey, listSeparator } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -269,7 +269,7 @@
       {/if}
       {#if agent.usedBy.length > 0}
         <p class="text-xs text-muted-foreground">
-          {t('agents.usedBy', { bots: agent.usedBy.map((bot) => bot.name).join('、') })}
+          {t('agents.usedBy', { bots: agent.usedBy.map((bot) => bot.name).join(listSeparator()) })}
         </p>
       {/if}
     </div>
@@ -373,19 +373,23 @@
         </p>
       {:else}
         <p class="text-xs text-muted-foreground">
-          {t('agents.models')}：{detected.models.length > 0
-            ? detected.models.map((model) => model.name).join('、')
+          {t('common.labelColon', { label: t('agents.models') })}{detected.models.length > 0
+            ? detected.models.map((model) => model.name).join(listSeparator())
             : t('agents.optionsNone')}
         </p>
         {#if detected.efforts.length > 0}
           <p class="text-xs text-muted-foreground">
-            {t('agents.efforts')}：{detected.efforts.map((effort) => effort.name).join('、')}
+            {t('common.labelColon', { label: t('agents.efforts') })}{detected.efforts
+              .map((effort) => effort.name)
+              .join(listSeparator())}
           </p>
         {/if}
       {/if}
       <p class="text-xs text-muted-foreground">{t('agents.detectedOptionsHint')}</p>
       <div class="grid gap-1.5 border-t pt-2">
-        <Label for={`agent-default-model-${agent.id}`} class="text-xs">{t('agents.defaultModel')}</Label>
+        <Label for={`agent-default-model-${agent.id}`} class="text-xs"
+          >{t('agents.defaultModel')}</Label
+        >
         <select
           id={`agent-default-model-${agent.id}`}
           class="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
@@ -616,7 +620,7 @@
         <DialogDescription>
           {#if agent.usedBy.length > 0}
             {t('agents.affectedBody', {
-              bots: agent.usedBy.map((bot) => bot.name).join('、'),
+              bots: agent.usedBy.map((bot) => bot.name).join(listSeparator()),
             })}
           {/if}
           {#if confirmAction === 'uninstall'}

@@ -3,7 +3,7 @@
   import { ArrowLeft, Eye, EyeOff } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { errorText, t } from '$lib/i18n';
+  import { errorText, t, listSeparator } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { appDetailStore } from '$lib/stores/app-detail.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -700,7 +700,7 @@
           {t('apps.detail.disconnectBody')}
           <span class="mt-1 block" data-testid="apps-detail-disconnect-impact">
             {impact.botNames.length > 0
-              ? t('apps.detail.disconnectAffected', { bots: impact.botNames.join('、') })
+              ? t('apps.detail.disconnectAffected', { bots: impact.botNames.join(listSeparator()) })
               : t('apps.detail.disconnectNoBots')}
           </span>
         </DialogDescription>
