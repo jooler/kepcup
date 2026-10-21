@@ -166,6 +166,18 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 > 使用单条用户消息承载上下文与触发内容，避免多人对话被映射为交替的 user / assistant 角色而造成混淆，也避免部分厂商对连续同角色消息的限制。
 
+### 任务 Loop Harness（D93）
+
+内置 pi 任务（以及子代理）在 `PiEngine` 里启用自动上下文压缩，对话轮不启用（上下文有界）。设计见 [design/43](../design/43-task-loop-harness.md)，实施见 [todo/task-loop-harness.md](../../todo/task-loop-harness.md)。
+
+- **压缩点**：pi-agent-core 的 `transformContext`（每次模型请求前）。先做旧工具输出确定性裁剪，仍超阈值再用轻量模型摘要；摘要失败 / 超时 / 无模型时退化为确定性裁剪，不阻断任务。
+- **保留**：system prompt、首条任务简报、`<current_plan>`、最近约 30% 窗口；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
+- **模型**：`LlmPurpose='task_compaction'`（Bot 轻量 → 全局轻量 → Bot 主）；用量记当前任务 run。
+- **计划**：内置任务注册 `update_plan`；run 内存状态在每次请求时以 `<current_plan>` 追加到系统提示词；每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
+- **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。开关与阈值在设置目录 `general.task-loop`（设置 → 通用 → 任务 Loop）。
+- **验收规则**：任务提示词要求代码类任务把测试 / lint / build 写进计划，并在结果里写明命令与结果；宿主不自动跑测试。
+- **大输出与详细历史（P3）**：内置任务单条工具输出超过 `TOOL_OUTPUT_MAX_CHARS` 时写到 workspace `.tool-output/<runId>/<seq>.txt`，模型只拿到头 + 尾 + 路径 + 字符数（仍包 `<untrusted>`）；写失败 / 路径不安全退回原有截断，随 run 结算删除。任务与子代理有 `get_run_steps({run_id, from_seq?, limit?})` 读取自己 / 当前对话本 Bot 的步骤详情（结果仍截断并包 `<untrusted>`）；对话轮不注册该工具，外部智能体经能力包过滤不注入。
+
 ### 系统提示词模板
 
 模板使用英文段落标签（对模型更稳定），Bot 的人设由用户填写，原样放入。各段按下表顺序拼接，每段超出预算时截断（截断时在段末注明“已截断”）。某段为空时整段省略。
@@ -459,6 +471,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
 | `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
 | `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
+| `update_plan` | none | K（仅内置 pi） | D93 | 结构化计划：`{ explanation?, plan: [{ step, status: 'pending' \| 'in_progress' \| 'completed' }] }`，1–20 项、至多一个 `in_progress`；全量替换 run 内存计划，下一轮以 `<current_plan>` 追加到系统提示词；每次更新发 `progress` 落 `run_steps`（任务卡与续接 digest 可见）。外部智能体任务不注册（用原生 todo） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
 | `widget_craft` / `widget_publish` / `widget_read_state` | conversation | K | D81 / D87 | Bot 自制交互组件（[design/32](../design/32-bot-widgets.md)）。`widget_craft{brief, title?, widget_id?, scope?, acceptance?, resume_craft_id?}`（D87）是新建与修改的唯一入口：前台阻塞，编码在独立制作 loop 里完成（见下文「组件制作 loop」），任务只拿到 ≤`WIDGET_CRAFT_RESULT_MAX_CHARS`（1500）字的回执（widgetId、版本、自检状态、已知问题；或未交付原因 + craftId），HTML / diff / 检查报告不进任务上下文；每 run ≤`WIDGET_CRAFTS_PER_RUN_MAX`（3）次，交付占用每 run ≤8 张的发卡名额。`widget_publish{widget_id}`（P2）把 Bot 级组件最新版发卡到当前对话（沿用该版本的自检状态）。`widget_create` / `widget_update` 不再是 Bot 的工具（保留为 `WidgetService.create` / `update`，只由制作 loop 凭检查回执调用）。`widget_read_state{widget_id, keys?}`（D87 P4）只读本 Bot 组件的 KV（≤`WIDGET_READ_STATE_MAX_BYTES` 64KB，按转义后字节计；放不下的值跳过并报告键名、大小与开头片段，`<untrusted source="widget-state">` 包裹，副作用 `none`）。仅任务面注册（对话轮只读）；craft / publish 副作用记 `local`；HTML/SQL 不进模型上下文；conversation 作用域组件随会话删除、Bot 删除走 `lifecycle` 显式清理 |
 | `app_request_connection` | none | T、K | D73 P0 / P1 | 请用户（重新）连接一个应用，三选一：`connector`（目录 slug，`<available_apps>` 里的未连接应用 → `target:{kind:'catalog'}`；该 Bot 已有授权连接但需重连则按该连接处理，已可用则拒绝）、`connection_id`（该 Bot 已勾选的目录连接 → `catalog` 目标 + `connectionId`；`custom:{serverId}` = 已勾选、应用级启用的 OAuth 自定义 server）或 `server_id`（自定义 OAuth server），`reason?`。目标不合法 → `INVALID_INPUT` 且不出卡；有效则宿主记下 `connect-app` setup 需求并返回 `SETUP_REQUIRED`（链路见下）。orchestrator `#appToolFacade`：Bot 有 OAuth 自定义 server、目录连接或可连接的目录条目之一才注册（其余 Bot 工具集不变）。属于 ACP `apps` 能力包（前缀 `app_`），勾选该包的外部智能体 Bot 经桥可用 |
@@ -489,7 +502,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | loop | 模型 | 方式 | 工具 | 优先级 | 阶段 |
 |---|---|---|---|---|---|
 | 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS=0`，不设步数上限） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、协作回合内 `@`） | D75（原「响应」，P01） |
-| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`RUN_MAX_TURNS`、`TASK_MAX_WALL_MS`） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
+| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`TASK_MAX_TURNS`、`TASK_MAX_WALL_MS`、D93 可选软预算） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
 | 项目组路由判断（续接 / 网关） | 轻量模型（负责人网关用负责人的轻量模型） | 单次结构化调用（`runLightJudgement`） | — | 0 | P05 / D92 |
 | 对话摘要 | 轻量模型 | 单次结构化调用 | — | 2 | P01 |
 | 反思 | 轻量模型 | 单次结构化调用 | — | 2 | P07 |
@@ -524,6 +537,12 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_CHANGED_FILES_SHOWN` | 20 | workspace 写任务取消卡列出的文件数 |
 | `GRANT_ABSOLUTE_TTL_MS` | 10 min | 「仅这一次」授权的绝对时限（DEV-009） |
 | `SUBAGENT_BACKGROUND_CONCURRENCY` / `SUBAGENT_CLOSE_GRACE_MS` | 4 / 10 s | 每个父 run 的后台分支封顶 / 父 run 结束时等分支 settle 的上限 |
+| `TASK_CONTEXT_COMPACT_RATIO` / `TASK_CONTEXT_KEEP_RECENT_RATIO` | 0.75 / 0.3 | D93：上下文压缩触发阈值 / 最近消息保留比例 |
+| `TASK_CONTEXT_MIN_MESSAGES` | 8 | D93：少于该条数不压缩 |
+| `TASK_CONTEXT_SUMMARY_INPUT_TOKENS` / `TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS` | 2,000 / 1,200 | D93：压缩摘要输入 / 输出上限 |
+| `TASK_CONTEXT_COMPACT_TIMEOUT_MS` | 30 s | D93：压缩摘要超时，超时退化为确定性裁剪 |
+| `TASK_TOKEN_SOFT_BUDGET` | 0（关闭） | D93：任务软预算；0 = 不限制，设置项覆盖 |
+| `TASK_LOOP_IDLE_WARN_AFTER` / `TASK_LOOP_IDLE_STOP_AFTER` / `TASK_LOOP_IDLE_WINDOW_CALLS` | 3 / 6 / 12 | D93：空转检测默认阈值；设置项 `general.task-loop` 覆盖 |
 
 
 ### 组件制作 loop（D87）

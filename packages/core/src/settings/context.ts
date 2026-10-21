@@ -126,6 +126,7 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'get_messages_around',
   'list_my_runs',
   'get_run',
+  'get_run_steps',
   'list_tasks',
   'list_todos',
   'list_memos',

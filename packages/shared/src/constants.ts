@@ -46,6 +46,16 @@ export const SKILLS_LIST_TOKEN_BUDGET = 500;
 export const WORKDIR_CONTEXT_TOKEN_BUDGET = 1500;
 /** Max characters of a single tool output returned to the model. */
 export const TOOL_OUTPUT_MAX_CHARS = 30_000;
+/** D93 P3：workspace 下的溢写目录（`<workspace>/.tool-output/<runId>/<seq>.txt`）。 */
+export const TOOL_OUTPUT_SPILL_DIR = '.tool-output';
+/** 溢写摘要保留的头部字符数（完整内容在文件里）。 */
+export const TOOL_OUTPUT_SPILL_HEAD_CHARS = 8_000;
+/** 溢写摘要保留的尾部字符数（错误 / 收尾信息通常在尾部）。 */
+export const TOOL_OUTPUT_SPILL_TAIL_CHARS = 8_000;
+/** get_run_steps 默认返回的步骤数。 */
+export const GET_RUN_STEPS_DEFAULT_LIMIT = 20;
+/** get_run_steps 单次最多返回的步骤数。 */
+export const GET_RUN_STEPS_MAX_LIMIT = 50;
 /**
  * Max turns of a single non-task run that still uses a step ceiling
  * (wiki / skill authoring / similar). Task Agent loops do **not** use this:

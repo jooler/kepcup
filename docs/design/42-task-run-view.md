@@ -30,6 +30,17 @@ metadata 行按可用字段展示：
 
 标题下方另有一条状态提示，按优先级显示：排队原因（`queueReason`）、等待用户回答（`awaitingInput`）、失败 / 中断错误（`error`）、取消原因（`cancelReason`）、最近进度（`lastProgress`）。没有内容时不渲染。
 
+## 执行计划（D93）
+
+内置 pi 任务可以调用 `update_plan`（[43-task-loop-harness.md](43-task-loop-harness.md)）。执行过程页在顶部提示条下方增加可折叠的计划区：
+
+- 数据来源是 `runs.steps` 里最后一个 `tool_call.toolName === 'update_plan'` 的 `args.plan`，不新增 RPC 或数据库字段；
+- 标题显示「执行计划」与 `已完成 / 总数`，每项按 `completed` / `in_progress` / `pending` 显示状态；
+- 任务运行中随现有事件 / 轮询刷新；没有计划时不渲染；
+- 任务卡卡面不新增字段：`update_plan` 的 progress 事件已让卡面最近进度显示「计划 x/y：…」。
+
+外部智能体任务的原生 `plan` 更新当前仍映射为 `progress` 行（见 `外部智能体引擎` 的 `plan → progress`），不进入本计划区；如需统一结构，后续在 ACP 事件映射里归一化。
+
 ## 消息列表
 
 数据源是 `runs.steps` RPC（`RunStep[]`），按 `seq` 升序渲染。步骤到列表条目的映射：
@@ -74,6 +85,7 @@ metadata 行按可用字段展示：
 | 文件 | 内容 |
 |---|---|
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划区（`update_plan` 的最新计划；可折叠、完成计数） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 工具调用行（摘要、状态、参数 / 结果展开） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts` | 上述逻辑的单测 |

@@ -1,4 +1,5 @@
 import type { AgentPermissionTier, McpToolRisk, TaskLoopSettings } from '@kepcup/shared';
+import type { ToolOutputSpill } from './tool-output-spill.js';
 
 /**
  * "provider/modelId" reference into the model registry; external agents use
@@ -124,6 +125,11 @@ export interface RunSpec {
   compaction?: RunCompactionSpec;
   /** D93：任务空转检测与软预算；缺省 = 使用默认值（仅内置任务）。 */
   taskLoop?: TaskLoopSettings;
+  /**
+   * D93 P3：内置任务的大工具输出落盘；缺省 = 只做现有截断。外部智能体
+   * 与对话轮不传（工具面与上下文行为保持不变）。
+   */
+  toolOutputSpill?: ToolOutputSpill;
   messages: EngineMessage[];
   tools: ToolDefinition[];
   /** maxTurns ≤ 0 = unlimited (supervisor turns and task Agent loops). */

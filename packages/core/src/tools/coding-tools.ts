@@ -22,6 +22,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { AppError, BASH_TIMEOUT_DEFAULT_MS, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
+import type { ToolOutputSpill } from '../agent/tool-output-spill.js';
 import type { ToolDefinition, ToolContext, ToolResult } from '../agent/types.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { SecretsService } from '../domain/secrets.js';
@@ -38,6 +39,8 @@ export interface CodingToolDeps {
   secrets: SecretsService;
   /** Per-run read hashes for staleness detection (docs/design/08 "过期检测"). */
   fsState: FileReadState;
+  /** D93 P3: large outputs are spilled to the workspace instead of the context. */
+  toolOutputSpill?: ToolOutputSpill | undefined;
 }
 
 /**
@@ -165,6 +168,8 @@ interface PiToolLike {
 interface WrapOptions {
   /** Runs before the underlying tool (status-line progress, D75 write guard); an AppError it throws becomes the tool error. */
   before?(params: unknown, ctx: ToolContext): void;
+  /** D93 P3: spill oversized output to the workspace (task runs only). */
+  spill?: ToolOutputSpill | undefined;
 }
 
 /** Converts a pi tool definition into our ToolDefinition with untrusted wrapping. */
@@ -193,10 +198,17 @@ export function wrapPiTool(
         // Redact before truncation so a secret at the head cannot push its
         // own redaction past the budget (same order as runs persistence).
         const redacted = secrets.redact(text);
+        // D93 P3: a huge output goes to the workspace; the model only gets a
+        // head/tail summary + the file path. Write failure falls back to the
+        // existing truncation below.
+        const spilled = options?.spill?.spill(redacted) ?? null;
         const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
-        const body = truncated.truncated
-          ? `${truncated.text}\n[输出已截断，共 ${redacted.length} 字符]`
-          : truncated.text;
+        const body =
+          spilled !== null
+            ? spilled.text
+            : truncated.truncated
+              ? `${truncated.text}\n[输出已截断，共 ${redacted.length} 字符]`
+              : truncated.text;
         // pi 1.x：非零退出（含被沙箱拦截）返回 isError:true 的结果，不再 throw。
         if (result.isError === true) {
           return {
@@ -225,6 +237,10 @@ export function wrapPiTool(
 function shortCommand(command: string): string {
   const firstLine = command.split('\n', 1)[0] ?? command;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}…` : firstLine;
+}
+
+function spillOption(spill: ToolOutputSpill | undefined): WrapOptions | undefined {
+  return spill !== undefined ? { spill } : undefined;
 }
 
 /** srt violation lines: `cat(x) deny(1) file-read-data /path`. */
@@ -464,13 +480,14 @@ export function buildCodingTools(
   });
 
   const codingTools = [
-    wrapPiTool(read, baseDir, secrets),
+    wrapPiTool(read, baseDir, secrets, spillOption(deps.toolOutputSpill)),
     wrapPiTool(write, baseDir, secrets, {
       before: (params, ctx) => {
         assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
         if (target !== undefined) ctx.progress(`正在写入 ${shortCommand(target)}`);
       },
+      ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),
     }),
     wrapPiTool(edit, baseDir, secrets, {
       before: (params, ctx) => {
@@ -478,15 +495,17 @@ export function buildCodingTools(
         const target = (params as { path?: string }).path;
         if (target !== undefined) ctx.progress(`正在编辑 ${shortCommand(target)}`);
       },
+      ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),
     }),
-    wrapPiTool(ls, baseDir, secrets),
-    wrapPiTool(find, baseDir, secrets),
-    wrapPiTool(grep, baseDir, secrets),
+    wrapPiTool(ls, baseDir, secrets, spillOption(deps.toolOutputSpill)),
+    wrapPiTool(find, baseDir, secrets, spillOption(deps.toolOutputSpill)),
+    wrapPiTool(grep, baseDir, secrets, spillOption(deps.toolOutputSpill)),
     wrapPiTool(bash, baseDir, secrets, {
       before: (params, ctx) => {
         const command = (params as { command?: string }).command;
         if (command !== undefined) ctx.progress(`正在执行命令 ${shortCommand(command)}`);
       },
+      ...(deps.toolOutputSpill !== undefined ? { spill: deps.toolOutputSpill } : {}),
     }),
   ];
   if (options?.excludeWriteTools === true) {
