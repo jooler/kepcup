@@ -52,7 +52,7 @@ describe('ToolOutputSpill', () => {
     expect(result!.path.endsWith(path.join('.tool-output', 'run_1', '0.txt'))).toBe(true);
     expect(readFileSync(result!.path, 'utf8')).toBe(text);
     expect(result!.text).toContain(`共 ${text.length} 字符`);
-    expect(result!.text).toContain(result!.path);
+    expect(result!.text).toContain(result!.path.split(path.sep).join('/'));
     expect(result!.text).toContain('A'.repeat(20));
     expect(result!.text).toContain('Z'.repeat(20));
     expect(result!.text).not.toContain('MIDDLE');
