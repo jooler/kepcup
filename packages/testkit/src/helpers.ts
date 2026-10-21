@@ -123,7 +123,11 @@ export async function createTestStack(
 
 // --- fixtures (docs/dev/05-testing.md "工厂函数") -----------------------------
 
-export function botProfile(overrides: { name: string } & Partial<Bot['profile']>): Bot['profile'] {
+export function botProfile(
+  overrides: { name: string } & Omit<Partial<Bot['profile']>, 'runtime'> & {
+    runtime?: Partial<Bot['profile']['runtime']>;
+  },
+): Bot['profile'] {
   return {
     identity: {
       name: overrides.name,

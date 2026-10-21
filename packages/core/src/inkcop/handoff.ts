@@ -3,12 +3,12 @@ import {
   InkcopAgentNotExposedError,
   InkcopAuthError,
   InkcopHttpError,
-  InkcopLocalBridgeClient,
   InkcopOfflineError,
   inkcopAgentNotExposedTip,
   inkcopAuthTip,
   inkcopOfflineTip,
 } from './client.js';
+import type { InkcopLocalBridgeClient } from './client.js';
 import { inkcopExternalId, inkcopMessageId } from './index.js';
 
 /**

@@ -2007,6 +2007,34 @@ export function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+export function inkcopLocalCollabAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const collab = deps.settings.get().inkcopLocalCollab;
+      const hasKey = collab.apiKey.trim().length > 0;
+      const status = !collab.enabled ? 'unconfigured' : hasKey ? 'configured' : 'partial';
+      const summary = !collab.enabled
+        ? '未启用'
+        : hasKey
+          ? '已启用本机应用协作'
+          : '已启用（未填写 API 密钥）';
+      return snapshot(status, { enabled: collab.enabled }, summary, { apiKey: hasKey });
+    },
+  };
+}
+
+export function botInkcopAgentsAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const keys = botField(deps, target, (bot) => bot.profile.runtime.inkcop_agent_keys);
+      if (keys === null) return snapshot('unknown', null, 'Bot 不存在');
+      return keys.length === 0
+        ? snapshot('unconfigured', { agents: [] }, '未关联 InkCop 智能体')
+        : snapshot('configured', { agents: keys }, `已关联 ${keys.length} 个 InkCop 智能体`);
+    },
+  };
+}
+
 export function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {

@@ -21,11 +21,12 @@
 
 ## 设置
 
-`settings.inkcopLocalCollab = { enabled, apiKey, baseUrl, systemBotId? }`。
+`settings.inkcopLocalCollab = { enabled, apiKey, baseUrl }`。
 
 - `apiKey`：Bearer 密钥（必填才能稳定通讯）；空时同机探测可从 `endpoint.json` 的 `token` 预填。
 - `baseUrl`：可选覆盖（局域网/跨机）；空则用 endpoint / `http://127.0.0.1:<port>`。
-- `systemBotId` 仅兼容旧配置，读写忽略。
+- `systemBotId` 已从设置类型移除；`settings.update` 的 patch 仍接受并忽略旧客户端的该字段。
+- 设置目录登记：`agents.inkcop-local-collab`（扩展中心「本机应用协作」页签）与 `bot.inkcop-agents`（Bot 详情「关联 InkCop 智能体」锚点）均为跳转卡；密钥仍只在界面填写。
 
 ## 运行时
 
