@@ -130,6 +130,7 @@ function fakeHandle(steerOk: boolean): TaskRunHandle & { steered: string[] } {
       return steerOk;
     },
     abort() {},
+    onEvent: () => () => undefined,
   };
 }
 
@@ -440,6 +441,42 @@ describe('LOW-1: a recorded cancel wins over recovery', () => {
     }
     expect(controls.size).toBe(0); // nothing re-launched
     expect(woken).toHaveLength(0);
+  });
+});
+
+describe('D93: a recorded user cancel is re-delivered after recovery', () => {
+  it('preserves user_cancelled and wakes the bot after a crash before settlement', async () => {
+    const stack = await start();
+    const bot = await makeBot(stack.core, '小艾');
+    const conv = await openDirect(stack.core, bot.id);
+    const { runs, messages } = domain(stack);
+    const task = runs.create({
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task',
+      triggerReason: null,
+      triggerMessageIds: [],
+      taskTitle: 'crash-user-cancel',
+      taskWrites: false,
+      originRunId: 'run_turn_old',
+    });
+    const scope = { conversationId: conv.id, ownerBotId: bot.id, taskId: task.id };
+    messages.appendTaskEvent({ ...scope, phase: 'brief', text: 'x', title: 'x', writes: false });
+    messages.appendTaskEvent({
+      ...scope,
+      phase: 'cancel',
+      text: '用户改主意了',
+      errorReason: 'user_cancelled',
+    });
+    runs.update(task.id, { status: 'running' });
+    const { host, controls, woken } = handDrivenHost(stack);
+    host.recover();
+    host.resume();
+    const after = runOf(stack, task.id);
+    expect(after.status).toBe('cancelled');
+    expect(after.errorReason).toBe('user_cancelled');
+    expect(woken).toHaveLength(1);
+    expect(controls.size).toBe(0);
   });
 });
 

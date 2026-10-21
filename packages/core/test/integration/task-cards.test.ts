@@ -127,6 +127,7 @@ describe('D75 task cards (W3)', () => {
           text: 'INJECT 顺便写上日期',
         })),
       step().inTurn().replyText('REPLY-2 已转给任务'),
+      step().inTurn().expect(isWake).replyText('任务已取消'),
     ]);
 
     await sendBatch(core, conv.id, ['帮我写两个文件']);
@@ -178,9 +179,18 @@ describe('D75 task cards (W3)', () => {
       `任务卡 ${taskId}（小卡）「<untrusted>写文件</untrusted>」：进行中`,
     );
 
-    // The user cancels from the card (runs.cancel): no wake, cancel summary.
+    // The user cancels from the card (runs.cancel): D93 wakes the bot with the
+    // cancellation reason, and the card keeps its cancel summary.
     await core.rpc.call('runs.cancel', { runId: taskId });
-    await waitRun(stack, taskId, ['cancelled'], 'task cancelled');
+    const cancelledRun = await waitRun(stack, taskId, ['cancelled'], 'task cancelled');
+    expect(cancelledRun.errorReason).toBe('user_cancelled');
+    const failure = domain(stack).messages.taskEvents(taskId).at(-1)?.content as TaskEventContent;
+    expect(failure).toMatchObject({
+      phase: 'failure',
+      status: 'cancelled',
+      errorReason: 'user_cancelled',
+    });
+    await waitVisible(stack, conv.id, '任务已取消');
     const cancelled = await waitFor(
       () => views.find((view) => view.taskId === taskId && view.state === 'cancelled') ?? null,
       { label: 'cancelled view' },

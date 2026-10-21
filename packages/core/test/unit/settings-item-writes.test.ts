@@ -1154,6 +1154,8 @@ describe('validation and widening fixes (D89 review)', () => {
       idleStopAfter: 6,
       idleWindowCalls: 12,
       tokenSoftBudget: 0,
+      stallTimeoutMinutes: 20,
+      maxWallMinutes: 240,
     });
 
     expect(
@@ -1168,6 +1170,21 @@ describe('validation and widening fixes (D89 review)', () => {
     expect(
       adapter.normalize!(entry, { idleWarnAfter: 1 }, rig.target),
     ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { stallTimeoutMinutes: 121 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { stallTimeoutMinutes: 5 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(adapter.normalize!(entry, { stallTimeoutMinutes: 0 }, rig.target)).toMatchObject({
+      ok: true,
+    });
+    expect(adapter.normalize!(entry, { maxWallMinutes: 0 }, rig.target)).toMatchObject({
+      ok: true,
+    });
+    expect(
+      adapter.normalize!(entry, { maxWallMinutes: 1_441 }, rig.target),
+    ).toMatchObject({ ok: false });
 
     const checked = adapter.normalize!(
       entry,
@@ -1177,6 +1194,8 @@ describe('validation and widening fixes (D89 review)', () => {
         idleStopAfter: 8,
         idleWindowCalls: 10,
         tokenSoftBudget: 100_000,
+        stallTimeoutMinutes: 30,
+        maxWallMinutes: 480,
       },
       rig.target,
     );
@@ -1189,6 +1208,8 @@ describe('validation and widening fixes (D89 review)', () => {
       idleStopAfter: 8,
       idleWindowCalls: 10,
       tokenSoftBudget: 100_000,
+      stallTimeoutMinutes: 30,
+      maxWallMinutes: 480,
     });
     // Other settings are untouched.
     expect(rig.settings().providerConcurrency.default).toBe(4);

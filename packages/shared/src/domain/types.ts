@@ -639,18 +639,17 @@ export const TASK_LOOP_DEFAULTS = {
   idleStopAfter: 6,
   idleWindowCalls: 12,
   tokenSoftBudget: 0,
+  /** 任务长时间没有任何执行活动时的强制结束阈值；0 = 关闭。 */
+  stallTimeoutMinutes: 20,
+  /** 任务总墙钟上限；0 = 关闭（仍受无活动超时与外部引擎自身时限约束）。 */
+  maxWallMinutes: 240,
 } as const;
 
 const taskLoopSettingsShape = z.object({
   idleGuardEnabled: z.boolean().default(TASK_LOOP_DEFAULTS.idleGuardEnabled),
   idleWarnAfter: z.number().int().min(2).max(10).default(TASK_LOOP_DEFAULTS.idleWarnAfter),
   idleStopAfter: z.number().int().min(3).max(20).default(TASK_LOOP_DEFAULTS.idleStopAfter),
-  idleWindowCalls: z
-    .number()
-    .int()
-    .min(3)
-    .max(50)
-    .default(TASK_LOOP_DEFAULTS.idleWindowCalls),
+  idleWindowCalls: z.number().int().min(3).max(50).default(TASK_LOOP_DEFAULTS.idleWindowCalls),
   /** 累计计费 token 软预算；0 = 不限制。 */
   tokenSoftBudget: z
     .number()
@@ -658,11 +657,30 @@ const taskLoopSettingsShape = z.object({
     .min(0)
     .max(10_000_000)
     .default(TASK_LOOP_DEFAULTS.tokenSoftBudget),
+  /** 无活动超时（分钟）；0 = 关闭，开启时至少 10 分钟（高于单次工具上限）。 */
+  stallTimeoutMinutes: z
+    .union([z.literal(0), z.number().int().min(10).max(120)])
+    .default(TASK_LOOP_DEFAULTS.stallTimeoutMinutes),
+  /** 任务总墙钟上限（分钟）；0 = 不限制。 */
+  maxWallMinutes: z.number().int().min(0).max(1_440).default(TASK_LOOP_DEFAULTS.maxWallMinutes),
 });
 /** 读取用：旧数据缺字段 / 损坏时整份设置仍可读，回落默认值。 */
 export const taskLoopSettingsSchema = taskLoopSettingsShape.catch({ ...TASK_LOOP_DEFAULTS });
-/** 写入用：粗边界校验，越界不静默夹取（交叉约束由 core 适配器做）。 */
-export const taskLoopSettingsInputSchema = taskLoopSettingsShape;
+/**
+ * `settings.update` 的部分 patch：字段全部 optional、不带 default，避免只改一个
+ * 字段时把其余字段重置成默认值。交叉约束由 core 适配器 / handler 合并后校验。
+ */
+export const taskLoopSettingsInputSchema = z.object({
+  idleGuardEnabled: z.boolean().optional(),
+  idleWarnAfter: z.number().int().min(2).max(10).optional(),
+  idleStopAfter: z.number().int().min(3).max(20).optional(),
+  idleWindowCalls: z.number().int().min(3).max(50).optional(),
+  tokenSoftBudget: z.number().int().min(0).max(10_000_000).optional(),
+  stallTimeoutMinutes: z
+    .union([z.literal(0), z.number().int().min(10).max(120)])
+    .optional(),
+  maxWallMinutes: z.number().int().min(0).max(1_440).optional(),
+});
 export type TaskLoopSettings = z.infer<typeof taskLoopSettingsSchema>;
 
 /**

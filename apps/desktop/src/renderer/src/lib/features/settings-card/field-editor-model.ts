@@ -57,6 +57,7 @@ export function readSettingAtPath(settings: unknown, path: string): unknown {
 
 /** 没有存值时各控件类型的初始值（设置快照到达后会被真实值覆盖）。 */
 export function controlDefault(field: SettingFieldSpec): unknown {
+  if (field.defaultValue !== undefined) return field.defaultValue;
   switch (fieldControl(field)) {
     case 'toggle':
       return false;
@@ -78,11 +79,15 @@ export function seedValues(
   prefill: SettingValues | null,
   settings: unknown,
 ): SettingValues {
-  if (prefill !== null) return { ...prefill };
   const out: SettingValues = {};
   for (const field of item.fields) {
     if (field.sensitive) continue;
-    const value = readSettingAtPath(settings, field.path ?? field.name);
+    // A partial prefill only overrides the fields it names; the rest seed from
+    // the current snapshot so saving the card never resets sibling settings.
+    const value =
+      prefill !== null && field.name in prefill
+        ? prefill[field.name]
+        : readSettingAtPath(settings, field.path ?? field.name);
     if (value !== undefined) out[field.name] = value as never;
   }
   return out;

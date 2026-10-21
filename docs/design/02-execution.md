@@ -17,7 +17,7 @@
 | 触发 | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
 | 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 cwd 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
-| 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；用量默认不设上限，D93 起可开启软预算；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）超限由 reaper 强制 `failed`。内置 pi 任务另有自动上下文压缩与空转检测，见 [43](43-task-loop-harness.md) |
+| 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；用量默认不设上限，D93 起可开启软预算；`taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制；等用户回答问题卡的时间不计入）超限或内置任务超过 `taskLoop.stallTimeoutMinutes` 无活动时由 reaper 强制 `failed`。内置 pi 任务另有自动上下文压缩与空转检测，见 [43](43-task-loop-harness.md) |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
 | 最终文本 | 自动作为可见消息发出（D48） | 写入私有 `result` 条目，**不直接发给用户** |
 | 深度 | — | 1：任务内 `start_task` 一律拒绝 |
@@ -32,7 +32,7 @@
 |---|---|---|
 | `start_task` | 派出任务：`title`、`instruction`、`source_message_ids`、`writes`、`cwd?`、`continues_task_id?` | 先写 runs 行（`queued` = submitted）与私有 `brief` 条目、再按配额启动；返回 `running` 或 `submitted` + 排队原因；超过本轮起数报 `TASK_LIMIT_REACHED` |
 | `inject_task` | 把新指令转给进行中 / 排队中的任务 | 已在跑：经 steering 注入（`delivered`）；尚未启动：并入简报；引擎收不下（外部智能体不支持或异步拒绝 steering、执行已收尾）：条目记为 `queued`（「未送达」），对话轮可改为取消后接续重做 |
-| `cancel_task` | 取消 submitted / running 的任务 | 写 `cancel` 条目后当场结算为 `cancelled`；不唤醒对话轮 |
+| `cancel_task` | 取消 submitted / running 的任务 | 写 `cancel` 条目后当场结算为 `cancelled`；Bot 自己的取消不唤醒对话轮 |
 | `list_tasks` | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS`（24 小时）内已结算的任务 | 平时不必调用，`<tasks>` 段已列出进行中的任务 |
 | `forward_task_result` | 把已完成任务的结果原文作为可见消息发出（Bot 身份，`origin:'task'`） | 每个任务只能转发一次；不是路由，是转述动作 |
 
@@ -88,7 +88,7 @@
 queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额度）
   → running（可带 awaiting_input）
       → completed    结果已写入私有时间线（skip_reply 时结果为空）
-      → failed       执行失败（含结构化 setup 失败、超时 / 超预算被强制结束）
+      → failed       执行失败（含结构化 setup 失败、超时 / 超预算 / 无活动被强制结束）
       → cancelled    cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot / 移出项目组 / 更新闸门
       → interrupted  进程退出或崩溃；运行中用户收紧授权或切换浏览器资料（D78，见 30 §7.4）
 ```
@@ -99,14 +99,14 @@ queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额�
 
 1. **先落盘再启动**：`start_task` 返回前已写入 submitted 行与 `brief` 条目。
 2. **结算次序**：终态条目（`result` / `failure`，main.db；「每任务至多一条终态条目」唯一索引保证幂等）→ 任务终态（runs.db）→ 唤醒判定 → 投递。两库不能同一事务，次序固定。条目写不进去而对话仍在时，任务保持非终态、由 reaper 重试结算——永远不会出现没有条目的终态任务。
-3. **唤醒判定**（宿主确定性判断）：`completed` 且结果非空、`failed`、`interrupted` 唤醒；`cancelled`（无论谁取消）、`completed` 但结果为空不唤醒，直接标记消费；`question` 不唤醒。对话已只读 / 删除、Bot 已停用 / 不在对话中时也直接标记消费。任务结果**不受免打扰停放**——它是用户要的交付，不是主动消息。
+3. **唤醒判定**（宿主确定性判断）：`completed` 且结果非空、`failed`、`interrupted` 唤醒；用户从任务卡取消（`runs.cancel`）也唤醒（D93，`failure` 条目带 `user_cancelled`）；Bot 自己 `cancel_task`、删除对话 / Bot 的取消、`completed` 但结果为空不唤醒，直接标记消费；`question` 不唤醒。对话已只读 / 删除、Bot 已停用 / 不在对话中时也直接标记消费。任务结果**不受免打扰停放**——它是用户要的交付，不是主动消息。
 4. **投递**：条目作为 `reason='task'` 的触发批交给该（Bot, 对话）的 mailbox；对话轮运行中则缓冲，release 时合并。
 5. **消费**：触发批里带着该条目的对话轮**处理了这次触发**（引擎已启动、无内置模型的降级路由已执行，或因缺设置失败而设置卡完成后会以同一触发重试）**且**终态为 `completed` 或 `failed`（含 `skip_reply`）时，宿主写任务行的 `result_consumed_at`。启动前被取消、Bot 停用 / 对话只读而放弃、被用户或更新闸门取消、中断的对话轮**不消费**（见 DEV-014）。代价：用户取消正在转述结果的对话轮后，结果会在补投窗口后再出现一次。
 6. **对账**：启动时与 reaper（每 `TASK_SETTLE_SWEEP_MS`，60 秒）扫描「终态且未消费」的任务重新投递；已投递但 `TASK_REDELIVER_AFTER_MS`（10 分钟）后仍未被消费的同样重投；Bot 已持有的结果不重投、不计数：正在执行或已创建还排在调度器里的对话轮触发里带着的，以及缓冲在 mailbox 里等下一轮的；投递次数只算真正交给 mailbox 的投递。一个结果至多投递 `TASK_REDELIVER_MAX_ATTEMPTS`（5）次，之后标记消费并在对话里发一条用户可见的提示（明示放弃，不是沉默）。重复消费时对话轮从时间线看得到自己已经说过，通常只会得到「没有新话要说」。
 
 ### Reaper
 
-`TaskHost.sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次：重试写条目失败的结算；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`running` 超过 `TASK_MAX_WALL_MS`（扣除等问题回答的时间）的任务先写 `failure` 条目再强制 `failed`；已结算但执行体超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行被驱逐（释放名额与写租约，外部智能体会话仍视为在用，不被接续继承）；再做对账；最后清理超过 `CONTINUATION_WINDOW_MS` 未用的任务外部智能体会话（`session/close` + 删行）。宿主主动停下的任务（取消、超时、删除）当场结算，但其执行在退场前仍占名额与写入目标。
+`TaskHost.sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次：重试写条目失败的结算；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`running` 超过 `taskLoop.maxWallMinutes` 或内置任务超过 `taskLoop.stallTimeoutMinutes` 无活动的任务先写 `failure` 条目再强制 `failed`；已结算但执行体超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行被驱逐（释放名额与写租约，外部智能体会话仍视为在用，不被接续继承）；再做对账；最后清理超过 `CONTINUATION_WINDOW_MS` 未用的任务外部智能体会话（`session/close` + 删行）。宿主主动停下的任务（取消、超时、删除）当场结算，但其执行在退场前仍占名额与写入目标。
 
 ## 执行记录（Run）
 

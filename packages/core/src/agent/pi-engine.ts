@@ -113,8 +113,7 @@ export class PiEngine implements AgentEngine {
             setPlan: (state) => {
               planState = state;
             },
-            onProgress: (text) =>
-              handleRef?.emit({ type: 'progress', payload: { text } }),
+            onProgress: (text) => handleRef?.emit({ type: 'progress', payload: { text } }),
           })
         : null;
     const runTools = planTool === null ? spec.tools : [...spec.tools, planTool];
@@ -269,8 +268,7 @@ export class PiEngine implements AgentEngine {
               if (result.usage !== null) compaction.onUsage?.([result.usage]);
               return { text: result.text, usage: result.usage };
             },
-            onProgress: (text) =>
-              handleRef?.emit({ type: 'progress', payload: { text } }),
+            onProgress: (text) => handleRef?.emit({ type: 'progress', payload: { text } }),
             logger: this.#deps.logger,
           })
         : null;
@@ -596,6 +594,22 @@ class RunHandleImpl implements RunHandle {
     ).filter((m) => m.role === 'assistant');
     const last = assistants.at(-1);
 
+    // A provider-side abort may also carry an errorMessage; map it before the
+    // generic error branch so the failure code/message stays specific.
+    if (last?.stopReason === 'aborted') {
+      this.#resolveDone({
+        status: 'failed',
+        finalText: '',
+        skipReply: false,
+        usage: this.#usage,
+        error: {
+          code: 'PROVIDER_UNAVAILABLE',
+          message: '模型中止了本次生成，任务没有完成',
+        },
+      });
+      return;
+    }
+
     if (last?.stopReason === 'error' || this.#agent.state.errorMessage) {
       const mapped = mapProviderError(
         new Error(last?.errorMessage ?? this.#agent.state.errorMessage ?? 'unknown model error'),
@@ -610,10 +624,46 @@ class RunHandleImpl implements RunHandle {
       return;
     }
 
+    const terminated = this.#terminatedReason !== null;
+    // D93: a provider-side stop that is not a normal completion must reach the
+    // task host as a failure — otherwise an empty `completed` result is silently
+    // consumed and the bot never learns that the task did not finish.
+    if (
+      !terminated &&
+      last !== undefined &&
+      last.stopReason !== 'stop' &&
+      last.stopReason !== 'toolUse'
+    ) {
+      if (last.stopReason === 'length') {
+        this.#resolveDone({
+          status: 'failed',
+          finalText: '',
+          skipReply: false,
+          usage: this.#usage,
+          error: {
+            code: 'OUTPUT_TRUNCATED',
+            message: '模型输出达到上限被截断，任务没有完成；请缩小范围或重试',
+          },
+        });
+        return;
+      }
+      this.#resolveDone({
+        status: 'failed',
+        finalText: '',
+        skipReply: false,
+        usage: this.#usage,
+        error: {
+          code: 'PROVIDER_UNAVAILABLE',
+          message: `模型以非正常状态结束（${last.stopReason ?? 'unknown'}），任务没有完成`,
+        },
+      });
+      return;
+    }
+
     this.#resolveDone({
       status: 'completed',
-      finalText: finalTextOf(assistants, this.#terminatedReason !== null),
-      skipReply: this.#terminatedReason !== null,
+      finalText: finalTextOf(assistants, terminated),
+      skipReply: terminated,
       usage: this.#usage,
     });
   }

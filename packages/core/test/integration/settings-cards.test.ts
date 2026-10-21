@@ -530,5 +530,22 @@ describe('conversational app settings', () => {
     expect(saved.name).toBe('New');
     expect(saved.enabled).toBe(false);
   }, 30_000);
+
+  it('settings.update taskLoop is a partial patch: one field never resets the others', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const before = (await settingsOf(core)).taskLoop;
+    await core.rpc.call('settings.update', { taskLoop: { stallTimeoutMinutes: 30 } });
+    const after = (await settingsOf(core)).taskLoop;
+    expect(after.stallTimeoutMinutes).toBe(30);
+    expect(after).toMatchObject({
+      idleGuardEnabled: before.idleGuardEnabled,
+      idleWarnAfter: before.idleWarnAfter,
+      idleStopAfter: before.idleStopAfter,
+      idleWindowCalls: before.idleWindowCalls,
+      tokenSoftBudget: before.tokenSoftBudget,
+      maxWallMinutes: before.maxWallMinutes,
+    });
+  }, 30_000);
 });
 

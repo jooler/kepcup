@@ -532,6 +532,8 @@ describe('general.task-loop catalog + settings schema (D93)', () => {
       ['idleStopAfter', 'number'],
       ['idleWindowCalls', 'number'],
       ['tokenSoftBudget', 'number'],
+      ['stallTimeoutMinutes', 'number'],
+      ['maxWallMinutes', 'number'],
     ]);
     expect(item?.fields.find((field) => field.name === 'idleWarnAfter')).toMatchObject({
       min: 2,
@@ -548,6 +550,8 @@ describe('general.task-loop catalog + settings schema (D93)', () => {
       idleStopAfter: 6,
       idleWindowCalls: 12,
       tokenSoftBudget: 0,
+      stallTimeoutMinutes: 20,
+      maxWallMinutes: 240,
     });
     expect(settingsSchema.parse({ taskLoop: { idleWarnAfter: 4 } }).taskLoop).toMatchObject({
       idleWarnAfter: 4,

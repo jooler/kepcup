@@ -174,7 +174,10 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 - **保留**：system prompt、首条任务简报、`<current_plan>`、最近约 30% 窗口；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
 - **模型**：`LlmPurpose='task_compaction'`（Bot 轻量 → 全局轻量 → Bot 主）；用量记当前任务 run。
 - **计划**：内置任务注册 `update_plan`；run 内存状态在每次请求时以 `<current_plan>` 追加到系统提示词；每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
-- **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。开关与阈值在设置目录 `general.task-loop`（设置 → 通用 → 任务 Loop）。
+- **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。
+- **无活动看门狗 / 墙钟**：`TaskHost` 用引擎事件（assistant / tool_call / tool_result / progress / steer）维护 `lastActivityAt`；内置任务在 `running` 且无 `questionSince` 时，超过 `taskLoop.stallTimeoutMinutes`（默认 20，0 = 关闭）没有活动 → failed（`stalled`）。总墙钟改读 `taskLoop.maxWallMinutes`（默认 240，0 = 不限制），不再固定 4 小时。审批 / 租约 / 用户回答等待不计入无活动看门狗；外部智能体保留自身 `AGENT_RUN_TIMEOUT_MS`（1 小时）。
+- **结果反馈**：模型 `length` → failed `OUTPUT_TRUNCATED`；`aborted` / `deferred` 等非正常停止 → failed；用户从任务卡取消（`runs.cancel`）→ failure 条目 + `user_cancelled` + 唤醒 Bot；Bot 自己的 `cancel_task` 不唤醒。
+- **设置**：以上参数在设置目录 `general.task-loop`（设置 → 通用 → 任务 Loop），字段 `idleGuardEnabled` / `idleWarnAfter` / `idleStopAfter` / `idleWindowCalls` / `tokenSoftBudget` / `stallTimeoutMinutes` / `maxWallMinutes`。
 - **验收规则**：任务提示词要求代码类任务把测试 / lint / build 写进计划，并在结果里写明命令与结果；宿主不自动跑测试。
 - **大输出与详细历史（P3）**：内置任务单条工具输出超过 `TOOL_OUTPUT_MAX_CHARS` 时写到 workspace `.tool-output/<runId>/<seq>.txt`，模型只拿到头 + 尾 + 路径 + 字符数（仍包 `<untrusted>`）；写失败 / 路径不安全退回原有截断，随 run 结算删除。任务与子代理有 `get_run_steps({run_id, from_seq?, limit?})` 读取自己 / 当前对话本 Bot 的步骤详情（结果仍截断并包 `<untrusted>`）；对话轮不注册该工具，外部智能体经能力包过滤不注入。
 
@@ -466,10 +469,10 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `delegate_to_bot` / `cancel_delegation` | conversation | T | D71 | 跨 Bot 委派（异步）：B 私聊落代发用户消息（`origin=delegation`）触发 B 的对话轮，参数 `bot_id`、`task`、`intent?`（`request` 默认 / `question` / `fyi`）；B 那一轮的最终回复（`request` 且该轮派了任务时改为跟随任务、取各任务结果拼接；`fyi` 不回贴）截断 ≤ `DELEGATION_RESULT_MAX_CHARS` 贴回 A 为结果卡 + internal follow-up（`delegation_result`），见 [design/27 §3.6](../design/27-butler-and-delegation.md#36-intent-与跟随任务)。B 忙 / 免打扰时排队（`submitted`）；被委派 run 不注册且执行时按 run_id 拒绝（单跳）；项目组内降级 `@`；不能委派给管家 / 访谈中的 Bot |
 | `start_task` | conversation | T | D75 | 派出任务：`title`（≤ `TASK_TITLE_MAX_CHARS`）、`instruction`（≤ `TASK_INSTRUCTION_MAX_CHARS`）、`source_message_ids`（≤ `TASK_SOURCE_MESSAGES_MAX`，本对话共享行）、`writes`、`cwd?`（`workspace` / `workdir`，缺省有可用 workdir 即 workdir）、`continues_task_id?`（须已结束）、`capabilities?`（D91：`<capabilities>` 里的能力 id，去重后 ≤ `TASK_CAPABILITIES_MAX`=8；宿主按该 Bot 当前目录校验，未知 id → `INVALID_INPUT` 并列出可用 id；非 ready 的允许声明但结果里提示不会挂上；落 `runs.task_capabilities`，brief 事件 / `TaskView` / `<tasks>` 行带出；接续取并集、`runs.retry` 沿用）；返回 `task_id` + `running` / `submitted`（排队原因）；本轮超 `TASK_START_MAX_PER_TURN` 报 `TASK_LIMIT_REACHED`；任务内调用 `NOT_SUPPORTED` |
 | `inject_task` | conversation | T | D75 | 把新指令（+ 原消息）转给未结束的任务：`delivered` / `queued`；任务正在 `ask_user` 时即为回答 |
-| `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、不唤醒；写任务的改动不自动撤销 |
+| `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、Bot 自己的取消不唤醒（D93：用户从任务卡取消会写 failure 条目并唤醒）；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、错误、可否注入；进度不返回给模型） |
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
-| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
+| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入任务墙钟（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
 | `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
 | `update_plan` | none | K（仅内置 pi） | D93 | 结构化计划：`{ explanation?, plan: [{ step, status: 'pending' \| 'in_progress' \| 'completed' }] }`，1–20 项、至多一个 `in_progress`；全量替换 run 内存计划，下一轮以 `<current_plan>` 追加到系统提示词；每次更新发 `progress` 落 `run_steps`（任务卡与续接 digest 可见）。外部智能体任务不注册（用原生 todo） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
@@ -502,7 +505,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | loop | 模型 | 方式 | 工具 | 优先级 | 阶段 |
 |---|---|---|---|---|---|
 | 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS=0`，不设步数上限） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、协作回合内 `@`） | D75（原「响应」，P01） |
-| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`TASK_MAX_TURNS`、`TASK_MAX_WALL_MS`、D93 可选软预算） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
+| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`TASK_MAX_TURNS`、`taskLoop.maxWallMinutes`、D93 可选软预算） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
 | 项目组路由判断（续接 / 网关） | 轻量模型（负责人网关用负责人的轻量模型） | 单次结构化调用（`runLightJudgement`） | — | 0 | P05 / D92 |
 | 对话摘要 | 轻量模型 | 单次结构化调用 | — | 2 | P01 |
 | 反思 | 轻量模型 | 单次结构化调用 | — | 2 | P07 |
@@ -524,11 +527,11 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 已启动任务的对话级 / 全局封顶 |
 | `TASK_START_MAX_PER_TURN` | 2 | 一个对话轮最多派出的任务数（按 `origin_run_id`） |
-| `TASK_MAX_WALL_MS` | 4 h | reaper 强制 `failed` 的时长上限 |
+| `TASK_MAX_WALL_MS` | 4 h | 墙钟兜底默认值；运行时优先读 `taskLoop.maxWallMinutes`（0 = 不限制） |
 | `TASK_SETTLE_SWEEP_MS` | 60 s | reaper 周期；结算后执行体未退场的驱逐阈值 |
 | `TASK_REDELIVER_AFTER_MS` | 10 min | 已投递未消费的结果多久后重投 |
 | `TASK_REDELIVER_MAX_ATTEMPTS` | 5 | 一个结果最多投递次数；超过即标记消费并发用户可见提示（审查批 E） |
-| `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `TASK_MAX_WALL_MS`） |
+| `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `taskLoop.maxWallMinutes`） |
 | `ASK_USER_OPTION_MAX_CHARS` | 200 | `ask_user` 每个候选答案的长度上限 |
 | `TASK_EVENT_CONTEXT_MAX_CHARS` / `TASK_TRIGGER_RESULT_MAX_CHARS` | 600 / 12,000 | 最近窗口里任务行的截断 / 触发段里结果全文的硬顶 |
 | `TASK_FAILURE_DIGEST_TOKEN_BUDGET` | 600 | 失败条目尾部的过程摘要预算 |
@@ -542,7 +545,9 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_CONTEXT_SUMMARY_INPUT_TOKENS` / `TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS` | 2,000 / 1,200 | D93：压缩摘要输入 / 输出上限 |
 | `TASK_CONTEXT_COMPACT_TIMEOUT_MS` | 30 s | D93：压缩摘要超时，超时退化为确定性裁剪 |
 | `TASK_TOKEN_SOFT_BUDGET` | 0（关闭） | D93：任务软预算；0 = 不限制，设置项覆盖 |
-| `TASK_LOOP_IDLE_WARN_AFTER` / `TASK_LOOP_IDLE_STOP_AFTER` / `TASK_LOOP_IDLE_WINDOW_CALLS` | 3 / 6 / 12 | D93：空转检测默认阈值；设置项 `general.task-loop` 覆盖 |
+| `TASK_IDLE_WARN_AFTER` / `TASK_IDLE_STOP_AFTER` / `TASK_IDLE_WINDOW_CALLS` | 3 / 6 / 12 | D93：空转检测默认阈值；设置项 `general.task-loop` 覆盖 |
+| `taskLoop.stallTimeoutMinutes` | 20（0 = 关闭） | D93：内置任务无活动看门狗 |
+| `taskLoop.maxWallMinutes` | 240（0 = 不限制） | D93：任务最长运行时间，替代固定 4 小时 |
 
 
 ### 组件制作 loop（D87）

@@ -69,6 +69,11 @@ describe('readSettingAtPath / seedValues', () => {
       idleWindowCalls: 20,
       tokenSoftBudget: 1_000_000,
     });
+    expect(
+      seedValues(taskLoop, { stallTimeoutMinutes: 30 }, {
+        taskLoop: { idleWarnAfter: 5, stallTimeoutMinutes: 20 },
+      }),
+    ).toEqual({ idleWarnAfter: 5, stallTimeoutMinutes: 30 });
     const withSecret = {
       ...workbench,
       fields: [...workbench.fields, { ...workbench.fields[0]!, name: 'apiKey', sensitive: true }],
@@ -87,6 +92,8 @@ describe('valuesFromState / controlDefault / supportsItem', () => {
       idleStopAfter: 3,
       idleWindowCalls: 3,
       tokenSoftBudget: 0,
+      stallTimeoutMinutes: 20,
+      maxWallMinutes: 240,
     });
     expect(controlDefault(taskLoop.fields[1]!)).toBe(2);
     expect(controlDefault(workbench.fields[0]!)).toBe(false);

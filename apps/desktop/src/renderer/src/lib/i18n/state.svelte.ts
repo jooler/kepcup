@@ -104,6 +104,11 @@ export function settingFieldText(itemId: string, fieldName: string, fallback: st
   return lookup(`settingsItem.${itemId}.field.${fieldName}`) ?? fallback;
 }
 
+/** 设置目录字段提示：按条目 + 字段名翻译，缺省回退目录里的中文。 */
+export function settingFieldHint(itemId: string, fieldName: string, fallback: string): string {
+  return lookup(`settingsItem.${itemId}.field.${fieldName}.hint`) ?? fallback;
+}
+
 /** 设置目录静态选项名：按条目 + 字段 + 值翻译，缺省回退目录里的中文。 */
 export function settingOptionText(
   itemId: string,

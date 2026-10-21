@@ -1,3 +1,4 @@
+import { TASK_LOOP_DEFAULTS } from '../domain/types.js';
 import type { SettingItem } from './types.js';
 import {
   defineSettingField as field,
@@ -846,9 +847,9 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'general.task-loop',
     group: 'general',
     title: '任务 Loop',
-    summary: '长任务的空转保护与软预算',
-    enables: ['长任务自动止损', '重复操作提醒', '任务 token 软预算'],
-    keywords: ['空转', '循环', '重复', '预算', '任务 Loop', 'loop'],
+    summary: '长任务的空转保护、无活动超时、最长运行与软预算',
+    enables: ['长任务自动止损', '重复操作提醒', '任务 token 软预算', '无活动超时', '最长运行时间'],
+    keywords: ['空转', '循环', '重复', '预算', '任务 Loop', 'loop', '最长运行', '运行时长', '超时'],
     scope: 'global',
     fields: [
       field('idleGuardEnabled', '启用空转检测', 'toggle', { path: 'taskLoop.idleGuardEnabled' }),
@@ -875,6 +876,22 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
         min: 0,
         max: 10_000_000,
         step: 100_000,
+      }),
+      field('stallTimeoutMinutes', '无活动超时（分钟）', 'number', {
+        path: 'taskLoop.stallTimeoutMinutes',
+        min: 0,
+        max: 120,
+        step: 1,
+        defaultValue: TASK_LOOP_DEFAULTS.stallTimeoutMinutes,
+        hint: '0 = 关闭；开启时应大于单次工具上限（10 分钟），建议 20 分钟。',
+      }),
+      field('maxWallMinutes', '最长运行（分钟）', 'number', {
+        path: 'taskLoop.maxWallMinutes',
+        min: 0,
+        max: 1_440,
+        step: 10,
+        defaultValue: TASK_LOOP_DEFAULTS.maxWallMinutes,
+        hint: '0 = 不限制；默认 240 分钟。',
       }),
     ],
     write: write('confirm'),

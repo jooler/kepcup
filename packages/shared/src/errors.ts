@@ -25,6 +25,8 @@ export const ERROR_CODES = [
   'CAPABILITY_NOT_CONFIGURED',
   // model / context size
   'CONTEXT_TOO_LARGE',
+  /** 模型输出达到上限被截断，任务没有完成（D93）。 */
+  'OUTPUT_TRUNCATED',
   // runs
   'RUN_NOT_FOUND',
   'RUN_ALREADY_FINISHED',

@@ -103,4 +103,53 @@ describe('approval timeout (never leave a task blocked)', () => {
       { timeoutMs: 30_000 },
     );
   }, 120_000);
+
+  it('a long approval wait does not count as task inactivity after approval', async () => {
+    const { core, llm, clock } = await startClocked();
+    const bot = await makeBot(core, '小等二');
+    const conv = await openDirect(core, bot.id);
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'kepcup-approval-wait-'));
+    const file = path.join(outside, 'secret.txt');
+    writeFileSync(file, 'outside');
+
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [step().replyToolCall('read', { path: file }), step().replyText('读完了')],
+        relay: 'RELAY-AFTER-APPROVAL',
+      }),
+    );
+    await sendBatch(core, conv.id, ['读一下这个文件']);
+
+    const approval = await waitFor(
+      async () => {
+        const result = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+          approvals: Approval[];
+        };
+        return result.approvals.find((item) => item.status === 'pending') ?? null;
+      },
+      { label: 'pending access approval', timeoutMs: 30_000 },
+    );
+
+    // 25 minutes is past the default stall timeout; it is a wait, not inactivity.
+    clock.advance(25 * 60_000);
+    await core.rpc.call('approvals.decide', {
+      id: approval.id,
+      approve: true,
+      duration: 'once',
+    });
+
+    const task = await waitForRun(core, conv.id, 'completed', {
+      loopType: 'task',
+      timeoutMs: 30_000,
+    });
+    expect(task.errorReason ?? null).toBeNull();
+    await waitForMessage(
+      core,
+      conv.id,
+      (message) => 'text' in message.content && message.content.text === 'RELAY-AFTER-APPROVAL',
+      { timeoutMs: 30_000 },
+    );
+  }, 120_000);
 });

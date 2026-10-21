@@ -121,6 +121,8 @@ export const settingFieldSpecSchema = z.object({
   min: z.number().optional(),
   max: z.number().optional(),
   step: z.number().positive().optional(),
+  /** 数字 / 开关控件的缺省值（没有存值时使用；缺省按 min / false）。 */
+  defaultValue: z.number().optional(),
   hint: z.string().optional(),
   /**
    * 这个字段写到设置存储的哪个点路径（`store.kind = 'settings'` 时）；缺省 = 字段名。
