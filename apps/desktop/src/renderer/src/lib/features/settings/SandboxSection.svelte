@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SettingValues } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { sandboxReasonText, t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -93,7 +93,9 @@
         {t('settings.sandboxBackend', { backend: backendLabel(status.backend) })}
       </span>
       {#if !status.available && status.reason !== undefined}
-        <span class="w-full text-xs text-muted-foreground" data-testid="sandbox-reason">{status.reason}</span>
+        <span class="w-full text-xs text-muted-foreground" data-testid="sandbox-reason"
+          >{sandboxReasonText(status.reason)}</span
+        >
       {/if}
     </div>
     {#if status.enhanced !== null && status.enhanced !== undefined}
@@ -112,7 +114,7 @@
         </span>
         {#if !status.enhanced.available && status.enhanced.reason !== undefined}
           <span class="w-full text-xs text-muted-foreground" data-testid="sandbox-enhanced-reason">
-            {status.enhanced.reason}
+            {sandboxReasonText(status.enhanced.reason)}
           </span>
         {/if}
       </div>

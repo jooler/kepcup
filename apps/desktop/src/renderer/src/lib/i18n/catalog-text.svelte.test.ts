@@ -5,6 +5,7 @@ import {
   connectorUnavailableText,
   i18n,
   presetSkillText,
+  sandboxReasonText,
   vendorName,
 } from './index';
 
@@ -42,6 +43,12 @@ describe('目录数据的界面文案', () => {
     expect(vendorName('volcengine', '火山方舟')).toBe('Volcengine Ark');
     expect(agentText('claude-acp', 'description', '中文')).toContain('ACP');
     expect(agentText('claude-acp', 'authNote', '中文')).toContain('Claude Pro');
+    expect(sandboxReasonText('Lima 已安装但增强沙箱虚拟机尚未创建')).toContain(
+      'has not been created',
+    );
+    expect(sandboxReasonText('沙箱自检命令失败（退出码 2）')).toBe(
+      'Sandbox self-test failed (exit code 2)',
+    );
 
     i18n.setLocale('zh-CN');
     expect(presetSkillText('docx', 'name', 'fallback')).toBe('Word 文档');

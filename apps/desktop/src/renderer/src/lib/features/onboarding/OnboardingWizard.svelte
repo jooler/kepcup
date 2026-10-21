@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SandboxStatusOutput, SandboxWslStatusOutput } from '@kepcup/shared';
   import { AppError } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { i18n, localeOptions, sandboxReasonText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
@@ -332,6 +332,10 @@
   async function startButler(): Promise<void> {
     creating = true;
     try {
+      // 先把语言同步给 core：管家 Profile、问候语与访谈提示词都按它生成。
+      await settingsStore.update({
+        appLanguage: i18n.locale === 'en-US' ? 'en-US' : 'zh-CN',
+      });
       // 订阅分支：管家由外部 Agent 驱动，组队访谈（内置引擎）不开启。
       const result = (await core.call('butler.ensure', { interview: !agentPath })) as {
         conversationId: string;
@@ -376,6 +380,25 @@
         {t('onboarding.dataDir', { dataDir: core.info?.dataDir ?? '…' })}
       </p>
       <p class="mt-3 text-xs text-muted-foreground">{t('onboarding.localBadges')}</p>
+      <div
+        class="mt-4 flex items-center justify-between gap-4 rounded-xl border px-3.5 py-3"
+        data-testid="onboarding-language"
+      >
+        <div class="min-w-0">
+          <p class="text-sm">{t('onboarding.language')}</p>
+          <p class="mt-0.5 text-xs text-muted-foreground">{t('onboarding.languageHint')}</p>
+        </div>
+        <select
+          class="h-9 w-40 shrink-0 rounded-md border border-input bg-background px-2 text-sm"
+          value={i18n.locale}
+          onchange={(event) => (i18n.locale = event.currentTarget.value)}
+          aria-label={t('onboarding.language')}
+        >
+          {#each localeOptions as option (option.id)}
+            <option value={option.id}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
       <footer class="mt-6 flex items-center justify-between">
         <Button
           size="sm"
@@ -651,7 +674,9 @@
           </p>
           {#if sandboxStatus.reason !== undefined && !sandboxStatus.available}
             <p class="text-xs text-muted-foreground">
-              {t('diagnostics.reason', { reason: sandboxStatus.reason })}
+              {t('diagnostics.reason', {
+                reason: sandboxReasonText(sandboxStatus.reason) ?? sandboxStatus.reason,
+              })}
             </p>
           {/if}
         {/if}
