@@ -94,6 +94,7 @@ CREATE TABLE conversations (
   direct_bot_id TEXT,
   lead_bot_id  TEXT REFERENCES bots(id),              -- 项目负责人
   workdir_id   TEXT,                                  -- 工作目录（原 project_id；与原列一致，无 FK）
+  archived_at  INTEGER,                               -- 非空 = 已从对话列表移除（归档）：数据全留，通讯录里可恢复
   -- …其余列不变（summary、cursor、read_only、created_at…）；删除 setup_state（D60 残留）
   CHECK ((type = 'project') = (lead_bot_id IS NOT NULL))   -- 项目恒有负责人，单聊恒无
 );
@@ -464,11 +465,12 @@ export const PROJECT_MODULES = [
 | 更换负责人 | `projects.setLead`：新负责人须是成员；沟通里落系统消息「负责人已更换为 X」（Bot 可见）；进行中的轮次不打断 |
 | 移出成员 | 负责人**拒绝**：「请先更换负责人」（`projects.removeMember` 与设置卡 `project.members` 同一道校验） |
 | 删除 Bot | **拒绝**，若它领导着项目：提示列出项目并给「去更换」入口（同管家不可删的做法）；其余级联不变 |
-| 解散项目组 | 随会话级联；另删项目 wiki 目录 / `wiki.db` / `wiki-store`；`episodes` 随会话 FK 级联 |
+| 从对话列表移除 | **归档**（`conversations.archive`，写 `conversations.archived_at`）：软删——消息、执行记录、附件、workspace、项目 wiki 目录全部保留，会话仍在通讯录的「项目组」一栏里，可恢复（`conversations.unarchive`，恢复后连左栏分组归属与置顶一起回来） |
+| 解散项目组 | 物理删除（`conversations.delete`），只在项目详情页「危险区」：随会话级联；另删项目 wiki 目录 / `wiki.db` / `wiki-store`；`episodes` 随会话 FK 级联 |
 
 ### 12.5 RPC 变更
 
-`groups.*` → `projects.*`：`create`（入参 `leadBotId`、`goal?`）、`setLead`、`update { title?, goal? }`（补 DEV-030）、`addMembers`、`removeMember`；删除 `groups.setup.*`、`groups.redistribute`、`groups.rename`（并入 `update`）。原目录 RPC `projects.*` → `workdirs.*`。新增 `episodes.resume / stop`、`wiki.addSource / sources / deleteSource`。事件：`conversation.updated` 复用，`group.turn` → `project.turn`（阶段 `triaging` → `routing`），`wiki_changed` 带 owner。
+`groups.*` → `projects.*`：`create`（入参 `leadBotId`、`goal?`）、`setLead`、`update { title?, goal? }`（补 DEV-030）、`addMembers`、`removeMember`；删除 `groups.setup.*`、`groups.redistribute`、`groups.rename`（并入 `update`）。原目录 RPC `projects.*` → `workdirs.*`。新增 `episodes.resume / stop`、`wiki.addSource / sources / deleteSource`、`conversations.archive / unarchive`（归档与恢复）、`conversations.all`（通讯录名册，含归档会话）。事件：`conversation.updated` 复用，`group.turn` → `project.turn`（阶段 `triaging` → `routing`），`wiki_changed` 带 owner。
 
 ## 13 改名与迁移方案
 

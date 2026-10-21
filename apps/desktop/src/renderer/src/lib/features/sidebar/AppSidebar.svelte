@@ -13,6 +13,7 @@
     Pencil,
     Copy,
     Trash2,
+    Archive,
     ChevronLeft,
     ChevronRight,
     Folder,
@@ -674,6 +675,18 @@
     if (!contextMenu) return;
     sidebarDialogs.askDelete(contextMenu.conversationId);
     closeContextMenu();
+  }
+
+  /**
+   * 从对话列表移除（归档）：内容全留，会话仍在通讯录里可恢复。管家聊天例外——
+   * 它是常驻入口，删掉要重开一个空的，仍走物理删除。
+   */
+  async function removeFromContext(): Promise<void> {
+    if (!contextMenu) return;
+    const conversationId = contextMenu.conversationId;
+    closeContextMenu();
+    await chat.archiveConversation(conversationId);
+    toast.success(t('sidebar.removedFromList'), { description: t('sidebar.removedFromListHint') });
   }
 </script>
 
@@ -1399,13 +1412,22 @@
       copyConversationId,
       'context-copy-id',
     )}
-    {@render contextItem(
-      Trash2,
-      t('chats.deleteConversation'),
-      deleteFromContext,
-      'context-delete-conversation',
-      true,
-    )}
+    {#if contextIsButler}
+      {@render contextItem(
+        Trash2,
+        t('chats.deleteConversation'),
+        deleteFromContext,
+        'context-delete-conversation',
+        true,
+      )}
+    {:else}
+      {@render contextItem(
+        Archive,
+        t('sidebar.removeFromList'),
+        () => void removeFromContext(),
+        'context-remove-conversation',
+      )}
+    {/if}
   </div>
   {#if moveMenu && !contextIsButler}
     <div

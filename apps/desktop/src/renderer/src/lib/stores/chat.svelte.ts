@@ -1,6 +1,7 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
 import {
   PROJECT_MEMBER_PREVIEW_MAX,
+  isArchivedConversation,
   projectTitleFromMemberNames,
   isSparseBotProfile,
   messagePreviewText,
@@ -146,6 +147,11 @@ class ChatState {
   #started = false;
   /** conversations.list 至少成功过一次（之前 conversations 为空不代表真的没有会话）。 */
   #listLoaded = false;
+  /**
+   * 已归档（已从对话列表移除）的会话 id：它们不在左栏，但左栏分组归属与置顶
+   * 要留着，恢复后回到原位。
+   */
+  #archivedIds = new Set<string>();
 
   get current(): CurrentChat | null {
     return this.#chat;
@@ -182,6 +188,10 @@ class ChatState {
     });
     core.onEvent('conversation.updated', (payload) => {
       const data = payload as { conversation: Conversation };
+      // 已归档（已从对话列表移除）的会话不在左栏，但左栏分组归属要留着，
+      // 恢复后回到原来的分组。
+      if (isArchivedConversation(data.conversation)) this.#archivedIds.add(data.conversation.id);
+      else this.#archivedIds.delete(data.conversation.id);
       this.#upsertConversation(this.#withDirectBot(data.conversation));
       // Membership may have changed; member cards drive the @ popup and the
       // group info panel, so refresh them for the open group.
@@ -191,8 +201,9 @@ class ChatState {
     });
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
+      this.#archivedIds.delete(data.id);
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
-      this.#pruneSidebarSections();
+      this.pruneSidebarSections();
       if (this.currentId === data.id) this.close();
     });
     core.onEvent('run.status', (payload) => {
@@ -247,7 +258,7 @@ class ChatState {
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
       // 删除效果）；项目组历史里它经 botName 回退为其 id。
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
-      this.#pruneSidebarSections();
+      this.pruneSidebarSections();
       if (this.#chat?.conversation.directBotId === data.id) this.close();
       // It is part of an in-flight project compose: a picked lead goes back to
       // round 1 (chosen members kept), members are dropped — never build the
@@ -302,7 +313,7 @@ class ChatState {
     }
     this.lastMessageText = lastMessageText;
     this.#listLoaded = true;
-    this.#pruneSidebarSections();
+    this.pruneSidebarSections();
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
@@ -342,12 +353,20 @@ class ChatState {
 
   async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
-    const result = (await core.call('conversations.get', { id: conversationId })) as {
+    const loaded = (await core.call('conversations.get', { id: conversationId })) as {
       conversation: ConversationView | null;
     };
-    if (!result.conversation) return;
+    if (!loaded.conversation) return;
+    // 打开一个已归档（已从对话列表移除）的会话 = 恢复它：显式要用它，就回到列表。
+    let conversation = loaded.conversation;
+    if (isArchivedConversation(conversation)) {
+      const restored = (await core.call('conversations.unarchive', { id: conversationId })) as {
+        conversation: ConversationView;
+      };
+      conversation = restored.conversation;
+    }
     this.cancelProjectCompose();
-    this.#upsertConversation(result.conversation);
+    this.#upsertConversation(conversation);
     const messages = await this.#loadLatest(conversationId);
     // D75: several tasks may be in flight next to the turns — look further back.
     const runs = (await core.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
@@ -362,7 +381,7 @@ class ChatState {
     const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
     if (failed !== null) logFailedRun(failed);
     this.#chat = {
-      conversation: result.conversation,
+      conversation,
       messages,
       activeRuns: active.map((run) => ({
         run,
@@ -400,8 +419,8 @@ class ChatState {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
-    if (result.conversation.type === 'project') await this.reloadMembers();
-    else await this.#startSparseInterview(result.conversation);
+    if (conversation.type === 'project') await this.reloadMembers();
+    else await this.#startSparseInterview(conversation);
     await this.#markRead();
     await permissions.loadForConversation(conversationId);
   }
@@ -859,8 +878,32 @@ class ChatState {
     try {
       await core.call('conversations.delete', { id });
       this.conversations = this.conversations.filter((c) => c.id !== id);
-      this.#pruneSidebarSections();
+      this.pruneSidebarSections();
       if (this.currentId === id) this.close();
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+    }
+  }
+
+  /**
+   * 从对话列表移除（归档）：数据、消息、wiki 全留，会话仍在通讯录里可恢复。
+   * 与「删除对话」（物理删除）不同——后者只在项目详情页危险区与管家聊天里。
+   */
+  async archiveConversation(id: string): Promise<void> {
+    try {
+      await core.call('conversations.archive', { id });
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+    }
+  }
+
+  /** 恢复已归档的会话：回到对话列表。 */
+  async restoreConversation(id: string): Promise<void> {
+    try {
+      const result = (await core.call('conversations.unarchive', { id })) as {
+        conversation: ConversationView;
+      };
+      this.#upsertConversation(result.conversation);
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }
@@ -874,11 +917,18 @@ class ChatState {
 
   /**
    * 左栏分组归属跟随会话列表：不在列表里的会话不再占着归属。首次 refresh
-   * 之前列表还是空的，此时清理会抹掉全部归属，所以要等列表加载过。
+   * 之前列表还是空的，此时清理会抹掉全部归属，所以要等列表加载过；名册
+   * （通讯录）没加载前同理——否则会把已归档会话的归属误删。
+   * 已归档（已从对话列表移除）的会话也算「还在」——恢复后要回到原分组。
    */
-  #pruneSidebarSections(): void {
-    if (!this.#listLoaded) return;
-    sidebarSections.prune(this.conversations.map((c) => c.id));
+  pruneSidebarSections(): void {
+    if (!this.#listLoaded || !contacts.rosterLoaded) return;
+    const ids: string[] = this.conversations.map((c) => c.id);
+    for (const id of this.#archivedIds) ids.push(id);
+    for (const conversation of contacts.conversations) {
+      if (isArchivedConversation(conversation)) ids.push(conversation.id);
+    }
+    sidebarSections.prune(ids);
   }
 
   /**
@@ -987,6 +1037,12 @@ class ChatState {
       runningBotIds:
         this.runningByConversation[conversation.id] ?? conversation.runningBotIds ?? [],
     };
+    // 已归档（已从对话列表移除）的会话不进左栏；数据全留，通讯录里可恢复。
+    if (isArchivedConversation(conversation)) {
+      this.conversations = this.conversations.filter((c) => c.id !== conversation.id);
+      if (this.#chat?.conversation.id === conversation.id) this.close();
+      return;
+    }
     // 已删除 Bot 的直聊不回左栏（bot.deleted 时已移除条目）；仅当它正被打开
     // （如记忆证据跳转）时同步当前会话视图。
     if (merged.type === 'direct' && (merged.bot == null || merged.bot.status === 'deleted')) {

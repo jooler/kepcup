@@ -35,7 +35,7 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     kind: 'settings-section',
     id: 'contacts',
     reason:
-      '通讯录：新建 / 删除 Bot 是对象管理而非设置（删除类不入目录）；单个 Bot 的配置由 bot.* 条目覆盖',
+      '通讯录：Bot / 项目组的名册与移除、恢复都是对象管理而非设置（删除类不入目录）；单个 Bot 的配置由 bot.* 条目覆盖',
   },
   {
     kind: 'bot-panel-tab',
@@ -50,7 +50,21 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'bot-panel-tab', id: 'other', reason: '「其它」只有移除 Bot：删除类破坏性动作（§九）' },
   { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
-  { kind: 'action', id: 'conversations.delete', reason: '删除会话：破坏性动作' },
+  {
+    kind: 'action',
+    id: 'conversations.archive',
+    reason: '从对话列表移除（归档）：可逆的对象管理动作，入口在侧栏右键与通讯录，不是设置',
+  },
+  {
+    kind: 'action',
+    id: 'conversations.unarchive',
+    reason: '恢复归档会话：可逆的对象管理动作，入口在通讯录，不是设置',
+  },
+  {
+    kind: 'action',
+    id: 'conversations.delete',
+    reason: '物理删除会话：破坏性动作，只在项目详情页「危险区」与管家聊天里',
+  },
   { kind: 'action', id: 'browserProfiles.delete', reason: '删除浏览器资料：破坏性动作' },
   { kind: 'action', id: 'browserProfiles.clear', reason: '清空浏览器资料（登录状态）：破坏性动作' },
   { kind: 'action', id: 'apps.disconnect', reason: '断开连接：破坏性动作' },
