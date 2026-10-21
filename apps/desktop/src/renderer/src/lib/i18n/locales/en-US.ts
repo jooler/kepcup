@@ -66,6 +66,7 @@ export const enUS = {
   'chats.errorCode.PROVIDER_UNAVAILABLE':
     'The model service is temporarily unavailable. Try again later.',
   'chats.errorCode.CONTEXT_TOO_LARGE': 'Context exceeds the model limit',
+  'chats.errorCode.OUTPUT_TRUNCATED': 'Model output was truncated; the task did not finish',
   'chats.errorCode.WORKDIR_MISSING':
     "The working directory doesn't exist (it may have been moved or deleted)",
   'chats.errorCode.WORKDIR_SWITCH_BLOCKED':
@@ -1550,29 +1551,6 @@ export const enUS = {
     'Show the workbench entry in the sidebar for organizing tasks and notes. When off, the entry and divider are hidden.',
   'settings.workbenchEnabledPersistFailed':
     "Couldn't save the workbench toggle. Restart the app and try again.",
-  'settings.taskLoop.title': 'Task loop',
-  'settings.taskLoop.hint':
-    'Idle-loop protection and a soft budget for long tasks. Higher thresholds are more permissive; 0 means no budget.',
-  'settings.taskLoop.enabled': 'Enable idle-loop detection',
-  'settings.taskLoop.enabledHint':
-    'When the same tool, arguments and result repeat, warn first; if it keeps repeating, block the call and fail the task.',
-  'settings.taskLoop.warnAfter': 'Warn after',
-  'settings.taskLoop.stopAfter': 'Stop after',
-  'settings.taskLoop.windowCalls': 'Detection window (calls)',
-  'settings.taskLoop.tokenSoftBudget': 'Token soft budget',
-  'settings.taskLoop.save': 'Save',
-  'settings.taskLoop.saving': 'Saving…',
-  'settings.taskLoop.valuesHint':
-    'Warn 2–10; stop 3–20 and greater than warn; window ≥ stop; budget 0 or 100k–10M.',
-  'settings.taskLoop.warnInvalid': 'Warn threshold must be an integer from 2 to 10.',
-  'settings.taskLoop.stopInvalid':
-    'Stop threshold must be an integer from 3 to 20 and greater than the warn threshold.',
-  'settings.taskLoop.windowInvalid':
-    'Detection window must be an integer from 3 to 50 and not smaller than the stop threshold.',
-  'settings.taskLoop.budgetInvalid': 'Token soft budget must be 0 or an integer from 100,000 to 10,000,000.',
-  'settings.taskLoop.saveFailed': "Couldn't save the task loop settings.",
-  'settingCard.taskLoop.title': 'Task loop',
-  'settingCard.taskLoop.hint': 'Higher thresholds are more permissive; 0 means no budget.',
   'workbench.nudge.title': 'Scheduled tasks are piling up',
   'workbench.nudge.body':
     'The Bot now has more than 3 scheduled tasks. Open the workbench to see and arrange them all in one place, more efficiently. Enable the workbench?',
@@ -2941,12 +2919,18 @@ export const enUS = {
     'Show a Workbench entry in the sidebar to organize tasks and notes',
   'settingsItem.general.workbench.field.enabled': 'Show Workbench',
   'settingsItem.general.task-loop.title': 'Task loop',
-  'settingsItem.general.task-loop.summary': 'Idle-loop protection and a soft budget for long tasks',
+  'settingsItem.general.task-loop.summary': 'Idle-loop protection, inactivity timeout, maximum run time and a soft budget for long tasks',
   'settingsItem.general.task-loop.field.idleGuardEnabled': 'Enable idle-loop detection',
   'settingsItem.general.task-loop.field.idleWarnAfter': 'Warn after',
   'settingsItem.general.task-loop.field.idleStopAfter': 'Stop after',
   'settingsItem.general.task-loop.field.idleWindowCalls': 'Detection window',
   'settingsItem.general.task-loop.field.tokenSoftBudget': 'Token soft budget',
+  'settingsItem.general.task-loop.field.stallTimeoutMinutes': 'Inactivity timeout (minutes)',
+  'settingsItem.general.task-loop.field.stallTimeoutMinutes.hint':
+    '0 disables it; when enabled it should exceed the 10-minute per-tool limit (20 minutes recommended).',
+  'settingsItem.general.task-loop.field.maxWallMinutes': 'Maximum run time (minutes)',
+  'settingsItem.general.task-loop.field.maxWallMinutes.hint':
+    '0 means unlimited; default is 240 minutes.',
   'settingsItem.background.tasks.title': 'Background task agent',
   'settingsItem.background.tasks.summary':
     'Whether background upkeep (memory, profile, skill distillation) uses an external agent, and which one',

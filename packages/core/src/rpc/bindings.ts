@@ -458,6 +458,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             agents: agentsPatch,
             backgroundTasks: backgroundTasksPatch,
             inkcopLocalCollab: inkcopLocalCollabPatch,
+            taskLoop: taskLoopPatch,
             ...rest
           } = resolve(current);
           const latestApps = current.apps;
@@ -506,6 +507,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             // P6 后台任务：部分 patch，与已存值合并。
             ...(backgroundTasksPatch !== undefined
               ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
+              : {}),
+            ...(taskLoopPatch !== undefined
+              ? { taskLoop: { ...current.taskLoop, ...taskLoopPatch } }
               : {}),
             // InkCop 同机协作 v0.2：部分 patch。
             ...(inkcopLocalCollabPatch !== undefined
@@ -1077,7 +1081,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
 
     'runs.cancel': method(runIdInputSchema, runsCancelOutputSchema, async (input) => ({
-      run: orchestrator.cancelRun(input.runId),
+      run: orchestrator.cancelRun(input.runId, { userInitiated: true }),
     })),
     // W3（D78）: `reviewed` comes only from the task card's review panel (the
     // user ticked 我已核实); no model tool reaches retryRun.

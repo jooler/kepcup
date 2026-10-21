@@ -753,6 +753,15 @@ export class Orchestrator {
       clock: deps.clock,
       logger: deps.logger,
       timeZone: deps.timeZone,
+      // D93: read the live task-loop limits on every sweep so settings changes
+      // apply to running tasks too.
+      taskLoopLimits: () => {
+        const taskLoop = deps.settings.get().taskLoop;
+        return {
+          maxWallMs: taskLoop.maxWallMinutes * 60_000,
+          stallTimeoutMs: taskLoop.stallTimeoutMinutes * 60_000,
+        };
+      },
       renderOptions: (selfBotId) => ({ ...this.#renderOptions(), selfBotId }),
       publishRunStatus: (run) => deps.publish('run.status', { run }),
       execute: (task, control) => {
@@ -1448,13 +1457,16 @@ export class Orchestrator {
     return this.#episodes;
   }
 
-  cancelRun(runId: string): Run | null {
+  cancelRun(runId: string, options: { userInitiated?: boolean } = {}): Run | null {
     const run = this.#deps.runs.get(runId);
     if (!run) return null;
     if (isTerminal(run.status)) return run;
-    // D75: a task is cancelled through its host (cancel entry → failure entry
-    // → terminal; no wake — it is the user's decision, §3.3).
-    if (run.loopType === 'task') return this.#taskHost.cancelById(runId, '用户取消');
+    // D75/D93: a task is cancelled through its host (cancel entry → failure
+    // entry → terminal). A user-initiated cancel wakes the bot with
+    // `user_cancelled`; the bot's own cancel_task does not go through here.
+    if (run.loopType === 'task') {
+      return this.#taskHost.cancelById(runId, '用户取消', options);
+    }
     const entry = this.#activeRuns.get(runId);
     if (entry) {
       entry.handle.abort('user cancelled');

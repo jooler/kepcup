@@ -695,7 +695,13 @@ export function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
       next.idleGuardEnabled = enabled;
     }
     const numbers: Array<{
-      key: 'idleWarnAfter' | 'idleStopAfter' | 'idleWindowCalls' | 'tokenSoftBudget';
+      key:
+        | 'idleWarnAfter'
+        | 'idleStopAfter'
+        | 'idleWindowCalls'
+        | 'tokenSoftBudget'
+        | 'stallTimeoutMinutes'
+        | 'maxWallMinutes';
       label: string;
       min: number;
       max: number;
@@ -704,6 +710,8 @@ export function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
       { key: 'idleStopAfter', label: '中止阈值', min: 3, max: 20 },
       { key: 'idleWindowCalls', label: '检测窗口', min: 3, max: 50 },
       { key: 'tokenSoftBudget', label: 'token 软预算', min: 0, max: 10_000_000 },
+      { key: 'stallTimeoutMinutes', label: '无活动超时', min: 0, max: 120 },
+      { key: 'maxWallMinutes', label: '最长运行', min: 0, max: 1_440 },
     ];
     for (const entry of numbers) {
       if (!(entry.key in values)) continue;
@@ -719,17 +727,23 @@ export function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
     if (next.idleWindowCalls < next.idleStopAfter) {
       return { ok: false, message: '检测窗口不能小于中止阈值' };
     }
+    if (next.stallTimeoutMinutes !== 0 && next.stallTimeoutMinutes < 10) {
+      return { ok: false, message: '无活动超时应为 0（关闭）或 10–120 分钟' };
+    }
     return { ok: true, values: next };
   };
 
   return {
     read: () => {
       const taskLoop = deps.settings.get().taskLoop;
-      const summary = taskLoop.idleGuardEnabled
-        ? `空转检测 ${taskLoop.idleWarnAfter}/${taskLoop.idleStopAfter}/${taskLoop.idleWindowCalls}；软预算 ${
-            taskLoop.tokenSoftBudget > 0 ? taskLoop.tokenSoftBudget : '不限'
-          }`
-        : '空转检测已关闭';
+      const summary = [
+        taskLoop.idleGuardEnabled
+          ? `空转检测 ${taskLoop.idleWarnAfter}/${taskLoop.idleStopAfter}/${taskLoop.idleWindowCalls}`
+          : '空转检测已关闭',
+        `软预算 ${taskLoop.tokenSoftBudget > 0 ? taskLoop.tokenSoftBudget : '不限'}`,
+        `无活动超时 ${taskLoop.stallTimeoutMinutes > 0 ? `${taskLoop.stallTimeoutMinutes} 分钟` : '关闭'}`,
+        `最长运行 ${taskLoop.maxWallMinutes > 0 ? `${taskLoop.maxWallMinutes} 分钟` : '不限'}`,
+      ].join('；');
       return snapshot('configured', { ...taskLoop }, summary);
     },
     normalize: (_item, values) => normalizeValues(deps.settings.get().taskLoop, values),
@@ -1621,7 +1635,11 @@ export function projectLeadAdapter(deps: AdapterDeps): ItemAdapter {
       }
       const leadBotId = conversation.leadBotId ?? null;
       const name = leadBotId !== null ? (deps.bots.get(leadBotId)?.name ?? leadBotId) : null;
-      return snapshot('configured', leadBotId === null ? null : { botId: leadBotId }, name ?? '（未设置）');
+      return snapshot(
+        'configured',
+        leadBotId === null ? null : { botId: leadBotId },
+        name ?? '（未设置）',
+      );
     },
     options: (_field, _item, target) => {
       if (target.conversationId === null) return [];

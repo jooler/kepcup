@@ -1,6 +1,6 @@
 # 43 任务 Loop Harness：上下文压缩、计划与空转护栏
 
-**状态：已实施 P0–P3（2026-10-21）。决策编号 D93。**
+**状态：已实施 P0–P4（2026-10-21）。决策编号 D93。**
 
 关联文档：
 
@@ -16,13 +16,15 @@
 
 1. **自动上下文压缩**：长任务不会在窗口将满时自动摘要 / 裁剪，只会以 `CONTEXT_TOO_LARGE` 失败。
 2. **结构化计划**：没有模型可维护的 todo / plan 工具，只有 UI 进度行。
-3. **空转护栏**：无重复调用检测、无任务级软预算，长任务可能反复执行同一操作直到墙钟耗尽。
+3. **运行护栏**：无重复调用检测、无任务级软预算、无「无活动」看门狗；长任务可能反复执行同一操作，或卡在一个不返回的工具上直到 4 小时墙钟耗尽。
 
-本设计补齐这三项，并把「计划」渲染进已有的任务执行过程页；不新增任务详情页面、不新增数据库表。空转检测参数进入「设置 → 通用 → 任务 Loop」设置卡，可关闭、可调阈值。
+本设计补齐这三项，并把「计划」渲染进已有的任务执行过程页；不新增任务详情页面、不新增数据库表。空转检测、无活动超时与最长运行时间进入「设置 → 通用 → 任务 Loop」设置卡，可关闭、可调阈值。同时补齐任务结果的反馈闭环：模型截断 / 异常停止、用户取消、强制超时都必须写失败条目并唤醒拉起任务的 Bot。
 
 外部智能体（Claude / Codex / OpenCode / Cursor / DSH 等）的任务由各自原生 harness 提供压缩与 todo，本设计**不改变**外部智能体路径。
 
-## 1 现状
+## 1 现状（实施前）
+
+下表记录 2026-10-21 实施前的基线；实施结果与最终语义见 §5 / §10。
 
 | 能力 | 内置 pi 任务 | 证据 |
 |---|---|---|
@@ -31,8 +33,9 @@
 | 自动上下文压缩 | **无**。运行中 transcript 全量累积；只有启动时最近消息预算与单次工具输出截断 | `agent/pi-engine.ts` 只注册 `prepareRequest`；`agent/tool-execution.ts` |
 | 超窗口 | 直接失败为 `CONTEXT_TOO_LARGE`，不压缩重试 | `agent/models.ts` |
 | 计划 / todo | **无模型工具**；`progress` 事件只给 UI | `tools/index.ts` 任务工具列表；`pi-engine.ts` |
-| 任务级预算 | 只有 `TASK_MAX_WALL_MS`（4 小时），无 token 软预算 | `shared/constants.ts` |
+| 任务级预算 | 只有 `TASK_MAX_WALL_MS`（4 小时兜底），无 token 软预算、无无活动看门狗 | `shared/constants.ts`、`dispatch/tasks.ts` |
 | 空转检测 | 无重复调用 / 无进展检测；副作用台账去重不覆盖读操作 | `agent/tool-execution.ts` |
+| 异常停止反馈 | 模型 `length` / `aborted` / `deferred` 等非正常停止未映射为失败，空结果 `completed` 不唤醒 Bot | `agent/pi-engine.ts` |
 | 任务执行过程页 | **已实现**：点击任务卡打开，渲染 `run_steps`（助手文本、工具调用 + 结果、progress、steer） | [42](42-task-run-view.md) |
 | 计划渲染 | **未实现**：没有结构化计划区；`update_plan` 若直接发 progress，只能作为一行进度显示 | `apps/desktop/.../TaskRunView.svelte`、`task-run-view.ts` |
 | 外部 Agent | 原生压缩 / todo / 会话恢复 | `agent/external/providers/*` |
@@ -47,9 +50,11 @@
 | D93-2 | 新增内置工具 `update_plan`，只在**内置 pi 任务**注册；外部智能体使用原生 todo / plan 工具，不重复注入。 |
 | D93-3 | 计划状态保存在 run 内存，每轮请求追加到系统提示词 `<current_plan>`；同时以 progress 事件落 `run_steps`，任务续接的 digest 可回放。 |
 | D93-4 | 任务执行过程页从 `run_steps` 里的 `update_plan` 调用派生最新计划，增加结构化计划区；不新增数据库表、不新增页面。 |
-| D93-5 | 新增任务软预算与空转检测；空转检测的开关、提醒阈值、中止阈值、检测窗口进入设置目录 `general.task-loop`，设置页「通用」可改。 |
+| D93-5 | 新增任务软预算、空转检测、无活动超时与可配置的最长运行时间；参数进入设置目录 `general.task-loop`，设置页「通用」可改。 |
 | D93-6 | 任务提示词增加验收规则：代码类任务把「运行相关测试 / lint / build」作为计划步骤，并在结果里写明验证命令与结果。 |
-| D93-7 | 不改变任务状态机、结算、审批、沙箱与外部智能体语义；压缩与计划失败都必须降级，不阻断任务。 |
+| D93-7 | 不改变任务状态机、结算、审批、沙箱与外部智能体语义；压缩、计划与看门狗失败都必须降级或走既有失败结算，不阻断反馈链路。 |
+| D93-8 | 模型 `length` / `aborted` / `deferred` 等非正常停止一律结算失败并唤醒 Bot；用户从任务卡取消（仅 `runs.cancel`）也写失败条目并唤醒 Bot（Bot 自己的 `cancel_task`、委派取消、更新闸门取消不唤醒）。 |
+| D93-9 | 4 小时墙钟从固定常量改为设置项 `taskLoop.maxWallMinutes`，默认 240 分钟、0 = 不限制；新增 `taskLoop.stallTimeoutMinutes`（默认 20 分钟）作为无活动看门狗。无活动看门狗只作用于内置 pi 任务，外部智能体保留自身 1 小时运行时限。 |
 
 ### 2.1 实施阶段
 
@@ -59,6 +64,7 @@
 | P1 | `update_plan`、`<current_plan>` 注入、任务提示词计划 / 验收规则 |
 | P2 | 任务软预算、空转检测、`general.task-loop` 设置目录与「设置 → 通用」UI |
 | P3 | 任务执行过程页结构化计划区、工具输出落盘、`get_run_steps` 详细历史 |
+| P4 | 反馈闭环：异常停止映射、用户取消唤醒、无活动看门狗、可配置最长运行时间 |
 
 详细任务、测试与验收见 [todo/task-loop-harness.md](../../todo/task-loop-harness.md)。
 
@@ -215,7 +221,24 @@ update_plan({
 - 只对纯读取与重复命令生效；写操作仍由审批、效果台账与文件过期检测把关；
 - 同一工具不同参数不合并。
 
-### 5.3 设置目录条目
+### 5.3 无活动看门狗与最长运行时间
+
+**空转检测只覆盖「同调用同结果」；它抓不住一次工具调用永久不返回、模型流卡死、或模型用不断变化的参数长期不收敛。**
+
+`TaskHost` 为每个已 attach 的任务记录 `lastActivityAt`：
+
+- 引擎事件 `assistant` / `tool_call` / `tool_result` / `progress` / `steer` 都算活动；
+- 任务处于 `running` 且没有等待用户回答（`questionSince === null`）时，超过 `stallTimeoutMinutes` 没有活动 → 强制 `failed`，`errorReason='stalled'`，写 failure 条目并唤醒 Bot；
+- 等待审批（`waiting_approval`）、等待租约（`waiting_lease`）、等待用户回答（`awaiting_input` / `questionSince`）不计入无活动超时；
+- 只对 `engine='builtin'` 的任务生效；外部智能体有自身 `AGENT_RUN_TIMEOUT_MS`（1 小时），避免用宿主 20 分钟阈值误杀其静默长命令。
+
+**最长运行时间**：
+
+- `TASK_MAX_WALL_MS` 仍是兜底常量，但运行时优先读 `taskLoop.maxWallMinutes`（默认 240 分钟，`0 = 不限制`）；该上限作用于所有任务；外部智能体默认先到自身 1 小时时限，显式把 `maxWallMinutes` 调到 60 以下时也会约束外部任务；
+- 超限仍走 `#stop('failed', ...)`，`errorReason='wall_timeout'`，先写 failure 条目并唤醒；
+- 无活动看门狗默认开启，因此即使把 `maxWallMinutes` 设为 0，内置任务仍有「无进展」兜底。
+
+### 5.4 设置目录条目
 
 新增设置目录条目 `general.task-loop`：
 
@@ -224,12 +247,12 @@ update_plan({
 | id | `general.task-loop` |
 | group | `general` |
 | title | 任务 Loop |
-| summary | 长任务的空转保护与软预算 |
+| summary | 长任务的空转保护、无活动超时、最长运行与软预算 |
 | scope | `global` |
 | owner | `core` |
-| fields | `idleGuardEnabled`（toggle）、`idleWarnAfter`（number）、`idleStopAfter`（number）、`idleWindowCalls`（number）、`tokenSoftBudget`（number） |
-| 默认值 | `idleGuardEnabled=true`、`idleWarnAfter=3`、`idleStopAfter=6`、`idleWindowCalls=12`、`tokenSoftBudget=0` |
-| 取值范围 | warn 2–10；stop 3–20 且必须 > warn；window 3–50 且必须 ≥ stop；tokenSoftBudget 0 或 10 万–1000 万 |
+| fields | `idleGuardEnabled`（toggle）、`idleWarnAfter`、`idleStopAfter`、`idleWindowCalls`、`tokenSoftBudget`、`stallTimeoutMinutes`、`maxWallMinutes`（number） |
+| 默认值 | `idleGuardEnabled=true`、`idleWarnAfter=3`、`idleStopAfter=6`、`idleWindowCalls=12`、`tokenSoftBudget=0`、`stallTimeoutMinutes=20`、`maxWallMinutes=240` |
+| 取值范围 | warn 2–10；stop 3–20 且必须 > warn；window 3–50 且必须 ≥ stop；tokenSoftBudget 0 或 10 万–1000 万；stall 0–120（0 = 关闭）；maxWall 0–1440（0 = 不限制） |
 | write | `confirm`（不是 direct；不绕过设置卡） |
 | card | `field-editor` |
 | deepLink | `settings` → `general` → `general-task-loop` |
@@ -237,21 +260,28 @@ update_plan({
 
 设置写入的语义校验放在 core 适配器 `normalize`：越界或 stop ≤ warn 时返回可读错误，不静默夹取。设置页与对话内设置卡共用同一适配器。
 
-### 5.4 设置页「通用」
+### 5.5 设置页「通用」
 
 `GeneralSection.svelte` 增加「任务 Loop」块：
 
 - `data-settings-anchor="general-task-loop"`；
-- 开关：启用空转检测；
-- 数字输入：提醒阈值 / 中止阈值 / 检测窗口 / 软预算；
-- 保存时校验并写入 `taskLoop`，失败给出提示；
-- 说明文案：阈值越大越宽松，0 表示软预算不限制。
+- 通过 `SettingsCatalogFields` 渲染 `general.task-loop`，开关 + 数字输入；
+- 数值：提醒阈值 / 中止阈值 / 检测窗口 / 软预算 / 无活动超时 / 最长运行；
+- 保存时由 core 适配器校验并写入 `taskLoop`，失败给出提示；
+- 说明文案：stall / maxWall 的 0 分别表示关闭 / 不限制。
 
-`FieldEditorCard` 当前按字段名硬编码（model / provider / limit / agent / enabled），需要扩展为按 `field.type` 渲染 `number` / `toggle`，并为 `general.task-loop` 增加读取 / 写入分支；这是设置卡复用的一部分，不新写专用卡片。
+`FieldEditorCard` 已按 `field.type`（toggle / number / select / model）通用渲染，不为 `general.task-loop` 新写专用卡片。
 
-### 5.5 设置不可用时的行为
+### 5.6 设置不可用时的行为
 
-设置读取失败或旧数据缺字段时，使用默认值（启用、3 / 6 / 12、预算 0），并记 warn 日志；不让任务因设置解析失败而无法启动。
+设置读取失败或旧数据缺字段时，使用默认值（启用、3 / 6 / 12、预算 0、无活动 20 分钟、最长 240 分钟），并记 warn 日志；不让任务因设置解析失败而无法启动。
+
+### 5.7 反馈闭环
+
+- **异常停止**：内置 pi 的 `length` → `OUTPUT_TRUNCATED` 失败；`aborted` / `deferred` 等非正常停止 → 失败；不再以空 `completed` 静默消费。正常 `stop` 且最终文本为空仍按既有语义结算为 `completed` 空结果（`skip_reply` / 无结果，不唤醒）。
+- **用户取消**：只有 `runs.cancel`（任务卡）写 failure 条目、`errorReason='user_cancelled'` 并唤醒 Bot；Bot 自己的 `cancel_task`、委派取消、更新闸门取消、删除类取消都不唤醒（避免误报「用户从任务卡取消」）。
+- **强制停止**：看门狗 / 墙钟 / 空转 `LOOP_DETECTED` 都经 `#stop` → 先写 failure 条目 → 唤醒。
+- **崩溃恢复**：沿用 D49：下次启动把未终态任务修复为 `interrupted` 并补投 failure 条目；用户取消的 cancel 条目持久化 `errorReason='user_cancelled'`，恢复后仍会按用户取消补投。
 
 ## 6 任务执行过程页与计划渲染
 
@@ -295,16 +325,16 @@ update_plan({
 - 不实现「计划模式」（只读规划阶段）与宿主自动重规划；
 - 不把 `run_steps` 全量回放成原生 transcript；
 - 不改变外部智能体的会话复用、原生工具、权限桥；
-- 不为压缩做硬性 token 上限；软预算默认关闭；
+- 不为压缩做硬性 token 上限；软预算默认关闭；不把 4 小时墙钟硬编码回固定值（默认 240 分钟，可设 0 = 不限制）；
 - 不改变对话轮的工具面与轮数策略。
 
 ## 9 影响与改动面
 
 | 区域 | 改动 |
 |---|---|
-| shared | `constants.ts` 新增压缩 / 计划 / 预算常量；`domain/types.ts` 新增 `taskLoop` settings 字段；`settings-catalog/types.ts` 数字字段可选 `min/max/step`；`settings-catalog/items.ts` 新增 `general.task-loop` |
-| core | 新增 `agent/context/compaction.ts`、`tools/plan-tools.ts`；`agent/pi-engine.ts` 接 `transformContext`、计划工具、空转检测、软预算；`agent/llm-router.ts` 新增 `task_compaction`；`settings/adapters.ts` 新增 `general.task-loop` 适配器；`dispatch/orchestrator.ts` 传压缩路由与任务设置 |
-| desktop | `FieldEditorCard` 支持 number / toggle 通用字段；`GeneralSection` 新增任务 Loop 块与锚点；`task-run-view.ts` 解析计划；新增 `TaskPlanPanel.svelte` 并在 `TaskRunView.svelte` 渲染；i18n |
+| shared | `constants.ts` 新增压缩 / 计划 / 预算常量；`domain/types.ts` 的 `taskLoop` 新增 `stallTimeoutMinutes` / `maxWallMinutes`；`settings-catalog/types.ts` 数字字段可选 `min/max/step`；`settings-catalog/items.ts` 的 `general.task-loop` 增字段 |
+| core | 新增 `agent/context/compaction.ts`、`agent/loop-guard.ts`、`tools/plan-tools.ts`；`agent/pi-engine.ts` 接 `transformContext`、计划工具、空转检测、软预算、异常停止映射；`agent/llm-router.ts` 新增 `task_compaction`；`settings/adapters.ts` 的 `general.task-loop` 适配器；`dispatch/tasks.ts` 无活动看门狗、可配置墙钟、用户取消唤醒；`dispatch/orchestrator.ts` 传压缩路由 / 任务设置 / 实时限制 |
+| desktop | `FieldEditorCard` / `SettingsCatalogFields` 渲染 number / toggle 通用字段；`GeneralSection` 任务 Loop 块与锚点；`task-run-view.ts` 解析计划；`TaskPlanPanel.svelte`；i18n |
 | docs | 本文件、设计 README / 30 / 38 / 42、dev/04、实施文档 |
 
 ## 10 验收标准
@@ -315,7 +345,11 @@ update_plan({
 4. 内置 pi 任务可以调用 `update_plan`；计划写入 run_steps，并在下一轮系统提示词出现 `<current_plan>`。
 5. 任务执行过程页显示结构化计划与完成计数；运行中自动更新；无计划时不显示。
 6. 同一工具同参数同结果重复达到提醒阈值时，模型收到提示；达到中止阈值后不再执行；继续重复则任务 failed 且错误码为 `LOOP_DETECTED`。
-7. 设置页「通用 → 任务 Loop」可开关空转检测并修改四个数值；越界 / 交叉校验失败给出可读错误；对话内设置卡同样可改。
+7. 设置页「通用 → 任务 Loop」可开关空转检测并修改六个数值（提醒 / 中止 / 窗口 / 软预算 / 无活动超时 / 最长运行）；越界 / 交叉校验失败给出可读错误；对话内设置卡同样可改。
 8. 设置缺字段或解析失败时使用默认值，任务正常启动。
-9. 外部智能体任务行为不变：不注入 `update_plan`、不叠加宿主压缩与空转检测。
-10. 既有任务结算、审批、租约、取消与续接测试不回归。
+9. 内置任务在 `stallTimeoutMinutes` 内没有任何引擎活动时强制 failed（`stalled`），写 failure 条目并唤醒 Bot；设置 `0` 可关闭。
+10. `maxWallMinutes=0` 时不按总时长强制结束；默认 240 分钟；等待审批 / 租约 / 用户回答不计入无活动超时。
+11. 模型 `length` 停止结算 failed（`OUTPUT_TRUNCATED`）；`aborted` / `deferred` 等非正常停止也 failed，均有 failure 条目并唤醒 Bot。
+12. 用户从任务卡取消（`runs.cancel`）写 failure 条目并唤醒 Bot；Bot 自己的 `cancel_task`、委派取消、更新闸门取消、删除对话 / Bot 的取消不唤醒。
+13. 外部智能体任务不注入 `update_plan`、不叠加宿主压缩与无活动看门狗；默认仍受自身 1 小时运行时限（若显式调小 `maxWallMinutes`，宿主墙钟也会约束它）。
+14. 既有任务结算、审批、租约、取消与续接测试不回归。

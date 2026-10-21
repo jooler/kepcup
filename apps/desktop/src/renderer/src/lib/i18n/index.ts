@@ -6,6 +6,7 @@ export {
   errorText,
   settingItemText,
   settingFieldText,
+  settingFieldHint,
   settingOptionText,
   listSeparator,
   detectLocale,

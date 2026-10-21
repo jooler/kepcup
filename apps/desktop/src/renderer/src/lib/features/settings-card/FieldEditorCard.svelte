@@ -2,7 +2,7 @@
   import type { SettingItem, SettingValues } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { settingFieldText, settingOptionText, t } from '$lib/i18n';
+  import { settingFieldHint, settingFieldText, settingOptionText, t } from '$lib/i18n';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -322,6 +322,11 @@
         bind:value={numbers[field.name]}
         data-testid={`${testid}-${field.name}`}
       />
+      {#if field.hint !== undefined}
+        <p class="text-xs text-muted-foreground">
+          {settingFieldHint(item.id, field.name, field.hint)}
+        </p>
+      {/if}
     {:else if fieldControl(field) === 'select-static'}
       <Label for={`${testid}-${field.name}`}>
         {settingFieldText(item.id, field.name, field.label)}

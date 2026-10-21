@@ -12,6 +12,7 @@ import {
   TASK_CONCURRENCY_PER_CONVERSATION,
   TASK_FAILURE_DIGEST_TOKEN_BUDGET,
   TASK_LIST_SETTLED_WINDOW_MS,
+  TASK_LOOP_DEFAULTS,
   TASK_MAX_WALL_MS,
   TASK_QUESTION_TTL_MS,
   TASK_REDELIVER_AFTER_MS,
@@ -39,7 +40,7 @@ import {
   TASK_UNDELIVERED_EVENT,
   type RenderMessageOptions,
 } from '../agent/context/conversation.js';
-import type { RunIdentity } from '../agent/types.js';
+import type { EngineEvent, RunIdentity } from '../agent/types.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -82,6 +83,8 @@ import type {
 export interface TaskRunHandle {
   steer(text: string): boolean;
   abort(reason: string): void;
+  /** D93: execution activity heartbeat for the no-progress watchdog. */
+  onEvent(listener: (event: EngineEvent) => void): () => void;
 }
 
 /** The brief a task starts from (§2.4.5), rebuilt from its private entries. */
@@ -156,8 +159,9 @@ export type TaskInterruptReason = 'permission_revoked' | 'browser_profile_change
  * 「上次同样的操作结果未知」(never auto-approved, not even unattended) —
  * `errorReason: 'uncertain_repeat_timeout'`.
  */
-/** Machine-readable task error reasons (`Run.errorReason`). */
-export type TaskErrorReason = TaskInterruptReason | 'uncertain_repeat_timeout';
+/** Machine-readable task error reasons (`Run.errorReason`, D93 adds the last three). */
+export type TaskErrorReason =
+  TaskInterruptReason | 'uncertain_repeat_timeout' | 'wall_timeout' | 'stalled' | 'user_cancelled';
 
 export const TASK_UNCERTAIN_REPEAT_TIMEOUT_MESSAGE =
   '等待确认「上次结果未知」的重复操作超时，任务已结束。请检查该操作是否已生效后再决定是否重试';
@@ -216,6 +220,8 @@ export interface TaskHostLimits {
   global: number;
   perTurn: number;
   maxWallMs: number;
+  /** D93: no engine activity for this long fails a running built-in task; 0 = off. */
+  stallTimeoutMs: number;
   questionTtlMs: number;
   redeliverMaxAttempts: number;
 }
@@ -232,6 +238,8 @@ export interface TaskHostDeps {
   clock: Clock;
   logger: CoreLogger;
   timeZone: string;
+  /** D93: live limits from settings; omitted = the fixed `limits` / constants. */
+  taskLoopLimits?: () => { maxWallMs: number; stallTimeoutMs: number };
   /** Render options of the bot's view (source / inject lines). */
   renderOptions(selfBotId: string): RenderMessageOptions;
   publishRunStatus(run: Run): void;
@@ -243,11 +251,7 @@ export interface TaskHostDeps {
    */
   wake(botId: string, conversationId: string, entry: Message): void;
   /** Resolves the task's cwd root (bound workdir or the workspace). */
-  resolveCwd(
-    botId: string,
-    conversationId: string,
-    requested?: 'workspace' | 'workdir',
-  ): string;
+  resolveCwd(botId: string, conversationId: string, requested?: 'workspace' | 'workdir'): string;
   /**
    * Terminal cleanup of the run (once-grants, pending approvals, run.status).
    * `executorActive`: the execution is still unwinding — it releases its own
@@ -371,6 +375,10 @@ interface LaunchedTask {
   questionSince: number | null;
   /** Time spent on answered / expired questions so far (excluded from the wall clock). */
   questionWaitMs: number;
+  /** D93: last engine event (assistant / tool / progress / steer); null = none yet. */
+  lastActivityAt: number | null;
+  /** D93: unsubscribe the activity listener when the engine detaches / finishes. */
+  unsubscribeActivity: (() => void) | null;
 }
 
 /** An inject on its way into an engine run (its entry id + the caller's fallback). */
@@ -595,6 +603,8 @@ export class TaskHost implements TaskToolFacade {
       global: deps.limits?.global ?? TASK_CONCURRENCY_GLOBAL,
       perTurn: deps.limits?.perTurn ?? TASK_START_MAX_PER_TURN,
       maxWallMs: deps.limits?.maxWallMs ?? TASK_MAX_WALL_MS,
+      stallTimeoutMs:
+        deps.limits?.stallTimeoutMs ?? TASK_LOOP_DEFAULTS.stallTimeoutMinutes * 60_000,
       questionTtlMs: deps.limits?.questionTtlMs ?? TASK_QUESTION_TTL_MS,
       redeliverMaxAttempts: deps.limits?.redeliverMaxAttempts ?? TASK_REDELIVER_MAX_ATTEMPTS,
     };
@@ -858,7 +868,11 @@ export class TaskHost implements TaskToolFacade {
    * The user cancelled a task from outside the tools (runs.cancel RPC, update
    * gate): same settlement as cancel_task, recorded as the user's decision.
    */
-  cancelById(taskId: string, reason: string): Run | null {
+  cancelById(
+    taskId: string,
+    reason: string,
+    options: { userInitiated?: boolean } = {},
+  ): Run | null {
     const task = this.#deps.runs.get(taskId);
     if (task === null || task.loopType !== 'task') return null;
     if (isTerminalStatus(task.status)) return task;
@@ -869,9 +883,15 @@ export class TaskHost implements TaskToolFacade {
         taskId,
         phase: 'cancel',
         text: reason,
+        ...(options.userInitiated === true ? { errorReason: 'user_cancelled' as const } : {}),
       });
     }
-    return this.#stop(taskId, 'cancelled', reason);
+    return this.#stop(
+      taskId,
+      'cancelled',
+      reason,
+      options.userInitiated === true ? { errorReason: 'user_cancelled' } : {},
+    );
   }
 
   list(identity: RunIdentity): TaskSummary[] {
@@ -1561,7 +1581,15 @@ export class TaskHost implements TaskToolFacade {
           .find((event) => taskEventOf(event)?.phase === 'cancel');
         if (cancelEntry !== undefined) {
           const reason = `已取消：${taskEventOf(cancelEntry)?.text ?? ''}`;
-          const settled = this.#recoverySettle(task, { status: 'cancelled', error: reason });
+          const cancelReason =
+            taskEventOf(cancelEntry)?.errorReason === 'user_cancelled'
+              ? ('user_cancelled' as const)
+              : undefined;
+          const settled = this.#recoverySettle(task, {
+            status: 'cancelled',
+            error: reason,
+            ...(cancelReason !== undefined ? { errorReason: cancelReason } : {}),
+          });
           // Consumed by the reconciliation in resume() (cancelled never wakes).
           if (settled !== null) repaired.push(settled);
           continue;
@@ -1592,7 +1620,7 @@ export class TaskHost implements TaskToolFacade {
    */
   #recoverySettle(
     task: Run,
-    outcome: { status: 'cancelled' | 'interrupted'; error: string },
+    outcome: { status: 'cancelled' | 'interrupted'; error: string; errorReason?: TaskErrorReason },
   ): Run | null {
     if (task.botId !== null && task.conversationId !== null) {
       const written = this.#safeAppend({
@@ -1600,16 +1628,21 @@ export class TaskHost implements TaskToolFacade {
         ownerBotId: task.botId,
         taskId: task.id,
         phase: 'failure',
-        text: this.#failureText(task, outcome.status, outcome.error),
+        text: this.#failureText(task, outcome.status, outcome.error, outcome.errorReason),
         status: outcome.status,
         error: outcome.error,
+        ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
       });
       if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {
         this.#unsettled.set(task.id, outcome);
         return null;
       }
     }
-    return this.#deps.runs.update(task.id, { status: outcome.status, error: outcome.error });
+    return this.#deps.runs.update(task.id, {
+      status: outcome.status,
+      error: outcome.error,
+      ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
+    });
   }
 
   /**
@@ -1656,7 +1689,41 @@ export class TaskHost implements TaskToolFacade {
       const waited =
         launched.questionWaitMs +
         (launched.questionSince !== null ? Math.max(0, now - launched.questionSince) : 0);
-      if (since !== null && now - since - waited > this.#limits.maxWallMs) {
+      const limits = this.#liveLimits();
+      const task = this.#deps.runs.get(launched.taskId);
+      // D93: a task that is not actually running (waiting for an approval, a
+      // lease, the user's answer, or the executor's teardown) must not look
+      // stalled when it resumes. Keep the activity anchor fresh for the whole
+      // wait; the wall clock still keeps counting separately.
+      const waiting =
+        task === null ||
+        task.status !== 'running' ||
+        launched.questionSince !== null ||
+        launched.handle === null ||
+        launched.closing;
+      if (waiting) launched.lastActivityAt = now;
+      // D93: a built-in task with no engine activity (assistant / tool / progress /
+      // steer) for too long is stuck even if its total wall clock is far away.
+      // External agents keep their own deadline.
+      if (
+        !waiting &&
+        task !== null &&
+        task.engine === 'builtin' &&
+        limits.stallTimeoutMs > 0 &&
+        since !== null
+      ) {
+        const last = launched.lastActivityAt ?? since;
+        if (now - last > limits.stallTimeoutMs) {
+          this.#stop(
+            launched.taskId,
+            'failed',
+            `任务长时间没有进展（${Math.round(limits.stallTimeoutMs / 60_000)} 分钟没有新的执行活动），已强制结束`,
+            { errorReason: 'stalled' },
+          );
+          continue;
+        }
+      }
+      if (limits.maxWallMs > 0 && since !== null && now - since - waited > limits.maxWallMs) {
         let flagged = false;
         this.#safely(() => {
           flagged = this.#deps.pendingUncertainRepeat?.(this.#runIdsOf(launched.taskId)) === true;
@@ -1670,7 +1737,8 @@ export class TaskHost implements TaskToolFacade {
         this.#stop(
           launched.taskId,
           'failed',
-          `任务运行超过时限（${Math.round(this.#limits.maxWallMs / 60_000)} 分钟），已强制结束`,
+          `任务运行超过时限（${Math.round(limits.maxWallMs / 60_000)} 分钟），已强制结束`,
+          { errorReason: 'wall_timeout' },
         );
         continue;
       }
@@ -2108,6 +2176,8 @@ export class TaskHost implements TaskToolFacade {
       confirmedEarly: [],
       questionSince: null,
       questionWaitMs: 0,
+      lastActivityAt: null,
+      unsubscribeActivity: null,
     };
     this.#launched.set(task.id, launched);
     const control: TaskRunControl = {
@@ -2116,6 +2186,8 @@ export class TaskHost implements TaskToolFacade {
       brief: () => this.#brief(task.id),
       attach: (handle) => this.#attach(task.id, handle),
       detach: () => {
+        launched.unsubscribeActivity?.();
+        launched.unsubscribeActivity = null;
         launched.handle = null;
         launched.closing = true;
       },
@@ -2139,6 +2211,8 @@ export class TaskHost implements TaskToolFacade {
         return (entry !== null ? taskEventOf(entry)?.sourceMessageIds : undefined) ?? [];
       },
       finish: () => {
+        launched.unsubscribeActivity?.();
+        launched.unsubscribeActivity = null;
         // Buffered injects that never reached an engine run.
         this.#injectsNotDelivered(task.id, launched.buffered.splice(0));
         this.#evicted.delete(task.id);
@@ -2202,6 +2276,11 @@ export class TaskHost implements TaskToolFacade {
     }
     launched.handle = handle;
     launched.attachedAt = this.#deps.clock.now();
+    launched.lastActivityAt ??= launched.attachedAt;
+    launched.unsubscribeActivity?.();
+    launched.unsubscribeActivity = handle.onEvent(() => {
+      launched.lastActivityAt = this.#deps.clock.now();
+    });
     const refused = launched.buffered.splice(0).filter((item) => {
       if (!handle.steer(item.text)) return true;
       noteSteered(launched, item);
@@ -2242,6 +2321,20 @@ export class TaskHost implements TaskToolFacade {
     } catch {
       return false;
     }
+  }
+
+  /** D93: settings may change while a task runs; fall back to the fixed limits. */
+  #liveLimits(): { maxWallMs: number; stallTimeoutMs: number } {
+    try {
+      const live = this.#deps.taskLoopLimits?.();
+      if (live !== undefined) return live;
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'task loop limits lookup failed; using fixed limits',
+      );
+    }
+    return { maxWallMs: this.#limits.maxWallMs, stallTimeoutMs: this.#limits.stallTimeoutMs };
   }
 
   #runningSince(launched: LaunchedTask): number | null {
@@ -2362,7 +2455,10 @@ export class TaskHost implements TaskToolFacade {
       const content = taskEventOf(entry);
       return content !== null && content.text.trim().length > 0;
     }
-    // Cancelled: the bot's or the user's own decision, or nobody left to wake.
+    // Cancelled by the bot itself: it already knows, no relay turn. Cancelled
+    // by the user from the task card (D93 feedback loop): wake with the reason
+    // so the bot can adjust instead of silently losing the task.
+    if (run.status === 'cancelled') return run.errorReason === 'user_cancelled';
     return run.status === 'failed' || run.status === 'interrupted';
   }
 
@@ -2503,7 +2599,9 @@ export class TaskHost implements TaskToolFacade {
         ? '用户撤销了这项任务所用的授权：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
         : reason === 'browser_profile_changed' && status === 'interrupted'
           ? '用户切换了你的浏览器资料（登录身份可能已不同）：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
-          : '';
+          : reason === 'user_cancelled' && status === 'cancelled'
+            ? '用户从任务卡主动取消了这项任务：不要自行重新派出或接续它；用一两句话确认已取消，并等用户明确要求再继续。'
+            : '';
     // 缺设置的失败（docs/design/18-inline-setup.md）：设置卡片已弹出，任务
     // 会在配置完成后自动续跑——明确告诉 Bot「等待」与「勿代产」的纪律，否则
     // 它会按普通失败自行给出替代产出（如文字设计方案）甚至推荐外部工具。
