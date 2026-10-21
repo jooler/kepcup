@@ -102,7 +102,7 @@ describe('wrapPiTool', () => {
     expect(result.ok).toBe(true);
     expect(result.content.startsWith('<untrusted>\n')).toBe(true);
     expect(result.content.endsWith('\n</untrusted>')).toBe(true);
-    expect(result.content).toContain(path.join('.tool-output', 'run_task', '0.txt'));
+    expect(result.content).toContain('.tool-output/run_task/0.txt');
     expect(result.content).toContain('共 40004 字符');
     expect(result.content.length).toBeLessThan(full.length);
     expect(
