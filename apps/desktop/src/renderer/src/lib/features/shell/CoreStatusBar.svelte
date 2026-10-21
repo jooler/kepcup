@@ -40,7 +40,7 @@
         ? 'bg-emerald-500'
         : 'bg-amber-500'}"
     ></span>
-    核心：{statusText}
+    {t('shell.coreLabel', { status: statusText })}
   </span>
   <span class="flex items-center gap-3" data-testid="ping-result">
     {#if pingOk !== null}

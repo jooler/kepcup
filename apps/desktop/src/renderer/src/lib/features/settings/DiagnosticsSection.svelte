@@ -74,7 +74,7 @@
         <dd class="min-w-0 flex-1 truncate font-mono text-xs">{diag.dataDir}</dd>
         <dd class="text-xs text-muted-foreground" data-testid="diagnostics-data-dir-size">
           {t('diagnostics.diskUsage')}: {sizeText(diag.dataDirBytes)}{#if diag.dataDirTruncated}
-            <span class="text-amber-600">（{t('diagnostics.diskTruncated')}）</span>{/if}
+            <span class="text-amber-600">{t('common.parenthesized', { text: t('diagnostics.diskTruncated') })}</span>{/if}
         </dd>
       </div>
 
@@ -83,7 +83,7 @@
         <dd class="min-w-0 flex-1 truncate font-mono text-xs">{diag.logsDir}</dd>
         <dd class="text-xs text-muted-foreground">
           {sizeText(diag.logsBytes)}{#if diag.logsTruncated}
-            （{t('diagnostics.diskTruncated')}）{/if}
+            {t('common.parenthesized', { text: t('diagnostics.diskTruncated') })}{/if}
         </dd>
         <Button size="sm" variant="ghost" onclick={() => void window.kepcup.openLogsDir()} data-testid="diagnostics-logs-open">
           {t('diagnostics.logsOpen')}

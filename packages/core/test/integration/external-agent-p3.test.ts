@@ -447,14 +447,19 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
-    // A cancelled task does not wake the bot (§3.3): no relay turn.
-    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true, relay: false }));
+    // D93: a user-cancelled task wakes the bot with the cancellation reason.
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['写']);
     const card = await pendingAgentTool(stack, conv.id);
     const [task] = tasksIn(stack, conv.id);
     expect(card.runId).toBe(task!.id);
     await stack.core.rpc.call('runs.cancel', { runId: task!.id });
-    await waitTask(stack, conv.id, 'cancelled');
+    const cancelled = await waitTask(stack, conv.id, 'cancelled');
+    expect(cancelled.errorReason).toBe('user_cancelled');
+    await waitFor(
+      () => (stack.llm.requestsFor('mock-main').some(isWake) ? true : null),
+      { label: 'user-cancel wake', timeoutMs: 15_000 },
+    );
     await waitFor(async () => (stack.record().permissions.length > 0 ? true : null), {
       label: 'permission answered',
     });

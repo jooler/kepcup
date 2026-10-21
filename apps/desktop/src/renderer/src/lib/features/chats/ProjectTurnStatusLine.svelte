@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
 
   let { conversationId }: { conversationId: string } = $props();
@@ -12,12 +12,16 @@
       (turn.phase === 'routing' ||
         (turn.phase !== 'idle' && (turn.currentBotId !== null || turn.queue.length > 0))),
   );
-  const currentName = $derived(turn?.currentBotId !== null && turn?.currentBotId !== undefined ? chat.botName(turn.currentBotId) : '');
+  const currentName = $derived(
+    turn?.currentBotId !== null && turn?.currentBotId !== undefined
+      ? chat.botName(turn.currentBotId)
+      : '',
+  );
   const queueNames = $derived(
     (turn?.queue ?? [])
       .filter((id) => id !== turn?.currentBotId)
       .map((id) => chat.botName(id))
-      .join('、'),
+      .join(listSeparator()),
   );
 </script>
 

@@ -7,9 +7,12 @@
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
+  import SettingsCatalogFields from './SettingsCatalogFields.svelte';
 
   /**
-   * 设置页「通用」：开机自启（P13-B）+ 工作台侧栏入口（D90，默认关）+ 版本与检查更新。
+   * 设置页「通用」：开机自启（P13-B）+ 工作台侧栏入口（D90，默认关）+
+   * 任务 Loop（D93：经 `SettingsCatalogFields` 渲染目录条目 `general.task-loop`，
+   * 校验单一来源在 core 适配器）+ 版本与检查更新。
    */
 
   let autostart = $state(true);
@@ -41,7 +44,11 @@
         toast.error(t('settings.launchAtLoginFailed', { reason: result.reason ?? '' }));
       } else {
         toast.success(
-          t('settings.autostartApplied', { state: result.enabled ? '开启' : '关闭' }),
+          t('settings.autostartApplied', {
+            state: result.enabled
+              ? t('settings.autostartStateOn')
+              : t('settings.autostartStateOff'),
+          }),
         );
       }
     });
@@ -104,7 +111,11 @@
 <section class="space-y-3" data-testid="settings-general">
   <h3 class="text-sm font-medium">{t('settings.generalSection')}</h3>
   <label class="flex items-start gap-3">
-    <Checkbox bind:checked={autostart} onCheckedChange={(checked) => toggleAutostart(checked === true)} data-testid="settings-launch-at-login" />
+    <Checkbox
+      bind:checked={autostart}
+      onCheckedChange={(checked) => toggleAutostart(checked === true)}
+      data-testid="settings-launch-at-login"
+    />
     <span class="grid gap-0.5">
       <Label class="font-medium">{t('settings.launchAtLogin')}</Label>
       <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
@@ -121,11 +132,25 @@
       <span class="text-xs text-muted-foreground">{t('settings.workbenchEnabledHint')}</span>
     </span>
   </label>
+  <!-- 锚点由页面静态写（覆盖率扫描只认字面量）；卡片内的保存走条目级 settings.items.apply。 -->
+  <div
+    class="rounded-md border p-3"
+    data-settings-anchor="general-task-loop"
+    data-testid="settings-task-loop"
+  >
+    <SettingsCatalogFields itemIds={['general.task-loop']} />
+  </div>
   <div class="flex items-center gap-3 text-sm">
     <span class="text-xs text-muted-foreground">
       {t('settings.version')}: {core.platform?.version ?? '—'}
     </span>
-    <Button size="sm" variant="outline" disabled={checking} onclick={() => void checkUpdate()} data-testid="settings-check-update">
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={checking}
+      onclick={() => void checkUpdate()}
+      data-testid="settings-check-update"
+    >
       {checking ? t('update.checking') : t('update.checkNow')}
     </Button>
   </div>

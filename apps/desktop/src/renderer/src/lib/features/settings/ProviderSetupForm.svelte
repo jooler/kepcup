@@ -3,7 +3,7 @@
   import { AppError, isVendorId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { t, vendorName } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -302,7 +302,7 @@
       >
         {#each Object.values(VENDOR_DESCRIPTORS) as vendor (vendor.id)}
           <option value={vendor.id}>
-            {vendor.name}{configuredVendorIds.includes(vendor.id)
+            {vendorName(vendor.id, vendor.name)}{configuredVendorIds.includes(vendor.id)
               ? t('settings.vendorConfiguredSuffix')
               : ''}
           </option>

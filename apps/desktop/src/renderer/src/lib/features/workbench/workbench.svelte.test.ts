@@ -62,6 +62,9 @@ beforeEach(() => {
   failMemos = false;
   workbench.todos = [];
   workbench.drawer = null;
+  workbench.memoDraft = '';
+  workbench.memoQuery = '';
+  workbench.todoDraft = '';
   shell.mainView = 'chats';
 });
 afterEach(() => {
@@ -155,6 +158,20 @@ describe('抽屉与跳转', () => {
   });
 });
 
+describe('输入草稿（切到对话再切回不丢）', () => {
+  it('挂载 / 卸载都不清草稿：视图整棵重挂后文本还在', () => {
+    workbench.memoDraft = '买咖啡豆';
+    workbench.memoQuery = '咖啡';
+    workbench.todoDraft = '周五前交周报';
+    detach = workbench.attach();
+    detach();
+    detach = null;
+    expect(workbench.memoDraft).toBe('买咖啡豆');
+    expect(workbench.memoQuery).toBe('咖啡');
+    expect(workbench.todoDraft).toBe('周五前交周报');
+  });
+});
+
 describe('就地更新', () => {
   it('upsertTodo 新增置顶、已有则替换', () => {
     workbench.upsertTodo(todo('a'));
@@ -165,7 +182,15 @@ describe('就地更新', () => {
   });
 
   it('upsertMemo：软删移入回收站，恢复移回列表', () => {
-    const base = { id: 'm1', body: 'x', pinned: false, source: 'user', createdAt: 1, updatedAt: 1 };
+    const base = {
+      id: 'm1',
+      body: 'x',
+      pinned: false,
+      source: 'user',
+      createdAt: 1,
+      updatedAt: 1,
+      sortAt: 1,
+    };
     const memo = { ...base, deletedAt: null } as never;
     workbench.upsertMemo(memo);
     expect(workbench.memos.map((m) => m.id)).toEqual(['m1']);

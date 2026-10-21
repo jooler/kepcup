@@ -16,25 +16,26 @@
   /**
    * 备忘栏（D90 §5.4）：常驻输入框（回车保存、Shift+回车换行、存完清空并保持焦点）→ 本地
    * 即时搜索 → 列表（置顶在前，其余按更新时间倒序）；「最近删除」切到回收视图，可恢复。
+   *
+   * 草稿与搜索词存在 `workbench` store 里（不是组件 `$state`）：切到对话会把工作台整棵
+   * 卸载，放组件里切回来就没了（见 workbench.svelte.ts 的字段注释）。
    */
-  let draft = $state('');
   let saving = $state(false);
-  let query = $state('');
   let input = $state<HTMLTextAreaElement | null>(null);
 
-  const visible = $derived(sortMemos(filterMemos(workbench.memos, query)));
+  const visible = $derived(sortMemos(filterMemos(workbench.memos, workbench.memoQuery)));
   const trashed = $derived(
     [...workbench.trashed].sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)),
   );
 
   async function save(): Promise<void> {
-    const body = draft.trim();
+    const body = workbench.memoDraft.trim();
     if (body.length === 0 || saving) return;
     saving = true;
     try {
       const result = (await core.call('memos.create', { body })) as { memo: Memo };
       workbench.upsertMemo(result.memo);
-      draft = '';
+      workbench.memoDraft = '';
     } catch (error) {
       toast.error(
         errorText((error as { code?: string } | undefined)?.code, t('workbench.memo.saveFailed')),
@@ -116,7 +117,7 @@
   {:else}
     <Textarea
       bind:ref={input}
-      bind:value={draft}
+      bind:value={workbench.memoDraft}
       maxlength={MEMO_BODY_MAX_CHARS}
       rows={2}
       placeholder={t('workbench.memo.inputPlaceholder')}
@@ -130,7 +131,7 @@
         aria-hidden="true"
       />
       <Input
-        bind:value={query}
+        bind:value={workbench.memoQuery}
         placeholder={t('workbench.memo.searchPlaceholder')}
         class="h-8 pl-8"
         data-testid="memo-search"

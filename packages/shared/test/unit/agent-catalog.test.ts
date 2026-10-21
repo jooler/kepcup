@@ -17,6 +17,7 @@ import {
   isHostToolInjected,
   NEVER_INJECTED_TOOLS,
   parseAgentModelRef,
+  resolveAgentModel,
   resolveCapabilities,
   runSchema,
   settingsSchema,
@@ -231,6 +232,13 @@ describe('agent catalog', () => {
     expect(parseAgentModelRef('agent:/x')).toBeNull();
   });
 
+  it('resolves the per-agent default model only when the Bot has no own model', () => {
+    expect(resolveAgentModel('', { model: 'smart' })).toBe('smart');
+    expect(resolveAgentModel('fast', { model: 'smart' })).toBe('fast');
+    expect(resolveAgentModel('', { model: '' })).toBe('');
+    expect(resolveAgentModel('', null)).toBe('');
+  });
+
   it('filters entries whose release gate is not approved (release builds only)', () => {
     const entries = [
       { ...AGENT_CATALOG[0]!, id: 'open', releaseGate: undefined },
@@ -293,6 +301,7 @@ describe('profile and settings defaults', () => {
       enabled: true,
       source: 'managed',
       loadUserConfig: false,
+      model: '',
     });
   });
 
@@ -303,8 +312,18 @@ describe('profile and settings defaults', () => {
       experimental: { externalAgents: 'yes' },
       backgroundAgentId: 7,
     });
-    expect(settings.agents.a).toEqual({ enabled: true, source: 'managed', loadUserConfig: false });
-    expect(settings.agents.b).toEqual({ enabled: false, source: 'managed', loadUserConfig: false });
+    expect(settings.agents.a).toEqual({
+      enabled: true,
+      source: 'managed',
+      loadUserConfig: false,
+      model: '',
+    });
+    expect(settings.agents.b).toEqual({
+      enabled: false,
+      source: 'managed',
+      loadUserConfig: false,
+      model: '',
+    });
     expect(settings.customAgents).toEqual([{ id: 42 }]);
     expect(settings.experimental.externalAgents).toBe(false);
     expect(settings.backgroundAgentId).toBeUndefined();

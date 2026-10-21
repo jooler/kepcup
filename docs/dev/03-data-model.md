@@ -50,6 +50,7 @@
 | main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
 | memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
 | main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
+| main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -77,7 +78,7 @@ CREATE TABLE settings (
 
 连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。P3 再加 `apps.directorySync`（签名目录索引同步开关，默认 `true`；同一入口写；关闭 → 远端目录条目立即清空，只用打包快照）。签名目录索引的本地缓存不在数据库里，而在数据目录 `cache/directory/`（`index.json`、`index.json.sig`、`state.json`；`state.json` 记最后接受的索引的 `generatedAt`、字节 sha256、`keyId`、ETag 与最近成功时间，是防回滚棘轮，缓存被清也不会放过更旧的索引；缓存启动时重新验签）。
 
-外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 项目组对话摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, projectMentionOnly=true（经 Agent 的项目组路由判断需用户关掉此项；D92 T1a WP8 由 groupMentionOnly 改名，无迁移，旧 JSON 缺省值被 `.default(true)` 吸收）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
+外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig, model}`，本机启用状态与默认模型（`model` 为空 = 智能体自己的默认）；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 项目组对话摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, projectMentionOnly=true（经 Agent 的项目组路由判断需用户关掉此项；D92 T1a WP8 由 groupMentionOnly 改名，无迁移，旧 JSON 缺省值被 `.default(true)` 吸收）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
 MCP 与浏览器资料同在设置 JSON：`mcpServers`（D65，server 列表；每项 `id` 受 `MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/` 约束〔D91 后续：字母 / 数字开头，其后字母、数字、`.` `_` `-`，1–64 个字符；写路径〔`settings.update`、`SettingsService.update`〕不合规直接拒绝，读路径 `SettingsService.get()` 逐条校验、丢弃不合规条目并 warn，不让一条坏数据拖垮整份设置，无迁移；它会拼进工具名 `mcp_{id}_{tool}`、能力 id `mcp:{id}`、`custom:{id}` 连接 id 与 secrets 键〕，每项可带逐工具策略 `toolPolicies?: Record<toolName, {approval?: 'auto'|'ask', enabled?}>`），D91 起每项还可带用途说明 `description?: string`（≤200 字符，扩展中心「MCP」表单填写；进系统提示 `<capabilities>` 目录行〔经 `oneLine` 清洗〕，缺省时目录行写固定缺省文案；只进提示词、不参与任何权限判断；无迁移）、`browserProfiles`（D77，共享浏览器资料 `[{id: 'bpf_…', name, createdAt}]`，缺省 `[]`；只经 `browserProfiles.*` RPC 写，`settings.update` 不接受）。Bot 运行配置 `browser_profile`（`''` = 私有；指向不存在的资料按私有处理）。均无迁移。
 
@@ -128,6 +129,7 @@ CREATE TABLE conversations (
   lead_bot_id      TEXT REFERENCES bots(id),  -- 项目负责人（0040）；direct 恒 NULL，project 恒非空（CHECK 保证）
   workdir_id       TEXT,                  -- P04 起使用（0038 改名），无 FK
   read_only        INTEGER NOT NULL DEFAULT 0,
+  archived_at      INTEGER,               -- 0045：非空 = 已从对话列表移除（归档）；数据全留，通讯录里可恢复
   summary          TEXT,                  -- 滚动摘要
   summary_upto_seq INTEGER NOT NULL DEFAULT 0,
   last_seq         INTEGER NOT NULL DEFAULT 0,
@@ -142,8 +144,9 @@ CREATE UNIQUE INDEX conversations_one_direct_per_bot
 
 - 0040 重建（`conversations` 是 12 张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
 - 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
+- **归档（0045）**：`archived_at` 非空 = 该会话已从对话列表移除。软删：消息、执行记录、附件、workspace、项目 wiki 目录全部保留；会话仍在通讯录里（`conversations.all` 名册），可随时恢复（`conversations.archive` / `conversations.unarchive`）。对话列表（`conversations.list`）不含归档会话。恢复归档的直聊 = 继续原对话（同 id，历史延续）：`ConversationsService.openDirect` 命中已归档的直聊时先恢复它，不新开对话实例。
 
-删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。项目组没有独立聚合：项目 id = 其根会话 id（`conv_…`），模块数据以它为键。
+删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。项目组没有独立聚合：项目 id = 其根会话 id（`conv_…`），模块数据以它为键。物理删除的入口只有项目详情页「危险区」与管家聊天；其余「从对话列表移除」都是归档（可恢复）。
 
 ### conversation_members（P01）
 
@@ -235,7 +238,8 @@ D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下
 CREATE TABLE jobs (
   id            TEXT PRIMARY KEY,
   type          TEXT NOT NULL,            -- conversation_summary | reflection | memory_consolidation | profile_curation
-                                          -- | wiki_ingest | wiki_lint | wiki_remove_source | skill_authoring | schedule_fire | watch_alert
+                                          -- | wiki_ingest | wiki_lint | wiki_suggestion | wiki_remove_source | skill_suggestion
+                                          -- | skill_authoring | schedule_fire | watch_alert
                                           -- | mail_alert | handover_copy（D88 P2）...
   bot_id        TEXT,
   conversation_id TEXT,
@@ -253,7 +257,8 @@ CREATE INDEX jobs_pending ON jobs(status, run_after, priority);
 CREATE UNIQUE INDEX jobs_dedupe ON jobs(dedupe_key) WHERE status = 'pending';
 ```
 
-- `wiki_ingest`（D92 T1b WP9 起 payload 带 `owner: { kind: 'bot', botId } | { kind: 'project', projectId }`）：项目 wiki 的入库 job `conversation_id` = 项目 id、`bot_id` = **执行者**（成员入库记该成员名下，用户添加的与体检以负责人身份）；去重键 `wiki_ingest:{ownerKey}:{sourceType}:{ref…}`（`wikiOwnerKey` 形态）。
+- `wiki_ingest`（D92 T1b WP9 起 payload 带 `owner: { kind: 'bot', botId } | { kind: 'project', projectId }`）：项目 wiki 的入库 job `conversation_id` = 项目 id、`bot_id` = **执行者**（成员入库记该成员名下，用户添加的与体检以负责人身份）；去重键 `wiki_ingest:{ownerKey}:{sourceType}:{ref…}`（`wikiOwnerKey` 形态）。**owner 由来源决定**（D92 T1b 收口）：① 对话轮里 Bot 调 `wiki_enqueue` 不传 `scope` 时——项目对话 → `project`，其它对话 → `bot`（显式 `scope` 按显式值）；② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job 被消费时）——反思发生在项目对话里且该 Bot 仍是成员时 → `project`，否则 → `bot`；③ 用户从界面添加来源 → `project`（执行者为负责人）。
+- `wiki_suggestion`（D92 T1b 收口，jobs runner 消费）：反思 loop 产出的 wiki 入库建议；消费方按上面的 ② 选 owner 后登记 `wiki_ingest`（执行者是提出建议的 Bot，来源类型归一 `workspace_file`→`file`，未知类型丢弃并记日志）。
 - `wiki_remove_source`（D92 T1b WP10，无迁移：`type` 没有 CHECK）：删除项目 wiki 来源的异步 job——不调用任何模型（不占模型路由、`JOB_PURPOSES` 不登记，不受预算延后），`payload = { owner, sourceId, actor: { role: 'user'|'lead'|'member', botId? } }`，`bot_id` = 项目负责人（仅记账），去重键 `wiki_remove_source:{ownerKey}:{sourceId}`；ACL / NOT_FOUND / NOT_SUPPORTED 终结为 `done` 不重试（入队时已快败一次，执行时再校验）。
 - `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；后台阶段暂时失败时作业抛 `JobRetryLaterError`，jobs runner 照常记一次失败并把 `run_after` 推后（30 秒 × 已用次数，`JobsService.postpone`），末次失败时条目记失败并结算；作业多次中断而 `failed` 时不再重登，其条目记失败。
 
@@ -662,10 +667,11 @@ CREATE TABLE memos (
   pinned     INTEGER NOT NULL DEFAULT 0,
   source     TEXT NOT NULL CHECK (source IN ('user', 'butler')),
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,                      -- 最后修改时间（卡片上的相对时间用它）
+  sort_at    INTEGER NOT NULL,                      -- 列表排序键（0046）：创建时间，只随置顶变化刷新
   deleted_at INTEGER                                 -- 非空 = 在「最近删除」
 );
-CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
+CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 ```
 
 - **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
@@ -673,6 +679,7 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
+- **备忘排序**（0046）：列表按 `pinned desc, sort_at desc, id desc`。`sort_at` 是排序键，创建时取创建时间，**只有置顶状态变化才刷新**（置顶卡提到置顶组最前）；改正文只动 `updated_at`（卡片上的相对时间、管家上下文里的「最近备忘」），**卡片不换位**。软删 / 恢复不动 `sort_at`，恢复后回到原位。
 - 检索用 `LIKE`（量级千条以内）。
 - 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
 
@@ -971,7 +978,7 @@ CREATE TABLE runs (
   output_message_ids_json TEXT NOT NULL DEFAULT '[]',
   summary              TEXT,
   continued_from_run_ids_json TEXT,    -- 续接来源 run id 列表（Loop 续接，design/02）；null＝无续接
-  error_json           TEXT,           -- {message, setup?, reason?, dismissed?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（`Run.errorReason`：`permission_revoked`、`browser_profile_changed`、`uncertain_repeat_timeout`）；dismissed 为用户已关闭失败横幅（`Run.failureDismissed`），刷新后不再恢复
+  error_json           TEXT,           -- {message, setup?, reason?, dismissed?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（`Run.errorReason`：`permission_revoked`、`browser_profile_changed`、`uncertain_repeat_timeout`、`stalled`、`wall_timeout`、`user_cancelled`）；dismissed 为用户已关闭失败横幅（`Run.failureDismissed`），刷新后不再恢复
   parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
   engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null

@@ -7,6 +7,8 @@ import {
   agentsCatalogOutputSchema,
   agentsConfigureInputSchema,
   agentsConfirmInputSchema,
+  agentsEffortsInputSchema,
+  agentsEffortsOutputSchema,
   agentsEnableInputSchema,
   agentsListOutputSchema,
   agentsLoginInputSchema,
@@ -70,6 +72,13 @@ export function bindAgentMethods(services: CoreServices): Record<string, RpcMeth
       agentsOptionsOutputSchema,
       async (input) => ({
         options: await agents().options(input.id, input.refresh === true),
+      }),
+    ),
+    'agents.efforts': method(
+      agentsEffortsInputSchema,
+      agentsEffortsOutputSchema,
+      async (input) => ({
+        efforts: await agents().efforts(input.id, input.model ?? '', input.refresh === true),
       }),
     ),
     'agents.configure': method(agentsConfigureInputSchema, agentOutputSchema, async (input) => ({

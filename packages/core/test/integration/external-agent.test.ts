@@ -202,6 +202,8 @@ describe('external agent engine (P1, fake agent)', () => {
       ],
     });
     await enableAgents(stack, ['fake']);
+    // The Bot keeps its own model empty: the agent-level default applies.
+    await stack.core.rpc.call('agents.configure', { id: 'fake', model: 'smart' });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const conv = await openDirect(stack.core, bot.id);
     stack.llm.script(
@@ -215,7 +217,7 @@ describe('external agent engine (P1, fake agent)', () => {
     expect(task).toMatchObject({
       engine: 'agent:fake',
       provider: 'agent:fake',
-      model: 'agent:fake/default',
+      model: 'agent:fake/smart',
       agentSessionId: 'fake-session-1',
     });
     const [turn] = turnsOf(stack, conv.id);

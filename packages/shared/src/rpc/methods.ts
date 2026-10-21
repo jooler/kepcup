@@ -72,6 +72,8 @@ import {
   agentsAffectingOutputSchema,
   agentsConfigureInputSchema,
   agentsConfirmInputSchema,
+  agentsEffortsInputSchema,
+  agentsEffortsOutputSchema,
   agentsEnableInputSchema,
   agentsListOutputSchema,
   agentsLoginInputSchema,
@@ -118,6 +120,8 @@ import {
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
+  taskLoopSettingsInputSchema,
+  appLanguageSchema,
   todoAssigneeSchema,
   todoEntrySchema,
   todoRunSchema,
@@ -286,6 +290,7 @@ export const settingsGetOutputSchema = settingsSchema;
 // inner defaults for missing keys and a partial update would erase stored
 // custom providers / model defaults.
 export const settingsUpdateInputSchema = z.object({
+  appLanguage: appLanguageSchema.optional(),
   customProviders: z.array(customProviderSchema).optional(),
   vendorProviders: z.array(vendorProviderSchema).optional(),
   defaultMainModel: z.string().optional(),
@@ -301,6 +306,17 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
+  /** D93 任务 Loop：空转检测与软预算。 */
+  taskLoop: taskLoopSettingsInputSchema.optional(),
+  /** InkCop 同机协作（v0.3）：部分 patch；systemBotId 仅兼容旧配置。 */
+  inkcopLocalCollab: z
+    .object({
+      enabled: z.boolean().optional(),
+      systemBotId: z.string().optional(),
+      apiKey: z.string().optional(),
+      baseUrl: z.string().optional(),
+    })
+    .optional(),
   /** P13 任务 4: first-run wizard completion flags (partial patch). */
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
@@ -759,6 +775,37 @@ export const mediaUnderstandImageInputSchema = z.object({
 });
 export const mediaUnderstandImageOutputSchema = z.object({ text: z.string() });
 
+
+// --- inkcop local bridge (v0.4) -------------------------------------------
+
+export const inkcopAgentSchema = z.object({
+  key: z.string().min(1),
+  name: z.string(),
+  kind: z.enum(['main', 'app']),
+  /** 契约 v0.4：能力说明；主智能体 = 主对话角色定义。 */
+  description: z.string().optional(),
+});
+export type InkcopAgent = z.infer<typeof inkcopAgentSchema>;
+
+export const inkcopHealthOutputSchema = z.object({
+  online: z.boolean(),
+  version: z.number().optional(),
+  app: z.string().optional(),
+  tip: z.string().optional(),
+  /** v0.3：401 / 未配置密钥。 */
+  authError: z.boolean().optional(),
+  /** 同机 endpoint.json 探测到的 token，供 UI 预填。 */
+  discoveredApiKey: z.string().optional(),
+  /** 同机 endpoint.json 的 baseUrl（或拼出的 loopback）。 */
+  discoveredBaseUrl: z.string().optional(),
+});
+export const inkcopListAgentsOutputSchema = z.object({
+  online: z.boolean(),
+  agents: z.array(inkcopAgentSchema),
+  tip: z.string().optional(),
+  authError: z.boolean().optional(),
+});
+
 // --- bots -----------------------------------------------------------------
 
 export const botsListOutputSchema = z.object({ bots: z.array(botSchema) });
@@ -777,6 +824,10 @@ export const botsCreateInputSchema = z
      * profile，完成后自行结束（setup_state 清空）。默认 false 走原路径。
      */
     interview: z.boolean().default(false),
+    /**
+     * 不套用 onboarding 默认外部 Agent（InkCop 同机桥绑定等：消息不经 ACP）。
+     */
+    skipDefaultAgent: z.boolean().default(false),
   })
   .refine((input) => input.interview || input.profile.identity.name.trim().length > 0, {
     path: ['profile', 'identity', 'name'],
@@ -859,12 +910,21 @@ export const interviewAnswerPathOutputSchema = z.object({
 export const conversationsListOutputSchema = z.object({
   conversations: z.array(conversationSchema),
 });
+/**
+ * 通讯录名册：所有会话（含已从对话列表移除的归档会话），带 Bot / 成员头像预览。
+ * 对话列表用 `conversations.list`（不含归档）；通讯录用这一份。
+ */
+export const conversationsAllOutputSchema = z.object({
+  conversations: z.array(conversationSchema),
+});
 export const conversationsOpenDirectInputSchema = z.object({ botId: z.string().min(1) });
 export const conversationsOpenDirectOutputSchema = z.object({
   conversation: conversationSchema,
   created: z.boolean(),
 });
 export const conversationsDeleteInputSchema = z.object({ id: z.string().min(1) });
+export const conversationsArchiveInputSchema = z.object({ id: z.string().min(1) });
+export const conversationsArchiveOutputSchema = z.object({ conversation: conversationSchema });
 export const conversationsMarkReadInputSchema = z.object({
   conversationId: z.string().min(1),
   seq: z.number().int(),
@@ -1818,6 +1878,8 @@ export const rpcMethodSchemas = {
 
   'settings.get': { input: voidInput, output: settingsGetOutputSchema },
   'settings.update': { input: settingsUpdateInputSchema, output: settingsGetOutputSchema },
+  'inkcop.health': { input: z.object({}).default({}), output: inkcopHealthOutputSchema },
+  'inkcop.listAgents': { input: z.object({}).default({}), output: inkcopListAgentsOutputSchema },
   'settings.items.apply': {
     input: settingsItemsApplyInputSchema,
     output: settingsItemsApplyOutputSchema,
@@ -1999,12 +2061,24 @@ export const rpcMethodSchemas = {
   },
 
   'conversations.list': { input: voidInput, output: conversationsListOutputSchema },
+  /** 通讯录名册：所有会话（含已归档的）。 */
+  'conversations.all': { input: voidInput, output: conversationsAllOutputSchema },
   'conversations.get': { input: conversationGetInputSchema, output: conversationGetOutputSchema },
   'conversations.openDirect': {
     input: conversationsOpenDirectInputSchema,
     output: conversationsOpenDirectOutputSchema,
   },
   'conversations.delete': { input: conversationsDeleteInputSchema, output: okOutput },
+  /** 从对话列表移除（归档）：数据全留，会话仍在通讯录里，可恢复。 */
+  'conversations.archive': {
+    input: conversationsArchiveInputSchema,
+    output: conversationsArchiveOutputSchema,
+  },
+  /** 恢复已归档的会话（回到对话列表）。 */
+  'conversations.unarchive': {
+    input: conversationsArchiveInputSchema,
+    output: conversationsArchiveOutputSchema,
+  },
   'conversations.markRead': { input: conversationsMarkReadInputSchema, output: okOutput },
   'conversations.members': {
     input: conversationsMembersInputSchema,
@@ -2122,6 +2196,7 @@ export const rpcMethodSchemas = {
   'agents.logout': { input: agentsLogoutInputSchema, output: agentOutputSchema },
   'agents.test': { input: agentIdInputSchema, output: agentsTestOutputSchema },
   'agents.options': { input: agentsOptionsInputSchema, output: agentsOptionsOutputSchema },
+  'agents.efforts': { input: agentsEffortsInputSchema, output: agentsEffortsOutputSchema },
   'agents.configure': { input: agentsConfigureInputSchema, output: agentOutputSchema },
 
   'memory.list': { input: memoryListInputSchema, output: memoryListOutputSchema },
@@ -2360,6 +2435,8 @@ const APP_METHODS = [
   'diagnostics.get',
   'settings.get',
   'settings.update',
+  'inkcop.health',
+  'inkcop.listAgents',
   'settings.items.apply',
   'settings.cards.dismiss',
   'settings.cards.complete',
@@ -2434,9 +2511,12 @@ const APP_METHODS = [
   'bots.interview.answer',
   'bots.interview.answerPath',
   'conversations.list',
+  'conversations.all',
   'conversations.get',
   'conversations.openDirect',
   'conversations.delete',
+  'conversations.archive',
+  'conversations.unarchive',
   'conversations.markRead',
   'conversations.members',
   'projects.create',
@@ -2502,6 +2582,7 @@ const APP_METHODS = [
   'agents.logout',
   'agents.test',
   'agents.options',
+  'agents.efforts',
   'agents.configure',
   'memory.list',
   'memory.update',

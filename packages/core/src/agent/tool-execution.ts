@@ -1,6 +1,7 @@
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { runInToolCall } from '../permissions/tool-call-scope.js';
 import { truncateToBudget } from './tokens.js';
+import { spillToolResult, type ToolOutputSpill } from './tool-output-spill.js';
 import type { ToolContext, ToolDefinition, ToolResult } from './types.js';
 import type { EffectRecorder } from './effects/recorder.js';
 import type { SettledEffectStatus } from './effects/store.js';
@@ -36,6 +37,7 @@ export async function executeToolSafely(
   params: unknown,
   ctx: ToolContext,
   effects?: EffectRecorder,
+  spill?: ToolOutputSpill,
 ): Promise<ToolResult> {
   const effect = effects?.begin({ tool, params, ctx }) ?? null;
   let result: ToolResult;
@@ -47,19 +49,22 @@ export async function executeToolSafely(
   } catch (error) {
     const status = settleQuietly(() => effect?.settleThrown(error) ?? null);
     const deduped = dedupeQuietly(effect);
-    if (deduped !== null) return deduped;
-    return withLedgerOutcome(
-      {
-        ok: false,
-        content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
-        errorCode: error instanceof AppError ? error.code : 'INTERNAL',
-      },
-      status,
+    if (deduped !== null) return spillToolResult(deduped, spill);
+    return spillToolResult(
+      withLedgerOutcome(
+        {
+          ok: false,
+          content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
+          errorCode: error instanceof AppError ? error.code : 'INTERNAL',
+        },
+        status,
+      ),
+      spill,
     );
   }
   // Outside the try: a ledger failure can never replace the real result.
   const status = settleQuietly(() => effect?.settle(result) ?? null);
-  return dedupeQuietly(effect) ?? withLedgerOutcome(result, status);
+  return spillToolResult(dedupeQuietly(effect) ?? withLedgerOutcome(result, status), spill);
 }
 
 function dedupeQuietly(effect: { dedupeResult?(): ToolResult | null } | null): ToolResult | null {

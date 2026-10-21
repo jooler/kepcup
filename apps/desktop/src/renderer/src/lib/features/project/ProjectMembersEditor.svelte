@@ -68,7 +68,9 @@
       <span class="flex min-w-0 items-center gap-1">
         <span class="truncate text-sm">{member.bot.name}</span>
         {#if isLead}
-          <span class="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+          <span
+            class="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+          >
             {t('projectSettings.leadBadge')}
           </span>
         {/if}
@@ -156,11 +158,15 @@
         <p class="text-base font-medium">{detail.bot.name}</p>
         <p class="text-muted-foreground">{detail.bot.bio || '—'}</p>
         <p>
-          <span class="text-xs text-muted-foreground">{t('projectSettings.expertise')}：</span>
+          <span class="text-xs text-muted-foreground"
+            >{t('common.labelColon', { label: t('projectSettings.expertise') })}</span
+          >
           {detail.bot.profile.role.expertise || '—'}
         </p>
         <p>
-          <span class="text-xs text-muted-foreground">{t('projectSettings.responsibilities')}：</span>
+          <span class="text-xs text-muted-foreground"
+            >{t('common.labelColon', { label: t('projectSettings.responsibilities') })}</span
+          >
           {detail.bot.profile.role.responsibilities || '—'}
         </p>
         {#if detailBrowserOpen}

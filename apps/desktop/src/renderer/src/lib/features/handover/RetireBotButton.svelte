@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -47,7 +47,7 @@
     )
       .filter(([, count]) => count > 0)
       .map(([kind, count]) => t(`handover.remaining.${kind}`, { count }))
-      .join('、'),
+      .join(listSeparator()),
   );
   let open = $state(false);
   let preview = $state({

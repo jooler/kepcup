@@ -46,6 +46,8 @@ export interface MockLlmStep {
   inTurn(): MockLlmStep;
   inTask(): MockLlmStep;
   replyText(text: string, usage?: MockUsage): MockLlmStep;
+  /** Reply with an explicit OpenAI `finish_reason` (e.g. `length`). */
+  replyFinish(finishReason: string, text?: string, usage?: MockUsage): MockLlmStep;
   /**
    * `args` may be a function `(req) => args`: it is evaluated when the
    * response is written (after a hold), for ids only known at run time.
@@ -84,6 +86,8 @@ interface StepState {
   lane?: (req: MockChatRequest) => boolean;
   kind?: 'text' | 'tool' | 'json' | 'fail';
   text?: string;
+  /** Overrides the default `stop` finish_reason (tests for `length` etc.). */
+  finishReason?: string;
   /** Prose accompanying a tool-call reply (replyTextAndToolCall). */
   toolText?: string;
   toolName?: string;
@@ -131,6 +135,14 @@ class Step implements MockLlmStep {
   replyText(text: string, usage?: MockUsage): this {
     this.state.kind = 'text';
     this.state.text = text;
+    this.state.usage = usage;
+    return this;
+  }
+
+  replyFinish(finishReason: string, text?: string, usage?: MockUsage): this {
+    this.state.kind = 'text';
+    this.state.text = text ?? '';
+    this.state.finishReason = finishReason;
     this.state.usage = usage;
     return this;
   }
@@ -409,7 +421,7 @@ function writeCompletion(res: ServerResponse, step: Step, model: string, stream:
       finishReason = 'tool_calls';
     } else {
       message = { role: 'assistant', content: step.state.text ?? '' };
-      finishReason = 'stop';
+      finishReason = step.state.finishReason ?? 'stop';
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
@@ -478,7 +490,10 @@ function writeCompletion(res: ServerResponse, step: Step, model: string, stream:
       ...base,
       choices: [{ index: 0, delta: { content: step.state.text ?? '' }, finish_reason: null }],
     });
-    send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+    send({
+      ...base,
+      choices: [{ index: 0, delta: {}, finish_reason: step.state.finishReason ?? 'stop' }],
+    });
   }
   send({
     ...base,

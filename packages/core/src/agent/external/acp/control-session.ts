@@ -6,6 +6,7 @@ import {
   type Client,
   type InitializeResponse,
   type NewSessionResponse,
+  type SessionConfigOption,
 } from '@agentclientprotocol/sdk';
 import { AppError } from '@kepcup/shared';
 import { ACP_AUTH_STATUS_NOTIFICATION, type AcpByteChannel } from './client.js';
@@ -98,6 +99,20 @@ export class AcpControlSession {
 
   async closeSession(sessionId: string): Promise<void> {
     await this.#connection.closeSession({ sessionId });
+  }
+
+  /** `session/set_config_option` → the full updated config options. */
+  async setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<readonly SessionConfigOption[]> {
+    const response = await this.#connection.setSessionConfigOption({
+      sessionId,
+      configId,
+      value,
+    });
+    return response.configOptions;
   }
 
   async authenticate(methodId: string): Promise<void> {

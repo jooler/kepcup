@@ -74,6 +74,17 @@ export const botRuntimeSchema = z.object({
    */
   browser_profile: z.string().default('').catch(''),
   /**
+   * Legacy（契约 v0.4 起废弃）：曾用 `inkcop-local` 把整轮用户消息 divert 到本机桥。
+   * 现恒应为空；关联智能体只走 `inkcop_agent_keys` + `call_inkcop_agent` 工具移交。
+   * 读出/写入时 core 会清空残留的 `inkcop-local`。未知值按 ''。
+   */
+  message_transport: z.enum(['', 'inkcop-local']).default('').catch(''),
+  /**
+   * InkCop 同机协作：本 Bot 可调用的 InkCop 智能体 key 列表（多选）。
+   * 空 = 未关联；非空且扩展中心已启协作时注册 `call_inkcop_agent`（非整轮 divert）。
+   */
+  inkcop_agent_keys: z.array(z.string().min(1)).default([]).catch([]),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -566,8 +577,13 @@ export const agentSettingSchema = z
     source: z.enum(['managed', 'system']).default('managed').catch('managed'),
     /** 「加载我的个人配置」（默认关，§5）。 */
     loadUserConfig: z.boolean().default(false).catch(false),
+    /**
+     * 该智能体的默认模型（设置页「智能体」）。Bot 选择它时自动带上；Bot 自己的
+     * `runtime.agent.model` 为空时也回退到这里。'' = 用智能体自己的默认。
+     */
+    model: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, source: 'managed', loadUserConfig: false });
+  .catch({ enabled: false, source: 'managed', loadUserConfig: false, model: '' });
 export type AgentSetting = z.infer<typeof agentSettingSchema>;
 
 /**
@@ -579,6 +595,8 @@ export const agentSettingInputSchema = z
   .object({
     enabled: z.boolean().optional(),
     loadUserConfig: z.boolean().optional(),
+    /** 默认模型（'' = 智能体自己的默认）。 */
+    model: z.string().max(500).optional(),
   })
   .strict();
 
@@ -609,6 +627,61 @@ export const backgroundTasksSettingsSchema = z
   })
   .catch({ agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
+
+/**
+ * 任务 Loop（D93，design 43 §5.3）：内置 pi 长任务的空转保护与软预算。
+ * schema 只做粗边界；`idleStopAfter > idleWarnAfter` 与
+ * `idleWindowCalls >= idleStopAfter` 由 core 适配器的 normalize 校验。
+ */
+export const TASK_LOOP_DEFAULTS = {
+  idleGuardEnabled: true,
+  idleWarnAfter: 3,
+  idleStopAfter: 6,
+  idleWindowCalls: 12,
+  tokenSoftBudget: 0,
+  /** 任务长时间没有任何执行活动时的强制结束阈值；0 = 关闭。 */
+  stallTimeoutMinutes: 20,
+  /** 任务总墙钟上限；0 = 关闭（仍受无活动超时与外部引擎自身时限约束）。 */
+  maxWallMinutes: 240,
+} as const;
+
+const taskLoopSettingsShape = z.object({
+  idleGuardEnabled: z.boolean().default(TASK_LOOP_DEFAULTS.idleGuardEnabled),
+  idleWarnAfter: z.number().int().min(2).max(10).default(TASK_LOOP_DEFAULTS.idleWarnAfter),
+  idleStopAfter: z.number().int().min(3).max(20).default(TASK_LOOP_DEFAULTS.idleStopAfter),
+  idleWindowCalls: z.number().int().min(3).max(50).default(TASK_LOOP_DEFAULTS.idleWindowCalls),
+  /** 累计计费 token 软预算；0 = 不限制。 */
+  tokenSoftBudget: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .default(TASK_LOOP_DEFAULTS.tokenSoftBudget),
+  /** 无活动超时（分钟）；0 = 关闭，开启时至少 10 分钟（高于单次工具上限）。 */
+  stallTimeoutMinutes: z
+    .union([z.literal(0), z.number().int().min(10).max(120)])
+    .default(TASK_LOOP_DEFAULTS.stallTimeoutMinutes),
+  /** 任务总墙钟上限（分钟）；0 = 不限制。 */
+  maxWallMinutes: z.number().int().min(0).max(1_440).default(TASK_LOOP_DEFAULTS.maxWallMinutes),
+});
+/** 读取用：旧数据缺字段 / 损坏时整份设置仍可读，回落默认值。 */
+export const taskLoopSettingsSchema = taskLoopSettingsShape.catch({ ...TASK_LOOP_DEFAULTS });
+/**
+ * `settings.update` 的部分 patch：字段全部 optional、不带 default，避免只改一个
+ * 字段时把其余字段重置成默认值。交叉约束由 core 适配器 / handler 合并后校验。
+ */
+export const taskLoopSettingsInputSchema = z.object({
+  idleGuardEnabled: z.boolean().optional(),
+  idleWarnAfter: z.number().int().min(2).max(10).optional(),
+  idleStopAfter: z.number().int().min(3).max(20).optional(),
+  idleWindowCalls: z.number().int().min(3).max(50).optional(),
+  tokenSoftBudget: z.number().int().min(0).max(10_000_000).optional(),
+  stallTimeoutMinutes: z
+    .union([z.literal(0), z.number().int().min(10).max(120)])
+    .optional(),
+  maxWallMinutes: z.number().int().min(0).max(1_440).optional(),
+});
+export type TaskLoopSettings = z.infer<typeof taskLoopSettingsSchema>;
 
 /**
  * 连接应用（D73）的 core 自有设置（不在 `settings.update` 入参里，渲染端改不了）：
@@ -658,7 +731,29 @@ export const browserProfileSchema = z.object({
 });
 export type BrowserProfile = z.infer<typeof browserProfileSchema>;
 
+/**
+ * InkCop 同机协作（契约 v0.3）：扩展中心「本机应用协作」启停 + API 密钥 + 可选服务地址。
+ * 开启后任意 Bot 详情可关联 InkCop 智能体；不预置系统 Bot。
+ * `systemBotId` 仅兼容旧配置，读写忽略。
+ */
+export const inkcopLocalCollabSettingsSchema = z
+  .object({
+    enabled: z.boolean().default(false).catch(false),
+    /** v0.3：Bearer API 密钥；空则同机探测时回落 endpoint.token。 */
+    apiKey: z.string().default('').catch(''),
+    /** v0.3：可选服务 baseUrl（局域网/跨机）；空则用 endpoint / 127.0.0.1。 */
+    baseUrl: z.string().default('').catch(''),
+  })
+  .catch({ enabled: false, apiKey: '', baseUrl: '' });
+export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettingsSchema>;
+
+/** UI language selected in the renderer; core mirrors it for prompts and deterministic copy. */
+export const appLanguageSchema = z.enum(['zh-CN', 'en-US']);
+export type AppLanguage = z.infer<typeof appLanguageSchema>;
+
 export const settingsSchema = z.object({
+  /** Renderer UI language; core reads it for prompts and onboarding copy. */
+  appLanguage: appLanguageSchema.default('zh-CN'),
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
   vendorProviders: z.array(vendorProviderSchema).default([]),
@@ -712,6 +807,10 @@ export const settingsSchema = z.object({
    */
   workbenchNudgeDismissed: z.boolean().default(false),
   /**
+   * InkCop 同机协作（v0.3）：扩展中心启停 + apiKey + 可选 baseUrl。
+   */
+  inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
+  /**
    * First-run onboarding state (P13 任务 4), stored in the existing settings
    * row — no new migration. `modelSkipped` drives the persistent "no model
    * configured" prompt on the main window (docs/dev/phases/P13-release.md
@@ -736,6 +835,8 @@ export const settingsSchema = z.object({
   backgroundAgentId: z.string().optional().catch(undefined),
   /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */
   backgroundTasks: backgroundTasksSettingsSchema.prefault({}),
+  /** D93：内置任务 Loop 的空转检测与软预算（设置 → 通用 → 任务 Loop）。 */
+  taskLoop: taskLoopSettingsSchema.prefault({}),
   /**
    * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支写入）：没有
    * 默认主模型时，新建的 Bot（含管家）若未指定模型 / Agent，即以它驱动；
@@ -773,6 +874,11 @@ export const conversationSchema = z.object({
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),
+  /**
+   * 归档时间：从对话列表「移除」= 置归档标记（数据、消息、wiki 全留）。
+   * 非空 = 该会话不在对话列表里，但仍在通讯录里，可恢复。
+   */
+  archivedAt: z.number().nullable().optional(),
   summary: z.string().nullable(),
   summaryUptoSeq: z.number(),
   lastSeq: z.number(),
@@ -2812,6 +2918,12 @@ export const memoSchema = z.object({
   source: todoSourceSchema,
   createdAt: z.number(),
   updatedAt: z.number(),
+  /**
+   * List sort key: creation time, only refreshed when the pin state changes.
+   * Editing the body moves `updatedAt` but not `sortAt`, so the card keeps its
+   * place in the workbench list.
+   */
+  sortAt: z.number(),
   /** Non-null = in 最近删除 (purged after MEMO_TRASH_RETENTION_MS). */
   deletedAt: z.number().nullable(),
 });

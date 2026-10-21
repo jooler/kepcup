@@ -159,6 +159,14 @@
     connections = interpreted.ids;
   });
 
+  // 外部智能体的模型 / 推理强度来自它自己的会话选项，按需探测并缓存。
+  $effect(() => {
+    if (itemId !== 'bot.agent') return;
+    const id = agentId;
+    if (id.length === 0 || agentsStore.options[id] !== undefined) return;
+    void agentsStore.loadOptions(id).catch(() => undefined);
+  });
+
   $effect(() => {
     if (itemId !== 'bot.agent' && itemId !== 'bot.apps' && itemId !== 'bot.mcp-servers') return;
     if (itemId === 'bot.agent') {
@@ -179,6 +187,15 @@
     const list = agentsStore.experimental ? agentsStore.selectable : [];
     return list;
   });
+  const agentChoices = $derived(
+    itemId === 'bot.agent' && agentId.length > 0 ? agentsStore.options[agentId] : undefined,
+  );
+
+  function changeAgent(id: string): void {
+    agentId = id;
+    // 设置页里给该智能体配的默认模型：切过来时直接带上（留空 = 智能体默认）。
+    agentModel = agentsStore.get(id)?.defaultModel ?? '';
+  }
 
   function toggle(list: string[], id: string, on: boolean): string[] {
     return on ? (list.includes(id) ? list : [...list, id]) : list.filter((entry) => entry !== id);
@@ -323,7 +340,8 @@
     <select
       id={`${testid}-agent`}
       class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-      bind:value={agentId}
+      value={agentId}
+      onchange={(event) => changeAgent(event.currentTarget.value)}
       data-testid={`${testid}-agent`}
     >
       <option value="">{t('settingCard.botConfig.builtinEngine')}</option>
@@ -346,11 +364,39 @@
       <Label for={`${testid}-model`}>{t('contacts.agentModel')}</Label>
       <input
         id={`${testid}-model`}
+        list={`${testid}-model-options`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={agentModel}
         placeholder={t('contacts.agentDefault')}
         data-testid={`${testid}-model`}
       />
+      <datalist id={`${testid}-model-options`}>
+        {#each agentChoices?.models ?? [] as choice (choice.value)}
+          <option value={choice.value}
+            >{choice.name}{choice.description.length > 0
+              ? t('common.parenthesized', { text: choice.description })
+              : ''}</option
+          >
+        {/each}
+      </datalist>
+      <div class="flex items-center gap-2">
+        <p class="text-xs text-muted-foreground">{t('contacts.agentModelFreeHint')}</p>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="ml-auto h-6 px-2 text-xs"
+          disabled={agentId.length === 0}
+          onclick={() => void agentsStore.loadOptions(agentId, true).catch(() => undefined)}
+          data-testid={`${testid}-model-refresh`}
+        >
+          {t('contacts.agentOptionsRefresh')}
+        </Button>
+      </div>
+      {#if agentChoices?.error}
+        <p class="text-xs text-destructive">
+          {t('contacts.agentOptionsError', { error: agentChoices.error })}
+        </p>
+      {/if}
     {/if}
   {/if}
 

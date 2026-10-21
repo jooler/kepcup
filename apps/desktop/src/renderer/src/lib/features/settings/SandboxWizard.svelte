@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SandboxStatusOutput, SandboxWslStatusOutput } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { sandboxReasonText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -164,7 +164,9 @@
           </Badge>
         </div>
         {#if status.reason !== undefined}
-          <p class="text-sm" data-testid="wizard-reason">{status.reason}</p>
+          <p class="text-sm" data-testid="wizard-reason">
+            {sandboxReasonText(status.reason)}
+          </p>
         {/if}
         {#if status.fixHint !== undefined}
           <p class="text-xs text-muted-foreground" data-testid="wizard-fix-hint">{status.fixHint}</p>
@@ -240,7 +242,9 @@
             <span class="text-sm">{enhancedName(enhanced.backend)}</span>
           </div>
           {#if !enhanced.available && enhanced.reason !== undefined}
-            <p class="text-xs text-muted-foreground" data-testid="wizard-enhanced-reason">{enhanced.reason}</p>
+            <p class="text-xs text-muted-foreground" data-testid="wizard-enhanced-reason">
+              {sandboxReasonText(enhanced.reason)}
+            </p>
           {/if}
           {#if !enhanced.available && enhanced.fixHint !== undefined}
             <p class="text-xs text-muted-foreground" data-testid="wizard-enhanced-hint">{enhanced.fixHint}</p>

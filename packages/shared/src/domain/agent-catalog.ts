@@ -157,6 +157,17 @@ export function agentModelRef(agentId: string, model: string): string {
   return `${agentEngineKey(agentId)}/${model.length > 0 ? model : AGENT_DEFAULT_MODEL_SEGMENT}`;
 }
 
+/**
+ * 实际下发给 Agent 的模型：Bot 自己的选择优先，留空回退到设置页里该智能体的
+ * 默认模型，'' = 两者都没有（用 Agent 自己的默认）。
+ */
+export function resolveAgentModel(
+  runtimeModel: string,
+  setting: { model?: string } | null | undefined,
+): string {
+  return runtimeModel.length > 0 ? runtimeModel : (setting?.model ?? '');
+}
+
 /** 解析伪 ref；不是 `agent:` 开头返回 null。`model` 为 '' 表示 Agent 默认。 */
 export function parseAgentModelRef(ref: string): { agentId: string; model: string } | null {
   if (!ref.startsWith(AGENT_KEY_PREFIX)) return null;

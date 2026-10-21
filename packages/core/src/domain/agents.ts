@@ -289,6 +289,8 @@ export class AgentsService {
   readonly #methods = new Map<string, AgentLoginMethod[]>();
   readonly #logins = new Map<string, LoginSession>();
   readonly #options = new Map<string, AgentOptions>();
+  /** `${agentId}\0${model}` → 该模型下 Agent 返回的推理强度选项。 */
+  readonly #efforts = new Map<string, AgentOptionChoice[]>();
   readonly #systemCli = new Map<string, AgentSystemCli & { at: number }>();
   readonly #publishTimers = new Map<string, NodeJS.Timeout>();
   readonly #installJobs = new Map<string, InstallJob>();
@@ -462,6 +464,7 @@ export class AgentsService {
       installedVersion: setting?.installedVersion ?? installedVersion,
       source,
       loadUserConfig: setting?.loadUserConfig === true,
+      defaultModel: setting?.model ?? '',
       // Effective limit (the scheduler's): 1 for agents without parallel sessions.
       concurrency: agentConcurrency(
         settings.providerConcurrency,
@@ -908,6 +911,7 @@ export class AgentsService {
    */
   #afterChange(entry: AgentCatalogEntry): void {
     if (this.#disposed) return;
+    this.#clearEfforts(entry.id);
     this.#deps.host.stop(entry.id);
     const probe = this.#probeQuietly(entry);
     this.#publish(entry.id);
@@ -963,6 +967,7 @@ export class AgentsService {
       for (const cache of [this.#errors, this.#auth, this.#methods, this.#logins, this.#options]) {
         cache.delete(agentId);
       }
+      this.#clearEfforts(agentId);
       this.#deps.logger.info({ agentId, name: entry.name }, 'agent uninstalled');
     });
   }
@@ -972,6 +977,7 @@ export class AgentsService {
     id: string;
     loadUserConfig?: boolean | undefined;
     concurrency?: number | undefined;
+    model?: string | undefined;
   }): AgentView {
     this.#requireExperimental();
     const entry = this.#entry(input.id);
@@ -979,6 +985,9 @@ export class AgentsService {
       this.#saveSetting(entry.id, { loadUserConfig: input.loadUserConfig });
       // The process-level config of a running agent depends on it.
       this.#deps.host.stop(entry.id);
+    }
+    if (input.model !== undefined) {
+      this.#saveSetting(entry.id, { model: input.model.trim() });
     }
     if (input.concurrency !== undefined) {
       const current = this.#deps.settings.get().providerConcurrency;
@@ -1354,6 +1363,85 @@ export class AgentsService {
     if (this.#auth.get(agentId) === 'required') return;
     this.#auth.set(agentId, 'required');
     this.#publish(agentId);
+  }
+
+  /** 已缓存的模型 / 推理强度选项（不触发探测；`null` = 尚未成功探测）。 */
+  optionsCached(agentId: string): AgentOptions | null {
+    return this.#options.get(agentId) ?? null;
+  }
+
+  #effortsKey(agentId: string, model: string): string {
+    return `${agentId}\u0000${model}`;
+  }
+
+  #clearEfforts(agentId: string): void {
+    const prefix = `${agentId}\u0000`;
+    for (const key of [...this.#efforts.keys()]) {
+      if (key.startsWith(prefix)) this.#efforts.delete(key);
+    }
+  }
+
+  /**
+   * 某个模型下的推理强度选项（缓存）：在探测会话里 `set_config_option` 切到
+   * 该模型，再读 Agent 返回的完整 configOptions。不同的模型可能暴露不同的
+   * `thought_level`，没有返回 = 该模型不支持推理强度。
+   */
+  async efforts(agentId: string, model = '', refresh = false): Promise<AgentOptionChoice[]> {
+    this.#requireExperimental();
+    const entry = this.#entry(agentId);
+    const wanted = model.trim();
+    const key = this.#effortsKey(entry.id, wanted);
+    const cached = this.#efforts.get(key);
+    if (!refresh && cached !== undefined) return cached;
+    const efforts = await this.#probeEfforts(entry, wanted);
+    this.#efforts.set(key, efforts);
+    return efforts;
+  }
+
+  async #probeEfforts(
+    entry: AgentCatalogEntry,
+    model: string,
+  ): Promise<AgentOptionChoice[]> {
+    const provider = providerFor(entry, this.#providers);
+    return this.#withControl(
+      entry,
+      this.#deps.timeouts?.probeMs ?? PROBE_TIMEOUT_MS,
+      async (session) => {
+        await session.initialize();
+        const meta = this.#probeSessionMeta(entry, provider);
+        const created = await session.newSession(this.#deps.workDir, meta);
+        try {
+          let configOptions: readonly AcpSessionConfigOption[] = created.configOptions ?? [];
+          if (model.length > 0) {
+            const option = configOptions.find(
+              (candidate) => candidate.category === 'model' && candidate.type === 'select',
+            );
+            if (option === undefined) return [];
+            try {
+              configOptions = await session.setConfigOption(created.sessionId, option.id, model);
+            } catch (error) {
+              if (error instanceof AppError && error.code === 'TIMEOUT') throw error;
+              this.#deps.logger.warn(
+                {
+                  agentId: entry.id,
+                  model,
+                  error: errorMessage(error),
+                },
+                'agent rejected the model while probing thought levels',
+              );
+              return [];
+            }
+          }
+          return agentOptionsFrom(configOptions, this.#now).efforts;
+        } finally {
+          try {
+            await session.closeSession(created.sessionId);
+          } catch {
+            // Optional capability; the process is killed right after anyway.
+          }
+        }
+      },
+    );
   }
 
   /** 模型 / 推理强度选项（缓存；`refresh` 或未读取过时经探测会话读取）。 */

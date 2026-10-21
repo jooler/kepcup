@@ -736,9 +736,9 @@
                 class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
                 bind:value={draft.transport}
               >
-                <option value="stdio">stdio</option>
-                <option value="http">Streamable HTTP</option>
-                <option value="sse">SSE（旧版）</option>
+                <option value="stdio">{t('settings.mcpTransportStdio')}</option>
+                <option value="http">{t('settings.mcpTransportHttp')}</option>
+                <option value="sse">{t('settings.mcpTransportSseLegacy')}</option>
               </select>
             </div>
           {/if}
@@ -947,9 +947,9 @@
           bind:value={newKind}
           data-testid="mcp-new-kind"
         >
-          <option value="stdio">stdio</option>
-          <option value="http">Streamable HTTP</option>
-          <option value="sse">SSE（旧版）</option>
+          <option value="stdio">{t('settings.mcpTransportStdio')}</option>
+          <option value="http">{t('settings.mcpTransportHttp')}</option>
+          <option value="sse">{t('settings.mcpTransportSseLegacy')}</option>
         </select>
         <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
         <McpbInstall />

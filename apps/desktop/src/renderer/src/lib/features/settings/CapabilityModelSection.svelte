@@ -3,7 +3,7 @@ import type { CapabilityModelKey, SettingValues, VendorId } from '@kepcup/shared
 import { AppError, VENDOR_DESCRIPTORS, vendorsForCapability } from '@kepcup/shared';
 import { untrack } from 'svelte';
 import { capabilityPrefill } from '$lib/features/settings-card/setting-card-model';
-import { t } from '$lib/i18n';
+import { t, vendorName } from '$lib/i18n';
 import { toast } from 'svelte-sonner';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -180,7 +180,7 @@ import { Badge } from '$lib/components/ui/badge';
       {#if stored === null}
         <Badge variant="outline">{t('settings.capabilityNotConfigured')}</Badge>
       {:else}
-        <Badge>{VENDOR_DESCRIPTORS[stored.vendor].name}</Badge>
+        <Badge>{vendorName(stored.vendor, VENDOR_DESCRIPTORS[stored.vendor].name)}</Badge>
         <span class="text-xs text-muted-foreground" data-testid={`${testid}-current`}>
           {stored.model}
         </span>

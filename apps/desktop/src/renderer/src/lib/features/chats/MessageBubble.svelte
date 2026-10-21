@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
+  import { t } from '$lib/i18n';
   import { SETTING_CARD_RESOLVED_EVENT } from '@kepcup/shared';
   import { permissions } from '$lib/stores/permissions.svelte';
   import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
@@ -255,7 +256,7 @@
       </div>
     {:else}
       <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground"
-        >（审批消息）</span
+        >{t('chats.approvalMessage')}</span
       >
     {/if}
   </div>

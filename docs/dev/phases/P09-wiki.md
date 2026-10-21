@@ -4,6 +4,8 @@
 
 每个 Bot 拥有自己维护的知识库（LLM Wiki）。响应 loop 只读查询、提交入库请求；独立的 Wiki 维护 loop 串行执行入库与体检，每次维护一次 git 提交，可回滚。
 
+> **D92 T1b 修订**：项目组另有一个**项目共享的项目 wiki**（同引擎、所有者是项目，见 [design/05-wiki-and-skills.md](../../design/05-wiki-and-skills.md) 与 [design/41-project-team.md](../../design/41-project-team.md) §8）。项目组对话里的 Bot 调 `wiki_enqueue` 不传 `scope` 时落进**项目 wiki**（不散落到成员的个人 wiki），`wiki_read` 缺省先读项目 wiki、该页不在时回落自己的 wiki；反思 loop 提出的 wiki 建议在项目组对话里同样进项目 wiki。本文其余内容按 P09 原样描述 Bot 个人 wiki。
+
 ## 依赖
 
 P07。
@@ -25,14 +27,14 @@ P07。
 - Wiki 维护 loop：主模型；可读写 `wiki/pages/`、`index.md`、`log.md`，只读 `raw/`；维护结束 es-git 提交。
 - `wiki_fts` 增量索引。
 - `<wiki_topics>` 注入（从 `index.md` 生成主题目录，按预算截断）。
-- 消费 P07 的 `wiki_suggestion` 任务。
+- 消费 P07 的 `wiki_suggestion` 任务；**目标 wiki 由会话决定**（D92 T1b 收口）：项目组对话里的反思建议进项目 wiki，否则进该 Bot 自己的 wiki。
 - 入库完成不产生对话消息（消息原则，见 design/01-conversation.md）：入库是 Bot 自己的知识库整理，完成后不向用户播报，只有 `wiki_ingested` / `wiki_changed` 总线事件驱动右栏 Wiki 界面刷新。
 - 界面：右栏“Wiki”标签页（页面树、页面内容、搜索、变更历史、回滚到某次提交、删除页面）。
 - 撤回附件的处理。
 
 不包含：
 
-- Bot 之间共享 Wiki（设计决定为完全隔离）。
+- Bot 之间共享 Wiki（设计决定为完全隔离）。**D92 T1b 修订**：项目内共享走**项目 wiki**（项目内唯一被许可的共享通道），Bot 个人 wiki 仍完全隔离。
 
 ## 任务
 
@@ -44,6 +46,8 @@ P07。
    | `wiki_search` | `query`、`limit?` | 查询 `wiki_fts`，返回页面路径、标题、片段 |
    | `wiki_read` | `path` | 读取页面全文（限定在 `pages/`、`index.md`） |
    | `wiki_enqueue` | `source_type: 'attachment' \| 'url' \| 'file'`、`ref`、`note` | 登记 `wiki_ingest` 任务，立即返回 |
+
+   > **D92 T1b 修订**：三个工具都增 `scope?`（`'mine' \| 'project'`，`wiki_search` 另有 `'all'`）。缺省值按会话：`wiki_search` 项目组里 `all`、其它 `mine`；`wiki_read` 项目组里先读项目 wiki、该页不在时回落自己的 wiki（显式 `scope` 不回落）、其它对话 `mine`；`wiki_enqueue` 项目组里 `project`、其它 `mine`。
 
 3. **入库**（`wiki/ingest.ts`）
    - 准备原始资料：附件复制到 `raw/`；URL 在沙箱中抓取后保存为文件（HTML 转为 markdown）；文件从 workspace / project 复制（需在可访问范围内）。文件名带日期与来源哈希，已存在相同哈希时跳过。

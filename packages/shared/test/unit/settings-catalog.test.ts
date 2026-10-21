@@ -20,6 +20,7 @@ import {
   searchSettingItems,
   sensitiveFieldNames,
   settingItemSchema,
+  settingsAdapterCoverageProblems,
   settingsCoverageProblems,
   settingsSchema,
   settingsUpdateInputSchema,
@@ -79,6 +80,7 @@ describe('settings catalog integrity', () => {
       'general.theme',
       'general.language',
       'general.launch-at-login',
+      'general.task-loop',
       'background.tasks',
       'unattended.enable',
       'unattended.disable',
@@ -322,7 +324,13 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
       expect.arrayContaining(['default-models', 'web-search', 'apps-connected', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
-    expect(scan.extensionCenterTabs).toEqual(['skills', 'connections', 'mcp', 'mail']);
+    expect(scan.extensionCenterTabs).toEqual([
+      'skills',
+      'connections',
+      'mcp',
+      'mail',
+      'localCollab',
+    ]);
     expect(scan.botPanelTabs).toEqual(expect.arrayContaining(['profile', 'skills', 'schedules']));
   });
 
@@ -386,6 +394,30 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
   });
 });
 
+describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)', () => {
+  it('generic items are plain top-level scalars: no sensitive / multiple / nested / widening', () => {
+    const generic = items.filter(
+      (entry) => entry.store.kind === 'settings' && entry.store.generic === true,
+    );
+    expect(generic.map((entry) => entry.id)).toEqual(['general.workbench']);
+    const defaults = settingsSchema.parse({}) as Record<string, unknown>;
+    for (const entry of generic) {
+      expect(entry.owner, entry.id).toBe('core');
+      expect(entry.scope, entry.id).toBe('global');
+      expect(entry.write.via, entry.id).toBe('catalog');
+      expect(entry.write.widensPermission, entry.id).toBe(false);
+      expect(entry.write.wideningMode, entry.id).toBeUndefined();
+      for (const field of entry.fields) {
+        const path = field.path ?? field.name;
+        expect(field.sensitive, `${entry.id}.${field.name}`).toBe(false);
+        expect(field.multiple, `${entry.id}.${field.name}`).not.toBe(true);
+        expect(path.includes('.'), `${entry.id}.${field.name} path 应为顶层键`).toBe(false);
+        expect(path in defaults, `${entry.id}.${field.name} path 应是 settingsSchema 的顶层键`).toBe(true);
+      }
+    }
+  });
+});
+
 describe('renderer component map check (for the desktop lane)', () => {
   it('passes for a complete map and names missing / unknown keys', () => {
     expect(cardComponentProblems(CARD_KEYS)).toEqual([]);
@@ -397,13 +429,166 @@ describe('renderer component map check (for the desktop lane)', () => {
   });
 });
 
+describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
+  const writableCore = (id: string, extra: Partial<SettingItem> = {}): SettingItem => ({
+    ...getSettingItem('general.workbench')!,
+    id,
+    // 显式去掉 generic：这个助手要构造「需要适配器」的条目（workbench 本身已豁免）。
+    store: { kind: 'settings', paths: ['demoFlag'] },
+    ...extra,
+  });
+
+  it('requires adapters for core-owned catalog-writable items and flags missing ones', () => {
+    const item = writableCore('general.demo-toggle');
+    const problems = settingsAdapterCoverageProblems({
+      items: [item],
+      adapterIds: [],
+    });
+    expect(problems).toEqual([
+      'general.demo-toggle：需要 core 适配器（core 拥有、经目录写入），但不在贡献表里，也没有登记 EXPLICIT_ADAPTER_FALLBACK 理由',
+    ]);
+    expect(settingsAdapterCoverageProblems({ items: [item], adapterIds: ['general.demo-toggle'] })).toEqual(
+      [],
+    );
+  });
+
+  it('exempts read-only / renderer / via-tool / generic items', () => {
+    const items = [
+      getSettingItem('diagnostics.status')!, // readOnly
+      getSettingItem('general.theme')!, // renderer
+      getSettingItem('mail.account')!, // via tool
+      { ...getSettingItem('general.workbench')!, store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true } },
+    ];
+    expect(settingsAdapterCoverageProblems({ items, adapterIds: [] })).toEqual([]);
+  });
+
+  it('flags stale adapter registrations and explicit fallback leftovers', () => {
+    const items = [writableCore('general.demo-toggle')];
+    expect(
+      settingsAdapterCoverageProblems({ items, adapterIds: ['general.demo-toggle', 'general.gone'] }),
+    ).toEqual(['适配器贡献登记了不存在的条目 general.gone']);
+    expect(
+      settingsAdapterCoverageProblems({
+        items,
+        adapterIds: ['general.demo-toggle'],
+        explicitFallback: { 'general.demo-toggle': '已有适配器却登记 fallback' },
+      }),
+    ).toEqual(['EXPLICIT_ADAPTER_FALLBACK 里的 general.demo-toggle 已有适配器，fallback 是遗留']);
+    expect(
+      settingsAdapterCoverageProblems({
+        items,
+        adapterIds: [],
+        explicitFallback: {
+          'general.demo-toggle': '先用 fallback 占位',
+          'general.no-such': '条目不存在',
+        },
+      }),
+    ).toEqual(['EXPLICIT_ADAPTER_FALLBACK 里的 general.no-such 不是目录条目']);
+  });
+
+  it('accepts a justified explicit fallback for an otherwise-uncovered item', () => {
+    expect(
+      settingsAdapterCoverageProblems({
+        items: [writableCore('general.demo-toggle')],
+        adapterIds: [],
+        explicitFallback: { 'general.demo-toggle': '没有安全信号，读状态以设置页为准' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('accepts field path and store generic in the schema', () => {
+    const item = getSettingItem('general.task-loop')!;
+    expect(
+      settingItemSchema.safeParse({
+        ...item,
+        fields: [{ ...item.fields[0]!, path: 'taskLoop.idleGuardEnabled' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      settingItemSchema.safeParse({
+        ...getSettingItem('general.workbench')!,
+        store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+
+describe('general.task-loop catalog + settings schema (D93)', () => {
+  it('registers the task-loop item, fields and deep link', () => {
+    const item = getSettingItem('general.task-loop');
+    expect(item).not.toBeNull();
+    expect(item?.store).toEqual({ kind: 'settings', paths: ['taskLoop'] });
+    expect(item?.card).toBe('field-editor');
+    expect(item?.write.maxMode).toBe('confirm');
+    expect(item?.deepLink).toEqual({
+      surface: 'settings',
+      section: 'general',
+      anchor: 'general-task-loop',
+    });
+    expect(item?.fields.map((field) => [field.name, field.type])).toEqual([
+      ['idleGuardEnabled', 'toggle'],
+      ['idleWarnAfter', 'number'],
+      ['idleStopAfter', 'number'],
+      ['idleWindowCalls', 'number'],
+      ['tokenSoftBudget', 'number'],
+      ['stallTimeoutMinutes', 'number'],
+      ['maxWallMinutes', 'number'],
+    ]);
+    expect(item?.fields.find((field) => field.name === 'idleWarnAfter')).toMatchObject({
+      min: 2,
+      max: 10,
+      step: 1,
+    });
+    expect(itemIdsForSettingsPaths(['taskLoop'])).toContain('general.task-loop');
+  });
+
+  it('defaults missing values and falls back to defaults on broken stored data', () => {
+    expect(settingsSchema.parse({}).taskLoop).toEqual({
+      idleGuardEnabled: true,
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+      stallTimeoutMinutes: 20,
+      maxWallMinutes: 240,
+    });
+    expect(settingsSchema.parse({ taskLoop: { idleWarnAfter: 4 } }).taskLoop).toMatchObject({
+      idleWarnAfter: 4,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+    });
+    // 读取容错：损坏的旧数据回落到默认值，而不是让整份设置解析失败。
+    expect(settingsSchema.parse({ taskLoop: { idleWarnAfter: 99 } }).taskLoop).toMatchObject({
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+    });
+  });
+
+  it('keeps the update input strict (no silent clamping)', () => {
+    const parsed = settingsUpdateInputSchema.parse({
+      taskLoop: {
+        idleGuardEnabled: false,
+        idleWarnAfter: 4,
+        idleStopAfter: 8,
+        idleWindowCalls: 10,
+        tokenSoftBudget: 100_000,
+      },
+    });
+    expect(parsed.taskLoop).toMatchObject({ idleWarnAfter: 4, idleStopAfter: 8 });
+    expect(() =>
+      settingsUpdateInputSchema.parse({ taskLoop: { idleWarnAfter: 99 } }),
+    ).toThrow();
+  });
+});
 
 describe('general.workbench catalog + update schema (D90)', () => {
   it('workbenchEnabled defaults off and settings.update keeps the boolean', () => {
     expect(settingsSchema.parse({}).workbenchEnabled).toBe(false);
     expect(settingsSchema.parse({}).workbenchNudgeDismissed).toBe(false);
     const item = getSettingItem('general.workbench');
-    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'] });
+    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'], generic: true });
     expect(itemIdsForSettingsPaths(['workbenchEnabled'])).toContain('general.workbench');
     const parsed = settingsUpdateInputSchema.parse({ workbenchEnabled: true });
     expect(parsed.workbenchEnabled).toBe(true);

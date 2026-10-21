@@ -1,12 +1,19 @@
 <script lang="ts">
   /** Shared profile form fields for bot create (dialog) and edit (right panel). */
   import { untrack } from 'svelte';
-  import type { BotProfile } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import type {
+    BotProfile,
+    HostCapabilityId,
+    HostCapabilityPrerequisite,
+    InkcopAgent,
+  } from '@kepcup/shared';
+  import { t, listSeparator } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
+  import { core } from '$lib/rpc/client.svelte';
+  import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import {
@@ -17,7 +24,6 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import type { HostCapabilityId, HostCapabilityPrerequisite } from '@kepcup/shared';
   import type { MessageKey } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -299,6 +305,9 @@
   let pendingAgentId = $state<string | null>(null);
   let switchDialogOpen = $state(false);
   let engineSelect = $state<HTMLSelectElement | undefined>();
+  let optionsBusy = $state(false);
+  let customModel = $state(false);
+  const CUSTOM_MODEL = '__custom__';
 
   function acknowledged(): boolean {
     try {
@@ -311,10 +320,12 @@
   function applyAgent(agentId: string): void {
     const sameAgent = profile.runtime.agent.id === agentId;
     const agent = agentsStore.get(agentId);
+    customModel = false;
     profile.runtime.agent = {
       ...profile.runtime.agent,
       id: agentId,
-      ...(sameAgent ? {} : { model: '', effort: '', capabilities: null }),
+      // 设置页里给该智能体配的默认模型：切过来时直接带上。
+      ...(sameAgent ? {} : { model: agent?.defaultModel ?? '', effort: '', capabilities: null }),
       // 预览档 Agent 默认更严（§6）。
       ...(sameAgent
         ? {}
@@ -361,6 +372,63 @@
   const agentChoices = $derived(
     selectedAgentId.length > 0 ? agentsStore.options[selectedAgentId] : undefined,
   );
+  const modelChoices = $derived(agentChoices?.models ?? []);
+  const agentDefaultModel = $derived(selectedAgent?.defaultModel ?? '');
+  /** Bot 留空时实际会用的模型：设置的默认模型，否则 Agent 自己的默认。 */
+  const effectiveModel = $derived(
+    profile.runtime.agent.model.length > 0 ? profile.runtime.agent.model : agentDefaultModel,
+  );
+  /** 当前模型下的推理强度选项；null = 还没读到（先隐藏，不阻塞其他设置）。 */
+  const effortChoices = $derived.by(() => {
+    if (selectedAgentId.length === 0) return null;
+    if (effectiveModel.length === 0) return agentChoices?.efforts ?? null;
+    return agentsStore.efforts[`${selectedAgentId}\u0000${effectiveModel}`] ?? null;
+  });
+
+  // 模型变化后按模型探测 thought_level（输入自定义模型时防抖）。
+  $effect(() => {
+    const id = selectedAgentId;
+    const model = effectiveModel;
+    if (id.length === 0 || model.length === 0) return;
+    const timer = setTimeout(() => {
+      void agentsStore.loadEfforts(id, model).catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  });
+
+  // 当前模型没有推理强度选项时隐藏设置并使用默认，避免带上别的模型的值。
+  $effect(() => {
+    const choices = effortChoices;
+    if (choices === null || profile.runtime.agent.effort.length === 0) return;
+    if (!choices.some((choice) => choice.value === profile.runtime.agent.effort)) {
+      profile.runtime.agent.effort = '';
+    }
+  });
+
+  function onModelSelect(value: string): void {
+    if (value === CUSTOM_MODEL) {
+      customModel = true;
+      return;
+    }
+    customModel = false;
+    if (value !== profile.runtime.agent.model) profile.runtime.agent.effort = '';
+    profile.runtime.agent.model = value;
+  }
+
+  async function detectAgentOptions(): Promise<void> {
+    if (selectedAgentId.length === 0) return;
+    optionsBusy = true;
+    try {
+      await agentsStore.loadOptions(selectedAgentId, true);
+      if (effectiveModel.length > 0) {
+        await agentsStore.loadEfforts(selectedAgentId, effectiveModel, true);
+      }
+    } catch {
+      // The card shows the error from the store.
+    } finally {
+      optionsBusy = false;
+    }
+  }
 
   function prerequisiteReady(prerequisite: HostCapabilityPrerequisite): boolean {
     if (prerequisite.kind === 'web-search') {
@@ -424,6 +492,58 @@
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
+  }
+
+  // --- InkCop 同机智能体关联（契约 v0.2） ---------------------------------
+  const inkcopCollabOn = $derived(inkcopCollabEnabled(settingsStore.settings));
+  let inkcopAgents = $state<InkcopAgent[]>([]);
+  let inkcopAgentsLoading = $state(false);
+  let inkcopAgentsOnline = $state<boolean | null>(null);
+  let inkcopAgentsTip = $state<string | null>(null);
+
+  async function refreshInkcopAgents(): Promise<void> {
+    if (!inkcopCollabOn) {
+      inkcopAgents = [];
+      inkcopAgentsOnline = null;
+      inkcopAgentsTip = null;
+      return;
+    }
+    inkcopAgentsLoading = true;
+    try {
+      const result = (await core.call('inkcop.listAgents', {})) as {
+        online: boolean;
+        agents: InkcopAgent[];
+        tip?: string;
+      };
+      inkcopAgentsOnline = result.online;
+      inkcopAgents = result.agents ?? [];
+      inkcopAgentsTip = result.tip ?? null;
+    } catch (error) {
+      inkcopAgentsOnline = false;
+      inkcopAgents = [];
+      inkcopAgentsTip = error instanceof Error ? error.message : String(error);
+    } finally {
+      inkcopAgentsLoading = false;
+    }
+  }
+
+  $effect(() => {
+    void inkcopCollabOn;
+    void refreshInkcopAgents();
+  });
+
+  function inkcopAgentChecked(key: string): boolean {
+    return (profile.runtime.inkcop_agent_keys ?? []).includes(key);
+  }
+
+  function toggleInkcopAgent(key: string, checked: boolean): void {
+    const current = profile.runtime.inkcop_agent_keys ?? [];
+    const next = checked
+      ? [...current.filter((entry) => entry !== key), key]
+      : current.filter((entry) => entry !== key);
+    profile.runtime.inkcop_agent_keys = next;
+    // v0.4：关联只存 keys，供 call_inkcop_agent 工具；不切换整轮 message_transport。
+    profile.runtime.message_transport = '';
   }
 </script>
 
@@ -626,38 +746,66 @@
       <p class="text-xs text-muted-foreground">{t('contacts.agentIsolationNote')}</p>
       <div class="grid gap-4">
         <div class="grid gap-1.5">
-          <Label for="bot-agent-model">{t('contacts.agentModel')}</Label>
+          <div class="flex items-center gap-2">
+            <Label for="bot-agent-model">{t('contacts.agentModel')}</Label>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="ml-auto h-6 px-2 text-xs"
+              disabled={optionsBusy}
+              onclick={() => void detectAgentOptions()}
+              data-testid="bot-agent-model-detect"
+            >
+              {optionsBusy ? t('contacts.agentOptionsDetecting') : t('contacts.agentOptionsProbe')}
+            </Button>
+          </div>
           <select
             id="bot-agent-model"
             class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-            bind:value={profile.runtime.agent.model}
+            value={customModel ? CUSTOM_MODEL : profile.runtime.agent.model}
+            onchange={(event) => onModelSelect(event.currentTarget.value)}
             data-testid="bot-agent-model"
           >
-            <option value="">{t('contacts.agentDefault')}</option>
-            {#each agentChoices?.models ?? [] as choice (choice.value)}
+            <option value="">
+              {agentDefaultModel.length > 0
+                ? t('contacts.agentDefaultWithModel', { model: agentDefaultModel })
+                : t('contacts.agentDefault')}
+            </option>
+            {#each modelChoices as choice (choice.value)}
               <option value={choice.value}>{choice.name}</option>
             {/each}
-            {#if profile.runtime.agent.model.length > 0 && !(agentChoices?.models ?? []).some((choice) => choice.value === profile.runtime.agent.model)}
+            {#if !customModel && profile.runtime.agent.model.length > 0 && !modelChoices.some((choice) => choice.value === profile.runtime.agent.model)}
               <option value={profile.runtime.agent.model}>{profile.runtime.agent.model}</option>
             {/if}
+            <option value={CUSTOM_MODEL}>{t('contacts.agentModelCustom')}</option>
           </select>
+          {#if customModel}
+            <input
+              id="bot-agent-model-custom"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              bind:value={profile.runtime.agent.model}
+              placeholder={t('contacts.agentModelCustomPlaceholder')}
+              data-testid="bot-agent-model-custom"
+            />
+          {/if}
+          <p class="text-xs text-muted-foreground">{t('contacts.agentModelFreeHint')}</p>
         </div>
-        <div class="grid gap-1.5">
-          <Label for="bot-agent-effort">{t('contacts.agentEffort')}</Label>
-          <select
-            id="bot-agent-effort"
-            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-            bind:value={profile.runtime.agent.effort}
-          >
-            <option value="">{t('contacts.agentDefault')}</option>
-            {#each agentChoices?.efforts ?? [] as choice (choice.value)}
-              <option value={choice.value}>{choice.name}</option>
-            {/each}
-            {#if profile.runtime.agent.effort.length > 0 && !(agentChoices?.efforts ?? []).some((choice) => choice.value === profile.runtime.agent.effort)}
-              <option value={profile.runtime.agent.effort}>{profile.runtime.agent.effort}</option>
-            {/if}
-          </select>
-        </div>
+        {#if effortChoices !== null && effortChoices.length > 0}
+          <div class="grid gap-1.5">
+            <Label for="bot-agent-effort">{t('contacts.agentEffort')}</Label>
+            <select
+              id="bot-agent-effort"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              bind:value={profile.runtime.agent.effort}
+              data-testid="bot-agent-effort"
+            >
+              <option value="">{t('contacts.agentDefault')}</option>
+              {#each effortChoices as choice (choice.value)}
+                <option value={choice.value}>{choice.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
         <div class="grid gap-1.5">
           <Label for="bot-agent-permission">{t('contacts.agentPermission')}</Label>
           <select
@@ -677,15 +825,6 @@
           {t('contacts.agentOptionsError', { error: agentChoices.error })}
         </p>
       {/if}
-      <Button
-        size="sm"
-        variant="ghost"
-        class="h-7 px-2 text-xs"
-        onclick={() => void agentsStore.loadOptions(selectedAgentId, true).catch(() => undefined)}
-      >
-        {t('contacts.agentOptionsRefresh')}
-      </Button>
-
       <div class="grid gap-1.5">
         <div class="flex items-center gap-2">
           <Label>{t('contacts.agentCapabilities')}</Label>
@@ -714,12 +853,16 @@
                   {t(`agents.capabilities.${row.id}.name` as MessageKey)}
                   {#if row.required}
                     <span class="text-xs text-muted-foreground"
-                      >（{t('contacts.agentCapabilityRequired')}）</span
+                      >{t('common.parenthesized', {
+                        text: t('contacts.agentCapabilityRequired'),
+                      })}</span
                     >
                   {/if}
                   {#if row.unconfigured}
                     <span class="text-xs text-amber-600 dark:text-amber-400"
-                      >（{t('contacts.agentCapabilityUnconfigured')}）</span
+                      >{t('common.parenthesized', {
+                        text: t('contacts.agentCapabilityUnconfigured'),
+                      })}</span
                     >
                   {/if}
                 </span>
@@ -728,7 +871,9 @@
                 >
                 {#if row.nativeTools.length > 0}
                   <span class="block text-xs text-muted-foreground"
-                    >{t('contacts.agentCapabilityNative')}（{row.nativeTools.join('、')}）</span
+                    >{t('contacts.agentCapabilityNative')}{t('common.parenthesized', {
+                      text: row.nativeTools.join(listSeparator()),
+                    })}</span
                   >
                 {/if}
               </span>
@@ -928,6 +1073,69 @@
       {/if}
     </div>
   {/if}
+  {#if inkcopCollabOn}
+    <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">
+      <div class="flex items-center justify-between gap-2">
+        <Label>{t('contacts.inkcopAgents')}</Label>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={inkcopAgentsLoading}
+          onclick={() => void refreshInkcopAgents()}
+          data-testid="bot-inkcop-agents-refresh"
+        >
+          {t('contacts.inkcopAgentsRefresh')}
+        </Button>
+      </div>
+      <p class="text-xs text-muted-foreground">{t('contacts.inkcopAgentsHint')}</p>
+      {#if inkcopAgentsLoading}
+        <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-loading">
+          {t('contacts.inkcopAgentsLoading')}
+        </p>
+      {:else if inkcopAgentsOnline === false}
+        <p
+          class="text-xs text-amber-700 dark:text-amber-400"
+          data-testid="bot-inkcop-agents-offline"
+        >
+          {inkcopAgentsTip ?? t('contacts.inkcopAgentsOffline')}
+        </p>
+      {:else if inkcopAgents.length === 0}
+        <p class="text-xs text-muted-foreground" data-testid="bot-inkcop-agents-empty">
+          {inkcopAgentsTip ?? t('contacts.inkcopAgentsEmpty')}
+        </p>
+      {:else}
+        <div class="space-y-1.5" data-testid="bot-inkcop-agents-list">
+          {#each inkcopAgents as agent (agent.key)}
+            <label
+              class="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm"
+              data-testid={`bot-inkcop-agent-${agent.key}`}
+            >
+              <Checkbox
+                checked={inkcopAgentChecked(agent.key)}
+                onCheckedChange={(checked) => toggleInkcopAgent(agent.key, checked === true)}
+                data-testid={`bot-inkcop-agent-check-${agent.key}`}
+              />
+              <span class="grid min-w-0 gap-0.5">
+                <span class="font-medium">{agent.name}</span>
+                <span class="text-[11px] text-muted-foreground">
+                  {agent.kind === 'main'
+                    ? t('contacts.inkcopAgentKindMain')
+                    : t('contacts.inkcopAgentKindApp')}
+                  · {agent.key}
+                </span>
+                {#if agent.description}
+                  <span class="line-clamp-3 text-[11px] text-muted-foreground"
+                    >{agent.description}</span
+                  >
+                {/if}
+              </span>
+            </label>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <BotMailBindings {botId} />
 </div>
 

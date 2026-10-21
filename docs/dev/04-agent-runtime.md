@@ -126,7 +126,7 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 | 结束判断 | `PromptResponse.stopReason`：`end_turn` → completed；`cancelled` → cancelled（`skip_reply` 引起的取消结算为不发最终文本的 completed）；`refusal` / `max_tokens` / `max_turn_requests` → failed |
 | 用量 | `PromptResponse.usage`（ACP 不稳定字段；Provider 声明口径：本 turn 或按会话累计做差；缺失时每轮一条零 token 行）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算 |
 | 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`——只有声明 `backgroundNoNativeTools` 的 Provider 可用；空私有临时 cwd；不挂桥、不复用、结束 `session/close`），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验，只在输出无法解析时重试 1 次；后台 loop 经 `llm-router` 在无内置模型时使用；仅外部后端时续接 L2 仲裁关闭 |
-| 模型 | `session/set_config_option`（`model` / `thought_level`），取自 `runtime.agent.model` / `runtime.agent.effort`，空则用智能体默认 |
+| 模型 | `session/set_config_option`（`model` / `thought_level`），model 取 `runtime.agent.model`，空则回退 `settings.agents[id].model`（设置页默认模型），再空用智能体默认；effort 取 `runtime.agent.effort`，空则用智能体默认。UI 的强度选项按所选模型经 `agents.efforts`（探测会话 `set_config_option` 后读返回的 configOptions）取得；该模型没有 `thought_level` 时隐藏设置并使用默认 |
 
 约束：
 
@@ -166,6 +166,21 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 > 使用单条用户消息承载上下文与触发内容，避免多人对话被映射为交替的 user / assistant 角色而造成混淆，也避免部分厂商对连续同角色消息的限制。
 
+### 任务 Loop Harness（D93）
+
+内置 pi 任务（以及子代理）在 `PiEngine` 里启用自动上下文压缩，对话轮不启用（上下文有界）。设计见 [design/43](../design/43-task-loop-harness.md)，实施见 [todo/task-loop-harness.md](../../todo/task-loop-harness.md)。
+
+- **压缩点**：pi-agent-core 的 `transformContext`（每次模型请求前）。先做旧工具输出确定性裁剪，仍超阈值再用轻量模型摘要；摘要失败 / 超时 / 无模型时退化为确定性裁剪，不阻断任务。
+- **保留**：system prompt、首条任务简报、`<current_plan>`、最近约 30% 窗口；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
+- **模型**：`LlmPurpose='task_compaction'`（Bot 轻量 → 全局轻量 → Bot 主）；用量记当前任务 run。
+- **计划**：内置任务注册 `update_plan`；run 内存状态在每次请求时以 `<current_plan>` 追加到系统提示词；每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
+- **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。
+- **无活动看门狗 / 墙钟**：`TaskHost` 用引擎事件（assistant / tool_call / tool_result / progress / steer）维护 `lastActivityAt`；内置任务在 `running` 且无 `questionSince` 时，超过 `taskLoop.stallTimeoutMinutes`（默认 20，0 = 关闭）没有活动 → failed（`stalled`）。总墙钟改读 `taskLoop.maxWallMinutes`（默认 240，0 = 不限制），不再固定 4 小时。审批 / 租约 / 用户回答等待不计入无活动看门狗；外部智能体保留自身 `AGENT_RUN_TIMEOUT_MS`（1 小时）。
+- **结果反馈**：模型 `length` → failed `OUTPUT_TRUNCATED`；`aborted` / `deferred` 等非正常停止 → failed；用户从任务卡取消（`runs.cancel`）→ failure 条目 + `user_cancelled` + 唤醒 Bot；Bot 自己的 `cancel_task` 不唤醒。
+- **设置**：以上参数在设置目录 `general.task-loop`（设置 → 通用 → 任务 Loop），字段 `idleGuardEnabled` / `idleWarnAfter` / `idleStopAfter` / `idleWindowCalls` / `tokenSoftBudget` / `stallTimeoutMinutes` / `maxWallMinutes`。
+- **验收规则**：任务提示词要求代码类任务把测试 / lint / build 写进计划，并在结果里写明命令与结果；宿主不自动跑测试。
+- **大输出与详细历史（P3）**：内置任务单条工具输出超过 `TOOL_OUTPUT_MAX_CHARS` 时写到 workspace `.tool-output/<runId>/<seq>.txt`，模型只拿到头 + 尾 + 路径 + 字符数（仍包 `<untrusted>`）；写失败 / 路径不安全退回原有截断，随 run 结算删除。任务与子代理有 `get_run_steps({run_id, from_seq?, limit?})` 读取自己 / 当前对话本 Bot 的步骤详情（结果仍截断并包 `<untrusted>`）；对话轮不注册该工具，外部智能体经能力包过滤不注入。
+
 ### 系统提示词模板
 
 模板使用英文段落标签（对模型更稳定），Bot 的人设由用户填写，原样放入。各段按下表顺序拼接，每段超出预算时截断（截断时在段末注明“已截断”）。某段为空时整段省略。
@@ -179,7 +194,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 5 | `<my_state>` | 到期的承诺、进行中事项的标题（跨对话） | `MY_STATE_TOKEN_BUDGET` | P07 |
 | 6 | `<relevant_memories>` | 相关记忆 top-k，每条带 id，标注“可能已过时”；项目组中来自私聊的条目标注 `origin="private"` | `RELEVANT_MEMORY_TOKEN_BUDGET` | P07 |
 | 7 | `<conversation_info>` | 对话类型（项目组带项目目标 `goal`）、成员名片（名字、简介、职责、bot id、负责人标记）、当前时间与时区 | — | P01（成员 P05；D92 项目分支） |
-| 7.5 | `<project_lead_rules>` / `<project_member_rules>`（紧跟 `<conversation_info>`、在 `<workdir>` 之前） | D92：项目组的对话轮按身份注入——负责人 `PROJECT_LEAD_RULES`（未 @ 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；权力限于本项目组）/ 成员 `projectMemberRules(leadName)`（`agent/context/system-prompt.ts` 的函数，代入负责人名字：负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报；共享结论用 `wiki_enqueue scope=project`，只能删自己添加的来源） | — | D92（WP4 / WP10） |
+| 7.5 | `<project_lead_rules>` / `<project_member_rules>`（紧跟 `<conversation_info>`、在 `<workdir>` 之前） | D92：项目组的对话轮按身份注入——负责人 `PROJECT_LEAD_RULES`（未 @ 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；权力限于本项目组）/ 成员 `projectMemberRules(leadName)`（`agent/context/system-prompt.ts` 的函数，代入负责人名字：负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报；共享结论用 `wiki_enqueue`（项目组对话里默认就写进共享的项目 wiki，纯个人经验才显式传 `scope=mine`），只能删自己添加的来源） | — | D92（WP4 / WP10） |
 | 8 | `<workdir>` | 路径、顶层结构、git 状态、`AGENTS.md` / `CLAUDE.md` | `WORKDIR_CONTEXT_TOKEN_BUDGET` | P04 |
 | 9 | `<workspace>` | workspace 路径与顶层文件列表（对话轮注明「这一轮只读，任务可读写」） | — | P02 |
 | 10 | `<access>` | 有效授权；沙箱状态（正常 / 逐条确认模式）只在任务版出现 | — | P03 |
@@ -432,7 +447,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `git_remote` | host | K | P04 | 在沙箱外代为执行 git 远程操作；参数 `operation`（push / pull / fetch / clone / remote_add / init）、`args`、`reason` |
 | `request_environment` | host | K | P06 | 申请安装宿主层环境；参数 `item`、`version?`、`reason` |
 | `remember` / `recall_memory` / `get_user_profile` / `list_commitments` / `memory_feedback` / `forget` | conversation | T、K | P07 | 见 [phases/P07-memory.md](phases/P07-memory.md) |
-| `wiki_search` / `wiki_read` / `wiki_enqueue` | conversation | T、K | P09 | Bot 个人 wiki；D92 T1b 起带 `scope`：`wiki_search{query, limit?, scope?: 'mine'|'project'|'all'}`（项目组里默认 `all`，其它默认 `mine`；结果逐条前缀 `[project]` / `[mine]` 且项目在前）、`wiki_read{path, scope?}`（默认 `mine`，搜索结果原样传回；项目 wiki 页面按出处可信度包裹——全部出处为用户才原样返回，否则整段 `<untrusted source="project_wiki">` 并在最前标注提交者）、`wiki_enqueue{source_type, ref, note, scope?}`（默认 `mine`；`source_type` 枚举 `attachment | url | file`，无 `text`） |
+| `wiki_search` / `wiki_read` / `wiki_enqueue` | conversation | T、K | P09 | Bot 个人 wiki；D92 T1b 起带 `scope`（D92 T1b 收口：项目组对话里的沉淀默认留在项目 wiki）：`wiki_search{query, limit?, scope?: 'mine'|'project'|'all'}`（项目组里默认 `all`，其它默认 `mine`；结果逐条前缀 `[project]` / `[mine]` 且项目在前）、`wiki_read{path, scope?}`（项目组里不传 scope 先读项目 wiki、那一页不在项目 wiki 时回落自己的 wiki，显式传 scope 则不回落；其它对话默认 `mine`，搜索结果原样传回；项目 wiki 页面按出处可信度包裹——全部出处为用户才原样返回，否则整段 `<untrusted source="project_wiki">` 并在最前标注提交者）、`wiki_enqueue{source_type, ref, note, scope?}`（**项目组里默认 `project`**——群聊里的沉淀留在项目 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`；`source_type` 枚举 `attachment | url | file`，无 `text`） |
 | `wiki_remove_source` | conversation | T、K | D92 T1b | **仅项目组会话注册**；`{source_id}`（`ast_…`）。删除自己创建的项目 wiki 来源（负责人删任意）；异步托管动作——入队 `wiki_remove_source` job 立即返回「已登记删除，稍后生效」，ACL / 来源不存在返回失败结果，不走审批 |
 | `schedule` / `list_schedules` / `cancel_schedule` | conversation | T、K | P10 / D80 | 见 [phases/P10-proactive.md](phases/P10-proactive.md)；D80：`schedule` 增 `title?`，返回人话时间与护栏提示，创建后对话里出回执卡 |
 | `offer_schedule` | conversation | T | D80 | 定时提议卡：参数 `when`、`title`、`note`、`question`、`timezone?`；宿主校验时间、同名重复与拒绝退避（7 天 2 次），旧的待定提议标为 superseded；用户点「设置」由宿主确定性创建（`origin='offer'`），不唤醒 Bot（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)） |
@@ -454,11 +469,12 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `delegate_to_bot` / `cancel_delegation` | conversation | T | D71 | 跨 Bot 委派（异步）：B 私聊落代发用户消息（`origin=delegation`）触发 B 的对话轮，参数 `bot_id`、`task`、`intent?`（`request` 默认 / `question` / `fyi`）；B 那一轮的最终回复（`request` 且该轮派了任务时改为跟随任务、取各任务结果拼接；`fyi` 不回贴）截断 ≤ `DELEGATION_RESULT_MAX_CHARS` 贴回 A 为结果卡 + internal follow-up（`delegation_result`），见 [design/27 §3.6](../design/27-butler-and-delegation.md#36-intent-与跟随任务)。B 忙 / 免打扰时排队（`submitted`）；被委派 run 不注册且执行时按 run_id 拒绝（单跳）；项目组内降级 `@`；不能委派给管家 / 访谈中的 Bot |
 | `start_task` | conversation | T | D75 | 派出任务：`title`（≤ `TASK_TITLE_MAX_CHARS`）、`instruction`（≤ `TASK_INSTRUCTION_MAX_CHARS`）、`source_message_ids`（≤ `TASK_SOURCE_MESSAGES_MAX`，本对话共享行）、`writes`、`cwd?`（`workspace` / `workdir`，缺省有可用 workdir 即 workdir）、`continues_task_id?`（须已结束）、`capabilities?`（D91：`<capabilities>` 里的能力 id，去重后 ≤ `TASK_CAPABILITIES_MAX`=8；宿主按该 Bot 当前目录校验，未知 id → `INVALID_INPUT` 并列出可用 id；非 ready 的允许声明但结果里提示不会挂上；落 `runs.task_capabilities`，brief 事件 / `TaskView` / `<tasks>` 行带出；接续取并集、`runs.retry` 沿用）；返回 `task_id` + `running` / `submitted`（排队原因）；本轮超 `TASK_START_MAX_PER_TURN` 报 `TASK_LIMIT_REACHED`；任务内调用 `NOT_SUPPORTED` |
 | `inject_task` | conversation | T | D75 | 把新指令（+ 原消息）转给未结束的任务：`delivered` / `queued`；任务正在 `ask_user` 时即为回答 |
-| `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、不唤醒；写任务的改动不自动撤销 |
+| `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、Bot 自己的取消不唤醒（D93：用户从任务卡取消会写 failure 条目并唤醒）；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、错误、可否注入；进度不返回给模型） |
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
-| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
+| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入任务墙钟（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
 | `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
+| `update_plan` | none | K（仅内置 pi） | D93 | 结构化计划：`{ explanation?, plan: [{ step, status: 'pending' \| 'in_progress' \| 'completed' }] }`，1–20 项、至多一个 `in_progress`；全量替换 run 内存计划，下一轮以 `<current_plan>` 追加到系统提示词；每次更新发 `progress` 落 `run_steps`（任务卡与续接 digest 可见）。外部智能体任务不注册（用原生 todo） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
 | `widget_craft` / `widget_publish` / `widget_read_state` | conversation | K | D81 / D87 | Bot 自制交互组件（[design/32](../design/32-bot-widgets.md)）。`widget_craft{brief, title?, widget_id?, scope?, acceptance?, resume_craft_id?}`（D87）是新建与修改的唯一入口：前台阻塞，编码在独立制作 loop 里完成（见下文「组件制作 loop」），任务只拿到 ≤`WIDGET_CRAFT_RESULT_MAX_CHARS`（1500）字的回执（widgetId、版本、自检状态、已知问题；或未交付原因 + craftId），HTML / diff / 检查报告不进任务上下文；每 run ≤`WIDGET_CRAFTS_PER_RUN_MAX`（3）次，交付占用每 run ≤8 张的发卡名额。`widget_publish{widget_id}`（P2）把 Bot 级组件最新版发卡到当前对话（沿用该版本的自检状态）。`widget_create` / `widget_update` 不再是 Bot 的工具（保留为 `WidgetService.create` / `update`，只由制作 loop 凭检查回执调用）。`widget_read_state{widget_id, keys?}`（D87 P4）只读本 Bot 组件的 KV（≤`WIDGET_READ_STATE_MAX_BYTES` 64KB，按转义后字节计；放不下的值跳过并报告键名、大小与开头片段，`<untrusted source="widget-state">` 包裹，副作用 `none`）。仅任务面注册（对话轮只读）；craft / publish 副作用记 `local`；HTML/SQL 不进模型上下文；conversation 作用域组件随会话删除、Bot 删除走 `lifecycle` 显式清理 |
 | `app_request_connection` | none | T、K | D73 P0 / P1 | 请用户（重新）连接一个应用，三选一：`connector`（目录 slug，`<available_apps>` 里的未连接应用 → `target:{kind:'catalog'}`；该 Bot 已有授权连接但需重连则按该连接处理，已可用则拒绝）、`connection_id`（该 Bot 已勾选的目录连接 → `catalog` 目标 + `connectionId`；`custom:{serverId}` = 已勾选、应用级启用的 OAuth 自定义 server）或 `server_id`（自定义 OAuth server），`reason?`。目标不合法 → `INVALID_INPUT` 且不出卡；有效则宿主记下 `connect-app` setup 需求并返回 `SETUP_REQUIRED`（链路见下）。orchestrator `#appToolFacade`：Bot 有 OAuth 自定义 server、目录连接或可连接的目录条目之一才注册（其余 Bot 工具集不变）。属于 ACP `apps` 能力包（前缀 `app_`），勾选该包的外部智能体 Bot 经桥可用 |
@@ -489,7 +505,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | loop | 模型 | 方式 | 工具 | 优先级 | 阶段 |
 |---|---|---|---|---|---|
 | 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS=0`，不设步数上限） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、协作回合内 `@`） | D75（原「响应」，P01） |
-| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`RUN_MAX_TURNS`、`TASK_MAX_WALL_MS`） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
+| 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`TASK_MAX_TURNS`、`taskLoop.maxWallMinutes`、D93 可选软预算） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
 | 项目组路由判断（续接 / 网关） | 轻量模型（负责人网关用负责人的轻量模型） | 单次结构化调用（`runLightJudgement`） | — | 0 | P05 / D92 |
 | 对话摘要 | 轻量模型 | 单次结构化调用 | — | 2 | P01 |
 | 反思 | 轻量模型 | 单次结构化调用 | — | 2 | P07 |
@@ -511,11 +527,11 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 已启动任务的对话级 / 全局封顶 |
 | `TASK_START_MAX_PER_TURN` | 2 | 一个对话轮最多派出的任务数（按 `origin_run_id`） |
-| `TASK_MAX_WALL_MS` | 4 h | reaper 强制 `failed` 的时长上限 |
+| `TASK_MAX_WALL_MS` | 4 h | 墙钟兜底默认值；运行时优先读 `taskLoop.maxWallMinutes`（0 = 不限制） |
 | `TASK_SETTLE_SWEEP_MS` | 60 s | reaper 周期；结算后执行体未退场的驱逐阈值 |
 | `TASK_REDELIVER_AFTER_MS` | 10 min | 已投递未消费的结果多久后重投 |
 | `TASK_REDELIVER_MAX_ATTEMPTS` | 5 | 一个结果最多投递次数；超过即标记消费并发用户可见提示（审查批 E） |
-| `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `TASK_MAX_WALL_MS`） |
+| `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `taskLoop.maxWallMinutes`） |
 | `ASK_USER_OPTION_MAX_CHARS` | 200 | `ask_user` 每个候选答案的长度上限 |
 | `TASK_EVENT_CONTEXT_MAX_CHARS` / `TASK_TRIGGER_RESULT_MAX_CHARS` | 600 / 12,000 | 最近窗口里任务行的截断 / 触发段里结果全文的硬顶 |
 | `TASK_FAILURE_DIGEST_TOKEN_BUDGET` | 600 | 失败条目尾部的过程摘要预算 |
@@ -524,6 +540,14 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_CHANGED_FILES_SHOWN` | 20 | workspace 写任务取消卡列出的文件数 |
 | `GRANT_ABSOLUTE_TTL_MS` | 10 min | 「仅这一次」授权的绝对时限（DEV-009） |
 | `SUBAGENT_BACKGROUND_CONCURRENCY` / `SUBAGENT_CLOSE_GRACE_MS` | 4 / 10 s | 每个父 run 的后台分支封顶 / 父 run 结束时等分支 settle 的上限 |
+| `TASK_CONTEXT_COMPACT_RATIO` / `TASK_CONTEXT_KEEP_RECENT_RATIO` | 0.75 / 0.3 | D93：上下文压缩触发阈值 / 最近消息保留比例 |
+| `TASK_CONTEXT_MIN_MESSAGES` | 8 | D93：少于该条数不压缩 |
+| `TASK_CONTEXT_SUMMARY_INPUT_TOKENS` / `TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS` | 2,000 / 1,200 | D93：压缩摘要输入 / 输出上限 |
+| `TASK_CONTEXT_COMPACT_TIMEOUT_MS` | 30 s | D93：压缩摘要超时，超时退化为确定性裁剪 |
+| `TASK_TOKEN_SOFT_BUDGET` | 0（关闭） | D93：任务软预算；0 = 不限制，设置项覆盖 |
+| `TASK_IDLE_WARN_AFTER` / `TASK_IDLE_STOP_AFTER` / `TASK_IDLE_WINDOW_CALLS` | 3 / 6 / 12 | D93：空转检测默认阈值；设置项 `general.task-loop` 覆盖 |
+| `taskLoop.stallTimeoutMinutes` | 20（0 = 关闭） | D93：内置任务无活动看门狗 |
+| `taskLoop.maxWallMinutes` | 240（0 = 不限制） | D93：任务最长运行时间，替代固定 4 小时 |
 
 
 ### 组件制作 loop（D87）
@@ -603,6 +627,8 @@ D75 常量（`packages/shared/src/constants.ts`）：
   skillSuggestion?: { name: string, description: string, reason: string }
 }
 ```
+
+`wikiSuggestions` 的**目标 wiki 由会话决定**（D92 T1b 收口）：反思发生在项目组对话里且该 Bot 仍是成员时进**项目 wiki**，否则进它自己的 wiki（`wiki_suggestion` job 被消费时解析 owner，见 [03-data-model.md](03-data-model.md) 的 `wiki_ingest` 条目）。
 
 代码层面的强制校验（不依赖模型自觉）见 [phases/P07-memory.md](phases/P07-memory.md#写入校验)。
 

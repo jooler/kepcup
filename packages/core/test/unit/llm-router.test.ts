@@ -136,6 +136,24 @@ describe('LlmRouter', () => {
       agentId: 'beta',
     });
     expect(router({}, { bot: own }).resolveForBot('bot_1', 'summary')?.agentId).toBe('beta');
+    // Bot model empty → the agent's configured default; a Bot choice wins.
+    const agentDefaults = {
+      agents: {
+        alpha: { enabled: true, model: 'alpha-default' },
+        beta: { enabled: true, model: 'beta-default' },
+      },
+    } as unknown as Partial<Settings>;
+    const bare = bot({}, { id: 'beta' });
+    expect(router(agentDefaults, { bot: bare }).resolveForBot(bare, 'summary')?.modelRef).toBe(
+      'agent:beta/beta-default',
+    );
+    expect(router(agentDefaults, { bot: own }).resolveForBot(own, 'summary')?.modelRef).toBe(
+      'agent:beta/beta-pro',
+    );
+    expect(
+      router({ ...agentDefaults, backgroundAgentId: 'alpha' }).resolveDefault('profile_curation')
+        ?.modelRef,
+    ).toBe('agent:alpha/alpha-default');
     // The bot's own agent unusable: skipped, alpha (ready) is NOT used instead.
     expect(router({}, { bot: own, ready: ['alpha'] }).resolveForBot(own, 'summary')).toBeNull();
     // A bot without an agent of its own: skipped.
@@ -170,7 +188,16 @@ describe('LlmRouter', () => {
     expect(agentBackgroundBlocker(settings(), codex)).toMatch(/原生工具/);
     expect(
       agentBackgroundBlocker(
-        settings({ agents: { 'claude-x': { loadUserConfig: true } } }),
+        settings({
+          agents: {
+            'claude-x': {
+              enabled: true,
+              source: 'managed',
+              loadUserConfig: true,
+              model: '',
+            },
+          },
+        }),
         claude,
       ),
     ).toMatch(/个人配置/);
@@ -183,7 +210,9 @@ describe('LlmRouter', () => {
     // The router skips blocked agents (explicit or the bot's own).
     const blocked = router({
       ...CHOSEN,
-      agents: { alpha: { enabled: true, loadUserConfig: true } },
+      agents: {
+        alpha: { enabled: true, source: 'managed', loadUserConfig: true, model: '' },
+      },
     });
     expect(blocked.resolveDefault('summary')).toBeNull();
     const own = bot({}, { id: 'beta' });

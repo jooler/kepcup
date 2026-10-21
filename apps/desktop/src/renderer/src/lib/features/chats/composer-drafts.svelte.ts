@@ -1,7 +1,7 @@
 import type { JSONContent } from '@tiptap/core';
 import type { Attachment } from '@kepcup/shared';
 import { EMPTY_COMPOSER_DOC } from './composer-draft-persist';
-import { errorText, t } from '$lib/i18n';
+import { errorText, t, listSeparator } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { toast } from 'svelte-sonner';
 import { attachmentUrl } from './attachments.svelte';
@@ -190,7 +190,7 @@ class ComposerDraftsState {
         const names = restored
           .filter((upload) => issue.missing.includes(upload.attachmentId as string))
           .map((upload) => upload.fileName);
-        toast.info(t('composer.attachmentExpired', { names: names.join('、') }));
+        toast.info(t('composer.attachmentExpired', { names: names.join(listSeparator()) }));
       }
       if (gone !== null) restored = restored.filter((upload) => !gone.has(upload.key));
     }

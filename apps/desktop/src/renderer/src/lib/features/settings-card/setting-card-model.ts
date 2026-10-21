@@ -82,8 +82,13 @@ export interface ValueText {
   on: string;
   off: string;
   empty: string;
+  /** 数组值的连接符；缺省用中文顿号（设置页都传当前语言）。 */
+  separator?: string;
   /** model 字段：ref → 展示名（不认识的返回 null，原样显示 ref）。 */
   modelLabel(ref: string): string | null;
+  /** 字段名与静态选项名的展示覆盖（当前语言）；缺省用目录里的中文。 */
+  fieldLabel?(name: string, label: string): string;
+  optionLabel?(fieldName: string, value: string, label: string): string;
 }
 
 /** 一个字段值的展示文本（敏感字段永不经过这里）。 */
@@ -95,13 +100,16 @@ export function formatSettingValue(
   if (value === undefined || value === null || value === '') return text.empty;
   if (Array.isArray(value)) {
     if (value.length === 0) return text.empty;
-    return value.map((entry) => formatSettingValue(field, entry, text)).join('、');
+    return value
+      .map((entry) => formatSettingValue(field, entry, text))
+      .join(text.separator ?? '、');
   }
   if (typeof value === 'boolean') return value ? text.on : text.off;
   if (typeof value === 'string') {
     if (field.type === 'model') return text.modelLabel(value) ?? value;
     const option = field.staticOptions?.find((entry) => entry.value === value);
-    return option?.label ?? value;
+    if (option === undefined) return value;
+    return text.optionLabel?.(field.name, option.value, option.label) ?? option.label;
   }
   if (typeof value === 'number') return String(value);
   return JSON.stringify(value);
@@ -135,7 +143,7 @@ export function settingDiffRows(
       const afterText = formatSettingValue(field, afterValue, text);
       return {
         name: field.name,
-        label: field.label,
+        label: text.fieldLabel?.(field.name, field.label) ?? field.label,
         before: beforeText,
         after: afterText,
         changed: JSON.stringify(beforeValue ?? null) !== JSON.stringify(afterValue ?? null),

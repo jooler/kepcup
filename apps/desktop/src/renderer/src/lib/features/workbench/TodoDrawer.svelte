@@ -740,7 +740,7 @@
             >
               <Select.Trigger
                 class="w-full"
-                aria-label={`${t('workbench.drawer.fieldAssignee')}：${assigneeLabel}`}
+                aria-label={t('common.labelValue', { label: t('workbench.drawer.fieldAssignee'), value: assigneeLabel })}
                 data-testid="todo-assignee"
               >
                 {#if assigneeKey.startsWith('bot:')}
@@ -849,7 +849,7 @@
                 >
                   <Select.Trigger
                     class="w-full"
-                    aria-label={`${t('workbench.drawer.fieldLead')}：${leadLabel}`}
+                    aria-label={t('common.labelValue', { label: t('workbench.drawer.fieldLead'), value: leadLabel })}
                     data-testid="todo-lead-bot"
                   >
                     {leadLabel}

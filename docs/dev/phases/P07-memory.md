@@ -66,7 +66,7 @@ P05、P06。
 5. **反思**（`memory/reflection.ts`）
    - 每次响应执行结束（`completed`）后登记 `reflection` 任务（`dedupe_key = run:{runId}`）。
    - 输入与输出见 [04-agent-runtime.md](../04-agent-runtime.md#反思)。
-   - 输出的 `runSummary` 写入 `runs.summary`；`wikiSuggestions`、`skillSuggestion` 写入 jobs（类型 `wiki_suggestion`、`skill_suggestion`，状态 `pending`，由 P09、P08 消费）。
+   - 输出的 `runSummary` 写入 `runs.summary`；`wikiSuggestions`、`skillSuggestion` 写入 jobs（类型 `wiki_suggestion`、`skill_suggestion`，状态 `pending`，由 P09、P08 消费）。**D92 T1b 收口**：`wiki_suggestion` 的目标 wiki 由会话决定——项目组对话里的反思建议进项目 wiki，否则进该 Bot 自己的 wiki（见 [P09-wiki.md](P09-wiki.md)）。
 6. **写入校验**（`memory/validate.ts`）：在写入任何记忆条目或画像提案之前执行，规则见下文[写入校验](#写入校验)一节。
 7. **凭据处理**（已按消息原则调整，见 design/01-conversation.md）：反思/写入链路照常检测凭据模式并拒绝把凭据写入记忆（`validate.ts`、`profile-curation.ts`），但不再向对话插入凭据提醒系统消息——怎么对待凭据是 Bot 自己的记忆事务。
 8. **画像整理**（`memory/profile-curation.ts`）

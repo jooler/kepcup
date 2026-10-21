@@ -10,6 +10,8 @@ import { applyFetchedViews, pruneTaskViews } from '$lib/features/tasks/task-view
  */
 class TasksState {
   byId = $state<Record<string, TaskView>>({});
+  /** The task whose execution view replaces the conversation (design 42). */
+  openTaskId = $state<string | null>(null);
   #started = false;
   #loading = new Set<string>();
   /** Counter of `task.updated` pushes, and the last one per task (newer-wins, 审查 L2). */
@@ -19,6 +21,8 @@ class TasksState {
   #sawReady = false;
   /** The open conversation (the cache keeps its views, 审查 L3). */
   #conversationId: string | null = null;
+  /** Element to focus after an explicit return from the execution view. */
+  #focusReturn: HTMLElement | null = null;
 
   start(): void {
     if (this.#started) return;
@@ -47,6 +51,32 @@ class TasksState {
       fetched,
       (taskId) => (this.#pushedAt.get(taskId) ?? 0) > since,
     );
+  }
+
+  /** Opens the task execution view (task card click / its keyboard entry). */
+  openDetail(taskId: string, trigger: HTMLElement | null = null): void {
+    if (taskId.length === 0) return;
+    this.#focusReturn = trigger ?? currentFocusElement();
+    this.openTaskId = taskId;
+    void this.ensure(taskId);
+  }
+
+  /**
+   * Returns from the task execution view to the conversation. `restoreFocus`
+   * is only for explicit returns (back / Esc): session switches close the view
+   * without stealing focus back to a card that may be going away.
+   */
+  closeDetail(options: { restoreFocus?: boolean } = {}): void {
+    if (this.openTaskId === null) return;
+    this.openTaskId = null;
+    const target = options.restoreFocus === true ? this.#focusReturn : null;
+    this.#focusReturn = null;
+    if (target === null) return;
+    // A timer (not a microtask) runs after Svelte restored the conversation's
+    // display, so the hidden trigger is focusable again.
+    setTimeout(() => {
+      if (target.isConnected) target.focus({ preventScroll: true });
+    }, 0);
   }
 
   /** Loads a task view once (cards mount lazily while scrolling history). */
@@ -148,3 +178,10 @@ class TasksState {
 }
 
 export const tasks = new TasksState();
+
+/** `document.activeElement` when a DOM exists (store tests run without one). */
+function currentFocusElement(): HTMLElement | null {
+  if (typeof document === 'undefined' || typeof HTMLElement === 'undefined') return null;
+  const active = document.activeElement;
+  return active instanceof HTMLElement ? active : null;
+}

@@ -329,11 +329,16 @@ export function selfScheduleSource(origin: ScheduleOrigin): SelfScheduleSource {
 // 备忘
 // ---------------------------------------------------------------------------
 
-/** 置顶在前，其余按更新时间倒序（id 兜底，保证稳定）。 */
+/**
+ * 置顶在前，其余按排序键 `sortAt` 倒序（id 兜底，保证稳定）。
+ * 排序键只随置顶变化，改正文不会让卡片换位。
+ */
 export function sortMemos(memos: readonly Memo[]): Memo[] {
   return [...memos].sort(
     (a, b) =>
-      Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
+      Number(b.pinned) - Number(a.pinned) ||
+      b.sortAt - a.sortAt ||
+      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   );
 }
 

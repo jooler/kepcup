@@ -64,3 +64,14 @@ describe('botRuntimeSchema.app_connection_ids', () => {
     expect(() => botRuntimeSchema.parse({ app_connection_ids: [1] })).toThrow();
   });
 });
+
+describe('botRuntimeSchema.message_transport', () => {
+  it('defaults to empty and accepts inkcop-local', () => {
+    expect(botRuntimeSchema.parse({}).message_transport).toBe('');
+    expect(botRuntimeSchema.parse({ message_transport: 'inkcop-local' }).message_transport).toBe(
+      'inkcop-local',
+    );
+    expect(botRuntimeSchema.parse({ message_transport: 'nope' }).message_transport).toBe('');
+  });
+});
+
