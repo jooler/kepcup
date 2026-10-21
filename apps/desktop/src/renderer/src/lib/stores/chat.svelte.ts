@@ -406,6 +406,8 @@ class ChatState {
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
     this.replyTo = null;
+    // 进入另一个会话即离开任务执行过程页（它与会话内容同层替换）。
+    tasks.closeDetail();
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
     // 或项目组），而不是按最近消息时间挑一个。
     saveLastConversationId(globalThis.localStorage ?? null, conversationId);
@@ -633,6 +635,7 @@ class ChatState {
     this.currentId = null;
     this.replyTo = null;
     this.highlightMessageId = null;
+    tasks.closeDetail();
     // 会话消失（删除会话/删除 Bot/放弃建项目组）才走到这里：记忆一并清除，
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
@@ -652,6 +655,7 @@ class ChatState {
     this.replyTo = null;
     this.highlightMessageId = null;
     this.#pendingSetup = null;
+    tasks.closeDetail();
     // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
