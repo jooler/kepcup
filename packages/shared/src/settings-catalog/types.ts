@@ -122,6 +122,12 @@ export const settingFieldSpecSchema = z.object({
   max: z.number().optional(),
   step: z.number().positive().optional(),
   hint: z.string().optional(),
+  /**
+   * 这个字段写到设置存储的哪个点路径（`store.kind = 'settings'` 时）；缺省 = 字段名。
+   * 通用渲染（FieldEditorCard）与通用标量适配器按它读写，如 `workbenchEnabled`、
+   * `taskLoop.idleWarnAfter`。
+   */
+  path: z.string().min(1).optional(),
 });
 export type SettingFieldSpec = z.infer<typeof settingFieldSpecSchema>;
 
@@ -249,7 +255,17 @@ export type SettingDeepLink = z.infer<typeof settingDeepLinkSchema>;
  * - `renderer`：渲染层 localStorage；`none`：只读 / 只经专门工具。
  */
 export const settingStoreSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('settings'), paths: z.array(z.string().min(1)).min(1) }),
+  z.object({
+    kind: z.literal('settings'),
+    paths: z.array(z.string().min(1)).min(1),
+    /**
+     * 显式声明这一条走 core 的通用标量适配器（`genericSettingsAdapter`）：只支持
+     * 非敏感、单值的顶层标量字段（boolean / string / number / 静态下拉），字段用
+     * `fields[].path` 指到 settings 顶层键。复杂对象、写后副作用、放宽类条目必须写
+     * 自定义适配器（contributions 覆盖测试强制闭合）。
+     */
+    generic: z.boolean().optional(),
+  }),
   z.object({ kind: z.literal('bot'), paths: z.array(z.string().min(1)).min(1) }),
   z.object({ kind: z.literal('service'), methods: z.array(z.string().min(1)).min(1) }),
   z.object({ kind: z.literal('renderer') }),

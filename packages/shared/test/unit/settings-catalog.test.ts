@@ -20,6 +20,7 @@ import {
   searchSettingItems,
   sensitiveFieldNames,
   settingItemSchema,
+  settingsAdapterCoverageProblems,
   settingsCoverageProblems,
   settingsSchema,
   settingsUpdateInputSchema,
@@ -387,6 +388,30 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
   });
 });
 
+describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)', () => {
+  it('generic items are plain top-level scalars: no sensitive / multiple / nested / widening', () => {
+    const generic = items.filter(
+      (entry) => entry.store.kind === 'settings' && entry.store.generic === true,
+    );
+    expect(generic.map((entry) => entry.id)).toEqual(['general.workbench']);
+    const defaults = settingsSchema.parse({}) as Record<string, unknown>;
+    for (const entry of generic) {
+      expect(entry.owner, entry.id).toBe('core');
+      expect(entry.scope, entry.id).toBe('global');
+      expect(entry.write.via, entry.id).toBe('catalog');
+      expect(entry.write.widensPermission, entry.id).toBe(false);
+      expect(entry.write.wideningMode, entry.id).toBeUndefined();
+      for (const field of entry.fields) {
+        const path = field.path ?? field.name;
+        expect(field.sensitive, `${entry.id}.${field.name}`).toBe(false);
+        expect(field.multiple, `${entry.id}.${field.name}`).not.toBe(true);
+        expect(path.includes('.'), `${entry.id}.${field.name} path 应为顶层键`).toBe(false);
+        expect(path in defaults, `${entry.id}.${field.name} path 应是 settingsSchema 的顶层键`).toBe(true);
+      }
+    }
+  });
+});
+
 describe('renderer component map check (for the desktop lane)', () => {
   it('passes for a complete map and names missing / unknown keys', () => {
     expect(cardComponentProblems(CARD_KEYS)).toEqual([]);
@@ -395,6 +420,90 @@ describe('renderer component map check (for the desktop lane)', () => {
       '卡片键 sensor 在渲染层映射里没有组件',
       '渲染层映射里的 bogus 不是 CARD_KEYS 里的卡片键',
     ]);
+  });
+});
+
+describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
+  const writableCore = (id: string, extra: Partial<SettingItem> = {}): SettingItem => ({
+    ...getSettingItem('general.workbench')!,
+    id,
+    // 显式去掉 generic：这个助手要构造「需要适配器」的条目（workbench 本身已豁免）。
+    store: { kind: 'settings', paths: ['demoFlag'] },
+    ...extra,
+  });
+
+  it('requires adapters for core-owned catalog-writable items and flags missing ones', () => {
+    const item = writableCore('general.demo-toggle');
+    const problems = settingsAdapterCoverageProblems({
+      items: [item],
+      adapterIds: [],
+    });
+    expect(problems).toEqual([
+      'general.demo-toggle：需要 core 适配器（core 拥有、经目录写入），但不在贡献表里，也没有登记 EXPLICIT_ADAPTER_FALLBACK 理由',
+    ]);
+    expect(settingsAdapterCoverageProblems({ items: [item], adapterIds: ['general.demo-toggle'] })).toEqual(
+      [],
+    );
+  });
+
+  it('exempts read-only / renderer / via-tool / generic items', () => {
+    const items = [
+      getSettingItem('diagnostics.status')!, // readOnly
+      getSettingItem('general.theme')!, // renderer
+      getSettingItem('mail.account')!, // via tool
+      { ...getSettingItem('general.workbench')!, store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true } },
+    ];
+    expect(settingsAdapterCoverageProblems({ items, adapterIds: [] })).toEqual([]);
+  });
+
+  it('flags stale adapter registrations and explicit fallback leftovers', () => {
+    const items = [writableCore('general.demo-toggle')];
+    expect(
+      settingsAdapterCoverageProblems({ items, adapterIds: ['general.demo-toggle', 'general.gone'] }),
+    ).toEqual(['适配器贡献登记了不存在的条目 general.gone']);
+    expect(
+      settingsAdapterCoverageProblems({
+        items,
+        adapterIds: ['general.demo-toggle'],
+        explicitFallback: { 'general.demo-toggle': '已有适配器却登记 fallback' },
+      }),
+    ).toEqual(['EXPLICIT_ADAPTER_FALLBACK 里的 general.demo-toggle 已有适配器，fallback 是遗留']);
+    expect(
+      settingsAdapterCoverageProblems({
+        items,
+        adapterIds: [],
+        explicitFallback: {
+          'general.demo-toggle': '先用 fallback 占位',
+          'general.no-such': '条目不存在',
+        },
+      }),
+    ).toEqual(['EXPLICIT_ADAPTER_FALLBACK 里的 general.no-such 不是目录条目']);
+  });
+
+  it('accepts a justified explicit fallback for an otherwise-uncovered item', () => {
+    expect(
+      settingsAdapterCoverageProblems({
+        items: [writableCore('general.demo-toggle')],
+        adapterIds: [],
+        explicitFallback: { 'general.demo-toggle': '没有安全信号，读状态以设置页为准' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('accepts field path and store generic in the schema', () => {
+    const item = getSettingItem('general.task-loop')!;
+    expect(
+      settingItemSchema.safeParse({
+        ...item,
+        fields: [{ ...item.fields[0]!, path: 'taskLoop.idleGuardEnabled' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      settingItemSchema.safeParse({
+        ...getSettingItem('general.workbench')!,
+        store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true },
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -469,7 +578,7 @@ describe('general.workbench catalog + update schema (D90)', () => {
     expect(settingsSchema.parse({}).workbenchEnabled).toBe(false);
     expect(settingsSchema.parse({}).workbenchNudgeDismissed).toBe(false);
     const item = getSettingItem('general.workbench');
-    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'] });
+    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'], generic: true });
     expect(itemIdsForSettingsPaths(['workbenchEnabled'])).toContain('general.workbench');
     const parsed = settingsUpdateInputSchema.parse({ workbenchEnabled: true });
     expect(parsed.workbenchEnabled).toBe(true);

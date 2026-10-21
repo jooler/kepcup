@@ -40,8 +40,8 @@ import type { MessagesService } from '../domain/messages.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import { TOOL_SETUP_REQUIRED } from '../tools/image-tools.js';
 import type { SettingsToolFacade } from '../tools/settings-tools.js';
+import { buildItemAdapters } from './contributions/index.js';
 import {
-  buildItemAdapters,
   type AdapterDeps,
   type ItemAdapter,
   type ItemSnapshot,

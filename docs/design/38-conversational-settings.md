@@ -2,7 +2,7 @@
 
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
-**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14；2026-10-15 e75b950 移除 `developer.mode` 后为 57 个条目、无内嵌卡 11 个）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
+**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14；2026-10-15 e75b950 移除 `developer.mode` 后为 57 个条目、无内嵌卡 11 个；D93 拟新增 `general.task-loop`，待实施）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）；2026-10-21 注册中心落地：适配器改由 `contributions/` 贡献表装配、漏登记回 `unknown`、新增通用标量适配器与适配器闭合测试（见 todo/settings-catalog-registry.md），当前 60 条、49 条有内嵌卡、28 个卡片键。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
 
 
 相关：D58 对话内设置引导（[18](18-inline-setup.md)，失败续跑链与 7 个旧 kind）、D75 对话轮与任务分治（[02](02-execution.md)、[30](30-supervisor-and-tasks.md)，对话轮只读、异步托管动作由宿主确定性执行）、D80 定时提议卡（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)，消息流里的提议卡先例）、D73 连接应用（[29](29-connected-apps.md)，污点）、D72 外部智能体能力包（[28](28-external-agents-acp.md)）、D88 盘点 → 提议（[37](37-bot-asset-handover.md)）。工具目录见 [dev/04](../dev/04-agent-runtime.md)。
@@ -31,7 +31,7 @@
 - `write.maxMode` 记**目标**档位；条目没有内嵌组件（`card = null`）时宿主一律兜底成 `link`（见 §3 第 4 步）。`widensPermission` 的条目永不 direct；`wideningMode: 'user-only'` 的条目在**本次值是放宽方向**时升到 user-only（如 Bot 网络策略放开、MCP / 连接逐工具策略放开；放宽与否由适配器按旧值 → 新值判定，未知按放宽）。
 - `DIRECT_ITEM_IDS = models.default-main / models.default-light / bot.model / bot.light-model`。
 
-### 1.2 首批条目（共 58 条，含 7 条能力模型；2026-10-15 移除 `developer.mode` 后 57 条）
+### 1.2 首批条目（历史：首版 58 条 → 2026-10-15 移除 `developer.mode` 后 57 条 → D93 新增 `general.task-loop` 等，当前 60 条、49 条有内嵌卡，实测以 `SETTING_ITEMS` 为准）
 
 | 组 | 条目 id | 最宽松档 | 卡片键 |
 |---|---|---|---|
@@ -53,7 +53,7 @@
 | 项目组 / 工作目录 | `project.title` / `project.goal` / `project.members` / `project.lead`（均 confirm，卡 `project-title` / `project-goal` / `project-members` / `project-lead`）；`workdir.protect-rules` / `workdir.ports`（user-only，卡 `workdir-settings`） | — | `project-title` / `project-goal` / `project-members` / `project-lead` / `workdir-settings` |
 | 深链落点 | 项目组条目 `surface: 'project-detail'`（内容区页面，`section ∈ PROJECT_DETAIL_SECTIONS = ['overview','members','grants','schedules','danger']`，锚点 `project-title` / `project-goal` / `project-members` / `project-lead`）；工作目录条目 `surface: 'workdir-dialog'` | — | — |
 | 硬件 | `hardware.microphone` / `hardware.camera`（renderer） | confirm | `sensor` |
-| 通用 | `general.theme` / `general.language`（renderer，语言只认 `zh-CN` 等已注册的）/ `general.launch-at-login` | confirm | `appearance` / `field-editor` |
+| 通用 | `general.theme` / `general.language`（renderer，语言只认 `zh-CN` 等已注册的）/ `general.launch-at-login` / `general.workbench`（D90）/ `general.task-loop`（D93：空转检测与软预算） | confirm | `appearance` / `field-editor` |
 | 后台 | `background.tasks` / `background.budget` | confirm | `background-tasks` / `field-editor` |
 | 无人值守 | `unattended.enable`（user-only）/ `unattended.disable`（confirm） | — | `unattended` |
 | 环境 | `environment.toolchains` / `environment.sandbox` / `environment.allowlist` | user-only | `environment-toolchains` / `environment-sandbox` / `environment-allowlist` |
@@ -67,17 +67,18 @@
 - **测试一（UI → 条目）**：设置弹框每个分区与 `data-settings-anchor`、扩展中心每个页签、Bot 面板每个 Tab、项目详情页与工作目录设置对话框，都必须对应至少一个条目或在排除表里写明理由；新增设置分区不登记就过不了。扫描 Svelte 源码在 `settings-ui-scan.ts`，判定是纯函数 `settingsCoverageProblems`。`PENDING_DESKTOP_ANCHORS`（计划中尚未加的锚点）当前为空，且测试强制其中的锚点必须仍不存在。
 - **测试二（条目 → 组件 / 锚点）**：每个 `card !== null` 的条目在渲染层 `SETTING_CARD_COMPONENTS` 映射里必须有组件（`cardComponentProblems`），每个条目的 `deepLink` 必须指向真实存在的分区与锚点（顺手修掉 `models-default` 这类死锚点）。
 - **测试三（direct 白名单）**：`maxMode = 'direct'` 的条目必须在 `DIRECT_ITEM_IDS` 里，且白名单条目都是 core 拥有、带内嵌卡、不含敏感字段的模型选择器；敏感类型字段必须 `sensitive`，含敏感字段的条目不得 direct；渲染层条目最多 confirm 且没有 core store；user-only 安全开关（无人值守开启、沙箱、白名单、项目保护规则、放宽网络）档位被钉死。
+- **测试四（条目 → 适配器闭合，2026-10-21）**：core 拥有、经目录写入、可写的条目必须在适配器贡献表（`settings/contributions/`）里，或显式登记 `EXPLICIT_ADAPTER_FALLBACK` 并写明理由（当前仅 `profile.user-facts`）；贡献表不得指向不存在的条目，fallback 表不得遗留。漏登记的条目 `settings_read` 回 `unknown`（不再静默报 `configured`），Bot 不会误判能力可用。
 
 ### 1.4 core 适配器
 
-`packages/core/src/settings/adapters.ts`：每个条目一个适配器 `{read, options?, normalize?, write?, needsSensitiveInput?, valuesWiden?}`，做法同 D88 资产适配器。
+`packages/core/src/settings/adapters.ts`：每个条目一个适配器 `{read, options?, normalize?, write?, needsSensitiveInput?, valuesWiden?}`，做法同 D88 资产适配器。适配器的**登记**在 `packages/core/src/settings/contributions/`（按功能组的贡献表，`buildItemAdapters` 由此装配，重复 id 直接抛错）；简单顶层标量条目可声明 `store: { kind: 'settings', generic: true }` 走通用适配器 `generic-adapter.ts`（首个例子 `general.workbench`），不必写自定义适配器；漏登记的条目回 `unknown`（见 §1.3 测试四）。
 
 - **读**返回脱敏快照 `{status: configured|unconfigured|partial|unknown|readonly, values, secrets, summary}`；永不返回密钥、本机路径、日志、画像原文，用户自填名称一律过 `sanitizeDisplayText`；渲染层条目回「状态未知（只在本机界面可见）」。
 - **写**调用设置页用的同一批服务，只改本条目字段（`capabilityModels` / `webSearch` / `agents` / `backgroundTasks` / `apps` / `mcpServers` 等整对象一律在**最新**设置上按字段合并，不发整对象）。写必须是同步的；需要 await 的收尾（中断任务、关浏览器页面、收回授权）以 `ItemWriteEffects.afterUnlock` 返回，宿主在释放写锁之后执行并补发 `settings.changed`；只要写已经发生，即使写之后的读 / 标卡抛错，收尾也在 `finally` 里照样执行，失败只记日志。有写实现的条目以 `adapters.ts` 里带 `write` 的适配器为准（todo §8.2 有清单）。
 - **Bot 配置的写入只有一条路径**：所有 Bot runtime 条目（模型、浏览器资料、网络、MCP、连接、任务引擎）经 `deps.botProfiles.apply`，生产装配为 `settings/bot-profile-update.ts` 的 `applyBotProfileUpdate`——`bots.update` RPC 用的是同一个函数：写之前 `assertAgentSelectable`（换外部智能体时的实验开关与目录）与 `browserProfiles.assertSelectable`，写后发 `bot.updated`，锁外依次 `revokeMcp`（从 Bot 拿掉的 MCP 服务、连接 → 中断它的任务，排在最前）与 `browserProfiles.onBotProfileChanged`（有效资料变了 → 中断用过浏览器的任务、关页面）；每一步各自兜错、互不影响，`settle()` 不抛，返回失败说明由调用方记日志——关页面失败不会让授权留在 Bot 手里。适配器的依赖里没有 `bots.update`，绕不过去。
 - **`values` 形状校验**：`settings_change` 与 `settings.items.apply` 在 core 写入前都过 `settingValuesProblems`（shared `validate.ts`）：只认目录字段，按字段类型核对（toggle 布尔、number 有限数、text / model 字符串 ≤500、多值 ≤200 条），静态选项以外的值拒绝；语义校验（厂商 id 是否已接入、并发 1–16、智能体在目录里、MCP 服务存在……）在各适配器的 `normalize`，写锁里再核对一次。
 - **Bot 的提议只能「加」的条目**：适配器可带 `proposal`，只作用于 `settings_change` 的建议值（用户在卡上保存不经过它）。`project.members` 的建议值 = 现有成员 ∪ Bot 给的，Bot 不能借预填移出成员；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选。
-- **值格式**（`values` 的键 = 字段名）：对话模型字段为 `{model: "厂商/模型id"}`（`''` = 跟随默认，仅限 Bot 模型与组件审查模型；写入前补全 / 校验厂商前缀并核对该厂商下确有此模型）；能力模型 `{provider, model: "厂商/模型id"}`（厂商须支持该能力）；联网 `{provider}`；开关类 `{enabled: boolean}`；预算 `{tokens: 非负整数, 0 = 不限}`；后台任务 `{agentEnabled, agent}`；外部智能体 `{agent, enabled}`；Bot 网络策略 `{policy, allowlist}`（白名单只在 `allowlist` 策略下写入）；Bot 技能 `{skill, enabled}`（快照另带 `scope`）；MCP 服务 `{server, enabled}`；项目成员 `{bots}`。
+- **值格式**（`values` 的键 = 字段名）：对话模型字段为 `{model: "厂商/模型id"}`（`''` = 跟随默认，仅限 Bot 模型与组件审查模型；写入前补全 / 校验厂商前缀并核对该厂商下确有此模型）；能力模型 `{provider, model: "厂商/模型id"}`（厂商须支持该能力）；联网 `{provider}`；开关类 `{enabled: boolean}`；预算 `{tokens: 非负整数, 0 = 不限}`；任务 Loop `{idleGuardEnabled, idleWarnAfter, idleStopAfter, idleWindowCalls, tokenSoftBudget}`（D93）；后台任务 `{agentEnabled, agent}`；外部智能体 `{agent, enabled}`；Bot 网络策略 `{policy, allowlist}`（白名单只在 `allowlist` 策略下写入）；Bot 技能 `{skill, enabled}`（快照另带 `scope`）；MCP 服务 `{server, enabled}`；项目成员 `{bots}`。
 - **needsSensitiveInput**：缺 Key、要新增厂商、外部智能体需登录 → 至少 form（例如种子 mock 厂商无 Key 时，换模型从 direct 收紧为 form）。
 - **选项**：已配置厂商下的对话模型、能力的可选厂商 / 模型（已有 Key 的排前）、检索供应商、智能体目录等，≤30 个。
 
@@ -292,6 +293,8 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 4. **永久跳转与只读分区覆盖不了**。`developer.*`、`diagnostics.*`、`profile.user-facts` 没有内嵌组件，这些分区仍是定制页——「唯一渲染单元」永远只能覆盖部分分区。
 5. **一分区多条目（或一条目组一份组件）**。环境页是工具链、沙箱、白名单**三张**卡；无人值守页是 `unattended.enable` / `unattended.disable` 两条目共享一份 `UnattendedSection`。页由卡拼会改变分区的信息架构（一页变三卡、一份表单变两张卡），不是等价替换。
 6. **卡片机制带着对话语义**：`messageId`、`expected`、`onSaved` 唤醒 Bot、7 天过期、顶替、每 run 上限——设置页全都用不上，套上只是负担。
+
+2026-10-21 补充：注册中心落地时给「新增简单设置」开了一条低成本通道——`SettingsCatalogFields.svelte` 把 `card: 'field-editor'` 的全局条目按目录元数据渲染进设置页分区（首例：通用分区的任务 Loop），条目级保存、锚点由页面静态写。这不改变「页 = 卡不做」的结论：现有整表分区不迁移，两种保存模型不混用在同一字段上。
 
 若将来出于别的动机仍要做，**第一刀切「联网检索」分区**：恰好一条目录条目（`search.provider`）对应一个组件（`WebSearchSection`），core 有读写适配器，两种形态差异最小（embedded 只藏标题与说明），无渲染层项、无多条目拼接；第二刀候选「后台与预算」。是否实施另开决定，本评估不改任何设置页组件。
 

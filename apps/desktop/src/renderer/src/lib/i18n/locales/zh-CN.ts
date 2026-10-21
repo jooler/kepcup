@@ -1367,6 +1367,7 @@ export const zhCN = {
   'settingCard.conflict': '设置已在别处修改：已按最新值刷新对比，请再确认一次',
   'settingCard.notVerified': '还没检测到这项设置完成，设置好后再点一次「我已设置好」',
   'settingCard.appliedToast': '设置已应用',
+  'settingCard.fieldUnsupported': '这个字段需要专用界面，请在设置页修改。',
   'settingCard.actionFailed': '操作失败：{error}',
   'settingCard.userOnlyHint': '这一项涉及安全边界，需要你亲手设置，Bot 不能替你填写。',
   'settingCard.linkHint':

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getSettingItem, settingsSchema, type Bot, type Settings } from '@kepcup/shared';
 import { botProfile } from '@kepcup/testkit';
-import { buildItemAdapters, type AdapterDeps } from '../../src/settings/adapters.js';
+import { buildItemAdapters } from '../../src/settings/contributions/index.js';
+import type { AdapterDeps } from '../../src/settings/adapters.js';
 
 /**
  * P1 写入适配器：条目级合并（不覆盖兄弟字段）、放宽判定、技能启停走原服务。

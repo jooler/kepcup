@@ -20,6 +20,10 @@ const ALLOWED = new Map<string, string>([
   ['start.ts', '装配：首启默认值 / 外部 Agent 兜底的启动期判断'],
   ['handover/adapters/model.ts', 'D88 移交：复制 / 改写 Bot 的模型配置值（不做选取）'],
   ['settings/adapters.ts', 'D89 设置目录适配器：读 / 改默认模型与 Bot 模型的配置值（不做选取）'],
+  [
+    'settings/contributions/models.ts',
+    '设置适配器贡献表：把适配器登记到条目 id（引用配置值字段名，不做选取）',
+  ],
   ['rpc/settings-bindings.ts', 'D89 settings.changed：按字段 diff 推出受影响的设置项（不做选取）'],
 ]);
 
