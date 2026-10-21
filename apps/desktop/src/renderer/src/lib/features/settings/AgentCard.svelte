@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentStatus, AgentTestResult, AgentView, SettingValues } from '@kepcup/shared';
-  import { t, type MessageKey, listSeparator } from '$lib/i18n';
+  import { t, type MessageKey, listSeparator, agentText } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -244,10 +244,12 @@
           >
         {/if}
       </div>
-      <p class="text-xs text-muted-foreground">{agent.description}</p>
+      <p class="text-xs text-muted-foreground">
+        {agentText(agent.id, 'description', agent.description)}
+      </p>
       <p class="text-xs text-muted-foreground">
         {t('agents.license', { license: agent.license })} · {t('agents.authNote', {
-          note: agent.authNote,
+          note: agentText(agent.id, 'authNote', agent.authNote),
         })}
       </p>
       <p class="text-xs text-amber-600 dark:text-amber-400">{termsText()}</p>

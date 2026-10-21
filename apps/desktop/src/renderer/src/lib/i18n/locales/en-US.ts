@@ -3030,6 +3030,85 @@ export const enUS = {
   'common.labelColon': '{label}: ',
   'common.labelValue': '{label}: {value}',
   'common.parenthesized': '({text})',
+  'connector.notion.description': 'Search, read, and edit Notion pages and databases',
+  'connector.linear.description': 'Find, create, and update Linear issues, projects, and comments',
+  'connector.atlassian.description': 'Access Jira, Confluence, and Compass (Rovo MCP)',
+  'connector.sentry.description': 'View Sentry issues, errors, and Seer analysis',
+  'connector.canva.description': 'Create, edit, search, and export Canva designs',
+  'connector.stripe.description': 'Look up and manage Stripe customers, products, and payments',
+  'connector.cloudflare.description':
+    'View and manage domains, Workers, and other products in your Cloudflare account',
+  'connector.gcalendar.description': 'View, search, and schedule Google Calendar events',
+  'connector.gdrive.description':
+    'Search, read, and create Google Drive files (only files shared with KepCup)',
+  'presetSkill.docx.name': 'Word documents',
+  'presetSkill.docx.summary':
+    'Write and revise reports, proposals, and contract drafts, with comments and format conversion',
+  'presetSkill.docx.tryIt': 'Turn this weekly report material into a Word report',
+  'presetSkill.xlsx.name': 'Excel spreadsheets',
+  'presetSkill.xlsx.summary': 'Summarize, pivot, chart, and convert data into deliverable reports',
+  'presetSkill.xlsx.tryIt': 'Organize this data into a monthly summary with charts',
+  'presetSkill.pptx.name': 'PPT presentations',
+  'presetSkill.pptx.summary':
+    'Turn outlines into meeting or review slides, and adjust layouts and template colors',
+  'presetSkill.pptx.tryIt': 'Create an 8-slide review deck from this report',
+  'presetSkill.pdf.name': 'PDF tools',
+  'presetSkill.pdf.summary':
+    'Extract text and tables, merge and split, fill forms, and create PDFs',
+  'presetSkill.pdf.tryIt': 'Merge these PDFs and extract their tables',
+  'presetSkill.meeting-notes.name': 'Meeting notes',
+  'presetSkill.meeting-notes.summary':
+    'Turn messy notes into decisions, action items, and accountable minutes',
+  'presetSkill.meeting-notes.tryIt':
+    'Turn these rough meeting notes into decisions and action items',
+  'presetSkill.weekly-report.name': 'Weekly reports',
+  'presetSkill.weekly-report.summary':
+    'Produce upward reports from a fixed template: progress, metrics, risks, and plans',
+  'presetSkill.weekly-report.tryIt': 'Draft this week’s report from these updates',
+  'presetSkill.internal-comms.name': 'Internal communications',
+  'presetSkill.internal-comms.summary':
+    'Announcements, all-hands letters, and change notices with the right format and tone',
+  'presetSkill.internal-comms.tryIt': 'Write an all-hands letter about this organizational change',
+  'presetSkill.doc-coauthoring.name': 'Collaborative editing',
+  'presetSkill.doc-coauthoring.summary':
+    'Multi-round editing: align on the outline, draft section by section, then comment and revise',
+  'presetSkill.doc-coauthoring.tryIt': 'Co-write this proposal with me, section by section',
+  'presetSkill.mineru.name': 'Document parsing (MinerU)',
+  'presetSkill.mineru.summary':
+    'Convert PDFs, scans, and Office files to Markdown with high-fidelity math, tables, and OCR; local parsing is preferred',
+  'presetSkill.mineru.tryIt': 'Convert this scanned PDF to Markdown',
+  'settings.vendor.dashscope': 'Alibaba Cloud Model Studio',
+  'settings.vendor.volcengine': 'Volcengine Ark',
+  'apps.unavailable.noRemote': 'This app has no available remote endpoint',
+  'apps.unavailable.unsupportedAuth': '{kind} authentication is not supported yet',
+  'apps.unavailable.preregisteredClient':
+    'This app requires a client preregistered by KepCup ({ref}), which this version does not include',
+  'agent.fake.description': 'Testkit scripted fake ACP agent (development and testing only)',
+  'agent.fake.authNote': 'No sign-in required',
+  'agent.claude-acp.description': "ACP wrapper for Anthropic's Claude",
+  'agent.claude-acp.authNote':
+    'Claude Pro / Max subscription or Anthropic Console (official terminal login)',
+  'agent.codex-acp.description': "ACP adapter for OpenAI's coding assistant",
+  'agent.codex-acp.authNote': 'ChatGPT subscription or OpenAI API key (Codex handles login itself)',
+  'agent.opencode.description': 'The open source coding agent',
+  'agent.opencode.authNote':
+    'Free built-in models without login; use `opencode auth login` for GitHub Copilot / ChatGPT / Z.AI and others (do not sign in with a Claude subscription)',
+  'agent.dsh.description': 'DeepSeek Harness automation agent (ACP profile)',
+  'agent.dsh.authNote': 'DeepSeek API key (pay-as-you-go, no subscription)',
+  'agent.cursor.description': "Cursor's coding agent",
+  'agent.cursor.authNote':
+    'Cursor account (browser login, counts against your Cursor plan) or CURSOR_API_KEY',
+  'agent.antigravity-acp.description': 'Google’s AI coding agent',
+  'agent.antigravity-acp.authNote':
+    'Gemini API key (AI Studio) or Vertex AI (agent-platform); Google personal account login is not supported',
+  'agent.inkcop.description':
+    'InkCop main conversation (writing), exposed to the KepCup task engine via ACP',
+  'agent.inkcop.authNote':
+    'Start and sign in to InkCop, then enable the bridge in InkCop Settings → Services → ACP Agents; keys are not injected through KepCup',
+  'settings.mcpTransportStdio': 'stdio',
+  'settings.mcpTransportHttp': 'Streamable HTTP',
+  'settings.providerKindCustom': 'custom',
+  'settings.providerKindBuiltin': 'builtin',
 } as const;
 
 export type MessageKey = keyof typeof enUS;

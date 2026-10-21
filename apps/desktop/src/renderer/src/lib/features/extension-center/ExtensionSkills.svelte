@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SkillPresetInfo } from '@kepcup/shared';
-  import { errorText, t, listSeparator } from '$lib/i18n';
+  import { errorText, t, listSeparator, presetSkillText } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Search } from '@lucide/svelte';
   import { skillMarket } from './market.svelte';
@@ -31,8 +31,8 @@
     if (needle.length === 0) return skillMarket.presets;
     return skillMarket.presets.filter(
       (preset) =>
-        preset.displayName.toLowerCase().includes(needle) ||
-        preset.summary.toLowerCase().includes(needle) ||
+        presetSkillText(preset.id, 'name', preset.displayName).toLowerCase().includes(needle) ||
+        presetSkillText(preset.id, 'summary', preset.summary).toLowerCase().includes(needle) ||
         preset.skillName.toLowerCase().includes(needle),
     );
   });
@@ -63,7 +63,11 @@
   async function install(preset: SkillPresetInfo): Promise<void> {
     try {
       await skillMarket.install(preset.id);
-      toast.success(t('skillMarket.installedToast', { name: preset.displayName }));
+      toast.success(
+        t('skillMarket.installedToast', {
+          name: presetSkillText(preset.id, 'name', preset.displayName),
+        }),
+      );
     } catch (error) {
       // core 侧的 AppError 消息（如「已存在同名公共技能…」「技能库条目写入失败…」）
       // 比按错误码映射的通用文案更具体：有消息就原样展示，并把完整错误打到
@@ -124,7 +128,9 @@
               </span>
               <span class="grid min-w-0 flex-1 gap-0.5">
                 <span class="flex min-w-0 items-center gap-2">
-                  <span class="truncate text-sm font-medium">{preset.displayName}</span>
+                  <span class="truncate text-sm font-medium"
+                    >{presetSkillText(preset.id, 'name', preset.displayName)}</span
+                  >
                   {#if preset.missingDeps.length > 0}
                     <Badge
                       variant="outline"
@@ -141,10 +147,10 @@
                     </Badge>
                   {/if}
                 </span>
-                <span class="truncate text-xs text-muted-foreground">{preset.summary}</span>
+                <span class="truncate text-xs text-muted-foreground">{presetSkillText(preset.id, 'summary', preset.summary)}</span>
                 {#if preset.tryIt.length > 0}
                   <span class="truncate text-xs text-muted-foreground/70">
-                    {t('skillMarket.tryIt', { tryIt: preset.tryIt })}
+                    {t('skillMarket.tryIt', { tryIt: presetSkillText(preset.id, 'tryIt', preset.tryIt) })}
                   </span>
                 {/if}
               </span>
