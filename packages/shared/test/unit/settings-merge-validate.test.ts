@@ -7,6 +7,7 @@ import {
   settingValuesProblems,
   settingsDeepEqual,
   settingsUpdateInputSchema,
+  settingsSchema,
   botsUpdateInputSchema,
   settingsCardsCompleteInputSchema,
   setupRequirementSchema,
@@ -111,6 +112,16 @@ describe('mergeThreeWay', () => {
     expect(settingsDeepEqual({ a: 1, b: { c: [1, 2] } }, { b: { c: [1, 2] }, a: 1 })).toBe(true);
     expect(settingsDeepEqual({ a: 1, b: undefined }, { a: 1 })).toBe(true);
     expect(settingsDeepEqual([1, 2], [2, 1])).toBe(false);
+  });
+});
+
+describe('appLanguage (renderer-synced UI language)', () => {
+  it('defaults to zh-CN and accepts en-US through settings.update', () => {
+    expect(settingsSchema.parse({}).appLanguage).toBe('zh-CN');
+    expect(settingsUpdateInputSchema.parse({ appLanguage: 'en-US' })).toEqual({
+      appLanguage: 'en-US',
+    });
+    expect(settingsUpdateInputSchema.safeParse({ appLanguage: 'fr-FR' }).success).toBe(false);
   });
 });
 

@@ -19,7 +19,12 @@ import {
   waitForRun,
   type TestStack,
 } from '@kepcup/testkit';
-import { BUTLER_SETUP_FIRST_QUESTION } from '../../src/domain/butler.js';
+import {
+  BUTLER_SETUP_FIRST_QUESTION,
+  butlerSetupFirstOptions,
+  butlerSetupFirstQuestion,
+  butlerSetupGreeting,
+} from '../../src/domain/butler.js';
 
 /**
  * 管家入职与组队（D70，docs/design/27 §2.2，todo P2；D92 T1a 改名 propose_bots）：
@@ -92,7 +97,9 @@ async function proposeTeam(stack: TestStack): Promise<{
 }> {
   const { core, llm } = stack;
   const { butler, conversationId } = await startButlerInterview(stack);
-  llm.script('mock-main', [step().replyToolCall('propose_bots', { bots: TEAM, note: '按你说的场景' })]);
+  llm.script('mock-main', [
+    step().replyToolCall('propose_bots', { bots: TEAM, note: '按你说的场景' }),
+  ]);
   await core.rpc.call('bots.interview.answer', { conversationId, text: '工作：编程与技术' });
   const approval = await waitFor(
     () => butlerApprovals(stack, conversationId).find((a) => a.status === 'pending') ?? null,
@@ -127,9 +134,9 @@ describe('butler interview + team proposal (D70 P2)', () => {
 
     // 无目录卡：首答直接开跑。
     const after = await listAllMessages(core, conversationId);
-    expect(after.some((m) => 'event' in m.content && m.content.event === 'bot_setup_path_question')).toBe(
-      false,
-    );
+    expect(
+      after.some((m) => 'event' in m.content && m.content.event === 'bot_setup_path_question'),
+    ).toBe(false);
     const request = llm.requestsFor('mock-main')[0]!;
     const tools = (request.body.tools as Array<{ function: { name: string } }>).map(
       (tool) => tool.function.name,
@@ -191,7 +198,8 @@ describe('butler interview + team proposal (D70 P2)', () => {
     const stack = await start();
     const { core, llm } = stack;
     const { approval } = await proposeTeam(stack);
-    const pushed: Array<{ id: string; directBotId: string | null; bot: Bot | null | undefined }> = [];
+    const pushed: Array<{ id: string; directBotId: string | null; bot: Bot | null | undefined }> =
+      [];
     const off = core.onEvent('conversation.updated', ({ conversation }) => {
       pushed.push({
         id: conversation.id,
@@ -304,7 +312,9 @@ describe('butler interview + team proposal (D70 P2)', () => {
         title: '规划写作 Bot',
         instruction: '根据用户的需求给出一个写作 Bot 的建议（名字、职责、理由）',
         taskSteps: [
-          step().replyText('建议建一个「文书」Bot：负责周报与文档的起草润色（提议卡需由对话轮提交）。'),
+          step().replyText(
+            '建议建一个「文书」Bot：负责周报与文档的起草润色（提议卡需由对话轮提交）。',
+          ),
         ],
         ack: '我去安排了。',
       }),
@@ -374,7 +384,9 @@ describe('butler interview + team proposal (D70 P2)', () => {
     llm.script('mock-main', [step().replyText('项目组建好了。')]);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
     const project = await waitFor(() =>
-      core.services.domain!.conversations.list().find((c) => c.type === 'project' && c.title === '发布项目组'),
+      core.services
+        .domain!.conversations.list()
+        .find((c) => c.type === 'project' && c.title === '发布项目组'),
     );
     expect(project.goal).toBe('负责版本发布的准备与复盘');
     expect(project.leadBotId).toBe(b.id);
@@ -396,12 +408,19 @@ describe('butler interview + team proposal (D70 P2)', () => {
         ],
       },
       TEAM[1]!,
-      { ...TEAM[2]!, routines: [{ title: '技术周刊', when: '0 9 * * 1', note: '整理本周技术动态' }] },
+      {
+        ...TEAM[2]!,
+        routines: [{ title: '技术周刊', when: '0 9 * * 1', note: '整理本周技术动态' }],
+      },
     ];
     // 先提交一个 when 非法的：工具直接退回，不出卡；再提交合法的。
     llm.script('mock-main', [
       step().replyToolCall('propose_bots', {
-        bots: [{ ...TEAM[0]!, routines: [{ title: 'x', when: 'banana', note: 'y' }] }, TEAM[1]!, TEAM[2]!],
+        bots: [
+          { ...TEAM[0]!, routines: [{ title: 'x', when: 'banana', note: 'y' }] },
+          TEAM[1]!,
+          TEAM[2]!,
+        ],
       }),
       step().replyToolCall('propose_bots', { bots: team }),
     ]);
@@ -422,7 +441,10 @@ describe('butler interview + team proposal (D70 P2)', () => {
       // Non-canonical keys are normalised ("02:0" → "2:0", review #5).
       routineSelection: ['0:0', '02:0'],
     })) as { approval: Approval };
-    expect(decided.approval.decision).toMatchObject({ selection: [0, 2], routineSelection: ['0:0', '2:0'] });
+    expect(decided.approval.decision).toMatchObject({
+      selection: [0, 2],
+      routineSelection: ['0:0', '2:0'],
+    });
 
     const created = await waitFor(() => (plainBots(stack).length === 2 ? plainBots(stack) : null));
     const writer = created.find((b) => b.name === '文书')!;
@@ -430,7 +452,9 @@ describe('butler interview + team proposal (D70 P2)', () => {
     const writerChat = core.services.domain!.conversations.listDirectByBot(writer.id)[0]!;
     const schedules = core.services.schedules!;
     const writerRows = schedules.listForBotInConversation(writer.id, writerChat.id);
-    expect(writerRows.map((r) => [r.title, r.origin, r.cron])).toEqual([['周报提醒', 'proposal', '0 17 * * 5']]);
+    expect(writerRows.map((r) => [r.title, r.origin, r.cron])).toEqual([
+      ['周报提醒', 'proposal', '0 17 * * 5'],
+    ]);
     const researcherChat = core.services.domain!.conversations.listDirectByBot(researcher.id)[0]!;
     expect(schedules.listForBotInConversation(researcher.id, researcherChat.id)).toHaveLength(1);
 
@@ -438,13 +462,41 @@ describe('butler interview + team proposal (D70 P2)', () => {
       (m) => 'event' in m.content && m.content.event === SCHEDULE_CREATED_EVENT,
     );
     expect(receipts).toHaveLength(1);
-    expect((receipts[0]!.content as { text: string }).text).toBe('已设置定时任务「周报提醒」：每周五 17:00');
+    expect((receipts[0]!.content as { text: string }).text).toBe(
+      '已设置定时任务「周报提醒」：每周五 17:00',
+    );
 
     const followUp = await waitFor(async () =>
       (await listAllMessages(core, conversationId)).find(
         (m) => 'event' in m.content && m.content.event === BUTLER_PROPOSAL_FOLLOWUP_EVENT,
       ),
     );
-    expect((followUp.content as { text: string }).text).toContain('已设置例行事项：文书「周报提醒」每周五 17:00');
+    expect((followUp.content as { text: string }).text).toContain(
+      '已设置例行事项：文书「周报提醒」每周五 17:00',
+    );
+  }, 30_000);
+
+  it('English UI: butler profile, greeting, first question and options are English', async () => {
+    const stack = await start();
+    await stack.core.rpc.call('settings.update', { appLanguage: 'en-US' });
+    const { butler, conversationId } = await startButlerInterview(stack);
+    expect(butler.name).toBe('Butler');
+    expect(butler.profile.identity.name).toBe('Butler');
+
+    const all = await listAllMessages(stack.core, conversationId);
+    expect(
+      all.some(
+        (m) =>
+          m.kind === 'text' &&
+          (m.content as { text: string }).text === butlerSetupGreeting('en-US'),
+      ),
+    ).toBe(true);
+    const card = all.find((m) => m.kind === 'system_event');
+    expect(card?.content).toMatchObject({
+      event: 'bot_setup_question',
+      text: butlerSetupFirstQuestion('en-US'),
+      options: [...butlerSetupFirstOptions('en-US')],
+    });
+    expect(butlerSetupFirstQuestion('en-US')).not.toBe(BUTLER_SETUP_FIRST_QUESTION);
   }, 30_000);
 });
