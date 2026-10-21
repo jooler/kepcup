@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { WikiOwner } from '@kepcup/shared';
+import { AppError, type WikiOwner } from '@kepcup/shared';
 
 import type { RunIdentity, ToolDefinition } from '../../src/agent/types.js';
 import {
@@ -237,42 +237,141 @@ describe('D92 T1b WP10：scope 解析与注册（resolveWikiScope / buildWikiToo
     })) as { content: string };
     expect(gone.content).toContain(`（来源提交者：bot_gone）`);
 
-    // mine 读取（默认）仍走 Bot 自己的 wiki 与既有 untrusted 包裹。
+    // 显式 mine 读取仍走 Bot 自己的 wiki 与既有 untrusted 包裹。
     fresh({ project: projectContext(), page: page('自己的页面'), sources: [BOT_ASSET] });
-    const mineRead = (await toolOf('wiki_read').execute({ path: 'pages/m.md' })) as {
+    const mineRead = (await toolOf('wiki_read').execute({
+      path: 'pages/m.md',
+      scope: 'mine',
+    })) as {
       content: string;
     };
     expect(mineRead.content).toContain('<untrusted>\n# 项目页');
     expect(harness.wiki.readPages).toEqual([{ owner: { kind: 'bot', id: MEMBER }, path: 'pages/m.md' }]);
   });
 
-  it('wiki_enqueue：默认 mine、显式 project 的 job payload（owner / createdBy / 执行者）', async () => {
+  it('wiki_enqueue：项目组里缺省 scope 写进项目 wiki（显式 mine 才写自己的），单聊里缺省写自己的', async () => {
     fresh({ project: projectContext() }, MEMBER, PROJECT);
-    // 默认 mine。
+    // 项目组里不传 scope → 共享的项目 wiki。
     await toolOf('wiki_enqueue').execute({
       source_type: 'url',
       ref: 'https://example.com/a',
       note: '资料',
     });
     expect(harness.wiki.enqueued[0]).toMatchObject({
-      owner: { kind: 'bot', id: MEMBER },
-      botId: MEMBER,
-      conversationId: PROJECT,
-      createdBy: { kind: 'bot', id: MEMBER },
-    });
-    // 显式 project。
-    await toolOf('wiki_enqueue').execute({
-      source_type: 'url',
-      ref: 'https://example.com/b',
-      note: '共享资料',
-      scope: 'project',
-    });
-    expect(harness.wiki.enqueued[1]).toMatchObject({
       owner: { kind: 'project', id: PROJECT },
       botId: MEMBER,
       conversationId: PROJECT,
       createdBy: { kind: 'bot', id: MEMBER },
     });
+    // 显式 mine → 自己的 wiki。
+    await toolOf('wiki_enqueue').execute({
+      source_type: 'url',
+      ref: 'https://example.com/b',
+      note: '个人经验',
+      scope: 'mine',
+    });
+    expect(harness.wiki.enqueued[1]).toMatchObject({
+      owner: { kind: 'bot', id: MEMBER },
+      botId: MEMBER,
+      conversationId: PROJECT,
+      createdBy: { kind: 'bot', id: MEMBER },
+    });
+    // 显式 project → 项目 wiki。
+    await toolOf('wiki_enqueue').execute({
+      source_type: 'url',
+      ref: 'https://example.com/c',
+      note: '共享资料',
+      scope: 'project',
+    });
+    expect(harness.wiki.enqueued[2]).toMatchObject({
+      owner: { kind: 'project', id: PROJECT },
+      botId: MEMBER,
+      conversationId: PROJECT,
+      createdBy: { kind: 'bot', id: MEMBER },
+    });
+
+    // 单聊里不传 scope → 自己的 wiki。
+    fresh({ project: null }, BOT, DIRECT);
+    await toolOf('wiki_enqueue').execute({
+      source_type: 'url',
+      ref: 'https://example.com/d',
+      note: '单聊资料',
+    });
+    expect(harness.wiki.enqueued[0]).toMatchObject({
+      owner: { kind: 'bot', id: BOT },
+      botId: BOT,
+      conversationId: DIRECT,
+    });
+  });
+
+  it('wiki_enqueue 的描述指明项目组里默认写项目 wiki、单聊里默认写自己的 wiki', async () => {
+    fresh({ project: projectContext() }, MEMBER, PROJECT);
+    const description = toolOf('wiki_enqueue').description;
+    expect(description).toContain('默认写进共享的项目 wiki');
+    expect(description).toContain('scope=mine');
+    const scopeDescription = (
+      toolOf('wiki_enqueue').parameters as { properties: { scope: { description: string } } }
+    ).properties.scope.description;
+    expect(scopeDescription).toContain('项目组对话里默认 project');
+  });
+
+  it('wiki_read：项目组里不传 scope 先读项目 wiki，项目 wiki 没有这一页时回落到自己的 wiki', async () => {
+    const page = (content: string) => (_owner: WikiOwner, _path: string) => ({
+      title: '页面',
+      content,
+    });
+    // ① 项目 wiki 里有这一页 → 读项目 wiki（按出处可信度包裹）。
+    fresh({
+      project: projectContext(),
+      page: page(`结论\n\n[源：a](../raw/_assets/${USER_ASSET.id}.json)`),
+      sources: [USER_ASSET],
+    });
+    const projectRead = (await toolOf('wiki_read').execute({ path: 'pages/p.md' })) as {
+      ok: boolean;
+      content: string;
+    };
+    expect(projectRead.ok).toBe(true);
+    expect(projectRead.content).toContain('# 页面');
+    expect(harness.wiki.readPages).toEqual([
+      { owner: { kind: 'project', id: PROJECT }, path: 'pages/p.md' },
+    ]);
+
+    // ② 项目 wiki 里没有这一页（NOT_FOUND）→ 回落到自己的 wiki。
+    fresh({
+      project: projectContext(),
+      page: (owner: WikiOwner, pagePath: string) => {
+        if (owner.kind === 'project') throw new AppError('NOT_FOUND', `页面不存在：${pagePath}`);
+        return { title: '个人页', content: '个人内容' };
+      },
+    });
+    const fallback = (await toolOf('wiki_read').execute({ path: 'pages/m.md' })) as {
+      ok: boolean;
+      content: string;
+    };
+    expect(fallback.ok).toBe(true);
+    expect(fallback.content).toContain('# 个人页');
+    expect(harness.wiki.readPages).toEqual([
+      { owner: { kind: 'project', id: PROJECT }, path: 'pages/m.md' },
+      { owner: { kind: 'bot', id: MEMBER }, path: 'pages/m.md' },
+    ]);
+
+    // ③ 显式 scope 决定读哪一边，不做回落。
+    fresh({
+      project: projectContext(),
+      page: (owner: WikiOwner, pagePath: string) => {
+        if (owner.kind === 'project') throw new AppError('NOT_FOUND', `页面不存在：${pagePath}`);
+        return { title: '个人页', content: '个人内容' };
+      },
+    });
+    const explicit = (await toolOf('wiki_read').execute({
+      path: 'pages/m.md',
+      scope: 'project',
+    })) as { ok: boolean; content: string };
+    expect(explicit.ok).toBe(false);
+    expect(explicit.content).toContain('页面不存在');
+    expect(harness.wiki.readPages).toEqual([
+      { owner: { kind: 'project', id: PROJECT }, path: 'pages/m.md' },
+    ]);
   });
 
   it('wiki_enqueue 的描述指明 file / attachment 来源必须是单个文件、目录要先列目录再逐文件登记', async () => {

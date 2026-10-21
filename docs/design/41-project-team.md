@@ -292,7 +292,7 @@ CREATE TABLE episodes (
 
 ### 8.5 工具、读写与可信度
 
-- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read`（按检索返回的引用读取）、`wiki_enqueue { scope }`（**默认** `mine`——发布到共享空间必须是有意为之）。仅在项目对话里出现 `project` / `all`。
+- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read { path, scope? }`（项目对话里不传就是先读项目 wiki、那一页不在项目 wiki 时再读自己的 wiki；其它对话默认读自己的 wiki）、`wiki_enqueue { scope }`（**项目对话里默认** `project`——群聊里沉淀的东西留在项目 wiki，不散落到成员的个人 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`）。仅在项目对话里出现 `project` / `all`。
 - **新增** `wiki_remove_source`（异步托管动作，同 `wiki_enqueue` 的非阻塞范式）：Bot 只能删自己创建的来源，负责人删任意；入队时与执行时各校验一次 ACL；执行 = 移除原件 + 台账，提交，并登记一次体检清理悬空引用（即 D85 §6 的 `wiki.deleteAsset` 的文本子集，本期首次实现）。**走 job（`wiki_remove_source`，不调用模型、不受预算延后）而不是同步执行**：删除要拿项目 wiki 的互斥锁，而锁可能正被一次几分钟的维护持有，工具与 RPC 都不能阻塞等它；界面靠 `wiki_changed` 刷新。
 - 用户从界面添加来源：网址或**粘贴文本**（`text` 来源类型**只给用户**：`wiki_enqueue` 工具的 `source_type` 枚举不含它，`enqueueIngest` 对 `text` 要求 `createdBy.kind==='user'`；台账 `sources[].type` 联合含 `text`，`ref` 只存正文前 80 字预览，长度上限 `WIKI_TEXT_SOURCE_MAX_CHARS` = 200 000）；本期不做界面上传文件——用户要入库文件，对 Bot 说「存到项目 wiki」，由 Bot 用 `wiki_enqueue` 的 file / attachment 类型入库。
 - **可信度**：用户创建的来源可信；Bot 创建的来源，以及由它参与综合的页面，其他 Bot 读取时包进 `<untrusted source="project_wiki">` 并标注创建者；页面按出处判定——全部出处为用户才算可信。
@@ -445,7 +445,7 @@ export const PROJECT_MODULES = [
 项目 wiki：{主题段}                       ← 有内容才出现，不设预算
 ```
 
-另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue scope=project`。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。项目 wiki 主题段（`<project_wiki_topics>`，位于 `<wiki_topics>` 之后，**不设预算**）除对话轮外也注入任务与外部智能体会话——任务要读得到团队知识目录。
+另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue`（项目组对话里默认就写进共享的项目 wiki，纯个人经验才显式传 `scope=mine`）。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。项目 wiki 主题段（`<project_wiki_topics>`，位于 `<wiki_topics>` 之后，**不设预算**）除对话轮外也注入任务与外部智能体会话——任务要读得到团队知识目录。
 
 ### 12.2 管家
 
@@ -587,7 +587,7 @@ WP11：设计与开发文档同步（删除各文档顶部的 D92 横幅并把�
 | # | 默认 → 实施结果 |
 |---|---|
 | 1 | 窗口 30 分钟、轻量模型照实施；阈值落为 `ROUTING_CONTINUATION_MIN_CONFIDENCE` 0.6、熔断 12 / 8（§17.5 勘误） |
-| 2 | `wiki_enqueue` 默认 `scope=mine`、`wiki_search` 项目组里默认 `all`（结果带 `[project]` / `[mine]` 前缀） |
+| 2 | `wiki_enqueue` 项目组里默认 `scope=project`（群聊里的沉淀留在项目 wiki；单聊里默认 `mine`）、`wiki_read` 项目组里不传 scope 先读项目 wiki、没有那一页时回落自己的 wiki、`wiki_search` 项目组里默认 `all`（结果带 `[project]` / `[mine]` 前缀） |
 | 3 | 「执行者付费」照实施；`enqueueIngest` 保留 `botId` 为执行者字段（WP9） |
 | 4 | 照实施（`PROJECT_MODULES.status='planned'` 灰显 + `ModulePlaceholder`） |
 | 5 | 照实施（`shell.projectView` 内存态，`chat.select()` 重置） |

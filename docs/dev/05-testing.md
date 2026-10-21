@@ -201,6 +201,7 @@ docker run --rm -v "$WT:$WT" -v "$NODE_DIR:$NODE_DIR:ro" -w "$WT" --user "$(id -
 - 界面元素使用 `data-testid` 定位，命名形如 `composer-input`、`draft-queue-item`、`approval-card-approve`。
 - 每个阶段的验收标准中凡是界面行为的，都要有对应的端到端测试。
 - **项目组相关 spec（D92）**：核心链 `project-compose`（双轮创建）、`project-chat`（创建后沟通 / 详情页）、`project-shell`（两行顶栏 / 模块 tab / 无右栏 / 详情页往返 / 窄屏）、`project-routing`（网关 route / self / none、续接、显式 @ 旁路——请求计数区分「你的名片」与「成员名册」两种轻量调用）、`episode-breaker`（`KEPCUP_TEST_EPISODE_LIMITS=2,2` 压阈值：暂停卡三态、沟通 tab 徽标、resume 补投、stop 后无新回合）、`project-wiki`（空态 / 用户粘贴文本入库 / 成员 `wiki_enqueue scope=project` / 删除来源 / 删除确认框 wiki 数）；既有 spec 适配项目组的有 `butler-proposal`（propose_project 改负责人）、`setting-card`、`memory`、`browser`（项目组走详情页概览绑定工作目录）、`workbench`、`external-agents`。单聊右栏的 `wiki.spec` 行为不变（`WikiBrowser` 复用）。
+- **wiki 归属的回归**：`packages/core/test/integration/wiki-project-default-scope.test.ts`——项目组对话里成员的一轮 `wiki_enqueue`（不传 `scope`）落到**项目 wiki**（job 的 owner、维护后的页面与台账），成员的个人 wiki 全程没被写；单聊里不传 `scope` 仍写自己的 wiki。单测 `packages/core/test/unit/wiki-tools.test.ts` 覆盖 `scope` 缺省与显式两套语义的解析。
 - 外部智能体（D72 P6，`external-agents.spec.ts`）：设置 `KEPCUP_FAKE_ACP_AGENT_BIN`（testkit `FAKE_ACP_AGENT_BIN`）+ `KEPCUP_FAKE_ACP_AGENT_SCRIPT`（`writeFakeAgentScript` 写的剧本）[+ `KEPCUP_FAKE_ACP_AGENT_RECORD`（`readFakeAgentRecord` 读）]，core 让目录的 `fake` 与额外的 `fake-sub`（订阅登录，onboarding 分支用）条目以 Electron 的 Node 运行 testkit 假 Agent（仅测试构建，打包产物剔除）；不设 `KEPCUP_MOCK_LLM_URL`（置空）即「只有智能体」的新用户。剧本的回合按 prompt 依次消耗：对话以外的后台任务会占用回合，用例先在设置「后台任务」里关闭。
 
 ### 外部智能体的真机项（D72）
