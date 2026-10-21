@@ -13,7 +13,7 @@
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { t } from '$lib/i18n';
+  import { i18n, t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -206,6 +206,16 @@
   // state says not completed and the platform allows it (e2e seam can hide it;
   // packaged builds always allow). Late settings loads are covered: the flag
   // flips only after settingsStore.settings arrives.
+  // Keep core's copy of the UI language in sync: prompts, butler copy, and
+  // onboarding/interview copy are generated in core and must follow the UI.
+  $effect(() => {
+    const settings = settingsStore.settings;
+    if (settings === null) return;
+    const language = i18n.locale === 'en-US' ? 'en-US' : 'zh-CN';
+    if (settings.appLanguage === language) return;
+    void settingsStore.update({ appLanguage: language }).catch(() => undefined);
+  });
+
   let onboardingChecked = false;
   $effect(() => {
     if (onboardingChecked) return;

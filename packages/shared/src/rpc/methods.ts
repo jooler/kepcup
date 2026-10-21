@@ -120,6 +120,7 @@ import {
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
+  appLanguageSchema,
   todoAssigneeSchema,
   todoEntrySchema,
   todoRunSchema,
@@ -288,6 +289,7 @@ export const settingsGetOutputSchema = settingsSchema;
 // inner defaults for missing keys and a partial update would erase stored
 // custom providers / model defaults.
 export const settingsUpdateInputSchema = z.object({
+  appLanguage: appLanguageSchema.optional(),
   customProviders: z.array(customProviderSchema).optional(),
   vendorProviders: z.array(vendorProviderSchema).optional(),
   defaultMainModel: z.string().optional(),

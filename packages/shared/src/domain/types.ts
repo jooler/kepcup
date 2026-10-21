@@ -694,7 +694,13 @@ export const inkcopLocalCollabSettingsSchema = z
   .catch({ enabled: false, systemBotId: '', apiKey: '', baseUrl: '' });
 export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettingsSchema>;
 
+/** UI language selected in the renderer; core mirrors it for prompts and deterministic copy. */
+export const appLanguageSchema = z.enum(['zh-CN', 'en-US']);
+export type AppLanguage = z.infer<typeof appLanguageSchema>;
+
 export const settingsSchema = z.object({
+  /** Renderer UI language; core reads it for prompts and onboarding copy. */
+  appLanguage: appLanguageSchema.default('zh-CN'),
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
   vendorProviders: z.array(vendorProviderSchema).default([]),

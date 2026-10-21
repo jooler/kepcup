@@ -3109,6 +3109,33 @@ export const enUS = {
   'settings.mcpTransportHttp': 'Streamable HTTP',
   'settings.providerKindCustom': 'custom',
   'settings.providerKindBuiltin': 'builtin',
+  'onboarding.language': 'Language',
+  'onboarding.languageHint':
+    'Chosen automatically from your system time zone; you can change it later in Settings → Appearance',
+  'sandbox.reason.limaMissing': 'Lima is not installed, so the enhanced sandbox is unavailable',
+  'sandbox.reason.limaNotCreated':
+    'Lima is installed, but the enhanced sandbox VM has not been created',
+  'sandbox.reason.vmNotRunning': 'The enhanced sandbox VM is not running',
+  'sandbox.reason.imageMissing': 'The enhanced sandbox image has not been imported',
+  'sandbox.reason.podmanMissing':
+    'Rootless Podman is not installed, so the enhanced sandbox is unavailable',
+  'sandbox.reason.platformUnsupported':
+    'The sandbox is not supported on this platform ({platform}); commands will not run',
+  'sandbox.reason.depsMissing': 'Sandbox dependencies are missing: {deps}',
+  'sandbox.reason.depsCheckFailed': 'Sandbox dependency check failed: {error}',
+  'sandbox.reason.selfTestFailed': 'Sandbox self-test failed (exit code {code})',
+  'sandbox.reason.initFailed': 'Sandbox initialization failed: {error}',
+  'sandbox.reason.wslMissing': 'WSL2 is not installed ({detail})',
+  'sandbox.reason.wslDisabled': 'WSL2 components are not enabled ({detail})',
+  'sandbox.reason.wsl1':
+    'The {distro} distribution is registered as WSL1 and cannot be used for the sandbox; re-import it as WSL2 in Settings',
+  'sandbox.reason.wslReboot':
+    'Administrator authorization is complete; restart Windows to continue',
+  'sandbox.reason.wslEnableReboot':
+    'WSL enablement is complete; restart Windows and the app will continue importing the distribution automatically',
+  'sandbox.reason.wslDistroMissing':
+    'WSL2 is ready, but the app private distribution has not been imported',
+  'sandbox.reason.wslConfigIncomplete': 'The distribution configuration is incomplete',
 } as const;
 
 export type MessageKey = keyof typeof enUS;

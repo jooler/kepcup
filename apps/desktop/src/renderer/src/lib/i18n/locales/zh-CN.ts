@@ -2948,6 +2948,26 @@ export const zhCN = {
   'settings.mcpTransportHttp': 'Streamable HTTP',
   'settings.providerKindCustom': '自定义',
   'settings.providerKindBuiltin': '内置',
+  'onboarding.language': '界面语言',
+  'onboarding.languageHint': '首次启动按系统时区自动选择；之后可在 设置 → 外观 修改',
+  'sandbox.reason.limaMissing': '未安装 Lima，增强沙箱不可用',
+  'sandbox.reason.limaNotCreated': 'Lima 已安装，但增强沙箱虚拟机尚未创建',
+  'sandbox.reason.vmNotRunning': '增强沙箱虚拟机未在运行',
+  'sandbox.reason.imageMissing': '增强沙箱镜像尚未导入',
+  'sandbox.reason.podmanMissing': '未安装 rootless Podman，增强沙箱不可用',
+  'sandbox.reason.platformUnsupported': '当前平台（{platform}）暂不支持沙箱，命令不会执行',
+  'sandbox.reason.depsMissing': '沙箱依赖缺失：{deps}',
+  'sandbox.reason.depsCheckFailed': '沙箱依赖检测失败：{error}',
+  'sandbox.reason.selfTestFailed': '沙箱自检命令失败（退出码 {code}）',
+  'sandbox.reason.initFailed': '沙箱初始化失败：{error}',
+  'sandbox.reason.wslMissing': 'WSL2 未安装（{detail}）',
+  'sandbox.reason.wslDisabled': 'WSL2 组件未启用（{detail}）',
+  'sandbox.reason.wsl1': '{distro} 发行版被注册为 WSL1，无法用于沙箱；请在设置页重新导入（WSL2）',
+  'sandbox.reason.wslReboot': '管理员授权已完成，请重启 Windows 后继续',
+  'sandbox.reason.wslEnableReboot':
+    'WSL 启用命令已完成；请重启 Windows，重启后应用会自动继续导入发行版',
+  'sandbox.reason.wslDistroMissing': 'WSL2 已就绪，应用私有发行版尚未导入',
+  'sandbox.reason.wslConfigIncomplete': '发行版配置未完成',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;
