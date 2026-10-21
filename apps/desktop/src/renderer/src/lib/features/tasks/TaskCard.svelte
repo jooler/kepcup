@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    ChevronRight,
     CircleCheck,
     CircleSlash,
     CircleX,
@@ -29,8 +30,21 @@
    * rounded-[22px]，对齐 ChatMessageRow / MessageBody 的 Bot 气泡。
    * W3（D78）：中断卡也可重试；中断前留下外部副作用（已完成 / 结果未知）的，
    * 按钮是「检查后重试」，展开台账清单、勾「我已核实」后才能重试。
+   * 点击卡面（按钮以外）或「查看执行过程」打开任务执行过程页
+   * （docs/design/42-task-run-view.md）。键盘入口是「查看执行过程」按钮。
    */
   let { taskId }: { taskId: string } = $props();
+
+  function openRun(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (target !== null && target.closest('button, a, input, select, textarea, label') !== null) {
+      return;
+    }
+    // 拖选文字后的松手也是 click：不打断选择，也不误开执行过程页。
+    if (window.getSelection()?.isCollapsed === false) return;
+    const card = event.currentTarget as HTMLElement;
+    tasks.openDetail(taskId, card.querySelector<HTMLElement>('[data-testid="task-open-run"]'));
+  }
 
   $effect(() => {
     void tasks.ensure(taskId);
@@ -90,14 +104,19 @@
     >{t('task.loading')}</span
   >
 {:else}
+  <!-- 卡面点击是鼠标便利；键盘入口是卡底的「查看执行过程」按钮（避免在 role=button
+       里嵌套重试 / 取消按钮）。 -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="w-full border p-3 text-sm {narrowLayout.narrow
+    class="w-full cursor-pointer border p-3 text-sm transition-colors hover:bg-accent/25 {narrowLayout.narrow
       ? 'max-w-[calc(100%-32px)]'
       : 'max-w-[78%]'} rounded-[22px] {model.tone === 'error'
       ? 'border-destructive/40 bg-destructive/5'
       : 'bg-background/80'}"
     data-testid={`task-card-${taskId}`}
     data-task-state={task.state}
+    onclick={openRun}
   >
     <div class="flex items-center gap-2 font-medium">
       <ListChecks class="size-4 shrink-0 text-sky-600" aria-hidden="true" />
@@ -145,9 +164,12 @@
     {/if}
     {#if pendingApprovals.length > 0}
       <!-- 中途权限卡只在输入区上方的停靠区渲染（12-ui-layout 焦点三），卡上只留提示。 -->
-      <p class="mt-2 text-xs text-amber-700 dark:text-amber-400" data-testid="task-pending-approvals"
-        >{t('task.waitingApproval')}</p
+      <p
+        class="mt-2 text-xs text-amber-700 dark:text-amber-400"
+        data-testid="task-pending-approvals"
       >
+        {t('task.waitingApproval')}
+      </p>
     {/if}
     {#if model.progress !== null}
       <p class="mt-1.5 line-clamp-2 text-xs text-muted-foreground" data-testid="task-progress">
@@ -201,39 +223,54 @@
       </p>
     {/if}
 
-    {#if model.canCancel || model.canRetry}
-      <div class="mt-2 flex justify-end gap-2">
-        {#if model.canRetry && model.needsReview}
-          <Button
-            size="sm"
-            variant="outline"
-            class="h-7"
-            disabled={busy || reviewing}
-            onclick={() => (reviewing = true)}
-            data-testid="task-review-open">{t('task.reviewRetry')}</Button
-          >
-        {:else if model.canRetry}
-          <Button
-            size="sm"
-            variant="outline"
-            class="h-7"
-            disabled={busy}
-            onclick={() => void retry()}
-            data-testid="task-retry">{t('task.retry')}</Button
-          >
-        {/if}
-        {#if model.canCancel}
-          <Button
-            size="sm"
-            variant="outline"
-            class="h-7"
-            disabled={busy}
-            onclick={() => void cancel()}
-            data-testid="task-cancel">{t('task.cancel')}</Button
-          >
-        {/if}
-      </div>
-    {/if}
+    <div class="mt-2 flex items-center justify-between gap-2">
+      <button
+        type="button"
+        class="inline-flex items-center gap-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        title={t('task.run.open')}
+        onclick={(event) => {
+          event.stopPropagation();
+          tasks.openDetail(taskId, event.currentTarget);
+        }}
+        data-testid="task-open-run"
+      >
+        {t('task.run.open')}
+        <ChevronRight class="size-3.5" aria-hidden="true" />
+      </button>
+      {#if model.canCancel || model.canRetry}
+        <div class="flex gap-2">
+          {#if model.canRetry && model.needsReview}
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-7"
+              disabled={busy || reviewing}
+              onclick={() => (reviewing = true)}
+              data-testid="task-review-open">{t('task.reviewRetry')}</Button
+            >
+          {:else if model.canRetry}
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-7"
+              disabled={busy}
+              onclick={() => void retry()}
+              data-testid="task-retry">{t('task.retry')}</Button
+            >
+          {/if}
+          {#if model.canCancel}
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-7"
+              disabled={busy}
+              onclick={() => void cancel()}
+              data-testid="task-cancel">{t('task.cancel')}</Button
+            >
+          {/if}
+        </div>
+      {/if}
+    </div>
     {#if reviewing && model.canRetry}
       <TaskEffectsReview
         {taskId}

@@ -51,6 +51,7 @@
 | [39-workbench.md](39-workbench.md) | 工作台（**已定稿，实施中**；D92 修订：项目组执行者默认 @ 负责人）：对话之外统筹全局——事项（待办 + 定时派活，指派给 Bot / 项目组，状态 draft→scheduled→in_progress→delivered→done）、备忘（闪念，可转事项）、管家接管（`list/create/update/close_todo`、`list/create/update/delete_memo`）；复用 `schedules` 计时（重建：`bot_id` 可空、`origin` 增 `workbench`、增 `todo_id`），到点以「工作台代你发出」的可见用户消息派发，不受主动消息护栏约束；交付追踪回流待验收；管家写权限按「是否用户本人触发」由宿主强制（D90） |
 | [40-capability-mounting.md](40-capability-mounting.md) | 能力目录与按需挂载（**已实现**）：对话轮只拿 `<capabilities>` 能力目录 + 只读两件套 `capability_search` / `capability_call`，不逐个挂外部工具；`start_task.capabilities` 声明能力，任务只挂声明的能力、其余经两件套兜底；无绑定邮箱不挂邮件工具（D91） |
 | [41-project-team.md](41-project-team.md) | 项目组（**已实施 2026-10-18，D92**；任务书与各 WP 实施记录见 [todo/project](../../todo/project/README.md)）：群聊升级为协作空间——项目组是一种会话（`conversations.type='project'`，必有负责人，`CHECK` 保证）；没有 `@` 的消息 → 上一位回话者续接判断 → 负责人网关（`self` / 静默 `route` / `none`），取消全员广播判断；连锁重构为协作回合 + 熔断（修复任务结算唤醒不继承连锁的防环缺口）；文档模块改为项目 wiki（复用 Bot wiki 引擎，共享单写入维护 loop，来源条目有创建者）；模块框架（`PROJECT_MODULES` 注册表 + 宿主强制写权限，看板 / 日历 / OKR 下期）；两行顶栏 + 重叠头像 + 设置按钮，详情页入内容区，群聊无右栏；全套改名（目录 `workdir`、任务执行根 `cwd`、`group → project`、`chain → episode`），纯改名先行；worktree 本期评估为不需要 |
+| [42-task-run-view.md](42-task-run-view.md) | 任务执行过程页：点击任务卡后原对话组件 `display: none`，主区改为该任务的 Agent 消息列表（`runs.steps`：助手说明、工具调用 + 结果、进度、追加指令）；顶部返回、任务名、状态与 metadata；运行中经事件 + 1.2s 轮询刷新（已实现，2026-10-21） |
 
 ## 尚未讨论（暂不入文档）
 
