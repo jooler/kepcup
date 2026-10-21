@@ -116,7 +116,7 @@ interface AgentCatalogEntry {
 ## 3 Bot 指定 Agent
 
 - 运行配置的「主模型」选择器改为分组下拉「模型 / 智能体」：模型组 = 现有内置模型；智能体组 = 已启用（`ready` 或 `needs_auth`）的 Agent。选模型 → `runtime.agent.id = ''`（内置引擎，其余行为不变）；选 Agent → 展开 Agent 专属设置：
-  - **模型 / 推理强度**：来自该 Agent 会话返回的 config options（类别 `model` / `thought_level`），缓存后供下拉；留空 = Agent 默认。
+  - **模型 / 推理强度**：来自该 Agent 会话返回的 config options（类别 `model` / `thought_level`），缓存后供下拉；也可手填自定义模型。留空 = 设置页里该 Agent 的默认模型，再空 = Agent 默认。设置页「智能体」可探测模型并配置该默认模型；选 Agent 时自动带入，未选模型的既有 Bot 在运行时回退。
   - **权限档位**：`read_only` / `workspace`（默认）/ `ask`（界面名「编辑前确认（沙箱内命令自动）」）；Agent 不具备 OS 沙箱时 `workspace` 档的命令也逐条确认（§6）。`ask` 档只逐次确认**文件工具**的写入与联网读取；Agent 能确认在其 OS 沙箱内的命令（目前只有 Claude）自动放行，包括它们的写入（f2b9627，见 [13 §外部智能体引擎](13-permissions.md#外部智能体引擎d72) 的档位表）。
   - **注入能力**：能力包勾选清单（§4），显示预计注入的工具数。
 - 「轻量模型」保留，语义为「该 Bot 后台任务用的内置模型」；没有内置模型时隐藏（后台任务走 §8）。

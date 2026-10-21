@@ -20,6 +20,7 @@ function harness(
   sandbox?: AdapterDeps['sandbox'],
   allowlist?: AdapterDeps['allowlist'],
   appConnections?: AdapterDeps['appConnections'],
+  agentOptions?: AdapterDeps['agentOptions'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -104,6 +105,7 @@ function harness(
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(allowlist !== undefined ? { allowlist } : {}),
     ...(appConnections !== undefined ? { appConnections } : {}),
+    ...(agentOptions !== undefined ? { agentOptions } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -224,6 +226,51 @@ describe('P1 setting item writes', () => {
         rig.target,
       ),
     ).toThrow(/连接 missing 不存在或已删除/);
+  });
+
+  it('agents.external stores the per-agent default model and keeps it per agent', () => {
+    const rig = harness();
+    const spec = item('agents.external');
+    const adapter = rig.adapters(spec);
+    adapter.write!(
+      spec,
+      { next: { agent: 'codex', enabled: true, model: '  gpt-5  ' }, secrets: {} },
+      rig.target,
+    );
+    expect(rig.settings().agents.codex).toMatchObject({ enabled: true, model: 'gpt-5' });
+    expect(adapter.read(spec, rig.target, { agent: 'codex' }).values).toMatchObject({
+      agent: 'codex',
+      enabled: true,
+      model: 'gpt-5',
+    });
+  });
+
+  it('bot.agent lists the cached model options probed from the selected agent', () => {
+    const rig = harness({}, {}, undefined, undefined, undefined, undefined, (agentId) =>
+      agentId === 'codex'
+        ? {
+            models: [
+              { value: 'gpt-5', name: 'GPT-5', description: 'frontier' },
+              { value: 'o4', name: 'o4', description: '' },
+            ],
+            efforts: [],
+            fetchedAt: 1,
+            error: null,
+          }
+        : null,
+    );
+    const itemSpec = item('bot.agent');
+    const adapter = rig.adapters(itemSpec);
+    adapter.write!(
+      itemSpec,
+      { next: { agent: 'codex', model: '', permission: 'ask' }, secrets: {} },
+      rig.target,
+    );
+    const modelField = itemSpec.fields.find((field) => field.name === 'model')!;
+    expect(adapter.options!(modelField, itemSpec, rig.target)).toEqual([
+      { value: 'gpt-5', label: 'GPT-5（frontier）' },
+      { value: 'o4', label: 'o4' },
+    ]);
   });
 
   it('switching a bot onto an external agent is widening; dropping to read-only is not', () => {

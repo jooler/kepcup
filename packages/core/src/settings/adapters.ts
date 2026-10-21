@@ -11,6 +11,7 @@ import {
   vendorsForCapability,
   webSearchProviderSchema,
   type AgentCatalogEntry,
+  type AgentOptions,
   type CapabilityModelKey,
   type McpServer,
   type McpToolPolicy,
@@ -177,6 +178,8 @@ export interface AdapterDeps {
   };
   unattended?: { effective(): UnattendedState; disable(reason?: string): UnattendedState };
   agentCatalog?: () => readonly AgentCatalogEntry[];
+  /** 最近一次探测缓存的模型 / 推理强度选项（未探测 = null）。 */
+  agentOptions?: (agentId: string) => AgentOptions | null;
   /**
    * 本地向量来源。与设置页 `embedding.configure` 同一方法（重置维度并排队重建）；
    * 缺省时只写 `settings.embedding.source`。
@@ -773,10 +776,11 @@ function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
       const focused = str(focus?.agent);
       if (focused !== undefined && focused.length > 0) {
         const on = agents[focused]?.enabled === true;
+        const model = agents[focused]?.model ?? '';
         return snapshot(
           on ? 'configured' : status === 'configured' ? 'partial' : 'unconfigured',
-          { agent: focused, enabled: on },
-          summary,
+          { agent: focused, enabled: on, model },
+          model.length > 0 ? `${summary} · 默认模型 ${clean(model, 40)}` : summary,
           {
             login: on,
           },
@@ -793,21 +797,35 @@ function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
             label: clean(entry.name),
           }))
         : staticOptions(field),
+    normalize: (_item, values) => {
+      const next = { ...values };
+      if ('model' in next && typeof next.model === 'string') next.model = next.model.trim();
+      return { ok: true, values: next };
+    },
     write: (_item, { next }) => {
       const agent = str(next.agent) ?? '';
       if (agent.length === 0) throw new AppError('INVALID_INPUT', '需要选择智能体');
       if (!(deps.agentCatalog?.() ?? []).some((entry) => entry.id === agent)) {
         throw new AppError('INVALID_INPUT', `智能体「${clean(agent)}」不在目录中`);
       }
-      // 只改这一个智能体的 enabled（installedVersion / source 由 core 的 agents.* 维护）。
+      // 只改这一个智能体的 enabled / 默认模型（installedVersion / source 由 core 的 agents.* 维护）。
       const latest = deps.settings.get().agents;
       const previous = latest[agent] ?? {
         enabled: false,
         source: 'managed' as const,
         loadUserConfig: false,
+        model: '',
       };
+      const model = str(next.model);
       deps.settings.update({
-        agents: { ...latest, [agent]: { ...previous, enabled: bool(next.enabled) ?? true } },
+        agents: {
+          ...latest,
+          [agent]: {
+            ...previous,
+            enabled: bool(next.enabled) ?? true,
+            ...(model !== undefined ? { model } : {}),
+          },
+        },
       });
     },
     // 登录由用户在卡片里完成：一律需要用户自己操作。
@@ -1189,7 +1207,7 @@ function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
         ? snapshot('configured', values, '内置引擎')
         : snapshot('configured', values, `外部智能体 ${clean(agent.id, 30)}`);
     },
-    options: (field) => {
+    options: (field, _item, target) => {
       if (field.name === 'agent') {
         return [
           { value: '', label: '内置引擎' },
@@ -1198,6 +1216,18 @@ function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
             label: clean(entry.name),
           })),
         ];
+      }
+      if (field.name === 'model' && field.options === 'agent-models') {
+        const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
+        const agentId = bot?.profile.runtime.agent.id ?? '';
+        const options = agentId.length > 0 ? (deps.agentOptions?.(agentId) ?? null) : null;
+        return (options?.models ?? []).map((model) => ({
+          value: model.value,
+          label:
+            model.description.length > 0
+              ? `${clean(model.name, 40)}（${clean(model.description, 60)}）`
+              : clean(model.name, 40),
+        }));
       }
       return staticOptions(field);
     },

@@ -125,6 +125,8 @@ export const agentViewSchema = z.object({
   installedVersion: z.string().nullable(),
   source: z.enum(['managed', 'system']),
   loadUserConfig: z.boolean(),
+  /** 设置页里给该智能体配置的默认模型（'' = 智能体自己的默认）。 */
+  defaultModel: z.string().default(''),
   /**
    * 生效的并发上限：能同进程并行会话的 Agent（`features.parallelSessions`）取
    * `settings.providerConcurrency['agent:{id}']`（缺省 2），其余恒为 1。
@@ -304,6 +306,8 @@ export const agentsConfigureInputSchema = z.object({
   loadUserConfig: z.boolean().optional(),
   /** 并发上限（`settings.providerConcurrency['agent:{id}']`）。 */
   concurrency: z.number().int().min(1).max(16).optional(),
+  /** 默认模型（'' = 智能体自己的默认）。 */
+  model: z.string().max(500).optional(),
 });
 export const agentsTestOutputSchema = z.object({
   agent: agentViewSchema,
@@ -314,6 +318,19 @@ export const agentsOptionsInputSchema = z.object({
   refresh: z.boolean().optional(),
 });
 export const agentsOptionsOutputSchema = z.object({ options: agentOptionsSchema });
+/**
+ * 某个模型下的推理强度选项：`model` 为空 = 智能体当前模型（通常是默认）。
+ * 选项来自 `session/set_config_option` 后 Agent 返回的 configOptions——不同
+ * 模型可能暴露不同的 `thought_level`。
+ */
+export const agentsEffortsInputSchema = z.object({
+  id: agentIdSchema,
+  model: z.string().max(500).optional(),
+  refresh: z.boolean().optional(),
+});
+export const agentsEffortsOutputSchema = z.object({
+  efforts: z.array(agentOptionChoiceSchema),
+});
 
 /** 事件 `agent.status`：某个 Agent 的视图变化。 */
 export const agentStatusPayloadSchema = z.object({ agent: agentViewSchema });

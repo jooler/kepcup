@@ -1,6 +1,28 @@
-import type { AgentBotRef, AgentOptions, AgentTestResult, AgentView } from '@kepcup/shared';
+import { agentViewSchema } from '@kepcup/shared';
+import type {
+  AgentBotRef,
+  AgentOptionChoice,
+  AgentOptions,
+  AgentTestResult,
+  AgentView,
+} from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
+
+/**
+ * 归一化 core 送来的智能体视图。
+ *
+ * 契约里 `defaultModel` 等次要字段是可选的（`z.string().default('')`），core
+ * 与渲染层版本不一致时载荷可能缺这些字段——直接进 UI 状态会让整页因一个
+ * `undefined.length` 崩掉。这里按契约 schema 过一遍补齐默认值；schema 校验
+ * 不过（字段确实不认识）时保留原载荷，不吞掉问题。
+ */
+function normalizeAgent(payload: AgentView): AgentView {
+  const parsed = agentViewSchema.safeParse(payload);
+  if (parsed.success) return parsed.data;
+  // schema 校验不过（core 送了不认识的字段）：仍补齐可选字段，别让 UI 崩。
+  return { ...payload, defaultModel: payload.defaultModel ?? '' };
+}
 
 /**
  * 外部智能体（D72，docs/design/28-external-agents-acp.md §2.2 / §3）的客户端
@@ -12,6 +34,8 @@ class AgentsState {
   experimental = $state(false);
   agents = $state<AgentView[]>([]);
   options = $state<Record<string, AgentOptions>>({});
+  /** `${agentId}\0${model}` → 该模型下的推理强度选项（模型切换后按需探测）。 */
+  efforts = $state<Record<string, AgentOptionChoice[]>>({});
   loaded = $state(false);
   #started = false;
   #settingsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -25,10 +49,12 @@ class AgentsState {
     });
   }
 
-  #upsert(agent: AgentView): void {
-    const index = this.agents.findIndex((item) => item.id === agent.id);
-    if (index === -1) this.agents = [...this.agents, agent];
-    else this.agents = this.agents.map((item, i) => (i === index ? agent : item));
+  #upsert(agent: AgentView): AgentView {
+    const next = normalizeAgent(agent);
+    const index = this.agents.findIndex((item) => item.id === next.id);
+    if (index === -1) this.agents = [...this.agents, next];
+    else this.agents = this.agents.map((item, i) => (i === index ? next : item));
+    return next;
   }
 
   get(id: string): AgentView | null {
@@ -52,7 +78,7 @@ class AgentsState {
       agents: AgentView[];
     };
     this.experimental = result.experimental;
-    this.agents = result.agents;
+    this.agents = result.agents.map((agent) => normalizeAgent(agent));
     this.loaded = true;
   }
 
@@ -66,8 +92,7 @@ class AgentsState {
       id,
       ...(source !== undefined ? { source } : {}),
     })) as { agent: AgentView };
-    this.#upsert(agent);
-    return agent;
+    return this.#upsert(agent);
   }
 
   async disable(
@@ -80,7 +105,7 @@ class AgentsState {
       applied: boolean;
     };
     this.#upsert(result.agent);
-    return result;
+    return { applied: result.applied, affectedBots: result.affectedBots };
   }
 
   async uninstall(
@@ -93,7 +118,7 @@ class AgentsState {
       applied: boolean;
     };
     this.#upsert(result.agent);
-    return result;
+    return { applied: result.applied, affectedBots: result.affectedBots };
   }
 
   async login(
@@ -101,14 +126,12 @@ class AgentsState {
     input: { methodId?: string; apiKey?: string; input?: string } = {},
   ): Promise<AgentView> {
     const { agent } = (await core.call('agents.login', { id, ...input })) as { agent: AgentView };
-    this.#upsert(agent);
-    return agent;
+    return this.#upsert(agent);
   }
 
   async logout(id: string): Promise<AgentView> {
     const { agent } = (await core.call('agents.logout', { id })) as { agent: AgentView };
-    this.#upsert(agent);
-    return agent;
+    return this.#upsert(agent);
   }
 
   async test(id: string): Promise<AgentTestResult> {
@@ -128,13 +151,30 @@ class AgentsState {
     return options;
   }
 
+  async loadEfforts(
+    id: string,
+    model: string,
+    refresh = false,
+  ): Promise<AgentOptionChoice[]> {
+    const key = `${id}\u0000${model}`;
+    const cached = this.efforts[key];
+    if (!refresh && cached !== undefined) return cached;
+    const { efforts } = (await core.call('agents.efforts', {
+      id,
+      model,
+      refresh,
+    })) as { efforts: AgentOptionChoice[] };
+    this.efforts = { ...this.efforts, [key]: efforts };
+    return efforts;
+  }
+
   /**
    * 高级设置（加载个人配置 / 并发上限）：逐 Agent 交给 core 合并写入——不在
    * 渲染端拿可能过期的 settings.agents 整表回写。
    */
   async configure(
     id: string,
-    patch: { loadUserConfig?: boolean; concurrency?: number },
+    patch: { loadUserConfig?: boolean; concurrency?: number; model?: string },
   ): Promise<void> {
     const { agent } = (await core.call('agents.configure', { id, ...patch })) as {
       agent: AgentView;

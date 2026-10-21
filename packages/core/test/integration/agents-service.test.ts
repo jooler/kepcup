@@ -37,6 +37,17 @@ const MODEL_OPTIONS: FakeAgentScript['configOptions'] = [
       { value: 'smart', name: 'Smart' },
     ],
   },
+  {
+    id: 'effort',
+    name: 'Effort',
+    category: 'thought_level',
+    type: 'select',
+    currentValue: 'low',
+    options: [
+      { value: 'low', name: 'Low' },
+      { value: 'high', name: 'High' },
+    ],
+  },
 ];
 
 async function startStack(
@@ -127,12 +138,22 @@ describe('agents service (P4, fake agents)', () => {
     const configured = await call<{ agent: AgentView }>(stack, 'agents.configure', {
       id: 'fake',
       concurrency: 3,
+      model: 'smart',
     });
-    expect(configured.agent).toMatchObject({ enabled: true, loadUserConfig: true, concurrency: 3 });
+    expect(configured.agent).toMatchObject({
+      enabled: true,
+      loadUserConfig: true,
+      concurrency: 3,
+      defaultModel: 'smart',
+    });
     const stored = await call<{
-      agents: Record<string, { enabled: boolean; installedVersion?: string }>;
+      agents: Record<string, { enabled: boolean; installedVersion?: string; model?: string }>;
     }>(stack, 'settings.get');
-    expect(stored.agents.fake).toMatchObject({ enabled: true, installedVersion: '0.0.0' });
+    expect(stored.agents.fake).toMatchObject({
+      enabled: true,
+      installedVersion: '0.0.0',
+      model: 'smart',
+    });
     await expect(
       call(stack, 'settings.update', {
         agents: { fake: { enabled: true, installedVersion: '../../../../tmp/p' } },
@@ -145,6 +166,12 @@ describe('agents service (P4, fake agents)', () => {
       { id: 'fake', refresh: true },
     );
     expect(options.models.map((model) => model.value)).toEqual(['fast', 'smart']);
+    const { efforts } = await call<{ efforts: Array<{ value: string }> }>(
+      stack,
+      'agents.efforts',
+      { id: 'fake', model: 'smart', refresh: true },
+    );
+    expect(efforts.map((effort) => effort.value)).toEqual(['low', 'high']);
 
     const tested = await call<{ result: { ok: boolean; reply: string; error: string | null } }>(
       stack,

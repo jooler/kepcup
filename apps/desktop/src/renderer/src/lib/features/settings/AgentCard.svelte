@@ -8,6 +8,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
   import {
     Dialog,
     DialogContent,
@@ -62,8 +63,15 @@
   let loginLoading = $state(false);
   let apiKeyDraft = $state('');
   let loginInputDraft = $state('');
+  let optionsBusy = $state(false);
 
   const icon = $derived(agentIconUrl(agent.icon));
+  const detected = $derived(agentsStore.options[agent.id]);
+  /**
+   * 默认模型：core 与渲染层版本不一致时载荷可能缺这个字段（契约里它是可选的
+   * `z.string().default('')`），缺省按「智能体自己的默认」处理，不让整页崩掉。
+   */
+  const defaultModel = $derived(agent.defaultModel ?? '');
 
   const STATUS_VARIANT: Record<AgentStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     available: 'outline',
@@ -142,6 +150,21 @@
       onTested?.(result);
       if (result.ok) onSaved?.();
     });
+  }
+
+  async function detectModels(): Promise<void> {
+    optionsBusy = true;
+    try {
+      await agentsStore.loadOptions(agent.id, true);
+    } catch (error) {
+      toast.error(t('agents.actionFailed', { error: errorOf(error) }));
+    } finally {
+      optionsBusy = false;
+    }
+  }
+
+  async function setDefaultModel(value: string): Promise<void> {
+    await run(() => agentsStore.configure(agent.id, { model: value }));
   }
 
   async function openLogin(): Promise<void> {
@@ -325,6 +348,63 @@
         {t('agents.testFailed', { error: testResult.error ?? '' })}
       </p>
     {/if}
+  {/if}
+
+  {#if agent.enabled && agent.status !== 'installing'}
+    <div class="space-y-1.5 rounded-lg bg-muted/40 p-3" data-testid={`agent-options-${agent.id}`}>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-medium">{t('agents.detectedOptions')}</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="ml-auto h-6 px-2 text-xs"
+          disabled={optionsBusy}
+          onclick={() => void detectModels()}
+          data-testid={`agent-options-refresh-${agent.id}`}
+        >
+          {optionsBusy ? t('agents.detectingOptions') : t('agents.detectOptions')}
+        </Button>
+      </div>
+      {#if detected === undefined}
+        <p class="text-xs text-muted-foreground">{t('agents.detectOptionsHint')}</p>
+      {:else if detected.error !== null}
+        <p class="text-xs text-destructive">
+          {t('agents.optionsError', { error: detected.error })}
+        </p>
+      {:else}
+        <p class="text-xs text-muted-foreground">
+          {t('agents.models')}：{detected.models.length > 0
+            ? detected.models.map((model) => model.name).join('、')
+            : t('agents.optionsNone')}
+        </p>
+        {#if detected.efforts.length > 0}
+          <p class="text-xs text-muted-foreground">
+            {t('agents.efforts')}：{detected.efforts.map((effort) => effort.name).join('、')}
+          </p>
+        {/if}
+      {/if}
+      <p class="text-xs text-muted-foreground">{t('agents.detectedOptionsHint')}</p>
+      <div class="grid gap-1.5 border-t pt-2">
+        <Label for={`agent-default-model-${agent.id}`} class="text-xs">{t('agents.defaultModel')}</Label>
+        <select
+          id={`agent-default-model-${agent.id}`}
+          class="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+          value={defaultModel}
+          disabled={busy}
+          onchange={(event) => void setDefaultModel(event.currentTarget.value)}
+          data-testid={`agent-default-model-${agent.id}`}
+        >
+          <option value="">{t('agents.defaultModelAgent')}</option>
+          {#each detected?.models ?? [] as choice (choice.value)}
+            <option value={choice.value}>{choice.name}</option>
+          {/each}
+          {#if defaultModel.length > 0 && !(detected?.models ?? []).some((choice) => choice.value === defaultModel)}
+            <option value={defaultModel}>{defaultModel}</option>
+          {/if}
+        </select>
+        <p class="text-xs text-muted-foreground">{t('agents.defaultModelHint')}</p>
+      </div>
+    </div>
   {/if}
 
   {#if loginOpen}

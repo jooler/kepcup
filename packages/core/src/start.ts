@@ -1081,7 +1081,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
       if (entry === null) return null;
-      return { id: agentId, permission: entry.tier === 'preview' ? 'ask' : 'workspace' };
+      return {
+        id: agentId,
+        permission: entry.tier === 'preview' ? 'ask' : 'workspace',
+        model: current.agents[agentId]?.model ?? '',
+      };
     });
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
@@ -2046,6 +2050,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       unattended,
       agentCatalog: () => agentCatalog,
+      agentOptions: (agentId) => agentsService.optionsCached(agentId),
       embedding: {
         configure: (input) => {
           memory.configureEmbedding(input);

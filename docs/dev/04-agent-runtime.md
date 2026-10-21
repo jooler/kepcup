@@ -126,7 +126,7 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 | 结束判断 | `PromptResponse.stopReason`：`end_turn` → completed；`cancelled` → cancelled（`skip_reply` 引起的取消结算为不发最终文本的 completed）；`refusal` / `max_tokens` / `max_turn_requests` → failed |
 | 用量 | `PromptResponse.usage`（ACP 不稳定字段；Provider 声明口径：本 turn 或按会话累计做差；缺失时每轮一条零 token 行）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算 |
 | 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`——只有声明 `backgroundNoNativeTools` 的 Provider 可用；空私有临时 cwd；不挂桥、不复用、结束 `session/close`），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验，只在输出无法解析时重试 1 次；后台 loop 经 `llm-router` 在无内置模型时使用；仅外部后端时续接 L2 仲裁关闭 |
-| 模型 | `session/set_config_option`（`model` / `thought_level`），取自 `runtime.agent.model` / `runtime.agent.effort`，空则用智能体默认 |
+| 模型 | `session/set_config_option`（`model` / `thought_level`），model 取 `runtime.agent.model`，空则回退 `settings.agents[id].model`（设置页默认模型），再空用智能体默认；effort 取 `runtime.agent.effort`，空则用智能体默认。UI 的强度选项按所选模型经 `agents.efforts`（探测会话 `set_config_option` 后读返回的 configOptions）取得；该模型没有 `thought_level` 时隐藏设置并使用默认 |
 
 约束：
 

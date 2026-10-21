@@ -300,6 +300,9 @@
   let pendingAgentId = $state<string | null>(null);
   let switchDialogOpen = $state(false);
   let engineSelect = $state<HTMLSelectElement | undefined>();
+  let optionsBusy = $state(false);
+  let customModel = $state(false);
+  const CUSTOM_MODEL = '__custom__';
 
   function acknowledged(): boolean {
     try {
@@ -312,10 +315,12 @@
   function applyAgent(agentId: string): void {
     const sameAgent = profile.runtime.agent.id === agentId;
     const agent = agentsStore.get(agentId);
+    customModel = false;
     profile.runtime.agent = {
       ...profile.runtime.agent,
       id: agentId,
-      ...(sameAgent ? {} : { model: '', effort: '', capabilities: null }),
+      // 设置页里给该智能体配的默认模型：切过来时直接带上。
+      ...(sameAgent ? {} : { model: agent?.defaultModel ?? '', effort: '', capabilities: null }),
       // 预览档 Agent 默认更严（§6）。
       ...(sameAgent
         ? {}
@@ -362,6 +367,63 @@
   const agentChoices = $derived(
     selectedAgentId.length > 0 ? agentsStore.options[selectedAgentId] : undefined,
   );
+  const modelChoices = $derived(agentChoices?.models ?? []);
+  const agentDefaultModel = $derived(selectedAgent?.defaultModel ?? '');
+  /** Bot 留空时实际会用的模型：设置的默认模型，否则 Agent 自己的默认。 */
+  const effectiveModel = $derived(
+    profile.runtime.agent.model.length > 0 ? profile.runtime.agent.model : agentDefaultModel,
+  );
+  /** 当前模型下的推理强度选项；null = 还没读到（先隐藏，不阻塞其他设置）。 */
+  const effortChoices = $derived.by(() => {
+    if (selectedAgentId.length === 0) return null;
+    if (effectiveModel.length === 0) return agentChoices?.efforts ?? null;
+    return agentsStore.efforts[`${selectedAgentId}\u0000${effectiveModel}`] ?? null;
+  });
+
+  // 模型变化后按模型探测 thought_level（输入自定义模型时防抖）。
+  $effect(() => {
+    const id = selectedAgentId;
+    const model = effectiveModel;
+    if (id.length === 0 || model.length === 0) return;
+    const timer = setTimeout(() => {
+      void agentsStore.loadEfforts(id, model).catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  });
+
+  // 当前模型没有推理强度选项时隐藏设置并使用默认，避免带上别的模型的值。
+  $effect(() => {
+    const choices = effortChoices;
+    if (choices === null || profile.runtime.agent.effort.length === 0) return;
+    if (!choices.some((choice) => choice.value === profile.runtime.agent.effort)) {
+      profile.runtime.agent.effort = '';
+    }
+  });
+
+  function onModelSelect(value: string): void {
+    if (value === CUSTOM_MODEL) {
+      customModel = true;
+      return;
+    }
+    customModel = false;
+    if (value !== profile.runtime.agent.model) profile.runtime.agent.effort = '';
+    profile.runtime.agent.model = value;
+  }
+
+  async function detectAgentOptions(): Promise<void> {
+    if (selectedAgentId.length === 0) return;
+    optionsBusy = true;
+    try {
+      await agentsStore.loadOptions(selectedAgentId, true);
+      if (effectiveModel.length > 0) {
+        await agentsStore.loadEfforts(selectedAgentId, effectiveModel, true);
+      }
+    } catch {
+      // The card shows the error from the store.
+    } finally {
+      optionsBusy = false;
+    }
+  }
 
   function prerequisiteReady(prerequisite: HostCapabilityPrerequisite): boolean {
     if (prerequisite.kind === 'web-search') {
@@ -679,38 +741,66 @@
       <p class="text-xs text-muted-foreground">{t('contacts.agentIsolationNote')}</p>
       <div class="grid gap-4">
         <div class="grid gap-1.5">
-          <Label for="bot-agent-model">{t('contacts.agentModel')}</Label>
+          <div class="flex items-center gap-2">
+            <Label for="bot-agent-model">{t('contacts.agentModel')}</Label>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="ml-auto h-6 px-2 text-xs"
+              disabled={optionsBusy}
+              onclick={() => void detectAgentOptions()}
+              data-testid="bot-agent-model-detect"
+            >
+              {optionsBusy ? t('contacts.agentOptionsDetecting') : t('contacts.agentOptionsProbe')}
+            </Button>
+          </div>
           <select
             id="bot-agent-model"
             class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-            bind:value={profile.runtime.agent.model}
+            value={customModel ? CUSTOM_MODEL : profile.runtime.agent.model}
+            onchange={(event) => onModelSelect(event.currentTarget.value)}
             data-testid="bot-agent-model"
           >
-            <option value="">{t('contacts.agentDefault')}</option>
-            {#each agentChoices?.models ?? [] as choice (choice.value)}
+            <option value="">
+              {agentDefaultModel.length > 0
+                ? t('contacts.agentDefaultWithModel', { model: agentDefaultModel })
+                : t('contacts.agentDefault')}
+            </option>
+            {#each modelChoices as choice (choice.value)}
               <option value={choice.value}>{choice.name}</option>
             {/each}
-            {#if profile.runtime.agent.model.length > 0 && !(agentChoices?.models ?? []).some((choice) => choice.value === profile.runtime.agent.model)}
+            {#if !customModel && profile.runtime.agent.model.length > 0 && !modelChoices.some((choice) => choice.value === profile.runtime.agent.model)}
               <option value={profile.runtime.agent.model}>{profile.runtime.agent.model}</option>
             {/if}
+            <option value={CUSTOM_MODEL}>{t('contacts.agentModelCustom')}</option>
           </select>
+          {#if customModel}
+            <input
+              id="bot-agent-model-custom"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              bind:value={profile.runtime.agent.model}
+              placeholder={t('contacts.agentModelCustomPlaceholder')}
+              data-testid="bot-agent-model-custom"
+            />
+          {/if}
+          <p class="text-xs text-muted-foreground">{t('contacts.agentModelFreeHint')}</p>
         </div>
-        <div class="grid gap-1.5">
-          <Label for="bot-agent-effort">{t('contacts.agentEffort')}</Label>
-          <select
-            id="bot-agent-effort"
-            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-            bind:value={profile.runtime.agent.effort}
-          >
-            <option value="">{t('contacts.agentDefault')}</option>
-            {#each agentChoices?.efforts ?? [] as choice (choice.value)}
-              <option value={choice.value}>{choice.name}</option>
-            {/each}
-            {#if profile.runtime.agent.effort.length > 0 && !(agentChoices?.efforts ?? []).some((choice) => choice.value === profile.runtime.agent.effort)}
-              <option value={profile.runtime.agent.effort}>{profile.runtime.agent.effort}</option>
-            {/if}
-          </select>
-        </div>
+        {#if effortChoices !== null && effortChoices.length > 0}
+          <div class="grid gap-1.5">
+            <Label for="bot-agent-effort">{t('contacts.agentEffort')}</Label>
+            <select
+              id="bot-agent-effort"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              bind:value={profile.runtime.agent.effort}
+              data-testid="bot-agent-effort"
+            >
+              <option value="">{t('contacts.agentDefault')}</option>
+              {#each effortChoices as choice (choice.value)}
+                <option value={choice.value}>{choice.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
         <div class="grid gap-1.5">
           <Label for="bot-agent-permission">{t('contacts.agentPermission')}</Label>
           <select
@@ -730,15 +820,6 @@
           {t('contacts.agentOptionsError', { error: agentChoices.error })}
         </p>
       {/if}
-      <Button
-        size="sm"
-        variant="ghost"
-        class="h-7 px-2 text-xs"
-        onclick={() => void agentsStore.loadOptions(selectedAgentId, true).catch(() => undefined)}
-      >
-        {t('contacts.agentOptionsRefresh')}
-      </Button>
-
       <div class="grid gap-1.5">
         <div class="flex items-center gap-2">
           <Label>{t('contacts.agentCapabilities')}</Label>
