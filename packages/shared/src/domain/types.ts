@@ -577,8 +577,13 @@ export const agentSettingSchema = z
     source: z.enum(['managed', 'system']).default('managed').catch('managed'),
     /** 「加载我的个人配置」（默认关，§5）。 */
     loadUserConfig: z.boolean().default(false).catch(false),
+    /**
+     * 该智能体的默认模型（设置页「智能体」）。Bot 选择它时自动带上；Bot 自己的
+     * `runtime.agent.model` 为空时也回退到这里。'' = 用智能体自己的默认。
+     */
+    model: z.string().default('').catch(''),
   })
-  .catch({ enabled: false, source: 'managed', loadUserConfig: false });
+  .catch({ enabled: false, source: 'managed', loadUserConfig: false, model: '' });
 export type AgentSetting = z.infer<typeof agentSettingSchema>;
 
 /**
@@ -590,6 +595,8 @@ export const agentSettingInputSchema = z
   .object({
     enabled: z.boolean().optional(),
     loadUserConfig: z.boolean().optional(),
+    /** 默认模型（'' = 智能体自己的默认）。 */
+    model: z.string().max(500).optional(),
   })
   .strict();
 

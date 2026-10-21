@@ -1477,7 +1477,7 @@ describe('settings catalog host: review fixes', () => {
     });
     const id = messageIdIn(result.content);
     const card = cardOf(rig, id);
-    expect(card.before).toEqual({ agent: 'agent-b', enabled: false });
+    expect(card.before).toEqual({ agent: 'agent-b', enabled: false, model: '' });
     // Meanwhile agent-a is switched off elsewhere.
     rig.settings.update({ agents: { 'agent-a': { enabled: false } } as never });
     const applied = await rig.host.applyItem({

@@ -25,6 +25,7 @@ import {
   CONTINUATION_WINDOW_MS,
   agentEngineKey,
   agentModelRef,
+  resolveAgentModel,
   agentSetupReasonForError,
   agentSetupReasonOf,
   agentToolApprovalPayloadSchema,
@@ -2710,7 +2711,8 @@ export class Orchestrator {
       const bot = this.#deps.bots.get(botId);
       const agent = bot?.profile.runtime.agent;
       if (agent !== undefined && this.#agentIdOf(bot).length > 0) {
-        return agentModelRef(agent.id, agent.model);
+        const settings = this.#deps.settings.get();
+        return agentModelRef(agent.id, resolveAgentModel(agent.model, settings.agents[agent.id]));
       }
       return builtinModelRef('conversation', this.#deps.settings.get(), bot);
     } catch {

@@ -87,7 +87,12 @@ function rowToBot(row: BotRow): Bot {
  * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支）：null = 不设
  * 或当前不适用（有默认主模型、实验开关关闭、Agent 未启用…，由装配方判定）。
  */
-export type DefaultAgentResolver = () => { id: string; permission: AgentPermissionTier } | null;
+export type DefaultAgentResolver = () => {
+  id: string;
+  permission: AgentPermissionTier;
+  /** 设置页里该智能体的默认模型（'' = 智能体自己的默认）。 */
+  model: string;
+} | null;
 
 /** `app_connection_ids` 校验所需的连接目录（`AppConnectionStore` 的子集）。 */
 export interface AppConnectionDirectory {
@@ -235,6 +240,7 @@ export class BotsService {
         profile.runtime.agent = {
           ...profile.runtime.agent,
           id: fallback.id,
+          model: fallback.model,
           permission: fallback.permission,
         };
       }

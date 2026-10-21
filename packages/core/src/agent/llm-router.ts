@@ -3,6 +3,7 @@ import {
   AGENT_TRIAGE_MIN_INTERVAL_MS,
   agentEngineKey,
   agentModelRef,
+  resolveAgentModel,
   BUILTIN_ENGINE,
   type AgentCatalogEntry,
   type AgentView,
@@ -274,7 +275,10 @@ export class LlmRouter {
       agentId = usable(own) ? own : null;
     }
     if (agentId === null) return null;
-    const model = agentId === own ? (bot?.profile.runtime.agent.model ?? '') : '';
+    const model = resolveAgentModel(
+      agentId === own ? (bot?.profile.runtime.agent.model ?? '') : '',
+      settings.agents[agentId],
+    );
     return {
       engine: external,
       modelRef: agentModelRef(agentId, model),
