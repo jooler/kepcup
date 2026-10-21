@@ -238,7 +238,8 @@ D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下
 CREATE TABLE jobs (
   id            TEXT PRIMARY KEY,
   type          TEXT NOT NULL,            -- conversation_summary | reflection | memory_consolidation | profile_curation
-                                          -- | wiki_ingest | wiki_lint | wiki_remove_source | skill_authoring | schedule_fire | watch_alert
+                                          -- | wiki_ingest | wiki_lint | wiki_suggestion | wiki_remove_source | skill_suggestion
+                                          -- | skill_authoring | schedule_fire | watch_alert
                                           -- | mail_alert | handover_copy（D88 P2）...
   bot_id        TEXT,
   conversation_id TEXT,
@@ -256,7 +257,8 @@ CREATE INDEX jobs_pending ON jobs(status, run_after, priority);
 CREATE UNIQUE INDEX jobs_dedupe ON jobs(dedupe_key) WHERE status = 'pending';
 ```
 
-- `wiki_ingest`（D92 T1b WP9 起 payload 带 `owner: { kind: 'bot', botId } | { kind: 'project', projectId }`）：项目 wiki 的入库 job `conversation_id` = 项目 id、`bot_id` = **执行者**（成员入库记该成员名下，用户添加的与体检以负责人身份）；去重键 `wiki_ingest:{ownerKey}:{sourceType}:{ref…}`（`wikiOwnerKey` 形态）。
+- `wiki_ingest`（D92 T1b WP9 起 payload 带 `owner: { kind: 'bot', botId } | { kind: 'project', projectId }`）：项目 wiki 的入库 job `conversation_id` = 项目 id、`bot_id` = **执行者**（成员入库记该成员名下，用户添加的与体检以负责人身份）；去重键 `wiki_ingest:{ownerKey}:{sourceType}:{ref…}`（`wikiOwnerKey` 形态）。**owner 由来源决定**（D92 T1b 收口）：① 对话轮里 Bot 调 `wiki_enqueue` 不传 `scope` 时——项目对话 → `project`，其它对话 → `bot`（显式 `scope` 按显式值）；② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job 被消费时）——反思发生在项目对话里且该 Bot 仍是成员时 → `project`，否则 → `bot`；③ 用户从界面添加来源 → `project`（执行者为负责人）。
+- `wiki_suggestion`（D92 T1b 收口，jobs runner 消费）：反思 loop 产出的 wiki 入库建议；消费方按上面的 ② 选 owner 后登记 `wiki_ingest`（执行者是提出建议的 Bot，来源类型归一 `workspace_file`→`file`，未知类型丢弃并记日志）。
 - `wiki_remove_source`（D92 T1b WP10，无迁移：`type` 没有 CHECK）：删除项目 wiki 来源的异步 job——不调用任何模型（不占模型路由、`JOB_PURPOSES` 不登记，不受预算延后），`payload = { owner, sourceId, actor: { role: 'user'|'lead'|'member', botId? } }`，`bot_id` = 项目负责人（仅记账），去重键 `wiki_remove_source:{ownerKey}:{sourceId}`；ACL / NOT_FOUND / NOT_SUPPORTED 终结为 `done` 不重试（入队时已快败一次，执行时再校验）。
 - `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；后台阶段暂时失败时作业抛 `JobRetryLaterError`，jobs runner 照常记一次失败并把 `run_after` 推后（30 秒 × 已用次数，`JobsService.postpone`），末次失败时条目记失败并结算；作业多次中断而 `failed` 时不再重登，其条目记失败。
 

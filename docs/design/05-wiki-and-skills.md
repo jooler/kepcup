@@ -2,7 +2,7 @@
 
 ## Wiki：Bot 的大脑
 
-每个 Bot 挂载一个自己维护的 LLM Wiki，采用 Karpathy 提出的 LLM Wiki 模式。
+每个 Bot 挂载一个自己维护的 LLM Wiki，采用 Karpathy 提出的 LLM Wiki 模式。项目组另有一个**项目共享的项目 wiki**（同引擎、所有者是项目，D92 T1b，见下节）——项目组对话里的沉淀默认落在它那里。
 
 ```text
 wiki/                  -- git 管理（内嵌 git 库，只存文本），每次维护提交一次，可回滚
@@ -20,9 +20,9 @@ wiki-store/            -- 仓外内容存储（不进 git）：二进制原件�
 
 ### 读写规则
 
-- **单一写入者**：响应 loop 对 Wiki 只读，通过 `wiki_search`、`wiki_read` 查询；需要入库时调用 `wiki_enqueue(source, note)` 排队，由独立的 Wiki 维护 loop 串行执行。
+- **单一写入者**：响应 loop 对 Wiki 只读，通过 `wiki_search`、`wiki_read` 查询；需要入库时调用 `wiki_enqueue(source, note)` 排队，由独立的 Wiki 维护 loop 串行执行。**入库的目标 wiki 由会话决定**（D92 T1b）：项目组对话里落进共享的**项目 wiki**，其它对话落进 Bot 自己的 wiki（见下方「项目 wiki」的 `scope` 行）。
 - Wiki 中不得出现用户的个人信息（那是记忆的职责），体检时检查这一条。
-- Bot 之间的 Wiki **完全隔离**（D9）。唯一的跨 Bot 写入是用户确认过的资产移交（D88 P2，[37](37-bot-asset-handover.md) §3.2）：按页 / 目录把页面连同引用的原件**复制**进接手方的 Wiki（接手方的维护锁内落盘、同路径不覆盖、一次提交、之后排一次体检），来源不变。项目内的共享知识不走 Bot wiki，走下一节的**项目 wiki**——它是项目内唯一被许可的共享通道。
+- Bot 之间的 Wiki **完全隔离**（D9）。唯一的跨 Bot 写入是用户确认过的资产移交（D88 P2，[37](37-bot-asset-handover.md) §3.2）：按页 / 目录把页面连同引用的原件**复制**进接手方的 Wiki（接手方的维护锁内落盘、同路径不覆盖、一次提交、之后排一次体检），来源不变。项目内的共享知识不走 Bot wiki，走下一节的**项目 wiki**——它是项目内唯一被许可的共享通道，且**项目组对话里的沉淀默认就落在它这里**（不散落到各成员的个人 wiki）。
 
 ### 项目 wiki（D92 T1b）
 
@@ -35,7 +35,8 @@ wiki-store/            -- 仓外内容存储（不进 git）：二进制原件�
 | 单写入队列 | 每个项目 wiki 一个串行维护队列（互斥键 `project:{id}`）；多个成员同时 `wiki_enqueue` 只是入队 |
 | 执行者付费 | 成员入库的维护 loop 以**该成员**身份运行（模型、用量与后台预算记其名下）；用户添加的来源与定期体检以**负责人**身份运行 |
 | 删除来源 | 成员只能删自己创建的来源（`wiki_remove_source`，经 job 异步执行）；用户与负责人管理全部。Bot 被删后其来源保留（创建者显示为 id） |
-| 工具 `scope` | 项目对话里 `wiki_search { scope: 'mine' \| 'project' \| 'all' }`（默认 `all`，结果带 `[project]` / `[mine]` 前缀且项目在前）、`wiki_read { scope }`（默认 `mine`）、`wiki_enqueue { scope }`（**默认 `mine`**——发布到共享空间必须有意为之）；`wiki_remove_source { source_id }` 仅项目对话注册 |
+| 工具 `scope` | 项目对话里 `wiki_search { scope: 'mine' \| 'project' \| 'all' }`（默认 `all`，结果带 `[project]` / `[mine]` 前缀且项目在前）、`wiki_read { scope }`（**默认先读项目 wiki、该页不在项目 wiki 时回落到自己的 wiki**；显式传 `scope` 则不回落）、`wiki_enqueue { scope }`（**默认 `project`**——项目组对话里沉淀的东西留在共享的项目 wiki；只有纯个人经验才显式传 `scope=mine`）；`wiki_remove_source { source_id }` 仅项目对话注册 |
+| 归属（谁选目标 wiki） | ① 对话轮里 Bot 调 `wiki_enqueue`：不传 `scope` 时按会话取——项目对话 → 项目 wiki，其它对话 → 自己的 wiki；显式 `scope` 按显式值。② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job）：反思发生在项目对话里且该 Bot 仍是成员时同样进项目 wiki，否则进它自己的 wiki。③ 用户从界面添加来源：进项目 wiki，执行者为负责人 |
 | 可信度 | 用户创建的来源可信；Bot 创建的来源及其参与的页面，其他 Bot 读取时整段包进 `<untrusted source="project_wiki">` 并标注提交者；页面全部出处为用户才原样返回 |
 | 提示词 | 项目对话注入项目 wiki 主题段 `<project_wiki_topics>`（取自项目 `index.md`，**不设预算**）；Bot 个人主题段仍受 `WIKI_TOPICS_TOKEN_BUDGET` 约束 |
 | 移交（D88） | 项目 wiki **不在**移交范围；Bot wiki 的移交不变 |
@@ -54,7 +55,7 @@ wiki-store/            -- 仓外内容存储（不进 git）：二进制原件�
 - 反思 loop 提出建议
 - 定时体检
 
-入库、体检、整理都是 Bot 自己的知识库事务（见 [01-conversation.md](01-conversation.md) 消息原则）：完成与进展不进入对话，不向用户播报（“你给的文档我读完了”这类汇报已废弃）；入库成功后 Bot 直接通过检索引用新内容。终态失败（重试耗尽）以内部事件触发 Bot，由 Bot 用自己的话向用户交代一句。唯一的另一例外是**派生阻塞**（缺 ffmpeg / MinerU 或未配置所需能力模型，D85）：同一份资料同一原因只触发一次内部事件，由 Bot 在对话里发起安装卡或设置卡；条件满足后自动续跑，不再播报。
+入库、体检、整理都是 **Bot 自己的知识库事务**（项目组对话里则是**项目共享的**知识库事务，见上）：完成与进展不进入对话，不向用户播报（“你给的文档我读完了”这类汇报已废弃）；入库成功后 Bot 直接通过检索引用新内容。终态失败（重试耗尽）以内部事件触发 Bot，由 Bot 用自己的话向用户交代一句。唯一的另一例外是**派生阻塞**（缺 ffmpeg / MinerU 或未配置所需能力模型，D85）：同一份资料同一原因只触发一次内部事件，由 Bot 在对话里发起安装卡或设置卡；条件满足后自动续跑，不再播报。
 
 ## Skills：Bot 的工具
 

@@ -190,7 +190,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 | 反思 | 对话轮或任务 `completed` 后 | 本 Bot 记忆、用户画像提案 | 2 |
 | 记忆整理 | 每天 | 本 Bot 记忆 | 2 |
 | 画像整理（全局唯一） | 收到画像提案、定期 | 共享用户画像 | 2 |
-| Wiki 维护 | 入库队列、定期体检 | 本 Bot Wiki | 2 |
+| Wiki 维护 | 入库队列、定期体检 | 本 Bot Wiki；项目组对话里的入库进项目共享的 Wiki（D92 T1b：项目 wiki） | 2 |
 | 技能生成 | 反思建议、`create_skill` | 本 Bot Skills（草稿） | 2 |
 
 - 后台 loop 的工作目录为 `bots/{id}/maintenance/{loop_type}/`，与 `workspaces/` 分属不同命名空间。

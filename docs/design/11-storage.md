@@ -16,6 +16,9 @@
   logs/                                    -- 运行日志（敏感字段脱敏）
   sandbox/                                 -- 沙箱运行时（例如 Windows 的 WSL2 发行版）
   projects/{project_id}/checkpoints/       -- project 的影子 git 仓库
+  projects/{project_id}/wiki/              -- 项目共享的 Wiki（git），D92 T1b
+  projects/{project_id}/wiki-store/        -- 仓外内容存储（不进 git）
+  projects/{project_id}/wiki.db            -- 项目级 Wiki 检索索引（加密 sqlite，仅 wiki_fts）
   bots/{bot_id}/
     memory.db                              -- 该 Bot 的记忆库
     wiki/                                  -- git
