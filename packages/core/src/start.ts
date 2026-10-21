@@ -1081,7 +1081,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
       if (entry === null) return null;
-      return { id: agentId, permission: entry.tier === 'preview' ? 'ask' : 'workspace' };
+      return {
+        id: agentId,
+        permission: entry.tier === 'preview' ? 'ask' : 'workspace',
+        model: current.agents[agentId]?.model ?? '',
+      };
     });
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
@@ -1099,7 +1103,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         lifecycle.removeProjectMember(conversationId, botId),
       publishConversation: (conversationId) => {
         const conversation = conversations.get(conversationId);
-        if (conversation) events.emit('conversation.updated', { conversation });
+        if (!conversation) return;
+        // 项目组带上成员头像预览：通讯录里的项目组卡片要画头像堆叠
+        //（members 变动、更名、负责人更换都走这条推送）。
+        events.emit('conversation.updated', {
+          conversation:
+            conversation.type === 'project'
+              ? { ...conversation, memberPreviews: projects.memberPreviews(conversationId) }
+              : conversation,
+        });
       },
       // 可见系统消息（负责人更换 / 成员加入）：与 workdir/service.ts 的
       // #systemMessage 同一写法与发布方式。
@@ -2038,6 +2050,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       unattended,
       agentCatalog: () => agentCatalog,
+      agentOptions: (agentId) => agentsService.optionsCached(agentId),
       embedding: {
         configure: (input) => {
           memory.configureEmbedding(input);

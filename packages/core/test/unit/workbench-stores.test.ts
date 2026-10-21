@@ -342,6 +342,7 @@ describe('MemoStore', () => {
       source: 'user',
       createdAt: 1_000,
       updatedAt: 1_000,
+      sortAt: 1_000,
       deletedAt: null,
     });
     expect(memoSchema.parse(memo)).toEqual(memo);
@@ -352,16 +353,18 @@ describe('MemoStore', () => {
     expect(store.get('memo_missing')).toBeNull();
   });
 
-  it('lists live memos pinned first then by update time, with search', () => {
+  it('lists live memos pinned first then by sort key; editing the body keeps the place', () => {
     const a = store.insert({ body: 'alpha', source: 'user' });
     now = 2_000;
     const b = store.insert({ body: 'beta 50%', source: 'user' });
     now = 3_000;
     const c = store.insert({ body: 'gamma', source: 'user', pinned: true });
     expect(store.list().map((m) => m.id)).toEqual([c.id, b.id, a.id]);
+    // 改正文：更新时间前移，但排序键不动 → 卡片不换位。
     now = 4_000;
     store.update(a.id, { body: 'alpha edited' });
-    expect(store.list().map((m) => m.id)).toEqual([c.id, a.id, b.id]);
+    expect(store.list().map((m) => m.id)).toEqual([c.id, b.id, a.id]);
+    // 置顶：排序键刷新 → 提到置顶组最前。
     store.update(b.id, { pinned: true });
     expect(store.list().map((m) => m.id)).toEqual([b.id, c.id, a.id]);
 
@@ -371,15 +374,22 @@ describe('MemoStore', () => {
     expect(store.list({ query: 'nothing' })).toEqual([]);
   });
 
-  it('updates body and pin independently', () => {
+  it('updates body and pin independently; only a pin change moves the sort key', () => {
     const memo = store.insert({ body: 'a', source: 'user' });
     now = 2_000;
     expect(store.update(memo.id, { pinned: true })).toMatchObject({
       body: 'a',
       pinned: true,
       updatedAt: 2_000,
+      sortAt: 2_000,
     });
-    expect(store.update(memo.id, { body: 'b' })).toMatchObject({ body: 'b', pinned: true });
+    now = 3_000;
+    expect(store.update(memo.id, { body: 'b' })).toMatchObject({
+      body: 'b',
+      pinned: true,
+      updatedAt: 3_000,
+      sortAt: 2_000,
+    });
     expect(store.update(memo.id, { pinned: false })?.pinned).toBe(false);
     expect(store.update('memo_missing', { body: 'x' })).toBeNull();
   });

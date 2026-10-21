@@ -6,7 +6,7 @@
   } from '@kepcup/shared';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { t, connectorDescription, connectorUnavailableText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -51,7 +51,12 @@
   );
   // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
   const catalog = $derived(
-    withoutLocalEntries(appsStore.catalog).filter((entry) => !isHiddenConnectorId(entry.connectorId)),
+    withoutLocalEntries(appsStore.catalog)
+      .filter((entry) => !isHiddenConnectorId(entry.connectorId))
+      .map((entry) => ({
+        ...entry,
+        description: connectorDescription(entry.connectorId, entry.description),
+      })),
   );
   const categories = $derived(catalogCategories(catalog));
   const entries = $derived(catalogView(catalog, { query, category }));
@@ -262,8 +267,11 @@
             {t(CATEGORY_LABEL_KEYS[entry.category])}
           </span>
         </div>
-        <p class="line-clamp-2 text-xs text-muted-foreground" title={entry.description}>
-          {entry.description}
+        <p
+          class="line-clamp-2 text-xs text-muted-foreground"
+          title={connectorDescription(entry.connectorId, entry.description)}
+        >
+          {connectorDescription(entry.connectorId, entry.description)}
         </p>
         {#if entry.connectedAccounts > 0}
           <p
@@ -274,7 +282,9 @@
           </p>
         {/if}
         {#if !entry.connectable && action.reason !== null}
-          <p class="text-[11px] text-amber-700 dark:text-amber-400">{action.reason}</p>
+          <p class="text-[11px] text-amber-700 dark:text-amber-400">
+            {connectorUnavailableText(action.reason)}
+          </p>
         {/if}
       </div>
     </div>
@@ -296,7 +306,7 @@
         variant={open ? 'ghost' : entry.connectedAccounts > 0 ? 'secondary' : 'default'}
         class="shrink-0"
         disabled={action.disabled && !open}
-        title={action.reason ?? undefined}
+        title={connectorUnavailableText(action.reason) ?? undefined}
         onclick={() => toggle(entry)}
         data-testid={`apps-catalog-connect-${entry.connectorId}`}
       >

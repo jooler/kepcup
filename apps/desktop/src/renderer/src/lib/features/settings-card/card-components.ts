@@ -1,112 +1,28 @@
-import type { AgentView, CardKey, SettingItem, SettingValues } from '@kepcup/shared';
-import { capabilityOfItem, prefillString, sensorOfItem } from './setting-card-model';
+import type { CardKey, SettingItem } from '@kepcup/shared';
+import { SETTING_CARD_CONTRIBUTIONS, type EmbedContext } from './cards/index.js';
 
 /**
- * 渲染层 `CardKey → Svelte 组件` 映射（todo/conversational-app-setup.md §4.1 / §4.3 测试二）。
- * 组件本身在 `SettingCardEmbed.svelte` 里按键分发（各组件 props 不同，逐键写参数）；这里登记
- * 「键 → 组件名」，单测用 shared 的 `cardComponentProblems` 核对每个非空 `card` 都有组件，
- * 并核对 `SettingCardEmbed.svelte` 确实引入了这些组件。
+ * 渲染层 `CardKey → Svelte 组件` 映射的派生层（todo/settings-catalog-registry.md §4.3）。
+ * 登记本身在 `cards/index.ts` 的贡献表里：键、组件名、可嵌入判定都在那里维护；
+ * 这里只提供旧出口（`SETTING_CARD_COMPONENTS` / `cardEmbeddable` / `EmbedContext`），
+ * 宿主与测试的 import 不变。组件本身在 `SettingCardEmbed.svelte` 里按键分发。
  */
-export const SETTING_CARD_COMPONENTS = {
-  'default-models': 'DefaultModelsCard',
-  'provider-setup': 'ProviderSetupForm',
-  'capability-model': 'CapabilityModelSection',
-  'web-search': 'WebSearchSection',
-  'connect-app': 'ConnectAppPanel',
-  'mail-account': 'MailAccountAddForm',
-  agent: 'AgentCard',
-  'bot-model': 'BotModelCard',
-  'bot-config': 'BotConfigCard',
-  'bot-skills': 'BotSkillsCard',
-  sensor: 'SensorCard',
-  'field-editor': 'FieldEditorCard',
-  embedding: 'EmbeddingSection',
-  appearance: 'AppearanceSection',
-  'background-tasks': 'BackgroundTasksSection',
-  unattended: 'UnattendedSection',
-  'taint-guard': 'UnattendedSection',
-  'project-title': 'ProjectTitleCard',
-  'project-goal': 'ProjectGoalCard',
-  'project-lead': 'ProjectLeadCard',
-  'project-members': 'ProjectMembersCard',
-  'workdir-settings': 'WorkdirSettingsDialog',
-  'tool-policy': 'AppConnectionDetail',
-  'mcp-servers': 'McpSection',
-  'browser-profiles': 'BrowserProfilesSection',
-  'environment-toolchains': 'EnvironmentSection',
-  'environment-sandbox': 'SandboxSection',
-  'environment-allowlist': 'AllowlistSection',
-} as const satisfies Record<CardKey, string>;
+export const SETTING_CARD_COMPONENTS = Object.fromEntries(
+  SETTING_CARD_CONTRIBUTIONS.map((card) => [card.key, card.componentName]),
+) as Record<CardKey, string>;
 
-/** 内嵌时需要的上下文（谁的卡、作用对象、可用的外部智能体）。 */
-export interface EmbedContext {
-  /** bot 范围条目的作用 Bot（卡片 target.botId，缺省为出卡 Bot）。 */
-  botId: string | null;
-  /** 群范围条目的群会话。 */
-  conversationId: string | null;
-  /** 工作目录范围条目的工作目录。 */
-  workdirId: string | null;
-  prefill: SettingValues | null;
-  /** 外部智能体目录（未加载为 null）。 */
-  agent(id: string): AgentView | null;
-  /** 当前默认智能体 id（`settings.defaultAgentId`）。 */
-  defaultAgentId: string | null;
-}
+export type { EmbedContext };
+
+const BY_KEY = new Map(SETTING_CARD_CONTRIBUTIONS.map((card) => [card.key, card]));
 
 /**
- * 该条目在当前上下文里能不能内嵌（不能就退回跳转卡）：
- * - `capability-model` / `sensor`：条目 id 能对上能力 / 传感器；
- * - `bot-model` / `mail-account`：要有作用 Bot；
- * - `connect-app`：要知道连哪个应用（预填 `app` = 目录 connectorId）；
- * - `agent`：要知道是哪个智能体（预填 `agent`，否则默认智能体），且目录里有它。
+ * 该条目在当前上下文里能不能内嵌（不能就退回跳转卡）。判定逻辑按卡片键登记在
+ * `cards/index.ts` 的贡献表里（作用对象是否就位、预填是否点名、条目 id 是否对得上能力 /
+ * 传感器）。
  */
 export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolean {
-  switch (item.card) {
-    case null:
-      return false;
-    case 'capability-model':
-      return capabilityOfItem(item.id) !== null;
-    case 'sensor':
-      return sensorOfItem(item.id) !== null;
-    case 'bot-model':
-    case 'bot-config':
-    case 'bot-skills':
-    case 'mail-account':
-      return context.botId !== null;
-    case 'project-title':
-    case 'project-members':
-    case 'project-goal':
-    case 'project-lead':
-      return context.conversationId !== null;
-    case 'workdir-settings':
-      return context.workdirId !== null;
-    case 'field-editor':
-    case 'embedding':
-    case 'appearance':
-    case 'background-tasks':
-    case 'unattended':
-    case 'taint-guard':
-    case 'tool-policy':
-    case 'mcp-servers':
-    case 'browser-profiles':
-    case 'environment-toolchains':
-    case 'environment-sandbox':
-    case 'environment-allowlist':
-      return true;
-    case 'connect-app':
-      return prefillString(context.prefill, 'app') !== null;
-    case 'agent':
-      return embeddedAgentId(context) !== null;
-    case 'default-models':
-    case 'provider-setup':
-    case 'web-search':
-      return true;
-  }
+  if (item.card === null) return false;
+  return BY_KEY.get(item.card)?.embeddable(item, context) ?? false;
 }
 
-/** agent 卡内嵌哪个智能体：预填 `agent` 优先，其次默认智能体；目录里没有返回 null。 */
-export function embeddedAgentId(context: EmbedContext): string | null {
-  const id = prefillString(context.prefill, 'agent') ?? context.defaultAgentId;
-  if (id === null || id.length === 0) return null;
-  return context.agent(id) !== null ? id : null;
-}
+export { embeddedAgentId } from './cards/index.js';

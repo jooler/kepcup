@@ -25,6 +25,7 @@ import {
   CONTINUATION_WINDOW_MS,
   agentEngineKey,
   agentModelRef,
+  resolveAgentModel,
   agentSetupReasonForError,
   agentSetupReasonOf,
   agentToolApprovalPayloadSchema,
@@ -82,6 +83,7 @@ import {
 } from '../agent/external/permission-bridge.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
+import { clearToolOutputSpill, ToolOutputSpill } from '../agent/tool-output-spill.js';
 import {
   humanizeLateBy,
   inQuietHours,
@@ -106,6 +108,7 @@ import { buildTasksSegment } from '../agent/context/tasks-segment.js';
 import type {
   AgentEngine,
   AgentSessionMode,
+  EngineUsage,
   RunHandle,
   RunIdentity,
   ToolDefinition,
@@ -122,6 +125,14 @@ import {
   type TriggerBatch,
   type TriggerPart,
 } from '../scheduler/mailbox.js';
+import {
+  inkcopAgentKeys,
+  inkcopAgentToolsEnabled,
+  inkcopClientFromSettings,
+  handoffToInkcopAgent,
+} from '../inkcop/index.js';
+import type { InkcopAgentInfo } from '../inkcop/client.js';
+import type { InkcopToolFacade } from '../tools/inkcop-tools.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { ProjectsService } from '../domain/projects.js';
@@ -175,12 +186,12 @@ import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
 import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
-  SETUP_FIRST_OPTIONS,
-  SETUP_FIRST_QUESTION,
-  SETUP_GREETING,
-  SETUP_PATH_QUESTION,
-  SETUP_PATH_SKIP_TEXT,
   questionCapReached,
+  setupFirstOptions,
+  setupFirstQuestion,
+  setupGreeting,
+  setupPathQuestion,
+  setupPathSkipText,
 } from '../tools/setup-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profiles.js';
@@ -212,11 +223,11 @@ import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import {
-  BUTLER_SETUP_FIRST_OPTIONS,
-  BUTLER_SETUP_FIRST_QUESTION,
-  BUTLER_SETUP_GREETING,
-  BUTLER_WELCOME_TEXT,
   butlerProfileTemplate,
+  butlerSetupFirstOptions,
+  butlerSetupFirstQuestion,
+  butlerSetupGreeting,
+  butlerWelcomeText,
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
 import type { HandoverToolFacade } from '../tools/handover-tools.js';
@@ -742,6 +753,15 @@ export class Orchestrator {
       clock: deps.clock,
       logger: deps.logger,
       timeZone: deps.timeZone,
+      // D93: read the live task-loop limits on every sweep so settings changes
+      // apply to running tasks too.
+      taskLoopLimits: () => {
+        const taskLoop = deps.settings.get().taskLoop;
+        return {
+          maxWallMs: taskLoop.maxWallMinutes * 60_000,
+          stallTimeoutMs: taskLoop.stallTimeoutMinutes * 60_000,
+        };
+      },
       renderOptions: (selfBotId) => ({ ...this.#renderOptions(), selfBotId }),
       publishRunStatus: (run) => deps.publish('run.status', { run }),
       execute: (task, control) => {
@@ -781,6 +801,8 @@ export class Orchestrator {
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
+        // D93 P3: spilled tool outputs live only as long as the run.
+        this.#clearToolOutputSpill(run.id, run.botId, run.conversationId);
         // A still-unwinding execution keeps its write lease until it ends (an
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
@@ -1206,8 +1228,10 @@ export class Orchestrator {
 
   /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
   hasTurnModel(botId: string): boolean {
+    const bot = this.#deps.bots.get(botId);
+    // InkCop 关联智能体是工具，不替代主模型；整轮 divert 已移除（契约 v0.4）。
     if (this.#turnModelRef(botId).length > 0) return true;
-    return this.#agentIdOf(this.#deps.bots.get(botId)).length > 0;
+    return this.#agentIdOf(bot).length > 0;
   }
 
   /**
@@ -1289,7 +1313,11 @@ export class Orchestrator {
     if (
       this.#deps.messages.countSystemEvents(conversationId, BOT_SETUP_PATH_QUESTION_EVENT) === 0
     ) {
-      this.#appendSystemMessage(conversationId, BOT_SETUP_PATH_QUESTION_EVENT, SETUP_PATH_QUESTION);
+      this.#appendSystemMessage(
+        conversationId,
+        BOT_SETUP_PATH_QUESTION_EVENT,
+        setupPathQuestion(this.#deps.settings.get().appLanguage),
+      );
     }
     const cardSeq = this.#deps.messages.systemEventSeq(
       conversationId,
@@ -1345,7 +1373,7 @@ export class Orchestrator {
       conversationId,
       senderType: 'user',
       kind: 'text',
-      text: path ?? SETUP_PATH_SKIP_TEXT,
+      text: path ?? setupPathSkipText(this.#deps.settings.get().appLanguage),
       setupAnswer: true,
       batchId: `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
     });
@@ -1429,13 +1457,16 @@ export class Orchestrator {
     return this.#episodes;
   }
 
-  cancelRun(runId: string): Run | null {
+  cancelRun(runId: string, options: { userInitiated?: boolean } = {}): Run | null {
     const run = this.#deps.runs.get(runId);
     if (!run) return null;
     if (isTerminal(run.status)) return run;
-    // D75: a task is cancelled through its host (cancel entry → failure entry
-    // → terminal; no wake — it is the user's decision, §3.3).
-    if (run.loopType === 'task') return this.#taskHost.cancelById(runId, '用户取消');
+    // D75/D93: a task is cancelled through its host (cancel entry → failure
+    // entry → terminal). A user-initiated cancel wakes the bot with
+    // `user_cancelled`; the bot's own cancel_task does not go through here.
+    if (run.loopType === 'task') {
+      return this.#taskHost.cancelById(runId, '用户取消', options);
+    }
     const entry = this.#activeRuns.get(runId);
     if (entry) {
       entry.handle.abort('user cancelled');
@@ -2375,17 +2406,20 @@ export class Orchestrator {
     // 管家访谈（D70）是同一机制的变体：问的是用户的领域与场景，不是「这个
     // 助手要做什么」。
     const butler = this.#deps.bots.get(botId)?.systemRole === 'butler';
+    const language = this.#deps.settings.get().appLanguage;
     this.#appendBotTextMessage(
       botId,
       conversationId,
-      butler ? BUTLER_SETUP_GREETING : SETUP_GREETING,
+      butler ? butlerSetupGreeting(language) : setupGreeting(language),
     );
     this.#appendSystemMessage(
       conversationId,
       SETUP_QUESTION_EVENT,
-      butler ? BUTLER_SETUP_FIRST_QUESTION : SETUP_FIRST_QUESTION,
+      butler ? butlerSetupFirstQuestion(language) : setupFirstQuestion(language),
       {
-        options: butler ? [...BUTLER_SETUP_FIRST_OPTIONS] : [...SETUP_FIRST_OPTIONS],
+        options: butler
+          ? [...butlerSetupFirstOptions(language)]
+          : [...setupFirstOptions(language)],
         // 首问是「有哪些/要哪些」的列举题，天然多选；用户也可以自行补充条目。
         questionMode: 'multi',
       },
@@ -2403,8 +2437,9 @@ export class Orchestrator {
     conversationId: string;
     created: boolean;
   } {
+    const language = this.#deps.settings.get().appLanguage;
     const { bot, created } = this.#deps.bots.ensureButler(
-      butlerProfileTemplate(),
+      butlerProfileTemplate(language),
       options.interview === true ? { interview: true } : {},
     );
     if (created) this.#deps.publish('bot.updated', { bot });
@@ -2414,7 +2449,7 @@ export class Orchestrator {
     if (conversationCreated) this.#publishConversation(conversation.id);
     if (created) {
       if (bot.setupState === 'interviewing') this.beginSetupInterview(bot.id, conversation.id);
-      else this.#appendBotTextMessage(bot.id, conversation.id, BUTLER_WELCOME_TEXT);
+      else this.#appendBotTextMessage(bot.id, conversation.id, butlerWelcomeText(language));
     }
     return { bot, conversationId: conversation.id, created };
   }
@@ -2649,6 +2684,49 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * D93 内置任务自动上下文压缩的路由（轻量模型）。外部 Agent 路由不用于
+   * PiEngine 的摘要调用：退回空 ref，压缩退化为确定性裁剪。
+   */
+  #taskCompactionRoute(
+    botId: string,
+    identity: RunIdentity,
+  ): {
+    modelRef: string;
+    isRouteCurrent?: () => boolean;
+    onUsage?: (usage: EngineUsage[]) => void;
+  } {
+    const route = this.#backgroundRoute(botId, 'task_compaction');
+    if (route === null || route.agentId !== null) return { modelRef: '' };
+    const modelRef = route.modelRef;
+    return {
+      modelRef,
+      isRouteCurrent: () => {
+        const current = this.#backgroundRoute(botId, 'task_compaction');
+        return current !== null && current.agentId === null && current.modelRef === modelRef;
+      },
+      onUsage: (usage) => {
+        if (identity.botId === null || identity.conversationId === null) return;
+        const provider = this.#providerForRef(modelRef);
+        for (const entry of usage) {
+          this.#deps.usage.record({
+            runId: identity.runId,
+            botId: identity.botId,
+            conversationId: identity.conversationId,
+            loopType: 'task',
+            provider,
+            model: modelRef.slice(provider.length + 1),
+            inputTokens: entry.input,
+            outputTokens: entry.output,
+            cacheReadTokens: entry.cacheRead,
+            cacheWriteTokens: entry.cacheWrite,
+            costUsd: entry.costUsd,
+          });
+        }
+      },
+    };
+  }
+
   /** SubAgent 结果压缩的模型与引擎（'' = 不压缩、截断兜底）。 */
   #compactionRoute(botId: string): {
     lightModelRef: string;
@@ -2700,7 +2778,8 @@ export class Orchestrator {
       const bot = this.#deps.bots.get(botId);
       const agent = bot?.profile.runtime.agent;
       if (agent !== undefined && this.#agentIdOf(bot).length > 0) {
-        return agentModelRef(agent.id, agent.model);
+        const settings = this.#deps.settings.get();
+        return agentModelRef(agent.id, resolveAgentModel(agent.model, settings.agents[agent.id]));
       }
       return builtinModelRef('conversation', this.#deps.settings.get(), bot);
     } catch {
@@ -3810,6 +3889,10 @@ export class Orchestrator {
       // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
       const mailBound =
         this.#deps.mail !== undefined && mailBoundFor(this.#deps.mail, identity.botId);
+      // D93 P3: only built-in tasks spill oversized tool output; external
+      // agents keep their own native harness and turn contexts stay bounded.
+      const toolOutputSpill =
+        isTask && agentId.length === 0 ? new ToolOutputSpill({ workspacePath, runId }) : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),
@@ -3824,6 +3907,7 @@ export class Orchestrator {
         workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
+        ...(toolOutputSpill !== undefined ? { toolOutputSpill } : {}),
         environment: environmentFacade,
         ...(memoryToolFacade !== undefined ? { memory: memoryToolFacade } : {}),
         ...(this.#deps.skills !== undefined
@@ -3947,6 +4031,7 @@ export class Orchestrator {
                 buildSubagentResearchTools({
                   identity: subIdentity,
                   deps: {
+                    runs,
                     gateway: this.#deps.gateway,
                     workspacePath,
                     workdirPath:
@@ -4057,6 +4142,50 @@ export class Orchestrator {
             '')
           : '';
       const triggerImages = this.#triggerImages(batch.messages);
+      // InkCop v0.4：关联智能体 → call_inkcop_agent 工具（非整轮 divert）。
+      let inkcopFacade: InkcopToolFacade | undefined;
+      const settingsSnap = this.#deps.settings.get();
+      if (inkcopAgentToolsEnabled(bot, settingsSnap)) {
+        const agentKeys = inkcopAgentKeys(bot);
+        const client = inkcopClientFromSettings(settingsSnap);
+        const botName = bot.profile.identity.name || bot.name;
+        let agents: InkcopAgentInfo[] = agentKeys.map((key) => ({
+          key,
+          name: key === 'main_agent' ? '主智能体' : key,
+          kind: key === 'main_agent' ? ('main' as const) : ('app' as const),
+        }));
+        try {
+          const listed = await client.listAgents();
+          const byKey = new Map(listed.agents.map((a) => [a.key, a]));
+          agents = agentKeys.map(
+            (key) =>
+              byKey.get(key) ?? {
+                key,
+                name: key === 'main_agent' ? '主智能体' : key,
+                kind: key === 'main_agent' ? ('main' as const) : ('app' as const),
+              },
+          );
+        } catch (error) {
+          this.#deps.logger.warn(
+            { err: error, botId: bot.id },
+            'inkcop listAgents failed; registering tools with key fallbacks',
+          );
+        }
+        inkcopFacade = {
+          botId: bot.id,
+          botName,
+          agentKeys,
+          agents,
+          handoff: (input, signal) =>
+            handoffToInkcopAgent(client, {
+              botId: bot.id,
+              botName,
+              agentKey: input.agentKey,
+              text: input.task,
+              signal,
+            }),
+        };
+      }
       const responseTools = buildResponseTools({
         identity,
         deps: {
@@ -4075,6 +4204,7 @@ export class Orchestrator {
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+          ...(inkcopFacade !== undefined ? { inkcop: inkcopFacade } : {}),
           // D90 工作台：事项 / 备忘工具（仅管家、仅对话轮；权限边界看 fromUser）。
           ...(this.#deps.workbench !== undefined
             ? {
@@ -4304,6 +4434,16 @@ export class Orchestrator {
         // Stop retrying a provider the user has since switched this Bot away
         // from (other Bots' changes do not matter).
         isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+        // D93: only built-in pi tasks get host-side compaction / idle guard /
+        // soft budget; external agents keep their own native harness, and
+        // conversation turns are bounded.
+        ...(isTask && agentId.length === 0
+          ? {
+              compaction: this.#taskCompactionRoute(batch.botId, identity),
+              taskLoop: this.#deps.settings.get().taskLoop,
+              ...(toolOutputSpill !== undefined ? { toolOutputSpill } : {}),
+            }
+          : {}),
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {
@@ -4364,6 +4504,7 @@ export class Orchestrator {
         buildSystemPrompt: async () =>
           buildSystemPrompt({
             loop: isTask ? 'task' : 'turn',
+            language: this.#deps.settings.get().appLanguage,
             bot,
             conversation: conv,
             timeZone: this.#deps.timeZone,
@@ -4396,6 +4537,7 @@ export class Orchestrator {
             ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
             ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
             // the 「新派发：做完给结论」 rule would read the notice as a new assignment.
@@ -5459,6 +5601,12 @@ export class Orchestrator {
     });
   }
 
+  /** D93 P3: remove a run's spilled tool outputs (workspace-scoped, best effort). */
+  #clearToolOutputSpill(runId: string, botId: string | null, conversationId: string | null): void {
+    if (botId === null || conversationId === null) return;
+    clearToolOutputSpill(workspacePathFor(this.#deps.paths, botId, conversationId), runId);
+  }
+
   #settleRun(
     runId: string,
     status: Run['status'],
@@ -5475,6 +5623,7 @@ export class Orchestrator {
       // must not dangle.
       this.#deps.grants.expireForRun(runId);
       this.#deps.approvals.cancelPendingForRun(runId);
+      this.#clearToolOutputSpill(runId, run.botId, run.conversationId);
     }
     this.#deps.publish('run.status', { run });
     // Group turns advance on any terminal state (cancelled/failed included)

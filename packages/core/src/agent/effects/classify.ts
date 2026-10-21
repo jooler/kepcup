@@ -107,6 +107,7 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   get_attachment: 'local',
   list_my_runs: 'none',
   get_run: 'none',
+  get_run_steps: 'none',
   ask_user: 'none',
   ask_question: 'none',
 

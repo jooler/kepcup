@@ -32,7 +32,7 @@ function settings(
     agents: Object.fromEntries(
       Object.entries(overrides.enabled ?? {}).map(([id, enabled]) => [
         id,
-        { enabled, source: 'managed' as const, loadUserConfig: false },
+        { enabled, source: 'managed' as const, loadUserConfig: false, model: '' },
       ]),
     ),
   };
@@ -113,4 +113,27 @@ describe('sendGateRequirement', () => {
       }),
     ).toEqual({ kind: 'main-model' });
   });
+
+  it('inkcop agent keys alone do not bypass main-model gate', () => {
+    const inkcopBot = {
+      setupState: null,
+      profile: {
+        runtime: {
+          model: '',
+          message_transport: '',
+          inkcop_agent_keys: ['main_agent'],
+          agent: { ...BUILTIN_AGENT_RUNTIME },
+        },
+      },
+    } as never;
+    expect(
+      sendGateRequirement({
+        conversationType: 'direct',
+        bot: inkcopBot,
+        settings: settings(),
+        agents: agents({}),
+      }),
+    ).toEqual({ kind: 'main-model' });
+  });
+
 });

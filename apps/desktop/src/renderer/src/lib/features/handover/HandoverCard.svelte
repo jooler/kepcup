@@ -18,7 +18,7 @@
     AlertTriangle,
     XCircle,
   } from '@lucide/svelte';
-  import { t, type MessageKey } from '$lib/i18n';
+  import { t, type MessageKey, listSeparator } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { handovers } from '$lib/stores/handovers.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -266,7 +266,12 @@
             data-testid="handover-item-error"
             >{state === 'notSelected'
               ? t('handover.item.notSelected')
-              : `${t(`handover.item.${state}` as MessageKey)}${itemError(key) !== null ? `：${itemError(key)}` : ''}`}</span
+              : itemError(key) === null
+                ? t(`handover.item.${state}` as MessageKey)
+                : t('common.labelValue', {
+                    label: t(`handover.item.${state}` as MessageKey),
+                    value: itemError(key)!,
+                  })}</span
           >
         {/if}
         {#if !pending && state === 'done' && isBackground(key)}
@@ -285,7 +290,9 @@
             <span
               class="text-xs break-all text-amber-700 dark:text-amber-400"
               data-testid="handover-item-skipped-paths"
-              >{t('handover.item.skippedPaths', { paths: summary.skipped.join('、') })}</span
+              >{t('handover.item.skippedPaths', {
+                paths: summary.skipped.join(listSeparator()),
+              })}</span
             >
           {/if}
         {/if}
@@ -410,7 +417,7 @@
             {@render itemRow(
               HANDOVER_RESP_TO_KEY,
               t('handover.respTo', { name: toName }),
-              `${t('handover.before')}：${resp.toBefore || t('handover.emptyText')}\n${t('handover.after')}：${resp.to}`,
+              `${t('common.labelValue', { label: t('handover.before'), value: resp.toBefore || t('handover.emptyText') })}\n${t('common.labelValue', { label: t('handover.after'), value: resp.to })}`,
               undefined,
               [],
               [],
@@ -420,7 +427,7 @@
             {@render itemRow(
               HANDOVER_RESP_FROM_KEY,
               t('handover.respFrom', { name: payload.fromBotName }),
-              `${t('handover.before')}：${resp.fromBefore || t('handover.emptyText')}\n${t('handover.after')}：${resp.from}`,
+              `${t('common.labelValue', { label: t('handover.before'), value: resp.fromBefore || t('handover.emptyText') })}\n${t('common.labelValue', { label: t('handover.after'), value: resp.from })}`,
               undefined,
               [],
               [],

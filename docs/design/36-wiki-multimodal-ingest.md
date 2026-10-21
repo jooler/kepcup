@@ -252,7 +252,7 @@ bots/{id}/
 
 ### 5.5 RPC、工具与 UX
 
-- `wiki_enqueue` 工具参数不变（不提供让模型绕过开关的 `derive` 参数）。工具说明补充：附件 >30MB 时请用户提供文件路径（file 来源，≤2GB）；入库是后台的、可能需要较长时间。
+- `wiki_enqueue` 工具不提供让模型绕过开关的 `derive` 参数（**D92 T1b 起另有 `scope?`**：项目组对话里缺省写入项目 wiki，见 [41-project-team.md](41-project-team.md) §8.5）。工具说明补充：附件 >30MB 时请用户提供文件路径（file 来源，≤2GB）；入库是后台的、可能需要较长时间。
 - 新增 RPC（D92 起入参为 `{ owner: WikiOwner }`；`botId` → owner 泛化）：
   - `wiki.assets(owner)`：资产列表（读 `state.json`，含状态、原因、进度）；
   - `wiki.asset(botId, assetId)`：详情（manifest、派生文本路径）；

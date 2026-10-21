@@ -3,7 +3,7 @@
   import type { ProviderInfo } from '@kepcup/shared';
   import { AppError, isVendorId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { Plus } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { t, vendorName } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -318,10 +318,10 @@
               <div class="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" data-testid={`provider-kind-${provider.id}`}>
                   {provider.kind === 'custom'
-                    ? 'custom'
+                    ? t('settings.providerKindCustom')
                     : provider.kind === 'vendor'
                       ? t('settings.providerKindVendor')
-                      : 'builtin'}
+                      : t('settings.providerKindBuiltin')}
                 </Badge>
                 {#if provider.hasKey}
                   <span
@@ -436,7 +436,12 @@
         {addMode === 'key'
           ? t('settings.rotateKeyTitle', { name: addTargetProvider?.name ?? addTarget })
           : addMode === 'edit'
-            ? t('settings.editVendorTitle', { name: addVendorDescriptor?.name ?? addTarget })
+            ? t('settings.editVendorTitle', {
+                name:
+                  addVendorDescriptor === null
+                    ? addTarget
+                    : vendorName(addVendorDescriptor.id, addVendorDescriptor.name),
+              })
             : t('settings.addProviderTitle')}
       </DialogTitle>
     </DialogHeader>

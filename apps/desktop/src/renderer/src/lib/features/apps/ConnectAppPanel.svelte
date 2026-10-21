@@ -3,7 +3,12 @@
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { ExternalLink, Loader2, ShieldAlert } from '@lucide/svelte';
-  import { errorText, t } from '$lib/i18n';
+  import {
+    connectorDescription,
+    connectorUnavailableText,
+    errorText,
+    t,
+  } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -332,7 +337,9 @@
           {/if}
         </p>
         {#if entry.description.length > 0}
-          <p class="text-xs text-muted-foreground">{entry.description}</p>
+          <p class="text-xs text-muted-foreground">
+            {connectorDescription(entry.connectorId, entry.description)}
+          </p>
         {/if}
         <div class="text-xs" data-testid={`${testid}-scopes`}>
           <span class="text-muted-foreground">{t('apps.panel.scopesTitle')}</span>
@@ -349,7 +356,7 @@
                   data-write={row.write}
                   >{row.scope}{#if row.write}
                     <span class="text-amber-700 dark:text-amber-400"
-                      >（{t('apps.panel.scopeWrite')}）</span
+                      >{t('common.parenthesized', { text: t('apps.panel.scopeWrite') })}</span
                     >{/if}</code
                 >
               {/each}
@@ -367,7 +374,7 @@
             class="text-xs text-amber-700 dark:text-amber-400"
             data-testid={`${testid}-unavailable`}
           >
-            {entry.unavailableReason ?? t('apps.panel.unavailable')}
+            {connectorUnavailableText(entry.unavailableReason) ?? t('apps.panel.unavailable')}
           </p>
         {/if}
       </div>
@@ -397,7 +404,7 @@
           variant={hasGrant && !statusNeedsReconnect(status) ? 'secondary' : 'default'}
           disabled={busy || unavailable}
           title={unavailable
-            ? (entry?.unavailableReason ?? t('apps.panel.unavailable'))
+            ? (connectorUnavailableText(entry?.unavailableReason) ?? t('apps.panel.unavailable'))
             : undefined}
           onclick={() => void start()}
           data-testid={`${testid}-connect`}

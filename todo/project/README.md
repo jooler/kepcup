@@ -338,8 +338,8 @@ scheduled, event, background, delegation, task, watch, mail
 | `propose_bots` | 仅管家 | 与原 `propose_team` 完全相同的参数 |
 | `suggest_route` | 仅管家 | `route: 'bot' \| 'project' \| 'delegate'`，其余同前 |
 | `wiki_search` | 所有 Bot | `{ query: string, limit?: number, scope?: 'mine' \| 'project' \| 'all' }`（WP10；`project` / `all` 仅在项目对话里有效，默认 `all`） |
-| `wiki_read` | 所有 Bot | `{ path: string, scope?: 'mine' \| 'project' }`（默认 `mine`；`wiki_search` 的结果带 scope，原样传回） |
-| `wiki_enqueue` | 所有 Bot | `{ source_type, ref, note, scope?: 'mine' \| 'project' }`（默认 `mine`） |
+| `wiki_read` | 所有 Bot | `{ path: string, scope?: 'mine' \| 'project' }`（项目对话里不传就是先读项目 wiki、那一页不在项目 wiki 时回落自己的 wiki；其它对话默认 `mine`；`wiki_search` 的结果带 scope，原样传回） |
+| `wiki_enqueue` | 所有 Bot | `{ source_type, ref, note, scope?: 'mine' \| 'project' }`（项目对话里默认 `project`——群聊里的沉淀留在项目 wiki；其它对话默认 `mine`） |
 | `wiki_remove_source` | 所有 Bot（仅项目对话） | `{ source_id: string }`（`ast_…`） |
 
 ### 4.11 渲染层状态契约（`apps/desktop/src/renderer/src/lib/stores/`）

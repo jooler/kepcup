@@ -232,18 +232,19 @@ function memo(id: string, patch: Partial<Memo> = {}): Memo {
     source: 'user',
     createdAt: 1,
     updatedAt: 1,
+    sortAt: 1,
     deletedAt: null,
     ...patch,
   };
 }
 
 describe('备忘', () => {
-  it('置顶在前，其余按更新时间倒序', () => {
+  it('置顶在前，其余按排序键倒序；改正文不换位', () => {
     const out = sortMemos([
-      memo('a', { updatedAt: 5 }),
-      memo('b', { updatedAt: 9 }),
-      memo('c', { updatedAt: 1, pinned: true }),
-      memo('d', { updatedAt: 3, pinned: true }),
+      memo('a', { sortAt: 5, updatedAt: 99 }),
+      memo('b', { sortAt: 9 }),
+      memo('c', { sortAt: 1, pinned: true }),
+      memo('d', { sortAt: 3, pinned: true }),
     ]);
     expect(out.map((m) => m.id)).toEqual(['d', 'c', 'b', 'a']);
   });

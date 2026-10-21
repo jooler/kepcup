@@ -7,7 +7,7 @@
   import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion';
   import { fileMentionToken, folderMentionToken, parseLocalPathMentionToken } from '@kepcup/shared';
   import { mount, unmount, untrack } from 'svelte';
-  import { errorText, t } from '$lib/i18n';
+  import { errorText, t, listSeparator } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Button, buttonVariants } from '$lib/components/ui/button';
   import { cn } from '$lib/utils.js';
@@ -815,12 +815,16 @@
           composerDrafts.discardAttachments(conversationId, issue);
           if (issue.sent.length > 0) {
             toast.error(
-              t('composer.attachmentIssueSent', { names: issue.sent.map(nameOf).join('、') }),
+              t('composer.attachmentIssueSent', {
+                names: issue.sent.map(nameOf).join(listSeparator()),
+              }),
             );
           }
           if (issue.missing.length > 0) {
             toast.error(
-              t('composer.attachmentIssueMissing', { names: issue.missing.map(nameOf).join('、') }),
+              t('composer.attachmentIssueMissing', {
+                names: issue.missing.map(nameOf).join(listSeparator()),
+              }),
             );
           }
         },

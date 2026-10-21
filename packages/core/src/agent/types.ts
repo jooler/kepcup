@@ -1,4 +1,5 @@
-import type { AgentPermissionTier, McpToolRisk } from '@kepcup/shared';
+import type { AgentPermissionTier, McpToolRisk, TaskLoopSettings } from '@kepcup/shared';
+import type { ToolOutputSpill } from './tool-output-spill.js';
 
 /**
  * "provider/modelId" reference into the model registry; external agents use
@@ -101,10 +102,34 @@ export interface EngineMessage {
   images?: Array<{ mimeType: string; base64: string }>;
 }
 
+/** D93 自动上下文压缩的模型路由（仅内置 pi 的任务 / 子代理）。 */
+export interface RunCompactionSpec {
+  /** 轻量摘要模型 ref（'' = 不调用模型，压缩退化为确定性裁剪）。 */
+  modelRef: string;
+  /** 摘要调用使用的引擎；缺省为当前 PiEngine（外部 Agent 路由时由调用方传入）。 */
+  engine?: AgentEngine;
+  /** 路由是否仍指向 `modelRef`（设置 / Bot 改模型后不再重试旧厂商）。 */
+  isRouteCurrent?: () => boolean;
+  /** 摘要调用用量：记入本 run 的 usage_ledger（loopType 仍为 task / subagent）。 */
+  onUsage?: (usage: EngineUsage[]) => void;
+}
+
 export interface RunSpec {
   identity: RunIdentity;
   model: ModelRef;
   buildSystemPrompt: () => Promise<string>;
+  /**
+   * D93：任务 / 子代理的自动上下文压缩路由。缺省 = 不压缩（对话轮与外部
+   * 智能体不启用）。`modelRef` 为空时只做确定性裁剪。
+   */
+  compaction?: RunCompactionSpec;
+  /** D93：任务空转检测与软预算；缺省 = 使用默认值（仅内置任务）。 */
+  taskLoop?: TaskLoopSettings;
+  /**
+   * D93 P3：内置任务的大工具输出落盘；缺省 = 只做现有截断。外部智能体
+   * 与对话轮不传（工具面与上下文行为保持不变）。
+   */
+  toolOutputSpill?: ToolOutputSpill;
   messages: EngineMessage[];
   tools: ToolDefinition[];
   /** maxTurns ≤ 0 = unlimited (supervisor turns and task Agent loops). */

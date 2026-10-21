@@ -237,6 +237,7 @@ describe('agents RPC contract', () => {
       'agents.logout',
       'agents.test',
       'agents.options',
+      'agents.efforts',
       'agents.configure',
     ];
     for (const name of names) {

@@ -113,6 +113,7 @@ function fakeHandle(onSteer?: (text: string) => void): TaskRunHandle & { steered
       return true;
     },
     abort() {},
+    onEvent: () => () => undefined,
   };
 }
 

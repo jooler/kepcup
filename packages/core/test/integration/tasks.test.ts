@@ -335,6 +335,28 @@ describe('D75 task layer (TaskHost)', () => {
     expect(runOf(stack, started.taskId).status).toBe('cancelled');
   }, 30_000);
 
+  it('cancelById without userInitiated (update gate / delegation) never wakes the bot', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小系统');
+    const conv = await openDirect(core, bot.id);
+    const held = step().expect(isTaskRequest('TASK-SYS-CANCEL')).hold().replyText('不会到达');
+    llm.script('mock-main', [held]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '系统取消',
+      instruction: 'TASK-SYS-CANCEL',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    tasksOf(stack).cancelById(started.taskId, '更新闸门');
+    await waitRun(stack, started.taskId, ['cancelled'], 'task cancelled');
+    expect(runOf(stack, started.taskId).errorReason).toBeNull();
+    expect(wakeRuns(stack, conv.id)).toEqual([]);
+    held.release();
+    llm.releaseAll();
+  }, 30_000);
+
   it('start_task inside a task is rejected (depth 1), by the tool and by the host', async () => {
     const stack = await start();
     const bot = await makeBot(stack.core, '小艾');
@@ -432,6 +454,12 @@ describe('D75 task layer (TaskHost)', () => {
       step().replyText('知道了'),
       step().replyText('知道了'),
     ]);
+    // D93: the wall-clock test disables the no-progress watchdog so the
+    // total-time path is the one under test.
+    const current = domain(stack).settings.get();
+    domain(stack).settings.update({
+      taskLoop: { ...current.taskLoop, stallTimeoutMinutes: 0, maxWallMinutes: 240 },
+    });
     const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
       title: '挂死',
       instruction: 'TASK-R',
@@ -446,6 +474,7 @@ describe('D75 task layer (TaskHost)', () => {
     tasksOf(stack).sweep(later);
     const run = runOf(stack, started.taskId);
     expect(run.status).toBe('failed');
+    expect(run.errorReason).toBe('wall_timeout');
     expect(run.error).toContain('超过时限');
     const failure = entries(stack, started.taskId).at(-1);
     expect(failure).toMatchObject({ phase: 'failure', status: 'failed' });
@@ -461,6 +490,98 @@ describe('D75 task layer (TaskHost)', () => {
     tasksOf(stack).sweep(later + 2 * 60_000);
     expect(tasksOf(stack).launchedCount()).toBe(0);
     llm.releaseAll();
+  }, 30_000);
+
+  it('maxWallMinutes=0 removes the fixed 4-hour cap (the task keeps running)', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小长');
+    const conv = await openDirect(core, bot.id);
+    const held = step().expect(isTaskRequest('TASK-NO-WALL')).hold().replyText('');
+    llm.script('mock-main', [held]);
+    const current = domain(stack).settings.get();
+    domain(stack).settings.update({
+      taskLoop: { ...current.taskLoop, stallTimeoutMinutes: 0, maxWallMinutes: 0 },
+    });
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '长跑',
+      instruction: 'TASK-NO-WALL',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'task request held',
+    });
+    tasksOf(stack).sweep(Date.now() + TASK_MAX_WALL_MS + 60_000);
+    expect(runOf(stack, started.taskId).status).toBe('running');
+    held.release();
+    llm.releaseAll();
+  }, 30_000);
+
+  it('a built-in task with no engine activity over the stall timeout fails and wakes the bot', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小停');
+    const conv = await openDirect(core, bot.id);
+    llm.script('mock-main', [
+      step().expect(isTaskRequest('TASK-STALL')).hold().replyText('不会到达'),
+      step().expect(isWakeRequest).replyText('那个任务卡住了'),
+    ]);
+    const current = domain(stack).settings.get();
+    domain(stack).settings.update({
+      taskLoop: { ...current.taskLoop, stallTimeoutMinutes: 20, maxWallMinutes: 0 },
+    });
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '卡住',
+      instruction: 'TASK-STALL',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    await waitRun(stack, started.taskId, ['running'], 'task running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'task request held',
+    });
+    tasksOf(stack).sweep(Date.now() + 21 * 60_000);
+    const run = runOf(stack, started.taskId);
+    expect(run.status).toBe('failed');
+    expect(run.errorReason).toBe('stalled');
+    expect(run.error).toContain('长时间没有进展');
+    const failure = entries(stack, started.taskId).at(-1);
+    expect(failure).toMatchObject({ phase: 'failure', status: 'failed' });
+    const entryId = domain(stack).messages.terminalTaskEvent(started.taskId)!.id;
+    const wake = await waitFor(
+      () => wakeRuns(stack, conv.id).find((r) => r.triggerMessageIds[0] === entryId) ?? null,
+      { label: 'wake run', timeoutMs: 15_000 },
+    );
+    expect(wake.triggerMessageIds).toEqual([entryId]);
+    llm.releaseAll();
+  }, 30_000);
+
+  it('a model length stop fails the task instead of silently completing empty', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小截');
+    const conv = await openDirect(core, bot.id);
+    llm.script('mock-main', [
+      step().expect(isTaskRequest('TASK-LENGTH')).replyFinish('length', '写到一半'),
+      step().expect(isWakeRequest).replyText('那个任务被截断了'),
+    ]);
+    const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
+      title: '截断',
+      instruction: 'TASK-LENGTH',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    const run = await waitRun(stack, started.taskId, ['failed'], 'task failed');
+    expect(run.error).toContain('输出达到上限');
+    const failure = entries(stack, started.taskId).at(-1);
+    expect(failure).toMatchObject({ phase: 'failure', status: 'failed' });
+    const entryId = domain(stack).messages.terminalTaskEvent(started.taskId)!.id;
+    await waitFor(
+      () => wakeRuns(stack, conv.id).find((r) => r.triggerMessageIds[0] === entryId) ?? null,
+      { label: 'wake run', timeoutMs: 15_000 },
+    );
   }, 30_000);
 
   it('deleting the conversation or the bot aborts its tasks', async () => {

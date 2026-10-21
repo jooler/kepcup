@@ -41,7 +41,7 @@
 | K12 | **命名**：共享目录 `workdir`、任务执行根目录 `cwd`、`project` 一词给项目组；纯改名先行                                                                                                                                                             |
 | K13 | **worktree 本期不需要**（§9.2 给出评估）；下期评估路径作用域写租约                                                                                                                                                                             |
 | K14 | 新建项目组的成员候选**排除管家**；创建下限为负责人 + ≥ 1 位成员                                                                                                                                                                                  |
-| K15 | **全局上下文预算单独评估，不并入本期**：本文只移除连锁的 token 预算与深度，新增的项目上下文段不设预算；`PERSONA_TOKEN_BUDGET`、`RECENT_MESSAGES_TOKEN_BUDGET`、`TOOL_OUTPUT_MAX_CHARS` 等全局预算要等「按模型窗口压缩」机制就绪后再议（超窗口不压缩会直接报错；`TOOL_OUTPUT_MAX_CHARS` 防的是单次工具输出撑爆窗口，性质不同） |
+| K15 | **全局上下文预算单独评估，不并入本期**：本文只移除连锁的 token 预算与深度，新增的项目上下文段不设预算；`PERSONA_TOKEN_BUDGET`、`RECENT_MESSAGES_TOKEN_BUDGET`、`TOOL_OUTPUT_MAX_CHARS` 等全局预算要等「按模型窗口压缩」机制就绪后再议（超窗口不压缩会直接报错；`TOOL_OUTPUT_MAX_CHARS` 防的是单次工具输出撑爆窗口，性质不同）。D93 已为内置任务 Loop 补上压缩（[43](43-task-loop-harness.md)）；全局预算是否移除仍单独评估 |
 | K16 | 批量提议建 Bot 的工具叫 `propose_bots`（保持与 `propose_bot` / `propose_project` 的 `propose_` 前缀一致，它是审批卡而非直接创建）                                                                                                                     |
 | K17 | **路由先后而非并行**：P 先做续接判断，不认领才进负责人网关（网关要用 P 的结论；代价是多一次秒级轻量调用）                                                                                                                                                              |
 | K18 | **保留旧群的纯 SQL 转换**（§4.3）：比清理旧群省事，也让现有开发库可用；不承诺升级路径                                                                                                                                                                      |
@@ -94,6 +94,7 @@ CREATE TABLE conversations (
   direct_bot_id TEXT,
   lead_bot_id  TEXT REFERENCES bots(id),              -- 项目负责人
   workdir_id   TEXT,                                  -- 工作目录（原 project_id；与原列一致，无 FK）
+  archived_at  INTEGER,                               -- 非空 = 已从对话列表移除（归档）：数据全留，通讯录里可恢复
   -- …其余列不变（summary、cursor、read_only、created_at…）；删除 setup_state（D60 残留）
   CHECK ((type = 'project') = (lead_bot_id IS NOT NULL))   -- 项目恒有负责人，单聊恒无
 );
@@ -291,7 +292,8 @@ CREATE TABLE episodes (
 
 ### 8.5 工具、读写与可信度
 
-- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read`（按检索返回的引用读取）、`wiki_enqueue { scope }`（**默认** `mine`——发布到共享空间必须是有意为之）。仅在项目对话里出现 `project` / `all`。
+- **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read { path, scope? }`（项目对话里不传就是先读项目 wiki、那一页不在项目 wiki 时再读自己的 wiki；显式传 `scope` 则不回落；其它对话默认读自己的 wiki）、`wiki_enqueue { scope }`（**项目对话里默认** `project`——群聊里沉淀的东西留在项目 wiki，不散落到成员的个人 wiki；其它对话默认 `mine`；只有纯个人经验才显式传 `scope=mine`）。仅在项目对话里出现 `project` / `all`。
+- **归属：谁决定写进哪个 wiki**——① 对话轮里 Bot 调 `wiki_enqueue`：缺省按会话取（项目对话 → 项目 wiki，否则自己的 wiki），显式 `scope` 按显式值；② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job）：反思发生在项目对话里且该 Bot 仍是成员时同样进项目 wiki，否则进它自己的 wiki（群聊里沉淀的知识留在项目 wiki）；③ 用户从界面添加来源：进项目 wiki，执行者为负责人。
 - **新增** `wiki_remove_source`（异步托管动作，同 `wiki_enqueue` 的非阻塞范式）：Bot 只能删自己创建的来源，负责人删任意；入队时与执行时各校验一次 ACL；执行 = 移除原件 + 台账，提交，并登记一次体检清理悬空引用（即 D85 §6 的 `wiki.deleteAsset` 的文本子集，本期首次实现）。**走 job（`wiki_remove_source`，不调用模型、不受预算延后）而不是同步执行**：删除要拿项目 wiki 的互斥锁，而锁可能正被一次几分钟的维护持有，工具与 RPC 都不能阻塞等它；界面靠 `wiki_changed` 刷新。
 - 用户从界面添加来源：网址或**粘贴文本**（`text` 来源类型**只给用户**：`wiki_enqueue` 工具的 `source_type` 枚举不含它，`enqueueIngest` 对 `text` 要求 `createdBy.kind==='user'`；台账 `sources[].type` 联合含 `text`，`ref` 只存正文前 80 字预览，长度上限 `WIKI_TEXT_SOURCE_MAX_CHARS` = 200 000）；本期不做界面上传文件——用户要入库文件，对 Bot 说「存到项目 wiki」，由 Bot 用 `wiki_enqueue` 的 file / attachment 类型入库。
 - **可信度**：用户创建的来源可信；Bot 创建的来源，以及由它参与综合的页面，其他 Bot 读取时包进 `<untrusted source="project_wiki">` 并标注创建者；页面按出处判定——全部出处为用户才算可信。
@@ -444,7 +446,7 @@ export const PROJECT_MODULES = [
 项目 wiki：{主题段}                       ← 有内容才出现，不设预算
 ```
 
-另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue scope=project`。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。项目 wiki 主题段（`<project_wiki_topics>`，位于 `<wiki_topics>` 之后，**不设预算**）除对话轮外也注入任务与外部智能体会话——任务要读得到团队知识目录。
+另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue`（项目组对话里默认就写进共享的项目 wiki，纯个人经验才显式传 `scope=mine`）。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。项目 wiki 主题段（`<project_wiki_topics>`，位于 `<wiki_topics>` 之后，**不设预算**）除对话轮外也注入任务与外部智能体会话——任务要读得到团队知识目录。
 
 ### 12.2 管家
 
@@ -464,11 +466,12 @@ export const PROJECT_MODULES = [
 | 更换负责人 | `projects.setLead`：新负责人须是成员；沟通里落系统消息「负责人已更换为 X」（Bot 可见）；进行中的轮次不打断 |
 | 移出成员 | 负责人**拒绝**：「请先更换负责人」（`projects.removeMember` 与设置卡 `project.members` 同一道校验） |
 | 删除 Bot | **拒绝**，若它领导着项目：提示列出项目并给「去更换」入口（同管家不可删的做法）；其余级联不变 |
-| 解散项目组 | 随会话级联；另删项目 wiki 目录 / `wiki.db` / `wiki-store`；`episodes` 随会话 FK 级联 |
+| 从对话列表移除 | **归档**（`conversations.archive`，写 `conversations.archived_at`）：软删——消息、执行记录、附件、workspace、项目 wiki 目录全部保留，会话仍在通讯录的「项目组」一栏里，可恢复（`conversations.unarchive`，恢复后连左栏分组归属与置顶一起回来） |
+| 解散项目组 | 物理删除（`conversations.delete`），只在项目详情页「危险区」：随会话级联；另删项目 wiki 目录 / `wiki.db` / `wiki-store`；`episodes` 随会话 FK 级联 |
 
 ### 12.5 RPC 变更
 
-`groups.*` → `projects.*`：`create`（入参 `leadBotId`、`goal?`）、`setLead`、`update { title?, goal? }`（补 DEV-030）、`addMembers`、`removeMember`；删除 `groups.setup.*`、`groups.redistribute`、`groups.rename`（并入 `update`）。原目录 RPC `projects.*` → `workdirs.*`。新增 `episodes.resume / stop`、`wiki.addSource / sources / deleteSource`。事件：`conversation.updated` 复用，`group.turn` → `project.turn`（阶段 `triaging` → `routing`），`wiki_changed` 带 owner。
+`groups.*` → `projects.*`：`create`（入参 `leadBotId`、`goal?`）、`setLead`、`update { title?, goal? }`（补 DEV-030）、`addMembers`、`removeMember`；删除 `groups.setup.*`、`groups.redistribute`、`groups.rename`（并入 `update`）。原目录 RPC `projects.*` → `workdirs.*`。新增 `episodes.resume / stop`、`wiki.addSource / sources / deleteSource`、`conversations.archive / unarchive`（归档与恢复）、`conversations.all`（通讯录名册，含归档会话）。事件：`conversation.updated` 复用，`group.turn` → `project.turn`（阶段 `triaging` → `routing`），`wiki_changed` 带 owner。
 
 ## 13 改名与迁移方案
 
@@ -585,7 +588,7 @@ WP11：设计与开发文档同步（删除各文档顶部的 D92 横幅并把�
 | # | 默认 → 实施结果 |
 |---|---|
 | 1 | 窗口 30 分钟、轻量模型照实施；阈值落为 `ROUTING_CONTINUATION_MIN_CONFIDENCE` 0.6、熔断 12 / 8（§17.5 勘误） |
-| 2 | `wiki_enqueue` 默认 `scope=mine`、`wiki_search` 项目组里默认 `all`（结果带 `[project]` / `[mine]` 前缀） |
+| 2 | `wiki_enqueue` 项目组里默认 `scope=project`（群聊里的沉淀留在项目 wiki；单聊里默认 `mine`）、`wiki_read` 项目组里不传 scope 先读项目 wiki、没有那一页时回落自己的 wiki、`wiki_search` 项目组里默认 `all`（结果带 `[project]` / `[mine]` 前缀） |
 | 3 | 「执行者付费」照实施；`enqueueIngest` 保留 `botId` 为执行者字段（WP9） |
 | 4 | 照实施（`PROJECT_MODULES.status='planned'` 灰显 + `ModulePlaceholder`） |
 | 5 | 照实施（`shell.projectView` 内存态，`chat.select()` 重置） |

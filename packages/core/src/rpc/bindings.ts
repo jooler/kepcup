@@ -11,6 +11,8 @@ import {
   browserProfileIdInputSchema,
   browserProfilesMutateOutputSchema,
   settingsUpdateInputSchema,
+  inkcopHealthOutputSchema,
+  inkcopListAgentsOutputSchema,
   providersSetKeyInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
@@ -46,12 +48,15 @@ import {
   interviewAnswerPathInputSchema,
   interviewAnswerPathOutputSchema,
   conversationsListOutputSchema,
+  conversationsAllOutputSchema,
   conversationGetInputSchema,
   conversationGetOutputSchema,
   conversationsOpenDirectInputSchema,
   conversationsOpenDirectOutputSchema,
   conversationsDeleteInputSchema,
   conversationsDeleteOutputSchema,
+  conversationsArchiveInputSchema,
+  conversationsArchiveOutputSchema,
   conversationsMarkReadInputSchema,
   conversationsMarkReadOutputSchema,
   conversationIdInputSchema,
@@ -229,6 +234,7 @@ import {
   mediaUnderstandImageInputSchema,
   mediaUnderstandImageOutputSchema,
   mergePatchOnto,
+  isArchivedConversation,
   type Conversation,
   type Settings,
 } from '@kepcup/shared';
@@ -259,6 +265,16 @@ import {
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
 import type { LoopType, WikiOwner } from '@kepcup/shared';
+import {
+  InkcopAuthError,
+  InkcopHttpError,
+  inkcopAuthTip,
+  inkcopBaseUrl,
+  inkcopClientFromSettings,
+  InkcopOfflineError,
+  inkcopOfflineTip,
+  readInkcopEndpoint,
+} from '../inkcop/index.js';
 
 const voidInput = z.void();
 
@@ -441,6 +457,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             apps: appsPatch,
             agents: agentsPatch,
             backgroundTasks: backgroundTasksPatch,
+            inkcopLocalCollab: inkcopLocalCollabPatch,
+            taskLoop: taskLoopPatch,
             ...rest
           } = resolve(current);
           const latestApps = current.apps;
@@ -489,6 +507,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             // P6 后台任务：部分 patch，与已存值合并。
             ...(backgroundTasksPatch !== undefined
               ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
+              : {}),
+            ...(taskLoopPatch !== undefined
+              ? { taskLoop: { ...current.taskLoop, ...taskLoopPatch } }
+              : {}),
+            // InkCop 同机协作 v0.2：部分 patch。
+            ...(inkcopLocalCollabPatch !== undefined
+              ? {
+                  inkcopLocalCollab: {
+                    ...current.inkcopLocalCollab,
+                    ...inkcopLocalCollabPatch,
+                  },
+                }
               : {}),
           });
           return { current, next };
@@ -620,6 +650,87 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { ok: true as const };
     }),
 
+    'inkcop.health': method(z.object({}).default({}), inkcopHealthOutputSchema, async () => {
+      const settings = domain.settings.get();
+      const discovered = readInkcopEndpoint();
+      const discoveredApiKey = discovered.ok ? discovered.endpoint.token : undefined;
+      const discoveredBaseUrl = discovered.ok ? inkcopBaseUrl(discovered.endpoint) : undefined;
+      const discoverFields = {
+        ...(discoveredApiKey !== undefined ? { discoveredApiKey } : {}),
+        ...(discoveredBaseUrl !== undefined ? { discoveredBaseUrl } : {}),
+      };
+      const client = inkcopClientFromSettings(settings);
+      try {
+        const health = await client.health();
+        return {
+          online: true as const,
+          version: health.version,
+          app: health.app,
+          ...discoverFields,
+        };
+      } catch (error) {
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            authError: true as const,
+            tip: inkcopAuthTip(null),
+            ...discoverFields,
+          };
+        }
+        if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
+          return {
+            online: false as const,
+            tip: inkcopOfflineTip(null),
+            ...discoverFields,
+          };
+        }
+        throw error;
+      }
+    }),
+    'inkcop.listAgents': method(z.object({}).default({}), inkcopListAgentsOutputSchema, async () => {
+      const client = inkcopClientFromSettings(domain.settings.get());
+      try {
+        await client.health();
+      } catch (error) {
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            agents: [],
+            authError: true as const,
+            tip: inkcopAuthTip(null),
+          };
+        }
+        if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
+          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+        }
+        throw error;
+      }
+      try {
+        const listed = await client.listAgents();
+        return { online: true as const, agents: listed.agents };
+      } catch (error) {
+        // Server not yet on v0.2: fall back to main_agent stub so UI can still bind.
+        if (error instanceof InkcopHttpError && (error.status === 404 || error.status === 501)) {
+          return {
+            online: true as const,
+            agents: [{ key: 'main_agent', name: '主智能体', kind: 'main' as const }],
+            tip: 'InkCop 尚未提供 /v1/agents，暂仅列出主智能体',
+          };
+        }
+        if (error instanceof InkcopAuthError) {
+          return {
+            online: false as const,
+            agents: [],
+            authError: true as const,
+            tip: inkcopAuthTip(null),
+          };
+        }
+        if (error instanceof InkcopOfflineError) {
+          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+        }
+        throw error;
+      }
+    }),
     'bots.list': method(voidInput, botsListOutputSchema, async () => ({
       bots: domain.bots.listActive(),
     })),
@@ -642,7 +753,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       // W8: only an existing shared browser profile ('' = private).
       domain.browserProfiles.assertSelectable(input.profile.runtime.browser_profile);
-      const bot = domain.bots.create(input.profile, { interview: input.interview });
+      const bot = domain.bots.create(input.profile, {
+        interview: input.interview,
+        // InkCop 同机桥 Bot 不走默认外部 Agent（契约：不暴露为外部智能体）。
+        skipDefaultAgent:
+          input.skipDefaultAgent === true ||
+          input.profile.runtime.message_transport === 'inkcop-local' ||
+          (input.profile.runtime.inkcop_agent_keys?.length ?? 0) > 0,
+      });
       publish('bot.updated', { bot });
       return { bot };
     }),
@@ -764,13 +882,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       // 下发：启动时不逐个打开会话也能看到「最后一条消息」。
       const previews = domain.messages.latestPreviewByConversation();
       return {
-        conversations: domain.conversations.list().map((conversation) => {
+        // 已归档（已从对话列表移除）的会话不进列表，但仍留在通讯录里可恢复。
+        conversations: domain.conversations.listVisible().map((conversation) => {
           const view = conversationView(conversation);
           const text = previews[conversation.id];
           return text === undefined ? view : { ...view, lastMessageText: text };
         }),
       };
     }),
+    /** 通讯录名册：所有会话（含已从对话列表移除的归档会话）。 */
+    'conversations.all': method(voidInput, conversationsAllOutputSchema, async () => ({
+      conversations: domain.conversations.list().map((conversation) => conversationView(conversation)),
+    })),
     'conversations.get': method(
       conversationGetInputSchema,
       conversationGetOutputSchema,
@@ -785,8 +908,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => {
         domain.bots.getOrThrow(input.botId);
         const { conversation, created } = domain.conversations.openDirect(input.botId);
-        if (created) publish('conversation.updated', { conversation });
-        return { conversation: conversationView(conversation), created };
+        // 用户从界面打开某个 Bot 的对话 = 恢复它（此前被从对话列表移除）：
+        // 一个 Bot 仍只有一个对话，历史延续。
+        const restored = isArchivedConversation(conversation)
+          ? domain.conversations.setArchived(conversation.id, false)
+          : conversation;
+        if (created || restored !== conversation) {
+          publish('conversation.updated', { conversation: restored });
+        }
+        return { conversation: conversationView(restored), created };
       },
     ),
     'conversations.delete': method(
@@ -796,6 +926,26 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         await domain.lifecycle.deleteConversation(input.id);
         publish('conversation.deleted', { id: input.id });
         return { ok: true as const };
+      },
+    ),
+    /** 从对话列表移除（归档）：数据全留，会话仍在通讯录里，可恢复。 */
+    'conversations.archive': method(
+      conversationsArchiveInputSchema,
+      conversationsArchiveOutputSchema,
+      async (input) => {
+        const conversation = domain.conversations.setArchived(input.id, true);
+        publish('conversation.updated', { conversation });
+        return { conversation: conversationView(conversation) };
+      },
+    ),
+    /** 恢复已归档的会话：回到对话列表。 */
+    'conversations.unarchive': method(
+      conversationsArchiveInputSchema,
+      conversationsArchiveOutputSchema,
+      async (input) => {
+        const conversation = domain.conversations.setArchived(input.id, false);
+        publish('conversation.updated', { conversation });
+        return { conversation: conversationView(conversation) };
       },
     ),
     'conversations.markRead': method(
@@ -931,7 +1081,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
 
     'runs.cancel': method(runIdInputSchema, runsCancelOutputSchema, async (input) => ({
-      run: orchestrator.cancelRun(input.runId),
+      run: orchestrator.cancelRun(input.runId, { userInitiated: true }),
     })),
     // W3（D78）: `reviewed` comes only from the task card's review panel (the
     // user ticked 我已核实); no model tool reaches retryRun.

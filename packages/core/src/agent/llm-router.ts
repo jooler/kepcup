@@ -3,6 +3,7 @@ import {
   AGENT_TRIAGE_MIN_INTERVAL_MS,
   agentEngineKey,
   agentModelRef,
+  resolveAgentModel,
   BUILTIN_ENGINE,
   type AgentCatalogEntry,
   type AgentView,
@@ -51,7 +52,9 @@ export type LlmPurpose =
   | 'widget_authoring'
   /** D87 P3c 组件制作 loop 的独立审查（设置「组件审查模型」，缺省跟随 Bot 主模型）。 */
   | 'widget_review'
-  | 'subagent_compaction';
+  | 'subagent_compaction'
+  /** D93 内置 pi 任务的自动上下文压缩（轻量模型摘要旧消息）。 */
+  | 'task_compaction';
 
 /**
  * 模型选取的唯一入口（所有推理调用的 purpose）：后台用途 + `conversation`
@@ -80,6 +83,7 @@ const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
   // 路由判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
   triage: 'light_for_bot',
   subagent_compaction: 'light_for_bot',
+  task_compaction: 'light_for_bot',
   // Wiki 维护 / 技能生成：Bot 主模型 → 全局主模型。
   wiki_maintenance: 'main_for_bot',
   skill_authoring: 'main_for_bot',
@@ -274,7 +278,10 @@ export class LlmRouter {
       agentId = usable(own) ? own : null;
     }
     if (agentId === null) return null;
-    const model = agentId === own ? (bot?.profile.runtime.agent.model ?? '') : '';
+    const model = resolveAgentModel(
+      agentId === own ? (bot?.profile.runtime.agent.model ?? '') : '',
+      settings.agents[agentId],
+    );
     return {
       engine: external,
       modelRef: agentModelRef(agentId, model),

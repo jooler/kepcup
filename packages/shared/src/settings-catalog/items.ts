@@ -1,11 +1,11 @@
+import { TASK_LOOP_DEFAULTS } from '../domain/types.js';
+import type { SettingItem } from './types.js';
 import {
-  SENSITIVE_FIELD_TYPES,
-  type SettingFieldSpec,
-  type SettingFieldType,
-  type SettingItem,
-  type SettingWriteMode,
-  type SettingWriteSpec,
-} from './types.js';
+  defineSettingField as field,
+  defineSettingItem as item,
+  defineSettingWrite as write,
+  defineViaTool as viaTool,
+} from './define.js';
 
 /**
  * 设置目录条目（todo/conversational-app-setup.md §4.2，「P0 实现前逐项复核」后的首批）。
@@ -15,6 +15,8 @@ import {
  *   `effectiveMode` 兜底成 link——P1 每把一个组件嵌入化，只需在 `CARD_KEYS` 加键并填 `card`。
  * - `direct` 只出现在 `DIRECT_ITEM_IDS` 里（§5.3 白名单，目录测试强制）。
  * - 删除类动作不在这里，见 `coverage.ts` 的 `EXCLUDED_SETTING_LOCATIONS`。
+ * - 简单全局标量（开关 / 文本 / 静态下拉）用 `store.generic` + `card: 'field-editor'`，
+ *   core 直接走通用标量适配器，不必写自定义适配器（见 `contributions/` 覆盖测试）。
  */
 
 /** direct 白名单（§5.3，已定）：默认主 / 轻量模型、本 Bot 的模型 / 轻量模型。 */
@@ -36,38 +38,6 @@ export const CAPABILITY_SETTING_IDS = {
   image: 'capability.image',
   video: 'capability.video',
 } as const;
-
-function field(
-  name: string,
-  label: string,
-  type: SettingFieldType,
-  extra: Partial<Omit<SettingFieldSpec, 'name' | 'label' | 'type'>> = {},
-): SettingFieldSpec {
-  return { name, label, type, sensitive: SENSITIVE_FIELD_TYPES.has(type), ...extra };
-}
-
-function write(
-  maxMode: SettingWriteMode,
-  extra: Partial<Omit<SettingWriteSpec, 'maxMode'>> = {},
-): SettingWriteSpec {
-  return { maxMode, via: 'catalog', widensPermission: false, ...extra };
-}
-
-/** 经专门工具的项：档位只作展示，`effectiveMode` 一律给 redirect。 */
-function viaTool(
-  tool: string,
-  maxMode: SettingWriteMode,
-  widensPermission = false,
-): SettingWriteSpec {
-  return { maxMode, via: { tool }, widensPermission };
-}
-
-type ItemInput = Omit<SettingItem, 'owner' | 'readOnly' | 'enables' | 'keywords' | 'fields'> &
-  Partial<Pick<SettingItem, 'owner' | 'readOnly' | 'enables' | 'keywords' | 'fields'>>;
-
-function item(input: ItemInput): SettingItem {
-  return { owner: 'core', readOnly: false, enables: [], keywords: [], fields: [], ...input };
-}
 
 const CAPABILITY_ITEMS: readonly SettingItem[] = (
   [
@@ -227,7 +197,9 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     enables: ['审查 Bot 制作的组件'],
     keywords: ['组件', '审查模型', 'widget'],
     scope: 'global',
-    fields: [field('model', '审查模型', 'model', { options: 'chat-models' })],
+    fields: [
+      field('model', '审查模型', 'model', { options: 'chat-models', path: 'widgetReviewModel' }),
+    ],
     write: write('confirm'),
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
@@ -377,17 +349,31 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     title: '外部智能体',
     summary: '启用并登录 Claude Code、Codex 等外部智能体，让 Bot 的任务由它执行',
     enables: ['用外部智能体执行任务', '写代码'],
-    keywords: ['智能体', 'Agent', 'Claude Code', 'Codex', 'ACP', '登录'],
+    keywords: ['智能体', 'Agent', 'Claude Code', 'Codex', 'ACP', '登录', '模型'],
     scope: 'global',
     fields: [
       field('agent', '智能体', 'select', { options: 'agents' }),
       field('enabled', '启用', 'toggle'),
       field('login', '登录', 'account'),
+      field('model', '默认模型', 'text'),
     ],
     write: write('form', { widensPermission: true }),
     card: 'agent',
     deepLink: { surface: 'settings', section: 'agents', anchor: 'agents' },
     store: { kind: 'settings', paths: ['agents'] },
+  }),
+  item({
+    id: 'agents.inkcop-local-collab',
+    group: 'agents',
+    title: '本机应用协作（InkCop）',
+    summary: '启用后可在 Bot 详情关联 InkCop 智能体，由它们代做单次移交',
+    enables: ['调用本机 InkCop 智能体'],
+    keywords: ['InkCop', '本机协作', '本机应用', 'API 密钥', '智能体关联'],
+    scope: 'global',
+    write: write('link', { widensPermission: true }),
+    card: null,
+    deepLink: { surface: 'extension-center', section: 'localCollab' },
+    store: { kind: 'settings', paths: ['inkcopLocalCollab'] },
   }),
   item({
     id: 'agents.default',
@@ -396,7 +382,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     summary: '没有默认主模型时，新建的 Bot 默认由哪个外部智能体驱动',
     keywords: ['默认智能体', '新建 Bot'],
     scope: 'global',
-    fields: [field('agent', '智能体', 'select', { options: 'agents' })],
+    fields: [field('agent', '智能体', 'select', { options: 'agents', path: 'defaultAgentId' })],
     write: write('confirm'),
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'agents', anchor: 'agents' },
@@ -539,6 +525,19 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     card: 'bot-config',
     deepLink: { surface: 'bot-panel', section: 'profile', anchor: 'bot-agent' },
     store: { kind: 'bot', paths: ['runtime.agent'] },
+  }),
+  item({
+    id: 'bot.inkcop-agents',
+    group: 'bot',
+    title: '这个 Bot 关联的 InkCop 智能体',
+    summary: '选择这个 Bot 可以移交任务的 InkCop 智能体；先在扩展中心启用本机应用协作',
+    enables: ['让这个 Bot 调用 InkCop 智能体'],
+    keywords: ['InkCop', '关联智能体', '本机智能体'],
+    scope: 'bot',
+    write: write('link'),
+    card: null,
+    deepLink: { surface: 'bot-panel', section: 'profile', anchor: 'bot-inkcop-agents' },
+    store: { kind: 'bot', paths: ['runtime.inkcop_agent_keys'] },
   }),
   item({
     id: 'bot.identity',
@@ -803,7 +802,10 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [
       field('language', '语言', 'select', {
         options: 'static',
-        staticOptions: [{ value: 'zh-CN', label: '简体中文' }],
+        staticOptions: [
+          { value: 'zh-CN', label: '简体中文' },
+          { value: 'en-US', label: 'English' },
+        ],
       }),
     ],
     write: write('confirm'),
@@ -819,7 +821,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     enables: ['开机后定时任务照常运行'],
     keywords: ['开机启动', '自启动', '登录启动'],
     scope: 'global',
-    fields: [field('enabled', '开机启动', 'toggle')],
+    fields: [field('enabled', '开机启动', 'toggle', { path: 'launchAtLogin' })],
     write: write('confirm'),
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'general', anchor: 'general' },
@@ -833,11 +835,69 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     summary: '在侧栏显示工作台入口，统筹事项与备忘',
     keywords: ['工作台', '事项', '备忘', '待办'],
     scope: 'global',
-    fields: [field('enabled', '显示工作台', 'toggle')],
+    fields: [field('enabled', '显示工作台', 'toggle', { path: 'workbenchEnabled' })],
     write: write('confirm'),
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'general', anchor: 'general-workbench' },
-    store: { kind: 'settings', paths: ['workbenchEnabled'] },
+    // 简单顶层布尔：走通用标量适配器（generic-adapter.ts），不写自定义适配器。
+    store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true },
+  }),
+
+  item({
+    id: 'general.task-loop',
+    group: 'general',
+    title: '任务 Loop',
+    summary: '长任务的空转保护、无活动超时、最长运行与软预算',
+    enables: ['长任务自动止损', '重复操作提醒', '任务 token 软预算', '无活动超时', '最长运行时间'],
+    keywords: ['空转', '循环', '重复', '预算', '任务 Loop', 'loop', '最长运行', '运行时长', '超时'],
+    scope: 'global',
+    fields: [
+      field('idleGuardEnabled', '启用空转检测', 'toggle', { path: 'taskLoop.idleGuardEnabled' }),
+      field('idleWarnAfter', '提醒阈值', 'number', {
+        path: 'taskLoop.idleWarnAfter',
+        min: 2,
+        max: 10,
+        step: 1,
+      }),
+      field('idleStopAfter', '中止阈值', 'number', {
+        path: 'taskLoop.idleStopAfter',
+        min: 3,
+        max: 20,
+        step: 1,
+      }),
+      field('idleWindowCalls', '检测窗口', 'number', {
+        path: 'taskLoop.idleWindowCalls',
+        min: 3,
+        max: 50,
+        step: 1,
+      }),
+      field('tokenSoftBudget', 'token 软预算', 'number', {
+        path: 'taskLoop.tokenSoftBudget',
+        min: 0,
+        max: 10_000_000,
+        step: 100_000,
+      }),
+      field('stallTimeoutMinutes', '无活动超时（分钟）', 'number', {
+        path: 'taskLoop.stallTimeoutMinutes',
+        min: 0,
+        max: 120,
+        step: 1,
+        defaultValue: TASK_LOOP_DEFAULTS.stallTimeoutMinutes,
+        hint: '0 = 关闭；开启时应大于单次工具上限（10 分钟），建议 20 分钟。',
+      }),
+      field('maxWallMinutes', '最长运行（分钟）', 'number', {
+        path: 'taskLoop.maxWallMinutes',
+        min: 0,
+        max: 1_440,
+        step: 10,
+        defaultValue: TASK_LOOP_DEFAULTS.maxWallMinutes,
+        hint: '0 = 不限制；默认 240 分钟。',
+      }),
+    ],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'general', anchor: 'general-task-loop' },
+    store: { kind: 'settings', paths: ['taskLoop'] },
   }),
 
   // --- 后台 ---------------------------------------------------------------

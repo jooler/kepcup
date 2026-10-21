@@ -1477,7 +1477,7 @@ describe('settings catalog host: review fixes', () => {
     });
     const id = messageIdIn(result.content);
     const card = cardOf(rig, id);
-    expect(card.before).toEqual({ agent: 'agent-b', enabled: false });
+    expect(card.before).toEqual({ agent: 'agent-b', enabled: false, model: '' });
     // Meanwhile agent-a is switched off elsewhere.
     rig.settings.update({ agents: { 'agent-a': { enabled: false } } as never });
     const applied = await rig.host.applyItem({
@@ -2053,22 +2053,23 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(rig.wakes).toHaveLength(0);
   });
 
-  it('兜底适配器恒回 configured 的条目（profile.user-facts）不擅自标完成；手动「我已设置好」仍可以', async () => {
+  it('显式 fallback 条目（profile.user-facts）读 unknown，不擅自标完成；手动「我已设置好」仍可以', async () => {
     const rig = makeRig();
     const card = appendCard(rig, { itemId: 'profile.user-facts', mode: 'link' });
-    // 没有不含原文的安全信号：values 保持 null。configured 不算核对通过。
+    // 没有不含原文的安全信号（EXPLICIT_ADAPTER_FALLBACK）：values 保持 null，状态 unknown。
     expect(
       rig.host.read('profile.user-facts', {
         botId: null,
         conversationId: null,
         workdirId: null,
       }),
-    ).toMatchObject({ status: 'configured', values: null });
-    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
+    ).toMatchObject({ status: 'unknown', values: null });
+    // unknown = 无法核对：recheck 保持 pending（verified null，不是「核对过没通过」）。
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: null });
     expect(cardOf(rig, card.id).state).toBe('pending');
     expect(rig.wakes).toHaveLength(0);
-    // 用户亲手点的 complete 仍按「已配置」结卡（既有行为不变）。
-    expect(rig.host.completeCard(card.id)).toEqual({ state: 'applied', verified: true });
+    // 用户亲手点的 complete：unknown 无法核对 → 按用户所说标 applied（verified null），仍唤醒。
+    expect(rig.host.completeCard(card.id)).toEqual({ state: 'applied', verified: null });
     expect(rig.wakes).toHaveLength(1);
   });
 

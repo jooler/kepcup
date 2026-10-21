@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getSettingItem, settingsSchema, type Bot, type Settings } from '@kepcup/shared';
 import { botProfile } from '@kepcup/testkit';
-import { buildItemAdapters, type AdapterDeps } from '../../src/settings/adapters.js';
+import { buildItemAdapters } from '../../src/settings/contributions/index.js';
+import type { AdapterDeps } from '../../src/settings/adapters.js';
 
 /**
  * P1 写入适配器：条目级合并（不覆盖兄弟字段）、放宽判定、技能启停走原服务。
@@ -20,6 +21,7 @@ function harness(
   sandbox?: AdapterDeps['sandbox'],
   allowlist?: AdapterDeps['allowlist'],
   appConnections?: AdapterDeps['appConnections'],
+  agentOptions?: AdapterDeps['agentOptions'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -38,6 +40,7 @@ function harness(
       mcp_server_ids: ['srv'],
       app_connection_ids: ['conn-1'],
       browser_profile: '',
+      message_transport: '',
       ...runtime,
     },
   });
@@ -103,6 +106,7 @@ function harness(
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(allowlist !== undefined ? { allowlist } : {}),
     ...(appConnections !== undefined ? { appConnections } : {}),
+    ...(agentOptions !== undefined ? { agentOptions } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -223,6 +227,51 @@ describe('P1 setting item writes', () => {
         rig.target,
       ),
     ).toThrow(/连接 missing 不存在或已删除/);
+  });
+
+  it('agents.external stores the per-agent default model and keeps it per agent', () => {
+    const rig = harness();
+    const spec = item('agents.external');
+    const adapter = rig.adapters(spec);
+    adapter.write!(
+      spec,
+      { next: { agent: 'codex', enabled: true, model: '  gpt-5  ' }, secrets: {} },
+      rig.target,
+    );
+    expect(rig.settings().agents.codex).toMatchObject({ enabled: true, model: 'gpt-5' });
+    expect(adapter.read(spec, rig.target, { agent: 'codex' }).values).toMatchObject({
+      agent: 'codex',
+      enabled: true,
+      model: 'gpt-5',
+    });
+  });
+
+  it('bot.agent lists the cached model options probed from the selected agent', () => {
+    const rig = harness({}, {}, undefined, undefined, undefined, undefined, (agentId) =>
+      agentId === 'codex'
+        ? {
+            models: [
+              { value: 'gpt-5', name: 'GPT-5', description: 'frontier' },
+              { value: 'o4', name: 'o4', description: '' },
+            ],
+            efforts: [],
+            fetchedAt: 1,
+            error: null,
+          }
+        : null,
+    );
+    const itemSpec = item('bot.agent');
+    const adapter = rig.adapters(itemSpec);
+    adapter.write!(
+      itemSpec,
+      { next: { agent: 'codex', model: '', permission: 'ask' }, secrets: {} },
+      rig.target,
+    );
+    const modelField = itemSpec.fields.find((field) => field.name === 'model')!;
+    expect(adapter.options!(modelField, itemSpec, rig.target)).toEqual([
+      { value: 'gpt-5', label: 'GPT-5（frontier）' },
+      { value: 'o4', label: 'o4' },
+    ]);
   });
 
   it('switching a bot onto an external agent is widening; dropping to read-only is not', () => {
@@ -1093,6 +1142,77 @@ describe('validation and widening fixes (D89 review)', () => {
     expect(() =>
       adapter.write!(entry, { next: { provider: 'nobody', limit: 2 }, secrets: {} }, rig.target),
     ).toThrow(/没有已接入的厂商/);
+  });
+
+  it('general.task-loop validates ranges and cross-field constraints', () => {
+    const rig = harness();
+    const entry = item('general.task-loop');
+    const adapter = rig.adapters(entry);
+    expect(adapter.read(entry, rig.target, {}).values).toMatchObject({
+      idleGuardEnabled: true,
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+      stallTimeoutMinutes: 20,
+      maxWallMinutes: 240,
+    });
+
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 2, idleStopAfter: 2 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 12, idleStopAfter: 8 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleStopAfter: 9, idleWindowCalls: 8 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 1 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { stallTimeoutMinutes: 121 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { stallTimeoutMinutes: 5 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(adapter.normalize!(entry, { stallTimeoutMinutes: 0 }, rig.target)).toMatchObject({
+      ok: true,
+    });
+    expect(adapter.normalize!(entry, { maxWallMinutes: 0 }, rig.target)).toMatchObject({
+      ok: true,
+    });
+    expect(
+      adapter.normalize!(entry, { maxWallMinutes: 1_441 }, rig.target),
+    ).toMatchObject({ ok: false });
+
+    const checked = adapter.normalize!(
+      entry,
+      {
+        idleGuardEnabled: false,
+        idleWarnAfter: 4,
+        idleStopAfter: 8,
+        idleWindowCalls: 10,
+        tokenSoftBudget: 100_000,
+        stallTimeoutMinutes: 30,
+        maxWallMinutes: 480,
+      },
+      rig.target,
+    );
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) throw new Error(checked.message);
+    adapter.write!(entry, { next: checked.values, secrets: {} }, rig.target);
+    expect(rig.settings().taskLoop).toMatchObject({
+      idleGuardEnabled: false,
+      idleWarnAfter: 4,
+      idleStopAfter: 8,
+      idleWindowCalls: 10,
+      tokenSoftBudget: 100_000,
+      stallTimeoutMinutes: 30,
+      maxWallMinutes: 480,
+    });
+    // Other settings are untouched.
+    expect(rig.settings().providerConcurrency.default).toBe(4);
   });
 
   it('general.workbench write toggles freely (not gated by schedule count)', () => {

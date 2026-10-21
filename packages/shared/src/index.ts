@@ -2,6 +2,7 @@ export * from './ids.js';
 export * from './errors.js';
 export * from './constants.js';
 export * from './domain/types.js';
+export * from './domain/conversation-archive.js';
 export * from './domain/message-preview.js';
 export * from './domain/project-title.js';
 export * from './domain/project-modules.js';

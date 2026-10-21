@@ -1,8 +1,15 @@
 import { Type } from '@earendil-works/pi-ai';
-import { AppError, TOOL_OUTPUT_MAX_CHARS, type Message } from '@kepcup/shared';
+import {
+  AppError,
+  GET_RUN_STEPS_DEFAULT_LIMIT,
+  GET_RUN_STEPS_MAX_LIMIT,
+  TOOL_OUTPUT_MAX_CHARS,
+  type Message,
+} from '@kepcup/shared';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
+import type { ToolOutputSpill } from '../agent/tool-output-spill.js';
 import {
   isTaskInterimProgress,
   renderMessageLine,
@@ -46,6 +53,7 @@ import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
 import { buildCapabilityTools } from './capability-tools.js';
+import { buildInkcopAgentTools, type InkcopToolFacade } from './inkcop-tools.js';
 import type { CapabilityDiscovery } from '../capabilities/discovery.js';
 import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
 import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
@@ -69,6 +77,8 @@ export interface ResponseToolDeps {
   network: SandboxNetworkPolicy;
   /** Per-run read hashes; released when the run settles. */
   fsState: FileReadState;
+  /** D93 P3: large tool outputs spill to the workspace (built-in task runs). */
+  toolOutputSpill?: ToolOutputSpill | undefined;
   /** Called for every message the bot sends (output_message_ids + events). */
   onBotMessage: (message: Message) => void;
   /**
@@ -252,6 +262,11 @@ export interface ResponseToolDeps {
    * 执行，档位由宿主裁定）。orchestrator 已按 run 绑定好上下文。
    */
   settings?: SettingsToolFacade | undefined;
+  /**
+   * InkCop 同机协作（design 41 / 契约 v0.4）：present 时注册 call_inkcop_agent。
+   * 关联智能体以工具移交，不切换整轮 message_transport。
+   */
+  inkcop?: InkcopToolFacade | undefined;
 }
 
 /**
@@ -640,6 +655,8 @@ export function buildResponseTools(input: {
     },
   };
 
+  const getRunSteps = buildGetRunStepsTool({ identity, runs: deps.runs });
+
   const requestAccess: ToolDefinition<{
     path: string;
     access: 'read' | 'write';
@@ -931,6 +948,7 @@ export function buildResponseTools(input: {
     network: deps.network,
     secrets: deps.secrets,
     fsState: deps.fsState,
+    ...(deps.toolOutputSpill !== undefined ? { toolOutputSpill: deps.toolOutputSpill } : {}),
   });
 
   // P07 memory tools (evidence = the triggering batch of this run).
@@ -1108,6 +1126,10 @@ export function buildResponseTools(input: {
   const mcpTools = deps.mcp?.tools ?? [];
   const capabilityTools =
     deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
+  const inkcopTools =
+    deps.inkcop !== undefined
+      ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop })
+      : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
 
@@ -1210,6 +1232,7 @@ export function buildResponseTools(input: {
       // D91: a turn mounts no external tool one by one — the read-only quick path is the
       // capability pair (call-time re-check in the gateway).
       ...capabilityTools,
+      ...inkcopTools,
       ...appTools,
       ...setupTools,
     ]);
@@ -1223,6 +1246,7 @@ export function buildResponseTools(input: {
     getAttachment,
     listMyRuns,
     getRun,
+    getRunSteps,
     requestAccess,
     requestUnsandboxed,
     acquireWorkdirWrite,
@@ -1255,6 +1279,7 @@ export function buildResponseTools(input: {
       : []),
     ...mcpTools,
     ...capabilityTools,
+    ...inkcopTools,
     ...appTools,
     ...setupTools,
   ]);
@@ -1300,6 +1325,114 @@ export function emptyToolResult(): ToolResult {
 }
 
 /**
+ * D93 P3: read one's own run history in detail (docs/design/43-task-loop-harness.md
+ * §7.3). Tasks and subagents get it; conversation turns do not (their tool
+ * surface stays unchanged). Only the run itself / the current bot's runs in
+ * the current conversation are readable — another member's process is private.
+ * Result text is still capped at TOOL_OUTPUT_MAX_CHARS and wrapped as data.
+ */
+export function buildGetRunStepsTool(input: {
+  identity: RunIdentity;
+  runs: Pick<RunsService, 'get' | 'stepsFor'>;
+}): ToolDefinition<{ run_id: string; from_seq?: number; limit?: number }> {
+  const { identity, runs } = input;
+  return {
+    name: 'get_run_steps',
+    description:
+      '读取一次执行的详细步骤（工具名与结果文本）。只能读取自己的执行或当前对话里本 Bot 的执行；用于上下文压缩后按需取回细节。',
+    parameters: Type.Object({
+      run_id: Type.String({ description: '执行 id（形如 run_...）' }),
+      from_seq: Type.Optional(
+        Type.Number({ description: '从该步骤序号开始（含）；缺省从第一条开始' }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: `最多返回多少条步骤（默认 ${GET_RUN_STEPS_DEFAULT_LIMIT}，最大 ${GET_RUN_STEPS_MAX_LIMIT}）`,
+        }),
+      ),
+    }),
+    execute: async (params) => {
+      const run = runs.get(params.run_id);
+      const ownRun = run !== null && run.id === identity.runId;
+      const sameConversation =
+        run !== null &&
+        identity.conversationId !== null &&
+        run.conversationId === identity.conversationId &&
+        run.botId === identity.botId;
+      if (run === null || (!ownRun && !sameConversation)) {
+        return { ok: false, content: '执行记录不存在', errorCode: 'RUN_NOT_FOUND' };
+      }
+
+      const fromSeq = params.from_seq ?? 0;
+      if (!Number.isInteger(fromSeq) || fromSeq < 0) {
+        return { ok: false, content: 'from_seq 必须是非负整数', errorCode: 'INVALID_INPUT' };
+      }
+      const requested = params.limit ?? GET_RUN_STEPS_DEFAULT_LIMIT;
+      if (!Number.isInteger(requested) || requested < 1) {
+        return { ok: false, content: 'limit 必须是正整数', errorCode: 'INVALID_INPUT' };
+      }
+      const limit = Math.min(requested, GET_RUN_STEPS_MAX_LIMIT);
+
+      const steps = runs.stepsFor(run.id);
+      const start = steps.findIndex((step) => step.seq >= fromSeq);
+      const offset = start === -1 ? steps.length : start;
+      const page = steps.slice(offset, offset + limit);
+      if (page.length === 0) {
+        return {
+          ok: true,
+          content: `<untrusted>\n该执行${fromSeq > 0 ? `从步骤 ${fromSeq} 起` : ''}没有更多步骤。\n</untrusted>`,
+        };
+      }
+
+      const lines = page.map((step) => {
+        const payload = step.payload as Record<string, unknown>;
+        switch (step.type) {
+          case 'tool_call': {
+            const name = String(payload['toolName'] ?? 'unknown');
+            return `${step.seq}. [tool_call] ${name}`;
+          }
+          case 'tool_result': {
+            const name = String(payload['toolName'] ?? 'unknown');
+            const ok = payload['ok'] === true ? '成功' : '失败';
+            const errorCode =
+              typeof payload['errorCode'] === 'string' ? ` ${payload['errorCode']}` : '';
+            const text = truncateToBudget(
+              String(payload['content'] ?? ''),
+              TOOL_OUTPUT_MAX_CHARS,
+            ).text;
+            return `${step.seq}. [tool_result] ${name}（${ok}${errorCode}）\n${text}`;
+          }
+          case 'assistant': {
+            const text = truncateToBudget(
+              String(payload['text'] ?? ''),
+              TOOL_OUTPUT_MAX_CHARS,
+            ).text;
+            return `${step.seq}. [assistant]\n${text}`;
+          }
+          case 'progress':
+            return `${step.seq}. [progress] ${String(payload['text'] ?? '')}`;
+          case 'steer':
+            return `${step.seq}. [steer] ${String(payload['text'] ?? '')}`;
+          case 'system':
+            return `${step.seq}. [system] ${String(payload['text'] ?? '')}`;
+          case 'request':
+            return `${step.seq}. [request]（模型请求载荷已省略）`;
+          default:
+            return `${step.seq}. [${step.type}]`;
+        }
+      });
+      const remaining = steps.length - (offset + page.length);
+      if (remaining > 0) {
+        lines.push(
+          `… 还有 ${remaining} 条步骤；用 from_seq=${steps[offset + page.length]?.seq ?? fromSeq + page.length} 继续读取。`,
+        );
+      }
+      return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
+    },
+  };
+}
+
+/**
  * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索 +
  * 只读 MCP 工具（W5：只读 + 有效审批 auto，≤ SUBAGENT_MCP_READ_TOOLS_MAX，按子
  * run 身份包装好的 `mcp`）与能力两件套（D91，按子 run 身份构建、索引限于只读 + auto）。无 write / edit（避免与主 run 的 workdir 写租约竞
@@ -1310,6 +1443,7 @@ export function buildSubagentResearchTools(input: {
   identity: RunIdentity;
   deps: Pick<
     ResponseToolDeps,
+    | 'runs'
     | 'gateway'
     | 'workspacePath'
     | 'workdirPath'
@@ -1345,8 +1479,12 @@ export function buildSubagentResearchTools(input: {
   const mcpTools = input.deps.mcp?.tools ?? [];
   const capabilityTools =
     input.deps.capabilities !== undefined ? buildCapabilityTools(input.deps.capabilities) : [];
+  const runHistory = buildGetRunStepsTool({
+    identity: input.identity,
+    runs: input.deps.runs,
+  });
   return dropBuiltinNameConflicts(
-    [...coding, ...web, ...mcpTools, ...capabilityTools],
+    [...coding, runHistory, ...web, ...mcpTools, ...capabilityTools],
     new Set(mcpTools),
     input.deps.logger,
   );
@@ -1359,3 +1497,6 @@ function browserProfileKeyOption(
 ): { profileKey?: () => string } {
   return resolve !== undefined && botId !== null ? { profileKey: () => resolve(botId) } : {};
 }
+
+export type { InkcopToolFacade } from './inkcop-tools.js';
+export { buildInkcopAgentTools } from './inkcop-tools.js';

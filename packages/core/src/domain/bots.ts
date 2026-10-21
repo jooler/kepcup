@@ -46,15 +46,29 @@ function emptyProfile(): BotProfile {
       mcp_server_ids: [],
       app_connection_ids: [],
       browser_profile: '',
+      message_transport: '',
+      inkcop_agent_keys: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
   };
 }
 
+/**
+ * v0.4：`message_transport: inkcop-local` 曾把整轮消息 divert 到本机桥。
+ * 现仅作废字段；读出时一律清空，避免旧 Bot 配置继续被误判。
+ */
+function stripLegacyInkcopTransport(profile: BotProfile): BotProfile {
+  if (profile.runtime.message_transport !== 'inkcop-local') return profile;
+  return {
+    ...profile,
+    runtime: { ...profile.runtime, message_transport: '' },
+  };
+}
+
 function rowToBot(row: BotRow): Bot {
   const parsed = botProfileSchema.safeParse(JSON.parse(row.profile_json));
-  const profile = parsed.success ? parsed.data : emptyProfile();
+  const profile = stripLegacyInkcopTransport(parsed.success ? parsed.data : emptyProfile());
   return {
     id: row.id,
     name: row.name,
@@ -73,7 +87,12 @@ function rowToBot(row: BotRow): Bot {
  * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支）：null = 不设
  * 或当前不适用（有默认主模型、实验开关关闭、Agent 未启用…，由装配方判定）。
  */
-export type DefaultAgentResolver = () => { id: string; permission: AgentPermissionTier } | null;
+export type DefaultAgentResolver = () => {
+  id: string;
+  permission: AgentPermissionTier;
+  /** 设置页里该智能体的默认模型（'' = 智能体自己的默认）。 */
+  model: string;
+} | null;
 
 /** `app_connection_ids` 校验所需的连接目录（`AppConnectionStore` 的子集）。 */
 export interface AppConnectionDirectory {
@@ -206,7 +225,7 @@ export class BotsService {
       skipDefaultAgent?: boolean;
     } = {},
   ): Bot {
-    const profile = botProfileSchema.parse(profileInput);
+    const profile = stripLegacyInkcopTransport(botProfileSchema.parse(profileInput));
     this.#assertAppConnections(profile.runtime.app_connection_ids);
     // 未指定模型与 Agent 的新 Bot（对话式访谈除外：访谈只在内置引擎上跑）
     // 默认由 onboarding 选定的外部 Agent 驱动。
@@ -221,6 +240,7 @@ export class BotsService {
         profile.runtime.agent = {
           ...profile.runtime.agent,
           id: fallback.id,
+          model: fallback.model,
           permission: fallback.permission,
         };
       }
@@ -326,7 +346,7 @@ export class BotsService {
     if (existing.status !== 'active') {
       throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
     }
-    const profile = botProfileSchema.parse(profileInput);
+    const profile = stripLegacyInkcopTransport(botProfileSchema.parse(profileInput));
     this.#assertAppConnections(profile.runtime.app_connection_ids);
     this.db
       .prepare(
@@ -357,10 +377,12 @@ export class BotsService {
     if (existing.setupState !== BOT_SETUP_INTERVIEWING) {
       throw new AppError('INVALID_INPUT', `Bot ${id} is not in setup interview`);
     }
-    const merged = botProfileSchema.parse({
-      ...existing.profile,
-      ...profileInput,
-    });
+    const merged = stripLegacyInkcopTransport(
+      botProfileSchema.parse({
+        ...existing.profile,
+        ...profileInput,
+      }),
+    );
     this.db
       .prepare('update bots set avatar = ?, bio = ?, profile_json = ?, updated_at = ? where id = ?')
       .run(

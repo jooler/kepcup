@@ -1,3 +1,4 @@
+import type { AppLanguage } from '@kepcup/shared';
 import { Type } from '@earendil-works/pi-ai';
 import {
   SETUP_MAX_QUESTIONS,
@@ -42,6 +43,35 @@ export const SETUP_PATH_QUESTION =
   '为了让后续的文件处理有个固定的地方，请为这次对话选择一个工作目录。';
 /** setupAnswer text recorded when the user skips the directory question. */
 export const SETUP_PATH_SKIP_TEXT = '暂不设置工作目录';
+
+const SETUP_GREETING_EN =
+  "Hi, nice to meet you! I'm your new assistant. Give me a minute to learn about you, and I'll know how to help.";
+const SETUP_FIRST_QUESTION_EN = 'What would you like me to help you with?';
+const SETUP_FIRST_OPTIONS_EN = [
+  'Writing and documents',
+  'Programming and development',
+  'Data analysis and reports',
+  'Marketing and growth',
+] as const;
+const SETUP_PATH_QUESTION_EN =
+  'So file work has a consistent home, choose a working directory for this conversation.';
+const SETUP_PATH_SKIP_TEXT_EN = 'No working directory for now';
+
+export function setupGreeting(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? SETUP_GREETING_EN : SETUP_GREETING;
+}
+export function setupFirstQuestion(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? SETUP_FIRST_QUESTION_EN : SETUP_FIRST_QUESTION;
+}
+export function setupFirstOptions(language: AppLanguage = 'zh-CN'): readonly string[] {
+  return language === 'en-US' ? SETUP_FIRST_OPTIONS_EN : SETUP_FIRST_OPTIONS;
+}
+export function setupPathQuestion(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? SETUP_PATH_QUESTION_EN : SETUP_PATH_QUESTION;
+}
+export function setupPathSkipText(language: AppLanguage = 'zh-CN'): string {
+  return language === 'en-US' ? SETUP_PATH_SKIP_TEXT_EN : SETUP_PATH_SKIP_TEXT;
+}
 
 /** The slice of BotsService (plus event publishing) the setup tools need. */
 export interface SetupToolFacade {

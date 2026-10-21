@@ -96,7 +96,11 @@
       aria-hidden="true"
     />
     {t('apps.local.section.title')}
-    <span class="font-normal">（{t('apps.local.section.count', { count: views.length })}）</span>
+    <span class="font-normal"
+      >{t('common.parenthesized', {
+        text: t('apps.local.section.count', { count: views.length }),
+      })}</span
+    >
   </button>
   <div id="local-connectors-panel" class="space-y-2.5" hidden={!expanded}>
     {#if expanded}

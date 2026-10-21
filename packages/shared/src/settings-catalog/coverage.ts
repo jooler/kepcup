@@ -35,7 +35,7 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     kind: 'settings-section',
     id: 'contacts',
     reason:
-      '通讯录：新建 / 删除 Bot 是对象管理而非设置（删除类不入目录）；单个 Bot 的配置由 bot.* 条目覆盖',
+      '通讯录：Bot / 项目组的名册与移除、恢复都是对象管理而非设置（删除类不入目录）；单个 Bot 的配置由 bot.* 条目覆盖',
   },
   {
     kind: 'bot-panel-tab',
@@ -50,7 +50,21 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'bot-panel-tab', id: 'other', reason: '「其它」只有移除 Bot：删除类破坏性动作（§九）' },
   { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
-  { kind: 'action', id: 'conversations.delete', reason: '删除会话：破坏性动作' },
+  {
+    kind: 'action',
+    id: 'conversations.archive',
+    reason: '从对话列表移除（归档）：可逆的对象管理动作，入口在侧栏右键与通讯录，不是设置',
+  },
+  {
+    kind: 'action',
+    id: 'conversations.unarchive',
+    reason: '恢复归档会话：可逆的对象管理动作，入口在通讯录，不是设置',
+  },
+  {
+    kind: 'action',
+    id: 'conversations.delete',
+    reason: '物理删除会话：破坏性动作，只在项目详情页「危险区」与管家聊天里',
+  },
   { kind: 'action', id: 'browserProfiles.delete', reason: '删除浏览器资料：破坏性动作' },
   { kind: 'action', id: 'browserProfiles.clear', reason: '清空浏览器资料（登录状态）：破坏性动作' },
   { kind: 'action', id: 'apps.disconnect', reason: '断开连接：破坏性动作' },
@@ -243,6 +257,74 @@ export function cardComponentProblems(
   for (const key of mapped) {
     if (!(CARD_KEYS as readonly string[]).includes(key)) {
       problems.push(`渲染层映射里的 ${key} 不是 CARD_KEYS 里的卡片键`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * 这一条是否需要 core 侧显式的条目适配器（todo/settings-catalog-registry.md §4.1.4）：
+ * core 拥有、经目录写入、可写、且没有声明 `store.generic`（通用标量适配器负责）。
+ * 只读 / 渲染层 / via-tool / generic 条目都不需要。
+ */
+export function requiresItemAdapter(item: SettingItem): boolean {
+  return (
+    item.owner === 'core' &&
+    !item.readOnly &&
+    item.write.via === 'catalog' &&
+    !(item.store.kind === 'settings' && item.store.generic === true)
+  );
+}
+
+export interface SettingsAdapterCoverageInput {
+  items?: readonly SettingItem[];
+  /** core 贡献表里登记的全部 itemId。 */
+  adapterIds: Iterable<string>;
+  /**
+   * 明确接受「没有适配器」的条目及理由（例如 profile.user-facts 没有安全信号）。
+   * 有理由才能进入这个表，不能靠静默 fallback。
+   */
+  explicitFallback?: Readonly<Record<string, string>>;
+}
+
+/**
+ * 目录条目 → core 适配器的闭合检查（core 车道在自己的单测里调用，`adapterIds` 来自
+ * `SETTING_ADAPTER_CONTRIBUTIONS`）。返回问题清单，空 = 通过：
+ * - 需要适配器的条目都在贡献表里，或显式登记了 fallback 理由；
+ * - 贡献表没有指向不存在条目的过期登记；
+ * - fallback 表没有遗留（条目已不需要 fallback，或根本不存在）。
+ */
+export function settingsAdapterCoverageProblems(input: SettingsAdapterCoverageInput): string[] {
+  const items = input.items ?? SETTING_ITEMS;
+  const byId = new Map(items.map((entry) => [entry.id, entry]));
+  const adapterIds = new Set(input.adapterIds);
+  const fallback = input.explicitFallback ?? {};
+  const problems: string[] = [];
+
+  for (const entry of items) {
+    if (!requiresItemAdapter(entry)) continue;
+    if (!adapterIds.has(entry.id) && fallback[entry.id] === undefined) {
+      problems.push(
+        `${entry.id}：需要 core 适配器（core 拥有、经目录写入），但不在贡献表里，也没有登记 EXPLICIT_ADAPTER_FALLBACK 理由`,
+      );
+    }
+  }
+  for (const id of adapterIds) {
+    if (!byId.has(id)) problems.push(`适配器贡献登记了不存在的条目 ${id}`);
+  }
+  for (const [id, reason] of Object.entries(fallback)) {
+    const entry = byId.get(id);
+    if (entry === undefined) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不是目录条目`);
+      continue;
+    }
+    if (reason.trim().length === 0) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 没写理由`);
+    }
+    if (!requiresItemAdapter(entry)) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不需要 fallback（只读 / 渲染层 / via-tool / generic），请删掉`);
+    } else if (adapterIds.has(id)) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 已有适配器，fallback 是遗留`);
     }
   }
   return problems;

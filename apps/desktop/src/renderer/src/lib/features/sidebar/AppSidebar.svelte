@@ -13,6 +13,7 @@
     Pencil,
     Copy,
     Trash2,
+    Archive,
     ChevronLeft,
     ChevronRight,
     Folder,
@@ -303,12 +304,13 @@
    * 管家不进入任何分组，单独排在列表最前。其余对话保持 store 的时间顺序，
    * 再按分组装桶。
    */
+  const sidebarConversations = $derived(chat.conversations);
   const butlerConversations = $derived(
-    chat.conversations.filter((conversation) => isButlerConversation(conversation)),
+    sidebarConversations.filter((conversation) => isButlerConversation(conversation)),
   );
   const sectionLayout = $derived(
     layoutSidebarSections(
-      chat.conversations.filter((conversation) => !isButlerConversation(conversation)),
+      sidebarConversations.filter((conversation) => !isButlerConversation(conversation)),
       sidebarSections.state,
       (conversation) => activitySnapshot[conversation.id] ?? conversationActivityOf(conversation),
     ),
@@ -673,6 +675,18 @@
     if (!contextMenu) return;
     sidebarDialogs.askDelete(contextMenu.conversationId);
     closeContextMenu();
+  }
+
+  /**
+   * 从对话列表移除（归档）：内容全留，会话仍在通讯录里可恢复。管家聊天例外——
+   * 它是常驻入口，删掉要重开一个空的，仍走物理删除。
+   */
+  async function removeFromContext(): Promise<void> {
+    if (!contextMenu) return;
+    const conversationId = contextMenu.conversationId;
+    closeContextMenu();
+    await chat.archiveConversation(conversationId);
+    toast.success(t('sidebar.removedFromList'), { description: t('sidebar.removedFromListHint') });
   }
 </script>
 
@@ -1398,13 +1412,22 @@
       copyConversationId,
       'context-copy-id',
     )}
-    {@render contextItem(
-      Trash2,
-      t('chats.deleteConversation'),
-      deleteFromContext,
-      'context-delete-conversation',
-      true,
-    )}
+    {#if contextIsButler}
+      {@render contextItem(
+        Trash2,
+        t('chats.deleteConversation'),
+        deleteFromContext,
+        'context-delete-conversation',
+        true,
+      )}
+    {:else}
+      {@render contextItem(
+        Archive,
+        t('sidebar.removeFromList'),
+        () => void removeFromContext(),
+        'context-remove-conversation',
+      )}
+    {/if}
   </div>
   {#if moveMenu && !contextIsButler}
     <div

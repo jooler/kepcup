@@ -14,6 +14,7 @@ import {
   SETTING_CARD_COMPONENTS,
   type EmbedContext,
 } from './card-components';
+import { SETTING_CARD_CONTRIBUTIONS } from './cards/index.js';
 
 /**
  * §4.3 测试二（组件部分）：每个 `card !== null` 的目录条目在渲染层映射里都有组件；
@@ -39,9 +40,21 @@ const context = (patch: Partial<EmbedContext> = {}): EmbedContext => ({
 });
 
 describe('CardKey → 组件映射', () => {
-  it('目录里用到的卡片键都有组件，映射里没有目录不认识的键', () => {
+  it('贡献表覆盖全部卡片键，无重复；派生映射与 CARD_KEYS 一致', () => {
+    const keys = SETTING_CARD_CONTRIBUTIONS.map((card) => card.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect([...keys].sort()).toEqual([...CARD_KEYS].sort());
     expect(cardComponentProblems(Object.keys(SETTING_CARD_COMPONENTS))).toEqual([]);
     expect(Object.keys(SETTING_CARD_COMPONENTS).sort()).toEqual([...CARD_KEYS].sort());
+  });
+
+  it('每个有卡片键的条目在贡献表里有登记', () => {
+    const registered = new Map(SETTING_CARD_CONTRIBUTIONS.map((card) => [card.key, card]));
+    for (const entry of SETTING_ITEMS) {
+      if (entry.card === null) continue;
+      const contribution = registered.get(entry.card);
+      expect(contribution, entry.id).toBeDefined();
+    }
   });
 
   it('SettingCardEmbed 引入了每个登记的组件，并为每个键写了分支', () => {

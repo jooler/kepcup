@@ -6,10 +6,11 @@
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
+  import ExtensionLocalCollab from './ExtensionLocalCollab.svelte';
   import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
 
   /**
-   * 扩展中心的分组 tab 条 + 内容（Skills / 连接 / MCP）：ExtensionCenterDialog
+   * 扩展中心的分组 tab 条 + 内容（Skills / 连接 / MCP / 邮件 / 本机应用协作）：ExtensionCenterDialog
    * （宽屏弹框）与窄屏「扩展」tab 页共用，当前分组都在 shell store 里，两边切换
    * 状态互通。卸载（弹框关闭 / 窄屏切走 tab）时复位 Skills 目录的搜索词——切
    * 分组不复发位，避免同一次浏览内闪现陈旧内容。
@@ -20,6 +21,7 @@
     connections: 'extensionCenter.tabs.connections',
     mcp: 'extensionCenter.tabs.mcp',
     mail: 'extensionCenter.tabs.mail',
+    localCollab: 'extensionCenter.tabs.localCollab',
   } as const;
 
   const tab = $derived(shell.extensionCenterTab);
@@ -91,7 +93,9 @@
     <ExtensionConnections />
   {:else if tab === 'mcp'}
     <ExtensionMcp />
-  {:else}
+  {:else if tab === 'mail'}
     <ExtensionMail />
+  {:else}
+    <ExtensionLocalCollab />
   {/if}
 </div>
