@@ -4,6 +4,7 @@ import {
   buildTaskRunTimeline,
   formatElapsed,
   formatToolArgs,
+  latestPlan,
   resultPreview,
   taskElapsedMs,
   toolCallSummary,
@@ -78,6 +79,73 @@ describe('buildTaskRunTimeline', () => {
     ]);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ kind: 'tool', name: 'bash', result: { ok: true } });
+  });
+});
+
+describe('latestPlan', () => {
+  const plan = (entries: Array<{ step: string; status: string }>, explanation = '') => ({
+    explanation,
+    plan: entries,
+  });
+
+  it('returns the last valid update_plan call', () => {
+    const steps = [
+      step(0, 'tool_call', {
+        toolCallId: 'c1',
+        toolName: 'update_plan',
+        args: plan([
+          { step: '检查项目', status: 'in_progress' },
+          { step: '运行测试', status: 'pending' },
+        ]),
+      }),
+      step(1, 'tool_call', {
+        toolCallId: 'c2',
+        toolName: 'update_plan',
+        args: plan(
+          [
+            { step: '检查项目', status: 'completed' },
+            { step: '运行测试', status: 'in_progress' },
+          ],
+          '检查完成',
+        ),
+      }),
+      step(2, 'tool_call', { toolCallId: 'c3', toolName: 'read', args: { path: 'a.ts' } }),
+    ];
+    expect(latestPlan(steps)).toMatchObject({
+      explanation: '检查完成',
+      updatedAt: 1,
+      plan: [
+        { step: '检查项目', status: 'completed' },
+        { step: '运行测试', status: 'in_progress' },
+      ],
+    });
+  });
+
+  it('skips invalid plans and returns null when there is none', () => {
+    expect(latestPlan([])).toBeNull();
+    expect(
+      latestPlan([
+        step(0, 'tool_call', {
+          toolCallId: 'bad',
+          toolName: 'update_plan',
+          args: { plan: [{ step: 'x', status: 'done' }] },
+        }),
+      ]),
+    ).toBeNull();
+
+    const valid = step(0, 'tool_call', {
+      toolCallId: 'good',
+      toolName: 'update_plan',
+      args: plan([{ step: '检查', status: 'pending' }]),
+    });
+    const invalidLater = step(1, 'tool_call', {
+      toolCallId: 'bad',
+      toolName: 'update_plan',
+      args: { plan: [] },
+    });
+    expect(latestPlan([valid, invalidLater])).toMatchObject({
+      plan: [{ step: '检查', status: 'pending' }],
+    });
   });
 });
 

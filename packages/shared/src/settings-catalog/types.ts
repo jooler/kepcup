@@ -117,6 +117,10 @@ export const settingFieldSpecSchema = z.object({
   staticOptions: z.array(settingOptionSchema).optional(),
   /** 多选（数组值）。 */
   multiple: z.boolean().optional(),
+  /** number 字段的取值范围 / 步长（设置页与卡片共用，不做静默夹取）。 */
+  min: z.number().optional(),
+  max: z.number().optional(),
+  step: z.number().positive().optional(),
   hint: z.string().optional(),
 });
 export type SettingFieldSpec = z.infer<typeof settingFieldSpecSchema>;

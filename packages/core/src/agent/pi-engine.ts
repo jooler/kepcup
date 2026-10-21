@@ -1,9 +1,24 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Message as PiAgentMessage } from '@earendil-works/pi-ai';
+import {
+  TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS,
+  TASK_IDLE_STOP_AFTER,
+  TASK_IDLE_WARN_AFTER,
+  TASK_IDLE_WINDOW_CALLS,
+} from '@kepcup/shared';
 import { executeToolSafely, toolResultBlocks } from './tool-execution.js';
 import { buildModelRegistry, mapProviderError, resolveModel } from './models.js';
 import { modelSessionId } from './model-session-id.js';
+import { TaskContextCompactor } from './context/compaction.js';
+import { LoopGuard } from './loop-guard.js';
+import { estimateTokens } from './tokens.js';
+import {
+  buildUpdatePlanTool,
+  currentPlanPrompt,
+  currentPlanText,
+  type PlanState,
+} from '../tools/plan-tools.js';
 import type {
   AgentEngine,
   CompletionRequest,
@@ -88,7 +103,34 @@ export class PiEngine implements AgentEngine {
     // through this mutable reference (assigned right after construction).
     let handleRef: RunHandleImpl | null = null;
 
-    const piTools = spec.tools.map((tool) => ({
+    // D93: run-scoped plan state. Only built-in pi tasks get update_plan;
+    // external agents have native todo tools and subagents have bounded runs.
+    let planState: PlanState | null = null;
+    const planTool =
+      spec.identity.loopType === 'task'
+        ? buildUpdatePlanTool({
+            getPlan: () => planState,
+            setPlan: (state) => {
+              planState = state;
+            },
+            onProgress: (text) =>
+              handleRef?.emit({ type: 'progress', payload: { text } }),
+          })
+        : null;
+    const runTools = planTool === null ? spec.tools : [...spec.tools, planTool];
+
+    // D93 §5.2：任务空转检测。只对内置 pi 任务启用；子代理有轮数 / 时限上限。
+    const taskLoop = spec.taskLoop;
+    const loopGuard =
+      spec.identity.loopType === 'task' && taskLoop?.idleGuardEnabled !== false
+        ? new LoopGuard({
+            warnAfter: taskLoop?.idleWarnAfter ?? TASK_IDLE_WARN_AFTER,
+            stopAfter: taskLoop?.idleStopAfter ?? TASK_IDLE_STOP_AFTER,
+            windowCalls: taskLoop?.idleWindowCalls ?? TASK_IDLE_WINDOW_CALLS,
+          })
+        : null;
+
+    const piTools = runTools.map((tool) => ({
       name: tool.name,
       label: tool.name,
       description: tool.description,
@@ -108,8 +150,55 @@ export class PiEngine implements AgentEngine {
           progress: (text) => handle.emit({ type: 'progress', payload: { text } }),
         };
         void onUpdate;
+
+        // D93 §5.2: the same call + result repeated past the stop threshold is
+        // not executed again. A second blocked repeat fails the task.
+        const guardCheck = loopGuard?.check(tool.name, params);
+        if (guardCheck?.block === true) {
+          const message = guardCheck.fatal
+            ? '检测到被阻止的重复操作仍在继续：任务中止（LOOP_DETECTED）。请换一种方法，或把当前进展写进结果。'
+            : '检测到重复操作（LOOP_DETECTED）：本次调用没有执行。请停止重复，改用其他做法或直接给出结果。';
+          const blocked = {
+            ok: false,
+            content: message,
+            errorCode: 'LOOP_DETECTED' as const,
+          };
+          handle.emit({
+            type: 'tool_result',
+            payload: {
+              toolCallId: String(toolCallId),
+              toolName: tool.name,
+              ok: false,
+              content: blocked.content,
+              errorCode: blocked.errorCode,
+            },
+          });
+          if (guardCheck.fatal) {
+            handle.fail({ code: 'LOOP_DETECTED', message });
+          } else {
+            handle.emit({
+              type: 'progress',
+              payload: { text: '检测到重复操作，请换一种方法' },
+            });
+          }
+          // Do not terminate the batch: the model must see the error and pick
+          // another approach (a second blocked repeat fails the run above).
+          return { content: toolResultBlocks(blocked, acceptsImages) };
+        }
+
         // Tool failures never break the loop: they return as tool output.
         const result = await executeToolSafely(tool, params, ctx, this.#deps.effects);
+        const guardRecord = loopGuard?.record(tool.name, params, {
+          ok: result.ok,
+          content: result.content,
+        });
+        if (guardRecord?.warn === true) {
+          result.content = `${result.content}\n\n[空转提醒] 相同的调用与结果已重复 ${guardRecord.count} 次：请换一种做法，或把当前进展写进结果，不要继续重复。`;
+          handle.emit({
+            type: 'progress',
+            payload: { text: '检测到重复操作，请换一种方法' },
+          });
+        }
         handle.emit({
           type: 'tool_result',
           payload: {
@@ -133,6 +222,52 @@ export class PiEngine implements AgentEngine {
         };
       },
     }));
+
+    // D93: automatic context compaction for built-in task / subagent runs.
+    // The compactor only shapes the transcript this request sees; run_steps
+    // keep the full process (design 43 §3.4).
+    const compaction = spec.compaction;
+    const compactor =
+      compaction !== undefined &&
+      (spec.identity.loopType === 'task' || spec.identity.loopType === 'subagent')
+        ? new TaskContextCompactor({
+            contextWindow: Number((model as { contextWindow?: unknown }).contextWindow ?? 0),
+            maxOutputTokens: Number((model as { maxTokens?: unknown }).maxTokens ?? 0),
+            toolSchemaReserveTokens: Math.max(
+              0,
+              estimateTokens(
+                JSON.stringify(
+                  piTools.map((tool) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                  })),
+                ),
+              ),
+            ),
+            taskBrief: spec.messages[0]?.content ?? '',
+            currentPlan: () => currentPlanText(planState),
+            complete: async ({ systemPrompt, userText, signal }) => {
+              if (compaction.modelRef.length === 0) throw new Error('no compaction model');
+              const result = await (compaction.engine ?? this).complete({
+                identity: spec.identity,
+                model: compaction.modelRef,
+                systemPrompt,
+                messages: [{ role: 'user', content: userText, timestamp: Date.now() }],
+                maxTokens: TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS,
+                signal,
+                ...(compaction.isRouteCurrent !== undefined
+                  ? { isRouteCurrent: compaction.isRouteCurrent }
+                  : {}),
+              });
+              if (result.usage !== null) compaction.onUsage?.([result.usage]);
+              return { text: result.text, usage: result.usage };
+            },
+            onProgress: (text) =>
+              handleRef?.emit({ type: 'progress', payload: { text } }),
+            logger: this.#deps.logger,
+          })
+        : null;
 
     const agent = new Agent({
       initialState: {
@@ -178,7 +313,11 @@ export class PiEngine implements AgentEngine {
     // The transcript's leading system message is the prompt; refresh it right
     // before every request so stateful sections stay current.
     agent.prepareRequest = async ({ context }) => {
-      const systemPrompt = await spec.buildSystemPrompt();
+      const basePrompt = await spec.buildSystemPrompt();
+      // D93: the plan is model-owned execution state, re-injected every turn
+      // (and never part of the compaction summary).
+      const plan = currentPlanPrompt(planState);
+      const systemPrompt = plan.length > 0 ? `${basePrompt}\n\n${plan}` : basePrompt;
       const messages = [...context.messages];
       const first = messages[0] as { role: string } | undefined;
       if (first?.role === 'system') {
@@ -189,6 +328,23 @@ export class PiEngine implements AgentEngine {
       return { context: { ...context, messages } };
     };
 
+    // D93: transformContext runs before convertToLlm on every model request.
+    // Contract: never throw / reject — a broken compaction degrades to the
+    // untouched transcript and the task keeps running.
+    agent.transformContext = async (messages, signal) => {
+      if (compactor === null) return messages;
+      try {
+        const result = await compactor.transform(messages as PiAgentMessage[], signal);
+        return result.messages as typeof messages;
+      } catch (error) {
+        this.#deps.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'task context compaction failed; using the original transcript',
+        );
+        return messages;
+      }
+    };
+
     // Full request payload (messages + tools) for the run_steps `request`
     // record — "模型看到的一切都在日志里" (docs/dev/03-data-model.md).
     agent.onPayload = (payload) => {
@@ -197,14 +353,32 @@ export class PiEngine implements AgentEngine {
     };
 
     let turns = 0;
+    let softBudgetWarned = false;
+    let softBudgetReached = false;
     agent.finishTurn = async () => {
       turns += 1;
+      // D93 §5.1: task token soft budget. 0 = off; never abort, only converge.
+      const budget = taskLoop?.tokenSoftBudget ?? 0;
+      if (budget > 0 && spec.identity.loopType === 'task' && handleRef !== null) {
+        const used = handleRef.tokensSoFar();
+        if (used >= budget && !softBudgetReached) {
+          softBudgetReached = true;
+          handleRef.steer(
+            'token 软预算已到上限：请立即收敛，停止新增探索，在下一轮给出最终结果（写清已完成、未完成与验证结果）。',
+          );
+        } else if (used >= budget * 0.8 && !softBudgetWarned && !softBudgetReached) {
+          softBudgetWarned = true;
+          handleRef.steer(
+            'token 预算接近上限：先收敛，把剩余步骤与未完成项写进结果，避免继续扩大范围。',
+          );
+        }
+      }
       // maxTurns ≤ 0 = unlimited (supervisor turns and task Agent loops).
       if (spec.limits.maxTurns > 0 && turns >= spec.limits.maxTurns) return { action: 'end' };
       return undefined;
     };
 
-    const handle = new RunHandleImpl(spec, agent);
+    const handle = new RunHandleImpl(spec, agent, () => loopGuard?.reset());
     handleRef = handle;
     // The transcript already carries the trigger messages; continue() starts
     // the loop from them (prompt() would append a duplicate user message).
@@ -274,14 +448,17 @@ class RunHandleImpl implements RunHandle {
   #agentEnded = false;
   readonly #listeners = new Set<(e: EngineEvent) => void>();
   readonly #usage: EngineUsage[] = [];
+  readonly #onSteer: (() => void) | undefined;
   #aborted = false;
+  #failure: { code: string; message: string } | null = null;
   #terminatedReason: string | null = null;
   #resolved = false;
   readonly done: Promise<RunOutcome>;
   #resolveDone!: (outcome: RunOutcome) => void;
 
-  constructor(spec: RunSpec, agent: Agent) {
+  constructor(spec: RunSpec, agent: Agent, onSteer?: () => void) {
     this.#agent = agent;
+    this.#onSteer = onSteer;
     this.done = new Promise<RunOutcome>((resolve) => {
       this.#resolveDone = resolve;
     });
@@ -332,8 +509,17 @@ class RunHandleImpl implements RunHandle {
   steer(text: string): boolean {
     if (this.#agentEnded) return false;
     this.emit({ type: 'steer', payload: { text } });
+    // A new instruction may legitimately ask for a retry.
+    this.#onSteer?.();
     this.#agent.steer({ role: 'user', content: text, timestamp: Date.now() });
     return true;
+  }
+
+  /** D93: abort with a structured failure instead of a plain cancellation. */
+  fail(error: { code: string; message: string }): void {
+    if (this.#failure !== null || this.#aborted) return;
+    this.#failure = error;
+    this.#agent.abort();
   }
 
   abort(_reason: string): void {
@@ -372,6 +558,17 @@ class RunHandleImpl implements RunHandle {
   #settle(): void {
     if (this.#resolved) return;
     this.#resolved = true;
+
+    if (this.#failure !== null) {
+      this.#resolveDone({
+        status: 'failed',
+        finalText: '',
+        skipReply: false,
+        usage: this.#usage,
+        error: this.#failure,
+      });
+      return;
+    }
 
     if (this.#aborted) {
       this.#resolveDone({

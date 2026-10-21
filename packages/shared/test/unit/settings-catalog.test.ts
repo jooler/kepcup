@@ -79,6 +79,7 @@ describe('settings catalog integrity', () => {
       'general.theme',
       'general.language',
       'general.launch-at-login',
+      'general.task-loop',
       'background.tasks',
       'unattended.enable',
       'unattended.disable',
@@ -397,6 +398,71 @@ describe('renderer component map check (for the desktop lane)', () => {
   });
 });
 
+
+describe('general.task-loop catalog + settings schema (D93)', () => {
+  it('registers the task-loop item, fields and deep link', () => {
+    const item = getSettingItem('general.task-loop');
+    expect(item).not.toBeNull();
+    expect(item?.store).toEqual({ kind: 'settings', paths: ['taskLoop'] });
+    expect(item?.card).toBe('field-editor');
+    expect(item?.write.maxMode).toBe('confirm');
+    expect(item?.deepLink).toEqual({
+      surface: 'settings',
+      section: 'general',
+      anchor: 'general-task-loop',
+    });
+    expect(item?.fields.map((field) => [field.name, field.type])).toEqual([
+      ['idleGuardEnabled', 'toggle'],
+      ['idleWarnAfter', 'number'],
+      ['idleStopAfter', 'number'],
+      ['idleWindowCalls', 'number'],
+      ['tokenSoftBudget', 'number'],
+    ]);
+    expect(item?.fields.find((field) => field.name === 'idleWarnAfter')).toMatchObject({
+      min: 2,
+      max: 10,
+      step: 1,
+    });
+    expect(itemIdsForSettingsPaths(['taskLoop'])).toContain('general.task-loop');
+  });
+
+  it('defaults missing values and falls back to defaults on broken stored data', () => {
+    expect(settingsSchema.parse({}).taskLoop).toEqual({
+      idleGuardEnabled: true,
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+    });
+    expect(settingsSchema.parse({ taskLoop: { idleWarnAfter: 4 } }).taskLoop).toMatchObject({
+      idleWarnAfter: 4,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+    });
+    // 读取容错：损坏的旧数据回落到默认值，而不是让整份设置解析失败。
+    expect(settingsSchema.parse({ taskLoop: { idleWarnAfter: 99 } }).taskLoop).toMatchObject({
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+    });
+  });
+
+  it('keeps the update input strict (no silent clamping)', () => {
+    const parsed = settingsUpdateInputSchema.parse({
+      taskLoop: {
+        idleGuardEnabled: false,
+        idleWarnAfter: 4,
+        idleStopAfter: 8,
+        idleWindowCalls: 10,
+        tokenSoftBudget: 100_000,
+      },
+    });
+    expect(parsed.taskLoop).toMatchObject({ idleWarnAfter: 4, idleStopAfter: 8 });
+    expect(() =>
+      settingsUpdateInputSchema.parse({ taskLoop: { idleWarnAfter: 99 } }),
+    ).toThrow();
+  });
+});
 
 describe('general.workbench catalog + update schema (D90)', () => {
   it('workbenchEnabled defaults off and settings.update keeps the boolean', () => {

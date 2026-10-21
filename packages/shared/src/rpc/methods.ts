@@ -120,6 +120,7 @@ import {
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
+  taskLoopSettingsInputSchema,
   todoAssigneeSchema,
   todoEntrySchema,
   todoRunSchema,
@@ -303,6 +304,8 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
+  /** D93 任务 Loop：空转检测与软预算。 */
+  taskLoop: taskLoopSettingsInputSchema.optional(),
   /** InkCop 同机协作（v0.3）：部分 patch；systemBotId 仅兼容旧配置。 */
   inkcopLocalCollab: z
     .object({

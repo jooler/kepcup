@@ -657,6 +657,40 @@ export const TURN_MAX_TURNS = 0;
  * (pi-engine and Claude omit maxTurns when ≤ 0).
  */
 export const TASK_MAX_TURNS = 0;
+
+// --- Task loop harness (D93, docs/design/43-task-loop-harness.md) -----------------
+
+/** 上下文占用达到可用窗口的这一比例时触发自动压缩。 */
+export const TASK_CONTEXT_COMPACT_RATIO = 0.75;
+/** 压缩后至少保留的最近消息占可用窗口的比例。 */
+export const TASK_CONTEXT_KEEP_RECENT_RATIO = 0.3;
+/** 少于这么多条消息不压缩，避免长任务开头抖动。 */
+export const TASK_CONTEXT_MIN_MESSAGES = 8;
+/** 单次摘要请求的输入上限（估算 token）。 */
+export const TASK_CONTEXT_SUMMARY_INPUT_TOKENS = 2_000;
+/** 单次摘要请求的输出上限。 */
+export const TASK_CONTEXT_SUMMARY_OUTPUT_TOKENS = 1_200;
+/** 摘要模型调用超时；超时退化为确定性裁剪。 */
+export const TASK_CONTEXT_COMPACT_TIMEOUT_MS = 30_000;
+/** 计算可用窗口时给工具 schema 预留的 token（缺省保守值）。 */
+export const TASK_CONTEXT_TOOL_SCHEMA_RESERVE_TOKENS = 8_000;
+
+/** update_plan：计划项上限。 */
+export const TASK_PLAN_MAX_STEPS = 20;
+/** update_plan：单个步骤文本上限。 */
+export const TASK_PLAN_STEP_MAX_CHARS = 200;
+/** update_plan：本次更新说明上限。 */
+export const TASK_PLAN_EXPLANATION_MAX_CHARS = 300;
+
+/** 任务软预算默认值（0 = 关闭）；设置里可开启并调整。 */
+export const TASK_TOKEN_SOFT_BUDGET = 0;
+/** 空转检测：默认提醒阈值。 */
+export const TASK_IDLE_WARN_AFTER = 3;
+/** 空转检测：默认阻止阈值。 */
+export const TASK_IDLE_STOP_AFTER = 6;
+/** 空转检测：默认检测窗口（最近多少次工具调用）。 */
+export const TASK_IDLE_WINDOW_CALLS = 12;
+
 /** Max simultaneously running tasks per conversation (§2.2); more wait as `queued` (submitted). */
 export const TASK_CONCURRENCY_PER_CONVERSATION = 3;
 /** Max simultaneously running tasks across all conversations (§2.2). */

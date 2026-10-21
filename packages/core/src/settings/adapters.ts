@@ -694,6 +694,71 @@ function workbenchEnabledAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * D93 任务 Loop 设置：空转检测与软预算。schema 只做粗边界，这里做交叉校验
+ * （stop > warn、window >= stop），越界不静默夹取。
+ */
+function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
+  const normalizeValues = (
+    current: Settings['taskLoop'],
+    values: SettingValues,
+  ): NormalizeResult => {
+    const next = { ...current };
+    if ('idleGuardEnabled' in values) {
+      const enabled = bool(values.idleGuardEnabled);
+      if (enabled === undefined) {
+        return { ok: false, message: '启用空转检测应为 true / false' };
+      }
+      next.idleGuardEnabled = enabled;
+    }
+    const numbers: Array<{
+      key: 'idleWarnAfter' | 'idleStopAfter' | 'idleWindowCalls' | 'tokenSoftBudget';
+      label: string;
+      min: number;
+      max: number;
+    }> = [
+      { key: 'idleWarnAfter', label: '提醒阈值', min: 2, max: 10 },
+      { key: 'idleStopAfter', label: '中止阈值', min: 3, max: 20 },
+      { key: 'idleWindowCalls', label: '检测窗口', min: 3, max: 50 },
+      { key: 'tokenSoftBudget', label: 'token 软预算', min: 0, max: 10_000_000 },
+    ];
+    for (const entry of numbers) {
+      if (!(entry.key in values)) continue;
+      const parsed = intIn(values[entry.key], entry.min, entry.max);
+      if (parsed === undefined) {
+        return { ok: false, message: `${entry.label}应为 ${entry.min}–${entry.max} 的整数` };
+      }
+      next[entry.key] = parsed;
+    }
+    if (next.idleStopAfter <= next.idleWarnAfter) {
+      return { ok: false, message: '中止阈值必须大于提醒阈值' };
+    }
+    if (next.idleWindowCalls < next.idleStopAfter) {
+      return { ok: false, message: '检测窗口不能小于中止阈值' };
+    }
+    return { ok: true, values: next };
+  };
+
+  return {
+    read: () => {
+      const taskLoop = deps.settings.get().taskLoop;
+      const summary = taskLoop.idleGuardEnabled
+        ? `空转检测 ${taskLoop.idleWarnAfter}/${taskLoop.idleStopAfter}/${taskLoop.idleWindowCalls}；软预算 ${
+            taskLoop.tokenSoftBudget > 0 ? taskLoop.tokenSoftBudget : '不限'
+          }`
+        : '空转检测已关闭';
+      return snapshot('configured', { ...taskLoop }, summary);
+    },
+    normalize: (_item, values) => normalizeValues(deps.settings.get().taskLoop, values),
+    write: (_item, { next }) => {
+      const normalized = normalizeValues(deps.settings.get().taskLoop, next);
+      if (!normalized.ok) throw new AppError('INVALID_INPUT', normalized.message);
+      deps.settings.update({ taskLoop: normalized.values as Settings['taskLoop'] });
+    },
+    valuesWiden: () => false,
+  };
+}
+
 function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
@@ -2047,6 +2112,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'workdir.ports': workdirRulesAdapter(deps, 'ports'),
     'general.launch-at-login': launchAtLoginAdapter(deps),
     'general.workbench': workbenchEnabledAdapter(deps),
+    'general.task-loop': taskLoopAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),
     'unattended.enable': unattendedAdapter(deps, 'enable'),
     'unattended.disable': unattendedAdapter(deps, 'disable'),
