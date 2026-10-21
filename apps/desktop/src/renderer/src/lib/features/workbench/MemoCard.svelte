@@ -203,7 +203,7 @@
 </script>
 
 <div
-  class="group/memo min-w-0 rounded-lg border bg-card p-3 text-sm"
+  class="group/memo flex min-w-0 flex-col rounded-lg border bg-card p-3 text-sm"
   data-testid="memo-card"
   data-memo-id={memo.id}
   data-pinned={memo.pinned ? 'true' : 'false'}
@@ -224,7 +224,7 @@
     onblur={onBlur}
     onkeydown={onKeydown}
   ></div>
-  <div class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+  <div class="mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
     {#if memo.pinned}
       <Pin class="size-3 shrink-0 text-amber-600" aria-hidden="true" />
     {/if}
