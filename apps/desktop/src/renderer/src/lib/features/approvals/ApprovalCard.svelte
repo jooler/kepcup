@@ -26,7 +26,13 @@
     Bot,
     Globe,
   } from '@lucide/svelte';
-  import { t, errorText, listSeparator, type MessageKey } from '$lib/i18n';
+  import {
+    t,
+    errorText,
+    listSeparator,
+    presetSkillText,
+    type MessageKey,
+  } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -544,7 +550,9 @@
             : approval.kind === 'skill_import'
               ? `${skillImport?.name ?? ''} ${skillImport?.sourceUrl ?? ''}`.trim()
               : approval.kind === 'skill_preset'
-                ? (skillPreset?.displayName ?? skillPreset?.name ?? '')
+                ? (skillPreset === null
+                    ? ''
+                    : presetSkillText(skillPreset.presetId, 'name', skillPreset.displayName))
                 : approval.kind === 'mcp_tool'
                   ? appIdentity !== null
                     ? t(
@@ -858,14 +866,14 @@
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-skill-preset">
         <span class="text-muted-foreground">{t('approvals.skillPresetName')}</span>
         <span data-testid="approval-skill-preset-name">
-          {skillPreset.displayName}
+          {presetSkillText(skillPreset.presetId, 'name', skillPreset.displayName)}
           <span class="text-xs text-muted-foreground"
             >({skillPreset.name} · v{skillPreset.version})</span
           >
         </span>
         <span class="text-muted-foreground">{t('approvals.skillPresetSummary')}</span>
         <span class="break-all" data-testid="approval-skill-preset-summary"
-          >{skillPreset.summary}</span
+          >{presetSkillText(skillPreset.presetId, 'summary', skillPreset.summary)}</span
         >
         <span class="text-muted-foreground">{t('approvals.skillPresetSource')}</span>
         <span data-testid="approval-skill-preset-source"

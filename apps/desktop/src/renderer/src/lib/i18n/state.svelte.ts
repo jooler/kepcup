@@ -111,6 +111,43 @@ export function settingOptionText(
   return lookup(`settingsItem.${itemId}.option.${fieldName}.${value}`) ?? fallback;
 }
 
+/** 连接应用目录条目：按 connector slug 覆盖描述，缺省回退目录数据。 */
+export function connectorDescription(connectorId: string, fallback: string): string {
+  return lookup(`connector.${connectorId}.description`) ?? fallback;
+}
+
+/** 连接应用不可连接原因：把 core 的中文原因映射到当前语言，认不出时原样返回。 */
+export function connectorUnavailableText(reason: string | null | undefined): string | null {
+  if (reason === null || reason === undefined || reason.length === 0) return null;
+  if (reason.includes('没有可用的远程端点')) return t('apps.unavailable.noRemote');
+  const auth = /^暂不支持 (.+) 认证方式$/.exec(reason);
+  if (auth !== null) return t('apps.unavailable.unsupportedAuth', { kind: auth[1]! });
+  const preregistered = /预注册的客户端（(.+?)）/.exec(reason);
+  if (preregistered !== null) {
+    return t('apps.unavailable.preregisteredClient', { ref: preregistered[1]! });
+  }
+  return reason;
+}
+
+/** 预置技能卡片：按 preset id + 字段覆盖，缺省回退目录数据。 */
+export function presetSkillText(
+  id: string,
+  part: 'name' | 'summary' | 'tryIt',
+  fallback: string,
+): string {
+  return lookup(`presetSkill.${id}.${part}`) ?? fallback;
+}
+
+/** 内置厂商展示名（阿里云百炼 / 火山方舟）：按 vendor id 翻译。 */
+export function vendorName(id: string, fallback: string): string {
+  return lookup(`settings.vendor.${id}`) ?? fallback;
+}
+
+/** 外部智能体目录描述 / 登录说明：按 agent id 翻译。 */
+export function agentText(id: string, part: 'description' | 'authNote', fallback: string): string {
+  return lookup(`agent.${id}.${part}`) ?? fallback;
+}
+
 /** Maps an RPC error code to user-facing text (current locale). */
 export function errorText(code: string | undefined, fallback: string): string {
   if (code === undefined) return fallback;
