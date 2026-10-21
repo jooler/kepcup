@@ -48,12 +48,15 @@ import {
   interviewAnswerPathInputSchema,
   interviewAnswerPathOutputSchema,
   conversationsListOutputSchema,
+  conversationsAllOutputSchema,
   conversationGetInputSchema,
   conversationGetOutputSchema,
   conversationsOpenDirectInputSchema,
   conversationsOpenDirectOutputSchema,
   conversationsDeleteInputSchema,
   conversationsDeleteOutputSchema,
+  conversationsArchiveInputSchema,
+  conversationsArchiveOutputSchema,
   conversationsMarkReadInputSchema,
   conversationsMarkReadOutputSchema,
   conversationIdInputSchema,
@@ -231,6 +234,7 @@ import {
   mediaUnderstandImageInputSchema,
   mediaUnderstandImageOutputSchema,
   mergePatchOnto,
+  isArchivedConversation,
   type Conversation,
   type Settings,
 } from '@kepcup/shared';
@@ -874,13 +878,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       // 下发：启动时不逐个打开会话也能看到「最后一条消息」。
       const previews = domain.messages.latestPreviewByConversation();
       return {
-        conversations: domain.conversations.list().map((conversation) => {
+        // 已归档（已从对话列表移除）的会话不进列表，但仍留在通讯录里可恢复。
+        conversations: domain.conversations.listVisible().map((conversation) => {
           const view = conversationView(conversation);
           const text = previews[conversation.id];
           return text === undefined ? view : { ...view, lastMessageText: text };
         }),
       };
     }),
+    /** 通讯录名册：所有会话（含已从对话列表移除的归档会话）。 */
+    'conversations.all': method(voidInput, conversationsAllOutputSchema, async () => ({
+      conversations: domain.conversations.list().map((conversation) => conversationView(conversation)),
+    })),
     'conversations.get': method(
       conversationGetInputSchema,
       conversationGetOutputSchema,
@@ -895,8 +904,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => {
         domain.bots.getOrThrow(input.botId);
         const { conversation, created } = domain.conversations.openDirect(input.botId);
-        if (created) publish('conversation.updated', { conversation });
-        return { conversation: conversationView(conversation), created };
+        // 用户从界面打开某个 Bot 的对话 = 恢复它（此前被从对话列表移除）：
+        // 一个 Bot 仍只有一个对话，历史延续。
+        const restored = isArchivedConversation(conversation)
+          ? domain.conversations.setArchived(conversation.id, false)
+          : conversation;
+        if (created || restored !== conversation) {
+          publish('conversation.updated', { conversation: restored });
+        }
+        return { conversation: conversationView(restored), created };
       },
     ),
     'conversations.delete': method(
@@ -906,6 +922,26 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         await domain.lifecycle.deleteConversation(input.id);
         publish('conversation.deleted', { id: input.id });
         return { ok: true as const };
+      },
+    ),
+    /** 从对话列表移除（归档）：数据全留，会话仍在通讯录里，可恢复。 */
+    'conversations.archive': method(
+      conversationsArchiveInputSchema,
+      conversationsArchiveOutputSchema,
+      async (input) => {
+        const conversation = domain.conversations.setArchived(input.id, true);
+        publish('conversation.updated', { conversation });
+        return { conversation: conversationView(conversation) };
+      },
+    ),
+    /** 恢复已归档的会话：回到对话列表。 */
+    'conversations.unarchive': method(
+      conversationsArchiveInputSchema,
+      conversationsArchiveOutputSchema,
+      async (input) => {
+        const conversation = domain.conversations.setArchived(input.id, false);
+        publish('conversation.updated', { conversation });
+        return { conversation: conversationView(conversation) };
       },
     ),
     'conversations.markRead': method(

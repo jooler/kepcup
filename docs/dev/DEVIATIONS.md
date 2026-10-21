@@ -683,3 +683,14 @@
 - 处理：按上述落实。设计文档同步改写：`docs/design/12-ui-layout.md` 焦点三、`docs/design/13-permissions.md`（执行回执、无人值守、界面节）、`docs/dev/03-data-model.md` `approvals.message_id` 注释；`packages/shared/src/domain/types.ts` 类型注释与集成测试口径（`approvals.test.ts` 三处、`messages-visible.test.ts`）更新。
 - 决定：（由人工确认）
 - 已更新的文档：`docs/design/12-ui-layout.md`、`docs/design/13-permissions.md`、`docs/dev/03-data-model.md`。
+
+### DEV-040 项目组进通讯录 + 「从对话列表移除」改为归档（可恢复），物理删除收口到危险区（用户决定，2026-10-21）
+
+- 状态：已落实
+- 阶段：日常使用反馈（用户发现应用内创建的项目组不在通讯录里，从对话列表移除时是物理删除——消息、执行记录、附件、workspace 与项目 wiki 目录一并删掉，无法恢复）
+- 是否阻塞：否
+- 问题：与既定设计相悖——`docs/design/01-conversation.md` 原口径是「删除对话是物理删除」，通讯录只是 `status='active'` 的 Bot 名册，项目组没有独立聚合（就是一行 `conversations`），因此天然不在通讯录里，移除即不可逆。用户拍板改为：项目组也进通讯录；从对话列表移除一律改为归档（软删，可恢复），物理删除只保留在项目详情页「危险区」；单聊同样归档化。
+- 影响范围：`conversations` 新增 `archived_at` 列（迁移 0045）；`ConversationsService`（`listVisible` 列表口径、`setArchived` 归档/恢复、`openDirect` 命中已归档直聊时先恢复它——一个 Bot 仍只有一个对话，历史延续）；新增 RPC `conversations.archive / unarchive / all`（`all` = 通讯录名册，含归档会话）；渲染层 `contacts.svelte.ts` 增会话名册与项目组一栏、`ContactsSection.svelte` 改「Bot / 项目组」两栏（含「已从对话列表移除」标记与恢复入口）、侧栏右键改「从对话列表移除」（管家聊天例外：物理删除后即刻重开一个空的）；左栏分组归属与置顶在归档期间保留，恢复后回原位。
+- 处理：按上述落实。归档不做任何级联：定时任务、监看与项目 wiki 继续存在（会话只是从列表里消失）；彻底删除仍是 `conversations.delete`，入口在项目详情页「危险区」。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/design/01-conversation.md`、`docs/design/41-project-team.md`、`docs/dev/03-data-model.md`、`packages/shared/src/settings-catalog/coverage.ts`（`conversations.archive / unarchive` 登记为对象管理动作，不是设置）。

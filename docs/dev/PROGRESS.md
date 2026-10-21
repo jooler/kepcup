@@ -1477,3 +1477,17 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 **文档**：P12 phase / 06-release / todo/cross-platform-acceptance 同步双架构与真机自检结论；arm64 WSL2 真机自检与基础镜像 digest 钉 CI 仍留 todo（rootfs job 产双架构已就绪）。
 
 **验证**：core 定向——`wsl-rootfs-resolve`（新，7 例）+ `wsl-setup` 集成 16 例（含新增用例）31/31；desktop `pack-hooks.test`（+4 例）与上轮共 15/15；两包 typecheck（含 svelte-check）0 错；`sandbox-wizard` e2e 4/4（其中一轮全量跑出现单例 30s locator 超时，单跑复核 11.5s 通过，判定负载抖动未改断言）；两个 shell 脚本 `bash -n` 与 `pack-hooks.cjs`/`dist.mjs` `node --check` 通过。
+
+### 项目组进通讯录 + 「从对话列表移除」改为归档（2026-10-21）
+
+用户反馈：应用内创建的项目组不在通讯录里，从对话列表移除时是物理删除——消息、执行记录、附件、workspace 与项目 wiki 目录一并删掉，无法恢复。核实属实（通讯录 = `bots` 表 `status='active'`；项目组只是一行 `conversations`，`conversations.delete` → `lifecycle.deleteConversation` 级联物理删除）。
+
+按用户拍板（DEV-040）改为：**项目组进通讯录；从对话列表移除一律归档（可恢复）；物理删除收口到项目详情页「危险区」与管家聊天；单聊同样归档化**。实现：
+
+- 数据：`conversations` 新增 `archived_at`（迁移 0045，纯新增列）。归档不做任何级联——消息、执行记录、附件、workspace、定时任务、项目 wiki 目录全部保留。
+- 域：`ConversationsService.setArchived`（归档/恢复）、`listVisible`（对话列表口径，排除归档）、`list`（名册口径，全量）；`openDirect` 不再自动恢复已归档的直聊（域层纯读，恢复是用户的动作，落在 RPC 层），后台投递（邮件 / 工作台 / wiki 入库）因此不会把归档会话拽回列表。
+- RPC：`conversations.archive` / `conversations.unarchive` / `conversations.all`（通讯录名册，含归档会话）；`conversations.openDirect` 在界面打开已归档的直聊时恢复它（一个 Bot 仍只有一个对话，历史延续）；`conversations.list` 只给未归档的。
+- 渲染层：通讯录改「Bot / 项目组」两栏（项目组卡片带成员头像堆叠、已移除标记与恢复入口；Bot 卡片标出直聊已被移除并可恢复）；侧栏右键改「从对话列表移除」（归档 + toast，管家聊天例外仍物理删除）；左栏分组归属与置顶在归档期间保留，恢复后回原位（清理时把归档会话也算「还在」，且要等通讯录名册加载完再清理）。
+- 文档：`docs/design/01-conversation.md`（通讯录 / 单聊 / 项目组 / 移除与删除两节）、`docs/design/41-project-team.md`（§4.1 数据模型、§12.4 生命周期、§12.5 RPC）、`docs/dev/03-data-model.md`（conversations 列与删除口径）、`docs/dev/DEVIATIONS.md`（DEV-040）、`packages/shared/src/settings-catalog/coverage.ts`（`conversations.archive / unarchive` 登记为对象管理动作）。
+
+**验证**：core 单测 230 文件 / 2892 例全过（新增 `conversation-archive.test.ts` 6 例：归档语义、幂等、项目组归档不删成员、域层不自动恢复、恢复后同一对话）；core 集成新增 `conversation-archive.test.ts` 2 例（RPC 口径：列表/名册/恢复、打开归档直聊 = 恢复同 id）；渲染层 93 文件 / 794 例全过（新增 `contacts.svelte.test.ts` 5 例）；desktop svelte-check 0 新增错误（余 4 处为进行中的 inkcop 本地协作改动，与本次无关）；eslint 干净。e2e `direct-chat.spec.ts` 随语义改为「移除 → 通讯录恢复」。

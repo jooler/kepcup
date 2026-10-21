@@ -268,7 +268,7 @@ test('restart reopens the conversation last viewed (not the most recently messag
   }
 });
 
-test('deleting the conversation removes it; deleting the bot removes its entry and closes its chat', async () => {
+test('removing the conversation archives it (restorable from the contacts); deleting the bot removes its entry and closes its chat', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-delete-');
   const { page, llm } = session;
@@ -284,14 +284,24 @@ test('deleting the conversation removes it; deleting the bot removes its entry a
       timeout: 30_000,
     });
 
-    // Delete the conversation itself (context menu on the sidebar item).
+    // Remove the conversation from the list (archive): the row disappears and
+    // the chat closes, but nothing is deleted — the address book keeps the
+    // entry and can restore it.
     await ensureStartPanelClosed(page);
     await page.locator('[data-testid^="conversation-row-"]').first().click({ button: 'right' });
-    await page.locator('[data-testid="context-delete-conversation"]').click();
-    await expect(page.locator('[data-testid="conversation-delete-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="conversation-delete-confirm"]').click();
+    await page.locator('[data-testid="context-remove-conversation"]').click();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(0);
+
+    // The address book lists the bot as removed and can restore its chat.
+    await page.locator('[data-testid="user-menu-trigger"]').click();
+    await page.locator('[data-testid="menu-contacts"]').click();
+    const removedBot = page.locator('li[data-testid^="bot-card-"]').filter({ hasText: '小艾' });
+    await expect(removedBot.locator('[data-testid^="bot-archived-"]')).toBeVisible();
+    await removedBot.locator('[data-testid^="bot-restore-"]').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(1);
 
     // Delete a bot from the contacts page: its data is kept, but the UI shows
     // the deletion — the sidebar no longer lists its direct chat and the open
@@ -320,7 +330,8 @@ test('deleting the conversation removes it; deleting the bot removes its entry a
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(0);
+    // Only 小艾's restored chat is left; 小明's is gone with its bot.
+    await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(1);
   } finally {
     await closeSession(session);
   }

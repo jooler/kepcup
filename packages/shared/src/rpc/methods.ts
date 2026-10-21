@@ -903,12 +903,21 @@ export const interviewAnswerPathOutputSchema = z.object({
 export const conversationsListOutputSchema = z.object({
   conversations: z.array(conversationSchema),
 });
+/**
+ * 通讯录名册：所有会话（含已从对话列表移除的归档会话），带 Bot / 成员头像预览。
+ * 对话列表用 `conversations.list`（不含归档）；通讯录用这一份。
+ */
+export const conversationsAllOutputSchema = z.object({
+  conversations: z.array(conversationSchema),
+});
 export const conversationsOpenDirectInputSchema = z.object({ botId: z.string().min(1) });
 export const conversationsOpenDirectOutputSchema = z.object({
   conversation: conversationSchema,
   created: z.boolean(),
 });
 export const conversationsDeleteInputSchema = z.object({ id: z.string().min(1) });
+export const conversationsArchiveInputSchema = z.object({ id: z.string().min(1) });
+export const conversationsArchiveOutputSchema = z.object({ conversation: conversationSchema });
 export const conversationsMarkReadInputSchema = z.object({
   conversationId: z.string().min(1),
   seq: z.number().int(),
@@ -2045,12 +2054,24 @@ export const rpcMethodSchemas = {
   },
 
   'conversations.list': { input: voidInput, output: conversationsListOutputSchema },
+  /** 通讯录名册：所有会话（含已归档的）。 */
+  'conversations.all': { input: voidInput, output: conversationsAllOutputSchema },
   'conversations.get': { input: conversationGetInputSchema, output: conversationGetOutputSchema },
   'conversations.openDirect': {
     input: conversationsOpenDirectInputSchema,
     output: conversationsOpenDirectOutputSchema,
   },
   'conversations.delete': { input: conversationsDeleteInputSchema, output: okOutput },
+  /** 从对话列表移除（归档）：数据全留，会话仍在通讯录里，可恢复。 */
+  'conversations.archive': {
+    input: conversationsArchiveInputSchema,
+    output: conversationsArchiveOutputSchema,
+  },
+  /** 恢复已归档的会话（回到对话列表）。 */
+  'conversations.unarchive': {
+    input: conversationsArchiveInputSchema,
+    output: conversationsArchiveOutputSchema,
+  },
   'conversations.markRead': { input: conversationsMarkReadInputSchema, output: okOutput },
   'conversations.members': {
     input: conversationsMembersInputSchema,
@@ -2482,9 +2503,12 @@ const APP_METHODS = [
   'bots.interview.answer',
   'bots.interview.answerPath',
   'conversations.list',
+  'conversations.all',
   'conversations.get',
   'conversations.openDirect',
   'conversations.delete',
+  'conversations.archive',
+  'conversations.unarchive',
   'conversations.markRead',
   'conversations.members',
   'projects.create',

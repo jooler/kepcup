@@ -128,6 +128,7 @@ CREATE TABLE conversations (
   lead_bot_id      TEXT REFERENCES bots(id),  -- 项目负责人（0040）；direct 恒 NULL，project 恒非空（CHECK 保证）
   workdir_id       TEXT,                  -- P04 起使用（0038 改名），无 FK
   read_only        INTEGER NOT NULL DEFAULT 0,
+  archived_at      INTEGER,               -- 0045：非空 = 已从对话列表移除（归档）；数据全留，通讯录里可恢复
   summary          TEXT,                  -- 滚动摘要
   summary_upto_seq INTEGER NOT NULL DEFAULT 0,
   last_seq         INTEGER NOT NULL DEFAULT 0,
@@ -142,8 +143,9 @@ CREATE UNIQUE INDEX conversations_one_direct_per_bot
 
 - 0040 重建（`conversations` 是 12 张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
 - 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
+- **归档（0045）**：`archived_at` 非空 = 该会话已从对话列表移除。软删：消息、执行记录、附件、workspace、项目 wiki 目录全部保留；会话仍在通讯录里（`conversations.all` 名册），可随时恢复（`conversations.archive` / `conversations.unarchive`）。对话列表（`conversations.list`）不含归档会话。恢复归档的直聊 = 继续原对话（同 id，历史延续）：`ConversationsService.openDirect` 命中已归档的直聊时先恢复它，不新开对话实例。
 
-删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。项目组没有独立聚合：项目 id = 其根会话 id（`conv_…`），模块数据以它为键。
+删除对话是**物理删除**（连同级联数据）；对话 id 为 ULID，不会复用。项目组没有独立聚合：项目 id = 其根会话 id（`conv_…`），模块数据以它为键。物理删除的入口只有项目详情页「危险区」与管家聊天；其余「从对话列表移除」都是归档（可恢复）。
 
 ### conversation_members（P01）
 

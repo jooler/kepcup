@@ -806,6 +806,11 @@ export const conversationSchema = z.object({
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),
+  /**
+   * 归档时间：从对话列表「移除」= 置归档标记（数据、消息、wiki 全留）。
+   * 非空 = 该会话不在对话列表里，但仍在通讯录里，可恢复。
+   */
+  archivedAt: z.number().nullable().optional(),
   summary: z.string().nullable(),
   summaryUptoSeq: z.number(),
   lastSeq: z.number(),
