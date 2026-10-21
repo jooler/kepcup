@@ -271,22 +271,22 @@ taskLoop: z.object({
 
 ### 7.2 工具输出落盘
 
-- [ ] 新增 `TOOL_OUTPUT_SPILL_*` 常量与 `agent/tool-output-spill.ts`：
+- [x] 新增 `TOOL_OUTPUT_SPILL_*` 常量与 `agent/tool-output-spill.ts`：
   - 超过 `TOOL_OUTPUT_MAX_CHARS` 时写 workspace `.tool-output/<runId>/<seq>.txt`；
   - 返回头 + 尾 + 文件路径 + 字符数；
   - 写失败退回现有截断；
   - 不把整段内容塞回上下文。
-- [ ] `agent/tool-execution.ts` / `tools/coding-tools.ts` 接入；保持 `<untrusted>` 包裹。
-- [ ] 清理策略：随 run 结算 / workspace 清理删除；读取路径经过现有路径检查。
+- [x] `agent/tool-execution.ts` / `tools/coding-tools.ts` 接入；保持 `<untrusted>` 包裹。
+- [x] 清理策略：随 run 结算 / workspace 清理删除；读取路径经过现有路径检查。
 
 ### 7.3 详细历史读取
 
-- [ ] `packages/core/src/tools/index.ts` 新增 `get_run_steps({ run_id, from_seq?, limit? })`：
+- [x] `packages/core/src/tools/index.ts` 新增 `get_run_steps({ run_id, from_seq?, limit? })`：
   - 只允许自己的 run / 当前对话；
   - 返回步骤类型、工具名、结果文本（仍按 `TOOL_OUTPUT_MAX_CHARS` 截断）；
   - 结果包 `<untrusted>`；
-  - 任务 / 子代理可用；对话轮可选。
-- [ ] 用途：压缩后模型需要细节时按需取回，而不是重新扫仓库。
+  - 任务 / 子代理可用；对话轮不注册（工具面不变）。
+- [x] 用途：压缩后模型需要细节时按需取回，而不是重新扫仓库。
 
 ### 7.4 验收
 
@@ -358,7 +358,11 @@ pnpm test
   - `finishTurn` 接入任务软预算（默认 0 = 关闭，80% / 100% 注入收敛提示，不 abort）。
   - 设置目录新增 `general.task-loop`；core 适配器做交叉校验；`FieldEditorCard` 支持通用 number / toggle；`GeneralSection` 新增「任务 Loop」块与 `general-task-loop` 锚点；i18n 同步。
   - 测试：`packages/core/test/unit/loop-guard.test.ts`、`packages/core/test/integration/task-loop-guard.test.ts`、`packages/core/test/integration/task-token-budget.test.ts`，以及设置目录 / 适配器 / 卡片映射定向测试。
-- P3 计划渲染 / 输出落盘 / 历史读取：计划渲染已完成（2026-10-21）。
+- P3 计划渲染 / 输出落盘 / 历史读取：已完成（2026-10-21）。
   - `task-run-view.ts` 新增 `latestPlan(steps)`；新增 `TaskPlanPanel.svelte` 并在已有 `TaskRunView.svelte` 顶部提示条下方渲染（可折叠，无计划不渲染）。
   - 测试：`apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts`。
-  - 工具输出落盘（`TOOL_OUTPUT_SPILL_*`）与 `get_run_steps` 详细历史本期未做，留作后续；不新增数据库迁移。
+  - 新增 `shared/constants.ts` 的 `TOOL_OUTPUT_SPILL_*` / `GET_RUN_STEPS_*`；新增 `core/agent/tool-output-spill.ts`（`<workspace>/.tool-output/<runId>/<seq>.txt`、头尾摘要、符号链接防护、写失败回退、结算清理）。
+  - `coding-tools.ts` 在截断前落盘完整输出；`tool-execution.ts` 兜底其它内置工具结果；仅内置 pi 任务传入 spill，外部智能体 / 对话轮 / 子代理路径不变。
+  - `tools/index.ts` 新增 `buildGetRunStepsTool`，任务与子代理注册，对话轮不注册；`buildSubagentResearchTools` 同步带该工具。
+  - 测试：`packages/core/test/unit/tool-output-spill.test.ts`、`packages/core/test/unit/coding-tools-wrap.test.ts`、`packages/core/test/unit/get-run-steps.test.ts`。
+  - 不新增数据库迁移。

@@ -187,7 +187,13 @@ export class PiEngine implements AgentEngine {
         }
 
         // Tool failures never break the loop: they return as tool output.
-        const result = await executeToolSafely(tool, params, ctx, this.#deps.effects);
+        const result = await executeToolSafely(
+          tool,
+          params,
+          ctx,
+          this.#deps.effects,
+          spec.toolOutputSpill,
+        );
         const guardRecord = loopGuard?.record(tool.name, params, {
           ok: result.ok,
           content: result.content,

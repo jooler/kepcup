@@ -83,6 +83,7 @@ import {
 } from '../agent/external/permission-bridge.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
+import { clearToolOutputSpill, ToolOutputSpill } from '../agent/tool-output-spill.js';
 import {
   humanizeLateBy,
   inQuietHours,
@@ -791,6 +792,8 @@ export class Orchestrator {
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
+        // D93 P3: spilled tool outputs live only as long as the run.
+        this.#clearToolOutputSpill(run.id, run.botId, run.conversationId);
         // A still-unwinding execution keeps its write lease until it ends (an
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
@@ -3874,6 +3877,10 @@ export class Orchestrator {
       // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
       const mailBound =
         this.#deps.mail !== undefined && mailBoundFor(this.#deps.mail, identity.botId);
+      // D93 P3: only built-in tasks spill oversized tool output; external
+      // agents keep their own native harness and turn contexts stay bounded.
+      const toolOutputSpill =
+        isTask && agentId.length === 0 ? new ToolOutputSpill({ workspacePath, runId }) : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),
@@ -3888,6 +3895,7 @@ export class Orchestrator {
         workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
+        ...(toolOutputSpill !== undefined ? { toolOutputSpill } : {}),
         environment: environmentFacade,
         ...(memoryToolFacade !== undefined ? { memory: memoryToolFacade } : {}),
         ...(this.#deps.skills !== undefined
@@ -4011,6 +4019,7 @@ export class Orchestrator {
                 buildSubagentResearchTools({
                   identity: subIdentity,
                   deps: {
+                    runs,
                     gateway: this.#deps.gateway,
                     workspacePath,
                     workdirPath:
@@ -4420,6 +4429,7 @@ export class Orchestrator {
           ? {
               compaction: this.#taskCompactionRoute(batch.botId, identity),
               taskLoop: this.#deps.settings.get().taskLoop,
+              ...(toolOutputSpill !== undefined ? { toolOutputSpill } : {}),
             }
           : {}),
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
@@ -5579,6 +5589,12 @@ export class Orchestrator {
     });
   }
 
+  /** D93 P3: remove a run's spilled tool outputs (workspace-scoped, best effort). */
+  #clearToolOutputSpill(runId: string, botId: string | null, conversationId: string | null): void {
+    if (botId === null || conversationId === null) return;
+    clearToolOutputSpill(workspacePathFor(this.#deps.paths, botId, conversationId), runId);
+  }
+
   #settleRun(
     runId: string,
     status: Run['status'],
@@ -5595,6 +5611,7 @@ export class Orchestrator {
       // must not dangle.
       this.#deps.grants.expireForRun(runId);
       this.#deps.approvals.cancelPendingForRun(runId);
+      this.#clearToolOutputSpill(runId, run.botId, run.conversationId);
     }
     this.#deps.publish('run.status', { run });
     // Group turns advance on any terminal state (cancelled/failed included)

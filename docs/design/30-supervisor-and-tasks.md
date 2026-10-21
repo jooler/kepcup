@@ -120,8 +120,10 @@
 | 工具面         | 现有完整响应工具面（文件、命令、浏览器、媒体、MCP、连接应用、技能、`delegate_task` / `collect_delegate_results`、交互执行、`send_message`），外加 `ask_user`（§2.4.6）；去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议；`send_message` 不能 @ 群成员 **D91 修订**：外部能力（MCP、连接应用）不再整批挂——只挂 `start_task.capabilities` 声明的能力（声明工具总数 > `EXTERNAL_TOOLS_INLINE_MAX`=40 则不内联），其余能力经 `capability_search` / `capability_call` 两件套兜底；邮件工具按绑定门控（[35](35-mail-channel.md)），见 [40](40-capability-mounting.md) §4。 |
 | 可写          | 消息（中间说明，直达可见流）；私有时间线（最终结果 / 失败 / 提问条目，§2.4）；`cwd` 内文件、授权范围内的其他路径 |
 | 寿命          | 默认 ephemeral（D49）；可标 durable（D67）——长任务才是 journal 的真实适用对象                                                             |
-| 上限          | `TASK_MAX_WALL_MS`（等用户回答问题卡的时间不计入，§2.4.6）；用量不设上限                                                          |
+| 上限          | `TASK_MAX_WALL_MS`（等用户回答问题卡的时间不计入，§2.4.6）；用量默认不设上限，D93 起可选软预算（见 [43](43-task-loop-harness.md)）                                                          |
 | 深度          | 1：任务内不得 `start_task`（执行期按 `loop_type` 校验）                                                                            |
+
+**任务 Loop Harness（D93）**：内置 pi 任务在上表工具面之外，另有 `update_plan`（结构化计划）、自动上下文压缩、任务软预算与空转检测；`<current_plan>` 每轮注入，计划与压缩进度落 `run_steps`。外部智能体任务沿用其原生压缩 / todo，不注入 `update_plan`。空转检测阈值在「设置 → 通用 → 任务 Loop」可配。详见 [43-task-loop-harness.md](43-task-loop-harness.md)。
 
 
 
