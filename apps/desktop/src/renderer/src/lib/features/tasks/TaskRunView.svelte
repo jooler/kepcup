@@ -18,9 +18,11 @@
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
   import TaskRunToolCard from './TaskRunToolCard.svelte';
+  import TaskPlanPanel from './TaskPlanPanel.svelte';
   import {
     buildTaskRunTimeline,
     formatElapsed,
+    latestPlan,
     taskElapsedMs,
     type TaskRunEntry,
   } from './task-run-view';
@@ -48,6 +50,7 @@
 
   const task = $derived(tasks.byId[taskId] ?? null);
   const entries = $derived(buildTaskRunTimeline(steps));
+  const plan = $derived(latestPlan(steps));
   const active = $derived(task !== null && isActiveTask(task));
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
@@ -282,6 +285,14 @@
         {hint}
       </div>
     {/if}
+  {/if}
+
+  {#if plan !== null}
+    <div class="shrink-0 border-b px-4 py-2">
+      <div class="mx-auto w-full max-w-3xl">
+        <TaskPlanPanel {plan} />
+      </div>
+    </div>
   {/if}
 
   <div

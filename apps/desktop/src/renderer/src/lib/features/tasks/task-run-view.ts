@@ -1,4 +1,8 @@
-import type { RunStep } from '@kepcup/shared';
+import {
+  TASK_PLAN_MAX_STEPS,
+  TASK_PLAN_STEP_MAX_CHARS,
+  type RunStep,
+} from '@kepcup/shared';
 
 /**
  * 任务执行过程页（docs/design/42-task-run-view.md）的纯展示逻辑：
@@ -126,6 +130,62 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
     }
   }
   return entries;
+}
+
+export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface TaskPlanEntry {
+  step: string;
+  status: TaskPlanStatus;
+}
+
+export interface TaskPlan {
+  explanation: string;
+  plan: TaskPlanEntry[];
+  updatedAt: number;
+}
+
+const PLAN_STATUSES: readonly TaskPlanStatus[] = ['pending', 'in_progress', 'completed'];
+
+/** 校验一条 update_plan 调用的 args.plan；非法返回 null。 */
+function parsePlanArgs(args: unknown): TaskPlanEntry[] | null {
+  const record = recordOf(args);
+  const raw = record['plan'];
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > TASK_PLAN_MAX_STEPS) return null;
+  const plan: TaskPlanEntry[] = [];
+  for (const entry of raw) {
+    const item = recordOf(entry);
+    const step = textOf(item['step']).trim();
+    const status = item['status'];
+    if (
+      step.length === 0 ||
+      step.length > TASK_PLAN_STEP_MAX_CHARS ||
+      !PLAN_STATUSES.includes(status as TaskPlanStatus)
+    ) {
+      return null;
+    }
+    plan.push({ step, status: status as TaskPlanStatus });
+  }
+  return plan;
+}
+
+/**
+ * 执行过程页的结构化计划（D93 §6.2）：取最后一个合法的 `update_plan`
+ * 调用，不新增 RPC 或数据库字段。非法调用跳过，往前找上一个合法计划。
+ */
+export function latestPlan(steps: readonly RunStep[]): TaskPlan | null {
+  const ordered = [...steps].sort((a, b) => a.seq - b.seq);
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const step = ordered[index]!;
+    if (step.type !== 'tool_call') continue;
+    const payload = recordOf(step.payload);
+    if (textOf(payload['toolName']) !== 'update_plan') continue;
+    const plan = parsePlanArgs(payload['args']);
+    if (plan === null) continue;
+    const explanation = textOf(recordOf(payload['args'])['explanation']).trim();
+    return { explanation, plan, updatedAt: step.createdAt };
+  }
+  return null;
 }
 
 const SUMMARY_MAX = 160;

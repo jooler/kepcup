@@ -107,6 +107,7 @@ import { buildTasksSegment } from '../agent/context/tasks-segment.js';
 import type {
   AgentEngine,
   AgentSessionMode,
+  EngineUsage,
   RunHandle,
   RunIdentity,
   ToolDefinition,
@@ -2660,6 +2661,49 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * D93 内置任务自动上下文压缩的路由（轻量模型）。外部 Agent 路由不用于
+   * PiEngine 的摘要调用：退回空 ref，压缩退化为确定性裁剪。
+   */
+  #taskCompactionRoute(
+    botId: string,
+    identity: RunIdentity,
+  ): {
+    modelRef: string;
+    isRouteCurrent?: () => boolean;
+    onUsage?: (usage: EngineUsage[]) => void;
+  } {
+    const route = this.#backgroundRoute(botId, 'task_compaction');
+    if (route === null || route.agentId !== null) return { modelRef: '' };
+    const modelRef = route.modelRef;
+    return {
+      modelRef,
+      isRouteCurrent: () => {
+        const current = this.#backgroundRoute(botId, 'task_compaction');
+        return current !== null && current.agentId === null && current.modelRef === modelRef;
+      },
+      onUsage: (usage) => {
+        if (identity.botId === null || identity.conversationId === null) return;
+        const provider = this.#providerForRef(modelRef);
+        for (const entry of usage) {
+          this.#deps.usage.record({
+            runId: identity.runId,
+            botId: identity.botId,
+            conversationId: identity.conversationId,
+            loopType: 'task',
+            provider,
+            model: modelRef.slice(provider.length + 1),
+            inputTokens: entry.input,
+            outputTokens: entry.output,
+            cacheReadTokens: entry.cacheRead,
+            cacheWriteTokens: entry.cacheWrite,
+            costUsd: entry.costUsd,
+          });
+        }
+      },
+    };
+  }
+
   /** SubAgent 结果压缩的模型与引擎（'' = 不压缩、截断兜底）。 */
   #compactionRoute(botId: string): {
     lightModelRef: string;
@@ -4361,6 +4405,15 @@ export class Orchestrator {
         // Stop retrying a provider the user has since switched this Bot away
         // from (other Bots' changes do not matter).
         isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+        // D93: only built-in pi tasks get host-side compaction / idle guard /
+        // soft budget; external agents keep their own native harness, and
+        // conversation turns are bounded.
+        ...(isTask && agentId.length === 0
+          ? {
+              compaction: this.#taskCompactionRoute(batch.botId, identity),
+              taskLoop: this.#deps.settings.get().taskLoop,
+            }
+          : {}),
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {

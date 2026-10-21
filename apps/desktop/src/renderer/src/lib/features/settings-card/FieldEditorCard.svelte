@@ -45,6 +45,8 @@
         return { agent: settings?.defaultAgentId ?? '' };
       case 'general.launch-at-login':
         return { enabled: settings?.launchAtLogin ?? true };
+      case 'general.task-loop':
+        return { ...(settings?.taskLoop ?? {}) };
       default:
         return {};
     }
@@ -56,6 +58,26 @@
   let limit = $state(typeof seeded.limit === 'number' ? seeded.limit : 4);
   let agent = $state(typeof seeded.agent === 'string' ? seeded.agent : '');
   let enabled = $state(seeded.enabled !== false);
+  // Generic directory fields: number / toggle beyond the special-cased names
+  // above (D93 setting cards reuse field-editor instead of a bespoke card).
+  const numberNames = untrack(() =>
+    item.fields
+      .filter((field) => field.type === 'number' && field.name !== 'limit')
+      .map((field) => field.name),
+  );
+  const toggleNames = untrack(() =>
+    item.fields
+      .filter((field) => field.type === 'toggle' && field.name !== 'enabled')
+      .map((field) => field.name),
+  );
+  let numbers = $state<Record<string, number>>(
+    Object.fromEntries(
+      numberNames.map((name) => [name, typeof seeded[name] === 'number' ? seeded[name] : 0]),
+    ),
+  );
+  let toggles = $state<Record<string, boolean>>(
+    Object.fromEntries(toggleNames.map((name) => [name, seeded[name] !== false])),
+  );
   let busy = $state(false);
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   let synced = false;
@@ -69,6 +91,12 @@
     if (typeof current.limit === 'number') limit = current.limit;
     if (typeof current.agent === 'string') agent = current.agent;
     if (typeof current.enabled === 'boolean') enabled = current.enabled;
+    for (const name of numberNames) {
+      if (typeof current[name] === 'number') numbers[name] = current[name];
+    }
+    for (const name of toggleNames) {
+      if (typeof current[name] === 'boolean') toggles[name] = current[name];
+    }
   });
 
   const needsAgents = $derived(item.fields.some((field) => field.options === 'agents'));
@@ -94,6 +122,8 @@
       else if (field.name === 'limit') out.limit = limit;
       else if (field.name === 'agent') out.agent = agent;
       else if (field.name === 'enabled') out.enabled = enabled;
+      else if (field.type === 'number') out[field.name] = numbers[field.name] ?? 0;
+      else if (field.type === 'toggle') out[field.name] = toggles[field.name] ?? false;
     }
     return out;
   }
@@ -172,6 +202,33 @@
         <span class="grid gap-0.5">
           <span>{t('settings.launchAtLogin')}</span>
           <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
+        </span>
+      </label>
+    {:else if field.type === 'number'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <input
+        id={`${testid}-${field.name}`}
+        type="number"
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        class="flex h-9 w-40 rounded-md border border-input bg-background px-3 py-1 text-sm"
+        bind:value={numbers[field.name]}
+        data-testid={`${testid}-${field.name}`}
+      />
+    {:else if field.type === 'toggle'}
+      <label class="flex items-start gap-2 text-sm">
+        <Checkbox
+          bind:checked={toggles[field.name]}
+          data-testid={`${testid}-${field.name}`}
+        />
+        <span class="grid gap-0.5">
+          <span>{settingFieldText(item.id, field.name, field.label)}</span>
+          {#if field.hint !== undefined}
+            <span class="text-xs text-muted-foreground">{field.hint}</span>
+          {/if}
         </span>
       </label>
     {/if}

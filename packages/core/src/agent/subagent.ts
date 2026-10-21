@@ -671,6 +671,17 @@ async function runSubagent(
       identity,
       model: input.modelRef,
       ...(input.isRouteCurrent ? { isRouteCurrent: input.isRouteCurrent } : {}),
+      // D93: subagents get the same automatic compaction (deterministic
+      // trimming still works when no light model is available).
+      compaction: {
+        modelRef: input.lightModelRef,
+        ...(input.lightEngine !== undefined ? { engine: input.lightEngine } : {}),
+        ...(input.isLightRouteCurrent !== undefined
+          ? { isRouteCurrent: input.isLightRouteCurrent }
+          : {}),
+        onUsage: (usage) =>
+          recordSubagentUsage(deps, input, identity, input.lightModelRef, usage),
+      },
       buildSystemPrompt: input.buildSystemPrompt,
       messages: [{ role: 'user', content: params.task, timestamp: clock.now() }],
       tools: input.buildTools(identity),

@@ -1143,6 +1143,56 @@ describe('validation and widening fixes (D89 review)', () => {
     ).toThrow(/没有已接入的厂商/);
   });
 
+  it('general.task-loop validates ranges and cross-field constraints', () => {
+    const rig = harness();
+    const entry = item('general.task-loop');
+    const adapter = rig.adapters(entry);
+    expect(adapter.read(entry, rig.target, {}).values).toMatchObject({
+      idleGuardEnabled: true,
+      idleWarnAfter: 3,
+      idleStopAfter: 6,
+      idleWindowCalls: 12,
+      tokenSoftBudget: 0,
+    });
+
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 2, idleStopAfter: 2 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 12, idleStopAfter: 8 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleStopAfter: 9, idleWindowCalls: 8 }, rig.target),
+    ).toMatchObject({ ok: false });
+    expect(
+      adapter.normalize!(entry, { idleWarnAfter: 1 }, rig.target),
+    ).toMatchObject({ ok: false });
+
+    const checked = adapter.normalize!(
+      entry,
+      {
+        idleGuardEnabled: false,
+        idleWarnAfter: 4,
+        idleStopAfter: 8,
+        idleWindowCalls: 10,
+        tokenSoftBudget: 100_000,
+      },
+      rig.target,
+    );
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) throw new Error(checked.message);
+    adapter.write!(entry, { next: checked.values, secrets: {} }, rig.target);
+    expect(rig.settings().taskLoop).toMatchObject({
+      idleGuardEnabled: false,
+      idleWarnAfter: 4,
+      idleStopAfter: 8,
+      idleWindowCalls: 10,
+      tokenSoftBudget: 100_000,
+    });
+    // Other settings are untouched.
+    expect(rig.settings().providerConcurrency.default).toBe(4);
+  });
+
   it('general.workbench write toggles freely (not gated by schedule count)', () => {
     const rig = harness({ workbenchEnabled: false });
     const entry = item('general.workbench');

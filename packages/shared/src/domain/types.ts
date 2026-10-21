@@ -629,6 +629,43 @@ export const backgroundTasksSettingsSchema = z
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
 /**
+ * 任务 Loop（D93，design 43 §5.3）：内置 pi 长任务的空转保护与软预算。
+ * schema 只做粗边界；`idleStopAfter > idleWarnAfter` 与
+ * `idleWindowCalls >= idleStopAfter` 由 core 适配器的 normalize 校验。
+ */
+export const TASK_LOOP_DEFAULTS = {
+  idleGuardEnabled: true,
+  idleWarnAfter: 3,
+  idleStopAfter: 6,
+  idleWindowCalls: 12,
+  tokenSoftBudget: 0,
+} as const;
+
+const taskLoopSettingsShape = z.object({
+  idleGuardEnabled: z.boolean().default(TASK_LOOP_DEFAULTS.idleGuardEnabled),
+  idleWarnAfter: z.number().int().min(2).max(10).default(TASK_LOOP_DEFAULTS.idleWarnAfter),
+  idleStopAfter: z.number().int().min(3).max(20).default(TASK_LOOP_DEFAULTS.idleStopAfter),
+  idleWindowCalls: z
+    .number()
+    .int()
+    .min(3)
+    .max(50)
+    .default(TASK_LOOP_DEFAULTS.idleWindowCalls),
+  /** 累计计费 token 软预算；0 = 不限制。 */
+  tokenSoftBudget: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .default(TASK_LOOP_DEFAULTS.tokenSoftBudget),
+});
+/** 读取用：旧数据缺字段 / 损坏时整份设置仍可读，回落默认值。 */
+export const taskLoopSettingsSchema = taskLoopSettingsShape.catch({ ...TASK_LOOP_DEFAULTS });
+/** 写入用：粗边界校验，越界不静默夹取（交叉约束由 core 适配器做）。 */
+export const taskLoopSettingsInputSchema = taskLoopSettingsShape;
+export type TaskLoopSettings = z.infer<typeof taskLoopSettingsSchema>;
+
+/**
  * 连接应用（D73）的 core 自有设置（不在 `settings.update` 入参里，渲染端改不了）：
  * `toolLockBaselineDone` = 存量 MCP server 的工具锁定基线已建立（只作用一次，见
  * `core/apps/tool-lock.ts`）。读取容错：损坏的值按未完成处理。
@@ -776,6 +813,8 @@ export const settingsSchema = z.object({
   backgroundAgentId: z.string().optional().catch(undefined),
   /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */
   backgroundTasks: backgroundTasksSettingsSchema.prefault({}),
+  /** D93：内置任务 Loop 的空转检测与软预算（设置 → 通用 → 任务 Loop）。 */
+  taskLoop: taskLoopSettingsSchema.prefault({}),
   /**
    * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支写入）：没有
    * 默认主模型时，新建的 Bot（含管家）若未指定模型 / Agent，即以它驱动；

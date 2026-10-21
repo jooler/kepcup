@@ -844,6 +844,31 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'settings', paths: ['workbenchEnabled'] },
   }),
 
+  item({
+    id: 'general.task-loop',
+    group: 'general',
+    title: '任务 Loop',
+    summary: '长任务的空转保护与软预算',
+    enables: ['长任务自动止损', '重复操作提醒', '任务 token 软预算'],
+    keywords: ['空转', '循环', '重复', '预算', '任务 Loop', 'loop'],
+    scope: 'global',
+    fields: [
+      field('idleGuardEnabled', '启用空转检测', 'toggle'),
+      field('idleWarnAfter', '提醒阈值', 'number', { min: 2, max: 10, step: 1 }),
+      field('idleStopAfter', '中止阈值', 'number', { min: 3, max: 20, step: 1 }),
+      field('idleWindowCalls', '检测窗口', 'number', { min: 3, max: 50, step: 1 }),
+      field('tokenSoftBudget', 'token 软预算', 'number', {
+        min: 0,
+        max: 10_000_000,
+        step: 100_000,
+      }),
+    ],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'general', anchor: 'general-task-loop' },
+    store: { kind: 'settings', paths: ['taskLoop'] },
+  }),
+
   // --- 后台 ---------------------------------------------------------------
   item({
     id: 'background.tasks',
