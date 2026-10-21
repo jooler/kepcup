@@ -65,9 +65,9 @@ describe('mergeThreeWay', () => {
       { id: 'their-new', enabled: true },
     ]);
     // deleted by the form, untouched elsewhere → deleted
-    expect(mergeThreeWay([{ id: 'a' }, { id: 'b' }], [{ id: 'a' }], [{ id: 'a' }, { id: 'b' }])).toEqual(
-      [{ id: 'a' }],
-    );
+    expect(
+      mergeThreeWay([{ id: 'a' }, { id: 'b' }], [{ id: 'a' }], [{ id: 'a' }, { id: 'b' }]),
+    ).toEqual([{ id: 'a' }]);
   });
 
   it('mergePatchOnto only merges keys present in base', () => {
@@ -89,10 +89,20 @@ describe('mergeThreeWay', () => {
     expect(merged.x).toBe(2);
     // A key missing on one side is not read from the prototype chain.
     expect(
-      settingsDeepEqual({ a: 1 }, Object.fromEntries([['a', 1], ['constructor', undefined]])),
+      settingsDeepEqual(
+        { a: 1 },
+        Object.fromEntries([
+          ['a', 1],
+          ['constructor', undefined],
+        ]),
+      ),
     ).toBe(true);
     expect(settingsDeepEqual(parse('{"toString":1}'), parse('{"toString":1}'))).toBe(true);
-    const patched = mergePatchOnto(parse('{"__proto__":{"a":2}}'), parse('{"__proto__":{"a":1}}'), parse('{"__proto__":{"a":1}}'));
+    const patched = mergePatchOnto(
+      parse('{"__proto__":{"a":2}}'),
+      parse('{"__proto__":{"a":1}}'),
+      parse('{"__proto__":{"a":1}}'),
+    );
     expect(Object.getPrototypeOf(patched)).toBe(Object.prototype);
     expect(Object.getOwnPropertyDescriptor(patched, '__proto__')?.value).toEqual({ a: 2 });
   });
@@ -106,19 +116,23 @@ describe('mergeThreeWay', () => {
 
 describe('settingValuesProblems', () => {
   it('accepts well-formed values for every catalog field type', () => {
-    expect(settingValuesProblems(item('models.concurrency'), { provider: 'openai', limit: 4 })).toEqual([]);
-    expect(settingValuesProblems(item('bot.network'), { policy: 'allowlist', allowlist: ['a.com'] })).toEqual(
-      [],
-    );
+    expect(
+      settingValuesProblems(item('models.concurrency'), { provider: 'openai', limit: 4 }),
+    ).toEqual([]);
+    expect(
+      settingValuesProblems(item('bot.network'), { policy: 'allowlist', allowlist: ['a.com'] }),
+    ).toEqual([]);
     expect(settingValuesProblems(item('bot.network'), { allowlist: 'a.com, b.com' })).toEqual([]);
-    expect(settingValuesProblems(item('capability.image'), { provider: 'dashscope', apiKey: 'k' })).toEqual(
-      [],
-    );
+    expect(
+      settingValuesProblems(item('capability.image'), { provider: 'dashscope', apiKey: 'k' }),
+    ).toEqual([]);
     expect(settingValuesProblems(item('general.language'), { language: 'zh-CN' })).toEqual([]);
   });
 
   it('rejects unknown keys, wrong types and values outside static options', () => {
-    expect(settingValuesProblems(item('models.concurrency'), { limit: '4' })).toEqual(['limit 应为数字']);
+    expect(settingValuesProblems(item('models.concurrency'), { limit: '4' })).toEqual([
+      'limit 应为数字',
+    ]);
     expect(settingValuesProblems(item('general.launch-at-login'), { enabled: 'yes' })).toEqual([
       'enabled 应为 true / false',
     ]);
@@ -126,11 +140,11 @@ describe('settingValuesProblems', () => {
       'policy 只能是 none / allowlist / open',
     ]);
     expect(settingValuesProblems(item('general.language'), { language: 'xx' })).toEqual([
-      'language 只能是 zh-CN',
+      'language 只能是 zh-CN / en-US',
     ]);
-    expect(settingValuesProblems(item('general.language'), { language: 'zh-CN', extra: true })).toEqual(
-      ['没有字段 extra'],
-    );
+    expect(
+      settingValuesProblems(item('general.language'), { language: 'zh-CN', extra: true }),
+    ).toEqual(['没有字段 extra']);
     expect(settingValuesProblems(item('project.title'), { title: 'x'.repeat(501) })).toEqual([
       'title 应为字符串',
     ]);
@@ -153,7 +167,12 @@ describe('settingValuesProblems', () => {
 
 describe('contracts touched by the review fixes', () => {
   it('settings.update / bots.update accept an optional base snapshot', () => {
-    expect(settingsUpdateInputSchema.parse({ defaultMainModel: 'a/b', base: { defaultMainModel: 'a/c' } })).toEqual({
+    expect(
+      settingsUpdateInputSchema.parse({
+        defaultMainModel: 'a/b',
+        base: { defaultMainModel: 'a/c' },
+      }),
+    ).toEqual({
       defaultMainModel: 'a/b',
       base: { defaultMainModel: 'a/c' },
     });

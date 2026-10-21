@@ -11,7 +11,7 @@
     MessageCircleQuestion,
   } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import { t, errorText } from '$lib/i18n';
+  import { t, errorText, listSeparator } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
@@ -146,7 +146,7 @@
 
     {#if model.capabilities.length > 0}
       <p class="mt-1 truncate text-xs text-muted-foreground" data-testid="task-capabilities">
-        {t('task.capabilities', { list: model.capabilities.join('、') })}
+        {t('task.capabilities', { list: model.capabilities.join(listSeparator()) })}
       </p>
     {/if}
     {#if model.queueReason !== null}

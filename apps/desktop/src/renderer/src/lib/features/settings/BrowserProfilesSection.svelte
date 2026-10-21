@@ -7,7 +7,7 @@
     type SettingValues,
   } from '@kepcup/shared';
   import { prefillString } from '$lib/features/settings-card/setting-card-model';
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -51,7 +51,7 @@
   function botNames(ids: string[]): string {
     return ids
       .map((id) => contacts.bots.find((bot) => bot.id === id)?.profile.identity.name ?? id)
-      .join('、');
+      .join(listSeparator());
   }
 
   async function refresh(): Promise<void> {

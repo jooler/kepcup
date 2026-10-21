@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SettingValues } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -53,7 +53,7 @@
   });
 
   function rosterNames(ids: readonly string[]): string {
-    return ids.map((id) => roster.find((row) => row.id === id)?.name ?? id).join('、');
+    return ids.map((id) => roster.find((row) => row.id === id)?.name ?? id).join(listSeparator());
   }
 
   function toggleMember(id: string, on: boolean): void {

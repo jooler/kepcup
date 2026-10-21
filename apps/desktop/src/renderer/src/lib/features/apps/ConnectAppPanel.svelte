@@ -349,7 +349,7 @@
                   data-write={row.write}
                   >{row.scope}{#if row.write}
                     <span class="text-amber-700 dark:text-amber-400"
-                      >（{t('apps.panel.scopeWrite')}）</span
+                      >{t('common.parenthesized', { text: t('apps.panel.scopeWrite') })}</span
                     >{/if}</code
                 >
               {/each}

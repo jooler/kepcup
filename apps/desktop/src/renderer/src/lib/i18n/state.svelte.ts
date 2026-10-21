@@ -1,3 +1,4 @@
+import { enUS } from './locales/en-US';
 import { zhCN, type MessageKey } from './locales/zh-CN';
 
 /**
@@ -12,9 +13,13 @@ export interface LocaleOption {
 
 const dicts: Record<string, Partial<Record<MessageKey, string>>> = {
   'zh-CN': zhCN,
+  'en-US': enUS,
 };
 
-export const localeOptions: LocaleOption[] = [{ id: 'zh-CN', label: '简体中文' }];
+export const localeOptions: LocaleOption[] = [
+  { id: 'zh-CN', label: '简体中文' },
+  { id: 'en-US', label: 'English' },
+];
 
 const LOCALE_STORAGE_KEY = 'kepcup.locale';
 
@@ -26,6 +31,10 @@ function initialLocale(): string {
     // localStorage 不可用时用默认语言
   }
   return 'zh-CN';
+}
+
+function applyDocumentLang(locale: string): void {
+  if (typeof document !== 'undefined') document.documentElement.lang = locale;
 }
 
 class I18nState {
@@ -44,6 +53,7 @@ class I18nState {
   setLocale(locale: string): void {
     if (!(locale in dicts)) return;
     this.#locale = locale;
+    applyDocumentLang(locale);
     try {
       localStorage.setItem(LOCALE_STORAGE_KEY, locale);
     } catch {
@@ -53,6 +63,7 @@ class I18nState {
 }
 
 export const i18n = new I18nState();
+applyDocumentLang(i18n.locale);
 
 /** 取当前语言的文案；缺 key 时回退到 zh-CN，再缺失时原样返回 key。 */
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
@@ -63,6 +74,41 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   return template.replace(/\{(\w+)\}/g, (_, name: string) =>
     name in params ? String(params[name]) : `{${name}}`,
   );
+}
+
+/** 列表连接符（中文顿号 / 英文逗号）。 */
+export function listSeparator(): string {
+  return i18n.locale === 'en-US' ? ', ' : '、';
+}
+
+/** Looks up a dynamic key (settings-catalog copy) in the current locale, then zh-CN. */
+function lookup(key: string): string | undefined {
+  const current = dicts[i18n.locale] ?? {};
+  return current[key as MessageKey] ?? zhCN[key as MessageKey];
+}
+
+/** 设置目录条目的标题 / 说明：渲染层按 key 覆盖，缺省回退目录里的中文。 */
+export function settingItemText(
+  itemId: string,
+  part: 'title' | 'summary',
+  fallback: string,
+): string {
+  return lookup(`settingsItem.${itemId}.${part}`) ?? fallback;
+}
+
+/** 设置目录字段名：按条目 + 字段名翻译，缺省回退目录里的中文。 */
+export function settingFieldText(itemId: string, fieldName: string, fallback: string): string {
+  return lookup(`settingsItem.${itemId}.field.${fieldName}`) ?? fallback;
+}
+
+/** 设置目录静态选项名：按条目 + 字段 + 值翻译，缺省回退目录里的中文。 */
+export function settingOptionText(
+  itemId: string,
+  fieldName: string,
+  value: string,
+  fallback: string,
+): string {
+  return lookup(`settingsItem.${itemId}.option.${fieldName}.${value}`) ?? fallback;
 }
 
 /** Maps an RPC error code to user-facing text (current locale). */

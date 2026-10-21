@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FilePlus2, FilePen, FileX2, GitCompare, Undo2 } from '@lucide/svelte';
   import type { Message, RunChange } from '@kepcup/shared';
-  import { t, errorText } from '$lib/i18n';
+  import { t, errorText, listSeparator } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
@@ -120,7 +120,7 @@
     <Dialog.Header>
       <Dialog.Title>{t('changes.revertConflictTitle')}</Dialog.Title>
       <Dialog.Description>
-        {t('changes.revertConflictBody', { files: conflicts.join('、') })}
+        {t('changes.revertConflictBody', { files: conflicts.join(listSeparator()) })}
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer class="gap-2">

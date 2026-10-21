@@ -4,7 +4,14 @@
   import { userPrefersMode } from 'mode-watcher';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { i18n, localeOptions, t } from '$lib/i18n';
+  import {
+    i18n,
+    localeOptions,
+    settingFieldText,
+    settingItemText,
+    settingOptionText,
+    t,
+  } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -77,8 +84,12 @@
     on: t('settingCard.value.on'),
     off: t('settingCard.value.off'),
     empty: t('settingCard.value.empty'),
+    separator: t('common.listSeparator'),
     modelLabel: (ref) =>
       settingsStore.availableModelOptions.find((option) => option.ref === ref)?.label ?? null,
+    fieldLabel: (name, label) => (item === null ? label : settingFieldText(item.id, name, label)),
+    optionLabel: (fieldName, value, label) =>
+      item === null ? label : settingOptionText(item.id, fieldName, value, label),
   });
   const after = $derived(
     view === 'receipt' ? (content.applied ?? content.proposed) : content.proposed,
@@ -111,9 +122,7 @@
   const componentSaves = $derived(embedKey !== null && COMPONENT_SAVE_CARD_KEYS.has(embedKey));
   const showHostApply = $derived(item !== null && pending && hostApplies(item, view, after));
   /** 没有可编辑字段的 confirm 卡（如关闭无人值守）直接展开组件。 */
-  const embedImmediately = $derived(
-    item !== null && view === 'confirm' && !confirmHasFields(item),
-  );
+  const embedImmediately = $derived(item !== null && view === 'confirm' && !confirmHasFields(item));
   /** 组件区：自带应用的卡与 form / user-only 直接展开；confirm 的其余组件点「改一下」才展开。 */
   const showEmbed = $derived(
     embedKey !== null &&
@@ -248,7 +257,7 @@
     />
     <div class="min-w-0 flex-1 space-y-0.5">
       <p class="font-medium break-words" data-testid="setting-card-title">
-        {item?.title ?? content.itemId}
+        {item === null ? content.itemId : settingItemText(item.id, 'title', item.title)}
         <span class="text-xs font-normal text-muted-foreground">
           · {t(`settingCard.view.${view}`)}{#if isProject}
             · {chat.botName(content.botId)}{/if}
@@ -292,7 +301,9 @@
       {:else}
         {#each diff as row (row.name)}
           <p class="break-words" data-testid={`setting-card-diff-${row.name}`}>
-            <span class="text-muted-foreground">{row.label}：</span>
+            <span class="text-muted-foreground"
+              >{t('settingCard.fieldLine', { label: row.label })}</span
+            >
             <span data-testid="setting-card-before">{row.before}</span>
             <span class="text-muted-foreground"> → </span>
             <span class="font-medium" data-testid="setting-card-after">{row.after}</span>

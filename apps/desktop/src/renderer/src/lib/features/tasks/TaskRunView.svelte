@@ -9,7 +9,7 @@
     CornerDownRight,
     Loader2,
   } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { t, listSeparator } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
@@ -248,7 +248,9 @@
           {#if (task.capabilities ?? []).length > 0}
             <span aria-hidden="true">·</span>
             <span class="truncate"
-              >{t('task.capabilities', { list: (task.capabilities ?? []).join('、') })}</span
+              >{t('task.capabilities', {
+                list: (task.capabilities ?? []).join(listSeparator()),
+              })}</span
             >
           {/if}
         </div>

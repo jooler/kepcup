@@ -124,7 +124,10 @@
         <Select.Root type="single" value={draft.preset.kind} onValueChange={setKind} {disabled}>
           <Select.Trigger
             class="w-32"
-            aria-label={`${t('workbench.drawer.whenRepeat')}：${t(KIND_LABEL[draft.preset.kind])}`}
+            aria-label={t('common.labelValue', {
+              label: t('workbench.drawer.whenRepeat'),
+              value: t(KIND_LABEL[draft.preset.kind]),
+            })}
             data-testid="todo-when-repeat-kind"
           >
             {t(KIND_LABEL[draft.preset.kind])}
@@ -144,7 +147,10 @@
           >
             <Select.Trigger
               class="w-24"
-              aria-label={`${t('workbench.drawer.repeatMonthDay')}：${t('workbench.drawer.repeatDayOption', { n: draft.preset.day })}`}
+              aria-label={t('common.labelValue', {
+                label: t('workbench.drawer.repeatMonthDay'),
+                value: t('workbench.drawer.repeatDayOption', { n: draft.preset.day }),
+              })}
               data-testid="todo-when-month-day"
             >
               {t('workbench.drawer.repeatDayOption', { n: draft.preset.day })}

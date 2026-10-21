@@ -158,7 +158,7 @@
 
   <div class="flex max-w-xl items-center justify-between gap-3 text-sm">
     <span class="text-muted-foreground">
-      {t('sensors.permission')}：
+      {t('common.labelColon', { label: t('sensors.permission') })}
       <span data-testid="sensor-permission-{kind}" data-status={permissionKey}>
         {t(PERMISSION_TEXT[permissionKey])}
       </span>

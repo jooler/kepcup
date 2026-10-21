@@ -738,7 +738,7 @@
               >
                 <option value="stdio">stdio</option>
                 <option value="http">Streamable HTTP</option>
-                <option value="sse">SSE（旧版）</option>
+                <option value="sse">{t('settings.mcpTransportSseLegacy')}</option>
               </select>
             </div>
           {/if}
@@ -949,7 +949,7 @@
         >
           <option value="stdio">stdio</option>
           <option value="http">Streamable HTTP</option>
-          <option value="sse">SSE（旧版）</option>
+          <option value="sse">{t('settings.mcpTransportSseLegacy')}</option>
         </select>
         <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
         <McpbInstall />

@@ -41,7 +41,11 @@
         toast.error(t('settings.launchAtLoginFailed', { reason: result.reason ?? '' }));
       } else {
         toast.success(
-          t('settings.autostartApplied', { state: result.enabled ? '开启' : '关闭' }),
+          t('settings.autostartApplied', {
+            state: result.enabled
+              ? t('settings.autostartStateOn')
+              : t('settings.autostartStateOff'),
+          }),
         );
       }
     });
@@ -104,7 +108,11 @@
 <section class="space-y-3" data-testid="settings-general">
   <h3 class="text-sm font-medium">{t('settings.generalSection')}</h3>
   <label class="flex items-start gap-3">
-    <Checkbox bind:checked={autostart} onCheckedChange={(checked) => toggleAutostart(checked === true)} data-testid="settings-launch-at-login" />
+    <Checkbox
+      bind:checked={autostart}
+      onCheckedChange={(checked) => toggleAutostart(checked === true)}
+      data-testid="settings-launch-at-login"
+    />
     <span class="grid gap-0.5">
       <Label class="font-medium">{t('settings.launchAtLogin')}</Label>
       <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
@@ -125,7 +133,13 @@
     <span class="text-xs text-muted-foreground">
       {t('settings.version')}: {core.platform?.version ?? '—'}
     </span>
-    <Button size="sm" variant="outline" disabled={checking} onclick={() => void checkUpdate()} data-testid="settings-check-update">
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={checking}
+      onclick={() => void checkUpdate()}
+      data-testid="settings-check-update"
+    >
       {checking ? t('update.checking') : t('update.checkNow')}
     </Button>
   </div>

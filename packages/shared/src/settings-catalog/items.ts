@@ -804,7 +804,10 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [
       field('language', '语言', 'select', {
         options: 'static',
-        staticOptions: [{ value: 'zh-CN', label: '简体中文' }],
+        staticOptions: [
+          { value: 'zh-CN', label: '简体中文' },
+          { value: 'en-US', label: 'English' },
+        ],
       }),
     ],
     write: write('confirm'),

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SkillEntry, SkillHistoryEntry } from '@kepcup/shared';
-  import { errorText, t, type MessageKey } from '$lib/i18n';
+  import { errorText, t, listSeparator, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { skillsStore } from '$lib/stores/skills.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -199,7 +199,7 @@
           </div>
           {#if skill.missingDeps.length > 0}
             <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="skill-missing-deps">
-              {t('skills.missingDeps', { deps: skill.missingDeps.join('、') })}
+              {t('skills.missingDeps', { deps: skill.missingDeps.join(listSeparator()) })}
             </p>
           {/if}
           {#if skill.enhancedRequired && skill.compatibility === 'incompatible'}
