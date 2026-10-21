@@ -2850,6 +2850,12 @@ export const memoSchema = z.object({
   source: todoSourceSchema,
   createdAt: z.number(),
   updatedAt: z.number(),
+  /**
+   * List sort key: creation time, only refreshed when the pin state changes.
+   * Editing the body moves `updatedAt` but not `sortAt`, so the card keeps its
+   * place in the workbench list.
+   */
+  sortAt: z.number(),
   /** Non-null = in 最近删除 (purged after MEMO_TRASH_RETENTION_MS). */
   deletedAt: z.number().nullable(),
 });

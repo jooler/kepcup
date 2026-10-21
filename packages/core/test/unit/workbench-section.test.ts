@@ -58,6 +58,7 @@ function memo(overrides: Partial<Memo> = {}): Memo {
     source: 'user',
     createdAt: NOW - HOUR,
     updatedAt: NOW - HOUR,
+    sortAt: NOW - HOUR,
     deletedAt: null,
     ...overrides,
   };

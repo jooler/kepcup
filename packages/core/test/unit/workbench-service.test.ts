@@ -1285,7 +1285,7 @@ describe('工作台备忘', () => {
     return { rig, memos, published };
   }
 
-  it('创建 / 编辑 / 置顶：长度校验，置顶在前，事件每次变更都发', () => {
+  it('创建 / 编辑 / 置顶：长度校验，置顶在前，改正文不换位，事件每次变更都发', () => {
     const { rig, memos, published } = memoRig();
     expect(codeOf(() => memos.create({ body: '  ' }))).toBe('INVALID_INPUT');
     const a = memos.create({ body: '  第一条  ' });
@@ -1294,9 +1294,12 @@ describe('工作台备忘', () => {
     const b = memos.create({ body: '第二条', source: 'butler' });
     expect(b.source).toBe('butler');
     expect(memos.list().map((m) => m.id)).toEqual([b.id, a.id]);
+    // 改正文：不动排序键 → 卡片留在原位。
+    expect(memos.update(a.id, { body: '改过' }).body).toBe('改过');
+    expect(memos.list().map((m) => m.id)).toEqual([b.id, a.id]);
+    // 置顶：提到置顶组最前。
     memos.update(a.id, { pinned: true });
     expect(memos.list().map((m) => m.id)).toEqual([a.id, b.id]);
-    expect(memos.update(a.id, { body: '改过' }).body).toBe('改过');
     expect(published.map((p) => (p as { event: string }).event)).toEqual([
       'memos.changed',
       'memos.changed',
@@ -1318,7 +1321,7 @@ describe('工作台备忘', () => {
     expect(codeOf(() => memos.update(a.id, { body: 'x' }))).toBe('INVALID_INPUT');
     expect(memos.delete(a.id).deletedAt).toBe(deleted.deletedAt);
     expect(memos.restore(a.id).deletedAt).toBeNull();
-    // 恢复后回到原位（updated_at 未变）。
+    // 恢复后回到原位（排序键未变）。
     expect(memos.list().map((m) => m.id)).toEqual([b.id, a.id]);
     expect(memos.restore(a.id).deletedAt).toBeNull();
   });

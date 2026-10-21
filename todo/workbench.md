@@ -745,3 +745,10 @@ shared 新增（均向后兼容）：`textContent.todoUpdate?: boolean`；`todos
 - 问题：主区在对话与工作台之间二选一（§5.1 / 设计 39 §4.1），切到任一 Bot 会话会把工作台整棵卸载；备忘输入框、备忘搜索框、事项快速新建框的文本原本是组件 `$state`，切回来就空了。
 - 改法：三处草稿移入 `workbench` store（`memoDraft` / `memoQuery` / `todoDraft`，内存、不落盘，与对话输入框的 `composerDrafts` 同一思路），组件 `bind:value` 直连 store，保存成功才清空。事项详情弹框是模态，仍按原设计在离开工作台时关闭（脏表单先经放弃确认），本次不动；`tab` / 「最近结束」展开态 / 回收站视图属导航态，也不随视图缓存。
 - 测试：单测 `workbench.svelte.test.ts`「输入草稿（切到对话再切回不丢）」（18 例全过）；e2e `workbench.spec.ts`「workbench inputs: memo draft, memo search and quick-add survive a round trip to a bot」。该 e2e 在未打补丁的构建上按预期失败（`memo-input` 切回后为空），打上补丁后通过——Mac 本机定向跑该 spec 的 4 例（入口、输入草稿、备忘 CRUD、布局）全过。
+
+**备忘改正文不再换位（2026-10-21）**
+
+- 问题：备忘列表按 `updated_at desc` 排序，正文一改就把卡片顶到最前（用户反馈：修改会自动调整排序，要去掉）。排序键跟「最后修改时间」耦合是根因。
+- 改法：排序键独立成 `memos.sort_at`（main 0046，回填 `created_at`）——创建时取创建时间，**只有置顶状态变化才刷新**（置顶卡提到置顶组最前，行为不变）；改正文只动 `updated_at`（卡片上的相对时间、管家上下文里的「最近备忘」仍按它算）。`updated_at` 与 `sort_at` 分开后，「最后修改时间」与「列表位置」两件事不再互相影响。
+- 连带：`shared` 的 `Memo` 增 `sortAt`，渲染层 `sortMemos` 改按 `sortAt` 排序（与服务端 SQL 同序：置顶 → 排序键 → id）；软删 / 恢复不动 `sort_at`，恢复后回原位。
+- 测试：单测 `workbench-stores.test.ts`（改正文后列表顺序不变；置顶后提到置顶组最前）、`workbench-service.test.ts`（改正文不换位）、`workbench-model.test.ts`（`sortMemos` 按排序键）；e2e `workbench.spec.ts` 备忘 CRUD 一例补「编辑后仍在最后一位」。
