@@ -65,8 +65,10 @@ describe('ToolOutputSpill', () => {
     const spill = new ToolOutputSpill({ workspacePath, runId: 'run_1', maxChars: 5 });
     const first = spill.spill('123456');
     const second = spill.spill('abcdef');
-    expect(first!.path.endsWith('/0.txt')).toBe(true);
-    expect(second!.path.endsWith('/1.txt')).toBe(true);
+    expect(path.basename(first!.path)).toBe('0.txt');
+    expect(path.basename(second!.path)).toBe('1.txt');
+    expect(first!.path.endsWith(path.join('run_1', '0.txt'))).toBe(true);
+    expect(second!.path.endsWith(path.join('run_1', '1.txt'))).toBe(true);
   });
 
   it('写失败退回 null（调用方走现有截断）', () => {
