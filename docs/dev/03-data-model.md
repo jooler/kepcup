@@ -50,6 +50,7 @@
 | main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
 | memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
 | main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
+| main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -664,10 +665,11 @@ CREATE TABLE memos (
   pinned     INTEGER NOT NULL DEFAULT 0,
   source     TEXT NOT NULL CHECK (source IN ('user', 'butler')),
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,                      -- 最后修改时间（卡片上的相对时间用它）
+  sort_at    INTEGER NOT NULL,                      -- 列表排序键（0046）：创建时间，只随置顶变化刷新
   deleted_at INTEGER                                 -- 非空 = 在「最近删除」
 );
-CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
+CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 ```
 
 - **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
@@ -675,6 +677,7 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
+- **备忘排序**（0046）：列表按 `pinned desc, sort_at desc, id desc`。`sort_at` 是排序键，创建时取创建时间，**只有置顶状态变化才刷新**（置顶卡提到置顶组最前）；改正文只动 `updated_at`（卡片上的相对时间、管家上下文里的「最近备忘」），**卡片不换位**。软删 / 恢复不动 `sort_at`，恢复后回到原位。
 - 检索用 `LIKE`（量级千条以内）。
 - 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
 

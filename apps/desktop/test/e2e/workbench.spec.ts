@@ -330,6 +330,9 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
     // 等第一笔编辑落盘（500ms 防抖）：否则 Escape 回滚到的是旧值。
     await expect(coffeeBody).toContainText('买咖啡豆和滤纸', { timeout: 5_000 });
     await page.waitForTimeout(700);
+    // 改正文不换位：编辑过的「买咖啡豆和滤纸」还在最后一位，最前的仍是「预约牙医」。
+    await expect(page.locator('[data-testid="memo-body"]').first()).toHaveText('预约牙医');
+    await expect(page.locator('[data-testid="memo-body"]').last()).toHaveText('买咖啡豆和滤纸');
     const coffeeCardId = await page
       .locator('[data-testid="memo-card"]')
       .filter({ has: page.locator('[data-testid="memo-body"]', { hasText: '买咖啡豆和滤纸' }) })

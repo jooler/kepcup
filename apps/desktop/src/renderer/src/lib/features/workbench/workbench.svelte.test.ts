@@ -182,7 +182,15 @@ describe('就地更新', () => {
   });
 
   it('upsertMemo：软删移入回收站，恢复移回列表', () => {
-    const base = { id: 'm1', body: 'x', pinned: false, source: 'user', createdAt: 1, updatedAt: 1 };
+    const base = {
+      id: 'm1',
+      body: 'x',
+      pinned: false,
+      source: 'user',
+      createdAt: 1,
+      updatedAt: 1,
+      sortAt: 1,
+    };
     const memo = { ...base, deletedAt: null } as never;
     workbench.upsertMemo(memo);
     expect(workbench.memos.map((m) => m.id)).toEqual(['m1']);

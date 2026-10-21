@@ -723,7 +723,7 @@ export function buildWorkbenchTools(input: {
   const listMemos: ToolDefinition<{ query?: string; limit?: number; include_trashed?: boolean }> = {
     name: 'list_memos',
     description:
-      '查看用户的备忘（闪念）：置顶的在前，其次按最近更新。用户问「我记过什么」「上次那条备忘」，或你要整理备忘、把备忘转成事项之前用它。include_trashed=true 时一并列出「最近删除」里的（可让用户在工作台恢复）。',
+      '查看用户的备忘（闪念）：置顶的在前，其余按记录先后（新记的在前；改正文不换位）。用户问「我记过什么」「上次那条备忘」，或你要整理备忘、把备忘转成事项之前用它。include_trashed=true 时一并列出「最近删除」里的（可让用户在工作台恢复）。',
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: '备忘正文里的关键词' })),
       limit: Type.Optional(

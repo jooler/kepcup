@@ -127,6 +127,7 @@ describe('memo schema', () => {
       source: 'butler',
       createdAt: 1,
       updatedAt: 1,
+      sortAt: 1,
       deletedAt: null,
     };
     expect(memoSchema.parse(memo)).toEqual(memo);
