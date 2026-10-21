@@ -6,7 +6,8 @@ import {
   type SettingModeContext,
   type SettingValues,
 } from '@kepcup/shared';
-import { buildItemAdapters, type AdapterDeps, type ItemAdapter } from '../../src/settings/adapters.js';
+import { buildItemAdapters } from '../../src/settings/contributions/index.js';
+import type { AdapterDeps, ItemAdapter } from '../../src/settings/adapters.js';
 
 /**
  * WP4 §3.D.5 / §4.4：`project.title` / `project.goal` / `project.members` /

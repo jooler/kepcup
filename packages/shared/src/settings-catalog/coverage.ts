@@ -261,3 +261,71 @@ export function cardComponentProblems(
   }
   return problems;
 }
+
+/**
+ * 这一条是否需要 core 侧显式的条目适配器（todo/settings-catalog-registry.md §4.1.4）：
+ * core 拥有、经目录写入、可写、且没有声明 `store.generic`（通用标量适配器负责）。
+ * 只读 / 渲染层 / via-tool / generic 条目都不需要。
+ */
+export function requiresItemAdapter(item: SettingItem): boolean {
+  return (
+    item.owner === 'core' &&
+    !item.readOnly &&
+    item.write.via === 'catalog' &&
+    !(item.store.kind === 'settings' && item.store.generic === true)
+  );
+}
+
+export interface SettingsAdapterCoverageInput {
+  items?: readonly SettingItem[];
+  /** core 贡献表里登记的全部 itemId。 */
+  adapterIds: Iterable<string>;
+  /**
+   * 明确接受「没有适配器」的条目及理由（例如 profile.user-facts 没有安全信号）。
+   * 有理由才能进入这个表，不能靠静默 fallback。
+   */
+  explicitFallback?: Readonly<Record<string, string>>;
+}
+
+/**
+ * 目录条目 → core 适配器的闭合检查（core 车道在自己的单测里调用，`adapterIds` 来自
+ * `SETTING_ADAPTER_CONTRIBUTIONS`）。返回问题清单，空 = 通过：
+ * - 需要适配器的条目都在贡献表里，或显式登记了 fallback 理由；
+ * - 贡献表没有指向不存在条目的过期登记；
+ * - fallback 表没有遗留（条目已不需要 fallback，或根本不存在）。
+ */
+export function settingsAdapterCoverageProblems(input: SettingsAdapterCoverageInput): string[] {
+  const items = input.items ?? SETTING_ITEMS;
+  const byId = new Map(items.map((entry) => [entry.id, entry]));
+  const adapterIds = new Set(input.adapterIds);
+  const fallback = input.explicitFallback ?? {};
+  const problems: string[] = [];
+
+  for (const entry of items) {
+    if (!requiresItemAdapter(entry)) continue;
+    if (!adapterIds.has(entry.id) && fallback[entry.id] === undefined) {
+      problems.push(
+        `${entry.id}：需要 core 适配器（core 拥有、经目录写入），但不在贡献表里，也没有登记 EXPLICIT_ADAPTER_FALLBACK 理由`,
+      );
+    }
+  }
+  for (const id of adapterIds) {
+    if (!byId.has(id)) problems.push(`适配器贡献登记了不存在的条目 ${id}`);
+  }
+  for (const [id, reason] of Object.entries(fallback)) {
+    const entry = byId.get(id);
+    if (entry === undefined) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不是目录条目`);
+      continue;
+    }
+    if (reason.trim().length === 0) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 没写理由`);
+    }
+    if (!requiresItemAdapter(entry)) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不需要 fallback（只读 / 渲染层 / via-tool / generic），请删掉`);
+    } else if (adapterIds.has(id)) {
+      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 已有适配器，fallback 是遗留`);
+    }
+  }
+  return problems;
+}

@@ -304,7 +304,7 @@ function bool(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
-function snapshot(
+export function snapshot(
   status: SettingItemStatus,
   values: SettingValues | null,
   summary: string,
@@ -393,7 +393,7 @@ function chatModelOptionsOf(deps: AdapterDeps): SettingOption[] {
 }
 
 /** settings 里一个对话模型字段（defaultMainModel / defaultLightModel / widgetReviewModel）。 */
-function settingsModelAdapter(
+export function settingsModelAdapter(
   deps: AdapterDeps,
   key: 'defaultMainModel' | 'defaultLightModel' | 'widgetReviewModel',
   emptyMeaning: string | null,
@@ -427,7 +427,7 @@ function settingsModelAdapter(
 }
 
 /** 本 Bot 的主 / 轻量模型（runtime.model / runtime.light_model；'' = 跟随默认）。 */
-function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model'): ItemAdapter {
+export function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model'): ItemAdapter {
   return {
     read: (_item, target) => {
       const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
@@ -462,7 +462,7 @@ function capabilityOf(item: SettingItem): CapabilityModelKey | null {
   return entry === undefined ? null : (entry[0] as CapabilityModelKey);
 }
 
-function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
+export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
   const keyed = (vendor: string): boolean =>
     vendor.length > 0 && deps.secrets.hasValue(providerSecretName(vendor));
   return {
@@ -560,7 +560,7 @@ function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
 
 // --- 联网检索 ---------------------------------------------------------------------
 
-function webSearchAdapter(deps: AdapterDeps): ItemAdapter {
+export function webSearchAdapter(deps: AdapterDeps): ItemAdapter {
   const keyed = (provider: string): boolean =>
     provider.length > 0 && deps.secrets.hasValue(`websearch:${provider}`);
   return {
@@ -608,7 +608,7 @@ function webSearchAdapter(deps: AdapterDeps): ItemAdapter {
 
 // --- 厂商与 Key -------------------------------------------------------------------
 
-function providerKeyAdapter(deps: AdapterDeps): ItemAdapter {
+export function providerKeyAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const providers = deps.providers.list();
@@ -658,7 +658,7 @@ function providerKeyAdapter(deps: AdapterDeps): ItemAdapter {
 
 // --- 其他 settings 字段 -----------------------------------------------------------
 
-function launchAtLoginAdapter(deps: AdapterDeps): ItemAdapter {
+export function launchAtLoginAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const enabled = deps.settings.get().launchAtLogin;
@@ -677,28 +677,11 @@ function launchAtLoginAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function workbenchEnabledAdapter(deps: AdapterDeps): ItemAdapter {
-  return {
-    read: () => {
-      const enabled = deps.settings.get().workbenchEnabled;
-      return snapshot('configured', { enabled }, enabled ? '已开启' : '已关闭');
-    },
-    normalize: (_item, values) =>
-      'enabled' in values && bool(values.enabled) === undefined
-        ? { ok: false, message: 'enabled 应为 true / false' }
-        : { ok: true, values },
-    write: (_item, { next }) => {
-      const enabled = bool(next.enabled) ?? false;
-      deps.settings.update({ workbenchEnabled: enabled });
-    },
-  };
-}
-
 /**
  * D93 任务 Loop 设置：空转检测与软预算。schema 只做粗边界，这里做交叉校验
  * （stop > warn、window >= stop），越界不静默夹取。
  */
-function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
+export function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
   const normalizeValues = (
     current: Settings['taskLoop'],
     values: SettingValues,
@@ -759,7 +742,7 @@ function taskLoopAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
+export function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const settings = deps.settings.get();
@@ -800,7 +783,7 @@ function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
+export function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const agent = deps.settings.get().defaultAgentId;
@@ -823,7 +806,7 @@ function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
+export function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     // 按智能体寻址（focus.agent）：值是「这一个智能体是否启用」；概况列出全部已启用的。
     // 不给 focus 时值是「已启用的全部智能体」（排序后以逗号连接），CAS 覆盖整个集合。
@@ -898,7 +881,7 @@ function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function taintGuardAdapter(deps: AdapterDeps): ItemAdapter {
+export function taintGuardAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const enabled = deps.settings.get().apps.taintGuard;
@@ -914,7 +897,7 @@ function taintGuardAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function unattendedAdapter(deps: AdapterDeps, kind: 'enable' | 'disable'): ItemAdapter {
+export function unattendedAdapter(deps: AdapterDeps, kind: 'enable' | 'disable'): ItemAdapter {
   const state = (): UnattendedState | null => deps.unattended?.effective() ?? null;
   return {
     read: () => {
@@ -945,7 +928,7 @@ function unattendedAdapter(deps: AdapterDeps, kind: 'enable' | 'disable'): ItemA
 /** 每家厂商并发上限的取值范围上界（与设置页一致）。 */
 const CONCURRENCY_MAX = 16;
 
-function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
+export function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
   // 键空间与 `providerConcurrency` 一致：default、已接入的厂商 id、外部智能体（`agent:{id}`）。
   const knownConcurrencyProvider = (provider: string): boolean =>
     provider.length === 0 ||
@@ -1006,7 +989,7 @@ function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function embeddingLocalAdapter(deps: AdapterDeps): ItemAdapter {
+export function embeddingLocalAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const source = deps.settings.get().embedding.source;
@@ -1036,7 +1019,7 @@ function embeddingLocalAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
+export function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const profileId = botField(deps, target, (bot) => bot.profile.runtime.browser_profile);
@@ -1078,7 +1061,7 @@ function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
  * 重命名要资料 id，目录里没有这个字段；清除和删除会把挂在上面的 Bot 退回私有资料并中断任务，
  * 都留在设置页。
  */
-function browserSharedProfilesAdapter(deps: AdapterDeps): ItemAdapter {
+export function browserSharedProfilesAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, _target, focus) => {
       const profiles = deps.settings.get().browserProfiles;
@@ -1099,7 +1082,7 @@ function browserSharedProfilesAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function networkAdapter(deps: AdapterDeps): ItemAdapter {
+export function networkAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const runtime = botField(deps, target, (bot) => bot.profile.runtime);
@@ -1161,7 +1144,7 @@ function networkAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function botMcpAdapter(deps: AdapterDeps): ItemAdapter {
+export function botMcpAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const ids = botField(deps, target, (bot) => bot.profile.runtime.mcp_server_ids);
@@ -1204,7 +1187,7 @@ function botMcpAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
+export function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const ids = botField(deps, target, (bot) => bot.profile.runtime.app_connection_ids);
@@ -1262,7 +1245,7 @@ function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
+export function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const agent = botField(deps, target, (bot) => bot.profile.runtime.agent);
@@ -1347,7 +1330,7 @@ function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
  * 这个 Bot 的私有行，`skills.enable` / `disable` 会改公共行、对所有 Bot 生效——这里拒绝并说明
  * 去技能页管理，不让一张「这个 Bot」的卡改全局状态。快照带 `scope`（public / private）。
  */
-function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
+export function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
   const listed = (botId: string): ReadonlyArray<{ name: string; status: string; scope?: string }> =>
     deps.skills?.list(botId) ?? [];
   const isPublic = (skill: { scope?: string } | undefined): boolean => skill?.scope === 'public';
@@ -1458,7 +1441,7 @@ function toolPolicyWidens(before: SettingValues | null, proposed: SettingValues)
  * before 定位是哪一条）。不提供 write——组件调用 `apps.connections.setToolPolicy`，策略变严时
  * 那条 RPC 会中断正在使用该连接的任务。
  */
-function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
+export function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, _target, focus) => {
       const rawConnection = str(focus?.connection);
@@ -1538,7 +1521,7 @@ function projectConversation(
   return conversation !== null && conversation.type === 'project' ? conversation : null;
 }
 
-function projectTitleAdapter(deps: AdapterDeps): ItemAdapter {
+export function projectTitleAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const conversation = projectConversation(deps, target);
@@ -1568,7 +1551,7 @@ function projectTitleAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function projectGoalAdapter(deps: AdapterDeps): ItemAdapter {
+export function projectGoalAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const conversation = projectConversation(deps, target);
@@ -1598,7 +1581,7 @@ function projectGoalAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function projectMembersAdapter(deps: AdapterDeps): ItemAdapter {
+export function projectMembersAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const conversation = projectConversation(deps, target);
@@ -1629,7 +1612,7 @@ function projectMembersAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function projectLeadAdapter(deps: AdapterDeps): ItemAdapter {
+export function projectLeadAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const conversation = projectConversation(deps, target);
@@ -1724,7 +1707,7 @@ export function redactPathPattern(
   return clean(shape, PROTECT_PATTERN_MAX);
 }
 
-function workdirRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
+export function workdirRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
   return {
     read: (_item, target) => {
       const workdir =
@@ -1779,7 +1762,7 @@ function mcpServerWidens(before: SettingValues | null, proposed: SettingValues):
  * 所以不需要 `reconcileServers`。卡片的组件经 `settings.items.apply` 走这里，不再从渲染层缓存
  * 整表提交 `settings.update`。启用（放宽）仍是 user-only：只有用户在卡上亲手点才会写。
  */
-function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
+export function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, _target, focus) => {
       const servers = deps.settings.get().mcpServers;
@@ -1847,7 +1830,7 @@ function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
  * 有问题时，已经有安装为 `partial`，一项都没有为 `unconfigured`。
  * 不提供 write：安装仍走环境审批，重新检测和重装由组件自己调原来的 RPC。
  */
-function environmentToolchainsAdapter(deps: AdapterDeps): ItemAdapter {
+export function environmentToolchainsAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const environment = deps.environment;
@@ -1874,7 +1857,7 @@ function environmentToolchainsAdapter(deps: AdapterDeps): ItemAdapter {
  * 可用为 `configured`，不可用为 `unconfigured`（沙箱仍不可用时「我已设置好」核对不过）。
  * 不放 fixHint、本机路径或修复命令。不提供 write：重新检测和准备向导留在组件。
  */
-function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
+export function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const last = deps.sandbox?.lastAvailability() ?? null;
@@ -1897,7 +1880,7 @@ function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
  *   相对出卡时变过（概要里的条数变了）才结卡。
  * 概要分开数内置与自定义、启用与停用。加一条命令豁免是放宽，保持 user-only，不提供 write。
  */
-function environmentAllowlistAdapter(deps: AdapterDeps): ItemAdapter {
+export function environmentAllowlistAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const allowlist = deps.allowlist;
@@ -1962,7 +1945,7 @@ function identityFilled(profile: Bot['profile']): boolean {
   );
 }
 
-function botIdentityAdapter(deps: AdapterDeps): ItemAdapter {
+export function botIdentityAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       const profile = botField(deps, target, (bot) => bot.profile);
@@ -1976,7 +1959,7 @@ function botIdentityAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function botFileAccessAdapter(deps: AdapterDeps): ItemAdapter {
+export function botFileAccessAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       if (deps.fileGrants === undefined || target.botId === null) {
@@ -1988,7 +1971,7 @@ function botFileAccessAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function skillInstallAdapter(deps: AdapterDeps): ItemAdapter {
+export function skillInstallAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       if (deps.skills === undefined || target.botId === null) {
@@ -2000,7 +1983,7 @@ function skillInstallAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function scheduleCountAdapter(deps: AdapterDeps): ItemAdapter {
+export function scheduleCountAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       if (deps.schedules === undefined || target.botId === null) {
@@ -2012,7 +1995,7 @@ function scheduleCountAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
+export function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
       if (deps.watches === undefined || target.botId === null) {
@@ -2024,7 +2007,7 @@ function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
+export function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const count = deps.settings
@@ -2035,7 +2018,7 @@ function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function developerOauthClientsAdapter(deps: AdapterDeps): ItemAdapter {
+export function developerOauthClientsAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       if (deps.oauthClients === undefined) {
@@ -2047,7 +2030,7 @@ function developerOauthClientsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function developerMcpbAdapter(deps: AdapterDeps): ItemAdapter {
+export function developerMcpbAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const count = deps.settings
@@ -2063,80 +2046,23 @@ function botField<T>(deps: AdapterDeps, target: SettingTargetRef, pick: (bot: Bo
   return bot === null ? null : pick(bot);
 }
 
-const RENDERER_ADAPTER: ItemAdapter = {
+export const RENDERER_ADAPTER: ItemAdapter = {
   read: () => snapshot('unknown', null, '状态未知（只在本机界面可见）'),
 };
 
-const READONLY_ITEM_ADAPTER: ItemAdapter = {
+export const READONLY_ITEM_ADAPTER: ItemAdapter = {
   read: () => snapshot('readonly', null, '只能在设置中查看'),
 };
 
 /** 经专门工具的条目：只给一句话，修改一律改用该工具。 */
-function viaToolAdapter(tool: string): ItemAdapter {
+export function viaToolAdapter(tool: string): ItemAdapter {
   return { read: () => snapshot('configured', null, `由 ${tool} 工具管理`) };
 }
 
 /**
- * 全部条目的适配器（按 id）。没登记的 core 条目回落到「状态以设置页为准」的只读概要——
- * 新增目录条目不会因此崩，但应在这里补上读法。
+ * 条目适配器的登记与装配已移到 `contributions/`（todo/settings-catalog-registry.md §4.2）：
+ * `contributions/index.ts` 的 `buildItemAdapters` 从 `SETTING_ADAPTER_CONTRIBUTIONS` 装配，
+ * 漏登记的条目回 `unknown`（不再静默报 `configured`），闭合由
+ * `settingsAdapterCoverageProblems` + core 单测强制。这个文件只留类型、共享 helper
+ * 与各条目的适配器实现。
  */
-export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => ItemAdapter {
-  const capability = capabilityAdapter(deps);
-  const byId: Record<string, ItemAdapter> = {
-    'models.default-main': settingsModelAdapter(deps, 'defaultMainModel', null),
-    'models.default-light': settingsModelAdapter(deps, 'defaultLightModel', null),
-    'models.widget-review': settingsModelAdapter(deps, 'widgetReviewModel', '跟随 Bot 主模型'),
-    'models.provider': providerKeyAdapter(deps),
-    'models.embedding-local': embeddingLocalAdapter(deps),
-    'models.concurrency': concurrencyAdapter(deps),
-    'search.provider': webSearchAdapter(deps),
-    'mcp.servers': mcpServersAdapter(deps),
-    'connections.taint-guard': taintGuardAdapter(deps),
-    'connections.tool-policy': toolPolicyAdapter(deps),
-    'agents.external': externalAgentsAdapter(deps),
-    'agents.default': agentsDefaultAdapter(deps),
-    'bot.model': botModelAdapter(deps, 'model'),
-    'bot.light-model': botModelAdapter(deps, 'light_model'),
-    'bot.browser-profile': browserProfileAdapter(deps),
-    'browser.shared-profiles': browserSharedProfilesAdapter(deps),
-    'bot.network': networkAdapter(deps),
-    'bot.mcp-servers': botMcpAdapter(deps),
-    'bot.apps': botAppsAdapter(deps),
-    'bot.skills': botSkillsAdapter(deps),
-    'bot.agent': botAgentAdapter(deps),
-    'project.title': projectTitleAdapter(deps),
-    'project.goal': projectGoalAdapter(deps),
-    'project.members': projectMembersAdapter(deps),
-    'project.lead': projectLeadAdapter(deps),
-    'workdir.protect-rules': workdirRulesAdapter(deps, 'rules'),
-    'workdir.ports': workdirRulesAdapter(deps, 'ports'),
-    'general.launch-at-login': launchAtLoginAdapter(deps),
-    'general.workbench': workbenchEnabledAdapter(deps),
-    'general.task-loop': taskLoopAdapter(deps),
-    'background.tasks': backgroundTasksAdapter(deps),
-    'unattended.enable': unattendedAdapter(deps, 'enable'),
-    'unattended.disable': unattendedAdapter(deps, 'disable'),
-    'environment.toolchains': environmentToolchainsAdapter(deps),
-    'environment.sandbox': environmentSandboxAdapter(deps),
-    'environment.allowlist': environmentAllowlistAdapter(deps),
-    'developer.custom-mcp': developerCustomMcpAdapter(deps),
-    'developer.oauth-clients': developerOauthClientsAdapter(deps),
-    'developer.mcpb': developerMcpbAdapter(deps),
-    'bot.identity': botIdentityAdapter(deps),
-    'bot.file-access': botFileAccessAdapter(deps),
-    'skills.install': skillInstallAdapter(deps),
-    'schedules.schedule': scheduleCountAdapter(deps),
-    'schedules.watch': watchCountAdapter(deps),
-  };
-  // profile.user-facts 停在这里：没有不含原文的安全信号，不为了结卡去造一个。
-  const fallback: ItemAdapter = { read: () => snapshot('configured', null, '详情以设置页为准') };
-  return (item) => {
-    if (item.readOnly) return READONLY_ITEM_ADAPTER;
-    if (item.owner === 'renderer') return RENDERER_ADAPTER;
-    if (item.id.startsWith('capability.')) return capability;
-    const adapter = byId[item.id];
-    if (adapter !== undefined) return adapter;
-    if (item.write.via !== 'catalog') return viaToolAdapter(item.write.via.tool);
-    return fallback;
-  };
-}

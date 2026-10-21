@@ -1408,6 +1408,7 @@ export const enUS = {
   'settingCard.notVerified':
     "This setting hasn't been detected as complete yet. Click “I've set it up” again once it's done",
   'settingCard.appliedToast': 'Setting applied',
+  'settingCard.fieldUnsupported': 'This field needs its dedicated UI — change it on the settings page.',
   'settingCard.actionFailed': 'Action failed: {error}',
   'settingCard.userOnlyHint':
     'This involves a security boundary and must be set up by you. The Bot cannot fill it in for you.',

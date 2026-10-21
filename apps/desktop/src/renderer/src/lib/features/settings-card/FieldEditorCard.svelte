@@ -2,7 +2,7 @@
   import type { SettingItem, SettingValues } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { settingFieldText, t } from '$lib/i18n';
+  import { settingFieldText, settingOptionText, t } from '$lib/i18n';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -10,11 +10,20 @@
   import { Label } from '$lib/components/ui/label';
   import ModelSelectField from '$lib/features/settings/ModelSelectField.svelte';
   import { applySettingItem } from './apply';
+  import {
+    controlDefault,
+    fieldControl,
+    seedValues,
+    valuesFromState,
+    type FieldControlKind,
+  } from './field-editor-model';
 
   /**
-   * 目录里字段简单、设置页控件又嵌在大分区里的条目（审查模型、并发、默认智能体、
-   * 开机启动）。选项与设置页同一份 store，保存走 `settings.items.apply`
-   * （条目级 CAS，与设置页落到同一个 core 服务）。右栏 / 设置页原有分区不用它。
+   * `card: 'field-editor'` 的通用卡片（todo/settings-catalog-registry.md §4.3.5）：默认按
+   * 目录字段的元数据渲染（toggle / text / number / 静态下拉 / 智能体 / 厂商 / 模型），
+   * 新增简单条目零改动出卡；种子值按 `fields[].path`（缺省 = 字段名）从 settings 快照取。
+   * 四个有联动或 i18n 语义的条目保留专用分支（SPECIAL_ITEM_IDS）。
+   * 保存走 `settings.items.apply`（条目级 CAS，与设置页落到同一个 core 服务）。
    */
   let {
     item,
@@ -34,69 +43,91 @@
     onConflict?: (current: SettingValues | null) => void;
   } = $props();
 
-  function stored(): SettingValues {
-    const settings = settingsStore.settings;
-    switch (item.id) {
-      case 'models.widget-review':
-        return { model: settings?.widgetReviewModel ?? '' };
-      case 'models.concurrency':
-        return { provider: 'default', limit: settings?.providerConcurrency.default ?? 4 };
-      case 'agents.default':
-        return { agent: settings?.defaultAgentId ?? '' };
-      case 'general.launch-at-login':
-        return { enabled: settings?.launchAtLogin ?? true };
-      case 'general.task-loop':
-        return { ...(settings?.taskLoop ?? {}) };
-      default:
-        return {};
+  /** 专用分支：并发上限（provider 联动 limit + 「默认」伪选项）、开机启动（i18n 标签与
+   * OS 级提示）、组件审查模型（i18n 提示）、默认智能体（「无」空选项）。 */
+  const SPECIAL_ITEM_IDS = new Set([
+    'models.concurrency',
+    'general.launch-at-login',
+    'models.widget-review',
+    'agents.default',
+  ]);
+  const special = SPECIAL_ITEM_IDS.has(item.id);
+
+  const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
+  const seeded = untrack(() => seedValues(item, hasPrefill ? prefill : null, settingsStore.settings));
+
+  /** 按控件类型分桶的可绑定状态（Svelte 绑定需要具体类型，不能绑 unknown）。 */
+  function bucket<K extends FieldControlKind>(kind: K) {
+    const out: Record<string, unknown> = {};
+    for (const field of item.fields) {
+      if (field.sensitive || fieldControl(field) !== kind) continue;
+      const value = seeded[field.name] ?? controlDefault(field);
+      if (kind === 'number') out[field.name] = typeof value === 'number' ? value : controlDefault(field);
+      else if (kind === 'toggle') out[field.name] = value === true;
+      else out[field.name] = typeof value === 'string' ? value : '';
     }
+    return out;
   }
 
-  const seeded = untrack(() => ({ ...stored(), ...(prefill ?? {}) }));
+  let toggles: Record<string, boolean> = $state(untrack(() => bucket('toggle') as Record<string, boolean>));
+  let texts: Record<string, string> = $state(untrack(() => bucket('text') as Record<string, string>));
+  let numbers: Record<string, number> = $state(untrack(() => bucket('number') as Record<string, number>));
+  let selects: Record<string, string> = $state(untrack(() => bucket('select-static') as Record<string, string>));
+  let agentSelects: Record<string, string> = $state(untrack(() => bucket('select-agents') as Record<string, string>));
+  let providerSelects: Record<string, string> = $state(untrack(() => bucket('select-providers') as Record<string, string>));
+  let models: Record<string, string> = $state(untrack(() => bucket('model') as Record<string, string>));
+  // 专用分支的具名控件（历史默认与绑定类型同旧实现）。
   let model = $state(typeof seeded.model === 'string' ? seeded.model : '');
   let provider = $state(typeof seeded.provider === 'string' ? seeded.provider : 'default');
   let limit = $state(typeof seeded.limit === 'number' ? seeded.limit : 4);
   let agent = $state(typeof seeded.agent === 'string' ? seeded.agent : '');
   let enabled = $state(seeded.enabled !== false);
-  // Generic directory fields: number / toggle beyond the special-cased names
-  // above (D93 setting cards reuse field-editor instead of a bespoke card).
-  const numberNames = untrack(() =>
-    item.fields
-      .filter((field) => field.type === 'number' && field.name !== 'limit')
-      .map((field) => field.name),
-  );
-  const toggleNames = untrack(() =>
-    item.fields
-      .filter((field) => field.type === 'toggle' && field.name !== 'enabled')
-      .map((field) => field.name),
-  );
-  let numbers = $state<Record<string, number>>(
-    Object.fromEntries(
-      numberNames.map((name) => [name, typeof seeded[name] === 'number' ? seeded[name] : 0]),
-    ),
-  );
-  let toggles = $state<Record<string, boolean>>(
-    Object.fromEntries(toggleNames.map((name) => [name, seeded[name] !== false])),
-  );
   let busy = $state(false);
-  const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   let synced = false;
 
-  $effect(() => {
-    if (hasPrefill || settingsStore.settings === null || synced) return;
-    synced = true;
-    const current = stored();
+  function resync(): void {
+    const current = seedValues(item, null, settingsStore.settings);
+    const of = (name: string): unknown => current[name];
+    for (const field of item.fields) {
+      if (field.sensitive) continue;
+      const value = of(field.name);
+      switch (fieldControl(field)) {
+        case 'toggle':
+          if (typeof value === 'boolean') toggles[field.name] = value;
+          break;
+        case 'text':
+          if (typeof value === 'string') texts[field.name] = value;
+          break;
+        case 'number':
+          if (typeof value === 'number') numbers[field.name] = value;
+          break;
+        case 'select-static':
+          if (typeof value === 'string') selects[field.name] = value;
+          break;
+        case 'select-agents':
+          if (typeof value === 'string') agentSelects[field.name] = value;
+          break;
+        case 'select-providers':
+          if (typeof value === 'string') providerSelects[field.name] = value;
+          break;
+        case 'model':
+          if (typeof value === 'string') models[field.name] = value;
+          break;
+        default:
+          break;
+      }
+    }
     if (typeof current.model === 'string') model = current.model;
     if (typeof current.provider === 'string') provider = current.provider;
     if (typeof current.limit === 'number') limit = current.limit;
     if (typeof current.agent === 'string') agent = current.agent;
     if (typeof current.enabled === 'boolean') enabled = current.enabled;
-    for (const name of numberNames) {
-      if (typeof current[name] === 'number') numbers[name] = current[name];
-    }
-    for (const name of toggleNames) {
-      if (typeof current[name] === 'boolean') toggles[name] = current[name];
-    }
+  }
+
+  $effect(() => {
+    if (hasPrefill || settingsStore.settings === null || synced) return;
+    synced = true;
+    resync();
   });
 
   const needsAgents = $derived(item.fields.some((field) => field.options === 'agents'));
@@ -106,26 +137,76 @@
     if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
   });
 
+  /** 当前选中的智能体（专用 agent 控件或通用 select-agents 字段），用于选项目录补全。 */
+  const currentAgentId = $derived.by(() => {
+    const generic = item.fields.find(
+      (field) => !field.sensitive && fieldControl(field) === 'select-agents',
+    );
+    const id = generic === undefined ? agent : agentSelects[generic.name] ?? '';
+    return id.length > 0 ? agentsStore.get(id) : null;
+  });
   const agentOptions = $derived.by(() => {
     const list = agentsStore.agents.filter((entry) => entry.enabled);
-    const current = agent.length > 0 ? agentsStore.get(agent) : null;
+    const current = currentAgentId;
     return current !== null && !list.includes(current) ? [...list, current] : list;
   });
   const providerOptions = $derived(settingsStore.providers);
 
   function values(): SettingValues {
-    const out: SettingValues = {};
+    const state: SettingValues = {};
     for (const field of item.fields) {
       if (field.sensitive) continue;
-      if (field.name === 'model') out.model = model;
-      else if (field.name === 'provider') out.provider = provider;
-      else if (field.name === 'limit') out.limit = limit;
-      else if (field.name === 'agent') out.agent = agent;
-      else if (field.name === 'enabled') out.enabled = enabled;
-      else if (field.type === 'number') out[field.name] = numbers[field.name] ?? 0;
-      else if (field.type === 'toggle') out[field.name] = toggles[field.name] ?? false;
+      // 专用分支的控件绑定具名状态，优先于通用桶（两者只对专用条目分开维护）。
+      if (special) {
+        if (field.name === 'model') {
+          state.model = model;
+          continue;
+        }
+        if (field.name === 'provider') {
+          state.provider = provider;
+          continue;
+        }
+        if (field.name === 'limit') {
+          state.limit = limit;
+          continue;
+        }
+        if (field.name === 'agent') {
+          state.agent = agent;
+          continue;
+        }
+        if (field.name === 'enabled') {
+          state.enabled = enabled;
+          continue;
+        }
+      }
+      switch (fieldControl(field)) {
+        case 'toggle':
+          state[field.name] = toggles[field.name] ?? false;
+          break;
+        case 'text':
+          state[field.name] = texts[field.name] ?? '';
+          break;
+        case 'number':
+          state[field.name] = numbers[field.name] ?? (controlDefault(field) as number);
+          break;
+        case 'select-static':
+          state[field.name] = selects[field.name] ?? '';
+          break;
+        case 'select-agents':
+          state[field.name] = agentSelects[field.name] ?? '';
+          break;
+        case 'select-providers':
+          state[field.name] = providerSelects[field.name] ?? '';
+          break;
+        case 'model':
+          state[field.name] = models[field.name] ?? '';
+          break;
+        default:
+          // 不支持的字段不提交（卡上已提示去设置页改）。
+          break;
+      }
     }
-    return out;
+    return valuesFromState(item, state);
   }
 
   async function apply(): Promise<void> {
@@ -155,11 +236,13 @@
 
 <div class="grid gap-2" data-testid={testid}>
   {#each item.fields as field (field.name)}
-    {#if field.name === 'model'}
+    {#if field.sensitive}
+      <!-- 敏感字段永不经卡片渲染（只可能在 form 卡的专用组件里由用户手填） -->
+    {:else if special && field.name === 'model'}
       <Label for={`${testid}-model`}>{t('settings.widgetReviewModel')}</Label>
       <ModelSelectField bind:value={model} id={`${testid}-model`} testid={`${testid}-model`} />
       <p class="text-xs text-muted-foreground">{t('settings.widgetReviewModelHint')}</p>
-    {:else if field.name === 'provider'}
+    {:else if special && field.name === 'provider'}
       <Label for={`${testid}-provider`}>{settingFieldText(item.id, field.name, field.label)}</Label>
       <select
         id={`${testid}-provider`}
@@ -172,7 +255,7 @@
           <option value={option.id}>{option.name}</option>
         {/each}
       </select>
-    {:else if field.name === 'limit'}
+    {:else if special && field.name === 'limit'}
       <Label for={`${testid}-limit`}>{t('settings.concurrency')}</Label>
       <input
         id={`${testid}-limit`}
@@ -183,7 +266,7 @@
         bind:value={limit}
         data-testid={`${testid}-limit`}
       />
-    {:else if field.name === 'agent'}
+    {:else if special && field.name === 'agent'}
       <Label for={`${testid}-agent`}>{t('agents.defaultAgent')}</Label>
       <select
         id={`${testid}-agent`}
@@ -196,7 +279,7 @@
           <option value={option.id}>{option.name}</option>
         {/each}
       </select>
-    {:else if field.name === 'enabled'}
+    {:else if special && field.name === 'enabled'}
       <label class="flex items-start gap-2 text-sm">
         <Checkbox bind:checked={enabled} data-testid={`${testid}-enabled`} />
         <span class="grid gap-0.5">
@@ -204,7 +287,28 @@
           <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
         </span>
       </label>
-    {:else if field.type === 'number'}
+    {:else if fieldControl(field) === 'toggle'}
+      <label class="flex items-start gap-2 text-sm">
+        <Checkbox bind:checked={toggles[field.name]} data-testid={`${testid}-${field.name}`} />
+        <span class="grid gap-0.5">
+          <span>{settingFieldText(item.id, field.name, field.label)}</span>
+          {#if field.hint !== undefined}
+            <span class="text-xs text-muted-foreground">{field.hint}</span>
+          {/if}
+        </span>
+      </label>
+    {:else if fieldControl(field) === 'text'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <input
+        id={`${testid}-${field.name}`}
+        type="text"
+        class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+        bind:value={texts[field.name]}
+        data-testid={`${testid}-${field.name}`}
+      />
+    {:else if fieldControl(field) === 'number'}
       <Label for={`${testid}-${field.name}`}>
         {settingFieldText(item.id, field.name, field.label)}
       </Label>
@@ -218,19 +322,64 @@
         bind:value={numbers[field.name]}
         data-testid={`${testid}-${field.name}`}
       />
-    {:else if field.type === 'toggle'}
-      <label class="flex items-start gap-2 text-sm">
-        <Checkbox
-          bind:checked={toggles[field.name]}
-          data-testid={`${testid}-${field.name}`}
-        />
-        <span class="grid gap-0.5">
-          <span>{settingFieldText(item.id, field.name, field.label)}</span>
-          {#if field.hint !== undefined}
-            <span class="text-xs text-muted-foreground">{field.hint}</span>
-          {/if}
-        </span>
-      </label>
+    {:else if fieldControl(field) === 'select-static'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <select
+        id={`${testid}-${field.name}`}
+        class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+        bind:value={selects[field.name]}
+        data-testid={`${testid}-${field.name}`}
+      >
+        {#each field.staticOptions ?? [] as option (option.value)}
+          <option value={option.value}>
+            {settingOptionText(item.id, field.name, option.value, option.label)}
+          </option>
+        {/each}
+      </select>
+    {:else if fieldControl(field) === 'select-agents'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <select
+        id={`${testid}-${field.name}`}
+        class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+        bind:value={agentSelects[field.name]}
+        data-testid={`${testid}-${field.name}`}
+      >
+        {#each agentOptions as option (option.id)}
+          <option value={option.id}>{option.name}</option>
+        {/each}
+      </select>
+    {:else if fieldControl(field) === 'select-providers'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <select
+        id={`${testid}-${field.name}`}
+        class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+        bind:value={providerSelects[field.name]}
+        data-testid={`${testid}-${field.name}`}
+      >
+        {#each providerOptions as option (option.id)}
+          <option value={option.id}>{option.name}</option>
+        {/each}
+      </select>
+    {:else if fieldControl(field) === 'model'}
+      <Label for={`${testid}-${field.name}`}>
+        {settingFieldText(item.id, field.name, field.label)}
+      </Label>
+      <ModelSelectField
+        bind:value={models[field.name]}
+        id={`${testid}-${field.name}`}
+        testid={`${testid}-${field.name}`}
+      />
+    {:else}
+      <div class="grid gap-0.5 text-sm">
+        <span>{settingFieldText(item.id, field.name, field.label)}</span>
+        <span class="text-xs text-muted-foreground">{t('settingCard.fieldUnsupported')}</span>
+      </div>
     {/if}
   {/each}
   <div class="flex justify-end">
