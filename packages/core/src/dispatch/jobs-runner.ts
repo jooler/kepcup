@@ -1,5 +1,6 @@
 import type { Orchestrator } from '../dispatch/orchestrator.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
+import type { WikiOwner } from '@kepcup/shared';
 import { JobRetryLaterError, type JobRow, type JobsService } from '../domain/jobs.js';
 import type { SettingsService } from '../domain/settings.js';
 import { runConversationSummaryJob } from '../agent/loops/conversation-summary.js';
@@ -260,7 +261,7 @@ export class JobsRunner {
           return;
         }
         const outcome = wiki.enqueueIngest({
-          owner: { kind: 'bot', id: job.bot_id },
+          owner: this.#wikiSuggestionOwner(job.bot_id, job.conversation_id),
           botId: job.bot_id,
           conversationId: job.conversation_id,
           source: {
@@ -396,6 +397,22 @@ export class JobsRunner {
       throw new Error('wiki domain not wired; cannot run wiki suggestion');
     }
     return this.#deps.wiki;
+  }
+
+  /**
+   * The wiki a reflection-suggested source belongs to: the shared PROJECT wiki
+   * when the reflection ran in a project group (群聊里的沉淀留在项目 wiki) and
+   * the bot is still a member; otherwise the bot's own wiki.
+   */
+  #wikiSuggestionOwner(botId: string, conversationId: string | null): WikiOwner {
+    if (conversationId !== null) {
+      const conversation = this.#deps.conversations.get(conversationId);
+      if (conversation?.type === 'project') {
+        const members = this.#deps.conversations.memberBotIds(conversationId);
+        if (members.includes(botId)) return { kind: 'project', id: conversationId };
+      }
+    }
+    return { kind: 'bot', id: botId };
   }
 
   #requireWikiIndexFor(): WikiIndexFor {

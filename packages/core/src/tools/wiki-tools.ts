@@ -1,7 +1,7 @@
 
 import { Type } from '@earendil-works/pi-ai';
 import type { WikiOwner } from '@kepcup/shared';
-import { AppError } from '@kepcup/shared';
+import { AppError, isAppError } from '@kepcup/shared';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 
@@ -58,11 +58,27 @@ const WIKI_SEARCH_RESULT_MAX = 20;
 /** Links a maintenance loop writes to cite a source asset (SCHEMA.md format). */
 const ASSET_LINK_PATTERN = /raw\/_assets\/(ast_[0-9a-f]{24})\.json/g;
 
+/** A missing page (the wiki service's NOT_FOUND) — the read fallback trigger. */
+function isNotFound(error: unknown): boolean {
+  return isAppError(error) && error.code === 'NOT_FOUND';
+}
+
 /** A resolved `scope` argument (D92 T1b WP10 §4 步骤 2). */
 export type WikiScopeResolution =
   | { ok: true; scope: 'mine' }
   | { ok: true; scope: 'project' | 'all'; owner: WikiOwner; role: 'lead' | 'member' }
   | { ok: false; message: string };
+
+/**
+ * The wiki a tool addresses when the model passes no `scope`:
+ * - a project conversation → the shared PROJECT wiki: what is settled in the
+ *   group chat stays in the project's knowledge base, not scattered over the
+ *   members' personal wikis (D92: 项目组的沉淀留在项目 wiki);
+ * - any other conversation → the bot's own wiki.
+ */
+export function defaultWikiScope(project: WikiProjectContext | null): 'mine' | 'project' {
+  return project !== null ? 'project' : 'mine';
+}
 
 /**
  * Resolves a wiki tool's `scope` argument against the running conversation
@@ -153,8 +169,9 @@ function projectPageResult(
  *
  * D92 T1b WP10: the `scope` argument selects the addressed wiki — `mine` (the
  * bot's own, the default outside project conversations), `project` (the shared
- * project wiki) and `all` (search only, the default inside a project
- * conversation). wiki_remove_source registers only in project conversations.
+ * project wiki, the default inside a project conversation) and `all` (search
+ * only, the default inside a project conversation). wiki_remove_source
+ * registers only in project conversations.
  */
 export function buildWikiTools(input: {
   identity: RunIdentity;
@@ -233,7 +250,7 @@ export function buildWikiTools(input: {
   const wikiRead: ToolDefinition<{ path: string; scope?: 'mine' | 'project' }> = {
     name: 'wiki_read',
     description:
-      '读取一个 Wiki 页面的全文（路径限定为 pages/ 下的页面或 index.md；路径来自 wiki_search 或 <wiki_topics>）。scope 可选 mine / project，默认 mine——wiki_search 结果里的 [mine] / [project] 标注原样传回即可。',
+      '读取一个 Wiki 页面的全文（路径限定为 pages/ 下的页面或 index.md；路径来自 wiki_search、<wiki_topics> 或 <project_wiki_topics>）。scope 可选 mine / project：项目组对话里不传就是先读共享的项目 wiki、那一页不在项目 wiki 时再读你自己的 wiki；其它对话默认读你自己的 wiki。wiki_search 结果里的 [mine] / [project] 标注原样传回即可。',
     parameters: Type.Object({
       path: Type.String({ description: '页面路径（相对 wiki 根目录，例如 pages/go-generics.md）' }),
       scope: Type.Optional(
@@ -244,6 +261,30 @@ export function buildWikiTools(input: {
       const noBot = requireBot();
       if (noBot !== null) return noBot;
       const botId = identity.botId!;
+      // 项目组里不传 scope：先读共享的项目 wiki（<project_wiki_topics> 的页面），
+      // 那一页不在项目 wiki 时回落到自己的 wiki（<wiki_topics> 的页面）。
+      if (params.scope === undefined && project !== null) {
+        const projectResolved = resolveWikiScope({ botId }, 'project', { project });
+        if (projectResolved.ok && projectResolved.scope !== 'mine') {
+          try {
+            const page = wiki.readPage(projectResolved.owner, params.path);
+            return {
+              ok: true,
+              content: projectPageResult(
+                page,
+                wiki.listSources(projectResolved.owner),
+                wiki.botName,
+              ),
+            };
+          } catch (error) {
+            if (!isNotFound(error)) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { ok: false, content: message, errorCode: 'NOT_FOUND' };
+            }
+            // 项目 wiki 里没有这一页 → 继续走自己的 wiki。
+          }
+        }
+      }
       const resolved = resolveWikiScope({ botId }, params.scope ?? 'mine', { project });
       if (!resolved.ok) return scopeFailure(resolved.message);
       try {
@@ -275,7 +316,7 @@ export function buildWikiTools(input: {
   }> = {
     name: 'wiki_enqueue',
     description:
-      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 workdir 中的单个文件路径）。file / attachment 来源必须是单个文件，不能是目录：要入库一个目录，先用 ls 列出其中的文件，再逐文件登记。后台维护 loop 会阅读资料、更新页面并提交；这是你自己的知识库整理，完成后无需向用户播报，wiki_search 直接就能检索到新内容。scope 可选：mine（默认，沉淀到你自己的 Wiki）、project（写入项目组共享的项目 wiki——发布到共享空间必须是有意为之）。',
+      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 workdir 中的单个文件路径）。file / attachment 来源必须是单个文件，不能是目录：要入库一个目录，先用 ls 列出其中的文件，再逐文件登记。后台维护 loop 会阅读资料、更新页面并提交；完成后无需向用户播报，wiki_search 直接就能检索到新内容。scope 可选：mine（沉淀到你自己的 Wiki）、project（写入项目组共享的项目 wiki）。项目组对话里不传 scope 就默认写进共享的项目 wiki——群聊里沉淀的东西留在项目 wiki，只有纯个人经验才显式传 scope=mine；其它对话（单聊）默认写自己的 Wiki。',
     parameters: Type.Object({
       source_type: Type.Union(
         ['attachment', 'url', 'file'].map((t) => Type.Literal(t)),
@@ -287,14 +328,21 @@ export function buildWikiTools(input: {
       }),
       note: Type.String({ description: '一句话说明这份资料是什么、为什么要入库' }),
       scope: Type.Optional(
-        Type.Union([Type.Literal('mine'), Type.Literal('project')], { description: '入库范围' }),
+        Type.Union([Type.Literal('mine'), Type.Literal('project')], {
+          description:
+            '入库范围：项目组对话里默认 project（写入共享的项目 wiki），其它对话默认 mine',
+        }),
       ),
     }),
     execute: async (params): Promise<ToolResult> => {
       const noBot = requireBot();
       if (noBot !== null) return noBot;
       const botId = identity.botId!;
-      const resolved = resolveWikiScope({ botId }, params.scope ?? 'mine', { project });
+      // 项目组对话里默认写进共享的项目 wiki（群聊里的沉淀留在项目 wiki）；
+      // 单聊里默认写自己的 wiki。
+      const resolved = resolveWikiScope({ botId }, params.scope ?? defaultWikiScope(project), {
+        project,
+      });
       if (!resolved.ok) return scopeFailure(resolved.message);
       try {
         const owner: WikiOwner =
