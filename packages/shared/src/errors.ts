@@ -172,6 +172,17 @@ export const ERROR_CODES = [
   'MAIL_AUTH_FAILED',
   'MAIL_CONNECT_FAILED',
   'MAIL_PROVIDER_UNAVAILABLE',
+  // macOS 分享接收（D94，docs/design/44-macos-share-extension.md）
+  /** manifest / 路径 / 文件 / hash / 大小非法。 */
+  'SHARE_INTAKE_INVALID',
+  /** Bot / 项目不存在或已删除。 */
+  'SHARE_TARGET_NOT_FOUND',
+  /** 目标会话只读。 */
+  'SHARE_TARGET_READ_ONLY',
+  /** 超过单文件 / 总量上限。 */
+  'SHARE_FILE_TOO_LARGE',
+  /** workspace 副本物化失败。 */
+  'SHARE_MATERIALIZE_FAILED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

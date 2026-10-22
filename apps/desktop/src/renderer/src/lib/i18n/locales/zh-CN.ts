@@ -2989,6 +2989,28 @@ export const zhCN = {
     'WSL 启用命令已完成；请重启 Windows，重启后应用会自动继续导入发行版',
   'sandbox.reason.wslDistroMissing': 'WSL2 已就绪，应用私有发行版尚未导入',
   'sandbox.reason.wslConfigIncomplete': '发行版配置未完成',
+
+  // --- 分享接收（D94，docs/design/44-macos-share-extension.md） ----------------
+  'share.imported': '通过系统分享导入',
+  'share.recovery.title': '系统分享导入失败',
+  'share.recovery.empty': '没有失败的分享。',
+  'share.recovery.retry': '重试',
+  'share.recovery.reselect': '换个目标',
+  'share.recovery.discard': '删除',
+  'share.recovery.expiresAt': '保留至',
+  'share.recovery.reason': '原因',
+  'share.recovery.originalTarget': '原目标',
+  'share.recovery.searchTarget': '搜索 Bot 或项目组',
+  'share.recovery.noFiles': '（文件已丢失）',
+  'share.recovery.retried': '已重新导入',
+  'share.recovery.retryFailed': '重新导入失败',
+  'share.recovery.discarded': '已删除该次分享',
+  'share.recovery.discardFailed': '删除失败',
+  'share.error.SHARE_INTAKE_INVALID': '分享内容校验不通过',
+  'share.error.SHARE_TARGET_NOT_FOUND': '目标已删除',
+  'share.error.SHARE_TARGET_READ_ONLY': '目标对话为只读',
+  'share.error.SHARE_FILE_TOO_LARGE': '文件超过大小上限',
+  'share.error.SHARE_MATERIALIZE_FAILED': '工作区副本准备失败',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

@@ -20,6 +20,12 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     targetArch: string,
     projectDir: string,
   ): { kept: string | null; warnMissing: boolean };
+  assertShareExtension(
+    appBundlePath: string,
+    groupId: string | null,
+  ): { appexPath: string; bundleId: string; extensionPoint: string; signed: boolean };
+  assertNoShareExtension(outDir: string): void;
+  readPlist(plistPath: string): unknown;
 };
 
 describe('afterPack forbidden markers', () => {
@@ -152,5 +158,87 @@ describe('ensureWslRootfsSource', () => {
     const project = projectWithWsl(['resources/wsl/rootfs.tar']);
     const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'arm64', project);
     expect(result).toEqual({ kept: null, warnMissing: true });
+  });
+});
+
+// D94 §10.2：Share Extension 的落位校验（macOS 产物里 .appex 必须在
+// Contents/PlugIns/ 下且扩展点正确；非 macOS 产物里不得出现 .appex）。
+describe('share extension packaging checks', () => {
+  function fakeAppex(overrides: { point?: string; bundleId?: string } = {}): string {
+    const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));
+    const appex = path.join(bundle, 'KepCup.app', 'Contents', 'PlugIns', 'KepCupShare.appex');
+    mkdirSync(path.join(appex, 'Contents'), { recursive: true });
+    writeFileSync(
+      path.join(appex, 'Contents', 'Info.plist'),
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        '<dict>',
+        '<key>CFBundleIdentifier</key>',
+        `<string>${overrides.bundleId ?? 'app.kepcup.desktop.ShareExtension'}</string>`,
+        '<key>NSExtension</key>',
+        '<dict>',
+        '<key>NSExtensionPointIdentifier</key>',
+        `<string>${overrides.point ?? 'com.apple.share-services'}</string>`,
+        '</dict>',
+        '</dict>',
+        '</plist>',
+        '',
+      ].join('\n'),
+    );
+    return path.join(bundle, 'KepCup.app');
+  }
+
+  test('a well-formed appex passes and reports its bundle id', () => {
+    const appBundle = fakeAppex();
+    try {
+      const summary = hooks.assertShareExtension(appBundle, '8CL9PRK85J.app.kepcup.desktop');
+      expect(summary.bundleId).toBe('app.kepcup.desktop.ShareExtension');
+      expect(summary.extensionPoint).toBe('com.apple.share-services');
+      expect(summary.appexPath).toContain(path.join('PlugIns', 'KepCupShare.appex'));
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a missing appex fails the build with a diagnosable error', () => {
+    const empty = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));
+    try {
+      expect(() => hooks.assertShareExtension(empty, null)).toThrow(/缺少 Share Extension/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong extension point fails the build', () => {
+    const appBundle = fakeAppex({ point: 'com.apple.widget-extension' });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, null)).toThrow(/扩展点不对/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong bundle id fails the build', () => {
+    const appBundle = fakeAppex({ bundleId: 'com.example.other' });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, null)).toThrow(/bundle id 不对/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('non-macOS artifacts must not contain an appex', () => {
+    const outDir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-win-'));
+    try {
+      expect(() => hooks.assertNoShareExtension(outDir)).not.toThrow();
+      const plugins = path.join(outDir, 'resources', 'app', 'PlugIns');
+      mkdirSync(plugins, { recursive: true });
+      mkdirSync(path.join(plugins, 'KepCupShare.appex'), { recursive: true });
+      expect(() => hooks.assertNoShareExtension(outDir)).toThrow(/非 macOS 产物里出现了 Share Extension/);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });

@@ -18,6 +18,11 @@ import {
   providersTestInputSchema,
   providersListOutputSchema,
   okOutputSchema,
+  shareFailedListInputSchema,
+  shareFailedListOutputSchema,
+  shareFailedRetryInputSchema,
+  shareFailedRetryOutputSchema,
+  shareFailedDiscardInputSchema,
   botsListOutputSchema,
   botGetOutputSchema,
   botsCreateInputSchema,
@@ -256,6 +261,7 @@ import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
 import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
+import type { ShareIntakeService } from '../share/service.js';
 import { bindAppsSkillsMethods } from './apps-skills-bindings.js';
 import {
   bindSettingsCatalogMethods,
@@ -1848,6 +1854,26 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+    // D94 §5.5: 分享失败恢复（渲染层调 core）。share.targets / share.consume
+    // 是平台方法（主进程调 core），不在这里。
+    'share.failed.list': method(
+      shareFailedListInputSchema,
+      shareFailedListOutputSchema,
+      async () => ({ items: requireShare(services).listFailed() }),
+    ),
+    'share.failed.retry': method(
+      shareFailedRetryInputSchema,
+      shareFailedRetryOutputSchema,
+      async (input) => requireShare(services).retry(input),
+    ),
+    'share.failed.discard': method(
+      shareFailedDiscardInputSchema,
+      okOutputSchema,
+      async (input) => {
+        requireShare(services).discard(input);
+        return { ok: true as const };
+      },
+    ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
   };
@@ -1869,4 +1895,10 @@ function requireMemos(services: CoreServices): MemoService {
 function requireWatches(services: CoreServices): WatchService {
   if (!services.watches) throw new AppError('NOT_IMPLEMENTED', '监看服务未就绪');
   return services.watches;
+}
+
+/** D94: 分享接收服务（Share Extension 投递与失败恢复）。 */
+function requireShare(services: CoreServices): ShareIntakeService {
+  if (!services.share) throw new AppError('NOT_IMPLEMENTED', '分享服务未就绪');
+  return services.share;
 }

@@ -25,6 +25,7 @@
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
   import WorkbenchNudge from '$lib/features/workbench/WorkbenchNudge.svelte';
+  import ShareRecoveryPanel from '$lib/features/share/ShareRecoveryPanel.svelte';
   import SidebarDialogs from '$lib/features/sidebar/SidebarDialogs.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -297,6 +298,8 @@
     <SidebarDialogs />
     <MissingSkillDialog />
     <WorkbenchNudge />
+    <!-- D94：系统分享导入失败时的恢复面板（重选目标 / 重试 / 删除）。 -->
+    <ShareRecoveryPanel />
   {/if}
 
   <!-- P12-B：沙箱准备向导（设置页/首启提示共用）与首次启动入口 -->

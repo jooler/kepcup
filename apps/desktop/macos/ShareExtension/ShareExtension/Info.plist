@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Share Extension（D94，docs/design/44-macos-share-extension.md §9.1）。
+  扩展点 com.apple.share-services：接收系统分享的文件 / 文本，写进 App Group
+  inbox 后唤起主应用。扩展不读 ~/.kepcup、不调 core、不联网。
+-->
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>KepCup</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>NSExtension</key>
+    <dict>
+      <key>NSExtensionPointIdentifier</key>
+      <string>com.apple.share-services</string>
+      <key>NSExtensionPrincipalClass</key>
+      <string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+      <key>NSExtensionAttributes</key>
+      <dict>
+        <!-- 文件：最多 10 个（与 D94 的单次上限一致）。ZIP 是普通文件，不把
+             public.file-url 当接收类型。 -->
+        <key>NSExtensionActivationSupportsFileWithMaxCount</key>
+        <integer>10</integer>
+        <key>NSExtensionActivationSupportsImageWithMaxCount</key>
+        <integer>10</integer>
+        <key>NSExtensionActivationSupportsMovieWithMaxCount</key>
+        <integer>10</integer>
+        <key>NSExtensionActivationSupportsText</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
+</plist>

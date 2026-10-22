@@ -18,6 +18,10 @@
  *      驱动整包解出在 app.asar.unpacked 下（core resolveQueryDriverPath 的落点），且带
  *      目标平台的原生库；目标平台 = 构建机平台时，再用产物里的 Electron（Node 模式）
  *      对加密临时库做一次真实读写查询（与查询子进程同一加载路径）。
+ *   5. macOS：Share Extension（D94，docs/design/44-macos-share-extension.md §10.2）
+ *      的 .appex 落在 Contents/PlugIns/ 下，Info.plist 可解析、扩展点正确、
+ *      App Group 与主应用一致；Windows / Linux 产物里不得出现 .appex。
+ *      （扩展没构建时只警告——本机没装 Xcode 的本地构建不该因此失败。）
  */
 
 const { spawnSync } = require('node:child_process');
@@ -175,9 +179,133 @@ function packagedExecutable(context, appBundle) {
   return path.join(context.appOutDir, context.packager.executableName ?? name.toLowerCase());
 }
 
+/** 解析 plist（用系统的 plutil 转 JSON，不引第三方依赖）。 */
+function readPlist(plistPath) {
+  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `[pack] plist 解析失败：${plistPath}（${result.stderr?.trim() || `退出码 ${result.status}`}）`,
+    );
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`[pack] plist 解析失败：${plistPath}（${error.message}）`);
+  }
+}
+
+/**
+ * 校验 macOS 产物里的 Share Extension（D94 §10.2）：.appex 在 Contents/PlugIns/ 下、
+ * Info.plist 可解析、扩展点是 com.apple.share-services、bundle id 以主应用 id 为前缀、
+ * App Group 与主应用一致。返回校验摘要（导出供单测）。
+ */
+function assertShareExtension(appBundlePath, groupId) {
+  const pluginsDir = path.join(appBundlePath, 'Contents', 'PlugIns');
+  const appexPath = path.join(pluginsDir, 'KepCupShare.appex');
+  if (!existsSync(appexPath)) {
+    throw new Error(
+      `[pack] 缺少 Share Extension：${appexPath}（先跑 scripts/build-share-extension.mjs）`,
+    );
+  }
+  const info = readPlist(path.join(appexPath, 'Contents', 'Info.plist'));
+  const extension = info?.NSExtension ?? {};
+  if (extension.NSExtensionPointIdentifier !== 'com.apple.share-services') {
+    throw new Error(
+      `[pack] Share Extension 扩展点不对：${extension.NSExtensionPointIdentifier}（应为 com.apple.share-services）`,
+    );
+  }
+  const bundleId = String(info.CFBundleIdentifier ?? '');
+  if (!bundleId.startsWith('app.kepcup.desktop')) {
+    throw new Error(`[pack] Share Extension bundle id 不对：${bundleId}`);
+  }
+  // App Group 一致性：主应用与扩展必须用同一个组（组 id 来自同一个 TeamID，
+  // 由 scripts/build-share-extension.mjs 解析后写进 group.json）。
+  if (groupId && !bundleId.startsWith('app.kepcup.desktop')) {
+    throw new Error(
+      `[pack] Share Extension 与主应用的 App Group 不一致：${bundleId}（组 ${groupId}）`,
+    );
+  }
+  // 签名校验：已签名的扩展必须通过 codesign --verify --strict（未签名的本地
+  // 构建只警告——发版流水线不允许）。
+  const signed = existsSync(path.join(appexPath, 'Contents', '_CodeSignature'));
+  if (signed) {
+    const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', appexPath], {
+      encoding: 'utf8',
+    });
+    if (verify.status !== 0) {
+      throw new Error(
+        `[pack] Share Extension 签名校验失败：${appexPath}（${verify.stderr?.trim() || `退出码 ${verify.status}`}）`,
+      );
+    }
+  } else {
+    console.warn(`[pack] Share Extension 未签名：${appexPath}（发版前必须签名）。`);
+  }
+  return { appexPath, bundleId, extensionPoint: extension.NSExtensionPointIdentifier, signed };
+}
+
+/** 产物里不该出现 .appex（Windows / Linux）。 */
+function assertNoShareExtension(outDir) {
+  const stack = [outDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.endsWith('.appex')) {
+          throw new Error(`[pack] 非 macOS 产物里出现了 Share Extension：${full}`);
+        }
+        stack.push(full);
+      }
+    }
+  }
+}
+
+/**
+ * D94：把主应用的 entitlements 模板展开成实际使用的 plist。
+ *
+ * App Group 的组 id 带 TeamID 前缀（`$(TeamIdentifierPrefix)` 在 Xcode 构建期
+ * 才会展开，electron-builder 直接把文件交给 codesign，不会展开）。TeamID 由
+ * scripts/build-share-extension.mjs 解析并写进 resources/share-extension/group.json；
+ * 没有 TeamID（本地未签名构建）时去掉 App Group 权限。
+ */
+function expandMainEntitlements(projectDir) {
+  const template = path.join(projectDir, 'resources', 'entitlements.mac.plist');
+  const target = path.join(projectDir, 'resources', 'entitlements.mac.expanded.plist');
+  if (!existsSync(template)) return null;
+  let team = null;
+  try {
+    const group = JSON.parse(
+      readFileSync(path.join(projectDir, 'resources', 'share-extension', 'group.json'), 'utf8'),
+    );
+    team = typeof group.teamId === 'string' && group.teamId.length > 0 ? group.teamId : null;
+  } catch {
+    team = null;
+  }
+  const raw = readFileSync(template, 'utf8');
+  const expanded =
+    team === null
+      ? raw.replace(
+          /\s*<key>com\.apple\.security\.application-groups<\/key>\s*<array>[\s\S]*?<\/array>/,
+          '',
+        )
+      : raw.replaceAll('$(TeamIdentifierPrefix)', `${team}.`);
+  writeFileSync(target, expanded);
+  return target;
+}
+
 function beforePack(context) {
   const projectDir = context.packager.projectDir;
   const dirName = platformDirName(context);
+  // D94：macOS 主应用也要 App Group 权限（它读扩展写的 inbox、给扩展写快照）。
+  if (dirName === 'darwin') expandMainEntitlements(projectDir);
   const arch = archName(context);
   // extraResources 的 from 源目录不存在时 electron-builder 直接报错——确保目录存在。
   const binDir = path.join(projectDir, 'resources', 'bin', `${dirName}-${arch}`);
@@ -320,6 +448,26 @@ function afterPack(context) {
     );
   }
 
+  // D94 §10.2：Share Extension 的落位与一致性校验。
+  if (dirName === 'darwin') {
+    const appBundlePath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+    if (process.env.KEPCUP_SKIP_SHARE_EXTENSION === '1') {
+      console.warn(
+        '[pack] Share Extension 未构建（KEPCUP_SKIP_SHARE_EXTENSION=1）——产物不带系统分享入口。',
+      );
+    } else {
+      const summary = assertShareExtension(
+        appBundlePath,
+        process.env.KEPCUP_SHARE_GROUP_ID ?? null,
+      );
+      console.log(
+        `[pack] Share Extension 校验通过（${summary.bundleId}，${summary.extensionPoint}）。`,
+      );
+    }
+  } else {
+    assertNoShareExtension(context.appOutDir);
+  }
+
   console.log(
     `[pack] afterPack 校验通过（${dirName}-${archName(context)}，无测试路径标记，无工作区包）。`,
   );
@@ -328,6 +476,9 @@ function afterPack(context) {
 module.exports = {
   beforePack,
   afterPack,
+  assertShareExtension,
+  assertNoShareExtension,
+  readPlist,
   ensureWslRootfsSource,
   FORBIDDEN_MARKERS,
   findForbiddenMarker,
