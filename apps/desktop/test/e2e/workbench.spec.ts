@@ -44,6 +44,7 @@ async function launchApp(home: string, llmUrl: string): Promise<ElectronApplicat
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: 'file',

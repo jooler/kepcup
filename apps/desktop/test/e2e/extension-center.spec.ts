@@ -52,6 +52,7 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
       args: ['.'],
       env: {
         ...process.env,
+        TZ: 'Asia/Shanghai',
         KEPCUP_HOME: home,
         NODE_ENV: 'test',
         KEPCUP_KEYSTORE: 'file',
@@ -163,6 +164,7 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
       args: ['.'],
       env: {
         ...process.env,
+        TZ: 'Asia/Shanghai',
         KEPCUP_HOME: home,
         NODE_ENV: 'test',
         KEPCUP_KEYSTORE: 'file',

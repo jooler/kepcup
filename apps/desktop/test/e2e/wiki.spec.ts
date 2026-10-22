@@ -56,6 +56,7 @@ async function launchApp(options: { home: string; llmUrl: string }): Promise<Lau
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: options.home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: 'file',

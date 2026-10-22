@@ -69,6 +69,7 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
       args: ['.'],
       env: {
         ...process.env,
+        TZ: 'Asia/Shanghai',
         KEPCUP_HOME: home,
         NODE_ENV: 'test',
         KEPCUP_KEYSTORE: 'file',

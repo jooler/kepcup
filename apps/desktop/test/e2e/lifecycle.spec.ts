@@ -10,6 +10,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; home
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: home,
       NODE_ENV: 'test',
       // The crash-restart test needs the master key to survive a core process

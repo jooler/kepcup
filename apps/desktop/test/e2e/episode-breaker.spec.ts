@@ -28,6 +28,7 @@ async function startSession(prefix: string): Promise<Session> {
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: 'file',
