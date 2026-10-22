@@ -21,6 +21,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
+  import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
 
@@ -71,6 +72,17 @@
       ? (message.content.scheduleTitle ?? '')
       : null,
   );
+  /**
+   * D94：系统分享导入的用户消息——气泡下方一个只读标签「通过系统分享导入」。
+   * 不生成用户口吻的默认文案，正文只有用户自己写的附言（可能为空）。
+   */
+  const isShareImport = $derived(
+    isUser &&
+      message.kind === 'text' &&
+      'shareIntakeId' in message.content &&
+      typeof message.content.shareIntakeId === 'string' &&
+      message.content.shareIntakeId.length > 0,
+  );
   /** D90：工作台事项派发引出的回复——气泡下方「📋 标题」，点开工作台该事项。 */
   const todoSource = $derived(
     !isUser &&
@@ -119,6 +131,12 @@
   /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
   const messageText = $derived('text' in message.content ? message.content.text : '');
   const hasText = $derived(messageText.length > 0);
+  /** Bot file cards carried by this reply (files.preview is scoped by conversation). */
+  const artifacts = $derived(
+    message.senderType === 'bot' && 'artifacts' in message.content
+      ? (message.content.artifacts ?? [])
+      : [],
+  );
   const canCopy = $derived(canAct && hasText);
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
   const canPin = $derived(canAct && hasText);
@@ -247,9 +265,19 @@
 
     <MessageBody {message} {merge} bind:isEditing bind:editText onsave={() => void saveEdit()} />
 
+    {#if artifacts.length > 0}
+      <FileArtifacts {artifacts} conversationId={message.conversationId} />
+    {/if}
+
     {#if message.status === 'edited' && !isEditing}
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-edited"
         >{t('chats.edited')}</span
+      >
+    {/if}
+
+    {#if isShareImport}
+      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="share-source"
+        >{t('share.imported')}</span
       >
     {/if}
 

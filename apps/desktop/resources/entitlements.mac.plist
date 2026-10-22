@@ -21,5 +21,13 @@
     <true/>
     <key>com.apple.security.device.camera</key>
     <true/>
+    <!-- D94（docs/design/44-macos-share-extension.md §9.6）：与 Share Extension 共享
+         App Group 容器（扩展写 inbox / 目标快照，主应用读 inbox、写快照）。
+         $(TeamIdentifierPrefix) 在签名时展开为 TeamID 前缀；扩展的 entitlements
+         必须用同一个组 id。 -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>$(TeamIdentifierPrefix)app.kepcup.desktop</string>
+    </array>
   </dict>
 </plist>

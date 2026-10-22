@@ -163,6 +163,18 @@ import {
   stickieScopeSchema,
   stickieSchema,
 } from '../domain/stickies.js';
+import {
+  shareConsumeInputSchema,
+  shareConsumeOutputSchema,
+  shareFailedDiscardInputSchema,
+  shareFailedListOutputSchema,
+  shareFailedRetryInputSchema,
+  shareFailedRetryOutputSchema,
+  shareTargetsSchema,
+  type ShareConsumeInput,
+  type ShareConsumeOutput,
+  type ShareTargets,
+} from '../domain/share.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -1056,6 +1068,24 @@ export const attachmentsStatusOutputSchema = z.object({
 export const attachmentsDetachInputSchema = z.object({ id: z.string().min(1) });
 export const attachmentsDetachOutputSchema = z.object({ ok: z.literal(true) });
 
+// --- bot file artifacts ---------------------------------------------------
+/**
+ * 读取 Bot 刚写入的本地文件用于覆盖层预览。`conversationId` 把可读范围限定在
+ * 该对话消息里出现过的文件（`hasArtifactPath`），避免渲染层拿这个 RPC 当
+ * 任意路径读取器。
+ */
+export const filesPreviewInputSchema = z.object({
+  conversationId: z.string().min(1),
+  path: z.string().min(1),
+});
+export const filesPreviewOutputSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.number(),
+  dataBase64: z.string(),
+});
+
 // --- web search（联网检索供应商，docs/design/21-web-search.md） ----------------
 
 export const webSearchTestInputSchema = z.object({
@@ -1654,6 +1684,12 @@ export const stickiesUpdateOutputSchema = z.object({ stickie: stickieSchema });
 export const stickiesDeleteInputSchema = z.object({ id: z.string().min(1) });
 export const stickiesDeleteOutputSchema = okOutputSchema;
 
+// --- share（D94，macOS Share Extension 分享接收） ------------------------------
+// 平台方法（port B，主进程调 core）：share.targets / share.consume。
+// App 方法（port A，渲染层调 core）：share.failed.list / retry / discard。
+export const shareTargetsOutputSchema = shareTargetsSchema;
+export const shareFailedListInputSchema = z.object({});
+
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
 // client (docs/dev/02-architecture.md 端口 B: 核心服务请求平台能力).
@@ -2122,6 +2158,8 @@ export const rpcMethodSchemas = {
     output: attachmentsDetachOutputSchema,
   },
 
+  'files.preview': { input: filesPreviewInputSchema, output: filesPreviewOutputSchema },
+
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
   'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
   'runs.setupDismissed': { input: runIdInputSchema, output: runsSetupDismissedOutputSchema },
@@ -2285,6 +2323,16 @@ export const rpcMethodSchemas = {
   'stickies.create': { input: stickiesCreateInputSchema, output: stickiesCreateOutputSchema },
   'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
   'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
+  // D94: share.targets / share.consume are platform methods (port B, main → core);
+  // share.failed.* are app methods (port A, renderer → core).
+  'share.targets': { input: voidInput, output: shareTargetsOutputSchema },
+  'share.consume': { input: shareConsumeInputSchema, output: shareConsumeOutputSchema },
+  'share.failed.list': { input: shareFailedListInputSchema, output: shareFailedListOutputSchema },
+  'share.failed.retry': {
+    input: shareFailedRetryInputSchema,
+    output: shareFailedRetryOutputSchema,
+  },
+  'share.failed.discard': { input: shareFailedDiscardInputSchema, output: okOutput },
 
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
@@ -2400,6 +2448,16 @@ export type PlatformRpcMethods = {
     html: string;
     csp: string;
   }>;
+  /**
+   * D94 §5.5: 分享目标快照（Bot / 项目组），主进程写进 App Group 供
+   * Share Extension 读取。
+   */
+  'share.targets': () => Promise<ShareTargets>;
+  /**
+   * D94 §5.5: 消费一个分享批次（主进程把 App Group inbox 移进 core inbox
+   * 后调用；只接受 core inbox 前缀下的路径）。
+   */
+  'share.consume': (input: ShareConsumeInput) => Promise<ShareConsumeOutput>;
 };
 
 /** The browser methods the MAIN process serves on port B (P11; W8 adds two). */
@@ -2531,6 +2589,7 @@ const APP_METHODS = [
   'attachments.get',
   'attachments.status',
   'attachments.detach',
+  'files.preview',
   'runs.cancel',
   'runs.retry',
   'runs.setupDismissed',
@@ -2656,6 +2715,9 @@ const APP_METHODS = [
   'browserProfiles.clear',
   'schedules.acceptOffer',
   'schedules.declineOffer',
+  'share.failed.list',
+  'share.failed.retry',
+  'share.failed.discard',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
@@ -2668,4 +2730,6 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'update.cancelActive',
   'browser.controlReturned',
   'apps.ui.resource',
+  'share.targets',
+  'share.consume',
 ];

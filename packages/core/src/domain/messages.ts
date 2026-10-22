@@ -9,6 +9,7 @@ import {
   taskEventContentSchema,
   type AppUiCard,
   type Message,
+  type MessageArtifact,
   type MessageKind,
   type MessageStatus,
   type RunStatus,
@@ -198,6 +199,18 @@ export interface AppendMessageInput {
   mentions?: string[];
   batchId?: string | null;
   runId?: string | null;
+  /**
+   * text messages only (D94)：这条消息来自 macOS Share Extension 的系统分享，
+   * 值是分享批次 id（`shr_`）。带这个标记的消息，其附件在上下文里额外带
+   * 当前查看 Bot 的 workspace 副本路径（按 Bot 物化，不落 DB、不进消息正文）。
+   */
+  shareIntakeId?: string | undefined;
+  /**
+   * text messages only: local files the bot created / modified in this reply.
+   * Carried in the message content so the UI can render file cards after a
+   * reload; the bytes are read on demand through `files.preview`.
+   */
+  artifacts?: MessageArtifact[] | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -274,6 +287,8 @@ export interface AppendTaskEventInput {
   continuesTaskId?: string | undefined;
   /** D91: brief — the external capability ids the task declared. */
   capabilities?: string[] | undefined;
+  /** Terminal entries: files the task created / modified. */
+  artifacts?: MessageArtifact[] | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -438,6 +453,10 @@ export class MessagesService {
                     todoRunId: input.todoSource.todoRunId,
                     todoTitle: input.todoSource.todoTitle,
                   }
+                : {}),
+              ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
+              ...(input.artifacts !== undefined && input.artifacts.length > 0
+                ? { artifacts: input.artifacts }
                 : {}),
             })
           : input.kind === 'card'
@@ -695,6 +714,9 @@ export class MessagesService {
       ...(input.capabilities !== undefined && input.capabilities.length > 0
         ? { capabilities: input.capabilities }
         : {}),
+      ...(input.artifacts !== undefined && input.artifacts.length > 0
+        ? { artifacts: input.artifacts }
+        : {}),
     };
     const write = this.db.transaction((): { message: Message; created: boolean } => {
       if (terminal) {
@@ -750,6 +772,21 @@ export class MessagesService {
     const message = messageRowToMessage(row);
     message.attachments = this.attachmentsFor(message.id);
     return message;
+  }
+
+  /**
+   * True when this conversation has a bot file card for `path`. The file
+   * preview RPC uses it as one of its read scopes: only files the conversation
+   * actually surfaced may be read by the renderer.
+   */
+  hasArtifactPath(conversationId: string, path: string): boolean {
+    const row = this.db
+      .prepare(
+        "select 1 as hit from messages, json_each(json_extract(content_json, '$.artifacts')) " +
+          "where conversation_id = ? and json_extract(value, '$.path') = ? limit 1",
+      )
+      .get(conversationId, path) as { hit: number } | undefined;
+    return row !== undefined;
   }
 
   /**

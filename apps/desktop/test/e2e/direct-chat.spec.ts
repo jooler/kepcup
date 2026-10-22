@@ -21,6 +21,7 @@ async function launchApp(options: {
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: options.home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: options.keystore ?? 'file',

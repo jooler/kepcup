@@ -39,10 +39,12 @@ import {
   type AgentToolApprovalPayload,
   type AgentPermissionTier,
   type AgentView,
+  type Attachment,
   type Bot,
   type Conversation,
   type Delegation,
   type Message,
+  type MessageArtifact,
   WATCH_CARD_TYPE,
   WATCH_ALERT_EVENT,
   MAIL_CARD_TYPE,
@@ -156,11 +158,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import {
-  decideMailSetupRequest,
-  mailBoundFor,
-  type MailSetupFacade,
-} from '../tools/mail-tools.js';
+import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody } from '../apps/prompt.js';
@@ -217,7 +215,7 @@ import {
 } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
 import type { WidgetToolFacade } from '../tools/widget-tools.js';
-import { FileReadState } from '../tools/fs-state.js';
+import { FileReadState, RUN_FILE_CHANGES_MAX } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
@@ -245,6 +243,7 @@ import {
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { EpisodesService } from './episodes.js';
+import { ensureShareAttachmentCopy } from '../share/materialize.js';
 import { ProjectTurnCoordinator, type ProjectRoundEnd } from './project-turn.js';
 import { judgeContinuation } from './dispatcher.js';
 import { leadGate } from './lead-gate.js';
@@ -515,7 +514,9 @@ export interface OrchestratorWikiFacade {
     conversationId: string;
   }): void;
   /** Source ledger for the read-time trust wrap (empty for bot wikis). */
-  listSources(owner: WikiOwner): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
+  listSources(
+    owner: WikiOwner,
+  ): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
   /** Display name of a bot (null when deleted). */
   botName(botId: string): string | null;
   /** Project facts of one conversation (null when it is not a project). */
@@ -561,6 +562,7 @@ export type OrchestratorMemoryFacade = Omit<
     onDecided: (outcome: { approved: boolean; note: string }) => void,
   ): void;
   profileCardSection(): string;
+  hardConstraintsSection(botId: string, conversationId: string): string;
   myStateSection(botId: string, currentConversationId: string | null): string;
   relevantMemoriesSection(input: {
     botId: string;
@@ -574,6 +576,8 @@ export type OrchestratorMemoryFacade = Omit<
     conversationId: string;
     triggerMessageIds: string[];
     batchId: string | null;
+    /** A pure conversation turn is debounced; a task reflects immediately (D75). */
+    kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
   }): void;
@@ -871,6 +875,13 @@ export class Orchestrator {
         if (change === 'created') this.#publishConversation(message.conversationId);
       },
       describeCwd: (task, withChanges) => this.#describeTaskCwd(task, withChanges),
+      artifactsOf: (taskId) =>
+        this.#fsState.changesOf(taskId).map((change) => ({
+          path: change.path,
+          name: nodePath.basename(change.path),
+          change: change.change,
+          ...(change.size !== undefined ? { size: change.size } : {}),
+        })),
       // 审查 M3: an ask_user wait gives the task job's provider slot back (the
       // tool runs inside that job, so the scheduler finds it by run id).
       yieldSlotWhile: (runId, wait, signal) => deps.scheduler.yieldSlotWhile(runId, wait, signal),
@@ -1010,9 +1021,7 @@ export class Orchestrator {
           goal: deps.conversations.get(input.conversationId)?.goal ?? null,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.judgementTimeoutMs !== undefined
-            ? { timeoutMs: deps.judgementTimeoutMs }
-            : {}),
+          ...(deps.judgementTimeoutMs !== undefined ? { timeoutMs: deps.judgementTimeoutMs } : {}),
         }),
       gate: (input) =>
         leadGate({
@@ -1032,9 +1041,7 @@ export class Orchestrator {
           continuation: input.continuation,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.judgementTimeoutMs !== undefined
-            ? { timeoutMs: deps.judgementTimeoutMs }
-            : {}),
+          ...(deps.judgementTimeoutMs !== undefined ? { timeoutMs: deps.judgementTimeoutMs } : {}),
         }),
     });
   }
@@ -1055,8 +1062,59 @@ export class Orchestrator {
       attachmentIds?: string[];
       /** D87 P4 L3：用户在组件卡上确认后、经组件回传的消息。 */
       widgetOrigin?: { widgetId: string; version: number };
+      /** D94：来自系统分享的消息（分享批次 id）。 */
+      shareIntakeId?: string;
     },
   ): { message: Message; runId: string | null } {
+    const prepared = this.#prepareUserMessage(conversationId, input);
+    const { runId } = this.#publishAndRouteUserMessage(prepared);
+    return { message: prepared.message, runId };
+  }
+
+  /**
+   * 分享投递（D94 §5.4 / §6.3）：与 {@link sendMessage} 同样的事务、触发批与
+   * 路由，但拆成「事务内落库」与「提交后唤醒」两段——`share_intakes` 的状态
+   * 更新要和消息落库在同一个事务里，事件发布与路由唤醒只能在提交后发生。
+   *
+   * 调用方把本方法包在自己的事务里，事务提交后再调用 `wake()`。
+   */
+  sendShareMessage(
+    conversationId: string,
+    input: { text: string; attachmentIds: string[]; shareIntakeId: string },
+  ): {
+    message: Message;
+    batchId: string;
+    conversation: Conversation;
+    wake: () => { runId: string | null };
+  } {
+    const prepared = this.#prepareUserMessage(conversationId, {
+      text: input.text,
+      attachmentIds: input.attachmentIds,
+      shareIntakeId: input.shareIntakeId,
+    });
+    return {
+      message: prepared.message,
+      batchId: prepared.batchId,
+      conversation: prepared.conversation,
+      wake: () => this.#publishAndRouteUserMessage(prepared),
+    };
+  }
+
+  /**
+   * 消息落库（事务内）：写消息 + 认领附件 + 生成 batch id。返回值交给
+   * {@link #publishAndRouteUserMessage} 在提交后发布事件与唤醒路由。
+   */
+  #prepareUserMessage(
+    conversationId: string,
+    input: {
+      text: string;
+      mentions?: string[];
+      replyTo?: string | null;
+      attachmentIds?: string[];
+      widgetOrigin?: { widgetId: string; version: number };
+      shareIntakeId?: string;
+    },
+  ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1076,6 +1134,7 @@ export class Orchestrator {
         replyTo: input.replyTo ?? null,
         batchId,
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
+        ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
@@ -1086,6 +1145,19 @@ export class Orchestrator {
       ...message!,
       attachments: this.#deps.messages.attachmentsFor(message!.id),
     };
+    return { conversation: conv, message: full, batchId };
+  }
+
+  /** 提交后：发布消息事件、按既有路由唤醒（项目组走 D92 路由，私聊走目录闸门）。 */
+  #publishAndRouteUserMessage(prepared: {
+    conversation: Conversation;
+    message: Message;
+    batchId: string;
+  }): { runId: string | null } {
+    const conv = prepared.conversation;
+    const conversationId = conv.id;
+    const full = prepared.message;
+    const batchId = prepared.batchId;
 
     this.#deps.publish('message.created', { conversationId, message: full });
     this.#publishConversation(conversationId);
@@ -1095,13 +1167,13 @@ export class Orchestrator {
       // ordered turns. The runs (if any) are chosen asynchronously; no single
       // run id to report.
       this.#projectTurns.onUserBatch(conversationId, batchId, [full]);
-      return { message: full, runId: null };
+      return { runId: null };
     }
     if (conv.directBotId !== null) {
       // 目录闸门（19/D59）：访谈中的自由输入同样只落库，等目录卡作答。
       this.#deliverDirectThroughGate(conv, conv.directBotId, [full], 'direct');
     }
-    return { message: full, runId: this.#latestRunId(conversationId, conv.directBotId) };
+    return { runId: this.#latestRunId(conversationId, conv.directBotId) };
   }
 
   /**
@@ -2417,9 +2489,7 @@ export class Orchestrator {
       SETUP_QUESTION_EVENT,
       butler ? butlerSetupFirstQuestion(language) : setupFirstQuestion(language),
       {
-        options: butler
-          ? [...butlerSetupFirstOptions(language)]
-          : [...setupFirstOptions(language)],
+        options: butler ? [...butlerSetupFirstOptions(language)] : [...setupFirstOptions(language)],
         // 首问是「有哪些/要哪些」的列举题，天然多选；用户也可以自行补充条目。
         questionMode: 'multi',
       },
@@ -2565,6 +2635,7 @@ export class Orchestrator {
       timeZone: this.#deps.timeZone,
       botNames: names,
       mentionLabels,
+      shareAttachmentPath: (attachment, botId) => this.#shareAttachmentPath(attachment, botId),
       renderCard: (message) => {
         if (message.senderType !== 'system' || message.kind !== 'card') return null;
         const content = message.content;
@@ -2614,6 +2685,37 @@ export class Orchestrator {
         return approval ? this.#deps.approvals.renderContextLine(approval) : '（审批记录已清理）';
       },
     };
+  }
+
+  /**
+   * D94 §5.7：分享附件的 workspace 副本路径（按当前查看 Bot 物化）。项目组
+   * 里每个 Bot 各有一份，路径互不串台。物化失败不阻断消息投递——附件行标
+   * `path=unavailable`，Bot 可以用 get_attachment 重建。
+   */
+  #shareAttachmentPath(attachment: Attachment, botId: string | null): string | null {
+    if (botId === null) return null;
+    try {
+      const workspacePath = workspacePathFor(
+        this.#deps.paths,
+        botId,
+        attachment.conversationId,
+      );
+      return ensureShareAttachmentCopy({
+        attachments: this.#deps.attachments,
+        workspacePath,
+        attachment,
+      }).path;
+    } catch (error) {
+      this.#deps.logger.warn(
+        {
+          attachmentId: attachment.id,
+          botId,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        'share attachment copy failed',
+      );
+      return null;
+    }
   }
 
   /**
@@ -2834,6 +2936,7 @@ export class Orchestrator {
     hasWorkdir: boolean;
     memorySections: {
       userProfile?: string;
+      hardConstraints?: string;
       myState?: string;
       schedules?: string;
       workbench?: string;
@@ -4103,6 +4206,7 @@ export class Orchestrator {
       const memorySections = memoryFacade
         ? {
             userProfile: memoryFacade.profileCardSection(),
+            hardConstraints: memoryFacade.hardConstraintsSection(batch.botId, batch.conversationId),
             myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
             ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
@@ -4652,8 +4756,25 @@ export class Orchestrator {
       }
 
       // D75 §6.1: a task's final text is its private result entry (settle
-      // below), never a visible message.
-      if (!isTask && outcome.status === 'completed' && outcome.finalText.trim().length > 0) {
+      // below), never a visible message. A turn's reply carries the files its
+      // tasks wrote as cards under the bubble (or stands alone when the bot
+      // only did file work and returned no prose).
+      const artifacts = isTask ? [] : this.#collectRunArtifacts(runId, batch);
+      // forward_task_result may already have carried some files on an earlier
+      // message of this run: merge by path instead of dropping the whole set.
+      const shownPaths = new Set<string>();
+      for (const id of runs.get(runId)?.outputMessageIds ?? []) {
+        const output = messages.getById(id);
+        if (output === null || !('artifacts' in output.content)) continue;
+        for (const artifact of output.content.artifacts ?? []) shownPaths.add(artifact.path);
+      }
+      const pendingArtifacts = artifacts.filter((artifact) => !shownPaths.has(artifact.path));
+      if (
+        !isTask &&
+        outcome.status === 'completed' &&
+        !outcome.skipReply &&
+        (outcome.finalText.trim().length > 0 || pendingArtifacts.length > 0)
+      ) {
         const message = messages.append({
           conversationId: batch.conversationId,
           senderType: 'bot',
@@ -4663,6 +4784,7 @@ export class Orchestrator {
           runId,
           ...(scheduleSource !== null ? { scheduleSource } : {}),
           ...(todoSource !== null ? { todoSource } : {}),
+          ...(pendingArtifacts.length > 0 ? { artifacts: pendingArtifacts } : {}),
         });
         this.#recordBotMessage(runId, message);
       }
@@ -4693,7 +4815,9 @@ export class Orchestrator {
           'lease release failed',
         );
       }
-      this.#fsState.release(runId);
+      // A task still needs its per-run file list when settle() writes the
+      // terminal entry; onSettled releases it right after.
+      if (!isTask) this.#fsState.release(runId);
 
       // 缺设置中断（setupHit 非空且 run 非正常完成）：统一改判 failed 并携带
       // 结构化 setup，界面上是可引导的设置卡片而非普通失败。
@@ -4730,14 +4854,26 @@ export class Orchestrator {
       // failures never touch this run.
       // (A task stopped by the host meanwhile is not completed after all.)
       if (outcome.status === 'completed' && (!isTask || runs.get(runId)?.status === 'completed')) {
-        this.#deps.memory?.registerReflection({
-          runId,
-          botId: batch.botId,
-          conversationId: batch.conversationId,
-          triggerMessageIds: batch.messages.map((m) => m.id),
-          batchId: batch.messages[0]?.batchId ?? null,
-          continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
-        });
+        // Reflection registration is best-effort background work: it runs after
+        // settle() already wrote the terminal state, and runs.update has no
+        // terminal-state guard — a throw here would let the outer catch flip
+        // the completed run to failed. Log and move on.
+        try {
+          this.#deps.memory?.registerReflection({
+            runId,
+            botId: batch.botId,
+            conversationId: batch.conversationId,
+            triggerMessageIds: batch.messages.map((m) => m.id),
+            batchId: batch.messages[0]?.batchId ?? null,
+            kind: isTask ? 'task' : 'turn',
+            continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
+          });
+        } catch (error) {
+          this.#deps.logger.warn(
+            { runId, err: error },
+            'reflection registration failed (run stays completed)',
+          );
+        }
       }
       this.#maybeEnqueueSummary(batch.conversationId);
     } catch (error) {
@@ -5686,6 +5822,32 @@ export class Orchestrator {
     // The title is the model's own words (start_task, possibly steered by
     // what it read): data, not a system statement (审查 L1).
     return `[系统] 任务卡 ${task.id}（${owner}）「<untrusted>${neutralizeUntrusted(task.taskTitle ?? '')}</untrusted>」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
+  }
+
+  /**
+   * Files the turn's own tools wrote plus every file carried by the task
+   * terminal entries in its trigger (deduped by path, first occurrence wins).
+   */
+  #collectRunArtifacts(runId: string, batch: TriggerBatch): MessageArtifact[] {
+    const byPath = new Map<string, MessageArtifact>();
+    const add = (artifact: MessageArtifact): void => {
+      if (byPath.size >= RUN_FILE_CHANGES_MAX) return;
+      if (!byPath.has(artifact.path)) byPath.set(artifact.path, artifact);
+    };
+    for (const change of this.#fsState.changesOf(runId)) {
+      add({
+        path: change.path,
+        name: nodePath.basename(change.path),
+        change: change.change,
+        ...(change.size !== undefined ? { size: change.size } : {}),
+      });
+    }
+    for (const message of batch.messages) {
+      if (message.kind !== 'task_event') continue;
+      const files = (message.content as TaskEventContent).artifacts ?? [];
+      for (const file of files) add(file);
+    }
+    return [...byPath.values()];
   }
 
   /**

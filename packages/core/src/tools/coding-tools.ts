@@ -140,8 +140,15 @@ export function resolveRgPath(bundledBinDir: string | null): string | null {
   return probe.error === undefined ? 'rg' : null;
 }
 
+type PiContentBlock = {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+};
+
 type PiToolResult = {
-  content: Array<{ type: string; text?: string }>;
+  content: PiContentBlock[];
   details?: unknown;
   /**
    * pi 1.x 语义（0.87.1 → 1.0.2 行为差异）：工具失败不再 throw，而是返回
@@ -189,12 +196,28 @@ export function wrapPiTool(
         const result = (await def.execute('call', params, ctx.signal, undefined, {
           cwd: workspacePath,
         })) as PiToolResult;
-        const text = (result.content ?? [])
-          .map((block) =>
-            block.type === 'text' && typeof block.text === 'string' ? block.text : '',
-          )
-          .join('\n')
-          .trim();
+        const textParts: string[] = [];
+        const images: Array<{ mimeType: string; base64: string }> = [];
+        for (const block of result.content ?? []) {
+          if (block.type === 'text' && typeof block.text === 'string') {
+            textParts.push(block.text);
+          } else if (block.type === 'image') {
+            // pi-coding-agent 1.4 的 read 对图片返回 image block；base64 只进
+            // ToolResult.images（由引擎按模型能力决定是否发送），绝不进文本。
+            // data / mimeType 缺失、非字符串或 data 为空串的无效图片不静默丢弃，
+            // 占位说明与 mcp/tools.ts 的「（xx 内容已省略）」一致。
+            if (
+              typeof block.data === 'string' &&
+              block.data !== '' &&
+              typeof block.mimeType === 'string'
+            ) {
+              images.push({ base64: block.data, mimeType: block.mimeType });
+            } else {
+              textParts.push('（image 内容已省略）');
+            }
+          }
+        }
+        const text = textParts.join('\n').trim();
         // Redact before truncation so a secret at the head cannot push its
         // own redaction past the budget (same order as runs persistence).
         const redacted = secrets.redact(text);
@@ -209,15 +232,22 @@ export function wrapPiTool(
             : truncated.truncated
               ? `${truncated.text}\n[输出已截断，共 ${redacted.length} 字符]`
               : truncated.text;
+        const content =
+          body.length === 0 && images.length > 0 ? '（已返回图片，见附加图片）' : body;
         // pi 1.x：非零退出（含被沙箱拦截）返回 isError:true 的结果，不再 throw。
         if (result.isError === true) {
           return {
             ok: false,
-            content: `<untrusted>\n${body}\n</untrusted>`,
+            content: `<untrusted>\n${content}\n</untrusted>`,
+            ...(images.length > 0 ? { images } : {}),
             errorCode: 'COMMAND_FAILED',
           };
         }
-        return { ok: true, content: `<untrusted>\n${body}\n</untrusted>` };
+        return {
+          ok: true,
+          content: `<untrusted>\n${content}\n</untrusted>`,
+          ...(images.length > 0 ? { images } : {}),
+        };
       } catch (error) {
         if (error instanceof AppError) {
           return {
@@ -315,8 +345,20 @@ export function buildCodingTools(
     writeFile: async (p: string, content: string) => {
       const resolved = await checked(identity, gateway, p, 'write', 'write');
       assertFresh(identity.runId, fsState, resolved);
+      const existed = existsSync(resolved);
       writeFileSync(resolved, content, 'utf-8');
       fsState.recordWrite(runId, resolved, content);
+      let size: number | undefined;
+      try {
+        size = statSync(resolved).size;
+      } catch {
+        size = undefined;
+      }
+      fsState.recordChange(runId, {
+        path: resolved,
+        change: existed ? 'modified' : 'created',
+        ...(size !== undefined ? { size } : {}),
+      });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write' });
     },
     mkdir: async (dir: string) => {

@@ -89,6 +89,8 @@ export function buildImageTools(input: {
   gateway: ToolGateway;
   /** 产物落盘后的确定性投递（测试装配可缺省：走「请模型 send_message」旧路径）。 */
   delivery?: GeneratedMediaDelivery | undefined;
+  /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
+  recordFile?: ((target: string) => void) | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -163,6 +165,7 @@ export function buildImageTools(input: {
         const fileName = images.length > 1 ? `${base}-${index + 1}.png` : `${base}.png`;
         const target = path.join(dir, fileName);
         writeFileSync(target, bytes);
+        input.recordFile?.(target);
         saved.push(target);
       }
       if (saved.length === 0) {
@@ -206,7 +209,9 @@ export function buildImageTools(input: {
         maxItems: 4,
         description: '要理解的图片，1-4 张',
       }),
-      prompt: Type.String({ description: '对图片的问题或指令（如「描述这张图」「读出图里的表格数据」）' }),
+      prompt: Type.String({
+        description: '对图片的问题或指令（如「描述这张图」「读出图里的表格数据」）',
+      }),
     }),
     execute: async (params) => {
       if (identity.conversationId === null || identity.botId === null) {
@@ -266,8 +271,7 @@ export function buildImageTools(input: {
           errorCode: 'INTERNAL',
         };
       }
-      const note =
-        skipped.length > 0 ? `\n（以下图片过大已跳过：${skipped.join('；')}）` : '';
+      const note = skipped.length > 0 ? `\n（以下图片过大已跳过：${skipped.join('；')}）` : '';
       const truncated = truncateToBudget(result.text, TOOL_OUTPUT_MAX_CHARS).text;
       return { ok: true, content: `${untrustedBlock(truncated)}${note}` };
     },

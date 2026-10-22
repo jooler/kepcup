@@ -374,7 +374,10 @@ describe('external agent engine (P1, fake agent)', () => {
     const started: FakeAcpAgentHandle[] = [];
     const stack = await createTestStack({
       memoryEmbedder: embedder,
-      env: { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' },
+      env: {
+        KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+        KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+      },
       agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
       agentSpawn: fakeAgentSpawner(
         { fake: { turns: [agentTurn().text('两条都收到。')] } },

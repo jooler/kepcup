@@ -1,6 +1,8 @@
 # PiEngine 1.x 升级 · MCP 接入 · 宿主 SubAgent
 
 > 状态：**已拍板待实现**（决策 D64 / D65 / D66，设计见 `docs/design/23-mcp-and-subagent.md`，技术选型见 `docs/design/09-tech-stack.md`）。分三个阶段，A 是 B 的前置，C 与 B 相互独立。
+>
+> 后续 1.0.2 → 1.4.0 升级见 [pi-1.4-upgrade.md](pi-1.4-upgrade.md)；本文件保留 1.0.2 升级与 MCP / SubAgent 的历史。
 
 ## 1. 背景与目标
 

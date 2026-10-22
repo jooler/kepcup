@@ -694,3 +694,56 @@
 - 处理：按上述落实。归档不做任何级联：定时任务、监看与项目 wiki 继续存在（会话只是从列表里消失）；彻底删除仍是 `conversations.delete`，入口在项目详情页「危险区」。
 - 决定：（由人工确认）
 - 已更新的文档：`docs/design/01-conversation.md`、`docs/design/41-project-team.md`、`docs/dev/03-data-model.md`、`packages/shared/src/settings-catalog/coverage.ts`（`conversations.archive / unarchive` 登记为对象管理动作，不是设置）。
+
+### DEV-041 Pi 1.4.0 升级把 `packages/app-validator` 的 `pi-mcp` 一并升到 1.4.0（超出任务书 §4.1 的四个包清单）
+
+- 状态：已落实
+- 阶段：Pi Agent 1.4.0 升级（2026-10-22）
+- 是否阻塞：否
+- 问题：[todo/pi-1.4-upgrade.md](../../todo/pi-1.4-upgrade.md) §4.1 只要求改 `packages/core/package.json` 的四个 pi 包，并写明「只改这四个依赖」；但该任务的验收标准同时要求 `pnpm-lock.yaml` 中无 `@earendil-works/pi-*@1.0.2` 残留。`packages/app-validator` 另有一条 `@earendil-works/pi-mcp: 1.0.2` 直连依赖，只改 core 会留下 1.0.2 实例，无法同时满足两条要求。
+- 影响范围：`packages/app-validator/package.json`（`pi-mcp` 1.0.2 → 1.4.0）与 lockfile；校验器代码只使用 `McpFetch`、`McpClient`、OAuth 低层函数等 1.4.0 仍存在的导出，无代码改动。
+- 处理：按验收标准把 app-validator 的 `pi-mcp` 同步到 1.4.0；`pnpm --filter @kepcup/app-validator run typecheck` 通过，全量测试通过。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/dev/PROGRESS.md`「Pi Agent 1.4.0 升级」。
+
+### DEV-042 Pi 1.4.0 的 `createModels()` identity 保持默认（未声明 KepCup 身份）
+
+- 状态：待决定
+- 阶段：Pi Agent 1.4.0 升级（2026-10-22）
+- 是否阻塞：否
+- 问题：pi-ai 1.4 的 `createModels()` 支持 `identity`（`userAgent` / `attribution`）；不设置时按上游默认以 pi 身份发送 User-Agent / attribution。任务书 §4.7 把它列为可选产品决定，不是升级阻塞项。
+- 影响范围：`packages/core/src/agent/models.ts`；只影响模型请求的 User-Agent / attribution，不影响鉴权、路由与功能。
+- 可选方案：
+  1. 保持默认（当前实现）— 优点：升级范围最小、与上游行为一致；缺点：请求身份显示为 pi，而不是 KepCup。
+  2. 显式声明 `identity: { attribution: { name: 'KepCup', url: 'https://kepcup.app' } }`（`userAgent` 是否用 `detailed` 另行决定）— 优点：身份清晰、便于供应商侧识别与审计；缺点：属于产品/隐私口径变更，需要单独评审并补请求头测试。
+- 推荐：方案 2 作为后续产品决定；本次升级不扩大范围，保持现状。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/dev/PROGRESS.md`。
+
+### DEV-043 `wrapPiTool` 未向 pi 的 `read` 传 `ctx.model`：图片 resize / 非视觉提示使用上游 fallback（P2）
+
+- 状态：待决定
+- 阶段：Pi Agent 1.4.0 升级（2026-10-22）
+- 是否阻塞：否
+- 问题：pi-coding-agent 1.4 的 `read` 会使用 `ctx.model.inputLimits` 做图片 resize，并据此决定是否加 `getNonVisionImageNote`；本地 `wrapPiTool` 调用 `def.execute(..., { cwd })` 时没有传 `model`，因此走 fallback resize，非视觉提示可能不触发。任务书 §11.3 明确这不阻塞升级，先记录为 P2。
+- 影响范围：`packages/core/src/tools/coding-tools.ts` 的 `WrapOptions` / 工具 `ctx`；当前引擎仍会按模型 `input` 能力决定是否发送 `ToolResult.images`，text-only 模型会收到 `SCREENSHOT_OMITTED_NOTE` 降级说明，功能不回退。
+- 可选方案：
+  1. 维持现状（fallback resize）— 优点：不改包装层接口；缺点：图片体积限制与非视觉提示不够精确。
+  2. 扩展 `WrapOptions` / `PiToolLike.execute` 的 ctx 传入当前 `model`（含 `inputLimits`）— 优点：按模型精确 resize、提示准确；缺点：需要把模型信息从引擎贯通到每个编码工具，改动面扩大，需单独任务验证。
+- 推荐：方案 2 作为后续 P2；本轮保持方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/dev/PROGRESS.md`。
+
+### DEV-044 本地 SSE 传输把「发送中取消」合并进 fetch signal，中断在途 POST（偏离 pi-mcp 上游）
+
+- 状态：已落实
+- 阶段：Pi Agent 1.4.0 升级 P3 加固（2026-10-22）
+- 是否阻塞：否
+- 问题：pi-mcp 1.4.0 的 `McpTransport.send` 增加可选 `signal`（「发送方不再等待回复时中止；传输不得在其后派发该消息，但不撤销已派发的消息」）。上游 `streamable-http` 传输的实现是：**fetch 只挂共享 `controller.signal`**，per-request `signal` 仅在每次派发（含授权刷新后的重试）前检查 `aborted`，**不中断在途 POST**。KepCup 自带的旧版「HTTP with SSE」传输（`packages/core/src/mcp/sse-transport.ts`，pi-mcp 未内置）把本次 dispatch 的 `signal` 与 `controller.signal` 经 `AbortSignal.any` 合并传给 fetch——取消或 `close()` 都会立刻掐断在途 POST。这是有意偏离：旧协议的响应经共享 SSE 流异步送达（POST 本身只拿 202），被放弃的在途 POST 继续占着连接没有任何收益；合并后 `close()` 也能收掉在途 dispatch。与上游相同点：中断不承诺撤回服务端可能已收到的消息（上层 ledger 按 uncertain 记账），取消只影响本次 dispatch、不关闭 transport（不误触发重连）。预派发检查顺序已对齐上游（连接态先于取消态：closed 优先抛 `McpConnectionClosedError`）。
+- 影响范围：`packages/core/src/mcp/sse-transport.ts`（`send` 的 signal 合并与检查顺序，签名改用 pi-mcp 导出的 `McpTransportSendOptions`）、`packages/core/test/unit/sse-transport.test.ts`（in-flight 取消 / close() 中断两腿各有用例）。
+- 可选方案：
+  1. 维持合并（当前实现）— 优点：取消 / 关闭即时释放连接与资源，close() 收口完整；缺点：与上游 streamable-http 的行为不同，升级 pi-mcp 时需重读差异（代码注释已点名）。
+  2. 完全对齐上游（fetch 只挂 controller.signal，signal 仅做派发前检查）— 优点：与上游零差异；缺点：被放弃的 POST 占连接到自然结束，close() 对在途 dispatch 无能为力，旧协议下无收益。
+- 推荐：方案 1（当前实现）。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/dev/PROGRESS.md`（Pi Agent 1.4.0 升级 P3 加固）。

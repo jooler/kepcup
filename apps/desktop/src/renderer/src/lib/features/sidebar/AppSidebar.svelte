@@ -37,6 +37,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
+  import SidebarUpdateButton from './SidebarUpdateButton.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
@@ -1134,6 +1135,8 @@
           >
             <Blocks class="size-5" aria-hidden="true" />
           </button>
+          <!-- 更新圆钮（ready 普通态 / awaiting-user destructive 确认态，组件内自管）。 -->
+          <SidebarUpdateButton />
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
               <button
@@ -1210,6 +1213,8 @@
             <Blocks class="size-4 shrink-0" aria-hidden="true" />
             <span class="truncate">{t('sidebar.extensionCenter')}</span>
           </button>
+          <!-- 更新圆钮（同图标模式的复用组件，语义见组件头注释）。 -->
+          <SidebarUpdateButton />
         </div>
       {/if}
     </Sidebar.Footer>

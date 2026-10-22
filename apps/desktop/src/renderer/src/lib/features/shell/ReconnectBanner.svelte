@@ -3,7 +3,9 @@
 </script>
 
 <div
-  class="flex h-9 items-center justify-center bg-amber-100 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+  class="app-no-drag pointer-events-none flex w-full max-w-xl items-center justify-center gap-3
+    rounded-full border border-amber-700/40 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white
+    shadow-lg"
   data-testid="reconnect-banner"
   role="status"
 >

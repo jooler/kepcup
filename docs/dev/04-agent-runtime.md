@@ -18,7 +18,7 @@
 | 用量 | 每条助手消息的 usage 写入 usage_ledger |
 | 单次调用 `complete()` | `@earendil-works/pi-ai` 的单次请求接口 |
 | 模型与厂商 | `pi-ai` 的模型注册表；自定义接口通过 `baseUrl`；API key 通过自定义 `CredentialStore` 提供——`read(providerId)` 在每次请求的鉴权解析时从 secrets 表解密（DEV-002，不用 `Agent` 的 `getApiKey` 覆盖） |
-| 编码工具 | `pi-coding-agent` 导出的 read / write / edit / bash / grep / find / ls 工具工厂，替换其文件与命令执行接口为网关实现 |
+| 编码工具 | `pi-coding-agent` 导出的 read / write / edit / bash / grep / find / ls 工具工厂，替换其文件与命令执行接口为网关实现；1.4 起 `read` 的图片结果（image block）映射为 `ToolResult.images`，base64 不进入 `<untrusted>` 文本 |
 | Skills | `pi-coding-agent` 的 `loadSkills` / `formatSkillsForPrompt`（P08） |
 
 约束：
@@ -499,6 +499,19 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 ## 附件处理阶梯（P19）
 
 系统提示 `<file_handling>` 段注入四级升级路径：已安装技能 → `<recommended_skills>` 匹配预置技能（`install_skill(preset_id)`，轻授权）→ `web_search` 检索技能仓库（`install_skill(source_url)`，扫描审批）→ 如实告知不支持。`<recommended_skills>` 段由 `SkillPresetsService.promptSection()` 生成（仅未安装条目），随 `prepareRequest` 每次请求刷新——安装成功当次 run 即可用。
+
+## 分享附件的 workspace 副本路径（D94）
+
+来自 macOS Share Extension 的用户消息（`textContent.shareIntakeId`）在上下文里，附件行额外带当前查看 Bot 的 **workspace 副本绝对路径**：
+
+```text
+（附件：att_… chat.zip [application/zip] 2048KB path="/…/.kepcup/bots/bot_x/workspaces/conv_y/.attachments/att_…_chat.zip"）
+```
+
+- 副本由宿主在上下文组装时物化（`core/src/share/materialize.ts` 的 `ensureShareAttachmentCopy`）：落 `<workspace>/.attachments/<attachmentId>_<safeName>`，权限 `0444`，同 Bot 多轮复用；副本被改写（size / mtime 变了）就重建并恢复原始字节。
+- **只对带 `shareIntakeId` 的消息启用**；普通上传附件的附件行保持原格式（P0 不统一）。对话轮、任务、历史消息、`messages.around` / `search_messages` 共用同一套渲染（`RenderMessageOptions.shareAttachmentPath`），项目组里每个 Bot 各有一份副本，路径互不串台。
+- 物化失败不阻断投递：附件行标 `path=unavailable`，Bot 用 `get_attachment` 兜底——`get_attachment` 的二进制分支复用同一个 `ensureShareAttachmentCopy` 落点（`checkHostCopyPath` 的 `.attachments/` 例外同时覆盖它），副本删了能重建。
+- 路径不落 DB、不进消息正文、不写日志；模型只拿到 workspace 副本路径，拿不到附件库路径与原始分享源路径。
 
 ## 各类 loop 的配置
 

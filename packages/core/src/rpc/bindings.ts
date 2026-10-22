@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import {
   AppError,
@@ -18,6 +20,11 @@ import {
   providersTestInputSchema,
   providersListOutputSchema,
   okOutputSchema,
+  shareFailedListInputSchema,
+  shareFailedListOutputSchema,
+  shareFailedRetryInputSchema,
+  shareFailedRetryOutputSchema,
+  shareFailedDiscardInputSchema,
   botsListOutputSchema,
   botGetOutputSchema,
   botsCreateInputSchema,
@@ -88,6 +95,8 @@ import {
   attachmentsStatusOutputSchema,
   attachmentsDetachInputSchema,
   attachmentsDetachOutputSchema,
+  filesPreviewInputSchema,
+  filesPreviewOutputSchema,
   mcpRemoveSecretInputSchema,
   mcpSetSecretInputSchema,
   mcpTestInputSchema,
@@ -256,6 +265,7 @@ import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
 import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
+import type { ShareIntakeService } from '../share/service.js';
 import { bindAppsSkillsMethods } from './apps-skills-bindings.js';
 import {
   bindSettingsCatalogMethods,
@@ -264,6 +274,8 @@ import {
   withSettingsChangedEvents,
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
+import { previewMaxBytesOf, previewMimeOf } from './file-preview.js';
+import { canonicalPath } from '../infra/paths.js';
 import type { LoopType, WikiOwner } from '@kepcup/shared';
 import {
   InkcopAuthError,
@@ -1079,6 +1091,35 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true } as const;
       },
     ),
+    'files.preview': method(filesPreviewInputSchema, filesPreviewOutputSchema, async (input) => {
+      const resolved = canonicalPath(input.path);
+      // Only files this conversation surfaced in a file card. This is also the
+      // symlink guard: the resolved target must equal the stored path.
+      if (!domain.messages.hasArtifactPath(input.conversationId, resolved)) {
+        throw new AppError('PATH_OUT_OF_SCOPE', '该文件不在本对话的文件卡内');
+      }
+      let stats;
+      try {
+        stats = await stat(resolved);
+      } catch {
+        throw new AppError('NOT_FOUND', '文件不存在或已被移动');
+      }
+      if (!stats.isFile()) throw new AppError('NOT_FOUND', '文件不存在或不是普通文件');
+      const limit = previewMaxBytesOf(resolved);
+      if (stats.size > limit) {
+        throw new AppError(
+          'INVALID_INPUT',
+          `文件过大（${stats.size} 字节），超过该类型预览上限 ${limit} 字节`,
+        );
+      }
+      return {
+        path: resolved,
+        name: path.basename(resolved),
+        mime: previewMimeOf(resolved),
+        size: stats.size,
+        dataBase64: (await readFile(resolved)).toString('base64'),
+      };
+    }),
 
     'runs.cancel': method(runIdInputSchema, runsCancelOutputSchema, async (input) => ({
       run: orchestrator.cancelRun(input.runId, { userInitiated: true }),
@@ -1848,6 +1889,26 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+    // D94 §5.5: 分享失败恢复（渲染层调 core）。share.targets / share.consume
+    // 是平台方法（主进程调 core），不在这里。
+    'share.failed.list': method(
+      shareFailedListInputSchema,
+      shareFailedListOutputSchema,
+      async () => ({ items: requireShare(services).listFailed() }),
+    ),
+    'share.failed.retry': method(
+      shareFailedRetryInputSchema,
+      shareFailedRetryOutputSchema,
+      async (input) => requireShare(services).retry(input),
+    ),
+    'share.failed.discard': method(
+      shareFailedDiscardInputSchema,
+      okOutputSchema,
+      async (input) => {
+        requireShare(services).discard(input);
+        return { ok: true as const };
+      },
+    ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
   };
@@ -1869,4 +1930,10 @@ function requireMemos(services: CoreServices): MemoService {
 function requireWatches(services: CoreServices): WatchService {
   if (!services.watches) throw new AppError('NOT_IMPLEMENTED', '监看服务未就绪');
   return services.watches;
+}
+
+/** D94: 分享接收服务（Share Extension 投递与失败恢复）。 */
+function requireShare(services: CoreServices): ShareIntakeService {
+  if (!services.share) throw new AppError('NOT_IMPLEMENTED', '分享服务未就绪');
+  return services.share;
 }

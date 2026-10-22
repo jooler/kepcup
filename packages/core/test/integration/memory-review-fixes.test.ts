@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createTestStack,
-  makeBot,
-  openDirect,
-  sendDrafts,
-  step,
-  waitFor,
-} from '@kepcup/testkit';
+import { createTestStack, makeBot, openDirect, sendDrafts, step, waitFor } from '@kepcup/testkit';
 import type { Run } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 import type { Embedder } from '../../src/memory/embedder.js';
 
 // 整理延迟冻结在 60s：只有「立即整理」路径能在测试时限内触发模型调用。
-const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' };
+const TEST_ENV = {
+  KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+  KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+};
 
 function emptyReflection() {
   return {
@@ -30,7 +26,9 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null;
+      return (
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null
+      );
     },
     { label: 'completed response run' },
   );
@@ -39,13 +37,15 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
 async function waitForRunnableJobsSettled(core: CoreHarness, timeoutMs = 15_000): Promise<void> {
   await waitFor(
     () => {
-      const runnable = core.services.mainDb!
-        .prepare(
+      const runnable = core.services
+        .mainDb!.prepare(
           "select count(*) as n from jobs where status in ('pending','running') and run_after <= ? and type not in ('wiki_suggestion','skill_suggestion')",
         )
         .get(Date.now() + 1000) as { n: number };
-      const active = core.services.runsDb!
-        .prepare("select count(*) as n from runs where status in ('queued','running','waiting_approval','waiting_lease')")
+      const active = core.services
+        .runsDb!.prepare(
+          "select count(*) as n from runs where status in ('queued','running','waiting_approval','waiting_lease')",
+        )
         .get() as { n: number };
       return runnable.n === 0 && active.n === 0 ? true : null;
     },
@@ -71,25 +71,31 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
 
       // 先产生一个被 60s 延迟去重键合并的 pending 任务（修复前它会被等待）。
       memory.scheduleCuration(false);
-      const pendingBefore = stack.core.services.mainDb!
-        .prepare("select run_after from jobs where type = 'profile_curation' and status = 'pending'")
+      const pendingBefore = stack.core.services
+        .mainDb!.prepare(
+          "select run_after from jobs where type = 'profile_curation' and status = 'pending'",
+        )
         .get() as { run_after: number } | undefined;
       expect(pendingBefore).toBeDefined();
       expect(pendingBefore!.run_after).toBeGreaterThan(Date.now() + 30_000);
 
       // curation 需要一次模型调用（retract 由代码在模型之后兜底应用）。
       stack.llm.script('mock-main', [
-        step().expect((req) => req.lastUserText().includes('<pending_proposals>')).replyJson({
-          operations: [],
-          card: '画像卡片：（无）',
-        }),
+        step()
+          .expect((req) => req.lastUserText().includes('<pending_proposals>'))
+          .replyJson({
+            operations: [],
+            card: '画像卡片：（无）',
+          }),
       ]);
       const outcome = memory.forget(bot.id, [item.id]);
       expect(outcome.proposed).toEqual([item.id]);
 
       // 立即语义：同键 pending 任务的 run_after 被提前到现在，而不是被丢弃。
-      const pendingAfter = stack.core.services.mainDb!
-        .prepare("select run_after from jobs where type = 'profile_curation' and status = 'pending'")
+      const pendingAfter = stack.core.services
+        .mainDb!.prepare(
+          "select run_after from jobs where type = 'profile_curation' and status = 'pending'",
+        )
         .get() as { run_after: number };
       expect(pendingAfter.run_after).toBeLessThanOrEqual(Date.now());
 
@@ -126,12 +132,19 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
         },
       });
       stack.llm.script('mock-main', [
-        step().expect((req) => req.lastUserText().includes('<pending_proposals>')).replyJson({
-          operations: [
-            { op: 'update', itemId: item.id, proposalId: proposal.id, content: '管理系统密码是password1234' },
-          ],
-          card: '画像卡片：在做记忆系统',
-        }),
+        step()
+          .expect((req) => req.lastUserText().includes('<pending_proposals>'))
+          .replyJson({
+            operations: [
+              {
+                op: 'update',
+                itemId: item.id,
+                proposalId: proposal.id,
+                content: '管理系统密码是password1234',
+              },
+            ],
+            card: '画像卡片：在做记忆系统',
+          }),
       ]);
       memory.scheduleCuration(true);
       await waitForRunnableJobsSettled(stack.core);
@@ -226,8 +239,8 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
       await completedRun(stack.core, conv.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection'")
+          const rows = stack.core.services
+            .mainDb!.prepare("select status from jobs where type = 'reflection'")
             .all() as Array<{ status: string }>;
           return rows.length >= 1 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -258,18 +271,17 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
       stack.llm.script('mock-light', [held]);
       await sendDrafts(stack.core, conv.id, [{ text: '再说点' }]);
       await completedRun(stack.core, conv.id);
-      await waitFor(
-        () => (stack.llm.requestsFor('mock-light').length >= 2 ? true : null),
-        { label: 'reflection request held at the mock' },
-      );
+      await waitFor(() => (stack.llm.requestsFor('mock-light').length >= 2 ? true : null), {
+        label: 'reflection request held at the mock',
+      });
 
       await stack.core.rpc.call('conversations.delete', { id: conv.id });
       held.release();
 
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection'")
+          const rows = stack.core.services
+            .mainDb!.prepare("select status from jobs where type = 'reflection'")
             .all() as Array<{ status: string }>;
           return rows.length >= 2 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -282,8 +294,8 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
       };
       expect(items.items).toHaveLength(0);
       // 无孤儿 run 行：级联删除之后反思不再重建/保留该对话的 run。
-      const orphanRuns = stack.core.services.runsDb!
-        .prepare('select count(*) as n from runs where conversation_id = ?')
+      const orphanRuns = stack.core.services
+        .runsDb!.prepare('select count(*) as n from runs where conversation_id = ?')
         .get(conv.id) as { n: number };
       expect(orphanRuns.n).toBe(0);
     } finally {

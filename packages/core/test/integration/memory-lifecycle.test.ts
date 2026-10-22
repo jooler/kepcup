@@ -12,7 +12,10 @@ import {
 } from '@kepcup/testkit';
 import type { Run } from '@kepcup/shared';
 
-const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' };
+const TEST_ENV = {
+  KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+  KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+};
 
 function emptyReflection() {
   return {

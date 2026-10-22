@@ -35,6 +35,8 @@ export const updateStatusPayloadSchema = z.object({
   phase: updateStatusPhaseSchema,
   /** New version string once known (downloaded or in progress). */
   version: z.string().optional(),
+  /** Download completion 0–100 while `downloading` (drives the progress copy). */
+  percent: z.number().min(0).max(100).optional(),
   /** Number of in-flight executions while waiting (drives the UI copy). */
   activeRuns: z.number().int().nonnegative().optional(),
   /** Human-readable detail for 'error'; already localized for display. */

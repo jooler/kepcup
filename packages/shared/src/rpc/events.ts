@@ -24,6 +24,10 @@ import { watchEntrySchema } from '../domain/watches.js';
 import { mailAccountSchema } from '../domain/mail.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
+import {
+  shareFailedChangedPayloadSchema,
+  shareTargetsChangedPayloadSchema,
+} from '../domain/share.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -399,6 +403,8 @@ export const rpcEventSchemas = {
   'app.notice': appNoticePayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
+  /** D94: 分享批次状态变化（失败恢复面板刷新）。 */
+  'share.failed.changed': shareFailedChangedPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;
@@ -432,10 +438,17 @@ export const platformUnattendedPayloadSchema = z.object({
  */
 export const platformAutostartPayloadSchema = z.object({ enabled: z.boolean() });
 
+/**
+ * D94 §5.5: 分享目标快照变了（Bot / 项目增删改或归档变化）。主进程防抖后
+ * 重新拉 `share.targets` 并原子写 App Group 里的 `targets.v1.json`。
+ */
+export const platformShareTargetsChangedPayloadSchema = shareTargetsChangedPayloadSchema;
+
 export const platformEventSchemas = {
   'platform.notify': platformNotifyPayloadSchema,
   'platform.unattended': platformUnattendedPayloadSchema,
   'platform.autostart': platformAutostartPayloadSchema,
+  'share.targets.changed': platformShareTargetsChangedPayloadSchema,
 } as const;
 export type PlatformEventName = keyof typeof platformEventSchemas;
 export const PLATFORM_EVENT_NAMES = Object.keys(platformEventSchemas) as PlatformEventName[];

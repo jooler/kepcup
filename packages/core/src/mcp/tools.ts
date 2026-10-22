@@ -310,8 +310,19 @@ function wrapMcpTool(input: {
   onSetupRequired?: McpSetupRequiredHandler | undefined;
   ui?: McpToolUiSink | undefined;
 }): ToolDefinition {
-  const { identity, server, tool, name, decision, app, mcp, gateway, secrets, onSetupRequired, ui } =
-    input;
+  const {
+    identity,
+    server,
+    tool,
+    name,
+    decision,
+    app,
+    mcp,
+    gateway,
+    secrets,
+    onSetupRequired,
+    ui,
+  } = input;
   const riskLabel =
     decision.risk === 'read' ? '只读' : decision.risk === 'write' ? '写入' : '可能有破坏性';
   // `developer` 分级（本机连接）：工具说明来自未审核的第三方——清洗不可见 / 控制字符、限长，并在
@@ -385,7 +396,8 @@ function wrapMcpTool(input: {
         return {
           ok: false,
           content: `MCP 调用失败：${error instanceof Error ? error.message : String(error)}`,
-          errorCode: error instanceof Error && 'code' in error ? String(error.code) : 'MCP_CALL_FAILED',
+          errorCode:
+            error instanceof Error && 'code' in error ? String(error.code) : 'MCP_CALL_FAILED',
           // W2: the request may have reached the server before the transport /
           // timeout failed — the ledger keeps it as uncertain (safe side).
           effect: { outcome: 'uncertain' },
@@ -435,7 +447,8 @@ const RECEIPT_ID_KEYS = ['id', 'message_id', 'messageId', 'issue_id', 'number', 
 /** Id-shaped: no whitespace, ≤ 64 chars (W4 复查 S3). */
 const RECEIPT_ID_MAX_CHARS = 64;
 /** Typical secret / token prefixes — never shown as a receipt. */
-const SECRET_PREFIX = /^(sk-|sk_|pk_|rk_|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xox[abposr]-?|AKIA|ASIA|AIza|ya29\.|eyJ)/i;
+const SECRET_PREFIX =
+  /^(sk-|sk_|pk_|rk_|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xox[abposr]-?|AKIA|ASIA|AIza|ya29\.|eyJ)/i;
 
 /**
  * Whether a receipt id looks like an id and not like a credential: no
@@ -476,12 +489,15 @@ const RECEIPT_TEXT_PARSE_MAX_CHARS = 64 * 1024;
  * card shows it as text, the model only sees it inside `<untrusted>`.
  */
 export function mcpReceiptOf(
-  result: { structuredContent?: Record<string, unknown> },
+  result: { structuredContent?: unknown },
   textParts: readonly string[],
 ): { url?: string; externalId?: string } | null {
+  // MCP 2026-07-28 允许 structuredContent 是数组 / null / 原始值（pi-mcp 1.4
+  // 起类型为 unknown）：只有普通对象才能作为回执来源。
+  const structured = result.structuredContent;
   let source: Record<string, unknown> | null =
-    result.structuredContent !== undefined && result.structuredContent !== null
-      ? result.structuredContent
+    structured !== null && typeof structured === 'object' && !Array.isArray(structured)
+      ? (structured as Record<string, unknown>)
       : null;
   if (source === null && textParts.length === 1) {
     const text = textParts[0]!.trim();

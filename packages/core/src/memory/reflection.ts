@@ -1,4 +1,4 @@
-import { AppError, type Message } from '@kepcup/shared';
+import { AppError, type Message, type Run } from '@kepcup/shared';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import { completeStructured } from '../agent/structured.js';
 import type { AgentEngine, EngineMessage } from '../agent/types.js';
@@ -17,6 +17,60 @@ import {
   type ReflectionOutput,
 } from './schemas.js';
 import type { MemoryService } from './service.js';
+
+interface ReflectionEntry {
+  /** Null for legacy/manual jobs that only carry trigger messages. */
+  runId: string | null;
+  triggerMessageIds: string[];
+  batchId: string | null;
+  /** Loop 续接 (D56): runs whose process records were replayed into this run. */
+  continuedFromRunIds?: string[];
+}
+
+/** Job payload: legacy single-run shape or debounced `entries[]` (D75 §7.2). */
+interface ReflectionPayload {
+  runId?: string;
+  triggerMessageIds?: string[];
+  batchId?: string | null;
+  continuedFromRunIds?: string[];
+  entries?: Array<Record<string, unknown>>;
+}
+
+function parseReflectionEntries(payload: ReflectionPayload): ReflectionEntry[] {
+  if (Array.isArray(payload.entries)) {
+    return payload.entries.flatMap((raw) => {
+      if (raw === null || typeof raw !== 'object') return [];
+      const runId = typeof raw['runId'] === 'string' ? raw['runId'] : null;
+      if (runId === null) return [];
+      const triggerMessageIds = Array.isArray(raw['triggerMessageIds'])
+        ? raw['triggerMessageIds'].filter((id): id is string => typeof id === 'string')
+        : [];
+      const batchId = typeof raw['batchId'] === 'string' ? raw['batchId'] : null;
+      const continued = Array.isArray(raw['continuedFromRunIds'])
+        ? raw['continuedFromRunIds'].filter((id): id is string => typeof id === 'string')
+        : [];
+      return [
+        {
+          runId,
+          triggerMessageIds,
+          batchId,
+          ...(continued.length > 0 ? { continuedFromRunIds: continued } : {}),
+        },
+      ];
+    });
+  }
+  // Legacy shape: runId may be absent (manual jobs only pass trigger messages).
+  return [
+    {
+      runId: typeof payload.runId === 'string' ? payload.runId : null,
+      triggerMessageIds: payload.triggerMessageIds ?? [],
+      batchId: payload.batchId ?? null,
+      ...(payload.continuedFromRunIds !== undefined && payload.continuedFromRunIds.length > 0
+        ? { continuedFromRunIds: payload.continuedFromRunIds }
+        : {}),
+    },
+  ];
+}
 
 export interface ReflectionJobDeps {
   engine: AgentEngine;
@@ -46,13 +100,10 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   }
   const botId = job.bot_id;
   const conversationId = job.conversation_id;
-  const payload = JSON.parse(job.payload_json) as {
-    runId?: string;
-    triggerMessageIds?: string[];
-    batchId?: string | null;
-    continuedFromRunIds?: string[];
-  };
-  const responseRunId = payload.runId ?? null;
+  const payload = JSON.parse(job.payload_json) as ReflectionPayload;
+  const entries = parseReflectionEntries(payload);
+  if (entries.length === 0) return;
+  const primaryRunId = entries[0]!.runId;
 
   // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过，
   // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次一跑。
@@ -70,19 +121,59 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   }
 
   // The conversation may have been deleted between registration and now.
-  const run = responseRunId !== null ? deps.runs.get(responseRunId) : null;
-  if (responseRunId !== null && run === null) return;
   if (deps.conversations.get(conversationId) === null) return;
+  // Drop entries whose run is gone (a deleted conversation removes its runs);
+  // legacy entries without a run id have no process record but stay valid.
+  const resolved: Array<{ entry: ReflectionEntry; run: Run | null }> = [];
+  for (const entry of entries) {
+    if (entry.runId === null) {
+      resolved.push({ entry, run: null });
+      continue;
+    }
+    const run = deps.runs.get(entry.runId);
+    if (run !== null) resolved.push({ entry, run });
+  }
+  if (resolved.length === 0) return;
 
   // D75 §7.2 / §2.4.3: private rows feed reflection only for their owner
   // bot — another member's task entries never reach this bot's memory.
   const ownView = (m: Message | null): m is Message =>
     m !== null && (m.ownerBotId === null || m.ownerBotId === botId);
-  const triggerMessages = (payload.triggerMessageIds ?? [])
-    .map((id) => deps.messages.getById(id))
-    .filter(ownView);
-  const botMessages =
-    run !== null ? run.outputMessageIds.map((id) => deps.messages.getById(id)).filter(ownView) : [];
+  const triggerMessages: Message[] = [];
+  const seenMessageIds = new Set<string>();
+  for (const { entry } of resolved) {
+    for (const id of entry.triggerMessageIds) {
+      if (seenMessageIds.has(id)) continue;
+      const message = deps.messages.getById(id);
+      if (!ownView(message)) continue;
+      seenMessageIds.add(id);
+      triggerMessages.push(message);
+    }
+  }
+  const botMessages: Message[] = [];
+  const seenBotMessageIds = new Set<string>();
+  for (const { run } of resolved) {
+    if (run === null) continue;
+    for (const id of run.outputMessageIds) {
+      if (seenBotMessageIds.has(id)) continue;
+      const message = deps.messages.getById(id);
+      if (!ownView(message)) continue;
+      seenBotMessageIds.add(id);
+      botMessages.push(message);
+    }
+  }
+  const debouncedRunIds =
+    resolved.length > 1
+      ? resolved.map(({ entry }) => entry.runId).filter((id): id is string => id !== null)
+      : [];
+  const continuedFromRunIds = [
+    ...new Set(resolved.flatMap(({ entry }) => entry.continuedFromRunIds ?? [])),
+  ];
+  const executionSteps = resolved
+    .map(({ entry }) => executionStepsSummary(deps.runs, entry.runId))
+    .filter((part) => part.length > 0)
+    .join('\n')
+    .slice(0, 4000);
 
   const reflectionRun = deps.runs.create({
     botId,
@@ -110,11 +201,12 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
       messages: reflectionInput({
         triggerMessages,
         botMessages,
-        runId: responseRunId,
-        executionSteps: executionStepsSummary(deps.runs, responseRunId),
+        runId: primaryRunId,
+        executionSteps,
         existingMemories: existing.text,
         profileCard: deps.memory.profileCardSection(),
-        continuedFromRunIds: payload.continuedFromRunIds ?? [],
+        continuedFromRunIds,
+        ...(debouncedRunIds.length > 0 ? { debouncedRunIds } : {}),
       }),
       parametersSchema: reflectionParametersSchema,
       schema: reflectionOutputSchema,
@@ -134,16 +226,12 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
       );
       return;
     }
-    await applyReflectionOutput(
-      deps,
-      botId,
-      conversationId,
-      responseRunId,
-      triggerMessages,
-      output,
-    );
-    if (responseRunId !== null) {
-      deps.runs.update(responseRunId, { summary: output.runSummary });
+    await applyReflectionOutput(deps, botId, conversationId, primaryRunId, triggerMessages, output);
+    if (primaryRunId !== null) {
+      // 合并反思的 runSummary 描述整批轮次，只记在 primary 轮（第一条
+      // entry）上；其余轮 summary 留空是有意为之——runs.summary 是单值，
+      // 逐轮写同一段摘要只会互相覆盖。
+      deps.runs.update(primaryRunId, { summary: output.runSummary });
     }
     deps.runs.update(reflectionRun.id, { status: 'completed' });
   } catch (error) {
@@ -160,7 +248,7 @@ export async function applyReflectionOutput(
   deps: ReflectionJobDeps,
   botId: string,
   conversationId: string,
-  responseRunId: string | null,
+  primaryRunId: string | null,
   triggerMessages: Array<{ id: string; batchId: string | null }>,
   output: ReflectionOutput,
 ): Promise<void> {
@@ -190,7 +278,7 @@ export async function applyReflectionOutput(
       privateToBot: memory.privateToBot,
       dueAtMs: parseIso(memory.dueAt),
       validUntilMs: parseIso(memory.validUntil),
-      evidenceRunId: responseRunId,
+      evidenceRunId: primaryRunId,
     });
     if (!result.ok) {
       deps.logger.info({ botId, reason: result.reason }, 'reflection memory dropped by validation');
@@ -224,9 +312,9 @@ export async function applyReflectionOutput(
       type: 'wiki_suggestion',
       botId,
       conversationId,
-      payload: { ...suggestion, responseRunId },
+      payload: { ...suggestion, responseRunId: primaryRunId },
       priority: 2,
-      dedupeKey: `wiki_suggestion:${responseRunId ?? 'unknown'}:${index}`,
+      dedupeKey: `wiki_suggestion:${primaryRunId ?? 'unknown'}:${index}`,
     });
   });
   if (output.skillSuggestion) {
@@ -234,9 +322,9 @@ export async function applyReflectionOutput(
       type: 'skill_suggestion',
       botId,
       conversationId,
-      payload: { ...output.skillSuggestion, responseRunId },
+      payload: { ...output.skillSuggestion, responseRunId: primaryRunId },
       priority: 2,
-      dedupeKey: `skill_suggestion:${responseRunId ?? 'unknown'}`,
+      dedupeKey: `skill_suggestion:${primaryRunId ?? 'unknown'}`,
     });
   }
 }
@@ -327,6 +415,7 @@ const REFLECTION_PROMPT = [
   '- Every memory and profileProposal includes confidence as a number from 0 to 1. An item without it is discarded.',
   '- Do not re-state memories already listed as existing.',
   '- <continued_from_runs> lists runs whose process records this execution replayed (loop continuation): facts distilled from them are already stored, so do not re-extract them as new memories.',
+  '- <debounced_runs> lists several turns reflected together: extract each distinct fact once and never repeat a memory already covered by another turn in the same input.',
   'Call submit with runSummary, memories, profileProposals (facts about the user for the shared profile), wikiSuggestions and skillSuggestion (or null).',
 ].join('\n');
 
@@ -347,6 +436,8 @@ export function reflectionInput(input: {
   profileCard: string;
   /** Loop 续接 (D56): runs whose process records were replayed into this run. */
   continuedFromRunIds?: string[];
+  /** Debounced turn reflections: several response runs reflected in one call. */
+  debouncedRunIds?: string[];
 }): EngineMessage[] {
   const render = (m: {
     id: string;
@@ -393,6 +484,10 @@ export function reflectionInput(input: {
       ? `<bot_messages>\n${input.botMessages.map(render).join('\n')}\n</bot_messages>`
       : '',
     `<response_run_id>${input.runId ?? 'unknown'}</response_run_id>`,
+    // 去抖窗口内的多轮合并反思（D75 §7.2）。
+    input.debouncedRunIds !== undefined && input.debouncedRunIds.length > 1
+      ? `<debounced_runs>${input.debouncedRunIds.join(',')}</debounced_runs>`
+      : '',
     // Loop 续接 (D56)：本次执行回放过这些 run 的过程记录，其事实已提炼过。
     input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
       ? `<continued_from_runs>${input.continuedFromRunIds.join(',')}</continued_from_runs>`

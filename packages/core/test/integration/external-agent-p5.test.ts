@@ -481,7 +481,13 @@ describe('continuation delta (P5-2 review #2, #3, #5, #12; D75 tasks)', () => {
     const { stack, started } = await start(
       { fake: { turns: [agentTurn().text('一'), agentTurn().text('二'), agentTurn().text('三')] } },
       [],
-      { memoryEmbedder: embedder, env: { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' } },
+      {
+        memoryEmbedder: embedder,
+        env: {
+          KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+          KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+        },
+      },
     );
     const bot = await agentBot(stack, 'fake');
     await stack.core.services.memory!.writeMemory(bot.id, null, {
@@ -529,56 +535,60 @@ describe('continuation delta (P5-2 review #2, #3, #5, #12; D75 tasks)', () => {
     expect(started[0]!.observed.sessions).toHaveLength(1);
   }, 40_000);
 
-  it.skipIf(process.platform === 'win32')('after an app restart a continuation does not reuse the session (no guessed delta)', async () => {
-    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-p5-restart-'));
-    const keystore = createMemoryKeystore();
-    try {
-      const first = await start({ fake: { turns: [agentTurn().text('一')] } }, [], {
-        home,
-        keystore,
-      });
-      const bot = await agentBot(first.stack, 'fake');
-      const conv = await openDirect(first.stack.core, bot.id);
-      const convId = () => conv.id;
-      first.stack.llm.script('mock-main', [
-        ...dispatch(first.stack, convId, '重启前', { instruction: 'TASK-BEFORE 回答' }),
-        relay('RELAY-BEFORE'),
-      ]);
-      await sendBatch(first.stack.core, conv.id, ['重启前']);
-      const before = await waitTask(first.stack, conv.id, 0, ['completed']);
-      await waitVisible(first.stack, conv.id, 'RELAY-BEFORE');
-      await waitFor(
-        () =>
-          domain(first.stack).runs.getOrThrow(before.id).resultConsumedAt !== null ? true : null,
-        { label: 'result consumed' },
-      );
-      await first.stack.cleanup();
-      stacks.splice(stacks.indexOf(first.stack), 1);
+  it.skipIf(process.platform === 'win32')(
+    'after an app restart a continuation does not reuse the session (no guessed delta)',
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), 'kepcup-p5-restart-'));
+      const keystore = createMemoryKeystore();
+      try {
+        const first = await start({ fake: { turns: [agentTurn().text('一')] } }, [], {
+          home,
+          keystore,
+        });
+        const bot = await agentBot(first.stack, 'fake');
+        const conv = await openDirect(first.stack.core, bot.id);
+        const convId = () => conv.id;
+        first.stack.llm.script('mock-main', [
+          ...dispatch(first.stack, convId, '重启前', { instruction: 'TASK-BEFORE 回答' }),
+          relay('RELAY-BEFORE'),
+        ]);
+        await sendBatch(first.stack.core, conv.id, ['重启前']);
+        const before = await waitTask(first.stack, conv.id, 0, ['completed']);
+        await waitVisible(first.stack, conv.id, 'RELAY-BEFORE');
+        await waitFor(
+          () =>
+            domain(first.stack).runs.getOrThrow(before.id).resultConsumedAt !== null ? true : null,
+          { label: 'result consumed' },
+        );
+        await first.stack.cleanup();
+        stacks.splice(stacks.indexOf(first.stack), 1);
 
-      const second = await start({ fake: { turns: [agentTurn().text('二')] } }, [], {
-        home,
-        keystore,
-      });
-      second.stack.llm.script('mock-main', [
-        ...dispatch(second.stack, convId, '重启后', {
-          instruction: 'TASK-AFTER 接着回答',
-          continues: () => before.id,
-        }),
-        relay('RELAY-AFTER'),
-      ]);
-      await sendBatch(second.stack.core, conv.id, ['重启后']);
-      const after = await waitTask(second.stack, conv.id, 1, ['completed']);
-      expect(after.continuedFromRunIds).toEqual([before.id]);
-      const prompt = second.started[0]!.observed.prompts[0]!.text;
-      // A new session with the full context.
-      expect(second.started[0]!.observed.sessions).toHaveLength(1);
-      expect(prompt).toContain('<platform_rules');
-      expect(prompt).toContain('重启前');
-      expect(prompt).toContain('重启后');
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  }, 50_000);
+        const second = await start({ fake: { turns: [agentTurn().text('二')] } }, [], {
+          home,
+          keystore,
+        });
+        second.stack.llm.script('mock-main', [
+          ...dispatch(second.stack, convId, '重启后', {
+            instruction: 'TASK-AFTER 接着回答',
+            continues: () => before.id,
+          }),
+          relay('RELAY-AFTER'),
+        ]);
+        await sendBatch(second.stack.core, conv.id, ['重启后']);
+        const after = await waitTask(second.stack, conv.id, 1, ['completed']);
+        expect(after.continuedFromRunIds).toEqual([before.id]);
+        const prompt = second.started[0]!.observed.prompts[0]!.text;
+        // A new session with the full context.
+        expect(second.started[0]!.observed.sessions).toHaveLength(1);
+        expect(prompt).toContain('<platform_rules');
+        expect(prompt).toContain('重启前');
+        expect(prompt).toContain('重启后');
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    50_000,
+  );
 
   it('deleting the bot while an inject waits for the agent: the task stops, nothing is re-delivered (#12)', async () => {
     const entry = fakeAgentEntry('fake-steer', { provider: 'claude' });

@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -37,6 +37,8 @@ import {
 } from './sensor-permission';
 import { wireUpdater } from './updater';
 import { createFileUpdateSourceStore } from './update-sources';
+import { ShareIntakeCoordinator, type ShareIntakeOutcome } from './share-intake/coordinator';
+import { shareGroupDir } from './share-intake/app-group';
 
 let window: BrowserWindow | null = null;
 let quitting = false;
@@ -50,8 +52,27 @@ let windowFocused = true;
 let unattendedActive = false;
 /** Latest update-gate snapshot for late-loading renderer windows (P13-B UI). */
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
+/** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
+let shareCoordinator: ShareIntakeCoordinator | null = null;
+/** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
+const pendingShareUrls: string[] = [];
 
 const isQuitting = () => quitting;
+
+/**
+ * 退出前的统一收尾（普通退出与「重启并应用更新」共用）：先立 quitting
+ * 标志，主窗口的 close 处理才不会把关闭拦成隐藏；随后停 core 重启、关掉
+ * 浏览器页面与组件预览窗口，避免它们在退出途中重新收养页面 / 建隐藏窗口。
+ */
+function beginQuit(): void {
+  quitting = true;
+  coreHost?.markQuitting();
+  // Pages (and their viewer windows) go first on every quit path, not just
+  // the tray's: a viewer closing mid-quit must not re-adopt its page into a
+  // freshly created hidden host window (that window would keep the app alive).
+  browserHost?.closeAll();
+  widgetPreviewHost?.dispose();
+}
 
 function showWindow(): void {
   if (!window) {
@@ -114,6 +135,72 @@ async function quitApp(): Promise<void> {
   } finally {
     app.quit();
   }
+}
+
+/**
+ * D94 §7.2：`kepcup://share-intake?id=…`（Share Extension 唤起主应用）。
+ * 冷启动时 URL 先到、core 还没就绪——先排队，core ready 后再消费。
+ */
+function handleShareUrl(raw: string): void {
+  if (shareCoordinator === null) {
+    pendingShareUrls.push(raw);
+    return;
+  }
+  void shareCoordinator.handleUrl(raw).then((outcome) => {
+    if (outcome === null) return;
+    // P0：把 KepCup 带到前台；静默导入是 P1 的体验优化。
+    showWindow();
+  });
+}
+
+/** core 就绪后：消费排队的分享 URL、扫描 App Group inbox、重写目标快照。 */
+async function drainShareIntakes(): Promise<void> {
+  if (shareCoordinator === null) return;
+  const queued = pendingShareUrls.splice(0, pendingShareUrls.length);
+  for (const raw of queued) {
+    await shareCoordinator.handleUrl(raw);
+  }
+  notifyShareFailures(await shareCoordinator.scan());
+  await shareCoordinator.refreshTargets();
+}
+
+/**
+ * D94 §7.5：扫描发现失败批次时发系统通知（恢复面板在主窗口里，窗口不可见时
+ * 用户没有任何别的感知）。主窗口可见且未最小化时不打扰；点击通知唤起主窗口。
+ */
+function notifyShareFailures(outcomes: ShareIntakeOutcome[]): void {
+  const failed = outcomes.filter(
+    (outcome) => outcome.state === 'failed' || outcome.state === 'failed_target',
+  );
+  if (failed.length === 0) return;
+  if (!Notification.isSupported()) return;
+  if (window !== null && window.isVisible() && !window.isMinimized() && windowFocused) return;
+  const count = failed.length;
+  const notification = new Notification({
+    title: '分享导入失败',
+    body:
+      count === 1
+        ? '有 1 个分享批次导入失败，可在恢复面板重试或删除。'
+        : `有 ${count} 个分享批次导入失败，可在恢复面板重试或删除。`,
+  });
+  notification.on('click', () => showWindow());
+  notification.show();
+}
+
+/**
+ * D94 §16.3 的兜底：沙盒扩展不一定能打开 `kepcup://`（唤起主应用是待验证项）。
+ * 主应用在运行时定期扫一眼 App Group inbox——扩展写完但没能唤起主应用时，
+ * 文件照样进得来（用户下次打开 KepCup 也会扫）。
+ */
+const SHARE_SCAN_INTERVAL_MS = 30_000;
+let shareScanTimer: NodeJS.Timeout | null = null;
+
+function startShareScanTimer(): void {
+  if (shareScanTimer !== null) return;
+  shareScanTimer = setInterval(() => {
+    void shareCoordinator?.scan().then(notifyShareFailures);
+  }, SHARE_SCAN_INTERVAL_MS);
+  shareScanTimer.unref?.();
 }
 
 function bootstrap(): void {
@@ -206,6 +293,21 @@ function bootstrap(): void {
     const logsDir = join(home, 'logs');
     mkdirSync(logsDir, { recursive: true });
     shell.showItemInFolder(logsDir);
+  });
+
+  /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
+  ipcMain.handle('shell:openPath', async (_event, target: unknown) => {
+    if (typeof target !== 'string' || !isAbsolute(target)) {
+      throw new Error('invalid path');
+    }
+    const error = await shell.openPath(target);
+    if (error.length > 0) throw new Error(error);
+  });
+  ipcMain.handle('shell:showItemInFolder', (_event, target: unknown) => {
+    if (typeof target !== 'string' || !isAbsolute(target)) {
+      throw new Error('invalid path');
+    }
+    shell.showItemInFolder(target);
   });
 
   // P13 任务 4 引导步骤 3「系统通知」: posting the first notification is what
@@ -363,6 +465,19 @@ function bootstrap(): void {
   });
 
   widgetPreviewHost = new WidgetPreviewHost();
+  // D94: 分享协调器。App Group 不可用（非 macOS / 未配置）时 groupDir = null，
+  // 协调器只做无害的跳过。
+  shareCoordinator = new ShareIntakeCoordinator({
+    groupDir: shareGroupDir(process.env, process.resourcesPath),
+    coreHome: process.env.KEPCUP_HOME ?? join(homedir(), '.kepcup'),
+    logger: {
+      // 主进程只允许 console.warn / console.error（BR-P13-008：无文案进程）。
+      info: (message, detail) => console.warn(`[share] ${message}`, detail ?? ''),
+      warn: (message, detail) => console.error(`[share] ${message}`, detail ?? ''),
+    },
+    callPlatform: <T>(method: string, input?: unknown) =>
+      coreHost!.callPlatform(method, input) as Promise<T>,
+  });
   coreHost = new CoreHost(app.getVersion(), {
     // P11: the core's browser tools call the main process over port B.
     // D73: …and so does OAuth consent (shell.openExternal, URL allow-list in shell-methods).
@@ -383,6 +498,15 @@ function bootstrap(): void {
     // The window appears once the core reports any terminal state so the
     // locked / error pages are reachable too.
     if (payload.status !== 'starting') ensureWindow();
+    // D94: core ready 后消费排队的分享 URL、扫描 App Group inbox、重写快照。
+    if (payload.status === 'ready') {
+      void drainShareIntakes();
+      startShareScanTimer();
+    }
+  });
+  // D94 §5.2: Bot / 项目 / 归档变了 → 重写 App Group 里的目标快照。
+  coreHost.onShareTargetsChanged(() => {
+    shareCoordinator?.scheduleTargetsRefresh();
   });
   coreHost.onNotify(({ conversationId, title, body }) => {
     // Focus rule (docs/design/13-permissions.md "系统通知"): never while the
@@ -451,8 +575,12 @@ function bootstrap(): void {
     // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
     // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
     forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
+    // MacUpdater 走 Electron 原生 quitAndInstall：它先关窗口、后发 before-quit。
+    // 不在这里提前立 quitting 的话，主窗口 close 会被拦成 hide，应用不退出、
+    // 更新一直等用户手动关（真机回归：点「重启并应用更新」后毫无反应）。
+    beforeQuitForUpdate: beginQuit,
   });
-  // 托盘「检查更新…」: opens the window (the banner / settings row live
+  // 托盘「检查更新…」: opens the window (the settings update row lives
   // there) and runs a manual check; failures stay silent (P13-A semantics).
   checkUpdates = () => {
     showWindow();
@@ -532,6 +660,25 @@ if (process.env.KEPCUP_HOME) {
 registerAppsUiScheme();
 guardAllAppFrames();
 
+// D94: URL Scheme 唤起（Share Extension 写完 inbox 后调用）。必须早于
+// app.ready 注册——冷启动时 URL 会在 ready 之前送达。
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleShareUrl(url);
+});
+// dev 下 scheme 由 Electron 壳注册（打包版由 Info.plist 的 CFBundleURLTypes
+// 负责，docs/design/44-macos-share-extension.md §7.2）。只做 macOS：Windows /
+// Linux 的 P0 没有分享入口（D94-10），不该往注册表 / 配置里写没人消费的 scheme。
+if (!app.isPackaged && process.platform === 'darwin') {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('kepcup', process.execPath, [
+      resolve(process.argv[1] as string),
+    ]);
+  } else {
+    app.setAsDefaultProtocolClient('kepcup');
+  }
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -541,14 +688,6 @@ if (!gotLock) {
   // Tray-resident: an empty listener keeps Electron from quitting when the
   // last window closes (non-macOS default).
   app.on('window-all-closed', () => {});
-  app.on('before-quit', () => {
-    quitting = true;
-    coreHost?.markQuitting();
-    // Pages (and their viewer windows) go first on every quit path, not just
-    // the tray's: a viewer closing mid-quit must not re-adopt its page into a
-    // freshly created hidden host window (that window would keep the app alive).
-    browserHost?.closeAll();
-    widgetPreviewHost?.dispose();
-  });
+  app.on('before-quit', beginQuit);
   void app.whenReady().then(bootstrap);
 }

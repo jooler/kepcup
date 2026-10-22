@@ -74,6 +74,16 @@ function harness(): Harness {
 }
 
 describe('UpdateGate', () => {
+  test('download progress is published while downloading and cleared when ready', async () => {
+    const h = harness();
+    h.gate.onDownloading('1.1.0', 42.4);
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', version: '1.1.0', percent: 42.4 });
+
+    await h.gate.evaluate('1.1.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+    expect(h.gate.status.percent).toBeUndefined();
+  });
+
   test('nothing in flight goes straight to ready-to-install; installNow quits+installs', async () => {
     const h = harness();
     await h.gate.evaluate('1.1.0');
@@ -240,6 +250,35 @@ describe('UpdateGate', () => {
     h.gate.onDownloading('1.1.0');
     expect(h.gate.phase).toBe('awaiting-user');
     expect(h.statuses.at(-1)?.phase).toBe('awaiting-user');
+  });
+
+  test('redundant download-progress while ready-to-install keeps the apply phase', async () => {
+    const h = harness();
+    await h.gate.evaluate('1.1.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+
+    // A scheduled re-check re-emits progress for the already-downloaded
+    // artifact; the apply button must not flip back to "downloading".
+    h.gate.onDownloading('1.1.0', 77);
+    expect(h.gate.phase).toBe('ready-to-install');
+    expect(h.statuses.at(-1)?.phase).toBe('ready-to-install');
+  });
+
+  test('redundant download-progress while waiting-runs keeps the drain state', async () => {
+    const h = harness();
+    h.setActiveRuns(1);
+    const evaluation = h.gate.evaluate('1.1.0');
+    await h.flush(5_000);
+    expect(h.gate.phase).toBe('waiting-runs');
+
+    h.gate.onDownloading('1.1.0', 77);
+    expect(h.gate.phase).toBe('waiting-runs');
+
+    // The drain continues undisturbed and still settles on its own.
+    h.setActiveRuns(0);
+    await h.flush(5_000);
+    await evaluation;
+    expect(h.gate.phase).toBe('ready-to-install');
   });
 
   test('a cancel that fails to settle the runs does NOT install (error surfaced)', async () => {

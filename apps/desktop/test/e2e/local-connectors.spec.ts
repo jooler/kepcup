@@ -46,6 +46,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
       args: ['.'],
       env: {
         ...process.env,
+        TZ: 'Asia/Shanghai',
         KEPCUP_HOME: home,
         NODE_ENV: 'test',
         KEPCUP_KEYSTORE: 'file',
@@ -216,6 +217,7 @@ test('local connectors: a cross-site authorization server gets a red warning and
       args: ['.'],
       env: {
         ...process.env,
+        TZ: 'Asia/Shanghai',
         KEPCUP_HOME: home,
         NODE_ENV: 'test',
         KEPCUP_KEYSTORE: 'file',
