@@ -158,7 +158,8 @@
    - 聚合：trigger message ids 取并集；bot messages 取各 run `outputMessageIds` 的并集；`executionStepsSummary` 逐 run 拼接后整体截断 4000 字符；
    - 反思输入加 `<debounced_runs>id1,id2</debounced_runs>`，提示模型「这些轮次合并反思，不要重复提取」；
    - `recall()` 的 query 用合并后的触发文本；
-   - `wiki_suggestion` / `skill_suggestion` 的 dedupe key 改用 `primaryRunId`（第一条 entry）+ index，避免多 run 冲突。
+   - `wiki_suggestion` / `skill_suggestion` 的 dedupe key 改用 `primaryRunId`（第一条 entry）+ index，避免多 run 冲突；
+   - runSummary 只写到 primary 轮（第一条 entry），其余轮 summary 留空是有意为之（`runs.summary` 是单值，逐轮覆写同一段摘要只会互相覆盖）。
 7. **不变量**：
    - 显式 `remember` 不入此队列，仍然即时写入；
    - 任务反思仍是 `run:{runId}`，不受窗口影响；
@@ -201,8 +202,8 @@
 ### 5.2 做法
 
 1. `ProfileStore.cardIsStale(): boolean`：
-   - `getCard().compiledAt === null` 且存在 active 条目 → stale；
-   - 否则比较 `compiledAt` 与 `max(updated_at) where status='active'`，`max > compiledAt` → stale；
+   - `getCard().compiledAt === null` 且存在条目 → stale；
+   - 否则比较 `compiledAt` 与 `max(updated_at)`（**全部条目，不限状态**——撤回/取代也会改 `updated_at`，同样要求重编译卡片），`max > compiledAt` → stale；
    - 用 `>` 而不是 `>=`，避免同一毫秒内的正常写入误判。
 2. `runProfileCurationJob`：
    - 计算 `stale = store.cardIsStale()`；
@@ -210,7 +211,7 @@
    - stale 时即使没有提案也跑一次整理，输入 `<pending_proposals>（空）</pending_proposals>`，只重编译卡片；
    - `setCard()` 后自然不再 stale。
 3. `updateProfile` / `retractProfile` 在内容、分类或状态实际变化后调用 `this.scheduleCuration(true)`（立即整理，复用现有 `hasten` 逻辑，`service.ts:644-662`）。
-4. 如果同一毫秒边界在测试中不稳定，再加 `profile_card.dirty` 列（迁移 0047）；先用时间戳方案，避免迁移。
+4. 如果同一毫秒边界在测试中不稳定，再加 `profile_card.dirty` 列（迁移号用 0048 起的下一个空位——0047 已被 share_intakes 占用）；先用时间戳方案，避免迁移。
 5. 设计文档：`04-memory.md` 的画像整理段补一句「用户直改/撤回后立即重编译卡片」。
 
 ### 5.3 测试
