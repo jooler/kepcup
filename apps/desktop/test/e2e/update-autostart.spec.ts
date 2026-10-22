@@ -142,6 +142,33 @@ test('update downloads silently; settings and sidebar expose progress and apply'
 });
 
 /**
+ * 回归（真机问题 4）：点「重启并应用更新」后应用没关、更新一直等到手动退出。
+ * macOS 的 quitAndInstall 走 Electron 原生 autoUpdater：它先关闭全部窗口，
+ * 之后才发 before-quit。主窗口的「关闭即隐藏」若只认 before-quit 的 quitting
+ * 标志，就会把窗口拦成 hide，Squirrel 永远等不到应用退出。
+ *
+ * 这里直接复现原生路径的顺序：先发 before-quit-for-update，再关窗口——
+ * 断言窗口真的被销毁（数量归零），而不是被隐藏。
+ */
+test('before-quit-for-update closes windows instead of hiding them (restart path)', async () => {
+  test.setTimeout(120_000);
+  const session = await startSession('kepcup-e2e-update-quit-');
+  const { app, page } = session;
+  try {
+    await waitReady(page);
+    const remaining = await app.evaluate(async ({ autoUpdater, BrowserWindow }) => {
+      autoUpdater.emit('before-quit-for-update');
+      for (const win of BrowserWindow.getAllWindows()) win.close();
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      return BrowserWindow.getAllWindows().length;
+    });
+    expect(remaining).toBe(0);
+  } finally {
+    await closeSession(session);
+  }
+});
+
+/**
  * 空态（无任何 Bot）启动时「+」面板自动展开引导新建：点背景收起。
  * 面板未展开（如已配置向导创建的 Bot）时静默跳过。
  */

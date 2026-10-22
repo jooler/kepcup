@@ -59,6 +59,21 @@ const pendingShareUrls: string[] = [];
 
 const isQuitting = () => quitting;
 
+/**
+ * 退出前的统一收尾（普通退出与「重启并应用更新」共用）：先立 quitting
+ * 标志，主窗口的 close 处理才不会把关闭拦成隐藏；随后停 core 重启、关掉
+ * 浏览器页面与组件预览窗口，避免它们在退出途中重新收养页面 / 建隐藏窗口。
+ */
+function beginQuit(): void {
+  quitting = true;
+  coreHost?.markQuitting();
+  // Pages (and their viewer windows) go first on every quit path, not just
+  // the tray's: a viewer closing mid-quit must not re-adopt its page into a
+  // freshly created hidden host window (that window would keep the app alive).
+  browserHost?.closeAll();
+  widgetPreviewHost?.dispose();
+}
+
 function showWindow(): void {
   if (!window) {
     ensureWindow();
@@ -560,6 +575,10 @@ function bootstrap(): void {
     // dev 下真查 feed 的显式开关（electron-updater 未打包默认跳过检查）；
     // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
     forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
+    // MacUpdater 走 Electron 原生 quitAndInstall：它先关窗口、后发 before-quit。
+    // 不在这里提前立 quitting 的话，主窗口 close 会被拦成 hide，应用不退出、
+    // 更新一直等用户手动关（真机回归：点「重启并应用更新」后毫无反应）。
+    beforeQuitForUpdate: beginQuit,
   });
   // 托盘「检查更新…」: opens the window (the settings update row lives
   // there) and runs a manual check; failures stay silent (P13-A semantics).
@@ -669,14 +688,6 @@ if (!gotLock) {
   // Tray-resident: an empty listener keeps Electron from quitting when the
   // last window closes (non-macOS default).
   app.on('window-all-closed', () => {});
-  app.on('before-quit', () => {
-    quitting = true;
-    coreHost?.markQuitting();
-    // Pages (and their viewer windows) go first on every quit path, not just
-    // the tray's: a viewer closing mid-quit must not re-adopt its page into a
-    // freshly created hidden host window (that window would keep the app alive).
-    browserHost?.closeAll();
-    widgetPreviewHost?.dispose();
-  });
+  app.on('before-quit', beginQuit);
   void app.whenReady().then(bootstrap);
 }
