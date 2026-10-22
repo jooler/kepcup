@@ -686,7 +686,7 @@ export const enUS = {
   'projectSettings.nav.members': 'Members',
   'projectSettings.nav.grants': 'Access',
   'projectSettings.nav.schedules': 'Schedules & monitoring',
-  'projectSettings.nav.danger': 'Danger zone',
+  'projectSettings.nav.danger': 'Other',
   'projectSettings.name': 'Project name',
   'projectSettings.save': 'Save',
   'projectSettings.goal': 'Project goal',
