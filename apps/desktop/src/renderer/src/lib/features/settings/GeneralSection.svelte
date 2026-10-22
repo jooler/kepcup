@@ -4,6 +4,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { core } from '$lib/rpc/client.svelte';
+  import { ArrowUpCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
@@ -12,11 +13,10 @@
   /**
    * 设置页「通用」：开机自启（P13-B）+ 工作台侧栏入口（D90，默认关）+
    * 任务 Loop（D93：经 `SettingsCatalogFields` 渲染目录条目 `general.task-loop`，
-   * 校验单一来源在 core 适配器）+ 版本与检查更新。
+   * 校验单一来源在 core 适配器）+ 版本与静默更新状态。
    */
 
   let autostart = $state(true);
-  let checking = $state(false);
   /** 点击后的乐观值；与 store 一致后清掉，避免往返期间被旧快照打回。 */
   let workbenchOverride = $state<boolean | null>(null);
   const workbench = $derived(
@@ -81,29 +81,23 @@
     }
   }
 
-  async function checkUpdate(): Promise<void> {
-    checking = true;
-    updateStore.lastCheckError = null;
-    try {
-      const result = await updateStore.checkNow();
-      if (!result.ok) {
-        toast.error(t('update.checkFailed', { reason: result.message ?? '' }));
-        return;
-      }
-      // 事件驱动（BR-P13-008，无墙钟启发）：update:status 推送与 invoke 响应
-      // 经同一 ipc 队列有序送达，checkNow() resolve 时本次检查的结果推送已经
-      // 在渲染层生效——update-not-available → idle（已是最新）；有更新 → 横幅
-      // 接管（downloading/waiting/ready，无需额外提示）；失败 → error 推送已
-      // 记入 lastCheckError 后回 idle。
-      if (updateStore.lastCheckError !== null) {
-        toast.error(t('update.checkFailed', { reason: updateStore.lastCheckError }));
-      } else if (updateStore.status.phase === 'idle') {
-        toast.success(t('update.upToDate'));
-      }
-    } catch (error) {
-      toast.error(t('update.checkFailed', { reason: String((error as Error).message ?? '') }));
-    } finally {
-      checking = false;
+  const updateStatus = $derived(updateStore.status);
+  const updateDownloading = $derived(updateStatus.phase === 'downloading');
+  const updateWaitingRuns = $derived(updateStatus.phase === 'waiting-runs');
+  const updateReady = $derived(
+    updateStatus.phase === 'ready-to-install' || updateStatus.phase === 'awaiting-user',
+  );
+  const updatePercent = $derived(Math.round(updateStatus.percent ?? 0));
+
+  async function applyUpdate(): Promise<void> {
+    const result = await updateStore.installNow();
+    if (!result.ok) {
+      toast.error(t('update.installFailed', { reason: result.message ?? '' }), {
+        action: {
+          label: t('update.viewLogs'),
+          onClick: () => void window.kepcup.openLogsDir(),
+        },
+      });
     }
   }
 </script>
@@ -140,18 +134,37 @@
   >
     <SettingsCatalogFields itemIds={['general.task-loop']} />
   </div>
-  <div class="flex items-center gap-3 text-sm">
+  <div class="flex items-center gap-3 text-sm" data-testid="settings-update-row">
     <span class="text-xs text-muted-foreground">
       {t('settings.version')}: {core.platform?.version ?? '—'}
     </span>
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={checking}
-      onclick={() => void checkUpdate()}
-      data-testid="settings-check-update"
-    >
-      {checking ? t('update.checking') : t('update.checkNow')}
-    </Button>
+    {#if updateDownloading}
+      <span
+        class="font-medium text-emerald-600 dark:text-emerald-400"
+        data-testid="settings-update-downloading"
+      >
+        {t('update.downloadingProgress', {
+          version: updateStatus.version ?? '',
+          percent: updatePercent,
+        })}
+      </span>
+    {:else if updateWaitingRuns}
+      <span
+        class="font-medium text-emerald-600 dark:text-emerald-400"
+        data-testid="settings-update-waiting"
+      >
+        {t('update.downloadedWaiting', { version: updateStatus.version ?? '' })}
+      </span>
+    {:else if updateReady}
+      <Button
+        size="sm"
+        class="bg-emerald-600 text-white hover:bg-emerald-700"
+        onclick={() => void applyUpdate()}
+        data-testid="settings-update-apply"
+      >
+        <ArrowUpCircle class="size-4" aria-hidden="true" />
+        {t('update.applyNow')}
+      </Button>
+    {/if}
   </div>
 </section>

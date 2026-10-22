@@ -155,7 +155,10 @@ export function wireUpdater(options: {
     gate.onUpToDate();
   });
   autoUpdater.on('download-progress', (progress) => {
-    if (availableVersion !== undefined) gate.onDownloading(availableVersion);
+    const percent = Number.isFinite(progress.percent)
+      ? Math.min(100, Math.max(0, progress.percent))
+      : undefined;
+    if (availableVersion !== undefined) gate.onDownloading(availableVersion, percent);
     host.log(`download progress: ${Math.round(progress.percent)}%`);
   });
   autoUpdater.on('update-downloaded', (info) => {
