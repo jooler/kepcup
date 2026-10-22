@@ -115,7 +115,8 @@ test('run status line shows the command description while a command executes', a
         title: '跑命令',
         writes: false,
         taskSteps: [
-          step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
+          // sleep so task-status-text can observe progress before the command ends
+          step().replyToolCall('bash', { command: 'sleep 5 && echo sandbox-e2e-probe' }),
           step().replyText('命令输出 sandbox-e2e-probe'),
         ],
         relay: '执行完了',
