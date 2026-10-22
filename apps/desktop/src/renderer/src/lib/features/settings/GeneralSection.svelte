@@ -4,7 +4,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { core } from '$lib/rpc/client.svelte';
-  import { ArrowUpCircle } from '@lucide/svelte';
+  import { AlertTriangle, ArrowUpCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
@@ -13,7 +13,7 @@
   /**
    * 设置页「通用」：开机自启（P13-B）+ 工作台侧栏入口（D90，默认关）+
    * 任务 Loop（D93：经 `SettingsCatalogFields` 渲染目录条目 `general.task-loop`，
-   * 校验单一来源在 core 适配器）+ 版本与静默更新状态。
+   * 校验单一来源在 core 适配器）+ 版本、静默更新状态与手动检查更新。
    */
 
   let autostart = $state(true);
@@ -84,21 +84,62 @@
   const updateStatus = $derived(updateStore.status);
   const updateDownloading = $derived(updateStatus.phase === 'downloading');
   const updateWaitingRuns = $derived(updateStatus.phase === 'waiting-runs');
-  const updateReady = $derived(
-    updateStatus.phase === 'ready-to-install' || updateStatus.phase === 'awaiting-user',
+  /** ready：门控已确认无在途执行，普通按钮直接应用（BR-P13-005 安全相位）。 */
+  const updateReadyToInstall = $derived(updateStatus.phase === 'ready-to-install');
+  /**
+   * awaiting-user：执行未在预算内排空。中断执行必须经 destructive 二次确认，
+   * 绝不能是普通样式按钮一键触发（BR-P13-005 红线）；「继续等待」重臂门控
+   * 排空轮询（BR-P13-002）。
+   */
+  const updateAwaitingUser = $derived(updateStatus.phase === 'awaiting-user');
+  /** 手动检查入口在无更新流程时可见：idle / error / checking（checking 置灰）。 */
+  const updateCanCheck = $derived(
+    updateStatus.phase === 'idle' ||
+      updateStatus.phase === 'error' ||
+      updateStatus.phase === 'checking',
   );
   const updatePercent = $derived(Math.round(updateStatus.percent ?? 0));
+  const awaitingRuns = $derived(updateStatus.activeRuns ?? 0);
+  let confirmInterrupt = $state(false);
 
-  async function applyUpdate(): Promise<void> {
-    const result = await updateStore.installNow();
-    if (!result.ok) {
-      toast.error(t('update.installFailed', { reason: result.message ?? '' }), {
-        action: {
-          label: t('update.viewLogs'),
-          onClick: () => void window.kepcup.openLogsDir(),
-        },
-      });
+  // 门控离开 awaiting-user（继续等待后排空成功 / 安装中）→ 确认框随之收起。
+  $effect(() => {
+    if (!updateAwaitingUser) confirmInterrupt = false;
+  });
+
+  async function checkUpdate(): Promise<void> {
+    updateStore.lastCheckError = null;
+    try {
+      const result = await updateStore.checkNow();
+      if (!result.ok) {
+        toast.error(t('update.checkFailed', { reason: result.message ?? '' }));
+        return;
+      }
+      // 事件驱动（BR-P13-008，无墙钟启发）：update:status 推送与 invoke 响应
+      // 经同一 ipc 队列有序送达，checkNow() resolve 时本次检查的结果推送已经
+      // 在渲染层生效——update-not-available → idle（已是最新）；有更新 →
+      // 设置行接管（downloading/waiting/ready）；失败 → error 推送已记入
+      // lastCheckError 后回 idle。
+      if (updateStore.lastCheckError !== null) {
+        toast.error(t('update.checkFailed', { reason: updateStore.lastCheckError }));
+      } else if (updateStore.status.phase === 'idle') {
+        toast.success(t('update.upToDate'));
+      }
+    } catch (error) {
+      toast.error(t('update.checkFailed', { reason: String((error as Error).message ?? '') }));
     }
+  }
+
+  /** awaiting-user 的二次确认通过：才允许中断在途执行并安装。 */
+  function confirmedInterruptInstall(): void {
+    confirmInterrupt = false;
+    void updateStore.applyWithFeedback();
+  }
+
+  /** 「继续等待」：收起确认框并重臂门控的排空轮询（不中断任何执行）。 */
+  function keepWaiting(): void {
+    confirmInterrupt = false;
+    void updateStore.keepWaiting();
   }
 </script>
 
@@ -134,19 +175,22 @@
   >
     <SettingsCatalogFields itemIds={['general.task-loop']} />
   </div>
-  <div class="flex items-center gap-3 text-sm" data-testid="settings-update-row">
+  <div class="flex flex-wrap items-center gap-3 text-sm" data-testid="settings-update-row">
     <span class="text-xs text-muted-foreground">
       {t('settings.version')}: {core.platform?.version ?? '—'}
     </span>
     {#if updateDownloading}
+      <!-- percent 未到（下载刚开始）时不显示误导性的 0%，退回无百分比文案。 -->
       <span
         class="font-medium text-emerald-600 dark:text-emerald-400"
         data-testid="settings-update-downloading"
       >
-        {t('update.downloadingProgress', {
-          version: updateStatus.version ?? '',
-          percent: updatePercent,
-        })}
+        {updateStatus.percent === undefined
+          ? t('update.downloading', { version: updateStatus.version ?? '' })
+          : t('update.downloadingProgress', {
+              version: updateStatus.version ?? '',
+              percent: updatePercent,
+            })}
       </span>
     {:else if updateWaitingRuns}
       <span
@@ -155,15 +199,71 @@
       >
         {t('update.downloadedWaiting', { version: updateStatus.version ?? '' })}
       </span>
-    {:else if updateReady}
+    {:else if updateReadyToInstall}
       <Button
         size="sm"
         class="bg-emerald-600 text-white hover:bg-emerald-700"
-        onclick={() => void applyUpdate()}
+        onclick={() => void updateStore.applyWithFeedback()}
         data-testid="settings-update-apply"
       >
         <ArrowUpCircle class="size-4" aria-hidden="true" />
         {t('update.applyNow')}
+      </Button>
+    {:else if updateAwaitingUser}
+      {#if !confirmInterrupt}
+        <Button
+          size="sm"
+          variant="destructive"
+          onclick={() => (confirmInterrupt = true)}
+          title={t('update.awaitingUser', { count: awaitingRuns })}
+          data-testid="settings-update-apply"
+        >
+          <AlertTriangle class="size-4" aria-hidden="true" />
+          {t('update.installAnyway')}
+        </Button>
+      {:else}
+        <div
+          class="flex min-w-0 flex-1 flex-wrap items-center gap-2 rounded-md border border-destructive/40
+            bg-destructive/5 p-2"
+          role="alertdialog"
+          aria-label={t('update.installAnyway')}
+          data-testid="settings-update-confirm-box"
+        >
+          <span class="min-w-0 flex-1 text-xs text-muted-foreground">
+            {t('update.awaitingUser', { count: awaitingRuns })}
+          </span>
+          <div class="flex gap-2">
+            <Button variant="outline" size="sm" onclick={() => (confirmInterrupt = false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={keepWaiting}
+              data-testid="settings-update-keep-waiting"
+            >
+              {t('update.keepWaiting')}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onclick={confirmedInterruptInstall}
+              data-testid="settings-update-install-anyway"
+            >
+              {t('update.installAnyway')}
+            </Button>
+          </div>
+        </div>
+      {/if}
+    {:else if updateCanCheck}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={updateStatus.phase === 'checking'}
+        onclick={() => void checkUpdate()}
+        data-testid="settings-check-update"
+      >
+        {updateStatus.phase === 'checking' ? t('update.checking') : t('update.checkNow')}
       </Button>
     {/if}
   </div>

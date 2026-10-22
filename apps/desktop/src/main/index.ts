@@ -538,7 +538,7 @@ function bootstrap(): void {
     // 不开则 dev 里检查恒为 skip，不影响 e2e（NODE_ENV=test 本就不排定时检查）。
     forceDevUpdateConfig: !app.isPackaged && process.env.KEPCUP_DEV_UPDATE_CHECK === '1',
   });
-  // 托盘「检查更新…」: opens the window (the banner / settings row live
+  // 托盘「检查更新…」: opens the window (the settings update row lives
   // there) and runs a manual check; failures stay silent (P13-A semantics).
   checkUpdates = () => {
     showWindow();

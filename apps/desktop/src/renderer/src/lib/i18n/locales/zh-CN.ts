@@ -1536,26 +1536,21 @@ export const zhCN = {
   'workbench.nudge.dismissBody': '之后若要启用，请到「设置 → 通用」打开「显示工作台」。',
   'workbench.nudge.gotIt': '知道了',
 
-  // --- P13 任务 2: 自动更新（更新提示 UI 留 P13-B，文案键与契约先备） --------
+  // --- P13 任务 2: 自动更新（设置行 + 左栏圆钮消费；键与 shared 契约对齐） ----
   'update.checkNow': '检查更新',
   'update.checking': '正在检查更新…',
   'update.upToDate': '当前已是最新版本',
   'update.downloading': '正在下载新版本 {version}…',
   'update.downloadingProgress': '正在下载 v{version} - {percent}%',
   'update.downloadedWaiting': '新版本 v{version} 已下载，等待执行结束…',
-  'update.applyNow': '点击应用更新',
-  'update.downloaded': '新版本 {version} 已就绪',
-  'update.restartToUpdate': '立即重启并更新',
-  'update.installOnQuit': '退出时自动安装',
-  'update.waitingRuns': '有 {count} 个执行正在进行，更新将等待它们结束后自动继续（不会中断执行）。',
+  'update.applyNow': '应用更新',
   'update.awaitingUser':
-    '有执行尚未结束，更新已暂停等待。你可以继续等待，或确认中断这些执行并立即更新（未完成的执行将被取消）。',
+    '有 {count} 个执行尚未结束，更新已暂停。可继续等待（执行结束后自动安装），或中断这些执行并立即更新（未完成的执行将被取消）。',
   'update.keepWaiting': '继续等待',
   'update.installAnyway': '中断执行并更新',
   'update.installFailed': '更新未能完成：{reason}',
   'update.checkFailed': '无法检查更新：{reason}',
   'update.viewLogs': '查看日志',
-  'update.installing': '正在重启以安装新版本…',
 
   // --- P13-B 任务 4: 首次启动引导（features/onboarding） -----------------------
   'onboarding.welcomeTitle': '欢迎使用 KepCup',

@@ -100,7 +100,8 @@ test('update downloads silently; settings and sidebar expose progress and apply'
   try {
     await waitReady(page);
 
-    // 下载中：不出现顶部横幅；设置页显示绿色进度文字，检查更新按钮已移除。
+    // 下载中：不出现顶部横幅；设置页显示绿色进度文字，手动检查按钮在下载
+    // 相位隐藏（idle/error 才显示，见 awaiting-user 用例后的回归）。
     await pushUpdate(app, { phase: 'downloading', version: '9.9.9', percent: 42 });
     await expect(page.locator('[data-testid="update-banner"]')).toHaveCount(0);
 
@@ -123,10 +124,9 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     });
 
     await openGeneralSettings(page);
-    await expect(page.locator('[data-testid="settings-update-apply"]')).toContainText(
-      '点击应用更新',
-      { timeout: 15_000 },
-    );
+    await expect(page.locator('[data-testid="settings-update-apply"]')).toContainText('应用更新', {
+      timeout: 15_000,
+    });
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
 
@@ -152,6 +152,62 @@ async function dismissStartPanel(page: Page): Promise<void> {
     // 面板没有展开，无需处理。
   }
 }
+
+test('waiting-runs shows drain copy; awaiting-user requires destructive confirmation', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-update-await-');
+  const { app, page } = session;
+  try {
+    await waitReady(page);
+
+    // waiting-runs：设置行显示「已下载、等待执行结束」且带版本号；左栏不出圆钮。
+    await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
+    await openGeneralSettings(page);
+    await expect(page.locator('[data-testid="settings-update-waiting"]')).toContainText('9.9.9', {
+      timeout: 15_000,
+    });
+    await expect(page.locator('[data-testid="settings-update-waiting"]')).toContainText(
+      '等待执行结束',
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0);
+
+    // awaiting-user：左栏圆钮转 destructive 警示态；点击先弹确认（含执行数），
+    // 「继续等待」收起确认且不安装（BR-P13-005：绝不静默中断在途执行）。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
+    const sidebarButton = page.locator('[data-testid="sidebar-update-button"]');
+    await expect(sidebarButton).toBeVisible({ timeout: 15_000 });
+    await expect(sidebarButton).toHaveAttribute('data-awaiting', 'true');
+    await sidebarButton.click();
+    const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText('2');
+    await page.locator('[data-testid="sidebar-update-keep-waiting"]').click();
+    await expect(confirm).toBeHidden();
+    // 门控重臂排空轮询（这里以 waiting-runs 推送模拟相位回流），圆钮收起。
+    await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
+    await expect(sidebarButton).toHaveCount(0, { timeout: 15_000 });
+
+    // 设置页入口同样先确认：确认框出现（含执行数），点「中断执行并更新」
+    // 才调 installNow（随后门控 installing 推送把整个入口收走）。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
+    await openGeneralSettings(page);
+    const apply = page.locator('[data-testid="settings-update-apply"]');
+    await expect(apply).toContainText('中断执行并更新', { timeout: 15_000 });
+    await apply.click();
+    const box = page.locator('[data-testid="settings-update-confirm-box"]');
+    await expect(box).toBeVisible();
+    await expect(box).toContainText('2');
+    await page.locator('[data-testid="settings-update-install-anyway"]').click();
+    await expect(box).toBeHidden();
+    await pushUpdate(app, { phase: 'installing', version: '9.9.9' });
+    await expect(page.locator('[data-testid="settings-update-apply"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+  } finally {
+    await closeSession(session);
+  }
+});
 
 test('launch-at-login switch persists in settings; in dev the OS login item is never touched', async () => {
   test.setTimeout(180_000);

@@ -1434,7 +1434,8 @@ export const enUS = {
   'settingCard.notVerified':
     "This setting hasn't been detected as complete yet. Click “I've set it up” again once it's done",
   'settingCard.appliedToast': 'Setting applied',
-  'settingCard.fieldUnsupported': 'This field needs its dedicated UI — change it on the settings page.',
+  'settingCard.fieldUnsupported':
+    'This field needs its dedicated UI — change it on the settings page.',
   'settingCard.actionFailed': 'Action failed: {error}',
   'settingCard.userOnlyHint':
     'This involves a security boundary and must be set up by you. The Bot cannot fill it in for you.',
@@ -1592,19 +1593,13 @@ export const enUS = {
   'update.downloadingProgress': 'Downloading v{version} - {percent}%',
   'update.downloadedWaiting': 'New version v{version} downloaded; waiting for runs to finish…',
   'update.applyNow': 'Apply update',
-  'update.downloaded': 'New version {version} is ready',
-  'update.restartToUpdate': 'Restart and update now',
-  'update.installOnQuit': 'Install on quit',
-  'update.waitingRuns':
-    '{count} runs are in progress. The update will continue automatically after they finish (without interrupting them).',
   'update.awaitingUser':
-    "Some runs haven't finished, so the update is paused. You can keep waiting, or confirm interrupting those runs and updating now (unfinished runs will be canceled).",
+    '{count} runs are still in progress, so the update is paused. Keep waiting (it installs automatically once they finish), or interrupt them and update now (unfinished runs will be canceled).',
   'update.keepWaiting': 'Keep waiting',
   'update.installAnyway': 'Interrupt runs and update',
   'update.installFailed': "Update couldn't complete: {reason}",
   'update.checkFailed': "Couldn't check for updates: {reason}",
   'update.viewLogs': 'View logs',
-  'update.installing': 'Restarting to install the new version…',
   'onboarding.welcomeTitle': 'Welcome to KepCup',
   'onboarding.welcomeBody':
     "KepCup helps you create, manage, and schedule your AI contacts. Each AI contact has its own personality, memory, and abilities. Your data and your AI contacts' data are stored locally at:",
@@ -2947,7 +2942,8 @@ export const enUS = {
     'Show a Workbench entry in the sidebar to organize tasks and notes',
   'settingsItem.general.workbench.field.enabled': 'Show Workbench',
   'settingsItem.general.task-loop.title': 'Task loop',
-  'settingsItem.general.task-loop.summary': 'Idle-loop protection, inactivity timeout, maximum run time and a soft budget for long tasks',
+  'settingsItem.general.task-loop.summary':
+    'Idle-loop protection, inactivity timeout, maximum run time and a soft budget for long tasks',
   'settingsItem.general.task-loop.field.idleGuardEnabled': 'Enable idle-loop detection',
   'settingsItem.general.task-loop.field.idleWarnAfter': 'Warn after',
   'settingsItem.general.task-loop.field.idleStopAfter': 'Stop after',
