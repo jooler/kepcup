@@ -1,4 +1,6 @@
 import { updateStatusPayloadSchema, type UpdateStatusPayload } from '@kepcup/shared';
+import { t } from '$lib/i18n';
+import { toast } from 'svelte-sonner';
 
 /**
  * Renderer-side snapshot of the main process's update gate (P13 任务 2).
@@ -34,6 +36,21 @@ class UpdateState {
   /** User-confirmed install (gate cancels in-flight runs first). */
   async installNow(): Promise<{ ok: boolean; message?: string }> {
     return window.kepcup.installUpdateNow();
+  }
+
+  /**
+   * Shared apply entry (settings row + sidebar round button): a failed install
+   * surfaces as a toast with a View-logs action (BR-P13-008), not just console.
+   */
+  async applyWithFeedback(
+    viewLogs: () => void = () => void window.kepcup.openLogsDir(),
+  ): Promise<void> {
+    const result = await this.installNow();
+    if (!result.ok) {
+      toast.error(t('update.installFailed', { reason: result.message ?? '' }), {
+        action: { label: t('update.viewLogs'), onClick: viewLogs },
+      });
+    }
   }
 
   /** Manual check (settings row / tray); failures are quiet. */

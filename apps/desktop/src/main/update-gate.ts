@@ -107,7 +107,19 @@ export class UpdateGate {
   }
 
   onDownloading(version: string, percent?: number): void {
-    if (this.#phase === 'installing' || this.#phase === 'awaiting-user') return;
+    // Decision/drain phases are sticky (header comment): a redundant
+    // download-progress event — e.g. the 24h scheduled re-check re-emitting
+    // progress for the already-downloaded artifact — must not knock the apply
+    // button back to "downloading". A genuinely new download still transitions
+    // through evaluate() when its update-downloaded event fires.
+    if (
+      this.#phase === 'installing' ||
+      this.#phase === 'awaiting-user' ||
+      this.#phase === 'ready-to-install' ||
+      this.#phase === 'waiting-runs'
+    ) {
+      return;
+    }
     if (percent !== undefined) this.#percent = percent;
     this.#setPhase('downloading', { version });
   }

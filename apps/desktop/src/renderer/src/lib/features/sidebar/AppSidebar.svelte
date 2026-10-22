@@ -21,7 +21,6 @@
     Check,
     Pin,
     PinOff,
-    ArrowUpCircle,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -34,11 +33,11 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { updateStore } from '$lib/stores/update.svelte';
   import { createBotConversational } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
+  import SidebarUpdateButton from './SidebarUpdateButton.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
@@ -104,22 +103,6 @@
   const workbenchActive = $derived(shell.workbenchShown);
   /** 设置 → 通用「显示工作台」；未加载快照前按默认关闭，避免闪一下。 */
   const workbenchNavVisible = $derived(settingsStore.settings?.workbenchEnabled === true);
-  /** 更新已下载（静默下载完成后才出现圆形更新按钮；下载中不打扰）。 */
-  const updateReady = $derived(
-    updateStore.status.phase === 'ready-to-install' || updateStore.status.phase === 'awaiting-user',
-  );
-
-  async function applyUpdate(): Promise<void> {
-    const result = await updateStore.installNow();
-    if (!result.ok) {
-      toast.error(t('update.installFailed', { reason: result.message ?? '' }), {
-        action: {
-          label: t('update.viewLogs'),
-          onClick: () => void window.kepcup.openLogsDir(),
-        },
-      });
-    }
-  }
 
   $effect(() => {
     // 设置快照未到时不要抢先复位：启动恢复可能已经按记忆切到工作台，
@@ -1152,19 +1135,8 @@
           >
             <Blocks class="size-5" aria-hidden="true" />
           </button>
-          {#if updateReady}
-            <button
-              type="button"
-              class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-                rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700"
-              onclick={() => void applyUpdate()}
-              aria-label={t('update.applyNow')}
-              title={t('update.applyNow')}
-              data-testid="sidebar-update-button"
-            >
-              <ArrowUpCircle class="size-5" aria-hidden="true" />
-            </button>
-          {/if}
+          <!-- 更新圆钮（ready 普通态 / awaiting-user destructive 确认态，组件内自管）。 -->
+          <SidebarUpdateButton />
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
               <button
@@ -1241,19 +1213,8 @@
             <Blocks class="size-4 shrink-0" aria-hidden="true" />
             <span class="truncate">{t('sidebar.extensionCenter')}</span>
           </button>
-          {#if updateReady}
-            <button
-              type="button"
-              class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-                rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700"
-              onclick={() => void applyUpdate()}
-              aria-label={t('update.applyNow')}
-              title={t('update.applyNow')}
-              data-testid="sidebar-update-button"
-            >
-              <ArrowUpCircle class="size-5" aria-hidden="true" />
-            </button>
-          {/if}
+          <!-- 更新圆钮（同图标模式的复用组件，语义见组件头注释）。 -->
+          <SidebarUpdateButton />
         </div>
       {/if}
     </Sidebar.Footer>
