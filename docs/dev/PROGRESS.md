@@ -1518,6 +1518,7 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **`structuredContent` 适配**：`pi-mcp@1.4` 将其类型改为 `unknown`（MCP 2026-07-28 允许数组 / `null` / 原始值）。`mcpReceiptOf` 改为只把普通对象当回执来源，数组 / `null` / 原始值不抛错、不误判，纯文本 JSON 回退保持不变；`toUiToolResult` 对非普通对象省略 `structuredContent`，只保留文本块。其余 `structuredContent` 使用点已扫描（`apps/connections.ts` 已按 `unknown` 处理，无需改）。
 - **`wrapPiTool` 图片结果**：`pi-coding-agent@1.4` 的 `read` 对图片返回 image block。包装层把 image block 收进 `ToolResult.images`（base64 / mimeType 原样，不进 `<untrusted>` 文本、不进 `ToolOutputSpill`），文本块仍按脱敏 → 落盘 / 截断 → `<untrusted>` 处理；只有图片、没有文本时文本为「（已返回图片，见附加图片）」。text-only 模型仍由引擎按现有 `toolResultBlocks` 逻辑丢弃图片并替换为提示。
 - **SSE 取消信号（建议项，已做）**：本地 `SseTransport.send` 接受 `{ signal }`，发送前已取消抛 `McpAbortError`，发送中用 `AbortSignal.any` 合并取消；取消只影响本次 dispatch，不关闭 transport、不误触发重连。
+- **P3 加固（同日补）**：`send` 签名改用 pi-mcp 1.4 导出的 `McpTransportSendOptions`；预派发检查顺序对齐上游 streamable-http（连接态先于取消态）；「发送中取消合并进 fetch signal」为有意偏离上游并登记 DEV-044，`sse-transport` 测试补 close() 中断在途 dispatch 一腿、in-flight 断言收紧到 `AbortError`。`SCREENSHOT_OMITTED_NOTE` 措辞通用化（截图与 `read` 读图共用，见 `agent/tool-execution.ts`）；`wrapPiTool` 对无效 image block（data / mimeType 非字符串、data 空串）不再静默丢弃，文本留「（image 内容已省略）」占位（与 `mcp/tools.ts` 一致）。
 - **未做 / 开放项**：未给 `createModels()` 加 KepCup `identity`（产品决定，见 DEV-042）；`read` 图片仍未向 `wrapPiTool` 传 `ctx.model`，使用上游 fallback resize（见 DEV-043）；未把上游 `details.fullOutputPath` 接入本地 spill（上游 bash 文本已含路径，按任务书不做）；Azure provider 旧 id 在代码与本地数据中均无命中（本次不做自动迁移）。
 - **验证**（macOS arm64，本工作树）：
   - 定向：`shared` build、`core` / `app-validator` typecheck 通过；`mcp-tools` / `app-ui-service` / `coding-tools-wrap` / 新增 `sse-transport` 4 文件 40 例通过；`mcp` / `mcp-loop` 集成 29 例通过；`context-compaction` / `subagent` / `model-switch` / `agent-end-transcript` / `opencode-session-header` 41 例通过。
@@ -1532,3 +1533,21 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **安全**：`files.preview` 仅允许 `hasArtifactPath` 命中的文件，`canonicalPath` 解析后必须仍等于登记路径（符号链接逃逸拒绝）；异步读取并按类型限制大小（文本 8MB / Office 12MB / 图片 24MB / PDF 32MB / 视频 48MB）。
 - **边界**：`bash` 间接写入、外部 Agent 原生工具写入暂不采集；HTML 完整脚本执行需要独立 scheme + 独立 CSP，当前不执行。
 - **验证**：定向 `file-artifacts`（core 单元 3 + 集成 1，含 RPC 读取与符号链接拒绝）、`artifact-kind`（4）、`messages-task-events`、`task-cards`、`workdir-rules`、`coding-tools-wrap` 共 44 例通过；shared/core/desktop typecheck 通过；desktop build 通过；改动文件 eslint 通过。
+
+## 记忆加固验证补记（2026-10-22，实施于 e958cd66）
+
+`feat(memory): 硬约束确定性注入与反思去抖`（e958cd66）实施时未在 PROGRESS 留验证记录，本轮审查补记。行为要点：`<hard_constraints>` 段确定性注入（status/validUntil 过滤、敏感项不入、boundaries 无条件入选、归一化去重、token 预算截断）；对话轮反思按 10 分钟窗口去抖合并（攒 6 轮提前冲刷），任务反思不进窗口；卡片陈旧判定比全部条目状态的 `max(updated_at)`。
+
+**验证（本轮复核）**：core 单测 memory-constraints / jobs-merge-payload / jobs-last-done-for / profile-store / context-assembly / context-compaction / memory-reflection-input / memory-reflection-output / memory-retrieval 9 文件 77 例；集成 memory-reflection（含本轮补的「窗口内攒够 MAX_RUNS 轮立即冲刷 + 去抖常量数值固化」）、handover-p2 7 例、memory 15 例全绿。本轮审查同时修复：jobs `fail()/defer()/resetRunningToPending` 在 running+pending 同 dedupe_key 并存（去抖设计常态）时撞 `jobs_dedupe` 部分唯一索引、行永久卡死 running 的问题——现先折入存活 pending 行（entries 按 runId 去重合并、run_after 取较早）再置 cancelled，崩溃恢复路径同修；硬约束 header 补「数据非指令」界定；词表分两级（弱词仅认 boundaries）并把 `HARD_CONSTRAINT_MAX_ITEMS` 收到 6 与 200 token 预算自洽；私聊不再加「不要在群聊透露」后缀；`registerReflection` 包独立 try/catch，反思失败不再把已完成 run 改判 failed。
+
+## main 后提交全量审查与修正（2026-10-22）
+
+对 v0.2.0 上 main 之后的全部提交（d026c4e2 更新浮层、ae1e7a56 Pi 1.4.0、e958cd66 记忆加固、657954e5 Share Extension、2bf83790 项目详情页 + 3 个文档提交）按提交分组做全量审查，修正发现的问题（详见本轮会话报告）。要点：
+
+- **更新（d026c4e2）**：awaiting-user 相位恢复 BR-P13-005/002 安全语义——destructive 样式 + 二次确认（展示将中断的执行数）才允许安装，「继续等待」入口复活（设置行与侧栏圆钮两处，圆钮抽 `SidebarUpdateButton` 组件，apply 反馈收敛进 update store）；`onDownloading` 豁免表补 ready/waiting-runs；idle/error 恢复手动「检查更新」；NoModelBanner 加 coreReady 门控；e2e 补 waiting-runs / awaiting-user 两相位断言并实跑通过。
+- **Share Extension（657954e5）**：Swift 侧组 id 改为构建期注入完整 `<TeamID>.app.kepcup.desktop`（Info.plist `KEPCUPShareGroupId`，签名构建下扩展才能拿到 App Group 容器）；`KEPCUP_SKIP_SHARE_EXTENSION` 改由 dist.mjs 按产物存在性判定并经 spawn env 下传（无 Xcode 本地打包不再必挂，陈旧 appex 一并清理）；pack 钩子的「App Group 一致性」从死代码改为真实 `codesign -d --entitlements` 比对；App Group inbox 按 24h TTL 清理、永久失败批次不再每 30s 重哈希；哈希读取异常归入 files_missing、scan 逐批次 try/catch；Swift 收集累计字节上限（60MB/单文件 30MB）+ 后台队列写盘；Info.plist 激活键包进 `NSExtensionActivationRule` 并补 image/movie 类型收集；裸 `pnpm dist --mac` 对齐 yml 双架构；core 侧 `received` 状态黑洞（scanInbox 补消费 + TTL 清理）、READ_ONLY 同目标重试不再吃缓存失败、每日 sweep 定时器、TOCTOU 单次读盘、stagedName/shareIntakeId 契约收紧、conversation.deleted 刷新 targets 快照并清死枚举值。
+- **记忆加固（e958cd66）**：见上节补记。
+- **项目详情页（2bf83790）**：e2e 补 master-detail 分区导航点击（project-chat / project-wiki / memory 三个 spec 均有同款不可达问题，实跑全绿）；窄屏（< md）恢复分区切换（横向 segmented）；自动保存防 IME 组合输入（compositionstart/end，抽 `autosave-field.svelte.ts`，12 例新单测）；失败回滚不再吞飞行期新输入；卸载补 flush。
+- **Pi 1.4.0（ae1e7a56）**：`McpTransportSendOptions` 具名导入、检查顺序对齐上游、close() 中断在途 dispatch 补测（DEV-044 登记「合并进 fetch signal」的有意偏离）；`SCREENSHOT_OMITTED_NOTE` 措辞通用化；无效 image block 留占位不再静默丢弃。
+- **文档**：design/44 状态行如实（真机验收未做）、§19.2 补登 3 条偏差（组 id 前缀 / pack 钩子校验 / 定位会话）、§12.5 测试路径、§9.1 实际布局、11-storage 补附件去向；design/41 §11.3 与实现同步；DEVIATIONS 增 DEV-044。
+- **验证**：`pnpm typecheck` 通过（svelte-check 0 error / 1 既有 warning）；`pnpm lint` 通过；`pnpm test` 收口 **559 文件 / 5988 通过 / 23 跳过 / 1 失败**——唯一失败 `environment.test.ts` 为 pino multistream 收尾偶发（单跑 14/14 通过，与本次改动无关的既有 flake）；更新与项目页 e2e 实跑通过（update-autostart 3 例、project-chat 2 例、project-wiki / memory / project-shell 窄屏段）；Swift `swiftc -typecheck` 0 警告 + 真实 `xcodebuild` 双架构 BUILD SUCCEEDED。另修复 memory.test.ts「任务 C」同毫秒边界 flake（写入前等墙钟越过 compiled_at）。

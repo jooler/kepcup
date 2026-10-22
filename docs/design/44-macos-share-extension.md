@@ -1,6 +1,6 @@
 # 44 macOS Share Extension（系统分享接收）
 
-**状态：P0 已实施（2026-10-22）。决策编号 D94。P0 前置预研见 §16（结论见 §19）。**
+**状态：P0 代码已实施（S1–S10，2026-10-22）；§15 验收中依赖真机的部分未做（见 §19.4）。决策编号 D94。P0 前置预研见 §16（结论见 §19）。**
 
 ## 0 摘要
 
@@ -556,7 +556,7 @@ apps/desktop/src/main/share-intake/
 - `Info.plist` / `electron-builder.yml` 的 `extendInfo` 增 `CFBundleURLTypes`，注册 `kepcup` scheme。
 - `app.on('open-url')`：`preventDefault`，解析 `kepcup://share-intake?id=…`，等待 app ready + core ready 后消费；冷启动排队。
 - `requestSingleInstanceLock` 已有；macOS 下同一路径即可。Windows 另案。
-- P0 默认把 KepCup 带到前台并定位到目标会话；静默导入（不抢焦点）作为 P1 体验优化。
+- P0 默认把 KepCup 带到前台并定位到目标会话（已登记偏差：当前实现只聚焦主窗口，定位到目标会话待接线，见 §19.2 第 10 条）；静默导入（不抢焦点）作为 P1 体验优化。
 - 启动时扫描 App Group 与 `{home}/inbox/share`：App Group 由主进程处理；core inbox 由 core 启动 `sweep` / `consume` 处理，主进程可补调一次 `share.consume` 防漏。
 - 主进程未 ready / core 未 ready 时保留 inbox，不做破坏性清理。
 
@@ -626,7 +626,7 @@ apps/desktop/src/main/share-intake/
 
 ### 9.1 目录与目标
 
-建议：
+实际布局（实施时未拆 `Shared/` 子目录，全部 Swift 源码在 `ShareExtension/` 下；较原建议多出 `PayloadCollector.swift`——从 `NSExtensionItem` 提取文件 / 纯文本载荷）：
 
 ```text
 apps/desktop/macos/ShareExtension/
@@ -637,8 +637,8 @@ apps/desktop/macos/ShareExtension/
     ShareViewController.swift
     TargetPickerView.swift
     InboxWriter.swift
+    PayloadCollector.swift
     SharedConfig.swift
-  Shared/
     ShareManifest.swift
     ShareTargets.swift
 ```
@@ -807,7 +807,8 @@ apps/desktop/macos/ShareExtension/
 node scripts/run-tests.mjs run packages/shared/test/unit/share-*.test.ts
 node scripts/run-tests.mjs run packages/core/test/unit/share-*.test.ts
 node scripts/run-tests.mjs run packages/core/test/integration/share-*.test.ts
-node scripts/run-tests.mjs run apps/desktop/test/share-*.test.ts
+node scripts/run-tests.mjs run apps/desktop/src/main/share-intake/share-intake.test.ts
+node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/features/share/share-recovery.svelte.test.ts
 ```
 
 涉及 shared 契约先 `pnpm --filter @kepcup/shared build`；类型检查按包跑 `pnpm --filter @kepcup/core typecheck`、`pnpm --filter @kepcup/desktop typecheck`。全量测试只在收口 / 最终交付前跑一次。
@@ -890,7 +891,8 @@ node scripts/run-tests.mjs run apps/desktop/test/share-*.test.ts
 |---|---|
 | 2026-10-22 | 初版评审修订：补 App Group 路径、扩展沙盒、URL Scheme、`share_intakes` 幂等、失败恢复、归档恢复、空附言、纯文本 `.txt`、P0 不解析 @、去掉 `attachments.source`、修正 D22 → D63、D30 → D75。 |
 | 2026-10-22 | 按用户确认改为 **workspace 稳定副本路径**：上下文附件行带 `path`，按查看 Bot 物化（项目组各 Bot 独立），路径不落消息 / DB；`get_attachment` 复用 / 重建；补完整实施任务、RPC、表结构、原生扩展、打包签名、测试与验收。 |
-| 2026-10-22 | **P0 实施完成**（S1–S10）：shared 契约 + `share_intakes` 迁移 + core 分享服务（幂等 / 事务 / 目标解析 / 失败恢复 / 清扫）+ 上下文 workspace 副本 path + 平台与 App RPC + 主进程协调器（App Group inbox → core inbox → `share.consume`）+ 恢复面板 + 原生 Share Extension（Swift / Xcode 目标）+ 打包签名钩子；实施偏差与 §16 预研结论见 §19。 |
+| 2026-10-22 | **P0 实施完成**（S1–S10）：shared 契约 + `share_intakes` 迁移 + core 分享服务（幂等 / 事务 / 目标解析 / 失败恢复 / 清扫）+ 上下文 workspace 副本 path + 平台与 App RPC + 主进程协调器（App Group inbox → core inbox → `share.consume`）+ 恢复面板 + 原生 Share Extension（Swift / Xcode 目标）+ 打包签名钩子；实施偏差与 §16 预研结论见 §19。代码与单测完成；**§15 验收中真机相关条目未做**（微信 / Finder 分享、签名包下 App Group 读写、公证与系统分享列表可见性，见 §19.4），完成前 P0 不算收口。 |
+| 2026-10-22 | 承诺-实现偏差补登（§19.2 第 8–10 条）：扩展 Swift 常量组 id 缺 TeamID 前缀（修复中）、pack 钩子 App Group 一致性校验未真实实现（修复中）、分享导入未定位到目标会话（待接线）；§12.5 测试命令改为实际路径、§9.1 目录结构按实际布局修正、`11-storage.md` 补分享附件去向说明。 |
 
 ## 19 实施记录（P0，2026-10-22）
 
@@ -918,6 +920,9 @@ node scripts/run-tests.mjs run apps/desktop/test/share-*.test.ts
 5. **失败批次保留 7 天**、**`processing` 超时 10 分钟**、**目标快照 24 小时过期**均按设计实现；`done` 记录同样 7 天后清理。
 6. **`get_attachment` 的二进制副本也是 0444**：设计 §6.6 要求它复用 `ensureShareAttachmentCopy` 的落点，而该 helper 统一写 0444（只读语义）。Bot 要改这个副本得先复制到 workspace 其它位置——与 §5.7 的语义一致。
 7. **Xcode 目标用显式 file reference**（不是 file-system synchronized group）：后者在 `-arch x64` 时会把编译步骤静默跳过、产物里没有可执行文件。另外 `xcodebuild` 的架构名是 `x86_64`（不是 electron-builder 的 `x64`）——传 `x64` 会让 `ARCHS` 变成无效值、同样跳过编译。`scripts/build-share-extension.mjs` 负责这层名字映射，产物目录仍用 electron-builder 的 `${arch}` 命名。
+8. **扩展 Swift 常量组 id 缺 TeamID 前缀**（§9.1 / §9.6 与 entitlements 不一致）：`SharedConfig.swift` 的组 id 常量是不带前缀的 `app.kepcup.desktop`，而 entitlements（扩展与主应用）用 `$(TeamIdentifierPrefix)app.kepcup.desktop`——签名产物里扩展代码查找的组与 entitlements 实际授权的组不一致，App Group 容器目录对不上。修复中：构建期把解析到的 TeamID 前缀注入扩展使用的组 id（与 §19.2 第 4 条的 entitlements 展开同一来源）。
+9. **pack 钩子的 App Group 一致性校验未真实实现**（§10.2 承诺「主应用与扩展 App Group id 一致」）：`pack-hooks.cjs` 里对应分支的判定条件恒为假（bundle id 前缀在上一行已断言成立），从未真正比对过两边的组 id——形同没有校验。修复中：改为真实读取主应用与扩展的组 id 并比对（组 id 以构建脚本写入 `group.json` 的展开值为准）。
+10. **分享导入未定位到目标会话**（§7.2「带到前台并定位到目标会话」）：主进程 `handleShareUrl` 只 `showWindow`，未调既有的 `showConversation`（消费结果里已有目标会话 id）。已登记：定位到目标会话待接线；接线前行为是「只聚焦主窗口，停在当前会话」，消息本身照常落入目标会话。
 
 ### 19.3 §16 预研项的落地结论
 
