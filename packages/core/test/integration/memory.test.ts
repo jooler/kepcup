@@ -15,7 +15,10 @@ import {
 import type { Bot, Run } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 
-const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '50' };
+const TEST_ENV = {
+  KEPCUP_PROFILE_CURATION_DELAY_MS: '50',
+  KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+};
 
 /**
  * 真正注入的 `<user_profile>` 段（标签后紧跟换行）。平台规则的画像查询引导文本
@@ -309,7 +312,9 @@ describe('P07 记忆与画像（集成）', () => {
           reason: '用户要求更正式',
         }),
         step()
-          .expect((req) => JSON.stringify(req.body.messages).includes('修改建议已作为审批卡发给用户'))
+          .expect((req) =>
+            JSON.stringify(req.body.messages).includes('修改建议已作为审批卡发给用户'),
+          )
           .replyText('建议已提交，等你确认'),
         step()
           .expect((req) => req.lastUserText().includes('profile_change_result'))
@@ -354,7 +359,8 @@ describe('P07 记忆与画像（集成）', () => {
           })) as { runs: Run[] };
           return (
             result.runs.find(
-              (r) => r.loopType === 'turn' && r.triggerReason === 'event' && r.status === 'completed',
+              (r) =>
+                r.loopType === 'turn' && r.triggerReason === 'event' && r.status === 'completed',
             ) ?? null
           );
         },
@@ -597,16 +603,23 @@ describe('P07 记忆与画像（集成）', () => {
 
       // 媒体调用行（token 为 0）按行数计入 calls；memory 行带 token。
       const usage = stack.core.services.domain!.usage;
-      const base = { runId: 'media_x', botId: bot.id, conversationId: null, provider: 'dashscope', model: 'm', costUsd: null };
+      const base = {
+        runId: 'media_x',
+        botId: bot.id,
+        conversationId: null,
+        provider: 'dashscope',
+        model: 'm',
+        costUsd: null,
+      };
       usage.record({ ...base, loopType: 'voice_input', inputTokens: 500, outputTokens: 500 });
       usage.record({ ...base, loopType: 'memory', inputTokens: 7, outputTokens: 0 });
       usage.record({ ...base, loopType: 'memory', inputTokens: 0, outputTokens: 0 });
       const again = (await stack.core.rpc.call('usage.summary', { days: 3 })) as {
         entries: Array<{ botId: string | null; loopType: string; calls?: number }>;
       };
-      expect(
-        again.entries.find((e) => e.botId === bot.id && e.loopType === 'memory')?.calls,
-      ).toBe(2);
+      expect(again.entries.find((e) => e.botId === bot.id && e.loopType === 'memory')?.calls).toBe(
+        2,
+      );
       expect(
         again.entries.find((e) => e.botId === bot.id && e.loopType === 'voice_input')?.calls,
       ).toBe(1);
@@ -863,6 +876,123 @@ describe('P07 记忆与画像（集成）', () => {
       expect(status.provider).toBe('dashscope');
       expect(status.model).toBe('text-embedding-v4');
       expect(status.ready).toBe(true);
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('硬约束直接读条目：与检索无关地注入，撤回后下一轮消失', async () => {
+    const stack = await createTestStack({
+      env: { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000', KEPCUP_REFLECTION_DEBOUNCE_MS: '0' },
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿坚');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script('mock-main', [
+        step()
+          .expect((req) => req.lastUserText().includes('记住'))
+          .replyToolCall('remember', { content: '我对坚果过敏', kind: 'fact' }),
+        step().replyText('记住了'),
+      ]);
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '记住：我对坚果过敏' }]);
+      await completedRun(stack.core, conv.id);
+      const item = (await listMemoryItems(stack.core, bot.id)).find((entry) =>
+        entry.content.includes('坚果过敏'),
+      )!;
+      expect(item).toBeDefined();
+
+      // 与饮食无关的轮次也注入；检索（FTS）里没有这条也不会漏。
+      stack.llm.script('mock-main', [step().replyText('好的')]);
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '推荐个甜点' }]);
+      const injected = await waitFor(
+        () =>
+          stack.llm
+            .requestsFor('mock-main')
+            .find((req) => JSON.stringify(req.body).includes('<hard_constraints>\\n')) ?? null,
+        { label: 'hard constraints injection' },
+      );
+      const body = JSON.stringify(injected.body);
+      expect(body).toContain('坚果过敏');
+      expect(body).toContain(item.id);
+      expect(body).toContain('以下为用户明确的硬性约束');
+
+      await stack.core.rpc.call('memory.retract', { botId: bot.id, id: item.id });
+      stack.llm.script('mock-main', [step().replyText('好')]);
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '再推荐一个' }]);
+      const next = await waitFor(
+        () =>
+          stack.llm
+            .requestsFor('mock-main')
+            .find((req) => req.lastUserText().includes('再推荐一个')) ?? null,
+        { label: 'next turn request' },
+      );
+      expect(JSON.stringify(next.body)).not.toContain('<hard_constraints>\\n');
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('用户直改/撤回画像后立即重编译卡片（任务 C）', async () => {
+    const stack = await createTestStack({ env: TEST_ENV });
+    try {
+      await makeBot(stack.core, '阿卡');
+      const memory = stack.core.services.memory!;
+      const item = memory.profileStore.insert({
+        category: 'boundaries',
+        content: '用户不吃香菜',
+        source: 'explicit',
+        evidence: [],
+        contributedBy: null,
+        confidence: 1,
+      });
+      memory.profileStore.setCard('画像卡片：不吃香菜');
+
+      stack.llm.script('mock-main', [
+        step()
+          .expect((req) => req.lastUserText().includes('<pending_proposals>'))
+          .replyJson({ operations: [], card: '画像卡片：对坚果过敏' }),
+        step()
+          .expect((req) => req.lastUserText().includes('<pending_proposals>'))
+          .replyJson({ operations: [], card: '画像卡片：（无）' }),
+      ]);
+
+      await stack.core.rpc.call('profile.update', {
+        id: item.id,
+        content: '用户对坚果过敏',
+      });
+      await waitForRunnableJobsSettled(stack.core);
+      expect((await getCard(stack.core)).card.content).toBe('画像卡片：对坚果过敏');
+
+      await stack.core.rpc.call('profile.retract', { id: item.id });
+      await waitForRunnableJobsSettled(stack.core);
+      expect((await getCard(stack.core)).card.content).toBe('画像卡片：（无）');
+      expect(memory.profileStore.cardIsStale()).toBe(false);
+
+      // 内容未变不重复调度整理。
+      stack.core.services.domain!.jobs.enqueue({
+        type: 'profile_curation',
+        payload: {},
+        priority: 2,
+        dedupeKey: 'probe_profile_curation',
+      });
+      const before = (
+        stack.core.services
+          .mainDb!.prepare("select count(*) as n from jobs where type = 'profile_curation'")
+          .get() as { n: number }
+      ).n;
+      await stack.core.rpc.call('profile.update', {
+        id: item.id,
+        content: '用户对坚果过敏',
+      });
+      const after = (
+        stack.core.services
+          .mainDb!.prepare("select count(*) as n from jobs where type = 'profile_curation'")
+          .get() as { n: number }
+      ).n;
+      expect(after).toBe(before);
     } finally {
       await stack.cleanup();
     }

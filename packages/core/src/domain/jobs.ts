@@ -85,6 +85,34 @@ export class JobsService {
   }
 
   /**
+   * Merges new state into the pending job with this dedupe key, without
+   * touching its `run_after` (the debounce window must not be extended).
+   * Returns false when there is no pending row (never claimed or already
+   * running) — the caller then enqueues a fresh job.
+   */
+  mergePendingPayload(
+    dedupeKey: string,
+    updater: (payload: Record<string, unknown>) => Record<string, unknown>,
+  ): boolean {
+    let merged = false;
+    const apply = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "select id, payload_json from jobs where dedupe_key = ? and status = 'pending' order by created_at limit 1",
+        )
+        .get(dedupeKey) as { id: string; payload_json: string } | undefined;
+      if (row === undefined) return;
+      const current = JSON.parse(row.payload_json) as Record<string, unknown>;
+      this.db
+        .prepare('update jobs set payload_json = ?, updated_at = ? where id = ?')
+        .run(JSON.stringify(updater(current)), this.clock.now(), row.id);
+      merged = true;
+    });
+    apply.immediate();
+    return merged;
+  }
+
+  /**
    * Claims the next runnable job (priority first, then age). `excludeTypes`
    * keeps those types pending forever (P07: suggestion jobs stored for later
    * phases are never consumed here).
@@ -239,7 +267,9 @@ export class JobsService {
   latestByDedupeKey(dedupeKey: string): JobRow | null {
     return (
       (this.db
-        .prepare('select * from jobs where dedupe_key = ? order by created_at desc, rowid desc limit 1')
+        .prepare(
+          'select * from jobs where dedupe_key = ? order by created_at desc, rowid desc limit 1',
+        )
         .get(dedupeKey) as JobRow | undefined) ?? null
     );
   }

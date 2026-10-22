@@ -191,7 +191,11 @@ import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
 import { AppSkillsOffers } from './apps/skills-offer.js';
 import { ToolLockService } from './apps/tool-lock.js';
-import { createShellHostRpc, type DeferredShellHostRpc, type ShellHostRpc } from './apps/shell-facade.js';
+import {
+  createShellHostRpc,
+  type DeferredShellHostRpc,
+  type ShellHostRpc,
+} from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
 import type { CoreEventsMap } from './start-types.js';
 
@@ -673,10 +677,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；
   // 查询函数在域服务建好后赋值，锁定/未解锁期间原样放行。
   let lookupDirectBot: ((botId: string) => Bot | null) | null = null;
-  const events = withDirectConversationBots(
-    createEventBus<CoreEventsMap>(),
-    () => lookupDirectBot,
-  );
+  const events = withDirectConversationBots(createEventBus<CoreEventsMap>(), () => lookupDirectBot);
   // BR-P13-007 test seam: production restore by default; tests inject a
   // failing wrapper to pin the honest migration-failure statusReason.
   const restoreBackup = options.restoreBackup ?? restoreDatabaseBackup;
@@ -716,8 +717,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const wslSetupSuppressedByTestSeam =
     __KEPCUP_TEST_HOOKS__ === true && env.KEPCUP_WSL_PROMPT === 'off';
   const wslSetup =
-    wslFixtureScenario !== null ||
-    (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
+    wslFixtureScenario !== null || (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
       : null;
   const sandbox = createSandboxBackend({
@@ -1244,7 +1244,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const guardedMcpFetch = createGuardedMcpFetch(apps.loopbackAllowlist);
     mcp.attachHttpFetch((server) => {
       const row = apps.store.get(server.id);
-      return row !== null && connectorCatalog.isLocal(row.connectorId) ? guardedMcpFetch : undefined;
+      return row !== null && connectorCatalog.isLocal(row.connectorId)
+        ? guardedMcpFetch
+        : undefined;
     });
     const connectedAppsRef: { current?: ConnectedApps } = {};
     const toolLock = new ToolLockService({
@@ -1526,6 +1528,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       ...(parseCurationDelayMs(env) !== undefined
         ? { curationDelayMs: parseCurationDelayMs(env) }
         : {}),
+      ...(parseReflectionDebounceMs(env) !== undefined
+        ? { reflectionDebounceMs: parseReflectionDebounceMs(env) }
+        : {}),
       // P10 commitment linkage rides the internal event bus (start-types.ts).
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
@@ -1647,10 +1652,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             approvalSource: 'default',
             enabled: false,
           };
-          if (appServer === null || !selectedByBot || !isExposableStatus(appView.connection.status)) {
+          if (
+            appServer === null ||
+            !selectedByBot ||
+            !isExposableStatus(appView.connection.status)
+          ) {
             return denied;
           }
-          const base = await mcp.resolveRisk(appServer, toolName, signal !== undefined ? { signal } : {});
+          const base = await mcp.resolveRisk(
+            appServer,
+            toolName,
+            signal !== undefined ? { signal } : {},
+          );
           const appDecision = connectedApps.decisionFor(serverId, toolName, base) ?? denied;
           return mcp.toolApproved(appServer, toolName)
             ? appDecision
@@ -1669,7 +1682,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             enabled: false,
           };
         }
-        const risk = await mcp.resolveRisk(server, toolName, signal !== undefined ? { signal } : {});
+        const risk = await mcp.resolveRisk(
+          server,
+          toolName,
+          signal !== undefined ? { signal } : {},
+        );
         const decision = decideMcpTool(server, toolName, risk);
         // D73 P1: a tool whose definition is unreviewed (new / changed since it was offered, e.g.
         // mid-run) is not callable — same refusal as a tool the user switched off.
@@ -1973,13 +1990,20 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         const modelId = modelRef.slice(slash + 1);
         try {
           const provider = providers.list().find((info) => info.id === providerId);
-          return provider !== undefined && provider.hasKey && provider.models.some((m) => m.id === modelId);
+          return (
+            provider !== undefined &&
+            provider.hasKey &&
+            provider.models.some((m) => m.id === modelId)
+          );
         } catch {
           return false;
         }
       },
       preview: (opts) =>
-        createWidgetPreviewRunner({ rpc: services.widgetPreviewRpc, screenshots: opts.screenshots }),
+        createWidgetPreviewRunner({
+          rpc: services.widgetPreviewRpc,
+          screenshots: opts.screenshots,
+        }),
     });
     try {
       widgetCraft.sweepDrafts();
@@ -2314,7 +2338,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const publishAppNotice = (notice: AppNoticePayload): void => {
       events.emit('app.notice', notice);
       if (notice.level === 'error' && notice.dismiss !== true) {
-        events.emit('platform.notify', { conversationId: null, title: 'KepCup', body: notice.text });
+        events.emit('platform.notify', {
+          conversationId: null,
+          title: 'KepCup',
+          body: notice.text,
+        });
       }
     };
     // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
@@ -2980,6 +3008,18 @@ function parseCurationDelayMs(env: NodeJS.ProcessEnv): number | undefined {
 }
 
 /**
+ * Test hook: KEPCUP_REFLECTION_DEBOUNCE_MS overrides the turn-reflection
+ * debounce window (production default stays REFLECTION_TURN_DEBOUNCE_MS);
+ * 0 disables debouncing and reflects each turn separately.
+ */
+function parseReflectionDebounceMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.KEPCUP_REFLECTION_DEBOUNCE_MS;
+  if (raw === undefined || raw.length === 0) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/**
  * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS for the
  * routing judgements (D92 T1a: the continuation check and the lead gate; the
  * constants.ts default stays the single source of truth for production).
@@ -2997,9 +3037,7 @@ function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
  * ping-pong instead of 12/8 live mentions). Unset parts fall back to the
  * shared constants.
  */
-function parseEpisodeLimits(
-  env: NodeJS.ProcessEnv,
-): { hops?: number; pair?: number } | undefined {
+function parseEpisodeLimits(env: NodeJS.ProcessEnv): { hops?: number; pair?: number } | undefined {
   const hops = Number(env.KEPCUP_EPISODE_HOP_BREAKER);
   const pair = Number(env.KEPCUP_EPISODE_PAIR_BREAKER);
   const limits: { hops?: number; pair?: number } = {};
@@ -3348,7 +3386,10 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         };
         if (services.orchestrator === null) return { injected: 0 };
         const injected = services.orchestrator.tasks.notifyBrowserHandback(botId, conversationId);
-        services.logger.info({ botId, conversationId, reason, injected }, 'browser control returned');
+        services.logger.info(
+          { botId, conversationId, reason, injected },
+          'browser control returned',
+        );
         return { injected };
       },
     },

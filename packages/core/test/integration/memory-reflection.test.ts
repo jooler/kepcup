@@ -10,12 +10,15 @@ import {
   step,
   waitFor,
 } from '@kepcup/testkit';
-import type { Run } from '@kepcup/shared';
+import type { Run, RunIdentity } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 
 // 反思输出引用真实消息 id：两阶段编排——第一轮产生消息并空反射，
 // 第二轮的反射步骤用第一轮的真实消息 id 作为证据。
-const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' };
+const TEST_ENV = {
+  KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+  KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+};
 
 function emptyReflection() {
   return {
@@ -38,7 +41,9 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null;
+      return (
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null
+      );
     },
     { label: 'completed response run' },
   );
@@ -47,8 +52,8 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
 async function waitForReflectionsDone(core: CoreHarness, count: number): Promise<void> {
   await waitFor(
     () => {
-      const rows = core.services.mainDb!
-        .prepare("select status from jobs where type = 'reflection' order by created_at")
+      const rows = core.services
+        .mainDb!.prepare("select status from jobs where type = 'reflection' order by created_at")
         .all() as Array<{ status: string }>;
       return rows.length >= count && rows.every((row) => row.status === 'done') ? true : null;
     },
@@ -78,7 +83,9 @@ async function seedTurn(
 
 function reflectionCount(core: CoreHarness): number {
   return (
-    core.services.mainDb!.prepare("select count(*) as n from jobs where type = 'reflection'").get() as {
+    core.services
+      .mainDb!.prepare("select count(*) as n from jobs where type = 'reflection'")
+      .get() as {
       n: number;
     }
   ).n;
@@ -108,7 +115,9 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
             },
           ],
           profileProposals: [],
-          wikiSuggestions: [{ sourceType: 'attachment', ref: 'att_demo', note: '部署文档值得入库' }],
+          wikiSuggestions: [
+            { sourceType: 'attachment', ref: 'att_demo', note: '部署文档值得入库' },
+          ],
           skillSuggestion: { name: 'deploy', description: '固定部署流程', reason: '重复任务' },
         }),
       ]);
@@ -123,7 +132,10 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       expect(result.items[0]!.content).toContain('Deploy.md');
       expect(result.items[0]!.origin).toBe('private');
 
-      const fresh = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 10 })) as {
+      const fresh = (await stack.core.rpc.call('runs.list', {
+        conversationId: conv.id,
+        limit: 10,
+      })) as {
         runs: Run[];
       };
       const responseRuns = fresh.runs.filter((r) => r.loopType === 'turn');
@@ -145,17 +157,21 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       // 合法，不与消费方竞速（BR-P08-009①）。
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'wiki_suggestion'")
+          const rows = stack.core.services
+            .mainDb!.prepare("select status from jobs where type = 'wiki_suggestion'")
             .all() as Array<{ status: string }>;
           return rows.length >= 1 && rows.every((row) => row.status === 'done') ? true : null;
         },
         { label: 'wiki_suggestion consumed by P09' },
       );
-      const jobs = stack.core.services.mainDb!
-        .prepare("select type, status from jobs where type in ('wiki_suggestion','skill_suggestion','wiki_ingest')")
+      const jobs = stack.core.services
+        .mainDb!.prepare(
+          "select type, status from jobs where type in ('wiki_suggestion','skill_suggestion','wiki_ingest')",
+        )
         .all() as Array<{ type: string; status: string }>;
-      expect(jobs.some((job) => job.type === 'wiki_suggestion' && job.status === 'done')).toBe(true);
+      expect(jobs.some((job) => job.type === 'wiki_suggestion' && job.status === 'done')).toBe(
+        true,
+      );
       expect(jobs.some((job) => job.type === 'skill_suggestion')).toBe(true);
       // P09：wiki_suggestion 消费后登记了 wiki_ingest 任务。
       expect(jobs.some((job) => job.type === 'wiki_ingest')).toBe(true);
@@ -173,10 +189,12 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
 
       stack.llm.script('mock-main', [
         step().replyText('嗯'),
-        step().expect((req) => req.lastUserText().includes('<pending_proposals>')).replyJson({
-          operations: [],
-          card: '画像卡片：（测试）',
-        }),
+        step()
+          .expect((req) => req.lastUserText().includes('<pending_proposals>'))
+          .replyJson({
+            operations: [],
+            card: '画像卡片：（测试）',
+          }),
       ]);
       stack.llm.script('mock-light', [
         step().replyJson({
@@ -220,7 +238,9 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
         { label: 'one pending proposal (user evidence only)' },
       );
       expect((proposals[0]!.payload as { content?: string }).content).toContain('用户消息证据');
-      expect((await stack.core.rpc.call('profile.list') as { items: unknown[] }).items).toHaveLength(0);
+      expect(
+        ((await stack.core.rpc.call('profile.list')) as { items: unknown[] }).items,
+      ).toHaveLength(0);
     } finally {
       await stack.cleanup();
     }
@@ -276,7 +296,9 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       await completedRun(stack.core, conv.id);
       await waitForReflectionsDone(stack.core, 2);
 
-      expect((await stack.core.rpc.call('profile.list') as { items: unknown[] }).items).toHaveLength(0);
+      expect(
+        ((await stack.core.rpc.call('profile.list')) as { items: unknown[] }).items,
+      ).toHaveLength(0);
       const result = (await stack.core.rpc.call('memory.list', { botId: botA.id })) as {
         items: Array<{ content: string; sensitivity: string }>;
       };
@@ -290,13 +312,16 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       await sendDrafts(stack.core, group.id, [{ text: '聊聊用户的猫吧', mentions: [botA.id] }]);
       await waitFor(
         () =>
-          stack.llm.requestsFor('mock-main').some((req) => JSON.stringify(req.body).includes('年糕'))
+          stack.llm
+            .requestsFor('mock-main')
+            .some((req) => JSON.stringify(req.body).includes('年糕'))
             ? true
             : null,
         { label: 'group injection' },
       );
       const body = JSON.stringify(
-        stack.llm.requestsFor('mock-main').find((req) => JSON.stringify(req.body).includes('年糕'))?.body,
+        stack.llm.requestsFor('mock-main').find((req) => JSON.stringify(req.body).includes('年糕'))
+          ?.body,
       );
       expect(body).not.toContain('失眠');
       expect(body).toContain('来自私聊'); // origin="private" 标注（JSON 转义后匹配中文注释）
@@ -344,7 +369,9 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       await completedRun(stack.core, conv.id);
       await waitForReflectionsDone(stack.core, 2);
 
-      expect((await stack.core.rpc.call('profile.list') as { items: unknown[] }).items).toHaveLength(0);
+      expect(
+        ((await stack.core.rpc.call('profile.list')) as { items: unknown[] }).items,
+      ).toHaveLength(0);
       const result = (await stack.core.rpc.call('memory.list', { botId: bot.id })) as {
         items: Array<{ content: string; privateToBot: boolean }>;
       };
@@ -401,6 +428,202 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
         items: unknown[];
       };
       expect(result.items).toHaveLength(0); // 凭据内容未被记住
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('去抖窗口：连续两轮只产生一次反思，两个 run 的记忆都写入', async () => {
+    const stack = await createTestStack({
+      env: {
+        KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+        KEPCUP_REFLECTION_DEBOUNCE_MS: '600000',
+      },
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿抖');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script('mock-main', [step().replyText('好'), step().replyText('嗯')]);
+      await sendDrafts(stack.core, conv.id, [{ text: '我住在杭州' }]);
+      await completedRun(stack.core, conv.id);
+      await sendDrafts(stack.core, conv.id, [{ text: '我每天早上跑步' }]);
+      await waitFor(
+        async () => {
+          const result = (await stack.core.rpc.call('runs.list', {
+            conversationId: conv.id,
+            limit: 20,
+          })) as { runs: Run[] };
+          return result.runs.filter((run) => run.loopType === 'turn' && run.status === 'completed')
+            .length >= 2
+            ? true
+            : null;
+        },
+        { label: 'two completed turns' },
+      );
+
+      const key = `reflection_debounce:${bot.id}:${conv.id}`;
+      const job = await waitFor(
+        () => {
+          const row = stack.core.services
+            .mainDb!.prepare('select * from jobs where dedupe_key = ?')
+            .get(key) as { status: string; run_after: number; payload_json: string } | undefined;
+          if (row === undefined) return null;
+          const payload = JSON.parse(row.payload_json) as { entries?: unknown[] };
+          return (payload.entries?.length ?? 0) === 2 ? row : null;
+        },
+        { label: 'debounced reflection job with two entries' },
+      );
+      expect(job.status).toBe('pending');
+      expect(job.run_after).toBeGreaterThan(Date.now());
+
+      const messages = await listMessages(stack.core, conv.id);
+      const userIds = messages.filter((message) => message.senderType === 'user').map((m) => m.id);
+      expect(userIds).toHaveLength(2);
+      stack.llm.script('mock-light', [
+        step().replyJson({
+          runSummary: '用户住在杭州并每天晨跑',
+          memories: [
+            {
+              kind: 'fact',
+              content: '用户住在杭州',
+              source: 'explicit',
+              evidenceMessageIds: [userIds[0]],
+              confidence: 0.9,
+              sensitivity: 'normal',
+              privateToBot: false,
+            },
+            {
+              kind: 'preference',
+              content: '用户每天早上跑步',
+              source: 'explicit',
+              evidenceMessageIds: [userIds[1]],
+              confidence: 0.9,
+              sensitivity: 'normal',
+              privateToBot: false,
+            },
+          ],
+          profileProposals: [],
+          wikiSuggestions: [],
+          skillSuggestion: null,
+        }),
+      ]);
+      stack.core.services.domain!.jobs.hasten(key, stack.core.services.clock.now());
+      await waitForReflectionsDone(stack.core, 1);
+
+      const result = (await stack.core.rpc.call('memory.list', { botId: bot.id })) as {
+        items: Array<{ content: string }>;
+      };
+      expect(result.items.map((item) => item.content).sort()).toEqual(
+        ['用户住在杭州', '用户每天早上跑步'].sort(),
+      );
+      const runs = (await stack.core.rpc.call('runs.list', {
+        conversationId: conv.id,
+        limit: 20,
+      })) as { runs: Run[] };
+      expect(runs.runs.filter((run) => run.loopType === 'reflection')).toHaveLength(1);
+      const reflectionRequest = stack.llm
+        .requestsFor('mock-light')
+        .find((req) => String(req.lastUserText()).includes('<debounced_runs>'));
+      expect(reflectionRequest).toBeDefined();
+      expect(String(reflectionRequest!.lastUserText())).toContain('<debounced_runs>');
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('同一 run 在窗口内重复登记不会产生重复 entry', async () => {
+    const stack = await createTestStack({
+      env: {
+        KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+        KEPCUP_REFLECTION_DEBOUNCE_MS: '600000',
+      },
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿重');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script('mock-main', [step().replyText('好')]);
+      await sendDrafts(stack.core, conv.id, [{ text: '你好' }]);
+      const turn = await completedRun(stack.core, conv.id);
+      stack.core.services.memory!.registerReflection({
+        runId: turn.id,
+        botId: bot.id,
+        conversationId: conv.id,
+        triggerMessageIds: [],
+        batchId: null,
+        kind: 'turn',
+      });
+
+      const key = `reflection_debounce:${bot.id}:${conv.id}`;
+      const row = stack.core.services
+        .mainDb!.prepare('select payload_json from jobs where dedupe_key = ?')
+        .get(key) as { payload_json: string };
+      const payload = JSON.parse(row.payload_json) as { entries: Array<{ runId: string }> };
+      expect(payload.entries).toHaveLength(1);
+      expect(payload.entries[0]!.runId).toBe(turn.id);
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('任务完成后冲刷窗口内待执行的对话轮反思', async () => {
+    const stack = await createTestStack({
+      env: {
+        KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+        KEPCUP_REFLECTION_DEBOUNCE_MS: '600000',
+      },
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿冲');
+      const conv = await openDirect(stack.core, bot.id);
+      // 对话轮 + 任务执行 + 任务结果唤醒轮。
+      stack.llm.script('mock-main', [
+        step().replyText('好'),
+        step().replyText('任务完成'),
+        step().replyText('任务结果已收到'),
+      ]);
+      stack.llm.script('mock-light', [
+        step().replyJson(emptyReflection()),
+        step().replyJson(emptyReflection()),
+      ]);
+      await sendDrafts(stack.core, conv.id, [{ text: '我住在杭州' }]);
+      const turn = await completedRun(stack.core, conv.id);
+
+      const identity: RunIdentity = {
+        runId: turn.id,
+        botId: bot.id,
+        conversationId: conv.id,
+        loopType: 'turn',
+      };
+      const started = stack.core.services.orchestrator!.tasks.start(identity, {
+        title: '整理文件',
+        instruction: '整理一下 workspace',
+        sourceMessageIds: [],
+        writes: false,
+      });
+      await waitFor(
+        async () => {
+          const result = (await stack.core.rpc.call('runs.list', {
+            conversationId: conv.id,
+            limit: 30,
+          })) as { runs: Run[] };
+          const task = result.runs.find((run) => run.id === started.taskId);
+          return task?.status === 'completed' ? true : null;
+        },
+        { label: 'task completed' },
+      );
+
+      const key = `reflection_debounce:${bot.id}:${conv.id}`;
+      await waitFor(
+        () => {
+          const row = stack.core.services
+            .mainDb!.prepare('select status, run_after from jobs where dedupe_key = ?')
+            .get(key) as { status: string; run_after: number } | undefined;
+          if (row === undefined) return null;
+          // The task flush pulled the window forward: it is running / done now.
+          return row.status === 'pending' && row.run_after > Date.now() ? null : true;
+        },
+        { label: 'turn reflection flushed by task completion' },
+      );
     } finally {
       await stack.cleanup();
     }
