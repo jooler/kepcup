@@ -33,16 +33,23 @@
       <string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
       <key>NSExtensionAttributes</key>
       <dict>
-        <!-- 文件：最多 10 个（与 D94 的单次上限一致）。ZIP 是普通文件，不把
-             public.file-url 当接收类型。 -->
-        <key>NSExtensionActivationSupportsFileWithMaxCount</key>
-        <integer>10</integer>
-        <key>NSExtensionActivationSupportsImageWithMaxCount</key>
-        <integer>10</integer>
-        <key>NSExtensionActivationSupportsMovieWithMaxCount</key>
-        <integer>10</integer>
-        <key>NSExtensionActivationSupportsText</key>
-        <true/>
+        <!-- 激活规则用字典形式：NSExtensionActivationSupports* 必须包在
+             NSExtensionActivationRule 里，平铺在 NSExtensionAttributes 下不是
+             合法结构（系统按缺省规则匹配，声明形同虚设）。文件最多 10 个
+             （与 D94 的单次上限一致）；图片 / 影片与文件并列声明——收集器
+             （PayloadCollector）确实支持这些类型（loadItem 拿 in-place URL /
+             Data）。ZIP 是普通文件，不把 public.file-url 当接收类型。 -->
+        <key>NSExtensionActivationRule</key>
+        <dict>
+          <key>NSExtensionActivationSupportsFileWithMaxCount</key>
+          <integer>10</integer>
+          <key>NSExtensionActivationSupportsImageWithMaxCount</key>
+          <integer>10</integer>
+          <key>NSExtensionActivationSupportsMovieWithMaxCount</key>
+          <integer>10</integer>
+          <key>NSExtensionActivationSupportsText</key>
+          <true/>
+        </dict>
       </dict>
     </dict>
   </dict>

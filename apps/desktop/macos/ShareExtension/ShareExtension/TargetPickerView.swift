@@ -4,6 +4,9 @@ import SwiftUI
 ///
 /// 列表读主应用写的 `targets.v1.json`：读不到就显示「打开 KepCup 同步列表」
 /// 并禁止确认；快照过期只提示，仍可选（core 确认时按实时数据校验）。
+///
+/// 用户可见文案走 `String(localized:)` + Localizable.strings（zh-Hans / en），
+/// 不再硬编码中文（CFBundleDevelopmentRegion=en）。
 struct TargetPickerView: View {
     /// 收集到的文件（用于展示数量与总大小）。
     let files: [CollectedFile]
@@ -33,21 +36,22 @@ struct TargetPickerView: View {
         files.reduce(0) { $0 + $1.bytes.count }
     }
 
+    /// 附言长度按 UTF-16 码元计——与主进程 zod `.max(2000)` 同一计数方式。
     private var noteTooLong: Bool {
-        note.count > SharedConfig.maxNoteChars
+        note.utf16.count > SharedConfig.maxNoteChars
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if targetsMissing {
-                Text("无法读取目标列表。请打开 KepCup 让它同步一次，再回到这里重试。")
+                Text(String(localized: "picker.targets_missing", defaultValue: "无法读取目标列表。请打开 KepCup 让它同步一次，再回到这里重试。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 if targetsStale {
-                    Text("目标列表可能已过期，确认时以 KepCup 为准。")
+                    Text(String(localized: "picker.targets_stale", defaultValue: "目标列表可能已过期，确认时以 KepCup 为准。"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -65,22 +69,25 @@ struct TargetPickerView: View {
 
     private var header: some View {
         HStack {
-            Text("导入到 KepCup")
+            Text(String(localized: "picker.title", defaultValue: "导入到 KepCup"))
                 .font(.headline)
             Spacer()
         }
     }
 
     private var searchField: some View {
-        TextField("搜索 Bot 或项目组", text: $query)
-            .textFieldStyle(.roundedBorder)
+        TextField(
+            String(localized: "picker.search", defaultValue: "搜索 Bot 或项目组"),
+            text: $query
+        )
+        .textFieldStyle(.roundedBorder)
     }
 
     private var targetList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
                 if !bots.isEmpty {
-                    Text("Bot")
+                    Text(String(localized: "picker.bots", defaultValue: "Bot"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(bots) { entry in
@@ -93,7 +100,7 @@ struct TargetPickerView: View {
                     }
                 }
                 if !projects.isEmpty {
-                    Text("项目组")
+                    Text(String(localized: "picker.projects", defaultValue: "项目组"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(projects) { entry in
@@ -128,7 +135,7 @@ struct TargetPickerView: View {
                 Text(name)
                     .lineLimit(1)
                 if archived {
-                    Text("（已归档）")
+                    Text(String(localized: "picker.archived", defaultValue: "（已归档）"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -150,14 +157,20 @@ struct TargetPickerView: View {
     }
 
     private var summary: some View {
-        Text("\(files.count) 个文件 · \(ByteFormat.string(totalBytes))")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        Text(
+            String(
+                format: String(localized: "picker.summary", defaultValue: "%d 个文件 · %@"),
+                files.count,
+                ByteFormat.string(totalBytes)
+            )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 
     private var noteField: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("附言（可留空）")
+            Text(String(localized: "picker.note_label", defaultValue: "附言（可留空）"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             // macOS 12 没有 TextField(_:text:axis:)，用 TextEditor 起多行。
@@ -169,21 +182,26 @@ struct TargetPickerView: View {
                         .stroke(Color.secondary.opacity(0.25))
                 )
             if noteTooLong {
-                Text("附言最多 \(SharedConfig.maxNoteChars) 字")
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Text(
+                    String(
+                        format: String(localized: "picker.note_limit", defaultValue: "附言最多 %d 字"),
+                        SharedConfig.maxNoteChars
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.red)
             }
         }
     }
 
     private var actions: some View {
         HStack {
-            Button("取消", action: onCancel)
+            Button(String(localized: "picker.cancel", defaultValue: "取消"), action: onCancel)
                 .keyboardShortcut(.cancelAction)
             Spacer()
-            Button("导入") {
+            Button(String(localized: "picker.confirm", defaultValue: "导入")) {
                 guard let selected else { return }
-                onConfirm(selected, String(note.prefix(SharedConfig.maxNoteChars)))
+                onConfirm(selected, SharedConfig.clampedNote(note))
             }
             .keyboardShortcut(.defaultAction)
             .disabled(selected == nil || targetsMissing || noteTooLong)

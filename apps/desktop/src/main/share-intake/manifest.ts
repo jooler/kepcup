@@ -91,7 +91,15 @@ export function readStagedIntake(dir: string): StagedIntake | { error: StagedInt
     if (stat.size > SHARE_MAX_FILE_BYTES) return { error: 'file_too_large' };
     total += stat.size;
     if (total > SHARE_MAX_TOTAL_BYTES) return { error: 'total_too_large' };
-    const digest = createHash('sha256').update(readFileSync(filePath)).digest('hex');
+    // stat 与 read 之间文件可能被删 / 权限变化：读不出来按 files_missing 归类，
+    // 不让单个坏批次把整轮 scan 炸掉（unhandled rejection）。
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(filePath);
+    } catch {
+      return { error: 'files_missing' };
+    }
+    const digest = createHash('sha256').update(bytes).digest('hex');
     if (digest !== file.sha256.toLowerCase()) return { error: 'hash_mismatch' };
     files.push({
       path: filePath,
@@ -106,6 +114,13 @@ export function readStagedIntake(dir: string): StagedIntake | { error: StagedInt
 
 /** 列出 App Group inbox 里「带 ready」的批次目录。 */
 export function listReadyIntakes(inboxDir: string): string[] {
+  return listIntakeDirs(inboxDir).filter(
+    (name) => isShareIntakeId(name) && existsSync(path.join(inboxDir, name, 'ready')),
+  );
+}
+
+/** 列出 inbox 里全部批次目录（含未写完 / 未通过校验的）——TTL 清理用（§6.7）。 */
+export function listIntakeDirs(inboxDir: string): string[] {
   let entries: string[];
   try {
     entries = readdirSync(inboxDir, { withFileTypes: true })
@@ -114,7 +129,5 @@ export function listReadyIntakes(inboxDir: string): string[] {
   } catch {
     return [];
   }
-  return entries
-    .filter((name) => isShareIntakeId(name) && existsSync(path.join(inboxDir, name, 'ready')))
-    .sort();
+  return entries.sort();
 }

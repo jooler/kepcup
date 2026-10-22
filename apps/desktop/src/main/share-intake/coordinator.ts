@@ -1,8 +1,8 @@
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
-import type { ShareConsumeInput, ShareConsumeOutput, ShareTargets } from '@kepcup/shared';
+import { SHARE_INBOX_STALE_MS, type ShareConsumeInput, type ShareConsumeOutput, type ShareTargets } from '@kepcup/shared';
 import { shareInboxDir } from './app-group';
-import { listReadyIntakes, readStagedIntake, type StagedIntake } from './manifest';
+import { listIntakeDirs, listReadyIntakes, readStagedIntake, type StagedIntake } from './manifest';
 import { writeTargetsSnapshot } from './targets';
 import { parseShareUrl } from './url';
 
@@ -55,16 +55,64 @@ export class ShareIntakeCoordinator {
     return path.join(this.#deps.coreHome, 'inbox', 'share');
   }
 
-  /** 启动扫描 + URL 唤起都走这里：把 inbox 里「带 ready」的批次消费掉。 */
+  /**
+   * 启动扫描 + URL 唤起都走这里：清掉过期批次，把 inbox 里「带 ready」的批次
+   * 消费掉。单个批次意外失败只记 warn，不拖垮本轮其它批次。
+   */
   async scan(): Promise<ShareIntakeOutcome[]> {
     const groupDir = this.#deps.groupDir;
     if (groupDir === null) return [];
     const inbox = shareInboxDir(groupDir);
+    this.#sweepInbox(inbox);
     const outcomes: ShareIntakeOutcome[] = [];
     for (const intakeId of listReadyIntakes(inbox)) {
-      outcomes.push(await this.consume(intakeId));
+      try {
+        outcomes.push(await this.consume(intakeId));
+      } catch (error) {
+        this.#deps.logger.warn('share intake scan error', {
+          intakeId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return outcomes;
+  }
+
+  /**
+   * App Group inbox 的清理（设计 §6.7）：
+   *  - 超过 `SHARE_INBOX_STALE_MS`（24h）的目录直接删——无论 ready / not_ready /
+   *    校验失败，坏批次不能每 30s 整读重哈希一轮。
+   *  - 24h 内、带 `ready` 但校验永久失败的批次立即删（hash 不符、manifest 损坏等
+   *    不会自愈）。消费失败（`failed*`）的批次不算：它们已搬进 core inbox，
+   *    失败记录与恢复面板由 core 侧负责。
+   *  - 不带 `ready` 的年轻目录保留（扩展可能还在写；core 未 ready 的语义同样不碰）。
+   */
+  #sweepInbox(inbox: string, now: number = Date.now()): void {
+    for (const name of listIntakeDirs(inbox)) {
+      const dir = path.join(inbox, name);
+      try {
+        const stat = statSync(dir);
+        if (now - stat.mtimeMs > SHARE_INBOX_STALE_MS) {
+          rmSync(dir, { recursive: true, force: true });
+          this.#deps.logger.warn('share intake expired (removed)', { intakeId: name });
+          continue;
+        }
+        if (!existsSync(path.join(dir, 'ready'))) continue;
+        const staged = readStagedIntake(dir);
+        if ('error' in staged && staged.error !== 'not_ready') {
+          rmSync(dir, { recursive: true, force: true });
+          this.#deps.logger.warn('share intake invalid (removed)', {
+            intakeId: name,
+            reason: staged.error,
+          });
+        }
+      } catch (error) {
+        this.#deps.logger.warn('share intake sweep error', {
+          intakeId: name,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   /** 处理 `kepcup://share-intake?id=…`（扩展唤起主应用）。 */

@@ -1,12 +1,21 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ShareConsumeInput, ShareConsumeOutput, ShareTargets } from '@kepcup/shared';
 
 import { ShareIntakeCoordinator } from './coordinator';
-import { readStagedIntake } from './manifest';
+import { listIntakeDirs, readStagedIntake } from './manifest';
 import { parseShareUrl } from './url';
 import { writeTargetsSnapshot } from './targets';
 import { shareInboxDir, shareTargetsPath } from './app-group';
@@ -129,6 +138,35 @@ describe('readStagedIntake', () => {
     writeFileSync(path.join(dir, 'files', '000-a.zip'), 'zop');
     expect(readStagedIntake(dir)).toEqual({ error: 'hash_mismatch' });
   });
+
+  // root 用户的读权限检查不生效，跳过。
+  it.skipIf(process.getuid?.() === 0)(
+    'staged 文件读不了（stat 与 read 之间被删 / 权限变化）→ files_missing，不抛异常',
+    () => {
+      stageIntake('shr_unreadab');
+      const dir = path.join(shareInboxDir(groupDir), 'shr_unreadab');
+      chmodSync(path.join(dir, 'files', '000-a.zip'), 0o000);
+      try {
+        expect(readStagedIntake(dir)).toEqual({ error: 'files_missing' });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('listIntakeDirs', () => {
+  it('列出全部目录（含未写完的），不含文件', () => {
+    stageIntake('shr_listready');
+    stageIntake('shr_listnotok', { ready: false });
+    const inbox = shareInboxDir(groupDir);
+    writeFileSync(path.join(inbox, 'stray-file'), '');
+    expect(listIntakeDirs(inbox)).toEqual(['shr_listnotok', 'shr_listready']);
+  });
+
+  it('目录不存在 → 空', () => {
+    expect(listIntakeDirs(path.join(groupDir, 'nope'))).toEqual([]);
+  });
 });
 
 describe('ShareIntakeCoordinator', () => {
@@ -197,6 +235,72 @@ describe('ShareIntakeCoordinator', () => {
 
   it('handleUrl 遇到非分享 URL 返回 null', async () => {
     expect(await coordinator.handleUrl('kepcup://other?id=x')).toBeNull();
+  });
+
+  it('扫描时清掉超过 24h 的批次目录（§6.7 TTL；不消费不重哈希）', async () => {
+    stageIntake('shr_staleold');
+    const dir = path.join(shareInboxDir(groupDir), 'shr_staleold');
+    const dayMs = 24 * 60 * 60 * 1000;
+    const old = new Date(Date.now() - dayMs - 60_000);
+    utimesSync(dir, old, old);
+    const outcomes = await coordinator.scan();
+    expect(outcomes).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+    expect(calls.filter((call) => call.method === 'share.consume')).toHaveLength(0);
+  });
+
+  it('24h 内、带 ready 但校验永久失败的批次立即删（不每轮整读重哈希）', async () => {
+    stageIntake('shr_permbad1');
+    const dir = path.join(shareInboxDir(groupDir), 'shr_permbad1');
+    // 同长度改写：大小对得上，sha256 不符（永久性校验失败）。
+    writeFileSync(path.join(dir, 'files', '000-a.zip'), 'zop');
+    const outcomes = await coordinator.scan();
+    expect(outcomes).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+    expect(calls.filter((call) => call.method === 'share.consume')).toHaveLength(0);
+  });
+
+  it('24h 内、不带 ready 的目录保留（扩展可能还在写）', async () => {
+    stageIntake('shr_youngwri', { ready: false });
+    await coordinator.scan();
+    expect(existsSync(path.join(shareInboxDir(groupDir), 'shr_youngwri'))).toBe(true);
+  });
+
+  it('单个批次意外出错不拖垮本轮其它批次（scan 兜底 + #consumeOnce 捕获）', async () => {
+    stageIntake('shr_boomxxxx');
+    stageIntake('shr_okayxxxx');
+    const mixed = new ShareIntakeCoordinator({
+      groupDir,
+      coreHome,
+      logger: { info: () => {}, warn: () => {} },
+      // callPlatform 对 shr_boomxxxx 同步抛错（最凶的失败形态：同步异常 +
+      // rejection 两种都被兜住）。
+      callPlatform: <T>(method: string, input?: unknown): Promise<T> => {
+        if (
+          method === 'share.consume' &&
+          (input as { intakeId?: string } | undefined)?.intakeId === 'shr_boomxxxx'
+        ) {
+          throw new Error('sync boom');
+        }
+        calls.push({ method, input });
+        return Promise.resolve(consumeResult) as unknown as Promise<T>;
+      },
+    });
+    // scan 不 reject（单批次失败只降级为该批次的 failed outcome）。
+    const outcomes = await mixed.scan();
+    expect(outcomes).toEqual([
+      { intakeId: 'shr_boomxxxx', state: 'failed' },
+      { intakeId: 'shr_okayxxxx', state: 'done' },
+    ]);
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === 'share.consume' &&
+          (call.input as ShareConsumeInput).intakeId === 'shr_okayxxxx',
+      ),
+    ).toHaveLength(1);
+    // 失败批次的文件保留在 core inbox（等下次启动 / core 恢复重试）。
+    expect(existsSync(path.join(coreHome, 'inbox', 'share', 'shr_boomxxxx'))).toBe(true);
   });
 
   it('refreshTargets 原子写 targets.v1.json', async () => {

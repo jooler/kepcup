@@ -68,7 +68,7 @@ enum InboxWriter {
             intakeId: intakeId,
             createdAt: Date().timeIntervalSince1970 * 1000,
             target: target,
-            note: String(note.prefix(SharedConfig.maxNoteChars)),
+            note: SharedConfig.clampedNote(note),
             files: manifestFiles
         )
 
