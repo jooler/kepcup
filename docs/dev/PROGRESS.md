@@ -1522,3 +1522,13 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **验证**（macOS arm64，本工作树）：
   - 定向：`shared` build、`core` / `app-validator` typecheck 通过；`mcp-tools` / `app-ui-service` / `coding-tools-wrap` / 新增 `sse-transport` 4 文件 40 例通过；`mcp` / `mcp-loop` 集成 29 例通过；`context-compaction` / `subagent` / `model-switch` / `agent-end-transcript` / `opencode-session-header` 41 例通过。
   - 收口全量：`pnpm typecheck` 通过（desktop svelte-check 0 error、1 个既有 warning）；`pnpm lint` 通过；`pnpm test` **542 文件 / 5805 通过 / 23 跳过，0 失败**；`pnpm build`（含 desktop 渲染端与 core）通过。
+
+## Bot 文件卡片与预览（2026-10-22，D95）
+
+对话里 Bot 创建 / 修改的本地文件现在以卡片列在回答下方，点击打开覆盖层查看（占满中部 + 右栏，左栏保持可交互，左上角圆形关闭按钮与左栏顶部按钮同样式）。设计见 [design/45-bot-file-artifacts.md](../design/45-bot-file-artifacts.md)。
+
+- **采集**：`write` / `edit` 按 run 记录路径与新建 / 修改；`generate_image` / `generate_speech` / `generate_video` 落盘产物也记录。任务终态条目携带 `artifacts`，对话轮把任务结果转述给用户时按 path 合并到回答消息（已由 `forward_task_result` 展示过的 path 不重复）。
+- **展示**：图片 / 视频 / 静态 HTML / Markdown / DOCX（mammoth）/ XLSX·XLS·ODS·CSV（SheetJS 0.20.3）/ 文本；PDF 走 Chromium 内置查看器（`plugins: true` + `object-src 'self' blob:`，已实测 Electron 44 的 blob URL 内嵌可用）；PPTX 等提供系统打开 / 下载 / 在文件夹中显示。HTML 预览不执行脚本、不加载远程资源，含脚本时显示明确提示。
+- **安全**：`files.preview` 仅允许 `hasArtifactPath` 命中的文件，`canonicalPath` 解析后必须仍等于登记路径（符号链接逃逸拒绝）；异步读取并按类型限制大小（文本 8MB / Office 12MB / 图片 24MB / PDF 32MB / 视频 48MB）。
+- **边界**：`bash` 间接写入、外部 Agent 原生工具写入暂不采集；HTML 完整脚本执行需要独立 scheme + 独立 CSP，当前不执行。
+- **验证**：定向 `file-artifacts`（core 单元 3 + 集成 1，含 RPC 读取与符号链接拒绝）、`artifact-kind`（4）、`messages-task-events`、`task-cards`、`workdir-rules`、`coding-tools-wrap` 共 44 例通过；shared/core/desktop typecheck 通过；desktop build 通过；改动文件 eslint 通过。

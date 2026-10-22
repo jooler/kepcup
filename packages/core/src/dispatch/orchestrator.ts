@@ -44,6 +44,7 @@ import {
   type Conversation,
   type Delegation,
   type Message,
+  type MessageArtifact,
   WATCH_CARD_TYPE,
   WATCH_ALERT_EVENT,
   MAIL_CARD_TYPE,
@@ -214,7 +215,7 @@ import {
 } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
 import type { WidgetToolFacade } from '../tools/widget-tools.js';
-import { FileReadState } from '../tools/fs-state.js';
+import { FileReadState, RUN_FILE_CHANGES_MAX } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
@@ -874,6 +875,13 @@ export class Orchestrator {
         if (change === 'created') this.#publishConversation(message.conversationId);
       },
       describeCwd: (task, withChanges) => this.#describeTaskCwd(task, withChanges),
+      artifactsOf: (taskId) =>
+        this.#fsState.changesOf(taskId).map((change) => ({
+          path: change.path,
+          name: nodePath.basename(change.path),
+          change: change.change,
+          ...(change.size !== undefined ? { size: change.size } : {}),
+        })),
       // 审查 M3: an ask_user wait gives the task job's provider slot back (the
       // tool runs inside that job, so the scheduler finds it by run id).
       yieldSlotWhile: (runId, wait, signal) => deps.scheduler.yieldSlotWhile(runId, wait, signal),
@@ -4748,8 +4756,25 @@ export class Orchestrator {
       }
 
       // D75 §6.1: a task's final text is its private result entry (settle
-      // below), never a visible message.
-      if (!isTask && outcome.status === 'completed' && outcome.finalText.trim().length > 0) {
+      // below), never a visible message. A turn's reply carries the files its
+      // tasks wrote as cards under the bubble (or stands alone when the bot
+      // only did file work and returned no prose).
+      const artifacts = isTask ? [] : this.#collectRunArtifacts(runId, batch);
+      // forward_task_result may already have carried some files on an earlier
+      // message of this run: merge by path instead of dropping the whole set.
+      const shownPaths = new Set<string>();
+      for (const id of runs.get(runId)?.outputMessageIds ?? []) {
+        const output = messages.getById(id);
+        if (output === null || !('artifacts' in output.content)) continue;
+        for (const artifact of output.content.artifacts ?? []) shownPaths.add(artifact.path);
+      }
+      const pendingArtifacts = artifacts.filter((artifact) => !shownPaths.has(artifact.path));
+      if (
+        !isTask &&
+        outcome.status === 'completed' &&
+        !outcome.skipReply &&
+        (outcome.finalText.trim().length > 0 || pendingArtifacts.length > 0)
+      ) {
         const message = messages.append({
           conversationId: batch.conversationId,
           senderType: 'bot',
@@ -4759,6 +4784,7 @@ export class Orchestrator {
           runId,
           ...(scheduleSource !== null ? { scheduleSource } : {}),
           ...(todoSource !== null ? { todoSource } : {}),
+          ...(pendingArtifacts.length > 0 ? { artifacts: pendingArtifacts } : {}),
         });
         this.#recordBotMessage(runId, message);
       }
@@ -4789,7 +4815,9 @@ export class Orchestrator {
           'lease release failed',
         );
       }
-      this.#fsState.release(runId);
+      // A task still needs its per-run file list when settle() writes the
+      // terminal entry; onSettled releases it right after.
+      if (!isTask) this.#fsState.release(runId);
 
       // 缺设置中断（setupHit 非空且 run 非正常完成）：统一改判 failed 并携带
       // 结构化 setup，界面上是可引导的设置卡片而非普通失败。
@@ -5783,6 +5811,32 @@ export class Orchestrator {
     // The title is the model's own words (start_task, possibly steered by
     // what it read): data, not a system statement (审查 L1).
     return `[系统] 任务卡 ${task.id}（${owner}）「<untrusted>${neutralizeUntrusted(task.taskTitle ?? '')}</untrusted>」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
+  }
+
+  /**
+   * Files the turn's own tools wrote plus every file carried by the task
+   * terminal entries in its trigger (deduped by path, first occurrence wins).
+   */
+  #collectRunArtifacts(runId: string, batch: TriggerBatch): MessageArtifact[] {
+    const byPath = new Map<string, MessageArtifact>();
+    const add = (artifact: MessageArtifact): void => {
+      if (byPath.size >= RUN_FILE_CHANGES_MAX) return;
+      if (!byPath.has(artifact.path)) byPath.set(artifact.path, artifact);
+    };
+    for (const change of this.#fsState.changesOf(runId)) {
+      add({
+        path: change.path,
+        name: nodePath.basename(change.path),
+        change: change.change,
+        ...(change.size !== undefined ? { size: change.size } : {}),
+      });
+    }
+    for (const message of batch.messages) {
+      if (message.kind !== 'task_event') continue;
+      const files = (message.content as TaskEventContent).artifacts ?? [];
+      for (const file of files) add(file);
+    }
+    return [...byPath.values()];
   }
 
   /**

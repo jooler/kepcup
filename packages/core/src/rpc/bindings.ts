@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import {
   AppError,
@@ -93,6 +95,8 @@ import {
   attachmentsStatusOutputSchema,
   attachmentsDetachInputSchema,
   attachmentsDetachOutputSchema,
+  filesPreviewInputSchema,
+  filesPreviewOutputSchema,
   mcpRemoveSecretInputSchema,
   mcpSetSecretInputSchema,
   mcpTestInputSchema,
@@ -270,6 +274,8 @@ import {
   withSettingsChangedEvents,
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
+import { previewMaxBytesOf, previewMimeOf } from './file-preview.js';
+import { canonicalPath } from '../infra/paths.js';
 import type { LoopType, WikiOwner } from '@kepcup/shared';
 import {
   InkcopAuthError,
@@ -1085,6 +1091,35 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true } as const;
       },
     ),
+    'files.preview': method(filesPreviewInputSchema, filesPreviewOutputSchema, async (input) => {
+      const resolved = canonicalPath(input.path);
+      // Only files this conversation surfaced in a file card. This is also the
+      // symlink guard: the resolved target must equal the stored path.
+      if (!domain.messages.hasArtifactPath(input.conversationId, resolved)) {
+        throw new AppError('PATH_OUT_OF_SCOPE', '该文件不在本对话的文件卡内');
+      }
+      let stats;
+      try {
+        stats = await stat(resolved);
+      } catch {
+        throw new AppError('NOT_FOUND', '文件不存在或已被移动');
+      }
+      if (!stats.isFile()) throw new AppError('NOT_FOUND', '文件不存在或不是普通文件');
+      const limit = previewMaxBytesOf(resolved);
+      if (stats.size > limit) {
+        throw new AppError(
+          'INVALID_INPUT',
+          `文件过大（${stats.size} 字节），超过该类型预览上限 ${limit} 字节`,
+        );
+      }
+      return {
+        path: resolved,
+        name: path.basename(resolved),
+        mime: previewMimeOf(resolved),
+        size: stats.size,
+        dataBase64: (await readFile(resolved)).toString('base64'),
+      };
+    }),
 
     'runs.cancel': method(runIdInputSchema, runsCancelOutputSchema, async (input) => ({
       run: orchestrator.cancelRun(input.runId, { userInitiated: true }),

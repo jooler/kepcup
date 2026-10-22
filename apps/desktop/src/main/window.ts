@@ -42,6 +42,9 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
+    // Chromium 内置 PDF 查看器是 plugin：对话文件卡里的 PDF 直接 <embed>
+    // 在覆盖层查看（不弹外部应用）。只启用 Electron 自带的查看器，不装第三方插件。
+    plugins: true,
     // Windows 亚克力（下面 win32 分支开启后）经 additionalArguments 同步传标记给
     // 渲染层 preload —— 渲染层首帧即可打标，避免异步 IPC 造成的透明化闪色。
     ...(windowsBackdropMaterial() === 'acrylic'

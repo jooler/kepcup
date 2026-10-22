@@ -1068,6 +1068,24 @@ export const attachmentsStatusOutputSchema = z.object({
 export const attachmentsDetachInputSchema = z.object({ id: z.string().min(1) });
 export const attachmentsDetachOutputSchema = z.object({ ok: z.literal(true) });
 
+// --- bot file artifacts ---------------------------------------------------
+/**
+ * 读取 Bot 刚写入的本地文件用于覆盖层预览。`conversationId` 把可读范围限定在
+ * 该对话消息里出现过的文件（`hasArtifactPath`），避免渲染层拿这个 RPC 当
+ * 任意路径读取器。
+ */
+export const filesPreviewInputSchema = z.object({
+  conversationId: z.string().min(1),
+  path: z.string().min(1),
+});
+export const filesPreviewOutputSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.number(),
+  dataBase64: z.string(),
+});
+
 // --- web search（联网检索供应商，docs/design/21-web-search.md） ----------------
 
 export const webSearchTestInputSchema = z.object({
@@ -2140,6 +2158,8 @@ export const rpcMethodSchemas = {
     output: attachmentsDetachOutputSchema,
   },
 
+  'files.preview': { input: filesPreviewInputSchema, output: filesPreviewOutputSchema },
+
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
   'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
   'runs.setupDismissed': { input: runIdInputSchema, output: runsSetupDismissedOutputSchema },
@@ -2569,6 +2589,7 @@ const APP_METHODS = [
   'attachments.get',
   'attachments.status',
   'attachments.detach',
+  'files.preview',
   'runs.cancel',
   'runs.retry',
   'runs.setupDismissed',

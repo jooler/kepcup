@@ -6,7 +6,7 @@ import {
   TOOL_OUTPUT_MAX_CHARS,
   type Message,
 } from '@kepcup/shared';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
 import type { ToolOutputSpill } from '../agent/tool-output-spill.js';
@@ -1086,6 +1086,18 @@ export function buildResponseTools(input: {
   // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
   // 20-conversation-media.md、25-capability-tools.md）：媒体网关就绪才注册；
   // 未配置能力时工具返回 SETUP_REQUIRED，由 orchestrator 中断 run 并引导设置。
+  /** File cards: generated media is also a created local file. */
+  const recordGenerated = (target: string): void => {
+    try {
+      deps.fsState.recordChange(identity.runId, {
+        path: target,
+        change: 'created',
+        size: statSync(target).size,
+      });
+    } catch {
+      // Best effort: no card when the file vanished or stats failed.
+    }
+  };
   const imageTools =
     deps.media !== undefined
       ? buildImageTools({
@@ -1095,6 +1107,7 @@ export function buildResponseTools(input: {
           attachments: deps.attachments,
           gateway,
           delivery: generatedMediaDelivery,
+          recordFile: recordGenerated,
         })
       : [];
   const speechTools =
@@ -1106,6 +1119,7 @@ export function buildResponseTools(input: {
           attachments: deps.attachments,
           gateway,
           delivery: generatedMediaDelivery,
+          recordFile: recordGenerated,
         })
       : [];
 

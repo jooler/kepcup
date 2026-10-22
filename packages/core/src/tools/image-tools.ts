@@ -89,6 +89,8 @@ export function buildImageTools(input: {
   gateway: ToolGateway;
   /** 产物落盘后的确定性投递（测试装配可缺省：走「请模型 send_message」旧路径）。 */
   delivery?: GeneratedMediaDelivery | undefined;
+  /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
+  recordFile?: ((target: string) => void) | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -163,6 +165,7 @@ export function buildImageTools(input: {
         const fileName = images.length > 1 ? `${base}-${index + 1}.png` : `${base}.png`;
         const target = path.join(dir, fileName);
         writeFileSync(target, bytes);
+        input.recordFile?.(target);
         saved.push(target);
       }
       if (saved.length === 0) {
