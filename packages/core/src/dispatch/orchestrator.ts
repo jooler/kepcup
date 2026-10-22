@@ -156,11 +156,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import {
-  decideMailSetupRequest,
-  mailBoundFor,
-  type MailSetupFacade,
-} from '../tools/mail-tools.js';
+import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody } from '../apps/prompt.js';
@@ -515,7 +511,9 @@ export interface OrchestratorWikiFacade {
     conversationId: string;
   }): void;
   /** Source ledger for the read-time trust wrap (empty for bot wikis). */
-  listSources(owner: WikiOwner): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
+  listSources(
+    owner: WikiOwner,
+  ): Array<{ id: string; createdBy: { kind: 'user' } | { kind: 'bot'; id: string } }>;
   /** Display name of a bot (null when deleted). */
   botName(botId: string): string | null;
   /** Project facts of one conversation (null when it is not a project). */
@@ -561,6 +559,7 @@ export type OrchestratorMemoryFacade = Omit<
     onDecided: (outcome: { approved: boolean; note: string }) => void,
   ): void;
   profileCardSection(): string;
+  hardConstraintsSection(botId: string, conversationId: string): string;
   myStateSection(botId: string, currentConversationId: string | null): string;
   relevantMemoriesSection(input: {
     botId: string;
@@ -574,6 +573,8 @@ export type OrchestratorMemoryFacade = Omit<
     conversationId: string;
     triggerMessageIds: string[];
     batchId: string | null;
+    /** A pure conversation turn is debounced; a task reflects immediately (D75). */
+    kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
   }): void;
@@ -1010,9 +1011,7 @@ export class Orchestrator {
           goal: deps.conversations.get(input.conversationId)?.goal ?? null,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.judgementTimeoutMs !== undefined
-            ? { timeoutMs: deps.judgementTimeoutMs }
-            : {}),
+          ...(deps.judgementTimeoutMs !== undefined ? { timeoutMs: deps.judgementTimeoutMs } : {}),
         }),
       gate: (input) =>
         leadGate({
@@ -1032,9 +1031,7 @@ export class Orchestrator {
           continuation: input.continuation,
           timeZone: deps.timeZone,
           logger: deps.logger,
-          ...(deps.judgementTimeoutMs !== undefined
-            ? { timeoutMs: deps.judgementTimeoutMs }
-            : {}),
+          ...(deps.judgementTimeoutMs !== undefined ? { timeoutMs: deps.judgementTimeoutMs } : {}),
         }),
     });
   }
@@ -2417,9 +2414,7 @@ export class Orchestrator {
       SETUP_QUESTION_EVENT,
       butler ? butlerSetupFirstQuestion(language) : setupFirstQuestion(language),
       {
-        options: butler
-          ? [...butlerSetupFirstOptions(language)]
-          : [...setupFirstOptions(language)],
+        options: butler ? [...butlerSetupFirstOptions(language)] : [...setupFirstOptions(language)],
         // 首问是「有哪些/要哪些」的列举题，天然多选；用户也可以自行补充条目。
         questionMode: 'multi',
       },
@@ -2834,6 +2829,7 @@ export class Orchestrator {
     hasWorkdir: boolean;
     memorySections: {
       userProfile?: string;
+      hardConstraints?: string;
       myState?: string;
       schedules?: string;
       workbench?: string;
@@ -4103,6 +4099,7 @@ export class Orchestrator {
       const memorySections = memoryFacade
         ? {
             userProfile: memoryFacade.profileCardSection(),
+            hardConstraints: memoryFacade.hardConstraintsSection(batch.botId, batch.conversationId),
             myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
             ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
@@ -4736,6 +4733,7 @@ export class Orchestrator {
           conversationId: batch.conversationId,
           triggerMessageIds: batch.messages.map((m) => m.id),
           batchId: batch.messages[0]?.batchId ?? null,
+          kind: isTask ? 'task' : 'turn',
           continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
         });
       }

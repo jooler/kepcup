@@ -31,7 +31,7 @@ describe('reflection input (BR-P07-009: 执行步骤概要)', () => {
     expect(text).toContain('<trigger_messages>');
   });
 
-  it('a widget reply (D87 P4 L3) is not the user\'s own words: labelled and wrapped', () => {
+  it("a widget reply (D87 P4 L3) is not the user's own words: labelled and wrapped", () => {
     const messages = reflectionInput({
       triggerMessages: [
         {
@@ -49,7 +49,9 @@ describe('reflection input (BR-P07-009: 执行步骤概要)', () => {
       profileCard: '',
     });
     const text = String(messages[0]!.content);
-    expect(text).toContain('[msg_w | 用户经组件发出（组件生成的文字，非用户本人的话）] <untrusted>');
+    expect(text).toContain(
+      '[msg_w | 用户经组件发出（组件生成的文字，非用户本人的话）] <untrusted>',
+    );
     expect(text).not.toContain('[msg_w | 用户]');
     expect(text.match(/<\/untrusted>/g)).toHaveLength(1);
   });
@@ -85,6 +87,24 @@ describe('reflection input (BR-P07-009: 执行步骤概要)', () => {
     );
     const withoutContinuation = reflectionInput({ ...base, continuedFromRunIds: [] });
     expect(String(withoutContinuation[0]!.content)).not.toContain('<continued_from_runs>');
+  });
+
+  it('renders <debounced_runs> for merged turns and keeps the legacy shape unchanged', () => {
+    const base = {
+      triggerMessages: [],
+      botMessages: [],
+      runId: 'run_1',
+      executionSteps: '',
+      existingMemories: '',
+      profileCard: '',
+    };
+    const debounced = reflectionInput({ ...base, debouncedRunIds: ['run_1', 'run_2'] });
+    expect(String(debounced[0]!.content)).toContain('<debounced_runs>run_1,run_2</debounced_runs>');
+    // A single run also passes through the new path but gets no tag.
+    const single = reflectionInput({ ...base, debouncedRunIds: ['run_1'] });
+    expect(String(single[0]!.content)).not.toContain('<debounced_runs>');
+    // Legacy payload (no field) is unchanged.
+    expect(String(reflectionInput(base)[0]!.content)).not.toContain('<debounced_runs>');
   });
 
   it('executionStepsSummary exposes only step kinds and tool names (no args/results)', () => {

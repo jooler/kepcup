@@ -1,8 +1,12 @@
 import {
   AppError,
   CONSOLIDATION_LOCAL_HOUR,
+  HARD_CONSTRAINT_TOKEN_BUDGET,
+  MEMORY_TOPK,
   PROFILE_CARD_TOKEN_BUDGET,
   PROFILE_CURATION_DELAY_MS,
+  REFLECTION_TURN_DEBOUNCE_MAX_RUNS,
+  REFLECTION_TURN_DEBOUNCE_MS,
   type Conversation,
   type EmbeddingStatus,
   type EnvInstall,
@@ -38,6 +42,7 @@ import { EMBEDDING_MODEL_ID, GatewayEmbedder, LocalEmbedder, type Embedder } fro
 import { EMBEDDING_MODEL_VERSION } from '../env/catalog.js';
 import { executionProvidersFor } from '../env/gpu.js';
 import { retrieveRelevant, type RetrievedMemories } from './retrieve.js';
+import { collectHardConstraints } from './constraints.js';
 import { buildMyState, formatMyState } from './my-state.js';
 import { checkMemoryCandidate, checkProfileCandidate, type WriteCheckContext } from './validate.js';
 import { containsCredential } from './credential-patterns.js';
@@ -77,6 +82,11 @@ export interface MemoryServiceDeps {
    * mirrors KEPCUP_TRIAGE_TIMEOUT_MS precedent).
    */
   curationDelayMs?: number | undefined;
+  /**
+   * Test hook: REFLECTION_TURN_DEBOUNCE_MS override (default from constants);
+   * 0 disables the window and restores one reflection job per turn.
+   */
+  reflectionDebounceMs?: number | undefined;
   /**
    * P10 commitment linkage: internal event bus emissions (commitment created
    * / invalidated) consumed by the schedule service. Not an RPC event.
@@ -194,8 +204,7 @@ export class MemoryService {
         model: target.model,
         getPersistedDim: () => this.#deps.settings.get().embedding.dim,
         ready: () => media.embeddingReady(),
-        embed: (texts) =>
-          media.embedTexts(target.vendor, target.model, texts, MEMORY_MEDIA_USAGE),
+        embed: (texts) => media.embedTexts(target.vendor, target.model, texts, MEMORY_MEDIA_USAGE),
       });
     }
     if (config.source === 'local') {
@@ -861,6 +870,42 @@ export class MemoryService {
     return truncateToBudget(card.content, PROFILE_CARD_TOKEN_BUDGET).text;
   }
 
+  /**
+   * <hard_constraints> body: active entries that must always be obeyed, read
+   * straight from the entries (never from the compiled card or retrieval).
+   */
+  hardConstraintsSection(botId: string, conversationId: string): string {
+    if (this.#deps.bots.get(botId) === null) return '';
+    const conversation = this.#deps.conversations.get(conversationId);
+    const privateItems = this.#manager.exists(botId) ? this.storeFor(botId).activeItems() : [];
+    const constraints = collectHardConstraints({
+      profileItems: this.#profileStore.list('active'),
+      privateItems,
+      isProject: conversation?.type === 'project',
+      now: this.#deps.clock.now(),
+    });
+    const lines = constraints.map((constraint) => {
+      const suffix =
+        constraint.privateToBot || constraint.origin === 'private'
+          ? '（来自私聊，不要在群聊中透露）'
+          : '';
+      return `- [${constraint.id}] ${constraint.content}${suffix}`;
+    });
+    const header =
+      '以下为用户明确的硬性约束；每次都必须遵守，不依赖本轮检索；与本轮请求冲突时先向用户确认。';
+    const cut = truncateToBudget([header, ...lines].join('\n'), HARD_CONSTRAINT_TOKEN_BUDGET);
+    this.#deps.logger.debug(
+      {
+        botId,
+        conversationId,
+        ids: constraints.map((constraint) => constraint.id),
+        truncated: cut.truncated,
+      },
+      'hard constraints injected',
+    );
+    return lines.length === 0 ? '' : cut.text;
+  }
+
   /** <my_state> body: due commitments + other-conversation activity titles. */
   myStateSection(botId: string, currentConversationId: string | null): string {
     if (!this.#manager.exists(botId)) return '';
@@ -896,6 +941,17 @@ export class MemoryService {
       },
       rerank: this.#retrievalReranker() ?? undefined,
     });
+    this.#deps.logger.debug(
+      {
+        botId: input.botId,
+        conversationId: input.conversationId,
+        ids: result.items.map((item) => item.id),
+        topK: MEMORY_TOPK,
+        truncated: result.truncated,
+        isProject: conversation?.type === 'project',
+      },
+      'relevant memories injected',
+    );
     if (result.items.length === 0) return '';
     // 正文即可：外层 <relevant_memories> 标签由 system-prompt 的 section() 加。
     return result.text;
@@ -949,24 +1005,77 @@ export class MemoryService {
     conversationId: string;
     triggerMessageIds: string[];
     batchId: string | null;
+    /** A pure conversation turn is debounced; a task reflects immediately (D75). */
+    kind: 'turn' | 'task';
     /** Loop 续接 (D56): runs whose process records were replayed into this run. */
     continuedFromRunIds?: string[];
   }): void {
-    this.#deps.jobs.enqueue({
-      type: 'reflection',
-      botId: input.botId,
-      conversationId: input.conversationId,
-      payload: {
-        runId: input.runId,
-        triggerMessageIds: input.triggerMessageIds,
-        batchId: input.batchId,
-        ...(input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
-          ? { continuedFromRunIds: input.continuedFromRunIds }
-          : {}),
-      },
-      priority: 2,
-      dedupeKey: `run:${input.runId}`,
+    const entry = {
+      runId: input.runId,
+      triggerMessageIds: input.triggerMessageIds,
+      batchId: input.batchId,
+      ...(input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
+        ? { continuedFromRunIds: input.continuedFromRunIds }
+        : {}),
+    };
+    const debounceKey = `reflection_debounce:${input.botId}:${input.conversationId}`;
+    if (input.kind === 'task') {
+      this.#deps.jobs.enqueue({
+        type: 'reflection',
+        botId: input.botId,
+        conversationId: input.conversationId,
+        payload: entry,
+        priority: 2,
+        dedupeKey: `run:${input.runId}`,
+      });
+      // A finished task already covers this conversation's context: flush
+      // the turns waiting in the debounce window instead of letting them sit.
+      this.#deps.jobs.hasten(debounceKey, this.#deps.clock.now());
+      return;
+    }
+
+    const now = this.#deps.clock.now();
+    const window = this.#deps.reflectionDebounceMs ?? REFLECTION_TURN_DEBOUNCE_MS;
+    // Test hook 0 = debounce disabled: keep the legacy per-run reflection job.
+    if (window <= 0) {
+      this.#deps.jobs.enqueue({
+        type: 'reflection',
+        botId: input.botId,
+        conversationId: input.conversationId,
+        payload: entry,
+        priority: 2,
+        dedupeKey: `run:${input.runId}`,
+      });
+      return;
+    }
+    const maxRuns = REFLECTION_TURN_DEBOUNCE_MAX_RUNS;
+    let entryCount = 0;
+    const merged = this.#deps.jobs.mergePendingPayload(debounceKey, (payload) => {
+      const entries = Array.isArray(payload['entries'])
+        ? (payload['entries'] as Array<Record<string, unknown>>)
+        : [];
+      if (entries.some((existing) => existing['runId'] === input.runId)) {
+        entryCount = entries.length;
+        return payload;
+      }
+      const next = [...entries, entry as unknown as Record<string, unknown>];
+      entryCount = next.length;
+      return { ...payload, entries: next };
     });
+    if (!merged) {
+      this.#deps.jobs.enqueue({
+        type: 'reflection',
+        botId: input.botId,
+        conversationId: input.conversationId,
+        payload: { entries: [entry] },
+        priority: 2,
+        dedupeKey: debounceKey,
+        runAfter: now + window,
+      });
+      return;
+    }
+    // Do not extend the window; flush early once enough turns accumulated.
+    if (entryCount >= maxRuns) this.#deps.jobs.hasten(debounceKey, now);
   }
 
   /** Startup + hourly: enqueue the daily consolidation for each due bot. */
@@ -1088,21 +1197,36 @@ export class MemoryService {
   updateProfile(id: string, patch: { content?: string; category?: ProfileCategory }): ProfileItem {
     const item = this.#profileStore.getItem(id);
     if (!item) throw new AppError('NOT_FOUND', `画像条目 ${id} 不存在`);
+    let changed = false;
     if (patch.content !== undefined) {
       if (containsCredential(patch.content)) {
         throw new AppError('INVALID_INPUT', '内容包含疑似凭据，不会被存储');
       }
-      this.#profileStore.updateContent(id, patch.content);
+      if (patch.content !== item.content) {
+        this.#profileStore.updateContent(id, patch.content);
+        changed = true;
+      }
     }
-    if (patch.category !== undefined) this.#profileStore.updateCategory(id, patch.category);
+    if (patch.category !== undefined && patch.category !== item.category) {
+      this.#profileStore.updateCategory(id, patch.category);
+      changed = true;
+    }
+    // A direct edit bypasses the proposal queue, so the card must be
+    // recompiled now — otherwise it keeps the retracted / old constraint
+    // (docs/design/04-memory.md 画像整理).
+    if (changed) this.scheduleCuration(true);
     return this.#profileStore.getItem(id)!;
   }
 
   retractProfile(id: string): void {
-    if (this.#profileStore.getItem(id) === null) {
+    const item = this.#profileStore.getItem(id);
+    if (item === null) {
       throw new AppError('NOT_FOUND', `画像条目 ${id} 不存在`);
     }
-    this.#profileStore.retract(id);
+    if (item.status === 'active') {
+      this.#profileStore.retract(id);
+      this.scheduleCuration(true);
+    }
   }
 
   profileCard(): { content: string | null; compiledAt: number | null } {
@@ -1284,8 +1408,13 @@ export function applyProfileChanges(
  */
 export function isProxiedUserText(message: Message): boolean {
   if (message.kind !== 'text' || !('origin' in message.content)) return false;
-  const content = message.content as { origin?: string; viaButler?: boolean; butlerDrafted?: boolean };
+  const content = message.content as {
+    origin?: string;
+    viaButler?: boolean;
+    butlerDrafted?: boolean;
+  };
   // A butler-made dispatch, or a todo the butler drafted (its notes may carry external content).
-  if (content.origin === 'workbench') return content.viaButler === true || content.butlerDrafted === true;
+  if (content.origin === 'workbench')
+    return content.viaButler === true || content.butlerDrafted === true;
   return content.origin === 'delegation' || content.origin === 'widget';
 }
