@@ -209,7 +209,9 @@ export function buildImageTools(input: {
         maxItems: 4,
         description: '要理解的图片，1-4 张',
       }),
-      prompt: Type.String({ description: '对图片的问题或指令（如「描述这张图」「读出图里的表格数据」）' }),
+      prompt: Type.String({
+        description: '对图片的问题或指令（如「描述这张图」「读出图里的表格数据」）',
+      }),
     }),
     execute: async (params) => {
       if (identity.conversationId === null || identity.botId === null) {
@@ -269,8 +271,7 @@ export function buildImageTools(input: {
           errorCode: 'INTERNAL',
         };
       }
-      const note =
-        skipped.length > 0 ? `\n（以下图片过大已跳过：${skipped.join('；')}）` : '';
+      const note = skipped.length > 0 ? `\n（以下图片过大已跳过：${skipped.join('；')}）` : '';
       const truncated = truncateToBudget(result.text, TOOL_OUTPUT_MAX_CHARS).text;
       return { ok: true, content: `${untrustedBlock(truncated)}${note}` };
     },

@@ -22,7 +22,7 @@ importers:
         version: 24.19.0
       electron:
         specifier: 44.4.5
-        version: 44.4.5(supports-color@7.2.0)
+        version: 44.4.5(supports-color@10.2.2)
       eslint:
         specifier: 10.11.0
         version: 10.11.0(jiti@2.7.0)(supports-color@7.2.0)
@@ -7305,14 +7305,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@electron/get@5.1.0(supports-color@7.2.0)':
+  '@electron/get@5.1.0(supports-color@10.2.2)':
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       env-paths: 3.0.0
       graceful-fs: 4.2.11
       progress: 2.0.3
       semver: 7.8.5
-      sumchecker: 3.0.1(supports-color@7.2.0)
+      sumchecker: 3.0.1(supports-color@10.2.2)
     optionalDependencies:
       undici: 8.11.2
     transitivePeerDependencies:
@@ -9864,10 +9864,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@44.4.5(supports-color@7.2.0):
+  electron@44.4.5(supports-color@10.2.2):
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
-      '@electron/get': 5.1.0(supports-color@7.2.0)
+      '@electron/get': 5.1.0(supports-color@10.2.2)
       '@types/node': 24.19.0
     transitivePeerDependencies:
       - supports-color
@@ -12728,12 +12728,6 @@ snapshots:
   sumchecker@3.0.1(supports-color@10.2.2):
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
-    transitivePeerDependencies:
-      - supports-color
-
-  sumchecker@3.0.1(supports-color@7.2.0):
-    dependencies:
-      debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 
