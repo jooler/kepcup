@@ -64,10 +64,28 @@ export const shareTargetsSchema = z.object({
 });
 export type ShareTargets = z.infer<typeof shareTargetsSchema>;
 
+/**
+ * 暂存文件名禁用字符：路径分隔符（`/` `\`，防路径注入；`\` 同时挡住 Windows
+ * basename 语义）与控制字符。其余放开通——扩展 `sanitizeName` 产出的是 Unicode
+ * 字母数字 + `._-` + 内部空格（如 `000-聊天记录.zip`），core / 主进程的
+ * manifest 校验口径是「basename 一致 + 拒绝 `..` 段」，契约与实现一致。
+ */
+// eslint-disable-next-line no-control-regex -- 拒绝控制字符正是目的
+export const SHARE_STAGED_NAME_FORBIDDEN = /[/\\\u0000-\u001f\u007f]/;
+
 /** 扩展写入的 manifest 里的一个文件。 */
 export const shareManifestFileSchema = z.object({
   /** 暂存文件名（`000-chat.zip`）：只作 inbox 内的相对名，不作路径。 */
-  stagedName: z.string().min(1),
+  stagedName: z
+    .string()
+    .min(1)
+    .max(255)
+    .refine((name) => !SHARE_STAGED_NAME_FORBIDDEN.test(name), {
+      message: 'stagedName 不允许路径分隔符 / 控制字符',
+    })
+    .refine((name) => name !== '.' && !name.includes('..'), {
+      message: 'stagedName 不允许 `.` / `..` 段',
+    }),
   /** 用户看到的原始文件名（已清洗 basename）。 */
   originalName: z.string().min(1),
   mime: z.string().min(1),
@@ -183,9 +201,13 @@ export const shareFailedChangedPayloadSchema = z.object({
 });
 export type ShareFailedChanged = z.infer<typeof shareFailedChangedPayloadSchema>;
 
-/** `share.targets.changed` 事件（platform 事件，core → 主进程）。 */
+/**
+ * `share.targets.changed` 事件（platform 事件，core → 主进程）。`reason` 只区分
+ * 目标来源（Bot / 项目组），主进程不按 reason 分流——统一防抖后重拉快照；快照
+ * 是否归档由快照内容本身携带。
+ */
 export const shareTargetsChangedPayloadSchema = z.object({
-  reason: z.enum(['bot', 'project', 'archive', 'startup']),
+  reason: z.enum(['bot', 'project']),
 });
 export type ShareTargetsChanged = z.infer<typeof shareTargetsChangedPayloadSchema>;
 

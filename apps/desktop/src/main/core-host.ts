@@ -18,6 +18,7 @@ import {
   type CoreStatusPayload,
   type RpcChannel,
   type RpcMethodSpec,
+  type ShareTargetsChanged,
 } from '@kepcup/shared';
 
 export type CoreProcessState = 'up' | 'down' | 'failed';
@@ -32,10 +33,10 @@ export interface CoreHostEvents {
   /** Launch-at-login setting changed or was pushed at bind (P13 任务 3). */
   onAutostart(listener: (payload: { enabled: boolean }) => void): () => void;
   /**
-   * D94: 分享目标快照该重写了（Bot / 项目 / 归档变化）。主进程据此重新拉
+   * D94: 分享目标快照该重写了（Bot / 项目增删改）。主进程据此重新拉
    * `share.targets` 并原子写 App Group 里的 `targets.v1.json`。
    */
-  onShareTargetsChanged(listener: (payload: { reason: string }) => void): () => void;
+  onShareTargetsChanged(listener: (payload: ShareTargetsChanged) => void): () => void;
 }
 
 function portToTransport(port: MessagePortMain) {
@@ -80,7 +81,7 @@ export class CoreHost implements CoreHostEvents {
     (payload: { active: boolean; until: number | null }) => void
   >();
   private readonly autostartListeners = new Set<(payload: { enabled: boolean }) => void>();
-  private readonly shareTargetsListeners = new Set<(payload: { reason: string }) => void>();
+  private readonly shareTargetsListeners = new Set<(payload: ShareTargetsChanged) => void>();
 
   constructor(
     private readonly appVersion: string,
@@ -152,7 +153,7 @@ export class CoreHost implements CoreHostEvents {
     return () => this.autostartListeners.delete(listener);
   }
 
-  onShareTargetsChanged(listener: (payload: { reason: string }) => void): () => void {
+  onShareTargetsChanged(listener: (payload: ShareTargetsChanged) => void): () => void {
     this.shareTargetsListeners.add(listener);
     return () => this.shareTargetsListeners.delete(listener);
   }

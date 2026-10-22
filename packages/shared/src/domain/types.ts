@@ -5,6 +5,7 @@ import { agentSetupReasonSchema } from './agent-status.js';
 import { appUiCardSchema } from './apps-ui.js';
 import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
+import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
 import {
@@ -1015,7 +1016,7 @@ export const textContentSchema = z.object({
    * 来自系统 Share Extension。带这个字段的消息，其附件在上下文里额外带
    * workspace 副本路径（按查看 Bot 物化）；UI 据此显示「通过系统分享导入」。
    */
-  shareIntakeId: z.string().optional(),
+  shareIntakeId: z.string().regex(SHARE_INTAKE_ID_PATTERN).optional(),
   /**
    * Bot 在本轮回答中创建 / 修改的本地文件（消息下方的文件卡列表）。路径是
    * 工具实际写入的绝对路径；渲染层按扩展名选择预览方式，用户点击后在覆盖层

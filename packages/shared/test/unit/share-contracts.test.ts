@@ -23,6 +23,7 @@ import {
   shareFailedRetryInputSchema,
   shareManifestSchema,
   shareTargetSchema,
+  shareTargetsChangedPayloadSchema,
   shareTargetsSchema,
 } from '../../src/index.js';
 
@@ -85,6 +86,36 @@ describe('shareManifestSchema（D94 §5.1）', () => {
       shareManifestSchema.safeParse({ ...base, note: 'x'.repeat(SHARE_NOTE_MAX_CHARS + 1) })
         .success,
     ).toBe(false);
+  });
+
+  it('stagedName 白名单：拒绝路径段与控制字符，放行 Unicode 文件名', () => {
+    // 合法：序号 + 清洗后的名字——扩展 sanitizeName 保留 Unicode 字母数字与
+    // 内部空格（CharacterSet.alphanumerics 含中文）。
+    for (const stagedName of [
+      '000-chat.zip',
+      '001-photo.png',
+      'a.txt',
+      '002_wechat.zip',
+      '000-聊天记录.zip',
+      '003-my file.zip',
+    ]) {
+      expect(
+        shareManifestSchema.safeParse({
+          ...base,
+          files: [{ ...base.files[0]!, stagedName }],
+        }).success,
+      ).toBe(true);
+    }
+    // 路径分隔符 / 控制字符 / `.` / `..` 段：全部拒绝（防路径注入，与 core /
+    // 主进程 manifest 校验「basename 一致 + 拒绝 ..」同一口径）。
+    for (const stagedName of ['a/b', 'a\\b', '..', '.', 'a..b', 'a\nb', '']) {
+      expect(
+        shareManifestSchema.safeParse({
+          ...base,
+          files: [{ ...base.files[0]!, stagedName }],
+        }).success,
+      ).toBe(false);
+    }
   });
 });
 
@@ -171,11 +202,18 @@ describe('shareFailed* schema', () => {
 });
 
 describe('文本消息带 shareIntakeId（D94-4）', () => {
-  it('可选字段，旧消息照常解析', () => {
+  it('可选字段，旧消息照常解析；形状必须匹配 shr_ 前缀', () => {
     const parsed = messageContentSchema.parse({ text: 'hi' });
     expect('shareIntakeId' in parsed).toBe(false);
     const withShare = messageContentSchema.parse({ text: '', shareIntakeId: INTAKE_ID });
     expect('shareIntakeId' in withShare && withShare.shareIntakeId).toBe(INTAKE_ID);
+    // 契约与 SHARE_INTAKE_ID_PATTERN 收紧到同一形状，不收任意字符串。
+    expect(messageContentSchema.safeParse({ text: '', shareIntakeId: 'bogus' }).success).toBe(
+      false,
+    );
+    expect(
+      messageContentSchema.safeParse({ text: '', shareIntakeId: '../escape' }).success,
+    ).toBe(false);
   });
 });
 
@@ -235,5 +273,14 @@ describe('分享的 RPC 与事件登记', () => {
     expect(
       rpcEventSchemas['share.failed.changed'].parse({ intakeId: INTAKE_ID, state: 'failed' }),
     ).toEqual({ intakeId: INTAKE_ID, state: 'failed' });
+  });
+
+  it('targets.changed 的 reason 只有 bot / project（发射方只有这两种）', () => {
+    expect(shareTargetsChangedPayloadSchema.parse({ reason: 'bot' }).reason).toBe('bot');
+    expect(shareTargetsChangedPayloadSchema.parse({ reason: 'project' }).reason).toBe('project');
+    // 'archive' / 'startup' 从未有发射方：归档变化走 conversation.updated（project），
+    // 启动刷新由主进程 core-ready 主动拉，不走该事件。
+    expect(shareTargetsChangedPayloadSchema.safeParse({ reason: 'archive' }).success).toBe(false);
+    expect(shareTargetsChangedPayloadSchema.safeParse({ reason: 'startup' }).success).toBe(false);
   });
 });

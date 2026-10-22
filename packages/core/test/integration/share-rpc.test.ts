@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestStack, makeBot, type TestStack } from '@kepcup/testkit';
+import { createCore, createMemoryKeystore } from '../../src/index.js';
 import type { ShareConsumeInput, ShareFailedItem, ShareTargets } from '@kepcup/shared';
 
 /**
@@ -152,5 +155,30 @@ describe('分享失败恢复（share.failed.*）', () => {
     expect(discarded.ok).toBe(true);
     const list = await callApp<{ items: ShareFailedItem[] }>('share.failed.list');
     expect(list.items.find((entry) => entry.intakeId === 'shr_rpcthreetest')).toBeUndefined();
+  });
+});
+
+describe('分享清扫定时（D94 §6.7 启动 + 每日）', () => {
+  it('注册的每日定时回调会调 sweep 与 scanInbox', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'share-sweep-it-'));
+    const core = await createCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { NODE_ENV: 'test', KEPCUP_KEYSTORE: 'memory' },
+      // 测试钩子：把每日间隔缩到毫秒级，观察定时器真的会重复触发。
+      shareSweepIntervalMs: 5,
+    });
+    try {
+      const share = core.services.share;
+      expect(share).not.toBeNull();
+      const sweep = vi.spyOn(share!, 'sweep');
+      const scanInbox = vi.spyOn(share!, 'scanInbox');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sweep.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(scanInbox.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await core.close();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
