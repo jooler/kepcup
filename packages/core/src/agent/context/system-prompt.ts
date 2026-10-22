@@ -135,6 +135,7 @@ export interface SystemPromptInput {
  */
 const FILE_HANDLING_GUIDANCE = [
   '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用工具处理）。',
+  '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接 read / bash 读它，文件正文不在上下文里；副本丢了用 get_attachment 重建。要改写文件先复制到 workspace 的其它位置再改。',
   '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。',
   '不要假装已经读取或处理过附件：没拿到内容就说明做不到或先去获取；安装技能的请求被用户拒绝后不要反复重试，降级处理或如实说明。',
 ]
@@ -377,6 +378,7 @@ const TURN_PLATFORM_RULES = [
 /** Attachment handling in a turn: getting files in and anything heavier is a task's. */
 const TURN_FILE_HANDLING_GUIDANCE = [
   '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。图片随消息附带给你的可直接看；其他文件可用 get_attachment 查看内容。',
+  '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接 read / bash 读它，正文不在上下文里；副本丢了用 get_attachment 重建。',
   '需要转换、解析或批量处理文件（如 PDF、Office 文档、安装处理它的技能）时派任务去做；不要假装已经读取或处理过附件。',
 ]
   .map((rule, index) => `${index + 1}. ${rule}`)
@@ -986,6 +988,7 @@ function agentFileHandling(toolNames: readonly string[]): string {
     toolNames.includes('get_attachment')
       ? '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用你自己的工具处理）。'
       : '',
+    '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接读它，文件正文不在上下文里。',
     toolNames.includes('install_skill')
       ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时联网检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
       : '遇到当前能力处理不了的文件格式，先看已安装技能（<skills>）里有没有能处理的；没有就如实告知用户该格式暂不支持，并建议替代做法。',

@@ -5,6 +5,7 @@
 ## 决策
 
 - **D61 附件与媒体**：用户附件走既有 `attachments` 通道（上传即落盘会话附件目录，草稿阶段预挂、flush 转正）；`drafts.add` 增 `attachmentIds`，发送前可移除（`attachments.detach`，仅限草稿阶段）；消息附件在渲染层按 mime 内联渲染——图片缩略图（懒加载 blob URL + 渲染层缓存）、视频/音频点击加载后内联播放、其余保持文件 chip；点击媒体打开灯箱（滚轮缩放、拖拽平移、双击适配、前后切换、下载）；新增 `generate_speech` / `generate_video` 工具（产物同 `generate_image` 落 workspace `.generated/`，落盘后由工具立即作为消息附件随消息发出——确定性投递，不依赖模型调 `send_message`；视频为提交+轮询的异步任务，工具内轮询并经 progress 汇报）；触发批中的图片附件在模型支持图像输入时以 image part 进入首条 user 消息（≤4 张、单张 ≤5MB），不支持时保持文本行并提示改用 `get_attachment`；上下文附件行补充 mime（见 20）。
+- **D94 系统分享（macOS Share Extension）**：分享进来的文件同样落既有 `attachments` 通道（`conversations/{id}/attachments/`），不新增附件表字段；与普通上传不同的是，**这类消息的上下文附件行追加 workspace 副本 path**（`path="…"`，按查看 Bot 物化到 `<workspace>/.attachments/`，见 [44-macos-share-extension.md](44-macos-share-extension.md) §5.7）。普通上传附件 P0 保持原格式（只有 id / 文件名 / mime / 大小）。
 
 ## 1 现状与缺口
 

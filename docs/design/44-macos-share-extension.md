@@ -1,6 +1,6 @@
 # 44 macOS Share Extension（系统分享接收）
 
-**状态：设计定稿，待实施（P0 前置预研见 §16）。决策编号 D94。**
+**状态：P0 已实施（2026-10-22）。决策编号 D94。P0 前置预研见 §16（结论见 §19）。**
 
 ## 0 摘要
 
@@ -890,3 +890,47 @@ node scripts/run-tests.mjs run apps/desktop/test/share-*.test.ts
 |---|---|
 | 2026-10-22 | 初版评审修订：补 App Group 路径、扩展沙盒、URL Scheme、`share_intakes` 幂等、失败恢复、归档恢复、空附言、纯文本 `.txt`、P0 不解析 @、去掉 `attachments.source`、修正 D22 → D63、D30 → D75。 |
 | 2026-10-22 | 按用户确认改为 **workspace 稳定副本路径**：上下文附件行带 `path`，按查看 Bot 物化（项目组各 Bot 独立），路径不落消息 / DB；`get_attachment` 复用 / 重建；补完整实施任务、RPC、表结构、原生扩展、打包签名、测试与验收。 |
+| 2026-10-22 | **P0 实施完成**（S1–S10）：shared 契约 + `share_intakes` 迁移 + core 分享服务（幂等 / 事务 / 目标解析 / 失败恢复 / 清扫）+ 上下文 workspace 副本 path + 平台与 App RPC + 主进程协调器（App Group inbox → core inbox → `share.consume`）+ 恢复面板 + 原生 Share Extension（Swift / Xcode 目标）+ 打包签名钩子；实施偏差与 §16 预研结论见 §19。 |
+
+## 19 实施记录（P0，2026-10-22）
+
+### 19.1 落地位置
+
+| 任务 | 落地 |
+|---|---|
+| S1 | `packages/shared/src/domain/share.ts`（schema + 常量 + 事件 payload）、`domain/types.ts`（`textContentSchema.shareIntakeId`）、`errors.ts`（5 个错误码）、`rpc/methods.ts`（`share.targets` / `share.consume` 平台方法 + `share.failed.*` App 方法）、`rpc/events.ts`（`share.failed.changed` App 事件 + `share.targets.changed` 平台事件） |
+| S2 | `packages/core/migrations/main/0047_share_intakes.sql` |
+| S3 | `packages/core/src/share/service.ts`（`ShareIntakeService`）、`packages/core/src/share/materialize.ts`（`ensureShareAttachmentCopy`）、`packages/core/src/infra/paths.ts`（`shareInboxDir`） |
+| S4 | `packages/core/src/domain/messages.ts`（`AppendMessageInput.shareIntakeId`）、`dispatch/orchestrator.ts`（`sendShareMessage` + 事务内/提交后两段）、`agent/context/conversation.ts`（`RenderMessageOptions.shareAttachmentPath` + 附件行 `path=`）、`agent/context/system-prompt.ts`（path 语义）、`tools/index.ts`（`get_attachment` 复用同一副本落点） |
+| S5 | `packages/core/src/start.ts`（服务构造、平台方法、启动清扫、`share.targets.changed`）、`packages/core/src/rpc/bindings.ts`（`share.failed.*`） |
+| S6 | `apps/desktop/src/main/share-intake/{coordinator,app-group,manifest,targets,url}.ts`、`main/index.ts`（`open-url` / 启动扫描 / 周期扫描 / 快照重写）、`main/core-host.ts`（平台事件）、`electron-builder.yml`（URL Scheme）、`resources/entitlements.mac.plist`（App Group） |
+| S7 | `apps/desktop/src/renderer/src/lib/features/share/{ShareRecoveryPanel.svelte,share-recovery.svelte.ts}`、i18n `share.*`、消息流「通过系统分享导入」标签 |
+| S8 | `apps/desktop/macos/ShareExtension/`（Xcode 目标 `KepCupShare`：显式 file reference 的 `.xcodeproj` + Swift 源码 `ShareExtension/`） |
+| S9 | `apps/desktop/scripts/build-share-extension.mjs`、`scripts/dist.mjs`、`scripts/pack-hooks.cjs`（appex 落位与一致性硬校验） |
+| S10 | 本节 + `docs/design/11-storage.md`、`docs/design/20-conversation-media.md`、`docs/design/13-permissions.md`、`docs/dev/04-agent-runtime.md` |
+
+### 19.2 与设计的偏差
+
+1. **上下文物化时机**：设计说「上下文组装前批量物化」，实现改为**渲染时按需物化**（`RenderMessageOptions.shareAttachmentPath` 回调，附件行渲染时才解析）。好处是所有渲染路径（对话轮、任务、历史、`messages.around`、`search_messages`）自动一致，且不必为整段历史窗口预扫附件。
+2. **`share.consume` 的平台方法不经渲染层**：设计 §5.5 的「`share.consume` 只接受 core inbox 前缀下的 path」由 core 侧再校验一次（`realpath` 必须落在 `{home}/inbox/share/{intakeId}` 内）；主进程与 core 各校验一次，路径注入两面都堵。
+3. **扩展唤起主应用**：实现同时提供两条路——`NSWorkspace.open`（沙盒扩展里通常被拒）与**主进程周期扫描**（30 秒一次扫 App Group inbox）。后者是 §16.3 的降级兜底：扩展唤起失败时文件照样进得来，用户下次打开 KepCup 也会扫。
+4. **App Group 组 id 带 TeamID 前缀**：entitlements 里的 `$(TeamIdentifierPrefix)` 由 `scripts/build-share-extension.mjs` 解析签名身份得到 TeamID 后展开（electron-builder 不展开 entitlements 变量）；展开后的主应用 entitlements 落在 `resources/entitlements.mac.expanded.plist`（构建期产物，不入库），组 id 同时写进 `resources/share-extension/group.json` 供主进程定位容器目录。
+5. **失败批次保留 7 天**、**`processing` 超时 10 分钟**、**目标快照 24 小时过期**均按设计实现；`done` 记录同样 7 天后清理。
+6. **`get_attachment` 的二进制副本也是 0444**：设计 §6.6 要求它复用 `ensureShareAttachmentCopy` 的落点，而该 helper 统一写 0444（只读语义）。Bot 要改这个副本得先复制到 workspace 其它位置——与 §5.7 的语义一致。
+7. **Xcode 目标用显式 file reference**（不是 file-system synchronized group）：后者在 `-arch x64` 时会把编译步骤静默跳过、产物里没有可执行文件。另外 `xcodebuild` 的架构名是 `x86_64`（不是 electron-builder 的 `x64`）——传 `x64` 会让 `ARCHS` 变成无效值、同样跳过编译。`scripts/build-share-extension.mjs` 负责这层名字映射，产物目录仍用 electron-builder 的 `${arch}` 命名。
+
+### 19.3 §16 预研项的落地结论
+
+| # | 预研项 | P0 结论 |
+|---|---|---|
+| 1 | 微信是否走系统 Share sheet | **未取证**（需在真机微信 ≥4.1.13 上验证）。设计上不依赖微信——同一扩展对 Finder / Safari / 邮件附件一律可用；但若微信不走系统 Share sheet，§15 验收第 1 条不成立，需另找入口（见 §16.1 的降级方向）。 |
+| 2 | 真实 ZIP 体积 | **未取证**。上限按设计保持单文件 30MB / 总量 60MB；超限在扩展内拒绝（用户看到明确提示）。 |
+| 3 | 沙盒扩展唤起主应用 | **已实现双路**：`NSWorkspace.open` + 主进程周期扫描。唤起是否在沙盒里生效需真机验证；周期扫描保证文件不丢。 |
+| 4 | electron-builder 嵌套签名与 App Group | **已实现**：扩展先签（`codesign` + 展开后的 entitlements + `--timestamp` + `--options runtime`），外层 app 由 electron-builder 后签；`pack-hooks.cjs` 硬校验 appex 落位 / 扩展点 / bundle id / 签名。公证与干净机安装仍需发版流水线验证。 |
+| 5–8 | 扩展资源限制、多副本成本、P1 解压归属、外部智能体 cwd 可见性 | 未处理（按设计属 P1）。外部智能体的 `cwd=workdir` 场景下 workspace `.attachments/` 路径可能不可见，届时附件行仍给 path，Bot 需回退 `get_attachment`。 |
+
+### 19.4 已知限制
+
+- 未做真机端到端验收（微信 / Finder 分享、App Group 容器在真实签名包下的读写、公证后的系统分享列表可见性）——需要真实 macOS 环境与 Developer ID 凭据。
+- 分享附件不进图片视觉通道（D61 保持不变）。
+- 分享消息不解析 `@`、不选路由目标（P0 附言里的 `@` 只是文本）。

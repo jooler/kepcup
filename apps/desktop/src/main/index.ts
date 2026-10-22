@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -37,6 +37,8 @@ import {
 } from './sensor-permission';
 import { wireUpdater } from './updater';
 import { createFileUpdateSourceStore } from './update-sources';
+import { ShareIntakeCoordinator } from './share-intake/coordinator';
+import { shareGroupDir } from './share-intake/app-group';
 
 let window: BrowserWindow | null = null;
 let quitting = false;
@@ -50,6 +52,10 @@ let windowFocused = true;
 let unattendedActive = false;
 /** Latest update-gate snapshot for late-loading renderer windows (P13-B UI). */
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
+/** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
+let shareCoordinator: ShareIntakeCoordinator | null = null;
+/** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
+const pendingShareUrls: string[] = [];
 
 const isQuitting = () => quitting;
 
@@ -114,6 +120,49 @@ async function quitApp(): Promise<void> {
   } finally {
     app.quit();
   }
+}
+
+/**
+ * D94 §7.2：`kepcup://share-intake?id=…`（Share Extension 唤起主应用）。
+ * 冷启动时 URL 先到、core 还没就绪——先排队，core ready 后再消费。
+ */
+function handleShareUrl(raw: string): void {
+  if (shareCoordinator === null) {
+    pendingShareUrls.push(raw);
+    return;
+  }
+  void shareCoordinator.handleUrl(raw).then((outcome) => {
+    if (outcome === null) return;
+    // P0：把 KepCup 带到前台；静默导入是 P1 的体验优化。
+    showWindow();
+  });
+}
+
+/** core 就绪后：消费排队的 URL、扫描 App Group inbox、重写目标快照。 */
+async function drainShareIntakes(): Promise<void> {
+  if (shareCoordinator === null) return;
+  const queued = pendingShareUrls.splice(0, pendingShareUrls.length);
+  for (const raw of queued) {
+    await shareCoordinator.handleUrl(raw);
+  }
+  await shareCoordinator.scan();
+  await shareCoordinator.refreshTargets();
+}
+
+/**
+ * D94 §16.3 的兜底：沙盒扩展不一定能打开 `kepcup://`（唤起主应用是待验证项）。
+ * 主应用在运行时定期扫一眼 App Group inbox——扩展写完但没能唤起主应用时，
+ * 文件照样进得来（用户下次打开 KepCup 也会扫）。
+ */
+const SHARE_SCAN_INTERVAL_MS = 30_000;
+let shareScanTimer: NodeJS.Timeout | null = null;
+
+function startShareScanTimer(): void {
+  if (shareScanTimer !== null) return;
+  shareScanTimer = setInterval(() => {
+    void shareCoordinator?.scan();
+  }, SHARE_SCAN_INTERVAL_MS);
+  shareScanTimer.unref?.();
 }
 
 function bootstrap(): void {
@@ -363,6 +412,19 @@ function bootstrap(): void {
   });
 
   widgetPreviewHost = new WidgetPreviewHost();
+  // D94: 分享协调器。App Group 不可用（非 macOS / 未配置）时 groupDir = null，
+  // 协调器只做无害的跳过。
+  shareCoordinator = new ShareIntakeCoordinator({
+    groupDir: shareGroupDir(process.env, process.resourcesPath),
+    coreHome: process.env.KEPCUP_HOME ?? join(homedir(), '.kepcup'),
+    logger: {
+      // 主进程只允许 console.warn / console.error（BR-P13-008：无文案进程）。
+      info: (message, detail) => console.warn(`[share] ${message}`, detail ?? ''),
+      warn: (message, detail) => console.error(`[share] ${message}`, detail ?? ''),
+    },
+    callPlatform: <T>(method: string, input?: unknown) =>
+      coreHost!.callPlatform(method, input) as Promise<T>,
+  });
   coreHost = new CoreHost(app.getVersion(), {
     // P11: the core's browser tools call the main process over port B.
     // D73: …and so does OAuth consent (shell.openExternal, URL allow-list in shell-methods).
@@ -383,6 +445,15 @@ function bootstrap(): void {
     // The window appears once the core reports any terminal state so the
     // locked / error pages are reachable too.
     if (payload.status !== 'starting') ensureWindow();
+    // D94: core ready 后消费排队的分享 URL、扫描 App Group inbox、重写快照。
+    if (payload.status === 'ready') {
+      void drainShareIntakes();
+      startShareScanTimer();
+    }
+  });
+  // D94 §5.2: Bot / 项目 / 归档变了 → 重写 App Group 里的目标快照。
+  coreHost.onShareTargetsChanged(() => {
+    shareCoordinator?.scheduleTargetsRefresh();
   });
   coreHost.onNotify(({ conversationId, title, body }) => {
     // Focus rule (docs/design/13-permissions.md "系统通知"): never while the
@@ -531,6 +602,20 @@ if (process.env.KEPCUP_HOME) {
 // navigation guard is installed for every webContents created from now on.
 registerAppsUiScheme();
 guardAllAppFrames();
+
+// D94: URL Scheme 唤起（Share Extension 写完 inbox 后调用）。必须早于
+// app.ready 注册——冷启动时 URL 会在 ready 之前送达。
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleShareUrl(url);
+});
+// dev 下 scheme 由 Electron 壳注册（打包版由 Info.plist 的 CFBundleURLTypes
+// 负责，docs/design/44-macos-share-extension.md §7.2）。
+if (process.defaultApp && process.argv.length >= 2) {
+  app.setAsDefaultProtocolClient('kepcup', process.execPath, [resolve(process.argv[1] as string)]);
+} else {
+  app.setAsDefaultProtocolClient('kepcup');
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

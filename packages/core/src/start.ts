@@ -24,11 +24,17 @@ import {
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
   chatModelOptions,
+  shareConsumeInputSchema,
+  shareConsumeOutputSchema,
+  shareTargetsSchema,
   type AgentCatalogEntry,
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
   type CustomModel,
+  type ShareConsumeInput,
+  type ShareConsumeOutput,
+  type ShareTargets,
 } from '@kepcup/shared';
 import type {
   ConnectorIndexPublicKey,
@@ -117,6 +123,7 @@ import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { SlotYieldingLeaseService } from './scheduler/slot-yielding-lease.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
+import { ShareIntakeService } from './share/service.js';
 import { episodeLimitsFromEnv } from './dispatch/episodes.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
 import { EnvManager } from './env/manager.js';
@@ -512,6 +519,8 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
+  /** D94 分享接收（Share Extension）：null while locked / errored. */
+  share: ShareIntakeService | null;
   /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
   workdirRuntime: WorkdirRuntime | null;
   /** P06 environment manager (null while locked / errored). */
@@ -818,6 +827,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
+    share: null,
     workdirRuntime: null,
     environment: null,
     memory: null,
@@ -2925,6 +2935,47 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // D94 分享接收：Share Extension 投递的目标解析、附件落盘与失败恢复。
+    const shareIntake = new ShareIntakeService({
+      db: mainDb,
+      paths,
+      clock,
+      logger,
+      attachments,
+      conversations,
+      bots,
+      orchestrator,
+      publish: (event, payload) => events.emit(event, payload),
+    });
+    services.share = shareIntake;
+
+    // D94 分享接收：清掉超时的 processing、过期失败行与无主残留；并把「主进程
+    // 移动后崩溃」留下的批次补消费掉（文件不丢）。
+    try {
+      const swept = shareIntake.sweep();
+      if (
+        swept.resetProcessing > 0 ||
+        swept.expiredFailed > 0 ||
+        swept.expiredDone > 0 ||
+        swept.orphanInboxDirs > 0
+      ) {
+        logger.info(swept, 'share intakes swept');
+      }
+      const recovered = shareIntake.scanInbox();
+      if (recovered.length > 0) {
+        logger.info({ recovered }, 'share intakes recovered from core inbox');
+      }
+    } catch (error) {
+      warnQuietly('share intake sweep failed', error);
+    }
+    // D94 §5.2: Bot / 项目 / 归档变化时通知主进程重写目标快照（主进程侧防抖）。
+    events.on('bot.updated', () => events.emit('share.targets.changed', { reason: 'bot' }));
+    events.on('bot.deleted', () => events.emit('share.targets.changed', { reason: 'bot' }));
+    events.on('conversation.updated', (payload) => {
+      const conversation = payload.conversation;
+      if (conversation.type !== 'project') return;
+      events.emit('share.targets.changed', { reason: 'project' });
+    });
     services.workdirRuntime = workdirRuntime;
     services.environment = environment;
     services.memory = memory;
@@ -3317,6 +3368,28 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       handle: async () => {
         await services.close();
         return { ok: true as const };
+      },
+    },
+    // D94 §5.5: 分享目标快照（主进程写进 App Group 供 Share Extension 读）。
+    'share.targets': {
+      input: voidInput,
+      output: shareTargetsSchema,
+      handle: async (): Promise<ShareTargets> => {
+        if (services.share === null) {
+          throw new AppError('NOT_FOUND', '分享服务尚未就绪');
+        }
+        return services.share.targets();
+      },
+    },
+    // D94 §5.5: 消费一个分享批次（主进程把 App Group inbox 移进 core inbox 后调）。
+    'share.consume': {
+      input: shareConsumeInputSchema,
+      output: shareConsumeOutputSchema,
+      handle: async (input): Promise<ShareConsumeOutput> => {
+        if (services.share === null) {
+          throw new AppError('NOT_FOUND', '分享服务尚未就绪');
+        }
+        return services.share.consume(input as ShareConsumeInput);
       },
     },
     'unattended.disable': {
