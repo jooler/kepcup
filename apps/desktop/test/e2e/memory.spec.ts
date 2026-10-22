@@ -38,6 +38,7 @@ async function launchApp(options: {
   home: string;
   llmUrl: string;
   curationDelayMs?: string;
+  reflectionDebounceMs?: string;
 }): Promise<LaunchedApp> {
   const app = await _electron.launch({
     args: ['.'],
@@ -54,6 +55,9 @@ async function launchApp(options: {
       ...(options.curationDelayMs !== undefined
         ? { KEPCUP_PROFILE_CURATION_DELAY_MS: options.curationDelayMs }
         : {}),
+      ...(options.reflectionDebounceMs !== undefined
+        ? { KEPCUP_REFLECTION_DEBOUNCE_MS: options.reflectionDebounceMs }
+        : {}),
     },
   });
   const page = await app.firstWindow();
@@ -67,10 +71,19 @@ interface Session {
   llm: MockLlmServer;
 }
 
-async function startSession(prefix: string, curationDelayMs?: string): Promise<Session> {
+async function startSession(
+  prefix: string,
+  curationDelayMs?: string,
+  reflectionDebounceMs?: string,
+): Promise<Session> {
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), prefix));
-  const launched = await launchApp({ home, llmUrl: llm.url, curationDelayMs });
+  const launched = await launchApp({
+    home,
+    llmUrl: llm.url,
+    curationDelayMs,
+    reflectionDebounceMs,
+  });
   return { ...launched, llm };
 }
 
@@ -407,7 +420,8 @@ test('profile page: curation entry with contributor, card preview, edit, delete'
 
 test('usage page: per bot/loop/day tokens', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-usage-', '60000');
+  // 对话轮反思默认防抖 10 分钟；这条用例要在当轮看到「反思」用量。
+  const session = await startSession('kepcup-e2e-usage-', '60000', '0');
   const { page, llm } = session;
   try {
     await waitReady(page);

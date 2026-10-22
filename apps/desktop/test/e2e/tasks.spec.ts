@@ -211,7 +211,7 @@ test('start a task → task card → progress attributed → inject line → res
     // The task's final text itself never became a visible message.
     await expect(botBubble(page, 'RESULT 笔记整理好了')).toHaveCount(0);
 
-    // A second task, cancelled from its card: no wake, the workspace summary.
+    // A second task, cancelled from its card: user cancel wakes an ack (D93).
     const held2 = step().inTask().hold().replyText('不会走到这里');
     llm.script('mock-main', [
       startTask('长任务', true),
@@ -227,15 +227,25 @@ test('start a task → task card → progress attributed → inject line → res
     await expect(page.locator('[data-testid="task-status"]').first()).toContainText('长任务', {
       timeout: 30_000,
     });
+    // D93：用户从任务卡取消会唤醒 Bot 确认（Bot 自己的 cancel_task 不唤醒）。
+    // 先写好应答，避免唤醒请求赶在脚本之前变成未编排的 500。
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => isWake(req) && turnWith('用户从任务卡主动取消')(req))
+        .replyText('好的，长任务已取消'),
+    ]);
     await card2.locator('[data-testid="task-cancel"]').click();
     await expect(card2).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(card2.locator('[data-testid="task-cancel-reason"]')).toContainText('用户取消');
     await expect(card2.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card2.locator('[data-testid="task-revert"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="task-status"]')).toHaveCount(0, { timeout: 30_000 });
-    // Cancelling never wakes the bot: still only the one waking turn (the first task's).
-    await page.waitForTimeout(1_500);
-    expect(llm.requestsFor('mock-main').filter(isWake)).toHaveLength(1);
+    await expect(botBubble(page, '好的，长任务已取消')).toBeVisible({ timeout: 30_000 });
+    // 第一次任务完成的唤醒 + 这次用户取消的唤醒。
+    await expect
+      .poll(() => llm.requestsFor('mock-main').filter(isWake).length, { timeout: 15_000 })
+      .toBe(2);
   } finally {
     llm.releaseAll();
     await closeSession(session);
@@ -272,8 +282,15 @@ test('a workdir write task cancelled from its card leaves disk changes and no re
     await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
     expect(existsSync(path.join(workdir, 'demo.txt'))).toBe(true);
 
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => isWake(req) && turnWith('用户从任务卡主动取消')(req))
+        .replyText('好的，改工作目录已取消'),
+    ]);
     await card.locator('[data-testid="task-cancel"]').click();
     await expect(card).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
+    await expect(botBubble(page, '好的，改工作目录已取消')).toBeVisible({ timeout: 30_000 });
     await expect(card.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card.locator('[data-testid="task-revert"]')).toHaveCount(0);
     expect(existsSync(path.join(workdir, 'demo.txt'))).toBe(true);

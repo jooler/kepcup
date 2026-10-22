@@ -3,7 +3,14 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { isTaskRequest, startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
+import {
+  isTaskRequest,
+  startMockLlm,
+  step,
+  viaTask,
+  type MockChatRequest,
+  type MockLlmServer,
+} from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
@@ -214,18 +221,22 @@ test("a write task queued behind another conversation's write task shows the wai
     await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
 
     // 乙的写任务排队等同一工作目录的租约（任务仍是 submitted，状态行显示等待）。
-    llm.script(
-      'mock-main',
-      viaTask({
+    // 甲从任务卡取消会在同一 mock-main 上唤醒（D93）。viaTask 的 relay 没有
+    // expect，会被这次唤醒提前消费，「写完了」就不再出现。两条唤醒按正文分开。
+    const turnWith = (fragment: string) => (req: MockChatRequest) =>
+      !isTaskRequest(req) && req.lastUserText().includes(fragment);
+    llm.script('mock-main', [
+      ...viaTask({
         title: '也写一个',
         ack: '乙去写',
         taskSteps: [
           step().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
           step().replyText('乙.txt 已写入'),
         ],
-        relay: '写完了',
       }),
-    );
+      step().inTurn().expect(turnWith('用户从任务卡主动取消')).replyText('好的，占用已取消'),
+      step().inTurn().expect(turnWith('乙.txt 已写入')).replyText('写完了'),
+    ]);
     await page.locator('[data-testid="composer-input"]').fill('也写一个');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
@@ -247,24 +258,9 @@ test("a write task queued behind another conversation's write task shows the wai
     expect(readFileSync(path.join(workdir, '乙.txt'), 'utf8')).toBe('from-b');
     await page.locator('[data-testid^="conversation-item-"]', { hasText: '乙' }).first().click();
     await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
-    // 诊断（临时）：唤醒轮的 relay 应答若被别的 inTurn 请求提前消费，「写完了」
-    // 就永远不出现；失败分支 dump mock-main 的整轮请求序列先取证。
-    try {
-      await expect(
-        page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
-      ).toBeVisible({ timeout: 60_000 });
-    } catch (error) {
-      const requests = llm.requestsFor('mock-main');
-      for (const [index, request] of requests.entries()) {
-        const toolCalls = JSON.stringify(request.body.messages ?? [])
-          .match(/"name":"(start_task|bash|write|delegate_task)"/)
-          ?.at(1);
-        console.warn(
-          `[task-relay-diag] #${index} task=${isTaskRequest(request)} tool=${toolCalls ?? '-'} last=${request.lastUserText().slice(0, 120)}`,
-        );
-      }
-      throw error;
-    }
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
+    ).toBeVisible({ timeout: 60_000 });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
     await closeSession(session);

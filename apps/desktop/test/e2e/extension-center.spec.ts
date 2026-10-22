@@ -105,8 +105,12 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
       'aria-selected',
       'true',
     );
-    // 末项再往右循环回第一项。
+    // 邮件之后是本机应用协作；末项再往右循环回第一项。
     await dialog.locator('[data-testid="extension-center-tab-mail"]').press('ArrowRight');
+    await expect(
+      dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
+    ).toHaveAttribute('aria-selected', 'true');
+    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
       'aria-selected',
       'true',
