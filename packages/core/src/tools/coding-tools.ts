@@ -201,14 +201,20 @@ export function wrapPiTool(
         for (const block of result.content ?? []) {
           if (block.type === 'text' && typeof block.text === 'string') {
             textParts.push(block.text);
-          } else if (
-            block.type === 'image' &&
-            typeof block.data === 'string' &&
-            typeof block.mimeType === 'string'
-          ) {
+          } else if (block.type === 'image') {
             // pi-coding-agent 1.4 的 read 对图片返回 image block；base64 只进
             // ToolResult.images（由引擎按模型能力决定是否发送），绝不进文本。
-            images.push({ base64: block.data, mimeType: block.mimeType });
+            // data / mimeType 缺失、非字符串或 data 为空串的无效图片不静默丢弃，
+            // 占位说明与 mcp/tools.ts 的「（xx 内容已省略）」一致。
+            if (
+              typeof block.data === 'string' &&
+              block.data !== '' &&
+              typeof block.mimeType === 'string'
+            ) {
+              images.push({ base64: block.data, mimeType: block.mimeType });
+            } else {
+              textParts.push('（image 内容已省略）');
+            }
           }
         }
         const text = textParts.join('\n').trim();

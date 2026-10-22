@@ -95,8 +95,12 @@ function withLedgerOutcome(result: ToolResult, status: SettledEffectStatus | nul
     : result;
 }
 
+/**
+ * 图像类工具结果（browser_screenshot 截图、read 读图）在模型不支持图像输入时的
+ * 降级说明；两处场景共用，措辞不绑定截图（快照等文本输出仍是截图场景的替代途径）。
+ */
 export const SCREENSHOT_OMITTED_NOTE =
-  '（截图已省略：当前模型不支持图像输入，请使用快照文本了解页面）';
+  '（图片已省略：当前模型不支持图像输入，请使用快照等文本输出了解内容）';
 
 export type ToolResultBlock =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -104,8 +108,8 @@ export type ToolResultBlock =
 /**
  * The content blocks a tool result hands back to the model: the truncated
  * text first, then the images when the model accepts them (P11
- * browser_screenshot), else a one-line note. Same shape for pi tool results
- * and MCP `CallToolResult.content`.
+ * browser_screenshot, pi 1.4 read images), else a one-line note. Same shape
+ * for pi tool results and MCP `CallToolResult.content`.
  */
 export function toolResultBlocks(result: ToolResult, acceptsImages: boolean): ToolResultBlock[] {
   const text = truncateToBudget(result.content, TOOL_OUTPUT_MAX_CHARS).text;

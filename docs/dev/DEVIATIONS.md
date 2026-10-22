@@ -733,3 +733,17 @@
 - 推荐：方案 2 作为后续 P2；本轮保持方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/dev/PROGRESS.md`。
+
+### DEV-044 本地 SSE 传输把「发送中取消」合并进 fetch signal，中断在途 POST（偏离 pi-mcp 上游）
+
+- 状态：已落实
+- 阶段：Pi Agent 1.4.0 升级 P3 加固（2026-10-22）
+- 是否阻塞：否
+- 问题：pi-mcp 1.4.0 的 `McpTransport.send` 增加可选 `signal`（「发送方不再等待回复时中止；传输不得在其后派发该消息，但不撤销已派发的消息」）。上游 `streamable-http` 传输的实现是：**fetch 只挂共享 `controller.signal`**，per-request `signal` 仅在每次派发（含授权刷新后的重试）前检查 `aborted`，**不中断在途 POST**。KepCup 自带的旧版「HTTP with SSE」传输（`packages/core/src/mcp/sse-transport.ts`，pi-mcp 未内置）把本次 dispatch 的 `signal` 与 `controller.signal` 经 `AbortSignal.any` 合并传给 fetch——取消或 `close()` 都会立刻掐断在途 POST。这是有意偏离：旧协议的响应经共享 SSE 流异步送达（POST 本身只拿 202），被放弃的在途 POST 继续占着连接没有任何收益；合并后 `close()` 也能收掉在途 dispatch。与上游相同点：中断不承诺撤回服务端可能已收到的消息（上层 ledger 按 uncertain 记账），取消只影响本次 dispatch、不关闭 transport（不误触发重连）。预派发检查顺序已对齐上游（连接态先于取消态：closed 优先抛 `McpConnectionClosedError`）。
+- 影响范围：`packages/core/src/mcp/sse-transport.ts`（`send` 的 signal 合并与检查顺序，签名改用 pi-mcp 导出的 `McpTransportSendOptions`）、`packages/core/test/unit/sse-transport.test.ts`（in-flight 取消 / close() 中断两腿各有用例）。
+- 可选方案：
+  1. 维持合并（当前实现）— 优点：取消 / 关闭即时释放连接与资源，close() 收口完整；缺点：与上游 streamable-http 的行为不同，升级 pi-mcp 时需重读差异（代码注释已点名）。
+  2. 完全对齐上游（fetch 只挂 controller.signal，signal 仅做派发前检查）— 优点：与上游零差异；缺点：被放弃的 POST 占连接到自然结束，close() 对在途 dispatch 无能为力，旧协议下无收益。
+- 推荐：方案 1（当前实现）。
+- 决定：（由人工确认）
+- 已更新的文档：`docs/dev/PROGRESS.md`（Pi Agent 1.4.0 升级 P3 加固）。
