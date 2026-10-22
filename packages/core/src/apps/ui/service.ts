@@ -146,9 +146,12 @@ export function toUiToolResult(
     budget -= text.length;
   }
   let structuredContent: Record<string, unknown> | undefined;
-  if (result.structuredContent !== undefined && result.structuredContent !== null) {
+  const structured = result.structuredContent;
+  // pi-mcp 1.4 / MCP 2026-07-28: structuredContent may be an array, null or a
+  // primitive. The UI contract only carries a plain object; omit anything else.
+  if (structured !== null && typeof structured === 'object' && !Array.isArray(structured)) {
     try {
-      const json = redact(JSON.stringify(result.structuredContent));
+      const json = redact(JSON.stringify(structured));
       if (json.length <= Math.max(0, budget)) {
         structuredContent = JSON.parse(json) as Record<string, unknown>;
       } else {

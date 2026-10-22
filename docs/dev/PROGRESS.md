@@ -1506,3 +1506,17 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 文档同步（本轮）：`design/05-wiki-and-skills.md`（读写规则、`scope` 行、新增「归属（谁选目标 wiki）」行、触发来源与事务口径、开篇定位）、`design/41-project-team.md` §8.5（归属规则 + `wiki_read` 不回落）、`design/02-execution.md` loop 表、`design/03-bot.md` 存储边界、`design/06-isolation-and-storage.md` 隔离矩阵与写入者表、`design/10-sandbox.md` 沙箱路径表、`design/11-storage.md` 磁盘布局、`design/30-supervisor-and-tasks.md` §7.2、`design/36-wiki-multimodal-ingest.md` §5.5、`dev/03-data-model.md`（jobs 类型 + `wiki_ingest` owner 的选择规则 + `wiki_suggestion` 条目）、`dev/04-agent-runtime.md`（工具行与反思输出契约）、`dev/phases/P07-memory.md`、`dev/phases/P09-wiki.md`（D92 修订注记）、`dev/05-testing.md`（回归登记）。
 
 **验证**：core 定向——`wiki-tools` / `system-prompt-project` 单测、`wiki-project-default-scope`（新集成 3 例：群聊里不传 `scope` 落项目 wiki 且个人 wiki 全程没被写；单聊里不传 `scope` 仍写自己的；反思建议也落项目 wiki，还原旧行为即失败）、`wiki-project` / `memory-reflection` 集成全绿；core typecheck 与 eslint 干净。
+
+## Pi Agent 1.4.0 升级（2026-10-22，不含 pi-durable）
+
+依据 [todo/pi-1.4-upgrade.md](../../todo/pi-1.4-upgrade.md) 实施。范围严格限定为「安全升级 + 保持现有行为」：未引入 `pi-durable`，未迁移 SubAgent / compaction / durable journal / 任务状态机，未做 DB 迁移。
+
+- **版本与依赖**：`packages/core` 的 `@earendil-works/pi-agent-core` / `pi-ai` / `pi-coding-agent` / `pi-mcp` 统一从 `1.0.2` 升到 `1.4.0`。`packages/app-validator` 的 `pi-mcp` 也同步升到 `1.4.0`（见 DEV-041：否则 lock 会残留 1.0.2，违反本任务验收标准）。lock 已无任何 `@earendil-works/pi-*@1.0.2`；新增 `pi-codemode` / `pi-telemetry` / `pi-tui` / `quickjs-wasi` 已进 lock；`pnpm why undici` 只有一个版本（`8.11.2`，override 继续生效）。
+- **release-age 例外**：`1.4.0` 发布不足仓库的最小发布年龄窗口，`pnpm install` 自动向 `pnpm-workspace.yaml` 追加 7 条 `minimumReleaseAgeExclude`（四个直连包 + `pi-codemode` / `pi-telemetry` / `pi-tui`）。这些例外是供应链策略的显式例外，需随本次变更提交；没有放宽或删除其他策略。
+- **`structuredContent` 适配**：`pi-mcp@1.4` 将其类型改为 `unknown`（MCP 2026-07-28 允许数组 / `null` / 原始值）。`mcpReceiptOf` 改为只把普通对象当回执来源，数组 / `null` / 原始值不抛错、不误判，纯文本 JSON 回退保持不变；`toUiToolResult` 对非普通对象省略 `structuredContent`，只保留文本块。其余 `structuredContent` 使用点已扫描（`apps/connections.ts` 已按 `unknown` 处理，无需改）。
+- **`wrapPiTool` 图片结果**：`pi-coding-agent@1.4` 的 `read` 对图片返回 image block。包装层把 image block 收进 `ToolResult.images`（base64 / mimeType 原样，不进 `<untrusted>` 文本、不进 `ToolOutputSpill`），文本块仍按脱敏 → 落盘 / 截断 → `<untrusted>` 处理；只有图片、没有文本时文本为「（已返回图片，见附加图片）」。text-only 模型仍由引擎按现有 `toolResultBlocks` 逻辑丢弃图片并替换为提示。
+- **SSE 取消信号（建议项，已做）**：本地 `SseTransport.send` 接受 `{ signal }`，发送前已取消抛 `McpAbortError`，发送中用 `AbortSignal.any` 合并取消；取消只影响本次 dispatch，不关闭 transport、不误触发重连。
+- **未做 / 开放项**：未给 `createModels()` 加 KepCup `identity`（产品决定，见 DEV-042）；`read` 图片仍未向 `wrapPiTool` 传 `ctx.model`，使用上游 fallback resize（见 DEV-043）；未把上游 `details.fullOutputPath` 接入本地 spill（上游 bash 文本已含路径，按任务书不做）；Azure provider 旧 id 在代码与本地数据中均无命中（本次不做自动迁移）。
+- **验证**（macOS arm64，本工作树）：
+  - 定向：`shared` build、`core` / `app-validator` typecheck 通过；`mcp-tools` / `app-ui-service` / `coding-tools-wrap` / 新增 `sse-transport` 4 文件 40 例通过；`mcp` / `mcp-loop` 集成 29 例通过；`context-compaction` / `subagent` / `model-switch` / `agent-end-transcript` / `opencode-session-header` 41 例通过。
+  - 收口全量：`pnpm typecheck` 通过（desktop svelte-check 0 error、1 个既有 warning）；`pnpm lint` 通过；`pnpm test` **542 文件 / 5805 通过 / 23 跳过，0 失败**；`pnpm build`（含 desktop 渲染端与 core）通过。

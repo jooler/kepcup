@@ -18,7 +18,7 @@
 | 用量 | 每条助手消息的 usage 写入 usage_ledger |
 | 单次调用 `complete()` | `@earendil-works/pi-ai` 的单次请求接口 |
 | 模型与厂商 | `pi-ai` 的模型注册表；自定义接口通过 `baseUrl`；API key 通过自定义 `CredentialStore` 提供——`read(providerId)` 在每次请求的鉴权解析时从 secrets 表解密（DEV-002，不用 `Agent` 的 `getApiKey` 覆盖） |
-| 编码工具 | `pi-coding-agent` 导出的 read / write / edit / bash / grep / find / ls 工具工厂，替换其文件与命令执行接口为网关实现 |
+| 编码工具 | `pi-coding-agent` 导出的 read / write / edit / bash / grep / find / ls 工具工厂，替换其文件与命令执行接口为网关实现；1.4 起 `read` 的图片结果（image block）映射为 `ToolResult.images`，base64 不进入 `<untrusted>` 文本 |
 | Skills | `pi-coding-agent` 的 `loadSkills` / `formatSkillsForPrompt`（P08） |
 
 约束：

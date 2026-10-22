@@ -148,6 +148,24 @@ describe('W4 exact cards and receipts', () => {
     expect(mcpReceiptOf({}, ['[1,2]'])).toBeNull();
   });
 
+  it('mcpReceiptOf ignores non-plain structuredContent (array / null / primitive)', () => {
+    for (const structuredContent of [
+      [{ url: 'https://gh.example/i/1', id: 'x' }],
+      null,
+      '{"url":"https://gh.example/i/1"}',
+      42,
+      true,
+      undefined,
+    ]) {
+      expect(() => mcpReceiptOf({ structuredContent }, [])).not.toThrow();
+      expect(mcpReceiptOf({ structuredContent }, [])).toBeNull();
+    }
+    // The text fallback still applies when structuredContent is not an object.
+    expect(mcpReceiptOf({ structuredContent: [1] }, ['{"id":"m-2"}'])).toEqual({
+      externalId: 'm-2',
+    });
+  });
+
   it('复查 S3: receipts keep id-shaped values only and strip URL query / fragment', () => {
     // key / uid are not receipt keys any more.
     expect(mcpReceiptOf({ structuredContent: { key: 'abc', uid: 'u1' } }, [])).toBeNull();
