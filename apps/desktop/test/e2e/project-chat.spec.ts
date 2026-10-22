@@ -246,9 +246,9 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
       timeout: 10_000,
     });
 
-    // Goal：填写并保存，经 RPC 核对落库。
+    // Goal：填写后自动保存（无保存按钮），经 RPC 核对落库。
     await page.locator('[data-testid="project-goal-input"]').fill('把官网改版做完');
-    await page.locator('[data-testid="project-goal-save"]').click();
+    await expect(page.locator('[data-testid="project-goal-save"]')).toHaveCount(0);
     await expect
       .poll(
         async () => {
@@ -292,7 +292,9 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     await openConversationByName(page, '新项目名');
     await page.locator('[data-testid="project-settings-button"]').click();
     await expect(settingsPage).toBeVisible({ timeout: 15_000 });
-    const memberRows = page.locator('[data-testid="project-member-list"] [data-testid^="project-member-row-"]');
+    const memberRows = page.locator(
+      '[data-testid="project-member-list"] [data-testid^="project-member-row-"]',
+    );
     await expect(memberRows).toHaveCount(2);
     const memberAdd = page.locator('[data-testid="project-member-add"]');
     await memberAdd.fill('阿丙');
@@ -308,7 +310,9 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     await page.locator(`[data-testid="project-make-lead-${beta.botId}"]`).click();
     const overview = page.locator('[data-testid="project-settings-section-overview"]');
     await expect(overview).toContainText('阿乙', { timeout: 10_000 });
-    await expect(page.locator(`[data-testid="project-member-remove-${beta.botId}"]`)).toBeDisabled();
+    await expect(
+      page.locator(`[data-testid="project-member-remove-${beta.botId}"]`),
+    ).toBeDisabled();
     await expect(
       page.locator(`[data-testid="project-member-remove-${alpha.botId}"]`),
     ).toBeEnabled();
