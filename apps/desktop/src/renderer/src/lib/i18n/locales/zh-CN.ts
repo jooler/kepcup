@@ -684,7 +684,6 @@ export const zhCN = {
   'projectSettings.nav.schedules': '定时与监看',
   'projectSettings.nav.danger': '其它',
   'projectSettings.name': '项目名称',
-  'projectSettings.save': '保存',
   'projectSettings.goal': '项目目标',
   'projectSettings.goalHint': '告诉成员这个项目要达成什么；它会写进每位成员的上下文。',
   'projectSettings.goalPlaceholder': '例如：在十一月底前完成官网改版并上线',

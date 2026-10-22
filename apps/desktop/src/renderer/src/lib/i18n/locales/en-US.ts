@@ -713,7 +713,6 @@ export const enUS = {
   'projectSettings.nav.schedules': 'Schedules & monitoring',
   'projectSettings.nav.danger': 'Other',
   'projectSettings.name': 'Project name',
-  'projectSettings.save': 'Save',
   'projectSettings.goal': 'Project goal',
   'projectSettings.goalHint':
     "Tell members what this project should achieve. It's included in each member's context.",

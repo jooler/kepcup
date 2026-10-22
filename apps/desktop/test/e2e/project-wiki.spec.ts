@@ -1,14 +1,14 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
-  expect,
-  test,
-  type ElectronApplication,
-  type Page,
-  _electron,
-} from '@playwright/test';
-import { startFileServer, startMockLlm, step, type MockLlmServer, type TestFileServer } from '@kepcup/testkit';
+  startFileServer,
+  startMockLlm,
+  step,
+  type MockLlmServer,
+  type TestFileServer,
+} from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
@@ -103,7 +103,12 @@ async function openWikiTab(page: Page): Promise<void> {
 }
 
 /** The pasted-text source flow: add via the panel, then the real maintenance loop writes the page. */
-function scriptTextMaintenance(llm: MockLlmServer, keyword: string, pagePath: string, pageTitle: string): void {
+function scriptTextMaintenance(
+  llm: MockLlmServer,
+  keyword: string,
+  pagePath: string,
+  pageTitle: string,
+): void {
   llm.script('mock-main', [
     step()
       .expect((req) => JSON.stringify(req.body).includes(keyword))
@@ -144,7 +149,10 @@ async function closeSourcesPanel(page: Page): Promise<void> {
 }
 
 test('project wiki: empty state, user adds a text source, page appears, creator is "you"', async () => {
-  test.skip(process.platform === 'win32', 'wiki ingest needs a working sandbox; windows CI has no distro');
+  test.skip(
+    process.platform === 'win32',
+    'wiki ingest needs a working sandbox; windows CI has no distro',
+  );
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-project-wiki-1-');
   const { page, llm } = session;
@@ -153,7 +161,10 @@ test('project wiki: empty state, user adds a text source, page appears, creator 
     await createBotAndOpenChat(page, '阿领');
     await createBotAndOpenChat(page, '阿员');
     await createProjectViaUi(page, '项目知识库', ['阿领', '阿员']);
-    llm.script('mock-light', Array.from({ length: 4 }, () => step().replyJson(emptyReflection())));
+    llm.script(
+      'mock-light',
+      Array.from({ length: 4 }, () => step().replyJson(emptyReflection())),
+    );
 
     // Wiki tab 空态（项目 wiki 未初始化）。
     await openWikiTab(page);
@@ -181,7 +192,10 @@ test('project wiki: empty state, user adds a text source, page appears, creator 
 });
 
 test('project wiki: a member bot contributes via wiki_enqueue scope=project', async () => {
-  test.skip(process.platform === 'win32', 'wiki ingest needs a working sandbox; windows CI has no distro');
+  test.skip(
+    process.platform === 'win32',
+    'wiki ingest needs a working sandbox; windows CI has no distro',
+  );
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-project-wiki-2-');
   const { page, llm, server } = session;
@@ -191,7 +205,10 @@ test('project wiki: a member bot contributes via wiki_enqueue scope=project', as
     await createBotAndOpenChat(page, '阿领');
     await createBotAndOpenChat(page, '阿员');
     await createProjectViaUi(page, '成员共建组', ['阿领', '阿员']);
-    llm.script('mock-light', Array.from({ length: 6 }, () => step().replyJson(emptyReflection())));
+    llm.script(
+      'mock-light',
+      Array.from({ length: 6 }, () => step().replyJson(emptyReflection())),
+    );
 
     // 沟通里 @ 成员，成员的对话轮显式 scope=project 入库（执行者 = 该成员）。
     llm.script('mock-main', [
@@ -253,7 +270,10 @@ test('project wiki: a member bot contributes via wiki_enqueue scope=project', as
 });
 
 test('project wiki: user deletes a source', async () => {
-  test.skip(process.platform === 'win32', 'wiki ingest needs a working sandbox; windows CI has no distro');
+  test.skip(
+    process.platform === 'win32',
+    'wiki ingest needs a working sandbox; windows CI has no distro',
+  );
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-project-wiki-3-');
   const { page, llm } = session;
@@ -262,7 +282,10 @@ test('project wiki: user deletes a source', async () => {
     await createBotAndOpenChat(page, '阿领');
     await createBotAndOpenChat(page, '阿员');
     await createProjectViaUi(page, '来源管理组', ['阿领', '阿员']);
-    llm.script('mock-light', Array.from({ length: 4 }, () => step().replyJson(emptyReflection())));
+    llm.script(
+      'mock-light',
+      Array.from({ length: 4 }, () => step().replyJson(emptyReflection())),
+    );
 
     scriptTextMaintenance(llm, 'DeleteDocKeyword', 'delete-note.md', '待删页');
     await openWikiTab(page);
@@ -290,7 +313,10 @@ test('project wiki: user deletes a source', async () => {
 });
 
 test('project wiki: delete project shows wiki counts', async () => {
-  test.skip(process.platform === 'win32', 'wiki ingest needs a working sandbox; windows CI has no distro');
+  test.skip(
+    process.platform === 'win32',
+    'wiki ingest needs a working sandbox; windows CI has no distro',
+  );
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-project-wiki-4-');
   const { page, llm } = session;
@@ -299,7 +325,10 @@ test('project wiki: delete project shows wiki counts', async () => {
     await createBotAndOpenChat(page, '阿领');
     await createBotAndOpenChat(page, '阿员');
     await createProjectViaUi(page, '删除确认组', ['阿领', '阿员']);
-    llm.script('mock-light', Array.from({ length: 4 }, () => step().replyJson(emptyReflection())));
+    llm.script(
+      'mock-light',
+      Array.from({ length: 4 }, () => step().replyJson(emptyReflection())),
+    );
 
     scriptTextMaintenance(llm, 'CountDocKeyword', 'count-note.md', '计数页');
     await openWikiTab(page);
@@ -314,6 +343,9 @@ test('project wiki: delete project shows wiki counts', async () => {
     await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
       timeout: 15_000,
     });
+    // master-detail：同屏只渲染当前分区，删除入口在「其它」分区（危险区卡片）。
+    await page.locator('[data-testid="project-settings-nav-danger"]').click();
+    await expect(page.locator('[data-testid="project-settings-section-danger"]')).toBeVisible();
     await page.locator('[data-testid="project-delete-begin"]').click();
     await expect(page.locator('[data-testid="project-delete-confirm-box"]')).toBeVisible();
     const counts = page.locator('[data-testid="project-delete-wiki-count"]');
