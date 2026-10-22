@@ -211,7 +211,7 @@ test('start a task → task card → progress attributed → inject line → res
     // The task's final text itself never became a visible message.
     await expect(botBubble(page, 'RESULT 笔记整理好了')).toHaveCount(0);
 
-    // A second task, cancelled from its card: no wake, the workspace summary.
+    // A second task, cancelled from its card (D93：用户取消会唤醒 Bot 确认).
     const held2 = step().inTask().hold().replyText('不会走到这里');
     llm.script('mock-main', [
       startTask('长任务', true),
@@ -227,15 +227,19 @@ test('start a task → task card → progress attributed → inject line → res
     await expect(page.locator('[data-testid="task-status"]').first()).toContainText('长任务', {
       timeout: 30_000,
     });
+    // 用户取消会再走一轮 wake（user_cancelled）；先备好应答，避免抢占后续脚本。
+    llm.script('mock-main', [
+      step().inTurn().expect(isWake).replyText('好的，长任务已取消'),
+    ]);
     await card2.locator('[data-testid="task-cancel"]').click();
     await expect(card2).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(card2.locator('[data-testid="task-cancel-reason"]')).toContainText('用户取消');
     await expect(card2.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card2.locator('[data-testid="task-revert"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="task-status"]')).toHaveCount(0, { timeout: 30_000 });
-    // Cancelling never wakes the bot: still only the one waking turn (the first task's).
-    await page.waitForTimeout(1_500);
-    expect(llm.requestsFor('mock-main').filter(isWake)).toHaveLength(1);
+    await expect(botBubble(page, '好的，长任务已取消')).toBeVisible({ timeout: 30_000 });
+    // 完成 wake（第一条任务）+ 取消 wake（第二条）共两轮。
+    expect(llm.requestsFor('mock-main').filter(isWake)).toHaveLength(2);
   } finally {
     llm.releaseAll();
     await closeSession(session);

@@ -83,9 +83,11 @@ mac:
   entitlementsInherit: resources/entitlements.mac.expanded.plist
   # D94 §10.2：Share Extension 放进 Contents/PlugIns/（系统分享列表由此可见）。
   # 源目录不存在时 electron-builder 静默跳过（没装 Xcode 的本地构建）。
+  # 注意：from 指向 .appex 目录时，electron-builder 的 copyDir 是「把内容拷进 to」——
+  # to 必须是 PlugIns/KepCupShare.appex，写成 PlugIns 会摊成 Contents/PlugIns/Contents/…。
   extraFiles:
     - from: resources/share-extension/${arch}/KepCupShare.appex
-      to: PlugIns
+      to: PlugIns/KepCupShare.appex
   extraResources:
     # 托盘四件套（tray.ts 运行时经 app-brand.trayIconPath 读取，process.resourcesPath/tray）。
     # 按平台各写一份而非顶层 extraResources：electron-builder 的平台块对同名

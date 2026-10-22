@@ -235,36 +235,45 @@ test("a write task queued behind another conversation's write task shows the wai
     await expect(card).toHaveAttribute('data-task-state', 'submitted');
     await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写入租约');
 
-    // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入
+    // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入。
+    // D93：用户取消会唤醒甲；必须先备好取消 wake，否则会吃掉乙 viaTask 的 relay「写完了」。
     await page.locator('[data-testid^="conversation-item-"]', { hasText: '甲' }).first().click();
     const holder = page.locator('[data-testid^="task-card-"]').filter({ hasText: '占用工作目录' });
     await expect(holder).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect(
+          (req) =>
+            !isTaskRequest(req) && req.lastUserText().includes('用户从任务卡主动取消'),
+        )
+        .replyText('好，占用已取消'),
+      step().inTask().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
+      step().inTask().replyText('乙.txt 已写入'),
+      step()
+        .inTurn()
+        .expect(
+          (req) =>
+            !isTaskRequest(req) &&
+            req.lastUserText().includes('<trigger reason="task"') &&
+            !req.lastUserText().includes('用户从任务卡主动取消'),
+        )
+        .replyText('写完了'),
+    ]);
     await holder.locator('[data-testid="task-cancel"]').click();
     await expect(holder).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '好，占用已取消' }),
+    ).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => existsSync(path.join(workdir, '乙.txt')), { timeout: 60_000 })
       .toBe(true);
     expect(readFileSync(path.join(workdir, '乙.txt'), 'utf8')).toBe('from-b');
     await page.locator('[data-testid^="conversation-item-"]', { hasText: '乙' }).first().click();
     await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
-    // 诊断（临时）：唤醒轮的 relay 应答若被别的 inTurn 请求提前消费，「写完了」
-    // 就永远不出现；失败分支 dump mock-main 的整轮请求序列先取证。
-    try {
-      await expect(
-        page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
-      ).toBeVisible({ timeout: 60_000 });
-    } catch (error) {
-      const requests = llm.requestsFor('mock-main');
-      for (const [index, request] of requests.entries()) {
-        const toolCalls = JSON.stringify(request.body.messages ?? [])
-          .match(/"name":"(start_task|bash|write|delegate_task)"/)
-          ?.at(1);
-        console.warn(
-          `[task-relay-diag] #${index} task=${isTaskRequest(request)} tool=${toolCalls ?? '-'} last=${request.lastUserText().slice(0, 120)}`,
-        );
-      }
-      throw error;
-    }
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
+    ).toBeVisible({ timeout: 60_000 });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
     await closeSession(session);
