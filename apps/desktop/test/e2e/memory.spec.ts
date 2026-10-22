@@ -51,6 +51,8 @@ async function launchApp(options: {
       KEPCUP_ONBOARDING: 'off',
       KEPCUP_FILE_KEYSTORE_PATH: path.join(options.home, '.test-master-key'),
       KEPCUP_MOCK_LLM_URL: options.llmUrl,
+      // D75 反思去抖默认 10 分钟；usage 用例要立刻看到「反思」行。
+      KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
       ...(options.curationDelayMs !== undefined
         ? { KEPCUP_PROFILE_CURATION_DELAY_MS: options.curationDelayMs }
         : {}),

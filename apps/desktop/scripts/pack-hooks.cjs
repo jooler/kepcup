@@ -179,20 +179,108 @@ function packagedExecutable(context, appBundle) {
   return path.join(context.appOutDir, context.packager.executableName ?? name.toLowerCase());
 }
 
-/** 解析 plist（用系统的 plutil 转 JSON，不引第三方依赖）。 */
+/**
+ * 解析 XML plist 的常见子集（dict / array / string / true / false / integer / real）。
+ * 单测与 Linux/Windows CI 没有 plutil；发版 macOS 仍优先走 plutil。
+ */
+function parseXmlPlist(xml) {
+  let i = 0;
+  const source = String(xml).replace(/<!--[\s\S]*?-->/g, '');
+
+  function skipWs() {
+    while (i < source.length && /\s/.test(source[i])) i += 1;
+  }
+
+  function match(re) {
+    skipWs();
+    const m = re.exec(source.slice(i));
+    if (m === null || m.index !== 0) return null;
+    i += m[0].length;
+    return m;
+  }
+
+  function expect(re, label) {
+    const m = match(re);
+    if (m === null) throw new Error(`期望 ${label}（偏移 ${i}）`);
+    return m;
+  }
+
+  function parseValue() {
+    skipWs();
+    if (match(/^<true\s*\/>/)) return true;
+    if (match(/^<false\s*\/>/)) return false;
+    if (match(/^<string>/)) {
+      const end = source.indexOf('</string>', i);
+      if (end < 0) throw new Error('未闭合的 <string>');
+      const value = source.slice(i, end);
+      i = end + '</string>'.length;
+      return value
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, '&');
+    }
+    const numOpen = match(/^<(integer|real)>/);
+    if (numOpen) {
+      const tag = numOpen[1];
+      const end = source.indexOf(`</${tag}>`, i);
+      if (end < 0) throw new Error(`未闭合的 <${tag}>`);
+      const raw = source.slice(i, end).trim();
+      i = end + `</${tag}>`.length;
+      return tag === 'integer' ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
+    }
+    if (match(/^<dict>/)) {
+      const obj = {};
+      for (;;) {
+        skipWs();
+        if (match(/^<\/dict>/)) return obj;
+        expect(/^<key>/, '<key>');
+        const keyEnd = source.indexOf('</key>', i);
+        if (keyEnd < 0) throw new Error('未闭合的 <key>');
+        const key = source.slice(i, keyEnd);
+        i = keyEnd + '</key>'.length;
+        obj[key] = parseValue();
+      }
+    }
+    if (match(/^<array>/)) {
+      const arr = [];
+      for (;;) {
+        skipWs();
+        if (match(/^<\/array>/)) return arr;
+        arr.push(parseValue());
+      }
+    }
+    throw new Error(`无法解析的 plist 节点（偏移 ${i}）：${source.slice(i, i + 40)}`);
+  }
+
+  const plistOpen = source.search(/<plist\b[^>]*>/i);
+  if (plistOpen < 0) throw new Error('缺少 <plist> 根元素');
+  i = source.indexOf('>', plistOpen) + 1;
+  return parseValue();
+}
+
+/** 解析 plist：macOS 优先 plutil；否则（及 plutil 失败时）走纯 JS XML 解析。 */
 function readPlist(plistPath) {
-  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `[pack] plist 解析失败：${plistPath}（${result.stderr?.trim() || `退出码 ${result.status}`}）`,
-    );
+  const xml = readFileSync(plistPath, 'utf8');
+  if (existsSync('/usr/bin/plutil')) {
+    const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+      encoding: 'utf8',
+    });
+    if (result.status === 0) {
+      try {
+        return JSON.parse(result.stdout);
+      } catch (error) {
+        throw new Error(`[pack] plist 解析失败：${plistPath}（${error.message}）`);
+      }
+    }
   }
   try {
-    return JSON.parse(result.stdout);
+    return parseXmlPlist(xml);
   } catch (error) {
-    throw new Error(`[pack] plist 解析失败：${plistPath}（${error.message}）`);
+    throw new Error(
+      `[pack] plist 解析失败：${plistPath}（${error instanceof Error ? error.message : String(error)}）`,
+    );
   }
 }
 

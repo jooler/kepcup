@@ -139,16 +139,22 @@ describe('readStagedIntake', () => {
     expect(readStagedIntake(dir)).toEqual({ error: 'hash_mismatch' });
   });
 
-  // root 用户的读权限检查不生效，跳过。
-  it.skipIf(process.getuid?.() === 0)(
+  // root 读权限检查不生效；Windows 的 chmod(0) 会把文件锁死，连 force rm 都 EPERM。
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'staged 文件读不了（stat 与 read 之间被删 / 权限变化）→ files_missing，不抛异常',
     () => {
       stageIntake('shr_unreadab');
       const dir = path.join(shareInboxDir(groupDir), 'shr_unreadab');
-      chmodSync(path.join(dir, 'files', '000-a.zip'), 0o000);
+      const staged = path.join(dir, 'files', '000-a.zip');
+      chmodSync(staged, 0o000);
       try {
         expect(readStagedIntake(dir)).toEqual({ error: 'files_missing' });
       } finally {
+        try {
+          chmodSync(staged, 0o644);
+        } catch {
+          // ignore — best-effort unlock before cleanup
+        }
         rmSync(dir, { recursive: true, force: true });
       }
     },
