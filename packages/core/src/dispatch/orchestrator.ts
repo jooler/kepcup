@@ -39,6 +39,7 @@ import {
   type AgentToolApprovalPayload,
   type AgentPermissionTier,
   type AgentView,
+  type Attachment,
   type Bot,
   type Conversation,
   type Delegation,
@@ -245,6 +246,7 @@ import {
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { EpisodesService } from './episodes.js';
+import { ensureShareAttachmentCopy } from '../share/materialize.js';
 import { ProjectTurnCoordinator, type ProjectRoundEnd } from './project-turn.js';
 import { judgeContinuation } from './dispatcher.js';
 import { leadGate } from './lead-gate.js';
@@ -1055,8 +1057,59 @@ export class Orchestrator {
       attachmentIds?: string[];
       /** D87 P4 L3：用户在组件卡上确认后、经组件回传的消息。 */
       widgetOrigin?: { widgetId: string; version: number };
+      /** D94：来自系统分享的消息（分享批次 id）。 */
+      shareIntakeId?: string;
     },
   ): { message: Message; runId: string | null } {
+    const prepared = this.#prepareUserMessage(conversationId, input);
+    const { runId } = this.#publishAndRouteUserMessage(prepared);
+    return { message: prepared.message, runId };
+  }
+
+  /**
+   * 分享投递（D94 §5.4 / §6.3）：与 {@link sendMessage} 同样的事务、触发批与
+   * 路由，但拆成「事务内落库」与「提交后唤醒」两段——`share_intakes` 的状态
+   * 更新要和消息落库在同一个事务里，事件发布与路由唤醒只能在提交后发生。
+   *
+   * 调用方把本方法包在自己的事务里，事务提交后再调用 `wake()`。
+   */
+  sendShareMessage(
+    conversationId: string,
+    input: { text: string; attachmentIds: string[]; shareIntakeId: string },
+  ): {
+    message: Message;
+    batchId: string;
+    conversation: Conversation;
+    wake: () => { runId: string | null };
+  } {
+    const prepared = this.#prepareUserMessage(conversationId, {
+      text: input.text,
+      attachmentIds: input.attachmentIds,
+      shareIntakeId: input.shareIntakeId,
+    });
+    return {
+      message: prepared.message,
+      batchId: prepared.batchId,
+      conversation: prepared.conversation,
+      wake: () => this.#publishAndRouteUserMessage(prepared),
+    };
+  }
+
+  /**
+   * 消息落库（事务内）：写消息 + 认领附件 + 生成 batch id。返回值交给
+   * {@link #publishAndRouteUserMessage} 在提交后发布事件与唤醒路由。
+   */
+  #prepareUserMessage(
+    conversationId: string,
+    input: {
+      text: string;
+      mentions?: string[];
+      replyTo?: string | null;
+      attachmentIds?: string[];
+      widgetOrigin?: { widgetId: string; version: number };
+      shareIntakeId?: string;
+    },
+  ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1076,6 +1129,7 @@ export class Orchestrator {
         replyTo: input.replyTo ?? null,
         batchId,
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
+        ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
@@ -1086,6 +1140,19 @@ export class Orchestrator {
       ...message!,
       attachments: this.#deps.messages.attachmentsFor(message!.id),
     };
+    return { conversation: conv, message: full, batchId };
+  }
+
+  /** 提交后：发布消息事件、按既有路由唤醒（项目组走 D92 路由，私聊走目录闸门）。 */
+  #publishAndRouteUserMessage(prepared: {
+    conversation: Conversation;
+    message: Message;
+    batchId: string;
+  }): { runId: string | null } {
+    const conv = prepared.conversation;
+    const conversationId = conv.id;
+    const full = prepared.message;
+    const batchId = prepared.batchId;
 
     this.#deps.publish('message.created', { conversationId, message: full });
     this.#publishConversation(conversationId);
@@ -1095,13 +1162,13 @@ export class Orchestrator {
       // ordered turns. The runs (if any) are chosen asynchronously; no single
       // run id to report.
       this.#projectTurns.onUserBatch(conversationId, batchId, [full]);
-      return { message: full, runId: null };
+      return { runId: null };
     }
     if (conv.directBotId !== null) {
       // 目录闸门（19/D59）：访谈中的自由输入同样只落库，等目录卡作答。
       this.#deliverDirectThroughGate(conv, conv.directBotId, [full], 'direct');
     }
-    return { message: full, runId: this.#latestRunId(conversationId, conv.directBotId) };
+    return { runId: this.#latestRunId(conversationId, conv.directBotId) };
   }
 
   /**
@@ -2565,6 +2632,7 @@ export class Orchestrator {
       timeZone: this.#deps.timeZone,
       botNames: names,
       mentionLabels,
+      shareAttachmentPath: (attachment, botId) => this.#shareAttachmentPath(attachment, botId),
       renderCard: (message) => {
         if (message.senderType !== 'system' || message.kind !== 'card') return null;
         const content = message.content;
@@ -2614,6 +2682,37 @@ export class Orchestrator {
         return approval ? this.#deps.approvals.renderContextLine(approval) : '（审批记录已清理）';
       },
     };
+  }
+
+  /**
+   * D94 §5.7：分享附件的 workspace 副本路径（按当前查看 Bot 物化）。项目组
+   * 里每个 Bot 各有一份，路径互不串台。物化失败不阻断消息投递——附件行标
+   * `path=unavailable`，Bot 可以用 get_attachment 重建。
+   */
+  #shareAttachmentPath(attachment: Attachment, botId: string | null): string | null {
+    if (botId === null) return null;
+    try {
+      const workspacePath = workspacePathFor(
+        this.#deps.paths,
+        botId,
+        attachment.conversationId,
+      );
+      return ensureShareAttachmentCopy({
+        attachments: this.#deps.attachments,
+        workspacePath,
+        attachment,
+      }).path;
+    } catch (error) {
+      this.#deps.logger.warn(
+        {
+          attachmentId: attachment.id,
+          botId,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        'share attachment copy failed',
+      );
+      return null;
+    }
   }
 
   /**

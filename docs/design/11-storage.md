@@ -27,6 +27,8 @@
     maintenance/{loop_type}/
     browser/                               -- 该 Bot 的浏览器会话数据
   conversations/{conversation_id}/attachments/
+  inbox/share/{intake_id}/                 -- D94：分享中转库（主进程从 App Group 搬来，
+                                              core 消费后清掉；失败批次按 TTL 保留）
 ```
 
 ## 数据库引擎

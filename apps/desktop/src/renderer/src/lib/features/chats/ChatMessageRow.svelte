@@ -71,6 +71,17 @@
       ? (message.content.scheduleTitle ?? '')
       : null,
   );
+  /**
+   * D94：系统分享导入的用户消息——气泡下方一个只读标签「通过系统分享导入」。
+   * 不生成用户口吻的默认文案，正文只有用户自己写的附言（可能为空）。
+   */
+  const isShareImport = $derived(
+    isUser &&
+      message.kind === 'text' &&
+      'shareIntakeId' in message.content &&
+      typeof message.content.shareIntakeId === 'string' &&
+      message.content.shareIntakeId.length > 0,
+  );
   /** D90：工作台事项派发引出的回复——气泡下方「📋 标题」，点开工作台该事项。 */
   const todoSource = $derived(
     !isUser &&
@@ -250,6 +261,12 @@
     {#if message.status === 'edited' && !isEditing}
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-edited"
         >{t('chats.edited')}</span
+      >
+    {/if}
+
+    {#if isShareImport}
+      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="share-source"
+        >{t('share.imported')}</span
       >
     {/if}
 

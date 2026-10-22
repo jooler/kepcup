@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Share Extension 的 entitlements（D94 §9.6）：沙盒 + 与主应用共享 App Group。
+  组 id 必须与主应用的 entitlements（resources/entitlements.mac.plist）一致；
+  $(TeamIdentifierPrefix) 在签名时展开为 TeamID 前缀。
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>$(TeamIdentifierPrefix)app.kepcup.desktop</string>
+    </array>
+  </dict>
+</plist>

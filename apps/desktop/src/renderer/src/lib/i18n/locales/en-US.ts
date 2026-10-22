@@ -3158,6 +3158,28 @@ export const enUS = {
   'sandbox.reason.wslDistroMissing':
     'WSL2 is ready, but the app private distribution has not been imported',
   'sandbox.reason.wslConfigIncomplete': 'The distribution configuration is incomplete',
+
+  // --- Share intake (D94, docs/design/44-macos-share-extension.md) ------------
+  'share.imported': 'Imported via system share',
+  'share.recovery.title': 'System share import failed',
+  'share.recovery.empty': 'No failed shares.',
+  'share.recovery.retry': 'Retry',
+  'share.recovery.reselect': 'Change target',
+  'share.recovery.discard': 'Delete',
+  'share.recovery.expiresAt': 'Kept until',
+  'share.recovery.reason': 'Reason',
+  'share.recovery.originalTarget': 'Original target',
+  'share.recovery.searchTarget': 'Search bots or project groups',
+  'share.recovery.noFiles': '(files are gone)',
+  'share.recovery.retried': 'Imported again',
+  'share.recovery.retryFailed': 'Could not import again',
+  'share.recovery.discarded': 'This share was deleted',
+  'share.recovery.discardFailed': 'Could not delete',
+  'share.error.SHARE_INTAKE_INVALID': 'The shared content failed validation',
+  'share.error.SHARE_TARGET_NOT_FOUND': 'The target was deleted',
+  'share.error.SHARE_TARGET_READ_ONLY': 'The target conversation is read-only',
+  'share.error.SHARE_FILE_TOO_LARGE': 'The file exceeds the size limit',
+  'share.error.SHARE_MATERIALIZE_FAILED': 'Could not prepare the workspace copy',
 } as const;
 
 export type MessageKey = keyof typeof enUS;
