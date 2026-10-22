@@ -228,6 +228,9 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
     }
     await applyReflectionOutput(deps, botId, conversationId, primaryRunId, triggerMessages, output);
     if (primaryRunId !== null) {
+      // 合并反思的 runSummary 描述整批轮次，只记在 primary 轮（第一条
+      // entry）上；其余轮 summary 留空是有意为之——runs.summary 是单值，
+      // 逐轮写同一段摘要只会互相覆盖。
       deps.runs.update(primaryRunId, { summary: output.runSummary });
     }
     deps.runs.update(reflectionRun.id, { status: 'completed' });

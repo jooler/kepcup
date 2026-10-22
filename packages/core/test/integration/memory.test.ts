@@ -71,6 +71,15 @@ async function getCard(core: CoreHarness) {
   };
 }
 
+/**
+ * cardIsStale 按毫秒比较 max(updated_at) > compiled_at：紧随 setCard 的写入若
+ * 落在同一毫秒会被判为不陈旧、跳过重编译（偶发 flake）。关键写入前等墙钟
+ * 越过卡片编译时间，消除同毫秒边界。
+ */
+async function waitPastMs(ms: number): Promise<void> {
+  while (Date.now() <= ms) await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
 async function completedRun(core: CoreHarness, conversationId: string): Promise<Run> {
   return waitFor(
     async () => {
@@ -917,6 +926,8 @@ describe('P07 记忆与画像（集成）', () => {
       expect(body).toContain('坚果过敏');
       expect(body).toContain(item.id);
       expect(body).toContain('以下为用户明确的硬性约束');
+      // 1:1 私聊里没有群聊泄露对象：私聊来源的硬约束不加“来自私聊”后缀。
+      expect(body).not.toContain('不要在群聊中透露');
 
       await stack.core.rpc.call('memory.retract', { botId: bot.id, id: item.id });
       stack.llm.script('mock-main', [step().replyText('好')]);
@@ -949,6 +960,7 @@ describe('P07 记忆与画像（集成）', () => {
         confidence: 1,
       });
       memory.profileStore.setCard('画像卡片：不吃香菜');
+      await waitPastMs(memory.profileStore.getCard().compiledAt as number);
 
       stack.llm.script('mock-main', [
         step()
@@ -966,6 +978,7 @@ describe('P07 记忆与画像（集成）', () => {
       await waitForRunnableJobsSettled(stack.core);
       expect((await getCard(stack.core)).card.content).toBe('画像卡片：对坚果过敏');
 
+      await waitPastMs((await getCard(stack.core)).card.compiledAt as number);
       await stack.core.rpc.call('profile.retract', { id: item.id });
       await waitForRunnableJobsSettled(stack.core);
       expect((await getCard(stack.core)).card.content).toBe('画像卡片：（无）');

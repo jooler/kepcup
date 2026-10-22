@@ -148,26 +148,120 @@ export class JobsService {
       .run(this.clock.now(), id);
   }
 
-  fail(id: string, error: string): void {
-    const row = this.db.prepare('select attempts from jobs where id = ?').get(id) as
-      { attempts: number } | undefined;
-    if (!row) return;
-    const status = row.attempts >= JOB_MAX_ATTEMPTS ? 'failed' : 'pending';
+  /** The pending row currently holding this dedupe key (oldest first, like {@linkcode JobsService.mergePendingPayload}). */
+  #pendingRowFor(
+    dedupeKey: string,
+  ): { id: string; payload_json: string; run_after: number } | undefined {
+    return this.db
+      .prepare(
+        "select id, payload_json, run_after from jobs where dedupe_key = ? and status = 'pending' order by created_at limit 1",
+      )
+      .get(dedupeKey) as { id: string; payload_json: string; run_after: number } | undefined;
+  }
+
+  /**
+   * Folds a running row into the newer pending row that took over its dedupe
+   * key (fail / defer / startup reset meeting the partial unique index
+   * `jobs_dedupe`). Same merge semantics as the reflection debounce in
+   * {@linkcode JobsService.mergePendingPayload}: `entries` arrays are
+   * concatenated with runId-level de-dup — the running row's batch first, it
+   * is the older one — and `run_after` keeps the earlier deadline so the
+   * merged job is claimable as soon as either half would have been. Any other
+   * payload shape keeps the pending row's own value on purpose: a generic deep
+   * merge could corrupt job-specific fields, so only the entries format is
+   * merged.
+   */
+  #foldRunningIntoPending(
+    pending: { id: string; payload_json: string; run_after: number },
+    running: JobRow,
+    runningRunAfter: number,
+  ): void {
+    let payloadJson = pending.payload_json;
+    try {
+      const target = JSON.parse(pending.payload_json) as Record<string, unknown>;
+      const source = JSON.parse(running.payload_json) as Record<string, unknown>;
+      if (Array.isArray(target['entries'])) {
+        const seen = new Set<string>();
+        const entries: Array<Record<string, unknown>> = [];
+        const push = (entry: unknown): void => {
+          if (typeof entry !== 'object' || entry === null) return;
+          const record = entry as Record<string, unknown>;
+          const key =
+            typeof record['runId'] === 'string' ? record['runId'] : JSON.stringify(record);
+          if (seen.has(key)) return;
+          seen.add(key);
+          entries.push(record);
+        };
+        for (const entry of Array.isArray(source['entries']) ? source['entries'] : []) push(entry);
+        for (const entry of target['entries']) push(entry);
+        target['entries'] = entries;
+        payloadJson = JSON.stringify(target);
+      }
+    } catch {
+      // Malformed JSON on either side: keep the pending row's payload as-is.
+    }
     this.db
-      .prepare('update jobs set status = ?, last_error = ?, updated_at = ? where id = ?')
-      .run(status, error.slice(0, 2000), this.clock.now(), id);
+      .prepare('update jobs set payload_json = ?, run_after = ?, updated_at = ? where id = ?')
+      .run(payloadJson, Math.min(pending.run_after, runningRunAfter), this.clock.now(), pending.id);
+  }
+
+  fail(id: string, error: string): void {
+    const row = this.db.prepare('select * from jobs where id = ?').get(id) as JobRow | undefined;
+    if (!row) return;
+    if (row.attempts >= JOB_MAX_ATTEMPTS) {
+      this.db
+        .prepare("update jobs set status = 'failed', last_error = ?, updated_at = ? where id = ?")
+        .run(error.slice(0, 2000), this.clock.now(), id);
+      return;
+    }
+    const settle = this.db.transaction(() => {
+      // Resetting to pending can collide with a newer pending row under the
+      // same dedupe key — the debounce design makes running + pending coexist
+      // (a claimed window enqueues a fresh pending row). The partial unique
+      // index would reject the plain reset and the row would stay running
+      // forever. Fold this row's payload into the survivor and cancel instead
+      // (mirror of resetRunningToPending).
+      const pending = row.dedupe_key !== null ? this.#pendingRowFor(row.dedupe_key) : undefined;
+      if (pending !== undefined) {
+        this.#foldRunningIntoPending(pending, row, row.run_after);
+        this.db
+          .prepare(
+            "update jobs set status = 'cancelled', last_error = ?, updated_at = ? where id = ?",
+          )
+          .run(error.slice(0, 2000), this.clock.now(), id);
+      } else {
+        this.db
+          .prepare("update jobs set status = 'pending', last_error = ?, updated_at = ? where id = ?")
+          .run(error.slice(0, 2000), this.clock.now(), id);
+      }
+    });
+    settle.immediate();
   }
 
   /**
    * Pushes a claimed job back to pending with a later run_after
-   * (vec rebuild waiting for a ready embedder).
+   * (vec rebuild waiting for a ready embedder). Same dedupe-key collision
+   * handling as {@linkcode JobsService.fail}.
    */
   defer(id: string, runAfter: number): void {
-    this.db
-      .prepare(
-        "update jobs set status = 'pending', run_after = ?, attempts = max(attempts - 1, 0), updated_at = ? where id = ?",
-      )
-      .run(runAfter, this.clock.now(), id);
+    const row = this.db.prepare('select * from jobs where id = ?').get(id) as JobRow | undefined;
+    if (!row) return;
+    const settle = this.db.transaction(() => {
+      const pending = row.dedupe_key !== null ? this.#pendingRowFor(row.dedupe_key) : undefined;
+      if (pending !== undefined) {
+        this.#foldRunningIntoPending(pending, row, runAfter);
+        this.db
+          .prepare("update jobs set status = 'cancelled', updated_at = ? where id = ?")
+          .run(this.clock.now(), id);
+      } else {
+        this.db
+          .prepare(
+            "update jobs set status = 'pending', run_after = ?, attempts = max(attempts - 1, 0), updated_at = ? where id = ?",
+          )
+          .run(runAfter, this.clock.now(), id);
+      }
+    });
+    settle.immediate();
   }
 
   /** Pushes a pending job's next run out (attempts unchanged; running / terminal rows untouched). */
@@ -193,23 +287,38 @@ export class JobsService {
 
   /** Startup recovery + cancel support. Returns the number of affected rows. */
   resetRunningToPending(): number {
-    // 上次会话崩溃遗留的 running 行复位为 pending；但同 dedupe_key 已有新的
-    // pending 行时（启动 wiring 在本调用之前入队）不能复位——部分唯一索引
-    // jobs_dedupe（unique on dedupe_key where pending）会拒绝，整个 core 启动
-    // 失败。这类行是新行的重复，置 cancelled 让出 dedupe 名额。
-    const result = this.db
-      .prepare(
-        `update jobs set status = case
-           when attempts >= ${JOB_MAX_ATTEMPTS} then 'failed'
-           when dedupe_key is not null and exists (
-             select 1 from jobs other
-             where other.dedupe_key = jobs.dedupe_key and other.status = 'pending'
-           ) then 'cancelled'
-           else 'pending'
-         end, updated_at = ? where status = 'running'`,
-      )
-      .run(this.clock.now());
-    return result.changes;
+    // 上次会话崩溃遗留的 running 行复位为 pending；但去抖设计允许同
+    // dedupe_key 的 running 行与新 pending 行并存，部分唯一索引
+    // jobs_dedupe（unique on dedupe_key where pending）会拒绝直接复位，
+    // 整个 core 启动失败。这类行是重复调度：先把它的 payload（entries）
+    // 折进新 pending 行再置 cancelled，不丢待反思的轮次。
+    const reset = this.db.transaction(() => {
+      const rows = this.db
+        .prepare('select * from jobs where status = ?')
+        .all('running') as JobRow[];
+      for (const row of rows) {
+        if (row.attempts >= JOB_MAX_ATTEMPTS) {
+          this.db
+            .prepare("update jobs set status = 'failed', updated_at = ? where id = ?")
+            .run(this.clock.now(), row.id);
+          continue;
+        }
+        const pending =
+          row.dedupe_key !== null ? this.#pendingRowFor(row.dedupe_key) : undefined;
+        if (pending !== undefined) {
+          this.#foldRunningIntoPending(pending, row, row.run_after);
+          this.db
+            .prepare("update jobs set status = 'cancelled', updated_at = ? where id = ?")
+            .run(this.clock.now(), row.id);
+        } else {
+          this.db
+            .prepare("update jobs set status = 'pending', updated_at = ? where id = ?")
+            .run(this.clock.now(), row.id);
+        }
+      }
+      return rows.length;
+    });
+    return reset.immediate();
   }
 
   cancelByConversation(conversationId: string): number {

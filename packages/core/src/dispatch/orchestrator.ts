@@ -4854,15 +4854,26 @@ export class Orchestrator {
       // failures never touch this run.
       // (A task stopped by the host meanwhile is not completed after all.)
       if (outcome.status === 'completed' && (!isTask || runs.get(runId)?.status === 'completed')) {
-        this.#deps.memory?.registerReflection({
-          runId,
-          botId: batch.botId,
-          conversationId: batch.conversationId,
-          triggerMessageIds: batch.messages.map((m) => m.id),
-          batchId: batch.messages[0]?.batchId ?? null,
-          kind: isTask ? 'task' : 'turn',
-          continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
-        });
+        // Reflection registration is best-effort background work: it runs after
+        // settle() already wrote the terminal state, and runs.update has no
+        // terminal-state guard — a throw here would let the outer catch flip
+        // the completed run to failed. Log and move on.
+        try {
+          this.#deps.memory?.registerReflection({
+            runId,
+            botId: batch.botId,
+            conversationId: batch.conversationId,
+            triggerMessageIds: batch.messages.map((m) => m.id),
+            batchId: batch.messages[0]?.batchId ?? null,
+            kind: isTask ? 'task' : 'turn',
+            continuedFromRunIds: continuation?.continuedFromRunIds ?? [],
+          });
+        } catch (error) {
+          this.#deps.logger.warn(
+            { runId, err: error },
+            'reflection registration failed (run stays completed)',
+          );
+        }
       }
       this.#maybeEnqueueSummary(batch.conversationId);
     } catch (error) {

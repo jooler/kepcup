@@ -10,8 +10,13 @@ import {
   step,
   waitFor,
 } from '@kepcup/testkit';
-import type { Run, RunIdentity } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
+import {
+  REFLECTION_TURN_DEBOUNCE_MAX_RUNS,
+  REFLECTION_TURN_DEBOUNCE_MS,
+  type Run,
+  type RunIdentity,
+} from '@kepcup/shared';
 
 // 反思输出引用真实消息 id：两阶段编排——第一轮产生消息并空反射，
 // 第二轮的反射步骤用第一轮的真实消息 id 作为证据。
@@ -277,6 +282,15 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               sensitivity: 'normal',
               privateToBot: false,
             },
+            {
+              kind: 'fact',
+              content: '用户不吃香菜',
+              source: 'explicit',
+              evidenceMessageIds: [userMsgId],
+              confidence: 1,
+              sensitivity: 'normal',
+              privateToBot: false,
+            },
           ],
           // 同一敏感内容若被提议进画像，应被降级（不出现提案条目）。
           profileProposals: [
@@ -325,6 +339,9 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       );
       expect(body).not.toContain('失眠');
       expect(body).toContain('来自私聊'); // origin="private" 标注（JSON 转义后匹配中文注释）
+      // 私聊来源的硬约束在 project 对话里带“不要在群聊中透露”后缀
+      //（<hard_constraints> 段；与 1:1 私聊不加后缀相对）。
+      expect(body).toContain('不要在群聊中透露');
     } finally {
       await stack.cleanup();
     }
@@ -560,6 +577,70 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       const payload = JSON.parse(row.payload_json) as { entries: Array<{ runId: string }> };
       expect(payload.entries).toHaveLength(1);
       expect(payload.entries[0]!.runId).toBe(turn.id);
+    } finally {
+      await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('窗口内攒够 MAX_RUNS 轮立即冲刷；去抖常量数值固化', async () => {
+    // 固化 packages/shared/src/constants.ts 的两个去抖常量：窗口 10 分钟、
+    // 上限 6 轮。改动它们是产品决策，必须过这里这一关。
+    expect(REFLECTION_TURN_DEBOUNCE_MS).toBe(10 * 60_000);
+    expect(REFLECTION_TURN_DEBOUNCE_MAX_RUNS).toBe(6);
+
+    const stack = await createTestStack({
+      env: {
+        KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+        KEPCUP_REFLECTION_DEBOUNCE_MS: '600000',
+      },
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿满');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script('mock-main', [step().replyText('好')]);
+      await sendDrafts(stack.core, conv.id, [{ text: '你好' }]);
+      const primary = await completedRun(stack.core, conv.id);
+      // primary 轮真实存在（反思执行时会 runs.update 它的 summary）；
+      // 其余轮用合成 runId 登记即可——去抖合并只按 runId 去重。
+      stack.core.services.memory!.registerReflection({
+        runId: primary.id,
+        botId: bot.id,
+        conversationId: conv.id,
+        triggerMessageIds: [],
+        batchId: null,
+        kind: 'turn',
+      });
+      const register = (index: number) =>
+        stack.core.services.memory!.registerReflection({
+          runId: `run_synthetic_${index}`,
+          botId: bot.id,
+          conversationId: conv.id,
+          triggerMessageIds: [],
+          batchId: null,
+          kind: 'turn',
+        });
+
+      const key = `reflection_debounce:${bot.id}:${conv.id}`;
+      // 差一轮满额：窗口不被延长也不提前。
+      for (let index = 1; index < REFLECTION_TURN_DEBOUNCE_MAX_RUNS - 1; index += 1) {
+        register(index);
+      }
+      const before = stack.core.services
+        .mainDb!.prepare('select run_after from jobs where dedupe_key = ?')
+        .get(key) as { run_after: number };
+      expect(before.run_after).toBeGreaterThan(stack.core.services.clock.now());
+
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      register(REFLECTION_TURN_DEBOUNCE_MAX_RUNS - 1); // 第 MAX_RUNS 轮 → hasten
+      const after = stack.core.services
+        .mainDb!.prepare('select run_after, payload_json from jobs where dedupe_key = ?')
+        .get(key) as { run_after: number; payload_json: string };
+      expect(JSON.parse(after.payload_json).entries).toHaveLength(
+        REFLECTION_TURN_DEBOUNCE_MAX_RUNS,
+      );
+      expect(after.run_after).toBeLessThanOrEqual(stack.core.services.clock.now());
+      // 被提前的窗口立即被认领执行（mock-light 空反思）。
+      await waitForReflectionsDone(stack.core, 1);
     } finally {
       await stack.cleanup();
     }
