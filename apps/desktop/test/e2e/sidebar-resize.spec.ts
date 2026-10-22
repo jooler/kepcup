@@ -99,7 +99,7 @@ test('sidebar drag-resize: icon mode at min width, double-click reset, persisten
       .locator('[data-testid="sidebar"] .app-drag')
       .first()
       .boundingBox())!;
-    expect(bandBox.height).toBeGreaterThanOrEqual(32);
+    expect(bandBox.height).toBeGreaterThanOrEqual(16);
     const firstItemBox = (await page
       .locator('[data-testid^="conversation-item-"]')
       .first()

@@ -850,8 +850,8 @@
        图标同口径），搜索/「+」贴右；图标模式下按钮整体隐藏，mac 剩红绿灯
        拖拽区、win/linux 剩 logo + 三键。
        win/linux 图标模式（collapsed）logo 一起隐藏，但保留一条空白拖拽带：
-       第一个 Bot 头像不顶到上缘，空白处可拖动窗口（高度同 window-drag-band
-       的 40px 兜底带）。 -->
+       第一个 Bot 头像不顶到上缘，空白处可拖动窗口（20px，比 window-drag-band
+       的 40px 兜底带收窄一半，免得头像过分下移）。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
   {#if isMac || !collapsed}
     <div
@@ -907,7 +907,7 @@
     </div>
   {:else}
     <!-- win/linux 图标模式：空带即整条拖拽区，不排任何内容。 -->
-    <div class="app-drag relative z-50 h-10 shrink-0"></div>
+    <div class="app-drag relative z-50 h-5 shrink-0"></div>
   {/if}
 
   <Sidebar.Content class="px-2">
