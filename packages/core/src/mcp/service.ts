@@ -12,6 +12,7 @@ import {
   type Tool as McpTool,
   type ToolAnnotations,
 } from '@earendil-works/pi-mcp';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { SseTransport } from './sse-transport.js';
 import {
   AppError,
@@ -46,6 +47,41 @@ import { toolLockKey } from '../apps/tool-lock.js';
  * 超限标记 failed 并发 `mcp.server_status` 事件）；tools 列表缓存 +
  * `notifications/tools/list_changed` 失效；core 关停统一 close。
  */
+
+/**
+ * Streamable HTTP 的 SSE GET 会占住一条连接。Node 自带 fetch 的连接池在
+ * Windows 上很小，随后的 POST / DELETE 排在它后面，`client.close()` 里的
+ * `body.cancel()` 可以一直不返回。专用 Agent 留出多余连接；关闭再设上限，
+ * 避免关停和「撤销后重连」卡死。
+ */
+const MCP_HTTP_CLOSE_TIMEOUT_MS = 2_000;
+
+let sharedMcpHttpAgent: Agent | undefined;
+
+const defaultMcpHttpFetch: McpFetch = (input, init) => {
+  sharedMcpHttpAgent ??= new Agent({ connections: 16, pipelining: 0 });
+  return undiciFetch(input as never, {
+    ...(init as Record<string, unknown>),
+    dispatcher: sharedMcpHttpAgent,
+  }) as unknown as Promise<Response>;
+};
+
+function closeMcpClient(client: { close: () => Promise<unknown> }): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, MCP_HTTP_CLOSE_TIMEOUT_MS);
+    timer.unref?.();
+    client.close().then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+    );
+  });
+}
 
 /** W5：调用时刷新工具注解的上限（在线连接上的 tools/list；超时用已知注解）。 */
 const MCP_RISK_REFRESH_TIMEOUT_MS = 5_000;
@@ -445,7 +481,7 @@ export class McpService {
       }
       throw error;
     } finally {
-      await client.close().catch(() => {});
+      await closeMcpClient(client);
     }
   }
 
@@ -611,7 +647,7 @@ export class McpService {
           MCP_TOOLS_PER_SERVER_MAX,
         );
       } finally {
-        await client.close().catch(() => {});
+        await closeMcpClient(client);
       }
       this.#rememberAnnotations(server.id, tools);
     }
@@ -768,7 +804,7 @@ export class McpService {
           MCP_TOOLS_PER_SERVER_MAX,
         );
       } finally {
-        await client.close().catch(() => {});
+        await closeMcpClient(client);
       }
     }
     return tools.map((tool) => JSON.parse(JSON.stringify(tool)) as Record<string, unknown>);
@@ -807,7 +843,7 @@ export class McpService {
     this.#connections.delete(serverId);
     state.offNotification?.();
     state.status = 'closed';
-    await state.client.close().catch(() => {});
+    await closeMcpClient(state.client);
     this.#deps.statusSink.emit({ serverId, serverName, status: 'closed' });
   }
 
@@ -817,7 +853,7 @@ export class McpService {
     await Promise.allSettled([...this.#pending.values()].map((entry) => entry.promise));
     for (const [serverId, state] of [...this.#connections.entries()]) {
       const serverName = this.#nameOf(serverId);
-      await state.client.close().catch(() => {});
+      await closeMcpClient(state.client);
       state.offNotification?.();
       this.#connections.delete(serverId);
       this.#deps.statusSink.emit({ serverId, serverName, status: 'closed' });
@@ -871,7 +907,7 @@ export class McpService {
     try {
       await this.#connectClient(client, server);
     } catch (error) {
-      await client.close().catch(() => {});
+      await closeMcpClient(client);
       // D73：授权错误（含被包装的）不是连接失败——不计数、不发 failed、不停用；
       // 发 needs_auth 状态并原样重抛，让调用方走“需要重新连接”的路径。
       const authError = this.#authFailureOf(server, error);
@@ -940,7 +976,10 @@ export class McpService {
     server: McpServer,
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<void> {
-    const guardedFetch = server.transport === 'http' ? this.#httpFetchFor?.(server) : undefined;
+    const httpFetch =
+      server.transport === 'http'
+        ? (this.#httpFetchFor?.(server) ?? defaultMcpHttpFetch)
+        : undefined;
     const transport =
       server.transport === 'stdio'
         ? new StdioTransport({
@@ -968,7 +1007,7 @@ export class McpService {
               ),
               // D73：OAuth 令牌由运行时提供者供给（只读 Vault + 主动刷新；从不自行授权）。
               ...(server.auth === 'oauth' ? { authProvider: this.#authProviderFor(server) } : {}),
-              ...(guardedFetch !== undefined ? { fetch: guardedFetch } : {}),
+              ...(httpFetch !== undefined ? { fetch: httpFetch } : {}),
             });
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), MCP_CONNECT_TIMEOUT_MS);

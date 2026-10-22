@@ -167,7 +167,9 @@ describe('McpService: catalog connections as servers', () => {
       expect.objectContaining({ serverId: id, status: 'needs_auth' }),
     );
     expect(core.services.apps!.store.get(id)!.status).toBe('expired');
-  });
+    // Windows：关掉仍挂着 SSE GET 的 streamable HTTP 客户端可能占满默认连接池，
+    // close 有上限，重连仍要走完连接预算，默认 30s 不够。
+  }, 60_000);
 });
 
 describe('apps.connections.update', () => {

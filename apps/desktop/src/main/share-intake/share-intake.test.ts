@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -58,6 +59,28 @@ beforeEach(() => {
     },
   });
 });
+
+/**
+ * 让当前进程读不了 `file`，并返回恢复函数（删除前必须先恢复，否则 Windows
+ * 对只读 / 拒绝 ACE 的文件 `rm` 会 EPERM）。
+ */
+function denyRead(file: string): () => void {
+  if (process.platform === 'win32') {
+    const deny = spawnSync('icacls', [file, '/deny', '*S-1-1-0:(R)'], { encoding: 'utf8' });
+    if (deny.status !== 0) {
+      throw new Error(
+        `icacls deny failed: ${deny.stderr?.trim() || deny.stdout?.trim() || deny.error?.message}`,
+      );
+    }
+    return () => {
+      spawnSync('icacls', [file, '/remove:d', '*S-1-1-0'], { encoding: 'utf8' });
+    };
+  }
+  chmodSync(file, 0o000);
+  return () => {
+    chmodSync(file, 0o644);
+  };
+}
 
 /** 在 App Group inbox 里造一个批次目录。 */
 function stageIntake(
@@ -145,10 +168,14 @@ describe('readStagedIntake', () => {
     () => {
       stageIntake('shr_unreadab');
       const dir = path.join(shareInboxDir(groupDir), 'shr_unreadab');
-      chmodSync(path.join(dir, 'files', '000-a.zip'), 0o000);
+      const file = path.join(dir, 'files', '000-a.zip');
+      // Windows 的 chmod 0o000 只设只读属性，属主仍能读，随后 rm 还会 EPERM。
+      // 用 Everyone（S-1-1-0）的拒绝 ACE，不依赖本地化的用户名。
+      const restore = denyRead(file);
       try {
         expect(readStagedIntake(dir)).toEqual({ error: 'files_missing' });
       } finally {
+        restore();
         rmSync(dir, { recursive: true, force: true });
       }
     },
