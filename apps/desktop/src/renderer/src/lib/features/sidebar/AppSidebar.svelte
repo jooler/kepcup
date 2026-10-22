@@ -849,61 +849,65 @@
        品牌 logo（无背景稿，明暗主题各一，按 html.dark 切换——工作台入口
        图标同口径），搜索/「+」贴右；图标模式下按钮整体隐藏，mac 剩红绿灯
        拖拽区、win/linux 剩 logo + 三键。
-       win/linux 图标模式（collapsed）连 logo 一起隐藏：头部容器整个不渲染，
-       第一个 Bot 头像顶到上缘。 -->
+       win/linux 图标模式（collapsed）logo 一起隐藏，但保留一条空白拖拽带：
+       第一个 Bot 头像不顶到上缘，空白处可拖动窗口（高度同 window-drag-band
+       的 40px 兜底带）。 -->
   <!-- relative z-50：面板 backdrop（fixed z-40）盖不住头部，「+」在面板开着时仍可点。 -->
   {#if isMac || !collapsed}
-  <div
-    class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
-      ? 'wco-inset-end'
-      : ''} {isMac ? (collapsed ? 'pl-0' : 'pl-20') : 'pl-4'}"
-  >
-    {#if !isMac}
-      <!-- 在 drag 区内不做按钮：按住 logo 拖动窗口是自然行为。深浅两稿各自只
+    <div
+      class="app-drag relative z-50 flex h-14 shrink-0 items-center gap-2 pr-2 {narrow
+        ? 'wco-inset-end'
+        : ''} {isMac ? (collapsed ? 'pl-0' : 'pl-20') : 'pl-4'}"
+    >
+      {#if !isMac}
+        <!-- 在 drag 区内不做按钮：按住 logo 拖动窗口是自然行为。深浅两稿各自只
            在对应主题渲染（dark:hidden / dark:block，与 workbenchIcon 同口径）。 -->
-      <img
-        src={logoLightUrl}
-        alt=""
-        draggable="false"
-        class="h-4.5 shrink-0 object-contain dark:hidden"
-        data-testid="sidebar-app-logo"
-      />
-      <img
-        src={logoDarkUrl}
-        alt=""
-        draggable="false"
-        class="hidden h-4.5 shrink-0 object-contain dark:block"
-        data-testid="sidebar-app-logo"
-      />
-    {/if}
-    {#if !collapsed}
-      <div class="flex-1"></div>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="app-no-drag size-9 rounded-full border border-border bg-background
+        <img
+          src={logoLightUrl}
+          alt=""
+          draggable="false"
+          class="h-4.5 shrink-0 object-contain dark:hidden"
+          data-testid="sidebar-app-logo"
+        />
+        <img
+          src={logoDarkUrl}
+          alt=""
+          draggable="false"
+          class="hidden h-4.5 shrink-0 object-contain dark:block"
+          data-testid="sidebar-app-logo"
+        />
+      {/if}
+      {#if !collapsed}
+        <div class="flex-1"></div>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="app-no-drag size-9 rounded-full border border-border bg-background
           text-muted-foreground shadow-none hover:text-foreground"
-        onclick={openGlobalSearch}
-        aria-label={t('search.open')}
-        title={t('search.open')}
-        data-testid="sidebar-search-button"
-      >
-        <Search class="size-5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="app-no-drag size-9 rounded-full border border-border bg-background
+          onclick={openGlobalSearch}
+          aria-label={t('search.open')}
+          title={t('search.open')}
+          data-testid="sidebar-search-button"
+        >
+          <Search class="size-5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="app-no-drag size-9 rounded-full border border-border bg-background
           text-muted-foreground shadow-none hover:text-foreground"
-        onclick={() => (plusOpen = true)}
-        aria-label={t('sidebar.startChatTitle')}
-        title={t('sidebar.startChatTitle')}
-        data-testid="new-chat-button"
-      >
-        <Plus class="size-5" />
-      </Button>
-    {/if}
-  </div>
+          onclick={() => (plusOpen = true)}
+          aria-label={t('sidebar.startChatTitle')}
+          title={t('sidebar.startChatTitle')}
+          data-testid="new-chat-button"
+        >
+          <Plus class="size-5" />
+        </Button>
+      {/if}
+    </div>
+  {:else}
+    <!-- win/linux 图标模式：空带即整条拖拽区，不排任何内容。 -->
+    <div class="app-drag relative z-50 h-10 shrink-0"></div>
   {/if}
 
   <Sidebar.Content class="px-2">

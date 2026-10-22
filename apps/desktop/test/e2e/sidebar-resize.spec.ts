@@ -93,6 +93,19 @@ test('sidebar drag-resize: icon mode at min width, double-click reset, persisten
     await expect(searchButton).toHaveCount(0);
     await expect(page.locator('[data-testid="conversation-preview"]')).toHaveCount(0);
 
+    // 顶部保留拖拽带（mac 红绿灯带 / win·linux 空白带）：第一个头像不顶到
+    // 上缘，空白处可拖动窗口。
+    const bandBox = (await page
+      .locator('[data-testid="sidebar"] .app-drag')
+      .first()
+      .boundingBox())!;
+    expect(bandBox.height).toBeGreaterThanOrEqual(32);
+    const firstItemBox = (await page
+      .locator('[data-testid^="conversation-item-"]')
+      .first()
+      .boundingBox())!;
+    expect(firstItemBox.y).toBeGreaterThanOrEqual(bandBox.y + bandBox.height);
+
     // 「+」移到底部（y 过侧栏中线），样式与参考一致只余图标。
     const newButton = page.locator('[data-testid="new-chat-button"]');
     await expect(newButton).toBeVisible();
