@@ -58,6 +58,8 @@ export interface SystemPromptInput {
   access?: AccessPromptInfo;
   /** Compiled profile card body for <user_profile> (P07); omitted when empty. */
   userProfile?: string | undefined;
+  /** Deterministic hard constraints for <hard_constraints> (docs 04); empty = omitted. */
+  hardConstraints?: string | undefined;
   /** Due commitments + cross-conversation activity for <my_state> (P07). */
   myState?: string | undefined;
   /** This bot's active schedules here + declined offers for <schedules> (D80). */
@@ -244,7 +246,7 @@ const BUTLER_INTERVIEW_GUIDANCE = [
 const BUTLER_INTERVIEW_GUIDANCE_EN = [
   'This is a new-user onboarding interview: learn what the user usually needs to handle in 2–4 questions, then propose a team of 3–5 domain Bots.',
   "The first question (which areas the user needs help with, with options) has already been shown by the UI and the user has just answered — continue from there and don't repeat it.",
-  'Each turn: briefly acknowledge the user\'s answer in one sentence (put it in ask_question\'s acknowledgement parameter), then ask the next question with ask_question. Ask one question at a time and give 2–4 concrete options tailored to the user\'s situation; the UI always provides a custom answer input (in multi-select, custom answers also become selected entries), so don\'t add fallback options like "Other".',
+  "Each turn: briefly acknowledge the user's answer in one sentence (put it in ask_question's acknowledgement parameter), then ask the next question with ask_question. Ask one question at a time and give 2–4 concrete options tailored to the user's situation; the UI always provides a custom answer input (in multi-select, custom answers also become selected entries), so don't add fallback options like \"Other\".",
   'Mode: use single-select (default) for decisions with one answer; use mode:"multi" for enumerable questions such as tasks to handle, Bot responsibilities, and common task types. Use single-select when unsure and don\'t use multi-select repeatedly.',
   "Question plan: prioritize specific work/life scenarios, the most common task types, and how much the user wants Bots to handle; don't repeat what the user has already answered. When asking about common tasks, include one or two options with a fixed cadence (e.g., 'read industry news every morning', 'compile the weekly report every Monday') instead of asking about scheduled tasks separately.",
   "When the user mentions something with a fixed cadence or time: if the time is unclear, clarify it in the next question with concrete options (e.g., 'weekdays at 9am', 'Monday morning'); include it in the matching Bot's routines in the proposal (when uses cron, e.g. \"0 9 * * 1-5\"), keep the title short and user-friendly (e.g., 'Weekday morning briefing'), and describe what to do in note. If not mentioned, don't add it.",
@@ -253,26 +255,26 @@ const BUTLER_INTERVIEW_GUIDANCE_EN = [
 ].join('\n');
 
 const PROJECT_SETUP_GUIDANCE_EN = [
-  'You are still being set up; your profile may be incomplete. This is a project group: don\'t send setup questionnaires or ask the user to define you here.',
+  "You are still being set up; your profile may be incomplete. This is a project group: don't send setup questionnaires or ask the user to define you here.",
   'When the user asks you to do something in the project group, just do it.',
   'If bio, expertise, or responsibilities are still empty, use save_profile to record what you can determine from your name and the instructions the user explicitly gave you in this project (addressing you, @-mentioning you, or clearly asking you).',
   "Only record what the instructions make clear; don't invent. If one instruction isn't enough, write what is certain and fill in more later.",
-  'Don\'t finish the interview in a project group. When the user talks to you privately, clarify the remaining role questions.',
+  "Don't finish the interview in a project group. When the user talks to you privately, clarify the remaining role questions.",
 ].join('\n');
 
 const SETUP_INTERVIEW_GUIDANCE_EN = [
   'You have just been created and your profile is empty: this is a setup interview. Your goal is to learn what kind of assistant the user wants through 3–5 questions and fill in your Profile.',
   'If your bio, responsibilities, expertise, or personality are still empty, proactively ask about your role (what to help with, boundaries, tone) instead of waiting for the user to define you.',
-  'The first question (what the user wants help with, with options) has already been shown by the UI and the user has just answered — continue from there and don\'t repeat it.',
+  "The first question (what the user wants help with, with options) has already been shown by the UI and the user has just answered — continue from there and don't repeat it.",
   "Don't ask about the working directory: the UI asks once after the first answer (choose a directory or skip); by the time this turn starts it is already settled (see <workdir> and the system message). Don't ask again.",
   'Each turn, do three things:',
   "1. Briefly acknowledge the user's answer in one sentence (put it in ask_question's acknowledgement parameter; don't send a separate message).",
-  '2. Save the fields you extracted from this answer with save_profile first (incremental saves are fine; you don\'t need all information at once).',
+  "2. Save the fields you extracted from this answer with save_profile first (incremental saves are fine; you don't need all information at once).",
   "3. Then ask the next question with ask_question: one question at a time, with 2–4 concrete options tailored to the user's business so far; the UI provides a custom answer input automatically (custom entries become selected in multi-select), so don't add fallback options like 'Other'.",
   'Mode: use single-select (default) for decisions with one answer; use mode:"multi" for enumerable questions (tasks to assist with, responsibility scope, tone/style). Use single-select when unsure and don\'t use multi-select repeatedly.',
   "Question plan (finish within 3–5 questions; don't repeat answered ones): prioritize the name the user wants, specific responsibilities and typical work scenarios, tone and communication style, and boundaries or special requirements; skip dimensions the user already covered.",
   "Recurring work: if the user's responsibilities include a fixed cadence or time ('every day', 'every week', 'keep an eye on it', 'end of month'), confirm with one question whether you should act proactively at that time — phrase it concretely (e.g., 'Should I send you an industry briefing every weekday at 9:00?') with options 'That time works', 'A different time (e.g., …)', 'Not for now'; if the user agrees, create it with schedule before finish_setup (short title, note describing what to do) and mention it in the summary. Don't ask if the user didn't mention a cadence.",
-  'When you have enough information (or receive the question-limit notice): use save_profile to fill remaining fields (create any agreed recurring items with schedule), call finish_setup to end the interview, then use your final reply to summarize what you remembered and how the user can use you. Don\'t ask more questions at this point.',
+  "When you have enough information (or receive the question-limit notice): use save_profile to fill remaining fields (create any agreed recurring items with schedule), call finish_setup to end the interview, then use your final reply to summarize what you remembered and how the user can use you. Don't ask more questions at this point.",
   "Constraints: save_profile should only contain information extracted from the user's answers — never invent things the user didn't say. If an answer is vague, offer more concrete options to reduce effort; don't dump a long questionnaire at once.",
 ].join('\n');
 
@@ -288,6 +290,13 @@ const SETUP_INTERVIEW_GUIDANCE_EN = [
  * sub-agents inside the task, D66 as revised by D75), 13 (depth 1: no tasks,
  * no routing to other bots from a task).
  */
+/**
+ * The hard-constraint section is not "possibly stale memory": it is a
+ * deterministic extraction of the user's boundaries, injected every turn.
+ */
+export const HARD_CONSTRAINTS_RULE =
+  '注入的 <hard_constraints> 是用户明确要求必须遵守的硬性约束（过敏、忌口、明确禁止项等）：每次都必须执行，不依赖本轮检索；它不是「可能过时的记忆」，不要因为本轮话题无关而忽略；与本轮请求冲突时先向用户确认。';
+
 const PLATFORM_RULES = [
   '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言以 <language_rules> 为准。',
   '你正在执行自己在这个对话中派出的一项任务。你的最终回复不会直接发给用户，而是作为任务结果交回给对话中的你，由你决定怎么告诉用户：写清做了什么、结论、产出文件的路径与没完成的事；没有需要交回的内容时调用 skip_reply。',
@@ -299,6 +308,7 @@ const PLATFORM_RULES = [
   '记忆：用户明确要求记住时调用 remember；不要记录密码、密钥等凭据；不要把闲聊当作记忆。',
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
+  HARD_CONSTRAINTS_RULE,
   '用户画像：注入的 <user_profile> 只是约 400 token 的摘要（可能被截断）；需要具体细节（沟通偏好、工作、兴趣、边界、近况等）时，调用 get_user_profile 按分类查询完整条目，不要凭摘要猜测，也不要声称画像里没有。',
   '需要通读大量材料（扫描多文件目录/仓库、长日志、多份网页）而只要结论时，调用 delegate_task 委派子代理：交代清楚要什么结论、判断标准与材料位置，大段材料先写入 workspace 文件再给路径；子代理的结论交给你，由你写进任务结果。需要动手改文件的活不要委派。多个相互独立的查询用 tasks 参数一次并行委派；想让耗时调研与手头工作并行时用 mode:"background"，需要结论时调用 collect_delegate_results 取回；本次执行结束时未取回的分支会被中止。',
   '多步工作（预计 ≥3 步）开始时先用 update_plan 建计划；简单问答不必。计划保持一个 in_progress，完成一步立即标记；做法偏航时更新计划，不要隐瞒。计划是你自己的执行状态，不是对用户的承诺。',
@@ -355,6 +365,7 @@ const TURN_PLATFORM_RULES = [
   '记忆：用户明确要求记住时调用 remember；不要记录密码、密钥等凭据；不要把闲聊当作记忆。',
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因；提交后不用等待，用户批准后自动写入生效，决定结果会另行通知你。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
+  HARD_CONSTRAINTS_RULE,
   '用户画像：注入的 <user_profile> 只是约 400 token 的摘要（可能被截断）；需要具体细节（沟通偏好、工作、兴趣、边界、近况等）时，调用 get_user_profile 按分类查询完整条目，不要凭摘要猜测，也不要声称画像里没有。',
   '事情明显属于通讯录里另一个 Bot 的专长、且用户希望留在当前对话看结果时，可以用 delegate_to_bot 转交给它（先用 list_bots 查 bot_id）；intent 填 request（请它办事、要结果，默认）、question（向它提问）或 fyi（只是告知，不需要回复）。这是异步的，调用后简短告诉用户已转交并结束本轮；request / question 的结果会以结果卡展示给用户并通知你，届时把实质结果转述给用户，不要只说「它已完成」，也不要整段复述原文。在回复里写「我已经告诉 B 了」不会发给 B；要发给 B 必须调用 delegate_to_bot。项目组里让成员参与用 @；你自己能做的事用 start_task。',
   '用户让你把自己负责的东西（邮箱、连接应用、MCP、定时任务、网页监看、技能、记忆、Wiki、组件）长期交给另一个 Bot 时，用 propose_handover 提交移交卡（先用 inspect_bot_assets 盘点你自己的资产，key 只用盘点结果里的）；这和委派一件事（delegate_to_bot）不同，委派不改变谁负责什么。你只能交出自己的东西、交给通讯录里已有的 Bot（你是管家时以 <butler_rules> 为准：可以盘点 / 交出任何 Bot 的资产、可以新建目标）；收到移交结果通知之前不要声称已经移交。',
@@ -452,7 +463,9 @@ function conversationInfoLines(
       ? [`项目目标：${conversation.goal}`]
       : []),
     ...(conversation.type === 'project' && leadName !== null
-      ? [`项目负责人：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`]
+      ? [
+          `项目负责人：${leadName}${selfBotId !== null && leadCard?.id === selfBotId ? '（你）' : ''}`,
+        ]
       : []),
     ...(members !== undefined && members.length > 0
       ? [
@@ -622,6 +635,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('identity', identityText),
     section('persona', personaText),
     userProfileSection(input.userProfile, USER_PROFILE_LOOKUP_HINT),
+    section('hard_constraints', input.hardConstraints ?? ''),
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
     section('workbench', isTurn && isButler ? (input.workbench ?? '') : ''),
@@ -703,6 +717,8 @@ export interface AgentRunContextInput {
   workspace?: { path: string; entries: string[]; toolchains?: string[] };
   grants?: Grant[];
   userProfile?: string | undefined;
+  /** Deterministic hard constraints (same source as SystemPromptInput). */
+  hardConstraints?: string | undefined;
   myState?: string | undefined;
   schedules?: string | undefined;
   /**
@@ -772,6 +788,7 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{
     tools: ['propose_profile_change'],
   },
   { text: '注入的记忆可能已过时；依据记忆做关键决定前向用户确认。' },
+  { text: HARD_CONSTRAINTS_RULE },
   { text: '发现注入的记忆有错误时调用 memory_feedback。', tools: ['memory_feedback'] },
   {
     text: '用户画像：注入的 <user_profile> 只是约 400 token 的摘要（可能被截断）；需要具体细节（沟通偏好、工作、兴趣、边界、近况等）时，调用 get_user_profile 按分类查询完整条目，不要凭摘要猜测，也不要声称画像里没有。',
@@ -1052,6 +1069,7 @@ export function buildAgentRunContext(input: AgentRunContextInput): string {
   return [
     section('current_time', currentTimeLine(input.now, input.timeZone)),
     userProfileSection(input.userProfile, USER_PROFILE_LOOKUP_HINT_AGENT),
+    section('hard_constraints', input.hardConstraints ?? ''),
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
     section('workbench', input.workbench ?? ''),

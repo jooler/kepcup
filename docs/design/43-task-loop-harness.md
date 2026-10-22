@@ -129,6 +129,7 @@ if used > usable * TASK_CONTEXT_COMPACT_RATIO: 压缩
 - 压缩后必须保持消息角色合法：tool result 只能跟随包含对应 tool call 的 assistant 消息；
 - `<current_plan>` 不进入摘要，由系统提示词每轮重新注入；
 - 压缩只影响模型上下文，`run_steps` 仍保留完整过程，供任务执行过程页与审计；
+- 记忆不依赖 transcript：system prompt 每轮重建，`<user_profile>` / `<hard_constraints>` / `<relevant_memories>` 都在其中；反思读取 `run_steps`，因此压缩前无需做记忆冲刷；
 - 压缩事件发 `progress`：「上下文已压缩（约 x → y token）」，任务卡与执行过程页可见。
 
 ### 3.5 与任务续接的关系
