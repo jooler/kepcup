@@ -198,6 +198,12 @@ export interface AppendMessageInput {
   mentions?: string[];
   batchId?: string | null;
   runId?: string | null;
+  /**
+   * text messages only (D94)：这条消息来自 macOS Share Extension 的系统分享，
+   * 值是分享批次 id（`shr_`）。带这个标记的消息，其附件在上下文里额外带
+   * 当前查看 Bot 的 workspace 副本路径（按 Bot 物化，不落 DB、不进消息正文）。
+   */
+  shareIntakeId?: string | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -439,6 +445,7 @@ export class MessagesService {
                     todoTitle: input.todoSource.todoTitle,
                   }
                 : {}),
+              ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
             })
           : input.kind === 'card'
             ? JSON.stringify({

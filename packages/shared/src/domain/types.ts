@@ -997,6 +997,12 @@ export const textContentSchema = z.object({
    * `todoId` / `todoRunId` 与标题快照，气泡下方显示「📋 标题」，点开工作台该事项。
    */
   todoTitle: z.string().optional(),
+  /**
+   * 分享批次 id（D94，docs/design/44-macos-share-extension.md）：这条用户消息
+   * 来自系统 Share Extension。带这个字段的消息，其附件在上下文里额外带
+   * workspace 副本路径（按查看 Bot 物化）；UI 据此显示「通过系统分享导入」。
+   */
+  shareIntakeId: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),

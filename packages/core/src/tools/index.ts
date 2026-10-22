@@ -6,7 +6,7 @@ import {
   TOOL_OUTPUT_MAX_CHARS,
   type Message,
 } from '@kepcup/shared';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
 import type { ToolOutputSpill } from '../agent/tool-output-spill.js';
@@ -60,6 +60,10 @@ import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
+import {
+  ensureShareAttachmentCopy,
+  shareAttachmentCopyPath,
+} from '../share/materialize.js';
 
 export interface ResponseToolDeps {
   messages: MessagesService;
@@ -566,8 +570,8 @@ export function buildResponseTools(input: {
       if (!attachment || attachment.conversationId !== identity.conversationId) {
         return { ok: false, content: '附件不存在或不属于当前对话', errorCode: 'NOT_FOUND' };
       }
-      const bytes = deps.attachments.readBytes(attachment);
       if (TEXTUAL_MIME.test(attachment.mime)) {
+        const bytes = deps.attachments.readBytes(attachment);
         const truncated = truncateToBudget(bytes.toString('utf8'), TOOL_OUTPUT_MAX_CHARS);
         const suffix = truncated.truncated ? '\n[输出已截断]' : '';
         return {
@@ -578,8 +582,9 @@ export function buildResponseTools(input: {
       // Non-textual: copy into the workspace so bash / read can use the file.
       // The copy is host-owned (D75): read-only runs may make it too, confined
       // to `.attachments/` (gateway.checkHostCopyPath).
-      const targetDir = path.join(deps.workspacePath, '.attachments');
-      const target = path.join(targetDir, `${attachment.id}_${attachment.fileName}`);
+      // D94 §6.6: 复用 ensureShareAttachmentCopy 的落点——分享附件的上下文
+      // path 与这里的路径是同一份副本，副本丢了这里能重建。
+      const target = shareAttachmentCopyPath(deps.workspacePath, attachment);
       const decision = gateway.checkHostCopyPath(identity, target, '.attachments');
       if (decision.kind === 'forbidden') {
         return {
@@ -588,12 +593,15 @@ export function buildResponseTools(input: {
           errorCode: decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
         };
       }
-      mkdirSync(targetDir, { recursive: true });
-      writeFileSync(decision.resolvedPath, bytes);
-      gateway.audit(identity, 'fs_write', { path: decision.resolvedPath, tool: 'get_attachment' });
+      const copy = ensureShareAttachmentCopy({
+        attachments: deps.attachments,
+        workspacePath: deps.workspacePath,
+        attachment,
+      });
+      gateway.audit(identity, 'fs_write', { path: copy.path, tool: 'get_attachment' });
       return {
         ok: true,
-        content: `附件已复制到 workspace：${decision.resolvedPath}`,
+        content: `附件已复制到 workspace：${copy.path}`,
       };
     },
   };

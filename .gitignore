@@ -35,6 +35,11 @@ apps/desktop/resources/wsl/*/rootfs.tar
 apps/desktop/resources/wsl/*/rootfs-manifest.json
 apps/desktop/resources/wsl/rootfs.*
 
+# D94: Share Extension 的构建产物（xcodebuild 出 .appex + 解析出的 App Group
+# 组 id）与展开后的 entitlements——都是打包期产物，不入库。
+apps/desktop/resources/share-extension/
+apps/desktop/resources/entitlements.mac.expanded.plist
+
 # ZCode session-local state (plans etc.) and its sync file
 .zcode/
 .zcodeignore

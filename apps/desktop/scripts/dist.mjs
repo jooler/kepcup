@@ -93,6 +93,27 @@ function winArchsFromArgs() {
   return archs;
 }
 
+/**
+ * 0b. macOS 的 Share Extension（D94，docs/design/44-macos-share-extension.md §10.1）。
+ *
+ *     先用 xcodebuild 出 .appex（每个目标架构一份），再由 electron-builder 放进
+ *     Contents/PlugIns/。没有 Xcode 时脚本自己跳过（KEPCUP_SKIP_SHARE_EXTENSION=1），
+ *     产物不带系统分享入口——发版流水线必须装 Xcode。
+ */
+function macArchsFromArgs() {
+  if (!builderArgs.includes('--mac')) return [];
+  const archs = [];
+  if (builderArgs.includes('--x64')) archs.push('x64');
+  if (builderArgs.includes('--arm64')) archs.push('arm64');
+  if (archs.length === 0) archs.push(process.arch === 'x64' ? 'x64' : 'arm64');
+  return archs;
+}
+
+for (const arch of macArchsFromArgs()) {
+  console.log(`[dist] 构建 Share Extension（${arch}）`);
+  run(process.execPath, ['scripts/build-share-extension.mjs', arch]);
+}
+
 if (process.env.KEPCUP_DIST_SKIP_ROOTFS !== '1') {
   for (const arch of winArchsFromArgs()) {
     const tarPath = path.join(appDir, 'resources', 'wsl', arch, 'rootfs.tar');

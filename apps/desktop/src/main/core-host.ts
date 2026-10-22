@@ -13,6 +13,7 @@ import {
   createRpcChannel,
   platformAutostartPayloadSchema,
   platformNotifyPayloadSchema,
+  platformShareTargetsChangedPayloadSchema,
   platformUnattendedPayloadSchema,
   type CoreStatusPayload,
   type RpcChannel,
@@ -30,6 +31,11 @@ export interface CoreHostEvents {
   onUnattended(listener: (payload: { active: boolean; until: number | null }) => void): () => void;
   /** Launch-at-login setting changed or was pushed at bind (P13 任务 3). */
   onAutostart(listener: (payload: { enabled: boolean }) => void): () => void;
+  /**
+   * D94: 分享目标快照该重写了（Bot / 项目 / 归档变化）。主进程据此重新拉
+   * `share.targets` 并原子写 App Group 里的 `targets.v1.json`。
+   */
+  onShareTargetsChanged(listener: (payload: { reason: string }) => void): () => void;
 }
 
 function portToTransport(port: MessagePortMain) {
@@ -74,6 +80,7 @@ export class CoreHost implements CoreHostEvents {
     (payload: { active: boolean; until: number | null }) => void
   >();
   private readonly autostartListeners = new Set<(payload: { enabled: boolean }) => void>();
+  private readonly shareTargetsListeners = new Set<(payload: { reason: string }) => void>();
 
   constructor(
     private readonly appVersion: string,
@@ -145,6 +152,11 @@ export class CoreHost implements CoreHostEvents {
     return () => this.autostartListeners.delete(listener);
   }
 
+  onShareTargetsChanged(listener: (payload: { reason: string }) => void): () => void {
+    this.shareTargetsListeners.add(listener);
+    return () => this.shareTargetsListeners.delete(listener);
+  }
+
   private fork(): void {
     const proc = utilityProcess.fork(join(__dirname, 'core-entry/index.js'), [], {
       serviceName: 'kepcup-core',
@@ -190,6 +202,11 @@ export class CoreHost implements CoreHostEvents {
           const parsed = platformAutostartPayloadSchema.safeParse(payload);
           if (!parsed.success) return;
           for (const listener of this.autostartListeners) listener(parsed.data);
+        },
+        'share.targets.changed': (payload) => {
+          const parsed = platformShareTargetsChangedPayloadSchema.safeParse(payload);
+          if (!parsed.success) return;
+          for (const listener of this.shareTargetsListeners) listener(parsed.data);
         },
       },
     });
