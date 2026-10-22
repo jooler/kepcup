@@ -17,7 +17,6 @@
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
-  import ReconnectBanner from '$lib/features/shell/ReconnectBanner.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
@@ -37,12 +36,10 @@
   import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
   import CoreStatusBar from '$lib/features/shell/CoreStatusBar.svelte';
-  import UpdateBanner from '$lib/features/shell/UpdateBanner.svelte';
-  import UnattendedBanner from '$lib/features/approvals/UnattendedBanner.svelte';
+  import TopBanners from '$lib/features/shell/TopBanners.svelte';
   import SandboxSetupPrompt from '$lib/features/settings/SandboxSetupPrompt.svelte';
   import SandboxWizard from '$lib/features/settings/SandboxWizard.svelte';
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
-  import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
   import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
   import { mountImeEnterGuard } from '$lib/features/shell/ime-enter-guard';
   import {
@@ -233,11 +230,6 @@
 <ModeWatcher />
 <svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
 <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
-  {#if core.connection === 'reconnecting'}
-    <ReconnectBanner />
-  {/if}
-  <UpdateBanner />
-
   <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
     {#if core.connection === 'failed'}
       <CoreErrorPage />
@@ -264,7 +256,6 @@
           {:else if !coreReady}
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
-            <NoModelBanner />
             <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
                  回到对话（chat.select）后重新水合。 -->
             {#if shell.mainView === 'workbench'}
@@ -283,9 +274,9 @@
     <CoreStatusBar />
   {/if}
 
-  <!-- 无人值守浮动横幅：挂在主布局之后，压过各栏顶部（app-drag）的窗口拖拽矩形，
-       关闭按钮才点得到；z-40 仍低于全屏浮层（z-50）。 -->
-  <UnattendedBanner />
+  <!-- 全局顶部浮层通知（重连 / 无模型 / 无人值守）：固定定位、不占布局高度，
+       挂在主布局之后压过各栏顶部的窗口拖拽矩形；z-40 仍低于全屏浮层（z-50）。 -->
+  <TopBanners />
 
   <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
   {#if coreReady}

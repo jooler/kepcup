@@ -74,6 +74,16 @@ function harness(): Harness {
 }
 
 describe('UpdateGate', () => {
+  test('download progress is published while downloading and cleared when ready', async () => {
+    const h = harness();
+    h.gate.onDownloading('1.1.0', 42.4);
+    expect(h.gate.status).toMatchObject({ phase: 'downloading', version: '1.1.0', percent: 42.4 });
+
+    await h.gate.evaluate('1.1.0');
+    expect(h.gate.phase).toBe('ready-to-install');
+    expect(h.gate.status.percent).toBeUndefined();
+  });
+
   test('nothing in flight goes straight to ready-to-install; installNow quits+installs', async () => {
     const h = harness();
     await h.gate.evaluate('1.1.0');

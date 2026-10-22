@@ -57,6 +57,7 @@ export class UpdateGate {
   #phase: GatePhase = 'idle';
   #activeRuns = 0;
   #version: string | undefined;
+  #percent: number | undefined;
   #message: string | undefined;
   /** Generation counter: installNow/cancelDuringWait invalidates stale polls. */
   #generation = 0;
@@ -74,6 +75,9 @@ export class UpdateGate {
     return {
       phase: this.#phase,
       ...(this.#version !== undefined ? { version: this.#version } : {}),
+      ...(this.#phase === 'downloading' && this.#percent !== undefined
+        ? { percent: this.#percent }
+        : {}),
       ...(this.#phase === 'waiting-runs' || this.#phase === 'awaiting-user'
         ? { activeRuns: this.#activeRuns }
         : {}),
@@ -88,6 +92,7 @@ export class UpdateGate {
   #setPhase(phase: GatePhase, extra?: { version?: string; message?: string }): void {
     this.#phase = phase;
     if (extra?.version !== undefined) this.#version = extra.version;
+    if (phase !== 'downloading') this.#percent = undefined;
     if (extra?.message !== undefined) this.#message = extra.message;
     else if (phase !== 'error') this.#message = undefined;
     this.#emit();
@@ -101,8 +106,9 @@ export class UpdateGate {
     this.#setPhase('checking');
   }
 
-  onDownloading(version: string): void {
+  onDownloading(version: string, percent?: number): void {
     if (this.#phase === 'installing' || this.#phase === 'awaiting-user') return;
+    if (percent !== undefined) this.#percent = percent;
     this.#setPhase('downloading', { version });
   }
 
