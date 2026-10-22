@@ -109,6 +109,14 @@ test('run status line shows the command description while a command executes', a
     await createBotAndOpenChat(page, '小执行');
 
     // D75: commands run in tasks; the status line shows the task's activity.
+    // `echo` returns in milliseconds. On a fast macOS runner the progress
+    // event and the task's terminal status land before the renderer paints,
+    // so `[data-testid="task-status-text"]` never attaches. `locator.textContent()`
+    // inside `expect.poll` then waits its full 30s action timeout and fails.
+    // Hold the task step after the command: the run stays active with the
+    // progress text until the assertion has seen it. `echo` stays on the
+    // read-only allowlist so confirm mode (sandbox unavailable) still runs it.
+    const afterCommand = step().hold().replyText('命令输出 sandbox-e2e-probe');
     llm.script(
       'mock-main',
       viaTask({
@@ -116,7 +124,7 @@ test('run status line shows the command description while a command executes', a
         writes: false,
         taskSteps: [
           step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
-          step().replyText('命令输出 sandbox-e2e-probe'),
+          afterCommand,
         ],
         relay: '执行完了',
       }),
@@ -127,13 +135,9 @@ test('run status line shows the command description while a command executes', a
     // Cmd/Ctrl+Enter 发送队列中的全部草稿（Enter 只入队）。
     await composer.press('ControlOrMeta+Enter');
 
-    // The bash progress text ("正在执行命令 …") must appear on the task status
-    // line while the task is active. The command finishes quickly, so poll generously.
-    await expect
-      .poll(async () => page.locator('[data-testid="task-status-text"]').textContent(), {
-        timeout: 60_000,
-      })
-      .toContain('正在执行命令');
+    const statusText = page.locator('[data-testid="task-status-text"]');
+    await expect(statusText).toContainText('正在执行命令', { timeout: 60_000 });
+    afterCommand.release();
 
     await expect(page.locator('[data-testid="task-status"]')).toBeHidden({ timeout: 120_000 });
     await expect(page.locator('[data-testid="chat-view"]').getByText('执行完了')).toBeVisible();

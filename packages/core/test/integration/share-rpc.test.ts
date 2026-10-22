@@ -173,9 +173,16 @@ describe('分享清扫定时（D94 §6.7 启动 + 每日）', () => {
       expect(share).not.toBeNull();
       const sweep = vi.spyOn(share!, 'sweep');
       const scanInbox = vi.spyOn(share!, 'scanInbox');
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(sweep.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(scanInbox.mock.calls.length).toBeGreaterThanOrEqual(2);
+      // 启动那一次清扫发生在 spy 之前，这里只数定时器。间隔 5ms，但 CI 事件循环
+      // 被占满时固定等 50ms 可能只赶上第一拍（sweep === 1）。等到至少两拍，证明
+      // 每日回调会重复触发，且每一拍都调 sweep 与 scanInbox。
+      await vi.waitFor(
+        () => {
+          expect(sweep.mock.calls.length).toBeGreaterThanOrEqual(2);
+          expect(scanInbox.mock.calls.length).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 5_000, interval: 15 },
+      );
     } finally {
       await core.close();
       await rm(home, { recursive: true, force: true });
