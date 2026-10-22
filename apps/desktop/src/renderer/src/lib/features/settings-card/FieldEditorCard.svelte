@@ -51,7 +51,7 @@
     'models.widget-review',
     'agents.default',
   ]);
-  const special = SPECIAL_ITEM_IDS.has(item.id);
+  const special = $derived(SPECIAL_ITEM_IDS.has(item.id));
 
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   const seeded = untrack(() => seedValues(item, hasPrefill ? prefill : null, settingsStore.settings));
