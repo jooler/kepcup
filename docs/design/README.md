@@ -54,6 +54,7 @@
 | [42-task-run-view.md](42-task-run-view.md) | 任务执行过程页：点击任务卡后原对话组件 `display: none`，主区改为该任务的 Agent 消息列表（`runs.steps`：助手说明、工具调用 + 结果、进度、追加指令）；顶部返回、任务名、状态与 metadata；运行中经事件 + 1.2s 轮询刷新（已实现，2026-10-21） |
 | [43-task-loop-harness.md](43-task-loop-harness.md) | 内置 pi 任务 Loop Harness（**已实施 P0–P4，2026-10-21；D93**）：自动上下文压缩（两阶段裁剪 + 摘要 + 确定性 fallback）、`update_plan` 结构化计划与 `<current_plan>` 注入、任务软预算、空转检测 / 无活动看门狗、可配置最长运行时间（设置 → 通用 → 任务 Loop）、异常停止 / 用户取消的 Bot 反馈、任务执行过程页的结构化计划区；外部智能体任务沿用原生 harness |
 | [44-macos-share-extension.md](44-macos-share-extension.md) | macOS Share Extension 系统分享接收（**P0 已实施**；D94）：微信「转发到其他应用」等系统 Share sheet → 选 Bot / 项目组 → App Group inbox + URL 唤醒 → 附件落盘并物化 workspace 副本；**上下文带当前 Bot 的稳定副本路径 + id / 元数据（不传原始路径），禁止正文灌模型**；`share_intakes` 幂等、失败可恢复；P0 仅 macOS |
+| [45-bot-file-artifacts.md](45-bot-file-artifacts.md) | Bot 文件卡片与预览（**已实现**，D95）：回答下方列出 Bot 创建 / 修改的本地文件，点击后在覆盖层查看；图片 / 视频 / 静态 HTML / Markdown / DOCX / XLSX / 文本内置渲染，PDF 走 Chromium 内置查看器，其它格式系统打开 / 下载；`files.preview` 只允许读取本对话文件卡中的路径 |
 
 ## 尚未讨论（暂不入文档）
 

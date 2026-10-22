@@ -51,6 +51,9 @@ declare global {
       onNavigateConversation(callback: (conversationId: string) => void): () => void;
       /** P13 任务 6 诊断: reveals the logs directory in the OS file manager. */
       openLogsDir(): Promise<void>;
+      /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
+      openPath(target: string): Promise<void>;
+      showItemInFolder(target: string): Promise<void>;
       /** P13 任务 4 引导: posts a test notification (macOS permission prompt). */
       sendTestNotification(title: string, body: string): Promise<void>;
       /** 传感器（31 号设计）的系统权限三件套（macOS TCC；其他平台恒 granted）。 */

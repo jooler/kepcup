@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -255,6 +255,21 @@ function bootstrap(): void {
     const logsDir = join(home, 'logs');
     mkdirSync(logsDir, { recursive: true });
     shell.showItemInFolder(logsDir);
+  });
+
+  /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
+  ipcMain.handle('shell:openPath', async (_event, target: unknown) => {
+    if (typeof target !== 'string' || !isAbsolute(target)) {
+      throw new Error('invalid path');
+    }
+    const error = await shell.openPath(target);
+    if (error.length > 0) throw new Error(error);
+  });
+  ipcMain.handle('shell:showItemInFolder', (_event, target: unknown) => {
+    if (typeof target !== 'string' || !isAbsolute(target)) {
+      throw new Error('invalid path');
+    }
+    shell.showItemInFolder(target);
   });
 
   // P13 任务 4 引导步骤 3「系统通知」: posting the first notification is what

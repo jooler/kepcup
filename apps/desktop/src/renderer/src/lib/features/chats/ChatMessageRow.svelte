@@ -21,6 +21,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
+  import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
 
@@ -130,6 +131,12 @@
   /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
   const messageText = $derived('text' in message.content ? message.content.text : '');
   const hasText = $derived(messageText.length > 0);
+  /** Bot file cards carried by this reply (files.preview is scoped by conversation). */
+  const artifacts = $derived(
+    message.senderType === 'bot' && 'artifacts' in message.content
+      ? (message.content.artifacts ?? [])
+      : [],
+  );
   const canCopy = $derived(canAct && hasText);
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
   const canPin = $derived(canAct && hasText);
@@ -257,6 +264,10 @@
     {/if}
 
     <MessageBody {message} {merge} bind:isEditing bind:editText onsave={() => void saveEdit()} />
+
+    {#if artifacts.length > 0}
+      <FileArtifacts {artifacts} conversationId={message.conversationId} />
+    {/if}
 
     {#if message.status === 'edited' && !isEditing}
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-edited"

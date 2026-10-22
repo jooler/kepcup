@@ -54,6 +54,10 @@ const api = {
     ipcRenderer.invoke('window:setThemeSource', mode),
   /** P13 任务 6 诊断: reveals `{dataHome}/logs` in the OS file manager. */
   openLogsDir: (): Promise<void> => ipcRenderer.invoke('shell:openLogsDir'),
+  /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
+  openPath: (target: string): Promise<void> => ipcRenderer.invoke('shell:openPath', target),
+  showItemInFolder: (target: string): Promise<void> =>
+    ipcRenderer.invoke('shell:showItemInFolder', target),
   /** P13 任务 4 引导步骤 3: posts a test notification (macOS permission prompt). */
   sendTestNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('notify:test', title, body),

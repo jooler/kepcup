@@ -339,8 +339,20 @@ export function buildCodingTools(
     writeFile: async (p: string, content: string) => {
       const resolved = await checked(identity, gateway, p, 'write', 'write');
       assertFresh(identity.runId, fsState, resolved);
+      const existed = existsSync(resolved);
       writeFileSync(resolved, content, 'utf-8');
       fsState.recordWrite(runId, resolved, content);
+      let size: number | undefined;
+      try {
+        size = statSync(resolved).size;
+      } catch {
+        size = undefined;
+      }
+      fsState.recordChange(runId, {
+        path: resolved,
+        change: existed ? 'modified' : 'created',
+        ...(size !== undefined ? { size } : {}),
+      });
       gateway.audit(identity, 'fs_write', { path: resolved, tool: 'write' });
     },
     mkdir: async (dir: string) => {
