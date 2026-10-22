@@ -21,6 +21,7 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page; home: s
     args: ['.', '--use-fake-device-for-media-stream'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: 'memory',
