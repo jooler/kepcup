@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Message } from '@kepcup/shared';
@@ -72,7 +73,8 @@ describe('Bot file artifacts', () => {
     const artifacts = 'artifacts' in reply.content ? (reply.content.artifacts ?? []) : [];
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0]).toMatchObject({ name: 'hello.md', change: 'created', size: 8 });
-    expect(artifacts[0]!.path.endsWith('/notes/hello.md')).toBe(true);
+    // Windows stores `\notes\hello.md`; compare the relative segments either way.
+    expect(artifacts[0]!.path.split(/[/\\]/).slice(-2)).toEqual(['notes', 'hello.md']);
 
     const preview = (await core.rpc.call('files.preview', {
       conversationId: conv.id,
@@ -87,18 +89,27 @@ describe('Bot file artifacts', () => {
 
     // A symlink surfaced in the card still resolves outside the conversation's
     // artifact path: the canonical target no longer matches the stored path.
+    // The target has to exist — Windows refuses to detect the link type otherwise,
+    // and a dangling link canonicalizes back to itself (preview would be NOT_FOUND).
+    const outsideDir = mkdtempSync(path.join(tmpdir(), 'kepcup-artifact-outside-'));
+    const outsideFile = path.join(outsideDir, 'outside.txt');
+    writeFileSync(outsideFile, 'outside');
     const link = path.join(core.services.paths.home, 'link-to-hosts');
-    symlinkSync('/etc/hosts', link);
-    core.services.domain!.messages.append({
-      conversationId: conv.id,
-      senderType: 'bot',
-      senderBotId: bot.id,
-      kind: 'text',
-      text: '一个链接',
-      artifacts: [{ path: link, name: 'link-to-hosts', change: 'created' }],
-    });
-    await expect(
-      core.rpc.call('files.preview', { conversationId: conv.id, path: link }),
-    ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
+    try {
+      symlinkSync(outsideFile, link, 'file');
+      core.services.domain!.messages.append({
+        conversationId: conv.id,
+        senderType: 'bot',
+        senderBotId: bot.id,
+        kind: 'text',
+        text: '一个链接',
+        artifacts: [{ path: link, name: 'link-to-hosts', change: 'created' }],
+      });
+      await expect(
+        core.rpc.call('files.preview', { conversationId: conv.id, path: link }),
+      ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });
