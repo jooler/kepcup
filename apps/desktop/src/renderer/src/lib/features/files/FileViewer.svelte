@@ -50,6 +50,8 @@
   let closeButton = $state<HTMLButtonElement | null>(null);
 
   const left = $derived(narrowLayout.narrow ? '0px' : `${sidebarLayout.effectiveWidth}px`);
+  // 窄屏时本浮层盖住整窗，mac 红绿灯叠在 header 左上角，关闭按钮要右移让位。
+  const isMac = /Mac/i.test(navigator.platform);
   const htmlNeedsScript = $derived(kind === 'html' && /<script[\s>]|\son[a-z]+\s*=/i.test(text));
   const htmlNeedsRemote = $derived(kind === 'html' && /(?:src|href)\s*=\s*["']https?:/i.test(text));
 
@@ -226,18 +228,21 @@
       style:left
       role="dialog"
       aria-label={artifact.name}
-      data-window-overlay
       data-testid="file-viewer"
       data-kind={kind}
     >
-      <!-- 顶部 40px 留给全局窗口拖拽带；圆形关闭按钮沿用左栏顶部按钮的样式。 -->
+      <!-- 顶部即工具栏高度：header 自身是拖拽区（本浮层不挂 data-window-overlay，
+           全局拖拽带不会盖住顶部），空白处拖窗口；文本与按钮挂 app-no-drag 不被
+           拖拽占用。高度与按钮留空对齐左栏顶部容器（h-14 + size-9 居中，上下各
+           10px）；圆形关闭按钮沿用左栏顶部按钮的样式。 -->
       <header
-        class="relative flex h-[88px] shrink-0 items-center justify-center border-b bg-background px-20 pt-10"
+        class="app-drag relative flex h-14 shrink-0 items-center justify-center border-b bg-background px-20"
       >
         <button
           bind:this={closeButton}
           type="button"
-          class="app-no-drag absolute bottom-1.5 left-4 flex size-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-none transition-colors hover:text-foreground"
+          class="app-no-drag absolute top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-none transition-colors hover:text-foreground
+            {narrowLayout.narrow && isMac ? 'left-20' : 'left-4'}"
           onclick={close}
           aria-label={t('files.close')}
           title={t('files.close')}
@@ -245,7 +250,7 @@
         >
           <X class="size-5" aria-hidden="true" />
         </button>
-        <div class="min-w-0 px-24 text-center">
+        <div class="app-no-drag min-w-0 px-24 text-center">
           <div class="truncate text-sm font-medium" data-testid="file-viewer-title">
             {artifact.name}
           </div>
@@ -258,7 +263,7 @@
           </div>
         </div>
         {#if payload !== null}
-          <div class="app-no-drag absolute right-4 bottom-1.5 flex items-center gap-1">
+          <div class="app-no-drag absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
             <button
               type="button"
               class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
