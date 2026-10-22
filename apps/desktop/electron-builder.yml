@@ -81,11 +81,15 @@ mac:
   # （由 scripts/build-share-extension.mjs 解析 TeamID、pack-hooks 生成）。
   entitlements: resources/entitlements.mac.expanded.plist
   entitlementsInherit: resources/entitlements.mac.expanded.plist
-  # D94 §10.2：Share Extension 放进 Contents/PlugIns/（系统分享列表由此可见）。
-  # 源目录不存在时 electron-builder 静默跳过（没装 Xcode 的本地构建）。
+  # D94 §10.2：Share Extension 放进 Contents/PlugIns/KepCupShare.appex
+  # （系统分享列表由此可见）。extraFiles 的 `to` 收到的是 `from` 目录的内容，
+  # 不是目录本身——`to: PlugIns` 会把包内的 Contents/ 摊进 PlugIns/，校验
+  # 就找不到 PlugIns/KepCupShare.appex。源目录不存在时 electron-builder
+  # 静默跳过（没装 Xcode 的本地构建）；afterPack 再用 ditto 覆盖一次，
+  # 避免逐文件复制弄坏已有的 codesign。
   extraFiles:
     - from: resources/share-extension/${arch}/KepCupShare.appex
-      to: PlugIns
+      to: PlugIns/KepCupShare.appex
   extraResources:
     # 托盘四件套（tray.ts 运行时经 app-brand.trayIconPath 读取，process.resourcesPath/tray）。
     # 按平台各写一份而非顶层 extraResources：electron-builder 的平台块对同名

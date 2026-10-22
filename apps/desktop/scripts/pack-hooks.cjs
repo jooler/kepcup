@@ -26,6 +26,7 @@
 
 const { spawnSync } = require('node:child_process');
 const {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -179,21 +180,165 @@ function packagedExecutable(context, appBundle) {
   return path.join(context.appOutDir, context.packager.executableName ?? name.toLowerCase());
 }
 
-/** 解析 plist（用系统的 plutil 转 JSON，不引第三方依赖）。 */
+function plistFail(plistPath, detail) {
+  throw new Error(`[pack] plist 解析失败：${plistPath}（${detail}）`);
+}
+
+/** XML 文本实体。`&amp;` 最后替换，避免把 `&amp;lt;` 解两次。 */
+function decodeXmlText(text) {
+  return text
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, dec) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/** `xml` 以 `<name…>` 开头；返回内文与闭合标签之后的剩余。 */
+function sliceBalanced(xml, name) {
+  const open = new RegExp(`^<${name}(\\s[^>]*)?>`).exec(xml);
+  if (open === null) return null;
+  const tokenRe = new RegExp(`<(/?)${name}(\\s[^>]*)?>`, 'g');
+  tokenRe.lastIndex = open[0].length;
+  let depth = 1;
+  let match = tokenRe.exec(xml);
+  while (match !== null) {
+    const isClose = match[1] === '/';
+    const selfClose = /\/\s*>$/.test(match[0]);
+    if (isClose) {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          inner: xml.slice(open[0].length, match.index),
+          rest: xml.slice(match.index + match[0].length),
+        };
+      }
+    } else if (!selfClose) {
+      depth += 1;
+    }
+    match = tokenRe.exec(xml);
+  }
+  return null;
+}
+
+function parsePlistValue(xml, fail) {
+  const text = xml.trim();
+  const self = /^<(true|false|dict|array)\s*\/>/.exec(text);
+  if (self !== null) {
+    const kind = self[1];
+    const value = kind === 'true' ? true : kind === 'false' ? false : kind === 'dict' ? {} : [];
+    return { value, rest: text.slice(self[0].length) };
+  }
+  const open = /^<([A-Za-z]+)\b/.exec(text);
+  if (open === null) fail('无法识别的 XML');
+  const name = open[1];
+  const sliced = sliceBalanced(text, name);
+  if (sliced === null) fail(`标签 ${name} 未闭合`);
+  let value;
+  switch (name) {
+    case 'dict':
+      value = parseDict(sliced.inner, fail);
+      break;
+    case 'array':
+      value = parseArray(sliced.inner, fail);
+      break;
+    case 'string':
+    case 'date':
+    case 'data':
+      value = decodeXmlText(sliced.inner);
+      break;
+    case 'integer':
+      value = Number.parseInt(sliced.inner.trim(), 10);
+      break;
+    case 'real':
+      value = Number.parseFloat(sliced.inner.trim());
+      break;
+    case 'true':
+      value = true;
+      break;
+    case 'false':
+      value = false;
+      break;
+    default:
+      fail(`不支持的类型 ${name}`);
+  }
+  return { value, rest: sliced.rest };
+}
+
+function parseDict(inner, fail) {
+  const obj = {};
+  let rest = inner.trim();
+  while (rest.length > 0) {
+    if (!rest.startsWith('<key')) fail('dict 缺少 key');
+    const keySlice = sliceBalanced(rest, 'key');
+    if (keySlice === null) fail('key 未闭合');
+    const key = decodeXmlText(keySlice.inner).trim();
+    const parsed = parsePlistValue(keySlice.rest, fail);
+    obj[key] = parsed.value;
+    rest = parsed.rest.trim();
+  }
+  return obj;
+}
+
+function parseArray(inner, fail) {
+  const items = [];
+  let rest = inner.trim();
+  while (rest.length > 0) {
+    const parsed = parsePlistValue(rest, fail);
+    items.push(parsed.value);
+    rest = parsed.rest.trim();
+  }
+  return items;
+}
+
+/**
+ * plutil 不在时的 XML plist 回退（Linux / Windows 的打包校验单测）。
+ * macOS 发版产物是 Xcode 的二进制 plist，仍走 plutil。
+ */
+function readXmlPlist(xml, plistPath) {
+  const fail = (detail) => plistFail(plistPath, detail);
+  const stripped = xml
+    .replace(/^\uFEFF/, '')
+    .replace(/<\?xml[\s\S]*?\?>/g, '')
+    .replace(/<!DOCTYPE[\s\S]*?>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .trim();
+  const root = /^<plist\b[^>]*>([\s\S]*)<\/plist>\s*$/i.exec(stripped);
+  if (root === null) fail('不是 XML plist');
+  return parsePlistValue(root[1], fail).value;
+}
+
+/**
+ * 解析 plist。macOS 用系统 plutil（覆盖 Xcode 写出的二进制 plist）；
+ * plutil 不存在时（Linux / Windows CI）解析 XML plist。不引第三方依赖。
+ */
 function readPlist(plistPath) {
-  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `[pack] plist 解析失败：${plistPath}（${result.stderr?.trim() || `退出码 ${result.status}`}）`,
-    );
+  const plutil = '/usr/bin/plutil';
+  if (existsSync(plutil)) {
+    const result = spawnSync(plutil, ['-convert', 'json', '-o', '-', plistPath], {
+      encoding: 'utf8',
+    });
+    if (result.status === 0) {
+      try {
+        return JSON.parse(result.stdout);
+      } catch (error) {
+        plistFail(plistPath, error.message);
+      }
+    }
+    // spawn 本身失败（ENOENT 等）才回退；plutil 拒绝的二进制 / 损坏文件保持原错误。
+    if (result.error === undefined) {
+      plistFail(plistPath, result.stderr?.trim() || `退出码 ${result.status}`);
+    }
   }
+  let xml;
   try {
-    return JSON.parse(result.stdout);
+    xml = readFileSync(plistPath, 'utf8');
   } catch (error) {
-    throw new Error(`[pack] plist 解析失败：${plistPath}（${error.message}）`);
+    plistFail(plistPath, error.message);
   }
+  return readXmlPlist(xml, plistPath);
 }
 
 /**
@@ -285,7 +430,49 @@ function assertShareExtension(appBundlePath, groupId) {
       }
     }
   }
-  return { appexPath, bundleId, extensionPoint: extension.NSExtensionPointIdentifier, signed, appGroup };
+  return {
+    appexPath,
+    bundleId,
+    extensionPoint: extension.NSExtensionPointIdentifier,
+    signed,
+    appGroup,
+  };
+}
+
+/**
+ * 把构建脚本产出的 .appex 放进 Contents/PlugIns/KepCupShare.appex。
+ *
+ * electron-builder 的 extraFiles 按文件复制，可能摊平 bundle 或弄坏
+ * codesign。这里在校验前用 ditto（保留资源叉与签名）整包覆盖；源不存在时
+ * 不动，交给 assertShareExtension 报「缺少 Share Extension」。
+ * 返回是否放入了构建产物。
+ */
+function installBuiltShareExtension(context, appBundlePath) {
+  const source = path.join(
+    context.packager.projectDir,
+    'resources',
+    'share-extension',
+    archName(context),
+    'KepCupShare.appex',
+  );
+  if (!existsSync(source)) return false;
+  const pluginsDir = path.join(appBundlePath, 'Contents', 'PlugIns');
+  const dest = path.join(pluginsDir, 'KepCupShare.appex');
+  mkdirSync(pluginsDir, { recursive: true });
+  // extraFiles 若把 appex 的内容摊进 PlugIns/，会留下同级的 Contents/。
+  rmSync(path.join(pluginsDir, 'Contents'), { recursive: true, force: true });
+  rmSync(dest, { recursive: true, force: true });
+  if (existsSync('/usr/bin/ditto')) {
+    const result = spawnSync('/usr/bin/ditto', [source, dest], { encoding: 'utf8' });
+    if (result.status !== 0) {
+      const reason = result.stderr?.trim() || result.error?.message || `退出码 ${result.status}`;
+      throw new Error(`[pack] 复制 Share Extension 失败：${source} → ${dest}（${reason}）`);
+    }
+  } else {
+    cpSync(source, dest, { recursive: true });
+  }
+  console.log(`[pack] Share Extension 已放入 ${dest}（整包复制，保留签名）。`);
+  return true;
 }
 
 /** resources/share-extension/group.json 里的组 id（构建脚本写入）；读不到为 null。 */
@@ -400,7 +587,9 @@ function beforePack(context) {
 function ensureWslRootfsSource(wslDir, targetArch, projectDir) {
   if (!existsSync(wslDir)) {
     mkdirSync(wslDir, { recursive: true });
-    console.warn(`[pack] created empty WSL rootfs source dir: ${path.relative(projectDir, wslDir)}`);
+    console.warn(
+      `[pack] created empty WSL rootfs source dir: ${path.relative(projectDir, wslDir)}`,
+    );
   }
   const archDir = path.join(wslDir, targetArch);
   mkdirSync(archDir, { recursive: true });
@@ -505,12 +694,17 @@ function afterPack(context) {
 
   // D94 §10.2：Share Extension 的落位与一致性校验。
   if (dirName === 'darwin') {
-    const appBundlePath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+    const appBundlePath = path.join(
+      context.appOutDir,
+      `${context.packager.appInfo.productFilename}.app`,
+    );
     if (process.env.KEPCUP_SKIP_SHARE_EXTENSION === '1') {
       console.warn(
         '[pack] Share Extension 未构建（KEPCUP_SKIP_SHARE_EXTENSION=1，dist.mjs 按 appex 产物存在性设置）——产物不带系统分享入口。',
       );
     } else {
+      // extraFiles 的落点不对或逐文件复制损坏签名时，用构建产物整包补上。
+      installBuiltShareExtension(context, appBundlePath);
       // 基准组 id 来自构建脚本写的 group.json（TeamID 展开后的同一个值），
       // 不再读无人设置的 KEPCUP_SHARE_GROUP_ID env。
       const summary = assertShareExtension(
@@ -536,6 +730,7 @@ module.exports = {
   assertShareExtension,
   assertNoShareExtension,
   readPlist,
+  installBuiltShareExtension,
   firstAppGroupFromEntitlements,
   shareGroupIdFromProject,
   ensureWslRootfsSource,
