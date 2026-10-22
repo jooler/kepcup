@@ -14,6 +14,7 @@
 		15FBC53637DA74707BDB19BF /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A62781DD4C04AAAF1533D41 /* ShareViewController.swift */; };
 		B07E24E89540B75FBAACDC89 /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A612584F3424AEE9A3696951 /* SharedConfig.swift */; };
 		79D56150B85F177F212362F2 /* TargetPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */; };
+		4E9B2A71D3C5F860A1B4D7E2 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,8 @@
 		CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetPickerView.swift; sourceTree = "<group>"; };
 		8873151C067A966D8A2B0623 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		EE4A0DC220901E8E4C25AFC4 /* KepCupShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KepCupShare.entitlements; sourceTree = "<group>"; };
+		10CA7E24F1A3B5D9E6728340 /* en.lproj/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		2D5B8F31E9C7A406B178D923 /* zh-Hans.lproj/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
 		D2246B8799AA84E22E5BCE9A /* KepCupShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KepCupShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -60,6 +63,7 @@
 				CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */,
 				8873151C067A966D8A2B0623 /* Info.plist */,
 				EE4A0DC220901E8E4C25AFC4 /* KepCupShare.entitlements */,
+				3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */,
 			);
 			path = ShareExtension;
 			sourceTree = "<group>";
@@ -73,6 +77,18 @@
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
+
+/* Begin PBXVariantGroup section */
+		3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				10CA7E24F1A3B5D9E6728340 /* en */,
+				2D5B8F31E9C7A406B178D923 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin PBXNativeTarget section */
 		SH0000000000000000000007 /* KepCupShare */ = {
@@ -116,6 +132,7 @@
 			knownRegions = (
 				en,
 				Base,
+				zh-Hans,
 			);
 			mainGroup = SH0000000000000000000004;
 			minimizedProjectReferenceProxies = 1;
@@ -134,6 +151,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4E9B2A71D3C5F860A1B4D7E2 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

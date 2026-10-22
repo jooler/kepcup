@@ -37,7 +37,7 @@ import {
 } from './sensor-permission';
 import { wireUpdater } from './updater';
 import { createFileUpdateSourceStore } from './update-sources';
-import { ShareIntakeCoordinator } from './share-intake/coordinator';
+import { ShareIntakeCoordinator, type ShareIntakeOutcome } from './share-intake/coordinator';
 import { shareGroupDir } from './share-intake/app-group';
 
 let window: BrowserWindow | null = null;
@@ -138,15 +138,38 @@ function handleShareUrl(raw: string): void {
   });
 }
 
-/** core 就绪后：消费排队的 URL、扫描 App Group inbox、重写目标快照。 */
+/** core 就绪后：消费排队的分享 URL、扫描 App Group inbox、重写目标快照。 */
 async function drainShareIntakes(): Promise<void> {
   if (shareCoordinator === null) return;
   const queued = pendingShareUrls.splice(0, pendingShareUrls.length);
   for (const raw of queued) {
     await shareCoordinator.handleUrl(raw);
   }
-  await shareCoordinator.scan();
+  notifyShareFailures(await shareCoordinator.scan());
   await shareCoordinator.refreshTargets();
+}
+
+/**
+ * D94 §7.5：扫描发现失败批次时发系统通知（恢复面板在主窗口里，窗口不可见时
+ * 用户没有任何别的感知）。主窗口可见且未最小化时不打扰；点击通知唤起主窗口。
+ */
+function notifyShareFailures(outcomes: ShareIntakeOutcome[]): void {
+  const failed = outcomes.filter(
+    (outcome) => outcome.state === 'failed' || outcome.state === 'failed_target',
+  );
+  if (failed.length === 0) return;
+  if (!Notification.isSupported()) return;
+  if (window !== null && window.isVisible() && !window.isMinimized() && windowFocused) return;
+  const count = failed.length;
+  const notification = new Notification({
+    title: '分享导入失败',
+    body:
+      count === 1
+        ? '有 1 个分享批次导入失败，可在恢复面板重试或删除。'
+        : `有 ${count} 个分享批次导入失败，可在恢复面板重试或删除。`,
+  });
+  notification.on('click', () => showWindow());
+  notification.show();
 }
 
 /**
@@ -160,7 +183,7 @@ let shareScanTimer: NodeJS.Timeout | null = null;
 function startShareScanTimer(): void {
   if (shareScanTimer !== null) return;
   shareScanTimer = setInterval(() => {
-    void shareCoordinator?.scan();
+    void shareCoordinator?.scan().then(notifyShareFailures);
   }, SHARE_SCAN_INTERVAL_MS);
   shareScanTimer.unref?.();
 }
@@ -625,11 +648,16 @@ app.on('open-url', (event, url) => {
   handleShareUrl(url);
 });
 // dev 下 scheme 由 Electron 壳注册（打包版由 Info.plist 的 CFBundleURLTypes
-// 负责，docs/design/44-macos-share-extension.md §7.2）。
-if (process.defaultApp && process.argv.length >= 2) {
-  app.setAsDefaultProtocolClient('kepcup', process.execPath, [resolve(process.argv[1] as string)]);
-} else {
-  app.setAsDefaultProtocolClient('kepcup');
+// 负责，docs/design/44-macos-share-extension.md §7.2）。只做 macOS：Windows /
+// Linux 的 P0 没有分享入口（D94-10），不该往注册表 / 配置里写没人消费的 scheme。
+if (!app.isPackaged && process.platform === 'darwin') {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('kepcup', process.execPath, [
+      resolve(process.argv[1] as string),
+    ]);
+  } else {
+    app.setAsDefaultProtocolClient('kepcup');
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock();

@@ -197,9 +197,33 @@ function readPlist(plistPath) {
 }
 
 /**
+ * 从 `codesign -d --entitlements :-` 的输出里取第一个 application-group。
+ * 输出格式随 macOS 版本变（旧版带 DOCTYPE 的完整 plist、新版裸 XML、前面可能
+ * 还混着 `Executable=…` 行），所以只按「key 后第一个 <string>」匹配（导出供单测）。
+ */
+function firstAppGroupFromEntitlements(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  const match =
+    /<key>com\.apple\.security\.application-groups<\/key>\s*(?:<array>\s*)?<string>([^<]+)<\/string>/.exec(
+      text,
+    );
+  return match === null ? null : match[1].trim();
+}
+
+/** appex 签名里实际生效的 entitlements 文本；codesign 不可用时返回 null（跳过校验）。 */
+function codesignEntitlements(appexPath) {
+  const result = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', appexPath], {
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) return null;
+  return `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+}
+
+/**
  * 校验 macOS 产物里的 Share Extension（D94 §10.2）：.appex 在 Contents/PlugIns/ 下、
  * Info.plist 可解析、扩展点是 com.apple.share-services、bundle id 以主应用 id 为前缀、
- * App Group 与主应用一致。返回校验摘要（导出供单测）。
+ * 签名里的 App Group 与主应用一致（groupId 来自 resources/share-extension/group.json，
+ * 即构建脚本展开 TeamID 后写的同一个值）。返回校验摘要（导出供单测）。
  */
 function assertShareExtension(appBundlePath, groupId) {
   const pluginsDir = path.join(appBundlePath, 'Contents', 'PlugIns');
@@ -220,13 +244,6 @@ function assertShareExtension(appBundlePath, groupId) {
   if (!bundleId.startsWith('app.kepcup.desktop')) {
     throw new Error(`[pack] Share Extension bundle id 不对：${bundleId}`);
   }
-  // App Group 一致性：主应用与扩展必须用同一个组（组 id 来自同一个 TeamID，
-  // 由 scripts/build-share-extension.mjs 解析后写进 group.json）。
-  if (groupId && !bundleId.startsWith('app.kepcup.desktop')) {
-    throw new Error(
-      `[pack] Share Extension 与主应用的 App Group 不一致：${bundleId}（组 ${groupId}）`,
-    );
-  }
   // 签名校验：已签名的扩展必须通过 codesign --verify --strict（未签名的本地
   // 构建只警告——发版流水线不允许）。
   const signed = existsSync(path.join(appexPath, 'Contents', '_CodeSignature'));
@@ -242,7 +259,45 @@ function assertShareExtension(appBundlePath, groupId) {
   } else {
     console.warn(`[pack] Share Extension 未签名：${appexPath}（发版前必须签名）。`);
   }
-  return { appexPath, bundleId, extensionPoint: extension.NSExtensionPointIdentifier, signed };
+  // App Group 一致性（§9.6）：扩展签名 entitlements 里实际生效的组 id 必须与
+  // 主应用的一致——对不上时扩展拿不到容器、功能整体不可用，硬失败。未签名 /
+  // codesign 不可用 / 没有 group.json（groupId 为 null）时无法取证，只警告。
+  let appGroup = null;
+  if (groupId === null) {
+    console.warn('[pack] 没有 App Group 基准（group.json 缺失）——跳过 App Group 一致性校验。');
+  } else if (!signed) {
+    console.warn('[pack] Share Extension 未签名，取不到 entitlements——跳过 App Group 一致性校验。');
+  } else {
+    const entitlements = codesignEntitlements(appexPath);
+    if (entitlements === null) {
+      console.warn('[pack] codesign 不可用——跳过 App Group 一致性校验。');
+    } else {
+      appGroup = firstAppGroupFromEntitlements(entitlements);
+      if (appGroup === null) {
+        throw new Error(
+          `[pack] Share Extension 的 entitlements 里没有 application-groups（期望 ${groupId}）`,
+        );
+      }
+      if (appGroup !== groupId) {
+        throw new Error(
+          `[pack] Share Extension 与主应用的 App Group 不一致：${appGroup}（期望 ${groupId}）`,
+        );
+      }
+    }
+  }
+  return { appexPath, bundleId, extensionPoint: extension.NSExtensionPointIdentifier, signed, appGroup };
+}
+
+/** resources/share-extension/group.json 里的组 id（构建脚本写入）；读不到为 null。 */
+function shareGroupIdFromProject(projectDir) {
+  try {
+    const group = JSON.parse(
+      readFileSync(path.join(projectDir, 'resources', 'share-extension', 'group.json'), 'utf8'),
+    );
+    return typeof group.groupId === 'string' && group.groupId.length > 0 ? group.groupId : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 产物里不该出现 .appex（Windows / Linux）。 */
@@ -453,12 +508,14 @@ function afterPack(context) {
     const appBundlePath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
     if (process.env.KEPCUP_SKIP_SHARE_EXTENSION === '1') {
       console.warn(
-        '[pack] Share Extension 未构建（KEPCUP_SKIP_SHARE_EXTENSION=1）——产物不带系统分享入口。',
+        '[pack] Share Extension 未构建（KEPCUP_SKIP_SHARE_EXTENSION=1，dist.mjs 按 appex 产物存在性设置）——产物不带系统分享入口。',
       );
     } else {
+      // 基准组 id 来自构建脚本写的 group.json（TeamID 展开后的同一个值），
+      // 不再读无人设置的 KEPCUP_SHARE_GROUP_ID env。
       const summary = assertShareExtension(
         appBundlePath,
-        process.env.KEPCUP_SHARE_GROUP_ID ?? null,
+        shareGroupIdFromProject(context.packager.projectDir),
       );
       console.log(
         `[pack] Share Extension 校验通过（${summary.bundleId}，${summary.extensionPoint}）。`,
@@ -479,6 +536,8 @@ module.exports = {
   assertShareExtension,
   assertNoShareExtension,
   readPlist,
+  firstAppGroupFromEntitlements,
+  shareGroupIdFromProject,
   ensureWslRootfsSource,
   FORBIDDEN_MARKERS,
   findForbiddenMarker,
