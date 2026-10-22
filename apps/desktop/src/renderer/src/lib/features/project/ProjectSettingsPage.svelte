@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PROJECT_DETAIL_SECTIONS, type ProjectSettingsSection } from '@kepcup/shared';
+  import type { ProjectSettingsSection } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -8,6 +8,7 @@
   import ProjectSettingsMembers from './ProjectSettingsMembers.svelte';
   import ProjectSettingsOverview from './ProjectSettingsOverview.svelte';
   import ProjectSettingsSchedules from './ProjectSettingsSchedules.svelte';
+  import { projectSettingsNav } from './project-settings-nav';
 
   /**
    * Project details page (D92 41 §11.3, WP7): a content-area page, not a
@@ -62,19 +63,26 @@
     <div class="mx-auto w-full max-w-4xl px-6 pt-8 pb-12">
       <p class="text-base font-semibold">{t('projectSettings.title')}</p>
 
-      <div class="mt-6 flex items-start gap-8">
-        <nav class="sticky top-6 hidden w-40 shrink-0 space-y-0.5 md:block">
-          {#each PROJECT_DETAIL_SECTIONS as navSection (navSection)}
+      <div class="mt-6 flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
+        <!-- 分区切换在所有宽度都可达：详情区同屏只渲染当前分区，导航藏掉窄屏
+             用户就到不了成员/危险区（窗口最小宽 375）。同一个 nav 两副形态：
+             md 以下横向滚动的 segmented 行（滚动时吸顶），md 起恢复竖排分类
+             列表；数据与 testid 出自同一份 project-settings-nav 模型。 -->
+        <nav
+          aria-label={t('projectSettings.title')}
+          class="sticky top-0 z-10 flex shrink-0 gap-1 overflow-x-auto rounded-md bg-background py-1 md:top-6 md:w-40 md:flex-col md:gap-0.5 md:overflow-visible md:rounded-none md:py-0"
+        >
+          {#each projectSettingsNav() as item (item.id)}
             <button
               type="button"
-              class="w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent {section ===
-              navSection
+              class="shrink-0 cursor-pointer rounded-md px-2 py-1.5 text-left text-sm whitespace-nowrap transition-colors hover:bg-accent md:w-full {section ===
+              item.id
                 ? 'bg-accent font-medium'
                 : 'text-muted-foreground'}"
-              onclick={() => goToSection(navSection)}
-              data-testid={`project-settings-nav-${navSection}`}
+              onclick={() => goToSection(item.id)}
+              data-testid={item.testid}
             >
-              {t(`projectSettings.nav.${navSection}`)}
+              {t(item.labelKey)}
             </button>
           {/each}
         </nav>

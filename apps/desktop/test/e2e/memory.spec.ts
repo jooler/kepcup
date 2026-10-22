@@ -270,6 +270,8 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
     await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
       timeout: 15_000,
     });
+    // master-detail：同屏只渲染当前分区，删除入口在「其它」分区（危险区卡片）。
+    await page.locator('[data-testid="project-settings-nav-danger"]').click();
     await page.locator('[data-testid="project-delete-begin"]').click();
     await page.locator('[data-testid="project-delete-confirm"]').click();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 15_000 });

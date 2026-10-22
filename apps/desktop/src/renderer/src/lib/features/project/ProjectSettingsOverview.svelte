@@ -6,13 +6,16 @@
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
+  import { AutoSaveField } from './autosave-field.svelte';
   import { planGoalSave, planTitleSave } from './project-settings-model';
 
   /**
    * Overview card of the project details page (D92 41 §11.3): name / goal /
    * workdir / lead. Name and goal auto-save shortly after typing (Enter/blur
    * flush, Escape restores the name); there is no separate save button. The
-   * pure save decisions live in `project-settings-model.ts`.
+   * pure save decisions live in `project-settings-model.ts`, the scheduling
+   * (debounce, IME composition guard, rollback, teardown) in
+   * `autosave-field.svelte.ts` — both unit-tested without this component.
    */
   let {
     conversationId,
@@ -38,66 +41,14 @@
   // --- Title (auto-save after typing; Enter/blur flush, Escape restores; an
   // emptied title is restored instead of submitted) ---
 
-  let titleDraft = $state('');
-  /** Last title synced into the input (comparison only, not reactive). */
-  let syncedTitle: string | null = null;
-  /** Save request in flight: later flushes wait for it to finish. */
-  let renaming = false;
-  let titleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  $effect(() => {
-    const title = conversation.title ?? '';
-    if (title === syncedTitle) return;
-    // Do not overwrite an edit that has not been saved yet.
-    const clean = titleDraft === (syncedTitle ?? '');
-    syncedTitle = title;
-    if (clean) titleDraft = title;
+  const titleField = new AutoSaveField({
+    delayMs: SAVE_DELAY_MS,
+    plan: (draft, current) => planTitleSave(draft, current ?? ''),
+    save: (value) => chat.renameProject(conversationId, value ?? ''),
+    current: () => conversation.title,
   });
 
-  function savedTitle(): string {
-    return conversation.title ?? '';
-  }
-
-  function scheduleTitleSave(): void {
-    if (titleTimer !== null) clearTimeout(titleTimer);
-    titleTimer = setTimeout(() => {
-      titleTimer = null;
-      void saveTitle();
-    }, SAVE_DELAY_MS);
-  }
-
-  function flushTitleSave(restoreEmpty: boolean): void {
-    if (titleTimer !== null) {
-      clearTimeout(titleTimer);
-      titleTimer = null;
-    }
-    void saveTitle(restoreEmpty);
-  }
-
-  async function saveTitle(restoreEmpty = false): Promise<void> {
-    if (renaming) return;
-    const plan = planTitleSave(titleDraft, savedTitle());
-    if (plan.kind === 'restore') {
-      // While typing an empty field is just an intermediate state; only a
-      // flush (blur) brings the saved name back.
-      if (restoreEmpty) titleDraft = savedTitle();
-      return;
-    }
-    if (plan.kind === 'skip') return;
-    renaming = true;
-    try {
-      // On failure (already toasted) fall back to the saved title so the
-      // input never sticks at a name that did not take effect.
-      if (!(await chat.renameProject(conversationId, plan.value))) {
-        titleDraft = savedTitle();
-        return;
-      }
-    } finally {
-      renaming = false;
-    }
-    // Edits made while the request was in flight need another round.
-    if (planTitleSave(titleDraft, savedTitle()).kind === 'save') scheduleTitleSave();
-  }
+  $effect(() => titleField.sync(conversation.title));
 
   function onTitleKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
     if (event.isComposing) return;
@@ -106,67 +57,30 @@
       event.currentTarget.blur();
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      if (titleTimer !== null) {
-        clearTimeout(titleTimer);
-        titleTimer = null;
-      }
-      titleDraft = savedTitle();
+      titleField.cancelAndRestore();
       event.currentTarget.blur();
     }
   }
 
   // --- Goal (auto-save after typing; emptying clears the goal) -------------------
 
-  let goalDraft = $state('');
-  /** Last goal synced into the textarea (like syncedTitle, not reactive). */
-  let syncedGoal: string | null = null;
-  let savingGoal = false;
-  let goalTimer: ReturnType<typeof setTimeout> | null = null;
-
-  $effect(() => {
-    const goal = conversation.goal ?? '';
-    if (goal === syncedGoal) return;
-    const clean = goalDraft === (syncedGoal ?? '');
-    syncedGoal = goal;
-    if (clean) goalDraft = goal;
+  const goalField = new AutoSaveField({
+    delayMs: SAVE_DELAY_MS,
+    plan: (draft, current) => planGoalSave(draft, current),
+    save: (value) => chat.updateProjectGoal(conversationId, value),
+    current: () => conversation.goal ?? null,
   });
 
-  function savedGoal(): string {
-    return conversation.goal ?? '';
-  }
+  $effect(() => goalField.sync(conversation.goal ?? null));
 
-  function scheduleGoalSave(): void {
-    if (goalTimer !== null) clearTimeout(goalTimer);
-    goalTimer = setTimeout(() => {
-      goalTimer = null;
-      void saveGoal();
-    }, SAVE_DELAY_MS);
-  }
-
-  function flushGoalSave(): void {
-    if (goalTimer !== null) {
-      clearTimeout(goalTimer);
-      goalTimer = null;
-    }
-    void saveGoal();
-  }
-
-  async function saveGoal(): Promise<void> {
-    if (savingGoal) return;
-    const plan = planGoalSave(goalDraft, conversation.goal ?? null);
-    if (plan.kind === 'skip') return;
-    savingGoal = true;
-    try {
-      if (!(await chat.updateProjectGoal(conversationId, plan.value))) {
-        goalDraft = savedGoal();
-        return;
-      }
-    } finally {
-      savingGoal = false;
-    }
-    // Edits made while the request was in flight need another round.
-    if (planGoalSave(goalDraft, conversation.goal ?? null).kind === 'save') scheduleGoalSave();
-  }
+  // Unmount (switching section / conversation) cleans up pending debounce
+  // timers; edits not yet saved get one final flush (see AutoSaveField.dispose).
+  $effect(() => {
+    return () => {
+      titleField.dispose();
+      goalField.dispose();
+    };
+  });
 </script>
 
 <div class="space-y-6">
@@ -176,13 +90,15 @@
     </label>
     <Input
       id="project-title-input"
-      bind:value={titleDraft}
+      bind:value={titleField.draft}
       maxlength={PROJECT_TITLE_MAX}
       data-testid="project-title-input"
       data-settings-anchor="project-title"
-      oninput={scheduleTitleSave}
+      oninput={(event) => titleField.onInput(event)}
+      oncompositionstart={() => titleField.onCompositionStart()}
+      oncompositionend={() => titleField.onCompositionEnd()}
       onkeydown={onTitleKeydown}
-      onblur={() => flushTitleSave(true)}
+      onblur={() => titleField.flush(true)}
     />
   </div>
 
@@ -192,20 +108,25 @@
     </label>
     <Textarea
       id="project-goal-input"
-      bind:value={goalDraft}
+      bind:value={goalField.draft}
       maxlength={PROJECT_GOAL_MAX_CHARS}
       rows={4}
       class="min-h-0 resize-y"
       placeholder={t('projectSettings.goalPlaceholder')}
       data-testid="project-goal-input"
       data-settings-anchor="project-goal"
-      oninput={scheduleGoalSave}
-      onblur={flushGoalSave}
+      oninput={(event) => goalField.onInput(event)}
+      oncompositionstart={() => goalField.onCompositionStart()}
+      oncompositionend={() => goalField.onCompositionEnd()}
+      onblur={() => goalField.flush()}
     />
     <div class="flex items-start justify-between gap-2">
       <span class="text-xs text-muted-foreground">{t('projectSettings.goalHint')}</span>
       <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
-        {t('projectSettings.goalCount', { count: goalDraft.length, max: PROJECT_GOAL_MAX_CHARS })}
+        {t('projectSettings.goalCount', {
+          count: goalField.draft.length,
+          max: PROJECT_GOAL_MAX_CHARS,
+        })}
       </span>
     </div>
   </div>

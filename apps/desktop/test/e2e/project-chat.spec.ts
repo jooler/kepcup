@@ -225,10 +225,11 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     const beta = await createBotAndOpenChat(page, '阿乙');
     await createProjectViaUi(page, '旧项目名', ['阿甲', '阿乙']);
 
-    // 经 ⚙ 打开详情页（内容区页面，不是弹框）。
+    // 经 ⚙ 打开详情页（内容区页面，不是弹框；master-detail 默认落在「概览」）。
     await page.locator('[data-testid="project-settings-button"]').click();
     const settingsPage = page.locator('[data-testid="project-settings-page"]');
     await expect(settingsPage).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="project-settings-section-overview"]')).toBeVisible();
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
       'data-view',
       'settings',
@@ -292,6 +293,9 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     await openConversationByName(page, '新项目名');
     await page.locator('[data-testid="project-settings-button"]').click();
     await expect(settingsPage).toBeVisible({ timeout: 15_000 });
+    // master-detail：同屏只渲染当前分区，成员操作先经导航切到「成员」。
+    await page.locator('[data-testid="project-settings-nav-members"]').click();
+    await expect(page.locator('[data-testid="project-settings-section-members"]')).toBeVisible();
     const memberRows = page.locator(
       '[data-testid="project-member-list"] [data-testid^="project-member-row-"]',
     );
@@ -308,8 +312,6 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
 
     // 设为负责人：阿乙 接任；负责人的移出按钮置灰，旧负责人恢复可移出。
     await page.locator(`[data-testid="project-make-lead-${beta.botId}"]`).click();
-    const overview = page.locator('[data-testid="project-settings-section-overview"]');
-    await expect(overview).toContainText('阿乙', { timeout: 10_000 });
     await expect(
       page.locator(`[data-testid="project-member-remove-${beta.botId}"]`),
     ).toBeDisabled();
@@ -321,7 +323,16 @@ test('project settings: rename, goal, members, set lead, delete', async () => {
     await page.locator(`[data-testid="project-member-remove-${gammaId}"]`).click();
     await expect(memberRows).toHaveCount(2, { timeout: 10_000 });
 
-    // 删除项目组（两步确认）回到空态；成员的私聊仍在侧栏。
+    // 负责人更换反映在「概览」的负责人卡片：切回概览核对。
+    await page.locator('[data-testid="project-settings-nav-overview"]').click();
+    const overview = page.locator('[data-testid="project-settings-section-overview"]');
+    await expect(overview).toBeVisible();
+    await expect(overview).toContainText('阿乙', { timeout: 10_000 });
+    await expect(overview.locator('[data-testid="project-lead-badge"]')).toBeVisible();
+
+    // 删除项目组在「其它」分区的危险区卡片（两步确认）回到空态；成员的私聊仍在侧栏。
+    await page.locator('[data-testid="project-settings-nav-danger"]').click();
+    await expect(page.locator('[data-testid="project-settings-section-danger"]')).toBeVisible();
     await page.locator('[data-testid="project-delete-begin"]').click();
     await expect(page.locator('[data-testid="project-delete-confirm-box"]')).toBeVisible();
     await page.locator('[data-testid="project-delete-confirm"]').click();
