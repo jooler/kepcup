@@ -72,7 +72,7 @@ describe('Bot file artifacts', () => {
     const artifacts = 'artifacts' in reply.content ? (reply.content.artifacts ?? []) : [];
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0]).toMatchObject({ name: 'hello.md', change: 'created', size: 8 });
-    expect(artifacts[0]!.path.endsWith('/notes/hello.md')).toBe(true);
+    expect(artifacts[0]!.path.endsWith(path.join('notes', 'hello.md'))).toBe(true);
 
     const preview = (await core.rpc.call('files.preview', {
       conversationId: conv.id,
