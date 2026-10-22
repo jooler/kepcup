@@ -5,14 +5,14 @@ import { expect, test, type ElectronApplication, type Page, _electron } from '@p
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
- * P13-B 任务 2/3 UI e2e：更新提示横幅（消费 P13-A 的 update:status 推送与
- * preload 契约）+ 设置页自启开关（写 settings.launchAtLogin，platform.autostart
- * 事件链在 P13-A 已单测覆盖；dev/e2e 下主进程不触 OS 登录项——isPackaged
- * 守卫，跨系统真机项见清单）。
+ * P13-B 任务 2/3 UI e2e：静默更新（设置页下载进度/应用按钮 + 左栏圆形更新
+ * 按钮，消费 P13-A 的 update:status 推送与 preload 契约）+ 设置页自启开关
+ * （写 settings.launchAtLogin，platform.autostart 事件链在 P13-A 已单测覆盖；
+ * dev/e2e 下主进程不触 OS 登录项——isPackaged 守卫，跨系统真机项见清单）。
  *
- * 更新横幅的驱动方式如实说明：NODE_ENV=test 下 updater 不调度、不触网
+ * 更新状态的驱动方式如实说明：NODE_ENV=test 下 updater 不调度、不触网
  * （P13-A 语义）。渲染层各相位的显示断言经主进程 webContents 推送
- * updateStatusPayload 形状载荷驱动；「点重启安装走门控」则经 dev/e2e 专用
+ * updateStatusPayload 形状载荷驱动；「点应用更新走门控」则经 dev/e2e 专用
  * seam（update:testEvaluate，__KEPCUP_TEST_HOOKS__ 守卫、打包 DCE 剔除）
  * 驱动【真实门控】的 evaluate() 生产转移路径后再点击——installNow 的相位
  * 守卫（BR-P13-005）要求门控真实处于可安装相位。
@@ -30,6 +30,7 @@ async function startSession(prefix: string): Promise<Session> {
     args: ['.'],
     env: {
       ...process.env,
+      TZ: 'Asia/Shanghai',
       KEPCUP_HOME: home,
       NODE_ENV: 'test',
       KEPCUP_KEYSTORE: 'memory',
@@ -86,49 +87,83 @@ type SeamWindow = Window & {
   kepcup: { testGateEvaluate?: (version: string) => Promise<void> };
 };
 
-test('update banner renders download/waiting phases; restart-install goes through the gate', async () => {
+/** 打开设置弹框并停在「通用」页（用户菜单入口）。 */
+async function openGeneralSettings(page: Page): Promise<void> {
+  await page.locator('[data-testid="user-menu-trigger"]').click();
+  await page.locator('[data-testid="menu-settings"]').click();
+  await expect(page.locator('[data-testid="settings-general"]')).toBeVisible({ timeout: 15_000 });
+}
+
+test('update downloads silently; settings and sidebar expose progress and apply', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-update-');
   const { app, page } = session;
   try {
     await waitReady(page);
 
-    // 下载中：横幅出现，显示版本号。
-    await pushUpdate(app, { phase: 'downloading', version: '9.9.9' });
-    const banner = page.locator('[data-testid="update-banner"]');
-    await expect(banner).toBeVisible({ timeout: 15_000 });
-    await expect(banner).toContainText('9.9.9');
+    // 下载中：不出现顶部横幅；设置页显示绿色进度文字，手动检查按钮在下载
+    // 相位隐藏（idle/error 才显示，见 awaiting-user 用例后的回归）。
+    await pushUpdate(app, { phase: 'downloading', version: '9.9.9', percent: 42 });
+    await expect(page.locator('[data-testid="update-banner"]')).toHaveCount(0);
 
-    // 在途执行等待中：不中断语义的文案 + 计数。
-    await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
-    await expect(banner).toHaveAttribute('data-phase', 'waiting-runs');
-    await expect(banner).toContainText('2 个执行正在进行');
+    await openGeneralSettings(page);
+    const updateRow = page.locator('[data-testid="settings-update-row"]');
+    await expect(updateRow).toContainText('正在下载 v9.9.9 - 42%', { timeout: 15_000 });
+    await expect(page.locator('[data-testid="settings-check-update"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
 
-    // 超时转 awaiting-user：绝不自动中断——用户可选择继续等待或确认中断。
-    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 1 });
-    await expect(banner).toHaveAttribute('data-phase', 'awaiting-user');
-    await page.locator('[data-testid="update-keep-waiting"]').click();
-    await expect(banner).not.toContainText('中断执行并更新');
-
-    // 回到 ready-to-install：经 dev/e2e 专用 seam 驱动【真实门控】走 evaluate()
-    // （无在途执行 → ready-to-install，生产转移路径；seam 经
-    // __KEPCUP_TEST_HOOKS__ 守卫，打包产物 DCE 剔除）。「立即重启并更新」
-    // → preload update:installNow → 主进程门控 installNow()——相位守卫
-    // （BR-P13-005）下仅 awaiting-user/ready-to-install 可安装，ready 相位会
-    // 复探在途执行。门控在调用 quitAndInstall 之前广播 installing 相位——
-    // e2e（dev 应用，无真实更新包）断言这一相位翻转，证明点击确实走到了门控
-    // 的安装决策；「确认后才 cancel+install」「ready 相位出现新执行先转
-    // awaiting-user」「idle 相位调用 no-op」的门控语义由 update-gate 单测覆盖
-    // （quitAndInstall 本身；dev 无更新包不真的退出）。
+    // 经 dev/e2e seam 驱动【真实门控】走 evaluate()（无在途执行 → ready），
+    // 下载完成后不弹横幅，只在设置页出现绿色按钮、左栏底部出现圆形更新按钮。
     await page.evaluate(
       (version) => (window as unknown as SeamWindow).kepcup.testGateEvaluate!(version),
       '9.9.9',
     );
-    await expect(banner).toHaveAttribute('data-phase', 'ready-to-install', { timeout: 15_000 });
-    await expect(banner).toContainText('立即重启并更新');
-    await page.locator('[data-testid="update-restart"]').click();
-    // 门控已进入 installing 相位（dev 无更新包，quitAndInstall 不真的退出）。
-    await expect(banner).toHaveAttribute('data-phase', 'installing', { timeout: 15_000 });
+    await expect(page.locator('[data-testid="update-banner"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="sidebar-update-button"]')).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await openGeneralSettings(page);
+    await expect(page.locator('[data-testid="settings-update-apply"]')).toContainText('应用更新', {
+      timeout: 15_000,
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+
+    // 点击左栏圆形按钮 → preload update:installNow → 主进程门控退出并安装；
+    // 门控先广播 installing，按钮随之消失，证明点击确实走到了安装决策。
+    await page.locator('[data-testid="sidebar-update-button"]').click();
+    await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+  } finally {
+    await closeSession(session);
+  }
+});
+
+/**
+ * 回归（真机问题 4）：点「重启并应用更新」后应用没关、更新一直等到手动退出。
+ * macOS 的 quitAndInstall 走 Electron 原生 autoUpdater：它先关闭全部窗口，
+ * 之后才发 before-quit。主窗口的「关闭即隐藏」若只认 before-quit 的 quitting
+ * 标志，就会把窗口拦成 hide，Squirrel 永远等不到应用退出。
+ *
+ * 这里直接复现原生路径的顺序：先发 before-quit-for-update，再关窗口——
+ * 断言窗口真的被销毁（数量归零），而不是被隐藏。
+ */
+test('before-quit-for-update closes windows instead of hiding them (restart path)', async () => {
+  test.setTimeout(120_000);
+  const session = await startSession('kepcup-e2e-update-quit-');
+  const { app, page } = session;
+  try {
+    await waitReady(page);
+    const remaining = await app.evaluate(async ({ autoUpdater, BrowserWindow }) => {
+      autoUpdater.emit('before-quit-for-update');
+      for (const win of BrowserWindow.getAllWindows()) win.close();
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      return BrowserWindow.getAllWindows().length;
+    });
+    expect(remaining).toBe(0);
   } finally {
     await closeSession(session);
   }
@@ -145,6 +180,62 @@ async function dismissStartPanel(page: Page): Promise<void> {
     // 面板没有展开，无需处理。
   }
 }
+
+test('waiting-runs shows drain copy; awaiting-user requires destructive confirmation', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-update-await-');
+  const { app, page } = session;
+  try {
+    await waitReady(page);
+
+    // waiting-runs：设置行显示「已下载、等待执行结束」且带版本号；左栏不出圆钮。
+    await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
+    await openGeneralSettings(page);
+    await expect(page.locator('[data-testid="settings-update-waiting"]')).toContainText('9.9.9', {
+      timeout: 15_000,
+    });
+    await expect(page.locator('[data-testid="settings-update-waiting"]')).toContainText(
+      '等待执行结束',
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0);
+
+    // awaiting-user：左栏圆钮转 destructive 警示态；点击先弹确认（含执行数），
+    // 「继续等待」收起确认且不安装（BR-P13-005：绝不静默中断在途执行）。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
+    const sidebarButton = page.locator('[data-testid="sidebar-update-button"]');
+    await expect(sidebarButton).toBeVisible({ timeout: 15_000 });
+    await expect(sidebarButton).toHaveAttribute('data-awaiting', 'true');
+    await sidebarButton.click();
+    const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText('2');
+    await page.locator('[data-testid="sidebar-update-keep-waiting"]').click();
+    await expect(confirm).toBeHidden();
+    // 门控重臂排空轮询（这里以 waiting-runs 推送模拟相位回流），圆钮收起。
+    await pushUpdate(app, { phase: 'waiting-runs', version: '9.9.9', activeRuns: 2 });
+    await expect(sidebarButton).toHaveCount(0, { timeout: 15_000 });
+
+    // 设置页入口同样先确认：确认框出现（含执行数），点「中断执行并更新」
+    // 才调 installNow（随后门控 installing 推送把整个入口收走）。
+    await pushUpdate(app, { phase: 'awaiting-user', version: '9.9.9', activeRuns: 2 });
+    await openGeneralSettings(page);
+    const apply = page.locator('[data-testid="settings-update-apply"]');
+    await expect(apply).toContainText('中断执行并更新', { timeout: 15_000 });
+    await apply.click();
+    const box = page.locator('[data-testid="settings-update-confirm-box"]');
+    await expect(box).toBeVisible();
+    await expect(box).toContainText('2');
+    await page.locator('[data-testid="settings-update-install-anyway"]').click();
+    await expect(box).toBeHidden();
+    await pushUpdate(app, { phase: 'installing', version: '9.9.9' });
+    await expect(page.locator('[data-testid="settings-update-apply"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+  } finally {
+    await closeSession(session);
+  }
+});
 
 test('launch-at-login switch persists in settings; in dev the OS login item is never touched', async () => {
   test.setTimeout(180_000);

@@ -346,6 +346,19 @@ export const WORKDIR_DEFAULT_PROTECT_RULES = {
 
 /** Delay before the profile curation job runs, to batch proposals (P07 任务 8). */
 export const PROFILE_CURATION_DELAY_MS = 60_000;
+/** Token budget of the deterministic <hard_constraints> section (docs 04). */
+export const HARD_CONSTRAINT_TOKEN_BUDGET = 200;
+/**
+ * Max hard-constraint entries injected (docs 04). Kept consistent with the
+ * token budget: one CJK entry may use up to ~120 chars ≈ 100+ tokens, so a
+ * 200-token budget holds roughly 4-6 entries — a 12-entry cap would routinely
+ * be truncated away.
+ */
+export const HARD_CONSTRAINT_MAX_ITEMS = 6;
+/** A turn-only conversation registers at most one reflection per window. */
+export const REFLECTION_TURN_DEBOUNCE_MS = 10 * 60_000;
+/** The window flushes early once this many turn reflections accumulated. */
+export const REFLECTION_TURN_DEBOUNCE_MAX_RUNS = 6;
 /** Commitments due within this horizon appear in <my_state> (P07 任务 10). */
 export const MY_STATE_COMMITMENT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
 /** Max simultaneously open per-bot memory.db connections (LRU-evicted, P07). */

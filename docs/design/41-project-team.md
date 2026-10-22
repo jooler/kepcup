@@ -420,7 +420,7 @@ export const PROJECT_MODULES = [
 | 成员浏览器「显示」按钮 | **成员**：行内按钮，显隐规则不变 |
 | 访问授权列表与「撤销」 | **授权**：保持一步可达，这是安全控制，不能因撤右栏而变深 |
 | `SchedulesPanel` / `WatchesPanel` | **定时与监看** |
-| 解散群（`GroupSettingsDialog`） | **危险区**：删除项目组，确认框列出 wiki 来源 / 页面数、消息数 |
+| 解散群（`GroupSettingsDialog`） | 「其它」分区内标题为「危险区」的卡片：删除项目组，确认框列出 wiki 来源 / 页面数、消息数 |
 
 - `GroupSettingsDialog` 的 `embedded` 模式供设置卡内嵌：把成员编辑拆成独立组件 `ProjectMembersEditor`，详情页与设置卡共用；弹框形态删除。
 - 设置目录：`group.title` / `group.members` → `project.title` / `project.members`，深链 `surface: 'group-dialog'` → `'project-detail'`（带分区锚点）；新增 `project.goal`、`project.lead`，`maxMode` 建议 `confirm`（更换负责人改变路由与权力，不宜 `direct`）。

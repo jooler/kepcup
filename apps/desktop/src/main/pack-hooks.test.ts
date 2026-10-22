@@ -1,4 +1,5 @@
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,20 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     targetArch: string,
     projectDir: string,
   ): { kept: string | null; warnMissing: boolean };
+  assertShareExtension(
+    appBundlePath: string,
+    groupId: string | null,
+  ): {
+    appexPath: string;
+    bundleId: string;
+    extensionPoint: string;
+    signed: boolean;
+    appGroup: string | null;
+  };
+  assertNoShareExtension(outDir: string): void;
+  readPlist(plistPath: string): unknown;
+  firstAppGroupFromEntitlements(text: string): string | null;
+  shareGroupIdFromProject(projectDir: string): string | null;
 };
 
 describe('afterPack forbidden markers', () => {
@@ -152,5 +167,213 @@ describe('ensureWslRootfsSource', () => {
     const project = projectWithWsl(['resources/wsl/rootfs.tar']);
     const result = hooks.ensureWslRootfsSource(path.join(project, 'resources', 'wsl'), 'arm64', project);
     expect(result).toEqual({ kept: null, warnMissing: true });
+  });
+});
+
+// D94 §10.2：Share Extension 的落位校验（macOS 产物里 .appex 必须在
+// Contents/PlugIns/ 下且扩展点正确；非 macOS 产物里不得出现 .appex）。
+describe('share extension packaging checks', () => {
+  function fakeAppex(overrides: { point?: string; bundleId?: string } = {}): string {
+    const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));
+    const appex = path.join(bundle, 'KepCup.app', 'Contents', 'PlugIns', 'KepCupShare.appex');
+    mkdirSync(path.join(appex, 'Contents', 'MacOS'), { recursive: true });
+    writeFileSync(
+      path.join(appex, 'Contents', 'Info.plist'),
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        '<dict>',
+        '<key>CFBundleIdentifier</key>',
+        `<string>${overrides.bundleId ?? 'app.kepcup.desktop.ShareExtension'}</string>`,
+        '<key>NSExtension</key>',
+        '<dict>',
+        '<key>NSExtensionPointIdentifier</key>',
+        `<string>${overrides.point ?? 'com.apple.share-services'}</string>`,
+        '</dict>',
+        '</dict>',
+        '</plist>',
+        '',
+      ].join('\n'),
+    );
+    // codesign 要求包里有可执行文件。
+    writeFileSync(path.join(appex, 'Contents', 'MacOS', 'KepCupShare'), '#!/bin/sh\n');
+    return path.join(bundle, 'KepCup.app');
+  }
+
+  /**
+   * ad-hoc 签名并带上给定 entitlements（macOS 的 codesign 可用时）。
+   *
+   * 可执行文件换真的 Mach-O：对 shell 脚本签名时 codesign 会静默丢掉
+   * entitlements（签名成功、entitlements 为空）。
+   */
+  function signAppex(
+    appBundle: string,
+    entitlementsXml: string | null,
+  ): { ok: boolean; reason?: string } {
+    const appex = path.join(appBundle, 'Contents', 'PlugIns', 'KepCupShare.appex');
+    cpSync('/usr/bin/true', path.join(appex, 'Contents', 'MacOS', 'KepCupShare'));
+    const args = ['--force', '--sign', '-'];
+    if (entitlementsXml !== null) {
+      const entFile = path.join(path.dirname(appex), 'test-entitlements.plist');
+      writeFileSync(entFile, entitlementsXml);
+      args.push('--entitlements', entFile);
+    }
+    args.push(appex);
+    const result = spawnSync('/usr/bin/codesign', args, { encoding: 'utf8' });
+    return result.status === 0 ? { ok: true } : { ok: false, reason: result.stderr };
+  }
+
+  const hasCodesign = existsSync('/usr/bin/codesign') && existsSync('/usr/bin/true');
+
+  /** codesign -d --entitlements 的真实输出格式（新旧 macOS 版本都可能出现）。 */
+  const ENTITLEMENTS_XML = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    '<dict>',
+    '<key>com.apple.security.app-sandbox</key><true/>',
+    '<key>com.apple.security.application-groups</key>',
+    '<array>',
+    '<string>TEAM123456.app.kepcup.desktop</string>',
+    '<string>group.something.else</string>',
+    '</array>',
+    '</dict>',
+    '</plist>',
+    '',
+  ].join('\n');
+
+  test('entitlements 解析：取第一个 application-group，容忍 Executable= 前缀与格式差异', () => {
+    // 旧版 codesign：带 DOCTYPE 的完整 plist，前面混着 Executable= 行（stderr）。
+    expect(hooks.firstAppGroupFromEntitlements(`Executable=${ENTITLEMENTS_XML}`)).toBe(
+      'TEAM123456.app.kepcup.desktop',
+    );
+    // 新版 codesign：裸 XML（无 DOCTYPE）。
+    const bare = ENTITLEMENTS_XML.replace(/<!DOCTYPE[^>]*>\n/, '');
+    expect(hooks.firstAppGroupFromEntitlements(bare)).toBe('TEAM123456.app.kepcup.desktop');
+    // 没有 App Group 键 / 空输入：null。
+    expect(hooks.firstAppGroupFromEntitlements('<plist><dict></dict></plist>')).toBeNull();
+    expect(hooks.firstAppGroupFromEntitlements('')).toBeNull();
+  });
+
+  test('shareGroupIdFromProject：读 group.json，缺失 / 损坏为 null', () => {
+    const project = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-group-'));
+    try {
+      expect(hooks.shareGroupIdFromProject(project)).toBeNull();
+      mkdirSync(path.join(project, 'resources', 'share-extension'), { recursive: true });
+      writeFileSync(
+        path.join(project, 'resources', 'share-extension', 'group.json'),
+        JSON.stringify({ groupId: 'TEAM123456.app.kepcup.desktop', teamId: 'TEAM123456' }),
+      );
+      expect(hooks.shareGroupIdFromProject(project)).toBe('TEAM123456.app.kepcup.desktop');
+      writeFileSync(path.join(project, 'resources', 'share-extension', 'group.json'), 'not json');
+      expect(hooks.shareGroupIdFromProject(project)).toBeNull();
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test('a well-formed appex passes and reports its bundle id', () => {
+    const appBundle = fakeAppex();
+    try {
+      const summary = hooks.assertShareExtension(appBundle, '8CL9PRK85J.app.kepcup.desktop');
+      expect(summary.bundleId).toBe('app.kepcup.desktop.ShareExtension');
+      expect(summary.extensionPoint).toBe('com.apple.share-services');
+      expect(summary.appexPath).toContain(path.join('PlugIns', 'KepCupShare.appex'));
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!hasCodesign)('a signed appex with matching App Group passes the consistency check', () => {
+    const appBundle = fakeAppex();
+    try {
+      const signed = signAppex(appBundle, ENTITLEMENTS_XML);
+      expect(signed.ok, signed.reason).toBe(true);
+      const summary = hooks.assertShareExtension(appBundle, 'TEAM123456.app.kepcup.desktop');
+      expect(summary.signed).toBe(true);
+      expect(summary.appGroup).toBe('TEAM123456.app.kepcup.desktop');
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!hasCodesign)(
+    'a signed appex whose App Group differs from group.json fails the build',
+    () => {
+      const appBundle = fakeAppex();
+      try {
+        const signed = signAppex(appBundle, ENTITLEMENTS_XML);
+        expect(signed.ok, signed.reason).toBe(true);
+        expect(() =>
+          hooks.assertShareExtension(appBundle, 'OTHERTEAM.app.kepcup.desktop'),
+        ).toThrow(/App Group 不一致/);
+      } finally {
+        rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(!hasCodesign)(
+    'a signed appex without application-groups fails when a group is expected',
+    () => {
+      const appBundle = fakeAppex();
+      try {
+        const signed = signAppex(
+          appBundle,
+          [
+            '<plist version="1.0"><dict>',
+            '<key>com.apple.security.app-sandbox</key><true/>',
+            '</dict></plist>',
+          ].join('\n'),
+        );
+        expect(signed.ok, signed.reason).toBe(true);
+        expect(() => hooks.assertShareExtension(appBundle, 'TEAM123456.app.kepcup.desktop')).toThrow(
+          /没有 application-groups/,
+        );
+      } finally {
+        rmSync(path.dirname(appBundle), { recursive: true, force: true });
+      }
+    },
+  );
+
+  test('a missing appex fails the build with a diagnosable error', () => {
+    const empty = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));
+    try {
+      expect(() => hooks.assertShareExtension(empty, null)).toThrow(/缺少 Share Extension/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong extension point fails the build', () => {
+    const appBundle = fakeAppex({ point: 'com.apple.widget-extension' });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, null)).toThrow(/扩展点不对/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong bundle id fails the build', () => {
+    const appBundle = fakeAppex({ bundleId: 'com.example.other' });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, null)).toThrow(/bundle id 不对/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('non-macOS artifacts must not contain an appex', () => {
+    const outDir = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-win-'));
+    try {
+      expect(() => hooks.assertNoShareExtension(outDir)).not.toThrow();
+      const plugins = path.join(outDir, 'resources', 'app', 'PlugIns');
+      mkdirSync(plugins, { recursive: true });
+      mkdirSync(path.join(plugins, 'KepCupShare.appex'), { recursive: true });
+      expect(() => hooks.assertNoShareExtension(outDir)).toThrow(/非 macOS 产物里出现了 Share Extension/);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });

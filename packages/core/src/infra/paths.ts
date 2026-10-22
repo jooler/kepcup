@@ -96,6 +96,20 @@ export function workspacePathFor(paths: AppPaths, botId: string, conversationId:
 }
 
 /**
+ * 分享中转目录（D94 §7.1）：`{home}/inbox/share/`。主进程把 App Group inbox
+ * 里的批次目录移到这里，core 再消费。批次目录 `{intakeId}/` 里带
+ * `manifest.json` 与 `files/`。
+ */
+export function shareInboxRoot(paths: AppPaths): string {
+  return path.join(paths.home, 'inbox', 'share');
+}
+
+/** 一个分享批次的 core inbox 目录：`{home}/inbox/share/{intakeId}/`。 */
+export function shareInboxDir(paths: AppPaths, intakeId: string): string {
+  return path.join(shareInboxRoot(paths), intakeId);
+}
+
+/**
  * Private state of one external agent (D72 P5): `agents/{agentId}/` — e.g. the
  * relocated config home of an agent whose global config must not be shared
  * with the user's own installation (Antigravity `GEMINI_HOME`).

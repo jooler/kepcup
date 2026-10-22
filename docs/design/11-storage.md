@@ -26,7 +26,11 @@
     workspaces/{conversation_id}/
     maintenance/{loop_type}/
     browser/                               -- 该 Bot 的浏览器会话数据
-  conversations/{conversation_id}/attachments/
+  conversations/{conversation_id}/attachments/   -- 附件库；D94 分享附件消费后仍落这里
+                                              （core 从 inbox/share 取文件后写入，不另设
+                                              分享专用目录；给 Bot 的是 workspace 副本路径）
+  inbox/share/{intake_id}/                 -- D94：分享中转库（主进程从 App Group 搬来，
+                                              core 消费后清掉；失败批次按 TTL 保留）
 ```
 
 ## 数据库引擎

@@ -24,11 +24,17 @@ import {
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
   chatModelOptions,
+  shareConsumeInputSchema,
+  shareConsumeOutputSchema,
+  shareTargetsSchema,
   type AgentCatalogEntry,
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
   type CustomModel,
+  type ShareConsumeInput,
+  type ShareConsumeOutput,
+  type ShareTargets,
 } from '@kepcup/shared';
 import type {
   ConnectorIndexPublicKey,
@@ -117,6 +123,7 @@ import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { SlotYieldingLeaseService } from './scheduler/slot-yielding-lease.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
+import { ShareIntakeService } from './share/service.js';
 import { episodeLimitsFromEnv } from './dispatch/episodes.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
 import { EnvManager } from './env/manager.js';
@@ -191,7 +198,11 @@ import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
 import { AppSkillsOffers } from './apps/skills-offer.js';
 import { ToolLockService } from './apps/tool-lock.js';
-import { createShellHostRpc, type DeferredShellHostRpc, type ShellHostRpc } from './apps/shell-facade.js';
+import {
+  createShellHostRpc,
+  type DeferredShellHostRpc,
+  type ShellHostRpc,
+} from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
 import type { CoreEventsMap } from './start-types.js';
 
@@ -406,6 +417,12 @@ export interface CoreServicesOptions {
     initialDelayMs?: number;
   };
   /**
+   * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
+   * share intake daily sweep cadence so integration tests can observe the
+   * timer firing without waiting a real day.
+   */
+  shareSweepIntervalMs?: number;
+  /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): tools seen for the
    * first time are approved straight away, like the stored-server baseline — so
    * fixtures that add a server through `settings.update` keep working. A tool whose
@@ -508,6 +525,8 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
+  /** D94 分享接收（Share Extension）：null while locked / errored. */
+  share: ShareIntakeService | null;
   /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
   workdirRuntime: WorkdirRuntime | null;
   /** P06 environment manager (null while locked / errored). */
@@ -621,6 +640,9 @@ const voidInput = z.void();
 /** Daily environment health check (docs/dev/phases/P06-environment.md 范围). */
 const ENV_DOCTOR_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+/** D94 §6.7：分享清扫「启动 + 每日」的每日间隔。 */
+const SHARE_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 /** Consolidation due-check cadence (P07 任务 9: daily after 03:00 local). */
 const CONSOLIDATION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -644,6 +666,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const consolidationTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
   /** Holder for the wiki lint due-check timer (P09). */
   const wikiLintTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
+  /** Holder for the share intake daily sweep timer (D94 §6.7). */
+  const shareSweepTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
   /** Set by close() so late best-effort callbacks stop touching dead resources. */
   const servicesClosed: { closed: boolean } = { closed: false };
   const env = options.env ?? process.env;
@@ -673,10 +697,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；
   // 查询函数在域服务建好后赋值，锁定/未解锁期间原样放行。
   let lookupDirectBot: ((botId: string) => Bot | null) | null = null;
-  const events = withDirectConversationBots(
-    createEventBus<CoreEventsMap>(),
-    () => lookupDirectBot,
-  );
+  const events = withDirectConversationBots(createEventBus<CoreEventsMap>(), () => lookupDirectBot);
   // BR-P13-007 test seam: production restore by default; tests inject a
   // failing wrapper to pin the honest migration-failure statusReason.
   const restoreBackup = options.restoreBackup ?? restoreDatabaseBackup;
@@ -716,8 +737,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const wslSetupSuppressedByTestSeam =
     __KEPCUP_TEST_HOOKS__ === true && env.KEPCUP_WSL_PROMPT === 'off';
   const wslSetup =
-    wslFixtureScenario !== null ||
-    (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
+    wslFixtureScenario !== null || (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
       : null;
   const sandbox = createSandboxBackend({
@@ -818,6 +838,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
+    share: null,
     workdirRuntime: null,
     environment: null,
     memory: null,
@@ -900,6 +921,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (envDoctorTimerRef.timer) clearInterval(envDoctorTimerRef.timer);
       if (consolidationTimerRef.timer) clearInterval(consolidationTimerRef.timer);
       if (wikiLintTimerRef.timer) clearInterval(wikiLintTimerRef.timer);
+      if (shareSweepTimerRef.timer) clearInterval(shareSweepTimerRef.timer);
       if (taskSweepTimer !== null) clearInterval(taskSweepTimer);
       taskSweepTimer = null;
       try {
@@ -1244,7 +1266,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const guardedMcpFetch = createGuardedMcpFetch(apps.loopbackAllowlist);
     mcp.attachHttpFetch((server) => {
       const row = apps.store.get(server.id);
-      return row !== null && connectorCatalog.isLocal(row.connectorId) ? guardedMcpFetch : undefined;
+      return row !== null && connectorCatalog.isLocal(row.connectorId)
+        ? guardedMcpFetch
+        : undefined;
     });
     const connectedAppsRef: { current?: ConnectedApps } = {};
     const toolLock = new ToolLockService({
@@ -1526,6 +1550,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       ...(parseCurationDelayMs(env) !== undefined
         ? { curationDelayMs: parseCurationDelayMs(env) }
         : {}),
+      ...(parseReflectionDebounceMs(env) !== undefined
+        ? { reflectionDebounceMs: parseReflectionDebounceMs(env) }
+        : {}),
       // P10 commitment linkage rides the internal event bus (start-types.ts).
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
@@ -1647,10 +1674,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             approvalSource: 'default',
             enabled: false,
           };
-          if (appServer === null || !selectedByBot || !isExposableStatus(appView.connection.status)) {
+          if (
+            appServer === null ||
+            !selectedByBot ||
+            !isExposableStatus(appView.connection.status)
+          ) {
             return denied;
           }
-          const base = await mcp.resolveRisk(appServer, toolName, signal !== undefined ? { signal } : {});
+          const base = await mcp.resolveRisk(
+            appServer,
+            toolName,
+            signal !== undefined ? { signal } : {},
+          );
           const appDecision = connectedApps.decisionFor(serverId, toolName, base) ?? denied;
           return mcp.toolApproved(appServer, toolName)
             ? appDecision
@@ -1669,7 +1704,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             enabled: false,
           };
         }
-        const risk = await mcp.resolveRisk(server, toolName, signal !== undefined ? { signal } : {});
+        const risk = await mcp.resolveRisk(
+          server,
+          toolName,
+          signal !== undefined ? { signal } : {},
+        );
         const decision = decideMcpTool(server, toolName, risk);
         // D73 P1: a tool whose definition is unreviewed (new / changed since it was offered, e.g.
         // mid-run) is not callable — same refusal as a tool the user switched off.
@@ -1973,13 +2012,20 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         const modelId = modelRef.slice(slash + 1);
         try {
           const provider = providers.list().find((info) => info.id === providerId);
-          return provider !== undefined && provider.hasKey && provider.models.some((m) => m.id === modelId);
+          return (
+            provider !== undefined &&
+            provider.hasKey &&
+            provider.models.some((m) => m.id === modelId)
+          );
         } catch {
           return false;
         }
       },
       preview: (opts) =>
-        createWidgetPreviewRunner({ rpc: services.widgetPreviewRpc, screenshots: opts.screenshots }),
+        createWidgetPreviewRunner({
+          rpc: services.widgetPreviewRpc,
+          screenshots: opts.screenshots,
+        }),
     });
     try {
       widgetCraft.sweepDrafts();
@@ -2314,7 +2360,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const publishAppNotice = (notice: AppNoticePayload): void => {
       events.emit('app.notice', notice);
       if (notice.level === 'error' && notice.dismiss !== true) {
-        events.emit('platform.notify', { conversationId: null, title: 'KepCup', body: notice.text });
+        events.emit('platform.notify', {
+          conversationId: null,
+          title: 'KepCup',
+          body: notice.text,
+        });
       }
     };
     // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
@@ -2897,6 +2947,74 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       browserProfiles,
     };
     services.orchestrator = orchestrator;
+    // D94 分享接收：Share Extension 投递的目标解析、附件落盘与失败恢复。
+    const shareIntake = new ShareIntakeService({
+      db: mainDb,
+      paths,
+      clock,
+      logger,
+      attachments,
+      conversations,
+      bots,
+      orchestrator,
+      publish: (event, payload) => events.emit(event, payload),
+    });
+    services.share = shareIntake;
+
+    // D94 §6.7：清扫「启动 + 每日」——超时的 processing、过期失败/done/received
+    // 行、无主残留目录；随后 scanInbox 把「主进程移动后崩溃」的残留和 sweep 打
+    // 回的 received 批次补消费掉（文件不丢，received 不滞留成黑洞）。
+    const runShareIntakeMaintenance = (): void => {
+      const swept = shareIntake.sweep();
+      if (
+        swept.resetProcessing > 0 ||
+        swept.expiredFailed > 0 ||
+        swept.expiredDone > 0 ||
+        swept.expiredReceived > 0 ||
+        swept.orphanInboxDirs > 0
+      ) {
+        logger.info(swept, 'share intakes swept');
+      }
+      const recovered = shareIntake.scanInbox();
+      if (recovered.length > 0) {
+        logger.info({ recovered }, 'share intakes recovered from core inbox');
+      }
+    };
+    try {
+      runShareIntakeMaintenance();
+    } catch (error) {
+      warnQuietly('share intake sweep failed', error);
+    }
+    const shareTestHooks = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
+    const shareSweepTimer = setInterval(
+      () => {
+        if (servicesClosed.closed) return;
+        try {
+          runShareIntakeMaintenance();
+        } catch (error) {
+          // 每日清扫是尽力而为：失败只记日志，不打断进程。
+          warnQuietly('share intake sweep failed', error);
+        }
+      },
+      shareTestHooks && options.shareSweepIntervalMs !== undefined
+        ? options.shareSweepIntervalMs
+        : SHARE_SWEEP_INTERVAL_MS,
+    );
+    shareSweepTimer.unref?.();
+    shareSweepTimerRef.timer = shareSweepTimer;
+    // D94 §5.2: Bot / 项目 / 归档变化时通知主进程重写目标快照（主进程侧防抖）。
+    events.on('bot.updated', () => events.emit('share.targets.changed', { reason: 'bot' }));
+    events.on('bot.deleted', () => events.emit('share.targets.changed', { reason: 'bot' }));
+    events.on('conversation.updated', (payload) => {
+      const conversation = payload.conversation;
+      if (conversation.type !== 'project') return;
+      events.emit('share.targets.changed', { reason: 'project' });
+    });
+    // 项目组被删：快照里的项目条目要消失（payload 只有 id，删除后已查不到
+    // 类型；多刷一次主进程会防抖合并，无害）。
+    events.on('conversation.deleted', () =>
+      events.emit('share.targets.changed', { reason: 'project' }),
+    );
     services.workdirRuntime = workdirRuntime;
     services.environment = environment;
     services.memory = memory;
@@ -2980,6 +3098,18 @@ function parseCurationDelayMs(env: NodeJS.ProcessEnv): number | undefined {
 }
 
 /**
+ * Test hook: KEPCUP_REFLECTION_DEBOUNCE_MS overrides the turn-reflection
+ * debounce window (production default stays REFLECTION_TURN_DEBOUNCE_MS);
+ * 0 disables debouncing and reflects each turn separately.
+ */
+function parseReflectionDebounceMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.KEPCUP_REFLECTION_DEBOUNCE_MS;
+  if (raw === undefined || raw.length === 0) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/**
  * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS for the
  * routing judgements (D92 T1a: the continuation check and the lead gate; the
  * constants.ts default stays the single source of truth for production).
@@ -2997,9 +3127,7 @@ function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
  * ping-pong instead of 12/8 live mentions). Unset parts fall back to the
  * shared constants.
  */
-function parseEpisodeLimits(
-  env: NodeJS.ProcessEnv,
-): { hops?: number; pair?: number } | undefined {
+function parseEpisodeLimits(env: NodeJS.ProcessEnv): { hops?: number; pair?: number } | undefined {
   const hops = Number(env.KEPCUP_EPISODE_HOP_BREAKER);
   const pair = Number(env.KEPCUP_EPISODE_PAIR_BREAKER);
   const limits: { hops?: number; pair?: number } = {};
@@ -3281,6 +3409,28 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     },
+    // D94 §5.5: 分享目标快照（主进程写进 App Group 供 Share Extension 读）。
+    'share.targets': {
+      input: voidInput,
+      output: shareTargetsSchema,
+      handle: async (): Promise<ShareTargets> => {
+        if (services.share === null) {
+          throw new AppError('NOT_FOUND', '分享服务尚未就绪');
+        }
+        return services.share.targets();
+      },
+    },
+    // D94 §5.5: 消费一个分享批次（主进程把 App Group inbox 移进 core inbox 后调）。
+    'share.consume': {
+      input: shareConsumeInputSchema,
+      output: shareConsumeOutputSchema,
+      handle: async (input): Promise<ShareConsumeOutput> => {
+        if (services.share === null) {
+          throw new AppError('NOT_FOUND', '分享服务尚未就绪');
+        }
+        return services.share.consume(input as ShareConsumeInput);
+      },
+    },
     'unattended.disable': {
       input: voidInput,
       output: unattendedGetOutputSchema,
@@ -3348,7 +3498,10 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         };
         if (services.orchestrator === null) return { injected: 0 };
         const injected = services.orchestrator.tasks.notifyBrowserHandback(botId, conversationId);
-        services.logger.info({ botId, conversationId, reason, injected }, 'browser control returned');
+        services.logger.info(
+          { botId, conversationId, reason, injected },
+          'browser control returned',
+        );
         return { injected };
       },
     },

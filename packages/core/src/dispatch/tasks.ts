@@ -20,6 +20,7 @@ import {
   TASK_SETTLE_SWEEP_MS,
   TASK_START_MAX_PER_TURN,
   type Message,
+  type MessageArtifact,
   type Run,
   type RunStatus,
   type RunStep,
@@ -299,6 +300,11 @@ export interface TaskHostDeps {
     task: Run,
     withChanges: boolean,
   ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null };
+  /**
+   * Files this task's file tools created / modified. Read once at settlement and
+   * stored on the terminal entry; absent = no tracking (unit tests).
+   */
+  artifactsOf?(runId: string): MessageArtifact[];
   /**
    * Awaits `wait` without holding the task's provider slot (Scheduler
    * .yieldSlotWhile with the task's run id; 审查 M3): ask_user waits on the
@@ -934,6 +940,9 @@ export class TaskHost implements TaskToolFacade {
       text: content.text,
       runId: identity.runId,
       taskOrigin: { taskId: task.id },
+      ...(content.artifacts !== undefined && content.artifacts.length > 0
+        ? { artifacts: content.artifacts }
+        : {}),
     });
     this.#deps.recordVisibleMessage(identity.runId, message);
     return { messageId: message.id };
@@ -1321,6 +1330,7 @@ export class TaskHost implements TaskToolFacade {
     let entry: Message | null = null;
     let created = true;
     if (task.botId !== null && task.conversationId !== null) {
+      const files = this.#deps.artifactsOf?.(taskId) ?? [];
       const written = this.#safeAppend(
         outcome.status === 'completed'
           ? {
@@ -1330,6 +1340,7 @@ export class TaskHost implements TaskToolFacade {
               phase: 'result',
               text: outcome.resultText ?? '',
               status: 'completed',
+              ...(files.length > 0 ? { artifacts: files } : {}),
             }
           : {
               conversationId: task.conversationId,
@@ -1346,6 +1357,7 @@ export class TaskHost implements TaskToolFacade {
               status: outcome.status,
               ...(error !== null ? { error } : {}),
               ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
+              ...(files.length > 0 ? { artifacts: files } : {}),
             },
       );
       if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {

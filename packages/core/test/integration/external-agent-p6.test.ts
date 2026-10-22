@@ -44,7 +44,7 @@ async function start(script: FakeAgentScript) {
   writeFakeAgentScript(scriptFile, script);
   // No built-in model: KEPCUP_MOCK_LLM_URL='' skips the mock provider seed.
   const stack = await createTestStack({
-    env: { KEPCUP_MOCK_LLM_URL: '' },
+    env: { KEPCUP_MOCK_LLM_URL: '', KEPCUP_REFLECTION_DEBOUNCE_MS: '0' },
     agentLaunch: (entry) =>
       entry.id === 'fake' ? fakeAcpAgentLaunch(scriptFile, recordFile) : null,
   });
@@ -307,7 +307,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       auth: { kinds: ['api-key'], note: 'API key', apiKeyEnv: 'FAKE_AGENT_API_KEY' },
     });
     const stack = await createTestStack({
-      env: { KEPCUP_MOCK_LLM_URL: '' },
+      env: { KEPCUP_MOCK_LLM_URL: '', KEPCUP_REFLECTION_DEBOUNCE_MS: '0' },
       agentCatalog: [entry],
       agentLaunch: (candidate) =>
         candidate.id === 'fake-key' ? fakeAcpAgentLaunch(scriptFile) : null,

@@ -5,7 +5,6 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
-  import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
   import NarrowTabBar from './NarrowTabBar.svelte';
   import NarrowContactsPage from './NarrowContactsPage.svelte';
   import NarrowExtensionsPage from './NarrowExtensionsPage.svelte';
@@ -50,7 +49,6 @@
 <Tooltip.Provider delayDuration={0}>
   <div class="flex min-h-0 flex-1 flex-col" data-testid="narrow-shell">
     {#if narrowLayout.tab === 'chats'}
-      <NoModelBanner />
       {#if showDetail}
         <!-- 会话详情层：显式铺不透明背景（macOS 毛玻璃只保留在列表页侧栏）。 -->
         <div class="flex min-h-0 flex-1 flex-col bg-background">

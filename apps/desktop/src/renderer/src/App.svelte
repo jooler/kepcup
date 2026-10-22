@@ -17,7 +17,6 @@
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
-  import ReconnectBanner from '$lib/features/shell/ReconnectBanner.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
@@ -26,6 +25,8 @@
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
   import WorkbenchNudge from '$lib/features/workbench/WorkbenchNudge.svelte';
+  import ShareRecoveryPanel from '$lib/features/share/ShareRecoveryPanel.svelte';
+  import FileViewer from '$lib/features/files/FileViewer.svelte';
   import SidebarDialogs from '$lib/features/sidebar/SidebarDialogs.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -37,12 +38,10 @@
   import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
   import CoreStatusBar from '$lib/features/shell/CoreStatusBar.svelte';
-  import UpdateBanner from '$lib/features/shell/UpdateBanner.svelte';
-  import UnattendedBanner from '$lib/features/approvals/UnattendedBanner.svelte';
+  import TopBanners from '$lib/features/shell/TopBanners.svelte';
   import SandboxSetupPrompt from '$lib/features/settings/SandboxSetupPrompt.svelte';
   import SandboxWizard from '$lib/features/settings/SandboxWizard.svelte';
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
-  import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
   import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
   import { mountImeEnterGuard } from '$lib/features/shell/ime-enter-guard';
   import {
@@ -233,11 +232,6 @@
 <ModeWatcher />
 <svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
 <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
-  {#if core.connection === 'reconnecting'}
-    <ReconnectBanner />
-  {/if}
-  <UpdateBanner />
-
   <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
     {#if core.connection === 'failed'}
       <CoreErrorPage />
@@ -264,7 +258,6 @@
           {:else if !coreReady}
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
-            <NoModelBanner />
             <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
                  回到对话（chat.select）后重新水合。 -->
             {#if shell.mainView === 'workbench'}
@@ -283,14 +276,17 @@
     <CoreStatusBar />
   {/if}
 
-  <!-- 无人值守浮动横幅：挂在主布局之后，压过各栏顶部（app-drag）的窗口拖拽矩形，
-       关闭按钮才点得到；z-40 仍低于全屏浮层（z-50）。 -->
-  <UnattendedBanner />
+  <!-- 全局顶部浮层通知（重连 / 无模型 / 无人值守）：固定定位、不占布局高度，
+       挂在主布局之后压过各栏顶部的窗口拖拽矩形；z-40 仍低于全屏浮层（z-50）。 -->
+  <TopBanners />
 
   <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
   {#if coreReady}
     <SettingsDialog />
   {/if}
+
+  <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
+  <FileViewer />
 
   <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
        Bot 详情覆盖层（z-40）→ 窄屏设置页（z-50）→ 全局搜索（z-50）；侧栏触发的模态对话框；
@@ -306,6 +302,8 @@
     <SidebarDialogs />
     <MissingSkillDialog />
     <WorkbenchNudge />
+    <!-- D94：系统分享导入失败时的恢复面板（重选目标 / 重试 / 删除）。 -->
+    <ShareRecoveryPanel />
   {/if}
 
   <!-- P12-B：沙箱准备向导（设置页/首启提示共用）与首次启动入口 -->

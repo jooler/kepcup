@@ -1,0 +1,297 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		CBEBF26801F2EBFD58B91527 /* InboxWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1566A49CCCB7F33D7B8079CE /* InboxWriter.swift */; };
+		53E42C9B1FF23A9DCAED803C /* PayloadCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECC617EC35E37CAD92A73FB /* PayloadCollector.swift */; };
+		B0D293A4B52EC9BEDA0B346C /* ShareManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45E50814392B5A72BE4ACFE6 /* ShareManifest.swift */; };
+		7685D1D26EAD000B3459AC8A /* ShareTargets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0AFD8EB57463B5C564E720 /* ShareTargets.swift */; };
+		15FBC53637DA74707BDB19BF /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A62781DD4C04AAAF1533D41 /* ShareViewController.swift */; };
+		B07E24E89540B75FBAACDC89 /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A612584F3424AEE9A3696951 /* SharedConfig.swift */; };
+		79D56150B85F177F212362F2 /* TargetPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */; };
+		4E9B2A71D3C5F860A1B4D7E2 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1566A49CCCB7F33D7B8079CE /* InboxWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWriter.swift; sourceTree = "<group>"; };
+		CECC617EC35E37CAD92A73FB /* PayloadCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayloadCollector.swift; sourceTree = "<group>"; };
+		45E50814392B5A72BE4ACFE6 /* ShareManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareManifest.swift; sourceTree = "<group>"; };
+		4D0AFD8EB57463B5C564E720 /* ShareTargets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareTargets.swift; sourceTree = "<group>"; };
+		7A62781DD4C04AAAF1533D41 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		A612584F3424AEE9A3696951 /* SharedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConfig.swift; sourceTree = "<group>"; };
+		CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetPickerView.swift; sourceTree = "<group>"; };
+		8873151C067A966D8A2B0623 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		EE4A0DC220901E8E4C25AFC4 /* KepCupShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KepCupShare.entitlements; sourceTree = "<group>"; };
+		10CA7E24F1A3B5D9E6728340 /* en.lproj/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		2D5B8F31E9C7A406B178D923 /* zh-Hans.lproj/Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
+		D2246B8799AA84E22E5BCE9A /* KepCupShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KepCupShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		SH0000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		SH0000000000000000000004 = {
+			isa = PBXGroup;
+			children = (
+				SH0000000000000000000005 /* ShareExtension */,
+				SH0000000000000000000006 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		SH0000000000000000000005 /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				1566A49CCCB7F33D7B8079CE /* InboxWriter.swift */,
+				CECC617EC35E37CAD92A73FB /* PayloadCollector.swift */,
+				45E50814392B5A72BE4ACFE6 /* ShareManifest.swift */,
+				4D0AFD8EB57463B5C564E720 /* ShareTargets.swift */,
+				7A62781DD4C04AAAF1533D41 /* ShareViewController.swift */,
+				A612584F3424AEE9A3696951 /* SharedConfig.swift */,
+				CFEFDBA0AE3474821CCEF0B3 /* TargetPickerView.swift */,
+				8873151C067A966D8A2B0623 /* Info.plist */,
+				EE4A0DC220901E8E4C25AFC4 /* KepCupShare.entitlements */,
+				3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */,
+			);
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		SH0000000000000000000006 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D2246B8799AA84E22E5BCE9A /* KepCupShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXVariantGroup section */
+		3F8A1D60C2B4E759F0A3B6C1 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				10CA7E24F1A3B5D9E6728340 /* en */,
+				2D5B8F31E9C7A406B178D923 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin PBXNativeTarget section */
+		SH0000000000000000000007 /* KepCupShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = SH0000000000000000000010 /* Build configuration list for PBXNativeTarget "KepCupShare" */;
+			buildPhases = (
+				SH0000000000000000000008 /* Sources */,
+				SH0000000000000000000003 /* Frameworks */,
+				SH0000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KepCupShare;
+			packageProductDependencies = (
+			);
+			productName = KepCupShare;
+			productReference = D2246B8799AA84E22E5BCE9A /* KepCupShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		SH0000000000000000000011 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					SH0000000000000000000007 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = SH0000000000000000000012 /* Build configuration list for PBXProject "KepCupShare" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				zh-Hans,
+			);
+			mainGroup = SH0000000000000000000004;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 56;
+			productRefGroup = SH0000000000000000000006 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				SH0000000000000000000007 /* KepCupShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		SH0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E9B2A71D3C5F860A1B4D7E2 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		SH0000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CBEBF26801F2EBFD58B91527 /* InboxWriter.swift in Sources */,
+				53E42C9B1FF23A9DCAED803C /* PayloadCollector.swift in Sources */,
+				B0D293A4B52EC9BEDA0B346C /* ShareManifest.swift in Sources */,
+				7685D1D26EAD000B3459AC8A /* ShareTargets.swift in Sources */,
+				15FBC53637DA74707BDB19BF /* ShareViewController.swift in Sources */,
+				B07E24E89540B75FBAACDC89 /* SharedConfig.swift in Sources */,
+				79D56150B85F177F212362F2 /* TargetPickerView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		SH0000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = NO;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		SH0000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				ONLY_ACTIVE_ARCH = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		SH0000000000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "ShareExtension/KepCupShare.entitlements";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "ShareExtension/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.kepcup.desktop.ShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		SH0000000000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "ShareExtension/KepCupShare.entitlements";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "ShareExtension/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.kepcup.desktop.ShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		SH0000000000000000000010 /* Build configuration list for PBXNativeTarget "KepCupShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				SH0000000000000000000015 /* Debug */,
+				SH0000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		SH0000000000000000000012 /* Build configuration list for PBXProject "KepCupShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				SH0000000000000000000013 /* Debug */,
+				SH0000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = SH0000000000000000000011 /* Project object */;
+}

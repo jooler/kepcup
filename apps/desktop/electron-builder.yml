@@ -63,6 +63,12 @@ mac:
     NSMicrophoneUsageDescription: 语音输入需要使用麦克风，用于把语音转为文字或发送语音消息。
     # 摄像头用途声明（传感器 D76，docs/design/31-sensors.md）：设置页预览摄像头及将来的监看。
     NSCameraUsageDescription: 需要使用摄像头，用于在设置中预览画面，以及将来让 Bot 协助监看。
+    # D94（docs/design/44-macos-share-extension.md §7.2）：Share Extension 写完
+    # App Group inbox 后用 kepcup://share-intake?id=… 唤起主应用。
+    CFBundleURLTypes:
+      - CFBundleURLName: app.kepcup.desktop.share-intake
+        CFBundleURLSchemes:
+          - kepcup
   # 签名：CSC_LINK（Developer ID Application .p12）存在时签名，否则 scripts/dist.mjs
   # 设 CSC_IDENTITY_AUTO_DISCOVERY=false 跳过（本机未签名构建）。不要写 identity: null——
   # 它会无视 CSC_LINK 直接跳过签名与公证。
@@ -70,8 +76,16 @@ mac:
   # 存在即公证（mac.notarize 未设 = 有凭据就公证）。凭据走 CI 机密，见 docs/dev/06-release.md。
   hardenedRuntime: true
   # JIT/原生模块 + 麦克风/摄像头（hardened runtime 下缺声明会被系统直接拒绝）。
-  entitlements: resources/entitlements.mac.plist
-  entitlementsInherit: resources/entitlements.mac.plist
+  # D94：App Group 权限的 TeamID 前缀在 beforePack 钩子里展开（electron-builder
+  # 不展开 entitlements 里的 $(TeamIdentifierPrefix)），所以这里指向展开后的文件
+  # （由 scripts/build-share-extension.mjs 解析 TeamID、pack-hooks 生成）。
+  entitlements: resources/entitlements.mac.expanded.plist
+  entitlementsInherit: resources/entitlements.mac.expanded.plist
+  # D94 §10.2：Share Extension 放进 Contents/PlugIns/（系统分享列表由此可见）。
+  # 源目录不存在时 electron-builder 静默跳过（没装 Xcode 的本地构建）。
+  extraFiles:
+    - from: resources/share-extension/${arch}/KepCupShare.appex
+      to: PlugIns
   extraResources:
     # 托盘四件套（tray.ts 运行时经 app-brand.trayIconPath 读取，process.resourcesPath/tray）。
     # 按平台各写一份而非顶层 extraResources：electron-builder 的平台块对同名
@@ -88,6 +102,9 @@ mac:
     # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
     - from: resources/connectors
       to: connectors
+    # D94：App Group 容器 id（带 TeamID 前缀）——主进程据此定位扩展写的 inbox。
+    - from: resources/share-extension/group.json
+      to: share-extension
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
 # 文件名不能有空格：latest.yml 记录的是连字符形式，gh 上传带空格的文件会被 GitHub 改成点号，

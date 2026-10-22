@@ -40,6 +40,8 @@ export function buildSpeechTools(input: {
   gateway: ToolGateway;
   /** 产物落盘后的确定性投递（测试装配可缺省：走「请模型 send_message」旧路径）。 */
   delivery?: GeneratedMediaDelivery | undefined;
+  /** 记录落盘产物（对话里的文件卡片）；测试装配可缺省。 */
+  recordFile?: ((target: string) => void) | undefined;
   /** 轮询间隔（测试注入缩短）；默认 5s。 */
   videoPollIntervalMs?: number;
 }): ToolDefinition[] {
@@ -117,6 +119,7 @@ export function buildSpeechTools(input: {
       if (saved === null) {
         return { ok: false, content: '语音保存失败：内容为空', errorCode: 'PROVIDER_UNAVAILABLE' };
       }
+      input.recordFile?.(saved);
       if (input.delivery !== undefined) {
         // 确定性投递：音频立即作为消息附件发进对话（任务内为进度消息）。
         // 全部送达才不回路径；失败则交还路径与原因供模型补救。
@@ -253,6 +256,7 @@ export function buildSpeechTools(input: {
           if (saved === null) {
             return { ok: false, content: '视频保存失败：内容为空', errorCode: 'INTERNAL' };
           }
+          input.recordFile?.(saved);
           if (input.delivery !== undefined) {
             // 确定性投递：视频立即作为消息附件发进对话（任务内为进度消息）。
             // 全部送达才不回路径；失败（如超过附件上限）则交还路径与原因供模型补救。

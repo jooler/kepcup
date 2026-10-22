@@ -38,13 +38,15 @@
 
 {#if noKey && !onboarding.open}
   <div
-    class="flex items-center gap-3 border-b bg-amber-500/10 px-4 py-2 text-sm"
+    class="app-no-drag pointer-events-none flex w-full max-w-xl items-center gap-3 rounded-full
+      border border-amber-700/40 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white shadow-lg"
     data-testid="no-model-banner"
   >
-    <span class="flex-1">{t('onboarding.noModelBanner')}</span>
+    <span class="min-w-0 flex-1">{t('onboarding.noModelBanner')}</span>
     <Button
       size="sm"
       variant="outline"
+      class="pointer-events-auto h-6 border-white/60 bg-transparent px-2 text-white hover:bg-white/20"
       onclick={() => shell.openSettings('models')}
       data-testid="no-model-go-settings"
     >

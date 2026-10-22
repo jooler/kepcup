@@ -5,6 +5,7 @@ import { agentSetupReasonSchema } from './agent-status.js';
 import { appUiCardSchema } from './apps-ui.js';
 import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
+import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
 import {
@@ -932,6 +933,19 @@ export type RunStatus = z.infer<typeof runStatusSchema>;
 export const messageKindSchema = z.enum(['text', 'system_event', 'card', 'task_event']);
 export type MessageKind = z.infer<typeof messageKindSchema>;
 
+/**
+ * A local file the bot created or modified in one run. Paths are absolute and
+ * stay on disk; the conversation only carries the list for the UI file cards.
+ */
+export const messageArtifactSchema = z.object({
+  path: z.string().min(1),
+  name: z.string().min(1),
+  change: z.enum(['created', 'modified']),
+  /** Bytes on disk when the file was recorded (absent when unknown). */
+  size: z.number().int().nonnegative().optional(),
+});
+export type MessageArtifact = z.infer<typeof messageArtifactSchema>;
+
 export const textContentSchema = z.object({
   text: z.string(),
   /**
@@ -997,6 +1011,18 @@ export const textContentSchema = z.object({
    * `todoId` / `todoRunId` 与标题快照，气泡下方显示「📋 标题」，点开工作台该事项。
    */
   todoTitle: z.string().optional(),
+  /**
+   * 分享批次 id（D94，docs/design/44-macos-share-extension.md）：这条用户消息
+   * 来自系统 Share Extension。带这个字段的消息，其附件在上下文里额外带
+   * workspace 副本路径（按查看 Bot 物化）；UI 据此显示「通过系统分享导入」。
+   */
+  shareIntakeId: z.string().regex(SHARE_INTAKE_ID_PATTERN).optional(),
+  /**
+   * Bot 在本轮回答中创建 / 修改的本地文件（消息下方的文件卡列表）。路径是
+   * 工具实际写入的绝对路径；渲染层按扩展名选择预览方式，用户点击后在覆盖层
+   * 里查看，不进模型上下文。
+   */
+  artifacts: z.array(messageArtifactSchema).optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
@@ -1222,6 +1248,11 @@ export const taskEventContentSchema = z.object({
   continuesTaskId: z.string().optional(),
   /** brief 条目：D91 任务声明的外部能力 id（任务卡 / 简报可见；落库在 runs.task_capabilities）。 */
   capabilities: z.array(z.string()).optional(),
+  /**
+   * 终态条目（result / failure）：这次任务用文件工具创建 / 修改的文件。对话轮
+   * 把任务结果转述给用户时，文件卡挂在那条回答消息上。
+   */
+  artifacts: z.array(messageArtifactSchema).optional(),
   /**
    * Terminal entries (result / failure): how many times the host handed the
    * entry to the bot (D75 审查 M4, capped by TASK_REDELIVER_MAX_ATTEMPTS).

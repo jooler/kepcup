@@ -144,6 +144,19 @@ describe('toUiToolResult', () => {
     });
   });
 
+  it('omits structured content that is not a plain object (array / null / primitive)', () => {
+    for (const structuredContent of [[{ url: 'https://example.com' }], null, 'text', 42, true]) {
+      const out = toUiToolResult(
+        { content: [{ type: 'text', text: 'ok' }], structuredContent } as never,
+        redact,
+        10_000,
+      );
+      expect(out.structuredContent).toBeUndefined();
+      expect(out.content).toEqual([{ type: 'text', text: 'ok' }]);
+      expect(out.truncated).toBeUndefined();
+    }
+  });
+
   it('truncates text over the budget and drops structured content that no longer fits', () => {
     const out = toUiToolResult(
       {

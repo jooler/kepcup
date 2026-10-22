@@ -5,6 +5,7 @@ import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
+import { macTargetArches, macTargetArchesFromYml, shareExtensionSkipPlan } from './dist-share-extension.mjs';
 
 /**
  * 打包入口（P13 任务 1 + 产物剔除，docs/dev/phases/P13-release.md）。
@@ -91,6 +92,43 @@ function winArchsFromArgs() {
     archs.push(process.arch === 'arm64' ? 'arm64' : 'x64');
   }
   return archs;
+}
+
+/**
+ * 0b. macOS 的 Share Extension（D94，docs/design/44-macos-share-extension.md §10.1）。
+ *
+ *     先用 xcodebuild 出 .appex（每个目标架构一份），再由 electron-builder 放进
+ *     Contents/PlugIns/。是否随包发行由这里按产物存在性决定：
+ *      - 任一架构缺产物（没装 Xcode 等）→ 本次打包跳过：删掉 resources/share-extension
+ *        （已 gitignore，残留的陈旧 appex 会被 electron-builder 静默打包），并通过
+ *        spawn env 给 electron-builder 进程传 KEPCUP_SKIP_SHARE_EXTENSION=1（子进程里
+ *        设 env 传不回父进程——pack 钩子读的是本进程树）。
+ *      - xcodebuild 失败（如本机无法交叉编译目标架构）→ run() 直接抛错终止，绝不
+ *        静默缺产物。
+ *     裸 `pnpm dist --mac`（无架构参数）按 electron-builder.yml 声明的双架构出
+ *     appex——第二个 pass 缺 appex 必挂。
+ */
+const macArches = macTargetArches(
+  builderArgs,
+  macTargetArchesFromYml(readFileSync(path.join(appDir, 'electron-builder.yml'), 'utf8')),
+);
+let shareExtensionSkip = false;
+if (macArches.length > 0) {
+  console.log(`[dist] 构建 Share Extension（${macArches.join(', ')}）`);
+  run(process.execPath, ['scripts/build-share-extension.mjs', ...macArches]);
+  const plan = shareExtensionSkipPlan({
+    arches: macArches,
+    appexExists: (arch) =>
+      existsSync(path.join(appDir, 'resources', 'share-extension', arch, 'KepCupShare.appex')),
+  });
+  if (plan.skip) {
+    shareExtensionSkip = true;
+    rmSync(path.join(appDir, 'resources', 'share-extension'), { recursive: true, force: true });
+    console.warn(
+      `[dist] Share Extension 产物缺失（${plan.missing.join(', ')}）——本次打包不带系统分享入口` +
+        '（发版流水线必须装 Xcode），并已清掉 resources/share-extension 里的陈旧产物。',
+    );
+  }
 }
 
 if (process.env.KEPCUP_DIST_SKIP_ROOTFS !== '1') {
@@ -308,6 +346,10 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
 
 // 5. electron-builder. Skip code signing unless credentials are provided.
 const env = {};
+if (shareExtensionSkip) {
+  // 见 0b：appex 缺产物时跳过随包发行，pack 钩子据此只警告不硬失败。
+  env.KEPCUP_SKIP_SHARE_EXTENSION = '1';
+}
 if (!process.env.CSC_LINK && !process.env.CSC_NAME) {
   env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 }

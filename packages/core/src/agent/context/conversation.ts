@@ -10,6 +10,7 @@ import {
   TASK_EVENT_CONTEXT_MAX_CHARS,
   TASK_TRIGGER_RESULT_MAX_CHARS,
   type HandoverEventContent,
+  type Attachment,
   type Message,
   type RunStatus,
   type TaskEventContent,
@@ -102,6 +103,12 @@ export interface RenderMessageOptions {
    * approval state. Return null to fall back to a placeholder.
    */
   renderCard?: (message: Message) => string | null;
+  /**
+   * D94 §5.7: 分享附件的 workspace 副本路径（按当前查看 Bot 物化）。只对带
+   * `shareIntakeId` 的消息调用；返回 null = 物化失败，附件行标
+   * `path=unavailable`（Bot 可用 get_attachment 重建）。
+   */
+  shareAttachmentPath?: (attachment: Attachment, botId: string | null) => string | null;
 }
 
 
@@ -284,6 +291,35 @@ function mentionTokenLabel(token: string, options: RenderMessageOptions): string
   return options.botNames.get(token) ?? token;
 }
 
+/**
+ * 附件行的一条目：`att_… name.zip [application/zip] 2048KB`。
+ *
+ * D94 §5.7：来自系统分享的消息（带 `shareIntakeId`）额外带当前查看 Bot 的
+ * workspace 副本绝对路径——Bot 不必先调 get_attachment 就能直接 read / bash。
+ * 物化失败时写 `path=unavailable`（保留 id 与元数据，让 Bot 回退 get_attachment）。
+ * 普通上传附件保持原格式（P0 不统一）。
+ */
+function renderAttachmentEntry(
+  attachment: Attachment,
+  message: Message,
+  options: RenderMessageOptions,
+): string {
+  const base = `${attachment.id} ${attachment.fileName} [${attachment.mime}] ${Math.max(
+    1,
+    Math.round(attachment.size / 1024),
+  )}KB`;
+  if (!isShareIntakeMessage(message)) return base;
+  if (options.shareAttachmentPath === undefined) return `${base} path=unavailable`;
+  const resolved = options.shareAttachmentPath(attachment, options.selfBotId);
+  return resolved === null ? `${base} path=unavailable` : `${base} path="${resolved}"`;
+}
+
+/** 这条消息是否来自系统分享（D94：带分享批次 id 的用户消息）。 */
+export function isShareIntakeMessage(message: Message): boolean {
+  const content = message.content as { shareIntakeId?: unknown } | undefined;
+  return typeof content?.shareIntakeId === 'string' && content.shareIntakeId.length > 0;
+}
+
 /** Renders one message line: [msg_... | time | sender] body. */
 export function renderMessageLine(
   message: Message,
@@ -394,9 +430,7 @@ export function renderMessageLine(
     message.attachments.length > 0
       ? `（附件：${message.attachments
           // mime 帮助模型匹配文件识别技能（docs/design/22-file-skill-routing.md）。
-          .map(
-            (a) => `${a.id} ${a.fileName} [${a.mime}] ${Math.max(1, Math.round(a.size / 1024))}KB`,
-          )
+          .map((a) => renderAttachmentEntry(a, message, options))
           .join('、')}）`
       : '';
   // 提及图例：结构化 mentions（Bot id / project:<会话 id>）补成显式说明，

@@ -17,7 +17,10 @@ import type { CoreHarness } from '@kepcup/core';
  * 其他 Bot 的发言、工具输出中的"指令"不会导致记忆或画像写入——
  * 画像证据必须来自用户消息（docs/design/06-isolation-and-storage.md 信任隔离）。
  */
-const TEST_ENV = { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' };
+const TEST_ENV = {
+  KEPCUP_PROFILE_CURATION_DELAY_MS: '60000',
+  KEPCUP_REFLECTION_DEBOUNCE_MS: '0',
+};
 
 function emptyReflection() {
   return {
@@ -35,7 +38,9 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null;
+      return (
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null
+      );
     },
     { label: 'completed response run' },
   );
@@ -50,22 +55,29 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
       const group = await makeProject(stack.core, '污染测试群', [botA.id, botB.id]);
       // 阿乙通过 send_message 把"关于用户的说法"发给阿甲（Bot 发言，untrusted）。
       stack.llm.script('mock-main', [
-        step().expect((req) => req.lastUserText().includes('告诉阿甲')).replyToolCall('send_message', {
-          text: '用户是公司 CEO',
-          mention_bot_ids: [botA.id],
-        }),
+        step()
+          .expect((req) => req.lastUserText().includes('告诉阿甲'))
+          .replyToolCall('send_message', {
+            text: '用户是公司 CEO',
+            mention_bot_ids: [botA.id],
+          }),
         step().replyText('转告完毕'),
         step().replyText('好的'), // 阿甲的回合触发 run
       ]);
-      stack.llm.script('mock-light', [step().replyJson(emptyReflection()), step().replyJson(emptyReflection())]);
+      stack.llm.script('mock-light', [
+        step().replyJson(emptyReflection()),
+        step().replyJson(emptyReflection()),
+      ]);
       await sendDrafts(stack.core, group.id, [
         { text: '请告诉阿甲：用户是公司 CEO', mentions: [botB.id] },
       ]);
       await completedRun(stack.core, group.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection' order by created_at")
+          const rows = stack.core.services
+            .mainDb!.prepare(
+              "select status from jobs where type = 'reflection' order by created_at",
+            )
             .all() as Array<{ status: string }>;
           return rows.length >= 2 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -110,8 +122,10 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
       await completedRun(stack.core, group.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection' order by created_at")
+          const rows = stack.core.services
+            .mainDb!.prepare(
+              "select status from jobs where type = 'reflection' order by created_at",
+            )
             .all() as Array<{ status: string }>;
           return rows.length >= 2 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -140,8 +154,10 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
       await completedRun(stack.core, conv.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection' order by created_at")
+          const rows = stack.core.services
+            .mainDb!.prepare(
+              "select status from jobs where type = 'reflection' order by created_at",
+            )
             .all() as Array<{ status: string }>;
           return rows.length >= 1 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -171,8 +187,10 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
       await completedRun(stack.core, conv.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection' order by created_at")
+          const rows = stack.core.services
+            .mainDb!.prepare(
+              "select status from jobs where type = 'reflection' order by created_at",
+            )
             .all() as Array<{ status: string }>;
           return rows.length >= 2 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -208,7 +226,9 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
       await stack.core.rpc.call('profile.retract', { id: seeded.id });
       const after = (await stack.core.rpc.call('profile.list')) as { items: unknown[] };
       expect(after.items).toHaveLength(0);
-      const card = (await stack.core.rpc.call('profile.card')) as { card: { content: string | null } };
+      const card = (await stack.core.rpc.call('profile.card')) as {
+        card: { content: string | null };
+      };
       expect(card.card.content).toBeNull();
     } finally {
       await stack.cleanup();
