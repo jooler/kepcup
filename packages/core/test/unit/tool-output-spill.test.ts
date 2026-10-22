@@ -52,7 +52,7 @@ describe('ToolOutputSpill', () => {
     expect(result!.path.endsWith(path.join('.tool-output', 'run_1', '0.txt'))).toBe(true);
     expect(readFileSync(result!.path, 'utf8')).toBe(text);
     expect(result!.text).toContain(`共 ${text.length} 字符`);
-    expect(result!.text).toContain(result!.path);
+    expect(result!.text).toContain(result!.path.split(path.sep).join('/'));
     expect(result!.text).toContain('A'.repeat(20));
     expect(result!.text).toContain('Z'.repeat(20));
     expect(result!.text).not.toContain('MIDDLE');
@@ -65,8 +65,10 @@ describe('ToolOutputSpill', () => {
     const spill = new ToolOutputSpill({ workspacePath, runId: 'run_1', maxChars: 5 });
     const first = spill.spill('123456');
     const second = spill.spill('abcdef');
-    expect(first!.path.endsWith('/0.txt')).toBe(true);
-    expect(second!.path.endsWith('/1.txt')).toBe(true);
+    expect(path.basename(first!.path)).toBe('0.txt');
+    expect(path.basename(second!.path)).toBe('1.txt');
+    expect(first!.path.endsWith(path.join('run_1', '0.txt'))).toBe(true);
+    expect(second!.path.endsWith(path.join('run_1', '1.txt'))).toBe(true);
   });
 
   it('写失败退回 null（调用方走现有截断）', () => {

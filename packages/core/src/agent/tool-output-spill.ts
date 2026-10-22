@@ -104,8 +104,11 @@ export class ToolOutputSpill {
     const tailChars = Math.min(this.#tailChars, half);
     const head = text.slice(0, headChars);
     const tail = text.slice(Math.max(head.length, text.length - tailChars));
+    // Model-facing paths always use `/` so notices are stable across OS
+    // (Node fs / our read tools accept forward slashes on Windows too).
+    const displayPath = file.split(path.sep).join('/');
     return [
-      `[工具输出过长（共 ${text.length} 字符），完整内容已写入：${file}]`,
+      `[工具输出过长（共 ${text.length} 字符），完整内容已写入：${displayPath}]`,
       `--- 开头 ${head.length} 字符 ---`,
       head,
       `--- 结尾 ${tail.length} 字符 ---`,
