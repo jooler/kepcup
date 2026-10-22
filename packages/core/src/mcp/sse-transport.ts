@@ -3,6 +3,7 @@ import {
   McpConnectionClosedError,
   McpHttpError,
   type JsonRpcMessage,
+  type McpTransportSendOptions,
   parseJsonRpcMessage,
 } from '@earendil-works/pi-mcp';
 import type { McpTransport } from '@earendil-works/pi-mcp';
@@ -98,12 +99,20 @@ export class SseTransport implements McpTransport {
     });
   }
 
-  async send(message: JsonRpcMessage, { signal }: { signal?: AbortSignal } = {}): Promise<void> {
-    if (signal?.aborted === true) throw new McpAbortError();
+  async send(message: JsonRpcMessage, { signal }: McpTransportSendOptions = {}): Promise<void> {
+    // 检查顺序对齐上游 streamable-http：连接态先于取消态（closed 的 POST 抛
+    // McpConnectionClosedError，上层按「连接已关」重连，而不是误当成可重试的取消）。
     if (!this.#started || this.#closed || this.#endpoint === null) {
       throw new McpConnectionClosedError();
     }
-    // 只取消本次 dispatch，不关闭 transport（否则会误触发上层重连）。
+    if (signal?.aborted === true) throw new McpAbortError();
+    // 有意偏离上游（见 docs/dev/DEVIATIONS.md）：上游 streamable-http 的 send 只把
+    // 共享 controller.signal 传给 fetch，per-request signal 仅在每次派发前检查、
+    // 不中断在途 POST；这里把本次 dispatch 的 signal 合并进 fetch signal——旧协议
+    // 的响应经共享 SSE 流异步送达，被放弃的在途 POST 继续占着连接没有收益，且
+    // close() 也能借此立刻收掉在途 dispatch（服务端可能已收到该消息，与上游一样
+    // 不承诺撤回，上层按 uncertain 记账）。只取消本次 dispatch，不关闭 transport
+    // （否则会误触发上层重连）。
     const combined =
       signal !== undefined
         ? AbortSignal.any([this.#controller.signal, signal])

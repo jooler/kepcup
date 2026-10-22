@@ -83,7 +83,8 @@ describe('SseTransport.send cancellation', () => {
     const controller = new AbortController();
     const sending = transport.send(MESSAGE, { signal: controller.signal });
     controller.abort();
-    await expect(sending).rejects.toBeDefined();
+    // fetch signal abort 在 Node 里以 AbortError DOMException 拒绝。
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' });
     expect(posts).toHaveLength(1);
 
     // Not closed: a later dispatch still goes out.
@@ -91,5 +92,26 @@ describe('SseTransport.send cancellation', () => {
     await transport.send(MESSAGE);
     expect(posts).toHaveLength(2);
     await transport.close();
+  });
+
+  it('close() also aborts an in-flight dispatch (the other leg of the combined signal)', async () => {
+    const { transport, posts, setPostHandler } = makeTransport();
+    await transport.start();
+    setPostHandler(
+      (init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason ?? new Error('aborted')),
+            { once: true },
+          );
+        }),
+    );
+    // 不带 per-request signal 的 dispatch 也挂共享 controller.signal：close()
+    // 中断在途 POST（有意偏离上游，见 src/mcp/sse-transport.ts 的偏离注释）。
+    const sending = transport.send(MESSAGE);
+    await transport.close();
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(posts).toHaveLength(1);
   });
 });

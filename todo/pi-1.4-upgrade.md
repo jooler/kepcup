@@ -1,6 +1,6 @@
 # Pi Agent 1.4.0 升级实施文档（不含 pi-durable）
 
-> 状态：**已实施**（2026-10-22，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)「Pi Agent 1.4.0 升级」；未提交）。
+> 状态：**已实施**（2026-10-22，提交 `ae1e7a56`；实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)「Pi Agent 1.4.0 升级」）。
 >
 > 基线：`packages/core` 的四个 pi 包锁定 `1.0.2`。
 >

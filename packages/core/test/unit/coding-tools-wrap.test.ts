@@ -83,6 +83,27 @@ describe('wrapPiTool', () => {
     expect(result.content).toBe('<untrusted>\n（已返回图片，见附加图片）\n</untrusted>');
   });
 
+  it('无效 image block（data/mimeType 非字符串或 data 空串）不静默丢弃，文本留占位', async () => {
+    const tool = wrapPiTool(
+      fakeDef({
+        content: [
+          { type: 'image', data: 123, mimeType: 'image/png' },
+          { type: 'image', data: 'QUJDRA==', mimeType: undefined },
+          { type: 'image', data: '', mimeType: 'image/png' },
+        ],
+      }),
+      '/ws',
+      secrets,
+    );
+    const result = await tool.execute({}, ctx);
+    expect(result.ok).toBe(true);
+    // 无有效图片：ToolResult 不带 images 键（条件展开）。
+    expect(result.images).toBeUndefined();
+    expect(result.content).toBe(
+      '<untrusted>\n（image 内容已省略）\n（image 内容已省略）\n（image 内容已省略）\n</untrusted>',
+    );
+  });
+
   it('pi 1.x isError 结果：ok:false + COMMAND_FAILED（而非误报成功）', async () => {
     const tool = wrapPiTool(
       fakeDef({
