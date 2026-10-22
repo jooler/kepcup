@@ -1,4 +1,5 @@
 import {
+  McpAbortError,
   McpConnectionClosedError,
   McpHttpError,
   type JsonRpcMessage,
@@ -97,15 +98,21 @@ export class SseTransport implements McpTransport {
     });
   }
 
-  async send(message: JsonRpcMessage): Promise<void> {
+  async send(message: JsonRpcMessage, { signal }: { signal?: AbortSignal } = {}): Promise<void> {
+    if (signal?.aborted === true) throw new McpAbortError();
     if (!this.#started || this.#closed || this.#endpoint === null) {
       throw new McpConnectionClosedError();
     }
+    // 只取消本次 dispatch，不关闭 transport（否则会误触发上层重连）。
+    const combined =
+      signal !== undefined
+        ? AbortSignal.any([this.#controller.signal, signal])
+        : this.#controller.signal;
     const response = await this.#fetch(this.#endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...this.#options.headers },
       body: JSON.stringify(message),
-      signal: this.#controller.signal,
+      signal: combined,
     });
     if (!response.ok) {
       const body = (await response.text().catch(() => '')).slice(0, MAX_ERROR_BODY_BYTES);
@@ -151,7 +158,10 @@ export class SseTransport implements McpTransport {
     let dataLines: string[] = [];
     const dispatch = () => {
       if (dataLines.length > 0) {
-        this.#onEvent({ ...(eventName !== undefined ? { event: eventName } : {}), data: dataLines.join('\n') });
+        this.#onEvent({
+          ...(eventName !== undefined ? { event: eventName } : {}),
+          data: dataLines.join('\n'),
+        });
       }
       eventName = undefined;
       dataLines = [];
