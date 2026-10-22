@@ -17,7 +17,13 @@ import { ShareIntakeService } from '../../src/share/service.js';
 import type { Orchestrator } from '../../src/dispatch/orchestrator.js';
 import type { Clock } from '../../src/infra/clock.js';
 import type { CoreLogger } from '../../src/infra/logger.js';
-import type { ShareConsumeInput, ShareFailedChanged } from '@kepcup/shared';
+import {
+  SHARE_INBOX_STALE_MS,
+  SHARE_MAX_FILE_BYTES,
+  SHARE_MAX_TOTAL_BYTES,
+  type ShareConsumeInput,
+  type ShareFailedChanged,
+} from '@kepcup/shared';
 
 /**
  * D94 分享接收（ShareIntakeService）：幂等、事务、目标解析、失败恢复。
@@ -281,18 +287,35 @@ describe('share.consume 目标失效', () => {
     expect(result.errorCode).toBe('SHARE_TARGET_READ_ONLY');
   });
 
-  it('failed_target 同一个目标不自动重试，换目标才继续', () => {
+  it('failed_target(NOT_FOUND) 同一个目标不自动重试，换目标才继续', () => {
     const bot = bots.create({ identity: { name: '阿甲' } });
     const other = bots.create({ identity: { name: '乙' } });
     const input = stageIntake('shr_44444444', { target: { kind: 'bot', id: bot.id } });
     bots.markDeleted(bot.id);
     expect(service.consume(input).state).toBe('failed_target');
-    // 同一目标再来一次 → 仍是原失败
+    // 同一目标再来一次 → 仍是原失败（NOT_FOUND 是终态，重试必然再失败）
     expect(service.consume(input).state).toBe('failed_target');
     expect(sent).toHaveLength(0);
     // 换目标 → 继续
     const retried = service.consume({ ...input, target: { kind: 'bot', id: other.id } });
     expect(retried.state).toBe('done');
+    expect(sent).toHaveLength(1);
+  });
+
+  it('failed_target(READ_ONLY) 同一目标也走重新校验：解除只读后重试成功', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    db.prepare(
+      "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_ro2', 'direct', ?, 1, 1)",
+    ).run(bot.id);
+    const input = stageIntake('shr_rorororo', { target: { kind: 'bot', id: bot.id } });
+    const first = service.consume(input);
+    expect(first.state).toBe('failed_target');
+    expect(first.errorCode).toBe('SHARE_TARGET_READ_ONLY');
+    expect(sent).toHaveLength(0);
+    // 用户解除只读后，同一目标重试 → 完整重新校验并成功（READ_ONLY 不是终态）
+    db.prepare('update conversations set read_only = 0 where id = ?').run('conv_ro2');
+    const second = service.consume(input);
+    expect(second.state).toBe('done');
     expect(sent).toHaveLength(1);
   });
 });
@@ -352,6 +375,49 @@ describe('share.consume 文件校验', () => {
     mkdirSync(path.join(dir, 'files', '000-a.zip'));
     const result = service.consume(input);
     expect(result.state).toBe('failed');
+  });
+
+  it('单文件超过 30MB → SHARE_FILE_TOO_LARGE，不发送', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    const input = stageIntake('shr_bigbigbig', {
+      target: { kind: 'bot', id: bot.id },
+      files: [
+        {
+          stagedName: '000-big.zip',
+          originalName: 'big.zip',
+          mime: 'application/zip',
+          bytes: Buffer.alloc(SHARE_MAX_FILE_BYTES + 1, 7),
+        },
+      ],
+    });
+    const result = service.consume(input);
+    expect(result.state).toBe('failed');
+    expect(result.errorCode).toBe('SHARE_FILE_TOO_LARGE');
+    expect(sent).toHaveLength(0);
+  });
+
+  it('总量超过 60MB → SHARE_FILE_TOO_LARGE，不发送', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    // 两个都顶到单文件上限（30,000,000 合法），第三个 1 字节把总量顶过 60,000,000。
+    const edge = Buffer.alloc(SHARE_MAX_FILE_BYTES, 1);
+    const input = stageIntake('shr_totalbig', {
+      target: { kind: 'bot', id: bot.id },
+      files: [
+        { stagedName: '000-a.bin', originalName: 'a.bin', mime: 'application/octet-stream', bytes: edge },
+        { stagedName: '001-b.bin', originalName: 'b.bin', mime: 'application/octet-stream', bytes: edge },
+        {
+          stagedName: '002-c.bin',
+          originalName: 'c.bin',
+          mime: 'application/octet-stream',
+          bytes: Buffer.from('x'),
+        },
+      ],
+    });
+    expect(SHARE_MAX_TOTAL_BYTES).toBe(2 * SHARE_MAX_FILE_BYTES);
+    const result = service.consume(input);
+    expect(result.state).toBe('failed');
+    expect(result.errorCode).toBe('SHARE_FILE_TOO_LARGE');
+    expect(sent).toHaveLength(0);
   });
 
   it('intakeId 形状非法 → 抛错，不落库', () => {
@@ -446,12 +512,37 @@ describe('share 清扫', () => {
     expect(existsSync(shareInboxDir(paths, 'shr_oldoldold'))).toBe(false);
   });
 
-  it('core inbox 里无 DB 行且过期的目录被清理', () => {
+  it('received 超过 7 天也清理（行与目录一并删，不滞留）', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    stageIntake('shr_ttlreceived', { target: { kind: 'bot', id: bot.id } });
+    db.prepare(
+      "insert into share_intakes (id, state, target_kind, target_id, attempts, created_at, updated_at) values (?, 'received', 'bot', ?, 1, ?, ?)",
+    ).run('shr_ttlreceived', bot.id, now - 8 * 24 * 3600 * 1000, now - 8 * 24 * 3600 * 1000);
+    const result = service.sweep();
+    expect(result.expiredReceived).toBe(1);
+    expect(
+      db.prepare('select id from share_intakes where id = ?').get('shr_ttlreceived'),
+    ).toBeUndefined();
+    expect(existsSync(shareInboxDir(paths, 'shr_ttlreceived'))).toBe(false);
+  });
+
+  it('core inbox 里无 DB 行且未过期的目录不清理', () => {
     const dir = shareInboxDir(paths, 'shr_orphanxxx');
     mkdirSync(dir, { recursive: true });
     const result = service.sweep();
     expect(result.orphanInboxDirs).toBe(0);
     expect(existsSync(dir)).toBe(true);
+  });
+
+  it('core inbox 里无 DB 行且超过 24 小时的目录被删除', () => {
+    const dir = shareInboxDir(paths, 'shr_orphanold');
+    mkdirSync(dir, { recursive: true });
+    // 目录 mtime 是真实文件系统时间：把可控时钟推到未来 25 小时，让
+    // now - mtime 越过 24 小时阈值（mtime 不受测试时钟控制）。
+    now = Date.now() + SHARE_INBOX_STALE_MS + 60 * 60 * 1000;
+    const result = service.sweep();
+    expect(result.orphanInboxDirs).toBe(1);
+    expect(existsSync(dir)).toBe(false);
   });
 });
 
@@ -463,5 +554,29 @@ describe('share 启动补消费', () => {
     expect(recovered).toEqual(['shr_crashcrash']);
     expect(sent).toHaveLength(1);
     expect(intakeRow('shr_crashcrash').state).toBe('done');
+  });
+
+  it('sweep 打回的 received 行 + 目录仍在 → scanInbox 重新消费（恢复闭环）', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    stageIntake('shr_recvrecv', { target: { kind: 'bot', id: bot.id } });
+    // 模拟 sweep 把超时 processing 打回 received 后进程崩溃/重启：
+    // 行是 received（不在恢复面板里），目录还在 core inbox。
+    db.prepare(
+      "insert into share_intakes (id, state, target_kind, target_id, attempts, created_at, updated_at) values (?, 'received', 'bot', ?, 1, ?, ?)",
+    ).run('shr_recvrecv', bot.id, now, now);
+    const recovered = service.scanInbox();
+    expect(recovered).toEqual(['shr_recvrecv']);
+    expect(sent).toHaveLength(1);
+    expect(intakeRow('shr_recvrecv').state).toBe('done');
+  });
+
+  it('done 行的目录不再被 scanInbox 重新消费', () => {
+    const bot = bots.create({ identity: { name: '阿甲' } });
+    const input = stageIntake('shr_donedirx', { target: { kind: 'bot', id: bot.id } });
+    expect(service.consume(input).state).toBe('done');
+    // 目录残留（清理失败等场景）：done 行必须跳过，不重复发消息。
+    stageIntake('shr_donedirx', { target: { kind: 'bot', id: bot.id } });
+    expect(service.scanInbox()).toEqual([]);
+    expect(sent).toHaveLength(1);
   });
 });

@@ -62,6 +62,8 @@ export interface ShareSweepResult {
   expiredFailed: number;
   /** 过期被清理的完成行数。 */
   expiredDone: number;
+  /** 过期被清理的 `received` 行数（sweep 打回后始终没消费掉的）。 */
+  expiredReceived: number;
   /** 无对应 DB 行、且过期的 core inbox 目录数。 */
   orphanInboxDirs: number;
 }
@@ -156,9 +158,12 @@ export class ShareIntakeService {
       ) {
         return { state: 'processing' };
       }
-      // 目标失效且没有换目标：返回原失败，等用户在恢复面板里重选。
+      // 目标已删（NOT_FOUND）是终态：同一目标重试必然再失败，直接返回原失败
+      // 等用户在恢复面板里重选。READ_ONLY 不是终态（用户可解除只读后重试），
+      // 同一目标也走完整重新校验。
       if (
         existing.state === 'failed_target' &&
+        existing.error_code === 'SHARE_TARGET_NOT_FOUND' &&
         existing.target_kind === input.target.kind &&
         existing.target_id === input.target.id
       ) {
@@ -181,7 +186,7 @@ export class ShareIntakeService {
         this.#upsertIntake(intakeId, input.target);
         const conversationId = this.#resolveTarget(input.target);
         const attachmentIds = files.map((file) =>
-          this.#uploadAttachment(conversationId, file.path, file.originalName, file.mime),
+          this.#uploadAttachment(conversationId, file.bytes, file.originalName, file.mime),
         );
         const sent = this.#orchestrator.sendShareMessage(conversationId, {
           text: input.note,
@@ -319,7 +324,10 @@ export class ShareIntakeService {
 
   /**
    * 启动扫描：core inbox 里「manifest 齐全、DB 无行」的批次是「主进程移动后
-   * 崩溃」的残留——补消费掉，文件不丢。
+   * 崩溃」的残留；「DB 行 state=received 且目录仍在」的批次是 sweep 打回的
+   * 超时 processing（本进程或上个进程崩在落库途中）。两类都走同一套消费校验
+   * 补消费掉——否则 received 行既不进恢复面板（listFailed 只列 failed*）也没
+   * 有别的出口，会永久滞留（黑洞）。
    */
   scanInbox(): string[] {
     const root = shareInboxRoot(this.#paths);
@@ -334,7 +342,8 @@ export class ShareIntakeService {
     const recovered: string[] = [];
     for (const name of names) {
       if (!isShareIntakeId(name)) continue;
-      if (this.#row(name) !== null) continue;
+      const row = this.#row(name);
+      if (row !== null && row.state !== 'received') continue;
       const manifest = this.#manifestOf(name);
       if (manifest === null) continue;
       const dir = shareInboxDir(this.#paths, name);
@@ -357,7 +366,9 @@ export class ShareIntakeService {
 
   /**
    * 启动与每日清扫：超时的 `processing` 打回 `received`（重试安全）、过期
-   * 的失败 / 完成行清理、无 DB 行的 core inbox 残留清理。
+   * 的失败 / 完成行清理、无 DB 行的 core inbox 残留清理。`received` 打回后
+   * 始终没被补消费掉的（目录已丢或反复崩溃）也在 7 天 TTL 里连同目录清理，
+   * 不留永久滞留行。
    */
   sweep(): ShareSweepResult {
     const now = this.#clock.now();
@@ -365,6 +376,7 @@ export class ShareIntakeService {
       resetProcessing: 0,
       expiredFailed: 0,
       expiredDone: 0,
+      expiredReceived: 0,
       orphanInboxDirs: 0,
     };
 
@@ -380,12 +392,13 @@ export class ShareIntakeService {
 
     const expired = this.#db
       .prepare(
-        "select id, state from share_intakes where state in ('failed_target', 'failed', 'done') and created_at < ?",
+        "select id, state from share_intakes where state in ('failed_target', 'failed', 'done', 'received') and created_at < ?",
       )
       .all(now - SHARE_FAILED_TTL_MS) as Array<{ id: string; state: string }>;
     for (const row of expired) {
       this.#db.prepare('delete from share_intakes where id = ?').run(row.id);
       if (row.state === 'done') result.expiredDone += 1;
+      else if (row.state === 'received') result.expiredReceived += 1;
       else result.expiredFailed += 1;
       this.#cleanupInbox(row.id);
     }
@@ -490,9 +503,14 @@ export class ShareIntakeService {
 
   /**
    * 校验 core inbox 里的文件：路径必须落在本批次的 inbox 目录内、必须是普通
-   * 文件（拒绝符号链接 / 目录 / 包）、大小与 SHA256 必须对得上。
+   * 文件（拒绝符号链接 / 目录 / 包）、大小与 SHA256 必须对得上。校验和上传读
+   * 同一份字节：每个文件只 `realpath` 一次、只读一次（30MB 文件不读两遍），
+   * 校验过的 buffer 直接交给附件上传，杜绝「校验 A、上传 B」的 TOCTOU。
    */
-  #validateFiles(intakeId: string, files: ShareConsumeInput['files']): ShareConsumeInput['files'] {
+  #validateFiles(
+    intakeId: string,
+    files: ShareConsumeInput['files'],
+  ): Array<{ bytes: Buffer; originalName: string; mime: string }> {
     if (files.length === 0 || files.length > SHARE_MAX_FILES) {
       throw new AppError('SHARE_INTAKE_INVALID', '分享文件数量不合法');
     }
@@ -504,6 +522,7 @@ export class ShareIntakeService {
       throw new AppError('SHARE_INTAKE_INVALID', '分享批次目录不存在');
     }
     let total = 0;
+    const validated: Array<{ bytes: Buffer; originalName: string; mime: string }> = [];
     for (const file of files) {
       if (file.path.includes('..')) {
         throw new AppError('SHARE_INTAKE_INVALID', '分享文件路径非法');
@@ -532,21 +551,22 @@ export class ShareIntakeService {
       if (total > SHARE_MAX_TOTAL_BYTES) {
         throw new AppError('SHARE_FILE_TOO_LARGE', '分享文件总量超过上限');
       }
-      const digest = createHash('sha256').update(readFileSync(real)).digest('hex');
+      const bytes = readFileSync(real);
+      const digest = createHash('sha256').update(bytes).digest('hex');
       if (digest !== file.sha256.toLowerCase()) {
         throw new AppError('SHARE_INTAKE_INVALID', '分享文件校验失败（sha256 不符）');
       }
+      validated.push({ bytes, originalName: file.originalName, mime: file.mime });
     }
-    return files;
+    return validated;
   }
 
   #uploadAttachment(
     conversationId: string,
-    filePath: string,
+    bytes: Buffer,
     fileName: string,
     mime: string,
   ): string {
-    const bytes = readFileSync(filePath);
     const attachment = this.#attachments.upload({
       conversationId,
       fileName,

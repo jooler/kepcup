@@ -417,6 +417,12 @@ export interface CoreServicesOptions {
     initialDelayMs?: number;
   };
   /**
+   * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
+   * share intake daily sweep cadence so integration tests can observe the
+   * timer firing without waiting a real day.
+   */
+  shareSweepIntervalMs?: number;
+  /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): tools seen for the
    * first time are approved straight away, like the stored-server baseline — so
    * fixtures that add a server through `settings.update` keep working. A tool whose
@@ -634,6 +640,9 @@ const voidInput = z.void();
 /** Daily environment health check (docs/dev/phases/P06-environment.md 范围). */
 const ENV_DOCTOR_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+/** D94 §6.7：分享清扫「启动 + 每日」的每日间隔。 */
+const SHARE_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 /** Consolidation due-check cadence (P07 任务 9: daily after 03:00 local). */
 const CONSOLIDATION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -657,6 +666,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const consolidationTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
   /** Holder for the wiki lint due-check timer (P09). */
   const wikiLintTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
+  /** Holder for the share intake daily sweep timer (D94 §6.7). */
+  const shareSweepTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
   /** Set by close() so late best-effort callbacks stop touching dead resources. */
   const servicesClosed: { closed: boolean } = { closed: false };
   const env = options.env ?? process.env;
@@ -910,6 +921,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (envDoctorTimerRef.timer) clearInterval(envDoctorTimerRef.timer);
       if (consolidationTimerRef.timer) clearInterval(consolidationTimerRef.timer);
       if (wikiLintTimerRef.timer) clearInterval(wikiLintTimerRef.timer);
+      if (shareSweepTimerRef.timer) clearInterval(shareSweepTimerRef.timer);
       if (taskSweepTimer !== null) clearInterval(taskSweepTimer);
       taskSweepTimer = null;
       try {
@@ -2949,14 +2961,16 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     services.share = shareIntake;
 
-    // D94 分享接收：清掉超时的 processing、过期失败行与无主残留；并把「主进程
-    // 移动后崩溃」留下的批次补消费掉（文件不丢）。
-    try {
+    // D94 §6.7：清扫「启动 + 每日」——超时的 processing、过期失败/done/received
+    // 行、无主残留目录；随后 scanInbox 把「主进程移动后崩溃」的残留和 sweep 打
+    // 回的 received 批次补消费掉（文件不丢，received 不滞留成黑洞）。
+    const runShareIntakeMaintenance = (): void => {
       const swept = shareIntake.sweep();
       if (
         swept.resetProcessing > 0 ||
         swept.expiredFailed > 0 ||
         swept.expiredDone > 0 ||
+        swept.expiredReceived > 0 ||
         swept.orphanInboxDirs > 0
       ) {
         logger.info(swept, 'share intakes swept');
@@ -2965,9 +2979,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (recovered.length > 0) {
         logger.info({ recovered }, 'share intakes recovered from core inbox');
       }
+    };
+    try {
+      runShareIntakeMaintenance();
     } catch (error) {
       warnQuietly('share intake sweep failed', error);
     }
+    const shareTestHooks = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
+    const shareSweepTimer = setInterval(
+      () => {
+        if (servicesClosed.closed) return;
+        try {
+          runShareIntakeMaintenance();
+        } catch (error) {
+          // 每日清扫是尽力而为：失败只记日志，不打断进程。
+          warnQuietly('share intake sweep failed', error);
+        }
+      },
+      shareTestHooks && options.shareSweepIntervalMs !== undefined
+        ? options.shareSweepIntervalMs
+        : SHARE_SWEEP_INTERVAL_MS,
+    );
+    shareSweepTimer.unref?.();
+    shareSweepTimerRef.timer = shareSweepTimer;
     // D94 §5.2: Bot / 项目 / 归档变化时通知主进程重写目标快照（主进程侧防抖）。
     events.on('bot.updated', () => events.emit('share.targets.changed', { reason: 'bot' }));
     events.on('bot.deleted', () => events.emit('share.targets.changed', { reason: 'bot' }));
@@ -2976,6 +3010,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (conversation.type !== 'project') return;
       events.emit('share.targets.changed', { reason: 'project' });
     });
+    // 项目组被删：快照里的项目条目要消失（payload 只有 id，删除后已查不到
+    // 类型；多刷一次主进程会防抖合并，无害）。
+    events.on('conversation.deleted', () =>
+      events.emit('share.targets.changed', { reason: 'project' }),
+    );
     services.workdirRuntime = workdirRuntime;
     services.environment = environment;
     services.memory = memory;
