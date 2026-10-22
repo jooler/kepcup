@@ -221,6 +221,34 @@ describe('TaskContextCompactor', () => {
     expect(body).not.toContain('base64-image-bytes');
   });
 
+  it('keeps memory sections in the system prompt and never mutates the full transcript', async () => {
+    const { compactor } = makeCompactor({
+      contextWindow: 12_000,
+      taskBrief: '修复构建并运行测试',
+    });
+    const prompt = [
+      '<user_profile>用户偏好简洁回复</user_profile>',
+      '<hard_constraints>我对坚果过敏</hard_constraints>',
+      '<relevant_memories>- [mem_1 | fact] 用户住在杭州</relevant_memories>',
+    ].join('\n');
+    const messages: Message[] = [system(prompt), user('修复构建并运行测试')];
+    for (let index = 0; index < 10; index += 1) {
+      messages.push(assistant(huge(`过程-${index}`, 1_000)));
+      messages.push(user(huge(`继续-${index}`, 300)));
+    }
+    const snapshot = [...messages];
+
+    const result = await compactor.transform(messages);
+    expect(result.compacted).toBe(true);
+    expect(result.messages[0]).toMatchObject({ role: 'system' });
+    const kept = String((result.messages[0] as { content: string }).content);
+    expect(kept).toContain('<user_profile>');
+    expect(kept).toContain('<hard_constraints>');
+    expect(kept).toContain('我对坚果过敏');
+    // 压缩只改「本次请求看到的消息」；agent transcript / run_steps 的来源不变。
+    expect(messages).toEqual(snapshot);
+  });
+
   it('reuses the cached summary and only summarizes the newly aged messages', async () => {
     const { compactor, complete } = makeCompactor({ contextWindow: 12_000 });
     const messages: Message[] = [system('S'), user('任务简报')];
@@ -248,7 +276,12 @@ describe('TaskContextCompactor', () => {
 
 describe('compaction helpers', () => {
   it('estimates messages and finds a safe keep start', () => {
-    const messages = [system(), user('brief'), assistant('a', [{ id: 'c', name: 'read' }]), toolResult('c', 'x')];
+    const messages = [
+      system(),
+      user('brief'),
+      assistant('a', [{ id: 'c', name: 'read' }]),
+      toolResult('c', 'x'),
+    ];
     expect(estimateMessagesTokens(messages)).toBeGreaterThan(0);
     const start = findKeepStart(messages, 1);
     expect(start).toBeLessThan(messages.length);

@@ -185,8 +185,9 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
       userProfile: '画像卡片内容',
+      hardConstraints: '- [prf_b] 我对坚果过敏',
       myState: '- 承诺（2026-10-02 前）：交报告',
-      relevantMemories: '- [mem_1] 内容',
+      relevantMemories: '- [mem_1 | fact] 内容',
     });
     // 平台规则 9~11（P07 起；自我迭代条随对话式创建一并加入；过程沟通规则
     // 3/4 为 loop 中间过程投送新增，todo/loop-interim-updates.md）。D75 W2：
@@ -199,19 +200,23 @@ describe('system prompt assembly', () => {
     expect(prompt).toContain('10. 注入的记忆可能已过时');
     expect(prompt).not.toContain('mention_bot_ids');
     expect(prompt).toContain('memory_feedback');
+    expect(prompt).toContain('注入的 <hard_constraints> 是用户明确要求必须遵守的硬性约束');
     // 画像卡片是摘要：规则 + 注入点都提示按分类查全文。
-    expect(prompt).toContain('11. 用户画像：注入的 <user_profile> 只是约 400 token 的摘要');
+    expect(prompt).toContain('用户画像：注入的 <user_profile> 只是约 400 token 的摘要');
     expect(prompt).toContain('get_user_profile 按分类查询完整条目');
     expect(prompt).toContain('这是根据完整画像条目编译的摘要（约 400 token，可能被截断）');
-    // 段落顺序：persona → user_profile → my_state → relevant_memories → conversation_info。
+    // 段落顺序：persona → user_profile → hard_constraints → my_state →
+    // relevant_memories → conversation_info。
     const personaIndex = prompt.indexOf('<persona>');
     // 规则文本也会提到 <user_profile>；这里只定位真正注入的段。
     const profileIndex = prompt.indexOf('<user_profile>\n');
+    const constraintsIndex = prompt.indexOf('<hard_constraints>\n');
     const myStateIndex = prompt.indexOf('<my_state>');
     const memoriesIndex = prompt.indexOf('<relevant_memories>');
     const infoIndex = prompt.indexOf('<conversation_info>');
     expect(profileIndex).toBeGreaterThan(personaIndex);
-    expect(myStateIndex).toBeGreaterThan(profileIndex);
+    expect(constraintsIndex).toBeGreaterThan(profileIndex);
+    expect(myStateIndex).toBeGreaterThan(constraintsIndex);
     expect(memoriesIndex).toBeGreaterThan(myStateIndex);
     expect(infoIndex).toBeGreaterThan(memoriesIndex);
     expect(prompt).toContain('画像卡片内容');
@@ -398,6 +403,37 @@ describe('trigger segment', () => {
     expect(segment).toContain('<trigger reason="direct">');
     expect(segment).toContain('msg_5');
     expect(segment).toContain('触发');
+  });
+});
+
+describe('hard constraints section (D-memory)', () => {
+  const base = {
+    bot: makeBot('bot_self', '我自己'),
+    conversation: makeConversation(),
+    timeZone: TIME_ZONE,
+    now: new Date('2026-09-29T08:00:00Z'),
+  };
+
+  it('sits between <user_profile> and <my_state> when present', () => {
+    const prompt = buildSystemPrompt({
+      ...base,
+      userProfile: '用户喜欢简洁回复',
+      hardConstraints: '以下为用户明确的硬性约束；\n- [prf_1] 我对坚果过敏',
+      myState: '（无）',
+    });
+    // 平台规则文本也提到这些标签；只定位真正注入的段（标签后紧跟换行）。
+    const profile = prompt.indexOf('<user_profile>\n');
+    const constraints = prompt.indexOf('<hard_constraints>\n');
+    const state = prompt.indexOf('<my_state>\n');
+    expect(profile).toBeGreaterThanOrEqual(0);
+    expect(constraints).toBeGreaterThan(profile);
+    expect(state).toBeGreaterThan(constraints);
+    expect(prompt).toContain('[prf_1] 我对坚果过敏');
+  });
+
+  it('omits the section entirely (no empty tag) when absent', () => {
+    const prompt = buildSystemPrompt({ ...base, userProfile: '摘要' });
+    expect(prompt).not.toContain('<hard_constraints>\n');
   });
 });
 

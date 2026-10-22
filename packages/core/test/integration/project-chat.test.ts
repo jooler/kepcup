@@ -27,12 +27,16 @@ afterEach(async () => {
 });
 
 async function start(env: NodeJS.ProcessEnv = {}): Promise<TestStack> {
-  const stack = await createTestStack({ env });
+  const stack = await createTestStack({
+    env: { KEPCUP_REFLECTION_DEBOUNCE_MS: '0', ...env },
+  });
   stacks.push(stack);
   return stack;
 }
 
-function systemText(request: { body: { messages?: Array<{ role: string; content?: unknown }> } }): string {
+function systemText(request: {
+  body: { messages?: Array<{ role: string; content?: unknown }> };
+}): string {
   const first = request.body.messages?.[0];
   return typeof first?.content === 'string' ? first.content : '';
 }
@@ -59,10 +63,15 @@ async function botRuns(
   conversationId: string,
   botId: string,
 ): Promise<Run[]> {
-  return (await listRuns(core, conversationId)).filter((r) => r.botId === botId && r.loopType === 'turn');
+  return (await listRuns(core, conversationId)).filter(
+    (r) => r.botId === botId && r.loopType === 'turn',
+  );
 }
 
-async function stepsOf(core: TestStack['core'], runId: string): Promise<Array<Record<string, unknown>>> {
+async function stepsOf(
+  core: TestStack['core'],
+  runId: string,
+): Promise<Array<Record<string, unknown>>> {
   const result = (await core.rpc.call('runs.steps', { runId })) as {
     steps: Array<{ type: string; payload: Record<string, unknown> }>;
   };
@@ -171,22 +180,21 @@ describe('project conversations', () => {
     const responseRuns = runs.filter((r) => r.loopType === 'turn');
     expect(responseRuns).toHaveLength(1);
     expect(responseRuns[0]).toMatchObject({ botId: a.id, triggerReason: 'mention' });
-    expect(runs.filter((r) => r.loopType !== 'turn').every((r) => r.loopType === 'reflection')).toBe(true);
-    expect(llm.requestsFor('mock-light').filter((req) => req.lastUserText().includes('<triage_batch>'))).toHaveLength(0);
+    expect(
+      runs.filter((r) => r.loopType !== 'turn').every((r) => r.loopType === 'reflection'),
+    ).toBe(true);
+    expect(
+      llm.requestsFor('mock-light').filter((req) => req.lastUserText().includes('<triage_batch>')),
+    ).toHaveLength(0);
   });
 
-  it('one message @-ing A and B executes them in order; B sees A\'s reply and the sequence hint', async () => {
+  it("one message @-ing A and B executes them in order; B sees A's reply and the sequence hint", async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
     void conv;
-    llm.script('mock-main', [
-      step().replyText('阿甲的答复'),
-      step().replyText('阿乙的补充'),
-    ]);
+    llm.script('mock-main', [step().replyText('阿甲的答复'), step().replyText('阿乙的补充')]);
 
-    await sendDrafts(core, conv.id, [
-      { text: '两个问题一起', mentions: [a.id, b.id] },
-    ]);
+    await sendDrafts(core, conv.id, [{ text: '两个问题一起', mentions: [a.id, b.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await waitForBotRun(core, conv.id, b.id, 'completed');
 
@@ -215,12 +223,18 @@ describe('project conversations', () => {
     const { a, b, conv } = await threeBots(core);
 
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('send_message', {
-        text: '请阿乙帮忙看一下',
-        mention_bot_ids: [b.id],
-      }),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('阿甲完成'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙来了'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .replyToolCall('send_message', {
+          text: '请阿乙帮忙看一下',
+          mention_bot_ids: [b.id],
+        }),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .replyText('阿甲完成'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('阿乙来了'),
     ]);
 
     await sendDrafts(core, conv.id, [{ text: '阿甲你来', mentions: [a.id] }]);
@@ -247,10 +261,9 @@ describe('project conversations', () => {
     await sendDrafts(core, conv.id, [{ text: '随便说说', mentions: [a.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await waitForMessage(core, conv.id, (m) => m.senderBotId === a.id);
-    await waitFor(
-      async () => ((await botRuns(core, conv.id, b.id)).length === 0 ? true : null),
-      { label: 'B never triggered' },
-    );
+    await waitFor(async () => ((await botRuns(core, conv.id, b.id)).length === 0 ? true : null), {
+      label: 'B never triggered',
+    });
   }, 30_000);
 
   // D75 W2 (D2 revised): the mid-round batch is no longer steered into the
@@ -261,9 +274,16 @@ describe('project conversations', () => {
     const { a, b, conv } = await threeBots(core);
 
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('阿甲第一批'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙第一批'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙第二批'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .hold()
+        .replyText('阿甲第一批'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('阿乙第一批'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('阿乙第二批'),
     ]);
 
     await sendDrafts(core, conv.id, [
@@ -271,9 +291,13 @@ describe('project conversations', () => {
       { text: '第一批乙', mentions: [b.id] },
     ]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), { label: 'A first request' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'A first request',
+    });
 
-    const second = await sendDrafts(core, conv.id, [{ text: '第二批（追加了）', mentions: [b.id] }]);
+    const second = await sendDrafts(core, conv.id, [
+      { text: '第二批（追加了）', mentions: [b.id] },
+    ]);
     llm.releaseAll();
 
     await waitForBotRun(core, conv.id, a.id, 'completed');
@@ -284,7 +308,9 @@ describe('project conversations', () => {
     const requests = llm.requestsFor('mock-main');
     expect(requests.every((r) => !r.lastUserText().includes('<new_messages>'))).toBe(true);
     const secondIds = second.map((m) => m.id);
-    const redispatched = bAll.find((r) => r.triggerMessageIds.length === 1 && r.triggerMessageIds[0] === secondIds[0]);
+    const redispatched = bAll.find(
+      (r) => r.triggerMessageIds.length === 1 && r.triggerMessageIds[0] === secondIds[0],
+    );
     expect(redispatched).toBeTruthy();
     expect(redispatched!.triggerReason).toBe('mention');
     // A is not addressed by the second batch: it never got a turn for it.
@@ -297,34 +323,43 @@ describe('project conversations', () => {
 
     // Case 1: B queued behind A; B removed before its slot.
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('阿甲完成'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙不应执行'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .hold()
+        .replyText('阿甲完成'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('阿乙不应执行'),
     ]);
-    await sendDrafts(core, conv.id, [
-      { text: '先甲后乙', mentions: [a.id, b.id] },
-    ]);
+    await sendDrafts(core, conv.id, [{ text: '先甲后乙', mentions: [a.id, b.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), { label: 'A request' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'A request',
+    });
     await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
     llm.releaseAll();
     await waitForBotRun(core, conv.id, a.id, 'completed');
-    await waitFor(
-      async () => ((await botRuns(core, conv.id, b.id)).length === 0 ? true : null),
-      { label: 'B skipped' },
-    );
+    await waitFor(async () => ((await botRuns(core, conv.id, b.id)).length === 0 ? true : null), {
+      label: 'B skipped',
+    });
 
     // Case 2: A running; A removed -> its run is cancelled, next member continues.
     const b2 = await makeBot(core, '阿乙二号');
     await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [b2.id] });
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('阿甲将被取消'),
-      step().expect((r) => systemText(r).includes('名字：阿乙二号')).replyText('阿乙二号接棒'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .hold()
+        .replyText('阿甲将被取消'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙二号'))
+        .replyText('阿乙二号接棒'),
     ]);
-    await sendDrafts(core, conv.id, [
-      { text: '再试一次', mentions: [a.id, b2.id] },
-    ]);
+    await sendDrafts(core, conv.id, [{ text: '再试一次', mentions: [a.id, b2.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 2 ? true : null), { label: 'A second request' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 2 ? true : null), {
+      label: 'A second request',
+    });
     await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: a.id });
     const aRun = await waitForBotRun(core, conv.id, a.id, 'cancelled');
     expect(aRun).toBeTruthy();
@@ -338,7 +373,9 @@ describe('project conversations', () => {
     const { a, b, conv } = await threeBots(core);
     const paths = core.services.paths;
 
-    await sendDrafts(core, conv.id, [{ text: '历史消息：独特关键词 zebra_marker', mentions: [a.id] }]);
+    await sendDrafts(core, conv.id, [
+      { text: '历史消息：独特关键词 zebra_marker', mentions: [a.id] },
+    ]);
     llm.script('mock-main', [step().replyText('收到历史消息')]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
 
@@ -367,8 +404,16 @@ describe('project conversations', () => {
     };
     const pending = approvals.approvals.find((x) => x.status === 'pending');
     expect(pending).toBeTruthy();
-    await core.rpc.call('approvals.decide', { id: pending!.id, approve: true, duration: 'conversation' });
-    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'B-RELAY 读到了');
+    await core.rpc.call('approvals.decide', {
+      id: pending!.id,
+      approve: true,
+      duration: 'conversation',
+    });
+    await waitForMessage(
+      core,
+      conv.id,
+      (m) => 'text' in m.content && m.content.text === 'B-RELAY 读到了',
+    );
 
     const workspaceDir = path.join(paths.home, 'bots', b.id, 'workspaces', conv.id);
     expect(existsSync(workspaceDir)).toBe(true);
@@ -418,8 +463,12 @@ describe('project conversations', () => {
     // Re-added: the bot reads the FULL history again (search finds pre-removal messages).
     await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [b.id] });
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('search_messages', { query: 'zebra_marker' }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('查到了历史消息'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyToolCall('search_messages', { query: 'zebra_marker' }),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('查到了历史消息'),
     ]);
     await sendDrafts(core, conv.id, [{ text: '你记得之前那条消息吗', mentions: [b.id] }]);
     const searchRun = await waitFor(
@@ -459,7 +508,9 @@ describe('project conversations', () => {
     const isB = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿乙');
     const [aStart, aAck, aWrite, aFinal, aRelay] = viaTask({
       taskSteps: [
-        step().expect(isA).replyToolCall('write', { path: 'from-group.txt', content: '群聊成员甲写入' }),
+        step()
+          .expect(isA)
+          .replyToolCall('write', { path: 'from-group.txt', content: '群聊成员甲写入' }),
         step().expect(isA).hold().replyText('甲完成'),
       ],
       relay: '甲：写好了',
@@ -484,10 +535,9 @@ describe('project conversations', () => {
       bRelay!.expect(isB),
     ]);
     await sendDrafts(core, conv.id, [{ text: '建一个文件', mentions: [a.id] }]);
-    await waitFor(
-      () => (existsSync(path.join(workdirDir, 'from-group.txt')) ? true : null),
-      { label: 'A group write' },
-    );
+    await waitFor(() => (existsSync(path.join(workdirDir, 'from-group.txt')) ? true : null), {
+      label: 'A group write',
+    });
 
     // While A's write task still holds the lease, B's write task (direct
     // conversation bound to the same workdir) waits for it, still submitted.
@@ -521,7 +571,9 @@ describe('project conversations', () => {
     llm.releaseAll();
     await waitFor(
       async () =>
-        (await listRuns(core, conv.id)).find((r) => r.loopType === 'task' && r.status === 'completed') ?? null,
+        (await listRuns(core, conv.id)).find(
+          (r) => r.loopType === 'task' && r.status === 'completed',
+        ) ?? null,
       { label: 'A task completes' },
     );
     const bRun = await waitFor(
@@ -541,8 +593,13 @@ describe('project conversations', () => {
     const { a, b, conv } = await threeBots(core);
 
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('甲完成'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('乙完成'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .hold()
+        .replyText('甲完成'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('乙完成'),
     ]);
     const runningEvent = waitForEvent(
       core,
@@ -550,9 +607,7 @@ describe('project conversations', () => {
       (p) => p.phase === 'running' && p.currentBotId === a.id && p.queue.includes(b.id),
       {},
     );
-    await sendDrafts(core, conv.id, [
-      { text: '甲先乙后', mentions: [a.id, b.id] },
-    ]);
+    await sendDrafts(core, conv.id, [{ text: '甲先乙后', mentions: [a.id, b.id] }]);
     const running = await runningEvent;
     expect(running.batchId).toBeTruthy();
     const idlePromise = waitForEvent(
@@ -573,12 +628,17 @@ describe('project conversations', () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('甲将被中止'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .hold()
+        .replyText('甲将被中止'),
     ]);
 
     await sendDrafts(core, conv.id, [{ text: '先甲后乙', mentions: [a.id, b.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), { label: 'A request' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'A request',
+    });
 
     // New runs start as queued; any spawn during teardown shows up here.
     const spawned: Run[] = [];
@@ -604,9 +664,15 @@ describe('project conversations', () => {
     const { conv } = await threeBots(core);
 
     // The lead's gate call (no prior bot reply -> no continuation check) hangs.
-    llm.script('mock-light', [step().expect((r) => r.lastUserText().includes('成员名册：')).hold()]);
+    llm.script('mock-light', [
+      step()
+        .expect((r) => r.lastUserText().includes('成员名册：'))
+        .hold(),
+    ]);
     await sendBatchless(core, conv.id, '需要有人处理');
-    await waitFor(() => (llm.requestsFor('mock-light').length >= 1 ? true : null), { label: 'gate request' });
+    await waitFor(() => (llm.requestsFor('mock-light').length >= 1 ? true : null), {
+      label: 'gate request',
+    });
 
     await core.rpc.call('conversations.delete', { id: conv.id });
     llm.releaseAll();
@@ -622,23 +688,35 @@ describe('project conversations', () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
-    const aFinal = step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('甲完成');
-    const bHeld = step().expect((r) => systemText(r).includes('名字：阿乙')).hold().replyText('乙的回合触发');
+    const aFinal = step()
+      .expect((r) => systemText(r).includes('名字：阿甲'))
+      .hold()
+      .replyText('甲完成');
+    const bHeld = step()
+      .expect((r) => systemText(r).includes('名字：阿乙'))
+      .hold()
+      .replyText('乙的回合触发');
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('send_message', {
-        text: '请阿乙先看这条',
-        mention_bot_ids: [b.id],
-      }),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .replyToolCall('send_message', {
+          text: '请阿乙先看这条',
+          mention_bot_ids: [b.id],
+        }),
       aFinal,
       bHeld,
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('乙轮次'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿乙'))
+        .replyText('乙轮次'),
     ]);
 
     const batch = await sendDrafts(core, conv.id, [
       { text: '轮次批次给乙', mentions: [a.id, b.id] },
     ]);
     await waitForBotRun(core, conv.id, a.id, 'running');
-    await waitFor(() => (llm.requestsFor('mock-main').length >= 3 ? true : null), { label: 'A final + B held' });
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 3 ? true : null), {
+      label: 'A final + B held',
+    });
 
     // A finishes while B's episode-bound run still holds B's mailbox.
     aFinal.release();
@@ -647,7 +725,9 @@ describe('project conversations', () => {
     // The turn waits (no fresh delivery steered into the episode's run).
     expect(await botRuns(core, conv.id, b.id)).toHaveLength(1);
     // The episode's run was never steered: no <new_messages> injection anywhere.
-    const episodeRequests = llm.requestsFor('mock-main').filter((r) => systemText(r).includes('名字：阿乙'));
+    const episodeRequests = llm
+      .requestsFor('mock-main')
+      .filter((r) => systemText(r).includes('名字：阿乙'));
     expect(episodeRequests.length).toBeGreaterThanOrEqual(1);
     expect(episodeRequests.every((r) => !r.lastUserText().includes('<new_messages>'))).toBe(true);
 
@@ -667,8 +747,12 @@ describe('project conversations', () => {
     const { a, conv } = await threeBots(core);
 
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('第一次回复'),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('编辑后的回复'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .replyText('第一次回复'),
+      step()
+        .expect((r) => systemText(r).includes('名字：阿甲'))
+        .replyText('编辑后的回复'),
     ]);
     const batch = await sendDrafts(core, conv.id, [{ text: '原始消息', mentions: [a.id] }]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
@@ -698,11 +782,7 @@ describe('project conversations', () => {
       'conversation.updated',
       (p) => p.conversation.id === conv.id,
     );
-    const deleted = waitForEvent<{ id: string }>(
-      core,
-      'bot.deleted',
-      (p) => p.id === a.id,
-    );
+    const deleted = waitForEvent<{ id: string }>(core, 'bot.deleted', (p) => p.id === a.id);
     await core.rpc.call('bots.delete', { id: a.id });
     expect((await groupUpdated).conversation.type).toBe('project');
     await deleted;
@@ -722,7 +802,6 @@ describe('project conversations', () => {
 
 // -- helpers ------------------------------------------------------------------
 
-
 /** Flushes a single draft without mentions (a silently routed batch). */
 async function sendBatchless(
   core: TestStack['core'],
@@ -740,8 +819,11 @@ async function waitForBotRunCount(
   count: number,
   options: { timeoutMs?: number } = {},
 ): Promise<Run[]> {
-  return waitFor(async () => {
-    const runs = await botRuns(core, conversationId, botId);
-    return runs.length >= count ? runs : null;
-  }, { ...options, label: `${count} response runs of ${botId}` });
+  return waitFor(
+    async () => {
+      const runs = await botRuns(core, conversationId, botId);
+      return runs.length >= count ? runs : null;
+    },
+    { ...options, label: `${count} response runs of ${botId}` },
+  );
 }

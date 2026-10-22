@@ -36,12 +36,16 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
   const store = deps.memory.profileStore;
   const pending = store.pendingProposals();
   const activeItems = store.list('active');
+  // A direct edit / retraction changes entries without a proposal; the card
+  // must still be recompiled (docs/design/04-memory.md 画像整理).
+  const stale = store.cardIsStale();
+  if (pending.length === 0 && !stale) return;
   // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent 时跳过（提议
   // 留待下次整理），不产生失败 run。
-  const route = pending.length > 0 ? routeFor(deps, 'profile_curation', null) : null;
-  if (pending.length > 0 && route === null) {
+  const route = routeFor(deps, 'profile_curation', null);
+  if (route === null) {
     deps.logger.info(
-      { pending: pending.length },
+      { pending: pending.length, stale },
       'profile curation skipped: no model for background calls',
     );
     return;
@@ -57,11 +61,7 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
   deps.runs.update(run.id, { status: 'running' });
 
   try {
-    if (pending.length === 0) {
-      deps.runs.update(run.id, { status: 'completed' });
-      return;
-    }
-    const { engine, modelRef: mainRef } = route!;
+    const { engine, modelRef: mainRef } = route;
     const output = await completeStructured<CurationOutput>({
       complete: (req) => engine.complete(req),
       resolveRoute: () => routeFor(deps, 'profile_curation', null),
@@ -291,6 +291,7 @@ function renderProposals(
     payload: Record<string, unknown>;
   }>,
 ): string {
+  if (proposals.length === 0) return '（空）';
   return proposals
     .map((proposal) => {
       const payload = proposal.payload as {
@@ -316,5 +317,6 @@ const CURATION_PROMPT = [
   'When a conflict cannot be resolved use keep_both and write a short note for the proposing bot to confirm with the user later.',
   'Reject proposals that are not durable facts about the user, duplicates of existing entries, or sourced from anything but the user.',
   'Then recompile the profile card: a compact third-person summary of the user in the SAME LANGUAGE as the entries, under 400 tokens.',
+  'The card MUST keep the user boundaries and hard constraints (allergies, forbidden foods, explicit prohibitions). When space is tight, drop examples and stories first.',
   'Call submit with the operations and the new card.',
 ].join('\n');

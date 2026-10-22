@@ -87,7 +87,9 @@ function waitForRequest(
 
 describe('私有时间线泄露契约（D75 §2.4.3）', () => {
   it('X 的私有条目对 Y 与用户的所有读路径都不可见，X 自己按 seq 交错看到', async () => {
-    const stack = await createTestStack();
+    const stack = await createTestStack({
+      env: { KEPCUP_REFLECTION_DEBOUNCE_MS: '0' },
+    });
     stacks.push(stack);
     const { core, llm } = stack;
     const domain = core.services.domain!;
@@ -294,7 +296,12 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
     // X 刚回复过（上一段 @X 的轮），是「上一位回话者」且不是负责人。
     await sendBatch(core, cid, ['routing_probe 大家看看']);
     // 续接判断跑在 P = X 自己的视角上——私有条目对 owner 可见。
-    const xContinuation = await waitForRequest(llm, 'mock-light', triageFor('阿甲'), 'X continuation');
+    const xContinuation = await waitForRequest(
+      llm,
+      'mock-light',
+      triageFor('阿甲'),
+      'X continuation',
+    );
     expect(xContinuation.lastUserText()).toContain('routing_probe');
     expect(xContinuation.lastUserText()).toContain('leak_tail');
     // X 不认领 → 负责人 Y 的网关跑在 Y 的视角上：看不到 X 的任何私有条目。

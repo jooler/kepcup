@@ -29,7 +29,7 @@ let attachmentId: string;
 const KEYWORD = 'ProjectScopeKeyword';
 
 beforeAll(async () => {
-  stack = await createTestStack();
+  stack = await createTestStack({ env: { KEPCUP_REFLECTION_DEBOUNCE_MS: '0' } });
   lead = (await makeBot(stack.core, '阿领')).id;
   member = (await makeBot(stack.core, '阿甲')).id;
   const project = await makeProject(stack.core, '项目组', [lead, member], { leadBotId: lead });
