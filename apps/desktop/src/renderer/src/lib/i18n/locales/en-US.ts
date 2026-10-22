@@ -1591,7 +1591,7 @@ export const enUS = {
   'update.downloading': 'Downloading new version {version}…',
   'update.downloadingProgress': 'Downloading v{version} - {percent}%',
   'update.downloadedWaiting': 'New version v{version} downloaded; waiting for runs to finish…',
-  'update.applyNow': 'Apply update',
+  'update.applyNow': 'Restart and update',
   'update.awaitingUser':
     '{count} runs are still in progress, so the update is paused. Keep waiting (it installs automatically once they finish), or interrupt them and update now (unfinished runs will be canceled).',
   'update.keepWaiting': 'Keep waiting',

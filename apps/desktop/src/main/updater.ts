@@ -1,4 +1,5 @@
 import electronUpdater from 'electron-updater';
+import { autoUpdater as nativeAutoUpdater } from 'electron';
 import {
   UPDATE_CHECK_INITIAL_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
@@ -91,6 +92,14 @@ export function wireUpdater(options: {
    * 平时 `pnpm dev` 不会后台偷跑更新下载。
    */
   forceDevUpdateConfig?: boolean;
+  /**
+   * Called when the updater is about to close the app's windows for install.
+   * Electron's native autoUpdater (macOS Squirrel; electron-updater on all
+   * platforms emits it too) closes windows BEFORE `before-quit`, so the
+   * window-close handler would otherwise hide the main window and block the
+   * restart. Main process uses this to flip its quitting flag first.
+   */
+  beforeQuitForUpdate?: () => void;
 }): UpdaterWiring {
   const { host } = options;
   const external = externalUpdateChannel();
@@ -142,11 +151,22 @@ export function wireUpdater(options: {
     onStatus: (status) => host.broadcast(UPDATE_STATUS_CHANNEL, status),
   });
 
+  // macOS: quitAndInstall 走 Electron 原生 autoUpdater，先关窗口再发
+  // before-quit（docs: autoUpdater 'before-quit-for-update'）；Windows/Linux:
+  // electron-updater 在 app.quit() 前手动 emit 同一事件。两种路径都在窗口
+  // 关闭前通知到宿主，否则主窗口的「关闭即隐藏」会卡住安装。
+  if (options.beforeQuitForUpdate !== undefined) {
+    nativeAutoUpdater?.on('before-quit-for-update', options.beforeQuitForUpdate);
+  }
+
   let availableVersion: string | undefined;
   autoUpdater.on('checking-for-update', () => gate.onChecking());
   autoUpdater.on('update-available', (info) => {
     availableVersion = String(info.version);
     host.log(`update available: ${availableVersion}`);
+    // 立即从 checking 切到 downloading：手动检查查到更新后，检查按钮马上
+    // 让位给进度（首个 download-progress 可能要等首包到达才来）。
+    gate.onDownloading(availableVersion);
   });
   // BR-P13-008: "no update" is a real result — the gate resolves checking →
   // idle so the manual check can settle event-driven (no wall-clock guess).
@@ -250,6 +270,9 @@ export function wireUpdater(options: {
       for (const timer of timers) {
         clearTimeout(timer);
         clearInterval(timer);
+      }
+      if (options.beforeQuitForUpdate !== undefined) {
+        nativeAutoUpdater?.off('before-quit-for-update', options.beforeQuitForUpdate);
       }
     },
   };
