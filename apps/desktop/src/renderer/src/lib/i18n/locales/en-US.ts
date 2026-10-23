@@ -2992,10 +2992,20 @@ export const enUS = {
   'settingsItem.general.task-loop.summary':
     'Idle-loop protection, inactivity timeout, maximum run time and a soft budget for long tasks',
   'settingsItem.general.task-loop.field.idleGuardEnabled': 'Enable idle-loop detection',
+  'settingsItem.general.task-loop.field.idleGuardEnabled.hint':
+    'Detects repeated tool calls with the same tool, arguments and result: warn first, then block and abort if it keeps repeating, so a task does not spin until the wall clock runs out. Builtin tasks only.',
   'settingsItem.general.task-loop.field.idleWarnAfter': 'Warn after',
+  'settingsItem.general.task-loop.field.idleWarnAfter.hint':
+    'Within the detection window, the Nth identical repeat triggers a one-time nudge to try another approach; default 3.',
   'settingsItem.general.task-loop.field.idleStopAfter': 'Stop after',
+  'settingsItem.general.task-loop.field.idleStopAfter.hint':
+    'Identical repeats beyond this count are no longer executed; repeating after being blocked aborts the task. Must exceed the warn threshold; default 6.',
   'settingsItem.general.task-loop.field.idleWindowCalls': 'Detection window',
+  'settingsItem.general.task-loop.field.idleWindowCalls.hint':
+    'Only the most recent N tool calls are counted for repeats. Must not be smaller than the stop threshold; default 12.',
   'settingsItem.general.task-loop.field.tokenSoftBudget': 'Token soft budget',
+  'settingsItem.general.task-loop.field.tokenSoftBudget.hint':
+    'Per-task total token usage: a nudge to converge at 80%, and a request to wrap up at 100% — never a hard abort. 0 means unlimited.',
   'settingsItem.general.task-loop.field.stallTimeoutMinutes': 'Inactivity timeout (minutes)',
   'settingsItem.general.task-loop.field.stallTimeoutMinutes.hint':
     '0 disables it; when enabled it should exceed the 10-minute per-tool limit (20 minutes recommended).',

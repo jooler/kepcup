@@ -10,9 +10,9 @@
    * 一行即可，不必手写表单。锚点由调用方**静态**写在包裹元素上（覆盖率扫描只认字面量，
    * 组件内动态锚点扫不到），值 = 条目 `deepLink.anchor`。
    *
-   * 只渲染 `owner === 'core'`、`scope === 'global'`、`card === 'field-editor'` 的条目；
-   * 条目级保存（`settings.items.apply`）与所在页面的整表保存是两种模型——不要把同一个
-   * 字段同时放进两者。
+   * 只渲染 `owner === 'core'`、`scope === 'global'`、`card === 'field-editor'` 的条目。
+   * 设置页是「改完即存」的形态：`saveOnChange` 让卡片省掉「应用」按钮，
+   * 开关 / 下拉立即落盘、文本 / 数字防抖落盘；对话内设置卡仍走确认后保存。
    */
   let { itemIds, title }: { itemIds: readonly string[]; title?: string } = $props();
 
@@ -40,7 +40,7 @@
         <span class="text-xs text-muted-foreground">
           {settingItemText(item.id, 'summary', item.summary)}
         </span>
-        <FieldEditorCard {item} onSaved={() => void settingsStore.refresh()} />
+        <FieldEditorCard {item} saveOnChange onSaved={() => void settingsStore.refresh()} />
       </div>
     {/each}
   </section>

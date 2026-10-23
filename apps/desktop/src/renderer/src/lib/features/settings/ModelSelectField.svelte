@@ -11,6 +11,7 @@
     id,
     testid,
     labelledBy,
+    onchange,
   }: {
     value?: string;
     id?: string;
@@ -18,6 +19,8 @@
     testid?: string;
     /** 外部 label 元素的 id（无障碍标注）。 */
     labelledBy?: string;
+    /** 选中变化（即改即存的宿主用；`bind:value` 在同一事件里已更新）。 */
+    onchange?: (event: Event) => void;
   } = $props();
 </script>
 
@@ -26,6 +29,7 @@
   bind:value
   {id}
   aria-labelledby={labelledBy}
+  {onchange}
   data-testid={testid}
 >
   <option value="">{t('settings.modelPlaceholder')}</option>

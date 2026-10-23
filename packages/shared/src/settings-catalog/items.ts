@@ -852,30 +852,37 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['空转', '循环', '重复', '预算', '任务 Loop', 'loop', '最长运行', '运行时长', '超时'],
     scope: 'global',
     fields: [
-      field('idleGuardEnabled', '启用空转检测', 'toggle', { path: 'taskLoop.idleGuardEnabled' }),
+      field('idleGuardEnabled', '启用空转检测', 'toggle', {
+        path: 'taskLoop.idleGuardEnabled',
+        hint: '检测任务里「同一工具、同一参数、同一结果」的重复操作：先提醒、仍重复则拦截直至中止，避免无效空转到墙钟耗尽。只对内置任务生效。',
+      }),
       field('idleWarnAfter', '提醒阈值', 'number', {
         path: 'taskLoop.idleWarnAfter',
         min: 2,
         max: 10,
         step: 1,
+        hint: '检测窗口内同一重复操作达到该次数时，提醒一次并建议换方法；默认 3 次。',
       }),
       field('idleStopAfter', '中止阈值', 'number', {
         path: 'taskLoop.idleStopAfter',
         min: 3,
         max: 20,
         step: 1,
+        hint: '同一重复操作达到该次数后不再执行；被拦后仍重复则中止任务。需大于提醒阈值，默认 6 次。',
       }),
       field('idleWindowCalls', '检测窗口', 'number', {
         path: 'taskLoop.idleWindowCalls',
         min: 3,
         max: 50,
         step: 1,
+        hint: '只在最近 N 次工具调用内统计重复，更早的不计数。需不小于中止阈值，默认 12 次。',
       }),
       field('tokenSoftBudget', 'token 软预算', 'number', {
         path: 'taskLoop.tokenSoftBudget',
         min: 0,
         max: 10_000_000,
         step: 100_000,
+        hint: '任务累计 token 用量：80% 时提醒收敛，到顶后要求给出最终结果，不会硬中断。0 = 不限制。',
       }),
       field('stallTimeoutMinutes', '无活动超时（分钟）', 'number', {
         path: 'taskLoop.stallTimeoutMinutes',

@@ -2845,10 +2845,20 @@ export const zhCN = {
   'settingsItem.general.task-loop.title': '任务 Loop',
   'settingsItem.general.task-loop.summary': '长任务的空转保护、无活动超时、最长运行与软预算',
   'settingsItem.general.task-loop.field.idleGuardEnabled': '启用空转检测',
+  'settingsItem.general.task-loop.field.idleGuardEnabled.hint':
+    '检测任务里「同一工具、同一参数、同一结果」的重复操作：先提醒、仍重复则拦截直至中止，避免无效空转到墙钟耗尽。只对内置任务生效。',
   'settingsItem.general.task-loop.field.idleWarnAfter': '提醒阈值',
+  'settingsItem.general.task-loop.field.idleWarnAfter.hint':
+    '检测窗口内同一重复操作达到该次数时，提醒一次并建议换方法；默认 3 次。',
   'settingsItem.general.task-loop.field.idleStopAfter': '中止阈值',
+  'settingsItem.general.task-loop.field.idleStopAfter.hint':
+    '同一重复操作达到该次数后不再执行；被拦后仍重复则中止任务。需大于提醒阈值，默认 6 次。',
   'settingsItem.general.task-loop.field.idleWindowCalls': '检测窗口',
+  'settingsItem.general.task-loop.field.idleWindowCalls.hint':
+    '只在最近 N 次工具调用内统计重复，更早的不计数。需不小于中止阈值，默认 12 次。',
   'settingsItem.general.task-loop.field.tokenSoftBudget': 'token 软预算',
+  'settingsItem.general.task-loop.field.tokenSoftBudget.hint':
+    '任务累计 token 用量：80% 时提醒收敛，到顶后要求给出最终结果，不会硬中断。0 = 不限制。',
   'settingsItem.general.task-loop.field.stallTimeoutMinutes': '无活动超时（分钟）',
   'settingsItem.general.task-loop.field.stallTimeoutMinutes.hint':
     '0 = 关闭；开启时应大于单次工具上限（10 分钟），建议 20 分钟。',

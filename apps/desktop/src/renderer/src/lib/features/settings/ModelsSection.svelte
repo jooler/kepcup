@@ -87,18 +87,27 @@
     appliedConcurrency = Number(conc.lastApplied);
   });
 
-  /** `auto`：下拉变更触发的自动保存，不弹 toast；点「保存」总是提示。 */
+  /** `auto`：输入停顿后的自动保存，不弹成功提示；失败仍提示并保留原值。 */
   async function saveModels(auto = false): Promise<void> {
     const settings = settingsStore.settings;
+    const main = mainModel;
+    const light = lightModel;
     const unchanged =
-      settings !== null &&
-      mainModel === settings.defaultMainModel &&
-      lightModel === settings.defaultLightModel;
+      settings !== null && main === settings.defaultMainModel && light === settings.defaultLightModel;
     if (!unchanged) {
-      await settingsStore.update({
-        defaultMainModel: mainModel,
-        defaultLightModel: lightModel,
-      });
+      try {
+        await settingsStore.update({
+          defaultMainModel: main,
+          defaultLightModel: light,
+        });
+        // 记下这次写出去的值：同步 effect 看到 store 等于 lastApplied 时保留
+        // 本地草稿，飞行期间的新选择不会被回包冲掉。
+        appliedMain = main;
+        appliedLight = light;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+        return;
+      }
     }
     if (!auto) toast.success(t('settings.saved'));
   }
@@ -122,11 +131,28 @@
   async function saveConcurrency(): Promise<void> {
     const current = settingsStore.settings;
     if (!current) return;
-    await settingsStore.update({
-      providerConcurrency: { ...current.providerConcurrency, default: concurrency },
-    });
-    toast.success(t('settings.saved'));
+    const value = concurrency;
+    try {
+      await settingsStore.update({
+        providerConcurrency: { ...current.providerConcurrency, default: value },
+      });
+      // 同 saveModels：写出去的值即「已应用」，避免回包冲掉飞行期间的新输入。
+      appliedConcurrency = value;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }
+
+  /** 并发上限同样即改即存：停顿 600ms 落盘，不渲染保存按钮。 */
+  $effect(() => {
+    const settings = settingsStore.settings;
+    const value = concurrency;
+    if (!settings) return;
+    if (value === settings.providerConcurrency.default) return;
+    if (appliedConcurrency === null) return;
+    const timer = setTimeout(() => void saveConcurrency(), 600);
+    return () => clearTimeout(timer);
+  });
 
   async function removeKey(providerId: string): Promise<void> {
     await settingsStore.removeKey(providerId);
@@ -267,7 +293,6 @@
         </div>
       </div>
     </div>
-    <Button size="sm" onclick={() => saveModels()} data-testid="save-models">{t('settings.save')}</Button>
     <div class="flex items-end gap-3">
       <div class="grid gap-1.5">
         <Label for="concurrency">{t('settings.concurrency')}</Label>
@@ -281,7 +306,6 @@
           data-testid="provider-concurrency"
         />
       </div>
-      <Button variant="outline" size="sm" onclick={saveConcurrency}>{t('settings.save')}</Button>
     </div>
   </section>
 
