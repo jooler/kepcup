@@ -178,6 +178,27 @@ describe('system prompt assembly', () => {
     expect(prompt).toContain('不做坏事');
   });
 
+  it('proactive profile proposals (D98) are a conversation-turn rule only; tasks keep the passive wording', () => {
+    const common = {
+      bot: makeBot('bot_self', '小艾'),
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+    };
+    const proactive = '用户明确纠正你的语气、职责、专长或性格时';
+    const turn = buildSystemPrompt({ ...common, loop: 'turn' });
+    expect(turn).toContain(proactive);
+    expect(turn).toContain('一次只提议被纠正涉及的字段');
+    // 任务里用户不在场、propose_profile_change 会阻塞到用户决定：不带主动提议条款。
+    const task = buildSystemPrompt(common);
+    expect(task).toContain('用户可以要求你更新你自己的 Profile');
+    expect(task).not.toContain(proactive);
+    // 带日期的 lesson / self_note 时效条款（D101）两种 loop 都带。
+    for (const prompt of [turn, task]) {
+      expect(prompt).toContain('带写入日期的 lesson / self_note 行距今越久越可能过时');
+    }
+  });
+
   it('includes the P07 platform rules 8/9 and the memory sections in order', () => {
     const prompt = buildSystemPrompt({
       bot: makeBot('bot_self', '小艾'),

@@ -102,7 +102,17 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
     try {
       const bot = await makeBot(stack.core, '阿思');
       const conv = await openDirect(stack.core, bot.id);
-      const { userMsgId } = await seedTurn(stack, conv.id, '我的部署流程都在 Deploy.md 里');
+      const first = await seedTurn(stack, conv.id, '我的部署流程都在 Deploy.md 里');
+      const { userMsgId } = first;
+
+      // 第二次同类工作：P0.1 门槛要求技能建议的证据解析到 ≥2 个不同的已完成 run。
+      stack.llm.script('mock-main', [step().replyText('好的，照旧')]);
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '部署流程我再讲一遍' }]);
+      await waitForReflectionsDone(stack.core, 2);
+      const secondUserMsgId = (await listMessages(stack.core, conv.id)).filter(
+        (m) => m.senderType === 'user',
+      )[1]!.id;
 
       stack.llm.script('mock-main', [step().replyText('嗯')]);
       stack.llm.script('mock-light', [
@@ -123,12 +133,19 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
           wikiSuggestions: [
             { sourceType: 'attachment', ref: 'att_demo', note: '部署文档值得入库' },
           ],
-          skillSuggestion: { name: 'deploy', description: '固定部署流程', reason: '重复任务' },
+          // P0.1 门槛：证据引用必须解析到 ≥2 个不同的已完成 run 才入队——
+          // 第一轮的 Bot 消息（经产出它的 run）+ 第二轮的用户消息（经它触发的 run）。
+          skillSuggestion: {
+            name: 'deploy',
+            description: '固定部署流程',
+            reason: '重复任务',
+            evidenceRefs: [first.botMsgId, secondUserMsgId],
+          },
         }),
       ]);
       await sendDrafts(stack.core, conv.id, [{ text: '再说一遍部署文档' }]);
       const run = await completedRun(stack.core, conv.id);
-      await waitForReflectionsDone(stack.core, 2);
+      await waitForReflectionsDone(stack.core, 3);
 
       const result = (await stack.core.rpc.call('memory.list', { botId: bot.id })) as {
         items: Array<{ content: string; origin: string; status: string }>;
@@ -178,6 +195,13 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
         true,
       );
       expect(jobs.some((job) => job.type === 'skill_suggestion')).toBe(true);
+      // 入队载荷带代码验证过的证据 run（两次不同的成功）。
+      const suggestion = stack.core.services
+        .mainDb!.prepare("select payload_json from jobs where type = 'skill_suggestion'")
+        .get() as { payload_json: string };
+      const evidenceRunIds = (JSON.parse(suggestion.payload_json) as { evidenceRunIds: string[] })
+        .evidenceRunIds;
+      expect(new Set(evidenceRunIds).size).toBe(2);
       // P09：wiki_suggestion 消费后登记了 wiki_ingest 任务。
       expect(jobs.some((job) => job.type === 'wiki_ingest')).toBe(true);
     } finally {

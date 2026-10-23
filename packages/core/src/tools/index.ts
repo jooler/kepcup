@@ -979,7 +979,7 @@ export function buildResponseTools(input: {
   }> = {
     name: 'create_skill',
     description:
-      '登记一个技能生成任务（用户说“以后都这样做”或希望把某类重复工作沉淀为技能时使用）。后台技能生成 loop 会起草稿、验证（语法 + 沙箱跑测试），通过后自动启用并通知；失败时保留草稿不打扰用户。技能名只能用小写字母、数字和连字符。',
+      '登记一个技能生成任务（用户说“以后都这样做”或希望把某类重复工作沉淀为技能时使用）。后台技能生成 loop 会起草稿、验证（语法 + 沙箱跑测试），通过后自动启用；失败时保留草稿不打扰用户，完成后也不会在对话里播报。技能名只能用小写字母、数字和连字符。',
     parameters: Type.Object({
       name: Type.String({ description: '技能名（小写字母、数字、连字符，例如 deploy-check）' }),
       description: Type.String({ description: '一句话描述这个技能做什么、何时使用' }),

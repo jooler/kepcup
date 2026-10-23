@@ -102,6 +102,44 @@ describe('retrieval filters (群聊注入)', () => {
       formatMemoryLine(item({ id: 'mem_f', kind: 'feedback', content: '用户嫌回复太长' }), false),
     ).toContain('[mem_f | feedback]');
   });
+
+  it('lesson / self_note lines carry the write date and up to two evidence message ids (P1.2)', () => {
+    // 本地日历 2026-10-20（dateLabelOf 按本地时区取日期，用本地 Date 构造保证跨时区稳定）。
+    const createdAt = new Date(2026, 9, 20, 12).getTime();
+    const line = formatMemoryLine(
+      item({
+        id: 'mem_l',
+        kind: 'lesson',
+        content: '部署前先跑 lint',
+        createdAt,
+        evidence: [
+          { messageId: 'msg_1', conversationId: 'conv_1', runId: null },
+          { messageId: null, conversationId: 'conv_1', runId: 'run_9' },
+          { messageId: 'msg_2', conversationId: 'conv_1', runId: null },
+          { messageId: 'msg_3', conversationId: 'conv_1', runId: null },
+        ],
+      }),
+      false,
+    );
+    expect(line).toBe('- [mem_l | lesson | 2026-10-20 | 依据 msg_1,msg_2] 部署前先跑 lint');
+    // 只有 run 证据（无消息 id）时省略依据段，日期仍在。
+    expect(
+      formatMemoryLine(
+        item({
+          id: 'mem_s',
+          kind: 'self_note',
+          content: '回复保持三段以内',
+          createdAt,
+          evidence: [{ messageId: null, conversationId: 'conv_1', runId: 'run_9' }],
+        }),
+        false,
+      ),
+    ).toBe('- [mem_s | self_note | 2026-10-20] 回复保持三段以内');
+    // 普通 fact 行不加日期/证据（预算控制），与旧行为逐字节一致。
+    expect(
+      formatMemoryLine(item({ id: 'mem_f', kind: 'fact', content: 'x', createdAt }), false),
+    ).toBe('- [mem_f | fact] x');
+  });
 });
 
 describe('hybrid retrieval', () => {

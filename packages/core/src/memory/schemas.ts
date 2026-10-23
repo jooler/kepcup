@@ -4,6 +4,7 @@ import {
   memorySourceSchema,
   memorySensitivitySchema,
   profileCategorySchema,
+  SKILL_AUTHOR_REPEAT_THRESHOLD,
 } from '@kepcup/shared';
 import { z } from 'zod';
 
@@ -49,7 +50,19 @@ export const reflectionOutputSchema = z.object({
     }),
   ),
   skillSuggestion: z
-    .object({ name: z.string().min(1), description: z.string(), reason: z.string() })
+    .object({
+      name: z.string().min(1),
+      description: z.string(),
+      reason: z.string(),
+      // Evidence for "the same kind of work already succeeded": run / message
+      // ids the model saw in its input. The threshold is enforced in code
+      // (applyReflectionOutput → resolveEvidenceRuns resolves the ids to
+      // distinct completed runs): a missing or short list drops the
+      // suggestion, it must never fail the whole structured output — that
+      // would lose the turn's memories as well, hence `default([])` here
+      // while the TypeBox side below lists it as required to steer the model.
+      evidenceRefs: z.array(z.string()).default([]),
+    })
     .nullable()
     .optional(),
 });
@@ -100,7 +113,14 @@ export const reflectionParametersSchema = Type.Object({
   ),
   skillSuggestion: Type.Optional(
     Type.Union([
-      Type.Object({ name: Type.String(), description: Type.String(), reason: Type.String() }),
+      Type.Object({
+        name: Type.String(),
+        description: Type.String(),
+        reason: Type.String(),
+        evidenceRefs: Type.Array(Type.String(), {
+          description: `「同类工作已成功完成」的出处：输入里出现过的 run id 或消息 id（<existing_memories> 中 lesson / self_note 行「依据」后的消息 id 也可引用）；代码会把它们解析成你已完成的 run 并按不同 run 计数，须至少 ${SKILL_AUTHOR_REPEAT_THRESHOLD} 个；凑不齐就交 null，不要编造 id`,
+        }),
+      }),
       Type.Null(),
     ]),
   ),

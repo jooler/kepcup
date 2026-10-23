@@ -208,7 +208,8 @@
               {t('skills.enhancedHint', { hint: skill.enhancedInstallHint ?? skill.statusReason ?? '' })}
             </p>
           {/if}
-          {#if skill.status === 'draft' && skill.statusReason !== null}
+          {#if (skill.status === 'draft' || skill.status === 'disabled') && skill.statusReason !== null}
+            <!-- draft = 生成失败原因；disabled = 未启用原因（反思生成的技能停在未启用态时标注来源） -->
             <p class="mt-1 text-xs text-muted-foreground" data-testid="skill-status-reason">
               {skill.statusReason}
             </p>

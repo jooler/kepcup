@@ -216,8 +216,11 @@ export class JobsRunner {
         return;
       case 'skill_authoring':
       case 'skill_suggestion':
-        // P08: both task sources run the same generation loop (the reflection
-        // already checked the repeat threshold for skill_suggestion).
+        // P08: both task sources run the same generation loop. The
+        // reflection's enqueue gate already resolved the evidence of a
+        // skill_suggestion to distinct runs; the job type decides whether
+        // success leaves the skill disabled (skill_suggestion, model intent)
+        // or activates it (skill_authoring / create_skill, user intent).
         if (this.#deps.skills === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined) {
           throw new Error('skills domain not wired; cannot run skill authoring');
         }
