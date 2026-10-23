@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -1118,9 +1118,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       let stats;
       try {
-        stats = await stat(resolved);
+        // lstat: a dangling symlink's canonicalPath often stays the link path
+        // (realpath cannot follow a missing target), so the check above can
+        // pass on Windows. Never preview through a symlink.
+        stats = await lstat(resolved);
       } catch {
         throw new AppError('NOT_FOUND', '文件不存在或已被移动');
+      }
+      if (stats.isSymbolicLink()) {
+        throw new AppError('PATH_OUT_OF_SCOPE', '该文件不在本对话的文件卡内');
       }
       if (!stats.isFile()) throw new AppError('NOT_FOUND', '文件不存在或不是普通文件');
       const limit = previewMaxBytesOf(resolved);
