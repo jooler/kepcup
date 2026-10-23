@@ -16,6 +16,7 @@ export const enUS = {
   'sidebar.userEmail': 'Local account',
   'menu.settings': 'Settings',
   'menu.contacts': 'Contacts',
+  'menu.connectPhone': 'Connect phone',
   'narrow.tabBarLabel': 'Global navigation',
   'narrow.tabChats': 'Chats',
   'narrow.tabContacts': 'Contacts',
@@ -1750,7 +1751,9 @@ export const enUS = {
   'settings.remotePairTitle': 'Connect phone',
   'settings.remotePairHint':
     'Scan the QR code with your phone to open the KepCup PWA and pair. The code is one-time and valid for 5 minutes.',
-  'settings.remotePairUnavailable': 'Remote control is off — turn on the switch above first.',
+  'settings.remotePairGateBody':
+    'Remote control is off. Tick the switch below to turn it on and get a pairing QR code right away.',
+  'settings.remotePairGateCheck': 'Allow phone remote control',
   'settings.remotePairExpired': 'QR code expired',
   'settings.remotePairRegenerate': 'Regenerate',
   'settings.remotePairWaitConfirm': 'Waiting for the phone to confirm…',

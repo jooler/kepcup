@@ -52,6 +52,10 @@
     'agents.default',
   ]);
   const special = $derived(SPECIAL_ITEM_IDS.has(item.id));
+  /** 勾选即存（不渲染保存按钮）：单开关条目，改动立即生效（remote.enabled 是
+   * 「允许手机遥控」总开关，侧栏「连接手机」门槛勾选走的是同一份设置）。 */
+  const AUTO_APPLY_ITEM_IDS = new Set(['remote.enabled']);
+  const autoApply = $derived(AUTO_APPLY_ITEM_IDS.has(item.id));
 
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   const seeded = untrack(() =>
@@ -226,6 +230,16 @@
     return valuesFromState(item, state);
   }
 
+  /** 勾选即存条目的连续拨动排队串行执行：每次 apply 取当时的状态快照，
+   * 快速来回拨动最终值 = 最后一次勾选（失败时 resync 回持久化值）。 */
+  let applyQueue: Promise<void> = Promise.resolve();
+
+  function onToggleChange(name: string, checked: boolean): void {
+    toggles[name] = checked;
+    if (!autoApply) return;
+    applyQueue = applyQueue.then(() => apply());
+  }
+
   async function apply(): Promise<void> {
     if (busy) return;
     busy = true;
@@ -236,7 +250,7 @@
         onConflict?.(out.current);
         return;
       }
-      toast.success(t('settingCard.appliedToast'));
+      if (!autoApply) toast.success(t('settingCard.appliedToast'));
       await settingsStore.refresh().catch(() => undefined);
       onSaved?.(out.values);
     } catch (error) {
@@ -245,6 +259,8 @@
           error: error instanceof Error ? error.message : String(error),
         }),
       );
+      // 勾选即存没有保存按钮可退回：失败立刻把控件拨回持久化值，别让勾选态骗人。
+      if (autoApply) resync();
     } finally {
       busy = false;
     }
@@ -306,7 +322,11 @@
       </label>
     {:else if fieldControl(field) === 'toggle'}
       <label class="flex items-start gap-2 text-sm">
-        <Checkbox bind:checked={toggles[field.name]} data-testid={`${testid}-${field.name}`} />
+        <Checkbox
+          bind:checked={toggles[field.name]}
+          onCheckedChange={(checked) => onToggleChange(field.name, checked === true)}
+          data-testid={`${testid}-${field.name}`}
+        />
         <span class="grid gap-0.5">
           <span>{settingFieldText(item.id, field.name, field.label)}</span>
           {#if field.hint !== undefined}
@@ -404,9 +424,16 @@
       </div>
     {/if}
   {/each}
-  <div class="flex justify-end">
-    <Button size="sm" disabled={busy} onclick={() => void apply()} data-testid={`${testid}-apply`}>
-      {t('settingCard.apply')}
-    </Button>
-  </div>
+  {#if !autoApply}
+    <div class="flex justify-end">
+      <Button
+        size="sm"
+        disabled={busy}
+        onclick={() => void apply()}
+        data-testid={`${testid}-apply`}
+      >
+        {t('settingCard.apply')}
+      </Button>
+    </div>
+  {/if}
 </div>

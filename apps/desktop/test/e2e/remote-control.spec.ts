@@ -11,7 +11,8 @@ import { dismissStartPanel, rpc } from './helpers/create-bot';
  * 二维码小窗 → 注入配对请求（测试缝 `remote.testInjectPairing`，模拟手机发来
  * pairing.request，走真实 PSK HMAC + 待确认路径）→ 确认卡「允许」→ 设备出现在
  * 列表 → 撤销（二次确认）后设备消失。真实中转 / 手机浏览器不在 e2e 范围
- *（WP6 `wrangler dev` 三端联调覆盖）。
+ *（WP6 `wrangler dev` 三端联调覆盖）。侧栏头像菜单的「连接手机」入口与
+ * 「勾选即开启」门槛、设置卡勾选即存见第三条用例。
  */
 
 interface Session {
@@ -164,6 +165,51 @@ test.describe('D96 远程遥控', () => {
         failed = true;
       }
       expect(failed).toBe(true);
+    } finally {
+      await closeSession(session);
+    }
+  });
+
+  test('侧栏「连接手机」：门槛勾选立即开启并出二维码；设置卡勾选即存无保存按钮', async () => {
+    const session = await startSession('kepcup-remote-e2e-c-');
+    const { page } = session;
+    try {
+      await waitReady(page);
+      await dismissStartPanel(page);
+
+      // 头像菜单 → 连接手机：开关未开，先出门槛（不出二维码）。
+      await page.locator('[data-testid="user-menu-trigger"]').click();
+      await page.locator('[data-testid="menu-connect-phone"]').click();
+      await expect(page.locator('[data-testid="remote-pair-dialog"]')).toBeVisible();
+      await expect(page.locator('[data-testid="remote-pair-gate"]')).toBeVisible();
+      await expect(page.locator('[data-testid="remote-qr"]')).toHaveCount(0);
+
+      // 勾选 = 用户本人开启（remote.config.set，托盘同款写路径）→ 立刻出二维码。
+      await page.locator('[data-testid="remote-pair-gate-check"]').click();
+      await expect(page.locator('[data-testid="remote-qr"]')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('[data-testid="remote-pair-gate"]')).toHaveCount(0);
+      await expect
+        .poll(async () => ((await rpc(page, 'remote.status')) as { enabled: boolean }).enabled)
+        .toBe(true);
+
+      // 设置页的同一份条目卡：勾选即存（无保存按钮），开关随门槛勾选已为真。
+      // remote.relay（中转地址）仍是有保存按钮的普通卡，别误伤。
+      await page.keyboard.press('Escape');
+      await page.locator('[data-testid="user-menu-trigger"]').click();
+      await page.locator('[data-testid="menu-settings"]').click();
+      await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+      await page.locator('[data-testid="settings-nav-remote"]').click();
+      await expect(page.locator('[data-settings-section="remote"]')).toBeVisible();
+      const enabledCard = page.locator('[data-settings-anchor="remote-enabled"]');
+      await expect(enabledCard.locator('[data-testid="setting-card-fields-apply"]')).toHaveCount(0);
+      await expect(
+        enabledCard.locator('[data-testid="setting-card-fields-enabled"]'),
+      ).toBeChecked();
+      await expect(
+        page.locator(
+          '[data-settings-anchor="remote-relay"] [data-testid="setting-card-fields-apply"]',
+        ),
+      ).toHaveCount(1);
     } finally {
       await closeSession(session);
     }

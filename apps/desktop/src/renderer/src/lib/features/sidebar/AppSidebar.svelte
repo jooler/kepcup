@@ -21,6 +21,7 @@
     Check,
     Pin,
     PinOff,
+    Smartphone,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -43,6 +44,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
+  import { remotePairing } from '$lib/features/remote/remote-pairing.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
   import { sidebarSections } from './sidebar-sections.svelte';
@@ -1154,6 +1156,15 @@
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="center" class="min-w-40">
+              <!-- 连接手机（D96）：拉起配对二维码小窗；未开启远程遥控时小窗
+                   先出「勾选即开启」门槛（见 RemotePairDialog）。 -->
+              <DropdownMenu.Item
+                onclick={() => remotePairing.request()}
+                data-testid="menu-connect-phone"
+              >
+                <Smartphone aria-hidden="true" />
+                {t('menu.connectPhone')}
+              </DropdownMenu.Item>
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
                 data-testid="menu-settings"
@@ -1187,6 +1198,14 @@
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="start" class="min-w-40">
+              <!-- 同图标模式的「连接手机」入口。 -->
+              <DropdownMenu.Item
+                onclick={() => remotePairing.request()}
+                data-testid="menu-connect-phone"
+              >
+                <Smartphone aria-hidden="true" />
+                {t('menu.connectPhone')}
+              </DropdownMenu.Item>
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
                 data-testid="menu-settings"
