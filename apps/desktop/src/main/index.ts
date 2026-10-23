@@ -11,6 +11,7 @@ import {
   nativeImage,
   nativeTheme,
   powerMonitor,
+  powerSaveBlocker,
   session,
   shell,
   systemPreferences,
@@ -35,6 +36,7 @@ import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
 import { applyLoginItem } from './login-item';
+import { createRemoteKeepAwake } from './remote-keep-awake';
 import { isPermissionAllowed } from './app-permissions';
 import {
   parseSensorKind,
@@ -67,6 +69,13 @@ const trayRemote: {
   anchor: 'off',
   onlineDevices: 0,
 };
+/** 连接存续期间阻止系统空闲休眠（D96 按需连接配套，见 remote-keep-awake.ts）。 */
+const remoteKeepAwake = createRemoteKeepAwake(powerSaveBlocker);
+/** trayRemote 的唯一写入口：托盘文案与休眠抑制都从这里跟随最新状态。 */
+function applyTrayRemote(): void {
+  tray?.setRemote({ ...trayRemote });
+  remoteKeepAwake.update(trayRemote.enabled, trayRemote.anchor);
+}
 /** Latest update-gate snapshot for late-loading renderer windows (P13-B UI). */
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
 /** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
@@ -586,7 +595,7 @@ function bootstrap(): void {
           trayRemote.enabled = parsed.enabled;
           trayRemote.anchor = parsed.anchor ?? 'off';
           trayRemote.onlineDevices = parsed.onlineDeviceIds?.length ?? 0;
-          tray?.setRemote({ ...trayRemote });
+          applyTrayRemote();
         })
         .catch(() => {});
     }
@@ -611,12 +620,13 @@ function bootstrap(): void {
     unattendedActive = active;
     tray?.setUnattended(active);
   });
-  // D96: 托盘的远程遥控状态（开关勾选 + 中转连接后缀 + 在线台数）。
+  // D96: 托盘的远程遥控状态（开关勾选 + 中转连接后缀 + 在线台数）；
+  // 同一份状态驱动休眠抑制（连接活着 → 阻止系统空闲休眠）。
   coreHost.onRemoteState((payload) => {
     trayRemote.enabled = payload.enabled;
     trayRemote.anchor = payload.state;
     trayRemote.onlineDevices = payload.onlineDevices;
-    tray?.setRemote({ ...trayRemote });
+    applyTrayRemote();
   });
   // P13 任务 3: launch-at-login (settings default ON). Applied best-effort —
   // an unsigned macOS build may refuse to register (logged; verification on a
