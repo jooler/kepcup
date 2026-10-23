@@ -33,6 +33,10 @@ import { currentRemoteSource } from '../../src/remote/audit.js';
  * 默认跳过（全量 `pnpm test` 不依赖 wrangler / 端口 / 浏览器）；手动跑：
  *   KEPCUP_RELAY_E2E=1 node scripts/run-tests.mjs run packages/core/test/integration/remote-relay.e2e.test.ts
  * 端口可用 KEPCUP_RELAY_E2E_PORT 覆盖（默认 8977）。
+ *
+ * 前置：真 web leg 需要 `pnpm --filter @kepcup/desktop build:web` 先产出
+ * `infra/cloudflare/relay/public`（构建产物不入 git——fresh checkout 首跑必缺，
+ * wrangler dev 会因 assets.directory 不存在拒绝启动，表现为 healthz 120s 超时）。
  */
 
 const RUN = process.env.KEPCUP_RELAY_E2E === '1';
