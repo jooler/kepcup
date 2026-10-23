@@ -3,6 +3,7 @@
   import { sandboxReasonText, t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import {
@@ -128,15 +129,35 @@
       {/if}
     {/if}
     <div class="flex gap-2">
-      <Button size="sm" variant="outline" disabled={probing} onclick={() => void reprobe()} data-testid="sandbox-reprobe">
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={probing}
+        onclick={() => void reprobe()}
+        data-testid="sandbox-reprobe"
+      >
         {probing ? t('settings.sandboxChecking') : t('settings.sandboxReprobe')}
       </Button>
-      <!-- P12-B 任务 7：可随时从设置页开始准备（向导按平台渲染内容） -->
-      <Button size="sm" variant="secondary" onclick={() => sandboxWizard.show()} data-testid="sandbox-wizard-open">
+      <!-- P12-B 任务 7：可随时从设置页开始准备（向导按平台渲染内容）。
+           D96 远程端点：WSL 等 OS 级准备流程是桌面专属，capabilities 置灰不隐藏。 -->
+      <Button
+        size="sm"
+        variant="secondary"
+        class={endpointSupports('sandbox-wizard') ? '' : 'opacity-50'}
+        disabled={!endpointSupports('sandbox-wizard')}
+        title={endpointSupports('sandbox-wizard') ? undefined : t('settings.desktopOnly')}
+        onclick={() => sandboxWizard.show()}
+        data-testid="sandbox-wizard-open"
+      >
         {t('settings.sandboxWizardOpen')}
       </Button>
       {#if !status.available && status.fixHint !== undefined}
-        <Button size="sm" variant="secondary" onclick={() => (fixDialogOpen = true)} data-testid="sandbox-fix-open">
+        <Button
+          size="sm"
+          variant="secondary"
+          onclick={() => (fixDialogOpen = true)}
+          data-testid="sandbox-fix-open"
+        >
           {t('settings.sandboxFixOpen')}
         </Button>
       {/if}
@@ -150,9 +171,16 @@
       <DialogTitle>{t('settings.sandboxFixTitle')}</DialogTitle>
       <DialogDescription>{t('settings.sandboxFixDescription')}</DialogDescription>
     </DialogHeader>
-    <pre class="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs" data-testid="sandbox-fix-command">{status?.fixHint}</pre>
+    <pre
+      class="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs"
+      data-testid="sandbox-fix-command">{status?.fixHint}</pre>
     <div class="flex gap-2">
-      <Button size="sm" variant="outline" onclick={() => void copyFix()} data-testid="sandbox-fix-copy">
+      <Button
+        size="sm"
+        variant="outline"
+        onclick={() => void copyFix()}
+        data-testid="sandbox-fix-copy"
+      >
         {copied ? t('settings.sandboxFixCopied') : t('settings.sandboxFixCopy')}
       </Button>
       <Button size="sm" onclick={() => void reprobe()} data-testid="sandbox-fix-reprobe">

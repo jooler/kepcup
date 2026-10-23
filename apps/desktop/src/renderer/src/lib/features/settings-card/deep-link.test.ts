@@ -112,18 +112,26 @@ describe('applyRendererValues（渲染层条目的本机写入）', () => {
     );
     const themeCalls: string[] = [];
     expect(
-      applyRendererValues(getSettingItem('general.theme')!, { theme: 'dark' }, {
-        ...writers,
-        setTheme: (theme) => themeCalls.push(theme),
-        setLanguage: (language) => themeCalls.push(language),
-      }),
+      applyRendererValues(
+        getSettingItem('general.theme')!,
+        { theme: 'dark' },
+        {
+          ...writers,
+          setTheme: (theme) => themeCalls.push(theme),
+          setLanguage: (language) => themeCalls.push(language),
+        },
+      ),
     ).toBe(true);
     expect(
-      applyRendererValues(getSettingItem('general.language')!, { language: 'zh-CN' }, {
-        ...writers,
-        setTheme: () => undefined,
-        setLanguage: (language) => themeCalls.push(language),
-      }),
+      applyRendererValues(
+        getSettingItem('general.language')!,
+        { language: 'zh-CN' },
+        {
+          ...writers,
+          setTheme: () => undefined,
+          setLanguage: (language) => themeCalls.push(language),
+        },
+      ),
     ).toBe(true);
     expect(themeCalls).toEqual(['dark', 'zh-CN']);
   });
@@ -145,13 +153,12 @@ describe('界面语言（D89 审查修复：只认支持的语言）', () => {
   });
 
   it('目录里 general.language 的静态选项与 i18n 注册的语言一致（core 按它校验）', () => {
-    const source = readFileSync(
-      new URL('../../i18n/state.svelte.ts', import.meta.url),
-      'utf8',
-    );
+    const source = readFileSync(new URL('../../i18n/state.svelte.ts', import.meta.url), 'utf8');
     const block = /localeOptions: LocaleOption\[\] = \[([^\]]*)\]/.exec(source)?.[1] ?? '';
     const ids = [...block.matchAll(/id: '([^']+)'/g)].map((match) => match[1]);
-    const field = getSettingItem('general.language')!.fields.find((entry) => entry.name === 'language')!;
+    const field = getSettingItem('general.language')!.fields.find(
+      (entry) => entry.name === 'language',
+    )!;
     expect(field.options).toBe('static');
     expect(ids.length).toBeGreaterThan(0);
     expect((field.staticOptions ?? []).map((option) => option.value)).toEqual(ids);

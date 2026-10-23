@@ -49,3 +49,17 @@ apps/desktop/resources/entitlements.mac.expanded.plist
 
 # macOS
 .DS_Store
+
+# D96 WP5: renderer web 构建(PWA)的产物,由 `pnpm --filter @kepcup/desktop build:web`
+# 生成到中转 Worker 的静态资产目录;public/ 里的占位 index.html 会被构建覆盖,
+# README.md 与 verify.mjs 与构建无关,始终入库。
+infra/cloudflare/relay/public/assets/
+infra/cloudflare/relay/public/index.html
+infra/cloudflare/relay/public/manifest.webmanifest
+infra/cloudflare/relay/public/sw.js
+infra/cloudflare/relay/public/icon.svg
+infra/cloudflare/relay/public/icon-256.png
+infra/cloudflare/relay/public/icon-512.png
+
+# D96 WP6: wrangler dev 本地联调的运行时状态(workerd 持久化/临时构建产物)
+infra/cloudflare/relay/.wrangler/

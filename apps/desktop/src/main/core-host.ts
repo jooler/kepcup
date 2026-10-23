@@ -13,8 +13,10 @@ import {
   createRpcChannel,
   platformAutostartPayloadSchema,
   platformNotifyPayloadSchema,
+  platformRemoteStatePayloadSchema,
   platformShareTargetsChangedPayloadSchema,
   platformUnattendedPayloadSchema,
+  type PlatformRemoteStatePayload,
   type CoreStatusPayload,
   type RpcChannel,
   type RpcMethodSpec,
@@ -27,7 +29,9 @@ export interface CoreHostEvents {
   onStatus(listener: (payload: CoreStatusPayload) => void): () => void;
   onState(listener: (state: CoreProcessState) => void): () => void;
   /** Core asks the main process to show a system notification (P03). */
-  onNotify(listener: (payload: { conversationId: string | null; title: string; body: string }) => void): () => void;
+  onNotify(
+    listener: (payload: { conversationId: string | null; title: string; body: string }) => void,
+  ): () => void;
   /** Unattended-mode state changed (tray indicator). */
   onUnattended(listener: (payload: { active: boolean; until: number | null }) => void): () => void;
   /** Launch-at-login setting changed or was pushed at bind (P13 任务 3). */
@@ -37,6 +41,8 @@ export interface CoreHostEvents {
    * `share.targets` 并原子写 App Group 里的 `targets.v1.json`。
    */
   onShareTargetsChanged(listener: (payload: ShareTargetsChanged) => void): () => void;
+  /** D96 远程遥控状态变化（托盘菜单与状态后缀）。 */
+  onRemoteState(listener: (payload: PlatformRemoteStatePayload) => void): () => void;
 }
 
 function portToTransport(port: MessagePortMain) {
@@ -82,6 +88,7 @@ export class CoreHost implements CoreHostEvents {
   >();
   private readonly autostartListeners = new Set<(payload: { enabled: boolean }) => void>();
   private readonly shareTargetsListeners = new Set<(payload: ShareTargetsChanged) => void>();
+  private readonly remoteStateListeners = new Set<(payload: PlatformRemoteStatePayload) => void>();
 
   constructor(
     private readonly appVersion: string,
@@ -158,6 +165,11 @@ export class CoreHost implements CoreHostEvents {
     return () => this.shareTargetsListeners.delete(listener);
   }
 
+  onRemoteState(listener: (payload: PlatformRemoteStatePayload) => void): () => void {
+    this.remoteStateListeners.add(listener);
+    return () => this.remoteStateListeners.delete(listener);
+  }
+
   private fork(): void {
     const proc = utilityProcess.fork(join(__dirname, 'core-entry/index.js'), [], {
       serviceName: 'kepcup-core',
@@ -208,6 +220,11 @@ export class CoreHost implements CoreHostEvents {
           const parsed = platformShareTargetsChangedPayloadSchema.safeParse(payload);
           if (!parsed.success) return;
           for (const listener of this.shareTargetsListeners) listener(parsed.data);
+        },
+        'platform.remoteState': (payload) => {
+          const parsed = platformRemoteStatePayloadSchema.safeParse(payload);
+          if (!parsed.success) return;
+          for (const listener of this.remoteStateListeners) listener(parsed.data);
         },
       },
     });

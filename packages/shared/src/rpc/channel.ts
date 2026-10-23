@@ -123,19 +123,24 @@ export function createRpcChannel(options: CreateRpcChannelOptions): RpcChannel {
     handlers[name] = handler ?? (() => undefined);
   }
 
-  const rpc: BirpcReturn<Record<string, (...args: unknown[]) => unknown>, typeof handlers> =
-    createBirpc<Record<string, (...args: unknown[]) => unknown>, typeof handlers>(handlers, {
-      post: (data) => options.transport.post(data),
-      on: (fn) => {
-        options.transport.onData(fn as (data: unknown) => void);
-      },
-      timeout: options.timeoutMs ?? RPC_CALL_TIMEOUT_MS,
-    });
+  const rpc: BirpcReturn<
+    Record<string, (...args: unknown[]) => unknown>,
+    typeof handlers
+  > = createBirpc<Record<string, (...args: unknown[]) => unknown>, typeof handlers>(handlers, {
+    post: (data) => options.transport.post(data),
+    on: (fn) => {
+      options.transport.onData(fn as (data: unknown) => void);
+    },
+    timeout: options.timeoutMs ?? RPC_CALL_TIMEOUT_MS,
+  });
 
   return {
     async call(method, input) {
       try {
-        return await rpc.$call(method, input);
+        // 无参调用必须真的零参发起：birpc 把 (method, input) 序列化为 a:[input]，
+        // a:[undefined] 过 JSON（远程链路）会变 a:[null]，被无参方法（voidInput）
+        // 的 zod 校验拒掉。三种传输（IPC / platform port / 远程 ws）共用此处。
+        return await (input === undefined ? rpc.$call(method) : rpc.$call(method, input));
       } catch (error) {
         throw unwrapErrorEnvelope(error);
       }

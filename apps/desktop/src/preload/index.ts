@@ -131,6 +131,14 @@ const api = {
       ipcRenderer.removeListener('navigate-conversation', listener);
     };
   },
+  /** D96: 托盘「连接手机…」→ 打开窗口并弹出配对二维码小窗。 */
+  onOpenRemotePairing: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('open-remote-pairing', listener);
+    return () => {
+      ipcRenderer.removeListener('open-remote-pairing', listener);
+    };
+  },
   // --- P13 任务 2: update gate surface (P13-B consumes the UI) ---------------
   /** Latest update-gate snapshot (safe to call before the first push). */
   updateStatus: (): Promise<unknown> => ipcRenderer.invoke('update:status'),

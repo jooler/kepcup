@@ -88,7 +88,10 @@
   {:else}
     <div class="max-h-44 space-y-1.5 overflow-y-auto">
       {#each members as member (member.bot.id)}
-        <label class="flex items-center gap-2 text-sm" data-testid={`project-card-lead-${member.bot.id}`}>
+        <label
+          class="flex items-center gap-2 text-sm"
+          data-testid={`project-card-lead-${member.bot.id}`}
+        >
           <input
             type="radio"
             name="project-card-lead-{conversationId}"

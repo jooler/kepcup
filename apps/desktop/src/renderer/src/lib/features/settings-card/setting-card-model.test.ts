@@ -163,11 +163,15 @@ describe('预填过滤', () => {
     expect(settingCardPrefill(item('mcp.servers'), 'user-only', mcpServer)).toBeNull();
     expect(settingCardPrefill(item('mcp.servers'), 'confirm', mcpServer)).toEqual(mcpServer);
     const profileName = { name: '工作' };
-    expect(settingCardPrefill(item('browser.shared-profiles'), 'user-only', profileName)).toBeNull();
+    expect(
+      settingCardPrefill(item('browser.shared-profiles'), 'user-only', profileName),
+    ).toBeNull();
     expect(settingCardPrefill(item('browser.shared-profiles'), 'confirm', profileName)).toEqual(
       profileName,
     );
-    expect(settingCardPrefill(item('environment.toolchains'), 'user-only', { item: 'python' })).toBeNull();
+    expect(
+      settingCardPrefill(item('environment.toolchains'), 'user-only', { item: 'python' }),
+    ).toBeNull();
   });
 
   it('能力模型预填：厂商须已适配该能力；厂商/模型写法拆开', () => {
@@ -281,9 +285,11 @@ describe('卡片形态的分发', () => {
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {
-    expect(['receipt', 'confirm', 'form', 'user-only', 'link'].filter((view) =>
-      autoVerifiable(view as Parameters<typeof autoVerifiable>[0]),
-    )).toEqual(['form', 'user-only', 'link']);
+    expect(
+      ['receipt', 'confirm', 'form', 'user-only', 'link'].filter((view) =>
+        autoVerifiable(view as Parameters<typeof autoVerifiable>[0]),
+      ),
+    ).toEqual(['form', 'user-only', 'link']);
     expect(offersManualComplete('form')).toBe(true);
     expect(offersManualComplete('user-only')).toBe(true);
     expect(offersManualComplete('link')).toBe(true);

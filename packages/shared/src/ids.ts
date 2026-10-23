@@ -69,6 +69,14 @@ export function newId(kind: IdKind): string {
   return `${ID_PREFIXES[kind]}${ulid()}`;
 }
 
+/**
+ * 裸 ULID（无前缀）：远程遥控的会话 id（D96）——中转按它路由 / 隔离，
+ * 不可猜性由 ULID 的 80bit 随机段保证（另 48bit 是时间戳；`RELAY_SESSION_ID_PATTERN`）。
+ */
+export function newUlid(): string {
+  return ulid();
+}
+
 export function isId(kind: IdKind, id: string): boolean {
   return id.startsWith(ID_PREFIXES[kind]);
 }

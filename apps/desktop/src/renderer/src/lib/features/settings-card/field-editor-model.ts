@@ -9,13 +9,7 @@ import type { SettingFieldSpec, SettingItem, SettingValues } from '@kepcup/share
  */
 
 export type FieldControlKind =
-  | 'toggle'
-  | 'text'
-  | 'number'
-  | 'select-static'
-  | 'select-agents'
-  | 'select-providers'
-  | 'model';
+  'toggle' | 'text' | 'number' | 'select-static' | 'select-agents' | 'select-providers' | 'model';
 
 /** 这个字段能不能由通用控件渲染；null = 不支持（组件提示去设置页改）。 */
 export function fieldControl(field: SettingFieldSpec): FieldControlKind | null {

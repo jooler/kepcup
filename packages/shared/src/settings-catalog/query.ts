@@ -33,6 +33,7 @@ export const SETTING_GROUP_TITLES: Readonly<Record<SettingGroup, string>> = {
   environment: '环境',
   developer: '开发者',
   diagnostics: '诊断与用量',
+  remote: '远程遥控',
 };
 
 const BY_ID: ReadonlyMap<string, SettingItem> = new Map(

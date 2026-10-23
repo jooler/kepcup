@@ -435,3 +435,64 @@ export function isHostToolInjected(
  */
 export const SUPPLEMENT_TOOL_DESCRIPTION_PREFIX =
   '[补充能力] 若你自带同类能力，优先使用自带能力；仅当其不存在、不可用或失败时调用本工具。';
+
+// --- D96 远程遥控：端点能力（design 46 §1.2 / §3.2）----------------------------
+//
+// 端点（endpoint）= 本机 renderer（desktop）或遥控端点（remote，renderer 的 web
+// 构建）。本机 UI 与远程端点功能完全对等、走同一份 RPC 目录、不做只读门；
+// 下面登记的是**物理上只能落在桌面**的动作：动作照常在桌面执行（弹通知、
+// shell.openExternal、浏览器控制），远程端点的 UI 把对应入口显示为不可用
+// （「仅桌面」态），不隐藏入口造成「功能消失」错觉。
+// 远程端点不新增暴露面，core 不按端点裁剪 RPC（secrets 卫生规则对端点统一适用）。
+
+/** 端点形态。 */
+export const endpointKindSchema = z.enum(['desktop', 'remote']);
+export type EndpointKind = z.infer<typeof endpointKindSchema>;
+
+/**
+ * desktop-only 能力项。粒度是 UI 入口（不是 RPC 方法名）：渲染层据此置灰，
+ * 未来物理桌面动作增多按需追加（追加只影响远程端的显示，不影响桌面）。
+ */
+export const endpointCapabilityIdSchema = z.enum([
+  /** 附件选择本地文件（本地文件选择对话框；手机相册上行 P1）。 */
+  'local-file-dialog',
+  /** 系统浏览器打开链接（shell.openExternal，链接仍可复制）。 */
+  'open-external',
+  /** 在文件管理器中打开（日志目录、附件落盘位置）。 */
+  'reveal-in-file-manager',
+  /** 桌面系统通知。 */
+  'desktop-notification',
+  /** 安装应用更新（重启桌面进程）。 */
+  'install-update',
+  /** 关闭 / 重启桌面应用。 */
+  'shutdown-app',
+  /** 开机自启设置（OS 登录项）。 */
+  'launch-at-login',
+  /** 沙箱准备向导（WSL 安装等 OS 级操作）。 */
+  'sandbox-wizard',
+]);
+export type EndpointCapabilityId = z.infer<typeof endpointCapabilityIdSchema>;
+
+/** desktop-only 全集（remote 端点一项都没有）。 */
+export const DESKTOP_ONLY_CAPABILITIES: readonly EndpointCapabilityId[] = [
+  'local-file-dialog',
+  'open-external',
+  'reveal-in-file-manager',
+  'desktop-notification',
+  'install-update',
+  'shutdown-app',
+  'launch-at-login',
+  'sandbox-wizard',
+];
+
+/**
+ * 端点是否具备某能力：desktop 恒全量（登记表外的未知 id 也按桌面可用处理），
+ * remote 只有 DESKTOP_ONLY_CAPABILITIES 之外的。纯函数，两种构建共用。
+ */
+export function endpointHasCapability(
+  kind: EndpointKind,
+  id: EndpointCapabilityId,
+): boolean {
+  if (kind === 'desktop') return true;
+  return !DESKTOP_ONLY_CAPABILITIES.includes(id);
+}

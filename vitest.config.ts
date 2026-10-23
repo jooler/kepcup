@@ -62,6 +62,11 @@ export default defineConfig({
       {
         test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },
       },
+      // D96 WP3: relay Worker (infra/cloudflare/relay) — DO 路由逻辑为纯类 + mock socket,
+      // 不用 miniflare(本仓测试跑在 Electron-as-Node 运行时下,见 relay/README)。
+      {
+        test: { name: 'infra-relay', include: ['infra/cloudflare/relay/test/**/*.test.ts'] },
+      },
       {
         test: {
           name: 'desktop',

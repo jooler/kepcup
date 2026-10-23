@@ -21,6 +21,12 @@ declare global {
     kepcup: {
       /** Secret nonce of the core-port window message (preload ↔ this page only). */
       portNonce: string;
+      /**
+       * D96 web 构建（手机 PWA）：web-main.ts 的垫片先于任何 renderer 模块打标；
+       * Electron 有真实 preload，恒无此字段。端点形态判定（endpoint.ts）与
+       * CoreConnection 的传输选择都读它。
+       */
+      isWeb?: boolean;
       /** 窗口衬底材质（sync，来自 preload 的 argv 标记）：'acrylic' 仅 Win11 22H2+。 */
       windowMaterial: 'acrylic' | 'opaque';
       platform: {
@@ -49,6 +55,8 @@ declare global {
       ): () => void;
       onCoreProcessState(callback: (state: string) => void): () => void;
       onNavigateConversation(callback: (conversationId: string) => void): () => void;
+      /** D96: 托盘「连接手机…」→ 打开配对二维码小窗（设置页 remote 分区）。 */
+      onOpenRemotePairing(callback: () => void): () => void;
       /** P13 任务 6 诊断: reveals the logs directory in the OS file manager. */
       openLogsDir(): Promise<void>;
       /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
@@ -84,6 +92,12 @@ declare global {
    * code (dev status bar, test seams) is dead-code-eliminated.
    */
   const __KEPCUP_TEST_HOOKS__: boolean;
+
+  /**
+   * D96 web 构建注入的应用版本（vite.config.web.ts 从 package.json 读入），
+   * web 垫片的 platform.info 返回它。
+   */
+  const __KEPCUP_WEB_VERSION__: string;
 }
 
 export type { CoreStatusPayload };

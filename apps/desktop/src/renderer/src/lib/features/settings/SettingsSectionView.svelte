@@ -11,6 +11,7 @@
   import AllowlistSection from './AllowlistSection.svelte';
   import EnvironmentSection from './EnvironmentSection.svelte';
   import ProfileSection from './ProfileSection.svelte';
+  import RemoteSection from './RemoteSection.svelte';
   import UsageSection from './UsageSection.svelte';
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
@@ -91,6 +92,10 @@
     <div data-settings-anchor="schedules">
       <SchedulesSection />
     </div>
+  </div>
+{:else if section === 'remote'}
+  <div data-settings-section="remote" class="space-y-6">
+    <RemoteSection />
   </div>
 {:else if section === 'profile'}
   <div data-settings-section="profile">
