@@ -304,15 +304,18 @@ async function pairedTransport(options?: {
   pskMode?: 'x25519' | 'psk';
   /** accept+done 背靠背投递（无间隔）——真实 hub confirm 后的发送时序。 */
   backToBack?: boolean;
+  storage?: FakeStorage;
+  identityStorage?: FakeStorage;
 }): Promise<PairedHarness> {
   const registry = new FakeSocketRegistry();
-  const storage = new FakeStorage();
+  const storage = options?.storage ?? new FakeStorage();
   const pskMode = options?.pskMode ?? 'psk';
   const crypto = options?.crypto ?? new TestCrypto(pskMode === 'x25519');
   const transport = new WsTransport({
     sessionId: SID,
     socketFactory: (url) => new FakeSocket(url, registry),
     storage,
+    ...(options?.identityStorage !== undefined ? { identityStorage: options.identityStorage } : {}),
     crypto,
     userAgent: 'pairing-test-agent',
   });
@@ -694,6 +697,48 @@ describe('WsTransport: pairing state machine', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('startPairing 防抖：同会话配对进行中重复调用被忽略', async () => {
+    // 真机回归钉（2026-10）：连点「请求配对」产生多条连接 / 多张确认卡——
+    // 同 sessionId 且配对进行中（joining / awaiting-confirm）的重复调用必须幂等。
+    const registry = new FakeSocketRegistry();
+    const transport = new WsTransport({
+      sessionId: SID,
+      socketFactory: (url) => new FakeSocket(url, registry),
+      storage: new FakeStorage(),
+      crypto: new TestCrypto(true),
+    });
+    const link = {
+      relayUrl: 'ws://127.0.0.1:8787',
+      sessionId: SID,
+      secret: CODE.toString('base64url'),
+    };
+    await transport.startPairing(link, '防抖机');
+    registry.last.open();
+    await settle();
+    expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
+    const sentBefore = registry.last.sent.length;
+    await transport.startPairing(link, '防抖机');
+    await transport.startPairing(link, '防抖机');
+    await settle();
+    expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
+    expect(registry.last.sent.length).toBe(sentBefore);
+    expect(registry.sockets).toHaveLength(1); // 没有新建连接
+  });
+
+  it('凭证与计数器入会话存储、设备 id 入身份存储（每标签页独立配对、身份稳定）', async () => {
+    const session = new FakeStorage();
+    const local = new FakeStorage();
+    await pairedTransport({
+      crypto: new TestCrypto(false),
+      storage: session,
+      identityStorage: local,
+    });
+    expect(session.getItem(CREDENTIALS_KEY)).not.toBeNull();
+    expect(session.getItem('kepcup.remote.counters.v1')).not.toBeNull();
+    // 设备 id（非机密的稳定身份）在 localStorage 侧：重配对覆盖同一设备行。
+    expect(local.getItem('kepcup.remote.deviceId.v1')).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
   });
 
   it('reject frame surfaces the reason and drops the pairing', async () => {
