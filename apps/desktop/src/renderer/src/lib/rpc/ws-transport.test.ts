@@ -240,6 +240,8 @@ class FakeAnchor {
     epub: string;
     pskMode: 'x25519' | 'psk';
     token?: string;
+    /** true = done 不与 accept 间隔任何微任务（复现 hub 背靠背发送的到达时序）。 */
+    backToBack?: boolean;
   }): Promise<SessionKeys> {
     const anchorPair = args.pskMode === 'x25519' ? generateEphemeralX25519() : null;
     const apub = anchorPair !== null ? anchorPair.rawPublicKey.toString('base64url') : '';
@@ -267,7 +269,7 @@ class FakeAnchor {
       n: 0,
       data: { kind: 'accept', apub, pskMode: args.pskMode },
     });
-    await settle();
+    if (args.backToBack !== true) await settle();
     const doneCodec = new FrameCodec(keys, this.sid, 'anchor');
     const [done] = doneCodec.seal(
       'pairing',
@@ -297,6 +299,8 @@ interface PairedHarness {
 async function pairedTransport(options?: {
   crypto?: Crypto;
   pskMode?: 'x25519' | 'psk';
+  /** accept+done 背靠背投递（无间隔）——真实 hub confirm 后的发送时序。 */
+  backToBack?: boolean;
 }): Promise<PairedHarness> {
   const registry = new FakeSocketRegistry();
   const storage = new FakeStorage();
@@ -358,6 +362,7 @@ async function pairedTransport(options?: {
     deviceId: request.did,
     epub: request.data.epub,
     pskMode: pskMode,
+    ...(options?.backToBack === true ? { backToBack: true } : {}),
   });
   const endpoint = new FrameCodec(anchorKeys, SID, 'anchor');
   // done 落地 → 凭证入库 + 立即 hello 自举；hello 可被 anchor 端点侧解开。
@@ -585,6 +590,20 @@ describe('WsTransport: pairing state machine', () => {
     const harness = await pairedTransport({ pskMode: 'x25519' });
     expect(harness.storage.getItem(CREDENTIALS_KEY)).not.toBeNull();
     expect(harness.transport.pairing).toEqual({ kind: 'connected' });
+  });
+
+  it('done arriving back-to-back with accept still completes pairing', async () => {
+    // 真机回归钉（2026-10 用户首配实测）：hub confirm 后 accept+done 背靠背发出，
+    // accept 的密钥派生是长 WebCrypto 异步链——done 若不排队等它（旧实现读到
+    // 尚未就位的 null codec 直接 return），桌面显示配对成功、手机永远停在
+    // 「等待确认」。此用例里 done 与 accept 之间没有任何微任务间隔。
+    const { transport, storage, pairings } = await pairedTransport({
+      pskMode: 'x25519',
+      backToBack: true,
+    });
+    expect(transport.pairing).toEqual({ kind: 'connected' });
+    expect(storage.getItem(CREDENTIALS_KEY)).not.toBeNull();
+    expect(pairings.map((phase) => phase.kind)).toContain('connected');
   });
 
   it('reject frame surfaces the reason and drops the pairing', async () => {

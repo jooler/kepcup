@@ -478,7 +478,15 @@ export class RemoteHub {
   }
 
   #sendOutcome(frames: PairingOutcomeFrames): void {
-    if (this.#relay === null || this.#relay.state !== 'online') return;
+    if (this.#relay === null || this.#relay.state !== 'online') {
+      // 设备已登记但 accept/done 送不出去：遥控端会停在等待态。必须留痕——桌面
+      // 提示「配对成功」与手机实际状态在这里分叉，日志是唯一线索。
+      this.#deps.logger.warn(
+        { did: frames.deviceId, relay: this.#relay?.state ?? 'none' },
+        'remote: 配对回执帧未送达（中转不在线）',
+      );
+      return;
+    }
     this.#relay.sendAll(frames.plaintext);
     if (frames.sealed.length > 0) {
       // done 帧按目标设备新密钥直接发（不经过端点表——端点在 hello 后才建立）。
