@@ -15,6 +15,7 @@ export const zhCN = {
   'sidebar.userEmail': '本地账户',
   'menu.settings': '设置',
   'menu.contacts': '通讯录',
+  'menu.connectPhone': '连接手机',
   // 窄屏单栏布局（docs/design/33-narrow-layout.md）：底部全局 tab 与详情页返回
   'narrow.tabBarLabel': '全局导航',
   'narrow.tabChats': '对话',
@@ -1701,7 +1702,8 @@ export const zhCN = {
   'settings.remotePairTitle': '连接手机',
   'settings.remotePairHint':
     '用手机扫码打开 KepCup PWA 并完成配对。二维码 5 分钟内有效，一次性使用。',
-  'settings.remotePairUnavailable': '远程遥控未开启，请先打开上面的总开关。',
+  'settings.remotePairGateBody': '远程遥控还没有开启。勾选下面即可开启，并立刻生成配对二维码。',
+  'settings.remotePairGateCheck': '允许手机遥控',
   'settings.remotePairExpired': '二维码已过期',
   'settings.remotePairRegenerate': '重新生成',
   'settings.remotePairWaitConfirm': '等待手机确认…',

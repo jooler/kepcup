@@ -4,6 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
   import {
     Dialog,
     DialogContent,
@@ -11,6 +12,7 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { renderSVG } from 'uqr';
   import { remotePairing } from './remote-pairing.svelte';
   import type { PairingOffer, RemoteStatusOutput } from '@kepcup/shared';
@@ -29,6 +31,9 @@
   let confirming = $state<null | 'allow' | 'decline'>(null);
   let pairedName = $state<string | null>(null);
   let copied = $state(false);
+  /** 未开启时的门槛勾选（勾上立即开启）与在途标记。 */
+  let gateChecked = $state(false);
+  let enabling = $state(false);
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -92,6 +97,31 @@
     }
   }
 
+  /**
+   * 门槛勾选（D96 §3.1 修订）：勾上即视为用户本人开启远程遥控——走
+   * `remote.config.set`（托盘开关同款路径：写设置并立即同步中转连接），成功后
+   * `enabled` 翻真、直接进入二维码视图，不用再去设置页找开关。失败把勾选弹回。
+   */
+  async function enableRemote(): Promise<void> {
+    if (enabling) return;
+    enabling = true;
+    try {
+      await core.call('remote.config.set', { enabled: true });
+      await settingsStore.refresh().catch(() => undefined);
+      await createOffer();
+    } catch (error) {
+      gateChecked = false;
+      toast.error(
+        errorText(
+          (error as { code?: string } | null)?.code,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    } finally {
+      enabling = false;
+    }
+  }
+
   async function confirm(requestId: string, accept: boolean): Promise<void> {
     confirming = accept ? 'allow' : 'decline';
     try {
@@ -146,6 +176,7 @@
     offer = null;
     status = null;
     pairedName = null;
+    gateChecked = false;
     return undefined;
   });
 </script>
@@ -157,6 +188,7 @@
       offer = null;
       status = null;
       pairedName = null;
+      gateChecked = false;
     }
   }}
 >
@@ -166,9 +198,27 @@
     </DialogHeader>
 
     {#if !enabled}
-      <p class="text-sm text-muted-foreground" data-testid="remote-pair-unavailable">
-        {t('settings.remotePairUnavailable')}
-      </p>
+      <!-- 未开启的门槛：勾选即开启（remote.config.set）并立刻进入二维码视图，
+           侧栏「连接手机」与设置页按钮共用这条路径。 -->
+      <div class="space-y-3 py-2" data-testid="remote-pair-gate">
+        <p class="text-sm text-muted-foreground">{t('settings.remotePairGateBody')}</p>
+        <label class="flex items-start gap-2 text-sm">
+          <Checkbox
+            bind:checked={gateChecked}
+            disabled={enabling}
+            onCheckedChange={(checked) => {
+              if (checked === true) void enableRemote();
+            }}
+            data-testid="remote-pair-gate-check"
+          />
+          <span class="grid gap-0.5">
+            <span>{t('settings.remotePairGateCheck')}</span>
+            <span class="text-xs text-muted-foreground">
+              {t('settings.remoteTrustBoundaryHint')}
+            </span>
+          </span>
+        </label>
+      </div>
       <DialogFooter>
         <Button variant="ghost" onclick={() => (open = false)}>{t('common.close')}</Button>
       </DialogFooter>
