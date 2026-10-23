@@ -1,4 +1,5 @@
 <script lang="ts">
+  import jsQR from 'jsqr';
   import type { Snippet } from 'svelte';
   import { ModeWatcher } from 'mode-watcher';
   import { t, type MessageKey } from '$lib/i18n';
@@ -32,6 +33,85 @@
     error: 'web.rejected.error',
   };
   const rejectKey = $derived(REJECT_KEYS[webGate.rejectReason]);
+
+  // --- 页内扫码（D96 配对体验）：系统相机扫完一关浏览器地址就找不回来（微信内置
+  // 浏览器尤甚），页内扫码让配对链接全程不离开本页。iOS Safari 没有 BarcodeDetector，
+  // 直接用 jsQR 全平台一条路径；getUserMedia 需 HTTPS（PWA 部署域满足）。 ---
+  let scanning = $state(false);
+  let scanError = $state<'denied' | 'failed' | 'bad-code' | null>(null);
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let stream: MediaStream | null = null;
+  let rafId = 0;
+  let lastDecodeAt = 0;
+
+  async function startScan(): Promise<void> {
+    scanError = null;
+    if (navigator.mediaDevices?.getUserMedia === undefined) {
+      scanError = 'failed';
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+    } catch {
+      scanError = 'denied';
+      return;
+    }
+    scanning = true;
+  }
+
+  function stopScan(): void {
+    if (rafId !== 0) cancelAnimationFrame(rafId);
+    rafId = 0;
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    if (videoEl !== null) videoEl.srcObject = null;
+    scanning = false;
+  }
+
+  // video 元素就绪（scanning 为真 + bind:this 到位）后接流并开始解码循环；
+  // 清理只停 rAF（停流归 stopScan / 卸载 effect），避免与取消按钮双停竞态。
+  $effect(() => {
+    if (!scanning || videoEl === null || stream === null) return;
+    const video = videoEl;
+    video.srcObject = stream;
+    void video.play().catch(() => {});
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const tick = (): void => {
+      rafId = requestAnimationFrame(tick);
+      if (ctx === null || video.readyState < 2) return;
+      const now = performance.now();
+      if (now - lastDecodeAt < 120) return; // ~8fps 解码：扫码足够，功耗友好
+      lastDecodeAt = now;
+      const width = 480;
+      const height =
+        video.videoHeight > 0 ? Math.round((video.videoHeight / video.videoWidth) * width) : 360;
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(video, 0, 0, width, height);
+      const code = jsQR(ctx.getImageData(0, 0, width, height).data, width, height);
+      if (code === null) return;
+      stopScan();
+      // 扫到但不是配对链接：回到粘贴页给出错误，不空转继续扫。
+      if (!webGate.acceptScannedCode(code.data)) scanError = 'bad-code';
+    };
+    tick();
+    return () => {
+      if (rafId !== 0) cancelAnimationFrame(rafId);
+      rafId = 0;
+    };
+  });
+  // 组件卸载（配对成功进 App / 刷新）必须停流释放摄像头。
+  $effect(() => () => stopScan());
+
+  const SCAN_ERROR_KEYS = {
+    'bad-code': 'web.scan.badCode',
+    denied: 'web.scan.denied',
+    failed: 'web.scan.failed',
+  } as const;
 </script>
 
 {#if view === 'connected'}
@@ -46,7 +126,27 @@
     </header>
 
     <main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 pb-10">
-      {#if view === 'unpaired'}
+      {#if scanning}
+        <div class="w-full max-w-sm space-y-3 text-center" data-testid="web-gate-scan">
+          <h1 class="text-lg font-semibold">{t('web.scan.title')}</h1>
+          <div
+            class="relative aspect-square w-full overflow-hidden rounded-lg border border-border bg-black"
+          >
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video bind:this={videoEl} class="size-full object-cover" muted autoplay playsinline
+            ></video>
+          </div>
+          <p class="text-xs text-muted-foreground">{t('web.scan.hint')}</p>
+          <button
+            type="button"
+            class="h-10 w-full rounded-md border border-border text-sm hover:bg-muted"
+            onclick={stopScan}
+            data-testid="web-scan-stop"
+          >
+            {t('web.scan.stop')}
+          </button>
+        </div>
+      {:else if view === 'unpaired'}
         <div class="w-full max-w-sm space-y-4" data-testid="web-gate-unpaired">
           <h1 class="text-lg font-semibold">{t('web.unpaired.title')}</h1>
           <p class="text-sm text-muted-foreground">{t('web.unpaired.body')}</p>
@@ -65,6 +165,11 @@
               {t('web.unpaired.invalid')}
             </p>
           {/if}
+          {#if scanError !== null}
+            <p class="text-xs text-destructive" data-testid="web-scan-error">
+              {t(SCAN_ERROR_KEYS[scanError])}
+            </p>
+          {/if}
           <button
             type="button"
             class="h-10 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/80"
@@ -72,6 +177,14 @@
             data-testid="web-pair-submit"
           >
             {t('web.unpaired.submit')}
+          </button>
+          <button
+            type="button"
+            class="h-10 w-full rounded-md border border-border text-sm hover:bg-muted"
+            onclick={() => void startScan()}
+            data-testid="web-scan-start"
+          >
+            {t('web.scan.action')}
           </button>
         </div>
       {:else if view === 'enter-name'}
