@@ -44,6 +44,9 @@ export function installWebShim(version: string): void {
     openLogsDir: noop,
     openPath: noop,
     showItemInFolder: noop,
+    // 桌面 HTML 预览的外链桥接（v0.2.1 FileViewer WebApp 档）：web 端点 no-op——
+    // FileViewer 的 HTML 档只在桌面宿主存在，web 里不会走到。
+    openExternal: noop,
     sendTestNotification: noop,
     sensorPermissionStatus: () => Promise.resolve('unknown'),
     sensorPermissionRequest: () => Promise.resolve(false),
