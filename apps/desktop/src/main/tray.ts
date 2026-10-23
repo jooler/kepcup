@@ -44,7 +44,7 @@ export function createTray(options: {
   let updateReadyVersion: string | null = null;
   let remote: TrayRemoteState = { enabled: false, anchor: 'off', onlineDevices: 0 };
 
-  /** 状态文案（设计 §3.1）：未开不带后缀；已连 (n) / 重连中 / 异常。 */
+  /** 状态文案（设计 §3.1）：未开 / 空闲（按需未连）不带后缀；已连 (n) / 重连中 / 异常。 */
   const remoteStatusSuffix = (): string => {
     if (!remote.enabled) return '';
     switch (remote.anchor) {
@@ -56,6 +56,7 @@ export function createTray(options: {
         return '（中转重连中…）';
       case 'error':
         return '（中转连接异常）';
+      case 'idle':
       case 'off':
         return '';
     }

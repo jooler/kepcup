@@ -60,7 +60,7 @@ let unattendedActive = false;
 /** D96: 托盘可见的远程遥控快照（platform.remoteState 推送 + 就绪时拉一次初值）。 */
 const trayRemote: {
   enabled: boolean;
-  anchor: 'off' | 'connecting' | 'online' | 'error';
+  anchor: 'off' | 'idle' | 'connecting' | 'online' | 'error';
   onlineDevices: number;
 } = {
   enabled: false,
@@ -579,7 +579,7 @@ function bootstrap(): void {
         .then((status) => {
           const parsed = status as {
             enabled?: boolean;
-            anchor?: 'off' | 'connecting' | 'online' | 'error';
+            anchor?: 'off' | 'idle' | 'connecting' | 'online' | 'error';
             onlineDeviceIds?: string[];
           };
           if (typeof parsed?.enabled !== 'boolean') return;

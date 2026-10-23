@@ -90,6 +90,7 @@
       ? ''
       : {
           off: t('settings.remoteAnchorOff'),
+          idle: t('settings.remoteAnchorIdle'),
           connecting: t('settings.remoteAnchorConnecting'),
           online: t('settings.remoteAnchorOnline'),
           error: t('settings.remoteAnchorError'),

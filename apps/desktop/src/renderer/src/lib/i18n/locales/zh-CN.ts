@@ -1683,6 +1683,7 @@ export const zhCN = {
   'settings.remoteSectionHint':
     '手机扫码配对后即可遥控这台桌面：同一份功能、桌面是唯一执行点。配对设备拥有与本机用户同等的权限。',
   'settings.remoteAnchorOff': '远程遥控未开启',
+  'settings.remoteAnchorIdle': '已开启 · 按需连接（打开连接手机或设备上线时才连中转）',
   'settings.remoteAnchorConnecting': '正在连接中转…',
   'settings.remoteAnchorOnline': '已连接中转',
   'settings.remoteAnchorError': '中转连接异常',

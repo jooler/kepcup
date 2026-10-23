@@ -1731,6 +1731,8 @@ export const enUS = {
   'settings.remoteSectionHint':
     'Pair a phone by QR code to remote-control this desktop: same features, the desktop is the only execution point. Paired devices act with the same authority as the local user.',
   'settings.remoteAnchorOff': 'Remote control is off',
+  'settings.remoteAnchorIdle':
+    'On · connects on demand (relay is joined when pairing opens or a device connects)',
   'settings.remoteAnchorConnecting': 'Connecting to relay…',
   'settings.remoteAnchorOnline': 'Relay connected',
   'settings.remoteAnchorError': 'Relay connection error',

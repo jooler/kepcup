@@ -116,7 +116,7 @@ sequenceDiagram
   participant P as 手机 PWA
   participant DO as RelaySession(DO)
   participant A as 桌面 core(anchor)
-  A->>DO: 开关开启即外连 WSS(join anchor)
+  A->>DO: 开关开启且「有用」时外连 WSS(join anchor,按需)
   P->>A: 设置「连接手机」→ 生成配对码 → 二维码
   P->>DO: 扫码打开 PWA,join(viewer)
   P->>A: pairing 帧(pubkey + HMAC(配对码, transcript))
@@ -125,7 +125,7 @@ sequenceDiagram
   Note over P,A: 之后每次重连:join(did, token) → 加密 hello 自证密钥持有+token 比对 → 恢复
 ```
 
-- anchor 常驻外连：开关开启时连接中转，断线指数退避重连（上限 5 分钟），应用层心跳 30s。
+- anchor 按需外连（2026-10 修订，降中转驻留成本）：连接只在「有用」时存在——① 存在未过期配对码（「连接手机」开窗，手机随时可能扫码）；② 有已配对设备在线；③ 刚确认配对 / 最后一台设备离开后的 2 分钟驻留窗（覆盖 done → hello 自举与 PWA 刷新重连）。仅打开开关**不**建立任何连接（原实现常驻，24/7 空转），状态机相应加 `idle`（off / idle / connecting / online / error）。代价（有意取舍）：桌面空闲期间手机发起的连接等不到 anchor（PWA 显示等待桌面），需回桌面点一次「连接手机」即可被已存凭证的手机自动重连接上。断线指数退避重连（上限 5 分钟），应用层心跳 30s。
 - 配对码：16 字节随机，一次性、5 分钟过期，仅存在于桌面内存；二维码即带出（QR 视为带外信道）。
 - 密钥派生：X25519 ECDH（双方临时密钥对）+ HKDF-SHA256（输入：共享秘密 ∥ HMAC(配对码, transcript)）→ 双向会话密钥；WebCrypto 无 X25519 的环境回退 HKDF(配对码) 直派（无 PFS，安全降级注明）。
 - 重连凭证：`deviceId + session token`（随机 32B；凭证与计数器存 PWA sessionStorage——每标签页独立配对、多标签页可各连各的桌面、关页即焚；设备 id 存 localStorage——跨标签页稳定身份，服务端按它识别同一台设备；同一桌面 + 同一设备身份只保留一条在席连接）；桌面只存 token 哈希与密钥指纹。重连时 viewer 发加密 hello（AEAD 解密成功即自证密钥持有，token 与桌面哈希比对防冒用；WP6 审查修订：实现方向与最初「anchor 发 challenge」的设想相反、强度等价，且少一个往返）。
@@ -144,7 +144,7 @@ sequenceDiagram
 
 ### 5.1 shared（`packages/shared/src/domain/remote.ts` 新增）
 
-- `relayEndpointSchema`（中转地址配置）、`pairedDeviceSchema`（deviceId、name、keyFingerprint、createdAt、lastSeenAt、revokedAt）、`pairingOfferSchema`、`remoteAnchorStateSchema`（中转连接状态机：off / connecting / online / error）。
+- `relayEndpointSchema`（中转地址配置）、`pairedDeviceSchema`（deviceId、name、keyFingerprint、createdAt、lastSeenAt、revokedAt）、`pairingOfferSchema`、`remoteAnchorStateSchema`（中转连接状态机：off / idle / connecting / online / error，idle = 开关已开但按需连接策略下不连中转）。
 - 帧与 handshake 的 zod schema（envelope 各类型 + payload 明文结构，供两端 codec 共用）。
 - `host-capabilities.ts` 增远程端点能力集（desktop-only 项的可见性判定，renderer 据此裁剪 UI）。
 
