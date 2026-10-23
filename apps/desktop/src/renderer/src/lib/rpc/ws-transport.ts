@@ -1013,7 +1013,9 @@ export class WsTransport implements RpcTransport {
     this.#sid = credentials.sessionId;
     this.#ensureCodec(credentials);
     const did = credentials.deviceId;
-    this.#enqueueWithCodec((codec) =>
+    // 必须等 hello 真正写进 socket：否则 accept→done 后的微任务 settle 在 Linux /
+    // CI 负载下可能读到仍停在 pairing.request 的 sent 末帧（审查/CI 回归）。
+    await this.#enqueueWithCodec((codec) =>
       codec.seal('hello', { token: credentials.token, ts: this.#now() }, { did }).catch(() => null),
     );
     this.#setPairing({ kind: 'connected' });
@@ -1233,8 +1235,9 @@ export class WsTransport implements RpcTransport {
 
   // --- 出站队列与心跳 --------------------------------------------------------------
 
-  /** seal 排进发送链：按 n 序写 socket，发完持久化计数器快照。 */
-  #enqueueWithCodec(run: (codec: WebFrameCodec) => Promise<RelayEnvelope[] | null>): void {
+  /** seal 排进发送链：按 n 序写 socket，发完持久化计数器快照。返回链 Promise，
+   *  调用方可 await（配对 hello 必须等发出再标 connected；重连路径仍可 fire-and-forget）。 */
+  #enqueueWithCodec(run: (codec: WebFrameCodec) => Promise<RelayEnvelope[] | null>): Promise<void> {
     this.#sendChain = this.#sendChain
       .then(async () => {
         const creation = this.#codecCreation;
@@ -1259,6 +1262,7 @@ export class WsTransport implements RpcTransport {
       .catch(() => {
         // 发送失败由 socket close → 重连路径兜底；这里只保证发送链不断。
       });
+    return this.#sendChain;
   }
 
   #startHeartbeat(): void {

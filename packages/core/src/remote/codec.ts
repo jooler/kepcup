@@ -5,6 +5,7 @@ import {
   createHash,
   createHmac,
   createPrivateKey,
+  createPublicKey,
   diffieHellman,
   generateKeyPairSync,
   hkdfSync,
@@ -75,11 +76,13 @@ export function generateEphemeralX25519(): EphemeralKeyPair {
 /** X25519 共享秘密（32B）；任一侧密钥不合法抛 INTERNAL。 */
 export function x25519Shared(privateKeyDer: Buffer, otherRawPublicKey: Buffer): Buffer {
   const priv = createPrivateKey({ key: privateKeyDer, format: 'der', type: 'pkcs8' });
-  const pub = {
+  // Node 24+（及 Electron 之外的纯 Node）要求 publicKey 为 KeyObject；传
+  // `{ key, format, type }` 会 ERR_INVALID_ARG_VALUE。createPublicKey 两端都通。
+  const pub = createPublicKey({
     key: x25519DerFromRaw(otherRawPublicKey),
-    format: 'der' as const,
-    type: 'spki' as const,
-  };
+    format: 'der',
+    type: 'spki',
+  });
   return diffieHellman({ privateKey: priv, publicKey: pub });
 }
 

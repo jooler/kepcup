@@ -71,14 +71,15 @@
     // 打成一片白）：连续对焦/连续曝光 + 轻微压低曝光。advanced 逐项尽量满足，
     // iOS Safari 等不支持的平台整段拒绝——吞掉，基础扫码不受影响。
     try {
+      // ImageCapture 风格的非标准键（focusMode / exposureMode /…）：DOM lib 与
+      // eslint globals 都没有对应类型名——用 never 断言，避免 no-undef。
       await stream.getVideoTracks()[0]?.applyConstraints({
-        // ImageCapture 风格的非标准键，DOM 类型库不含：显式断言。
         advanced: [
           { focusMode: 'continuous' },
           { exposureMode: 'continuous' },
           { exposureCompensation: -1 },
-        ] as unknown as MediaTrackConstraintSet[],
-      });
+        ],
+      } as never);
     } catch {
       // 平台不支持相机微调：忽略。
     }
@@ -173,7 +174,6 @@
           <div
             class="relative aspect-square w-full overflow-hidden rounded-lg border border-border bg-black"
           >
-            <!-- svelte-ignore a11y_media_has_caption -->
             <video bind:this={videoEl} class="size-full object-cover" muted autoplay playsinline
             ></video>
           </div>
