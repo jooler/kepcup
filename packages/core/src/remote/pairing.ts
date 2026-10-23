@@ -203,7 +203,12 @@ export class PairingService {
     // 常数时间比较（审查修复）：配对码的安全余量不该依赖字符串比较的短路行为。
     const provided = Buffer.from(payload.auth, 'base64url');
     if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-      this.#logger.warn({ did: payload.deviceId }, 'remote pairing: bad code HMAC');
+      // 附带 offer 上下文：坏码几乎总来自「上一张 offer 的码」（每次开窗换码，
+      // 复制的旧链接 / 旧二维码即作废）。码本身不落日志（一次性但仍是 bearer secret）。
+      this.#logger.warn(
+        { did: payload.deviceId, offerAgeMs: now - offer.createdAt, consumed: offer.consumed },
+        'remote pairing: bad code HMAC',
+      );
       return { frames: [reject('bad_code')] };
     }
     const requestId = newUlid();

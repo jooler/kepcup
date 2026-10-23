@@ -610,6 +610,8 @@ export class WsTransport implements RpcTransport {
   #pairingConnectStrikes = 0;
   /** x25519 探测结果缓存（每个页面生命周期探测一次）。 */
   #x25519Support: Promise<boolean> | null = null;
+  /** 配对帧串行链：accept 的密钥派生是长异步链，done 必须等它落地（见 case 'pairing'）。 */
+  #pairingChain: Promise<void> = Promise.resolve();
 
   constructor(options: WsTransportOptions) {
     this.#socketFactory =
@@ -1201,7 +1203,24 @@ export class WsTransport implements RpcTransport {
         void this.#onKick(frame);
         return;
       case 'pairing':
-        void this.#onPairingFrame(frame);
+        // accept→done 竞态钉（真机首配实测）：hub 确认后 accept+done 背靠背发出，
+        // accept 的处理是约 8 步顺序 WebCrypto 调用（摘要 → ECDH → HKDF →
+        // importKey），跑完才把配对 codec 挂到 #codecCreation；done 若不排队等它，
+        // 会读到 null 被静默丢弃——桌面显示配对成功、手机永远停在「等待确认」。
+        // 配对帧量级是个位数，串行零成本；accept 半途抛错（ECDH / HKDF）明确转
+        // rejected，不许停在 awaiting-confirm 干等。
+        this.#pairingChain = this.#pairingChain
+          .then(() => this.#onPairingFrame(frame))
+          .catch((error: unknown) => {
+            console.warn('[kepcup-remote] 配对帧处理失败', error);
+            if (this.#pendingPairing !== null) {
+              this.#pendingPairing = null;
+              this.#derivedKeys = null;
+              this.#detachSocket(true);
+              this.#setPairing({ kind: 'rejected', reason: 'error' });
+              this.#setLinkState('connecting');
+            }
+          });
         return;
       case 'hello':
         return; // viewer 不该收到 hello
