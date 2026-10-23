@@ -1,5 +1,4 @@
 <script lang="ts">
-  import jsQR from 'jsqr';
   import type { Snippet } from 'svelte';
   import { ModeWatcher } from 'mode-watcher';
   import { t, type MessageKey } from '$lib/i18n';
@@ -36,15 +35,21 @@
 
   // --- 页内扫码（D96 配对体验）：系统相机扫完一关浏览器地址就找不回来（微信内置
   // 浏览器尤甚），页内扫码让配对链接全程不离开本页。iOS Safari 没有 BarcodeDetector，
-  // 直接用 jsQR 全平台一条路径；getUserMedia 需 HTTPS（PWA 部署域满足）。 ---
+  // 直接用 jsQR 全平台一条路径；getUserMedia 需 HTTPS（PWA 部署域满足）。
+  // jsQR 走动态 import（审查建议）：桌面 Electron 端点永不进本分支，静态 import
+  // 会把这份 web 专属体积塞进桌面 renderer 包。
   let scanning = $state(false);
-  let scanError = $state<'denied' | 'failed' | 'bad-code' | null>(null);
+  let scanError = $state<'denied' | 'busy' | 'failed' | 'bad-code' | null>(null);
   let videoEl = $state<HTMLVideoElement | null>(null);
   let stream: MediaStream | null = null;
   let rafId = 0;
   let lastDecodeAt = 0;
 
   async function startScan(): Promise<void> {
+    // 重入守卫（审查修复）：getUserMedia 带权限弹窗、耗时数百 ms，期间按钮仍可
+    // 点——双击会发起两次调用，后一次覆盖 stream 引用，前一条流的 track 永不
+    // stop（取消扫码后相机指示灯还亮着）。
+    if (scanning || stream !== null) return;
     scanError = null;
     if (navigator.mediaDevices?.getUserMedia === undefined) {
       scanError = 'failed';
@@ -55,8 +60,11 @@
         video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
-    } catch {
-      scanError = 'denied';
+    } catch (error) {
+      // NotReadableError / TrackStartError：相机被其他应用占用，与权限无关——
+      // 提示用户关掉占用的应用，而不是让他去翻浏览器权限（审查修复）。
+      const name = (error as { name?: string } | null)?.name ?? '';
+      scanError = name === 'NotReadableError' || name === 'TrackStartError' ? 'busy' : 'denied';
       return;
     }
     // 拍屏幕亮二维码的补偿（真机反馈：暗色主题下屏幕很亮，自动曝光把二维码区域
@@ -95,9 +103,21 @@
     void video.play().catch(() => {});
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // 解码器按需加载（动态 import）：加载完成前的帧直接跳过，不阻塞取流。
+    let decode:
+      | ((data: Uint8ClampedArray, w: number, h: number, o: object) => { data: string } | null)
+      | null = null;
+    let disposed = false;
+    void import('jsqr')
+      .then((mod) => {
+        if (!disposed) decode = mod.default;
+      })
+      .catch(() => {
+        if (!disposed) scanError = 'failed';
+      });
     const tick = (): void => {
       rafId = requestAnimationFrame(tick);
-      if (ctx === null || video.readyState < 2) return;
+      if (ctx === null || video.readyState < 2 || decode === null) return;
       const now = performance.now();
       if (now - lastDecodeAt < 150) return; // ~6.7fps 解码：720p 帧较重，扫码足够
       lastDecodeAt = now;
@@ -109,7 +129,7 @@
       canvas.height = height;
       ctx.drawImage(video, 0, 0, width, height);
       // attemptBoth：暗色主题下若二维码以反色（亮模块暗底）出现也能解。
-      const code = jsQR(ctx.getImageData(0, 0, width, height).data, width, height, {
+      const code = decode(ctx.getImageData(0, 0, width, height).data, width, height, {
         inversionAttempts: 'attemptBoth',
       });
       if (code === null) return;
@@ -119,6 +139,7 @@
     };
     tick();
     return () => {
+      disposed = true;
       if (rafId !== 0) cancelAnimationFrame(rafId);
       rafId = 0;
     };
@@ -129,6 +150,7 @@
   const SCAN_ERROR_KEYS = {
     'bad-code': 'web.scan.badCode',
     denied: 'web.scan.denied',
+    busy: 'web.scan.busy',
     failed: 'web.scan.failed',
   } as const;
 </script>

@@ -1,4 +1,5 @@
 import {
+  PAIRING_TTL_MS,
   RELAY_FRAGMENT_THRESHOLD_BYTES,
   RELAY_HEARTBEAT_MS,
   RELAY_MAX_LOGICAL_BYTES,
@@ -668,6 +669,8 @@ export class WsTransport implements RpcTransport {
   #pairingChain: Promise<void> = Promise.resolve();
   /** awaiting-confirm 期间的 pairing.request 重发定时器（#setPairing 离开该态即清）。 */
   #pairingResendTimer: ReturnType<typeof setInterval> | null = null;
+  /** 重发截止时刻（= 发出时刻 + 配对码有效期）：码过期后桌面只回 reject，无意义重发到此为止。 */
+  #pairingResendDeadline = 0;
 
   constructor(options: WsTransportOptions) {
     this.#socketFactory =
@@ -784,6 +787,22 @@ export class WsTransport implements RpcTransport {
     this.#connect();
   }
 
+  /**
+   * 等待桌面确认期间改设备名（用户从等待页回去改名再提交）：更新待发送的
+   * pending 并立刻重发（同 epub 同 HMAC，桌面侧同设备去重）。返回 false 表示
+   * 当前没有在途配对，调用方应走 startPairing 重新开始。
+   */
+  renamePendingPairing(deviceName: string): boolean {
+    const pending = this.#pendingPairing;
+    if (pending === null) return false;
+    const name = deviceName.trim().slice(0, 60);
+    if (name.length === 0) return false;
+    this.#pendingPairing = { ...pending, deviceName: name };
+    this.#setPairing({ kind: 'awaiting-confirm' });
+    this.#resendPairingRequest();
+    return true;
+  }
+
   /** Gate 的手动重试：连接还开着（anchor 离线等待中）就重新自举，否则立刻重连。 */
   reconnect(): void {
     if (this.#socket !== null && this.#socketOpen) {
@@ -871,7 +890,7 @@ export class WsTransport implements RpcTransport {
       this.#socketOpen = true;
       this.#backoffMs = RECONNECT_BACKOFF_BASE_MS;
       this.#pairingConnectStrikes = 0;
-      if (this.#pendingPairing !== null) void this.#sendPairingRequest();
+      if (this.#pendingPairing !== null) this.#resendPairingRequest();
       else void this.#bootstrapHello();
     };
     socket.onmessage = (event) => this.#onSocketMessage(event.data);
@@ -1025,6 +1044,10 @@ export class WsTransport implements RpcTransport {
     const auth = bytesToB64Url(
       new Uint8Array(await this.#crypto.subtle.sign('HMAC', codeKey, hash)),
     );
+    // 派生期间配对可能已被终结（过期终态化 / 桌面 reject / 换码重扫）：不是
+    // 同一份 pending（或 socket 已换）就丢弃这次在途请求，绝不把状态写回
+    // awaiting-confirm（审查修复：过期瞬间的在途重发会把 rejected 覆盖回去）。
+    if (this.#pendingPairing !== pending || this.#socket !== socket) return;
     socket.send(
       JSON.stringify({
         v: RELAY_PROTOCOL_VERSION,
@@ -1049,11 +1072,41 @@ export class WsTransport implements RpcTransport {
 
   /** 等待桌面确认的保活：周期重发 pairing.request（同 epub 同 HMAC，幂等）。 */
   #startPairingResend(): void {
-    this.#stopPairingResend();
+    // 每次重发都会重新进本函数：截止时刻只在「还没有截止」时设一次，以首次
+    // 发出为准（每次重置的话永远不会过期）。
+    if (this.#pairingResendDeadline === 0) {
+      this.#pairingResendDeadline = this.#now() + PAIRING_TTL_MS;
+    }
+    if (this.#pairingResendTimer !== null) return;
     this.#pairingResendTimer = setInterval(() => {
       if (this.#pendingPairing === null || !this.#socketOpen) return;
-      void this.#sendPairingRequest();
+      if (this.#now() >= this.#pairingResendDeadline) {
+        // 码已过期：继续重发只会收到 reject('expired')，就地终态化让用户重扫。
+        this.#stopPairingResend();
+        this.#pendingPairing = null;
+        this.#derivedKeys = null;
+        this.#detachSocket(true);
+        this.#setPairing({ kind: 'rejected', reason: 'expired' });
+        this.#setLinkState('connecting');
+        return;
+      }
+      this.#resendPairingRequest();
     }, PAIRING_RESEND_MS);
+  }
+
+  /** #sendPairingRequest 的发火包装：链上任何一步失败都就地终态化，不停在
+   * joining/awaiting-confirm 干等，也不产生 unhandled rejection。 */
+  #resendPairingRequest(): void {
+    this.#sendPairingRequest().catch((error: unknown) => {
+      console.warn('[kepcup-remote] 配对请求发送失败', error);
+      if (this.#pendingPairing === null) return;
+      this.#stopPairingResend();
+      this.#pendingPairing = null;
+      this.#derivedKeys = null;
+      this.#detachSocket(true);
+      this.#setPairing({ kind: 'rejected', reason: 'error' });
+      this.#setLinkState('connecting');
+    });
   }
 
   #stopPairingResend(): void {
@@ -1061,6 +1114,7 @@ export class WsTransport implements RpcTransport {
       clearInterval(this.#pairingResendTimer);
       this.#pairingResendTimer = null;
     }
+    this.#pairingResendDeadline = 0;
   }
 
   /** accept（明文负载）到达：ECDH + HKDF 派生会话密钥，等 done（密文）落地。 */
@@ -1269,10 +1323,12 @@ export class WsTransport implements RpcTransport {
             void this.#bootstrapHello();
           } else if (this.#pendingPairing !== null && this.#socketOpen) {
             // 配对请求发出时 anchor 尚未进场（被中转丢弃）：桌面连上来即重发。
-            void this.#sendPairingRequest();
+            this.#resendPairingRequest();
           }
         } else if (kind === 'replaced') {
-          // 同 did 的另一个连接顶掉了我们（多开标签页）：不自动重连，避免互踢循环。
+          // 同 did 的另一个连接顶掉了我们（多开标签页）：不自动重连，避免互踢
+          // 循环；用户切回本页时由 visibilitychange 显式重连——可见页获胜（语义
+          // 与实现一致化，审查修正注释）。
           this.#detachSocket(true);
           this.#setLinkState('reconnecting');
         } else if (kind === 'session_idle' || kind === 'ratelimit') {
@@ -1299,18 +1355,27 @@ export class WsTransport implements RpcTransport {
       case 'kick':
         void this.#onKick(frame);
         return;
-      case 'pairing':
+      case 'pairing': {
         // accept→done 竞态钉（真机首配实测）：hub 确认后 accept+done 背靠背发出，
         // accept 的处理是约 8 步顺序 WebCrypto 调用（摘要 → ECDH → HKDF →
         // importKey），跑完才把配对 codec 挂到 #codecCreation；done 若不排队等它，
         // 会读到 null 被静默丢弃——桌面显示配对成功、手机永远停在「等待确认」。
-        // 配对帧量级是个位数，串行零成本；accept 半途抛错（ECDH / HKDF）明确转
-        // rejected，不许停在 awaiting-confirm 干等。
+        // 配对帧量级是个位数，串行零成本。
+        // 归属校验（审查修复）：入链时捕获当时的配对，处理前比对——重扫换码
+        //（同会话新码，sessionId 稳定所以 sid 校验拦不住）后，旧配对的迟到帧
+        // 不得动新配对的状态：旧 accept 会拿新码派生错钥、旧 reject 会清掉新
+        // pending 把新配对拆掉。
+        const pendingAtArrival = this.#pendingPairing;
         this.#pairingChain = this.#pairingChain
-          .then(() => this.#onPairingFrame(frame))
+          .then(() => {
+            if (this.#pendingPairing !== pendingAtArrival) return;
+            return this.#onPairingFrame(frame);
+          })
           .catch((error: unknown) => {
             console.warn('[kepcup-remote] 配对帧处理失败', error);
-            if (this.#pendingPairing !== null) {
+            // 只有「入链时的那份配对」仍是当前配对才就地失败它；旧帧的失败
+            // 不动新配对。
+            if (this.#pendingPairing !== null && this.#pendingPairing === pendingAtArrival) {
               this.#pendingPairing = null;
               this.#derivedKeys = null;
               this.#detachSocket(true);
@@ -1319,6 +1384,7 @@ export class WsTransport implements RpcTransport {
             }
           });
         return;
+      }
       case 'hello':
         return; // viewer 不该收到 hello
       case 'rpc':
@@ -1388,6 +1454,11 @@ export class WsTransport implements RpcTransport {
         return;
       }
       if (payload.success && payload.data.kind === 'reject') {
+        // done 已落地（#pendingPairing 清空）后迟到的 reject（桌面确认即消耗
+        // offer，5s 保活重发落在消耗之后会收到 reject('expired')）：此刻连接与
+        // 凭证都已就绪，绝不能被迟到的 reject 拆线（审查修复：真机约 2-6%/次
+        // 的「配对成功瞬间被拆回拒绝页」）。等待中的合法 reject 不受影响。
+        if (this.#pendingPairing === null) return;
         this.#pendingPairing = null;
         this.#derivedKeys = null;
         this.#detachSocket(true);

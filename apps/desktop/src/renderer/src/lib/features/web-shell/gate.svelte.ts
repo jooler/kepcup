@@ -128,12 +128,21 @@ class WebGateState {
 
   /** enter-name → 发起配对（pairing.request 携带确认过的设备名）。 */
   submitDeviceName(): void {
-    if (this.#transport === null || this.pendingLink === null) return;
+    if (this.#transport === null) return;
+    const name = this.deviceName.trim().slice(0, 60) || defaultDeviceName();
+    this.deviceName = name;
+    // 已在等待确认（用户回去改名再提交）：只更新设备名并重发，不重开配对——
+    // 重开会被传输层的同会话防抖忽略，UI 则永远停在「配对中」（审查修复）。
+    if (this.#transport.renamePendingPairing(name)) {
+      this.pendingLink = null;
+      this.view = 'awaiting-confirm';
+      history.replaceState(null, '', location.pathname + location.search);
+      return;
+    }
+    if (this.pendingLink === null) return;
     // 防抖（真机反馈：连点产生多张确认卡）：进入配对流程后忽略重复提交；
     // 传输层还有同会话幂等兜底（startPairing）。
     if (this.view === 'joining' || this.view === 'awaiting-confirm') return;
-    const name = this.deviceName.trim().slice(0, 60) || defaultDeviceName();
-    this.deviceName = name;
     const link = this.pendingLink;
     this.pendingLink = null;
     this.view = 'joining';

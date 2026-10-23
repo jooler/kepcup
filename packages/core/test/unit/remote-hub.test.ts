@@ -106,6 +106,8 @@ interface HubRig {
   hub: RemoteHub;
   db: SqliteDatabase;
   audit: AuditService;
+  /** 注入时钟（配对有效期等用它；推进它才能让 hasActiveOffer 过期）。 */
+  clock: { now: () => number; advance: (ms: number) => void };
   /** 当前 anchor 连接（enableRemote 之后可用）。 */
   readonly relay: FakeRelayClient;
   emit: (name: keyof CoreEventsMap, payload: never) => void;
@@ -152,6 +154,7 @@ function makeHub(appMethods: Record<string, RpcMethodSpec> = {}): HubRig {
     hub,
     db,
     audit,
+    clock,
     // 开关默认关：relay 实例在第一次 enableRemote / syncConfig 时创建。
     get relay() {
       const client = FakeRelayClient.instances[0];
@@ -323,6 +326,54 @@ describe('remote hub: config & status', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('按需连接：配对码过期且无人配对，驻留窗结束断开', async () => {
+    // offer 过期 → evaluate（无设备）→ 进驻留窗 → 到点断开：#offerTimer 主路径。
+    // 配对有效期走注入时钟，offer 定时器走真实事件环：两者都要推进。
+    vi.useFakeTimers();
+    try {
+      const rig = makeHub();
+      enableRemote(rig);
+      rig.hub.createPairing();
+      expect(rig.relay.state).toBe('online');
+      rig.clock.advance(5 * 60 * 1000 + 1_000); // PAIRING_TTL_MS（hasActiveOffer 过期）
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000); // #offerTimer 到点
+      expect(rig.relay.state).toBe('online'); // 先进驻留窗（扫得晚一点仍可用）
+      await vi.advanceTimersByTimeAsync(RELAY_IDLE_LINGER_MS + 1_000);
+      expect(rig.hub.status().anchor).toBe('idle');
+      expect(rig.relay.state).toBe('off');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('开关关闭后 confirm 拒绝（INVALID_STATE），不登记设备', () => {
+    const rig = makeHub();
+    enableRemote(rig);
+    const viewer = new FakeViewer();
+    const offer = rig.hub.createPairing();
+    rig.relay.inject({
+      v: 1,
+      sid: offer.sessionId,
+      type: 'pairing',
+      did: viewer.did,
+      n: 0,
+      data: {
+        kind: 'request',
+        deviceId: viewer.did,
+        deviceName: viewer.deviceName,
+        userAgent: 'UA',
+        epub: viewer.epub,
+        pskMode: 'x25519',
+        auth: viewer.requestAuth(Buffer.from(offer.url.split(',')[2]!, 'base64url')),
+      },
+    });
+    rig.hub.configSet({ enabled: false });
+    expect(() =>
+      rig.hub.confirmPairing(rig.hub.status().pendingPairing[0]!.requestId, true),
+    ).toThrow('远程遥控未开启');
+    expect(rig.hub.devices().devices).toHaveLength(0);
   });
 
   it('sessionId is stable across config resyncs (persisted in secrets)', () => {

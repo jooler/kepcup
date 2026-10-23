@@ -3272,6 +3272,7 @@ export const enUS = {
   'web.scan.hint': 'Point the camera at the QR code in the desktop pairing dialog',
   'web.scan.stop': 'Cancel scanning',
   'web.scan.denied': 'Camera unavailable: check the browser permission, or paste the link instead',
+  'web.scan.busy': 'Camera is in use by another app — close it and try again',
   'web.scan.failed': 'Camera scanning is not supported here; paste the link instead',
   'web.scan.badCode': 'That QR code is not a pairing link — generate a new one on the desktop',
   'web.name.title': 'Confirm device name',

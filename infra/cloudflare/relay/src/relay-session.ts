@@ -172,7 +172,12 @@ export class RelaySessionLogic {
     }
     // 首个 anchor 回场也要通知先于 anchor 进场的 viewer(它们可能在等配对,
     // 手机端收到 anchor_online 会重发配对请求);TTL 窗口内重连同样通知。
-    if (this.clearTtl() || this.noAnchorSince !== null)
+    // 替换旧 anchor(僵尸:桌面侧断链、close 帧没到 DO)同样通知(审查修复
+    // 2026-10):僵尸被对账回路由表时 noAnchorSince 已被清空,不补 previous
+    // 条件的话真 anchor 回场永远不广播——viewer 的 pong 一直正常(活性判定
+    // 永不触发)而请求发给僵尸全部丢失,界面冻死。重发 hello 是幂等自愈:
+    // hub 对 hello 走 replaced 流程并移植双向计数器。
+    if (this.clearTtl() || this.noAnchorSince !== null || previous !== null)
       this.broadcastInfo('signal', { kind: 'anchor_online' });
     // anchor 回场:补发离场期间错过的 viewer_left(桌面据此清掉早退的端点)
     if (this.pendingViewerLeft.size > 0) {

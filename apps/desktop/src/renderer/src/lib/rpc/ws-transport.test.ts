@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PAIRING_TTL_MS,
   RELAY_HEARTBEAT_MS,
   RELAY_PROTOCOL_VERSION,
   pairingAcceptTranscript,
@@ -694,6 +695,55 @@ describe('WsTransport: pairing state machine', () => {
       });
       await settle();
       expect(requestCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('配对成功后迟到的 reject(expired) 不拆线（5s 重发落在 offer 消耗之后）', async () => {
+    // 真机回归钉（审查修复 2026-10）：桌面确认即消耗 offer，此后到达的重发会收
+    // 到 reject('expired')——旧实现无条件拆线，刚建立的连接被拆回「已过期」页，
+    // 点重试还会清掉刚存的凭证逼用户重扫。
+    const harness = await pairedTransport();
+    expect(harness.transport.pairing).toEqual({ kind: 'connected' });
+    harness.registry.last.receive({
+      v: RELAY_PROTOCOL_VERSION,
+      sid: SID,
+      type: 'pairing',
+      n: 0,
+      data: { kind: 'reject', reason: 'expired' },
+    });
+    await settle();
+    expect(harness.transport.pairing).toEqual({ kind: 'connected' });
+    expect(harness.transport.linkState).toBe('connected');
+    expect(harness.storage.getItem(CREDENTIALS_KEY)).not.toBeNull();
+  });
+
+  it('等待确认超过配对码有效期：停止重发并转 rejected(expired)', async () => {
+    // 审查修复：重发无上限——码过期后桌面只会回 reject，无限重发空转还反复
+    // 打桌面的事件；到线就地终态化让用户重扫。
+    vi.useFakeTimers();
+    try {
+      const registry = new FakeSocketRegistry();
+      const transport = new WsTransport({
+        sessionId: SID,
+        socketFactory: (url) => new FakeSocket(url, registry),
+        storage: new FakeStorage(),
+        crypto: new TestCrypto(true),
+      });
+      await transport.startPairing(
+        { relayUrl: 'ws://127.0.0.1:8787', sessionId: SID, secret: CODE.toString('base64url') },
+        '超时测试机',
+      );
+      registry.last.open();
+      await settle();
+      expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
+      await vi.advanceTimersByTimeAsync(PAIRING_TTL_MS / 2);
+      await settle();
+      expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
+      await vi.advanceTimersByTimeAsync(PAIRING_TTL_MS);
+      await settle();
+      expect(transport.pairing).toEqual({ kind: 'rejected', reason: 'expired' });
     } finally {
       vi.useRealTimers();
     }

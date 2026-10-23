@@ -99,6 +99,8 @@ export class RemoteHub {
   #relay: RelayClientLike | null = null;
   #anchorState: RemoteAnchorState = 'off';
   #anchorReason: string | undefined;
+  /** 拆连接期间屏蔽 close() 的 'off' 回调，避免终态前多发布一帧。 */
+  #suppressRelayState = false;
   readonly #endpoints = new Map<string, Endpoint>();
   /** 合流缓冲：`${event}:${runId}` → 最新 payload（保留最新，定时冲刷）。 */
   readonly #coalesced = new Map<string, { name: RpcEventName; payload: unknown }>();
@@ -205,7 +207,13 @@ export class RemoteHub {
     const sessionId = this.pairing.sessionUlid();
     if (this.#relay !== null) {
       // 地址没变就不折腾；变了先断（close 会回 off，connect 走 connecting→online）。
-      if (this.#relay.url.startsWith(`${relayUrl.replace(/\/+$/, '')}/`)) return;
+      if (this.#relay.url.startsWith(`${relayUrl.replace(/\/+$/, '')}/`)) {
+        // 但 error 态（退避重连等待中）例外：此刻连接正被需要（配对码窗口 /
+        // 设备在线），等退避到点最长 5 分钟手机会白等——立即拨号（幂等，
+        // connect 成功后退避重置 1s）。
+        if (this.#relay.state === 'error') this.#relay.connect();
+        return;
+      }
       this.#relay.close();
       this.#relay = null;
     }
@@ -234,8 +242,16 @@ export class RemoteHub {
   /** 拆掉中转连接与所有端点（开关关 → 'off'；按需策略下无人用 → 'idle'）。 */
   #dropRelay(state: RemoteAnchorState): void {
     this.#cancelLinger();
-    this.#relay?.close();
+    const relay = this.#relay;
     this.#relay = null;
+    // close() 会同步回调 'off'：屏蔽掉，终态一次到位（否则 off→idle 两帧，
+    // 设置页状态文案闪一下）。
+    this.#suppressRelayState = true;
+    try {
+      relay?.close();
+    } finally {
+      this.#suppressRelayState = false;
+    }
     for (const timer of this.#pendingLeftCleanup.values()) clearTimeout(timer);
     this.#pendingLeftCleanup.clear();
     for (const endpoint of this.#endpoints.values()) this.#dropEndpoint(endpoint.deviceId);
@@ -314,6 +330,11 @@ export class RemoteHub {
     requestId: string,
     accept: boolean,
   ): { status: 'paired'; device: PairedDevice } | { status: 'declined' } | { status: 'gone' } {
+    // 与 createPairing 对称的门槛（审查修复）：开关关着时回执帧必无处可发
+    //（relay 已按需拆线），确认只会登记出手机永远收不到 done 的设备行。
+    if (!this.#deps.settings.get().remoteEnabled) {
+      throw new AppError('INVALID_STATE', '远程遥控未开启（先打开总开关）');
+    }
     const outcome = this.pairing.confirm(requestId, accept);
     for (const frames of outcome.frames) this.#sendOutcome(frames);
     if (outcome.status === 'paired' && outcome.device !== undefined) {
@@ -665,6 +686,7 @@ export class RemoteHub {
   // --- 状态发布 ----------------------------------------------------------------
 
   #setAnchorState(state: RemoteAnchorState, reason?: string): void {
+    if (this.#suppressRelayState) return;
     // 按需策略下重估变频繁，同状态同原因不重复广播（error 同因重试同样算重复）。
     if (this.#anchorState === state && this.#anchorReason === reason) return;
     this.#anchorState = state;
