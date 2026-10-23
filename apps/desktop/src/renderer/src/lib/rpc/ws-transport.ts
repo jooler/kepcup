@@ -548,6 +548,51 @@ const CREDENTIALS_KEY = 'kepcup.remote.credentials.v1';
 const COUNTERS_KEY = 'kepcup.remote.counters.v1';
 const DEVICE_ID_KEY = 'kepcup.remote.deviceId.v1';
 
+/**
+ * 存储分层（真机多标签页需求 2026-10）：**凭证与计数器挂 sessionStorage**——
+ * 每个标签页独立配对、各自持有会话密钥，服务端按各自凭证区分连接，多标签页
+ * 可同时各连各的桌面，关闭标签页即焚（共用电脑更安全）；**设备 id 挂
+ * localStorage**——跨标签页稳定且非机密，服务端仍识别「同一台设备」，重配对
+ * 只更新设备行、不产生僵尸条目。同一桌面 + 同一设备身份只保留一条在席连接
+ * （第二个标签页顶掉第一个），这是「配对设备 ≡ 全权用户」的既有安全边界。
+ */
+
+/** 探测一个存储可用性（隐私模式可能直接禁用访问，读取本身就会抛）。 */
+function tryStorage(get: () => Storage): Storage | null {
+  try {
+    const storage = get();
+    const probe = '__kepcup_probe__';
+    storage.setItem(probe, probe);
+    storage.removeItem(probe);
+    return storage;
+  } catch {
+    return null;
+  }
+}
+
+/** 兜底内存垫：两级存储都被禁时退化为本页内存态（刷新即失，原有 catch 语义）。 */
+class MemoryStorage implements Storage {
+  readonly #map = new Map<string, string>();
+  get length(): number {
+    return this.#map.size;
+  }
+  clear(): void {
+    this.#map.clear();
+  }
+  getItem(key: string): string | null {
+    return this.#map.get(key) ?? null;
+  }
+  key(index: number): string | null {
+    return [...this.#map.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.#map.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.#map.set(key, String(value));
+  }
+}
+
 /** 重连退避（毫秒）：1s 起步翻倍、上限 15s（桌面 anchor 的 5min 上限对手机 UI 太钝）。 */
 const RECONNECT_BACKOFF_BASE_MS = 1_000;
 const RECONNECT_BACKOFF_MAX_MS = 15_000;
@@ -564,7 +609,10 @@ export interface WsTransportOptions {
   /** 初始会话 id；resume / startPairing 会用凭证 / 配对链接里的真实值覆盖。 */
   sessionId: string;
   socketFactory?: (url: string) => WsSocketLike;
+  /** 凭证 + 计数器的存储（默认 sessionStorage：每标签页独立，见上方存储分层）。 */
   storage?: Storage;
+  /** 设备 id 的存储（默认 localStorage：跨标签页稳定身份；缺省跟随 storage）。 */
+  identityStorage?: Storage;
   crypto?: Crypto;
   now?: () => number;
   userAgent?: string;
@@ -584,7 +632,10 @@ interface PendingPairing {
 
 export class WsTransport implements RpcTransport {
   readonly #socketFactory: (url: string) => WsSocketLike;
+  /** 凭证 + 计数器（每标签页一份，sessionStorage）。 */
   readonly #storage: Storage;
+  /** 设备 id（跨标签页稳定，localStorage）。 */
+  readonly #identityStorage: Storage;
   readonly #crypto: Crypto;
   readonly #now: () => number;
   readonly #userAgent: string;
@@ -621,7 +672,16 @@ export class WsTransport implements RpcTransport {
   constructor(options: WsTransportOptions) {
     this.#socketFactory =
       options.socketFactory ?? ((url) => new WebSocket(url) as unknown as WsSocketLike);
-    this.#storage = options.storage ?? globalThis.localStorage;
+    this.#storage =
+      options.storage ??
+      tryStorage(() => globalThis.sessionStorage) ??
+      tryStorage(() => globalThis.localStorage) ??
+      new MemoryStorage();
+    this.#identityStorage =
+      options.identityStorage ??
+      options.storage ??
+      tryStorage(() => globalThis.localStorage) ??
+      this.#storage;
     this.#crypto = options.crypto ?? globalThis.crypto;
     this.#now = options.now ?? Date.now;
     this.#userAgent = options.userAgent ?? globalThis.navigator.userAgent;
@@ -696,6 +756,16 @@ export class WsTransport implements RpcTransport {
 
   /** 发起配对：解析过的链接 + 用户确认的设备名。替换进行中的配对。 */
   async startPairing(link: PairingLink, deviceName: string): Promise<void> {
+    // 防抖（真机反馈：双击「请求配对」产生多次请求/多张确认卡）：同一会话已在
+    // 配对流程中就幂等忽略——放在所有 await 之前，连点在同帧也安全。换桌面
+    // （不同 sessionId）重配或被拒后重试才是合法的重新开始。
+    if (
+      this.#pendingPairing !== null &&
+      this.#pendingPairing.link.sessionId === link.sessionId &&
+      (this.#pairing.kind === 'joining' || this.#pairing.kind === 'awaiting-confirm')
+    ) {
+      return;
+    }
     const supportsX25519 = await this.#detectX25519();
     const pskMode: PairingKeyMode = supportsX25519 ? 'x25519' : 'psk';
     const ephemeral = supportsX25519 ? await generateEphemeralX25519(this.#crypto) : null;
@@ -1067,7 +1137,7 @@ export class WsTransport implements RpcTransport {
   #ensureDeviceId(): string {
     let stored: string | null = null;
     try {
-      stored = this.#storage.getItem(DEVICE_ID_KEY);
+      stored = this.#identityStorage.getItem(DEVICE_ID_KEY);
     } catch {
       // 隐私模式读不到就走生成路径。
     }
@@ -1075,7 +1145,7 @@ export class WsTransport implements RpcTransport {
       // 24B 随机的 base64url：32 字符，落在 REMOTE_DEVICE_ID_PATTERN 内。
       const deviceId = bytesToB64Url(randomBytes(this.#crypto, 24));
       try {
-        this.#storage.setItem(DEVICE_ID_KEY, deviceId);
+        this.#identityStorage.setItem(DEVICE_ID_KEY, deviceId);
       } catch {
         // 存不进去（配额 / 隐私模式）：退化为本次会话的内存 id，刷新后重新配对
         //（审查修复：原先裸抛会让 startPairing 整体失败）。

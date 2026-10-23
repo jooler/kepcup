@@ -128,7 +128,7 @@ sequenceDiagram
 - anchor 常驻外连：开关开启时连接中转，断线指数退避重连（上限 5 分钟），应用层心跳 30s。
 - 配对码：16 字节随机，一次性、5 分钟过期，仅存在于桌面内存；二维码即带出（QR 视为带外信道）。
 - 密钥派生：X25519 ECDH（双方临时密钥对）+ HKDF-SHA256（输入：共享秘密 ∥ HMAC(配对码, transcript)）→ 双向会话密钥；WebCrypto 无 X25519 的环境回退 HKDF(配对码) 直派（无 PFS，安全降级注明）。
-- 重连凭证：`deviceId + session token`（随机 32B，PWA storage 保存）；桌面只存 token 哈希与密钥指纹。重连时 viewer 发加密 hello（AEAD 解密成功即自证密钥持有，token 与桌面哈希比对防冒用；WP6 审查修订：实现方向与最初「anchor 发 challenge」的设想相反、强度等价，且少一个往返）。
+- 重连凭证：`deviceId + session token`（随机 32B；凭证与计数器存 PWA sessionStorage——每标签页独立配对、多标签页可各连各的桌面、关页即焚；设备 id 存 localStorage——跨标签页稳定身份，服务端按它识别同一台设备；同一桌面 + 同一设备身份只保留一条在席连接）；桌面只存 token 哈希与密钥指纹。重连时 viewer 发加密 hello（AEAD 解密成功即自证密钥持有，token 与桌面哈希比对防冒用；WP6 审查修订：实现方向与最初「anchor 发 challenge」的设想相反、强度等价，且少一个往返）。
 - 撤销：设备管理删除 → anchor 发 `kick` → 删除本地密钥与 token 哈希 + 审计；中转侧无需任何操作。
 - 桌面重启：`remote_devices` 与密钥在加密库中持久，重连自动恢复；PWA 侧 token 不变，无需重新配对。
 
