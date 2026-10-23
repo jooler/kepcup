@@ -19,7 +19,10 @@ function fieldValue(deps: AdapterDeps, field: SettingFieldSpec): unknown {
 }
 
 /** 单个字段的就绪状态：null = 该字段不算配置信号（如 toggle 恒有值）。 */
-function fieldStatus(field: SettingFieldSpec, value: unknown): 'configured' | 'unconfigured' | null {
+function fieldStatus(
+  field: SettingFieldSpec,
+  value: unknown,
+): 'configured' | 'unconfigured' | null {
   switch (field.type) {
     case 'toggle':
       return typeof value === 'boolean' ? 'configured' : null;
@@ -52,9 +55,7 @@ function normalizeField(field: SettingFieldSpec, values: SettingValues): Normali
         : { ok: false, message: `${field.name} 应为 true / false` };
     case 'text':
     case 'model':
-      return typeof value === 'string'
-        ? null
-        : { ok: false, message: `${field.name} 应为字符串` };
+      return typeof value === 'string' ? null : { ok: false, message: `${field.name} 应为字符串` };
     case 'number':
       if (typeof value !== 'number' || !Number.isFinite(value)) {
         return { ok: false, message: `${field.name} 应为数字` };

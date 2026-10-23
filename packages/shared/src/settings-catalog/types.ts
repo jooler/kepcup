@@ -27,6 +27,7 @@ export const settingGroupSchema = z.enum([
   'environment',
   'developer',
   'diagnostics',
+  'remote',
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
@@ -220,6 +221,8 @@ export const CARD_KEYS = [
   'environment-sandbox',
   /** 命令白名单（`AllowlistSection`：添加、启停、风险提示；恢复默认留在设置页）。 */
   'environment-allowlist',
+  /** 远程遥控设备管理（`RemoteDevicesCard`：开关、中转状态、配对设备列表与撤销）。 */
+  'remote-devices',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

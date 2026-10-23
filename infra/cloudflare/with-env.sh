@@ -40,7 +40,8 @@ fi
 # 清掉 shell 里所有已有的 Cloudflare 变量（含旧式 Global API Key 变量），防止误用。
 while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(CLOUDFLARE_|CF_)' || true)
 
-declare -A VALS=()
+# 白名单键直接导出（环境已清空，后行覆盖前行；不用 declare -A——macOS 自带的
+# bash 3.2 没有关联数组，脚本要能在 stock bash 下跑）。
 while IFS= read -r line || [[ -n "$line" ]]; do
   line="${line%$'\r'}"
   [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
@@ -51,18 +52,15 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     val="${val#"${val%%[![:space:]]*}"}"     # 去前导空白
     val="${val%"${val##*[![:space:]]}"}"     # 去尾随空白
     val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
-    VALS["$key"]="$val"
+    export "$key=$val"
   fi
 done <"$ENV_FILE"
 
-export CLOUDFLARE_ACCOUNT_ID="${VALS[CLOUDFLARE_ACCOUNT_ID]:-}"
-[[ -n "${VALS[CLOUDFLARE_ZONE_ID]:-}" ]] && export CLOUDFLARE_ZONE_ID="${VALS[CLOUDFLARE_ZONE_ID]}"
-export CLOUDFLARE_ZONE_NAME="${VALS[CLOUDFLARE_ZONE_NAME]:-kepcup.com}"
+[[ -n "${CLOUDFLARE_ZONE_ID:-}" ]] && export CLOUDFLARE_ZONE_ID
+export CLOUDFLARE_ZONE_NAME="${CLOUDFLARE_ZONE_NAME:-kepcup.com}"
 if [[ "$USE_ADMIN" == 1 ]]; then
-  export CLOUDFLARE_API_TOKEN="${VALS[CLOUDFLARE_ZONE_ADMIN_API_TOKEN]:-}"
+  export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_ZONE_ADMIN_API_TOKEN:-}"
   [[ -n "$CLOUDFLARE_API_TOKEN" ]] || { echo "--admin 需要 .env 里的 CLOUDFLARE_ZONE_ADMIN_API_TOKEN。" >&2; exit 2; }
-else
-  export CLOUDFLARE_API_TOKEN="${VALS[CLOUDFLARE_API_TOKEN]:-}"
 fi
 [[ -n "$CLOUDFLARE_API_TOKEN" ]] || { echo ".env 里缺 CLOUDFLARE_API_TOKEN。" >&2; exit 2; }
 [[ "$CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-f]{32}$ ]] || { echo ".env 里的 CLOUDFLARE_ACCOUNT_ID 应为 32 位十六进制。" >&2; exit 2; }

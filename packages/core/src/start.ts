@@ -17,6 +17,10 @@ import {
   systemPingOutputSchema,
   systemShutdownOutputSchema,
   unattendedGetOutputSchema,
+  remoteStatusOutputSchema,
+  remoteCreatePairingOutputSchema,
+  remoteConfigSetInputSchema,
+  remoteConfigSetOutputSchema,
   updateActiveRunsOutputSchema,
   updateCancelActiveInputSchema,
   browserControlReturnedInputSchema,
@@ -204,6 +208,7 @@ import {
   type ShellHostRpc,
 } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
+import { RemoteHub } from './remote/hub.js';
 import type { CoreEventsMap } from './start-types.js';
 
 /** Test hooks for the environment manager's system-item guidance (P06). */
@@ -622,6 +627,8 @@ export interface CoreServices {
   appSkills: AppSkillsOffers | null;
   appMethods: Record<string, RpcMethodSpec>;
   platformMethods: Record<string, RpcMethodSpec>;
+  /** D96 远程遥控收发中枢（端点注册表 / 事件扇出 / remote.* 处理）；成功启动后非空。 */
+  remote: RemoteHub | null;
   /** Re-announce the current status to a freshly bound RPC client. */
   pushStatusTo(server: RpcServerHandle): void;
   /**
@@ -882,6 +889,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appSkills: null,
     appMethods: {},
     platformMethods: {},
+    remote: null,
     pushStatusTo(server) {
       server.pushEvent(
         'core.status',
@@ -899,6 +907,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     refreshEnhancedAvailability: enhancedAvailability.refresh,
     async close() {
       servicesClosed.closed = true;
+      await services.remote?.close();
       services.jobsRunner?.stop();
       services.directorySync?.stop();
       services.appSkills?.stop();
@@ -2136,6 +2145,16 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       watches: {
         countForBot: (botId) => linkCounts.watches(botId),
       },
+      // D96：remoteHub 在后面才构造，闭包晚绑定（读快照时它已就位）。
+      remote: {
+        devices: () =>
+          services.remote === null
+            ? []
+            : services.remote.devices().devices.map((device) => ({
+                online: device.online === true,
+                revoked: device.revokedAt !== null,
+              })),
+      },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wake: (input) =>
@@ -3070,9 +3089,47 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     appSkills.start();
     services.appSkills = appSkills;
+    // D96 远程遥控：收发中枢（端点注册表 / 事件扇出 / remote.* 处理）。handlers
+    // 经 getter 取与本机 renderer 同一份 appMethods（此时 bindAppMethods 尚未跑，
+    // 端点只会在 ready 后建立）。开关关闭时零连接零端点。
+    const remoteHub = new RemoteHub({
+      db: mainDb,
+      secrets,
+      settings,
+      events,
+      audit,
+      clock,
+      logger,
+      appMethods: () => services.appMethods,
+    });
+    services.remote = remoteHub;
+    remoteHub.start();
     services.appMethods = {
       ...systemMethods,
       ...bindAppMethods(services),
+      // e2e 测试缝（打包产物 DCE 掉）：模拟手机发来配对请求，走真实配对路径。
+      ...(__KEPCUP_TEST_HOOKS__
+        ? {
+            'remote.testInjectPairing': {
+              input: z.object({
+                deviceId: z.string().min(1),
+                deviceName: z.string().min(1),
+                userAgent: z.string().min(1),
+                pskMode: z.enum(['x25519', 'psk']).optional(),
+              }),
+              output: z.object({ requestId: z.string() }),
+              handle: async (input) =>
+                remoteHub.pairing.testInjectPairingRequest(
+                  input as {
+                    deviceId: string;
+                    deviceName: string;
+                    userAgent: string;
+                    pskMode?: 'x25519' | 'psk';
+                  },
+                ),
+            },
+          }
+        : {}),
     };
 
     setStatus('ready');
@@ -3435,6 +3492,31 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       input: voidInput,
       output: unattendedGetOutputSchema,
       handle: async () => services.domain!.unattended.disable('tray'),
+    },
+    // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（端口 B）。与 app 侧同一 hub。
+    'remote.status': {
+      input: voidInput,
+      output: remoteStatusOutputSchema,
+      handle: async () => {
+        if (services.remote === null) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
+        return services.remote.status();
+      },
+    },
+    'remote.createPairing': {
+      input: voidInput,
+      output: remoteCreatePairingOutputSchema,
+      handle: async () => {
+        if (services.remote === null) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
+        return services.remote.createPairing();
+      },
+    },
+    'remote.config.set': {
+      input: remoteConfigSetInputSchema,
+      output: remoteConfigSetOutputSchema,
+      handle: async (input) => {
+        if (services.remote === null) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
+        return services.remote.configSet(input as { enabled?: boolean; relayUrl?: string });
+      },
     },
     // P10: powerMonitor bridge (docs/dev/phases/P10-proactive.md 接口与数据).
     // Suspend needs no action — timers stall with the OS and resume catch-up

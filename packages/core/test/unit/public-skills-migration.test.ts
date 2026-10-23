@@ -117,6 +117,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table git_remote_grants;');
     // main 0047（D94 分享接收）的新表同样摘除（纯新增，回放时重建）。
     db.exec('drop table share_intakes;');
+    // main 0049（D96 远程遥控）的新表同样摘除（纯新增，回放时重建；索引随表走）。
+    db.exec('drop table remote_devices;');
     // main 0028（D81 bot widgets）的三表与 0029（P2 查询模板）同样摘除（先子后父）。
     db.exec('drop table widget_queries;');
     db.exec('drop table widget_docs;');

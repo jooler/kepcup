@@ -24,6 +24,7 @@
   import NarrowSettings from '$lib/features/settings/NarrowSettings.svelte';
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
+  import RemotePairDialog from '$lib/features/remote/RemotePairDialog.svelte';
   import WorkbenchNudge from '$lib/features/workbench/WorkbenchNudge.svelte';
   import ShareRecoveryPanel from '$lib/features/share/ShareRecoveryPanel.svelte';
   import FileViewer from '$lib/features/files/FileViewer.svelte';
@@ -44,6 +45,8 @@
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
   import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
   import { mountImeEnterGuard } from '$lib/features/shell/ime-enter-guard';
+  import WebShellGate from '$lib/features/web-shell/WebShellGate.svelte';
+  import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import {
     hasOpenModal,
     isSearchShortcut,
@@ -58,6 +61,7 @@
   // 全局捕获阶段截停，避免各输入框的 `key === 'Enter'` 确认逻辑误触发（模块头注释）。
   $effect(() => mountImeEnterGuard());
 
+  let remotePair = $state<RemotePairDialog | null>(null);
   let started = false;
   $effect(() => {
     if (started) return;
@@ -68,6 +72,11 @@
     // 通知点击 → 打开对应对话（主进程经 ipc 转发）。
     window.kepcup.onNavigateConversation((conversationId) => {
       void chat.select(conversationId);
+    });
+    // D96: 托盘「连接手机…」→ 打开窗口后弹出配对二维码小窗（设置 remote 分区的
+    // 按钮走 RemoteSection 自己的入口，同一个小窗实例）。
+    window.kepcup.onOpenRemotePairing(() => {
+      remotePair?.show();
     });
   });
 
@@ -229,95 +238,112 @@
   });
 </script>
 
-<ModeWatcher />
-<svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
-<div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
-  <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
-    {#if core.connection === 'failed'}
-      <CoreErrorPage />
-    {:else if narrowLayout.narrow}
-      <!-- 窄屏（33-narrow-layout）：手机式单栏 + 底部全局 tab；核心状态页全屏
+{#snippet kepCupApp()}
+  <ModeWatcher />
+  <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
+    <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
+      {#if core.connection === 'failed'}
+        <CoreErrorPage />
+      {:else if narrowLayout.narrow}
+        <!-- 窄屏（33-narrow-layout）：手机式单栏 + 底部全局 tab；核心状态页全屏
            呈现（包 main 以铺不透明背景，macOS 毛玻璃下同宽屏）。 -->
-      <main class="flex min-h-0 min-w-0 flex-1 flex-col">
-        {#if core.coreStatus?.status === 'locked'}
-          <LockedPage reason={core.coreStatus.reason} />
-        {:else if !coreReady}
-          <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
-        {:else}
-          <NarrowShell />
-        {/if}
-      </main>
-    {:else}
-      <!-- 左栏宽度可拖拽调节：动态 --sidebar-width 经 style 覆盖套件默认值
-           （provider 的 style 拼在默认声明之后，后写胜出）。 -->
-      <Sidebar.Provider style={sidebarLayout.widthStyle}>
-        <AppSidebar />
         <main class="flex min-h-0 min-w-0 flex-1 flex-col">
           {#if core.coreStatus?.status === 'locked'}
             <LockedPage reason={core.coreStatus.reason} />
           {:else if !coreReady}
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
-            <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
-                 回到对话（chat.select）后重新水合。 -->
-            {#if shell.mainView === 'workbench'}
-              <WorkbenchView />
-            {:else}
-              <ChatsArea />
-            {/if}
+            <NarrowShell />
           {/if}
         </main>
-      </Sidebar.Provider>
+      {:else}
+        <!-- 左栏宽度可拖拽调节：动态 --sidebar-width 经 style 覆盖套件默认值
+           （provider 的 style 拼在默认声明之后，后写胜出）。 -->
+        <Sidebar.Provider style={sidebarLayout.widthStyle}>
+          <AppSidebar />
+          <main class="flex min-h-0 min-w-0 flex-1 flex-col">
+            {#if core.coreStatus?.status === 'locked'}
+              <LockedPage reason={core.coreStatus.reason} />
+            {:else if !coreReady}
+              <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
+            {:else}
+              <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
+                 回到对话（chat.select）后重新水合。 -->
+              {#if shell.mainView === 'workbench'}
+                <WorkbenchView />
+              {:else}
+                <ChatsArea />
+              {/if}
+            {/if}
+          </main>
+        </Sidebar.Provider>
+      {/if}
+    </div>
+
+    <!-- 状态栏是开发/e2e 专用（连通性 ping 与 Node 版本），打包产物经 DCE 剔除。 -->
+    {#if __KEPCUP_TEST_HOOKS__}
+      <CoreStatusBar />
     {/if}
-  </div>
 
-  <!-- 状态栏是开发/e2e 专用（连通性 ping 与 Node 版本），打包产物经 DCE 剔除。 -->
-  {#if __KEPCUP_TEST_HOOKS__}
-    <CoreStatusBar />
-  {/if}
-
-  <!-- 全局顶部浮层通知（重连 / 无模型 / 无人值守）：固定定位、不占布局高度，
+    <!-- 全局顶部浮层通知（重连 / 无模型 / 无人值守）：固定定位、不占布局高度，
        挂在主布局之后压过各栏顶部的窗口拖拽矩形；z-40 仍低于全屏浮层（z-50）。 -->
-  <TopBanners />
+    <TopBanners />
 
-  <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
-  {#if coreReady}
-    <SettingsDialog />
-  {/if}
+    <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
+    {#if coreReady}
+      <SettingsDialog />
+    {/if}
 
-  <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
-  <FileViewer />
+    <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
+    <FileViewer />
 
-  <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
+    <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
        Bot 详情覆盖层（z-40）→ 窄屏设置页（z-50）→ 全局搜索（z-50）；侧栏触发的模态对话框；
        技能目录缺失提示（原挂在 AppSidebar，窄屏会话详情里侧栏不在，订阅与弹框都不存在）。 -->
-  {#if coreReady}
-    <BotDetailOverlay />
-    {#if narrowLayout.narrow}
-      <Tooltip.Provider delayDuration={0}>
-        <NarrowSettings />
-      </Tooltip.Provider>
+    {#if coreReady}
+      <BotDetailOverlay />
+      {#if narrowLayout.narrow}
+        <Tooltip.Provider delayDuration={0}>
+          <NarrowSettings />
+        </Tooltip.Provider>
+      {/if}
+      <GlobalSearchDialog bind:open={shell.searchOpen} />
+      <SidebarDialogs />
+      <MissingSkillDialog />
+      <!-- D96: 配对二维码小窗（托盘与设置页共用；托盘路径经 onOpenRemotePairing）。 -->
+      <RemotePairDialog bind:this={remotePair} />
+      <WorkbenchNudge />
+      <!-- D94：系统分享导入失败时的恢复面板（重选目标 / 重试 / 删除）。 -->
+      <ShareRecoveryPanel />
     {/if}
-    <GlobalSearchDialog bind:open={shell.searchOpen} />
-    <SidebarDialogs />
-    <MissingSkillDialog />
-    <WorkbenchNudge />
-    <!-- D94：系统分享导入失败时的恢复面板（重选目标 / 重试 / 删除）。 -->
-    <ShareRecoveryPanel />
-  {/if}
 
-  <!-- P12-B：沙箱准备向导（设置页/首启提示共用）与首次启动入口 -->
-  {#if coreReady}
-    <SandboxSetupPrompt />
-  {/if}
-  <SandboxWizard />
+    <!-- P12-B：沙箱准备向导（设置页/首启提示共用）与首次启动入口 -->
+    {#if coreReady}
+      <SandboxSetupPrompt />
+    {/if}
+    <SandboxWizard />
 
-  <!-- P13 任务 4：首次启动引导 -->
-  {#if onboarding.open}
-    <OnboardingWizard />
-  {/if}
+    <!-- P13 任务 4：首次启动引导 -->
+    {#if onboarding.open}
+      <OnboardingWizard />
+    {/if}
 
-  <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
+    <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
        bottom-right 在手机宽度窗口里会横贯整个底部 tab 栏。 -->
-  <Toaster position={narrowLayout.narrow ? 'top-center' : 'bottom-right'} />
-</div>
+    <Toaster position={narrowLayout.narrow ? 'top-center' : 'bottom-right'} />
+  </div>
+{/snippet}
+
+<!-- svelte:window 只能放模板顶层（不能进 snippet / block）：宽窄断点回填与全局
+     快捷键两种形态（web 门 / App UI）都需要它在场。 -->
+<svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
+
+{#if ENDPOINT_KIND === 'remote'}
+  <!-- D96 web 构建（手机 PWA）：App UI 整体作为 children 交给门，配对完成后才
+       渲染；未配对 / 桌面离线等状态由 WebShellGate 的状态页接管（§3.2 纯遥控器）。 -->
+  <WebShellGate>
+    {@render kepCupApp()}
+  </WebShellGate>
+{:else}
+  {@render kepCupApp()}
+{/if}

@@ -7,6 +7,7 @@ import {
 } from '@kepcup/shared';
 import type { PlatformInfo } from '$lib/shim';
 import { domPortToTransport, isCorePortMessage } from './port';
+import { getWebTransport, type WebLinkState } from './ws-transport';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
@@ -27,6 +28,12 @@ class CoreConnection {
   readonly #eventHandlers = new Map<string, Set<EventHandler>>();
 
   async start(): Promise<void> {
+    // D96 web 构建（手机 PWA）：没有 preload 与 MessagePort，core 在桌面，
+    // 传输是中转 WebSocket（WsTransport，配对完成后可用）。Electron 路径不变。
+    if (window.kepcup.isWeb === true) {
+      this.#startWeb();
+      return;
+    }
     // The main process hands over the MessagePort through a window message
     // (forwarded by the preload); every later 'core-port' message rebinds.
     window.addEventListener('message', this.#onWindowMessage);
@@ -38,6 +45,35 @@ class CoreConnection {
     void window.kepcup.platform.info().then((info) => {
       this.platform = info;
     });
+  }
+
+  /**
+   * Web 模式启动：初始化 WsTransport 上的 birpc 客户端；有本地凭证时由 transport
+   * 自行重连自举（hello），没有则停在 connecting，配对完成（Gate 驱动）后状态
+   * 回调把 connection 切到 connected。
+   */
+  #startWeb(): void {
+    const transport = getWebTransport();
+    this.#rpc = createRpcClient({
+      transport,
+      eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
+    });
+    this.#applyWebLinkState(transport.linkState);
+    transport.onLinkState((state) => this.#applyWebLinkState(state));
+    void window.kepcup.platform.info().then((info) => {
+      this.platform = info;
+    });
+  }
+
+  /** 中转连接状态 → 既有 connection 状态（手机 UI 的状态页 / 横幅共用语义）。 */
+  #applyWebLinkState(state: WebLinkState): void {
+    this.connection =
+      state === 'connected'
+        ? 'connected'
+        : state === 'reconnecting' || state === 'offline'
+          ? 'reconnecting'
+          : 'connecting';
+    if (state === 'connected') void this.refreshInfo();
   }
 
   onEvent(event: string, handler: EventHandler): () => void {
@@ -71,9 +107,20 @@ class CoreConnection {
   #bind(port: MessagePort): void {
     this.#rpc?.close();
     port.start();
-    // birpc looks handlers up by event name at delivery time, so a Proxy here
-    // lets handlers registered later (via onEvent) receive events too.
-    const eventHandlers = new Proxy(
+    this.#rpc = createRpcClient({
+      transport: domPortToTransport(port),
+      eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
+    });
+    this.connection = 'connected';
+    void this.refreshInfo();
+  }
+
+  /**
+   * birpc looks handlers up by event name at delivery time, so a Proxy here
+   * lets handlers registered later (via onEvent) receive events too.
+   */
+  #eventProxy(): Record<string, (payload: unknown) => void> {
+    return new Proxy(
       {},
       {
         get: (_target, name) => {
@@ -87,13 +134,7 @@ class CoreConnection {
           return (payload: unknown) => this.#dispatch(name, payload);
         },
       },
-    );
-    this.#rpc = createRpcClient({
-      transport: domPortToTransport(port),
-      eventHandlers: eventHandlers as Record<string, (payload: unknown) => void>,
-    });
-    this.connection = 'connected';
-    void this.refreshInfo();
+    ) as Record<string, (payload: unknown) => void>;
   }
 
   #dispatch(event: string, payload: unknown): void {

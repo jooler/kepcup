@@ -16,6 +16,7 @@ export type SettingsSectionId =
   | 'profile'
   | 'contacts'
   | 'unattended'
+  | 'remote'
   | 'environment'
   | 'usage'
   | 'diagnostics'

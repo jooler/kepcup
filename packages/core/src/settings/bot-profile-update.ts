@@ -45,7 +45,9 @@ export interface PermissionEffects {
   /** W3：中断了几个任务就推一条 `tasks.interrupted`（0 不推）。 */
   publishInterrupted(count: number, scope: 'path' | 'mcp' | 'browser_profile'): void;
   /** 收回 MCP 服务 / 工具的授权：中断受影响 Bot 的运行中任务。 */
-  revokeMcp(revoked: ReadonlyArray<{ serverId: string; toolName?: string; botIds: string[] }>): void;
+  revokeMcp(
+    revoked: ReadonlyArray<{ serverId: string; toolName?: string; botIds: string[] }>,
+  ): void;
   /** `mcpServers` 旧 → 新：停用 / 删掉 / 免审批关掉 / 逐工具收紧 → 中断用到它的 Bot 的任务。 */
   revokeMcpServerChanges(previous: readonly McpServer[], next: readonly McpServer[]): void;
 }

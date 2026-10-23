@@ -89,6 +89,7 @@ infra/cloudflare/with-env.sh check
 
 | 日期 | 动作 | 结果 |
 | ---- | ---- | ---- |
+| 2026-10-23 | 部署 `kepcup-relay`（D96 远程遥控中转，`infra/cloudflare/relay/`：Worker + RelaySession DO SQLite 型 migration v1 + PWA 静态资产 434 文件），custom domain `remote.kepcup.com`（DNS 与证书由 wrangler 自动创建） | 已上线，版本 `31229d6e…`；`relay/verify.mjs` 通过（/healthz、静态资产 200、WSS 握手）；补充冒烟：跨源 Origin viewer 403（CSWSH 防护生效）、无效 sid 400、`/` 与 manifest 200。用 `apps/website` 依赖带入的 wrangler 4.151.1 部署（本机无全局 wrangler；`with-env.sh` 已修到 stock bash 3.2 可用——`declare -A` 换白名单直接导出） |
 | 2026-10-10 | 只读盘点：DNS、Worker、D1、Bot Management | kepcup.com **没有任何 DNS 记录**；Bot Fight Mode 本来就是关的（`fight_mode:false`）；账号里没有 D1 |
 | 2026-10-10 | `cf d1 create --name kepcup-registry` | 已建，id `efc7712f-a979-414e-b315-3640cd00a600`（WEUR，无管辖区限制；公开元数据，无用户数据） |
 | 2026-10-10 | `wrangler d1 execute kepcup-registry --remote --file=schema.sql` | 已建表（`servers` / `reviews` / `sync_state`） |
@@ -104,4 +105,4 @@ infra/cloudflare/with-env.sh check
 
 ### 等你放行的
 
-暂无。线上待办只剩首次注册表同步（:17 UTC）的确认。
+暂无。D96 中转已上线（`remote.kepcup.com`，2026-10-23），待真机验收（手机扫码 → 配对 → 遥控 → 撤销）与首周用量观察（免费额度 10 万次 WS 请求/天，见 `relay/README.md`「部署」）。

@@ -554,6 +554,8 @@ export const enUS = {
   'coreStatus.locked': 'Locked',
   'coreStatus.error': 'Error',
   'common.close': 'Close',
+  'common.copy': 'Copy',
+  'common.copied': 'Copied',
   'approvals.accessTitle': 'Access request',
   'approvals.unsandboxedTitle': 'Unsandboxed execution request',
   'approvals.commandTitle': 'Command approval (confirm each command)',
@@ -1723,6 +1725,43 @@ export const enUS = {
   'settings.navEnvironment': 'Environment',
   'settings.navUsage': 'Usage',
   'settings.navDiagnostics': 'Diagnostics',
+  // --- D96 remote control -----------------------------------------------------
+  'settings.navRemote': 'Remote',
+  'settings.remoteSectionTitle': 'Remote control',
+  'settings.remoteSectionHint':
+    'Pair a phone by QR code to remote-control this desktop: same features, the desktop is the only execution point. Paired devices act with the same authority as the local user.',
+  'settings.remoteAnchorOff': 'Remote control is off',
+  'settings.remoteAnchorConnecting': 'Connecting to relay…',
+  'settings.remoteAnchorOnline': 'Relay connected',
+  'settings.remoteAnchorError': 'Relay connection error',
+  'settings.remoteOnlineNow': 'online',
+  'settings.remoteNeverSeen': 'never seen',
+  'settings.remoteOnlineCount': '{count} online',
+  'settings.remoteNoDevices':
+    'No paired phones yet. Turn on the switch and click "Connect phone" for a QR code.',
+  'settings.remoteRevoke': 'Revoke',
+  'settings.remoteRevokeConfirmTitle': 'Revoke "{name}"?',
+  'settings.remoteRevokeConfirmBody':
+    'The phone disconnects immediately and cannot reconnect without pairing again. Revocation takes effect instantly.',
+  'settings.remotePskDowngrade': 'compat key',
+  'settings.remoteTrustBoundaryHint':
+    'A paired device acts like the user sitting at this desktop: it can chat, approve, and change settings. Revoking takes effect immediately.',
+  'settings.remotePairDevice': 'Connect phone…',
+  'settings.remoteRevoked': 'Revoked remote access for "{name}"',
+  'settings.remotePairTitle': 'Connect phone',
+  'settings.remotePairHint':
+    'Scan the QR code with your phone to open the KepCup PWA and pair. The code is one-time and valid for 5 minutes.',
+  'settings.remotePairUnavailable': 'Remote control is off — turn on the switch above first.',
+  'settings.remotePairExpired': 'QR code expired',
+  'settings.remotePairRegenerate': 'Regenerate',
+  'settings.remotePairWaitConfirm': 'Waiting for the phone to confirm…',
+  'settings.remoteConfirmTitle': '"{name}" wants to pair',
+  'settings.remoteConfirmBody':
+    'A paired device acts like the user sitting at this desktop, with full authority.',
+  'settings.remoteConfirmAllow': 'Allow',
+  'settings.remoteConfirmDecline': 'Decline',
+  'settings.remotePairDone': 'Paired: {name}',
+  'settings.remotePairCopyFailed': 'Copy failed: select and copy the link above manually',
   'settings.navBrowserProfiles': 'Browser profiles',
   'settings.browserProfilesTitle': 'Shared browser profiles',
   'settings.browserProfilesHint':
@@ -3200,6 +3239,51 @@ export const enUS = {
   'share.error.SHARE_TARGET_READ_ONLY': 'The target conversation is read-only',
   'share.error.SHARE_FILE_TOO_LARGE': 'The file exceeds the size limit',
   'share.error.SHARE_MATERIALIZE_FAILED': 'Could not prepare the workspace copy',
+  // --- D96 web (PWA, docs/design/46-remote-control.md §3.2/§5.5) ---------------
+  'web.gate.title': 'KepCup Remote',
+  'web.unpaired.title': 'Pair with desktop KepCup',
+  'web.unpaired.body':
+    'In desktop KepCup, open Settings → Remote control → “Connect phone”, scan the QR code with your phone camera, or paste the pairing link shown next to it.',
+  'web.unpaired.placeholder': 'https://…/#pair=…',
+  'web.unpaired.submit': 'Next',
+  'web.unpaired.invalid':
+    'Invalid link: expected a #pair=<relay>,<sessionId>,<secret> link from the desktop app',
+  'web.name.title': 'Confirm device name',
+  'web.name.body':
+    'The request goes through relay {host}; the desktop confirmation card will show this device name.',
+  'web.name.label': 'Device name',
+  'web.name.submit': 'Request pairing',
+  'web.name.back': 'Back',
+  'web.joining': 'Connecting to the relay…',
+  'web.awaiting':
+    'Pairing request sent. Tap “Allow” on the desktop KepCup card (the pairing code is valid for 5 minutes).',
+  'web.booting': 'Connecting to your desktop…',
+  'web.rejected.title': 'Pairing was not completed',
+  'web.rejected.expired':
+    'The pairing code expired or was already used: generate a new QR code on the desktop.',
+  'web.rejected.declined': 'The desktop declined this request.',
+  'web.rejected.bad_code': 'The pairing code is incorrect.',
+  'web.rejected.busy': 'The desktop cannot handle this right now; try again shortly.',
+  'web.rejected.error': 'Pairing failed; please try again.',
+  'web.rejected.retry': 'Pair again',
+  'web.kicked.title': 'Connection removed by the desktop',
+  'web.kicked.revoked': 'This device has been unpaired on the desktop.',
+  'web.kicked.auth_failed':
+    'Local credentials are no longer valid (remote control may have been reset on the desktop).',
+  'web.kicked.action': 'Pair again',
+  'web.offline.title': 'Desktop KepCup is offline',
+  'web.offline.body':
+    'The desktop is not connected to the relay right now. This page reconnects automatically once it is back; you can also retry manually.',
+  'web.disconnected.title': 'Connection to the relay lost',
+  'web.disconnected.body': 'Reconnecting… you can also retry manually.',
+  'web.retry': 'Retry',
+  'web.connected.fingerprint': 'Key fingerprint',
+  'web.install.hint': 'Add KepCup to your home screen to use it like an app',
+  'web.install.action': 'Add to Home Screen',
+  'settings.desktopOnly': 'Available on the desktop app only',
+  'web.failed.title': 'Cannot reach the relay',
+  'web.failed.body':
+    'The relay is unreachable right now (the pairing link itself is still valid). Check your connection and retry.',
 } as const;
 
 export type MessageKey = keyof typeof enUS;

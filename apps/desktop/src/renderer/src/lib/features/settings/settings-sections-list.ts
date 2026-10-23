@@ -17,6 +17,7 @@ import {
   Plug,
   Settings2,
   Cpu,
+  Smartphone,
   UserRound,
   type LucideIcon,
 } from '@lucide/svelte';
@@ -43,6 +44,7 @@ export const settingsSections: SettingsSectionDef[] = [
   { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
   { id: 'contacts', label: t('settings.navContacts'), icon: BookUser },
   { id: 'unattended', label: t('settings.navUnattended'), icon: MoonStar },
+  { id: 'remote', label: t('settings.navRemote'), icon: Smartphone },
   { id: 'environment', label: t('settings.navEnvironment'), icon: Monitor },
   { id: 'usage', label: t('settings.navUsage'), icon: BarChart3 },
   { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },

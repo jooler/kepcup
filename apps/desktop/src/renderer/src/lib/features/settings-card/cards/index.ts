@@ -31,7 +31,11 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
     // 要知道连哪个应用（预填 app = 目录 connectorId）。
     embeddable: (_item, ctx) => prefillString(ctx.prefill, 'app') !== null,
   },
-  { key: 'mail-account', componentName: 'MailAccountAddForm', embeddable: (_item, ctx) => ctx.botId !== null },
+  {
+    key: 'mail-account',
+    componentName: 'MailAccountAddForm',
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
   { key: 'tool-policy', componentName: 'AppConnectionDetail', embeddable: always },
   { key: 'mcp-servers', componentName: 'McpSection', embeddable: always },
 
@@ -42,9 +46,21 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
     // 要知道是哪个智能体（预填 agent，否则默认智能体），且目录里有它。
     embeddable: (_item, ctx) => embeddedAgentId(ctx) !== null,
   },
-  { key: 'bot-model', componentName: 'BotModelCard', embeddable: (_item, ctx) => ctx.botId !== null },
-  { key: 'bot-config', componentName: 'BotConfigCard', embeddable: (_item, ctx) => ctx.botId !== null },
-  { key: 'bot-skills', componentName: 'BotSkillsCard', embeddable: (_item, ctx) => ctx.botId !== null },
+  {
+    key: 'bot-model',
+    componentName: 'BotModelCard',
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
+  {
+    key: 'bot-config',
+    componentName: 'BotConfigCard',
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
+  {
+    key: 'bot-skills',
+    componentName: 'BotSkillsCard',
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
 
   // --- 硬件 ---------------------------------------------------------
   {
@@ -97,4 +113,7 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
   { key: 'environment-toolchains', componentName: 'EnvironmentSection', embeddable: always },
   { key: 'environment-sandbox', componentName: 'SandboxSection', embeddable: always },
   { key: 'environment-allowlist', componentName: 'AllowlistSection', embeddable: always },
+
+  // --- 远程遥控（D96）--------------------------------------------------------
+  { key: 'remote-devices', componentName: 'RemoteDevicesCard', embeddable: always },
 ];
