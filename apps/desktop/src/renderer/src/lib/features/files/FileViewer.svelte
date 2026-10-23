@@ -2,8 +2,13 @@
   import { Download, ExternalLink, FolderOpen, X } from '@lucide/svelte';
   import { Portal } from 'bits-ui';
   import { toast } from 'svelte-sonner';
+  import {
+    FILE_APP_SCHEME,
+    filePreviewSessionOutputSchema,
+  } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { core } from '$lib/rpc/client.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
@@ -28,8 +33,9 @@
   /**
    * Bot file artifact overlay: fills the middle + right columns (the left
    * sidebar stays visible), closes from the round button at its top-left.
-   * The file is read on demand through `files.preview` and rendered by kind:
-   * image / video, static HTML (sandboxed iframe, scripts not executed),
+   * Files are read on demand and rendered by kind: image / video, HTML as a
+   * full WebApp (directory preview protocol, scripts and network enabled,
+   * isolated by the sandboxed iframe on its own kepcup-file origin),
    * Markdown, DOCX, XLSX and plain text. PDF and other formats without a
    * suitable in-app renderer show an actions panel (open with the system app /
    * download) instead of a blank frame.
@@ -48,12 +54,16 @@
   let sheets = $state<Array<{ name: string; rows: unknown[][] }>>([]);
   let activeSheet = $state(0);
   let closeButton = $state<HTMLButtonElement | null>(null);
+  /** HTML 的目录预览会话（kepcup-file 源）；其余类型不走这条通道。 */
+  let htmlSession = $state<{ token: string; size: number } | null>(null);
 
   const left = $derived(narrowLayout.narrow ? '0px' : `${sidebarLayout.effectiveWidth}px`);
   // 窄屏时本浮层盖住整窗，mac 红绿灯叠在 header 左上角，关闭按钮要右移让位。
   const isMac = /Mac/i.test(navigator.platform);
-  const htmlNeedsScript = $derived(kind === 'html' && /<script[\s>]|\son[a-z]+\s*=/i.test(text));
-  const htmlNeedsRemote = $derived(kind === 'html' && /(?:src|href)\s*=\s*["']https?:/i.test(text));
+  /** HTML 入口 = 协议 URL 的路径段（所在目录在 core 侧已按 artifact 路径登记）。 */
+  const htmlEntry = $derived(
+    artifact === null ? '' : (artifact.path.split(/[\\/]/).pop() ?? ''),
+  );
 
   $effect(() => {
     const request = current;
@@ -65,6 +75,7 @@
     docxHtml = null;
     sheets = [];
     activeSheet = 0;
+    htmlSession = null;
     if (request === null || file === null) return;
 
     let cancelled = false;
@@ -72,6 +83,17 @@
     loading = true;
     void (async () => {
       try {
+        if (kind === 'html') {
+          // 完整 WebApp 档：不把字节拉进渲染层，页面与相对资源由 kepcup-file 协议按需服务。
+          const session = filePreviewSessionOutputSchema.parse(
+            await core.call('files.previewSession', {
+              conversationId: request.conversationId,
+              path: file.path,
+            }),
+          );
+          if (!cancelled) htmlSession = session;
+          return;
+        }
         const data = await loadFilePreview(request.conversationId, file.path);
         if (cancelled) return;
         payload = data;
@@ -256,13 +278,13 @@
           </div>
           <div class="truncate text-[11px] text-muted-foreground">
             {t(artifactKindLabelKey(kind))}
-            {#if payload !== null}
+            {#if payload !== null || htmlSession !== null}
               <span class="mx-1 opacity-50">·</span>
-              {formatFileSize(payload.size)}
+              {formatFileSize(payload?.size ?? htmlSession?.size)}
             {/if}
           </div>
         </div>
-        {#if payload !== null}
+        {#if payload !== null || htmlSession !== null}
           <div class="app-no-drag absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
             <button
               type="button"
@@ -284,16 +306,18 @@
             >
               <ExternalLink class="size-4" aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onclick={download}
-              aria-label={t('files.download')}
-              title={t('files.download')}
-              data-testid="file-viewer-download"
-            >
-              <Download class="size-4" aria-hidden="true" />
-            </button>
+            {#if payload !== null}
+              <button
+                type="button"
+                class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onclick={download}
+                aria-label={t('files.download')}
+                title={t('files.download')}
+                data-testid="file-viewer-download"
+              >
+                <Download class="size-4" aria-hidden="true" />
+              </button>
+            {/if}
           </div>
         {/if}
       </header>
@@ -328,32 +352,18 @@
               data-testid="file-viewer-video"
             ></video>
           </div>
-        {:else if kind === 'html'}
-          <div class="flex h-full min-h-0 flex-col">
-            {#if htmlNeedsScript || htmlNeedsRemote}
-              <div
-                class="flex shrink-0 items-center justify-between gap-3 border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-300"
-                data-testid="file-viewer-html-notice"
-              >
-                <span>{t('files.htmlStaticNotice')}</span>
-                <button
-                  type="button"
-                  class="shrink-0 rounded-full border border-current/30 px-2 py-0.5 hover:bg-current/10"
-                  onclick={() => void openWithSystem()}
-                >
-                  {t('files.openExternal')}
-                </button>
-              </div>
-            {/if}
-            <iframe
-              title={artifact.name}
-              sandbox=""
-              referrerpolicy="no-referrer"
-              srcdoc={text}
-              class="min-h-0 w-full flex-1 border-0 bg-white"
-              data-testid="file-viewer-html"
-            ></iframe>
-          </div>
+        {:else if kind === 'html' && htmlSession !== null}
+          <!-- 完整 WebApp 档（kepcup-file://，docs/design/47）：脚本、网络、相对路径资源、
+               localStorage 全部可用；隔离靠 sandbox 属性（无弹窗 / 无顶层导航 / 无下载）+
+               独占协议源（与宿主不同源，碰不到 window.kepcup 与父窗口）。 -->
+          <iframe
+            title={artifact.name}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+            referrerpolicy="no-referrer"
+            src={`${FILE_APP_SCHEME}://${htmlSession.token}/${encodeURIComponent(htmlEntry)}`}
+            class="min-h-0 w-full h-full flex-1 border-0 bg-white"
+            data-testid="file-viewer-html"
+          ></iframe>
         {:else if kind === 'markdown'}
           <div class="h-full overflow-auto">
             <div class="mx-auto max-w-4xl px-8 py-8">

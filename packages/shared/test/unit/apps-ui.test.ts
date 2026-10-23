@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appLoopbackKey,
   buildAppCspHeader,
+  buildWidgetRuntimeCspHeader,
   isToolVisibleToApp,
   mcpAppResourceUriOf,
   normalizeAppCspSource,
@@ -191,5 +192,16 @@ describe('tool _meta.ui helpers', () => {
     expect(isToolVisibleToApp({ ui: { visibility: 'app' } })).toBe(false);
     expect(isToolVisibleToApp(undefined)).toBe(false);
     expect(isToolVisibleToApp({})).toBe(false);
+  });
+});
+
+describe('buildWidgetRuntimeCspHeader', () => {
+  it('carries only the sandbox flags (full webapp tier) and frame-ancestors', () => {
+    expect(buildWidgetRuntimeCspHeader()).toBe(
+      [
+        'sandbox allow-scripts allow-same-origin allow-forms allow-modals',
+        'frame-ancestors file: http://localhost:*',
+      ].join('; '),
+    );
   });
 });

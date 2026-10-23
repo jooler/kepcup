@@ -164,6 +164,11 @@ export function formatCheckReport(
       );
     }
   }
+  if (report.stages.S2.status === 'ran') {
+    fixed.push(
+      '注意：S2 预览环境不联网——组件的联网请求会失败（preview.offline-network，不算缺陷），依赖真实网络的验收点也会失败：这类数据与断言请改用 fixtures（kepcup.storage / kepcup.query）或容错展示。',
+    );
+  }
 
   const body: string[] = [];
   const hintShown = new Set<string>();

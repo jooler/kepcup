@@ -4,15 +4,19 @@ import {
   WIDGET_BRIDGE_HOST_SOURCE,
   WIDGET_BRIDGE_WIDGET_SOURCE,
   WIDGET_HOST_THEME_EVENT,
+  htmlDefinesScrollbarStyle,
+  IFRAME_SCROLLBAR_CSS,
+  IFRAME_SCROLLBAR_STYLE_MARKER,
   type WidgetTheme,
 } from '@kepcup/shared';
 
 /**
- * widget 侧 SDK 垫片（D81 P1，设计 32 §6）：组件跑在 `sandbox="allow-scripts"` 的
- * opaque origin iframe 里——没有 localStorage / fetch / window.kepcup，与宿主的唯一
- * 通道是 postMessage。core 在 `widgets.ui.open` 登记 HTML 时把这段内联 `<script>`
- * 前置进去（响应头 CSP 的 `script-src 'unsafe-inline'` 允许内联），组件即可用
- * `window.kepcup.*`（storage / query / openLink / theme / setHeight，全部 promise 化）。
+ * widget 侧 SDK 垫片（D81 P1，设计 32 §6）：组件跑在 `sandbox="allow-scripts
+ * allow-same-origin allow-forms allow-modals"` 的独占协议源 iframe 里（完整 WebApp 档：
+ * fetch / localStorage 等按真实 WebApp 可用，与宿主的可靠通道仍是 postMessage——垫片以
+ * `event.source === parent` 校验回执）。core 在 `widgets.ui.open` 登记 HTML 时把这段内联
+ * `<script>` 前置进去，组件即可用 `window.kepcup.*`（storage / query / openLink / theme /
+ * setHeight，全部 promise 化）。
  *
  * 垫片是静态文本：关联凭据（resourceId）由渲染端宿主桥附加，不进这里——因此
  * 不存在把不可信内容拼进脚本的注入面。插入点必须是 `<!DOCTYPE html>` **之后**
@@ -93,8 +97,9 @@ export const WIDGET_THEME_STYLE = `<style data-kepcup="theme">:root{${varsCss(TH
 
 /**
  * 垫片脚本本体（IIFE，不污染全局 except `window.kepcup`）。协议：
- * - widget → 宿主：`{ source: 'kepcup-widget', id, type, payload }`（opaque origin
- *   下 `postMessage` 只能 `targetOrigin '*'`，宿主侧必须以 `event.source` 校验来源）；
+ * - widget → 宿主：`{ source: 'kepcup-widget', id, type, payload }`（宿主 origin 打包态是
+ *   `file://`、开发态是 localhost，垫片不知道也不猜，`postMessage` 用 `targetOrigin '*'`，
+ *   宿主侧必须以 `event.source` 校验来源）；
  * - 宿主 → widget：`{ source: 'kepcup-host', id, ok, value?/code?, error? }`——拒绝时
  *   `error` 是人话、`code` 是机器可读错误码（widget 据此区分限速 / 配额 / 过期等）；
  *   主题推送 `{ source: 'kepcup-host', event: 'theme', theme }`（没有 id）。
@@ -237,9 +242,10 @@ export const WIDGET_KIT_STYLE = oneLine(`<style data-kepcup="kit">
 </style>`);
 
 /**
- * `kepcup.ui`（kit 才有）：纯 SVG 图表与数字格式化——沙箱禁网、用不了 CDN 图表库，让弱模型
- * 徒手画 canvas 是 bug 的主要来源之一。图表写进容器（元素或 #id 选择器），文字一律经
- * textContent（不拼 HTML）。数据：`[{label, value}]`；line 也接受多组 `{series: [{name, values}], labels}`。
+ * `kepcup.ui`（kit 才有）：纯 SVG 图表与数字格式化——S2 预览离线、CDN 图表库在预览里
+ * 加载不到，徒手画 canvas 是 bug 的主要来源之一。图表写进容器（元素或 #id 选择器），
+ * 文字一律经 textContent（不拼 HTML）。数据：`[{label, value}]`；line 也接受多组
+ * `{series: [{name, values}], labels}`。
  */
 const KIT_SOURCE = `<script>/* kepcup-kit */
 (function () {
@@ -377,6 +383,10 @@ export const WIDGET_KIT_SCRIPT = oneLine(KIT_SOURCE);
 export function injectWidgetSdk(html: string, options: { theme?: WidgetTheme } = {}): string {
   if (html.includes(WIDGET_SDK_MARKER) || html.includes(LEGACY_SDK_MARKER)) return html;
   const injection = [
+    // 默认滚动条（应用同款）：页面自己定义了滚动条样式就不注入（见 iframe-defaults.ts）。
+    ...(htmlDefinesScrollbarStyle(html)
+      ? []
+      : [`<style ${IFRAME_SCROLLBAR_STYLE_MARKER}>${IFRAME_SCROLLBAR_CSS}</style>`]),
     WIDGET_THEME_STYLE,
     widgetSdkShim(options.theme ?? 'light'),
     ...(wantsKepcupKit(html) ? [WIDGET_KIT_STYLE, WIDGET_KIT_SCRIPT] : []),

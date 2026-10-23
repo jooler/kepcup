@@ -192,6 +192,59 @@ describe('widget preview (core side)', () => {
     expect((await check()).stages.S2.status).toBe('skipped');
   });
 
+  it('离线预览的联网失败归 preview.offline-network（warning）；外链资源加载失败同算，相对路径不算', async () => {
+    const rpc = createWidgetPreviewRpc();
+    rpc.bindFacade({
+      run: async () => ({
+        viewports: [
+          viewport(360, 'light', {
+            findings: [
+              { rule: 'runtime.error', message: 'TypeError: Failed to fetch' },
+              {
+                rule: 'console.error',
+                message: '资源加载失败：<script> https://cdn.example.com/chart.js',
+              },
+              {
+                rule: 'console.error',
+                message: '资源加载失败：<script> js/app.js',
+              },
+              { rule: 'console.error', message: 'TypeError: chart is not a function' },
+              {
+                rule: 'console.error',
+                message: "Failed to set target on 'XMLHttpRequest': not a function",
+              },
+            ],
+          }),
+        ],
+      }),
+    });
+    const report = await runWidgetCheck({
+      draftDir: draft({ 'index.html': GOOD }),
+      validateQueries: () => null,
+      preview: createWidgetPreviewRunner({ rpc }),
+      now: 1,
+    });
+    const offline = report.issues.filter((issue) => issue.rule === 'preview.offline-network');
+    // fetch 失败 + https 外链脚本加载失败 = 离线产物（warning，不阻断）；其余照常上报。
+    expect(offline).toHaveLength(2);
+    for (const issue of offline) {
+      expect(issue).toMatchObject({ level: 'warning', blocking: false, viewport: '360/light' });
+    }
+    expect(report.issues.some((issue) => issue.message.includes('js/app.js'))).toBe(true);
+    expect(
+      report.issues.some(
+        (issue) => issue.rule === 'console.error' && issue.message.includes('chart is not a function'),
+      ),
+    ).toBe(true);
+    expect(
+      report.issues.some((issue) => issue.message.includes('XMLHttpRequest')),
+    ).toBe(true);
+    // 只剩警告与非阻断 error → 可交付（issues），不会为离线产物空转修复轮。
+    expect(report.verdict).toBe('issues');
+    expect(report.blockers).toBe(0);
+    expect(report.errors).toBe(3);
+  });
+
   it('制作取消：本地放弃等待并抛出（检查器据 signal 透传，不当作 S2 结果）', async () => {
     const rpc = createWidgetPreviewRpc();
     rpc.bindFacade({ run: () => new Promise(() => undefined) });

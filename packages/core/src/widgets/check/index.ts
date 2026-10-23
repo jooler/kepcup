@@ -3,7 +3,10 @@
  * S2 预览由 P3b 的桌面预览宿主经 {@link WidgetPreviewRunner} 接入。
  */
 export {
+  PREVIEW_OFFLINE_NETWORK_RULE_ID,
   WIDGET_CHECK_RULES,
+  previewOfflineNetworkMessage,
+  previewOfflineResourceLoadMessage,
   ruleIssue,
   sandboxPitfallsPrompt,
   widgetCheckRule,

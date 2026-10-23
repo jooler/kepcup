@@ -46,12 +46,12 @@ const mainMigrations = fileURLToPath(new URL('../../migrations/main/', import.me
 const logger = { info() {}, warn() {} };
 
 const GOOD = WIDGET_TEMPLATES.find((t) => t.name === 'blank')!.html;
-/** 一个阻断项（sandbox.storage）。 */
-const BAD = GOOD.replace('  init();', "  localStorage.setItem('x', '1');\n  init();");
-/** 两个阻断项（再加 sandbox.modals）——比 BAD 更差。 */
-const WORSE = BAD.replace('  init();', "  if (confirm('ok?')) state.count = 0;\n  init();");
-/** 只有警告（sandbox.alert）。 */
-const WARN_ONLY = GOOD.replace('  init();', "  alert('hi');\n  init();");
+/** 一个阻断项（sandbox.top-nav；完整 WebApp 档下存储 / confirm 已合法，不再作阻断样本）。 */
+const BAD = GOOD.replace('  init();', "  top.location.href = 'https://x.example';\n  init();");
+/** 两个阻断项（再加 sandbox.popup）——比 BAD 更差。 */
+const WORSE = BAD.replace('  init();', "  window.open('https://x.example');\n  init();");
+/** 只有警告（js.undefined-name，未调用）。 */
+const WARN_ONLY = GOOD.replace('  init();', '  const maybe = NotDefinedAnywhere;\n  init();');
 
 const SPEC_MD = '> 一个点击计数器\n\n# 规格\n- #action 按钮计数\n';
 const ACCEPTANCE = JSON.stringify([
@@ -369,9 +369,9 @@ describe('widget craft loop (D87)', () => {
       .add('SPEC', specScript)
       .add('BUILD', buildScript(BAD))
       .add('FIX', async (tools, spec) => {
-        expect(spec.messages[0]!.content).toContain('sandbox.storage');
+        expect(spec.messages[0]!.content).toContain('sandbox.top-nav');
         overwrite = await tools.call('write', { path: 'index.html', content: GOOD });
-        await editScript("  localStorage.setItem('x', '1');\n", '')(tools, spec);
+        await editScript("  top.location.href = 'https://x.example';\n", '')(tools, spec);
       });
     const result = await craft(h, { brief: '计数器', title: '计数器' });
     expect(result.ok).toBe(true);
@@ -389,20 +389,20 @@ describe('widget craft loop (D87)', () => {
       .add('SPEC', specScript)
       .add('BUILD', buildScript(BAD))
       // 第 1 轮修复反而多加了一个阻断项。
-      .add('FIX', editScript('  init();', "  if (confirm('ok?')) state.count = 0;\n  init();"))
+      .add('FIX', editScript('  init();', "  window.open('https://x.example');\n  init();"))
       .add('FIX', async (tools, spec) => {
         const input = spec.messages[0]!.content;
         expect(input).toContain('<rollback>');
-        expect(input).toContain('sandbox.modals');
-        // 文件已被回滚到 BAD（没有 confirm）。
+        expect(input).toContain('sandbox.popup');
+        // 文件已被回滚到 BAD（没有 window.open）。
         const read = await tools.call('read', { path: 'index.html' });
-        expect(read.content).not.toContain('confirm(');
-        await editScript("  localStorage.setItem('x', '1');\n", '')(tools, spec);
+        expect(read.content).not.toContain('window.open(');
+        await editScript("  top.location.href = 'https://x.example';\n", '')(tools, spec);
       });
     const result = await craft(h, { brief: '计数器', title: '计数器' });
     expect(result.ok).toBe(true);
     expect(h.deliveries[0]!.input['html']).toBe(GOOD);
-    expect(WORSE).toContain('confirm(');
+    expect(WORSE).toContain('window.open(');
   });
 
   it('同一组问题连续两轮 → 收缩模式；轮数用尽仍有阻断项 → 不交付，回执带原因与 craftId，草稿保留；续做后交付', async () => {
@@ -429,7 +429,7 @@ describe('widget craft loop (D87)', () => {
     expect(manifest.rounds.gate).toBe(WIDGET_CRAFT_FIX_ROUNDS_MAX + 1);
 
     // 续做：从检查开始（不重写规格），新的修复预算。
-    h.engine.add('FIX', editScript("  localStorage.setItem('x', '1');\n", ''));
+    h.engine.add('FIX', editScript("  top.location.href = 'https://x.example';\n", ''));
     const resumed = await craft(
       h,
       { brief: '计数器（换个改法）', resume_craft_id: craftId },
@@ -679,7 +679,7 @@ describe('review fixes (D87 P3a)', () => {
     h.engine
       .add('SPEC', specScript)
       .add('BUILD', buildScript(WARN_ONLY))
-      .add('FIX', editScript('  init();', "  localStorage.setItem('x', '1');\n  init();"));
+      .add('FIX', editScript('  init();', "  top.location.href = 'https://x.example';\n  init();"));
     const result = await craft(h, { brief: '计数器', title: '计数器' });
     expect(result.ok).toBe(true);
     expect(h.deliveries[0]!.input['html']).toBe(WARN_ONLY);
@@ -733,6 +733,33 @@ describe('S2 接入（D87 P3b）', () => {
     expect(result.content).toContain('已通过自检');
     expect((h.deliveries[0]!.input['check'] as { status: string }).status).toBe('passed');
     expect(selfCheck!.images).toEqual([{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }]);
+    // 自查的就是交付的这份文件：首视口截图随版本落库（poster_png）。
+    expect(h.deliveries[0]!.input['posterPng']).toBe('iVBORw0KGgo=');
+  });
+
+  it('自查之后文件又改过 → 截图过期，交付不落旧海报', async () => {
+    const preview = {
+      run: async () => ({ issues: [], acceptance: [], outline: 'h3 标题' }),
+      screenshots: () => [{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }],
+    };
+    const h = harness({ preview });
+    const GOOD_V2 = `${GOOD}\n<!-- v2 -->`;
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', async (tools) => {
+        await tools.call('write', { path: 'index.html', content: GOOD });
+        // 自查记下的是 GOOD 的摘要；之后又改了文件——交付 GOOD_V2 时截图已过期。
+        await tools.call('widget_check', {});
+        await tools.call('write', { path: 'index.html', content: GOOD_V2 });
+        await tools.call('stage_done', { summary: '已写' });
+      })
+      .add('REVIEW', async (tools) => {
+        await tools.call('submit_review', { verdict: 'pass', findings: [] });
+      });
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(h.deliveries[0]!.input['html']).toBe(GOOD_V2);
+    expect(h.deliveries[0]!.input['posterPng']).toBeUndefined();
   });
 });
 
@@ -851,12 +878,12 @@ describe('独立审查 REVIEW（D87 P3c）', () => {
       .add('SPEC', specScript)
       .add('BUILD', buildScript(GOOD))
       .add('REVIEW', submit({ verdict: 'fix', findings: [p1] }))
-      // 修好了 P1，顺带多了一个警告（alert）。
+      // 修好了 P1，顺带多了一个警告（js.undefined-name，未调用）。
       .add(
         'FIX',
         editScript(
           'state.count += 1;',
-          "state.count = Math.min(state.count + 1, 999); alert('满了');",
+          "state.count = Math.min(state.count + 1, 999); const maybe = NotDefinedAnywhere;",
         ),
       )
       // 只剩警告的那一轮修复：什么都没改。

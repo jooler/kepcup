@@ -1,15 +1,20 @@
 import { BOT_WIDGET_HTML_MAX_BYTES, type WidgetCheckIssue } from '@kepcup/shared';
 
 /**
- * 组件检查器的规则注册表（设计 32 §11.8）。规则、制作 loop 的「沙箱雷区清单」提示词
- * （{@link sandboxPitfallsPrompt}）与卡片上的「已知问题」文案都从这里生成——改一处三处同步，
- * 提示与检查不会漂移（单测锁住：提示词必须提到每一条规则 id）。
+ * 组件检查器的规则注册表（设计 32 §11.8；UX 改版修订：运行时为「完整 WebApp 档」）。
+ * 规则、制作 loop 的「沙箱雷区清单」提示词（{@link sandboxPitfallsPrompt}）与卡片上的
+ * 「已知问题」文案都从这里生成——改一处三处同步，提示与检查不会漂移（单测锁住：提示词
+ * 必须提到每一条规则 id）。
+ *
+ * 运行档位（修订）：组件跑在 `sandbox="allow-scripts allow-same-origin allow-forms
+ * allow-modals"` 的独占 iframe 里——联网（fetch / WebSocket / CDN 外链）、浏览器存储
+ * （localStorage 等）、表单事件、confirm / alert 都可用；仍然没有的是弹窗（window.open）、
+ * 页面导航与下载。组件仍是单文件分发：相对路径资源不存在。S2 预览宿主**离线**（防未经
+ * 确认的代码出网）：联网请求在预览里必然失败，归到 {@link previewOfflineNetworkRuleId}，
+ * 不算组件缺陷。
  *
  * 级别与阻断（设计 32 §11.6）：S0 / S1 的 error 全部是阻断项；S2 里未捕获异常 / 未处理的
- * 拒绝 / 页面空白 / 预览超时是阻断项，`console.error` 与 `csp.violation` 是不阻断的 error
- * （外链资源的 CSP 违规 S0 已经静态拦住，S2 再报只是佐证）。沙箱行为以 P3-0 在 Electron
- * 44 上的实测为准（执行文档 §8.1）：`alert` 不阻断控制流，降为 warning；只有 submit 按钮、
- * 没有 submit 处理函数时按钮的 click 照常执行，拆成 warning。
+ * 拒绝 / 页面空白 / 预览超时是阻断项，`console.error` 与 `csp.violation` 是不阻断的 error。
  */
 export interface WidgetCheckRule {
   /** 规则 id（如 `sandbox.storage`）。 */
@@ -27,6 +32,40 @@ export interface WidgetCheckRule {
 }
 
 const HTML_MAX_MB = Math.round((BOT_WIDGET_HTML_MAX_BYTES / 1024 / 1024) * 10) / 10;
+
+/**
+ * S2 预览宿主离线导致的联网失败问题条目（{@link previewOfflineNetworkMessage} 命中的
+ * 预览 findings 会被归到这里，不算组件缺陷）。
+ */
+export const PREVIEW_OFFLINE_NETWORK_RULE_ID = 'preview.offline-network';
+
+/**
+ * 预览 findings 是否「离线导致的联网失败」（防未审查代码出网，预览宿主走死代理离线运行）：
+ * 组件发起的 fetch / XHR / WebSocket 在预览里必然失败，这类报错不是缺陷。
+ *
+ * 判定按 Chromium 的实际报错形态：fetch 的 "Failed to fetch"、网络栈的 `net::ERR_*`
+ * （死代理下连接建立失败家族）、WebSocket 连接失败句式与 XHR 的 NetworkError——不按
+ * 「消息里出现过 websocket / error 字样」宽松匹配，避免把带这些词的真实运行错误误降级。
+ */
+export function previewOfflineNetworkMessage(message: string): boolean {
+  return (
+    /failed to fetch/i.test(message) ||
+    /\bnetworkerror\b/i.test(message) ||
+    /net::ERR_(PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_RESET|CONNECTION_REFUSED|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|EMPTY_RESPONSE|TIMED_OUT|ADDRESS_UNREACHABLE)/i.test(
+      message,
+    ) ||
+    /websocket connection (to|closed before)[^]*?failed/i.test(message)
+  );
+}
+
+/**
+ * 预览里「外链资源加载失败」的 findings（探针把元素加载失败记成 console.error「资源加载失败：
+ * <tag> url」）：url 是 http(s) 时是离线的必然产物（正式运行时可加载），不算组件缺陷；
+ * 相对路径的加载失败是真实缺陷（S0 的 sandbox.external-resource 已经阻断），照常上报。
+ */
+export function previewOfflineResourceLoadMessage(message: string): boolean {
+  return /^资源加载失败：/.test(message) && /https?:\/\//i.test(message);
+}
 
 export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
   // --- S0 静态 -------------------------------------------------------------------
@@ -71,75 +110,46 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     level: 'error',
     stage: 'S0',
     blocking: true,
-    title: '引用了外部资源（加载不到）',
+    title: '引用了相对路径资源（单文件分发，加载不到）',
     hint:
-      "组件是离线单文件：CSP default-src 'none' 拦截一切外链，草稿目录里的其他文件也不会随组件发布——CDN 脚本、" +
-      'Google Fonts、外链样式 / 图片、相对路径的 src / href、import 都加载不到（CSS url() 被拦时连报错都没有）。' +
-      '脚本与样式写进内联 <script> / <style>；图标用内联 SVG 或 data: URL；字体用系统字体栈；图表用内联 SVG / canvas 自己画。',
-    userText: '部分外部资源（脚本、字体或图片）无法加载',
+      '组件按单文件分发：只有 index.html 自己，相对路径（./x.js、css/a.png、/assets/…）都不存在；' +
+      'http(s) 外链资源（CDN 脚本、Google Fonts、图片）可以正常加载。把本地资源改内联，' +
+      '或改用 https:// 外链；图标用内联 SVG 或 data: URL。',
+    userText: '部分资源（脚本、样式或图片）路径不存在',
   },
   {
     id: 'sandbox.storage',
-    level: 'error',
-    stage: 'S0',
-    blocking: true,
-    title: '使用了浏览器存储（沙箱里一碰就抛错）',
-    hint:
-      '不透明 origin 下 localStorage / sessionStorage / indexedDB / document.cookie 连读取都抛 SecurityError，' +
-      '整段脚本随之中断。持久化改用 await kepcup.storage.get(key) / await kepcup.storage.set(key, value)' +
-      '（值可为任意 JSON），删除用 kepcup.storage.delete(key)，列出用 kepcup.storage.list()。',
-    userText: '数据保存功能无法使用',
-  },
-  {
-    id: 'sandbox.network',
-    level: 'error',
-    stage: 'S0',
-    blocking: true,
-    title: '发起了网络请求（组件禁网）',
-    hint:
-      'fetch / XMLHttpRequest / WebSocket / EventSource / navigator.sendBeacon 都会失败。需要的数据写进组件本身、' +
-      '用 kepcup.storage 保存，或在 queries.json 里声明查询模板后用 await kepcup.query(名字, 参数) 读取。',
-    userText: '联网请求无法完成',
-  },
-  {
-    id: 'sandbox.modals',
-    level: 'error',
-    stage: 'S0',
-    blocking: true,
-    title: '使用了 confirm / prompt（不弹窗）',
-    hint:
-      'confirm() 立即返回 false、prompt() 立即返回 null，不会弹窗——if (confirm(…)) 的分支永远不执行。' +
-      '改成页内确认 UI（如点一次按钮变成「确认删除？」、再点一次才执行），输入用页内的输入框 + 按钮。',
-    userText: '需要确认或输入的操作无法完成',
-  },
-  {
-    id: 'sandbox.alert',
     level: 'warning',
     stage: 'S0',
     blocking: false,
-    title: '使用了 alert（提示不会显示）',
-    hint: 'alert() 不弹窗、直接返回，用户看不到提示。改成页内提示（状态栏文字或页内 toast 元素）。',
-    userText: '部分提示信息不会显示',
+    title: '使用了 document.cookie（非 http 源仍抛 SecurityError）',
+    hint:
+      'localStorage / sessionStorage / indexedDB 在组件源下可用；cookie 不可用。跨打开的持久化优先用 ' +
+      'await kepcup.storage.get(key) / set(key, value)（值可为任意 JSON）——S2 预览还能用 fixtures.storage 注入初始数据，' +
+      '便于验收。',
+    userText: '部分存储能力（cookie）不可用',
   },
   {
     id: 'sandbox.form-submit',
-    level: 'error',
+    level: 'warning',
     stage: 'S0',
-    blocking: true,
-    title: '依赖表单提交（submit 事件永远不触发）',
+    blocking: false,
+    title: '表单默认提交会尝试页面导航（被宿主拦下）',
     hint:
-      '沙箱禁止表单提交：点 submit 按钮、在输入框按 Enter、requestSubmit()、form.submit() 都不会触发 submit 事件。' +
-      '去掉 onsubmit / submit 监听，按钮写 type="button" 并在它的 click 里处理；需要回车时在输入框的 keydown 里判断 event.key === "Enter"。',
-    userText: '提交表单的操作没有反应',
+      'submit 事件与 onsubmit / addEventListener(\'submit\') 处理函数照常触发——在里面 event.preventDefault() 后自行处理输入即可。' +
+      '没有 preventDefault 的默认提交、form.submit()、requestSubmit() 都会尝试把页面导航走，被宿主的导航守卫拦下（表现为点击后无反应）。',
+    userText: '表单默认提交没有反应',
   },
   {
     id: 'sandbox.submit-button',
     level: 'warning',
     stage: 'S0',
     blocking: false,
-    title: 'submit 类型的按钮',
-    hint: 'submit 按钮自身的 click 处理照常执行，但回车提交与默认提交无效。显式写 type="button"，需要回车时自己处理 keydown。',
-    userText: '在输入框里按回车不会提交',
+    title: 'submit 类型的按钮（表单没有 submit 处理函数）',
+    hint:
+      '点 submit 按钮会触发默认提交 = 尝试页面导航，被宿主拦下。给表单加 submit 监听并在里面 preventDefault 处理，' +
+      '或按钮写 type="button" 在 click 里处理。',
+    userText: '表单提交没有反应',
   },
   {
     id: 'sandbox.popup',
@@ -276,7 +286,9 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     stage: 'S1',
     blocking: true,
     title: '使用了未定义的名字',
-    hint: '先声明再用，检查拼写。沙箱里没有任何第三方库（Chart、$、_、dayjs 等都不存在，CDN 也加载不了）——需要的功能自己写。',
+    hint:
+      '先声明再用，检查拼写。需要第三方库时用 <script src="https://cdn…"> 引入（运行时可联网）；' +
+      '注意 S2 预览环境离线，预览里这些脚本加载不到，别让初始渲染依赖它们。',
     userText: '脚本引用了不存在的变量或函数',
   },
   {
@@ -363,7 +375,7 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     stage: 'S2',
     blocking: false,
     title: '被安全策略（CSP）拦截',
-    hint: '去掉外链脚本 / 样式 / 图片 / 字体与网络请求，改成内联或 data: URL（见 sandbox.external-resource / sandbox.network）。',
+    hint: '响应头不再限制资源与网络，正常不会出现 CSP 违规；出现了说明触到了沙箱本身（如同源 flag 丢失），按报错内容排查。',
     userText: '部分资源被安全策略拦截',
   },
   {
@@ -401,6 +413,18 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     title: '预览超时（疑似死循环）',
     hint: '检查 while / for 循环的退出条件、递归终止条件，以及加载期间的长时间同步计算。',
     userText: '组件会卡死',
+  },
+  {
+    id: PREVIEW_OFFLINE_NETWORK_RULE_ID,
+    level: 'warning',
+    stage: 'S2',
+    blocking: false,
+    title: '预览环境离线，组件的联网请求失败',
+    hint:
+      'S2 预览宿主不联网（在用户确认前运行草稿代码，不能给出网通道）：Failed to fetch / net::ERR_* 这类失败是预期的，' +
+      '正式运行时可正常联网。依赖外部数据的功能请改用 fixtures（kepcup.storage 初始数据 / kepcup.query 查询模板）' +
+      '或在代码里容错（加载失败时显示空状态与重试），验收点不要依赖真实网络。',
+    userText: '',
   },
 ];
 
@@ -471,8 +495,11 @@ export function sandboxPitfallsPrompt(): string {
   return [
     '## 沙箱雷区清单（检查器规则）',
     '',
-    '组件跑在 sandbox="allow-scripts" 的不透明 origin iframe 里：CSP default-src \'none\'，没有网络、没有弹窗 / 表单 / 导航权限，' +
-      '除了 index.html 本身没有任何文件。宿主的检查器按下面的规则机器检查每一版草稿，报告格式是' +
+    '组件跑在 sandbox="allow-scripts allow-same-origin allow-forms allow-modals" 的独占 iframe 里（完整 WebApp 档）：' +
+      '可以联网（fetch / WebSocket / https 外链资源）、可以用 localStorage / indexedDB、表单事件与 confirm / alert 可用；' +
+      '没有的：弹窗（window.open）、页面导航、下载。组件按单文件分发——相对路径资源不存在，本地资源改内联或用 https:// 外链。' +
+      '注意 S2 预览宿主不联网（防未经确认的代码出网）：联网请求在预览里必然失败（preview.offline-network，不算缺陷），' +
+      '依赖外部数据的验收点请改用 fixtures 或容错展示。宿主的检查器按下面的规则机器检查每一版草稿，报告格式是' +
       '「[规则id] 第 L 行:C 列 — 问题 — 怎么改」。标「阻断」的必须修好才能交付；警告不阻断交付，但会作为已知问题告诉用户。',
     '',
     '### 静态检查（S0：HTML 结构、沙箱禁区、查询声明）',

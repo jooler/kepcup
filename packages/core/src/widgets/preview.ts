@@ -10,7 +10,10 @@ import {
   type WidgetPreviewRunOutput,
 } from '@kepcup/shared';
 import {
+  PREVIEW_OFFLINE_NETWORK_RULE_ID,
   WIDGET_PREVIEW_UNAVAILABLE_REASON,
+  previewOfflineNetworkMessage,
+  previewOfflineResourceLoadMessage,
   ruleIssue,
   type WidgetPreviewOutcome,
   type WidgetPreviewRunner,
@@ -143,6 +146,27 @@ export function createWidgetPreviewRunner(input: {
         const extra = statusIssue(viewport.status, viewport.detail, label);
         if (extra !== null) issues.push(extra);
         for (const finding of viewport.findings) {
+          // 预览宿主离线（防未经确认的代码出网）：组件的联网请求 / 外链资源加载必然失败，归到
+          // preview.offline-network（warning，非阻断），不算组件缺陷。资源加载失败只有 http(s)
+          // 外链算离线产物——相对路径的失败是真实缺陷（S0 已有阻断项），照常上报。
+          const offline =
+            previewOfflineNetworkMessage(finding.message) ||
+            (finding.rule === 'console.error' && previewOfflineResourceLoadMessage(finding.message));
+          if (
+            (finding.rule === 'runtime.error' ||
+              finding.rule === 'runtime.rejection' ||
+              finding.rule === 'csp.violation' ||
+              finding.rule === 'console.error') &&
+            offline
+          ) {
+            issues.push(
+              ruleIssue(PREVIEW_OFFLINE_NETWORK_RULE_ID, {
+                message: `组件的联网请求在预览里失败（正式运行时可联网）：${finding.message}`,
+                viewport: label,
+              }),
+            );
+            continue;
+          }
           issues.push(
             ruleIssue(finding.rule, {
               message: finding.message,

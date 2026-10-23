@@ -27,6 +27,7 @@
   import WorkbenchNudge from '$lib/features/workbench/WorkbenchNudge.svelte';
   import ShareRecoveryPanel from '$lib/features/share/ShareRecoveryPanel.svelte';
   import FileViewer from '$lib/features/files/FileViewer.svelte';
+  import WidgetViewer from '$lib/features/widgets/WidgetViewer.svelte';
   import SidebarDialogs from '$lib/features/sidebar/SidebarDialogs.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -287,6 +288,9 @@
 
   <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
   <FileViewer />
+
+  <!-- 组件海报点击后的运行覆盖层（几何同 FileViewer）：真正运行组件的地方。 -->
+  <WidgetViewer />
 
   <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
        Bot 详情覆盖层（z-40）→ 窄屏设置页（z-50）→ 全局搜索（z-50）；侧栏触发的模态对话框；

@@ -15,6 +15,8 @@ import {
   widgetsUiReplyInputSchema,
   widgetsUiReplyOutputSchema,
   widgetsUiOpenOutputSchema,
+  widgetsUiPosterInputSchema,
+  widgetsUiPosterOutputSchema,
   widgetsUiQueryInputSchema,
   widgetsUiQueryOutputSchema,
   widgetsUiResourceInputSchema,
@@ -65,6 +67,11 @@ export function bindWidgetsUiMethods(services: CoreServices): {
         widgetsUiSourceInputSchema,
         widgetsUiSourceOutputSchema,
         async (input) => ui().source(input.messageId),
+      ),
+      'widgets.ui.poster': method(
+        widgetsUiPosterInputSchema,
+        widgetsUiPosterOutputSchema,
+        async (input) => ui().poster(input.messageId),
       ),
       'widgets.ui.storage': method(
         widgetsUiStorageInputSchema,

@@ -186,7 +186,6 @@ export const zhCN = {
   'files.openExternal': '用系统程序打开',
   'files.openFailed': '无法用系统程序打开该文件',
   'files.revealFailed': '无法在文件夹中显示该文件',
-  'files.htmlStaticNotice': '为保证安全，预览不执行脚本或加载远程资源；完整效果请用系统程序打开。',
   'files.change.created': '新建',
   'files.change.modified': '修改',
   'files.kind.image': '图片',
@@ -2290,13 +2289,18 @@ export const zhCN = {
   // Bot 自制交互组件卡片（D81）
   'botWidget.byBot': 'Bot 制作',
   'botWidget.reviewNote':
-    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网、读不到你的其他数据；建议先查看源码再加载。',
+    '这是 Bot 生成的交互组件，在隔离沙箱中运行：可以联网、读不到你的其他数据；建议先查看源码再打开。',
   'botWidget.reviewNoteQueries':
-    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网；数据库查询仅限下方列出的只读模板，且只能读这个组件自己存的数据和本对话的文字消息。',
+    '这是 Bot 生成的交互组件，在隔离沙箱中运行：可以联网；数据库查询仅限下方列出的只读模板，且只能读这个组件自己存的数据和本对话的文字消息。',
   'botWidget.queriesNote':
     '本版本声明了 {n} 个数据库查询（只读模板），SQL 全文在「查看源码」里，请一并审查',
   'botWidget.reviewQueriesFirst': '这个版本带数据库查询，请先「查看源码」审查查询 SQL，再加载运行',
-  'botWidget.load': '加载运行',
+  'botWidget.confirmAndOpen': '确认并打开',
+  'botWidget.open': '打开组件',
+  'botWidget.close': '关闭',
+  'botWidget.posterLoading': '正在读取海报…',
+  'botWidget.posterFallback': '组件截图尚未生成',
+  'botWidget.reviewFirstHint': '请先在下方确认，再运行组件',
   'botWidget.sourceShow': '查看源码',
   'botWidget.sourceHide': '收起源码',
   'botWidget.sourceLoading': '正在读取源码…',
@@ -2325,7 +2329,7 @@ export const zhCN = {
     'Bot 做交互组件时由这个模型独立审查代码，换一个与主模型不同的模型能发现更多问题。Bot 固定了自己的模型时仍用 Bot 的模型。',
   'settings.widgetReviewModelUnavailable': '（不可用，将改用 Bot 主模型）',
   'botWidget.capabilities':
-    '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
+    '沙箱内运行 · 可访问网络 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
   'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',
   'botWidget.openLinkHost': '将打开站点：',
   'botWidget.openLinkConfirm': '在浏览器中打开',

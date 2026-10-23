@@ -117,6 +117,7 @@ export interface WidgetCraftTarget {
     scope: WidgetScope;
     runId: string;
     check?: WidgetDeliveryCheck;
+    posterPng?: string | undefined;
   }): WidgetWriteResult;
   update(input: {
     botId: string;
@@ -127,6 +128,7 @@ export interface WidgetCraftTarget {
     changeNote: string;
     runId: string;
     check?: WidgetDeliveryCheck;
+    posterPng?: string | undefined;
   }): WidgetWriteResult;
   validateQueries(defs: WidgetQueryDef[]): string | null;
   craftSource(
@@ -206,6 +208,11 @@ interface CraftSession {
   reviewSkipped: boolean;
   /** 上一轮审查的 P0 / P1（第二轮审查只核对它们 + 新 P0）。 */
   lastReview: WidgetReviewFinding[];
+  /**
+   * 自检（widget_check）的首视口截图（base64 PNG）与它对应的检查摘要：交付时只有当被检查
+   * 的文件就是交付的那一份（两项摘要一致）才随版本落库——截图过期的版本不落旧画面。
+   */
+  poster: { htmlSha256: string; queriesSha256: string; base64: string } | null;
 }
 
 /** core 兜底时限比给宿主的预算多出的余量（宿主按预算收尾、回传结果要一点时间）。 */
@@ -363,6 +370,8 @@ export class WidgetCraftService {
       reviewFindings: new Map(),
       reviewSkipped: false,
       lastReview: [],
+      /** 自检（widget_check）的首视口截图，交付时随版本落库（对话卡片海报用）。 */
+      poster: null,
     };
     this.#active.set(manifest.craftId, session);
 
@@ -839,6 +848,16 @@ export class WidgetCraftService {
         controller.signal,
       );
       const images = preview?.screenshots?.() ?? [];
+      // 首视口截图留给交付：版本行 poster_png（对话卡片海报），多次自查取最新的；记下被
+      // 检查文件的摘要，交付时只有摘要一致才落库（自查之后文件又改过 = 截图过期）。
+      const firstShot = images[0]?.base64;
+      if (typeof firstShot === 'string' && firstShot !== '') {
+        session.poster = {
+          htmlSha256: report.htmlSha256,
+          queriesSha256: report.queriesSha256,
+          base64: firstShot,
+        };
+      }
       return {
         ok: true,
         content: formatCheckReport(report),
@@ -1152,6 +1171,13 @@ export class WidgetCraftService {
       },
     };
     const description = oneLiner(draft.read(DRAFT_SPEC), manifest.brief);
+    // 海报只在「自查的就是交付的这份文件」时落库（截图与版本摘要不一致 = 旧画面，丢弃）。
+    const poster =
+      session.poster !== null &&
+      session.poster.htmlSha256 === digest.htmlSha256 &&
+      session.poster.queriesSha256 === digest.queriesSha256
+        ? session.poster.base64
+        : undefined;
     const result =
       manifest.widgetId !== null
         ? this.#deps.widgets.update({
@@ -1163,6 +1189,7 @@ export class WidgetCraftService {
             changeNote: description,
             runId: manifest.parentRunId,
             check,
+            posterPng: poster,
           })
         : this.#deps.widgets.create({
             botId: identity.botId,
@@ -1174,6 +1201,7 @@ export class WidgetCraftService {
             scope: manifest.scope,
             runId: manifest.parentRunId,
             check,
+            posterPng: poster,
           });
     if (!result.ok) {
       const reasons = [`交付失败：${result.message}`];

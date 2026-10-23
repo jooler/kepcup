@@ -502,3 +502,14 @@ S0 里涉及代码的规则（storage / network / modals / popup / top-nav / for
   - 确认条与外链确认条共用单例（任一条挂着时另一个请求直接得 `false`），确认条全文展示要发的文字；发出或取消后该卡冷却 5s。core `WidgetService.prepareReply` 再核一次长度与每卡冷却（`WIDGET_RATE_LIMITED`，按卡片消息 id 计，重开 / 重载换了资源 id 也不重置），不依赖 UI；`widgets.ui.reply` 以 `orchestrator.sendMessage` 发出，与用户在输入框里发消息同一条路径（正常触发 Bot）。
   - `widget_read_state` 只读：返回 `{键: 值}` 的 JSON，`<` 转义后包 `<untrusted source="widget-state">`；按键名排序累加到 64KB（按转义后的字节计），放不下的值**跳过并报告**键名、大小与 1000 字的开头片段，其余键照常给（单值上限 256KB 大于回执上限，遇大值就停会让整份数据读不到），并说明「已截断，可用 keys 只读需要的键」；别的 Bot 的组件得 `FORBIDDEN`。副作用分类 `none`。
   - S2 预览的模拟桥认 `reply`（校验后回 `false`，不发任何东西）；制作提示的 API 清单写明「只能在用户操作里调用、否则返回 false、不要自动或循环调用」。
+
+## 13 修订记录（2026-10：完整 WebApp 档 + 海报 / 覆盖层）
+
+本节修订 §2 / §8 / §10 与渲染管线的部分结论（执行方案见对话存档，测试为证）：
+
+- **运行档位**：组件响应头 CSP 换 `buildWidgetRuntimeCspHeader()`（`sandbox allow-scripts allow-same-origin allow-forms allow-modals; frame-ancestors file: http://localhost:*`，旗标与 iframe 属性一致），iframe `sandbox` 属性同旗标。联网（fetch / WebSocket / https 外链资源）、浏览器存储（localStorage / indexedDB）、表单事件、confirm / alert 全部可用。仍然禁止：弹窗（window.open）、页面导航（宿主守卫）、下载（sandbox 无 allow-downloads）。`buildAppCspHeader`（MCP Apps 严格档）不变，两档并存。
+- **§2 信任模型**：不透明 origin → 独占协议源（`kepcup-app://widget-{hash}`，仍与宿主不同源，`allow-same-origin` 不解锁宿主）；「按版本人工确认」保留不变。
+- **§8 安全清单**：第 1 / 2 条按上款更新；预览宿主（§8 第 8 条）**保持离线**（死代理）——它在用户确认前运行草稿代码，不给出网通道；联网组件在预览里的网络报错归 `preview.offline-network`（warning，非阻断），依赖外部数据的验收点用 fixtures。
+- **检查器规则**（§11.8）：`sandbox.network / sandbox.modals / sandbox.alert` 删除，`sandbox.storage` 降为 warning（只管 cookie，指向 kepcup.storage），`sandbox.form-submit` 降为 warning（只管默认提交导航），`sandbox.external-resource` 收窄为相对路径（单文件分发），`js.undefined-name` 在文档引了 https 外链脚本时降为 warning。
+- **渲染形态**：对话卡片改为**静态海报**（`widget_versions.poster_png` 存自检首视口截图，迁移 0048；`widgets.ui.poster` 懒加载），点击海报 → FileViewer 式覆盖层（WidgetViewer）里挂 WidgetRuntime 才真正运行；审查态（查看源码 + 按版本确认）保留在海报卡上。关闭覆盖层 = 组件停止，状态不跨打开保留。
+- **§10 修订**：「生成代码访问网络」从「永久不做」改为「运行时可联网（本节档位），预览环境始终离线」——信任边界由按版本确认 + 覆盖层显式运行承担，页面可联网这件事在卡片文案（`botWidget.capabilities`）里明示。

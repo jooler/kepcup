@@ -192,6 +192,20 @@ export function buildAppCspHeader(
   ].join('; ');
 }
 
+/**
+ * Bot 组件运行时的响应头 CSP（「完整 WebApp 档」）：不限制任何资源与网络（脚本 / 样式 /
+ * 外链 / connect 全放，由 iframe 的 sandbox 属性与宿主守卫兜底），CSP 只保留两件事——
+ * 与 iframe 属性同旗标的 `sandbox`（别的宿主误嵌时仍是沙箱文档；旗标必须与 iframe 属性
+ * 一致，否则 CSP 侧会把 origin 打回 opaque，localStorage 等不可用）与 `frame-ancestors`
+ * （只许应用自己的窗口嵌入）。MCP Apps 的严格档见 {@link buildAppCspHeader}，两者不共用。
+ */
+export function buildWidgetRuntimeCspHeader(): string {
+  return [
+    'sandbox allow-scripts allow-same-origin allow-forms allow-modals',
+    'frame-ancestors file: http://localhost:*',
+  ].join('; ');
+}
+
 // --- 工具元数据（`_meta.ui`） -----------------------------------------------
 
 function uiMetaOf(meta: unknown): Record<string, unknown> | null {

@@ -29,8 +29,10 @@ import {
  * confirm 不算；解析不了的单元（S1 会报 js.syntax）退到 acorn 词法器的记号流上做同样的判断
  * （注释同样被跳过）。用户自己声明过的同名标识符（如自定义的 `function confirm()`）不算沙箱 API。
  *
- * 宿主拦截组件框架的一切子框架导航（§8.1 实测），所以除了 `location.hash = …`（同文档）以外，
- * 对 location 的任何改写与 `location.assign/replace/reload()` 都是 `sandbox.top-nav`。
+ * 宿主拦截组件框架的一切子框架导航（§8.1 实测；运行档位下同 token 的自我导航只对
+ * `kepcup-file` 放行，组件的 `kepcup-app` 单资源依旧全拦），所以除了 `location.hash = …`
+ * （同文档）以外，对 location 的任何改写与 `location.assign/replace/reload()` 都是
+ * `sandbox.top-nav`。
  */
 export function staticCheck(input: {
   html: string;
@@ -83,12 +85,9 @@ export function staticCheck(input: {
   for (const element of model.elements) checkElement(element, ctx);
   for (const handler of model.handlers) {
     if (handler.attr === 'onsubmit' && !isTrivialSubmitBody(handler.program?.body ?? null)) {
+      // submit 事件在运行档位下照常触发（完整 WebApp 档）：有处理函数 = 有 preventDefault 的入口，
+      // 只记事实用于抑制 submit 按钮的默认提交警告，不再算问题。
       ctx.hasSubmitHandler = true;
-      push(
-        'sandbox.form-submit',
-        handler.attrOffset,
-        `<${handler.tagName}> 上的 onsubmit 处理函数永远不会被调用（沙箱里 submit 事件不触发）`,
-      );
     }
   }
   for (const unit of units) {
@@ -239,17 +238,21 @@ const NON_LOADING_LINK_RELS = new Set([
   'me',
 ]);
 
-/** 指向沙箱外（或不存在的同目录文件）的 URL：除 data: / blob: / 页内锚点外都加载不到。 */
+/**
+ * 单文件分发下加载不到的 URL：相对路径（含协议相对 `//host…`——组件源是 `kepcup-app://`，
+ * 协议相对解析回同一协议而不是 https，协议处理器给不出这个 host）都加载不到；
+ * http(s) 外链运行时可联网加载，data: / blob: / 页内锚点 / javascript: 照常。
+ */
 function isBrokenUrl(raw: string): boolean {
   const url = raw.trim();
   if (url === '') return false;
-  return !/^(data:|blob:|#|javascript:|about:)/i.test(url);
+  if (/^(data:|blob:|#|javascript:|about:|https?:)/i.test(url)) return false;
+  return true;
 }
 
 function describeUrl(url: string): string {
   const trimmed = url.trim();
-  if (/^(https?:)?\/\//i.test(trimmed)) return `外链 ${trimmed}（被 CSP 拦截）`;
-  return `「${trimmed}」（组件只有 index.html 一个文件，这个路径不存在）`;
+  return `「${trimmed}」（组件按单文件分发，这个相对路径不存在——改内联或改用 https:// 外链）`;
 }
 
 function srcsetUrls(value: string): string[] {
@@ -327,23 +330,29 @@ function checkElement(element: ElementInfo, ctx: ScanContext): void {
   if ((tag === 'a' || tag === 'area') && !preventsDefault(element)) {
     const href = element.attrs.get('href');
     const sameFrame = target === undefined || targetName === '' || targetName === '_self';
-    if (
-      href !== undefined &&
-      sameFrame &&
-      isBrokenUrl(href) &&
-      !/^mailto:|^tel:/i.test(href.trim())
-    ) {
-      push(
-        'sandbox.link-navigation',
-        element.attrValue('href').offset,
-        `链接 <a href="${href.trim()}"> 点击后会被宿主拦下，什么也不发生`,
-      );
-    } else if (href !== undefined && sameFrame && /^(mailto|tel):/i.test(href.trim())) {
-      push(
-        'sandbox.link-navigation',
-        element.attrValue('href').offset,
-        `链接 <a href="${href.trim()}"> 在沙箱里无法打开`,
-      );
+    if (href !== undefined && sameFrame) {
+      const trimmed = href.trim();
+      // 宿主拦截组件框架的一切导航：相对路径（加载不到）与 http(s) 外链（导航守卫拦下）
+      // 点击后都没有任何反应；页内锚点不拦。
+      if (isBrokenUrl(trimmed) && !/^(mailto|tel):/i.test(trimmed)) {
+        push(
+          'sandbox.link-navigation',
+          element.attrValue('href').offset,
+          `链接 <a href="${trimmed}"> 点击后会被宿主拦下，什么也不发生`,
+        );
+      } else if (/^https?:/i.test(trimmed)) {
+        push(
+          'sandbox.link-navigation',
+          element.attrValue('href').offset,
+          `链接 <a href="${trimmed}"> 指向外部网页，点击后会被宿主的导航守卫拦下，什么也不发生——外链改用 kepcup.openLink(url)`,
+        );
+      } else if (/^(mailto|tel):/i.test(trimmed)) {
+        push(
+          'sandbox.link-navigation',
+          element.attrValue('href').offset,
+          `链接 <a href="${trimmed}"> 在沙箱里无法打开`,
+        );
+      }
     }
   }
   if (tag === 'a' && element.attrs.has('download')) {
@@ -368,14 +377,14 @@ function checkSubmitButton(element: ElementInfo, push: Push): void {
       'sandbox.submit-button',
       type === undefined ? element.offset : element.attrOffset('type'),
       type === undefined
-        ? '表单里的 <button> 没写 type（缺省是 submit）：回车提交与默认提交在沙箱里无效'
-        : '<button type="submit">：回车提交与默认提交在沙箱里无效',
+        ? '表单里的 <button> 没写 type（缺省是 submit）：默认提交会尝试页面导航，被宿主的导航守卫拦下'
+        : '<button type="submit">：默认提交会尝试页面导航，被宿主的导航守卫拦下',
     );
   } else if (tag === 'input' && (typeName === 'submit' || typeName === 'image')) {
     push(
       'sandbox.submit-button',
       element.attrOffset('type'),
-      `<input type="${typeName}">：提交在沙箱里无效`,
+      `<input type="${typeName}">：默认提交会尝试页面导航，被宿主的导航守卫拦下`,
     );
   }
 }
@@ -443,8 +452,6 @@ function isTrivialSubmitListener(listener: AnyNode | undefined): boolean {
   ]);
 }
 
-const STORAGE_GLOBALS = new Set(['localStorage', 'sessionStorage', 'indexedDB']);
-const NETWORK_GLOBALS = new Set(['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource']);
 /** location 前面可以出现的「窗口」前缀：window.location / top.location / document.location… */
 const LOCATION_OWNERS = new Set(['window', 'self', 'globalThis', 'top', 'parent', 'document']);
 const LOCATION_NAV_METHODS = new Set(['assign', 'replace', 'reload']);
@@ -456,24 +463,10 @@ function locationPath(path: readonly string[]): string[] {
   return path.slice(at);
 }
 
-/** 沙箱 API 的全局使用（裸名字或 window.x）。 */
+/** 沙箱 API 的全局使用（裸名字或 window.x）。存储 / 网络全局在运行档位下可用，不再检查。 */
 function globalUse(name: string, offset: number, called: boolean, ctx: ScanContext): void {
   const { push } = ctx;
-  if (STORAGE_GLOBALS.has(name)) {
-    push('sandbox.storage', offset, `使用了 ${name}（沙箱里一访问就抛 SecurityError）`);
-  } else if (NETWORK_GLOBALS.has(name)) {
-    push('sandbox.network', offset, `使用了 ${name}（组件禁网，请求必然失败）`);
-  } else if (called && (name === 'confirm' || name === 'prompt')) {
-    push(
-      'sandbox.modals',
-      offset,
-      name === 'confirm'
-        ? '调用了 confirm()：不弹窗、立即返回 false，依赖它的分支永远不执行'
-        : '调用了 prompt()：不弹窗、立即返回 null',
-    );
-  } else if (called && name === 'alert') {
-    push('sandbox.alert', offset, '调用了 alert()：不弹窗，用户看不到这条提示');
-  } else if (called && name === 'open') {
+  if (called && name === 'open') {
     push('sandbox.popup', offset, '调用了 window.open()：沙箱里返回 null，不会打开任何窗口');
   }
 }
@@ -535,9 +528,11 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
         }
         const joined = stripped.join('.');
         if (joined === 'document.cookie') {
-          push('sandbox.storage', at(node), '使用了 document.cookie（沙箱里抛 SecurityError）');
-        } else if (joined === 'navigator.sendBeacon') {
-          push('sandbox.network', at(node), '使用了 navigator.sendBeacon（组件禁网）');
+          push(
+            'sandbox.storage',
+            at(node),
+            '使用了 document.cookie（非 http 源下读写抛 SecurityError）——localStorage 可用，跨打开持久化优先 kepcup.storage',
+          );
         } else if (joined === 'navigator.clipboard') {
           push(
             'sandbox.clipboard',
@@ -570,12 +565,8 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
         const prop = propertyName(node.left);
         const value = stringValue(node.right);
         if (prop === 'onsubmit') {
+          // submit 事件在运行档位下照常触发：只记事实用于抑制默认提交警告。
           ctx.hasSubmitHandler = true;
-          push(
-            'sandbox.form-submit',
-            at(node),
-            '设置了 onsubmit 处理函数：沙箱里 submit 事件永远不触发',
-          );
         } else if (prop === 'download') {
           push('sandbox.download', at(node), '设置了链接的 download 属性：沙箱里下载静默无效');
         } else if (prop === 'target' && value?.trim().toLowerCase() === '_blank') {
@@ -609,25 +600,25 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
           push(
             'sandbox.form-submit',
             at(node),
-            '调用了 requestSubmit()：沙箱里不会触发 submit 事件',
+            '调用了 requestSubmit()：默认提交会尝试页面导航，被宿主的导航守卫拦下——在 submit 监听里 preventDefault 后自行处理',
           );
         } else if (
           method === 'submit' &&
           node.arguments.length === 0 &&
           !ctx.userMembers.has('submit')
         ) {
-          push('sandbox.form-submit', at(node), '调用了 form.submit()：沙箱里静默无效');
+          push(
+            'sandbox.form-submit',
+            at(node),
+            '调用了 form.submit()：默认提交会尝试页面导航，被宿主的导航守卫拦下——在 submit 监听里 preventDefault 后自行处理',
+          );
         } else if (
           calleeName === 'addEventListener' &&
           stringValue(firstArg) === 'submit' &&
           !isTrivialSubmitListener(node.arguments[1])
         ) {
+          // submit 监听照常触发（完整 WebApp 档）：只记事实用于抑制默认提交警告。
           ctx.hasSubmitHandler = true;
-          push(
-            'sandbox.form-submit',
-            at(node),
-            "addEventListener('submit', …) 注册的处理函数永远不会被调用",
-          );
         } else if (method === 'setAttribute') {
           const attr = stringValue(firstArg)?.toLowerCase();
           const attrValue = stringValue(node.arguments[1]);
@@ -715,10 +706,11 @@ function scanUnitTokens(unit: JsUnit, ctx: ScanContext): void {
     if (bare) globalUse(name, at(start), called, ctx);
 
     if (afterDot && isName(i - 2, 'document') && name === 'cookie') {
-      push('sandbox.storage', at(i - 2), '使用了 document.cookie（沙箱里抛 SecurityError）');
-    }
-    if (afterDot && isName(i - 2, 'navigator') && name === 'sendBeacon') {
-      push('sandbox.network', at(i - 2), '使用了 navigator.sendBeacon（组件禁网）');
+      push(
+        'sandbox.storage',
+        at(i - 2),
+        '使用了 document.cookie（非 http 源下读写抛 SecurityError）——localStorage 可用，跨打开持久化优先 kepcup.storage',
+      );
     }
     if (afterDot && isName(i - 2, 'navigator') && name === 'clipboard') {
       push(
@@ -740,7 +732,11 @@ function scanUnitTokens(unit: JsUnit, ctx: ScanContext): void {
         );
     }
     if (afterDot && name === 'requestSubmit' && called) {
-      push('sandbox.form-submit', at(i), '调用了 requestSubmit()：沙箱里不会触发 submit 事件');
+      push(
+        'sandbox.form-submit',
+        at(i),
+        '调用了 requestSubmit()：默认提交会尝试页面导航，被宿主的导航守卫拦下——在 submit 监听里 preventDefault 后自行处理',
+      );
     }
     if (
       afterDot &&
@@ -749,11 +745,15 @@ function scanUnitTokens(unit: JsUnit, ctx: ScanContext): void {
       type(i + 2) === ')' &&
       !ctx.userMembers.has('submit')
     ) {
-      push('sandbox.form-submit', at(i), '调用了 form.submit()：沙箱里静默无效');
+      push(
+        'sandbox.form-submit',
+        at(i),
+        '调用了 form.submit()：默认提交会尝试页面导航，被宿主的导航守卫拦下——在 submit 监听里 preventDefault 后自行处理',
+      );
     }
     if (afterDot && name === 'onsubmit' && type(i + 1) === '=') {
+      // submit 事件在运行档位下照常触发：只记事实用于抑制默认提交警告。
       ctx.hasSubmitHandler = true;
-      push('sandbox.form-submit', at(i), '设置了 onsubmit 处理函数：沙箱里 submit 事件永远不触发');
     }
     if (
       name === 'addEventListener' &&
@@ -761,12 +761,8 @@ function scanUnitTokens(unit: JsUnit, ctx: ScanContext): void {
       type(i + 2) === 'string' &&
       value(i + 2) === 'submit'
     ) {
+      // 同上：submit 监听照常触发，只记事实。
       ctx.hasSubmitHandler = true;
-      push(
-        'sandbox.form-submit',
-        at(i),
-        "addEventListener('submit', …) 注册的处理函数永远不会被调用",
-      );
     }
     if (
       name === 'kepcup' &&

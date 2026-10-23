@@ -51,7 +51,11 @@ export function jsCheck(input: { html: string }): WidgetCheckIssue[] {
   checkSyntax(model, push);
   const analysis = analyze(model);
   checkHandlers(analysis, push);
-  checkUndefinedNames(analysis, push);
+  // 文档里引了 https 外链脚本：库全局（Chart、$ 等）可能由 CDN 提供，降为 warning。
+  // 属性值带不带引号都算（`<script src=https://cdn…>` 是合法 HTML）；协议相对 `//…`
+  // 不算（解析回 kepcup-app 协议，加载不到，见 static-check 的 isBrokenUrl）。
+  const hasExternalScript = /<script\b[^>]*\bsrc\s*=\s*["']?https?:/i.test(input.html);
+  checkUndefinedNames(analysis, push, hasExternalScript);
   checkRedeclare(model, analysis, push);
   checkIds(model, analysis, push);
   checkNotAwaited(analysis, push);
@@ -196,7 +200,11 @@ const FORM_SCOPE_NAMES: ReadonlySet<string> = new Set([
   'enctype',
 ]);
 
-/** 常被 LLM 当成「已经引入」的第三方库全局名（报错里点明是 CDN 库）。 */
+/**
+ * 常被 LLM 当成「已经引入」的第三方库全局名。文档里引了 https 外链脚本时这些名字可能由
+ * CDN 提供——降为 warning（真缺失时 S2 预览会以运行时错误暴露；预览离线，CDN 本来也
+ * 加载不到）；没引外链脚本时仍是 error。
+ */
 const LIBRARY_NAMES = new Set([
   'Chart',
   '$',
@@ -383,7 +391,7 @@ function checkHandlers(analysis: Analysis, push: Push): void {
 
 // --- js.undefined-name -------------------------------------------------------------
 
-function checkUndefinedNames(analysis: Analysis, push: Push): void {
+function checkUndefinedNames(analysis: Analysis, push: Push, hasExternalScript: boolean): void {
   // 每个名字只报一处：被调用的那处优先（error），否则第一次出现（warning）。
   const found = new Map<string, { offset: number; called: boolean; count: number }>();
   for (const { unit, facts } of analysis.units) {
@@ -407,17 +415,22 @@ function checkUndefinedNames(analysis: Analysis, push: Push): void {
     });
   }
   for (const [name, hit] of found) {
-    const library = LIBRARY_NAMES.has(name)
-      ? `（${name} 是第三方库的全局名：沙箱加载不了 CDN，这个库不存在）`
+    const libraryGlobal = LIBRARY_NAMES.has(name);
+    const library = libraryGlobal
+      ? hasExternalScript
+        ? `（${name} 可能由 CDN 脚本提供；S2 预览离线加载不到，请容错或本地兜底）`
+        : `（${name} 是第三方库的全局名：文档里没有引它的 <script src>，不存在）`
       : '';
     const more = hit.count > 1 ? `（共 ${hit.count} 处）` : '';
+    // CDN 提供的库全局不再算 error（S2 预览离线会暴露真实缺失）。
+    const level = libraryGlobal && hasExternalScript ? 'warning' : hit.called ? 'error' : 'warning';
     push(
       'js.undefined-name',
       hit.offset,
       hit.called
         ? `调用了未定义的 ${name}${library}${more}，运行到这里会抛 ReferenceError`
         : `使用了未定义的 ${name}${library}${more}`,
-      hit.called ? 'error' : 'warning',
+      level,
     );
   }
 }

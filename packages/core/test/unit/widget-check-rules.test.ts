@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   WIDGET_CHECK_RULES,
+  previewOfflineNetworkMessage,
+  previewOfflineResourceLoadMessage,
   ruleIssue,
   sandboxPitfallsPrompt,
   widgetCheckRule,
@@ -21,9 +23,6 @@ describe('widget check rule registry', () => {
         'html.doctype',
         'sandbox.external-resource',
         'sandbox.storage',
-        'sandbox.network',
-        'sandbox.modals',
-        'sandbox.alert',
         'sandbox.form-submit',
         'sandbox.submit-button',
         'sandbox.popup',
@@ -53,18 +52,23 @@ describe('widget check rule registry', () => {
         'render.overflow-x',
         'render.bad-text',
         'preview.timeout',
+        'preview.offline-network',
       ]),
     );
   });
 
-  it('levels follow the spike-revised design (alert / submit-button are warnings)', () => {
+  it('levels follow the full-webapp tier (storage / forms are warnings, no network / modals rules)', () => {
     const level = (id: string): string => widgetCheckRule(id).level;
-    expect(level('sandbox.alert')).toBe('warning');
+    expect(level('sandbox.storage')).toBe('warning');
     expect(level('sandbox.submit-button')).toBe('warning');
-    expect(level('sandbox.modals')).toBe('error');
-    expect(level('sandbox.form-submit')).toBe('error');
+    expect(level('sandbox.form-submit')).toBe('warning');
     expect(level('sandbox.link-navigation')).toBe('warning');
     expect(level('acceptance.invalid')).toBe('warning');
+    expect(level('preview.offline-network')).toBe('warning');
+    // 完整 WebApp 档：联网 / confirm / alert 合法，不再有对应禁区规则。
+    expect(() => widgetCheckRule('sandbox.network')).toThrow(/unknown/);
+    expect(() => widgetCheckRule('sandbox.modals')).toThrow(/unknown/);
+    expect(() => widgetCheckRule('sandbox.alert')).toThrow(/unknown/);
   });
 
   it('every S0/S1 error is blocking; S2 blocking set matches §11.6', () => {
@@ -96,7 +100,7 @@ describe('widget check rule registry', () => {
   it('sandbox hints point at the kepcup.* replacements', () => {
     expect(widgetCheckRule('sandbox.storage').hint).toContain('kepcup.storage');
     expect(widgetCheckRule('sandbox.popup').hint).toContain('kepcup.openLink');
-    expect(widgetCheckRule('sandbox.network').hint).toContain('kepcup.query');
+    expect(widgetCheckRule('preview.offline-network').hint).toContain('fixtures');
   });
 
   it('ruleIssue: downgraded level is never blocking; messages are clipped', () => {
@@ -122,5 +126,47 @@ describe('widget check rule registry', () => {
     for (const rule of WIDGET_CHECK_RULES) expect(prompt, rule.id).toContain(`[${rule.id}]`);
     expect(prompt).toContain('沙箱雷区清单');
     expect(prompt).toContain('阻断');
+  });
+});
+
+describe('preview offline classifiers', () => {
+  it('previewOfflineNetworkMessage matches the offline failure shapes (dead proxy)', () => {
+    // fetch / XHR / WebSocket 的典型离线报错。
+    expect(previewOfflineNetworkMessage('TypeError: Failed to fetch')).toBe(true);
+    expect(
+      previewOfflineNetworkMessage(
+        "WebSocket connection to 'wss://x' failed: Error in connection establishment: net::ERR_PROXY_CONNECTION_FAILED",
+      ),
+    ).toBe(true);
+    expect(
+      previewOfflineNetworkMessage("GET https://x net::ERR_TUNNEL_CONNECTION_FAILED"),
+    ).toBe(true);
+    expect(previewOfflineNetworkMessage('NetworkError: Failed to execute send on XMLHttpRequest')).toBe(true);
+    expect(previewOfflineNetworkMessage('net::ERR_CONNECTION_TIMED_OUT')).toBe(true);
+    expect(previewOfflineNetworkMessage('net::ERR_CONNECTION_REFUSED')).toBe(true);
+  });
+
+  it('previewOfflineNetworkMessage does not swallow unrelated runtime errors', () => {
+    // 旧版宽松匹配（关键词 + 任意远距离 error/failed）会把这类真实缺陷降级；现在不命中。
+    expect(previewOfflineNetworkMessage("Failed to set target on 'XMLHttpRequest': not a function")).toBe(
+      false,
+    );
+    expect(previewOfflineNetworkMessage('TypeError: WebSocketChannel has no method open0')).toBe(false);
+    expect(previewOfflineNetworkMessage('ReferenceError: socket is not defined')).toBe(false);
+    expect(previewOfflineNetworkMessage('读文件失败：EACCES')).toBe(false);
+  });
+
+  it('previewOfflineResourceLoadMessage: only external-resource load failures count', () => {
+    expect(previewOfflineResourceLoadMessage('资源加载失败：<script> https://cdn.example.com/x.js')).toBe(
+      true,
+    );
+    expect(previewOfflineResourceLoadMessage('资源加载失败：<img> HTTP://cdn.example.com/a.png')).toBe(
+      true,
+    );
+    // 相对路径的加载失败是真实缺陷（S0 已阻断），不算离线产物。
+    expect(previewOfflineResourceLoadMessage('资源加载失败：<script> js/app.js')).toBe(false);
+    expect(previewOfflineResourceLoadMessage('资源加载失败：<img> (无地址)')).toBe(false);
+    // 其它 console.error（真实的运行期错误输出）照常上报。
+    expect(previewOfflineResourceLoadMessage('TypeError: x is null')).toBe(false);
   });
 });
