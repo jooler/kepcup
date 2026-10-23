@@ -173,9 +173,14 @@ describe('分享清扫定时（D94 §6.7 启动 + 每日）', () => {
       expect(share).not.toBeNull();
       const sweep = vi.spyOn(share!, 'sweep');
       const scanInbox = vi.spyOn(share!, 'scanInbox');
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(sweep.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(scanInbox.mock.calls.length).toBeGreaterThanOrEqual(2);
+      // Startup already ran before spies; wait for ≥2 daily ticks under CI load.
+      await vi.waitFor(
+        () => {
+          expect(sweep.mock.calls.length).toBeGreaterThanOrEqual(2);
+          expect(scanInbox.mock.calls.length).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 5_000 },
+      );
     } finally {
       await core.close();
       await rm(home, { recursive: true, force: true });

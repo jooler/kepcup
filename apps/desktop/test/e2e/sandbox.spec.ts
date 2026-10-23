@@ -104,6 +104,11 @@ test('run status line shows the command description while a command executes', a
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-statusline-');
   const { page, llm } = session;
+  // Hold the LLM step after bash so lastProgress「正在执行命令 …」stays on the
+  // status line. sleep-based waits race on Windows: Playwright textContent()
+  // defaults to 30s when the node is missing and burns the poll budget, and
+  // Windows CI often has no usable long-lived sandbox sleep.
+  const afterCmd = step().hold().replyText('命令输出 sandbox-e2e-probe');
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小执行');
@@ -116,7 +121,7 @@ test('run status line shows the command description while a command executes', a
         writes: false,
         taskSteps: [
           step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
-          step().replyText('命令输出 sandbox-e2e-probe'),
+          afterCmd,
         ],
         relay: '执行完了',
       }),
@@ -127,17 +132,16 @@ test('run status line shows the command description while a command executes', a
     // Cmd/Ctrl+Enter 发送队列中的全部草稿（Enter 只入队）。
     await composer.press('ControlOrMeta+Enter');
 
-    // The bash progress text ("正在执行命令 …") must appear on the task status
-    // line while the task is active. The command finishes quickly, so poll generously.
-    await expect
-      .poll(async () => page.locator('[data-testid="task-status-text"]').textContent(), {
-        timeout: 60_000,
-      })
-      .toContain('正在执行命令');
+    // bash before() sets「正在执行命令 …」; afterCmd hold keeps lastProgress visible.
+    await expect(page.locator('[data-testid="task-status-text"]')).toContainText('正在执行命令', {
+      timeout: 60_000,
+    });
+    afterCmd.release();
 
     await expect(page.locator('[data-testid="task-status"]')).toBeHidden({ timeout: 120_000 });
     await expect(page.locator('[data-testid="chat-view"]').getByText('执行完了')).toBeVisible();
   } finally {
+    afterCmd.release();
     await closeSession(session);
   }
 });
