@@ -17,6 +17,7 @@
   import EnvironmentSection from '$lib/features/settings/EnvironmentSection.svelte';
   import SandboxSection from '$lib/features/settings/SandboxSection.svelte';
   import AllowlistSection from '$lib/features/settings/AllowlistSection.svelte';
+  import RemoteDevicesCard from '$lib/features/settings/RemoteDevicesCard.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -96,9 +97,7 @@
     return { id: botId, name: bot !== undefined && bot.name.length > 0 ? bot.name : botId };
   });
 
-  const workdir = $derived(
-    workdirId === null ? null : workdirs.boundOf(conversationId, workdirId),
-  );
+  const workdir = $derived(workdirId === null ? null : workdirs.boundOf(conversationId, workdirId));
 
   $effect(() => {
     if (item.card !== 'agent') return;
@@ -217,12 +216,7 @@
 {:else if item.card === 'project-members' && conversationId !== null}
   <ProjectMembersCard {conversationId} {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'tool-policy'}
-  <AppConnectionDetail
-    embedded
-    before={expected}
-    {prefill}
-    onSaved={() => onSaved()}
-  />
+  <AppConnectionDetail embedded before={expected} {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'mcp-servers'}
   <McpSection
     embedded
@@ -240,6 +234,8 @@
   <SandboxSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-allowlist'}
   <AllowlistSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'remote-devices'}
+  <RemoteDevicesCard embedded onSaved={() => onSaved()} />
 {:else if item.card === 'workdir-settings' && workdir !== null}
   <WorkdirSettingsDialog
     embedded

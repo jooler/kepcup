@@ -511,3 +511,37 @@ html.wco .wco-inset-end {
   height: 0;
   pointer-events: none;
 }
+
+/*
+ * D96 web 构建（手机 PWA，html.kepcup-web 由 index.web.html 打标）：安全区与
+ * 移动视口（design 46 §5.5）。index.web.html 的 viewport-fit=cover 让内容延伸进
+ * 刘海 / 手势条区域；standalone（添加到主屏幕）模式下用 env(safe-area-inset-*)
+ * 给整个视口让位——body 一次性内边距同时覆盖顶栏（状态栏）与底部（手势条），
+ * 应用自身布局无需逐栏适配。普通浏览器标签页系统自动留白，媒体查询不命中。
+ * Electron 构建没有 kepcup-web 类，整块是死规则，零影响。
+ */
+@media (display-mode: standalone) {
+  html.kepcup-web,
+  html.kepcup-web body {
+    height: 100%;
+    overflow: hidden;
+  }
+  html.kepcup-web body {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  /* h-screen（100vh）在 cover 视口含安全区，改按 body 实际内容高度铺满。
+     选择器借用 App 根容器的 data-testid：它没有稳定的业务类名可挂。 */
+  html.kepcup-web [data-testid='app-shell'] {
+    height: 100%;
+  }
+}
+
+/*
+ * web 构建没有原生 vibrancy / acrylic：Mac 浏览器上 main.ts 的 platform-mac 类
+ * 会让 body 透明（为桌面毛玻璃准备），web 里强制回不透明底色，暗色主题不露白。
+ * 写在 platform-mac 块之后，同特异性靠源码顺序胜出。
+ */
+html.kepcup-web body {
+  background-color: var(--background);
+}

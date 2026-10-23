@@ -76,14 +76,19 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   {
     kind: 'action',
     id: 'wiki.deleteSource',
-    reason: '删除项目 wiki 来源：破坏性动作，入口在项目 Wiki 的来源面板（收录走 wiki_enqueue / wiki.addSource）',
+    reason:
+      '删除项目 wiki 来源：破坏性动作，入口在项目 Wiki 的来源面板（收录走 wiki_enqueue / wiki.addSource）',
   },
   {
     kind: 'action',
     id: 'grants.revoke',
     reason: '撤销目录授权：在 Bot「访问」页签逐条撤销，不经对话',
   },
-  { kind: 'action', id: 'workdirs.remove', reason: '移除工作目录：破坏性动作（工作目录设置对话框内）' },
+  {
+    kind: 'action',
+    id: 'workdirs.remove',
+    reason: '移除工作目录：破坏性动作（工作目录设置对话框内）',
+  },
   {
     kind: 'action',
     id: 'projects.delete',
@@ -112,7 +117,13 @@ export const DIALOG_SURFACE_SECTIONS = {
  * 项目详情页的分区（README §4.11 的 `ProjectSettingsSection`，shared 与渲染层共用一份）。
  * `project-detail` 不是对话框：section 必须属于这里，而不是 `DIALOG_SURFACE_SECTIONS`。
  */
-export const PROJECT_DETAIL_SECTIONS = ['overview', 'members', 'grants', 'schedules', 'danger'] as const;
+export const PROJECT_DETAIL_SECTIONS = [
+  'overview',
+  'members',
+  'grants',
+  'schedules',
+  'danger',
+] as const;
 export type ProjectSettingsSection = (typeof PROJECT_DETAIL_SECTIONS)[number];
 
 /** 从渲染层源码扫出来的界面位置。 */
@@ -322,7 +333,9 @@ export function settingsAdapterCoverageProblems(input: SettingsAdapterCoverageIn
       problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 没写理由`);
     }
     if (!requiresItemAdapter(entry)) {
-      problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不需要 fallback（只读 / 渲染层 / via-tool / generic），请删掉`);
+      problems.push(
+        `EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 不需要 fallback（只读 / 渲染层 / via-tool / generic），请删掉`,
+      );
     } else if (adapterIds.has(id)) {
       problems.push(`EXPLICIT_ADAPTER_FALLBACK 里的 ${id} 已有适配器，fallback 是遗留`);
     }

@@ -14,6 +14,7 @@ import { environmentContribution } from './environment.js';
 import { generalContribution } from './general.js';
 import { legacyContribution } from './legacy.js';
 import { modelsContribution } from './models.js';
+import { remoteContribution } from './remote.js';
 import type { SettingAdapterContribution } from './types.js';
 
 /**
@@ -26,6 +27,7 @@ export const SETTING_ADAPTER_CONTRIBUTIONS: readonly SettingAdapterContribution[
   botContribution,
   generalContribution,
   environmentContribution,
+  remoteContribution,
   legacyContribution,
 ];
 

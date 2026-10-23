@@ -241,6 +241,14 @@ export interface AdapterDeps {
   watches?: {
     countForBot(botId: string): number;
   };
+  /**
+   * D96 远程遥控设备概要（只读）：只数个数与在线状态，不把 deviceId /
+   * 指纹放进快照。缺省（服务未就绪）回 unknown。写入全部走专用 RPC
+   *（`remote.confirmPairing` / `remote.revokeDevice`），适配器不提供 write。
+   */
+  remote?: {
+    devices(): ReadonlyArray<{ online: boolean; revoked: boolean }>;
+  };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
 }
@@ -2090,6 +2098,31 @@ export function developerMcpbAdapter(deps: AdapterDeps): ItemAdapter {
 function botField<T>(deps: AdapterDeps, target: SettingTargetRef, pick: (bot: Bot) => T): T | null {
   const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
   return bot === null ? null : pick(bot);
+}
+
+/**
+ * `remote.devices`（D96）：设备概要只读——开关开着且有未撤销设备为 configured，
+ * 开着但一台没有为 unconfigured（「我已设置好」核对不过，引导去配对）；开关关着
+ * 也是 unconfigured（状态一句话讲清）。不提供 write：配对 / 撤销走专用 RPC
+ *（`remote.confirmPairing` / `remote.revokeDevice`），设备名与指纹不出现在快照。
+ */
+export function remoteDevicesAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      if (deps.remote === undefined) {
+        return snapshot('unknown', null, '还看不到遥控设备状态');
+      }
+      const devices = deps.remote.devices();
+      const active = devices.filter((device) => !device.revoked);
+      const online = active.filter((device) => device.online).length;
+      const status = active.length > 0 ? 'configured' : 'unconfigured';
+      return snapshot(
+        status,
+        null,
+        active.length > 0 ? `${active.length} 台已配对，在线 ${online} 台` : '还没有配对的手机',
+      );
+    },
+  };
 }
 
 export const RENDERER_ADAPTER: ItemAdapter = {

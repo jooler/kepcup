@@ -25,6 +25,16 @@ import {
   shareFailedRetryInputSchema,
   shareFailedRetryOutputSchema,
   shareFailedDiscardInputSchema,
+  remoteStatusOutputSchema,
+  remoteCreatePairingOutputSchema,
+  remoteConfirmPairingInputSchema,
+  remoteConfirmPairingOutputSchema,
+  remoteRevokeDeviceInputSchema,
+  remoteRevokeDeviceOutputSchema,
+  remoteDevicesOutputSchema,
+  remoteConfigGetOutputSchema,
+  remoteConfigSetInputSchema,
+  remoteConfigSetOutputSchema,
   botsListOutputSchema,
   botGetOutputSchema,
   botsCreateInputSchema,
@@ -248,6 +258,7 @@ import {
   type Settings,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
+import type { RemoteHub } from '../remote/hub.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
@@ -700,50 +711,54 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         throw error;
       }
     }),
-    'inkcop.listAgents': method(z.object({}).default({}), inkcopListAgentsOutputSchema, async () => {
-      const client = inkcopClientFromSettings(domain.settings.get());
-      try {
-        await client.health();
-      } catch (error) {
-        if (error instanceof InkcopAuthError) {
-          return {
-            online: false as const,
-            agents: [],
-            authError: true as const,
-            tip: inkcopAuthTip(null),
-          };
+    'inkcop.listAgents': method(
+      z.object({}).default({}),
+      inkcopListAgentsOutputSchema,
+      async () => {
+        const client = inkcopClientFromSettings(domain.settings.get());
+        try {
+          await client.health();
+        } catch (error) {
+          if (error instanceof InkcopAuthError) {
+            return {
+              online: false as const,
+              agents: [],
+              authError: true as const,
+              tip: inkcopAuthTip(null),
+            };
+          }
+          if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
+            return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+          }
+          throw error;
         }
-        if (error instanceof InkcopOfflineError || error instanceof InkcopHttpError) {
-          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+        try {
+          const listed = await client.listAgents();
+          return { online: true as const, agents: listed.agents };
+        } catch (error) {
+          // Server not yet on v0.2: fall back to main_agent stub so UI can still bind.
+          if (error instanceof InkcopHttpError && (error.status === 404 || error.status === 501)) {
+            return {
+              online: true as const,
+              agents: [{ key: 'main_agent', name: '主智能体', kind: 'main' as const }],
+              tip: 'InkCop 尚未提供 /v1/agents，暂仅列出主智能体',
+            };
+          }
+          if (error instanceof InkcopAuthError) {
+            return {
+              online: false as const,
+              agents: [],
+              authError: true as const,
+              tip: inkcopAuthTip(null),
+            };
+          }
+          if (error instanceof InkcopOfflineError) {
+            return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
+          }
+          throw error;
         }
-        throw error;
-      }
-      try {
-        const listed = await client.listAgents();
-        return { online: true as const, agents: listed.agents };
-      } catch (error) {
-        // Server not yet on v0.2: fall back to main_agent stub so UI can still bind.
-        if (error instanceof InkcopHttpError && (error.status === 404 || error.status === 501)) {
-          return {
-            online: true as const,
-            agents: [{ key: 'main_agent', name: '主智能体', kind: 'main' as const }],
-            tip: 'InkCop 尚未提供 /v1/agents，暂仅列出主智能体',
-          };
-        }
-        if (error instanceof InkcopAuthError) {
-          return {
-            online: false as const,
-            agents: [],
-            authError: true as const,
-            tip: inkcopAuthTip(null),
-          };
-        }
-        if (error instanceof InkcopOfflineError) {
-          return { online: false as const, agents: [], tip: inkcopOfflineTip(null) };
-        }
-        throw error;
-      }
-    }),
+      },
+    ),
     'bots.list': method(voidInput, botsListOutputSchema, async () => ({
       bots: domain.bots.listActive(),
     })),
@@ -905,7 +920,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
     /** 通讯录名册：所有会话（含已从对话列表移除的归档会话）。 */
     'conversations.all': method(voidInput, conversationsAllOutputSchema, async () => ({
-      conversations: domain.conversations.list().map((conversation) => conversationView(conversation)),
+      conversations: domain.conversations
+        .list()
+        .map((conversation) => conversationView(conversation)),
     })),
     'conversations.get': method(
       conversationGetInputSchema,
@@ -1903,13 +1920,38 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       shareFailedRetryOutputSchema,
       async (input) => requireShare(services).retry(input),
     ),
-    'share.failed.discard': method(
-      shareFailedDiscardInputSchema,
-      okOutputSchema,
-      async (input) => {
-        requireShare(services).discard(input);
-        return { ok: true as const };
-      },
+    'share.failed.discard': method(shareFailedDiscardInputSchema, okOutputSchema, async (input) => {
+      requireShare(services).discard(input);
+      return { ok: true as const };
+    }),
+    // D96 远程遥控：全部委托给收发中枢（remote/hub.ts）；handlers 对本机与
+    // 远程端点对等（同一份 methods 表），不做只读门。
+    'remote.status': method(voidInput, remoteStatusOutputSchema, async () =>
+      requireRemote(services).status(),
+    ),
+    'remote.createPairing': method(voidInput, remoteCreatePairingOutputSchema, async () =>
+      requireRemote(services).createPairing(),
+    ),
+    'remote.confirmPairing': method(
+      remoteConfirmPairingInputSchema,
+      remoteConfirmPairingOutputSchema,
+      async (input) => requireRemote(services).confirmPairing(input.requestId, input.accept),
+    ),
+    'remote.revokeDevice': method(
+      remoteRevokeDeviceInputSchema,
+      remoteRevokeDeviceOutputSchema,
+      async (input) => ({ device: requireRemote(services).revokeDevice(input.deviceId) }),
+    ),
+    'remote.devices': method(voidInput, remoteDevicesOutputSchema, async () =>
+      requireRemote(services).devices(),
+    ),
+    'remote.config.get': method(voidInput, remoteConfigGetOutputSchema, async () =>
+      requireRemote(services).configGet(),
+    ),
+    'remote.config.set': method(
+      remoteConfigSetInputSchema,
+      remoteConfigSetOutputSchema,
+      async (input) => requireRemote(services).configSet(input),
     ),
     // 对话内应用设置：settings.items.apply 与设置卡动作。
     ...bindSettingsCatalogMethods(services),
@@ -1922,6 +1964,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
 function requireTodos(services: CoreServices): TodoService {
   if (!services.todos) throw new AppError('NOT_IMPLEMENTED', '工作台服务未就绪');
   return services.todos;
+}
+
+function requireRemote(services: CoreServices): RemoteHub {
+  if (!services.remote) throw new AppError('NOT_IMPLEMENTED', '远程遥控服务未就绪');
+  return services.remote;
 }
 
 function requireMemos(services: CoreServices): MemoService {

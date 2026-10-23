@@ -15,6 +15,7 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { resolveComposerAction } from './key-handling';
   import {
     buildMentionTargets,
@@ -1056,7 +1057,12 @@
   // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
   // 上传管道在 composerDrafts（按会话缓存）；这里只负责收集文件与视图操作。
 
+  // D96 远程端点（web 构建）：附件上传按 desktop-only 能力裁剪（设计 §3.2「本地
+  // 文件选择对话框」；手机相册上行是 P1）——按钮置灰、title 提示，不隐藏入口。
+  const canAttachFiles = $derived(endpointSupports('local-file-dialog'));
+
   function pickFiles(): void {
+    if (!canAttachFiles) return;
     fileInputEl?.click();
   }
 
@@ -1255,9 +1261,13 @@
             <Button
               variant="ghost"
               size="icon"
-              class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground"
+              class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles
+                ? ''
+                : 'opacity-50'}"
               onclick={pickFiles}
               disabled={readOnly}
+              aria-disabled={readOnly ? undefined : !canAttachFiles}
+              title={canAttachFiles ? t('composer.attach') : t('settings.desktopOnly')}
               aria-label={t('composer.attach')}
               data-testid="composer-attach"
             >

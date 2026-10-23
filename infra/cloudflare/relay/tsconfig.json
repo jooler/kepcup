@@ -1,0 +1,22 @@
+{
+  // Standalone:这个目录不是 pnpm workspace 包(同 registry),repo 级 `pnpm typecheck`
+  // 不覆盖它。运行:npx tsc -p infra/cloudflare/relay --noEmit
+  // `dom` 提供 Request/Response/WebSocket/TextEncoder(Workers runtime 形状);
+  // @types/node 仅测试需要(假时钟等),src/ 不依赖 Node API。
+  // paths 只为 test/envelope-sync.test.ts 解析 @kepcup/shared(与根 vitest 的 alias 同指 src)。
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2023", "dom"],
+    "types": ["node"],
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@kepcup/shared": ["../../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

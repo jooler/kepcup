@@ -1,0 +1,38 @@
+{
+  // KepCup 远程遥控中转(设计 46 §4.3,D96):Worker 只做 WSS 入口与静态资产,
+  // 每会话一个 RelaySession DO(SQLite 型;仅内存态 + hibernation,零 durable 写)。
+  // 负载全程端到端加密、中转不可信:不记录 IP、不落任何日志存储(设计 §7)。
+  // 部署由用户完成(DNS 由 custom domain 自动创建),见本目录 README「部署」。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kepcup-relay",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  // 与 registry 相反,这里显式关掉 observability:中转不保留任何可回溯的请求日志。
+  "observability": { "enabled": false },
+  "durable_objects": {
+    "bindings": [
+      // 每会话一个 DO 实例:idFromName(ULID sid),多用户天然隔离(设计 §1.4)。
+      { "name": "RELAY_SESSION", "class_name": "RelaySession" },
+    ],
+  },
+  "migrations": [
+    // SQLite 型 DO(免费套餐可用)。本 DO 不写 storage,选 SQLite 只为免费额度下的创建资格。
+    { "tag": "v1", "new_sqlite_classes": ["RelaySession"] },
+  ],
+  "assets": {
+    // PWA 构建产物(WP5 之前是占位页);hash 文件名与长缓存由构建侧负责。
+    "directory": "./public",
+    // 未命中资产的路径回退 index.html(SPA 路由;配对链接 #pair=… 依赖它)。
+    "not_found_handling": "single-page-application",
+    // Worker 侧兜底取资产的绑定(worker.ts 的 fallthrough)。
+    "binding": "ASSETS",
+    // 默认资产优先:只有 /ws/* 与 /healthz 先进 Worker 脚本,资产请求不耗 Worker 调用。
+    "run_worker_first": ["/ws/*", "/healthz"],
+  },
+  "routes": [
+    // custom domain:部署时自动创建 remote.kepcup.com 的 DNS 记录与证书(用户操作)。
+    { "pattern": "remote.kepcup.com", "custom_domain": true },
+  ],
+}

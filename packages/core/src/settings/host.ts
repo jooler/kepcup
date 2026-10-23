@@ -766,7 +766,10 @@ export class SettingsCatalogHost {
     );
     const shapeProblems = settingValuesProblems(item, input.values);
     if (shapeProblems.length > 0) {
-      throw new AppError('INVALID_INPUT', `「${item.title}」的值不合法：${shapeProblems.join('；')}`);
+      throw new AppError(
+        'INVALID_INPUT',
+        `「${item.title}」的值不合法：${shapeProblems.join('；')}`,
+      );
     }
     const known = new Map(item.fields.map((field) => [field.name, field]));
     const plain: SettingValues = {};
@@ -987,8 +990,7 @@ export class SettingsCatalogHost {
       const done =
         proposed !== null
           ? proposedMet
-          : changed &&
-            (!directional || adapter.valuesWiden!(item, before, snapshot.values ?? {}));
+          : changed && (!directional || adapter.valuesWiden!(item, before, snapshot.values ?? {}));
       if (!done) return { state: 'pending', verified: false };
       this.#resolveCard(
         current,
@@ -998,7 +1000,11 @@ export class SettingsCatalogHost {
       return { state: 'applied', verified: true };
     }
     if (snapshot.status === 'unknown' || snapshot.status === 'readonly') {
-      this.#resolveCard(current, 'applied', snapshot.values !== null ? { applied: snapshot.values } : {});
+      this.#resolveCard(
+        current,
+        'applied',
+        snapshot.values !== null ? { applied: snapshot.values } : {},
+      );
       return { state: 'applied', verified: null };
     }
     // 用户可能在卡上改成了别的值（确认卡）或填了与预填不同的值（待填卡）：只要已配置好，或本条目

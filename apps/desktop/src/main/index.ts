@@ -57,6 +57,16 @@ let tray: ReturnType<typeof createTray> | null = null;
 /** Tracked to honour "no notifications while the window is in the foreground". */
 let windowFocused = true;
 let unattendedActive = false;
+/** D96: 托盘可见的远程遥控快照（platform.remoteState 推送 + 就绪时拉一次初值）。 */
+const trayRemote: {
+  enabled: boolean;
+  anchor: 'off' | 'connecting' | 'online' | 'error';
+  onlineDevices: number;
+} = {
+  enabled: false,
+  anchor: 'off',
+  onlineDevices: 0,
+};
 /** Latest update-gate snapshot for late-loading renderer windows (P13-B UI). */
 let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
 /** D94: 分享协调器（App Group inbox → core inbox → share.consume）。 */
@@ -81,6 +91,10 @@ function beginQuit(): void {
   widgetPreviewHost?.dispose();
 }
 
+/** 窗口尚未建好时暂存的「连接手机」请求：did-finish-load 后补发（审查修复：
+ * 原先新建分支立即 send 会落在 renderer 注册监听之前，事件丢失）。 */
+let pendingRemotePairingOpen = false;
+
 function showWindow(): void {
   if (!window) {
     ensureWindow();
@@ -94,6 +108,18 @@ function showWindow(): void {
 function showConversation(conversationId: string): void {
   showWindow();
   window?.webContents.send('navigate-conversation', conversationId);
+}
+
+/** 打开窗口并让 renderer 弹出远程配对小窗；窗口新建分支在加载完成后补发。 */
+function openRemotePairing(): void {
+  if (!window) {
+    pendingRemotePairingOpen = true;
+    ensureWindow();
+    return;
+  }
+  window.show();
+  window.focus();
+  window.webContents.send('open-remote-pairing');
 }
 
 function ensureWindow(): BrowserWindow {
@@ -110,6 +136,10 @@ function ensureWindow(): BrowserWindow {
   });
   window.webContents.on('did-finish-load', () => {
     sendAppPort();
+    if (pendingRemotePairingOpen) {
+      pendingRemotePairingOpen = false;
+      window?.webContents.send('open-remote-pairing');
+    }
   });
 
   coreHost?.onState((state) => {
@@ -247,6 +277,16 @@ function bootstrap(): void {
       } else {
         coreHost?.callPlatform('unattended.disable').catch(() => {});
       }
+    },
+    // D96: 菜单动作 = 明确用户意图；core 落库后经 platform.remoteState 回推新状态，
+    // 托盘勾选态与设置页保持一致（这里不做本地翻转）。
+    onToggleRemote: () => {
+      if (coreHost === null) return;
+      const enable = !trayRemote.enabled;
+      void coreHost.callPlatform('remote.config.set', { enabled: enable }).catch(() => {});
+    },
+    onPairPhone: () => {
+      openRemotePairing();
     },
   });
 
@@ -533,6 +573,22 @@ function bootstrap(): void {
     if (payload.status === 'ready') {
       void drainShareIntakes();
       startShareScanTimer();
+      // D96: 托盘初值（后续变化走 platform.remoteState 推送）。
+      void coreHost
+        ?.callPlatform('remote.status')
+        .then((status) => {
+          const parsed = status as {
+            enabled?: boolean;
+            anchor?: 'off' | 'connecting' | 'online' | 'error';
+            onlineDeviceIds?: string[];
+          };
+          if (typeof parsed?.enabled !== 'boolean') return;
+          trayRemote.enabled = parsed.enabled;
+          trayRemote.anchor = parsed.anchor ?? 'off';
+          trayRemote.onlineDevices = parsed.onlineDeviceIds?.length ?? 0;
+          tray?.setRemote({ ...trayRemote });
+        })
+        .catch(() => {});
     }
   });
   // D94 §5.2: Bot / 项目 / 归档变了 → 重写 App Group 里的目标快照。
@@ -554,6 +610,13 @@ function bootstrap(): void {
   coreHost.onUnattended(({ active }) => {
     unattendedActive = active;
     tray?.setUnattended(active);
+  });
+  // D96: 托盘的远程遥控状态（开关勾选 + 中转连接后缀 + 在线台数）。
+  coreHost.onRemoteState((payload) => {
+    trayRemote.enabled = payload.enabled;
+    trayRemote.anchor = payload.state;
+    trayRemote.onlineDevices = payload.onlineDevices;
+    tray?.setRemote({ ...trayRemote });
   });
   // P13 任务 3: launch-at-login (settings default ON). Applied best-effort —
   // an unsigned macOS build may refuse to register (logged; verification on a

@@ -45,16 +45,13 @@
 
   const skills = $derived(skillsStore.botId === botId ? skillsStore.skills : []);
   /** 选中的是公共技能（所有 Bot 共用，启停是全局的）。 */
-  const selectedPublic = $derived(
-    skills.find((entry) => entry.name === skill)?.scope === 'public',
-  );
+  const selectedPublic = $derived(skills.find((entry) => entry.name === skill)?.scope === 'public');
 
   $effect(() => {
     const list = skills;
     if (skill.length > 0 || list.length === 0) return;
     const first =
-      list.find((entry) => entry.status !== 'incompatible' && entry.scope !== 'public') ??
-      list[0];
+      list.find((entry) => entry.status !== 'incompatible' && entry.scope !== 'public') ?? list[0];
     if (first !== undefined) {
       skill = first.name;
       enabled = first.status === 'active';

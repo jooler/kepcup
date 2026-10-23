@@ -10,6 +10,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { core } from '$lib/rpc/client.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
@@ -214,8 +215,13 @@
     if (objectUrl === null) setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
 
+  // D96 远程端点（web 构建）置灰桌面专属动作（capabilities 裁剪，不隐藏入口）：
+  // 按钮仍可悬停看提示（title 换成「仅桌面」），handler 里兜底拦下。
+  const canOpenExternal = $derived(endpointSupports('open-external'));
+  const canReveal = $derived(endpointSupports('reveal-in-file-manager'));
+
   async function openWithSystem(): Promise<void> {
-    if (artifact === null) return;
+    if (artifact === null || !canOpenExternal) return;
     try {
       await window.kepcup.openPath(artifact.path);
     } catch {
@@ -224,7 +230,7 @@
   }
 
   async function revealInFolder(): Promise<void> {
-    if (artifact === null) return;
+    if (artifact === null || !canReveal) return;
     try {
       await window.kepcup.showItemInFolder(artifact.path);
     } catch {
@@ -243,7 +249,11 @@
     <div class="mt-1 flex flex-wrap justify-center gap-2">
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
+        class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent {canOpenExternal
+          ? ''
+          : 'opacity-50'}"
+        aria-disabled={!canOpenExternal}
+        title={canOpenExternal ? undefined : t('settings.desktopOnly')}
         onclick={() => void openWithSystem()}
         data-testid="file-viewer-open-system"
       >
@@ -261,7 +271,11 @@
       </button>
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
+        class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent {canReveal
+          ? ''
+          : 'opacity-50'}"
+        aria-disabled={!canReveal}
+        title={canReveal ? undefined : t('settings.desktopOnly')}
         onclick={() => void revealInFolder()}
         data-testid="file-viewer-reveal-panel"
       >
@@ -319,20 +333,26 @@
           >
             <button
               type="button"
-              class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground {canReveal
+                ? ''
+                : 'opacity-50'}"
+              aria-disabled={!canReveal}
               onclick={() => void revealInFolder()}
               aria-label={t('files.reveal')}
-              title={t('files.reveal')}
+              title={canReveal ? t('files.reveal') : t('settings.desktopOnly')}
               data-testid="file-viewer-reveal"
             >
               <FolderOpen class="size-4" aria-hidden="true" />
             </button>
             <button
               type="button"
-              class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground {canOpenExternal
+                ? ''
+                : 'opacity-50'}"
+              aria-disabled={!canOpenExternal}
               onclick={() => void openWithSystem()}
               aria-label={t('files.openExternal')}
-              title={t('files.openExternal')}
+              title={canOpenExternal ? t('files.openExternal') : t('settings.desktopOnly')}
               data-testid="file-viewer-open-external"
             >
               <ExternalLink class="size-4" aria-hidden="true" />
