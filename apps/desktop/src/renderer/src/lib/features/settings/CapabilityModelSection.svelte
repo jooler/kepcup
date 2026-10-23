@@ -14,12 +14,13 @@ import { Badge } from '$lib/components/ui/badge';
   /**
    * 「能力模型」section（docs/design/16-capability-models.md）：一种模型
    * 能力一条配置——厂商（仅已适配该能力的国内厂商）+ 模型 id + API Key
-   * （按厂商共享）。测试「未保存先测」（与 websearch.test 同一取向）：
-   * 直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，不落库；落库只经
-   * 「保存」。embedded=true 时隐藏标题与说明（对话内设置卡片自带），测试
-   * 成功后把「保存」换成「保存并关闭」，保存成功后回调 onSaved（inline
-   * setup 的继续对话钩子，卡片随之关闭）。prefill：对话内设置卡里 Bot 给的非敏感预填
-   * （`provider` / `model`；Key 永远由用户自己填），挂载时套用一次。
+   * （按厂商共享）。设置页是「改完即存」：厂商 / 模型输入停顿后自动落盘，
+   * Key 在失焦 / 回车时提交（敏感值不逐字存储）；「测试」仍用当前填写的
+   * 参数发一次最小真实请求，不落库。embedded=true 时隐藏标题与说明（对话内
+   * 设置卡片自带），保留「保存」按钮并在测试成功后换成「保存并关闭」，保存
+   * 成功后回调 onSaved（inline setup 的继续对话钩子，卡片随之关闭）。prefill：
+   * 对话内设置卡里 Bot 给的非敏感预填（`provider` / `model`；Key 永远由用户
+   * 自己填），挂载时套用一次。
    */
   let {
     capability,
@@ -45,6 +46,8 @@ import { Badge } from '$lib/components/ui/badge';
   let testing = $state(false);
   /** 测试已用当前参数通过：embedded 下把「保存」换成「保存并关闭」。 */
   let testOk = $state(false);
+  /** IME 组合中：暂停模型 id 的自动落盘，避免把未上屏的拼音串存进去。 */
+  let composing = $state(false);
 
   const vendors = $derived(vendorsForCapability(capability));
   const stored = $derived(settingsStore.settings?.capabilityModels[capability] ?? null);
@@ -113,11 +116,11 @@ import { Badge } from '$lib/components/ui/badge';
     }
   }
 
-  async function save(): Promise<void> {
+  async function save(auto = false): Promise<void> {
     busy = true;
     try {
       await persist();
-      toast.success(t('settings.saved'));
+      if (!auto) toast.success(t('settings.saved'));
       onSaved?.();
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
@@ -127,8 +130,56 @@ import { Badge } from '$lib/components/ui/badge';
   }
 
   /**
+   * 设置页：厂商 / 模型即改即存（800ms 防抖）。Key 不参与自动保存——敏感值
+   * 只在失焦或回车时提交一次。embedded 仍等用户点「保存」。
+   */
+  $effect(() => {
+    if (embedded || composing) return;
+    const current = settingsStore.settings?.capabilityModels[capability] ?? null;
+    const wanted = vendor;
+    const wantedModel = model.trim();
+    if (wanted === '' || wantedModel === '') return;
+    if (current !== null && current.vendor === wanted && current.model === wantedModel) return;
+    const timer = setTimeout(() => void save(true), 800);
+    return () => clearTimeout(timer);
+  });
+
+  /** 切换厂商后旧模型 id 多半不适用：换成该厂商的首个预设（没有预设就清空），
+   * 避免把上一个厂商的模型 id 存到新厂商名下。 */
+  function onVendorChange(value: string): void {
+    if (embedded) return;
+    testOk = false;
+    vendor = value as VendorId | '';
+    const known = vendors.find((entry) => entry.id === value);
+    model = known === undefined ? '' : (VENDOR_DESCRIPTORS[known.id].presets[capability]?.[0] ?? '');
+  }
+
+  /** Key 提交（失焦 / 回车）：先确保厂商可用，不逐字落盘。 */
+  async function commitKey(): Promise<void> {
+    if (embedded || vendor === '' || key.length === 0 || busy) return;
+    busy = true;
+    try {
+      await settingsStore.setKey(vendor, key);
+      key = '';
+      await settingsStore.refresh();
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    } finally {
+      busy = false;
+    }
+  }
+
+  function onKeyKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
+  /**
    * 未保存先测：直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，
-   * 不落库（key 留空 = 测已存 key）；落库只经「保存」。
+   * 不因测试而落库（key 留空 = 测已存 key）；落库由即存或 embedded 的「保存」负责。
    */
   async function test(): Promise<void> {
     testing = true;
@@ -194,6 +245,7 @@ import { Badge } from '$lib/components/ui/badge';
           id={`${testid}-vendor`}
           class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
           bind:value={vendor}
+          onchange={(event) => onVendorChange(event.currentTarget.value)}
           data-testid={`${testid}-vendor`}
         >
           <option value="">—</option>
@@ -211,6 +263,8 @@ import { Badge } from '$lib/components/ui/badge';
           bind:value={model}
           list={`${testid}-presets`}
           disabled={vendor === ''}
+          oncompositionstart={() => (composing = true)}
+          oncompositionend={() => (composing = false)}
           data-testid={`${testid}-model`}
         />
         {#if presets.length > 0}
@@ -236,6 +290,8 @@ import { Badge } from '$lib/components/ui/badge';
               : t('settings.providerKeyPlaceholder')
           }
           bind:value={key}
+          onblur={() => void commitKey()}
+          onkeydown={onKeyKeydown}
           data-testid={`${testid}-key`}
         />
         <p class="text-xs text-muted-foreground">
@@ -245,25 +301,27 @@ import { Badge } from '$lib/components/ui/badge';
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">
-      {#if embedded && testOk}
-        <!-- 测试已用当前参数通过：一个明确的「保存并关闭」，保存后卡片自动收起。 -->
-        <Button
-          size="sm"
-          disabled={busy || testing}
-          onclick={() => void save()}
-          data-testid={`${testid}-save-close`}
-        >
-          {t('settings.saveAndClose')}
-        </Button>
-      {:else}
-        <Button
-          size="sm"
-          disabled={busy || testing || !dirty}
-          onclick={() => void save()}
-          data-testid={`${testid}-save`}
-        >
-          {t('settings.save')}
-        </Button>
+      {#if embedded}
+        {#if testOk}
+          <!-- 测试已用当前参数通过：一个明确的「保存并关闭」，保存后卡片自动收起。 -->
+          <Button
+            size="sm"
+            disabled={busy || testing}
+            onclick={() => void save()}
+            data-testid={`${testid}-save-close`}
+          >
+            {t('settings.saveAndClose')}
+          </Button>
+        {:else}
+          <Button
+            size="sm"
+            disabled={busy || testing || !dirty}
+            onclick={() => void save()}
+            data-testid={`${testid}-save`}
+          >
+            {t('settings.save')}
+          </Button>
+        {/if}
       {/if}
       <Button
         size="sm"

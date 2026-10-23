@@ -31,6 +31,8 @@
     expected = null,
     messageId,
     testid = 'setting-card-fields',
+    /** 即改即存（设置页）：改动直接保存，不渲染「应用」按钮；对话内卡片不传。 */
+    saveOnChange = false,
     onSaved,
     onConflict,
   }: {
@@ -39,6 +41,7 @@
     expected?: SettingValues | null;
     messageId?: string | undefined;
     testid?: string;
+    saveOnChange?: boolean;
     onSaved?: (values: SettingValues) => void;
     onConflict?: (current: SettingValues | null) => void;
   } = $props();
@@ -55,7 +58,8 @@
   /** 勾选即存（不渲染保存按钮）：单开关条目，改动立即生效（remote.enabled 是
    * 「允许手机遥控」总开关，侧栏「连接手机」门槛勾选走的是同一份设置）。 */
   const AUTO_APPLY_ITEM_IDS = new Set(['remote.enabled']);
-  const autoApply = $derived(AUTO_APPLY_ITEM_IDS.has(item.id));
+  // 专用分支的控件是具名历史实现（无统一 input 钩子），即改即存只覆盖通用渲染。
+  const autoApply = $derived((saveOnChange && !special) || AUTO_APPLY_ITEM_IDS.has(item.id));
 
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
   const seeded = untrack(() =>
@@ -234,17 +238,85 @@
    * 快速来回拨动最终值 = 最后一次勾选（失败时 resync 回持久化值）。 */
   let applyQueue: Promise<void> = Promise.resolve();
 
-  function onToggleChange(name: string, checked: boolean): void {
-    toggles[name] = checked;
-    if (!autoApply) return;
-    applyQueue = applyQueue.then(() => apply());
+  /**
+   * 即改即存的调度：开关 / 下拉是离散选择，立即提交；文本 / 数字在输入停顿
+   * `APPLY_DEBOUNCE_MS` 后静默提交，失焦 / 回车再正式提交。排队串行保证飞行
+   * 中的提交不会丢掉之后的新值。
+   */
+  const APPLY_DEBOUNCE_MS = 600;
+  let applyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelPendingApply(): void {
+    if (applyTimer !== null) {
+      clearTimeout(applyTimer);
+      applyTimer = null;
+    }
   }
 
-  async function apply(): Promise<void> {
+  function requestApply(delayMs: number, silent: boolean): void {
+    if (!autoApply) return;
+    cancelPendingApply();
+    if (delayMs <= 0) {
+      applyQueue = applyQueue.then(() => apply(silent));
+      return;
+    }
+    applyTimer = setTimeout(() => {
+      applyTimer = null;
+      applyQueue = applyQueue.then(() => apply(silent));
+    }, delayMs);
+  }
+
+  /**
+   * 输入事件：停顿 `APPLY_DEBOUNCE_MS` 后静默提交。打字中途的值可能还不完整
+   * （URL 半截、数字越界），静默失败不打扰、不把草稿拨回去；失焦 / 回车才是
+   * 正式提交，失败会提示并恢复已存值。IME 组合期间不调度。
+   */
+  function onFieldInput(event?: Event): void {
+    if ((event as InputEvent | undefined)?.isComposing === true) return;
+    requestApply(APPLY_DEBOUNCE_MS, true);
+  }
+
+  /** 失焦 / 回车：撤掉挂起的静默提交，正式提交一次。 */
+  function commitField(): void {
+    requestApply(0, false);
+  }
+
+  function onFieldKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
+  // 卸载（关设置弹框 / 切分区）补提交挂起的编辑；非即存模式没有挂起项。
+  $effect(() => {
+    return () => {
+      if (!autoApply || applyTimer === null) return;
+      applyTimer = null;
+      applyQueue = applyQueue.then(() => apply(false));
+    };
+  });
+
+  function onToggleChange(name: string, checked: boolean): void {
+    toggles[name] = checked;
+    requestApply(0, false);
+  }
+
+  /** 提交值与持久化快照逐字段相同（开关 / 下拉 / 数字 / 文本都是标量）。 */
+  function isUnchanged(next: SettingValues): boolean {
+    const current = seedValues(item, null, settingsStore.settings);
+    return Object.entries(next).every(([name, value]) => current[name] === value);
+  }
+
+  async function apply(silent = false): Promise<void> {
     if (busy) return;
     busy = true;
     try {
       const next = values();
+      // 即改即存下，失焦 / 卸载也会触发提交：与已存值一致就别写，避免给
+      // `settings.changed` 的订阅者（如中转地址变更重连）制造假事件。
+      if (autoApply && isUnchanged(next)) return;
       const out = await applySettingItem({ itemId: item.id, values: next, expected, messageId });
       if (out.status === 'conflict') {
         onConflict?.(out.current);
@@ -254,12 +326,14 @@
       await settingsStore.refresh().catch(() => undefined);
       onSaved?.(out.values);
     } catch (error) {
+      // 静默提交只是输入途中的尝试：值还不合法就等下一位输入，不提示也不回滚。
+      if (silent) return;
       toast.error(
         t('settingCard.actionFailed', {
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-      // 勾选即存没有保存按钮可退回：失败立刻把控件拨回持久化值，别让勾选态骗人。
+      // 即改即存没有保存按钮可退回：失败立刻把控件拨回持久化值，别让改动态骗人。
       if (autoApply) resync();
     } finally {
       busy = false;
@@ -330,7 +404,9 @@
         <span class="grid gap-0.5">
           <span>{settingFieldText(item.id, field.name, field.label)}</span>
           {#if field.hint !== undefined}
-            <span class="text-xs text-muted-foreground">{field.hint}</span>
+            <span class="text-xs text-muted-foreground">
+              {settingFieldHint(item.id, field.name, field.hint)}
+            </span>
           {/if}
         </span>
       </label>
@@ -343,8 +419,18 @@
         type="text"
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={texts[field.name]}
+        oninput={(event) => onFieldInput(event)}
+        oncompositionstart={() => cancelPendingApply()}
+        oncompositionend={() => onFieldInput()}
+        onblur={commitField}
+        onkeydown={onFieldKeydown}
         data-testid={`${testid}-${field.name}`}
       />
+      {#if field.hint !== undefined}
+        <p class="text-xs text-muted-foreground">
+          {settingFieldHint(item.id, field.name, field.hint)}
+        </p>
+      {/if}
     {:else if fieldControl(field) === 'number'}
       <Label for={`${testid}-${field.name}`}>
         {settingFieldText(item.id, field.name, field.label)}
@@ -357,6 +443,11 @@
         step={field.step}
         class="flex h-9 w-40 rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={numbers[field.name]}
+        oninput={(event) => onFieldInput(event)}
+        oncompositionstart={() => cancelPendingApply()}
+        oncompositionend={() => onFieldInput()}
+        onblur={commitField}
+        onkeydown={onFieldKeydown}
         data-testid={`${testid}-${field.name}`}
       />
       {#if field.hint !== undefined}
@@ -372,6 +463,7 @@
         id={`${testid}-${field.name}`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={selects[field.name]}
+        onchange={() => requestApply(0, false)}
         data-testid={`${testid}-${field.name}`}
       >
         {#each field.staticOptions ?? [] as option (option.value)}
@@ -388,6 +480,7 @@
         id={`${testid}-${field.name}`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={agentSelects[field.name]}
+        onchange={() => requestApply(0, false)}
         data-testid={`${testid}-${field.name}`}
       >
         {#each agentOptions as option (option.id)}
@@ -402,6 +495,7 @@
         id={`${testid}-${field.name}`}
         class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
         bind:value={providerSelects[field.name]}
+        onchange={() => requestApply(0, false)}
         data-testid={`${testid}-${field.name}`}
       >
         {#each providerOptions as option (option.id)}
@@ -416,6 +510,7 @@
         bind:value={models[field.name]}
         id={`${testid}-${field.name}`}
         testid={`${testid}-${field.name}`}
+        onchange={() => requestApply(0, false)}
       />
     {:else}
       <div class="grid gap-0.5 text-sm">

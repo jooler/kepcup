@@ -87,6 +87,47 @@
     }
   }
 
+  /**
+   * 设置页：供应商是离散选择，选中即落盘（失败提示并把下拉拨回已存值）。
+   * 对话内卡片仍等「应用」。
+   */
+  async function onProviderChange(): Promise<void> {
+    if (embedded || provider === '') return;
+    const next = provider;
+    try {
+      await settingsStore.update({ webSearch: { provider: next } });
+    } catch (error) {
+      provider = stored ?? '';
+      toast.error(String((error as Error).message ?? error));
+    }
+  }
+
+  /**
+   * 设置页：API key 是敏感输入，逐字落盘会把半截密钥存进去，所以只在
+   * 失焦 / 回车时提交一次（提交后清空输入框，占位符回到「已配置」）。
+   */
+  async function commitKey(): Promise<void> {
+    if (embedded || provider === '' || key.length === 0 || busy) return;
+    busy = true;
+    try {
+      if (stored !== provider) await settingsStore.update({ webSearch: { provider } });
+      await settingsStore.setSearchKey(provider, key);
+      key = '';
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    } finally {
+      busy = false;
+    }
+  }
+
+  function onKeyKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
   async function test(): Promise<void> {
     if (provider === '') return;
     testing = true;
@@ -162,6 +203,7 @@
           id={`${testid}-provider`}
           class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
           bind:value={provider}
+          onchange={() => void onProviderChange()}
           data-testid={`${testid}-provider`}
         >
           <option value="">—</option>
@@ -181,6 +223,8 @@
             : t('settings.providerKeyPlaceholder')}
           bind:value={key}
           disabled={provider === ''}
+          onblur={() => void commitKey()}
+          onkeydown={onKeyKeydown}
           data-testid={`${testid}-key`}
         />
         {#if provider !== ''}
@@ -194,14 +238,16 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
-      <Button
-        size="sm"
-        disabled={busy || !dirty}
-        onclick={() => void save()}
-        data-testid={`${testid}-save`}
-      >
-        {t('settings.save')}
-      </Button>
+      {#if embedded}
+        <Button
+          size="sm"
+          disabled={busy || !dirty}
+          onclick={() => void save()}
+          data-testid={`${testid}-save`}
+        >
+          {t('settings.save')}
+        </Button>
+      {/if}
       <Button
         size="sm"
         variant="secondary"

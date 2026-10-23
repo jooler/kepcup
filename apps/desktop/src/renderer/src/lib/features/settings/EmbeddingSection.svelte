@@ -25,6 +25,10 @@
 
   let status = $state<EmbeddingStatus | null>(null);
   let source = $state<'local' | 'provider'>('local');
+  /** 已落盘 / 已读到的来源；设置页据此判断「用户真的改了」，避免读状态触发写回。 */
+  let persistedSource = $state<'local' | 'provider' | null>(null);
+  /** 用户是否亲手切换过来源（未配置时 persisted 为 null，靠它区分初始态）。 */
+  let sourceTouched = $state(false);
   let saving = $state(false);
   let downloading = $state(false);
   let prefillApplied = false;
@@ -76,23 +80,42 @@
     if (prefillApplied) return;
     if (status.source === 'provider') {
       source = 'provider';
+      persistedSource = 'provider';
     } else if (status.source === 'local') {
       source = 'local';
+      persistedSource = 'local';
     }
   }
 
-  async function save(): Promise<void> {
+  /** `auto`：设置页单选即存后的静默保存（失败仍提示）。 */
+  async function save(auto = false): Promise<void> {
     saving = true;
     try {
       status = (await core.call('embedding.configure', { source })) as EmbeddingStatus;
-      toast.success(t('settings.embeddingSaved'));
+      persistedSource = source;
+      if (!auto) toast.success(t('settings.embeddingSaved'));
       onSaved?.();
     } catch {
       toast.error(t('common.actionFailed'));
+      // 保存失败：单选回到已落盘来源，别让选择态骗人。
+      if (persistedSource !== null) source = persistedSource;
     } finally {
       saving = false;
     }
   }
+
+  /**
+   * 设置页：来源单选即存（400ms 防抖）。只有用户亲手切换过才判脏——`refresh()`
+   * 同步进来的值、以及「尚未配置」（source = ''、persisted 未知）时的初始单选
+   * 都不会触发写回。
+   */
+  $effect(() => {
+    if (embedded || !sourceTouched) return;
+    const next = source;
+    if (next === persistedSource) return;
+    const timer = setTimeout(() => void save(true), 400);
+    return () => clearTimeout(timer);
+  });
 
   /** 手动下载本地模型：用户点击即同意，core 侧直接安装（不再发审批卡）。 */
   async function downloadModel(): Promise<void> {
@@ -150,6 +173,7 @@
           name={embedded ? 'embedding-source-card' : 'embedding-source'}
           value="local"
           bind:group={source}
+          onchange={() => (sourceTouched = true)}
           data-testid="embedding-source-local"
         />
         {t('settings.embeddingSourceLocal')}
@@ -160,6 +184,7 @@
           name={embedded ? 'embedding-source-card' : 'embedding-source'}
           value="provider"
           bind:group={source}
+          onchange={() => (sourceTouched = true)}
           data-testid="embedding-source-provider"
         />
         {t('settings.embeddingSourceProvider')}
@@ -209,8 +234,10 @@
       </p>
     {/if}
 
-    <Button size="sm" disabled={saving} onclick={() => void save()} data-testid="embedding-save">
-      {t('common.save')}
-    </Button>
+    {#if embedded}
+      <Button size="sm" disabled={saving} onclick={() => void save()} data-testid="embedding-save">
+        {t('common.save')}
+      </Button>
+    {/if}
   </div>
 </section>
