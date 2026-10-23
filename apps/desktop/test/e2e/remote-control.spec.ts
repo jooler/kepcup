@@ -10,7 +10,7 @@ import { dismissStartPanel, rpc } from './helpers/create-bot';
  * D96 远程遥控 e2e（todo/remote-control.md WP4）：设置页开关 → 「连接手机」
  * 二维码小窗 → 注入配对请求（测试缝 `remote.testInjectPairing`，模拟手机发来
  * pairing.request，走真实 PSK HMAC + 待确认路径）→ 确认卡「允许」→ 设备出现在
- * 列表 → 撤销（二次确认）后设备消失。真实中转 / 手机浏览器不在 e2e 范围
+ * 列表 → 撤销（二次确认）后行保留、revokedAt 置位。真实中转 / 手机浏览器不在 e2e 范围
  *（WP6 `wrangler dev` 三端联调覆盖）。侧栏头像菜单的「连接手机」入口与
  * 「勾选即开启」门槛、设置卡勾选即存见第三条用例。
  */
@@ -79,9 +79,12 @@ test.describe('D96 远程遥控', () => {
 
       // 开关：走设置目录条目的写路径（confirm 档位，目录卡片或 RPC 等价）。
       // 按需连接（2026-10 修订）：只开开关不连中转，anchor 应为 idle。
+      // 中转地址指向本机 1 号端口（特权端口，正常环境必无监听）：既满足
+      // relayEndpointSchema 的 ws:// 形状，又保证零外联、且不会撞上开发者
+      // 本机 wrangler dev 的 8787（审查发现的环境假设缺口）。
       const configured = (await rpc(page, 'remote.config.set', {
         enabled: true,
-        relayUrl: 'ws://127.0.0.1:8787',
+        relayUrl: 'ws://127.0.0.1:1',
       })) as { enabled: boolean };
       expect(configured.enabled).toBe(true);
       await expect
@@ -193,7 +196,7 @@ test.describe('D96 远程遥控', () => {
       // e2e 不得触达线上中转：默认地址是 wss://remote.kepcup.com，而勾选出码即
       // 开窗连接。趁开关未开先把中转地址指到本地空端口（此刻按需策略下零连接；
       // 勾选后 offer 窗口内只连本地空端口 → error，无外联）。
-      await rpc(page, 'remote.config.set', { relayUrl: 'ws://127.0.0.1:8787' });
+      await rpc(page, 'remote.config.set', { relayUrl: 'ws://127.0.0.1:1' });
       // 勾选 = 用户本人开启（remote.config.set，托盘同款写路径）→ 立刻出二维码。
       await page.locator('[data-testid="remote-pair-gate-check"]').click();
       await expect(page.locator('[data-testid="remote-qr"]')).toBeVisible({ timeout: 15_000 });
@@ -203,7 +206,8 @@ test.describe('D96 远程遥控', () => {
         .toBe(true);
 
       // 设置页的同一份条目卡：勾选即存（无保存按钮），开关随门槛勾选已为真。
-      // remote.relay（中转地址）仍是有保存按钮的普通卡，别误伤。
+      // 设置页整体是「改完即存」形态（saveOnChange），中转地址卡同样没有保存
+      // 按钮——改一下地址即应自动落盘。
       await page.keyboard.press('Escape');
       await page.locator('[data-testid="user-menu-trigger"]').click();
       await page.locator('[data-testid="menu-settings"]').click();
@@ -215,11 +219,15 @@ test.describe('D96 远程遥控', () => {
       await expect(
         enabledCard.locator('[data-testid="setting-card-fields-enabled"]'),
       ).toBeChecked();
-      await expect(
-        page.locator(
-          '[data-settings-anchor="remote-relay"] [data-testid="setting-card-fields-apply"]',
-        ),
-      ).toHaveCount(1);
+
+      const relayCard = page.locator('[data-settings-anchor="remote-relay"]');
+      await expect(relayCard.locator('[data-testid="setting-card-fields-apply"]')).toHaveCount(0);
+      await relayCard.locator('[data-testid="setting-card-fields-url"]').fill('ws://127.0.0.1:2');
+      await expect
+        .poll(async () => ((await rpc(page, 'remote.status')) as { relayUrl: string }).relayUrl, {
+          timeout: 15_000,
+        })
+        .toBe('ws://127.0.0.1:2');
     } finally {
       await closeSession(session);
     }

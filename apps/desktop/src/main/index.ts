@@ -573,6 +573,15 @@ function bootstrap(): void {
       // The window shows the error page; logs live under the data directory.
       ensureWindow();
     }
+    // D96: core 进程不在了（崩溃重启窗口 / 终态）→ 中转连接必然不存在。
+    // 不在这里复位的话，崩溃前的 online/error 会让 powerSaveBlocker 一直被
+    // 持有（终态 failed 更永不释放，机器不再空闲休眠）、托盘也永远显示陈旧
+    // 的「手机已连接」。enabled 保留：core 重新 ready 后初值拉取会恢复真值。
+    if (state === 'down' || state === 'failed') {
+      trayRemote.anchor = 'off';
+      trayRemote.onlineDevices = 0;
+      applyTrayRemote();
+    }
   });
   coreHost.onStatus((payload) => {
     // The window appears once the core reports any terminal state so the

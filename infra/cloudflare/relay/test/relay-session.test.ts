@@ -362,15 +362,38 @@ describe('anchor 生命周期', () => {
     expect(viewer.sent.at(-1)).toBeDefined();
   });
 
-  it('第二个 anchor 顶掉旧的:旧连接收 signal replaced 后关闭,viewers 无感', () => {
+  it('第二个 anchor 顶掉旧的:旧连接收 signal replaced 后关闭,viewers 收 anchor_online 重自举', () => {
     const s = makeSession();
     const viewer = addViewer(s, DID_A);
     const anchor2 = new MockSocket();
     s.logic.joinAnchor(anchor2);
     expect(sent(s.anchor).at(-1)?.info).toEqual({ kind: 'replaced' });
     expect(s.anchor.closedWith).toEqual({ code: 1000, reason: 'anchor replaced' });
-    expect(viewer.sent).toHaveLength(0); // 没有 anchor_offline
+    // 替换也广播 anchor_online(审查修复 2026-10):被顶掉的旧 anchor 可能是
+    // 僵尸(桌面断链、close 帧没到 DO)——viewer 对面的端点换了,重发 hello 是
+    // 幂等自愈;不广播的话 viewer 的 pong 一直正常、请求却发给僵尸全丢,冻死。
+    expect(sent(viewer).at(-1)?.info).toEqual({ kind: 'anchor_online' });
     expect(s.logic.hasAnchor).toBe(true);
+  });
+
+  it('僵尸 anchor 被替换后真 anchor 回场:viewer 收 anchor_online,后续帧路由到新 anchor(真机回归钉 2026-10)', () => {
+    const clock = new FakeClock();
+    const logic = new RelaySessionLogic({ sid: SID_A, timer: clock.timer, now: clock.now });
+    const zombie = new MockSocket();
+    logic.joinAnchor(zombie); // 桌面断链:DO 不会收到 close,僵尸留在路由表
+    const viewer = new MockSocket();
+    expect(logic.joinViewer(viewer)).toBe(true);
+    logic.onMessage(viewer, frame({ type: 'pairing', did: DID_A }));
+    expect(sent(zombie)).toHaveLength(1); // 发给了僵尸 = 丢失(hub 侧端点没建起来)
+
+    // 桌面网络恢复,RelayClient 重连:替换僵尸。修复前(noAnchorSince 已空、
+    // 无 TTL 可清)永不广播,手机冻死在假活连接上;修复后替换即广播。
+    const fresh = new MockSocket();
+    logic.joinAnchor(fresh);
+    expect(sent(viewer).at(-1)?.info).toEqual({ kind: 'anchor_online' });
+    // viewer 重发 hello / 后续帧路由到真 anchor。
+    logic.onMessage(viewer, frame({ type: 'pairing', did: DID_A }));
+    expect(fresh.sent).toHaveLength(1);
   });
 
   it('viewers 全部离开后无需保活:TTL 取消,全空即逐出', () => {

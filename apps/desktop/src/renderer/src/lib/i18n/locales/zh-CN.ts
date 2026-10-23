@@ -3097,6 +3097,7 @@ export const zhCN = {
   'web.scan.hint': '对准桌面「连接手机」弹窗中的二维码，识别后自动进入配对',
   'web.scan.stop': '取消扫码',
   'web.scan.denied': '无法访问摄像头：请检查浏览器权限，或改用粘贴链接',
+  'web.scan.busy': '摄像头被其他应用占用：请先关闭占用摄像头的应用再试',
   'web.scan.failed': '当前环境不支持摄像头扫码，请改用粘贴链接',
   'web.scan.badCode': '扫到的二维码不是配对链接，请在桌面重新生成后重试',
   'web.name.title': '确认设备名称',
