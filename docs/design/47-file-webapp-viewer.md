@@ -27,7 +27,9 @@ FileViewer 浏览 Bot 产出的 HTML 时，原实现是 `<iframe sandbox="" srcd
 - 浏览器权限（摄像头等）：default session 权限白名单只认应用自身 origin，协议源全拒；响应头 Permissions-Policy 再拒一道；
 - **网络是明示给出的**：页面可 fetch 任意 https、可探测 localhost——这就是「完整 WebApp」的语义本身；UI 不再显示旧的「不执行脚本」警告条。
 
-**导航守卫**（`shouldBlockAppFrameNavigation`，覆盖两个协议）：kepcup-file 帧允许**同 token** 自我导航（多页面 WebApp），跨 token / 跳别的协议 / 外部站点拦；kepcup-app 帧维持全拦；顶层窗口禁止导航到任一特权协议；首次加载（about:blank）放行，内容由 `frame-src` 决定。URL 解析（`parseFileAppUrl`）严格：token 形状、段解码、拒 `..` 段 / 反斜杠 / 凭据 / 端口 / 空段——WHATWG 解析器本身会把点段收敛在 token 根内（Web 根即根，跳不出去），core 的 `isInsidePath` 再兜底。
+**导航守卫**（`appFrameNavigationVerdict`，覆盖两个协议）：kepcup-file 帧允许**同 token** 自我导航（多页面 WebApp），跨 token / 跳两个特权协议拦；kepcup-app 帧维持全拦；顶层窗口禁止导航到任一特权协议；首次加载（about:blank）放行，内容由 `frame-src` 决定。URL 解析（`parseFileAppUrl`）严格：token 形状、段解码、拒 `..` 段 / 反斜杠 / 凭据 / 端口 / 空段——WHATWG 解析器本身会把点段收敛在 token 根内（Web 根即根，跳不出去），core 的 `isInsidePath` 再兜底。
+
+**外链转交系统浏览器**（2026-10 追加）：预览页里点外站链接不应静默失效——「像浏览器开了一个网站」的语义包括链接能出去。两条通路：① 锚点点击**优先**走主进程注入 kepcup-file 帧的外链桥接脚本（`externalLinkBridgeScript`，与滚动条兜底同挂法、各自独立 executeJavaScript）——sandbox 无 allow-popups，`target=_blank` 的点击在 Blink 层就被静默吞掉、导航守卫收不到，只能帧内拦截：白名单 scheme 的锚点点击 preventDefault 后 `postMessage` 给宿主渲染层（`FILE_APP_OPEN_EXTERNAL_MESSAGE`），FileViewer 校验 `event.source` / origin 后经 `shell:openExternal` 打开（主进程再验一次白名单）；脚本只装在顶层预览帧（`parent===top`），带凭据 URL 不拦（与白名单一致地让它落回守卫静默拦）；② 程序化同帧跳转（JS `location.href`、表单提交、meta refresh）与桥接缺位时的兜底由导航守卫接手：verdict `open-external` → 拦下导航并直接 `shell.openExternal`。两条通路共用 `isOpenablePreviewLinkUrl` 白名单（http / https 任意主机 + mailto + tel，拒凭据；与 `shell-methods` 的 OAuth 白名单（https 外加回环 http）相互独立——这里是用户点击语义）与每 webContents 令牌桶限流（`createOpenExternalRateLimiter`，容量 4、每 10s 回 1，guard 与 IPC 共用）——页面不需要手势也能走到 `shell.openExternal`，限流兜住「onload 循环无限弹系统浏览器」。同 token 页内跳转不拦；`window.open` 与白名单外 scheme（自定义协议等）维持静默拦截。
 
 ## 4 响应头
 
@@ -37,11 +39,12 @@ FileViewer 浏览 Bot 产出的 HTML 时，原实现是 `<iframe sandbox="" srcd
 
 - core 重启丢会话表：协议侧 404，页面资源加载失败；重新打开 FileViewer 即重建（渲染端每次打开都先调 previewSession）。
 - 页面触发的下载被 sandbox 静默拦截（不给 allow-downloads）；default session 本期不加 will-download 处理。
+- 外链只放行 http / https / mailto / tel：`window.open`、自定义 scheme（`vscode:` 等）、带凭据 URL 与非白名单跳转维持静默拦截；同 token 页内跳转带 `target=_blank`（sandbox 吞掉弹窗）与修饰键 / 中键点击外链是死链；预览页内嵌的第三方 iframe 内部点击不走桥接（注入只落顶层 kepcup-file 帧）；限流超限时打开被静默放弃。
 - 大于 64MB 的单文件资源 404（`INVALID_INPUT` 记日志）。
 - Range 请求不支持（视频 seek 从头加载）；按需再补。
 
 ## 6 测试
 
-- `apps/desktop/src/main/apps-ui-policy.test.ts`：URL 解析（含点段收敛 / 拒绝表）、导航守卫（同 token 放行 / 跨 token / 顶层 / 首次加载）、响应头。
+- `apps/desktop/src/main/apps-ui-policy.test.ts`：URL 解析（含点段收敛 / 拒绝表）、导航守卫（同 token 放行 / 跨 token / 顶层 / 首次加载 / 外链 open-external 判定）、外链白名单、桥接脚本形状、外链限流、响应头。
 - `packages/core/test/unit/files-preview-bindings.test.ts`：token 派生、MIME 表、会话校验（PATH_OUT_OF_SCOPE / NOT_FOUND）、穿越与符号链接拒收。
 - 桌面渲染层：FileViewer html 分支 typecheck（svelte-check）；端到端手工验证清单见 docs/dev。

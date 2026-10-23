@@ -10,6 +10,14 @@ import { z } from 'zod';
 
 export const FILE_APP_SCHEME = 'kepcup-file';
 
+/**
+ * 预览页外链 → 宿主渲染层的 postMessage 消息类型（docs/design/47）：主进程注入 kepcup-file
+ * 帧的桥接脚本拦截外链点击（`target=_blank` 被 sandbox 挡在 Blink 层，导航守卫收不到事件），
+ * 发 `{ type, url }` 给父窗口；渲染层校验 `event.source` / origin 后经 `shell:openExternal`
+ * 转交系统浏览器，URL scheme 白名单在主进程兜底。
+ */
+export const FILE_APP_OPEN_EXTERNAL_MESSAGE = 'kepcup:open-external';
+
 /** token = `f` + sha256(canonical 绝对路径) 前 24 hex（core 侧派生）：重开同一文件 = 同一源，localStorage 延续。 */
 const TOKEN_PATTERN = /^f[0-9a-f]{24}$/;
 

@@ -1,12 +1,16 @@
 import { describe, expect, test } from 'vitest';
 import { isPermissionAllowed } from './app-permissions';
 import {
+  appFrameNavigationVerdict,
   appUiResponseHeaders,
+  createOpenExternalRateLimiter,
+  externalLinkBridgeScript,
   fileAppResponseHeaders,
+  isOpenablePreviewLinkUrl,
   parseAppUiUrl,
   parseFileAppUrl,
+  PREVIEW_EXTERNAL_LINK_SCHEMES,
   scrollbarBackstopScript,
-  shouldBlockAppFrameNavigation,
 } from './apps-ui-policy';
 
 describe('kepcup-app:// URL parsing', () => {
@@ -54,23 +58,23 @@ describe('page response headers', () => {
 describe('sub-frame navigation guard', () => {
   test('a sub-frame already showing a kepcup-app page may not navigate anywhere', () => {
     const loaded = 'kepcup-app://app-x/AbCdEfGhIjKlMnOpQrStUv';
-    expect(shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: loaded })).toBe(true);
+    expect(appFrameNavigationVerdict({ isMainFrame: false, frameUrl: loaded })).toBe('block');
   });
   test('the first load (about:blank / empty) and main-frame navigations are not touched here', () => {
-    expect(shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: 'about:blank' })).toBe(
-      false,
+    expect(appFrameNavigationVerdict({ isMainFrame: false, frameUrl: 'about:blank' })).toBe(
+      'allow',
     );
-    expect(shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: '' })).toBe(false);
+    expect(appFrameNavigationVerdict({ isMainFrame: false, frameUrl: '' })).toBe('allow');
     expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: undefined,
         targetUrl: 'https://example.com/',
       }),
-    ).toBe(false);
+    ).toBe('allow');
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: true, frameUrl: 'kepcup-app://app-x/abc' }),
-    ).toBe(false);
+      appFrameNavigationVerdict({ isMainFrame: true, frameUrl: 'kepcup-app://app-x/abc' }),
+    ).toBe('allow');
   });
 });
 
@@ -99,7 +103,12 @@ describe('default-session permission allowlist vs kepcup-app frames', () => {
 
   test('kepcup-file (directory preview, docs/design/47) origins are denied too', () => {
     for (const appUrl of ['file:///', 'http://localhost:5173']) {
-      for (const permission of ['media', 'clipboard-sanitized-write', 'fullscreen', 'geolocation']) {
+      for (const permission of [
+        'media',
+        'clipboard-sanitized-write',
+        'fullscreen',
+        'geolocation',
+      ]) {
         expect(
           isPermissionAllowed({
             permission,
@@ -118,30 +127,30 @@ describe('sub-frame navigation guard fails closed', () => {
   const app = 'kepcup-app://app-x/AbCdEfGhIjKlMnOpQrStUv';
   test('an unknown frame may not navigate to a kepcup-app page, nor may the top-level window', () => {
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: undefined, targetUrl: app }),
-    ).toBe(true);
+      appFrameNavigationVerdict({ isMainFrame: false, frameUrl: undefined, targetUrl: app }),
+    ).toBe('block');
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: true, frameUrl: 'file:///', targetUrl: app }),
-    ).toBe(true);
+      appFrameNavigationVerdict({ isMainFrame: true, frameUrl: 'file:///', targetUrl: app }),
+    ).toBe('block');
     expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
         isMainFrame: true,
         frameUrl: 'file:///',
         targetUrl: 'file:///x',
       }),
-    ).toBe(false);
+    ).toBe('allow');
   });
   test('a known, not yet loaded frame may load its page once', () => {
     expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: 'about:blank',
         targetUrl: app,
       }),
-    ).toBe(false);
-    expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: app, targetUrl: app }),
-    ).toBe(true);
+    ).toBe('allow');
+    expect(appFrameNavigationVerdict({ isMainFrame: false, frameUrl: app, targetUrl: app })).toBe(
+      'block',
+    );
   });
 });
 
@@ -211,45 +220,142 @@ describe('kepcup-file sub-frame navigation guard', () => {
   const page = `kepcup-file://${token}/index.html`;
   const other = `kepcup-file://f0123456789abcdef01234568/index.html`;
   test('same-token self navigation is allowed (multi-page webapps)', () => {
+    expect(appFrameNavigationVerdict({ isMainFrame: false, frameUrl: page, targetUrl: page })).toBe(
+      'allow',
+    );
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: page, targetUrl: page }),
-    ).toBe(false);
-    expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: page,
         targetUrl: `kepcup-file://${token}/assets/a.png`,
       }),
-    ).toBe(false);
+    ).toBe('allow');
   });
-  test('cross-token / other schemes / top-level are blocked', () => {
+  test('external links become open-external (handed to the system browser)', () => {
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: false, frameUrl: page, targetUrl: other }),
-    ).toBe(true);
-    expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: page,
         targetUrl: 'https://example.com/',
       }),
-    ).toBe(true);
+    ).toBe('open-external');
     expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({
+        isMainFrame: false,
+        frameUrl: page,
+        targetUrl: 'mailto:hi@example.com',
+      }),
+    ).toBe('open-external');
+  });
+  test('cross-token / privileged / unknown schemes / top-level are blocked', () => {
+    expect(
+      appFrameNavigationVerdict({ isMainFrame: false, frameUrl: page, targetUrl: other }),
+    ).toBe('block');
+    expect(
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: page,
         targetUrl: 'kepcup-app://app-x/AbCdEfGhIjKlMnOpQrStUv',
       }),
-    ).toBe(true);
+    ).toBe('block');
     expect(
-      shouldBlockAppFrameNavigation({ isMainFrame: true, frameUrl: 'file:///', targetUrl: page }),
-    ).toBe(true);
+      appFrameNavigationVerdict({
+        isMainFrame: false,
+        frameUrl: page,
+        targetUrl: 'javascript:alert(1)',
+      }),
+    ).toBe('block');
     expect(
-      shouldBlockAppFrameNavigation({
+      appFrameNavigationVerdict({ isMainFrame: true, frameUrl: 'file:///', targetUrl: page }),
+    ).toBe('block');
+    expect(
+      appFrameNavigationVerdict({
         isMainFrame: false,
         frameUrl: 'about:blank',
         targetUrl: page,
       }),
-    ).toBe(false);
+    ).toBe('allow');
+  });
+});
+
+describe('preview external-link allowlist', () => {
+  test('accepts http / https / mailto / tel', () => {
+    for (const url of [
+      'https://example.com/a?b=1#top',
+      'http://example.com/',
+      'http://127.0.0.1:3000/x',
+      'mailto:hi@example.com',
+      'tel:+8610086',
+    ]) {
+      expect(isOpenablePreviewLinkUrl(url), url).toBe(true);
+    }
+  });
+  test('rejects non-allowlisted schemes, credential URLs and hostless http(s)', () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'data:text/html,<b>x</b>',
+      'file:///etc/passwd',
+      'kepcup-file://f0123456789abcdef01234567/index.html',
+      'kepcup-app://app-x/AbCdEfGhIjKlMnOpQrStUv',
+      'https://user:pw@example.com/',
+      'http:///',
+      'https:///',
+      'not a url',
+      '',
+    ]) {
+      expect(isOpenablePreviewLinkUrl(url), url).toBe(false);
+    }
+  });
+});
+
+describe('external link bridge script', () => {
+  const script = externalLinkBridgeScript(PREVIEW_EXTERNAL_LINK_SCHEMES, 'kepcup:open-external');
+  test('embeds the schemes and message type, single-line ascii', () => {
+    expect(script).toContain(JSON.stringify([...PREVIEW_EXTERNAL_LINK_SCHEMES]));
+    expect(script).toContain(JSON.stringify('kepcup:open-external'));
+    expect(script).not.toMatch(/[\n\r]/);
+    expect(/^[\x20-\x7e]*$/.test(script)).toBe(true);
+  });
+  test('guards against re-injection and intercepts clicks on allowlisted anchors only', () => {
+    expect(script).toContain('if(window.parent!==window.top)return;');
+    expect(script).toContain('if(window.__kepcupExtLink)return;');
+    expect(script).toContain("addEventListener('click'");
+    expect(script).toContain('u.protocol===location.protocol&&u.host===location.host');
+    expect(script).toContain('ok.indexOf(u.protocol)===-1');
+    expect(script).toContain('if(u.username!==""||u.password!=="")return;');
+    expect(script).toContain('ev.preventDefault()');
+    expect(script).toContain('window.parent.postMessage({type:TYPE,url:u.toString()},"*")');
+  });
+});
+
+describe('open-external rate limiter', () => {
+  test('allows the initial burst, then blocks until tokens refill over time', () => {
+    let now = 1_000;
+    const limiter = createOpenExternalRateLimiter(() => now);
+    const sender = {};
+    for (let i = 0; i < 4; i += 1) {
+      expect(limiter.tryTake(sender), `take ${i}`).toBe(true);
+    }
+    expect(limiter.tryTake(sender)).toBe(false);
+    now += 9_999;
+    expect(limiter.tryTake(sender)).toBe(false);
+    now += 1;
+    expect(limiter.tryTake(sender)).toBe(true);
+    expect(limiter.tryTake(sender)).toBe(false);
+  });
+  test('buckets are independent per sender and cap at the burst size', () => {
+    let now = 0;
+    const limiter = createOpenExternalRateLimiter(() => now);
+    const a = {};
+    const b = {};
+    expect(limiter.tryTake(a)).toBe(true);
+    expect(limiter.tryTake(b)).toBe(true);
+    now += 1_000_000;
+    for (let i = 0; i < 4; i += 1) {
+      expect(limiter.tryTake(a), `a take ${i}`).toBe(true);
+    }
+    expect(limiter.tryTake(a)).toBe(false);
+    expect(limiter.tryTake(b)).toBe(true);
   });
 });
 

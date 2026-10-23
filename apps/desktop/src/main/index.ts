@@ -23,8 +23,14 @@ import { browserMethodSpecs } from './browser-methods';
 import { shellMethodSpecs } from './shell-methods';
 import { WidgetPreviewHost } from './widget-preview';
 import { widgetPreviewMethodSpecs } from './widget-preview-methods';
-import { guardAllAppFrames, installAppsUiProtocol, registerAppsUiScheme } from './apps-ui';
-import { installFileAppProtocol, watchFileAppScrollbarBackstop } from './file-apps';
+import {
+  guardAllAppFrames,
+  installAppsUiProtocol,
+  openExternalRateLimiter,
+  registerAppsUiScheme,
+} from './apps-ui';
+import { installFileAppProtocol, watchFileAppFrameScripts } from './file-apps';
+import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
@@ -309,6 +315,17 @@ function bootstrap(): void {
       throw new Error('invalid path');
     }
     shell.showItemInFolder(target);
+  });
+  // FileViewer HTML 预览的外链（docs/design/47）：预览页点击 / 页内跳转的外站链接转交
+  // 系统浏览器。主进程按 scheme 白名单兜底（渲染层消息不可信，与 shell-methods 的
+  // OAuth 白名单相互独立——这里是用户点击语义，放行 http 站点）；与 guard 的同帧跳转
+  // 通路共用限流，超限静默放弃（不抛错——脚本刷消息不该刷出 toast 轰炸）。
+  ipcMain.handle('shell:openExternal', (event, rawUrl: unknown) => {
+    if (typeof rawUrl !== 'string' || !isOpenablePreviewLinkUrl(rawUrl)) {
+      throw new Error('invalid url');
+    }
+    if (!openExternalRateLimiter.tryTake(event.sender)) return;
+    return shell.openExternal(new URL(rawUrl).toString());
   });
 
   // P13 任务 4 引导步骤 3「系统通知」: posting the first notification is what
@@ -674,7 +691,7 @@ if (process.env.KEPCUP_HOME) {
 registerAppsUiScheme();
 guardAllAppFrames();
 // kepcup-file 子框架的滚动条兜底（协议层静态注入的保险，docs/design/47）。
-watchFileAppScrollbarBackstop();
+watchFileAppFrameScripts();
 
 // D94: URL Scheme 唤起（Share Extension 写完 inbox 后调用）。必须早于
 // app.ready 注册——冷启动时 URL 会在 ready 之前送达。

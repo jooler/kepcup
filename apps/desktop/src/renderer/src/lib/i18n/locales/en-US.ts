@@ -197,6 +197,7 @@ export const enUS = {
   'files.download': 'Download',
   'files.reveal': 'Show in folder',
   'files.openExternal': 'Open with system app',
+  'files.openLinkFailed': 'Could not open the link in the system browser',
   'files.openFailed': 'Could not open the file with the system app',
   'files.revealFailed': 'Could not reveal the file in the folder',
   'files.change.created': 'Created',

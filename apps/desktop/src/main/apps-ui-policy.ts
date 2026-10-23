@@ -1,12 +1,9 @@
-import {
-  FILE_APP_SCHEME,
-  MCP_APP_SCHEME,
-  buildWidgetRuntimeCspHeader,
-} from '@kepcup/shared';
+import { FILE_APP_SCHEME, MCP_APP_SCHEME, buildWidgetRuntimeCspHeader } from '@kepcup/shared';
 
 /**
- * MCP Apps 主进程部分的纯函数（无 Electron 依赖，可单测）：URL 解析、响应头、子框架导航判定。
- * 协议注册与处理器见 `apps-ui.ts`（kepcup-app）与 `file-apps.ts`（kepcup-file，docs/design/47）。
+ * MCP Apps 主进程部分的纯函数（无 Electron 依赖，可单测）：URL 解析、响应头、子框架导航
+ * 判定、预览外链白名单与限流、帧内注入脚本（滚动条兜底 / 外链桥接）。协议注册与处理器见
+ * `apps-ui.ts`（kepcup-app）与 `file-apps.ts`（kepcup-file，docs/design/47）。
  */
 
 export interface AppUiRef {
@@ -43,34 +40,93 @@ export function appUiResponseHeaders(csp: string): Record<string, string> {
   };
 }
 
+export type AppFrameNavigationVerdict = 'allow' | 'block' | 'open-external';
+
 /**
- * 子框架导航拦截（失败即关闭）：
+ * 子框架导航判定（失败即关闭）：
  * - 已加载了 `kepcup-app://` 页面的子框架不能再导航到任何地方（别的应用的页面、外部站点）；
- * - `kepcup-file://` 帧允许**同 token** 的自我导航（多页面 WebApp 的页内跳转），跨 token /
- *   跳别的协议 / 外部站点一律拦下；
+ * - `kepcup-file://` 帧允许**同 token** 的自我导航（多页面 WebApp 的页内跳转）；跨 token /
+ *   跳两个特权协议一律拦下；外部站点 / mailto 等白名单 scheme 返回 `open-external`——调用方
+ *   拦下导航并转交系统浏览器（docs/design/47），其余未知 scheme 静默拦；
  * - 框架未知（事件没带 frame）时，凡是导航到两个特权协议一律拒绝；
  * - 顶层窗口不能被导航到任一特权协议。
  * 首次加载（已知框架还是 about:blank / 空）放行，加载什么由渲染端 `frame-src` 决定。
  */
-export function shouldBlockAppFrameNavigation(input: {
+export function appFrameNavigationVerdict(input: {
   isMainFrame: boolean;
   /** 发起导航的框架当前 URL；框架未知 = undefined。 */
   frameUrl: string | undefined;
   /** 导航目标。 */
   targetUrl?: string | undefined;
-}): boolean {
+}): AppFrameNavigationVerdict {
   const target = input.targetUrl ?? '';
   const toApp = target.toLowerCase().startsWith(`${MCP_APP_SCHEME}://`);
   const toFile = target.toLowerCase().startsWith(`${FILE_APP_SCHEME}://`);
-  if (input.isMainFrame) return toApp || toFile;
-  if (input.frameUrl === undefined) return toApp || toFile;
+  const toPrivileged = toApp || toFile;
+  if (input.isMainFrame) return toPrivileged ? 'block' : 'allow';
+  if (input.frameUrl === undefined) return toPrivileged ? 'block' : 'allow';
   const frame = input.frameUrl;
-  if (frame === '' || frame === 'about:blank') return false;
-  if (frame.toLowerCase().startsWith(`${MCP_APP_SCHEME}://`)) return true;
+  if (frame === '' || frame === 'about:blank') return 'allow';
+  if (frame.toLowerCase().startsWith(`${MCP_APP_SCHEME}://`)) return 'block';
   if (frame.toLowerCase().startsWith(`${FILE_APP_SCHEME}://`)) {
-    return !sameFileToken(frame, target);
+    if (sameFileToken(frame, target)) return 'allow';
+    if (toPrivileged) return 'block';
+    return isOpenablePreviewLinkUrl(target) ? 'open-external' : 'block';
   }
-  return toApp || toFile;
+  return toPrivileged ? 'block' : 'allow';
+}
+
+/** 预览页外链白名单（docs/design/47）：http / https（任意主机）+ mailto + tel。 */
+export const PREVIEW_EXTERNAL_LINK_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'] as const;
+
+const PREVIEW_EXTERNAL_LINK_SCHEME_SET = new Set<string>(PREVIEW_EXTERNAL_LINK_SCHEMES);
+
+/**
+ * 预览页允许转交系统浏览器打开的 URL（外链判定与 `shell:openExternal` 兜底共用；
+ * 拒凭据，http(s) 须有主机，白名单外 scheme 一律 false——OAuth 的
+ * `isOpenableExternalUrl`（https 外加回环 http）是 core 发起授权的边界，这里是
+ * 用户点击语义，http 站点照开，两个白名单各自独立）。
+ */
+export function isOpenablePreviewLinkUrl(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (!PREVIEW_EXTERNAL_LINK_SCHEME_SET.has(url.protocol)) return false;
+  if (url.username !== '' || url.password !== '') return false;
+  if ((url.protocol === 'http:' || url.protocol === 'https:') && url.hostname === '') return false;
+  return true;
+}
+
+export interface OpenExternalRateLimiter {
+  /** 取走一个令牌；该 sender 余量不足时 false（调用方静默放弃本次打开）。 */
+  tryTake(sender: object): boolean;
+}
+
+/**
+ * 外链打开限流（每 sender 一个令牌桶）：预览页不需要用户手势也能走到 `shell.openExternal`
+ * （JS `location.href`、伪造桥接消息两条路都通），令牌桶兜住「onload 循环无限弹系统
+ * 浏览器」——容量 4、每 10s 回 1，正常连点几条外链不受影响，脚本狂刷每分钟至多几个。
+ * WeakMap 挂在 webContents 上，销毁即回收；`now` 可注入以便单测。
+ */
+export function createOpenExternalRateLimiter(
+  now: () => number = Date.now,
+): OpenExternalRateLimiter {
+  const buckets = new WeakMap<object, { tokens: number; at: number }>();
+  return {
+    tryTake(sender) {
+      const at = now();
+      const bucket = buckets.get(sender) ?? { tokens: 4, at };
+      buckets.set(sender, bucket);
+      bucket.tokens = Math.min(4, bucket.tokens + (at - bucket.at) / 10_000);
+      bucket.at = at;
+      if (bucket.tokens < 1) return false;
+      bucket.tokens -= 1;
+      return true;
+    },
+  };
 }
 
 /** 两个 kepcup-file URL 是否同一个 token（host）：同 token 的自我导航放行。 */
@@ -108,7 +164,8 @@ export function parseFileAppUrl(raw: string): FileAppRef | null {
     } catch {
       return null;
     }
-    if (decoded === '' || decoded === '.' || decoded === '..' || decoded.includes('\\')) return null;
+    if (decoded === '' || decoded === '.' || decoded === '..' || decoded.includes('\\'))
+      return null;
     segments.push(decoded);
   }
   return { token: url.hostname, rel: segments.join('/') };
@@ -142,5 +199,36 @@ export function scrollbarBackstopScript(css: string, marker: string): string {
     'var head=document.head||document.documentElement;if(!head)return;' +
     `var style=document.createElement('style');style.setAttribute('${marker}','');` +
     `style.textContent=${JSON.stringify(css)};head.insertBefore(style,head.firstChild)})();`
+  );
+}
+
+/**
+ * 预览页外链桥接脚本（主进程对 kepcup-file 子框架 executeJavaScript；单行 ASCII，内容
+ * 全部来自常量，没有不可信输入）：拦截白名单 scheme 的链接点击——sandbox 无
+ * allow-popups，`target=_blank` 的点击在 Blink 层就被静默吞掉，主进程导航守卫收不到
+ * 事件——preventDefault 后 postMessage 给宿主渲染层（FILE_APP_OPEN_EXTERNAL_MESSAGE），
+ * 由渲染层经 `shell:openExternal` 转交系统浏览器（主进程再验一次白名单 + 限流）。
+ * 不拦：同 token 页内跳转（同协议同 host）、页内锚点、带凭据 URL（主进程白名单照拒，
+ * 让它落回导航守卫静默拦，两条通路行为一致）、嵌套帧（parent≠top 时 postMessage 落不到
+ * 渲染层，不装拦截让点击成为同帧导航由守卫接手）；guard 标记防导航后重复注入叠 listener。
+ */
+export function externalLinkBridgeScript(schemes: readonly string[], messageType: string): string {
+  return (
+    '(function(){if(window.parent!==window.top)return;' +
+    'if(window.__kepcupExtLink)return;window.__kepcupExtLink=1;' +
+    `var ok=${JSON.stringify(schemes)},TYPE=${JSON.stringify(messageType)};` +
+    "document.addEventListener('click',function(ev){" +
+    'if(ev.button!==0||ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey||ev.defaultPrevented)return;' +
+    'var n=ev.target;while(n&&n.localName!=="a")n=n.parentElement;' +
+    'if(!n||!n.hasAttribute("href"))return;' +
+    'var href=n.getAttribute("href");' +
+    'if(href===""||href.charAt(0)==="#")return;' +
+    'var u;try{u=new URL(href,location.href)}catch(e){return}' +
+    'if(u.protocol===location.protocol&&u.host===location.host)return;' +
+    'if(ok.indexOf(u.protocol)===-1)return;' +
+    'if(u.username!==""||u.password!=="")return;' +
+    'ev.preventDefault();' +
+    'try{window.parent.postMessage({type:TYPE,url:u.toString()},"*")}catch(e){}' +
+    '},false)})();'
   );
 }
