@@ -3,6 +3,7 @@
   import { Portal } from 'bits-ui';
   import { toast } from 'svelte-sonner';
   import {
+    FILE_APP_OPEN_EXTERNAL_MESSAGE,
     FILE_APP_SCHEME,
     filePreviewSessionOutputSchema,
   } from '@kepcup/shared';
@@ -35,7 +36,8 @@
    * sidebar stays visible), closes from the round button at its top-left.
    * Files are read on demand and rendered by kind: image / video, HTML as a
    * full WebApp (directory preview protocol, scripts and network enabled,
-   * isolated by the sandboxed iframe on its own kepcup-file origin),
+   * isolated by the sandboxed iframe on its own kepcup-file origin, external
+   * links handed to the system browser),
    * Markdown, DOCX, XLSX and plain text. PDF and other formats without a
    * suitable in-app renderer show an actions panel (open with the system app /
    * download) instead of a blank frame.
@@ -56,14 +58,13 @@
   let closeButton = $state<HTMLButtonElement | null>(null);
   /** HTML 的目录预览会话（kepcup-file 源）；其余类型不走这条通道。 */
   let htmlSession = $state<{ token: string; size: number } | null>(null);
+  let htmlFrame = $state<HTMLIFrameElement | null>(null);
 
   const left = $derived(narrowLayout.narrow ? '0px' : `${sidebarLayout.effectiveWidth}px`);
   // 窄屏时本浮层盖住整窗，mac 红绿灯叠在 header 左上角，关闭按钮要右移让位。
   const isMac = /Mac/i.test(navigator.platform);
   /** HTML 入口 = 协议 URL 的路径段（所在目录在 core 侧已按 artifact 路径登记）。 */
-  const htmlEntry = $derived(
-    artifact === null ? '' : (artifact.path.split(/[\\/]/).pop() ?? ''),
-  );
+  const htmlEntry = $derived(artifact === null ? '' : (artifact.path.split(/[\\/]/).pop() ?? ''));
 
   $effect(() => {
     const request = current;
@@ -166,6 +167,34 @@
       priority: ESCAPE_PRIORITY.lightbox,
       onEscape: () => fileViewer.close(),
     });
+  });
+
+  // 预览页外链（docs/design/47）：主进程注入的桥接脚本拦截外链点击（target=_blank 被
+  // sandbox 挡在 Blink 层，主进程导航守卫收不到）后 postMessage 过来，这里转交系统
+  // 浏览器。只认「本 iframe 是 source + kepcup-file origin + 已知消息类型」；URL 的
+  // scheme 白名单与打开限流都在主进程 `shell:openExternal` 兜底。失败 toast 去重：
+  // 恶意页刷无效消息时不刷屏。
+  let lastOpenLinkErrorAt = 0;
+  $effect(() => {
+    if (!fileViewer.open || htmlSession === null) return;
+    const frame = htmlFrame;
+    if (frame === null) return;
+    const onMessage = (event: MessageEvent): void => {
+      if (event.source !== frame.contentWindow) return;
+      if (!event.origin.toLowerCase().startsWith(`${FILE_APP_SCHEME}://`)) return;
+      const data = event.data as { type?: unknown; url?: unknown } | null;
+      if (data === null || typeof data !== 'object') return;
+      if (data.type !== FILE_APP_OPEN_EXTERNAL_MESSAGE) return;
+      if (typeof data.url !== 'string' || data.url === '') return;
+      window.kepcup.openExternal(data.url).catch(() => {
+        const at = Date.now();
+        if (at - lastOpenLinkErrorAt < 3_000) return;
+        lastOpenLinkErrorAt = at;
+        toast.error(t('files.openLinkFailed'));
+      });
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   });
 
   function close(event?: MouseEvent): void {
@@ -285,7 +314,9 @@
           </div>
         </div>
         {#if payload !== null || htmlSession !== null}
-          <div class="app-no-drag absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
+          <div
+            class="app-no-drag absolute top-1/2 right-4 flex -translate-y-1/2 items-center gap-1"
+          >
             <button
               type="button"
               class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -355,13 +386,15 @@
         {:else if kind === 'html' && htmlSession !== null}
           <!-- 完整 WebApp 档（kepcup-file://，docs/design/47）：脚本、网络、相对路径资源、
                localStorage 全部可用；隔离靠 sandbox 属性（无弹窗 / 无顶层导航 / 无下载）+
-               独占协议源（与宿主不同源，碰不到 window.kepcup 与父窗口）。 -->
+               独占协议源（与宿主不同源，碰不到 window.kepcup 与父窗口）。页内外链（含
+               target=_blank）由主进程注入的桥接脚本 + 本组件的 message 监听转交系统浏览器。 -->
           <iframe
             title={artifact.name}
+            bind:this={htmlFrame}
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
             referrerpolicy="no-referrer"
             src={`${FILE_APP_SCHEME}://${htmlSession.token}/${encodeURIComponent(htmlEntry)}`}
-            class="min-h-0 w-full h-full flex-1 border-0 bg-white"
+            class="h-full min-h-0 w-full flex-1 border-0 bg-white"
             data-testid="file-viewer-html"
           ></iframe>
         {:else if kind === 'markdown'}

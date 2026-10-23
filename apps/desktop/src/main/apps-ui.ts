@@ -1,14 +1,17 @@
-import { app, protocol, type Session, type WebContents } from 'electron';
-import {
-  FILE_APP_SCHEME,
-  MCP_APP_SCHEME,
-  appsUiResourceOutputSchema,
-} from '@kepcup/shared';
+import { app, protocol, shell, type Session, type WebContents } from 'electron';
+import { FILE_APP_SCHEME, MCP_APP_SCHEME, appsUiResourceOutputSchema } from '@kepcup/shared';
 import {
   appUiResponseHeaders,
+  appFrameNavigationVerdict,
+  createOpenExternalRateLimiter,
   parseAppUiUrl,
-  shouldBlockAppFrameNavigation,
 } from './apps-ui-policy';
+
+/**
+ * 预览外链打开的全局限流（每 webContents 一个令牌桶）：guard 的同帧跳转通路与
+ * `shell:openExternal` IPC 通路共用同一份余量，防止预览页无手势刷弹系统浏览器。
+ */
+export const openExternalRateLimiter = createOpenExternalRateLimiter();
 
 /**
  * MCP Apps 渲染的主进程部分（D73 P3 §7.5，设计 29 §11.6；spike 与安全结论见 todo/connected-apps.md
@@ -64,14 +67,19 @@ export function installAppsUiProtocol(targetSession: Session, host: AppsUiHost):
 
 export function guardAppFrameNavigation(contents: WebContents): void {
   contents.on('will-frame-navigate', (event) => {
-    if (
-      shouldBlockAppFrameNavigation({
-        isMainFrame: event.isMainFrame,
-        frameUrl: event.frame?.url,
-        targetUrl: event.url,
-      })
-    ) {
-      event.preventDefault();
+    const verdict = appFrameNavigationVerdict({
+      isMainFrame: event.isMainFrame,
+      frameUrl: event.frame?.url,
+      targetUrl: event.url,
+    });
+    if (verdict === 'allow') return;
+    event.preventDefault();
+    // kepcup-file 预览页的页内跳转 / JS 跳外站（docs/design/47）：拦下导航并把外链
+    // 转交系统浏览器（锚点点击优先走注入的桥接脚本，这里接的是程序化跳转与桥接
+    // 缺位时的兜底）。限流兜住「脚本循环 location.href 无限弹浏览器」。
+    if (verdict === 'open-external') {
+      if (!openExternalRateLimiter.tryTake(contents)) return;
+      void shell.openExternal(event.url).catch(() => undefined);
     }
   });
 }

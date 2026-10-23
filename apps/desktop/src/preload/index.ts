@@ -58,6 +58,8 @@ const api = {
   openPath: (target: string): Promise<void> => ipcRenderer.invoke('shell:openPath', target),
   showItemInFolder: (target: string): Promise<void> =>
     ipcRenderer.invoke('shell:showItemInFolder', target),
+  /** FileViewer HTML 预览（docs/design/47）：预览页外链转交系统浏览器；scheme 白名单在主进程兜底。 */
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
   /** P13 任务 4 引导步骤 3: posts a test notification (macOS permission prompt). */
   sendTestNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('notify:test', title, body),

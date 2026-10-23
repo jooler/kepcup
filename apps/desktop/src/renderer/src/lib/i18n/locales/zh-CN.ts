@@ -184,6 +184,7 @@ export const zhCN = {
   'files.download': '下载',
   'files.reveal': '在文件夹中显示',
   'files.openExternal': '用系统程序打开',
+  'files.openLinkFailed': '无法在系统浏览器中打开该链接',
   'files.openFailed': '无法用系统程序打开该文件',
   'files.revealFailed': '无法在文件夹中显示该文件',
   'files.change.created': '新建',

@@ -54,6 +54,8 @@ declare global {
       /** Bot 文件卡片：用系统默认程序打开 / 在文件管理器中显示。 */
       openPath(target: string): Promise<void>;
       showItemInFolder(target: string): Promise<void>;
+      /** FileViewer HTML 预览（47 号设计）：预览页外链转交系统浏览器（主进程校验 scheme）。 */
+      openExternal(url: string): Promise<void>;
       /** P13 任务 4 引导: posts a test notification (macOS permission prompt). */
       sendTestNotification(title: string, body: string): Promise<void>;
       /** 传感器（31 号设计）的系统权限三件套（macOS TCC；其他平台恒 granted）。 */
