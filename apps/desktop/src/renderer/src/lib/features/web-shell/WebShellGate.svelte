@@ -52,12 +52,27 @@
     }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
     } catch {
       scanError = 'denied';
       return;
+    }
+    // 拍屏幕亮二维码的补偿（真机反馈：暗色主题下屏幕很亮，自动曝光把二维码区域
+    // 打成一片白）：连续对焦/连续曝光 + 轻微压低曝光。advanced 逐项尽量满足，
+    // iOS Safari 等不支持的平台整段拒绝——吞掉，基础扫码不受影响。
+    try {
+      await stream.getVideoTracks()[0]?.applyConstraints({
+        // ImageCapture 风格的非标准键，DOM 类型库不含：显式断言。
+        advanced: [
+          { focusMode: 'continuous' },
+          { exposureMode: 'continuous' },
+          { exposureCompensation: -1 },
+        ] as unknown as MediaTrackConstraintSet[],
+      });
+    } catch {
+      // 平台不支持相机微调：忽略。
     }
     scanning = true;
   }
@@ -84,15 +99,19 @@
       rafId = requestAnimationFrame(tick);
       if (ctx === null || video.readyState < 2) return;
       const now = performance.now();
-      if (now - lastDecodeAt < 120) return; // ~8fps 解码：扫码足够，功耗友好
+      if (now - lastDecodeAt < 150) return; // ~6.7fps 解码：720p 帧较重，扫码足够
       lastDecodeAt = now;
-      const width = 480;
+      // 720 而不是 480：屏幕二维码在画面里占比小，降采样会抹掉模块边界。
+      const width = 720;
       const height =
-        video.videoHeight > 0 ? Math.round((video.videoHeight / video.videoWidth) * width) : 360;
+        video.videoHeight > 0 ? Math.round((video.videoHeight / video.videoWidth) * width) : 405;
       canvas.width = width;
       canvas.height = height;
       ctx.drawImage(video, 0, 0, width, height);
-      const code = jsQR(ctx.getImageData(0, 0, width, height).data, width, height);
+      // attemptBoth：暗色主题下若二维码以反色（亮模块暗底）出现也能解。
+      const code = jsQR(ctx.getImageData(0, 0, width, height).data, width, height, {
+        inversionAttempts: 'attemptBoth',
+      });
       if (code === null) return;
       stopScan();
       // 扫到但不是配对链接：回到粘贴页给出错误，不空转继续扫。
