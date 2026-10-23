@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
+import { setImmediate as nodeSetImmediate, setTimeout as nodeSetTimeout } from 'node:timers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   PAIRING_TTL_MS,
@@ -223,11 +224,29 @@ async function nodeX25519DeriveBits(
 /**
  * 让微任务与线程池级的 WebCrypto / transport 异步路径全部落地（真假定时器环境都
  * 可用）。x25519 的 accept→done 之间有约 8 次顺序的 subtle 调用，轮次要给够。
+ *
+ * Linux CI / Electron-as-Node 上 WebCrypto 完成走 libuv 线程池，不挂在 vitest
+ * fake timers 上。这里固定用 `node:timers` 的真实 setImmediate（不吃 vi.useFakeTimers
+ * 的全局替换），假定时器下也能把 subtle Promise 刷出来；同时 advance 0ms 推动
+ * 被 fake 的定时器队列。
  */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 40; i += 1) {
-    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(1);
-    else await new Promise<void>((resolve) => setImmediate(resolve));
+  // 真实 setImmediate + 1ms setTimeout：WebCrypto 走 libuv 线程池，既不挂在
+  // vitest fake timers 上，也不保证只靠 nextTick/setImmediate 就能排完——短真实
+  // 睡眠把线程池回调让出来。node:timers 绑定不受 vi.useFakeTimers 替换全局影响。
+  for (let i = 0; i < 20; i += 1) {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    await new Promise<void>((resolve) => nodeSetImmediate(resolve));
+  }
+  await new Promise<void>((resolve) => nodeSetTimeout(resolve, 1));
+}
+
+/** 轮询条件成立（配合 settle 刷 WebCrypto）；超时仍返回，由调用方 expect 断言。 */
+async function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) return;
+    await settle();
   }
 }
 
@@ -331,6 +350,7 @@ async function pairedTransport(options?: {
   expect(registry.last.url).toBe(`ws://127.0.0.1:8787/ws/${SID}?role=viewer`);
   registry.last.open();
   await settle();
+  await waitUntil(() => registry.last.sent.length > 0);
 
   const request = JSON.parse(registry.last.sent[0] as string) as {
     v: number;
@@ -373,7 +393,18 @@ async function pairedTransport(options?: {
   });
   const endpoint = new FrameCodec(anchorKeys, SID, 'anchor');
   // done 落地 → 凭证入库 + 立即 hello 自举；hello 可被 anchor 端点侧解开。
+  await waitUntil(() => storage.getItem(CREDENTIALS_KEY) !== null);
   expect(storage.getItem(CREDENTIALS_KEY)).not.toBeNull();
+  const lastType = (): string | undefined => {
+    const raw = registry.last.sent.at(-1);
+    if (typeof raw !== 'string') return undefined;
+    try {
+      return (JSON.parse(raw) as { type?: string }).type;
+    } catch {
+      return undefined;
+    }
+  };
+  await waitUntil(() => lastType() === 'hello');
   const hello = JSON.parse(registry.last.sent.at(-1) as string) as RelayEnvelope;
   expect(hello.type).toBe('hello');
   expect(hello.did).toBe(request.did);
@@ -630,17 +661,17 @@ describe('WsTransport: pairing state machine', () => {
         '重发测试机',
       );
       registry.last.open();
-      await settle();
       const requestCount = (): number =>
         registry.last.sent.filter(
           (text) => (JSON.parse(text) as { type?: string }).type === 'pairing',
         ).length;
+      await waitUntil(() => requestCount() >= 1);
       expect(requestCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS);
-      await settle();
+      await waitUntil(() => requestCount() >= 2);
       expect(requestCount()).toBe(2);
       await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS);
-      await settle();
+      await waitUntil(() => requestCount() >= 3);
       expect(requestCount()).toBe(3);
 
       // 走完配对：重发必须停（done 后不再有 pairing 帧上线）。
@@ -654,6 +685,7 @@ describe('WsTransport: pairing state machine', () => {
         epub: request.data.epub,
         pskMode: 'x25519',
       });
+      await waitUntil(() => transport.pairing.kind === 'connected');
       expect(transport.pairing).toEqual({ kind: 'connected' });
       const after = requestCount();
       await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS * 2);
@@ -680,11 +712,11 @@ describe('WsTransport: pairing state machine', () => {
         '信号测试机',
       );
       registry.last.open();
-      await settle();
       const requestCount = (): number =>
         registry.last.sent.filter(
           (text) => (JSON.parse(text) as { type?: string }).type === 'pairing',
         ).length;
+      await waitUntil(() => requestCount() >= 1);
       expect(requestCount()).toBe(1);
       registry.last.receive({
         v: RELAY_PROTOCOL_VERSION,
@@ -693,7 +725,7 @@ describe('WsTransport: pairing state machine', () => {
         n: 0,
         info: { kind: 'anchor_online' },
       });
-      await settle();
+      await waitUntil(() => requestCount() >= 2);
       expect(requestCount()).toBe(2);
     } finally {
       vi.useRealTimers();
@@ -736,7 +768,7 @@ describe('WsTransport: pairing state machine', () => {
         '超时测试机',
       );
       registry.last.open();
-      await settle();
+      await waitUntil(() => transport.pairing.kind === 'awaiting-confirm');
       expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
       await vi.advanceTimersByTimeAsync(PAIRING_TTL_MS / 2);
       await settle();
@@ -766,7 +798,7 @@ describe('WsTransport: pairing state machine', () => {
     };
     await transport.startPairing(link, '防抖机');
     registry.last.open();
-    await settle();
+    await waitUntil(() => transport.pairing.kind === 'awaiting-confirm');
     expect(transport.pairing).toEqual({ kind: 'awaiting-confirm' });
     const sentBefore = registry.last.sent.length;
     await transport.startPairing(link, '防抖机');
@@ -806,7 +838,7 @@ describe('WsTransport: pairing state machine', () => {
       '测试机',
     );
     registry.last.open();
-    await settle();
+    await waitUntil(() => registry.last.sent.length > 0);
     const request = JSON.parse(registry.last.sent[0] as string) as { did: string };
     registry.last.receive({
       v: 1,
@@ -816,7 +848,7 @@ describe('WsTransport: pairing state machine', () => {
       n: 0,
       data: { kind: 'reject', reason: 'expired' },
     });
-    await settle();
+    await waitUntil(() => pairings.at(-1)?.kind === 'rejected');
     expect(pairings.at(-1)).toEqual({ kind: 'rejected', reason: 'expired' });
     expect(transport.linkState).toBe('connecting');
     expect(registry.last.closed).toBe(true);
@@ -833,11 +865,19 @@ describe('WsTransport: connected-phase frames', () => {
       payload: { runId: 'r1', pct: 50 },
     });
     registry.last.receive(event);
-    await settle();
+    await waitUntil(() => received.length >= 1);
     expect(received).toEqual([{ m: 'run.progress', a: [{ runId: 'r1', pct: 50 }], t: 'q' }]);
 
     transport.post({ t: 'q', m: 'test.echo', a: [{ hello: '桌面' }], i: 'req7' });
-    await settle();
+    await waitUntil(() => {
+      const raw = registry.last.sent.at(-1);
+      if (typeof raw !== 'string') return false;
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'rpc';
+      } catch {
+        return false;
+      }
+    });
     const rpcFrame = JSON.parse(registry.last.sent.at(-1) as string) as RelayEnvelope;
     expect(rpcFrame.type).toBe('rpc');
     expect(rpcFrame.rid).toBe('req7');
@@ -891,7 +931,15 @@ describe('WsTransport: connected-phase frames', () => {
     await settle();
     expect(registry.last).not.toBe(registry.at(0));
     registry.last.open();
-    await settle();
+    await waitUntil(() => {
+      const raw = registry.last.sent.at(-1);
+      if (typeof raw !== 'string') return false;
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'hello';
+      } catch {
+        return false;
+      }
+    });
     const secondHello = JSON.parse(registry.last.sent.at(-1) as string) as RelayEnvelope;
     expect(secondHello.type).toBe('hello');
     expect(secondHello.n).toBe(1);
@@ -919,9 +967,18 @@ describe('WsTransport: connected-phase frames', () => {
     });
     const received: unknown[] = [];
     revived.onData((data) => received.push(data));
+    first.transport.close();
     revived.resume();
     registry.last.open();
-    await settle();
+    await waitUntil(() => {
+      const raw = registry.last.sent.at(-1);
+      if (typeof raw !== 'string') return false;
+      try {
+        return (JSON.parse(raw) as { type?: string }).type === 'hello';
+      } catch {
+        return false;
+      }
+    });
     const hello = JSON.parse(registry.last.sent.at(-1) as string) as RelayEnvelope;
     expect(hello.type).toBe('hello');
     // 出站计数器随凭证持久化：恢复后 hello 继续 n=1（清零会被 anchor 移植后的
@@ -931,7 +988,7 @@ describe('WsTransport: connected-phase frames', () => {
     // 入站窗口每连接从零重建：anchor 端点存活时出站续号（n=1），照常解开。
     const [next] = first.endpoint.seal('event', { name: 'x', payload: 2 });
     registry.last.receive(next);
-    await settle();
+    await waitUntil(() => received.length >= 1);
     expect(received).toEqual([{ m: 'x', a: [2], t: 'q' }]);
     expect(revived.linkState).toBe('connected');
   });
@@ -958,13 +1015,14 @@ describe('WsTransport: connected-phase frames', () => {
     });
     const received: unknown[] = [];
     revived.onData((data) => received.push(data));
+    first.transport.close();
     revived.resume();
     registry.last.open();
-    await settle();
+    await waitUntil(() => revived.linkState === 'connected');
     const restartedAnchor = new FrameCodec(first.anchorKeys, SID, 'anchor');
     const [event] = restartedAnchor.seal('event', { name: 'x', payload: 'after-restart' });
     registry.last.receive(event);
-    await settle();
+    await waitUntil(() => received.length >= 1);
     expect(received).toEqual([{ m: 'x', a: ['after-restart'], t: 'q' }]);
   });
 
