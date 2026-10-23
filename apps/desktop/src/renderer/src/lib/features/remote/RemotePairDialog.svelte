@@ -188,7 +188,7 @@
           <Button onclick={() => void createOffer()}>{t('settings.remotePairRegenerate')}</Button>
         </div>
       {:else}
-        <div class="space-y-3">
+        <div class="min-w-0 space-y-3">
           <p class="text-sm text-muted-foreground">{t('settings.remotePairHint')}</p>
           <div
             class="mx-auto w-56 rounded-lg bg-muted p-3 [&_svg]:block [&_svg]:h-auto [&_svg]:w-full"
@@ -201,9 +201,14 @@
           <p class="text-center text-xs" data-testid="remote-pair-countdown">
             {Math.floor(expiresInSeconds / 60)}:{String(expiresInSeconds % 60).padStart(2, '0')}
           </p>
-          <div class="flex items-center justify-center gap-2" data-testid="remote-pair-link">
+          <!-- 配对码链接 100+ 字符：break-all 换行展示（窄窗下 truncate/nowrap 的
+               min-content 会把 grid 弹窗撑出屏幕，真机回归过）。 -->
+          <div
+            class="flex w-full min-w-0 items-start justify-center gap-2"
+            data-testid="remote-pair-link"
+          >
             <code
-              class="max-w-[15rem] truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground"
+              class="min-w-0 flex-1 rounded bg-muted px-2 py-1 text-left text-[11px] leading-relaxed break-all text-muted-foreground"
             >
               {offer.url}
             </code>
@@ -216,13 +221,15 @@
 
       {#each pending as request (request.requestId)}
         <div
-          class="space-y-2 rounded-lg border border-border p-3"
+          class="w-full min-w-0 space-y-2 rounded-lg border border-border p-3"
           data-testid="remote-confirm-card"
         >
           <p class="text-sm font-medium">
             {t('settings.remoteConfirmTitle', { name: request.deviceName })}
           </p>
-          <p class="truncate text-xs text-muted-foreground">{request.userAgent}</p>
+          <!-- UA 可能 300+ 字符：truncate 的 nowrap 会把 min-content 撑爆 grid 弹窗，
+               卡片必须 min-w-0 让截断生效（窄窗真机回归过）。 -->
+          <p class="min-w-0 truncate text-xs text-muted-foreground">{request.userAgent}</p>
           <p class="text-xs text-muted-foreground">{t('settings.remoteConfirmBody')}</p>
           <div class="flex justify-end gap-2">
             <Button
