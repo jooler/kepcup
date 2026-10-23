@@ -78,23 +78,29 @@ test.describe('D96 远程遥控', () => {
       expect(status0.enabled).toBe(false);
 
       // 开关：走设置目录条目的写路径（confirm 档位，目录卡片或 RPC 等价）。
+      // 按需连接（2026-10 修订）：只开开关不连中转，anchor 应为 idle。
       const configured = (await rpc(page, 'remote.config.set', {
         enabled: true,
         relayUrl: 'ws://127.0.0.1:8787',
       })) as { enabled: boolean };
       expect(configured.enabled).toBe(true);
-      // anchor 会连不上（本地无中转）→ 状态 error / connecting 都算"在尝试"。
+      await expect
+        .poll(async () => ((await rpc(page, 'remote.status')) as { anchor: string }).anchor, {
+          timeout: 30_000,
+        })
+        .toBe('idle');
+
+      // 「连接手机」→ 二维码小窗（offer + 倒计时）。配对码窗口开启才尝试连接
+      // 中转：本地无中转 → 状态 error（在尝试即算数）。
+      await page.locator('[data-testid="remote-pair-button"]').click();
+      await expect(page.locator('[data-testid="remote-pair-dialog"]')).toBeVisible();
+      await expect(page.locator('[data-testid="remote-qr"]')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('[data-testid="remote-pair-countdown"]')).toContainText(/\d:\d{2}/);
       await expect
         .poll(async () => ((await rpc(page, 'remote.status')) as { anchor: string }).anchor, {
           timeout: 30_000,
         })
         .toBe('error');
-
-      // 「连接手机」→ 二维码小窗（offer + 倒计时）。
-      await page.locator('[data-testid="remote-pair-button"]').click();
-      await expect(page.locator('[data-testid="remote-pair-dialog"]')).toBeVisible();
-      await expect(page.locator('[data-testid="remote-qr"]')).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator('[data-testid="remote-pair-countdown"]')).toContainText(/\d:\d{2}/);
 
       // 模拟手机配对请求（真实 HMAC / 挂起路径）。
       const deviceId = 'dev-' + randomBytes(10).toString('hex');
@@ -184,6 +190,10 @@ test.describe('D96 远程遥控', () => {
       await expect(page.locator('[data-testid="remote-pair-gate"]')).toBeVisible();
       await expect(page.locator('[data-testid="remote-qr"]')).toHaveCount(0);
 
+      // e2e 不得触达线上中转：默认地址是 wss://remote.kepcup.com，而勾选出码即
+      // 开窗连接。趁开关未开先把中转地址指到本地空端口（此刻按需策略下零连接；
+      // 勾选后 offer 窗口内只连本地空端口 → error，无外联）。
+      await rpc(page, 'remote.config.set', { relayUrl: 'ws://127.0.0.1:8787' });
       // 勾选 = 用户本人开启（remote.config.set，托盘同款写路径）→ 立刻出二维码。
       await page.locator('[data-testid="remote-pair-gate-check"]').click();
       await expect(page.locator('[data-testid="remote-qr"]')).toBeVisible({ timeout: 15_000 });

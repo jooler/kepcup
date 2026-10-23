@@ -119,8 +119,12 @@ export const pairedDeviceSchema = z.object({
 });
 export type PairedDevice = z.infer<typeof pairedDeviceSchema>;
 
-/** anchor（桌面 ↔ 中转 1:1 外连）连接状态机（§5.1）。 */
-export const remoteAnchorStateSchema = z.enum(['off', 'connecting', 'online', 'error']);
+/**
+ * anchor（桌面 ↔ 中转 1:1 外连）连接状态机（§5.1）。`idle` = 开关已开但按需连接
+ * 策略下当前不连中转（无未过期配对码、无设备在线、也不在驻留窗内）——原实现
+ * 开关一开就常驻连接（24/7 空转），现只在「有用」时连接以降低中转驻留成本。
+ */
+export const remoteAnchorStateSchema = z.enum(['off', 'idle', 'connecting', 'online', 'error']);
 export type RemoteAnchorState = z.infer<typeof remoteAnchorStateSchema>;
 
 /**

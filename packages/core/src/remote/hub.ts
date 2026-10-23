@@ -45,6 +45,12 @@ const COALESCE_FLUSH_MS = 100;
  * close，宽限内任何该 did 的入站帧都会取消清理，避免误杀活端点。
  */
 const VIEWER_LEFT_GRACE_MS = 5_000;
+/**
+ * 按需连接的驻留窗（运营成本，2026-10 修订）：配对刚确认或最后一台设备刚离开后，
+ * 中转连接再保持这么久——手机 done → hello 的自举间隙、PWA 刷新 / 弱网重连都落
+ * 在窗口内，不用回桌面重新准备。窗口结束仍无人用即断开，不空转。导出供测试钉策略。
+ */
+export const RELAY_IDLE_LINGER_MS = 2 * 60 * 1000;
 /** 仅本机可调的方法（测试缝）：不暴露给远程端点的方法表。 */
 const LOCAL_ONLY_METHODS = new Set(['remote.testInjectPairing']);
 
@@ -99,6 +105,10 @@ export class RemoteHub {
   #coalesceTimer: ReturnType<typeof setTimeout> | null = null;
   /** viewer_left 宽限期定时器：did → timer。入站帧或实际清理时移除。 */
   readonly #pendingLeftCleanup = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 按需连接的驻留定时器（到点重估，仍无人用即断开）。 */
+  #lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 配对码过期定时器（到点重估：窗口结束且无设备 → 断开）。 */
+  #offerTimer: ReturnType<typeof setTimeout> | null = null;
   #unsubscribers: Array<() => void> = [];
   #closed = false;
 
@@ -139,6 +149,8 @@ export class RemoteHub {
     this.#relay = null;
     for (const timer of this.#pendingLeftCleanup.values()) clearTimeout(timer);
     this.#pendingLeftCleanup.clear();
+    this.#cancelLinger();
+    this.#cancelOfferTimer();
     for (const endpoint of this.#endpoints.values()) this.#dropEndpoint(endpoint.deviceId);
     if (this.#coalesceTimer !== null) {
       clearTimeout(this.#coalesceTimer);
@@ -146,17 +158,40 @@ export class RemoteHub {
     }
   }
 
-  /** 读设置里的开关与中转地址，建立 / 断开 anchor 连接。 */
+  /**
+   * 读设置 + 按需连接策略，建立 / 保持 / 断开 anchor 连接。连接只在「有用」时
+   * 存在：① 有未过期配对码（连接手机开窗，手机随时可能扫码）；② 有已配对设备
+   * 在线；③ 刚确认配对 / 刚有设备离开的驻留窗内。仅打开开关不建立任何连接
+   * （原实现开着就常驻，24/7 与中转空转）。
+   */
   async syncConfig(): Promise<void> {
+    this.#evaluateRelay();
+  }
+
+  #evaluateRelay(): void {
     if (this.#closed) return;
     const settings = this.#deps.settings.get();
     if (!settings.remoteEnabled) {
-      this.#relay?.close();
-      this.#relay = null;
-      for (const endpoint of this.#endpoints.values()) this.#dropEndpoint(endpoint.deviceId);
-      this.#setAnchorState('off');
+      this.#dropRelay('off');
       return;
     }
+    if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer()) {
+      this.#cancelLinger();
+      this.#ensureRelayConnection();
+      return;
+    }
+    if (this.#relay === null) {
+      this.#setAnchorState('idle');
+      return;
+    }
+    // 连着但已无人要用：驻留窗内保持现状（手机重连 / done→hello 自举都落在窗里），
+    // 到点仍无人用即断开。
+    if (this.#lingerTimer === null) this.#startLinger();
+  }
+
+  /** 确保中转客户端存在且指向当前配置地址（原 syncConfig 建连段）。 */
+  #ensureRelayConnection(): void {
+    const settings = this.#deps.settings.get();
     // 存储值不合法时回退默认并留痕（审查修复：原先 .catch 静默吞掉，配置坏了
     // 只会表现为「连的不是我以为的地址」）。
     const parsedUrl = relayEndpointSchema.safeParse(settings.remoteRelayUrl);
@@ -196,6 +231,57 @@ export class RemoteHub {
     relay.connect();
   }
 
+  /** 拆掉中转连接与所有端点（开关关 → 'off'；按需策略下无人用 → 'idle'）。 */
+  #dropRelay(state: RemoteAnchorState): void {
+    this.#cancelLinger();
+    this.#relay?.close();
+    this.#relay = null;
+    for (const timer of this.#pendingLeftCleanup.values()) clearTimeout(timer);
+    this.#pendingLeftCleanup.clear();
+    for (const endpoint of this.#endpoints.values()) this.#dropEndpoint(endpoint.deviceId);
+    this.#setAnchorState(state);
+  }
+
+  #startLinger(): void {
+    this.#lingerTimer = setTimeout(() => {
+      this.#lingerTimer = null;
+      // 到点仍无人用（无码、无设备）即拆；期间来了码 / 设备则重估走建连分支。
+      // 不能回到 evaluate 的「再驻留一次」分支，否则无人用也会无限续期。
+      if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer()) {
+        this.#evaluateRelay();
+        return;
+      }
+      this.#dropRelay('idle');
+    }, RELAY_IDLE_LINGER_MS);
+    // 纯内存重估定时器：不该拖住进程退出。
+    this.#lingerTimer.unref?.();
+  }
+
+  #cancelLinger(): void {
+    if (this.#lingerTimer !== null) {
+      clearTimeout(this.#lingerTimer);
+      this.#lingerTimer = null;
+    }
+  }
+
+  #armOfferTimer(expiresAt: number): void {
+    this.#cancelOfferTimer();
+    const delay = Math.max(0, expiresAt - this.#deps.clock.now());
+    this.#offerTimer = setTimeout(() => {
+      this.#offerTimer = null;
+      // 配对码窗口结束：无设备在线即断开（有设备走端点/驻留路径，不受影响）。
+      this.#evaluateRelay();
+    }, delay);
+    this.#offerTimer.unref?.();
+  }
+
+  #cancelOfferTimer(): void {
+    if (this.#offerTimer !== null) {
+      clearTimeout(this.#offerTimer);
+      this.#offerTimer = null;
+    }
+  }
+
   // --- remote.* RPC handlers（bindings.ts 委托到这里）--------------------------
 
   status(): RemoteStatusOutput {
@@ -217,7 +303,11 @@ export class RemoteHub {
     if (!settings.remoteEnabled) {
       throw new AppError('INVALID_STATE', '远程遥控未开启（先打开总开关）');
     }
-    return this.pairing.createOffer(settings.remoteRelayUrl);
+    const offer = this.pairing.createOffer(settings.remoteRelayUrl);
+    // 按需连接：配对码窗口开启才算「有用」，此刻才去连中转（手机随时可能扫码）。
+    this.#armOfferTimer(offer.expiresAt);
+    this.#evaluateRelay();
+    return offer;
   }
 
   confirmPairing(
@@ -227,6 +317,10 @@ export class RemoteHub {
     const outcome = this.pairing.confirm(requestId, accept);
     for (const frames of outcome.frames) this.#sendOutcome(frames);
     if (outcome.status === 'paired' && outcome.device !== undefined) {
+      // 配对码已消耗但手机的 hello 还在路上：重估会进驻留窗（而非立刻断开），
+      // 覆盖 done → hello 的自举间隙。
+      this.#cancelOfferTimer();
+      this.#evaluateRelay();
       return { status: 'paired', device: outcome.device };
     }
     if (outcome.status === 'declined') return { status: 'declined' };
@@ -444,6 +538,8 @@ export class RemoteHub {
       },
     });
     this.#endpoints.set(deviceId, endpoint);
+    // 端点建立即「有用」：取消驻留窗（设备回来了就不拆连接）。
+    if (!this.#closed) this.#evaluateRelay();
     return endpoint;
   }
 
@@ -464,6 +560,9 @@ export class RemoteHub {
       });
     }
     this.#publishAnchorState();
+    // 最后一个端点也没了且连接还在 → 重估（多半进驻留窗，到点仍无人用即断开）。
+    // relay 为 null（拆连接途中）时不再递归重估。
+    if (!this.#closed && this.#relay !== null) this.#evaluateRelay();
   }
 
   // --- 出站帧 ------------------------------------------------------------------
@@ -566,6 +665,8 @@ export class RemoteHub {
   // --- 状态发布 ----------------------------------------------------------------
 
   #setAnchorState(state: RemoteAnchorState, reason?: string): void {
+    // 按需策略下重估变频繁，同状态同原因不重复广播（error 同因重试同样算重复）。
+    if (this.#anchorState === state && this.#anchorReason === reason) return;
     this.#anchorState = state;
     this.#anchorReason = reason;
     this.#publishAnchorState();

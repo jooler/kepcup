@@ -1165,6 +1165,7 @@
                 <Smartphone aria-hidden="true" />
                 {t('menu.connectPhone')}
               </DropdownMenu.Item>
+              <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
                 data-testid="menu-settings"
@@ -1206,6 +1207,7 @@
                 <Smartphone aria-hidden="true" />
                 {t('menu.connectPhone')}
               </DropdownMenu.Item>
+              <DropdownMenu.Separator />
               <DropdownMenu.Item
                 onclick={() => shell.openSettings('general')}
                 data-testid="menu-settings"

@@ -21,7 +21,7 @@ import { createEventBus } from '../../src/infra/events.js';
 import { SettingsService } from '../../src/domain/settings.js';
 import { SecretsService } from '../../src/domain/secrets.js';
 import { AuditService } from '../../src/domain/audit.js';
-import { RemoteHub, type RelayClientLike } from '../../src/remote/hub.js';
+import { RemoteHub, RELAY_IDLE_LINGER_MS, type RelayClientLike } from '../../src/remote/hub.js';
 import type { RelayClientOptions } from '../../src/remote/relay-client.js';
 import {
   FrameCodec,
@@ -261,7 +261,9 @@ class FakeViewer {
 }
 
 describe('remote hub: config & status', () => {
-  it('disabled by default: no connection; enable connects the anchor', () => {
+  it('disabled by default: no connection; enable alone stays idle (on-demand relay)', () => {
+    // 按需连接（运营成本，2026-10 修订）：开关只是权限门槛，不再一开就常驻连接
+    //（原实现 24/7 与中转空转）。出配对码（连接手机开窗）才算「有用」。
     const rig = makeHub();
     expect(rig.hub.status()).toMatchObject({ enabled: false, anchor: 'off', sessionId: null });
     expect(FakeRelayClient.instances).toHaveLength(0);
@@ -269,9 +271,58 @@ describe('remote hub: config & status', () => {
     enableRemote(rig);
     const status = rig.hub.status();
     expect(status.enabled).toBe(true);
-    expect(status.anchor).toBe('online');
+    expect(status.anchor).toBe('idle');
     expect(status.sessionId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(rig.relay.url).toBe(`wss://remote.kepcup.com/ws/${status.sessionId}?role=anchor`);
+    expect(FakeRelayClient.instances).toHaveLength(0);
+
+    const offer = rig.hub.createPairing();
+    expect(rig.hub.status().anchor).toBe('online');
+    expect(rig.relay.url).toBe(`wss://remote.kepcup.com/ws/${offer.sessionId}?role=anchor`);
+  });
+
+  it('按需连接：配对确认后进驻留窗；无设备跟进则窗口结束断开', async () => {
+    vi.useFakeTimers();
+    try {
+      const rig = makeHub();
+      enableRemote(rig);
+      const viewer = new FakeViewer();
+      viewer.pairThrough(rig);
+      expect(rig.relay.state).toBe('online');
+      // confirm 后码已消耗、hello 未到：驻留窗覆盖 done → hello 自举间隙，
+      // 到点仍无设备上线即断开（不无限续期）。
+      await vi.advanceTimersByTimeAsync(RELAY_IDLE_LINGER_MS + 1_000);
+      expect(rig.hub.status().anchor).toBe('idle');
+      expect(rig.relay.state).toBe('off');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('按需连接：设备离开后驻留窗内保持连接，窗口结束断开', async () => {
+    vi.useFakeTimers();
+    try {
+      const rig = makeHub();
+      enableRemote(rig);
+      const viewer = new FakeViewer();
+      viewer.pairThrough(rig);
+      viewer.helloThrough(rig);
+      expect(rig.hub.status().onlineDeviceIds).toEqual([viewer.did]);
+      rig.relay.inject({
+        v: 1,
+        sid: rig.hub.status().sessionId!,
+        type: 'signal',
+        n: 0,
+        info: { kind: 'viewer_left', did: viewer.did },
+      });
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(rig.hub.status().onlineDeviceIds).toEqual([]); // viewer_left 宽限过完
+      expect(rig.relay.state).toBe('online'); // 驻留窗内连接仍在（PWA 刷新能直接回来）
+      await vi.advanceTimersByTimeAsync(RELAY_IDLE_LINGER_MS);
+      expect(rig.hub.status().anchor).toBe('idle');
+      expect(rig.relay.state).toBe('off');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('sessionId is stable across config resyncs (persisted in secrets)', () => {

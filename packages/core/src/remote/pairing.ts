@@ -170,6 +170,12 @@ export class PairingService {
     };
   }
 
+  /** 按需连接用：是否存在未消费、未过期的配对码窗口（手机随时可能扫码进场）。 */
+  hasActiveOffer(): boolean {
+    const offer = this.#offer;
+    return offer !== null && !offer.consumed && this.#clock.now() <= offer.expiresAt;
+  }
+
   /**
    * viewer 的 pairing.request 到达：验配对码 HMAC → 挂起待确认 + 发
    * `remote.pairingRequested` 事件（桌面确认卡）。返回要立刻回给 viewer 的帧
