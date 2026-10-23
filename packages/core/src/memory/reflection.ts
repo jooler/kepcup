@@ -1,4 +1,4 @@
-import { AppError, type Message, type Run } from '@kepcup/shared';
+import { AppError, type Message, type Run, SKILL_AUTHOR_REPEAT_THRESHOLD } from '@kepcup/shared';
 import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import { completeStructured } from '../agent/structured.js';
 import type { AgentEngine, EngineMessage } from '../agent/types.js';
@@ -318,15 +318,86 @@ export async function applyReflectionOutput(
     });
   });
   if (output.skillSuggestion) {
-    deps.jobs.enqueue({
-      type: 'skill_suggestion',
-      botId,
-      conversationId,
-      payload: { ...output.skillSuggestion, responseRunId: primaryRunId },
-      priority: 2,
-      dedupeKey: `skill_suggestion:${primaryRunId ?? 'unknown'}`,
-    });
+    const suggestion = output.skillSuggestion;
+    // P0.1: the repeat threshold is enforced here, in code — the model judges
+    // "same kind of work", the code counts the distinct completed runs its
+    // citations resolve to (a bare list length would pass invented or
+    // duplicated ids). Too few runs drops the suggestion (logged) instead of
+    // failing the reflection's whole structured output on a schema error.
+    const evidenceRunIds = resolveEvidenceRuns(deps, botId, suggestion.evidenceRefs);
+    if (evidenceRunIds.length < SKILL_AUTHOR_REPEAT_THRESHOLD) {
+      deps.logger.info(
+        {
+          botId,
+          name: suggestion.name,
+          cited: suggestion.evidenceRefs.length,
+          evidenceRuns: evidenceRunIds.length,
+        },
+        'skill suggestion dropped: evidence resolves to fewer runs than the repeat threshold',
+      );
+    } else {
+      deps.jobs.enqueue({
+        type: 'skill_suggestion',
+        botId,
+        conversationId,
+        payload: { ...suggestion, evidenceRunIds, responseRunId: primaryRunId },
+        priority: 2,
+        dedupeKey: `skill_suggestion:${primaryRunId ?? 'unknown'}`,
+      });
+    }
   }
+}
+
+/** Upper bound of citations resolved per suggestion (bounds the lookups; extras add nothing). */
+const MAX_EVIDENCE_REFS = 10;
+/** Window of the bot's newest runs searched to find the run a user message triggered. */
+const EVIDENCE_TRIGGER_RUN_WINDOW = 50;
+
+/**
+ * Resolves a skill suggestion's `evidenceRefs` to the distinct runs they stand
+ * for. A ref counts only when it points at a COMPLETED turn / task run of this
+ * bot: a run id directly, a bot message via the run that produced it, a user
+ * message via the run it triggered (found in the bot's recent runs of that
+ * conversation). Unknown ids, other bots' runs, failed / non-turn runs and
+ * messages private to another bot resolve to nothing; two refs to the same
+ * run count once. Pure lookups — nothing is written.
+ */
+export function resolveEvidenceRuns(
+  deps: Pick<ReflectionJobDeps, 'runs' | 'messages'>,
+  botId: string,
+  refs: readonly string[],
+): string[] {
+  const counted = (run: Run | null): run is Run =>
+    run !== null &&
+    run.botId === botId &&
+    run.status === 'completed' &&
+    (run.loopType === 'turn' || run.loopType === 'task');
+  const runIds = new Set<string>();
+  const unique = [...new Set(refs.map((ref) => ref.trim()).filter((ref) => ref.length > 0))];
+  for (const ref of unique.slice(0, MAX_EVIDENCE_REFS)) {
+    const asRun = deps.runs.get(ref);
+    if (asRun !== null) {
+      if (counted(asRun)) runIds.add(asRun.id);
+      continue;
+    }
+    const message = deps.messages.getById(ref);
+    if (message === null) continue;
+    if (message.ownerBotId !== null && message.ownerBotId !== botId) continue;
+    const producerRunId = message.runId ?? message.taskId;
+    const owner =
+      producerRunId !== null
+        ? deps.runs.get(producerRunId)
+        : (deps.runs
+            .listByBotInConversation(
+              message.conversationId,
+              botId,
+              ['turn', 'task'],
+              EVIDENCE_TRIGGER_RUN_WINDOW,
+            )
+            .find((run) => run.triggerMessageIds.includes(message.id)) ?? null);
+    if (counted(owner)) runIds.add(owner.id);
+  }
+  return [...runIds];
 }
 
 function parseIso(iso: string | null | undefined): number | null {
@@ -416,6 +487,7 @@ const REFLECTION_PROMPT = [
   '- Do not re-state memories already listed as existing.',
   '- <continued_from_runs> lists runs whose process records this execution replayed (loop continuation): facts distilled from them are already stored, so do not re-extract them as new memories.',
   '- <debounced_runs> lists several turns reflected together: extract each distinct fact once and never repeat a memory already covered by another turn in the same input.',
+  '- skillSuggestion: submit it only when the same kind of work has succeeded at least 2 separate times (2 different runs), and cite where in evidenceRefs: run ids or message ids shown in this input (the "依据" ids on lesson / self_note lines of <existing_memories> count too). Code resolves every id to a real completed run of yours and counts DISTINCT runs: unknown, duplicate or same-run ids count for nothing, so never invent ids. With fewer than 2 separate successes submit null. A user explicitly asking to persist a workflow is create_skill\'s path, not a skillSuggestion.',
   'Call submit with runSummary, memories, profileProposals (facts about the user for the shared profile), wikiSuggestions and skillSuggestion (or null).',
 ].join('\n');
 

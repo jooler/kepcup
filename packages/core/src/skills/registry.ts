@@ -973,6 +973,27 @@ export class SkillsService {
   }
 
   /**
+   * Marks a promoted reflection-authored skill (`skill_suggestion` job) as
+   * present-but-disabled: the panel lists it with an 启用 button and the reason
+   * visible, and `enable` clears the reason. An already active row is left
+   * alone — a reflection improving an enabled skill keeps it enabled (same
+   * posture as the failed-attempt path, which keeps the previous version
+   * active).
+   */
+  parkAuthored(botId: string, name: string, reason: string): void {
+    const existing = this.botSkillRow(botId, name);
+    if (existing !== null && existing.kind === 'authored' && existing.status === 'active') return;
+    this.#upsertBotSkill(botId, {
+      name,
+      kind: 'authored',
+      libraryId: null,
+      status: 'disabled',
+      statusReason: reason.slice(0, 500),
+    });
+    this.publishChanged(botId);
+  }
+
+  /**
    * create_skill tool entry: registers the generation job (dedupe per bot +
    * skill name keeps one pending attempt). The name is sanitized here so the
    * loop never starts on an impossible directory name.
@@ -1010,7 +1031,7 @@ export class SkillsService {
     });
     return {
       ok: true,
-      message: `已登记技能 ${cleaned} 的生成任务：后台会起草稿并验证，通过后自动启用并通知你；未通过时保留草稿，不打扰用户。`,
+      message: `已登记技能 ${cleaned} 的生成任务：后台会起草稿并验证，通过后自动启用；未通过时保留草稿，不打扰用户。`,
     };
   }
 

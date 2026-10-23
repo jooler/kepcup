@@ -687,6 +687,7 @@ export class MemoryService {
       filters: {
         isProject: conversation?.type === 'project',
         now: this.#deps.clock.now(),
+        timeZone: this.#deps.timeZone,
       },
       ...(kind !== undefined ? {} : {}),
       rerank: this.#retrievalReranker() ?? undefined,
@@ -942,6 +943,7 @@ export class MemoryService {
       filters: {
         isProject: conversation?.type === 'project',
         now: this.#deps.clock.now(),
+        timeZone: this.#deps.timeZone,
       },
       rerank: this.#retrievalReranker() ?? undefined,
     });

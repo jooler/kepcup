@@ -15,8 +15,10 @@ import type { SkillEntry } from '@kepcup/shared';
 /**
  * P08 自建集成（docs/dev/phases/P08-skills.md 测试要求）：skill_suggestion
  * 与 create_skill 两个任务来源 → 技能生成 loop（mock 模型写草稿）→ 验证
- * （frontmatter + bash -n + 沙箱跑 tests/）→ 自动启用并通知；失败保留草稿、
- * 不启用、无通知。历史与回滚走自建技能仓库。
+ * （frontmatter + bash -n + 沙箱跑 tests/）。任务来源（作业类型）决定成功后的
+ * 状态：反思来源（skill_suggestion）停在未启用态，由面板启用；用户来源
+ * （create_skill）通过即启用；两者完成都不向对话播报；失败保留草稿、不启用。
+ * 历史与回滚走自建技能仓库。
  */
 
 const GOOD_SKILL_MD = [
@@ -67,7 +69,7 @@ function enqueueSuggestion(
   });
 }
 
-describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知', () => {
+describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 未启用（create_skill 则启用）；均不播报', () => {
   let stack: Awaited<ReturnType<typeof createTestStack>>;
   let botId: string;
   let conversationId: string;
@@ -83,20 +85,29 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     await stack.cleanup();
   });
 
-  it.skipIf(process.platform === 'win32')('成功路径：验证通过 → active + 通知消息；草稿目录不在仓库历史中', async () => {
+  it.skipIf(process.platform === 'win32')('反思来源成功路径：验证通过 → 未启用（面板可一键启用）；草稿目录不在仓库历史中', async () => {
     enqueueSuggestion(stack.core, botId, conversationId, 'release-note');
     stack.llm.script('mock-main', authoringSteps());
 
-    const entry = await waitFor(
+    // P1.1：反思生成的技能停在未启用态（disabled），面板可见、附来源说明。
+    const parked = await waitFor(
       async () => {
         const result = (await stack.core.rpc.call('skills.list', { botId })) as {
           skills: SkillEntry[];
         };
-        return result.skills.find((s) => s.name === 'release-note' && s.status === 'active') ?? null;
+        return result.skills.find((s) => s.name === 'release-note' && s.status === 'disabled') ?? null;
       },
-      { label: 'authored skill active', timeoutMs: 30_000 },
+      { label: 'authored skill parked disabled', timeoutMs: 30_000 },
     );
-    expect(entry.kind).toBe('authored');
+    expect(parked.kind).toBe('authored');
+    expect(parked.statusReason).toContain('反思生成');
+
+    // 面板启用（skills.enable）后进入 active。
+    const enabled = (await stack.core.rpc.call('skills.enable', {
+      botId,
+      name: 'release-note',
+    })) as { skills: SkillEntry[] };
+    expect(enabled.skills.find((s) => s.name === 'release-note')!.status).toBe('active');
 
     // 消息原则：自创技能是 Bot 自己积累的经验，完成不向对话播报。
     const announced = (await listMessages(stack.core, conversationId)).some(
@@ -169,7 +180,7 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     ).toHaveLength(0);
   }, 60_000);
 
-  it.skipIf(process.platform === 'win32')('create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 启用 + 通知', async () => {
+  it.skipIf(process.platform === 'win32')('create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 直接启用（不播报）', async () => {
     stack.llm.script('mock-main', [
       step()
         .expect((req) => String(req.lastUserText()).includes('以后都这样做'))

@@ -127,6 +127,7 @@ MemoryItem
 
 - `<hard_constraints>` 直接读 active 画像条目与当前 Bot 的私有记忆（`boundaries` 分类无条件入选，其余按硬约束词表命中），不依赖画像卡片和 top-k 检索；卡片被截断、未重编译或本轮检索为空时硬约束仍然注入。
 - 注入的记忆都带 id 与 kind，并标明“可能已过时，关键决策前请确认”。
+- `lesson` / `self_note` 行额外带**写入日期**（本地 `YYYY-MM-DD`，取 createdAt）与至多 2 条证据消息 id（D101）：`- [id | lesson | 2026-10-20 | 依据 m123,m456] 内容`（只有 run 证据时省略依据段）。这两类最依赖时效——日期距今越久越可能过时，与用户最新说法或当前实际情况冲突时以后者为准；普通 fact / preference 行不加标注（控注入 token 预算）。
 - Bot 发现记忆有误时调用 `memory_feedback(id, outdated)`。
 - 群聊中，来自私聊的记忆标注“来自私聊”，Bot 需像真人一样有分寸，不在群里透露私聊内容。
 

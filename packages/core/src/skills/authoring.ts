@@ -54,12 +54,17 @@ export interface AuthoringJobDeps {
 
 /**
  * Skill generation loop (docs/dev/phases/P08-skills.md 任务 6). Consumes both
- * task sources — `skill_suggestion` jobs (reflection already checked the
- * SKILL_AUTHOR_REPEAT_THRESHOLD condition against the execution summaries)
- * and `create_skill` registrations — runs a main-model loop over the draft
- * directory, validates the result (frontmatter + syntax + sandbox tests),
- * and promotes on success; keeps the draft with the recorded reason on
- * failure. 自创技能是 Bot 自己积累的经验：成败都不向对话播报（消息原则，
+ * task sources — `skill_suggestion` jobs (the reflection loop's suggestion;
+ * its enqueue gate already resolved the cited evidence to at least
+ * SKILL_AUTHOR_REPEAT_THRESHOLD distinct runs) and `create_skill`
+ * registrations (`skill_authoring` jobs) — runs a main-model loop over the
+ * draft directory, validates the result (frontmatter + syntax + sandbox
+ * tests), and promotes on success; keeps the draft with the recorded reason
+ * on failure. The job type is the task source and decides the success path:
+ * a reflection-suggested skill (model intent) is promoted but stays disabled
+ * until the user enables it from the panel; a `create_skill` one (user
+ * intent) activates as before.
+ * 自创技能是 Bot 自己积累的经验：成败都不向对话播报（消息原则，
  * design/01-conversation.md），技能面板由 skills.changed 驱动。
  */
 export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void> {
@@ -86,6 +91,12 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
     reason?: string;
     responseRunId?: string;
   };
+  // The job type is the origin (only the reflection loop enqueues
+  // `skill_suggestion`; `create_skill` registers `skill_authoring`): no extra
+  // payload discriminator that could drift from it, and rows queued before this
+  // distinction existed take the safe side (a model-suggested skill never
+  // auto-enables).
+  const fromReflection = job.type === 'skill_suggestion';
   const name = sanitizeSkillName(payload.name ?? '');
   if (name === null) {
     deps.logger.warn({ botId: job.bot_id, raw: payload.name }, 'skill suggestion has no usable name');
@@ -227,11 +238,22 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
       return;
     }
     await deps.skills.promoteAuthored({ botId: job.bot_id, name, draftDir: draftsDir });
-    deps.skills.activateAuthored(job.bot_id, name);
+    if (fromReflection) {
+      // 反思来源停在未启用态：面板可见、一键启用（用户意图才自动启用）。
+      // 已启用的技能被反思改进时维持启用（与失败路径「上一版保持 active」
+      // 同一取向），parkAuthored 对 active 行是 no-op。
+      deps.skills.parkAuthored(job.bot_id, name, '反思生成，待你启用');
+      deps.logger.info(
+        { botId: job.bot_id, skill: name },
+        'skill authored from reflection; left disabled for the user to enable',
+      );
+    } else {
+      deps.skills.activateAuthored(job.bot_id, name);
+      deps.logger.info({ botId: job.bot_id, skill: name }, 'skill authored and activated');
+    }
     deps.runs.update(run.id, { status: 'completed' });
     // 技能是 Bot 自己积累的经验（消息原则，design/01-conversation.md）：自创
     // 完成不向对话播报——技能面板由 skills.changed 驱动，下次执行自然可用。
-    deps.logger.info({ botId: job.bot_id, skill: name }, 'skill authored and activated');
     return;
   }
 

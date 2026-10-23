@@ -579,6 +579,39 @@ describe('access approvals for file tools (P03)', () => {
     expect(bodies.some((r) => r.lastUserText().includes('等待用户确认'))).toBe(false);
     expect(bodies.some((r) => r.lastUserText().includes('自动批准'))).toBe(false);
   }, 120_000);
+
+  it('unattended mode never auto-decides a profile_change card (P0.3): pending until the user decides', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小设');
+    const conv = await openDirect(core, bot.id);
+    await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
+
+    const approvals = core.services.domain!.approvals;
+    const identity = {
+      runId: 'run_profile_unattended',
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'turn' as const,
+    };
+    let decided: string | null = null;
+    const approval = approvals.submitNonBlocking(
+      identity,
+      'profile_change',
+      { changes: [{ field: 'persona.tone', value: '更简洁' }], reason: '用户说「你太啰嗦了」' },
+      (outcome) => {
+        decided = outcome.decision;
+      },
+    );
+    // 人设是身份资产：无人值守不自动批准，卡留给用户回来决定。
+    expect(decided).toBe(null);
+    expect(approval.status).toBe('pending');
+    expect(approval.autoApproved).toBe(false);
+    // 未发生自动批准：无人值守摘要里没有它。
+    expect(approvals.summary().some((entry) => entry.approvalId === approval.id)).toBe(false);
+    // 用户回来后手动批准照常生效。
+    approvals.decide(approval.id, true);
+    expect(approvals.get(approval.id)!.status).toBe('approved');
+  }, 60_000);
 });
 
 describe('confirm mode (sandbox unavailable, P03)', () => {

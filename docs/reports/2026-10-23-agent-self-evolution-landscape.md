@@ -3,7 +3,7 @@
 | 字段 | 内容 |
 |---|---|
 | 日期 | 2026-10-23（Asia/Shanghai） |
-| 状态 | **调研**（非 design 权威；要变成规范须回写 design 并留决策） |
+| 状态 | **调研**（非 design 权威；要变成规范须回写 design 并留决策）。**建议已由 [todo/bot-self-evolution.md](../../todo/bot-self-evolution.md) 落地（2026-10-23，T1–T5 → 决策 D97–D101；P1.3 离线对照顺延至评测草案立项）** |
 | 读者 | KepCup 产品 / 工程（Pengfei） |
 | 范围 | 已公开、可核对的产品行为：谁可以改 prompt / 人设 / 技能 / 记忆 / 策略，谁发起，怎么批，在线还是离线。纯论文只在它已经长出可运行代码或产品入口时展开 |
 | 材料 | 各产品官方文档、博客、GitHub README、论文（检索日 2026-10-23）；本仓库 `packages/core` 与 `docs/design` |

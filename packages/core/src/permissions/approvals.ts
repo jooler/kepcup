@@ -136,12 +136,18 @@ type Resolver = (outcome: ApprovalOutcome) => void;
  * - mail_send (D84): outbound email to arbitrary recipients — always a human click,
  *   even when unattended is on (defence in depth with requireHuman on the request).
  * - bot_handover (D88): changes who owns mailboxes / apps / schedules — always waits.
+ * - profile_change: the bot's persona is its identity asset — a silent write while
+ *   the user is away must never happen; the card stays pending and waits for the
+ *   user to come back. This floor is also the premise for the proactive-propose
+ *   rule (the cards only appear when the user corrected the bot): each one still
+ *   needs a human decision.
  */
 const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
   'butler_proposal',
   'mail_send',
   // D88: moves mailboxes / apps / schedules between bots — always waits for the user.
   'bot_handover',
+  'profile_change',
 ]);
 
 /**
