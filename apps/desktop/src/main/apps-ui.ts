@@ -1,5 +1,9 @@
 import { app, protocol, type Session, type WebContents } from 'electron';
-import { MCP_APP_SCHEME, appsUiResourceOutputSchema } from '@kepcup/shared';
+import {
+  FILE_APP_SCHEME,
+  MCP_APP_SCHEME,
+  appsUiResourceOutputSchema,
+} from '@kepcup/shared';
 import {
   appUiResponseHeaders,
   parseAppUiUrl,
@@ -21,12 +25,18 @@ import {
  * - 没有 preload：preload 只注入主框架；子框架拿不到 `window.kepcup`（spike 实测）。
  */
 
-/** 必须在 `app.ready` 之前调用一次。 */
+/** 必须在 `app.ready` 之前调用一次（registerSchemesAsPrivileged 全应用只能调一次）。 */
 export function registerAppsUiScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: MCP_APP_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false },
+    },
+    {
+      // kepcup-file（docs/design/47）：目录预览协议。supportFetchAPI 开——页面里的
+      // fetch / XHR 允许打到自己源上的相对资源；corsEnabled 关——跨源读响应仍被 CORS 拦。
+      scheme: FILE_APP_SCHEME,
+      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false },
     },
   ]);
 }

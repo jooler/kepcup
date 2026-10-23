@@ -245,7 +245,8 @@ describe('injectWidgetSdk 插入点边界', () => {
     // head 正则不做注释解析（廉价探测不值得）：垫片插进注释 → window.kepcup 不存在，
     // 无副作用（见 sdk-injection.ts 模块注释「已知失效模式」）；Bot 重发修正的 HTML 即恢复。
     expect(out.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(out).toContain('<!-- <head><style data-kepcup="theme">');
+    expect(out).toContain('<!-- <head><style data-kepcup-scrollbar>::-webkit-scrollbar');
+    expect(out).toContain('<style data-kepcup="theme">');
     expect(out).toContain(WIDGET_SDK_MARKER);
   });
 

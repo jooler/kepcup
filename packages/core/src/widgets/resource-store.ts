@@ -31,7 +31,7 @@ export interface WidgetResourceInput {
   conversationId: string;
   botId: string | null;
   html: string;
-  /** 完整的响应头 CSP（widget 固定禁网：`buildAppCspHeader` 空域输出）。 */
+  /** 完整的响应头 CSP（widget 完整 WebApp 档：`buildWidgetRuntimeCspHeader` 输出）。 */
   csp: string;
 }
 

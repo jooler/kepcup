@@ -5,10 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { jsCheck, staticCheck } from '../../src/widgets/check/index.js';
 
 /**
- * 检查器召回率的回归锁（执行文档 §5.1）：`bad/` 是典型的 LLM 坏组件（CDN 图表库、localStorage、
- * confirm 删除、表单提交、onclick 指向闭包函数、截断输出、fetch、window.open、prompt、module +
- * 内联 onclick、跨脚本重复 let、id 拼错、top.location、Google Fonts…），每份都必须被至少一条阻断项
- * 拦下；`good/` 是写对了的组件，不能有任何 error。草稿里没有 queries.json（声明的查询为空）。
+ * 检查器召回率的回归锁（执行文档 §5.1；完整 WebApp 档修订）。`bad/` 是典型的 LLM 坏组件
+ * （相对路径资源、onclick 指向闭包函数、截断输出、window.open、module + 内联 onclick、
+ * 跨脚本重复 let、id 拼错、top.location…），每份都必须被至少一条阻断项拦下；`good/` 是
+ * 写对了的组件，不能有任何 error——其中联网 / 浏览器存储 / confirm / 表单 preventDefault /
+ * CDN 外链（fetch、localStorage、Google Fonts、CDN 图表库…）在完整 WebApp 档下都是合法用法。
+ * 草稿里没有 queries.json（声明的查询为空）。
  */
 
 const ROOT = path.join(__dirname, '../fixtures/widgets');
@@ -51,21 +53,13 @@ describe('widget checker corpus', () => {
 
   it('each bad fixture is caught by the rule it is about', () => {
     const expected: Record<string, string> = {
-      'cdn-chart.html': 'sandbox.external-resource',
       'closure-onclick.html': 'js.handler-undefined',
-      'confirm-delete.html': 'sandbox.modals',
-      'css-background-url.html': 'sandbox.external-resource',
       'duplicate-let.html': 'js.redeclare',
-      'fetch-api.html': 'sandbox.network',
-      'form-onsubmit.html': 'sandbox.form-submit',
       'getelementbyid-typo.html': 'dom.id-missing',
-      'google-fonts.html': 'sandbox.external-resource',
-      'localstorage-todo.html': 'sandbox.storage',
       'markup-onclick-closure.html': 'js.handler-undefined',
       'module-inline-onclick.html': 'js.handler-undefined',
-      'prompt-name.html': 'sandbox.modals',
       'query-undeclared.html': 'query.unknown-name',
-      'submit-listener.html': 'sandbox.form-submit',
+      'relative-assets.html': 'sandbox.external-resource',
       'target-blank.html': 'sandbox.popup',
       'top-level-await.html': 'js.syntax',
       'top-location.html': 'sandbox.top-nav',

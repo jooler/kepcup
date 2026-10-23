@@ -190,6 +190,7 @@ import {
   type WidgetPreviewHostRpc,
 } from './widgets/preview.js';
 import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
+import { bindFilesPreviewMethods } from './rpc/files-preview-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
 import { DirectorySync } from './apps/directory-sync.js';
@@ -3509,6 +3510,8 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsUiMethods(services).platform,
     // D81: the same protocol handler fetches a registered bot-widget page (host prefix `widget-`).
     ...bindWidgetsUiMethods(services).platform,
+    // kepcup-file 协议处理器（docs/design/47）：按会话 token 取目录内文件。
+    ...bindFilesPreviewMethods(services).platform,
     'update.cancelActive': {
       input: updateCancelActiveInputSchema,
       output: updateCancelActiveOutputSchema,

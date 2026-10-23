@@ -186,6 +186,37 @@ describe('S1 js.undefined-name', () => {
     expect(issue?.message).toContain('第三方库');
   });
 
+  it('with an https external script, called library globals downgrade to warning', () => {
+    const base = '<script>new Chart(ctx, {});\nvar ctx;</script>';
+    // 无外链脚本：调用未定义的库全局是 error（阻断）。
+    const [without] = only(doc(base), 'js.undefined-name');
+    expect(without).toMatchObject({ level: 'error', blocking: true });
+    // 双引号 / 单引号 / 属性序 / 大小写 / 不带引号的属性值都算「引了 https 外链脚本」。
+    for (const script of [
+      '<script src="https://cdn.example.com/chart.js"></script>',
+      "<script src='https://cdn.example.com/chart.js'></script>",
+      '<script defer src="https://cdn.example.com/chart.js"></script>',
+      '<SCRIPT SRC="HTTPS://cdn.example.com/chart.js"></SCRIPT>',
+      '<script src=https://cdn.example.com/chart.js></script>',
+    ]) {
+      const [issue] = only(doc(`${script}\n${base}`), 'js.undefined-name');
+      expect(issue).toMatchObject({ level: 'warning', blocking: false });
+      expect(issue?.message).toContain('CDN');
+    }
+    // 协议相对 // 不算外链（解析回 kepcup-app 协议，加载不到），保持 error。
+    const [protocolRelative] = only(
+      doc('<script src="//cdn.example.com/chart.js"></script>\n' + base),
+      'js.undefined-name',
+    );
+    expect(protocolRelative).toMatchObject({ level: 'error', blocking: true });
+    // 未声明的非库全局不因外链脚本降级（CDN 提供不了任意名字）。
+    const [plain] = only(
+      doc('<script src="https://cdn.example.com/chart.js"></script>\n<script>nope();</script>'),
+      'js.undefined-name',
+    );
+    expect(plain).toMatchObject({ level: 'error', blocking: true });
+  });
+
   it('typeof, property keys, members, labels, declarations anywhere, element ids are fine', () => {
     const html = doc(
       [

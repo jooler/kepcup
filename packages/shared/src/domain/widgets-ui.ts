@@ -5,14 +5,16 @@ import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema, widgetThemeSchema } f
 /**
  * Bot 自制交互组件（Bot Widgets，D81，设计 32）：Bot 在任务里用 `widget_create` /
  * `widget_update` 交付的单文件 HTML 组件，作为 `cardType: 'bot_widget'` 卡片消息落在对话里，
- * 渲染端在 `sandbox="allow-scripts"` 沙箱 iframe 中加载（复用 MCP Apps 的 `kepcup-app://`
- * 特权协议与登记机制，host 前缀 `widget-`）。
+ * 渲染端在 `sandbox="allow-scripts allow-same-origin allow-forms allow-modals"` 的独占协议源
+ * iframe 中加载（复用 MCP Apps 的 `kepcup-app://` 特权协议与登记机制，host 前缀 `widget-`）。
  *
- * 信任模型（设计 32 §2）：widget HTML 是最低信任的内容——卡片与登记的内存资源里**不含运行时
- * 之外的东西**（HTML 只在 core 的库与内存资源里，不进模型上下文），响应头 CSP 固定
- * `connect-src 'none'`（默认禁网，见 `buildAppCspHeader` 空域输出）；用户按版本（sha256）
- * 人工确认后才挂载 iframe。能力（存储 / 查询）由宿主能力桥代为执行（P1 起），生成代码永不
- * 接触 Node / 文件系统 / 网络。
+ * 信任模型（设计 32 §2，2026-10 修订的「完整 WebApp 档」）：widget HTML 是最低信任的内容——
+ * 卡片与登记的内存资源里**不含运行时之外的东西**（HTML 只在 core 的库与内存资源里，不进模型
+ * 上下文），响应头 CSP 用 `buildWidgetRuntimeCspHeader()`（只保留 sandbox 四旗标 + frame-ancestors，
+ * 联网 / 存储 / 表单 / 对话框按真实 WebApp 可用，隔离由 iframe sandbox 属性 + 独占协议源 + 宿主
+ * 守卫承担；MCP Apps 的严格档 `buildAppCspHeader` 不变，两档并存）；用户按版本（sha256）人工
+ * 确认后才运行。能力（存储 / 查询）由宿主能力桥代为执行（P1 起），生成代码永不接触 Node /
+ * 文件系统；预览（S2 自检）始终离线。
  */
 
 /** 对话里卡片消息的 `cardType`。 */
@@ -164,6 +166,14 @@ export const widgetsUiSourceOutputSchema = z.object({
   queries: z.array(widgetQueryDefSchema),
 });
 export type WidgetsUiSourceOutput = z.infer<typeof widgetsUiSourceOutputSchema>;
+
+/**
+ * `widgets.ui.poster`：对话卡片的海报截图（自检 S2 预览的首视口）。懒加载——卡片消息里
+ * 不背 base64，挂载后按需取；legacy 版本或截图失败时为 null（前端回退图标占位）。
+ */
+export const widgetsUiPosterInputSchema = z.object({ messageId: z.string().min(1) });
+export const widgetsUiPosterOutputSchema = z.object({ posterPng: z.string().nullable() });
+export type WidgetsUiPosterOutput = z.infer<typeof widgetsUiPosterOutputSchema>;
 
 /** `widgets.ui.open`：卡片挂载，登记内存资源并返回 iframe 地址。 */
 export const widgetsUiOpenInputSchema = z.object({

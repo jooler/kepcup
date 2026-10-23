@@ -18,7 +18,7 @@ import {
   WIDGET_REPLY_COOLDOWN_MS,
   WIDGET_REPLY_MAX_CHARS,
   MCP_APP_SCHEME,
-  buildAppCspHeader,
+  buildWidgetRuntimeCspHeader,
   newId,
   widgetCardSchema,
   widgetCheckSummarySchema,
@@ -32,6 +32,7 @@ import {
   type WidgetsUiOpenOutput,
   type WidgetsUiQueryInput,
   type WidgetsUiQueryOutput,
+  type WidgetsUiPosterOutput,
   type WidgetsUiSourceOutput,
   type WidgetsUiStorageInput,
   type WidgetsUiStorageOutput,
@@ -61,7 +62,7 @@ import { injectWidgetSdk } from './sdk-injection.js';
  *   把该卡版本的 HTML 登记成内存资源（前置 SDK 垫片，见 sdk-injection.ts），返回
  *   `kepcup-app://widget-{hash}/{id}`。
  * - {@link WidgetService.resource}：平台方法 `widgets.ui.resource` 的实现——主进程
- *   协议处理器按 host 前缀 `widget-` 分流到这里取 HTML 与响应头 CSP（固定禁网）。
+ *   协议处理器按 host 前缀 `widget-` 分流到这里取 HTML 与响应头 CSP（完整 WebApp 档）。
  * - {@link WidgetService.storage} / {@link WidgetService.openLink}：能力桥（P1，
  *   设计 32 §6）——渲染端桥把 widget 的调用转发为 `widgets.ui.storage` /
  *   `widgets.ui.openLink`，这里以 resourceId 反查登记资源定命名空间，KV 落
@@ -109,8 +110,34 @@ interface WidgetVersionRow {
   created_at: number;
 }
 
-/** widget 的固定响应头 CSP：没有任何网络与资源域（禁网）。 */
-const WIDGET_CSP = buildAppCspHeader({ connectDomains: [], resourceDomains: [] });
+/**
+ * widget 的固定响应头 CSP：完整 WebApp 档——不限制资源与网络（sandbox 旗标与 iframe
+ * 属性一致），隔离由 iframe sandbox 属性 + 宿主导航/权限守卫承担。
+ */
+const WIDGET_CSP = buildWidgetRuntimeCspHeader();
+
+/** 海报截图的防御性上限（base64 字符数；S2 预览截图远小于此，超出视为异常丢弃）。 */
+export const WIDGET_POSTER_MAX_CHARS = 4_000_000;
+
+/** PNG 文件签名（base64 解码头 8 字节必须逐字节一致）。 */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/**
+ * 落库侧的海报校验：非空 base64、不超上限，且解码头部是 PNG 签名（`preview.ts` 的
+ * mimeType 是生产方自报的，存库前以字节为准——损坏数据 / data:URL 前缀形式都在这里
+ * 丢弃，渲染端 `data:image/png;base64,` 前缀拼接后才不会出坏图）。不合格返回 undefined。
+ */
+export function posterPngOf(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0 || value.length > WIDGET_POSTER_MAX_CHARS) {
+    return undefined;
+  }
+  try {
+    const head = Buffer.from(value.slice(0, 16), 'base64');
+    return head.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface WidgetServiceDeps {
   db: SqliteDatabase;
@@ -158,6 +185,8 @@ export interface WidgetCreateInput {
   scope: WidgetScope;
   runId: string;
   check?: WidgetDeliveryCheck;
+  /** 自检 S2 预览的首视口截图（base64 PNG）；对话卡片海报用，缺省 = 无海报。 */
+  posterPng?: string | undefined;
 }
 
 export interface WidgetUpdateInput {
@@ -174,6 +203,8 @@ export interface WidgetUpdateInput {
   changeNote: string;
   runId: string;
   check?: WidgetDeliveryCheck;
+  /** 同 create。 */
+  posterPng?: string | undefined;
 }
 
 export type WidgetWriteResult =
@@ -280,7 +311,17 @@ export class WidgetService {
             now,
             now,
           );
-        this.#insertVersion(widgetId, 1, html, sha256, queries, input.runId, now, input.check);
+        this.#insertVersion(
+          widgetId,
+          1,
+          html,
+          sha256,
+          queries,
+          input.runId,
+          now,
+          input.check,
+          posterPngOf(input.posterPng),
+        );
       });
       tx();
       const card = this.#emitCard({
@@ -366,7 +407,17 @@ export class WidgetService {
       const run = this.#acquireRunSlot(input.runId);
       if (!run.ok) return run;
       const tx = this.#deps.db.transaction(() => {
-        this.#insertVersion(widgetId, version, html, sha256, queries, input.runId, now, input.check);
+        this.#insertVersion(
+          widgetId,
+          version,
+          html,
+          sha256,
+          queries,
+          input.runId,
+          now,
+          input.check,
+          posterPngOf(input.posterPng),
+        );
         this.#deps.db
           .prepare('update widgets set latest_version = ?, updated_at = ? where id = ?')
           .run(version, now, widgetId);
@@ -516,6 +567,18 @@ export class WidgetService {
       html: version.html,
       queries,
     };
+  }
+
+  /**
+   * 海报截图（对话卡片静态展示用，懒加载）：取卡片钉住版本的自检截图。只读展示——
+   * 不做 `#pinnedVersion` 的摘要强校验（截图损坏不至于挂不上组件，回退占位即可）。
+   */
+  poster(messageId: string): WidgetsUiPosterOutput {
+    const { card } = this.cardOf(messageId);
+    const row = this.#deps.db
+      .prepare('select poster_png from widget_versions where widget_id = ? and version = ?')
+      .get(card.widgetId, card.version) as { poster_png: string | null } | undefined;
+    return { posterPng: row?.poster_png ?? null };
   }
 
   // --- 挂载与协议服务 ------------------------------------------------------------
@@ -827,8 +890,8 @@ export class WidgetService {
   }
 
   /**
-   * 把一个 Bot 级组件连同全部版本（HTML、摘要、自检状态与摘要、查询模板的人工预审时间
-   * 照搬）、查询模板与 storage 文档复制给接手方：新 id、仍为 Bot 级、不发卡（接手方之后用
+   * 把一个 Bot 级组件连同全部版本（HTML、摘要、自检状态与摘要、查询模板的人工预审时间、
+   * 海报截图照搬）、查询模板与 storage 文档复制给接手方：新 id、仍为 Bot 级、不发卡（接手方之后用
    * `widget_publish` 发到需要的对话）。一个事务；阻断条件在事务内复查。
    *
    * 确认状态：渲染端按「HTML sha256 + 查询摘要」记忆用户的加载确认（不分组件 / Bot），
@@ -863,9 +926,9 @@ export class WidgetService {
         this.#deps.db
           .prepare(
             `insert into widget_versions (widget_id, version, html, sha256, created_by_run, created_at,
-               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json)
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png)
              select ?, version, html, sha256, created_by_run, created_at,
-               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png
              from widget_versions where widget_id = ?`,
           )
           .run(newWidgetId, widgetId).changes,
@@ -1237,10 +1300,11 @@ export class WidgetService {
     runId: string,
     now: number,
     check: WidgetDeliveryCheck | undefined,
+    posterPng: string | undefined,
   ): void {
     this.#deps.db
       .prepare(
-        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at, check_status, check_summary_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at, check_status, check_summary_json, poster_png) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         widgetId,
@@ -1253,6 +1317,7 @@ export class WidgetService {
         now,
         check?.status ?? 'legacy',
         check !== undefined ? JSON.stringify(check.summary) : '',
+        posterPng ?? null,
       );
     const insert = this.#deps.db.prepare(
       'insert into widget_queries (widget_id, version, name, sql) values (?, ?, ?, ?)',

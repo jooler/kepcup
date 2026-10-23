@@ -39,6 +39,12 @@ import {
   appsLocalConnectorsRemoveInputSchema,
 } from '../domain/local-connectors.js';
 import {
+  filePreviewResourceInputSchema,
+  filePreviewResourceOutputSchema,
+  filePreviewSessionInputSchema,
+  filePreviewSessionOutputSchema,
+} from '../domain/file-preview.js';
+import {
   appsUiCallToolInputSchema,
   appsUiCallToolOutputSchema,
   appsUiCloseInputSchema,
@@ -49,6 +55,31 @@ import {
   appsUiResourceInputSchema,
   appsUiResourceOutputSchema,
 } from '../domain/apps-ui.js';
+import {
+  widgetsDeleteInputSchema,
+  widgetsDeleteOutputSchema,
+  widgetsListInputSchema,
+  widgetsListOutputSchema,
+  widgetsPublishInputSchema,
+  widgetsPublishOutputSchema,
+  widgetsUiCloseInputSchema,
+  widgetsUiOpenInputSchema,
+  widgetsUiOpenLinkInputSchema,
+  widgetsUiOpenLinkOutputSchema,
+  widgetsUiOpenOutputSchema,
+  widgetsUiPosterInputSchema,
+  widgetsUiPosterOutputSchema,
+  widgetsUiQueryInputSchema,
+  widgetsUiQueryOutputSchema,
+  widgetsUiReplyInputSchema,
+  widgetsUiReplyOutputSchema,
+  widgetsUiResourceInputSchema,
+  widgetsUiResourceOutputSchema,
+  widgetsUiSourceInputSchema,
+  widgetsUiSourceOutputSchema,
+  widgetsUiStorageInputSchema,
+  widgetsUiStorageOutputSchema,
+} from '../domain/widgets-ui.js';
 import {
   mcpbInspectInputSchema,
   mcpbInspectOutputSchema,
@@ -1086,6 +1117,10 @@ export const filesPreviewOutputSchema = z.object({
   dataBase64: z.string(),
 });
 
+// --- 目录预览协议（kepcup-file，「完整 WebApp 档」） -----------------------------
+// `files.previewSession` 是 app 方法（renderer → core）；`files.previewResource` 是平台
+// 方法（主进程协议处理器 → core，PlatformRpcMethods）。schema 见 domain/file-preview.ts。
+
 // --- web search（联网检索供应商，docs/design/21-web-search.md） ----------------
 
 export const webSearchTestInputSchema = z.object({
@@ -2030,6 +2065,26 @@ export const rpcMethodSchemas = {
   'apps.ui.callTool': { input: appsUiCallToolInputSchema, output: appsUiCallToolOutputSchema },
   'apps.ui.openLink': { input: appsUiOpenLinkInputSchema, output: appsUiOpenLinkOutputSchema },
   'apps.ui.resource': { input: appsUiResourceInputSchema, output: appsUiResourceOutputSchema },
+  // D81 Bot Widgets（docs/design/32-bot-widgets.md）：卡片挂载 / 审查 / 能力桥与管理入口。
+  // `widgets.ui.resource` 是平台方法（port B，主进程按 host 前缀 `widget-` 分流）。
+  'widgets.ui.open': { input: widgetsUiOpenInputSchema, output: widgetsUiOpenOutputSchema },
+  'widgets.ui.close': { input: widgetsUiCloseInputSchema, output: okOutput },
+  'widgets.ui.source': { input: widgetsUiSourceInputSchema, output: widgetsUiSourceOutputSchema },
+  'widgets.ui.poster': { input: widgetsUiPosterInputSchema, output: widgetsUiPosterOutputSchema },
+  'widgets.ui.storage': { input: widgetsUiStorageInputSchema, output: widgetsUiStorageOutputSchema },
+  'widgets.ui.openLink': {
+    input: widgetsUiOpenLinkInputSchema,
+    output: widgetsUiOpenLinkOutputSchema,
+  },
+  'widgets.ui.reply': { input: widgetsUiReplyInputSchema, output: widgetsUiReplyOutputSchema },
+  'widgets.ui.query': { input: widgetsUiQueryInputSchema, output: widgetsUiQueryOutputSchema },
+  'widgets.ui.resource': {
+    input: widgetsUiResourceInputSchema,
+    output: widgetsUiResourceOutputSchema,
+  },
+  'widgets.list': { input: widgetsListInputSchema, output: widgetsListOutputSchema },
+  'widgets.delete': { input: widgetsDeleteInputSchema, output: widgetsDeleteOutputSchema },
+  'widgets.publish': { input: widgetsPublishInputSchema, output: widgetsPublishOutputSchema },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -2159,6 +2214,14 @@ export const rpcMethodSchemas = {
   },
 
   'files.preview': { input: filesPreviewInputSchema, output: filesPreviewOutputSchema },
+  'files.previewSession': {
+    input: filePreviewSessionInputSchema,
+    output: filePreviewSessionOutputSchema,
+  },
+  'files.previewResource': {
+    input: filePreviewResourceInputSchema,
+    output: filePreviewResourceOutputSchema,
+  },
 
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
   'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
@@ -2448,6 +2511,16 @@ export type PlatformRpcMethods = {
     html: string;
     csp: string;
   }>;
+  /** D81: the same protocol handler fetches a bot-widget page (host prefix `widget-`). */
+  'widgets.ui.resource': (input: { resourceId: string; host: string }) => Promise<{
+    html: string;
+    csp: string;
+  }>;
+  /** kepcup-file 协议处理器按会话 token 取目录内文件（完整 WebApp 档，docs/design/47）。 */
+  'files.previewResource': (input: { token: string; rel: string }) => Promise<{
+    mime: string;
+    dataBase64: string;
+  }>;
   /**
    * D94 §5.5: 分享目标快照（Bot / 项目组），主进程写进 App Group 供
    * Share Extension 读取。
@@ -2550,6 +2623,18 @@ const APP_METHODS = [
   'apps.ui.close',
   'apps.ui.callTool',
   'apps.ui.openLink',
+  // D81 Bot Widgets：卡片挂载 / 审查 / 能力桥与管理入口（widgets.ui.resource 在 port B）。
+  'widgets.ui.open',
+  'widgets.ui.close',
+  'widgets.ui.source',
+  'widgets.ui.poster',
+  'widgets.ui.storage',
+  'widgets.ui.openLink',
+  'widgets.ui.reply',
+  'widgets.ui.query',
+  'widgets.list',
+  'widgets.delete',
+  'widgets.publish',
   'mcp.rawTools',
   'mcp.refreshTools',
   'websearch.test',
@@ -2590,6 +2675,7 @@ const APP_METHODS = [
   'attachments.status',
   'attachments.detach',
   'files.preview',
+  'files.previewSession',
   'runs.cancel',
   'runs.retry',
   'runs.setupDismissed',
@@ -2730,6 +2816,8 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'update.cancelActive',
   'browser.controlReturned',
   'apps.ui.resource',
+  'widgets.ui.resource',
+  'files.previewResource',
   'share.targets',
   'share.consume',
 ];

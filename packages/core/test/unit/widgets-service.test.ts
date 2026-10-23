@@ -20,7 +20,7 @@ import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
-import { WidgetService } from '../../src/widgets/service.js';
+import { WidgetService, WIDGET_POSTER_MAX_CHARS } from '../../src/widgets/service.js';
 import { WidgetQueryRunner } from '../../src/widgets/query-runner.js';
 import { WidgetResourceStore, widgetUiHostFor } from '../../src/widgets/resource-store.js';
 import { WIDGET_SDK_SHIM, injectWidgetSdk } from '../../src/widgets/sdk-injection.js';
@@ -292,7 +292,7 @@ describe('WidgetService create/update', () => {
 });
 
 describe('WidgetService 审查与资源', () => {
-  it('source / open / resource：审查取原文、登记资源、host 校验、禁网 CSP', () => {
+  it('source / open / resource：审查取原文、登记资源、host 校验、完整 WebApp 档 CSP', () => {
     const created = h.service.create({
       botId: 'bot_a',
       conversationId: 'conv_1',
@@ -317,8 +317,8 @@ describe('WidgetService 审查与资源', () => {
     expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
     expect(page.html).toContain('<button id="b">1</button>');
     expect(page.html).toContain("source: 'kepcup-widget'");
-    expect(page.csp).toContain("connect-src 'none'");
-    expect(page.csp).toContain('sandbox allow-scripts');
+    expect(page.csp).toContain("allow-same-origin allow-forms allow-modals");
+    expect(page.csp).toContain("sandbox allow-scripts");
 
     expect(() =>
       h.service.resource({ resourceId: opened.resourceId, host: 'widget-aaaaaaaaaaaaaaaaaaaaaaaa' }),
@@ -741,9 +741,11 @@ describe('WidgetService SDK 垫片注入（P1）', () => {
     );
     const host = widgetUiHostFor(widgetId);
     const page = h.service.resource({ resourceId, host });
-    // doctype 仍是文档第一个非空内容（quirks-mode 防线），垫片插在 <head> 之后。
+    // doctype 仍是文档第一个非空内容（quirks-mode 防线），垫片插在 <head> 之后（滚动条
+    // 默认样式在最前，见 iframe-defaults）。
     expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(page.html).toContain('<head><style data-kepcup="theme">');
+    expect(page.html).toContain('<head><style data-kepcup-scrollbar>::-webkit-scrollbar');
+    expect(page.html).toContain('<style data-kepcup="theme">');
     expect(page.html).toContain("source: 'kepcup-widget'");
     expect(page.html).toContain('</script><title>t</title>');
     expect(page.html).toContain('<body><p>x</p></body>');
@@ -754,13 +756,26 @@ describe('WidgetService SDK 垫片注入（P1）', () => {
 
   it('injectWidgetSdk：无 head 时退到 doctype 之后；两者都无时前置；幂等', () => {
     const afterDoctype = injectWidgetSdk('<!doctype html><html><body></body></html>');
-    expect(afterDoctype.startsWith('<!doctype html><style data-kepcup="theme">')).toBe(true);
+    expect(afterDoctype.startsWith('<!doctype html><style data-kepcup-scrollbar>::-webkit-scrollbar')).toBe(true);
     const prepended = injectWidgetSdk('<html><body></body></html>');
-    expect(prepended.startsWith('<style data-kepcup="theme">')).toBe(true);
+    expect(prepended.startsWith('<style data-kepcup-scrollbar>::-webkit-scrollbar')).toBe(true);
     // 已含垫片（例如重复调用）原样返回。
     expect(injectWidgetSdk(afterDoctype)).toBe(afterDoctype);
     // 垫片自身不含 </script> 以外的意外标签闭合。
     expect(WIDGET_SDK_SHIM.endsWith('</script>')).toBe(true);
+  });
+
+  it('injectWidgetSdk：页面自定义了滚动条样式时不注入默认滚动条', () => {
+    const own = injectWidgetSdk(
+      '<!doctype html><html><head><style>::-webkit-scrollbar-thumb{background:red}</style></head><body></body></html>',
+    );
+    expect(own).toContain('<head><style data-kepcup="theme">');
+    expect(own).not.toContain('::-webkit-scrollbar{width:8px');
+    const standardProp = injectWidgetSdk(
+      '<!doctype html><html><head><style>*{scrollbar-width:thin}</style></head><body></body></html>',
+    );
+    expect(standardProp).toContain('<head><style data-kepcup="theme">');
+    expect(standardProp).not.toContain('::-webkit-scrollbar{width:8px');
   });
 });
 
@@ -1492,5 +1507,79 @@ describe('WidgetService 审查修复（资源存活 / 存量上限 / 体积列�
       queries_reviewed_at: null,
     });
     db.close();
+  });
+});
+
+describe('WidgetService 海报（poster_png，D87 海报卡）', () => {
+  /** PNG 签名（8 字节）的 base64 —— 真实截图的前缀形态。 */
+  const PNG = 'iVBORw0KGgo=';
+  const PNG_LONG = 'iVBORw0KGgoAAAANSUhEUg==';
+
+  function createWithPoster(posterPng: string | undefined, scope: WidgetScope = 'conversation') {
+    const result = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: `t${h.cards.length}`,
+      description: '',
+      html: HTML,
+      scope,
+      runId: 'r',
+      ...(posterPng !== undefined ? { posterPng } : {}),
+    });
+    if (!result.ok) throw new Error('create failed');
+    return result;
+  }
+
+  it('合法 base64 PNG 落库并从 widgets.ui.poster 取回；损坏数据 / data:URL / 超长丢弃', () => {
+    createWithPoster(PNG);
+    const messageId = h.cards[h.cards.length - 1]!.id;
+    expect(h.service.poster(messageId)).toEqual({ posterPng: PNG });
+
+    // mimeType 是生产方自报的，落库前按字节校验：非 PNG / data:URL 前缀形式都不要。
+    for (const bad of [
+      'not-a-png',
+      Buffer.from('GIF89a....').toString('base64'),
+      `data:image/png;base64,${PNG}`,
+      'x'.repeat(WIDGET_POSTER_MAX_CHARS + 1),
+      '',
+    ]) {
+      const result = createWithPoster(bad);
+      const id = h.cards[h.cards.length - 1]!.id;
+      expect(h.service.poster(id)).toEqual({ posterPng: null });
+      expect(result.ok).toBe(true);
+    }
+    // 不传 = 无海报（legacy 同形态）。
+    const plain = createWithPoster(undefined);
+    expect(h.service.poster(h.cards[h.cards.length - 1]!.id)).toEqual({ posterPng: null });
+    expect(plain.ok).toBe(true);
+  });
+
+  it('update：新版本的海报随新卡取回；旧卡仍取旧版本的海报', async () => {
+    const created = createWithPoster(PNG);
+    const oldCardId = h.cards[h.cards.length - 1]!.id;
+    advance(RATE_TICK_MS);
+    const updated = h.service.update({
+      botId: 'bot_a',
+      widgetId: created.widgetId,
+      html: `${HTML}<!--v2-->`,
+      changeNote: 'v2',
+      runId: 'r',
+      posterPng: PNG_LONG,
+    });
+    expect(updated).toMatchObject({ ok: true, version: 2 });
+    const newCardId = h.cards[h.cards.length - 1]!.id;
+    expect(h.service.poster(newCardId)).toEqual({ posterPng: PNG_LONG });
+    expect(h.service.poster(oldCardId)).toEqual({ posterPng: PNG });
+  });
+
+  it('copyForHandover 连海报一起复制（接手方发卡有海报）', () => {
+    const created = createWithPoster(PNG, 'bot');
+    const copy = h.service.copyForHandover(created.widgetId, 'bot_b', 'B');
+    expect(copy.versions).toBe(1);
+    expect(
+      h.db
+        .prepare('select poster_png from widget_versions where widget_id = ? and version = 1')
+        .get(copy.widgetId),
+    ).toEqual({ poster_png: PNG });
   });
 });

@@ -24,6 +24,7 @@ import { shellMethodSpecs } from './shell-methods';
 import { WidgetPreviewHost } from './widget-preview';
 import { widgetPreviewMethodSpecs } from './widget-preview-methods';
 import { guardAllAppFrames, installAppsUiProtocol, registerAppsUiScheme } from './apps-ui';
+import { installFileAppProtocol, watchFileAppScrollbarBackstop } from './file-apps';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
@@ -464,6 +465,19 @@ function bootstrap(): void {
     },
   });
 
+  // kepcup-file（docs/design/47）：目录预览协议——FileViewer 的 HTML 在该源下按完整 WebApp
+  // 运行，handler 经平台 RPC 向 core 取会话目录内的文件字节（token 由 core 登记与校验）。
+  installFileAppProtocol(session.defaultSession, {
+    fetchResource: async (input) => {
+      if (coreHost === null) throw new Error('core not running');
+      return coreHost.callPlatform('files.previewResource', input);
+    },
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : '';
+      console.warn(`[file-app] ${message}${detail}`);
+    },
+  });
+
   widgetPreviewHost = new WidgetPreviewHost();
   // D94: 分享协调器。App Group 不可用（非 macOS / 未配置）时 groupDir = null，
   // 协调器只做无害的跳过。
@@ -659,6 +673,8 @@ if (process.env.KEPCUP_HOME) {
 // navigation guard is installed for every webContents created from now on.
 registerAppsUiScheme();
 guardAllAppFrames();
+// kepcup-file 子框架的滚动条兜底（协议层静态注入的保险，docs/design/47）。
+watchFileAppScrollbarBackstop();
 
 // D94: URL Scheme 唤起（Share Extension 写完 inbox 后调用）。必须早于
 // app.ready 注册——冷启动时 URL 会在 ready 之前送达。

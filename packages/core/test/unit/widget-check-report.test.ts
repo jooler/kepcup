@@ -36,8 +36,21 @@ function report(
   });
 }
 
-const storage = ruleIssue('sandbox.storage', { message: '使用了 localStorage', line: 9, col: 3 });
-const alertWarn = ruleIssue('sandbox.alert', { message: '调用了 alert()', line: 2, col: 1 });
+const storage = ruleIssue('sandbox.storage', {
+  message: '使用了 document.cookie',
+  line: 9,
+  col: 3,
+});
+const linkWarn = ruleIssue('sandbox.link-navigation', {
+  message: '链接点击会被拦下',
+  line: 2,
+  col: 1,
+});
+const externalRes = ruleIssue('sandbox.external-resource', {
+  message: '引用了 app.js',
+  line: 9,
+  col: 3,
+});
 const consoleErr = ruleIssue('console.error', {
   message: 'boom',
   viewport: '360/light',
@@ -48,13 +61,13 @@ const syntax = ruleIssue('js.syntax', { message: '解析失败', line: 3, col: 7
 
 describe('buildCheckReport', () => {
   it('dedupes identical issues and sorts blocking → error → warning, then file, line, col', () => {
-    const r = report([alertWarn, consoleErr, queryBad, storage, syntax, { ...storage }]);
+    const r = report([linkWarn, consoleErr, queryBad, externalRes, syntax, { ...externalRes }]);
     expect(r.issues.map((issue) => issue.rule)).toEqual([
       'js.syntax',
-      'sandbox.storage',
+      'sandbox.external-resource',
       'query.invalid',
       'console.error',
-      'sandbox.alert',
+      'sandbox.link-navigation',
     ]);
     expect(r).toMatchObject({
       blockers: 3,
@@ -67,7 +80,7 @@ describe('buildCheckReport', () => {
 
   it('scores per design §11.6 (+ failed acceptance) and decides the verdict', () => {
     const r = report(
-      [storage, consoleErr, alertWarn],
+      [externalRes, consoleErr, linkWarn],
       [
         { id: 'add', must: true, passed: false, detail: '合计没变', viewport: '360/light' },
         { id: 'add', must: true, passed: false, detail: '合计没变', viewport: '720/dark' },
@@ -82,7 +95,7 @@ describe('buildCheckReport', () => {
   it('verdicts: pass / issues / blocked by failed must acceptance alone', () => {
     expect(report([]).verdict).toBe('pass');
     expect(report([]).score).toBe(0);
-    expect(report([alertWarn]).verdict).toBe('issues');
+    expect(report([linkWarn]).verdict).toBe('issues');
     expect(report([consoleErr]).verdict).toBe('issues');
     expect(report([], [{ id: 'x', must: false, passed: false, detail: '' }]).verdict).toBe(
       'issues',
@@ -95,29 +108,29 @@ describe('buildCheckReport', () => {
 
 describe('formatCheckReport', () => {
   it('header, grouped lines with rule / position / hint, skipped S2 line', () => {
-    const text = formatCheckReport(report([storage, alertWarn, consoleErr, queryBad]));
+    const text = formatCheckReport(report([storage, linkWarn, consoleErr, queryBad]));
     const lines = text.split('\n');
     expect(lines[0]).toContain('不合格');
-    expect(lines[0]).toContain('阻断 2');
+    expect(lines[0]).toContain('阻断 1');
     expect(lines[0]).toContain('错误 1');
-    expect(lines[0]).toContain('警告 1');
+    expect(lines[0]).toContain('警告 2');
     expect(text).toContain('S2 运行预览：已跳过（预览宿主不可用（未经运行验证））');
-    expect(text).toContain('[sandbox.storage] 第 9 行:3 列 — 使用了 localStorage — ');
+    expect(text).toContain('[sandbox.storage] 第 9 行:3 列 — 使用了 document.cookie — ');
     expect(text).toContain('kepcup.storage');
     expect(text).toContain('[query.invalid] queries.json — 查询「a」语法错误');
     expect(text).toContain('（视口 360/light，触发：button#add「添加」）');
-    expect(text.indexOf('[sandbox.storage]')).toBeLessThan(text.indexOf('[console.error]'));
-    expect(text.indexOf('[console.error]')).toBeLessThan(text.indexOf('[sandbox.alert]'));
+    expect(text.indexOf('[query.invalid]')).toBeLessThan(text.indexOf('[console.error]'));
+    expect(text.indexOf('[console.error]')).toBeLessThan(text.indexOf('[sandbox.storage]'));
   });
 
   it('repeats of a rule say "改法同上" instead of repeating the hint', () => {
     const second = ruleIssue('sandbox.storage', {
-      message: '又用了 localStorage',
+      message: '又用了 document.cookie',
       line: 20,
       col: 1,
     });
     const text = formatCheckReport(report([storage, second]));
-    expect(text).toContain('又用了 localStorage — 改法同上');
+    expect(text).toContain('又用了 document.cookie — 改法同上');
   });
 
   it('lists failed acceptance points', () => {
@@ -183,7 +196,7 @@ describe('issueSignature / knownIssuesForUser', () => {
       file: 'acceptance.json',
     });
     const r = report(
-      [alertWarn, storage, { ...storage, line: 30 }, consoleErr, acceptanceWarn],
+      [externalRes, storage, { ...storage, line: 30 }, consoleErr, acceptanceWarn],
       [
         { id: 'add', must: true, passed: false, detail: '' },
         { id: 'sort', must: false, passed: false, detail: '' },
@@ -199,11 +212,11 @@ describe('issueSignature / knownIssuesForUser', () => {
       },
     ]);
     expect(lines).toEqual([
-      '数据保存功能无法使用',
+      '部分资源（脚本、样式或图片）路径不存在',
       '未通过验收：添加一笔费用后合计更新',
       '运行中有错误输出',
       '未通过验收：sort',
-      '部分提示信息不会显示',
+      '部分存储能力（cookie）不可用',
     ]);
     expect(knownIssuesForUser(r, 2)).toHaveLength(2);
     expect(knownIssuesForUser(report([]))).toEqual([]);

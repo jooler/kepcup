@@ -16,6 +16,8 @@ export * from './domain/directory-index.js';
 export * from './domain/app-connections.js';
 export * from './domain/app-skills.js';
 export * from './domain/apps-ui.js';
+export * from './domain/iframe-defaults.js';
+export * from './domain/file-preview.js';
 export * from './domain/widgets-ui.js';
 export * from './domain/widget-craft.js';
 export * from './domain/present.js';
