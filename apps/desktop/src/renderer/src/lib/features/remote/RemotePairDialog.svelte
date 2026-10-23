@@ -191,7 +191,7 @@
         <div class="min-w-0 space-y-3">
           <p class="text-sm text-muted-foreground">{t('settings.remotePairHint')}</p>
           <div
-            class="mx-auto w-56 rounded-lg bg-muted p-3 [&_svg]:block [&_svg]:h-auto [&_svg]:w-full"
+            class="mx-auto w-72 rounded-xl bg-muted p-4 [&_svg]:block [&_svg]:h-auto [&_svg]:w-full"
             data-testid="remote-qr"
           >
             <!-- uqr 生成的二维码 SVG（无用户输入，非 XSS 面） -->
