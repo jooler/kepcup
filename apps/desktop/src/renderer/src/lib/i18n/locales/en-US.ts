@@ -3252,6 +3252,13 @@ export const enUS = {
   'web.unpaired.submit': 'Next',
   'web.unpaired.invalid':
     'Invalid link: expected a #pair=<relay>,<sessionId>,<secret> link from the desktop app',
+  'web.scan.action': 'Scan QR code',
+  'web.scan.title': 'Scan the QR code on your desktop',
+  'web.scan.hint': 'Point the camera at the QR code in the desktop pairing dialog',
+  'web.scan.stop': 'Cancel scanning',
+  'web.scan.denied': 'Camera unavailable: check the browser permission, or paste the link instead',
+  'web.scan.failed': 'Camera scanning is not supported here; paste the link instead',
+  'web.scan.badCode': 'That QR code is not a pairing link — generate a new one on the desktop',
   'web.name.title': 'Confirm device name',
   'web.name.body':
     'The request goes through relay {host}; the desktop confirmation card will show this device name.',

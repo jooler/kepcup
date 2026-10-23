@@ -139,6 +139,21 @@ class WebGateState {
     history.replaceState(null, '', location.pathname + location.search);
   }
 
+  /**
+   * 页内扫码成功的入口（相机与解码循环在 Gate 组件里）：解析二维码文本并直接进
+   * 设备名步骤。手机系统相机扫码后一关浏览器地址就找不回来了（尤其微信内置浏览器），
+   * 页内扫码让链接全程不离开本页。解析失败返回 false（组件显示错误并继续扫）。
+   */
+  acceptScannedCode(raw: string): boolean {
+    const link = parsePairingLink(raw);
+    if (link === null) return false;
+    this.linkInput = raw;
+    this.inputError = null;
+    this.pendingLink = link;
+    this.view = 'enter-name';
+    return true;
+  }
+
   /** enter-name 返回粘贴步（链接写错了等）。 */
   backToUnpaired(): void {
     this.pendingLink = null;
