@@ -418,6 +418,39 @@ describe('connection-level errors (review #1)', () => {
   });
 });
 
+describe('wake during poll catch-up (lost-wake race)', () => {
+  it('does not drop a wake that arrives between catch-up and the poll delay', async () => {
+    const h = harness({ mode: 'poll_only', pollIntervalSec: 3600, lastUid: 5 });
+    const client = new MockImap();
+    client.capabilities = [];
+    // 第一次补拉停在 SEARCH：wake 落在「补拉结束 → 进入 3600s delay」之间。
+    const searchGate = deferred();
+    client.searchBarrier = searchGate.promise;
+    h.script = [() => client];
+    h.hub.start(h.record.id);
+    await until(() => h.ready.length >= 1, 'ready');
+    await until(() => client.searchBarrier !== null, 'catch-up search started');
+    h.hub.wake(h.record.id);
+    client.searchResult = [6];
+    client.fetchResult = [
+      {
+        uid: 6,
+        from: 'a@b.c',
+        to: [],
+        subject: 'after wake',
+        date: '2026-10-24T00:00:00.000Z',
+        text: 'x',
+        attachments: [],
+      },
+    ];
+    searchGate.resolve();
+    client.searchBarrier = null;
+    // 旧实现会换掉 AbortController，随后 delay 睡满 pollInterval；这里必须在远短于 3600s 内补到。
+    await until(() => h.messages.length >= 1, 'catch-up after wake', 2000);
+    expect(h.messages[0]?.map((m) => m.uid)).toEqual([6]);
+  });
+});
+
 describe('AppError passthrough', () => {
   it('classifies an AppError MAIL_AUTH_FAILED from the opener as fatal', async () => {
     const h = harness();

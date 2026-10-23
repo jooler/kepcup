@@ -193,6 +193,8 @@ export class MailSessionHub {
         this.#deps.logger.info({ accountId, streak: state.streak, fatal, error: message }, 'mail session failed');
         this.#deps.onFailure(accountId, message, state.streak, { fatal });
         if (fatal) return;
+        // onError/wake 可能在补拉期间 abort 了 tick；退避必须用新信号，否则会立刻返回、跳过退避。
+        if (state.tick.signal.aborted) state.tick = new AbortController();
         await delay(backoff(state.streak + state.flaps), state.tick.signal);
       }
     }
@@ -289,10 +291,14 @@ export class MailSessionHub {
     }
   }
 
-  /** 打断当前等待（IDLE / 轮询间隔 / 退避），并换一个新的等待信号。 */
+  /**
+   * 打断当前等待（IDLE / 轮询间隔 / 退避）。
+   * 只 abort，不在这里换新的 AbortController——换新会丢掉「补拉和 delay/idle 之间」到达的 wake：
+   * 轮询间隔常是几十分钟，丢掉一次就表现为新信一直不来（macOS CI 上 UIDVALIDITY 用例因此挂过）。
+   * 等在 signal 上的一方在返回后自行 `state.tick = new AbortController()`。
+   */
   #interrupt(state: LoopState): void {
     state.tick.abort();
-    state.tick = new AbortController();
   }
 
   #locked<T>(state: LoopState, fn: () => Promise<T>): Promise<T> {
