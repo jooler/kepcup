@@ -363,6 +363,39 @@ describe('remote hub: pairing state machine', () => {
     expect(reject?.data).toMatchObject({ kind: 'reject', reason: 'bad_code' });
   });
 
+  it('同设备重复请求替换旧 pending（手机端保活重发不重复出卡）', () => {
+    // 真机回归钉（2026-10）：手机端等待确认期间每 5s 重发 pairing.request（自愈
+    // 中转丢帧），桌面侧必须同设备去重——确认卡永远只出一张，且确认走标准路径。
+    const rig = makeHub();
+    enableRemote(rig);
+    const viewer = new FakeViewer();
+    const offer = rig.hub.createPairing();
+    const code = Buffer.from(offer.url.split(',')[2]!, 'base64url');
+    const injectRequest = (): void =>
+      rig.relay.inject({
+        v: 1,
+        sid: offer.sessionId,
+        type: 'pairing',
+        did: viewer.did,
+        n: 0,
+        data: {
+          kind: 'request',
+          deviceId: viewer.did,
+          deviceName: viewer.deviceName,
+          userAgent: 'Mozilla/5.0 (iPhone)',
+          epub: viewer.epub,
+          pskMode: 'x25519',
+          auth: viewer.requestAuth(code),
+        },
+      });
+    injectRequest();
+    injectRequest();
+    injectRequest();
+    expect(rig.hub.status().pendingPairing).toHaveLength(1);
+    rig.hub.confirmPairing(rig.hub.status().pendingPairing[0]!.requestId, true);
+    expect(rig.hub.devices().devices[0]).toMatchObject({ deviceId: viewer.did });
+  });
+
   it('decline → reject frame; unknown request id → gone', () => {
     const rig = makeHub();
     enableRemote(rig);

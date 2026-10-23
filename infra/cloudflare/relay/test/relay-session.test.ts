@@ -389,10 +389,28 @@ describe('anchor 生命周期', () => {
     s.logic.onClose(s.anchor);
     expect(s.clock.pending).toBe(0);
     const anchor2 = new MockSocket();
+    const viewer = addViewer(s, DID_A); // viewer 先于 anchor 进场(等待期)
     s.logic.joinAnchor(anchor2);
-    // 没有保活窗口,自然也不会有 anchor_online
-    const viewer = addViewer(s, DID_A);
-    expect(sent(viewer)).toHaveLength(0);
+    // 先于 anchor 进场的 viewer 收到 anchor_online(真机回归钉 2026-10:手机在
+    // anchor 进场前发的配对请求被丢弃,手机端据此信号重发,不再永远等待)
+    expect(sent(viewer).at(-1)?.info).toEqual({ kind: 'anchor_online' });
+  });
+
+  it('viewer 先进场并发帧后 anchor 才来:viewer 收 anchor_online,后续帧正常路由', () => {
+    const clock = new FakeClock();
+    const logic = new RelaySessionLogic({ sid: SID_A, timer: clock.timer, now: clock.now });
+    const viewer = new MockSocket();
+    expect(logic.joinViewer(viewer)).toBe(true);
+    // anchor 不在:viewer 帧无处转发(安静丢弃,原有语义)
+    logic.onMessage(viewer, frame({ type: 'pairing', did: DID_A }));
+    expect(logic.hasAnchor).toBe(false);
+
+    const anchor = new MockSocket();
+    logic.joinAnchor(anchor);
+    expect(sent(viewer).at(-1)?.info).toEqual({ kind: 'anchor_online' });
+    // anchor 到场后 viewer 的下一帧正常转发
+    logic.onMessage(viewer, frame({ type: 'pairing', did: DID_A }));
+    expect(anchor.sent).toHaveLength(1);
   });
 
   it('anchor 离场期间的 viewer_left 暂存,anchor 回场补发(审查修复)', () => {

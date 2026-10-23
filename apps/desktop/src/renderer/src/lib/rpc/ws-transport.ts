@@ -556,6 +556,9 @@ const REPLAY_HEAL_STRIKES = 8;
 const REPLAY_HEAL_MARGIN = 32;
 /** 配对阶段连续连不上中转的容忍次数：超过即进入 failed 态等手动重试。 */
 const PAIRING_CONNECT_STRIKES = 3;
+/** 等待桌面确认期间重发 pairing.request 的周期（幂等：同 epub 同 HMAC；请求若被
+ * 中转在 hibernation/竞态窗口丢掉，靠它自愈，桌面侧同设备去重不重复出卡）。 */
+const PAIRING_RESEND_MS = 5_000;
 
 export interface WsTransportOptions {
   /** 初始会话 id；resume / startPairing 会用凭证 / 配对链接里的真实值覆盖。 */
@@ -612,6 +615,8 @@ export class WsTransport implements RpcTransport {
   #x25519Support: Promise<boolean> | null = null;
   /** 配对帧串行链：accept 的密钥派生是长异步链，done 必须等它落地（见 case 'pairing'）。 */
   #pairingChain: Promise<void> = Promise.resolve();
+  /** awaiting-confirm 期间的 pairing.request 重发定时器（#setPairing 离开该态即清）。 */
+  #pairingResendTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: WsTransportOptions) {
     this.#socketFactory =
@@ -673,6 +678,7 @@ export class WsTransport implements RpcTransport {
 
   #setPairing(phase: PairingPhase): void {
     this.#pairing = phase;
+    if (phase.kind !== 'awaiting-confirm') this.#stopPairingResend();
     for (const listener of this.#pairingListeners) listener(phase);
   }
 
@@ -776,6 +782,7 @@ export class WsTransport implements RpcTransport {
 
   /** RpcTransport：页面卸载 / 重绑定时的收尾。 */
   close(): void {
+    this.#stopPairingResend();
     this.#pendingPairing = null;
     this.#detachSocket(true);
   }
@@ -967,6 +974,23 @@ export class WsTransport implements RpcTransport {
       }),
     );
     this.#setPairing({ kind: 'awaiting-confirm' });
+    this.#startPairingResend();
+  }
+
+  /** 等待桌面确认的保活：周期重发 pairing.request（同 epub 同 HMAC，幂等）。 */
+  #startPairingResend(): void {
+    this.#stopPairingResend();
+    this.#pairingResendTimer = setInterval(() => {
+      if (this.#pendingPairing === null || !this.#socketOpen) return;
+      void this.#sendPairingRequest();
+    }, PAIRING_RESEND_MS);
+  }
+
+  #stopPairingResend(): void {
+    if (this.#pairingResendTimer !== null) {
+      clearInterval(this.#pairingResendTimer);
+      this.#pairingResendTimer = null;
+    }
   }
 
   /** accept（明文负载）到达：ECDH + HKDF 派生会话密钥，等 done（密文）落地。 */
@@ -1173,6 +1197,9 @@ export class WsTransport implements RpcTransport {
             this.#codecReady = null;
             this.#setLinkState('paired');
             void this.#bootstrapHello();
+          } else if (this.#pendingPairing !== null && this.#socketOpen) {
+            // 配对请求发出时 anchor 尚未进场（被中转丢弃）：桌面连上来即重发。
+            void this.#sendPairingRequest();
           }
         } else if (kind === 'replaced') {
           // 同 did 的另一个连接顶掉了我们（多开标签页）：不自动重连，避免互踢循环。
