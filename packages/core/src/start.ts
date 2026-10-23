@@ -3102,6 +3102,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       appMethods: () => services.appMethods,
+      pushInitialEventsTo: (server) => {
+        services.pushStatusTo(server);
+        services.pushPlatformStateTo(server);
+      },
     });
     services.remote = remoteHub;
     remoteHub.start();
