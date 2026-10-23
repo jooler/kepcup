@@ -6,6 +6,8 @@
 
 FileViewer 浏览 Bot 产出的 HTML 时，原实现是 `<iframe sandbox="" srcdoc>`：脚本不执行、相对路径资源全挂、单文件 base64 上限 8MB、父页 CSP 继承。目标：**像浏览器开了一个本地网站**——脚本、网络（fetch / WebSocket / CDN）、相对路径多文件、localStorage、表单、对话框全部可用；同时页面代码不能逃逸影响宿主应用。
 
+**与 Bot 组件的关系**：本协议让文件卡的 HTML 预览与 Bot 组件（32 §13）处于同一运行档位——同款 sandbox 旗标，`fileAppResponseHeaders` 直接复用 `buildWidgetRuntimeCspHeader()`。但同档位只说明「页面在 iframe 里能做的事一样」，不说明两者是同一种东西：**组件是 Bot 生成并交付给用户的产品**（HTML 在库里版本化、按版本人工确认后运行、带 storage / query / openLink / reply 能力桥；单文件，源为 `kepcup-app://widget-{hash}`）；**文件卡是 Bot 根据用户要求修改或创建的本地文件的列表，方便用户在应用内查看**（文件是用户工作目录里的真实工件，预览只校验 artifact 归属，无确认环节、页面无能力桥；目录树按相对路径供数、同 token 可自导航、外链唯一出口是系统浏览器）。
+
 ## 2 方案
 
 自定义协议 `kepcup-file://`（standard + secure + supportFetchAPI，corsEnabled 关），注册在宿主 session（与 `kepcup-app` 同一次 `registerSchemesAsPrivileged`，`app.ready` 前）。页面源 = `kepcup-file://{token}/{相对路径}`：
