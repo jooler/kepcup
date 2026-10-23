@@ -142,6 +142,9 @@ function makeHub(appMethods: Record<string, RpcMethodSpec> = {}): HubRig {
     clock,
     logger: fakeLogger,
     appMethods: () => appMethods,
+    pushInitialEventsTo: (server) => {
+      server.pushEvent('core.status', { status: 'ready' });
+    },
     relayClientFactory: (options) => new FakeRelayClient(options),
   });
   hub.start();
@@ -421,6 +424,23 @@ describe('remote hub: reconnect & routing', () => {
     expect(rig.hub.status().onlineDeviceIds).toEqual([viewer.did]);
     expect(rig.hub.devices().devices[0]).toMatchObject({ deviceId: viewer.did, online: true });
     void seen;
+  });
+
+  it('hello 建立端点时推送 core.status 快照（手机 App 启动门槛依赖它）', () => {
+    // 真机回归钉（2026-10 用户实测）：手机配对成功后永远停在「核心服务启动中」——
+    // App 等 core.status 事件才开始加载，而扇出只在状态「变化」时发生，core 早已
+    // ready 的情况下远程端点永远等不到首帧。本地通道绑定时推快照（pushStatusTo），
+    // 远程端点必须同款契约。
+    const { rig, viewer } = makeRigWithEcho();
+    // 真手机 done 落地即重建 codec（入站窗口从零开，ws-transport #onPairingDone）；
+    // fixture 不同步重建的话，endpoint 的 n=0 首帧会被 done 的旧窗口判成重放。
+    viewer.codec = new FrameCodec(viewer.keys!, rig.hub.status().sessionId!, 'viewer');
+    viewer.helloThrough(rig);
+    const pushed = sentFrames
+      .filter((frame) => frame.type === 'rpc')
+      .map((frame) => viewer.open(frame) as { m?: string; a?: unknown[] })
+      .find((payload) => payload.m === 'core.status');
+    expect(pushed?.a?.[0]).toEqual({ status: 'ready' });
   });
 
   it('hello from an unknown device is ignored (no endpoint, no leak)', () => {

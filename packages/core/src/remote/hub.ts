@@ -76,6 +76,13 @@ export interface RemoteHubDeps {
   logger: CoreLogger;
   /** 与本机 renderer 同一份 handlers（bindAppMethods 产物）；getter 保证拿到最终版。 */
   appMethods: () => Record<string, RpcMethodSpec>;
+  /**
+   * 端点建立（hello 校验通过）时推当前状态快照（core.status / platform.autostart）。
+   * 与本地通道绑定时 pushStatusTo 的契约对齐：App 的启动门槛等的是 core.status，
+   * 而事件扇出只在「变化」时发生——core 早已 ready 的情况下手机永远等不到首帧，
+   * 会卡在「核心服务启动中」。
+   */
+  pushInitialEventsTo: (server: RpcServerHandle) => void;
   /** 测试注入：不真连 WSS。 */
   relayClientFactory?: (options: RelayClientOptions) => RelayClientLike;
 }
@@ -368,6 +375,8 @@ export class RemoteHub {
         return;
       }
       this.#closeReplaced(replaced);
+      // 状态快照先行（本地通道绑定同款契约）：App 等 core.status 才开始加载数据。
+      this.#deps.pushInitialEventsTo(endpoint.server);
       this.#deps.events.emit('remote.deviceChanged', {
         change: 'online',
         device: { ...verdict.device, online: true },
