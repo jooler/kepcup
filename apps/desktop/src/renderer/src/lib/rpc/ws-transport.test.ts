@@ -39,6 +39,9 @@ import {
  * 跑全程（含两侧 ECDH 共享秘密一致）。
  */
 
+/** 重发周期（与实现共用常量语义；实现内定义为私有，这里保持一致数值）。 */
+const PAIRING_RESEND_MS = 5_000;
+
 const SID = '01J8Z3V7K2QW5R8TN9XYC4M6AH';
 const CODE = randomBytes(16);
 const TOKEN = bytesToB64Url(randomBytes(32));
@@ -604,6 +607,93 @@ describe('WsTransport: pairing state machine', () => {
     expect(transport.pairing).toEqual({ kind: 'connected' });
     expect(storage.getItem(CREDENTIALS_KEY)).not.toBeNull();
     expect(pairings.map((phase) => phase.kind)).toContain('connected');
+  });
+
+  it('awaiting-confirm 期间周期重发 pairing.request；配对完成后停止', async () => {
+    // 真机回归钉（2026-10 首扫永远无反馈）：请求若在中转的 hibernation/竞态窗口
+    // 被静默丢弃，手机只能永远等待——周期重发幂等自愈（桌面侧同设备去重）。
+    vi.useFakeTimers();
+    try {
+      const registry = new FakeSocketRegistry();
+      const transport = new WsTransport({
+        sessionId: SID,
+        socketFactory: (url) => new FakeSocket(url, registry),
+        storage: new FakeStorage(),
+        crypto: new TestCrypto(true),
+      });
+      await transport.startPairing(
+        { relayUrl: 'ws://127.0.0.1:8787', sessionId: SID, secret: CODE.toString('base64url') },
+        '重发测试机',
+      );
+      registry.last.open();
+      await settle();
+      const requestCount = (): number =>
+        registry.last.sent.filter(
+          (text) => (JSON.parse(text) as { type?: string }).type === 'pairing',
+        ).length;
+      expect(requestCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS);
+      await settle();
+      expect(requestCount()).toBe(2);
+      await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS);
+      await settle();
+      expect(requestCount()).toBe(3);
+
+      // 走完配对：重发必须停（done 后不再有 pairing 帧上线）。
+      const request = JSON.parse(registry.last.sent[0] as string) as {
+        did: string;
+        data: { epub: string; pskMode: string };
+      };
+      const anchor = new FakeAnchor(CODE, SID, registry.last);
+      await anchor.acceptAndDone({
+        deviceId: request.did,
+        epub: request.data.epub,
+        pskMode: 'x25519',
+      });
+      expect(transport.pairing).toEqual({ kind: 'connected' });
+      const after = requestCount();
+      await vi.advanceTimersByTimeAsync(PAIRING_RESEND_MS * 2);
+      expect(requestCount()).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('awaiting-confirm 期间收到 anchor_online 立即重发 pairing.request', async () => {
+    // 请求发出时 anchor 尚未进场（被中转丢弃的另一半场景）：桌面连上来的
+    // anchor_online 信号要触发重发，不等 5s 周期。
+    vi.useFakeTimers();
+    try {
+      const registry = new FakeSocketRegistry();
+      const transport = new WsTransport({
+        sessionId: SID,
+        socketFactory: (url) => new FakeSocket(url, registry),
+        storage: new FakeStorage(),
+        crypto: new TestCrypto(true),
+      });
+      await transport.startPairing(
+        { relayUrl: 'ws://127.0.0.1:8787', sessionId: SID, secret: CODE.toString('base64url') },
+        '信号测试机',
+      );
+      registry.last.open();
+      await settle();
+      const requestCount = (): number =>
+        registry.last.sent.filter(
+          (text) => (JSON.parse(text) as { type?: string }).type === 'pairing',
+        ).length;
+      expect(requestCount()).toBe(1);
+      registry.last.receive({
+        v: RELAY_PROTOCOL_VERSION,
+        sid: SID,
+        type: 'signal',
+        n: 0,
+        info: { kind: 'anchor_online' },
+      });
+      await settle();
+      expect(requestCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reject frame surfaces the reason and drops the pairing', async () => {

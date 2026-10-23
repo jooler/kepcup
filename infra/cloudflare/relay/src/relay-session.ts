@@ -170,7 +170,10 @@ export class RelaySessionLogic {
       this.sendInfo(previous.sock, 'signal', { kind: 'replaced' });
       previous.sock.close(1000, 'anchor replaced');
     }
-    if (this.clearTtl()) this.broadcastInfo('signal', { kind: 'anchor_online' });
+    // 首个 anchor 回场也要通知先于 anchor 进场的 viewer(它们可能在等配对,
+    // 手机端收到 anchor_online 会重发配对请求);TTL 窗口内重连同样通知。
+    if (this.clearTtl() || this.noAnchorSince !== null)
+      this.broadcastInfo('signal', { kind: 'anchor_online' });
     // anchor 回场:补发离场期间错过的 viewer_left(桌面据此清掉早退的端点)
     if (this.pendingViewerLeft.size > 0) {
       for (const did of this.pendingViewerLeft) {
@@ -481,15 +484,35 @@ export class RelaySession {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const sock = this.reconcile(ws);
     if (!sock) return;
-    if (typeof message === 'string') this.logic.onMessage(sock, message);
-    else this.logic.onBinary(sock);
+    if (typeof message === 'string') {
+      this.reconcileAll();
+      this.logic.onMessage(sock, message);
+    } else {
+      this.reconcileAll();
+      this.logic.onBinary(sock);
+    }
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
+    this.reconcileAll();
     const sock = this.adapters.get(ws);
     if (!sock) return; // hibernation 期间关闭、未重建过的连接:无需清理内存态
     this.adapters.delete(ws);
     this.logic.onClose(sock);
+  }
+
+  /**
+   * 本 DO 名下全部存活 socket 对账进内存路由表（幂等,已知的直接跳过）。
+   *
+   * hibernation 对账缺口（真机实测 2026-10:首扫永远无反馈、重扫秒成）:唤醒后
+   * 若只 reconcile 发送方,对端还挂在 hibernation 里不在内存路由表——viewer 的
+   * 首条配对请求会命中「anchor 不在 → 静默丢弃」,反方向 accept/done 也会因
+   * didIndex 空而丢帧。任何入站事件先全量对账;发送到 hibernated socket 是 DO
+   * 的正规能力,唤醒即达。
+   */
+  private reconcileAll(): void {
+    for (const ws of this.state.getWebSockets(TAG_ANCHOR)) this.reconcile(ws);
+    for (const ws of this.state.getWebSockets(TAG_VIEWER)) this.reconcile(ws);
   }
 
   /**

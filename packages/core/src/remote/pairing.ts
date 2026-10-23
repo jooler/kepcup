@@ -212,6 +212,10 @@ export class PairingService {
       return { frames: [reject('bad_code')] };
     }
     const requestId = newUlid();
+    // 同设备重复请求（手机端 5s 保活重发）：替换旧 pending，确认卡只出一张。
+    for (const [existingId, existing] of this.#pending) {
+      if (existing.deviceId === payload.deviceId) this.#pending.delete(existingId);
+    }
     this.#pending.set(requestId, {
       requestId,
       deviceId: payload.deviceId,
