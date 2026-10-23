@@ -6,6 +6,7 @@ import { appUiCardSchema } from './apps-ui.js';
 import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
+import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
 import {
@@ -677,9 +678,7 @@ export const taskLoopSettingsInputSchema = z.object({
   idleStopAfter: z.number().int().min(3).max(20).optional(),
   idleWindowCalls: z.number().int().min(3).max(50).optional(),
   tokenSoftBudget: z.number().int().min(0).max(10_000_000).optional(),
-  stallTimeoutMinutes: z
-    .union([z.literal(0), z.number().int().min(10).max(120)])
-    .optional(),
+  stallTimeoutMinutes: z.union([z.literal(0), z.number().int().min(10).max(120)]).optional(),
   maxWallMinutes: z.number().int().min(0).max(1_440).optional(),
 });
 export type TaskLoopSettings = z.infer<typeof taskLoopSettingsSchema>;
@@ -846,6 +845,13 @@ export const settingsSchema = z.object({
   defaultAgentId: z.string().default('').catch(''),
   /** 连接应用（D73）的 core 自有状态，如工具锁定基线标记。 */
   apps: appsSettingsSchema.prefault({}),
+  /**
+   * D96 远程遥控：总开关（默认关）。开启后桌面主动外连中转（anchor）；
+   * 配对设备 ≡ 本机用户全权（设置目录条目 `remote.enabled`）。
+   */
+  remoteEnabled: z.boolean().default(false),
+  /** D96 远程遥控：中转地址，默认公共服务，自建用户可改（条目 `remote.relay`）。 */
+  remoteRelayUrl: relayEndpointSchema.default(DEFAULT_RELAY_URL),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

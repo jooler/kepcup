@@ -54,7 +54,9 @@
   const special = $derived(SPECIAL_ITEM_IDS.has(item.id));
 
   const hasPrefill = untrack(() => prefill !== null && Object.keys(prefill).length > 0);
-  const seeded = untrack(() => seedValues(item, hasPrefill ? prefill : null, settingsStore.settings));
+  const seeded = untrack(() =>
+    seedValues(item, hasPrefill ? prefill : null, settingsStore.settings),
+  );
 
   /** 按控件类型分桶的可绑定状态（Svelte 绑定需要具体类型，不能绑 unknown）。 */
   function bucket<K extends FieldControlKind>(kind: K) {
@@ -62,20 +64,35 @@
     for (const field of item.fields) {
       if (field.sensitive || fieldControl(field) !== kind) continue;
       const value = seeded[field.name] ?? controlDefault(field);
-      if (kind === 'number') out[field.name] = typeof value === 'number' ? value : controlDefault(field);
+      if (kind === 'number')
+        out[field.name] = typeof value === 'number' ? value : controlDefault(field);
       else if (kind === 'toggle') out[field.name] = value === true;
       else out[field.name] = typeof value === 'string' ? value : '';
     }
     return out;
   }
 
-  let toggles: Record<string, boolean> = $state(untrack(() => bucket('toggle') as Record<string, boolean>));
-  let texts: Record<string, string> = $state(untrack(() => bucket('text') as Record<string, string>));
-  let numbers: Record<string, number> = $state(untrack(() => bucket('number') as Record<string, number>));
-  let selects: Record<string, string> = $state(untrack(() => bucket('select-static') as Record<string, string>));
-  let agentSelects: Record<string, string> = $state(untrack(() => bucket('select-agents') as Record<string, string>));
-  let providerSelects: Record<string, string> = $state(untrack(() => bucket('select-providers') as Record<string, string>));
-  let models: Record<string, string> = $state(untrack(() => bucket('model') as Record<string, string>));
+  let toggles: Record<string, boolean> = $state(
+    untrack(() => bucket('toggle') as Record<string, boolean>),
+  );
+  let texts: Record<string, string> = $state(
+    untrack(() => bucket('text') as Record<string, string>),
+  );
+  let numbers: Record<string, number> = $state(
+    untrack(() => bucket('number') as Record<string, number>),
+  );
+  let selects: Record<string, string> = $state(
+    untrack(() => bucket('select-static') as Record<string, string>),
+  );
+  let agentSelects: Record<string, string> = $state(
+    untrack(() => bucket('select-agents') as Record<string, string>),
+  );
+  let providerSelects: Record<string, string> = $state(
+    untrack(() => bucket('select-providers') as Record<string, string>),
+  );
+  let models: Record<string, string> = $state(
+    untrack(() => bucket('model') as Record<string, string>),
+  );
   // 专用分支的具名控件（历史默认与绑定类型同旧实现）。
   let model = $state(typeof seeded.model === 'string' ? seeded.model : '');
   let provider = $state(typeof seeded.provider === 'string' ? seeded.provider : 'default');
@@ -142,7 +159,7 @@
     const generic = item.fields.find(
       (field) => !field.sensitive && fieldControl(field) === 'select-agents',
     );
-    const id = generic === undefined ? agent : agentSelects[generic.name] ?? '';
+    const id = generic === undefined ? agent : (agentSelects[generic.name] ?? '');
     return id.length > 0 ? agentsStore.get(id) : null;
   });
   const agentOptions = $derived.by(() => {

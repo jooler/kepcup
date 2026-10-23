@@ -1,6 +1,6 @@
 # 远程遥控（D96）
 
-> 状态：**已定稿，未实施**（2026-10-23）。执行方案见 [todo/remote-control.md](../../todo/remote-control.md)。
+> 状态：**已上线，待真机验收**（2026-10-23，`feat/remote-control`：G0 + WP1–WP6 完成并验收——WP6 三端联调 14 用例全绿；随后独立子代理三路审查并按全级别修复 38 项发现（重连计数语义、hello 重放、常数时间比较、anchor 扇出限流等，见 todo/remote-control.md）；WP7 已部署——`remote.kepcup.com` 版本 `31229d6e`，verify.mjs 冒烟通过，剩真机验收与首周用量观察）。执行方案与验收记录见 [todo/remote-control.md](../../todo/remote-control.md)。
 
 ## 0 摘要
 
@@ -12,7 +12,7 @@
 
 1. **纯遥控器**：手机端为 PWA（浏览器打开 / 添加到主屏幕），无本地执行、无本地持久化业务数据、无同步层；原生壳（厂商推送、系统分享目标）后议。
 2. **桌面 core 是唯一服务层**：所有 LLM 调用、工具执行、数据、密钥只在桌面。本机 UI 与远程端点**功能完全对等**，走同一份 RPC 目录（`APP_RPC_METHODS`），**不做只读门**；`PLATFORM_RPC_METHODS` 按宿主能力协商——物理上只能落在桌面的动作（弹通知、`shell.openExternal`、浏览器控制）照常在桌面执行，端点 UI 隐藏不适用项。
-3. **收发中枢**：core 内抽象 Hub，端点（endpoint）= 本机 renderer + N 个远程端点，对等。中转连接关系：桌面 ↔ 中转是 **1:1 锚连接（anchor，桌面主动外连）**；每个遥控端 ↔ 中转各自 1:1；数据分发上，**事件帧广播**——core 推送的事件发给全部在线端点（本机 + 所有遥控端），**RPC 帧定向**（请求 → core，响应 → 发起端点），控制帧点对点。**信号区分 = 帧类型决定路由**，中转按帧类型执行三种转发策略，不理解内容。
+3. **收发中枢**：core 内抽象 Hub，端点（endpoint）= 本机 renderer + N 个远程端点，对等。中转连接关系：桌面 ↔ 中转是 **1:1 锚连接（anchor，桌面主动外连）**；每个遥控端 ↔ 中转各自 1:1；数据分发上，**事件帧按端点定向封帧**（E2E 按设备加密，WP6 修订；语义上仍是「发给全部在线遥控端」），**RPC 帧定向**（请求 → core，响应 → 发起端点），控制帧点对点。**信号区分 = 帧类型决定路由**，中转按帧类型执行三种转发策略，不理解内容。
 4. **公共哑中转**：Cloudflare Worker（入口 + PWA 静态资产）+ Durable Object（每会话一个 `RelaySession`，仅内存态 + hibernation，无 durable 写）。多用户：会话 id 为不透明 ULID，每会话独立 DO 实例天然隔离；不存任何用户数据、不记录 IP；对全部负载 E2E 加密，中转不可信。
 5. **配对即信任边界**：桌面出二维码（一次性配对码，5 分钟有效）→ 手机扫码 → 桌面确认（设备名）→ X25519 ECDH + HKDF 派生会话密钥（配对码作 PSK 认证；WebCrypto 不支持 X25519 时回退纯 HKDF-PSK）。**配对设备 ≡ 坐在本机前的用户**，拥有全部权限；支持多设备配对与撤销；远程敏感操作审计带 deviceId。
 6. **secrets 卫生规则不变**：现有 RPC 层的敏感字段规则（secret / oauth / account 永不出现在可读快照与 `settings_change.Values`）对远程端点统一适用，远程不新增暴露面。
@@ -41,7 +41,7 @@
 
 - 设置页新增「远程遥控」分区：总开关（默认关）、自定义中转地址（默认 `wss://remote.kepcup.com`）、「连接手机」按钮、已配对设备管理（名称、指纹、最后在线、撤销）。
 - 托盘菜单：「远程遥控」快捷开关 + 「连接手机…」（弹出二维码小窗）；连接后托盘显示「手机已连接 (n)」。
-- 二维码内容：`https://remote.kepcup.app/#pair=<relayUrl>,<sessionId>,<pairingSecret>`（URL 安全 base64）。手机扫码即打开 PWA 并自动进入配对确认。
+- 二维码内容：`https://remote.kepcup.com/#pair=<relayUrl>,<sessionId>,<pairingSecret>`（URL 安全 base64）。手机扫码即打开 PWA 并自动进入配对确认。
 - 桌面确认卡显示手机侧上报的设备名（手机可编辑，如「李的 iPhone」）+ 浏览器 / 型号信息，用户点「允许」完成配对。
 
 ### 3.2 手机端
@@ -91,15 +91,23 @@ flowchart TB
 
 | 帧类型 | 来源 | DO 动作 |
 | --- | --- | --- |
-| `event` | anchor | 广播给全部 viewers |
+| `event`（带目标 did，WP6 修订） | anchor | 定向给该 viewer |
+| `event`（无 did，协议保留） | anchor | 广播给全部 viewers |
 | `rpc` / `pairing` / `hello` | viewer | 转发给 anchor |
 | `rpc`（带目标 did） | anchor | 定向给该 viewer |
 | `kick` / `error` / `ratelimit` | anchor 或 DO 自身 | 定向给目标 viewer |
+| `viewer_left`（DO 自产信号，WP6 增补） | DO → anchor | 定向给 anchor：该 viewer 断开 |
 | `ping` | 任一 | 应用层回 pong，维持 hibernation 活性 |
 
+> WP6 修订（三端联调发现）：E2E 加密按设备（每端点独立会话密钥），一帧密文只能服务一个端点——
+> DO 对 event 盲广播会把 A 的密文转给 B（B 解不开，甚至被误判为认证失败踢出）。因此 anchor
+> 对同一事件按端点各封一帧、带 `did` 定向；DO 只对不带 did 的 event（协议保留）才广播。
+> 同时新增 DO 自产信号 `viewer_left`：viewer 断开时通知 anchor，桌面据此清端点（带 5s 宽限 +
+> 入站帧取消，避免旧 socket 迟到的 close 误杀已重连的新端点），设备列表 / 托盘在线状态不再虚高。
+
 - **生命周期**：anchor 断开 → viewers 收 `anchor_offline` 信号；DO 保活 TTL（默认 10 分钟）等待桌面重连；全空即逐出。DO 无 durable 写，重建零成本。
-- **多用户与滥用防护**（免费套餐全站限速规则已被 registry 占用，限流全部在 DO 内实现）：每连接令牌桶（持续 30 msg/s、突发 60）；单帧 ≤ 512KB（逻辑消息分片重组见 §4.5）；每会话 viewers ≤ 5；每 IP 并发会话数上限；不记录 IP、不落任何日志存储。
-- **成员资格校验在中转之外**：DO 只防会话 id 枚举（ULID 128bit 不可猜）与滥用；`join` 后的合法性由 anchor（core）在 E2E 帧内校验（token challenge），失败由 anchor 发 `kick`。中转永远接触不到密钥与明文。
+- **多用户与滥用防护**（免费套餐全站限速规则已被 registry 占用，限流全部在 DO 内实现）：每连接令牌桶（持续 30 msg/s、突发 60；anchor 按 1+viewer 数放大，WP6 审查修订——定向扇出会把同一事件按端点封多帧，单连接预算会自我踢除）；单帧 ≤ 512KB（逻辑消息分片重组见 §4.5）；每会话 viewers ≤ 5；每 IP 并发会话数上限；viewer 的 WSS 升级要求 Origin 缺省或同源（CSWSH 防护，WP6 审查增补）；不记录 IP、不落任何日志存储。
+- **成员资格校验在中转之外**：DO 只防会话 id 枚举（ULID，80bit 随机段不可猜）与滥用；`join` 后的合法性由 anchor（core）在 E2E 帧内校验（加密 hello 自证密钥持有 + token 哈希比对），失败由 anchor 发 `kick`。中转永远接触不到密钥与明文。
 
 ### 4.4 连接与配对
 
@@ -114,21 +122,21 @@ sequenceDiagram
   P->>A: pairing 帧(pubkey + HMAC(配对码, transcript))
   A-->>P: 桌面确认卡:设备名 → 允许 → pubkey
   A->>P: ECDH+HKDF → 会话密钥;登记设备;下发 session token
-  Note over P,A: 之后每次重连:join(did, token) → E2E challenge → 恢复
+  Note over P,A: 之后每次重连:join(did, token) → 加密 hello 自证密钥持有+token 比对 → 恢复
 ```
 
 - anchor 常驻外连：开关开启时连接中转，断线指数退避重连（上限 5 分钟），应用层心跳 30s。
 - 配对码：16 字节随机，一次性、5 分钟过期，仅存在于桌面内存；二维码即带出（QR 视为带外信道）。
 - 密钥派生：X25519 ECDH（双方临时密钥对）+ HKDF-SHA256（输入：共享秘密 ∥ HMAC(配对码, transcript)）→ 双向会话密钥；WebCrypto 无 X25519 的环境回退 HKDF(配对码) 直派（无 PFS，安全降级注明）。
-- 重连凭证：`deviceId + session token`（随机 32B，PWA storage 保存）；桌面只存 token 哈希与密钥指纹。重连时 anchor 发 E2E challenge（HMAC 会话密钥）防 token 冒用。
+- 重连凭证：`deviceId + session token`（随机 32B，PWA storage 保存）；桌面只存 token 哈希与密钥指纹。重连时 viewer 发加密 hello（AEAD 解密成功即自证密钥持有，token 与桌面哈希比对防冒用；WP6 审查修订：实现方向与最初「anchor 发 challenge」的设想相反、强度等价，且少一个往返）。
 - 撤销：设备管理删除 → anchor 发 `kick` → 删除本地密钥与 token 哈希 + 审计；中转侧无需任何操作。
 - 桌面重启：`remote_devices` 与密钥在加密库中持久，重连自动恢复；PWA 侧 token 不变，无需重新配对。
 
 ### 4.5 帧协议（信号区分）
 
-- envelope（明文路由头，最小化）：`{ v: 1, sid, did?, type, rid?, n, frag? }`；`type ∈ pairing | hello | rpc | event | kick | ping | error`。
-- 数据帧 payload 一律 AES-256-GCM 密文（密钥按方向区分，AAD = envelope 去密文）。
-- 防重放：每方向单调计数器 `n`，接收侧滑动窗口（如 64）拒绝回退 / 重复。
+- envelope（明文路由头，最小化）：`{ v: 1, sid, did?, type, rid?, n, frag? }`；`type ∈ pairing | hello | rpc | event | kick | ping | pong | error | signal`（`pong` / `signal` 为 DO 自产帧，WP6 审查增补进清单）。
+- 数据帧 payload 一律 AES-256-GCM 密文（密钥按方向区分，AAD = envelope 去密文；IV 由方向标签 + 计数器派生，不进协议，WP6 审查修订——同密钥下随机 IV 有 2^32 次约束，而会话密钥跨重连长期使用）。
+- 防重放：每方向单调计数器 `n`，接收侧滑动窗口（如 64）拒绝回退 / 重复。**重连计数语义（WP6 审查修订）**：hub 在 hello 重建端点时移植旧 codec 的双向计数（出站续号——viewer 持久化的入站水位不会被打回归零的计数判成重放；入站窗口保留——同一条捕获的 hello 无法被中转重放）；viewer 侧入站窗口每次新连接从零重建（桌面重启后对端计数从零重来，恢复旧窗口只会死锁），出站计数随凭证持久化单调。
 - 分片：逻辑消息 > 128KB 时按 `frag` 分片、端侧重组，单逻辑消息上限 8MB（P0 的 RPC 负载——文本消息、审批、设置——远小于此；大附件读取沿用现有分页参数）。
 - 版本协商：`v` 不识别即断开连接并报错，不做静默降级。
 
@@ -147,7 +155,7 @@ sequenceDiagram
 
 ### 5.3 存储（core）
 
-- main.db 迁移 `0048_remote_devices.sql`：`remote_devices` 表（deviceId 主键、name、keyFingerprint、tokenHash、createdAt、lastSeenAt、revokedAt）。
+- main.db 迁移 `0049_remote_devices.sql`：`remote_devices` 表（deviceId 主键、name、keyFingerprint、tokenHash、createdAt、lastSeenAt、revokedAt）。
 - 会话密钥与 token 明文不落明文库：密钥材料入 `secrets` 表（键 `remote:{deviceId}`，沿用 AES-256-GCM 加密），配对码仅内存。
 - 审计：远程端点发起的审批、设置写入、任务取消等动作，审计记录带 `remote:{deviceId}` 来源标记（沿现有审计链路加来源字段）。
 
@@ -160,7 +168,7 @@ sequenceDiagram
 
 - renderer 增加 web 构建目标（同一份 Svelte 源码；vite 多 target 或独立 `apps/remote` 引用 renderer 源）。transport 用 `WsTransport` 替换 MessagePort 版（实现 `RpcTransport` 三方法接口）。
 - manifest + 图标 + 安装引导；safe-area（`env(safe-area-inset-*)`）与横滑返回（`popstate` / 视图栈）适配；service worker P0 仅做静态缓存壳（推送 SW P1）。
-- 构建产物部署为 Worker 静态资产；自建中转用户可自行托管同一构建（配对 URL 里的 relay 参数指向自建地址）。
+- 构建产物部署为 Worker 静态资产；自建中转用户可自行托管同一构建（配对 URL 里的 relay 参数指向自建地址）。托管路径约定为站点根（manifest / SW 注册 / start_url 都是根绝对路径，WP6 审查明示）。
 
 ## 6 核心实现
 
@@ -177,7 +185,7 @@ sequenceDiagram
 
 ## 7 安全与隐私
 
-- **威胁模型**：中转被攻破或运营者恶意 → 只见密文与元数据（sid、did、帧大小与时序），无内容、无身份（无账号体系、无 IP 日志）；二维码被截获 → 5 分钟一次性 + 桌面确认卡拦截；手机失窃 → 设备撤销即时生效；帧重放 / 篡改 → 计数器 + AEAD；协议降级 → 版本不匹配即断开。
+- **威胁模型**：中转被攻破或运营者恶意 → 只见密文与元数据（sid、did、帧大小与时序），无内容、无身份（无账号体系、无 IP 日志）；二维码被截获 → 5 分钟一次性 + 桌面确认卡拦截；手机失窃 → 设备撤销即时生效；帧重放 / 篡改 → 计数器 + AEAD；协议降级 → 版本不匹配即断开。**明示边界（WP6 审查增补）**：PWA 静态资产与中转同源托管（免费套餐单 Worker 形态），运营者作恶可替换 PWA 代码、读到 storage 里的会话凭证——这是「哑中转 + 免费托管」的取舍；要求更强隔离的自建者可把静态资产挪到与中转不同源。
 - **信任边界**：配对设备等同本机用户全权（这是「功能完整对等」的必然语义），配对与撤销 UI 必须明示。secrets 卫生规则（§1.6）统一适用于所有端点，远程不放大敏感面。
 - **公共服务披露**（话术沿 [todo/hosted-auth-gateway.md](../../todo/hosted-auth-gateway.md) 的中转立场）：中转仅转发加密帧，不保存任何用户数据、不记录 IP；帧格式与 Worker 源码公开（GPL），可自建替代。
 - **成本与配额**：免费套餐起步（DO SQLite 型免费可用；WebSocket 每消息计一次请求，免费 10 万次 / 天）。公共服务多用户增长后按需升 Workers Paid（$5 / 月，含 1000 万次 / 天）——升级只能由用户在控制台操作（见 `infra/cloudflare/README.md` §4.3）。

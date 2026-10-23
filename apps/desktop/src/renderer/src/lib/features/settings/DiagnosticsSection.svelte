@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
 
@@ -44,61 +45,105 @@
   }
 
   function statusBadge(ok: boolean): { label: string; variant: 'default' | 'destructive' } {
-    return ok ? { label: t('settings.sandboxAvailable'), variant: 'default' } : { label: t('settings.sandboxUnavailable'), variant: 'destructive' };
+    return ok
+      ? { label: t('settings.sandboxAvailable'), variant: 'default' }
+      : { label: t('settings.sandboxUnavailable'), variant: 'destructive' };
   }
 </script>
 
 <section class="space-y-3" data-testid="settings-diagnostics">
   <div class="flex items-center justify-between">
     <h3 class="text-sm font-medium">{t('diagnostics.title')}</h3>
-    <Button size="sm" variant="outline" disabled={loading} onclick={() => void refresh()} data-testid="diagnostics-refresh">
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={loading}
+      onclick={() => void refresh()}
+      data-testid="diagnostics-refresh"
+    >
       {t('diagnostics.refresh')}
     </Button>
   </div>
 
   {#if diag !== null}
     <dl class="grid gap-2 text-sm" data-testid="diagnostics-rows">
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2" data-testid="diagnostics-core">
+      <div
+        class="flex items-center gap-2 rounded-md border px-3 py-2"
+        data-testid="diagnostics-core"
+      >
         <dt class="w-32 shrink-0 text-muted-foreground">{t('diagnostics.core')}</dt>
         <dd class="flex flex-wrap items-center gap-2">
-          <Badge variant={diag.core.status === 'ready' ? 'default' : 'destructive'}>{diag.core.status}</Badge>
-          <span class="text-xs text-muted-foreground">{t('diagnostics.coreUptime', { sec: diag.core.uptimeSec })}</span>
+          <Badge variant={diag.core.status === 'ready' ? 'default' : 'destructive'}
+            >{diag.core.status}</Badge
+          >
+          <span class="text-xs text-muted-foreground"
+            >{t('diagnostics.coreUptime', { sec: diag.core.uptimeSec })}</span
+          >
           {#if diag.core.statusReason}
-            <span class="text-xs text-muted-foreground">{t('diagnostics.reason', { reason: diag.core.statusReason })}</span>
+            <span class="text-xs text-muted-foreground"
+              >{t('diagnostics.reason', { reason: diag.core.statusReason })}</span
+            >
           {/if}
         </dd>
       </div>
 
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2" data-testid="diagnostics-data-dir">
+      <div
+        class="flex items-center gap-2 rounded-md border px-3 py-2"
+        data-testid="diagnostics-data-dir"
+      >
         <dt class="w-32 shrink-0 text-muted-foreground">{t('diagnostics.dataDir')}</dt>
         <dd class="min-w-0 flex-1 truncate font-mono text-xs">{diag.dataDir}</dd>
         <dd class="text-xs text-muted-foreground" data-testid="diagnostics-data-dir-size">
           {t('diagnostics.diskUsage')}: {sizeText(diag.dataDirBytes)}{#if diag.dataDirTruncated}
-            <span class="text-amber-600">{t('common.parenthesized', { text: t('diagnostics.diskTruncated') })}</span>{/if}
+            <span class="text-amber-600"
+              >{t('common.parenthesized', { text: t('diagnostics.diskTruncated') })}</span
+            >{/if}
         </dd>
       </div>
 
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2" data-testid="diagnostics-logs-dir">
+      <div
+        class="flex items-center gap-2 rounded-md border px-3 py-2"
+        data-testid="diagnostics-logs-dir"
+      >
         <dt class="w-32 shrink-0 text-muted-foreground">{t('diagnostics.logsDir')}</dt>
         <dd class="min-w-0 flex-1 truncate font-mono text-xs">{diag.logsDir}</dd>
         <dd class="text-xs text-muted-foreground">
           {sizeText(diag.logsBytes)}{#if diag.logsTruncated}
             {t('common.parenthesized', { text: t('diagnostics.diskTruncated') })}{/if}
         </dd>
-        <Button size="sm" variant="ghost" onclick={() => void window.kepcup.openLogsDir()} data-testid="diagnostics-logs-open">
+        <!-- D96 远程端点：在文件管理器中打开是桌面专属（capabilities 裁剪，置灰不隐藏）。 -->
+        <Button
+          size="sm"
+          variant="ghost"
+          class={endpointSupports('reveal-in-file-manager') ? '' : 'opacity-50'}
+          disabled={!endpointSupports('reveal-in-file-manager')}
+          title={endpointSupports('reveal-in-file-manager') ? undefined : t('settings.desktopOnly')}
+          onclick={() => {
+            if (endpointSupports('reveal-in-file-manager')) void window.kepcup.openLogsDir();
+          }}
+          data-testid="diagnostics-logs-open"
+        >
           {t('diagnostics.logsOpen')}
         </Button>
       </div>
 
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2" data-testid="diagnostics-keystore">
+      <div
+        class="flex items-center gap-2 rounded-md border px-3 py-2"
+        data-testid="diagnostics-keystore"
+      >
         <dt class="w-32 shrink-0 text-muted-foreground">{t('diagnostics.keystore')}</dt>
         <dd class="flex flex-wrap items-center gap-2">
-          <Badge variant={diag.keystore.ok ? 'default' : 'destructive'} data-testid="diagnostics-keystore-state">
+          <Badge
+            variant={diag.keystore.ok ? 'default' : 'destructive'}
+            data-testid="diagnostics-keystore-state"
+          >
             {diag.keystore.ok ? t('diagnostics.keystoreOk') : t('diagnostics.keystoreFailed')}
           </Badge>
           <span class="text-xs text-muted-foreground">{diag.keystore.kind}</span>
           {#if diag.keystore.reason}
-            <span class="text-xs text-muted-foreground">{t('diagnostics.reason', { reason: diag.keystore.reason })}</span>
+            <span class="text-xs text-muted-foreground"
+              >{t('diagnostics.reason', { reason: diag.keystore.reason })}</span
+            >
           {/if}
         </dd>
       </div>
@@ -107,13 +152,19 @@
         <dt class="text-muted-foreground">{t('diagnostics.databases')}</dt>
         <dd class="mt-1 grid gap-1">
           {#each diag.databases as row (row.name)}
-            <div class="flex flex-wrap items-center gap-2" data-testid={`diagnostics-db-${row.name.split('（')[0]?.replace('.', '-')}`}>
+            <div
+              class="flex flex-wrap items-center gap-2"
+              data-testid={`diagnostics-db-${row.name.split('（')[0]?.replace('.', '-')}`}
+            >
               <span class="font-mono text-xs">{row.name}</span>
               {#if row.open}
                 <Badge variant="outline">{t('settings.sandboxAvailable')}</Badge>
                 {#if row.version !== undefined && row.targetVersion !== undefined}
                   <span class="text-xs text-muted-foreground">
-                    {t('diagnostics.dbVersion', { version: row.version, target: row.targetVersion })}
+                    {t('diagnostics.dbVersion', {
+                      version: row.version,
+                      target: row.targetVersion,
+                    })}
                   </span>
                 {/if}
               {:else}
@@ -130,19 +181,28 @@
         </dd>
       </div>
 
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2" data-testid="diagnostics-sandbox">
+      <div
+        class="flex items-center gap-2 rounded-md border px-3 py-2"
+        data-testid="diagnostics-sandbox"
+      >
         <dt class="w-32 shrink-0 text-muted-foreground">{t('diagnostics.sandbox')}</dt>
         <dd class="flex flex-wrap items-center gap-2">
           <span class="font-mono text-xs">{diag.sandbox.backend}</span>
-          <Badge variant={statusBadge(diag.sandbox.available).variant}>{statusBadge(diag.sandbox.available).label}</Badge>
+          <Badge variant={statusBadge(diag.sandbox.available).variant}
+            >{statusBadge(diag.sandbox.available).label}</Badge
+          >
           {#if diag.sandbox.enhancedBackend !== null}
             <span class="text-xs text-muted-foreground">
               {t('diagnostics.sandboxEnhanced', { backend: diag.sandbox.enhancedBackend })}:
-              {diag.sandbox.enhancedAvailable ? t('settings.sandboxEnhancedAvailable') : t('settings.sandboxEnhancedMissing')}
+              {diag.sandbox.enhancedAvailable
+                ? t('settings.sandboxEnhancedAvailable')
+                : t('settings.sandboxEnhancedMissing')}
             </span>
           {/if}
           {#if diag.sandbox.reason && !diag.sandbox.available}
-            <span class="text-xs text-muted-foreground">{t('diagnostics.reason', { reason: diag.sandbox.reason })}</span>
+            <span class="text-xs text-muted-foreground"
+              >{t('diagnostics.reason', { reason: diag.sandbox.reason })}</span
+            >
           {/if}
         </dd>
       </div>
@@ -156,7 +216,11 @@
             {#each diag.toolchain as row (row.id)}
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-mono text-xs">{row.kind}</span>
-                <Badge variant={row.healthy ? 'default' : 'destructive'}>{row.healthy ? t('diagnostics.keystoreOk') : t('settings.envStatusFailed')}</Badge>
+                <Badge variant={row.healthy ? 'default' : 'destructive'}
+                  >{row.healthy
+                    ? t('diagnostics.keystoreOk')
+                    : t('settings.envStatusFailed')}</Badge
+                >
                 <span class="truncate text-xs text-muted-foreground">{row.detail}</span>
               </div>
             {/each}

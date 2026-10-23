@@ -26,6 +26,7 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'profile',
   'contacts',
   'unattended',
+  'remote',
   'environment',
   'usage',
   'diagnostics',
@@ -38,7 +39,12 @@ export type SettingDeepLinkAction =
   /** 右栏 Bot 详情的页签；`botId` 与当前会话的 Bot 不同时先打开该 Bot 的单聊。 */
   | { kind: 'bot-panel'; tab: string; anchor: string | null; botId: string | null }
   /** 项目详情页的分区（∈ PROJECT_DETAIL_SECTIONS）。 */
-  | { kind: 'project-detail'; conversationId: string | null; section: ProjectSettingsSection; anchor: string | null }
+  | {
+      kind: 'project-detail';
+      conversationId: string | null;
+      section: ProjectSettingsSection;
+      anchor: string | null;
+    }
   | { kind: 'workdir-dialog'; anchor: string | null };
 
 /**

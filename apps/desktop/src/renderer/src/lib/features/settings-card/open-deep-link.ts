@@ -34,7 +34,10 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       // current one (select folds the view back to chat, so the following
       // openProjectSettings lands on the details section), then scroll the
       // anchor into view and focus it once the page has rendered.
-      if (action.conversationId !== null && action.conversationId !== chat.current?.conversation.id) {
+      if (
+        action.conversationId !== null &&
+        action.conversationId !== chat.current?.conversation.id
+      ) {
         await chat.select(action.conversationId);
       }
       shell.openProjectSettings(action.section);

@@ -23,13 +23,25 @@ describe('fieldControl', () => {
     expect(fieldControl(taskLoop.fields[0]!)).toBe('toggle');
     expect(fieldControl(taskLoop.fields[1]!)).toBe('number');
     expect(
-      fieldControl({ ...workbench.fields[0]!, type: 'select' as const, options: 'static' as const }),
+      fieldControl({
+        ...workbench.fields[0]!,
+        type: 'select' as const,
+        options: 'static' as const,
+      }),
     ).toBe('select-static');
     expect(
-      fieldControl({ ...workbench.fields[0]!, type: 'select' as const, options: 'agents' as const }),
+      fieldControl({
+        ...workbench.fields[0]!,
+        type: 'select' as const,
+        options: 'agents' as const,
+      }),
     ).toBe('select-agents');
     expect(
-      fieldControl({ ...workbench.fields[0]!, type: 'select' as const, options: 'providers' as const }),
+      fieldControl({
+        ...workbench.fields[0]!,
+        type: 'select' as const,
+        options: 'providers' as const,
+      }),
     ).toBe('select-providers');
     expect(fieldControl({ ...workbench.fields[0]!, type: 'model' as const })).toBe('model');
     expect(fieldControl({ ...workbench.fields[0]!, type: 'text' as const })).toBe('text');
@@ -52,15 +64,21 @@ describe('readSettingAtPath / seedValues', () => {
   });
 
   it('seeds from field.path ?? name; prefill wins and sensitive fields never seed', () => {
-    expect(
-      seedValues(workbench, null, { workbenchEnabled: true, other: 1 }),
-    ).toEqual({ enabled: true });
+    expect(seedValues(workbench, null, { workbenchEnabled: true, other: 1 })).toEqual({
+      enabled: true,
+    });
     expect(seedValues(workbench, { enabled: false }, { workbenchEnabled: true })).toEqual({
       enabled: false,
     });
     expect(
       seedValues(taskLoop, null, {
-        taskLoop: { idleGuardEnabled: false, idleWarnAfter: 5, idleStopAfter: 9, idleWindowCalls: 20, tokenSoftBudget: 1_000_000 },
+        taskLoop: {
+          idleGuardEnabled: false,
+          idleWarnAfter: 5,
+          idleStopAfter: 9,
+          idleWindowCalls: 20,
+          tokenSoftBudget: 1_000_000,
+        },
       }),
     ).toEqual({
       idleGuardEnabled: false,
@@ -70,9 +88,13 @@ describe('readSettingAtPath / seedValues', () => {
       tokenSoftBudget: 1_000_000,
     });
     expect(
-      seedValues(taskLoop, { stallTimeoutMinutes: 30 }, {
-        taskLoop: { idleWarnAfter: 5, stallTimeoutMinutes: 20 },
-      }),
+      seedValues(
+        taskLoop,
+        { stallTimeoutMinutes: 30 },
+        {
+          taskLoop: { idleWarnAfter: 5, stallTimeoutMinutes: 20 },
+        },
+      ),
     ).toEqual({ idleWarnAfter: 5, stallTimeoutMinutes: 30 });
     const withSecret = {
       ...workbench,
@@ -86,15 +108,17 @@ describe('readSettingAtPath / seedValues', () => {
 
 describe('valuesFromState / controlDefault / supportsItem', () => {
   it('falls empty numbers back to the field default and keeps every non-sensitive field', () => {
-    expect(valuesFromState(taskLoop, { idleGuardEnabled: true, idleWarnAfter: undefined })).toEqual({
-      idleGuardEnabled: true,
-      idleWarnAfter: 2,
-      idleStopAfter: 3,
-      idleWindowCalls: 3,
-      tokenSoftBudget: 0,
-      stallTimeoutMinutes: 20,
-      maxWallMinutes: 240,
-    });
+    expect(valuesFromState(taskLoop, { idleGuardEnabled: true, idleWarnAfter: undefined })).toEqual(
+      {
+        idleGuardEnabled: true,
+        idleWarnAfter: 2,
+        idleStopAfter: 3,
+        idleWindowCalls: 3,
+        tokenSoftBudget: 0,
+        stallTimeoutMinutes: 20,
+        maxWallMinutes: 240,
+      },
+    );
     expect(controlDefault(taskLoop.fields[1]!)).toBe(2);
     expect(controlDefault(workbench.fields[0]!)).toBe(false);
     // 没有控件的字段（不支持的类型）不提交。
@@ -126,7 +150,9 @@ describe('valuesFromState / controlDefault / supportsItem', () => {
     }
     const withDynamicSelect = {
       ...workbench,
-      fields: [{ ...workbench.fields[0]!, type: 'select' as const, options: 'chat-models' as const }],
+      fields: [
+        { ...workbench.fields[0]!, type: 'select' as const, options: 'chat-models' as const },
+      ],
     };
     expect(supportsItem(withDynamicSelect)).toBe(false);
   });

@@ -2,6 +2,7 @@ import { newId, type AuditEntry } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { RunIdentity } from '../agent/types.js';
+import { currentRemoteSource } from '../remote/audit.js';
 
 interface AuditRow {
   id: string;
@@ -41,6 +42,9 @@ export class AuditService {
   record(identity: RunIdentity, action: string, detail: Record<string, unknown>): AuditEntry {
     const id = newId('aud');
     const now = this.#clock.now();
+    // D96：远程端点发起的动作带 `source: remote:{deviceId}`（remote/audit.ts 的调用链上下文）。
+    const remoteSource = currentRemoteSource();
+    const detailWithSource = remoteSource === null ? detail : { ...detail, source: remoteSource };
     this.#db
       .prepare(
         'insert into audit_log (id, run_id, bot_id, conversation_id, action, detail_json, created_at) values (?, ?, ?, ?, ?, ?, ?)',
@@ -51,7 +55,7 @@ export class AuditService {
         identity.botId,
         identity.conversationId,
         action,
-        JSON.stringify(detail),
+        JSON.stringify(detailWithSource),
         now,
       );
     return {
@@ -60,7 +64,7 @@ export class AuditService {
       botId: identity.botId,
       conversationId: identity.conversationId,
       action,
-      detail,
+      detail: detailWithSource,
       createdAt: now,
     };
   }
@@ -69,12 +73,23 @@ export class AuditService {
   recordSystem(action: string, detail: Record<string, unknown>): AuditEntry {
     const id = newId('aud');
     const now = this.#clock.now();
+    // 同 record：远程端点的动作（remote.* 的撤销 / 配置等）带来源标记。
+    const remoteSource = currentRemoteSource();
+    const detailWithSource = remoteSource === null ? detail : { ...detail, source: remoteSource };
     this.#db
       .prepare(
         'insert into audit_log (id, run_id, bot_id, conversation_id, action, detail_json, created_at) values (?, null, null, null, ?, ?, ?)',
       )
-      .run(id, action, JSON.stringify(detail), now);
-    return { id, runId: null, botId: null, conversationId: null, action, detail, createdAt: now };
+      .run(id, action, JSON.stringify(detailWithSource), now);
+    return {
+      id,
+      runId: null,
+      botId: null,
+      conversationId: null,
+      action,
+      detail: detailWithSource,
+      createdAt: now,
+    };
   }
 
   /**

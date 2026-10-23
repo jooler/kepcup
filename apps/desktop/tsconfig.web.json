@@ -14,5 +14,10 @@
     },
     "noEmit": true
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.svelte"]
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.svelte",
+    // D96 WS 互测向量直接 import core 的 Node codec（仅测试文件引用）：
+    "../../packages/core/src/remote/codec.ts"
+  ]
 }

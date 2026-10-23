@@ -25,6 +25,11 @@ import { mailAccountSchema } from '../domain/mail.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
 import {
+  pairedDeviceSchema,
+  pendingPairingRequestSchema,
+  remoteAnchorStateSchema,
+} from '../domain/remote.js';
+import {
   shareFailedChangedPayloadSchema,
   shareTargetsChangedPayloadSchema,
 } from '../domain/share.js';
@@ -357,6 +362,34 @@ export const settingsChangedPayloadSchema = z.object({
 });
 export type SettingsChangedPayload = z.infer<typeof settingsChangedPayloadSchema>;
 
+// --- D96 远程遥控（design 46 §5.2）----------------------------------------------
+
+/**
+ * 中转连接状态变化（本机 UI 托盘 / 状态页共用）。`onlineDevices` 为此刻在线的
+ * 遥控端数（托盘「手机已连接 (n)」）。
+ */
+export const remoteAnchorStatePayloadSchema = z.object({
+  state: remoteAnchorStateSchema,
+  reason: z.string().optional(),
+  onlineDevices: z.number().int().nonnegative(),
+});
+export type RemoteAnchorStatePayload = z.infer<typeof remoteAnchorStatePayloadSchema>;
+
+/** 设备上线 / 下线 / 新配对 / 撤销（设备管理列表与托盘计数刷新）。 */
+export const remoteDeviceChangedPayloadSchema = z.object({
+  change: z.enum(['paired', 'online', 'offline', 'revoked']),
+  device: pairedDeviceSchema,
+});
+export type RemoteDeviceChangedPayload = z.infer<typeof remoteDeviceChangedPayloadSchema>;
+
+/**
+ * 手机发来配对请求、等桌面确认（§5.2 清单之外补的一条）：二维码小窗 / 设置页
+ * 据此弹确认卡（拉 `remote.status` 取 pending 全量）。请求过期不再补发事件，
+ * 窗口按 `requestedAt + PAIRING_TTL_MS` 自行倒计时。
+ */
+export const remotePairingRequestedPayloadSchema = pendingPairingRequestSchema;
+export type RemotePairingRequestedPayload = z.infer<typeof remotePairingRequestedPayloadSchema>;
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -405,6 +438,12 @@ export const rpcEventSchemas = {
   'agent.status': agentStatusPayloadSchema,
   /** D94: 分享批次状态变化（失败恢复面板刷新）。 */
   'share.failed.changed': shareFailedChangedPayloadSchema,
+  /** D96: 桌面 ↔ 中转 anchor 连接状态变化。 */
+  'remote.anchorState': remoteAnchorStatePayloadSchema,
+  /** D96: 遥控设备上线 / 下线 / 新配对 / 撤销。 */
+  'remote.deviceChanged': remoteDeviceChangedPayloadSchema,
+  /** D96: 配对请求到达、等桌面确认（确认卡）。 */
+  'remote.pairingRequested': remotePairingRequestedPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;
@@ -444,11 +483,21 @@ export const platformAutostartPayloadSchema = z.object({ enabled: z.boolean() })
  */
 export const platformShareTargetsChangedPayloadSchema = shareTargetsChangedPayloadSchema;
 
+/**
+ * D96 远程遥控状态变化（托盘）：与 `remote.anchorState`（本机渲染层）同一时刻
+ * 发出，多带 `enabled`（托盘勾选态）。端口 B 的主进程据此更新托盘菜单。
+ */
+export const platformRemoteStatePayloadSchema = remoteAnchorStatePayloadSchema.extend({
+  enabled: z.boolean(),
+});
+export type PlatformRemoteStatePayload = z.infer<typeof platformRemoteStatePayloadSchema>;
+
 export const platformEventSchemas = {
   'platform.notify': platformNotifyPayloadSchema,
   'platform.unattended': platformUnattendedPayloadSchema,
   'platform.autostart': platformAutostartPayloadSchema,
   'share.targets.changed': platformShareTargetsChangedPayloadSchema,
+  'platform.remoteState': platformRemoteStatePayloadSchema,
 } as const;
 export type PlatformEventName = keyof typeof platformEventSchemas;
 export const PLATFORM_EVENT_NAMES = Object.keys(platformEventSchemas) as PlatformEventName[];

@@ -4,6 +4,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { core } from '$lib/rpc/client.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { AlertTriangle, ArrowUpCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -17,6 +18,10 @@
    */
 
   let autostart = $state(true);
+  // D96 远程端点（web 构建）：登录项与「安装应用更新」是 OS 级桌面动作，按
+  // capabilities 置灰不隐藏（§3.2）；其余行（工作台 / 任务 Loop / 版本）照常可用。
+  const canLaunchAtLogin = $derived(endpointSupports('launch-at-login'));
+  const canInstallUpdate = $derived(endpointSupports('install-update'));
   /** 点击后的乐观值；与 store 一致后清掉，避免往返期间被旧快照打回。 */
   let workbenchOverride = $state<boolean | null>(null);
   const workbench = $derived(
@@ -145,14 +150,17 @@
 
 <section class="space-y-3" data-testid="settings-general">
   <h3 class="text-sm font-medium">{t('settings.generalSection')}</h3>
-  <label class="flex items-start gap-3">
+  <label class="flex items-start gap-3" class:opacity-50={!canLaunchAtLogin}>
     <Checkbox
+      disabled={!canLaunchAtLogin}
       bind:checked={autostart}
       onCheckedChange={(checked) => toggleAutostart(checked === true)}
       data-testid="settings-launch-at-login"
     />
     <span class="grid gap-0.5">
-      <Label class="font-medium">{t('settings.launchAtLogin')}</Label>
+      <Label class="font-medium" title={canLaunchAtLogin ? undefined : t('settings.desktopOnly')}>
+        {t('settings.launchAtLogin')}
+      </Label>
       <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
     </span>
   </label>
@@ -202,7 +210,11 @@
     {:else if updateReadyToInstall}
       <Button
         size="sm"
-        class="bg-emerald-600 text-white hover:bg-emerald-700"
+        class="bg-emerald-600 text-white hover:bg-emerald-700 {canInstallUpdate
+          ? ''
+          : 'opacity-50'}"
+        disabled={!canInstallUpdate}
+        title={canInstallUpdate ? undefined : t('settings.desktopOnly')}
         onclick={() => void updateStore.applyWithFeedback()}
         data-testid="settings-update-apply"
       >
@@ -214,8 +226,12 @@
         <Button
           size="sm"
           variant="destructive"
+          class={canInstallUpdate ? '' : 'opacity-50'}
+          disabled={!canInstallUpdate}
+          title={canInstallUpdate
+            ? t('update.awaitingUser', { count: awaitingRuns })
+            : t('settings.desktopOnly')}
           onclick={() => (confirmInterrupt = true)}
-          title={t('update.awaitingUser', { count: awaitingRuns })}
           data-testid="settings-update-apply"
         >
           <AlertTriangle class="size-4" aria-hidden="true" />
@@ -259,7 +275,9 @@
       <Button
         size="sm"
         variant="outline"
-        disabled={updateStatus.phase === 'checking'}
+        class={canInstallUpdate ? '' : 'opacity-50'}
+        disabled={updateStatus.phase === 'checking' || !canInstallUpdate}
+        title={canInstallUpdate ? undefined : t('settings.desktopOnly')}
         onclick={() => void checkUpdate()}
         data-testid="settings-check-update"
       >

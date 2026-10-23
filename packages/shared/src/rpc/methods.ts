@@ -145,6 +145,15 @@ import {
   type ProviderInfo,
 } from '../domain/types.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
+import {
+  pairingOfferSchema,
+  pairedDeviceSchema,
+  pendingPairingRequestSchema,
+  relayEndpointSchema,
+  remoteAnchorStateSchema,
+  remoteDeviceIdSchema,
+  type PairingOffer,
+} from '../domain/remote.js';
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
@@ -359,6 +368,9 @@ export const settingsUpdateInputSchema = z.object({
     .optional(),
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
   defaultAgentId: z.string().optional(),
+  /** D96 远程遥控：总开关与中转地址（部分 patch；条目 `remote.enabled` / `remote.relay`）。 */
+  remoteEnabled: z.boolean().optional(),
+  remoteRelayUrl: relayEndpointSchema.optional(),
   /**
    * D89 审查修复：这份补丁是从哪一版设置快照改出来的（只需带补丁里的顶层键）。给了就由 core 按
    * 键三方合并（`mergeThreeWay`）：表单没改的字段保留最新值（Bot 直改、设置卡、别处保存的不被
@@ -787,7 +799,6 @@ export const mediaUnderstandImageInputSchema = z.object({
 });
 export const mediaUnderstandImageOutputSchema = z.object({ text: z.string() });
 
-
 // --- inkcop local bridge (v0.4) -------------------------------------------
 
 export const inkcopAgentSchema = z.object({
@@ -1060,9 +1071,7 @@ export const attachmentsStatusInputSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(100),
 });
 export const attachmentsStatusOutputSchema = z.object({
-  statuses: z.array(
-    z.object({ id: z.string(), state: z.enum(['pending', 'sent', 'missing']) }),
-  ),
+  statuses: z.array(z.object({ id: z.string(), state: z.enum(['pending', 'sent', 'missing']) })),
 });
 /** 移除未发送的附件（输入框里已上传、尚未随消息发出的 chip）。 */
 export const attachmentsDetachInputSchema = z.object({ id: z.string().min(1) });
@@ -1893,6 +1902,58 @@ export const browserProfilesMutateOutputSchema = z.object({
   interrupted: z.number().int().nonnegative().optional(),
 });
 
+// --- 远程遥控（D96，docs/design/46-remote-control.md §5.2）----------------------
+
+/** `remote.status`：总开关、anchor 状态机、在线设备与待确认配对请求。 */
+export const remoteStatusOutputSchema = z.object({
+  enabled: z.boolean(),
+  relayUrl: relayEndpointSchema,
+  anchor: remoteAnchorStateSchema,
+  /** `error` / `connecting` 时的可读原因（本机 UI 托盘 / 状态页共用）。 */
+  anchorReason: z.string().optional(),
+  /** 开关开启时 core 生成的会话 id（配对二维码的一部分）。 */
+  sessionId: z.string().nullable(),
+  onlineDeviceIds: z.array(remoteDeviceIdSchema),
+  /** 等桌面确认的配对请求（确认卡轮询 / `remote.pairingRequested` 事件后拉取）。 */
+  pendingPairing: z.array(pendingPairingRequestSchema),
+});
+export type RemoteStatusOutput = z.infer<typeof remoteStatusOutputSchema>;
+
+/** `remote.createPairing`：生成一次性配对码与二维码内容（产物见 pairingOfferSchema）。 */
+export const remoteCreatePairingOutputSchema = pairingOfferSchema;
+export type RemoteCreatePairingOutput = PairingOffer;
+
+/** `remote.confirmPairing`：桌面确认卡「允许 / 拒绝」。 */
+export const remoteConfirmPairingInputSchema = z.object({
+  requestId: z.string().min(1),
+  accept: z.boolean(),
+});
+export const remoteConfirmPairingOutputSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('paired'), device: pairedDeviceSchema }),
+  /** 用户点了拒绝（手机侧收到 pairing.reject）。 */
+  z.object({ status: z.literal('declined') }),
+  /** 请求已不在（过期 / 重复确认 / 手机已断开）。 */
+  z.object({ status: z.literal('gone') }),
+]);
+export type RemoteConfirmPairingOutput = z.infer<typeof remoteConfirmPairingOutputSchema>;
+
+/** `remote.revokeDevice`：撤销即 kick + 删密钥与 token 哈希 + 审计。 */
+export const remoteRevokeDeviceInputSchema = z.object({ deviceId: remoteDeviceIdSchema });
+export const remoteRevokeDeviceOutputSchema = z.object({ device: pairedDeviceSchema });
+
+export const remoteDevicesOutputSchema = z.object({ devices: z.array(pairedDeviceSchema) });
+
+export const remoteConfigGetOutputSchema = z.object({
+  enabled: z.boolean(),
+  relayUrl: relayEndpointSchema,
+});
+export type RemoteConfig = z.infer<typeof remoteConfigGetOutputSchema>;
+export const remoteConfigSetInputSchema = z.object({
+  enabled: z.boolean().optional(),
+  relayUrl: relayEndpointSchema.optional(),
+});
+export const remoteConfigSetOutputSchema = remoteConfigGetOutputSchema;
+
 /**
  * Method registry keyed by wire name. Port A (renderer <-> core) and port B
  * (main <-> core) share this registry; each server binds only its subset.
@@ -2334,6 +2395,21 @@ export const rpcMethodSchemas = {
   },
   'share.failed.discard': { input: shareFailedDiscardInputSchema, output: okOutput },
 
+  // D96 远程遥控：全部 app 方法（本机与远程端点功能对等，同一 handlers）。
+  'remote.status': { input: voidInput, output: remoteStatusOutputSchema },
+  'remote.createPairing': { input: voidInput, output: remoteCreatePairingOutputSchema },
+  'remote.confirmPairing': {
+    input: remoteConfirmPairingInputSchema,
+    output: remoteConfirmPairingOutputSchema,
+  },
+  'remote.revokeDevice': {
+    input: remoteRevokeDeviceInputSchema,
+    output: remoteRevokeDeviceOutputSchema,
+  },
+  'remote.devices': { input: voidInput, output: remoteDevicesOutputSchema },
+  'remote.config.get': { input: voidInput, output: remoteConfigGetOutputSchema },
+  'remote.config.set': { input: remoteConfigSetInputSchema, output: remoteConfigSetOutputSchema },
+
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
   'mail.accounts.test': { input: mailAccountTestInputSchema, output: mailAccountTestOutputSchema },
@@ -2718,6 +2794,13 @@ const APP_METHODS = [
   'share.failed.list',
   'share.failed.retry',
   'share.failed.discard',
+  'remote.status',
+  'remote.createPairing',
+  'remote.confirmPairing',
+  'remote.revokeDevice',
+  'remote.devices',
+  'remote.config.get',
+  'remote.config.set',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
@@ -2732,4 +2815,8 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'apps.ui.resource',
   'share.targets',
   'share.consume',
+  // D96 远程遥控：托盘读状态 / 切开关 / 发起配对（主进程 → core，端口 B）。
+  'remote.status',
+  'remote.createPairing',
+  'remote.config.set',
 ];

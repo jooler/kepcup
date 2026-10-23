@@ -1050,4 +1050,52 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     deepLink: { surface: 'settings', section: 'usage' },
     store: { kind: 'none' },
   }),
+
+  // --- 远程遥控（D96，design 46 §5.4）---------------------------------------
+  item({
+    id: 'remote.enabled',
+    group: 'remote',
+    title: '远程遥控',
+    summary: '用手机（PWA）遥控这台桌面：同一份功能、桌面是唯一执行点',
+    enables: ['手机上浏览与发起对话', '远程批准 / 拒绝审批卡', '任务分派与进度', '设置读写'],
+    keywords: ['远程', '遥控', '手机', '移动端', 'PWA', '配对'],
+    scope: 'global',
+    // 信任边界（设计 §7）：配对设备 ≡ 坐在本机前的用户全权。
+    fields: [field('enabled', '允许手机遥控', 'toggle', { path: 'remoteEnabled' })],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'remote', anchor: 'remote-enabled' },
+    // 简单顶层布尔：通用标量适配器，零 core 改动。
+    store: { kind: 'settings', paths: ['remoteEnabled'], generic: true },
+  }),
+  item({
+    id: 'remote.relay',
+    group: 'remote',
+    title: '中转地址',
+    summary: '遥控流量的公共哑中转（默认官方，可换自建）',
+    keywords: ['中转', 'relay', '自建', '远程地址'],
+    scope: 'global',
+    fields: [
+      field('url', '中转地址', 'text', {
+        path: 'remoteRelayUrl',
+        hint: 'wss:// 开头；自建中转部署同一份 Worker 源码即可替换',
+      }),
+    ],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'remote', anchor: 'remote-relay' },
+    store: { kind: 'settings', paths: ['remoteRelayUrl'], generic: true },
+  }),
+  item({
+    id: 'remote.devices',
+    group: 'remote',
+    title: '已配对设备',
+    summary: '手机配对设备的管理：名称、最后在线、撤销（撤销即时生效）',
+    keywords: ['设备', '配对', '撤销', '手机管理'],
+    scope: 'global',
+    write: write('user-only', { widensPermission: true }),
+    card: 'remote-devices',
+    deepLink: { surface: 'settings', section: 'remote', anchor: 'remote-devices' },
+    store: { kind: 'service', methods: ['remote.devices', 'remote.revokeDevice'] },
+  }),
 ];
