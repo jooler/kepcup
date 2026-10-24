@@ -137,10 +137,13 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await expect(dialog).toBeHidden({ timeout: 15_000 });
 
     // 右栏技能面板：条目存在、active、公共作用域（skills.changed 驱动的同一数据源）。
-    if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
       await page.locator('[data-testid="right-panel-toggle"]').click();
     }
-    await page.locator('[data-testid="right-panel-tabs"]').locator('text=Skills').click();
+    // 统一二级菜单：已在某个详情里先点返回回菜单（幂等，可重复调用）。
+    const back = page.locator('[data-testid="bot-detail-back"]');
+    if (await back.isVisible()) await back.click();
+    await page.locator('[data-testid="bot-menu-row-skills"]').click();
     await expect(page.locator('[data-testid="skills-tab"]')).toBeVisible();
     const skillItem = page.locator('[data-testid="skill-item-market-demo"]');
     await expect(skillItem).toBeVisible({ timeout: 30_000 });

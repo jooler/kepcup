@@ -18,8 +18,8 @@
    * 分组（条件渲染，非滚动定位），滚动条归当前分组内容自己；打开时按
    * shell.settingsSection 直接落在目标分组，带 anchor 时再滚到分组内的
    * [data-settings-anchor]（如「模型 → 默认模型」）。沙箱与访问白名单并入
-   *「环境」，定时任务并入「无人值守」；「应用」只管已连接账号（发现与添加在扩展中心）；
-   * 自定义 MCP 服务器在「扩展中心 → MCP」（`mcp` / `developer` 深链由 shell.openSettings 改开扩展中心）。
+   *「环境」，定时任务并入「无人值守」；连接应用 / 已连接账号 / 邮箱在扩展中心
+   *（`mcp` / `developer` 旧深链由 shell.openSettings 改开扩展中心）。
    *
    * 分区清单 / 内容视图与窄屏设置页（NarrowSettings）共用（settings-sections-list /
    * SettingsSectionView）；窄屏不再打开本弹框（shell.openSettings 重路由到
@@ -34,18 +34,13 @@
   let contentEl: HTMLElement | undefined = $state();
 
   const requestedSection = $derived.by(() => {
-    const resolved = resolveSettingsSection(
-      shell.settingsSection,
-      shell.settingsAppsTab ?? undefined,
-    );
+    const resolved = resolveSettingsSection(shell.settingsSection);
     return sections.some((section) => section.id === resolved.section)
       ? resolved.section
       : ('general' as SectionId);
   });
   const activeSection = $derived(clickedSection ?? requestedSection);
-  const activeLabel = $derived(
-    settingsSectionLabel(activeSection),
-  );
+  const activeLabel = $derived(settingsSectionLabel(activeSection));
 
   // 每次打开：展开别名后落在指定分组（无条目的 id 兜底回 general——窄屏下
   // 通讯录 / 用户画像深链即落这里，入口本身已在底部 tab）。分区同步取自

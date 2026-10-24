@@ -325,7 +325,8 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 卡片按页面档位保存（allow → auto，deny → 停用），不把目录词写进 McpToolPolicy。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
     card: 'tool-policy',
-    deepLink: { surface: 'settings', section: 'apps', anchor: 'apps-connected' },
+    // 设置「应用」分区已移除：逐工具策略在扩展中心「连接」分组的账号详情里管理。
+    deepLink: { surface: 'extension-center', section: 'connections' },
     store: { kind: 'service', methods: ['apps.connections.setToolPolicy'] },
   }),
   item({

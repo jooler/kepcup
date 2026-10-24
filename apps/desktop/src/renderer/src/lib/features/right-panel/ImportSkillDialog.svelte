@@ -148,7 +148,11 @@
     <DialogFooter>
       <Button variant="outline" onclick={() => (open = false)}>{t('common.cancel')}</Button>
       {#if candidates === null}
-        <Button disabled={submitting} onclick={() => void submit()} data-testid="skills-import-submit">
+        <Button
+          disabled={submitting}
+          onclick={() => void submit()}
+          data-testid="skills-import-submit"
+        >
           {submitting ? t('skills.importSubmitting') : t('skills.importSubmit')}
         </Button>
       {/if}

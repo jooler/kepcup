@@ -118,20 +118,28 @@ async function waitReady(page: Page): Promise<void> {
 
 /** 右栏默认收起：需要时经顶部药丸展开（toggle 语义，不能盲点）。 */
 async function expandRightPanel(page: Page): Promise<void> {
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
 }
 
-async function openWikiTab(page: Page): Promise<void> {
+/** 从任意下钻详情回到统一二级菜单（已在菜单则不动）。 */
+async function openBotMenu(page: Page): Promise<void> {
   await expandRightPanel(page);
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=Wiki').click();
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  await expect(page.locator('[data-testid="bot-menu"]')).toBeVisible();
+}
+
+async function openWikiTab(page: Page): Promise<void> {
+  await openBotMenu(page);
+  await page.locator('[data-testid="bot-menu-row-wiki"]').click();
   await expect(page.locator('[data-testid="wiki-tab"]')).toBeVisible();
 }
 
 async function openProfileTab(page: Page): Promise<void> {
-  await expandRightPanel(page);
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
+  // tabs 已移除：回到统一二级菜单即可。
+  await openBotMenu(page);
 }
 
 /**
@@ -180,20 +188,31 @@ async function dumpWikiDiag(page: Page, home: string): Promise<void> {
         conversationId: conversation.id,
         limit: 20,
       })) as {
-        runs: Array<{ loopType: string; status: string; error: string | null; summary: string | null }>;
+        runs: Array<{
+          loopType: string;
+          status: string;
+          error: string | null;
+          summary: string | null;
+        }>;
       };
       for (const run of runs) {
-        console.warn(`[wiki-diag] run ${run.loopType} ${run.status} ${run.error ?? ''} ${run.summary ?? ''}`);
+        console.warn(
+          `[wiki-diag] run ${run.loopType} ${run.status} ${run.error ?? ''} ${run.summary ?? ''}`,
+        );
       }
     }
     for (const conversation of conversations.slice(-3)) {
       const { messages } = (await rpc(page, 'messages.list', {
         conversationId: conversation.id,
         limit: 8,
-      })) as { messages: Array<{ seq: number; senderType: string; kind: string; content: unknown }> };
+      })) as {
+        messages: Array<{ seq: number; senderType: string; kind: string; content: unknown }>;
+      };
       for (const message of messages) {
         const text =
-          typeof message.content === 'object' && message.content !== null && 'text' in message.content
+          typeof message.content === 'object' &&
+          message.content !== null &&
+          'text' in message.content
             ? String((message.content as { text: unknown }).text).slice(0, 200)
             : JSON.stringify(message.content).slice(0, 200);
         console.warn(`[wiki-diag] ${message.seq} ${message.senderType}/${message.kind} ${text}`);
@@ -208,7 +227,10 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
   // Windows CI：WSL2 CLI 可用但应用私有发行版未导入 → 沙箱 probe 不可用 →
   // URL 入库按设计 fail-closed（沙箱不可用就不抓），树项永远不会出现。
   // 发行版级 fixture 属另一工程，这里直接跳过整个入库 → 阅读 → 回滚链路。
-  test.skip(process.platform === 'win32', 'wiki URL ingest needs a working sandbox; windows CI has no distro');
+  test.skip(
+    process.platform === 'win32',
+    'wiki URL ingest needs a working sandbox; windows CI has no distro',
+  );
   // 慢 CI（ubuntu 在负载下入库管线可能超过半分钟）余量：整用例放宽，
   // 树项等待也从 30s 放宽到 90s（validation/fixtures 全走同样管线）。
   test.setTimeout(360_000);

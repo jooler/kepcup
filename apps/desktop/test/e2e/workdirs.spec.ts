@@ -90,13 +90,15 @@ function makeWorkdirDir(prefix: string): string {
   return dir;
 }
 
-/** 工作目录选择器已移入右栏「配置」tab：右栏收起时先展开再切 tab，然后打开选择器。 */
+/** 工作目录在统一二级菜单的行里：展开右栏、回菜单、点行打开选择器。 */
 async function openWorkdirSelector(page: Page): Promise<void> {
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await page.locator('[data-testid="workdir-selector-trigger"]').click();
+  // 统一二级菜单：已在某个详情里先点返回回菜单（幂等，可重复调用）。
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  await page.locator('[data-testid="bot-config-row-workdir"]').click();
 }
 
 test('workdir selection, switching block while running; no changes card after writes', async () => {
@@ -113,16 +115,13 @@ test('workdir selection, switching block while running; no changes card after wr
     await mockDirectoryPicker(app, workdir);
     await openWorkdirSelector(page);
     await page.locator('[data-testid="workdir-pick-new"]').click();
-    await expect(page.locator('[data-testid="workdir-selector-name"]')).toContainText(
+    await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toContainText(
       path.basename(workdir),
       { timeout: 15_000 },
     );
     await expect(
       page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
-    await expect(page.locator('[data-testid="workdir-selector"]')).toContainText(
-      path.basename(workdir),
-    );
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
 
@@ -131,13 +130,13 @@ test('workdir selection, switching block while running; no changes card after wr
     await page.locator('[data-testid="composer-input"]').fill('占住执行');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
     await expect(page.locator('[data-testid="run-status"]')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-testid="workdir-selector-trigger"]')).toBeDisabled();
+    await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toBeDisabled();
     await expect(page.locator('[data-testid="workdir-switch-blocked-hint"]')).toBeVisible();
 
     // 放行后恢复可用
     llm.releaseAll();
     await expect(page.locator('[data-testid="run-status"]')).not.toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-testid="workdir-selector-trigger"]')).toBeEnabled();
+    await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toBeEnabled();
 
     // 一次有改动的写任务：磁盘文件保留，对话中不再出现改动摘要卡 / diff / 回退。
     llm.script(
@@ -243,10 +242,7 @@ test("a write task queued behind another conversation's write task shows the wai
     llm.script('mock-main', [
       step()
         .inTurn()
-        .expect(
-          (req) =>
-            !isTaskRequest(req) && req.lastUserText().includes('用户从任务卡主动取消'),
-        )
+        .expect((req) => !isTaskRequest(req) && req.lastUserText().includes('用户从任务卡主动取消'))
         .replyText('好，占用已取消'),
       step().inTask().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
       step().inTask().replyText('乙.txt 已写入'),

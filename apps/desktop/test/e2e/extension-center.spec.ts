@@ -106,10 +106,9 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
       'true',
     );
     await dialog.locator('[data-testid="extension-center-tab-mail"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-localCollab"]')).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    await expect(
+      dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
+    ).toHaveAttribute('aria-selected', 'true');
     // 末项再往右循环回第一项。
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
@@ -120,23 +119,14 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog).toBeHidden({ timeout: 15_000 });
     await expect(dragBand).toHaveAttribute('data-active', 'false');
 
-    // 设置 → 应用：只管已连接账号，带去扩展中心的入口。
-    await openSettings(page, 'apps');
-    await expect(page.locator('[data-testid="apps-section"]')).toBeVisible();
+    // 设置里不再有「应用」分区（已连接账号 / 连接应用 / 邮箱都在扩展中心对应分组），
+    // 也不再有「开发者模式」分区。
+    await openSettings(page, 'general');
+    await expect(page.locator('[data-testid="apps-section"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="settings-nav-apps"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="apps-tabs"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="mcp-section"]')).toHaveCount(0);
-
-    // 设置里不再有「开发者模式」分区。
     await expect(page.locator('[data-testid="settings-nav-developer"]')).toHaveCount(0);
-
-    // 应用分区的横条 → 扩展中心「连接」分组（设置弹框先收起）。
-    await page.locator('[data-testid="settings-nav-apps"]').click();
-    await page.locator('[data-testid="apps-open-extension-center"]').click();
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
-    await expect(dialog).toBeVisible();
-    await expect(
-      dialog.locator('[data-testid="extension-center-tab-connections"]'),
-    ).toHaveAttribute('aria-selected', 'true');
   } finally {
     await app?.close();
     await llm.stop();
