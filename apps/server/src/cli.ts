@@ -109,7 +109,7 @@ async function ensureAdminAccount(
   const auth = new AuthStore(dataDir);
   if (auth.isConfigured()) return;
   if (adminUser !== null && adminPassword !== null) {
-    auth.setupAdmin(adminUser, adminPassword);
+    await auth.setupAdmin(adminUser, adminPassword);
     console.log(`管理员账号已创建：${adminUser}`);
     return;
   }
@@ -175,7 +175,7 @@ async function changeAdminPassword(config: ReturnType<typeof parseConfig>): Prom
         console.error('两次输入不一致。');
         process.exit(2);
       }
-      auth.setupAdmin(username, password);
+      await auth.setupAdmin(username, password);
       console.log(`管理员账号已创建：${username}`);
       return;
     }
@@ -187,7 +187,7 @@ async function changeAdminPassword(config: ReturnType<typeof parseConfig>): Prom
       console.error('两次输入不一致，密码未修改。');
       process.exit(2);
     }
-    auth.changePassword(oldPassword, newPassword);
+    await auth.changePassword(oldPassword, newPassword);
     console.log('密码已修改。');
   } finally {
     rl.close();
@@ -196,6 +196,11 @@ async function changeAdminPassword(config: ReturnType<typeof parseConfig>): Prom
 
 main().catch((error) => {
   if (error instanceof ConfigError) {
+    if (error.message === 'help') {
+      // 显式 --help/-h 是正常退出（审查 P3：原先落到错误分支退 2）。
+      console.log(usageText());
+      process.exit(0);
+    }
     console.error(`${error.message}\n\n${usageText()}`);
     process.exit(2);
   }

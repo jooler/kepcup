@@ -8,7 +8,12 @@ import {
 import type { PlatformInfo } from '$lib/shim';
 import { domPortToTransport, isCorePortMessage } from './port';
 import { getWebTransport, type WebLinkState } from './ws-transport';
-import { getAuthedTransport, probeServerAuth, type AuthedLinkState } from './authed-transport';
+import {
+  getAuthedTransport,
+  probeServerAuthUntilSettled,
+  watchForPasswordServer,
+  type AuthedLinkState,
+} from './authed-transport';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
@@ -51,15 +56,12 @@ class CoreConnection {
   /**
    * Web 模式启动（D102 修订）：先探测服务器认证模型——账号密码模式（headless
    * 直连默认）走 AuthedWsTransport（登录 Cookie 会话），配对模式（公共中转 /
-   * --auth pairing）走既有 WsTransport。探测失败（服务器不可达）重试两次后
-   * 回退配对路径，由 Gate 呈现离线态。
+   * --auth pairing）走既有 WsTransport。探测持续到有确定答案（审查 P2：原先
+   * 两次失败就永久回退配对路径）；30s 仍不可达才回退，并后台重探自愈（一旦
+   * 确定是密码服务器就刷新页面进正路）。
    */
   async #startWeb(): Promise<void> {
-    let probe = await probeServerAuth();
-    if (probe === null) {
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-      probe = await probeServerAuth();
-    }
+    const probe = await probeServerAuthUntilSettled();
     if (probe !== null && probe.mode === 'password') {
       const transport = getAuthedTransport();
       this.#rpc = createRpcClient({
@@ -76,6 +78,7 @@ class CoreConnection {
       });
       this.#applyWebLinkState(transport.linkState);
       transport.onLinkState((state) => this.#applyWebLinkState(state));
+      if (probe === null) watchForPasswordServer();
     }
     void window.kepcup.platform.info().then((info) => {
       this.platform = info;

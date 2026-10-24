@@ -77,4 +77,23 @@ describe('parseConfig', () => {
     expect(() => parseConfig(['frobnicate'])).toThrow(ConfigError);
     expect(() => parseConfig(['--host'])).toThrow(ConfigError);
   });
+
+  it('--trust-proxy：默认关，flag / 环境变量开启', () => {
+    savedEnv();
+    expect(parseConfig([]).trustProxy).toBe(false);
+    expect(parseConfig(['--trust-proxy']).trustProxy).toBe(true);
+    process.env.KEPCUP_SERVER_TRUST_PROXY = '1';
+    expect(parseConfig([]).trustProxy).toBe(true);
+    process.env.KEPCUP_SERVER_TRUST_PROXY = 'false';
+    expect(parseConfig([]).trustProxy).toBe(false);
+    savedEnv();
+    Object.assign(process.env, BASE_ENV);
+  });
+
+  it('--help 走 ConfigError("help")（CLI 层打印用法退 0；误用才退 2）', () => {
+    savedEnv();
+    expect(() => parseConfig(['--help'])).toThrowError(
+      expect.objectContaining({ message: 'help' }) as ConfigError,
+    );
+  });
 });

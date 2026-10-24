@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
-import { request } from 'node:http';
-import { expect, it, beforeAll, afterAll } from 'vitest';
+import { request, type IncomingMessage } from 'node:http';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import WebSocket from 'ws';
 import { createMemoryKeystore } from '@kepcup/core';
-import { createHeadlessServer, type HeadlessServer } from '../src/server.js';
+import { createHeadlessServer, clientIp, type HeadlessServer } from '../src/server.js';
 import { SESSION_COOKIE } from '../src/auth.js';
 
 /**
@@ -39,8 +39,13 @@ beforeAll(async () => {
       acceptRequestId: null,
       revokeDeviceId: null,
       json: false,
+      trustProxy: false,
     },
-    { env: { ...process.env, NODE_ENV: 'test' }, keystore: createMemoryKeystore() },
+    {
+      env: { ...process.env, NODE_ENV: 'test' },
+      keystore: createMemoryKeystore(),
+      pingIntervalMs: 50,
+    },
   );
 });
 
@@ -234,10 +239,51 @@ it('跨源 /rpc 升级被拒（CSWSH 纵深，即使带上有效 Cookie）', asy
 });
 
 it('改密码后旧 cookie 失效', async () => {
-  server.auth.changePassword('a-long-enough-passphrase', 'another-long-passphrase');
+  await server.auth.changePassword('a-long-enough-passphrase', 'another-long-passphrase');
   const stale = await get('/api/auth/whoami', { cookie });
   expect(stale.code).toBe(401);
   // 新密码可登录。
   const fresh = await post('/api/auth/login', { username: 'tester', password: 'another-long-passphrase' });
   expect(fresh.code).toBe(200);
+});
+
+it('应用层心跳：会话连接后按 ping 间隔推 session.heartbeat（客户端自愈判据）', async () => {
+  const login = await post('/api/auth/login', { username: 'tester', password: 'another-long-passphrase' });
+  const freshCookie = (login.setCookie ?? []).find((value) => value.startsWith(`${SESSION_COOKIE}=`));
+  const client = await new RpcClient({ cookie: freshCookie ?? '' }).open();
+  try {
+    // 测试注入 pingIntervalMs=50ms；协议级 ping 浏览器 JS 不可见，这里验证的是
+    // 客户端可观测的那一帧（birpc 事件推送形如 {m: 'session.heartbeat'}）。
+    await client.next(
+      (message) => (message as { m?: string })?.m === 'session.heartbeat',
+      5_000,
+    );
+  } finally {
+    client.ws.close();
+  }
+});
+
+describe('clientIp（--trust-proxy）', () => {
+  it('默认不信 X-Forwarded-For；开启后取首段（直连客户端）', () => {
+    const req = {
+      headers: { 'x-forwarded-for': '1.2.3.4, 10.0.0.1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as unknown as IncomingMessage;
+    expect(clientIp(req, false)).toBe('127.0.0.1');
+    expect(clientIp(req, true)).toBe('1.2.3.4');
+  });
+
+  it('开启但无头 / 首段为空 → 回落 socket 地址（不去猜更深的段）', () => {
+    const req = {
+      headers: {},
+      socket: { remoteAddress: '192.168.1.5' },
+    } as unknown as IncomingMessage;
+    expect(clientIp(req, true)).toBe('192.168.1.5');
+    // 畸形头（首段空）：取第一个非空段更方便但那一段更深、更可伪造——保守回落。
+    const spaced = {
+      headers: { 'x-forwarded-for': '  , 5.6.7.8' },
+      socket: { remoteAddress: '192.168.1.5' },
+    } as unknown as IncomingMessage;
+    expect(clientIp(spaced, true)).toBe('192.168.1.5');
+  });
 });

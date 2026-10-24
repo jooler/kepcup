@@ -52,7 +52,12 @@ export function serveStatic(
     stat = existsSync(filePath) ? statSync(filePath) : null;
   }
   if (stat === null || !stat.isFile()) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('not found');
+    res
+      .writeHead(404, {
+        'content-type': 'text/plain; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+      })
+      .end('not found');
     return true;
   }
   const ext = path.extname(filePath).toLowerCase();
@@ -60,6 +65,7 @@ export function serveStatic(
   const hashed = pathname.startsWith('/assets/');
   res.writeHead(200, {
     'content-type': type,
+    'x-content-type-options': 'nosniff',
     'cache-control': hashed
       ? 'public, max-age=31536000, immutable'
       : 'no-cache, must-revalidate',

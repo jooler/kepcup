@@ -41,6 +41,8 @@ export interface SessionHubOptions {
   services: CoreServices;
   auth: AuthStore;
   logger: CoreLogger;
+  /** 测试注入：心跳/清扫间隔（生产 30s）。 */
+  pingIntervalMs?: number;
 }
 
 export class SessionHub {
@@ -49,6 +51,7 @@ export class SessionHub {
   readonly #auth: AuthStore;
   readonly #logger: CoreLogger;
   readonly #sessions = new Set<SessionConnection>();
+  readonly #pingIntervalMs: number;
   #pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: SessionHubOptions) {
@@ -57,6 +60,7 @@ export class SessionHub {
     this.#services = options.services;
     this.#auth = options.auth;
     this.#logger = options.logger;
+    this.#pingIntervalMs = options.pingIntervalMs ?? WS_PING_INTERVAL_MS;
   }
 
   /** server.ts 在 upgrade 事件里按路径分流进来。 */
@@ -96,7 +100,7 @@ export class SessionHub {
   #attach(ws: WebSocket, username: string): void {
     (ws as WebSocket & { alive?: boolean }).alive = true;
     if (this.#pingTimer === null) {
-      this.#pingTimer = setInterval(() => this.#pingSweep(), WS_PING_INTERVAL_MS);
+      this.#pingTimer = setInterval(() => this.#pingSweep(), this.#pingIntervalMs);
       this.#pingTimer.unref?.();
     }
     ws.on('pong', () => {
@@ -202,17 +206,23 @@ export class SessionHub {
     }
   }
 
-  /** ws 协议级心跳：穿透反代的死连接检测（浏览器自动回 pong）。 */
+  /**
+   * ws 协议级心跳：穿透反代的死连接检测（浏览器自动回 pong）。同时推一帧
+   * 应用层心跳事件（审查 P2）：协议级 ping 在浏览器 JS 完全不可见，空闲连接
+   * 上客户端没有任何可观测流量，NAT 半开要等 TCP 超时才发现——AuthedWsTransport
+   * 以「该有心跳却没有」做前台自愈的判据。事件名无订阅者，客户端静默忽略。
+   */
   #pingSweep(): void {
-    for (const { ws } of this.#sessions) {
-      const tagged = ws as WebSocket & { alive?: boolean };
+    for (const connection of this.#sessions) {
+      const tagged = connection.ws as WebSocket & { alive?: boolean };
       if (tagged.alive === false) {
-        ws.terminate();
+        connection.ws.terminate();
         continue;
       }
       tagged.alive = false;
       try {
-        ws.ping();
+        connection.ws.ping();
+        connection.server.pushEvent('session.heartbeat', Date.now());
       } catch {
         // 已断开的 socket ping 抛错：close 事件会清理。
       }

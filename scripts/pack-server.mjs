@@ -69,6 +69,16 @@ run('pnpm', ['--filter', '@kepcup/server', 'run', 'build']);
 console.log('[pack-server] pnpm deploy');
 run('pnpm', ['--filter', '@kepcup/server', 'deploy', '--prod', '--legacy', pkgDir]);
 
+// 3.5) 裁剪发行物：deploy 复制的是整包目录，src/ 与 test/ 不进 tarball
+//      （运行只要 dist/ + web/ + node_modules/；审查 P3：原先白背源码）。
+for (const extra of ['src', 'test']) {
+  const dir = path.join(pkgDir, extra);
+  if (existsSync(dir)) {
+    console.log(`[pack-server] 裁剪 ${extra}/`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // 4) 改写 package.json：bundledDependencies 让 npm 把 node_modules 视为包内容
 //    （npm i -g <tarball> 不再尝试解析依赖）；发布名 kepcup-server（npm i -g 后
 //    命令即 kepcup-server）。

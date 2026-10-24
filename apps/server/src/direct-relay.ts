@@ -86,7 +86,8 @@ export class DirectRelayServer {
     const active = this.#active;
     if (active === null) {
       // dormant（hub 未挂会话，如开关刚关 / 换地址中）：接收后告知 anchor 不在，
-      // viewer 按语义保留等待态（ws-transport anchor_offline 分支）。
+      // viewer 按语义保留等待态（ws-transport anchor_offline 分支）。顺带这也是
+      // 一个「服务在但 anchor 未挂」的探测口径：有响应即服务进程活着（审查备注）。
       this.#wss.handleUpgrade(req, socket, head, (ws) => {
         this.#send(ws, this.#infoFrame(sid, 'signal', { kind: 'anchor_offline' }));
         ws.close(1000, 'anchor_offline');

@@ -43,6 +43,7 @@ function testConfig(dataDir: string): ServerConfig {
     acceptRequestId: null,
     revokeDeviceId: null,
     json: false,
+    trustProxy: false,
   };
 }
 
