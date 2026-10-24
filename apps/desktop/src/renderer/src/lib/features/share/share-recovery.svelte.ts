@@ -33,7 +33,9 @@ export class ShareRecoveryState {
     const seq = ++this.#refreshSeq;
     this.loading = true;
     try {
-      const result = (await core.call('share.failed.list')) as { items: ShareFailedItem[] };
+      // 输入 schema 是 z.object({})——不传参会整包被 INVALID_INPUT 拒掉，
+      // 恢复面板会一直拿不到失败列表。
+      const result = (await core.call('share.failed.list', {})) as { items: ShareFailedItem[] };
       if (seq === this.#refreshSeq) this.items = result.items;
     } catch {
       // 拿不到失败列表不该打扰用户（面板本来就是补丁性的入口）。

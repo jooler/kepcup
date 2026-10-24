@@ -105,8 +105,11 @@ mac:
     - from: resources/connectors
       to: connectors
     # D94：App Group 容器 id（带 TeamID 前缀）——主进程据此定位扩展写的 inbox。
+    # to 必须写完整文件名：单文件源的 to 不带文件名时，electron-builder 会把它
+    # 当目标文件路径，拷出一个名为 share-extension 的文件（主进程读
+    # Resources/share-extension/group.json 就落空，回落无前缀组 id、快照写错容器）。
     - from: resources/share-extension/group.json
-      to: share-extension
+      to: share-extension/group.json
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
 # 文件名不能有空格：latest.yml 记录的是连字符形式，gh 上传带空格的文件会被 GitHub 改成点号，

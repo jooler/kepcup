@@ -82,6 +82,13 @@ let lastUpdateStatus: UpdateStatusPayload = { phase: 'idle' };
 let shareCoordinator: ShareIntakeCoordinator | null = null;
 /** 冷启动时先到的 `kepcup://` URL：core 就绪后再消费。 */
 const pendingShareUrls: string[] = [];
+/**
+ * 本次启动是分享唤起（URL 在 core ready 之前到达）：core 首次 ready 时
+ * 不弹主窗口（静默导入）；失败 / 锁定等异常状态照常弹。
+ */
+let shareWakeLaunch = false;
+/** core 已完成首次 ready：此前的 `kepcup://` URL 都必须排队等 drain。 */
+let coreReady = false;
 
 const isQuitting = () => quitting;
 
@@ -186,16 +193,21 @@ async function quitApp(): Promise<void> {
 /**
  * D94 §7.2：`kepcup://share-intake?id=…`（Share Extension 唤起主应用）。
  * 冷启动时 URL 先到、core 还没就绪——先排队，core ready 后再消费。
+ * 排队依据是 coreReady 而非协调器是否已建：协调器在 bootstrap 里同步创建，
+ * 但 core ready 晚数秒——窗口期直接 consume 会因平台端口未连而失败，
+ * 误发「分享导入失败」通知，还会让 shareWakeLaunch 失效、ready 时弹窗。
  */
 function handleShareUrl(raw: string): void {
-  if (shareCoordinator === null) {
+  if (shareCoordinator === null || !coreReady) {
     pendingShareUrls.push(raw);
+    shareWakeLaunch = true;
     return;
   }
   void shareCoordinator.handleUrl(raw).then((outcome) => {
     if (outcome === null) return;
-    // P0：把 KepCup 带到前台；静默导入是 P1 的体验优化。
-    showWindow();
+    // 静默导入（D94 P1 提前落地）：成功不拉窗口；失败走系统通知
+    // （notifyShareFailures 只对 failed / failed_target 出声，点通知才开窗）。
+    notifyShareFailures([outcome]);
   });
 }
 
@@ -203,10 +215,23 @@ function handleShareUrl(raw: string): void {
 async function drainShareIntakes(): Promise<void> {
   if (shareCoordinator === null) return;
   const queued = pendingShareUrls.splice(0, pendingShareUrls.length);
+  const consumed: ShareIntakeOutcome[] = [];
   for (const raw of queued) {
-    await shareCoordinator.handleUrl(raw);
+    const outcome = await shareCoordinator.handleUrl(raw);
+    if (outcome !== null) consumed.push(outcome);
   }
-  notifyShareFailures(await shareCoordinator.scan());
+  // 队列消费的结果也要进通知——否则冷启动唤起的失败批次永远无感知
+  // （scan 只看 inbox 里还没消费的批次）。按 intakeId 去重：搬进 core inbox
+  // 失败的批次会同时出现在 consumed 与 scan 里（目录留在原地）。
+  const outcomes = [...consumed, ...(await shareCoordinator.scan())];
+  const seen = new Set<string>();
+  notifyShareFailures(
+    outcomes.filter((o) => {
+      if (seen.has(o.intakeId)) return false;
+      seen.add(o.intakeId);
+      return true;
+    }),
+  );
   await shareCoordinator.refreshTargets();
 }
 
@@ -612,6 +637,11 @@ function bootstrap(): void {
     // 持有（终态 failed 更永不释放，机器不再空闲休眠）、托盘也永远显示陈旧
     // 的「手机已连接」。enabled 保留：core 重新 ready 后初值拉取会恢复真值。
     if (state === 'down' || state === 'failed') {
+      // core 不在了：期间到达的分享 URL 重新排队（handleShareUrl 按 coreReady
+      // 判断），恢复 ready 后由 drainShareIntakes 统一消费。静默使命同时终结
+      // ——异常页（failed）/ 后续 ready 都照常弹窗，不再代表分享唤起的静默启动。
+      coreReady = false;
+      shareWakeLaunch = false;
       trayRemote.anchor = 'off';
       trayRemote.onlineDevices = 0;
       applyTrayRemote();
@@ -619,10 +649,14 @@ function bootstrap(): void {
   });
   coreHost.onStatus((payload) => {
     // The window appears once the core reports any terminal state so the
-    // locked / error pages are reachable too.
-    if (payload.status !== 'starting') ensureWindow();
+    // locked / error pages are reachable too. 例外：分享唤起的冷启动在首次
+    // ready 时静默（D94 P1 静默导入）——之后 core 若崩溃重启再 ready 就照常弹。
+    const silentShareWake = shareWakeLaunch && payload.status === 'ready';
+    if (payload.status !== 'starting' && !silentShareWake) ensureWindow();
     // D94: core ready 后消费排队的分享 URL、扫描 App Group inbox、重写快照。
     if (payload.status === 'ready') {
+      coreReady = true;
+      shareWakeLaunch = false;
       void drainShareIntakes();
       startShareScanTimer();
       // D96: 托盘初值（后续变化走 platform.remoteState 推送）。
