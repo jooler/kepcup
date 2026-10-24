@@ -120,7 +120,11 @@
   }
 
   /** Jump to the evidence message; report when its conversation is gone. */
-  async function viewEvidence(item: MemoryItem, conversationId: string, messageId: string): Promise<void> {
+  async function viewEvidence(
+    item: MemoryItem,
+    conversationId: string,
+    messageId: string,
+  ): Promise<void> {
     const ok = await chat.jumpToMessage(conversationId, messageId);
     if (!ok) {
       deletedEvidence = { ...deletedEvidence, [item.id]: true };
@@ -164,34 +168,59 @@
                 {#if editingId === item.id}
                   <Textarea bind:value={editText} rows={3} data-testid="memory-edit-input" />
                   <div class="mt-1 flex justify-end gap-2">
-                    <Button size="sm" variant="ghost" onclick={() => (editingId = null)} data-testid="memory-edit-cancel">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onclick={() => (editingId = null)}
+                      data-testid="memory-edit-cancel"
+                    >
                       {t('common.cancel')}
                     </Button>
-                    <Button size="sm" onclick={() => void saveEdit(item)} data-testid="memory-edit-save">
+                    <Button
+                      size="sm"
+                      onclick={() => void saveEdit(item)}
+                      data-testid="memory-edit-save"
+                    >
                       {t('common.save')}
                     </Button>
                   </div>
                 {:else}
-                  <p class="whitespace-pre-wrap break-words" data-testid="memory-item-content">{item.content}</p>
-                  <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <p class="break-words whitespace-pre-wrap" data-testid="memory-item-content">
+                    {item.content}
+                  </p>
+                  <div
+                    class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                  >
                     {#if inactive}
-                      <Badge variant="outline" data-testid="memory-item-status">{t(STATUS_KEYS[item.status])}</Badge>
+                      <Badge variant="outline" data-testid="memory-item-status"
+                        >{t(STATUS_KEYS[item.status])}</Badge
+                      >
                     {/if}
                     {#if item.privateToBot}
-                      <Badge variant="secondary" data-testid="memory-item-private">{t('memory.privateBadge')}</Badge>
+                      <Badge variant="secondary" data-testid="memory-item-private"
+                        >{t('memory.privateBadge')}</Badge
+                      >
                     {/if}
                     {#if item.dueAt !== null}
-                      <span data-testid="memory-item-due">{new Date(item.dueAt).toLocaleDateString()}</span>
+                      <span data-testid="memory-item-due"
+                        >{new Date(item.dueAt).toLocaleDateString()}</span
+                      >
                     {/if}
                   </div>
                   {#if deletedEvidence[item.id]}
-                    <p class="mt-1 text-xs text-muted-foreground italic" data-testid="memory-evidence-deleted">
+                    <p
+                      class="mt-1 text-xs text-muted-foreground italic"
+                      data-testid="memory-evidence-deleted"
+                    >
                       {t('memory.evidenceDeleted')}
                     </p>
                   {/if}
                   {#if !inactive}
                     <div class="mt-2 flex flex-wrap items-center gap-2">
-                      <label class="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`memory-private-label-${item.id}`}>
+                      <label
+                        class="flex items-center gap-1.5 text-xs text-muted-foreground"
+                        data-testid={`memory-private-label-${item.id}`}
+                      >
                         <Checkbox
                           checked={item.privateToBot}
                           onCheckedChange={(value) => void togglePrivate(item, value === true)}
@@ -204,7 +233,8 @@
                           size="sm"
                           variant="ghost"
                           class="h-6 px-2 text-xs"
-                          onclick={() => void viewEvidence(item, evidence.conversationId!, evidence.messageId!)}
+                          onclick={() =>
+                            void viewEvidence(item, evidence.conversationId!, evidence.messageId!)}
                           data-testid={`memory-evidence-${item.id}`}
                           data-message-id={evidence.messageId}
                         >
@@ -212,7 +242,13 @@
                         </Button>
                       {/each}
                       <div class="ml-auto flex gap-1">
-                        <Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => startEdit(item)} data-testid={`memory-edit-${item.id}`}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          class="h-6 px-2 text-xs"
+                          onclick={() => startEdit(item)}
+                          data-testid={`memory-edit-${item.id}`}
+                        >
                           {t('common.edit')}
                         </Button>
                         <Button
@@ -247,8 +283,15 @@
       <DialogDescription>{t('memory.deleteBody')}</DialogDescription>
     </DialogHeader>
     <DialogFooter>
-      <Button variant="outline" onclick={() => (deleteDialogOpen = false)}>{t('common.cancel')}</Button>
-      <Button variant="destructive" disabled={deleting} onclick={() => void remove()} data-testid="memory-delete-confirm">
+      <Button variant="outline" onclick={() => (deleteDialogOpen = false)}
+        >{t('common.cancel')}</Button
+      >
+      <Button
+        variant="destructive"
+        disabled={deleting}
+        onclick={() => void remove()}
+        data-testid="memory-delete-confirm"
+      >
         {t('common.delete')}
       </Button>
     </DialogFooter>

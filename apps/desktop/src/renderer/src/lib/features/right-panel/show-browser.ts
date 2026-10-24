@@ -6,7 +6,11 @@ import { toast } from 'svelte-sonner';
  * the current conversation into a visible window. The ipc channel is a pure
  * capability request — the main process does not decide permissions.
  */
-export async function showBrowser(botId: string, conversationId: string, botName: string): Promise<void> {
+export async function showBrowser(
+  botId: string,
+  conversationId: string,
+  botName: string,
+): Promise<void> {
   try {
     // W8: the viewer toolbar copy is localized here, like the window title.
     await window.kepcup.showBotBrowser(

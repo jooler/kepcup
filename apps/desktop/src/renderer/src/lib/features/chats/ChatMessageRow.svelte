@@ -14,6 +14,7 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -21,6 +22,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
+  import QuotedMedia from './QuotedMedia.svelte';
   import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
@@ -116,10 +118,21 @@
     quoted === null
       ? ''
       : quoted.senderType === 'user'
-        ? t('sidebar.userName')
+        ? settingsStore.userDisplayName
         : quoted.senderBotId
           ? chat.botName(quoted.senderBotId)
           : '',
+  );
+  /** 引用块里的被引用附件（图片缩略图 / 文件 chip）：映射成 QuotedMedia 的轻量形状。 */
+  const quotedAttachments = $derived(
+    quoted === null
+      ? []
+      : quoted.attachments.map((a) => ({
+          attachmentId: a.id,
+          fileName: a.fileName,
+          mime: a.mime,
+          size: a.size,
+        })),
   );
 
   let editText = $state('');
@@ -205,7 +218,7 @@
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
     : ''}"
   role="group"
-  aria-label={isUser ? t('sidebar.userName') : name}
+  aria-label={isUser ? settingsStore.userDisplayName : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
   data-highlighted={chat.highlightMessageId === message.id ? 'true' : 'false'}
@@ -245,18 +258,24 @@
       </span>
     {/if}
     {#if quoted !== null}
-      <button
-        type="button"
-        class="mt-0.5 max-w-full truncate rounded-md border-l-2 border-muted-foreground/40 bg-muted/40 px-2 py-0.5 text-left text-[11px] text-muted-foreground"
+      <!-- 引用块：文本 + 被引用附件（图片缩略图可点开大图）。外层用 div——
+           内嵌缩略图按钮，不能再是 button（按钮不可嵌套）。 -->
+      <div
+        class="mt-0.5 flex max-w-full items-center gap-1 rounded-md border-l-2 border-muted-foreground/40 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground"
         data-testid="quoted-line"
       >
-        {quoted.status === 'recalled'
-          ? t('messages.quotedDeleted')
-          : t('messages.quotedLine', {
-              name: quotedName,
-              text: 'text' in quoted.content ? quoted.content.text.slice(0, 60) : '',
-            })}
-      </button>
+        <span class="min-w-0 truncate">
+          {quoted.status === 'recalled'
+            ? t('messages.quotedDeleted')
+            : t('messages.quotedLine', {
+                name: quotedName,
+                text: 'text' in quoted.content ? quoted.content.text.slice(0, 60) : '',
+              })}
+        </span>
+        {#if quoted.status !== 'recalled' && quotedAttachments.length > 0}
+          <QuotedMedia attachments={quotedAttachments} />
+        {/if}
+      </div>
     {/if}
 
     {#if message.attachments.length > 0}

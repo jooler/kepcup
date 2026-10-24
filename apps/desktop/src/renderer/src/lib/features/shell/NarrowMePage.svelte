@@ -2,16 +2,19 @@
   import { ChevronRight, Settings2 } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import ProfileSection from '$lib/features/settings/ProfileSection.svelte';
   import NarrowPage from './NarrowPage.svelte';
 
   /**
-   * 窄屏「我」tab 页（33-narrow-layout）：用户卡（本地用户）+ 设置入口 + 用户
-   * 画像（复用设置分区，窄屏设置页里没有这一项）。设置入口不带分区参——
-   * shell.openSettings() 在窄屏落到设置分组列表页（NarrowSettings），再进各
-   * 分组详情。顶部只有红绿灯拖拽带（不渲染标题，见 NarrowPage）。
+   * 窄屏「我」tab 页（33-narrow-layout）：用户卡（头像与名称来自「个人资料」，
+   * 未设置时回退本地用户占位）+ 设置入口 + 个人资料分区（复用设置分区，窄屏
+   * 设置页里没有这一项）。设置入口不带分区参——shell.openSettings() 在窄屏落
+   * 到设置分组列表页（NarrowSettings），再进各分组详情。顶部只有红绿灯拖拽带
+   * （不渲染标题，见 NarrowPage）。
    */
+  const userName = $derived(settingsStore.userDisplayName);
 </script>
 
 <NarrowPage testid="narrow-me-page">
@@ -19,7 +22,7 @@
     <div class="flex items-center gap-3">
       <UserAvatar class="size-14" testId="narrow-me-avatar" />
       <div class="min-w-0">
-        <p class="truncate text-base font-medium">{t('sidebar.userName')}</p>
+        <p class="truncate text-base font-medium" data-testid="narrow-me-name">{userName}</p>
         <p class="truncate text-xs text-muted-foreground">{t('sidebar.userEmail')}</p>
       </div>
     </div>

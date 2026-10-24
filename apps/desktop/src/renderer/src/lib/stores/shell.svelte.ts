@@ -4,7 +4,7 @@
  * 窄屏（33-narrow-layout）例外：设置改走 NarrowSettings 全屏页，通讯录 /
  * 用户画像直达底部 tab——见 openSettings 的重路由；窄屏暂无工作台入口，`mainView` 不生效。
  */
-import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
+import type { SettingsSectionId } from '$lib/features/settings/sections';
 import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 import { PROJECT_MODULES, type ProjectModuleId, type ProjectSettingsSection } from '@kepcup/shared';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -16,7 +16,7 @@ import {
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
 
-export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
+export type { SettingsSectionId } from '$lib/features/settings/sections';
 export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 
 export type MainView = 'chats' | 'workbench';
@@ -68,11 +68,6 @@ class ShellState {
    * SettingsDialog 渲染完目标分区后消费并复位。
    */
   settingsAnchor = $state<string | null>(null);
-  /**
-   * 「应用」分区旧页签参数（目录 / 已连接 / 自定义）；`custom` / `mcp` / `developer`
-   * 由 openSettings 改开扩展中心 MCP。SettingsDialog 经 resolveSettingsSection 消费。
-   */
-  settingsAppsTab = $state<AppsTab | null>(null);
   /** 右栏（Bot 详情）默认收起，保持界面简单；只在用户点击顶部药丸时展开。 */
   rightPanelCollapsed = $state(true);
 
@@ -133,16 +128,16 @@ class ShellState {
   }
 
   /**
-   * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）；`apps` 分组可
-   * 再带一个旧页签参数：`custom` / `mcp` / `developer` 改开扩展中心 MCP，其余忽略
-   * （「应用」= 已连接账号管理）。
+   * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）。
+   * 旧深链 `mcp` / `developer` 改开扩展中心 MCP（「应用」分区已移除，连接相关都在
+   * 扩展中心对应分组）。
    *
    * 窄屏重路由（33-narrow-layout）：不打开弹框——不带分区落到 NarrowSettings
    * 分组列表页，带分区直达该分组详情页；「通讯录」「用户画像」是底部 tab，
    * 深链直接切 tab。
    */
-  openSettings(section?: SettingsSectionId, anchor?: string, appsTab?: AppsTab): void {
-    if (section !== undefined && settingsSectionOpensExtensionMcp(section, appsTab)) {
+  openSettings(section?: SettingsSectionId, anchor?: string): void {
+    if (section !== undefined && settingsSectionOpensExtensionMcp(section)) {
       this.closeSettings();
       this.openExtensionCenter('mcp');
       return;
@@ -155,7 +150,7 @@ class ShellState {
         this.narrowSettingsOpen = true;
         return;
       }
-      const resolved = resolveSettingsSection(section, appsTab);
+      const resolved = resolveSettingsSection(section);
       if (NARROW_HIDDEN_SETTINGS_SECTIONS.has(resolved.section)) {
         narrowLayout.selectTab(resolved.section === 'contacts' ? 'contacts' : 'me');
         return;
@@ -169,7 +164,6 @@ class ShellState {
     }
     this.settingsSection = section ?? 'general';
     this.settingsAnchor = anchor ?? null;
-    this.settingsAppsTab = appsTab ?? null;
     this.settingsOpen = true;
   }
 

@@ -2,7 +2,8 @@
   /**
    * 头像编辑卡（参考 Grok Bot 的 Edit Avatar 弹层）：左上「预置 / 上传」
    * 两个页签，右上 Reset（恢复预置第一个形状 + 第一种颜色）。预置页签
-   * 形状网格 + 颜色色板，点选即保存；上传页签选择图片后前端缩放再上传。
+   * 形状网格 + 颜色色板，点选即保存；上传页签选图后先经 AvatarCropper
+   * 裁成方形（弹窗 Portal 到 body），确认再上传。
    */
   import { ImagePlus, RotateCcw } from '@lucide/svelte';
   import type { Bot } from '@kepcup/shared';
@@ -17,7 +18,7 @@
     formatPresetAvatar,
     parsePresetAvatar,
   } from '$lib/avatars/presets';
-  import { fileToAvatarPayload } from '$lib/avatars/upload-image';
+  import AvatarCropper from '$lib/avatars/AvatarCropper.svelte';
   import BotPresetAvatar from '$lib/avatars/BotPresetAvatar.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
@@ -28,6 +29,7 @@
 
   let tab = $state<'preset' | 'upload'>('preset');
   let uploading = $state(false);
+  let cropFile = $state<File | null>(null);
   let node = $state<HTMLDivElement | null>(null);
 
   // 当前选择：预置值直接解析；尚未设置头像（或上传态）时视为默认组合，
@@ -53,6 +55,8 @@
   });
 
   function closeOnPointerdown(event: PointerEvent): void {
+    // 裁切弹窗开着时（Portal 到 body，目标必在 node 外）不动选择器。
+    if (cropFile !== null) return;
     if (open && node && !node.contains(event.target as globalThis.Node)) open = false;
   }
 
@@ -79,15 +83,24 @@
     }
   }
 
-  async function onPickFile(event: Event): Promise<void> {
+  function onPickFile(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
+    // 选图先弹裁切：确认后才上传（AvatarCropper 的 onconfirm）。
+    cropFile = file;
+  }
+
+  async function onCropConfirm(payload: { mime: 'image/png'; bytesBase64: string }): Promise<void> {
     uploading = true;
     try {
-      const { mime, bytesBase64 } = await fileToAvatarPayload(file);
-      await core.call('bots.avatar.upload', { id: bot.id, mime, bytesBase64 });
+      await core.call('bots.avatar.upload', {
+        id: bot.id,
+        mime: payload.mime,
+        bytesBase64: payload.bytesBase64,
+      });
+      cropFile = null;
       open = false;
     } catch (error) {
       toast.error(
@@ -109,7 +122,7 @@
     class="absolute top-full left-1/2 z-30 mt-2 w-76 -translate-x-1/2 rounded-2xl border bg-popover text-sm shadow-xl"
     data-testid="avatar-picker"
   >
-    <div class="flex items-center gap-1 p-2 border-b">
+    <div class="flex items-center gap-1 border-b p-2">
       <button
         type="button"
         class="rounded-full px-2.5 py-1 font-medium transition-colors {tab === 'preset'
@@ -173,8 +186,8 @@
         {#each AVATAR_COLORS as color (color.id)}
           <button
             type="button"
-            class="size-7 shrink-0 rounded-full transition-transform hover:scale-110 {selected
-              .color.id === color.id
+            class="size-7 shrink-0 rounded-full transition-transform hover:scale-110 {selected.color
+              .id === color.id
               ? 'ring-2 ring-ring ring-offset-2 ring-offset-popover'
               : ''}"
             style="background: {color.hex};"
@@ -186,24 +199,36 @@
         {/each}
       </div>
     {:else}
-    <div class="p-2">
-      <label
-        class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent p-2 {uploading
-          ? 'pointer-events-none opacity-60'
-          : ''}"
-        data-testid="avatar-upload-zone"
-      >
-        <ImagePlus class="size-6" aria-hidden="true" />
-        <span>{t('rightPanel.avatarUploadHint')}</span>
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
-          class="hidden"
-          onchange={onPickFile}
-          data-testid="avatar-upload-input"
-        />
-      </label>
-    </div>
+      <div class="p-2">
+        <label
+          class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed p-2 px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent {uploading
+            ? 'pointer-events-none opacity-60'
+            : ''}"
+          data-testid="avatar-upload-zone"
+        >
+          <ImagePlus class="size-6" aria-hidden="true" />
+          <span>{t('rightPanel.avatarUploadHint')}</span>
+          <span class="text-xs text-muted-foreground/80"
+            >{t('rightPanel.avatarUploadCropHint')}</span
+          >
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
+            class="hidden"
+            onchange={onPickFile}
+            data-testid="avatar-upload-input"
+          />
+        </label>
+      </div>
     {/if}
   </div>
+{/if}
+
+{#if cropFile !== null}
+  <AvatarCropper
+    file={cropFile}
+    busy={uploading}
+    onconfirm={onCropConfirm}
+    oncancel={() => (cropFile = null)}
+  />
 {/if}

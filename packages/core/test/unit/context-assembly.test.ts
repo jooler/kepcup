@@ -544,3 +544,170 @@ describe('widget reply message', () => {
     expect(line).toContain('| 用户]');
   });
 });
+
+// 引用回复（replyTo）标注：模型读到的每一行都要说明「回复了哪条」——被引用的
+// 是图片等非文本附件时正文没有文字，标注还要带上附件 id（get_attachment 凭据）。
+describe('message reply annotation', () => {
+  const quotedText = makeMessage({
+    id: 'msg_a',
+    seq: 1,
+    senderType: 'user',
+    content: { text: '看看这张图' },
+  });
+  const quotedImage = makeMessage({
+    id: 'msg_img',
+    seq: 2,
+    senderType: 'user',
+    content: { text: '' },
+    attachments: [
+      {
+        id: 'att_img1',
+        conversationId: 'conv_1',
+        messageId: 'msg_img',
+        fileName: 'photo.png',
+        mime: 'image/png',
+        size: 2048,
+        sha256: 'ab',
+        relPath: 'att/ab.png',
+        createdAt: 0,
+      },
+    ],
+  });
+  const optionsWithResolver: RenderMessageOptions = {
+    ...renderOptions,
+    resolveReplyTarget: (id) =>
+      id === 'msg_a' ? quotedText : id === 'msg_img' ? quotedImage : null,
+  };
+
+  it('annotates the quoted message: id, sender, quoted text in <untrusted>', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_b', seq: 3, replyTo: 'msg_a', content: { text: '这是什么？' } }),
+      optionsWithResolver,
+    );
+    expect(line).toContain('（回复 msg_a [用户]：<untrusted>看看这张图</untrusted>）');
+    // 标注在行尾（提及 / 附件之后）。
+    expect(line.indexOf('这是什么？')).toBeLessThan(line.indexOf('（回复 '));
+  });
+
+  it('quotes an image message with its attachment id so the model can get_attachment', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_c', seq: 4, replyTo: 'msg_img', content: { text: '图里是什么？' } }),
+      optionsWithResolver,
+    );
+    expect(line).toContain('（回复 msg_img [用户]：<untrusted>（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+  });
+
+  it('combines quoted text and attachment entries in one annotation', () => {
+    const mixed = makeMessage({
+      id: 'msg_mixed',
+      seq: 2,
+      content: { text: '看这张' },
+      attachments: quotedImage.attachments,
+    });
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_c2', seq: 4, replyTo: 'msg_mixed', content: { text: 'hi' } }),
+      { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_mixed' ? mixed : null) },
+    );
+    expect(line).toContain('（回复 msg_mixed [用户]：<untrusted>看这张（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+  });
+
+  it('keeps the workbench/butler origin qualification when quoting such a message', () => {
+    // D90 口径：管家起草的文字在引用标注里也不能被归到用户本人名下。
+    const butlerDrafted = makeMessage({
+      id: 'msg_butler',
+      seq: 2,
+      content: { text: '把周报发出去', origin: 'workbench', butlerDrafted: true } as Message['content'],
+    });
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_b2', seq: 4, replyTo: 'msg_butler', content: { text: '好' } }),
+      { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_butler' ? butlerDrafted : null) },
+    );
+    expect(line).toContain('（回复 msg_butler [用户（经工作台派发；事项由管家起草');
+    expect(line).toContain('<untrusted>把周报发出去</untrusted>');
+  });
+
+  it('degrades to the bare quoted id when the target lives in another conversation', () => {
+    const elsewhere = makeMessage({
+      id: 'msg_far',
+      seq: 1,
+      conversationId: 'conv_other',
+      content: { text: '别的会话的消息' },
+    });
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_d2', seq: 5, replyTo: 'msg_far', content: { text: 'hi' } }),
+      { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_far' ? elsewhere : null) },
+    );
+    expect(line).toContain('（回复 msg_far）');
+    expect(line).not.toContain('别的会话的消息');
+  });
+
+  it('degrades to the bare quoted id when the resolver throws', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_d3', seq: 5, replyTo: 'msg_a', content: { text: 'hi' } }),
+      {
+        ...renderOptions,
+        resolveReplyTarget: () => {
+          throw new Error('resolver down');
+        },
+      },
+    );
+    expect(line).toContain('（回复 msg_a）');
+    expect(line).not.toContain('<untrusted>');
+  });
+
+  it('degrades to the bare quoted id when the target is unresolvable', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_d', seq: 5, replyTo: 'msg_gone', content: { text: 'hi' } }),
+      optionsWithResolver,
+    );
+    expect(line).toContain('（回复 msg_gone）');
+    expect(line).not.toContain('<untrusted>（回复');
+  });
+
+  it('marks a recalled quoted message instead of leaking its content', () => {
+    const options: RenderMessageOptions = {
+      ...renderOptions,
+      resolveReplyTarget: (id) =>
+        id === 'msg_gone'
+          ? makeMessage({ id: 'msg_gone', seq: 1, status: 'recalled', content: { text: '秘密' } })
+          : null,
+    };
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_e', seq: 5, replyTo: 'msg_gone', content: { text: 'hi' } }),
+      options,
+    );
+    expect(line).toContain('（回复 msg_gone：原消息已撤回）');
+    expect(line).not.toContain('秘密');
+  });
+
+  it('never renders another bot\'s private quoted row (ownerBotId visibility)', () => {
+    const options: RenderMessageOptions = {
+      ...renderOptions,
+      resolveReplyTarget: (id) =>
+        id === 'msg_priv'
+          ? makeMessage({
+              id: 'msg_priv',
+              seq: 1,
+              kind: 'task_event',
+              ownerBotId: 'bot_other',
+              taskId: 'run_1',
+              content: { phase: 'result', text: '任务内部结果', taskId: 'run_1' },
+            } as Message)
+          : null,
+    };
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_f', seq: 5, replyTo: 'msg_priv', content: { text: 'hi' } }),
+      options,
+    );
+    expect(line).toContain('（回复 msg_priv）');
+    expect(line).not.toContain('任务内部结果');
+  });
+
+  it('without a resolver the annotation still names the quoted id', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_g', seq: 5, replyTo: 'msg_a', content: { text: 'hi' } }),
+      renderOptions,
+    );
+    expect(line).toContain('（回复 msg_a）');
+  });
+});

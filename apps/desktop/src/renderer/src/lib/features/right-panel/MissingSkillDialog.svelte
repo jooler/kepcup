@@ -34,7 +34,9 @@
     } catch (error) {
       console.error('[skills] purge missing failed', { name: current.name, error });
       toast.error(
-        error instanceof Error && error.message.length > 0 ? error.message : t('skills.actionFailed'),
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : t('skills.actionFailed'),
       );
     } finally {
       busy = false;
@@ -54,7 +56,7 @@
         <DialogTitle>{t('skills.missingTitle')}</DialogTitle>
         <DialogDescription>{t('skills.missingBody', { name: current.name })}</DialogDescription>
       </DialogHeader>
-      <p class="break-all text-xs text-muted-foreground" data-testid="skill-missing-path">
+      <p class="text-xs break-all text-muted-foreground" data-testid="skill-missing-path">
         {current.dirPath}
       </p>
       <DialogFooter>

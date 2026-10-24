@@ -92,7 +92,9 @@
   /** 执行者：Bot 名；派给群且没指定负责 Bot 的工作台排期没有 botId，显示群名。 */
   function ownerText(entry: ScheduleEntry): string {
     if (entry.botId !== null) return entry.botName ?? entry.botId;
-    const group = chat.conversations.find((conversation) => conversation.id === entry.conversationId);
+    const group = chat.conversations.find(
+      (conversation) => conversation.id === entry.conversationId,
+    );
     return t('schedules.workbenchProject', { name: group?.title ?? entry.conversationId });
   }
 
@@ -156,7 +158,8 @@
             {ownerText(entry)}
           </p>
           <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-when">
-            {whenText(entry)}{#if entry.kind === 'cron'} · {t('schedules.nextFire', {
+            {whenText(entry)}{#if entry.kind === 'cron'}
+              · {t('schedules.nextFire', {
                 time: fireTime(entry),
               })}{/if}
           </p>

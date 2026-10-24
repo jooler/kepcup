@@ -412,6 +412,9 @@ export const settingsUpdateInputSchema = z.object({
   /** D96 远程遥控：总开关与中转地址（部分 patch；条目 `remote.enabled` / `remote.relay`）。 */
   remoteEnabled: z.boolean().optional(),
   remoteRelayUrl: relayEndpointSchema.optional(),
+  /** 用户个人资料（Profile）：显示名与头像引用（条目 `profile.user-name` / `profile.user-avatar`）。 */
+  userProfileName: z.string().optional(),
+  userProfileAvatar: z.string().optional(),
   /**
    * D89 审查修复：这份补丁是从哪一版设置快照改出来的（只需带补丁里的顶层键）。给了就由 core 按
    * 键三方合并（`mergeThreeWay`）：表单没改的字段保留最新值（Bot 直改、设置卡、别处保存的不被
@@ -924,6 +927,20 @@ export const botsAvatarDataInputSchema = z.object({
   file: z.string().min(1),
 });
 export const botsAvatarDataOutputSchema = z.object({ mime: z.string(), base64: z.string() });
+/**
+ * Upload the user's own avatar (Profile settings). Core writes the file under
+ * `user/avatar/`, keeps only the latest upload, points
+ * `settings.userProfileAvatar` at it (`upload:{fileName}`) and publishes
+ * `settings.changed`. The renderer sends already cropped square bytes.
+ */
+export const userAvatarUploadInputSchema = z.object({
+  mime: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  bytesBase64: z.string().min(1),
+});
+export const userAvatarUploadOutputSchema = z.object({ avatar: z.string() });
+/** Read back the user avatar (file name comes from `settings.userProfileAvatar`). */
+export const userAvatarDataInputSchema = z.object({ file: z.string().min(1) });
+export const userAvatarDataOutputSchema = z.object({ mime: z.string(), base64: z.string() });
 export const botsDeletionPreviewOutputSchema = z.object({
   conversations: z.number().int(),
   messages: z.number().int(),
@@ -2201,6 +2218,11 @@ export const rpcMethodSchemas = {
     output: botsAvatarUploadOutputSchema,
   },
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
+  'user.avatar.upload': {
+    input: userAvatarUploadInputSchema,
+    output: userAvatarUploadOutputSchema,
+  },
+  'user.avatar.data': { input: userAvatarDataInputSchema, output: userAvatarDataOutputSchema },
   'bots.delete': { input: botIdInputSchema, output: okOutput },
   'bots.deletionPreview': { input: botIdInputSchema, output: botsDeletionPreviewOutputSchema },
   /** 模板导出/导入（docs/design/48-bot-template-export.md）：导出前摘要。 */

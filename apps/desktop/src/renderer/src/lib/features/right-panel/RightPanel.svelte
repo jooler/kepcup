@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { X, Monitor, Pencil } from '@lucide/svelte';
-  import type { BotProfile } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import type { BotProfile, WidgetsListItem } from '@kepcup/shared';
+  import { t, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -21,12 +21,19 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
+  import {
+    BOT_CONFIG_ANCHOR_SECTIONS,
+    BOT_CONFIG_SECTION_LABEL_KEYS,
+    type BotConfigSection,
+  } from '$lib/features/bot-panel/bot-config-sections';
+  import BotMenu from './BotMenu.svelte';
+  import BotWidgetDetail from './BotWidgetDetail.svelte';
+  import DetailHeader from './DetailHeader.svelte';
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
   import WikiBrowser from '../wiki/WikiBrowser.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
-  import WidgetsTab from './WidgetsTab.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
@@ -51,58 +58,67 @@
   const isMac = /Mac/i.test(navigator.platform);
 
   let draft = $state<BotProfile | null>(null);
-  let activeTab = $state('profile');
-  // D80: a card / message tag asked for the schedules tab.
+  /**
+   * Bot 详情的统一下钻状态（tabs 已移除，所有内容收进一张二级菜单列表）：null =
+   * 菜单首页；否则为下钻的详情——配置条目（BotProfileForm section 模式）、组件
+   * 查看（BotWidgetDetail）或原各 tab 的内容。深链锚点按
+   * BOT_CONFIG_ANCHOR_SECTIONS 直达对应配置条目。
+   */
+  type PanelDetail =
+    | { kind: 'profile'; section: BotConfigSection }
+    | { kind: 'widget'; widget: WidgetsListItem }
+    | { kind: 'memory' }
+    | { kind: 'skills' }
+    | { kind: 'wiki' }
+    | { kind: 'access' }
+    | { kind: 'schedules' }
+    | { kind: 'watches' };
+  let detail = $state<PanelDetail | null>(null);
+  let configMenu = $state<BotMenu | null>(null);
+  let workdirSelector = $state<WorkdirSelector | null>(null);
+
+  /** 详情标题的文案键（返回头 + 深链共用）。 */
+  const DETAIL_TITLE_KEYS: Record<
+    Exclude<PanelDetail['kind'], 'profile' | 'widget'>,
+    MessageKey
+  > = {
+    memory: 'rightPanel.tabMemory',
+    skills: 'rightPanel.tabSkills',
+    wiki: 'rightPanel.tabWiki',
+    access: 'rightPanel.tabAccess',
+    schedules: 'rightPanel.tabSchedules',
+    watches: 'watches.title',
+  };
+
+  // D80（回执卡 / 提议卡的「全部定时任务」）与设置卡深链（'profile' / 'skills'）。
   $effect(() => {
     const requested = shell.rightPanelTabRequest;
     if (requested === null) return;
-    if (tabItems.some((tab) => tab.value === requested)) activeTab = requested;
     shell.rightPanelTabRequest = null;
+    detail =
+      requested === 'skills'
+        ? { kind: 'skills' }
+        : requested === 'schedules'
+          ? { kind: 'schedules' }
+          : null;
   });
-  // 对话内设置卡的深链（shell.openBotPanel）：切到页签后滚到 [data-settings-anchor]。草稿
-  // 克隆完才渲染配置表单，找不到就逐帧重试一小会儿（anchor-scroll.ts）。
+  // 对话内设置卡的深链（shell.openBotPanel）：按锚点映射直接落到二级菜单对应
+  // 配置条目，再滚到 [data-settings-anchor]。草稿克隆完才渲染配置表单，找不到
+  // 就逐帧重试一小会儿（anchor-scroll.ts）。
   $effect(() => {
     const anchor = shell.botPanelAnchor;
     if (anchor === null) return;
+    const section = BOT_CONFIG_ANCHOR_SECTIONS[anchor];
+    detail = section !== undefined ? { kind: 'profile', section } : null;
     void revealSettingsAnchor({
       anchor,
-      container: () => document.getElementById(`tab-panel-${untrack(() => activeTab)}`),
+      container: () => document.querySelector('[data-testid="bot-panel-content"]'),
       flush: tick,
       wait: nextFrame,
       attempts: 30,
       clear: () => (shell.botPanelAnchor = null),
     });
   });
-
-  /**
-   * 手写切换条：组件库 Tabs 的样式变体写在 `data-active:` 上，而 bits-ui 实际
-   * 输出 `data-state="active"`，激活样式永不生效。此处自绘——Grok 风格的药丸
-   * 分段条（激活项灰底圆角胶囊，非激活项透明度减半），放在头部资料卡下方。
-   */
-  const tabItems = [
-    { value: 'profile', labelKey: 'rightPanel.tabProfile' },
-    { value: 'access', labelKey: 'rightPanel.tabAccess' },
-    { value: 'memory', labelKey: 'rightPanel.tabMemory' },
-    { value: 'skills', labelKey: 'rightPanel.tabSkills' },
-    { value: 'widgets', labelKey: 'rightPanel.tabWidgets' },
-    { value: 'wiki', labelKey: 'rightPanel.tabWiki' },
-    { value: 'schedules', labelKey: 'rightPanel.tabSchedules' },
-    { value: 'other', labelKey: 'rightPanel.otherSection' },
-  ] as const;
-
-  function onTablistKeydown(
-    event: KeyboardEvent & { currentTarget: EventTarget & HTMLDivElement },
-  ): void {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const index = tabItems.findIndex((tab) => tab.value === activeTab);
-    if (index === -1) return;
-    const delta = event.key === 'ArrowRight' ? 1 : -1;
-    const next = tabItems[(index + delta + tabItems.length) % tabItems.length];
-    if (!next) return;
-    activeTab = next.value;
-    event.currentTarget.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
-  }
 
   /** 「其它」分组：移除 Bot（删除全部数据，历史保留为只读）。 */
   let removeOpen = $state(false);
@@ -145,6 +161,10 @@
         serverProfile,
       });
       if (result.action === 'replace') {
+        // 换 Bot 时下钻详情一并回到菜单首页。
+        if (draftBotId !== bot.id) {
+          detail = null;
+        }
         draft = structuredClone(result.draft);
         savedProfile = bot.profile;
         draftBotId = bot.id;
@@ -153,6 +173,7 @@
       draft = null;
       savedProfile = null;
       draftBotId = null;
+      detail = null;
     }
   });
 
@@ -306,7 +327,7 @@
 >
   <header
     class="app-drag wco-inset-end @container relative z-30 flex h-12 shrink-0 items-center justify-end {narrow &&
-      isMac
+    isMac
       ? 'pr-2 pl-20'
       : 'px-4'}"
   >
@@ -337,6 +358,10 @@
           <X class="size-3.5" aria-hidden="true" />
           <span class="@max-[380px]:hidden">{t('rightPanel.browserClose')}</span>
         </Button>
+      {/if}
+      <!-- D48：导出为模板（人设/能力/自写技能/头像）——顶栏图标钮，与关闭按钮同款样式。 -->
+      {#if bot?.status === 'active'}
+        <ExportBotTemplateButton botId={bot.id} botName={bot.name} />
       {/if}
       <!-- 关闭按钮与对话列表页的搜索 / 新增同款（圆形带边框，33-narrow-layout）。 -->
       <Button
@@ -458,214 +483,140 @@
         <AvatarPicker bind:open={pickerOpen} {bot} />
       </div>
 
-      <div
-        class="flex shrink-0 items-center gap-0.5 overflow-x-auto px-3 pb-1 whitespace-nowrap"
-        role="tablist"
-        tabindex={-1}
-        data-testid="right-panel-tabs"
-        onkeydown={onTablistKeydown}
-      >
-        {#each tabItems as tab (tab.value)}
-          <button
-            type="button"
-            role="tab"
-            id={`tab-${tab.value}`}
-            aria-selected={activeTab === tab.value}
-            aria-controls={`tab-panel-${tab.value}`}
-            tabindex={activeTab === tab.value ? 0 : -1}
-            class="rounded-full px-2.5 py-1 text-[13px] transition-colors {activeTab === tab.value
-              ? 'bg-muted font-medium text-foreground'
-              : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'}"
-            onclick={() => (activeTab = tab.value)}
-          >
-            {t(tab.labelKey)}
-          </button>
-        {/each}
-      </div>
-      <div
-        id="tab-panel-profile"
-        role="tabpanel"
-        aria-labelledby="tab-profile"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'profile'}
-        data-testid="profile-tab"
-      >
-        <div class="space-y-4">
-          <!-- 工作目录（P04）：绑定在对话上，配置 tab 内手动选择/切换；
-               执行中切换由选择器内部禁用。 -->
-          {#if conversation}
-            <WorkdirSelector
-              conversationId={conversation.id}
-              workdirId={conversation.workdirId}
-              disabled={conversation.readOnly}
-            />
-          {/if}
-          <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
-          <BotProfileForm
-            bind:profile={draft}
-            showIdentity={false}
-            botId={bot?.id}
-            onBrowserProfileConfirm={confirmBrowserProfile}
+      <!-- 统一二级菜单 / 下钻详情（tabs 已移除）：默认菜单列表，点行进入详情。 -->
+      <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
+        <!-- 工作目录（P04）：选择弹框挂在这里，菜单的工作目录行经 openPicker 打开。 -->
+        {#if conversation}
+          <WorkdirSelector
+            bind:this={workdirSelector}
+            conversationId={conversation.id}
+            workdirId={conversation.workdirId}
+            disabled={conversation.readOnly}
+            showBlock={false}
           />
-          {#if bot}
+        {/if}
+        {#if detail === null}
+          <div class="space-y-4">
+            <!-- D73 P2：污点外发汇总（有记录才占位），置于菜单之上。 -->
             <EgressSummary botId={bot.id} />
-            <!-- D48：导出为模板（人设/能力/自写技能/头像；私有数据不包含）。 -->
-            <ExportBotTemplateButton botId={bot.id} botName={bot.name} />
-          {/if}
-        </div>
-      </div>
-      <div
-        id="tab-panel-access"
-        role="tabpanel"
-        aria-labelledby="tab-access"
-        class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm"
-        hidden={activeTab !== 'access'}
-        data-testid="access-tab"
-      >
-        {#if confirmMode}
-          <p
-            class="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
-            data-testid="confirm-mode-hint"
-          >
-            {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
-          </p>
-        {/if}
-        {#if grants.length === 0}
-          <p class="text-muted-foreground" data-testid="grants-empty">
-            {t('rightPanel.grantsEmpty')}
-          </p>
-        {:else}
-          <ul class="space-y-2" data-testid="grants-list">
-            {#each grants as grant (grant.id)}
-              <li class="rounded-md border p-2" data-testid={`grant-item-${grant.id}`}>
-                <code class="block text-xs break-all">{grant.path}</code>
-                <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span
-                    >{t(
-                      grant.access === 'write' ? 'rightPanel.grantWrite' : 'rightPanel.grantRead',
-                    )}</span
-                  >
-                  <span>·</span>
-                  <span
-                    >{t(
-                      grant.duration === 'once'
-                        ? 'rightPanel.grantOnce'
-                        : 'rightPanel.grantConversation',
-                    )}</span
-                  >
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="ml-auto h-6 px-2 text-xs text-destructive"
-                    onclick={() => void permissions.revokeGrant(grant.id)}
-                    data-testid={`grant-revoke-${grant.id}`}
-                  >
-                    {t('rightPanel.revoke')}
-                  </Button>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        <p class="text-xs text-muted-foreground">{t('rightPanel.grantsHint')}</p>
-      </div>
-      <div
-        id="tab-panel-memory"
-        role="tabpanel"
-        aria-labelledby="tab-memory"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'memory'}
-      >
-        {#if bot}
-          <MemoryTab botId={bot.id} active={activeTab === 'memory'} />
-        {/if}
-      </div>
-      <div
-        id="tab-panel-skills"
-        role="tabpanel"
-        aria-labelledby="tab-skills"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'skills'}
-      >
-        {#if bot}
-          <SkillsTab botId={bot.id} active={activeTab === 'skills'} />
-        {/if}
-      </div>
-      <div
-        id="tab-panel-widgets"
-        role="tabpanel"
-        aria-labelledby="tab-widgets"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'widgets'}
-      >
-        {#if bot}
-          <WidgetsTab
+            <!-- D48 导出为模板已上移到顶栏（关闭按钮左侧）。 -->
+            <BotMenu
+              bind:this={configMenu}
+              profile={draft}
+              botId={bot.id}
+              conversationId={conversation?.id}
+              workdirId={conversation?.workdirId ?? null}
+              workdirDisabled={conversation?.readOnly}
+              deletable={bot.systemRole !== 'butler'}
+              onOpenSection={(section) => (detail = { kind: 'profile', section })}
+              onOpenWidget={(widget) => (detail = { kind: 'widget', widget })}
+              onOpenWorkdir={() => workdirSelector?.openPicker()}
+              onOpenMemory={() => (detail = { kind: 'memory' })}
+              onOpenSkills={() => (detail = { kind: 'skills' })}
+              onOpenWiki={() => (detail = { kind: 'wiki' })}
+              onOpenAccess={() => (detail = { kind: 'access' })}
+              onOpenSchedules={() => (detail = { kind: 'schedules' })}
+              onOpenWatches={() => (detail = { kind: 'watches' })}
+              onRemoveBot={() => void askRemove()}
+            />
+          </div>
+        {:else if detail.kind === 'widget'}
+          <!-- 组件直查详情：菜单置顶组件行的落点（发卡 / 删除在此）。 -->
+          <BotWidgetDetail
             botId={bot.id}
             conversationId={conversation?.id}
-            active={activeTab === 'widgets'}
+            widget={detail.widget}
+            onChanged={() => void configMenu?.refresh()}
+            onBack={() => (detail = null)}
           />
-        {/if}
-      </div>
-      <div
-        id="tab-panel-wiki"
-        role="tabpanel"
-        aria-labelledby="tab-wiki"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'wiki'}
-      >
-        {#if bot}
-          <WikiBrowser owner={{ kind: 'bot', id: bot.id }} active={activeTab === 'wiki'} />
-        {/if}
-      </div>
-      <div
-        id="tab-panel-schedules"
-        role="tabpanel"
-        aria-labelledby="tab-schedules"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'schedules'}
-      >
-        {#if bot && conversation}
-          <!-- P10: the current conversation's schedules (direct chat = this bot). -->
-          <SchedulesPanel
-            conversationId={conversation.id}
-            active={activeTab === 'schedules'}
-            testid="schedules-tab"
-          />
-          <!-- W7: the conversation's web-page watches, next to its schedules. -->
-          <section class="mt-4 space-y-2">
-            <p class="text-xs font-medium">{t('watches.title')}</p>
-            <WatchesPanel
-              conversationId={conversation.id}
-              active={activeTab === 'schedules'}
-              testid="watches-tab"
+        {:else if detail.kind === 'profile'}
+          <!-- 配置条目详情：返回回菜单；字段变化仍走表单自动保存。 -->
+          <div class="space-y-3" data-testid={`bot-detail-${detail.section}`}>
+            <DetailHeader
+              title={t(BOT_CONFIG_SECTION_LABEL_KEYS[detail.section])}
+              onBack={() => (detail = null)}
             />
-          </section>
-        {/if}
-      </div>
-      <div
-        id="tab-panel-other"
-        role="tabpanel"
-        aria-labelledby="tab-other"
-        class="min-h-0 flex-1 overflow-y-auto p-4"
-        hidden={activeTab !== 'other'}
-        data-testid="bot-other-section"
-      >
-        <!-- 其它分组：移除 Bot（左栏条目不再有「…」删除入口，收拢到这里）。
-             管家（D70）不可删除：只给说明，不给按钮。 -->
-        {#if bot?.systemRole === 'butler'}
-          <p class="text-xs text-muted-foreground" data-testid="bot-remove-butler-note">
-            {t('rightPanel.butlerUndeletable')}
-          </p>
+            <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
+            <BotProfileForm
+              bind:profile={draft}
+              showIdentity={false}
+              botId={bot?.id}
+              onBrowserProfileConfirm={confirmBrowserProfile}
+              section={detail.section}
+            />
+          </div>
         {:else}
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-7 w-full gap-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onclick={() => void askRemove()}
-            data-testid="bot-remove"
-          >
-            {t('rightPanel.removeBot')}
-          </Button>
+          <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
+          <div class="flex min-h-0 flex-col gap-3" data-testid={`bot-detail-${detail.kind}`}>
+            <DetailHeader
+              title={t(DETAIL_TITLE_KEYS[detail.kind])}
+              onBack={() => (detail = null)}
+            />
+            {#if detail.kind === 'access'}
+              {#if confirmMode}
+                <p
+                  class="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
+                  data-testid="confirm-mode-hint"
+                >
+                  {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
+                </p>
+              {/if}
+              {#if grants.length === 0}
+                <p class="text-muted-foreground" data-testid="grants-empty">
+                  {t('rightPanel.grantsEmpty')}
+                </p>
+              {:else}
+                <ul class="space-y-2" data-testid="grants-list">
+                  {#each grants as grant (grant.id)}
+                    <li class="rounded-md border p-2" data-testid={`grant-item-${grant.id}`}>
+                      <code class="block text-xs break-all">{grant.path}</code>
+                      <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span
+                          >{t(
+                            grant.access === 'write'
+                              ? 'rightPanel.grantWrite'
+                              : 'rightPanel.grantRead',
+                          )}</span
+                        >
+                        <span>·</span>
+                        <span
+                          >{t(
+                            grant.duration === 'once'
+                              ? 'rightPanel.grantOnce'
+                              : 'rightPanel.grantConversation',
+                          )}</span
+                        >
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="ml-auto h-6 px-2 text-xs text-destructive"
+                          onclick={() => void permissions.revokeGrant(grant.id)}
+                          data-testid={`grant-revoke-${grant.id}`}
+                        >
+                          {t('rightPanel.revoke')}
+                        </Button>
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+              <p class="text-xs text-muted-foreground">{t('rightPanel.grantsHint')}</p>
+            {:else if detail.kind === 'memory'}
+              <MemoryTab botId={bot.id} active={true} />
+            {:else if detail.kind === 'skills'}
+              <SkillsTab botId={bot.id} active={true} />
+            {:else if detail.kind === 'wiki'}
+              <WikiBrowser owner={{ kind: 'bot', id: bot.id }} active={true} />
+            {:else if conversation}
+              {#if detail.kind === 'schedules'}
+                <!-- P10: the current conversation's schedules (direct chat = this bot). -->
+                <SchedulesPanel conversationId={conversation.id} testid="schedules-tab" />
+              {:else}
+                <!-- W7: the conversation's web-page watches. -->
+                <WatchesPanel conversationId={conversation.id} testid="watches-tab" />
+              {/if}
+            {/if}
+          </div>
         {/if}
       </div>
     </div>

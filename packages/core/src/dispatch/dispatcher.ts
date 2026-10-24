@@ -173,6 +173,7 @@ export function judgeContinuation(input: ContinuationInput): Promise<Continuatio
         timeZone: input.timeZone,
         botId: input.botId,
         bots: input.bots,
+        messages: input.messages,
       }),
     parametersSchema: continuationParametersSchema,
     schema: continuationOutputSchema,
@@ -193,6 +194,7 @@ function buildContinuationUserMessage(input: {
   timeZone: string;
   botId: string;
   bots: BotsService;
+  messages: MessagesService;
 }): string {
   const names = new Map<string, string>();
   for (const bot of input.bots.listActive())
@@ -201,6 +203,8 @@ function buildContinuationUserMessage(input: {
     selfBotId: input.botId,
     timeZone: input.timeZone,
     botNames: names,
+    // 引用回复标注：续接判断也要看得出消息回复的是哪条（图片引用尤其依赖）。
+    resolveReplyTarget: (id: string) => input.messages.getById(id),
   };
   const render = (messages: Message[]) =>
     messages
