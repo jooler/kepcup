@@ -1,9 +1,10 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { RPC_EVENT_NAMES, type RpcMethodSpec } from '@kepcup/shared';
+import { RELAY_MAX_FRAME_BYTES, RPC_EVENT_NAMES, type RpcMethodSpec } from '@kepcup/shared';
 import {
   createRpcServer,
+  LOCAL_ONLY_METHODS,
   withRemoteSource,
   type CoreLogger,
   type CoreServices,
@@ -25,9 +26,6 @@ const WS_PING_INTERVAL_MS = 30_000;
 /** 与 RemoteHub 相同的高频事件合流策略（run.progress ≤10Hz、保留最新）。 */
 const COALESCED_EVENTS = new Set(['run.progress']);
 const COALESCE_FLUSH_MS = 100;
-
-/** 与 RemoteHub.LOCAL_ONLY_METHODS 对齐：测试缝不进任何远程端点。 */
-const LOCAL_ONLY_METHODS = new Set(['remote.testInjectPairing']);
 
 interface SessionConnection {
   username: string;
@@ -54,7 +52,8 @@ export class SessionHub {
   #pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: SessionHubOptions) {
-    this.#wss = new WebSocketServer({ noServer: true });
+    // 帧上限交给 ws 在缓冲期拒绝（审查修复：原先默认 100MiB，已认证连接也不该能打内存）。
+    this.#wss = new WebSocketServer({ noServer: true, maxPayload: RELAY_MAX_FRAME_BYTES });
     this.#services = options.services;
     this.#auth = options.auth;
     this.#logger = options.logger;
@@ -62,6 +61,22 @@ export class SessionHub {
 
   /** server.ts 在 upgrade 事件里按路径分流进来。 */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    // CSWSH 纵深（审查修复 P1）：与 direct-relay 同款——浏览器跨站握手即使带着
+    // Cookie 也拒（SameSite=Lax 之外的防线）；Origin 缺省放行（非浏览器客户端）。
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+      let sameOrigin: boolean;
+      try {
+        sameOrigin = new URL(origin).host === (req.headers.host ?? '');
+      } catch {
+        sameOrigin = false;
+      }
+      if (!sameOrigin) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
     const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '');
     const token = sessionTokenFromCookie(req.headers.cookie) ?? bearer?.[1];
     const session = token !== undefined ? this.#auth.verifyToken(token) : null;

@@ -84,7 +84,8 @@ describe('AuthStore', () => {
     );
   });
 
-  it('同一 IP 连续失败触发限流；成功登录清零', () => {
+  // scrypt N=2^17 下每次失败校验 ~几百 ms（Electron 运行时更慢），给足预算。
+  it('同一 IP 连续失败触发限流；成功登录清零', { timeout: 30_000 }, () => {
     const auth = makeStore();
     auth.setupAdmin('alice', 'correct horse battery');
     for (let i = 0; i < 10; i += 1) {

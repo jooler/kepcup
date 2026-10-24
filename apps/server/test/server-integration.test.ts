@@ -1,16 +1,16 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import { expect, it, afterAll, beforeAll } from 'vitest';
+import { describe, expect, it, afterAll, beforeAll } from 'vitest';
 import WebSocket from 'ws';
 import {
   RELAY_PROTOCOL_VERSION,
   type PairingOffer,
   type RelayEnvelope,
 } from '@kepcup/shared';
-import { createMemoryKeystore, FrameCodec } from '@kepcup/core';
+import { createFileKeystore, createMemoryKeystore, FrameCodec } from '@kepcup/core';
 import { createHeadlessServer, type HeadlessServer } from '../src/server.js';
 import type { ServerConfig } from '../src/config.js';
 
@@ -275,4 +275,65 @@ it('admin 接口：环回 + Bearer token', async () => {
   expect(ok.code).toBe(200);
   const body = JSON.parse(ok.body) as { remote: { enabled: boolean } };
   expect(body.remote.enabled).toBe(true);
+});
+
+describe('启动路径回归（独立子代理审查修复：P0 二次启动 / P1 --relay 劫持）', () => {
+  it('pairing 直连模式：同一数据目录二次启动不崩、anchor 恢复 online', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-reboot-'));
+    const config = { ...testConfig(dir), pairingManual: false, autoPair: false };
+    const rebootKeystore = () => createFileKeystore(path.join(dir, 'master-key'));
+    const first = await createHeadlessServer(config, {
+      env: { ...process.env, NODE_ENV: 'test' },
+      keystore: rebootKeystore(),
+    });
+    // 首启把 remoteEnabled=true 落库；显式 syncConfig 后 anchor online。
+    expect(first.services.remote?.status().anchor).toBe('online');
+    await first.close();
+
+    // 二次启动：hub.start() 在 directRelay 赋值前调工厂——修复前是
+    // unhandledRejection 崩进程；修复后 warn 兜底 + 显式 syncConfig 补建。
+    const second = await createHeadlessServer(config, {
+      env: { ...process.env, NODE_ENV: 'test' },
+      keystore: rebootKeystore(),
+    });
+    expect(second.services.remote?.status().enabled).toBe(true);
+    expect(second.services.remote?.status().anchor).toBe('online');
+    expect(second.directRelay).not.toBeNull();
+    await second.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('--relay 中转模式：不建本地直连监听，/ws 升级 404，remoteRelayUrl 指向中转', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-relaymode-'));
+    // 死端口当假中转：RelayClient 外连失败进退避重试，但绝不崩、绝不建本地监听。
+    const config = {
+      ...testConfig(dir),
+      relayUrl: 'ws://127.0.0.1:1',
+      publicUrl: 'ws://127.0.0.1:1',
+      publicUrlExplicit: true,
+    };
+    const server = await createHeadlessServer(config, {
+      env: { ...process.env, NODE_ENV: 'test' },
+      keystore: createMemoryKeystore(),
+    });
+    expect(server.directRelay).toBeNull();
+    expect(server.services.remote?.status().enabled).toBe(true);
+    expect(server.services.remote?.status().relayUrl).toBe('ws://127.0.0.1:1');
+    // 本地不提供 /ws 升级（anchor 应当外连中转，而不是劫持成直连）。
+    const probe = new WebSocket(
+      `ws://127.0.0.1:${server.port}/ws/${server.services.remote?.status().sessionId ?? 'x'}?role=viewer`,
+    );
+    const outcome = await new Promise<number | 'open'>((resolve) => {
+      probe.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+      probe.on('error', () => {
+        // error 后必有 close（运行时差异），由 close 兜底。
+      });
+      probe.on('open', () => resolve('open'));
+      probe.on('close', () => resolve(404));
+    });
+    expect(outcome).not.toBe('open');
+    probe.terminate();
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

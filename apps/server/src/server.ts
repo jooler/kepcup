@@ -2,7 +2,13 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { createFileKeystore, createCoreServices, type CoreServices, type Keystore } from '@kepcup/core';
+import {
+  createFileKeystore,
+  createCoreServices,
+  type CoreLogger,
+  type CoreServices,
+  type Keystore,
+} from '@kepcup/core';
 import { handleAdminRequest, isAdminPath, readJson, type AdminDeps } from './admin.js';
 import { DirectRelayServer } from './direct-relay.js';
 import { qrTerminal } from './qr.js';
@@ -86,10 +92,14 @@ export async function createHeadlessServer(
     auth.setupAdmin(config.adminUser, config.adminPassword);
   }
 
-  // 直连适配层在 core ready 后才建（要 logger/clock），工厂在 hub 建连时才被调，
-  // 而那只会发生在我们打开 remoteEnabled 之后——引用先占位。密码模式不走
-  // RemoteHub（会话端点直接绑 appMethods），工厂不注入。
-  const pairingDirect = config.relayUrl !== null || config.auth === 'pairing';
+  // 三种形态（审查修复 P1 重排）：直连配对（本地监听 + direct 工厂）/ 中转出站
+  // （--relay：原生 RelayClient 外连，不建本地监听、不注入工厂——工厂存在则 hub
+  // 永远不会 new RelayClient，该模式会被直连适配层劫持成死路）/ 账号密码（不走
+  // RemoteHub）。直连工厂在 core ready 后才就绪，引用先占位；headless 二次启动时
+  // hub.start() 早于占位赋值调工厂，由 hub 侧 #scheduleSync 兜底 + 下面的显式
+  // syncConfig 补建。
+  const pairingDirect = config.relayUrl === null && config.auth === 'pairing';
+  const relayOutbound = config.relayUrl !== null;
   let directRelay: DirectRelayServer | null = null;
   const services = await createCoreServices({
     home: config.dataDir,
@@ -109,6 +119,8 @@ export async function createHeadlessServer(
           },
         }
       : {}),
+    // --relay：alwaysOn 常驻外连，无工厂。
+    ...(relayOutbound ? { remote: { alwaysOn: true } } : {}),
   });
   if (services.status !== 'ready' || services.remote === null || services.domain === null) {
     await services.close().catch(() => {});
@@ -145,7 +157,7 @@ export async function createHeadlessServer(
       // /api/* 只认 auth 路由（密码模式）；pairing 模式没有 auth API，给 404
       //（客户端据此识别服务器认证模型），不能落进 SPA 回退（那会 200 返回 index.html）。
       if (passwordMode) {
-        handleAuthRequest(auth, req, res, url.pathname);
+        handleAuthRequest(auth, logger, req, res, url.pathname);
       } else {
         res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }).end('{"error":"not_found"}');
       }
@@ -171,7 +183,12 @@ export async function createHeadlessServer(
       socket.destroy();
       return;
     }
-    directRelay?.handleUpgrade(req, socket, head);
+    if (directRelay !== null) {
+      directRelay.handleUpgrade(req, socket, head);
+      return;
+    }
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+    socket.destroy();
   });
   if (pairingDirect) {
     const relay = new DirectRelayServer({ httpServer, logger, clock: services.clock });
@@ -192,17 +209,22 @@ export async function createHeadlessServer(
   }
 
   let pairingFlow: { stop(): void } = { stop: () => {} };
-  if (pairingDirect) {
+  if (pairingDirect || relayOutbound) {
     // headless 的服务端配置是唯一事实来源：强制开远程、指向本服务（或 --relay）。
     // 直接调 settings.update 不经 RPC 层、不广播 settings.changed，所以要像
-    // hub.configSet 一样显式重估 → 工厂建连（alwaysOn：此后不再按需断线）。
+    // hub.configSet 一样显式重估 → 建连（直连=工厂挂本地监听；--relay=原生
+    // RelayClient 外连；alwaysOn：此后不再按需断线）。
     services.domain.settings.update({
       remoteEnabled: true,
       remoteRelayUrl: config.relayUrl ?? config.publicUrl,
     });
-    void hub.syncConfig();
+    void hub.syncConfig().catch((error) => {
+      logger.warn({ error: String(error) }, 'remote: 启动重估失败（稍后由下一次同步自愈）');
+    });
+  }
+  if (pairingDirect) {
     pairingFlow = startPairingFlow(config, services);
-  } else {
+  } else if (!relayOutbound) {
     // 密码模式：会话端点直连 appMethods，RemoteHub 保持关（零连接零端点）。
     sessionHub = new SessionHub({ httpServer, services, auth, logger });
   }
@@ -246,6 +268,7 @@ export async function createHeadlessServer(
  */
 function handleAuthRequest(
   auth: AuthStore,
+  logger: CoreLogger,
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string,
@@ -274,6 +297,8 @@ function handleAuthRequest(
         const password = String((body as { password?: unknown }).password ?? '');
         const ip = req.socket.remoteAddress ?? 'unknown';
         const token = auth.login(username, password, ip);
+        // 审计（审查修复：爆破无痕）：只记 IP 与结果，凭据不落日志。
+        logger.info({ ip, user: auth.username }, 'admin login ok');
         const cookie =
           `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${30 * 24 * 60 * 60}; ` +
           `HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
@@ -281,6 +306,10 @@ function handleAuthRequest(
       })
       .catch((error) => {
         if (error instanceof AuthError) {
+          logger.warn(
+            { ip: req.socket.remoteAddress ?? 'unknown', code: error.code },
+            'admin login failed',
+          );
           const headers: Record<string, string> =
             error.code === 'RATE_LIMITED' && error.retryAfterSec !== undefined
               ? { 'retry-after': String(error.retryAfterSec) }
@@ -376,6 +405,17 @@ export async function runServer(config: ServerConfig): Promise<void> {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // 常驻进程兜底（审查修复）：未捕获的 rejection 落日志而不是崩进程——
+  // systemd 下崩溃即重启循环，一次可诊断的 error 日志更有用。
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
   console.log(`数据目录：${config.dataDir}`);
-  console.log(`管理命令：kepcup-server pair / devices（本机 127.0.0.1:${config.port}）`);
+  // 认证模型决定管理命令（审查修复）：pair/devices 只在配对模式有意义，
+  // 密码模式的 pair 会被 hub 以 INVALID_STATE 拒绝，不能误导用户。
+  if (config.relayUrl === null && config.auth === 'password') {
+    console.log('管理命令：kepcup-server password（修改管理员密码，本机执行）');
+  } else {
+    console.log(`管理命令：kepcup-server pair / devices（本机 127.0.0.1:${config.port}）`);
+  }
 }

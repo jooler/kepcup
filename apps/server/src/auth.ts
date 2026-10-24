@@ -18,7 +18,9 @@ import path from 'node:path';
  * 改密码即全量失效（版本号不匹配）。配对模式的 E2E 设备凭证（D96）不受影响。
  */
 
-const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keylen: 64 };
+/** OWASP 建议 scrypt N ≥ 2^17（审查修复：原 2^14 离线爆破成本偏低）。 */
+const SCRYPT_PARAMS = { N: 131072, r: 8, p: 1, keylen: 64 };
+type ScryptParams = { N: number; r: number; p: number };
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SESSION_COOKIE = 'kepcup_session';
 /** 密码最小长度：与「拿到地址的人不能直接用」的门槛匹配，弱口令靠限流与 TLS 兜底。 */
@@ -28,6 +30,8 @@ export interface StoredAdmin {
   username: string;
   saltB64: string;
   hashB64: string;
+  /** 哈希参数随档存储：校验按建档参数执行；缺省（旧档）按当前参数（会失配 → 重新建号）。 */
+  params?: ScryptParams;
   /** 改密码 +1：旧会话 token 全部失效。 */
   passwordVersion: number;
   createdAt: number;
@@ -53,11 +57,13 @@ function writeJson0600(file: string, value: unknown): void {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
-export function hashPassword(password: string, salt: Buffer): Buffer {
+export function hashPassword(password: string, salt: Buffer, params: ScryptParams = SCRYPT_PARAMS): Buffer {
   return scryptSync(password.normalize('NFKC'), salt, SCRYPT_PARAMS.keylen, {
-    N: SCRYPT_PARAMS.N,
-    r: SCRYPT_PARAMS.r,
-    p: SCRYPT_PARAMS.p,
+    N: params.N,
+    r: params.r,
+    p: params.p,
+    // OpenSSL 默认 scrypt 内存上限 32MB；N=2^17·r=8 需 ~128MB（128·N·r）。
+    maxmem: 256 * 1024 * 1024,
   });
 }
 
@@ -125,6 +131,7 @@ export class AuthStore {
       username,
       saltB64: salt.toString('base64'),
       hashB64: hashPassword(password, salt).toString('base64'),
+      params: { N: SCRYPT_PARAMS.N, r: SCRYPT_PARAMS.r, p: SCRYPT_PARAMS.p },
       passwordVersion: 1,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -145,6 +152,7 @@ export class AuthStore {
       ...admin,
       saltB64: salt.toString('base64'),
       hashB64: hashPassword(newPassword, salt).toString('base64'),
+      params: { N: SCRYPT_PARAMS.N, r: SCRYPT_PARAMS.r, p: SCRYPT_PARAMS.p },
       passwordVersion: admin.passwordVersion + 1,
       updatedAt: Date.now(),
     };
@@ -161,7 +169,11 @@ export class AuthStore {
 
   #verifyHash(admin: StoredAdmin, password: string): boolean {
     const stored = Buffer.from(admin.hashB64, 'base64');
-    const actual = hashPassword(password, Buffer.from(admin.saltB64, 'base64'));
+    const actual = hashPassword(
+      password,
+      Buffer.from(admin.saltB64, 'base64'),
+      admin.params,
+    );
     return stored.length === actual.length && timingSafeEqual(stored, actual);
   }
 
@@ -173,6 +185,10 @@ export class AuthStore {
     const admin = this.#requireAdmin();
     this.#limiter.check(clientIp);
     if (username !== admin.username || !this.#verifyHash(admin, password)) {
+      // 用户名错误也跑一次同代价哈希，抹平计时差（单账号枚举面很小，顺手闭环）。
+      if (username !== admin.username) {
+        hashPassword(password, Buffer.from(admin.saltB64, 'base64'), admin.params);
+      }
       throw this.#limiter.fail(clientIp);
     }
     this.#limiter.reset(clientIp);
