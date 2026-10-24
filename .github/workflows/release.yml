@@ -5,9 +5,10 @@
 # 不发版；0.0.0 与预发布版本（带 -）永不发布。
 #
 # 流程：prepare（判定版本）→ rootfs（Windows 包要的 WSL rootfs）→ build（五个平台 job，
-# 一律 --publish never，见 BR-P13-003）→ publish（合并 mac 双架构更新清单，草稿 Release
-# 上传全部产物后再转正式，用户端 electron-updater 不会看到缺文件的半成品）。
-# 任一平台构建失败则整个版本不发布；修好后重新推送或手动重跑本工作流即可。
+# 一律 --publish never，见 BR-P13-003）+ server（headless 服务端 tar.gz，D102）→
+# publish（合并 mac 双架构更新清单，草稿 Release 上传全部产物后再转正式，用户端
+# electron-updater 不会看到缺文件的半成品）。任一平台构建失败则整个版本不发布；
+# 修好后重新推送或手动重跑本工作流即可。
 #
 # 机密（Settings → Secrets → Actions；用 scripts/release/sync-github-secrets.mjs 从
 # .env.release 同步）：
@@ -257,9 +258,52 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+  # D102 headless 服务端：自包含 tar.gz（npm i -g 与解压直跑同一产物）。平台由
+  # 构建机决定——NAS 主场景出 linux-x64 / linux-arm64；产物名 dist-server-* 落入
+  # publish job 既有 dist-* 下载 pattern，无需改收集逻辑。
+  server:
+    name: Server tarball (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # shared/core 的 exports 只指向 dist/ 且无 prepare 脚本——install 不构建，
+      # pack 的 web 构建（renderer import @kepcup/shared）与 tsc 都解析不到
+      #（审查修复 P1：漏此步首次发版必失败；设计 §4 原文即含此步骤）。
+      - run: pnpm -r build
+      - name: Pack server tarball
+        run: node scripts/pack-server.mjs --version ${{ needs.prepare.outputs.version }}
+      - name: Smoke test
+        run: |
+          mkdir -p /tmp/ks-smoke && tar -xzf release-server/*.tar.gz -C /tmp/ks-smoke
+          /tmp/ks-smoke/dist/cli.js version
+          # web 构建产物必须随包（配对链接的 origin 指向服务端自身）
+          test -f /tmp/ks-smoke/web/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-server-${{ matrix.name }}
+          path: release-server/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: [prepare, build]
+    needs: [prepare, build, server]
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}

@@ -35,6 +35,12 @@ export function createRpcClient(options: CreateRpcClientOptions): RpcClient {
   return {
     async call(method, input) {
       try {
+        // JSON 线（WebSocket / 中转）会把 `[undefined]` 序列化成 `[null]`，
+        // z.void() 拒绝 null——无参调用统一发空参数组（MessagePort 结构化克隆
+        // 路径下 apply(rpc, []) 与 apply(rpc, [undefined]) 语义相同，桌面不受影响）。
+        if (input === undefined) {
+          return await rpc.$callRaw({ method, args: [] });
+        }
         return await rpc.$call(method, input);
       } catch (error) {
         if (

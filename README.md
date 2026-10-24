@@ -268,6 +268,7 @@ The default sandbox is Anthropic Sandbox Runtime. Platforms can also opt into en
 ```text
 kepcup/
 ├── apps/desktop/     # Electron desktop app (product entry)
+├── apps/server/      # Headless server (self-hosted, D102)
 ├── apps/website/     # Official marketing site (kepcup.app)
 ├── packages/core/    # Business logic & data (separate process)
 ├── packages/shared/  # Cross-process contracts & types
@@ -290,6 +291,26 @@ pnpm test:e2e     # Playwright e2e (@kepcup/desktop)
 ```
 
 Agent conventions: [AGENTS.md](AGENTS.md).
+
+### Headless server
+
+The same core (conversations, scheduler, mail, MCP, approvals, memory) can also run as a **self-hosted always-on service** on a NAS or cloud box (D102): any device with a browser connects to the same data source — no multi-device sync, no "desktop must stay awake". Sign-in is account + password (set once at first start; no per-device pairing), and there is no Docker — just **Node.js ≥ 22.19**.
+
+Run from source:
+
+```bash
+pnpm install && pnpm -r build
+
+# first run (interactive terminal) asks for an admin username & password
+node apps/server/dist/cli.js
+
+# LAN / NAS style (reachable from other devices):
+node apps/server/dist/cli.js --host 0.0.0.0 --public-url ws://<your-ip>:8642
+```
+
+Then open `http://<host>:8642` in any browser, sign in, and finish the first-run wizard (model provider, butler Bot). Useful sub-commands: `password` (rotate — signs out all sessions), `version`. Common flags: `--data-dir` (default `~/.kepcup-server`), `--keystore file` (for hosts without a system keychain), `--auth pairing` (device pairing instead of passwords), `--relay <url>` (outbound relay mode, no inbound port).
+
+For deployment (systemd, TLS reverse proxy) and packaged installs — a single self-contained tarball from `node scripts/pack-server.mjs`, attached to GitHub Releases with every desktop release and usable both as `npm i -g <tarball-url>` and extract-and-run — see [apps/server/README.md](apps/server/README.md) and the design doc [docs/design/49-headless-server.md](docs/design/49-headless-server.md).
 
 ### License
 

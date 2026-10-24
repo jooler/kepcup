@@ -3129,6 +3129,15 @@ export const zhCN = {
   'share.error.SHARE_MATERIALIZE_FAILED': '工作区副本准备失败',
   // --- D96 web（PWA，docs/design/46-remote-control.md §3.2/§5.5）---------------
   'web.gate.title': 'KepCup 遥控器',
+  'web.login.title': '登录 KepCup',
+  'web.login.body': '输入服务端管理员账号密码访问。',
+  'web.login.user': '用户名',
+  'web.login.password': '密码',
+  'web.login.submit': '登录',
+  'web.login.pending': '登录中…',
+  'web.login.invalid': '用户名或密码不正确',
+  'web.login.ratelimited': '失败次数过多，稍后再试',
+  'web.login.error': '连不上服务器，请检查网络后重试',
   'web.unpaired.title': '用桌面 KepCup 扫码配对',
   'web.unpaired.body':
     '在桌面 KepCup 的「设置 → 远程遥控」里点「连接手机」，用手机相机扫码打开本页；或把二维码旁的配对链接粘贴到这里。',

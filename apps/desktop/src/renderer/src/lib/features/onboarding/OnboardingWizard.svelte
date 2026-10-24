@@ -9,6 +9,7 @@
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
+  import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import AgentCard from '$lib/features/settings/AgentCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -319,7 +320,18 @@
     void persist({ launchAtLogin: checked });
   }
 
+  /** 桌面语义控件（自启 / 系统通知）在 web 端点置灰（审查 P3）：垫片是空实现，可点但不做任何事，比假按钮诚实的做法是禁用。 */
+  const isDesktop = ENDPOINT_KIND === 'desktop';
+
   async function finish(): Promise<void> {
+    // 跳过路径也先建管家（无访谈）：headless 7×24 常驻不等「下次重启」的启动
+    // 兜底（审查 P2——server 可能几周不重启）；ensure 幂等，桌面端只是把兜底
+    // 提前。失败不阻塞完成：下次启动的 core 兜底仍会补建。
+    try {
+      await core.call('butler.ensure', { interview: false });
+    } catch {
+      // 补建失败留给启动兜底；跳过流程本身不应被卡住。
+    }
     await persist({ onboarding: { completed: true } });
     onboarding.close();
   }
@@ -617,6 +629,7 @@
           <Checkbox
             bind:checked={launchAtLogin}
             onCheckedChange={(checked) => toggleAutostart(checked === true)}
+            disabled={!isDesktop}
             data-testid="onboarding-autostart"
           />
           <span class="grid gap-0.5">
@@ -640,6 +653,7 @@
               size="sm"
               variant="outline"
               class="mt-1 w-fit"
+              disabled={!isDesktop}
               onclick={() =>
                 void window.kepcup.sendTestNotification(
                   t('app.title'),
