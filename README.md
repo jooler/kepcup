@@ -16,7 +16,7 @@ OpenMind means opening the *thinking*—product intent, the hard problems themse
 
 ## What is KepCup
 
-KepCup is a **local-first multi-Bot assistant**. It can stand in for hosted teammate products such as Grok Bot, Muse, or Dot: you create Bots on your machine, give them permissions and a working directory, and they collaborate with you—and with each other—without handing your data to a host you do not control.
+KepCup is an open-source, local-first **Personal Agent** (multi-Bot team form). As a **local-first multi-Bot assistant**, it can stand in for hosted teammate products such as Grok Bot, Muse, or Dot: you create Bots on your machine, give them permissions and a working directory, and they collaborate with you—and with each other—without handing your data to a host you do not control.
 
 Bots are designed to be like real people. Collaboration should feel human: shared context, clear roles, and work that actually gets done—not endless Bot small talk.
 
