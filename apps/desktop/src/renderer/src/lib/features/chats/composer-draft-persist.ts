@@ -22,12 +22,14 @@ export interface PersistedAttachment {
 }
 
 /** 引用回复的轻量快照：预览渲染只需要的字段（发送时只回传 id）。
- * chat store 的运行期 replyTo 与持久化快照共用此形状。 */
+ * chat store 的运行期 replyTo 与持久化快照共用此形状。attachments 是被引用
+ * 消息的附件元数据（引用块里的图片缩略图与灯箱需要；旧快照没有该字段）。 */
 export interface ComposerReplyRef {
   id: string;
   senderType: 'user' | 'bot' | 'system';
   senderBotId: string | null;
   text: string;
+  attachments?: PersistedAttachment[];
 }
 
 export interface PersistedComposerDraft {
@@ -133,7 +135,18 @@ function normalizeReply(value: unknown): ComposerReplyRef | null {
   const senderBotId = typeof record.senderBotId === 'string' ? record.senderBotId : null;
   const text =
     typeof record.text === 'string' ? record.text.slice(0, MAX_PERSISTED_REPLY_TEXT) : '';
-  return { id: record.id, senderType: record.senderType, senderBotId, text };
+  const attachments = Array.isArray(record.attachments)
+    ? record.attachments
+        .map(normalizeAttachment)
+        .filter((attachment): attachment is PersistedAttachment => attachment !== null)
+    : [];
+  return {
+    id: record.id,
+    senderType: record.senderType,
+    senderBotId,
+    text,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
 }
 
 function normalizeAttachment(value: unknown): PersistedAttachment | null {

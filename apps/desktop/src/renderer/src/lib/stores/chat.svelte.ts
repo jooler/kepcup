@@ -682,6 +682,18 @@ class ChatState {
       senderType: message.senderType,
       senderBotId: message.senderBotId,
       text: 'text' in message.content ? message.content.text : '',
+      // 附件元数据快照：引用块里的图片缩略图 / 灯箱要用（图片消息没有正文文字，
+      // 只存 text 会让引用块空掉）。无附件不写字段，与旧快照形状一致。
+      ...(message.attachments.length > 0
+        ? {
+            attachments: message.attachments.map((a) => ({
+              attachmentId: a.id,
+              fileName: a.fileName,
+              mime: a.mime,
+              size: a.size,
+            })),
+          }
+        : {}),
     };
   }
 

@@ -88,6 +88,58 @@ describe('loadPersistedDrafts', () => {
     expect(loadPersistedDrafts(fakeStorage({ [COMPOSER_DRAFTS_STORAGE_KEY]: 'null' }))).toEqual({});
   });
 
+  test('reply 的 attachments 元数据按条目容错解析（图片引用块的缩略图数据源）', () => {
+    const storage = fakeStorage({
+      [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+        conv_a: {
+          doc: docOf(''),
+          mentions: [],
+          reply: {
+            id: 'm1',
+            senderType: 'user',
+            senderBotId: null,
+            text: '',
+            attachments: [
+              { attachmentId: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 },
+              { attachmentId: '', fileName: 'bad' },
+            ],
+          },
+          attachments: [],
+          updatedAt: 7,
+        },
+      }),
+    });
+    const loaded = loadPersistedDrafts(storage);
+    expect(loaded.conv_a?.reply).toEqual({
+      id: 'm1',
+      senderType: 'user',
+      senderBotId: null,
+      text: '',
+      attachments: [{ attachmentId: 'att_1', fileName: 'a.png', mime: 'image/png', size: 3 }],
+    });
+  });
+
+  test('旧快照 reply 没有 attachments 字段照常水合（不写空数组）', () => {
+    const storage = fakeStorage({
+      [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+        conv_a: {
+          doc: docOf(''),
+          mentions: [],
+          reply: { id: 'm1', senderType: 'user', senderBotId: null, text: '引用' },
+          attachments: [],
+          updatedAt: 7,
+        },
+      }),
+    });
+    const loaded = loadPersistedDrafts(storage);
+    expect(loaded.conv_a?.reply).toEqual({
+      id: 'm1',
+      senderType: 'user',
+      senderBotId: null,
+      text: '引用',
+    });
+  });
+
   test('doc 形状不对的条目丢弃；其余字段容错，整体为空不保留', () => {
     const storage = fakeStorage({
       [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
