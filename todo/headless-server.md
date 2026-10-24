@@ -92,4 +92,5 @@
   - 打包：`node scripts/pack-server.mjs` 本地产出 `kepcup-server-v0.2.1-darwin-arm64.tar.gz`（69MB，含 web PWA），干净目录解压 `./dist/cli.js version` / `devices` 冒烟通过。
   - 实现期修正（均已修）：settings.update 不经 RPC 层不广播 `settings.changed`（补 `hub.syncConfig()`）；`KEPCUP_WEB_OUTDIR` 相对路径被 resolve 到 apps/desktop 下（改绝对路径）；CLI 位置参数识别把 flag 值误当子命令（单遍解析重写）；eslint 扫到 web 构建产物 4 万+ 报错（ignores 收编）。
   - 2026-10-24（修订）：账号密码认证落地（Phase 5.5，见上）；设计文档 §0.1。本机验证：`GET /` 200、whoami 401、错密 401、正确密码 200 + Set-Cookie。
+  - 2026-10-24（真机反馈修复）：web 端首启无向导、无管家——根因同源：`web-shim.ts` 的 `onboardingVisible` 写死 false（D96 时手机只是遥控器），而向导既是模型供应商引导也是管家创建入口（`butler.ensure` 只在向导完成时调；core 启动兜底仅面向 `onboarding.completed === true` 的存量桌面用户）。修复：web 端点 `onboardingVisible: true`，门控仍由 `settings.onboarding.completed` 决定（桌面已完成引导的手机遥控不重复出现）；向导中的桌面权限步骤按垫片降级、沙箱探测走 RPC 在服务端如实执行。
   - 待办：手机真机验收（验收清单 #2，密码模式 + pairing 模式各一遍）；首次发版时观察 CI server job 产物进 Release。
