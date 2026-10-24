@@ -1,8 +1,8 @@
 import { core } from '$lib/rpc/client.svelte';
 
 /**
- * 上传头像的 dataURL 缓存（key = `{botId}/{fileName}`）。文件名带时间戳，
- * 新上传自然换 key；旧文件被 core 删除后读取会 404，失败结果记入
+ * 上传头像的 dataURL 缓存（key = `{botId}/{fileName}`，用户头像 = `user/{fileName}`）。
+ * 文件名带时间戳，新上传自然换 key；旧文件被 core 删除后读取会 404，失败结果记入
  * `#failed`，避免渲染反复重发注定失败的 RPC。
  */
 class AvatarImageStore {
@@ -11,13 +11,22 @@ class AvatarImageStore {
   #failed = new Set<string>();
 
   url(botId: string, file: string): string | null {
-    const key = `${botId}/${file}`;
+    return this.#load(`${botId}/${file}`, () =>
+      core.call('bots.avatar.data', { id: botId, file }),
+    );
+  }
+
+  /** 用户头像（设置页「个人资料」上传的那张）。 */
+  user(file: string): string | null {
+    return this.#load(`user/${file}`, () => core.call('user.avatar.data', { file }));
+  }
+
+  #load(key: string, rpc: () => Promise<unknown>): string | null {
     const cached = this.#cache[key];
     if (cached) return cached;
     if (!this.#pending.has(key) && !this.#failed.has(key)) {
       this.#pending.add(key);
-      core
-        .call('bots.avatar.data', { id: botId, file })
+      rpc()
         .then((data) => {
           const { mime, base64 } = data as { mime: string; base64: string };
           this.#cache = { ...this.#cache, [key]: `data:${mime};base64,${base64}` };

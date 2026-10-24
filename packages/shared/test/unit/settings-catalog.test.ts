@@ -400,7 +400,12 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
     const generic = items.filter(
       (entry) => entry.store.kind === 'settings' && entry.store.generic === true,
     );
-    expect(generic.map((entry) => entry.id)).toEqual(['general.workbench', 'remote.enabled', 'remote.relay']);
+    expect(generic.map((entry) => entry.id)).toEqual([
+      'profile.user-name',
+      'general.workbench',
+      'remote.enabled',
+      'remote.relay',
+    ]);
     const defaults = settingsSchema.parse({}) as Record<string, unknown>;
     for (const entry of generic) {
       expect(entry.owner, entry.id).toBe('core');

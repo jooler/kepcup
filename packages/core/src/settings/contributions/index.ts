@@ -14,6 +14,7 @@ import { environmentContribution } from './environment.js';
 import { generalContribution } from './general.js';
 import { legacyContribution } from './legacy.js';
 import { modelsContribution } from './models.js';
+import { profileContribution } from './profile.js';
 import { remoteContribution } from './remote.js';
 import type { SettingAdapterContribution } from './types.js';
 
@@ -22,6 +23,7 @@ import type { SettingAdapterContribution } from './types.js';
  * barrel（或并入 legacy），闭合检查见 `settingsAdapterCoverageProblems`。
  */
 export const SETTING_ADAPTER_CONTRIBUTIONS: readonly SettingAdapterContribution[] = [
+  profileContribution,
   capabilityContribution,
   modelsContribution,
   botContribution,

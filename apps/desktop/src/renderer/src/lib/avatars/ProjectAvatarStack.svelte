@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Users } from '@lucide/svelte';
   import { t } from '$lib/i18n';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from './BotAvatar.svelte';
   import UserAvatar from './UserAvatar.svelte';
@@ -26,7 +27,7 @@
     projectAvatarFaces(
       members,
       includeUser
-        ? { id: PROJECT_AVATAR_USER_ID, name: t('sidebar.userName'), avatar: null as string | null }
+        ? { id: PROJECT_AVATAR_USER_ID, name: settingsStore.userDisplayName, avatar: null as string | null }
         : null,
     ),
   );

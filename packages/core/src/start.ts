@@ -76,6 +76,7 @@ import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
 import { BotsService } from './domain/bots.js';
 import { BotAvatarService } from './domain/avatars.js';
+import { UserProfileAvatarService } from './domain/user-profile.js';
 import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
@@ -490,6 +491,8 @@ export interface CoreDomainServices {
   secrets: SecretsService;
   bots: BotsService;
   avatars: BotAvatarService;
+  /** 用户个人资料头像（设置页「个人资料」，`user.avatar.*` RPC）。 */
+  userProfileAvatars: UserProfileAvatarService;
   /** D48 Bot 模板导出/导入（`bots.template.*` RPC）。 */
   botTemplates: BotTemplateService;
   audit: AuditService;
@@ -1130,6 +1133,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
+    const userProfileAvatars = new UserProfileAvatarService({ paths, clock, settings });
     const conversations = new ConversationsService(mainDb, clock);
     const messages = new MessagesService(mainDb, clock);
     // 项目组域服务先于 orchestrator 构造；removeMemberCascade 闭包引用其后的
@@ -2971,6 +2975,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       bots,
       avatars,
+      userProfileAvatars,
       botTemplates,
       conversations,
       messages,

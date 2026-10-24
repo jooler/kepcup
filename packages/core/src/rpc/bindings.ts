@@ -43,6 +43,10 @@ import {
   botsAvatarUploadOutputSchema,
   botsAvatarDataInputSchema,
   botsAvatarDataOutputSchema,
+  userAvatarUploadInputSchema,
+  userAvatarUploadOutputSchema,
+  userAvatarDataInputSchema,
+  userAvatarDataOutputSchema,
   botIdInputSchema,
   botsDeletionPreviewOutputSchema,
   botsTemplatePreviewInputSchema,
@@ -886,6 +890,30 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       botsAvatarDataOutputSchema,
       async (input) => {
         const data = domain.avatars.read(input.id, input.file);
+        return { mime: data.mime, base64: data.base64 };
+      },
+    ),
+    // 用户头像：落盘 + 写 settings.userProfileAvatar 在同一把设置写锁里；发布
+    // settings.changed 让设置页 / 侧栏头像即时刷新。
+    'user.avatar.upload': method(
+      userAvatarUploadInputSchema,
+      userAvatarUploadOutputSchema,
+      async (input) => {
+        const avatar = await settingsLocked(() =>
+          domain.userProfileAvatars.upload(
+            input.mime,
+            Buffer.from(input.bytesBase64, 'base64'),
+          ),
+        );
+        publishSettingsChanged(itemIdsForSettingsPaths(['userProfileAvatar']));
+        return { avatar };
+      },
+    ),
+    'user.avatar.data': method(
+      userAvatarDataInputSchema,
+      userAvatarDataOutputSchema,
+      async (input) => {
+        const data = domain.userProfileAvatars.read(input.file);
         return { mime: data.mime, base64: data.base64 };
       },
     ),

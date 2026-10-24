@@ -108,6 +108,48 @@ const CAPABILITY_ITEMS: readonly SettingItem[] = (
 );
 
 export const SETTING_ITEMS: readonly SettingItem[] = [
+  // --- 个人资料（Profile）：第一位 ------------------------------------------
+  item({
+    id: 'profile.user-avatar',
+    group: 'profile',
+    title: '用户头像',
+    summary: '设置页「个人资料」里的用户头像；上传与裁剪在设置页完成',
+    keywords: ['头像', '个人资料', '照片', 'profile'],
+    scope: 'global',
+    fields: [],
+    // 头像是二进制上传，Bot 没有可写的字段；只能出跳转卡。
+    write: write('link'),
+    card: null,
+    deepLink: { surface: 'settings', section: 'profile', anchor: 'profile-identity' },
+    store: { kind: 'settings', paths: ['userProfileAvatar'] },
+  }),
+  item({
+    id: 'profile.user-name',
+    group: 'profile',
+    title: '用户名称',
+    summary: '设置页「个人资料」里的显示名称',
+    enables: ['知道怎么称呼你'],
+    keywords: ['名称', '昵称', '称呼', '个人资料', 'profile'],
+    scope: 'global',
+    fields: [field('name', '名称', 'text', { path: 'userProfileName' })],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'profile', anchor: 'profile-identity' },
+    store: { kind: 'settings', paths: ['userProfileName'], generic: true },
+  }),
+  item({
+    id: 'profile.user-facts',
+    group: 'profile',
+    title: '用户画像',
+    summary: 'Bot 记住的关于你的事实；改写在设置页「个人资料 → 用户画像」',
+    keywords: ['画像', '关于我', '个人信息'],
+    scope: 'global',
+    write: write('link'),
+    card: null,
+    deepLink: { surface: 'settings', section: 'profile', anchor: 'profile-persona' },
+    store: { kind: 'none' },
+  }),
+
   // --- 模型 ---------------------------------------------------------------
   item({
     id: 'models.default-main',
@@ -612,20 +654,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: viaTool('watch_create', 'confirm'),
     card: null,
     deepLink: { surface: 'bot-panel', section: 'schedules' },
-    store: { kind: 'none' },
-  }),
-
-  // --- 用户画像 -----------------------------------------------------------
-  item({
-    id: 'profile.user-facts',
-    group: 'profile',
-    title: '用户画像',
-    summary: 'Bot 记住的关于你的事实；改写在设置页「用户画像」',
-    keywords: ['画像', '关于我', '个人信息'],
-    scope: 'global',
-    write: write('link'),
-    card: null,
-    deepLink: { surface: 'settings', section: 'profile' },
     store: { kind: 'none' },
   }),
 

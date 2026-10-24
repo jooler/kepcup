@@ -115,7 +115,7 @@
     replyTo === null
       ? ''
       : replyTo.senderType === 'user'
-        ? t('sidebar.userName')
+        ? settingsStore.userDisplayName
         : replyTo.senderBotId
           ? chat.botName(replyTo.senderBotId)
           : '',

@@ -375,7 +375,8 @@ test('profile page: curation entry with contributor, card preview, edit, delete'
     const section = page.locator('[data-testid="settings-profile"]');
     await expect(section).toBeVisible();
 
-    // The curation-produced entry appears under 基本信息 with its contributor.
+    // The curation-produced entry appears under 基本信息 (second-level menu) with its contributor.
+    await section.locator('[data-testid="profile-menu-basic"]').click();
     const entry = section.locator('[data-testid^="profile-item-"]').first();
     await expect(async () => {
       await section.locator('[data-testid="profile-refresh"]').click();
@@ -384,9 +385,6 @@ test('profile page: curation entry with contributor, card preview, edit, delete'
     await expect(entry.locator('[data-testid="profile-item-content"]')).toContainText('王小明');
     await expect(entry.locator('[data-testid="profile-item-contributed"]')).toContainText('小明');
     await expect(section.getByRole('heading').filter({ hasText: '基本信息' })).toBeVisible();
-
-    // Card preview compiled by the curation loop.
-    await expect(section.locator('[data-testid="profile-card-content"]')).toContainText('王小明');
 
     // Edit: direct write, no proposal involved.
     await entry.locator('[data-testid^="profile-edit-"]').click();
@@ -402,6 +400,11 @@ test('profile page: curation entry with contributor, card preview, edit, delete'
     await expect(page.locator('[data-testid="profile-delete-dialog"]')).toBeVisible();
     await page.locator('[data-testid="profile-delete-confirm"]').click();
     await expect(section.locator('[data-testid="profile-empty"]')).toBeVisible({ timeout: 15_000 });
+
+    // Card preview compiled by the curation loop (own second-level menu entry).
+    await section.locator('[data-testid="profile-back"]').click();
+    await section.locator('[data-testid="profile-menu-card"]').click();
+    await expect(section.locator('[data-testid="profile-card-content"]')).toContainText('王小明');
   } finally {
     await closeSession(session);
   }
