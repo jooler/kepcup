@@ -17,6 +17,7 @@ import {
   AuthError,
   AuthStore,
   SESSION_COOKIE,
+  SESSION_TTL_SEC,
   sessionTokenFromCookie,
 } from './auth.js';
 import { SessionHub } from './session-hub.js';
@@ -31,6 +32,8 @@ export interface HeadlessServerTestOptions {
   /** 测试注入（等价 createCore 的测试环境：NODE_ENV=test 等）。 */
   env?: NodeJS.ProcessEnv;
   keystore?: Keystore;
+  /** 测试注入：SessionHub 心跳/清扫间隔（生产 30s）。 */
+  pingIntervalMs?: number;
 }
 
 export interface HeadlessServer {
@@ -89,7 +92,7 @@ export async function createHeadlessServer(
           '--admin-user/--admin-password 或环境变量 KEPCUP_SERVER_ADMIN_USER/_PASSWORD',
       );
     }
-    auth.setupAdmin(config.adminUser, config.adminPassword);
+    await auth.setupAdmin(config.adminUser, config.adminPassword);
   }
 
   // 三种形态（审查修复 P1 重排）：直连配对（本地监听 + direct 工厂）/ 中转出站
@@ -157,9 +160,14 @@ export async function createHeadlessServer(
       // /api/* 只认 auth 路由（密码模式）；pairing 模式没有 auth API，给 404
       //（客户端据此识别服务器认证模型），不能落进 SPA 回退（那会 200 返回 index.html）。
       if (passwordMode) {
-        handleAuthRequest(auth, logger, req, res, url.pathname);
+        handleAuthRequest(auth, logger, config.trustProxy, req, res, url.pathname);
       } else {
-        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }).end('{"error":"not_found"}');
+        res
+          .writeHead(404, {
+            'content-type': 'application/json; charset=utf-8',
+            'x-content-type-options': 'nosniff',
+          })
+          .end('{"error":"not_found"}');
       }
       return;
     }
@@ -226,7 +234,13 @@ export async function createHeadlessServer(
     pairingFlow = startPairingFlow(config, services);
   } else if (!relayOutbound) {
     // 密码模式：会话端点直连 appMethods，RemoteHub 保持关（零连接零端点）。
-    sessionHub = new SessionHub({ httpServer, services, auth, logger });
+    sessionHub = new SessionHub({
+      httpServer,
+      services,
+      auth,
+      logger,
+      ...(test.pingIntervalMs !== undefined ? { pingIntervalMs: test.pingIntervalMs } : {}),
+    });
   }
 
   const bound = config.port;
@@ -259,6 +273,22 @@ export async function createHeadlessServer(
 }
 
 /**
+ * 客户端 IP（限流 / 登录审计用）：--trust-proxy 时取 X-Forwarded-For 首段
+ * （直连客户端；后面的段是代理链，可被伪造的头部只有显式开启才信任），
+ * 否则一律用 socket 地址——反代直连场景下所有请求同 IP，限流本就按部署形态
+ * 该收紧而不是默认放水。
+ */
+export function clientIp(req: IncomingMessage, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
+    const trimmed = first?.trim();
+    if (trimmed !== undefined && trimmed.length > 0) return trimmed;
+  }
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+/**
  * 账号密码 API（D102 修订，仅 password 模式挂载）：
  * - POST /api/auth/login {username,password} → Set-Cookie(kepcup_session, HttpOnly,
  *   30d) + {ok,username,token}；失败 401（限流 429）。token 也可作 Bearer 用（脚本）。
@@ -269,14 +299,19 @@ export async function createHeadlessServer(
 function handleAuthRequest(
   auth: AuthStore,
   logger: CoreLogger,
+  trustProxy: boolean,
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string,
 ): void {
   const send = (code: number, body: unknown, headers: Record<string, string> = {}): void => {
-    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', ...headers }).end(
-      JSON.stringify(body),
-    );
+    res
+      .writeHead(code, {
+        'content-type': 'application/json; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+        ...headers,
+      })
+      .end(JSON.stringify(body));
   };
   const secure =
     (req.socket as { encrypted?: boolean }).encrypted === true ||
@@ -292,22 +327,22 @@ function handleAuthRequest(
   }
   if (pathname === '/api/auth/login' && req.method === 'POST') {
     void readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const username = String((body as { username?: unknown }).username ?? '');
         const password = String((body as { password?: unknown }).password ?? '');
-        const ip = req.socket.remoteAddress ?? 'unknown';
-        const token = auth.login(username, password, ip);
+        const ip = clientIp(req, trustProxy);
+        const token = await auth.login(username, password, ip);
         // 审计（审查修复：爆破无痕）：只记 IP 与结果，凭据不落日志。
         logger.info({ ip, user: auth.username }, 'admin login ok');
         const cookie =
-          `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${30 * 24 * 60 * 60}; ` +
+          `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${SESSION_TTL_SEC}; ` +
           `HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
         send(200, { ok: true, username: auth.username, token }, { 'set-cookie': cookie });
       })
       .catch((error) => {
         if (error instanceof AuthError) {
           logger.warn(
-            { ip: req.socket.remoteAddress ?? 'unknown', code: error.code },
+            { ip: clientIp(req, trustProxy), code: error.code },
             'admin login failed',
           );
           const headers: Record<string, string> =

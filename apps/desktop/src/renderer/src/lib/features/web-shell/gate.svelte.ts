@@ -8,7 +8,8 @@ import {
 } from '$lib/rpc/ws-transport';
 import {
   getAuthedTransport,
-  probeServerAuth,
+  probeServerAuthUntilSettled,
+  watchForPasswordServer,
   type AuthedLinkState,
 } from '$lib/rpc/authed-transport';
 import { ENDPOINT_KIND, defaultDeviceName } from './endpoint';
@@ -76,18 +77,17 @@ class WebGateState {
     void this.#boot();
   }
 
-  /** 认证模型探测 → 配对路径（原构造器逻辑）或账号密码路径。 */
+  /**
+   * 认证模型探测 → 配对路径（原构造器逻辑）或账号密码路径。探测持续到有确定
+   * 答案（审查 P2：原先两次失败就永久回退配对页，要手动刷新）；30s 仍不可达
+   * 才回退配对呈现，并后台重探自愈——一旦确定是密码服务器就刷新页面进正路。
+   */
   async #boot(): Promise<void> {
-    let probe = await probeServerAuth();
-    if (probe === null) {
-      // 服务器暂不可达：稍后重探（probeServerAuth 失败不记忆，会重新请求）。
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-      probe = await probeServerAuth();
-    }
+    const probe = await probeServerAuthUntilSettled();
     if (probe === null || probe.mode === 'pairing') {
-      // 探测仍失败按配对路径走（WsTransport 有自己的离线态呈现）。
       this.authMode = 'pairing';
       this.#initPairing();
+      if (probe === null) watchForPasswordServer();
       return;
     }
     this.authMode = 'password';
@@ -139,12 +139,6 @@ class WebGateState {
     } finally {
       this.loginPending = false;
     }
-  }
-
-  /** 登录页的手动重试（登录报 error = 服务器不可达时）。 */
-  retryLogin(): void {
-    this.loginError = null;
-    void this.#boot();
   }
 
   #initPairing(): void {

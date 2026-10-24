@@ -93,6 +93,19 @@
 
 未修（已立项后议）：登录限流维度（反代共享 IP / IPv6 旋转 / Map 清扫 / --trust-proxy）、会话 token 撤销面（jti）、`--admin-password` argv 暴露（文档警示）、admin token 常量时间比较、nosniff 头、TTL 双常量、dormant 探测备注。
 
+## 5.7 收尾修复批（2026-10-24，评审遗留全量清账后合并）
+
+三批评审的全部「现在能修」项一次清完，随后 `feat/headless-server` 合并回 `v0.3.0`、worktree 撤除：
+
+- [x] **渲染层 P2×4**：
+  1. `AuthedWsTransport` 心跳自愈：服务端 `SessionHub` 的 pingSweep 附带应用层心跳事件 `session.heartbeat`（协议级 ping 浏览器 JS 不可见）；客户端以「90s 无任何入站 ≈ 连丢三帧」判死半开连接（NAT 换基站/路由器重启原先最长挂 30 分钟），`visibilitychange` 回前台立刻查、`online` 事件提前重连。
+  2. 冷启动探测可恢复：`probeServerAuthUntilSettled`（30s 内持续重试到有确定答案）；5xx（反代 502 等）不再误判为 password 模式；30s 仍不可达才回退配对呈现 + `watchForPasswordServer` 后台每 30s 重探，一旦确定是密码服务器自动刷新进正路（原先要手动刷新）。
+  3. 向导跳过路径也 `butler.ensure`（无访谈、幂等，失败不阻塞完成）：headless 7×24 常驻不等「下次重启」的 core 兜底补建。
+  4. 认证状态机测试补齐（仓库惯例）：`authed-transport.test.ts`（13 用例：探测分类/记忆化/退避重连/会话失效/心跳自愈/资源清理）+ `gate.svelte.test.ts`（6 用例：登录页/直连/登录成功 401/429/网络错/会话失效回登录页）。
+- [x] **安全后议项**：限流键 IPv6 /64 聚合 + `::ffff:` v4 还原（旋转 /128 绕不开）+ 过期清扫（Map 超 256 条摊销清扫）；`--trust-proxy` 开关（默认不信 `X-Forwarded-For`，反代场景显式开；环境变量 `KEPCUP_SERVER_TRUST_PROXY` 兜底）；admin token 常量时间比较；`nosniff` 头（静态与 auth API）；`SESSION_TTL_SEC` 与 Cookie Max-Age 同源常量；`--admin-password` 凭据卫生警示（usage + README）。
+- [x] **P3 十项**：`retryLogin` 死代码删除；`--help` 退 0；scrypt 全链路异步化（`scryptSync` → libuv 线程，登录/建号/改密不再阻塞事件循环 ~0.5s）；tarball 裁剪 `src/` `test/`；设计文档 §4 `bin/kepcup-server` 路径修正（实际 `dist/cli.js`）；`docs/dev/06-release.md` 一览表补 headless server 行；向导权限步的桌面语义控件（自启勾选、测试通知）web 端置灰；dormant 探测口径备注（direct-relay）。
+- [x] 服务端测试同步：`auth.test.ts` 异步化 + 限流键归一 3 用例；`session-hub.test.ts` 心跳用例 + `clientIp` 4 用例 + config 字面量补字段；`config.test.ts` `--trust-proxy` + help 用例；server 定向 44 用例、渲染层新增 19 用例、shared/core 定向 42 用例全绿；lint / typecheck（含 svelte-check）全绿；全量收口一次（见实施记录）。
+
 ## 6 明确不做（本期）
 
 - 旧桌面数据迁移 / 向后兼容（用户明确不需要）。
@@ -113,3 +126,4 @@
   - 2026-10-24（真机反馈修复二，P0 级共享 bug）：web 端登录后 `settings.get` / `conversations.list` 等**一切 void 输入方法**报 INVALID_INPUT、应用卡死（向导也因此到不了门控）。根因在共享 RPC 客户端：birpc `$call(method, undefined)` 发出 `a:[undefined]`，JSON 线序列化成 `[null]`，`z.void()` 拒绝 null——**配对模式的手机端同源命中**（D96 联调未覆盖 void 方法直调；桌面 MessagePort 结构化克隆保真 undefined 从未暴露）。修复 `shared/src/rpc/client.ts`：无参调用发空参数组（`$callRaw({method, args: []})`），桌面语义不变；回归测试 `rpc-client-args.test.ts` 钉线上形状。shared+server 定向 430 用例全绿。
   - 2026-10-24（真机反馈修复）：web 端首启无向导、无管家——根因同源：`web-shim.ts` 的 `onboardingVisible` 写死 false（D96 时手机只是遥控器），而向导既是模型供应商引导也是管家创建入口（`butler.ensure` 只在向导完成时调；core 启动兜底仅面向 `onboarding.completed === true` 的存量桌面用户）。修复：web 端点 `onboardingVisible: true`，门控仍由 `settings.onboarding.completed` 决定（桌面已完成引导的手机遥控不重复出现）；向导中的桌面权限步骤按垫片降级、沙箱探测走 RPC 在服务端如实执行。
   - 待办：手机真机验收（验收清单 #2，密码模式 + pairing 模式各一遍）；首次发版时观察 CI server job 产物进 Release。
+  - 2026-10-24（收尾修复批，§5.7）：评审遗留全量清账（渲染层 P2×4 + 安全后议 + P3 十项）。实现期修正两处：`promisify(scrypt)` 的 TS 重载解析不对（显式签名包装）；fake timers 下 onDrop 的 whoami 微任务不随 `advanceTimersByTimeAsync(0)` 保证冲刷（测试显式排空）。定向 105 用例全绿后全量收口。随后合并回 `v0.3.0`，worktree 撤除。

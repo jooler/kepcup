@@ -45,7 +45,7 @@ kepcup-server pair                # 出配对码（多设备）
 kepcup-server devices            # 设备列表 / devices revoke <id> 撤销
 ```
 
-常用选项（环境变量 `KEPCUP_SERVER_HOST/_PORT/_DATA_DIR/_PUBLIC_URL/_RELAY` 同名兜底）：
+常用选项（环境变量 `KEPCUP_SERVER_HOST/_PORT/_DATA_DIR/_PUBLIC_URL/_RELAY/_TRUST_PROXY` 同名兜底）：
 
 | 选项 | 说明 |
 |---|---|
@@ -55,8 +55,11 @@ kepcup-server devices            # 设备列表 / devices revoke <id> 撤销
 | `--auth <mode>` | `password`（默认，账号密码登录）\| `pairing`（D96 配对码）；`--relay` 模式恒为 pairing |
 | `--admin-user` / `--admin-password` | 非交互首启建号（环境变量 `KEPCUP_SERVER_ADMIN_*` 等价） |
 | `--relay <url>` | 中转出站模式：不开入站端口，经公共/自建中转（`wss://remote.kepcup.com`）连客户端 |
+| `--trust-proxy` | 反代后信任 `X-Forwarded-For`（登录限流与审计日志取真实客户端 IP；见「TLS」） |
 | `--pairing-manual` | 配对请求不自动接受，由 `pair --accept <requestId>` 人工确认 |
 | `--no-auto-pair` | 关闭首配自动出码 |
+
+> **凭据卫生**：`--admin-password` 与 `KEPCUP_SERVER_ADMIN_PASSWORD` 会留在 shell 历史、进程列表与环境快照里。交互终端优先用首启提示输入；systemd 场景用环境变量时确认单元文件权限（`0600`），建号后移除。
 
 ## 密钥（keystore）
 
@@ -96,6 +99,8 @@ kepcup.example.com {
 ```
 
 nginx 用 `proxy_pass http://127.0.0.1:8642;`＋ `proxy_http_version 1.1`＋ `Upgrade`/`Connection` 头透传 WebSocket。Tailscale / WireGuard 内网可直接 `ws://<内网地址>:8642`。
+
+反代后面加 `--trust-proxy`：登录限流与审计日志改取 `X-Forwarded-For` 的真实客户端 IP（默认不信该头——直接暴露时它可被任意伪造；不开时限流按反代 IP 聚合，属预期收紧而非误伤）。
 
 ## 与桌面应用的关系
 

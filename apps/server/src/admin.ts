@@ -1,4 +1,5 @@
 import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import type {
   PairedDevice,
   PairingOffer,
@@ -35,6 +36,13 @@ function isLoopback(req: IncomingMessage): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
+/** 常量时间比较（审查后议）：token 是环回 + 随机 32B，早退比较的时序面很小，顺手闭环。 */
+function adminTokenMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 function send(res: ServerResponse, code: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }).end(payload);
@@ -50,8 +58,8 @@ export function handleAdminRequest(
     send(res, 403, { error: 'admin endpoints are loopback-only' });
     return;
   }
-  const auth = req.headers.authorization ?? '';
-  if (auth !== `Bearer ${deps.token}`) {
+  const provided = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
+  if (!adminTokenMatches(provided, deps.token)) {
     send(res, 401, { error: 'invalid admin token' });
     return;
   }

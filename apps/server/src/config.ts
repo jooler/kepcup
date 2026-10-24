@@ -45,6 +45,11 @@ export interface ServerConfig {
   revokeDeviceId: string | null;
   /** pair/devices：JSON 输出（脚本友好）。 */
   json: boolean;
+  /**
+   * 反代后信任 X-Forwarded-For（限流与登录日志取真实客户端 IP）。仅当服务
+   * 直接暴露在不可信网络且前面没有会伪造该头的代理时保持默认 false。
+   */
+  trustProxy: boolean;
   /** 内部：publicUrl 是否用户显式给定（port=0 时推导用的公开端口会变）。 */
   publicUrlExplicit: boolean;
 }
@@ -101,7 +106,7 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       // 布尔开关表；其余都按取值参数解析（值里的 -- 开头串需要转义的场景不存在）。
-      if (['pairing-manual', 'no-auto-pair', 'json', 'help'].includes(key)) {
+      if (['pairing-manual', 'no-auto-pair', 'json', 'help', 'trust-proxy'].includes(key)) {
         flags.add(key);
         continue;
       }
@@ -161,6 +166,7 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
   const auth = relayUrl !== null ? 'pairing' : (authRaw as 'password' | 'pairing');
   const adminUser = values.get('admin-user') ?? env('ADMIN_USER') ?? null;
   const adminPassword = values.get('admin-password') ?? env('ADMIN_PASSWORD') ?? null;
+  const trustProxyEnv = env('TRUST_PROXY');
 
   return {
     command,
@@ -179,6 +185,7 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
     acceptRequestId: values.get('accept') ?? null,
     revokeDeviceId: values.get('revoke') ?? positionalRevoke,
     json: flags.has('json'),
+    trustProxy: flags.has('trust-proxy') || trustProxyEnv === '1' || trustProxyEnv === 'true',
     publicUrlExplicit: explicitPublicUrl !== undefined,
   };
 }
@@ -201,6 +208,7 @@ function emptyConfig(command: ServerConfig['command']): ServerConfig {
     acceptRequestId: null,
     revokeDeviceId: null,
     json: false,
+    trustProxy: false,
     publicUrlExplicit: false,
   };
 }
@@ -228,8 +236,12 @@ run 选项：
   --admin-password <pw>  同上；环境变量 KEPCUP_SERVER_ADMIN_USER/_PASSWORD 等价
   --keystore <kind>      system（默认，Linux 需 Secret Service）| file（0600 明文，NAS 常用）
   --web-dir <dir>        PWA 静态目录（默认包内 web/）
+  --trust-proxy          反代后信任 X-Forwarded-For（限流/日志取真实客户端 IP）
   --pairing-manual       配对请求不自动接受，改由 pair --accept 人工确认
   --no-auto-pair         关闭首配自动出码
 
-环境变量兜底：KEPCUP_SERVER_HOST / _PORT / _DATA_DIR / _PUBLIC_URL / _RELAY`;
+环境变量兜底：KEPCUP_SERVER_HOST / _PORT / _DATA_DIR / _PUBLIC_URL / _RELAY / _TRUST_PROXY
+
+注意：--admin-password 与 KEPCUP_SERVER_ADMIN_PASSWORD 会进入 shell 历史 / 进程列表 /
+      环境快照，交互终端优先用首启提示输入；systemd 场景确认单元文件权限（0600）。`;
 }

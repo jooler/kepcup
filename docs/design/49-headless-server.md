@@ -113,9 +113,9 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 
 ## 4 发布与部署
 
-- **产物**：`kepcup-server-v{version}-{platform}-{arch}.tar.gz`，内容为自包含包（`bin/kepcup-server` + `dist/` + `web/`（PWA）+ `node_modules/`（bundledDependencies 内联，原生模块为该平台预构建产物））。同一文件两种用法：
+- **产物**：`kepcup-server-v{version}-{platform}-{arch}.tar.gz`，内容为自包含包（`dist/`（入口 `dist/cli.js`，npm 安装后即 `kepcup-server` 命令）+ `web/`（PWA）+ `node_modules/`（bundledDependencies 内联，原生模块为该平台预构建产物））。同一文件两种用法：
   - npm 方式（优先）：`npm i -g https://github.com/…/releases/download/v{v}/kepcup-server-v{v}-linux-x64.tar.gz`
-  - tar 方式（补充）：下载解压，`./bin/kepcup-server` 直接跑（离线可装）。
+  - tar 方式（补充）：下载解压，`./dist/cli.js` 直接跑（入口已 chmod +x；离线可装）。
 - **CI/Release**：`release.yml` 新增 `server` job（needs prepare；matrix linux-x64 / linux-arm64）：`pnpm install → pnpm -r build → KEPCUP_WEB_OUTDIR=… build:web → scripts/pack-server.mjs → 上传工件 dist-server-{platform}[-{arch}]`。publish job 的 `dist-*` 下载 pattern 原样收编（无需改动收集逻辑，`needs` 加 server 即可）。`ci.yml` 无需新 job——lint/typecheck/test 覆盖新包。
 - **平台矩阵**：linux-x64 / linux-arm64（NAS 主场景）。其余平台走源码路径（`pnpm --filter @kepcup/server start`），文档注明。
 - **部署文档**（`apps/server/README.md`）：systemd 单元样例、Caddy/nginx 反代 TLS 样例、Tailscale 场景说明、内网直连（ws + E2E）边界说明。
@@ -125,7 +125,7 @@ hub 的 `relayClientFactory` DI 缝（`remote/hub.ts`，测试注入假中转的
 - **单元**（`apps/server/test/`）：直连适配层路由（did 定向 / 广播 / pong 回复 / viewer_left / replaced / 越界帧拒绝）用真 `ws` socket 对打；CLI 参数解析。
 - **集成**：临时数据目录 + memory keystore 起完整服务端 → 用 core 的 `FrameCodec` + `PairingService` 原语编写脚本化 viewer 客户端走完 配对（auto-accept）→ hello 自举 → `system.ping` RPC → 事件扇出 → 断线重连 全链路。
 - **回归**：core 定向测试（remote / settings 相关文件）+ hub 默认路径（alwaysOn=false）行为不变；阶段收口跑一次全量。
-- **发版验收**：本地跑 `scripts/pack-server.mjs` 产出 tar.gz，解压后在干净目录 `./bin/kepcup-server` 冒烟（起服务、出码、admin pair）。
+- **发版验收**：本地跑 `scripts/pack-server.mjs` 产出 tar.gz，解压后在干净目录 `./dist/cli.js` 冒烟（起服务、出码、admin pair）。
 
 ## 6 分期
 
