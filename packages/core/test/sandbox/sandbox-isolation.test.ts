@@ -257,22 +257,24 @@ d('sandbox escape cases (P02 安全用例集)', () => {
 
     it('reaches the internet in open mode but not in none/allowlist modes without the domain', { timeout: TIMEOUT }, async () => {
       workspace();
+      // Any HTTP status (incl. 5xx) proves the request left the sandbox;
+      // requiring 2xx/3xx flakes when example.com returns 503 (macOS CI).
+      const reached = /^\d{3}$/;
       const fetchCode = async (mode: 'none' | 'allowlist' | 'open', domains: string[]) => {
-        // Public-network success cases retry to ride out transient flakiness.
         const expectSuccess = mode === 'open' || (mode === 'allowlist' && domains.includes('example.com'));
         let last = '';
         for (let attempt = 0; attempt < (expectSuccess ? 3 : 1); attempt++) {
           const result = await bash(`curl -sS -m 15 -o /dev/null -w '%{http_code}' https://example.com`, 40_000, mode, domains);
           last = result.exitCode === 0 ? result.stdout.trim() : `exit:${result.exitCode}`;
-          if (/^[23]/.test(last)) return last;
+          if (reached.test(last)) return last;
         }
         return last;
       };
 
-      expect(await fetchCode('open', [])).toMatch(/^[23]/);
-      expect(await fetchCode('none', [])).not.toMatch(/^[23]/);
-      expect(await fetchCode('allowlist', ['github.com'])).not.toMatch(/^[23]/);
-      expect(await fetchCode('allowlist', ['example.com'])).toMatch(/^[23]/);
+      expect(await fetchCode('open', [])).toMatch(reached);
+      expect(await fetchCode('none', [])).not.toMatch(reached);
+      expect(await fetchCode('allowlist', ['github.com'])).not.toMatch(reached);
+      expect(await fetchCode('allowlist', ['example.com'])).toMatch(reached);
     });
   });
 });
