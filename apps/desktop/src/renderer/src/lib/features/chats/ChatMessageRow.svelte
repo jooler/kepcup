@@ -14,6 +14,7 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { shell } from '$lib/stores/shell.svelte';
@@ -116,7 +117,7 @@
     quoted === null
       ? ''
       : quoted.senderType === 'user'
-        ? t('sidebar.userName')
+        ? settingsStore.userDisplayName
         : quoted.senderBotId
           ? chat.botName(quoted.senderBotId)
           : '',
@@ -205,7 +206,7 @@
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
     : ''}"
   role="group"
-  aria-label={isUser ? t('sidebar.userName') : name}
+  aria-label={isUser ? settingsStore.userDisplayName : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
   data-highlighted={chat.highlightMessageId === message.id ? 'true' : 'false'}

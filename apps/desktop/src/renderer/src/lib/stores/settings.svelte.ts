@@ -12,6 +12,7 @@ import type {
 } from '@kepcup/shared';
 import { chatModelOptions } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
+import { t } from '$lib/i18n';
 
 export interface ModelOption {
   ref: string;
@@ -83,6 +84,15 @@ class SettingsState {
     const config = settings.capabilityModels[capability];
     if (!config) return false;
     return this.providers.find((provider) => provider.id === config.vendor)?.hasKey ?? false;
+  }
+
+  /**
+   * 用户显示名（个人资料里设置的名称；未设置时回退本地用户占位）。字段取值按
+   * 缺失处理：core 侧尚未重启（旧快照没有这个键）时也不能抛错。
+   */
+  get userDisplayName(): string {
+    const name = this.settings?.userProfileName;
+    return typeof name === 'string' && name.trim().length > 0 ? name.trim() : t('sidebar.userName');
   }
 
   async refresh(): Promise<void> {

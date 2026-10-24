@@ -852,6 +852,16 @@ export const settingsSchema = z.object({
   remoteEnabled: z.boolean().default(false),
   /** D96 远程遥控：中转地址，默认公共服务，自建用户可改（条目 `remote.relay`）。 */
   remoteRelayUrl: relayEndpointSchema.default(DEFAULT_RELAY_URL),
+  /**
+   * 用户个人资料（Profile）显示名；'' = 未设置（界面显示默认称呼）。条目
+   * `profile.user-name`，设置页「个人资料」编辑。
+   */
+  userProfileName: z.string().default(''),
+  /**
+   * 用户头像引用：'' = 未设置；`upload:{fileName}` 指向 core `user/avatar/` 下
+   * 的当前上传文件（只保留最新一张）。条目 `profile.user-avatar`。
+   */
+  userProfileAvatar: z.string().default(''),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

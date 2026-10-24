@@ -1157,7 +1157,7 @@
                 type="button"
                 class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
                 aria-label={t('menu.settings')}
-                title={t('sidebar.userName')}
+                title={settingsStore.userDisplayName}
                 data-testid="user-menu-trigger"
               >
                 <UserAvatar class="size-10" testId="user-menu-avatar" />
@@ -1200,7 +1200,7 @@
                 type="button"
                 class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
                 aria-label={t('menu.settings')}
-                title={t('sidebar.userName')}
+                title={settingsStore.userDisplayName}
                 data-testid="user-menu-trigger"
               >
                 <UserAvatar class="size-10" testId="user-menu-avatar" />
