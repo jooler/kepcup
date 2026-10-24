@@ -13,7 +13,7 @@ import { SkillsService } from '../../src/skills/registry.js';
 import { copySkillTree } from '../../src/skills/library.js';
 import { scanSkillDir } from '../../src/skills/scan.js';
 import { parseSkillDir } from '../../src/skills/parse.js';
-import { AppError } from '@kepcup/shared';
+import type { AppError } from '@kepcup/shared';
 import type { SkillScan } from '@kepcup/shared';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'skills-registry-'));
