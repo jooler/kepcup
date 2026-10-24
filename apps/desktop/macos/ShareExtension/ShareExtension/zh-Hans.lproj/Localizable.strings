@@ -1,10 +1,10 @@
 /* KepCup Share Extension（zh-Hans 开发语言文案）。 */
 
 "share.loading" = "正在读取分享内容…";
-"share.empty" = "没有可导入的内容。";
-"share.write_failed" = "导入失败：%@";
+"share.empty" = "没有可发送的内容。";
+"share.write_failed" = "发送失败：%@";
 
-"picker.title" = "导入到 KepCup";
+"picker.title" = "发送到 KepCup";
 "picker.targets_missing" = "无法读取目标列表。请打开 KepCup 让它同步一次，再回到这里重试。";
 "picker.targets_stale" = "目标列表可能已过期，确认时以 KepCup 为准。";
 "picker.search" = "搜索 Bot 或项目组";
@@ -15,4 +15,4 @@
 "picker.note_label" = "附言（可留空）";
 "picker.note_limit" = "附言最多 %d 字";
 "picker.cancel" = "取消";
-"picker.confirm" = "导入";
+"picker.confirm" = "发送";

@@ -76,6 +76,7 @@ import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
 import { BotsService } from './domain/bots.js';
 import { BotAvatarService } from './domain/avatars.js';
+import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
 import { StickiesService } from './domain/stickies.js';
@@ -209,7 +210,7 @@ import {
   type ShellHostRpc,
 } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
-import { RemoteHub } from './remote/hub.js';
+import { RemoteHub, type RemoteHostOptions } from './remote/hub.js';
 import type { CoreEventsMap } from './start-types.js';
 
 /** Test hooks for the environment manager's system-item guidance (P06). */
@@ -470,6 +471,12 @@ export interface CoreServicesOptions {
   agentLaunch?: (entry: AgentCatalogEntry) => LaunchTarget | null;
   /** D72 test hook: in-process agents instead of child processes. */
   agentSpawn?: AgentSpawner;
+  /**
+   * D102 远程宿主形态（headless 服务端）：注入直连监听适配层（替代默认的
+   * RelayClient 出站中连）并启用常驻连接语义。桌面 / 测试缺省 undefined，
+   * RemoteHub 走既有路径。
+   */
+  remote?: RemoteHostOptions;
 }
 
 export interface CoreDomainServices {
@@ -483,6 +490,8 @@ export interface CoreDomainServices {
   secrets: SecretsService;
   bots: BotsService;
   avatars: BotAvatarService;
+  /** D48 Bot 模板导出/导入（`bots.template.*` RPC）。 */
+  botTemplates: BotTemplateService;
   audit: AuditService;
   conversations: ConversationsService;
   messages: MessagesService;
@@ -2940,11 +2949,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
     services.mainDb = mainDb;
     services.runsDb = runsDb;
+    // D48 Bot 模板：导入时外部智能体引擎在本机不可用（实验开关/目录）→ 回退内置。
+    const botTemplates = new BotTemplateService({
+      paths,
+      clock,
+      logger,
+      bots,
+      avatars,
+      skills,
+      agentSelectable: (agentId) => {
+        try {
+          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
     services.domain = {
       settings,
       secrets,
       bots,
       avatars,
+      botTemplates,
       conversations,
       messages,
       stickies,
@@ -3102,6 +3129,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       appMethods: () => services.appMethods,
+      ...(options.remote ?? {}),
       pushInitialEventsTo: (server) => {
         services.pushStatusTo(server);
         services.pushPlatformStateTo(server);

@@ -10,6 +10,7 @@ KepCup 怎么打包、发布到哪些渠道、用户怎么收到更新，以及�
 | Windows（x64 / arm64） | GitHub Releases：一个合并 NSIS 安装包 | 推 main 后 CI 自动构建、发布 | 应用内自动更新 |
 | Windows | Microsoft Store：MSIX（x64，arm64 机器走仿真） | CI 构建 MSIX，本地跑 `store-upload.mjs` 提交 | 商店更新，应用内更新关闭 |
 | Linux（x64 / arm64） | GitHub Releases：AppImage + deb | 推 main 后 CI 自动构建、发布 | AppImage 应用内静默更新；deb 应用内更新（会弹 pkexec 要密码） |
+| Linux x64 / arm64（headless 服务端） | GitHub Releases：`kepcup-server-v{v}-{platform}-{arch}.tar.gz`（`npm i -g <url>` 或解压 `./dist/cli.js` 直跑） | release.yml 的 `server` job（pack + 干净解压冒烟）随桌面版一起发；部署见 `apps/server/README.md` | 暂无自动更新：重新下载安装（数据目录不受影响） |
 
 **不做的渠道：**
 

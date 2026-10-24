@@ -17,6 +17,7 @@ const PATTERN = /\b(defaultMainModel|defaultLightModel|runtime\??\.(model|light_
 const ALLOWED = new Map<string, string>([
   ['agent/llm-router.ts', '唯一的选取逻辑'],
   ['domain/bots.ts', 'Bot 创建：是否指定了模型'],
+  ['domain/bot-templates.ts', 'D48 模板：复制 Bot 的模型配置值（不做选取）'],
   ['start.ts', '装配：首启默认值 / 外部 Agent 兜底的启动期判断'],
   ['handover/adapters/model.ts', 'D88 移交：复制 / 改写 Bot 的模型配置值（不做选取）'],
   ['settings/adapters.ts', 'D89 设置目录适配器：读 / 改默认模型与 Bot 模型的配置值（不做选取）'],

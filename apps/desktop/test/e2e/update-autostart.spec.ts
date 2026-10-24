@@ -131,9 +131,20 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
 
-    // 点击左栏圆形按钮 → preload update:installNow → 主进程门控退出并安装；
-    // 门控先广播 installing，按钮随之消失，证明点击确实走到了安装决策。
+    // 点击左栏圆形按钮 → 先弹确认浮层（提醒需要重启才能生效），确认后才走
+    // preload update:installNow → 主进程门控退出并安装；门控先广播
+    // installing，按钮随之消失，证明确认后的点击确实走到了安装决策。
     await page.locator('[data-testid="sidebar-update-button"]').click();
+    const confirm = page.locator('[data-testid="sidebar-update-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText('9.9.9');
+    // 「稍后重启」只收起浮层，不触发安装。
+    await page.locator('[data-testid="sidebar-update-restart-later"]').click();
+    await expect(confirm).toBeHidden();
+    await expect(page.locator('[data-testid="sidebar-update-button"]')).toBeVisible();
+    await page.locator('[data-testid="sidebar-update-button"]').click();
+    await expect(confirm).toBeVisible();
+    await page.locator('[data-testid="sidebar-update-install-now"]').click();
     await expect(page.locator('[data-testid="sidebar-update-button"]')).toHaveCount(0, {
       timeout: 15_000,
     });
