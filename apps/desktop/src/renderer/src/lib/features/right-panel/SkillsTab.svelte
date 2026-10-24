@@ -177,7 +177,7 @@
             {/if}
           </p>
           {#if skill.description.length > 0}
-            <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{skill.description}</p>
+            <p class="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground">{skill.description}</p>
           {/if}
           <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
             <Badge variant="secondary" data-testid="skill-kind">{t(KIND_KEYS[skill.kind])}</Badge>
@@ -198,19 +198,19 @@
             {/if}
           </div>
           {#if skill.missingDeps.length > 0}
-            <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="skill-missing-deps">
+            <p class="mt-1 break-words text-xs text-amber-700 dark:text-amber-400" data-testid="skill-missing-deps">
               {t('skills.missingDeps', { deps: skill.missingDeps.join(listSeparator()) })}
             </p>
           {/if}
           {#if skill.enhancedRequired && skill.compatibility === 'incompatible'}
             <!-- P12: 增强级未安装 → 不兼容 + 可安装提示（enhancedInstallHint 契约） -->
-            <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="skill-enhanced-hint">
+            <p class="mt-1 break-words text-xs text-amber-700 dark:text-amber-400" data-testid="skill-enhanced-hint">
               {t('skills.enhancedHint', { hint: skill.enhancedInstallHint ?? skill.statusReason ?? '' })}
             </p>
           {/if}
           {#if (skill.status === 'draft' || skill.status === 'disabled') && skill.statusReason !== null}
             <!-- draft = 生成失败原因；disabled = 未启用原因（反思生成的技能停在未启用态时标注来源） -->
-            <p class="mt-1 text-xs text-muted-foreground" data-testid="skill-status-reason">
+            <p class="mt-1 break-words text-xs text-muted-foreground" data-testid="skill-status-reason">
               {skill.statusReason}
             </p>
           {/if}
