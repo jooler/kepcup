@@ -282,6 +282,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # shared/core 的 exports 只指向 dist/ 且无 prepare 脚本——install 不构建，
+      # pack 的 web 构建（renderer import @kepcup/shared）与 tsc 都解析不到
+      #（审查修复 P1：漏此步首次发版必失败；设计 §4 原文即含此步骤）。
+      - run: pnpm -r build
       - name: Pack server tarball
         run: node scripts/pack-server.mjs --version ${{ needs.prepare.outputs.version }}
       - name: Smoke test
