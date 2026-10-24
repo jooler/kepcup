@@ -2,29 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { resolveSettingsSection, settingsSectionOpensExtensionMcp } from './sections';
 
 describe('resolveSettingsSection', () => {
-  it('maps legacy mcp / developer / apps custom onto apps (shell redirects to extension MCP)', () => {
-    expect(resolveSettingsSection('mcp')).toEqual({ section: 'apps' });
-    expect(resolveSettingsSection('developer')).toEqual({ section: 'apps' });
-    expect(resolveSettingsSection('apps', 'custom')).toEqual({ section: 'apps' });
-    expect(resolveSettingsSection('mcp', 'catalog')).toEqual({ section: 'apps' });
+  it('兜底旧深链 mcp / developer 到「通用」（正常由 shell 改开扩展中心 MCP）', () => {
+    expect(resolveSettingsSection('mcp')).toEqual({ section: 'general' });
+    expect(resolveSettingsSection('developer')).toEqual({ section: 'general' });
   });
 
-  it('keeps apps (non-custom) and other sections', () => {
-    expect(resolveSettingsSection('apps')).toEqual({ section: 'apps' });
-    expect(resolveSettingsSection('apps', 'connected')).toEqual({ section: 'apps' });
-    expect(resolveSettingsSection('apps', 'catalog')).toEqual({ section: 'apps' });
+  it('其余分区原样返回', () => {
     expect(resolveSettingsSection('models')).toEqual({ section: 'models' });
-    expect(resolveSettingsSection('general', 'custom')).toEqual({ section: 'general' });
+    expect(resolveSettingsSection('general')).toEqual({ section: 'general' });
   });
 });
 
 describe('settingsSectionOpensExtensionMcp', () => {
-  it('flags mcp, developer, and apps+custom', () => {
+  it('flags mcp and developer legacy deep links', () => {
     expect(settingsSectionOpensExtensionMcp('mcp')).toBe(true);
     expect(settingsSectionOpensExtensionMcp('developer')).toBe(true);
-    expect(settingsSectionOpensExtensionMcp('apps', 'custom')).toBe(true);
-    expect(settingsSectionOpensExtensionMcp('apps')).toBe(false);
-    expect(settingsSectionOpensExtensionMcp('apps', 'connected')).toBe(false);
     expect(settingsSectionOpensExtensionMcp('models')).toBe(false);
+    expect(settingsSectionOpensExtensionMcp('general')).toBe(false);
   });
 });

@@ -42,13 +42,17 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     id: 'memory',
     reason: '记忆条目是 Bot 的数据，不是设置；改写走 remember / forget',
   },
-  { kind: 'bot-panel-tab', id: 'widgets', reason: 'Bot 自制组件是产出物，不是设置' },
+  { kind: 'bot-panel-tab', id: 'widget', reason: 'Bot 自制组件是产出物，不是设置' },
   {
     kind: 'bot-panel-tab',
     id: 'wiki',
     reason: '知识库内容是 Bot 的数据，不是设置；收录走 wiki_enqueue',
   },
-  { kind: 'bot-panel-tab', id: 'other', reason: '「其它」只有移除 Bot：删除类破坏性动作（§九）' },
+  {
+    kind: 'bot-panel-tab',
+    id: 'watches',
+    reason: '网页监看是对话级自动化配置与数据，不是设置；入口在 Bot 详情的监看详情',
+  },
   { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
   {
     kind: 'action',
@@ -136,7 +140,7 @@ export interface SettingsUiScan {
   anchorSections: Readonly<Record<string, string>>;
   /** 扩展中心页签（`EXTENSION_CENTER_TABS`）。 */
   extensionCenterTabs: readonly string[];
-  /** Bot 详情右栏页签（RightPanel 的 `tabItems`）。 */
+  /** Bot 详情下钻位置（RightPanel `PanelDetail` 的 `kind`：profile / skills / access 等）。 */
   botPanelTabs: readonly string[];
 }
 

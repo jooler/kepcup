@@ -13,7 +13,14 @@
     conversationId,
     workdirId,
     disabled,
-  }: { conversationId: string; workdirId: string | null; disabled?: boolean } = $props();
+    /** false = 只挂载弹框不渲染表单区块：右栏「配置」二级菜单用自己的行触发 openPicker()。 */
+    showBlock = true,
+  }: {
+    conversationId: string;
+    workdirId: string | null;
+    disabled?: boolean;
+    showBlock?: boolean;
+  } = $props();
 
   let pickerOpen = $state(false);
   let settingsOpen = $state(false);
@@ -51,35 +58,42 @@
   async function handlePickNew(): Promise<void> {
     await workdirs.selectWithDialog(conversationId);
   }
+
+  /** 供外部（配置二级菜单的工作目录行）打开选择弹框；执行中 / 只读时不动。 */
+  export function openPicker(): void {
+    if (!effectiveDisabled) pickerOpen = true;
+  }
 </script>
 
-<!-- 右栏表单区块（Bot「配置」tab / 群信息）：自带标签的通栏触发按钮 -->
-<div class="grid gap-1.5" data-testid="workdir-selector">
-  <Label>{t('workdirs.selector')}</Label>
-  <Button
-    variant="outline"
-    size="sm"
-    class="h-9 w-full justify-start gap-1.5 px-2 text-xs font-normal text-muted-foreground"
-    disabled={effectiveDisabled}
-    onclick={() => (pickerOpen = true)}
-    title={current !== null ? current.path : t('workdirs.none')}
-    data-testid="workdir-selector-trigger"
-  >
-    {#if missing}<TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
-    {:else}<FolderOpen class="size-3.5 shrink-0" aria-hidden="true" />{/if}
-    <span class="truncate" data-testid="workdir-selector-name">
-      {current !== null ? current.name : t('workdirs.none')}
-    </span>
-  </Button>
-  {#if missing}
-    <span class="text-[11px] text-amber-600">{t('workdirs.missingWarning')}</span>
-  {/if}
-  {#if running}
-    <span class="text-[11px] text-muted-foreground" data-testid="workdir-switch-blocked-hint">
-      {t('workdirs.switchBlocked')}
-    </span>
-  {/if}
-</div>
+{#if showBlock}
+  <!-- 右栏表单区块（Bot「配置」tab / 群信息）：自带标签的通栏触发按钮 -->
+  <div class="grid gap-1.5" data-testid="workdir-selector">
+    <Label>{t('workdirs.selector')}</Label>
+    <Button
+      variant="outline"
+      size="sm"
+      class="h-9 w-full justify-start gap-1.5 px-2 text-xs font-normal text-muted-foreground"
+      disabled={effectiveDisabled}
+      onclick={() => (pickerOpen = true)}
+      title={current !== null ? current.path : t('workdirs.none')}
+      data-testid="workdir-selector-trigger"
+    >
+      {#if missing}<TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+      {:else}<FolderOpen class="size-3.5 shrink-0" aria-hidden="true" />{/if}
+      <span class="truncate" data-testid="workdir-selector-name">
+        {current !== null ? current.name : t('workdirs.none')}
+      </span>
+    </Button>
+    {#if missing}
+      <span class="text-[11px] text-amber-600">{t('workdirs.missingWarning')}</span>
+    {/if}
+    {#if running}
+      <span class="text-[11px] text-muted-foreground" data-testid="workdir-switch-blocked-hint">
+        {t('workdirs.switchBlocked')}
+      </span>
+    {/if}
+  </div>
+{/if}
 
 <Dialog.Root bind:open={pickerOpen}>
   <Dialog.Content class="max-w-md" data-testid="workdir-picker-dialog">

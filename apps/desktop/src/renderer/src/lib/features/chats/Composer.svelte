@@ -32,6 +32,7 @@
   } from './composer-editor';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import QuotedMedia from './QuotedMedia.svelte';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
@@ -115,7 +116,7 @@
     replyTo === null
       ? ''
       : replyTo.senderType === 'user'
-        ? t('sidebar.userName')
+        ? settingsStore.userDisplayName
         : replyTo.senderBotId
           ? chat.botName(replyTo.senderBotId)
           : '',
@@ -1246,6 +1247,10 @@
               <span class="min-w-0 flex-1 truncate">
                 {t('composer.replying', { name: replyToName, text: replyToText })}
               </span>
+              {#if (replyTo.attachments ?? []).length > 0}
+                <!-- 被引用的图片等附件（图片消息没有正文文字，空文本块靠它可辨） -->
+                <QuotedMedia attachments={replyTo.attachments ?? []} />
+              {/if}
               <button
                 type="button"
                 class="shrink-0 rounded-full p-1 hover:bg-accent"

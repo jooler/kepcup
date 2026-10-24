@@ -110,9 +110,7 @@ async function clickBrowserShow(page: Page): Promise<void> {
         );
         const r = btn?.getBoundingClientRect();
         const center =
-          r === undefined
-            ? []
-            : document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          r === undefined ? [] : document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2);
         return {
           panes: Array.from(document.querySelectorAll('[data-pane]')).map((p) => ({
             id: p.getAttribute('data-pane-id'),
@@ -191,18 +189,32 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
     await expect(page.locator('[data-testid="project-workdir"]')).toBeVisible({ timeout: 15_000 });
     inProjectSettings = true;
   } else {
-    const tabs = page.locator('[data-testid="right-panel-tabs"]');
-    if (!(await tabs.isVisible())) {
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
       await page.locator('[data-testid="right-panel-toggle"]').click();
     }
-    await tabs.locator('text=配置').click();
+    // 统一二级菜单：已在详情里先点返回回菜单。
+    const back = page.locator('[data-testid="bot-detail-back"]');
+    if (await back.isVisible()) await back.click();
   }
-  await page.locator('[data-testid="workdir-selector-trigger"]').click();
+  // 项目组设置页直接挂 WorkdirSelector；单聊仍走右栏配置行。
+  if (inProjectSettings) {
+    await page
+      .locator('[data-testid="project-workdir"] [data-testid="workdir-selector-trigger"]')
+      .click();
+  } else {
+    await page.locator('[data-testid="bot-config-row-workdir"]').click();
+  }
   await page.locator('[data-testid="workdir-pick-new"]').click();
-  await expect(page.locator('[data-testid="workdir-selector-name"]')).toContainText(
-    path.basename(dir),
-    { timeout: 15_000 },
-  );
+  if (inProjectSettings) {
+    await expect(
+      page.locator('[data-testid="project-workdir"] [data-testid="workdir-selector-name"]'),
+    ).toContainText(path.basename(dir), { timeout: 15_000 });
+  } else {
+    await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toContainText(
+      path.basename(dir),
+      { timeout: 15_000 },
+    );
+  }
   // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
   // 项目组随后回沟通视图（输入坞只在沟通里）——「已绑定」系统消息在沟通里才渲染。
   await page.keyboard.press('Escape');
@@ -784,7 +796,9 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     // 分毫未动）；磁盘上的分区目录只能等进程退出（closeSession 的
     // rmHomeTolerant）后随 home 一起消失。mac/linux 保持当场断言。
     if (process.platform !== 'win32') {
-      await expect.poll(() => partitionEntries(home, partition).length, { timeout: 30_000 }).toBe(0);
+      await expect
+        .poll(() => partitionEntries(home, partition).length, { timeout: 30_000 })
+        .toBe(0);
       // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
       await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
     }
@@ -1266,11 +1280,17 @@ test('W8 自动接管：查看窗口里点击 → Bot 点击被拒（BROWSER_USE
 });
 
 async function openProfileTab(page: Page): Promise<void> {
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+  // 统一二级菜单：已在某个详情里先点返回回菜单。
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  // 浏览器资料在菜单的「浏览器资料」行里：点行下钻。
+  await page.locator('[data-testid="bot-config-row-browser"]').click();
+  await expect(
+    page.locator('[data-testid="bot-detail-browser"] [data-testid="bot-browser-profile"]'),
+  ).toBeVisible();
 }
 
 async function openBrowserProfilesSettings(page: Page): Promise<void> {
@@ -1319,7 +1339,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     // Bot 详情：共甲、共乙挂到共享资料（选中即出现警示），自动保存。
     // 切换要显式确认（不走自动保存）：先取消一次，值复原、没有保存。
     const profileSelect = page.locator(
-      '[data-testid="profile-tab"] [data-testid="bot-browser-profile"]',
+      '[data-testid="bot-detail-browser"] [data-testid="bot-browser-profile"]',
     );
     const switchConfirm = page.locator('[data-testid="bot-browser-profile-confirm"]');
     for (const name of ['共甲', '共乙']) {
@@ -1406,7 +1426,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     await openConversation(page, '共甲');
     await openProfileTab(page);
     await expect(
-      page.locator('[data-testid="profile-tab"] [data-testid="bot-browser-profile"]'),
+      page.locator('[data-testid="bot-detail-browser"] [data-testid="bot-browser-profile"]'),
     ).toHaveValue('');
   } catch (error) {
     dumpRequests(llm, testInfo);
@@ -1460,10 +1480,12 @@ test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦�
       timeout: 15_000,
     });
 
-    // 右栏「定时任务」标签里的监看列表：第一次检查立即执行，被网络规则拦截 → 失败计数。
-    const tabs = page.locator('[data-testid="right-panel-tabs"]');
-    if (!(await tabs.isVisible())) await page.locator('[data-testid="right-panel-toggle"]').click();
-    await tabs.locator('text=定时任务').click();
+    // 右栏菜单「网页监看」详情里的监看列表：第一次检查立即执行，被网络规则拦截 → 失败计数。
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible()))
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    const back = page.locator('[data-testid="bot-detail-back"]');
+    if (await back.isVisible()) await back.click();
+    await page.locator('[data-testid="bot-menu-row-watches"]').click();
     const list = page.locator('[data-testid="watches-tab-list"]');
     await expect(list.locator('[data-testid="watch-failing"]')).toContainText('拦截', {
       timeout: 60_000,

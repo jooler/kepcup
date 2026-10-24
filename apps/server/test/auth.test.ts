@@ -73,7 +73,8 @@ describe('AuthStore', () => {
     expect(other.verifyToken(token)).toBeNull();
   });
 
-  it('改密码 → 旧 token 全部失效（版本号）、新 token 有效', async () => {
+  // Multiple scrypt ops (setup/login/change/login/reject); Windows CI needs budget like the rate-limit case.
+  it('改密码 → 旧 token 全部失效（版本号）、新 token 有效', { timeout: 30_000 }, async () => {
     const auth = makeStore();
     await auth.setupAdmin('alice', 'correct horse battery');
     const stale = await auth.login('alice', 'correct horse battery', '::1');

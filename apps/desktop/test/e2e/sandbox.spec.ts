@@ -119,10 +119,7 @@ test('run status line shows the command description while a command executes', a
       viaTask({
         title: '跑命令',
         writes: false,
-        taskSteps: [
-          step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
-          afterCmd,
-        ],
+        taskSteps: [step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }), afterCmd],
         relay: '执行完了',
       }),
     );

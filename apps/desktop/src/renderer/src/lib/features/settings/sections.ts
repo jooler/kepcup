@@ -1,16 +1,13 @@
 /**
- * 设置弹框分区 id 与别名（D73 §5.9；扩展中心：自定义 MCP 迁到「扩展中心 → MCP」后调整）。
- * 纯函数，便于单测：shell store 与 SettingsDialog 共用。
- * `mcp` / `developer` / 旧 `apps`+`custom` 深链由 `shell.openSettings` 改开扩展中心 MCP，
- * 本函数若仍被调用则落到「应用」（已连接账号），避免渲染已移除的开发者分区。
+ * 设置弹框分区 id（D73 §5.9；扩展中心 X3 后「应用」分区已移除：已连接账号、连接应用
+ * 目录、邮箱都在扩展中心对应分组）。纯函数，便于单测：shell store 与 SettingsDialog 共用。
+ * 旧深链 `mcp` / `developer` 由 `shell.openSettings` 改开扩展中心 MCP，不再落进设置弹框。
  */
 export type SettingsSectionId =
   | 'general'
   | 'hardware'
   | 'models'
   | 'search'
-  | 'apps'
-  | 'mcp'
   | 'browser'
   | 'agents'
   | 'profile'
@@ -20,34 +17,25 @@ export type SettingsSectionId =
   | 'environment'
   | 'usage'
   | 'diagnostics'
+  /** 旧深链 id：shell.openSettings 改开扩展中心 MCP，不会渲染成设置分区。 */
+  | 'mcp'
   | 'developer';
 
-/**
- * 「应用」分区原有的页签（目录 / 已连接 / 自定义）。扩展中心之后分区只剩已连接账号管理，
- * 页签已移除；这个类型只为旧深链 `openSettings('apps', anchor, tab)` 保持可编译：
- * `custom` 与 `mcp` / `developer` 由 shell 改开扩展中心；其余落在「应用」。
- */
-export type AppsTab = 'catalog' | 'connected' | 'custom';
-
 export interface ResolvedSection {
-  /** 实际渲染的分区（别名已展开）。 */
+  /** 实际渲染的分区（旧深链别名已展开）。 */
   section: Exclude<SettingsSectionId, 'mcp' | 'developer'>;
 }
 
 /**
- * 展开分区别名：`mcp` / `developer` / `apps`+`custom` → `apps`（shell 应优先改开扩展中心）；
- * 其余分区原样返回。
+ * 展开旧深链别名：`mcp` / `developer` 正常情况下由 shell 改开扩展中心，到不了这里；
+ * 万一落到设置弹框（兜底），渲染「通用」而不是已移除的分区。其余分区原样返回。
  */
-export function resolveSettingsSection(id: SettingsSectionId, appsTab?: AppsTab): ResolvedSection {
-  if (id === 'mcp' || id === 'developer') return { section: 'apps' };
-  if (id === 'apps' && appsTab === 'custom') return { section: 'apps' };
+export function resolveSettingsSection(id: SettingsSectionId): ResolvedSection {
+  if (id === 'mcp' || id === 'developer') return { section: 'general' };
   return { section: id as Exclude<SettingsSectionId, 'mcp' | 'developer'> };
 }
 
-/** 这些设置分区 id（含别名）应改开扩展中心 MCP，而不是设置弹框。 */
-export function settingsSectionOpensExtensionMcp(
-  id: SettingsSectionId,
-  appsTab?: AppsTab,
-): boolean {
-  return id === 'mcp' || id === 'developer' || (id === 'apps' && appsTab === 'custom');
+/** 这些设置分区 id（旧深链别名）应改开扩展中心 MCP，而不是设置弹框。 */
+export function settingsSectionOpensExtensionMcp(id: SettingsSectionId): boolean {
+  return id === 'mcp' || id === 'developer';
 }

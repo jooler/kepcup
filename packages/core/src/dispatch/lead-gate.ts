@@ -158,6 +158,7 @@ export function leadGate(input: LeadGateInput): Promise<LeadGateDecision> {
         timeZone: input.timeZone,
         leadBotId: input.leadBotId,
         bots: input.bots,
+        messages: input.messages,
       }),
     parametersSchema: gateParametersSchema,
     schema: gateOutputSchema,
@@ -180,6 +181,7 @@ function buildGateUserMessage(input: {
   timeZone: string;
   leadBotId: string;
   bots: BotsService;
+  messages: MessagesService;
 }): string {
   const names = new Map<string, string>();
   for (const bot of input.bots.listActive())
@@ -188,6 +190,8 @@ function buildGateUserMessage(input: {
     selfBotId: input.leadBotId,
     timeZone: input.timeZone,
     botNames: names,
+    // 引用回复标注：路由判断也要看得出消息回复的是哪条（图片引用尤其依赖）。
+    resolveReplyTarget: (id: string) => input.messages.getById(id),
   };
   const render = (messages: Message[]) =>
     messages

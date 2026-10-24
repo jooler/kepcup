@@ -5,7 +5,7 @@
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
-  import { FileDown } from '@lucide/svelte';
+  import { Upload } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import {
     Dialog,
@@ -89,17 +89,17 @@
   }
 </script>
 
+<!-- 顶栏图标钮：与右栏关闭按钮同款（圆形带边框、只显示 icon），文案走 title。 -->
 <Button
-  variant="outline"
-  size="sm"
-  class="h-7 w-full gap-1"
+  variant="ghost"
+  size="icon"
+  class="size-8 rounded-full border border-border bg-background text-muted-foreground shadow-none hover:text-foreground"
   disabled={!desktop}
-  title={desktop ? '' : t('botTemplate.desktopOnly')}
+  title={desktop ? t('rightPanel.exportTemplate') : t('botTemplate.desktopOnly')}
   onclick={() => void askExport()}
   data-testid="bot-export-template"
 >
-  <FileDown class="size-3.5" aria-hidden="true" />
-  {t('botTemplate.exportButton', { name: botName })}
+  <Upload class="size-4" aria-hidden="true" />
 </Button>
 
 <Dialog bind:open>

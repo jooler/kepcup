@@ -30,7 +30,12 @@ describe('reconcileBotDraft', () => {
     const saved = profile('', '旧简介');
     const server = profile('', '新简介');
     expect(
-      reconcileBotDraft({ sameBot: true, draft: saved, savedProfile: saved, serverProfile: server }),
+      reconcileBotDraft({
+        sameBot: true,
+        draft: saved,
+        savedProfile: saved,
+        serverProfile: server,
+      }),
     ).toEqual({ action: 'replace', draft: server });
   });
 

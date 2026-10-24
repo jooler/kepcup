@@ -1,21 +1,24 @@
 <script lang="ts">
-  import { Pin } from '@lucide/svelte';
+  import { Copy, Pin } from '@lucide/svelte';
   import { Portal } from 'bits-ui';
   import { t } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
   import { chat } from '$lib/stores/chat.svelte';
   import { placeSelectionToolbar } from './selection-pin';
   import { stickies } from './stickies.svelte';
 
   /**
-   * 消息选中文本的浮动工具栏：列表内选中非空文本时浮出，一个 pin 按钮
+   * 消息选中文本的浮动工具栏：列表内选中非空文本时浮出，pin 按钮
    * 把选中文本钉成当前对话的便签（改全局在便签卡片上切换，见
-   * StickiesLayer）。浮层 portal 到 body 末尾 + app-no-drag（app.css：
-   * no-drag 矩形沿 DOM 顺序覆盖 header 的 drag 矩形，原地挂会被顶部拖拽
-   * 区吞掉点击）。fixed 定位由选区矩形推导，滚动/选区变化时跟随。
+   * StickiesLayer），copy 按钮把选中文本写入剪贴板。浮层 portal 到
+   * body 末尾 + app-no-drag（app.css：no-drag 矩形沿 DOM 顺序覆盖
+   * header 的 drag 矩形，原地挂会被顶部拖拽区吞掉点击）。fixed 定位
+   * 由选区矩形推导，滚动/选区变化时跟随。
    */
   let { container }: { container: HTMLElement | null } = $props();
 
-  const TOOLBAR_WIDTH = 44;
+  // 两个 size-6 按钮 + gap-0.5 + p-1，供定位居中计算用。
+  const TOOLBAR_WIDTH = 58;
   const TOOLBAR_HEIGHT = 32;
 
   let toolbar = $state<{ x: number; y: number; text: string } | null>(null);
@@ -90,6 +93,19 @@
     window.getSelection()?.removeAllRanges();
     toolbar = null;
   }
+
+  async function copy(): Promise<void> {
+    const text = toolbar?.text;
+    if (text === undefined) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 剪贴板写入会因权限 / 失焦被拒：给出明确失败提示，不假装已复制。
+      toast.error(t('messages.copyFailed'));
+      return;
+    }
+    toast.success(t('messages.copied'));
+  }
 </script>
 
 {#if toolbar}
@@ -109,6 +125,17 @@
         data-testid="pin-conversation"
       >
         <Pin class="size-3.5" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={t('messages.copy')}
+        aria-label={t('messages.copy')}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => copy()}
+        data-testid="copy-selection"
+      >
+        <Copy class="size-3.5" aria-hidden="true" />
       </button>
     </div>
   </Portal>

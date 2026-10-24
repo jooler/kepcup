@@ -11,8 +11,9 @@ export const SETTINGS_READ_OPTIONS_MAX = 30;
 export const SETTINGS_SEARCH_MAX_BYTES = 2048;
 export const SETTINGS_READ_MAX_BYTES = 4096;
 
-/** 分组标题与顺序（`settings_search` 无 query 时每组一行）。 */
+/** 分组标题与顺序（`settings_search` 无 query 时每组一行；个人资料在第一位）。 */
 export const SETTING_GROUP_TITLES: Readonly<Record<SettingGroup, string>> = {
+  profile: '个人资料',
   models: '模型',
   search: '联网检索',
   connections: '连接应用',
@@ -22,7 +23,6 @@ export const SETTING_GROUP_TITLES: Readonly<Record<SettingGroup, string>> = {
   bot: 'Bot 配置',
   skills: '技能',
   schedules: '定时与监看',
-  profile: '用户画像',
   browser: '浏览器',
   project: '项目组设置',
   workdir: '工作目录设置',

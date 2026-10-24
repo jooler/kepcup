@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
-   * 当前用户头像占位（尚无个人资料头像）。项目组马赛克与侧栏菜单共用；
-   * 之后接上真实头像时只改本组件即可。字号按头像边长走（cqmin），em 只认继承字号，
-   * 不会随 size-* 变。
+   * 当前用户头像：设置了头像（settings.userProfileAvatar = `upload:{fileName}`）时
+   * 渲染该图（dataURL 经 avatarImages 缓存），否则回退到占位字母。项目组马赛克与
+   * 侧栏菜单共用。字号按头像边长走（cqmin），em 只认继承字号，不会随 size-* 变。
    */
   import { t } from '$lib/i18n';
+  import { settingsStore } from '$lib/stores/settings.svelte';
+  import { avatarImages } from './avatar-images.svelte';
 
   let {
     class: klass = 'size-8',
@@ -22,6 +24,13 @@
       ? undefined
       : `--group-avatar-sx:${glyphShadowOffset.x}px; --group-avatar-sy:${glyphShadowOffset.y}px`,
   );
+
+  /** `upload:{fileName}` → 文件名；'' / 其他形态都没有自传头像。 */
+  const uploadedFile = $derived.by(() => {
+    const ref = settingsStore.settings?.userProfileAvatar ?? '';
+    return ref.startsWith('upload:') ? ref.slice('upload:'.length) : null;
+  });
+  const avatarUrl = $derived(uploadedFile !== null ? avatarImages.user(uploadedFile) : null);
 </script>
 
 <span
@@ -30,9 +39,13 @@
   data-testid={testId}
   aria-hidden="true"
 >
-  <span
-    class="[font-size:35cqmin] leading-none font-semibold select-none {glyphShadowOffset
-      ? 'group-avatar-letter-shadow'
-      : ''}">{t('sidebar.userFallback')}</span
-  >
+  {#if avatarUrl !== null}
+    <img src={avatarUrl} alt="" class="size-full object-cover" draggable="false" />
+  {:else}
+    <span
+      class="[font-size:35cqmin] leading-none font-semibold select-none {glyphShadowOffset
+        ? 'group-avatar-letter-shadow'
+        : ''}">{t('sidebar.userFallback')}</span
+    >
+  {/if}
 </span>

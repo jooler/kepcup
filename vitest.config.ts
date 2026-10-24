@@ -63,6 +63,8 @@ export default defineConfig({
         test: {
           name: 'server',
           include: ['apps/server/test/**/*.test.ts'],
+          // Same as core: Windows is several times slower for scrypt / disk.
+          ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
         },
       },
       // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.

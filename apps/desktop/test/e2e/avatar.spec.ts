@@ -92,9 +92,14 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
     await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
 
-    // 上传页签：真实走 core 落盘（bots/{id}/avatar/），右栏出现 <img> 头像。
+    // 上传页签：选图 → AvatarCropper 确认 → core 落盘（bots/{id}/avatar/），右栏出现 <img>。
     await page.locator('[data-testid="avatar-tab-upload"]').click();
     await page.locator('[data-testid="avatar-upload-input"]').setInputFiles(uploadPng);
+    await expect(page.locator('[data-testid="avatar-cropper"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="avatar-cropper-preview"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="avatar-cropper-confirm"]').click();
     await expect(page.locator('[data-testid="bot-avatar"] img')).toBeVisible({ timeout: 15_000 });
     await expect(picker).toBeHidden();
 

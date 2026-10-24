@@ -230,7 +230,9 @@ async function openCard(session: Session): Promise<Frame> {
           const out = (await window.__kepcupRpc('runs.steps', { runId: run.id })) as {
             steps: Array<{ type: string; payload: Record<string, unknown> }>;
           };
-          steps.push(...out.steps.map((step) => `${run.loopType}|${JSON.stringify(step).slice(0, 500)}`));
+          steps.push(
+            ...out.steps.map((step) => `${run.loopType}|${JSON.stringify(step).slice(0, 500)}`),
+          );
         }
         const reflectionErrors = runs
           .filter((r) => r.loopType === 'reflection')

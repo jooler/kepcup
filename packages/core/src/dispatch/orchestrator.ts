@@ -2636,6 +2636,9 @@ export class Orchestrator {
       botNames: names,
       mentionLabels,
       shareAttachmentPath: (attachment, botId) => this.#shareAttachmentPath(attachment, botId),
+      // 引用回复标注（conversation.ts renderReplySuffix）：解析被引用消息，让
+      // 模型知道回复关系与被引用的附件 id（图片等非文本引用尤其依赖）。
+      resolveReplyTarget: (id) => this.#deps.messages.getById(id),
       renderCard: (message) => {
         if (message.senderType !== 'system' || message.kind !== 'card') return null;
         const content = message.content;

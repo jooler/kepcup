@@ -74,6 +74,8 @@ export const ERROR_CODES = [
   // skills (P08)
   'SKILL_IMPORT_FAILED',
   'SKILL_VALIDATION_FAILED',
+  /** 自建草稿的 `_drafts/` 目录已消失（应用外被删/回收），dangling 行已随之清理。 */
+  'SKILL_DRAFT_MISSING',
   // sandbox
   'SANDBOX_UNAVAILABLE',
   'SANDBOX_POLICY_DENIED',

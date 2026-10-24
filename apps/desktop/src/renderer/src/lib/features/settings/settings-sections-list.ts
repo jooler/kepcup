@@ -14,7 +14,6 @@ import {
   Mic,
   Monitor,
   MoonStar,
-  Plug,
   Settings2,
   Cpu,
   Smartphone,
@@ -34,14 +33,13 @@ export interface SettingsSectionDef {
 }
 
 export const settingsSections: SettingsSectionDef[] = [
+  { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
   { id: 'general', label: t('settings.navGeneral'), icon: Settings2 },
   { id: 'hardware', label: t('settings.navHardware'), icon: Mic },
   { id: 'models', label: t('settings.navModels'), icon: Cpu },
   { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
-  { id: 'apps', label: t('settings.navApps'), icon: Plug },
   { id: 'browser', label: t('settings.navBrowserProfiles'), icon: Compass },
   { id: 'agents', label: t('settings.navAgents'), icon: Bot },
-  { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
   { id: 'contacts', label: t('settings.navContacts'), icon: BookUser },
   { id: 'unattended', label: t('settings.navUnattended'), icon: MoonStar },
   { id: 'remote', label: t('settings.navRemote'), icon: Smartphone },
@@ -50,7 +48,7 @@ export const settingsSections: SettingsSectionDef[] = [
   { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },
 ];
 
-/** 可见分区：窄屏隐藏「通讯录」「用户画像」（提取为底部 tab，33-narrow-layout）。 */
+/** 可见分区：窄屏隐藏「通讯录」「个人资料」（提取为底部 tab，33-narrow-layout）。 */
 export function visibleSettingsSections(narrow: boolean): SettingsSectionDef[] {
   return narrow
     ? settingsSections.filter((section) => !NARROW_HIDDEN_SETTINGS_SECTIONS.has(section.id))

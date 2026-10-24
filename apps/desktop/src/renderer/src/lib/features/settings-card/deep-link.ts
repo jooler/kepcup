@@ -19,7 +19,6 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'hardware',
   'models',
   'search',
-  'apps',
   'mcp',
   'browser',
   'agents',
