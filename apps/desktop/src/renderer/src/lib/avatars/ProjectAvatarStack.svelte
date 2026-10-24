@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Users } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from './BotAvatar.svelte';
