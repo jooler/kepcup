@@ -173,7 +173,9 @@ describe('ensureWslRootfsSource', () => {
 // D94 §10.2：Share Extension 的落位校验（macOS 产物里 .appex 必须在
 // Contents/PlugIns/ 下且扩展点正确；非 macOS 产物里不得出现 .appex）。
 describe('share extension packaging checks', () => {
-  function fakeAppex(overrides: { point?: string; bundleId?: string } = {}): string {
+  function fakeAppex(
+    overrides: { point?: string; bundleId?: string; groupId?: string | null } = {},
+  ): string {
     const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));
     const appex = path.join(bundle, 'KepCup.app', 'Contents', 'PlugIns', 'KepCupShare.appex');
     mkdirSync(path.join(appex, 'Contents', 'MacOS'), { recursive: true });
@@ -198,6 +200,17 @@ describe('share extension packaging checks', () => {
     );
     // codesign 要求包里有可执行文件。
     writeFileSync(path.join(appex, 'Contents', 'MacOS', 'KepCupShare'), '#!/bin/sh\n');
+    // 打包产物里主进程读的组 id 快照（extraResources 拷进 Resources 的那份）。
+    // groupId 传 null 时不写——模拟「包内缺 group.json」的坏产物。
+    const packagedGroupId = overrides.groupId === undefined ? '8CL9PRK85J.app.kepcup.desktop' : overrides.groupId;
+    if (packagedGroupId !== null) {
+      const resources = path.join(bundle, 'KepCup.app', 'Contents', 'Resources', 'share-extension');
+      mkdirSync(resources, { recursive: true });
+      writeFileSync(
+        path.join(resources, 'group.json'),
+        JSON.stringify({ groupId: packagedGroupId, teamId: '8CL9PRK85J' }),
+      );
+    }
     return path.join(bundle, 'KepCup.app');
   }
 
@@ -286,7 +299,7 @@ describe('share extension packaging checks', () => {
   });
 
   test.skipIf(!hasCodesign)('a signed appex with matching App Group passes the consistency check', () => {
-    const appBundle = fakeAppex();
+    const appBundle = fakeAppex({ groupId: 'TEAM123456.app.kepcup.desktop' });
     try {
       const signed = signAppex(appBundle, ENTITLEMENTS_XML);
       expect(signed.ok, signed.reason).toBe(true);
@@ -301,7 +314,7 @@ describe('share extension packaging checks', () => {
   test.skipIf(!hasCodesign)(
     'a signed appex whose App Group differs from group.json fails the build',
     () => {
-      const appBundle = fakeAppex();
+      const appBundle = fakeAppex({ groupId: 'OTHERTEAM.app.kepcup.desktop' });
       try {
         const signed = signAppex(appBundle, ENTITLEMENTS_XML);
         expect(signed.ok, signed.reason).toBe(true);
@@ -317,7 +330,7 @@ describe('share extension packaging checks', () => {
   test.skipIf(!hasCodesign)(
     'a signed appex without application-groups fails when a group is expected',
     () => {
-      const appBundle = fakeAppex();
+      const appBundle = fakeAppex({ groupId: 'TEAM123456.app.kepcup.desktop' });
       try {
         const signed = signAppex(
           appBundle,
@@ -336,6 +349,30 @@ describe('share extension packaging checks', () => {
       }
     },
   );
+
+  test('a missing packaged Resources/share-extension/group.json fails the build', () => {
+    // extraResources 单文件条目的 to 不带文件名时，group.json 会被拷成名为
+    // share-extension 的文件——主进程读不到就回落无前缀组 id，快照写错容器。
+    const appBundle = fakeAppex({ groupId: null });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, '8CL9PRK85J.app.kepcup.desktop')).toThrow(
+        /包内缺少 Resources\/share-extension\/group\.json/,
+      );
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a packaged group.json whose groupId differs from the build baseline fails', () => {
+    const appBundle = fakeAppex({ groupId: 'STALE.app.kepcup.desktop' });
+    try {
+      expect(() => hooks.assertShareExtension(appBundle, '8CL9PRK85J.app.kepcup.desktop')).toThrow(
+        /与构建基准（8CL9PRK85J\.app\.kepcup\.desktop）不一致/,
+      );
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
 
   test('a missing appex fails the build with a diagnosable error', () => {
     const empty = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-appex-'));

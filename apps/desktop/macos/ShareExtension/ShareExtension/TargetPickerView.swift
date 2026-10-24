@@ -69,7 +69,7 @@ struct TargetPickerView: View {
 
     private var header: some View {
         HStack {
-            Text(String(localized: "picker.title", defaultValue: "导入到 KepCup"))
+            Text(String(localized: "picker.title", defaultValue: "发送到 KepCup"))
                 .font(.headline)
             Spacer()
         }
@@ -176,6 +176,7 @@ struct TargetPickerView: View {
             // macOS 12 没有 TextField(_:text:axis:)，用 TextEditor 起多行。
             TextEditor(text: $note)
                 .font(.body)
+                .padding(4)
                 .frame(height: 56)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -199,7 +200,7 @@ struct TargetPickerView: View {
             Button(String(localized: "picker.cancel", defaultValue: "取消"), action: onCancel)
                 .keyboardShortcut(.cancelAction)
             Spacer()
-            Button(String(localized: "picker.confirm", defaultValue: "导入")) {
+            Button(String(localized: "picker.confirm", defaultValue: "发送")) {
                 guard let selected else { return }
                 onConfirm(selected, SharedConfig.clampedNote(note))
             }

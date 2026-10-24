@@ -83,14 +83,68 @@ enum PayloadCollector {
     }
 
     private static func loadFile(_ provider: NSItemProvider) async -> CollectedFile? {
-        let url: URL? = await withCheckedContinuation { continuation in
+        let item: NSSecureCoding? = await withCheckedContinuation { continuation in
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) {
                 item, _ in
-                continuation.resume(returning: item as? URL)
+                continuation.resume(returning: item)
             }
         }
-        guard let url else { return nil }
+        guard let url = decodedFileURL(item) else { return nil }
         return file(at: url)
+    }
+
+    /// `public.file-url` 的 loadItem 载荷不止 URL 一种形态：不少来源给 Data
+    /// （URL 字符串 / plist / keyed-archiver 归档的 NSURL）或 String。只认 URL
+    /// 会把这些分享全判成「没有可发送的内容」。
+    private static func decodedFileURL(_ item: NSSecureCoding?) -> URL? {
+        switch item {
+        case let url as URL:
+            return url
+        case let string as String:
+            return fileURLFromString(string)
+        case let data as Data:
+            return fileURLFromData(data)
+        default:
+            return nil
+        }
+    }
+
+    private static func fileURLFromData(_ data: Data) -> URL? {
+        // UTF-8 / UTF-16 文本形态（URL 字符串或裸路径）。
+        if
+            let string = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16),
+            let url = fileURLFromString(string)
+        {
+            return url
+        }
+        // plist 编码：纯字符串，或 NSURL 字典表示（NS.relative 是原始 URL 字符串）。
+        if let decoded = try? PropertyListSerialization.propertyList(from: data, format: nil) {
+            if let string = decoded as? String {
+                if let url = fileURLFromString(string) { return url }
+            } else if let dict = decoded as? [String: Any] {
+                for key in ["NS.relative", "NSFileSystemPath", "NS.fileSystemPath"] {
+                    if let string = dict[key] as? String, let url = fileURLFromString(string) {
+                        return url
+                    }
+                }
+            }
+        }
+        // keyed-archiver 归档的 NSURL（部分来源用 NSKeyedArchiver 打包）。
+        if
+            let url = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSURL.self, from: data),
+            url.isFileURL
+        {
+            return url as URL
+        }
+        return nil
+    }
+
+    /// URL 字符串或裸路径 → 文件 URL。先按 URL 解析（保留百分号编码语义）；
+    /// 裸路径（含未编码的空格 / 非 ASCII）解不出合法 URL 时按文件路径兜底。
+    private static func fileURLFromString(_ string: String) -> URL? {
+        if let url = URL(string: string), url.isFileURL { return url }
+        guard !string.isEmpty, string.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: string)
     }
 
     /// 图片 / 影片：Photos 分享常给 in-place URL 或裸 Data（§9.3）。
