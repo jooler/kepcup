@@ -852,7 +852,7 @@
      松手吸附/复位时恢复平滑动画。 -->
 <Sidebar.Root
   collapsible="none"
-  class="relative {sidebarLayout.transitionClass}"
+  class="relative border-r {sidebarLayout.transitionClass}"
   data-testid="sidebar"
 >
   <!-- 头部：拖拽区 + 搜索/新增。macOS 红绿灯让出左侧空间；win/linux 左上放

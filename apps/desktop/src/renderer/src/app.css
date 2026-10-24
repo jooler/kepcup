@@ -24,7 +24,10 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.35 27.325);
-  --border: oklch(0.922 0 0);
+  /* 全局边框透明度系数：乘在 --border / --sidebar-border 的 alpha 上，
+     1 = 原样、0.5 = 透明度减半。手动试边框深浅只调这一个值。 */
+  --border-alpha: 0.6;
+  --border: oklch(0.922 0 0 / calc(100% * var(--border-alpha)));
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --sidebar: oklch(0.945 0 0);
@@ -33,7 +36,7 @@
   --sidebar-primary-foreground: oklch(0.945 0 0);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: oklch(0.922 0 0 / calc(100% * var(--border-alpha)));
   --sidebar-ring: oklch(0.708 0 0);
   /* 预置头像第一种颜色「黑白」（presets.ts 的 mono）：随主题翻转——亮色风格
      为黑、暗色风格为白；contrast 是其上的前景（眼睛 / 用户气泡文字），
@@ -43,7 +46,7 @@
 }
 
 .dark {
-  --background: oklch(0.05 0 0);
+  --background: oklch(0.18 0 0);
   --foreground: oklch(0.945 0 0);
   --surface-raised: oklch(0.26 0 0);
   --card: oklch(0.205 0 0);
@@ -59,7 +62,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.945 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 12%);
+  --border-alpha: 0.3;
+  --border: oklch(1 0 0 / calc(12% * var(--border-alpha)));
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.556 0 0);
   --sidebar: oklch(0.205 0 0);
@@ -68,7 +72,7 @@
   --sidebar-primary-foreground: oklch(0.945 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.945 0 0);
-  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-border: oklch(1 0 0 / calc(12% * var(--border-alpha)));
   --sidebar-ring: oklch(0.556 0 0);
   --avatar-mono: oklch(0.945 0 0);
   --avatar-mono-contrast: oklch(0.35 0 0);
@@ -89,10 +93,10 @@ html.platform-mac body {
   background: transparent;
 }
 html.platform-mac {
-  --sidebar: oklch(0.945 0 0 / 65%);
+  --sidebar: oklch(1 0 0 / 65%);
 }
 html.platform-mac.dark {
-  --sidebar: oklch(0.205 0 0 / 60%);
+  --sidebar: oklch(0.1 0 0 / 75%);
 }
 html.platform-mac main {
   background-color: var(--background);
