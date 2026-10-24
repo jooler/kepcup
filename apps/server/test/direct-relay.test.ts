@@ -235,6 +235,22 @@ describe('DirectRelayServer 活动会话', () => {
     expect((signal?.info as { did?: string } | undefined)?.did).toBe(DID_A);
   });
 
+  it('viewer 伪造的 signal/kick/error 帧被丢弃（中转白名单语义，审查修复）', async () => {
+    const { port, relay, frames } = await makeRelay();
+    adapterFor(relay, port, frames).connect();
+    const sink = await connectViewer(port);
+    sink.send(envelope({ did: DID_A, type: 'signal', info: { kind: 'viewer_left', did: DID_A } }));
+    sink.send(envelope({ did: DID_A, type: 'kick', ct: 'AAEC' }));
+    sink.send(envelope({ did: DID_A, type: 'event', ct: 'AAEC' }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    // did 注册也不发生（白名单在注册之前）；合法 rpc 帧仍通。
+    expect(frames).toHaveLength(0);
+    sink.send(envelope({ did: DID_A, type: 'rpc', ct: 'AAEC' }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(frames).toHaveLength(1);
+    expect(frames[0].type).toBe('rpc');
+  });
+
   it('坏帧（非 JSON / 超 schema）回 bad_frame 并断开', async () => {
     const { port, relay, frames } = await makeRelay();
     adapterFor(relay, port, frames).connect();

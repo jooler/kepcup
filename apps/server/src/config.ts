@@ -151,7 +151,7 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
   if (keystore !== 'system' && keystore !== 'file') {
     throw new ConfigError(`--keystore 只支持 system 或 file（收到 "${keystore}"）`);
   }
-  if (relayUrl !== null && values.get('public-url') !== undefined) {
+  if (relayUrl !== null && explicitPublicUrl !== undefined) {
     throw new ConfigError('--relay 与 --public-url 互斥：中转模式下配对地址由中转自身决定');
   }
   const authRaw = values.get('auth') ?? 'password';

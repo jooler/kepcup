@@ -15,6 +15,7 @@ export type {
   RemoteHubDeps,
   RemoteHostOptions,
 } from './remote/hub.js';
+export { LOCAL_ONLY_METHODS } from './remote/hub.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
 export { withRemoteSource } from './remote/audit.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';

@@ -76,6 +76,21 @@
 - [x] 测试：`auth.test.ts`（7 用例：建号/弱口令/篡改 token/改密失效/限流/权限位）、`session-hub.test.ts`（4 用例：未认证升级拒绝、login→Cookie→bootstrap→ping→重连、改密失效）。实现期修掉三个真 bug：close 顺序（先关会话再关 core，否则 pino 流销毁后写日志崩）、SessionHub 把 ws Buffer 帧当 string 丢弃（客户端请求全被吞）、密码模式路由把静态托管吞进 auth handler。
 - [x] 回归：apps/server 5 文件 32 用例全绿；lint / typecheck（desktop svelte-check）全绿。
 
+## 5.6 独立子代理审查修复（2026-10-24，安全 + 协议两路审查）
+
+两路独立审查（第三路架构/渲染层随后）：合计 1×P0 + 2×P1 + 8×P2 + 18×P3。已修：
+
+- [x] **P0** pairing 直连二次启动 crash：`remoteEnabled:true` 落库后 hub.start() 在 directRelay 赋值前调工厂 → unhandledRejection 崩进程。修：hub `#scheduleSync()` 兜底 catch（`hub.ts`）+ server 显式 syncConfig 带 catch + `runServer` 进程级 unhandledRejection 守卫（落日志不崩，systemd 场景防重启循环）。新用例：同 dataDir 二次启动（file keystore 复用模拟真实重启）。
+- [x] **P1** `--relay` 被直连工厂劫持（两路审查独立发现）：`pairingDirect = relayUrl===null && auth==='pairing'`；--relay 只传 alwaysOn（原生 RelayClient 外连），不建本地监听、/ws 升级 404；settings 启用块覆盖 relay 模式（修前 --relay 连 remoteEnabled 都不开——测试抓出）；`--relay` 与环境变量 PUBLIC_URL 互斥检查补齐。新用例：--relay 模式无本地监听 + 404。
+- [x] **P1** `/rpc` 升级缺 Origin 校验（CSWSH 纵深）：与 direct-relay 同款同源校验。新用例：带有效 Cookie 的跨源升级被拒。
+- [x] maxPayload：两个 WSServer 设 `RELAY_MAX_FRAME_BYTES`（原默认 100MiB）。
+- [x] scrypt N 2^14→2^17（OWASP），参数随 auth.json 入档、校验按建档参数；maxmem 256MB（OpenSSL 默认 32MB 上限不够）；错误用户名路径跑哑哈希抹平计时差。旧档（无参数）登录失配 → 重新建号（发行前数据，无兼容负担）。
+- [x] direct-relay 帧类型白名单（中转 routeFromViewer 同款）：viewer 只许发 rpc/pairing/hello，伪造 signal/kick/error/event 丢弃（原先可伪造 viewer_left 清他人端点）。新用例钉住。
+- [x] 登录成败落日志（IP + 结果码，无凭据）；启动日志按认证模型打印管理命令（密码模式不再误导打印 pair/devices）。
+- [x] `LOCAL_ONLY_METHODS` 从 core 导出共用（session-hub 引用，消除双份字面量漂移）；direct-relay `MAX_VIEWERS` 用协议常量 `RELAY_MAX_VIEWERS`(5)。
+
+未修（已立项后议）：登录限流维度（反代共享 IP / IPv6 旋转 / Map 清扫 / --trust-proxy）、会话 token 撤销面（jti）、`--admin-password` argv 暴露（文档警示）、admin token 常量时间比较、nosniff 头、TTL 双常量、dormant 探测备注。
+
 ## 6 明确不做（本期）
 
 - 旧桌面数据迁移 / 向后兼容（用户明确不需要）。

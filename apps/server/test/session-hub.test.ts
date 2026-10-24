@@ -207,6 +207,32 @@ it('/rpc 会话：未登录升级被拒；登录后 bootstrap + system.ping + �
   reconnected.ws.close();
 });
 
+it('跨源 /rpc 升级被拒（CSWSH 纵深，即使带上有效 Cookie）', async () => {
+  // 注意：改密码用例在本用例之后，此刻仍是初始密码。
+  const login = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'a-long-enough-passphrase',
+  });
+  expect(login.code).toBe(200);
+  const freshCookie = (login.setCookie ?? []).find((value) =>
+    value.startsWith('kepcup_session='),
+  );
+  expect(freshCookie).toBeDefined();
+  const evil = new WebSocket(rpcUrl(), {
+    headers: { cookie: freshCookie, origin: 'https://evil.example' },
+  });
+  const outcome = await new Promise<{ status: number | 'open' }>((resolve) => {
+    evil.on('unexpected-response', (_req, res) => resolve({ status: res.statusCode ?? 0 }));
+    evil.on('error', () => {
+      // error 后必有 close，由 close 兜底（Electron 运行时差异同前）。
+    });
+    evil.on('open', () => resolve({ status: 'open' }));
+    evil.on('close', () => resolve({ status: 403 }));
+  });
+  expect(outcome.status).not.toBe('open');
+  evil.terminate();
+});
+
 it('改密码后旧 cookie 失效', async () => {
   server.auth.changePassword('a-long-enough-passphrase', 'another-long-passphrase');
   const stale = await get('/api/auth/whoami', { cookie });

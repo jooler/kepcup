@@ -3,6 +3,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   RELAY_MAX_FRAME_BYTES,
+  RELAY_MAX_VIEWERS,
   RELAY_PROTOCOL_VERSION,
   RELAY_SESSION_ID_PATTERN,
   relayEnvelopeSchema,
@@ -28,7 +29,8 @@ import type { Clock, CoreLogger, RelayClientLike, RelayClientOptions } from '@ke
  * 并转入 dormant——dormant 期新连接收 anchor_offline 后断开，viewer 进入等待态。
  */
 
-const MAX_VIEWERS = 8;
+/** viewer 并发上限直接用协议常量（审查修复：原 8 与 shared 的 5 无声分叉）。 */
+const MAX_VIEWERS = RELAY_MAX_VIEWERS;
 /** ws 库协议级心跳：穿透反代的死连接检测（应用层另有 viewer→anchor ping/pong）。 */
 const WS_PING_INTERVAL_MS = 30_000;
 
@@ -53,7 +55,8 @@ export class DirectRelayServer {
   #pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: DirectRelayServerOptions) {
-    this.#wss = new WebSocketServer({ noServer: true });
+    // 帧上限交给 ws 在缓冲期拒绝（审查修复：原先默认 100MiB，512KB 检查在整帧进内存后才生效）。
+    this.#wss = new WebSocketServer({ noServer: true, maxPayload: RELAY_MAX_FRAME_BYTES });
     this.#logger = options.logger;
     this.#clock = options.clock;
   }
@@ -169,6 +172,12 @@ export class DirectRelayServer {
       if (frame.type === 'ping') {
         // 中转自产行为：ping 在中转终结，不到 anchor（hub.ts 同款注释）。
         this.#send(ws, this.#infoFrame(frame.sid, 'pong', { kind: 'pong', ts: this.#clock.now() }));
+        return;
+      }
+      // 中转白名单语义（审查修复）：viewer 只许发 rpc/pairing/hello——signal/kick/
+      // error/event/pong 是 anchor/DO 方向的帧，透传会允许伪造 viewer_left 清他人
+      // 端点（relay-session.ts routeFromViewer 同款丢弃）。
+      if (frame.type !== 'rpc' && frame.type !== 'pairing' && frame.type !== 'hello') {
         return;
       }
       if (frame.did !== undefined) this.#registerDid(frame.did, ws);
