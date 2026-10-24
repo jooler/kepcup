@@ -28,6 +28,7 @@
   import { toast } from 'svelte-sonner';
   import { stripMarkdown } from '$lib/strip-markdown';
   import { logoDarkUrl, logoLightUrl } from './sidebar-icons';
+  import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
@@ -94,7 +95,9 @@
    * 由 NarrowShell 覆盖为全宽，图标模式不适用（强制展开）、底部 footer 与调宽
    * 手柄隐藏（扩展中心 / 我移到底部 tab），「+」面板定位改贴窗口左缘。
    */
-  const isMac = /Mac/i.test(navigator.platform);
+  // 红绿灯让位只属于 Electron 桌面壳；web 端点（浏览器）没有系统窗控，一律
+  // 不做 macOS 适配——左上角 logo 恒显、无 pl-20 让位（D102 小修正）。
+  const isMac = ENDPOINT_KIND === 'desktop' && /Mac/i.test(navigator.platform);
 
   /** 图标模式（拖到最小宽 = 红绿灯占位）：顶部搜索隐藏、「+」落底部、对话只显示头像。 */
   const narrow = $derived(narrowLayout.narrow);
