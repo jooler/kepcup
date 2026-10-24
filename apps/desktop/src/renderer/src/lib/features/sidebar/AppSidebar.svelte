@@ -787,8 +787,8 @@
            毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
            比侧栏底色 0.205 再暗一档。 -->
       <Sidebar.MenuButton
-        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg p-1 data-active:bg-[oklch(0.98_0_0)]
-          dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
+        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg p-1 data-active:bg-[oklch(0.925_0_0)]
+          dark:data-active:bg-[oklch(0.25_0_0)] [&_svg]:size-auto"
         isActive={activeConversationId === conversation.id}
         onclick={() => void selectConversation(conversation.id)}
         data-testid={`conversation-item-${conversation.id}`}
