@@ -89,6 +89,8 @@
 - [x] 登录成败落日志（IP + 结果码，无凭据）；启动日志按认证模型打印管理命令（密码模式不再误导打印 pair/devices）。
 - [x] `LOCAL_ONLY_METHODS` 从 core 导出共用（session-hub 引用，消除双份字面量漂移）；direct-relay `MAX_VIEWERS` 用协议常量 `RELAY_MAX_VIEWERS`(5)。
 
+第三路审查（架构/渲染层，修复后复核）：确认前两路修复无回归；新发现 **P1 release.yml server job 缺 `pnpm -r build`**（exports 指向 dist 且无 prepare，本地靠缓存产物通过——已当轮修复）；P2 四项待议：AuthedWsTransport 无心跳/前台自愈（NAT 半开挂 30 分钟）、冷启动探测双失败回退 pairing 后不可自恢复（需手动刷新）、跳过向导的管家补建在 7×24 常驻下缺口放大（建议 skip 也调 butler.ensure）、渲染层认证状态机零测试（仓库惯例 106 个 renderer 纯逻辑测试）；P3 十项（retryLogin 死代码、design §4 的 bin/ 路径描述、help 退出码、probe 把 502 当 password、同步 scrypt 阻塞事件循环、tarball 带 src/test、06-release.md 未提 server job、向导桌面语义控件置灰等）。
+
 未修（已立项后议）：登录限流维度（反代共享 IP / IPv6 旋转 / Map 清扫 / --trust-proxy）、会话 token 撤销面（jti）、`--admin-password` argv 暴露（文档警示）、admin token 常量时间比较、nosniff 头、TTL 双常量、dormant 探测备注。
 
 ## 6 明确不做（本期）
