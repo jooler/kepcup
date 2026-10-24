@@ -243,7 +243,10 @@ describe('agents service (P4, fake agents)', () => {
     const ready = await waitForAgent(
       stack,
       'fake-auth',
-      (agent) => agent.status === 'ready' && agent.login?.running === false,
+      // Wait until the post-login probe finishes too — an in-flight probe can
+      // otherwise overwrite logout's needs_auth with ready (Windows timing flake).
+      (agent) =>
+        agent.status === 'ready' && agent.login?.running === false && agent.probing !== true,
       'ready after authenticate',
     );
     expect(ready.login).toMatchObject({ methodId: 'chat', exitCode: 0, error: null });

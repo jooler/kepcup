@@ -107,7 +107,9 @@ describe('AuthStore', () => {
     expect(await auth.login('alice', 'correct horse battery', '8.8.8.8')).toMatch(/^v1\./);
   });
 
-  it('auth.json / session-secret 权限 0600', async () => {
+  // Windows ignores Unix mode bits on writeFileSync({ mode }); skip there (same as
+  // packages/core/test/unit/sign-connector-index.test.ts 0600 coverage).
+  it.skipIf(process.platform === 'win32')('auth.json / session-secret 权限 0600', async () => {
     const auth = makeStore();
     await auth.setupAdmin('alice', 'correct horse battery');
     expect((statSync(path.join(dir, 'auth.json')).mode & 0o777).toString(8)).toBe('600');
