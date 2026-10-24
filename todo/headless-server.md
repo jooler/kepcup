@@ -1,6 +1,6 @@
 # Headless 服务端（D102）· 执行方案
 
-> 状态：**P1 已实现，待真机验收**（2026-10-24 拍板并实现，设计见 [docs/design/49-headless-server.md](../docs/design/49-headless-server.md)，分支 `feat/headless-server`）。
+> 状态：**P1 已实现（含账号密码认证修订），待真机验收**（2026-10-24 拍板并实现，设计见 [docs/design/49-headless-server.md](../docs/design/49-headless-server.md) §0.1 修订，分支 `feat/headless-server`）。
 >
 > 背景讨论：用户自托管 NAS / 云服务器常驻大脑，任意位置客户端直连同一数据源，替代「桌面常开 + 公共中转遥控」的体验瓶颈。约束（用户原话归纳）：① headless 是**现有基础上的新增模式**，不破坏现有功能；② npm 包优先发行、tar 包补充，都进 GitHub CI / Release 工作流随版本发布；③ **不需要**旧数据迁移与向后兼容。
 
@@ -64,6 +64,18 @@
 3. [x] `pack-server.mjs` 产出的 tar.gz 在干净目录可直接运行（无需编译工具链；本机 darwin-arm64 验证，CI 出 linux 双架构并带冒烟步骤）。
 4. [x] release.yml 逻辑核对：`dist-server-*` 命中 publish 的 `dist-*` 下载 pattern、`publish.needs` 已含 server、资产名与桌面产物无重名。
 
+## 5.5 Phase 5 — 账号密码认证（2026-10-24 当日修订，用户反馈驱动）
+
+> 反馈：配对要求每台新设备到服务端取配对码，与「任意设备直接访问」冲突；改为账号密码，首启在服务端建立，用户记住凭据随处登录。
+
+- [x] `apps/server/src/auth.ts`：AuthStore（scrypt 哈希、auth.json/session-secret 0600、改密码版本化）、无状态会话 token（HMAC-SHA256 + 30d + 密码版本）、每 IP 登录限流（10 次/15 分钟）。
+- [x] `apps/server/src/session-hub.ts`：`/rpc` 会话端点——Cookie/Bearer 认证升级、每连接 `createRpcServer` + appMethods（`withRemoteSource('session-<user>')` 审计、LOCAL_ONLY 剔除）、`run.progress` 合流、状态快照先行、ws 协议级心跳。
+- [x] server.ts：`POST /api/auth/login|logout`、`GET /api/auth/whoami`（配对模式 404 = 客户端探测锚点）；`--auth password|pairing`（默认 password，`--relay` 恒 pairing）；密码模式不启用 RemoteHub。
+- [x] CLI：首启交互式建号（TTY 提示，密码不回显）、`--admin-user/--admin-password` 与 `KEPCUP_SERVER_ADMIN_*`（非交互）、`kepcup-server password` 改密子命令。
+- [x] renderer：`lib/rpc/authed-transport.ts`（AuthedWsTransport：Cookie 会话 + 断线 whoami 区分会话失效/网络断线 + 指数退避）；`client.svelte.ts` 启动探测分流；`gate.svelte.ts` + `WebShellGate.svelte` 登录视图（i18n 中英）。
+- [x] 测试：`auth.test.ts`（7 用例：建号/弱口令/篡改 token/改密失效/限流/权限位）、`session-hub.test.ts`（4 用例：未认证升级拒绝、login→Cookie→bootstrap→ping→重连、改密失效）。实现期修掉三个真 bug：close 顺序（先关会话再关 core，否则 pino 流销毁后写日志崩）、SessionHub 把 ws Buffer 帧当 string 丢弃（客户端请求全被吞）、密码模式路由把静态托管吞进 auth handler。
+- [x] 回归：apps/server 5 文件 32 用例全绿；lint / typecheck（desktop svelte-check）全绿。
+
 ## 6 明确不做（本期）
 
 - 旧桌面数据迁移 / 向后兼容（用户明确不需要）。
@@ -79,4 +91,5 @@
   - 收口：`pnpm lint` / `pnpm typecheck`（含 desktop svelte-check）全绿；`pnpm test` 全量 **573 文件 6188 用例全绿零失败**（2 文件 / 37 用例既有 skip）；`pnpm test:e2e` 按 AGENTS 约定留待合并前统一跑。
   - 打包：`node scripts/pack-server.mjs` 本地产出 `kepcup-server-v0.2.1-darwin-arm64.tar.gz`（69MB，含 web PWA），干净目录解压 `./dist/cli.js version` / `devices` 冒烟通过。
   - 实现期修正（均已修）：settings.update 不经 RPC 层不广播 `settings.changed`（补 `hub.syncConfig()`）；`KEPCUP_WEB_OUTDIR` 相对路径被 resolve 到 apps/desktop 下（改绝对路径）；CLI 位置参数识别把 flag 值误当子命令（单遍解析重写）；eslint 扫到 web 构建产物 4 万+ 报错（ignores 收编）。
-  - 待办：手机真机扫码验收（验收清单 #2）；首次发版时观察 CI server job 产物进 Release。
+  - 2026-10-24（修订）：账号密码认证落地（Phase 5.5，见上）；设计文档 §0.1。本机验证：`GET /` 200、whoami 401、错密 401、正确密码 200 + Set-Cookie。
+  - 待办：手机真机验收（验收清单 #2，密码模式 + pairing 模式各一遍）；首次发版时观察 CI server job 产物进 Release。

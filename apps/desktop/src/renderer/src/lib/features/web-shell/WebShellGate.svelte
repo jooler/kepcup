@@ -33,6 +33,25 @@
   };
   const rejectKey = $derived(REJECT_KEYS[webGate.rejectReason]);
 
+  // --- 账号密码登录（D102 修订）：headless 直连模式的门。表单状态是纯局部 UI
+  // 态（不进 gate store 的响应式面），提交走 webGate.login。
+  let loginUser = $state('');
+  let loginPass = $state('');
+
+  const LOGIN_ERROR_KEYS = {
+    invalid: 'web.login.invalid',
+    ratelimited: 'web.login.ratelimited',
+    error: 'web.login.error',
+  } as const;
+  const loginErrorKey = $derived(
+    webGate.loginError !== null ? LOGIN_ERROR_KEYS[webGate.loginError] : null,
+  );
+
+  function submitLogin(): void {
+    if (loginUser.trim().length === 0 || loginPass.length === 0) return;
+    void webGate.login(loginUser.trim(), loginPass);
+  }
+
   // --- 页内扫码（D96 配对体验）：系统相机扫完一关浏览器地址就找不回来（微信内置
   // 浏览器尤甚），页内扫码让配对链接全程不离开本页。iOS Safari 没有 BarcodeDetector，
   // 直接用 jsQR 全平台一条路径；getUserMedia 需 HTTPS（PWA 部署域满足）。
@@ -186,6 +205,53 @@
           >
             {t('web.scan.stop')}
           </button>
+        </div>
+      {:else if view === 'login'}
+        <div class="w-full max-w-sm space-y-4" data-testid="web-gate-login">
+          <h1 class="text-lg font-semibold">{t('web.login.title')}</h1>
+          <p class="text-sm text-muted-foreground">{t('web.login.body')}</p>
+          <form
+            class="space-y-3"
+            onsubmit={(event) => {
+              event.preventDefault();
+              submitLogin();
+            }}
+          >
+            <label class="grid gap-1.5">
+              <span class="text-xs text-muted-foreground">{t('web.login.user')}</span>
+              <input
+                class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
+                type="text"
+                autocomplete="username"
+                spellcheck="false"
+                bind:value={loginUser}
+                data-testid="web-login-user"
+              />
+            </label>
+            <label class="grid gap-1.5">
+              <span class="text-xs text-muted-foreground">{t('web.login.password')}</span>
+              <input
+                class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring"
+                type="password"
+                autocomplete="current-password"
+                bind:value={loginPass}
+                data-testid="web-login-password"
+              />
+            </label>
+            {#if loginErrorKey !== null}
+              <p class="text-xs text-destructive" data-testid="web-login-error">
+                {t(loginErrorKey)}
+              </p>
+            {/if}
+            <button
+              type="submit"
+              class="h-10 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
+              disabled={webGate.loginPending || loginUser.trim().length === 0 || loginPass.length === 0}
+              data-testid="web-login-submit"
+            >
+              {webGate.loginPending ? t('web.login.pending') : t('web.login.submit')}
+            </button>
+          </form>
         </div>
       {:else if view === 'unpaired'}
         <div class="w-full max-w-sm space-y-4" data-testid="web-gate-unpaired">

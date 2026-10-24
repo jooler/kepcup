@@ -1,6 +1,16 @@
 # Headless 服务端（D102）
 
-> 状态：**P1 已实现，待真机验收**（2026-10-24 拍板并实现，分支 `feat/headless-server`，执行方案与验收记录见 [todo/headless-server.md](../../todo/headless-server.md)）。
+> 状态：**P1 已实现（含 2026-10-24 修订：账号密码认证），待真机验收**（分支 `feat/headless-server`，执行方案与验收记录见 [todo/headless-server.md](../../todo/headless-server.md)）。
+
+## 0.1 修订（2026-10-24 当日）：直连模式改账号密码认证
+
+初版直连模式复用 D96 配对（一次性配对码 + 设备 E2E 凭证）。用户反馈落地：**配对要求每台新设备到服务端控制台取码，与「任意设备直接访问自托管服务」的定位冲突**。修订：
+
+- **直连模式默认 `--auth password`**：管理员账号密码在 headless 首启建立（TTY 交互式提示，或 `--admin-user/--admin-password` / `KEPCUP_SERVER_ADMIN_USER/_PASSWORD` 供 systemd），凭据在 `<data-dir>/auth.json`（0600，scrypt 哈希）。用户记在脑子里——任何设备打开网址即见登录页，登录即用，无需服务端操作。
+- **会话端点（SessionHub）**：`POST /api/auth/login` 校验凭据（每 IP 限流 10 次/15 分钟）→ 下发 HMAC 签名的无状态会话 token（`v1.<payload>.<sig>`，30 天），HttpOnly Cookie 携带；`/rpc` 的 WS 升级凭 Cookie（或 Bearer，脚本用）认证，每连接绑 `createRpcServer` + 同一份 appMethods（审计 `remote:session-<user>`、`run.progress` 合流、状态快照先行）——与 RemoteHub 端点同模式，但信任模型是「用户刚输过密码的直连」，birpc JSON 明文跑在（反代 TLS 的）WS 上，**不经 D96 E2E 帧协议**（那层面向不可信中转；`--auth pairing` 可退回完整配对路径，`--relay` 模式恒为配对）。
+- **改密码**：`kepcup-server password`（校验旧密码）；密码版本号 +1，全部旧会话立即失效。
+- **web 客户端**：启动探测 `GET /api/auth/whoami`（404 = 配对模式服务器 → 既有 WsTransport 路径不变；401/200 = 密码模式 → 登录门 + `AuthedWsTransport`）。断线后用 whoami 区分「会话失效（回登录页）」与「网络断线（自动重连）」——浏览器 WS 拿不到升级响应码，两者在线上都表现为 close 1006。
+- **边界不变**：admin 管理面仍仅环回 + token；secrets 卫生规则对会话端点统一适用；配对模式与公共中转路径零改动。
 
 ## 0 摘要
 

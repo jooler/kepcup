@@ -9,7 +9,7 @@ import { relayEndpointSchema } from '@kepcup/shared';
  */
 
 export interface ServerConfig {
-  command: 'run' | 'pair' | 'devices' | 'version';
+  command: 'run' | 'pair' | 'devices' | 'password' | 'version';
   /** run：HTTP/WS 绑定地址（默认 127.0.0.1，公网/局域网部署显式给 0.0.0.0）。 */
   host: string;
   /** run：端口（默认 8642）。 */
@@ -23,6 +23,15 @@ export interface ServerConfig {
   publicUrl: string;
   /** 中转出站模式（--relay）：不监听入站，anchor 主动外连公共/自建中转。 */
   relayUrl: string | null;
+  /**
+   * 直连认证模型（D102 修订）：password = 账号密码登录（默认，输入网址即可访问，
+   * 任何设备凭凭据登录）；pairing = D96 配对码（--auth pairing 退回）。
+   * --relay 模式恒为 pairing（D96 路径不变）。
+   */
+  auth: 'password' | 'pairing';
+  /** 非交互建号 / 改密（systemd）；缺省首启交互式提示。 */
+  adminUser: string | null;
+  adminPassword: string | null;
   keystore: 'system' | 'file';
   /** PWA 静态目录（缺省包内 web/，不存在则不托管）。 */
   webDir: string | null;
@@ -109,8 +118,8 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
   if (flags.has('help')) throw new ConfigError('help');
 
   const command = (positionals[0] ?? 'run') as ServerConfig['command'];
-  if (!['run', 'pair', 'devices', 'version'].includes(command)) {
-    throw new ConfigError(`未知子命令 "${command}"（可用：run / pair / devices / version）`);
+  if (!['run', 'pair', 'devices', 'version', 'password'].includes(command)) {
+    throw new ConfigError(`未知子命令 "${command}"（可用：run / pair / devices / password / version）`);
   }
   if (command === 'version') {
     return emptyConfig('version');
@@ -145,6 +154,13 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
   if (relayUrl !== null && values.get('public-url') !== undefined) {
     throw new ConfigError('--relay 与 --public-url 互斥：中转模式下配对地址由中转自身决定');
   }
+  const authRaw = values.get('auth') ?? 'password';
+  if (authRaw !== 'password' && authRaw !== 'pairing') {
+    throw new ConfigError(`--auth 只支持 password 或 pairing（收到 "${authRaw}"）`);
+  }
+  const auth = relayUrl !== null ? 'pairing' : (authRaw as 'password' | 'pairing');
+  const adminUser = values.get('admin-user') ?? env('ADMIN_USER') ?? null;
+  const adminPassword = values.get('admin-password') ?? env('ADMIN_PASSWORD') ?? null;
 
   return {
     command,
@@ -153,6 +169,9 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
     dataDir,
     publicUrl,
     relayUrl,
+    auth,
+    adminUser,
+    adminPassword,
     keystore,
     webDir: values.get('web-dir') !== undefined ? path.resolve(values.get('web-dir') as string) : null,
     pairingManual: flags.has('pairing-manual'),
@@ -172,6 +191,9 @@ function emptyConfig(command: ServerConfig['command']): ServerConfig {
     dataDir: '',
     publicUrl: '',
     relayUrl: null,
+    auth: 'password',
+    adminUser: null,
+    adminPassword: null,
     keystore: 'system',
     webDir: null,
     pairingManual: false,
@@ -191,6 +213,7 @@ export function usageText(): string {
   kepcup-server pair [选项]          生成配对码（打印链接与二维码；服务须在跑）
   kepcup-server devices [list]       列出已配对设备
   kepcup-server devices revoke <id>  撤销设备（踢下线并删除）
+  kepcup-server password             修改管理员密码（交互式输入旧密码与新密码）
   kepcup-server version              打印版本
 
 run 选项：
@@ -200,6 +223,9 @@ run 选项：
   --public-url <url>     客户端可访问的 ws(s):// 地址；通配 host 时必填；
                          反代 TLS 场景填 wss://<域名>
   --relay <url>          中转出站模式（不经本服务监听，anchor 主动连中转）
+  --auth <mode>          password（默认，账号密码登录）| pairing（D96 配对码）
+  --admin-user <name>    非交互建号（systemd；缺省首启交互式提示输入）
+  --admin-password <pw>  同上；环境变量 KEPCUP_SERVER_ADMIN_USER/_PASSWORD 等价
   --keystore <kind>      system（默认，Linux 需 Secret Service）| file（0600 明文，NAS 常用）
   --web-dir <dir>        PWA 静态目录（默认包内 web/）
   --pairing-manual       配对请求不自动接受，改由 pair --accept 人工确认

@@ -16,6 +16,7 @@ export type {
   RemoteHostOptions,
 } from './remote/hub.js';
 export type { RelayClientOptions } from './remote/relay-client.js';
+export { withRemoteSource } from './remote/audit.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';
 export type { SessionKeys } from './remote/codec.js';
 export type { SkillsService } from './skills/registry.js';

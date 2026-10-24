@@ -97,7 +97,7 @@ export function handleAdminRequest(
   send(res, 404, { error: 'unknown admin endpoint' });
 }
 
-function readJson(req: IncomingMessage): Promise<unknown> {
+export function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
