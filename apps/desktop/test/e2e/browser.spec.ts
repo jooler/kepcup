@@ -196,12 +196,25 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
     const back = page.locator('[data-testid="bot-detail-back"]');
     if (await back.isVisible()) await back.click();
   }
-  await page.locator('[data-testid="bot-config-row-workdir"]').click();
+  // 项目组设置页直接挂 WorkdirSelector；单聊仍走右栏配置行。
+  if (inProjectSettings) {
+    await page
+      .locator('[data-testid="project-workdir"] [data-testid="workdir-selector-trigger"]')
+      .click();
+  } else {
+    await page.locator('[data-testid="bot-config-row-workdir"]').click();
+  }
   await page.locator('[data-testid="workdir-pick-new"]').click();
-  await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toContainText(
-    path.basename(dir),
-    { timeout: 15_000 },
-  );
+  if (inProjectSettings) {
+    await expect(
+      page.locator('[data-testid="project-workdir"] [data-testid="workdir-selector-name"]'),
+    ).toContainText(path.basename(dir), { timeout: 15_000 });
+  } else {
+    await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toContainText(
+      path.basename(dir),
+      { timeout: 15_000 },
+    );
+  }
   // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
   // 项目组随后回沟通视图（输入坞只在沟通里）——「已绑定」系统消息在沟通里才渲染。
   await page.keyboard.press('Escape');
