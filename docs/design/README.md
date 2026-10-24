@@ -57,6 +57,7 @@
 | [45-bot-file-artifacts.md](45-bot-file-artifacts.md) | Bot 文件卡片与预览（**已实现**，D95）：回答下方列出 Bot 根据用户要求创建 / 修改的本地文件（用户工作目录里的真实工件，卡片只是应用内查看入口；与 32 的 Bot 组件——Bot 生成并交付给用户的产品——定位不同），点击后在覆盖层查看；图片 / 视频 / HTML（完整 WebApp 档，见 47）/ Markdown / DOCX / XLSX / 文本内置渲染，PDF 与其它格式走系统程序打开 / 下载；`files.preview` 只允许读取本对话文件卡中的路径 |
 | [46-remote-control.md](46-remote-control.md) | 远程遥控（**已定稿，未实施**，D96）：手机 PWA = 纯遥控器（现有 renderer 的 web 构建），桌面 core = 唯一服务层，Cloudflare Worker + DO = 公共哑中转（多用户、零持久化、不可信、E2E 加密）；core 抽象收发中枢——本机 UI 与远程端点对等、同一 RPC 目录、不做只读门，本机直连、远程经中转（桌面 anchor 1:1 外连，事件帧广播全部端点、RPC 帧定向，帧类型即信号区分）；二维码一次性配对码 + X25519/HKDF，配对设备 ≡ 本机用户，多设备可撤销；无同步层，断线重连走 renderer 现有自举；`remote.kepcup.com`，免费套餐起步；推送 / 附件上行（复用 D94 intake）P1 |
 | [47-file-webapp-viewer.md](47-file-webapp-viewer.md) | 文件目录预览协议 `kepcup-file://`（**已实施**）：FileViewer 浏览 HTML 升级「完整 WebApp 档」——脚本、网络、相对路径多文件、localStorage、表单全可用，隔离靠 iframe sandbox 属性 + 独占协议源（token = sha256(canonical 路径) 派生）+ 导航守卫 + core 目录范围校验（`files.previewSession` / `files.previewResource`，TTL+LRU 会话表）；配套：Bot 组件同款档位与海报 / 覆盖层改版（见 32 §13 修订记录） |
+| [48-bot-template-export.md](48-bot-template-export.md) | Bot 模板导出/导入（**已实施**）：导出 Bot 为单个 `*.kepcup-bot.json` 供他人套用或换设备恢复——含清洗后的 Profile（人设 / 职责 / 边界 / 模型偏好 / 能力包）、自写技能文件全量与头像；对话 / 记忆 / 知识库 / 任务 / 组件 / 密钥与本机引用（MCP / 连接应用 / 浏览器资料 / InkCop / 域名白名单）永不包含，导出与导入双侧清洗；导入 = 从模板新建 Bot（sha256 防确认后替换，技能 staging 校验后真实 git 提交，已导入技能只列清单提示重装）；`bots.template.*` RPC + 新增 `dialog:saveFile` 主进程通道 |
 
 ## 尚未讨论（暂不入文档）
 

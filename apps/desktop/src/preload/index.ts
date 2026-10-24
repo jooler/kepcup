@@ -42,6 +42,12 @@ const api = {
     /** System file picker (D73 P2 MCPB install); null when cancelled. */
     selectFile: (extensions: string[]): Promise<string | null> =>
       ipcRenderer.invoke('dialog:selectFile', extensions),
+    /** System save-as picker (D48 Bot 模板导出); null when cancelled. */
+    saveFile: (options: {
+      title?: string;
+      defaultFileName?: string;
+      extensions?: string[];
+    }): Promise<string | null> => ipcRenderer.invoke('dialog:saveFile', options),
     /** 对话里 @ 本地文件/文件夹：只返回路径与类型，绝不上传文件字节。 */
     selectLocalPath: (): Promise<{ path: string; kind: 'file' | 'folder' } | null> =>
       ipcRenderer.invoke('dialog:selectLocalPath'),
