@@ -310,8 +310,10 @@ function codesignEntitlements(appexPath) {
 /**
  * 校验 macOS 产物里的 Share Extension（D94 §10.2）：.appex 在 Contents/PlugIns/ 下、
  * Info.plist 可解析、扩展点是 com.apple.share-services、bundle id 以主应用 id 为前缀、
- * 签名里的 App Group 与主应用一致（groupId 来自 resources/share-extension/group.json，
- * 即构建脚本展开 TeamID 后写的同一个值）。返回校验摘要（导出供单测）。
+ * 包内 Resources/share-extension/group.json 存在且组 id 与构建基准一致（主进程靠它
+ * 定位容器，读不到就回落无前缀组 id）、签名里的 App Group 与主应用一致（groupId
+ * 来自 resources/share-extension/group.json，即构建脚本展开 TeamID 后写的同一个值）。
+ * 返回校验摘要（导出供单测）。
  */
 function assertShareExtension(appBundlePath, groupId) {
   const pluginsDir = path.join(appBundlePath, 'Contents', 'PlugIns');
@@ -331,6 +333,41 @@ function assertShareExtension(appBundlePath, groupId) {
   const bundleId = String(info.CFBundleIdentifier ?? '');
   if (!bundleId.startsWith('app.kepcup.desktop')) {
     throw new Error(`[pack] Share Extension bundle id 不对：${bundleId}`);
+  }
+  // 主进程靠包内 Resources/share-extension/group.json 定位 App Group 容器
+  // （src/main/share-intake/app-group.ts 的 resolveShareGroupId）：读不到就回落
+  // 无前缀组 id，目标快照写进错误容器、扩展永远「读不到目标列表」。曾因
+  // extraResources 单文件条目的 to 不带文件名，group.json 被拷成名为
+  // share-extension 的文件——对着产物硬校验，防这类静默回归。
+  const packagedGroupJson = path.join(
+    appBundlePath,
+    'Contents',
+    'Resources',
+    'share-extension',
+    'group.json',
+  );
+  if (!existsSync(packagedGroupJson)) {
+    throw new Error(
+      `[pack] 包内缺少 Resources/share-extension/group.json（${
+        packagedGroupJson
+      }）——主进程将回落无前缀 App Group id，快照写错容器。extraResources 的 to 必须写完整文件名 share-extension/group.json。`,
+    );
+  }
+  if (groupId !== null) {
+    let packagedGroupId = null;
+    try {
+      const parsed = JSON.parse(readFileSync(packagedGroupJson, 'utf8'));
+      if (typeof parsed.groupId === 'string' && parsed.groupId.length > 0) {
+        packagedGroupId = parsed.groupId;
+      }
+    } catch {
+      packagedGroupId = null;
+    }
+    if (packagedGroupId !== groupId) {
+      throw new Error(
+        `[pack] 包内 group.json 的组 id（${packagedGroupId ?? '不可解析'}）与构建基准（${groupId}）不一致。`,
+      );
+    }
   }
   // 签名校验：已签名的扩展必须通过 codesign --verify --strict（未签名的本地
   // 构建只警告——发版流水线不允许）。

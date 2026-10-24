@@ -72,7 +72,10 @@ describe('ShareRecoveryState', () => {
     listResult = [item()];
     const state = new ShareRecoveryState();
     await state.refresh();
-    expect(calls.filter((c) => c.method === 'share.failed.list')).toHaveLength(1);
+    const listCall = calls.filter((c) => c.method === 'share.failed.list');
+    expect(listCall).toHaveLength(1);
+    // 入参必须是 {}：schema 是 z.object({})，缺参会整包被拒（回归锁）。
+    expect(listCall[0]?.params).toEqual({});
     expect(state.items).toHaveLength(1);
     expect(state.items[0]?.intakeId).toBe('shr_abcdefgh');
   });

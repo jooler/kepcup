@@ -1,10 +1,10 @@
 /* KepCup Share Extension (English). */
 
 "share.loading" = "Reading shared content…";
-"share.empty" = "Nothing to import.";
-"share.write_failed" = "Import failed: %@";
+"share.empty" = "Nothing to send.";
+"share.write_failed" = "Send failed: %@";
 
-"picker.title" = "Import to KepCup";
+"picker.title" = "Send to KepCup";
 "picker.targets_missing" = "Cannot read the target list. Open KepCup once to sync it, then come back.";
 "picker.targets_stale" = "The target list may be outdated; KepCup validates on confirm.";
 "picker.search" = "Search bots or projects";
@@ -15,4 +15,4 @@
 "picker.note_label" = "Note (optional)";
 "picker.note_limit" = "Note is limited to %d characters";
 "picker.cancel" = "Cancel";
-"picker.confirm" = "Import";
+"picker.confirm" = "Send";

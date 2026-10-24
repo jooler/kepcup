@@ -30,6 +30,7 @@
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
+  import ExportBotTemplateButton from '$lib/features/bot-template/ExportBotTemplateButton.svelte';
   import { showBrowser, closeBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
@@ -508,6 +509,8 @@
           />
           {#if bot}
             <EgressSummary botId={bot.id} />
+            <!-- D48：导出为模板（人设/能力/自写技能/头像；私有数据不包含）。 -->
+            <ExportBotTemplateButton botId={bot.id} botName={bot.name} />
           {/if}
         </div>
       </div>

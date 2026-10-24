@@ -87,6 +87,16 @@ import {
   mcpbInstallOutputSchema,
 } from '../domain/mcpb.js';
 import {
+  botsTemplateExportInputSchema,
+  botsTemplateExportOutputSchema,
+  botsTemplateImportInputSchema,
+  botsTemplateImportOutputSchema,
+  botsTemplateInspectInputSchema,
+  botsTemplateInspectOutputSchema,
+  botsTemplatePreviewInputSchema,
+  botsTemplatePreviewOutputSchema,
+} from '../domain/bot-template.js';
+import {
   oauthClientsListOutputSchema,
   oauthClientsRemoveInputSchema,
   oauthClientsSetInputSchema,
@@ -2193,6 +2203,23 @@ export const rpcMethodSchemas = {
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.delete': { input: botIdInputSchema, output: okOutput },
   'bots.deletionPreview': { input: botIdInputSchema, output: botsDeletionPreviewOutputSchema },
+  /** 模板导出/导入（docs/design/48-bot-template-export.md）：导出前摘要。 */
+  'bots.templatePreview': {
+    input: botsTemplatePreviewInputSchema,
+    output: botsTemplatePreviewOutputSchema,
+  },
+  'bots.templateExport': {
+    input: botsTemplateExportInputSchema,
+    output: botsTemplateExportOutputSchema,
+  },
+  'bots.templateInspect': {
+    input: botsTemplateInspectInputSchema,
+    output: botsTemplateInspectOutputSchema,
+  },
+  'bots.templateImport': {
+    input: botsTemplateImportInputSchema,
+    output: botsTemplateImportOutputSchema,
+  },
   /** 管家（D70）：确保唯一管家存在并打开其私聊（幂等）。 */
   'butler.ensure': { input: butlerEnsureInputSchema, output: butlerEnsureOutputSchema },
   'butler.acceptRoute': {
@@ -2724,6 +2751,10 @@ const APP_METHODS = [
   'bots.avatar.data',
   'bots.delete',
   'bots.deletionPreview',
+  'bots.templatePreview',
+  'bots.templateExport',
+  'bots.templateInspect',
+  'bots.templateImport',
   'butler.ensure',
   'butler.acceptRoute',
   'bots.interview.start',

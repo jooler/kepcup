@@ -45,6 +45,14 @@ import {
   botsAvatarDataOutputSchema,
   botIdInputSchema,
   botsDeletionPreviewOutputSchema,
+  botsTemplatePreviewInputSchema,
+  botsTemplatePreviewOutputSchema,
+  botsTemplateExportInputSchema,
+  botsTemplateExportOutputSchema,
+  botsTemplateInspectInputSchema,
+  botsTemplateInspectOutputSchema,
+  botsTemplateImportInputSchema,
+  botsTemplateImportOutputSchema,
   interviewStartOutputSchema,
   butlerEnsureInputSchema,
   butlerEnsureOutputSchema,
@@ -903,6 +911,33 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       botIdInputSchema,
       botsDeletionPreviewOutputSchema,
       async (input) => domain.lifecycle.deletionPreview(input.id),
+    ),
+    // D48 Bot 模板（docs/design/48-bot-template-export.md）：导出预览 / 写文件 /
+    // 导入预览（sha256 防确认后替换，同 mcpb 模式）/ 从模板新建 Bot。
+    'bots.templatePreview': method(
+      botsTemplatePreviewInputSchema,
+      botsTemplatePreviewOutputSchema,
+      async (input) => domain.botTemplates.preview(input.botId),
+    ),
+    'bots.templateExport': method(
+      botsTemplateExportInputSchema,
+      botsTemplateExportOutputSchema,
+      async (input) => domain.botTemplates.exportTo(input.botId, input.path),
+    ),
+    'bots.templateInspect': method(
+      botsTemplateInspectInputSchema,
+      botsTemplateInspectOutputSchema,
+      async (input) => domain.botTemplates.inspect(input.path),
+    ),
+    'bots.templateImport': method(
+      botsTemplateImportInputSchema,
+      botsTemplateImportOutputSchema,
+      async (input) => {
+        const result = await domain.botTemplates.importFrom(input.path, input.sha256);
+        const bot = domain.bots.get(result.botId);
+        if (bot) publish('bot.updated', { bot });
+        return result;
+      },
     ),
 
     'conversations.list': method(voidInput, conversationsListOutputSchema, async () => {

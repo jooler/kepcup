@@ -23,6 +23,7 @@ export * from './domain/widget-craft.js';
 export * from './domain/present.js';
 export * from './domain/ask-user.js';
 export * from './domain/mcpb.js';
+export * from './domain/bot-template.js';
 export * from './domain/oauth-clients.js';
 export * from './domain/host-capabilities.js';
 export * from './domain/sensors.js';

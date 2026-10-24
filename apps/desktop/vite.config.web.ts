@@ -77,8 +77,15 @@ export default defineConfig({
     __KEPCUP_WEB_VERSION__: JSON.stringify(pkg.version),
   },
   build: {
-    outDir: resolve(__dirname, '../../infra/cloudflare/relay/public'),
-    emptyOutDir: false,
+    // D102 headless 服务端打包：KEPCUP_WEB_OUTDIR 把同一份 web 产物改投
+    // apps/server/web（pack-server.mjs 用）；缺省仍投中转 Worker 的 public。
+    outDir:
+      process.env.KEPCUP_WEB_OUTDIR !== undefined && process.env.KEPCUP_WEB_OUTDIR !== ''
+        ? resolve(__dirname, process.env.KEPCUP_WEB_OUTDIR)
+        : resolve(__dirname, '../../infra/cloudflare/relay/public'),
+    // 改投目录（打包场景）整目录归 web 产物，允许清空；缺省目录里混有 Worker
+    // 的占位文件，不能清。
+    emptyOutDir: process.env.KEPCUP_WEB_OUTDIR !== undefined && process.env.KEPCUP_WEB_OUTDIR !== '',
     // vite 的内联 module preload polyfill 过不了 index.web.html 的 CSP
     // （script-src 'self'）；现代浏览器不需要它。
     modulePreload: { polyfill: false },

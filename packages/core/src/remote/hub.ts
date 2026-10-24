@@ -51,8 +51,8 @@ const VIEWER_LEFT_GRACE_MS = 5_000;
  * 在窗口内，不用回桌面重新准备。窗口结束仍无人用即断开，不空转。导出供测试钉策略。
  */
 export const RELAY_IDLE_LINGER_MS = 2 * 60 * 1000;
-/** 仅本机可调的方法（测试缝）：不暴露给远程端点的方法表。 */
-const LOCAL_ONLY_METHODS = new Set(['remote.testInjectPairing']);
+/** 仅本机可调的方法（测试缝）：不暴露给任何远程端点（hub 端点与会话端点共用）。 */
+export const LOCAL_ONLY_METHODS = new Set(['remote.testInjectPairing']);
 
 interface Endpoint {
   deviceId: string;
@@ -72,7 +72,19 @@ export interface RelayClientLike {
   close(): void;
 }
 
-export interface RemoteHubDeps {
+/** 远程宿主形态选项（D102）：`CoreServicesOptions.remote`，桌面缺省 undefined。 */
+export interface RemoteHostOptions {
+  /** 测试注入：不真连 WSS；headless 服务端（D102）注入直连监听适配层。 */
+  relayClientFactory?: (options: RelayClientOptions) => RelayClientLike;
+  /**
+   * 常驻连接（D102 headless）：开启后只要 remoteEnabled 就保持连接，不进入按需
+   * 断线的 idle 驻留策略——常驻服务端的监听零边际成本，且 idle 拆线后入站帧会被
+   * `#relay === null` 直接丢弃，远程客户端将无法再连上。桌面路径缺省 false 不变。
+   */
+  alwaysOn?: boolean;
+}
+
+export interface RemoteHubDeps extends RemoteHostOptions {
   db: SqliteDatabase;
   secrets: SecretsService;
   settings: SettingsService;
@@ -89,8 +101,6 @@ export interface RemoteHubDeps {
    * 会卡在「核心服务启动中」。
    */
   pushInitialEventsTo: (server: RpcServerHandle) => void;
-  /** 测试注入：不真连 WSS。 */
-  relayClientFactory?: (options: RelayClientOptions) => RelayClientLike;
 }
 
 export class RemoteHub {
@@ -130,7 +140,7 @@ export class RemoteHub {
   start(): void {
     this.#unsubscribers.push(
       this.#deps.events.on('settings.changed', () => {
-        void this.syncConfig();
+        this.#scheduleSync();
       }),
     );
     for (const name of RPC_EVENT_NAMES) {
@@ -140,7 +150,22 @@ export class RemoteHub {
         }),
       );
     }
-    void this.syncConfig();
+    this.#scheduleSync();
+  }
+
+  /**
+   * 兜底调度 syncConfig（审查修复 P0）：headless 二次启动时 DB 里 remoteEnabled
+   * 已是 true，start() 在 createCoreServices 内部被调——此时宿主的
+   * relayClientFactory 目标（DirectRelayServer）尚未就绪，工厂 throw 会变成
+   * unhandledRejection 直接崩进程（宿主随后会显式 syncConfig 补建连接，功能自愈）。
+   */
+  #scheduleSync(): void {
+    void this.syncConfig().catch((error) => {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'remote: syncConfig failed (will retry on next host sync)',
+      );
+    });
   }
 
   async close(): Promise<void> {
@@ -177,7 +202,7 @@ export class RemoteHub {
       this.#dropRelay('off');
       return;
     }
-    if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer()) {
+    if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer() || this.#deps.alwaysOn === true) {
       this.#cancelLinger();
       this.#ensureRelayConnection();
       return;
