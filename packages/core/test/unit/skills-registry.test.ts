@@ -13,6 +13,7 @@ import { SkillsService } from '../../src/skills/registry.js';
 import { copySkillTree } from '../../src/skills/library.js';
 import { scanSkillDir } from '../../src/skills/scan.js';
 import { parseSkillDir } from '../../src/skills/parse.js';
+import { AppError } from '@kepcup/shared';
 import type { SkillScan } from '@kepcup/shared';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'skills-registry-'));
@@ -24,6 +25,8 @@ interface Rig {
   skills: SkillsService;
   db: SqliteDatabase;
   paths: ReturnType<typeof resolvePaths>;
+  /** 发布过的事件名（skills.changed / skills.missing 断言用）。 */
+  events: string[];
 }
 
 function makeRig(enhancedSandbox?: { available: () => boolean; installHint: () => string }): Rig {
@@ -49,7 +52,7 @@ function makeRig(enhancedSandbox?: { available: () => boolean; installHint: () =
     publish: (event) => events.push(event),
     ...(enhancedSandbox !== undefined ? { enhancedSandbox } : {}),
   });
-  return { skills, db, paths };
+  return { skills, db, paths, events };
 }
 
 const stubLogger = { info() {}, warn() {}, error() {}, debug() {}, child: () => stubLogger };
@@ -298,6 +301,45 @@ describe('skills/registry（P08 任务 4：安装/冲突/引用回收）', () =>
     rig.skills.uninstall('bot_a', 'ghost-draft');
     expect(rig.skills.rowsForBot('bot_a').some((row) => row.name === 'ghost-draft')).toBe(false);
     expect(existsSync(draftDir)).toBe(false);
+    closeDatabase(rig.db);
+  });
+
+  it('skills.read 读草稿：目录在 _drafts 下时返回草稿内容，目录消失时报 SKILL_DRAFT_MISSING 并清掉残留行', () => {
+    const rig = makeRig();
+    const draftDir = path.join(rig.paths.home, 'bots', 'bot_a', 'skills', '_drafts', 'draft-read');
+    mkdirSync(draftDir, { recursive: true });
+    writeFileSync(path.join(draftDir, 'SKILL.md'), '---\nname: draft-read\ndescription: d\n---\n草稿正文');
+    rig.skills.ensureDraftRow('bot_a', 'draft-read', '验证未通过');
+
+    // 修复前：草稿行查的是已转正目录，必然报「技能目录不存在」。
+    expect(rig.skills.readSkill('bot_a', 'draft-read').content).toContain('草稿正文');
+
+    rmSync(draftDir, { recursive: true, force: true });
+    rig.events.length = 0;
+    try {
+      rig.skills.readSkill('bot_a', 'draft-read');
+      expect.unreachable();
+    } catch (error) {
+      expect((error as AppError).code).toBe('SKILL_DRAFT_MISSING');
+    }
+    expect(rig.skills.rowsForBot('bot_a').some((row) => row.name === 'draft-read')).toBe(false);
+    expect(rig.events).toContain('skills.changed');
+    expect(rig.skills.listForBot('bot_a').some((entry) => entry.name === 'draft-read')).toBe(false);
+    closeDatabase(rig.db);
+  });
+
+  it('listForBot 主动清理目录已消失的草稿行（不再留在列表里）', () => {
+    const rig = makeRig();
+    const draftDir = path.join(rig.paths.home, 'bots', 'bot_a', 'skills', '_drafts', 'gone-draft');
+    mkdirSync(draftDir, { recursive: true });
+    writeFileSync(path.join(draftDir, 'SKILL.md'), '---\nname: gone-draft\ndescription: d\n---\n正文');
+    rig.skills.ensureDraftRow('bot_a', 'gone-draft', '验证未通过');
+    rmSync(draftDir, { recursive: true, force: true });
+    rig.events.length = 0;
+
+    expect(rig.skills.listForBot('bot_a').some((entry) => entry.name === 'gone-draft')).toBe(false);
+    expect(rig.skills.rowsForBot('bot_a').some((row) => row.name === 'gone-draft')).toBe(false);
+    expect(rig.events).toContain('skills.changed');
     closeDatabase(rig.db);
   });
 

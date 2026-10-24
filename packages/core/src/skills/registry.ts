@@ -319,6 +319,17 @@ export class SkillsService {
     return purged;
   }
 
+  /**
+   * 草稿目录已消失（应用外被删/回收）而 `bot_skills` 行还在：草稿没有 git
+   * 历史也没有库版本，行删掉即无残留。面板列表与 skills.read 都会经过这里，
+   * 同名行不该再留在列表里。
+   */
+  #purgeDanglingDraft(botId: string, name: string): void {
+    this.#db.prepare('delete from bot_skills where bot_id = ? and name = ?').run(botId, name);
+    this.#deps.logger.warn({ botId, skill: name }, 'draft directory missing: draft row purged');
+    this.publishChanged(botId);
+  }
+
   // --- library ------------------------------------------------------------
 
   libraryByNameAndHash(name: string, contentHash: string): LibraryRow | null {
@@ -772,6 +783,15 @@ export class SkillsService {
     const ownNames = new Set(rows.map((row) => row.name));
     const entries: SkillEntry[] = [];
     for (const row of rows) {
+      // 草稿目录已消失的行就地清理（无历史，纯死数据），不再出现在列表里。
+      if (
+        row.kind === 'authored' &&
+        row.status === 'draft' &&
+        !existsSync(botSkillDraftDir(this.#paths, botId, row.name))
+      ) {
+        this.#purgeDanglingDraft(botId, row.name);
+        continue;
+      }
       const entry = this.#privateEntry(botId, row);
       if (entry !== null) entries.push(entry);
     }
@@ -1110,6 +1130,17 @@ export class SkillsService {
   readSkill(botId: string, name: string): { name: string; content: string; dirPath: string } {
     const row = this.botSkillRow(botId, name);
     if (row !== null) {
+      // 草稿行：内容在 `_drafts/{name}`（没有已转正目录，也没有 git 历史）。
+      // 目录已消失的草稿行是死数据（草稿无历史可回），直接清理（BR-P08-011
+      // 的延伸：RPC 卸载不留残留；这里不留「目录没了但行还在」的残留）。
+      if (row.kind === 'authored' && row.status === 'draft') {
+        const draftDir = botSkillDraftDir(this.#paths, botId, name);
+        if (existsSync(draftDir)) {
+          return { name, content: readSkillMarkdown(draftDir), dirPath: draftDir };
+        }
+        this.#purgeDanglingDraft(botId, name);
+        throw new AppError('SKILL_DRAFT_MISSING', `草稿目录不存在（可能已被删除或回收），条目已清理：${name}`);
+      }
       const dir = this.dirOf(row);
       if (dir === null) {
         this.#reportMissingPrivate(botId, row);
