@@ -6,6 +6,11 @@ import {
   type WebLinkState,
   type WsTransport,
 } from '$lib/rpc/ws-transport';
+import {
+  getAuthedTransport,
+  probeServerAuth,
+  type AuthedLinkState,
+} from '$lib/rpc/authed-transport';
 import { ENDPOINT_KIND, defaultDeviceName } from './endpoint';
 
 /**
@@ -19,6 +24,7 @@ import { ENDPOINT_KIND, defaultDeviceName } from './endpoint';
  */
 
 export type GateView =
+  | 'login'
   | 'unpaired'
   | 'enter-name'
   | 'joining'
@@ -38,8 +44,14 @@ interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+export type LoginError = 'invalid' | 'ratelimited' | 'error' | null;
+
 class WebGateState {
   view = $state<GateView>('unpaired');
+  /** D102 修订：服务器认证模型（probing 期间停在 booting 视图）。 */
+  authMode = $state<'probing' | 'password' | 'pairing'>('probing');
+  loginError = $state<LoginError>(null);
+  loginPending = $state(false);
   /** 配对链接输入框内容（也承接 #pair=… 深链的预填）。 */
   linkInput = $state('');
   inputError = $state<string | null>(null);
@@ -60,6 +72,82 @@ class WebGateState {
       this.view = 'connected';
       return;
     }
+    this.view = 'booting';
+    void this.#boot();
+  }
+
+  /** 认证模型探测 → 配对路径（原构造器逻辑）或账号密码路径。 */
+  async #boot(): Promise<void> {
+    let probe = await probeServerAuth();
+    if (probe === null) {
+      // 服务器暂不可达：稍后重探（probeServerAuth 失败不记忆，会重新请求）。
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      probe = await probeServerAuth();
+    }
+    if (probe === null || probe.mode === 'pairing') {
+      // 探测仍失败按配对路径走（WsTransport 有自己的离线态呈现）。
+      this.authMode = 'pairing';
+      this.#initPairing();
+      return;
+    }
+    this.authMode = 'password';
+    const transport = getAuthedTransport();
+    transport.onLinkState((state) => this.#syncPassword(state));
+    if (probe.authenticated) {
+      this.view = 'booting';
+      transport.connect();
+    } else {
+      this.view = 'login';
+    }
+  }
+
+  /** 账号密码模式：会话状态 → Gate 视图。 */
+  #syncPassword(state: AuthedLinkState): void {
+    if (this.authMode !== 'password') return;
+    if (state === 'connected') {
+      this.view = 'connected';
+      return;
+    }
+    if (state === 'unauthenticated') {
+      this.loginError = null;
+      this.view = 'login';
+      return;
+    }
+    // connecting / reconnecting：已登录过会话则等待重连，否则停在登录页。
+    if (this.view !== 'login') this.view = 'booting';
+  }
+
+  /** 登录（表单提交）：成功立即拨号，失败按错误码展示。 */
+  async login(username: string, password: string): Promise<void> {
+    if (this.authMode !== 'password' || this.loginPending) return;
+    this.loginPending = true;
+    this.loginError = null;
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (response.ok) {
+        this.view = 'booting';
+        getAuthedTransport().connectNow();
+        return;
+      }
+      this.loginError = response.status === 429 ? 'ratelimited' : 'invalid';
+    } catch {
+      this.loginError = 'error';
+    } finally {
+      this.loginPending = false;
+    }
+  }
+
+  /** 登录页的手动重试（登录报 error = 服务器不可达时）。 */
+  retryLogin(): void {
+    this.loginError = null;
+    void this.#boot();
+  }
+
+  #initPairing(): void {
     const transport = getWebTransport();
     this.#transport = transport;
     this.keyFingerprint = transport.keyFingerprint;
@@ -175,6 +263,10 @@ class WebGateState {
 
   /** 离线 / 断线页的手动重试。 */
   retryConnection(): void {
+    if (this.authMode === 'password') {
+      getAuthedTransport().connectNow();
+      return;
+    }
     this.#transport?.reconnect();
   }
 

@@ -1,12 +1,19 @@
-import { createServer, type Server as HttpServer } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { createFileKeystore, createCoreServices, type CoreServices, type Keystore } from '@kepcup/core';
-import { handleAdminRequest, isAdminPath, type AdminDeps } from './admin.js';
+import { handleAdminRequest, isAdminPath, readJson, type AdminDeps } from './admin.js';
 import { DirectRelayServer } from './direct-relay.js';
 import { qrTerminal } from './qr.js';
 import { resolveWebDir, serveStatic } from './static.js';
+import {
+  AuthError,
+  AuthStore,
+  SESSION_COOKIE,
+  sessionTokenFromCookie,
+} from './auth.js';
+import { SessionHub } from './session-hub.js';
 import type { ServerConfig } from './config.js';
 
 /**
@@ -27,6 +34,9 @@ export interface HeadlessServer {
   services: CoreServices;
   httpServer: HttpServer;
   directRelay: DirectRelayServer | null;
+  /** 账号密码模式的会话端点（/rpc）；pairing 模式为 null。 */
+  sessionHub: SessionHub | null;
+  auth: AuthStore;
   /** 首配自动出码 / auto-accept 循环（有设备后自停）。 */
   stopPairingFlow(): void;
   close(): Promise<void>;
@@ -62,27 +72,43 @@ export async function createHeadlessServer(
         ? createFileKeystore(path.join(config.dataDir, 'master-key'))
         : undefined;
 
+  // 账号密码模式：管理员账号在 core 起来之前就绪（首启交互建号由 CLI 层完成；
+  // 这里兜底非交互参数，两者都没有则报错退出——不能带着「任何人可登录」的状态起服务）。
+  const auth = new AuthStore(config.dataDir);
+  const passwordMode = config.relayUrl === null && config.auth === 'password';
+  if (passwordMode && !auth.isConfigured()) {
+    if (config.adminUser === null || config.adminPassword === null) {
+      throw new Error(
+        '管理员账号未初始化：交互式终端首启会提示输入；非交互场景（systemd）用 ' +
+          '--admin-user/--admin-password 或环境变量 KEPCUP_SERVER_ADMIN_USER/_PASSWORD',
+      );
+    }
+    auth.setupAdmin(config.adminUser, config.adminPassword);
+  }
+
   // 直连适配层在 core ready 后才建（要 logger/clock），工厂在 hub 建连时才被调，
-  // 而那只会发生在我们打开 remoteEnabled 之后——引用先占位。
+  // 而那只会发生在我们打开 remoteEnabled 之后——引用先占位。密码模式不走
+  // RemoteHub（会话端点直接绑 appMethods），工厂不注入。
+  const pairingDirect = config.relayUrl !== null || config.auth === 'pairing';
   let directRelay: DirectRelayServer | null = null;
   const services = await createCoreServices({
     home: config.dataDir,
     env: test.env ?? process.env,
     appVersion: serverVersion(),
     ...(keystore !== undefined ? { keystore } : {}),
-    remote: {
-      alwaysOn: true,
-      ...(config.relayUrl === null
-        ? {
+    ...(pairingDirect
+      ? {
+          remote: {
+            alwaysOn: true,
             relayClientFactory: (options) => {
               if (directRelay === null) {
                 throw new Error('direct relay server not ready');
               }
               return directRelay.createAdapter(options);
             },
-          }
-        : {}),
-    },
+          },
+        }
+      : {}),
   });
   if (services.status !== 'ready' || services.remote === null || services.domain === null) {
     await services.close().catch(() => {});
@@ -108,10 +134,21 @@ export async function createHeadlessServer(
   };
 
   const webDir = resolveWebDir(config.webDir);
+  let sessionHub: SessionHub | null = null;
   const httpServer = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://internal');
     if (isAdminPath(url.pathname)) {
       handleAdminRequest(adminDeps, req, res, url.pathname);
+      return;
+    }
+    if (url.pathname.startsWith('/api/')) {
+      // /api/* 只认 auth 路由（密码模式）；pairing 模式没有 auth API，给 404
+      //（客户端据此识别服务器认证模型），不能落进 SPA 回退（那会 200 返回 index.html）。
+      if (passwordMode) {
+        handleAuthRequest(auth, req, res, url.pathname);
+      } else {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }).end('{"error":"not_found"}');
+      }
       return;
     }
     if (webDir !== null) {
@@ -123,10 +160,22 @@ export async function createHeadlessServer(
     );
   });
 
-  if (config.relayUrl === null) {
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url ?? '/', 'http://internal');
+    if (passwordMode) {
+      if (url.pathname === '/rpc' && sessionHub !== null) {
+        sessionHub.handleUpgrade(req, socket, head);
+        return;
+      }
+      socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    directRelay?.handleUpgrade(req, socket, head);
+  });
+  if (pairingDirect) {
     const relay = new DirectRelayServer({ httpServer, logger, clock: services.clock });
     directRelay = relay;
-    httpServer.on('upgrade', (req, socket, head) => relay.handleUpgrade(req, socket, head));
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -142,16 +191,21 @@ export async function createHeadlessServer(
     config.publicUrl = `ws://${config.host}:${actualPort}`;
   }
 
-  // headless 的服务端配置是唯一事实来源：强制开远程、指向本服务（或 --relay）。
-  // 直接调 settings.update 不经 RPC 层、不广播 settings.changed，所以要像
-  // hub.configSet 一样显式重估 → 工厂建连（alwaysOn：此后不再按需断线）。
-  services.domain.settings.update({
-    remoteEnabled: true,
-    remoteRelayUrl: config.relayUrl ?? config.publicUrl,
-  });
-  void hub.syncConfig();
-
-  const pairingFlow = startPairingFlow(config, services);
+  let pairingFlow: { stop(): void } = { stop: () => {} };
+  if (pairingDirect) {
+    // headless 的服务端配置是唯一事实来源：强制开远程、指向本服务（或 --relay）。
+    // 直接调 settings.update 不经 RPC 层、不广播 settings.changed，所以要像
+    // hub.configSet 一样显式重估 → 工厂建连（alwaysOn：此后不再按需断线）。
+    services.domain.settings.update({
+      remoteEnabled: true,
+      remoteRelayUrl: config.relayUrl ?? config.publicUrl,
+    });
+    void hub.syncConfig();
+    pairingFlow = startPairingFlow(config, services);
+  } else {
+    // 密码模式：会话端点直连 appMethods，RemoteHub 保持关（零连接零端点）。
+    sessionHub = new SessionHub({ httpServer, services, auth, logger });
+  }
 
   const bound = config.port;
   logger.info(
@@ -165,17 +219,85 @@ export async function createHeadlessServer(
     services,
     httpServer,
     directRelay,
+    sessionHub,
+    auth,
     stopPairingFlow: pairingFlow.stop,
     async close() {
       pairingFlow.stop();
-      await services.close().catch(() => {});
+      // 顺序：先关会话/直连（关闭路径要写日志），再关 core（销毁 pino 流）。
       if (directRelay !== null) directRelay.close();
+      sessionHub?.close();
+      await services.close().catch(() => {});
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections?.();
       });
     },
   };
+}
+
+/**
+ * 账号密码 API（D102 修订，仅 password 模式挂载）：
+ * - POST /api/auth/login {username,password} → Set-Cookie(kepcup_session, HttpOnly,
+ *   30d) + {ok,username,token}；失败 401（限流 429）。token 也可作 Bearer 用（脚本）。
+ * - POST /api/auth/logout → 清 Cookie。
+ * - GET  /api/auth/whoami → 200 {username} / 401；pairing 模式服务器无此路由（404），
+ *   客户端据此识别认证模型。
+ */
+function handleAuthRequest(
+  auth: AuthStore,
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+): void {
+  const send = (code: number, body: unknown, headers: Record<string, string> = {}): void => {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', ...headers }).end(
+      JSON.stringify(body),
+    );
+  };
+  const secure =
+    (req.socket as { encrypted?: boolean }).encrypted === true ||
+    req.headers['x-forwarded-proto'] === 'https';
+  if (pathname === '/api/auth/whoami' && req.method === 'GET') {
+    const session = auth.verifyToken(sessionTokenFromCookie(req.headers.cookie));
+    if (session === null) {
+      send(401, { mode: 'password', error: 'unauthenticated' });
+      return;
+    }
+    send(200, { mode: 'password', username: session.username });
+    return;
+  }
+  if (pathname === '/api/auth/login' && req.method === 'POST') {
+    void readJson(req)
+      .then((body) => {
+        const username = String((body as { username?: unknown }).username ?? '');
+        const password = String((body as { password?: unknown }).password ?? '');
+        const ip = req.socket.remoteAddress ?? 'unknown';
+        const token = auth.login(username, password, ip);
+        const cookie =
+          `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${30 * 24 * 60 * 60}; ` +
+          `HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
+        send(200, { ok: true, username: auth.username, token }, { 'set-cookie': cookie });
+      })
+      .catch((error) => {
+        if (error instanceof AuthError) {
+          const headers: Record<string, string> =
+            error.code === 'RATE_LIMITED' && error.retryAfterSec !== undefined
+              ? { 'retry-after': String(error.retryAfterSec) }
+              : {};
+          send(error.code === 'RATE_LIMITED' ? 429 : 401, { error: error.code }, headers);
+          return;
+        }
+        send(400, { error: 'bad_request' });
+      });
+    return;
+  }
+  if (pathname === '/api/auth/logout' && req.method === 'POST') {
+    const cookie = `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
+    send(200, { ok: true }, { 'set-cookie': cookie });
+    return;
+  }
+  send(404, { mode: 'password', error: 'not_found' });
 }
 
 /**

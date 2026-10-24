@@ -8,6 +8,7 @@ import {
 import type { PlatformInfo } from '$lib/shim';
 import { domPortToTransport, isCorePortMessage } from './port';
 import { getWebTransport, type WebLinkState } from './ws-transport';
+import { getAuthedTransport, probeServerAuth, type AuthedLinkState } from './authed-transport';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
@@ -31,7 +32,7 @@ class CoreConnection {
     // D96 web 构建（手机 PWA）：没有 preload 与 MessagePort，core 在桌面，
     // 传输是中转 WebSocket（WsTransport，配对完成后可用）。Electron 路径不变。
     if (window.kepcup.isWeb === true) {
-      this.#startWeb();
+      void this.#startWeb();
       return;
     }
     // The main process hands over the MessagePort through a window message
@@ -48,21 +49,44 @@ class CoreConnection {
   }
 
   /**
-   * Web 模式启动：初始化 WsTransport 上的 birpc 客户端；有本地凭证时由 transport
-   * 自行重连自举（hello），没有则停在 connecting，配对完成（Gate 驱动）后状态
-   * 回调把 connection 切到 connected。
+   * Web 模式启动（D102 修订）：先探测服务器认证模型——账号密码模式（headless
+   * 直连默认）走 AuthedWsTransport（登录 Cookie 会话），配对模式（公共中转 /
+   * --auth pairing）走既有 WsTransport。探测失败（服务器不可达）重试两次后
+   * 回退配对路径，由 Gate 呈现离线态。
    */
-  #startWeb(): void {
-    const transport = getWebTransport();
-    this.#rpc = createRpcClient({
-      transport,
-      eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
-    });
-    this.#applyWebLinkState(transport.linkState);
-    transport.onLinkState((state) => this.#applyWebLinkState(state));
+  async #startWeb(): Promise<void> {
+    let probe = await probeServerAuth();
+    if (probe === null) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      probe = await probeServerAuth();
+    }
+    if (probe !== null && probe.mode === 'password') {
+      const transport = getAuthedTransport();
+      this.#rpc = createRpcClient({
+        transport,
+        eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
+      });
+      this.#applyAuthedLinkState(transport.linkState);
+      transport.onLinkState((state) => this.#applyAuthedLinkState(state));
+    } else {
+      const transport = getWebTransport();
+      this.#rpc = createRpcClient({
+        transport,
+        eventHandlers: this.#eventProxy() as Record<string, (payload: unknown) => void>,
+      });
+      this.#applyWebLinkState(transport.linkState);
+      transport.onLinkState((state) => this.#applyWebLinkState(state));
+    }
     void window.kepcup.platform.info().then((info) => {
       this.platform = info;
     });
+  }
+
+  /** 账号密码会话状态 → 既有 connection 状态（未登录不算失败，Gate 出登录页）。 */
+  #applyAuthedLinkState(state: AuthedLinkState): void {
+    this.connection =
+      state === 'connected' ? 'connected' : state === 'reconnecting' ? 'reconnecting' : 'connecting';
+    if (state === 'connected') void this.refreshInfo();
   }
 
   /** 中转连接状态 → 既有 connection 状态（手机 UI 的状态页 / 横幅共用语义）。 */
