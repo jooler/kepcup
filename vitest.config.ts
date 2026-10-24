@@ -58,6 +58,13 @@ export default defineConfig({
           include: ['packages/app-validator/test/**/*.test.ts'],
         },
       },
+      // D102 headless 服务端：直连监听层 / CLI 解析 / 全链路（临时目录 + memory keystore）。
+      {
+        test: {
+          name: 'server',
+          include: ['apps/server/test/**/*.test.ts'],
+        },
+      },
       // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.
       {
         test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },
