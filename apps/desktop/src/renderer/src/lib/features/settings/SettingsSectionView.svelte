@@ -15,7 +15,6 @@
   import UsageSection from './UsageSection.svelte';
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
-  import AppsSection from './AppsSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
@@ -60,10 +59,6 @@
     <div data-settings-anchor="web-search">
       <WebSearchSection testid="settings-web-search" />
     </div>
-  </div>
-{:else if section === 'apps'}
-  <div data-settings-section="apps" class="space-y-6">
-    <AppsSection />
   </div>
 {:else if section === 'browser'}
   <div data-settings-section="browser" class="space-y-6">

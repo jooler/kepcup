@@ -6,7 +6,7 @@ import type { SettingsUiScan } from '../../src/index.js';
 /**
  * 扫渲染层源码得到设置界面位置（设置目录覆盖率测试用，todo/conversational-app-setup.md §4.3）。
  * 宽松解析：只认 `data-settings-anchor` / `data-settings-section` 属性、扩展中心
- * `EXTENSION_CENTER_TABS` 与 RightPanel `tabItems` 的字面量；HTML / 块注释先剥掉；
+ * `EXTENSION_CENTER_TABS` 与 RightPanel `PanelDetail` 的 `kind` 字面量；HTML / 块注释先剥掉；
  * 模板串里的动态锚点（`agent-${id}`）记成「静态前缀*」。
  */
 
@@ -88,9 +88,14 @@ export function scanSettingsUi(featuresDir: string = FEATURES_DIR): SettingsUiSc
   const tabsList = /EXTENSION_CENTER_TABS[^=]*=\s*\[([^\]]*)\]/.exec(tabsSource)?.[1] ?? '';
 
   const panel = readFileSync(join(featuresDir, 'right-panel', 'RightPanel.svelte'), 'utf8');
-  const botPanelTabs = [...panel.matchAll(/\{\s*value:\s*['"]([^'"]+)['"]\s*,\s*labelKey:/g)].map(
-    (match) => match[1]!,
-  );
+  // Bot 详情已无 tabs：下钻详情的 kind（profile / skills / access / schedules /
+  // memory / wiki / widget / watches）就是可深链的位置清单。只认 PanelDetail 联合
+  // 类型的成员行（`| { kind: '…'`），不误捕 `owner={{ kind: 'bot' }}` 之类。
+  const botPanelTabs = [
+    ...new Set(
+      [...panel.matchAll(/^\s*\|\s*\{\s*kind:\s*['"]([a-z-]+)['"]/gm)].map((match) => match[1]!),
+    ),
+  ];
 
   return {
     settingsSections,

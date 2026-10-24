@@ -170,9 +170,7 @@ test('episode breaker: pause card, resume re-delivers, stop ends the round', asy
     await expect(
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '甲第一轮再收尾' }),
     ).toBeVisible({ timeout: 60_000 });
-    llm.script('mock-main', [
-      step().inTurn().expect(isBot('阿乙')).replyText('乙补投完成'),
-    ]);
+    llm.script('mock-main', [step().inTurn().expect(isBot('阿乙')).replyText('乙补投完成')]);
     await page.locator('[data-testid="episode-resume"]').click();
     await expect(cards.last()).toHaveAttribute('data-status', 'active', { timeout: 15_000 });
     await expect(cards.last()).toContainText('已继续协作');

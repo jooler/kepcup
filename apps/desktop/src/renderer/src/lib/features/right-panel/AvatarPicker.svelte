@@ -122,7 +122,7 @@
     class="absolute top-full left-1/2 z-30 mt-2 w-76 -translate-x-1/2 rounded-2xl border bg-popover text-sm shadow-xl"
     data-testid="avatar-picker"
   >
-    <div class="flex items-center gap-1 p-2 border-b">
+    <div class="flex items-center gap-1 border-b p-2">
       <button
         type="button"
         class="rounded-full px-2.5 py-1 font-medium transition-colors {tab === 'preset'
@@ -186,8 +186,8 @@
         {#each AVATAR_COLORS as color (color.id)}
           <button
             type="button"
-            class="size-7 shrink-0 rounded-full transition-transform hover:scale-110 {selected
-              .color.id === color.id
+            class="size-7 shrink-0 rounded-full transition-transform hover:scale-110 {selected.color
+              .id === color.id
               ? 'ring-2 ring-ring ring-offset-2 ring-offset-popover'
               : ''}"
             style="background: {color.hex};"
@@ -199,25 +199,27 @@
         {/each}
       </div>
     {:else}
-    <div class="p-2">
-      <label
-        class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent p-2 {uploading
-          ? 'pointer-events-none opacity-60'
-          : ''}"
-        data-testid="avatar-upload-zone"
-      >
-        <ImagePlus class="size-6" aria-hidden="true" />
-        <span>{t('rightPanel.avatarUploadHint')}</span>
-        <span class="text-xs text-muted-foreground/80">{t('rightPanel.avatarUploadCropHint')}</span>
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
-          class="hidden"
-          onchange={onPickFile}
-          data-testid="avatar-upload-input"
-        />
-      </label>
-    </div>
+      <div class="p-2">
+        <label
+          class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed p-2 px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent {uploading
+            ? 'pointer-events-none opacity-60'
+            : ''}"
+          data-testid="avatar-upload-zone"
+        >
+          <ImagePlus class="size-6" aria-hidden="true" />
+          <span>{t('rightPanel.avatarUploadHint')}</span>
+          <span class="text-xs text-muted-foreground/80"
+            >{t('rightPanel.avatarUploadCropHint')}</span
+          >
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg"
+            class="hidden"
+            onchange={onPickFile}
+            data-testid="avatar-upload-input"
+          />
+        </label>
+      </div>
     {/if}
   </div>
 {/if}

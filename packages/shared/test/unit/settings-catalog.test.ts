@@ -318,11 +318,11 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
 
   it('scans the real settings UI', () => {
     // 宽松扫描也必须扫到已知位置，否则说明扫描规则失效。
-    expect(scan.settingsSections).toEqual(
-      expect.arrayContaining(['general', 'models', 'apps']),
-    );
+    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models']));
+    // 「应用」分区已移除（连接相关都在扩展中心）。
+    expect(scan.settingsSections).not.toContain('apps');
     expect(scan.anchors).toEqual(
-      expect.arrayContaining(['default-models', 'web-search', 'apps-connected', 'agent-*']),
+      expect.arrayContaining(['default-models', 'web-search', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     expect(scan.extensionCenterTabs).toEqual([
@@ -332,7 +332,9 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
       'mail',
       'localCollab',
     ]);
-    expect(scan.botPanelTabs).toEqual(expect.arrayContaining(['profile', 'skills', 'schedules']));
+    expect(scan.botPanelTabs).toEqual(
+      expect.arrayContaining(['profile', 'skills', 'access', 'schedules']),
+    );
   });
 
   it('every settings location has an item or an exclusion; every deep link lands', () => {
@@ -378,9 +380,7 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
     expect(scan.anchors).toContain('bot-model');
     expect(
       settingsCoverageProblems(scan, { pendingAnchors: [...PENDING_DESKTOP_ANCHORS, 'bot-model'] }),
-    ).toEqual([
-      '待补锚点 bot-model 已存在：从 PENDING_DESKTOP_ANCHORS 删掉',
-    ]);
+    ).toEqual(['待补锚点 bot-model 已存在：从 PENDING_DESKTOP_ANCHORS 删掉']);
   });
 
   it('exclusions explain themselves and point at live locations', () => {
@@ -418,7 +418,10 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
         expect(field.sensitive, `${entry.id}.${field.name}`).toBe(false);
         expect(field.multiple, `${entry.id}.${field.name}`).not.toBe(true);
         expect(path.includes('.'), `${entry.id}.${field.name} path 应为顶层键`).toBe(false);
-        expect(path in defaults, `${entry.id}.${field.name} path 应是 settingsSchema 的顶层键`).toBe(true);
+        expect(
+          path in defaults,
+          `${entry.id}.${field.name} path 应是 settingsSchema 的顶层键`,
+        ).toBe(true);
       }
     }
   });
@@ -453,9 +456,9 @@ describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
     expect(problems).toEqual([
       'general.demo-toggle：需要 core 适配器（core 拥有、经目录写入），但不在贡献表里，也没有登记 EXPLICIT_ADAPTER_FALLBACK 理由',
     ]);
-    expect(settingsAdapterCoverageProblems({ items: [item], adapterIds: ['general.demo-toggle'] })).toEqual(
-      [],
-    );
+    expect(
+      settingsAdapterCoverageProblems({ items: [item], adapterIds: ['general.demo-toggle'] }),
+    ).toEqual([]);
   });
 
   it('exempts read-only / renderer / via-tool / generic items', () => {
@@ -463,7 +466,10 @@ describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
       getSettingItem('diagnostics.status')!, // readOnly
       getSettingItem('general.theme')!, // renderer
       getSettingItem('mail.account')!, // via tool
-      { ...getSettingItem('general.workbench')!, store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true } },
+      {
+        ...getSettingItem('general.workbench')!,
+        store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true },
+      },
     ];
     expect(settingsAdapterCoverageProblems({ items, adapterIds: [] })).toEqual([]);
   });
@@ -471,7 +477,10 @@ describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
   it('flags stale adapter registrations and explicit fallback leftovers', () => {
     const items = [writableCore('general.demo-toggle')];
     expect(
-      settingsAdapterCoverageProblems({ items, adapterIds: ['general.demo-toggle', 'general.gone'] }),
+      settingsAdapterCoverageProblems({
+        items,
+        adapterIds: ['general.demo-toggle', 'general.gone'],
+      }),
     ).toEqual(['适配器贡献登记了不存在的条目 general.gone']);
     expect(
       settingsAdapterCoverageProblems({
@@ -518,7 +527,6 @@ describe('adapter coverage (todo/settings-catalog-registry.md §4.1.4)', () => {
     ).toBe(true);
   });
 });
-
 
 describe('general.task-loop catalog + settings schema (D93)', () => {
   it('registers the task-loop item, fields and deep link', () => {
@@ -583,9 +591,7 @@ describe('general.task-loop catalog + settings schema (D93)', () => {
       },
     });
     expect(parsed.taskLoop).toMatchObject({ idleWarnAfter: 4, idleStopAfter: 8 });
-    expect(() =>
-      settingsUpdateInputSchema.parse({ taskLoop: { idleWarnAfter: 99 } }),
-    ).toThrow();
+    expect(() => settingsUpdateInputSchema.parse({ taskLoop: { idleWarnAfter: 99 } })).toThrow();
   });
 });
 
@@ -599,7 +605,8 @@ describe('general.workbench catalog + update schema (D90)', () => {
     const parsed = settingsUpdateInputSchema.parse({ workbenchEnabled: true });
     expect(parsed.workbenchEnabled).toBe(true);
     expect(
-      settingsSchema.parse({ ...settingsSchema.parse({}), workbenchEnabled: true }).workbenchEnabled,
+      settingsSchema.parse({ ...settingsSchema.parse({}), workbenchEnabled: true })
+        .workbenchEnabled,
     ).toBe(true);
   });
 });

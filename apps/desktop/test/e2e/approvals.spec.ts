@@ -132,10 +132,14 @@ test('access approval card appears above the composer and leaves the transcript'
     });
 
     // 右栏授权标签显示该授权并可撤销（右栏默认收起，先经顶部药丸展开）。
-    if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
       await page.locator('[data-testid="right-panel-toggle"]').click();
     }
-    await page.locator('[data-testid="right-panel-tabs"]').locator('text=授权').click();
+    // 授权详情在统一二级菜单的「有效授权」行里（已在详情则先返回菜单）。
+    // 统一二级菜单：已在某个详情里先点返回回菜单（幂等，可重复调用）。
+    const back = page.locator('[data-testid="bot-detail-back"]');
+    if (await back.isVisible()) await back.click();
+    await page.locator('[data-testid="bot-menu-row-access"]').click();
     const grantItem = page.locator('[data-testid^="grant-item-"]');
     await expect(grantItem).toBeVisible({ timeout: 15_000 });
     await grantItem.locator('[data-testid^="grant-revoke-"]').click();

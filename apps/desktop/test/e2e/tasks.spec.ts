@@ -96,13 +96,15 @@ function makeWorkdirDir(prefix: string): string {
   return dir;
 }
 
-/** 工作目录选择器已移入右栏「配置」tab：右栏收起时先展开再切 tab，然后打开选择器。 */
+/** 工作目录在统一二级菜单的行里：展开右栏、回菜单、点行打开选择器。 */
 async function openWorkdirSelector(page: Page): Promise<void> {
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await page.locator('[data-testid="workdir-selector-trigger"]').click();
+  // 统一二级菜单：已在某个详情里先点返回回菜单（幂等，可重复调用）。
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  await page.locator('[data-testid="bot-config-row-workdir"]').click();
 }
 
 // D75 W3（docs/design/30-supervisor-and-tasks.md §4.3 / §6 / §2.4.6）：派任务 →
@@ -228,9 +230,7 @@ test('start a task → task card → progress attributed → inject line → res
       timeout: 30_000,
     });
     // 用户取消会再走一轮 wake（user_cancelled）；先备好应答，避免抢占后续脚本。
-    llm.script('mock-main', [
-      step().inTurn().expect(isWake).replyText('好的，长任务已取消'),
-    ]);
+    llm.script('mock-main', [step().inTurn().expect(isWake).replyText('好的，长任务已取消')]);
     await card2.locator('[data-testid="task-cancel"]').click();
     await expect(card2).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(card2.locator('[data-testid="task-cancel-reason"]')).toContainText('用户取消');

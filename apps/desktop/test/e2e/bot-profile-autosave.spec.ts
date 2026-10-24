@@ -78,11 +78,16 @@ async function waitReady(page: Page): Promise<void> {
 
 async function openProfileTab(page: Page): Promise<void> {
   // 右栏默认收起：需要时经顶部药丸展开（toggle 语义，不能盲点）。
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+  // 统一二级菜单：已在某个详情里先点返回回菜单（幂等，可重复调用）。
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  await page.locator('[data-testid="bot-config-row-persona"]').click();
+  await expect(
+    page.locator('[data-testid="bot-detail-persona"] [data-testid="bot-personality-input"]'),
+  ).toBeVisible();
 }
 
 test('right panel profile form autosaves on change (no save button)', async () => {
@@ -98,7 +103,7 @@ test('right panel profile form autosaves on change (no save button)', async () =
     await expect(page.locator('[data-testid="profile-save"]')).toHaveCount(0);
 
     const personality = page.locator(
-      '[data-testid="profile-tab"] [data-testid="bot-personality-input"]',
+      '[data-testid="bot-detail-persona"] [data-testid="bot-personality-input"]',
     );
     await personality.fill('温和、耐心，回答简短');
 

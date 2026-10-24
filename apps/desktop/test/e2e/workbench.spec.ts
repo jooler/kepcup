@@ -346,9 +346,9 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
     await editedBody.fill('不会保存的改动');
     await editedBody.press('Escape');
     await expect(coffeeCard.locator('[data-testid="memo-body"]')).toContainText('买咖啡豆和滤纸');
-    await expect(page.locator('[data-testid="memo-body"]', { hasText: '不会保存的改动' })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.locator('[data-testid="memo-body"]', { hasText: '不会保存的改动' }),
+    ).toHaveCount(0);
 
     // 置顶：被改过的「买咖啡豆和滤纸」排到最前并带 data-pinned。
     await coffeeCard.locator('[data-testid="memo-pin"]').click();
@@ -1065,7 +1065,11 @@ async function overflowing(page: Page, rootSelector: string): Promise<string[]> 
       // 输入框自己内部滚动，不算撑破。
       if (box.tagName === 'INPUT' || box.tagName === 'TEXTAREA') continue;
       // 横向滚动容器、以及 overflow-x:hidden 的主动裁剪（含 truncate / 道头按钮）不算撑破。
-      if (style.overflowX === 'auto' || style.overflowX === 'scroll' || style.overflowX === 'hidden')
+      if (
+        style.overflowX === 'auto' ||
+        style.overflowX === 'scroll' ||
+        style.overflowX === 'hidden'
+      )
         continue;
       if (box.scrollWidth > box.clientWidth + 1 && box.clientWidth > 0) {
         const id = box.getAttribute('data-testid') ?? '';
@@ -1099,7 +1103,9 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
 
     await quickAdd(page, longTitle);
     await page
-      .locator('[data-testid="todo-lane"][data-lane-kind="unassigned"] [data-testid="todo-lane-add"]')
+      .locator(
+        '[data-testid="todo-lane"][data-lane-kind="unassigned"] [data-testid="todo-lane-add"]',
+      )
       .click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toBeVisible();
     await pickAssignee(page, '阿长名字特别特别特别特别特别长的助手');

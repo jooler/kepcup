@@ -62,7 +62,9 @@
     try {
       await skillsStore.setEnabled(botId, skill.name, enabled);
     } catch (error) {
-      toast.error(errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')));
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')),
+      );
     }
   }
 
@@ -75,7 +77,9 @@
       toast.success(t('skills.uninstalled'));
       uninstallTarget = null;
     } catch (error) {
-      toast.error(errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')));
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')),
+      );
     } finally {
       uninstalling = false;
     }
@@ -88,7 +92,9 @@
       const result = await skillsStore.read(botId, skill.name);
       reading = { name: result.name, content: result.content };
     } catch (error) {
-      toast.error(errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')));
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')),
+      );
       reading = null;
     } finally {
       readLoading = false;
@@ -102,7 +108,9 @@
     try {
       history = await skillsStore.history(botId, skill.name);
     } catch (error) {
-      toast.error(errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')));
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')),
+      );
       history = [];
     } finally {
       historyLoading = false;
@@ -119,7 +127,9 @@
       rollbackTarget = null;
       history = await skillsStore.history(botId, historyFor);
     } catch (error) {
-      toast.error(errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')));
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('skills.actionFailed')),
+      );
     } finally {
       rollingBack = false;
     }
@@ -135,7 +145,12 @@
     <p class="text-xs text-muted-foreground">{t('skills.tabHint')}</p>
   </div>
   <div class="flex items-center gap-1.5">
-    <Button size="sm" variant="outline" onclick={() => (importOpen = true)} data-testid="skills-import">
+    <Button
+      size="sm"
+      variant="outline"
+      onclick={() => (importOpen = true)}
+      data-testid="skills-import"
+    >
       {t('skills.import')}
     </Button>
     <Button
@@ -177,7 +192,9 @@
             {/if}
           </p>
           {#if skill.description.length > 0}
-            <p class="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground">{skill.description}</p>
+            <p class="mt-0.5 line-clamp-2 text-xs break-words text-muted-foreground">
+              {skill.description}
+            </p>
           {/if}
           <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
             <Badge variant="secondary" data-testid="skill-kind">{t(KIND_KEYS[skill.kind])}</Badge>
@@ -198,19 +215,30 @@
             {/if}
           </div>
           {#if skill.missingDeps.length > 0}
-            <p class="mt-1 break-words text-xs text-amber-700 dark:text-amber-400" data-testid="skill-missing-deps">
+            <p
+              class="mt-1 text-xs break-words text-amber-700 dark:text-amber-400"
+              data-testid="skill-missing-deps"
+            >
               {t('skills.missingDeps', { deps: skill.missingDeps.join(listSeparator()) })}
             </p>
           {/if}
           {#if skill.enhancedRequired && skill.compatibility === 'incompatible'}
             <!-- P12: 增强级未安装 → 不兼容 + 可安装提示（enhancedInstallHint 契约） -->
-            <p class="mt-1 break-words text-xs text-amber-700 dark:text-amber-400" data-testid="skill-enhanced-hint">
-              {t('skills.enhancedHint', { hint: skill.enhancedInstallHint ?? skill.statusReason ?? '' })}
+            <p
+              class="mt-1 text-xs break-words text-amber-700 dark:text-amber-400"
+              data-testid="skill-enhanced-hint"
+            >
+              {t('skills.enhancedHint', {
+                hint: skill.enhancedInstallHint ?? skill.statusReason ?? '',
+              })}
             </p>
           {/if}
           {#if (skill.status === 'draft' || skill.status === 'disabled') && skill.statusReason !== null}
             <!-- draft = 生成失败原因；disabled = 未启用原因（反思生成的技能停在未启用态时标注来源） -->
-            <p class="mt-1 break-words text-xs text-muted-foreground" data-testid="skill-status-reason">
+            <p
+              class="mt-1 text-xs break-words text-muted-foreground"
+              data-testid="skill-status-reason"
+            >
               {skill.statusReason}
             </p>
           {/if}
@@ -288,11 +316,16 @@
       <DialogTitle>{t('skills.readTitle', { name: reading?.name ?? '' })}</DialogTitle>
       <DialogDescription>{t('skills.readHint')}</DialogDescription>
     </DialogHeader>
-    <div class="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30 p-3" data-testid="skills-read-body">
+    <div
+      class="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30 p-3"
+      data-testid="skills-read-body"
+    >
       {#if readLoading}
         <p class="text-sm text-muted-foreground">…</p>
       {:else}
-        <pre class="whitespace-pre-wrap break-words font-mono text-xs" data-testid="skills-read-content">{reading?.content}</pre>
+        <pre
+          class="font-mono text-xs break-words whitespace-pre-wrap"
+          data-testid="skills-read-content">{reading?.content}</pre>
       {/if}
     </div>
     <DialogFooter>
@@ -328,7 +361,10 @@
       {:else}
         <ul class="space-y-2">
           {#each history as entry (entry.oid)}
-            <li class="rounded-md border p-2 text-sm" data-testid={`skills-history-item-${entry.oid}`}>
+            <li
+              class="rounded-md border p-2 text-sm"
+              data-testid={`skills-history-item-${entry.oid}`}
+            >
               <p class="break-words" data-testid="skills-history-message">{entry.message}</p>
               <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 <code data-testid="skills-history-oid">{shortOid(entry.oid)}</code>
@@ -372,7 +408,11 @@
       {/if}
     </div>
     <DialogFooter>
-      <Button variant="outline" onclick={() => (historyFor = null)} data-testid="skills-history-close">
+      <Button
+        variant="outline"
+        onclick={() => (historyFor = null)}
+        data-testid="skills-history-close"
+      >
         {t('common.close')}
       </Button>
     </DialogFooter>

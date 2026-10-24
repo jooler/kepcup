@@ -366,7 +366,8 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     // --- 审查 #1：会话详情里的 openExtensionCenter 深链不再被弹回对话 tab ----------
     await page.locator('[data-testid="right-panel-toggle"]').click();
     await expect(overlay).toBeVisible();
-    await overlay.locator('#tab-skills').click();
+    // tabs 已移除：直接点统一二级菜单的 Skills 行进详情。
+    await overlay.locator('[data-testid="bot-menu-row-skills"]').click();
     await overlay.locator('[data-testid="skills-open-market"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(overlay).toHaveCount(0);
@@ -377,14 +378,15 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await page.locator('[data-testid="narrow-tab-chats"]').click();
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
 
-    // --- 审查 #2：设置里「去扩展中心」会收起窄屏设置页 --------------------------
+    // --- 审查 #2：窄屏设置分组列表不再有「应用」（连接相关都在扩展中心对应分组）----
     await page.locator('[data-testid="narrow-back-button"]').click();
     await page.locator('[data-testid="narrow-tab-me"]').click();
     await page.locator('[data-testid="narrow-me-settings"]').click();
-    await page.locator('[data-testid="narrow-settings-item-apps"]').click();
-    await page.locator('[data-testid="apps-open-extension-center"]').click();
+    await expect(settingsPage).toBeVisible();
+    await expect(page.locator('[data-testid="narrow-settings-item-apps"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="narrow-settings-item-models"]')).toBeVisible();
+    await page.locator('[data-testid="narrow-settings-back"]').click();
     await expect(settingsPage).toHaveCount(0);
-    await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
 
     // --- 审查 #11b + #4：Cmd/Ctrl+K 在任意 tab / 详情层可用；搜索层 Esc 与焦点约束 ---
     await page.locator('[data-testid="narrow-tab-chats"]').click();
@@ -448,7 +450,7 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await expect(settingsPage).toHaveCount(0);
     await expect(overlay).toBeVisible();
     // 嵌套 bits-ui 弹层（移除 Bot 确认框）开着时 Esc 先归弹层，覆盖层不动。
-    await overlay.locator('#tab-other').click();
+    // tabs 已移除：统一二级菜单默认可见，直接点「移除 Bot」行。
     await overlay.locator('[data-testid="bot-remove"]').click();
     const removeDialog = page.locator('[data-testid="bot-remove-dialog"]');
     await expect(removeDialog).toBeVisible();
@@ -521,7 +523,7 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
     await page.locator('[data-testid="right-panel-toggle"]').click();
     await expect(overlay).toBeVisible();
-    await overlay.locator('#tab-other').click();
+    // tabs 已移除：统一二级菜单默认可见，直接点「移除 Bot」行。
     await overlay.locator('[data-testid="bot-remove"]').click();
     await page.locator('[data-testid="bot-remove-confirm"]').click();
     // 移除是重 RPC 链（删对话/工作区目录 + 资料分区清场），windows 上

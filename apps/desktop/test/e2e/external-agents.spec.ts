@@ -138,18 +138,24 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
 }
 
 async function openProfileTab(page: Page): Promise<void> {
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
-  await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+  // 统一二级菜单：已在某个详情里先点返回回菜单。
+  const back = page.locator('[data-testid="bot-detail-back"]');
+  if (await back.isVisible()) await back.click();
+  // 模型 / 智能体下拉在菜单的「模型与智能体」行里：点行下钻。
+  await page.locator('[data-testid="bot-config-row-model"]').click();
+  await expect(
+    page.locator('[data-testid="bot-detail-model"] [data-testid="bot-model-select"]'),
+  ).toBeVisible();
 }
 
 /** Bot 运行配置：主模型下拉改选智能体（首次切换弹让渡说明；`apps` 包勾选时
  * 还有一张一次性 ACP 说明卡，遮罩会挡住后续一切点击——都要关掉）。 */
 async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await openProfileTab(page);
-  const profile = page.locator('[data-testid="profile-tab"]');
+  const profile = page.locator('[data-testid="bot-detail-model"]');
   await profile.locator('[data-testid="bot-model-select"]').selectOption(`@agent:${agentId}`);
   const dialog = page.locator('[data-testid="bot-agent-switch-dialog"]');
   if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
@@ -188,7 +194,7 @@ test('settings catalog: enable the agent, background tasks; bot switches to it w
     await switchBotToAgent(page);
 
     // 能力包：core 灰显必选；勾掉「图像生成」后工具数随之变化（自动保存）。
-    const profile = page.locator('[data-testid="profile-tab"]');
+    const profile = page.locator('[data-testid="bot-detail-model"]');
     await expect(profile.locator('[data-testid="bot-agent-capability-core"]')).toBeDisabled();
     const imageGen = profile.locator('[data-testid="bot-agent-capability-image_generation"]');
     const countBefore = await profile.locator('[data-testid="bot-agent-tool-count"]').innerText();
