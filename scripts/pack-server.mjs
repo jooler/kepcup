@@ -37,7 +37,9 @@ function run(command, args, env = {}) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const desktopVersion = JSON.parse(readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8')).version;
+const desktopVersion = JSON.parse(
+  readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8'),
+).version;
 const version = options.version ?? desktopVersion;
 const stage = path.join(options.out, 'stage');
 const pkgDir = path.join(stage, 'package');
