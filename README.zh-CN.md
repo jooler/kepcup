@@ -268,6 +268,7 @@ KepCup 站在许多开源项目与产品灵感之上。以下致谢**不暗示**
 ```text
 kepcup/
 ├── apps/desktop/     # Electron 桌面应用（产品入口）
+├── apps/server/      # Headless 服务端（自托管常驻，D102）
 ├── apps/website/     # 官方营销站（kepcup.app）
 ├── packages/core/    # 业务逻辑与数据（独立进程）
 ├── packages/shared/  # 跨进程契约与类型
@@ -290,6 +291,26 @@ pnpm test:e2e     # Playwright e2e（@kepcup/desktop）
 ```
 
 编程代理约定见 [AGENTS.md](AGENTS.md)。
+
+### Headless 服务端
+
+同一份 core（对话 / 调度 / 邮件 / MCP / 审批 / 记忆）也能以**自托管常驻服务**跑在 NAS 或云服务器上（D102）：任意设备的浏览器直连同一数据源——没有多端同步，也没有"桌面必须醒着"。登录是账号 + 密码（首启设置一次，无需逐台设备配对），不需要 Docker，只要 **Node.js ≥ 22.19**。
+
+源码运行：
+
+```bash
+pnpm install && pnpm -r build
+
+# 首次启动（交互终端）会提示设置管理员用户名与密码
+node apps/server/dist/cli.js
+
+# 局域网 / NAS 形态（其他设备可访问）：
+node apps/server/dist/cli.js --host 0.0.0.0 --public-url ws://<你的IP>:8642
+```
+
+然后用浏览器打开 `http://<主机>:8642`，登录并完成首启向导（模型供应商、管家 Bot）。常用子命令：`password`（改密，全部已登录会话失效）、`version`。常用参数：`--data-dir`（默认 `~/.kepcup-server`）、`--keystore file`（无系统钥匙串的主机）、`--auth pairing`（改用设备配对而非密码）、`--relay <url>`（中转出站模式，不开入站端口）。
+
+部署（systemd、TLS 反代）与打包安装——`node scripts/pack-server.mjs` 产出的单一自包含 tar.gz，随每个桌面版本一起附在 GitHub Release，既可 `npm i -g <tarball-url>` 也可解压直跑——见 [apps/server/README.md](apps/server/README.md) 与设计文档 [docs/design/49-headless-server.md](docs/design/49-headless-server.md)。
 
 ### 许可
 
