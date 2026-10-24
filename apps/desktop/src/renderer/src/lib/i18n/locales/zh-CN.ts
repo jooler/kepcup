@@ -1586,8 +1586,7 @@ export const zhCN = {
   'update.downloadingProgress': '正在下载 v{version} - {percent}%',
   'update.downloadedWaiting': '新版本 v{version} 已下载，等待执行结束…',
   'update.applyNow': '重启并应用更新',
-  'update.readyToInstall':
-    '新版本 {version} 已下载完成。更新需要重启应用后才能生效，现在重启吗？',
+  'update.readyToInstall': '新版本 {version} 已下载完成。更新需要重启应用后才能生效，现在重启吗？',
   'update.restartLater': '稍后重启',
   'update.awaitingUser':
     '有 {count} 个执行尚未结束，更新已暂停。可继续等待（执行结束后自动安装），或中断这些执行并立即更新（未完成的执行将被取消）。',
