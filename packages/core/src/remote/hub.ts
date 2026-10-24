@@ -72,7 +72,19 @@ export interface RelayClientLike {
   close(): void;
 }
 
-export interface RemoteHubDeps {
+/** 远程宿主形态选项（D102）：`CoreServicesOptions.remote`，桌面缺省 undefined。 */
+export interface RemoteHostOptions {
+  /** 测试注入：不真连 WSS；headless 服务端（D102）注入直连监听适配层。 */
+  relayClientFactory?: (options: RelayClientOptions) => RelayClientLike;
+  /**
+   * 常驻连接（D102 headless）：开启后只要 remoteEnabled 就保持连接，不进入按需
+   * 断线的 idle 驻留策略——常驻服务端的监听零边际成本，且 idle 拆线后入站帧会被
+   * `#relay === null` 直接丢弃，远程客户端将无法再连上。桌面路径缺省 false 不变。
+   */
+  alwaysOn?: boolean;
+}
+
+export interface RemoteHubDeps extends RemoteHostOptions {
   db: SqliteDatabase;
   secrets: SecretsService;
   settings: SettingsService;
@@ -89,8 +101,6 @@ export interface RemoteHubDeps {
    * 会卡在「核心服务启动中」。
    */
   pushInitialEventsTo: (server: RpcServerHandle) => void;
-  /** 测试注入：不真连 WSS。 */
-  relayClientFactory?: (options: RelayClientOptions) => RelayClientLike;
 }
 
 export class RemoteHub {
@@ -177,7 +187,7 @@ export class RemoteHub {
       this.#dropRelay('off');
       return;
     }
-    if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer()) {
+    if (this.#endpoints.size > 0 || this.pairing.hasActiveOffer() || this.#deps.alwaysOn === true) {
       this.#cancelLinger();
       this.#ensureRelayConnection();
       return;
