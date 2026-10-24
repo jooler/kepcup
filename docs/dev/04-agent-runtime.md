@@ -310,6 +310,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 - 任务问题卡（`task_question`）渲染为「[… | Bot（任务 t_…）向用户提问] <untrusted>问题、选项：… / …、回答：…</untrusted>」（提问方自己看到「你（任务 t_…）」），不是「系统」行；最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断。对话摘要的输入同样归属并包裹。结果放弃提示（`task_result_undelivered`）对 Bot 与对话摘要输入都渲染为固定文案（不含模型起的标题）。所有 `<untrusted>` 包裹（问题卡、任务卡标题、其他 Bot 的话、`<tasks>` 段）都中和内文里的字面 `</untrusted>` / `<untrusted>`（`infra/data-boundary.ts`，最终审查 L-1）。反思输入的 `<trigger_messages>` 里，Bot 自己任务的结果 / 失败条目标为「任务 t_… 的结果 / 失败报告」并包 `<untrusted>`，不是「系统」（最终审查 L-2）。
 - 已删除的 Bot 显示为其 id。
 - 时间按用户本地时区显示。
+- 引用回复标注：带 `reply_to` 的消息行尾附「（回复 msg_… [发送者]：<untrusted>被引用文字（≤160 字，超长省略号截断）与附件行</untrusted>）」——被引用的是图片等非文本附件时正文没有文字，标注同时给出附件 id（`get_attachment` 的凭据）。发送者标签与主行同口径（含工作台 / 管家 / 组件 / 委派代发的来源修饰，`userSenderLabel` 共用）；被引用消息已撤回标「原消息已撤回」，解析不到 / 跨会话 / 私有条目（`owner_bot_id` 非当前查看 Bot）退化为只标裸 id，不泄内容（`conversation.ts` `renderReplySuffix`；resolver 即 `messages.getById`，由 orchestrator 的 renderOptions、续接判断与路由门禁注入，抛错按解析不到处理）。
 
 ### `<tasks>` 段（对话轮）
 
