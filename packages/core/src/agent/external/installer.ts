@@ -18,7 +18,7 @@ import {
 import { rmSync } from '../../infra/fs-rm.js';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { finished, pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { inflateRawSync } from 'node:zlib';
 import {
@@ -425,14 +425,17 @@ export const defaultAgentDownloader: AgentDownloader = async ({
   }
 };
 
-export function sha256File(file: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    createReadStream(file)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('error', reject)
-      .on('end', () => resolve(hash.digest('hex')));
+export async function sha256File(file: string): Promise<string> {
+  // Wait for stream `close` (via finished), not just `end`: on Windows the
+  // read handle must be released before callers' finally blocks can delete
+  // the file (checksum-mismatch cleanup).
+  const hash = createHash('sha256');
+  const stream = createReadStream(file);
+  stream.on('data', (chunk: Buffer | string) => {
+    hash.update(chunk);
   });
+  await finished(stream);
+  return hash.digest('hex');
 }
 
 // --- archives --------------------------------------------------------------------------
