@@ -76,6 +76,7 @@ import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
 import { BotsService } from './domain/bots.js';
 import { BotAvatarService } from './domain/avatars.js';
+import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
 import { StickiesService } from './domain/stickies.js';
@@ -483,6 +484,8 @@ export interface CoreDomainServices {
   secrets: SecretsService;
   bots: BotsService;
   avatars: BotAvatarService;
+  /** D48 Bot 模板导出/导入（`bots.template.*` RPC）。 */
+  botTemplates: BotTemplateService;
   audit: AuditService;
   conversations: ConversationsService;
   messages: MessagesService;
@@ -2940,11 +2943,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
     services.mainDb = mainDb;
     services.runsDb = runsDb;
+    // D48 Bot 模板：导入时外部智能体引擎在本机不可用（实验开关/目录）→ 回退内置。
+    const botTemplates = new BotTemplateService({
+      paths,
+      clock,
+      logger,
+      bots,
+      avatars,
+      skills,
+      agentSelectable: (agentId) => {
+        try {
+          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
     services.domain = {
       settings,
       secrets,
       bots,
       avatars,
+      botTemplates,
       conversations,
       messages,
       stickies,

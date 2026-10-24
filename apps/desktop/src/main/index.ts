@@ -465,6 +465,40 @@ function bootstrap(): void {
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });
 
+  // D48 (Bot 模板导出): system save-as dialog — returns the target path or null when
+  // cancelled; path only, the core serializes and writes the file itself.
+  ipcMain.handle(
+    'dialog:saveFile',
+    async (
+      _event,
+      options: unknown,
+    ): Promise<string | null> => {
+      if (window === null) return null;
+      const input =
+        typeof options === 'object' && options !== null
+          ? (options as { title?: unknown; defaultFileName?: unknown; extensions?: unknown })
+          : {};
+      const title = typeof input.title === 'string' && input.title.length > 0 ? input.title : '';
+      const defaultFileName =
+        typeof input.defaultFileName === 'string' && input.defaultFileName.length > 0
+          ? input.defaultFileName
+          : '';
+      const extensions = Array.isArray(input.extensions)
+        ? input.extensions.filter(
+            (ext): ext is string => typeof ext === 'string' && /^[a-z0-9.*]+$/i.test(ext),
+          )
+        : [];
+      const result = await dialog.showSaveDialog(window, {
+        ...(title.length > 0 ? { message: title } : {}),
+        ...(defaultFileName.length > 0 ? { defaultPath: defaultFileName } : {}),
+        ...(extensions.length > 0
+          ? { filters: [{ name: extensions.join(', '), extensions }] }
+          : {}),
+      });
+      return result.canceled || result.filePath === undefined ? null : result.filePath;
+    },
+  );
+
   // 对话里 @ 本地文件/文件夹（只传路径，不上传字节）：macOS 面板可同时选
   // 文件或目录；Windows/Linux 的原生面板不支持二合一，先让用户选类型。
   ipcMain.handle('dialog:selectLocalPath', async () => {

@@ -22,6 +22,7 @@
     Pin,
     PinOff,
     Smartphone,
+    FileUp,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -44,6 +45,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
+  import BotTemplateImportDialog from '$lib/features/bot-template/BotTemplateImportDialog.svelte';
+  import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { remotePairing } from '$lib/features/remote/remote-pairing.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
@@ -126,6 +129,8 @@
 
   let plusOpen = $state(false);
   let plusQuery = $state('');
+  /** D48：从模板导入 Bot（.kepcup-bot.json → 新建 Bot）。 */
+  let templateImportOpen = $state(false);
 
   /** 右键上下文菜单（视口坐标 + 目标会话）。 */
   let contextMenu = $state<{ x: number; y: number; conversationId: string } | null>(null);
@@ -1293,6 +1298,21 @@
       </span>
       {t('sidebar.createProject')}
     </button>
+    <!-- D48：从模板导入（web 端点无本地文件对话框，置灰不隐藏）。 -->
+    <button
+      type="button"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent
+        {endpointSupports('local-file-dialog') ? '' : 'cursor-not-allowed opacity-50'}"
+      disabled={!endpointSupports('local-file-dialog')}
+      title={endpointSupports('local-file-dialog') ? '' : t('botTemplate.desktopOnly')}
+      onclick={() => (templateImportOpen = true)}
+      data-testid="start-chat-import-template"
+    >
+      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+        <FileUp class="size-4" />
+      </span>
+      {t('botTemplate.importEntry')}
+    </button>
   </div>
   {#if plusBots.length > 0}
     <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground">{t('contacts.title')}</p>
@@ -1578,3 +1598,4 @@
 {/if}
 
 <ExtensionCenterDialog bind:open={shell.extensionCenterOpen} />
+<BotTemplateImportDialog bind:open={templateImportOpen} />
