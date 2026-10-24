@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Conversation } from '@kepcup/shared';
-import { createTestStack, makeBot, step, waitForEvent, type TestStack } from '@kepcup/testkit';
+import { createTestStack, makeBot, waitFor, waitForEvent, type TestStack } from '@kepcup/testkit';
 import { commitWikiTree } from '../../src/wiki/git.js';
 import { initWiki } from '../../src/wiki/init.js';
 import {
@@ -215,16 +215,31 @@ describe('D92 T1b WP9：项目 wiki 来源删除（removeSource）', () => {
   }, 60_000);
 
   it('删除级联：log.md 记录、新提交、source_removed 体检入队且去重、wiki_changed、FTS 不动', async () => {
+    // Freeze the runner before measuring commits: ACL cleanup's source_removed
+    // wiki_lint jobs otherwise race a maintenance commit into the same wiki
+    // (Windows CI saw commitsBefore+2). Enqueue still writes the jobs row.
+    stack.core.services.jobsRunner!.stop();
+    await waitFor(
+      () => {
+        const row = stack.core.services
+          .mainDb!.prepare(
+            "select count(*) as n from jobs where type = 'wiki_lint' and conversation_id = ? and status = 'running'",
+          )
+          .get(project.id) as { n: number };
+        return row.n === 0 ? true : null;
+      },
+      { timeoutMs: 30_000, label: 'in-flight wiki_lint to settle' },
+    );
+    stack.core.services
+      .mainDb!.prepare(
+        "update jobs set status = 'cancelled' where type = 'wiki_lint' and conversation_id = ? and status = 'pending'",
+      )
+      .run(project.id);
+
     const entry = seedSource(project.id, 'cascade', { kind: 'bot', id: memberM });
     const commitsBefore = await commitCount(project.id);
     const ftsBefore = stack.core.services.wikiIndexes!.forProject(project.id).wikiPagePaths();
 
-    // 体检 loop 需要模型：给 lint 模式一个直接完成的应答。
-    stack.llm.script('mock-main', [
-      step()
-        .expect((req) => JSON.stringify(req.body).includes('体检'))
-        .replyText('项目 wiki 体检完成'),
-    ]);
     const changedEvent = waitForEvent<{ owner: { kind: string; id: string } }>(
       stack.core,
       'wiki_changed',
