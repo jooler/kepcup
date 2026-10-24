@@ -15,6 +15,9 @@ export default tseslint.config(
       'resources/**',
       'playwright-report/**',
       'test-results/**',
+      // D102 headless 服务端：web 构建产物（pack-server.mjs 生成）与打包暂存目录。
+      'apps/server/web/**',
+      'release-server/**',
       'packages/core/src/**/migrations/**',
       // P12 rootfs build scripts: distro-side CI artifacts (CommonJS/bash by
       // contract, executed inside the image build — not app source).
@@ -76,6 +79,14 @@ export default tseslint.config(
   },
   {
     files: ['scripts/**', 'apps/desktop/scripts/**', '**/*.config.*', 'packages/*/test/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // D102 headless 服务端：CLI / 服务端控制台输出就是产品面（二维码、配对链接、
+    // 设备列表），与桌面「renderer 不许 console」的约束不同域。
+    files: ['apps/server/src/**', 'apps/server/test/**'],
     rules: {
       'no-console': 'off',
     },

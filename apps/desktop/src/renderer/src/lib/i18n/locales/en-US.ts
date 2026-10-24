@@ -3305,6 +3305,15 @@ export const enUS = {
   'share.error.SHARE_MATERIALIZE_FAILED': 'Could not prepare the workspace copy',
   // --- D96 web (PWA, docs/design/46-remote-control.md §3.2/§5.5) ---------------
   'web.gate.title': 'KepCup Remote',
+  'web.login.title': 'Sign in to KepCup',
+  'web.login.body': 'Enter the server admin account to continue.',
+  'web.login.user': 'Username',
+  'web.login.password': 'Password',
+  'web.login.submit': 'Sign in',
+  'web.login.pending': 'Signing in…',
+  'web.login.invalid': 'Incorrect username or password',
+  'web.login.ratelimited': 'Too many attempts, try again later',
+  'web.login.error': 'Cannot reach the server, check your connection',
   'web.unpaired.title': 'Pair with desktop KepCup',
   'web.unpaired.body':
     'In desktop KepCup, open Settings → Remote control → “Connect phone”, scan the QR code with your phone camera, or paste the pairing link shown next to it.',

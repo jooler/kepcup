@@ -20,8 +20,13 @@ export function installWebShim(version: string): void {
     arch: 'wasm',
     electronVersion: '-',
     nodeVersion: '-',
-    // 首启引导向导涉及桌面通知/自启/沙箱等系统权限，web 端点不引导。
-    onboardingVisible: false,
+    // 首启引导对 web 端点开放（D102 修订）：headless 服务端的 web 客户端就是主
+    // 客户端，向导负责模型供应商引导与管家 Bot 创建（butler.ensure），否则新装
+    // 服务端永远没有向导也没有管家。门控仍由 settings.onboarding.completed 决定
+    // ——D96 手机遥控桌面时桌面已完成引导，web 端不会重复出现。向导里的桌面
+    // 系统权限步骤（自启 / 测试通知）在本垫片降级 no-op，沙箱探测走 RPC 在
+    // 服务端环境执行、如实展示。
+    onboardingVisible: true,
   };
   window.kepcup = {
     portNonce: crypto.randomUUID(),
