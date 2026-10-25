@@ -134,6 +134,16 @@ export interface LifecycleDeps {
         onExecutorChanged(): void;
       }
     | undefined;
+  /**
+   * Project board (D103). Before the project conversation row goes: purge board
+   * todos (they are not removed by a foreign key). Columns and side rows then
+   * cascade with the conversation.
+   */
+  board?:
+    | {
+        onProjectDeleting(projectId: string): void;
+      }
+    | undefined;
   /** W7 watch cascades (删除监看), no-op when absent. */
   watches?:
     | {
@@ -256,6 +266,13 @@ export class LifecycleService {
     this.#cascade('workbench conversation cascade failed', { conversationId }, () =>
       this.deps.workbench?.onConversationDeleting(conversationId),
     );
+    // D103: board todos have no FK to the project. Purge them before the row
+    // delete; board_columns / board_cards then cascade with the conversation.
+    if (conv.type === 'project') {
+      this.#cascade('board project cascade failed', { conversationId }, () =>
+        this.deps.board?.onProjectDeleting(conversationId),
+      );
+    }
     // P10: the conversation's schedules are deleted (03-data-model 删除级联;
     // the FK also cascades on the conversations row delete below).
     try {
