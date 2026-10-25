@@ -178,11 +178,13 @@ describe('board RPC and events', () => {
       }).seedTitles,
     ).toEqual(['Todo', 'Doing']);
     expect(rpcMethodSchemas['board.get'].input.safeParse({}).success).toBe(false);
-    expect(rpcMethodSchemas['board.cards.move'].input.parse({
-      cardId: 'todo_1',
-      columnId: 'bcol_1',
-      beforeCardId: null,
-    })).toEqual({ cardId: 'todo_1', columnId: 'bcol_1', beforeCardId: null });
+    expect(
+      rpcMethodSchemas['board.cards.move'].input.parse({
+        cardId: 'todo_1',
+        columnId: 'bcol_1',
+        beforeCardId: null,
+      }),
+    ).toEqual({ cardId: 'todo_1', columnId: 'bcol_1', beforeCardId: null });
 
     expect(RPC_EVENT_NAMES).toContain('board.changed');
     expect(rpcEventSchemas['board.changed'].parse({ projectId: 'conv_1' })).toEqual({

@@ -52,6 +52,7 @@
 | memory | `0004_drop_private_to_bot.sql` | 2026-10-25：删除 `private_to_bot` 列（「只属于该 Bot」机制移除，见 design/04 修订） |
 | main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
 | main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
+| main | `0050_project_board.sql` | D103：新表 `board_columns` / `board_cards`（卡片 id = 事项 id；`column_id` 无 `ON DELETE`，即 NO ACTION） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -684,6 +685,35 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 - 检索用 `LIKE`（量级千条以内）。
 - 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
 
+### board_columns / board_cards（项目看板，D103，迁移 0050）
+
+设计见 [design 50](../design/50-project-board.md)。每个项目组一块看板。卡片不是 `todos` 上的新列：侧表行存在即表示这是一张看板卡片，卡片 id = 事项 id。文本在 `todos.notes`（≤ 4000 字），`todos.title` 是 `deriveCardTitle` 的派生缓存。
+
+```sql
+CREATE TABLE board_columns (
+  id          TEXT PRIMARY KEY,                                        -- bcol_...
+  project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 60),
+  position    REAL NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX board_columns_project ON board_columns(project_id, position);
+
+CREATE TABLE board_cards (
+  todo_id     TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE, -- 卡片 id = 事项 id
+  project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  column_id   TEXT NOT NULL REFERENCES board_columns(id),              -- NO ACTION：删栏前由 BoardService 处理卡片
+  position    REAL NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX board_cards_column ON board_cards(column_id, position);
+CREATE INDEX board_cards_project ON board_cards(project_id);
+```
+
+- 删事项：`board_cards` 随 `todos` 外键级联。
+- 删分栏：`column_id` 不级联。服务先挪走或删除卡片，再删分栏。
+- 删项目会话：`board_columns` / `board_cards` 随会话外键级联；事项没有指向会话的外键，由 `lifecycle.deleteConversation` 在删行之前调用 `board.onProjectDeleting` 逐张 `todos.purge`（见删除级联表）。
+
 ### widgets（Bot 自制交互组件，D81，main 0028）
 
 Bot 在任务里用 `widget_craft`（D87 制作 loop，凭检查回执经 `WidgetService.create` / `update` 落库）交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
@@ -1148,6 +1178,8 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
 | todos 中以该对话为项目组执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「项目组已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_project_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
+| board_columns（该项目的分栏） | 随会话外键 `ON DELETE CASCADE` 删除 | D103 |
+| board_cards（该项目的卡片侧表）与对应事项 | 侧表行随会话外键 `ON DELETE CASCADE` 删除；事项不依赖外键，删除会话行之前由 `board.onProjectDeleting` 显式 `todos.purge`（侧表行也会随事项外键先被带走） | D103 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
