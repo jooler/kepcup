@@ -123,6 +123,7 @@ describe('createCore (integration)', () => {
     // 0040 = D92 T1a（conversations 重建：type 'project'、lead_bot_id、goal、
     // 删 setup_state）；0041 = D92 T1a WP2（chains 删除，episodes 协作回合）；
     // 0042 = D92 T1a WP4（todos 执行者列）；0043 = D73 P2 后续（egress_allows）。
+    // 0050 = D103 看板表；0051 = D103 卡片会话（conversations 重建，type 增 card）。
     expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(
       migrationTargetVersion(migrationsUrl('main')),
     );
