@@ -185,6 +185,27 @@ export const ERROR_CODES = [
   'SHARE_FILE_TOO_LARGE',
   /** workspace 副本物化失败。 */
   'SHARE_MATERIALIZE_FAILED',
+  // project board (D103, docs/design/50-project-board.md)
+  /** A board card was mutated from outside the board. */
+  'BOARD_MANAGED',
+  /** The project already has BOARD_MAX_COLUMNS columns. */
+  'BOARD_LIMIT_COLUMNS',
+  /** The project already has BOARD_MAX_CARDS cards. */
+  'BOARD_LIMIT_CARDS',
+  /** The last column of a board cannot be deleted. */
+  'BOARD_LAST_COLUMN',
+  /** Deleting a non-empty column requires deleteCards. */
+  'BOARD_COLUMN_NOT_EMPTY',
+  /** Card text is empty after trim. */
+  'BOARD_TEXT_EMPTY',
+  /** Board cron is tighter than BOARD_CRON_MIN_INTERVAL_MS (P2). */
+  'BOARD_CRON_TOO_FREQUENT',
+  /** The project is read-only, so the board cannot be edited. */
+  'BOARD_PROJECT_READ_ONLY',
+  /** The assignee is not an active non-butler member of the project (P2). */
+  'BOARD_ASSIGNEE_INVALID',
+  /** An in-flight or closed card cannot change assignee or schedule (P2). */
+  'BOARD_LOCKED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

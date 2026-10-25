@@ -135,6 +135,15 @@ export interface TodoServiceDeps {
   timers?: TimerScheduler | undefined;
   /** Quiet period before an update notice goes out. Default {@link TODO_UPDATE_DEBOUNCE_MS}. */
   updateDebounceMs?: number | undefined;
+  /**
+   * Read-only board-card lookup. The side-table row is the only switch for
+   * board behavior. Absent in tests that do not construct a board.
+   */
+  boardCards?:
+    | {
+        locationOf(todoId: string): { projectId: string; columnId: string } | null;
+      }
+    | undefined;
 }
 
 /**
@@ -273,6 +282,8 @@ export class TodoService implements WorkbenchDispatchPort {
       ...todo,
       assigneeName,
       leadBotName,
+      // Filled from board_cards once BoardStore is wired; ordinary todos stay null.
+      board: this.#deps.boardCards?.locationOf(todo.id) ?? null,
       schedule:
         schedule === null
           ? null
