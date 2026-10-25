@@ -289,26 +289,37 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '读完后告诉你' }).first(),
     ).toBeVisible({ timeout: 60_000 });
 
-    // --- browse: the tree lists the new page (wiki_changed refresh + reload) -
+    // --- browse: the root lists the pages FOLDER plus the 目录 entry; page
+    // entries live one level down (wiki_changed refresh + reload) -------------
     await openWikiTab(page);
     const pageItem = page.locator('[data-testid="wiki-page-pages-deploy-md"]');
+    const pagesFolder = page.locator('[data-testid="wiki-dir-pages"]');
     try {
-      await expect(pageItem).toBeVisible({ timeout: 90_000 });
+      await expect(pagesFolder).toBeVisible({ timeout: 90_000 });
     } catch (error) {
       await dumpWikiDiag(page, home);
       throw error;
     }
+    await expect(page.locator('[data-testid="wiki-page-index"]')).toBeVisible();
+    await expect(pagesFolder).toContainText('1'); // one page under pages/
+    await pagesFolder.click();
+    await expect(pageItem).toBeVisible({ timeout: 15_000 });
     await expect(pageItem).toHaveAttribute('data-page-path', 'pages/deploy.md');
     await expect(pageItem).toContainText('部署指南');
 
     // Page content: wiki.page renders as markdown (`# 部署指南` → <h1>).
+    // 导航走头部面包屑（「< Wiki」改造）：末段是当前页面，根段点击回列表。
     await pageItem.click();
     await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南');
     await expect(page.locator('[data-testid="wiki-page-content"]')).toContainText(
       '构建、推送、发布',
     );
     await expect(page.locator('[data-testid="wiki-page-content"] h1')).toHaveText('部署指南');
-    await page.locator('[data-testid="wiki-page-back"]').click();
+    const breadcrumb = page.locator('[data-testid="wiki-breadcrumb"]');
+    await expect(breadcrumb).toContainText('Wiki');
+    await expect(breadcrumb).toContainText('pages');
+    await expect(breadcrumb).toContainText('部署指南');
+    await breadcrumb.locator('button').first().click();
     await expect(page.locator('[data-testid="wiki-tree"]')).toBeVisible();
 
     // The 目录 entry opens index.md through the same wiki.page path.
@@ -316,7 +327,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     await expect(page.locator('[data-testid="wiki-page-content"]')).toContainText('部署指南', {
       timeout: 15_000,
     });
-    await page.locator('[data-testid="wiki-page-back"]').click();
+    await breadcrumb.locator('button').first().click();
 
     // --- search: FTS hits with snippet; misses show the empty state ----------
     const searchBox = page.locator('[data-testid="wiki-search"]');
@@ -331,7 +342,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南', {
       timeout: 15_000,
     });
-    await page.locator('[data-testid="wiki-page-back"]').click();
+    await page.locator('[data-testid="wiki-breadcrumb"] button').first().click();
     // No-hit query: tokens that appear nowhere (avoid particles like 的 — the
     // FTS retrieval is OR-combined, so a shared particle would still match).
     await searchBox.fill('量子隐身斗篷');
@@ -344,6 +355,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     // --- delete: two-step confirm in the page view (pages/ pages only); the
     // deletion is a NEW commit on the append-only history, so it stays
     // recoverable via rollback -----------------------------------------------
+    await pagesFolder.click();
     await pageItem.click();
     await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南');
     await page.locator('[data-testid="wiki-page-delete"]').click();
@@ -357,42 +369,79 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     await searchBox.fill('');
     await expect(page.locator('[data-testid="wiki-empty"]')).toBeVisible({ timeout: 15_000 });
 
-    // --- history: one commit per maintenance (init + ingest + delete) --------
+    // --- history: inline list (toggle replaces search + tree), one commit per
+    // maintenance (init + ingest + delete). An entry opens that commit's wiki
+    // snapshot so the user can read the historical content before rolling back
     await page.locator('[data-testid="wiki-history"]').click();
-    const dialog = page.locator('[data-testid="wiki-history-dialog"]');
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator('[data-testid^="wiki-history-item-"]')).toHaveCount(3, {
+    const historyList = page.locator('[data-testid="wiki-history-list"]');
+    // 历史视图不属于内容导航：顶栏「< Wiki」一行隐藏（面包屑只负责内容）。
+    await expect(page.locator('[data-testid="wiki-breadcrumb"]')).toHaveCount(0);
+    await expect(historyList.locator('[data-testid^="wiki-history-item-"]')).toHaveCount(3, {
       timeout: 15_000,
     });
     // Newest first: the user deletion, then the ingest record, then the init.
-    await expect(dialog.locator('[data-testid="wiki-history-message"]').first()).toHaveText(
+    await expect(historyList.locator('[data-testid="wiki-history-message"]').first()).toHaveText(
       'wiki: delete pages/deploy.md',
     );
-    await expect(dialog.locator('[data-testid="wiki-history-message"]').nth(1)).toContainText(
+    await expect(historyList.locator('[data-testid="wiki-history-message"]').nth(1)).toContainText(
       'pages/deploy.md',
     );
-    await expect(dialog.locator('[data-testid="wiki-history-message"]').last()).toHaveText(
+    await expect(historyList.locator('[data-testid="wiki-history-message"]').last()).toHaveText(
       'wiki: init',
     );
-    await expect(dialog.locator('[data-testid^="wiki-history-item-"]').first()).toContainText(
+    await expect(historyList.locator('[data-testid^="wiki-history-item-"]').first()).toContainText(
       /\d{4}/,
     ); // the commit time is rendered
 
+    // The ingest commit's snapshot: folder layout like the browse view (the
+    // 目录 entry + the pages folder), and the historical full text of the page
+    // (read-only). The top hint rows stay hidden inside the commit.
+    await historyList.locator('[data-testid^="wiki-history-open-"]').nth(1).click();
+    await expect(page.locator('[data-testid="wiki-commit-view"]')).toBeVisible();
+    await expect(page.locator('[data-testid="wiki-history-breadcrumb"]')).toBeVisible();
+    const snapshotFolder = page.locator('[data-testid="wiki-history-dir-pages"]');
+    await expect(snapshotFolder).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="wiki-history-page-index"]')).toBeVisible();
+    await snapshotFolder.click();
+    const snapshotPage = page.locator('[data-testid="wiki-history-page-pages-deploy-md"]');
+    await expect(snapshotPage).toBeVisible({ timeout: 15_000 });
+    await expect(snapshotPage).toContainText('部署指南');
+    await snapshotPage.click();
+    // 快照页面：「← 返回 + 摘要」行保留，面包屑（含文档名末段）在其下方；
+    // 上一级走面包屑目录段——与浏览视图同一体验（无重复的文档标题行）。
+    const historyBreadcrumb = page.locator('[data-testid="wiki-history-breadcrumb"]');
+    await expect(page.locator('[data-testid="wiki-commit-back"]')).toBeVisible();
+    await expect(historyBreadcrumb).toContainText('部署指南', { timeout: 15_000 });
+    await expect(historyBreadcrumb).toContainText('pages');
+    await expect(page.locator('[data-testid="wiki-history-page-back"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="wiki-history-page-title"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="wiki-history-page-content"] h1')).toHaveText(
+      '部署指南',
+    );
+    await historyBreadcrumb.getByRole('button', { name: 'pages' }).click();
+    await expect(snapshotPage).toBeVisible({ timeout: 15_000 });
+    // 提交内的「← 返回」直接退出到历史条目列表
+    await page.locator('[data-testid="wiki-commit-back"]').click();
+    await expect(historyList.locator('[data-testid^="wiki-history-item-"]')).toHaveCount(3);
+
     // --- rollback to the init commit (two-step confirm): the pages disappear
     // and the history GROWS to four entries (a rollback is a new commit) ----
-    await dialog
+    await historyList
       .locator('[data-testid^="wiki-history-item-"]')
       .last()
       .locator('[data-testid^="wiki-rollback-"]')
       .click();
-    await dialog.locator('[data-testid="wiki-rollback-confirm"]').click();
-    await expect(dialog.locator('[data-testid^="wiki-history-item-"]')).toHaveCount(4, {
+    await historyList.locator('[data-testid="wiki-rollback-confirm"]').click();
+    await expect(historyList.locator('[data-testid^="wiki-history-item-"]')).toHaveCount(4, {
       timeout: 30_000,
     });
-    await expect(dialog.locator('[data-testid="wiki-history-message"]').first()).toContainText(
+    await expect(historyList.locator('[data-testid="wiki-history-message"]').first()).toContainText(
       'rollback to',
     );
-    await dialog.locator('[data-testid="wiki-history-close"]').click();
+    // History has its own back button next to the hint text (the breadcrumb
+    // stays content-only): exit the history view with it.
+    await expect(page.locator('[data-testid="wiki-history-back"]')).toBeVisible();
+    await page.locator('[data-testid="wiki-history-back"]').click();
 
     // Rolled back to init: no pages, and the search index followed (no hits).
     await expect(page.locator('[data-testid="wiki-empty"]')).toBeVisible({ timeout: 30_000 });

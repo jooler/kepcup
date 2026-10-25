@@ -149,6 +149,13 @@ async function closeSourcesPanel(page: Page): Promise<void> {
   });
 }
 
+/** 页面条目都在 pages 文件夹一层：等树出现后进文件夹。 */
+async function openPagesFolder(page: Page): Promise<void> {
+  const folder = page.locator('[data-testid="wiki-dir-pages"]');
+  await expect(folder).toBeVisible({ timeout: 90_000 });
+  await folder.click();
+}
+
 test('project wiki: empty state, user adds a text source, page appears, creator is "you"', async () => {
   test.skip(
     process.platform === 'win32',
@@ -182,10 +189,11 @@ test('project wiki: empty state, user adds a text source, page appears, creator 
     await expect(creator.first()).toBeVisible({ timeout: 90_000 });
     await expect(creator.first()).toHaveText('提交者：你');
 
-    // 关闭来源子视图回到页面树：维护 loop 写出的页面已出现。
+    // 关闭来源子视图回到页面树：维护 loop 写出的页面已出现（pages 文件夹一层）。
     await closeSourcesPanel(page);
     const pageItem = page.locator('[data-testid="wiki-page-pages-text-note-md"]');
-    await expect(pageItem).toBeVisible({ timeout: 90_000 });
+    await openPagesFolder(page);
+    await expect(pageItem).toBeVisible({ timeout: 15_000 });
     await expect(pageItem).toContainText('文本页');
   } finally {
     await closeSession(session);
@@ -258,8 +266,9 @@ test('project wiki: a member bot contributes via wiki_enqueue scope=project', as
 
     // Wiki tab：页面与来源都出现，来源提交者是该成员 Bot。
     await openWikiTab(page);
+    await openPagesFolder(page);
     await expect(page.locator('[data-testid="wiki-page-pages-member-doc-md"]')).toBeVisible({
-      timeout: 90_000,
+      timeout: 15_000,
     });
     await page.locator('[data-testid="wiki-sources-toggle"]').click();
     const creator = page.locator('[data-testid^="wiki-source-creator-"]');
@@ -292,8 +301,9 @@ test('project wiki: user deletes a source', async () => {
     await openWikiTab(page);
     await addTextSource(page, '等待删除的正文：DeleteDocKeyword。');
     await closeSourcesPanel(page);
+    await openPagesFolder(page);
     await expect(page.locator('[data-testid="wiki-page-pages-delete-note-md"]')).toBeVisible({
-      timeout: 90_000,
+      timeout: 15_000,
     });
     await page.locator('[data-testid="wiki-sources-toggle"]').click();
     const row = page.locator('[data-testid^="wiki-source-row-"]').first();
@@ -335,8 +345,9 @@ test('project wiki: delete project shows wiki counts', async () => {
     await openWikiTab(page);
     await addTextSource(page, '计数用正文：CountDocKeyword。');
     await closeSourcesPanel(page);
+    await openPagesFolder(page);
     await expect(page.locator('[data-testid="wiki-page-pages-count-note-md"]')).toBeVisible({
-      timeout: 90_000,
+      timeout: 15_000,
     });
 
     // 详情页危险区：展开确认时并行取 wiki.sources + wiki.tree，显示数量行。
