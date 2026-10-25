@@ -1465,11 +1465,6 @@ export const memoryUpdateInputSchema = z.object({
   id: z.string().min(1),
   botId: z.string().min(1),
   content: z.string().min(1).max(10_000).optional(),
-  /**
-   * 任务书任务 13 的界面动作「标记只属于该 Bot」需要独立于内容的写入通道
-   * （content 与 privateToBot 允许只改其一，均为显式 optional）。
-   */
-  privateToBot: z.boolean().optional(),
 });
 export const memoryRetractInputSchema = z.object({
   id: z.string().min(1),

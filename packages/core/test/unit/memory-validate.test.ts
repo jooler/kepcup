@@ -34,7 +34,6 @@ function memoryCandidate(overrides: Partial<Parameters<typeof checkMemoryCandida
     evidenceMessageIds: [USER_MSG],
     confidence: 0.9,
     sensitivity: 'normal' as const,
-    privateToBot: false,
     ...overrides,
   };
 }
@@ -46,7 +45,6 @@ function profileCandidate(overrides: Partial<Parameters<typeof checkProfileCandi
     evidenceMessageIds: [USER_MSG],
     confidence: 0.95,
     sensitivity: 'normal' as const,
-    privateToBot: false,
     ...overrides,
   };
 }
@@ -111,13 +109,10 @@ describe('write validation (P07 写入校验，每条规则正反例)', () => {
     ).toBe('write');
   });
 
-  it('rule 3: sensitive / private-to-bot proposals downgrade to bot-private memory', () => {
+  it('rule 3: sensitive proposals downgrade to bot-private memory', () => {
     expect(
       checkProfileCandidate(profileCandidate({ sensitivity: 'sensitive' }), 'bot_1', baseCtx)
         .verdict,
-    ).toBe('private-only');
-    expect(
-      checkProfileCandidate(profileCandidate({ privateToBot: true }), 'bot_1', baseCtx).verdict,
     ).toBe('private-only');
     expect(checkProfileCandidate(profileCandidate(), 'bot_1', baseCtx).verdict).toBe('write');
   });

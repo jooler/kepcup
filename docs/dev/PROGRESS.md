@@ -1567,3 +1567,13 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **实施后独立审查**：拉两个子代理（core / 渲染层）只读交叉审查，无 P0；修复其 P1（引用标注丢失用户消息来源修饰——管家起草的文字会被归到用户本人名下）与可低成本处理的 P2（resolver 异常守卫、`replyTo` 参数化消除 cast、引用快照空数组形状不对称、补 4 类测试）。
 - **遗留（P2 备忘，不阻塞）**：中途权限卡（ephemeral card）作为引用目标渲染为无内容标注（无泄露，仅模型见到读不到的 id）；任务层 Bot 用 `send_message.reply_to` 引用自身私有 task_event 行时条目文字会进任务上下文（归属 Bot 自己的数据且包 untrusted，口径边缘）；引用快照附件不做 core 侧有效性校验（失效时缩略图回退 chip、chip 下载静默失败——与 `MessageAttachments` 同模式）；被引用消息带多个文件 chip 且窗口极窄时引用条可能溢出。
 - **验证**：`context-assembly` 33 例（引用标注 10 例：文本 / 图片附件 id / 文字+附件混合 / 管家来源修饰保留 / 解析不到 / 撤回 / 他人私有行防泄露 / 跨会话 / resolver 抛错 / 无 resolver）、`composer-draft-persist` 11 例（新增快照附件逐条容错解析与旧快照兼容 2 例）及 workbench-render / untrusted-lines / dispatch / turn 等相关定向全绿；core 全量 4301 例 1 失败（watch 集成假时钟偶发，单跑 13/13 通过，与本改动无关）；core / desktop typecheck 与改动文件 eslint 干净。
+
+## 移除「只属于该 Bot」机制 + 记忆 Tab 目录菜单（2026-10-25）
+
+产品决定（见 design/04 修订注）：记忆检索现状（每 Bot 独立 memory.db，跨 Bot 无检索路径）保持不变；`private_to_bot` 的唯一行为效果是「阻止条目进入共享画像 + 移交排除」，作为开关易被误解为跨 Bot 检索开关，整体移除——画像该影响的就影响，隐私边界由 `sensitivity='sensitive'`（敏感类别降级不进共享层、项目对话过滤）继续承担。
+
+- **shared**：`memoryItemSchema` / `memoryUpdateInputSchema` 移除 `privateToBot`。
+- **core**：迁移 `memory/0004_drop_private_to_bot.sql`（`ALTER TABLE … DROP COLUMN`，按 main/0030 先例）；store 行映射/insert/`setPrivateToBot` 移除；`writeMemory` / `writeReflectionMemory` / `submitProfileProposal` 候选与 `checkProfileCandidate`（private-only 判定只剩 sensitive）收敛；remember 工具删 `private_to_bot` 参数；反思提示词删「only tell you」规则；hard constraints 标注只看 `origin`；consolidation 合并不再聚合该标记；移交（D88）记忆与定时任务适配器的「私密承诺」概念移除（`self_note` / 非 active / 敏感默认不勾不变），`memory.update` RPC 只接受 content。
+- **desktop**：记忆 Tab 移除勾选与「只属于该 Bot」徽标；同轮 UI：分类目录菜单逐层下钻（关系记忆/自我状态/用户事实与偏好 → kind；已过时条目叶子底部折叠，非菜单层级）、「查看证据：」+ 纯数字编号按钮（索引从 1 起，同消息多证据按 messageId 去重）。
+- **文档**：design/04（修订注 + 共享规则/用户控制）、README D8/D88、37（永不提供清单）、P07（工具参数/右栏 UI/画像提案校验/任务清单）、03-data-model（schema + 迁移表 0004 行）、04-agent-runtime（盘点/提议工具）。
+- **验证**：core 记忆相关单测/集成/安全 41+74 例定向全绿（validate rule3 收敛为 sensitive、约束标注 origin 化、迁移 0004 断言、移交 refusal 改走 self_note、审查 #7 改「提议后撤回」场景）；desktop typecheck + memory/handover e2e；全量 `pnpm test` 见下轮记录。

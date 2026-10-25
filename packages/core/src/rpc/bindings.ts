@@ -1530,13 +1530,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       items: services.memory!.listMemory(input.botId),
     })),
     'memory.update': method(memoryUpdateInputSchema, memoryListOutputSchema, async (input) => {
-      if (input.content === undefined && input.privateToBot === undefined) {
-        throw new AppError('INVALID_INPUT', 'memory.update 需要提供 content 或 privateToBot');
+      if (input.content === undefined) {
+        throw new AppError('INVALID_INPUT', 'memory.update 需要提供 content');
       }
-      services.memory!.updateMemory(input.botId, input.id, {
-        ...(input.content !== undefined ? { content: input.content } : {}),
-        ...(input.privateToBot !== undefined ? { privateToBot: input.privateToBot } : {}),
-      });
+      services.memory!.updateMemory(input.botId, input.id, { content: input.content });
       return { items: services.memory!.listMemory(input.botId) };
     }),
     'memory.retract': method(memoryRetractInputSchema, memoryListOutputSchema, async (input) => {

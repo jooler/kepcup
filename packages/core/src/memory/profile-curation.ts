@@ -231,7 +231,6 @@ function applyOperations(deps: CurationJobDeps, output: CurationOutput): void {
             evidenceMessageIds: [],
             confidence: 1,
             sensitivity: 'normal',
-            privateToBot: false,
             evidenceRunId: null,
           })
           .catch(() => {});

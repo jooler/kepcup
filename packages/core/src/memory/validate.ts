@@ -29,7 +29,6 @@ export interface MemoryCandidate {
   evidenceMessageIds: string[];
   confidence: number;
   sensitivity: MemorySensitivity;
-  privateToBot: boolean;
 }
 
 export interface ProfileCandidate {
@@ -38,7 +37,6 @@ export interface ProfileCandidate {
   evidenceMessageIds: string[];
   confidence: number;
   sensitivity?: MemorySensitivity | undefined;
-  privateToBot?: boolean | undefined;
 }
 
 export type CheckVerdict = 'write' | 'private-only' | 'drop';
@@ -115,8 +113,8 @@ export function checkMemoryCandidate(
 }
 
 /**
- * Profile proposals: sensitive / private-to-bot content never enters the
- * shared layer — it is downgraded to the proposing bot's private memory.
+ * Profile proposals: sensitive content never enters the shared layer — it is
+ * downgraded to the proposing bot's private memory.
  */
 export function checkProfileCandidate(
   candidate: ProfileCandidate,
@@ -132,13 +130,10 @@ export function checkProfileCandidate(
     ctx,
   );
   if (base.verdict === 'drop') return base;
-  if (candidate.sensitivity === 'sensitive' || candidate.privateToBot === true) {
+  if (candidate.sensitivity === 'sensitive') {
     return {
       verdict: 'private-only',
-      reason:
-        candidate.sensitivity === 'sensitive'
-          ? "sensitive content stays in the proposing bot's private memory"
-          : 'user said "only tell you": stays in this bot\'s private memory',
+      reason: "sensitive content stays in the proposing bot's private memory",
     };
   }
   // ALL profile proposals require user evidence (信任隔离, design/06).
