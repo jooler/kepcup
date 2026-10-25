@@ -10,6 +10,7 @@ import {
   type TodoAssignee,
   type TodoEntry,
   type TodoRun,
+  type BoardChangedPayload,
   type TodoSource,
   type TodoStatus,
 } from '@kepcup/shared';
@@ -232,6 +233,13 @@ export class TodoService implements WorkbenchDispatchPort {
   #busy = 0;
   /** A reconcile was requested while busy: it runs once the outermost operation ends. */
   #reconcilePending = false;
+  /**
+   * > 0 while a board batch (column delete, project delete) will publish one
+   * `board.changed` of its own after commit. Nested card writes stay quiet.
+   */
+  #suppressBoardEvents = 0;
+  /** `board.changed` payloads held until {@link withTransaction} commits. */
+  #queuedBoardEvents: BoardChangedPayload[] = [];
   /** Update notices waiting out their debounce, by todo id. */
   readonly #pendingUpdates = new Map<string, PendingUpdate>();
 
@@ -1081,9 +1089,9 @@ export class TodoService implements WorkbenchDispatchPort {
    * which would silently turn a project assignee into a bare lead bot.
    */
   onConversationDeleting(conversationId: string): void {
-    this.#guard(() =>
-      this.#tx(() => {
-        const touched = new Set<string>();
+    this.#guard(() => {
+      const touched = this.#tx(() => {
+        const ids = new Set<string>();
         for (const todo of this.store.listByAssigneeProject(conversationId)) {
           if (todo.status === 'done' || todo.status === 'cancelled' || todo.status === 'delivered') {
             // Closed / awaiting acceptance: keep the record, just drop the dangling project.
@@ -1093,16 +1101,16 @@ export class TodoService implements WorkbenchDispatchPort {
             this.#failOpenRuns(todo.id);
             this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_PROJECT_GONE });
           }
-          touched.add(todo.id);
+          ids.add(todo.id);
         }
         // Bot assignees whose schedule lives in this (direct) conversation.
         for (const schedule of this.#deps.schedules.store.listActiveForConversation(conversationId)) {
           if (schedule.origin !== 'workbench' || schedule.todoId === null) continue;
           const todo = this.store.get(schedule.todoId);
-          if (todo === null || touched.has(todo.id)) continue;
+          if (todo === null || ids.has(todo.id)) continue;
           if (todo.status === 'scheduled') {
             this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_DELETED });
-            touched.add(todo.id);
+            ids.add(todo.id);
           }
         }
         // Dispatched into this conversation and still waiting for the executor: it can never
@@ -1113,11 +1121,13 @@ export class TodoService implements WorkbenchDispatchPort {
           if (todo !== null && todo.status === 'in_progress') {
             this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_GONE });
           }
-          touched.add(run.todoId);
+          ids.add(run.todoId);
         }
-        for (const id of touched) this.#changed(id);
-      }),
-    );
+        return ids;
+      });
+      // After the commit, so a listener never observes a change that can still roll back.
+      for (const id of touched) this.#changed(id);
+    });
   }
 
   /** After a bot or a project membership went away: reconcile picks up (and publishes) the consequences. */
@@ -1272,6 +1282,57 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /**
+   * Run `fn` without emitting per-card `board.changed`. The caller publishes
+   * one signal after its transaction commits (column delete, project delete).
+   */
+  withoutBoardEvents<T>(fn: () => T): T {
+    this.#suppressBoardEvents += 1;
+    try {
+      return fn();
+    } finally {
+      this.#suppressBoardEvents -= 1;
+    }
+  }
+
+  /**
+   * Publish one `board.changed`. Inside an open transaction the payload is
+   * held until {@link withTransaction} returns successfully and nothing is
+   * left open; a throw drops what that attempt queued. Several card payloads
+   * from the same project collapse into one.
+   */
+  deliverBoardChanged(payload: BoardChangedPayload): void {
+    if (this.#suppressBoardEvents > 0) return;
+    if (this.#deps.db.inTransaction) {
+      this.#queuedBoardEvents.push(payload);
+      return;
+    }
+    this.#deps.publish?.('board.changed', payload);
+  }
+
+  /**
+   * Run `fn` in a database transaction. Queued `board.changed` payloads are
+   * emitted only after the outermost transaction commits.
+   */
+  withTransaction<T>(fn: () => T): T {
+    const mark = this.#queuedBoardEvents.length;
+    try {
+      const result = this.#deps.db.transaction(fn)();
+      if (!this.#deps.db.inTransaction) this.#flushBoardQueue();
+      return result;
+    } catch (error) {
+      this.#queuedBoardEvents.length = mark;
+      throw error;
+    }
+  }
+
+  #flushBoardQueue(): void {
+    const queued = this.#queuedBoardEvents.splice(0);
+    for (const payload of coalesceBoardEvents(queued)) {
+      this.#deps.publish?.('board.changed', payload);
+    }
+  }
+
+  /**
    * Board cards publish `board.changed` instead of `todos.changed`. Pass
    * `known` when the side row is already gone (purge); `null` means it was
    * not a card, `undefined` looks the row up.
@@ -1279,7 +1340,7 @@ export class TodoService implements WorkbenchDispatchPort {
   #changed(todoId: string, known?: { projectId: string; columnId: string } | null): void {
     const location = known !== undefined ? known : this.#boardLocation(todoId);
     if (location !== null) {
-      this.#deps.publish?.('board.changed', {
+      this.deliverBoardChanged({
         projectId: location.projectId,
         cardId: todoId,
         columnId: location.columnId,
@@ -1396,6 +1457,31 @@ function sameAssignee(a: TodoAssignee | null, b: TodoAssignee | null): boolean {
     return a.projectId === b.projectId && a.leadBotId === b.leadBotId;
   }
   return false;
+}
+
+/**
+ * Several card events from one committed transaction are one board refresh.
+ * A shared column id is kept; otherwise the signal is the project.
+ */
+function coalesceBoardEvents(events: readonly BoardChangedPayload[]): BoardChangedPayload[] {
+  const groups = new Map<string, BoardChangedPayload[]>();
+  for (const event of events) {
+    const list = groups.get(event.projectId) ?? [];
+    list.push(event);
+    groups.set(event.projectId, list);
+  }
+  const out: BoardChangedPayload[] = [];
+  for (const [projectId, list] of groups) {
+    if (list.length === 1) {
+      out.push(list[0]!);
+      continue;
+    }
+    const columnId = list[0]?.columnId;
+    const shared =
+      columnId !== undefined && list.every((event) => event.columnId === columnId);
+    out.push(shared ? { projectId, columnId } : { projectId });
+  }
+  return out;
 }
 
 /** A schedule's timing as a `when` string to carry over (null = a one-off in the past). */

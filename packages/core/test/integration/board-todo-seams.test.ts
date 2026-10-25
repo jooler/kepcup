@@ -167,9 +167,7 @@ describe('board todo seams', () => {
     });
     stack.core.services.board!.updateCard(card.id, 'Managed again', 'user');
     expect(todoEvents).toEqual([]);
-    expect(boardEvents).toEqual(
-      expect.arrayContaining([{ projectId: project.id, cardId: card.id, columnId }]),
-    );
+    expect(boardEvents).toEqual([{ projectId: project.id, cardId: card.id, columnId }]);
     todos.update(ordinary.id, { notes: 'note' });
     expect(todoEvents).toEqual([{ todoId: ordinary.id }]);
     stopBoard();

@@ -16,6 +16,7 @@ import {
   deriveCardTitle,
   rpcEventSchemas,
   rpcMethodSchemas,
+  todoEntrySchema,
   todoRunSchema,
 } from '../../src/index.js';
 
@@ -185,6 +186,38 @@ describe('board RPC and events', () => {
         beforeCardId: null,
       }),
     ).toEqual({ cardId: 'todo_1', columnId: 'bcol_1', beforeCardId: null });
+    // Omitted anchor means "top of the column". A default of null would append.
+    expect(
+      rpcMethodSchemas['board.cards.create'].input.parse({
+        projectId: 'conv_1',
+        columnId: 'bcol_1',
+        text: 'hi',
+      }),
+    ).toEqual({ projectId: 'conv_1', columnId: 'bcol_1', text: 'hi' });
+    expect(rpcMethodSchemas['board.columns.delete'].input.parse({ columnId: 'bcol_1' })).toEqual({
+      columnId: 'bcol_1',
+    });
+    const entry = {
+      id: 'todo_1',
+      title: 't',
+      notes: '',
+      assignee: null,
+      status: 'draft' as const,
+      source: 'user' as const,
+      memoId: null,
+      blockedReason: null,
+      createdAt: 1,
+      updatedAt: 1,
+      closedAt: null,
+      assigneeName: null,
+      leadBotName: null,
+      schedule: null,
+      lastRun: null,
+      board: { projectId: 'conv_1', columnId: 'bcol_1' },
+    };
+    expect(todoEntrySchema.parse(entry).board).toEqual({ projectId: 'conv_1', columnId: 'bcol_1' });
+    const { board: _board, ...withoutBoard } = entry;
+    expect(todoEntrySchema.parse(withoutBoard).board).toBeNull();
 
     expect(RPC_EVENT_NAMES).toContain('board.changed');
     expect(rpcEventSchemas['board.changed'].parse({ projectId: 'conv_1' })).toEqual({

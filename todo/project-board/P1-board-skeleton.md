@@ -237,11 +237,19 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 - DEV-045：不添加 `board.cards.reject`。
 - DEV-046：看板事项不广播 `todos.changed`。
 
+### 审查修复
+
+- **一条 `board.changed`，提交之后。** `updateCard` 只由 `TodoService.updateBoardText` 发布；`deleteCard` 只由 `todos.purge` 发布（删除前记下 `projectId` / `columnId`，侧表被外键带走后不会误发 `todos.changed`）。`deleteColumn` / `onProjectDeleting` 在事务里静默逐张 `purge`，提交后各发一条：删栏是 `{ projectId, columnId }`，删项目是 `{ projectId }`。不再「每张卡一条 + 再加一条栏事件」，也不在事务未提交时发出。事务内的其它看板写入先挂起，由 `TodoService.withTransaction` 在最外层提交成功后发出、抛错则丢掉；同一项目的多条收成一条。
+- **分栏标题与 SQLite `length()` 对齐。** `length()` 在 NUL 处截断，所以「服务按码点接受、CHECK 拒绝」和「服务拒绝、裸 INSERT 仍能插入」都会发生。服务拒绝内嵌 NUL；`0050` 的 CHECK 增加 `instr(title, char(0)) = 0`。无 NUL 时码点长度与 `length()` 一致（60 个 emoji 可插入，61 个不行）。
+- `onConversationDeleting` 的 `todos.changed` / `board.changed` 改到事务提交之后。
+
 ### 尚未做、会挡住 UI 切片的点
 
 - 注册表已把 `board` 标为 `available` 且顺序为 `chat, board, wiki, okr, calendar`。`project-tabs.test.ts`、`shell-project.svelte.test.ts`、`project-shell.spec.ts` 仍按「board 是 planned」断言，要等步骤 7 一起改。本切片没跑这些测试。
 - `board.summary` 与 `board.cards.assign / schedule / start / complete / cancel / reopen / conversation` 只有 shared schema 和 `APP_METHODS` 登记，**没有**绑到 `rpc/bindings.ts`。直接调用会当未知方法失败。
 - 卡片投影的执行字段恒为 `assignee: null`、`conversationId: null`、`unreadCount: 0`、`pendingApprovals: 0`、`task: null`。
-- 同一张卡的文本更新会发两次相同的 `board.changed`（`TodoService.#changed` 一次，`BoardService` 再一次）。渲染层去抖可以吸收；若步骤 8 要严格计次，应只保留一处。
+- 同一次写入只发一条 `board.changed`，且在事务提交之后（审查修复，见下）。
 - 错误码的 `chats.errorCode.BOARD_*` 文案属于步骤 13，本切片未写。
-- 删项目：`lifecycle.deleteConversation` 在删会话行之前、紧挨 `workbench.onConversationDeleting` 调用 `board.onProjectDeleting`（仅 `type === 'project'`）。钩子失败走 `#cascade`，记日志、不中断删除（与工作台钩子相同）。
+- 删项目：`lifecycle.deleteConversation` 在删会话行之前、紧挨 `workbench.onConversationDeleting` 调用 `board.onProjectDeleting`（仅 `type === 'project'`）。钩子失败走 `#cascade`，记日志、不中断删除（与工作台钩子相同）。有卡片时钩子在 purge 提交后发一条 `{ projectId }`，此时分栏还在（随会话行级联才消失）。同步重拉会看到「栏还在、卡已没」；步骤 8 的去抖重拉发生在 `deleteConversation` 返回之后，项目已不在，`board.get` 为 `NOT_FOUND`。
+- 删栏的事件没有 `cardId`。步骤 8 应按 `projectId` 整板重拉，不要把「没有 cardId」当成单卡补丁。
+- 新建卡片若触发整栏重排，响应里只有新卡（契约出参是 `{ card }`），其它卡的新 position 靠随后的 `board.changed` 重拉。`board.changed` 在 RPC 返回之前同步发出。

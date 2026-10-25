@@ -234,10 +234,126 @@ describe('BoardService', () => {
     expect(todoEvents).toEqual([]);
     const doing = board().get(projectId, undefined, 'user').columns[1]!.id;
     board().moveCard(card.id, doing, null, 'user');
-    expect(boardEvents).toContainEqual({ projectId, cardId: card.id, columnId: doing });
+    expect(boardEvents).toEqual([{ projectId, cardId: card.id, columnId: doing }]);
     expect(todoEvents).toEqual([]);
     stopBoard();
     stopTodos();
+  });
+
+  it('publishes one board.changed after the write commits', async () => {
+    const projectId = await freshProject('once');
+    const db = stack.core.services.mainDb!;
+    const seeded = board().get(projectId, ['Todo', 'Doing'], 'user');
+    const columnId = seeded.columns[0]!.id;
+    const otherId = seeded.columns[1]!.id;
+    const card = board().createCard(projectId, columnId, 'one', undefined, 'user');
+    const second = board().createCard(projectId, columnId, 'two', undefined, 'user');
+    const boardEvents: BoardChangedPayload[] = [];
+    const todoEvents: unknown[] = [];
+    let inTransaction = false;
+    let watchedTodo = card.id;
+    let todoGone = false;
+    let columnGone = false;
+    const stopBoard = stack.core.services.events.on('board.changed', (payload) => {
+      boardEvents.push(payload);
+      inTransaction = db.inTransaction;
+      todoGone = db.prepare('select id from todos where id = ?').get(watchedTodo) === undefined;
+      columnGone =
+        db.prepare('select id from board_columns where id = ?').get(columnId) === undefined;
+    });
+    const stopTodos = stack.core.services.events.on('todos.changed', (payload) => {
+      todoEvents.push(payload);
+    });
+
+    board().updateCard(card.id, 'one more', 'user');
+    expect(boardEvents).toEqual([{ projectId, cardId: card.id, columnId }]);
+    expect(todoEvents).toEqual([]);
+    expect(inTransaction).toBe(false);
+    expect(
+      db.prepare('select notes from todos where id = ?').get(card.id),
+    ).toEqual({ notes: 'one more' });
+
+    boardEvents.length = 0;
+    board().deleteCard(card.id, 'user');
+    expect(boardEvents).toEqual([{ projectId, cardId: card.id, columnId }]);
+    expect(todoEvents).toEqual([]);
+    expect(inTransaction).toBe(false);
+    expect(todoGone).toBe(true);
+
+    boardEvents.length = 0;
+    watchedTodo = second.id;
+    todoGone = false;
+    board().deleteColumn(columnId, true, 'user');
+    expect(boardEvents).toEqual([{ projectId, columnId }]);
+    expect(todoEvents).toEqual([]);
+    expect(inTransaction).toBe(false);
+    expect(todoGone).toBe(true);
+    expect(columnGone).toBe(true);
+    expect(db.prepare('select id from todos where id = ?').get(second.id)).toBeUndefined();
+
+    const left = board().createCard(projectId, otherId, 'left', undefined, 'user');
+    const rightColumn = board().createColumn(projectId, 'Extra', null, 'user');
+    const right = board().createCard(projectId, rightColumn.id, 'right', undefined, 'user');
+    boardEvents.length = 0;
+    stack.core.services.board!.onProjectDeleting(projectId);
+    expect(boardEvents).toEqual([{ projectId }]);
+    expect(inTransaction).toBe(false);
+    expect(db.prepare('select id from todos where id = ?').get(left.id)).toBeUndefined();
+    expect(db.prepare('select id from todos where id = ?').get(right.id)).toBeUndefined();
+
+    stopBoard();
+    stopTodos();
+  });
+
+  it('drops board.changed when the surrounding transaction rolls back', async () => {
+    const projectId = await freshProject('rollback');
+    const db = stack.core.services.mainDb!;
+    const columnId = board().get(projectId, ['Todo'], 'user').columns[0]!.id;
+    const card = board().createCard(projectId, columnId, 'keep', undefined, 'user');
+    const boardEvents: BoardChangedPayload[] = [];
+    const stop = stack.core.services.events.on('board.changed', (payload) => {
+      boardEvents.push(payload);
+    });
+    const todos = stack.core.services.todos!;
+    expect(() => {
+      todos.withTransaction(() => {
+        todos.purge(card.id, 'board');
+        throw new Error('rollback');
+      });
+    }).toThrow(/rollback/);
+    expect(boardEvents).toEqual([]);
+    expect(db.prepare('select id from todos where id = ?').get(card.id)).toEqual({ id: card.id });
+    expect(db.inTransaction).toBe(false);
+
+    const other = board().createCard(projectId, columnId, 'other', undefined, 'user');
+    boardEvents.length = 0;
+    todos.withTransaction(() => {
+      todos.purge(card.id, 'board');
+      todos.purge(other.id, 'board');
+    });
+    expect(boardEvents).toEqual([{ projectId, columnId }]);
+    expect(db.prepare('select id from todos where id = ?').get(card.id)).toBeUndefined();
+    expect(db.prepare('select id from todos where id = ?').get(other.id)).toBeUndefined();
+    stop();
+  });
+
+  it('accepts a 60-code-point title and rejects one SQLite length() would not store', async () => {
+    const projectId = await freshProject('titles');
+    const emoji = '😀';
+    const column = board().createColumn(projectId, emoji.repeat(60), null, 'user');
+    expect(column.title).toBe(emoji.repeat(60));
+    expect(codeOf(() => board().createColumn(projectId, emoji.repeat(61), null, 'user'))).toBe(
+      'INVALID_INPUT',
+    );
+    expect(codeOf(() => board().createColumn(projectId, 'a\u0000b', null, 'user'))).toBe(
+      'INVALID_INPUT',
+    );
+    expect(codeOf(() => board().updateColumn(column.id, `\u0000${'a'.repeat(10)}`, 'user'))).toBe(
+      'INVALID_INPUT',
+    );
+    const empty = await freshProject('titles-seed');
+    expect(codeOf(() => board().get(empty, ['Todo', 'a\u0000b'], 'user'))).toBe('INVALID_INPUT');
+    expect(board().get(empty, undefined, 'user').columns).toEqual([]);
   });
 
   it('lifecycle.deleteConversation purges board todos, side rows, and columns', async () => {

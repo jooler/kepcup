@@ -101,6 +101,25 @@ describe('0050 project board migration', () => {
         )
         .run(),
     ).toThrow();
+    const emoji = '😀';
+    db.prepare(
+      'insert into board_columns (id, project_id, title, position, created_at) values (?, ?, ?, ?, ?)',
+    ).run('bcol_emoji', 'conv_p', emoji.repeat(60), 2048, 1);
+    expect(
+      (
+        db.prepare('select title from board_columns where id = ?').get('bcol_emoji') as {
+          title: string;
+        }
+      ).title,
+    ).toBe(emoji.repeat(60));
+    const insertTitle = db.prepare(
+      'insert into board_columns (id, project_id, title, position, created_at) values (?, ?, ?, 1, 1)',
+    );
+    expect(() => insertTitle.run('bcol_long', 'conv_p', emoji.repeat(61))).toThrow();
+    expect(() => insertTitle.run('bcol_ascii', 'conv_p', 'a'.repeat(61))).toThrow();
+    // length() stops at NUL, so the CHECK must reject the tail explicitly.
+    expect(() => insertTitle.run('bcol_nul', 'conv_p', `a\u0000${'b'.repeat(80)}`)).toThrow();
+    expect(() => insertTitle.run('bcol_lead', 'conv_p', '\u0000hello')).toThrow();
 
     db.prepare('delete from todos where id = ?').run('todo_1');
     expect(db.prepare('select count(*) as n from board_cards').get() as { n: number }).toEqual({

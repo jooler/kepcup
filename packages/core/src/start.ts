@@ -2373,7 +2373,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: boardStore,
       todos,
       conversations,
-      publish: (payload) => publishEvent('board.changed', payload),
     });
     todoService = todos;
     schedules.attachWorkbench(todos);

@@ -7,7 +7,11 @@
 CREATE TABLE board_columns (
   id          TEXT PRIMARY KEY,                                        -- bcol_...
   project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  title       TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 60),
+  -- length() stops at the first NUL, so instr rejects an embedded NUL. Without
+  -- that, a title of NUL plus a long tail has length 1 and passes the cap.
+  title       TEXT NOT NULL CHECK (
+                length(title) BETWEEN 1 AND 60 AND instr(title, char(0)) = 0
+              ),
   position    REAL NOT NULL,
   created_at  INTEGER NOT NULL
 );

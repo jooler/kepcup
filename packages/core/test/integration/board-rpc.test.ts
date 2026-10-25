@@ -67,7 +67,7 @@ describe('board RPC', () => {
     seeded.stop();
     expect(got.columns.map((column) => column.title)).toEqual(['Todo', 'Doing']);
     expect(got.cards).toEqual([]);
-    expect(seeded.events).toContainEqual({ projectId });
+    expect(seeded.events).toEqual([{ projectId }]);
 
     await expectCode('board.columns.create', { projectId }, 'INVALID_INPUT');
     const createdColumn = watch();
@@ -79,7 +79,7 @@ describe('board RPC', () => {
     ).column;
     createdColumn.stop();
     expect(column.title).toBe('Later');
-    expect(createdColumn.events).toContainEqual({ projectId, columnId: column.id });
+    expect(createdColumn.events).toEqual([{ projectId, columnId: column.id }]);
     await expectCode('board.columns.create', { projectId, title: '   ' }, 'INVALID_INPUT');
 
     await expectCode('board.columns.update', { columnId: column.id }, 'INVALID_INPUT');
@@ -92,7 +92,7 @@ describe('board RPC', () => {
     ).column;
     renamed.stop();
     expect(updated.title).toBe('Later renamed');
-    expect(renamed.events).toContainEqual({ projectId, columnId: column.id });
+    expect(renamed.events).toEqual([{ projectId, columnId: column.id }]);
     await expectCode('board.columns.update', { columnId: 'bcol_missing', title: 'x' }, 'NOT_FOUND');
 
     await expectCode('board.columns.move', { columnId: column.id }, 'INVALID_INPUT');
@@ -105,7 +105,7 @@ describe('board RPC', () => {
     ).columns;
     movedColumns.stop();
     expect(columns[0]?.id).toBe(column.id);
-    expect(movedColumns.events).toContainEqual({ projectId, columnId: column.id });
+    expect(movedColumns.events).toEqual([{ projectId, columnId: column.id }]);
 
     await expectCode('board.cards.create', { projectId, columnId: column.id }, 'INVALID_INPUT');
     const createdCard = watch();
@@ -119,11 +119,13 @@ describe('board RPC', () => {
     createdCard.stop();
     expect(card.text).toBe('Hello board');
     expect(card.todo.assignee).toBeNull();
-    expect(createdCard.events).toContainEqual({
-      projectId,
-      cardId: card.id,
-      columnId: column.id,
-    });
+    expect(createdCard.events).toEqual([
+      {
+        projectId,
+        cardId: card.id,
+        columnId: column.id,
+      },
+    ]);
     await expectCode(
       'board.cards.create',
       { projectId, columnId: column.id, text: '   ' },
@@ -140,11 +142,13 @@ describe('board RPC', () => {
     ).card;
     updatedCard.stop();
     expect(next.text).toBe('Hello again');
-    expect(updatedCard.events).toContainEqual({
-      projectId,
-      cardId: card.id,
-      columnId: column.id,
-    });
+    expect(updatedCard.events).toEqual([
+      {
+        projectId,
+        cardId: card.id,
+        columnId: column.id,
+      },
+    ]);
 
     const doing = got.columns[1]!.id;
     await expectCode('board.cards.move', { cardId: card.id, columnId: doing }, 'INVALID_INPUT');
@@ -156,7 +160,7 @@ describe('board RPC', () => {
     });
     movedCard.stop();
     expect(moved.card.columnId).toBe(doing);
-    expect(movedCard.events).toContainEqual({ projectId, cardId: card.id, columnId: doing });
+    expect(movedCard.events).toEqual([{ projectId, cardId: card.id, columnId: doing }]);
 
     await expectCode('board.cards.delete', {}, 'INVALID_INPUT');
     const deleted = watch();
@@ -164,7 +168,7 @@ describe('board RPC', () => {
       {},
     );
     deleted.stop();
-    expect(deleted.events).toContainEqual({ projectId, cardId: card.id, columnId: doing });
+    expect(deleted.events).toEqual([{ projectId, cardId: card.id, columnId: doing }]);
     await expectCode('board.cards.delete', { cardId: card.id }, 'NOT_FOUND');
 
     await expectCode('board.columns.delete', { columnId: 'bcol_missing' }, 'NOT_FOUND');
