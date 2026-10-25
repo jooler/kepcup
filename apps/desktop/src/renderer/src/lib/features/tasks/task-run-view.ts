@@ -277,3 +277,14 @@ function clip(text: string): string {
   const flat = text.trim().replace(/\s+/g, ' ');
   return flat.length > SUMMARY_MAX ? `${flat.slice(0, SUMMARY_MAX)}…` : flat;
 }
+
+/**
+ * 详情页审批条（权限请求）归属的会话：任务自带；任务视图还没读到时回退
+ * 当前会话——详情页只在本会话内打开（切会话即关闭），两者在打开期间一致。
+ */
+export function approvalConversationIdOf(
+  task: { conversationId: string | null } | null,
+  currentConversationId: string | null | undefined,
+): string | null {
+  return task?.conversationId ?? currentConversationId ?? null;
+}
