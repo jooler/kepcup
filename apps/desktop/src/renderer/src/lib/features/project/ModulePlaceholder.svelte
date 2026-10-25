@@ -5,9 +5,8 @@
   import { t } from '$lib/i18n';
 
   /**
-   * 模块占位页（WP6 §4 步骤 4）：看板 / OKR / 日历是 planned 模块（soonBody）；
-   * Wiki 的真实视图由 WP10 的 ProjectWikiView 接管（wikiSoon 文案已删）。
-   * 正常不会以 'chat' / 'wiki' 渲染。
+   * Placeholder for planned modules (OKR / calendar). Wiki and the board have
+   * their own views. This is not rendered for chat, wiki, or board.
    */
   let { module }: { module: ProjectModuleId } = $props();
 

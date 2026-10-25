@@ -3,6 +3,7 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import ModulePlaceholder from './ModulePlaceholder.svelte';
+  import ProjectBoardView from './ProjectBoardView.svelte';
   import ProjectHeader from './ProjectHeader.svelte';
   import ProjectSettingsPage from './ProjectSettingsPage.svelte';
   import ProjectWikiView from './ProjectWikiView.svelte';
@@ -34,6 +35,8 @@
     {:else if view === 'wiki'}
       <!-- D92 T1b WP10: the Wiki tab's real view replaces the WP6 placeholder. -->
       <ProjectWikiView conversationId={current?.conversation.id ?? ''} />
+    {:else if view === 'board'}
+      <ProjectBoardView conversationId={current?.conversation.id ?? ''} />
     {:else if view !== 'chat'}
       <ModulePlaceholder module={view} />
     {/if}
