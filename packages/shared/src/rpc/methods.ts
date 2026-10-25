@@ -1584,6 +1584,22 @@ export const wikiSearchOutputSchema = z.object({ hits: z.array(wikiSearchHitSche
 export type WikiSearchOutput = z.infer<typeof wikiSearchOutputSchema>;
 export const wikiHistoryOutputSchema = z.object({ history: z.array(wikiHistoryEntrySchema) });
 export type WikiHistoryOutput = z.infer<typeof wikiHistoryOutputSchema>;
+/** 某一次提交的 Wiki 快照（只读）：页面列表 / 单页全文按 commitOid 从 git 对象读。 */
+export const wikiCommitInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  commitOid: z.string().min(1),
+});
+export type WikiCommitInput = z.infer<typeof wikiCommitInputSchema>;
+export const wikiCommitTreeOutputSchema = z.object({ pages: z.array(wikiPageSchema) });
+export type WikiCommitTreeOutput = z.infer<typeof wikiCommitTreeOutputSchema>;
+export const wikiCommitPageInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  commitOid: z.string().min(1),
+  path: z.string().min(1).max(500),
+});
+export type WikiCommitPageInput = z.infer<typeof wikiCommitPageInputSchema>;
+export const wikiCommitPageOutputSchema = wikiPageOutputSchema;
+export type WikiCommitPageOutput = z.infer<typeof wikiCommitPageOutputSchema>;
 export const wikiRollbackInputSchema = z.object({
   owner: wikiOwnerSchema,
   commitOid: z.string().min(1),
@@ -2456,6 +2472,8 @@ export const rpcMethodSchemas = {
   'wiki.page': { input: wikiPageInputSchema, output: wikiPageOutputSchema },
   'wiki.search': { input: wikiSearchInputSchema, output: wikiSearchOutputSchema },
   'wiki.history': { input: wikiOwnerInputSchema, output: wikiHistoryOutputSchema },
+  'wiki.commitTree': { input: wikiCommitInputSchema, output: wikiCommitTreeOutputSchema },
+  'wiki.commitPage': { input: wikiCommitPageInputSchema, output: wikiCommitPageOutputSchema },
   'wiki.rollback': { input: wikiRollbackInputSchema, output: wikiRollbackOutputSchema },
   'wiki.deletePage': { input: wikiDeletePageInputSchema, output: wikiDeletePageOutputSchema },
   'wiki.sources': { input: wikiOwnerInputSchema, output: wikiSourcesOutputSchema },

@@ -20,7 +20,7 @@ import {
   type WikiOwner,
   type WikiPage,
 } from '@kepcup/shared';
-import { openRepository } from 'es-git';
+import { openRepository, type Commit, type Repository } from 'es-git';
 
 import {
   canonicalPath,
@@ -388,6 +388,93 @@ export class WikiService {
       entries.push({ oid, message: commit.summary() ?? '', createdAt: commit.time().getTime() });
     }
     return entries;
+  }
+
+  /**
+   * Opens one owner's repository and resolves a commit for the snapshot reads
+   * below (same NOT_FOUND posture as wiki.rollback). Read-only: like
+   * history(), no maintenance mutex — a looked-up commit's git objects are
+   * immutable, so a concurrent maintenance commit cannot change what we read.
+   */
+  async #commitOf(
+    owner: WikiOwner,
+    commitOid: string,
+  ): Promise<{ repo: Repository; commit: Commit }> {
+    const root = this.wikiRoot(owner);
+    if (!existsSync(path.join(root, '.git'))) {
+      throw new AppError('NOT_FOUND', '该 Bot 还没有 Wiki');
+    }
+    const repo = await openRepository(root);
+    let commit: Commit;
+    try {
+      commit = repo.getCommit(commitOid);
+    } catch {
+      throw new AppError('NOT_FOUND', `提交 ${commitOid} 不存在`);
+    }
+    return { repo, commit };
+  }
+
+  /**
+   * wiki.commitTree: the page list (path + title) as of one commit, read from
+   * the commit's git tree — never the worktree, so the user sees exactly what
+   * that historical entry contains when deciding on a rollback.
+   */
+  async commitTree(owner: WikiOwner, commitOid: string): Promise<WikiPage[]> {
+    const { repo, commit } = await this.#commitOf(owner, commitOid);
+    const pages: WikiPage[] = [];
+    const walk = (treeId: string, prefix: string): void => {
+      const tree = repo.getTree(treeId);
+      const count = Number(tree.len());
+      for (let i = 0; i < count; i += 1) {
+        const entry = tree.get(i);
+        if (entry === null) continue;
+        const rel = prefix === '' ? entry.name() : `${prefix}/${entry.name()}`;
+        if (entry.type() === 'Tree') {
+          walk(entry.id(), rel);
+          continue;
+        }
+        if (entry.type() === 'Blob' && isWikiPagePath(rel)) {
+          const content = new TextDecoder().decode(entry.toObject(repo).peelToBlob().content());
+          pages.push({ path: rel, title: pageTitleOf(content, rel) });
+        }
+      }
+    };
+    walk(commit.tree().id(), '');
+    return pages.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  /**
+   * wiki.commitPage: one page's full text as of one commit (index.md or
+   * pages/**). Path rules mirror isWikiPagePath (safe segments, no traversal)
+   * because the lookup goes through the commit tree; the worktree is never
+   * touched.
+   */
+  async readCommitPage(
+    owner: WikiOwner,
+    commitOid: string,
+    pagePath: string,
+  ): Promise<{ path: string; title: string; content: string }> {
+    const { repo, commit } = await this.#commitOf(owner, commitOid);
+    const rel = pagePath.replaceAll('\\', '/');
+    if (rel !== 'index.md' && !isWikiPagePath(rel)) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `只能读取提交快照中的 index.md 与 pages/ 下的页面（收到 ${pagePath}）`,
+      );
+    }
+    const entry = commit.tree().getPath(rel);
+    if (entry === null || entry.type() !== 'Blob') {
+      throw new AppError(
+        'NOT_FOUND',
+        `页面在提交 ${commitOid.slice(0, 10)} 中不存在：${pagePath}`,
+      );
+    }
+    const content = new TextDecoder().decode(entry.toObject(repo).peelToBlob().content());
+    return {
+      path: rel,
+      title: rel === 'index.md' ? '目录' : pageTitleOf(content, rel),
+      content,
+    };
   }
 
   /**

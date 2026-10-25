@@ -32,9 +32,15 @@
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
-  import { findNode, findParent, memoryNav, type MemoryCategoryNode } from './memory-categories.svelte';
+  import {
+    findNode,
+    findParent,
+    memoryNav,
+    type MemoryCategoryNode,
+  } from './memory-categories.svelte';
   import { skillNav } from './skills-nav.svelte';
   import WikiBrowser from '../wiki/WikiBrowser.svelte';
+  import { wikiCrumbs, wikiStore } from '$lib/stores/wiki.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
@@ -105,12 +111,25 @@
           : null;
   });
 
+  /** Wiki 历史视图（提交列表 / 快照 / 快照页面）激活时隐藏「< Wiki」顶栏行。 */
+  const wikiInHistory = $derived(
+    detail !== null &&
+      detail.kind === 'wiki' &&
+      bot !== null &&
+      wikiStore.navOf({ kind: 'bot', id: bot.id }).mode === 'history',
+  );
+
   /**
    * 记忆详情的面包屑（DetailHeader 用）：根段「记忆」点击回顶层目录，其后每级
    * 分类按路径展示、点击对应跳转；末段为当前位置不可点。仅 memory 详情有。
    */
   const detailBreadcrumb = $derived.by(() => {
-    if (detail === null || detail.kind !== 'memory') return undefined;
+    if (detail === null) return undefined;
+    // Wiki 详情：根段「Wiki」+ 目录层级 / 历史位置（位置状态在 wikiStore）。
+    if (detail.kind === 'wiki' && bot !== null) {
+      return wikiCrumbs({ kind: 'bot', id: bot.id });
+    }
+    if (detail.kind !== 'memory') return undefined;
     const chain: MemoryCategoryNode[] = [];
     for (
       let node = memoryNav.id === null ? null : findNode(memoryNav.id);
@@ -578,14 +597,20 @@
         {:else}
           <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
           <div class="flex min-h-0 flex-col gap-3" data-testid={`bot-detail-${detail.kind}`}>
-            {#if !(detail.kind === 'skills' && skillNav.selectedName !== null)}
+            {#if !(detail.kind === 'skills' && skillNav.selectedName !== null) && !wikiInHistory}
               <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
-                   顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。 -->
+                   顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。
+                   Wiki 历史视图同理：查看历史时隐藏顶栏（WikiBrowser 的提示行 /
+                   返回行负责返回），面包屑只负责内容导航。 -->
               <DetailHeader
                 title={t(DETAIL_TITLE_KEYS[detail.kind])}
                 onBack={() => (detail = null)}
                 breadcrumb={detailBreadcrumb}
-                breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
+                breadcrumbTestid={detail.kind === 'memory'
+                  ? 'memory-breadcrumb'
+                  : detail.kind === 'wiki'
+                    ? 'wiki-breadcrumb'
+                    : undefined}
               />
             {/if}
             {#if detail.kind === 'access'}
