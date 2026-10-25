@@ -1,7 +1,9 @@
 import {
   AppError,
+  describeScheduleWhen,
   BOARD_CARD_TEXT_MAX_CHARS,
   BOARD_COLUMN_TITLE_MAX_CHARS,
+  BOARD_CRON_MIN_INTERVAL_MS,
   BOARD_MAX_CARDS,
   BOARD_MAX_COLUMNS,
   BOARD_POSITION_STEP,
@@ -13,12 +15,17 @@ import {
   type BoardColumn,
   type Conversation,
   type ProjectActor,
+  type RunStatus,
+  type TodoStatus,
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
+import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { TodoService } from '../workbench/todo-service.js';
+import { isValidCron, nextCronFireAt } from '../schedule/cron.js';
+import { parseIsoOrThrow } from '../schedule/when.js';
 import type { BoardCardRecord, BoardColumnRecord, BoardStore } from './board-store.js';
 import { placeItem } from './positions.js';
 
@@ -29,6 +36,13 @@ export interface BoardServiceDeps {
   store: BoardStore;
   todos: TodoService;
   conversations: ConversationsService;
+  bots: BotsService;
+  approvals: { pendingCount(conversationId: string): number };
+  tasks: {
+    activeOf(conversationId: string): Array<{ status: RunStatus; queueReason: string | null }>;
+  };
+  /** Zone used when judging cron gaps. Same zone the schedule service fires in. */
+  timeZone: string;
 }
 
 /**
@@ -218,7 +232,7 @@ export class BoardService {
       return this.#deps.store.getCard(todo.id)!;
     })();
     this.#changed({ projectId, cardId: record.todoId, columnId });
-    return toCard(record);
+    return this.#toCard(record);
   }
 
   updateCard(cardId: string, text: string, actor: ProjectActor): BoardCard {
@@ -228,7 +242,8 @@ export class BoardService {
     // updateBoardText emits the one board.changed. A second publish here
     // would deliver the same payload twice.
     this.#deps.todos.updateBoardText(cardId, { title: cardTitle(notes), notes });
-    return toCard(this.#deps.store.getCard(cardId)!);
+    this.#deps.conversations.setCardTitle(cardId, cardTitle(notes));
+    return this.#toCard(this.#deps.store.getCard(cardId)!);
   }
 
   /**
@@ -272,16 +287,172 @@ export class BoardService {
       this.#deps.store.moveCard(cardId, columnId, position);
       if (placed.renumbered) this.#writeCardPositions(placed.items);
       const renumbered = placed.renumbered
-        ? placed.items.map((item) => toCard(this.#deps.store.getCard(item.id)!))
+        ? placed.items.map((item) => this.#toCard(this.#deps.store.getCard(item.id)!))
         : undefined;
       return { changed: true as const, renumbered };
     })();
-    const fresh = toCard(this.#deps.store.getCard(cardId)!);
+    const fresh = this.#toCard(this.#deps.store.getCard(cardId)!);
     if (!result.changed) return { card: fresh };
     this.#changed({ projectId: card.projectId, cardId, columnId });
     return result.renumbered !== undefined
       ? { card: fresh, renumbered: result.renumbered }
       : { card: fresh };
+  }
+
+  /**
+   * Current card facts for a card conversation's prompt. Read on every run.
+   * Null when `conversationId` is not a card chat or the card is gone.
+   */
+  cardContext(conversationId: string): {
+    projectName: string;
+    goal: string | null;
+    text: string;
+    statusLabel: string;
+    columnName: string;
+    scheduleWhen: string | null;
+  } | null {
+    const conversation = this.#deps.conversations.get(conversationId);
+    if (
+      conversation === null ||
+      conversation.type !== 'card' ||
+      conversation.cardTodoId === null ||
+      conversation.parentProjectId === null
+    ) {
+      return null;
+    }
+    const card = this.#deps.store.getCard(conversation.cardTodoId);
+    if (card === null) return null;
+    const column = this.#deps.store.getColumn(card.columnId);
+    const project = this.#deps.conversations.get(conversation.parentProjectId);
+    const entry = this.#deps.todos.get(card.todoId).todo;
+    const schedule = entry.schedule;
+    return {
+      projectName: project?.title ?? '',
+      goal: project?.goal ?? null,
+      text: card.notes,
+      statusLabel: cardStatusLabel(card.status, entry.assignee !== null),
+      columnName: column?.title ?? '',
+      scheduleWhen:
+        schedule === null
+          ? null
+          : describeScheduleWhen(
+              {
+                kind: schedule.kind,
+                runAt: schedule.runAt,
+                cron: schedule.cron,
+                timezone: schedule.timezone,
+              },
+              { now: this.#deps.clock.now() },
+            ),
+    };
+  }
+
+  /**
+   * Assign the card to an active non-butler member, or clear the assignee.
+   * An existing schedule moves onto the new card conversation.
+   */
+  assign(
+    cardId: string,
+    botId: string | null,
+    actor: ProjectActor,
+  ): { card: BoardCard; warnings: string[] } {
+    const card = this.#requireCard(cardId);
+    this.#write(card.projectId, actor);
+    const entry = this.#deps.todos.get(cardId).todo;
+    assertUnlocked(entry.status);
+    if (botId === null) {
+      const updated = this.#deps.todos.update(cardId, { assignee: null, actor: 'board' });
+      this.#deps.conversations.closeOpenCardConversations(cardId);
+      return { card: this.#toCard(this.#requireCard(cardId)), warnings: updated.warnings };
+    }
+    this.#assertExecutor(card.projectId, botId);
+    this.#deps.conversations.ensureCardConversation({
+      projectId: card.projectId,
+      todoId: cardId,
+      botId,
+      title: cardTitle(card.notes),
+    });
+    const updated = this.#deps.todos.update(cardId, {
+      assignee: { kind: 'project', projectId: card.projectId, leadBotId: botId },
+      actor: 'board',
+    });
+    return { card: this.#toCard(this.#requireCard(cardId)), warnings: updated.warnings };
+  }
+
+  /**
+   * Set, clear, or fire the card's schedule. `when` is `'now'`, an ISO time,
+   * a cron expression, or null. The schedule lives on the card conversation.
+   */
+  schedule(
+    cardId: string,
+    when: string | null,
+    actor: ProjectActor,
+  ): { card: BoardCard; warnings: string[] } {
+    const card = this.#requireCard(cardId);
+    this.#write(card.projectId, actor);
+    const entry = this.#deps.todos.get(cardId).todo;
+    if (entry.assignee === null) {
+      throw new AppError('BOARD_ASSIGNEE_INVALID', '设置时间前请先选择执行成员');
+    }
+    assertUnlocked(entry.status);
+    if (when !== null) assertBoardCronGap(when, this.#deps.timeZone, this.#deps.clock.now());
+    const updated = this.#deps.todos.update(cardId, { when, actor: 'board' });
+    return { card: this.#toCard(this.#requireCard(cardId)), warnings: updated.warnings };
+  }
+
+  start(cardId: string, actor: ProjectActor): BoardCard {
+    return this.#transition(cardId, actor, (id) => this.#deps.todos.start(id, 'board'));
+  }
+
+  complete(cardId: string, actor: ProjectActor): BoardCard {
+    return this.#transition(cardId, actor, (id) => this.#deps.todos.complete(id, 'board'));
+  }
+
+  cancel(cardId: string, actor: ProjectActor): BoardCard {
+    return this.#transition(cardId, actor, (id) => this.#deps.todos.cancel(id, 'board'));
+  }
+
+  reopen(cardId: string, actor: ProjectActor): BoardCard {
+    return this.#transition(cardId, actor, (id) => this.#deps.todos.reopen(id, 'board'));
+  }
+
+  /**
+   * The card's open conversation. Creates it when the card is assigned and
+   * the conversation is missing. Unassigned cards throw.
+   */
+  conversation(cardId: string, actor: ProjectActor): string {
+    const card = this.#requireCard(cardId);
+    const entry = this.#deps.todos.get(cardId).todo;
+    const botId =
+      entry.assignee?.kind === 'project' ? entry.assignee.leadBotId : null;
+    if (botId === null) {
+      throw new AppError('BOARD_ASSIGNEE_INVALID', '这张卡片还没有执行成员');
+    }
+    const open = this.#deps.conversations.openCardConversation(cardId);
+    if (open !== null) return open.id;
+    this.#write(card.projectId, actor);
+    return this.#deps.conversations.ensureCardConversation({
+      projectId: card.projectId,
+      todoId: cardId,
+      botId,
+      title: cardTitle(card.notes),
+    }).conversation.id;
+  }
+
+  /** Unread, pending approvals, and cards awaiting acceptance across the project. */
+  summary(projectId: string): { unread: number; pendingApprovals: number; delivered: number } {
+    this.#project(projectId);
+    let unread = 0;
+    let pendingApprovals = 0;
+    let delivered = 0;
+    for (const card of this.#deps.store.listCards(projectId)) {
+      if (card.status === 'delivered') delivered += 1;
+      for (const conversation of this.#deps.conversations.cardConversations({ todoId: card.todoId })) {
+        unread += Math.max(0, conversation.lastSeq - conversation.lastReadSeq);
+        pendingApprovals += this.#deps.approvals.pendingCount(conversation.id);
+      }
+    }
+    return { unread, pendingApprovals, delivered };
   }
 
   /**
@@ -317,7 +488,7 @@ export class BoardService {
   #snapshot(projectId: string): { columns: BoardColumn[]; cards: BoardCard[] } {
     return {
       columns: this.#deps.store.listColumns(projectId).map(toColumn),
-      cards: this.#deps.store.listCards(projectId).map(toCard),
+      cards: this.#deps.store.listCards(projectId).map((row) => this.#toCard(row)),
     };
   }
 
@@ -376,6 +547,61 @@ export class BoardService {
   #changed(payload: BoardChangedPayload): void {
     this.#deps.todos.deliverBoardChanged(payload);
   }
+
+  #transition(
+    cardId: string,
+    actor: ProjectActor,
+    run: (cardId: string) => unknown,
+  ): BoardCard {
+    const card = this.#requireCard(cardId);
+    this.#write(card.projectId, actor);
+    run(cardId);
+    return this.#toCard(this.#requireCard(cardId));
+  }
+
+  #assertExecutor(projectId: string, botId: string): void {
+    const bot = this.#deps.bots.get(botId);
+    if (bot === null || bot.status !== 'active' || bot.systemRole === 'butler') {
+      throw new AppError('BOARD_ASSIGNEE_INVALID', '执行成员必须是项目里的活跃 Bot，不能是管家');
+    }
+    if (!this.#deps.conversations.memberBotIds(projectId).includes(botId)) {
+      throw new AppError('BOARD_ASSIGNEE_INVALID', '执行成员不在这个项目组里');
+    }
+  }
+
+  #toCard(row: BoardCardRecord): BoardCard {
+    const entry = this.#deps.todos.get(row.todoId).todo;
+    const open = this.#deps.conversations.openCardConversation(row.todoId);
+    const assignee =
+      entry.assignee?.kind === 'project' && entry.assignee.leadBotId !== null
+        ? {
+            botId: entry.assignee.leadBotId,
+            name: this.#deps.bots.get(entry.assignee.leadBotId)?.name ?? entry.assignee.leadBotId,
+          }
+        : null;
+    const views = open === null ? [] : this.#deps.tasks.activeOf(open.id);
+    return {
+      id: row.todoId,
+      projectId: row.projectId,
+      columnId: row.columnId,
+      position: row.position,
+      text: row.notes,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      todo: {
+        status: row.status,
+        blockedReason: row.blockedReason,
+        source: row.source,
+        assignee,
+        schedule: entry.schedule,
+        lastRun: entry.lastRun,
+      },
+      conversationId: open?.id ?? null,
+      unreadCount: open === null ? 0 : Math.max(0, open.lastSeq - open.lastReadSeq),
+      pendingApprovals: open === null ? 0 : this.#deps.approvals.pendingCount(open.id),
+      task: taskProjection(views),
+    };
+  }
 }
 
 function toColumn(column: BoardColumnRecord): BoardColumn {
@@ -388,29 +614,53 @@ function toColumn(column: BoardColumnRecord): BoardColumn {
   };
 }
 
-/** P1 execution fields are the empty defaults from the contract. */
-function toCard(row: BoardCardRecord): BoardCard {
-  return {
-    id: row.todoId,
-    projectId: row.projectId,
-    columnId: row.columnId,
-    position: row.position,
-    text: row.notes,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    todo: {
-      status: row.status,
-      blockedReason: row.blockedReason,
-      source: row.source,
-      assignee: null,
-      schedule: null,
-      lastRun: null,
-    },
-    conversationId: null,
-    unreadCount: 0,
-    pendingApprovals: 0,
-    task: null,
-  };
+const LOCKED_STATUSES: readonly TodoStatus[] = ['in_progress', 'delivered', 'done', 'cancelled'];
+
+function assertUnlocked(status: TodoStatus): void {
+  if (LOCKED_STATUSES.includes(status)) {
+    throw new AppError('BOARD_LOCKED', '这张卡片正在执行或已结束，不能更换执行成员或时间');
+  }
+}
+
+/** Next several fires must be at least an hour apart. ISO times are not cron. */
+function assertBoardCronGap(when: string, timeZone: string, now: number): void {
+  const trimmed = when.trim();
+  if (trimmed.toLowerCase() === 'now') return;
+  try {
+    if (parseIsoOrThrow(trimmed) !== null) return;
+  } catch {
+    return;
+  }
+  if (!isValidCron(trimmed)) return;
+  let after = now;
+  let previous: number | null = null;
+  for (let i = 0; i < 5; i += 1) {
+    const next = nextCronFireAt(trimmed, timeZone, after);
+    if (next === null) return;
+    if (previous !== null && next - previous < BOARD_CRON_MIN_INTERVAL_MS) {
+      throw new AppError('BOARD_CRON_TOO_FREQUENT', '看板周期的触发间隔至少为一小时');
+    }
+    previous = next;
+    after = next;
+  }
+}
+
+function taskProjection(
+  views: readonly { status: RunStatus; queueReason: string | null }[],
+): BoardCard['task'] {
+  if (views.length === 0) return null;
+  let running = 0;
+  let queued = 0;
+  let queueReason: string | null = null;
+  for (const view of views) {
+    if (view.status === 'queued') {
+      queued += 1;
+      if (queueReason === null) queueReason = view.queueReason;
+    } else {
+      running += 1;
+    }
+  }
+  return { running, queued, queueReason };
 }
 
 function codePoints(text: string): number {
@@ -470,6 +720,24 @@ function normalizeCardText(text: string): string {
     );
   }
   return trimmed;
+}
+
+/** Display word for a card's todo status (design 50 §6.4). */
+function cardStatusLabel(status: TodoStatus, assigned: boolean): string {
+  switch (status) {
+    case 'draft':
+      return assigned ? '待开始' : '未指派';
+    case 'scheduled':
+      return '已排期';
+    case 'in_progress':
+      return '执行中';
+    case 'delivered':
+      return '待验收';
+    case 'done':
+      return '已完成';
+    case 'cancelled':
+      return '已取消';
+  }
 }
 
 function cardTitle(notes: string): string {

@@ -150,6 +150,23 @@ describe('ensureCardConversation', () => {
   });
 });
 
+describe('cardContext', () => {
+  it('reads the current card text and status for the prompt', () => {
+    const context = board().cardContext(conversations().openCardConversation(todoId)!.id);
+    expect(context).toMatchObject({
+      projectName: 'Card chats',
+      text: 'Ship the notes',
+      statusLabel: '未指派',
+      columnName: 'Todo',
+      scheduleWhen: null,
+    });
+    board().updateCard(todoId, 'Ship the revised notes', 'user');
+    expect(board().cardContext(conversations().openCardConversation(todoId)!.id)?.text).toBe(
+      'Ship the revised notes',
+    );
+  });
+});
+
 describe('card chats stay out of the roster', () => {
   it('list, listVisible, conversations.all, direct queries, and share targets exclude card', async () => {
     const cardId = conversations().openCardConversation(todoId)!.id;

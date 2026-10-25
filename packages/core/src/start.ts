@@ -1901,6 +1901,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D90: the workbench todo service is constructed after the orchestrator and the schedule
     // service; the orchestrator's delivery tracking reaches it through this lazy facade.
     let todoService: TodoService | null = null;
+    let boardService: BoardService | null = null;
     const todoFacade: OrchestratorTodoFacade = {
       titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
       settleDelivered: (todoRunId, resultMessageId) => {
@@ -2287,6 +2288,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       handover: handoverFacade,
       todos: todoFacade,
       workbench: workbenchFacade,
+      cardContext: (conversationId) => boardService?.cardContext(conversationId) ?? null,
       settingsCatalog,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
@@ -2375,7 +2377,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: boardStore,
       todos,
       conversations,
+      bots,
+      approvals: { pendingCount: (conversationId) => approvals.pendingCount(conversationId) },
+      tasks: {
+        activeOf: (conversationId) =>
+          orchestrator.tasks.activeViews(conversationId).map((view) => ({
+            status: view.status,
+            queueReason: view.queueReason,
+          })),
+      },
+      timeZone: workbenchTimeZone,
     });
+    boardService = board;
     todoService = todos;
     schedules.attachWorkbench(todos);
     const memos = new MemoService({
