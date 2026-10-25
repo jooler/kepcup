@@ -869,7 +869,7 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'project']);
+export const conversationTypeSchema = z.enum(['direct', 'project', 'card']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
@@ -886,8 +886,19 @@ export const conversationSchema = z.object({
   /** 项目目标（该项目主要处理什么事务）；单聊恒为空。 */
   goal: z.string().nullable().optional(),
   directBotId: z.string().nullable(),
-  /** 项目负责人；project 恒非空，direct 恒为空。 */
+  /** 项目负责人；project 恒非空，direct 与 card 恒为空。 */
   leadBotId: z.string().nullable().optional(),
+  /**
+   * Owning project of a `card` conversation. Null for `direct` and `project`.
+   * Foreign-key safety net only; the service deletes card conversations
+   * (runs, FTS, attachments) and is not wired in this slice.
+   */
+  parentProjectId: z.string().nullable().default(null),
+  /**
+   * Board card (todo id) of a `card` conversation. Null for `direct` and
+   * `project`. No foreign key: card deletion is service-driven.
+   */
+  cardTodoId: z.string().nullable().default(null),
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),

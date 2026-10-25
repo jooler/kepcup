@@ -1,10 +1,10 @@
-import { AppError, newId, type Conversation } from '@kepcup/shared';
+import { AppError, newId, type Conversation, type ConversationType } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
 interface ConversationRow {
   id: string;
-  type: 'direct' | 'project';
+  type: ConversationType;
   title: string | null;
   goal: string | null;
   direct_bot_id: string | null;
@@ -18,6 +18,8 @@ interface ConversationRow {
   last_read_seq: number;
   last_message_at: number | null;
   created_at: number;
+  parent_project_id: string | null;
+  card_todo_id: string | null;
 }
 
 export function conversationRowToConversation(row: ConversationRow): Conversation {
@@ -28,6 +30,8 @@ export function conversationRowToConversation(row: ConversationRow): Conversatio
     ...(row.goal !== null ? { goal: row.goal } : {}),
     directBotId: row.direct_bot_id,
     leadBotId: row.lead_bot_id,
+    parentProjectId: row.parent_project_id,
+    cardTodoId: row.card_todo_id,
     workdirId: row.workdir_id,
     readOnly: row.read_only === 1,
     archivedAt: row.archived_at ?? null,

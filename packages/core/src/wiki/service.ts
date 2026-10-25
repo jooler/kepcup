@@ -16,6 +16,7 @@ import {
   WIKI_TOPICS_TOKEN_BUDGET,
   canManageEntry,
   wikiOwnerKey,
+  type ConversationType,
   type WikiHistoryEntry,
   type WikiOwner,
   type WikiPage,
@@ -97,7 +98,7 @@ export interface BotsFacade {
 export interface ConversationsFacade {
   get(
     id: string,
-  ): { id: string; type: 'direct' | 'project'; leadBotId?: string | null } | null;
+  ): { id: string; type: ConversationType; leadBotId?: string | null } | null;
   memberBotIds(conversationId: string): string[];
 }
 
