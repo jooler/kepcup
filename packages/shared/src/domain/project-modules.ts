@@ -4,7 +4,7 @@
  * (progressive disclosure); labels live in i18n (`project.module.<id>`).
  */
 
-export const PROJECT_MODULE_IDS = ['chat', 'wiki', 'board', 'okr', 'calendar'] as const;
+export const PROJECT_MODULE_IDS = ['chat', 'board', 'wiki', 'okr', 'calendar'] as const;
 export type ProjectModuleId = (typeof PROJECT_MODULE_IDS)[number];
 
 export type ProjectModuleWrite = 'members' | 'lead' | 'owner';
@@ -18,8 +18,8 @@ export interface ProjectModuleDescriptor {
 
 export const PROJECT_MODULES: readonly ProjectModuleDescriptor[] = [
   { id: 'chat', status: 'available', write: 'members' },
+  { id: 'board', status: 'available', write: 'lead' },
   { id: 'wiki', status: 'available', write: 'owner' },
-  { id: 'board', status: 'planned', write: 'lead' },
   { id: 'okr', status: 'planned', write: 'lead' },
   { id: 'calendar', status: 'planned', write: 'lead' },
 ];

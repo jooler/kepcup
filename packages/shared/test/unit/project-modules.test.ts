@@ -29,11 +29,11 @@ describe('canWriteModule', () => {
 
   it('matches the declared registry', () => {
     // The table above must cover exactly the registry, with the documented
-    // write levels: chat 'members', wiki 'owner', the planned trio 'lead'.
+    // write levels: chat 'members', wiki 'owner', board and the planned pair 'lead'.
     expect(PROJECT_MODULES.map((m) => [m.id, m.write, m.status])).toEqual([
       ['chat', 'members', 'available'],
+      ['board', 'lead', 'available'],
       ['wiki', 'owner', 'available'],
-      ['board', 'lead', 'planned'],
       ['okr', 'lead', 'planned'],
       ['calendar', 'lead', 'planned'],
     ]);

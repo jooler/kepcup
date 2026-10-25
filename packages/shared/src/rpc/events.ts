@@ -188,6 +188,14 @@ export const schedulesChangedPayloadSchema = z.object({
  */
 export const todosChangedPayloadSchema = z.object({ todoId: z.string() });
 
+/** A board column or card changed. `cardId` / `columnId` are set when one row is the subject. */
+export const boardChangedPayloadSchema = z.object({
+  projectId: z.string(),
+  cardId: z.string().optional(),
+  columnId: z.string().optional(),
+});
+export type BoardChangedPayload = z.infer<typeof boardChangedPayloadSchema>;
+
 /** A workbench memo was created / changed / deleted / restored (D90). */
 export const memosChangedPayloadSchema = z.object({ memoId: z.string() });
 
@@ -415,6 +423,7 @@ export const rpcEventSchemas = {
   'skills.missing': skillsMissingPayloadSchema,
   'schedules.changed': schedulesChangedPayloadSchema,
   'todos.changed': todosChangedPayloadSchema,
+  'board.changed': boardChangedPayloadSchema,
   'memos.changed': memosChangedPayloadSchema,
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,

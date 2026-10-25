@@ -36,6 +36,7 @@ function todo(id: string, patch: Partial<TodoEntry> = {}): TodoEntry {
     leadBotName: null,
     schedule: null,
     lastRun: null,
+    board: null,
     ...patch,
   };
 }
