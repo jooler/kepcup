@@ -36,6 +36,8 @@
       refused = 0;
       recent = [];
     } catch (error) {
+      // 打到控制台便于诊断（如旧 core 进程没有 apps.egressClear 时的 UNKNOWN_METHOD）。
+      console.error('apps.egressClear failed', error);
       toast.error(errorText((error as { code?: string }).code, t('chats.errorCode.INTERNAL')));
     } finally {
       clearing = false;
