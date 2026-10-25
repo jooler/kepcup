@@ -125,6 +125,9 @@ importers:
       streamdown-svelte:
         specifier: 3.0.6
         version: 3.0.6(@types/mdast@4.0.4)(micromark-util-types@2.0.3)(micromark@4.0.3(supports-color@10.2.2))(supports-color@10.2.2)(svelte@5.57.1(@typescript-eslint/types@8.71.0))
+      svelte-dnd-action:
+        specifier: 0.9.80
+        version: 0.9.80(svelte@5.57.1(@typescript-eslint/types@8.71.0))
       svelte-sonner:
         specifier: 1.2.1
         version: 1.2.1(svelte@5.57.1(@typescript-eslint/types@8.71.0))
@@ -5865,6 +5868,11 @@ packages:
     peerDependencies:
       svelte: ^4.0.0 || ^5.0.0-next.0
       typescript: ^5.0.0 || ^6.0.0
+
+  svelte-dnd-action@0.9.80:
+    resolution: {integrity: sha512-GweBRVBMp0F3T/e3O8EZoukRbbi+NhYlOghn5cE69CFmkDH1AuY0P/FklTlQxAfWw+SUkSm+iZyvYaRljgKUOA==}
+    peerDependencies:
+      svelte: '>=3.23.0 || ^5.0.0-next.0'
 
   svelte-eslint-parser@1.8.1:
     resolution: {integrity: sha512-5zgKBqAf6V8Jyrmr1jViksyG4NKT8NheYwkdxRaMRDAqpGWi9wR8ktcGrAZbfMn/PHUp1BWzAp0cYQECkWuAMA==}
@@ -12789,6 +12797,10 @@ snapshots:
       typescript: 5.8.3
     transitivePeerDependencies:
       - picomatch
+
+  svelte-dnd-action@0.9.80(svelte@5.57.1(@typescript-eslint/types@8.71.0)):
+    dependencies:
+      svelte: 5.57.1(@typescript-eslint/types@8.71.0)
 
   svelte-eslint-parser@1.8.1(svelte@5.57.1(@typescript-eslint/types@8.71.0)):
     dependencies:
