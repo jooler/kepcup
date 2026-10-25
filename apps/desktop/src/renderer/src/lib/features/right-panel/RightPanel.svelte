@@ -33,6 +33,7 @@
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
   import { findNode, findParent, memoryNav, type MemoryCategoryNode } from './memory-categories.svelte';
+  import { skillNav } from './skills-nav.svelte';
   import WikiBrowser from '../wiki/WikiBrowser.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
@@ -577,12 +578,16 @@
         {:else}
           <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
           <div class="flex min-h-0 flex-col gap-3" data-testid={`bot-detail-${detail.kind}`}>
-            <DetailHeader
-              title={t(DETAIL_TITLE_KEYS[detail.kind])}
-              onBack={() => (detail = null)}
-              breadcrumb={detailBreadcrumb}
-              breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
-            />
+            {#if !(detail.kind === 'skills' && skillNav.selectedName !== null)}
+              <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
+                   顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。 -->
+              <DetailHeader
+                title={t(DETAIL_TITLE_KEYS[detail.kind])}
+                onBack={() => (detail = null)}
+                breadcrumb={detailBreadcrumb}
+                breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
+              />
+            {/if}
             {#if detail.kind === 'access'}
               {#if confirmMode}
                 <p

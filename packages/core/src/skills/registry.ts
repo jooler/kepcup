@@ -597,6 +597,16 @@ export class SkillsService {
       this.publishChangedAll();
       return this.#publicEntry(botId, this.#requirePublicRow(name))!;
     }
+    // 草稿行 fail-closed：草稿内容仍在 `_drafts/{name}`（校验未通过、从未转正），
+    // 翻成 active 后 dirOf 解析不到目录——提示词/沙箱看不见它，skills.read 也会
+    // 落空（幽灵启用）。启用只对已转正的行有意义（disabled 反思技能走这里启用）。
+    if (row.status === 'draft') {
+      const entry = this.entryFor(botId, name);
+      throw new AppError(
+        'INVALID_INPUT',
+        `草稿技能不能启用：${entry?.statusReason ?? '生成未通过校验，请先查看失败原因'}`,
+      );
+    }
     // P12/BR-P12-002: the gate is the CURRENT effective verdict, not the
     // stored status. A row imported while the enhanced sandbox was missing
     // is stored `incompatible`; once the backend is installed the verdict
@@ -976,7 +986,9 @@ export class SkillsService {
       kind: 'authored',
       libraryId: null,
       status: 'draft',
-      statusReason: reason.slice(0, 500),
+      // 2000 而非 500：失败原因按行承载逐条检查结果（ok/FAIL），截太狠技能面板
+      // 的逐条还原会缺尾部条目。
+      statusReason: reason.slice(0, 2000),
     });
   }
 

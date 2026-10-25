@@ -160,8 +160,13 @@ test('import flow: approval card shows scan results; approval lands in the Skill
     await expect(item.locator('[data-testid="skill-status"]')).toContainText('已启用');
     await expect(item.locator('[data-testid="skill-compat"]')).toContainText('兼容');
 
+    // 详情态：点条目进入（操作按钮都在详情里）。
+    await item.click();
+    const detail = page.locator('[data-testid="skill-detail"]');
+    await expect(detail).toBeVisible();
+
     // View SKILL.md (skills.read): the full markdown incl. frontmatter.
-    await item.locator('[data-testid="skill-view-deploy-check"]').click();
+    await detail.locator('[data-testid="skill-view-deploy-check"]').click();
     const readDialog = page.locator('[data-testid="skills-read-dialog"]');
     await expect(readDialog).toBeVisible();
     await expect(readDialog.locator('[data-testid="skills-read-content"]')).toContainText(
@@ -173,7 +178,7 @@ test('import flow: approval card shows scan results; approval lands in the Skill
     await readDialog.locator('[data-testid="skills-read-close"]').click();
 
     // Uninstall with the two-step confirm; the list returns to empty.
-    await item.locator('[data-testid="skill-uninstall-deploy-check"]').click();
+    await detail.locator('[data-testid="skill-uninstall-deploy-check"]').click();
     await expect(page.locator('[data-testid="skills-uninstall-dialog"]')).toBeVisible();
     await page.locator('[data-testid="skills-uninstall-confirm"]').click();
     await expect(page.locator('[data-testid="skills-empty"]')).toBeVisible({ timeout: 30_000 });
@@ -224,17 +229,25 @@ test('skills tab: multi-skill candidate pick, then enable / disable', async () =
     // Only the picked candidate was installed.
     await expect(page.locator('[data-testid="skill-item-alpha-skill"]')).toHaveCount(0);
 
-    // Disable → status flips to 已停用 (skills.disable); the imported skill has
-    // no history entry (only authored skills keep git history).
-    await expect(item.locator('[data-testid="skill-history-beta-skill"]')).toHaveCount(0);
-    await item.locator('[data-testid="skill-disable-beta-skill"]').click();
-    await expect(item).toHaveAttribute('data-skill-status', 'disabled', { timeout: 30_000 });
-    await expect(item.locator('[data-testid="skill-status"]')).toContainText('已停用');
+    // 详情态：启停按钮都在详情里；导入技能没有版本历史入口。
+    await item.click();
+    const detail = page.locator('[data-testid="skill-detail"]');
+    await expect(detail).toBeVisible();
+    await expect(detail.locator('[data-testid="skill-history-beta-skill"]')).toHaveCount(0);
 
-    // Re-enable.
-    await item.locator('[data-testid="skill-enable-beta-skill"]').click();
-    await expect(item).toHaveAttribute('data-skill-status', 'active', { timeout: 30_000 });
-    await expect(item.locator('[data-testid="skill-status"]')).toContainText('已启用');
+    // Disable → the detail badge flips to 已停用 (skills.disable).
+    await detail.locator('[data-testid="skill-disable-beta-skill"]').click();
+    await expect(detail.locator('[data-testid="skill-detail-status"]')).toContainText('已停用', {
+      timeout: 30_000,
+    });
+
+    // Re-enable; back on the list the row reflects the active status again.
+    await detail.locator('[data-testid="skill-enable-beta-skill"]').click();
+    await expect(detail.locator('[data-testid="skill-detail-status"]')).toContainText('已启用', {
+      timeout: 30_000,
+    });
+    await page.locator('[data-testid="skills-back"]').click();
+    await expect(item).toHaveAttribute('data-skill-status', 'active');
   } finally {
     await closeSession(session);
     await repo.cleanup();
@@ -277,7 +290,11 @@ test('P12: a skill declaring sandbox: enhanced is incompatible while the enhance
     await expect(item).toBeVisible({ timeout: 30_000 });
     await expect(item).toHaveAttribute('data-skill-status', 'incompatible', { timeout: 30_000 });
     await expect(item.locator('[data-testid="skill-compat"]')).toContainText('不兼容');
-    const hint = item.locator('[data-testid="skill-enhanced-hint"]');
+    // 提示文案在详情里（列表行只带标签）。
+    await item.click();
+    const detail = page.locator('[data-testid="skill-detail"]');
+    await expect(detail).toBeVisible();
+    const hint = detail.locator('[data-testid="skill-enhanced-hint"]');
     await expect(hint).toBeVisible();
     await expect(hint).toContainText('增强沙箱');
   } finally {
