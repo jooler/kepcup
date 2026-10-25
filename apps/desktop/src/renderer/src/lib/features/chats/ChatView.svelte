@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
+  import { isSingleBotConversation } from './single-bot-conversation';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -34,7 +35,7 @@
   // 访谈目录闸门（19/D59）：目录卡未答期间输入禁用——回答只能经卡片提交。
   const pathGateClosed = $derived.by(() => {
     const c = current;
-    if (c === null || c.conversation.type !== 'direct') return false;
+    if (c === null || !isSingleBotConversation(c.conversation.type)) return false;
     if (c.conversation.bot?.setupState !== 'interviewing') return false;
     const card = [...c.messages]
       .reverse()
