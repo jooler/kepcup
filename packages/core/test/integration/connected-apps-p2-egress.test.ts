@@ -412,6 +412,17 @@ describe('§6.2 污点外发控制', () => {
     expect(
       ((await env.call('apps.egressSummary', { botId: other.id })) as { total: number }).total,
     ).toBe(0);
+
+    // 关闭汇总 = 删除该 Bot 的 egress_tainted 审计（apps.egressClear）：本 Bot 归零，
+    // 其他 Bot 的记录不受影响；新记录会重新累计（见 egressTainted 单测）。
+    const cleared = (await env.call('apps.egressClear', { botId: bot.id })) as { deleted: number };
+    expect(cleared.deleted).toBe(3);
+    expect(
+      ((await env.call('apps.egressSummary', { botId: bot.id })) as { total: number }).total,
+    ).toBe(0);
+    expect(
+      ((await env.call('apps.egressSummary', { botId: other.id })) as { total: number }).total,
+    ).toBe(0);
   }, 300_000);
 
   it('「本对话内一直允许」arms a conversation-wide allowance; a fresh read of app data re-cards', async () => {
