@@ -120,8 +120,22 @@ function showWindow(): void {
   window.focus();
 }
 
-/** Opens the window and navigates the renderer to the conversation. */
-function showConversation(conversationId: string): void {
+/**
+ * Opens the window and navigates the renderer to the conversation.
+ * A card conversation is not selected here.
+ */
+async function showConversation(conversationId: string): Promise<void> {
+  let type: string | null = null;
+  try {
+    const result = (await coreHost?.callPlatform('conversations.kind', {
+      id: conversationId,
+    })) as { type?: string | null } | undefined;
+    type = result?.type ?? null;
+  } catch {
+    type = null;
+  }
+  // P3: open the project board on this card. Do not chat.select() it.
+  if (type === 'card') return;
   showWindow();
   window?.webContents.send('navigate-conversation', conversationId);
 }
@@ -688,7 +702,7 @@ function bootstrap(): void {
     if (!Notification.isSupported()) return;
     const notification = new Notification({ title, body });
     notification.on('click', () => {
-      if (conversationId !== null) showConversation(conversationId);
+      if (conversationId !== null) void showConversation(conversationId);
       else showWindow();
     });
     notification.show();

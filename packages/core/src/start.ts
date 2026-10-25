@@ -1139,7 +1139,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
     const userProfileAvatars = new UserProfileAvatarService({ paths, clock, settings });
-    const conversations = new ConversationsService(mainDb, clock);
+    const conversations = new ConversationsService(mainDb, clock, {
+      onUpdated: (conversation) => events.emit('conversation.updated', { conversation }),
+    });
     const messages = new MessagesService(mainDb, clock);
     // 项目组域服务先于 orchestrator 构造；removeMemberCascade 闭包引用其后的
     // lifecycle（仅运行期触发，无 TDZ 问题）。显式类型标注打断 projects →
@@ -3524,6 +3526,19 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       },
     },
     // D94 §5.5: 分享目标快照（主进程写进 App Group 供 Share Extension 读）。
+    // Notification clicks ask this before the renderer chat.select()s. A card
+    // conversation is not a sidebar chat (P3 opens the board instead).
+    'conversations.kind': {
+      input: z.object({ id: z.string().min(1) }),
+      output: z.object({
+        type: z.enum(['direct', 'project', 'card']).nullable(),
+      }),
+      handle: async (input) => {
+        const id = (input as { id: string }).id;
+        const conversation = services.domain?.conversations.get(id) ?? null;
+        return { type: conversation?.type ?? null };
+      },
+    },
     'share.targets': {
       input: voidInput,
       output: shareTargetsSchema,
