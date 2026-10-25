@@ -7,6 +7,7 @@
   import { wikiCrumbs, wikiStore, type WikiCrumb } from '$lib/stores/wiki.svelte';
   import { listWikiDir } from './wiki-browse';
   import WikiSourcesPanel from './WikiSourcesPanel.svelte';
+  import DetailHeader from '../right-panel/DetailHeader.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
 
@@ -16,11 +17,23 @@
    * both surfaces — the bot panel's e2e (wiki.spec.ts) must keep passing.
    *
    * 页面在数据层允许目录结构（pages/** 任意深度），列表按当前目录分层下钻；
-   * 位置状态在 wikiStore（per owner），右栏 DetailHeader 用它画面包屑。项目
-   * Wiki 页没有 DetailHeader，面包屑内联在顶行。历史视图内联替换搜索 + 列表
-   * （不再是弹框）：条目点开浏览该次提交时的页面与全文，据此决定是否回滚。
+   * 位置状态在 wikiStore（per owner），面包屑由本组件画：Bot 右栏经
+   * DetailHeader（onBack 传入时，含右侧页面删除），项目 Wiki 页内联在顶行。
+   * 历史视图内联替换搜索 + 列表（不再是弹框）。
    */
-  let { owner, active }: { owner: WikiOwner; active: boolean } = $props();
+  let {
+    owner,
+    active,
+    onBack = null,
+    headerTitle = '',
+  }: {
+    owner: WikiOwner;
+    active: boolean;
+    /** 传入时（Bot 右栏）在顶部渲染 DetailHeader：返回二级菜单 + 面包屑。 */
+    onBack?: (() => void) | null;
+    /** DetailHeader 的标题（aria-label 与无面包屑兜底，仅 onBack 传入时用）。 */
+    headerTitle?: string;
+  } = $props();
 
   /** The sources sub-view (project wikis only — bot wikis have no ledger). */
   let sourcesOpen = $state(false);
@@ -30,6 +43,8 @@
   const history = $derived(wikiStore.historyOf(owner));
   const crumbs = $derived(wikiCrumbs(owner));
   const listing = $derived(listWikiDir(pages, nav.dir));
+  /** 浏览视图根目录：提示文本与历史入口只在这里出现，其余位置由面包屑导航。 */
+  const atRoot = $derived(nav.mode === 'list' && nav.dir === '' && nav.pagePath === null);
 
   /** Search box content; empty string means "not searching" (tree shown). */
   let search = $state('');
@@ -103,6 +118,8 @@
   // 列表视图打开的页面：内容随导航位置拉取；失败（如页面已被维护删除）退回列表。
   $effect(() => {
     const path = nav.pagePath;
+    // 换页 / 离开页面即撤销已点下的删除确认（控件贴面包屑，易被顺手带过去）。
+    deleteArmed = false;
     if (nav.mode !== 'list' || path === null) {
       page = null;
       pageLoading = false;
@@ -314,6 +331,62 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="wiki-tab">
+  {#snippet pageDeleteControl()}
+    <!--
+      页面删除（pages/ 页面才有）：图标按钮贴在面包屑行右侧（Bot 右栏在
+      DetailHeader 动作区，项目 Wiki 页在顶行右端），两步确认原地展开。
+    -->
+    {#if nav.mode === 'list' && nav.pagePath !== null && nav.pagePath.startsWith('pages/')}
+      {#if deleteArmed}
+        <Button
+          size="sm"
+          variant="ghost"
+          class="h-6 px-2 text-xs"
+          onclick={() => (deleteArmed = false)}
+          data-testid="wiki-page-delete-cancel"
+        >
+          {t('common.cancel')}
+        </Button>
+        <Button
+          size="sm"
+          variant="destructive"
+          class="h-6 px-2 text-xs"
+          disabled={deleting}
+          onclick={() => void deletePage()}
+          data-testid="wiki-page-delete-confirm"
+        >
+          {t('wiki.deleteConfirm')}
+        </Button>
+      {:else}
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-7 shrink-0 text-destructive hover:text-destructive"
+          title={t('wiki.delete')}
+          onclick={() => (deleteArmed = true)}
+          data-testid="wiki-page-delete"
+        >
+          <Trash2 class="size-4" aria-hidden="true" />
+        </Button>
+      {/if}
+    {/if}
+  {/snippet}
+
+  {#if onBack !== null && nav.mode !== 'history'}
+    <!--
+      Bot 右栏的「< Wiki」头行（返回二级菜单 + 内容面包屑）由本组件渲染：
+      页面删除控件与面包屑同行（DetailHeader 动作区）。历史视图仍走下面的
+      返回行（历史不属于内容导航，不进面包屑），此时头行整体让位。
+    -->
+    <DetailHeader
+      title={headerTitle}
+      {onBack}
+      breadcrumb={crumbs}
+      breadcrumbTestid="wiki-breadcrumb"
+      action={pageDeleteControl}
+    />
+  {/if}
+
   {#snippet historyBreadcrumb()}
     <!-- 快照面包屑（提交列表下方 / 快照页面顶行共用）：目录段可点，末段文档名不可点 -->
     <nav
@@ -343,77 +416,86 @@
 
   {#if !(nav.mode === 'history' && nav.historyCommit !== null)}
     <!-- 提交内部（快照列表 / 快照页面）自带返回行：顶部的提示行整体隐藏。 -->
-    <div class="flex items-center justify-between gap-2">
-      <span class="flex min-w-0 items-center gap-1">
-        {#if nav.mode === 'history'}
-          <!-- 历史视图的返回：历史不属于内容导航（不进面包屑），这里回浏览视图。 -->
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-7 shrink-0"
-            title={t('common.back')}
-            onclick={() => closeHistoryView()}
-            data-testid="wiki-history-back"
-          >
-            <ChevronLeft class="size-4" aria-hidden="true" />
-          </Button>
-        {/if}
-        {#if nav.mode !== 'history' && owner.kind === 'project' && crumbs.length > 1}
-          <!-- 项目 Wiki 页没有 DetailHeader：面包屑内联（Bot 面板由 RightPanel 画）。 -->
-          <nav
-            class="flex min-w-0 items-center gap-0.5 text-sm font-medium"
-            data-testid="wiki-breadcrumb"
-            aria-label="Wiki"
-          >
-            {#each crumbs as crumb, index (index)}
-              {#if index > 0}
-                <span class="shrink-0 text-xs text-muted-foreground">/</span>
-              {/if}
-              {#if crumb.onJump !== undefined}
-                <button
-                  type="button"
-                  class="min-w-0 cursor-pointer truncate rounded px-0.5 text-muted-foreground transition-colors hover:text-foreground"
-                  onclick={crumb.onJump}
-                  title={crumb.label}
-                >
-                  {crumb.label}
-                </button>
-              {:else}
-                <span class="min-w-0 truncate" title={crumb.label}>{crumb.label}</span>
-              {/if}
-            {/each}
-          </nav>
-        {:else}
-          <p class="min-w-0 truncate text-xs text-muted-foreground">
-            {t(owner.kind === 'project' ? 'project.wiki.hint' : 'wiki.tabHint')}
-          </p>
-        {/if}
-      </span>
-      <span class="flex shrink-0 gap-1">
-        {#if owner.kind === 'project'}
-          <Button
-            size="sm"
-            variant={sourcesOpen ? 'secondary' : 'outline'}
-            onclick={() => (sourcesOpen = !sourcesOpen)}
-            data-testid="wiki-sources-toggle"
-            aria-pressed={sourcesOpen}
-          >
-            <BookOpen class="size-3.5" aria-hidden="true" />
-            {t('wiki.sources.title')}
-          </Button>
-        {/if}
-        <Button
-          size="sm"
-          variant={nav.mode === 'history' ? 'secondary' : 'outline'}
-          onclick={() => toggleHistory()}
-          data-testid="wiki-history"
-          aria-pressed={nav.mode === 'history'}
-        >
-          <History class="size-3.5" aria-hidden="true" />
-          {t('wiki.history')}
-        </Button>
-      </span>
-    </div>
+    {#if owner.kind === 'project' || nav.mode === 'history' || atRoot}
+      <!--
+        提示文本与历史入口只在根目录出现：下钻后的位置导航全走面包屑（Bot
+        面板是右栏 DetailHeader，项目 Wiki 页是下面的内联面包屑），此行让位。
+        历史列表态仍渲染本行，只留返回按钮（退出历史视图的唯一入口）。
+      -->
+      <div class="flex items-center justify-between gap-2">
+        <span class="flex min-w-0 items-center gap-1">
+          {#if nav.mode === 'history'}
+            <!-- 历史视图的返回：历史不属于内容导航（不进面包屑），这里回浏览视图。 -->
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-7 shrink-0"
+              title={t('common.back')}
+              onclick={() => closeHistoryView()}
+              data-testid="wiki-history-back"
+            >
+              <ChevronLeft class="size-4" aria-hidden="true" />
+            </Button>
+          {/if}
+          {#if nav.mode !== 'history' && owner.kind === 'project' && crumbs.length > 1}
+            <!-- 项目 Wiki 页没有 DetailHeader：面包屑内联在顶行（Bot 右栏走上面的 DetailHeader）。 -->
+            <nav
+              class="flex min-w-0 items-center gap-0.5 text-sm font-medium"
+              data-testid="wiki-breadcrumb"
+              aria-label="Wiki"
+            >
+              {#each crumbs as crumb, index (index)}
+                {#if index > 0}
+                  <span class="shrink-0 text-xs text-muted-foreground">/</span>
+                {/if}
+                {#if crumb.onJump !== undefined}
+                  <button
+                    type="button"
+                    class="min-w-0 cursor-pointer truncate rounded px-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                    onclick={crumb.onJump}
+                    title={crumb.label}
+                  >
+                    {crumb.label}
+                  </button>
+                {:else}
+                  <span class="min-w-0 truncate" title={crumb.label}>{crumb.label}</span>
+                {/if}
+              {/each}
+            </nav>
+          {:else if atRoot}
+            <p class="min-w-0 truncate text-xs text-muted-foreground">
+              {t(owner.kind === 'project' ? 'project.wiki.hint' : 'wiki.tabHint')}
+            </p>
+          {/if}
+        </span>
+        <span class="flex shrink-0 items-center gap-1">
+          {#if owner.kind === 'project'}
+            <Button
+              size="sm"
+              variant={sourcesOpen ? 'secondary' : 'outline'}
+              onclick={() => (sourcesOpen = !sourcesOpen)}
+              data-testid="wiki-sources-toggle"
+              aria-pressed={sourcesOpen}
+            >
+              <BookOpen class="size-3.5" aria-hidden="true" />
+              {t('wiki.sources.title')}
+            </Button>
+          {/if}
+          {#if atRoot}
+            <Button
+              size="sm"
+              variant="outline"
+              onclick={() => toggleHistory()}
+              data-testid="wiki-history"
+            >
+              <History class="size-3.5" aria-hidden="true" />
+              {t('wiki.history')}
+            </Button>
+          {/if}
+          {@render pageDeleteControl()}
+        </span>
+      </div>
+    {/if}
   {/if}
 
   {#if nav.mode === 'history'}
@@ -599,49 +681,10 @@
       </div>
     {/if}
   {:else if nav.pagePath !== null}
-    <!-- 页面内容：markdown 渲染（与消息气泡同一 Streamdown 先例）；导航走面包屑 -->
+    <!-- 页面内容：markdown 渲染（与消息气泡同一 Streamdown 先例）；导航走面包屑，
+         删除入口在面包屑行右侧（pageDeleteControl）。 -->
     <div class="flex min-h-0 flex-1 flex-col gap-2" data-testid="wiki-page-view">
-      {#if nav.pagePath.startsWith('pages/')}
-        {#if deleteArmed}
-          <div class="flex items-center justify-end gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              class="h-6 px-2 text-xs"
-              onclick={() => (deleteArmed = false)}
-              data-testid="wiki-page-delete-cancel"
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              class="h-6 px-2 text-xs"
-              disabled={deleting}
-              onclick={() => void deletePage()}
-              data-testid="wiki-page-delete-confirm"
-            >
-              {t('wiki.deleteConfirm')}
-            </Button>
-          </div>
-        {:else}
-          <div class="flex items-center justify-end">
-            <Button
-              size="sm"
-              variant="ghost"
-              class="h-6 px-2 text-xs text-destructive hover:text-destructive"
-              onclick={() => (deleteArmed = true)}
-              data-testid="wiki-page-delete"
-            >
-              <Trash2 class="size-3.5" aria-hidden="true" />
-              {t('wiki.delete')}
-            </Button>
-          </div>
-        {/if}
-      {/if}
-      <h3 class="text-sm font-medium" data-testid="wiki-page-title">
-        {page?.title ?? (pageLoading ? '…' : '')}
-      </h3>
+      <!-- 文档名不单独成行：面包屑末段（DetailHeader / 内联）已是当前位置。 -->
       <div
         class="min-h-0 flex-1 overflow-y-auto rounded-md border bg-muted/30 p-3 text-sm"
         data-testid="wiki-page-content"
