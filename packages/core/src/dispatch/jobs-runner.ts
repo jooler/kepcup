@@ -8,6 +8,7 @@ import type { AgentEngine } from '../agent/types.js';
 import { builtinModelRef, type LlmPurpose, type LlmRouter } from '../agent/llm-router.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
+import { projectScopeOf } from '../domain/project-scope.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { UsageService } from '../domain/usage.js';
 import type { RunsService } from '../domain/runs.js';
@@ -410,9 +411,10 @@ export class JobsRunner {
   #wikiSuggestionOwner(botId: string, conversationId: string | null): WikiOwner {
     if (conversationId !== null) {
       const conversation = this.#deps.conversations.get(conversationId);
-      if (conversation?.type === 'project') {
-        const members = this.#deps.conversations.memberBotIds(conversationId);
-        if (members.includes(botId)) return { kind: 'project', id: conversationId };
+      const projectId = projectScopeOf(conversation);
+      if (projectId !== null) {
+        const members = this.#deps.conversations.memberBotIds(projectId);
+        if (members.includes(botId)) return { kind: 'project', id: projectId };
       }
     }
     return { kind: 'bot', id: botId };

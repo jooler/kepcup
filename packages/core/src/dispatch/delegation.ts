@@ -226,6 +226,12 @@ export class DelegationHost implements DelegationToolFacade {
     if (conversation === null || conversation.readOnly) {
       return { ok: false, message: '当前对话不可用，无法委派' };
     }
+    if (conversation.type === 'card') {
+      return {
+        ok: false,
+        message: '卡片对话里不能委派：请在这条对话里直接完成，或请用户去私聊处理。',
+      };
+    }
     if (conversation.type === 'project') {
       // 同组降级（§3.3）：同组用 @；B 不在组里则首期不支持。
       return this.#deps.conversations.memberBotIds(conversationId).includes(toBotId)
