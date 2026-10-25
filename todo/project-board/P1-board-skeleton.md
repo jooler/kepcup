@@ -199,4 +199,49 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 7. 实施记录
 
-（执行智能体在最后一个提交里填写：步骤 0 的类型 / 构建结论；`TodoService` 看板缝的实现方式与 `todos.changed` 取舍；步骤 11 的「核对点」结果；新增的非 README §4 名字；DEVIATIONS 编号；全量测试结果。）
+本段只记录 **P1 步骤 0–6 的后端切片**（分支 `cursor/board-p1-skeleton-05a0`）。**步骤 7–14 的渲染层没有开始**：没有 `ProjectBoardView` / `BoardView` / 拖拽组件 / `InlineEditable` / `CardDialog` / `dnd-setup.ts` / i18n 文案 / e2e。全量 `pnpm test` 未跑（按定向测试规则，留给阶段收口）。
+
+### 步骤 0
+
+- `svelte-dnd-action@0.9.80` 精确写在 `apps/desktop` 的 `dependencies`（无 `^`）。锁文件只增加该包（peer 为仓库里已有的 svelte，无新的传递依赖）。未改 `allowBuilds`。
+- 类型探针：临时 `.svelte` 使用 `use:dndzone` 与 `onconsider` / `onfinalize`，`pnpm --filter @kepcup/desktop typecheck`（svelte-check）**没有**报未知属性。库的 `ActionReturn<Options<T>, DndZoneAttributes<T>>` 已带这两个属性，**不需要**模块扩展 `.d.ts`。探针已删除。
+- `pnpm --filter @kepcup/desktop build` 与 `pnpm --filter @kepcup/desktop build:web` 均通过。
+- `dnd-setup.ts`（`setKeyboardDragTrigger` / `setAriaStrings`）留到步骤 13 的 i18n，本切片未写。
+
+### TodoService 缝与 `todos.changed`
+
+- 开关只有 `board_cards` 行。`BoardStore.locationOf` 不依赖任何服务；`TodoService` 注入可选的 `boardCards.locationOf`。`toEntry` 据此填 `TodoEntry.board`（没有侧表行则为 `null`）。
+- `todos.list` 在 SQL 里排除 `board_cards.todo_id`（RPC 入参未改）。管家 `list_todos` 走同一个 `list`。`<workbench>` 在 `buildWorkbenchSection` 里再滤掉 `todo.board != null`（`== null` 仍计入旧夹具里未写该字段的事项）。
+- `update` / `start` / `complete` / `cancel` / `reopen` / `purge` 在其它校验之前：侧表行存在且 `actor !== 'board'` 抛 `BOARD_MANAGED`。`TodoActor` 增 `'board'`（不写入 `source`，仍是 `'user'`）。管家工具的 `failure()` 把 `BOARD_MANAGED` 原样放到 `errorCode`（原先非 `NOT_FOUND` 一律收成 `INVALID_INPUT`）。
+- 建卡：`insertBoardDraft` **不**发事件（此时还没有侧表行，发了会变成 `todos.changed`）。`BoardService` 在同一事务写入侧表后再发 `board.changed`。
+- 其它看板事项变更：`#changed` 查到侧表位置就发 `board.changed`，不发 `todos.changed`。`purge` 在删除前记下 `{ projectId, columnId }`，避免级联删掉侧表后误发 `todos.changed`。`reconcile` 仍扫描这些事项（本阶段是无指派的 `draft`，没有动作）。取舍见 DEV-046。
+- `scheduled_by` 的 CHECK 只有 `'user' | 'butler'`。P1 看板写入不排期；若 `actor === 'board'` 真的走到 `#schedule`，记成 `'user'`。P2 的排期 RPC 应改这里，不要把 `'board'` 写进该列。
+
+### 权限
+
+`canWriteModule('board', actor)` 的 actor 是 `'user' | 'lead' | 'member'`。用户恒可写；`lead` 在现有实现里也对所有模块返回 true（`write: 'lead'` 挡的是 `member`）。P1 的 RPC 固定传 `'user'`。`member` 拒绝为 `INVALID_INPUT`（没有单独的看板权限错误码，与 wiki 的拒绝方式相同）。只读项目的写（含播种）为 `BOARD_PROJECT_READ_ONLY`。
+
+### 超长文本
+
+卡片正文按码点超过 `BOARD_CARD_TEXT_MAX_CHARS` 时服务抛 `INVALID_INPUT`（错误码表没有「文本过长」）。空文本（trim 后）为 `BOARD_TEXT_EMPTY`。分栏标题 trim 后空或超过 60 个码点为 `INVALID_INPUT`。
+
+### 新增名字（README §4 未列）
+
+- `BoardStore.locationOf`、`placeItem`（`positions.ts`，在 `positionBetween` / `needsRenumber` / `renumber` 之上的落点函数）、`insertBoardDraft`、`updateBoardText`。
+- RPC schema 常量沿 `todos*Schema` 的写法：`boardGetInputSchema`、`boardCardIdInputSchema`、`boardEmptyOutputSchema`、`boardChangedPayloadSchema` 等。线上方法名不变。
+- 迁移测试文件 `packages/core/test/unit/project-board-migration.test.ts`。
+- id 种类 `bcol`（前缀 `bcol_` 已在契约里）。
+
+### 偏差
+
+- DEV-045：不添加 `board.cards.reject`。
+- DEV-046：看板事项不广播 `todos.changed`。
+
+### 尚未做、会挡住 UI 切片的点
+
+- 注册表已把 `board` 标为 `available` 且顺序为 `chat, board, wiki, okr, calendar`。`project-tabs.test.ts`、`shell-project.svelte.test.ts`、`project-shell.spec.ts` 仍按「board 是 planned」断言，要等步骤 7 一起改。本切片没跑这些测试。
+- `board.summary` 与 `board.cards.assign / schedule / start / complete / cancel / reopen / conversation` 只有 shared schema 和 `APP_METHODS` 登记，**没有**绑到 `rpc/bindings.ts`。直接调用会当未知方法失败。
+- 卡片投影的执行字段恒为 `assignee: null`、`conversationId: null`、`unreadCount: 0`、`pendingApprovals: 0`、`task: null`。
+- 同一张卡的文本更新会发两次相同的 `board.changed`（`TodoService.#changed` 一次，`BoardService` 再一次）。渲染层去抖可以吸收；若步骤 8 要严格计次，应只保留一处。
+- 错误码的 `chats.errorCode.BOARD_*` 文案属于步骤 13，本切片未写。
+- 删项目：`lifecycle.deleteConversation` 在删会话行之前、紧挨 `workbench.onConversationDeleting` 调用 `board.onProjectDeleting`（仅 `type === 'project'`）。钩子失败走 `#cascade`，记日志、不中断删除（与工作台钩子相同）。
