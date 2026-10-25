@@ -6,7 +6,13 @@
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { board, type BoardCardView, type BoardColumnView } from './board.svelte';
-  import { anchorFromFinalize, cardClickGuard, isNoopMove, isShadow, stripShadow } from './board-dnd';
+  import {
+    anchorFromFinalize,
+    cardClickGuard,
+    isNoopMove,
+    isShadow,
+    stripShadow,
+  } from './board-dnd';
   import BoardCard from './BoardCard.svelte';
   import InlineEditable from './InlineEditable.svelte';
   import NewCardComposer from './NewCardComposer.svelte';
@@ -83,17 +89,20 @@
       info,
     });
     if (decision.kind === 'ignore') {
-      if (info.trigger === 'droppedIntoAnother') {
-        items = stripShadow(event.detail.items);
-        return;
-      }
+      if (info.trigger === 'droppedIntoAnother') items = stripShadow(event.detail.items);
+      // Pointer drags end here. Keyboard drags keep going until dragStopped.
       if (info.source !== 'keyboard') board.setDragging(false);
       return;
     }
     const next = stripShadow(event.detail.items);
     const prevIds = column.cards.map((card) => card.id);
     items = next;
-    if (!isNoopMove(prevIds, next.map((card) => card.id))) {
+    if (
+      !isNoopMove(
+        prevIds,
+        next.map((card) => card.id),
+      )
+    ) {
       board.moveCard(info.id, column.id, decision.beforeId);
     }
     if (info.source !== 'keyboard') board.setDragging(false);
@@ -211,7 +220,7 @@
 
   <div
     bind:this={listEl}
-    class="flex min-h-16 min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
+    class="flex min-h-0 min-h-16 flex-1 flex-col gap-2 overflow-y-auto"
     aria-label={column.title}
     data-testid="board-column-cards"
     onscroll={onListScroll}

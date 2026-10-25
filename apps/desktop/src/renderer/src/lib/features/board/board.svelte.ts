@@ -232,14 +232,19 @@ export class BoardState {
     };
     this.columns = [...this.columns, column];
     this.focusColumnId = id;
-    return this.#write(epoch, snapshot, async () => {
-      const result = (await core.call('board.columns.create', {
-        projectId,
-        title: column.title,
-      })) as { column: BoardColumn };
-      if (this.#epoch === epoch) this.#replaceColumn(id, result.column);
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        const result = (await core.call('board.columns.create', {
+          projectId,
+          title: column.title,
+        })) as { column: BoardColumn };
+        if (this.#epoch === epoch) this.#replaceColumn(id, result.column);
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   async renameColumn(columnId: string, title: string): Promise<boolean> {
@@ -251,14 +256,19 @@ export class BoardState {
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
     this.#patchColumn(columnId, { title: next });
-    return this.#write(epoch, snapshot, async () => {
-      const result = (await core.call('board.columns.update', {
-        columnId,
-        title: next,
-      })) as { column: BoardColumn };
-      if (this.#epoch === epoch) this.#patchColumn(columnId, result.column);
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        const result = (await core.call('board.columns.update', {
+          columnId,
+          title: next,
+        })) as { column: BoardColumn };
+        if (this.#epoch === epoch) this.#patchColumn(columnId, result.column);
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   /**
@@ -287,10 +297,15 @@ export class BoardState {
     ) {
       this.focusColumnId = null;
     }
-    return this.#write(epoch, snapshot, async () => {
-      await core.call('board.columns.delete', { columnId, deleteCards });
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        await core.call('board.columns.delete', { columnId, deleteCards });
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   async createCard(columnId: string, text: string): Promise<boolean> {
@@ -304,15 +319,20 @@ export class BoardState {
     const snapshot = cloneColumns(this.columns);
     const card = blankCard(id, projectId, columnId, body, (column.cards[0]?.position ?? 1) - 1);
     this.#patchColumn(columnId, { cards: [card, ...column.cards] });
-    return this.#write(epoch, snapshot, async () => {
-      const result = (await core.call('board.cards.create', {
-        projectId,
-        columnId,
-        text: body,
-      })) as { card: BoardCard };
-      if (this.#epoch === epoch) this.#replaceCard(id, result.card);
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        const result = (await core.call('board.cards.create', {
+          projectId,
+          columnId,
+          text: body,
+        })) as { card: BoardCard };
+        if (this.#epoch === epoch) this.#replaceCard(id, result.card);
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   async updateCardText(cardId: string, text: string): Promise<boolean> {
@@ -324,14 +344,19 @@ export class BoardState {
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
     this.#patchCard(cardId, { text: body, updatedAt: Date.now() });
-    return this.#write(epoch, snapshot, async () => {
-      const result = (await core.call('board.cards.update', {
-        cardId,
-        text: body,
-      })) as { card: BoardCard };
-      if (this.#epoch === epoch) this.#patchCard(cardId, result.card);
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        const result = (await core.call('board.cards.update', {
+          cardId,
+          text: body,
+        })) as { card: BoardCard };
+        if (this.#epoch === epoch) this.#patchCard(cardId, result.card);
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   /** Move a card before `beforeId` in `columnId` (`null` = end of that column). */
@@ -355,10 +380,15 @@ export class BoardState {
       cards: column.cards.filter((card) => card.id !== cardId),
     }));
     if (this.openCardId === cardId) this.openCardId = null;
-    return this.#write(epoch, snapshot, async () => {
-      await core.call('board.cards.delete', { cardId });
-      return true;
-    }, t('board.error.saveFailed'));
+    return this.#write(
+      epoch,
+      snapshot,
+      async () => {
+        await core.call('board.cards.delete', { cardId });
+        return true;
+      },
+      t('board.error.saveFailed'),
+    );
   }
 
   #switchProject(projectId: string): void {
@@ -629,7 +659,8 @@ export class BoardState {
     const next = this.columns.slice();
     const [column] = next.splice(index, 1);
     if (column === undefined) return;
-    const beforeIndex = beforeId === null ? next.length : next.findIndex((item) => item.id === beforeId);
+    const beforeIndex =
+      beforeId === null ? next.length : next.findIndex((item) => item.id === beforeId);
     next.splice(beforeIndex < 0 ? next.length : beforeIndex, 0, column);
     this.columns = next;
   }
@@ -649,7 +680,8 @@ export class BoardState {
     this.columns = stripped.map((column) => {
       if (column.id !== columnId) return column;
       const cards = column.cards.slice();
-      const beforeIndex = beforeId === null ? cards.length : cards.findIndex((item) => item.id === beforeId);
+      const beforeIndex =
+        beforeId === null ? cards.length : cards.findIndex((item) => item.id === beforeId);
       cards.splice(beforeIndex < 0 ? cards.length : beforeIndex, 0, card);
       return { ...column, cards };
     });

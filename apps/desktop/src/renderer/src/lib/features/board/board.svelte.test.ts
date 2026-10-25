@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const calls: Array<{ method: string; params: unknown }> = [];
 const handlers = new Map<string, Set<(payload: unknown) => void>>();
-const pending: Array<{ method: string; resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+const pending: Array<{
+  method: string;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+}> = [];
 
 let hangGets = false;
 let failMethod: { method: string; code: string } | null = null;

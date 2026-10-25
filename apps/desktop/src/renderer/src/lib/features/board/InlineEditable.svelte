@@ -112,7 +112,8 @@
 
   $effect(() => {
     const next = value;
-    if (focused || scheduler.hasUnsaved() || scheduler.isSaving() || scheduler.isComposing()) return;
+    if (focused || scheduler.hasUnsaved() || scheduler.isSaving() || scheduler.isComposing())
+      return;
     scheduler.sync(next);
   });
 

@@ -98,8 +98,10 @@ export const enUS = {
   'chats.errorCode.BOARD_COLUMN_NOT_EMPTY':
     'Delete the cards in this column first, or confirm that they should be deleted with it',
   'chats.errorCode.BOARD_TEXT_EMPTY': 'Text cannot be empty',
-  'chats.errorCode.BOARD_CRON_TOO_FREQUENT': 'A repeating schedule cannot be more frequent than once an hour',
-  'chats.errorCode.BOARD_PROJECT_READ_ONLY': 'This project is read-only, so the board cannot be changed',
+  'chats.errorCode.BOARD_CRON_TOO_FREQUENT':
+    'A repeating schedule cannot be more frequent than once an hour',
+  'chats.errorCode.BOARD_PROJECT_READ_ONLY':
+    'This project is read-only, so the board cannot be changed',
   'chats.errorCode.BOARD_ASSIGNEE_INVALID': 'Assign the card to a member of this project',
   'chats.errorCode.BOARD_LOCKED': 'This card is running and cannot be changed right now',
   'runStatus.pleaseWait': 'Please wait…',
