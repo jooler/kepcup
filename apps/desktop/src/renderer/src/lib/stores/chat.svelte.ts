@@ -84,10 +84,10 @@ class ChatState {
       applyConversation: (conversation) => {
         if (isArchivedConversation(conversation)) this.#archivedIds.add(conversation.id);
         else this.#archivedIds.delete(conversation.id);
-        this.#upsertConversation(this.#withDirectBot(conversation));
+        return this.#upsertConversation(this.#withDirectBot(conversation));
       },
     },
-    { attach: false },
+    { attach: false, foreground: true },
   );
   conversations = $state<ConversationView[]>([]);
   /**
@@ -738,9 +738,14 @@ class ChatState {
     );
   }
 
-  #upsertConversation(conversation: ConversationView): void {
+  /**
+   * Insert or refresh a sidebar row. Returns true when this call owned the
+   * open-view write (so the session must not replace it). Card rows are
+   * ignored here; the session applies those itself.
+   */
+  #upsertConversation(conversation: ConversationView): boolean {
     // Card chats are hidden. A dialog session still hears the event itself.
-    if (conversation.type === 'card') return;
+    if (conversation.type === 'card') return false;
     const index = this.conversations.findIndex((c) => c.id === conversation.id);
     const unread = mergeUnreadCount(conversation, this.conversations[index]);
     // A conversation first seen through an event without a count (D75: seq
@@ -756,7 +761,7 @@ class ChatState {
     if (isArchivedConversation(conversation)) {
       this.conversations = this.conversations.filter((c) => c.id !== conversation.id);
       if (this.main.view?.conversation.id === conversation.id) this.close();
-      return;
+      return true;
     }
     // 已删除 Bot 的直聊不回左栏（bot.deleted 时已移除条目）；仅当它正被打开
     // （如记忆证据跳转）时同步当前会话视图。
@@ -768,7 +773,7 @@ class ChatState {
           bot: merged.bot ?? view.conversation.bot,
         };
       }
-      return;
+      return true;
     }
     if (index >= 0) {
       const existing = this.conversations[index]!;
@@ -789,6 +794,7 @@ class ChatState {
         memberPreviews: conversation.memberPreviews ?? view.conversation.memberPreviews,
       };
     }
+    return true;
   }
 
   /**

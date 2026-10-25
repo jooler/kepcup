@@ -57,7 +57,12 @@ export interface ChatSessionHost {
   noteIncoming(conversationId: string, message: Message): void;
   applyRunning(run: Run): void;
   applyBot(bot: Bot): void;
-  applyConversation(conversation: Conversation): void;
+  /**
+   * Sidebar (and, for the main session, the open view). Return true when
+   * this host already wrote the open view, so the session does not replace
+   * that merged row with the raw event.
+   */
+  applyConversation(conversation: Conversation): boolean;
 }
 
 export interface OpenSessionOptions {
@@ -83,7 +88,7 @@ const noopHost: ChatSessionHost = {
   noteIncoming: () => undefined,
   applyRunning: () => undefined,
   applyBot: () => undefined,
-  applyConversation: () => undefined,
+  applyConversation: () => false,
 };
 
 /**
@@ -107,7 +112,10 @@ export class ChatSession {
   #host: ChatSessionHost;
   #unsubscribers: Array<() => void> = [];
   #disposed = false;
-  /** Foreground sessions update the right-panel grants list. Dialogs do not. */
+  /**
+   * Foreground sessions update the right-panel grants list and may open the
+   * main task page. A dialog session is not foreground.
+   */
   #foreground: boolean;
   /** Failed-run banners closed in this instance. Survives `open` of another id. */
   #dismissedFailedRunIds = new Set<string>();
@@ -127,7 +135,11 @@ export class ChatSession {
     options: { attach?: boolean; foreground?: boolean } = {},
   ) {
     this.#host = host;
-    this.#foreground = options.foreground !== false;
+    // Only an explicit foreground session (the main chat) may replace the
+    // right-panel grants list or the main task page. `new ChatSession()` is
+    // a dialog and must not steal either.
+    this.#foreground = options.foreground === true;
+    if (!this.#foreground) this.openTask = () => undefined;
     if (options.attach !== false) this.start();
   }
 
@@ -220,8 +232,11 @@ export class ChatSession {
     this.pendingSetup = null;
     this.#holdConversation(id);
     this.#recheckPendingLinkCards(messages);
-    if (conversation.type === 'project') await this.reloadMembers();
+    // Shell side effects (leave the workbench, close the task page) before
+    // the project member fetch. Waiting on members used to keep the previous
+    // surface up until that RPC returned.
     await options.onReady?.(conversation);
+    if (conversation.type === 'project') await this.reloadMembers();
     await this.markRead();
     await permissions.loadForConversation(id, { foreground: this.#foreground });
     return true;
@@ -534,14 +549,18 @@ export class ChatSession {
 
   #applyConversation(conversation: Conversation): void {
     if (this.#disposed) return;
-    this.#host.applyConversation(conversation);
+    const hostWroteView = this.#host.applyConversation(conversation);
     const view = this.view;
     if (!view || view.conversation.id !== conversation.id) return;
-    view.conversation = {
-      ...conversation,
-      bot: conversation.bot ?? view.conversation.bot,
-      memberPreviews: conversation.memberPreviews ?? view.conversation.memberPreviews,
-    };
+    // The main host merges unread and running markers onto the open view.
+    // Writing the raw event afterwards drops that merge.
+    if (!hostWroteView) {
+      view.conversation = {
+        ...conversation,
+        bot: conversation.bot ?? view.conversation.bot,
+        memberPreviews: conversation.memberPreviews ?? view.conversation.memberPreviews,
+      };
+    }
     if (conversation.type === 'project') void this.reloadMembers();
   }
 
