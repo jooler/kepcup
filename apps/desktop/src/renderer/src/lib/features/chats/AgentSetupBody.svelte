@@ -3,7 +3,7 @@
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { t, type MessageKey } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { core } from '$lib/rpc/client.svelte';
@@ -19,6 +19,7 @@
    * 自动续跑（重试原 run / 冲掉保留的草稿），也可手动「继续」。
    */
   let { requirement }: { requirement: Extract<SetupRequirement, { kind: 'agent' }> } = $props();
+  const session = getChatSession();
 
   let enabling = $state(false);
   let continued = false;
@@ -72,7 +73,7 @@
   async function proceed(): Promise<void> {
     if (continued) return;
     continued = true;
-    await chat.continueAfterSetup();
+    await session.continueAfterSetup();
   }
 
   const showSandboxInstall = $derived(core.platform?.platform === 'linux');

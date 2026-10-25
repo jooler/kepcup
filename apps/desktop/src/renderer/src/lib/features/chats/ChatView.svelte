@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, MessageSquare, X } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, MessageSquare } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
-  import { permissions } from '$lib/stores/permissions.svelte';
+  import { getChatSession } from './chat-session-context';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -11,6 +11,7 @@
   import ProjectView from '$lib/features/project/ProjectView.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
+  import ChatBanners from './ChatBanners.svelte';
   import ProjectComposeBar from './ProjectComposeBar.svelte';
   import SetupRequiredCard from './SetupRequiredCard.svelte';
   import MediaLightbox from './MediaLightbox.svelte';
@@ -26,11 +27,9 @@
    * 实心两行顶栏 + 模块内容区，不再有药丸与右栏（WP6）。两者的沟通主体是同一
    * 份 chatBody snippet，一份代码两处渲染。
    */
-  const current = $derived(chat.current);
+  const session = getChatSession();
+  const current = $derived(session.view);
   const hasMessages = $derived((current?.messages.length ?? 0) > 0);
-  const confirmMode = $derived(
-    current !== null && permissions.sandbox !== null && !permissions.sandbox.available,
-  );
   const isProject = $derived(current?.conversation.type === 'project');
   // 访谈目录闸门（19/D59）：目录卡未答期间输入禁用——回答只能经卡片提交。
   const pathGateClosed = $derived.by(() => {
@@ -77,65 +76,7 @@
 -->
 {#snippet chatBody(topInset: number, bannerTopClass: string)}
   <!-- 浮动提示条（只读 / 确认模式 / 执行失败） -->
-  {#if current!.conversation.readOnly || confirmMode || current!.failedRun}
-    <div
-      class="pointer-events-none absolute inset-x-0 {bannerTopClass} z-30 flex flex-col items-center gap-1.5 px-4"
-    >
-      {#if current!.conversation.readOnly}
-        <div
-          class="pointer-events-auto rounded-full border bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
-          data-testid="readonly-banner"
-        >
-          {t('composer.readOnly')}
-        </div>
-      {/if}
-      {#if confirmMode}
-        <div
-          class="pointer-events-auto rounded-full border border-amber-500/40 bg-background/95 px-3 py-1 text-xs text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
-          data-testid="confirm-mode-banner"
-        >
-          {t('chats.confirmModeBanner', { reason: permissions.sandbox?.reason ?? '' })}
-        </div>
-      {/if}
-      {#if current!.failedRun && !current!.failedRun.setup}
-        <!-- 缺设置的失败（run.setup）由消息列表内的设置卡片接管（18-inline-setup），
-             此处只展示普通失败。 -->
-        <div
-          class="pointer-events-auto flex items-center gap-2 rounded-full border border-destructive/30 bg-background/95 py-1 pr-1.5 pl-3 text-xs text-destructive shadow-sm backdrop-blur"
-          data-testid="run-failed-banner"
-        >
-          <!-- 原因常被截断：悬停可看完整原因。 -->
-          <span
-            class="max-w-md min-w-0 truncate"
-            title={t('chats.runFailed', { reason: current!.failedRun.error ?? '' })}
-          >
-            {t('chats.runFailed', { reason: current!.failedRun.error ?? '' })}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-6 rounded-full px-2"
-            onclick={() => void chat.retryRun(current!.failedRun!.id)}
-            data-testid="run-retry"
-          >
-            {t('chats.retry')}
-          </Button>
-          <!-- 关闭把这次失败标成已读（run 保留）；刷新后不再出现。 -->
-          <Button
-            variant="ghost"
-            size="sm"
-            class="h-6 w-6 rounded-full p-0 text-destructive hover:text-destructive"
-            aria-label={t('common.close')}
-            title={t('common.close')}
-            onclick={() => chat.dismissFailedRun(current!.failedRun!.id)}
-            data-testid="run-failed-dismiss"
-          >
-            <X class="size-3.5" aria-hidden="true" />
-          </Button>
-        </div>
-      {/if}
-    </div>
-  {/if}
+  <ChatBanners topClass={bannerTopClass} />
 
   {#if hasMessages}
     <MessageList {topInset} bottomInset={composerDockHeight} />
@@ -170,7 +111,7 @@
       ></div>
     {/if}
     <ApprovalDock conversationId={current!.conversation.id} />
-    {#if chat.setupRequirement}
+    {#if session.setupRequirement}
       <!--
         缺设置引导卡（docs/design/18-inline-setup.md）：发送门禁置起或最近
         失败 run 携带结构化 setup 时出现在输入坞上方——对话的注意力位置；
@@ -178,7 +119,7 @@
         对话自动继续。
       -->
       <div class="pb-2" data-testid="setup-required-wrap">
-        <SetupRequiredCard requirement={chat.setupRequirement} />
+        <SetupRequiredCard requirement={session.setupRequirement} />
       </div>
     {/if}
     <Composer

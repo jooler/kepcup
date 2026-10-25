@@ -8,6 +8,7 @@
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
 
@@ -22,11 +23,14 @@
     showBot = false,
   }: { schedule: ScheduleReceiptSnapshot; testid: string; showBot?: boolean } = $props();
 
+  const session = getChatSession();
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const when = $derived(describeScheduleWhen(schedule, { localTimeZone, now: Date.now() }));
   /** 派给项目组且没指定负责 Bot 的工作台排期没有 botId：回执卡就在那个项目组里，显示项目名。 */
   const groupName = $derived(
-    schedule.botId === null ? (chat.current?.conversation.title ?? chat.current?.conversation.id ?? '') : null,
+    schedule.botId === null
+      ? (session.view?.conversation.title ?? session.view?.conversation.id ?? '')
+      : null,
   );
   let confirming = $state(false);
   let cancelling = $state(false);

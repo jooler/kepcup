@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
 
   /**
    * 初始化访谈的工作目录卡（docs/design/19 D59）：首问作答后由 core 确定性
@@ -12,6 +13,7 @@
    * 同构——展示首条后续用户消息（setupAnswer 标记）为已答行。
    */
   let { message }: { message: Message } = $props();
+  const session = getChatSession();
 
   const question = $derived(
     message.kind === 'system_event' && 'text' in message.content ? message.content.text : '',
@@ -20,7 +22,7 @@
   // 已答判定：目录卡之后的第一条用户文本消息（answerSetupPath 落的
   // setupAnswer 消息 / 用户自由输入都算）。
   const answeredText = $derived.by(() => {
-    for (const m of chat.current?.messages ?? []) {
+    for (const m of session.view?.messages ?? []) {
       if (m.seq <= message.seq || m.senderType !== 'user' || m.kind !== 'text') continue;
       if (m.status === 'recalled') continue;
       return 'text' in m.content ? m.content.text : '';
@@ -28,13 +30,13 @@
     return null;
   });
   const interactive = $derived(
-    answeredText === null && chat.current?.conversation.bot?.setupState === 'interviewing',
+    answeredText === null && session.view?.conversation.bot?.setupState === 'interviewing',
   );
 
   let submitting = $state(false);
 
   async function submit(path: string | null): Promise<void> {
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = session.view?.conversation.id;
     if (submitting || !interactive || conversationId === undefined) return;
     submitting = true;
     try {
