@@ -60,6 +60,7 @@ import {
   type WikiAssetEntry,
 } from './assets.js';
 import { extractWikiTopics, formatWikiTopics, pageTitleOf } from './topics.js';
+import { projectScopeOf } from '../domain/project-scope.js';
 
 export interface WikiServiceDeps {
   paths: AppPaths;
@@ -96,9 +97,12 @@ export interface BotsFacade {
 }
 
 export interface ConversationsFacade {
-  get(
-    id: string,
-  ): { id: string; type: ConversationType; leadBotId?: string | null } | null;
+  get(id: string): {
+    id: string;
+    type: ConversationType;
+    leadBotId?: string | null;
+    parentProjectId?: string | null;
+  } | null;
   memberBotIds(conversationId: string): string[];
 }
 
@@ -253,7 +257,7 @@ export class WikiService {
     createdBy: WikiAssetCreator;
   }): { ok: boolean; message: string } {
     const { owner, source } = input;
-    if (owner.kind === 'project' && input.conversationId !== owner.id) {
+    if (owner.kind === 'project' && !this.#inProjectScope(input.conversationId, owner.id)) {
       throw new AppError('INVALID_INPUT', '项目 Wiki 的入库必须登记在项目会话里');
     }
     const cleanedRef = input.source.ref.trim();
@@ -707,7 +711,7 @@ export class WikiService {
     if (owner.kind !== 'project') {
       throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
     }
-    if (input.conversationId !== owner.id) {
+    if (!this.#inProjectScope(input.conversationId, owner.id)) {
       throw new AppError('INVALID_INPUT', '来源删除必须登记在项目会话里');
     }
     const entry = readLedger(this.wikiRoot(owner), this.#deps.logger).find(
@@ -1237,6 +1241,16 @@ export class WikiService {
       `${before}${before.endsWith('\n') || before.length === 0 ? '' : '\n'}- ${date} | 从 ${fromName} 复制${marker} | ${listed}${more}\n`,
       'utf8',
     );
+  }
+
+  /**
+   * A project wiki write is allowed from the project conversation or from a
+   * card conversation whose parent is that project.
+   */
+  #inProjectScope(conversationId: string | null, projectId: string): boolean {
+    if (conversationId === null) return false;
+    if (conversationId === projectId) return true;
+    return projectScopeOf(this.#deps.conversations.get(conversationId)) === projectId;
   }
 
   // --- prompt section ------------------------------------------------------------
