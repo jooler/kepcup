@@ -94,17 +94,19 @@
       info,
     });
     if (decision.kind === 'ignore') {
-      if (info.trigger === 'droppedIntoAnother') {
-        columnItems = stripShadow(event.detail.items);
-        return;
-      }
+      if (info.trigger === 'droppedIntoAnother') columnItems = stripShadow(event.detail.items);
       if (info.source !== 'keyboard') board.setDragging(false);
       return;
     }
     const next = stripShadow(event.detail.items);
     const prevIds = board.columns.map((column) => column.id);
     columnItems = next;
-    if (!isNoopMove(prevIds, next.map((column) => column.id))) {
+    if (
+      !isNoopMove(
+        prevIds,
+        next.map((column) => column.id),
+      )
+    ) {
       board.moveColumn(info.id, decision.beforeId);
     }
     if (info.source !== 'keyboard') board.setDragging(false);
@@ -136,7 +138,10 @@
     >
       {#each columnItems as column (column.localKey ?? column.id)}
         {#if isShadow(column)}
-          <div class="h-full w-72 shrink-0 rounded-lg border border-dashed" aria-hidden="true"></div>
+          <div
+            class="h-full w-72 shrink-0 rounded-lg border border-dashed"
+            aria-hidden="true"
+          ></div>
         {:else}
           <BoardColumn {column} {flipDurationMs} />
         {/if}

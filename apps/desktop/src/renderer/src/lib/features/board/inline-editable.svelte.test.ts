@@ -113,6 +113,21 @@ describe('InlineEditScheduler composition', () => {
   });
 });
 
+describe('InlineEditScheduler cancel', () => {
+  it('does not save on a flush that follows cancel, even if the draft is restored', async () => {
+    const { field, calls } = setup('saved');
+    field.draft = 'nope';
+    field.onInput(plainInput);
+    field.cancel();
+    field.draft = 'nope';
+    await field.flush();
+    expect(calls).toEqual([]);
+    expect(field.draft).toBe('saved');
+    await vi.advanceTimersByTimeAsync(DELAY_MS * 2);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('InlineEditScheduler empty values', () => {
   it('does not save an empty draft and restores the saved text on blur', async () => {
     const { field, calls } = setup('saved');

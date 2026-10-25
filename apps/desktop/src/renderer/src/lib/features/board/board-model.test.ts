@@ -1,6 +1,12 @@
 import type { BoardCard } from '@kepcup/shared';
 import { describe, expect, it } from 'vitest';
-import { cardAriaLabel, cardFooter, columnCounts, moveTargets, needsDeleteConfirm } from './board-model';
+import {
+  cardAriaLabel,
+  cardFooter,
+  columnCounts,
+  moveTargets,
+  needsDeleteConfirm,
+} from './board-model';
 
 function card(patch: Partial<BoardCard> = {}): BoardCard {
   return {

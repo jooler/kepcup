@@ -1,8 +1,4 @@
-import {
-  SHADOW_PLACEHOLDER_ITEM_ID,
-  TRIGGERS,
-  type DndEventInfo,
-} from 'svelte-dnd-action';
+import { SHADOW_PLACEHOLDER_ITEM_ID, TRIGGERS, type DndEventInfo } from 'svelte-dnd-action';
 
 /**
  * Drop math for svelte-dnd-action. `consider` never reaches these; `finalize`

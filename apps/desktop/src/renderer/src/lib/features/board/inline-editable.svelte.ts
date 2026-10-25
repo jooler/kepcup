@@ -35,13 +35,17 @@ export class InlineEditScheduler {
   private composing = false;
   /** Blur arrived during IME; flush once compositionend delivers the text. */
   private pendingFlush = false;
+  /** Escape restored the saved text. The blur that follows must not save it. */
+  private cancelled = false;
   private queued: 'flush' | 'schedule' | null = null;
-  private readonly autosave: boolean;
   private readonly normalize: (text: string) => string;
 
   constructor(private readonly options: InlineEditSchedulerOptions) {
-    this.autosave = options.autosave !== false;
     this.normalize = options.normalize ?? ((text: string) => text);
+  }
+
+  private get autosave(): boolean {
+    return this.options.autosave !== false;
   }
 
   isComposing(): boolean {
@@ -74,6 +78,7 @@ export class InlineEditScheduler {
 
   /** Input event. Composition and `isComposing` do not schedule. */
   onInput(event?: Event): void {
+    this.cancelled = false;
     if (this.composing || (event as InputEvent | undefined)?.isComposing === true) return;
     if (!this.autosave) return;
     if (this.saving) {
@@ -90,6 +95,7 @@ export class InlineEditScheduler {
 
   onCompositionEnd(): void {
     this.composing = false;
+    if (this.cancelled) return;
     if (this.pendingFlush) {
       this.pendingFlush = false;
       void this.flush();
@@ -100,6 +106,12 @@ export class InlineEditScheduler {
 
   /** Commit now. A blur during composition waits for compositionend. */
   async flush(): Promise<boolean> {
+    if (this.cancelled) {
+      this.clearTimer();
+      this.pendingFlush = false;
+      this.draft = this.synced;
+      return false;
+    }
     if (this.composing) {
       this.pendingFlush = true;
       return false;
@@ -114,6 +126,7 @@ export class InlineEditScheduler {
     this.clearTimer();
     this.pendingFlush = false;
     this.queued = null;
+    this.cancelled = true;
     this.draft = this.synced;
   }
 
@@ -122,6 +135,7 @@ export class InlineEditScheduler {
     this.clearTimer();
     this.pendingFlush = false;
     this.queued = null;
+    this.cancelled = false;
     this.synced = value;
     this.draft = value;
   }
