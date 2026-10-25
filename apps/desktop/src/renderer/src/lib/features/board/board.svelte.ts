@@ -10,9 +10,12 @@ import { core } from '$lib/rpc/client.svelte';
  * newer fetch, a newer local edit, or an in-flight drag.
  *
  * Writes are optimistic. A synchronous `board.changed` (the server publishes
- * it before the RPC promise resolves) must not replace a newer draft or a
- * drag that has not finished. Scroll position and the open card stay here
- * so a tab switch, which unmounts the view, can restore them.
+ * it before the RPC promise resolves) is applied after the write settles,
+ * unless a drag is in progress. A temp id is swapped for the server id even
+ * when a later edit bumped the epoch, and text saved against that temp id
+ * waits for the real id so the open dialog is not closed or reverted.
+ * Scroll position and the open card stay here so a tab switch, which
+ * unmounts the view, can restore them.
  */
 
 /** Quiet period after the latest event before a refetch. */
@@ -41,6 +44,12 @@ interface CardMove {
 interface ColumnMove {
   beforeId: string | null;
   epoch: number;
+}
+
+/** Text saved against a temp id, replayed once the server id exists. */
+interface QueuedText {
+  text: string;
+  waiters: Array<(ok: boolean) => void>;
 }
 
 let tempSeq = 0;
@@ -159,6 +168,12 @@ export class BoardState {
   #fetchSeq = 0;
   #epoch = 0;
   #inflightWrites = 0;
+  /** A `board.changed` arrived and has not been applied yet. */
+  #reloadPending = false;
+  /** Optimistic ids whose create RPC has not finished. A snapshot must not drop them. */
+  #inflightTemps: Record<string, true> = {};
+  #queuedCardText: Record<string, QueuedText> = {};
+  #queuedColumnTitle: Record<string, QueuedText> = {};
   #needsSeed = true;
   #moveChain: Promise<void> = Promise.resolve();
   /** Latest not-yet-sent card move, keyed by card id. Coalesces keyboard steps. */
@@ -199,7 +214,7 @@ export class BoardState {
   setDragging(dragging: boolean): void {
     if (this.dragging === dragging) return;
     this.dragging = dragging;
-    if (!dragging) this.#scheduleReload();
+    if (!dragging && this.#reloadPending) this.#scheduleReload();
   }
 
   openCard(id: string): void {
@@ -232,16 +247,23 @@ export class BoardState {
     };
     this.columns = [...this.columns, column];
     this.focusColumnId = id;
+    this.#inflightTemps[id] = true;
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
-        const result = (await core.call('board.columns.create', {
-          projectId,
-          title: column.title,
-        })) as { column: BoardColumn };
-        if (this.#epoch === epoch) this.#replaceColumn(id, result.column);
-        return true;
+        try {
+          const result = (await core.call('board.columns.create', {
+            projectId,
+            title: column.title,
+          })) as { column: BoardColumn };
+          return this.#finishColumnCreate(id, epoch, projectId, result.column);
+        } catch (error) {
+          delete this.#inflightTemps[id];
+          this.#rejectQueue(this.#queuedColumnTitle, id);
+          throw error;
+        }
       },
       t('board.error.saveFailed'),
     );
@@ -252,19 +274,28 @@ export class BoardState {
     if (column === undefined) return false;
     const next = title.trim();
     if (next.length === 0) return false;
+    if (column.id.startsWith('tmp_')) {
+      if (next === column.title && this.#queuedColumnTitle[column.id] === undefined) return true;
+      return this.#enqueue(this.#queuedColumnTitle, column.id, next);
+    }
     if (next === column.title) return true;
+    const projectId = this.projectId;
+    if (projectId === null) return false;
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
     this.#patchColumn(columnId, { title: next });
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
         const result = (await core.call('board.columns.update', {
           columnId,
           title: next,
         })) as { column: BoardColumn };
-        if (this.#epoch === epoch) this.#patchColumn(columnId, result.column);
+        if (this.projectId === projectId && this.#epoch === epoch) {
+          this.#patchColumn(columnId, result.column);
+        }
         return true;
       },
       t('board.error.saveFailed'),
@@ -288,6 +319,8 @@ export class BoardState {
 
   async deleteColumn(columnId: string, deleteCards = false): Promise<boolean> {
     if (this.#columnById(columnId) === undefined) return false;
+    const projectId = this.projectId;
+    if (projectId === null) return false;
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
     this.columns = this.columns.filter((column) => column.id !== columnId);
@@ -297,9 +330,11 @@ export class BoardState {
     ) {
       this.focusColumnId = null;
     }
+    this.#rejectQueue(this.#queuedColumnTitle, columnId);
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
         await core.call('board.columns.delete', { columnId, deleteCards });
         return true;
@@ -319,17 +354,24 @@ export class BoardState {
     const snapshot = cloneColumns(this.columns);
     const card = blankCard(id, projectId, columnId, body, (column.cards[0]?.position ?? 1) - 1);
     this.#patchColumn(columnId, { cards: [card, ...column.cards] });
+    this.#inflightTemps[id] = true;
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
-        const result = (await core.call('board.cards.create', {
-          projectId,
-          columnId,
-          text: body,
-        })) as { card: BoardCard };
-        if (this.#epoch === epoch) this.#replaceCard(id, result.card);
-        return true;
+        try {
+          const result = (await core.call('board.cards.create', {
+            projectId,
+            columnId,
+            text: body,
+          })) as { card: BoardCard };
+          return this.#finishCardCreate(id, epoch, projectId, result.card);
+        } catch (error) {
+          delete this.#inflightTemps[id];
+          this.#rejectQueue(this.#queuedCardText, id);
+          throw error;
+        }
       },
       t('board.error.saveFailed'),
     );
@@ -340,19 +382,28 @@ export class BoardState {
     if (card === undefined) return false;
     const body = text.trim();
     if (body.length === 0) return false;
+    if (card.id.startsWith('tmp_')) {
+      if (body === card.text && this.#queuedCardText[card.id] === undefined) return true;
+      return this.#enqueue(this.#queuedCardText, card.id, body);
+    }
     if (body === card.text) return true;
+    const projectId = this.projectId;
+    if (projectId === null) return false;
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
     this.#patchCard(cardId, { text: body, updatedAt: Date.now() });
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
         const result = (await core.call('board.cards.update', {
           cardId,
           text: body,
         })) as { card: BoardCard };
-        if (this.#epoch === epoch) this.#patchCard(cardId, result.card);
+        if (this.projectId === projectId && this.#epoch === epoch) {
+          this.#patchCard(cardId, result.card);
+        }
         return true;
       },
       t('board.error.saveFailed'),
@@ -373,8 +424,11 @@ export class BoardState {
 
   async deleteCard(cardId: string): Promise<boolean> {
     if (this.#cardById(cardId) === undefined) return false;
+    const projectId = this.projectId;
+    if (projectId === null) return false;
     const epoch = ++this.#epoch;
     const snapshot = cloneColumns(this.columns);
+    this.#rejectQueue(this.#queuedCardText, cardId);
     this.columns = this.columns.map((column) => ({
       ...column,
       cards: column.cards.filter((card) => card.id !== cardId),
@@ -383,6 +437,7 @@ export class BoardState {
     return this.#write(
       epoch,
       snapshot,
+      projectId,
       async () => {
         await core.call('board.cards.delete', { cardId });
         return true;
@@ -403,6 +458,9 @@ export class BoardState {
     this.scrollLeft = 0;
     for (const key of Object.keys(this.columnScrollTop)) delete this.columnScrollTop[key];
     this.#needsSeed = true;
+    this.#reloadPending = false;
+    this.#inflightTemps = {};
+    this.#rejectAllQueues();
     this.#pendingCardMoves = {};
     this.#cardMoveOrigin = {};
     this.#pendingColumnMoves = {};
@@ -414,6 +472,7 @@ export class BoardState {
       core.onEvent('board.changed', (payload) => {
         const event = payload as BoardChangedPayload;
         if (event.projectId !== this.projectId) return;
+        this.#reloadPending = true;
         this.#scheduleReload();
       }),
     ];
@@ -425,6 +484,7 @@ export class BoardState {
     this.#offs = [];
     this.#clearTimer();
     this.dragging = false;
+    this.#reloadPending = false;
     this.#fetchSeq += 1;
   }
 
@@ -441,12 +501,16 @@ export class BoardState {
     );
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
-      this.#firstPending = undefined;
-      if (this.dragging) return;
+      if (this.dragging) {
+        this.#reloadPending = true;
+        return;
+      }
       if (this.#inflightWrites > 0) {
+        this.#reloadPending = true;
         this.#scheduleReload();
         return;
       }
+      this.#firstPending = undefined;
       void this.#fetch(false);
     }, delay);
   }
@@ -470,16 +534,25 @@ export class BoardState {
         ...(seed ? { seedTitles: seedTitles() } : {}),
       })) as { columns: BoardColumn[]; cards: BoardCard[] };
       if (seq !== this.#fetchSeq || this.projectId !== projectId) return;
-      if (this.dragging) return;
-      if (this.#epoch !== epoch || this.#inflightWrites !== writes) {
-        this.#scheduleReload();
+      if (this.dragging || this.#epoch !== epoch || this.#inflightWrites !== writes) {
+        // The response predates a drag or a newer edit. Keep it pending and
+        // take the next snapshot once that settles.
+        this.#reloadPending = true;
+        if (!this.dragging) this.#scheduleReload();
         return;
       }
-      this.columns = groupBoard(result.columns, result.cards, this.columns);
+      const previous = this.columns;
+      this.columns = this.#retainInflightTemps(
+        previous,
+        groupBoard(result.columns, result.cards, previous),
+      );
       this.#closeMissingCard();
       this.loading = false;
       this.error = null;
       if (seed) this.#needsSeed = false;
+      if (this.#timer === undefined && this.#inflightWrites === 0 && !this.dragging) {
+        this.#reloadPending = false;
+      }
     } catch (error) {
       if (seq !== this.#fetchSeq || this.projectId !== projectId) return;
       this.loading = false;
@@ -490,6 +563,7 @@ export class BoardState {
   async #write(
     epoch: number,
     snapshot: BoardColumnView[],
+    projectId: string,
     run: () => Promise<boolean>,
     fallback: string,
   ): Promise<boolean> {
@@ -497,11 +571,14 @@ export class BoardState {
     try {
       return await run();
     } catch (error) {
-      if (this.#epoch === epoch) this.columns = snapshot;
+      if (this.#epoch === epoch && this.projectId === projectId) this.columns = snapshot;
       toast.error(errorText(errorCode(error), fallback));
       return false;
     } finally {
       this.#inflightWrites -= 1;
+      if (this.#inflightWrites === 0 && this.#reloadPending && !this.dragging) {
+        this.#scheduleReload();
+      }
     }
   }
 
@@ -510,6 +587,7 @@ export class BoardState {
     if (pending === undefined) return;
     delete this.#pendingCardMoves[cardId];
     const origin = this.#cardMoveOrigin[cardId];
+    const projectId = this.projectId;
     this.#inflightWrites += 1;
     try {
       const result = (await core.call('board.cards.move', {
@@ -517,16 +595,23 @@ export class BoardState {
         columnId: pending.columnId,
         beforeCardId: pending.beforeId,
       })) as { card: BoardCard; renumbered?: BoardCard[] };
-      if (this.#pendingCardMoves[cardId] === undefined && this.#epoch === pending.epoch) {
+      if (
+        this.projectId === projectId &&
+        this.#pendingCardMoves[cardId] === undefined &&
+        this.#epoch === pending.epoch
+      ) {
         this.#applyCardMoveResult(result);
       }
     } catch (error) {
-      if (this.#pendingCardMoves[cardId] === undefined) {
+      if (this.projectId === projectId && this.#pendingCardMoves[cardId] === undefined) {
         if (origin !== undefined) this.columns = origin;
         toast.error(errorText(errorCode(error), t('board.error.moveFailed')));
       }
     } finally {
       this.#inflightWrites -= 1;
+      if (this.#inflightWrites === 0 && this.#reloadPending && !this.dragging) {
+        this.#scheduleReload();
+      }
       if (this.#pendingCardMoves[cardId] !== undefined) await this.#drainCardMove(cardId);
       else delete this.#cardMoveOrigin[cardId];
     }
@@ -537,22 +622,30 @@ export class BoardState {
     if (pending === undefined) return;
     delete this.#pendingColumnMoves[columnId];
     const origin = this.#columnMoveOrigin[columnId];
+    const projectId = this.projectId;
     this.#inflightWrites += 1;
     try {
       const result = (await core.call('board.columns.move', {
         columnId,
         beforeColumnId: pending.beforeId,
       })) as { columns: BoardColumn[] };
-      if (this.#pendingColumnMoves[columnId] === undefined && this.#epoch === pending.epoch) {
+      if (
+        this.projectId === projectId &&
+        this.#pendingColumnMoves[columnId] === undefined &&
+        this.#epoch === pending.epoch
+      ) {
         this.#applyColumnOrder(result.columns);
       }
     } catch (error) {
-      if (this.#pendingColumnMoves[columnId] === undefined) {
+      if (this.projectId === projectId && this.#pendingColumnMoves[columnId] === undefined) {
         if (origin !== undefined) this.columns = origin;
         toast.error(errorText(errorCode(error), t('board.error.moveFailed')));
       }
     } finally {
       this.#inflightWrites -= 1;
+      if (this.#inflightWrites === 0 && this.#reloadPending && !this.dragging) {
+        this.#scheduleReload();
+      }
       if (this.#pendingColumnMoves[columnId] !== undefined) await this.#drainColumnMove(columnId);
       else delete this.#columnMoveOrigin[columnId];
     }
@@ -603,39 +696,73 @@ export class BoardState {
       });
       return;
     }
-    this.#replaceCard(result.card.id, result.card);
+    this.#replaceCard(result.card.id, result.card, false);
   }
 
-  #replaceColumn(localKeyOrId: string, column: BoardColumn): void {
-    this.columns = this.columns.map((item) => {
-      if (item.localKey !== localKeyOrId && item.id !== localKeyOrId) return item;
-      const nextId = column.id;
+  /**
+   * Swap a temp column id for the server row. `keepTitle` holds a rename that
+   * landed locally while the create was still in flight.
+   */
+  #replaceColumn(localKeyOrId: string, column: BoardColumn, keepTitle: boolean): void {
+    let replaced = false;
+    this.columns = this.columns.flatMap((item) => {
+      const matches = item.localKey === localKeyOrId || item.id === localKeyOrId;
+      if (item.id === column.id && !matches) return [];
+      if (!matches) return [item];
+      replaced = true;
       if (this.focusColumnId === item.localKey || this.focusColumnId === item.id) {
         this.focusColumnId = item.localKey;
       }
-      return { ...item, ...column, localKey: item.localKey, id: nextId, cards: item.cards };
+      return [
+        {
+          ...item,
+          ...column,
+          title: keepTitle ? item.title : column.title,
+          localKey: item.localKey,
+          id: column.id,
+          cards: item.cards,
+        },
+      ];
     });
+    if (!replaced && this.focusColumnId === localKeyOrId) this.focusColumnId = column.id;
   }
 
-  #replaceCard(localKeyOrId: string, card: BoardCard): void {
+  /**
+   * Swap a temp card id for the server row. `keepText` holds a draft that
+   * landed locally while the create was still in flight. A server copy of
+   * the same id (an early snapshot) is dropped so the card is not doubled.
+   */
+  #replaceCard(localKeyOrId: string, card: BoardCard, keepText: boolean): void {
     let replaced = false;
     this.columns = this.columns.map((column) => ({
       ...column,
-      cards: column.cards.map((item) => {
-        if (item.localKey !== localKeyOrId && item.id !== localKeyOrId) return item;
+      cards: column.cards.flatMap((item) => {
+        const matches = item.localKey === localKeyOrId || item.id === localKeyOrId;
+        if (item.id === card.id && !matches) return [];
+        if (!matches) return [item];
         replaced = true;
-        if (this.openCardId === item.id) this.openCardId = card.id;
-        return { ...item, ...card, todo: { ...card.todo }, localKey: item.localKey };
+        if (this.openCardId === item.id || this.openCardId === item.localKey) {
+          this.openCardId = card.id;
+        }
+        return [
+          {
+            ...item,
+            ...card,
+            text: keepText ? item.text : card.text,
+            todo: { ...card.todo },
+            localKey: item.localKey,
+          },
+        ];
       }),
     }));
-    if (!replaced) {
-      this.#patchColumn(card.columnId, {
-        cards: [
-          { ...card, todo: { ...card.todo }, localKey: card.id },
-          ...(this.#columnById(card.columnId)?.cards ?? []),
-        ],
-      });
-    }
+    if (replaced) return;
+    if (this.openCardId === localKeyOrId) this.openCardId = card.id;
+    const column = this.#columnById(card.columnId);
+    if (column === undefined) return;
+    if (column.cards.some((item) => item.id === card.id)) return;
+    this.#patchColumn(card.columnId, {
+      cards: [{ ...card, todo: { ...card.todo }, localKey: localKeyOrId }, ...column.cards],
+    });
   }
 
   #patchColumn(columnId: string, patch: Partial<BoardColumnView>): void {
@@ -685,6 +812,125 @@ export class BoardState {
       cards.splice(beforeIndex < 0 ? cards.length : beforeIndex, 0, card);
       return { ...column, cards };
     });
+  }
+
+  #finishColumnCreate(
+    tempIdValue: string,
+    epoch: number,
+    projectId: string,
+    column: BoardColumn,
+  ): boolean {
+    const queued = this.#takeQueue(this.#queuedColumnTitle, tempIdValue);
+    delete this.#inflightTemps[tempIdValue];
+    if (this.projectId !== projectId) {
+      this.#resolveQueue(queued, false);
+      return true;
+    }
+    const stillThere = this.#columnById(tempIdValue) !== undefined;
+    if (stillThere) {
+      // A queued rename is sent after the swap, so the create title can land
+      // first. Any other newer edit keeps the local title.
+      this.#replaceColumn(tempIdValue, column, queued === undefined && this.#epoch !== epoch);
+    }
+    if (queued === undefined) return true;
+    if (!stillThere && this.#columnById(column.id) === undefined) {
+      this.#resolveQueue(queued, false);
+      return true;
+    }
+    void this.renameColumn(column.id, queued.text).then((ok) => {
+      this.#resolveQueue(queued, ok);
+    });
+    return true;
+  }
+
+  #finishCardCreate(
+    tempIdValue: string,
+    epoch: number,
+    projectId: string,
+    card: BoardCard,
+  ): boolean {
+    const queued = this.#takeQueue(this.#queuedCardText, tempIdValue);
+    delete this.#inflightTemps[tempIdValue];
+    if (this.projectId !== projectId) {
+      this.#resolveQueue(queued, false);
+      return true;
+    }
+    const stillThere = this.#cardById(tempIdValue) !== undefined;
+    if (stillThere) {
+      // A queued text save is sent after the swap. Keeping the create text
+      // here makes that save see a real change. Any other newer edit stays.
+      this.#replaceCard(tempIdValue, card, queued === undefined && this.#epoch !== epoch);
+    }
+    if (queued === undefined) return true;
+    if (!stillThere && this.#cardById(card.id) === undefined) {
+      this.#resolveQueue(queued, false);
+      return true;
+    }
+    void this.updateCardText(card.id, queued.text).then((ok) => {
+      this.#resolveQueue(queued, ok);
+    });
+    return true;
+  }
+
+  /** Keep creates that have not received their server id yet. */
+  #retainInflightTemps(
+    previous: readonly BoardColumnView[],
+    next: BoardColumnView[],
+  ): BoardColumnView[] {
+    if (Object.keys(this.#inflightTemps).length === 0) return next;
+    const seenColumns: Record<string, true> = {};
+    for (const column of next) seenColumns[column.id] = true;
+    let columns = next;
+    for (const column of previous) {
+      if (this.#inflightTemps[column.id] !== true || seenColumns[column.id] === true) continue;
+      columns = [...columns, { ...column, cards: column.cards.map((card) => ({ ...card })) }];
+      seenColumns[column.id] = true;
+    }
+    return columns.map((column) => {
+      const local = previous.find((item) => item.id === column.id);
+      if (local === undefined) return column;
+      const present: Record<string, true> = {};
+      for (const card of column.cards) present[card.id] = true;
+      const missing = local.cards.filter(
+        (card) => this.#inflightTemps[card.id] === true && present[card.id] !== true,
+      );
+      if (missing.length === 0) return column;
+      return { ...column, cards: [...missing, ...column.cards] };
+    });
+  }
+
+  #enqueue(bucket: Record<string, QueuedText>, id: string, text: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const existing = bucket[id];
+      if (existing !== undefined) {
+        existing.text = text;
+        existing.waiters.push(resolve);
+        return;
+      }
+      bucket[id] = { text, waiters: [resolve] };
+    });
+  }
+
+  #takeQueue(bucket: Record<string, QueuedText>, id: string): QueuedText | undefined {
+    const queued = bucket[id];
+    if (queued !== undefined) delete bucket[id];
+    return queued;
+  }
+
+  #rejectQueue(bucket: Record<string, QueuedText>, id: string): void {
+    this.#resolveQueue(this.#takeQueue(bucket, id), false);
+  }
+
+  #resolveQueue(queued: QueuedText | undefined, ok: boolean): void {
+    if (queued === undefined) return;
+    for (const waiter of queued.waiters) waiter(ok);
+  }
+
+  #rejectAllQueues(): void {
+    for (const bucket of [this.#queuedCardText, this.#queuedColumnTitle]) {
+      for (const queued of Object.values(bucket)) this.#resolveQueue(queued, false);
+      for (const id of Object.keys(bucket)) delete bucket[id];
+    }
   }
 
   #columnById(columnId: string): BoardColumnView | undefined {

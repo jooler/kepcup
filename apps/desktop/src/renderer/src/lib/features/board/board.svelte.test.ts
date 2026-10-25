@@ -16,6 +16,7 @@ const pending: Array<{
 }> = [];
 
 let hangGets = false;
+const hangMethods = new Set<string>();
 let failMethod: { method: string; code: string } | null = null;
 let columns: BoardColumn[] = [];
 let cards: BoardCard[] = [];
@@ -70,7 +71,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         error.code = failure.code;
         return Promise.reject(error);
       }
-      if (method === 'board.get' && hangGets) {
+      if ((method === 'board.get' && hangGets) || hangMethods.has(method)) {
         return new Promise((resolve, reject) => {
           pending.push({ method, resolve, reject });
         });
@@ -83,13 +84,35 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       }
       if (method === 'board.columns.update') {
         const input = params as { columnId: string; title: string };
-        return Promise.resolve({
-          column: column(input.columnId, input.title, 1),
-        });
+        const existing = columns.find((item) => item.id === input.columnId);
+        const updated = column(input.columnId, input.title, existing?.position ?? 1);
+        const index = columns.findIndex((item) => item.id === input.columnId);
+        if (index >= 0) columns[index] = updated;
+        return Promise.resolve({ column: updated });
       }
       if (method === 'board.cards.create') {
         const input = params as { columnId: string; text: string; projectId: string };
         return Promise.resolve({ card: card('card_real', input.columnId, input.text, 1) });
+      }
+      if (method === 'board.cards.update') {
+        const input = params as { cardId: string; text: string };
+        const existing = cards.find((item) => item.id === input.cardId);
+        const updated = card(
+          input.cardId,
+          existing?.columnId ?? 'bcol_a',
+          input.text,
+          existing?.position ?? 1,
+        );
+        const index = cards.findIndex((item) => item.id === input.cardId);
+        if (index >= 0) cards[index] = updated;
+        return Promise.resolve({ card: updated });
+      }
+      if (method === 'board.cards.move') {
+        const input = params as { cardId: string; columnId: string; beforeCardId: string | null };
+        const existing = cards.find((item) => item.id === input.cardId);
+        return Promise.resolve({
+          card: card(input.cardId, input.columnId, existing?.text ?? '', existing?.position ?? 1),
+        });
       }
       if (method === 'conversations.get') {
         const id = (params as { id?: string } | undefined)?.id;
@@ -141,6 +164,7 @@ beforeEach(() => {
   handlers.clear();
   pending.length = 0;
   hangGets = false;
+  hangMethods.clear();
   failMethod = null;
   columns = [column('bcol_a', 'Old', 1)];
   cards = [card('card_a', 'bcol_a', 'hello', 1)];
@@ -246,6 +270,135 @@ describe('optimistic writes', () => {
     expect(board.columns[0]?.title).toBe('Edited');
     await renamed;
     expect(board.columns[0]?.title).toBe('Edited');
+  });
+
+  it('swaps a temp card id when a later edit landed, and keeps the open card', async () => {
+    columns = [column('bcol_a', 'A', 1), column('bcol_b', 'B', 2)];
+    cards = [card('card_a', 'bcol_a', 'a', 1), card('card_b', 'bcol_a', 'b', 2)];
+    detach = board.attach('p1');
+    await wait(20);
+    hangMethods.add('board.cards.create');
+    const creating = board.createCard('bcol_a', 'new');
+    const tempId = board.columns[0]?.cards[0]?.id ?? '';
+    expect(tempId.startsWith('tmp_')).toBe(true);
+    board.openCard(tempId);
+    // Another edit bumps the epoch before the create RPC returns.
+    await board.renameColumn('bcol_a', 'Renamed');
+    const saving = board.updateCardText(tempId, 'edited later');
+    cards = [
+      card('card_real', 'bcol_a', 'edited later', 10),
+      card('card_a', 'bcol_a', 'a', 100),
+      card('card_b', 'bcol_a', 'b', 200),
+    ];
+    columns = [column('bcol_a', 'Renamed', 1), column('bcol_b', 'B', 2)];
+    emit({ projectId: 'p1', cardId: 'card_real' });
+    pending.find((call) => call.method === 'board.cards.create')?.resolve({
+      card: card('card_real', 'bcol_a', 'new', 10),
+    });
+    expect(await creating).toBe(true);
+    expect(board.openCardId).toBe('card_real');
+    expect(await saving).toBe(true);
+    const updates = calls.filter((call) => call.method === 'board.cards.update');
+    expect(updates.map((call) => (call.params as { cardId: string }).cardId)).toEqual(['card_real']);
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 80);
+    const columnA = board.columns.find((column) => column.id === 'bcol_a');
+    expect(columnA?.cards.map((card) => card.id)).toEqual(['card_real', 'card_a', 'card_b']);
+    expect(columnA?.cards.map((card) => card.position)).toEqual([10, 100, 200]);
+    expect(columnA?.cards[0]?.text).toBe('edited later');
+    expect(columnA?.cards[0]?.localKey).toBe(tempId);
+    expect(board.openCardId).toBe('card_real');
+  });
+
+  it('fails a text save queued on a temp id when the create fails', async () => {
+    detach = board.attach('p1');
+    await wait(20);
+    hangMethods.add('board.cards.create');
+    const creating = board.createCard('bcol_a', 'new');
+    const tempId = board.columns[0]?.cards[0]?.id ?? '';
+    const saving = board.updateCardText(tempId, 'doomed');
+    const error = new Error('BOARD_LIMIT_CARDS') as Error & { code: string };
+    error.code = 'BOARD_LIMIT_CARDS';
+    pending.find((call) => call.method === 'board.cards.create')?.reject(error);
+    expect(await creating).toBe(false);
+    expect(await saving).toBe(false);
+    expect(board.columns[0]?.cards.map((card) => card.id)).toEqual(['card_a']);
+    expect(calls.some((call) => call.method === 'board.cards.update')).toBe(false);
+  });
+
+  it('replays a column rename that was saved against a temp id', async () => {
+    detach = board.attach('p1');
+    await wait(20);
+    hangMethods.add('board.columns.create');
+    const creating = board.createColumn('Placeholder');
+    const tempId = board.columns.at(-1)?.id ?? '';
+    const renaming = board.renameColumn(tempId, 'Archive');
+    pending.find((call) => call.method === 'board.columns.create')?.resolve({
+      column: column('bcol_real', 'Placeholder', 50),
+    });
+    expect(await creating).toBe(true);
+    expect(await renaming).toBe(true);
+    const updates = calls.filter((call) => call.method === 'board.columns.update');
+    expect(updates.map((call) => (call.params as { columnId: string }).columnId)).toEqual([
+      'bcol_real',
+    ]);
+    expect(board.columns.at(-1)?.id).toBe('bcol_real');
+    expect(board.columns.at(-1)?.title).toBe('Archive');
+    expect(board.columns.at(-1)?.localKey).toBe(tempId);
+  });
+
+  it('sends only the last keyboard position and skips a no-op move', async () => {
+    columns = [column('bcol_a', 'A', 1), column('bcol_b', 'B', 2)];
+    cards = [card('card_a', 'bcol_a', 'a', 1), card('card_b', 'bcol_a', 'b', 2)];
+    detach = board.attach('p1');
+    await wait(20);
+    const before = count('board.cards.move');
+    board.moveCard('card_a', 'bcol_a', 'card_b');
+    expect(count('board.cards.move')).toBe(before);
+
+    hangMethods.add('board.cards.move');
+    board.moveCard('card_a', 'bcol_a', null);
+    await wait(0);
+    expect(calls.filter((call) => call.method === 'board.cards.move')).toHaveLength(1);
+    // A step that lands while that RPC is in flight is not sent until it
+    // finishes, and only the latest position goes out.
+    board.moveCard('card_a', 'bcol_b', null);
+    board.moveCard('card_a', 'bcol_b', 'card_b');
+    expect(calls.filter((call) => call.method === 'board.cards.move')).toHaveLength(1);
+    pending.find((call) => call.method === 'board.cards.move')?.resolve({
+      card: card('card_a', 'bcol_a', 'a', 3),
+    });
+    await wait(20);
+    const moves = calls.filter((call) => call.method === 'board.cards.move');
+    expect(moves).toHaveLength(2);
+    expect(moves[1]?.params).toMatchObject({
+      cardId: 'card_a',
+      columnId: 'bcol_b',
+      beforeCardId: 'card_b',
+    });
+    pending.filter((call) => call.method === 'board.cards.move').at(-1)?.resolve({
+      card: card('card_a', 'bcol_b', 'a', 1),
+    });
+    await wait(20);
+  });
+
+  it('shows a read-only seed error once and does not retry', async () => {
+    failMethod = { method: 'board.get', code: 'BOARD_PROJECT_READ_ONLY' };
+    detach = board.attach('readonly');
+    await wait(20);
+    expect(board.loading).toBe(false);
+    expect(board.error).toBe(t('chats.errorCode.BOARD_PROJECT_READ_ONLY'));
+    expect(board.columns).toEqual([]);
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(1);
+  });
+
+  it('restores the last column and surfaces BOARD_LAST_COLUMN', async () => {
+    detach = board.attach('p1');
+    await wait(20);
+    failMethod = { method: 'board.columns.delete', code: 'BOARD_LAST_COLUMN' };
+    expect(await board.deleteColumn('bcol_a', false)).toBe(false);
+    expect(board.columns.map((column) => column.id)).toEqual(['bcol_a']);
+    expect(toast.error).toHaveBeenCalled();
   });
 });
 
