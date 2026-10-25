@@ -45,7 +45,7 @@
     // 拖选文字后的松手也是 click：不打断选择，也不误开执行过程页。
     if (window.getSelection()?.isCollapsed === false) return;
     const card = event.currentTarget as HTMLElement;
-    tasks.openDetail(taskId, card.querySelector<HTMLElement>('[data-testid="task-open-run"]'));
+    session.openTask(taskId, card.querySelector<HTMLElement>('[data-testid="task-open-run"]'));
   }
 
   $effect(() => {
