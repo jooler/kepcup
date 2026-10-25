@@ -3,7 +3,7 @@
   import { Portal } from 'bits-ui';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { placeSelectionToolbar } from './selection-pin';
   import { stickies } from './stickies.svelte';
 
@@ -16,6 +16,7 @@
    * 由选区矩形推导，滚动/选区变化时跟随。
    */
   let { container }: { container: HTMLElement | null } = $props();
+  const session = getChatSession();
 
   // 两个 size-6 按钮 + gap-0.5 + p-1，供定位居中计算用。
   const TOOLBAR_WIDTH = 58;
@@ -82,12 +83,12 @@
 
   // 切换对话即收起：旧选区已不属于新对话的列表。
   $effect(() => {
-    void chat.current?.conversation.id;
+    void session.view?.conversation.id;
     toolbar = null;
   });
 
   function pin(): void {
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = session.view?.conversation.id;
     if (conversationId === undefined || toolbar === null) return;
     stickies.pin(toolbar.text, conversationId, 'conversation');
     window.getSelection()?.removeAllRanges();

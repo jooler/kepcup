@@ -5,8 +5,11 @@
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
+
+  const session = getChatSession();
 
   /**
    * 初始化访谈的问题卡片（参考 Grok）：问题文本 + 预置候选答案行 + 常驻的
@@ -40,7 +43,7 @@
   // 已答判定：访谈一问一答，本条之后的第一条用户文本消息即本次回答
   //（setupAnswer 标记消息 / 用户在输入框自由输入的普通消息都算）。
   const answeredText = $derived.by(() => {
-    for (const m of chat.current?.messages ?? []) {
+    for (const m of session.view?.messages ?? []) {
       if (m.seq <= message.seq || m.senderType !== 'user' || m.kind !== 'text') continue;
       if (m.status === 'recalled') continue;
       return 'text' in m.content ? m.content.text : '';
@@ -48,7 +51,7 @@
     return null;
   });
   const interactive = $derived(
-    answeredText === null && chat.current?.conversation.bot?.setupState === 'interviewing',
+    answeredText === null && session.view?.conversation.bot?.setupState === 'interviewing',
   );
 
   let customText = $state('');
@@ -57,7 +60,7 @@
 
   async function submit(text: string): Promise<void> {
     const answer = text.trim();
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = session.view?.conversation.id;
     if (answer.length === 0 || submitting || !interactive || conversationId === undefined) return;
     submitting = true;
     try {

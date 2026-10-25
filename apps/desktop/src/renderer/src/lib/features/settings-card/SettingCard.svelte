@@ -13,6 +13,7 @@
     t,
   } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { sensors } from '$lib/sensors/sensors.svelte';
@@ -62,12 +63,13 @@
    * 「应用 / 不用了」都带卡片消息 id，core 据此唤醒 Bot 续答（每张卡一次，§6.2）。
    */
   let { message }: { message: Message } = $props();
+  const session = getChatSession();
 
   const content = $derived(settingCardOf(message)!);
   const item = $derived(getSettingItem(content.itemId));
   const view = $derived(settingCardView(content));
   const pending = $derived(content.state === 'pending');
-  const isProject = $derived(chat.current?.conversation.type === 'project');
+  const isProject = $derived(session.view?.conversation.type === 'project');
   /** bot 范围条目的作用 Bot：卡片 target，缺省为出卡的 Bot。 */
   const targetBotId = $derived(content.target.botId ?? content.botId);
 
@@ -110,8 +112,8 @@
     if (item === null || !pending) return null;
     const context = {
       botId: targetBotId,
-      conversationId: content.target.conversationId ?? chat.currentId,
-      workdirId: content.target.workdirId ?? chat.current?.conversation.workdirId ?? null,
+      conversationId: content.target.conversationId ?? session.conversationId,
+      workdirId: content.target.workdirId ?? session.view?.conversation.workdirId ?? null,
       prefill,
       agent: (id: string) => agentsStore.get(id),
       defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -174,7 +176,7 @@
           languages: localeOptions.map((option) => option.id),
         });
         if (!written) {
-          await openSettingDeepLink(entry, content.target);
+          await openSettingDeepLink(entry, content.target, session.view?.conversation ?? null);
           return;
         }
         // core 写不了渲染层条目：本机写完再经同一入口结卡（记下应用的值、唤醒 Bot）。
@@ -340,8 +342,8 @@
           {item}
           {prefill}
           botId={targetBotId}
-          conversationId={content.target.conversationId ?? chat.currentId}
-          workdirId={content.target.workdirId ?? chat.current?.conversation.workdirId ?? null}
+          conversationId={content.target.conversationId ?? session.conversationId}
+          workdirId={content.target.workdirId ?? session.view?.conversation.workdirId ?? null}
           expected={before}
           messageId={message.id}
           onSaved={embedSaved}
@@ -364,7 +366,7 @@
           size="sm"
           variant="outline"
           class="h-7"
-          onclick={() => void openSettingDeepLink(item, content.target)}
+          onclick={() => void openSettingDeepLink(item, content.target, session.view?.conversation ?? null)}
           data-testid="setting-card-open"
         >
           <ExternalLink class="size-3.5" aria-hidden="true" />
