@@ -107,12 +107,27 @@ export class ChatSession {
   #host: ChatSessionHost;
   #unsubscribers: Array<() => void> = [];
   #disposed = false;
+  /** Foreground sessions update the right-panel grants list. Dialogs do not. */
+  #foreground: boolean;
   /** Failed-run banners closed in this instance. Survives `open` of another id. */
   #dismissedFailedRunIds = new Set<string>();
   #continuedSetupRunIds = new Set<string>();
+  /** Conversation id currently counted in `tasks.retain`. */
+  #heldConversationId: string | null = null;
+  /**
+   * Opens the task run page. The main session uses `tasks.openDetail`. A
+   * dialog can replace this so the card does not take over the main view.
+   */
+  openTask = (taskId: string, trigger: HTMLElement | null = null): void => {
+    tasks.openDetail(taskId, trigger);
+  };
 
-  constructor(host: ChatSessionHost = noopHost, options: { attach?: boolean } = {}) {
+  constructor(
+    host: ChatSessionHost = noopHost,
+    options: { attach?: boolean; foreground?: boolean } = {},
+  ) {
     this.#host = host;
+    this.#foreground = options.foreground !== false;
     if (options.attach !== false) this.start();
   }
 
@@ -203,16 +218,18 @@ export class ChatSession {
     };
     this.replyTo = null;
     this.pendingSetup = null;
+    this.#holdConversation(id);
     this.#recheckPendingLinkCards(messages);
     if (conversation.type === 'project') await this.reloadMembers();
     await options.onReady?.(conversation);
     await this.markRead();
-    await permissions.loadForConversation(id);
+    await permissions.loadForConversation(id, { foreground: this.#foreground });
     return true;
   }
 
   /** Drop the view but keep the subscription. `main` uses this on close. */
   clear(): void {
+    this.#releaseConversation();
     this.view = null;
     this.replyTo = null;
     this.highlightMessageId = null;
@@ -383,6 +400,19 @@ export class ChatSession {
           }
         : {}),
     };
+  }
+
+  #holdConversation(id: string): void {
+    if (this.#heldConversationId === id) return;
+    if (this.#heldConversationId !== null) tasks.release(this.#heldConversationId);
+    tasks.retain(id);
+    this.#heldConversationId = id;
+  }
+
+  #releaseConversation(): void {
+    if (this.#heldConversationId === null) return;
+    tasks.release(this.#heldConversationId);
+    this.#heldConversationId = null;
   }
 
   #subscribe(): void {
