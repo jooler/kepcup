@@ -307,3 +307,21 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 - e2e（`DISPLAY=:1`，先 `pnpm --filter @kepcup/desktop build`）：`project-board.spec.ts` 1 通过。同批 `project-shell`、`project-wiki`（4）、`workbench` 大部分通过。稳定失败且未改对应代码：`project-chat`「引用」按钮 hover 后仍不可见；`workbench` 两例在排期保存后 `todo-drawer` 不关闭（`scheduled todo`、`layout: long text`）。这两处不打开看板。
 - 全量 `pnpm test`：6327 通过 / 21 失败 / 44 跳过（6 个文件）。失败全部是沙箱基线：`sandbox-isolation`（10）、`toolchain-sandbox`（2）、`skills-authoring`（4）、`skills`（2）、`workdirs` 的 OS sandbox（缺 bwrap/socat）、`workspace-tools`（3）。没有看板用例失败。集合没有超出 `docs/dev/05-testing.md` 记录的沙箱 / 技能 / workspace 基线。
 
+#### 审查修复（渲染层）
+
+对照步骤 7–14 与设计 50 §9.2–§9.7、§9.9 复核。下面只记确认后改过的行为，以及核对后维持原样的假设。
+
+- **临时 id 与打开的卡片。** 创建 RPC 返回前若又有一次写入，`#epoch` 已经前进，原先会跳过 `tmp_` → 服务端 id 的替换。随后的整板快照会按服务端 id 重绘，`openCardId` 仍指着 `tmp_`，弹框被关掉；对着 `tmp_` 发出的改字 RPC 也落不到这张卡上。现在只要乐观行还在就替换 id（更新的标题 / 正文留在本地），弹框跟着新 id。在 `tmp_` 上保存的正文或分栏标题先排队，等真实 id 出现再发一次。创建失败则这两次保存以失败结束，不额外 toast。快照若在创建返回前被应用，仍保留 `#inflightTemps` 里的乐观行，避免弹框被拆掉。
+- **重拉不会在拖动或写入结束后丢掉。** `board.changed` 记下「还有一次快照没应用」。拖动中不拉取；松手且这面旗还在才去抖重拉。写入的 `finally` 在没有进行中的写、也没在拖时把这面旗排上。响应若和一次更新的本地 epoch 或进行中的写重叠，仍然不覆盖，改期再拉。切换项目之后，迟到的写入不再改当前项目的列。
+- **新建卡片失焦后不再把焦点抢回来。** `clearOnSave` 只在焦点还在输入框里时（Enter 提交）重新聚焦。点「添加分栏」等控件导致的失焦会提交，但焦点留在用户点到的地方。
+- **卡面角色。** `svelte-dnd-action` 每次更新区域都会把子元素的 `role` 写成 `listitem`。卡面按阶段要求是按钮（Enter 开弹框），用一个只改 `role` 的 observer 设回 `button`，不改库用来表示拖动中的 `tabindex`。
+
+核对后未改代码的假设：
+
+- **`setKeyboardDragTrigger('space')` 保持全局。** 全库只有看板调用 `svelte-dnd-action`。触发键是模块级变量，只在已挂载区域的项上处理按键；区域卸载时库会卸掉自己的 document 监听。卸载之后聊天和对话框里的空格不受影响，不需要在 detach 时改回去。
+- **e2e 的额外 `mouseup`。** 库把松手听在 `window` 的 `mouseup` 上。Playwright 的 `mouse.up()` 有时到不了这个监听，浮层会留下。spec 在松手后再派发一次，并断言卡片顺序变了、`#dnd-action-dragged-el` 消失。产品路径不用补这个事件。
+- **`project-chat` 与 `workbench` 的 e2e 失败不是这条分支造成的。** 相对 `v0.4.0`，这两个 spec、`ChatMessageRow.svelte`、`TodoDrawer.svelte`、`workbench.svelte.ts` 都没有改。`board.closeCard()` 只在 `chat.select()` / `leaveCurrent()` 把 `openCardId` 清掉，不碰引用按钮或事项抽屉。引用按钮仍是 `group-hover` 才可见；抽屉在排期保存后不关，走的是事项抽屉自己的保存路径。没有改写这两个 spec，也没有在 `v0.4.0` 上重跑它们。
+- **拖拽语义、布局、文案、删除、只读。** `consider` 不发 RPC；`finalize` 才提交；落回原位不发；键盘步合并为最后一次位置（已补 store 测试）；影子项不作锚点。高度链与阶段要求的类名一致，分栏无背景无描边，弹框是 `sm:max-w-xl`，删除分栏确认是 `sm:max-w-sm`。未指派的卡 `needsDeleteConfirm` 为假，直接删；最后一栏删除回 `BOARD_LAST_COLUMN` 并还原（已补测试）。只读项目播种失败时展示 `BOARD_PROJECT_READ_ONLY`，不重试（已补测试）。`locales.test.ts` 通过；`board.dnd.*` 覆盖库的 `AriaStrings`。没有执行相关 UI。
+
+P2 仍要注意：弹框只有正文；另一个 dnd 区域出现之前，空格触发键继续是全局的；创建 RPC 很慢时，对着 `tmp_` 保存的正文会一直挂到创建返回，弹框处于保存中所以草稿不会被回滚。
+

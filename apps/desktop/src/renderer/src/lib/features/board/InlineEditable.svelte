@@ -4,6 +4,7 @@
     InlineEditScheduler,
     normalizeMultiline,
     normalizeSingleLine,
+    shouldRestoreComposerFocus,
     truncateCodePoints,
   } from './inline-editable.svelte';
 
@@ -61,9 +62,11 @@
     save: (text) => onSave(text),
     onSettled: (ok) => {
       if (!clearOnSave || !ok || scheduler.hasUnsaved()) return;
+      const field = root;
+      const active = typeof document === 'undefined' ? null : document.activeElement;
       scheduler.reset('');
       writeDom('');
-      root?.focus();
+      if (field !== null && shouldRestoreComposerFocus(active, field)) field.focus();
     },
   });
 

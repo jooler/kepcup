@@ -230,3 +230,15 @@ export function normalizeMultiline(text: string): string {
 export function normalizeSingleLine(text: string): string {
   return normalizeMultiline(text).replace(/\n/g, ' ');
 }
+
+/**
+ * After a composer submits, put the caret back only when it never left.
+ * A blur that focused another control (add column, the next field) must keep
+ * that focus.
+ */
+export function shouldRestoreComposerFocus(
+  active: EventTarget | null,
+  field: EventTarget | null,
+): boolean {
+  return field !== null && active === field;
+}

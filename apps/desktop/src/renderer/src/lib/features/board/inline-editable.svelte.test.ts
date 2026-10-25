@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InlineEditScheduler, normalizeMultiline } from './inline-editable.svelte';
+import {
+  InlineEditScheduler,
+  normalizeMultiline,
+  shouldRestoreComposerFocus,
+} from './inline-editable.svelte';
 
 /**
  * Inline edit scheduler: debounce, IME, deferred blur, empty values, dispose,
@@ -55,6 +59,17 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('shouldRestoreComposerFocus', () => {
+  it('restores only when focus is still in the composer', () => {
+    const field = {} as EventTarget;
+    const other = {} as EventTarget;
+    expect(shouldRestoreComposerFocus(field, field)).toBe(true);
+    expect(shouldRestoreComposerFocus(other, field)).toBe(false);
+    expect(shouldRestoreComposerFocus(null, field)).toBe(false);
+    expect(shouldRestoreComposerFocus(field, null)).toBe(false);
+  });
 });
 
 describe('InlineEditScheduler debounce', () => {
