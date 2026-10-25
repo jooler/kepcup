@@ -24,6 +24,25 @@
   );
   const index = $derived(columnCards.findIndex((item) => item.id === card.id));
 
+  /**
+   * The drag library rewrites each item's role to `listitem` whenever the
+   * zone updates. The card face is a button (Enter opens it); put that role
+   * back without fighting tabindex, which the library uses while dragging.
+   */
+  function keepButtonRole(node: HTMLElement): { destroy: () => void } {
+    const apply = (): void => {
+      if (node.getAttribute('role') !== 'button') node.setAttribute('role', 'button');
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(node, { attributes: true, attributeFilter: ['role'] });
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
+  }
+
   function openDialog(): void {
     if (cardClickGuard.ignores() || board.dragging) return;
     board.openCard(card.id);
@@ -85,6 +104,7 @@
   class="cursor-pointer rounded-lg border bg-card p-3 text-sm hover:bg-accent/40"
   role="button"
   tabindex="0"
+  use:keepButtonRole
   aria-label={label}
   data-testid="board-card"
   data-card-id={card.id}
