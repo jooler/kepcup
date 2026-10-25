@@ -99,27 +99,27 @@ export function groupBoard(
   cards: readonly BoardCard[],
   previous: readonly BoardColumnView[] = [],
 ): BoardColumnView[] {
-  const keys = new Map<string, string>();
+  const keys: Record<string, string> = {};
   for (const column of previous) {
-    keys.set(column.id, column.localKey);
-    for (const card of column.cards) keys.set(card.id, card.localKey);
+    keys[column.id] = column.localKey;
+    for (const card of column.cards) keys[card.id] = card.localKey;
   }
   const sortedColumns = [...columns].sort(
     (a, b) => a.position - b.position || a.createdAt - b.createdAt,
   );
-  const buckets = new Map<string, BoardCard[]>();
-  for (const column of sortedColumns) buckets.set(column.id, []);
+  const buckets: Record<string, BoardCard[]> = {};
+  for (const column of sortedColumns) buckets[column.id] = [];
   const sortedCards = [...cards].sort(
     (a, b) => a.position - b.position || a.createdAt - b.createdAt,
   );
-  for (const card of sortedCards) buckets.get(card.columnId)?.push(card);
+  for (const card of sortedCards) buckets[card.columnId]?.push(card);
   return sortedColumns.map((column) => ({
     ...column,
-    localKey: keys.get(column.id) ?? column.id,
-    cards: (buckets.get(column.id) ?? []).map((card) => ({
+    localKey: keys[column.id] ?? column.id,
+    cards: (buckets[column.id] ?? []).map((card) => ({
       ...card,
       todo: { ...card.todo },
-      localKey: keys.get(card.id) ?? card.id,
+      localKey: keys[card.id] ?? card.id,
     })),
   }));
 }
@@ -160,13 +160,12 @@ export class BoardState {
   #epoch = 0;
   #inflightWrites = 0;
   #needsSeed = true;
-  #reloadAfterDrag = false;
   #moveChain: Promise<void> = Promise.resolve();
   /** Latest not-yet-sent card move, keyed by card id. Coalesces keyboard steps. */
-  #pendingCardMoves = new Map<string, CardMove>();
-  #cardMoveOrigin = new Map<string, BoardColumnView[]>();
-  #pendingColumnMoves = new Map<string, ColumnMove>();
-  #columnMoveOrigin = new Map<string, BoardColumnView[]>();
+  #pendingCardMoves: Record<string, CardMove> = {};
+  #cardMoveOrigin: Record<string, BoardColumnView[]> = {};
+  #pendingColumnMoves: Record<string, ColumnMove> = {};
+  #columnMoveOrigin: Record<string, BoardColumnView[]> = {};
 
   /**
    * Mount the board for a project. The first mount loads and subscribes;
@@ -200,10 +199,7 @@ export class BoardState {
   setDragging(dragging: boolean): void {
     if (this.dragging === dragging) return;
     this.dragging = dragging;
-    if (!dragging) {
-      this.#reloadAfterDrag = false;
-      this.#scheduleReload();
-    }
+    if (!dragging) this.#scheduleReload();
   }
 
   openCard(id: string): void {
@@ -271,12 +267,12 @@ export class BoardState {
    */
   moveColumn(columnId: string, beforeId: string | null): void {
     if (this.#columnAlreadyThere(columnId, beforeId)) return;
-    if (!this.#pendingColumnMoves.has(columnId)) {
-      this.#columnMoveOrigin.set(columnId, cloneColumns(this.columns));
+    if (this.#pendingColumnMoves[columnId] === undefined) {
+      this.#columnMoveOrigin[columnId] = cloneColumns(this.columns);
     }
     const epoch = ++this.#epoch;
     this.#moveColumnLocal(columnId, beforeId);
-    this.#pendingColumnMoves.set(columnId, { beforeId, epoch });
+    this.#pendingColumnMoves[columnId] = { beforeId, epoch };
     this.#moveChain = this.#moveChain.then(() => this.#drainColumnMove(columnId));
   }
 
@@ -341,12 +337,12 @@ export class BoardState {
   /** Move a card before `beforeId` in `columnId` (`null` = end of that column). */
   moveCard(cardId: string, columnId: string, beforeId: string | null): void {
     if (this.#cardAlreadyThere(cardId, columnId, beforeId)) return;
-    if (!this.#pendingCardMoves.has(cardId)) {
-      this.#cardMoveOrigin.set(cardId, cloneColumns(this.columns));
+    if (this.#pendingCardMoves[cardId] === undefined) {
+      this.#cardMoveOrigin[cardId] = cloneColumns(this.columns);
     }
     const epoch = ++this.#epoch;
     this.#moveCardLocal(cardId, columnId, beforeId);
-    this.#pendingCardMoves.set(cardId, { columnId, beforeId, epoch });
+    this.#pendingCardMoves[cardId] = { columnId, beforeId, epoch };
     this.#moveChain = this.#moveChain.then(() => this.#drainCardMove(cardId));
   }
 
@@ -377,11 +373,10 @@ export class BoardState {
     this.scrollLeft = 0;
     for (const key of Object.keys(this.columnScrollTop)) delete this.columnScrollTop[key];
     this.#needsSeed = true;
-    this.#reloadAfterDrag = false;
-    this.#pendingCardMoves.clear();
-    this.#cardMoveOrigin.clear();
-    this.#pendingColumnMoves.clear();
-    this.#columnMoveOrigin.clear();
+    this.#pendingCardMoves = {};
+    this.#cardMoveOrigin = {};
+    this.#pendingColumnMoves = {};
+    this.#columnMoveOrigin = {};
   }
 
   #subscribe(): void {
@@ -400,16 +395,12 @@ export class BoardState {
     this.#offs = [];
     this.#clearTimer();
     this.dragging = false;
-    this.#reloadAfterDrag = false;
     this.#fetchSeq += 1;
   }
 
   #scheduleReload(): void {
     if (this.projectId === null || this.#attachCount === 0) return;
-    if (this.dragging) {
-      this.#reloadAfterDrag = true;
-      return;
-    }
+    if (this.dragging) return;
     const now = Date.now();
     if (this.#timer !== undefined) clearTimeout(this.#timer);
     const first = this.#firstPending ?? now;
@@ -421,10 +412,7 @@ export class BoardState {
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
       this.#firstPending = undefined;
-      if (this.dragging) {
-        this.#reloadAfterDrag = true;
-        return;
-      }
+      if (this.dragging) return;
       if (this.#inflightWrites > 0) {
         this.#scheduleReload();
         return;
@@ -452,10 +440,7 @@ export class BoardState {
         ...(seed ? { seedTitles: seedTitles() } : {}),
       })) as { columns: BoardColumn[]; cards: BoardCard[] };
       if (seq !== this.#fetchSeq || this.projectId !== projectId) return;
-      if (this.dragging) {
-        this.#reloadAfterDrag = true;
-        return;
-      }
+      if (this.dragging) return;
       if (this.#epoch !== epoch || this.#inflightWrites !== writes) {
         this.#scheduleReload();
         return;
@@ -491,10 +476,10 @@ export class BoardState {
   }
 
   async #drainCardMove(cardId: string): Promise<void> {
-    const pending = this.#pendingCardMoves.get(cardId);
+    const pending = this.#pendingCardMoves[cardId];
     if (pending === undefined) return;
-    this.#pendingCardMoves.delete(cardId);
-    const origin = this.#cardMoveOrigin.get(cardId);
+    delete this.#pendingCardMoves[cardId];
+    const origin = this.#cardMoveOrigin[cardId];
     this.#inflightWrites += 1;
     try {
       const result = (await core.call('board.cards.move', {
@@ -502,53 +487,56 @@ export class BoardState {
         columnId: pending.columnId,
         beforeCardId: pending.beforeId,
       })) as { card: BoardCard; renumbered?: BoardCard[] };
-      if (!this.#pendingCardMoves.has(cardId) && this.#epoch === pending.epoch) {
+      if (this.#pendingCardMoves[cardId] === undefined && this.#epoch === pending.epoch) {
         this.#applyCardMoveResult(result);
       }
     } catch (error) {
-      if (!this.#pendingCardMoves.has(cardId)) {
+      if (this.#pendingCardMoves[cardId] === undefined) {
         if (origin !== undefined) this.columns = origin;
         toast.error(errorText(errorCode(error), t('board.error.moveFailed')));
       }
     } finally {
       this.#inflightWrites -= 1;
-      if (this.#pendingCardMoves.has(cardId)) await this.#drainCardMove(cardId);
-      else this.#cardMoveOrigin.delete(cardId);
+      if (this.#pendingCardMoves[cardId] !== undefined) await this.#drainCardMove(cardId);
+      else delete this.#cardMoveOrigin[cardId];
     }
   }
 
   async #drainColumnMove(columnId: string): Promise<void> {
-    const pending = this.#pendingColumnMoves.get(columnId);
+    const pending = this.#pendingColumnMoves[columnId];
     if (pending === undefined) return;
-    this.#pendingColumnMoves.delete(columnId);
-    const origin = this.#columnMoveOrigin.get(columnId);
+    delete this.#pendingColumnMoves[columnId];
+    const origin = this.#columnMoveOrigin[columnId];
     this.#inflightWrites += 1;
     try {
       const result = (await core.call('board.columns.move', {
         columnId,
         beforeColumnId: pending.beforeId,
       })) as { columns: BoardColumn[] };
-      if (!this.#pendingColumnMoves.has(columnId) && this.#epoch === pending.epoch) {
+      if (this.#pendingColumnMoves[columnId] === undefined && this.#epoch === pending.epoch) {
         this.#applyColumnOrder(result.columns);
       }
     } catch (error) {
-      if (!this.#pendingColumnMoves.has(columnId)) {
+      if (this.#pendingColumnMoves[columnId] === undefined) {
         if (origin !== undefined) this.columns = origin;
         toast.error(errorText(errorCode(error), t('board.error.moveFailed')));
       }
     } finally {
       this.#inflightWrites -= 1;
-      if (this.#pendingColumnMoves.has(columnId)) await this.#drainColumnMove(columnId);
-      else this.#columnMoveOrigin.delete(columnId);
+      if (this.#pendingColumnMoves[columnId] !== undefined) await this.#drainColumnMove(columnId);
+      else delete this.#columnMoveOrigin[columnId];
     }
   }
 
   /** Reorder columns from a move response without re-sorting cards by stale positions. */
   #applyColumnOrder(columns: readonly BoardColumn[]): void {
-    const order = new Map(columns.map((column, index) => [column.id, { column, index }]));
+    const order: Record<string, { column: BoardColumn; index: number }> = {};
+    columns.forEach((column, index) => {
+      order[column.id] = { column, index };
+    });
     this.columns = this.columns
       .map((column) => {
-        const fresh = order.get(column.id);
+        const fresh = order[column.id];
         if (fresh === undefined) return column;
         return {
           ...column,
@@ -557,15 +545,15 @@ export class BoardState {
           cards: column.cards,
         };
       })
-      .sort((a, b) => (order.get(a.id)?.index ?? 0) - (order.get(b.id)?.index ?? 0));
+      .sort((a, b) => (order[a.id]?.index ?? 0) - (order[b.id]?.index ?? 0));
   }
 
   #applyCardMoveResult(result: { card: BoardCard; renumbered?: BoardCard[] }): void {
     if (result.renumbered !== undefined && result.renumbered.length > 0) {
       const columnId = result.card.columnId;
-      const previous = new Map<string, BoardCardView>();
+      const previous: Record<string, BoardCardView> = {};
       for (const column of this.columns) {
-        for (const card of column.cards) previous.set(card.id, card);
+        for (const card of column.cards) previous[card.id] = card;
       }
       const renumbered = [...result.renumbered].sort((a, b) => a.position - b.position);
       this.columns = this.columns.map((column) => {
@@ -578,7 +566,7 @@ export class BoardState {
         return {
           ...column,
           cards: renumbered.map((card) => {
-            const prior = previous.get(card.id);
+            const prior = previous[card.id];
             return { ...card, todo: { ...card.todo }, localKey: prior?.localKey ?? card.id };
           }),
         };
