@@ -199,7 +199,7 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 7. 实施记录
 
-本段只记录 **P1 步骤 0–6 的后端切片**（分支 `cursor/board-p1-skeleton-05a0`）。**步骤 7–14 的渲染层没有开始**：没有 `ProjectBoardView` / `BoardView` / 拖拽组件 / `InlineEditable` / `CardDialog` / `dnd-setup.ts` / i18n 文案 / e2e。全量 `pnpm test` 未跑（按定向测试规则，留给阶段收口）。
+本段先记录 **P1 步骤 0–6 的后端切片**，后面「渲染层切片」记录步骤 7–14。分支 `cursor/board-p1-skeleton-05a0`。下面「尚未做、会挡住 UI 切片的点」是后端切片当时的清单，渲染层切片已处理其中和界面有关的项。
 
 ### 步骤 0
 
@@ -253,3 +253,57 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 - 删项目：`lifecycle.deleteConversation` 在删会话行之前、紧挨 `workbench.onConversationDeleting` 调用 `board.onProjectDeleting`（仅 `type === 'project'`）。钩子失败走 `#cascade`，记日志、不中断删除（与工作台钩子相同）。有卡片时钩子在 purge 提交后发一条 `{ projectId }`，此时分栏还在（随会话行级联才消失）。同步重拉会看到「栏还在、卡已没」；步骤 8 的去抖重拉发生在 `deleteConversation` 返回之后，项目已不在，`board.get` 为 `NOT_FOUND`。
 - 删栏的事件没有 `cardId`。步骤 8 应按 `projectId` 整板重拉，不要把「没有 cardId」当成单卡补丁。
 - 新建卡片若触发整栏重排，响应里只有新卡（契约出参是 `{ card }`），其它卡的新 position 靠随后的 `board.changed` 重拉。`board.changed` 在 RPC 返回之前同步发出。
+
+### 渲染层切片（步骤 7–14）
+
+#### 拖拽类型
+
+步骤 0 的结论没有变。`BoardView` / `BoardColumn` 上的 `onconsider` / `onfinalize` 经 `pnpm --filter @kepcup/desktop typecheck`（svelte-check）**没有**报未知属性。仍不需要给 `svelte/elements` 做 `DndZoneAttributes` 模块扩展。依赖版本仍是 `svelte-dnd-action@0.9.80`。
+
+#### 步骤 11 核对
+
+均在 `apps/desktop/test/e2e/project-board.spec.ts` 里走通（真实 Electron）：
+
+- 点击卡片打开弹框；拖动结束（同栏、跨栏、分栏 grip）后 `board-dialog` 数量为 0。
+- Space 之后屏读节点 `#dnd-action-aria-alert` 含「拖动」；再按 Enter 打开弹框。
+- 在分栏标题（`contenteditable`）上按下并横向拖 180px，分栏顺序不变。
+- 卡片按在卡片区下沿时 `scrollTop` 增加；分栏 grip 按在轨道右沿时 `scrollLeft` 增加。轨道 computed `overflow-x` 为 `auto`、`overflow-y` 为 `hidden`；卡片区 `overflow-y` 为 `auto`。
+- e2e 里 Playwright 的 `mouse.up()` 有时到不了库挂在 `window` 上的 `mouseup`（浮层 `#dnd-action-dragged-el` 会留下）。spec 在松手后再向 `window` 派发一次 `mouseup`。这是测试夹具，不是产品改动。
+
+#### 布局
+
+- `ProjectBoardView` 根除阶段要求的 `h-full min-h-0 overflow-hidden` 外加了 `flex flex-col`，否则轨道的 `flex-1` 没有高度。
+- 分栏在 `flex h-full w-72 shrink-0 flex-col` 上多了 `min-h-0`，卡片区才能在分栏内收缩并滚动。
+- 卡片区类名含要求的 `min-h-16 min-h-0 flex-1 overflow-y-auto`，另有 `flex flex-col gap-2`。Prettier 的 Tailwind 插件把 `min-h-0` 排到了 `min-h-16` 前面，两个类都在。
+
+#### README §4 未列的名字
+
+- 视图模型 `localKey`（乐观创建的临时 id 换成服务端 id 时 `{#each}` 不拆掉正在编辑的标题）。`focusColumnId`、`scrollLeft`、`columnScrollTop`。
+- store 方法 `setDragging` / `setScrollLeft` / `setColumnScroll`；纯函数 `groupBoard`。
+- `board-dnd.ts`：`cardClickGuard`、`BOARD_FLIP_MS`、`boardFlipDurationMs`。刷新常量 `BOARD_REFRESH_DEBOUNCE_MS` / `BOARD_REFRESH_MAX_WAIT_MS`。
+- `InlineEditable` 额外 props：`autosave`、`submitOnEnter`、`clearOnSave`、`revertOnEscape`、`onDiscard`（新建卡片：Enter 提交、Shift+Enter 换行、失焦提交、Esc 撤销，且停顿不自动建卡）。
+- `cardAriaLabel`。
+- testid：`board-track`、`board-column-cards`、`board-column-delete-dialog`、`board-column-delete-confirm`、`board-card-delete-confirm`。
+- i18n：`board.column.menuLabel`、`board.card.menuLabel`、`board.card.deleteDialog.*`、`board.dnd.dragStartedBetween`（`canMoveBetweenZones` 为假时为空串）。`board.dnd.*` 覆盖库的 `AriaStrings`。`chats.errorCode.BOARD_*` 覆盖 README §4.2 的十个新错误码。
+
+#### 行为取舍
+
+- 重拉按 `projectId` 整板替换，不按「没有 cardId」打单卡补丁。拖动中不应用事件；松手后去抖重拉一次。进行中的写（`#inflightWrites`）或更新的本地 epoch 会丢掉这次响应并再排一次，避免盖住更新的乐观编辑。
+- 键盘移动串行排队，同一张卡只发送最后一次位置。指针落在原位（`isNoopMove`）不发 RPC。
+- 页脚恒为 `null`（`cardFooter` 在无指派时返回 null）。`needsDeleteConfirm` 本阶段恒为 false，卡片菜单直接删；谓词为真时走确认框（P2/P3 不用再找调用点）。
+- `chat.select()` 与 `leaveCurrent()` 在重置 `projectView` 的同一处调用 `board.closeCard()`。
+- 未调用 `board.summary` 与 `board.cards.assign/schedule/start/complete/cancel/reopen/conversation`。
+
+#### 偏差
+
+没有新的 DEVIATIONS。DEV-045 / DEV-046 仍只属于后端切片。
+
+#### 测试
+
+- 定向：`project-tabs`、`shell-project`、`board.svelte`（8）、`inline-editable.svelte`（11）、`board-model`、`board-dnd`、`locales`、`chat-main-view` 均通过。
+- `pnpm --filter @kepcup/desktop typecheck` 通过。`pnpm typecheck` 通过。
+- `pnpm exec eslint apps packages scripts` 通过。仓库根 `pnpm lint` 失败，只因为本机存在且被 gitignore 的 `infra/cloudflare/relay/public/assets/**`（构建产物，eslint 忽略列表未包含该目录）。与看板无关。
+- `node scripts/run-tests.mjs run --project desktop`：1018 通过 / 5 跳过。`--project desktop-svelte`：157 通过。
+- e2e（`DISPLAY=:1`，先 `pnpm --filter @kepcup/desktop build`）：`project-board.spec.ts` 1 通过。同批 `project-shell`、`project-wiki`（4）、`workbench` 大部分通过。稳定失败且未改对应代码：`project-chat`「引用」按钮 hover 后仍不可见；`workbench` 两例在排期保存后 `todo-drawer` 不关闭（`scheduled todo`、`layout: long text`）。这两处不打开看板。
+- 全量 `pnpm test`：6327 通过 / 21 失败 / 44 跳过（6 个文件）。失败全部是沙箱基线：`sandbox-isolation`（10）、`toolchain-sandbox`（2）、`skills-authoring`（4）、`skills`（2）、`workdirs` 的 OS sandbox（缺 bwrap/socat）、`workspace-tools`（3）。没有看板用例失败。集合没有超出 `docs/dev/05-testing.md` 记录的沙箱 / 技能 / workspace 基线。
+
