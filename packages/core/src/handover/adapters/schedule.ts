@@ -20,7 +20,7 @@ import { embedBestEffort, handoverMemoryCopy, type HandoverMemoryPort } from './
  * 记录同记忆复制），重建的任务接到这条副本上；A 的承诺置 `void`，不再进 A 的
  * `<my_state>`，也不会再提醒。顺序「复制承诺 → 移交任务（事务）→ 作废 A 的承诺」，每步
  * 可重入：崩溃后重跑时副本按来源记录找回、已移交的任务不再重建，只补做剩下的作废。
- * 承诺已失效、用户说过「只告诉 A」的不可执行。
+ * 承诺已失效的不可执行。
  */
 
 export interface ScheduleAdapterDeps {
@@ -49,8 +49,6 @@ export interface ScheduleAdapterDeps {
   memory?: Pick<HandoverMemoryPort, 'get' | 'findCopy' | 'insertCopy' | 'embed' | 'voidCommitment'>;
 }
 
-/** 关联私密承诺的定时任务在盘点 / 卡片上的名字（不露承诺原文）。 */
-export const PRIVATE_COMMITMENT_LABEL = '一条私密承诺的提醒';
 const WITH_COMMITMENT = '；连同承诺「';
 
 function clip(text: string): string {
@@ -92,7 +90,7 @@ export class ScheduleAdapter implements HandoverAdapter {
   }
 
   /** Why a commitment-linked task cannot move (null = it can, or it has no commitment). */
-  #commitmentBlocked(row: Schedule, ownerName: string): string | null {
+  #commitmentBlocked(row: Schedule): string | null {
     if (row.commitmentId === null) return null;
     if (this.#deps.memory === undefined)
       return '这条定时任务与一条承诺联动，当前环境不支持迁移承诺';
@@ -100,28 +98,23 @@ export class ScheduleAdapter implements HandoverAdapter {
     if (commitment === null || commitment.status !== 'active') {
       return '这条定时任务关联的承诺已失效';
     }
-    if (commitment.privateToBot) return `关联的承诺用户说过只告诉 ${ownerName}，不能移交`;
     return null;
   }
 
   inventory(botId: string): HandoverEntry[] {
     return this.#deps.schedules.listActiveForBot(botId).map((row) => {
       const commitment = this.#commitment(row);
-      // 私密承诺（用户说过「只告诉 A」）：任务标题 / 说明就是承诺原文，盘点与卡片里一律
-      // 换成中性说法（这一项本来就不可执行）。
-      const secret = commitment?.privateToBot === true;
-      const sensitive = !secret && commitment?.sensitivity === 'sensitive';
+      // 敏感承诺：任务标题 / 说明就是承诺原文，卡上标「敏感」且默认不勾（仍可执行）。
+      const sensitive = commitment?.sensitivity === 'sensitive';
       const where = `${row.origin === 'workbench' ? '工作台事项，' : ''}${this.#deps.schedules.describeWhen(row)}，${this.#where(row)}`;
       return {
         key: `schedule:${row.id}`,
         type: 'schedule' as const,
-        label: secret ? PRIVATE_COMMITMENT_LABEL : scheduleDisplayTitle(row),
-        detail: secret
-          ? where
-          : `${where}${commitment !== null ? `${WITH_COMMITMENT}${clip(commitment.content)}」` : ''}`,
+        label: scheduleDisplayTitle(row),
+        detail: `${where}${commitment !== null ? `${WITH_COMMITMENT}${clip(commitment.content)}」` : ''}`,
         actions: ['move'],
         defaultAction: 'move',
-        blocked: this.#commitmentBlocked(row, '来源 Bot') ?? undefined,
+        blocked: this.#commitmentBlocked(row) ?? undefined,
         // 标题 / 说明 / 承诺内容来自模型或用户；项目组名来自用户。
         external: true,
         // 敏感承诺跟记忆一样：卡上标「敏感」、默认不勾。
@@ -139,7 +132,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     if (ctx.toBot !== null && this.#resumable(ctx, row)) return null;
     if (row.status !== 'active') return '这条定时任务已结束或已取消';
     if (row.botId !== ctx.fromBot.id) return `这条定时任务已不属于 ${ctx.fromBot.name}`;
-    const blocked = this.#commitmentBlocked(row, ctx.fromBot.name);
+    const blocked = this.#commitmentBlocked(row);
     if (blocked !== null) return blocked;
     if (this.#isDirectOf(row.conversationId, row.botId)) return null;
     const conversation = this.#deps.conversations.get(row.conversationId);

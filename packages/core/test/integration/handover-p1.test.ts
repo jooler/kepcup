@@ -33,7 +33,7 @@ import { parseSkillDir } from '../../src/skills/parse.js';
 /**
  * D88 P1（docs/design/37，todo/bot-handover.md §4）：普通 Bot 自己发起移交（只能交出自己的、
  * 目标只能是已有 Bot，宿主校验）；网页监看移交（保留检查状态）；技能复制（外部导入同版本）；
- * 记忆按条复制（private_to_bot 永不出现、敏感默认不勾、副本 B 能检索到）；承诺随定时任务
+ * 记忆按条复制（自我笔记永不出现、敏感默认不勾、副本 B 能检索到）；承诺随定时任务
  * 迁移（A 的承诺作废、不再提醒）；崩溃恢复不重复。全程 mock LLM。
  */
 
@@ -65,7 +65,6 @@ function remember(
     originConversationId: null,
     confidence: 0.9,
     sensitivity: 'normal',
-    privateToBot: false,
     ...item,
   });
 }
@@ -182,7 +181,6 @@ interface World {
   watchId: string;
   pref: MemoryItem;
   sensitive: MemoryItem;
-  secret: MemoryItem;
   selfNote: MemoryItem;
   commitment: MemoryItem;
   commitmentScheduleId: string;
@@ -201,10 +199,6 @@ async function world(stack: TestStack): Promise<World> {
     content: '用户的周报里会提到体检安排',
     sensitivity: 'sensitive',
   });
-  const secret = remember(stack, alpha.id, {
-    content: '只告诉你：周报其实是外包写的',
-    privateToBot: true,
-  });
   const selfNote = remember(stack, alpha.id, { content: '我写周报总是太啰嗦', kind: 'self_note' });
   const { commitment, scheduleId } = seedCommitment(
     stack,
@@ -219,7 +213,6 @@ async function world(stack: TestStack): Promise<World> {
     watchId,
     pref,
     sensitive,
-    secret,
     selfNote,
     commitment,
     commitmentScheduleId: scheduleId,
@@ -227,7 +220,7 @@ async function world(stack: TestStack): Promise<World> {
 }
 
 describe('bot asset handover P1 (D88)', () => {
-  it('普通 Bot 自己发起：只能交自己的；监看 / 技能 / 记忆 / 承诺随定时任务一张卡完成；private_to_bot 永不出现；敏感默认不勾；B 能检索到副本；A 不再提醒', async () => {
+  it('普通 Bot 自己发起：只能交自己的；监看 / 技能 / 记忆 / 承诺随定时任务一张卡完成；自我笔记永不出现；敏感默认不勾；B 能检索到副本；A 不再提醒', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const w = await world(stack);
@@ -240,14 +233,13 @@ describe('bot asset handover P1 (D88)', () => {
       step()
         .expect((request) => toolResults(request).includes('你只能盘点自己名下的资产'))
         .replyToolCall('inspect_bot_assets', { memory_query: '周报' }),
-      // 盘点自己：私密 / 自我笔记 / 承诺不在候选里；监看、技能、承诺定时任务都在。
+      // 盘点自己：自我笔记 / 承诺不在候选里；监看、技能、承诺定时任务都在。
       step()
         .expect((request) => {
           const text = toolResults(request);
           return (
             text.includes(`memory:${w.pref.id}`) &&
             text.includes(`memory:${w.sensitive.id}`) &&
-            !text.includes(`memory:${w.secret.id}`) &&
             !text.includes(`memory:${w.selfNote.id}`) &&
             !text.includes(`memory:${w.commitment.id}`) &&
             text.includes(`watch:${w.watchId}`) &&
@@ -264,10 +256,10 @@ describe('bot asset handover P1 (D88)', () => {
         }),
       step()
         .expect((request) => toolResults(request).includes('你只能交出自己名下的资产'))
-        // private_to_bot 出现在提议里 → 整张退回。
+        // 自我笔记出现在提议里 → 整张退回。
         .replyToolCall('propose_handover', {
           to: { bot_id: w.beta.id },
-          items: [{ key: `memory:${w.pref.id}` }, { key: `memory:${w.secret.id}` }],
+          items: [{ key: `memory:${w.pref.id}` }, { key: `memory:${w.selfNote.id}` }],
           handover_note: '不该成功。',
         }),
       step()
@@ -308,7 +300,7 @@ describe('bot asset handover P1 (D88)', () => {
     const scheduleItem = item(`schedule:${w.commitmentScheduleId}`);
     expect(scheduleItem.blocked).toBeUndefined();
     expect(scheduleItem.detail).toContain('原来的承诺作废');
-    expect(payload.items.some((entry) => entry.key === `memory:${w.secret.id}`)).toBe(false);
+    expect(payload.items.some((entry) => entry.key === `memory:${w.selfNote.id}`)).toBe(false);
 
     // 不带勾选的确认 = 卡上的默认勾选：敏感记忆不会被带进来。
     llm.script('mock-main', [step().replyText('已经交给贝塔了。')]);
@@ -343,7 +335,7 @@ describe('bot asset handover P1 (D88)', () => {
     });
     expect(skills.botSkillRow(w.alpha.id, 'deploy')).not.toBeNull();
 
-    // 记忆：普通条目复制、可被贝塔检索；敏感（未勾）、私密、自我笔记都没有过去。
+    // 记忆：普通条目复制、可被贝塔检索；敏感（未勾）、自我笔记都没有过去。
     const betaItems = memory.activeItemsFor(w.beta.id);
     const prefCopy = betaItems.find((entry) => entry.content === w.pref.content)!;
     expect(prefCopy).toBeDefined();
@@ -357,7 +349,7 @@ describe('bot asset handover P1 (D88)', () => {
         messageId: null,
       }),
     ]);
-    for (const absent of [w.sensitive, w.secret, w.selfNote]) {
+    for (const absent of [w.sensitive, w.selfNote]) {
       expect(betaItems.some((entry) => entry.content === absent.content)).toBe(false);
     }
     const recalled = await memory.recall(w.beta.id, betaDirect, '三段式 周报');
@@ -569,9 +561,8 @@ describe('bot asset handover P1 (D88)', () => {
     await sendBatch(core, alphaDirect, ['把周报相关的记忆交给贝塔']);
     const approval = await pendingHandover(stack, alphaDirect);
     await waitForRun(core, alphaDirect, 'completed');
-    // 提议之后用户把两条标成「只告诉阿尔法」。
-    for (const item of gone)
-      core.services.memory!.storeFor(alpha.id).setPrivateToBot(item.id, true);
+    // 提议之后用户把两条撤回。
+    for (const item of gone) core.services.memory!.storeFor(alpha.id).retract(item.id);
     llm.script('mock-main', [step().replyText('部分完成。')]);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
     const view = await settled(stack, approval.id);

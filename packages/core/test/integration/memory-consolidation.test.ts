@@ -84,7 +84,6 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
         originConversationId: conv.id,
         confidence: 1,
         sensitivity: 'normal',
-        privateToBot: false,
         validUntil: Date.now() - 1000,
       });
       // 两条高度相似的条目 → 模型 merge。第二条带敏感/私有/时效约束
@@ -97,7 +96,6 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
         origin: 'private',
         confidence: 1,
         sensitivity: 'normal',
-        privateToBot: false,
       });
       const withConstraints = store.insert({
         kind: 'preference',
@@ -107,7 +105,6 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
         origin: 'private',
         confidence: 0.8,
         sensitivity: 'sensitive',
-        privateToBot: true,
         dueAt: Date.now() + 2 * 60 * 60 * 1000,
         validUntil: Date.now() + 30 * 24 * 60 * 60 * 1000,
       });
@@ -159,7 +156,6 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
           content: string;
           status: string;
           sensitivity: string;
-          privateToBot: boolean;
           dueAt: number | null;
           validUntil: number | null;
         }>;
@@ -176,10 +172,9 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
       const merged = result.items.find((item) => item.content === '用户偏好深色主题的界面');
       expect(merged).toBeDefined();
       expect(merged!.status).toBe('active');
-      // 合并保留最强约束（BR-P07-002）：任一敏感即敏感、任一私有即私有、
+      // 合并保留最强约束（BR-P07-002）：任一敏感即敏感、
       // 截止/时效取最晚（不会比任何来源更早失效）。
       expect(merged!.sensitivity).toBe('sensitive');
-      expect(merged!.privateToBot).toBe(true);
       expect(merged!.dueAt).toBe(withConstraints.dueAt);
       expect(merged!.validUntil).toBe(withConstraints.validUntil);
       // 整理产物可被 KNN 检出（BR-P07-002：插入后回填向量）。
@@ -209,7 +204,6 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
         origin: 'private',
         confidence: 1,
         sensitivity: 'normal',
-        privateToBot: false,
         validUntil: Date.now() - 1000,
       });
       stack.core.services.domain!.jobs.enqueue({

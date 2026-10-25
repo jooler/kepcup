@@ -114,7 +114,6 @@ export interface ApprovalsFacade {
 export interface RememberInput {
   content: string;
   kind: MemoryKind;
-  privateToBot?: boolean | undefined;
   dueAt?: string | undefined;
   validUntil?: string | undefined;
   /** Evidence = the messages that triggered this run. */
@@ -405,7 +404,6 @@ export class MemoryService {
       evidenceMessageIds: input.triggerMessages.map((m) => m.id),
       confidence: 1,
       sensitivity: 'normal' as const,
-      privateToBot: input.privateToBot === true,
     };
     const verdict = checkMemoryCandidate(candidate, botId, this.#checkContext());
     if (verdict.verdict === 'drop') {
@@ -421,7 +419,6 @@ export class MemoryService {
       originConversationId: conversationId,
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: input.privateToBot === true,
       dueAt: input.dueAt !== undefined ? parseIsoOrThrow(input.dueAt) : null,
       validUntil: input.validUntil !== undefined ? parseIsoOrThrow(input.validUntil) : null,
     });
@@ -437,7 +434,6 @@ export class MemoryService {
         evidence: input.triggerMessages.map((m) => m.id),
         confidence: 1,
         sensitivity: mentionsSensitiveTopic(input.content) ? 'sensitive' : 'normal',
-        privateToBot: input.privateToBot === true,
         immediate: false,
       });
     }
@@ -459,7 +455,6 @@ export class MemoryService {
       evidenceMessageIds: string[];
       confidence: number;
       sensitivity: 'normal' | 'sensitive';
-      privateToBot: boolean;
       dueAtMs?: number | null;
       validUntilMs?: number | null;
       evidenceRunId: string | null;
@@ -473,7 +468,6 @@ export class MemoryService {
         evidenceMessageIds: candidate.evidenceMessageIds,
         confidence: candidate.confidence,
         sensitivity: candidate.sensitivity,
-        privateToBot: candidate.privateToBot,
       },
       botId,
       this.#checkContext(),
@@ -496,7 +490,6 @@ export class MemoryService {
       originConversationId: conversationId,
       confidence: candidate.confidence,
       sensitivity: candidate.sensitivity,
-      privateToBot: candidate.privateToBot,
       dueAt: candidate.dueAtMs ?? null,
       validUntil: candidate.validUntilMs ?? null,
     });
@@ -585,7 +578,6 @@ export class MemoryService {
       evidence: string[];
       confidence: number;
       sensitivity: 'normal' | 'sensitive';
-      privateToBot: boolean;
       validUntilMs?: number | null;
       immediate?: boolean | undefined;
     },
@@ -598,14 +590,13 @@ export class MemoryService {
         evidenceMessageIds: candidate.evidence,
         confidence: candidate.confidence,
         sensitivity: candidate.sensitivity,
-        privateToBot: candidate.privateToBot,
       },
       botId,
       this.#checkContext(),
     );
     if (verdict.verdict === 'drop') return { ok: false, reason: verdict.reason };
     if (verdict.verdict === 'private-only') {
-      // 敏感 / “只告诉你”：留在该 Bot 的私有记忆，不进入共享层。
+      // 敏感：留在该 Bot 的私有记忆，不进入共享层。
       void this.writeReflectionMemory(botId, null, {
         kind: 'fact',
         content: candidate.content,
@@ -614,7 +605,6 @@ export class MemoryService {
         evidenceMessageIds: candidate.evidence,
         confidence: candidate.confidence,
         sensitivity: candidate.sensitivity,
-        privateToBot: true,
         validUntilMs: candidate.validUntilMs ?? null,
         evidenceRunId: null,
       });
@@ -890,7 +880,7 @@ export class MemoryService {
       // 会话已查不到的兜底场景）才需要提醒不要外泄私聊内容。
       const warnPrivateOrigin = conversation?.type !== 'direct';
       const suffix =
-        warnPrivateOrigin && (constraint.privateToBot || constraint.origin === 'private')
+        warnPrivateOrigin && constraint.origin === 'private'
           ? '（来自私聊，不要在群聊中透露）'
           : '';
       return `- [${constraint.id}] ${constraint.content}${suffix}`;
@@ -1117,13 +1107,9 @@ export class MemoryService {
 
   /**
    * profile.update / memory.update — the user's direct-edit write path
-   * (content edit +「只属于该 Bot」toggle, 任务书任务 13).
+   * (content edit, 任务书任务 13).
    */
-  updateMemory(
-    botId: string,
-    id: string,
-    patch: { content?: string; privateToBot?: boolean },
-  ): MemoryItem {
+  updateMemory(botId: string, id: string, patch: { content?: string }): MemoryItem {
     const store = this.storeFor(botId);
     if (store.getItem(id) === null) throw new AppError('NOT_FOUND', `记忆条目 ${id} 不存在`);
     if (patch.content !== undefined) {
@@ -1133,7 +1119,6 @@ export class MemoryService {
       store.updateContent(id, patch.content);
       void this.#syncVector(botId, id, patch.content);
     }
-    if (patch.privateToBot !== undefined) store.setPrivateToBot(id, patch.privateToBot);
     return store.getItem(id)!;
   }
 

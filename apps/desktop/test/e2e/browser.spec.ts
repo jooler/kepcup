@@ -204,7 +204,11 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
   } else {
     await page.locator('[data-testid="bot-config-row-workdir"]').click();
   }
-  await page.locator('[data-testid="workdir-pick-new"]').click();
+  // 单步绑定：系统对话框（已被 mock）→ 待确认的目录设置弹框 → 保存才正式绑定。
+  await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.locator('[data-testid="workdir-save"]').click();
   if (inProjectSettings) {
     await expect(
       page.locator('[data-testid="project-workdir"] [data-testid="workdir-selector-name"]'),
@@ -215,10 +219,8 @@ async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): P
       { timeout: 15_000 },
     );
   }
-  // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
   // 项目组随后回沟通视图（输入坞只在沟通里）——「已绑定」系统消息在沟通里才渲染。
-  await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+  await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
   if (inProjectSettings) {
     await page.locator('[data-testid="project-tab-chat"]').click();
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(

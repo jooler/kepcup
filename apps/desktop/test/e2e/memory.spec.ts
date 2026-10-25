@@ -168,9 +168,11 @@ test('memory tab: view, search, edit, private toggle, evidence jump, delete', as
       timeout: 30_000,
     });
 
-    // --- view: grouped under 承诺 with the evidence link ---------------------
+    // --- view: drill 关系记忆 → 承诺, grouped under 承诺 with the evidence link --
     await openMemoryTab(page);
     const tab = page.locator('[data-testid="memory-tab"]');
+    await tab.locator('[data-testid="memory-menu-relationship"]').click();
+    await tab.locator('[data-testid="memory-menu-commitment"]').click();
     // The li carries data-memory-kind; its children (memory-item-content etc.)
     // share the testid prefix, so anchor item locators on the attribute.
     const item = tab.locator('[data-testid^="memory-item-"][data-memory-kind]').first();
@@ -179,7 +181,7 @@ test('memory tab: view, search, edit, private toggle, evidence jump, delete', as
     await expect(item.locator('[data-testid="memory-item-content"]')).toContainText(
       '下周三要交周报',
     );
-    await expect(tab.getByRole('heading')).toContainText('承诺');
+    await expect(page.locator('[data-testid="memory-breadcrumb"]')).toContainText('承诺');
 
     // --- search filter --------------------------------------------------------
     await page.locator('[data-testid="memory-search"]').fill('完全不匹配的词');
@@ -200,15 +202,6 @@ test('memory tab: view, search, edit, private toggle, evidence jump, delete', as
       { timeout: 15_000 },
     );
 
-    // --- private_to_bot toggle (bits-ui checkbox = button[role=checkbox]) -----
-    await expect(
-      page.locator('[role="checkbox"][data-testid^="memory-private-"]').first(),
-    ).toBeVisible();
-    await page.locator('[role="checkbox"][data-testid^="memory-private-"]').first().click();
-    await expect(page.locator('[data-testid="memory-item-private"]')).toBeVisible({
-      timeout: 15_000,
-    });
-
     // --- edit content -----------------------------------------------------------
     await page.locator('[data-testid^="memory-edit-"]').first().click();
     const editInput = page.locator('[data-testid="memory-edit-input"]');
@@ -223,6 +216,8 @@ test('memory tab: view, search, edit, private toggle, evidence jump, delete', as
     await page.locator('[data-testid^="memory-delete-"]').first().click();
     await expect(page.locator('[data-testid="memory-delete-dialog"]')).toBeVisible();
     await page.locator('[data-testid="memory-delete-confirm"]').click();
+    // 过时条目折进「已过时」折叠区（默认收起）：展开后再断言状态。
+    await tab.locator('[data-testid="memory-outdated-toggle"]').click();
     const row = page.locator('[data-testid^="memory-item-"][data-memory-kind]').first();
     await expect(row).toHaveAttribute('data-memory-status', 'retracted', { timeout: 15_000 });
     await expect(row.locator('[data-testid="memory-item-status"]')).toContainText('已撤回');
@@ -287,6 +282,9 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
     await openMemoryTab(page);
     const tab = page.locator('[data-testid="memory-tab"]');
+    // fact 落在 用户事实与偏好 → 事实 叶子里。
+    await tab.locator('[data-testid="memory-menu-user"]').click();
+    await tab.locator('[data-testid="memory-menu-fact"]').click();
     const item = tab.locator('[data-testid^="memory-item-"][data-memory-kind]').first();
     await expect(item).toBeVisible({ timeout: 15_000 });
     await item.locator('[data-testid^="memory-evidence-"]').click();

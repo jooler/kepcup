@@ -11,6 +11,8 @@ import {
   appsConnectionsToolsOutputSchema,
   appsConnectionsUpdateInputSchema,
   appsConnectionsUpdateOutputSchema,
+  appsEgressClearInputSchema,
+  appsEgressClearOutputSchema,
   appsEgressSummaryInputSchema,
   appsEgressSummaryOutputSchema,
   appsGrantsRevokeInputSchema,
@@ -170,6 +172,15 @@ export function bindAppsConnectionMethods(
             approved: entry.detail['approved'] !== false,
           })),
         };
+      },
+    ),
+    'apps.egressClear': method(
+      appsEgressClearInputSchema,
+      appsEgressClearOutputSchema,
+      async (input) => {
+        const audit = services.domain?.audit;
+        if (audit === undefined) throw new AppError('NOT_IMPLEMENTED', '审计模块未就绪');
+        return { deleted: audit.clearEgressTainted(input.botId) };
       },
     ),
     'apps.tools.approveAfterTest': method(

@@ -114,4 +114,29 @@ describe('skills/validateDraft：语法检查命令的 shell 引用（BR-P08-008
     });
     expect(verdict.ok).toBe(true);
   });
+
+  it('测试输出的逐条检查行超过旧 500 字上限也完整保留（技能面板逐条还原依赖它）', async () => {
+    const name = 'tap-output';
+    const lines: string[] = [];
+    for (let i = 1; i <= 30; i += 1) {
+      lines.push(`ok   检查项 ${i}：${'细节'.repeat(20)}`);
+    }
+    lines.push('FAIL 最后一条：超出旧上限的检查行必须还在');
+    const draftsDir = makeDraft(name, {
+      'SKILL.md': `---\nname: ${name}\ndescription: 描述\ntest: bash tests/run.sh\n---\n正文`,
+      'tests/run.sh': `#!/usr/bin/env bash\ncat <<'EOF'\n${lines.join('\n')}\nEOF\nexit 1`,
+    });
+    const verdict = await validateDraft({
+      draftsDir,
+      name,
+      sandbox: realShellSandbox(),
+      paths: paths(),
+      botId: 'bot_x',
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain('技能测试未通过');
+    // 30 条检查行（约 1500 字符）与最后的 FAIL 行都在 reason 里，没有被 500 截断。
+    expect(verdict.reason).toContain('检查项 30');
+    expect(verdict.reason).toContain('FAIL 最后一条');
+  });
 });

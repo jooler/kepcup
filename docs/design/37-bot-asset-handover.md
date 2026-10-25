@@ -96,7 +96,7 @@
 ### 3.1 记忆
 
 - **选择**：`inspect_bot_assets` 对记忆只给数量与按 kind 的分布；模型用 `memory_query`（关键词）取候选，返回条目 id 与内容预览。提议里列出条目 id，卡上逐条展示可勾选。单次 ≤ `HANDOVER_MEMORY_MAX_ITEMS`（200）。
-- **永不提供**：`private_to_bot=1`（用户说过「只告诉你」）、`self_note`（A 关于自己的笔记）、非 `active` 状态。宿主在盘点与执行两处都过滤，提议里出现即拒绝。
+- **永不提供**：`self_note`（A 关于自己的笔记）、非 `active` 状态。宿主在盘点与执行两处都过滤，提议里出现即拒绝。（2026-10-25 修订：`private_to_bot` 机制移除，见 design/04。）
 - **敏感**：`sensitivity='sensitive'` 的条目默认不勾，标「敏感」。
 - **写入 B**：新 id；kind / content / subject / source / confidence / sensitivity / due_at / valid_until 照搬；`evidence_json` 改为来源记录 `{handoverId, fromBotId, fromItemId}`（记忆 schema 增加这种证据形态）；`origin_conversation_id` 置空；写入后走 `embedItem` 入向量。B 的反思不会把它们当成用户原话（它们不是消息）。
 - **承诺（commitment）是唯一的例外**：承诺是「答应用户要做的事」，属于待办责任而不是知识。它跟着关联的定时任务走——B 得到承诺副本并接到重建的定时任务上（`commitment_id` 指向 B 的新条目），A 的承诺置为 `void`、不再出现在 A 的 `<my_state>`，否则两个 Bot 会重复提醒用户。P0 先不迁移承诺联动的定时任务（置灰「随承诺，P1 支持」），P1 与记忆一起做。
@@ -221,6 +221,6 @@ P2 在接口上增加两项：`background`（后台条目：确认后的同步�
 3. 卡上勾掉某项 → 该项不执行；拒绝 → 什么都不变，发起方收到「未采纳」。
 4. 无人值守模式下移交卡不被自动批准。
 5. 执行中崩溃 → 重启后继续剩余项，已完成项不重复（邮箱不重复绑定、定时任务不重复建）。
-6. 编造的 key、不属于来源 Bot 的资产、`private_to_bot` 记忆出现在提议里 → 工具直接拒绝。
+6. 编造的 key、不属于来源 Bot 的资产、`self_note` 记忆出现在提议里 → 工具直接拒绝。
 7. 用户说「把这封邮件转给 B 处理」→ 仍走委派，不出移交卡（不误判）。
 8. P1：普通 Bot A 收到「把你的邮箱交给 B」→ A 自己出移交卡；A 试图以别的 Bot 为来源 → 拒绝。

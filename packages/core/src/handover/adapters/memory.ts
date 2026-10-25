@@ -14,10 +14,9 @@ import { keyId } from './common.js';
  *
  * - 选择：盘点默认只给数量与按 kind 的分布（`summary`）；给了 `memory_query` 才列候选条目
  *   （关键词检索；`*` = 最近的），每条带 id 与内容预览。
- * - 永不提供：`private_to_bot`（用户说过「只告诉你」）、`self_note`（A 关于自己的笔记）、
- *   非 active / 已过期的；承诺（commitment）也不单独复制——它是待办责任，跟着关联的定时
- *   任务走（schedule 适配器）。盘点、提议（`refusal` → 退回）与执行（`validate` → 跳过）
- *   三处都过滤。
+ * - 永不提供：`self_note`（A 关于自己的笔记）、非 active / 已过期的；承诺（commitment）
+ *   也不单独复制——它是待办责任，跟着关联的定时任务走（schedule 适配器）。盘点、提议
+ *   （`refusal` → 退回）与执行（`validate` → 跳过）三处都过滤。
  * - 敏感（`sensitivity='sensitive'`）：卡上标「敏感」，默认不勾。
  * - 写入 B：新 id；kind / content / subject / source / confidence / sensitivity / due_at /
  *   valid_until / origin 照搬；`evidence_json` 只记来源 `{handoverId, fromBotId, fromItemId}`；
@@ -62,10 +61,9 @@ function preview(content: string): string {
 
 /**
  * Why an item may never be copied by a handover (null = it may). Shared by the memory
- * adapter and the schedule adapter's commitment check (`private_to_bot`).
+ * adapter and the schedule adapter's commitment check.
  */
 export function memoryRefusal(item: MemoryItem, now: number, ownerName: string): string | null {
-  if (item.privateToBot) return `用户说过这条只告诉 ${ownerName}，不能移交`;
   if (item.kind === 'self_note') return `这是 ${ownerName} 关于自己的笔记，不能移交`;
   if (item.kind === 'commitment') {
     return '承诺不单独复制：它跟着关联的定时任务一起移交（移交那条定时任务）';
@@ -117,7 +115,6 @@ export function handoverMemoryCopy(
     originConversationId,
     confidence: item.confidence,
     sensitivity: item.sensitivity,
-    privateToBot: false,
     dueAt: item.dueAt,
     validUntil: item.validUntil,
   };

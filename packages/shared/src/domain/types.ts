@@ -2524,8 +2524,6 @@ export const memoryItemSchema = z.object({
   originConversationId: z.string().nullable(),
   confidence: z.number(),
   sensitivity: memorySensitivitySchema,
-  /** 用户说“只告诉你”：never enters the shared profile. */
-  privateToBot: z.boolean(),
   dueAt: z.number().nullable(),
   validUntil: z.number().nullable(),
   status: memoryStatusSchema,

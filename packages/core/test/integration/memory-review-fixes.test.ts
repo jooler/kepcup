@@ -260,7 +260,6 @@ describe('P07 审查修复回归（BR-P07-003/004/005/006）', () => {
               evidenceMessageIds: [],
               confidence: 0.9,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           profileProposals: [],

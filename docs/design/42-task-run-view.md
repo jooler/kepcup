@@ -41,6 +41,15 @@ metadata 行按可用字段展示：
 
 外部智能体任务的原生 `plan` 更新当前仍映射为 `progress` 行（见 `外部智能体引擎` 的 `plan → progress`），不进入本计划区；如需统一结构，后续在 ACP 事件映射里归一化。
 
+## 审批卡（权限请求）
+
+任务执行中触发权限请求时，卡片照常进入对话输入坞上方的 ApprovalDock；但执行过程页打开期间原对话以 `display:none` 隐藏，任务停在 `waiting_approval` 时用户在页内毫无感知。因此执行过程页在时间线下方固定渲染同一会话的 ApprovalDock（`task-run-approvals`）：
+
+- 卡片与对话完全同源（`permissions` store 的 pending 列表），可直接在页内批准 / 拒绝，任务随之继续；没有待审批时不渲染，页面布局不变。
+- 会话取 `TaskView.conversationId`，任务视图未读到时回退当前会话（`approvalConversationIdOf`；详情页只在本会话内打开，切会话即关闭）。
+- 打开详情页时补拉一次会话审批（`permissions.reloadApprovals`，只并入审批记录、不动右栏数据），覆盖连接中断期间错过的事件。
+- 焦点与键盘：打开详情页时已有待审批卡、或新卡到达时，焦点交给队首卡片（与对话一致；此时返回键不抢焦点）；卡片聚焦时 Esc 先被卡片消费（拒绝），不会误退详情页。
+
 ## 消息列表
 
 数据源是 `runs.steps` RPC（`RunStep[]`），按 `seq` 升序渲染。步骤到列表条目的映射：
@@ -84,10 +93,10 @@ metadata 行按可用字段展示：
 
 | 文件 | 内容 |
 |---|---|
-| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、审批卡条 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划区（`update_plan` 的最新计划；可折叠、完成计数） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 工具调用行（摘要、状态、参数 / 结果展开） |
-| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化、审批条会话回退 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts` | 上述逻辑的单测 |
 
 i18n 文案在 `apps/desktop/src/renderer/src/lib/i18n/locales/zh-CN.ts` 的 `task.run.*`。

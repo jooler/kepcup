@@ -2,10 +2,14 @@
   /**
    * D73 P2（design 29 §8.3）Bot 详情里的「污点外发」汇总：读取过连接应用的数据后，无人值守下
    * 自动放行的外发操作（审计 `egress_tainted`）的次数与最近几条。没有记录时不占位。
+   * 右上角关闭 = 调 `apps.egressClear` 把这些审计记录从数据库删除（持久生效），
+   * 新的外发记录会重新累计展示。
    */
-  import { t } from '$lib/i18n';
+  import { X } from '@lucide/svelte';
+  import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
+  import { toast } from 'svelte-sonner';
 
   let { botId }: { botId: string } = $props();
 
@@ -19,6 +23,26 @@
   let total = $state(0);
   let refused = $state(0);
   let recent = $state<EgressEntry[]>([]);
+  let clearing = $state(false);
+
+  const recordCount = $derived(total + refused);
+
+  async function dismiss(): Promise<void> {
+    if (clearing) return;
+    clearing = true;
+    try {
+      await core.call('apps.egressClear', { botId });
+      total = 0;
+      refused = 0;
+      recent = [];
+    } catch (error) {
+      // 打到控制台便于诊断（如旧 core 进程没有 apps.egressClear 时的 UNKNOWN_METHOD）。
+      console.error('apps.egressClear failed', error);
+      toast.error(errorText((error as { code?: string }).code, t('chats.errorCode.INTERNAL')));
+    } finally {
+      clearing = false;
+    }
+  }
 
   // 换 Bot、或无人值守开关变化（刚关闭时产生了新记录）时重取。
   $effect(() => {
@@ -47,13 +71,24 @@
   });
 </script>
 
-{#if total > 0 || refused > 0}
+{#if recordCount > 0}
   <div
-    class="grid gap-1 rounded bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300"
+    class="relative grid gap-1 rounded bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300"
     data-testid="bot-egress-summary"
     data-count={total}
   >
-    <p class="font-medium">
+    <button
+      type="button"
+      class="absolute right-1 top-1 rounded p-0.5 text-amber-800/60 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300/60 dark:hover:text-amber-300 disabled:opacity-50"
+      onclick={() => void dismiss()}
+      disabled={clearing}
+      aria-label={t('common.close')}
+      title={t('common.close')}
+      data-testid="bot-egress-summary-close"
+    >
+      <X class="size-3" aria-hidden="true" />
+    </button>
+    <p class="pr-4 font-medium">
       {t('bot.egressSummary', { count: total })}{#if refused > 0}{t('common.parenthesized', {
           text: t('bot.egressSummaryRefused', { count: refused }),
         })}{/if}

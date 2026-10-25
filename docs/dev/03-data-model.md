@@ -49,6 +49,7 @@
 | runs | `0014_episode_columns.sql` | D92 T1a（WP2）：`runs` 的连锁列改名 `episode_id` / `episode_hop` |
 | main | `0042_todos_assignee_project.sql` | D92 T1a（WP4）：`todos` 的项目执行者列改名 `assignee_project_id` |
 | memory | `0003_origin_project.sql` | D92 T1a（WP4）：重建 `memory_items`，`origin` 取值 `('private','project')`，旧值转换 |
+| memory | `0004_drop_private_to_bot.sql` | 2026-10-25：删除 `private_to_bot` 列（「只属于该 Bot」机制移除，见 design/04 修订） |
 | main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
 | main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
 
@@ -1076,7 +1077,6 @@ CREATE TABLE memory_items (
   origin_conversation_id TEXT,
   confidence      REAL NOT NULL,
   sensitivity     TEXT NOT NULL CHECK (sensitivity IN ('normal', 'sensitive')),
-  private_to_bot  INTEGER NOT NULL DEFAULT 0,  -- 用户说“只告诉你”
   due_at          INTEGER,                -- commitment 的截止时间
   valid_until     INTEGER,
   status          TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'retracted', 'void')),
@@ -1095,7 +1095,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(segmented_text, item_id UNINDEXED, to
 ```
 
 - `void`：承诺因对话删除或 Bot 被移出项目组而作废；D88 起也包括「承诺随定时任务移交给了别的 Bot」（来源 Bot 的那条置 `void`，不再进 `<my_state>`，联动任务按 `memory.commitment_invalidated` 取消）。
-- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出项目组时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。承诺联动的定时任务没移交成时，本次移交写给接手方、没接上任何 active 任务的承诺副本置 `void`（不留孤儿承诺）；`findHandoverCopy` 取 active 优先、其次最新的一条。
+- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬（`self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出项目组时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。承诺联动的定时任务没移交成时，本次移交写给接手方、没接上任何 active 任务的承诺副本置 `void`（不留孤儿承诺）；`findHandoverCopy` 取 active 优先、其次最新的一条。
 
 ### wiki_fts（P09）
 

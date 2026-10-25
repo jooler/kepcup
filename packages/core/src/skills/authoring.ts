@@ -363,7 +363,9 @@ async function runInSandbox(
     timeoutMs: 120_000,
   });
   const detail = [result.stdout, result.stderr].filter((s) => s.length > 0).join('\n').trim();
-  return { ok: result.exitCode === 0, detail: detail.slice(0, 500) };
+  // 2000 而非 500：测试脚本按行输出逐条检查（ok/FAIL），截太狠会把后面的检查行
+  // 整段吃掉，技能面板没法逐条还原（渲染端按行解析 status_reason）。
+  return { ok: result.exitCode === 0, detail: detail.slice(0, 2000) };
 }
 
 function listFilesRecursive(dir: string): string[] {

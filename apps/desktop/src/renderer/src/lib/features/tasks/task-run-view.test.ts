@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { RunStep } from '@kepcup/shared';
 import {
+  approvalConversationIdOf,
   buildTaskRunTimeline,
   formatElapsed,
   formatToolArgs,
@@ -185,5 +187,32 @@ describe('formatting helpers', () => {
     expect(formatToolArgs({ path: 'a.ts' })).toContain('"path": "a.ts"');
     expect(resultPreview('\n\nfirst line\nsecond line')).toBe('first line');
     expect(resultPreview('')).toBe('');
+  });
+});
+
+describe('approvalConversationIdOf（详情页审批条的会话）', () => {
+  it('任务自带的会话优先，任务视图未读到时回退当前会话', () => {
+    expect(approvalConversationIdOf({ conversationId: 'conv_task' }, 'conv_current')).toBe(
+      'conv_task',
+    );
+    expect(approvalConversationIdOf({ conversationId: 'conv_task' }, null)).toBe('conv_task');
+    expect(approvalConversationIdOf(null, 'conv_current')).toBe('conv_current');
+    expect(approvalConversationIdOf({ conversationId: null }, 'conv_current')).toBe('conv_current');
+  });
+
+  it('两头都没有会话时为 null（不渲染审批条）', () => {
+    expect(approvalConversationIdOf({ conversationId: null }, null)).toBeNull();
+    expect(approvalConversationIdOf(null, undefined)).toBeNull();
+  });
+
+  it('详情页挂了同会话的 ApprovalDock（组件无 DOM 测试，源码契约锁接线）', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain(
+      "import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';",
+    );
+    expect(source).toContain('permissions.pendingOf(approvalConversationId)');
+    expect(source).toContain('data-testid="task-run-approvals"');
+    expect(source).toContain('<ApprovalDock conversationId={approvalConversationId} />');
+    expect(source).toContain('void permissions.reloadApprovals(id)');
   });
 });

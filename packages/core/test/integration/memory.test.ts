@@ -676,7 +676,7 @@ describe('P07 记忆与画像（集成）', () => {
     }
   }, 40_000);
 
-  it('memory.update 支持独立编辑 content 与 privateToBot（任务书任务 13 界面动作）', async () => {
+  it('memory.update 编辑 content（任务书任务 13 界面动作）', async () => {
     const stack = await createTestStack({ env: TEST_ENV });
     try {
       const bot = await makeBot(stack.core, '阿标');
@@ -689,29 +689,16 @@ describe('P07 记忆与画像（集成）', () => {
         origin: 'private',
         confidence: 1,
         sensitivity: 'normal',
-        privateToBot: false,
       });
 
-      // 只改 privateToBot：content 不变。
-      const flagged = (await stack.core.rpc.call('memory.update', {
-        id: item.id,
-        botId: bot.id,
-        privateToBot: true,
-      })) as { items: Array<{ id: string; content: string; privateToBot: boolean }> };
-      expect(flagged.items.find((entry) => entry.id === item.id)).toMatchObject({
-        content: '用户在杭州工作',
-        privateToBot: true,
-      });
-
-      // 只改 content：标记保持。
+      // 只改 content：内容更新。
       const edited = (await stack.core.rpc.call('memory.update', {
         id: item.id,
         botId: bot.id,
         content: '用户在苏州工作',
-      })) as { items: Array<{ id: string; content: string; privateToBot: boolean }> };
+      })) as { items: Array<{ id: string; content: string }> };
       expect(edited.items.find((entry) => entry.id === item.id)).toMatchObject({
         content: '用户在苏州工作',
-        privateToBot: true,
       });
 
       // 凭据内容拒绝；空 patch 拒绝。

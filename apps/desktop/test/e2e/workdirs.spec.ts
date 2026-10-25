@@ -110,11 +110,15 @@ test('workdir selection, switching block while running; no changes card after wr
     await waitReady(page);
     await createBotAndOpenChat(page, '小项');
 
-    // 选择新目录 → 系统对话框（已被 mock）→ 绑定 + 系统消息（弹框保持打开，
-    // 方便继续权限设置；对话流程前先 Esc 关闭）
+    // 单步绑定：配置行 → 系统对话框（已被 mock）→ 待确认的目录设置弹框（无移除按钮）→
+    // 保存才正式绑定并落系统消息
     await mockDirectoryPicker(app, workdir);
     await openWorkdirSelector(page);
-    await page.locator('[data-testid="workdir-pick-new"]').click();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator('[data-testid="workdir-remove"]')).toHaveCount(0);
+    await page.locator('[data-testid="workdir-save"]').click();
     await expect(page.locator('[data-testid="bot-config-row-workdir"]')).toContainText(
       path.basename(workdir),
       { timeout: 15_000 },
@@ -122,8 +126,25 @@ test('workdir selection, switching block while running; no changes card after wr
     await expect(
       page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
+
+    // 左栏预览跟到工作目录通知自身文本（未读徽标亮着时不能停留在上一条消息）。
+    // 绑定只落一条 workdir 通知（授权范围说明不再发消息）。
+    await expect(
+      page
+        .locator('[data-testid^="conversation-item-"]', { hasText: '小项' })
+        .first()
+        .locator('[data-testid="conversation-preview"]'),
+    ).toContainText('工作目录已绑定', { timeout: 15_000 });
+
+    // 已绑定：再点配置行直接打开目录设置（含「移除当前目录」），取消关闭。
+    await openWorkdirSelector(page);
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator('[data-testid="workdir-remove"]')).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
     // 执行中禁用切换：挂起一个 run
     llm.script('mock-main', [step().hold().replyText('挂起中')]);
@@ -181,12 +202,15 @@ test("a write task queued behind another conversation's write task shows the wai
     // 甲绑定工作目录并占住租约（挂在工具调用上，run 保持执行中）
     await mockDirectoryPicker(app, workdir);
     await openWorkdirSelector(page);
-    await page.locator('[data-testid="workdir-pick-new"]').click();
+    // 待确认的目录设置弹框 → 保存正式绑定。
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="workdir-save"]').click();
     await expect(
       page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
     // D75：甲的写任务启动前取得工作目录租约并整任务持有（挂在工具调用上保持执行中）。
     const held = step().hold().replyToolCall('bash', { command: 'sleep 30' });
@@ -202,15 +226,18 @@ test("a write task queued behind another conversation's write task shows the wai
     // The task's request is parked on the held step (the script is replaced next).
     await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
 
-    // 乙：第二个对话绑定同一工作目录，触发写入 → 排队等待租约
+    // 乙：第二个对话绑定同一工作目录，触发写入 → 排队等待租约。
+    // 系统对话框 mock 仍指向同一目录：重走单步绑定（同路径复用同一条 Workdir 记录）。
     await createBotAndOpenChat(page, '乙');
     await openWorkdirSelector(page);
-    await page.locator('[data-testid="workdir-option"]').first().click();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="workdir-save"]').click();
     await expect(
       page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
     // 乙的写任务排队等同一工作目录的租约（任务仍是 submitted，状态行显示等待）。
     llm.script(

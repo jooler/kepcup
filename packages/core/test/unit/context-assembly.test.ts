@@ -412,6 +412,27 @@ describe('conversation context', () => {
     });
     expect(context).toContain('bot_gone');
   });
+
+  // 工作目录变更代表工作环境变化：workdir 系统事件要作为系统行进入
+  // <recent_messages>，Bot 下一次被唤起时读得到（模型/资料变更不落系统消息，
+  // 天然不进上下文，见 docs/design/08-workdir.md）。
+  it('includes workdir system events in the recent window', () => {
+    const context = buildConversationContext({
+      summary: null,
+      recent: [
+        makeMessage({ id: 'msg_1', seq: 1, content: { text: '早' } }),
+        makeMessage({
+          id: 'msg_2',
+          seq: 2,
+          senderType: 'system',
+          kind: 'system_event',
+          content: { event: 'workdir', text: '工作目录已绑定为 demo（/tmp/demo）' },
+        }),
+      ],
+      options: renderOptions,
+    });
+    expect(context).toContain('| 系统] 工作目录已绑定为 demo（/tmp/demo）');
+  });
 });
 
 describe('trigger segment', () => {

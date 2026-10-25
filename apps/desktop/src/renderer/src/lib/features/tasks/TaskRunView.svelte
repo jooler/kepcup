@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { RunStep } from '@kepcup/shared';
   import {
     ArrowLeft,
@@ -13,13 +14,16 @@
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
+  import { permissions } from '$lib/stores/permissions.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { registerEscapeLayer, ESCAPE_PRIORITY } from '$lib/features/shell/escape-layers';
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
+  import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
   import TaskRunToolCard from './TaskRunToolCard.svelte';
   import TaskPlanPanel from './TaskPlanPanel.svelte';
   import {
+    approvalConversationIdOf,
     buildTaskRunTimeline,
     formatElapsed,
     latestPlan,
@@ -36,6 +40,10 @@
    *
    * 运行中经 `run.progress` / `run.status` / `task.updated` 事件触发增量重读
    * `runs.steps`，另以 1.2s 轮询兜底；任务终态后停止轮询。
+   *
+   * 本会话的待审批卡（权限请求）在时间线下方固定渲染：详情页打开期间原对话
+   * （含输入坞上方的 ApprovalDock）是 display:none，任务停在 waiting_approval
+   * 时用户在页内毫无感知——这里给出同源的卡片，批准 / 拒绝可直接在页内完成。
    */
   let { taskId }: { taskId: string } = $props();
 
@@ -59,6 +67,12 @@
   const elapsed = $derived(task !== null ? formatElapsed(taskElapsedMs(task, now)) : '');
   const narrow = $derived(narrowLayout.narrow);
   const isMac = /Mac/i.test(navigator.platform);
+  // 审批条归属的会话（approvalConversationIdOf）：任务自带；任务视图还没读
+  // 到时回退当前会话——详情页只在本会话内打开，切会话即关闭。
+  const approvalConversationId = $derived(
+    approvalConversationIdOf(task, chat.current?.conversation.id),
+  );
+  const pendingApprovals = $derived(permissions.pendingOf(approvalConversationId));
 
   $effect(() => {
     const id = taskId;
@@ -66,6 +80,13 @@
     void tasks.ensure(id).finally(() => {
       if (id === taskId) taskChecked = true;
     });
+  });
+
+  $effect(() => {
+    // 打开详情页时补拉一次会话审批：连接中断期间的 approval.created 事件
+    // 会丢，只靠事件会让审批条漏卡。只并入审批记录，不动右栏数据。
+    const id = approvalConversationId;
+    if (id !== null) void permissions.reloadApprovals(id);
   });
 
   $effect(() => {
@@ -136,6 +157,10 @@
 
   $effect(() => {
     // 进入执行过程页时焦点落在返回键：原任务卡仍在 DOM 里但已 display:none。
+    // 挂载那一刻已有待审批卡则不抢焦点，让审批条按「逐张聚焦」把焦点交给
+    // 队首卡片（untrack：只看打开那一刻，不随待审批集合变化重触发）。
+    const pendingOnEnter = untrack(() => pendingApprovals.length > 0);
+    if (pendingOnEnter) return;
     queueMicrotask(() => backButton?.focus({ preventScroll: true }));
   });
 
@@ -373,4 +398,16 @@
       {/if}
     </div>
   </div>
+
+  {#if approvalConversationId !== null && pendingApprovals.length > 0}
+    <!--
+      权限请求条：对话被 display:none 隐藏期间任务触发的审批卡改在这里出现
+      （与对话输入坞上方同一份 permissions 数据）。固定在时间线之下、始终
+      可见；卡片获得焦点后 Enter 批准 / Esc 拒绝，Esc 先被卡片消费，不会
+      误退详情页。
+    -->
+    <div class="shrink-0 border-t" data-testid="task-run-approvals">
+      <ApprovalDock conversationId={approvalConversationId} />
+    </div>
+  {/if}
 </div>
