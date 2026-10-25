@@ -739,6 +739,8 @@ class ChatState {
   }
 
   #upsertConversation(conversation: ConversationView): void {
+    // Card chats are hidden. A dialog session still hears the event itself.
+    if (conversation.type === 'card') return;
     const index = this.conversations.findIndex((c) => c.id === conversation.id);
     const unread = mergeUnreadCount(conversation, this.conversations[index]);
     // A conversation first seen through an event without a count (D75: seq

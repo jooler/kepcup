@@ -103,6 +103,19 @@ describe('通讯录名册', () => {
     expect(contacts.isChatArchived('bot_b')).toBe(false);
   });
 
+  it('ignores a card conversation update', () => {
+    contacts.start();
+    handlers.get('conversation.updated')?.({
+      conversation: {
+        ...directConversation('conv_card', 'bot_a'),
+        type: 'card',
+        parentProjectId: 'conv_p',
+        cardTodoId: 'todo_1',
+      },
+    });
+    expect(contacts.conversations.map((conversation) => conversation.id)).not.toContain('conv_card');
+  });
+
   it('归档事件即时更新名册', async () => {
     contacts.start();
     handlers.get('conversation.updated')?.({
@@ -120,6 +133,21 @@ describe('左栏的归档与恢复', () => {
       conversation: projectConversation('conv_p1', '项目组一', 999),
     });
     expect(chat.conversations.map((c) => c.id)).not.toContain('conv_p1');
+  });
+
+  it('does not put a card conversation in the sidebar', () => {
+    chat.start();
+    handlers.get('conversation.updated')?.({
+      conversation: {
+        ...projectConversation('conv_card', '卡片'),
+        type: 'card',
+        directBotId: 'bot_a',
+        leadBotId: null,
+        parentProjectId: 'conv_p',
+        cardTodoId: 'todo_1',
+      },
+    });
+    expect(chat.conversations.map((conversation) => conversation.id)).not.toContain('conv_card');
   });
 
   it('恢复事件把会话放回左栏', () => {

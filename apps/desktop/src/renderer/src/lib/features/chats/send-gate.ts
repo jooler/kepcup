@@ -5,6 +5,7 @@ import {
   type SetupRequirement,
   type Settings,
 } from '@kepcup/shared';
+import { isSingleBotConversation } from './single-bot-conversation';
 
 /**
  * 发送门禁（docs/design/18-inline-setup.md「发送门禁」）：单聊 Bot 明确跑不
@@ -26,7 +27,7 @@ export function sendGateRequirement(input: {
   agents: { loaded: boolean; get(id: string): Pick<AgentView, 'enabled' | 'status'> | null };
 }): SetupRequirement | null {
   const { bot, settings } = input;
-  if (input.conversationType !== 'direct' || bot === null || bot === undefined) return null;
+  if (!isSingleBotConversation(input.conversationType) || bot === null || bot === undefined) return null;
   if (settings === null) return null;
   const agentId = bot.setupState === 'interviewing' ? '' : bot.profile.runtime.agent.id;
   // InkCop 关联智能体是工具移交，仍需要主模型（契约 v0.4）。

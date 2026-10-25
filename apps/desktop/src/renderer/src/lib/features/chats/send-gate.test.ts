@@ -58,6 +58,15 @@ describe('sendGateRequirement', () => {
         settings: settings({ defaultMainModel: 'a/b' }),
       }),
     ).toBeNull();
+    // A card chat is a single-bot session: the same main-model gate as direct.
+    expect(
+      sendGateRequirement({
+        ...base,
+        conversationType: 'card',
+        bot: bot({}),
+        settings: settings(),
+      }),
+    ).toEqual({ kind: 'main-model' });
     // Unloaded settings / group chats pass through (core falls back).
     expect(sendGateRequirement({ ...base, bot: bot({}), settings: null })).toBeNull();
     expect(
