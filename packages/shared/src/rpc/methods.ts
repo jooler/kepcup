@@ -641,6 +641,9 @@ export const appsConnectionsGrantsOutputSchema = z.object({
 export const appsGrantsRevokeInputSchema = z.object({ grantId: z.string().min(1) });
 /** D73 P2：Bot 详情的污点外发汇总——无人值守下自动批准的外发（审计 `egress_tainted`）。 */
 export const appsEgressSummaryInputSchema = z.object({ botId: z.string().min(1) });
+/** 关闭「污点外发」汇总 = 删除该 Bot 的 `egress_tainted` 审计记录；返回删除条数。 */
+export const appsEgressClearInputSchema = z.object({ botId: z.string().min(1) });
+export const appsEgressClearOutputSchema = z.object({ deleted: z.number().int().min(0) });
 export const appsEgressSummaryOutputSchema = z.object({
   /** 放行的次数（审计 `approved !== false`）。 */
   total: z.number().int().min(0),
@@ -2127,6 +2130,10 @@ export const rpcMethodSchemas = {
     input: appsEgressSummaryInputSchema,
     output: appsEgressSummaryOutputSchema,
   },
+  'apps.egressClear': {
+    input: appsEgressClearInputSchema,
+    output: appsEgressClearOutputSchema,
+  },
   'apps.tools.approveAfterTest': {
     input: appsToolsApproveAfterTestInputSchema,
     output: appsToolsApproveAfterTestOutputSchema,
@@ -2736,6 +2743,7 @@ const APP_METHODS = [
   'apps.connections.grants',
   'apps.grants.revoke',
   'apps.egressSummary',
+  'apps.egressClear',
   'apps.tools.approveAfterTest',
   'apps.connections.list',
   'apps.disconnect',
