@@ -310,9 +310,11 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     // Page content: wiki.page renders as markdown (`# 部署指南` → <h1>).
     // 导航走头部面包屑（「< Wiki」改造）：末段是当前页面，根段点击回列表。
     await pageItem.click();
-    await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南');
+    // 文档名不再单独成行：面包屑末段（DetailHeader）已是当前位置。
+    await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="wiki-page-content"]')).toContainText(
       '构建、推送、发布',
+      { timeout: 15_000 },
     );
     await expect(page.locator('[data-testid="wiki-page-content"] h1')).toHaveText('部署指南');
     const breadcrumb = page.locator('[data-testid="wiki-breadcrumb"]');
@@ -339,9 +341,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     await expect(hit).toContainText('推送');
     // A hit opens the page.
     await hit.click();
-    await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南', {
-      timeout: 15_000,
-    });
+    await expect(page.locator('[data-testid="wiki-page-view"]')).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-testid="wiki-breadcrumb"] button').first().click();
     // No-hit query: tokens that appear nowhere (avoid particles like 的 — the
     // FTS retrieval is OR-combined, so a shared particle would still match).
@@ -357,7 +357,7 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     // recoverable via rollback -----------------------------------------------
     await pagesFolder.click();
     await pageItem.click();
-    await expect(page.locator('[data-testid="wiki-page-title"]')).toHaveText('部署指南');
+    await expect(page.locator('[data-testid="wiki-page-view"]')).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-testid="wiki-page-delete"]').click();
     await page.locator('[data-testid="wiki-page-delete-confirm"]').click();
     await expect(page.locator('[data-testid="wiki-empty"]')).toBeVisible({ timeout: 30_000 });
@@ -371,7 +371,10 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
 
     // --- history: inline list (toggle replaces search + tree), one commit per
     // maintenance (init + ingest + delete). An entry opens that commit's wiki
-    // snapshot so the user can read the historical content before rolling back
+    // snapshot so the user can read the historical content before rolling back.
+    // 历史入口只在根目录出现：删除后仍停在 pages 目录（空态），先经面包屑回根。
+    await page.locator('[data-testid="wiki-breadcrumb"] button').first().click();
+    await expect(page.locator('[data-testid="wiki-history"]')).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-testid="wiki-history"]').click();
     const historyList = page.locator('[data-testid="wiki-history-list"]');
     // 历史视图不属于内容导航：顶栏「< Wiki」一行隐藏（面包屑只负责内容）。
