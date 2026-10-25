@@ -435,8 +435,8 @@ export class ToolGateway {
           resolvedPath: resolved,
           reason:
             mode === 'read'
-              ? '被工作目录保护规则禁止读取（可在权限设置中调整）'
-              : '被工作目录保护规则禁止写入（可在权限设置中调整）',
+              ? '被工作目录保护规则禁止读取（可在目录设置中调整）'
+              : '被工作目录保护规则禁止写入（可在目录设置中调整）',
         };
       }
       if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };

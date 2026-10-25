@@ -256,12 +256,15 @@ test('a workdir write task cancelled from its card leaves disk changes and no re
     await createBotAndOpenChat(page, '小项任');
     await mockDirectoryPicker(app, workdir);
     await openWorkdirSelector(page);
-    await page.locator('[data-testid="workdir-pick-new"]').click();
+    // 待确认的目录设置弹框 → 保存正式绑定。
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="workdir-save"]').click();
     await expect(
       page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
     ).toHaveCount(1, { timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="workdir-settings-dialog"]')).not.toBeVisible();
 
     const held = step().inTask().hold().replyText('不会走到这里');
     llm.script('mock-main', [

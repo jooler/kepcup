@@ -1,19 +1,18 @@
 <script lang="ts">
-  import { FolderOpen, Settings, TriangleAlert } from '@lucide/svelte';
+  import { FolderOpen, TriangleAlert } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
-  import * as Dialog from '$lib/components/ui/dialog';
   import WorkdirSettingsDialog from './WorkdirSettingsDialog.svelte';
 
   let {
     conversationId,
     workdirId,
     disabled,
-    /** false = 只挂载弹框不渲染表单区块：右栏「配置」二级菜单用自己的行触发 openPicker()。 */
+    /** false = 只挂载弹框不渲染表单区块：右栏「配置」二级菜单用自己的行触发 openWorkdir()。 */
     showBlock = true,
   }: {
     conversationId: string;
@@ -22,9 +21,10 @@
     showBlock?: boolean;
   } = $props();
 
-  let pickerOpen = $state(false);
   let settingsOpen = $state(false);
   let settingsAnchor = $state<string | null>(null);
+  /** 系统目录选择器刚选出、还没在目录设置弹框里保存确认的路径；保存才正式绑定。 */
+  let pendingPath = $state<string | null>(null);
 
   const current = $derived(workdirs.boundOf(conversationId, workdirId));
   const missing = $derived(current !== null && current.status === 'missing');
@@ -32,8 +32,8 @@
   const running = $derived((chat.current?.activeRuns.length ?? 0) > 0);
   const effectiveDisabled = $derived(disabled === true || running);
 
-  // 对话内设置卡的「在设置中打开」（shell.openWorkdirSettings）：已绑工作目录直接开工作目录设置并
-  // 聚焦锚点；还没绑工作目录先开选择框（绑定后用户再点「权限设置」）。
+  // 对话内设置卡的「在设置中打开」（shell.openWorkdirSettings）：已绑工作目录直接开目录设置并
+  // 聚焦锚点；还没绑工作目录先走系统目录选择器（锚点丢弃，与旧的选择弹框一致）。
   $effect(() => {
     const request = shell.workdirSettingsRequest;
     if (request === null) return;
@@ -42,26 +42,28 @@
       settingsAnchor = request.anchor;
       settingsOpen = true;
     } else if (!effectiveDisabled) {
-      pickerOpen = true;
+      void pickNew();
     }
   });
 
-  async function handleSelect(path: string): Promise<void> {
-    // 绑定后保持弹框打开：用户看到 ✓ 与刚出现的「权限设置」，可继续配置。
-    try {
-      await workdirs.select(conversationId, path);
-    } catch {
-      // toast already shown by the store
-    }
+  // 弹框关闭（保存或取消）即清掉待确认路径，不影响下一次打开。
+  $effect(() => {
+    if (!settingsOpen) pendingPath = null;
+  });
+
+  /** 系统目录选择器选出路径 → 打开待确认模式的目录设置弹框；取消选择则原地不动。 */
+  async function pickNew(): Promise<void> {
+    const path = await workdirs.pickPath();
+    if (path === null) return;
+    pendingPath = path;
+    settingsOpen = true;
   }
 
-  async function handlePickNew(): Promise<void> {
-    await workdirs.selectWithDialog(conversationId);
-  }
-
-  /** 供外部（配置二级菜单的工作目录行）打开选择弹框；执行中 / 只读时不动。 */
-  export function openPicker(): void {
-    if (!effectiveDisabled) pickerOpen = true;
+  /** 单步入口（区块触发按钮 / 配置二级菜单行）：已绑直接开目录设置，未绑先选目录。 */
+  export function openWorkdir(): void {
+    if (effectiveDisabled) return;
+    if (current !== null) settingsOpen = true;
+    else void pickNew();
   }
 </script>
 
@@ -74,7 +76,7 @@
       size="sm"
       class="h-9 w-full justify-start gap-1.5 px-2 text-xs font-normal text-muted-foreground"
       disabled={effectiveDisabled}
-      onclick={() => (pickerOpen = true)}
+      onclick={openWorkdir}
       title={current !== null ? current.path : t('workdirs.none')}
       data-testid="workdir-selector-trigger"
     >
@@ -95,64 +97,10 @@
   </div>
 {/if}
 
-<Dialog.Root bind:open={pickerOpen}>
-  <Dialog.Content class="max-w-md" data-testid="workdir-picker-dialog">
-    <Dialog.Header>
-      <Dialog.Title>{t('workdirs.selector')}</Dialog.Title>
-      <Dialog.Description>{current !== null ? current.path : ''}</Dialog.Description>
-    </Dialog.Header>
-    <div class="max-h-72 space-y-1 overflow-y-auto" data-testid="workdir-picker-list">
-      {#each workdirs.recent as workdir (workdir.id)}
-        <button
-          type="button"
-          class="flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
-          disabled={workdir.id === workdirId}
-          onclick={() => void handleSelect(workdir.path)}
-          data-testid="workdir-option"
-          data-workdir-id={workdir.id}
-          data-workdir-status={workdir.status}
-        >
-          <span class="min-w-0 flex-1">
-            <span class="block truncate">{workdir.name}</span>
-            <span class="block truncate text-[11px] text-muted-foreground">{workdir.path}</span>
-          </span>
-          {#if workdir.status === 'missing'}
-            <TriangleAlert class="size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
-          {/if}
-          {#if workdir.id === workdirId}
-            <span class="text-xs text-muted-foreground">✓</span>
-          {/if}
-        </button>
-      {:else}
-        <p class="px-3 py-4 text-center text-xs text-muted-foreground">{t('workdirs.none')}</p>
-      {/each}
-    </div>
-    <div class="flex flex-col gap-1 border-t pt-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        class="justify-start gap-2"
-        onclick={() => void handlePickNew()}
-        data-testid="workdir-pick-new"
-      >
-        <FolderOpen class="size-3.5" aria-hidden="true" />
-        {t('workdirs.pickNew')}
-      </Button>
-      {#if current !== null}
-        <!-- 权限设置叠在选择弹框之上：取消/Esc 只关上层，选择弹框原地保留 -->
-        <Button
-          variant="ghost"
-          size="sm"
-          class="justify-start gap-2"
-          onclick={() => (settingsOpen = true)}
-          data-testid="workdir-settings"
-        >
-          <Settings class="size-3.5" aria-hidden="true" />
-          {t('workdirs.manage')}
-        </Button>
-      {/if}
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
-
-<WorkdirSettingsDialog bind:open={settingsOpen} bind:anchor={settingsAnchor} workdir={current} />
+<WorkdirSettingsDialog
+  bind:open={settingsOpen}
+  bind:anchor={settingsAnchor}
+  workdir={current}
+  {conversationId}
+  {pendingPath}
+/>

@@ -485,7 +485,7 @@
 
       <!-- 统一二级菜单 / 下钻详情（tabs 已移除）：默认菜单列表，点行进入详情。 -->
       <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
-        <!-- 工作目录（P04）：选择弹框挂在这里，菜单的工作目录行经 openPicker 打开。 -->
+        <!-- 工作目录（P04）：目录设置弹框挂在这里，菜单的工作目录行经 openWorkdir 打开。 -->
         {#if conversation}
           <WorkdirSelector
             bind:this={workdirSelector}
@@ -510,7 +510,7 @@
               deletable={bot.systemRole !== 'butler'}
               onOpenSection={(section) => (detail = { kind: 'profile', section })}
               onOpenWidget={(widget) => (detail = { kind: 'widget', widget })}
-              onOpenWorkdir={() => workdirSelector?.openPicker()}
+              onOpenWorkdir={() => workdirSelector?.openWorkdir()}
               onOpenMemory={() => (detail = { kind: 'memory' })}
               onOpenSkills={() => (detail = { kind: 'skills' })}
               onOpenWiki={() => (detail = { kind: 'wiki' })}

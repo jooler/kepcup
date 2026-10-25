@@ -65,23 +65,22 @@ class WorkdirsState {
     this.recent = result.workdirs;
   }
 
-  async select(conversationId: string, path: string): Promise<void> {
+  async select(conversationId: string, path: string): Promise<Workdir> {
     try {
       const result = (await core.call('workdirs.select', { conversationId, path })) as {
         workdir: Workdir;
       };
       this.#upsert(result.workdir);
+      return result.workdir;
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
       throw error;
     }
   }
 
-  /** Opens the system directory picker, then binds the chosen path. */
-  async selectWithDialog(conversationId: string): Promise<void> {
-    const path = await window.kepcup.platform.selectDirectory();
-    if (path === null) return;
-    await this.select(conversationId, path);
+  /** Opens the system directory picker and returns the chosen path without binding. */
+  async pickPath(): Promise<string | null> {
+    return window.kepcup.platform.selectDirectory();
   }
 
   async update(

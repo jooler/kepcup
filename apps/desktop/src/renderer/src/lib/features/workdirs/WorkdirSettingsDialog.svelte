@@ -15,6 +15,10 @@
     embedded = false,
     focus = 'protect' as 'protect' | 'ports',
     prefill: _prefill = null,
+    /** 待确认模式（WorkdirSelector 单步绑定）：系统选择器刚选出、尚未绑定的路径；保存才正式绑定。 */
+    pendingPath = null,
+    /** 待确认保存时 workdirs.select 的目标对话。 */
+    conversationId = undefined,
     onSaved,
   }: {
     open?: boolean;
@@ -25,6 +29,8 @@
     embedded?: boolean;
     focus?: 'protect' | 'ports';
     prefill?: SettingValues | null;
+    pendingPath?: string | null;
+    conversationId?: string;
     onSaved?: () => void;
   } = $props();
 
@@ -83,7 +89,22 @@
   }
 
   async function save(): Promise<void> {
-    if (workdir === null) return;
+    if (workdir === null) {
+      // 待确认模式：目录还没绑定，保存 = 正式绑定 + 写入权限；取消则什么都不发生。
+      if (pendingPath === null || conversationId === undefined) return;
+      try {
+        const created = await workdirs.select(conversationId, pendingPath);
+        await workdirs.update(created.id, {
+          protectRules: { denyRead: parseLines(denyRead), denyWrite: parseLines(denyWrite) },
+          allowedPorts: parsePorts(ports),
+        });
+        onSaved?.();
+        open = false;
+      } catch {
+        // select / update 已经 toast 过失败原因；留在弹框里可重试或取消。
+      }
+      return;
+    }
     await workdirs.update(workdir.id, {
       protectRules: { denyRead: parseLines(denyRead), denyWrite: parseLines(denyWrite) },
       allowedPorts: parsePorts(ports),
@@ -170,9 +191,9 @@
   <Dialog.Content class="max-w-lg" data-testid="workdir-settings-dialog">
     <Dialog.Header>
       <Dialog.Title>{t('workdirs.settingsTitle')}</Dialog.Title>
-      <Dialog.Description class="font-mono text-xs">{workdir?.path ?? ''}</Dialog.Description>
+      <Dialog.Description class="font-mono text-xs">{workdir?.path ?? pendingPath ?? ''}</Dialog.Description>
     </Dialog.Header>
-    {#if workdir !== null}
+    {#if workdir !== null || pendingPath !== null}
       <div class="space-y-3">
         <!-- data-settings-anchor：对话内设置卡「在设置中打开」的落点（settings-catalog 深链）。 -->
         <div class="space-y-3" data-settings-anchor="workdir-protect">
@@ -192,15 +213,18 @@
         </label>
       </div>
       <Dialog.Footer class="mt-2 flex items-center gap-2">
-        <Button
-          variant={removeArmed ? 'destructive' : 'outline'}
-          size="sm"
-          onclick={armRemove}
-          data-testid="workdir-remove"
-          title={t('workdirs.removeBody', { name: workdir.name })}
-        >
-          {removeArmed ? t('workdirs.removeConfirm') : t('workdirs.removeCurrent')}
-        </Button>
+        {#if workdir !== null}
+          <!-- 待确认模式下目录还没正式绑定，没有「移除」可言；取消即放弃。 -->
+          <Button
+            variant={removeArmed ? 'destructive' : 'outline'}
+            size="sm"
+            onclick={armRemove}
+            data-testid="workdir-remove"
+            title={t('workdirs.removeBody', { name: workdir.name })}
+          >
+            {removeArmed ? t('workdirs.removeConfirm') : t('workdirs.removeCurrent')}
+          </Button>
+        {/if}
         <div class="flex-1"></div>
         <Button variant="outline" size="sm" onclick={() => (open = false)}>{t('contacts.cancel')}</Button>
         <Button size="sm" onclick={() => void save()} data-testid="workdir-save">{t('workdirs.save')}</Button>
