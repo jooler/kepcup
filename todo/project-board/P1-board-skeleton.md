@@ -325,3 +325,5 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 P2 仍要注意：弹框只有正文；另一个 dnd 区域出现之前，空格触发键继续是全局的；创建 RPC 很慢时，对着 `tmp_` 保存的正文会一直挂到创建返回，弹框处于保存中所以草稿不会被回滚。
 
+审查后再跑了一次 `project-board.spec.ts`（`DISPLAY=:1`，先 `pnpm --filter @kepcup/desktop build`）：1 通过。没有重跑 `project-chat` / `workbench`。
+
