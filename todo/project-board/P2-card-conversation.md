@@ -212,4 +212,94 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 11. 实施记录
 
-（执行智能体在最后一个提交里填写：A4 的逐文件迁移清单；A5 两个 store 的具体改法；B3 的判断点决定表；授权是否经项目解析；D88 适配器核对结论；新增的非 README §4 名字；DEVIATIONS 编号；全量测试结果。）
+本切片只做了 **B1 + 轨道 A（A1–A6）**。**B2–B9 未开始**：没有 `ConversationsService.ensureCardConversation`，没有 `projectScopeOf` 及调用点改造，没有 `BoardService` 的指派 / 排期，没有 `CARD_RULES`，没有生命周期里删除卡片会话。界面上仍然无法创建卡片会话（没有任何 `INSERT … type = 'card'` 的产品代码；`openDirect` / `projects.create` 仍只写 `direct` / `project`）。
+
+### B1
+
+- 迁移 `packages/core/migrations/main/0051_card_conversations.sql`。建表按 head 实况（`0040` 列 + `0045` 的 `archived_at` 在末列；索引 `conversations_one_direct_per_bot`、`conversations_archived`；**没有触发器**）。旧行复制，新列 `NULL`。
+- 契约 CHECK 原样保留：`(type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL)`，以及原有的 project/lead CHECK。
+- **额外一条 CHECK**：`(type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL)`。等式单独允许「`direct_bot_id` 为空的 project 行」或「只填了两列之一的 direct 行」通过；阶段测试要求 direct / project 写下这两列被拒，所以加严。不是替换契约等式。
+- `conversationSchema` 的 `parentProjectId` / `cardTodoId` 是 `z.string().nullable().default(null)`：输出类型 `string | null`；缺键的旧载荷解析为 `null`。
+- `domain/conversations.ts` 的行类型改为 `ConversationType`，映射写出两列。`wiki/service.ts` 的 `ConversationsFacade.get` 返回类型改为 `ConversationType`。没有因此新增行为分支。
+- `rg "'direct' | 'project'"` 的其余命中**未放宽**：`tools/index.ts` 与 `setup-tools.ts` 是访谈面 `setupSurface`，不是会话类型；`workbench-service.test.ts` / `wiki-text-source.test.ts` 是局部夹具。`orchestrator` 里 `setupSurface: type === 'project' ? 'project' : 'direct'` 仍把非 project（含将来的 card）当成 direct。`system-prompt.ts` 的 `<conversation_info>` 仍是「非 direct 即项目组文案」——card 还不能被创建，B4 再改提示词。
+- 文档：`docs/dev/03-data-model.md` 的表、类型、删除级联（`parent_project_id` 的 FK CASCADE 只删 main.db 行，是安全网；真正删除含 `runs.db` / FTS / 附件由 service 驱动，**B7 未做**）。
+
+### A1
+
+- 特征化测试：`stores/chat-session-characterization.svelte.test.ts`。`select` 的加载序列钉的是现状：`conversations.get`、`messages.list`、两次 `runs.list`（`limit: 30` 与 `active: true`）、`tasks.active`（`tasks.loadActive`）、`approvals.list` + `grants.list`（`permissions.loadForConversation`，**不是** `reloadApprovals`）。之后每步都未改这个文件。
+
+### A2 / A3
+
+- `stores/chat-session.svelte.ts` 的 `ChatSession`。视图是**一块** `$state` 对象（`view`），`open` / `clear` 才换引用；消息与 run 在原对象上改。窄屏路由只跟踪 `chat.current` 的引用，不能每次读都 new 一个对象。`replyTo`、`highlightMessageId`、`pendingSetup` 是各自的 `$state`。
+- `main` 在 `chat` 构造时 `attach: false`，由 `chat.start()` 调用 `main.start()` 订阅。特征化测试的 mock 每个事件只留最后一个 handler，所以列表更新经 host 回调做在同一次订阅里，而不是再注册一套会被覆盖的监听。
+- `open` 含：get、归档则 unarchive、`afterResolved`（`select` 在这里 `cancelProjectCompose` + upsert）、消息与 runs、`tasks.loadActive`（不 await）、装上视图、项目则 `reloadMembers`、`onReady`（`select` 在这里 `showChats` / 重置项目视图 / `board.closeCard` / `tasks.closeDetail` / 记住上次会话 / 侧栏预览 / 稀疏访谈）、`markRead`、`permissions.loadForConversation`。`markRead` 必须在 `showChats` 之后，否则工作台盖住时第二次 `select` 不会补标已读（`chat-main-view` 的用例）。
+- `chat.current` / `currentId` / `replyTo` / `highlightMessageId` / `setupRequirement` 以及发送、已读、翻页、重试、关横幅都委托 `main`。列表、`runningByConversation`、`turnByConversation`、`lastMessageText`、`composingProject` 留在 `chat`。
+
+### A4 逐文件清单
+
+已改读 `getChatSession()`（未设置 context 时就是 `chat.main`，主区行为不变）：
+
+| 文件 | 处理 |
+|---|---|
+| `features/chats/chat-session-context.ts` | 新增 `setChatSession` / `getChatSession` |
+| `features/chats/ChatBanners.svelte` | 从 `ChatView` 抽出的只读 / 确认模式 / 失败重试横幅 |
+| `features/chats/ChatView.svelte` | 当前视图与设置卡需求改读 session；横幅交给 `ChatBanners` |
+| `features/chats/MessageList.svelte` | 消息、run、已读、翻页、高亮 |
+| `features/chats/Composer.svelte` | 当前会话、引用、发送、门禁、语音设置卡（组件内录音序号仍叫 `session`，聊天会话变量是 `chatSession`） |
+| `features/chats/ChatMessageRow.svelte` | 项目判断、成员、引用消息、高亮、开始引用 |
+| `features/chats/MessageBody.svelte` | 用户气泡颜色取当前会话 Bot |
+| `features/chats/SetupPathCard.svelte` / `SetupQuestionCard.svelte` | 访谈卡读当前会话消息 |
+| `features/chats/ConnectAppSetupBody.svelte` / `MainModelSetupBody.svelte` / `AgentSetupBody.svelte` | 设置卡续跑走 session |
+| `features/chats/SelectionPinToolbar.svelte` | 便签归属当前会话 |
+| `features/tasks/TaskCard.svelte` | 是否项目组；打开任务过程走 `session.openTask`（A5） |
+| `features/settings-card/SettingCard.svelte` / `SettingSetupBody.svelte` | 当前会话 id / 工作目录 / 项目判断 |
+| `features/settings-card/open-deep-link.ts` | 增加可选的当前会话参数；上述两张卡传入 session。缺省仍是 `chat.current`（导航 `select` / `openDirect` 仍是主区） |
+| `features/schedules/ScheduleCard.svelte` / `ScheduleReceipt.svelte` | 是否项目组、项目名。`chat.botName` 仍是名册查找 |
+| `features/widgets/BotWidgetCard.svelte` | 打开覆盖层时带上 session 的会话 id |
+| `features/widgets/WidgetViewer.svelte` / `features/files/FileViewer.svelte` | 会话一切换就关覆盖层；未设 context 时仍是主区 |
+
+看过、故意留在 `chat.current` / `chat.currentId` 上（主区外壳，卡片弹框不会包住它们；`getChatSession()` 缺省也是 `main`，留着是为了窄屏路由继续只跟踪主区对象引用）：
+
+| 文件 | 理由 |
+|---|---|
+| `features/chats/ChatsArea.svelte` | 主区外壳：项目组沟通 vs 单聊、创建项目组。不是可嵌进弹框的会话片段 |
+| `features/project/ProjectView.svelte`、`ProjectHeader.svelte`、`ProjectMembersMenu.svelte`、`ProjectMembersEditor.svelte`、`ProjectSettingsPage.svelte` | 主区项目组壳。卡片弹框不承载项目详情 |
+| `features/right-panel/RightPanel.svelte`、`BotMenu.svelte` | 主区右栏 |
+| `features/settings-card/BotConfigCard.svelte`、`BotModelCard.svelte`、`ProjectLeadCard.svelte`、`ProjectMembersCard.svelte` | 仍读主区会话。阶段点名的设置卡三件已迁；这四张是主区项目 / Bot 卡，弹框若要复用需再迁（P3） |
+| `features/workdirs/WorkdirSelector.svelte` | 主区「有 run 在跑」指示 |
+| `features/shell/NarrowShell.svelte`、`BotDetailOverlay.svelte`、`features/web-shell/back-navigation.svelte.ts`、`App.svelte` | 窄屏 / 返回 / 启动恢复都是主区 `currentId` |
+| `features/shell/narrow-routing.svelte.ts`、`stores/shell.svelte.ts` | 只有注释提到 `chat.current` |
+| `features/tasks/TaskRunView.svelte` | 主区任务过程页。打开动作已改走 session（见 A5），页面本身仍是主区 |
+| `stores/chat-*.svelte.test.ts`、`narrow-routing.svelte.test.ts` | 测试钉的是对外 API 或假 store，不是产品组件 |
+
+### A5
+
+- `tasks.retain(id)` / `tasks.release(id)`：按会话引用计数。`loadActive` 用 `pruneTaskViewsMany`：仍被某个 session 持有的会话，其已结束视图保留；任何会话里进行中的任务都保留。`refresh` 重拉每一个仍被持有的会话。`openTaskId` 语义不变。
+- `ChatSession` 在 `open` 成功时 retain（切换 id 先 release 旧的），`clear` / `dispose` release。
+- `openTask` 是 session 上的可替换字段，默认 `tasks.openDetail`。`TaskCard` 的「打开任务过程」改走 `session.openTask`。主区因此不变。
+- `permissions`：`#grantsByConversation` 按会话存授权。`grants` 只镜像**前台**会话（右栏 / 项目授权页仍读它）。`grantsOf(id)` 读任意已加载会话。`grant.changed` 写入对应桶，仅当前台 id 时改 `grants`。`loadForConversation(id, { foreground })`：`foreground: false` 不抢右栏列表。`main` 默认 `foreground: true`。`pendingOf` / `reloadApprovals` 未改。
+
+### A6
+
+- `features/chats/single-bot-conversation.ts` 的 `isSingleBotConversation`：`direct` 或 `card`。`send-gate.ts`、`conversation-bot.ts`、`ChatView` 的访谈闸门（原先 `!== 'direct'`）改用它。
+- `chat.#upsertConversation` 与 `contacts` 的 `conversation.updated` 见到 `type === 'card'` 直接返回。没有改 `conversations.list` / `all` 的过滤（那是 B2；现在也没有代码能插入 card 行）。
+
+### 新增、不在 README §4 里的名字
+
+`ChatSession`、`ChatSessionView`、`ChatSessionHost`、`OpenSessionOptions`（`afterResolved` / `onReady`）、`getChatSession` / `setChatSession`、`ChatBanners`、`isSingleBotConversation`、`pruneTaskViewsMany`、`tasks.retain` / `tasks.release`、`permissions.grantsOf`、`loadForConversation` 的 `foreground`、`ChatSession.openTask`、`ChatSession` 构造参数 `attach` / `foreground`。
+
+### 偏差
+
+未新开 DEVIATIONS 条目。唯一相对契约等式的加严是 B1 那条「非 card 两列皆空」CHECK，理由见上，等式本身仍在。
+
+### 测试（本切片，未跑全量 `pnpm test`）
+
+- store 目录：`node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/stores` — 16 文件 / 88 例通过。
+- `pnpm --filter @kepcup/shared run build`、`pnpm --filter @kepcup/core typecheck`、`pnpm --filter @kepcup/desktop typecheck` 通过。
+- 迁移与契约：`card-conversations-migration`、`project-conversations-migration`、`public-skills-migration`、`project-board-migration`、`project-contract`、`conversation-archive`、`projects-service` 通过。
+- e2e（`pnpm build` 之后，`DISPLAY=:1`，45 例，约 6.3 分钟）：**40 通过 / 5 失败**。失败与 v0.4.0 / P1 已确认的基线同类，未改 spec：
+  - `project-chat`「create, @ mention, reply-quote, turn status」：悬停后 `message-quote` 在 DOM 里但 `element is not visible`（P1 已记：引用按钮悬停后仍不可见）。
+  - `workbench`「scheduled todo…」与「layout: long text…」：点 `todo-save` 后 `todo-drawer` 仍为 1（P1 已记：两条 workbench 在排期保存后抽屉不关）。
+  - `stickies` 两条：`message-pin` 同样是悬停后按钮不可见（与引用按钮同一类）；另一条是环境里没有 bubblewrap，确认模式横幅（`confirm-mode-banner`）挡住便签拖动手柄。横幅标记与抽出前一致，不是本切片改出来的门禁。未改这两份 spec。
+
+
