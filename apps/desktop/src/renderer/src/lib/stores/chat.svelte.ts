@@ -7,11 +7,13 @@ import {
   messagePreviewText,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
+import {
+  ChatSession,
+  type ConversationView,
+  type ProjectMemberView,
+} from './chat-session.svelte';
 
-export interface ProjectMemberView {
-  bot: Bot;
-  joinedAt: number;
-}
+export type { ActiveRunView, ConversationView, ProjectMemberView } from './chat-session.svelte';
 
 export interface ProjectTurnState {
   batchId: string | null;
@@ -24,10 +26,6 @@ import { board } from '$lib/features/board/board.svelte';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
-import { permissions } from '$lib/stores/permissions.svelte';
-import { agentsStore } from '$lib/stores/agents.svelte';
-import { sendGateRequirement } from '../features/chats/send-gate';
-import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
   composeAddMember,
@@ -43,20 +41,11 @@ import {
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { isSilentOnArrival, mergeUnreadCount } from '../features/chats/unread';
-import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
-import { activeRunsOf } from '../features/tasks/task-view';
-import { botMessageMutesRun, isInterimMessage } from '../features/chats/run-status-mute';
+import { isInterimMessage } from '../features/chats/run-status-mute';
 import { sidebarSections } from '../features/sidebar/sidebar-sections.svelte';
-import { settingsStore } from '$lib/stores/settings.svelte';
 import { shell } from '$lib/stores/shell.svelte';
 import { toast } from 'svelte-sonner';
-
-export type ConversationView = Conversation & {
-  unreadCount?: number;
-  runningBotIds?: string[];
-  bot?: Bot | null;
-};
 
 export interface SelectOptions {
   /**
@@ -66,40 +55,41 @@ export interface SelectOptions {
   keepMainView?: boolean;
 }
 
-export interface ActiveRunView {
-  run: Run;
-  /** Latest tool self-reported progress text (run.progress text tick). */
-  progress: string;
-  /** Tool the loop is calling right now (run.progress toolName tick). */
-  toolName: string;
-  /**
-   * True right after a bot message of this run landed: the status line yields
-   * its spot to that message until the next activity tick (tool_call /
-   * progress) — todo/loop-interim-updates.md 的「状态提示消失 → 新状态提示」节奏。
-   */
-  muted: boolean;
-  /** Time of the latest activity (status line: most recent task first). */
-  at: number;
-}
-
-interface CurrentChat {
-  conversation: ConversationView;
-  messages: Message[];
-  /** Active runs with their latest progress text (status line). */
-  activeRuns: ActiveRunView[];
-  /** The latest failed (retryable) run of this conversation. */
-  failedRun: Run | null;
-  loadingEarlier: boolean;
-  hasEarlier: boolean;
-  /** Group members (group conversations only). */
-  members: ProjectMemberView[];
-}
-
-const PAGE_SIZE = 60;
-
 class ChatState {
+  /**
+   * The main conversation view. Dialogs will construct their own session;
+   * this one is switched by `select`.
+   */
+  readonly main = new ChatSession(
+    {
+      syncReadCursor: (conversationId, lastReadSeq) => {
+        this.conversations = this.conversations.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, lastReadSeq, unreadCount: 0 }
+            : conversation,
+        );
+      },
+      syncMemberPreviews: (conversationId, members) => {
+        this.#syncMemberPreviews(conversationId, members);
+      },
+      noteIncoming: (conversationId, message) => {
+        this.#noteIncoming(conversationId, message);
+      },
+      applyRunning: (run) => {
+        this.#applyRunning(run);
+      },
+      applyBot: (bot) => {
+        this.#applyBotToList(bot);
+      },
+      applyConversation: (conversation) => {
+        if (isArchivedConversation(conversation)) this.#archivedIds.add(conversation.id);
+        else this.#archivedIds.delete(conversation.id);
+        this.#upsertConversation(this.#withDirectBot(conversation));
+      },
+    },
+    { attach: false },
+  );
   conversations = $state<ConversationView[]>([]);
-  currentId = $state<string | null>(null);
   /**
    * New-project compose: the two-round input at the top of the main area,
    * not yet persisted. Round 1 picks the lead (single), round 2 the members
@@ -115,36 +105,12 @@ class ChatState {
   /** Group turn state (P05), per conversation. */
   turnByConversation = $state<Record<string, ProjectTurnState>>({});
   /**
-   * The message being quoted in the composer (引用回复)：轻量引用快照而非
-   * Message 全量——与 composer 草稿缓存（按会话持久化）共用形状，切换会话/
-   * 重启后经缓存水合恢复。
-   */
-  replyTo = $state<ComposerReplyRef | null>(null);
-  /** Evidence jump (P07 记忆标签页): flash + scroll to this message after select. */
-  highlightMessageId = $state<string | null>(null);
-  /**
    * 左栏条目的「最后一条消息」单行预览：启动时由 conversations.list 一并
    * 下发（最后一条文本消息），之后经消息事件/打开会话增量维护；无文本
    * 消息的会话回退到会话 summary。
    */
   lastMessageText = $state<Record<string, string>>({});
-  #chat = $state<CurrentChat | null>(null);
   #lastSeqByConversation: Record<string, number> = {};
-  /**
-   * 本会话已关闭的失败横幅。关闭同时经 `runs.dismissFailure` 落库
-   * （`failureDismissed`），刷新后由那条标记挡住；这个集合只盖住落库完成前
-   * 的空窗，以及迟到的、还没带上标记的 run 事件。新的失败仍会显示。
-   */
-  #dismissedFailedRunIds = new Set<string>();
-  /** Failed runs already retried by the in-chat setup card (one-shot). */
-  #continuedSetupRunIds = new Set<string>();
-  /**
-   * 发送门禁置起的「缺设置」（inline setup，docs/design/18-inline-setup.md）：
-   * 单聊 Bot 无可用模型时消息不发（内容留在输入框），先在消息列表里完成设置。
-   * fromVoice 标记置起来源：语音入口（26 号设计）的转写能力缺失与发送门禁
-   * 共用卡片层，语义上只用于标记入口。
-   */
-  #pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
   #started = false;
   /** conversations.list 至少成功过一次（之前 conversations 为空不代表真的没有会话）。 */
   #listLoaded = false;
@@ -154,8 +120,29 @@ class ChatState {
    */
   #archivedIds = new Set<string>();
 
-  get current(): CurrentChat | null {
-    return this.#chat;
+  /** Stable until the next open/clear. Property updates do not replace it. */
+  get current() {
+    return this.main.view;
+  }
+
+  get currentId(): string | null {
+    return this.main.conversationId;
+  }
+
+  get replyTo(): ComposerReplyRef | null {
+    return this.main.replyTo;
+  }
+
+  set replyTo(value: ComposerReplyRef | null) {
+    this.main.replyTo = value;
+  }
+
+  get highlightMessageId(): string | null {
+    return this.main.highlightMessageId;
+  }
+
+  set highlightMessageId(value: string | null) {
+    this.main.highlightMessageId = value;
   }
 
   /**
@@ -172,34 +159,15 @@ class ChatState {
    * pendingSetup 优先，否则取最近失败 run 携带的结构化 setup。
    */
   get setupRequirement(): SetupRequirement | null {
-    if (this.#pendingSetup !== null) return this.#pendingSetup.requirement;
-    return this.#chat?.failedRun?.setup ?? null;
+    return this.main.setupRequirement;
   }
 
   start(): void {
     if (this.#started) return;
     this.#started = true;
-    core.onEvent('message.created', (payload) => {
-      const data = payload as { conversationId: string; message: Message };
-      this.#ingestMessage(data.conversationId, data.message, /* own */ false);
-    });
-    core.onEvent('message.updated', (payload) => {
-      const data = payload as { conversationId: string; message: Message };
-      this.#replaceMessage(data.message);
-    });
-    core.onEvent('conversation.updated', (payload) => {
-      const data = payload as { conversation: Conversation };
-      // 已归档（已从对话列表移除）的会话不在左栏，但左栏分组归属要留着，
-      // 恢复后回到原来的分组。
-      if (isArchivedConversation(data.conversation)) this.#archivedIds.add(data.conversation.id);
-      else this.#archivedIds.delete(data.conversation.id);
-      this.#upsertConversation(this.#withDirectBot(data.conversation));
-      // Membership may have changed; member cards drive the @ popup and the
-      // group info panel, so refresh them for the open group.
-      if (data.conversation.type === 'project' && data.conversation.id === this.currentId) {
-        void this.reloadMembers();
-      }
-    });
+    // The session subscribes to message, run, bot, and conversation updates.
+    // List-only events stay here.
+    this.main.start();
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.#archivedIds.delete(data.id);
@@ -207,60 +175,13 @@ class ChatState {
       this.pruneSidebarSections();
       if (this.currentId === data.id) this.close();
     });
-    core.onEvent('run.status', (payload) => {
-      const data = payload as { run: Run };
-      this.#applyRun(data.run);
-    });
-    core.onEvent('run.progress', (payload) => {
-      const data = payload as { runId: string; text?: string; toolName?: string };
-      const chat = this.#chat;
-      const entry = chat?.activeRuns.find((a) => a.run.id === data.runId);
-      if (chat && entry) {
-        // tool_call tick: switch to the tool label; progress tick: tool
-        // self-reported text wins until the next tool_call.
-        if (data.toolName !== undefined) {
-          entry.toolName = data.toolName;
-          entry.progress = '';
-        }
-        if (data.text !== undefined) {
-          entry.progress = data.text;
-        }
-        entry.muted = false;
-        entry.at = Date.now();
-        chat.activeRuns = [...chat.activeRuns];
-      }
-    });
-    core.onEvent('bot.updated', (payload) => {
-      const data = payload as { bot: Bot };
-      const bot = data.bot;
-      this.conversations = this.conversations.map((conversation) => {
-        const withBot = conversation.bot?.id === bot.id ? { ...conversation, bot } : conversation;
-        if (!withBot.memberPreviews?.some((member) => member.id === bot.id)) return withBot;
-        return {
-          ...withBot,
-          memberPreviews: withBot.memberPreviews.map((member) =>
-            member.id === bot.id ? { id: bot.id, name: bot.name, avatar: bot.avatar } : member,
-          ),
-        };
-      });
-      const chatState = this.#chat;
-      if (!chatState) return;
-      if (chatState.conversation.bot?.id === bot.id) {
-        chatState.conversation = { ...chatState.conversation, bot };
-      }
-      if (chatState.members.some((member) => member.bot.id === bot.id)) {
-        chatState.members = chatState.members.map((member) =>
-          member.bot.id === bot.id ? { ...member, bot } : member,
-        );
-      }
-    });
     core.onEvent('bot.deleted', (payload) => {
       const data = payload as { id: string };
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
       // 删除效果）；项目组历史里它经 botName 回退为其 id。
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
       this.pruneSidebarSections();
-      if (this.#chat?.conversation.directBotId === data.id) this.close();
+      if (this.main.conversation?.directBotId === data.id) this.close();
       // It is part of an in-flight project compose: a picked lead goes back to
       // round 1 (chosen members kept), members are dropped — never build the
       // project around a deleted bot.
@@ -285,11 +206,11 @@ class ChatState {
    * Bot 名称)；deleted bots fall through to their id (design/01: 显示其 id).
    */
   botName(botId: string): string {
-    const member = this.#chat?.members.find((m) => m.bot.id === botId);
+    const member = this.main.members.find((m) => m.bot.id === botId);
     if (member) return member.bot.name || member.bot.id;
     const known = contacts.bots.find((bot) => bot.id === botId);
     if (known) return known.name || known.id;
-    const directBot = this.#chat?.conversation.bot;
+    const directBot = this.main.conversation?.bot;
     if (directBot && directBot.id === botId) return directBot.name || directBot.id;
     return botId;
   }
@@ -354,92 +275,35 @@ class ChatState {
 
   async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
-    const loaded = (await core.call('conversations.get', { id: conversationId })) as {
-      conversation: ConversationView | null;
-    };
-    if (!loaded.conversation) return;
-    // 打开一个已归档（已从对话列表移除）的会话 = 恢复它：显式要用它，就回到列表。
-    let conversation = loaded.conversation;
-    if (isArchivedConversation(conversation)) {
-      const restored = (await core.call('conversations.unarchive', { id: conversationId })) as {
-        conversation: ConversationView;
-      };
-      conversation = restored.conversation;
-    }
-    this.cancelProjectCompose();
-    this.#upsertConversation(conversation);
-    const messages = await this.#loadLatest(conversationId);
-    // D75: several tasks may be in flight next to the turns — look further back.
-    const runs = (await core.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
-    // Every in-flight run, however old (审查 L3: a long task may be older
-    // than the latest page of runs).
-    const inFlight = (await core.call('runs.list', { conversationId, active: true })) as {
-      runs: Run[];
-    };
-    void tasks.loadActive(conversationId);
-    const active = activeRunsOf(runs.runs, inFlight.runs, (r) => isActive(r.status));
-    // 带 setup 的旧失败若已被后续响应 run 接手，不再恢复为设置卡（审查 HIGH #1）。
-    const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
-    if (failed !== null) logFailedRun(failed);
-    this.#chat = {
-      conversation,
-      messages,
-      activeRuns: active.map((run) => ({
-        run,
-        progress: '',
-        toolName: '',
-        // Same yield as live message.created ingest: a bot message of this run
-        // already in the loaded page means the status line starts hidden.
-        muted: botMessageMutesRun(messages, run.id),
-        at: run.startedAt ?? run.createdAt,
-      })),
-      failedRun: failed,
-      loadingEarlier: false,
-      hasEarlier: messages.length >= PAGE_SIZE,
-      members: [],
-    };
-    this.currentId = conversationId;
-    // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
-    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。启动恢复要落在
-    // 工作台时同样不动主区（keepMainView）。
-    if (!options.keepMainView && shell.workbenchIntent === workbenchIntent) shell.showChats();
-    // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
-    // The board dialog closes with the project view so it cannot follow the user
-    // into another conversation.
-    shell.projectView = 'chat';
-    shell.projectSettingsSection = 'overview';
-    board.closeCard();
-    this.replyTo = null;
-    // 进入另一个会话即离开任务执行过程页（它与会话内容同层替换）。
-    tasks.closeDetail();
-    // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
-    // 或项目组），而不是按最近消息时间挑一个。
-    saveLastConversationId(globalThis.localStorage ?? null, conversationId);
-    // 重新打开对话：对 pending 的 link 卡核对一次（P2，design 38 §4.3）。
-    this.#recheckPendingLinkCards(messages);
-    // 切换会话撤销门禁缺设置卡（与 close 同理；失败 run 的 setup 卡随
-    // failedRun 天然按会话生效，无需处理）。
-    this.#pendingSetup = null;
-    // 末尾可能是不可预览的 system_event（如环境安装批准提示），预览要重建到
-    // 最后一条文本或卡片消息——与 #ingestMessage 逐条事件记录的行为对齐。
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (this.#noteLastMessage(conversationId, messages[i]!)) break;
-    }
-    if (conversation.type === 'project') await this.reloadMembers();
-    else await this.#startSparseInterview(conversation);
-    await this.#markRead();
-    await permissions.loadForConversation(conversationId);
+    const opened = await this.main.open(conversationId, {
+      afterResolved: (conversation) => {
+        this.cancelProjectCompose();
+        this.#upsertConversation(conversation);
+      },
+      onReady: async (conversation) => {
+        // 工作台视图（D90 §5.1）的唯一退出点。慢 select 期间用户主动打开了工作台：
+        // 尊重它，只更新当前会话。启动恢复要落在工作台时同样不动主区（keepMainView）。
+        // Mark-read runs after this, so a covered conversation stays unread.
+        if (!options.keepMainView && shell.workbenchIntent === workbenchIntent) shell.showChats();
+        // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
+        shell.projectView = 'chat';
+        shell.projectSettingsSection = 'overview';
+        board.closeCard();
+        tasks.closeDetail();
+        saveLastConversationId(globalThis.localStorage ?? null, conversationId);
+        const messages = this.main.messages;
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+          if (this.#noteLastMessage(conversationId, messages[i]!)) break;
+        }
+        if (conversation.type !== 'project') await this.#startSparseInterview(conversation);
+      },
+    });
+    if (!opened) return;
   }
 
   /** Reloads the current group's member cards. */
   async reloadMembers(): Promise<void> {
-    const chatState = this.#chat;
-    if (!chatState || chatState.conversation.type !== 'project') return;
-    const result = (await core.call('conversations.members', {
-      conversationId: chatState.conversation.id,
-    })) as { members: ProjectMemberView[] };
-    chatState.members = result.members;
-    this.#syncMemberPreviews(chatState.conversation.id, result.members);
+    await this.main.reloadMembers();
   }
 
   /** 空画像的新 Bot 第一次打开私聊时，主动发出定位提问。已经问过的不重复发。 */
@@ -463,9 +327,6 @@ class ChatState {
     this.conversations = this.conversations.map((conversation) =>
       conversation.id === conversationId ? { ...conversation, memberPreviews } : conversation,
     );
-    if (this.#chat?.conversation.id === conversationId) {
-      this.#chat.conversation = { ...this.#chat.conversation, memberPreviews };
-    }
   }
 
   // --- project compose (D92 §11.1: two-round creation, lead first) -------------
@@ -635,17 +496,11 @@ class ChatState {
   }
 
   close(): void {
-    this.#chat = null;
-    this.currentId = null;
-    this.replyTo = null;
-    this.highlightMessageId = null;
+    this.main.clear();
     tasks.closeDetail();
     // 会话消失（删除会话/删除 Bot/放弃建项目组）才走到这里：记忆一并清除，
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
-    // 门禁置起的缺设置卡是「本次发送动作」的即时引导：离开会话即撤销
-    //（消息内容仍在输入框，再发送会重新拦下）。
-    this.#pendingSetup = null;
   }
 
   /**
@@ -654,11 +509,7 @@ class ChatState {
    * 这里保留记忆——下次启动 / 拉回宽屏仍回到该会话。
    */
   leaveCurrent(): void {
-    this.#chat = null;
-    this.currentId = null;
-    this.replyTo = null;
-    this.highlightMessageId = null;
-    this.#pendingSetup = null;
+    this.main.clear();
     tasks.closeDetail();
     // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
     shell.projectView = 'chat';
@@ -682,24 +533,7 @@ class ChatState {
   }
 
   startReply(message: Message): void {
-    this.replyTo = {
-      id: message.id,
-      senderType: message.senderType,
-      senderBotId: message.senderBotId,
-      text: 'text' in message.content ? message.content.text : '',
-      // 附件元数据快照：引用块里的图片缩略图 / 灯箱要用（图片消息没有正文文字，
-      // 只存 text 会让引用块空掉）。无附件不写字段，与旧快照形状一致。
-      ...(message.attachments.length > 0
-        ? {
-            attachments: message.attachments.map((a) => ({
-              attachmentId: a.id,
-              fileName: a.fileName,
-              mime: a.mime,
-              size: a.size,
-            })),
-          }
-        : {}),
-    };
+    this.main.startReply(message);
   }
 
   cancelReply(): void {
@@ -707,41 +541,7 @@ class ChatState {
   }
 
   async loadEarlier(): Promise<void> {
-    const chat = this.#chat;
-    if (!chat || chat.loadingEarlier || chat.messages.length === 0) return;
-    chat.loadingEarlier = true;
-    try {
-      const oldestSeq = chat.messages[0]?.seq ?? 1;
-      const result = (await core.call('messages.list', {
-        conversationId: chat.conversation.id,
-        beforeSeq: oldestSeq,
-        limit: PAGE_SIZE,
-      })) as { messages: Message[] };
-      chat.messages = [...result.messages, ...chat.messages];
-      chat.hasEarlier = result.messages.length >= PAGE_SIZE;
-      // 翻页翻出的更早的 pending link 卡同样核对一次。
-      this.#recheckPendingLinkCards(result.messages);
-    } finally {
-      chat.loadingEarlier = false;
-    }
-  }
-
-  /**
-   * 重新打开对话（或翻出更早消息）时，对消息里 pending 的 link 卡用读适配器核对一次
-   * （P2，todo/conversational-settings-p2.md 任务 8）：SettingCard 的自动完成只认挂载之后的
-   * settings.changed，用户在设置页改完、之后才回到这个对话时卡会一直挂着。核对由 core 做
-   * （settings.cards.recheck）：通过才标 applied 并唤醒一次；核对不了（渲染层 / 只读 /
-   * unknown / 兜底适配器）保持 pending，不擅自标完成。confirm / user-only / form 卡不在
-   * 此列——那些要用户在卡上操作。结果经 message.updated 回来，无需本地处理。
-   */
-  #recheckPendingLinkCards(messages: readonly Message[]): void {
-    for (const message of messages) {
-      const setting = settingCardOf(message);
-      if (setting === null || setting.state !== 'pending' || setting.mode !== 'link') continue;
-      core.call('settings.cards.recheck', { messageId: message.id }).catch(() => {
-        // 核对失败不影响打开对话；卡片保持 pending，用户仍可手动结卡。
-      });
-    }
+    await this.main.loadEarlier();
   }
 
   // --- send（直发，无待发送队列）---------------------------------------------
@@ -752,7 +552,7 @@ class ChatState {
    *
    * `conversationId` 由调用方显式给出并**只发往它**——发送是异步的（要等上传落定，
    * 最长 60 秒），期间用户可能已切到别的会话；若按「调用时的当前会话」发，文本会误投
-   * 进新会话。因此这里不依赖 `#chat`。
+   * 进新会话。
    *
    * 返回 `{ ok: true }` = core 已受理；失败返回错误码，**不在这里 toast**——调用方
    * （composer-send）要先按错误码/附件状态判因再决定提示（附件失效 vs 通用错误），
@@ -763,24 +563,7 @@ class ChatState {
     text: string,
     options: { mentions?: string[]; replyTo?: string | null; attachmentIds?: string[] } = {},
   ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
-    try {
-      await core.call('messages.send', {
-        conversationId,
-        text,
-        ...(options.mentions !== undefined && options.mentions.length > 0
-          ? { mentions: options.mentions }
-          : {}),
-        ...(options.replyTo != null ? { replyTo: options.replyTo } : {}),
-        ...(options.attachmentIds !== undefined && options.attachmentIds.length > 0
-          ? { attachmentIds: options.attachmentIds }
-          : {}),
-      });
-      // 引用回复是当前会话的瞬态；发的是别的会话（用户已切走）时不能清掉眼前会话的引用。
-      if (this.#chat?.conversation.id === conversationId) this.replyTo = null;
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, code: errorCode(error) };
-    }
+    return this.main.send(conversationId, text, options);
   }
 
   /** 发送失败的通用提示（附件失效等可归因的情形由调用方另行提示）。 */
@@ -798,22 +581,7 @@ class ChatState {
    *（run.setup）兜底出卡片。Composer 发送前调用（true = 已拦截，不要清空）。
    */
   gateForSend(): boolean {
-    const chat = this.#chat;
-    if (!chat) return false;
-    const bot = chat.conversation.bot;
-    if ((bot?.profile.runtime.agent.id ?? '').length > 0 && !agentsStore.loaded) {
-      agentsStore.start();
-      void agentsStore.refresh().catch(() => undefined);
-    }
-    const requirement = sendGateRequirement({
-      conversationType: chat.conversation.type,
-      bot,
-      settings: settingsStore.settings,
-      agents: agentsStore,
-    });
-    if (requirement === null) return false;
-    this.#pendingSetup = { requirement, fromVoice: false };
-    return true;
+    return this.main.gateForSend();
   }
 
   /**
@@ -823,14 +591,7 @@ class ChatState {
    * 不起来）。
    */
   dismissSetupCard(): void {
-    this.#pendingSetup = null;
-    const failed = this.#chat?.failedRun;
-    if (failed?.setup) {
-      this.dismissFailedRun(failed.id);
-      core.call('runs.setupDismissed', { runId: failed.id }).catch(() => {
-        // 通知失败不影响收卡（任务仍可在任务卡上手动重试）。
-      });
-    }
+    this.main.dismissSetupCard();
   }
 
   /**
@@ -840,8 +601,7 @@ class ChatState {
   requestCapabilitySetup(
     capability: Extract<SetupRequirement, { kind: 'capability-model' }>['capability'],
   ): void {
-    if (this.#chat === null) return;
-    this.#pendingSetup = { requirement: { kind: 'capability-model', capability }, fromVoice: true };
+    this.main.requestCapabilitySetup(capability);
   }
 
   /**
@@ -850,17 +610,7 @@ class ChatState {
    * 发送门禁路径无事可做——消息内容一直留在输入框，用户再按一次发送。
    */
   async continueAfterSetup(): Promise<void> {
-    this.#pendingSetup = null;
-    const failed = this.#chat?.failedRun;
-    if (failed?.setup) {
-      this.dismissFailedRun(failed.id);
-      // 一次性续跑令牌：同一失败 run 只自动重试一次（设置卡的测试连接回调
-      // 与随后迟到的 ready 事件不会把它重放两次）。
-      if (!this.#continuedSetupRunIds.has(failed.id)) {
-        this.#continuedSetupRunIds.add(failed.id);
-        await this.retryRun(failed.id);
-      }
-    }
+    await this.main.continueAfterSetup();
   }
 
   // --- messages ---------------------------------------------------------------
@@ -876,11 +626,7 @@ class ChatState {
   // --- runs --------------------------------------------------------------------
 
   async retryRun(runId: string): Promise<void> {
-    try {
-      await core.call('runs.retry', { runId });
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-    }
+    await this.main.retryRun(runId);
   }
 
   /**
@@ -888,11 +634,7 @@ class ChatState {
    * 重试来源都还在），刷新后不再恢复。
    */
   dismissFailedRun(runId: string): void {
-    this.#dismissedFailedRunIds.add(runId);
-    if (this.#chat?.failedRun?.id === runId) this.#chat.failedRun = null;
-    core.call('runs.dismissFailure', { runId }).catch((error: unknown) => {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-    });
+    this.main.dismissFailedRun(runId);
   }
 
   async deleteConversation(id: string): Promise<void> {
@@ -931,7 +673,7 @@ class ChatState {
   }
 
   async markRead(): Promise<void> {
-    await this.#markRead();
+    await this.main.markRead();
   }
 
   // --- internals -----------------------------------------------------------------
@@ -965,14 +707,6 @@ class ChatState {
     return true;
   }
 
-  async #loadLatest(conversationId: string): Promise<Message[]> {
-    const result = (await core.call('messages.list', {
-      conversationId,
-      limit: PAGE_SIZE,
-    })) as { messages: Message[] };
-    return result.messages;
-  }
-
   /**
    * 会话此刻是否真的在用户眼前：对话视图里的当前会话。工作台（D90）盖住对话区时它仍是
    * `currentId`，但用户看不到——期间到达的回复要算未读，回到对话（`select`）时再补标已读。
@@ -981,69 +715,27 @@ class ChatState {
     return !shell.workbenchShown && this.currentId === conversationId;
   }
 
-  async #markRead(): Promise<void> {
-    const chat = this.#chat;
-    if (!chat || chat.conversation.readOnly) return;
-    // 工作台开着时不标已读（MessageList 卸载后一般不会走到这里，仍在此兜底）。
-    if (shell.workbenchShown) return;
-    const lastSeq = chat.messages.at(-1)?.seq;
-    if (lastSeq === undefined || lastSeq <= chat.conversation.lastReadSeq) return;
-    await core.call('conversations.markRead', {
-      conversationId: chat.conversation.id,
-      seq: lastSeq,
-    });
-    chat.conversation = { ...chat.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
-    this.conversations = this.conversations.map((c) =>
-      c.id === chat.conversation.id ? { ...c, lastReadSeq: lastSeq, unreadCount: 0 } : c,
-    );
-  }
-
-  #ingestMessage(conversationId: string, message: Message, own: boolean): void {
-    // Task interim is a status overlay, not a chat bubble (may still arrive from older cores).
-    if (isInterimMessage(message)) return;
-    // Mid-turn permission popups are a dock card. Drop the message.created
-    // payload so it never sits in the open conversation's message list.
-    if (isEphemeralApprovalCard(message)) return;
+  /** Sidebar row for a new message. The open transcript is the session's job. */
+  #noteIncoming(conversationId: string, message: Message): void {
+    if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
     this.#lastSeqByConversation[conversationId] = Math.max(
       this.#lastSeqByConversation[conversationId] ?? 0,
       message.seq,
     );
     this.#noteLastMessage(conversationId, message);
-    // Update the list entry (preview/time/order); refetch-less optimistic view.
-    this.conversations = this.conversations.map((c) =>
-      c.id === conversationId
+    this.conversations = this.conversations.map((conversation) =>
+      conversation.id === conversationId
         ? {
-            ...c,
-            lastSeq: Math.max(c.lastSeq, message.seq),
+            ...conversation,
+            lastSeq: Math.max(conversation.lastSeq, message.seq),
             lastMessageAt: message.createdAt,
             unreadCount:
-              this.isViewing(c.id) || isSilentOnArrival(message)
-                ? (c.unreadCount ?? 0)
-                : (c.unreadCount ?? 0) + 1,
+              this.isViewing(conversation.id) || isSilentOnArrival(message)
+                ? (conversation.unreadCount ?? 0)
+                : (conversation.unreadCount ?? 0) + 1,
           }
-        : c,
+        : conversation,
     );
-    const chat = this.#chat;
-    if (!chat || chat.conversation.id !== conversationId) return;
-    if (!chat.messages.some((m) => m.id === message.id)) {
-      chat.messages = [...chat.messages, message];
-    }
-    // 本 run 的消息落库：状态行让位（隐藏），直到下一个活动事件再出现。
-    if (message.senderType === 'bot' && message.runId) {
-      const entry = chat.activeRuns.find((a) => a.run.id === message.runId);
-      if (entry && !entry.muted) {
-        entry.muted = true;
-        chat.activeRuns = [...chat.activeRuns];
-      }
-    }
-    if (message.senderType === 'user') void this.#markRead();
-    void own;
-  }
-
-  #replaceMessage(message: Message): void {
-    const chat = this.#chat;
-    if (!chat || chat.conversation.id !== message.conversationId) return;
-    chat.messages = chat.messages.map((m) => (m.id === message.id ? message : m));
   }
 
   #upsertConversation(conversation: ConversationView): void {
@@ -1061,16 +753,17 @@ class ChatState {
     // 已归档（已从对话列表移除）的会话不进左栏；数据全留，通讯录里可恢复。
     if (isArchivedConversation(conversation)) {
       this.conversations = this.conversations.filter((c) => c.id !== conversation.id);
-      if (this.#chat?.conversation.id === conversation.id) this.close();
+      if (this.main.view?.conversation.id === conversation.id) this.close();
       return;
     }
     // 已删除 Bot 的直聊不回左栏（bot.deleted 时已移除条目）；仅当它正被打开
     // （如记忆证据跳转）时同步当前会话视图。
     if (merged.type === 'direct' && (merged.bot == null || merged.bot.status === 'deleted')) {
-      if (this.#chat?.conversation.id === merged.id) {
-        this.#chat.conversation = {
+      const view = this.main.view;
+      if (view?.conversation.id === merged.id) {
+        view.conversation = {
           ...merged,
-          bot: merged.bot ?? this.#chat.conversation.bot,
+          bot: merged.bot ?? view.conversation.bot,
         };
       }
       return;
@@ -1086,11 +779,12 @@ class ChatState {
     } else {
       this.conversations = [merged, ...this.conversations];
     }
-    if (this.#chat?.conversation.id === conversation.id) {
-      this.#chat.conversation = {
+    const view = this.main.view;
+    if (view?.conversation.id === conversation.id) {
+      view.conversation = {
         ...merged,
-        bot: conversation.bot ?? this.#chat.conversation.bot,
-        memberPreviews: conversation.memberPreviews ?? this.#chat.conversation.memberPreviews,
+        bot: conversation.bot ?? view.conversation.bot,
+        memberPreviews: conversation.memberPreviews ?? view.conversation.memberPreviews,
       };
     }
   }
@@ -1136,7 +830,8 @@ class ChatState {
     }
   }
 
-  #applyRun(run: Run): void {
+  /** Sidebar running markers. The open session owns activeRuns and failedRun. */
+  #applyRunning(run: Run): void {
     if (run.conversationId === null) return;
     const current = this.runningByConversation[run.conversationId] ?? [];
     let running = [...current];
@@ -1146,62 +841,33 @@ class ChatState {
       running = running.filter((id) => id !== run.botId);
     }
     this.runningByConversation[run.conversationId] = running;
-    this.conversations = this.conversations.map((c) =>
-      c.id === run.conversationId ? { ...c, runningBotIds: running } : c,
+    this.conversations = this.conversations.map((conversation) =>
+      conversation.id === run.conversationId ? { ...conversation, runningBotIds: running } : conversation,
     );
+  }
 
-    const chat = this.#chat;
-    if (!chat || chat.conversation.id !== run.conversationId) return;
-    if (isActive(run.status)) {
-      const existing = chat.activeRuns.find((a) => a.run.id === run.id);
-      if (existing) {
-        existing.run = run;
-        chat.activeRuns = [...chat.activeRuns];
-      } else {
-        chat.activeRuns = [
-          ...chat.activeRuns,
-          { run, progress: '', toolName: '', muted: false, at: Date.now() },
-        ];
-      }
-    } else {
-      chat.activeRuns = chat.activeRuns.filter((a) => a.run.id !== run.id);
-    }
-    const failureHidden = run.failureDismissed === true || this.#dismissedFailedRunIds.has(run.id);
-    if (run.status === 'failed' && !failureHidden && chat.failedRun?.id !== run.id) {
-      logFailedRun(run);
-    }
-    chat.failedRun =
-      run.status === 'failed' && showsFailure(run) && !failureHidden
-        ? run
-        : chat.failedRun?.id === run.id
-          ? null
-          : chat.failedRun;
+  #applyBotToList(bot: Bot): void {
+    this.conversations = this.conversations.map((conversation) => {
+      const withBot = conversation.bot?.id === bot.id ? { ...conversation, bot } : conversation;
+      if (!withBot.memberPreviews?.some((member) => member.id === bot.id)) return withBot;
+      return {
+        ...withBot,
+        memberPreviews: withBot.memberPreviews.map((member) =>
+          member.id === bot.id ? { id: bot.id, name: bot.name, avatar: bot.avatar } : member,
+        ),
+      };
+    });
   }
 
   /** Only clears the running marker when no other active run of this bot remains. */
   #isLastRunOfBot(run: Run): boolean {
-    const chat = this.#chat;
-    if (!chat) return true;
-    for (const active of chat.activeRuns) {
+    const view = this.main.view;
+    if (!view) return true;
+    for (const active of view.activeRuns) {
       if (active.run.id !== run.id && active.run.botId === run.botId) return false;
     }
     return true;
   }
-}
-
-/**
- * Dev builds: a failed run's full error goes to the DevTools console (the
- * banner truncates it; the core also logs it to the `pnpm dev` terminal).
- */
-function logFailedRun(run: Run): void {
-  if (!import.meta.env.DEV) return;
-  console.warn('[kepcup] run failed', {
-    runId: run.id,
-    loopType: run.loopType,
-    botId: run.botId,
-    error: run.error,
-    setup: run.setup,
-  });
 }
 
 function isActive(status: Run['status']): boolean {

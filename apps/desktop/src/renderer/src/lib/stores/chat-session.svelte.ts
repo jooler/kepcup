@@ -54,6 +54,10 @@ export interface ActiveRunView {
 export interface ChatSessionHost {
   syncReadCursor(conversationId: string, lastReadSeq: number): void;
   syncMemberPreviews(conversationId: string, members: ProjectMemberView[]): void;
+  noteIncoming(conversationId: string, message: Message): void;
+  applyRunning(run: Run): void;
+  applyBot(bot: Bot): void;
+  applyConversation(conversation: Conversation): void;
 }
 
 export interface OpenSessionOptions {
@@ -63,6 +67,12 @@ export interface OpenSessionOptions {
    * which is where that work happens today.
    */
   afterResolved?: (conversation: ConversationView) => void;
+  /**
+   * After the view is installed and before mark-read. `chat.select` returns
+   * to the chat surface here so a workbench-covered open does not mark read
+   * until the conversation is actually on screen.
+   */
+  onReady?: (conversation: ConversationView) => void | Promise<void>;
 }
 
 const PAGE_SIZE = 60;
@@ -70,6 +80,10 @@ const PAGE_SIZE = 60;
 const noopHost: ChatSessionHost = {
   syncReadCursor: () => undefined,
   syncMemberPreviews: () => undefined,
+  noteIncoming: () => undefined,
+  applyRunning: () => undefined,
+  applyBot: () => undefined,
+  applyConversation: () => undefined,
 };
 
 /**
@@ -97,8 +111,14 @@ export class ChatSession {
   #dismissedFailedRunIds = new Set<string>();
   #continuedSetupRunIds = new Set<string>();
 
-  constructor(host: ChatSessionHost = noopHost) {
+  constructor(host: ChatSessionHost = noopHost, options: { attach?: boolean } = {}) {
     this.#host = host;
+    if (options.attach !== false) this.start();
+  }
+
+  /** Subscribe once. `chat.start` attaches `main`; other instances attach here. */
+  start(): void {
+    if (this.#unsubscribers.length > 0 || this.#disposed) return;
     this.#subscribe();
   }
 
@@ -185,6 +205,7 @@ export class ChatSession {
     this.pendingSetup = null;
     this.#recheckPendingLinkCards(messages);
     if (conversation.type === 'project') await this.reloadMembers();
+    await options.onReady?.(conversation);
     await this.markRead();
     await permissions.loadForConversation(id);
     return true;
@@ -397,6 +418,7 @@ export class ChatSession {
   #ingestMessage(conversationId: string, message: Message): void {
     if (this.#disposed) return;
     if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
+    this.#host.noteIncoming(conversationId, message);
     const view = this.view;
     if (!view || view.conversation.id !== conversationId) return;
     if (!view.messages.some((item) => item.id === message.id)) {
@@ -421,6 +443,7 @@ export class ChatSession {
 
   #applyRun(run: Run): void {
     if (this.#disposed || run.conversationId === null) return;
+    this.#host.applyRunning(run);
     const view = this.view;
     if (!view || view.conversation.id !== run.conversationId) return;
     if (isActive(run.status)) {
@@ -466,6 +489,7 @@ export class ChatSession {
 
   #applyBot(bot: Bot): void {
     if (this.#disposed) return;
+    this.#host.applyBot(bot);
     const view = this.view;
     if (!view) return;
     if (view.conversation.bot?.id === bot.id) {
@@ -480,6 +504,7 @@ export class ChatSession {
 
   #applyConversation(conversation: Conversation): void {
     if (this.#disposed) return;
+    this.#host.applyConversation(conversation);
     const view = this.view;
     if (!view || view.conversation.id !== conversation.id) return;
     view.conversation = {
