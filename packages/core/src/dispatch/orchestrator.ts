@@ -97,6 +97,7 @@ import {
   mapToolNames,
   buildAgentSessionPrompt,
   buildSystemPrompt,
+  type CardPromptContext,
 } from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -430,6 +431,12 @@ export interface OrchestratorDeps {
    * （缺省 = 管家没有这些工具）。
    */
   workbench?: WorkbenchToolFacade | undefined;
+  /**
+   * Current board-card facts for a card conversation's prompt (D103 §7.1).
+   * Read on every run so an edited card is what the bot sees. Null when the
+   * conversation is not a card chat.
+   */
+  cardContext?: ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -2411,6 +2418,17 @@ export class Orchestrator {
     return cards;
   }
 
+  /**
+   * Card branch of the prompt. Undefined for every other conversation type.
+   * Wiki topics, when present, are the same body as `<project_wiki_topics>`.
+   */
+  #cardPrompt(conversation: Conversation, wikiTopics: string): CardPromptContext | undefined {
+    if (conversation.type !== 'card') return undefined;
+    const context = this.#deps.cardContext?.(conversation.id) ?? null;
+    if (context === null) return undefined;
+    return wikiTopics.length > 0 ? { ...context, wikiTopics } : context;
+  }
+
   /** Appends + publishes a system message (group events, P05). */
   #appendSystemMessage(
     conversationId: string,
@@ -3057,10 +3075,12 @@ export class Orchestrator {
         optIns: resolveCapabilityOptIns(bot.profile.runtime.agent.capabilities, capabilities),
         maxNameLength: MAX_AGENT_TOOL_NAME - toolName('').length,
       });
+      const cardPrompt = this.#cardPrompt(conversation, input.projectWikiTopics);
       const sessionPrompt = buildAgentSessionPrompt({
         bot,
         conversation,
         ...(conversation.type === 'project' ? { members: this.#memberCards(conversation.id) } : {}),
+        ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
         tools: {
           toolNames: tools.map((tool) => tool.name),
           nativeCapabilities: entry.nativeCapabilities,
@@ -4617,8 +4637,9 @@ export class Orchestrator {
               },
             }
           : {}),
-        buildSystemPrompt: async () =>
-          buildSystemPrompt({
+        buildSystemPrompt: async () => {
+          const cardPrompt = this.#cardPrompt(conv, projectWikiTopicsSection);
+          return buildSystemPrompt({
             loop: isTask ? 'task' : 'turn',
             language: this.#deps.settings.get().appLanguage,
             bot,
@@ -4631,6 +4652,7 @@ export class Orchestrator {
             ...(conv.type === 'project' && !isTask
               ? { projectRole: bot.id === conv.leadBotId ? ('lead' as const) : ('member' as const) }
               : {}),
+            ...(cardPrompt !== undefined ? { card: cardPrompt } : {}),
             workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
             workspace: {
               path: workspacePath,
@@ -4663,7 +4685,8 @@ export class Orchestrator {
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
             // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
             ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
-          }),
+          });
+        },
         messages: [
           {
             role: 'user',
