@@ -206,6 +206,10 @@ import {
   wikiSearchInputSchema,
   wikiSearchOutputSchema,
   wikiHistoryOutputSchema,
+  wikiCommitInputSchema,
+  wikiCommitTreeOutputSchema,
+  wikiCommitPageInputSchema,
+  wikiCommitPageOutputSchema,
   wikiRollbackInputSchema,
   wikiRollbackOutputSchema,
   wikiDeletePageInputSchema,
@@ -1530,13 +1534,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       items: services.memory!.listMemory(input.botId),
     })),
     'memory.update': method(memoryUpdateInputSchema, memoryListOutputSchema, async (input) => {
-      if (input.content === undefined && input.privateToBot === undefined) {
-        throw new AppError('INVALID_INPUT', 'memory.update 需要提供 content 或 privateToBot');
+      if (input.content === undefined) {
+        throw new AppError('INVALID_INPUT', 'memory.update 需要提供 content');
       }
-      services.memory!.updateMemory(input.botId, input.id, {
-        ...(input.content !== undefined ? { content: input.content } : {}),
-        ...(input.privateToBot !== undefined ? { privateToBot: input.privateToBot } : {}),
-      });
+      services.memory!.updateMemory(input.botId, input.id, { content: input.content });
       return { items: services.memory!.listMemory(input.botId) };
     }),
     'memory.retract': method(memoryRetractInputSchema, memoryListOutputSchema, async (input) => {
@@ -1699,6 +1700,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'wiki.history': method(wikiOwnerInputSchema, wikiHistoryOutputSchema, async (input) => ({
       history: await services.wiki!.history(wikiOwnerOf(input.owner)),
     })),
+    // 历史快照（只读，从 git 对象读）：历史条目点开后浏览当时的页面与内容，
+    // 用户据此判断要不要回滚。
+    'wiki.commitTree': method(wikiCommitInputSchema, wikiCommitTreeOutputSchema, async (input) => ({
+      pages: await services.wiki!.commitTree(wikiOwnerOf(input.owner), input.commitOid),
+    })),
+    'wiki.commitPage': method(wikiCommitPageInputSchema, wikiCommitPageOutputSchema, async (input) =>
+      services.wiki!.readCommitPage(wikiOwnerOf(input.owner), input.commitOid, input.path),
+    ),
     'wiki.rollback': method(wikiRollbackInputSchema, wikiRollbackOutputSchema, async (input) => {
       await services.wiki!.rollback(wikiOwnerOf(input.owner), input.commitOid);
       return { ok: true as const };

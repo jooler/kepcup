@@ -304,6 +304,20 @@ describe('skills/registry（P08 任务 4：安装/冲突/引用回收）', () =>
     closeDatabase(rig.db);
   });
 
+  it('draft 行 enable fail-closed：内容未转正，翻 active 只会造出幽灵启用', () => {
+    const rig = makeRig();
+    const draftDir = path.join(rig.paths.home, 'bots', 'bot_a', 'skills', '_drafts', 'no-enable');
+    mkdirSync(draftDir, { recursive: true });
+    writeFileSync(path.join(draftDir, 'SKILL.md'), '---\nname: no-enable\ndescription: d\n---\n正文');
+    rig.skills.ensureDraftRow('bot_a', 'no-enable', '语法检查未通过');
+
+    expect(() => rig.skills.enable('bot_a', 'no-enable')).toThrowError(/草稿技能不能启用/);
+    expect(rig.skills.rowsForBot('bot_a').find((row) => row.name === 'no-enable')?.status).toBe(
+      'draft',
+    );
+    closeDatabase(rig.db);
+  });
+
   it('skills.read 读草稿：目录在 _drafts 下时返回草稿内容，目录消失时报 SKILL_DRAFT_MISSING 并清掉残留行', () => {
     const rig = makeRig();
     const draftDir = path.join(rig.paths.home, 'bots', 'bot_a', 'skills', '_drafts', 'draft-read');

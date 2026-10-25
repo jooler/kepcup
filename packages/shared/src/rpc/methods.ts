@@ -641,6 +641,9 @@ export const appsConnectionsGrantsOutputSchema = z.object({
 export const appsGrantsRevokeInputSchema = z.object({ grantId: z.string().min(1) });
 /** D73 P2：Bot 详情的污点外发汇总——无人值守下自动批准的外发（审计 `egress_tainted`）。 */
 export const appsEgressSummaryInputSchema = z.object({ botId: z.string().min(1) });
+/** 关闭「污点外发」汇总 = 删除该 Bot 的 `egress_tainted` 审计记录；返回删除条数。 */
+export const appsEgressClearInputSchema = z.object({ botId: z.string().min(1) });
+export const appsEgressClearOutputSchema = z.object({ deleted: z.number().int().min(0) });
 export const appsEgressSummaryOutputSchema = z.object({
   /** 放行的次数（审计 `approved !== false`）。 */
   total: z.number().int().min(0),
@@ -1462,11 +1465,6 @@ export const memoryUpdateInputSchema = z.object({
   id: z.string().min(1),
   botId: z.string().min(1),
   content: z.string().min(1).max(10_000).optional(),
-  /**
-   * 任务书任务 13 的界面动作「标记只属于该 Bot」需要独立于内容的写入通道
-   * （content 与 privateToBot 允许只改其一，均为显式 optional）。
-   */
-  privateToBot: z.boolean().optional(),
 });
 export const memoryRetractInputSchema = z.object({
   id: z.string().min(1),
@@ -1586,6 +1584,22 @@ export const wikiSearchOutputSchema = z.object({ hits: z.array(wikiSearchHitSche
 export type WikiSearchOutput = z.infer<typeof wikiSearchOutputSchema>;
 export const wikiHistoryOutputSchema = z.object({ history: z.array(wikiHistoryEntrySchema) });
 export type WikiHistoryOutput = z.infer<typeof wikiHistoryOutputSchema>;
+/** 某一次提交的 Wiki 快照（只读）：页面列表 / 单页全文按 commitOid 从 git 对象读。 */
+export const wikiCommitInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  commitOid: z.string().min(1),
+});
+export type WikiCommitInput = z.infer<typeof wikiCommitInputSchema>;
+export const wikiCommitTreeOutputSchema = z.object({ pages: z.array(wikiPageSchema) });
+export type WikiCommitTreeOutput = z.infer<typeof wikiCommitTreeOutputSchema>;
+export const wikiCommitPageInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  commitOid: z.string().min(1),
+  path: z.string().min(1).max(500),
+});
+export type WikiCommitPageInput = z.infer<typeof wikiCommitPageInputSchema>;
+export const wikiCommitPageOutputSchema = wikiPageOutputSchema;
+export type WikiCommitPageOutput = z.infer<typeof wikiCommitPageOutputSchema>;
 export const wikiRollbackInputSchema = z.object({
   owner: wikiOwnerSchema,
   commitOid: z.string().min(1),
@@ -2127,6 +2141,10 @@ export const rpcMethodSchemas = {
     input: appsEgressSummaryInputSchema,
     output: appsEgressSummaryOutputSchema,
   },
+  'apps.egressClear': {
+    input: appsEgressClearInputSchema,
+    output: appsEgressClearOutputSchema,
+  },
   'apps.tools.approveAfterTest': {
     input: appsToolsApproveAfterTestInputSchema,
     output: appsToolsApproveAfterTestOutputSchema,
@@ -2454,6 +2472,8 @@ export const rpcMethodSchemas = {
   'wiki.page': { input: wikiPageInputSchema, output: wikiPageOutputSchema },
   'wiki.search': { input: wikiSearchInputSchema, output: wikiSearchOutputSchema },
   'wiki.history': { input: wikiOwnerInputSchema, output: wikiHistoryOutputSchema },
+  'wiki.commitTree': { input: wikiCommitInputSchema, output: wikiCommitTreeOutputSchema },
+  'wiki.commitPage': { input: wikiCommitPageInputSchema, output: wikiCommitPageOutputSchema },
   'wiki.rollback': { input: wikiRollbackInputSchema, output: wikiRollbackOutputSchema },
   'wiki.deletePage': { input: wikiDeletePageInputSchema, output: wikiDeletePageOutputSchema },
   'wiki.sources': { input: wikiOwnerInputSchema, output: wikiSourcesOutputSchema },
@@ -2736,6 +2756,7 @@ const APP_METHODS = [
   'apps.connections.grants',
   'apps.grants.revoke',
   'apps.egressSummary',
+  'apps.egressClear',
   'apps.tools.approveAfterTest',
   'apps.connections.list',
   'apps.disconnect',

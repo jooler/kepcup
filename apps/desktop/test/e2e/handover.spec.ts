@@ -187,9 +187,9 @@ test('handover card: uncheck one item, confirm, progress and results render', as
 
 /**
  * D88 P1：普通 Bot 自己发起。阿尔法用 remember / schedule 工具记下两条记忆（其中一条
- * 「只告诉你」）与一条定时任务；阿尔法自己 inspect_bot_assets（memory_query）→ 私密记忆
- * 不在候选里 → propose_handover 把一条记忆与定时任务交给贝塔；dock 里的卡按组展示记忆
- * 与定时任务 → 确认 → 进度卡完成；贝塔的记忆里有副本，阿尔法的私密记忆没有过去。
+ * self_note，永不移交）与一条定时任务；阿尔法自己 inspect_bot_assets（memory_query）→
+ * 自我笔记不在候选里 → propose_handover 把一条记忆与定时任务交给贝塔；dock 里的卡按组
+ * 展示记忆与定时任务 → 确认 → 进度卡完成；贝塔的记忆里有副本，阿尔法的自我笔记没有过去。
  */
 test('handover P1: a regular bot hands its own memory and schedule over', async () => {
   test.setTimeout(240_000);
@@ -211,9 +211,8 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
     llm.script('mock-main', [
       step().replyToolCall('remember', { content: '用户喜欢周报用三段式写', kind: 'preference' }),
       step().replyToolCall('remember', {
-        content: '只告诉你：周报其实是外包写的',
-        kind: 'fact',
-        private_to_bot: true,
+        content: '我整理周报时容易漏掉数据来源',
+        kind: 'self_note',
       }),
       step().replyToolCall('schedule', { when: '0 18 * * 5', title: '周报', note: '写周报' }),
       step().replyText('都记下了。'),
@@ -234,7 +233,7 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
           weekly = schedules.find((entry) => entry.title === '周报')?.id ?? '';
           const { items } = (await rpc(page, 'memory.list', { botId: alpha.bot.id })) as MemoryList;
           pref = items.find((item) => item.content.includes('三段式'))?.id ?? '';
-          secret = items.find((item) => item.content.includes('外包'))?.id ?? '';
+          secret = items.find((item) => item.content.includes('数据来源'))?.id ?? '';
           return weekly.length > 0 && pref.length > 0 && secret.length > 0;
         },
         { timeout: 60_000 },
@@ -282,7 +281,7 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
       progress.locator(`[data-testid="handover-item-status-memory:${pref}"]`),
     ).toHaveAttribute('data-status', 'done');
 
-    // 贝塔得到记忆副本；私密记忆没有过去；阿尔法的记忆原样保留。
+    // 贝塔得到记忆副本；自我笔记没有过去；阿尔法的记忆原样保留。
     await expect
       .poll(async () => {
         const { items } = (await rpc(page, 'memory.list', { botId: beta.bot.id })) as MemoryList;
@@ -290,7 +289,7 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
       })
       .toEqual(expect.arrayContaining(['用户喜欢周报用三段式写']));
     const betaItems = (await rpc(page, 'memory.list', { botId: beta.bot.id })) as MemoryList;
-    expect(betaItems.items.some((item) => item.content.includes('外包'))).toBe(false);
+    expect(betaItems.items.some((item) => item.content.includes('数据来源'))).toBe(false);
     const alphaItems = (await rpc(page, 'memory.list', { botId: alpha.bot.id })) as MemoryList;
     expect(alphaItems.items.some((item) => item.id === pref)).toBe(true);
   } finally {

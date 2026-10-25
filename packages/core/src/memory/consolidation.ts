@@ -186,7 +186,6 @@ async function applyOperations(
           sensitivity: items.some((item) => item.sensitivity === 'sensitive')
             ? 'sensitive'
             : 'normal',
-          privateToBot: items.some((item) => item.privateToBot),
           dueAt: latestOf(items, (item) => item.dueAt),
           validUntil: latestOf(items, (item) => item.validUntil),
           supersedes: items[0]!.id,
@@ -222,7 +221,6 @@ async function applyOperations(
           sensitivity: items.some((item) => item.sensitivity === 'sensitive')
             ? 'sensitive'
             : 'normal',
-          privateToBot: items.some((item) => item.privateToBot),
           validUntil: latestOf(items, (item) => item.validUntil),
         });
         await deps.memory.embedItem(botId, summarized);

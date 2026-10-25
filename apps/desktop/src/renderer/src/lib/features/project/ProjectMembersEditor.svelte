@@ -119,6 +119,18 @@
 {/snippet}
 
 <div class="space-y-3" data-testid="project-member-list" data-settings-anchor="project-members">
+  <!-- Add-member sits above the list; its candidate panel opens as a dropdown
+       only while the search input has focus. -->
+  <div class="space-y-1.5">
+    <p class="text-xs font-medium">{t('project.members.add')}</p>
+    <ProjectMemberPicker
+      excludeIds={memberIds}
+      onPick={addMember}
+      testid="project-member-add"
+      variant="dropdown"
+    />
+  </div>
+
   <ul class="space-y-1">
     {#each members as member (member.bot.id)}
       {#if member.bot.id === leadBotId}
@@ -141,11 +153,6 @@
       {/if}
     {/each}
   </ul>
-
-  <div class="space-y-1.5">
-    <p class="text-xs font-medium">{t('project.members.add')}</p>
-    <ProjectMemberPicker excludeIds={memberIds} onPick={addMember} testid="project-member-add" />
-  </div>
 </div>
 
 <Dialog.Root open={detail !== null} onOpenChange={(open) => (detail = open ? detail : null)}>

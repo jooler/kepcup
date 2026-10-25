@@ -126,7 +126,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userMsgId],
               confidence: 0.9,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           profileProposals: [],
@@ -295,7 +294,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userMsgId],
               confidence: 0.9,
               sensitivity: 'sensitive',
-              privateToBot: false,
             },
             {
               kind: 'fact',
@@ -304,7 +302,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userMsgId],
               confidence: 1,
               sensitivity: 'normal',
-              privateToBot: false,
             },
             {
               kind: 'fact',
@@ -313,7 +310,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userMsgId],
               confidence: 1,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           // 同一敏感内容若被提议进画像，应被降级（不出现提案条目）。
@@ -371,7 +367,7 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
     }
   }, 40_000);
 
-  it('“只告诉你”的条目不进入画像，只留在该 Bot 的私有记忆', async () => {
+  it('敏感条目不进入画像，只留在该 Bot 的私有记忆', async () => {
     const stack = await createTestStack({ env: TEST_ENV });
     try {
       const bot = await makeBot(stack.core, '阿密');
@@ -389,8 +385,7 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               source: 'explicit',
               evidenceMessageIds: [userMsgId],
               confidence: 1,
-              sensitivity: 'normal',
-              privateToBot: true,
+              sensitivity: 'sensitive',
             },
           ],
           profileProposals: [
@@ -414,11 +409,11 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
         ((await stack.core.rpc.call('profile.list')) as { items: unknown[] }).items,
       ).toHaveLength(0);
       const result = (await stack.core.rpc.call('memory.list', { botId: bot.id })) as {
-        items: Array<{ content: string; privateToBot: boolean }>;
+        items: Array<{ content: string; sensitivity: string }>;
       };
       const secret = result.items.find((item) => item.content.includes('跳槽'));
       expect(secret).toBeDefined();
-      expect(secret!.privateToBot).toBe(true);
+      expect(secret!.sensitivity).toBe('sensitive');
     } finally {
       await stack.cleanup();
     }
@@ -441,7 +436,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [],
               confidence: 1,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           profileProposals: [],
@@ -531,7 +525,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userIds[0]],
               confidence: 0.9,
               sensitivity: 'normal',
-              privateToBot: false,
             },
             {
               kind: 'preference',
@@ -540,7 +533,6 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
               evidenceMessageIds: [userIds[1]],
               confidence: 0.9,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           profileProposals: [],

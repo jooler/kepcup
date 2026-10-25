@@ -47,8 +47,8 @@ function insertItem(
   db.prepare(
     `insert into memory_items
        (id, kind, content, subject, source, evidence_json, origin, origin_conversation_id,
-        confidence, sensitivity, private_to_bot, status, created_at, updated_at)
-     values (?, 'fact', ?, null, 'explicit', '[]', ?, 'conv_1', 1, 'normal', 0, 'active', 0, 0)`,
+        confidence, sensitivity, status, created_at, updated_at)
+     values (?, 'fact', ?, null, 'explicit', '[]', ?, 'conv_1', 1, 'normal', 'active', 0, 0)`,
   ).run(id, content, origin);
 }
 
@@ -69,7 +69,7 @@ describe('memory 0003 origin project (WP4 §3.E)', () => {
     ).run();
 
     const applied = runMigrations(db, memoryMigrationsUrl());
-    expect(applied.map((m) => m.version)).toEqual([3]);
+    expect(applied.map((m) => m.version)).toEqual([3, 4]);
 
     const rows = db
       .prepare('select id, origin, content from memory_items order by id')
@@ -100,10 +100,10 @@ describe('memory 0003 origin project (WP4 §3.E)', () => {
     db.close();
   });
 
-  it('全新库直接跑全量迁移：origin 取值只有 private / project', () => {
+  it('全新库直接跑全量迁移：origin 取值只有 private / project，private_to_bot 已删除', () => {
     const db = openMemoryDb();
     const applied = runMigrations(db, memoryMigrationsUrl());
-    expect(applied.map((m) => m.version)).toEqual([1, 2, 3]);
+    expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4]);
     const check = (
       db
         .prepare(
@@ -113,6 +113,7 @@ describe('memory 0003 origin project (WP4 §3.E)', () => {
     ).sql;
     expect(check).toContain("origin IN ('private', 'project')");
     expect(check).not.toContain('group');
+    expect(check).not.toContain('private_to_bot');
     db.close();
   });
 });

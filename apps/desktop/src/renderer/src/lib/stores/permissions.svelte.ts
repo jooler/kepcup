@@ -99,8 +99,12 @@ class PermissionsState {
     this.#recount(conversationId);
   }
 
-  /** Refetches one conversation's approvals (W4: after an APPROVAL_STALE refusal). */
-  async #reloadApprovals(conversationId: string): Promise<void> {
+  /**
+   * Refetches one conversation's approvals, merging into the global record
+   * without touching grants or the mirrored conversation (W4: after an
+   * APPROVAL_STALE refusal; the task-run view's approval strip on open).
+   */
+  async reloadApprovals(conversationId: string): Promise<void> {
     try {
       const result = (await core.call('approvals.list', { conversationId })) as {
         approvals: Approval[];
@@ -165,7 +169,7 @@ class PermissionsState {
       // shows what the user is actually deciding on.
       const conversationId = this.approvals[approvalId]?.conversationId ?? null;
       if (code === 'APPROVAL_STALE' && conversationId !== null) {
-        void this.#reloadApprovals(conversationId);
+        void this.reloadApprovals(conversationId);
       }
     }
   }

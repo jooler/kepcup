@@ -32,7 +32,15 @@
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
+  import {
+    findNode,
+    findParent,
+    memoryNav,
+    type MemoryCategoryNode,
+  } from './memory-categories.svelte';
+  import { skillNav } from './skills-nav.svelte';
   import WikiBrowser from '../wiki/WikiBrowser.svelte';
+  import { wikiCrumbs, wikiStore } from '$lib/stores/wiki.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
@@ -101,6 +109,47 @@
         : requested === 'schedules'
           ? { kind: 'schedules' }
           : null;
+  });
+
+  /** Wiki 历史视图（提交列表 / 快照 / 快照页面）激活时隐藏「< Wiki」顶栏行。 */
+  const wikiInHistory = $derived(
+    detail !== null &&
+      detail.kind === 'wiki' &&
+      bot !== null &&
+      wikiStore.navOf({ kind: 'bot', id: bot.id }).mode === 'history',
+  );
+
+  /**
+   * 记忆详情的面包屑（DetailHeader 用）：根段「记忆」点击回顶层目录，其后每级
+   * 分类按路径展示、点击对应跳转；末段为当前位置不可点。仅 memory 详情有。
+   */
+  const detailBreadcrumb = $derived.by(() => {
+    if (detail === null) return undefined;
+    // Wiki 详情：根段「Wiki」+ 目录层级 / 历史位置（位置状态在 wikiStore）。
+    if (detail.kind === 'wiki' && bot !== null) {
+      return wikiCrumbs({ kind: 'bot', id: bot.id });
+    }
+    if (detail.kind !== 'memory') return undefined;
+    const chain: MemoryCategoryNode[] = [];
+    for (
+      let node = memoryNav.id === null ? null : findNode(memoryNav.id);
+      node !== null;
+      node = findParent(node.id)
+    ) {
+      chain.unshift(node);
+    }
+    const crumbs: Array<{ label: string; onJump?: () => void }> = [];
+    crumbs.push({
+      label: t(DETAIL_TITLE_KEYS.memory),
+      ...(chain.length > 0 ? { onJump: () => memoryNav.select(null) } : {}),
+    });
+    for (const node of chain) {
+      crumbs.push({
+        label: t(node.labelKey),
+        ...(node.id !== memoryNav.id ? { onJump: () => memoryNav.select(node.id) } : {}),
+      });
+    }
+    return crumbs;
   });
   // 对话内设置卡的深链（shell.openBotPanel）：按锚点映射直接落到二级菜单对应
   // 配置条目，再滚到 [data-settings-anchor]。草稿克隆完才渲染配置表单，找不到
@@ -485,7 +534,7 @@
 
       <!-- 统一二级菜单 / 下钻详情（tabs 已移除）：默认菜单列表，点行进入详情。 -->
       <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
-        <!-- 工作目录（P04）：选择弹框挂在这里，菜单的工作目录行经 openPicker 打开。 -->
+        <!-- 工作目录（P04）：目录设置弹框挂在这里，菜单的工作目录行经 openWorkdir 打开。 -->
         {#if conversation}
           <WorkdirSelector
             bind:this={workdirSelector}
@@ -510,7 +559,7 @@
               deletable={bot.systemRole !== 'butler'}
               onOpenSection={(section) => (detail = { kind: 'profile', section })}
               onOpenWidget={(widget) => (detail = { kind: 'widget', widget })}
-              onOpenWorkdir={() => workdirSelector?.openPicker()}
+              onOpenWorkdir={() => workdirSelector?.openWorkdir()}
               onOpenMemory={() => (detail = { kind: 'memory' })}
               onOpenSkills={() => (detail = { kind: 'skills' })}
               onOpenWiki={() => (detail = { kind: 'wiki' })}
@@ -548,10 +597,22 @@
         {:else}
           <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
           <div class="flex min-h-0 flex-col gap-3" data-testid={`bot-detail-${detail.kind}`}>
-            <DetailHeader
-              title={t(DETAIL_TITLE_KEYS[detail.kind])}
-              onBack={() => (detail = null)}
-            />
+            {#if !(detail.kind === 'skills' && skillNav.selectedName !== null) && !wikiInHistory}
+              <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
+                   顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。
+                   Wiki 历史视图同理：查看历史时隐藏顶栏（WikiBrowser 的提示行 /
+                   返回行负责返回），面包屑只负责内容导航。 -->
+              <DetailHeader
+                title={t(DETAIL_TITLE_KEYS[detail.kind])}
+                onBack={() => (detail = null)}
+                breadcrumb={detailBreadcrumb}
+                breadcrumbTestid={detail.kind === 'memory'
+                  ? 'memory-breadcrumb'
+                  : detail.kind === 'wiki'
+                    ? 'wiki-breadcrumb'
+                    : undefined}
+              />
+            {/if}
             {#if detail.kind === 'access'}
               {#if confirmMode}
                 <p

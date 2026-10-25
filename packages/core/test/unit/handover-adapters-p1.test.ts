@@ -10,7 +10,7 @@ import {
   memoryRefusal,
   type HandoverMemoryPort,
 } from '../../src/handover/adapters/memory.js';
-import { PRIVATE_COMMITMENT_LABEL, ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
+import { ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
 import type { NewMemoryItem } from '../../src/memory/store.js';
 import { checkProfileCandidate } from '../../src/memory/validate.js';
 import type { HandoverContext } from '../../src/handover/types.js';
@@ -360,7 +360,6 @@ function memory(id: string, content: string, extra: Partial<MemoryItem> = {}): M
     originConversationId: 'conv_a',
     confidence: 0.9,
     sensitivity: 'normal',
-    privateToBot: false,
     dueAt: null,
     validUntil: null,
     status: 'active',
@@ -379,7 +378,6 @@ describe('memory adapter', () => {
       bot_a: [
         memory('mem_pref', '用户喜欢简洁的周报'),
         memory('mem_sens', '用户的体检报告在周报文件夹', { sensitivity: 'sensitive' }),
-        memory('mem_priv', '只告诉你：周报其实是老板写的', { privateToBot: true }),
         memory('mem_self', '我写周报总是太长', { kind: 'self_note' }),
         memory('mem_old', '用户以前喜欢长周报', { status: 'superseded' }),
         memory('mem_exp', '本周周报延期', { validUntil: 5 }),
@@ -391,7 +389,7 @@ describe('memory adapter', () => {
     return { adapter, ...world };
   }
 
-  it('without a query lists nothing but a summary; private_to_bot / self_note / commitments / inactive / expired never appear', () => {
+  it('without a query lists nothing but a summary; self_note / commitments / inactive / expired never appear', () => {
     const { adapter } = setup();
     expect(adapter.inventory('bot_a')).toEqual([]);
     const summary = adapter.summary('bot_a')!;
@@ -423,16 +421,15 @@ describe('memory adapter', () => {
 
   it('refusal explains never-transferable keys; resolve only accepts eligible ones', () => {
     const { adapter } = setup();
-    expect(adapter.refusal('bot_a', 'memory:mem_priv')).toContain('只告诉');
     expect(adapter.refusal('bot_a', 'memory:mem_self')).toContain('关于自己的笔记');
     expect(adapter.refusal('bot_a', 'memory:mem_com')).toContain('定时任务');
     expect(adapter.refusal('bot_a', 'memory:mem_old')).toContain('已失效');
     expect(adapter.refusal('bot_a', 'memory:mem_exp')).toContain('过期');
     expect(adapter.refusal('bot_a', 'memory:mem_made_up')).toBeNull();
-    expect(adapter.resolve('bot_a', 'memory:mem_priv')).toBeNull();
+    expect(adapter.resolve('bot_a', 'memory:mem_self')).toBeNull();
     expect(adapter.resolve('bot_a', 'memory:mem_sens')).toMatchObject({ key: 'memory:mem_sens' });
-    // Execution re-checks too (an item made private after the proposal is skipped).
-    expect(adapter.validate(ctx(), 'memory:mem_priv', 'copy')).toContain('只告诉');
+    // Execution re-checks too (an item voided after the proposal is skipped).
+    expect(adapter.validate(ctx(), 'memory:mem_self', 'copy')).toContain('关于自己的笔记');
   });
 
   it('copies with a new id, same fields, provenance evidence and no origin conversation; once; embedded', async () => {
@@ -448,7 +445,6 @@ describe('memory adapter', () => {
       source: 'explicit',
       confidence: 0.9,
       sensitivity: 'sensitive',
-      privateToBot: false,
       originConversationId: null,
       evidence: [
         {
@@ -513,7 +509,7 @@ describe('memory adapter', () => {
   });
 
   it('memoryRefusal is shared with the schedule adapter’s commitment rule', () => {
-    expect(memoryRefusal(memory('m', 'x', { privateToBot: true }), 0, 'A')).toContain('只告诉 A');
+    expect(memoryRefusal(memory('m', 'x', { kind: 'self_note' }), 0, 'A')).toContain('关于自己的笔记');
   });
 });
 
@@ -545,11 +541,6 @@ describe('schedule adapter: commitment moves with its schedule', () => {
     const world = memoryWorld({
       bot_a: [
         memory('mem_com', '周五前交周报', { kind: 'commitment', dueAt: 100 }),
-        memory('mem_pc', '只告诉你：周五前交私事', {
-          kind: 'commitment',
-          dueAt: 100,
-          privateToBot: true,
-        }),
       ],
     });
     const transfers: Array<{ id: string; commitmentId: string | undefined }> = [];
@@ -701,30 +692,16 @@ describe('schedule adapter: commitment moves with its schedule', () => {
     expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(false);
   });
 
-  it('审查 #4 / #6: a private commitment’s task never shows the commitment text; a sensitive one is marked and unchecked', () => {
-    const { adapter, rows, port } = setup();
-    rows.set('sch_p', {
-      ...rows.get('sch_c')!,
-      id: 'sch_p',
-      title: '只告诉你：周五前交私事',
-      note: '只告诉你：周五前交私事',
-      commitmentId: 'mem_pc',
-    });
-    const priv = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_p')!;
-    expect(priv.label).toBe(PRIVATE_COMMITMENT_LABEL);
-    expect(JSON.stringify(priv)).not.toContain('私事');
-    expect(adapter.describe(priv, 'move', 'B')).not.toContain('私事');
-    expect(priv.blocked).toContain('只告诉');
-    const plain = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_c')!;
-    expect(plain.marks ?? []).toEqual([]);
-    expect(plain.defaultSelected ?? true).toBe(true);
+  it('审查 #4 / #6: a sensitive commitment is marked and unchecked', () => {
+    const { adapter, port } = setup();
     const items = port.activeItems('bot_a');
-    Object.assign(
-      items.find((item) => item.id === 'mem_com')!,
-      { sensitivity: 'sensitive' },
-    );
-    const sensitive = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_c')!;
-    expect(sensitive).toMatchObject({ marks: ['sensitive'], defaultSelected: false });
+    Object.assign(items.find((item) => item.id === 'mem_com')!, {
+      sensitivity: 'sensitive',
+    });
+    const entry = adapter.inventory('bot_a').find((item) => item.key === 'schedule:sch_c')!;
+    expect(entry.marks).toEqual(['sensitive']);
+    expect(entry.defaultSelected).toBe(false);
+    expect(adapter.validate(ctx(), 'schedule:sch_c', 'move')).toBeNull();
   });
 
   it('crash between the transfer and voiding A’s commitment: not applied yet, still valid, re-run only voids', async () => {
@@ -743,10 +720,8 @@ describe('schedule adapter: commitment moves with its schedule', () => {
     expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(true);
   });
 
-  it('a voided or private_to_bot commitment blocks its schedule', () => {
-    const { adapter, rows, port } = setup();
-    rows.set('sch_p', { ...rows.get('sch_c')!, id: 'sch_p', commitmentId: 'mem_pc' });
-    expect(adapter.validate(ctx(), 'schedule:sch_p', 'move')).toContain('只告诉 A');
+  it('a voided commitment blocks its schedule', () => {
+    const { adapter, port } = setup();
     port.voidCommitment('bot_a', 'mem_com');
     expect(adapter.validate(ctx(), 'schedule:sch_c', 'move')).toContain('承诺已失效');
   });
@@ -754,12 +729,12 @@ describe('schedule adapter: commitment moves with its schedule', () => {
 
 describe('registry refusal', () => {
   it('routes refusal() to the owning adapter', () => {
-    const world = memoryWorld({ bot_a: [memory('mem_priv', 'x', { privateToBot: true })] });
+    const world = memoryWorld({ bot_a: [memory('mem_self', 'x', { kind: 'self_note' })] });
     const registry = new HandoverRegistry([
       new MemoryAdapter({ memory: world.port, clock: () => 0 }),
     ]);
-    expect(registry.entry('bot_a', 'memory:mem_priv')).toBeNull();
-    expect(registry.refusal('bot_a', 'memory:mem_priv')).toContain('只告诉');
+    expect(registry.entry('bot_a', 'memory:mem_self')).toBeNull();
+    expect(registry.refusal('bot_a', 'memory:mem_self')).toContain('关于自己的笔记');
     expect(registry.refusal('bot_a', 'mail:mal_x')).toBeNull();
     expect(registry.summaries('bot_a')).toEqual([
       { type: 'memory', text: expect.stringContaining('0 条') },

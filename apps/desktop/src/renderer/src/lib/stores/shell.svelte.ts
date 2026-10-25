@@ -261,8 +261,8 @@ class ShellState {
   }
 
   /**
-   * 请求打开当前会话所绑工作目录的「工作目录设置」对话框（可带锚点）：WorkdirSelector（Bot 配置页签 /
-   * 群信息里）消费并复位；会话还没绑工作目录时改开选择框。
+   * 请求打开当前会话所绑工作目录的「目录设置」对话框（可带锚点）：WorkdirSelector（Bot 配置页签 /
+   * 群信息里）消费并复位；会话还没绑工作目录时先走系统目录选择器，保存确认后才绑定。
    */
   workdirSettingsRequest = $state<{ anchor: string | null } | null>(null);
 

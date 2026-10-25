@@ -101,7 +101,6 @@ describe('P07 安全：画像证据必须来自用户消息（记忆污染防线
               evidenceMessageIds: [botStatement!.id],
               confidence: 0.95,
               sensitivity: 'normal',
-              privateToBot: false,
             },
           ],
           profileProposals: [

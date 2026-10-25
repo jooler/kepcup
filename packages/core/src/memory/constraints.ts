@@ -44,7 +44,6 @@ export interface HardConstraint {
   content: string;
   source: 'profile' | 'private';
   origin: 'private' | 'project';
-  privateToBot: boolean;
 }
 
 export interface CollectHardConstraintsInput {
@@ -86,7 +85,6 @@ export function collectHardConstraints(input: CollectHardConstraintsInput): Hard
     content: string,
     source: 'profile' | 'private',
     origin: 'private' | 'project',
-    privateToBot: boolean,
   ) => {
     if (collected.length >= maxItems) return;
     const key = normalize(content);
@@ -97,7 +95,6 @@ export function collectHardConstraints(input: CollectHardConstraintsInput): Hard
       content: content.length > MAX_CONTENT_CHARS ? content.slice(0, MAX_CONTENT_CHARS) : content,
       source,
       origin,
-      privateToBot,
     });
   };
 
@@ -105,7 +102,7 @@ export function collectHardConstraints(input: CollectHardConstraintsInput): Hard
     if (item.status !== 'active') continue;
     if (isExpired(item.validUntil, input.now)) continue;
     if (item.category !== 'boundaries' && !matchesHardConstraint(item.content)) continue;
-    push(item.id, item.content, 'profile', 'project', false);
+    push(item.id, item.content, 'profile', 'project');
   }
 
   for (const item of input.privateItems) {
@@ -113,7 +110,7 @@ export function collectHardConstraints(input: CollectHardConstraintsInput): Hard
     if (isExpired(item.validUntil, input.now)) continue;
     if (input.isProject && item.sensitivity === 'sensitive') continue;
     if (!matchesHardConstraint(item.content)) continue;
-    push(item.id, item.content, 'private', item.origin, item.privateToBot);
+    push(item.id, item.content, 'private', item.origin);
   }
 
   return collected;
