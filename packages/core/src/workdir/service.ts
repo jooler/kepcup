@@ -365,11 +365,9 @@ export class WorkdirRuntime {
     if (previousId === workdir.id) {
       this.#systemMessage(conversationId, `工作目录已确认为 ${label}`);
     } else if (previousId === null) {
+      // 只落绑定通知。授权范围（成员可读写、写入按租约串行、敏感文件默认保护）
+      // 属于对话配置说明，Bot 无需感知，不再发进消息列表（docs/design/08-workdir.md）。
       this.#systemMessage(conversationId, `工作目录已绑定为 ${label}`);
-      this.#systemMessage(
-        conversationId,
-        '授权范围：此对话中的所有 Bot 都可以读写该目录；写入按租约串行执行。目录中的 .env、*.pem 等敏感文件默认不可读，可在权限设置中调整。',
-      );
     } else {
       this.#systemMessage(conversationId, `工作目录已从 ${previous?.name ?? previousId} 切换为 ${label}`);
     }

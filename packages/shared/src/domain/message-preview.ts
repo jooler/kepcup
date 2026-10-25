@@ -138,10 +138,19 @@ export function messagePreviewText(message: Message): string | null {
 
   if (message.kind === 'system_event') {
     // 存量邮件 / 监看状态卡读出时被改写成系统提示：仍然值得作为预览。
+    // 工作目录变更通知代表工作环境变化：未读徽标会为它点亮，预览若停留在
+    // 上一条消息会让用户困惑，所以取通知自身的文本。
     const content = message.content as { event?: unknown; text?: unknown };
-    if (content.event !== 'mail_status' && content.event !== 'watch_status') return null;
+    if (
+      content.event !== 'mail_status' &&
+      content.event !== 'watch_status' &&
+      content.event !== 'workdir'
+    ) {
+      return null;
+    }
     const text = textOf(content.text);
-    return text.length > 0 ? line('⚠️', text) : null;
+    if (text.length === 0) return null;
+    return content.event === 'workdir' ? text : line('⚠️', text);
   }
 
   if (message.kind === 'card') {

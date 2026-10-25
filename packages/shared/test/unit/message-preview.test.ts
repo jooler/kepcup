@@ -117,4 +117,20 @@ describe('messagePreviewText（最后一条消息）', () => {
       ),
     ).toBe('⚠️ 连接被拒绝');
   });
+
+  it('工作目录变更通知取自身文本作为预览（未读徽标亮着时不能停留在上一条）', () => {
+    expect(
+      messagePreviewText(
+        message({
+          kind: 'system_event',
+          content: { event: 'workdir', text: '工作目录已绑定为 demo（/tmp/demo）' },
+        }),
+      ),
+    ).toBe('工作目录已绑定为 demo（/tmp/demo）');
+    expect(
+      messagePreviewText(
+        message({ kind: 'system_event', content: { event: 'workdir', text: '  ' } }),
+      ),
+    ).toBeNull();
+  });
 });
