@@ -35,7 +35,6 @@ function memoryItem(overrides: Partial<MemoryItem> & { id: string }): MemoryItem
     originConversationId: 'conv_1',
     confidence: 1,
     sensitivity: 'normal',
-    privateToBot: false,
     dueAt: null,
     validUntil: null,
     status: 'active',
@@ -121,11 +120,11 @@ describe('hard constraints (D-memory hard_constraints)', () => {
     expect(constraints.map((entry) => entry.id)).toEqual(['mem_ok']);
   });
 
-  it('marks private origin and privateToBot entries for the group-chat warning', () => {
+  it('keeps the private-origin origin annotation for the group-chat warning', () => {
     const constraints = collectHardConstraints({
       profileItems: [],
       privateItems: [
-        memoryItem({ id: 'mem_private', privateToBot: true }),
+        memoryItem({ id: 'mem_private', content: '务必提前提醒' }),
         memoryItem({ id: 'mem_project', content: '不吃香菜', origin: 'project' }),
       ],
       isProject: false,
@@ -133,11 +132,10 @@ describe('hard constraints (D-memory hard_constraints)', () => {
     });
     expect(constraints.find((entry) => entry.id === 'mem_private')).toMatchObject({
       source: 'private',
-      privateToBot: true,
+      origin: 'private',
     });
     expect(constraints.find((entry) => entry.id === 'mem_project')).toMatchObject({
       origin: 'project',
-      privateToBot: false,
     });
   });
 

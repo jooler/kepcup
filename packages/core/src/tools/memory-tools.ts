@@ -19,7 +19,6 @@ export interface MemoryToolFacade {
     input: {
       content: string;
       kind: MemoryKind;
-      privateToBot?: boolean;
       dueAt?: string;
       validUntil?: string;
       triggerMessages: Message[];
@@ -89,7 +88,6 @@ export function buildMemoryTools(input: {
   const remember: ToolDefinition<{
     content: string;
     kind: (typeof KINDS)[number];
-    private_to_bot?: boolean;
     due_at?: string;
   }> = {
     name: 'remember',
@@ -101,12 +99,6 @@ export function buildMemoryTools(input: {
         KINDS.map((k) => Type.Literal(k)),
         { description: '记忆类型' },
       ),
-      private_to_bot: Type.Optional(
-        Type.Boolean({
-          description:
-            '用户说“只告诉你”时为 true，不进入共享画像；涉及健康、财务、感情等敏感内容时也应为 true',
-        }),
-      ),
       due_at: Type.Optional(Type.String({ description: '承诺截止时间（ISO 8601）' })),
     }),
     execute: async (params) => {
@@ -115,7 +107,6 @@ export function buildMemoryTools(input: {
       const result = await memory.writeMemory(ctx.botId, ctx.conversationId, {
         content: params.content,
         kind: params.kind,
-        ...(params.private_to_bot !== undefined ? { privateToBot: params.private_to_bot } : {}),
         ...(params.due_at !== undefined ? { dueAt: params.due_at } : {}),
         triggerMessages: memory.triggerMessages(),
       });

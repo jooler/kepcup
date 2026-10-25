@@ -32,6 +32,7 @@
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
+  import { findNode, findParent, memoryNav, type MemoryCategoryNode } from './memory-categories.svelte';
   import WikiBrowser from '../wiki/WikiBrowser.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
@@ -101,6 +102,34 @@
         : requested === 'schedules'
           ? { kind: 'schedules' }
           : null;
+  });
+
+  /**
+   * 记忆详情的面包屑（DetailHeader 用）：根段「记忆」点击回顶层目录，其后每级
+   * 分类按路径展示、点击对应跳转；末段为当前位置不可点。仅 memory 详情有。
+   */
+  const detailBreadcrumb = $derived.by(() => {
+    if (detail === null || detail.kind !== 'memory') return undefined;
+    const chain: MemoryCategoryNode[] = [];
+    for (
+      let node = memoryNav.id === null ? null : findNode(memoryNav.id);
+      node !== null;
+      node = findParent(node.id)
+    ) {
+      chain.unshift(node);
+    }
+    const crumbs: Array<{ label: string; onJump?: () => void }> = [];
+    crumbs.push({
+      label: t(DETAIL_TITLE_KEYS.memory),
+      ...(chain.length > 0 ? { onJump: () => memoryNav.select(null) } : {}),
+    });
+    for (const node of chain) {
+      crumbs.push({
+        label: t(node.labelKey),
+        ...(node.id !== memoryNav.id ? { onJump: () => memoryNav.select(node.id) } : {}),
+      });
+    }
+    return crumbs;
   });
   // 对话内设置卡的深链（shell.openBotPanel）：按锚点映射直接落到二级菜单对应
   // 配置条目，再滚到 [data-settings-anchor]。草稿克隆完才渲染配置表单，找不到
@@ -551,6 +580,8 @@
             <DetailHeader
               title={t(DETAIL_TITLE_KEYS[detail.kind])}
               onBack={() => (detail = null)}
+              breadcrumb={detailBreadcrumb}
+              breadcrumbTestid={detail.kind === 'memory' ? 'memory-breadcrumb' : undefined}
             />
             {#if detail.kind === 'access'}
               {#if confirmMode}

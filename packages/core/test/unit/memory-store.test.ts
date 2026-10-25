@@ -75,7 +75,6 @@ describe('memory store (memory.db 领域层)', () => {
       originConversationId: 'conv_1',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     expect(item.id.startsWith('mem_')).toBe(true);
 
@@ -102,7 +101,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     await store.ensureVecTable(embedder.id, 8);
     store.upsertVec(store.rowidOf(stored.id)!, vector!);
@@ -133,7 +131,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     store.upsertVec(store.rowidOf(created.id)!, vector!);
     const knn = store.knn(vector!, 3);
@@ -156,7 +153,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     // Make the vector side usable for the stored item.
     const stored = store.activeItems()[0]!;
@@ -188,7 +184,6 @@ describe('memory store (memory.db 领域层)', () => {
       originConversationId: 'conv_9',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
       dueAt: 2_000_000,
     });
     const other = store.insert({
@@ -199,7 +194,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     // P10: returns the voided ids so the schedule linkage can cancel tasks.
     expect(store.voidCommitmentsOfConversation('conv_9')).toEqual([commitment.id]);
@@ -220,7 +214,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
       validUntil: 1_500_000,
     });
     expect(store.expirePastValidUntil(1_600_000)).toBe(1);
@@ -228,7 +221,7 @@ describe('memory store (memory.db 领域层)', () => {
     manager.closeAll();
   });
 
-  it('user edits: updateContent rewrites FTS; setPrivateToBot toggles the flag (任务书任务 13)', () => {
+  it('user edits: updateContent rewrites FTS (任务书任务 13)', () => {
     const manager = newManager();
     const store = manager.for('bot_edit');
     const item = store.insert({
@@ -239,17 +232,11 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     const edited = store.updateContent(item.id, '用户居住在苏州工业园区');
     expect(edited.content).toBe('用户居住在苏州工业园区');
     expect(store.searchFts('苏州', 20).map((entry) => entry.id)).toContain(item.id);
     expect(store.searchFts('后端', 20)).toHaveLength(0);
-
-    const flagged = store.setPrivateToBot(item.id, true);
-    expect(flagged.privateToBot).toBe(true);
-    expect(store.getItem(item.id)!.privateToBot).toBe(true);
-    expect(store.setPrivateToBot(item.id, false).privateToBot).toBe(false);
     manager.closeAll();
   });
 
@@ -264,7 +251,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     const before = store.getItem(item.id)!;
     expect(before.updatedAt).toBeGreaterThan(0);
@@ -291,7 +277,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     const stores = [first];
     for (let i = 1; i < 10; i++) {
@@ -327,7 +312,6 @@ describe('memory store (memory.db 领域层)', () => {
       origin: 'private',
       confidence: 1,
       sensitivity: 'normal',
-      privateToBot: false,
     });
     await store.ensureVecTable(embedder.id, 8);
     store.upsertVec(store.rowidOf(stored.id)!, vector!);

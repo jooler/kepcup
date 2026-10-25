@@ -81,7 +81,7 @@ export interface HandoverAdapter {
   /** 盘点结果里这类资产的一行统计（如记忆的数量与按 kind 分布）；null = 不出。 */
   summary?(botId: string): string | null;
   /**
-   * 存在、但永远不能移交的 key 的拒绝原因（如 `private_to_bot` 记忆）：提议里出现即退回并
+   * 存在、但永远不能移交的 key 的拒绝原因（如 `self_note` 记忆）：提议里出现即退回并
    * 说明原因，而不是当作编造的 key。null = 不是这种情况。
    */
   refusal?(fromBotId: string, key: string): string | null;

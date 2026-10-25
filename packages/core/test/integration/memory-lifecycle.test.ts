@@ -149,7 +149,6 @@ describe('P07 生命周期级联（docs/dev/03-data-model.md 删除级联）', (
         evidence: [batch[0]!.id],
         confidence: 1,
         sensitivity: 'normal',
-        privateToBot: false,
       });
       expect(proposals.ok).toBe(true);
       // 冻结的延迟整理任务（60s 后）占用 dedupe 键：清掉后立即触发。

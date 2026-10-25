@@ -27,7 +27,6 @@ export const reflectionOutputSchema = z.object({
       // often leaves it out, and the write path drops that one item.
       confidence: z.number().min(0).max(1).nullish(),
       sensitivity: memorySensitivitySchema,
-      privateToBot: z.boolean(),
       dueAt: z.string().nullable().optional(),
       validUntil: z.string().nullable().optional(),
     }),
@@ -83,7 +82,6 @@ export const reflectionParametersSchema = Type.Object({
       evidenceMessageIds: Type.Array(Type.String()),
       confidence: Type.Number({ description: '0~1' }),
       sensitivity: Type.Union([Type.Literal('normal'), Type.Literal('sensitive')]),
-      privateToBot: Type.Boolean({ description: '用户说“只告诉你”时为 true' }),
       dueAt: Type.Optional(
         Type.Union([Type.String(), Type.Null()], { description: 'ISO 时间，承诺截止' }),
       ),

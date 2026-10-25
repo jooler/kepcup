@@ -25,11 +25,7 @@ class MemoryState {
   }
 
   /** Plain-object patch over RPC (a $state Proxy must never cross postMessage). */
-  async update(
-    botId: string,
-    id: string,
-    patch: { content?: string; privateToBot?: boolean },
-  ): Promise<void> {
+  async update(botId: string, id: string, patch: { content?: string }): Promise<void> {
     const result = (await core.call('memory.update', { id, botId, ...patch })) as {
       items: MemoryItem[];
     };

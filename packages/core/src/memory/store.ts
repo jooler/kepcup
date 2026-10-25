@@ -59,7 +59,6 @@ interface MemoryItemRow {
   origin_conversation_id: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;
-  private_to_bot: number;
   due_at: number | null;
   valid_until: number | null;
   status: MemoryStatus;
@@ -83,7 +82,6 @@ function rowToItem(botId: string, row: MemoryItemRow): MemoryItem {
     originConversationId: row.origin_conversation_id,
     confidence: row.confidence,
     sensitivity: row.sensitivity,
-    privateToBot: row.private_to_bot === 1,
     dueAt: row.due_at,
     validUntil: row.valid_until,
     status: row.status,
@@ -105,7 +103,6 @@ export interface NewMemoryItem {
   originConversationId?: string | null;
   confidence: number;
   sensitivity: MemorySensitivity;
-  privateToBot: boolean;
   dueAt?: number | null;
   validUntil?: number | null;
   supersedes?: string | null;
@@ -238,7 +235,7 @@ export class MemoryStore {
     const id = newId('mem');
     this.#db
       .prepare(
-        'insert into memory_items (id, kind, content, subject, source, evidence_json, origin, origin_conversation_id, confidence, sensitivity, private_to_bot, due_at, valid_until, status, supersedes, use_count, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
+        'insert into memory_items (id, kind, content, subject, source, evidence_json, origin, origin_conversation_id, confidence, sensitivity, due_at, valid_until, status, supersedes, use_count, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
       )
       .run(
         id,
@@ -251,7 +248,6 @@ export class MemoryStore {
         input.originConversationId ?? null,
         input.confidence,
         input.sensitivity,
-        input.privateToBot ? 1 : 0,
         input.dueAt ?? null,
         input.validUntil ?? null,
         'active',
@@ -270,14 +266,6 @@ export class MemoryStore {
       .run(content, this.#clock(), id);
     this.#db.prepare('delete from memory_fts where item_id = ?').run(id);
     this.#writeFts(id, content);
-    return this.getItem(id)!;
-  }
-
-  /** UI「只属于该 Bot」toggle（任务书任务 13；用户显式操作）。 */
-  setPrivateToBot(id: string, privateToBot: boolean): MemoryItem {
-    this.#db
-      .prepare('update memory_items set private_to_bot = ?, updated_at = ? where id = ?')
-      .run(privateToBot ? 1 : 0, this.#clock(), id);
     return this.getItem(id)!;
   }
 

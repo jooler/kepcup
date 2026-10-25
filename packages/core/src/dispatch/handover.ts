@@ -366,7 +366,7 @@ export class HandoverHost implements HandoverToolFacade {
       seen.add(item.key);
       const found = this.#deps.registry.entry(from.id, item.key);
       if (found === null) {
-        // 存在但永远不能移交的（如 private_to_bot 记忆）：按原因退回，不当作编造的 key。
+        // 存在但永远不能移交的（如 self_note 记忆）：按原因退回，不当作编造的 key。
         const reason = this.#deps.registry.refusal(from.id, item.key);
         if (reason !== null) refused.push(`${item.key}（${reason}）`);
         else unknown.push(item.key);
