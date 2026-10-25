@@ -118,6 +118,17 @@ export class AuditService {
     return { total: counts.total, refused: counts.refused, recent: rows.map(rowToEntry) };
   }
 
+  /**
+   * 用户在 Bot 详情关闭「污点外发」汇总 = 删除该 Bot 的 `egress_tainted` 审计（唯一的
+   * 非追加写路径；这些行只被 `egressTainted` 汇总消费，删除即"标记已读"）。返回删除条数。
+   */
+  clearEgressTainted(botId: string): number {
+    const result = this.#db
+      .prepare("delete from audit_log where bot_id = ? and action = 'egress_tainted'")
+      .run(botId);
+    return Number(result.changes);
+  }
+
   listByConversation(conversationId: string, limit = 100): AuditEntry[] {
     const rows = this.#db
       .prepare('select * from audit_log where conversation_id = ? order by created_at desc limit ?')

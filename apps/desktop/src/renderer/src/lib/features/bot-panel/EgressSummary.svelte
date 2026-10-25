@@ -1,18 +1,15 @@
-<script module lang="ts">
-  // 「关闭」按 Bot 记忆（内存态）：记住关闭时的记录总数；没有新增记录就不再
-  // 展示，出现新记录（总数超过记忆值）时重新弹出，避免关掉后马上又弹回来。
-  const dismissedCounts = $state<Record<string, number>>({});
-</script>
-
 <script lang="ts">
   /**
    * D73 P2（design 29 §8.3）Bot 详情里的「污点外发」汇总：读取过连接应用的数据后，无人值守下
    * 自动放行的外发操作（审计 `egress_tainted`）的次数与最近几条。没有记录时不占位。
+   * 右上角关闭 = 调 `apps.egressClear` 把这些审计记录从数据库删除（持久生效），
+   * 新的外发记录会重新累计展示。
    */
   import { X } from '@lucide/svelte';
-  import { t } from '$lib/i18n';
+  import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
+  import { toast } from 'svelte-sonner';
 
   let { botId }: { botId: string } = $props();
 
@@ -26,12 +23,23 @@
   let total = $state(0);
   let refused = $state(0);
   let recent = $state<EgressEntry[]>([]);
+  let clearing = $state(false);
 
   const recordCount = $derived(total + refused);
-  const visible = $derived(recordCount > (dismissedCounts[botId] ?? 0));
 
-  function dismiss(): void {
-    dismissedCounts[botId] = recordCount;
+  async function dismiss(): Promise<void> {
+    if (clearing) return;
+    clearing = true;
+    try {
+      await core.call('apps.egressClear', { botId });
+      total = 0;
+      refused = 0;
+      recent = [];
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('chats.errorCode.INTERNAL')));
+    } finally {
+      clearing = false;
+    }
   }
 
   // 换 Bot、或无人值守开关变化（刚关闭时产生了新记录）时重取。
@@ -61,7 +69,7 @@
   });
 </script>
 
-{#if visible && recordCount > 0}
+{#if recordCount > 0}
   <div
     class="relative grid gap-1 rounded bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300"
     data-testid="bot-egress-summary"
@@ -69,8 +77,9 @@
   >
     <button
       type="button"
-      class="absolute right-1 top-1 rounded p-0.5 text-amber-800/60 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300/60 dark:hover:text-amber-300"
-      onclick={dismiss}
+      class="absolute right-1 top-1 rounded p-0.5 text-amber-800/60 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300/60 dark:hover:text-amber-300 disabled:opacity-50"
+      onclick={() => void dismiss()}
+      disabled={clearing}
       aria-label={t('common.close')}
       title={t('common.close')}
       data-testid="bot-egress-summary-close"
