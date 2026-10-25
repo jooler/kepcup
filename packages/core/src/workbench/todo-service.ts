@@ -70,6 +70,14 @@ export type TodoRunFailure = { kind: 'failed'; error: string | null } | { kind: 
 
 /** The dispatch prefix of a workbench message (the first line reads 「【工作台】标题」). */
 export const WORKBENCH_DISPATCH_TAG = '【工作台】';
+/** Board-card dispatch: the card text, not a repeated title (design 50 §6.3). */
+export const BOARD_DISPATCH_TAG = '【看板】';
+/** Appended when a cron fire finds the previous run still undispatched-to-delivery. */
+export const BOARD_UNDISPATCHED_NOTE = '（上一次执行尚未交付）';
+/** Board executor left the project. The card does not fall back to the lead. */
+export const BLOCKED_EXECUTOR_LEFT = '执行成员已移出项目组';
+/** Board executor bot was deleted. */
+export const BLOCKED_EXECUTOR_DELETED = '执行成员已删除';
 export const WORKBENCH_BUTLER_NOTE = '（管家代你安排）';
 /** The first line of an update notice reads 「【工作台】事项更新：标题」. */
 export const WORKBENCH_UPDATE_TAG = '【工作台】事项更新：';
@@ -386,7 +394,7 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
     }
     if (assigneeChanged && input.assignee !== null && input.assignee !== undefined) {
-      this.#validateAssignee(input.assignee);
+      this.#validateAssignee(input.assignee, id);
     }
     if (typeof when === 'string' && when !== NOW) this.#deps.schedules.validateWhen(when);
 
@@ -596,7 +604,7 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不能立即开始`);
     }
     if (todo.assignee === null) throw new AppError('INVALID_INPUT', '请先选择执行者');
-    this.#validateAssignee(todo.assignee);
+    this.#validateAssignee(todo.assignee, id);
     return this.#guard(() => {
       const schedule = this.#activeSchedule(id);
       // Dispatch first: if routing throws, the schedule is still there. A one-off schedule is
@@ -694,13 +702,13 @@ export class TodoService implements WorkbenchDispatchPort {
   #schedule(todo: Todo, when: string, timezone: string | undefined, actor: TodoActor): Todo {
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
-    const target = this.#targetOf(assignee);
+    const target = this.#targetOf(todo);
     return this.#tx(() => {
       const existing = this.#activeSchedule(todo.id);
       if (
         existing !== null &&
         existing.conversationId === target.conversationId &&
-        existing.botId === target.leadBotId
+        existing.botId === target.scheduleBotId
       ) {
         this.#deps.schedules.reschedule(existing.id, when, timezone);
       } else {
@@ -708,7 +716,7 @@ export class TodoService implements WorkbenchDispatchPort {
         // schedule is still intact.
         this.#deps.schedules.createForTodo({
           todoId: todo.id,
-          botId: target.leadBotId,
+          botId: target.scheduleBotId,
           conversationId: target.conversationId,
           when,
           ...(timezone !== undefined ? { timezone } : {}),
@@ -807,8 +815,8 @@ export class TodoService implements WorkbenchDispatchPort {
   #dispatch(todo: Todo, context: DispatchContext): Todo {
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '请先选择执行者');
-    this.#validateAssignee(assignee);
-    const target = this.#targetOf(assignee);
+    this.#validateAssignee(assignee, todo.id);
+    const target = this.#targetOf(todo);
     const run = this.store.insertRun({ todoId: todo.id, conversationId: target.conversationId });
     const viaButler = context.actor === 'butler';
     const butlerDrafted = todo.source === 'butler';
@@ -828,9 +836,14 @@ export class TodoService implements WorkbenchDispatchPort {
           todoRunId: run.id,
           viaButler,
           butlerDrafted,
-          // D92 T1a: a project always has a lead, so a project dispatch always carries the
-          // structured @ (the assignee's override, else the project's own lead) — no routing.
-          leadBotId: assignee.kind === 'project' ? (assignee.leadBotId ?? target.leadBotId) : null,
+          // A board card is a single-bot chat: no @ and no project routing.
+          // A project dispatch carries the structured @ (the assignee's override,
+          // else the project's own lead).
+          leadBotId: this.#isBoard(todo.id)
+            ? null
+            : assignee.kind === 'project'
+              ? (assignee.leadBotId ?? target.leadBotId)
+              : null,
           onAppended: (message) => {
             this.store.updateRun(run.id, { messageId: message.id });
           },
@@ -852,22 +865,43 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   #dispatchText(todo: Todo, context: DispatchContext): string {
+    if (this.#isBoard(todo.id)) {
+      const lines = [`${BOARD_DISPATCH_TAG}${todo.notes.trim()}`];
+      if (this.#cronStillUndelivered(todo, context)) lines.push(BOARD_UNDISPATCHED_NOTE);
+      if (context.lateByMs != null && context.fireAt !== undefined) {
+        lines.push('', this.#lateLine(context));
+      }
+      return lines.join('\n');
+    }
     const lines = [
       `${WORKBENCH_DISPATCH_TAG}${todo.title}${context.actor === 'butler' ? WORKBENCH_BUTLER_NOTE : ''}`,
     ];
     if (todo.notes.trim().length > 0) lines.push('', todo.notes.trim());
     if (context.lateByMs != null && context.fireAt !== undefined) {
-      const schedule =
-        context.scheduleId === undefined ? null : this.#deps.schedules.store.get(context.scheduleId);
-      const planned = this.#deps.schedules.describeWhen({
-        kind: 'once',
-        runAt: context.fireAt,
-        cron: null,
-        timezone: schedule?.timezone ?? 'UTC',
-      });
-      lines.push('', `（原定 ${planned}，延迟派发）`);
+      lines.push('', this.#lateLine(context));
     }
     return lines.join('\n');
+  }
+
+  /** The newest run is the one just inserted. A cron fire notes the one before it. */
+  #cronStillUndelivered(todo: Todo, context: DispatchContext): boolean {
+    if (context.scheduleId === undefined || context.fireAt === undefined) return false;
+    const schedule = this.#deps.schedules.store.get(context.scheduleId);
+    if (schedule === null || schedule.kind !== 'cron') return false;
+    const previous = this.store.listRuns(todo.id)[1];
+    return previous !== undefined && previous.status === 'dispatched';
+  }
+
+  #lateLine(context: DispatchContext): string {
+    const schedule =
+      context.scheduleId === undefined ? null : this.#deps.schedules.store.get(context.scheduleId);
+    const planned = this.#deps.schedules.describeWhen({
+      kind: 'once',
+      runAt: context.fireAt!,
+      cron: null,
+      timezone: schedule?.timezone ?? 'UTC',
+    });
+    return `（原定 ${planned}，延迟派发）`;
   }
 
   // --- delivery tracking (called by the orchestrator) ----------------------------------
@@ -1025,6 +1059,14 @@ export class TodoService implements WorkbenchDispatchPort {
   #dropExecutor(todo: Todo, problem: string): Todo {
     this.#cancelSchedules(todo.id);
     this.#failOpenRuns(todo.id);
+    if (this.#isBoard(todo.id)) {
+      // The card does not fall back to "the lead executes it".
+      this.#deps.conversations.closeOpenCardConversations(todo.id);
+      return this.#move(todo, 'draft', {
+        assignee: null,
+        blockedReason: boardBlockedReason(problem),
+      });
+    }
     const assignee = todo.assignee;
     const keepProject =
       assignee?.kind === 'project' &&
@@ -1044,6 +1086,9 @@ export class TodoService implements WorkbenchDispatchPort {
 
   /** The schedule's bot differs from the todo's executor (handover): the todo follows. */
   #adoptScheduleHolder(todo: Todo, schedule: Schedule): boolean {
+    // A board card names its executor explicitly. Do not pin an empty lead
+    // to the project lead, and do not follow a transferred schedule.
+    if (this.#isBoard(todo.id)) return false;
     const assignee = todo.assignee;
     if (assignee === null || schedule.botId === null) return false;
     if (assignee.kind === 'bot' && assignee.botId !== schedule.botId) {
@@ -1145,22 +1190,59 @@ export class TodoService implements WorkbenchDispatchPort {
 
   // --- helpers --------------------------------------------------------------------------
 
-  /** Where a dispatch for `assignee` lands: [lead override for the schedule, conversation]. */
-  #targetOf(assignee: TodoAssignee): { leadBotId: string | null; conversationId: string } {
+  /**
+   * Where a dispatch for `todo` lands.
+   * `leadBotId` is the @ target (null for a board card). `scheduleBotId` is
+   * the bot the workbench schedule row belongs to.
+   */
+  #targetOf(todo: Todo): {
+    leadBotId: string | null;
+    scheduleBotId: string | null;
+    conversationId: string;
+  } {
+    const assignee = todo.assignee;
+    if (assignee === null) throw new AppError('INVALID_INPUT', '请先选择执行者');
+    if (this.#isBoard(todo.id)) {
+      if (assignee.kind !== 'project' || assignee.leadBotId === null) {
+        throw new AppError('BOARD_ASSIGNEE_INVALID', '看板卡片要指派给项目里的一位成员');
+      }
+      const conversation = this.#deps.conversations.openCardConversation(todo.id);
+      if (conversation === null) {
+        throw new AppError('BOARD_ASSIGNEE_INVALID', '这张卡片还没有执行对话');
+      }
+      return {
+        leadBotId: null,
+        scheduleBotId: assignee.leadBotId,
+        conversationId: conversation.id,
+      };
+    }
     if (assignee.kind === 'bot') {
       const { conversation, created } = this.#deps.conversations.openDirect(assignee.botId);
       if (created) this.#deps.publish?.('conversation.updated', { conversation });
-      return { leadBotId: assignee.botId, conversationId: conversation.id };
+      return {
+        leadBotId: assignee.botId,
+        scheduleBotId: assignee.botId,
+        conversationId: conversation.id,
+      };
     }
     const leadBotId =
       assignee.leadBotId ??
       this.#deps.conversations.get(assignee.projectId)?.leadBotId ??
       null;
-    return { leadBotId, conversationId: assignee.projectId };
+    return { leadBotId, scheduleBotId: leadBotId, conversationId: assignee.projectId };
+  }
+
+  #isBoard(todoId: string): boolean {
+    return this.#boardLocation(todoId) !== null;
   }
 
   /** Bot active; project writable; lead override an active member. */
-  #validateAssignee(assignee: TodoAssignee): void {
+  #validateAssignee(assignee: TodoAssignee, todoId?: string): void {
+    if (todoId !== undefined && this.#isBoard(todoId)) {
+      if (assignee.kind !== 'project' || assignee.leadBotId === null || assignee.leadBotId.length === 0) {
+        throw new AppError('BOARD_ASSIGNEE_INVALID', '看板卡片要指派给项目里的一位成员');
+      }
+    }
     if (assignee.kind === 'bot') {
       const bot = this.#deps.bots.get(assignee.botId);
       if (bot === null || bot.status !== 'active') {
@@ -1181,6 +1263,13 @@ export class TodoService implements WorkbenchDispatchPort {
       }
       if (!this.#deps.conversations.memberBotIds(assignee.projectId).includes(assignee.leadBotId)) {
         throw new AppError('INVALID_INPUT', '负责 Bot 不在该项目组中');
+      }
+      if (
+        todoId !== undefined &&
+        this.#isBoard(todoId) &&
+        this.#deps.bots.get(assignee.leadBotId)?.systemRole === 'butler'
+      ) {
+        throw new AppError('BOARD_ASSIGNEE_INVALID', '不能把卡片指派给管家');
       }
     }
   }
@@ -1264,8 +1353,12 @@ export class TodoService implements WorkbenchDispatchPort {
   /** Replace a board card's text. `actor` is board, so the managed guard passes. */
   updateBoardText(id: string, input: { title: string; notes: string }): Todo {
     this.#assertBoardWritable(id, 'board');
+    const before = this.#getOrThrow(id);
     const updated = this.store.update(id, { title: input.title, notes: input.notes });
     if (updated === null) throw new AppError('NOT_FOUND', `事项 ${id} 不存在`);
+    const schedule = this.#activeSchedule(id);
+    if (schedule !== null) this.#deps.schedules.retitle(schedule.id, updated.title, updated.notes);
+    this.#queueUpdateNotice(before, updated, 'board');
     this.#changed(id);
     return updated;
   }
@@ -1383,6 +1476,14 @@ function parseWhen(when: string | null | undefined): string | null {
   const trimmed = when.trim();
   if (trimmed.length === 0) throw new AppError('INVALID_INPUT', '时间不能为空');
   return trimmed.toLowerCase() === NOW ? NOW : trimmed;
+}
+
+function boardBlockedReason(problem: string): string {
+  if (problem === BLOCKED_LEAD_DELETED || problem === BLOCKED_BOT_DELETED) {
+    return BLOCKED_EXECUTOR_DELETED;
+  }
+  if (problem === BLOCKED_LEAD_LEFT) return BLOCKED_EXECUTOR_LEFT;
+  return problem;
 }
 
 function errorText(error: unknown): string {
