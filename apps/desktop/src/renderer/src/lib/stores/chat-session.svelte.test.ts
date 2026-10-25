@@ -116,6 +116,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
 const { settingsStore } = await import('./settings.svelte');
 const { agentsStore } = await import('./agents.svelte');
 const { shell } = await import('./shell.svelte');
+const { chat } = await import('./chat.svelte');
 
 beforeEach(() => {
   handlers.clear();
@@ -230,5 +231,18 @@ describe('ChatSession', () => {
     expect(other.setupRequirement).toBeNull();
     session.dispose();
     other.dispose();
+  });
+
+  it('chat.main.open switches the main view and resets replyTo', async () => {
+    chat.start();
+    state.messages = [textMessage({ id: 'main-m', conversationId: 'main-a', seq: 1 })];
+    expect(await chat.main.open('main-a')).toBe(true);
+    chat.main.startReply(state.messages[0]!);
+    expect(chat.replyTo?.id).toBe('main-m');
+    state.messages = [];
+    expect(await chat.main.open('main-b')).toBe(true);
+    expect(chat.main.conversationId).toBe('main-b');
+    expect(chat.currentId).toBe('main-b');
+    expect(chat.replyTo).toBeNull();
   });
 });
