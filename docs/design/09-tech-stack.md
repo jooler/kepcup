@@ -109,6 +109,7 @@ deepseek-harness 的设计（持久化收件箱、“模型看到的一切都在
 | 聊天组件 | Svelte AI Elements（消息、会话、输入框、操作按钮） |
 | 流式 markdown | streamdown-svelte（Shiki 代码高亮） |
 | 消息列表虚拟滚动 | @humanspeak/svelte-virtual-list |
+| 看板拖拽（分栏 / 卡片，嵌套区域） | svelte-dnd-action（精确锁定 0.9.80，D103；设计见 [50](50-project-board.md) §9.6） |
 | 代码编辑 | CodeMirror 6（svelte-codemirror-editor），可编辑 diff 用 `@codemirror/merge` |
 | diff 展示 | @pierre/diffs |
 
