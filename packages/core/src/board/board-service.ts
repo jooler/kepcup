@@ -29,8 +29,6 @@ export interface BoardServiceDeps {
   store: BoardStore;
   todos: TodoService;
   conversations: ConversationsService;
-  /** Publishes `board.changed` after a committed write. */
-  publish?: ((payload: BoardChangedPayload) => void) | undefined;
 }
 
 /**
@@ -161,17 +159,21 @@ export class BoardService {
   deleteColumn(columnId: string, deleteCards: boolean | undefined, actor: ProjectActor): void {
     const column = this.#requireColumn(columnId);
     this.#write(column.projectId, actor);
-    this.#deps.db.transaction(() => {
-      if (this.#deps.store.countColumns(column.projectId) <= 1) {
-        throw new AppError('BOARD_LAST_COLUMN', 'The last column cannot be deleted');
-      }
-      const cards = this.#deps.store.listCardsInColumn(columnId);
-      if (cards.length > 0 && deleteCards !== true) {
-        throw new AppError('BOARD_COLUMN_NOT_EMPTY', 'Delete the cards in this column first');
-      }
-      for (const card of cards) this.#deps.todos.purge(card.todoId, 'board');
-      this.#deps.store.deleteColumn(columnId);
-    })();
+    // Card purges would each emit board.changed inside this transaction.
+    // One column signal after commit is the change listeners can trust.
+    this.#deps.todos.withoutBoardEvents(() => {
+      this.#deps.todos.withTransaction(() => {
+        if (this.#deps.store.countColumns(column.projectId) <= 1) {
+          throw new AppError('BOARD_LAST_COLUMN', 'The last column cannot be deleted');
+        }
+        const cards = this.#deps.store.listCardsInColumn(columnId);
+        if (cards.length > 0 && deleteCards !== true) {
+          throw new AppError('BOARD_COLUMN_NOT_EMPTY', 'Delete the cards in this column first');
+        }
+        for (const card of cards) this.#deps.todos.purge(card.todoId, 'board');
+        this.#deps.store.deleteColumn(columnId);
+      });
+    });
     this.#changed({ projectId: column.projectId, columnId });
     this.#deps.logger.info({ projectId: column.projectId, columnId }, 'board column deleted');
   }
@@ -223,8 +225,9 @@ export class BoardService {
     const card = this.#requireCard(cardId);
     this.#write(card.projectId, actor);
     const notes = normalizeCardText(text);
+    // updateBoardText emits the one board.changed. A second publish here
+    // would deliver the same payload twice.
     this.#deps.todos.updateBoardText(cardId, { title: cardTitle(notes), notes });
-    this.#changed({ projectId: card.projectId, cardId, columnId: card.columnId });
     return toCard(this.#deps.store.getCard(cardId)!);
   }
 
@@ -281,13 +284,16 @@ export class BoardService {
       : { card: fresh };
   }
 
-  /** Hard-delete the todo. The side row leaves with the todo's foreign key. */
+  /**
+   * Hard-delete the todo. The side row leaves with the todo's foreign key.
+   * `purge` emits the one `board.changed`; it captured the column before the
+   * side row disappeared. Publishing again here would duplicate that event.
+   */
   deleteCard(cardId: string, actor: ProjectActor): void {
     const card = this.#requireCard(cardId);
     this.#write(card.projectId, actor);
     const deleted = this.#deps.todos.purge(cardId, 'board');
     if (!deleted) throw new AppError('NOT_FOUND', 'Card not found');
-    this.#changed({ projectId: card.projectId, cardId, columnId: card.columnId });
     this.#deps.logger.info({ projectId: card.projectId, cardId }, 'board card deleted');
   }
 
@@ -297,9 +303,15 @@ export class BoardService {
    */
   onProjectDeleting(projectId: string): void {
     const ids = this.#deps.store.listCardIdsByProject(projectId);
-    this.#deps.db.transaction(() => {
-      for (const id of ids) this.#deps.todos.purge(id, 'board');
-    })();
+    if (ids.length === 0) return;
+    this.#deps.todos.withoutBoardEvents(() => {
+      this.#deps.todos.withTransaction(() => {
+        for (const id of ids) this.#deps.todos.purge(id, 'board');
+      });
+    });
+    // One project signal after the purges commit. Per-card events would fire
+    // inside the transaction and again once for every card.
+    this.#changed({ projectId });
   }
 
   #snapshot(projectId: string): { columns: BoardColumn[]; cards: BoardCard[] } {
@@ -362,7 +374,7 @@ export class BoardService {
   }
 
   #changed(payload: BoardChangedPayload): void {
-    this.#deps.publish?.(payload);
+    this.#deps.todos.deliverBoardChanged(payload);
   }
 }
 
@@ -406,6 +418,7 @@ function codePoints(text: string): number {
 }
 
 function normalizeColumnTitle(title: string): string {
+  assertColumnTitle(title);
   const trimmed = title.trim();
   if (codePoints(trimmed) === 0) throw new AppError('INVALID_INPUT', 'Column title is empty');
   if (codePoints(trimmed) > BOARD_COLUMN_TITLE_MAX_CHARS) {
@@ -420,6 +433,7 @@ function normalizeColumnTitle(title: string): string {
 function cleanSeedTitles(titles: readonly string[]): string[] {
   const cleaned: string[] = [];
   for (const raw of titles) {
+    assertColumnTitle(raw);
     const title = raw.trim();
     if (codePoints(title) === 0) continue;
     if (codePoints(title) > BOARD_COLUMN_TITLE_MAX_CHARS) {
@@ -432,6 +446,18 @@ function cleanSeedTitles(titles: readonly string[]): string[] {
     if (cleaned.length === BOARD_MAX_COLUMNS) break;
   }
   return cleaned;
+}
+
+/**
+ * SQLite `length()` stops at the first NUL, so a title the code-point check
+ * accepts can fail the CHECK (leading NUL → length 0) and a title it rejects
+ * can still be inserted (NUL then a long tail → length 1). Reject NUL here;
+ * the CHECK rejects it too (`instr(title, char(0)) = 0`).
+ */
+function assertColumnTitle(title: string): void {
+  if (title.includes('\0')) {
+    throw new AppError('INVALID_INPUT', 'Column title contains a null character');
+  }
 }
 
 function normalizeCardText(text: string): string {

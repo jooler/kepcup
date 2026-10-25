@@ -693,7 +693,9 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 CREATE TABLE board_columns (
   id          TEXT PRIMARY KEY,                                        -- bcol_...
   project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  title       TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 60),
+  title       TEXT NOT NULL CHECK (
+                length(title) BETWEEN 1 AND 60 AND instr(title, char(0)) = 0
+              ),
   position    REAL NOT NULL,
   created_at  INTEGER NOT NULL
 );
@@ -710,6 +712,7 @@ CREATE INDEX board_cards_column ON board_cards(column_id, position);
 CREATE INDEX board_cards_project ON board_cards(project_id);
 ```
 
+- 分栏标题 1–60 个码点。SQLite 的 `length()` 在 NUL 处截断，所以 CHECK 同时用 `instr(title, char(0)) = 0` 拒绝内嵌 NUL，与服务的码点校验一致：服务接受的标题插得进去，服务拒绝的标题（超长或含 NUL）也插不进去。
 - 删事项：`board_cards` 随 `todos` 外键级联。
 - 删分栏：`column_id` 不级联。服务先挪走或删除卡片，再删分栏。
 - 删项目会话：`board_columns` / `board_cards` 随会话外键级联；事项没有指向会话的外键，由 `lifecycle.deleteConversation` 在删行之前调用 `board.onProjectDeleting` 逐张 `todos.purge`（见删除级联表）。
