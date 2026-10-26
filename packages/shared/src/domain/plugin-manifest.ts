@@ -185,17 +185,17 @@ export const pluginManifestSchema = z
       })
       .optional(),
     homepage: httpsUrl(500).optional(),
-    engines: z
-      .strictObject({ kepcup: z.string().min(1).max(100) })
+    engines: z.strictObject({ kepcup: z.string().min(1).max(100) }).optional(),
+    platforms: z
+      .array(z.enum(['darwin', 'win32', 'linux']))
+      .min(1)
       .optional(),
-    platforms: z.array(z.enum(['darwin', 'win32', 'linux'])).min(1).optional(),
-    contributions: z
-      .strictObject({
-        skills: z.array(pluginSkillContributionSchema).max(PLUGIN_MAX_SKILLS).default([]),
-        connectors: z.array(pluginConnectorContributionSchema).max(PLUGIN_MAX_CONNECTORS).default([]),
-        mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
-        mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
-      }),
+    contributions: z.strictObject({
+      skills: z.array(pluginSkillContributionSchema).max(PLUGIN_MAX_SKILLS).default([]),
+      connectors: z.array(pluginConnectorContributionSchema).max(PLUGIN_MAX_CONNECTORS).default([]),
+      mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
+      mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
+    }),
   })
   .superRefine((manifest, ctx) => {
     const { skills, connectors, mcp, mail } = manifest.contributions;
@@ -206,13 +206,15 @@ export const pluginManifestSchema = z
         message: '插件至少要包含一类贡献',
       });
     }
+    // Entries carry their index in the containing array so the issue path points at the
+    // offending item even when the duplicated values come from a filtered subset (mcpb files).
     const dup = (
-      values: string[],
+      entries: ReadonlyArray<readonly [string, number]>,
       path: readonly (string | number)[],
       field: string,
     ) => {
       const seen = new Set<string>();
-      for (const [index, value] of values.entries()) {
+      for (const [value, index] of entries) {
         const key = value.toLowerCase();
         if (seen.has(key)) {
           ctx.addIssue({
@@ -225,31 +227,29 @@ export const pluginManifestSchema = z
       }
     };
     dup(
-      skills.map((skill) => skill.dir),
+      skills.map((skill, index) => [skill.dir, index] as const),
       ['contributions', 'skills'],
       'dir',
     );
     dup(
-      connectors.map((connector) => connector.file),
+      connectors.map((connector, index) => [connector.file, index] as const),
       ['contributions', 'connectors'],
       'file',
     );
     dup(
-      mcp.map((contribution) => contribution.id),
+      mcp.map((contribution, index) => [contribution.id, index] as const),
       ['contributions', 'mcp'],
       'id',
     );
     dup(
-      mcp
-        .filter((contribution): contribution is Extract<PluginMcpContribution, { kind: 'mcpb' }> =>
-          contribution.kind === 'mcpb',
-        )
-        .map((contribution) => contribution.file),
+      mcp.flatMap((contribution, index) =>
+        contribution.kind === 'mcpb' ? [[contribution.file, index] as const] : [],
+      ),
       ['contributions', 'mcp'],
       'file',
     );
     dup(
-      mail.map((template) => template.id),
+      mail.map((template, index) => [template.id, index] as const),
       ['contributions', 'mail'],
       'id',
     );
