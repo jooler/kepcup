@@ -18,6 +18,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
     call: async (method: string, payload: Record<string, unknown> = {}) => {
       calls.push({ method, payload });
       if (method === 'tasks.get') return getResult;
+      if (method === 'tasks.active') return { tasks: [] };
       return {};
     },
   },
@@ -74,6 +75,25 @@ describe('tasks.openDetail / closeDetail', () => {
     tasks.openDetail('task_1');
     tasks.openDetail('task_2');
     expect(tasks.openTaskId).toBe('task_2');
+  });
+
+  it('keeps settled views for every conversation a session still holds', async () => {
+    const settled = { ...taskView('done_a', 'completed'), conversationId: 'conv_a' };
+    const other = { ...taskView('done_b', 'completed'), conversationId: 'conv_b' };
+    const running = { ...taskView('run_c', 'running'), conversationId: 'conv_c' };
+    tasks.byId = { done_a: settled, done_b: other, run_c: running };
+    tasks.retain('conv_a');
+    tasks.retain('conv_b');
+    await tasks.loadActive('conv_a');
+    expect(tasks.byId['done_a']).toEqual(settled);
+    expect(tasks.byId['done_b']).toEqual(other);
+    expect(tasks.byId['run_c']).toEqual(running);
+
+    tasks.release('conv_b');
+    expect(tasks.byId['done_b']).toBeUndefined();
+    expect(tasks.byId['done_a']).toEqual(settled);
+    expect(tasks.byId['run_c']).toEqual(running);
+    tasks.release('conv_a');
   });
 
   it('ignores an empty id', () => {

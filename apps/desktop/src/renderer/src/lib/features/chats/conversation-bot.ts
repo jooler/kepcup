@@ -1,4 +1,5 @@
 import type { Bot, Conversation } from '@kepcup/shared';
+import { isSingleBotConversation } from './single-bot-conversation';
 
 /**
  * `conversation.updated` 事件携带的是裸 domain Conversation——`bot` 视图字段
@@ -14,7 +15,7 @@ export function resolveConversationBot(
   knownBots: readonly Bot[],
 ): { conversation: Conversation; refetch: boolean } {
   if (
-    conversation.type !== 'direct' ||
+    !isSingleBotConversation(conversation.type) ||
     conversation.bot != null ||
     conversation.directBotId === null
   ) {

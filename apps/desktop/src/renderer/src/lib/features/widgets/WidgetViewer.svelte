@@ -2,7 +2,7 @@
   import { X, RefreshCw } from '@lucide/svelte';
   import { Portal } from 'bits-ui';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
@@ -15,6 +15,7 @@
    * 关掉一个网页一致，组件内状态不跨打开保留）；重载按钮整体重开。切会话时组件卡属于
    * 旧对话：直接关闭（同 FileViewer 的归属守卫）。
    */
+  const session = getChatSession();
   const current = $derived(widgetViewer.current);
   const card = $derived(current?.card ?? null);
 
@@ -27,7 +28,7 @@
 
   // 切会话时组件卡属于旧对话：直接关闭，避免把旧会话的组件继续展示在新会话上。
   $effect(() => {
-    const conversationId = chat.currentId;
+    const conversationId = session.conversationId;
     if (widgetViewer.current !== null && widgetViewer.current.conversationId !== conversationId) {
       widgetViewer.close();
     }

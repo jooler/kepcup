@@ -2,7 +2,7 @@
   import type { SetupRequirement } from '@kepcup/shared';
   import { ShieldAlert } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { Button } from '$lib/components/ui/button';
   import {
@@ -33,6 +33,7 @@
     requirement,
   }: { requirement: Extract<SetupRequirement, { kind: 'confirm-local-connector' }> } = $props();
 
+  const session = getChatSession();
   const card = $derived(requirement.card);
 
   let now = $state(Date.now());
@@ -111,7 +112,7 @@
       // 幂等：提案已过期 / 已处理也无妨，卡片照常收起。
       await appsStore.rejectLocal(card.proposalId).catch(() => undefined);
       rejected = true;
-      chat.dismissSetupCard();
+      session.dismissSetupCard();
     } finally {
       busy = false;
     }

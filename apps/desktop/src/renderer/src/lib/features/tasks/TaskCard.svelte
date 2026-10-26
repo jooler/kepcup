@@ -13,6 +13,7 @@
   import { toast } from 'svelte-sonner';
   import { t, errorText, listSeparator } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -34,6 +35,7 @@
    * （docs/design/42-task-run-view.md）。键盘入口是「查看执行过程」按钮。
    */
   let { taskId }: { taskId: string } = $props();
+  const session = getChatSession();
 
   function openRun(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
@@ -43,7 +45,7 @@
     // 拖选文字后的松手也是 click：不打断选择，也不误开执行过程页。
     if (window.getSelection()?.isCollapsed === false) return;
     const card = event.currentTarget as HTMLElement;
-    tasks.openDetail(taskId, card.querySelector<HTMLElement>('[data-testid="task-open-run"]'));
+    session.openTask(taskId, card.querySelector<HTMLElement>('[data-testid="task-open-run"]'));
   }
 
   $effect(() => {
@@ -58,7 +60,7 @@
       .sort((a, b) => a.createdAt - b.createdAt),
   );
   const ownerName = $derived(
-    task?.botId != null && chat.current?.conversation.type === 'project'
+    task?.botId != null && session.view?.conversation.type === 'project'
       ? chat.botName(task.botId)
       : '',
   );

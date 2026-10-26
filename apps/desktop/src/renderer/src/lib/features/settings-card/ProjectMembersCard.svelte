@@ -2,6 +2,7 @@
   import type { SettingValues } from '@kepcup/shared';
   import { t, listSeparator } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -30,9 +31,8 @@
   let memberChoices = $state<Record<string, boolean>>({});
   let cardBusy = $state(false);
 
-  const members = $derived(
-    chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
-  );
+  const session = getChatSession();
+  const members = $derived(session.conversationId === conversationId ? session.members : []);
 
   // The bot's prefill only suggests bots to pull in: current members stay
   // checked by default, prefill only adds checks.

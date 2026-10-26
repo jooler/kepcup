@@ -9,8 +9,12 @@ import { settingDeepLinkAction } from './deep-link';
  * 弹框 / 扩展中心 / 右栏 Bot 详情 / 项目设置 / 工作目录设置的对应锚点。窄屏的重路由由各入口自己
  * 处理（`shell.openSettings` → NarrowSettings；扩展中心 → 扩展 tab；右栏 → 覆盖层）。
  */
-export async function openSettingDeepLink(item: SettingItem, target: SettingTarget): Promise<void> {
-  const conversationId = chat.current?.conversation.id ?? null;
+export async function openSettingDeepLink(
+  item: SettingItem,
+  target: SettingTarget,
+  current: { id: string; bot?: { id: string } | null } | null = chat.current?.conversation ?? null,
+): Promise<void> {
+  const conversationId = current?.id ?? null;
   const action = settingDeepLinkAction(item.deepLink, target, conversationId);
   switch (action.kind) {
     case 'settings':
@@ -21,7 +25,7 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       return;
     case 'bot-panel': {
       // 右栏只展示当前单聊的 Bot：改的是别的 Bot（管家出的卡）时先切到它的单聊。
-      const currentBotId = chat.current?.conversation.bot?.id ?? null;
+      const currentBotId = current?.bot?.id ?? null;
       if (action.botId !== null && action.botId !== currentBotId) {
         await chat.openDirect(action.botId);
       }
@@ -36,7 +40,7 @@ export async function openSettingDeepLink(item: SettingItem, target: SettingTarg
       // anchor into view and focus it once the page has rendered.
       if (
         action.conversationId !== null &&
-        action.conversationId !== chat.current?.conversation.id
+        action.conversationId !== current?.id
       ) {
         await chat.select(action.conversationId);
       }

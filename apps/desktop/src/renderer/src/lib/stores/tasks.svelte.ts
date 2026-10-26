@@ -1,6 +1,6 @@
 import type { AskUserValues, Run, TaskView } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
-import { applyFetchedViews, pruneTaskViews } from '$lib/features/tasks/task-view';
+import { applyFetchedViews, pruneTaskViewsMany } from '$lib/features/tasks/task-view';
 
 /**
  * D75 任务（docs/design/30-supervisor-and-tasks.md §4.3 / §6.3）的渲染端缓存：
@@ -19,8 +19,12 @@ class TasksState {
   // Plain Map: bookkeeping, not UI state.
   readonly #pushedAt = new Map<string, number>();
   #sawReady = false;
-  /** The open conversation (the cache keeps its views, 审查 L3). */
-  #conversationId: string | null = null;
+  /**
+   * Conversations a session still has open, with a refcount so two sessions
+   * can share one id. Settled views of a conversation are dropped only when
+   * the count hits zero. `openTaskId` stays the main task page.
+   */
+  readonly #useCount = new Map<string, number>();
   /** Element to focus after an explicit return from the execution view. */
   #focusReturn: HTMLElement | null = null;
 
@@ -101,10 +105,24 @@ class TasksState {
    * open) — same newer-wins rule as `ensure` (审查 L2) — and drops settled
    * views of other conversations (审查 L3).
    */
+  /** Mark a conversation as still on screen. Idempotent per session, not per call. */
+  retain(conversationId: string): void {
+    this.#useCount.set(conversationId, (this.#useCount.get(conversationId) ?? 0) + 1);
+  }
+
+  /** A session left this conversation. Prunes its settled views when unused. */
+  release(conversationId: string): void {
+    const next = (this.#useCount.get(conversationId) ?? 0) - 1;
+    if (next <= 0) this.#useCount.delete(conversationId);
+    else this.#useCount.set(conversationId, next);
+    this.byId = pruneTaskViewsMany(this.byId, new Set(this.#useCount.keys()));
+  }
+
   async loadActive(conversationId: string): Promise<void> {
     this.start();
-    this.#conversationId = conversationId;
-    this.byId = pruneTaskViews(this.byId, conversationId);
+    const keep = new Set(this.#useCount.keys());
+    keep.add(conversationId);
+    this.byId = pruneTaskViewsMany(this.byId, keep);
     for (const taskId of [...this.#pushedAt.keys()]) {
       if (this.byId[taskId] === undefined) this.#pushedAt.delete(taskId);
     }
@@ -146,7 +164,7 @@ class TasksState {
       for (const taskId of gone) delete next[taskId];
     }
     this.byId = next;
-    if (this.#conversationId !== null) await this.loadActive(this.#conversationId);
+    for (const conversationId of this.#useCount.keys()) await this.loadActive(conversationId);
   }
 
   /** Cancels a task from its card (the user's decision: no turn is woken, §3.3). */

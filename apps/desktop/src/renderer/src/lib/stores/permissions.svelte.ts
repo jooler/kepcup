@@ -35,7 +35,11 @@ class PermissionsState {
   approvals = $state<Record<string, Approval>>({});
   /** Pending approval count per conversation (sidebar marker). */
   pendingByConversation = $state<Record<string, number>>({});
-  /** Active grants of the current conversation (right panel). */
+  /**
+   * Active grants mirrored for the foreground (main) conversation. The right
+   * panel reads this. Other open sessions keep their own lists in
+   * {@link grantsOf}.
+   */
   grants = $state<Grant[]>([]);
   unattended = $state<UnattendedState>({ enabled: false, until: null, enabledAt: null });
   sandbox = $state<SandboxStatusOutput | null>(null);
@@ -44,8 +48,10 @@ class PermissionsState {
   summaryItems = $state<Array<UnattendedSummaryEntry>>([]);
   /** Auto-approvals already surfaced to the user (focus reminder). */
   #seenAutoApprovals = 0;
-  /** Conversation the grants list currently mirrors. */
-  #currentConversationId: string | null = null;
+  /** Grants loaded per conversation, so a dialog and the main view can both be open. */
+  #grantsByConversation = $state<Record<string, Grant[]>>({});
+  /** Whose grants `this.grants` mirrors (the main view). */
+  #foregroundConversationId: string | null = null;
   /** Loaded once per boot for the banner; refreshed on unattended.changed. */
   #started = false;
 
@@ -71,7 +77,8 @@ class PermissionsState {
     });
     core.onEvent('grant.changed', (payload) => {
       const data = payload as { conversationId: string; grants: Grant[] };
-      if (data.conversationId === this.#currentConversationId) this.grants = data.grants;
+      this.#grantsByConversation = { ...this.#grantsByConversation, [data.conversationId]: data.grants };
+      if (data.conversationId === this.#foregroundConversationId) this.grants = data.grants;
     });
     core.onEvent('unattended.changed', (payload) => {
       const data = payload as { state: UnattendedState };
@@ -85,9 +92,22 @@ class PermissionsState {
     });
   }
 
-  /** Loads pending approvals + grants + sandbox state for a conversation. */
-  async loadForConversation(conversationId: string): Promise<void> {
-    this.#currentConversationId = conversationId;
+  /** Grants last loaded for one conversation. Empty until `loadForConversation`. */
+  grantsOf(conversationId: string): Grant[] {
+    return this.#grantsByConversation[conversationId] ?? [];
+  }
+
+  /**
+   * Loads pending approvals + grants for a conversation. `foreground` (the
+   * main view) also updates {@link grants}, which the right panel reads.
+   * A second session passes `foreground: false` so it does not steal that list.
+   */
+  async loadForConversation(
+    conversationId: string,
+    options: { foreground?: boolean } = {},
+  ): Promise<void> {
+    const foreground = options.foreground !== false;
+    if (foreground) this.#foregroundConversationId = conversationId;
     const [approvalsResult, grantsResult] = await Promise.all([
       core.call('approvals.list', { conversationId }) as Promise<{ approvals: Approval[] }>,
       core.call('grants.list', { conversationId }) as Promise<{ grants: Grant[] }>,
@@ -95,7 +115,11 @@ class PermissionsState {
     const next: Record<string, Approval> = { ...this.approvals };
     for (const approval of approvalsResult.approvals) next[approval.id] = approval;
     this.approvals = next;
-    this.grants = grantsResult.grants;
+    this.#grantsByConversation = {
+      ...this.#grantsByConversation,
+      [conversationId]: grantsResult.grants,
+    };
+    if (foreground) this.grants = grantsResult.grants;
     this.#recount(conversationId);
   }
 
