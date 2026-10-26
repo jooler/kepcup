@@ -1,3 +1,4 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,7 @@ import {
   type Page,
   _electron,
 } from '@playwright/test';
-import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
+import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 import { createProjectViaUi } from './helpers/create-project';
 import { rmHomeTolerant } from './helpers/home-cleanup';
@@ -484,6 +485,275 @@ test('project board: columns, cards, dialog, drag, layout, draft, narrow width',
     const beforeNarrow = await columns(page).count();
     await page.locator('[data-testid="board-add-column"]').click();
     await expect(columns(page)).toHaveCount(beforeNarrow + 1);
+  } finally {
+    await closeSession(session);
+  }
+});
+
+function scriptLight(llm: MockLlmServer): void {
+  llm.script(
+    'mock-light',
+    Array.from({ length: 8 }, () =>
+      step().replyJson({
+        runSummary: '无',
+        memories: [],
+        profileProposals: [],
+        wikiSuggestions: [],
+        skillSuggestion: null,
+      }),
+    ),
+  );
+}
+
+test('project board: assign, dialog chat, badge, deep link, cascade', async () => {
+  test.setTimeout(360_000);
+  const session = await startSession('kepcup-e2e-project-board-dialog-');
+  const { app, page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '阿甲');
+    await createBotAndOpenChat(page, '阿乙');
+    await createProjectViaUi(page, '执行看板', ['阿甲', '阿乙']);
+    await openBoard(page);
+
+    const doing = columnTitled(page, '进行中');
+    await doing.locator('[data-testid="board-column-add-card"]').click();
+    const composer = doing.locator('[data-testid="board-card-composer"]');
+    await composer.pressSequentially('写一句问候');
+    await composer.press('Enter');
+    const face = doing.locator('[data-testid="board-card"]', { hasText: '写一句问候' });
+    await expect(face).toBeVisible();
+
+    // ⑧ Assign a member and a time. The schedule shows on the project page.
+    await face.click();
+    const dialog = page.locator('[data-testid="board-dialog"]');
+    await expect(dialog).toBeVisible();
+    await dialog.locator('[data-testid="board-dialog-executor"]').click();
+    await dialog.getByRole('menuitem', { name: '阿乙' }).click();
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待开始');
+    await dialog.locator('[data-testid="board-dialog-when"]').click();
+    await dialog.locator('[data-testid="todo-when-once"]').click();
+    await dialog.locator('[data-testid="todo-when-once-input"]').fill('2099-06-01T09:00');
+    await dialog.locator('[data-testid="board-dialog-when-save"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-when"]')).not.toContainText('未设置');
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await expect(dialog).toHaveCount(0);
+
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await page.locator('[data-testid="project-settings-nav-schedules"]').click();
+    const schedule = page.locator('[data-testid="project-schedules"] [data-testid^="schedule-item-"]');
+    await expect(schedule).toBeVisible({ timeout: 15_000 });
+    await expect(schedule.locator('[data-testid="schedule-workbench"]')).toHaveText('工作台');
+    await expect(schedule.locator('[data-testid="schedule-title"]')).toContainText('写一句问候');
+    await page.locator('[data-testid="project-tab-board"]').click();
+
+    // ⑨ Start, accept, reopen, and a card-thread reply that stays out of the direct chat.
+    // The one-off schedule is cleared first: 「开始执行」 is the draft action.
+    await face.click();
+    await expect(dialog).toBeVisible();
+    await dialog.locator('[data-testid="board-dialog-action-clearWhen"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待开始', {
+      timeout: 15_000,
+    });
+    const held = step().hold().replyText('问候写好了');
+    scriptLight(llm);
+    llm.script('mock-main', [held]);
+    await dialog.locator('[data-testid="board-dialog-action-start"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('执行中', {
+      timeout: 30_000,
+    });
+    await expect(dialog.locator('[data-testid="dispatch-card"]')).toContainText('任务派发');
+    await expect(dialog.locator('[data-testid="dispatch-card-view"]')).toHaveCount(0);
+    held.release();
+    await expect(dialog.locator('[data-testid="bot-bubble"]').first()).toContainText('问候写好了', {
+      timeout: 30_000,
+    });
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待验收', {
+      timeout: 30_000,
+    });
+    await dialog.locator('[data-testid="board-dialog-action-accept"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('已完成', {
+      timeout: 15_000,
+    });
+    await dialog.locator('[data-testid="board-dialog-action-reopen"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待开始', {
+      timeout: 15_000,
+    });
+
+    scriptLight(llm);
+    llm.script('mock-main', [step().replyText('卡片里的回答')]);
+    const cardComposer = dialog.locator('[data-testid="composer-input"]');
+    await cardComposer.click();
+    await cardComposer.pressSequentially('直接问一句');
+    await cardComposer.press('ControlOrMeta+Enter');
+    await expect(dialog.locator('[data-testid="bot-bubble"]').last()).toContainText('卡片里的回答', {
+      timeout: 30_000,
+    });
+    const cardConversationId = await dialog
+      .locator('[data-testid="board-dialog-chat"]')
+      .getAttribute('data-conversation-id');
+    expect(cardConversationId).toBeTruthy();
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+
+    await page.locator('[data-testid="conversation-name"]', { hasText: '阿乙' }).click();
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible();
+    await expect(page.locator('[data-testid="chat-view"]')).not.toContainText('卡片里的回答');
+    await expect(page.locator('[data-testid="chat-view"]')).not.toContainText('问候写好了');
+    await page.locator('[data-testid="conversation-name"]', { hasText: '执行看板' }).click();
+    await openBoard(page);
+    await face.click();
+    await expect(dialog.locator('[data-testid="bot-bubble"]').last()).toContainText('卡片里的回答');
+
+    // ⑪ A new assignee gets a new thread. Clearing the assignee shows the empty state.
+    await dialog.locator('[data-testid="board-dialog-executor"]').click();
+    await dialog.getByRole('menuitem', { name: '阿甲' }).click();
+    await expect(dialog.locator('[data-testid="bot-bubble"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).not.toContainText(
+      '卡片里的回答',
+    );
+    const reassignedId = await dialog
+      .locator('[data-testid="board-dialog-chat"]')
+      .getAttribute('data-conversation-id');
+    expect(reassignedId).not.toBe(cardConversationId);
+    await dialog.locator('[data-testid="board-dialog-executor"]').click();
+    await dialog.locator('[data-testid="board-dialog-executor-none"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
+      '指派一位成员后',
+    );
+    await dialog.locator('[data-testid="board-dialog-executor"]').click();
+    await dialog.getByRole('menuitem', { name: '阿乙' }).click();
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText('卡片里的回答');
+
+    // ⑩ and ⑫ Approval in the dialog, tab and face badges, task page inside the dialog.
+    const externalDir = mkdtempSync(path.join(tmpdir(), 'kepcup-e2e-board-approval-'));
+    const externalPath = path.join(externalDir, 'note.txt');
+    writeFileSync(externalPath, 'e2e-external-content');
+    scriptLight(llm);
+    llm.script(
+      'mock-main',
+      viaTask({
+        title: '读外部文件',
+        writes: false,
+        ack: '好的，我去读',
+        taskSteps: [
+          step().replyToolCall('read', { path: externalPath }),
+          step().replyText('文件内容已读到'),
+        ],
+        relay: '外部文件读完了',
+      }),
+    );
+    await cardComposer.click();
+    await cardComposer.pressSequentially('读一下外部文件');
+    await cardComposer.press('ControlOrMeta+Enter');
+    const approval = dialog.locator('[data-testid^="approval-card-"]');
+    await expect(approval).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toBeVisible();
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await expect(face.locator('[data-testid="board-card-approval"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await face.click();
+    await expect(approval).toBeVisible();
+    await dialog.locator('[data-testid="task-open-run"]').click();
+    await expect(dialog.locator('[data-testid="task-run-view"]')).toBeVisible({ timeout: 15_000 });
+    await dialog.locator('[data-testid="task-run-back"]').click();
+    await expect(dialog.locator('[data-testid="task-run-view"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText('好的，我去读');
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="task-run-view"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toBeVisible();
+    await openBoard(page);
+    await face.click();
+    await approval.press('Enter');
+    await expect(approval).toBeHidden({ timeout: 60_000 });
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await expect(face.locator('[data-testid="board-card-approval"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toHaveCount(0);
+
+    // ⑭ Narrow dialog: details / chat tabs.
+    await resizeWindow(app, 720, 800);
+    await face.click();
+    await expect(dialog.locator('[data-testid="board-dialog-tabs"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="board-dialog-tab-chat"]')).toBeVisible();
+    await dialog.locator('[data-testid="board-dialog-tab-chat"]').click();
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toBeVisible();
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await resizeWindow(app, 1280, 800);
+
+    // ⑮ A notification-style select of the card id opens the dialog, not the sidebar.
+    await face.click();
+    const linkedId = await dialog
+      .locator('[data-testid="board-dialog-chat"]')
+      .getAttribute('data-conversation-id');
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    const beforeItems = await page.locator('[data-testid^="conversation-item-"]').count();
+    await app.evaluate(({ BrowserWindow }, conversationId) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send('navigate-conversation', conversationId);
+    }, linkedId);
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid^="conversation-item-"]')).toHaveCount(beforeItems);
+    await expect(
+      page.locator(
+        '[data-testid^="conversation-item-"][data-active="true"] [data-testid="conversation-name"]',
+      ),
+    ).toContainText('执行看板');
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+
+    // ⑯ Removing the assignee blocks the card and makes the thread read-only.
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await page.locator('[data-testid="project-settings-nav-members"]').click();
+    const memberRow = page
+      .locator('[data-testid^="project-member-row-"]')
+      .filter({ hasText: '阿乙' });
+    await memberRow.locator('[data-testid^="project-member-remove-"]').click();
+    await openBoard(page);
+    await expect(face.locator('[data-testid="board-card-blocked"]')).toContainText(
+      '执行成员已移出项目组',
+    );
+    await face.click();
+    // The open conversation is closed with the assignee, so the dialog is the
+    // unassigned empty state. The blocked reason stays on the status chip.
+    // The read-only history is not reopened here (historical chats are backlog).
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
+      '指派一位成员后',
+    );
+    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText(
+      '执行成员已移出项目组',
+    );
+    await dialog.locator('[data-testid="board-dialog-close"]').click();
+
+    // ⑬ Delete the card (with confirm) and the project, whose confirm counts cards.
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await page.locator('[data-testid="project-settings-nav-danger"]').click();
+    await page.locator('[data-testid="project-delete-begin"]').click();
+    await expect(page.locator('[data-testid="project-delete-board-count"]')).toContainText('1');
+    await page.getByRole('button', { name: '取消' }).click();
+    await openBoard(page);
+    await face.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '删除卡片' }).click();
+    const confirm = page.locator('[data-testid="board-card-delete-confirm"]');
+    await expect(page.getByRole('dialog').filter({ has: confirm })).toContainText(
+      '其对话与执行记录会一并删除',
+    );
+    await confirm.click();
+    await expect(face).toHaveCount(0);
+
+    await doing.locator('[data-testid="board-column-add-card"]').click();
+    await doing.locator('[data-testid="board-card-composer"]').pressSequentially('栏里的卡');
+    await doing.locator('[data-testid="board-card-composer"]').press('Enter');
+    await doing.locator('header').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '删除分栏' }).click();
+    await page.locator('[data-testid="board-column-delete-confirm"]').click();
+    await expect(columnTitled(page, '进行中')).toHaveCount(0);
+
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await page.locator('[data-testid="project-settings-nav-danger"]').click();
+    await page.locator('[data-testid="project-delete-begin"]').click();
+    await expect(page.locator('[data-testid="project-delete-board-count"]')).toBeVisible();
+    await page.locator('[data-testid="project-delete-confirm"]').click();
+    await expect(page.locator('[data-testid="project-board-view"]')).toHaveCount(0);
   } finally {
     await closeSession(session);
   }

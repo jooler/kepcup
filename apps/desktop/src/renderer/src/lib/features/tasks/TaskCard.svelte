@@ -232,7 +232,7 @@
         title={t('task.run.open')}
         onclick={(event) => {
           event.stopPropagation();
-          tasks.openDetail(taskId, event.currentTarget);
+          session.openTask(taskId, event.currentTarget);
         }}
         data-testid="task-open-run"
       >

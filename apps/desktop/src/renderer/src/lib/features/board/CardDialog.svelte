@@ -49,9 +49,17 @@
   });
 
   // A new card conversation is a new session. Drop a task page that belonged
-  // to the previous one. Reading only the id keeps an open task page put.
+  // to the previous one. A board refresh replaces the card object without
+  // changing the id, and must not close the task page.
+  let conversationKey = $state<string | null | undefined>(undefined);
   $effect(() => {
-    void card?.conversationId;
+    const next = card?.conversationId ?? null;
+    if (conversationKey === undefined) {
+      conversationKey = next;
+      return;
+    }
+    if (next === conversationKey) return;
+    conversationKey = next;
     taskId = null;
   });
 

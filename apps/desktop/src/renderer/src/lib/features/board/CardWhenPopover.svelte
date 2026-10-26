@@ -120,7 +120,12 @@
       >
         {t('board.dialog.when.clear')}
       </Button>
-      <Button size="sm" disabled={saving || whenFromDraft(draft) === undefined} onclick={onSave}>
+      <Button
+        size="sm"
+        disabled={saving || whenFromDraft(draft) === undefined}
+        onclick={onSave}
+        data-testid="board-dialog-when-save"
+      >
         {t('board.dialog.when.save')}
       </Button>
     </div>
