@@ -550,6 +550,35 @@ describe('PluginRegistry', () => {
     expect(existsSync(slotDir)).toBe(true);
   });
 
+  it('start() 对禁用插件也读清单：list 显示名称与描述；不触发 activate', async () => {
+    const rig = makeRig();
+    const fixture = await makeFixture({ id: 'io.github.tester/named' });
+    await rig.registry.install(installArgs(fixture));
+    await rig.registry.setEnabled('io.github.tester/named', false);
+    rig.fakes.skill.activated.length = 0;
+    rig.fakes.mail.activated.length = 0;
+
+    // 新的注册表实例（新进程语义：清单缓存为空，只有 start() 会填）
+    const second = new PluginRegistry({
+      store: rig.store,
+      packager: rig.packager,
+      projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
+      pluginsDir: rig.pluginsDir,
+      clock: { now: () => 9_000_000 },
+      logger: noopLogger,
+      events: { emit: () => {} },
+    });
+    await second.start();
+    const summary = second.list().find((entry) => entry.id === 'io.github.tester/named');
+    expect(summary).toMatchObject({
+      name: fixture.manifest.name,
+      description: fixture.manifest.description,
+      enabled: false,
+    });
+    expect(rig.fakes.skill.activated).toEqual([]); // 禁用 → 不激活
+    expect(rig.fakes.mail.activated).toEqual([]);
+  });
+
   it('ownerOf / list 的 missing 标记', async () => {
     const rig = makeRig();
     const fixture = await makeFixture({ id: 'io.github.tester/own' });
