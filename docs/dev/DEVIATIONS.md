@@ -845,3 +845,17 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P0a-3-ui.md` 实施记录。
+
+### DEV-052 步骤 9 称「其余规格不涉及」，但 `plugins.spec.ts` 的 `plugins-empty` 断言因 `plugins.list` 新增内置条目而失效
+
+- 状态：已落实
+- 阶段：插件系统 P0b（D104）
+- 是否阻塞：否
+- 问题：P0b 步骤 9 的 e2e 表只列 `skill-market` / `extension-center` / `connect-abort` 三份规格，并写「其余规格不涉及」。但同一任务书 §1 明确 `plugins.list` 「多出两条只读的内置插件」，于是 P0a-3 的 `plugins.spec.ts` 里两处「卸载后 / 安装前 `plugins-empty` 空态可见」的断言在仓库检出（未设 `KEPCUP_BUILTIN_PLUGINS`，向上查找命中真实随包资源）下失败——列表里恒有 2 张内置卡片，全列表空态不再出现。
+- 影响范围：仅 `apps/desktop/test/e2e/plugins.spec.ts` 的 `launch()`：把 `KEPCUP_BUILTIN_PLUGINS` 指向 home 下一个空目录（与任务书给其它规格「env 指向临时目录」同一手法），全部既有断言原样保留。内置插件在「已安装」页签的展示由集成测试（`integration/plugins.test.ts` 新增用例）覆盖。
+- 可选方案：
+  1. 该规格指向空内置目录（当前实现）— 优点：规格继续只测本地插件生命周期，断言零改动；缺点：e2e 不再顺带覆盖「内置卡片在已安装页签出现」。
+  2. 改写空态断言为「内置卡片恒在」— 优点：多一层 UI 覆盖；缺点：本规格断言语义被稀释，且内置展示另有集成测试。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P0b-builtin.md` 实施记录。
