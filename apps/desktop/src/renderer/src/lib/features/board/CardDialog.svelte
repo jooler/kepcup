@@ -5,17 +5,27 @@
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { board } from './board.svelte';
-  import { deriveCardBadges, dialogEscapeAction } from './board-model';
+  import {
+    cardNeighbors,
+    deriveCardBadges,
+    dialogEscapeAction,
+    cardAriaLabel,
+  } from './board-model';
   import InlineEditable from './InlineEditable.svelte';
+  import CardActions from './CardActions.svelte';
   import CardChat from './CardChat.svelte';
-  import CardExecutorMenu from './CardExecutorMenu.svelte';
+  import CardDetails from './CardDetails.svelte';
+  import CardMoreMenu from './CardMoreMenu.svelte';
   import CardRuns from './CardRuns.svelte';
-  import CardStatusBar from './CardStatusBar.svelte';
 
   /**
-   * Card dialog. Three bands: toolbar, detail | chat, status. Below 760px the
-   * middle becomes Details / Chat tabs. Escape closes, after inputs, approval
-   * cards, and an open task page have had their turn. Text is flushed first.
+   * Card dialog. Two bands: toolbar and detail | chat. The detail side is a
+   * field list (status / assignee / schedule); the schedule popover anchors
+   * to its row. Prev/next ride outside the dialog's top-left corner and must
+   * stay clickable, so the dialog ignores outside interactions entirely
+   * (closing is X / Escape only). Below 760px the middle becomes Details /
+   * Chat tabs. Escape closes, after inputs, approval cards, and an open task
+   * page have had their turn. Text is flushed first.
    */
   const TABS_BELOW = 760;
 
@@ -28,8 +38,10 @@
     }
     return null;
   });
+  const neighbors = $derived(cardNeighbors(board.columns, cardId));
 
   let dialogEl = $state<HTMLElement | null>(null);
+  let navTop = $state<number | null>(null);
   let editor = $state<{ flush: () => Promise<boolean> } | null>(null);
   let width = $state(0);
   let tab = $state<'detail' | 'chat'>('detail');
@@ -39,6 +51,28 @@
 
   const tabbed = $derived(width > 0 && width < TABS_BELOW);
   const unread = $derived(card !== null && deriveCardBadges(card).unread);
+
+  // 上一条/下一条贴着弹框左上角的外上方（不可见溢出），同时留在 Dialog.Content
+  // 内：焦点作用域与 aria-modal 覆盖它们，键盘/读屏才能用。顶部 40px 是全屏
+  // 浮层激活的窗口拖拽带（app.css .window-drag-band-active），落进去点击会被
+  // 当成拖窗口，所以视口下界抬到 48。
+  $effect(() => {
+    const el = dialogEl;
+    if (el === null) return;
+    const update = (): void => {
+      navTop = el.getBoundingClientRect().top;
+    };
+    update();
+    const settle = setTimeout(update, 150);
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      clearTimeout(settle);
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  });
 
   $effect(() => {
     const current = card;
@@ -68,6 +102,15 @@
     closing = true;
     await editor?.flush();
     board.closeCard();
+  }
+
+  async function switchCard(id: string): Promise<void> {
+    if (id === cardId) return;
+    await editor?.flush();
+    highlightId = null;
+    // Drop the previous card's task page before the new one renders.
+    taskId = null;
+    board.openCard(id);
   }
 
   function onSave(next: string): Promise<boolean> {
@@ -117,10 +160,11 @@
   >
     <Dialog.Content
       bind:ref={dialogEl}
-      class="flex h-[min(80vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
+      class="flex h-[min(80vh,720px)] flex-col gap-0 p-0 sm:max-w-5xl"
       showCloseButton={false}
       tabindex={-1}
       data-testid="board-dialog"
+      interactOutsideBehavior="ignore"
       onkeydown={consumeEscape}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
@@ -128,12 +172,49 @@
       }}
       {onEscapeKeydown}
     >
-      <div bind:clientWidth={width} class="flex h-full min-h-0 flex-col">
+      <div
+        class="absolute left-0 z-[70] flex items-center gap-1"
+        class:hidden={navTop === null}
+        style:top="{Math.max(-36, 48 - (navTop ?? 0))}px"
+        data-testid="board-dialog-nav"
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={neighbors.prev === null}
+          onclick={() => {
+            const prev = neighbors.prev;
+            if (prev !== null) void switchCard(prev);
+          }}
+          data-testid="board-dialog-prev"
+        >
+          {t('board.dialog.prev')}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={neighbors.next === null}
+          onclick={() => {
+            const next = neighbors.next;
+            if (next !== null) void switchCard(next);
+          }}
+          data-testid="board-dialog-next"
+        >
+          {t('board.dialog.next')}
+        </Button>
+      </div>
+      <div
+        bind:clientWidth={width}
+        class="flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit]"
+      >
         <header class="flex shrink-0 items-center gap-2 border-b px-4 py-3">
           <Dialog.Title class="min-w-0 flex-1 truncate text-sm font-medium">
             {t('board.dialog.title')}
+            <span class="sr-only" aria-live="polite">{cardAriaLabel(card.text)}</span>
           </Dialog.Title>
-          <CardExecutorMenu {card} />
+          {#key cardId}
+            <CardMoreMenu {card} />
+          {/key}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -188,24 +269,33 @@
         {/if}
         <div class="flex min-h-0 flex-1 {tabbed ? 'flex-col' : ''}">
           <div
-            class="flex min-h-0 flex-col overflow-y-auto px-4 py-4 {tabbed
+            class="flex min-h-0 flex-col overflow-y-auto px-6 py-4 {tabbed
               ? tab === 'detail'
                 ? 'flex-1'
                 : 'hidden'
               : 'w-[40%] max-w-[420px] border-r'}"
           >
-            <InlineEditable
-              bind:this={editor}
-              value={card.text}
-              {onSave}
-              multiline
-              maxLength={BOARD_CARD_TEXT_MAX_CHARS}
-              placeholder={t('board.card.placeholder')}
-              delayMs={600}
-              ariaLabel={t('board.dialog.title')}
-              testid="board-dialog-text"
-            />
-            <CardRuns {card} onOpen={openRun} />
+            <div
+              class="-mx-2.5 mb-3 rounded-lg px-2.5 py-1.5 text-base font-medium transition-colors focus-within:bg-muted"
+            >
+              {#key cardId}
+                <InlineEditable
+                  bind:this={editor}
+                  value={card.text}
+                  {onSave}
+                  multiline
+                  maxLength={BOARD_CARD_TEXT_MAX_CHARS}
+                  placeholder={t('board.card.placeholder')}
+                  delayMs={600}
+                  ariaLabel={t('board.dialog.title')}
+                  testid="board-dialog-text"
+                />
+              {/key}
+            </div>
+            {#key cardId}
+              <CardDetails {card} />
+              <CardRuns {card} onOpen={openRun} />
+            {/key}
           </div>
           <div
             class="flex min-h-0 min-w-0 flex-col {tabbed
@@ -214,12 +304,16 @@
                 : 'hidden'
               : 'flex-1'}"
           >
+            {#if tabbed && tab === 'chat'}
+              <div class="flex shrink-0 items-center justify-end border-b px-4 py-1.5">
+                <CardActions {card} testidPrefix="board-dialog-chat-action" />
+              </div>
+            {/if}
             {#key card.conversationId ?? 'unassigned'}
               <CardChat {card} bind:taskId {highlightId} />
             {/key}
           </div>
         </div>
-        <CardStatusBar {card} />
       </div>
     </Dialog.Content>
   </Dialog.Root>

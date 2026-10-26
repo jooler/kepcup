@@ -137,7 +137,9 @@
 >
   <p class="line-clamp-6 break-words whitespace-pre-wrap">{card.text}</p>
   {#if badges.unread || badges.approval || badges.askUser || (footer === null && blocked?.key === 'blocked')}
-    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+    <div
+      class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400"
+    >
       {#if badges.unread}
         <span
           class="size-1.5 rounded-full bg-amber-500"
@@ -154,6 +156,15 @@
       {#if footer === null && blocked?.key === 'blocked'}
         <span data-testid="board-card-blocked">{blocked.params?.reason}</span>
       {/if}
+    </div>
+  {/if}
+  {#if footer === null && blocked?.key === 'pending'}
+    <div
+      class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+      data-testid="board-card-pending"
+    >
+      <Clock class="size-3 shrink-0" aria-hidden="true" />
+      <span class="truncate">{t(blocked.label, blocked.params)}</span>
     </div>
   {/if}
   {#if footer}

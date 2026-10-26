@@ -2919,6 +2919,12 @@ export const todoSchema = z.object({
   memoId: z.string().nullable(),
   /** Why the todo fell back to draft ("项目里无人回应" / "负责 Bot 已删除"…); display only. */
   blockedReason: z.string().nullable(),
+  /**
+   * Time set before an executor exists (board card): the validated `when`
+   * (ISO / cron) kept on the draft todo until an assignee lands, at which
+   * point TodoService turns it into a real schedule. null = not set.
+   */
+  pendingWhen: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
   /** done / cancelled time. */
@@ -2951,7 +2957,11 @@ export const todoEntrySchema = todoSchema.extend({
   assigneeName: z.string().nullable(),
   /** Name of the lead bot actually in effect (the assignee override, else the project lead). */
   leadBotName: z.string().nullable(),
-  /** The active schedule of the todo (time lives only there); null = not scheduled. */
+  /**
+   * The active schedule, or a projection of `pendingWhen` when a time was set
+   * before an assignee (`id` is then synthetic: `pending_<todoId>`, and no
+   * `schedules` row exists yet). null = no time set.
+   */
   schedule: z
     .object({
       id: z.string(),

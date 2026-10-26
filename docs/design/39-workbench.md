@@ -45,8 +45,7 @@
 
 **不变式**：
 
-- 有时间 ⇒ 必有执行者。选时间而不选人，表单直接要求先选人。
-- 有排期 ⇔ 存在一条 `todo_id` 指向它的 active schedule。时间只存在 schedule 上，事项表不重复存，避免两处不一致。
+- 有时间 ⇔ 存在一条 `todo_id` 指向它的 active schedule，或 `pending_when` 非空（未指派时先定的时间，指派后转成 schedule）。active schedule 一定有执行者；只选时间不选人时，时间先记在 `pending_when`，事项停在 draft。
 
 **状态机**：
 

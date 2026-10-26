@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { ArrowUp, Plus } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { ChatSession } from '$lib/stores/chat-session.svelte';
@@ -93,9 +94,36 @@
   data-conversation-id={card.conversationId ?? ''}
 >
   {#if card.conversationId === null}
-    <p class="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-      {t('board.dialog.chat.emptyUnassigned')}
-    </p>
+    <!-- 未指派：输入区照常渲染成只读占位，上层蒙层压住并给出提示。
+         蒙层用 background 令牌，明暗主题各自动适配。 -->
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="flex-1" aria-hidden="true"></div>
+      <div class="px-4 pb-3" aria-hidden="true">
+        <div
+          class="mx-auto flex w-full max-w-3xl items-center gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5"
+        >
+          <span
+            class="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-50"
+          >
+            <Plus class="size-4" />
+          </span>
+          <span class="min-w-0 flex-1 px-1 py-2"></span>
+          <span
+            class="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-muted-foreground"
+          >
+            <ArrowUp class="size-4" />
+          </span>
+        </div>
+      </div>
+    </div>
+    <div
+      class="absolute inset-0 z-30 flex items-center justify-center bg-background/60 px-6"
+      data-testid="board-dialog-chat-mask"
+    >
+      <p class="text-center text-sm text-muted-foreground">
+        {t('board.dialog.chat.emptyUnassigned')}
+      </p>
+    </div>
   {:else}
     <div class="relative h-full min-h-0" class:hidden={taskId !== null}>
       {#if view}

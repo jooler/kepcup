@@ -14,8 +14,9 @@ export const boardColumnSchema = z.object({
 export type BoardColumn = z.infer<typeof boardColumnSchema>;
 
 /**
- * Schedule slice carried on a board card. Same shape as `TodoEntry['schedule']`
- * (time lives on the workbench schedule row; P1 cards are unscheduled).
+ * Schedule slice carried on a board card. Same shape as `TodoEntry['schedule']`:
+ * an active schedule, or the projection of `pendingWhen` while a time waits for
+ * an assignee (synthetic `pending_<todoId>` id).
  */
 export const boardCardScheduleSchema = z
   .object({

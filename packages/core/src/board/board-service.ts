@@ -401,7 +401,9 @@ export class BoardService {
 
   /**
    * Set, clear, or fire the card's schedule. `when` is `'now'`, an ISO time,
-   * a cron expression, or null. The schedule lives on the card conversation.
+   * a cron expression, or null. A time may be set before an assignee: it is
+   * then parked on the draft todo (Todo.pendingWhen) and turns into a real
+   * schedule the moment an executor is assigned.
    */
   schedule(
     cardId: string,
@@ -411,10 +413,11 @@ export class BoardService {
     const card = this.#requireCard(cardId);
     this.#write(card.projectId, actor);
     const entry = this.#deps.todos.get(cardId).todo;
-    if (entry.assignee === null) {
+    assertUnlocked(entry.status);
+    // A one-off/cron time may wait for an assignee; 「现在」 dispatches and needs one.
+    if (when === 'now' && entry.assignee === null) {
       throw new AppError('BOARD_ASSIGNEE_INVALID', '设置时间前请先选择执行成员');
     }
-    assertUnlocked(entry.status);
     if (when !== null) assertBoardCronGap(when, this.#deps.timeZone, this.#deps.clock.now());
     const updated = this.#deps.todos.update(cardId, { when, actor: 'board' });
     return { card: this.#toCard(this.#requireCard(cardId)), warnings: updated.warnings };
@@ -443,8 +446,7 @@ export class BoardService {
   conversation(cardId: string, actor: ProjectActor): string {
     const card = this.#requireCard(cardId);
     const entry = this.#deps.todos.get(cardId).todo;
-    const botId =
-      entry.assignee?.kind === 'project' ? entry.assignee.leadBotId : null;
+    const botId = entry.assignee?.kind === 'project' ? entry.assignee.leadBotId : null;
     if (botId === null) {
       throw new AppError('BOARD_ASSIGNEE_INVALID', '这张卡片还没有执行成员');
     }
@@ -612,11 +614,7 @@ export class BoardService {
     this.#deps.todos.deliverBoardChanged(payload);
   }
 
-  #transition(
-    cardId: string,
-    actor: ProjectActor,
-    run: (cardId: string) => unknown,
-  ): BoardCard {
+  #transition(cardId: string, actor: ProjectActor, run: (cardId: string) => unknown): BoardCard {
     const card = this.#requireCard(cardId);
     this.#write(card.projectId, actor);
     run(cardId);

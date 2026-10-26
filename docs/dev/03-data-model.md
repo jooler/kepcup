@@ -54,6 +54,7 @@
 | main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
 | main | `0050_project_board.sql` | D103：新表 `board_columns` / `board_cards`（卡片 id = 事项 id；`column_id` 无 `ON DELETE`，即 NO ACTION） |
 | main | `0051_card_conversations.sql` | D103：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`）——`type` 增 `card`；新列 `parent_project_id`（FK 自身 `ON DELETE CASCADE`）、`card_todo_id`（无 FK）；`CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL))`，另加「非 card 两列皆空」；唯一索引 `conversations_one_open_per_card`。旧行原样保留，新列为 NULL |
+| main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -654,6 +655,7 @@ CREATE TABLE todos (
   source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),   -- 内容出处：管家创建，或管家改写过标题 / 说明
   memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
   blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
+  pending_when      TEXT,                            -- 未指派时先定的时间（ISO / cron，0052）；指派时转成 schedule
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
   closed_at         INTEGER,                         -- done / cancelled 时间
@@ -687,7 +689,7 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 ```
 
 - **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
-- **不变式**：有时间 ⇒ 必有执行者；有排期 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行。时间只存在 schedule 上。
+- **不变式**：有时间 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行，或 `todos.pending_when` 非空（后者只出现在未指派草案上）；active schedule 一定有执行者。指派前定下的时间只存 `pending_when`，指派完成时由 TodoService 转成 schedule 并清空；取消 / 退回草案 / 重开 / 真正排期都会清掉它。
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。

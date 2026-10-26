@@ -1,8 +1,14 @@
-import { describeInstant, describeScheduleWhen, type BoardCard, type TodoRun } from '@kepcup/shared';
+import {
+  describeInstant,
+  describeScheduleWhen,
+  type BoardCard,
+  type TodoRun,
+} from '@kepcup/shared';
 import { describe, expect, it } from 'vitest';
 import {
   cardAriaLabel,
   cardFooter,
+  cardNeighbors,
   columnCounts,
   deriveCardBadges,
   deriveCardStatus,
@@ -76,6 +82,33 @@ describe('deriveCardStatus', () => {
     expect(deriveCardStatus(card(), CLOCK)).toBeNull();
   });
 
+  it('keeps a time set before assignment visible', () => {
+    const runAt = Date.UTC(2026, 9, 27, 1, 0);
+    const derived = deriveCardStatus(
+      card({
+        todo: {
+          ...card().todo,
+          schedule: {
+            id: 'pending_card_1',
+            kind: 'once',
+            runAt,
+            cron: null,
+            timezone: 'UTC',
+            nextFireAt: runAt,
+          },
+        },
+      }),
+      CLOCK,
+    );
+    expect(derived).toMatchObject({ key: 'pending', tone: 'sky', label: 'board.status.pending' });
+    expect(derived?.params?.when).toBe(
+      describeScheduleWhen(
+        { kind: 'once', runAt, cron: null, timezone: 'UTC' },
+        { localTimeZone: CLOCK.timeZone, now: CLOCK.now },
+      ),
+    );
+  });
+
   it('shows idle for an assigned draft', () => {
     expect(deriveCardStatus(assigned(), CLOCK)).toMatchObject({
       key: 'idle',
@@ -118,12 +151,16 @@ describe('deriveCardStatus', () => {
       nextFireAt: Date.UTC(2026, 10, 2, 1, 0),
     };
     expect(
-      deriveCardStatus(assigned({ status: 'scheduled', schedule, lastRun: run('dispatched') }), CLOCK)
-        ?.key,
+      deriveCardStatus(
+        assigned({ status: 'scheduled', schedule, lastRun: run('dispatched') }),
+        CLOCK,
+      )?.key,
     ).toBe('running');
     expect(
-      deriveCardStatus(assigned({ status: 'scheduled', schedule, lastRun: run('delivered') }), CLOCK)
-        ?.key,
+      deriveCardStatus(
+        assigned({ status: 'scheduled', schedule, lastRun: run('delivered') }),
+        CLOCK,
+      )?.key,
     ).toBe('delivered');
     expect(
       deriveCardStatus(assigned({ status: 'scheduled', schedule, lastRun: null }), CLOCK)?.key,
@@ -261,6 +298,27 @@ describe('primaryActions', () => {
     expect(primaryActions(card())).toEqual([]);
   });
 
+  it('lets an unassigned card clear a time set before assignment', () => {
+    const runAt = Date.UTC(2026, 9, 27, 1, 0);
+    expect(
+      primaryActions(
+        card({
+          todo: {
+            ...card().todo,
+            schedule: {
+              id: 'pending_card_1',
+              kind: 'once',
+              runAt,
+              cron: null,
+              timezone: 'UTC',
+              nextFireAt: runAt,
+            },
+          },
+        }),
+      ),
+    ).toEqual(['clearWhen']);
+  });
+
   it('starts an assigned draft', () => {
     expect(primaryActions(assigned())).toEqual(['start']);
   });
@@ -287,9 +345,7 @@ describe('primaryActions', () => {
     // A cron card stays `scheduled` while its latest run looks delivered.
     // Accept belongs to todo status `delivered` only.
     expect(
-      primaryActions(
-        assigned({ status: 'scheduled', schedule: cron, lastRun: run('delivered') }),
-      ),
+      primaryActions(assigned({ status: 'scheduled', schedule: cron, lastRun: run('delivered') })),
     ).not.toContain('accept');
   });
 
@@ -393,6 +449,23 @@ describe('columnCounts and moveTargets', () => {
       { id: 'a', title: 'A' },
       { id: 'c', title: 'C' },
     ]);
+  });
+});
+
+describe('cardNeighbors', () => {
+  const columns = [
+    { id: 'a', cards: [{ id: 'a1' }, { id: 'a2' }] },
+    { id: 'b', cards: [{ id: 'b1' }] },
+  ];
+
+  it('walks columns left to right and cards top to bottom', () => {
+    expect(cardNeighbors(columns, 'a1')).toEqual({ prev: null, next: 'a2' });
+    expect(cardNeighbors(columns, 'a2')).toEqual({ prev: 'a1', next: 'b1' });
+    expect(cardNeighbors(columns, 'b1')).toEqual({ prev: 'a2', next: null });
+  });
+
+  it('is quiet about a card that is not on the board', () => {
+    expect(cardNeighbors(columns, 'gone')).toEqual({ prev: null, next: null });
   });
 });
 
