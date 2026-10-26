@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { X, Monitor, Pencil } from '@lucide/svelte';
   import type { BotProfile, WidgetsListItem } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
+  import { motionMs, MOTION } from '$lib/motion';
   import { toast } from 'svelte-sonner';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -532,7 +534,7 @@
           />
         {/if}
         {#if detail === null}
-          <div class="space-y-4">
+          <div class="space-y-4" in:fade={{ duration: motionMs(MOTION.content) }}>
             <!-- D73 P2：污点外发汇总（有记录才占位），置于菜单之上。 -->
             <EgressSummary botId={bot.id} />
             <!-- D48 导出为模板已上移到顶栏（关闭按钮左侧）。 -->
@@ -558,16 +560,22 @@
           </div>
         {:else if detail.kind === 'widget'}
           <!-- 组件直查详情：菜单置顶组件行的落点（发卡 / 删除在此）。 -->
-          <BotWidgetDetail
-            botId={bot.id}
-            conversationId={conversation?.id}
-            widget={detail.widget}
-            onChanged={() => void configMenu?.refresh()}
-            onBack={() => (detail = null)}
-          />
+          <div in:fade={{ duration: motionMs(MOTION.content) }}>
+            <BotWidgetDetail
+              botId={bot.id}
+              conversationId={conversation?.id}
+              widget={detail.widget}
+              onChanged={() => void configMenu?.refresh()}
+              onBack={() => (detail = null)}
+            />
+          </div>
         {:else if detail.kind === 'profile'}
           <!-- 配置条目详情：返回回菜单；字段变化仍走表单自动保存。 -->
-          <div class="space-y-3" data-testid={`bot-detail-${detail.section}`}>
+          <div
+            class="space-y-3"
+            data-testid={`bot-detail-${detail.section}`}
+            in:fade={{ duration: motionMs(MOTION.content) }}
+          >
             <DetailHeader
               title={t(BOT_CONFIG_SECTION_LABEL_KEYS[detail.section])}
               onBack={() => (detail = null)}
@@ -583,7 +591,11 @@
           </div>
         {:else}
           <!-- 原 tab 内容详情：授权 / 记忆 / Skills / Wiki / 定时任务 / 网页监看。 -->
-          <div class="flex min-h-0 flex-col gap-3" data-testid={`bot-detail-${detail.kind}`}>
+          <div
+            class="flex min-h-0 flex-col gap-3"
+            data-testid={`bot-detail-${detail.kind}`}
+            in:fade={{ duration: motionMs(MOTION.content) }}
+          >
             {#if detail.kind !== 'wiki' && !(detail.kind === 'skills' && skillNav.selectedName !== null)}
               <!-- 技能详情态隐藏「< Skills」一行：返回由 SkillsTab 详情内的「返回」承担，
                    顶栏出现会造成两层返回（skillNav 状态在 skills-nav.svelte）。

@@ -549,3 +549,32 @@ html.wco .wco-inset-end {
 html.kepcup-web body {
   background-color: var(--background);
 }
+
+/*
+ * 「减弱动态效果」兜底：tw-animate-css 与业务 CSS 过渡统一瞬时完成；Svelte 的
+ * JS transition 由 $lib/motion.ts 的 motionMs 归零。加载类循环动画（spin / pulse /
+ * ping）保留——它们是运行状态反馈，停成静止反而误导。已有 animation: none 的
+ * 装饰动效（Bot 头像、语音点）不受影响。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .animate-pulse {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .animate-ping {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { fade, fly } from 'svelte/transition';
   import { ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
+  import { motionMs, MOTION } from '$lib/motion';
   import { Button } from '$lib/components/ui/button';
   import {
     asIconComponent,
@@ -72,6 +74,8 @@
   <div
     class="app-no-drag fixed inset-0 z-50 flex flex-col bg-background"
     data-testid="narrow-settings-page"
+    in:fly={{ x: 48, duration: motionMs(MOTION.enter) }}
+    out:fly={{ x: 48, duration: motionMs(MOTION.exit) }}
   >
     <div
       class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
@@ -96,6 +100,7 @@
       <div
         class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-3"
         data-testid="narrow-settings-list"
+        in:fade={{ duration: motionMs(MOTION.content) }}
       >
         {#each sections as item (item.id)}
           {@const Icon = asIconComponent(item.icon)}
@@ -121,6 +126,7 @@
         class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4"
         bind:this={contentEl}
         data-testid="narrow-settings-content"
+        in:fade={{ duration: motionMs(MOTION.content) }}
       >
         <SettingsSectionView {section} />
       </div>
