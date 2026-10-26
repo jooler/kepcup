@@ -46,7 +46,8 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   {
     kind: 'extension-tab',
     id: 'installed',
-    reason: '已安装插件的对象管理（装 / 卸 / 启停），不是设置；插件相关设置项在 P1 以 plugins.* 条目登记并改指此页签',
+    reason:
+      '已安装插件的对象管理（装 / 卸 / 启停），不是设置；插件相关设置项在 P1 以 plugins.* 条目登记并改指此页签',
   },
   {
     kind: 'bot-panel-tab',

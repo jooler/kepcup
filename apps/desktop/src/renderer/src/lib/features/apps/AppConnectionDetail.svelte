@@ -399,10 +399,7 @@
                 {t('apps.local.badge')}
               </Badge>
             {:else if entry?.origin === 'plugin' && entry?.pluginId !== undefined}
-              <PluginSourceBadge
-                pluginId={entry.pluginId}
-                testid="apps-detail-plugin-badge"
-              />
+              <PluginSourceBadge pluginId={entry.pluginId} testid="apps-detail-plugin-badge" />
             {/if}
           </div>
           <div class="grid gap-1.5">

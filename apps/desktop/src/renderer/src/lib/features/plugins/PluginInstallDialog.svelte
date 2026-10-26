@@ -55,7 +55,10 @@
 
   function reasonOf(caught: unknown): string {
     const message = (caught as Error | undefined)?.message;
-    return errorText(codeOf(caught), message !== undefined && message !== '' ? message : String(caught));
+    return errorText(
+      codeOf(caught),
+      message !== undefined && message !== '' ? message : String(caught),
+    );
   }
 
   function reset(): void {
@@ -74,7 +77,9 @@
     const picked =
       mode === 'file'
         ? await window.kepcup?.platform?.selectFile?.(['kepcup'])
-        : await window.kepcup?.platform?.selectDirectory?.({ message: t('plugins.pickFolderMessage') });
+        : await window.kepcup?.platform?.selectDirectory?.({
+            message: t('plugins.pickFolderMessage'),
+          });
     if (picked !== null && picked !== undefined) {
       path = picked;
       await inspect();
@@ -129,7 +134,10 @@
     if (!next) close();
   }}
 >
-  <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-2xl" data-testid="plugins-install-dialog">
+  <DialogContent
+    class="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+    data-testid="plugins-install-dialog"
+  >
     <DialogHeader>
       <DialogTitle>{t('plugins.installTitle')}</DialogTitle>
       <DialogDescription>{t('plugins.installHint')}</DialogDescription>
@@ -149,11 +157,21 @@
           data-testid="plugins-install-path"
         />
         {#if mode === 'file' && window.kepcup?.platform?.selectFile !== undefined}
-          <Button size="sm" variant="outline" onclick={() => void pick()} data-testid="plugins-install-pick">
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => void pick()}
+            data-testid="plugins-install-pick"
+          >
             {t('plugins.pickFile')}
           </Button>
         {:else if mode === 'folder' && window.kepcup?.platform?.selectDirectory !== undefined}
-          <Button size="sm" variant="outline" onclick={() => void pick()} data-testid="plugins-install-pick">
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => void pick()}
+            data-testid="plugins-install-pick"
+          >
             {t('plugins.pickFolder')}
           </Button>
         {/if}

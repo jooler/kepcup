@@ -107,7 +107,8 @@ export const enUS = {
   'chats.errorCode.PLUGIN_INVALID': 'Invalid plugin package',
   'chats.errorCode.PLUGIN_INCOMPATIBLE': 'The plugin is not compatible with this environment',
   'chats.errorCode.PLUGIN_CONFLICT': 'The plugin conflicts with existing content',
-  'chats.errorCode.PLUGIN_MANAGED': 'This item is managed by a plugin; uninstall the plugin under Installed',
+  'chats.errorCode.PLUGIN_MANAGED':
+    'This item is managed by a plugin; uninstall the plugin under Installed',
   'runStatus.pleaseWait': 'Please wait…',
   'runStatus.callingVerb': '{verb}…',
   'runStatus.callingTool': 'Calling {tool}…',
@@ -1543,7 +1544,8 @@ export const enUS = {
   'extensionCenter.mcp.empty':
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
   'plugins.title': 'Installed plugins',
-  'plugins.hint': 'Plugins bundle skills, MCP servers and connected apps into one distributable extension.',
+  'plugins.hint':
+    'Plugins bundle skills, MCP servers and connected apps into one distributable extension.',
   'plugins.installFile': 'Install from file…',
   'plugins.installFolder': 'Install from folder…',
   'plugins.empty': 'No plugins installed yet.',
@@ -1583,7 +1585,8 @@ export const enUS = {
   'plugins.managedBy': 'Managed by plugin "{name}"',
   'plugins.managedHint': 'To remove it, uninstall the plugin under Installed.',
   'plugins.installTitle': 'Install plugin',
-  'plugins.installHint': 'Review what the package contains and asks for. Nothing is installed until you confirm.',
+  'plugins.installHint':
+    'Review what the package contains and asks for. Nothing is installed until you confirm.',
   'plugins.pathLabel': 'Plugin package (.kepcup) or folder path',
   'plugins.pathPlaceholder': '/path/to/plugin.kepcup',
   'plugins.pickFile': 'Choose file…',

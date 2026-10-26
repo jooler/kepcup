@@ -83,16 +83,18 @@ describe('plugin install form helpers', () => {
     expect(missingPluginConfig(info, { ...form, docs: { ...form.docs, api_key: '  ' } })).toEqual([
       '「Doc Tools」API Key',
     ]);
-    expect(missingPluginConfig(info, { ...form, docs: { ...form.docs, api_key: 'k' } })).toEqual([]);
+    expect(missingPluginConfig(info, { ...form, docs: { ...form.docs, api_key: 'k' } })).toEqual(
+      [],
+    );
   });
 
   it('builds typed userConfig per MCPB, keeping empty objects', () => {
     const form = initialPluginForm(info);
-    expect(
-      buildPluginUserConfig(info, { ...form, docs: { ...form.docs, api_key: 'sk' } }),
-    ).toEqual({
-      docs: { api_key: 'sk', port: 8080, verbose: true },
-    });
+    expect(buildPluginUserConfig(info, { ...form, docs: { ...form.docs, api_key: 'sk' } })).toEqual(
+      {
+        docs: { api_key: 'sk', port: 8080, verbose: true },
+      },
+    );
     // No values at all: the mcpb id is still present with an empty object.
     expect(buildPluginUserConfig(info, { docs: {} })).toEqual({ docs: {} });
   });
@@ -132,11 +134,19 @@ describe('plugin install form helpers', () => {
       enabled: true,
       auth: 'none',
       oauth: null,
-      source: { kind: 'plugin', pluginId: 'io.github.alice/doc-tools', version: '1.2.0', key: 'docs' },
+      source: {
+        kind: 'plugin',
+        pluginId: 'io.github.alice/doc-tools',
+        version: '1.2.0',
+        key: 'docs',
+      },
     } as unknown as McpServer;
     expect(managedServerPluginId(managed)).toBe('io.github.alice/doc-tools');
     expect(
-      managedServerPluginId({ ...managed, source: { kind: 'mcpb', name: 'x', version: '1', sha256: 'c'.repeat(64) } } as unknown as McpServer),
+      managedServerPluginId({
+        ...managed,
+        source: { kind: 'mcpb', name: 'x', version: '1', sha256: 'c'.repeat(64) },
+      } as unknown as McpServer),
     ).toBeNull();
     expect(managedServerPluginId({ ...managed, source: undefined } as unknown as McpServer)).toBe(
       null,
