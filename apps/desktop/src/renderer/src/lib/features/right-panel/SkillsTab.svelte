@@ -172,7 +172,8 @@
 {#snippet skillRow(skill: SkillEntry)}
   <button
     type="button"
-    class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/50 {skill.status === 'draft'
+    class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/50 {skill.status ===
+    'draft'
       ? 'opacity-60'
       : ''}"
     data-testid={`skill-item-${skill.name}`}
@@ -217,7 +218,6 @@
     </span>
   </button>
 {/snippet}
-
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="skills-tab">
   {#if selected}
@@ -303,7 +303,8 @@
       {/if}
       {#if (skill.status === 'draft' || skill.status === 'disabled') && skill.statusReason !== null}
         <!-- draft = 生成失败原因（TAP 风格逐条还原：绿勾/红叉/无图标行）；disabled = 未启用原因 -->
-        {@const draftChecks = skill.status === 'draft' ? parseSkillDraftChecks(skill.statusReason) : null}
+        {@const draftChecks =
+          skill.status === 'draft' ? parseSkillDraftChecks(skill.statusReason) : null}
         {#if draftChecks !== null}
           <ul class="mt-2 space-y-1" data-testid="skill-check-list">
             {#each draftChecks as check, index (index)}
@@ -318,10 +319,7 @@
                     aria-hidden="true"
                   />
                 {:else if check.kind === 'fail'}
-                  <X
-                    class="mt-0.5 size-3.5 shrink-0 text-destructive"
-                    aria-hidden="true"
-                  />
+                  <X class="mt-0.5 size-3.5 shrink-0 text-destructive" aria-hidden="true" />
                 {:else}
                   <Minus
                     class="mt-0.5 size-3.5 shrink-0 text-muted-foreground/50"
@@ -332,8 +330,8 @@
                   class="min-w-0 break-words {check.kind === 'fail'
                     ? 'font-medium'
                     : check.kind === 'info'
-                    ? 'text-muted-foreground'
-                    : ''}"
+                      ? 'text-muted-foreground'
+                      : ''}"
                 >
                   {check.label}
                 </span>
@@ -407,10 +405,12 @@
             <!-- 插件投影的技能由插件整体管理（core 的 PLUGIN_MANAGED 是权威）。
                 用 min-w-0 占住 ml-auto 的右端，文案不挤压左侧按钮。 -->
             <span
-              class="ml-auto min-w-0 max-w-[60%] text-right text-[10px] text-muted-foreground"
+              class="ml-auto max-w-[60%] min-w-0 text-right text-[10px] text-muted-foreground"
               data-testid={`skill-managed-${skill.name}`}
             >
-              {t('plugins.managedBy', { name: plugins.nameOf(pluginIdOfSkillSource(skill.sourceUrl ?? '')!) })}
+              {t('plugins.managedBy', {
+                name: plugins.nameOf(pluginIdOfSkillSource(skill.sourceUrl ?? '')!),
+              })}
               · {t('plugins.managedHint')}
             </span>
           {/if}

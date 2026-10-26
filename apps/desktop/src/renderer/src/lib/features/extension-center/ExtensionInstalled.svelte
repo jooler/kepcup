@@ -244,7 +244,9 @@
                 {#if items.length > 0}
                   <div class="grid gap-0.5">
                     <div class="flex items-center gap-2">
-                      <Label class="text-xs text-muted-foreground">{t(`plugins.kind.${kind}`)}</Label>
+                      <Label class="text-xs text-muted-foreground"
+                        >{t(`plugins.kind.${kind}`)}</Label
+                      >
                       {#if kind !== 'mail'}
                         <Button
                           size="sm"

@@ -3,14 +3,10 @@
  * 纯函数，便于单测；shell store、弹框与各入口（`openExtensionCenter(tab)`）共用。
  */
 export type ExtensionCenterTab =
-  | 'installed'
-  | 'skills'
-  | 'connections'
-  | 'mcp'
-  | 'mail'
-  | 'localCollab';
+  'installed' | 'skills' | 'connections' | 'mcp' | 'mail' | 'localCollab';
 
-// prettier-ignore -- settings-ui-scan.ts parses this literal with a regex; keep it single-line.
+// prettier-ignore
+// settings-ui-scan.ts parses the array below with a regex; keep it a single-line literal.
 export const EXTENSION_CENTER_TABS: readonly ExtensionCenterTab[] = ['installed', 'skills', 'connections', 'mcp', 'mail', 'localCollab'];
 
 /** WAI-ARIA tabs 的键盘导航：左右方向键循环，Home / End 到两端；其他键返回 null（不处理）。 */

@@ -3,12 +3,7 @@
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { ExternalLink, Loader2, ShieldAlert } from '@lucide/svelte';
-  import {
-    connectorDescription,
-    connectorUnavailableText,
-    errorText,
-    t,
-  } from '$lib/i18n';
+  import { connectorDescription, connectorUnavailableText, errorText, t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Badge } from '$lib/components/ui/badge';

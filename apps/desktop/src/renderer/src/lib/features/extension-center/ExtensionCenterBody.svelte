@@ -71,7 +71,8 @@
       aria-selected={tab === item}
       aria-controls={panelId(item)}
       tabindex={tab === item ? 0 : -1}
-      class="-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-1.5 text-sm transition-colors {tab === item
+      class="-mb-px shrink-0 border-b-2 px-3 py-1.5 text-sm whitespace-nowrap transition-colors {tab ===
+      item
         ? 'border-foreground font-medium text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
       onclick={() => select(item)}

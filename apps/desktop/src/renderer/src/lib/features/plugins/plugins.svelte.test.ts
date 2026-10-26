@@ -91,7 +91,7 @@ describe('plugins store', () => {
     const changed = handlers.get('plugins.changed');
     expect(changed).toBeDefined();
     list = [summary('io.github.alice/doc-tools', 'Doc Tools'), summary('local.kepcup/x', 'X')];
-    changed!( { ids: ['io.github.alice/doc-tools'] } );
+    changed!({ ids: ['io.github.alice/doc-tools'] });
     await vi.waitFor(() => {
       expect(count('plugins.list')).toBe(2);
     });

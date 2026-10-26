@@ -35,7 +35,9 @@
 <div class="space-y-3" data-testid={testid}>
   <div class="flex flex-wrap items-center gap-2">
     <Badge>{info.name}</Badge>
-    <span class="text-xs text-muted-foreground">{t('plugins.version', { version: info.version })}</span>
+    <span class="text-xs text-muted-foreground"
+      >{t('plugins.version', { version: info.version })}</span
+    >
     <Badge variant="outline">{t(`plugins.origin.${info.origin}`)}</Badge>
     <Badge
       variant="outline"
@@ -124,8 +126,7 @@
               <Badge variant="outline">{item.serverType}</Badge>
             </div>
             <Label class="mt-1 text-xs text-muted-foreground">{t('plugins.consent.mcpb')}</Label>
-            <code
-              class="block overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs whitespace-pre"
+            <code class="block overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs whitespace-pre"
               >{item.launchCommand}</code
             >
             {#if item.runtime !== null && !item.runtime.available}
@@ -133,13 +134,13 @@
                 {t('plugins.consent.runtimeMissing', { runtime: runtimeLabel(item.runtime.kind) })}
               </span>
             {/if}
-            <code class="break-all text-xs text-muted-foreground">{item.mcpbSha256}</code>
+            <code class="text-xs break-all text-muted-foreground">{item.mcpbSha256}</code>
           {:else}
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-sm">{item.displayName}</span>
               <Badge variant="outline">{t('plugins.consent.mcpHttp', { host: item.host })}</Badge>
             </div>
-            <code class="break-all text-xs text-muted-foreground">{item.url}</code>
+            <code class="text-xs break-all text-muted-foreground">{item.url}</code>
           {/if}
         </div>
       {/each}
@@ -215,7 +216,9 @@
           <span class="text-sm">{connector.title}</span>
           {#if connector.hosts.length > 0}
             <span class="text-xs text-muted-foreground">
-              {t('plugins.consent.connectorHosts', { hosts: connector.hosts.join(listSeparator()) })}
+              {t('plugins.consent.connectorHosts', {
+                hosts: connector.hosts.join(listSeparator()),
+              })}
             </span>
           {/if}
           {#if connector.scopes.length > 0}
