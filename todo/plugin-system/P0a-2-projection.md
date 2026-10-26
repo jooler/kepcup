@@ -380,4 +380,62 @@ export function assertPluginServersIntact(previous: readonly McpServer[], next: 
 
 ## 6. 实施记录
 
-（执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 卸载级联用例里连接行的造法 / 其它改 `mcpServers` 的入口核对结论 / 遗留问题。）
+（2026-10-26，分支 `feat/plugins/p0a-2-projection`，执行智能体填写。）
+
+### 做了什么（按提交）
+
+| 提交 | 内容 |
+|---|---|
+| `cd586d0e` | 步骤 1：`plugins/store.ts`（`PluginStore`：`plugins` 行 CRUD + `plugin_items` 账本，`addItem` 幂等、`refs` 按 rowid 保序、`ownerOf` 走 `plugin_items_ref` 索引、enabled 布尔 ↔ 整数）+ `plugin-store.test.ts`（4 例，rig 照 `skills-presets.test.ts`）。 |
+| `6b35e295` | 步骤 2+3：`projectors/index.ts`（`PluginProjector` / `PluginLedger` / `PluginProjectionContext` / `PLUGIN_PROJECTOR_ORDER` 等契约）与 `projectors/skills.ts`（配方照抄 `SkillPresetsService`：parse → scan → hash → `installPublic`，`sourceUrl = plugin://{id}/{name}`；unproject 前验 `source_url` 归属，绝不删别人的技能）+ `plugin-projector-skills.test.ts`（5 例：同名冲突 / Bot 私有不冲突 / 解析失败 blocker / 来源标记 / 只删自己 / setEnabled 往返 / missing）。 |
+| `34bc7175` | 步骤 4（独立提交 `refactor(mcpb)`）：`McpbInstaller` 的 `register` 覆盖项（`serverId` / `source` / `tier` / `name` / `description`，重 id 报 `ALREADY_EXISTS`）、`mcpbPackageOf` 双来源包引用计数（`afterServerRemoved` / `#releasePackage` / 槽位检查 / `#audit` 第三参改 `McpbPackageRef`，审计键值不变）、`verify` 接受 `McpbPackageRef | McpServerSource`、公开 `slotConflict()`；`uninstall(serverId)` 保持只认 `kind==='mcpb'`。新增 `mcpb-register.test.ts`（8 例）；**既有 `unit/mcpb.test.ts` + `integration/mcpb.test.ts` 35 例零改动全绿**（`git diff f41c878d HEAD -- <两文件>` 为空）。 |
+| `47b261a8` | 步骤 5：`projectors/mcp.ts`（纯函数 `mcpTierFor` / `mcpDescriptionFor`；mcpb 经 `register` 安装、http 在同步区内写 `settings.mcpServers`；unproject 镜像 `mcp.removeServer` 四步且逐步尽力而为；setEnabled 同步区先行、关连接与撤销在区外）+ `plugin-projector-mcp.test.ts`（11 例，installer rig 复用 register 测试的 harness）。 |
+| `77b9ec9f` | 步骤 6：`apps/catalog.ts` 的 plugin 来源（门禁后、本机前追加；slug / name 冲突让位记 `yieldedPluginSlugs`；本机条目的冲突检查把插件条目的 slug **与 name** 都算进 taken 集合；`originOf='plugin'`；`isDirectorySourced` 扩大为「远端独有或插件」；`iconSvg` 读插件自带文件）+ `projectors/connectors.ts`（`rewriteConnectorEntry` 纯函数 + `ConnectorsProjector implements PluginProjector, PluginConnectorSource`，断连两次扫法同 `LocalConnectors.remove`，`disabled_connection` 账本只恢复自己停用的连接）+ `apps/http-fetch-policy.ts` 的 `useGuardedMcpFetch` 纯谓词 + `connector-catalog-plugin.test.ts`（6 例）与 `plugin-projector-connectors.test.ts`（9 例）。既有 `connector-catalog.test.ts` / `directory-merge.test.ts` 零改动。 |
+| `7dc16e99` | 步骤 7：`projectors/mail.ts`（登记型：inspect 对照内置厂商 id，project / unproject 只动账本，setEnabled 空操作）+ `plugin-projector-mail.test.ts`（2 例）。 |
+| `7ca96f4f` | 步骤 8：`projectors/index.ts` 补 `createPluginProjectors()` + `plugin-projectors-coverage.test.ts`；`registry.ts` 的 `PluginRegistry`（`#runExclusive` promise 链互斥无超时；install 七步：stage → sha 绑定 → 保留命名空间 / 同 id → inspect 预检 → user_config 预校验 → rename 落盘 → 逐类投影，任一步失败按账本逆序回滚；`#teardown` 卸载 / 回滚 / 崩溃恢复共用且幂等；`recoverInterrupted`；`start()` 激活 installed+enabled；list 的 missing / yielded / counts）+ `plugin-registry.test.ts`（11 例：含并发 install 串行、崩溃恢复、activate 容错）。 |
+| `482193e0` | 步骤 9：`plugins/guards.ts`（`PLUGIN_SERVER_PROTECTED_FIELDS` + `assertPluginServersIntact`：删除 / 改受保护字段 / 伪造 plugin 来源拒绝，name / enabled / autoApprove / toolPolicies / description 放行）；接入 `settings.update`（写锁内、用锁内最新设置比对）与 `mcp.removeServer`（最前面拦截）；`SkillsService.attachPublicUninstallGuard`（只在 `uninstall` 的公共卸载分支前调用，`uninstallPublic` 本身不接）+ `plugin-guards.test.ts`（6 例表驱动）。 |
+| `66c73f99` | 步骤 10：`rpc/plugins-bindings.ts`（五个方法 + `assertLocalSource`，远程端点拒 file / folder）；`bindAppMethods` 展开、`settings-bindings.ts` 的 `EXTRA_METHOD_ITEMS` 三条（`itemIdsForSettingsPaths(['mcpServers'])`）；`start.ts`：`CoreServices.plugins`（初始 null）、`SettingsCatalogHost` 之后构造 store / packager / 四投影器 / `PluginRegistry`、`connectorCatalog.attachPlugins`、`skills.attachPublicUninstallGuard`、`services.plugins` 赋值、`environment.recoverInterrupted()` 之后 `await plugins.start()`（try/catch 只记 error）、`mcp.attachHttpFetch` 改用 `useGuardedMcpFetch` 谓词；`core/src/index.ts` 导出 `PluginRegistry` 类型与 `PluginStore`；`docs/dev/01-conventions.md` 的 core 目录清单加 `plugins/`。 |
+| `dc80e5c5` | 步骤 11：`test/integration/plugins.test.ts`（11 例，`createTestStack({ mcpbRuntimes })` + `buildPluginFixture`，全部经 `core.rpc.call`）。 |
+| `3785df3e`（lint） | `fix(plugins)`：P0a-2 全部文件过 eslint（未用变量 / import type / `no-useless-assignment` 清理），行为零改动。 |
+
+### 偏差与 DEV 编号
+
+- **DEV-050**：步骤 11 的「经 `withRemoteSource('dev_x', …)` 调 `plugins.inspect`」在进程内 rpc 通道上不成立——`core.rpc.call` 走 Node MessagePort，AsyncLocalStorage 不跨端口传播，测试侧的包装到不了 handler。改为按 `remote/hub.ts` 包装 handler 的同一形状直接测绑定 handler（`INVALID_INPUT` + 无远程来源放行的对照），生产行为零改动。详见 DEVIATIONS。
+- 其余均为自由度内的判断点（见下），不构成偏差。
+
+### 卸载级联用例里连接行的造法
+
+用 `core.services.apps!.store.create({ connectorId: 'plgconn', label: '级联用连接' })` 直接经 `AppConnectionStore` 造一行（`status` 缺省 `not_connected`）。选它而不是 testkit 假授权：级联要验证的是「连接行随卸载消失」，`AppDisconnector.disconnect(id, { removeRow: true })` 对无令牌的行同样删行（吊销 / 清 Vault 对 `not_connected` 行是空操作，写法与 `LocalConnectors.remove` 的两次扫描一致），无需真走 OAuth。断言卸载后 `store.get(connection.id) === null`。
+
+### 其它改 `mcpServers` 的入口核对结论
+
+`rg "settings.update\(\{ mcpServers" packages/core/src --glob '!*.test.ts'` 共三处写入：① `plugins/projectors/mcp.ts`（注册表自身路径，设计上不受守卫约束）；② `apps/mcpb/install.ts`（独立 `.mcpb` 安装新增 mcpb 来源 server，允许）；③ `settings/adapters.ts` 的 `mcpServersAdapter.write`（约 l.1844）——**只切 `enabled`**（`previous.map(server => server.id === serverId ? { ...server, enabled } : server)`，且先校验 server 存在），符合任务书「只切 enabled 的适配器允许」，不加守卫。读路径（`mcpServersAdapter.read/options/normalize`、`mcp.setSecret` / `mcp.removeSecret`）不删不改 server 结构。RPC 层两个删除 / 整改入口（`settings.update` 的 `mcpServers`、`mcp.removeServer`）均已接 `PLUGIN_MANAGED`。另外 `mcp.removeServer` 的既有清理顺序里 `settings.update` 的移除路径（bindings.ts 删 server 分支）同样被锁内守卫挡住，插件 server 不可能经「整份快照少了一个」被误删。
+
+### 自由度内的判断点（登记）
+
+1. **MCP 投影器 `missing` 的范围**：任务书写「对 mcpb 来源」，但 `missing(plugin, refs)` 签名拿不到清单，无法按贡献类别区分 mcpb / http；实现为统一规则「refs 不在 `settings.mcpServers` = 缺失」（await-free，与任务书对 mcpb 的要求完全一致，http 条目消失同样是缺失事实）。解包树完整性仍归 `McpbInstaller.verify`。
+2. **`useGuardedMcpFetch` 返回 boolean 谓词**（任务书代码块返回 `guardedMcpFetch | undefined`）：守卫 fetch 实例是 `start.ts` 的闭包值，纯函数返回 `true/false`、`start.ts` 映射为 `guardedMcpFetch ?? undefined`，语义等价且可单测。
+3. **`setEnabled` 时清单不可读**：置 `enabled` 照做并 `logger.warn` 跳过投影器调用（`plugins.list` 会把内容缺失标出来）；不阻塞启停。
+4. **卸载审计时机**：`#teardown` 以「尽力而为 + 末尾重抛首个错误」结束，行与目录都会被清；`uninstall` 把审计与 `plugins.changed` 放在 teardown 之后、重抛之前——部分失败的卸载同样落审计（行确实没了）。
+5. **连接器 inspect 的检查顺序**：图标缺失 → 目录冲突（对照含其它插件的全集）→ 包内重复。同名冲突优先于包内重复报告（对用户更可操作）。
+6. **`rewriteConnectorEntry` 的第三参**在改写本体里不消费（icon 留在 meta 原样，路径校验在调用方），参数名 `_iconAbsPath` 并注释用途，签名与任务书一致。
+7. **`plugins.list` 的清单缓存**：`#manifests` 按 `id@version` 缓存，`install` / `start()` / `contributionsOf` / `setEnabled` 时填充，`#teardown` 时删除；`list()` 保持同步签名。
+8. **`assertLocalSource` 的 `'marketplace'` 比较**：P0a 的 `pluginSourceSchema` 还没有该分支（P1 加性），比较前把 `kind` 放宽为三值联合再比，避免对恒假比较的 TS 报错；P1 落地后无需再改。
+9. **集成测试的连接器冲突**用「插件 A 已装 → 插件 B（同 slug）inspect/install 被拒」构造，比注入假目录更真实；技能冲突用 `services.skills.installPublic` 直装预置来源同名技能。
+
+### 验收清单逐条证据
+
+1. **`refactor(mcpb)` 独立、既有测试零改动全绿**：`34bc7175` 单独提交（`git show --stat` 仅 `install.ts` + 新测试文件）；`node scripts/run-tests.mjs run packages/core/test/unit/mcpb.test.ts packages/core/test/integration/mcpb.test.ts` → 35 例全绿；`git diff f41c878d HEAD -- packages/core/test/unit/mcpb.test.ts packages/core/test/integration/mcpb.test.ts` 为空（f41c878d 为分支基点）。
+2. **步骤 1–11 新测试全绿**：`node scripts/run-tests.mjs run packages/core/test/unit/plugin-store.test.ts packages/core/test/unit/mcpb-register.test.ts packages/core/test/unit/plugin-projector-skills.test.ts packages/core/test/unit/plugin-projector-mcp.test.ts packages/core/test/unit/plugin-projector-connectors.test.ts packages/core/test/unit/connector-catalog-plugin.test.ts packages/core/test/unit/plugin-registry.test.ts packages/core/test/unit/plugin-guards.test.ts packages/core/test/unit/plugin-projectors-coverage.test.ts packages/core/test/integration/plugins.test.ts` → 10 文件 **73 例**全绿。
+3. **既有相关测试不回归**：`node scripts/run-tests.mjs run packages/core/test/unit/connector-catalog.test.ts packages/core/test/unit/directory-merge.test.ts packages/core/test/unit/skills-presets.test.ts packages/core/test/integration/local-connectors.test.ts packages/core/test/integration/catalog-connect.test.ts packages/core/test/unit/settings-adapters-coverage.test.ts` → 6 文件 **128 例**全绿。
+4. **类型检查**：`pnpm --filter @kepcup/core typecheck` 通过；`pnpm --filter @kepcup/shared run build` 后 `pnpm --filter @kepcup/desktop run typecheck` 通过（svelte-check 0 errors——`ConnectorOrigin` / `McpServerSource` 的变化未打破渲染层）。
+5. **注入失败 / 崩溃恢复不留半成品**：`plugin-registry.test.ts` 的「第 2 项投影失败 → 回滚」「崩溃恢复：installing 行回滚、uninstalling 行继续完成」两例验证目录 / 行 / 账本全清且事件不发；集成测试的 sha256 不符 / user_config 缺失 / 冲突三例断言无目录无行无 server 残留。
+6. **无对包内文件的动态执行**：`rg -n "import\(|require\(|new Function|vm\." packages/core/src/plugins` → **无任何匹配**（退出码 1）。插件内容唯一被执行的路径是内嵌 `.mcpb` 经 `McpbInstaller` 既有受管启动（集成测试里 `mcp.callTool` 验证）。
+7. **本阶段未跑全量 `pnpm test`**（按任务书，P0a-3 收口时跑）。
+
+### 遗留问题
+
+- 无阻塞项。`plugins.update`（P1-2）、市场来源 `{kind:'marketplace'}`（P1-1，`assertLocalSource` 已预留）、邮件模板读取 RPC（P1-3，`contributionsOf` 已就位）、内置插件激活（P0b，`activate` 管线已跑通安装型插件）按计划在后续阶段。
+- `plugins.list` 的 `missing` 标记依赖各投影器的 `missing?.()`；技能 / MCP 已实现，连接器恒空（条目在内存重建）。
+- 集成测试的远程端点用例按 DEV-050 的方案 1 实现；若 P1-1 起需要更真的远程链路覆盖，可复用 `remote-relay` e2e 夹具。
+
