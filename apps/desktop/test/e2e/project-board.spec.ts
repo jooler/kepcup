@@ -123,7 +123,7 @@ async function settledCardIds(column: Locator): Promise<string[]> {
 
 async function replaceTitle(page: Page, title: Locator, text: string): Promise<void> {
   await title.click();
-  await page.keyboard.press('Control+A');
+  await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type(text);
   await page.keyboard.press('Enter');
   await expect(title).toHaveText(text);
@@ -252,7 +252,7 @@ test('project board: columns, cards, dialog, drag, layout, draft, narrow width',
     await expect(dialog).toBeVisible();
     const dialogText = page.locator('[data-testid="board-dialog-text"]');
     await dialogText.click();
-    await page.keyboard.press('Control+A');
+    await page.keyboard.press('ControlOrMeta+A');
     await page.keyboard.type('改过的文本');
     await page.waitForTimeout(800);
     await page.locator('[data-testid="board-dialog-close"]').click();
