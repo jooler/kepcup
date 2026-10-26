@@ -1,9 +1,20 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import {
+  expect,
+  test,
+  type ElectronApplication,
+  type Locator,
+  type Page,
+  _electron,
+} from '@playwright/test';
 import { buildPluginFixture, startMockLlm } from '@kepcup/testkit';
-import { createBotAndOpenChat, dismissStartPanel, openConversationByName } from './helpers/create-bot';
+import {
+  createBotAndOpenChat,
+  dismissStartPanel,
+  openConversationByName,
+} from './helpers/create-bot';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
@@ -42,7 +53,10 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-async function launch(home: string, llmUrl: string): Promise<{
+async function launch(
+  home: string,
+  llmUrl: string,
+): Promise<{
   app: ElectronApplication;
   page: Page;
 }> {
@@ -88,14 +102,14 @@ async function installViaRpc(page: Page, fixture: { path: string; sha256: string
   );
 }
 
-async function openExtensionCenter(page: Page): Promise<Page> {
+async function openExtensionCenter(page: Page): Promise<Locator> {
   const dialog = page.locator('[data-testid="extension-center-dialog"]');
   await page.locator('[data-testid="extension-center-button"]').click();
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
-async function openInstalledTab(page: Page): Promise<Page> {
+async function openInstalledTab(page: Page): Promise<Locator> {
   const dialog = await openExtensionCenter(page);
   await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
   await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();
@@ -201,9 +215,7 @@ test('plugins: local file install full flow through the path input', async () =>
     // 卡片出现：developer 分级徽标（未审核）。
     const card = dialog.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`);
     await expect(card).toBeVisible({ timeout: 30_000 });
-    await expect(card.locator(`[data-testid="plugins-tier-${PLUGIN_ID}"]`)).toContainText(
-      '未审核',
-    );
+    await expect(card.locator(`[data-testid="plugins-tier-${PLUGIN_ID}"]`)).toContainText('未审核');
   } finally {
     await app?.close();
     await llm.stop();
@@ -427,9 +439,9 @@ test('plugins: reinstalling the same fixture inspects into a blocked consent pan
     await installDialog.locator('[data-testid="plugins-install-path"]').fill(fixture.path);
     await installDialog.locator('[data-testid="plugins-install-inspect"]').click();
 
-    await expect(
-      installDialog.locator('[data-testid="plugins-consent-blockers"]'),
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(installDialog.locator('[data-testid="plugins-consent-blockers"]')).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(installDialog.locator('[data-testid="plugins-install-confirm"]')).toBeDisabled();
   } finally {
     await app?.close();
@@ -454,7 +466,12 @@ test('plugins: narrow viewport shows the tabs scrollable with Installed reachabl
     await page.locator('[data-testid="narrow-tab-extensions"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tabs"]')).toBeVisible();
-    // 六个页签在 375px 下横向滚动：installed 可点进「已安装」主体。
+    // 页签条在 375px 下真的横向溢出（overflow-x-auto 生效），而不是挤压或换行。
+    const scrollable = await page
+      .locator('[data-testid="extension-center-tabs"]')
+      .evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(scrollable).toBe(true);
+    // installed 可点进「已安装」主体。
     await expect(page.locator('[data-testid="extension-center-tab-installed"]')).toBeVisible();
     await page.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(page.locator('[data-testid="extension-installed"]')).toBeVisible();
