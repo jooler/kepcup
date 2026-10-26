@@ -803,3 +803,17 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
+
+### DEV-049 任务书称「`satisfiesRange` 不支持的写法会返回 false」，实际实现是忽略未知子句（返回 true）
+
+- 状态：已登记（审查阶段发现，P0a-1 实现本身无需改动）
+- 阶段：插件系统 P0a-1（D104）
+- 是否阻塞：否
+- 问题：P0a-1 步骤 6 写「`range` 含 `satisfiesRange` 不支持的写法时它会返回 false，这是预期（按不兼容处理）」。核对 `packages/core/src/apps/mcpb/manifest.ts` 的实际实现：未知子句形状走 `continue`（「unknown clause shape: ignore」），整串都是未知子句时返回 `true`（按兼容放行），与任务书的描述相反。
+- 影响范围：`packages/core/src/plugins/manifest-loader.ts` 的 `checkPluginCompatibility` 按任务书的可操作指令直接复用 `satisfiesRange`（与 MCPB 兼容检查同一实现，不允许另写一份），因此未知写法的 `engines.kepcup`（如 `latest`、`||`）会被当作满足而不是不兼容。这是既有共享助手的语义，本阶段不改它。
+- 可选方案：
+  1. 保持复用 `satisfiesRange`（当前实现）— 优点：与 MCPB 同一语义、零重复实现；缺点：畸形 range 偏向放行，但清单 schema 已把 `engines.kepcup` 限为 1–100 字符字符串，畸形写法的实际风险低。
+  2. 在 `manifest-loader.ts` 里加一层「未知子句视为不兼容」的预判 — 优点：更保守；缺点：与 `satisfiesRange` 语义分叉，两处规则会漂移。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
