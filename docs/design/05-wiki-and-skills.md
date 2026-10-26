@@ -35,7 +35,7 @@ wiki-store/            -- 仓外内容存储（不进 git）：二进制原件�
 | 单写入队列 | 每个项目 wiki 一个串行维护队列（互斥键 `project:{id}`）；多个成员同时 `wiki_enqueue` 只是入队 |
 | 执行者付费 | 成员入库的维护 loop 以**该成员**身份运行（模型、用量与后台预算记其名下）；用户添加的来源与定期体检以**负责人**身份运行 |
 | 删除来源 | 成员只能删自己创建的来源（`wiki_remove_source`，经 job 异步执行）；用户与负责人管理全部。Bot 被删后其来源保留（创建者显示为 id） |
-| 工具 `scope` | 项目对话里 `wiki_search { scope: 'mine' \| 'project' \| 'all' }`（默认 `all`，结果带 `[project]` / `[mine]` 前缀且项目在前）、`wiki_read { scope }`（**默认先读项目 wiki、该页不在项目 wiki 时回落到自己的 wiki**；显式传 `scope` 则不回落）、`wiki_enqueue { scope }`（**默认 `project`**——项目组对话里沉淀的东西留在共享的项目 wiki；只有纯个人经验才显式传 `scope=mine`）；`wiki_remove_source { source_id }` 仅项目对话注册 |
+| 工具 `scope` | 项目对话里 `wiki_search { scope: 'mine' \| 'project' \| 'all' }`（默认 `all`，结果带 `[project]` / `[mine]` 前缀且项目在前）、`wiki_read { scope }`（**默认先读项目 wiki、该页不在项目 wiki 时回落到自己的 wiki**；显式传 `scope` 则不回落）、`wiki_enqueue { scope }`（**默认 `project`**——项目组对话里沉淀的东西留在共享的项目 wiki；只有纯个人经验才显式传 `scope=mine`）；`wiki_remove_source { source_id }` 仅项目对话注册。看板卡片对话与项目组对话同一口径（`projectScopeOf` → 所属项目） |
 | 归属（谁选目标 wiki） | ① 对话轮里 Bot 调 `wiki_enqueue`：不传 `scope` 时按会话取——项目对话 → 项目 wiki，其它对话 → 自己的 wiki；显式 `scope` 按显式值。② **反思 loop 提出的 wiki 建议**（`wiki_suggestion` job）：反思发生在项目对话里且该 Bot 仍是成员时同样进项目 wiki，否则进它自己的 wiki。③ 用户从界面添加来源：进项目 wiki，执行者为负责人 |
 | 可信度 | 用户创建的来源可信；Bot 创建的来源及其参与的页面，其他 Bot 读取时整段包进 `<untrusted source="project_wiki">` 并标注提交者；页面全部出处为用户才原样返回 |
 | 提示词 | 项目对话注入项目 wiki 主题段 `<project_wiki_topics>`（取自项目 `index.md`，**不设预算**）；Bot 个人主题段仍受 `WIKI_TOPICS_TOKEN_BUDGET` 约束 |

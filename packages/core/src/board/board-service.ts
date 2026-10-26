@@ -43,7 +43,9 @@ export interface BoardServiceDeps {
   bots: BotsService;
   approvals: { pendingCount(conversationId: string): number };
   tasks: {
-    activeOf(conversationId: string): Array<{ status: RunStatus; queueReason: string | null }>;
+    activeOf(
+      conversationId: string,
+    ): Array<{ status: RunStatus; queueReason: string | null; awaitingInput: boolean }>;
   };
   /** Zone used when judging cron gaps. Same zone the schedule service fires in. */
   timeZone: string;
@@ -465,10 +467,13 @@ export class BoardService {
     let delivered = 0;
     for (const card of this.#deps.store.listCards(projectId)) {
       if (card.status === 'delivered') delivered += 1;
-      for (const conversation of this.#deps.conversations.cardConversations({ todoId: card.todoId })) {
-        unread += Math.max(0, conversation.lastSeq - conversation.lastReadSeq);
-        pendingApprovals += this.#deps.approvals.pendingCount(conversation.id);
-      }
+      // The open thread, or — when the executor has left — the latest
+      // read-only thread the dialog can still open and mark read. Older
+      // history behind a new assignee has no entry, so it stays out.
+      const conversation = this.#visibleConversation(card.todoId, card.blockedReason);
+      if (conversation === null) continue;
+      unread += Math.max(0, conversation.lastSeq - conversation.lastReadSeq);
+      pendingApprovals += this.#deps.approvals.pendingCount(conversation.id);
     }
     return { unread, pendingApprovals, delivered };
   }
@@ -628,9 +633,31 @@ export class BoardService {
     }
   }
 
+  /**
+   * The thread the dialog shows. An open conversation wins. After the
+   * executor leaves there is no open row; the latest read-only thread is
+   * still the card's chat (read-only banner). Clearing the assignee on
+   * purpose does not set `blockedReason`, so that history stays hidden.
+   * Older threads than the latest one stay hidden either way.
+   */
+  #visibleConversation(todoId: string, blockedReason: string | null): Conversation | null {
+    const open = this.#deps.conversations.openCardConversation(todoId);
+    if (open !== null) return open;
+    if (blockedReason === null || blockedReason.trim().length === 0) return null;
+    // The row created last is not always the thread just closed: reassigning
+    // back to an earlier bot reopens the older row. Prefer the one that
+    // spoke most recently, then the newer row.
+    const history = this.#deps.conversations.readOnlyCardConversationsOf({ todoId });
+    let latest: Conversation | null = null;
+    for (const row of history) {
+      if (latest === null || laterCardThread(row, latest)) latest = row;
+    }
+    return latest;
+  }
+
   #toCard(row: BoardCardRecord): BoardCard {
     const entry = this.#deps.todos.get(row.todoId).todo;
-    const open = this.#deps.conversations.openCardConversation(row.todoId);
+    const conversation = this.#visibleConversation(row.todoId, row.blockedReason);
     const assignee =
       entry.assignee?.kind === 'project' && entry.assignee.leadBotId !== null
         ? {
@@ -638,7 +665,7 @@ export class BoardService {
             name: this.#deps.bots.get(entry.assignee.leadBotId)?.name ?? entry.assignee.leadBotId,
           }
         : null;
-    const views = open === null ? [] : this.#deps.tasks.activeOf(open.id);
+    const views = conversation === null ? [] : this.#deps.tasks.activeOf(conversation.id);
     return {
       id: row.todoId,
       projectId: row.projectId,
@@ -655,12 +682,21 @@ export class BoardService {
         schedule: entry.schedule,
         lastRun: entry.lastRun,
       },
-      conversationId: open?.id ?? null,
-      unreadCount: open === null ? 0 : Math.max(0, open.lastSeq - open.lastReadSeq),
-      pendingApprovals: open === null ? 0 : this.#deps.approvals.pendingCount(open.id),
+      conversationId: conversation?.id ?? null,
+      unreadCount:
+        conversation === null ? 0 : Math.max(0, conversation.lastSeq - conversation.lastReadSeq),
+      pendingApprovals:
+        conversation === null ? 0 : this.#deps.approvals.pendingCount(conversation.id),
       task: taskProjection(views),
     };
   }
+}
+
+function laterCardThread(row: Conversation, than: Conversation): boolean {
+  const rowAt = row.lastMessageAt ?? row.createdAt;
+  const thanAt = than.lastMessageAt ?? than.createdAt;
+  if (rowAt !== thanAt) return rowAt > thanAt;
+  return row.createdAt > than.createdAt;
 }
 
 function toColumn(column: BoardColumnRecord): BoardColumn {
@@ -705,13 +741,15 @@ function assertBoardCronGap(when: string, timeZone: string, now: number): void {
 }
 
 function taskProjection(
-  views: readonly { status: RunStatus; queueReason: string | null }[],
+  views: readonly { status: RunStatus; queueReason: string | null; awaitingInput: boolean }[],
 ): BoardCard['task'] {
   if (views.length === 0) return null;
   let running = 0;
   let queued = 0;
   let queueReason: string | null = null;
+  let awaitingInput = false;
   for (const view of views) {
+    if (view.awaitingInput) awaitingInput = true;
     if (view.status === 'queued') {
       queued += 1;
       if (queueReason === null) queueReason = view.queueReason;
@@ -719,7 +757,7 @@ function taskProjection(
       running += 1;
     }
   }
-  return { running, queued, queueReason };
+  return { running, queued, queueReason, awaitingInput };
 }
 
 function codePoints(text: string): number {

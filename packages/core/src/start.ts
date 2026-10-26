@@ -2385,6 +2385,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           orchestrator.tasks.activeViews(conversationId).map((view) => ({
             status: view.status,
             queueReason: view.queueReason,
+            awaitingInput: view.awaitingInput,
           })),
       },
       timeZone: workbenchTimeZone,

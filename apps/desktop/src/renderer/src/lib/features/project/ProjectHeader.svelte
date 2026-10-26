@@ -8,7 +8,9 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { board } from '$lib/features/board/board.svelte';
   import { chatTabBadge } from './project-chat-badge';
+  import { boardTabBadge } from './project-board-badge';
   import ProjectMembersMenu from './ProjectMembersMenu.svelte';
   import ProjectTabs from './ProjectTabs.svelte';
 
@@ -45,6 +47,16 @@
     }
     if (last > seenSeq) seenSeq = last;
   });
+
+  // The board tab badge stays live on the chat and wiki tabs. ProjectView
+  // keeps this header mounted for the whole visit.
+  $effect(() => {
+    const id = current?.conversation.type === 'project' ? current.conversation.id : null;
+    if (id === null) return;
+    return board.watchSummary(id);
+  });
+
+  const boardBadge = $derived(boardTabBadge(board.summary));
 
   const badge = $derived(
     chatTabBadge({
@@ -85,7 +97,7 @@
     </Button>
   {/if}
   <!-- tab 行：min-w-0 收缩，窄屏时如需横向滚动在 ProjectTabs 根上。 -->
-  <ProjectTabs {badge} />
+  <ProjectTabs {badge} {boardBadge} />
   <div class="app-no-drag flex shrink-0 items-center gap-2">
     <ProjectMembersMenu />
     <Button

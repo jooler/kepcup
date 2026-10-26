@@ -1,6 +1,6 @@
 # 项目组看板（Board）实施编排 · 总览
 
-> 状态：**待实施**（设计 [docs/design/50-project-board.md](../../docs/design/50-project-board.md) 已确认，决策 **D103**，2026-10-26；Q1–Q9 按推荐，仅 Q4 改为 `svelte-dnd-action`）。
+> 状态：**已实施**（2026-10-26。设计 [docs/design/50-project-board.md](../../docs/design/50-project-board.md)，决策 **D103**；Q1–Q9 按推荐，仅 Q4 改为 `svelte-dnd-action`）。
 > 本目录是给**执行智能体**的任务书，分**三个阶段**，每阶段一份。**先读本文件，再读你被分配的那一阶段。**
 > 早期阶段：不做向后兼容、不迁旧数据；一切以语义准确、逻辑正确为准。
 

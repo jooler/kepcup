@@ -50,7 +50,7 @@ function card(id: string, columnId: string, text: string, position: number): Boa
 }
 
 vi.mock('svelte-sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({
@@ -77,6 +77,9 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         });
       }
       if (method === 'board.get') return Promise.resolve({ columns, cards });
+      if (method === 'board.summary') {
+        return Promise.resolve({ unread: 1, pendingApprovals: 0, delivered: 0 });
+      }
       if (method === 'board.columns.create') {
         const input = params as { title: string; projectId: string };
         const created = column('bcol_real', input.title, 100);
@@ -153,7 +156,10 @@ const { t, i18n } = await import('$lib/i18n');
 
 const count = (method: string): number => calls.filter((call) => call.method === method).length;
 const emit = (payload: unknown): void => {
-  for (const handler of handlers.get('board.changed') ?? []) handler(payload);
+  emitEvent('board.changed', payload);
+};
+const emitEvent = (event: string, payload: unknown): void => {
+  for (const handler of handlers.get(event) ?? []) handler(payload);
 };
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -399,6 +405,93 @@ describe('optimistic writes', () => {
     expect(await board.deleteColumn('bcol_a', false)).toBe(false);
     expect(board.columns.map((column) => column.id)).toEqual(['bcol_a']);
     expect(toast.error).toHaveBeenCalled();
+  });
+});
+
+describe('card conversation events reload only mapped cards', () => {
+  it('refetches when a mapped conversation changes and ignores the rest', async () => {
+    cards = [{ ...card('card_a', 'bcol_a', 'hello', 1), conversationId: 'conv_card' }];
+    detach = board.attach('p1');
+    await wait(20);
+    const before = count('board.get');
+
+    emitEvent('message.created', { conversationId: 'conv_other' });
+    emitEvent('run.status', { run: { conversationId: 'conv_other' } });
+    emitEvent('approval.created', { conversationId: 'conv_other' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before);
+
+    emitEvent('message.created', { conversationId: 'conv_card' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 1);
+
+    emitEvent('run.status', { run: { conversationId: 'conv_card' } });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 2);
+
+    emitEvent('approval.resolved', { conversationId: 'conv_card' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 3);
+  });
+});
+
+describe('watchSummary', () => {
+  it('reloads for a mapped card conversation and ignores the rest', async () => {
+    cards = [{ ...card('card_a', 'bcol_a', 'hello', 1), conversationId: 'conv_card' }];
+    const stop = board.watchSummary('p1');
+    try {
+      await wait(20);
+      const before = count('board.summary');
+      expect(before).toBeGreaterThanOrEqual(1);
+      expect(board.summary).toEqual({ unread: 1, pendingApprovals: 0, delivered: 0 });
+
+      emitEvent('message.created', { conversationId: 'conv_other' });
+      emitEvent('approval.created', { conversationId: 'conv_other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before);
+
+      emitEvent('message.created', { conversationId: 'conv_card' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 1);
+
+      emitEvent('board.changed', { projectId: 'p1' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 2);
+
+      emitEvent('todos.changed', { id: 'todo_other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 3);
+
+      emitEvent('board.changed', { projectId: 'other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 3);
+    } finally {
+      stop();
+    }
+  });
+});
+
+describe('noteCardRead', () => {
+  it('clears the face and only that card’s share of the tab count', async () => {
+    cards = [
+      { ...card('card_a', 'bcol_a', 'hello', 1), unreadCount: 2, conversationId: 'conv_a' },
+      { ...card('card_b', 'bcol_a', 'other', 2), unreadCount: 3, conversationId: 'conv_b' },
+    ];
+    detach = board.attach('p1');
+    const stop = board.watchSummary('p1');
+    try {
+      await wait(20);
+      board.summary = { unread: 5, pendingApprovals: 1, delivered: 4 };
+      board.noteCardRead('card_a');
+      const rows = board.columns.flatMap((column) => column.cards);
+      expect(rows.find((item) => item.id === 'card_a')?.unreadCount).toBe(0);
+      expect(rows.find((item) => item.id === 'card_b')?.unreadCount).toBe(3);
+      expect(board.summary).toEqual({ unread: 3, pendingApprovals: 1, delivered: 4 });
+      board.noteCardRead('card_a');
+      expect(board.summary.unread).toBe(3);
+    } finally {
+      stop();
+    }
   });
 });
 

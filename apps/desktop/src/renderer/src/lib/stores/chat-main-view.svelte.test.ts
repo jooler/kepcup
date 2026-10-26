@@ -17,22 +17,67 @@ const state = {
   gate: null as Promise<void> | null,
 };
 
-const conversation = (id: string) => ({
-  id,
-  type: 'direct',
-  title: null,
-  directBotId: `bot_${id}`,
-  workdirId: null,
-  readOnly: false,
-  summary: null,
-  summaryUptoSeq: 0,
-  lastSeq: state.lastSeq,
-  lastReadSeq: state.lastReadSeq,
-  unreadCount: Math.max(0, state.lastSeq - state.lastReadSeq),
-  lastMessageAt: null,
-  createdAt: 1,
-  bot: { id: `bot_${id}`, name: id, status: 'active', avatar: null },
-});
+const conversation = (id: string) => {
+  if (id === 'card_1') {
+    return {
+      id,
+      type: 'card',
+      title: 'Card',
+      directBotId: 'bot_ada',
+      parentProjectId: 'proj_1',
+      cardTodoId: 'todo_card',
+      workdirId: null,
+      readOnly: false,
+      summary: null,
+      summaryUptoSeq: 0,
+      lastSeq: 0,
+      lastReadSeq: 0,
+      unreadCount: 0,
+      lastMessageAt: null,
+      createdAt: 1,
+      bot: { id: 'bot_ada', name: 'Ada', status: 'active', avatar: null },
+    };
+  }
+  if (id === 'proj_1') {
+    return {
+      id,
+      type: 'project',
+      title: 'Project',
+      directBotId: null,
+      parentProjectId: null,
+      cardTodoId: null,
+      leadBotId: 'bot_ada',
+      workdirId: null,
+      readOnly: false,
+      summary: null,
+      summaryUptoSeq: 0,
+      lastSeq: state.lastSeq,
+      lastReadSeq: state.lastReadSeq,
+      unreadCount: Math.max(0, state.lastSeq - state.lastReadSeq),
+      lastMessageAt: null,
+      createdAt: 1,
+      bot: null,
+    };
+  }
+  return {
+    id,
+    type: 'direct',
+    title: null,
+    directBotId: `bot_${id}`,
+    parentProjectId: null,
+    cardTodoId: null,
+    workdirId: null,
+    readOnly: false,
+    summary: null,
+    summaryUptoSeq: 0,
+    lastSeq: state.lastSeq,
+    lastReadSeq: state.lastReadSeq,
+    unreadCount: Math.max(0, state.lastSeq - state.lastReadSeq),
+    lastMessageAt: null,
+    createdAt: 1,
+    bot: { id: `bot_${id}`, name: id, status: 'active', avatar: null },
+  };
+};
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
@@ -62,6 +107,8 @@ vi.mock('$lib/rpc/client.svelte', () => ({
           return { approvals: [] };
         case 'grants.list':
           return { grants: [] };
+        case 'conversations.members':
+          return { members: [] };
         default:
           return {};
       }
@@ -71,6 +118,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
 
 const { chat } = await import('./chat.svelte');
 const { shell } = await import('./shell.svelte');
+const { board } = await import('../features/board/board.svelte');
 
 beforeEach(() => {
   shell.mainView = 'chats';
@@ -246,5 +294,59 @@ describe('慢 select 与用户主动打开工作台', () => {
     shell.openWorkbench();
     await chat.select('another');
     expect(shell.mainView).toBe('chats');
+  });
+});
+
+describe('card conversations redirect onto the board', () => {
+  it('select(card) calls openBoardCard and does not select the card', async () => {
+    await chat.select('c1');
+    const redirect = vi
+      .spyOn(shell, 'openBoardCard')
+      .mockImplementation(async () => undefined);
+    try {
+      await chat.select('card_1');
+      expect(redirect).toHaveBeenCalledWith('proj_1', 'todo_card');
+      expect(chat.currentId).toBe('c1');
+    } finally {
+      redirect.mockRestore();
+    }
+  });
+
+  it('select(direct) and select(project) still open that conversation', async () => {
+    await chat.select('c1');
+    expect(chat.currentId).toBe('c1');
+    expect(chat.current?.conversation.type).toBe('direct');
+    await chat.select('proj_1');
+    expect(chat.currentId).toBe('proj_1');
+    expect(chat.current?.conversation.type).toBe('project');
+    expect(shell.projectView).toBe('chat');
+  });
+
+  it('openBoardCard selects the project before opening the board and the card', async () => {
+    shell.projectView = 'wiki';
+    board.openCard('stale');
+    const order: string[] = [];
+    const close = board.closeCard.bind(board);
+    const open = board.openCard.bind(board);
+    const closeSpy = vi.spyOn(board, 'closeCard').mockImplementation(() => {
+      order.push('close');
+      close();
+    });
+    const openSpy = vi.spyOn(board, 'openCard').mockImplementation((id: string) => {
+      order.push(`open:${id}`);
+      open(id);
+    });
+    try {
+      await shell.openBoardCard('proj_1', 'todo_card');
+      expect(order).toEqual(['close', 'open:todo_card']);
+      expect(chat.currentId).toBe('proj_1');
+      expect(shell.projectView).toBe('board');
+      expect(board.openCardId).toBe('todo_card');
+    } finally {
+      closeSpy.mockRestore();
+      openSpy.mockRestore();
+      board.closeCard();
+      shell.projectView = 'chat';
+    }
   });
 });

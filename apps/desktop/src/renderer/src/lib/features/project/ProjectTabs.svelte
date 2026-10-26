@@ -4,13 +4,14 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { projectTabs } from './project-tabs';
   import type { ChatTabBadge } from './project-chat-badge';
+  import type { BoardTabBadge } from './project-board-badge';
 
   /**
    * 模块 tab 行（WP6 §4 步骤 4）。手写按钮条，不用 components/ui/tabs——组件库
    * Tabs 的样式变体写在 `data-active:` 上而 bits-ui 输出 `data-state="active"`，
    * 激活样式永不生效（RightPanel 的 tablist 同款做法与注释）。
    */
-  let { badge }: { badge: ChatTabBadge } = $props();
+  let { badge, boardBadge }: { badge: ChatTabBadge; boardBadge: BoardTabBadge } = $props();
 
   const tabs = projectTabs(PROJECT_MODULES);
   const onChatView = $derived(shell.projectView === 'chat');
@@ -57,6 +58,22 @@
             title={t('project.tab.badgePending')}
           ></span>
         {/if}
+      {:else if tab.id === 'board' && boardBadge.count > 0}
+        <span
+          class="ml-1 inline-flex items-center gap-1 align-middle"
+          data-testid="project-tab-badge-board"
+          data-kind={boardBadge.pending ? 'pending' : 'count'}
+          title={boardBadge.pending
+            ? t('board.tab.badgePending')
+            : t('board.tab.badgeCount', { count: boardBadge.count })}
+        >
+          <span
+            class="size-1.5 rounded-full {boardBadge.pending ? 'bg-amber-500' : 'bg-sky-500'}"
+          ></span>
+          <span class="text-[11px] font-medium text-foreground/70 tabular-nums">
+            {boardBadge.count}
+          </span>
+        </span>
       {/if}
     </button>
   {/each}

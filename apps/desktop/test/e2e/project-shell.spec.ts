@@ -94,6 +94,9 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
       'data-active',
       'true',
     );
+    await expect(page.locator('[data-testid="project-tab-board"]')).toBeVisible();
+    // A new project has nothing for the board to report, so the badge stays hidden.
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
     for (const id of ['okr', 'calendar']) {
       await expect(page.locator(`[data-testid="project-tab-${id}"]`)).toHaveCount(0);
