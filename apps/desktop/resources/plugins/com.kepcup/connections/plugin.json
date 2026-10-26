@@ -1,0 +1,38 @@
+{
+  "format_version": 1,
+  "id": "com.kepcup/connections",
+  "name": "KepCup 连接应用",
+  "version": "1.0.0",
+  "description": "随应用分发的连接应用目录（打包快照）。",
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/notion/server.json"
+      },
+      {
+        "file": "connectors/linear/server.json"
+      },
+      {
+        "file": "connectors/atlassian/server.json"
+      },
+      {
+        "file": "connectors/sentry/server.json"
+      },
+      {
+        "file": "connectors/canva/server.json"
+      },
+      {
+        "file": "connectors/stripe/server.json"
+      },
+      {
+        "file": "connectors/cloudflare/server.json"
+      },
+      {
+        "file": "connectors/gcalendar/server.json"
+      },
+      {
+        "file": "connectors/gdrive/server.json"
+      }
+    ]
+  }
+}
