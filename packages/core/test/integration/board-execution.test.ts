@@ -336,6 +336,7 @@ describe('board execution', () => {
     expect(card.task!.queued).toBeGreaterThanOrEqual(1);
     expect(card.task!.queueReason).toEqual(expect.any(String));
     expect(card.task!.queueReason!.length).toBeGreaterThan(0);
+    expect(card.task!.awaitingInput).toBe(false);
   }, 60_000);
 
   it('publishes one board.changed after a one-off start cancels the schedule', async () => {

@@ -468,6 +468,11 @@ export class BoardState {
   }
 
   #subscribe(): void {
+    const onCardConversation = (conversationId: string | null | undefined): void => {
+      if (conversationId == null || this.#cardConversations()[conversationId] !== true) return;
+      this.#reloadPending = true;
+      this.#scheduleReload();
+    };
     this.#offs = [
       core.onEvent('board.changed', (payload) => {
         const event = payload as BoardChangedPayload;
@@ -475,8 +480,34 @@ export class BoardState {
         this.#reloadPending = true;
         this.#scheduleReload();
       }),
+      // Card-face counts follow the open card conversation. A reload replaces
+      // the stored text; the dialog editor keeps an unsaved draft itself.
+      core.onEvent('message.created', (payload) => {
+        onCardConversation((payload as { conversationId?: string }).conversationId);
+      }),
+      core.onEvent('run.status', (payload) => {
+        const run = (payload as { run?: { conversationId?: string | null } }).run;
+        onCardConversation(run?.conversationId);
+      }),
+      core.onEvent('approval.created', (payload) => {
+        onCardConversation((payload as { conversationId?: string | null }).conversationId);
+      }),
+      core.onEvent('approval.resolved', (payload) => {
+        onCardConversation((payload as { conversationId?: string | null }).conversationId);
+      }),
     ];
     void this.load();
+  }
+
+  /** Open card conversations, from the last `board.get`. */
+  #cardConversations(): Record<string, true> {
+    const map: Record<string, true> = {};
+    for (const column of this.columns) {
+      for (const card of column.cards) {
+        if (card.conversationId !== null) map[card.conversationId] = true;
+      }
+    }
+    return map;
   }
 
   #unsubscribe(): void {

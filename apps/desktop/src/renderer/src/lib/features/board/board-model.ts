@@ -1,26 +1,132 @@
-import type { BoardCard, BoardColumn } from '@kepcup/shared';
+import { describeInstant, describeScheduleWhen, type BoardCard, type BoardColumn } from '@kepcup/shared';
+import { blockedNotice, effectiveStatus } from '../workbench/workbench-model';
 
 /**
- * Pure board-view decisions. Execution fields stay empty in P1, so the footer
- * is null and delete confirmation stays off until a later phase fills them in.
+ * Pure board-view decisions. Status on the card face is derived from the
+ * todo, its latest run, and the card conversation's tasks (design 50 §6.4).
+ * `effectiveStatus` / `blockedNotice` stay in the workbench model.
  */
+
+export type CardStatusKey =
+  | 'idle'
+  | 'scheduled'
+  | 'queued'
+  | 'running'
+  | 'delivered'
+  | 'done'
+  | 'cancelled'
+  | 'stopped'
+  | 'blocked';
+
+export type CardStatusTone = 'neutral' | 'sky' | 'amber' | 'emerald';
+
+export interface CardStatus {
+  key: CardStatusKey;
+  tone: CardStatusTone;
+  /** i18n key. */
+  label: `board.status.${CardStatusKey}`;
+  params?: Record<string, string>;
+}
+
+export interface CardClock {
+  now: number;
+  timeZone: string;
+}
 
 export interface CardFooter {
   assignee: { botId: string; name: string };
-  status: BoardCard['todo']['status'];
-  schedule: BoardCard['todo']['schedule'];
-  lastRun: BoardCard['todo']['lastRun'];
+  status: CardStatus;
+  /** Human schedule phrase. Null when the card has no schedule. */
+  when: string | null;
 }
 
-/** Footer row. Unassigned cards (every card in P1) have none. */
-export function cardFooter(card: BoardCard): CardFooter | null {
-  if (card.todo.assignee === null) return null;
+export interface CardBadges {
+  unread: boolean;
+  approval: boolean;
+  askUser: boolean;
+}
+
+function clockOf(clock?: Partial<CardClock>): CardClock {
   return {
-    assignee: card.todo.assignee,
-    status: card.todo.status,
-    schedule: card.todo.schedule,
-    lastRun: card.todo.lastRun,
+    now: clock?.now ?? Date.now(),
+    timeZone: clock?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
+}
+
+function status(
+  key: CardStatusKey,
+  tone: CardStatusTone,
+  params?: Record<string, string>,
+): CardStatus {
+  return params === undefined
+    ? { key, tone, label: `board.status.${key}` }
+    : { key, tone, label: `board.status.${key}`, params };
+}
+
+/**
+ * Display status. Unassigned cards are blank, except a draft that was sent
+ * back with a blocked reason (the executor left). A cron card stays
+ * `scheduled`; the latest run is folded in through `effectiveStatus`.
+ */
+export function deriveCardStatus(
+  card: BoardCard,
+  clock?: Partial<CardClock>,
+): CardStatus | null {
+  const notice = blockedNotice(card.todo);
+  if (card.todo.status === 'draft' && notice !== null) {
+    return status('blocked', 'amber', { reason: notice.reason });
+  }
+  if (card.todo.assignee === null) return null;
+  const effective = effectiveStatus(card.todo);
+  if (effective === 'in_progress' && (card.task?.queued ?? 0) > 0) {
+    return status('queued', 'amber', { reason: card.task?.queueReason ?? '' });
+  }
+  switch (effective) {
+    case 'draft':
+      return status('idle', 'neutral');
+    case 'scheduled': {
+      const at = card.todo.schedule?.nextFireAt;
+      const zone = card.todo.schedule?.timezone ?? clockOf(clock).timeZone;
+      const time =
+        typeof at === 'number' ? describeInstant(at, zone, clockOf(clock).now) : '';
+      return status('scheduled', 'sky', { time });
+    }
+    case 'in_progress':
+      return status('running', 'emerald');
+    case 'delivered':
+      return status('delivered', 'amber');
+    case 'done':
+      return status('done', 'neutral');
+    case 'cancelled':
+      return card.todo.lastRun !== null
+        ? status('stopped', 'neutral')
+        : status('cancelled', 'neutral');
+    default:
+      return null;
+  }
+}
+
+/** Amber marks on the face. Blocked text is a status, not one of these. */
+export function deriveCardBadges(card: BoardCard): CardBadges {
+  return {
+    unread: card.unreadCount > 0,
+    approval: card.pendingApprovals > 0,
+    askUser: card.task?.awaitingInput === true,
+  };
+}
+
+/** Footer row. Unassigned cards have none, including a blocked card whose executor left. */
+export function cardFooter(card: BoardCard, clock?: Partial<CardClock>): CardFooter | null {
+  if (card.todo.assignee === null) return null;
+  const derived = deriveCardStatus(card, clock);
+  if (derived === null) return null;
+  const schedule = card.todo.schedule;
+  const resolved = clockOf(clock);
+  const when =
+    schedule === null
+      ? null
+      : describeScheduleWhen(schedule, { localTimeZone: resolved.timeZone, now: resolved.now });
+  return { assignee: card.todo.assignee, status: derived, when };
 }
 
 /**

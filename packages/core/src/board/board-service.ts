@@ -43,7 +43,9 @@ export interface BoardServiceDeps {
   bots: BotsService;
   approvals: { pendingCount(conversationId: string): number };
   tasks: {
-    activeOf(conversationId: string): Array<{ status: RunStatus; queueReason: string | null }>;
+    activeOf(
+      conversationId: string,
+    ): Array<{ status: RunStatus; queueReason: string | null; awaitingInput: boolean }>;
   };
   /** Zone used when judging cron gaps. Same zone the schedule service fires in. */
   timeZone: string;
@@ -705,13 +707,15 @@ function assertBoardCronGap(when: string, timeZone: string, now: number): void {
 }
 
 function taskProjection(
-  views: readonly { status: RunStatus; queueReason: string | null }[],
+  views: readonly { status: RunStatus; queueReason: string | null; awaitingInput: boolean }[],
 ): BoardCard['task'] {
   if (views.length === 0) return null;
   let running = 0;
   let queued = 0;
   let queueReason: string | null = null;
+  let awaitingInput = false;
   for (const view of views) {
+    if (view.awaitingInput) awaitingInput = true;
     if (view.status === 'queued') {
       queued += 1;
       if (queueReason === null) queueReason = view.queueReason;
@@ -719,7 +723,7 @@ function taskProjection(
       running += 1;
     }
   }
-  return { running, queued, queueReason };
+  return { running, queued, queueReason, awaitingInput };
 }
 
 function codePoints(text: string): number {
