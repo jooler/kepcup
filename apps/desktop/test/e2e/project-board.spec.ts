@@ -676,21 +676,21 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     await face.click();
     await approval.press('Enter');
     await expect(approval).toBeHidden({ timeout: 60_000 });
+    // Keep the dialog open until post-approval replies land so they are marked
+    // read. Closing earlier on slower runners leaves an unread tab badge.
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
+      '文件内容已读到',
+      { timeout: 60_000 },
+    );
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
+      '外部文件读完了',
+      { timeout: 60_000 },
+    );
     await dialog.locator('[data-testid="board-dialog-close"]').click();
     await expect(face.locator('[data-testid="board-card-approval"]')).toHaveCount(0);
-    // Tab badge also counts「待验收」and unread. On slower runners the approved
-    // run can settle into delivered before this assertion, leaving a count
-    // badge even though the approval itself is gone. Accept to quiet it.
-    await face.click();
-    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待验收', {
-      timeout: 60_000,
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toHaveCount(0, {
+      timeout: 30_000,
     });
-    await dialog.locator('[data-testid="board-dialog-action-accept"]').click();
-    await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('已完成', {
-      timeout: 15_000,
-    });
-    await dialog.locator('[data-testid="board-dialog-close"]').click();
-    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toHaveCount(0);
 
     // ⑭ Narrow dialog: details / chat tabs.
     await resizeWindow(app, 720, 800);
