@@ -2,6 +2,7 @@
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import { skillMarket } from './market.svelte';
+  import ExtensionInstalled from './ExtensionInstalled.svelte';
   import ExtensionSkills from './ExtensionSkills.svelte';
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
@@ -10,13 +11,14 @@
   import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
 
   /**
-   * 扩展中心的分组 tab 条 + 内容（Skills / 连接 / MCP / 邮件 / 本机应用协作）：ExtensionCenterDialog
-   * （宽屏弹框）与窄屏「扩展」tab 页共用，当前分组都在 shell store 里，两边切换
-   * 状态互通。卸载（弹框关闭 / 窄屏切走 tab）时复位 Skills 目录的搜索词——切
+   * 扩展中心的分组 tab 条 + 内容（已安装 / Skills / 连接 / MCP / 邮件 / 本机应用协作）：
+   * ExtensionCenterDialog（宽屏弹框）与窄屏「扩展」tab 页共用，当前分组都在 shell store 里，
+   * 两边切换状态互通。卸载（弹框关闭 / 窄屏切走 tab）时复位 Skills 目录的搜索词——切
    * 分组不复发位，避免同一次浏览内闪现陈旧内容。
    */
 
   const TAB_LABEL_KEYS = {
+    installed: 'extensionCenter.tabs.installed',
     skills: 'extensionCenter.tabs.skills',
     connections: 'extensionCenter.tabs.connections',
     mcp: 'extensionCenter.tabs.mcp',
@@ -56,7 +58,7 @@
 </script>
 
 <div
-  class="flex shrink-0 items-center gap-1 border-b"
+  class="flex shrink-0 items-center gap-1 overflow-x-auto border-b"
   role="tablist"
   bind:this={tablist}
   data-testid="extension-center-tabs"
@@ -69,7 +71,7 @@
       aria-selected={tab === item}
       aria-controls={panelId(item)}
       tabindex={tab === item ? 0 : -1}
-      class="-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors {tab === item
+      class="-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-1.5 text-sm transition-colors {tab === item
         ? 'border-foreground font-medium text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
       onclick={() => select(item)}
@@ -87,7 +89,9 @@
   aria-labelledby={tabId(tab)}
   class="@container flex min-h-0 flex-1 flex-col"
 >
-  {#if tab === 'skills'}
+  {#if tab === 'installed'}
+    <ExtensionInstalled />
+  {:else if tab === 'skills'}
     <ExtensionSkills />
   {:else if tab === 'connections'}
     <ExtensionConnections />
