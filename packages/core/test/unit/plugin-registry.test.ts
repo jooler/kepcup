@@ -488,6 +488,36 @@ describe('PluginRegistry', () => {
     expect(shared[3]).toBe(ends[1]);
   });
 
+  it('setEnabled：清单不可读 → PLUGIN_INVALID，标志与投影都不动；卸载仍可用', async () => {
+    const rig = makeRig();
+    const fixture = await makeFixture({ id: 'io.github.tester/corrupt' });
+    await rig.registry.install(installArgs(fixture));
+    // 内容在应用外被破坏：清单解析失败
+    const dir = path.join(
+      rig.pluginsDir,
+      'io.github.tester',
+      `corrupt@${fixture.manifest.version}`,
+    );
+    writeFileSync(path.join(dir, 'plugin.json'), '{broken');
+    rig.fakes.skill.setEnabledCalls.length = 0;
+    const error = await rig.registry.setEnabled('io.github.tester/corrupt', false).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expectCode(error, 'PLUGIN_INVALID');
+    // 标志不翻转（enabled 与投影保持一致，绝不出现「已停用但投影还活着」）
+    expect(rig.store.get('io.github.tester/corrupt')).toMatchObject({ enabled: true });
+    expect(rig.fakes.skill.setEnabledCalls).toHaveLength(0);
+    // 卸载不依赖清单（走账本），照常清干净
+    await rig.registry.uninstall('io.github.tester/corrupt');
+    expect(rig.store.get('io.github.tester/corrupt')).toBeNull();
+    expect(
+      existsSync(
+        path.join(rig.pluginsDir, 'io.github.tester', `corrupt@${fixture.manifest.version}`),
+      ),
+    ).toBe(false);
+  });
+
   it('ownerOf / list 的 missing 标记', async () => {
     const rig = makeRig();
     const fixture = await makeFixture({ id: 'io.github.tester/own' });
