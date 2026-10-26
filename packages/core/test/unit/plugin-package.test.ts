@@ -1,11 +1,25 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AppError } from '@kepcup/shared';
 import { buildPluginDir, buildPluginFixture } from '@kepcup/testkit';
-import { PluginPackager, type PluginPackagerDeps, type StagedPlugin } from '../../src/plugins/package.js';
+import {
+  PluginPackager,
+  type PluginPackagerDeps,
+  type StagedPlugin,
+} from '../../src/plugins/package.js';
 
 /**
  * 插件包暂存管线（D104 P0a-1 步骤 7）：file 走私有快照 + zip 防护，folder 走目录遍历
@@ -217,7 +231,6 @@ describe('staging a .kepcup file', () => {
 
   it.skipIf(process.platform === 'win32')('extracts files as 0755 / 0644 only', async () => {
     const { packager } = await makePackager();
-    const { writeFile: writeFileFromFs } = await import('node:fs/promises');
     const fixture = await buildPluginFixture({
       dir: await tmp(),
       skills: [{ name: 'docx' }],
@@ -226,14 +239,10 @@ describe('staging a .kepcup file', () => {
         { name: 'data/tool.sh', data: 'x', mode: 0o777 },
       ],
     });
-    void writeFileFromFs;
     const staged = await packager.stage({ kind: 'file', path: fixture.path });
-    const { stat } = await import('node:fs/promises');
     expect((await stat(path.join(staged.stagingDir, 'data', 'open.txt'))).mode & 0o777).toBe(0o644);
     expect((await stat(path.join(staged.stagingDir, 'data', 'tool.sh'))).mode & 0o777).toBe(0o755);
-    expect(
-      (await stat(path.join(staged.stagingDir, 'plugin.json'))).mode & 0o777,
-    ).toBe(0o644);
+    expect((await stat(path.join(staged.stagingDir, 'plugin.json'))).mode & 0o777).toBe(0o644);
     await packager.discard(staged);
   });
 });
@@ -289,18 +298,20 @@ describe('staging a development directory', () => {
     await expectCode(packager.stage({ kind: 'folder', path: '/nonexistent/dir' }), 'NOT_FOUND');
   });
 
-  it.skipIf(process.platform === 'win32')('copies keep the mode rule (no group/world bits)', async () => {
-    const { packager } = await makePackager();
-    const dir = await tmp();
-    await buildPluginDir({ dir, skills: [{ name: 'docx' }] });
-    await chmod(path.join(dir, 'skills', 'docx', 'SKILL.md'), 0o666);
-    const staged = await packager.stage({ kind: 'folder', path: dir });
-    const { stat } = await import('node:fs/promises');
-    expect(
-      (await stat(path.join(staged.stagingDir, 'skills', 'docx', 'SKILL.md'))).mode & 0o777,
-    ).toBe(0o644);
-    await packager.discard(staged);
-  });
+  it.skipIf(process.platform === 'win32')(
+    'copies keep the mode rule (no group/world bits)',
+    async () => {
+      const { packager } = await makePackager();
+      const dir = await tmp();
+      await buildPluginDir({ dir, skills: [{ name: 'docx' }] });
+      await chmod(path.join(dir, 'skills', 'docx', 'SKILL.md'), 0o666);
+      const staged = await packager.stage({ kind: 'folder', path: dir });
+      expect(
+        (await stat(path.join(staged.stagingDir, 'skills', 'docx', 'SKILL.md'))).mode & 0o777,
+      ).toBe(0o644);
+      await packager.discard(staged);
+    },
+  );
 });
 
 describe('discard / sweepStaging', () => {

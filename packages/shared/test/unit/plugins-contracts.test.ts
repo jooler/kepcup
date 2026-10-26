@@ -65,7 +65,12 @@ describe('plugins RPC / event / error-code contracts', () => {
   });
 
   it('registers the four PLUGIN_* error codes', () => {
-    for (const code of ['PLUGIN_INVALID', 'PLUGIN_INCOMPATIBLE', 'PLUGIN_CONFLICT', 'PLUGIN_MANAGED']) {
+    for (const code of [
+      'PLUGIN_INVALID',
+      'PLUGIN_INCOMPATIBLE',
+      'PLUGIN_CONFLICT',
+      'PLUGIN_MANAGED',
+    ]) {
       expect(ERROR_CODES).toContain(code);
     }
   });
@@ -181,9 +186,22 @@ describe('payload round-trips', () => {
           compatible: true,
           incompatibleReason: null,
         },
-        { kind: 'http', id: 'docs', displayName: 'Docs', url: 'https://mcp.example.com/mcp', host: 'mcp.example.com' },
+        {
+          kind: 'http',
+          id: 'docs',
+          displayName: 'Docs',
+          url: 'https://mcp.example.com/mcp',
+          host: 'mcp.example.com',
+        },
       ],
-      mail: [{ id: 'fastmail', label: 'Fastmail', imapHost: 'imap.fastmail.com', smtpHost: 'smtp.fastmail.com' }],
+      mail: [
+        {
+          id: 'fastmail',
+          label: 'Fastmail',
+          imapHost: 'imap.fastmail.com',
+          smtpHost: 'smtp.fastmail.com',
+        },
+      ],
       conflicts: [{ kind: 'skill', ref: 'docx', withWhat: '公共技能 docx（预置）' }],
       existing: null,
       update: null,

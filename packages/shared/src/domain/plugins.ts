@@ -1,9 +1,6 @@
 import { z } from 'zod';
 import { mcpbUserConfigFieldSchema, mcpbUserConfigValueSchema } from './mcpb.js';
-import {
-  pluginIdSchema,
-  pluginVersionSchema,
-} from './plugin-manifest.js';
+import { pluginIdSchema, pluginVersionSchema } from './plugin-manifest.js';
 
 /**
  * Plugin system RPC contracts (D104, docs/design/51-plugin-system.md §5 / §8):

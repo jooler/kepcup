@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -69,9 +69,7 @@ describe('buildPluginFixture', () => {
     };
     expect(manifest.id).toBe('io.github.tester/fixture');
     expect(manifest.contributions.skills).toEqual([{ dir: 'skills/docx' }]);
-    expect(manifest.contributions.connectors).toEqual([
-      { file: 'connectors/notion/server.json' },
-    ]);
+    expect(manifest.contributions.connectors).toEqual([{ file: 'connectors/notion/server.json' }]);
     expect(manifest.contributions.mcp).toEqual([
       { kind: 'mcpb', id: 'dbtools', file: 'mcp/dbtools.mcpb' },
       { kind: 'http', id: 'docs', url: 'https://mcp.example.com/mcp' },
@@ -132,7 +130,6 @@ describe('buildPluginFixture', () => {
   });
 
   it('embeds a real .mcpb whose manifest.json parses', async () => {
-    const { writeFile } = await import('node:fs/promises');
     const fixture = await buildPluginFixture({
       dir: await tmp(),
       mcpb: [{ id: 'dbtools', mcpb: { manifest: { name: 'db-bundle' } } }],
@@ -159,9 +156,7 @@ describe('buildPluginFixture', () => {
 
   it('connectorFixtureEntry mirrors the catalog shape with a test release gate', () => {
     const entry = connectorFixtureEntry('notion', { tier: 'community' });
-    const meta = (entry._meta as Record<string, Record<string, unknown>>)[
-      'app.kepcup/connector'
-    ]!;
+    const meta = (entry._meta as Record<string, Record<string, unknown>>)['app.kepcup/connector']!;
     expect(entry.name).toBe('test.notion/mcp');
     expect(meta).toMatchObject({
       slug: 'notion',
@@ -169,9 +164,9 @@ describe('buildPluginFixture', () => {
       tier: 'community',
       releaseGate: 'test',
     });
-    expect(
-      (entry.remotes as Array<{ type: string; url: string }>)[0]!.url,
-    ).toBe('https://mcp.notion.test/mcp');
+    expect((entry.remotes as Array<{ type: string; url: string }>)[0]!.url).toBe(
+      'https://mcp.notion.test/mcp',
+    );
   });
 });
 
