@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toast } from 'svelte-sonner';
+  import { CirclePlay } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { primaryActions, type BoardAction } from './board-model';
@@ -106,6 +107,9 @@
         onclick={() => void run(action)}
         data-testid={`${testidPrefix}-${action}`}
       >
+        {#if action === 'start'}
+          <CirclePlay class="size-4" aria-hidden="true" />
+        {/if}
         {t(LABEL[action])}
       </Button>
     {/each}
