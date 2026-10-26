@@ -1,5 +1,6 @@
 # P1 · 看板骨架：契约、迁移、`BoardService`、看板 UI、拖拽、行内编辑
 
+> 状态：**已实施**（2026-10-26）。
 > 设计 WP：**WP1 + WP3**。依赖：无（从当前集成分支拉出）。分支：`feat/board/p1-skeleton`。
 > 先读 [README.md](README.md) §1、§4（固定契约）；设计依据 [docs/design/50-project-board.md](../../docs/design/50-project-board.md) §5（数据）、§8（权限）、§9（界面，尤其 §9.2–§9.7）、§10（RPC）。
 

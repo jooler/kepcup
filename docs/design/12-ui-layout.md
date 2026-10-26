@@ -55,10 +55,11 @@
 
 项目组会话的内容区顶栏改为**实心块**（不再是单聊的浮动渐隐药丸），高度两行；组件在 `features/project/`（`ProjectView` / `ProjectHeader` / `ProjectTabs` / `ProjectMembersMenu` / `ModulePlaceholder`）。
 
-- **左两行**：第一行项目名；第二行模块 tab，读 shared 的 `PROJECT_MODULES` 注册表（`chat / wiki / board / okr / calendar`），`planned` 模块灰显、悬停提示「即将推出」、不可点。
-- **沟通 tab 徽标** = 未读数 + 待确认标记（`project-chat-badge.ts`）：用户停在 Wiki 等其他 tab 时不会漏掉审批卡。
+- **模块 tab**：读 `PROJECT_MODULES`。现在渲染沟通、看板、Wiki；OKR / 日历仍是 `planned`，不出现在 tab 行。看板是实装视图（`ProjectBoardView`），点卡片打开详情弹框（左文本与执行记录，右卡片对话）。
+- **沟通 tab 徽标** = 未读数 + 待确认标记（`project-chat-badge.ts`）。**看板 tab 徽标** = 未读 + 待审批 + 待验收（`board.summary`，`project-board-badge.ts`）。人在沟通或 Wiki 上时两枚徽标都还在。
+- **卡片对话不进侧栏**。`card` 会话不出现在对话列表里；通知和任何 `chat.select(cardId)` 都打开「该项目 → 看板 → 这张卡片」。
 - **右侧成员堆叠与弹层**：重叠头像堆叠（负责人排第一带冠标，超过 5 个显示 `+N`）；点开成员下拉（`ProjectMembersMenu`）：成员列表（负责人置顶带标）+ 搜索添加成员 +「管理成员…」（跳详情页成员分区）。
-- **设置按钮 ⚙**：打开**项目详情页**——内容区里的页面（`ProjectSettingsPage`，非弹框），tab 行不新增项、⚙ 呈选中态；再点任一 tab 返回。状态 `shell.projectView`（内存，不持久化），`chat.select()` 时重置回沟通。详情页五分区：概览（名称、项目目标、工作目录、负责人）/ 成员 / 授权 / 定时与监看 / 危险区（删除项目组）。
+- **设置按钮 ⚙**：打开**项目详情页**——内容区里的页面（`ProjectSettingsPage`，非弹框），tab 行不新增项、⚙ 呈选中态；再点任一 tab 返回。状态 `shell.projectView`（内存，不持久化），`chat.select()` 时重置回沟通。详情页五分区：概览（名称、项目目标、工作目录、负责人）/ 成员 / 授权 / 定时与监看（含看板卡片的排期，带「工作台」徽标和卡片标题）/ 危险区（删除项目组，确认框列出看板卡片数和其中已指派的张数）。
 - **窄屏**：第一行「返回 + 项目名 + ⚙」，第二行 tab 横向滚动；头像堆叠紧凑保留。
 - **右栏**：项目组会话不渲染 `RightPanel`，右栏只服务单聊；`shell.rightPanelCollapsed` 等右栏状态对项目组无意义。
 

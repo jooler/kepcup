@@ -1,5 +1,6 @@
 # P3 · 卡片弹框与收口：详情弹框、对话区、徽标、通知深链、e2e、文档同步
 
+> 状态：**已实施**（2026-10-26）。
 > 设计 WP：**WP4 + WP5**。依赖：**P2 已合入**（`ChatSession`、`card` 会话、`BoardService` 执行方法、`board.summary`）。分支：`feat/board/p3-card-dialog`。
 > 先读 [README.md](README.md) §1、§4；设计依据 [docs/design/50-project-board.md](../../docs/design/50-project-board.md) §6.4（状态派生与操作）、§9.1（外壳集成）、§9.4（卡面）、§9.8（弹框）、§10、§13、§14；前两阶段的实施记录（[P1](P1-board-skeleton.md) §7、[P2](P2-card-conversation.md) §11）。
 
@@ -167,4 +168,14 @@ pnpm test      # 最终交付前跑一次全量；失败集合不得超出基线
 
 ## 8. 实施记录
 
-（执行智能体在最后一个提交里填写：`askUser` 徽标的数据来源；`todos.get` 对看板事项的核对结论；免打扰提示是否实现；`chat.select` 兜底的取会话路径；新增的非 README §4 名字；DEVIATIONS 编号；全量测试结果与基线对比。）
+- **`askUser`**：`BoardCard.task.awaitingInput`。P2 投影原先只有 `running` / `queued` / `queueReason`；本阶段在同一对象上加了这个布尔值（任一活跃任务 `awaitingInput` 即为真）。没有活跃任务时 `task` 仍是 `null`，徽标为假。
+- **`todos.get`**：读路径，不经过 `BOARD_MANAGED`。看板事项可以取回 `runs`。弹框的执行记录用它。
+- **免打扰**：未做选中时的预判。免打扰窗口在 Bot 画像 `behavior.quiet_hours`，设置目录里没有可读条目。排期成功后服务返回的说明走 toast；`BOARD_CRON_TOO_FREQUENT` 留在时间弹层里。
+- **`chat.select`**：`ChatSession.open` 第一步就是 `conversations.get`。拿到行之后若 `type === 'card'`，`afterResolved` 返回 `'stop'`，不装进主会话、不拉消息；然后 `shell.openBoardCard(parentProjectId, cardTodoId)`。`get` 抛错则不继续选中。主进程 `showConversation` 在 `conversations.kind` 抛错时不发 `navigate-conversation`；成功（含 card）才发给渲染层，由这次 `select` 接住。
+- **`board.summary`**：只加总 `read_only = 0` 的卡片会话。只读历史的未读没有界面可清，计进去会让 tab 徽标撒谎。卡面未读仍是该卡打开中的 `unreadCount`。有集成测试。
+- **移出执行成员后的弹框**：指派被清空，打开中的会话 id 变成 `null`，弹框是未指派空态，受阻原因在卡面和状态 chip 上。只读的旧会话不在弹框里重开（历史执行成员对话仍是 backlog）。
+- **新增名字（README §4 没有的）**：`deriveCardStatus`、`deriveCardBadges`、`primaryActions`、`BoardAction`、`shell.openBoardCard`、`board.watchSummary`、`board.mutateCard`、`board.noteCardRead`、`boardTabBadge`、`ChatSession.open` 的 `markOnOpen` 与 `afterResolved` 的 `'stop'`、`listActiveForConversationScope`、`BoardCard.task.awaitingInput`、testid `board-dialog-tabs` / `board-dialog-tab-detail` / `board-dialog-tab-chat` / `board-dialog-tab-unread` / `board-dialog-when-popover` / `board-dialog-when-save` / `board-dialog-when-clear` / `board-dialog-when-error` / `board-dialog-action-*` / `board-card-approval` / `board-card-ask-user` / `board-card-blocked` / `project-tab-badge-board` / `project-delete-board-count`。
+- **DEVIATIONS**：沿用 DEV-045 / DEV-046 / DEV-047，没有新编号。三者状态已是「已落实」。`board.cards.reject` 仍未绑定。
+- **全量测试**：`pnpm test` 6425 通过 / 21 失败 / 44 跳过（610 个文件里 6 个失败）。21 例全部是沙箱基线（没有 bubblewrap / socat），与 P2 的 21 例同一集合。通过数比 P2 的 6393 多，是这三阶段新增的用例。`pnpm --filter @kepcup/desktop typecheck` 通过。`pnpm lint` 失败在既有文件，本阶段文件没有新增 lint 报错。
+
+e2e（`DISPLAY=:1`，本阶段构建）：`project-board.spec.ts` 两条（P1 骨架 + ⑧–⑯）与 `project-shell.spec.ts` 通过。其余收口清单里 `approvals`、`direct-chat`、`narrow-layout`、`project-wiki`、`schedules`、`tasks` 全过；`project-chat` 的引用按钮、`workbench` 的两条「排期保存后 `todo-drawer` 仍开着」失败，与 P1 / P2 已记录的基线相同，没有改那些 spec。37 例里 34 过、3 失败。
