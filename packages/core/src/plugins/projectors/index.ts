@@ -71,3 +71,41 @@ export interface PluginProjector<T = unknown> {
 
 /** Fixed order: skills and MCP first, then connectors and mail; uninstall / rollback reverse it. */
 export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = ['skill', 'mcp', 'connector', 'mail'];
+
+// --- barrel -------------------------------------------------------------------
+// The concrete projectors are imported below (runtime values), so this file cannot be
+// imported by them at runtime — they only take types from here (erased at build time).
+
+import { ConnectorsProjector, type ConnectorsProjectorDeps } from './connectors.js';
+import { MailProjector, type MailProjectorDeps } from './mail.js';
+import { McpProjector, type PluginMcpDeps } from './mcp.js';
+import { SkillsProjector, type SkillsProjectorDeps } from './skills.js';
+
+export type {
+  ConnectorsProjectorDeps,
+  MailProjectorDeps,
+  PluginMcpDeps,
+  SkillsProjectorDeps,
+};
+
+/** Dependencies for the fixed-order projector set (`start.ts` wires them once). */
+export interface PluginProjectorsDeps {
+  skills: SkillsProjectorDeps;
+  mcp: PluginMcpDeps;
+  connectors: ConnectorsProjectorDeps;
+  mail?: MailProjectorDeps | undefined;
+}
+
+/**
+ * Builds one projector per contribution kind in {@link PLUGIN_PROJECTOR_ORDER}.
+ * The coverage test asserts this set stays exhaustive: a new contribution kind in
+ * `pluginContributionKindSchema` without a projector fails the test.
+ */
+export function createPluginProjectors(deps: PluginProjectorsDeps): readonly PluginProjector[] {
+  return [
+    new SkillsProjector(deps.skills),
+    new McpProjector(deps.mcp),
+    new ConnectorsProjector(deps.connectors),
+    new MailProjector(deps.mail ?? {}),
+  ];
+}
