@@ -82,7 +82,7 @@ kepcup/
         workdir/               # 写入租约、检查点、保护规则、workdir 上下文
         wiki/                  # Wiki 引擎：所有者泛化（bot | project）、来源台账、项目级索引（index-store.ts，projects/{id}/wiki.db）、入库 / 体检 / 删除来源 job
         memory/                # 记忆、用户画像、检索、向量服务、各后台 loop 的业务逻辑
-        wiki/  skills/  env/  browser/  usage/  schedule/
+        wiki/  skills/  env/  browser/  usage/  schedule/  plugins/
       migrations/
         main/NNNN_name.sql
         runs/NNNN_name.sql
