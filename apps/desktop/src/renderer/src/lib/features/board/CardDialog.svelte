@@ -173,6 +173,9 @@
       }}
       {onEscapeKeydown}
     >
+      <!-- 按钮压在弹框与遮罩上，用不透明底色：macOS 原生 vibrancy 下 DOM
+           backdrop-filter 的合成不可靠（同 dialog-overlay.svelte 的理由），
+           模糊层会露出未模糊的内容。禁用态也不透明，靠浅底与弱化文字区分。 -->
       <div
         class="absolute left-0 z-[70] flex items-center gap-1"
         class:hidden={navTop === null}
@@ -182,6 +185,7 @@
         <Button
           variant="secondary"
           size="sm"
+          class="border-border/60 bg-popover hover:bg-muted disabled:border-border/40 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
           disabled={neighbors.prev === null}
           onclick={() => {
             const prev = neighbors.prev;
@@ -194,6 +198,7 @@
         <Button
           variant="secondary"
           size="sm"
+          class="border-border/60 bg-popover hover:bg-muted disabled:border-border/40 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
           disabled={neighbors.next === null}
           onclick={() => {
             const next = neighbors.next;
