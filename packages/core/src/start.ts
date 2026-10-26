@@ -2367,6 +2367,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         dispatchUpdate: (input) => orchestrator.dispatchWorkbenchUpdate(input),
         hasTurnModel: (botId) => orchestrator.hasTurnModel(botId),
       },
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       publish: publishEvent,
       timers: options.timers ?? realTimerScheduler,
       boardCards: boardStore,

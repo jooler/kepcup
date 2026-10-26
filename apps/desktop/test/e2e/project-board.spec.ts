@@ -529,19 +529,23 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     const dialog = page.locator('[data-testid="board-dialog"]');
     await expect(dialog).toBeVisible();
     await dialog.locator('[data-testid="board-dialog-executor"]').click();
-    await dialog.getByRole('menuitem', { name: '阿乙' }).click();
+    await page.getByRole('menuitem', { name: '阿乙' }).click();
     await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText('待开始');
     await dialog.locator('[data-testid="board-dialog-when"]').click();
-    await dialog.locator('[data-testid="todo-when-once"]').click();
-    await dialog.locator('[data-testid="todo-when-once-input"]').fill('2099-06-01T09:00');
-    await dialog.locator('[data-testid="board-dialog-when-save"]').click();
+    // The popover is portal'd to body so the dialog's scroll box cannot clip it.
+    const whenPopover = page.locator('[data-testid="board-dialog-when-popover"]');
+    await whenPopover.locator('[data-testid="todo-when-once"]').click();
+    await whenPopover.locator('[data-testid="todo-when-once-input"]').fill('2099-06-01T09:00');
+    await whenPopover.locator('[data-testid="board-dialog-when-save"]').click();
     await expect(dialog.locator('[data-testid="board-dialog-when"]')).not.toContainText('未设置');
     await dialog.locator('[data-testid="board-dialog-close"]').click();
     await expect(dialog).toHaveCount(0);
 
     await page.locator('[data-testid="project-settings-button"]').click();
     await page.locator('[data-testid="project-settings-nav-schedules"]').click();
-    const schedule = page.locator('[data-testid="project-schedules"] [data-testid^="schedule-item-"]');
+    const schedule = page.locator(
+      '[data-testid="project-schedules"] [data-testid^="schedule-item-"]',
+    );
     await expect(schedule).toBeVisible({ timeout: 15_000 });
     await expect(schedule.locator('[data-testid="schedule-workbench"]')).toHaveText('工作台');
     await expect(schedule.locator('[data-testid="schedule-title"]')).toContainText('写一句问候');
@@ -586,9 +590,12 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     await cardComposer.click();
     await cardComposer.pressSequentially('直接问一句');
     await cardComposer.press('ControlOrMeta+Enter');
-    await expect(dialog.locator('[data-testid="bot-bubble"]').last()).toContainText('卡片里的回答', {
-      timeout: 30_000,
-    });
+    await expect(dialog.locator('[data-testid="bot-bubble"]').last()).toContainText(
+      '卡片里的回答',
+      {
+        timeout: 30_000,
+      },
+    );
     const cardConversationId = await dialog
       .locator('[data-testid="board-dialog-chat"]')
       .getAttribute('data-conversation-id');
@@ -606,7 +613,7 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
 
     // ⑪ A new assignee gets a new thread. Clearing the assignee shows the empty state.
     await dialog.locator('[data-testid="board-dialog-executor"]').click();
-    await dialog.getByRole('menuitem', { name: '阿甲' }).click();
+    await page.getByRole('menuitem', { name: '阿甲' }).click();
     await expect(dialog.locator('[data-testid="bot-bubble"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="board-dialog-chat"]')).not.toContainText(
       '卡片里的回答',
@@ -616,12 +623,12 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
       .getAttribute('data-conversation-id');
     expect(reassignedId).not.toBe(cardConversationId);
     await dialog.locator('[data-testid="board-dialog-executor"]').click();
-    await dialog.locator('[data-testid="board-dialog-executor-none"]').click();
+    await page.locator('[data-testid="board-dialog-executor-none"]').click();
     await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
       '指派一位成员后',
     );
     await dialog.locator('[data-testid="board-dialog-executor"]').click();
-    await dialog.getByRole('menuitem', { name: '阿乙' }).click();
+    await page.getByRole('menuitem', { name: '阿乙' }).click();
     await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText('卡片里的回答');
 
     // ⑩ and ⑫ Approval in the dialog, tab and face badges, task page inside the dialog.

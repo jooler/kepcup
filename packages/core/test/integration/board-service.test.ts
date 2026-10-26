@@ -277,9 +277,9 @@ describe('BoardService', () => {
     expect(boardEvents).toEqual([{ projectId, cardId: card.id, columnId }]);
     expect(todoEvents).toEqual([]);
     expect(inTransaction).toBe(false);
-    expect(
-      db.prepare('select notes from todos where id = ?').get(card.id),
-    ).toEqual({ notes: 'one more' });
+    expect(db.prepare('select notes from todos where id = ?').get(card.id)).toEqual({
+      notes: 'one more',
+    });
 
     boardEvents.length = 0;
     await board().deleteCard(card.id, 'user');
@@ -362,6 +362,33 @@ describe('BoardService', () => {
     const empty = await freshProject('titles-seed');
     expect(codeOf(() => board().get(empty, ['Todo', 'a\u0000b'], 'user'))).toBe('INVALID_INPUT');
     expect(board().get(empty, undefined, 'user').columns).toEqual([]);
+  });
+
+  it('sets a time before an assignee, then schedules once one is assigned', async () => {
+    const projectId = await freshProject('time-first');
+    const columnId = board().get(projectId, ['Todo'], 'user').columns[0]!.id;
+    const card = board().createCard(projectId, columnId, 'later', undefined, 'user');
+    const when = '2099-06-01T09:00';
+
+    const pending = board().schedule(card.id, when, 'user').card;
+    expect(pending.todo.assignee).toBeNull();
+    expect(pending.todo.status).toBe('draft');
+    expect(pending.todo.schedule).toMatchObject({ kind: 'once', runAt: Date.parse(when) });
+    const pendingRow = () =>
+      stack.core.services
+        .mainDb!.prepare('select pending_when from todos where id = ?')
+        .get(card.id);
+    expect(pendingRow()).toEqual({ pending_when: when });
+
+    const assigned = board().assign(card.id, members[0]!, 'user').card;
+    expect(assigned.todo.status).toBe('scheduled');
+    expect(assigned.todo.schedule).toMatchObject({ kind: 'once', runAt: Date.parse(when) });
+    expect(pendingRow()).toEqual({ pending_when: null });
+    expect(
+      stack.core.services
+        .mainDb!.prepare('select count(*) as n from schedules where todo_id = ?')
+        .get(card.id),
+    ).toEqual({ n: 1 });
   });
 
   it('lifecycle.deleteConversation purges board todos, side rows, and columns', async () => {

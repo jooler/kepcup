@@ -81,10 +81,11 @@ rg -n "listActiveForConversation|'schedules.list'" packages/core/src | head
 - **已读**：弹框可见且窗口聚焦时对当前 session `markRead()`；更新 `board` 里该卡的 `unreadCount`。
 - testid `board-dialog-chat`。**测试**：e2e（步骤 11）。
 
-### 步骤 7：下工具栏——时间、状态与主操作
+### 步骤 7：详情字段——时间、状态与主操作
 
-- `CardStatusBar.svelte`：chip 行（`text-xs`）：时间 chip（`board-dialog-when`，点开 `CardWhenPopover`）、状态 chip（`board-dialog-status`，`deriveCardStatus`）、「下次 {time}」（有排期）、创建 / 更新时间；最右主操作区（`board-dialog-action`）按设计 §6.4 表：已指派未开始 → 开始执行（`board.cards.start`）；已排期 → 改期、周期卡「立即执行一次」（`start`，保留周期）、清除时间（`schedule(null)`）；进行中 → 取消执行（**行内二次确认**，仿 `SchedulesPanel` 的两步取消）；待验收 → **验收完成**（`complete`）、取消；已完成 / 已取消 → 重新打开（`reopen`）。成功 / 失败都经 toast（`errorText`）。
-- `CardWhenPopover.svelte`：手写弹层，内嵌 **`WhenPicker`**（`bind:draft`）+「保存 / 清除」；用 `when-presets.ts` 的 `draftFromSchedule` / `whenFromDraft` / `sameWhen` / `nextFireOfPreset`；无指派时时间 chip 置灰并提示 `board.dialog.when.needAssignee`；锁定态（进行中 / 待验收 / 已关闭）置灰；保存 → `board.cards.schedule`，`BOARD_CRON_TOO_FREQUENT` 等错误就地显示。「免打扰时段提示」：**由你判断**——仅当设置里已有可读取的免打扰时段入口时，在选到该时段时给一行提示（D90 风险项），否则不做并写进实施记录。
+- `CardDetails.svelte` + `CardActions.svelte`：详情字段行（状态 / 执行者 / 执行时间）。主操作抽成 `CardActions`，详情行与窄屏「对话」tab 顶部共用（对话 tab 不显示改期，时间气泡在详情侧）；状态 chip（`board-dialog-status`，`deriveCardStatus`；未指派但先定了时间显示「待指派 · 时间」）+ 创建时间；主操作区（`board-dialog-action`）按设计 §6.4 表：已指派未开始 → 开始执行（`board.cards.start`）；已排期 → 改期、周期卡「立即执行一次」（`start`，保留周期）、清除时间（`schedule(null)`）；未指派但有待定时间 → 清除时间；进行中 → 取消执行（**行内二次确认**，仿 `SchedulesPanel` 的两步取消）；待验收 → **验收完成**（`complete`）、取消；已完成 / 已取消 → 重新打开（`reopen`）。成功 / 失败都经 toast（`errorText`）。执行者菜单用 portaled DropdownMenu。
+- `CardWhenPopover.svelte`：portaled Popover（不受弹框滚动容器裁剪）。菜单三项「现在 / 某时 / 重复」：现在直接 `board.cards.schedule('now')`（需要执行者，否则禁用并提示 `board.dialog.when.needAssignee`）；后两项把内容切成 `WhenFields` 的对应字段（某时 / 重复），带回退、保存、清除。用 `when-presets.ts` 的 `draftFromSchedule` / `whenFromDraft` / `nextFireOfPreset`；锁定态（进行中 / 待验收 / 已关闭）置灰；`BOARD_CRON_TOO_FREQUENT` 等错误就地显示。「免打扰时段提示」：**由你判断**——仅当设置里已有可读取的免打扰时段入口时，在选到该时段时给一行提示（D90 风险项），否则不做并写进实施记录。
+- 上一条 / 下一条：始终显示，越界时禁用；放在 `Dialog.Content` 内、绝对定位到左上角外侧，确保焦点作用域与点击都可用。
 - **测试**：`board-model.test.ts` 里 `primaryActions(card)`（状态 → 可用操作清单，纯逻辑）全表。
 
 ### 步骤 8：`DispatchCard`、tab 徽标、项目详情页对接
@@ -139,7 +140,7 @@ rg -n "listActiveForConversation|'schedules.list'" packages/core/src | head
 
 - [ ] 弹框三段结构与设计 §9.8 一致；窄容器（< 760）为「详情 / 对话」tab；Esc / 焦点 / 补存行为正确。
 - [ ] 执行成员菜单只列项目里 active 非管家 Bot，用户不在其中；锁定态置灰并提示。
-- [ ] 时间 / 周期经 `WhenPicker` 设置，无指派 / 锁定时置灰；cron 过密有就地错误；排期出现在项目详情「定时与监看」。
+- [ ] 时间 / 周期经 `CardWhenPopover`（菜单 现在 / 某时 / 重复，字段体复用 `WhenFields`）设置；未指派可先定某时 / 重复，「现在」需先指派；锁定时置灰；cron 过密有就地错误；排期出现在项目详情「定时与监看」。
 - [ ] 右栏是真正的单聊组件（消息、审批坞、状态行、Composer、只读横幅），绑定卡片会话；弹框内任务过程页可进可返；与该 Bot 单聊互不串。
 - [ ] 状态派生与页脚 / 徽标与设计 §6.4 一致；待验收需手动「验收完成」；周期卡显示最近一次执行状态。
 - [ ] 看板 tab 徽标在用户处于沟通 / Wiki tab 时仍会提示未读与待审批；通知点击与所有 `chat.select(cardConversationId)` 路径都落到卡片弹框，卡片会话永不被侧栏选中。

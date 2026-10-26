@@ -29,6 +29,7 @@ function todo(id: string, patch: Partial<TodoEntry> = {}): TodoEntry {
     source: 'user',
     memoId: null,
     blockedReason: null,
+    pendingWhen: null,
     createdAt: 1,
     updatedAt: 1,
     closedAt: null,

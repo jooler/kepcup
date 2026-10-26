@@ -1,4 +1,9 @@
-import { describeInstant, describeScheduleWhen, type BoardCard, type BoardColumn } from '@kepcup/shared';
+import {
+  describeInstant,
+  describeScheduleWhen,
+  type BoardCard,
+  type BoardColumn,
+} from '@kepcup/shared';
 import { blockedNotice, effectiveStatus } from '../workbench/workbench-model';
 
 /**
@@ -9,6 +14,7 @@ import { blockedNotice, effectiveStatus } from '../workbench/workbench-model';
 
 export type CardStatusKey =
   | 'idle'
+  | 'pending'
   | 'scheduled'
   | 'queued'
   | 'running'
@@ -64,19 +70,28 @@ function status(
 }
 
 /**
- * Display status. Unassigned cards are blank, except a draft that was sent
- * back with a blocked reason (the executor left). A cron card stays
- * `scheduled`; the latest run is folded in through `effectiveStatus`.
+ * Display status. An unassigned card is blank unless it carries a time set
+ * before assignment (`pendingWhen`): that reads as 「待指派 · <time>」 so the
+ * intent stays visible on the board. A draft sent back with a blocked reason
+ * (the executor left) wins. A cron card stays `scheduled`; the latest run is
+ * folded in through `effectiveStatus`.
  */
-export function deriveCardStatus(
-  card: BoardCard,
-  clock?: Partial<CardClock>,
-): CardStatus | null {
+export function deriveCardStatus(card: BoardCard, clock?: Partial<CardClock>): CardStatus | null {
   const notice = blockedNotice(card.todo);
   if (card.todo.status === 'draft' && notice !== null) {
     return status('blocked', 'amber', { reason: notice.reason });
   }
-  if (card.todo.assignee === null) return null;
+  const schedule = card.todo.schedule;
+  if (card.todo.assignee === null) {
+    if (schedule === null) return null;
+    const resolved = clockOf(clock);
+    return status('pending', 'sky', {
+      when: describeScheduleWhen(schedule, {
+        localTimeZone: resolved.timeZone,
+        now: resolved.now,
+      }),
+    });
+  }
   const effective = effectiveStatus(card.todo);
   if (effective === 'in_progress' && (card.task?.queued ?? 0) > 0) {
     return status('queued', 'amber', { reason: card.task?.queueReason ?? '' });
@@ -87,8 +102,7 @@ export function deriveCardStatus(
     case 'scheduled': {
       const at = card.todo.schedule?.nextFireAt;
       const zone = card.todo.schedule?.timezone ?? clockOf(clock).timeZone;
-      const time =
-        typeof at === 'number' ? describeInstant(at, zone, clockOf(clock).now) : '';
+      const time = typeof at === 'number' ? describeInstant(at, zone, clockOf(clock).now) : '';
       return status('scheduled', 'sky', { time });
     }
     case 'in_progress':
@@ -121,13 +135,7 @@ export function deriveCardBadges(card: BoardCard): CardBadges {
  * shown separately). Reopen does not need an assignee.
  */
 export type BoardAction =
-  | 'start'
-  | 'reschedule'
-  | 'runOnce'
-  | 'clearWhen'
-  | 'cancel'
-  | 'accept'
-  | 'reopen';
+  'start' | 'reschedule' | 'runOnce' | 'clearWhen' | 'cancel' | 'accept' | 'reopen';
 
 /**
  * What one Esc does inside the card dialog. An approval card (or any control
@@ -148,9 +156,22 @@ export function dialogEscapeAction(input: {
   return 'close';
 }
 
+/** Running, waiting for review, or closed: the executor and the time are frozen. */
+export function isCardLocked(card: BoardCard): boolean {
+  return (
+    card.todo.status === 'in_progress' ||
+    card.todo.status === 'delivered' ||
+    card.todo.status === 'done' ||
+    card.todo.status === 'cancelled'
+  );
+}
+
 export function primaryActions(card: BoardCard): BoardAction[] {
   if (card.todo.status === 'done' || card.todo.status === 'cancelled') return ['reopen'];
-  if (card.todo.assignee === null) return [];
+  if (card.todo.assignee === null) {
+    // A time set before assignment can still be cleared; nothing can be run yet.
+    return card.todo.schedule === null ? [] : ['clearWhen'];
+  }
   switch (card.todo.status) {
     case 'draft':
       return ['start'];
@@ -207,6 +228,20 @@ export function moveTargets(
   return columns
     .filter((column) => column.id !== card.columnId)
     .map((column) => ({ id: column.id, title: column.title }));
+}
+
+/**
+ * Neighbours of the open card in board display order (columns left to
+ * right, cards top to bottom). Either side is null at an edge.
+ */
+export function cardNeighbors(
+  columns: readonly { cards: readonly { id: string }[] }[],
+  cardId: string,
+): { prev: string | null; next: string | null } {
+  const ids = columns.flatMap((column) => column.cards.map((card) => card.id));
+  const index = ids.indexOf(cardId);
+  if (index < 0) return { prev: null, next: null };
+  return { prev: ids[index - 1] ?? null, next: ids[index + 1] ?? null };
 }
 
 /** Screen-reader name: the card's first non-empty line. */

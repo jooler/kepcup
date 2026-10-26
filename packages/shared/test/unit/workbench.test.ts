@@ -35,6 +35,7 @@ const todo = {
   source: 'user',
   memoId: null,
   blockedReason: null,
+  pendingWhen: null,
   createdAt: 1,
   updatedAt: 1,
   closedAt: null,

@@ -81,15 +81,15 @@ describe('0051 card conversations migration', () => {
     expect(beforeIndexes).toEqual(['conversations_archived', 'conversations_one_direct_per_bot']);
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((row) => row.version)).toEqual([51]);
+    // Later migrations may follow 0051; this test only cares that 0051 ran and all are applied.
+    expect(applied.map((row) => row.version)).toContain(51);
     expect(db.pragma('user_version', { simple: true })).toBe(
       migrationTargetVersion(migrationsUrl('main')),
     );
 
-    const direct = db.prepare('select * from conversations where id = ?').get('conv_direct') as Record<
-      string,
-      unknown
-    >;
+    const direct = db
+      .prepare('select * from conversations where id = ?')
+      .get('conv_direct') as Record<string, unknown>;
     expect(direct).toMatchObject({
       id: 'conv_direct',
       type: 'direct',
@@ -108,9 +108,11 @@ describe('0051 card conversations migration', () => {
       card_todo_id: null,
     });
     expect(
-      db.prepare('select id, type, archived_at, parent_project_id, card_todo_id from conversations where id = ?').get(
-        'conv_archived',
-      ),
+      db
+        .prepare(
+          'select id, type, archived_at, parent_project_id, card_todo_id from conversations where id = ?',
+        )
+        .get('conv_archived'),
     ).toEqual({
       id: 'conv_archived',
       type: 'direct',
@@ -133,7 +135,9 @@ describe('0051 card conversations migration', () => {
       parent_project_id: null,
       card_todo_id: null,
     });
-    expect(db.prepare('select id from messages where conversation_id = ?').get('conv_direct')).toEqual({
+    expect(
+      db.prepare('select id from messages where conversation_id = ?').get('conv_direct'),
+    ).toEqual({
       id: 'msg_1',
     });
     expect(indexNames(db)).toEqual([
@@ -142,7 +146,9 @@ describe('0051 card conversations migration', () => {
       'conversations_one_open_per_card',
     ]);
     const triggers = db
-      .prepare("select name from sqlite_master where type = 'trigger' and tbl_name = 'conversations'")
+      .prepare(
+        "select name from sqlite_master where type = 'trigger' and tbl_name = 'conversations'",
+      )
       .all();
     expect(triggers).toEqual([]);
 
@@ -177,7 +183,9 @@ describe('0051 card conversations migration', () => {
     expect(() =>
       insert.run('conv_direct_bad', 'direct', 'bot_a', null, 'conv_project', 'todo_1'),
     ).toThrow();
-    expect(() => insert.run('conv_direct_one', 'direct', 'bot_a', null, 'conv_project', null)).toThrow();
+    expect(() =>
+      insert.run('conv_direct_one', 'direct', 'bot_a', null, 'conv_project', null),
+    ).toThrow();
     expect(() =>
       insert.run('conv_project_bad', 'project', null, 'bot_a', 'conv_project', 'todo_2'),
     ).toThrow();
@@ -186,9 +194,11 @@ describe('0051 card conversations migration', () => {
     ).toThrow();
 
     expect(
-      db.prepare('select type, parent_project_id, card_todo_id, direct_bot_id from conversations where id = ?').get(
-        'conv_card',
-      ),
+      db
+        .prepare(
+          'select type, parent_project_id, card_todo_id, direct_bot_id from conversations where id = ?',
+        )
+        .get('conv_card'),
     ).toEqual({
       type: 'card',
       parent_project_id: 'conv_project',

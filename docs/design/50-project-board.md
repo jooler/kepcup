@@ -57,7 +57,7 @@
 | 方面 | 现状 |
 |---|---|
 | 模块框架 | `PROJECT_MODULES` 里 `board` 为 `status:'planned'`、`write:'lead'`（`packages/shared/src/domain/project-modules.ts`）；`ProjectTabs` 只渲染 `available`；`ProjectView` 对非 chat / wiki / settings 回落 `ModulePlaceholder`；`shell.openProjectModule` 忽略 `planned`。注册表顺序为 chat、wiki、board，与 41 §11.2 示意图的「沟通 看板 Wiki」不一致 |
-| 事项（D90） | `todos` / `todo_runs` + `TodoService`：状态机 `draft → scheduled → in_progress → delivered → done`（另 `cancelled`）；「有时间 ⇒ 必有执行者」「有排期 ⇔ 存在 `todo_id` 指向它的 active schedule」；派发 = 目标对话里一条可见用户消息（`textContent.origin='workbench'` + `todoId` / `todoRunId`）；交付追踪、对账、事项更新通知（10 秒去抖）；**全局、无项目作用域、无排序**；已关闭 7 天后默认不出列表 |
+| 事项（D90） | `todos` / `todo_runs` + `TodoService`：状态机 `draft → scheduled → in_progress → delivered → done`（另 `cancelled`）；「有时间 ⇔ 存在 active schedule 或 `pending_when`（未指派先定时间）」「active schedule 一定有执行者」；派发 = 目标对话里一条可见用户消息（`textContent.origin='workbench'` + `todoId` / `todoRunId`）；交付追踪、对账、事项更新通知（10 秒去抖）；**全局、无项目作用域、无排序**；已关闭 7 天后默认不出列表 |
 | 计划任务 | `schedules`：`once` / `cron`；`createForTodo` 不走 Bot 成员 / 主动消息护栏；`reschedule` 原地改期；到点 `#fireWorkbench → dispatchScheduled`；错过补发（`catchUpMissed`）；改派 = 取消旧排期在新对话重建 |
 | 时间界面 | `WhenPicker` + `when-presets.ts` + `describe.ts`：不定 / 立即 / 某时 / 重复（每天 / 工作日 / 每周几 / 每月几号 + 时刻），纯逻辑已有单测 |
 | 会话 | `conversations.type ∈ {direct, project}`（CHECK）；单聊唯一索引每 Bot 一条未只读；`conversations.list` 无类型过滤；每次消息 / run 变化发 `conversation.updated`，渲染层盲 upsert 进侧栏 |
@@ -464,7 +464,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 - **上工具栏**：左「任务详情」`text-sm font-medium`；右侧执行成员头像（点开 §6.1 的成员菜单；无指派显示虚线圆形「＋」）+ 关闭。
 - **左栏上方**：文本卡片（`InlineEditable`，多行，同卡面字号），始终可编辑。左栏下方：**执行记录**（`todo_runs`：派发时间、状态、「›」跳到对话里那条结果消息），无记录时不渲染。
 - **右栏**：卡片对话（§11 的 `ChatSession(cardConversationId)`）——消息列表、审批坞、状态行、Composer、只读横幅都是单聊现有组件。未指派且没有可打开的对话：居中一行说明「指派一位成员后，可在这里就这张卡片与 TA 沟通」。用户主动取消指派走这行空态（会话只读保留，不在弹框里重开）。执行成员被移出或 Bot 被删（`blocked_reason`）：右栏重开最近一条只读卡片对话，沿用只读横幅，不把它显示成可写对话；更早的执行成员对话仍不能切换。已指派未发过消息：Composer 占位「就这张卡片与 {名字} 沟通…」。弹框内点任务卡，在右栏显示 `TaskRunView`（带返回），不替换主区。Esc 时审批卡和输入框先消费，打开的任务过程页先回到对话，然后才关弹框。
-- **下工具栏**（metadata，同时是入口）：时间 chip（点开手写弹层 `CardWhenPopover`，内为 `WhenPicker`；无指派时置灰并提示「先指派执行成员」）；状态 chip；「下次」；创建 / 更新时间；最右主操作（§6.4 表）。
+- **详情字段**（metadata，同时是入口）：状态（`deriveCardStatus`；未指派但先定了时间显示「待指派 · 时间」）、执行者菜单、执行时间（`CardWhenPopover`：菜单「现在 / 某时 / 重复」，点开后两项切到对应字段；「现在」需要先有执行者）、「下次」、创建时间；主操作（§6.4 表）跟在状态行右侧。时间不再要求先指派：未指派先定的时间停在 `pendingWhen`，指派后自动落成排期。
 - **窄容器**（弹框宽 < 760px）：中部改为「详情 / 对话」两个 tab，tab 上带未读点。
 - **焦点与键盘**：打开时焦点在弹框容器（不抢文本光标）；Esc 关闭（输入框与审批卡内 Esc 先被它们消费）；关闭前补存文本。
 - **弹框外**：沿用 `inert` 处理背景。
