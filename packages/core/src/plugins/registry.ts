@@ -120,12 +120,14 @@ export class PluginRegistry {
       this.#deps.logger.info({ recovered }, 'plugin registry recovered interrupted rows');
     }
     for (const row of this.#deps.store.list()) {
-      if (row.state !== 'installed' || !row.enabled) continue;
+      if (row.state !== 'installed') continue;
       const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
       if (manifest === null) {
-        this.#deps.logger.warn({ plugin: row.id }, 'plugin activate skipped: manifest unreadable');
+        this.#deps.logger.warn({ plugin: row.id }, 'plugin startup skipped: manifest unreadable');
         continue;
       }
+      // Disabled rows only needed the manifest for the summary list; nothing to activate.
+      if (!row.enabled) continue;
       const ctx = await this.#contextFor(row, manifest, {});
       for (const projector of this.#deps.projectors) {
         if (projector.activate === undefined) continue;
