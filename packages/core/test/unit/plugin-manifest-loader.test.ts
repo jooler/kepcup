@@ -229,19 +229,39 @@ describe('verifyContributionFiles', () => {
     await expectCode(verifyContributionFiles(manifest, dir), 'PLUGIN_INVALID', /符号链接/);
   });
 
-  it.skipIf(process.platform === 'win32')('rejects a realpath escape through a symlinked parent', async () => {
-    const outside = await tmp();
-    const realSkill = path.join(outside, 'real-docx');
-    await mkdir(realSkill, { recursive: true });
-    await writeFile(path.join(realSkill, 'SKILL.md'), '---\nname: docx\n---\n');
-    const dir = await tmp();
-    await writeLayout(dir, layout);
-    await rm(path.join(dir, 'skills', 'docx'), { recursive: true });
-    await symlink(realSkill, path.join(dir, 'skills', 'docx'));
-    await expectCode(
-      verifyContributionFiles(manifest, dir),
-      'PLUGIN_INVALID',
-      /skills\/docx/,
-    );
-  });
+  it.skipIf(process.platform === 'win32')(
+    'rejects a realpath escape through a symlinked parent',
+    async () => {
+      const outside = await tmp();
+      const realSkill = path.join(outside, 'real-docx');
+      await mkdir(realSkill, { recursive: true });
+      await writeFile(path.join(realSkill, 'SKILL.md'), '---\nname: docx\n---\n');
+      const dir = await tmp();
+      await writeLayout(dir, layout);
+      await rm(path.join(dir, 'skills', 'docx'), { recursive: true });
+      await symlink(realSkill, path.join(dir, 'skills', 'docx'));
+      await expectCode(verifyContributionFiles(manifest, dir), 'PLUGIN_INVALID', /skills\/docx/);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a contribution reached through a symlinked ancestor (realpath containment)',
+    async () => {
+      // The symlink sits above the contribution itself: lstat(`skills/docx`) sees a real
+      // directory, so only the realpath containment check can catch the escape.
+      const outside = await tmp();
+      const realSkills = path.join(outside, 'real-skills');
+      await mkdir(path.join(realSkills, 'docx'), { recursive: true });
+      await writeFile(path.join(realSkills, 'docx', 'SKILL.md'), '---\nname: docx\n---\n');
+      const dir = await tmp();
+      await writeLayout(dir, layout);
+      await rm(path.join(dir, 'skills'), { recursive: true });
+      await symlink(realSkills, path.join(dir, 'skills'));
+      await expectCode(
+        verifyContributionFiles(manifest, dir),
+        'PLUGIN_INVALID',
+        /越界（符号链接逃逸）：skills\/docx/,
+      );
+    },
+  );
 });

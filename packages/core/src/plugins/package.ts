@@ -163,10 +163,7 @@ export class PluginPackager {
           platform: this.#platform,
         });
         stagingDir = await this.#extract(zip, manifest);
-        this.#deps.logger.info(
-          { source: filePath, sha256, size },
-          'plugin package staged',
-        );
+        this.#deps.logger.info({ source: filePath, sha256, size }, 'plugin package staged');
         return {
           manifest,
           stagingDir,
@@ -259,7 +256,13 @@ export class PluginPackager {
         await copyFile(absolute, target);
         const mode = (info.mode & 0o111) !== 0 ? 0o755 : 0o644;
         await chmod(target, mode);
-        treeEntries.push(`${relative}\0${createHash('sha256').update(await readFile(absolute)).digest('hex')}`);
+        // Hash the staged copy, not the source: the source may change between copyFile and
+        // hashing, and `packageSha256` must bind the bytes that are actually staged.
+        treeEntries.push(
+          `${relative}\0${createHash('sha256')
+            .update(await readFile(target))
+            .digest('hex')}`,
+        );
       };
       await walk('');
 

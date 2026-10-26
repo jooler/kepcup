@@ -59,7 +59,10 @@ describe('plugin manifest schema', () => {
 
   it('rejects an empty contributions set', () => {
     expect(() =>
-      parse({ ...minimalManifest, contributions: { skills: [], connectors: [], mcp: [], mail: [] } }),
+      parse({
+        ...minimalManifest,
+        contributions: { skills: [], connectors: [], mcp: [], mail: [] },
+      }),
     ).toThrow(/至少要包含一类贡献/);
   });
 
@@ -120,12 +123,43 @@ describe('plugin manifest schema', () => {
           connectors: [],
           mcp: [],
           mail: [
-            { id: 'fast', label: 'Fast', imap: { host: 'i', port: 993, secure: 'ssl' }, smtp: { host: 's', port: 465, secure: 'ssl' } },
-            { id: 'FAST', label: 'Fast', imap: { host: 'i', port: 993, secure: 'ssl' }, smtp: { host: 's', port: 465, secure: 'ssl' } },
+            {
+              id: 'fast',
+              label: 'Fast',
+              imap: { host: 'i', port: 993, secure: 'ssl' },
+              smtp: { host: 's', port: 465, secure: 'ssl' },
+            },
+            {
+              id: 'FAST',
+              label: 'Fast',
+              imap: { host: 'i', port: 993, secure: 'ssl' },
+              smtp: { host: 's', port: 465, secure: 'ssl' },
+            },
           ],
         },
       }),
     ).toThrow(/重复项/);
+  });
+
+  it('points the mcpb-file duplicate issue at the index in the full mcp array', () => {
+    const result = pluginManifestSchema.safeParse({
+      ...minimalManifest,
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [
+          { kind: 'http', id: 'docs', url: 'https://mcp.example.com/mcp' },
+          { kind: 'mcpb', id: 'a', file: 'mcp/x.mcpb' },
+          { kind: 'mcpb', id: 'b', file: 'mcp/X.mcpb' },
+        ],
+        mail: [],
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The index must be the position inside `mcp` (2), not inside the mcpb-only subset (1).
+      expect(result.error.issues[0]?.path).toEqual(['contributions', 'mcp', 2, 'file']);
+    }
   });
 
   it('rejects a non-URL http contribution and a non-mcpb file', () => {
@@ -182,7 +216,9 @@ describe('plugin manifest schema', () => {
 
   it('rejects http (non-https) author url / homepage / helpUrl', () => {
     expect(() => parse({ ...minimalManifest, homepage: 'http://example.com' })).toThrow();
-    expect(() => parse({ ...minimalManifest, author: { name: 'A', url: 'http://a.example' } })).toThrow();
+    expect(() =>
+      parse({ ...minimalManifest, author: { name: 'A', url: 'http://a.example' } }),
+    ).toThrow();
     expect(() =>
       parse({
         ...minimalManifest,
