@@ -67,17 +67,22 @@ export interface ChatSessionHost {
 
 export interface OpenSessionOptions {
   /**
-   * After the row is resolved (and unarchived) and before messages load.
-   * `chat.select` cancels project compose and upserts the sidebar row here,
-   * which is where that work happens today.
+   * After the row is resolved and before messages load. `chat.select` cancels
+   * project compose and upserts the sidebar row here. Return `'stop'` to leave
+   * the session untouched (a card id is opened on the board instead).
    */
-  afterResolved?: (conversation: ConversationView) => void;
+  afterResolved?: (conversation: ConversationView) => void | 'stop';
   /**
    * After the view is installed and before mark-read. `chat.select` returns
    * to the chat surface here so a workbench-covered open does not mark read
    * until the conversation is actually on screen.
    */
   onReady?: (conversation: ConversationView) => void | Promise<void>;
+  /**
+   * When false, skip the mark-read at the end of `open`. A card dialog marks
+   * read only while it is visible and the window is focused.
+   */
+  markOnOpen?: boolean;
 }
 
 const PAGE_SIZE = 60;
@@ -194,13 +199,17 @@ export class ChatSession {
     };
     if (!loaded.conversation) return false;
     let conversation = loaded.conversation;
-    if (isArchivedConversation(conversation)) {
+    // Card rows are not in the sidebar. `chat.select` stops here, before any
+    // message load or unarchive, and opens the board instead.
+    if (conversation.type === 'card') {
+      if (options.afterResolved?.(conversation) === 'stop') return false;
+    } else if (isArchivedConversation(conversation)) {
       const restored = (await core.call('conversations.unarchive', { id })) as {
         conversation: ConversationView;
       };
       conversation = restored.conversation;
     }
-    options.afterResolved?.(conversation);
+    if (conversation.type !== 'card') options.afterResolved?.(conversation);
     const messages = await this.#loadLatest(id);
     const runs = (await core.call('runs.list', { conversationId: id, limit: 30 })) as {
       runs: Run[];
@@ -237,7 +246,7 @@ export class ChatSession {
     // surface up until that RPC returned.
     await options.onReady?.(conversation);
     if (conversation.type === 'project') await this.reloadMembers();
-    await this.markRead();
+    if (options.markOnOpen !== false) await this.markRead();
     await permissions.loadForConversation(id, { foreground: this.#foreground });
     return true;
   }

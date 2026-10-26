@@ -275,8 +275,18 @@ class ChatState {
 
   async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
+    // Filled when `conversations.get` (inside `open`) returns a card row.
+    // Card rows are not in `this.conversations`, so the type check has to
+    // happen on that fetched object. A thrown get does not fall through.
+    // A box, not a `let`: the assignment sits in a callback, and control-flow
+    // analysis would otherwise keep the local as `null`.
+    const cardRedirect: { conversation: ConversationView | null } = { conversation: null };
     const opened = await this.main.open(conversationId, {
       afterResolved: (conversation) => {
+        if (conversation.type === 'card') {
+          cardRedirect.conversation = conversation;
+          return 'stop';
+        }
         this.cancelProjectCompose();
         this.#upsertConversation(conversation);
       },
@@ -298,6 +308,15 @@ class ChatState {
         if (conversation.type !== 'project') await this.#startSparseInterview(conversation);
       },
     });
+    const redirected = cardRedirect.conversation;
+    if (redirected !== null) {
+      const projectId = redirected.parentProjectId;
+      const cardId = redirected.cardTodoId;
+      if (projectId !== null && cardId !== null) {
+        await shell.openBoardCard(projectId, cardId);
+      }
+      return;
+    }
     if (!opened) return;
   }
 
