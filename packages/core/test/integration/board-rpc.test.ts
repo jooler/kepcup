@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { BoardCard, BoardChangedPayload, BoardColumn } from '@kepcup/shared';
 import { createTestStack, makeBot, makeProject, type TestStack } from '@kepcup/testkit';
+import { ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
 
 /**
  * P1 board RPC methods (modeled on wiki-rpc.test.ts). Execution methods stay unbound.
@@ -8,11 +9,15 @@ import { createTestStack, makeBot, makeProject, type TestStack } from '@kepcup/t
 
 let stack: TestStack;
 let projectId: string;
+let leadId: string;
+let memberId: string;
 
 beforeAll(async () => {
   stack = await createTestStack();
   const lead = await makeBot(stack.core, 'Lead');
   const member = await makeBot(stack.core, 'Member');
+  leadId = lead.id;
+  memberId = member.id;
   projectId = (await makeProject(stack.core, 'RPC board', [lead.id, member.id])).id;
 }, 60_000);
 
@@ -35,11 +40,8 @@ function watch(): { events: BoardChangedPayload[]; stop: () => void } {
 }
 
 describe('board RPC', () => {
-  it('does not bind the P2 execution methods', () => {
+  it('binds the execution methods and leaves reject unbound', () => {
     const methods = stack.core.services.appMethods;
-    expect(methods['board.get']).toBeDefined();
-    expect(methods['board.columns.create']).toBeDefined();
-    expect(methods['board.cards.delete']).toBeDefined();
     for (const name of [
       'board.summary',
       'board.cards.assign',
@@ -49,10 +51,47 @@ describe('board RPC', () => {
       'board.cards.cancel',
       'board.cards.reopen',
       'board.cards.conversation',
-      'board.cards.reject',
     ]) {
-      expect(methods[name]).toBeUndefined();
+      expect(methods[name]).toBeDefined();
     }
+    expect(methods['board.cards.reject']).toBeUndefined();
+  });
+
+  it('assigns, summarizes, and rejects a too-frequent cron', async () => {
+    const ownProjectId = (await makeProject(stack.core, 'RPC exec', [leadId, memberId])).id;
+    const column = (
+      await call<{ column: BoardColumn }>('board.columns.create', {
+        projectId: ownProjectId,
+        title: 'Exec',
+      })
+    ).column;
+    const created = await call<{ card: BoardCard }>('board.cards.create', {
+      projectId: ownProjectId,
+      columnId: column.id,
+      text: 'RPC 执行',
+    });
+    await expectCode('board.cards.assign', { cardId: created.card.id, botId: 'bot_missing' }, 'BOARD_ASSIGNEE_INVALID');
+    const assigned = await call<{ card: BoardCard; warnings: string[] }>('board.cards.assign', {
+      cardId: created.card.id,
+      botId: memberId,
+    });
+    expect(assigned.card.todo.assignee?.botId).toBe(memberId);
+    expect(assigned.card.conversationId).not.toBeNull();
+    const conversation = await call<{ conversationId: string }>('board.cards.conversation', {
+      cardId: created.card.id,
+    });
+    expect(conversation.conversationId).toBe(assigned.card.conversationId);
+    await expectCode(
+      'board.cards.schedule',
+      { cardId: created.card.id, when: '* * * * *' },
+      'BOARD_CRON_TOO_FREQUENT',
+    );
+    const summary = await call<{ unread: number; pendingApprovals: number; delivered: number }>(
+      'board.summary',
+      { projectId: ownProjectId },
+    );
+    expect(summary).toEqual({ unread: 0, pendingApprovals: 0, delivered: 0 });
+    await expectCode('board.cards.assign', { cardId: 'missing' }, 'INVALID_INPUT');
   });
 
   it('validates input, succeeds, publishes board.changed, and returns error codes', async () => {
@@ -183,5 +222,79 @@ describe('board RPC', () => {
       { columnId: todoColumn, deleteCards: true },
       'BOARD_LAST_COLUMN',
     );
+  });
+
+  it('does not offer a board schedule for handover', async () => {
+    const ownProjectId = (await makeProject(stack.core, 'RPC handover', [leadId, memberId])).id;
+    const column = (
+      await call<{ column: BoardColumn }>('board.columns.create', {
+        projectId: ownProjectId,
+        title: 'Exec',
+      })
+    ).column;
+    const created = await call<{ card: BoardCard }>('board.cards.create', {
+      projectId: ownProjectId,
+      columnId: column.id,
+      text: '不要移交',
+    });
+    await call('board.cards.assign', { cardId: created.card.id, botId: memberId });
+    const scheduled = await call<{ card: BoardCard }>('board.cards.schedule', {
+      cardId: created.card.id,
+      when: '2099-04-01T00:00:00.000Z',
+    });
+    const boardScheduleId = scheduled.card.todo.schedule?.id;
+    expect(boardScheduleId).toBeTruthy();
+    const directId = (
+      (await stack.core.rpc.call('conversations.openDirect', { botId: memberId })) as {
+        conversation: { id: string };
+      }
+    ).conversation.id;
+    const direct = stack.core.services.schedules!.createFromWhen({
+      botId: memberId,
+      conversationId: directId,
+      when: '2099-05-01T00:00:00.000Z',
+      note: '私聊提醒',
+      title: '私聊提醒',
+      origin: 'tool',
+    });
+    const adapter = new ScheduleAdapter({
+      schedules: {
+        listActiveForBot: (botId) => stack.core.services.schedules!.listActiveForBot(botId),
+        get: (id) => stack.core.services.schedules!.store.get(id),
+        transferTo: () => {
+          throw new Error('transferred');
+        },
+        transferredTo: () => false,
+        describeWhen: (row) => stack.core.services.schedules!.describeWhen(row),
+      },
+      conversations: {
+        get: (id) => stack.core.services.domain!.conversations.get(id),
+        memberBotIds: (id) => stack.core.services.domain!.conversations.memberBotIds(id),
+        directIdFor: (botId) =>
+          stack.core.services.domain!.conversations.openDirect(botId).conversation.id,
+      },
+      todos: {
+        onScheduleTransferred: () => undefined,
+        isBoardTodo: (todoId) => stack.core.services.todos!.isBoardTodo(todoId),
+      },
+    });
+    const keys = adapter.inventory(memberId).map((entry) => entry.key);
+    expect(keys).toContain(`schedule:${direct.id}`);
+    expect(keys).not.toContain(`schedule:${boardScheduleId}`);
+    const from = stack.core.services.domain!.bots.get(memberId)!;
+    expect(
+      adapter.validate(
+        { handoverId: 'hov_test', fromBot: from, toBot: null, toName: '接手' },
+        `schedule:${boardScheduleId}`,
+        'move',
+      ),
+    ).toBe('看板卡片的排期不随移交带走');
+    await expect(
+      adapter.apply(
+        { handoverId: 'hov_test', fromBot: from, toBot: from, toName: '接手' },
+        `schedule:${boardScheduleId}`,
+      ),
+    ).rejects.toThrow(/不随移交带走/);
+    expect(stack.core.services.schedules!.store.get(boardScheduleId!)?.botId).toBe(memberId);
   });
 });
