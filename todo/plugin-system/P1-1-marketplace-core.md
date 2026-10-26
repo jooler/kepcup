@@ -278,3 +278,48 @@ export class MarketplaceService {
 ## 7. 实施记录
 
 （执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / `CoreServices.marketplace` 的取舍 / 用户待办清单是否完整 / 遗留问题。）
+
+> 状态：**已实施**（2026-10-27，分支 `feat/plugins/p1-1-marketplace-core`，5 个提交）。
+
+### 做了什么（按提交）
+
+1. `f141faba` `refactor(core): extract SignedIndexSync from DirectorySync` —— 纯重构：`packages/core/src/infra/signed-index.ts` 收编验签（泛型 `verifySignedIndex<T>`）、防回滚棘轮、原子缓存、定时器与状态机；`apps/directory-sync.ts` 变薄壳（公开 API 与行为不变，目录通道的配置与 `entries()` / `remoteEntries` 计数 / 开关翻转计数留在壳里）。私有错误类随搬迁更名 `SignedIndexRejection`（原 `DirectoryRejection`，未导出，属 §1.3 私有命名自由度，在此登记）。
+2. `f1277e80` `test(core): direct coverage for the extracted SignedIndexSync` —— `packages/core/test/unit/signed-index.test.ts`（17 例）：验签五态、棘轮五态、缓存重验、304、回落、开关、定时。
+3. `826991f4` shared 契约 —— `domain/plugin-index.ts`（常量 + 信封/条目/撤销 schema；`PLUGIN_INDEX_PUBLIC_KEYS` 保持空数组）；`domain/plugins.ts` 加 `marketplace` 来源分支、`PluginSummary.revoked`、`plugins.marketplace.*` 视图；`settingsSchema` 三个顶层键 + `settingsUpdateInputSchema` 三个 optional 键；设置目录 `plugins` 组 + `plugins.updates` / `plugins.marketplace` 两条 generic 条目（marketplace 为 `user-only` 不放宽权限）；`PENDING_DESKTOP_ANCHORS` 登记 `plugins-updates` / `plugins-marketplace`，删除 P0a-3 的 `installed` 页签排除项；RPC 两方法 + `plugins.marketplace.updated` 事件。测试：`plugin-index.test.ts`（新）、`plugins-contracts.test.ts` / `settings-catalog.test.ts` / `settings-merge-validate.test.ts` 按失败提示补齐。
+4. `e4b436ee` core 市场核心 —— `plugins/marketplace-sync.ts`（条目逐条校验坏条目跳过、custom 封顶 community、`find` 版本挑选与兼容判断、`revocationOf`、流式下载 sha256 + 体积上限 + 0600 + 并发合并 + 缓存重验 + 7 天清理；**`enabled` 只控定时，`sync()` 恒可联网**）；`plugins/marketplace-service.ts`（官方 / 自建端点解析、切换停旧建新 + `plugins.marketplace.updated{null}`、`endpointId`）；注册表接入市场来源（inspect / install 全管线 + 包内清单与索引一致校验）、`applyRevocations()`（disable 自动停用、审计带 `reason: 'revoked'`）、`updateAvailable` / `revoked` 标记、`marketplaceEntries()`；RPC 绑定两方法（list 距上次成功同步 >10 分钟后台补拉）；`start.ts` 接线（`services.marketplace`、`pluginMarketplace` 测试钩子、`onAdopted → applyRevocations`）；夹具 `test/support/plugin-market-fixture.ts` + testkit 透传。测试：`marketplace-sync.test.ts`（14）、`marketplace-service.test.ts`（9）、`plugins-marketplace.test.ts`（9）。
+5. `e9088c24` + `013c2f19` —— `scripts/sign-plugin-index.mjs`（`KEPCUP_PLUGIN_SIGNING_KEY`，包经 `@kepcup/package-guard` 读取、策展文件定 tier、内容寻址包副本、`--verify`、`--generate-dev-key`；导出 `buildPluginIndexBytes` / `verifyPluginIndexBytes`）；`infra/cloudflare/directory/public/_headers` 加 `/plugins/v1/` 两段 + `.gitignore`；`infra/cloudflare/directory/README.md` 加「插件市场索引」一节；新建 `infra/cloudflare/plugins/README.md`（用户待办清单）。测试：`sign-plugin-index.test.ts`（4）；共享 dist 模块环修复见 DEV-055。
+
+### 验收证据（§5，全部真实执行于最终提交 `013c2f19`）
+
+1. **重构提交独立、四个测试文件零改动**：`git diff f141faba^ f141faba --stat` 只含 `apps/directory-sync.ts`（改造）与 `infra/signed-index.ts`（新增）；`git log --oneline -1 -- <四个测试文件>` 最后一次触碰仍是 P0b 的 `84a5b0b4`（本分支零改动）。
+2. **测试全绿**：`node scripts/run-tests.mjs run`（验收清单 11 个文件 + 步骤 1 回归 4 个 + P0a 回归 2 个 = 17 文件）→ `Test Files 17 passed (17) / Tests 309 passed (309)`；`pnpm lint` 通过（0 错误）。
+3. **构建与类型**：`pnpm --filter @kepcup/shared run build` ✓；`pnpm --filter @kepcup/core typecheck` ✓；`pnpm --filter @kepcup/desktop typecheck` ✓（svelte-check 0 errors 0 warnings）。
+4. **默认构建不发网络请求**：集成用例「默认构建（官方公钥为空）不发任何网络请求，市场关闭」——`createTestStack` 不注入 `pluginMarketplace.keys`（生产默认空），`initialDelayMs: 10` 下等 80ms 后断言注入的 `fetch` 请求数为 0，`plugins.marketplace.list` 返回 `disabled/no_keys`，`inspect` marketplace 来源报 `PLUGIN_INVALID`。
+5. **公钥列表为空**：`rg -n "PLUGIN_INDEX_PUBLIC_KEYS" packages/shared/src` → 仅 `plugin-index.ts:48` 一处，`= []`。
+6. **签名脚本端到端**：CLI 冒烟（临时目录、`--generate-dev-key` → 签名 → `--verify` → `OK entries=1`，产物含 `plugins/v1/index.json`、`index.json.sig`、`packages/{sha256}.kepcup`）+ `sign-plugin-index.test.ts` 四例（签名 → 步骤 1 泛化 `verifySignedIndex` 验过 → 篡改一字节 `bad_signature`；条目逐条过 `pluginIndexEntrySchema`）。
+7. 本阶段**未跑**全量 `pnpm test`（P1-3 收口时跑）。
+
+### 偏差与 DEV
+
+- **DEV-053 / DEV-054**：§6 两条有意差异（索引不含 `manifestDigest` / `summary.icon`、不拉 README；`pluginAutoCheckUpdates` 只控定时），状态「已决定」，决定「按任务书」。
+- **DEV-055**：`pluginMarketplaceUrlSchema` / `pluginMarketplacePublicKeySchema` 定在 `domain/types.ts` 而非 `plugin-index.ts`——任务书位置会让 shared dist 的模块图成环（`types → plugin-index → plugins → plugin-manifest → connector-catalog → types`），plain node 直接 import shared dist（签名脚本的 `loadShared()`）踩 TDZ；CLI 冒烟实证后挪动，契约形状零变化。
+
+### `CoreServices.marketplace` 的取舍
+
+选择了**加 `CoreServices.marketplace: MarketplaceService | null`**（初始 `null`，构造后立即赋值），而不是只挂在 `PluginRegistry` 上：`close()` 要在 `directorySync.stop()` 旁停定时器、`rpc/plugins-bindings.ts` 的 `plugins.marketplace.list / refresh` 要取 `status() / current() / endpointId()`，两条路径都不该依赖注册表转发（注册表已有 `marketplace?` 依赖做安装 / 撤销 / 标记，两侧是同一个实例）。
+
+### 任务书之外的新增名字（§1.3 登记口径）
+
+`MarketplaceSyncDeps.packagesDir`（包下载缓存目录 `{cacheDir}/plugins`，任务书 deps 只写了索引缓存 `dir`，但 `download()` 的内容寻址缓存需要独立路径）；`MarketplaceSync.incompatibleReason()`（list 视图给不兼容原因用）；`PluginRegistry.marketplaceEntries()`（`plugins.marketplace.list` 的 entries 计算，集中在注册表因为需要 appVersion / platform / store）；`PluginRegistryDeps.appVersion / platform`（市场兼容判断用，可选，缺省 `'0.0.0'` / `process.platform`，引擎校验按既有约定跳过）；`MarketplaceServiceDeps.official?`（测试注入官方端点）；`MarketplaceSyncEvents`（市场通道的事件面）。测试钩子 `CoreServicesOptions.pluginMarketplace` 含 `officialKey` 透传用的 `keys` / `baseUrl` / `fetch` / `downloadFetch` / `intervalMs` / `initialDelayMs`（任务书指定形状）。
+
+### 用户待办清单是否完整
+
+`infra/cloudflare/plugins/README.md` 覆盖任务书步骤 7.3 的全部四点：真实密钥生成与 `PLUGIN_INDEX_PUBLIC_KEYS` 登记（含「与连接器目录不共用」「登记前客户端不联网」）、R2 bucket + 自定义域 + 内容寻址 + immutable 头（含「Static Assets 单文件 25 MiB 装不下所以包走 R2、索引走 dl.kepcup.com」）、CI 步骤序列（签名 → `--verify` → 上传 R2 → 部署索引）、首次部署后记 PROGRESS.md + 端到端验收。Agent 未生成任何真实密钥、未改 `PLUGIN_INDEX_PUBLIC_KEYS`、未联网。
+
+### 遗留问题
+
+- **更新流未开**（P1-2）：同 id 重装仍报 `PLUGIN_CONFLICT`；`updateAvailable` 只计算与展示。
+- **条目级「版本不降」**（设计 51 §6.1 的另一道防线）未实现——当前防回滚只有信封级 `generatedAt` 棘轮；P1-2 做更新时在安装入口已有 `PLUGIN_CONFLICT` 挡住同 id 重装，版本不降校验随更新流一起做更合适（届时索引里旧版本仍可被新客户端直接安装的问题需重新评估是否可接受）。
+- `pluginMarketplacePublicKey` 轮换：自建公钥变更 = 换端点（缓存目录按 URL 哈希隔离），公钥本身变更（同 URL）会触发 `#resolve` 重建（签名含公钥），旧索引缓存被新公钥重验——行为已在 service 单测覆盖「切换后旧实例停止」，无遗留。
+- 任务书步骤 4.7 的 `plugins.changed { ids: [] }` 全量刷新事件已实现；渲染端对 `ids` 不过滤的语义由 P1-3 的 UI 消费（本阶段无新界面）。
+
