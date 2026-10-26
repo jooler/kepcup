@@ -1,6 +1,6 @@
-// Reads the shipped builtin connector entries (D104 P0b): the old
-// apps/desktop/resources/connectors/catalog.json `connectors` array now lives as one
-// `server.json` per directory inside the builtin plugin com.kepcup/connections.
+// Reads the shipped builtin connector entries (D104 P0b): the shipped connector
+// catalog lives as one `server.json` per directory inside the builtin plugin
+// com.kepcup/connections (was a single catalog.json before D104).
 // Entry order = `contributions.connectors` order in the plugin manifest.
 //
 //   import { readBundledConnectorEntries } from './lib/builtin-connectors.mjs';

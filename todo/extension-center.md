@@ -1,5 +1,7 @@
 # 扩展中心：把「技能市场」升级为 Skills / 连接 / MCP 三组，并逐家预置连接应用
 
+> **注（D104，2026-10-26）**：MCP 精选清单空壳（`resources/mcp-presets/` + `packages/core/src/mcp/presets.ts`）已删除，预置 MCP 的发现与分发由插件市场承担，见设计 51（docs/design/51-plugin-system.md）。连接应用条目亦已迁入内置插件 `com.kepcup/connections`。
+>
 > 状态：**X0–X4、X6 已在 `t/extension-center` 分支实现（2026-10-10，待评审合并）**；X5 逐家适配未开始。偏差见 DEV-023。2026-10-10 由用户决定后写成，编号待分配（接 D73 / D74 之后）。上游：[connected-apps.md](connected-apps.md)（连接应用 P0–P3 已实现）、[connected-apps-status.md](connected-apps-status.md)。
 >
 > **本文取代原 U2**：原「U2 测试账号 → 登录实测 → 放行发行门禁」不再是用户待办，而是本文 §4 的**持续适配工作**（Agent 做，账号持有人只负责浏览器里的那一次登录）。

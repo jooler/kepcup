@@ -249,7 +249,7 @@ Thanks to **Grok Bot** (xAI / Cursor product line) for the product inspiration�
 | [Zod](https://zod.dev) | Runtime validation & RPC contracts |
 | [birpc](https://github.com/antfu-collective/birpc) | Main process ↔ core RPC |
 | [undici](https://undici.nodejs.org) | HTTP |
-| [MinerU](https://github.com/opendatalab/MinerU) | Document-parsing preset skill (AGPL-3.0; see [NOTICE](apps/desktop/resources/preset-skills/NOTICE.md)) |
+| [MinerU](https://github.com/opendatalab/MinerU) | Document-parsing preset skill (AGPL-3.0; see [NOTICE](apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md)) |
 | [cron-parser](https://github.com/harrisiirak/cron-parser); [bash-parser](https://github.com/vorpaljs/bash-parser) + [acorn](https://github.com/acornjs/acorn); [pino](https://github.com/pinojs/pino) / [ulid](https://github.com/ulid/javascript) | Scheduling, command parsing, logging & IDs |
 
 And to the maintainers of our transitive dependencies (ESLint / Prettier / Vitest / `@types`, and pure utility libraries such as `clsx` / `tailwind-merge`; Playwright is used for e2e, while the in-product browser is Electron CDP).
@@ -323,4 +323,4 @@ For deployment (systemd, TLS reverse proxy) and packaged installs — a single s
 
 ### License
 
-The root license is [GPL-3.0](LICENSE). The MinerU skill vendored in the preset skills is redistributed separately under AGPL-3.0—see [apps/desktop/resources/preset-skills/NOTICE.md](apps/desktop/resources/preset-skills/NOTICE.md). A repository-wide NOTICE file is not yet published.
+The root license is [GPL-3.0](LICENSE). The MinerU skill vendored in the preset skills is redistributed separately under AGPL-3.0—see [apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md](apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md). A repository-wide NOTICE file is not yet published.

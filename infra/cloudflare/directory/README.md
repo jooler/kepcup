@@ -50,7 +50,7 @@ cd infra/cloudflare/directory && npx wrangler deploy
 node verify.mjs                                 # 部署后验线上
 ```
 
-- 条目默认来自 `apps/desktop/resources/connectors/catalog.json`；`--extra-dir` 追加一个目录里的
+- 条目默认来自内置插件 `apps/desktop/resources/plugins/com.kepcup/connections/`（`scripts/lib/builtin-connectors.mjs` 按 `plugin.json` 顺序读各 `server.json`）；`--extra-dir` 追加一个目录里的
   `*.json`（单个 server.json 或数组），`name` 不得与现有条目重复。
 - `--key-id` 必须出现在应用内置的公钥列表里；`--generated-at <ISO|毫秒>` 可固定时间（默认现在）。
 - 脚本签完会用对应公钥自检；输出里打印的是**公钥**（base64），私钥从不打印。
