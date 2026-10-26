@@ -145,14 +145,16 @@ describe('BoardService', () => {
     const projectId = await freshProject('columns');
     const seeded = board().get(projectId, ['Only'], 'user');
     const only = seeded.columns[0]!.id;
-    expect(codeOf(() => board().deleteColumn(only, true, 'user'))).toBe('BOARD_LAST_COLUMN');
+    await expect(board().deleteColumn(only, true, 'user')).rejects.toMatchObject({
+      code: 'BOARD_LAST_COLUMN',
+    });
     const extra = board().createColumn(projectId, 'Extra', null, 'user');
     const card = board().createCard(projectId, extra.id, 'inside', undefined, 'user');
-    expect(codeOf(() => board().deleteColumn(extra.id, undefined, 'user'))).toBe(
-      'BOARD_COLUMN_NOT_EMPTY',
-    );
+    await expect(board().deleteColumn(extra.id, undefined, 'user')).rejects.toMatchObject({
+      code: 'BOARD_COLUMN_NOT_EMPTY',
+    });
     expect(cardIds(projectId)).toEqual([card.id]);
-    board().deleteColumn(extra.id, true, 'user');
+    await board().deleteColumn(extra.id, true, 'user');
     expect(cardIds(projectId)).toEqual([]);
     expect(
       stack.core.services.mainDb!.prepare('select id from todos where id = ?').get(card.id),
@@ -162,7 +164,9 @@ describe('BoardService', () => {
         .get(projectId, undefined, 'user')
         .columns.map((column) => column.id),
     ).toEqual([only]);
-    expect(codeOf(() => board().deleteColumn(only, false, 'user'))).toBe('BOARD_LAST_COLUMN');
+    await expect(board().deleteColumn(only, false, 'user')).rejects.toMatchObject({
+      code: 'BOARD_LAST_COLUMN',
+    });
   });
 
   it('rejects every write on a read-only project', async () => {
@@ -174,13 +178,17 @@ describe('BoardService', () => {
       () => board().createColumn(projectId, 'More', null, 'user'),
       () => board().updateColumn(columnId, 'Renamed', 'user'),
       () => board().moveColumn(columnId, null, 'user'),
-      () => board().deleteColumn(columnId, true, 'user'),
       () => board().createCard(projectId, columnId, 'nope', undefined, 'user'),
       () => board().updateCard(card.id, 'nope', 'user'),
       () => board().moveCard(card.id, columnId, null, 'user'),
-      () => board().deleteCard(card.id, 'user'),
     ];
     for (const write of writes) expect(codeOf(write)).toBe('BOARD_PROJECT_READ_ONLY');
+    await expect(board().deleteColumn(columnId, true, 'user')).rejects.toMatchObject({
+      code: 'BOARD_PROJECT_READ_ONLY',
+    });
+    await expect(board().deleteCard(card.id, 'user')).rejects.toMatchObject({
+      code: 'BOARD_PROJECT_READ_ONLY',
+    });
     expect(
       board()
         .get(projectId, undefined, 'user')
@@ -274,7 +282,7 @@ describe('BoardService', () => {
     ).toEqual({ notes: 'one more' });
 
     boardEvents.length = 0;
-    board().deleteCard(card.id, 'user');
+    await board().deleteCard(card.id, 'user');
     expect(boardEvents).toEqual([{ projectId, cardId: card.id, columnId }]);
     expect(todoEvents).toEqual([]);
     expect(inTransaction).toBe(false);
@@ -283,7 +291,7 @@ describe('BoardService', () => {
     boardEvents.length = 0;
     watchedTodo = second.id;
     todoGone = false;
-    board().deleteColumn(columnId, true, 'user');
+    await board().deleteColumn(columnId, true, 'user');
     expect(boardEvents).toEqual([{ projectId, columnId }]);
     expect(todoEvents).toEqual([]);
     expect(inTransaction).toBe(false);
@@ -295,7 +303,7 @@ describe('BoardService', () => {
     const rightColumn = board().createColumn(projectId, 'Extra', null, 'user');
     const right = board().createCard(projectId, rightColumn.id, 'right', undefined, 'user');
     boardEvents.length = 0;
-    stack.core.services.board!.onProjectDeleting(projectId);
+    await stack.core.services.board!.onProjectDeleting(projectId);
     expect(boardEvents).toEqual([{ projectId }]);
     expect(inTransaction).toBe(false);
     expect(db.prepare('select id from todos where id = ?').get(left.id)).toBeUndefined();
