@@ -9,7 +9,7 @@
   }
 </script>
 
-<div class="shrink-0 self-start pb-2">
+<div class="shrink-0 self-start p-2">
   <button
     type="button"
     class="flex h-6 cursor-pointer items-center gap-1 rounded-md pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent/40 hover:text-foreground"

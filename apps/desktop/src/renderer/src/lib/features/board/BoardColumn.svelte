@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { GripVertical, MoreHorizontal, Plus } from '@lucide/svelte';
+  import { MoreHorizontal, Plus } from '@lucide/svelte';
   import { BOARD_COLUMN_TITLE_MAX_CHARS } from '@kepcup/shared';
   import { dragHandle, dndzone, type DndEvent } from 'svelte-dnd-action';
   import { t } from '$lib/i18n';
@@ -37,6 +37,8 @@
   let composing = $state(false);
   let menu = $state<{ x: number; y: number } | null>(null);
   let confirmDelete = $state(false);
+  /** Height of the floating card copy, measured when a pointer drag starts. */
+  let shadowHeight = $state<number | null>(null);
 
   const index = $derived(board.columns.findIndex((item) => item.id === column.id));
   const cardCount = $derived(column.cards.length);
@@ -72,16 +74,43 @@
   }
 
   function onConsider(event: CustomEvent<DndEvent<BoardCardView>>): void {
-    if (event.detail.info.trigger === 'dragStopped') {
+    const info = event.detail.info;
+    if (info.trigger === 'dragStopped') {
+      shadowHeight = null;
       board.setDragging(false);
       return;
+    }
+    // Measure on entry as well: a card dragged from another column renders its
+    // slot here, and that slot must match the card it replaces.
+    if (event.detail.items.some(isShadow)) {
+      if (
+        shadowHeight === null ||
+        info.trigger === 'dragStarted' ||
+        info.trigger === 'draggedEntered'
+      ) {
+        shadowHeight = draggedElementHeight();
+      }
+    } else {
+      shadowHeight = null;
     }
     items = event.detail.items;
     board.setDragging(true);
   }
 
+  /**
+   * The library sizes the floating copy to the drop slot. The slot only holds
+   * the card's text, so pin it to the copy's measured height; otherwise the
+   * copy loses its footer and jumps when it changes position.
+   */
+  function draggedElementHeight(): number | null {
+    if (typeof document === 'undefined') return null;
+    const el = document.getElementById('dnd-action-dragged-el');
+    return el === null ? null : el.getBoundingClientRect().height;
+  }
+
   function onFinalize(event: CustomEvent<DndEvent<BoardCardView>>): void {
     const info = event.detail.info;
+    shadowHeight = null;
     if (info.source === 'pointer') cardClickGuard.arm();
     const decision = anchorFromFinalize({
       items: event.detail.items,
@@ -154,29 +183,28 @@
 
 <section
   bind:this={rootEl}
-  class="group/column flex h-full min-h-0 w-72 shrink-0 flex-col"
+  class="group/column flex max-h-full min-h-0 w-72 shrink-0 flex-col self-start rounded-sm p-2"
   aria-label={column.title}
   data-testid="board-column"
   data-column-id={column.id}
 >
   <header
-    class="flex shrink-0 items-center gap-1 pb-2"
+    class="relative flex shrink-0 items-center gap-1 pb-2"
     role="group"
     oncontextmenu={(event) => {
       event.preventDefault();
       openMenu(event.clientX, event.clientY);
     }}
   >
-    <button
-      type="button"
-      class="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground opacity-0 group-hover/column:opacity-100 focus-visible:opacity-100"
+    <!-- Fills the header behind the title and buttons: the whole header drags
+         the column, while editable and clickable children sit above it. -->
+    <div
+      class="absolute inset-0"
       aria-label={t('board.column.handle')}
       data-testid="board-column-handle"
       use:dragHandle
-    >
-      <GripVertical class="size-4" aria-hidden="true" />
-    </button>
-    <div class="min-w-0 flex-1 text-sm font-medium">
+    ></div>
+    <div class="relative w-fit max-w-full min-w-0 cursor-text text-sm font-medium">
       <InlineEditable
         bind:this={titleEditor}
         value={column.title}
@@ -188,10 +216,11 @@
         testid="board-column-title"
       />
     </div>
+    <div class="min-w-0 flex-1"></div>
     <span class="shrink-0 text-xs text-muted-foreground tabular-nums">{cardCount}</span>
     <button
       type="button"
-      class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+      class="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-foreground"
       aria-label={t('board.column.addCard')}
       onclick={() => (composing = true)}
       data-testid="board-column-add-card"
@@ -200,7 +229,7 @@
     </button>
     <button
       type="button"
-      class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 group-hover/column:opacity-100 hover:bg-accent/40 hover:text-foreground focus-visible:opacity-100"
+      class="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 group-hover/column:opacity-100 hover:bg-accent/40 hover:text-foreground focus-visible:opacity-100"
       aria-label={t('board.column.menuLabel')}
       data-testid="board-column-menu"
       onclick={(event) => {
@@ -220,7 +249,7 @@
 
   <div
     bind:this={listEl}
-    class="flex min-h-0 min-h-16 flex-1 flex-col gap-2 overflow-y-auto"
+    class="flex min-h-16 flex-col gap-2 overflow-y-auto"
     aria-label={column.title}
     data-testid="board-column-cards"
     onscroll={onListScroll}
@@ -229,6 +258,7 @@
       type: 'card',
       flipDurationMs,
       delayTouchStart: true,
+      morphDisabled: true,
       dropTargetStyle: {},
     }}
     onconsider={onConsider}
@@ -236,7 +266,11 @@
   >
     {#each items as item (item.localKey ?? item.id)}
       {#if isShadow(item)}
-        <div class="rounded-lg border p-3 text-sm" aria-hidden="true">
+        <div
+          class="min-h-16 rounded-lg p-3 text-sm"
+          style:height={shadowHeight === null ? undefined : `${shadowHeight}px`}
+          aria-hidden="true"
+        >
           <p class="invisible line-clamp-6 break-words whitespace-pre-wrap">{item.text}</p>
         </div>
       {:else}
