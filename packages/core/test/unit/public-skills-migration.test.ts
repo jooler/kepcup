@@ -106,6 +106,9 @@ describe('0013 public_skills 迁移', () => {
     // board_cards 外键指向 todos，必须先于 todos 摘除。
     db.exec('drop table board_cards;');
     db.exec('drop table board_columns;');
+    // main 0053（D104 插件系统）的两表同样摘除：plugin_items 外键指向 plugins，先摘账本。
+    db.exec('drop table plugin_items;');
+    db.exec('drop table plugins;');
     db.exec('drop table todo_runs;');
     db.exec('drop table todos;');
     db.exec('drop table memos;');
