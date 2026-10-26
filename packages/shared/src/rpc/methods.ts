@@ -188,6 +188,16 @@ import {
 import { wikiOwnerSchema } from '../domain/wiki.js';
 import { boardCardSchema, boardColumnSchema, boardSummarySchema } from '../domain/board.js';
 import {
+  pluginInspectOutputSchema,
+  pluginsInstallInputSchema,
+  pluginsInstallOutputSchema,
+  pluginsListOutputSchema,
+  pluginsSetEnabledInputSchema,
+  pluginsSetEnabledOutputSchema,
+  pluginsUninstallInputSchema,
+  pluginsInspectInputSchema,
+} from '../domain/plugins.js';
+import {
   pairingOfferSchema,
   pairedDeviceSchema,
   pendingPairingRequestSchema,
@@ -2760,6 +2770,16 @@ export const rpcMethodSchemas = {
     input: widgetPreviewRunInputSchema,
     output: widgetPreviewRunOutputSchema,
   },
+
+  // --- plugins (D104, docs/design/51-plugin-system.md §8) ------------------------
+  'plugins.list': { input: voidInput, output: pluginsListOutputSchema },
+  'plugins.inspect': { input: pluginsInspectInputSchema, output: pluginInspectOutputSchema },
+  'plugins.install': { input: pluginsInstallInputSchema, output: pluginsInstallOutputSchema },
+  'plugins.setEnabled': {
+    input: pluginsSetEnabledInputSchema,
+    output: pluginsSetEnabledOutputSchema,
+  },
+  'plugins.uninstall': { input: pluginsUninstallInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -3112,6 +3132,11 @@ const APP_METHODS = [
   'remote.devices',
   'remote.config.get',
   'remote.config.set',
+  'plugins.list',
+  'plugins.inspect',
+  'plugins.install',
+  'plugins.setEnabled',
+  'plugins.uninstall',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
