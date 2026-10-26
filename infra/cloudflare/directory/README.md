@@ -10,6 +10,7 @@ infra/cloudflare/directory/
   wrangler.jsonc                    仅静态资源（无 Worker 脚本），自定义域 dl.kepcup.com
   public/_headers                   缓存头（Static Assets 只认资源根目录的 _headers）
   public/connectors/v1/             CI 把签名产物放这里再部署（index.json 等被 .gitignore 忽略）
+  public/plugins/v1/                插件市场索引（D104 P1-1）：CI 把签名产物放这里再部署
   verify.mjs                        部署后的外部验证（拉线上索引并验签）
 ```
 
@@ -78,6 +79,14 @@ node infra/cloudflare/directory/verify.mjs https://dl.kepcup.com/connectors/v1 -
 curl -sSI https://dl.kepcup.com/connectors/v1/index.json         # 期望 200、cache-control: public, max-age=300
 curl -sS  https://dl.kepcup.com/connectors/v1/index.json.sig     # 期望一行 base64（88 字符）
 ```
+
+## 插件市场索引（`/plugins/v1/`）
+
+同一静态资源域还托管**插件市场**的签名索引（D104 P1-1，`public/plugins/v1/`，缓存头已在
+`_headers` 配好）。签名用独立脚本 `scripts/sign-plugin-index.mjs`（独立密钥
+`KEPCUP_PLUGIN_SIGNING_KEY`，公钥登记在 shared 的 `PLUGIN_INDEX_PUBLIC_KEYS`），
+包本体走 R2 内容寻址（`{sha256}.kepcup`）。机制、防回滚与轮换流程与连接器目录相同；
+完整的密钥生成、R2 与 CI 待办见 **[../plugins/README.md](../plugins/README.md)**。
 
 ## 用户待办（U5，不属于代码，agent 不会代做）
 

@@ -7,10 +7,6 @@ import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
-import {
-  pluginMarketplacePublicKeySchema,
-  pluginMarketplaceUrlSchema,
-} from './plugin-index.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
 import {
@@ -769,6 +765,37 @@ export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettings
 /** UI language selected in the renderer; core mirrors it for prompts and deterministic copy. */
 export const appLanguageSchema = z.enum(['zh-CN', 'en-US']);
 export type AppLanguage = z.infer<typeof appLanguageSchema>;
+
+/**
+ * D104 P1-1 插件市场的两个设置键 schema（条目 `plugins.marketplace`）。故意定义在本文件而
+ * 不是 `plugin-index.ts`：settingsSchema 在这里，而 plugin-index 一带（plugins →
+ * plugin-manifest → connector-catalog → types）会把 dist 的 import 图连成环，plain node
+ * 直接引 `@kepcup/shared` 会踩 TDZ。
+ */
+const RAW_PUBLIC_KEY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** 自建市场地址：只 https、无用户信息；'' = 官方市场。 */
+export function isHttpsMarketplaceUrl(value: string): boolean {
+  if (value === '') return true;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && url.username === '' && url.password === '';
+}
+
+export const pluginMarketplaceUrlSchema = z.union([
+  z.literal(''),
+  z.string().max(500).refine(isHttpsMarketplaceUrl),
+]);
+
+/** 自建市场的 Ed25519 公钥：Ed25519 原始 32 字节的 base64（44 字符）；'' = 用官方公钥。 */
+export const pluginMarketplacePublicKeySchema = z.union([
+  z.literal(''),
+  z.string().length(44).regex(RAW_PUBLIC_KEY_PATTERN),
+]);
 
 export const settingsSchema = z.object({
   /** Renderer UI language; core reads it for prompts and onboarding copy. */

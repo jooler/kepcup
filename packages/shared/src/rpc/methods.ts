@@ -177,6 +177,8 @@ import {
   webSearchConfigSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
+  pluginMarketplacePublicKeySchema,
+  pluginMarketplaceUrlSchema,
   skillPresetInfoSchema,
   unattendedStateSchema,
   usageSummaryOutputSchema,
@@ -199,10 +201,6 @@ import {
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
 } from '../domain/plugins.js';
-import {
-  pluginMarketplacePublicKeySchema,
-  pluginMarketplaceUrlSchema,
-} from '../domain/plugin-index.js';
 import {
   pairingOfferSchema,
   pairedDeviceSchema,

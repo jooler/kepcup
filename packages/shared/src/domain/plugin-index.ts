@@ -6,7 +6,6 @@ import {
   CONNECTOR_INDEX_SYNC_INTERVAL_MS,
   CONNECTOR_INDEX_SYNC_JITTER_RATIO,
   connectorIndexKeyIdSchema,
-  connectorIndexPublicKeySchema,
   generatedAtSchema,
   type ConnectorIndexPublicKey,
 } from './directory-index.js';
@@ -57,36 +56,6 @@ export const PLUGIN_INDEX_RETRY_MS = CONNECTOR_INDEX_RETRY_MS;
 export const PLUGIN_INDEX_SYNC_JITTER_RATIO = CONNECTOR_INDEX_SYNC_JITTER_RATIO;
 export const PLUGIN_INDEX_INITIAL_DELAY_MS = CONNECTOR_INDEX_INITIAL_DELAY_MS;
 export const PLUGIN_INDEX_STALE_AFTER_MS = CONNECTOR_INDEX_STALE_AFTER_MS;
-
-// --- settings keys -------------------------------------------------------------------------
-
-/** `pluginMarketplacePublicKey`：Ed25519 原始 32 字节公钥的 base64（44 字符）。 */
-const RAW_PUBLIC_KEY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
-
-/**
- * 自建市场地址：只 https、无用户信息（`user:pass@`）、无空串以外的主机。official 用空串
- * 表达，所以这里是 union 而不是 plain url schema。
- */
-export function isHttpsMarketplaceUrl(value: string): boolean {
-  if (value === '') return true;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  return url.protocol === 'https:' && url.username === '' && url.password === '';
-}
-
-export const pluginMarketplaceUrlSchema = z.union([
-  z.literal(''),
-  z.string().max(500).refine(isHttpsMarketplaceUrl),
-]);
-
-export const pluginMarketplacePublicKeySchema = z.union([
-  z.literal(''),
-  z.string().length(44).regex(RAW_PUBLIC_KEY_PATTERN),
-]);
 
 // --- index schema --------------------------------------------------------------------------
 
