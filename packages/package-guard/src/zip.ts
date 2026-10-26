@@ -74,26 +74,27 @@ export class ZipArchive {
   readonly #handle: FileHandle;
 
   readonly #fileSize: number;
-  readonly #error: ZipErrorFactory;
-  readonly #label: string;
+  /** Both policies live on the instance: opening used them, `read()` keeps using them. */
+  readonly #guard: Required<ZipGuardOptions>;
 
   private constructor(
     handle: FileHandle,
     entries: ZipEntry[],
     fileSize: number,
-    error: ZipErrorFactory,
-    label: string,
+    guard: Required<ZipGuardOptions>,
   ) {
     this.#handle = handle;
     this.entries = entries;
     this.#fileSize = fileSize;
-    this.#error = error;
-    this.#label = label;
+    this.#guard = guard;
   }
 
   static async open(filePath: string, options: ZipGuardOptions = {}): Promise<ZipArchive> {
-    const error = options.error ?? defaultError;
-    const label = options.label ?? defaultLabel;
+    const guard: Required<ZipGuardOptions> = {
+      error: options.error ?? defaultError,
+      label: options.label ?? defaultLabel,
+    };
+    const { error, label } = guard;
     const handle = await open(filePath, 'r');
     try {
       const { size } = await handle.stat();
@@ -173,7 +174,7 @@ export class ZipArchive {
           localOffset,
         });
       }
-      return new ZipArchive(handle, entries, size, error, label);
+      return new ZipArchive(handle, entries, size, guard);
     } catch (error_) {
       await handle.close();
       throw error_;
@@ -188,18 +189,18 @@ export class ZipArchive {
     const header = Buffer.alloc(30);
     const headerRead = await this.#handle.read(header, 0, 30, entry.localOffset);
     if (headerRead.bytesRead !== 30 || header.readUInt32LE(0) !== LOC_SIG) {
-      throw this.#error(`ZIP 条目损坏：${entry.name}`);
+      throw this.#guard.error(`ZIP 条目损坏：${entry.name}`);
     }
     const dataStart = entry.localOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
     if (dataStart + entry.compressedSize > this.#fileSize) {
-      throw this.#error(`ZIP 条目被截断：${entry.name}`);
+      throw this.#guard.error(`ZIP 条目被截断：${entry.name}`);
     }
     const compressed = Buffer.alloc(entry.compressedSize);
     // Chunked: a single huge fs.read length aborts the process on some Node versions.
     for (let done = 0; done < entry.compressedSize;) {
       const length = Math.min(READ_CHUNK_BYTES, entry.compressedSize - done);
       const { bytesRead } = await this.#handle.read(compressed, done, length, dataStart + done);
-      if (bytesRead === 0) throw this.#error(`ZIP 条目被截断：${entry.name}`);
+      if (bytesRead === 0) throw this.#guard.error(`ZIP 条目被截断：${entry.name}`);
       done += bytesRead;
     }
     let data: Buffer;
@@ -210,13 +211,13 @@ export class ZipArchive {
         // maxOutputLength bounds a decompression bomb to the (already capped) declared size.
         data = inflateRawSync(compressed, { maxOutputLength: Math.max(entry.size, 1) });
       } catch {
-        throw this.#error(`ZIP 条目解压失败：${entry.name}`);
+        throw this.#guard.error(`ZIP 条目解压失败：${entry.name}`);
       }
     } else {
-      throw this.#error(`不支持的压缩方式（${entry.method}）：${entry.name}`);
+      throw this.#guard.error(`不支持的压缩方式（${entry.method}）：${entry.name}`);
     }
-    if (data.length !== entry.size) throw this.#error(`ZIP 条目大小与目录不符：${entry.name}`);
-    if (crc32(data) !== entry.crc32) throw this.#error(`ZIP 条目校验失败：${entry.name}`);
+    if (data.length !== entry.size) throw this.#guard.error(`ZIP 条目大小与目录不符：${entry.name}`);
+    if (crc32(data) !== entry.crc32) throw this.#guard.error(`ZIP 条目校验失败：${entry.name}`);
     return data;
   }
 
