@@ -265,6 +265,9 @@ importers:
       '@earendil-works/pi-mcp':
         specifier: 1.4.0
         version: 1.4.0
+      '@kepcup/package-guard':
+        specifier: workspace:*
+        version: link:../package-guard
       '@kepcup/shared':
         specifier: workspace:*
         version: link:../shared
@@ -332,6 +335,8 @@ importers:
       sqlite-vec:
         specifier: 0.1.9
         version: 0.1.9
+
+  packages/package-guard: {}
 
   packages/shared:
     dependencies:
