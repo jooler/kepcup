@@ -1,5 +1,6 @@
 # P2 · 卡片对话与执行：`ChatSession` 抽取、`card` 会话、项目作用域、指派 / 排期 / 派发
 
+> 状态：**已实施**（2026-10-26）。
 > 设计 WP：**WP0 + WP2**。依赖：**P1 已合入**（后端部分需要 `board_cards` / `BoardService` / `TodoService` 看板缝）；轨道 A（WP0）本身不依赖 P1。分支：`feat/board/p2-card-conversation`。
 > 先读 [README.md](README.md) §1、§4；设计依据 [docs/design/50-project-board.md](../../docs/design/50-project-board.md) §5.5（`card` 会话）、§6（执行）、§7（Bot 视角）、§8、§11（`ChatSession`）；背景 [39-workbench.md](../../docs/design/39-workbench.md) §2–§3、[41](../../docs/design/41-project-team.md) §6–§8。
 
