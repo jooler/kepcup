@@ -1,64 +1,42 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { z } from 'zod';
 import { AppError, type SkillPresetInfo, type SkillScan } from '@kepcup/shared';
 
 import type { CoreLogger } from '../infra/logger.js';
-import { resolvePresetSkillsDir } from '../infra/paths.js';
+import type { BuiltinPlugins, BuiltinSkillOffer } from '../plugins/builtin.js';
 import { hashDirectory } from './library.js';
 import { parseSkillDir } from './parse.js';
 import { scanSkillDir } from './scan.js';
 import type { SkillsService } from './registry.js';
 
 /**
- * Preset skills ("技能市场", apps/desktop/resources/preset-skills/): the
- * app-shipped catalog behind the marketplace UI. Installation reuses the P08
- * import pipeline (parse → scan → content-hash → installPublic) and lands in
- * the PUBLIC scope — one install, every bot discovers and calls it
- * (`public_skills`). Presets are trusted app content, so there is no approval
- * card; the user's explicit 「添加」 click IS the install decision (unlike
- * git imports, which keep the per-bot private approval flow).
+ * Preset skills ("技能市场"): the skill contributions of the builtin
+ * `com.kepcup/starter-skills` plugin (apps/desktop/resources/plugins/, read-only,
+ * D104 P0b). Installation reuses the P08 import pipeline (parse → scan →
+ * content-hash → installPublic) and lands in the PUBLIC scope — one install,
+ * every bot discovers and calls it (`public_skills`). Presets are trusted app
+ * content, so there is no approval card; the user's explicit 「添加」 click IS the
+ * install decision (unlike git imports, which keep the per-bot private approval
+ * flow).
  *
- * Library entries installed from here carry `source_url = preset://{id}`, the
- * marker that lets a newer app version REPLACE an outdated public preset in
- * place (uninstall → reference-counted GC → install new content). Same-name
- * PUBLIC entries from any other source are never clobbered — ALREADY_EXISTS.
- * A bot's private same-name skill is not a conflict either: it shadows the
- * public version for that bot only.
+ * Library entries installed from here carry
+ * `source_url = plugin://com.kepcup/starter-skills/{id}`, the marker that lets a
+ * newer app version REPLACE an outdated public preset in place (uninstall →
+ * reference-counted GC → install new content). Same-name PUBLIC entries from any
+ * other source are never clobbered — ALREADY_EXISTS. A bot's private same-name
+ * skill is not a conflict either: it shadows the public version for that bot only.
  */
 
-const catalogEntrySchema = z.object({
-  id: z.string().min(1).max(64),
-  /** Directory under the preset-skills root; must contain a SKILL.md. */
-  dir: z.string().min(1).max(200),
-  section: z.string().min(1).max(64),
-  displayName: z.string().min(1).max(100),
-  summary: z.string().min(1).max(500),
-  icon: z.string().min(1).max(64).default('puzzle'),
-  version: z.string().min(1).max(32),
-  tryIt: z.string().max(500).default(''),
-  /**
-   * Verbatim import of an upstream official skill (e.g. mineru, AGPL-3.0).
-   * Its SKILL.md must never be hand-edited — sync via
-   * `scripts/sync-mineru-skill.mjs` and bump `version`. The catalog-guard
-   * test relaxes the description cap for these entries (upstream trigger
-   * text is kept intact) and asserts full compatibility.
-   */
-  vendored: z.boolean().optional(),
-});
-
-const catalogSchema = z.object({
-  version: z.number(),
-  presets: z.array(catalogEntrySchema),
-});
-
-type CatalogEntry = z.infer<typeof catalogEntrySchema>;
-
-/** source_url marker of library entries installed from the preset catalog. */
-export const PRESET_SOURCE_PREFIX = 'preset://';
+/**
+ * source_url marker of library entries installed from the builtin starter-skills
+ * plugin. Was `preset://` before D104 P0b; migration 0054 rewrites installed rows,
+ * and the `foreign` check below treats everything under this prefix as ours.
+ */
+export const PRESET_SOURCE_PREFIX = 'plugin://com.kepcup/starter-skills/';
 
 export interface SkillPresetsDeps {
-  env: NodeJS.ProcessEnv;
+  /** Builtin plugin loader (`BuiltinPlugins`); the presets are its skill contributions. */
+  builtin: Pick<BuiltinPlugins, 'skillOffers'>;
   logger: CoreLogger;
   skills: SkillsService;
   /** Missing-dependency detection for the marketplace badge (optional, same as registry). */
@@ -67,9 +45,9 @@ export interface SkillPresetsDeps {
   enhancedSandbox?: { available(): boolean } | undefined;
 }
 
-/** One catalog entry resolved against its files (parse + scan + hash). */
+/** One skill offer resolved against its files (parse + scan + hash). */
 interface ResolvedPreset {
-  entry: CatalogEntry;
+  entry: BuiltinSkillOffer;
   /** Skill name from SKILL.md frontmatter (the registry-level identifier). */
   name: string;
   scan: SkillScan;
@@ -79,19 +57,17 @@ interface ResolvedPreset {
 
 export class SkillPresetsService {
   readonly #deps: SkillPresetsDeps;
-  readonly #presetsDir: string | null;
 
   constructor(deps: SkillPresetsDeps) {
     this.#deps = deps;
-    this.#presetsDir = resolvePresetSkillsDir(deps.env);
-    if (this.#presetsDir === null) {
-      deps.logger.info('preset skills directory not found; skill marketplace will be empty');
+    if (deps.builtin.skillOffers().length === 0) {
+      deps.logger.info('no builtin skill offers; skill marketplace will be empty');
     }
   }
 
   /**
-   * Catalog with global install state (public scope). Re-reads and re-scans
-   * every call — the whole catalog is a few hundred KB, and this keeps
+   * Offer list with global install state (public scope). Re-reads and re-scans
+   * every call — the builtin tree is a few hundred KB, and this keeps
    * shipped-content edits visible without cache invalidation logic.
    */
   list(): SkillPresetInfo[] {
@@ -263,61 +239,35 @@ export class SkillPresetsService {
     return `${this.#deps.skills.libraryDirOf(library)}${path.sep}SKILL.md`;
   }
 
-  /** Parses + scans + hashes every catalog entry; broken entries are skipped with a warning. */
+  /** Parses + scans + hashes every builtin skill offer; broken entries are skipped with a warning. */
   #resolveAll(): ResolvedPreset[] {
-    if (this.#presetsDir === null) return [];
-    const catalog = this.#readCatalog();
-    if (catalog === null) return [];
     const resolved: ResolvedPreset[] = [];
-    for (const entry of catalog.presets) {
-      // dir is joined, never used as an absolute path — guard against path escapes.
-      if (path.isAbsolute(entry.dir) || entry.dir.includes('..')) {
-        this.#deps.logger.warn({ preset: entry.id, dir: entry.dir }, 'preset dir rejected');
+    for (const offer of this.#deps.builtin.skillOffers()) {
+      // `offer.dir` is absolute inside the plugin tree (the loader verified the
+      // contribution layout), so there is no path-escape surface left here.
+      if (!existsSync(path.join(offer.dir, 'SKILL.md'))) {
+        this.#deps.logger.warn({ preset: offer.id, dir: offer.dir }, 'preset dir has no SKILL.md');
         continue;
       }
-      const dir = path.join(this.#presetsDir, entry.dir);
-      if (!existsSync(path.join(dir, 'SKILL.md'))) {
-        this.#deps.logger.warn({ preset: entry.id, dir: entry.dir }, 'preset dir has no SKILL.md');
-        continue;
-      }
-      const parsed = parseSkillDir(dir);
+      const parsed = parseSkillDir(offer.dir);
       if (parsed === null) {
         this.#deps.logger.warn(
-          { preset: entry.id, dir: entry.dir },
+          { preset: offer.id, dir: offer.dir },
           'preset SKILL.md failed to parse',
         );
         continue;
       }
       resolved.push({
-        entry,
+        entry: offer,
         name: parsed.name,
-        scan: scanSkillDir(dir, parsed, {
+        scan: scanSkillDir(offer.dir, parsed, {
           enhancedSandboxAvailable: this.#deps.enhancedSandbox?.available() ?? false,
         }),
-        contentHash: hashDirectory(dir),
-        dir,
+        contentHash: hashDirectory(offer.dir),
+        dir: offer.dir,
       });
     }
     return resolved;
-  }
-
-  #readCatalog(): z.infer<typeof catalogSchema> | null {
-    if (this.#presetsDir === null) return null;
-    const file = path.join(this.#presetsDir, 'catalog.json');
-    try {
-      const parsed = catalogSchema.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-      if (!parsed.success) {
-        this.#deps.logger.warn({ file }, 'preset catalog.json failed schema validation');
-        return null;
-      }
-      return parsed.data;
-    } catch (error) {
-      this.#deps.logger.warn(
-        { file, error: error instanceof Error ? error.message : String(error) },
-        'preset catalog.json unreadable',
-      );
-      return null;
-    }
   }
 
   #depAvailable(dep: string): boolean {

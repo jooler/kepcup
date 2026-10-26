@@ -1,22 +1,17 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { connectorCatalogEntrySchema, connectorMetaOf } from '@kepcup/shared';
 import { extractPath } from '../../src/apps/connections.js';
+import { readShippedConnectorEntries } from '../support/shipped-connectors.js';
 
 /**
  * 目录里 `whoami` 的字段路径要和真实工具的返回结构对得上（2026-10-10 用户在真实账号上调用
  * `notion-get-self` / `get_user` 得到的结构；下面是**结构相同、值为虚构**的样本，不含真实账号信息）。
  * 路径写错只会退回自动编号，但 `subjectPath` 取错会把不同账号并成一行，所以钉死。
  */
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const catalog = JSON.parse(
-  readFileSync(path.join(repoRoot, 'apps/desktop/resources/connectors/catalog.json'), 'utf8'),
-) as { connectors: unknown[] };
+const shipped = readShippedConnectorEntries();
 
 function whoamiOf(slug: string) {
-  for (const raw of catalog.connectors) {
+  for (const raw of shipped) {
     const meta = connectorMetaOf(connectorCatalogEntrySchema.parse(raw));
     if (meta.slug === slug) return meta.whoami;
   }

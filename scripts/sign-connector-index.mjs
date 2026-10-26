@@ -43,7 +43,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
-const DEFAULT_CATALOG = path.join(repoRoot, 'apps/desktop/resources/connectors/catalog.json');
 const SIGNING_KEY_ENV = 'KEPCUP_CONNECTOR_SIGNING_KEY';
 const MAX_INDEX_BYTES = 4 * 1024 * 1024;
 const MAX_DELTA_CHAIN = 8;
@@ -148,13 +147,24 @@ function parseGeneratedAt(value) {
   return ms;
 }
 
-/** Entries from the catalog file plus every `*.json` (object or array) in `extraDir`. */
-export function collectEntries({ catalog = DEFAULT_CATALOG, extraDir } = {}) {
-  const file = readJson(catalog);
-  if (!file || file.version !== 1 || !Array.isArray(file.connectors)) {
-    throw new SignError(`${catalog} is not a catalog file ({ version: 1, connectors: [...] })`);
+/** Entries from the shipped builtin plugin (or an explicit catalog file) plus every `*.json` (object or array) in `extraDir`. */
+export async function collectEntries({ catalog, extraDir } = {}) {
+  let entries;
+  if (catalog !== undefined) {
+    // Explicit override (tests / one-off builds): the old catalog-file shape.
+    const file = readJson(catalog);
+    if (!file || file.version !== 1 || !Array.isArray(file.connectors)) {
+      throw new SignError(`${catalog} is not a catalog file ({ version: 1, connectors: [...] })`);
+    }
+    entries = [...file.connectors];
+  } else {
+    // D104 P0b: the shipped catalog lives in the builtin com.kepcup/connections plugin;
+    // readBundledConnectorEntries preserves the old entry order and shape.
+    const { readBundledConnectorEntries } = await import(
+      pathToFileURL(path.join(here, 'lib', 'builtin-connectors.mjs')).href
+    );
+    entries = [...readBundledConnectorEntries(repoRoot)];
   }
-  const entries = [...file.connectors];
   if (extraDir) {
     for (const name of readdirSync(extraDir)
       .filter((f) => f.endsWith('.json'))
@@ -474,7 +484,7 @@ export async function run(
     );
   }
   const privateKey = privateKeyFromEnv(env[SIGNING_KEY_ENV]);
-  const entries = collectEntries({ catalog: args.catalog, extraDir: args['extra-dir'] });
+  const entries = await collectEntries({ catalog: args.catalog, extraDir: args['extra-dir'] });
   await validateEntries(entries, (message) => io.out(message), {
     skip: args['skip-validation'] === true,
   });

@@ -8,6 +8,7 @@ import {
   connectorMetaOf,
   type McpToolRisk,
 } from '@kepcup/shared';
+import { readShippedConnectorEntries } from '../support/shipped-connectors.js';
 
 /**
  * 真实工具定义快照（`test/fixtures/connectors/<slug>.tools.json`，README 有导出方法）与目录条目的
@@ -20,9 +21,7 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const fixturesDir = path.join(repoRoot, 'packages/core/test/fixtures/connectors');
-const catalog = JSON.parse(
-  readFileSync(path.join(repoRoot, 'apps/desktop/resources/connectors/catalog.json'), 'utf8'),
-) as { connectors: unknown[] };
+const shipped = readShippedConnectorEntries();
 const gates = JSON.parse(
   readFileSync(path.join(repoRoot, 'apps/desktop/connector-release-gates.json'), 'utf8'),
 ) as { approved: string[] };
@@ -32,7 +31,7 @@ interface SnapshotTool {
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
-const entries = catalog.connectors.map((raw) => {
+const entries = shipped.map((raw) => {
   const entry = connectorCatalogEntrySchema.parse(raw);
   return { entry, meta: connectorMetaOf(entry) };
 });

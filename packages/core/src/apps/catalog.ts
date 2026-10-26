@@ -1,9 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   connectorCatalogEntrySchema,
-  connectorCatalogFileSchema,
   connectorMetaOf,
   filterReleasedConnectors,
   findConnectorBySlug,
@@ -14,12 +12,11 @@ import type { CoreLogger } from '../infra/logger.js';
 import { mergeDirectoryEntries } from './directory-merge.js';
 
 /**
- * 连接应用目录（D73 P1 §5.2，设计 29 §4）的运行时加载。
+ * 连接应用目录（D73 P1 §5.2，设计 29 §4）的运行时合并。
  *
- * 数据来自随应用打包的 `apps/desktop/resources/connectors/catalog.json` 与
- * `icons/*.svg`（照 `skills/presets.ts` 读资源 JSON；打包后由 core-host 经
- * `KEPCUP_CONNECTORS` 指向 `Resources/connectors`，开发态向上查找 `apps/` 祖先）。
- * 单个坏条目只告警并跳过，不拖垮整个目录；slug 重复时保留先出现者。
+ * 打包快照来自内置插件 `com.kepcup/connections`（D104 P0b：`BuiltinPlugins.connectorSource()`
+ * 每次构造时注入 `source`；目录本身**不再自己读盘**）。单个坏条目只告警并跳过，不拖垮整个
+ * 目录；slug 重复时保留先出现者。
  *
  * 发行门禁（照 D72 `agent/external/catalog.ts`）：打包脚本以 esbuild define 注入
  * `__KEPCUP_CONNECTOR_RELEASE_GATES__`（放行清单）；开发构建、tsc 产物与测试里
@@ -30,23 +27,6 @@ import { mergeDirectoryEntries } from './directory-merge.js';
  * 独立来源；与已有条目的 slug / name 冲突时本机条目被丢弃（打包 / 远端条目永远优先）。
  */
 
-/** 资源目录：env 覆盖 → 向上查找 `apps/desktop/resources/connectors` → null（目录为空）。 */
-export function resolveConnectorsDir(env: NodeJS.ProcessEnv): string | null {
-  const override = env.KEPCUP_CONNECTORS;
-  if (override !== undefined && override.length > 0) {
-    return existsSync(override) ? path.resolve(override) : null;
-  }
-  let current = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 8; i++) {
-    const candidate = path.join(current, 'apps', 'desktop', 'resources', 'connectors');
-    if (existsSync(candidate)) return candidate;
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
-}
-
 /** 构建期注入的放行清单；未注入（开发 / 测试）= null = 不过滤。 */
 export function connectorReleaseGates(): readonly string[] | null {
   return typeof __KEPCUP_CONNECTOR_RELEASE_GATES__ === 'undefined'
@@ -56,16 +36,17 @@ export function connectorReleaseGates(): readonly string[] | null {
 
 /** 一份已解析的目录数据：条目 + 图标目录（测试可直接注入）。 */
 export interface ConnectorCatalogSource {
-  /** `catalog.json` 的 `connectors` 数组（未校验）。 */
+  /** 内置插件各 `server.json` 的原始对象（未校验；顺序 = plugin.json 的 connectors 顺序）。 */
   entries: readonly unknown[];
   /** 图标所在目录；null = 没有图标文件。 */
   iconsDir: string | null;
+  /** slug → 图标文件绝对路径（内置插件的图标与 server.json 同目录；可选）。 */
+  iconPaths?: ReadonlyMap<string, string> | undefined;
 }
 
 export interface ConnectorCatalogOptions {
-  env: NodeJS.ProcessEnv;
   logger?: Pick<CoreLogger, 'warn'> | undefined;
-  /** 注入数据（测试）；缺省从资源目录读取。 */
+  /** 打包快照数据（`BuiltinPlugins.connectorSource()`；测试可注入）；缺省 = 空目录。 */
   source?: ConnectorCatalogSource | undefined;
   /**
    * 放行清单：`null` = 不过滤；缺省取构建期注入值（{@link connectorReleaseGates}）。
@@ -109,30 +90,6 @@ export interface PluginConnectorSource {
 export interface RemoteDirectorySource {
   revision(): number;
   entries(): readonly unknown[];
-}
-
-/** 读取资源目录里的 catalog.json；缺失 / 损坏 → 空来源并告警。 */
-export function readConnectorCatalogSource(
-  env: NodeJS.ProcessEnv,
-  logger?: Pick<CoreLogger, 'warn'>,
-): ConnectorCatalogSource {
-  const dir = resolveConnectorsDir(env);
-  if (dir === null) return { entries: [], iconsDir: null };
-  const file = path.join(dir, 'catalog.json');
-  try {
-    const parsed = connectorCatalogFileSchema.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-    if (!parsed.success) {
-      logger?.warn({ file }, 'connector catalog.json failed schema validation');
-      return { entries: [], iconsDir: null };
-    }
-    return { entries: parsed.data.connectors, iconsDir: path.join(dir, 'icons') };
-  } catch (error) {
-    logger?.warn(
-      { file, error: error instanceof Error ? error.message : String(error) },
-      'connector catalog.json unreadable',
-    );
-    return { entries: [], iconsDir: null };
-  }
 }
 
 /** 校验并去重（坏条目 / 重复 slug 告警跳过）。 */
@@ -184,7 +141,7 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
   /** 因 slug / name 冲突而让位的插件条目 slug。 */
   yieldedPluginSlugs: ReadonlySet<string>;
 } {
-  const source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
+  const source = options.source ?? { entries: [], iconsDir: null };
   let entries = parseConnectorEntries(source.entries, options.logger);
   let remoteOnlySlugs: ReadonlySet<string> = new Set();
   if (options.remote !== undefined && options.remote.length > 0) {
@@ -304,7 +261,7 @@ export class ConnectorCatalog {
       local?: LocalConnectorSource;
     },
   ) {
-    this.#source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
+    this.#source = options.source ?? { entries: [], iconsDir: null };
     this.#iconsDir = this.#source.iconsDir;
     this.#options = options;
     this.#directory = options.directory;
@@ -408,13 +365,23 @@ export class ConnectorCatalog {
   iconSvg(slug: string): string | null {
     const entry = this.get(slug);
     if (entry === null) return null;
-    // 插件条目读插件目录里的图标文件（`iconPath` 由投影器确认在插件目录内）。
-    if (this.#pluginSlugs.has(slug)) {
-      const iconPath = this.#pluginIcons.get(slug);
-      if (iconPath === undefined || iconPath === null) return null;
+    // 内置插件条目的图标与 server.json 同目录（D104 P0b，iconPaths 由加载器确认存在）。
+    const iconPath = this.#source.iconPaths?.get(slug);
+    if (iconPath !== undefined) {
       if (!iconPath.endsWith('.svg')) return null;
       try {
         return readFileSync(iconPath, 'utf8');
+      } catch {
+        return null;
+      }
+    }
+    // 插件贡献条目读插件目录里的图标文件（`iconPath` 由投影器确认在插件目录内）。
+    if (this.#pluginSlugs.has(slug)) {
+      const pluginIconPath = this.#pluginIcons.get(slug);
+      if (pluginIconPath === undefined || pluginIconPath === null) return null;
+      if (!pluginIconPath.endsWith('.svg')) return null;
+      try {
+        return readFileSync(pluginIconPath, 'utf8');
       } catch {
         return null;
       }
