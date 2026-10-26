@@ -14,6 +14,7 @@
   import { Input } from '$lib/components/ui/input';
   import ConnectAppPanel from './ConnectAppPanel.svelte';
   import { withoutLocalEntries } from './local-connectors';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import {
     CATEGORY_LABEL_KEYS,
     TIER_LABEL_KEYS,
@@ -266,6 +267,12 @@
           <span class="text-[11px] text-muted-foreground">
             {t(CATEGORY_LABEL_KEYS[entry.category])}
           </span>
+          {#if entry.origin === 'plugin' && entry.pluginId !== undefined}
+            <PluginSourceBadge
+              pluginId={entry.pluginId}
+              testid={`apps-catalog-plugin-badge-${entry.connectorId}`}
+            />
+          {/if}
         </div>
         <p
           class="line-clamp-2 text-xs text-muted-foreground"
