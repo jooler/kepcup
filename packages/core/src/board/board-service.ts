@@ -23,7 +23,11 @@ import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
-import type { TodoService } from '../workbench/todo-service.js';
+import {
+  BLOCKED_EXECUTOR_DELETED,
+  BLOCKED_EXECUTOR_LEFT,
+  type TodoService,
+} from '../workbench/todo-service.js';
 import { isValidCron, nextCronFireAt } from '../schedule/cron.js';
 import { parseIsoOrThrow } from '../schedule/when.js';
 import type { BoardCardRecord, BoardColumnRecord, BoardStore } from './board-store.js';
@@ -43,6 +47,13 @@ export interface BoardServiceDeps {
   };
   /** Zone used when judging cron gaps. Same zone the schedule service fires in. */
   timeZone: string;
+  /** Cancels live workbench schedules of a card before its conversation goes. */
+  schedules: { cancelForTodo(todoId: string): void };
+  /**
+   * Deletes one conversation through the lifecycle service (runs, FTS,
+   * attachments). Card rows have no FK onto the todo, so this is required.
+   */
+  deleteConversation: (conversationId: string) => Promise<void>;
 }
 
 /**
@@ -168,26 +179,28 @@ export class BoardService {
 
   /**
    * Delete a column. The last column is refused. A non-empty column requires
-   * `deleteCards`, which purges each card through TodoService.
+   * `deleteCards`, which deletes each card through {@link deleteCard}.
    */
-  deleteColumn(columnId: string, deleteCards: boolean | undefined, actor: ProjectActor): void {
+  async deleteColumn(
+    columnId: string,
+    deleteCards: boolean | undefined,
+    actor: ProjectActor,
+  ): Promise<void> {
     const column = this.#requireColumn(columnId);
     this.#write(column.projectId, actor);
-    // Card purges would each emit board.changed inside this transaction.
-    // One column signal after commit is the change listeners can trust.
-    this.#deps.todos.withoutBoardEvents(() => {
-      this.#deps.todos.withTransaction(() => {
-        if (this.#deps.store.countColumns(column.projectId) <= 1) {
-          throw new AppError('BOARD_LAST_COLUMN', 'The last column cannot be deleted');
-        }
-        const cards = this.#deps.store.listCardsInColumn(columnId);
-        if (cards.length > 0 && deleteCards !== true) {
-          throw new AppError('BOARD_COLUMN_NOT_EMPTY', 'Delete the cards in this column first');
-        }
-        for (const card of cards) this.#deps.todos.purge(card.todoId, 'board');
-        this.#deps.store.deleteColumn(columnId);
-      });
+    if (this.#deps.store.countColumns(column.projectId) <= 1) {
+      throw new AppError('BOARD_LAST_COLUMN', 'The last column cannot be deleted');
+    }
+    const cards = this.#deps.store.listCardsInColumn(columnId);
+    if (cards.length > 0 && deleteCards !== true) {
+      throw new AppError('BOARD_COLUMN_NOT_EMPTY', 'Delete the cards in this column first');
+    }
+    // One signal after the card deletions. Per-card events would also fire
+    // from each purge; suppress those and publish the column once.
+    await this.#deps.todos.withoutBoardEvents(async () => {
+      for (const card of cards) await this.#deleteCardData(card.todoId);
     });
+    this.#deps.store.deleteColumn(columnId);
     this.#changed({ projectId: column.projectId, columnId });
     this.#deps.logger.info({ projectId: column.projectId, columnId }, 'board column deleted');
   }
@@ -460,10 +473,10 @@ export class BoardService {
    * `purge` emits the one `board.changed`; it captured the column before the
    * side row disappeared. Publishing again here would duplicate that event.
    */
-  deleteCard(cardId: string, actor: ProjectActor): void {
+  async deleteCard(cardId: string, actor: ProjectActor): Promise<void> {
     const card = this.#requireCard(cardId);
     this.#write(card.projectId, actor);
-    const deleted = this.#deps.todos.purge(cardId, 'board');
+    const deleted = await this.#deleteCardData(cardId);
     if (!deleted) throw new AppError('NOT_FOUND', 'Card not found');
     this.#deps.logger.info({ projectId: card.projectId, cardId }, 'board card deleted');
   }
@@ -472,17 +485,36 @@ export class BoardService {
    * Purge every board todo of a project that is about to be deleted. Column
    * and side rows then cascade with the conversation; the todos would not.
    */
-  onProjectDeleting(projectId: string): void {
+  async onProjectDeleting(projectId: string): Promise<void> {
     const ids = this.#deps.store.listCardIdsByProject(projectId);
     if (ids.length === 0) return;
-    this.#deps.todos.withoutBoardEvents(() => {
-      this.#deps.todos.withTransaction(() => {
-        for (const id of ids) this.#deps.todos.purge(id, 'board');
-      });
+    // Conversations first (runs / FTS / attachments), then the todos. The
+    // project conversation row is deleted by the caller after this returns.
+    await this.#deps.todos.withoutBoardEvents(async () => {
+      for (const id of ids) await this.#deleteCardData(id);
     });
-    // One project signal after the purges commit. Per-card events would fire
-    // inside the transaction and again once for every card.
     this.#changed({ projectId });
+  }
+
+  /** Cards this bot executes in the project go back to draft. */
+  onMemberRemoved(projectId: string, botId: string): void {
+    this.#releaseExecutors(
+      this.#deps.store.listCards(projectId).map((card) => card.todoId),
+      botId,
+      BLOCKED_EXECUTOR_LEFT,
+    );
+  }
+
+  /** Every card this bot executes, in any project. */
+  onBotDeleting(botId: string): void {
+    const rows = this.#deps.db
+      .prepare(
+        `select c.todo_id as id from board_cards c
+         join todos t on t.id = c.todo_id
+         where t.assignee_bot_id = ?`,
+      )
+      .all(botId) as Array<{ id: string }>;
+    for (const row of rows) this.#deps.todos.releaseExecutor(row.id, BLOCKED_EXECUTOR_DELETED);
   }
 
   #snapshot(projectId: string): { columns: BoardColumn[]; cards: BoardCard[] } {
@@ -542,6 +574,28 @@ export class BoardService {
 
   #writeCardPositions(items: readonly { id: string; position: number }[]): void {
     for (const item of items) this.#deps.store.setCardPosition(item.id, item.position);
+  }
+
+  /**
+   * Cancel the schedule, delete every card conversation through the lifecycle
+   * service, then purge the todo. Returns false when the todo was already gone.
+   */
+  async #deleteCardData(cardId: string): Promise<boolean> {
+    this.#deps.schedules.cancelForTodo(cardId);
+    const conversations = this.#deps.conversations.cardConversations({ todoId: cardId });
+    for (const conversation of conversations) {
+      await this.#deps.deleteConversation(conversation.id);
+    }
+    return this.#deps.todos.purge(cardId, 'board');
+  }
+
+  #releaseExecutors(todoIds: readonly string[], botId: string, reason: string): void {
+    for (const todoId of todoIds) {
+      const entry = this.#deps.todos.get(todoId).todo;
+      if (entry.assignee?.kind === 'project' && entry.assignee.leadBotId === botId) {
+        this.#deps.todos.releaseExecutor(todoId, reason);
+      }
+    }
   }
 
   #changed(payload: BoardChangedPayload): void {

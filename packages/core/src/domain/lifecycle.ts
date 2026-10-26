@@ -141,7 +141,9 @@ export interface LifecycleDeps {
    */
   board?:
     | {
-        onProjectDeleting(projectId: string): void;
+        onProjectDeleting(projectId: string): void | Promise<void>;
+        onMemberRemoved?(projectId: string, botId: string): void;
+        onBotDeleting?(botId: string): void;
       }
     | undefined;
   /** W7 watch cascades (删除监看), no-op when absent. */
@@ -269,9 +271,16 @@ export class LifecycleService {
     // D103: board todos have no FK to the project. Purge them before the row
     // delete; board_columns / board_cards then cascade with the conversation.
     if (conv.type === 'project') {
-      this.#cascade('board project cascade failed', { conversationId }, () =>
-        this.deps.board?.onProjectDeleting(conversationId),
-      );
+      // Card conversations go first (runs.db / FTS / attachments). The project
+      // row is deleted below, after this await.
+      try {
+        await this.deps.board?.onProjectDeleting(conversationId);
+      } catch (error) {
+        this.deps.logger.warn(
+          { conversationId, error: error instanceof Error ? error.message : String(error) },
+          'board project cascade failed',
+        );
+      }
     }
     // P10: the conversation's schedules are deleted (03-data-model 删除级联;
     // the FK also cascades on the conversations row delete below).
@@ -416,6 +425,8 @@ export class LifecycleService {
     for (const conv of this.deps.conversations.listDirectByBot(botId)) {
       this.deps.conversations.setReadOnly(conv.id, true);
     }
+    // Board cards this bot executes: clear the assignee. Not the direct-chat loop.
+    this.#cascade('board bot cascade failed', { botId }, () => this.deps.board?.onBotDeleting?.(botId));
 
     // P09: drain + drop the wiki maintenance mutex chain BEFORE the run rows
     // die — an in-flight maintenance loop still appends steps to its run and
@@ -604,6 +615,9 @@ export class LifecycleService {
       force: true,
     });
 
+    this.#cascade('board project-removal cascade failed', { botId, conversationId }, () =>
+      this.deps.board?.onMemberRemoved?.(conversationId, botId),
+    );
     this.#cascade('workbench project-removal cascade failed', { botId, conversationId }, () =>
       this.deps.workbench?.onExecutorChanged(),
     );

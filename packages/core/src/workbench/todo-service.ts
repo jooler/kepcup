@@ -1062,10 +1062,20 @@ export class TodoService implements WorkbenchDispatchPort {
     if (this.#isBoard(todo.id)) {
       // The card does not fall back to "the lead executes it".
       this.#deps.conversations.closeOpenCardConversations(todo.id);
-      return this.#move(todo, 'draft', {
-        assignee: null,
-        blockedReason: boardBlockedReason(problem),
-      });
+      const reason = boardBlockedReason(problem);
+      if (todo.status === 'draft' || canTransitionTodo(todo.status, 'draft')) {
+        return this.#move(todo, 'draft', { assignee: null, blockedReason: reason });
+      }
+      // delivered has no draft edge on the generic table; a departed executor
+      // still returns the card to draft (design 50 §5.6).
+      return (
+        this.store.update(todo.id, {
+          status: 'draft',
+          assignee: null,
+          blockedReason: reason,
+          closedAt: null,
+        }) ?? todo
+      );
     }
     const assignee = todo.assignee;
     const keepProject =
@@ -1180,6 +1190,20 @@ export class TodoService implements WorkbenchDispatchPort {
     this.reconcile();
   }
 
+  /**
+   * Board executor left or was deleted. Clears the assignee and returns the
+   * card to draft. No-op when the todo is not a board card.
+   */
+  releaseExecutor(todoId: string, problem: string): void {
+    const todo = this.store.get(todoId);
+    if (todo === null || !this.#isBoard(todoId)) return;
+    if (todo.assignee === null && todo.status === 'draft') return;
+    this.#guard(() => {
+      this.#dropExecutor(todo, problem);
+      this.#changed(todoId);
+    });
+  }
+
   /** D88 handover: the schedule of a todo moved to another bot — the todo's executor follows. */
   onScheduleTransferred(moved: Schedule): void {
     if (moved.todoId === null || moved.botId === null) return;
@@ -1234,6 +1258,11 @@ export class TodoService implements WorkbenchDispatchPort {
 
   #isBoard(todoId: string): boolean {
     return this.#boardLocation(todoId) !== null;
+  }
+
+  /** True when a `board_cards` row exists. Handover uses this to skip the schedule. */
+  isBoardTodo(todoId: string): boolean {
+    return this.#isBoard(todoId);
   }
 
   /** Bot active; project writable; lead override an active member. */
@@ -1378,10 +1407,10 @@ export class TodoService implements WorkbenchDispatchPort {
    * Run `fn` without emitting per-card `board.changed`. The caller publishes
    * one signal after its transaction commits (column delete, project delete).
    */
-  withoutBoardEvents<T>(fn: () => T): T {
+  async withoutBoardEvents<T>(fn: () => Promise<T> | T): Promise<T> {
     this.#suppressBoardEvents += 1;
     try {
-      return fn();
+      return await fn();
     } finally {
       this.#suppressBoardEvents -= 1;
     }

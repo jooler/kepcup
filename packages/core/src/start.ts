@@ -1902,6 +1902,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // service; the orchestrator's delivery tracking reaches it through this lazy facade.
     let todoService: TodoService | null = null;
     let boardService: BoardService | null = null;
+    let lifecycleForBoard: { deleteConversation(id: string): Promise<void> } | null = null;
     const todoFacade: OrchestratorTodoFacade = {
       titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
       settleDelivered: (todoRunId, resultMessageId) => {
@@ -2387,6 +2388,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           })),
       },
       timeZone: workbenchTimeZone,
+      schedules: {
+        cancelForTodo: (todoId) => {
+          for (const row of schedules.store.listActiveForTodo(todoId)) schedules.cancel(row.id);
+        },
+      },
+      deleteConversation: (id) => {
+        if (lifecycleForBoard === null) throw new Error('lifecycle is not ready');
+        return lifecycleForBoard.deleteConversation(id);
+      },
     });
     boardService = board;
     todoService = todos;
@@ -2742,6 +2752,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       board: {
         onProjectDeleting: (projectId) => board.onProjectDeleting(projectId),
+        onMemberRemoved: (projectId, botId) => board.onMemberRemoved(projectId, botId),
+        onBotDeleting: (botId) => board.onBotDeleting(botId),
       },
       // W7: watches of a deleted conversation / bot (or a bot removed from the group) are removed.
       watches: {
@@ -2805,6 +2817,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       attachments,
     });
 
+    lifecycleForBoard = lifecycle;
     jobs.resetRunningToPending();
     // Provider limits apply before recovery launches anything (re-queued
     // tasks, wake runs — D75 审查 LOW-5).
