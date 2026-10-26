@@ -25,6 +25,8 @@
   let trackEl = $state<HTMLDivElement | null>(null);
   let restored = false;
   let reducedMotion = $state(false);
+  /** Height of the floating copy, measured when a pointer drag starts. */
+  let shadowHeight = $state<number | null>(null);
 
   const flipDurationMs = $derived(boardFlipDurationMs(reducedMotion));
   const openCard = $derived.by(() => {
@@ -78,16 +80,31 @@
   }
 
   function onConsider(event: CustomEvent<DndEvent<BoardColumnView>>): void {
-    if (event.detail.info.trigger === 'dragStopped') {
+    const info = event.detail.info;
+    if (info.trigger === 'dragStopped') {
+      shadowHeight = null;
       board.setDragging(false);
       return;
     }
+    if (info.trigger === 'dragStarted') shadowHeight = draggedElementHeight();
     columnItems = event.detail.items;
     board.setDragging(true);
   }
 
+  /**
+   * The slot has no content of its own, so pin it to the floating copy's
+   * measured height; otherwise the library sizes the copy to the slot and the
+   * copy resizes (and jumps) whenever it changes position.
+   */
+  function draggedElementHeight(): number | null {
+    if (typeof document === 'undefined') return null;
+    const el = document.getElementById('dnd-action-dragged-el');
+    return el === null ? null : el.getBoundingClientRect().height;
+  }
+
   function onFinalize(event: CustomEvent<DndEvent<BoardColumnView>>): void {
     const info = event.detail.info;
+    shadowHeight = null;
     const decision = anchorFromFinalize({
       items: event.detail.items,
       droppedId: info.id,
@@ -111,9 +128,20 @@
     }
     if (info.source !== 'keyboard') board.setDragging(false);
   }
+
+  /**
+   * The board drags with pointer events. Cancel the native HTML5 drag that
+   * Chromium starts for images and selected text, whose default feedback is a
+   * translucent ghost that would double the floating copy.
+   */
+  function blockNativeDrag(node: HTMLElement): { destroy: () => void } {
+    const cancel = (event: Event): void => event.preventDefault();
+    node.addEventListener('dragstart', cancel);
+    return { destroy: () => node.removeEventListener('dragstart', cancel) };
+  }
 </script>
 
-<div class="board flex min-h-0 flex-1 flex-col" data-testid="board-view">
+<div class="board flex min-h-0 flex-1 flex-col" data-testid="board-view" use:blockNativeDrag>
   {#if board.error}
     <p class="shrink-0 px-6 pt-4 text-sm text-muted-foreground" role="alert">{board.error}</p>
   {/if}
@@ -124,13 +152,14 @@
     onscroll={onTrackScroll}
   >
     <div
-      class="flex h-full min-h-0 gap-6"
+      class="flex h-full min-h-0 gap-2"
       role="list"
       aria-label={t('project.module.board')}
       use:dragHandleZone={{
         items: columnItems,
         type: 'column',
         flipDurationMs,
+        morphDisabled: true,
         dropTargetStyle: {},
       }}
       onconsider={onConsider}
@@ -139,7 +168,8 @@
       {#each columnItems as column (column.localKey ?? column.id)}
         {#if isShadow(column)}
           <div
-            class="h-full w-72 shrink-0 rounded-lg border border-dashed"
+            class="min-h-16 w-72 shrink-0 rounded-lg"
+            style:height={shadowHeight === null ? undefined : `${shadowHeight}px`}
             aria-hidden="true"
           ></div>
         {:else}
@@ -156,23 +186,34 @@
 {/if}
 
 <style>
-  /* Drop slot: same size as the item, dashed outline, no fill. The library
-     hides the slot with an inline visibility; override it under this root. */
+  /* Drop slot: same size as the item, board-coloured gap, no outline. The
+     library hides the slot with an inline visibility; override it here. */
   .board :global([data-is-dnd-shadow-item-internal]) {
     visibility: visible !important;
-    background: transparent !important;
+    background: var(--background) !important;
     background-image: none !important;
-    border-style: dashed !important;
+    border: none !important;
     box-shadow: none !important;
   }
   .board :global([data-is-dnd-shadow-item-internal] *) {
     visibility: hidden !important;
   }
-  /* The floating copy is appended to the document body, outside this root. */
+  /* The floating copy is appended to the document body, outside this root.
+     It is a clone of the item, so pin full opacity (done cards are dimmed)
+     and, for the transparent column, the board fill. */
   :global(#dnd-action-dragged-el) {
-    opacity: 0.9;
+    opacity: 1 !important;
     box-shadow:
       0 4px 6px -1px rgb(0 0 0 / 0.1),
       0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
+  /* Cards carry their own fill and border; the transparent column needs the
+     board fill so the copy is opaque. */
+  :global(#dnd-action-dragged-el[data-testid='board-column']) {
+    background-color: var(--background) !important;
+  }
+  :global(#dnd-action-dragged-el[data-testid='board-card']) {
+    background-color: var(--card) !important;
+    border: 1px solid var(--border) !important;
   }
 </style>

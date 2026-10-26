@@ -306,7 +306,6 @@ test('project board: columns, cards, dialog, drag, layout, draft, narrow width',
 
     const idsBeforeColumnDrag = await columnIds(page);
     const firstColumn = columns(page).first();
-    await firstColumn.hover();
     const handle = firstColumn.locator('[data-testid="board-column-handle"]');
     await expect(handle).toBeVisible();
     const secondBox = await columns(page).nth(1).boundingBox();
@@ -385,12 +384,15 @@ test('project board: columns, cards, dialog, drag, layout, draft, narrow width',
     const track = page.locator('[data-testid="board-track"]');
     const trackBox = await track.boundingBox();
     if (trackBox === null) throw new Error('missing track box');
-    await columns(page).first().hover();
     const trackHandle = columns(page).first().locator('[data-testid="board-column-handle"]');
     const beforeTrack = await track.evaluate((el) => el.scrollLeft);
+    const trackHandleBox = await trackHandle.boundingBox();
+    if (trackHandleBox === null) throw new Error('missing column handle box');
+    // The handle spans the header; its centre is empty header space, clear of
+    // the title on the left and the buttons on the right.
     await page.mouse.move(
-      (await trackHandle.boundingBox())!.x + 8,
-      (await trackHandle.boundingBox())!.y + 8,
+      trackHandleBox.x + trackHandleBox.width / 2,
+      trackHandleBox.y + trackHandleBox.height / 2,
     );
     await page.mouse.down();
     await page.mouse.move(trackBox.x + 40, trackBox.y + 40, { steps: 4 });
