@@ -18,6 +18,7 @@
   import { Label } from '$lib/components/ui/label';
   import McpRiskBadge from '$lib/features/approvals/McpRiskBadge.svelte';
   import ConnectedSkillsPrompt from './ConnectedSkillsPrompt.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import { TIER_LABEL_KEYS, appIconSrc, appInitial } from './app-catalog';
   import {
     CONNECTION_STATUS_LABEL_KEYS,
@@ -334,6 +335,11 @@
             >
               {t('apps.local.badge')}
             </Badge>
+          {:else if entry.origin === 'plugin' && entry.pluginId !== undefined}
+            <PluginSourceBadge
+              pluginId={entry.pluginId}
+              testid={`${testid}-plugin-badge-${entry.connectorId}`}
+            />
           {/if}
         </p>
         {#if entry.description.length > 0}

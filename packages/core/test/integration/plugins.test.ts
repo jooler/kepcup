@@ -172,12 +172,16 @@ describe('plugins integration (P0a-2)', () => {
       },
     );
 
-    // 连接器：目录里出现，origin plugin、tier developer
+    // 连接器：目录里出现，origin plugin、tier developer、带来源插件 id（P0a-3 徽标用）
     const catalog = (await core.rpc.call('apps.catalog.list', undefined)) as {
-      entries: Array<{ connectorId: string; origin?: string; tier: string }>;
+      entries: Array<{ connectorId: string; origin?: string; tier: string; pluginId?: string }>;
     };
     const entry = catalog.entries.find((item) => item.connectorId === 'plgconn')!;
-    expect(entry).toMatchObject({ origin: 'plugin', tier: 'developer' });
+    expect(entry).toMatchObject({
+      origin: 'plugin',
+      tier: 'developer',
+      pluginId: PLUGIN_ID,
+    });
 
     // plugins.list 计数与账本对上
     const list = (await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] };
