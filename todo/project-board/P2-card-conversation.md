@@ -212,7 +212,7 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 11. 实施记录
 
-本切片只做了 **B1 + 轨道 A（A1–A6）**。**B2–B9 未开始**：没有 `ConversationsService.ensureCardConversation`，没有 `projectScopeOf` 及调用点改造，没有 `BoardService` 的指派 / 排期，没有 `CARD_RULES`，没有生命周期里删除卡片会话。界面上仍然无法创建卡片会话（没有任何 `INSERT … type = 'card'` 的产品代码；`openDirect` / `projects.create` 仍只写 `direct` / `project`）。
+B1 + 轨道 A 见下方原文。**B2–B9 已在本分支落地**（无新界面；P3 未做）。决策与名字见文末「轨道 B」。
 
 ### B1
 
@@ -311,7 +311,59 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 - **仍留在 `chat.current` 上的**：`ChatsArea`（主区外壳：项目组沟通 vs 单聊）、项目组壳（`ProjectView` / 顶栏 / 成员菜单与编辑器 / 项目设置）、右栏（`RightPanel`、`BotMenu`）、`WorkdirSelector`、窄屏与返回、`TaskRunView`。`TaskRunView` 只由 `ChatsArea` 在 `tasks.openTaskId` 时挂上，是主区替换页，不是消息列表里的片段；弹框要内嵌任务过程时再给它单独的 session。`BotConfigCard` 等四张已从这张「故意留主区」的表里划走，见上一条。
 - **订阅**：`start` 只订一次，`open` 不重订，`dispose` 卸订。切换 id 不叠加 handler。
 - **迁移 CHECK**：等式之外的 `(type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL)` 保留。它不拒绝合法的 direct / project / archived 行（新列为空），也不放松「每卡至多一条 `read_only = 0`」。索引仍是 `conversations_one_direct_per_bot`、`conversations_archived`、`conversations_one_open_per_card`。没有改旧迁移文件。
-- **未做 B2**：`list` / `listVisible` 仍不过滤 `card`。渲染层对 `conversation.updated` 的 `type === 'card'` 直接返回。产品代码没有 `INSERT` 卡片会话行。
+- **未做 B2**（轨道 A 收口时的快照）：当时 `list` / `listVisible` 仍不过滤 `card`。渲染层对 `conversation.updated` 的 `type === 'card'` 直接返回。B2 已补上列表过滤，见下节。
 - `isSingleBotConversation` 仍只含 `direct` 与 `card`。项目组不走单聊发送路径。
+
+## 轨道 B（B2–B9）
+
+没有新的用户入口。P3 的卡片弹框、执行菜单、徽标、深链、对话框重写都没做。`showConversation` 见到 `card` 直接返回，注释 `// P3`。
+
+### B3 判断点
+
+`projectScopeOf`：`project` → 自身 id，`card` → `parentProjectId`，其余 `null`。
+
+| 判断点 | 决定 |
+|---|---|
+| wiki `projectContext` / 默认 scope | card ≡ project（所属项目，含成员校验） |
+| `<project_wiki_topics>` | card ≡ project |
+| 反思 `#wikiSuggestionOwner` | card ≡ project（仍是成员才写入项目 wiki） |
+| 记忆 origin | card ≡ project（`'project'`） |
+| 记忆读取 `isProject` / `warnPrivateOrigin` | card ≡ project |
+| `<my_state>` 标签 | card → 「项目组卡片对话」 |
+| 工作目录 `boundWorkdir` | card ≡ project（不复制 workdir） |
+| 访问授权 `grants` | **不经项目**。`GrantsService` 按 `conversation_id` 取授权，没有会话查找。卡片对话里重新授权；审批卡按会话 id，P3 弹框里可见 |
+| 委派 `delegate_to_bot` | 不适用。`type === 'card'` 直接拒绝 |
+| 开箱引导 / 设置答复 | 不适用。`type !== 'direct'` 已拒绝；访谈工具不对 card 注册 |
+| 项目负责人 / 成员规则、`projectRole` | 不适用。只在 `type === 'project'` 注入 |
+| 总结 job、反思 debounce | 不改（`directBotId` / `(bot, conversation)`） |
+| 设置目录 `isProject` | card ≡ direct（一对一，不走项目组设置面） |
+| 移交盘点的敏感记忆过滤 | card ≡ project |
+| 中途进度条上限 | card ≡ direct（不是项目组那档） |
+| 用户消息 / 工作台派发路由 | card ≡ direct（`directBotId` 走投递闸口，不 `@`、不进项目路由） |
+| `withDirectConversationBots` | card ≡ direct（补 `bot` 字段；侧栏仍忽略 `type === 'card'`） |
+| 分享目标 / 通讯录 / `listDirectByBot` | 不适用（本来就只查 `project` 或 `direct`） |
+| 移交适配器 | 见 B8 / DEV-047 |
+
+### 授权
+
+卡片对话的路径授权**不**继承所属项目。查询点在 `GrantsService.listEffective` / `listActive`，键是会话 id。本阶段不把项目授权并进卡片会话，也不做路径作用域写租约。
+
+### D88
+
+看板事项的 workbench 排期**不移交**。`ScheduleAdapter` 跳过 `board_cards` 上的事项：清单里没有、`validate` / `apply` 拒绝。适配器表达不了「执行成员离开」（盘点不能改指派，移交后 Bot 仍是成员）。离开语义在移出成员和删除 Bot：`#dropExecutor` 清空指派、回 `draft`、`blocked_reason`、会话只读、取消排期。见 DEV-047。
+
+### 新增名字（README §4 没有的）
+
+`ensureCardConversation`、`openCardConversation`、`cardConversations`、`readOnlyCardConversationsOf`、`setCardTitle`、`closeOpenCardConversations`、`projectScopeOf`、`CARD_RULES`、`CardPromptContext`、`BoardService.cardContext`、`BoardService.assign` / `schedule` / `start` / `complete` / `cancel` / `reopen` / `conversation` / `summary`、`TodoService.releaseExecutor`、`TodoService.isBoardTodo`、`BOARD_DISPATCH_TAG`、`BOARD_UNDISPATCHED_NOTE`、`BLOCKED_EXECUTOR_LEFT`、`BLOCKED_EXECUTOR_DELETED`、平台方法 `conversations.kind`（通知点击用来识别 card，避免 `chat.select`）。
+
+### 偏差
+
+DEV-047。没有别的新编号。
+
+### 测试
+
+定向（8 个文件 / 151 例）通过：`project-scope`、`card-conversation`、`card-project-scope`、`board-execution`、`board-lifecycle`、`board-rpc`、`board-service`、`system-prompt-card`、`workbench-service`（单元）、`workbench-project`。`pnpm --filter @kepcup/core typecheck` 与 `pnpm --filter @kepcup/desktop typecheck` 通过。
+
+全量 `pnpm test`：**6393 通过 / 21 失败 / 44 跳过**（609 个文件里 6 个失败）。21 例全部是沙箱基线（本环境没有 bubblewrap / socat），与 P1 记录的 21 例同一集合：`sandbox-isolation`、`toolchain-sandbox`、`skills-authoring`、`skills`、`workdirs` 的 OS sandbox、`workspace-tools`。没有非沙箱失败。未改这些测试。未跑 e2e（界面除主进程 `showConversation` 忽略 card 外没有变化；`project-shell` / `project-board` 不覆盖这条通知路径）。
 
 
