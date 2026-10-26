@@ -6,6 +6,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { board, type BoardCardView } from './board.svelte';
   import { isCardLocked } from './board-model';
+  import { botAvatarOf, botNameColor } from './bot-face';
 
   /**
    * Assignee menu. Lists the project's active bots, excluding the butler.
@@ -32,6 +33,8 @@
   });
   const assigneeId = $derived(card.todo.assignee?.botId ?? null);
   const assigneeName = $derived(card.todo.assignee?.name ?? t('board.dialog.executor.none'));
+  const assigneeAvatar = $derived(assigneeId === null ? null : botAvatarOf(assigneeId));
+  const assigneeColor = $derived(botNameColor(assigneeAvatar));
   const closed = $derived(card.todo.status === 'done' || card.todo.status === 'cancelled');
   const locked = $derived(isCardLocked(card));
   const lockHint = $derived(
@@ -65,11 +68,13 @@
       <BotAvatar
         botId={card.todo.assignee.botId}
         name={card.todo.assignee.name}
-        avatar={null}
+        avatar={assigneeAvatar}
         class="size-6"
         animated={false}
       />
-      <span class="max-w-40 truncate text-sm">{card.todo.assignee.name}</span>
+      <span class="max-w-40 truncate text-sm" style:color={assigneeColor}
+        >{card.todo.assignee.name}</span
+      >
     {:else}
       <span
         class="flex size-6 items-center justify-center rounded-full border border-dashed text-muted-foreground"

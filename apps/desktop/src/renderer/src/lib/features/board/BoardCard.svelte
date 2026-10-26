@@ -5,6 +5,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { board, type BoardCardView } from './board.svelte';
+  import { botAvatarOf } from './bot-face';
   import {
     cardAriaLabel,
     cardFooter,
@@ -169,15 +170,6 @@
   {/if}
   {#if footer}
     <div class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span class="flex shrink-0" data-testid="board-card-assignee">
-        <BotAvatar
-          botId={footer.assignee.botId}
-          name={footer.assignee.name}
-          avatar={null}
-          class="size-4"
-          animated={false}
-        />
-      </span>
       <span class="inline-flex min-w-0 items-center gap-1" data-testid="board-card-status">
         <span
           class="size-1.5 shrink-0 rounded-full {dotClass(footer.status.tone)}"
@@ -191,6 +183,19 @@
           <span class="truncate">{footer.when}</span>
         </span>
       {/if}
+      <span
+        class="ml-auto flex shrink-0 items-center"
+        title={footer.assignee.name}
+        data-testid="board-card-assignee"
+      >
+        <BotAvatar
+          botId={footer.assignee.botId}
+          name={footer.assignee.name}
+          avatar={botAvatarOf(footer.assignee.botId)}
+          class="size-5"
+          animated={false}
+        />
+      </span>
     </div>
   {/if}
 </div>

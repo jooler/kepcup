@@ -36,28 +36,34 @@
 </script>
 
 <div data-testid="board-dialog-fields">
-  <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 text-sm">
+  <div class="flex items-start gap-x-3 py-2.5 text-sm">
     <span class="flex w-20 shrink-0 items-center gap-2 text-muted-foreground">
       <ListChecks class="size-4" aria-hidden="true" />
       <span>{t('board.dialog.status.label')}</span>
     </span>
-    {#if status}
-      <span
-        class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
-        data-testid="board-dialog-status"
-      >
-        <span class="size-1.5 rounded-full {dot(status.tone)}" aria-hidden="true"></span>
-        {t(status.label, status.params)}
-      </span>
-    {:else}
-      <span class="text-xs text-muted-foreground" data-testid="board-dialog-status">
-        {t('board.status.idle')}
-      </span>
-    {/if}
-    <span class="text-xs text-muted-foreground">{t('board.meta.createdAt', { time: created })}</span
-    >
-    <div class="ml-auto">
-      <CardActions {card} onReschedule={() => (whenOpen = true)} />
+    <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {#if status}
+          <span
+            class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+            data-testid="board-dialog-status"
+          >
+            <span class="size-1.5 rounded-full {dot(status.tone)}" aria-hidden="true"></span>
+            {t(status.label, status.params)}
+          </span>
+        {:else}
+          <span class="text-xs text-muted-foreground" data-testid="board-dialog-status">
+            {t('board.status.idle')}
+          </span>
+        {/if}
+        <span class="text-xs text-muted-foreground"
+          >{t('board.meta.createdAt', { time: created })}</span
+        >
+      </div>
+      <!-- 状态动作跟状态内容左对齐，落在状态行下方，而不是挤在整行最右侧。 -->
+      <div>
+        <CardActions {card} onReschedule={() => (whenOpen = true)} />
+      </div>
     </div>
   </div>
   <div class="flex items-center gap-3 border-t py-2.5 text-sm">
