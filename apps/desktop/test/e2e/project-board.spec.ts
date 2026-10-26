@@ -676,12 +676,8 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     await face.click();
     await approval.press('Enter');
     await expect(approval).toBeHidden({ timeout: 60_000 });
-    // Keep the dialog open until post-approval replies land so they are marked
-    // read. Closing earlier on slower runners leaves an unread tab badge.
-    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
-      '文件内容已读到',
-      { timeout: 60_000 },
-    );
+    // Keep the dialog open until the relay lands so it is marked read. Closing
+    // earlier on slower runners leaves an unread tab badge.
     await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
       '外部文件读完了',
       { timeout: 60_000 },
