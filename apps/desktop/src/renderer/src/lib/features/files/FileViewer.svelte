@@ -8,7 +8,7 @@
     filePreviewSessionOutputSchema,
   } from '@kepcup/shared';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { core } from '$lib/rpc/client.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -146,9 +146,11 @@
     };
   });
 
+  const session = getChatSession();
+
   // 切换会话时文件卡属于旧对话：直接关闭，避免把旧会话文件继续展示在新会话上。
   $effect(() => {
-    const conversationId = chat.currentId;
+    const conversationId = session.conversationId;
     if (fileViewer.current !== null && fileViewer.current.conversationId !== conversationId) {
       fileViewer.close();
     }

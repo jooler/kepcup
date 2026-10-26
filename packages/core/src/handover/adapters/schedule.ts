@@ -44,7 +44,13 @@ export interface ScheduleAdapterDeps {
    * D90：工作台事项的排期随移交搬走（`origin` 与 `todo_id` 原样保留，见
    * `ScheduleService.transferTo`），事项的执行者改到接手方。
    */
-  todos?: { onScheduleTransferred(moved: Schedule): void } | undefined;
+  todos?:
+    | {
+        onScheduleTransferred(moved: Schedule): void;
+        /** Board-card schedules stay with the card. They are not handover items. */
+        isBoardTodo?(todoId: string): boolean;
+      }
+    | undefined;
   /** 承诺联动（缺省 = 承诺联动的任务不可执行）。 */
   memory?: Pick<HandoverMemoryPort, 'get' | 'findCopy' | 'insertCopy' | 'embed' | 'voidCommitment'>;
 }
@@ -101,8 +107,12 @@ export class ScheduleAdapter implements HandoverAdapter {
     return null;
   }
 
+  #isBoardSchedule(row: Schedule): boolean {
+    return row.todoId !== null && this.#deps.todos?.isBoardTodo?.(row.todoId) === true;
+  }
+
   inventory(botId: string): HandoverEntry[] {
-    return this.#deps.schedules.listActiveForBot(botId).map((row) => {
+    return this.#deps.schedules.listActiveForBot(botId).filter((row) => !this.#isBoardSchedule(row)).map((row) => {
       const commitment = this.#commitment(row);
       // 敏感承诺：任务标题 / 说明就是承诺原文，卡上标「敏感」且默认不勾（仍可执行）。
       const sensitive = commitment?.sensitivity === 'sensitive';
@@ -132,6 +142,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     if (ctx.toBot !== null && this.#resumable(ctx, row)) return null;
     if (row.status !== 'active') return '这条定时任务已结束或已取消';
     if (row.botId !== ctx.fromBot.id) return `这条定时任务已不属于 ${ctx.fromBot.name}`;
+    if (this.#isBoardSchedule(row)) return '看板卡片的排期不随移交带走';
     const blocked = this.#commitmentBlocked(row);
     if (blocked !== null) return blocked;
     if (this.#isDirectOf(row.conversationId, row.botId)) return null;
@@ -152,6 +163,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     const scheduleId = keyId(key, 'schedule') ?? '';
     const row = this.#deps.schedules.get(scheduleId);
     if (row === null) throw new Error('这条定时任务已被删除');
+    if (this.#isBoardSchedule(row)) throw new Error('看板卡片的排期不随移交带走');
     const memory = this.#deps.memory;
     if (this.#resumable(ctx, row)) {
       // Resumed after a crash between the transfer and voiding A's commitment.

@@ -3,7 +3,7 @@
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -43,8 +43,9 @@
   const light = $derived(itemId === 'bot.light-model');
 
   /** 会话快照里的 Bot（项目组成员 / 单聊 Bot），兜底通讯录（core 推 bot.updated 后更新）。 */
+  const session = getChatSession();
   const bot = $derived.by((): Bot | null => {
-    const current = chat.current;
+    const current = session.view;
     return (
       contacts.bots.find((entry) => entry.id === botId) ??
       current?.members.find((member) => member.bot.id === botId)?.bot ??

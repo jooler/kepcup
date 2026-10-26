@@ -10,7 +10,7 @@
   import { Button } from '$lib/components/ui/button';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { widgetViewer } from './widget-viewer.svelte';
   import { rememberWidgetConsent, widgetConsented } from './consent.svelte';
   import { checkBadge } from './check-status';
@@ -25,6 +25,7 @@
    * 运行期的一切（桥 / 资源租约 / 外链与回传确认）都在 WidgetRuntime。
    */
   let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
+  const session = getChatSession();
 
   let posterPng = $state<string | null>(null);
   let posterLoading = $state(true);
@@ -61,7 +62,7 @@
   });
 
   function openRuntime(): void {
-    widgetViewer.show(messageId, card, chat.currentId ?? '');
+    widgetViewer.show(messageId, card, session.conversationId ?? '');
   }
 
   function handlePosterClick(): void {

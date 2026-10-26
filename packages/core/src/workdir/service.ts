@@ -18,6 +18,7 @@ import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
 import type { WorkdirsService } from '../domain/workdirs.js';
 import type { ConversationsService } from '../domain/conversations.js';
+import { projectScopeOf } from '../domain/project-scope.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { RunsService } from '../domain/runs.js';
 import type { BotsService } from '../domain/bots.js';
@@ -149,8 +150,17 @@ export class WorkdirRuntime {
   boundWorkdir(conversationId: string | null): Workdir | null {
     if (conversationId === null) return null;
     const conv = this.#deps.conversations.get(conversationId);
-    if (conv === null || conv.workdirId === null) return null;
-    const workdir = this.#deps.workdirs.get(conv.workdirId);
+    if (conv === null) return null;
+    // A card chat does not copy the workdir; it uses the parent project's.
+    const scoped =
+      conv.type === 'card'
+        ? (() => {
+            const projectId = projectScopeOf(conv);
+            return projectId === null ? null : this.#deps.conversations.get(projectId);
+          })()
+        : conv;
+    if (scoped === null || scoped.workdirId === null) return null;
+    const workdir = this.#deps.workdirs.get(scoped.workdirId);
     if (workdir === null) return null;
     const refreshed = this.#deps.workdirs.refreshStatus(workdir.id);
     if (refreshed.status !== workdir.status) {

@@ -212,4 +212,166 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 11. 实施记录
 
-（执行智能体在最后一个提交里填写：A4 的逐文件迁移清单；A5 两个 store 的具体改法；B3 的判断点决定表；授权是否经项目解析；D88 适配器核对结论；新增的非 README §4 名字；DEVIATIONS 编号；全量测试结果。）
+B1 + 轨道 A 见下方原文。**B2–B9 已在本分支落地**（无新界面；P3 未做）。决策与名字见文末「轨道 B」。
+
+### B1
+
+- 迁移 `packages/core/migrations/main/0051_card_conversations.sql`。建表按 head 实况（`0040` 列 + `0045` 的 `archived_at` 在末列；索引 `conversations_one_direct_per_bot`、`conversations_archived`；**没有触发器**）。旧行复制，新列 `NULL`。
+- 契约 CHECK 原样保留：`(type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL)`，以及原有的 project/lead CHECK。
+- **额外一条 CHECK**：`(type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL)`。等式单独允许「`direct_bot_id` 为空的 project 行」或「只填了两列之一的 direct 行」通过；阶段测试要求 direct / project 写下这两列被拒，所以加严。不是替换契约等式。
+- `conversationSchema` 的 `parentProjectId` / `cardTodoId` 是 `z.string().nullable().default(null)`：输出类型 `string | null`；缺键的旧载荷解析为 `null`。
+- `domain/conversations.ts` 的行类型改为 `ConversationType`，映射写出两列。`wiki/service.ts` 的 `ConversationsFacade.get` 返回类型改为 `ConversationType`。没有因此新增行为分支。
+- `rg "'direct' | 'project'"` 的其余命中**未放宽**：`tools/index.ts` 与 `setup-tools.ts` 是访谈面 `setupSurface`，不是会话类型；`workbench-service.test.ts` / `wiki-text-source.test.ts` 是局部夹具。`orchestrator` 里 `setupSurface: type === 'project' ? 'project' : 'direct'` 仍把非 project（含将来的 card）当成 direct。`system-prompt.ts` 的 `<conversation_info>` 仍是「非 direct 即项目组文案」——card 还不能被创建，B4 再改提示词。
+- 文档：`docs/dev/03-data-model.md` 的表、类型、删除级联（`parent_project_id` 的 FK CASCADE 只删 main.db 行，是安全网；真正删除含 `runs.db` / FTS / 附件由 service 驱动，**B7 未做**）。
+
+### A1
+
+- 特征化测试：`stores/chat-session-characterization.svelte.test.ts`。`select` 的加载序列钉的是现状：`conversations.get`、`messages.list`、两次 `runs.list`（`limit: 30` 与 `active: true`）、`tasks.active`（`tasks.loadActive`）、`approvals.list` + `grants.list`（`permissions.loadForConversation`，**不是** `reloadApprovals`）。之后每步都未改这个文件。
+
+### A2 / A3
+
+- `stores/chat-session.svelte.ts` 的 `ChatSession`。视图是**一块** `$state` 对象（`view`），`open` / `clear` 才换引用；消息与 run 在原对象上改。窄屏路由只跟踪 `chat.current` 的引用，不能每次读都 new 一个对象。`replyTo`、`highlightMessageId`、`pendingSetup` 是各自的 `$state`。
+- `main` 在 `chat` 构造时 `attach: false`，由 `chat.start()` 调用 `main.start()` 订阅。特征化测试的 mock 每个事件只留最后一个 handler，所以列表更新经 host 回调做在同一次订阅里，而不是再注册一套会被覆盖的监听。
+- `open` 含：get、归档则 unarchive、`afterResolved`（`select` 在这里 `cancelProjectCompose` + upsert）、消息与 runs、`tasks.loadActive`（不 await）、装上视图、`onReady`（`select` 在这里 `showChats` / 重置项目视图 / `board.closeCard` / `tasks.closeDetail` / 记住上次会话 / 侧栏预览 / 稀疏访谈）、项目则 `reloadMembers`、`markRead`、`permissions.loadForConversation`。`markRead` 必须在 `showChats` 之后，否则工作台盖住时第二次 `select` 不会补标已读（`chat-main-view` 的用例）。复核把成员加载挪到 `onReady` 之后，见文末。
+- `chat.current` / `currentId` / `replyTo` / `highlightMessageId` / `setupRequirement` 以及发送、已读、翻页、重试、关横幅都委托 `main`。列表、`runningByConversation`、`turnByConversation`、`lastMessageText`、`composingProject` 留在 `chat`。
+
+### A4 逐文件清单
+
+已改读 `getChatSession()`（未设置 context 时就是 `chat.main`，主区行为不变）：
+
+| 文件 | 处理 |
+|---|---|
+| `features/chats/chat-session-context.ts` | 新增 `setChatSession` / `getChatSession` |
+| `features/chats/ChatBanners.svelte` | 从 `ChatView` 抽出的只读 / 确认模式 / 失败重试横幅 |
+| `features/chats/ChatView.svelte` | 当前视图与设置卡需求改读 session；横幅交给 `ChatBanners` |
+| `features/chats/MessageList.svelte` | 消息、run、已读、翻页、高亮 |
+| `features/chats/Composer.svelte` | 当前会话、引用、发送、门禁、语音设置卡（组件内录音序号仍叫 `session`，聊天会话变量是 `chatSession`） |
+| `features/chats/ChatMessageRow.svelte` | 项目判断、成员、引用消息、高亮、开始引用 |
+| `features/chats/MessageBody.svelte` | 用户气泡颜色取当前会话 Bot |
+| `features/chats/SetupPathCard.svelte` / `SetupQuestionCard.svelte` | 访谈卡读当前会话消息 |
+| `features/chats/ConnectAppSetupBody.svelte` / `MainModelSetupBody.svelte` / `AgentSetupBody.svelte` | 设置卡续跑走 session |
+| `features/chats/SelectionPinToolbar.svelte` | 便签归属当前会话 |
+| `features/tasks/TaskCard.svelte` | 是否项目组；打开任务过程走 `session.openTask`（A5） |
+| `features/settings-card/SettingCard.svelte` / `SettingSetupBody.svelte` | 当前会话 id / 工作目录 / 项目判断 |
+| `features/settings-card/open-deep-link.ts` | 增加可选的当前会话参数；上述两张卡传入 session。缺省仍是 `chat.current`（导航 `select` / `openDirect` 仍是主区） |
+| `features/schedules/ScheduleCard.svelte` / `ScheduleReceipt.svelte` | 是否项目组、项目名。`chat.botName` 仍是名册查找 |
+| `features/widgets/BotWidgetCard.svelte` | 打开覆盖层时带上 session 的会话 id |
+| `features/widgets/WidgetViewer.svelte` / `features/files/FileViewer.svelte` | 会话一切换就关覆盖层；未设 context 时仍是主区 |
+
+看过、故意留在 `chat.current` / `chat.currentId` 上（主区外壳，卡片弹框不会包住它们；`getChatSession()` 缺省也是 `main`，留着是为了窄屏路由继续只跟踪主区对象引用）：
+
+| 文件 | 理由 |
+|---|---|
+| `features/chats/ChatsArea.svelte` | 主区外壳：项目组沟通 vs 单聊、创建项目组。不是可嵌进弹框的会话片段 |
+| `features/project/ProjectView.svelte`、`ProjectHeader.svelte`、`ProjectMembersMenu.svelte`、`ProjectMembersEditor.svelte`、`ProjectSettingsPage.svelte` | 主区项目组壳。卡片弹框不承载项目详情 |
+| `features/right-panel/RightPanel.svelte`、`BotMenu.svelte` | 主区右栏 |
+| `features/settings-card/BotConfigCard.svelte`、`BotModelCard.svelte`、`ProjectLeadCard.svelte`、`ProjectMembersCard.svelte` | 复核时改读 session。它们经 `SettingCardEmbed` 出现在消息里的设置卡中；项目名单与加人仍走 `chat`（见文末复核） |
+| `features/workdirs/WorkdirSelector.svelte` | 主区「有 run 在跑」指示 |
+| `features/shell/NarrowShell.svelte`、`BotDetailOverlay.svelte`、`features/web-shell/back-navigation.svelte.ts`、`App.svelte` | 窄屏 / 返回 / 启动恢复都是主区 `currentId` |
+| `features/shell/narrow-routing.svelte.ts`、`stores/shell.svelte.ts` | 只有注释提到 `chat.current` |
+| `features/tasks/TaskRunView.svelte` | 主区任务过程页。打开动作已改走 session（见 A5），页面本身仍是主区 |
+| `stores/chat-*.svelte.test.ts`、`narrow-routing.svelte.test.ts` | 测试钉的是对外 API 或假 store，不是产品组件 |
+
+### A5
+
+- `tasks.retain(id)` / `tasks.release(id)`：按会话引用计数。`loadActive` 用 `pruneTaskViewsMany`：仍被某个 session 持有的会话，其已结束视图保留；任何会话里进行中的任务都保留。`refresh` 重拉每一个仍被持有的会话。`openTaskId` 语义不变。
+- `ChatSession` 在 `open` 成功时 retain（切换 id 先 release 旧的），`clear` / `dispose` release。
+- `openTask` 是 session 上的可替换字段。复核后只有前台 session 的默认实现是 `tasks.openDetail`；后台 session 默认空操作，避免抢走 `openTaskId`。`TaskCard` 的「打开任务过程」改走 `session.openTask`。主区因此不变。
+- `permissions`：`#grantsByConversation` 按会话存授权。`grants` 只镜像**前台**会话（右栏 / 项目授权页仍读它）。`grantsOf(id)` 读任意已加载会话。`grant.changed` 写入对应桶，仅当前台 id 时改 `grants`。`loadForConversation(id, { foreground })`：`foreground: false` 不抢右栏列表。复核后只有显式 `foreground: true` 的 `main` 是前台。`pendingOf` / `reloadApprovals` 未改。
+
+### A6
+
+- `features/chats/single-bot-conversation.ts` 的 `isSingleBotConversation`：`direct` 或 `card`。`send-gate.ts`、`conversation-bot.ts`、`ChatView` 的访谈闸门（原先 `!== 'direct'`）改用它。
+- `chat.#upsertConversation` 与 `contacts` 的 `conversation.updated` 见到 `type === 'card'` 直接返回。没有改 `conversations.list` / `all` 的过滤（那是 B2；现在也没有代码能插入 card 行）。
+
+### 新增、不在 README §4 里的名字
+
+`ChatSession`、`ChatSessionView`、`ChatSessionHost`、`OpenSessionOptions`（`afterResolved` / `onReady`）、`getChatSession` / `setChatSession`、`ChatBanners`、`isSingleBotConversation`、`pruneTaskViewsMany`、`tasks.retain` / `tasks.release`、`permissions.grantsOf`、`loadForConversation` 的 `foreground`、`ChatSession.openTask`、`ChatSession` 构造参数 `attach` / `foreground`。
+
+### 偏差
+
+未新开 DEVIATIONS 条目。唯一相对契约等式的加严是 B1 那条「非 card 两列皆空」CHECK，理由见上，等式本身仍在。
+
+### 测试（本切片，未跑全量 `pnpm test`）
+
+- store 目录：`node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/stores` — 16 文件 / 88 例通过。
+- `pnpm --filter @kepcup/shared run build`、`pnpm --filter @kepcup/core typecheck`、`pnpm --filter @kepcup/desktop typecheck` 通过。
+- 迁移与契约：`card-conversations-migration`、`project-conversations-migration`、`public-skills-migration`、`project-board-migration`、`project-contract`、`conversation-archive`、`projects-service` 通过。
+- e2e（`pnpm build` 之后，`DISPLAY=:1`，45 例，约 6.3 分钟）：**40 通过 / 5 失败**。失败与 v0.4.0 / P1 已确认的基线同类，未改 spec：
+  - `project-chat`「create, @ mention, reply-quote, turn status」：悬停后 `message-quote` 在 DOM 里但 `element is not visible`（P1 已记：引用按钮悬停后仍不可见）。
+  - `workbench`「scheduled todo…」与「layout: long text…」：点 `todo-save` 后 `todo-drawer` 仍为 1（P1 已记：两条 workbench 在排期保存后抽屉不关）。
+  - `stickies` 两条：`message-pin` 同样是悬停后按钮不可见（与引用按钮同一类）；另一条是环境里没有 bubblewrap，确认模式横幅（`confirm-mode-banner`）挡住便签拖动手柄。横幅标记与抽出前一致，不是本切片改出来的门禁。未改这两份 spec。
+
+### 复核（对照 P1 的 `chat.svelte.ts`，未改特征化测试）
+
+- **项目组 `select` 的顺序**：抽出后 `reloadMembers` 在 `onReady`（`showChats` / `tasks.closeDetail`）之前。工作台或任务过程页会一直盖到成员 RPC 回来。改回先 `onReady` 再拉成员，`markRead` 仍在 `showChats` 之后。`replyTo` 与失败 run 仍在 `open` 换视图时清掉。`highlightMessageId` 在 P1 的 `select` 里本来就不清（只在 `close` / `leaveCurrent` 清），没有改。
+- **`conversation.updated` 写了两遍打开中的会话**：侧栏 upsert 先把合并后的未读数写上视图，session 再用原始事件盖掉，未读数丢失。host 在已经写过视图时返回 true，session 不再覆盖。`type === 'card'` 仍不进侧栏，由 session 自己更新视图。
+- **第二个 `ChatSession()` 会抢走主区**：`foreground` 默认是 true，`openTask` 一律是 `tasks.openDetail`。改成只有显式 `foreground: true`（`chat.main`）才更新右栏授权列表和 `openTaskId`。`new ChatSession()` 是后台会话：`loadForConversation(..., { foreground: false })`，`openTask` 为空操作，等弹框自己换上。主区已经 retain 的已结束任务，在第二个会话打开和 `dispose` 时保留。
+- **转录里仍读 `chat.current` 的设置卡**：`BotConfigCard`、`BotModelCard`、`ProjectLeadCard`、`ProjectMembersCard` 改读 `getChatSession()`（未设 context 时仍是 `main`）。`SetupRequiredCard` 与 `ConfirmLocalConnectorBody` 的收卡改走 `session.dismissSetupCard()`。项目名单、加人、`chat.botName` 仍在 `chat` 上：那是主区名册和项目写操作，不是这一份转录的视图。
+- **仍留在 `chat.current` 上的**：`ChatsArea`（主区外壳：项目组沟通 vs 单聊）、项目组壳（`ProjectView` / 顶栏 / 成员菜单与编辑器 / 项目设置）、右栏（`RightPanel`、`BotMenu`）、`WorkdirSelector`、窄屏与返回、`TaskRunView`。`TaskRunView` 只由 `ChatsArea` 在 `tasks.openTaskId` 时挂上，是主区替换页，不是消息列表里的片段；弹框要内嵌任务过程时再给它单独的 session。`BotConfigCard` 等四张已从这张「故意留主区」的表里划走，见上一条。
+- **订阅**：`start` 只订一次，`open` 不重订，`dispose` 卸订。切换 id 不叠加 handler。
+- **迁移 CHECK**：等式之外的 `(type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL)` 保留。它不拒绝合法的 direct / project / archived 行（新列为空），也不放松「每卡至多一条 `read_only = 0`」。索引仍是 `conversations_one_direct_per_bot`、`conversations_archived`、`conversations_one_open_per_card`。没有改旧迁移文件。
+- **未做 B2**（轨道 A 收口时的快照）：当时 `list` / `listVisible` 仍不过滤 `card`。渲染层对 `conversation.updated` 的 `type === 'card'` 直接返回。B2 已补上列表过滤，见下节。
+- `isSingleBotConversation` 仍只含 `direct` 与 `card`。项目组不走单聊发送路径。
+
+## 轨道 B（B2–B9）
+
+没有新的用户入口。P3 的卡片弹框、执行菜单、徽标、深链、对话框重写都没做。`showConversation` 见到 `card` 直接返回，注释 `// P3`。
+
+### B3 判断点
+
+`projectScopeOf`：`project` → 自身 id，`card` → `parentProjectId`，其余 `null`。
+
+| 判断点 | 决定 |
+|---|---|
+| wiki `projectContext` / 默认 scope | card ≡ project（所属项目，含成员校验） |
+| `<project_wiki_topics>` | card ≡ project |
+| 反思 `#wikiSuggestionOwner` | card ≡ project（仍是成员才写入项目 wiki） |
+| 记忆 origin | card ≡ project（`'project'`） |
+| 记忆读取 `isProject` / `warnPrivateOrigin` | card ≡ project |
+| `<my_state>` 标签 | card → 「项目组卡片对话」 |
+| 工作目录 `boundWorkdir` | card ≡ project（不复制 workdir） |
+| 访问授权 `grants` | **不经项目**。`GrantsService` 按 `conversation_id` 取授权，没有会话查找。卡片对话里重新授权；审批卡按会话 id，P3 弹框里可见 |
+| 委派 `delegate_to_bot` | 不适用。`type === 'card'` 直接拒绝 |
+| 开箱引导 / 设置答复 | 不适用。`type !== 'direct'` 已拒绝；访谈工具不对 card 注册 |
+| 项目负责人 / 成员规则、`projectRole` | 不适用。只在 `type === 'project'` 注入 |
+| 总结 job、反思 debounce | 不改（`directBotId` / `(bot, conversation)`） |
+| 设置目录 `isProject` | card ≡ direct（一对一，不走项目组设置面） |
+| 移交盘点的敏感记忆过滤 | card ≡ project |
+| 中途进度条上限 | card ≡ direct（不是项目组那档） |
+| 用户消息 / 工作台派发路由 | card ≡ direct（`directBotId` 走投递闸口，不 `@`、不进项目路由） |
+| `withDirectConversationBots` | card ≡ direct（补 `bot` 字段；侧栏仍忽略 `type === 'card'`） |
+| 分享目标 / 通讯录 / `listDirectByBot` | 不适用（本来就只查 `project` 或 `direct`） |
+| 移交适配器 | 见 B8 / DEV-047 |
+
+### 授权
+
+卡片对话的路径授权**不**继承所属项目。查询点在 `GrantsService.listEffective` / `listActive`，键是会话 id。本阶段不把项目授权并进卡片会话，也不做路径作用域写租约。
+
+### D88
+
+看板事项的 workbench 排期**不移交**。`ScheduleAdapter` 跳过 `board_cards` 上的事项：清单里没有、`validate` / `apply` 拒绝。适配器表达不了「执行成员离开」（盘点不能改指派，移交后 Bot 仍是成员）。离开语义在移出成员和删除 Bot：`#dropExecutor` 清空指派、回 `draft`、`blocked_reason`、会话只读、取消排期。见 DEV-047。
+
+### 新增名字（README §4 没有的）
+
+`ensureCardConversation`、`openCardConversation`、`cardConversations`、`readOnlyCardConversationsOf`、`setCardTitle`、`closeOpenCardConversations`、`projectScopeOf`、`CARD_RULES`、`CardPromptContext`、`BoardService.cardContext`、`BoardService.assign` / `schedule` / `start` / `complete` / `cancel` / `reopen` / `conversation` / `summary`、`TodoService.releaseExecutor`、`TodoService.isBoardTodo`、`BOARD_DISPATCH_TAG`、`BOARD_UNDISPATCHED_NOTE`、`BLOCKED_EXECUTOR_LEFT`、`BLOCKED_EXECUTOR_DELETED`、平台方法 `conversations.kind`（通知点击用来识别 card，避免 `chat.select`）。
+
+### 偏差
+
+DEV-047。没有别的新编号。
+
+### 测试
+
+定向（8 个文件 / 151 例）通过：`project-scope`、`card-conversation`、`card-project-scope`、`board-execution`、`board-lifecycle`、`board-rpc`、`board-service`、`system-prompt-card`、`workbench-service`（单元）、`workbench-project`。`pnpm --filter @kepcup/core typecheck` 与 `pnpm --filter @kepcup/desktop typecheck` 通过。
+
+全量 `pnpm test`：**6393 通过 / 21 失败 / 44 跳过**（609 个文件里 6 个失败）。21 例全部是沙箱基线（本环境没有 bubblewrap / socat），与 P1 记录的 21 例同一集合：`sandbox-isolation`、`toolchain-sandbox`、`skills-authoring`、`skills`、`workdirs` 的 OS sandbox、`workspace-tools`。没有非沙箱失败。未改这些测试。未跑 e2e（界面除主进程 `showConversation` 忽略 card 外没有变化；`project-shell` / `project-board` 不覆盖这条通知路径）。
+
+### 复核（对照 §7–§11，只记改过的地方）
+
+- **删除确认计数**：`deletionPreview` 按 `direct_bot_id` 计数，卡片对话也会被算进「将清理 N 个对话」。改为只计 `type = 'direct'` 且未只读的行。消息条数仍是该 Bot 发出的全部消息。
+- **`board.changed` 次数**：`when: 'now'` 和 `start` 原先在派发时发一次，取消单次排期之后再发一次（`start` 的那一次还发生在取消之前，同步监听会看到排期还在）。现在这两条路径只在取消提交之后发一次。取消指派改为先把卡片对话标只读，再发那一次 `board.changed`，监听里读到的 `conversationId` 已经是 `null`。
+- **进行中改时间**：`schedule` 与换人一样拒绝，错误码 `BOARD_LOCKED`。测试补上了这一支。
+- **移交终态**（DEV-047 的决定）：不取消看板排期，也不清空指派。卡片仍指派给原 Bot，状态 `scheduled`，没有 `blocked_reason`，对话可写，排期仍在该卡片对话上。不写「执行成员已移出项目组」——移交没有把 Bot 移出项目组。
+- **核对后未改**：`conversations.kind` 是平台口方法（主进程 `callPlatform`），不进 `APP_METHODS`；`list` / `listVisible` / `conversations.all` / `openDirect` / `listDirectByBot` / 分享目标已排除 `card`，`conversation.updated` 仍发布。`GrantsService` 没有会话查找，授权仍是卡片对话内重新授权（见上「授权」）。`projectScopeOf` 已用在 wiki、记忆、反思、工作目录。
+
+

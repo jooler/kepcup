@@ -2,7 +2,7 @@
   import { getSettingItem, type SetupRequirement } from '@kepcup/shared';
   import { ExternalLink } from '@lucide/svelte';
   import { settingItemText, t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -42,6 +42,7 @@
    *   `settings.items.apply`——不并入 SettingCard，保持独立 kind 与独立 body。
    */
   let { requirement }: { requirement: SetupRequirement } = $props();
+  const session = getChatSession();
 
   /** 旧 kind 的兼容别名（capability-model / web-search / mail-account → setting）。 */
   const alias = $derived(setupAliasOf(requirement, t));
@@ -52,14 +53,14 @@
   );
   /** 失败 run 的 Bot（bot 范围条目的作用对象）。 */
   const botId = $derived(
-    chat.current?.failedRun?.botId ?? chat.current?.conversation.bot?.id ?? null,
+    session.view?.failedRun?.botId ?? session.view?.conversation.bot?.id ?? null,
   );
   const embeddable = $derived(
     item !== null &&
       cardEmbeddable(item, {
         botId,
-        conversationId: chat.currentId,
-        workdirId: chat.current?.conversation.workdirId ?? null,
+        conversationId: session.conversationId,
+        workdirId: session.view?.conversation.workdirId ?? null,
         prefill,
         agent: (id) => agentsStore.get(id),
         defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -70,7 +71,7 @@
   function proceed(): void {
     if (continued) return;
     continued = true;
-    void chat.continueAfterSetup();
+    void session.continueAfterSetup();
   }
 
   $effect(() => {
@@ -107,8 +108,8 @@
       {item}
       {prefill}
       {botId}
-      conversationId={chat.currentId}
-      workdirId={chat.current?.conversation.workdirId ?? null}
+      conversationId={session.conversationId}
+      workdirId={session.view?.conversation.workdirId ?? null}
       expected={setting.before ?? null}
       testidPrefix="setup-card-setting"
       onSaved={proceed}
@@ -124,7 +125,8 @@
         <Button
           size="sm"
           variant="outline"
-          onclick={() => void openSettingDeepLink(item, botId !== null ? { botId } : {})}
+          onclick={() =>
+            void openSettingDeepLink(item, botId !== null ? { botId } : {}, session.view?.conversation ?? null)}
           data-testid="setup-card-setting-open"
         >
           <ExternalLink class="size-3.5" aria-hidden="true" />

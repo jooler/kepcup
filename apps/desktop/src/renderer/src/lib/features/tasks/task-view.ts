@@ -176,11 +176,26 @@ export function pruneTaskViews(
   byId: Record<string, TaskView>,
   keepConversationId: string,
 ): Record<string, TaskView> {
+  return pruneTaskViewsMany(byId, new Set([keepConversationId]));
+}
+
+/**
+ * Drop settled views whose conversation no session still has open. In-flight
+ * tasks of any conversation stay (the status line can outlive the switch).
+ */
+export function pruneTaskViewsMany(
+  byId: Record<string, TaskView>,
+  keepConversationIds: ReadonlySet<string>,
+): Record<string, TaskView> {
   const next: Record<string, TaskView> = {};
   let dropped = false;
   for (const [taskId, view] of Object.entries(byId)) {
-    if (view.conversationId === keepConversationId || isActiveTask(view)) next[taskId] = view;
-    else dropped = true;
+    if (
+      (view.conversationId !== null && keepConversationIds.has(view.conversationId)) ||
+      isActiveTask(view)
+    ) {
+      next[taskId] = view;
+    } else dropped = true;
   }
   return dropped ? next : byId;
 }

@@ -243,6 +243,12 @@ import {
   boardCardsMoveInputSchema,
   boardCardsMoveOutputSchema,
   boardCardIdInputSchema,
+  boardSummaryInputSchema,
+  boardSummaryOutputSchema,
+  boardCardsAssignInputSchema,
+  boardCardsScheduleInputSchema,
+  boardCardWarningsOutputSchema,
+  boardCardsConversationOutputSchema,
   memosListInputSchema,
   memosListOutputSchema,
   memosIdInputSchema,
@@ -1849,7 +1855,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       boardColumnsDeleteInputSchema,
       boardEmptyOutputSchema,
       async (input) => {
-        requireBoard(services).deleteColumn(input.columnId, input.deleteCards, 'user');
+        await requireBoard(services).deleteColumn(input.columnId, input.deleteCards, 'user');
         return {};
       },
     ),
@@ -1879,11 +1885,43 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) =>
         requireBoard(services).moveCard(input.cardId, input.columnId, input.beforeCardId, 'user'),
     ),
+    'board.summary': method(boardSummaryInputSchema, boardSummaryOutputSchema, async (input) =>
+      requireBoard(services).summary(input.projectId),
+    ),
+    'board.cards.assign': method(
+      boardCardsAssignInputSchema,
+      boardCardWarningsOutputSchema,
+      async (input) => requireBoard(services).assign(input.cardId, input.botId, 'user'),
+    ),
+    'board.cards.schedule': method(
+      boardCardsScheduleInputSchema,
+      boardCardWarningsOutputSchema,
+      async (input) => requireBoard(services).schedule(input.cardId, input.when, 'user'),
+    ),
+    'board.cards.start': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).start(input.cardId, 'user'),
+    })),
+    'board.cards.complete': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).complete(input.cardId, 'user'),
+    })),
+    'board.cards.cancel': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).cancel(input.cardId, 'user'),
+    })),
+    'board.cards.reopen': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).reopen(input.cardId, 'user'),
+    })),
+    'board.cards.conversation': method(
+      boardCardIdInputSchema,
+      boardCardsConversationOutputSchema,
+      async (input) => ({
+        conversationId: requireBoard(services).conversation(input.cardId, 'user'),
+      }),
+    ),
     'board.cards.delete': method(
       boardCardIdInputSchema,
       boardEmptyOutputSchema,
       async (input) => {
-        requireBoard(services).deleteCard(input.cardId, 'user');
+        await requireBoard(services).deleteCard(input.cardId, 'user');
         return {};
       },
     ),

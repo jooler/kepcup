@@ -2,7 +2,7 @@
   import type { Bot, BotProfile, SetupRequirement } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t, type MessageKey } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -29,6 +29,7 @@
    * 这里经 `bots.update` 自行补写 `app_connection_ids`（core 在 `done` 前已推 `bot.updated`，
    * 第一张卡据此判定无需再写）。
    */
+  const session = getChatSession();
   let { requirement }: { requirement: Extract<SetupRequirement, { kind: 'connect-app' }> } =
     $props();
 
@@ -61,7 +62,7 @@
 
   /** 发起失败 run 的 Bot（项目组取成员，单聊取对话 Bot，兜底通讯录）。 */
   const runBot = $derived.by((): Bot | null => {
-    const current = chat.current;
+    const current = session.view;
     if (current === null) return null;
     const botId = current.failedRun?.botId ?? current.conversation.bot?.id ?? null;
     if (botId === null) return null;
@@ -139,7 +140,7 @@
   function proceed(): void {
     if (continued) return;
     continued = true;
-    void chat.continueAfterSetup();
+    void session.continueAfterSetup();
   }
 
   /** 「已连接，继续」：需要时先把该账号授权给当前 Bot，再续跑。 */
