@@ -297,19 +297,20 @@ export class PluginRegistry {
 
     const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
     if (manifest === null) {
-      // Content unreadable: flipping the flag is still safe; the list shows what is missing.
-      this.#deps.logger.warn({ plugin: id }, 'plugin setEnabled: manifest unreadable, skipping projectors');
-    } else {
-      const ctx = await this.#contextFor(row, manifest, {});
-      // Disable unwinds in reverse projection order, enable re-projects forward.
-      const order = enabled ? [...PLUGIN_PROJECTOR_ORDER] : [...PLUGIN_PROJECTOR_ORDER].reverse();
-      for (const kind of order) {
-        const refs = this.#deps.store.refs(id, kind);
-        if (refs.length === 0) continue;
-        const projector = this.#projectorOf(kind);
-        if (projector === undefined) continue;
-        await projector.setEnabled(ctx, refs, enabled);
-      }
+      // The flag must never drift from the projected state (design 51 §7: enabled=0
+      // removes every projection). With unreadable content we cannot run the projectors
+      // — refusing keeps `enabled` truthful; uninstall still works from the ledger.
+      throw new AppError('PLUGIN_INVALID', '插件内容不可读，无法启停；如需移除请卸载该插件');
+    }
+    const ctx = await this.#contextFor(row, manifest, {});
+    // Disable unwinds in reverse projection order, enable re-projects forward.
+    const order = enabled ? [...PLUGIN_PROJECTOR_ORDER] : [...PLUGIN_PROJECTOR_ORDER].reverse();
+    for (const kind of order) {
+      const refs = this.#deps.store.refs(id, kind);
+      if (refs.length === 0) continue;
+      const projector = this.#projectorOf(kind);
+      if (projector === undefined) continue;
+      await projector.setEnabled(ctx, refs, enabled);
     }
     this.#deps.store.update(id, { enabled, updatedAt: this.#deps.clock.now() });
     this.#deps.audit?.recordSystem('plugin_set_enabled', {
