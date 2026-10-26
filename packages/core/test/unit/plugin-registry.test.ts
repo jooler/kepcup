@@ -13,7 +13,7 @@ import { buildPluginFixture } from '@kepcup/testkit';
 import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginStore } from '../../src/plugins/store.js';
-import { openDatabase, closeDatabase } from '../../src/infra/db.js';
+import { openDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
@@ -81,7 +81,7 @@ class FakeProjector implements PluginProjector {
     this.kind = kind;
   }
 
-  async inspect(ctx: PluginProjectionContext) {
+  async inspect(_ctx: PluginProjectionContext) {
     this.inspected += 1;
     return { items: [], conflicts: this.conflicts, blockers: this.blockers };
   }

@@ -578,7 +578,7 @@ export class PluginRegistry {
         });
       }
     }
-    let dirPath: string | null = null;
+    let dirPath: string | null;
     try {
       dirPath = this.#dirOf(row.id, row.version);
     } catch {

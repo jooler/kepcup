@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { McpbInspectOutput, McpServer, PluginInspectOutput, PluginSummary } from '@kepcup/shared';
+import { afterAll, describe, expect, it } from 'vitest';
+import type { McpServer, PluginInspectOutput, PluginSummary } from '@kepcup/shared';
 import { withRemoteSource } from '@kepcup/core';
 import {
   buildPluginDir,
@@ -192,7 +192,7 @@ describe('plugins integration (P0a-2)', () => {
       const fileStack = await setup();
       const dirStack = await setup();
       const fxDir = path.join(root, `dirfx-${Math.random().toString(36).slice(2, 8)}`);
-      const built = await buildPluginDir({
+      await buildPluginDir({
         dir: fxDir,
         manifest: { id: PLUGIN_ID },
         skills: [{ name: 'plg-alpha' }, { name: 'plg-beta' }],

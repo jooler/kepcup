@@ -64,7 +64,9 @@ function tierFor(pluginTier: PluginIdentity['tier']): 'verified' | 'community' |
 export function rewriteConnectorEntry(
   raw: unknown,
   plugin: PluginIdentity,
-  iconAbsPath: string | null,
+  // Present in the signature for symmetry with the inspect/activate callers (the icon
+  // stays whatever the entry's meta declares; the path is validated there, not here).
+  _iconAbsPath: string | null,
 ): ConnectorCatalogEntry {
   const parsed = connectorCatalogEntrySchema.parse(raw);
   const meta = connectorMetaOf(parsed);
@@ -180,18 +182,6 @@ export class ConnectorsProjector
       : null;
     const entry = rewriteConnectorEntry(raw, ctx.plugin, iconAbsPath);
     return { entry, slug: connectorMetaOf(entry).slug, iconPath: iconAbsPath };
-  }
-
-  #put(pluginId: string, entry: PluginConnectorEntry): void {
-    const state = this.#byPlugin.get(pluginId);
-    if (state === undefined) {
-      this.#byPlugin.set(pluginId, { pluginId, entries: [entry], disabled: false });
-      return;
-    }
-    state.entries = state.entries.filter(
-      (item) => connectorMetaOf(item.entry).slug !== connectorMetaOf(entry.entry).slug,
-    );
-    state.entries.push(entry);
   }
 
   /** Disconnects every connection of a connector, twice like `LocalConnectors.remove`. */
