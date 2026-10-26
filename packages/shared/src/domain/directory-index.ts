@@ -99,8 +99,8 @@ export function selectIndexKey(
 
 const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
-/** `generatedAt`：ISO 8601 字符串或 epoch 毫秒；统一规范化为毫秒。 */
-const generatedAtSchema = z
+/** `generatedAt`：ISO 8601 字符串或 epoch 毫秒；统一规范化为毫秒。（插件市场索引复用。） */
+export const generatedAtSchema = z
   .union([
     z.number().int().min(1),
     z.string().refine((value) => !Number.isNaN(Date.parse(value)), {

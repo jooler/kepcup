@@ -7,6 +7,10 @@ import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
+import {
+  pluginMarketplacePublicKeySchema,
+  pluginMarketplaceUrlSchema,
+} from './plugin-index.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
 import {
@@ -867,6 +871,21 @@ export const settingsSchema = z.object({
   remoteEnabled: z.boolean().default(false),
   /** D96 远程遥控：中转地址，默认公共服务，自建用户可改（条目 `remote.relay`）。 */
   remoteRelayUrl: relayEndpointSchema.default(DEFAULT_RELAY_URL),
+  /**
+   * D104 P1-1 插件市场：是否随市场索引定时检查更新（只控制定时拉取；手动 refresh /
+   * 打开市场页仍联网）。条目 `plugins.updates`。
+   */
+  pluginAutoCheckUpdates: z.boolean().default(true),
+  /**
+   * D104 P1-1 插件市场：市场地址；'' = 官方市场（`PLUGIN_INDEX_BASE_URL`），自建须 https 且
+   * 同时登记自己的签名公钥（`pluginMarketplacePublicKey`）。条目 `plugins.marketplace`。
+   */
+  pluginMarketplaceUrl: pluginMarketplaceUrlSchema.default(''),
+  /**
+   * D104 P1-1 插件市场：自建市场的 Ed25519 公钥（原始 32 字节的 base64）；'' = 用内置
+   * 官方公钥。这是供应链信任根，只能由用户在卡片里改（条目 `plugins.marketplace`）。
+   */
+  pluginMarketplacePublicKey: pluginMarketplacePublicKeySchema.default(''),
   /**
    * 用户个人资料（Profile）显示名；'' = 未设置（界面显示默认称呼）。条目
    * `profile.user-name`，设置页「个人资料」编辑。

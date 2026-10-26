@@ -28,6 +28,7 @@ export const settingGroupSchema = z.enum([
   'developer',
   'diagnostics',
   'remote',
+  'plugins',
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
