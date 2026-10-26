@@ -130,6 +130,8 @@ describe('board todo seams', () => {
     );
     const todos = stack.core.services.todos!;
 
+    expect(todos.get(card.id).runs).toEqual([]);
+    expect(todos.get(card.id).todo.id).toBe(card.id);
     expect(codeOf(() => todos.update(card.id, { title: 'nope' }))).toBe('BOARD_MANAGED');
     expect(codeOf(() => todos.update(card.id, { title: 'nope', actor: 'butler' }))).toBe(
       'BOARD_MANAGED',

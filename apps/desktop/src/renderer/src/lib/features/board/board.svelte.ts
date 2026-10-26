@@ -493,9 +493,26 @@ export class BoardState {
     }
   }
 
-  /** Zero the face badge after the dialog marks the card conversation read. */
+  /**
+   * The dialog marked this card's thread read. Zero the face and take the
+   * same count off the tab badge. A snapshot already in flight was read
+   * before the mark and must not put either badge back; the next snapshot
+   * sees the server's cursor.
+   */
   noteCardRead(cardId: string): void {
+    const card = this.#cardById(cardId);
+    if (card === undefined || card.unreadCount <= 0) return;
+    const unread = card.unreadCount;
     this.#patchCard(cardId, { unreadCount: 0 });
+    this.summary = {
+      ...this.summary,
+      unread: Math.max(0, this.summary.unread - unread),
+    };
+    this.#fetchSeq += 1;
+    this.#summarySeq += 1;
+    this.#reloadPending = true;
+    this.#scheduleReload();
+    if (this.#summaryCount > 0) this.#scheduleSummary();
   }
 
   async deleteCard(cardId: string): Promise<boolean> {

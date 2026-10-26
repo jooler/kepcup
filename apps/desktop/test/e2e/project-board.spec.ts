@@ -713,10 +713,12 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
       '执行成员已移出项目组',
     );
     await face.click();
-    // The open conversation is closed with the assignee, so the dialog is the
-    // unassigned empty state. The blocked reason stays on the status chip.
-    // The read-only history is not reopened here (historical chats are backlog).
-    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText(
+    // The latest thread stays in the dialog, read-only, with the blocked reason.
+    // Older executor threads are still not listed.
+    await expect(dialog.locator('[data-testid="readonly-banner"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="composer-readonly"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).toContainText('卡片里的回答');
+    await expect(dialog.locator('[data-testid="board-dialog-chat"]')).not.toContainText(
       '指派一位成员后',
     );
     await expect(dialog.locator('[data-testid="board-dialog-status"]')).toContainText(

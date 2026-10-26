@@ -255,6 +255,7 @@ describe('board execution', () => {
     expect(afterLeave.todo.assignee).toBeNull();
     expect(afterLeave.todo.status).toBe('draft');
     expect(afterLeave.todo.blockedReason).toBe('执行成员已移出项目组');
+    expect(afterLeave.conversationId).toBe(leftConversation);
     expect(stack.core.services.domain!.conversations.get(leftConversation)?.readOnly).toBe(true);
     expect(activeSchedule(stack, left.cardId)).toBeNull();
 
@@ -267,6 +268,7 @@ describe('board execution', () => {
     expect(afterDelete.todo.assignee).toBeNull();
     expect(afterDelete.todo.status).toBe('draft');
     expect(afterDelete.todo.blockedReason).toBe('执行成员已删除');
+    expect(afterDelete.conversationId).toBe(goneConversation);
     expect(stack.core.services.domain!.conversations.get(goneConversation)?.readOnly).toBe(true);
     expect(activeSchedule(stack, gone.cardId)).toBeNull();
   }, 60_000);
@@ -402,6 +404,65 @@ describe('board execution', () => {
     expect(
       stack.core.services.schedules!.listEntries(directId).some((row) => row.todoId === cardId),
     ).toBe(false);
+  });
+
+  it('projects awaitingInput when the card task is waiting on the user', async () => {
+    const stack = await start();
+    const { projectId, memberId, cardId } = await scaffold(stack);
+    const assigned = board(stack).assign(cardId, memberId, 'user');
+    const run = stack.core.services.domain!.runs.create({
+      botId: memberId,
+      conversationId: assigned.card.conversationId!,
+      loopType: 'task',
+      triggerReason: 'task',
+      triggerMessageIds: [],
+      taskTitle: '等你回答',
+      taskWrites: false,
+    });
+    expect(cardOf(stack, projectId, cardId).task?.awaitingInput).toBe(false);
+    stack.core.services.domain!.runs.update(run.id, { awaitingInput: true });
+    expect(cardOf(stack, projectId, cardId).task?.awaitingInput).toBe(true);
+  });
+
+  it('keeps the blocked card’s latest thread and still counts a second card', async () => {
+    const stack = await start();
+    const { projectId, leadId, memberId, cardId } = await scaffold(stack, '离开后还能看');
+    const assigned = board(stack).assign(cardId, memberId, 'user');
+    const conversationId = assigned.card.conversationId!;
+    const message = stack.core.services.domain!.messages.append({
+      conversationId,
+      senderType: 'bot',
+      senderBotId: memberId,
+      kind: 'text',
+      text: '还没看',
+    });
+    await stack.core.rpc.call('projects.removeMember', {
+      conversationId: projectId,
+      botId: memberId,
+    });
+    const blocked = cardOf(stack, projectId, cardId);
+    expect(blocked.todo.assignee).toBeNull();
+    expect(blocked.conversationId).toBe(conversationId);
+    expect(blocked.unreadCount).toBeGreaterThan(0);
+    expect(board(stack).summary(projectId).unread).toBe(blocked.unreadCount);
+
+    const columnId = board(stack).get(projectId, undefined, 'user').columns[0]!.id;
+    const otherId = board(stack).createCard(projectId, columnId, '另一张', undefined, 'user').id;
+    const other = board(stack).assign(otherId, leadId, 'user');
+    stack.core.services.domain!.messages.append({
+      conversationId: other.card.conversationId!,
+      senderType: 'bot',
+      senderBotId: leadId,
+      kind: 'text',
+      text: '另一张的未读',
+    });
+    const before = board(stack).summary(projectId).unread;
+    expect(before).toBeGreaterThan(blocked.unreadCount);
+    stack.core.services.domain!.conversations.markRead(conversationId, message.seq);
+    expect(cardOf(stack, projectId, cardId).unreadCount).toBe(0);
+    expect(cardOf(stack, projectId, cardId).conversationId).toBe(conversationId);
+    expect(board(stack).summary(projectId).unread).toBe(before - blocked.unreadCount);
+    expect(board(stack).summary(projectId).unread).toBeGreaterThan(0);
   });
 
   it('summary counts the open card conversation and not read-only history', async () => {

@@ -307,7 +307,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 
 - 注册表翻转 `board` 为 `available`，顺序调整为 `chat, board, wiki, okr, calendar`（与 41 §11.2 示意图一致；`project-modules.test.ts` 逐字锁定，随改）。`shell.projectView` 联合类型已含 `'board'`；`ProjectView` 增 `{:else if view === 'board'}` → `ProjectBoardView`（薄壳，仿 `ProjectWikiView`）。
 - **切 tab 会卸载看板**（只有沟通保持挂载）：看板状态存 store（`features/board/board.svelte.ts`，沿用工作台「挂载计数 + 订阅 + 200ms 去抖 / 1s 上限整体重拉 + 迟到响应序号丢弃」），滚动位置与打开的卡片 id 也进 store；编辑中的草稿靠卸载补存（§9.7）。`chat.select()` 收口时一并关闭弹框（同 `projectView` 重置不变式）。
-- **徽标**：看板 tab 显示「未读 + 待审批 + 待验收」之和（读 `board.summary`，项目外壳挂载期间随卡片会话的 `message.created` / 审批 / `board.changed` / `todos.changed` 去抖刷新；实现仿 `project-chat-badge.ts`）。未读与待审批只计当前打开的卡片会话，不算只读历史（那些线程没有入口，计进去会留下清不掉的数字）。用户在沟通 / Wiki tab 时不会漏掉卡片里的审批。
+- **徽标**：看板 tab 显示「未读 + 待审批 + 待验收」之和（读 `board.summary`，项目外壳挂载期间随卡片会话的 `message.created` / 审批 / `board.changed` / `todos.changed` 去抖刷新；实现仿 `project-chat-badge.ts`）。未读与待审批计当前打开的卡片会话；执行成员离开后，弹框仍能打开最近一条只读对话并标已读，这一条也计入。更早的只读历史没有入口，不计，避免留下清不掉的数字。卡面用同一条会话的 `unreadCount`；弹框标已读会同时清掉卡面和 tab。用户在沟通 / Wiki tab 时不会漏掉卡片里的审批。
 - **通知 / 深链**：卡片对话的审批与回复通知，点击跳到「该项目 → 看板 → 打开该卡片」（不是 `showConversation`，后者会选中隐藏会话）。项目沟通里的 `DispatchCard` 不涉及（看板事项不派到沟通）。
 
 ### 9.2 看板布局与滚动不变式
@@ -463,7 +463,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 - **容器**：`Dialog`，`sm:max-w-5xl`（必须带 `sm:` 前缀，否则被基类 `sm:max-w-sm` 压住）、高度 `min(80vh, 720px)`、`gap-0 overflow-hidden p-0`，自带关闭钮（`showCloseButton={false}` 自绘，同 `TodoDrawer`）。三段结构：上下工具栏 `shrink-0 border-b / border-t px-4 py-3`，中部 `min-h-0 flex-1`，左右两栏**各自**纵向滚动。
 - **上工具栏**：左「任务详情」`text-sm font-medium`；右侧执行成员头像（点开 §6.1 的成员菜单；无指派显示虚线圆形「＋」）+ 关闭。
 - **左栏上方**：文本卡片（`InlineEditable`，多行，同卡面字号），始终可编辑。左栏下方：**执行记录**（`todo_runs`：派发时间、状态、「›」跳到对话里那条结果消息），无记录时不渲染。
-- **右栏**：卡片对话（§11 的 `ChatSession(cardConversationId)`）——消息列表、审批坞、状态行、Composer、只读横幅都是单聊现有组件。未指派：居中一行说明「指派一位成员后，可在这里就这张卡片与 TA 沟通」。已指派未发过消息：Composer 占位「就这张卡片与 {名字} 沟通…」。弹框内点任务卡，在右栏显示 `TaskRunView`（带返回），不替换主区。
+- **右栏**：卡片对话（§11 的 `ChatSession(cardConversationId)`）——消息列表、审批坞、状态行、Composer、只读横幅都是单聊现有组件。未指派且没有可打开的对话：居中一行说明「指派一位成员后，可在这里就这张卡片与 TA 沟通」。用户主动取消指派走这行空态（会话只读保留，不在弹框里重开）。执行成员被移出或 Bot 被删（`blocked_reason`）：右栏重开最近一条只读卡片对话，沿用只读横幅，不把它显示成可写对话；更早的执行成员对话仍不能切换。已指派未发过消息：Composer 占位「就这张卡片与 {名字} 沟通…」。弹框内点任务卡，在右栏显示 `TaskRunView`（带返回），不替换主区。Esc 时审批卡和输入框先消费，打开的任务过程页先回到对话，然后才关弹框。
 - **下工具栏**（metadata，同时是入口）：时间 chip（点开手写弹层 `CardWhenPopover`，内为 `WhenPicker`；无指派时置灰并提示「先指派执行成员」）；状态 chip；「下次」；创建 / 更新时间；最右主操作（§6.4 表）。
 - **窄容器**（弹框宽 < 760px）：中部改为「详情 / 对话」两个 tab，tab 上带未读点。
 - **焦点与键盘**：打开时焦点在弹框容器（不抢文本光标）；Esc 关闭（输入框与审批卡内 Esc 先被它们消费）；关闭前补存文本。

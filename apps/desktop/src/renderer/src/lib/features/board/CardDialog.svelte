@@ -5,7 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { board } from './board.svelte';
-  import { deriveCardBadges } from './board-model';
+  import { deriveCardBadges, dialogEscapeAction } from './board-model';
   import InlineEditable from './InlineEditable.svelte';
   import CardChat from './CardChat.svelte';
   import CardExecutorMenu from './CardExecutorMenu.svelte';
@@ -79,12 +79,32 @@
     tab = 'chat';
   }
 
+  function focusInComposer(): boolean {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && active.closest('[data-testid="composer"]') !== null;
+  }
+
+  /**
+   * bits-ui closes on a cloned Escape event and ignores `preventDefault` on
+   * the original keydown. Handle the real event while it is still bubbling
+   * inside the dialog, and stop it so the dialog stays open.
+   */
+  function consumeEscape(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    const action = dialogEscapeAction({
+      defaultPrevented: event.defaultPrevented,
+      composerFocused: focusInComposer(),
+      taskOpen: taskId !== null,
+    });
+    if (action === 'close') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (action === 'blur-composer' || action === 'leave-task') dialogEl?.focus();
+    if (action === 'leave-task') taskId = null;
+  }
+
   function onEscapeKeydown(event: KeyboardEvent): void {
-    if (event.defaultPrevented) return;
-    if (taskId !== null) {
-      event.preventDefault();
-      taskId = null;
-    }
+    consumeEscape(event);
   }
 </script>
 
@@ -101,6 +121,7 @@
       showCloseButton={false}
       tabindex={-1}
       data-testid="board-dialog"
+      onkeydown={consumeEscape}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         dialogEl?.focus();
