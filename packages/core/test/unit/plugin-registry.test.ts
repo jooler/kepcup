@@ -518,6 +518,38 @@ describe('PluginRegistry', () => {
     ).toBe(false);
   });
 
+  it('大小写变体 id：目录槽位冲突 → inspect 冲突 / install PLUGIN_CONFLICT，原插件不受影响', async () => {
+    const rig = makeRig();
+    const first = await makeFixture({ id: 'io.github.tester/slot' });
+    await rig.registry.install(installArgs(first));
+    const slotDir = path.join(rig.pluginsDir, 'io.github.tester', `slot@${first.manifest.version}`);
+    expect(existsSync(slotDir)).toBe(true);
+
+    // 同版本大小写变体 → lower-cased 后是同一个目录槽位
+    const variant = await makeFixture({
+      id: 'io.github.tester/SLOT',
+      version: first.manifest.version,
+    });
+    const output = await rig.registry.inspect({ kind: 'file', path: variant.path });
+    expect(output.installable).toBe(false);
+    expect(output.conflicts).toEqual([
+      {
+        kind: 'plugin',
+        ref: 'io.github.tester/SLOT',
+        withWhat: '安装目录槽位已被插件 io.github.tester/slot 占用（目录名仅大小写不同）',
+      },
+    ]);
+    const error = await rig.registry.install(installArgs(variant)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expectCode(error, 'PLUGIN_CONFLICT');
+    // 原插件的行、账本与目录完好（rm(finalDir) 之前已被拒绝）
+    expect(rig.store.get('io.github.tester/slot')).toMatchObject({ state: 'installed' });
+    expect(rig.store.items('io.github.tester/slot')).toHaveLength(3);
+    expect(existsSync(slotDir)).toBe(true);
+  });
+
   it('ownerOf / list 的 missing 标记', async () => {
     const rig = makeRig();
     const fixture = await makeFixture({ id: 'io.github.tester/own' });

@@ -19,7 +19,7 @@ import { validateUserConfig } from '../apps/mcpb/manifest.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { PluginRow, PluginStore } from './store.js';
-import { assertInstallablePluginId, pluginDirOf } from './ids.js';
+import { assertInstallablePluginId, pluginDirName, pluginDirOf } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 import type { PluginPackager, StagedPlugin } from './package.js';
 import {
@@ -528,6 +528,19 @@ export class PluginRegistry {
       blockers.push(
         `已安装同 id 插件（v${existingRow.version}），请先卸载（更新流在后续版本提供）`,
       );
+    } else {
+      // The install slot is the lower-cased `{id}@{version}`: a case-variant id of a
+      // DIFFERENT plugin must not rename-collide with an installed plugin's directory
+      // (design 51 §5 — one slot per id on case-insensitive file systems).
+      const slot = pluginDirName(manifest.id, manifest.version);
+      const slotOwner = this.#deps.store.list().find((row) => row.dir === slot);
+      if (slotOwner !== undefined) {
+        inspection.conflicts.push({
+          kind: 'plugin',
+          ref: manifest.id,
+          withWhat: `安装目录槽位已被插件 ${slotOwner.id} 占用（目录名仅大小写不同）`,
+        });
+      }
     }
     return {
       id: manifest.id,
