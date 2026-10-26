@@ -1,0 +1,219 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import {
+  AppError,
+  parsePluginSkillSource,
+  pluginSkillSource,
+  type PluginConflict,
+  type PluginConsentSkill,
+  type SkillScan,
+} from '@kepcup/shared';
+import type { CoreLogger } from '../../infra/logger.js';
+import { hashDirectory } from '../../skills/library.js';
+import { parseSkillDir } from '../../skills/parse.js';
+import { scanSkillDir } from '../../skills/scan.js';
+import { resolveEffectiveCompatibility, type SkillsService } from '../../skills/registry.js';
+import type {
+  PluginIdentity,
+  PluginLedger,
+  PluginProjectionContext,
+  PluginProjector,
+  ProjectorInspection,
+} from './index.js';
+
+/**
+ * Skills projector (D104 P0a-2 步骤 3): packaged skill folders land in the PUBLIC
+ * scope through the same pipeline as the preset marketplace
+ * (parse → scan → hash → `SkillsService.installPublic`), marked
+ * `skill_library.source_url = plugin://{pluginId}/{skillName}`. Ownership lives in
+ * the ledger; `source_url` is only consulted to avoid deleting someone else's
+ * same-name skill (the library dedupes by `name@hash`, so it is not authoritative).
+ */
+
+export interface SkillsProjectorDeps {
+  skills: SkillsService;
+  /** Missing-dependency detection for the consent card (optional, same as the registry). */
+  environment?: { depAvailable(dep: string): boolean } | undefined;
+  /** Enhanced-sandbox availability at scan time (optional, same as the registry). */
+  enhancedSandbox?: { available(): boolean } | undefined;
+  logger: Pick<CoreLogger, 'info' | 'warn' | 'error'>;
+}
+
+/** One resolved packaged skill: everything `project` needs, recomputed from `dir`. */
+interface ResolvedSkill {
+  name: string;
+  scan: SkillScan;
+  contentHash: string;
+  dir: string;
+}
+
+export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
+  readonly kind = 'skill' as const;
+  readonly #deps: SkillsProjectorDeps;
+
+  constructor(deps: SkillsProjectorDeps) {
+    this.#deps = deps;
+  }
+
+  async inspect(ctx: PluginProjectionContext): Promise<ProjectorInspection<PluginConsentSkill>> {
+    const items: PluginConsentSkill[] = [];
+    const conflicts: PluginConflict[] = [];
+    const blockers: string[] = [];
+    const seen = new Set<string>();
+    for (const contribution of ctx.manifest.contributions.skills) {
+      const dir = path.join(ctx.dir, ...contribution.dir.split('/'));
+      const parsed = parseSkillDir(dir);
+      if (parsed === null) {
+        blockers.push(`技能 ${contribution.dir} 的 SKILL.md 无法解析`);
+        continue;
+      }
+      const scan = scanSkillDir(dir, parsed, {
+        enhancedSandboxAvailable: this.#deps.enhancedSandbox?.available() ?? false,
+      });
+      const effective = resolveEffectiveCompatibility(
+        scan,
+        this.#deps.enhancedSandbox?.available() ?? false,
+      );
+      // Incompatible does NOT block the install: `installPublic` registers it with an
+      // `incompatible` status; the consent panel just flags it.
+      items.push({
+        name: parsed.name,
+        description: parsed.description,
+        runtimeDeps: scan.runtimeDeps,
+        compatible: !effective.incompatible,
+        incompatibleReason: effective.incompatible
+          ? [
+              scan.compatibilityReasons.join('；'),
+              effective.installHint ?? '',
+            ]
+              .filter((part) => part.length > 0)
+              .join(' ')
+          : null,
+      });
+      if (seen.has(parsed.name.toLowerCase())) {
+        blockers.push(`包内有两个技能解析出同名「${parsed.name}」`);
+        continue;
+      }
+      seen.add(parsed.name.toLowerCase());
+      if (this.#deps.skills.publicSkillRow(parsed.name) !== null) {
+        // ANY source counts: a Bot's private same-name skill only shadows, that is not a conflict.
+        conflicts.push({ kind: 'skill', ref: parsed.name, withWhat: '已有同名公共技能' });
+      }
+    }
+    return { items, conflicts, blockers };
+  }
+
+  async project(ctx: PluginProjectionContext): Promise<void> {
+    for (const contribution of ctx.manifest.contributions.skills) {
+      const resolved = this.#resolve(ctx, contribution.dir);
+      if (resolved === null) {
+        // Inspect rejects this earlier; a throw here is a programming error and the
+        // registry rolls the already-written items back through the ledger.
+        throw new AppError('PLUGIN_INVALID', `技能 ${contribution.dir} 的 SKILL.md 无法解析`);
+      }
+      ctx.ledger.add('skill', resolved.name);
+      this.#installOne(ctx.plugin, resolved);
+    }
+  }
+
+  async unproject(
+    plugin: PluginIdentity,
+    refs: readonly string[],
+    ledger: PluginLedger,
+  ): Promise<void> {
+    for (const name of refs) {
+      this.#removeOne(plugin, name);
+      ledger.remove('skill', name);
+    }
+  }
+
+  async setEnabled(
+    ctx: PluginProjectionContext,
+    refs: readonly string[],
+    enabled: boolean,
+  ): Promise<void> {
+    if (!enabled) {
+      // Same removal as unproject, but the projected items stay in the ledger.
+      for (const name of refs) this.#removeOne(ctx.plugin, name);
+      return;
+    }
+    // Reinstall only the names whose public row is gone; the ledger entries never left.
+    // Skills are identified by their SKILL.md name, which the manifest does not carry;
+    // resolve by re-parsing every packaged folder and matching the parsed name.
+    for (const name of refs) {
+      if (this.#deps.skills.publicSkillRow(name) !== null) continue;
+      const resolved = this.#resolveByName(ctx, name);
+      if (resolved === null) {
+        // Content deleted outside the app: `plugins.list` shows it as missing; nothing to do here.
+        this.#deps.logger.warn(
+          { plugin: ctx.plugin.id, skill: name },
+          'plugin skill reinstall skipped: content missing',
+        );
+        continue;
+      }
+      this.#installOne(ctx.plugin, resolved);
+    }
+  }
+
+  missing(plugin: PluginIdentity, refs: readonly string[]): string[] {
+    void plugin;
+    return refs.filter((name) => {
+      const row = this.#deps.skills.publicSkillRow(name);
+      if (row === null) return true;
+      const library = this.#deps.skills.libraryGet(row.library_id);
+      if (library === null) return true;
+      return !existsSync(this.#deps.skills.libraryDirOf(library));
+    });
+  }
+
+  // --- internals ---------------------------------------------------------------
+
+  #resolve(ctx: PluginProjectionContext, relativeDir: string): ResolvedSkill | null {
+    const dir = path.join(ctx.dir, ...relativeDir.split('/'));
+    const parsed = parseSkillDir(dir);
+    if (parsed === null) return null;
+    return {
+      name: parsed.name,
+      scan: scanSkillDir(dir, parsed, {
+        enhancedSandboxAvailable: this.#deps.enhancedSandbox?.available() ?? false,
+      }),
+      contentHash: hashDirectory(dir),
+      dir,
+    };
+  }
+
+  #resolveByName(ctx: PluginProjectionContext, name: string): ResolvedSkill | null {
+    for (const contribution of ctx.manifest.contributions.skills) {
+      const resolved = this.#resolve(ctx, contribution.dir);
+      if (resolved !== null && resolved.name === name) return resolved;
+    }
+    return null;
+  }
+
+  #installOne(plugin: PluginIdentity, resolved: ResolvedSkill): void {
+    this.#deps.skills.installPublic({
+      name: resolved.name,
+      scan: resolved.scan,
+      sourceUrl: pluginSkillSource(plugin.id, resolved.name),
+      commitOid: plugin.version,
+      contentHash: resolved.contentHash,
+      stagingDir: resolved.dir,
+    });
+  }
+
+  /** Never deletes another source's skill: ownership is verified via `source_url`. */
+  #removeOne(plugin: PluginIdentity, name: string): void {
+    const row = this.#deps.skills.publicSkillRow(name);
+    if (row === null) return;
+    const library = this.#deps.skills.libraryGet(row.library_id);
+    const source = library?.source_url ?? '';
+    if (parsePluginSkillSource(source)?.pluginId !== plugin.id) {
+      this.#deps.logger.warn(
+        { plugin: plugin.id, skill: name, sourceUrl: source },
+        'plugin skill uninstall skipped: owned by another source',
+      );
+      return;
+    }
+    this.#deps.skills.uninstallPublic(name);
+  }
+}
