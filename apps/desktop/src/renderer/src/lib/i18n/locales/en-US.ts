@@ -104,6 +104,12 @@ export const enUS = {
     'This project is read-only, so the board cannot be changed',
   'chats.errorCode.BOARD_ASSIGNEE_INVALID': 'Assign the card to a member of this project',
   'chats.errorCode.BOARD_LOCKED': 'This card is running and cannot be changed right now',
+  'chats.errorCode.PLUGIN_INVALID': 'The plugin package is broken and cannot be installed',
+  'chats.errorCode.PLUGIN_INCOMPATIBLE':
+    'This plugin is not compatible with this version of KepCup',
+  'chats.errorCode.PLUGIN_CONFLICT': 'The plugin conflicts with installed content; nothing changed',
+  'chats.errorCode.PLUGIN_MANAGED':
+    'This item is managed by a plugin — uninstall the whole plugin under "Installed"',
   'runStatus.pleaseWait': 'Please wait…',
   'runStatus.callingVerb': '{verb}…',
   'runStatus.callingTool': 'Calling {tool}…',

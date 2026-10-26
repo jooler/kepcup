@@ -375,14 +375,29 @@ export type McpToolPolicy = z.infer<typeof mcpToolPolicySchema>;
 export const mcpServerAuthSchema = z.enum(['none', 'headers', 'oauth']);
 export type McpServerAuth = z.infer<typeof mcpServerAuthSchema>;
 
-export const mcpServerSourceSchema = z.object({
-  kind: z.literal('mcpb'),
-  // Same patterns as the MCPB manifest: these become a directory name under toolchains/mcpb
-  // (and get `rm -r`-ed on uninstall), so no separators / dot-dot can ever get in.
+// Same patterns as the MCPB manifest: these become a directory name under toolchains/mcpb
+// (and get `rm -r`-ed on uninstall), so no separators / dot-dot can ever get in.
+const mcpbPackageRefSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),
   version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
+/**
+ * 来源（D73 P2 §6.5 / D104 插件系统）：独立 `.mcpb` 安装记 `kind:'mcpb'`（包名 / 版本 /
+ * 包文件 sha256）；插件登记的 server 记 `kind:'plugin'`（`key` 是清单里该 mcp 贡献的
+ * `id`，内嵌 MCPB 另带 `mcpb` 包引用）。本文件不 import `plugin-manifest.ts`
+ * （会与 connector-catalog.ts 成环），id 形状用本地约束。
+ */
+export const mcpServerSourceSchema = z.discriminatedUnion('kind', [
+  mcpbPackageRefSchema.extend({ kind: z.literal('mcpb') }),
+  z.object({
+    kind: z.literal('plugin'),
+    pluginId: z.string().min(3).max(200),
+    version: z.string().min(1).max(64),
+    key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
+    mcpb: mcpbPackageRefSchema.optional(),
+  }),
+]);
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
 /**

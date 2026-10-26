@@ -49,9 +49,10 @@ export type ConnectorTier = z.infer<typeof connectorTierSchema>;
 
 /**
  * 目录条目的来源（`apps.catalog.list` 的 `origin`）：`bundled` 随应用打包；`directory` 来自已验签的
- * 远端目录且打包快照里没有；`local` 是本机连接（Bot 读文档生成、只存在于本机，不经发行门禁）。
+ * 远端目录且打包快照里没有；`local` 是本机连接（Bot 读文档生成、只存在于本机，不经发行门禁）；
+ * `plugin` 来自已安装插件的连接器贡献（D104，目录型投影，发行门禁之后追加）。
  */
-export const connectorOriginSchema = z.enum(['bundled', 'directory', 'local']);
+export const connectorOriginSchema = z.enum(['bundled', 'directory', 'local', 'plugin']);
 export type ConnectorOrigin = z.infer<typeof connectorOriginSchema>;
 
 export const connectorAuthSchema = z
