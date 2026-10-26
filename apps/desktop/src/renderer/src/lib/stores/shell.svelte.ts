@@ -88,8 +88,9 @@ class ShellState {
   }
 
   /**
-   * 切到某个项目模块 tab：注册表里 `status !== 'available'` 的模块（board /
-   * okr / calendar，planned）直接忽略；已是当前视图则不动。
+   * Switch to a project module tab. Modules whose registry status is not
+   * `available` (okr / calendar, still planned) are ignored. The current
+   * view is left unchanged.
    */
   openProjectModule(id: ProjectModuleId): void {
     const module = PROJECT_MODULES.find((entry) => entry.id === id);

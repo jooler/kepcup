@@ -149,6 +149,8 @@ import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
 import { MemoService } from './workbench/memo-service.js';
 import { TodoService } from './workbench/todo-service.js';
+import { BoardService } from './board/board-service.js';
+import { BoardStore } from './board/board-store.js';
 import { buildWorkbenchSection, describeTime } from './workbench/context.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
@@ -584,6 +586,8 @@ export interface CoreServices {
   schedules: ScheduleService | null;
   /** D90 工作台事项 (null while locked / errored). */
   todos: TodoService | null;
+  /** D103 项目看板 (null while locked / errored). */
+  board: BoardService | null;
   /** D90 工作台备忘 (null while locked / errored). */
   memos: MemoService | null;
   /** W7 确定性监看 (null while locked / errored). */
@@ -875,6 +879,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     wikiIndexes: null,
     schedules: null,
     todos: null,
+    board: null,
     memos: null,
     watches: null,
     mail: null,
@@ -2344,6 +2349,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // memos. A due workbench schedule dispatches through TodoService (no proactive guardrails).
     const publishEvent = (event: string, payload: unknown): void =>
       events.emit(event as never, payload as never);
+    const boardStore = new BoardStore(mainDb, clock);
     const todos = new TodoService({
       db: mainDb,
       clock,
@@ -2358,6 +2364,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       publish: publishEvent,
       timers: options.timers ?? realTimerScheduler,
+      boardCards: boardStore,
+    });
+    const board = new BoardService({
+      db: mainDb,
+      clock,
+      logger,
+      store: boardStore,
+      todos,
+      conversations,
     });
     todoService = todos;
     schedules.attachWorkbench(todos);
@@ -2709,6 +2724,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       workbench: {
         onConversationDeleting: (conversationId) => todos.onConversationDeleting(conversationId),
         onExecutorChanged: () => todos.onExecutorChanged(),
+      },
+      board: {
+        onProjectDeleting: (projectId) => board.onProjectDeleting(projectId),
       },
       // W7: watches of a deleted conversation / bot (or a bot removed from the group) are removed.
       watches: {
@@ -3079,6 +3097,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;
     services.todos = todos;
+    services.board = board;
     services.memos = memos;
     services.watches = watches;
     services.mail = mail;

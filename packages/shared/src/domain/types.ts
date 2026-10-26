@@ -2952,6 +2952,17 @@ export const todoEntrySchema = todoSchema.extend({
     })
     .nullable(),
   lastRun: todoRunSchema.nullable(),
+  /**
+   * Set when this todo is a board card (a `board_cards` row). Read-only: the
+   * workbench never writes it. Absent input parses as null.
+   */
+  board: z
+    .object({
+      projectId: z.string(),
+      columnId: z.string(),
+    })
+    .nullable()
+    .default(null),
 });
 export type TodoEntry = z.infer<typeof todoEntrySchema>;
 

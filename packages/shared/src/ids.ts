@@ -61,6 +61,8 @@ export const ID_PREFIXES = {
   tdr: 'tdr_',
   /** 工作台备忘（D90，main.db memos）；与记忆条目 `mem_` 无关。 */
   memo: 'memo_',
+  /** 看板分栏（D103，main.db board_columns）。卡片 id 复用事项 id，没有单独前缀。 */
+  bcol: 'bcol_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

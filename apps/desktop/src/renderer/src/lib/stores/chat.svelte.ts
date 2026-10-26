@@ -20,6 +20,7 @@ export interface ProjectTurnState {
   queue: string[];
   pendingBatches: number;
 }
+import { board } from '$lib/features/board/board.svelte';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
@@ -403,8 +404,11 @@ class ChatState {
     // 工作台时同样不动主区（keepMainView）。
     if (!options.keepMainView && shell.workbenchIntent === workbenchIntent) shell.showChats();
     // 项目组视图（WP6 §4.11）的收口不变式：进入会话自然回到沟通 tab、详情分区回概览。
+    // The board dialog closes with the project view so it cannot follow the user
+    // into another conversation.
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
+    board.closeCard();
     this.replyTo = null;
     // 进入另一个会话即离开任务执行过程页（它与会话内容同层替换）。
     tasks.closeDetail();
@@ -659,6 +663,7 @@ class ChatState {
     // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
+    board.closeCard();
   }
 
   /**

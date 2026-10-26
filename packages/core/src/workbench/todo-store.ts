@@ -124,6 +124,11 @@ export interface ListTodosFilter {
    * closed todos of any age.
    */
   closedAfter?: number | undefined;
+  /**
+   * Hide todos that have a board_cards row. TodoService.list sets this so the
+   * workbench RPC and the butler never see cards. Reconcile does not.
+   */
+  excludeBoardCards?: boolean | undefined;
 }
 
 export interface InsertTodoRunInput {
@@ -273,6 +278,9 @@ export class TodoStore {
     if (filter.closedAfter !== undefined) {
       where.push("(status not in ('done', 'cancelled') or coalesce(closed_at, updated_at) >= ?)");
       params.push(filter.closedAfter);
+    }
+    if (filter.excludeBoardCards === true) {
+      where.push('id not in (select todo_id from board_cards)');
     }
     const clause = where.length > 0 ? `where ${where.join(' and ')}` : '';
     return (
