@@ -124,6 +124,8 @@ afterAll(() => {
 
 async function setup(options: {
   officialKeys?: boolean;
+  /** Explicit official key (tests that publish the index before the stack starts). */
+  officialKey?: ReturnType<typeof makeMarketKey>;
   baseUrl?: string;
   fetch?: DirectoryFetch;
   downloadFetch?: DirectoryFetch;
@@ -131,7 +133,7 @@ async function setup(options: {
   initialDelayMs?: number;
 } = {}): Promise<Rig> {
   const market = new Market();
-  const officialKey = makeMarketKey('official-test');
+  const officialKey = options.officialKey ?? makeMarketKey('official-test');
   const customKey = makeMarketKey('custom');
   const stack = await createTestStack({
     mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } },
@@ -522,18 +524,32 @@ describe('plugins marketplace integration (P1-1)', () => {
   }, 60_000);
 
   it('pluginAutoCheckUpdates=false：定时不拉取，手动 refresh 仍拉取', async () => {
-    const { stack, market, officialKey } = await setup({
-      intervalMs: 10,
-      initialDelayMs: 10,
-    });
-    const { core } = stack;
+    // 先把索引发布好再起 stack：initialDelay 只有 10ms，首跳不能吃 404（否则定时器按
+    // 重试间隔退避，测试就观察不到恢复后的自动拉取）。
+    const market = new Market();
+    const officialKey = makeMarketKey('official-test');
     const pkg = await makePackage({ id: 'io.official/cadence', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
-    const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
-      { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
-    );
-    market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T1,
+      entries: [
+        pluginIndexEntryFor(
+          { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+          { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
+        ),
+      ],
+    });
+    // 索引在 stack 启动前发布好（initialDelay 只有 10ms，首跳不能吃 404 / 坏签名——否则
+    // 定时器按重试间隔退避，观察不到恢复后的自动拉取）。
+    const { stack } = await setup({
+      officialKey,
+      intervalMs: 10,
+      initialDelayMs: 10,
+      fetch: market.fetch,
+    });
+    const { core } = stack;
 
     // 关掉自动检查（core 启动后定时器已在跑，先让在途的一跳结束再取基线）。
     await core.rpc.call('settings.update', { pluginAutoCheckUpdates: false });
