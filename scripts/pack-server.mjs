@@ -14,7 +14,15 @@
 // web 构建复用已有 apps/server/web（本地迭代用）。
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +86,36 @@ for (const extra of ['src', 'test']) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// 3.6) 内置插件（D104 P0b，Q9）：把 resources/plugins 拷进包根，并按发行门禁过滤
+//      连接器。server 是 tsc 产物、没有 esbuild 注入的放行清单 define，不过滤就会把
+//      未放行（hidden 或 releaseGate 不在 approved）的条目带进 headless 构建。
+console.log('[pack-server] 拷贝内置插件 resources/plugins → plugins/');
+const builtinSrc = path.join(root, 'apps/desktop/resources/plugins');
+const builtinDst = path.join(pkgDir, 'plugins');
+cpSync(builtinSrc, builtinDst, { recursive: true });
+const gates = JSON.parse(
+  readFileSync(path.join(root, 'apps/desktop/connector-release-gates.json'), 'utf8'),
+);
+const approved = new Set(gates.approved);
+const connectionsPluginDir = path.join(builtinDst, 'com.kepcup', 'connections');
+const connectionsManifestPath = path.join(connectionsPluginDir, 'plugin.json');
+const manifest = JSON.parse(readFileSync(connectionsManifestPath, 'utf8'));
+const kept = [];
+for (const contribution of manifest.contributions.connectors) {
+  const serverFile = path.join(connectionsPluginDir, ...contribution.file.split('/'));
+  const entry = JSON.parse(readFileSync(serverFile, 'utf8'));
+  const meta = entry._meta['app.kepcup/connector'];
+  const slug = meta.slug;
+  if (meta.hidden === true || !approved.has(meta.releaseGate)) {
+    console.log(`[pack-server] 发行门禁过滤连接器：${slug}`);
+    rmSync(path.dirname(serverFile), { recursive: true, force: true });
+    continue;
+  }
+  kept.push(contribution);
+}
+manifest.contributions.connectors = kept;
+writeFileSync(connectionsManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 // 4) 改写 package.json：bundledDependencies 让 npm 把 node_modules 视为包内容
 //    （npm i -g <tarball> 不再尝试解析依赖）；发布名 kepcup-server（npm i -g 后
