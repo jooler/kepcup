@@ -4,4 +4,6 @@ export * from './manifest-loader.js';
 export * from './package.js';
 export * from './store.js';
 export * from './registry.js';
+export * from './marketplace-sync.js';
+export * from './marketplace-service.js';
 export * from './projectors/index.js';

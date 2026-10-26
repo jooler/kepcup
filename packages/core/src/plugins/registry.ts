@@ -9,16 +9,20 @@ import {
   type PluginConsentMail,
   type PluginConsentMcp,
   type PluginConsentSkill,
+  type PluginIndexEntry,
   type PluginInspectOutput,
   type PluginItemRef,
   type PluginManifest,
+  type PluginMarketEntry,
   type PluginSource,
   type PluginSummary,
 } from '@kepcup/shared';
+import { compareConnectorVersions } from '../apps/directory-merge.js';
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BuiltinPlugins } from './builtin.js';
+import type { MarketplaceService } from './marketplace-service.js';
 import type { PluginRow, PluginStore } from './store.js';
 import { assertInstallablePluginId, pluginDirName, pluginDirOf } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
@@ -47,7 +51,12 @@ export interface PluginRegistryDeps {
   projectors: readonly PluginProjector[];
   /** Builtin plugin loader (D104 P0b): read-only summaries first in `list()`, and the guard for mutating them. */
   builtin?: Pick<BuiltinPlugins, 'summaries' | 'get'> | undefined;
+  /** Marketplace service (D104 P1-1): marketplace installs, revocations, update markers. Absent in P0a tests. */
+  marketplace?: MarketplaceService | undefined;
   pluginsDir: string;
+  /** App version for marketplace compatibility (`engines`); core `0.0.0` skips the check. */
+  appVersion?: string;
+  platform?: NodeJS.Platform;
   clock: Clock;
   logger: CoreLogger;
   events: { emit(name: 'plugins.changed', payload: { ids: string[] }): void };
@@ -58,7 +67,15 @@ export interface PluginInstallInput {
   source: PluginSource;
   sha256: string;
   userConfig: Record<string, Record<string, McpbUserConfigValue>>;
-  via: 'file' | 'folder' | 'bot';
+  /** Derived from `source.kind` (Bot-initiated installs pass 'bot' in P1-3). */
+  via: 'file' | 'folder' | 'marketplace' | 'bot';
+}
+
+/** A source resolved to something the packager can stage (marketplace → downloaded file). */
+interface ResolvedSource {
+  stageSource: { kind: 'file' | 'folder'; path: string };
+  /** Marketplace provenance; null for local sources. */
+  marketplace: { entry: PluginIndexEntry; endpointId: string } | null;
 }
 
 interface InspectStagedResult {
@@ -149,6 +166,8 @@ export class PluginRegistry {
         }
       }
     }
+    // Marketplace revocations may have changed while the app was down (D104 P1-1).
+    await this.applyRevocations();
   }
 
   /** Rolls back `installing` rows and finishes `uninstalling` rows from a dead process. */
@@ -194,12 +213,160 @@ export class PluginRegistry {
   }
 
   async inspect(source: PluginSource): Promise<PluginInspectOutput> {
-    const staged = await this.#deps.packager.stage(source);
+    const resolved = await this.#resolveSource(source);
+    const staged = await this.#deps.packager.stage(resolved.stageSource);
     try {
-      return await this.#inspectStagedOutput(staged);
+      return await this.#inspectStagedOutput(staged, resolved.marketplace);
     } finally {
       await this.#deps.packager.discard(staged);
     }
+  }
+
+  // --- marketplace (D104 P1-1) ---------------------------------------------------
+
+  #appVersion(): string {
+    return this.#deps.appVersion ?? '0.0.0';
+  }
+
+  #platform(): NodeJS.Platform {
+    return this.#deps.platform ?? process.platform;
+  }
+
+  /**
+   * Resolves the install source: marketplace sources download the indexed package into the
+   * cache (sha256-bound) and refuse closed markets / unknown versions / revoked versions;
+   * local sources pass through unchanged.
+   */
+  async #resolveSource(source: PluginSource): Promise<ResolvedSource> {
+    if (source.kind !== 'marketplace') return { stageSource: source, marketplace: null };
+    const service = this.#deps.marketplace;
+    const sync = service?.current() ?? null;
+    if (service === undefined || sync === null) {
+      throw new AppError('PLUGIN_INVALID', '插件市场未启用');
+    }
+    const entry = sync.find(source.id, {
+      ...(source.version !== undefined ? { version: source.version } : {}),
+      appVersion: this.#appVersion(),
+      platform: this.#platform(),
+    });
+    if (entry === null) {
+      throw new AppError(
+        'NOT_FOUND',
+        `市场里没有这个插件版本：${source.id}${source.version !== undefined ? `@${source.version}` : ''}`,
+      );
+    }
+    if (sync.revocationOf(entry.id, entry.version) !== null) {
+      throw new AppError('PLUGIN_INVALID', '该插件版本已被撤销，不能安装');
+    }
+    const filePath = await sync.download(entry);
+    return {
+      stageSource: { kind: 'file', path: filePath },
+      marketplace: { entry, endpointId: service.endpointId() },
+    };
+  }
+
+  /**
+   * Enforces the marketplace revocation list (D104 P1-1 step 4.4): `disable` auto-disables
+   * installed plugins from the current market (same path as setEnabled(false), audited with
+   * `reason: 'revoked'`). Called after every adopted index and at registry start.
+   */
+  applyRevocations(): Promise<void> {
+    return this.#runExclusive(async () => {
+      const service = this.#deps.marketplace;
+      const sync = service?.current() ?? null;
+      if (service === undefined || sync === null) return;
+      const endpointId = service.endpointId();
+      for (const row of this.#deps.store.list()) {
+        if (row.origin !== 'marketplace' || row.marketplace !== endpointId) continue;
+        if (sync.revocationOf(row.id, row.version) !== 'disable') continue;
+        if (!row.enabled || row.state !== 'installed') continue;
+        try {
+          await this.#setEnabledLocked(row.id, false, { auditReason: 'revoked' });
+        } catch (error) {
+          this.#deps.logger.warn(
+            { plugin: row.id, error: error instanceof Error ? error.message : String(error) },
+            'plugin revocation disable failed',
+          );
+        }
+      }
+    });
+  }
+
+  /** Marketplace list view for `plugins.marketplace.list` (one row per id, best version). */
+  marketplaceEntries(): PluginMarketEntry[] {
+    const service = this.#deps.marketplace;
+    const sync = service?.current() ?? null;
+    if (service === undefined || sync === null) return [];
+    const platform = this.#platform();
+    const byId = new Map<string, PluginIndexEntry[]>();
+    for (const entry of sync.entries()) {
+      const list = byId.get(entry.id);
+      if (list === undefined) byId.set(entry.id, [entry]);
+      else list.push(entry);
+    }
+    const rows = new Map(this.#deps.store.list().map((row) => [row.id, row]));
+    const entries: PluginMarketEntry[] = [];
+    for (const [id, candidates] of byId) {
+      const compatible = sync.find(id, { appVersion: this.#appVersion(), platform });
+      // No compatible version: show the highest one flagged incompatible (P1-1 step 4.6).
+      const chosen =
+        compatible ??
+        [...candidates].sort(
+          (a, b) => (compareConnectorVersions(b.version, a.version) ?? -1),
+        )[0]!;
+      const row = rows.get(id) ?? null;
+      const revoked = row !== null
+        ? sync.revocationOf(row.id, row.version)
+        : sync.revocationOf(id, chosen.version);
+      entries.push({
+        id,
+        version: chosen.version,
+        tier: chosen.tier,
+        name: chosen.summary.name,
+        description: chosen.summary.description,
+        author: chosen.summary.author,
+        categories: chosen.categories,
+        size: chosen.size,
+        updatedAt: chosen.updatedAt,
+        compatible: compatible !== null,
+        incompatibleReason:
+          compatible !== null ? null : sync.incompatibleReason(chosen, this.#appVersion(), platform),
+        installed:
+          row === null
+            ? null
+            : {
+                version: row.version,
+                updateAvailable: this.#marketUpdateOf(row) !== null,
+              },
+        revoked,
+      });
+    }
+    return entries;
+  }
+
+  /** Update marker for an installed marketplace plugin from the current market's index. */
+  #marketUpdateOf(row: PluginRow): { version: string } | null {
+    const service = this.#deps.marketplace;
+    const sync = service?.current() ?? null;
+    if (service === undefined || sync === null) return null;
+    if (row.origin !== 'marketplace' || row.marketplace !== service.endpointId()) return null;
+    const latest = sync.find(row.id, {
+      appVersion: this.#appVersion(),
+      platform: this.#platform(),
+    });
+    if (latest === null) return null;
+    if ((compareConnectorVersions(latest.version, row.version) ?? -1) <= 0) return null;
+    if (sync.revocationOf(latest.id, latest.version) !== null) return null;
+    return { version: latest.version };
+  }
+
+  /** Revocation marker for an installed marketplace plugin from the current market's index. */
+  #marketRevocationOf(row: PluginRow): 'warn' | 'disable' | null {
+    const service = this.#deps.marketplace;
+    const sync = service?.current() ?? null;
+    if (service === undefined || sync === null) return null;
+    if (row.origin !== 'marketplace' || row.marketplace !== service.endpointId()) return null;
+    return sync.revocationOf(row.id, row.version);
   }
 
   // --- mutations ----------------------------------------------------------------
@@ -209,10 +376,21 @@ export class PluginRegistry {
   }
 
   async #installLocked(input: PluginInstallInput): Promise<PluginSummary> {
-    const staged = await this.#deps.packager.stage(input.source);
+    const resolved = await this.#resolveSource(input.source);
+    const staged = await this.#deps.packager.stage(resolved.stageSource);
     try {
       if (staged.packageSha256 !== input.sha256) {
         throw new AppError('PLUGIN_INVALID', '包与确认时不一致，请重新选择');
+      }
+      if (resolved.marketplace !== null) {
+        // The package must be exactly what the signed index describes (design 51 §5).
+        const { entry } = resolved.marketplace;
+        if (staged.manifest.id !== entry.id || staged.manifest.version !== entry.version) {
+          throw new AppError('PLUGIN_INVALID', '包内清单与索引不符');
+        }
+        if (staged.packageSha256 !== entry.sha256) {
+          throw new AppError('PLUGIN_INVALID', '包内容与索引的 sha256 不符');
+        }
       }
       const manifest = staged.manifest;
       const { id, version } = manifest;
@@ -247,7 +425,9 @@ export class PluginRegistry {
         validateUserConfig(item.userConfigFields, input.userConfig[contribution.id] ?? {});
       }
 
-      const identity: PluginIdentity = { id, version, origin: 'local', tier: 'developer' };
+      const origin = resolved.marketplace === null ? 'local' : 'marketplace';
+      const tier = resolved.marketplace === null ? 'developer' : resolved.marketplace.entry.tier;
+      const identity: PluginIdentity = { id, version, origin, tier };
       // Atomic落盘: rename the staged tree into the final dir (a leftover dir without a
       // row is cleared first).
       const finalDir = pluginDirOf(this.#deps.pluginsDir, id, version);
@@ -260,12 +440,12 @@ export class PluginRegistry {
       this.#deps.store.insert({
         id,
         version,
-        origin: 'local',
-        tier: 'developer',
+        origin,
+        tier,
         state: 'installing',
         enabled: true,
         packageSha256: staged.packageSha256,
-        marketplace: null,
+        marketplace: resolved.marketplace?.endpointId ?? null,
         dir: path.relative(this.#deps.pluginsDir, finalDir),
         installedAt: now,
         updatedAt: now,
@@ -296,9 +476,12 @@ export class PluginRegistry {
       this.#deps.audit?.recordSystem('plugin_install', {
         pluginId: id,
         version,
-        origin: 'local',
-        tier: 'developer',
+        origin,
+        tier,
         via: input.via,
+        ...(resolved.marketplace !== null
+          ? { marketplace: resolved.marketplace.endpointId }
+          : {}),
       });
       this.#deps.events.emit('plugins.changed', { ids: [id] });
       return this.#summaryOf(this.#deps.store.get(id)!);
@@ -311,7 +494,11 @@ export class PluginRegistry {
     return this.#runExclusive(() => this.#setEnabledLocked(id, enabled));
   }
 
-  async #setEnabledLocked(id: string, enabled: boolean): Promise<PluginSummary> {
+  async #setEnabledLocked(
+    id: string,
+    enabled: boolean,
+    options: { auditReason?: string } = {},
+  ): Promise<PluginSummary> {
     if (this.#isBuiltin(id)) {
       throw new AppError('INVALID_INPUT', '内置插件不能停用或卸载');
     }
@@ -345,6 +532,7 @@ export class PluginRegistry {
       version: row.version,
       origin: row.origin,
       tier: row.tier,
+      ...(options.auditReason !== undefined ? { reason: options.auditReason } : {}),
     });
     this.#deps.events.emit('plugins.changed', { ids: [id] });
     return this.#summaryOf(this.#deps.store.get(id)!);
@@ -500,13 +688,15 @@ export class PluginRegistry {
    * Runs every projector's inspect for the kinds present in the manifest and merges
    * the results (shared by `inspect` and the pre-check inside `install`).
    */
-  async #inspectStaged(staged: StagedPlugin): Promise<InspectStagedResult> {
-    const identity: PluginIdentity = {
+  async #inspectStaged(
+    staged: StagedPlugin,
+    identity: PluginIdentity = {
       id: staged.manifest.id,
       version: staged.manifest.version,
       origin: 'local',
       tier: 'developer',
-    };
+    },
+  ): Promise<InspectStagedResult> {
     const ctx: PluginProjectionContext = {
       plugin: identity,
       manifest: staged.manifest,
@@ -546,8 +736,24 @@ export class PluginRegistry {
     return result;
   }
 
-  async #inspectStagedOutput(staged: StagedPlugin): Promise<PluginInspectOutput> {
-    const inspection = await this.#inspectStaged(staged);
+  async #inspectStagedOutput(
+    staged: StagedPlugin,
+    marketplace: ResolvedSource['marketplace'] = null,
+  ): Promise<PluginInspectOutput> {
+    const identity: PluginIdentity = marketplace === null
+      ? {
+          id: staged.manifest.id,
+          version: staged.manifest.version,
+          origin: 'local',
+          tier: 'developer',
+        }
+      : {
+          id: staged.manifest.id,
+          version: staged.manifest.version,
+          origin: 'marketplace',
+          tier: marketplace.entry.tier,
+        };
+    const inspection = await this.#inspectStaged(staged, identity);
     const manifest = staged.manifest;
     const existingRow = this.#deps.store.get(manifest.id);
     const blockers = [...inspection.blockers];
@@ -582,8 +788,6 @@ export class PluginRegistry {
       description: manifest.description,
       author: manifest.author?.name ?? null,
       homepage: manifest.homepage ?? null,
-      origin: 'local',
-      tier: 'developer',
       packageSha256: staged.packageSha256,
       sizeBytes: staged.sizeBytes,
       skills: inspection.skills,
@@ -595,6 +799,8 @@ export class PluginRegistry {
       update: null,
       installable: blockers.length === 0 && inspection.conflicts.length === 0,
       blockers,
+      origin: marketplace === null ? 'local' : 'marketplace',
+      tier: marketplace === null ? 'developer' : marketplace.entry.tier,
     };
   }
 
@@ -648,7 +854,8 @@ export class PluginRegistry {
       updatedAt: row.updatedAt,
       counts,
       items,
-      updateAvailable: null,
+      updateAvailable: this.#marketUpdateOf(row),
+      revoked: this.#marketRevocationOf(row),
     };
   }
 
