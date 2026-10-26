@@ -65,7 +65,8 @@ class FakeProjector implements PluginProjector {
   inspected = 0;
   readonly projected: Array<{ pluginId: string; ref: string }> = [];
   readonly unprojected: Array<{ pluginId: string; refs: readonly string[] }> = [];
-  readonly setEnabledCalls: Array<{ pluginId: string; refs: readonly string[]; enabled: boolean }> = [];
+  readonly setEnabledCalls: Array<{ pluginId: string; refs: readonly string[]; enabled: boolean }> =
+    [];
   readonly activated: string[] = [];
   conflicts: PluginConflict[] = [];
   blockers: string[] = [];
@@ -88,7 +89,8 @@ class FakeProjector implements PluginProjector {
 
   async project(ctx: PluginProjectionContext): Promise<void> {
     this.log?.push(`${this.kind}.project.begin:${ctx.plugin.id}`);
-    if (this.projectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.projectDelayMs));
+    if (this.projectDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, this.projectDelayMs));
     const refs = refsOf(ctx.manifest, this.kind);
     for (const [index, ref] of refs.entries()) {
       ctx.ledger.add(this.kind, ref);
@@ -101,13 +103,21 @@ class FakeProjector implements PluginProjector {
     this.log?.push(`${this.kind}.project.end:${ctx.plugin.id}`);
   }
 
-  async unproject(plugin: PluginIdentity, refs: readonly string[], ledger: PluginLedger): Promise<void> {
+  async unproject(
+    plugin: PluginIdentity,
+    refs: readonly string[],
+    ledger: PluginLedger,
+  ): Promise<void> {
     this.unprojected.push({ pluginId: plugin.id, refs });
     if (this.failUnproject) throw new Error(`unproject ${this.kind} failed`);
     for (const ref of refs) ledger.remove(this.kind, ref);
   }
 
-  async setEnabled(ctx: PluginProjectionContext, refs: readonly string[], enabled: boolean): Promise<void> {
+  async setEnabled(
+    ctx: PluginProjectionContext,
+    refs: readonly string[],
+    enabled: boolean,
+  ): Promise<void> {
     this.setEnabledCalls.push({ pluginId: ctx.plugin.id, refs, enabled });
   }
 
@@ -140,7 +150,11 @@ function makeRig(): Rig {
   let tick = 0;
   const clock: Clock = { now: () => 5_000_000 + tick++ };
   const store = new PluginStore(db);
-  const packager = new PluginPackager({ pluginsDir: paths.pluginsDir, logger: noopLogger, appVersion: '0.0.0-test' });
+  const packager = new PluginPackager({
+    pluginsDir: paths.pluginsDir,
+    logger: noopLogger,
+    appVersion: '0.0.0-test',
+  });
   const fakes = {
     skill: new FakeProjector('skill'),
     mcp: new FakeProjector('mcp'),
@@ -200,7 +214,11 @@ async function makeFixture(
     },
     skills: (options.skills ?? ['alpha', 'beta']).map((name) => ({ name })),
   });
-  return { path: built.path, sha256: built.sha256, manifest: pluginManifestSchema.parse(built.manifest) };
+  return {
+    path: built.path,
+    sha256: built.sha256,
+    manifest: pluginManifestSchema.parse(built.manifest),
+  };
 }
 
 function expectCode(error: unknown, code: string): AppError {
@@ -244,7 +262,9 @@ describe('PluginRegistry', () => {
       { kind: 'skill', ref: 'beta' },
       { kind: 'mail', ref: 'mailtest' },
     ]);
-    expect(rig.events).toEqual([{ name: 'plugins.changed', payload: { ids: ['io.github.tester/reg'] } }]);
+    expect(rig.events).toEqual([
+      { name: 'plugins.changed', payload: { ids: ['io.github.tester/reg'] } },
+    ]);
     expect(rig.audits).toEqual([
       {
         action: 'plugin_install',
@@ -273,7 +293,9 @@ describe('PluginRegistry', () => {
     expect(rig.store.get('io.github.tester/reg')).toBeNull();
     expect(rig.store.items('io.github.tester/reg')).toEqual([]);
     expect(
-      existsSync(path.join(rig.pluginsDir, `io.github.tester/reg@${fixture.manifest.version}`.toLowerCase())),
+      existsSync(
+        path.join(rig.pluginsDir, `io.github.tester/reg@${fixture.manifest.version}`.toLowerCase()),
+      ),
     ).toBe(false);
     // 回滚按逆序：mail / connector / mcp 无账本项被跳过，skill 收到已写项
     expect(rig.fakes.skill.unprojected).toEqual([
@@ -288,18 +310,27 @@ describe('PluginRegistry', () => {
     const fixture = await makeFixture({ id: 'io.github.tester/sha' });
     const error = await rig.registry
       .install({ ...installArgs(fixture), sha256: 'b'.repeat(64) })
-      .then(() => null, (caught: unknown) => caught);
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
     expectCode(error, 'PLUGIN_INVALID');
     expect(rig.store.get('io.github.tester/sha')).toBeNull();
 
     const ok = await makeFixture({ id: 'io.github.tester/dup' });
     await rig.registry.install(installArgs(ok));
     const dup = await makeFixture({ id: 'io.github.tester/dup' });
-    const conflict = await rig.registry.install(installArgs(dup)).then(() => null, (caught: unknown) => caught);
+    const conflict = await rig.registry.install(installArgs(dup)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
     expectCode(conflict, 'PLUGIN_CONFLICT');
 
     const reserved = await makeFixture({ id: 'com.kepcup/evil' });
-    const reservedError = await rig.registry.install(installArgs(reserved)).then(() => null, (caught: unknown) => caught);
+    const reservedError = await rig.registry.install(installArgs(reserved)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
     expectCode(reservedError, 'PLUGIN_INVALID');
     expect((reservedError as AppError).message).toMatch(/保留/);
   });
@@ -310,8 +341,13 @@ describe('PluginRegistry', () => {
     rig.fakes.skill.conflicts = [{ kind: 'skill', ref: 'alpha', withWhat: '已有同名公共技能' }];
     const inspect = await rig.registry.inspect({ kind: 'file', path: conflicted.path });
     expect(inspect.installable).toBe(false);
-    expect(inspect.conflicts).toEqual([{ kind: 'skill', ref: 'alpha', withWhat: '已有同名公共技能' }]);
-    const conflict = await rig.registry.install(installArgs(conflicted)).then(() => null, (caught: unknown) => caught);
+    expect(inspect.conflicts).toEqual([
+      { kind: 'skill', ref: 'alpha', withWhat: '已有同名公共技能' },
+    ]);
+    const conflict = await rig.registry.install(installArgs(conflicted)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
     const conflictError = expectCode(conflict, 'PLUGIN_CONFLICT');
     expect(conflictError.message).toContain('alpha（已有同名公共技能）');
     expect(rig.store.get('io.github.tester/conf')).toBeNull();
@@ -319,7 +355,10 @@ describe('PluginRegistry', () => {
     rig.fakes.skill.conflicts = [];
     rig.fakes.mail.blockers = ['内置模板冲突'];
     const blocked = await makeFixture({ id: 'io.github.tester/block' });
-    const blocker = await rig.registry.install(installArgs(blocked)).then(() => null, (caught: unknown) => caught);
+    const blocker = await rig.registry.install(installArgs(blocked)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
     expectCode(blocker, 'PLUGIN_INCOMPATIBLE');
     expect(rig.store.get('io.github.tester/block')).toBeNull();
   });
@@ -385,14 +424,24 @@ describe('PluginRegistry', () => {
     const appError = expectCode(error, 'INTERNAL');
     expect(appError.message).toContain('unproject mail failed');
     // 尽力而为：skill 的清理照做，行与目录都被清
-    expect(rig.fakes.skill.unprojected).toEqual([{ pluginId: 'io.github.tester/gone', refs: ['alpha', 'beta'] }]);
+    expect(rig.fakes.skill.unprojected).toEqual([
+      { pluginId: 'io.github.tester/gone', refs: ['alpha', 'beta'] },
+    ]);
     expect(rig.store.get('io.github.tester/gone')).toBeNull();
     expect(
-      existsSync(path.join(rig.pluginsDir, `io.github.tester/gone@${fixture.manifest.version}`.toLowerCase())),
+      existsSync(
+        path.join(
+          rig.pluginsDir,
+          `io.github.tester/gone@${fixture.manifest.version}`.toLowerCase(),
+        ),
+      ),
     ).toBe(false);
     expect(rig.audits.at(-1)).toMatchObject({ action: 'plugin_uninstall' });
 
-    const none = await rig.registry.uninstall('io.github.tester/none').then(() => null, (caught: unknown) => caught);
+    const none = await rig.registry.uninstall('io.github.tester/none').then(
+      () => null,
+      (caught: unknown) => caught,
+    );
     expectCode(none, 'NOT_FOUND');
   });
 
@@ -446,7 +495,10 @@ describe('PluginRegistry', () => {
     const recovered2 = await rig.registry.recoverInterrupted();
     expect(recovered2).toBe(1);
     expect(rig.store.get('io.github.tester/mid')).toBeNull();
-    expect(rig.fakes.mail.unprojected.at(-1)).toEqual({ pluginId: 'io.github.tester/mid', refs: ['mailleft'] });
+    expect(rig.fakes.mail.unprojected.at(-1)).toEqual({
+      pluginId: 'io.github.tester/mid',
+      refs: ['mailleft'],
+    });
   });
 
   it('start()：activate 抛错只告警不失败；installed+enabled 才激活', async () => {

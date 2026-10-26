@@ -59,7 +59,11 @@ export interface PluginProjector<T = unknown> {
    * Hide / restore; does not touch the projected items in the ledger
    * (`disabled_connection` is the connectors projector's own bookkeeping).
    */
-  setEnabled(ctx: PluginProjectionContext, refs: readonly string[], enabled: boolean): Promise<void>;
+  setEnabled(
+    ctx: PluginProjectionContext,
+    refs: readonly string[],
+    enabled: boolean,
+  ): Promise<void>;
   /**
    * Startup: rebuild runtime state for installed+enabled plugins (does not write the
    * ledger). Skills / MCP state lives in the DB / settings — no implementation needed.
@@ -70,7 +74,12 @@ export interface PluginProjector<T = unknown> {
 }
 
 /** Fixed order: skills and MCP first, then connectors and mail; uninstall / rollback reverse it. */
-export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = ['skill', 'mcp', 'connector', 'mail'];
+export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = [
+  'skill',
+  'mcp',
+  'connector',
+  'mail',
+];
 
 // --- barrel -------------------------------------------------------------------
 // The concrete projectors are imported below (runtime values), so this file cannot be
@@ -81,12 +90,7 @@ import { MailProjector, type MailProjectorDeps } from './mail.js';
 import { McpProjector, type PluginMcpDeps } from './mcp.js';
 import { SkillsProjector, type SkillsProjectorDeps } from './skills.js';
 
-export type {
-  ConnectorsProjectorDeps,
-  MailProjectorDeps,
-  PluginMcpDeps,
-  SkillsProjectorDeps,
-};
+export type { ConnectorsProjectorDeps, MailProjectorDeps, PluginMcpDeps, SkillsProjectorDeps };
 
 /** Dependencies for the fixed-order projector set (`start.ts` wires them once). */
 export interface PluginProjectorsDeps {

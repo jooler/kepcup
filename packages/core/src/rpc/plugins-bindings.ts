@@ -46,21 +46,29 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
     'plugins.list': method(voidInput, pluginsListOutputSchema, async () => ({
       plugins: registry().list(),
     })),
-    'plugins.inspect': method(pluginsInspectInputSchema, pluginInspectOutputSchema, async (input) => {
-      assertLocalSource(input.source);
-      return registry().inspect(input.source);
-    }),
-    'plugins.install': method(pluginsInstallInputSchema, pluginsInstallOutputSchema, async (input) => {
-      assertLocalSource(input.source);
-      return {
-        plugin: await registry().install({
-          source: input.source,
-          sha256: input.sha256,
-          userConfig: input.userConfig,
-          via: input.source.kind,
-        }),
-      };
-    }),
+    'plugins.inspect': method(
+      pluginsInspectInputSchema,
+      pluginInspectOutputSchema,
+      async (input) => {
+        assertLocalSource(input.source);
+        return registry().inspect(input.source);
+      },
+    ),
+    'plugins.install': method(
+      pluginsInstallInputSchema,
+      pluginsInstallOutputSchema,
+      async (input) => {
+        assertLocalSource(input.source);
+        return {
+          plugin: await registry().install({
+            source: input.source,
+            sha256: input.sha256,
+            userConfig: input.userConfig,
+            via: input.source.kind,
+          }),
+        };
+      },
+    ),
     'plugins.setEnabled': method(
       pluginsSetEnabledInputSchema,
       pluginsSetEnabledOutputSchema,

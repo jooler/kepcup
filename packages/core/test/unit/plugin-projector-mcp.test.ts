@@ -13,15 +13,8 @@ import {
 import { buildPluginDir } from '@kepcup/testkit';
 
 import { McpbInstaller, type McpbInstallerDeps } from '../../src/apps/mcpb/install.js';
-import {
-  McpProjector,
-  mcpDescriptionFor,
-  mcpTierFor,
-} from '../../src/plugins/projectors/mcp.js';
-import type {
-  PluginLedger,
-  PluginProjectionContext,
-} from '../../src/plugins/projectors/index.js';
+import { McpProjector, mcpDescriptionFor, mcpTierFor } from '../../src/plugins/projectors/mcp.js';
+import type { PluginLedger, PluginProjectionContext } from '../../src/plugins/projectors/index.js';
 
 /**
  * MCP 投影器（D104 P0a-2 步骤 5）：tier / description 推导纯函数、inspect 的
@@ -47,7 +40,12 @@ async function tmp(prefix: string): Promise<string> {
 
 async function installerHarness(
   overrides: Partial<McpbInstallerDeps> = {},
-): Promise<{ installer: McpbInstaller; home: string; servers: McpServer[]; secrets: Map<string, string> }> {
+): Promise<{
+  installer: McpbInstaller;
+  home: string;
+  servers: McpServer[];
+  secrets: Map<string, string>;
+}> {
   const home = await tmp('mcp-projector-install-');
   const servers: McpServer[] = [];
   const secrets = new Map<string, string>();
@@ -92,7 +90,10 @@ class MemLedger implements PluginLedger {
     this.#items.set(kind, list);
   }
   remove(kind: PluginItemKind, ref: string): void {
-    this.#items.set(kind, (this.#items.get(kind) ?? []).filter((entry) => entry !== ref));
+    this.#items.set(
+      kind,
+      (this.#items.get(kind) ?? []).filter((entry) => entry !== ref),
+    );
   }
   list(kind: PluginItemKind): string[] {
     return [...(this.#items.get(kind) ?? [])];
@@ -188,7 +189,10 @@ async function contentDir(
   const dir = await tmp('mcp-projector-content-');
   const built = await buildPluginDir({
     dir,
-    mcpb: mcpbItems.map((item) => ({ id: item.id, mcpb: { manifest: item.manifest ?? mcpbManifest } })),
+    mcpb: mcpbItems.map((item) => ({
+      id: item.id,
+      mcpb: { manifest: item.manifest ?? mcpbManifest },
+    })),
     http: httpItems,
   });
   return { dir, manifestFile: pluginManifestSchema.parse(built.manifest) };
@@ -282,14 +286,19 @@ describe('McpProjector.inspect', () => {
 
   it('不安全的 http 端点进 blockers', async () => {
     const rig = await makeRig();
-    const { dir, manifestFile } = await contentDir([], [
-      { id: 'plain', url: 'http://mcp.example.com/mcp' },
-      { id: 'loop', url: 'https://127.0.0.1/mcp' },
-      { id: 'creds', url: 'https://user:pass@mcp.example.com/mcp' },
-    ]);
+    const { dir, manifestFile } = await contentDir(
+      [],
+      [
+        { id: 'plain', url: 'http://mcp.example.com/mcp' },
+        { id: 'loop', url: 'https://127.0.0.1/mcp' },
+        { id: 'creds', url: 'https://user:pass@mcp.example.com/mcp' },
+      ],
+    );
     const result = await rig.projector.inspect(ctxOf(rig, identity(), dir, manifestFile));
     expect(result.blockers).toHaveLength(3);
-    expect(result.blockers.every((line) => line.includes('不是可接受的公网 https 地址'))).toBe(true);
+    expect(result.blockers.every((line) => line.includes('不是可接受的公网 https 地址'))).toBe(
+      true,
+    );
     expect(result.items.map((item) => (item.kind === 'http' ? item.host : ''))).toEqual([
       'mcp.example.com',
       '127.0.0.1',
@@ -301,9 +310,10 @@ describe('McpProjector.inspect', () => {
 describe('McpProjector.project', () => {
   it('mcpb + http 都登记；local 来源带 developer tier；账本先登记', async () => {
     const rig = await makeRig();
-    const { dir, manifestFile } = await contentDir([{ id: 'dbtools' }], [
-      { id: 'docs', url: 'https://mcp.example.com/mcp' },
-    ]);
+    const { dir, manifestFile } = await contentDir(
+      [{ id: 'dbtools' }],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
     const ctx = ctxOf(rig, identity('developer'), dir, manifestFile);
     ctx.userConfig = { dbtools: { api_key: 'sk-project' } };
     await rig.projector.project(ctx);
@@ -333,17 +343,16 @@ describe('McpProjector.project', () => {
       tier: 'developer',
       source: { kind: 'plugin', pluginId: 'io.github.tester/mcp', key: 'docs' },
     });
-    expect(rig.ledger.list('mcp')).toEqual(
-      expect.arrayContaining([mcpbServer.id, httpServer.id]),
-    );
+    expect(rig.ledger.list('mcp')).toEqual(expect.arrayContaining([mcpbServer.id, httpServer.id]));
     expect(existsSync(rig.unpackedDir)).toBe(true);
   });
 
   it('verified 不带 tier、带清洗后的 description；community 带 developer', async () => {
     const rig = await makeRig();
-    const { dir, manifestFile } = await contentDir([], [
-      { id: 'docs', url: 'https://mcp.example.com/mcp' },
-    ]);
+    const { dir, manifestFile } = await contentDir(
+      [],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
     const verified = pluginManifestSchema.parse({
       ...manifestFile,
       contributions: {
@@ -375,9 +384,10 @@ describe('McpProjector.project', () => {
 
   it('project 中途失败时账本已含已写项', async () => {
     const rig = await makeRig();
-    const { dir, manifestFile } = await contentDir([{ id: 'dbtools' }], [
-      { id: 'docs', url: 'https://mcp.example.com/mcp' },
-    ]);
+    const { dir, manifestFile } = await contentDir(
+      [{ id: 'dbtools' }],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
     // http first (succeeds), then an mcpb whose file is missing → inspect throws.
     const broken = pluginManifestSchema.parse({
       ...manifestFile,
@@ -444,9 +454,7 @@ describe('McpProjector.unproject / setEnabled', () => {
       revokeMcpServerChanges: () => {},
       logger: noopLogger,
     });
-    await expect(
-      failing.unproject(identity(), [serverId], rig.ledger),
-    ).resolves.toBeUndefined();
+    await expect(failing.unproject(identity(), [serverId], rig.ledger)).resolves.toBeUndefined();
     // Step ① still succeeded, and the chain continued past the throwing revoke to
     // afterServerRemoved → the tree was released.
     expect(rig.servers).toHaveLength(0);
@@ -456,13 +464,18 @@ describe('McpProjector.unproject / setEnabled', () => {
   it('setEnabled 往返：false 关闭并撤销，true 恢复', async () => {
     const rig = await projectOne();
     const serverId = rig.servers[0]!.id;
-    const ctx = ctxOf(rig, identity(), '/nonexistent', pluginManifestSchema.parse({
-      format_version: 1,
-      id: 'io.github.tester/mcp',
-      name: 'MCP',
-      version: '1.0.0',
-      contributions: { mcp: [{ kind: 'mcpb', id: 'dbtools', file: 'mcp/dbtools.mcpb' }] },
-    }));
+    const ctx = ctxOf(
+      rig,
+      identity(),
+      '/nonexistent',
+      pluginManifestSchema.parse({
+        format_version: 1,
+        id: 'io.github.tester/mcp',
+        name: 'MCP',
+        version: '1.0.0',
+        contributions: { mcp: [{ kind: 'mcpb', id: 'dbtools', file: 'mcp/dbtools.mcpb' }] },
+      }),
+    );
     await rig.projector.setEnabled(ctx, [serverId], false);
     expect(rig.servers[0]).toMatchObject({ enabled: false });
     expect(rig.closed).toEqual([serverId]);

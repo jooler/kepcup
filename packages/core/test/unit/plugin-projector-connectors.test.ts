@@ -41,7 +41,10 @@ class MemLedger implements PluginLedger {
     this.#items.set(kind, list);
   }
   remove(kind: PluginItemKind, ref: string): void {
-    this.#items.set(kind, (this.#items.get(kind) ?? []).filter((entry) => entry !== ref));
+    this.#items.set(
+      kind,
+      (this.#items.get(kind) ?? []).filter((entry) => entry !== ref),
+    );
   }
   list(kind: PluginItemKind): string[] {
     return [...(this.#items.get(kind) ?? [])];
@@ -145,7 +148,11 @@ function makeRig(bundledSlugs: string[] = []): Rig {
   const catalogEvents: Array<{ connectorId: string; change: string }> = [];
   const events = createEventBus<CoreEventsMap>();
   events.on('apps.catalog_changed', (payload) => catalogEvents.push(payload));
-  const connectionRow = (id: string, connectorId: string, status: AppConnectionStatus): AppConnection =>
+  const connectionRow = (
+    id: string,
+    connectorId: string,
+    status: AppConnectionStatus,
+  ): AppConnection =>
     ({
       id,
       connectorId,
@@ -194,7 +201,11 @@ function makeRig(bundledSlugs: string[] = []): Rig {
 
 /** A projection context bound to a fresh in-memory ledger. */
 function withLedger(): {
-  ctx: (dir: string, manifest: PluginProjectionContext['manifest'], tier?: PluginIdentity['tier']) => PluginProjectionContext;
+  ctx: (
+    dir: string,
+    manifest: PluginProjectionContext['manifest'],
+    tier?: PluginIdentity['tier'],
+  ) => PluginProjectionContext;
   ledger: MemLedger;
 } {
   const ledger = new MemLedger();
@@ -237,13 +248,21 @@ describe('rewriteConnectorEntry', () => {
   });
 
   it('tier 映射：verified → verified、community → community', () => {
-    expect(connectorMetaOf(rewriteConnectorEntry(rawEntry('acme'), identity('verified'), null)).tier).toBe('verified');
-    expect(connectorMetaOf(rewriteConnectorEntry(rawEntry('acme'), identity('community'), null)).tier).toBe('community');
+    expect(
+      connectorMetaOf(rewriteConnectorEntry(rawEntry('acme'), identity('verified'), null)).tier,
+    ).toBe('verified');
+    expect(
+      connectorMetaOf(rewriteConnectorEntry(rawEntry('acme'), identity('community'), null)).tier,
+    ).toBe('community');
   });
 
   it('拒绝：packages 非空、remotes 为空、不安全端点、保留前缀名称', () => {
     expect(() =>
-      rewriteConnectorEntry(rawEntry('acme', { packages: [{ registryType: 'mcpb', identifier: 'x' }] }), plugin, null),
+      rewriteConnectorEntry(
+        rawEntry('acme', { packages: [{ registryType: 'mcpb', identifier: 'x' }] }),
+        plugin,
+        null,
+      ),
     ).toThrow(/不允许携带 packages/);
     const noRemotes = rawEntry('acme');
     (noRemotes['remotes'] as unknown[]) = [];

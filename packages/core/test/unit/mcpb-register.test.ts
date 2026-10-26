@@ -185,9 +185,7 @@ describe('mcpb register (plugin pipeline)', () => {
     });
     expect(h.secrets.get('mcp:plg_abc123def456:env:api_key')).toBe('sk-register');
     expect(h.settingsJson()).not.toContain('sk-register');
-    expect(
-      existsSync(path.join(h.home, 'toolchains', 'mcpb', 'echo-bundle@1.0.0')),
-    ).toBe(true);
+    expect(existsSync(path.join(h.home, 'toolchains', 'mcpb', 'echo-bundle@1.0.0'))).toBe(true);
   });
 
   it('omits the tier field when the registration tier is undefined', async () => {
@@ -317,9 +315,9 @@ describe('mcpb register (plugin pipeline)', () => {
       }),
     });
     // Same slot (echo-bundle@1.0.0), different sha256 → hit.
-    expect(
-      h.installer.slotConflict('echo-bundle', '1.0.0', 'f'.repeat(64)),
-    ).toEqual({ serverId: 'plg_slot00000001' });
+    expect(h.installer.slotConflict('echo-bundle', '1.0.0', 'f'.repeat(64))).toEqual({
+      serverId: 'plg_slot00000001',
+    });
     // Same slot, same sha256 → miss (re-install of the same content is fine).
     expect(h.installer.slotConflict('echo-bundle', '1.0.0', fixture.sha256)).toBeNull();
     // Different version → miss.

@@ -2,14 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { pluginManifestSchema, type PluginManifest } from '@kepcup/shared';
 
 import { MailProjector } from '../../src/plugins/projectors/mail.js';
-import type { PluginIdentity, PluginLedger, PluginItemKind } from '../../src/plugins/projectors/index.js';
+import type {
+  PluginIdentity,
+  PluginLedger,
+  PluginItemKind,
+} from '../../src/plugins/projectors/index.js';
 
 /**
  * 邮件投影器（D104 P0a-2 步骤 7，登记型）：inspect 的内置厂商冲突与包内重复，
  * project / unproject 只动账本，setEnabled 空操作。
  */
 
-const identity: PluginIdentity = { id: 'io.github.tester/mail', version: '1.0.0', origin: 'local', tier: 'developer' };
+const identity: PluginIdentity = {
+  id: 'io.github.tester/mail',
+  version: '1.0.0',
+  origin: 'local',
+  tier: 'developer',
+};
 
 class MemLedger implements PluginLedger {
   readonly #items = new Map<PluginItemKind, string[]>();
@@ -19,7 +28,10 @@ class MemLedger implements PluginLedger {
     this.#items.set(kind, list);
   }
   remove(kind: PluginItemKind, ref: string): void {
-    this.#items.set(kind, (this.#items.get(kind) ?? []).filter((entry) => entry !== ref));
+    this.#items.set(
+      kind,
+      (this.#items.get(kind) ?? []).filter((entry) => entry !== ref),
+    );
   }
   list(kind: PluginItemKind): string[] {
     return [...(this.#items.get(kind) ?? [])];
@@ -44,7 +56,13 @@ function manifestOf(mailIds: string[]): PluginManifest {
 }
 
 function ctx(manifest: ReturnType<typeof manifestOf>) {
-  return { plugin: identity, manifest, dir: '/irrelevant', userConfig: {}, ledger: new MemLedger() };
+  return {
+    plugin: identity,
+    manifest,
+    dir: '/irrelevant',
+    userConfig: {},
+    ledger: new MemLedger(),
+  };
 }
 
 describe('MailProjector（登记型）', () => {
@@ -52,7 +70,12 @@ describe('MailProjector（登记型）', () => {
     const projector = new MailProjector();
     const result = await projector.inspect(ctx(manifestOf(['fastmail', 'gmail'])));
     expect(result.items).toEqual([
-      { id: 'fastmail', label: '模板 fastmail', imapHost: 'imap.fastmail.test', smtpHost: 'smtp.fastmail.test' },
+      {
+        id: 'fastmail',
+        label: '模板 fastmail',
+        imapHost: 'imap.fastmail.test',
+        smtpHost: 'smtp.fastmail.test',
+      },
     ]);
     expect(result.conflicts).toEqual([
       { kind: 'mail', ref: 'gmail', withWhat: '与内置邮件厂商模板同名' },

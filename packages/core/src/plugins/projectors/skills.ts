@@ -82,10 +82,7 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
         runtimeDeps: scan.runtimeDeps,
         compatible: !effective.incompatible,
         incompatibleReason: effective.incompatible
-          ? [
-              scan.compatibilityReasons.join('；'),
-              effective.installHint ?? '',
-            ]
+          ? [scan.compatibilityReasons.join('；'), effective.installHint ?? '']
               .filter((part) => part.length > 0)
               .join(' ')
           : null,

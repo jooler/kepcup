@@ -20,7 +20,11 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function makeRig(): { store: PluginStore; db: SqliteDatabase; paths: ReturnType<typeof resolvePaths> } {
+function makeRig(): {
+  store: PluginStore;
+  db: SqliteDatabase;
+  paths: ReturnType<typeof resolvePaths>;
+} {
   const home = path.join(root, `home-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(home, { recursive: true });
   const paths = resolvePaths(home);
@@ -75,7 +79,10 @@ describe('PluginStore', () => {
     });
 
     store.update('io.github.tester/one', { state: 'installed', updatedAt: 2000 });
-    expect(store.get('io.github.tester/one')).toMatchObject({ state: 'installed', updatedAt: 2000 });
+    expect(store.get('io.github.tester/one')).toMatchObject({
+      state: 'installed',
+      updatedAt: 2000,
+    });
     // An empty patch is a no-op (no SQL).
     store.update('io.github.tester/one', {});
     expect(store.get('io.github.tester/one')?.updatedAt).toBe(2000);
