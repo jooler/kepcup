@@ -649,8 +649,13 @@ export class LifecycleService {
     ledProjects: Array<{ id: string; title: string | null }>;
   } {
     const { mainDb } = this.deps;
+    // Open direct chats only. A card conversation also has direct_bot_id, and
+    // it is hidden from the chat list; counting it would show the user a
+    // chat they cannot see.
     const conversations = mainDb
-      .prepare('select count(*) as n from conversations where direct_bot_id = ? and read_only = 0')
+      .prepare(
+        "select count(*) as n from conversations where type = 'direct' and direct_bot_id = ? and read_only = 0",
+      )
       .get(botId) as { n: number };
     const messages = mainDb
       .prepare('select count(*) as n from messages where sender_bot_id = ?')

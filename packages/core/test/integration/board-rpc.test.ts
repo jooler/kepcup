@@ -296,5 +296,17 @@ describe('board RPC', () => {
       ),
     ).rejects.toThrow(/不随移交带走/);
     expect(stack.core.services.schedules!.store.get(boardScheduleId!)?.botId).toBe(memberId);
+    const card = stack.core.services.board!.get(ownProjectId, undefined, 'user').cards.find(
+      (row) => row.id === created.card.id,
+    )!;
+    expect(card.todo.assignee?.botId).toBe(memberId);
+    expect(card.todo.status).toBe('scheduled');
+    expect(card.todo.blockedReason).toBeNull();
+    expect(card.todo.schedule?.id).toBe(boardScheduleId);
+    expect(card.conversationId).not.toBeNull();
+    expect(stack.core.services.domain!.conversations.get(card.conversationId!)?.readOnly).toBe(
+      false,
+    );
+    expect(stack.core.services.schedules!.store.get(boardScheduleId!)?.status).toBe('active');
   });
 });

@@ -366,4 +366,12 @@ DEV-047。没有别的新编号。
 
 全量 `pnpm test`：**6393 通过 / 21 失败 / 44 跳过**（609 个文件里 6 个失败）。21 例全部是沙箱基线（本环境没有 bubblewrap / socat），与 P1 记录的 21 例同一集合：`sandbox-isolation`、`toolchain-sandbox`、`skills-authoring`、`skills`、`workdirs` 的 OS sandbox、`workspace-tools`。没有非沙箱失败。未改这些测试。未跑 e2e（界面除主进程 `showConversation` 忽略 card 外没有变化；`project-shell` / `project-board` 不覆盖这条通知路径）。
 
+### 复核（对照 §7–§11，只记改过的地方）
+
+- **删除确认计数**：`deletionPreview` 按 `direct_bot_id` 计数，卡片对话也会被算进「将清理 N 个对话」。改为只计 `type = 'direct'` 且未只读的行。消息条数仍是该 Bot 发出的全部消息。
+- **`board.changed` 次数**：`when: 'now'` 和 `start` 原先在派发时发一次，取消单次排期之后再发一次（`start` 的那一次还发生在取消之前，同步监听会看到排期还在）。现在这两条路径只在取消提交之后发一次。取消指派改为先把卡片对话标只读，再发那一次 `board.changed`，监听里读到的 `conversationId` 已经是 `null`。
+- **进行中改时间**：`schedule` 与换人一样拒绝，错误码 `BOARD_LOCKED`。测试补上了这一支。
+- **移交终态**（DEV-047 的决定）：不取消看板排期，也不清空指派。卡片仍指派给原 Bot，状态 `scheduled`，没有 `blocked_reason`，对话可写，排期仍在该卡片对话上。不写「执行成员已移出项目组」——移交没有把 Bot 移出项目组。
+- **核对后未改**：`conversations.kind` 是平台口方法（主进程 `callPlatform`），不进 `APP_METHODS`；`list` / `listVisible` / `conversations.all` / `openDirect` / `listDirectByBot` / 分享目标已排除 `card`，`conversation.updated` 仍发布。`GrantsService` 没有会话查找，授权仍是卡片对话内重新授权（见上「授权」）。`projectScopeOf` 已用在 wiki、记忆、反思、工作目录。
+
 

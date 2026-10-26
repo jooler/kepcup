@@ -204,6 +204,11 @@ interface DispatchContext {
   consumeSchedule?: boolean;
   /** Who triggered this dispatch (a due schedule: whoever last set it). */
   actor: TodoActor;
+  /**
+   * When false, this dispatch does not publish. The caller publishes once
+   * after the rest of the operation (cancelling a one-off schedule) commits.
+   */
+  notify?: boolean;
 }
 
 const NOW = 'now';
@@ -426,7 +431,9 @@ export class TodoService implements WorkbenchDispatchPort {
           return assigneeChanged ? this.#applyAssignee(updated, input.assignee!) : updated;
         });
         try {
-          current = this.#dispatch(current, { consumeSchedule: true, actor });
+          // One event after the schedule is cancelled, not one from the
+          // dispatch and another from this method.
+          current = this.#dispatch(current, { consumeSchedule: true, actor, notify: false });
         } catch (error) {
           if (assigneeChanged) {
             this.store.update(id, { assignee: todo.assignee, blockedReason: todo.blockedReason });
@@ -610,8 +617,17 @@ export class TodoService implements WorkbenchDispatchPort {
       // Dispatch first: if routing throws, the schedule is still there. A one-off schedule is
       // replaced by this dispatch; a periodic one keeps running (and the todo stays
       // `scheduled`) — compare update `when:'now'`, which ends the periodic schedule.
-      const dispatched = this.#dispatch(this.#getOrThrow(id), { actor });
+      // Publish once, after that cancel, so a listener never observes the
+      // one-off schedule still active.
+      let dispatched: Todo;
+      try {
+        dispatched = this.#dispatch(this.#getOrThrow(id), { actor, notify: false });
+      } catch (error) {
+        this.#changed(id);
+        throw error;
+      }
       if (schedule !== null && schedule.kind === 'once') this.#cancelSchedules(id);
+      this.#changed(id);
       return this.toEntry(this.store.get(id) ?? dispatched);
     });
   }
@@ -813,6 +829,7 @@ export class TodoService implements WorkbenchDispatchPort {
    * the proactive switch, quiet hours or the daily cap (it is the user's instruction).
    */
   #dispatch(todo: Todo, context: DispatchContext): Todo {
+    const notify = context.notify !== false;
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '请先选择执行者');
     this.#validateAssignee(assignee, todo.id);
@@ -854,13 +871,13 @@ export class TodoService implements WorkbenchDispatchPort {
       if (this.store.get(todo.id)?.status === 'in_progress' && todo.status !== 'in_progress') {
         this.store.update(todo.id, { status: todo.status, blockedReason: todo.blockedReason });
       }
-      this.#changed(todo.id);
+      if (notify) this.#changed(todo.id);
       throw error;
     }
     if (held && !periodic && this.store.get(todo.id)?.status === 'in_progress') {
       this.store.update(todo.id, { blockedReason: BLOCKED_HELD });
     }
-    this.#changed(todo.id);
+    if (notify) this.#changed(todo.id);
     return this.store.get(todo.id) ?? todo;
   }
 
@@ -1400,6 +1417,19 @@ export class TodoService implements WorkbenchDispatchPort {
   #assertBoardWritable(id: string, actor: TodoActor): void {
     if (this.#boardLocation(id) !== null && actor !== 'board') {
       throw new AppError('BOARD_MANAGED', 'Edit this card on the board');
+    }
+  }
+
+  /**
+   * Run `fn` without emitting `board.changed`. The caller publishes after the
+   * rest of the operation commits (unassign closes the card chat first).
+   */
+  omitBoardEvents<T>(fn: () => T): T {
+    this.#suppressBoardEvents += 1;
+    try {
+      return fn();
+    } finally {
+      this.#suppressBoardEvents -= 1;
     }
   }
 

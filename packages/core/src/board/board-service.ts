@@ -374,8 +374,13 @@ export class BoardService {
     const entry = this.#deps.todos.get(cardId).todo;
     assertUnlocked(entry.status);
     if (botId === null) {
-      const updated = this.#deps.todos.update(cardId, { assignee: null, actor: 'board' });
+      // Close the conversation before the one board.changed. update() would
+      // publish while the chat is still open.
+      const updated = this.#deps.todos.omitBoardEvents(() =>
+        this.#deps.todos.update(cardId, { assignee: null, actor: 'board' }),
+      );
       this.#deps.conversations.closeOpenCardConversations(cardId);
+      this.#changed({ projectId: card.projectId, cardId, columnId: card.columnId });
       return { card: this.#toCard(this.#requireCard(cardId)), warnings: updated.warnings };
     }
     this.#assertExecutor(card.projectId, botId);

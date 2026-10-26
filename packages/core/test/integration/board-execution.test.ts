@@ -180,7 +180,14 @@ describe('board execution', () => {
     );
     expect(activeSchedule(stack, cardId)?.conversationId).toBe(second.card.conversationId);
 
+    const duringUnassign: Array<string | null> = [];
+    const stopUnassign = stack.core.onEvent('board.changed', () => {
+      duringUnassign.push(cardOf(stack, projectId, cardId).conversationId);
+    });
     const cleared = board(stack).assign(cardId, null, 'user');
+    await Promise.resolve();
+    stopUnassign();
+    expect(duringUnassign).toEqual([null]);
     expect(cleared.card.todo.assignee).toBeNull();
     expect(cleared.card.todo.status).toBe('draft');
     expect(cleared.card.conversationId).toBeNull();
@@ -218,6 +225,9 @@ describe('board execution', () => {
     );
     expect(cardOf(stack, projectId, cardId).todo.status).toBe('in_progress');
     expect(codeOf(() => board(stack).assign(cardId, leadId, 'user'))).toBe('BOARD_LOCKED');
+    expect(codeOf(() => board(stack).schedule(cardId, '2099-08-01T00:00:00.000Z', 'user'))).toBe(
+      'BOARD_LOCKED',
+    );
     held.release();
   }, 60_000);
 
@@ -326,5 +336,57 @@ describe('board execution', () => {
     expect(card.task!.queued).toBeGreaterThanOrEqual(1);
     expect(card.task!.queueReason).toEqual(expect.any(String));
     expect(card.task!.queueReason!.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('publishes one board.changed after a one-off start cancels the schedule', async () => {
+    const stack = await start();
+    const { memberId, cardId } = await scaffold(stack, '马上做');
+    stack.llm.script('mock-main', [step().inTurn().replyText('做完了。')]);
+    stack.llm.script('mock-light', [
+      step().replyJson({
+        runSummary: '无',
+        memories: [],
+        profileProposals: [],
+        wikiSuggestions: [],
+        skillSuggestion: null,
+      }),
+    ]);
+    board(stack).assign(cardId, memberId, 'user');
+    board(stack).schedule(cardId, '2099-09-01T00:00:00.000Z', 'user');
+    expect(activeSchedule(stack, cardId)).not.toBeNull();
+
+    const events: boolean[] = [];
+    const stop = stack.core.onEvent('board.changed', () => {
+      events.push(activeSchedule(stack, cardId) === null);
+    });
+    board(stack).start(cardId, 'user');
+    await Promise.resolve();
+    stop();
+    expect(events).toEqual([true]);
+  }, 60_000);
+
+  it('publishes one board.changed for an immediate schedule', async () => {
+    const stack = await start();
+    const { memberId, cardId } = await scaffold(stack, '立即排期');
+    stack.llm.script('mock-main', [step().inTurn().replyText('收到。')]);
+    stack.llm.script('mock-light', [
+      step().replyJson({
+        runSummary: '无',
+        memories: [],
+        profileProposals: [],
+        wikiSuggestions: [],
+        skillSuggestion: null,
+      }),
+    ]);
+    board(stack).assign(cardId, memberId, 'user');
+    const events: unknown[] = [];
+    const stop = stack.core.onEvent('board.changed', () => {
+      events.push(true);
+    });
+    board(stack).schedule(cardId, 'now', 'user');
+    await Promise.resolve();
+    stop();
+    expect(events).toHaveLength(1);
+    expect(activeSchedule(stack, cardId)).toBeNull();
   }, 60_000);
 });
