@@ -1,4 +1,4 @@
-import type { BoardCard, BoardColumn, BoardChangedPayload } from '@kepcup/shared';
+import type { BoardCard, BoardColumn, BoardChangedPayload, BoardSummary } from '@kepcup/shared';
 import { toast } from 'svelte-sonner';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
@@ -155,6 +155,11 @@ export class BoardState {
   dragging = $state(false);
   /** Column whose title should be focused after it is created. Stable local key. */
   focusColumnId = $state<string | null>(null);
+  /**
+   * Tab-badge counts. Updated while a project shell is open, even when the
+   * board tab itself is not mounted.
+   */
+  summary = $state<BoardSummary>({ unread: 0, pendingApprovals: 0, delivered: 0 });
 
   /** Horizontal track position, restored when the board remounts. Not reactive. */
   scrollLeft = 0;
@@ -176,6 +181,13 @@ export class BoardState {
   #queuedColumnTitle: Record<string, QueuedText> = {};
   #needsSeed = true;
   #moveChain: Promise<void> = Promise.resolve();
+  #summaryCount = 0;
+  #summaryProjectId: string | null = null;
+  #summaryOffs: Array<() => void> = [];
+  #summaryTimer: ReturnType<typeof setTimeout> | undefined;
+  #summarySeq = 0;
+  /** Card conversation ids from the last summary-side `board.get`. */
+  #summaryConversations: Record<string, true> = {};
   /** Latest not-yet-sent card move, keyed by card id. Coalesces keyboard steps. */
   #pendingCardMoves: Record<string, CardMove> = {};
   #cardMoveOrigin: Record<string, BoardColumnView[]> = {};
@@ -223,6 +235,30 @@ export class BoardState {
 
   closeCard(): void {
     this.openCardId = null;
+  }
+
+  /**
+   * Keep `summary` current for a project shell. Message and approval events
+   * reload only when the conversation is one of this project's cards.
+   * `board.changed` and `todos.changed` always reload. Debounced like the board.
+   */
+  watchSummary(projectId: string): () => void {
+    if (this.#summaryProjectId !== projectId) {
+      this.#unsubscribeSummary();
+      this.#summaryCount = 0;
+      this.#summaryProjectId = projectId;
+      this.summary = { unread: 0, pendingApprovals: 0, delivered: 0 };
+      this.#summaryConversations = {};
+    }
+    this.#summaryCount += 1;
+    if (this.#summaryCount === 1) this.#subscribeSummary();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#summaryCount -= 1;
+      if (this.#summaryCount === 0) this.#unsubscribeSummary();
+    };
   }
 
   /** Full refetch. The first successful load of a mount passes seed titles. */
@@ -422,6 +458,63 @@ export class BoardState {
     this.#moveChain = this.#moveChain.then(() => this.#drainCardMove(cardId));
   }
 
+  /**
+   * Apply an execution RPC. Keeps text that is still queued for save.
+   * `BOARD_CRON_TOO_FREQUENT` is returned instead of toasted so the time
+   * popover can show it in place.
+   */
+  async mutateCard(
+    method: string,
+    input: { cardId: string } & Record<string, unknown>,
+  ): Promise<{ ok: true; warnings: string[] } | { ok: false; code: string | undefined }> {
+    try {
+      const result = (await core.call(method, input)) as {
+        card?: BoardCard;
+        warnings?: string[];
+        conversationId?: string;
+      };
+      if (result.card !== undefined) {
+        this.#replaceCard(
+          result.card.id,
+          result.card,
+          this.#queuedCardText[result.card.id] !== undefined,
+        );
+      } else if (typeof result.conversationId === 'string') {
+        this.#patchCard(input.cardId, { conversationId: result.conversationId });
+      }
+      for (const warning of result.warnings ?? []) toast.warning(warning);
+      return { ok: true, warnings: result.warnings ?? [] };
+    } catch (error) {
+      const code = errorCode(error);
+      if (code !== 'BOARD_CRON_TOO_FREQUENT') {
+        toast.error(errorText(code, t('board.error.saveFailed')));
+      }
+      return { ok: false, code };
+    }
+  }
+
+  /**
+   * The dialog marked this card's thread read. Zero the face and take the
+   * same count off the tab badge. A snapshot already in flight was read
+   * before the mark and must not put either badge back; the next snapshot
+   * sees the server's cursor.
+   */
+  noteCardRead(cardId: string): void {
+    const card = this.#cardById(cardId);
+    if (card === undefined || card.unreadCount <= 0) return;
+    const unread = card.unreadCount;
+    this.#patchCard(cardId, { unreadCount: 0 });
+    this.summary = {
+      ...this.summary,
+      unread: Math.max(0, this.summary.unread - unread),
+    };
+    this.#fetchSeq += 1;
+    this.#summarySeq += 1;
+    this.#reloadPending = true;
+    this.#scheduleReload();
+    if (this.#summaryCount > 0) this.#scheduleSummary();
+  }
+
   async deleteCard(cardId: string): Promise<boolean> {
     if (this.#cardById(cardId) === undefined) return false;
     const projectId = this.projectId;
@@ -468,6 +561,11 @@ export class BoardState {
   }
 
   #subscribe(): void {
+    const onCardConversation = (conversationId: string | null | undefined): void => {
+      if (conversationId == null || this.#cardConversations()[conversationId] !== true) return;
+      this.#reloadPending = true;
+      this.#scheduleReload();
+    };
     this.#offs = [
       core.onEvent('board.changed', (payload) => {
         const event = payload as BoardChangedPayload;
@@ -475,8 +573,100 @@ export class BoardState {
         this.#reloadPending = true;
         this.#scheduleReload();
       }),
+      // Card-face counts follow the open card conversation. A reload replaces
+      // the stored text; the dialog editor keeps an unsaved draft itself.
+      core.onEvent('message.created', (payload) => {
+        onCardConversation((payload as { conversationId?: string }).conversationId);
+      }),
+      core.onEvent('run.status', (payload) => {
+        const run = (payload as { run?: { conversationId?: string | null } }).run;
+        onCardConversation(run?.conversationId);
+      }),
+      core.onEvent('approval.created', (payload) => {
+        onCardConversation((payload as { conversationId?: string | null }).conversationId);
+      }),
+      core.onEvent('approval.resolved', (payload) => {
+        onCardConversation((payload as { conversationId?: string | null }).conversationId);
+      }),
     ];
     void this.load();
+  }
+
+  /** Open card conversations, from the last `board.get`. */
+  #cardConversations(): Record<string, true> {
+    const map: Record<string, true> = {};
+    for (const column of this.columns) {
+      for (const card of column.cards) {
+        if (card.conversationId !== null) map[card.conversationId] = true;
+      }
+    }
+    return map;
+  }
+
+  #subscribeSummary(): void {
+    const onCard = (conversationId: string | null | undefined): void => {
+      if (conversationId == null || this.#summaryConversations[conversationId] !== true) return;
+      this.#scheduleSummary();
+    };
+    this.#summaryOffs = [
+      core.onEvent('message.created', (payload) => {
+        onCard((payload as { conversationId?: string }).conversationId);
+      }),
+      core.onEvent('approval.created', (payload) => {
+        onCard((payload as { conversationId?: string | null }).conversationId);
+      }),
+      core.onEvent('approval.resolved', (payload) => {
+        onCard((payload as { conversationId?: string | null }).conversationId);
+      }),
+      core.onEvent('board.changed', (payload) => {
+        const event = payload as BoardChangedPayload;
+        if (event.projectId !== this.#summaryProjectId) return;
+        this.#scheduleSummary();
+      }),
+      core.onEvent('todos.changed', () => {
+        this.#scheduleSummary();
+      }),
+    ];
+    void this.#loadSummary();
+  }
+
+  #unsubscribeSummary(): void {
+    for (const off of this.#summaryOffs) off();
+    this.#summaryOffs = [];
+    if (this.#summaryTimer !== undefined) clearTimeout(this.#summaryTimer);
+    this.#summaryTimer = undefined;
+    this.#summarySeq += 1;
+  }
+
+  #scheduleSummary(): void {
+    if (this.#summaryProjectId === null || this.#summaryCount === 0) return;
+    if (this.#summaryTimer !== undefined) clearTimeout(this.#summaryTimer);
+    this.#summaryTimer = setTimeout(() => {
+      this.#summaryTimer = undefined;
+      void this.#loadSummary();
+    }, BOARD_REFRESH_DEBOUNCE_MS);
+  }
+
+  async #loadSummary(): Promise<void> {
+    const projectId = this.#summaryProjectId;
+    if (projectId === null) return;
+    const seq = (this.#summarySeq += 1);
+    try {
+      const [summary, boardResult] = await Promise.all([
+        core.call('board.summary', { projectId }) as Promise<BoardSummary>,
+        core.call('board.get', { projectId }) as Promise<{ cards: BoardCard[] }>,
+      ]);
+      if (seq !== this.#summarySeq || this.#summaryProjectId !== projectId) return;
+      this.summary = summary;
+      const map: Record<string, true> = {};
+      for (const card of boardResult.cards) {
+        if (card.conversationId !== null) map[card.conversationId] = true;
+      }
+      this.#summaryConversations = map;
+    } catch {
+      // The tab badge stays at the last good counts. The board view surfaces
+      // its own load error.
+    }
   }
 
   #unsubscribe(): void {

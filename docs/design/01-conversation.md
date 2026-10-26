@@ -23,7 +23,8 @@
 
 ## 项目组
 
-- 项目组是一种会话（`conversations.type = 'project'`）：一个**目标** + 一位必有的**负责人** + 若干**成员** + 一组协作模块（沟通 / Wiki / 看板 / OKR / 日历；本期交付沟通与 Wiki），可绑定一个共享**工作目录**。设计全貌见 [41-project-team.md](41-project-team.md)；对话没有 `setup_state`（D60 的对话内创建流程已整体删除）。
+- 项目组是一种会话（`conversations.type = 'project'`）：一个**目标** + 一位必有的**负责人** + 若干**成员** + 一组协作模块（沟通 / 看板 / Wiki / OKR / 日历；沟通、看板、Wiki 已交付），可绑定一个共享**工作目录**。设计全貌见 [41-project-team.md](41-project-team.md)；对话没有 `setup_state`（D60 的对话内创建流程已整体删除）。
+- **卡片对话**（`conversations.type = 'card'`）是看板卡片和它的执行成员之间的隐藏会话：`parent_project_id` 指向项目，`card_todo_id` 是卡片 id，`direct_bot_id` 是执行成员。它不进侧栏，只在卡片弹框里打开。见 [50](50-project-board.md)。
 - 用户在项目组的「沟通」模块中与多个 Bot 协作，由路由决定谁响应。响应规则见 [02-execution.md](02-execution.md#项目组沟通的响应)。
 - 新建项目组：**双轮选择**——第一轮单选**负责人**（候选排除管家；输入新名字回车可新建一个空画像 Bot 并直接作为负责人），第二轮多选**成员**（≥ 1 位，不含负责人与管家；Backspace 可退回上一轮，Esc 取消）；空回车创建，默认名称按「负责人, 成员…」拼接。创建时不收集项目目标与工作目录，之后在项目详情页补充。入口与交互见 [12-ui-layout.md](12-ui-layout.md)。
 - 项目目标存于对话的 `goal`（原 `description`），非空时注入项目内 Bot 的上下文；在项目详情页「概览」编辑（`projects.update`）。

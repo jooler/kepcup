@@ -152,7 +152,7 @@
 </div>
 
 {#if openCard}
-  <CardDialog cardId={openCard.id} text={openCard.text} />
+  <CardDialog cardId={openCard.id} />
 {/if}
 
 <style>

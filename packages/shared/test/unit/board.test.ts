@@ -133,7 +133,7 @@ describe('board schemas', () => {
       conversationId: 'conv_card',
       unreadCount: 2,
       pendingApprovals: 1,
-      task: { running: 1, queued: 0, queueReason: null },
+      task: { running: 1, queued: 0, queueReason: null, awaitingInput: false },
     };
     expect(boardCardSchema.parse(withRun)).toEqual(withRun);
     expect(boardSummarySchema.parse({ unread: 1, pendingApprovals: 2, delivered: 3 })).toEqual({

@@ -1,6 +1,6 @@
 # 50 项目组看板（Board）：梳理思路、指派执行、卡片对话
 
-**状态：已确认，待实施（2026-10-26）。** 决策 **D103**；§2 的 Q1–Q9 全部按推荐，**仅 Q4 改口为 `svelte-dnd-action`**（用户 2026-10-26 确认）。执行方案见 [todo/project-board/](../../todo/project-board/README.md)（三个阶段）。
+**状态：已实施（2026-10-26）。** 决策 **D103**；§2 的 Q1–Q9 全部按推荐，**仅 Q4 改口为 `svelte-dnd-action`**（用户 2026-10-26 确认）。执行方案与实施记录见 [todo/project-board/](../../todo/project-board/README.md)（三个阶段均已落地）。
 
 早期阶段的工程原则沿用 [41](41-project-team.md)：**不保证旧数据可用、不做向后兼容；以语义准确、框架坚实为准。**
 
@@ -185,7 +185,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 - **看板专属守卫**（宿主，不靠 UI）：cron 最小间隔 1 小时（`BOARD_CRON_MIN_INTERVAL_MS`），更密的拒绝；ISO 时间不得在过去（`validateWhen` 已有）。
 - **时区**：事项 RPC 没有时区参数，cron 以核心进程时区计算；界面时间预设按本机时区编译。两者同机一致；若不一致（将来 headless），`describeScheduleWhen` 已能标出时区差异，沿用。
 - **周期触发时上一次未交付**：每次触发是新的 `todo_runs`，派发文本末尾由宿主附「（上一次执行尚未交付）」；不跳过、不去重。同一 Bot 在该会话的邮箱串行处理；任务并发上限按卡（3）计。
-- **深夜派发**：与 D90 一致，不拦截；`WhenPicker` 选到免打扰时段时给一行提示。
+- **深夜派发**：与 D90 一致，不拦截。免打扰时段记在 Bot 画像的 `behavior.quiet_hours`，不在设置目录里，时间弹层不在选中时预判；排期 RPC 返回的说明用 toast 显示。过密的 cron（`BOARD_CRON_TOO_FREQUENT`）在时间弹层里就地显示。
 
 ### 6.3 派发到卡片对话
 
@@ -246,7 +246,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 | 删除分栏 | §5.3；非空须确认，连带删卡 |
 | 删除项目组 | `board.onProjectDeleting`（§5.2）；确认框列出卡片数 / 其中已指派数 |
 | 项目只读 | 看板整体只读（不可增删改拖、不可指派 / 排期）；仍可查看卡片对话 |
-| Bot 移交（D88） | 看板事项不随移交带走：移交适配器跳过看板排期；被移交 Bot 的卡片按「执行成员离开」处理（实施时核对适配器对 `origin='workbench'` 排期的现有行为） |
+| Bot 移交（D88） | 看板排期不进移交清单，也不取消、也不清空指派（DEV-047）。移交没有把 Bot 移出项目组。清空指派、回 `draft`、写 `blocked_reason`、会话只读，只发生在移出成员和删除 Bot |
 | 应用重启 | 排期 / 补发 / 对账沿用 D90；卡片对话与消息为普通持久数据 |
 
 ## 7 卡片对话：Bot 视角
@@ -307,7 +307,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 
 - 注册表翻转 `board` 为 `available`，顺序调整为 `chat, board, wiki, okr, calendar`（与 41 §11.2 示意图一致；`project-modules.test.ts` 逐字锁定，随改）。`shell.projectView` 联合类型已含 `'board'`；`ProjectView` 增 `{:else if view === 'board'}` → `ProjectBoardView`（薄壳，仿 `ProjectWikiView`）。
 - **切 tab 会卸载看板**（只有沟通保持挂载）：看板状态存 store（`features/board/board.svelte.ts`，沿用工作台「挂载计数 + 订阅 + 200ms 去抖 / 1s 上限整体重拉 + 迟到响应序号丢弃」），滚动位置与打开的卡片 id 也进 store；编辑中的草稿靠卸载补存（§9.7）。`chat.select()` 收口时一并关闭弹框（同 `projectView` 重置不变式）。
-- **徽标**：看板 tab 显示「未读 + 待审批 + 待验收」之和（读 `board.summary`，随 `message.created` / 审批 / `todos.changed` 去抖刷新；实现仿 `project-chat-badge.ts`）。用户在沟通 / Wiki tab 时不会漏掉卡片里的审批。
+- **徽标**：看板 tab 显示「未读 + 待审批 + 待验收」之和（读 `board.summary`，项目外壳挂载期间随卡片会话的 `message.created` / 审批 / `board.changed` / `todos.changed` 去抖刷新；实现仿 `project-chat-badge.ts`）。未读与待审批计当前打开的卡片会话；执行成员离开后，弹框仍能打开最近一条只读对话并标已读，这一条也计入。更早的只读历史没有入口，不计，避免留下清不掉的数字。卡面用同一条会话的 `unreadCount`；弹框标已读会同时清掉卡面和 tab。用户在沟通 / Wiki tab 时不会漏掉卡片里的审批。
 - **通知 / 深链**：卡片对话的审批与回复通知，点击跳到「该项目 → 看板 → 打开该卡片」（不是 `showConversation`，后者会选中隐藏会话）。项目沟通里的 `DispatchCard` 不涉及（看板事项不派到沟通）。
 
 ### 9.2 看板布局与滚动不变式
@@ -463,7 +463,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 - **容器**：`Dialog`，`sm:max-w-5xl`（必须带 `sm:` 前缀，否则被基类 `sm:max-w-sm` 压住）、高度 `min(80vh, 720px)`、`gap-0 overflow-hidden p-0`，自带关闭钮（`showCloseButton={false}` 自绘，同 `TodoDrawer`）。三段结构：上下工具栏 `shrink-0 border-b / border-t px-4 py-3`，中部 `min-h-0 flex-1`，左右两栏**各自**纵向滚动。
 - **上工具栏**：左「任务详情」`text-sm font-medium`；右侧执行成员头像（点开 §6.1 的成员菜单；无指派显示虚线圆形「＋」）+ 关闭。
 - **左栏上方**：文本卡片（`InlineEditable`，多行，同卡面字号），始终可编辑。左栏下方：**执行记录**（`todo_runs`：派发时间、状态、「›」跳到对话里那条结果消息），无记录时不渲染。
-- **右栏**：卡片对话（§11 的 `ChatSession(cardConversationId)`）——消息列表、审批坞、状态行、Composer、只读横幅都是单聊现有组件。未指派：居中一行说明「指派一位成员后，可在这里就这张卡片与 TA 沟通」。已指派未发过消息：Composer 占位「就这张卡片与 {名字} 沟通…」。弹框内点任务卡，在右栏显示 `TaskRunView`（带返回），不替换主区。
+- **右栏**：卡片对话（§11 的 `ChatSession(cardConversationId)`）——消息列表、审批坞、状态行、Composer、只读横幅都是单聊现有组件。未指派且没有可打开的对话：居中一行说明「指派一位成员后，可在这里就这张卡片与 TA 沟通」。用户主动取消指派走这行空态（会话只读保留，不在弹框里重开）。执行成员被移出或 Bot 被删（`blocked_reason`）：右栏重开最近一条只读卡片对话，沿用只读横幅，不把它显示成可写对话；更早的执行成员对话仍不能切换。已指派未发过消息：Composer 占位「就这张卡片与 {名字} 沟通…」。弹框内点任务卡，在右栏显示 `TaskRunView`（带返回），不替换主区。Esc 时审批卡和输入框先消费，打开的任务过程页先回到对话，然后才关弹框。
 - **下工具栏**（metadata，同时是入口）：时间 chip（点开手写弹层 `CardWhenPopover`，内为 `WhenPicker`；无指派时置灰并提示「先指派执行成员」）；状态 chip；「下次」；创建 / 更新时间；最右主操作（§6.4 表）。
 - **窄容器**（弹框宽 < 760px）：中部改为「详情 / 对话」两个 tab，tab 上带未读点。
 - **焦点与键盘**：打开时焦点在弹框容器（不抢文本光标）；Esc 关闭（输入框与审批卡内 Esc 先被它们消费）；关闭前补存文本。
@@ -505,7 +505,7 @@ BoardCard = {
           schedule: TodoEntry['schedule'], lastRun: TodoRun | null },
   conversationId: string | null,                    // 当前执行成员的卡片对话
   unreadCount: number, pendingApprovals: number,
-  task: { running: number, queued: number, queueReason: string | null } | null,
+  task: { running: number, queued: number, queueReason: string | null, awaitingInput: boolean } | null,
 }
 ```
 

@@ -1,10 +1,19 @@
 <script lang="ts">
-  import { ChevronRight } from '@lucide/svelte';
+  import { ChevronRight, Clock } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
+  import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { board, type BoardCardView } from './board.svelte';
-  import { cardAriaLabel, moveTargets, needsDeleteConfirm } from './board-model';
+  import {
+    cardAriaLabel,
+    cardFooter,
+    deriveCardBadges,
+    deriveCardStatus,
+    moveTargets,
+    needsDeleteConfirm,
+    type CardStatusTone,
+  } from './board-model';
   import { cardClickGuard } from './board-dnd';
 
   /**
@@ -18,6 +27,17 @@
   let confirmDelete = $state(false);
 
   const label = $derived(cardAriaLabel(card.text) || t('board.card.placeholder'));
+  const footer = $derived(cardFooter(card));
+  const badges = $derived(deriveCardBadges(card));
+  const blocked = $derived(deriveCardStatus(card));
+  const done = $derived(footer?.status.key === 'done');
+
+  function dotClass(tone: CardStatusTone): string {
+    if (tone === 'sky') return 'bg-sky-500';
+    if (tone === 'emerald') return 'bg-emerald-500';
+    if (tone === 'amber') return 'bg-amber-500';
+    return 'bg-muted-foreground';
+  }
   const targets = $derived(moveTargets(board.columns, card));
   const columnCards = $derived(
     board.columns.find((column) => column.id === card.columnId)?.cards ?? [],
@@ -101,18 +121,67 @@
 </script>
 
 <div
-  class="cursor-pointer rounded-lg border bg-card p-3 text-sm hover:bg-accent/40"
+  class="cursor-pointer rounded-lg border bg-card p-3 text-sm hover:bg-accent/40 {done
+    ? 'opacity-70'
+    : ''}"
   role="button"
   tabindex="0"
   use:keepButtonRole
   aria-label={label}
   data-testid="board-card"
   data-card-id={card.id}
+  data-status={footer?.status.key ?? blocked?.key ?? ''}
   onclick={openDialog}
   onkeydown={onKeydown}
   oncontextmenu={openMenu}
 >
   <p class="line-clamp-6 break-words whitespace-pre-wrap">{card.text}</p>
+  {#if badges.unread || badges.approval || badges.askUser || (footer === null && blocked?.key === 'blocked')}
+    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+      {#if badges.unread}
+        <span
+          class="size-1.5 rounded-full bg-amber-500"
+          title={t('board.badge.unread')}
+          data-testid="board-card-unread"
+        ></span>
+      {/if}
+      {#if badges.approval}
+        <span data-testid="board-card-approval">{t('board.badge.approval')}</span>
+      {/if}
+      {#if badges.askUser}
+        <span data-testid="board-card-ask-user">{t('board.badge.askUser')}</span>
+      {/if}
+      {#if footer === null && blocked?.key === 'blocked'}
+        <span data-testid="board-card-blocked">{blocked.params?.reason}</span>
+      {/if}
+    </div>
+  {/if}
+  {#if footer}
+    <div class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span class="flex shrink-0" data-testid="board-card-assignee">
+        <BotAvatar
+          botId={footer.assignee.botId}
+          name={footer.assignee.name}
+          avatar={null}
+          class="size-4"
+          animated={false}
+        />
+      </span>
+      <span class="inline-flex min-w-0 items-center gap-1" data-testid="board-card-status">
+        <span
+          class="size-1.5 shrink-0 rounded-full {dotClass(footer.status.tone)}"
+          aria-hidden="true"
+        ></span>
+        <span class="truncate">{t(footer.status.label, footer.status.params)}</span>
+      </span>
+      {#if footer.when !== null}
+        <span class="inline-flex min-w-0 items-center gap-1" data-testid="board-card-time">
+          <Clock class="size-3 shrink-0" aria-hidden="true" />
+          <span class="truncate">{footer.when}</span>
+        </span>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 {#if menu}
@@ -203,12 +272,12 @@
   >
     <Dialog.Content class="sm:max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>{t('board.card.deleteDialog.title')}</Dialog.Title>
-        <Dialog.Description>{t('board.card.deleteDialog.body')}</Dialog.Description>
+        <Dialog.Title>{t('board.deleteCard.title')}</Dialog.Title>
+        <Dialog.Description>{t('board.deleteCard.body')}</Dialog.Description>
       </Dialog.Header>
       <Dialog.Footer>
         <Button variant="outline" onclick={() => (confirmDelete = false)}>
-          {t('board.card.deleteDialog.cancel')}
+          {t('common.cancel')}
         </Button>
         <Button
           variant="destructive"
@@ -218,7 +287,7 @@
           }}
           data-testid="board-card-delete-confirm"
         >
-          {t('board.card.deleteDialog.confirm')}
+          {t('board.deleteCard.confirm')}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>

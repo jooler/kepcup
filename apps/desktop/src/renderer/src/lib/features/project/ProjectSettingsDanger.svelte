@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { BoardCard } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
@@ -14,27 +15,37 @@
   let deleting = $state(false);
   /** Wiki inventory of the project (null = not fetched / hidden). */
   let wikiCounts = $state<{ sources: number; pages: number } | null>(null);
+  /** Board inventory. Null until the confirmation fetch returns. */
+  let boardCounts = $state<{ cards: number; assigned: number } | null>(null);
 
   // Expanding the confirmation loads the counts in parallel; collapsing resets
   // them so reopening refetches (sources may have changed meanwhile).
   $effect(() => {
     if (!confirmDelete) {
       wikiCounts = null;
+      boardCounts = null;
       return;
     }
     const id = conversationId;
     void (async () => {
       try {
-        const [sourcesResult, treeResult] = await Promise.all([
+        const [sourcesResult, treeResult, boardResult] = await Promise.all([
           core.call('wiki.sources', { owner: { kind: 'project', id } }),
           core.call('wiki.tree', { owner: { kind: 'project', id } }),
+          core.call('board.get', { projectId: id }),
         ]);
         wikiCounts = {
           sources: (sourcesResult as { sources: unknown[] }).sources.length,
           pages: (treeResult as { pages: unknown[] }).pages.length,
         };
+        const cards = (boardResult as { cards: BoardCard[] }).cards;
+        boardCounts = {
+          cards: cards.length,
+          assigned: cards.filter((card) => card.todo.assignee !== null).length,
+        };
       } catch {
         wikiCounts = null;
+        boardCounts = null;
       }
     })();
   });
@@ -74,6 +85,14 @@
           {t('projectSettings.deleteWikiCount', {
             sources: wikiCounts.sources,
             pages: wikiCounts.pages,
+          })}
+        </p>
+      {/if}
+      {#if boardCounts !== null}
+        <p class="text-xs text-muted-foreground" data-testid="project-delete-board-count">
+          {t('projectSettings.deleteBoardCount', {
+            cards: boardCounts.cards,
+            assigned: boardCounts.assigned,
           })}
         </p>
       {/if}

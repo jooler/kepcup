@@ -62,6 +62,8 @@ export const boardCardSchema = z.object({
       running: z.number(),
       queued: z.number(),
       queueReason: z.string().nullable(),
+      /** A task in the card conversation is waiting on `ask_user`. */
+      awaitingInput: z.boolean(),
     })
     .nullable(),
 });

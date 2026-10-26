@@ -98,6 +98,18 @@ class ShellState {
     if (this.projectView === id) return;
     this.projectView = id;
   }
+
+  /**
+   * Open one board card. `chat.select` resets the project view and closes any
+   * open card, so the board tab and the card come after it.
+   */
+  async openBoardCard(projectId: string, cardId: string): Promise<void> {
+    const { chat } = await import('./chat.svelte');
+    const { board } = await import('$lib/features/board/board.svelte');
+    await chat.select(projectId);
+    this.openProjectModule('board');
+    board.openCard(cardId);
+  }
   /**
    * 启动时一个 Bot 都没有：左栏「+」面板自动下拉展开引导新建；
    * AppSidebar 消费后即复位。
