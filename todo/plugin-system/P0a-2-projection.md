@@ -397,6 +397,21 @@ export function assertPluginServersIntact(previous: readonly McpServer[], next: 
 | `66c73f99` | 步骤 10：`rpc/plugins-bindings.ts`（五个方法 + `assertLocalSource`，远程端点拒 file / folder）；`bindAppMethods` 展开、`settings-bindings.ts` 的 `EXTRA_METHOD_ITEMS` 三条（`itemIdsForSettingsPaths(['mcpServers'])`）；`start.ts`：`CoreServices.plugins`（初始 null）、`SettingsCatalogHost` 之后构造 store / packager / 四投影器 / `PluginRegistry`、`connectorCatalog.attachPlugins`、`skills.attachPublicUninstallGuard`、`services.plugins` 赋值、`environment.recoverInterrupted()` 之后 `await plugins.start()`（try/catch 只记 error）、`mcp.attachHttpFetch` 改用 `useGuardedMcpFetch` 谓词；`core/src/index.ts` 导出 `PluginRegistry` 类型与 `PluginStore`；`docs/dev/01-conventions.md` 的 core 目录清单加 `plugins/`。 |
 | `dc80e5c5` | 步骤 11：`test/integration/plugins.test.ts`（11 例，`createTestStack({ mcpbRuntimes })` + `buildPluginFixture`，全部经 `core.rpc.call`）。 |
 | `3785df3e`（lint） | `fix(plugins)`：P0a-2 全部文件过 eslint（未用变量 / import type / `no-useless-assignment` 清理），行为零改动。 |
+| `e8886e00`（审查） | `fix(plugins)`：`setEnabled` 在已装目录清单不可读时拒绝翻转（`PLUGIN_INVALID`）——原实现只告警并翻转标志，会出现「已停用但技能 / server / 连接器投影还活着」的标志与投影漂移；卸载不依赖清单、照常可用。+1 例（`plugin-registry.test.ts` 12 例）。 |
+| `0203dc14`（审查） | `fix(plugins)`：大小写变体插件 id 的目录槽位冲突预检——`pluginDirName` 整体小写，`io.github.t/E` 与 `io.github.t/e` 是两个不同 id 但共享同一安装目录槽位，原实现会在 `rm(finalDir)` 时删掉已装插件的目录；现于 `#inspectStagedOutput` 记 `kind:'plugin'` 冲突（inspect 可见、install 抛 `PLUGIN_CONFLICT`，均发生在任何文件系统写入之前）。+1 例（13 例）。 |
+| `96291012`（审查） | `fix(plugins)`：`start()` 对所有 `installed` 行读清单（原实现只读 `installed && enabled`），修复重启后禁用插件在 `plugins.list` 里显示 `name = id`、描述为空（清单缓存是进程内的，只有 `start()` 会为存量行填充）；激活仍以 `enabled` 为门槛。+1 例（14 例）。 |
+| `1d1d9e30`（审查） | `fix(plugins)`：P0a-2 全部新源文件与测试过 prettier（对齐 P0a-1 审查先例）；`SkillsService.attachPublicUninstallGuard` 挪回它挤占的 `uninstall` 文档注释之前；`mail.ts` 去掉多余的 `as never` 断言。行为零改动。 |
+
+### 审查修正（独立审查智能体，2026-10-26）
+
+逐项对照 README §4、任务书 11 个步骤、设计 51 §2/§4/§5/§7/§10 复核后的修正与结论：
+
+- **修正 1（`e8886e00`）**：`#setEnabledLocked` 原在清单不可读时「warn + 照常翻转 `enabled`」，破坏设计 51 §7 的不变量「`enabled=0` → 投影层整体摘除」——用户停用一个内容损坏的插件后，它的公共技能、`plg_` server 与连接器条目照常生效。改为抛 `PLUGIN_INVALID`（标志不翻转）；卸载走账本、不依赖清单，仍可用。原「自由度判断点 3」按此作废。
+- **修正 2（`0203dc14`）**：任务书未提及大小写变体 id，但设计 51 §5 明确「目录名小写化（大小写不敏感文件系统上同槽）」——槽位属主判定必须按小写槽位而不是精确 id。在 `#inspectStagedOutput`（inspect 与 install 共用）记录槽位冲突，冲突路径在 `rm(finalDir)` 之前被拒。
+- **修正 3（`96291012`）**：任务书步骤 8 的 `list()` 要求「每行 + 读清单」；原 `start()` 跳过禁用行导致重启后禁用插件的展示名缺失。改为对所有 `installed` 行读清单、仅激活以 `enabled` 门槛。
+- **核对结论（未改动）**：账本顺序（先登记后写入、回滚按 `PLUGIN_PROJECTOR_ORDER` 逆序且幂等、`#teardown` 三条失败路径全部收敛、`rm` 前经 `pluginDirOf` 守卫）；互斥 promise 链串行（并发 install 的 begin/end 成对断言）；投影器同步区纪律（三个改 `mcpServers` 的读→改→写均无 await，网络副作用在区外）；守卫三规则与接入点（锁内最新比对、`mcp.removeServer` 顶部、技能守卫在 `uninstallPublic` 之外的公共卸载分支）；unproject 归属校验（`parsePluginSkillSource` 只删自己的、`mcpbPackageOf` 引用计数）；连接器改写规则（packages 空 / toolPolicy 只留 destructive / hidden 删除 / tier 映射 / `isSafeDirectoryRemoteUrl` / `LOCAL_CONNECTOR_NAME_PREFIX`）；`useGuardedMcpFetch` 谓词；`register` 语义（ALREADY_EXISTS 仅 register、`slotConflict` 与 `#installSnapshot` 共用 `#findSlotConflicts`、`#audit` 第三参改型后键值不变）；步骤 10 的 EXTRA_METHOD_ITEMS 三条——均与任务书一致。
+- **遗留观察（不构成返工项）**：① `store.insert` 抛错（DB 层故障）时会留下一个无行的 `finalDir`，由下一次同 id 安装的 `rm(finalDir)` 与 `.staging` 清扫收敛，与任务书「清掉无行的残留目录」口径一致；② `afterServerRemoved` 对无 `tier` 的 verified 插件 server 审计 `tier:'catalog'`，沿袭既有 `uninstall(serverId)` 的表达，审计 detail 不含敏感值；③ `plugin_set_enabled` 审计 detail 无 `via`（README §4.1 的 `via` 枚举 file/folder/marketplace/bot 对启停动作无语义）。
+- 审查修正共 4 个独立提交，每个均可构建；未新增 DEVIATIONS 条目（三处行为修正均在任务书自由度 / 设计既有约束内，非与任务书的冲突）。 |
 
 ### 偏差与 DEV 编号
 
@@ -415,7 +430,7 @@ export function assertPluginServersIntact(previous: readonly McpServer[], next: 
 
 1. **MCP 投影器 `missing` 的范围**：任务书写「对 mcpb 来源」，但 `missing(plugin, refs)` 签名拿不到清单，无法按贡献类别区分 mcpb / http；实现为统一规则「refs 不在 `settings.mcpServers` = 缺失」（await-free，与任务书对 mcpb 的要求完全一致，http 条目消失同样是缺失事实）。解包树完整性仍归 `McpbInstaller.verify`。
 2. **`useGuardedMcpFetch` 返回 boolean 谓词**（任务书代码块返回 `guardedMcpFetch | undefined`）：守卫 fetch 实例是 `start.ts` 的闭包值，纯函数返回 `true/false`、`start.ts` 映射为 `guardedMcpFetch ?? undefined`，语义等价且可单测。
-3. **`setEnabled` 时清单不可读**：置 `enabled` 照做并 `logger.warn` 跳过投影器调用（`plugins.list` 会把内容缺失标出来）；不阻塞启停。
+3. **`setEnabled` 时清单不可读**：~~置 `enabled` 照做并 `logger.warn` 跳过投影器调用~~（审查修正 `e8886e00` 改为拒绝翻转：清单不可读时启停抛 `PLUGIN_INVALID`，避免「标志已停用、投影还活着」的漂移；卸载不依赖清单照常可用）。
 4. **卸载审计时机**：`#teardown` 以「尽力而为 + 末尾重抛首个错误」结束，行与目录都会被清；`uninstall` 把审计与 `plugins.changed` 放在 teardown 之后、重抛之前——部分失败的卸载同样落审计（行确实没了）。
 5. **连接器 inspect 的检查顺序**：图标缺失 → 目录冲突（对照含其它插件的全集）→ 包内重复。同名冲突优先于包内重复报告（对用户更可操作）。
 6. **`rewriteConnectorEntry` 的第三参**在改写本体里不消费（icon 留在 meta 原样，路径校验在调用方），参数名 `_iconAbsPath` 并注释用途，签名与任务书一致。
