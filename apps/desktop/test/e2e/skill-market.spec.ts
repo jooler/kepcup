@@ -1,44 +1,34 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm } from '@kepcup/testkit';
+import { buildBuiltinPluginsDir, startMockLlm } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 扩展中心 Skills 分组（原技能市场）e2e：左栏底部「扩展中心」入口 → 弹框（默认落在 Skills）→ 点「添加」
  * 安装为公共技能（public_skills：一次安装所有 Bot 可用，无审批卡片）→ 按钮
  * 翻转为「已添加」→ 右栏技能面板出现且 active、带「公共」徽标。预置目录用
- * 夹具（与 skills.spec 的本地 git 夹具同理，绝不触网、无模型调用）。
+ * 内置插件夹具（D104 P0b：buildBuiltinPluginsDir → KEPCUP_BUILTIN_PLUGINS；
+ * 与 skills.spec 的本地 git 夹具同理，绝不触网、无模型调用）。
  */
 
 async function writePresetDir(root: string): Promise<string> {
-  const presetDir = path.join(root, 'presets');
-  await mkdir(path.join(presetDir, 'market-demo'), { recursive: true });
-  await writeFile(
-    path.join(presetDir, 'catalog.json'),
-    JSON.stringify({
-      version: 1,
-      presets: [
-        {
-          id: 'market-demo',
-          dir: 'market-demo',
-          section: 'starter',
-          displayName: '市场演示',
-          summary: '端到端夹具技能',
-          icon: 'puzzle',
-          version: '1.0.0',
-          tryIt: '把素材丢给我',
-        },
-      ],
-    }),
-  );
-  await writeFile(
-    path.join(presetDir, 'market-demo', 'SKILL.md'),
-    '---\nname: market-demo\ndescription: 技能市场端到端夹具技能\n---\n正文',
-  );
-  return presetDir;
+  return buildBuiltinPluginsDir({
+    dir: path.join(root, 'builtin-plugins'),
+    skills: [
+      {
+        id: 'market-demo',
+        displayName: '市场演示',
+        summary: '端到端夹具技能',
+        section: 'starter',
+        version: '1.0.0',
+        tryIt: '把素材丢给我',
+        description: '技能市场端到端夹具技能',
+      },
+    ],
+  });
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -76,7 +66,7 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
         KEPCUP_ONBOARDING: 'off',
         KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
         KEPCUP_MOCK_LLM_URL: llm.url,
-        KEPCUP_PRESET_SKILLS: presetDir,
+        KEPCUP_BUILTIN_PLUGINS: presetDir,
       },
     });
     const page = await app.firstWindow();
