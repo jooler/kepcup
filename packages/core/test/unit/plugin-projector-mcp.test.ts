@@ -38,9 +38,7 @@ async function tmp(prefix: string): Promise<string> {
 
 // --- installer harness (same shape as mcpb-register.test.ts) -------------------
 
-async function installerHarness(
-  overrides: Partial<McpbInstallerDeps> = {},
-): Promise<{
+async function installerHarness(overrides: Partial<McpbInstallerDeps> = {}): Promise<{
   installer: McpbInstaller;
   home: string;
   servers: McpServer[];
