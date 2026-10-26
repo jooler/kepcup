@@ -153,7 +153,10 @@ const { t, i18n } = await import('$lib/i18n');
 
 const count = (method: string): number => calls.filter((call) => call.method === method).length;
 const emit = (payload: unknown): void => {
-  for (const handler of handlers.get('board.changed') ?? []) handler(payload);
+  emitEvent('board.changed', payload);
+};
+const emitEvent = (event: string, payload: unknown): void => {
+  for (const handler of handlers.get(event) ?? []) handler(payload);
 };
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -399,6 +402,33 @@ describe('optimistic writes', () => {
     expect(await board.deleteColumn('bcol_a', false)).toBe(false);
     expect(board.columns.map((column) => column.id)).toEqual(['bcol_a']);
     expect(toast.error).toHaveBeenCalled();
+  });
+});
+
+describe('card conversation events reload only mapped cards', () => {
+  it('refetches when a mapped conversation changes and ignores the rest', async () => {
+    cards = [{ ...card('card_a', 'bcol_a', 'hello', 1), conversationId: 'conv_card' }];
+    detach = board.attach('p1');
+    await wait(20);
+    const before = count('board.get');
+
+    emitEvent('message.created', { conversationId: 'conv_other' });
+    emitEvent('run.status', { run: { conversationId: 'conv_other' } });
+    emitEvent('approval.created', { conversationId: 'conv_other' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before);
+
+    emitEvent('message.created', { conversationId: 'conv_card' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 1);
+
+    emitEvent('run.status', { run: { conversationId: 'conv_card' } });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 2);
+
+    emitEvent('approval.resolved', { conversationId: 'conv_card' });
+    await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+    expect(count('board.get')).toBe(before + 3);
   });
 });
 
