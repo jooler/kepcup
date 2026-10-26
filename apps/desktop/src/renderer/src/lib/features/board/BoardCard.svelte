@@ -272,12 +272,12 @@
   >
     <Dialog.Content class="sm:max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>{t('board.card.deleteDialog.title')}</Dialog.Title>
-        <Dialog.Description>{t('board.card.deleteDialog.body')}</Dialog.Description>
+        <Dialog.Title>{t('board.deleteCard.title')}</Dialog.Title>
+        <Dialog.Description>{t('board.deleteCard.body')}</Dialog.Description>
       </Dialog.Header>
       <Dialog.Footer>
         <Button variant="outline" onclick={() => (confirmDelete = false)}>
-          {t('board.card.deleteDialog.cancel')}
+          {t('common.cancel')}
         </Button>
         <Button
           variant="destructive"
@@ -287,7 +287,7 @@
           }}
           data-testid="board-card-delete-confirm"
         >
-          {t('board.card.deleteDialog.confirm')}
+          {t('board.deleteCard.confirm')}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
