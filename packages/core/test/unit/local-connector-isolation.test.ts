@@ -18,6 +18,7 @@ import {
 import { ConnectorCatalog, buildConnectorCatalog } from '../../src/apps/catalog.js';
 import { mergeDirectoryEntries } from '../../src/apps/directory-merge.js';
 import { fakeCatalogEntry } from '../support/catalog-connect-env.js';
+import { readShippedConnectorEntries } from '../support/shipped-connectors.js';
 import { SIGN_SCRIPT_PATH } from '../support/directory-fixture.js';
 
 /**
@@ -207,18 +208,26 @@ describe('the signed directory path never carries a local connector', () => {
     expect(merged.entries.map((entry) => entry.name)).toEqual(['test.alpha/mcp']);
   });
 
-  it('the signing script reads only the shipped catalog by default, and refuses a local entry in --extra-dir', async () => {
+  it('the signing script reads only the shipped builtin plugin by default, and refuses a local entry in --extra-dir', async () => {
     const script = (await import(/* @vite-ignore */ pathToFileURL(SIGN_SCRIPT_PATH).href)) as {
-      collectEntries(input?: { catalog?: string; extraDir?: string }): Array<{ name: string }>;
+      collectEntries(input?: { catalog?: string; extraDir?: string }): Promise<
+        Array<{ name: string }>
+      >;
     };
-    // Default inputs = apps/desktop/resources/connectors/catalog.json, byte for byte.
-    const shipped = JSON.parse(
-      readFileSync(path.join(repoRoot, 'apps/desktop/resources/connectors/catalog.json'), 'utf8'),
-    ) as { connectors: Array<{ name: string; _meta: Record<string, { releaseGate?: string }> }> };
-    expect(script.collectEntries().map((entry) => entry.name)).toEqual(
-      shipped.connectors.map((entry) => entry.name),
-    );
-    for (const entry of shipped.connectors) {
+    // Default inputs = the builtin com.kepcup/connections plugin (scripts/lib/builtin-connectors.mjs),
+    // equal to the test-side shipped-entries reader (D104 P0b; was catalog.json byte for byte).
+    const shipped = readShippedConnectorEntries() as Array<{
+      name: string;
+      _meta: Record<string, { releaseGate?: string }>;
+    }>;
+    const bundled = (await import(
+      /* @vite-ignore */ pathToFileURL(
+        path.join(repoRoot, 'scripts/lib/builtin-connectors.mjs'),
+      ).href
+    )) as { readBundledConnectorEntries(root?: string): Array<{ name: string }> };
+    expect(await script.collectEntries()).toEqual(bundled.readBundledConnectorEntries(repoRoot));
+    expect(bundled.readBundledConnectorEntries(repoRoot)).toEqual(shipped);
+    for (const entry of shipped) {
       expect(entry.name.startsWith('local.kepcup/')).toBe(false);
       expect(entry._meta[CONNECTOR_META_KEY]?.releaseGate).not.toBe(LOCAL_CONNECTOR_GATE);
     }
@@ -228,11 +237,11 @@ describe('the signed directory path never carries a local connector', () => {
     const extra = path.join(dir, 'extra');
     mkdirSync(extra);
     writeFileSync(path.join(extra, 'oops.json'), JSON.stringify(localEntry()));
-    expect(() => script.collectEntries({ extraDir: extra })).toThrow(/local connector/);
+    await expect(script.collectEntries({ extraDir: extra })).rejects.toThrow(/local connector/);
     // …even when it hides behind another name but keeps the local gate.
     const renamed = { ...localEntry(), name: 'com.sneaky/mcp' };
     writeFileSync(path.join(extra, 'oops.json'), JSON.stringify(renamed));
-    expect(() => script.collectEntries({ extraDir: extra })).toThrow(/local connector/);
+    await expect(script.collectEntries({ extraDir: extra })).rejects.toThrow(/local connector/);
   });
 
   it('nothing under the directory / signing code paths reads settings.apps.localConnectors', () => {

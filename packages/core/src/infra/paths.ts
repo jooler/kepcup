@@ -303,25 +303,5 @@ export function resolveBundledBinDir(env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
-/**
- * Preset skills shipped with the app (`apps/desktop/resources/preset-skills/`,
- * the skill-marketplace catalog, packaged as extraResources). Resolution
- * mirrors resolveBundledBinDir: explicit env override (KEPCUP_PRESET_SKILLS,
- * injected by core-host for the packaged app) → nearest `apps/` ancestor of
- * this package (repo checkout) → null (the marketplace simply lists nothing).
- */
-export function resolvePresetSkillsDir(env: NodeJS.ProcessEnv): string | null {
-  const override = env.KEPCUP_PRESET_SKILLS;
-  if (override !== undefined && override.length > 0) {
-    return existsSync(override) ? path.resolve(override) : null;
-  }
-  let current = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 8; i++) {
-    const candidate = path.join(current, 'apps', 'desktop', 'resources', 'preset-skills');
-    if (existsSync(candidate)) return candidate;
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
-}
+// Preset skills shipped with the app moved to the builtin plugin loader (D104 P0b):
+// see plugins/builtin.ts (`resolveBuiltinPluginsDir`, env `KEPCUP_BUILTIN_PLUGINS`).

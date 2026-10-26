@@ -18,10 +18,12 @@ import {
 export interface ConnectorCatalogContractTarget {
   /** 显示名（describe 标题）。 */
   label: string;
-  /** `catalog.json` 的 `connectors` 原始数组（未经 schema）。 */
+  /** 内置插件各 `server.json` 的原始数组（未经 schema；D104 P0b 起 catalog.json 的等价物）。 */
   entries: readonly unknown[];
-  /** 图标目录。 */
+  /** 图标目录（注入条目用）。 */
   iconsDir: string;
+  /** slug → 图标文件绝对路径（内置插件用；给了就优先于 iconsDir）。 */
+  iconPaths?: ReadonlyMap<string, string>;
 }
 
 export function runConnectorCatalogContract(target: ConnectorCatalogContractTarget): void {
@@ -59,7 +61,8 @@ export function runConnectorCatalogContract(target: ConnectorCatalogContractTarg
       for (const entry of parsed()) {
         const meta = connectorMetaOf(entry);
         expect(path.basename(meta.icon), `${meta.slug} icon`).toBe(meta.icon);
-        const file = path.join(target.iconsDir, meta.icon);
+        const file =
+          target.iconPaths?.get(meta.slug) ?? path.join(target.iconsDir, meta.icon);
         expect(existsSync(file), `${meta.slug}: missing icon ${meta.icon}`).toBe(true);
         if (meta.icon.endsWith('.svg')) {
           const svg = readFileSync(file, 'utf8');

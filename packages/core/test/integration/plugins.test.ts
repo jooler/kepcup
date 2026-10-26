@@ -5,8 +5,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServer, PluginInspectOutput, PluginSummary } from '@kepcup/shared';
 import { withRemoteSource } from '@kepcup/core';
 import {
+  buildBuiltinPluginsDir,
   buildPluginDir,
   buildPluginFixture,
+  connectorFixtureEntry,
   createTestStack,
   makeBot,
   type TestStack,
@@ -558,5 +560,54 @@ describe('plugins integration (P0a-2)', () => {
       'plg-alpha',
       'plg-beta',
     ]);
+  }, 90_000);
+
+  it('内置插件（D104 P0b）：plugins.list 含只读内置条目，启停 / 卸载被拒绝', async () => {
+    const builtinDir = await buildBuiltinPluginsDir({
+      dir: path.join(root, `builtin-${Math.random().toString(36).slice(2, 8)}`),
+      skills: [{ id: 'demo', displayName: '演示', summary: '内置技能', section: 'starter' }],
+      connectors: [connectorFixtureEntry('demoapp', { url: 'https://mcp.demoapp.test/mcp' })],
+    });
+    const stack = await createTestStack({
+      env: { KEPCUP_BUILTIN_PLUGINS: builtinDir },
+      mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } },
+    });
+    stacks.push(stack);
+    const core = stack.core;
+
+    const list = (await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] };
+    const builtin = list.plugins.filter((plugin) => plugin.origin === 'builtin');
+    expect(builtin.map((plugin) => plugin.id).sort()).toEqual([
+      'com.kepcup/connections',
+      'com.kepcup/starter-skills',
+    ]);
+    const connections = builtin.find((plugin) => plugin.id === 'com.kepcup/connections')!;
+    expect(connections).toMatchObject({
+      tier: 'builtin',
+      state: 'installed',
+      enabled: true,
+      dirPath: null,
+      installedAt: null,
+      counts: { connectors: 1, skills: 0, mcp: 0, mail: 0 },
+    });
+    // 内置连接器条目进目录（origin bundled——内置插件条目走快照来源，不是 plugin 投影）。
+    const catalog = (await core.rpc.call('apps.catalog.list', undefined)) as {
+      entries: Array<{ connectorId: string; origin?: string }>;
+    };
+    expect(catalog.entries.find((item) => item.connectorId === 'demoapp')).toMatchObject({
+      origin: 'bundled',
+    });
+
+    for (const method of ['plugins.setEnabled', 'plugins.uninstall']) {
+      await expect(
+        core.rpc.call(method, method === 'plugins.setEnabled' ? { id: 'com.kepcup/connections', enabled: false } : { id: 'com.kepcup/connections' }),
+      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      await expect(
+        core.rpc.call(method, method === 'plugins.setEnabled' ? { id: 'com.kepcup/starter-skills', enabled: false } : { id: 'com.kepcup/starter-skills' }),
+      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    // 内置插件始终在列（未受拒绝的启停 / 卸载影响）。
+    const after = (await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] };
+    expect(after.plugins.filter((plugin) => plugin.origin === 'builtin')).toHaveLength(2);
   }, 90_000);
 });

@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -108,10 +109,19 @@ export interface CreateTestCoreOptions {
  * Defaults follow docs/dev/05-testing.md ("Test fixtures").
  */
 export async function createTestCore(options: CreateTestCoreOptions = {}): Promise<CoreHarness> {
+  // D104 P0b: builtin plugins resolve the repo's real shipped resources by walking up —
+  // that would leak marketplace/preset/catalog content into every test. Default to an
+  // EMPTY builtin dir inside the test home unless the caller injects one explicitly.
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', KEPCUP_KEYSTORE: 'memory', ...options.env };
+  if (env.KEPCUP_BUILTIN_PLUGINS === undefined && options.home !== undefined) {
+    const empty = path.join(options.home, '.empty-builtin-plugins');
+    mkdirSync(empty, { recursive: true });
+    env.KEPCUP_BUILTIN_PLUGINS = empty;
+  }
   return createCore({
     home: options.home,
     appVersion: options.appVersion ?? '0.0.0-test',
-    env: { NODE_ENV: 'test', KEPCUP_KEYSTORE: 'memory', ...options.env },
+    env,
     ...(options.keystore ? { keystore: options.keystore } : {}),
     ...(options.envCatalog !== undefined ? { envCatalog: options.envCatalog as never } : {}),
     ...(options.envManagerHooks !== undefined

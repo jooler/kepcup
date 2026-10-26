@@ -1,12 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createTestStack, makeBot } from '@kepcup/testkit';
+import { buildBuiltinPluginsDir, createTestStack, makeBot } from '@kepcup/testkit';
 import type { SkillEntry, SkillPresetInfo } from '@kepcup/shared';
 
 /**
- * 技能市场集成（公共作用域）：夹具预置目录经 KEPCUP_PRESET_SKILLS 注入 →
+ * 技能市场集成（公共作用域）：夹具内置插件目录经 KEPCUP_BUILTIN_PLUGINS 注入 →
  * skills.presets.list（全局安装态，无入参）→ skills.presets.install（点「添加」
  * 即装，无审批卡片）→ 安装一次，两个 Bot 的 skills.list 都可见且 scope=public。
  */
@@ -16,36 +16,25 @@ let stack: Awaited<ReturnType<typeof createTestStack>>;
 let botA: string;
 let botB: string;
 
-function makePresetDir(): string {
-  const presetDir = path.join(root, 'presets');
-  mkdirSync(path.join(presetDir, 'preset-demo'), { recursive: true });
-  writeFileSync(
-    path.join(presetDir, 'catalog.json'),
-    JSON.stringify({
-      version: 1,
-      presets: [
-        {
-          id: 'preset-demo',
-          dir: 'preset-demo',
-          section: 'starter',
-          displayName: '演示技能',
-          summary: '集成测试夹具',
-          icon: 'puzzle',
-          version: '1.0.0',
-          tryIt: '试试我',
-        },
-      ],
-    }),
-  );
-  writeFileSync(
-    path.join(presetDir, 'preset-demo', 'SKILL.md'),
-    '---\nname: preset-demo\ndescription: 预置演示技能：集成测试夹具\n---\n正文',
-  );
-  return presetDir;
+async function makePresetDir(): Promise<string> {
+  return buildBuiltinPluginsDir({
+    dir: path.join(root, 'builtin'),
+    skills: [
+      {
+        id: 'preset-demo',
+        displayName: '演示技能',
+        summary: '集成测试夹具',
+        section: 'starter',
+        version: '1.0.0',
+        tryIt: '试试我',
+        description: '预置演示技能：集成测试夹具',
+      },
+    ],
+  });
 }
 
 beforeAll(async () => {
-  stack = await createTestStack({ env: { KEPCUP_PRESET_SKILLS: makePresetDir() } });
+  stack = await createTestStack({ env: { KEPCUP_BUILTIN_PLUGINS: await makePresetDir() } });
   botA = (await makeBot(stack.core, '市场甲')).id;
   botB = (await makeBot(stack.core, '市场乙')).id;
 });
@@ -91,7 +80,8 @@ describe('P08 技能市场：预置目录 → 公共技能 → 全体 Bot 可见
       expect(entry!.scope).toBe('public');
       expect(entry!.status).toBe('active');
       expect(entry!.kind).toBe('imported');
-      expect(entry!.sourceUrl).toBe('preset://preset-demo');
+      // D104 P0b：来源标记由 `preset://` 改为内置插件前缀（迁移 0054 同步改写存量）。
+      expect(entry!.sourceUrl).toBe('plugin://com.kepcup/starter-skills/preset-demo');
     }
   });
 

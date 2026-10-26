@@ -186,6 +186,7 @@ import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
 import { ConnectorsProjector } from './plugins/projectors/connectors.js';
 import { createPluginProjectors } from './plugins/projectors/index.js';
+import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { PluginStore } from './plugins/store.js';
@@ -1257,6 +1258,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // through it, so it is declared first and filled right after the lock exists.
     // D73 P3 §7.1: signed directory index (daily pull → verify → merge with the bundled
     // snapshot). An empty production key list = disabled, snapshot only.
+    // D104 P0b: builtin plugin loader first — both the connector catalog's packaged
+    // snapshot source and the skill presets are its contributions now.
+    const builtinPlugins = new BuiltinPlugins({ env, logger });
     const directoryTest = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
     const directoryBase = directoryTest ? options.directorySync?.baseUrl : undefined;
     const directorySync = new DirectorySync({
@@ -1281,11 +1285,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const connectorCatalog =
       options.connectorCatalog ??
       new ConnectorCatalog({
-        env,
         logger,
         directory: directorySync,
-        ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_CONNECTORS
-          ? { source: { entries: [], iconsDir: null } }
+        source: builtinPlugins.connectorSource(),
+        // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断变量
+        // 由 KEPCUP_CONNECTORS 换成 KEPCUP_BUILTIN_PLUGINS）。
+        ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_BUILTIN_PLUGINS
+          ? { source: { entries: [], iconsDir: null, iconPaths: new Map() } }
           : {}),
       });
     // 本机连接（todo/local-connector-authoring.md）：目录的第三个来源。无论目录是内部构造还是
@@ -1632,10 +1638,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Staged clones never survive a restart: pending approvals are cancelled
     // below (recoverInterrupted), so nothing can decide them anymore.
     skillImporter.sweepStaging();
-    // 技能市场（resources/preset-skills 随应用分发）：安装复用 registry 管线；
-    // 缺依赖与增强沙箱判定与导入同源。目录缺失（异常打包）时市场列表为空。
+    // 技能市场（内置插件 com.kepcup/starter-skills 的技能贡献，D104 P0b）：安装复用
+    // registry 管线；缺依赖与增强沙箱判定与导入同源。贡献缺失（异常打包）时市场列表为空。
     const skillPresets = new SkillPresetsService({
-      env,
+      builtin: builtinPlugins,
       logger,
       skills,
       environment: {
@@ -2258,6 +2264,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: pluginStore,
       packager: pluginPackager,
       projectors: pluginProjectors,
+      builtin: builtinPlugins,
       pluginsDir: paths.pluginsDir,
       clock,
       logger,
