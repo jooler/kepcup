@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -60,6 +60,10 @@ async function launch(
   app: ElectronApplication;
   page: Page;
 }> {
+  // D104 P0b：本规格只管本地插件的生命周期，把内置插件指向空目录，
+  // 「plugins-empty」空态断言不随随包内置插件（starter-skills / connections）出现而改变。
+  const emptyBuiltin = path.join(home, '.empty-builtin-plugins');
+  await mkdir(emptyBuiltin, { recursive: true });
   const app = await _electron.launch({
     args: ['.'],
     env: {
@@ -71,6 +75,7 @@ async function launch(
       KEPCUP_ONBOARDING: 'off',
       KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
       KEPCUP_MOCK_LLM_URL: llmUrl,
+      KEPCUP_BUILTIN_PLUGINS: emptyBuiltin,
     },
   });
   const page = await app.firstWindow();
