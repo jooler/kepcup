@@ -199,4 +199,131 @@ pnpm test      # 阶段收口跑一次全量；失败集合不得超出基线
 
 ## 7. 实施记录
 
-（执行智能体在最后一个提交里填写：步骤 0 的类型 / 构建结论；`TodoService` 看板缝的实现方式与 `todos.changed` 取舍；步骤 11 的「核对点」结果；新增的非 README §4 名字；DEVIATIONS 编号；全量测试结果。）
+本段先记录 **P1 步骤 0–6 的后端切片**，后面「渲染层切片」记录步骤 7–14。分支 `cursor/board-p1-skeleton-05a0`。下面「尚未做、会挡住 UI 切片的点」是后端切片当时的清单，渲染层切片已处理其中和界面有关的项。
+
+### 步骤 0
+
+- `svelte-dnd-action@0.9.80` 精确写在 `apps/desktop` 的 `dependencies`（无 `^`）。锁文件只增加该包（peer 为仓库里已有的 svelte，无新的传递依赖）。未改 `allowBuilds`。
+- 类型探针：临时 `.svelte` 使用 `use:dndzone` 与 `onconsider` / `onfinalize`，`pnpm --filter @kepcup/desktop typecheck`（svelte-check）**没有**报未知属性。库的 `ActionReturn<Options<T>, DndZoneAttributes<T>>` 已带这两个属性，**不需要**模块扩展 `.d.ts`。探针已删除。
+- `pnpm --filter @kepcup/desktop build` 与 `pnpm --filter @kepcup/desktop build:web` 均通过。
+- `dnd-setup.ts`（`setKeyboardDragTrigger` / `setAriaStrings`）留到步骤 13 的 i18n，本切片未写。
+
+### TodoService 缝与 `todos.changed`
+
+- 开关只有 `board_cards` 行。`BoardStore.locationOf` 不依赖任何服务；`TodoService` 注入可选的 `boardCards.locationOf`。`toEntry` 据此填 `TodoEntry.board`（没有侧表行则为 `null`）。
+- `todos.list` 在 SQL 里排除 `board_cards.todo_id`（RPC 入参未改）。管家 `list_todos` 走同一个 `list`。`<workbench>` 在 `buildWorkbenchSection` 里再滤掉 `todo.board != null`（`== null` 仍计入旧夹具里未写该字段的事项）。
+- `update` / `start` / `complete` / `cancel` / `reopen` / `purge` 在其它校验之前：侧表行存在且 `actor !== 'board'` 抛 `BOARD_MANAGED`。`TodoActor` 增 `'board'`（不写入 `source`，仍是 `'user'`）。管家工具的 `failure()` 把 `BOARD_MANAGED` 原样放到 `errorCode`（原先非 `NOT_FOUND` 一律收成 `INVALID_INPUT`）。
+- 建卡：`insertBoardDraft` **不**发事件（此时还没有侧表行，发了会变成 `todos.changed`）。`BoardService` 在同一事务写入侧表后再发 `board.changed`。
+- 其它看板事项变更：`#changed` 查到侧表位置就发 `board.changed`，不发 `todos.changed`。`purge` 在删除前记下 `{ projectId, columnId }`，避免级联删掉侧表后误发 `todos.changed`。`reconcile` 仍扫描这些事项（本阶段是无指派的 `draft`，没有动作）。取舍见 DEV-046。
+- `scheduled_by` 的 CHECK 只有 `'user' | 'butler'`。P1 看板写入不排期；若 `actor === 'board'` 真的走到 `#schedule`，记成 `'user'`。P2 的排期 RPC 应改这里，不要把 `'board'` 写进该列。
+
+### 权限
+
+`canWriteModule('board', actor)` 的 actor 是 `'user' | 'lead' | 'member'`。用户恒可写；`lead` 在现有实现里也对所有模块返回 true（`write: 'lead'` 挡的是 `member`）。P1 的 RPC 固定传 `'user'`。`member` 拒绝为 `INVALID_INPUT`（没有单独的看板权限错误码，与 wiki 的拒绝方式相同）。只读项目的写（含播种）为 `BOARD_PROJECT_READ_ONLY`。
+
+### 超长文本
+
+卡片正文按码点超过 `BOARD_CARD_TEXT_MAX_CHARS` 时服务抛 `INVALID_INPUT`（错误码表没有「文本过长」）。空文本（trim 后）为 `BOARD_TEXT_EMPTY`。分栏标题 trim 后空或超过 60 个码点为 `INVALID_INPUT`。
+
+### 新增名字（README §4 未列）
+
+- `BoardStore.locationOf`、`placeItem`（`positions.ts`，在 `positionBetween` / `needsRenumber` / `renumber` 之上的落点函数）、`insertBoardDraft`、`updateBoardText`。
+- RPC schema 常量沿 `todos*Schema` 的写法：`boardGetInputSchema`、`boardCardIdInputSchema`、`boardEmptyOutputSchema`、`boardChangedPayloadSchema` 等。线上方法名不变。
+- 迁移测试文件 `packages/core/test/unit/project-board-migration.test.ts`。
+- id 种类 `bcol`（前缀 `bcol_` 已在契约里）。
+
+### 偏差
+
+- DEV-045：不添加 `board.cards.reject`。
+- DEV-046：看板事项不广播 `todos.changed`。
+
+### 审查修复
+
+- **一条 `board.changed`，提交之后。** `updateCard` 只由 `TodoService.updateBoardText` 发布；`deleteCard` 只由 `todos.purge` 发布（删除前记下 `projectId` / `columnId`，侧表被外键带走后不会误发 `todos.changed`）。`deleteColumn` / `onProjectDeleting` 在事务里静默逐张 `purge`，提交后各发一条：删栏是 `{ projectId, columnId }`，删项目是 `{ projectId }`。不再「每张卡一条 + 再加一条栏事件」，也不在事务未提交时发出。事务内的其它看板写入先挂起，由 `TodoService.withTransaction` 在最外层提交成功后发出、抛错则丢掉；同一项目的多条收成一条。
+- **分栏标题与 SQLite `length()` 对齐。** `length()` 在 NUL 处截断，所以「服务按码点接受、CHECK 拒绝」和「服务拒绝、裸 INSERT 仍能插入」都会发生。服务拒绝内嵌 NUL；`0050` 的 CHECK 增加 `instr(title, char(0)) = 0`。无 NUL 时码点长度与 `length()` 一致（60 个 emoji 可插入，61 个不行）。
+- `onConversationDeleting` 的 `todos.changed` / `board.changed` 改到事务提交之后。
+
+### 尚未做、会挡住 UI 切片的点
+
+- 注册表已把 `board` 标为 `available` 且顺序为 `chat, board, wiki, okr, calendar`。`project-tabs.test.ts`、`shell-project.svelte.test.ts`、`project-shell.spec.ts` 仍按「board 是 planned」断言，要等步骤 7 一起改。本切片没跑这些测试。
+- `board.summary` 与 `board.cards.assign / schedule / start / complete / cancel / reopen / conversation` 只有 shared schema 和 `APP_METHODS` 登记，**没有**绑到 `rpc/bindings.ts`。直接调用会当未知方法失败。
+- 卡片投影的执行字段恒为 `assignee: null`、`conversationId: null`、`unreadCount: 0`、`pendingApprovals: 0`、`task: null`。
+- 同一次写入只发一条 `board.changed`，且在事务提交之后（审查修复，见下）。
+- 错误码的 `chats.errorCode.BOARD_*` 文案属于步骤 13，本切片未写。
+- 删项目：`lifecycle.deleteConversation` 在删会话行之前、紧挨 `workbench.onConversationDeleting` 调用 `board.onProjectDeleting`（仅 `type === 'project'`）。钩子失败走 `#cascade`，记日志、不中断删除（与工作台钩子相同）。有卡片时钩子在 purge 提交后发一条 `{ projectId }`，此时分栏还在（随会话行级联才消失）。同步重拉会看到「栏还在、卡已没」；步骤 8 的去抖重拉发生在 `deleteConversation` 返回之后，项目已不在，`board.get` 为 `NOT_FOUND`。
+- 删栏的事件没有 `cardId`。步骤 8 应按 `projectId` 整板重拉，不要把「没有 cardId」当成单卡补丁。
+- 新建卡片若触发整栏重排，响应里只有新卡（契约出参是 `{ card }`），其它卡的新 position 靠随后的 `board.changed` 重拉。`board.changed` 在 RPC 返回之前同步发出。
+
+### 渲染层切片（步骤 7–14）
+
+#### 拖拽类型
+
+步骤 0 的结论没有变。`BoardView` / `BoardColumn` 上的 `onconsider` / `onfinalize` 经 `pnpm --filter @kepcup/desktop typecheck`（svelte-check）**没有**报未知属性。仍不需要给 `svelte/elements` 做 `DndZoneAttributes` 模块扩展。依赖版本仍是 `svelte-dnd-action@0.9.80`。
+
+#### 步骤 11 核对
+
+均在 `apps/desktop/test/e2e/project-board.spec.ts` 里走通（真实 Electron）：
+
+- 点击卡片打开弹框；拖动结束（同栏、跨栏、分栏 grip）后 `board-dialog` 数量为 0。
+- Space 之后屏读节点 `#dnd-action-aria-alert` 含「拖动」；再按 Enter 打开弹框。
+- 在分栏标题（`contenteditable`）上按下并横向拖 180px，分栏顺序不变。
+- 卡片按在卡片区下沿时 `scrollTop` 增加；分栏 grip 按在轨道右沿时 `scrollLeft` 增加。轨道 computed `overflow-x` 为 `auto`、`overflow-y` 为 `hidden`；卡片区 `overflow-y` 为 `auto`。
+- e2e 里 Playwright 的 `mouse.up()` 有时到不了库挂在 `window` 上的 `mouseup`（浮层 `#dnd-action-dragged-el` 会留下）。spec 在松手后再向 `window` 派发一次 `mouseup`。这是测试夹具，不是产品改动。
+
+#### 布局
+
+- `ProjectBoardView` 根除阶段要求的 `h-full min-h-0 overflow-hidden` 外加了 `flex flex-col`，否则轨道的 `flex-1` 没有高度。
+- 分栏在 `flex h-full w-72 shrink-0 flex-col` 上多了 `min-h-0`，卡片区才能在分栏内收缩并滚动。
+- 卡片区类名含要求的 `min-h-16 min-h-0 flex-1 overflow-y-auto`，另有 `flex flex-col gap-2`。Prettier 的 Tailwind 插件把 `min-h-0` 排到了 `min-h-16` 前面，两个类都在。
+
+#### README §4 未列的名字
+
+- 视图模型 `localKey`（乐观创建的临时 id 换成服务端 id 时 `{#each}` 不拆掉正在编辑的标题）。`focusColumnId`、`scrollLeft`、`columnScrollTop`。
+- store 方法 `setDragging` / `setScrollLeft` / `setColumnScroll`；纯函数 `groupBoard`。
+- `board-dnd.ts`：`cardClickGuard`、`BOARD_FLIP_MS`、`boardFlipDurationMs`。刷新常量 `BOARD_REFRESH_DEBOUNCE_MS` / `BOARD_REFRESH_MAX_WAIT_MS`。
+- `InlineEditable` 额外 props：`autosave`、`submitOnEnter`、`clearOnSave`、`revertOnEscape`、`onDiscard`（新建卡片：Enter 提交、Shift+Enter 换行、失焦提交、Esc 撤销，且停顿不自动建卡）。
+- `cardAriaLabel`。
+- testid：`board-track`、`board-column-cards`、`board-column-delete-dialog`、`board-column-delete-confirm`、`board-card-delete-confirm`。
+- i18n：`board.column.menuLabel`、`board.card.menuLabel`、`board.card.deleteDialog.*`、`board.dnd.dragStartedBetween`（`canMoveBetweenZones` 为假时为空串）。`board.dnd.*` 覆盖库的 `AriaStrings`。`chats.errorCode.BOARD_*` 覆盖 README §4.2 的十个新错误码。
+
+#### 行为取舍
+
+- 重拉按 `projectId` 整板替换，不按「没有 cardId」打单卡补丁。拖动中不应用事件；松手后去抖重拉一次。进行中的写（`#inflightWrites`）或更新的本地 epoch 会丢掉这次响应并再排一次，避免盖住更新的乐观编辑。
+- 键盘移动串行排队，同一张卡只发送最后一次位置。指针落在原位（`isNoopMove`）不发 RPC。
+- 页脚恒为 `null`（`cardFooter` 在无指派时返回 null）。`needsDeleteConfirm` 本阶段恒为 false，卡片菜单直接删；谓词为真时走确认框（P2/P3 不用再找调用点）。
+- `chat.select()` 与 `leaveCurrent()` 在重置 `projectView` 的同一处调用 `board.closeCard()`。
+- 未调用 `board.summary` 与 `board.cards.assign/schedule/start/complete/cancel/reopen/conversation`。
+
+#### 偏差
+
+没有新的 DEVIATIONS。DEV-045 / DEV-046 仍只属于后端切片。
+
+#### 测试
+
+- 定向：`project-tabs`、`shell-project`、`board.svelte`（8）、`inline-editable.svelte`（11）、`board-model`、`board-dnd`、`locales`、`chat-main-view` 均通过。
+- `pnpm --filter @kepcup/desktop typecheck` 通过。`pnpm typecheck` 通过。
+- `pnpm exec eslint apps packages scripts` 通过。仓库根 `pnpm lint` 失败，只因为本机存在且被 gitignore 的 `infra/cloudflare/relay/public/assets/**`（构建产物，eslint 忽略列表未包含该目录）。与看板无关。
+- `node scripts/run-tests.mjs run --project desktop`：1018 通过 / 5 跳过。`--project desktop-svelte`：157 通过。
+- e2e（`DISPLAY=:1`，先 `pnpm --filter @kepcup/desktop build`）：`project-board.spec.ts` 1 通过。同批 `project-shell`、`project-wiki`（4）、`workbench` 大部分通过。稳定失败且未改对应代码：`project-chat`「引用」按钮 hover 后仍不可见；`workbench` 两例在排期保存后 `todo-drawer` 不关闭（`scheduled todo`、`layout: long text`）。这两处不打开看板。
+- 全量 `pnpm test`：6327 通过 / 21 失败 / 44 跳过（6 个文件）。失败全部是沙箱基线：`sandbox-isolation`（10）、`toolchain-sandbox`（2）、`skills-authoring`（4）、`skills`（2）、`workdirs` 的 OS sandbox（缺 bwrap/socat）、`workspace-tools`（3）。没有看板用例失败。集合没有超出 `docs/dev/05-testing.md` 记录的沙箱 / 技能 / workspace 基线。
+
+#### 审查修复（渲染层）
+
+对照步骤 7–14 与设计 50 §9.2–§9.7、§9.9 复核。下面只记确认后改过的行为，以及核对后维持原样的假设。
+
+- **临时 id 与打开的卡片。** 创建 RPC 返回前若又有一次写入，`#epoch` 已经前进，原先会跳过 `tmp_` → 服务端 id 的替换。随后的整板快照会按服务端 id 重绘，`openCardId` 仍指着 `tmp_`，弹框被关掉；对着 `tmp_` 发出的改字 RPC 也落不到这张卡上。现在只要乐观行还在就替换 id（更新的标题 / 正文留在本地），弹框跟着新 id。在 `tmp_` 上保存的正文或分栏标题先排队，等真实 id 出现再发一次。创建失败则这两次保存以失败结束，不额外 toast。快照若在创建返回前被应用，仍保留 `#inflightTemps` 里的乐观行，避免弹框被拆掉。
+- **重拉不会在拖动或写入结束后丢掉。** `board.changed` 记下「还有一次快照没应用」。拖动中不拉取；松手且这面旗还在才去抖重拉。写入的 `finally` 在没有进行中的写、也没在拖时把这面旗排上。响应若和一次更新的本地 epoch 或进行中的写重叠，仍然不覆盖，改期再拉。切换项目之后，迟到的写入不再改当前项目的列。
+- **新建卡片失焦后不再把焦点抢回来。** `clearOnSave` 只在焦点还在输入框里时（Enter 提交）重新聚焦。点「添加分栏」等控件导致的失焦会提交，但焦点留在用户点到的地方。
+- **卡面角色。** `svelte-dnd-action` 每次更新区域都会把子元素的 `role` 写成 `listitem`。卡面按阶段要求是按钮（Enter 开弹框），用一个只改 `role` 的 observer 设回 `button`，不改库用来表示拖动中的 `tabindex`。
+
+核对后未改代码的假设：
+
+- **`setKeyboardDragTrigger('space')` 保持全局。** 全库只有看板调用 `svelte-dnd-action`。触发键是模块级变量，只在已挂载区域的项上处理按键；区域卸载时库会卸掉自己的 document 监听。卸载之后聊天和对话框里的空格不受影响，不需要在 detach 时改回去。
+- **e2e 的额外 `mouseup`。** 库把松手听在 `window` 的 `mouseup` 上。Playwright 的 `mouse.up()` 有时到不了这个监听，浮层会留下。spec 在松手后再派发一次，并断言卡片顺序变了、`#dnd-action-dragged-el` 消失。产品路径不用补这个事件。
+- **`project-chat` 与 `workbench` 的 e2e 失败不是这条分支造成的。** 相对 `v0.4.0`，这两个 spec、`ChatMessageRow.svelte`、`TodoDrawer.svelte`、`workbench.svelte.ts` 都没有改。`board.closeCard()` 只在 `chat.select()` / `leaveCurrent()` 把 `openCardId` 清掉，不碰引用按钮或事项抽屉。引用按钮仍是 `group-hover` 才可见；抽屉在排期保存后不关，走的是事项抽屉自己的保存路径。没有改写这两个 spec，也没有在 `v0.4.0` 上重跑它们。
+- **拖拽语义、布局、文案、删除、只读。** `consider` 不发 RPC；`finalize` 才提交；落回原位不发；键盘步合并为最后一次位置（已补 store 测试）；影子项不作锚点。高度链与阶段要求的类名一致，分栏无背景无描边，弹框是 `sm:max-w-xl`，删除分栏确认是 `sm:max-w-sm`。未指派的卡 `needsDeleteConfirm` 为假，直接删；最后一栏删除回 `BOARD_LAST_COLUMN` 并还原（已补测试）。只读项目播种失败时展示 `BOARD_PROJECT_READ_ONLY`，不重试（已补测试）。`locales.test.ts` 通过；`board.dnd.*` 覆盖库的 `AriaStrings`。没有执行相关 UI。
+
+P2 仍要注意：弹框只有正文；另一个 dnd 区域出现之前，空格触发键继续是全局的；创建 RPC 很慢时，对着 `tmp_` 保存的正文会一直挂到创建返回，弹框处于保存中所以草稿不会被回滚。
+
+审查后再跑了一次 `project-board.spec.ts`（`DISPLAY=:1`，先 `pnpm --filter @kepcup/desktop build`）：1 通过。没有重跑 `project-chat` / `workbench`。
+

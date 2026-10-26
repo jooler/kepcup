@@ -10,6 +10,7 @@ import {
   type TodoAssignee,
   type TodoEntry,
   type TodoRun,
+  type BoardChangedPayload,
   type TodoSource,
   type TodoStatus,
 } from '@kepcup/shared';
@@ -135,6 +136,15 @@ export interface TodoServiceDeps {
   timers?: TimerScheduler | undefined;
   /** Quiet period before an update notice goes out. Default {@link TODO_UPDATE_DEBOUNCE_MS}. */
   updateDebounceMs?: number | undefined;
+  /**
+   * Read-only board-card lookup. The side-table row is the only switch for
+   * board behavior. Absent in tests that do not construct a board.
+   */
+  boardCards?:
+    | {
+        locationOf(todoId: string): { projectId: string; columnId: string } | null;
+      }
+    | undefined;
 }
 
 /**
@@ -142,7 +152,8 @@ export interface TodoServiceDeps {
  * a dispatch is attributed (「（管家代你安排）」, `viaButler`). The todo's `source` is the content's
  * provenance: who created it, and 'butler' as soon as the butler wrote or rewrote its title / notes.
  */
-export type TodoActor = TodoSource;
+/** 'board' is a write that came through BoardService. It is not stored as `source`. */
+export type TodoActor = TodoSource | 'board';
 
 export interface CreateTodoInput {
   title: string;
@@ -222,6 +233,13 @@ export class TodoService implements WorkbenchDispatchPort {
   #busy = 0;
   /** A reconcile was requested while busy: it runs once the outermost operation ends. */
   #reconcilePending = false;
+  /**
+   * > 0 while a board batch (column delete, project delete) will publish one
+   * `board.changed` of its own after commit. Nested card writes stay quiet.
+   */
+  #suppressBoardEvents = 0;
+  /** `board.changed` payloads held until {@link withTransaction} commits. */
+  #queuedBoardEvents: BoardChangedPayload[] = [];
   /** Update notices waiting out their debounce, by todo id. */
   readonly #pendingUpdates = new Map<string, PendingUpdate>();
 
@@ -241,6 +259,8 @@ export class TodoService implements WorkbenchDispatchPort {
         ...(input.statuses !== undefined ? { statuses: input.statuses } : {}),
         ...(input.query !== undefined ? { query: input.query } : {}),
         ...(closedAfter !== undefined ? { closedAfter } : {}),
+        // Board cards are a board concern. The RPC shape is unchanged.
+        excludeBoardCards: true,
       })
       .map((todo) => this.toEntry(todo));
   }
@@ -273,6 +293,8 @@ export class TodoService implements WorkbenchDispatchPort {
       ...todo,
       assigneeName,
       leadBotName,
+      // Filled from board_cards once BoardStore is wired; ordinary todos stay null.
+      board: this.#deps.boardCards?.locationOf(todo.id) ?? null,
       schedule:
         schedule === null
           ? null
@@ -342,6 +364,7 @@ export class TodoService implements WorkbenchDispatchPort {
     input: UpdateTodoInput,
   ): { todo: TodoEntry; warnings: string[]; notified: boolean } {
     const actor: TodoActor = input.actor ?? 'user';
+    this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，请先重新打开再修改`);
@@ -567,6 +590,7 @@ export class TodoService implements WorkbenchDispatchPort {
 
   /** 立即开始: dispatches a draft (or scheduled) todo now; needs an assignee. */
   start(id: string, actor: TodoActor = 'user'): TodoEntry {
+    this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'draft' && todo.status !== 'scheduled') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不能立即开始`);
@@ -585,7 +609,8 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** The user accepts the result (or marks a stuck in-progress todo done). */
-  complete(id: string): TodoEntry {
+  complete(id: string, actor: TodoActor = 'user'): TodoEntry {
+    this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'delivered' && todo.status !== 'in_progress') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不能标为完成`);
@@ -604,7 +629,8 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   /** Cancels any open todo (a periodic one: 「已停止」) together with its schedule. */
-  cancel(id: string): TodoEntry {
+  cancel(id: string, actor: TodoActor = 'user'): TodoEntry {
+    this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
       throw new AppError('INVALID_INPUT', `事项已经${STATUS_LABEL[todo.status]}`);
@@ -627,18 +653,22 @@ export class TodoService implements WorkbenchDispatchPort {
    * schedules are cancelled first: `schedules.todo_id` is `ON DELETE SET NULL`, which would
    * otherwise leave a live workbench schedule pointing at nothing.
    */
-  purge(id: string): boolean {
+  purge(id: string, actor: TodoActor = 'user'): boolean {
+    this.#assertBoardWritable(id, actor);
+    // Capture the board location before the side row cascades away with the todo.
+    const location = this.#boardLocation(id);
     return this.#guard(() => {
       this.#dropPendingUpdate(id);
       this.#cancelSchedules(id);
       const deleted = this.store.delete(id);
-      if (deleted) this.#changed(id);
+      if (deleted) this.#changed(id, location);
       return deleted;
     });
   }
 
   /** Back from done / cancelled to draft. */
-  reopen(id: string): TodoEntry {
+  reopen(id: string, actor: TodoActor = 'user'): TodoEntry {
+    this.#assertBoardWritable(id, actor);
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'done' && todo.status !== 'cancelled') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不需要重新打开`);
@@ -688,7 +718,9 @@ export class TodoService implements WorkbenchDispatchPort {
         if (existing !== null) this.#deps.schedules.cancel(existing.id, { reassigned: true });
       }
       // The last actor to set the schedule is who a due dispatch is attributed to.
-      this.store.setScheduledBy(todo.id, actor);
+      // scheduled_by is only 'user' | 'butler'. P1 board writes do not schedule;
+      // a later board schedule is attributed as the user if it ever lands here.
+      this.store.setScheduledBy(todo.id, actor === 'board' ? 'user' : actor);
       return this.#move(todo, 'scheduled', { blockedReason: null });
     });
   }
@@ -1057,9 +1089,9 @@ export class TodoService implements WorkbenchDispatchPort {
    * which would silently turn a project assignee into a bare lead bot.
    */
   onConversationDeleting(conversationId: string): void {
-    this.#guard(() =>
-      this.#tx(() => {
-        const touched = new Set<string>();
+    this.#guard(() => {
+      const touched = this.#tx(() => {
+        const ids = new Set<string>();
         for (const todo of this.store.listByAssigneeProject(conversationId)) {
           if (todo.status === 'done' || todo.status === 'cancelled' || todo.status === 'delivered') {
             // Closed / awaiting acceptance: keep the record, just drop the dangling project.
@@ -1069,16 +1101,16 @@ export class TodoService implements WorkbenchDispatchPort {
             this.#failOpenRuns(todo.id);
             this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_PROJECT_GONE });
           }
-          touched.add(todo.id);
+          ids.add(todo.id);
         }
         // Bot assignees whose schedule lives in this (direct) conversation.
         for (const schedule of this.#deps.schedules.store.listActiveForConversation(conversationId)) {
           if (schedule.origin !== 'workbench' || schedule.todoId === null) continue;
           const todo = this.store.get(schedule.todoId);
-          if (todo === null || touched.has(todo.id)) continue;
+          if (todo === null || ids.has(todo.id)) continue;
           if (todo.status === 'scheduled') {
             this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_DELETED });
-            touched.add(todo.id);
+            ids.add(todo.id);
           }
         }
         // Dispatched into this conversation and still waiting for the executor: it can never
@@ -1089,11 +1121,13 @@ export class TodoService implements WorkbenchDispatchPort {
           if (todo !== null && todo.status === 'in_progress') {
             this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_GONE });
           }
-          touched.add(run.todoId);
+          ids.add(run.todoId);
         }
-        for (const id of touched) this.#changed(id);
-      }),
-    );
+        return ids;
+      });
+      // After the commit, so a listener never observes a change that can still roll back.
+      for (const id of touched) this.#changed(id);
+    });
   }
 
   /** After a bot or a project membership went away: reconcile picks up (and publishes) the consequences. */
@@ -1212,7 +1246,107 @@ export class TodoService implements WorkbenchDispatchPort {
     return to;
   }
 
-  #changed(todoId: string): void {
+  /**
+   * Insert the todo row of a new board card. Does not publish: the caller
+   * inserts the board_cards row in the same transaction and publishes
+   * `board.changed` afterwards. Publishing here would emit `todos.changed`
+   * because the side row does not exist yet.
+   */
+  insertBoardDraft(input: { title: string; notes: string }): Todo {
+    return this.store.insert({
+      title: input.title,
+      notes: input.notes,
+      source: 'user',
+      status: 'draft',
+    });
+  }
+
+  /** Replace a board card's text. `actor` is board, so the managed guard passes. */
+  updateBoardText(id: string, input: { title: string; notes: string }): Todo {
+    this.#assertBoardWritable(id, 'board');
+    const updated = this.store.update(id, { title: input.title, notes: input.notes });
+    if (updated === null) throw new AppError('NOT_FOUND', `事项 ${id} 不存在`);
+    this.#changed(id);
+    return updated;
+  }
+
+  #boardLocation(id: string): { projectId: string; columnId: string } | null {
+    return this.#deps.boardCards?.locationOf(id) ?? null;
+  }
+
+  /** A board card is writable only through BoardService (`actor === 'board'`). */
+  #assertBoardWritable(id: string, actor: TodoActor): void {
+    if (this.#boardLocation(id) !== null && actor !== 'board') {
+      throw new AppError('BOARD_MANAGED', 'Edit this card on the board');
+    }
+  }
+
+  /**
+   * Run `fn` without emitting per-card `board.changed`. The caller publishes
+   * one signal after its transaction commits (column delete, project delete).
+   */
+  withoutBoardEvents<T>(fn: () => T): T {
+    this.#suppressBoardEvents += 1;
+    try {
+      return fn();
+    } finally {
+      this.#suppressBoardEvents -= 1;
+    }
+  }
+
+  /**
+   * Publish one `board.changed`. Inside an open transaction the payload is
+   * held until {@link withTransaction} returns successfully and nothing is
+   * left open; a throw drops what that attempt queued. Several card payloads
+   * from the same project collapse into one.
+   */
+  deliverBoardChanged(payload: BoardChangedPayload): void {
+    if (this.#suppressBoardEvents > 0) return;
+    if (this.#deps.db.inTransaction) {
+      this.#queuedBoardEvents.push(payload);
+      return;
+    }
+    this.#deps.publish?.('board.changed', payload);
+  }
+
+  /**
+   * Run `fn` in a database transaction. Queued `board.changed` payloads are
+   * emitted only after the outermost transaction commits.
+   */
+  withTransaction<T>(fn: () => T): T {
+    const mark = this.#queuedBoardEvents.length;
+    try {
+      const result = this.#deps.db.transaction(fn)();
+      if (!this.#deps.db.inTransaction) this.#flushBoardQueue();
+      return result;
+    } catch (error) {
+      this.#queuedBoardEvents.length = mark;
+      throw error;
+    }
+  }
+
+  #flushBoardQueue(): void {
+    const queued = this.#queuedBoardEvents.splice(0);
+    for (const payload of coalesceBoardEvents(queued)) {
+      this.#deps.publish?.('board.changed', payload);
+    }
+  }
+
+  /**
+   * Board cards publish `board.changed` instead of `todos.changed`. Pass
+   * `known` when the side row is already gone (purge); `null` means it was
+   * not a card, `undefined` looks the row up.
+   */
+  #changed(todoId: string, known?: { projectId: string; columnId: string } | null): void {
+    const location = known !== undefined ? known : this.#boardLocation(todoId);
+    if (location !== null) {
+      this.deliverBoardChanged({
+        projectId: location.projectId,
+        cardId: todoId,
+        columnId: location.columnId,
+      });
+      return;
+    }
     this.#deps.publish?.('todos.changed', { todoId });
   }
 
@@ -1323,6 +1457,31 @@ function sameAssignee(a: TodoAssignee | null, b: TodoAssignee | null): boolean {
     return a.projectId === b.projectId && a.leadBotId === b.leadBotId;
   }
   return false;
+}
+
+/**
+ * Several card events from one committed transaction are one board refresh.
+ * A shared column id is kept; otherwise the signal is the project.
+ */
+function coalesceBoardEvents(events: readonly BoardChangedPayload[]): BoardChangedPayload[] {
+  const groups = new Map<string, BoardChangedPayload[]>();
+  for (const event of events) {
+    const list = groups.get(event.projectId) ?? [];
+    list.push(event);
+    groups.set(event.projectId, list);
+  }
+  const out: BoardChangedPayload[] = [];
+  for (const [projectId, list] of groups) {
+    if (list.length === 1) {
+      out.push(list[0]!);
+      continue;
+    }
+    const columnId = list[0]?.columnId;
+    const shared =
+      columnId !== undefined && list.every((event) => event.columnId === columnId);
+    out.push(shared ? { projectId, columnId } : { projectId });
+  }
+  return out;
 }
 
 /** A schedule's timing as a `when` string to carry over (null = a one-off in the past). */

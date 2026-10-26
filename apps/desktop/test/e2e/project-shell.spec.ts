@@ -95,7 +95,7 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
       'true',
     );
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
-    for (const id of ['board', 'okr', 'calendar']) {
+    for (const id of ['okr', 'calendar']) {
       await expect(page.locator(`[data-testid="project-tab-${id}"]`)).toHaveCount(0);
     }
     await page.locator('[data-testid="project-tab-wiki"]').click();

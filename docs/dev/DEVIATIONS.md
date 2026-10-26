@@ -747,3 +747,31 @@
 - 推荐：方案 1（当前实现）。
 - 决定：（由人工确认）
 - 已更新的文档：`docs/dev/PROGRESS.md`（Pi Agent 1.4.0 升级 P3 加固）。
+
+### DEV-045 看板阶段一不登记 `board.cards.reject`
+
+- 状态：已落实
+- 阶段：项目看板 P1（D103）
+- 是否阻塞：否
+- 问题：设计 50 §10 的 RPC 表把 `board.cards.reject { cardId, note }` 标为 P1（退回追问）。阶段文件 [P1-board-skeleton.md](../../todo/project-board/P1-board-skeleton.md) 与 [README §4.2](../../todo/project-board/README.md) 明确它属于 backlog，本次不得加入 schema、`APP_METHODS` 或处理函数。阶段文件更晚、更具体，按其执行。
+- 影响范围：`packages/shared/src/rpc/methods.ts` 的 `board.*` 清单不含 `reject`；P3 弹框的「退回追问」仍未接线。
+- 可选方案：
+  1. 按阶段文件，不定义、不注册 `board.cards.reject` — 优点：与任务书一致，避免半套执行接口；缺点：与设计 50 §10 的表差这一行。
+  2. 只加 schema、不注册处理函数 — 优点：契约一次写全；缺点：阶段文件写明不要加。
+- 推荐：方案 1（当前实现）。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/project-board/P1-board-skeleton.md` 实施记录。
+
+### DEV-046 看板事项的变更不广播 `todos.changed`
+
+- 状态：已落实
+- 阶段：项目看板 P1（D103）
+- 是否阻塞：否
+- 问题：设计 50 §10 写「复用 `todos.changed`、`message.created`、`run.status`、审批事件」刷新卡片投影。阶段文件步骤 4 要求看板事项的变更不再广播 `todos.changed`，改发 `board.changed`，避免工作台无意义重拉。阶段文件更晚、更具体。
+- 影响范围：`TodoService.#changed`。存在 `board_cards` 行时发布 `board.changed`（`projectId` + `cardId` + `columnId`），不发布 `todos.changed`。`purge` 在删除前记下位置，避免侧表被外键带走后误发 `todos.changed`。`reconcile` 仍扫描看板事项；若它改了行，同样只发 `board.changed`。
+- 可选方案：
+  1. 只发 `board.changed`（当前实现）— 优点：工作台列表不因看板编辑重拉；缺点：设计 50 里「复用 todos.changed 刷新卡片」要等渲染层改订 `board.changed`（P1 渲染层尚未做）。
+  2. 两种事件都发 — 优点：贴着设计 50 的「复用」一句；缺点：违反阶段步骤 4，工作台会空跑一次重拉。
+- 推荐：方案 1（当前实现）。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/project-board/P1-board-skeleton.md` 实施记录。

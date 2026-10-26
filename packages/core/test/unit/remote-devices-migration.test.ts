@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
-import { runMigrations } from '../../src/infra/migrate.js';
+import { migrationTargetVersion, runMigrations } from '../../src/infra/migrate.js';
 
 /**
  * 0049_remote_devices（D96 §5.3）：remote_devices 表。升级路径用「真实迁移目录
@@ -46,7 +46,9 @@ describe('0049 remote_devices 迁移', () => {
     ).toBeUndefined();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied[applied.length - 1]?.version).toBe(49);
+    // Head follows the migration files (0049 plus anything after it).
+    expect(applied[applied.length - 1]?.version).toBe(migrationTargetVersion(migrationsUrl('main')));
+    expect(applied.some((migration) => migration.version === 49)).toBe(true);
     expect(
       db.prepare("select 1 from sqlite_master where name = 'remote_devices'").get(),
     ).toBeDefined();

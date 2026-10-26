@@ -186,6 +186,7 @@ import {
   type ProviderInfo,
 } from '../domain/types.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
+import { boardCardSchema, boardColumnSchema, boardSummarySchema } from '../domain/board.js';
 import {
   pairingOfferSchema,
   pairedDeviceSchema,
@@ -1720,6 +1721,101 @@ export const todosWriteOutputSchema = z.object({
 });
 export const todosTransitionOutputSchema = z.object({ todo: todoEntrySchema });
 
+// --- project board (D103, docs/design/50-project-board.md §10) -------------------
+// `board.cards.reject` is P1 backlog and is intentionally absent.
+
+const boardIdSchema = z.string().min(1);
+
+export const boardGetInputSchema = z.object({
+  projectId: boardIdSchema,
+  /** Localized default column titles. Omitted or empty → no seeding. */
+  seedTitles: z.array(z.string()).optional(),
+});
+export const boardGetOutputSchema = z.object({
+  columns: z.array(boardColumnSchema),
+  cards: z.array(boardCardSchema),
+});
+
+export const boardSummaryInputSchema = z.object({ projectId: boardIdSchema });
+export const boardSummaryOutputSchema = boardSummarySchema;
+
+export const boardColumnsCreateInputSchema = z.object({
+  projectId: boardIdSchema,
+  title: z.string(),
+  /** Insert before this column. Null or omitted = append. */
+  beforeColumnId: boardIdSchema.nullable().optional(),
+});
+export const boardColumnOutputSchema = z.object({ column: boardColumnSchema });
+
+export const boardColumnsUpdateInputSchema = z.object({
+  columnId: boardIdSchema,
+  title: z.string(),
+});
+
+export const boardColumnsMoveInputSchema = z.object({
+  columnId: boardIdSchema,
+  /** Null = move to the end. */
+  beforeColumnId: boardIdSchema.nullable(),
+});
+export const boardColumnsOutputSchema = z.object({ columns: z.array(boardColumnSchema) });
+
+export const boardColumnsDeleteInputSchema = z.object({
+  columnId: boardIdSchema,
+  /** Required when the column still has cards. */
+  deleteCards: z.boolean().optional(),
+});
+export const boardEmptyOutputSchema = z.object({});
+
+export const boardCardsCreateInputSchema = z.object({
+  projectId: boardIdSchema,
+  columnId: boardIdSchema,
+  text: z.string(),
+  /**
+   * Insert before this card. Omitted = top of the column (the create default).
+   * Null = append.
+   */
+  beforeCardId: boardIdSchema.nullable().optional(),
+});
+export const boardCardOutputSchema = z.object({ card: boardCardSchema });
+
+export const boardCardIdInputSchema = z.object({ cardId: boardIdSchema });
+
+export const boardCardsUpdateInputSchema = z.object({
+  cardId: boardIdSchema,
+  text: z.string(),
+});
+
+export const boardCardsMoveInputSchema = z.object({
+  cardId: boardIdSchema,
+  columnId: boardIdSchema,
+  /** Null = end of the target column. */
+  beforeCardId: boardIdSchema.nullable(),
+});
+export const boardCardsMoveOutputSchema = z.object({
+  card: boardCardSchema,
+  renumbered: z.array(boardCardSchema).optional(),
+});
+
+export const boardCardsAssignInputSchema = z.object({
+  cardId: boardIdSchema,
+  /** Null clears the assignee. */
+  botId: boardIdSchema.nullable(),
+});
+export const boardCardWarningsOutputSchema = z.object({
+  card: boardCardSchema,
+  warnings: z.array(z.string()),
+});
+
+export const boardCardsScheduleInputSchema = z.object({
+  cardId: boardIdSchema,
+  /** 'now' | ISO 8601 | cron | null (clear). */
+  when: z.string().min(1).nullable(),
+});
+
+export const boardCardsConversationOutputSchema = z.object({
+  conversationId: z.string(),
+});
+
 export const memosListInputSchema = z.object({
   query: z.string().optional(),
   /** true = 最近删除 (soft-deleted memos); default = live memos. */
@@ -2500,6 +2596,44 @@ export const rpcMethodSchemas = {
   'todos.complete': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
   'todos.cancel': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
   'todos.reopen': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
+  'board.get': { input: boardGetInputSchema, output: boardGetOutputSchema },
+  'board.summary': { input: boardSummaryInputSchema, output: boardSummaryOutputSchema },
+  'board.columns.create': {
+    input: boardColumnsCreateInputSchema,
+    output: boardColumnOutputSchema,
+  },
+  'board.columns.update': {
+    input: boardColumnsUpdateInputSchema,
+    output: boardColumnOutputSchema,
+  },
+  'board.columns.move': {
+    input: boardColumnsMoveInputSchema,
+    output: boardColumnsOutputSchema,
+  },
+  'board.columns.delete': {
+    input: boardColumnsDeleteInputSchema,
+    output: boardEmptyOutputSchema,
+  },
+  'board.cards.create': { input: boardCardsCreateInputSchema, output: boardCardOutputSchema },
+  'board.cards.update': { input: boardCardsUpdateInputSchema, output: boardCardOutputSchema },
+  'board.cards.move': { input: boardCardsMoveInputSchema, output: boardCardsMoveOutputSchema },
+  'board.cards.assign': {
+    input: boardCardsAssignInputSchema,
+    output: boardCardWarningsOutputSchema,
+  },
+  'board.cards.schedule': {
+    input: boardCardsScheduleInputSchema,
+    output: boardCardWarningsOutputSchema,
+  },
+  'board.cards.start': { input: boardCardIdInputSchema, output: boardCardOutputSchema },
+  'board.cards.complete': { input: boardCardIdInputSchema, output: boardCardOutputSchema },
+  'board.cards.cancel': { input: boardCardIdInputSchema, output: boardCardOutputSchema },
+  'board.cards.reopen': { input: boardCardIdInputSchema, output: boardCardOutputSchema },
+  'board.cards.delete': { input: boardCardIdInputSchema, output: boardEmptyOutputSchema },
+  'board.cards.conversation': {
+    input: boardCardIdInputSchema,
+    output: boardCardsConversationOutputSchema,
+  },
   'memos.list': { input: memosListInputSchema, output: memosListOutputSchema },
   'memos.create': { input: memosCreateInputSchema, output: memosMemoOutputSchema },
   'memos.update': { input: memosUpdateInputSchema, output: memosMemoOutputSchema },
@@ -2919,6 +3053,23 @@ const APP_METHODS = [
   'todos.complete',
   'todos.cancel',
   'todos.reopen',
+  'board.get',
+  'board.summary',
+  'board.columns.create',
+  'board.columns.update',
+  'board.columns.move',
+  'board.columns.delete',
+  'board.cards.create',
+  'board.cards.update',
+  'board.cards.move',
+  'board.cards.assign',
+  'board.cards.schedule',
+  'board.cards.start',
+  'board.cards.complete',
+  'board.cards.cancel',
+  'board.cards.reopen',
+  'board.cards.delete',
+  'board.cards.conversation',
   'memos.list',
   'memos.create',
   'memos.update',
