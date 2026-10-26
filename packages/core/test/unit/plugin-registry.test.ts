@@ -690,15 +690,17 @@ describe('PluginRegistry', () => {
     await rig.registry.install(installArgs(fixture));
 
     const listed = rig.registry.list();
-    expect(listed.filter((plugin) => plugin.origin === 'builtin').map((plugin) => plugin.id)).toEqual(
-      rig.builtinIds,
-    );
+    expect(
+      listed.filter((plugin) => plugin.origin === 'builtin').map((plugin) => plugin.id),
+    ).toEqual(rig.builtinIds);
     // 已装插件跟在内置之后。
     expect(listed[rig.builtinIds.length]).toMatchObject({ id: 'io.github.tester/reg' });
 
-    await expect(rig.registry.setEnabled('com.kepcup/starter-skills', false)).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
-    });
+    await expect(rig.registry.setEnabled('com.kepcup/starter-skills', false)).rejects.toMatchObject(
+      {
+        code: 'INVALID_INPUT',
+      },
+    );
     await expect(rig.registry.uninstall('com.kepcup/connections')).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });

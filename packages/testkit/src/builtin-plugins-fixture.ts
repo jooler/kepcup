@@ -36,7 +36,8 @@ function skillMdOf(skill: BuiltinFixtureSkill): string {
 }
 
 /** Writes the fixture tree and returns the builtin root `dir`. */
-export async function buildBuiltinPluginsDir(options: BuiltinFixtureOptions): Promise<string> {  const root = options.dir;
+export async function buildBuiltinPluginsDir(options: BuiltinFixtureOptions): Promise<string> {
+  const root = options.dir;
   await mkdir(path.join(root, 'com.kepcup'), { recursive: true });
   if (options.skills !== undefined) {
     const pluginDir = path.join(root, 'com.kepcup', 'starter-skills');
@@ -75,17 +76,13 @@ export async function buildBuiltinPluginsDir(options: BuiltinFixtureOptions): Pr
     const pluginDir = path.join(root, 'com.kepcup', 'connections');
     const contributions = [];
     for (const [index, entry] of options.connectors.entries()) {
-      const meta = (
-        entry as { _meta?: Record<string, { slug?: unknown; icon?: unknown }> }
-      )._meta?.['app.kepcup/connector'];
+      const meta = (entry as { _meta?: Record<string, { slug?: unknown; icon?: unknown }> })
+        ._meta?.['app.kepcup/connector'];
       const slug = typeof meta?.slug === 'string' ? meta.slug : `connector-${index}`;
       const icon = typeof meta?.icon === 'string' ? meta.icon : `${slug}.svg`;
       const dir = path.join(pluginDir, 'connectors', slug);
       await mkdir(dir, { recursive: true });
-      await writeFile(
-        path.join(dir, 'server.json'),
-        JSON.stringify(entry, null, 2) + '\n',
-      );
+      await writeFile(path.join(dir, 'server.json'), JSON.stringify(entry, null, 2) + '\n');
       await writeFile(path.join(dir, icon), ICON_SVG);
       contributions.push({ file: `connectors/${slug}/server.json` });
     }

@@ -3,10 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import {
-  pluginManifestSchema,
-  SKILL_DESCRIPTION_MAX_CHARS,
-} from '@kepcup/shared';
+import { pluginManifestSchema, SKILL_DESCRIPTION_MAX_CHARS } from '@kepcup/shared';
 
 import { parseSkillDir } from '../../src/skills/parse.js';
 import { scanSkillDir } from '../../src/skills/scan.js';
@@ -82,29 +79,32 @@ describe('内置插件 com.kepcup/starter-skills（技能市场数据源）', ()
     expect(notice).toContain('原创');
   });
 
-  it.skipIf(!existsSync(pluginDir))('vendored 条目必须完全兼容，且 NOTICE 记录上游来源与许可', () => {
-    const manifest = pluginManifestSchema.parse(
-      JSON.parse(readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8')),
-    );
-    const vendored = manifest.contributions.skills.filter((entry) => entry.vendored === true);
-    expect(vendored.length).toBeGreaterThanOrEqual(1);
-
-    const notice = readFileSync(path.join(pluginDir, 'NOTICE.md'), 'utf8');
-    for (const entry of vendored) {
-      const dir = path.join(pluginDir, ...entry.dir.split('/'));
-      const parsed = parseSkillDir(dir);
-      expect(parsed, `${entry.dir}: SKILL.md 应可解析`).not.toBeNull();
-      const scan = scanSkillDir(dir, parsed);
-      // vendored 原文不做宿主适配——partial 意味着上游文本出现了本宿主不提供
-      // 的能力词，此时应修上游适配而非放宽此断言
-      expect(scan.compatibility, `${entry.dir}: ${scan.compatibilityReasons.join('; ')}`).toBe(
-        'compatible',
+  it.skipIf(!existsSync(pluginDir))(
+    'vendored 条目必须完全兼容，且 NOTICE 记录上游来源与许可',
+    () => {
+      const manifest = pluginManifestSchema.parse(
+        JSON.parse(readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8')),
       );
-    }
-    // 再分发依据三要素：来源、锚点 commit（40 位十六进制）、许可
-    expect(notice).toContain('vendored');
-    expect(notice).toContain('github.com/opendatalab/MinerU');
-    expect(notice).toMatch(/[0-9a-f]{40}/);
-    expect(notice).toContain('AGPL-3.0');
-  });
+      const vendored = manifest.contributions.skills.filter((entry) => entry.vendored === true);
+      expect(vendored.length).toBeGreaterThanOrEqual(1);
+
+      const notice = readFileSync(path.join(pluginDir, 'NOTICE.md'), 'utf8');
+      for (const entry of vendored) {
+        const dir = path.join(pluginDir, ...entry.dir.split('/'));
+        const parsed = parseSkillDir(dir);
+        expect(parsed, `${entry.dir}: SKILL.md 应可解析`).not.toBeNull();
+        const scan = scanSkillDir(dir, parsed);
+        // vendored 原文不做宿主适配——partial 意味着上游文本出现了本宿主不提供
+        // 的能力词，此时应修上游适配而非放宽此断言
+        expect(scan.compatibility, `${entry.dir}: ${scan.compatibilityReasons.join('; ')}`).toBe(
+          'compatible',
+        );
+      }
+      // 再分发依据三要素：来源、锚点 commit（40 位十六进制）、许可
+      expect(notice).toContain('vendored');
+      expect(notice).toContain('github.com/opendatalab/MinerU');
+      expect(notice).toMatch(/[0-9a-f]{40}/);
+      expect(notice).toContain('AGPL-3.0');
+    },
+  );
 });

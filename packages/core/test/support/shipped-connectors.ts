@@ -29,7 +29,12 @@ export function readShippedConnectorEntries(): Array<Record<string, unknown>> {
   return manifest.contributions.connectors.map((contribution) =>
     JSON.parse(
       readFileSync(
-        path.join(SHIPPED_PLUGINS_DIR, 'com.kepcup', 'connections', ...contribution.file.split('/')),
+        path.join(
+          SHIPPED_PLUGINS_DIR,
+          'com.kepcup',
+          'connections',
+          ...contribution.file.split('/'),
+        ),
         'utf8',
       ),
     ),

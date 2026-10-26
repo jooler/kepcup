@@ -1,11 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  PLUGIN_MANIFEST_FILE,
-  type PluginManifest,
-  type PluginSummary,
-} from '@kepcup/shared';
+import { PLUGIN_MANIFEST_FILE, type PluginManifest, type PluginSummary } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 

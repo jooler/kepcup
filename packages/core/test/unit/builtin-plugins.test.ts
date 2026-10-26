@@ -4,10 +4,7 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildBuiltinPluginsDir, connectorFixtureEntry } from '@kepcup/testkit';
 
-import {
-  BuiltinPlugins,
-  resolveBuiltinPluginsDir,
-} from '../../src/plugins/builtin.js';
+import { BuiltinPlugins, resolveBuiltinPluginsDir } from '../../src/plugins/builtin.js';
 
 /**
  * BuiltinPlugins 加载器（D104 P0b 步骤 2）：目录扫描、清单校验与容错、技能贡献
@@ -36,7 +33,9 @@ describe('resolveBuiltinPluginsDir', () => {
   it('env override wins and must exist', () => {
     const dir = freshDir('override');
     expect(resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: dir })).toBe(path.resolve(dir));
-    expect(resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: path.join(root, 'nope') })).toBeNull();
+    expect(
+      resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: path.join(root, 'nope') }),
+    ).toBeNull();
     // 空串视为未设置（走向上查找）。
     expect(resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: '' })).not.toBeNull();
   });
@@ -45,9 +44,9 @@ describe('resolveBuiltinPluginsDir', () => {
     const found = resolveBuiltinPluginsDir({});
     expect(found).not.toBeNull();
     expect(found!.endsWith(path.join('apps', 'desktop', 'resources', 'plugins'))).toBe(true);
-    expect(readFileSync(path.join(found!, 'com.kepcup', 'starter-skills', 'plugin.json'), 'utf8')).toContain(
-      'com.kepcup/starter-skills',
-    );
+    expect(
+      readFileSync(path.join(found!, 'com.kepcup', 'starter-skills', 'plugin.json'), 'utf8'),
+    ).toContain('com.kepcup/starter-skills');
   });
 });
 
@@ -85,7 +84,17 @@ describe('BuiltinPlugins.list', () => {
         id: 'com.kepcup/missing-files',
         name: 'Missing',
         version: '1.0.0',
-        contributions: { skills: [{ dir: 'skills/ghost', displayName: 'G', summary: 's', section: 'starter', version: '1.0.0' }] },
+        contributions: {
+          skills: [
+            {
+              dir: 'skills/ghost',
+              displayName: 'G',
+              summary: 's',
+              section: 'starter',
+              version: '1.0.0',
+            },
+          ],
+        },
       }),
     );
 
@@ -135,7 +144,9 @@ describe('BuiltinPlugins.list', () => {
       tryIt: '',
     });
     writeFileSync(pluginJson, JSON.stringify(manifest));
-    mkdirSync(path.join(dir, 'com.kepcup', 'starter-skills', 'skills', 'beta'), { recursive: true });
+    mkdirSync(path.join(dir, 'com.kepcup', 'starter-skills', 'skills', 'beta'), {
+      recursive: true,
+    });
     writeFileSync(
       path.join(dir, 'com.kepcup', 'starter-skills', 'skills', 'beta', 'SKILL.md'),
       '---\nname: beta\ndescription: beta\n---\n# beta\n',
@@ -155,8 +166,19 @@ describe('BuiltinPlugins.skillOffers', () => {
     await buildBuiltinPluginsDir({
       dir,
       skills: [
-        { id: 'alpha', displayName: 'A', summary: 'alpha 摘要', section: 'starter', version: '1.2.0', tryIt: '试试' },
-        { id: 'mineru', description: 'upstream', skillMd: '---\nname: mineru\ndescription: upstream\n---\n' },
+        {
+          id: 'alpha',
+          displayName: 'A',
+          summary: 'alpha 摘要',
+          section: 'starter',
+          version: '1.2.0',
+          tryIt: '试试',
+        },
+        {
+          id: 'mineru',
+          description: 'upstream',
+          skillMd: '---\nname: mineru\ndescription: upstream\n---\n',
+        },
       ],
     });
     // vendored 不在 fixture 缺省里，手工补进清单（与随包 mineru 一致）。
@@ -178,7 +200,9 @@ describe('BuiltinPlugins.skillOffers', () => {
       tryIt: '试试',
       vendored: false,
     });
-    expect(offers[1]).toEqual(expect.objectContaining({ id: 'mineru', vendored: true, icon: 'puzzle', tryIt: '' }));
+    expect(offers[1]).toEqual(
+      expect.objectContaining({ id: 'mineru', vendored: true, icon: 'puzzle', tryIt: '' }),
+    );
   });
 
   it('warns and skips contributions missing required display fields', async () => {
@@ -220,7 +244,11 @@ describe('BuiltinPlugins.connectorSource', () => {
   it('returns an empty source when the connections plugin is absent', () => {
     const dir = freshDir('no-connectors');
     const builtin = new BuiltinPlugins({ env: { KEPCUP_BUILTIN_PLUGINS: dir }, logger });
-    expect(builtin.connectorSource()).toEqual({ entries: [], iconsDir: null, iconPaths: new Map() });
+    expect(builtin.connectorSource()).toEqual({
+      entries: [],
+      iconsDir: null,
+      iconPaths: new Map(),
+    });
   });
 });
 
