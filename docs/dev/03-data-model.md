@@ -154,7 +154,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 ```
 
 - 0040 重建（`conversations` 是多张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
-- **卡片会话（0051）**：`type = 'card'` 是看板卡片与执行成员之间的隐藏对话。`parent_project_id` 指向所属项目会话，`card_todo_id` 是卡片（事项）id，`direct_bot_id` 是执行成员。三列对 card 必填，对 direct / project 必空（后一条比等式 CHECK 更严：等式单独允许 `direct_bot_id` 为空的 project 行写下两列）。每张卡片至多一条 `read_only = 0` 的卡片会话。本阶段还没有创建卡片会话的代码。
+- **卡片会话（0051）**：`type = 'card'` 是看板卡片与执行成员之间的隐藏对话。`parent_project_id` 指向所属项目会话，`card_todo_id` 是卡片（事项）id，`direct_bot_id` 是执行成员。三列对 card 必填，对 direct / project 必空（后一条比等式 CHECK 更严：等式单独允许 `direct_bot_id` 为空的 project 行写下两列）。每张卡片至多一条 `read_only = 0` 的卡片会话。`ConversationsService.ensureCardConversation` 在指派时创建或复用；`list` / `listVisible` / `conversations.all` 排除 `card`。删除不靠 FK：`BoardService` 先取消排期，再对每一条卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），最后 `todos.purge`。
 - 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
 - **归档（0045）**：`archived_at` 非空 = 该会话已从对话列表移除。软删：消息、执行记录、附件、workspace、项目 wiki 目录全部保留；会话仍在通讯录里（`conversations.all` 名册），可随时恢复（`conversations.archive` / `conversations.unarchive`）。对话列表（`conversations.list`）不含归档会话。恢复归档的直聊 = 继续原对话（同 id，历史延续）：`ConversationsService.openDirect` 命中已归档的直聊时先恢复它，不新开对话实例。
 
@@ -1193,7 +1193,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | todos 中以该对话为项目组执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「项目组已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_project_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
 | board_columns（该项目的分栏） | 随会话外键 `ON DELETE CASCADE` 删除 | D103 |
 | board_cards（该项目的卡片侧表）与对应事项 | 侧表行随会话外键 `ON DELETE CASCADE` 删除；事项不依赖外键，删除会话行之前由 `board.onProjectDeleting` 显式 `todos.purge`（侧表行也会随事项外键先被带走） | D103 |
-| 卡片会话（`parent_project_id` 指向该项目） | `parent_project_id` 的 `ON DELETE CASCADE` 只删 main.db 里的会话行（及其子表），是 FK 安全网。实际删除由 service 驱动（先清 `runs.db` / FTS / 附件再删行）；该 service 删除尚未接入 | D103（0051） |
+| 卡片会话（`parent_project_id` 指向该项目） | `parent_project_id` 的 `ON DELETE CASCADE` 只删 main.db 里的会话行（及其子表），是 FK 安全网。实际删除由 `board.onProjectDeleting` 驱动：先对每张卡片的全部卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），再 `todos.purge`，然后才删项目会话行 | D103（0051） |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
