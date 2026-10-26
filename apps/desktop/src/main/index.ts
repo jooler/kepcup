@@ -121,21 +121,17 @@ function showWindow(): void {
 }
 
 /**
- * Opens the window and navigates the renderer to the conversation.
- * A card conversation is not selected here.
+ * Opens the window and asks the renderer to select the conversation.
+ * Card ids are included: `chat.select` redirects them onto the board.
+ * If the kind lookup throws, do not navigate — an unknown id must not be
+ * selected, because a card row is hidden from the sidebar.
  */
 async function showConversation(conversationId: string): Promise<void> {
-  let type: string | null = null;
   try {
-    const result = (await coreHost?.callPlatform('conversations.kind', {
-      id: conversationId,
-    })) as { type?: string | null } | undefined;
-    type = result?.type ?? null;
+    await coreHost?.callPlatform('conversations.kind', { id: conversationId });
   } catch {
-    type = null;
+    return;
   }
-  // P3: open the project board on this card. Do not chat.select() it.
-  if (type === 'card') return;
   showWindow();
   window?.webContents.send('navigate-conversation', conversationId);
 }
