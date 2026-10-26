@@ -64,7 +64,11 @@
   }
 </script>
 
-<div class="relative h-full min-h-0" data-testid="board-dialog-chat">
+<div
+  class="relative h-full min-h-0"
+  data-testid="board-dialog-chat"
+  data-conversation-id={card.conversationId ?? ''}
+>
   {#if card.todo.assignee === null}
     <p class="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
       {t('board.dialog.chat.emptyUnassigned')}
