@@ -6,6 +6,7 @@ import {
   columnCounts,
   deriveCardBadges,
   deriveCardStatus,
+  dialogEscapeAction,
   moveTargets,
   needsDeleteConfirm,
   primaryActions,
@@ -283,6 +284,13 @@ describe('primaryActions', () => {
       'runOnce',
       'clearWhen',
     ]);
+    // A cron card stays `scheduled` while its latest run looks delivered.
+    // Accept belongs to todo status `delivered` only.
+    expect(
+      primaryActions(
+        assigned({ status: 'scheduled', schedule: cron, lastRun: run('delivered') }),
+      ),
+    ).not.toContain('accept');
   });
 
   it('cancels work in progress', () => {
@@ -296,6 +304,29 @@ describe('primaryActions', () => {
   it('reopens a finished card, with or without an assignee', () => {
     expect(primaryActions(assigned({ status: 'done' }))).toEqual(['reopen']);
     expect(primaryActions(assigned({ status: 'cancelled', assignee: null }))).toEqual(['reopen']);
+  });
+});
+
+describe('dialogEscapeAction', () => {
+  it('lets an approval or any consumed Esc keep the dialog open', () => {
+    expect(
+      dialogEscapeAction({ defaultPrevented: true, composerFocused: false, taskOpen: false }),
+    ).toBe('stay');
+    expect(
+      dialogEscapeAction({ defaultPrevented: true, composerFocused: false, taskOpen: true }),
+    ).toBe('stay');
+  });
+
+  it('blurs the composer before closing, and leaves a task page before that', () => {
+    expect(
+      dialogEscapeAction({ defaultPrevented: false, composerFocused: true, taskOpen: true }),
+    ).toBe('blur-composer');
+    expect(
+      dialogEscapeAction({ defaultPrevented: false, composerFocused: false, taskOpen: true }),
+    ).toBe('leave-task');
+    expect(
+      dialogEscapeAction({ defaultPrevented: false, composerFocused: false, taskOpen: false }),
+    ).toBe('close');
   });
 });
 

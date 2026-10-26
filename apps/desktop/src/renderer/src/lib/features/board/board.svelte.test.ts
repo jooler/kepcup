@@ -471,6 +471,30 @@ describe('watchSummary', () => {
   });
 });
 
+describe('noteCardRead', () => {
+  it('clears the face and only that card’s share of the tab count', async () => {
+    cards = [
+      { ...card('card_a', 'bcol_a', 'hello', 1), unreadCount: 2, conversationId: 'conv_a' },
+      { ...card('card_b', 'bcol_a', 'other', 2), unreadCount: 3, conversationId: 'conv_b' },
+    ];
+    detach = board.attach('p1');
+    const stop = board.watchSummary('p1');
+    try {
+      await wait(20);
+      board.summary = { unread: 5, pendingApprovals: 1, delivered: 4 };
+      board.noteCardRead('card_a');
+      const rows = board.columns.flatMap((column) => column.cards);
+      expect(rows.find((item) => item.id === 'card_a')?.unreadCount).toBe(0);
+      expect(rows.find((item) => item.id === 'card_b')?.unreadCount).toBe(3);
+      expect(board.summary).toEqual({ unread: 3, pendingApprovals: 1, delivered: 4 });
+      board.noteCardRead('card_a');
+      expect(board.summary.unread).toBe(3);
+    } finally {
+      stop();
+    }
+  });
+});
+
 describe('closeCard follows chat.select()', () => {
   it('clears the open card when select() resets the project view', async () => {
     board.openCard('card_a');

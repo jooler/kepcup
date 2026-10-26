@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { t } from '$lib/i18n';
+  import { core } from '$lib/rpc/client.svelte';
   import { ChatSession } from '$lib/stores/chat-session.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { setChatSession } from '$lib/features/chats/chat-session-context';
   import ChatBanners from '$lib/features/chats/ChatBanners.svelte';
   import Composer from '$lib/features/chats/Composer.svelte';
@@ -40,7 +42,14 @@
 
   $effect(() => {
     const id = card.conversationId;
+    // A departed executor leaves a read-only thread and no assignee. Re-open
+    // it if this session still has the writable copy, so the banner appears
+    // without presenting that thread as the current chat.
+    const blocked =
+      card.todo.assignee === null && (card.todo.blockedReason?.trim().length ?? 0) > 0;
     if (id === null) return;
+    const current = session.conversation;
+    if (current?.id === id && (!blocked || current.readOnly === true)) return;
     void session.open(id, { markOnOpen: false }).then(() => markIfFocused());
   });
 
@@ -59,7 +68,21 @@
 
   async function markIfFocused(): Promise<void> {
     if (typeof document !== 'undefined' && !document.hasFocus()) return;
+    if (shell.workbenchShown) return;
     await session.markRead();
+    // `ChatSession.markRead` skips read-only rows. This thread is on screen,
+    // so the cursor still moves; otherwise the badge comes back on reassign.
+    const view = session.view;
+    if (view?.conversation.readOnly) {
+      const lastSeq = view.messages.at(-1)?.seq;
+      if (lastSeq !== undefined && lastSeq > view.conversation.lastReadSeq) {
+        await core.call('conversations.markRead', {
+          conversationId: view.conversation.id,
+          seq: lastSeq,
+        });
+        view.conversation = { ...view.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
+      }
+    }
     board.noteCardRead(card.id);
   }
 </script>
@@ -69,7 +92,7 @@
   data-testid="board-dialog-chat"
   data-conversation-id={card.conversationId ?? ''}
 >
-  {#if card.todo.assignee === null}
+  {#if card.conversationId === null}
     <p class="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
       {t('board.dialog.chat.emptyUnassigned')}
     </p>

@@ -129,6 +129,25 @@ export type BoardAction =
   | 'accept'
   | 'reopen';
 
+/**
+ * What one Esc does inside the card dialog. An approval card (or any control
+ * that already called `preventDefault`) and the composer win. An open task
+ * page returns to the chat. Otherwise the dialog closes. The card text field
+ * is not one of these: it does not consume Esc.
+ */
+export type DialogEscape = 'close' | 'stay' | 'blur-composer' | 'leave-task';
+
+export function dialogEscapeAction(input: {
+  defaultPrevented: boolean;
+  composerFocused: boolean;
+  taskOpen: boolean;
+}): DialogEscape {
+  if (input.defaultPrevented) return 'stay';
+  if (input.composerFocused) return 'blur-composer';
+  if (input.taskOpen) return 'leave-task';
+  return 'close';
+}
+
 export function primaryActions(card: BoardCard): BoardAction[] {
   if (card.todo.status === 'done' || card.todo.status === 'cancelled') return ['reopen'];
   if (card.todo.assignee === null) return [];
