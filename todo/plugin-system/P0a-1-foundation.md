@@ -526,3 +526,15 @@ export class PluginPackager {
 - 无阻塞项。`plugins.install` 的 `userConfig` 消费、`plugins.inspect` 的推导（技能 parse/scan、连接器 schema、MCPB 检视、http 主机校验）、账本写入与投影器、RPC 绑定与 `start.ts` 装配均在 P0a-2。
 - `pluginSourceSchema` 目前只有 `file` / `folder`，`marketplace` 分支按计划 P1 加性加入。
 - 本机（macOS）无 bubblewrap，沙箱类用例按基线失败，与改动无关。
+
+### 审查修正（2026-10-26，独立审查智能体）
+
+审查范围：`git diff 3b092d6d..HEAD`；结论：可合入，未发现 P0/P1 问题。修正分两个 `fix(plugins)` 提交：
+
+1. **folder 管线树哈希改读 staging 副本**（`core/src/plugins/package.ts`）：原实现对每个文件 `copyFile` 到 staging 后再 `readFile(源路径)` 算哈希——复制与哈希之间源文件被改时，`packageSha256` 绑定的不是实际暂存的字节，违反「校验后只用副本」与设计 51 §7「`package_sha256` 包文件内容绑定」。改为哈希 staging 副本，并补注释说明。
+2. **superRefine 的 mcpb `file` 去重 issue path 用全量 `mcp` 数组的下标**（`shared/src/domain/plugin-manifest.ts`）：原实现先 `filter(kind === 'mcpb')` 再去重，`path` 里的下标是 mcpb 子集内的位置；当前面有 `http` 贡献时指向错误的元素。`dup` 助手改为接收 `[value, 原数组下标]` 对，mcpb 分支用 `flatMap` 带出原下标；新增用例断言 `['contributions','mcp',2,'file']`（http 在前时）。
+3. **realpath 逃逸分支补直接用例**（`core/test/unit/plugin-manifest-loader.test.ts`）：原「symlinked parent」用例的符号链接落在贡献目录本身，`lstat` 的 symlink 分支先命中，realpath 包含性检查从未被执行。新增用例把符号链接放在贡献的**祖先目录**（`skills` → 包外），`lstat` 见到的是真实目录，只有 realpath 包含性检查能拒绝（断言 `越界（符号链接逃逸）`）。
+4. **清理与规范**：`plugin-package.test.ts` / `plugin-fixture.test.ts` 删掉函数内动态 `import('node:fs/promises')`（其一 `void` 后未使用，属复制粘贴残留），并入顶层静态导入；P0a-1 全部 15 个新增/改动文件过 `prettier --check`（此前 14 个不干净，仓库 lint 基线不受影响，CI 只跑 eslint）。
+5. **DEV-049**：任务书称「`satisfiesRange` 不支持的写法返回 false（按不兼容处理）」，与 `mcpb/manifest.ts` 实际实现（未知子句 `continue` 忽略 → 返回 true 放行）相反；实现按任务书可操作指令复用共享助手、语义与 MCPB 一致，登记偏差不另写一层。
+
+审查确认无须改动的判断点：`pluginSummarySchema` / `pluginInspectOutputSchema` 的 `version` 用 `pluginVersionSchema`（任务书代码块写 `z.string()`；系统内版本恒经清单 schema 校验，取更严者且与同块 `id: pluginIdSchema` 对称）；folder 管线目录条目计入 `ZIP_MAX_ENTRIES`；staging 子目录用默认 `mkdir -p` 模式（任务书只约束文件位，与 `McpbInstaller` 解包先例一致）。
