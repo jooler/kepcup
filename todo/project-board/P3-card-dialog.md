@@ -175,7 +175,7 @@ pnpm test      # 最终交付前跑一次全量；失败集合不得超出基线
 - **`board.summary`**：打开中的卡片会话，加上执行成员离开后弹框仍能打开的最近一条只读对话。更早的只读历史没有入口，不计。卡面未读是同一条会话的 `unreadCount`。弹框标已读会同时减掉 tab 上的这一份，另一张卡的未读还在。有集成测试。
 - **移出执行成员后的弹框**：指派被清空，卡片回 `draft` 并带受阻原因。投影仍返回最近一条只读卡片对话的 id（用户主动取消指派不带 `blockedReason`，id 仍是 `null`，弹框是空态）。弹框重开这条只读线程和只读横幅，不把它当成可写对话。更早的执行成员对话仍不提供切换。
 - **审查修复**（对照实现，不改阶段范围）：
-  - 移出成员后弹框曾落到未指派空态，读不到只读横幅。`#visibleConversation` 在有 `blockedReason`、没有在用对话时返回最近一条只读会话；`CardChat` 以 `conversationId` 而不是指派决定空态，并在会话仍被标成可写时重新 `open`。只读会话的 `markRead` 由弹框补调（`ChatSession.markRead` 仍跳过只读行）。
+  - 移出成员后弹框曾落到未指派空态，读不到只读横幅。`#visibleConversation` 在有 `blockedReason`、没有在用对话时返回最近活跃的那条只读会话（按 `lastMessageAt`，不是按建表时间——指回先前的成员会复用更早的行）。`CardChat` 以 `conversationId` 而不是指派决定空态，并在会话仍被标成可写时重新 `open`。只读会话的 `markRead` 由弹框补调（`ChatSession.markRead` 仍跳过只读行）。
   - `noteCardRead` 以前只把卡面 `unreadCount` 归零，tab 读的是 `board.summary`，标已读清不掉 tab。现在按这张卡的未读从 summary 里减掉，并作废已经在飞的快照，避免旧的 `board.get` 把徽标写回去。
   - bits-ui 的 Esc 用克隆事件，不看子节点上的 `preventDefault`，审批卡和 Composer 的 Esc 会把弹框关掉；任务过程页里的审批也会连任务页一起关掉。弹框在冒泡阶段用 `dialogEscapeAction` 先停住已消费的 Esc，再让 Composer 失焦、任务页回到对话，最后才交给对话框关闭。打开时焦点仍在弹框容器。
   - 周期卡停在 `scheduled` 时，最近一次已交付只改派生状态，不提供「验收完成」。`awaitingInput` 来自任务视图，不是写死的 false。`todos.get` 对看板事项返回 `runs`，不走 `BOARD_MANAGED`。
