@@ -12,7 +12,6 @@ import {
   PLUGIN_INDEX_STALE_AFTER_MS,
   PLUGIN_INDEX_SYNC_INTERVAL_MS,
   PLUGIN_INDEX_SYNC_JITTER_RATIO,
-  PLUGIN_PACKAGE_MAX_BYTES,
   pluginIndexEntrySchema,
   pluginIndexSchema,
   type PluginIndexEntry,

@@ -7,7 +7,7 @@ import {
   type ConnectorIndexPublicKey,
   type PluginMarketStatus,
 } from '@kepcup/shared';
-import { SettingsService } from '../domain/settings.js';
+import type { SettingsService } from '../domain/settings.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { sha256Hex } from '../infra/signed-index.js';

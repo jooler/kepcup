@@ -259,10 +259,8 @@ describe('ETag / 304', () => {
     const h = harness();
     const { indexBytes, sig } = sign({ items: ['a'], key: h.key, generatedAt: T1 });
     h.server.publish({ indexBytes, sig });
-    const sync = h.make();
-    // Prime the 304 branch by making the server think we sent a validator: no — the client
-    // only sends if-none-match when the cache is loaded, so instead seed the ratchet state
-    // with an ETag but no cached index files.
+    // The client only sends if-none-match when the cache is loaded, so seed the ratchet
+    // state with an ETag but no cached index files.
     const state = {
       version: 1,
       generatedAt: T1,
@@ -411,11 +409,11 @@ describe('timers', () => {
     try {
       const h = harness();
       publish(h, ['alpha'], T1);
-      const sync = h.make({ keys: [] });
-      sync.start();
+      const disabled = h.make({ keys: [] });
+      disabled.start();
       await vi.advanceTimersByTimeAsync(INTERVALS.sync * 3);
       expect(h.server.requests).toEqual([]);
-      sync.stop();
+      disabled.stop();
     } finally {
       vi.useRealTimers();
     }

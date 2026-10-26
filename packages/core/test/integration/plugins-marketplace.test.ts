@@ -535,17 +535,20 @@ describe('plugins marketplace integration (P1-1)', () => {
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
 
+    // 关掉自动检查（core 启动后定时器已在跑，先让在途的一跳结束再取基线）。
     await core.rpc.call('settings.update', { pluginAutoCheckUpdates: false });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    const pullsOff = market.indexRequests;
-    expect(pullsOff).toBe(0); // 定时循环在跑但不拉取
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const baseline = market.indexRequests;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(market.indexRequests).toBe(baseline); // 定时循环在跑但不拉取
 
+    // 手动 refresh 不看开关。
     await refresh(stack);
     const pullsManual = market.indexRequests;
-    expect(pullsManual).toBeGreaterThan(0);
+    expect(pullsManual).toBeGreaterThan(baseline);
 
+    // 重新打开：定时恢复（CI 负载下计时器可能延迟，轮询而不是睡死等）。
     await core.rpc.call('settings.update', { pluginAutoCheckUpdates: true });
-    // 定时恢复：等待下一次自动拉取（CI 负载下计时器可能延迟，轮询而不是睡死等）。
     await vi.waitFor(
       () => {
         expect(market.indexRequests).toBeGreaterThan(pullsManual);
