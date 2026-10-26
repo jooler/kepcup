@@ -139,6 +139,11 @@ export class ConnectorsProjector
     return out;
   }
 
+  /** Slugs this projector had to yield to an existing catalog entry (`plugins.list` marks them). */
+  yieldedSlugs(): ReadonlySet<string> {
+    return this.#deps.catalog.yieldedPluginSlugs();
+  }
+
   // --- helpers -----------------------------------------------------------------
 
   #bump(): void {
