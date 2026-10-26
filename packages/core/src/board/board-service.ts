@@ -644,8 +644,15 @@ export class BoardService {
     const open = this.#deps.conversations.openCardConversation(todoId);
     if (open !== null) return open;
     if (blockedReason === null || blockedReason.trim().length === 0) return null;
+    // The row created last is not always the thread just closed: reassigning
+    // back to an earlier bot reopens the older row. Prefer the one that
+    // spoke most recently, then the newer row.
     const history = this.#deps.conversations.readOnlyCardConversationsOf({ todoId });
-    return history.at(-1) ?? null;
+    let latest: Conversation | null = null;
+    for (const row of history) {
+      if (latest === null || laterCardThread(row, latest)) latest = row;
+    }
+    return latest;
   }
 
   #toCard(row: BoardCardRecord): BoardCard {
@@ -683,6 +690,13 @@ export class BoardService {
       task: taskProjection(views),
     };
   }
+}
+
+function laterCardThread(row: Conversation, than: Conversation): boolean {
+  const rowAt = row.lastMessageAt ?? row.createdAt;
+  const thanAt = than.lastMessageAt ?? than.createdAt;
+  if (rowAt !== thanAt) return rowAt > thanAt;
+  return row.createdAt > than.createdAt;
 }
 
 function toColumn(column: BoardColumnRecord): BoardColumn {

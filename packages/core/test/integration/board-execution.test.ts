@@ -465,6 +465,40 @@ describe('board execution', () => {
     expect(board(stack).summary(projectId).unread).toBeGreaterThan(0);
   });
 
+  it('after a reassignment, removal keeps the thread that was just open', async () => {
+    const stack = await start();
+    const { projectId, leadId, memberId, cardId } = await scaffold(stack, '回到原来的成员');
+    const first = board(stack).assign(cardId, memberId, 'user');
+    const memberConversation = first.card.conversationId!;
+    stack.core.services.domain!.messages.append({
+      conversationId: memberConversation,
+      senderType: 'bot',
+      senderBotId: memberId,
+      kind: 'text',
+      text: '成员说过',
+    });
+    const second = board(stack).assign(cardId, leadId, 'user');
+    expect(second.card.conversationId).not.toBe(memberConversation);
+    const back = board(stack).assign(cardId, memberId, 'user');
+    expect(back.card.conversationId).toBe(memberConversation);
+    stack.core.services.domain!.messages.append({
+      conversationId: memberConversation,
+      senderType: 'bot',
+      senderBotId: memberId,
+      kind: 'text',
+      text: '又说了一句',
+    });
+    await stack.core.rpc.call('projects.removeMember', {
+      conversationId: projectId,
+      botId: memberId,
+    });
+    const blocked = cardOf(stack, projectId, cardId);
+    expect(blocked.conversationId).toBe(memberConversation);
+    expect(stack.core.services.domain!.conversations.get(second.card.conversationId!)?.readOnly).toBe(
+      true,
+    );
+  });
+
   it('summary counts the open card conversation and not read-only history', async () => {
     const stack = await start();
     const { projectId, leadId, memberId, cardId } = await scaffold(stack);
