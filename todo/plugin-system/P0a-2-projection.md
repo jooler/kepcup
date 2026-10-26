@@ -400,7 +400,7 @@ export function assertPluginServersIntact(previous: readonly McpServer[], next: 
 | `e8886e00`（审查） | `fix(plugins)`：`setEnabled` 在已装目录清单不可读时拒绝翻转（`PLUGIN_INVALID`）——原实现只告警并翻转标志，会出现「已停用但技能 / server / 连接器投影还活着」的标志与投影漂移；卸载不依赖清单、照常可用。+1 例（`plugin-registry.test.ts` 12 例）。 |
 | `0203dc14`（审查） | `fix(plugins)`：大小写变体插件 id 的目录槽位冲突预检——`pluginDirName` 整体小写，`io.github.t/E` 与 `io.github.t/e` 是两个不同 id 但共享同一安装目录槽位，原实现会在 `rm(finalDir)` 时删掉已装插件的目录；现于 `#inspectStagedOutput` 记 `kind:'plugin'` 冲突（inspect 可见、install 抛 `PLUGIN_CONFLICT`，均发生在任何文件系统写入之前）。+1 例（13 例）。 |
 | `96291012`（审查） | `fix(plugins)`：`start()` 对所有 `installed` 行读清单（原实现只读 `installed && enabled`），修复重启后禁用插件在 `plugins.list` 里显示 `name = id`、描述为空（清单缓存是进程内的，只有 `start()` 会为存量行填充）；激活仍以 `enabled` 为门槛。+1 例（14 例）。 |
-| `1d1d9e30`（审查） | `fix(plugins)`：P0a-2 全部新源文件与测试过 prettier（对齐 P0a-1 审查先例）；`SkillsService.attachPublicUninstallGuard` 挪回它挤占的 `uninstall` 文档注释之前；`mail.ts` 去掉多余的 `as never` 断言。行为零改动。 |
+| `1d1d9e30` + `b56c624e`（审查） | `fix(plugins)`：P0a-2 全部新源文件与测试过 prettier（对齐 P0a-1 审查先例；`b56c624e` 为其残留补一行）；`SkillsService.attachPublicUninstallGuard` 挪回它挤占的 `uninstall` 文档注释之前；`mail.ts` 去掉多余的 `as never` 断言。行为零改动。 |
 
 ### 审查修正（独立审查智能体，2026-10-26）
 
