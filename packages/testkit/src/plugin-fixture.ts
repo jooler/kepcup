@@ -173,7 +173,10 @@ async function planContent(options: PluginFixtureOptions): Promise<PlannedConten
   const manifest = mergeManifest(defaultManifest(options), options.manifest);
   const files: PlannedContent['files'] = [];
   for (const skill of options.skills ?? []) {
-    files.push({ name: `skills/${skill.name}/SKILL.md`, data: skillFile(skill.name, skill.description) });
+    files.push({
+      name: `skills/${skill.name}/SKILL.md`,
+      data: skillFile(skill.name, skill.description),
+    });
     for (const [relative, data] of Object.entries(skill.extraFiles ?? {})) {
       files.push({ name: `skills/${skill.name}/${relative}`, data });
     }

@@ -69,10 +69,7 @@ export function checkPluginCompatibility(
   const range = manifest.engines?.kepcup;
   if (range !== undefined && coreVersion(env.appVersion) !== '0.0.0') {
     if (!satisfiesRange(env.appVersion, range)) {
-      throw new AppError(
-        'PLUGIN_INCOMPATIBLE',
-        `需要 KepCup ${range}，当前 ${env.appVersion}`,
-      );
+      throw new AppError('PLUGIN_INCOMPATIBLE', `需要 KepCup ${range}，当前 ${env.appVersion}`);
     }
   }
 }

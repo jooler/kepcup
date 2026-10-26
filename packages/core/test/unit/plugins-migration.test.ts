@@ -93,15 +93,19 @@ describe('0053 plugins migration', () => {
   it('cascades plugin_items when the plugin row goes', () => {
     const db = openMainDb();
     insertPlugin(db);
-    db.prepare("insert into plugin_items (plugin_id, kind, ref) values ('io.github.alice/doc-tools', 'skill', 'docx')").run();
-    db.prepare("insert into plugin_items (plugin_id, kind, ref) values ('io.github.alice/doc-tools', 'mcp', 'plg_abc123456789')").run();
-    expect(
-      db.prepare('select count(*) as n from plugin_items').get() as { n: number },
-    ).toEqual({ n: 2 });
+    db.prepare(
+      "insert into plugin_items (plugin_id, kind, ref) values ('io.github.alice/doc-tools', 'skill', 'docx')",
+    ).run();
+    db.prepare(
+      "insert into plugin_items (plugin_id, kind, ref) values ('io.github.alice/doc-tools', 'mcp', 'plg_abc123456789')",
+    ).run();
+    expect(db.prepare('select count(*) as n from plugin_items').get() as { n: number }).toEqual({
+      n: 2,
+    });
     db.prepare('delete from plugins').run();
-    expect(
-      db.prepare('select count(*) as n from plugin_items').get() as { n: number },
-    ).toEqual({ n: 0 });
+    expect(db.prepare('select count(*) as n from plugin_items').get() as { n: number }).toEqual({
+      n: 0,
+    });
     closeDatabase(db);
   });
 

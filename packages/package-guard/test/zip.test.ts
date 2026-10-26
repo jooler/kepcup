@@ -140,7 +140,9 @@ describe('ZipArchive.open structural checks', () => {
 
   it('rejects the encryption flag', async () => {
     const bytes = buildZip([{ name: 'a.txt', data: 'x', deflate: false }]);
-    const encrypted = patchCentral(bytes, (c, o) => c.writeUInt16LE(c.readUInt16LE(o + 8) | 1, o + 8));
+    const encrypted = patchCentral(bytes, (c, o) =>
+      c.writeUInt16LE(c.readUInt16LE(o + 8) | 1, o + 8),
+    );
     const file = await writeArchive('enc.bin', encrypted);
     await expect(
       ZipArchive.open(file, { error: (m) => new PackageGuardError(m), label: '.kepcup' }),

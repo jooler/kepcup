@@ -216,7 +216,8 @@ export class ZipArchive {
     } else {
       throw this.#guard.error(`不支持的压缩方式（${entry.method}）：${entry.name}`);
     }
-    if (data.length !== entry.size) throw this.#guard.error(`ZIP 条目大小与目录不符：${entry.name}`);
+    if (data.length !== entry.size)
+      throw this.#guard.error(`ZIP 条目大小与目录不符：${entry.name}`);
     if (crc32(data) !== entry.crc32) throw this.#guard.error(`ZIP 条目校验失败：${entry.name}`);
     return data;
   }
