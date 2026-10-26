@@ -831,3 +831,17 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P0a-2-projection.md` 实施记录。
+
+### DEV-051 `chats.errorCode.PLUGIN_*` 四条已在 P0a-1 登记，P0a-3 步骤 8 要求的「追加到块末尾」位置不可用
+
+- 状态：已落实
+- 阶段：插件系统 P0a-3（D104）
+- 是否阻塞：否
+- 问题：P0a-3 步骤 8 写「`chats.errorCode.PLUGIN_*` 四条：放在各自 `chats.errorCode.*` 块的末尾」。核对现实：P0a-1 已经把这四条加进了两个语言文件（紧随 `BOARD_*` 组之后，`git log -S` 定位到 2a5853c3），且 `locales.test.ts` 强制两份词典键集合与顺序一致、对象字面量不允许重复键——再按任务书追加到 `chats.errorCode.*` 块末尾（`MAIL_PROVIDER_UNAVAILABLE` 之后）会产生重复键，typecheck 直接失败。
+- 影响范围：仅 `apps/desktop/src/renderer/src/lib/i18n/locales/{zh-CN,en-US}.ts`：保留 P0a-1 的键位置（紧跟 `BOARD_LOCKED` 之后），把四条文案按 P0a-3 步骤 8 的文案表逐条改写（zh 与 en 同步、占位符一致，本组无占位符）。无代码路径受影响。
+- 可选方案：
+  1. 保留既有位置、只更新文案（当前实现）— 优点：不产生重复键，键序在两份文件里仍然一致；缺点：与任务书「放在块末尾」的字面位置不符。
+  2. 把四条从块首移到块末尾 — 优点：贴合任务书字面；缺点：纯位置挪动要同时改两份文件并重跑校验，收益为零。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P0a-3-ui.md` 实施记录。
