@@ -56,6 +56,7 @@
 | main | `0051_card_conversations.sql` | D103：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`）——`type` 增 `card`；新列 `parent_project_id`（FK 自身 `ON DELETE CASCADE`）、`card_todo_id`（无 FK）；`CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL))`，另加「非 card 两列皆空」；唯一索引 `conversations_one_open_per_card`。旧行原样保留，新列为 NULL |
 | main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
 | main | `0053_plugins.sql` | D104：新表 `plugins`（市场 / 本地插件，内置插件不入表）、`plugin_items`（投影账本，随插件 `ON DELETE CASCADE`） |
+| main | `0054_plugin_skill_source.sql` | D104 P0b：`skill_library.source_url` 的 `preset://{id}` 一次性改写为 `plugin://com.kepcup/starter-skills/{id}`（纯 UPDATE；预置技能改为内置插件 `com.kepcup/starter-skills` 的技能贡献，`SkillPresetsService` 按新前缀认领） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 

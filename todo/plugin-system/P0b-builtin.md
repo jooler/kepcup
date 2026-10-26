@@ -359,3 +359,14 @@ export async function copyShippedPlugins(dest: string, options?: { connectorSlug
 - `pnpm deploy` 会把 `@kepcup/core` 的 `test/` 一并打进 headless tarball 的 `node_modules`（本轮 tar 清单可见），属 pack-server 既有行为（与 P0b 无关），未处理。
 - dev / e2e 里 testkit `createTestCore` 的内置插件缺省为空目录是测试密闭性选择；需要随包内容的测试显式注入（如 `starter-skills-plugin` 守护测试直接读仓库资源）。
 - 签名目录通道的正式 CI 签名输入（`infra/cloudflare/sign-directory.sh` → 脚本）走同一默认（`readBundledConnectorEntries`），行为不变；线上重签由发版流程触发，本阶段不涉及。
+
+### 审查修正（2026-10-26，独立审查轮）
+
+独立审查（对照 `5a2aa68b..HEAD`）复核结论：内容等价性与行为不变性成立（旧 catalog 9 条与新 `server.json` 逐条 `deepStrictEqual`、SKILL.md 全部 R100 零改动、`plugin.json` 展示字段逐字段相等、`#resolveAll` 只换数据源、迁移 0054 纯 UPDATE）。修正以下问题（提交 `fix(plugins): review - …`）：
+
+1. **lint**：`apps/catalog.ts` 删除 `readConnectorCatalogSource` 后残留未用的 `existsSync` import（本阶段引入的 eslint error，`pnpm lint` 全仓失败）；顺手把 `start.ts` 的 `ConnectorsProjector` 改 `import type`（基点即有的 type-only 误用）。修后 `pnpm lint` **全仓 0 error**。
+2. **prettier**：本阶段新增/改动的 30 个「基点时 prettier-clean」文件被重新格式化（含 `builtin-plugins-fixture.ts` 第 38 行 `{  const root` 的换行丢失）；基点即不干净的 6 个文件（`presets.ts`、`start.ts`、`skills-presets.test.ts`、`testkit/fixtures.ts`、`apps/server/src/server.ts`、`scripts/sync-mineru-skill.mjs`）按 P0a-3 审查先例保持原样。§6 早前「`pnpm exec prettier --check` 通过」的记录只对 resources/（prettier-ignore）成立，代码文件此前并不干净——以本节为准。
+3. **文档**：`docs/dev/03-data-model.md` 迁移表按惯例补 `0054_plugin_skill_source.sql` 一行（该表每迁移一行，0053 之后缺 0054）；`connections/README.md` 的「`approved: []`」改为如实描述（随包文件已有 7 项放行，原句沿自旧 README 的过期写法并与同句「已放行」矛盾）。
+4. **证据复核**：任务书 §5 的 rg 残留命令复跑无输出；pack-server 重跑 tarball 清单复核（starter-skills 全量 + 恰好 7 家已放行连接器、gcalendar/gdrive 不在）；定向测试与 e2e 五规格重跑全绿（见下）。
+
+审查重跑证据：§5 定向 12 项 + 行为回归 6 项全绿；`pnpm --filter @kepcup/core typecheck`、desktop typecheck 通过；`pnpm build` 后 e2e 五规格 14 例全绿；`pnpm lint` 全仓通过。

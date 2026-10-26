@@ -210,9 +210,10 @@ describe('the signed directory path never carries a local connector', () => {
 
   it('the signing script reads only the shipped builtin plugin by default, and refuses a local entry in --extra-dir', async () => {
     const script = (await import(/* @vite-ignore */ pathToFileURL(SIGN_SCRIPT_PATH).href)) as {
-      collectEntries(input?: { catalog?: string; extraDir?: string }): Promise<
-        Array<{ name: string }>
-      >;
+      collectEntries(input?: {
+        catalog?: string;
+        extraDir?: string;
+      }): Promise<Array<{ name: string }>>;
     };
     // Default inputs = the builtin com.kepcup/connections plugin (scripts/lib/builtin-connectors.mjs),
     // equal to the test-side shipped-entries reader (D104 P0b; was catalog.json byte for byte).
@@ -221,9 +222,8 @@ describe('the signed directory path never carries a local connector', () => {
       _meta: Record<string, { releaseGate?: string }>;
     }>;
     const bundled = (await import(
-      /* @vite-ignore */ pathToFileURL(
-        path.join(repoRoot, 'scripts/lib/builtin-connectors.mjs'),
-      ).href
+      /* @vite-ignore */ pathToFileURL(path.join(repoRoot, 'scripts/lib/builtin-connectors.mjs'))
+        .href
     )) as { readBundledConnectorEntries(root?: string): Array<{ name: string }> };
     expect(await script.collectEntries()).toEqual(bundled.readBundledConnectorEntries(repoRoot));
     expect(bundled.readBundledConnectorEntries(repoRoot)).toEqual(shipped);

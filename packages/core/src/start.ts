@@ -184,7 +184,7 @@ import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
-import { ConnectorsProjector } from './plugins/projectors/connectors.js';
+import type { ConnectorsProjector } from './plugins/projectors/connectors.js';
 import { createPluginProjectors } from './plugins/projectors/index.js';
 import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';

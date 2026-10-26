@@ -9,10 +9,7 @@ import path from 'node:path';
  * the core falls back to its repo-checkout walk-up (which finds nothing in a
  * deployed package — builtin skills/connections are then simply absent).
  */
-export function builtinPluginsEnv(
-  distDir: string,
-  env: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
+export function builtinPluginsEnv(distDir: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.KEPCUP_BUILTIN_PLUGINS !== undefined && env.KEPCUP_BUILTIN_PLUGINS.length > 0) {
     return env;
   }

@@ -61,8 +61,7 @@ export function runConnectorCatalogContract(target: ConnectorCatalogContractTarg
       for (const entry of parsed()) {
         const meta = connectorMetaOf(entry);
         expect(path.basename(meta.icon), `${meta.slug} icon`).toBe(meta.icon);
-        const file =
-          target.iconPaths?.get(meta.slug) ?? path.join(target.iconsDir, meta.icon);
+        const file = target.iconPaths?.get(meta.slug) ?? path.join(target.iconsDir, meta.icon);
         expect(existsSync(file), `${meta.slug}: missing icon ${meta.icon}`).toBe(true);
         if (meta.icon.endsWith('.svg')) {
           const svg = readFileSync(file, 'utf8');

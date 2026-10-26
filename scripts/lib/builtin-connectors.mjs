@@ -19,13 +19,8 @@ export const BUNDLED_CONNECTIONS_PLUGIN_DIR = path.join(
 
 /** `[server.json, …]` in plugin.json order; throws when the plugin tree is missing. */
 export function readBundledConnectorEntries(repoRoot = DEFAULT_ROOT) {
-  const pluginDir = path.join(
-    repoRoot,
-    'apps/desktop/resources/plugins/com.kepcup/connections',
-  );
-  const manifest = JSON.parse(
-    readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8'),
-  );
+  const pluginDir = path.join(repoRoot, 'apps/desktop/resources/plugins/com.kepcup/connections');
+  const manifest = JSON.parse(readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8'));
   const contributions = manifest?.contributions?.connectors;
   if (!Array.isArray(contributions)) {
     throw new Error(`malformed plugin manifest: ${path.join(pluginDir, 'plugin.json')}`);

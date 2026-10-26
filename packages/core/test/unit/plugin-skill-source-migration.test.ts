@@ -42,16 +42,19 @@ function migrationsUpTo(maxVersion: number): string {
 
 const SCAN_JSON = JSON.stringify({ compatibility: 'compatible' });
 
-function insertLibrary(
-  db: SqliteDatabase,
-  id: string,
-  name: string,
-  sourceUrl: string,
-): void {
+function insertLibrary(db: SqliteDatabase, id: string, name: string, sourceUrl: string): void {
   db.prepare(
     `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
      values (?, ?, ?, ?, ?, ?, ?, 0)`,
-  ).run(id, name, sourceUrl, 'a'.repeat(40), `hash-${id}`, `skills-library/${name}@hash-${id}`, SCAN_JSON);
+  ).run(
+    id,
+    name,
+    sourceUrl,
+    'a'.repeat(40),
+    `hash-${id}`,
+    `skills-library/${name}@hash-${id}`,
+    SCAN_JSON,
+  );
 }
 
 describe('0054 plugin skill source migration', () => {
@@ -68,9 +71,10 @@ describe('0054 plugin skill source migration', () => {
       migrationTargetVersion(migrationsUrl('main')),
     );
 
-    const rows = db
-      .prepare('select id, source_url from skill_library order by id')
-      .all() as Array<{ id: string; source_url: string }>;
+    const rows = db.prepare('select id, source_url from skill_library order by id').all() as Array<{
+      id: string;
+      source_url: string;
+    }>;
     expect(rows).toEqual([
       { id: 'skl_1', source_url: 'plugin://com.kepcup/starter-skills/docx' },
       { id: 'skl_2', source_url: 'https://github.com/x/y' },
@@ -88,9 +92,11 @@ describe('0054 plugin skill source migration', () => {
     const appliedAgain = runMigrations(db, migrationsUrl('main'));
     expect(appliedAgain).toHaveLength(0);
     expect(
-      (db.prepare('select source_url from skill_library where id = ?').get('skl_1') as {
-        source_url: string;
-      }).source_url,
+      (
+        db.prepare('select source_url from skill_library where id = ?').get('skl_1') as {
+          source_url: string;
+        }
+      ).source_url,
     ).toBe('plugin://com.kepcup/starter-skills/docx');
   });
 });

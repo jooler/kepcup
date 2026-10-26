@@ -600,10 +600,20 @@ describe('plugins integration (P0a-2)', () => {
 
     for (const method of ['plugins.setEnabled', 'plugins.uninstall']) {
       await expect(
-        core.rpc.call(method, method === 'plugins.setEnabled' ? { id: 'com.kepcup/connections', enabled: false } : { id: 'com.kepcup/connections' }),
+        core.rpc.call(
+          method,
+          method === 'plugins.setEnabled'
+            ? { id: 'com.kepcup/connections', enabled: false }
+            : { id: 'com.kepcup/connections' },
+        ),
       ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
       await expect(
-        core.rpc.call(method, method === 'plugins.setEnabled' ? { id: 'com.kepcup/starter-skills', enabled: false } : { id: 'com.kepcup/starter-skills' }),
+        core.rpc.call(
+          method,
+          method === 'plugins.setEnabled'
+            ? { id: 'com.kepcup/starter-skills', enabled: false }
+            : { id: 'com.kepcup/starter-skills' },
+        ),
       ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     }
     // 内置插件始终在列（未受拒绝的启停 / 卸载影响）。

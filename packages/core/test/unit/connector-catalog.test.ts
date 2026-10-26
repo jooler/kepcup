@@ -313,7 +313,10 @@ describe('ConnectorCatalog (runtime loader)', () => {
       'stripe',
       'cloudflare',
     ]);
-    const some = new ConnectorCatalog({ source: shippedSource(), approvedGates: ['linear', 'stripe'] });
+    const some = new ConnectorCatalog({
+      source: shippedSource(),
+      approvedGates: ['linear', 'stripe'],
+    });
     expect(some.list().map((entry) => connectorMetaOf(entry).slug)).toEqual(['linear', 'stripe']);
     expect(some.get('linear')?.name).toBe('app.linear/linear');
     expect(some.get('notion')).toBeNull();
@@ -327,9 +330,13 @@ describe('ConnectorCatalog (runtime loader)', () => {
     expect(connectorReleaseGates()).toEqual([]);
     expect(new ConnectorCatalog({ source: shippedSource() }).list()).toEqual([]);
     vi.stubGlobal('__KEPCUP_CONNECTOR_RELEASE_GATES__', ['notion']);
-    expect(new ConnectorCatalog({ source: shippedSource() }).list().map((e) => e.name)).toEqual(['com.notion/mcp']);
+    expect(new ConnectorCatalog({ source: shippedSource() }).list().map((e) => e.name)).toEqual([
+      'com.notion/mcp',
+    ]);
     // An explicit null from the caller still wins (tests that need everything).
-    expect(new ConnectorCatalog({ source: shippedSource(), approvedGates: null }).list()).toHaveLength(7);
+    expect(
+      new ConnectorCatalog({ source: shippedSource(), approvedGates: null }).list(),
+    ).toHaveLength(7);
   });
 
   it('skips broken entries and duplicate slugs with warnings, keeps the rest', () => {
@@ -370,7 +377,11 @@ describe('ConnectorCatalog (runtime loader)', () => {
       env: { KEPCUP_BUILTIN_PLUGINS: path.join(tmp(), 'nope') },
       logger,
     });
-    expect(missing.connectorSource()).toEqual({ entries: [], iconsDir: null, iconPaths: new Map() });
+    expect(missing.connectorSource()).toEqual({
+      entries: [],
+      iconsDir: null,
+      iconPaths: new Map(),
+    });
 
     // 坏 plugin.json → 整个插件被跳过（告警），来源为空。
     const broken = tmp();
@@ -378,7 +389,10 @@ describe('ConnectorCatalog (runtime loader)', () => {
     rmSync(path.join(broken, 'com.kepcup', 'connections', 'plugin.json'));
     writeFileSync(path.join(broken, 'com.kepcup', 'connections', 'plugin.json'), '{not json');
     warnings.length = 0;
-    expect(new BuiltinPlugins({ env: { KEPCUP_BUILTIN_PLUGINS: broken }, logger }).connectorSource().entries).toEqual([]);
+    expect(
+      new BuiltinPlugins({ env: { KEPCUP_BUILTIN_PLUGINS: broken }, logger }).connectorSource()
+        .entries,
+    ).toEqual([]);
     expect(warnings.length).toBe(1);
 
     // 正常注入：条目 + 每条目同目录图标经 iconPaths 供 iconSvg 读取。
