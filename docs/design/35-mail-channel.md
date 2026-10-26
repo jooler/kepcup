@@ -9,7 +9,7 @@ Bot 可以接管用户邮箱：宿主用 IMAP 收信、SMTP 发信，新信到�
 ## 决策
 
 - **D84 邮件通道**：
-  1. **平行通道，不是 MCP Connector**。账号、凭据、收信会话、Bot 绑定与 `mail_*` 宿主工具自成模块；不进 `connectors/catalog.json`，不复用 `app_connections` / OAuth vault / MCP 工具锁定。将来 Gmail / Outlook 的官方 MCP（OAuth）仍走 D73「连接」；本通道覆盖 QQ / 163 / 自定义域名等以授权码登录的场景，二者可并存。
+  1. **平行通道，不是 MCP Connector**。账号、凭据、收信会话、Bot 绑定与 `mail_*` 宿主工具自成模块；不进内置连接应用插件（`com.kepcup/connections`）的条目，不复用 `app_connections` / OAuth vault / MCP 工具锁定。将来 Gmail / Outlook 的官方 MCP（OAuth）仍走 D73「连接」；本通道覆盖 QQ / 163 / 自定义域名等以授权码登录的场景，二者可并存。
   2. **入口**：扩展中心新增第 4 页签 **「邮件」**（`ExtensionCenterTab = 'skills' | 'connections' | 'mcp' | 'mail'`）。设置里不单开「邮件」分区；需要时可在设置「应用」旁放一条指针跳转扩展中心（与现 Apps → 扩展中心指针同模式）。
   3. **收信优先 IDLE，轮询兜底**。登录后 `CAPABILITY` 含 `IDLE` → 对 INBOX 做 IDLE（近实时）；不含 → 按账号配置的间隔轮询。用户可强制「仅轮询」并改间隔。厂商预设给出默认间隔与是否尝试 IDLE（见 §4）。
   4. **多 Bot 可绑同一邮箱**。绑定存 `mail_account_bots`（或等价）；每个绑定的 Bot 在**自己的私聊**被唤醒（同一封信可唤醒多个 Bot；幂等按「账号 + UID + botId」去重）。

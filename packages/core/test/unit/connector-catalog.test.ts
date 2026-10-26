@@ -36,7 +36,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const connectionsPluginDir = path.join(SHIPPED_PLUGINS_DIR, 'com.kepcup', 'connections');
 const shipped = readShippedConnectorEntries();
 
-/** 经 BuiltinPlugins 读随包内置插件（等价旧的 KEPCUP_CONNECTORS 注入）。 */
+/** 经 BuiltinPlugins 读随包内置插件（等价旧的环境变量目录注入）。 */
 function shippedSource() {
   return new BuiltinPlugins({
     env: { KEPCUP_BUILTIN_PLUGINS: SHIPPED_PLUGINS_DIR },
@@ -365,7 +365,7 @@ describe('ConnectorCatalog (runtime loader)', () => {
   });
 
   it('injects the packaged snapshot via BuiltinPlugins.connectorSource() and tolerates a broken plugin', async () => {
-    // 不存在的内置插件目录 → 空来源（等价旧 KEPCUP_CONNECTORS 指向缺失目录）。
+    // 不存在的内置插件目录 → 空来源（等价旧环境变量指向缺失目录）。
     const missing = new BuiltinPlugins({
       env: { KEPCUP_BUILTIN_PLUGINS: path.join(tmp(), 'nope') },
       logger,

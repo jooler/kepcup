@@ -4,7 +4,7 @@
   /**
    * 扩展中心 →「MCP」分组：已安装 MCP 的完整管理（新建 stdio / HTTP / SSE、启停、
    * 逐工具策略、编辑、删除、BYO OAuth 客户端、原始工具定义 / 授权日志）+ MCPB 本地包安装。
-   * 精选清单（`resources/mcp-presets/catalog.json`）首期为空；有预置条目后再在此处渲染卡片。
+   * （MCP 精选清单空壳已随 D104 删除；预置 MCP 的发现与分发由插件市场承担。）
    */
 </script>
 

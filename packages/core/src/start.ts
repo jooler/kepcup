@@ -1288,8 +1288,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         logger,
         directory: directorySync,
         source: builtinPlugins.connectorSource(),
-        // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断变量
-        // 由 KEPCUP_CONNECTORS 换成 KEPCUP_BUILTIN_PLUGINS）。
+        // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断
+        // 变量换成 KEPCUP_BUILTIN_PLUGINS，原为旧连接器目录的环境变量）。
         ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_BUILTIN_PLUGINS
           ? { source: { entries: [], iconsDir: null, iconPaths: new Map() } }
           : {}),
