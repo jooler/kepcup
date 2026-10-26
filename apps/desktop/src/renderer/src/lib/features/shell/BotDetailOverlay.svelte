@@ -1,6 +1,8 @@
 <script lang="ts">
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { fly } from 'svelte/transition';
+  import { motionMs, MOTION } from '$lib/motion';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import RightPanel from '$lib/features/right-panel/RightPanel.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -58,6 +60,8 @@
       class="app-no-drag fixed inset-0 z-40 bg-background"
       inert={covered}
       data-testid="narrow-bot-detail"
+      in:fly={{ x: 48, duration: motionMs(MOTION.enter) }}
+      out:fly={{ x: 48, duration: motionMs(MOTION.exit) }}
     >
       <RightPanel />
     </div>

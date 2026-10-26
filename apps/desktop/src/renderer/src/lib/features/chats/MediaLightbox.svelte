@@ -1,7 +1,9 @@
 <script lang="ts">
   import { Download, X, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { Portal } from 'bits-ui';
+  import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
+  import { motionMs, MOTION } from '$lib/motion';
   import { Button } from '$lib/components/ui/button';
   import { mediaViewer, isLocalMedia } from './media-viewer.svelte';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
@@ -144,6 +146,8 @@
       onclick={() => mediaViewer.close()}
       onwheel={onWheel}
       role="presentation"
+      in:fade={{ duration: motionMs(MOTION.enter) }}
+      out:fade={{ duration: motionMs(MOTION.exit) }}
     >
       <!-- 顶栏：压在全局拖拽带（顶部 40px，见 window-drag-band.ts）之下，
            mac 侧再让出红绿灯；带内是纯拖拽区，顶栏按钮不能伸进去。 -->

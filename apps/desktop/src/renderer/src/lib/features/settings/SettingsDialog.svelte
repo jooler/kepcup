@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
+  import { motionMs, MOTION } from '$lib/motion';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import { resolveSettingsSection, type ResolvedSection } from './sections';
@@ -104,7 +106,11 @@
         data-testid="settings-page-content"
         bind:this={contentEl}
       >
-        <SettingsSectionView section={activeSection} />
+        {#key activeSection}
+          <div in:fade={{ duration: motionMs(MOTION.content) }}>
+            <SettingsSectionView section={activeSection} />
+          </div>
+        {/key}
       </div>
     </div>
   </Dialog.Content>

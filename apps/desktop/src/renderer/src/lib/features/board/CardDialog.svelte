@@ -63,7 +63,8 @@
       navTop = el.getBoundingClientRect().top;
     };
     update();
-    const settle = setTimeout(update, 150);
+    // 开场动画（duration-200，含滑动）结束后补测一次：动画期间 rect 仍在变。
+    const settle = setTimeout(update, 250);
     const observer = new ResizeObserver(update);
     observer.observe(el);
     window.addEventListener('resize', update);
