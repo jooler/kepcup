@@ -789,3 +789,17 @@
 - 推荐：方案 1。
 - 决定：方案 1，并钉住移交后的卡片终态。看板排期不进移交清单，`validate` / `apply` 拒绝，**也不取消**。移交不把该 Bot 移出项目组，所以不能走 `#dropExecutor`：那会写「执行成员已移出项目组」或「执行成员已删除」，等于假装成员已经离开。移交结束后卡片仍指派给原执行成员，状态仍是 `scheduled`，`blocked_reason` 为空，卡片对话保持可写，排期仍挂在这条卡片对话上、`bot_id` 仍是该 Bot。这样「不随移交带走」和「Bot 还在项目里、仍执行这张卡」是同一件事，不会出现「排期没了、人还在、也没有原因」的半截卡片。真正清空指派仍只发生在移出成员和删除 Bot。
 - 已更新的文档：`todo/project-board/P2-card-conversation.md` 实施记录。
+
+### DEV-048 `mcpServerSourceSchema` 改联合后，`McpbInstaller` 三个私有/公共方法签名收窄到 mcpb 分支
+
+- 状态：已落实
+- 阶段：插件系统 P0a-1（D104）
+- 是否阻塞：否
+- 问题：P0a-1 任务书步骤 2.3 把 `mcpServerSourceSchema` 从单一 `kind:'mcpb'` 对象改为 `mcpb | plugin` 判别联合，并称「读 `kind === 'mcpb'` 的原有逻辑收窄后仍成立（不改 install.ts）」。核对发现 `McpbInstaller.verify(source: McpServerSource)`、`#releasePackage(source)`、`#audit(…, source, …)` 直接在整个联合类型上取 `name` / `version` / `sha256`（未先判 `kind`），联合化后 typecheck 报 9 个 TS2339/TS2345——「不改 install.ts」的前提在这三处不成立。
+- 影响范围：`packages/core/src/apps/mcpb/install.ts`（仅类型层：新增 `type McpbPackageSource = Extract<McpServerSource, { kind: 'mcpb' }>`，`verify` / `#releasePackage` / `#audit` 参数与 `#installSnapshot` 里的局部 `source` 改用它）；行为零改动（三个方法的调用方本就都已先判 `kind === 'mcpb'`）。`McpbInstaller` 面向插件来源的完整改造仍在 P0a-2。
+- 可选方案：
+  1. 方法签名收窄到 mcpb 分支（当前实现）— 优点：最小、语义精确（该 installer 今天只管 mcpb 来源）；缺点：P0a-2 改造时要把 plugin 来源引入新的卸载 / 释放路径，届时再放宽。
+  2. 在方法体里运行时判 `source.kind !== 'mcpb'` 提前返回 — 优点：签名不动；缺点：把「类型上不可能」变成死分支，掩盖联合的语义。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。

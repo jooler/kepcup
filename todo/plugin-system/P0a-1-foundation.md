@@ -470,4 +470,59 @@ export class PluginPackager {
 
 ## 6. 实施记录
 
-（执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 迁移实际编号 / `ci.yml` 构建顺序核对结论 / `settings/adapters.ts` plugin 来源计数结论 / 遗留问题。）
+（2026-10-26，分支 `feat/plugins/p0a-1-foundation`，执行智能体填写。）
+
+### 做了什么（按提交）
+
+| 提交 | 内容 |
+|---|---|
+| `f792b9b4` | 步骤 1：`refactor(mcpb): extract zip reader into @kepcup/package-guard` —— 新建工作区包 `@kepcup/package-guard`（`ZipArchive` / `safeEntryPath` / `crc32` / `ZIP_MAX_*` / `ZipGuardOptions` / `PackageGuardError`，无运行时依赖），core 的 `apps/mcpb/zip.ts` 改为薄适配层（导出面不变）；vitest 别名与 `package-guard` 项目、根 `package.json` 的 `typecheck` / `dev` 构建顺序插入 package-guard、core 依赖 + lockfile；新增 `packages/package-guard/test/zip.test.ts`（11 例）。该提交上 `unit/mcpb.test.ts` + `integration/mcpb.test.ts` 35 例零改动全绿（`git diff v0.5.0 HEAD -- <两个文件>` 为空）。 |
+| `2a5853c3` | 步骤 2：shared 契约 —— 新建 `domain/plugin-manifest.ts`（常量、id/version/relPath schema、四类贡献 strict schema、`pluginManifestSchema` + superRefine 去重/非空、`pluginSkillSource` / `parsePluginSkillSource`）、`domain/plugins.ts`（origin/tier/state/itemKind/source/summary/inspect/install/setEnabled/uninstall/changed 全套 zod）；`connectorOriginSchema` 增 `'plugin'`、`mcpServerSourceSchema` 改判别联合（`types.ts` 本地约束，不 import plugin-manifest）、`ERROR_CODES` 增四个 `PLUGIN_*`、`rpc/events.ts` 增 `plugins.changed`、`rpc/methods.ts` 注册五个 `plugins.*`（`rpcMethodSchemas` + `APP_METHODS`）、`index.ts` 导出；i18n `chats.errorCode.PLUGIN_*` 四条 × 两种语言（locales.test 通过）。新增 `plugin-manifest.test.ts` / `plugins-contracts.test.ts`。`install.ts` 仅类型层收窄（见 DEV-048）。 |
+| `bacccfaf` | 步骤 3：迁移 `0053_plugins.sql`（DDL 逐字照任务书）；`public-skills-migration.test.ts` 的 drop 链按依赖顺序加 `drop table plugin_items; drop table plugins;`；`AppPaths.pluginsDir` + `resolvePaths` + `start.ts` `mkdirSync(paths.pluginsDir)`（对 start.ts 的唯一改动）+ `paths.test.ts` 断言；`docs/dev/03-data-model.md` 三处（迁移表行、`### plugins / plugin_items` 小节、两张删除级联表各一行）；新增 `plugins-migration.test.ts`（6 例）。 |
+| `2cca7fc0` | 步骤 4：testkit `plugin-fixture.ts`（`buildPluginFixture` / `buildPluginDir` / `connectorFixtureEntry`，基于 `buildZip` + `buildMcpbFixture`）+ `plugin-fixture.test.ts`（6 例）。 |
+| `14b2302a` | 步骤 5：`core/src/plugins/ids.ts`（`pluginDirName` / `pluginDirOf` / `pluginServerId` / `assertInstallablePluginId`）+ `plugin-ids.test.ts`（7 例）。 |
+| `9b9920c1` | 步骤 6+7：`core/src/plugins/manifest-loader.ts`（`parsePluginManifestText` / `checkPluginCompatibility` / `verifyContributionFiles`）与 `core/src/plugins/package.ts`（`PluginPackager.stage`（file 快照管线 + folder 遍历复制管线）/ `discard` / `sweepStaging`）+ `plugin-manifest-loader.test.ts`（15 例）/ `plugin-package.test.ts`（12 例）。 |
+| `c45a6dad` | `fix(plugins)`：package-guard 的 error/label 改存为一个实例上的 options 对象（修 `no-unused-private-class-members`，语义仍是「存进实例」），顺带修 `#stageFile` 里 sha256 双 `digest` 的笔误。 |
+
+### 偏差与 DEV 编号
+
+- **DEV-048**：`mcpServerSourceSchema` 联合化后，任务书「不改 install.ts」的假设在 `verify` / `#releasePackage` / `#audit` 三处签名上不成立（直接在联合上取 `name`/`version`/`sha256`）。做了最小类型收窄（`Extract<McpServerSource, { kind: 'mcpb' }>`），行为零改动；`McpbInstaller` 面向 plugin 来源的完整改造仍按计划归 P0a-2。
+- 其余为自由度内的判断点（见下），不构成偏差。
+
+### 迁移实际编号
+
+开工核对 `ls packages/core/migrations/main | tail -3`：最新为 `0052_todo_pending_when.sql`，本阶段用 **0053**（`0053_plugins.sql`），与任务书一致，未占用、未顺延。
+
+### `ci.yml` / `release.yml` 构建顺序核对结论
+
+- `.github/workflows/ci.yml`：跑根 `pnpm typecheck`（第 26 行，注释说明它先构建 shared+core；根脚本已把 `pnpm --filter @kepcup/package-guard run build &&` 插在 shared 之后、core 之前），另有一步显式 `pnpm --filter @kepcup/shared run build`（第 44 行）。**没有逐包 build core 的步骤，不需要改 ci.yml。**
+- `.github/workflows/release.yml`：两处 `pnpm -r build`（138、288 行），按 workspace 依赖拓扑自动先建 package-guard（core 依赖它）。**不需要改。**
+
+### `settings/adapters.ts` plugin 来源计数结论
+
+`developerCustomMcpAdapter`（2069 行，`source?.kind !== 'mcpb'` → 「N 个自定义 MCP」）与 `developerMcpbAdapter`（2092 行，`=== 'mcpb'` → 「N 个 .mcpb 包」）统计的是 `settings.mcpServers` 条目。联合化后 plugin 来源的 server 落进前者的「自定义 MCP」计数——**符合其用途**：设置卡的这两条文案都是「开发者 MCP」桶的计数，插件登记的 server（内嵌 MCPB / 远端 http）本质也是经插件进入的自定义 server，出现在 MCP 设置页并计入该桶是准确的；若 P0a-3 的界面想单独标出插件来源，改渲染层徽标即可，core 计数不需要动。P0a-1 未改这两行。
+
+### 自由度内的判断点（登记）
+
+1. **`platforms` 条目类型**：任务书只说「至少 1 项」，取 `z.enum(['darwin', 'win32', 'linux'])`（与 mcpb `MCPB_PLATFORMS` 一致；未知平台串没有意义）。
+2. **`pluginDirOf` 的「恰好两段」**：插件目录名本身含一个 `/`，mcpb 的 `dirname === root` 检查不能照搬，改为 `path.relative(root, dir)` 恰好两段且拼回等于小写化名字（守卫强度等价，`a/b` 这类 schema 合法 id 正确放行）。
+3. **`connectorFixtureEntry`**：在任务书列出的字段外补了 `title` / `description` / `version`（照 `fakeCatalogEntry` 的完整形状，P0a-2 过 `connectorCatalogEntrySchema` 时必需）。
+4. **package-guard 实例上的 error/label**：任务书要求「存进实例」，为过 `no-unused-private-class-members`（label 在 open 阶段后才无读者），存为一个 `Required<ZipGuardOptions>` 对象字段 `#guard`，`read()` 用 `this.#guard.error`，语义不变。
+5. **`chats.errorCode.PLUGIN_*` 文案**：任务书未给词，按相邻错误文案风格自拟（中文四条 + 英文对应，两文件键顺序一致）。
+6. **folder 管线的条目计数**：目录与文件都计入 `ZIP_MAX_ENTRIES`（与 zip 条目口径一致）；复制用 `copyFile` + `chmod` 落 0755/0644 规则。
+7. **清单超限错误口径**：zip 条目尺寸检查先于 `parsePluginManifestText` 的字节预算触发时报「plugin.json 过大」，两者都是 `PLUGIN_INVALID`，测试按 `/过大|上限/` 断言。
+
+### 验收清单逐条证据
+
+1. **mcpb 既有测试零改动全绿**：`node scripts/run-tests.mjs run packages/core/test/unit/mcpb.test.ts packages/core/test/integration/mcpb.test.ts` → 2 文件 35 例全绿；`git diff v0.5.0 HEAD -- packages/core/test/unit/mcpb.test.ts packages/core/test/integration/mcpb.test.ts` 为空；`refactor(mcpb)` 提交（`f792b9b4`）只含 package-guard 抽取相关文件（git show --stat 核对）。
+2. **根 `pnpm typecheck` 通过**（含新构建顺序：shared → package-guard → core → `-r typecheck`，desktop svelte-check 0 错误）；`pnpm --filter @kepcup/server run build` 通过。
+3. **全部新测试**：`node scripts/run-tests.mjs run packages/package-guard packages/shared/test/unit/plugin-manifest.test.ts packages/shared/test/unit/plugins-contracts.test.ts packages/core/test/unit/plugins-migration.test.ts packages/core/test/unit/plugin-ids.test.ts packages/core/test/unit/plugin-manifest-loader.test.ts packages/core/test/unit/plugin-package.test.ts packages/testkit/test/plugin-fixture.test.ts packages/core/test/unit/public-skills-migration.test.ts packages/core/test/unit/paths.test.ts` → 10 文件 113 例全绿。
+4. **阶段收口全量 `pnpm test`（macOS arm64，本机）**：619 个测试文件（617 通过 / 2 跳过）、6612 例——**6575 通过 / 0 失败 / 37 跳过**，退出码 0（约 190 秒）。失败集合为空，不超出 PROGRESS.md 记录的沙箱基线（最近一轮 macOS 收口记录同为 0 失败；沙箱环境类用例不在本机常规全量路径内）。未放宽或删除任何既有断言。
+5. **`docs/dev/03-data-model.md` 三处更新**：迁移表 `0053` 行、`### plugins / plugin_items（插件，D104，迁移 0053）` 小节（`agent_sessions` 之后、`## runs.db` 之前，含 DDL 与 4 条说明）、「删除对话」「删除 Bot」两表各加 `plugins / plugin_items | 保留 | D104` 行。
+6. **无 RPC 注册、`start.ts` 仅一行 mkdir**：`rg -n "bindPluginsMethods|plugins\." packages/core/src/rpc packages/core/src/start.ts` 只有 `mkdirSync(paths.pluginsDir)`；`rpc/` 目录未新增文件，`bindAppMethods` 未动。
+
+### 遗留问题
+
+- 无阻塞项。`plugins.install` 的 `userConfig` 消费、`plugins.inspect` 的推导（技能 parse/scan、连接器 schema、MCPB 检视、http 主机校验）、账本写入与投影器、RPC 绑定与 `start.ts` 装配均在 P0a-2。
+- `pluginSourceSchema` 目前只有 `file` / `folder`，`marketplace` 分支按计划 P1 加性加入。
+- 本机（macOS）无 bubblewrap，沙箱类用例按基线失败，与改动无关。
