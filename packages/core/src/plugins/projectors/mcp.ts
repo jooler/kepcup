@@ -1,15 +1,9 @@
 import path from 'node:path';
-import {
-  mcpServerSchema,
-  type McpServer,
-  type PluginConflict,
-  type PluginConsentMcp,
-  type Settings,
-} from '@kepcup/shared';
+import { mcpServerSchema, type McpServer, type PluginConflict, type PluginConsentMcp, type Settings } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
 import type { AppDisconnector } from '../../apps/disconnect.js';
 import { isSafeDirectoryRemoteUrl } from '../../apps/directory-merge.js';
-import { McpbInstaller } from '../../apps/mcpb/install.js';
+import type { McpbInstaller } from '../../apps/mcpb/install.js';
 import type { McpService } from '../../mcp/service.js';
 import { oneLine } from '../../apps/prompt.js';
 import { pluginServerId } from '../ids.js';

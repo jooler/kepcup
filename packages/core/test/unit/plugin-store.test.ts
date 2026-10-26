@@ -3,12 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infra/db.js';
+import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { resolvePaths } from '../../src/infra/paths.js';
-import type { Clock } from '../../src/infra/clock.js';
 import { PluginStore, type PluginRow } from '../../src/plugins/store.js';
 
 /**

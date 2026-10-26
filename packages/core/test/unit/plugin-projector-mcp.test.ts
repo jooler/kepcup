@@ -10,14 +10,13 @@ import {
   type PluginItemKind,
   type Settings,
 } from '@kepcup/shared';
-import { buildMcpbFixture, buildPluginDir } from '@kepcup/testkit';
+import { buildPluginDir } from '@kepcup/testkit';
 
 import { McpbInstaller, type McpbInstallerDeps } from '../../src/apps/mcpb/install.js';
 import {
   McpProjector,
   mcpDescriptionFor,
   mcpTierFor,
-  type PluginMcpDeps,
 } from '../../src/plugins/projectors/mcp.js';
 import type {
   PluginLedger,

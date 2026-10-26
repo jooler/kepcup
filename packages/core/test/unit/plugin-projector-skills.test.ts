@@ -8,7 +8,7 @@ import {
   type PluginItemKind,
 } from '@kepcup/shared';
 
-import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infra/db.js';
+import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';

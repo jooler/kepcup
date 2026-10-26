@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
-  connectorCatalogEntrySchema,
   connectorMetaOf,
   pluginManifestSchema,
   type AppConnection,
