@@ -196,7 +196,13 @@ import {
   pluginsSetEnabledOutputSchema,
   pluginsUninstallInputSchema,
   pluginsInspectInputSchema,
+  pluginsMarketplaceListOutputSchema,
+  pluginsMarketplaceRefreshOutputSchema,
 } from '../domain/plugins.js';
+import {
+  pluginMarketplacePublicKeySchema,
+  pluginMarketplaceUrlSchema,
+} from '../domain/plugin-index.js';
 import {
   pairingOfferSchema,
   pairedDeviceSchema,
@@ -423,6 +429,13 @@ export const settingsUpdateInputSchema = z.object({
   /** D96 远程遥控：总开关与中转地址（部分 patch；条目 `remote.enabled` / `remote.relay`）。 */
   remoteEnabled: z.boolean().optional(),
   remoteRelayUrl: relayEndpointSchema.optional(),
+  /**
+   * D104 P1-1 插件市场：定时检查开关、市场地址与自建签名公钥（部分 patch；条目
+   * `plugins.updates` / `plugins.marketplace`）。公钥是供应链信任根，目录档位 user-only。
+   */
+  pluginAutoCheckUpdates: z.boolean().optional(),
+  pluginMarketplaceUrl: pluginMarketplaceUrlSchema.optional(),
+  pluginMarketplacePublicKey: pluginMarketplacePublicKeySchema.optional(),
   /** 用户个人资料（Profile）：显示名与头像引用（条目 `profile.user-name` / `profile.user-avatar`）。 */
   userProfileName: z.string().optional(),
   userProfileAvatar: z.string().optional(),
@@ -2780,6 +2793,14 @@ export const rpcMethodSchemas = {
     output: pluginsSetEnabledOutputSchema,
   },
   'plugins.uninstall': { input: pluginsUninstallInputSchema, output: okOutput },
+  'plugins.marketplace.list': {
+    input: voidInput,
+    output: pluginsMarketplaceListOutputSchema,
+  },
+  'plugins.marketplace.refresh': {
+    input: voidInput,
+    output: pluginsMarketplaceRefreshOutputSchema,
+  },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -3137,6 +3158,8 @@ const APP_METHODS = [
   'plugins.install',
   'plugins.setEnabled',
   'plugins.uninstall',
+  'plugins.marketplace.list',
+  'plugins.marketplace.refresh',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;

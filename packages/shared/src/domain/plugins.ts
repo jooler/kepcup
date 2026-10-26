@@ -31,10 +31,11 @@ export const pluginItemKindSchema = z.enum([
 ]);
 export type PluginItemKind = z.infer<typeof pluginItemKindSchema>;
 
-// P1 adds { kind: 'marketplace', id, version? } (additive).
+// P1-1 adds { kind: 'marketplace', id, version? } (additive).
 export const pluginSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), path: z.string().min(1).max(4096) }),
   z.object({ kind: z.literal('folder'), path: z.string().min(1).max(4096) }),
+  z.object({ kind: z.literal('marketplace'), id: pluginIdSchema, version: pluginVersionSchema.optional() }),
 ]);
 export type PluginSource = z.infer<typeof pluginSourceSchema>;
 
@@ -71,6 +72,8 @@ export const pluginSummarySchema = z.object({
   items: z.array(pluginItemRefSchema),
   /** P0a is always null; P1 fills it from the marketplace index. */
   updateAvailable: z.object({ version: z.string() }).nullable(),
+  /** P1-1: revocation marker from the marketplace index (`warn` flags, `disable` auto-disabled). */
+  revoked: z.enum(['warn', 'disable']).nullable().default(null),
 });
 export type PluginSummary = z.infer<typeof pluginSummarySchema>;
 
@@ -200,3 +203,54 @@ export type PluginsUninstallInput = z.infer<typeof pluginsUninstallInputSchema>;
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });
 export type PluginsChangedPayload = z.infer<typeof pluginsChangedPayloadSchema>;
+
+// --- marketplace views (P1-1, docs/design/51-plugin-system.md §6.1 / §8) --------------------
+
+export const pluginMarketStatusSchema = z.object({
+  state: z.enum(['disabled', 'ok', 'degraded', 'stale']),
+  /** `disabled` 时：no_keys = 官方公钥列表为空；no_custom_key = 自建市场没登记公钥。 */
+  disabledReason: z.enum(['no_keys', 'no_custom_key']).nullable(),
+  lastSync: z.number().nullable(),
+  generatedAt: z.number().nullable(),
+  error: z.string().nullable(),
+  endpoint: z.enum(['official', 'custom']),
+});
+export type PluginMarketStatus = z.infer<typeof pluginMarketStatusSchema>;
+
+export const pluginMarketEntrySchema = z.object({
+  id: pluginIdSchema,
+  version: z.string(),
+  tier: z.enum(['verified', 'community']),
+  name: z.string(),
+  description: z.string(),
+  author: z.string().nullable(),
+  categories: z.array(pluginContributionKindSchema),
+  size: z.number().int(),
+  updatedAt: z.number().int(),
+  compatible: z.boolean(),
+  incompatibleReason: z.string().nullable(),
+  installed: z.object({ version: z.string(), updateAvailable: z.boolean() }).nullable(),
+  revoked: z.enum(['warn', 'disable']).nullable(),
+});
+export type PluginMarketEntry = z.infer<typeof pluginMarketEntrySchema>;
+
+export const pluginsMarketplaceListOutputSchema = z.object({
+  status: pluginMarketStatusSchema,
+  entries: z.array(pluginMarketEntrySchema),
+});
+export type PluginsMarketplaceListOutput = z.infer<typeof pluginsMarketplaceListOutputSchema>;
+
+export const pluginsMarketplaceRefreshOutputSchema = z.object({
+  status: pluginMarketStatusSchema,
+});
+export type PluginsMarketplaceRefreshOutput = z.infer<
+  typeof pluginsMarketplaceRefreshOutputSchema
+>;
+
+/** `plugins.marketplace.updated`：索引采纳 / 端点切换后广播；null = 视图清空待重同步。 */
+export const pluginsMarketplaceUpdatedPayloadSchema = z.object({
+  generatedAt: z.number().nullable(),
+});
+export type PluginsMarketplaceUpdatedPayload = z.infer<
+  typeof pluginsMarketplaceUpdatedPayloadSchema
+>;
