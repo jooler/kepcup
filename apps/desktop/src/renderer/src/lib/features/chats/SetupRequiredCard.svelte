@@ -2,13 +2,13 @@
   import type { SetupRequirement } from '@kepcup/shared';
   import { X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { Button } from '$lib/components/ui/button';
   import SettingSetupBody from '$lib/features/settings-card/SettingSetupBody.svelte';
 
   /**
    * 消息列表内的「缺设置」引导卡片（docs/design/18-inline-setup.md）：数据源
-   * 是 chat.setupRequirement（发送门禁置起，或失败 run 携带的结构化 setup）。
+   * 是当前会话的 setupRequirement（发送门禁置起，或失败 run 携带的结构化 setup）。
    * P2 收拢后这里只是外壳（关闭按钮 + 分发）；body 的选择与旧 kind 的别名转换
    * 统一在 `SettingSetupBody`（设计篇 38 §5.3）：
    * - setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流
@@ -21,9 +21,10 @@
    *   不是单条目录条目，保留独立 kind（MainModelSetupBody）；
    * - confirm-local-connector：本机连接确认卡，不是设置目录条目——用户点的是
    *   apps.localConnectors.confirm / reject，保持独立 kind 与独立 body。
-   * 确认 / 保存后 chat.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
+   * 确认 / 保存后 session.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
    */
   let { requirement }: { requirement: SetupRequirement } = $props();
+  const session = getChatSession();
 </script>
 
 <div
@@ -36,7 +37,7 @@
     class="absolute top-1.5 right-1.5 size-6 text-muted-foreground"
     aria-label={t('setupCard.dismiss')}
     title={t('setupCard.dismiss')}
-    onclick={() => chat.dismissSetupCard()}
+    onclick={() => session.dismissSetupCard()}
     data-testid="setup-card-dismiss"
   >
     <X class="size-3.5" aria-hidden="true" />

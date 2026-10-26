@@ -1425,9 +1425,11 @@ export class ScheduleService {
 
   listEntries(conversationId?: string | undefined): ScheduleEntry[] {
     const rows =
-      conversationId !== undefined
-        ? this.store.listActiveForConversation(conversationId)
-        : this.store.listActive();
+      conversationId === undefined
+        ? this.store.listActive()
+        : this.#deps.conversations.get(conversationId)?.type === 'project'
+          ? this.store.listActiveForConversationScope(conversationId)
+          : this.store.listActiveForConversation(conversationId);
     const now = this.#deps.clock.now();
     return rows.map((row) => {
       const bot = row.botId === null ? null : this.#deps.bots.get(row.botId);

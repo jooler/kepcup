@@ -120,8 +120,18 @@ function showWindow(): void {
   window.focus();
 }
 
-/** Opens the window and navigates the renderer to the conversation. */
-function showConversation(conversationId: string): void {
+/**
+ * Opens the window and asks the renderer to select the conversation.
+ * Card ids are included: `chat.select` redirects them onto the board.
+ * If the kind lookup throws, do not navigate — an unknown id must not be
+ * selected, because a card row is hidden from the sidebar.
+ */
+async function showConversation(conversationId: string): Promise<void> {
+  try {
+    await coreHost?.callPlatform('conversations.kind', { id: conversationId });
+  } catch {
+    return;
+  }
   showWindow();
   window?.webContents.send('navigate-conversation', conversationId);
 }
@@ -688,7 +698,7 @@ function bootstrap(): void {
     if (!Notification.isSupported()) return;
     const notification = new Notification({ title, body });
     notification.on('click', () => {
-      if (conversationId !== null) showConversation(conversationId);
+      if (conversationId !== null) void showConversation(conversationId);
       else showWindow();
     });
     notification.show();
@@ -827,6 +837,9 @@ function bootstrap(): void {
 app.setName(APP_NAME);
 // Windows toast 通知按 AUMID 归组到开始菜单磁贴；不设置时显示 "Electron"。
 app.setAppUserModelId(APP_ID);
+// e2e 固定按「减弱动态效果」运行：Playwright 的可见性 / 稳定性断言不必等
+// 抽屉与弹框动画结束。手动启动（NODE_ENV 非 test）不受影响。
+if (process.env.NODE_ENV === 'test') app.commandLine.appendSwitch('force-prefers-reduced-motion');
 
 // dev/e2e（KEPCUP_HOME）：把 userData 一并隔离到数据目录下——渲染层
 // localStorage、GPU 缓存与 requestSingleInstanceLock 都以 userData 为作用域，

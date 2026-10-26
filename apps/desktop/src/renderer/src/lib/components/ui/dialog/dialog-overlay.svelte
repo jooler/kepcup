@@ -16,6 +16,6 @@
 	bind:ref
 	data-slot="dialog-overlay"
 	data-window-overlay
-	class={cn("data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 bg-black/60 duration-100 fixed inset-0 isolate z-50", className)}
+	class={cn("data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-open:ease-out data-closed:ease-in bg-black/60 duration-150 fixed inset-0 isolate z-50", className)}
 	{...restProps}
 />

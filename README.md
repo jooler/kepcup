@@ -16,7 +16,16 @@ OpenMind means opening the *thinking*—product intent, the hard problems themse
 
 ## What is KepCup
 
-KepCup is an open-source, local-first **Personal Agent** (multi-Bot team form). As a **local-first multi-Bot assistant**, it can stand in for hosted teammate products such as Grok Bot, Muse, or Dot: you create Bots on your machine, give them permissions and a working directory, and they collaborate with you—and with each other—without handing your data to a host you do not control.
+KepCup is an open-source **Personal Agent** in multi-Bot team form. You create Bots, give them permissions and a working directory, and they collaborate with you—and with each other—**without handing your data to a host you do not control**. As a multi-Bot assistant you own end to end, it can stand in for hosted teammate products such as Grok Bot, Muse, or Dot.
+
+You choose how it runs—**local run** or **private / self-hosted deploy**:
+
+| When… | Choose… | What that looks like |
+| --- | --- | --- |
+| You mainly use it on one computer, offline-friendly, and are fine opening the app when you need it | **Local run** | Install the desktop app (or `pnpm dev` while developing). Bots, memory, mail, and schedules live on that machine. |
+| You want the team **always online**—schedules, mail, and replies while the laptop is closed or you're on the phone | **Private deploy** | Run the headless server on your NAS or cloud VPS. Any browser / PWA signs in to that same instance. Data stays on infrastructure **you** control; the desktop does not need to stay awake. |
+
+These are two run modes of the same product and the same core—not a separate “cloud KepCup.” Details for the always-on path: [Headless server](#headless-server) below, plus [apps/server/README.md](apps/server/README.md).
 
 Bots are designed to be like real people. Collaboration should feel human: shared context, clear roles, and work that actually gets done—not endless Bot small talk.
 
@@ -267,8 +276,8 @@ The default sandbox is Anthropic Sandbox Runtime. Platforms can also opt into en
 
 ```text
 kepcup/
-├── apps/desktop/     # Electron desktop app (product entry)
-├── apps/server/      # Headless server (self-hosted, D102)
+├── apps/desktop/     # Electron desktop app (local run)
+├── apps/server/      # Headless server (private / self-hosted deploy, D102)
 ├── apps/website/     # Official marketing site (kepcup.app)
 ├── packages/core/    # Business logic & data (separate process)
 ├── packages/shared/  # Cross-process contracts & types
@@ -294,7 +303,7 @@ Agent conventions: [AGENTS.md](AGENTS.md).
 
 ### Headless server
 
-The same core (conversations, scheduler, mail, MCP, approvals, memory) can also run as a **self-hosted always-on service** on a NAS or cloud box (D102): any device with a browser connects to the same data source — no multi-device sync, no "desktop must stay awake". Sign-in is account + password (set once at first start; no per-device pairing), and there is no Docker — just **Node.js ≥ 22.19**.
+When you pick **private / self-hosted deploy** (see [What is KepCup](#what-is-kepcup)), the same core (conversations, scheduler, mail, MCP, approvals, memory) runs as an always-on service on a NAS or cloud box (D102). Any device with a browser connects to that same data source—no multi-device sync dance, no “desktop must stay awake.” Sign-in is account + password (set once at first start; no per-device pairing), and there is no Docker—just **Node.js ≥ 22.19**.
 
 Run from source:
 

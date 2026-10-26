@@ -27,6 +27,7 @@
   );
   const parsed = $derived(parseDispatchText(text, updateFlag));
   const isUpdate = $derived(parsed.update === true);
+  const isBoard = $derived(parsed.board === true);
   // 管家徽标优先看 content.viaButler（core 写入），没有该字段再用正文里的标注兜底。
   const viaButler = $derived(
     'viaButler' in message.content && typeof message.content.viaButler === 'boolean'
@@ -48,12 +49,16 @@
   class="w-full max-w-[85%] rounded-lg border bg-background/80 p-3 text-sm"
   data-testid="dispatch-card"
   data-todo-id={todoId ?? ''}
-  data-variant={isUpdate ? 'update' : 'dispatch'}
+  data-variant={isBoard ? 'board' : isUpdate ? 'update' : 'dispatch'}
 >
   <div class="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
     <ClipboardList class="size-3.5" aria-hidden="true" />
     <span data-testid="dispatch-card-label"
-      >{isUpdate ? t('workbench.dispatch.updateLabel') : t('workbench.dispatch.label')}</span
+      >{isBoard
+        ? t('dispatch.board.title')
+        : isUpdate
+          ? t('workbench.dispatch.updateLabel')
+          : t('workbench.dispatch.label')}</span
     >
     {#if isUpdate}
       <span data-testid="dispatch-card-updated-by"
@@ -92,7 +97,7 @@
       {parsed.lateNote}
     </p>
   {/if}
-  {#if todoId !== null && !narrowLayout.narrow}
+  {#if todoId !== null && !narrowLayout.narrow && !isBoard}
     <div class="mt-2 flex justify-end">
       <Button
         size="xs"

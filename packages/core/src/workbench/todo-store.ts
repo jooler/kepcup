@@ -20,6 +20,7 @@ interface TodoRow {
   source: TodoSource;
   memo_id: string | null;
   blocked_reason: string | null;
+  pending_when: string | null;
   created_at: number;
   updated_at: number;
   closed_at: number | null;
@@ -72,6 +73,7 @@ export function rowToTodo(row: TodoRow): Todo {
     source: row.source,
     memoId: row.memo_id,
     blockedReason: row.blocked_reason,
+    pendingWhen: row.pending_when,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
@@ -111,6 +113,8 @@ export interface UpdateTodoPatch {
   /** Set to 'butler' once the butler rewrote the title / notes (content provenance, see TodoSource). */
   source?: TodoSource;
   blockedReason?: string | null;
+  /** Time set before an executor exists; null clears it (see Todo.pendingWhen). */
+  pendingWhen?: string | null;
   /** Explicit done / cancelled time; omitted = derived from `status` (set / cleared by the store). */
   closedAt?: number | null;
 }
@@ -124,6 +128,11 @@ export interface ListTodosFilter {
    * closed todos of any age.
    */
   closedAfter?: number | undefined;
+  /**
+   * Hide todos that have a board_cards row. TodoService.list sets this so the
+   * workbench RPC and the butler never see cards. Reconcile does not.
+   */
+  excludeBoardCards?: boolean | undefined;
 }
 
 export interface InsertTodoRunInput {
@@ -168,8 +177,8 @@ export class TodoStore {
       .prepare(
         `insert into todos
            (id, title, notes, assignee_bot_id, assignee_project_id, status, source,
-            memo_id, blocked_reason, created_at, updated_at, closed_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -181,6 +190,7 @@ export class TodoStore {
         input.source,
         input.memoId ?? null,
         input.blockedReason ?? null,
+        null,
         now,
         now,
         CLOSED_TODO_STATUSES.includes(status) ? now : null,
@@ -218,7 +228,7 @@ export class TodoStore {
     this.db
       .prepare(
         `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_project_id = ?,
-           status = ?, source = ?, blocked_reason = ?, closed_at = ?, updated_at = ?
+           status = ?, source = ?, blocked_reason = ?, pending_when = ?, closed_at = ?, updated_at = ?
          where id = ?`,
       )
       .run(
@@ -229,6 +239,7 @@ export class TodoStore {
         nextStatus,
         patch.source ?? current.source,
         patch.blockedReason !== undefined ? patch.blockedReason : current.blockedReason,
+        patch.pendingWhen !== undefined ? patch.pendingWhen : current.pendingWhen,
         closedAt,
         now,
         id,
@@ -242,8 +253,7 @@ export class TodoStore {
    */
   scheduledBy(id: string): TodoSource | null {
     const row = this.db.prepare('select scheduled_by from todos where id = ?').get(id) as
-      | { scheduled_by: TodoSource | null }
-      | undefined;
+      { scheduled_by: TodoSource | null } | undefined;
     return row?.scheduled_by ?? null;
   }
 
@@ -273,6 +283,9 @@ export class TodoStore {
     if (filter.closedAfter !== undefined) {
       where.push("(status not in ('done', 'cancelled') or coalesce(closed_at, updated_at) >= ?)");
       params.push(filter.closedAfter);
+    }
+    if (filter.excludeBoardCards === true) {
+      where.push('id not in (select todo_id from board_cards)');
     }
     const clause = where.length > 0 ? `where ${where.join(' and ')}` : '';
     return (

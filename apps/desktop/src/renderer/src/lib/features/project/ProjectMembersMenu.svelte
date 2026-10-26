@@ -2,14 +2,14 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { Users } from '@lucide/svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import ProjectMemberPicker from './ProjectMemberPicker.svelte';
 
   /**
-   * 成员头像堆叠 + 下拉（WP6 §4 步骤 4）。自建轻量弹层，不用 bits-ui
-   * DropdownMenu——里面要放搜索输入框，菜单的 typeahead 会吃掉按键；仓库也没有
-   * popover 组件。堆叠是重叠式（后一个压前一个，负责人排最前不加冠标），与侧栏的
-   * ProjectAvatarStack 马赛克语义不同，不复用它。
+   * 成员头像堆叠 + 下拉（WP6 §4 步骤 4）：只读名册 + 「管理成员…」跳转。加人
+   * 不在弹层里做——由「管理成员…」进详情页成员分区（ProjectMembersEditor）。
+   * 自建轻量弹层，不用 bits-ui DropdownMenu；堆叠是重叠式（后一个压前一个，
+   * 负责人排最前不加冠标），与侧栏的 ProjectAvatarStack 马赛克语义不同，不复用。
    */
   const STACK_MAX = 5;
 
@@ -31,25 +31,10 @@
   const overflow = $derived(Math.max(0, members.length - STACK_MAX));
 
   let open = $state(false);
-  /** 添加成员区块默认收起，点全宽「添加成员」按钮才展开。 */
-  let pickerOpen = $state(false);
   let root: HTMLElement | undefined = $state();
-
-  // Focus lands on the search box when the picker is revealed (no extra mouse
-  // move for picking or Esc-closing); the input lives inside
-  // ProjectMemberPicker, so reach it here by its testid.
-  $effect(() => {
-    if (open && pickerOpen)
-      queueMicrotask(() =>
-        root?.querySelector<HTMLInputElement>('input[data-testid="project-member-add"]')?.focus(),
-      );
-  });
-
-  const memberIds = $derived(members.map((member) => member.bot.id));
 
   function close(): void {
     open = false;
-    pickerOpen = false;
   }
 
   function toggle(): void {
@@ -66,21 +51,6 @@
   function onWindowKeydown(event: KeyboardEvent): void {
     if (!open || event.key !== 'Escape') return;
     close();
-  }
-
-  /**
-   * The picker stops all keystrokes from leaking (global shortcuts listen at
-   * the window level); Esc is intercepted here on the capture phase so
-   * pressing it in the search box still closes the menu.
-   */
-  function onPickerKeydownCapture(event: KeyboardEvent): void {
-    if (event.key === 'Escape') close();
-  }
-
-  async function addMember(botId: string): Promise<void> {
-    if (!conversation) return;
-    // The member list refreshes itself via the conversation.updated event.
-    await chat.addProjectMembers(conversation.id, [botId]);
   }
 
   function manageMembers(): void {
@@ -157,32 +127,17 @@
 
       <div class="my-1.5 border-t" role="separator"></div>
 
-      {#if pickerOpen}
-        <div onkeydowncapture={onPickerKeydownCapture}>
-          <ProjectMemberPicker
-            excludeIds={memberIds}
-            onPick={addMember}
-            testid="project-member-add"
-          />
-        </div>
-      {:else}
-        <button
-          type="button"
-          class="w-full rounded-md px-1 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onclick={() => (pickerOpen = true)}
-          data-testid="project-members-add"
-        >
-          {t('project.members.add')}
-        </button>
-      {/if}
-
+      <!-- 与成员行同一几何（px-1 py-1.5 + size-7 头像槽位）：标签与上方名字对齐。 -->
       <button
         type="button"
-        class="mt-1 w-full rounded-md px-1 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        class="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm transition-colors hover:bg-accent"
         onclick={manageMembers}
         data-testid="project-members-manage"
       >
-        {t('project.members.manage')}
+        <span class="flex size-7 shrink-0 items-center justify-center">
+          <Users class="size-4 text-muted-foreground" aria-hidden="true" />
+        </span>
+        <span class="min-w-0 truncate">{t('project.members.manage')}</span>
       </button>
     </div>
   {/if}

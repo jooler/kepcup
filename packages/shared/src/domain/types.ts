@@ -869,7 +869,7 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'project']);
+export const conversationTypeSchema = z.enum(['direct', 'project', 'card']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
@@ -886,8 +886,19 @@ export const conversationSchema = z.object({
   /** 项目目标（该项目主要处理什么事务）；单聊恒为空。 */
   goal: z.string().nullable().optional(),
   directBotId: z.string().nullable(),
-  /** 项目负责人；project 恒非空，direct 恒为空。 */
+  /** 项目负责人；project 恒非空，direct 与 card 恒为空。 */
   leadBotId: z.string().nullable().optional(),
+  /**
+   * Owning project of a `card` conversation. Null for `direct` and `project`.
+   * Foreign-key safety net only; the service deletes card conversations
+   * (runs, FTS, attachments) and is not wired in this slice.
+   */
+  parentProjectId: z.string().nullable().default(null),
+  /**
+   * Board card (todo id) of a `card` conversation. Null for `direct` and
+   * `project`. No foreign key: card deletion is service-driven.
+   */
+  cardTodoId: z.string().nullable().default(null),
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),
@@ -2908,6 +2919,12 @@ export const todoSchema = z.object({
   memoId: z.string().nullable(),
   /** Why the todo fell back to draft ("项目里无人回应" / "负责 Bot 已删除"…); display only. */
   blockedReason: z.string().nullable(),
+  /**
+   * Time set before an executor exists (board card): the validated `when`
+   * (ISO / cron) kept on the draft todo until an assignee lands, at which
+   * point TodoService turns it into a real schedule. null = not set.
+   */
+  pendingWhen: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
   /** done / cancelled time. */
@@ -2940,7 +2957,11 @@ export const todoEntrySchema = todoSchema.extend({
   assigneeName: z.string().nullable(),
   /** Name of the lead bot actually in effect (the assignee override, else the project lead). */
   leadBotName: z.string().nullable(),
-  /** The active schedule of the todo (time lives only there); null = not scheduled. */
+  /**
+   * The active schedule, or a projection of `pendingWhen` when a time was set
+   * before an assignee (`id` is then synthetic: `pending_<todoId>`, and no
+   * `schedules` row exists yet). null = no time set.
+   */
   schedule: z
     .object({
       id: z.string(),
@@ -2952,6 +2973,17 @@ export const todoEntrySchema = todoSchema.extend({
     })
     .nullable(),
   lastRun: todoRunSchema.nullable(),
+  /**
+   * Set when this todo is a board card (a `board_cards` row). Read-only: the
+   * workbench never writes it. Absent input parses as null.
+   */
+  board: z
+    .object({
+      projectId: z.string(),
+      columnId: z.string(),
+    })
+    .nullable()
+    .default(null),
 });
 export type TodoEntry = z.infer<typeof todoEntrySchema>;
 

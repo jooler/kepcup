@@ -806,3 +806,19 @@ export const MEMO_BODY_MAX_CHARS = 10_000;
 export const MEMO_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /** todos.list hides done / cancelled todos closed longer ago than this (unless includeClosed). */
 export const TODO_CLOSED_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// --- Project board (D103, docs/design/50-project-board.md §5) -------------------
+/** Columns per project. */
+export const BOARD_MAX_COLUMNS = 20;
+/** Cards per project. */
+export const BOARD_MAX_CARDS = 500;
+/** Card text, stored in `todos.notes` (code points). */
+export const BOARD_CARD_TEXT_MAX_CHARS = 4000;
+/** Column title length (code points). */
+export const BOARD_COLUMN_TITLE_MAX_CHARS = 60;
+/** Gap between freshly seeded or renumbered positions. */
+export const BOARD_POSITION_STEP = 1024;
+/** Neighbor gap below which the column (or the project's columns) is renumbered. */
+export const BOARD_POSITION_MIN_GAP = 1e-3;
+/** Minimum cron interval for a board card schedule (P2 enforces this). */
+export const BOARD_CRON_MIN_INTERVAL_MS = 3_600_000;

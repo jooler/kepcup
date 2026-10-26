@@ -28,6 +28,8 @@ function directConversation(): Conversation {
     type: 'direct',
     title: null,
     directBotId: 'bot_writer',
+    parentProjectId: null,
+    cardTodoId: null,
     workdirId: null,
     readOnly: false,
     summary: null,
@@ -56,6 +58,18 @@ describe('resolveConversationBot (D70: 管家提议创建的 Bot 只经事件进
     const view = { ...directConversation(), bot };
     const resolved = resolveConversationBot(view, []);
     expect(resolved).toEqual({ conversation: view, refetch: false });
+  });
+
+  it('attaches a contact card to a card conversation the same way as a direct chat', () => {
+    const card = {
+      ...directConversation(),
+      type: 'card' as const,
+      parentProjectId: 'conv_project',
+      cardTodoId: 'todo_1',
+    };
+    const resolved = resolveConversationBot(card, [bot]);
+    expect(resolved.refetch).toBe(false);
+    expect(resolved.conversation.bot).toEqual(bot);
   });
 
   it('ignores group conversations and direct rows without a bot id', () => {

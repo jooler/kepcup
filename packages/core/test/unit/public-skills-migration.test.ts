@@ -102,6 +102,10 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table schedules;');
     db.exec('alter table schedules_old rename to schedules;');
     db.exec('create index schedules_next on schedules(status, next_fire_at);');
+    // main 0050（看板）的新表同样摘除（先卡片侧表再分栏；纯新增，回放时重建）。
+    // board_cards 外键指向 todos，必须先于 todos 摘除。
+    db.exec('drop table board_cards;');
+    db.exec('drop table board_columns;');
     db.exec('drop table todo_runs;');
     db.exec('drop table todos;');
     db.exec('drop table memos;');

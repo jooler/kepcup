@@ -88,14 +88,27 @@ class ShellState {
   }
 
   /**
-   * 切到某个项目模块 tab：注册表里 `status !== 'available'` 的模块（board /
-   * okr / calendar，planned）直接忽略；已是当前视图则不动。
+   * Switch to a project module tab. Modules whose registry status is not
+   * `available` (okr / calendar, still planned) are ignored. The current
+   * view is left unchanged.
    */
   openProjectModule(id: ProjectModuleId): void {
     const module = PROJECT_MODULES.find((entry) => entry.id === id);
     if (module === undefined || module.status !== 'available') return;
     if (this.projectView === id) return;
     this.projectView = id;
+  }
+
+  /**
+   * Open one board card. `chat.select` resets the project view and closes any
+   * open card, so the board tab and the card come after it.
+   */
+  async openBoardCard(projectId: string, cardId: string): Promise<void> {
+    const { chat } = await import('./chat.svelte');
+    const { board } = await import('$lib/features/board/board.svelte');
+    await chat.select(projectId);
+    this.openProjectModule('board');
+    board.openCard(cardId);
   }
   /**
    * 启动时一个 Bot 都没有：左栏「+」面板自动下拉展开引导新建；

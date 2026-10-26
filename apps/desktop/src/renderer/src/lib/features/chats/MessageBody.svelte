@@ -3,6 +3,7 @@
   import { File as FileIcon, Folder as FolderIcon } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
@@ -55,8 +56,9 @@
    * Bot，维持默认主色）。第一种「黑白」是 var() 主题变量，亮/暗风格下
    * 黑白互换，文字用其对比色；其余固定色一律白字。
    */
+  const session = getChatSession();
   const userBubbleColor = $derived(
-    parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
+    parsePresetAvatar(session.view?.conversation.bot?.avatar ?? null)?.color ?? null,
   );
   /**
    * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一

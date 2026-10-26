@@ -14,6 +14,7 @@
 | 样式 | Tailwind CSS v4 | 4.x |
 | 组件 | shadcn-svelte（CLI 添加）、bits-ui、svelte-sonner、`@lucide/svelte` 图标、shadcn-svelte-extras | 最新稳定版 |
 | 聊天组件 | Svelte AI Elements（复制进项目）、streamdown-svelte、@humanspeak/svelte-virtual-list | 最新稳定版 |
+| 看板拖拽 | svelte-dnd-action（D103，项目组看板的分栏 / 卡片拖拽） | 0.9.80（精确锁定） |
 | 代码与 diff | CodeMirror 6（svelte-codemirror-editor、`@codemirror/merge`）、@pierre/diffs | 最新稳定版 |
 | Agent | `@earendil-works/pi-ai`、`@earendil-works/pi-agent-core`、`@earendil-works/pi-coding-agent` | 0.87.x 或更新，三者版本一致 |
 | 沙箱 | `@anthropic-ai/sandbox-runtime`（srt） | 最新版，锁定 |
@@ -141,6 +142,7 @@ kepcup/
 | 工作台事项（D90） | `todo_` | |
 | 工作台事项的一次派发（D90） | `tdr_` | |
 | 工作台备忘（D90） | `memo_` | 与记忆条目 `mem_` 无关 |
+| 看板分栏（D103） | `bcol_` | 卡片 id 复用事项 id（`todo_`），没有单独前缀 |
 
 ## 可调参数
 

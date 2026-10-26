@@ -2,7 +2,7 @@
   import type { BotProfile } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { toast } from 'svelte-sonner';
@@ -26,7 +26,8 @@
   const readyAtMount = untrack(() => hasModelOptions);
   let savedFromForm = $state(false);
   const showModelStage = $derived(hasModelOptions && (readyAtMount || savedFromForm));
-  const currentBot = $derived(chat.current?.conversation.bot ?? null);
+  const session = getChatSession();
+  const currentBot = $derived(session.view?.conversation.bot ?? null);
 
   let defaultMain = $state('');
   let botModel = $state('');
@@ -70,7 +71,7 @@
         } satisfies BotProfile;
         await contacts.update(currentBot.id, profile, base);
       }
-      await chat.continueAfterSetup();
+      await session.continueAfterSetup();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {

@@ -3,6 +3,7 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { Button } from '$lib/components/ui/button';
   import { applySettingItem } from './apply';
@@ -33,10 +34,9 @@
   let selectedReady = false;
   let cardBusy = $state(false);
 
+  const session = getChatSession();
   const conversation = $derived(chat.conversations.find((c) => c.id === conversationId) ?? null);
-  const members = $derived(
-    chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
-  );
+  const members = $derived(session.conversationId === conversationId ? session.members : []);
 
   // Prefill (the bot's suggestion) first; fall back to the current lead.
   $effect(() => {

@@ -52,6 +52,9 @@
 | memory | `0004_drop_private_to_bot.sql` | 2026-10-25：删除 `private_to_bot` 列（「只属于该 Bot」机制移除，见 design/04 修订） |
 | main | `0043_egress_allow.sql` | D73 P2 后续：新表 `egress_allows`（egress 卡对话级放行：「本对话内一直允许」/ bash「本对话内相同命令」） |
 | main | `0046_memo_sort_at.sql` | 备忘列表排序键独立：`memos` 增 `sort_at`（0046 增列，回填 `created_at`），索引 `memos_live` 改为按 `sort_at` 排序 —— 改正文不再把卡片顶到最前 |
+| main | `0050_project_board.sql` | D103：新表 `board_columns` / `board_cards`（卡片 id = 事项 id；`column_id` 无 `ON DELETE`，即 NO ACTION） |
+| main | `0051_card_conversations.sql` | D103：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`）——`type` 增 `card`；新列 `parent_project_id`（FK 自身 `ON DELETE CASCADE`）、`card_todo_id`（无 FK）；`CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL))`，另加「非 card 两列皆空」；唯一索引 `conversations_one_open_per_card`。旧行原样保留，新列为 NULL |
+| main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -123,27 +126,36 @@ CREATE TABLE bots (
 ```sql
 CREATE TABLE conversations (
   id               TEXT PRIMARY KEY,      -- conv_...
-  type             TEXT NOT NULL CHECK (type IN ('direct', 'project')),
-  title            TEXT,                  -- 项目组名称；单聊为空（显示 Bot 名称）
-  goal             TEXT,                  -- 项目目标（0040，原 description）；direct 恒 NULL，非空才注入 <conversation_info>
-  direct_bot_id    TEXT REFERENCES bots(id),
-  lead_bot_id      TEXT REFERENCES bots(id),  -- 项目负责人（0040）；direct 恒 NULL，project 恒非空（CHECK 保证）
-  workdir_id       TEXT,                  -- P04 起使用（0038 改名），无 FK
+  type             TEXT NOT NULL CHECK (type IN ('direct', 'project', 'card')),
+  title            TEXT,                  -- 项目组名称；单聊为空（显示 Bot 名称）；card 为卡片派生标题
+  goal             TEXT,                  -- 项目目标（0040，原 description）；direct / card 恒 NULL，非空才注入 <conversation_info>
+  direct_bot_id    TEXT REFERENCES bots(id),  -- direct：对方 Bot；card：执行成员；project 恒 NULL
+  lead_bot_id      TEXT REFERENCES bots(id),  -- 项目负责人（0040）；direct / card 恒 NULL，project 恒非空（CHECK 保证）
+  workdir_id       TEXT,                  -- P04 起使用（0038 改名），无 FK；card 不复制，经所属项目解析
   read_only        INTEGER NOT NULL DEFAULT 0,
-  archived_at      INTEGER,               -- 0045：非空 = 已从对话列表移除（归档）；数据全留，通讯录里可恢复
   summary          TEXT,                  -- 滚动摘要
   summary_upto_seq INTEGER NOT NULL DEFAULT 0,
   last_seq         INTEGER NOT NULL DEFAULT 0,
   last_read_seq    INTEGER NOT NULL DEFAULT 0,
   last_message_at  INTEGER,
   created_at       INTEGER NOT NULL,
-  CHECK ((type = 'project') = (lead_bot_id IS NOT NULL))
+  archived_at      INTEGER,               -- 0045：非空 = 已从对话列表移除（归档）；数据全留，通讯录里可恢复
+  parent_project_id TEXT REFERENCES conversations(id) ON DELETE CASCADE, -- 0051：card 的所属项目；其余 NULL
+  card_todo_id     TEXT,                  -- 0051：卡片（事项）id，无 FK
+  CHECK ((type = 'project') = (lead_bot_id IS NOT NULL)),
+  CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL)),
+  CHECK ((type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL))
 );
 CREATE UNIQUE INDEX conversations_one_direct_per_bot
   ON conversations(direct_bot_id) WHERE type = 'direct' AND read_only = 0;
+CREATE INDEX conversations_archived
+  ON conversations(archived_at) WHERE archived_at IS NOT NULL;
+CREATE UNIQUE INDEX conversations_one_open_per_card
+  ON conversations(card_todo_id) WHERE type = 'card' AND read_only = 0;
 ```
 
-- 0040 重建（`conversations` 是 12 张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
+- 0040 重建（`conversations` 是多张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
+- **卡片会话（0051）**：`type = 'card'` 是看板卡片与执行成员之间的隐藏对话。`parent_project_id` 指向所属项目会话，`card_todo_id` 是卡片（事项）id，`direct_bot_id` 是执行成员。三列对 card 必填，对 direct / project 必空（后一条比等式 CHECK 更严：等式单独允许 `direct_bot_id` 为空的 project 行写下两列）。每张卡片至多一条 `read_only = 0` 的卡片会话。`ConversationsService.ensureCardConversation` 在指派时创建或复用；`list` / `listVisible` / `conversations.all` 排除 `card`。删除不靠 FK：`BoardService` 先取消排期，再对每一条卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），最后 `todos.purge`。`board.summary` 的未读与待审批只加总这条打开的会话，不算只读历史。`schedules.list` 在入参是项目会话时，并入 `parent_project_id` 等于该项目的卡片会话排期。
 - 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
 - **归档（0045）**：`archived_at` 非空 = 该会话已从对话列表移除。软删：消息、执行记录、附件、workspace、项目 wiki 目录全部保留；会话仍在通讯录里（`conversations.all` 名册），可随时恢复（`conversations.archive` / `conversations.unarchive`）。对话列表（`conversations.list`）不含归档会话。恢复归档的直聊 = 继续原对话（同 id，历史延续）：`ConversationsService.openDirect` 命中已归档的直聊时先恢复它，不新开对话实例。
 
@@ -643,6 +655,7 @@ CREATE TABLE todos (
   source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),   -- 内容出处：管家创建，或管家改写过标题 / 说明
   memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
   blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
+  pending_when      TEXT,                            -- 未指派时先定的时间（ISO / cron，0052）；指派时转成 schedule
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
   closed_at         INTEGER,                         -- done / cancelled 时间
@@ -676,13 +689,45 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 ```
 
 - **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
-- **不变式**：有时间 ⇒ 必有执行者；有排期 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行。时间只存在 schedule 上。
+- **不变式**：有时间 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行，或 `todos.pending_when` 非空（后者只出现在未指派草案上）；active schedule 一定有执行者。指派前定下的时间只存 `pending_when`，指派完成时由 TodoService 转成 schedule 并清空；取消 / 退回草案 / 重开 / 真正排期都会清掉它。
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
 - **备忘排序**（0046）：列表按 `pinned desc, sort_at desc, id desc`。`sort_at` 是排序键，创建时取创建时间，**只有置顶状态变化才刷新**（置顶卡提到置顶组最前）；改正文只动 `updated_at`（卡片上的相对时间、管家上下文里的「最近备忘」），**卡片不换位**。软删 / 恢复不动 `sort_at`，恢复后回到原位。
 - 检索用 `LIKE`（量级千条以内）。
 - 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
+
+### board_columns / board_cards（项目看板，D103，迁移 0050）
+
+设计见 [design 50](../design/50-project-board.md)。每个项目组一块看板。卡片不是 `todos` 上的新列：侧表行存在即表示这是一张看板卡片，卡片 id = 事项 id。文本在 `todos.notes`（≤ 4000 字），`todos.title` 是 `deriveCardTitle` 的派生缓存。
+
+```sql
+CREATE TABLE board_columns (
+  id          TEXT PRIMARY KEY,                                        -- bcol_...
+  project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL CHECK (
+                length(title) BETWEEN 1 AND 60 AND instr(title, char(0)) = 0
+              ),
+  position    REAL NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX board_columns_project ON board_columns(project_id, position);
+
+CREATE TABLE board_cards (
+  todo_id     TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE, -- 卡片 id = 事项 id
+  project_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  column_id   TEXT NOT NULL REFERENCES board_columns(id),              -- NO ACTION：删栏前由 BoardService 处理卡片
+  position    REAL NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX board_cards_column ON board_cards(column_id, position);
+CREATE INDEX board_cards_project ON board_cards(project_id);
+```
+
+- 分栏标题 1–60 个码点。SQLite 的 `length()` 在 NUL 处截断，所以 CHECK 同时用 `instr(title, char(0)) = 0` 拒绝内嵌 NUL，与服务的码点校验一致：服务接受的标题插得进去，服务拒绝的标题（超长或含 NUL）也插不进去。
+- 删事项：`board_cards` 随 `todos` 外键级联。
+- 删分栏：`column_id` 不级联。服务先挪走或删除卡片，再删分栏。
+- 删项目会话：`board_columns` / `board_cards` 随会话外键级联；事项没有指向会话的外键，由 `lifecycle.deleteConversation` 在删行之前调用 `board.onProjectDeleting` 逐张 `todos.purge`（见删除级联表）。
 
 ### widgets（Bot 自制交互组件，D81，main 0028）
 
@@ -1148,6 +1193,9 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
 | todos 中以该对话为项目组执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「项目组已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_project_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
+| board_columns（该项目的分栏） | 随会话外键 `ON DELETE CASCADE` 删除 | D103 |
+| board_cards（该项目的卡片侧表）与对应事项 | 侧表行随会话外键 `ON DELETE CASCADE` 删除；事项不依赖外键，删除会话行之前由 `board.onProjectDeleting` 显式 `todos.purge`（侧表行也会随事项外键先被带走） | D103 |
+| 卡片会话（`parent_project_id` 指向该项目） | `parent_project_id` 的 `ON DELETE CASCADE` 只删 main.db 里的会话行（及其子表），是 FK 安全网。实际删除由 `board.onProjectDeleting` 驱动：先对每张卡片的全部卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），再 `todos.purge`，然后才删项目会话行 | D103（0051） |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |

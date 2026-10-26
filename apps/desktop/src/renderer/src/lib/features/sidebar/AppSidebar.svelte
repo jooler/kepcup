@@ -1141,7 +1141,7 @@
           <button
             type="button"
             class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-              rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              rounded-full text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground"
             onclick={() => shell.openExtensionCenter()}
             aria-label={t('sidebar.extensionCenter')}
             title={t('sidebar.extensionCenter')}
@@ -1155,12 +1155,12 @@
             <DropdownMenu.Trigger>
               <button
                 type="button"
-                class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
+                class="z-10 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
                 aria-label={t('menu.settings')}
                 title={settingsStore.userDisplayName}
                 data-testid="user-menu-trigger"
               >
-                <UserAvatar class="size-10" testId="user-menu-avatar" />
+                <UserAvatar class="size-8" testId="user-menu-avatar" />
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="center" class="min-w-40">
@@ -1198,12 +1198,12 @@
               <!-- 参考 Grok Bot：底部只有一枚圆形头像，不带文字与底色。 -->
               <button
                 type="button"
-                class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
+                class="z-10 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
                 aria-label={t('menu.settings')}
                 title={settingsStore.userDisplayName}
                 data-testid="user-menu-trigger"
               >
-                <UserAvatar class="size-10" testId="user-menu-avatar" />
+                <UserAvatar class="size-8" testId="user-menu-avatar" />
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="start" class="min-w-40">
@@ -1236,7 +1236,7 @@
           <button
             type="button"
             class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
-              rounded-full border border-border bg-background px-3 text-sm
+              rounded-full border border-border bg-white dark:bg-accent px-3 text-sm
               text-muted-foreground shadow-none transition-colors hover:text-foreground"
             onclick={() => shell.openExtensionCenter()}
             aria-label={t('sidebar.extensionCenter')}

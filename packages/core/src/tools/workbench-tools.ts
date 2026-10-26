@@ -177,7 +177,7 @@ function failure(error: unknown, prefix: string): ToolResult {
   return {
     ok: false,
     content: `${prefix}：${message}`,
-    errorCode: code === 'NOT_FOUND' ? 'NOT_FOUND' : 'INVALID_INPUT',
+    errorCode: code === 'NOT_FOUND' || code === 'BOARD_MANAGED' ? code : 'INVALID_INPUT',
   };
 }
 

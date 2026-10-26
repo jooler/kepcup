@@ -26,6 +26,7 @@ import { truncateToBudget } from '../agent/tokens.js';
 import type { MediaService, MediaUsageContext } from '../media/service.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
+import { projectScopeOf } from '../domain/project-scope.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { JobsService } from '../domain/jobs.js';
 import type { RunsService } from '../domain/runs.js';
@@ -415,7 +416,7 @@ export class MemoryService {
       subject: null,
       source: 'explicit',
       evidence: this.#evidenceFrom(input.triggerMessages, null),
-      origin: conversation?.type === 'project' ? 'project' : 'private',
+      origin: projectScopeOf(conversation) !== null ? 'project' : 'private',
       originConversationId: conversationId,
       confidence: 1,
       sensitivity: 'normal',
@@ -486,7 +487,7 @@ export class MemoryService {
       subject: candidate.subject ?? null,
       source: candidate.source,
       evidence: this.#evidenceFrom(messages, candidate.evidenceRunId),
-      origin: conversation?.type === 'project' ? 'project' : 'private',
+      origin: projectScopeOf(conversation) !== null ? 'project' : 'private',
       originConversationId: conversationId,
       confidence: candidate.confidence,
       sensitivity: candidate.sensitivity,
@@ -675,7 +676,7 @@ export class MemoryService {
       embedder: this.currentEmbedder(),
       queryText: query,
       filters: {
-        isProject: conversation?.type === 'project',
+        isProject: projectScopeOf(conversation) !== null,
         now: this.#deps.clock.now(),
         timeZone: this.#deps.timeZone,
       },
@@ -872,13 +873,13 @@ export class MemoryService {
     const constraints = collectHardConstraints({
       profileItems: this.#profileStore.list('active'),
       privateItems,
-      isProject: conversation?.type === 'project',
+      isProject: projectScopeOf(conversation) !== null,
       now: this.#deps.clock.now(),
     });
     const lines = constraints.map((constraint) => {
-      // 1:1 私聊（direct）里只有双方，泄露提示没有对象；project 对话（以及
-      // 会话已查不到的兜底场景）才需要提醒不要外泄私聊内容。
-      const warnPrivateOrigin = conversation?.type !== 'direct';
+      // 1:1 私聊（direct）里只有双方，泄露提示没有对象；项目口径（项目组、
+      // 卡片对话）以及会话已查不到的兜底场景才需要提醒不要外泄私聊内容。
+      const warnPrivateOrigin = conversation == null || projectScopeOf(conversation) !== null;
       const suffix =
         warnPrivateOrigin && constraint.origin === 'private'
           ? '（来自私聊，不要在群聊中透露）'
@@ -931,7 +932,7 @@ export class MemoryService {
       embedder: this.currentEmbedder(),
       queryText: input.queryText,
       filters: {
-        isProject: conversation?.type === 'project',
+        isProject: projectScopeOf(conversation) !== null,
         now: this.#deps.clock.now(),
         timeZone: this.#deps.timeZone,
       },
@@ -944,7 +945,7 @@ export class MemoryService {
         ids: result.items.map((item) => item.id),
         topK: MEMORY_TOPK,
         truncated: result.truncated,
-        isProject: conversation?.type === 'project',
+        isProject: projectScopeOf(conversation) !== null,
       },
       'relevant memories injected',
     );

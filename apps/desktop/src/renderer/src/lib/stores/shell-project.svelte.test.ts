@@ -34,17 +34,18 @@ describe('openProjectSettings', () => {
 });
 
 describe('openProjectModule', () => {
-  it('planned 模块（board）被忽略', () => {
-    shell.openProjectModule('board');
-    expect(shell.projectView).toBe('chat');
-    shell.openProjectModule('wiki');
+  it('planned 模块（okr / calendar）被忽略，board 可切换', () => {
     shell.openProjectModule('okr');
-    expect(shell.projectView).toBe('wiki');
+    expect(shell.projectView).toBe('chat');
+    shell.openProjectModule('board');
+    expect(shell.projectView).toBe('board');
     shell.openProjectModule('calendar');
-    expect(shell.projectView).toBe('wiki');
+    expect(shell.projectView).toBe('board');
   });
 
-  it('available 模块（wiki）生效，再切回 chat', () => {
+  it('available 模块（board / wiki）生效，再切回 chat', () => {
+    shell.openProjectModule('board');
+    expect(shell.projectView).toBe('board');
     shell.openProjectModule('wiki');
     expect(shell.projectView).toBe('wiki');
     shell.openProjectModule('chat');

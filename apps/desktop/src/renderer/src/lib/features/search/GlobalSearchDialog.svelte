@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { fly } from 'svelte/transition';
   import type { Component } from 'svelte';
   import { ChevronLeft, Search } from '@lucide/svelte';
+  import { motionMs, MOTION } from '$lib/motion';
   import type { Bot } from '@kepcup/shared';
   import {
     Activity,
@@ -547,6 +549,8 @@
   <div
     class="app-no-drag fixed inset-0 z-50 flex flex-col bg-background"
     data-testid="global-search-layer"
+    in:fly={{ x: 48, duration: motionMs(MOTION.enter) }}
+    out:fly={{ x: 48, duration: motionMs(MOTION.exit) }}
   >
     <div
       class="app-drag wco-inset-end flex h-14 shrink-0 items-center gap-1 border-b {isMac
