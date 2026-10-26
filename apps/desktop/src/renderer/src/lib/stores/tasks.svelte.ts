@@ -120,6 +120,8 @@ class TasksState {
 
   async loadActive(conversationId: string): Promise<void> {
     this.start();
+    // Plain Set: prune filter, not UI state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const keep = new Set(this.#useCount.keys());
     keep.add(conversationId);
     this.byId = pruneTaskViewsMany(this.byId, keep);

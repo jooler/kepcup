@@ -4,7 +4,6 @@
   import { t, listSeparator } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
-  import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';

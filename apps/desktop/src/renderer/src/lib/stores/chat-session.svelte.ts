@@ -123,7 +123,10 @@ export class ChatSession {
    */
   #foreground: boolean;
   /** Failed-run banners closed in this instance. Survives `open` of another id. */
+  // Plain Set: bookkeeping, not UI state.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #dismissedFailedRunIds = new Set<string>();
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #continuedSetupRunIds = new Set<string>();
   /** Conversation id currently counted in `tasks.retain`. */
   #heldConversationId: string | null = null;
