@@ -201,4 +201,24 @@ describe('card chats stay out of the roster', () => {
     })) as { type: string | null };
     expect(kind.type).toBe('card');
   });
+
+  it('does not count an open card chat in the bot deletion preview', () => {
+    conversations().ensureCardConversation({
+      projectId,
+      todoId,
+      botId: leadId,
+      title: 'Ship the notes',
+    });
+    conversations().openDirect(leadId);
+    const openCards = conversations()
+      .cardConversations({ botId: leadId })
+      .filter((row) => !row.readOnly);
+    expect(openCards.length).toBeGreaterThan(0);
+    const directOpen = conversations()
+      .listDirectByBot(leadId)
+      .filter((row) => !row.readOnly).length;
+    expect(stack.core.services.domain!.lifecycle.deletionPreview(leadId).conversations).toBe(
+      directOpen,
+    );
+  });
 });
