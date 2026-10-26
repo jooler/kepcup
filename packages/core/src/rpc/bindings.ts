@@ -312,6 +312,7 @@ import { bindAppsMethods } from './apps-bindings.js';
 import { bindMailMethods } from './mail-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
+import { bindPluginsMethods } from './plugins-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './files-preview-bindings.js';
@@ -1548,6 +1549,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.
     ...bindMcpbMethods(services),
+    // D104 P0a-2: plugins.list / inspect / install / setEnabled / uninstall.
+    ...bindPluginsMethods(services),
     // D73 P3 §7.5: apps.ui.open / close / callTool / openLink (MCP Apps rendering).
     ...bindAppsUiMethods(services).app,
     ...bindWidgetsUiMethods(services).app,

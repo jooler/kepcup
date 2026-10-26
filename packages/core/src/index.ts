@@ -21,6 +21,8 @@ export { withRemoteSource } from './remote/audit.js';
 export { FrameCodec, RelayProtocolError } from './remote/codec.js';
 export type { SessionKeys } from './remote/codec.js';
 export type { SkillsService } from './skills/registry.js';
+export type { PluginRegistry } from './plugins/registry.js';
+export { PluginStore } from './plugins/store.js';
 export { sanitizeSkillName } from './skills/parse.js';
 export type { ScheduleService } from './schedule/service.js';
 export type { TodoService } from './workbench/todo-service.js';
