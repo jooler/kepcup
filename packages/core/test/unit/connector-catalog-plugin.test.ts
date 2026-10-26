@@ -36,7 +36,12 @@ function entry(slug: string, options: { name?: string; icon?: string } = {}) {
         icon: options.icon ?? `${slug}.svg`,
         category: 'productivity',
         tier: 'builtin',
-        auth: { kind: 'oauth', registration: 'auto', clientRef: null, scopes: { default: [], write: [] } },
+        auth: {
+          kind: 'oauth',
+          registration: 'auto',
+          clientRef: null,
+          scopes: { default: [], write: [] },
+        },
         toolPolicy: {},
         skills: [],
         ui: false,
@@ -58,19 +63,19 @@ function pluginEntry(
   };
 }
 
-function makeCatalog(options: {
-  bundled?: ReturnType<typeof entry>[];
-  local?: ReturnType<typeof entry>[];
-  remote?: ReturnType<typeof entry>[];
-} = {}): ConnectorCatalog {
+function makeCatalog(
+  options: {
+    bundled?: ReturnType<typeof entry>[];
+    local?: ReturnType<typeof entry>[];
+    remote?: ReturnType<typeof entry>[];
+  } = {},
+): ConnectorCatalog {
   return new ConnectorCatalog({
     env: {},
     logger: noopLogger,
     source: { entries: options.bundled ?? [], iconsDir: null },
     approvedGates: null,
-    ...(options.local !== undefined
-      ? { local: options.local }
-      : {}),
+    ...(options.local !== undefined ? { local: options.local } : {}),
     ...(options.remote !== undefined
       ? { directory: { revision: () => 1, entries: () => options.remote! } }
       : {}),
@@ -138,11 +143,7 @@ describe('buildConnectorCatalog with plugin entries', () => {
       source: { entries: [], iconsDir: null },
       approvedGates: null,
       plugin: [pluginEntry('firstplug'), pluginEntry('nameholder', { name: 'local.holder/mcp' })],
-      local: [
-        entry('firstplug'),
-        entry('loser', { name: 'local.holder/mcp' }),
-        entry('winslocal'),
-      ],
+      local: [entry('firstplug'), entry('loser', { name: 'local.holder/mcp' }), entry('winslocal')],
     });
     expect(built.entries.map((item) => connectorMetaOf(item).slug)).toEqual([
       'firstplug',

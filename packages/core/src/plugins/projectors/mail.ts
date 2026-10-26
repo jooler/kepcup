@@ -40,7 +40,7 @@ export class MailProjector implements PluginProjector<PluginConsentMail> {
         continue;
       }
       seen.add(template.id);
-      if (this.#builtinIds.has(template.id as never)) {
+      if (this.#builtinIds.has(template.id)) {
         conflicts.push({
           kind: 'mail',
           ref: template.id,

@@ -71,21 +71,24 @@ export function rewriteConnectorEntry(
   const parsed = connectorCatalogEntrySchema.parse(raw);
   const meta = connectorMetaOf(parsed);
   if (parsed.packages.length > 0) {
-    throw new AppError('PLUGIN_INVALID', `连接器 ${meta.slug} 不允许携带 packages（本地执行只走 MCPB）`);
+    throw new AppError(
+      'PLUGIN_INVALID',
+      `连接器 ${meta.slug} 不允许携带 packages（本地执行只走 MCPB）`,
+    );
   }
   if (parsed.remotes.length === 0) {
     throw new AppError('PLUGIN_INVALID', `连接器 ${meta.slug} 没有可用的远程端点`);
   }
   for (const remote of parsed.remotes) {
     if (!isSafeDirectoryRemoteUrl(remote.url)) {
-      throw new AppError(
-        'PLUGIN_INVALID',
-        `连接器 ${meta.slug} 的端点不是可接受的公网 https 地址`,
-      );
+      throw new AppError('PLUGIN_INVALID', `连接器 ${meta.slug} 的端点不是可接受的公网 https 地址`);
     }
   }
   if (parsed.name.startsWith(LOCAL_CONNECTOR_NAME_PREFIX)) {
-    throw new AppError('PLUGIN_INVALID', `连接器名称不能以保留前缀 ${LOCAL_CONNECTOR_NAME_PREFIX} 开头`);
+    throw new AppError(
+      'PLUGIN_INVALID',
+      `连接器名称不能以保留前缀 ${LOCAL_CONNECTOR_NAME_PREFIX} 开头`,
+    );
   }
   const toolPolicy = Object.fromEntries(
     Object.entries(meta.toolPolicy).filter(([, policy]) => policy.risk === 'destructive'),
@@ -197,7 +200,9 @@ export class ConnectorsProjector
 
   // --- PluginProjector ---------------------------------------------------------
 
-  async inspect(ctx: PluginProjectionContext): Promise<ProjectorInspection<PluginConsentConnector>> {
+  async inspect(
+    ctx: PluginProjectionContext,
+  ): Promise<ProjectorInspection<PluginConsentConnector>> {
     const items: PluginConsentConnector[] = [];
     const conflicts: PluginConflict[] = [];
     const blockers: string[] = [];
@@ -212,9 +217,7 @@ export class ConnectorsProjector
         iconPath = loaded.iconPath;
       } catch (error) {
         blockers.push(
-          error instanceof AppError
-            ? error.message
-            : `连接器贡献 ${contribution.file} 无法解析`,
+          error instanceof AppError ? error.message : `连接器贡献 ${contribution.file} 无法解析`,
         );
         continue;
       }
@@ -226,10 +229,12 @@ export class ConnectorsProjector
       }
       // Conflicts against the FULL current catalog (bundled / directory / local / other
       // plugins) — this plugin is not installed yet, so it cannot collide with itself.
-      const existing = this.#deps.catalog.list().find(
-        (candidate) =>
-          connectorMetaOf(candidate).slug === meta.slug || candidate.name === entry.name,
-      );
+      const existing = this.#deps.catalog
+        .list()
+        .find(
+          (candidate) =>
+            connectorMetaOf(candidate).slug === meta.slug || candidate.name === entry.name,
+        );
       if (existing !== undefined) {
         const existingSlug = connectorMetaOf(existing).slug;
         conflicts.push({
@@ -268,7 +273,11 @@ export class ConnectorsProjector
     }
     const state = this.#byPlugin.get(ctx.plugin.id);
     if (state === undefined) {
-      this.#byPlugin.set(ctx.plugin.id, { pluginId: ctx.plugin.id, entries: loaded, disabled: false });
+      this.#byPlugin.set(ctx.plugin.id, {
+        pluginId: ctx.plugin.id,
+        entries: loaded,
+        disabled: false,
+      });
     } else {
       state.entries = loaded;
       state.disabled = false;
@@ -330,7 +339,11 @@ export class ConnectorsProjector
         await this.#sweepConnections(slug);
       } catch (error) {
         this.#deps.logger.warn(
-          { plugin: plugin.id, slug, error: error instanceof Error ? error.message : String(error) },
+          {
+            plugin: plugin.id,
+            slug,
+            error: error instanceof Error ? error.message : String(error),
+          },
           'plugin connector uninstall: disconnect failed',
         );
       }

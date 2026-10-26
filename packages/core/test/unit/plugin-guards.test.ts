@@ -80,7 +80,14 @@ describe('assertPluginServersIntact', () => {
       [{ headers: { A: 'b' } }, /\bheaders\b/],
       [{ auth: 'oauth' }, /\bauth\b/],
       [
-        { source: { kind: 'plugin', pluginId: 'io.github.tester/other', version: '1.0.0', key: 'db' } },
+        {
+          source: {
+            kind: 'plugin',
+            pluginId: 'io.github.tester/other',
+            version: '1.0.0',
+            key: 'db',
+          },
+        },
         /\bsource\b/,
       ],
       [{ tier: undefined }, /\btier\b/],
@@ -111,18 +118,33 @@ describe('assertPluginServersIntact', () => {
 
   it('伪造 plugin 来源 server（新增）被拒', () => {
     expectManaged(
-      () => assertPluginServersIntact(before, [pluginServer(), plainServer(), pluginServer({ id: 'plg_forged0001', source: { kind: 'plugin', pluginId: 'io.github.tester/x', version: '1.0.0', key: 'y' } })]),
+      () =>
+        assertPluginServersIntact(before, [
+          pluginServer(),
+          plainServer(),
+          pluginServer({
+            id: 'plg_forged0001',
+            source: { kind: 'plugin', pluginId: 'io.github.tester/x', version: '1.0.0', key: 'y' },
+          }),
+        ]),
       /不能手工创建插件来源的 MCP 服务器/,
     );
     // 非插件来源的新增不受影响
     expect(() =>
-      assertPluginServersIntact(before, [pluginServer(), plainServer(), plainServer({ id: 'custom_2' })]),
+      assertPluginServersIntact(before, [
+        pluginServer(),
+        plainServer(),
+        plainServer({ id: 'custom_2' }),
+      ]),
     ).not.toThrow();
   });
 
   it('普通 server 的改动完全不受守卫影响', () => {
     expect(() =>
-      assertPluginServersIntact(before, [pluginServer(), plainServer({ url: 'https://other.example.com/mcp', name: '改名' })]),
+      assertPluginServersIntact(before, [
+        pluginServer(),
+        plainServer({ url: 'https://other.example.com/mcp', name: '改名' }),
+      ]),
     ).not.toThrow();
     // 新增非插件 server + 删除非插件 server 都放行
     expect(() => assertPluginServersIntact(before, [pluginServer()])).not.toThrow();

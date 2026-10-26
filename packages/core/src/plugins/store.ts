@@ -83,8 +83,7 @@ export class PluginStore {
 
   get(id: string): PluginRow | null {
     const row = this.#db.prepare('select * from plugins where id = ?').get(id) as
-      | PluginDbRow
-      | undefined;
+      PluginDbRow | undefined;
     return row === undefined ? null : pluginFromRow(row);
   }
 
@@ -145,9 +144,7 @@ export class PluginStore {
       values.push(patch.updatedAt);
     }
     if (columns.length === 0) return;
-    this.#db
-      .prepare(`update plugins set ${columns.join(', ')} where id = ?`)
-      .run(...values, id);
+    this.#db.prepare(`update plugins set ${columns.join(', ')} where id = ?`).run(...values, id);
   }
 
   /** Deletes the plugin row; `plugin_items` rows go with it (FK ON DELETE CASCADE). */
@@ -158,9 +155,7 @@ export class PluginStore {
   /** Every ledger item of one plugin (all kinds, insertion order). */
   items(pluginId: string): Array<{ kind: PluginItemKind; ref: string }> {
     const rows = this.#db
-      .prepare(
-        'select kind, ref from plugin_items where plugin_id = ? order by rowid asc',
-      )
+      .prepare('select kind, ref from plugin_items where plugin_id = ? order by rowid asc')
       .all(pluginId) as ItemDbRow[];
     return rows.map((row) => ({ kind: row.kind as PluginItemKind, ref: row.ref }));
   }
@@ -168,9 +163,7 @@ export class PluginStore {
   /** Ledger refs of one kind, in insertion order (rowid). */
   refs(pluginId: string, kind: PluginItemKind): string[] {
     const rows = this.#db
-      .prepare(
-        'select ref from plugin_items where plugin_id = ? and kind = ? order by rowid asc',
-      )
+      .prepare('select ref from plugin_items where plugin_id = ? and kind = ? order by rowid asc')
       .all(pluginId, kind) as Array<{ ref: string }>;
     return rows.map((row) => row.ref);
   }
@@ -178,9 +171,7 @@ export class PluginStore {
   /** Registers a projected item BEFORE it is written; idempotent. */
   addItem(pluginId: string, kind: PluginItemKind, ref: string): void {
     this.#db
-      .prepare(
-        'insert or ignore into plugin_items (plugin_id, kind, ref) values (?, ?, ?)',
-      )
+      .prepare('insert or ignore into plugin_items (plugin_id, kind, ref) values (?, ?, ?)')
       .run(pluginId, kind, ref);
   }
 

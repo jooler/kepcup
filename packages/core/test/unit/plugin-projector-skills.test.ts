@@ -2,11 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import {
-  pluginManifestSchema,
-  type PluginManifest,
-  type PluginItemKind,
-} from '@kepcup/shared';
+import { pluginManifestSchema, type PluginManifest, type PluginItemKind } from '@kepcup/shared';
 
 import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
@@ -49,7 +45,10 @@ class MemLedger implements PluginLedger {
     this.#items.set(kind, list);
   }
   remove(kind: PluginItemKind, ref: string): void {
-    this.#items.set(kind, (this.#items.get(kind) ?? []).filter((entry) => entry !== ref));
+    this.#items.set(
+      kind,
+      (this.#items.get(kind) ?? []).filter((entry) => entry !== ref),
+    );
   }
   list(kind: PluginItemKind): string[] {
     return [...(this.#items.get(kind) ?? [])];
@@ -91,7 +90,9 @@ function makeRig(depAvailable?: (dep: string) => boolean): Rig {
   return { skills, db, projector };
 }
 
-function makeContentDir(entries: Array<{ name: string; description?: string; script?: string }>): string {
+function makeContentDir(
+  entries: Array<{ name: string; description?: string; script?: string }>,
+): string {
   const dir = path.join(root, `content-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(dir, { recursive: true });
   for (const entry of entries) {
@@ -119,23 +120,36 @@ function manifestOf(dirs: string[]): PluginManifest {
   });
 }
 
-const identity: PluginIdentity = { id: 'io.github.tester/skills', version: '1.0.0', origin: 'local', tier: 'developer' };
+const identity: PluginIdentity = {
+  id: 'io.github.tester/skills',
+  version: '1.0.0',
+  origin: 'local',
+  tier: 'developer',
+};
 
-function ctxOf(rig: Rig, contentDir: string, manifest: PluginManifest, ledger: PluginLedger): PluginProjectionContext {
+function ctxOf(
+  rig: Rig,
+  contentDir: string,
+  manifest: PluginManifest,
+  ledger: PluginLedger,
+): PluginProjectionContext {
   return { plugin: identity, manifest, dir: contentDir, userConfig: {}, ledger };
 }
 
 describe('SkillsProjector', () => {
   it('inspect：同名公共技能冲突（任何来源），Bot 私有同名不算；无法解析进 blockers', async () => {
     const rig = makeRig();
-    const contentDir = makeContentDir([
-      { name: 'alpha' },
-      { name: 'beta', script: 'echo hi' },
-    ]);
+    const contentDir = makeContentDir([{ name: 'alpha' }, { name: 'beta', script: 'echo hi' }]);
     // 预置来源的同名公共技能 → 冲突
     rig.skills.installPublic({
       name: 'beta',
-      scan: { compatibility: 'compatible', compatibilityReasons: [], runtimeDeps: [], sandboxDeclaration: null, files: [] } as never,
+      scan: {
+        compatibility: 'compatible',
+        compatibilityReasons: [],
+        runtimeDeps: [],
+        sandboxDeclaration: null,
+        files: [],
+      } as never,
       sourceUrl: 'preset://beta',
       commitOid: '9.9.9',
       contentHash: `hash-beta-${Math.random()}`,
@@ -149,21 +163,28 @@ describe('SkillsProjector', () => {
       .run();
 
     const ledger = new MemLedger();
-    const result = await rig.projector.inspect(ctxOf(rig, contentDir, manifestOf(['alpha', 'beta']), ledger));
+    const result = await rig.projector.inspect(
+      ctxOf(rig, contentDir, manifestOf(['alpha', 'beta']), ledger),
+    );
     expect(result.items.map((item) => [item.name, item.compatible])).toEqual([
       ['alpha', true],
       ['beta', true],
     ]);
     expect(result.items[1]!.runtimeDeps).toEqual(['bash']); // echo 脚本经 shell 运行
-    expect(result.conflicts).toEqual([{ kind: 'skill', ref: 'beta', withWhat: '已有同名公共技能' }]);
+    expect(result.conflicts).toEqual([
+      { kind: 'skill', ref: 'beta', withWhat: '已有同名公共技能' },
+    ]);
     expect(result.blockers).toEqual([]);
   });
 
   it('inspect：SKILL.md 解析失败 → blocker；运行时依赖出现在条目里', async () => {
     const rig = makeRig(() => true);
-    const contentDir = makeContentDir([{ name: 'good', script: '#!/usr/bin/env python3\nprint(1)' }]);
+    const contentDir = makeContentDir([
+      { name: 'good', script: '#!/usr/bin/env python3\nprint(1)' },
+    ]);
     mkdirSync(path.join(contentDir, 'skills', 'broken'), { recursive: true });
-    writeFileSync(path.join(contentDir, 'skills', 'broken', 'SKILL.md'), 'not-frontmatter');    const manifest = manifestOf(['good', 'broken']);
+    writeFileSync(path.join(contentDir, 'skills', 'broken', 'SKILL.md'), 'not-frontmatter');
+    const manifest = manifestOf(['good', 'broken']);
     const ledger = new MemLedger();
     const result = await rig.projector.inspect(ctxOf(rig, contentDir, manifest, ledger));
     expect(result.blockers).toHaveLength(1);
@@ -193,7 +214,13 @@ describe('SkillsProjector', () => {
     // 另一来源装同名公共技能，并硬塞进账本：unproject 绝不删别人的
     rig.skills.installPublic({
       name: 'gamma',
-      scan: { compatibility: 'compatible', compatibilityReasons: [], runtimeDeps: [], sandboxDeclaration: null, files: [] } as never,
+      scan: {
+        compatibility: 'compatible',
+        compatibilityReasons: [],
+        runtimeDeps: [],
+        sandboxDeclaration: null,
+        files: [],
+      } as never,
       sourceUrl: 'preset://gamma',
       commitOid: '9.9.9',
       contentHash: `hash-gamma-${Math.random()}`,

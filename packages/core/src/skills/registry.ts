@@ -655,6 +655,11 @@ export class SkillsService {
     return this.entryFor(botId, name)!;
   }
 
+  /** 接入「插件管理的公共技能不许单项删除」守卫（`start.ts`，D104）。 */
+  attachPublicUninstallGuard(guard: (name: string) => void): void {
+    this.#publicUninstallGuard = guard;
+  }
+
   /**
    * Removes one reference. Private rows (bot_skills) are per-bot; a name with
    * no private row but a public_skills row is a PUBLIC skill — uninstalling
@@ -665,11 +670,6 @@ export class SkillsService {
    * no history — its `_drafts/{name}` directory goes with the row so an RPC
    * uninstall leaves nothing dangling (BR-P08-011).
    */
-  /** 接入「插件管理的公共技能不许单项删除」守卫（`start.ts`，D104）。 */
-  attachPublicUninstallGuard(guard: (name: string) => void): void {
-    this.#publicUninstallGuard = guard;
-  }
-
   uninstall(botId: string, name: string): SkillEntry[] {
     const row = this.botSkillRow(botId, name);
     if (row === null) {

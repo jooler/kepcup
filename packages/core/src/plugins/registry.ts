@@ -136,7 +136,11 @@ export class PluginRegistry {
           await projector.activate(ctx);
         } catch (error) {
           this.#deps.logger.warn(
-            { plugin: row.id, kind: projector.kind, error: error instanceof Error ? error.message : String(error) },
+            {
+              plugin: row.id,
+              kind: projector.kind,
+              error: error instanceof Error ? error.message : String(error),
+            },
             'plugin activate failed',
           );
         }
@@ -205,7 +209,10 @@ export class PluginRegistry {
       // Reserved namespaces are rejected for marketplace / local installs.
       assertInstallablePluginId(id);
       if (this.#deps.store.get(id) !== null) {
-        throw new AppError('PLUGIN_CONFLICT', `已安装同 id 插件（v${this.#deps.store.get(id)!.version}），请先卸载（更新流在后续版本提供）`);
+        throw new AppError(
+          'PLUGIN_CONFLICT',
+          `已安装同 id 插件（v${this.#deps.store.get(id)!.version}），请先卸载（更新流在后续版本提供）`,
+        );
       }
 
       const inspection = await this.#inspectStagedOutput(staged);
@@ -223,7 +230,9 @@ export class PluginRegistry {
       // user_config pre-validation BEFORE any persistent write (keeps the MCPB error code).
       for (const contribution of manifest.contributions.mcp) {
         if (contribution.kind !== 'mcpb') continue;
-        const item = inspection.mcp.find((entry) => entry.kind === 'mcpb' && entry.id === contribution.id);
+        const item = inspection.mcp.find(
+          (entry) => entry.kind === 'mcpb' && entry.id === contribution.id,
+        );
         if (item === undefined || item.kind !== 'mcpb') continue;
         validateUserConfig(item.userConfigFields, input.userConfig[contribution.id] ?? {});
       }
@@ -267,7 +276,10 @@ export class PluginRegistry {
           { plugin: id, error: error instanceof Error ? error.message : String(error) },
           'plugin install projection failed',
         );
-        throw new AppError('INTERNAL', `插件安装失败：${error instanceof Error ? error.message : String(error)}`);
+        throw new AppError(
+          'INTERNAL',
+          `插件安装失败：${error instanceof Error ? error.message : String(error)}`,
+        );
       }
 
       this.#deps.store.update(id, { state: 'installed', updatedAt: this.#deps.clock.now() });
@@ -398,7 +410,10 @@ export class PluginRegistry {
     if (options.throwOnError && errors.length > 0) {
       const error = errors[0];
       if (error instanceof AppError) throw error;
-      throw new AppError('INTERNAL', `插件卸载未完全成功：${error instanceof Error ? error.message : String(error)}`);
+      throw new AppError(
+        'INTERNAL',
+        `插件卸载未完全成功：${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

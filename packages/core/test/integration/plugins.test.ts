@@ -50,7 +50,11 @@ afterAll(() => {
 const stacks: TestStack[] = [];
 
 async function setup(
-  options: { runtimes?: boolean; home?: string; keystore?: ReturnType<typeof createMemoryKeystore> } = {},
+  options: {
+    runtimes?: boolean;
+    home?: string;
+    keystore?: ReturnType<typeof createMemoryKeystore>;
+  } = {},
 ): Promise<TestStack> {
   const stack = await createTestStack({
     ...(options.runtimes === false
@@ -93,7 +97,10 @@ const installInput = (
   userConfig,
 });
 
-function publicSkills(core: TestStack['core'], botId: string): Promise<Array<{ name: string; scope: string }>> {
+function publicSkills(
+  core: TestStack['core'],
+  botId: string,
+): Promise<Array<{ name: string; scope: string }>> {
   return core.rpc
     .call('skills.list', { botId })
     .then((result) =>
@@ -156,12 +163,14 @@ describe('plugins integration (P0a-2)', () => {
       source: { kind: 'plugin', pluginId: PLUGIN_ID, key: MCPB_KEY },
       env: { API_KEY: 'secret:env:api_key' },
     });
-    expect(servers.find((server) => server.id === pluginServerId(PLUGIN_ID, 'docs'))).toMatchObject({
-      transport: 'http',
-      url: 'https://mcp.docs.test/mcp',
-      auth: 'none',
-      tier: 'developer',
-    });
+    expect(servers.find((server) => server.id === pluginServerId(PLUGIN_ID, 'docs'))).toMatchObject(
+      {
+        transport: 'http',
+        url: 'https://mcp.docs.test/mcp',
+        auth: 'none',
+        tier: 'developer',
+      },
+    );
 
     // 连接器：目录里出现，origin plugin、tier developer
     const catalog = (await core.rpc.call('apps.catalog.list', undefined)) as {
@@ -209,7 +218,10 @@ describe('plugins integration (P0a-2)', () => {
       const fileInspect = (await fileStack.core.rpc.call('plugins.inspect', {
         source: { kind: 'file', path: fileFixture.path },
       })) as PluginInspectOutput;
-      const fromFile = (await fileStack.core.rpc.call('plugins.install', installInput(fileFixture))) as {
+      const fromFile = (await fileStack.core.rpc.call(
+        'plugins.install',
+        installInput(fileFixture),
+      )) as {
         plugin: PluginSummary;
       };
       const fromDir = (await dirStack.core.rpc.call('plugins.install', {
@@ -240,10 +252,14 @@ describe('plugins integration (P0a-2)', () => {
       core.rpc.call('plugins.install', { ...installInput(fixture), sha256: 'a'.repeat(64) }),
     ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
     expect(core.services.domain!.settings.get().mcpServers).toHaveLength(0);
-    expect((await core.rpc.call('plugins.list', undefined)) as { plugins: unknown[] }).toMatchObject({
+    expect(
+      (await core.rpc.call('plugins.list', undefined)) as { plugins: unknown[] },
+    ).toMatchObject({
       plugins: [],
     });
-    expect(existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0'))).toBe(false);
+    expect(
+      existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0')),
+    ).toBe(false);
   });
 
   it('冲突：同名公共技能 / 同 slug 连接器 → PLUGIN_CONFLICT 且无残留', async () => {
@@ -251,10 +267,19 @@ describe('plugins integration (P0a-2)', () => {
     // 预装一个同名公共技能（预置来源）
     const preDir = path.join(root, `pre-${Math.random().toString(36).slice(2, 8)}`);
     mkdirSync(path.join(preDir, 'plg-alpha'), { recursive: true });
-    writeFileSync(path.join(preDir, 'plg-alpha', 'SKILL.md'), '---\nname: plg-alpha\ndescription: 预装\n---\n预装内容');
+    writeFileSync(
+      path.join(preDir, 'plg-alpha', 'SKILL.md'),
+      '---\nname: plg-alpha\ndescription: 预装\n---\n预装内容',
+    );
     core.services.skills!.installPublic({
       name: 'plg-alpha',
-      scan: { compatibility: 'compatible', compatibilityReasons: [], runtimeDeps: [], sandboxDeclaration: null, files: [] } as never,
+      scan: {
+        compatibility: 'compatible',
+        compatibilityReasons: [],
+        runtimeDeps: [],
+        sandboxDeclaration: null,
+        files: [],
+      } as never,
       sourceUrl: 'preset://plg-alpha',
       commitOid: '9.9.9',
       contentHash: hashDirectory(path.join(preDir, 'plg-alpha')),
@@ -264,7 +289,11 @@ describe('plugins integration (P0a-2)', () => {
     const inspect = (await core.rpc.call('plugins.inspect', {
       source: { kind: 'file', path: fixture.path },
     })) as PluginInspectOutput;
-    expect(inspect.conflicts.some((conflict) => conflict.kind === 'skill' && conflict.ref === 'plg-alpha')).toBe(true);
+    expect(
+      inspect.conflicts.some(
+        (conflict) => conflict.kind === 'skill' && conflict.ref === 'plg-alpha',
+      ),
+    ).toBe(true);
     await expect(core.rpc.call('plugins.install', installInput(fixture))).rejects.toMatchObject({
       code: 'PLUGIN_CONFLICT',
     });
@@ -281,9 +310,16 @@ describe('plugins integration (P0a-2)', () => {
     const inspectB = (await core.rpc.call('plugins.inspect', {
       source: { kind: 'file', path: fixtureB.path },
     })) as PluginInspectOutput;
-    expect(inspectB.conflicts.some((conflict) => conflict.kind === 'connector' && conflict.ref === 'plgconn')).toBe(true);
+    expect(
+      inspectB.conflicts.some(
+        (conflict) => conflict.kind === 'connector' && conflict.ref === 'plgconn',
+      ),
+    ).toBe(true);
     await expect(
-      core.rpc.call('plugins.install', { ...installInput(fixtureB), source: { kind: 'file', path: fixtureB.path } }),
+      core.rpc.call('plugins.install', {
+        ...installInput(fixtureB),
+        source: { kind: 'file', path: fixtureB.path },
+      }),
     ).rejects.toMatchObject({ code: 'PLUGIN_CONFLICT' });
   }, 90_000);
 
@@ -309,7 +345,9 @@ describe('plugins integration (P0a-2)', () => {
     expect(
       (await core.rpc.call('plugins.list', undefined)) as { plugins: unknown[] },
     ).toMatchObject({ plugins: [] });
-    expect(existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0'))).toBe(false);
+    expect(
+      existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0')),
+    ).toBe(false);
   });
 
   it('启停：技能摘除 / server 停用 / 连接器隐藏，恢复后全部回来', async () => {
@@ -320,15 +358,21 @@ describe('plugins integration (P0a-2)', () => {
     const id = PLUGIN_ID;
 
     await core.rpc.call('plugins.setEnabled', { id, enabled: false });
-    expect((await publicSkills(core, bot.id))).toEqual([]);
+    expect(await publicSkills(core, bot.id)).toEqual([]);
     const servers = core.services.domain!.settings.get().mcpServers;
     expect(servers.filter((server) => server.source?.kind === 'plugin')).toHaveLength(2);
-    expect(servers.filter((server) => server.source?.kind === 'plugin').every((server) => server.enabled === false)).toBe(true);
+    expect(
+      servers
+        .filter((server) => server.source?.kind === 'plugin')
+        .every((server) => server.enabled === false),
+    ).toBe(true);
     const catalogAfterOff = (await core.rpc.call('apps.catalog.list', undefined)) as {
       entries: Array<{ connectorId: string }>;
     };
     expect(catalogAfterOff.entries.some((item) => item.connectorId === 'plgconn')).toBe(false);
-    expect(((await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] }).plugins[0]).toMatchObject({
+    expect(
+      ((await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] }).plugins[0],
+    ).toMatchObject({
       enabled: false,
       counts: { skills: 2, connectors: 1, mcp: 2, mail: 0 },
     });
@@ -339,9 +383,10 @@ describe('plugins integration (P0a-2)', () => {
       'plg-beta',
     ]);
     expect(
-      core.services.domain!.settings.get().mcpServers.filter((server) => server.source?.kind === 'plugin').every(
-        (server) => server.enabled === true,
-      ),
+      core.services
+        .domain!.settings.get()
+        .mcpServers.filter((server) => server.source?.kind === 'plugin')
+        .every((server) => server.enabled === true),
     ).toBe(true);
     const catalogAfterOn = (await core.rpc.call('apps.catalog.list', undefined)) as {
       entries: Array<{ connectorId: string }>;
@@ -359,20 +404,31 @@ describe('plugins integration (P0a-2)', () => {
     expect(core.services.domain!.secrets.getValue(`mcp:${stdioId}:env:api_key`)).toBe('sk-e2e');
 
     // 连接行：直接经 AppConnectionStore 造一行（连接器目录型语义：插件不代连，这里只验证级联删）
-    const connection = core.services.apps!.store.create({ connectorId: 'plgconn', label: '级联用连接' });
+    const connection = core.services.apps!.store.create({
+      connectorId: 'plgconn',
+      label: '级联用连接',
+    });
     expect(core.services.apps!.store.listByConnector('plgconn')).toHaveLength(1);
 
     await core.rpc.call('plugins.uninstall', { id: PLUGIN_ID });
     const bot = await makeBot(core, '小卸载');
     expect(await publicSkills(core, bot.id)).toEqual([]);
-    expect(core.services.domain!.settings.get().mcpServers.filter((server) => server.source?.kind === 'plugin')).toHaveLength(0);
+    expect(
+      core.services
+        .domain!.settings.get()
+        .mcpServers.filter((server) => server.source?.kind === 'plugin'),
+    ).toHaveLength(0);
     expect(core.services.domain!.secrets.getValue(`mcp:${stdioId}:env:api_key`)).toBeNull();
     expect(core.services.apps!.store.get(connection.id)).toBeNull();
     expect(existsSync(unpacked)).toBe(false);
-    expect(existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0'))).toBe(false);
+    expect(
+      existsSync(path.join(core.services.paths.pluginsDir, 'io.github.tester', 'e2e@1.0.0')),
+    ).toBe(false);
     expect(core.services.plugins!.ownerOf('skill', 'plg-alpha')).toBeNull();
     expect(core.services.plugins!.ownerOf('mcp', stdioId)).toBeNull();
-    expect(((await core.rpc.call('plugins.list', undefined)) as { plugins: unknown[] })).toMatchObject({ plugins: [] });
+    expect(
+      (await core.rpc.call('plugins.list', undefined)) as { plugins: unknown[] },
+    ).toMatchObject({ plugins: [] });
   }, 90_000);
 
   it('守卫：插件管理项单项删除被拒，非管理操作放行', async () => {
@@ -390,7 +446,9 @@ describe('plugins integration (P0a-2)', () => {
     // settings.update：删除 / 改 url → PLUGIN_MANAGED；改 enabled / toolPolicies → 放行
     const servers = () => core.services.domain!.settings.get().mcpServers;
     await expect(
-      core.rpc.call('settings.update', { mcpServers: servers().filter((server) => server.id !== stdioId) }),
+      core.rpc.call('settings.update', {
+        mcpServers: servers().filter((server) => server.id !== stdioId),
+      }),
     ).rejects.toMatchObject({ code: 'PLUGIN_MANAGED' });
     await expect(
       core.rpc.call('settings.update', {
@@ -402,14 +460,18 @@ describe('plugins integration (P0a-2)', () => {
     await expect(
       core.rpc.call('settings.update', {
         mcpServers: servers().map((server) =>
-          server.id === httpId ? { ...server, enabled: false, toolPolicies: { read: { approval: 'ask' } } } : server,
+          server.id === httpId
+            ? { ...server, enabled: false, toolPolicies: { read: { approval: 'ask' } } }
+            : server,
         ),
       }),
     ).resolves.toBeDefined();
 
     // skills.uninstall 对插件技能 → PLUGIN_MANAGED
     const bot = await makeBot(core, '小守卫');
-    await expect(core.rpc.call('skills.uninstall', { botId: bot.id, name: 'plg-alpha' })).rejects.toMatchObject({
+    await expect(
+      core.rpc.call('skills.uninstall', { botId: bot.id, name: 'plg-alpha' }),
+    ).rejects.toMatchObject({
       code: 'PLUGIN_MANAGED',
     });
 
@@ -420,14 +482,23 @@ describe('plugins integration (P0a-2)', () => {
       botId: bot.id,
       conversationId: 'conv_priv',
       name: 'plg-alpha',
-      scan: { compatibility: 'compatible', compatibilityReasons: [], runtimeDeps: [], sandboxDeclaration: null, files: [] } as never,
+      scan: {
+        compatibility: 'compatible',
+        compatibilityReasons: [],
+        runtimeDeps: [],
+        sandboxDeclaration: null,
+        files: [],
+      } as never,
       sourceUrl: 'git+https://example.com/plg-alpha.git',
       commitOid: '1.0.0',
       contentHash: hashDirectory(privateSkillDir),
       stagingDir: privateSkillDir,
       reuseExisting: true,
     });
-    const afterPrivate = await core.rpc.call('skills.uninstall', { botId: bot.id, name: 'plg-alpha' });
+    const afterPrivate = await core.rpc.call('skills.uninstall', {
+      botId: bot.id,
+      name: 'plg-alpha',
+    });
     expect(afterPrivate).toBeDefined();
     // 公共版本还在（私有卸载不影响）
     expect((await publicSkills(core, bot.id)).map((skill) => skill.name)).toContain('plg-alpha');
@@ -447,7 +518,9 @@ describe('plugins integration (P0a-2)', () => {
       ),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     // 同一来源在本地端点上正常
-    const local = (await inspect.handle({ source: { kind: 'file', path: fixture.path } })) as PluginInspectOutput;
+    const local = (await inspect.handle({
+      source: { kind: 'file', path: fixture.path },
+    })) as PluginInspectOutput;
     expect(local.installable).toBe(true);
   });
 
@@ -460,15 +533,21 @@ describe('plugins integration (P0a-2)', () => {
     await first.cleanup();
 
     const second = await setup({ home, keystore });
-    const list = (await second.core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] };
+    const list = (await second.core.rpc.call('plugins.list', undefined)) as {
+      plugins: PluginSummary[];
+    };
     expect(list.plugins).toHaveLength(1);
     expect(list.plugins[0]).toMatchObject({ id: PLUGIN_ID, state: 'installed', enabled: true });
     const catalog = (await second.core.rpc.call('apps.catalog.list', undefined)) as {
       entries: Array<{ connectorId: string; origin?: string }>;
     };
-    expect(catalog.entries.find((item) => item.connectorId === 'plgconn')).toMatchObject({ origin: 'plugin' });
+    expect(catalog.entries.find((item) => item.connectorId === 'plgconn')).toMatchObject({
+      origin: 'plugin',
+    });
     expect(
-      second.core.services.domain!.settings.get().mcpServers.filter((server) => server.source?.kind === 'plugin'),
+      second.core.services
+        .domain!.settings.get()
+        .mcpServers.filter((server) => server.source?.kind === 'plugin'),
     ).toHaveLength(2);
     const bot = await makeBot(second.core, '小重启');
     expect((await publicSkills(second.core, bot.id)).map((skill) => skill.name).sort()).toEqual([
