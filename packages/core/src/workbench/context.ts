@@ -85,7 +85,10 @@ export interface WorkbenchSectionInput {
  * 标题和备忘内容是用户写的（可能来自网页摘录）：只出现在 `<untrusted>` 里。
  */
 export function buildWorkbenchSection(input: WorkbenchSectionInput): string {
-  const { todos, memos, now, timeZone } = input;
+  const { memos, now, timeZone } = input;
+  // Board cards are not workbench items. `board == null` also keeps fixtures
+  // that predate the field (undefined).
+  const todos = input.todos.filter((todo) => todo.board == null);
   const open = todos.filter((todo) => todo.status !== 'done' && todo.status !== 'cancelled');
   if (open.length === 0 && memos.length === 0) return '';
 

@@ -1,6 +1,6 @@
 {
   "name": "@kepcup/desktop",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -46,6 +46,7 @@
     "mammoth": "1.13.0",
     "mode-watcher": "1.1.0",
     "streamdown-svelte": "3.0.6",
+    "svelte-dnd-action": "0.9.80",
     "svelte-sonner": "1.2.1",
     "tailwind-merge": "3.7.0",
     "tailwind-variants": "3.3.1",

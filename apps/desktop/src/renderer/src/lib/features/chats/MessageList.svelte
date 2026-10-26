@@ -2,7 +2,7 @@
   import type { Message } from '@kepcup/shared';
   import { ChevronDown } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import ProjectTurnStatusLine from './ProjectTurnStatusLine.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
@@ -20,6 +20,8 @@
     bottomInset = 0,
   }: { topInset?: number; bottomInset?: number } = $props();
 
+  const session = getChatSession();
+
   let scrollContainer: HTMLElement | undefined = $state();
   let pinnedToBottom = $state(true);
   let showNewMessages = $state(false);
@@ -28,11 +30,11 @@
   // 会话记录可见性：与沟通 tab 徽标共用 isVisibleInTranscript（WP6 步骤 2），
   // 各条件的语义见该函数的注释。
   const messages = $derived(
-    (chat.current?.messages ?? []).filter((m) => isVisibleInTranscript(m, permissions.approvals)),
+    (session.view?.messages ?? []).filter((m) => isVisibleInTranscript(m, permissions.approvals)),
   );
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。
   const statusSignature = $derived(
-    (chat.current?.activeRuns ?? [])
+    (session.view?.activeRuns ?? [])
       .map((e) => `${e.run.id}:${e.run.status}:${e.muted ? 1 : 0}:${e.toolName}:${e.progress}`)
       .join('|'),
   );
@@ -56,7 +58,7 @@
       (message.content.event === 'bot_setup_question' ||
         message.content.event === 'bot_setup_path_question')
     ) {
-      return `bot:${chat.current?.conversation.directBotId ?? ''}`;
+      return `bot:${session.view?.conversation.directBotId ?? ''}`;
     }
     return null;
   }
@@ -65,10 +67,10 @@
   // D75 §6.3: turns keep their own (short) status line; tasks share one line.
   // Only real turns — reflection / summary / subagent must not show as「请稍等」.
   const turnEntries = $derived(
-    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'turn'),
+    (session.view?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'turn'),
   );
   const taskEntries = $derived(
-    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'task'),
+    (session.view?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'task'),
   );
 
   // New message handling: follow when pinned, otherwise surface a hint.
@@ -83,7 +85,7 @@
     } else {
       showNewMessages = true;
     }
-    void chat.markRead();
+    void session.markRead();
   });
 
   // 输入坞高度变化（多行输入）时，若已贴底则保持贴底。
@@ -113,7 +115,7 @@
     pinnedToBottom = distance < 40;
     if (pinnedToBottom) {
       showNewMessages = false;
-      void chat.markRead();
+      void session.markRead();
     } else if (wasPinned && distance > 40) {
       showNewMessages = true;
     }
@@ -128,7 +130,7 @@
   // Memory evidence jump: scroll to the highlighted message once it is
   // rendered, then clear the highlight after a short flash.
   $effect(() => {
-    const id = chat.highlightMessageId;
+    const id = session.highlightMessageId;
     if (!id || !messages.some((message) => message.id === id)) return;
     queueMicrotask(() => {
       scrollContainer
@@ -136,7 +138,7 @@
         ?.scrollIntoView({ block: 'center' });
     });
     const timer = setTimeout(() => {
-      if (chat.highlightMessageId === id) chat.highlightMessageId = null;
+      if (session.highlightMessageId === id) session.highlightMessageId = null;
     }, 4000);
     return () => clearTimeout(timer);
   });
@@ -151,14 +153,14 @@
     style="padding-top: {topInset}px; padding-bottom: {bottomInset + 12}px;"
     data-testid="message-list"
   >
-    {#if chat.current?.hasEarlier}
+    {#if session.view?.hasEarlier}
       <button
         type="button"
         class="mx-auto mb-2 rounded-md border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
-        onclick={() => void chat.loadEarlier()}
+        onclick={() => void session.loadEarlier()}
         data-testid="load-earlier"
       >
-        {chat.current?.loadingEarlier ? '…' : t('chats.loadEarlier')}
+        {session.view?.loadingEarlier ? '…' : t('chats.loadEarlier')}
       </button>
     {/if}
     <!-- 内容区限宽居中，与输入药丸（max-w-3xl）同轴 -->
@@ -177,9 +179,9 @@
         一条消息会出现的位置；本 run 的消息落库时让位隐藏，下一个工具活动
         再出现（todo/loop-interim-updates.md）。
       -->
-      {#if chat.current}
-        {#if chat.current.conversation.type === 'project'}
-          <ProjectTurnStatusLine conversationId={chat.current.conversation.id} />
+      {#if session.view}
+        {#if session.view.conversation.type === 'project'}
+          <ProjectTurnStatusLine conversationId={session.view.conversation.id} />
         {/if}
         {#each turnEntries as entry (entry.run.id)}
           <RunStatusLine {entry} />

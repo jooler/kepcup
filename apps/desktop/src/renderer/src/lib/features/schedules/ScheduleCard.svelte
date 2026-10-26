@@ -11,6 +11,7 @@
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { Button } from '$lib/components/ui/button';
   import ScheduleReceipt from './ScheduleReceipt.svelte';
 
@@ -21,6 +22,7 @@
    * 时间已过时只留一行说明）。两种都不唤醒 Bot，状态经 message.updated 重绘。
    */
   let { message }: { message: Message } = $props();
+  const session = getChatSession();
 
   const content = $derived(
     message.content as {
@@ -32,7 +34,7 @@
   );
   const isOffer = $derived(content.event === SCHEDULE_OFFER_EVENT);
   const offer = $derived(content.offer ?? null);
-  const isProject = $derived(chat.current?.conversation.type === 'project');
+  const isProject = $derived(session.view?.conversation.type === 'project');
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const ISO = /^\d{4}-\d{2}-\d{2}/;
   const offerWhen = $derived.by(() => {

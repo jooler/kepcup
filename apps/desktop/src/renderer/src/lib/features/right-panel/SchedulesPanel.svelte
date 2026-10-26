@@ -42,6 +42,15 @@
       if (conversationId === undefined || changed === conversationId) void refresh();
     });
   });
+  // A board card's schedule lives on the card conversation. The project
+  // panel hears about it through board.changed.
+  $effect(() => {
+    if (!active || conversationId === undefined) return;
+    const projectId = conversationId;
+    return core.onEvent('board.changed', (payload) => {
+      if ((payload as { projectId?: string }).projectId === projectId) void refresh();
+    });
+  });
 
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 

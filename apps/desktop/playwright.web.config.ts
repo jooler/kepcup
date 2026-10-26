@@ -17,6 +17,8 @@ export default defineConfig({
   reporter: process.env['CI'] ? 'github' : 'list',
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    // 动效统一按「减弱动态效果」跑，断言不等过渡结束。
+    reducedMotion: 'reduce',
   },
   webServer: {
     // --host 定指 127.0.0.1：vite preview 默认绑 localhost（本机解析成 ::1），

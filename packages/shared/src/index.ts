@@ -6,6 +6,8 @@ export * from './domain/conversation-archive.js';
 export * from './domain/message-preview.js';
 export * from './domain/project-title.js';
 export * from './domain/project-modules.js';
+export * from './domain/board.js';
+export * from './board.js';
 export * from './domain/wiki.js';
 export * from './domain/vendors.js';
 export * from './domain/agent-catalog.js';

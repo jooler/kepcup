@@ -14,6 +14,7 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
@@ -96,12 +97,13 @@
   );
   // 头像只在项目组出现：单聊双方都是纯气泡（UI 改版）；项目组里头像即发送者身份
   // （不再渲染名字/时间行）。
-  const isProjectChat = $derived(chat.current?.conversation.type === 'project');
+  const session = getChatSession();
+  const isProjectChat = $derived(session.view?.conversation.type === 'project');
   /** Sender's stored avatar (preset / upload), falling back to initials. */
   const senderBot = $derived(
     message.senderBotId === null
       ? null
-      : (chat.current?.members.find((m) => m.bot.id === message.senderBotId)?.bot ??
+      : (session.view?.members.find((m) => m.bot.id === message.senderBotId)?.bot ??
           contacts.bots.find((b) => b.id === message.senderBotId) ??
           null),
   );
@@ -111,7 +113,7 @@
   /** Quoted message preview (引用回复): resolved from the loaded window. */
   const quoted = $derived(
     message.replyTo !== null
-      ? (chat.current?.messages.find((m) => m.id === message.replyTo) ?? null)
+      ? (session.view?.messages.find((m) => m.id === message.replyTo) ?? null)
       : null,
   );
   const quotedName = $derived(
@@ -166,7 +168,7 @@
   }
 
   function quote(): void {
-    chat.startReply(message);
+    session.startReply(message);
   }
 
   async function copyText(): Promise<void> {
@@ -183,7 +185,7 @@
 
   /** 整条消息钉成便签（与选中文本钉便签同一入口，作用域在便签卡片上切换）。 */
   function pinMessage(): void {
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = session.view?.conversation.id;
     if (conversationId === undefined) return;
     stickies.pin(messageText, conversationId, 'conversation');
   }
@@ -214,14 +216,14 @@
 <div
   class="group flex w-full gap-2 rounded-md pb-1 {isUser
     ? 'flex-row-reverse'
-    : 'flex-row'} {chat.highlightMessageId === message.id
+    : 'flex-row'} {session.highlightMessageId === message.id
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
     : ''}"
   role="group"
   aria-label={isUser ? settingsStore.userDisplayName : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
-  data-highlighted={chat.highlightMessageId === message.id ? 'true' : 'false'}
+  data-highlighted={session.highlightMessageId === message.id ? 'true' : 'false'}
   oncontextmenu={openMenu}
 >
   {#if !isUser && isProjectChat}

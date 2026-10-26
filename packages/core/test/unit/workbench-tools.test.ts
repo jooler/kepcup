@@ -42,6 +42,7 @@ function todo(overrides: Partial<TodoEntry> = {}): TodoEntry {
     leadBotName: null,
     schedule: null,
     lastRun: null,
+    board: null,
     ...overrides,
   };
 }

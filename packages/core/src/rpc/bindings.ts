@@ -228,6 +228,27 @@ import {
   todosUpdateInputSchema,
   todosWriteOutputSchema,
   todosTransitionOutputSchema,
+  boardGetInputSchema,
+  boardGetOutputSchema,
+  boardColumnsCreateInputSchema,
+  boardColumnOutputSchema,
+  boardColumnsUpdateInputSchema,
+  boardColumnsMoveInputSchema,
+  boardColumnsOutputSchema,
+  boardColumnsDeleteInputSchema,
+  boardEmptyOutputSchema,
+  boardCardsCreateInputSchema,
+  boardCardOutputSchema,
+  boardCardsUpdateInputSchema,
+  boardCardsMoveInputSchema,
+  boardCardsMoveOutputSchema,
+  boardCardIdInputSchema,
+  boardSummaryInputSchema,
+  boardSummaryOutputSchema,
+  boardCardsAssignInputSchema,
+  boardCardsScheduleInputSchema,
+  boardCardWarningsOutputSchema,
+  boardCardsConversationOutputSchema,
   memosListInputSchema,
   memosListOutputSchema,
   memosIdInputSchema,
@@ -278,6 +299,7 @@ import type { RemoteHub } from '../remote/hub.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
+import type { BoardService } from '../board/board-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
@@ -1797,6 +1819,113 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
 
+    // --- project board (D103). P1 registers the skeleton methods only.
+    // assign / schedule / start / complete / cancel / reopen / conversation /
+    // summary stay in the shared contract for P2 and are not bound here.
+    'board.get': method(boardGetInputSchema, boardGetOutputSchema, async (input) =>
+      requireBoard(services).get(input.projectId, input.seedTitles, 'user'),
+    ),
+    'board.columns.create': method(
+      boardColumnsCreateInputSchema,
+      boardColumnOutputSchema,
+      async (input) => ({
+        column: requireBoard(services).createColumn(
+          input.projectId,
+          input.title,
+          input.beforeColumnId,
+          'user',
+        ),
+      }),
+    ),
+    'board.columns.update': method(
+      boardColumnsUpdateInputSchema,
+      boardColumnOutputSchema,
+      async (input) => ({
+        column: requireBoard(services).updateColumn(input.columnId, input.title, 'user'),
+      }),
+    ),
+    'board.columns.move': method(
+      boardColumnsMoveInputSchema,
+      boardColumnsOutputSchema,
+      async (input) => ({
+        columns: requireBoard(services).moveColumn(input.columnId, input.beforeColumnId, 'user'),
+      }),
+    ),
+    'board.columns.delete': method(
+      boardColumnsDeleteInputSchema,
+      boardEmptyOutputSchema,
+      async (input) => {
+        await requireBoard(services).deleteColumn(input.columnId, input.deleteCards, 'user');
+        return {};
+      },
+    ),
+    'board.cards.create': method(
+      boardCardsCreateInputSchema,
+      boardCardOutputSchema,
+      async (input) => ({
+        card: requireBoard(services).createCard(
+          input.projectId,
+          input.columnId,
+          input.text,
+          input.beforeCardId,
+          'user',
+        ),
+      }),
+    ),
+    'board.cards.update': method(
+      boardCardsUpdateInputSchema,
+      boardCardOutputSchema,
+      async (input) => ({
+        card: requireBoard(services).updateCard(input.cardId, input.text, 'user'),
+      }),
+    ),
+    'board.cards.move': method(
+      boardCardsMoveInputSchema,
+      boardCardsMoveOutputSchema,
+      async (input) =>
+        requireBoard(services).moveCard(input.cardId, input.columnId, input.beforeCardId, 'user'),
+    ),
+    'board.summary': method(boardSummaryInputSchema, boardSummaryOutputSchema, async (input) =>
+      requireBoard(services).summary(input.projectId),
+    ),
+    'board.cards.assign': method(
+      boardCardsAssignInputSchema,
+      boardCardWarningsOutputSchema,
+      async (input) => requireBoard(services).assign(input.cardId, input.botId, 'user'),
+    ),
+    'board.cards.schedule': method(
+      boardCardsScheduleInputSchema,
+      boardCardWarningsOutputSchema,
+      async (input) => requireBoard(services).schedule(input.cardId, input.when, 'user'),
+    ),
+    'board.cards.start': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).start(input.cardId, 'user'),
+    })),
+    'board.cards.complete': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).complete(input.cardId, 'user'),
+    })),
+    'board.cards.cancel': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).cancel(input.cardId, 'user'),
+    })),
+    'board.cards.reopen': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
+      card: requireBoard(services).reopen(input.cardId, 'user'),
+    })),
+    'board.cards.conversation': method(
+      boardCardIdInputSchema,
+      boardCardsConversationOutputSchema,
+      async (input) => ({
+        conversationId: requireBoard(services).conversation(input.cardId, 'user'),
+      }),
+    ),
+    'board.cards.delete': method(
+      boardCardIdInputSchema,
+      boardEmptyOutputSchema,
+      async (input) => {
+        await requireBoard(services).deleteCard(input.cardId, 'user');
+        return {};
+      },
+    ),
+
     // --- schedules (P10) -----------------------------------------------------
     'schedules.list': method(
       schedulesListInputSchema,
@@ -2042,6 +2171,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
 function requireTodos(services: CoreServices): TodoService {
   if (!services.todos) throw new AppError('NOT_IMPLEMENTED', '工作台服务未就绪');
   return services.todos;
+}
+
+function requireBoard(services: CoreServices): BoardService {
+  if (!services.board) throw new AppError('NOT_IMPLEMENTED', '看板服务未就绪');
+  return services.board;
 }
 
 function requireRemote(services: CoreServices): RemoteHub {

@@ -149,6 +149,8 @@ import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
 import { MemoService } from './workbench/memo-service.js';
 import { TodoService } from './workbench/todo-service.js';
+import { BoardService } from './board/board-service.js';
+import { BoardStore } from './board/board-store.js';
 import { buildWorkbenchSection, describeTime } from './workbench/context.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
@@ -584,6 +586,8 @@ export interface CoreServices {
   schedules: ScheduleService | null;
   /** D90 工作台事项 (null while locked / errored). */
   todos: TodoService | null;
+  /** D103 项目看板 (null while locked / errored). */
+  board: BoardService | null;
   /** D90 工作台备忘 (null while locked / errored). */
   memos: MemoService | null;
   /** W7 确定性监看 (null while locked / errored). */
@@ -875,6 +879,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     wikiIndexes: null,
     schedules: null,
     todos: null,
+    board: null,
     memos: null,
     watches: null,
     mail: null,
@@ -1134,7 +1139,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
     const userProfileAvatars = new UserProfileAvatarService({ paths, clock, settings });
-    const conversations = new ConversationsService(mainDb, clock);
+    const conversations = new ConversationsService(mainDb, clock, {
+      onUpdated: (conversation) => events.emit('conversation.updated', { conversation }),
+    });
     const messages = new MessagesService(mainDb, clock);
     // 项目组域服务先于 orchestrator 构造；removeMemberCascade 闭包引用其后的
     // lifecycle（仅运行期触发，无 TDZ 问题）。显式类型标注打断 projects →
@@ -1894,6 +1901,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D90: the workbench todo service is constructed after the orchestrator and the schedule
     // service; the orchestrator's delivery tracking reaches it through this lazy facade.
     let todoService: TodoService | null = null;
+    let boardService: BoardService | null = null;
+    let lifecycleForBoard: { deleteConversation(id: string): Promise<void> } | null = null;
     const todoFacade: OrchestratorTodoFacade = {
       titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
       settleDelivered: (todoRunId, resultMessageId) => {
@@ -2280,6 +2289,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       handover: handoverFacade,
       todos: todoFacade,
       workbench: workbenchFacade,
+      cardContext: (conversationId) => boardService?.cardContext(conversationId) ?? null,
       settingsCatalog,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
@@ -2344,6 +2354,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // memos. A due workbench schedule dispatches through TodoService (no proactive guardrails).
     const publishEvent = (event: string, payload: unknown): void =>
       events.emit(event as never, payload as never);
+    const boardStore = new BoardStore(mainDb, clock);
     const todos = new TodoService({
       db: mainDb,
       clock,
@@ -2356,9 +2367,40 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         dispatchUpdate: (input) => orchestrator.dispatchWorkbenchUpdate(input),
         hasTurnModel: (botId) => orchestrator.hasTurnModel(botId),
       },
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       publish: publishEvent,
       timers: options.timers ?? realTimerScheduler,
+      boardCards: boardStore,
     });
+    const board = new BoardService({
+      db: mainDb,
+      clock,
+      logger,
+      store: boardStore,
+      todos,
+      conversations,
+      bots,
+      approvals: { pendingCount: (conversationId) => approvals.pendingCount(conversationId) },
+      tasks: {
+        activeOf: (conversationId) =>
+          orchestrator.tasks.activeViews(conversationId).map((view) => ({
+            status: view.status,
+            queueReason: view.queueReason,
+            awaitingInput: view.awaitingInput,
+          })),
+      },
+      timeZone: workbenchTimeZone,
+      schedules: {
+        cancelForTodo: (todoId) => {
+          for (const row of schedules.store.listActiveForTodo(todoId)) schedules.cancel(row.id);
+        },
+      },
+      deleteConversation: (id) => {
+        if (lifecycleForBoard === null) throw new Error('lifecycle is not ready');
+        return lifecycleForBoard.deleteConversation(id);
+      },
+    });
+    boardService = board;
     todoService = todos;
     schedules.attachWorkbench(todos);
     const memos = new MemoService({
@@ -2531,7 +2573,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
         }),
         new ScheduleAdapter({
-          todos: { onScheduleTransferred: (moved) => todos.onScheduleTransferred(moved) },
+          todos: {
+            onScheduleTransferred: (moved) => todos.onScheduleTransferred(moved),
+            isBoardTodo: (todoId) => todos.isBoardTodo(todoId),
+          },
           schedules: {
             listActiveForBot: (botId) => schedules.listActiveForBot(botId),
             get: (scheduleId) => schedules.store.get(scheduleId),
@@ -2710,6 +2755,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         onConversationDeleting: (conversationId) => todos.onConversationDeleting(conversationId),
         onExecutorChanged: () => todos.onExecutorChanged(),
       },
+      board: {
+        onProjectDeleting: (projectId) => board.onProjectDeleting(projectId),
+        onMemberRemoved: (projectId, botId) => board.onMemberRemoved(projectId, botId),
+        onBotDeleting: (botId) => board.onBotDeleting(botId),
+      },
       // W7: watches of a deleted conversation / bot (or a bot removed from the group) are removed.
       watches: {
         deleteForConversation: (conversationId) => watches.deleteForConversation(conversationId),
@@ -2772,6 +2822,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       attachments,
     });
 
+    lifecycleForBoard = lifecycle;
     jobs.resetRunningToPending();
     // Provider limits apply before recovery launches anything (re-queued
     // tasks, wake runs — D75 审查 LOW-5).
@@ -3079,6 +3130,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;
     services.todos = todos;
+    services.board = board;
     services.memos = memos;
     services.watches = watches;
     services.mail = mail;
@@ -3505,6 +3557,19 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       },
     },
     // D94 §5.5: 分享目标快照（主进程写进 App Group 供 Share Extension 读）。
+    // Notification clicks ask this before the renderer chat.select()s. A card
+    // conversation is not a sidebar chat (P3 opens the board instead).
+    'conversations.kind': {
+      input: z.object({ id: z.string().min(1) }),
+      output: z.object({
+        type: z.enum(['direct', 'project', 'card']).nullable(),
+      }),
+      handle: async (input) => {
+        const id = (input as { id: string }).id;
+        const conversation = services.domain?.conversations.get(id) ?? null;
+        return { type: conversation?.type ?? null };
+      },
+    },
     'share.targets': {
       input: voidInput,
       output: shareTargetsSchema,

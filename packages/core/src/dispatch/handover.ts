@@ -24,6 +24,7 @@ import type { CoreLogger } from '../infra/logger.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
+import { projectScopeOf } from '../domain/project-scope.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { ApprovalOutcome, ApprovalsService } from '../permissions/approvals.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
@@ -264,7 +265,8 @@ export class HandoverHost implements HandoverToolFacade {
     const wikiQuery = input.wikiQuery?.trim() ?? '';
     // 项目组里盘点：敏感记忆不作候选（同检索的项目组过滤，passesFilters）——候选内容会进项目组的
     // 上下文。
-    const isProject = this.#deps.conversations.get(initiator.conversationId)?.type === 'project';
+    const isProject =
+      projectScopeOf(this.#deps.conversations.get(initiator.conversationId)) !== null;
     const entries = this.#deps.registry
       .inventory(bot.id, {
         memoryQuery: memoryQuery.length > 0 ? memoryQuery : undefined,

@@ -54,6 +54,7 @@ describe('TodoStore', () => {
       source: 'user',
       memoId: null,
       blockedReason: null,
+      pendingWhen: null,
       createdAt: 1_000,
       updatedAt: 1_000,
       closedAt: null,
@@ -94,7 +95,9 @@ describe('TodoStore', () => {
     const cleared = store.update(lead.id, { assignee: null });
     expect(cleared?.assignee).toBeNull();
     expect(
-      db.prepare('select assignee_bot_id, assignee_project_id from todos where id = ?').get(lead.id),
+      db
+        .prepare('select assignee_bot_id, assignee_project_id from todos where id = ?')
+        .get(lead.id),
     ).toEqual({ assignee_bot_id: null, assignee_project_id: null });
   });
 
@@ -141,7 +144,11 @@ describe('TodoStore', () => {
   });
 
   it('reassignBot moves only open todos', () => {
-    const open = store.insert({ title: 'a', source: 'user', assignee: { kind: 'bot', botId: 'bot_1' } });
+    const open = store.insert({
+      title: 'a',
+      source: 'user',
+      assignee: { kind: 'bot', botId: 'bot_1' },
+    });
     const done = store.insert({
       title: 'b',
       source: 'user',
@@ -296,7 +303,9 @@ describe('TodoStore', () => {
       expect(store.updateRun(run.id, { status: 'failed' })?.settledAt).toBe(6_000);
       now = 7_000;
       // A later result keeps the first settlement time; going back clears it.
-      expect(store.updateRun(run.id, { status: 'delivered', resultMessageId: 'm' })?.settledAt).toBe(6_000);
+      expect(
+        store.updateRun(run.id, { status: 'delivered', resultMessageId: 'm' })?.settledAt,
+      ).toBe(6_000);
       expect(store.updateRun(run.id, { status: 'dispatched' })?.settledAt).toBeNull();
     });
 

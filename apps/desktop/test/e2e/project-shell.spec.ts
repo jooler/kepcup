@@ -94,8 +94,11 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
       'data-active',
       'true',
     );
+    await expect(page.locator('[data-testid="project-tab-board"]')).toBeVisible();
+    // A new project has nothing for the board to report, so the badge stays hidden.
+    await expect(page.locator('[data-testid="project-tab-badge-board"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
-    for (const id of ['board', 'okr', 'calendar']) {
+    for (const id of ['okr', 'calendar']) {
       await expect(page.locator(`[data-testid="project-tab-${id}"]`)).toHaveCount(0);
     }
     await page.locator('[data-testid="project-tab-wiki"]').click();
@@ -141,7 +144,8 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     await page.locator('[data-testid="project-tab-chat"]').click();
     await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
 
-    // ⑤ 成员弹层：负责人置顶带标；搜索添加成员；点外部与 Esc 都能关。
+    // ⑤ 成员弹层：负责人置顶带标；菜单不再有「添加成员」入口（加人收编进
+    // 「管理成员…」→详情页成员分区）；点外部与 Esc 都能关。
     await page.locator('[data-testid="project-members-trigger"]').click();
     const menu = page.locator('[data-testid="project-members-menu"]');
     await expect(menu).toBeVisible();
@@ -149,17 +153,36 @@ test('project shell: header, tabs, no right panel, settings page, draft, members
     await expect(menuRows).toHaveCount(2);
     await expect(menuRows.first()).toContainText('阿甲');
     await expect(menuRows.first()).toContainText('负责人');
-    // 添加成员区块默认收起，点全宽按钮展开后再搜索添加。
-    await expect(menu.locator('[data-testid="project-members-add"]')).toBeVisible();
+    await expect(menu.locator('[data-testid="project-members-add"]')).toHaveCount(0);
     await expect(menu.locator('[data-testid="project-member-add"]')).toHaveCount(0);
-    await menu.locator('[data-testid="project-members-add"]').click();
-    const memberAdd = menu.locator('[data-testid="project-member-add"]');
+    // 点弹层外部关闭。
+    await page.locator('[data-testid="composer-input"]').click();
+    await expect(menu).toHaveCount(0);
+    // 再开一次，Esc 关闭。
+    await page.locator('[data-testid="project-members-trigger"]').click();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    // 管理成员：弹层直达详情页成员分区，底部选择器搜索加入阿丙。
+    await page.locator('[data-testid="project-members-trigger"]').click();
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-testid="project-members-manage"]').click();
+    await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator('[data-testid="project-settings-section-members"]')).toBeVisible();
+    const memberAdd = page.locator('[data-testid="project-member-add"]');
     await memberAdd.fill('阿丙');
-    await menu
+    await page
       .locator('[data-testid^="project-member-add-option-"]')
       .filter({ hasText: '阿丙' })
       .click();
-    await expect(menuRows).toHaveCount(3, { timeout: 10_000 });
+    await expect(
+      page.locator('[data-testid="project-member-list"] [data-testid^="project-member-row-"]'),
+    ).toHaveCount(3, { timeout: 10_000 });
+    // 回沟通：⑥ 的 ⚙ 是切换键，要求从沟通视图出发。
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute('data-view', 'chat');
     // 点弹层外部关闭。
     await page.locator('[data-testid="composer-input"]').click();
     await expect(menu).toHaveCount(0);

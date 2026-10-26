@@ -35,6 +35,7 @@ const todo = {
   source: 'user',
   memoId: null,
   blockedReason: null,
+  pendingWhen: null,
   createdAt: 1,
   updatedAt: 1,
   closedAt: null,
@@ -103,6 +104,7 @@ describe('todo schemas', () => {
         nextFireAt: 10,
       },
       lastRun: run,
+      board: null,
     };
     expect(todoEntrySchema.parse(entry)).toEqual(entry);
     expect(
@@ -232,6 +234,7 @@ describe('workbench rpc contract', () => {
       leadBotName: null,
       schedule: null,
       lastRun: null,
+      board: null,
     };
     expect(rpcMethodSchemas['todos.create'].output.parse({ todo: entry, warnings: ['w'] })).toEqual(
       {

@@ -15,7 +15,7 @@
 - **文档模块取消，改为项目 wiki**：复用 Bot wiki 引擎，泛化「所有者」为 Bot 或项目；共享单写入维护 loop；**来源条目有创建者**，Bot 只能删自己的来源，用户与负责人管理全部；本期做。
 - **界面**：创建改双轮；顶栏左侧两行（项目名 / 模块 tab），右侧重叠头像堆叠 + 设置按钮；项目详情是内容区里的页面，不用弹框；群聊不再有右栏。
 - **全套改名**：共享目录 `project → workdir`；D75 的任务执行根目录 `workdir → cwd`；`group → project`；连锁 `chain → episode`。**先做一个行为中性的纯改名提交**，再做功能。
-- **本期范围**：T0 纯改名 → T1a 项目组核心 → T1b 项目 wiki。看板（复用 `todos`）、日历、OKR 下期。
+- **本期范围**：T0 纯改名 → T1a 项目组核心 → T1b 项目 wiki。看板已另按 [50](50-project-board.md) 实施；日历、OKR 仍未做。
 
 ## 1 想法与已定决策
 
@@ -340,8 +340,8 @@ CREATE TABLE episodes (
 ```ts
 export const PROJECT_MODULES = [
   { id: 'chat',     status: 'available', write: 'members' }, // 沟通
+  { id: 'board',    status: 'available', write: 'lead'    }, // 看板（D103，已实施）
   { id: 'wiki',     status: 'available', write: 'owner'   }, // 项目 wiki：条目级所有权（§8）
-  { id: 'board',    status: 'planned',   write: 'lead'    }, // 看板
   { id: 'okr',      status: 'planned',   write: 'lead'    }, // OKR
   { id: 'calendar', status: 'planned',   write: 'lead'    }, // 日历
 ] as const;
@@ -349,7 +349,7 @@ export const PROJECT_MODULES = [
 // 读权限恒为项目组全员；标题等文案走渲染层 i18n（`project.module.{id}`）
 ```
 
-- 渲染层 tab 顺序与灰显读此表；`planned` 灰显并提示「即将推出」。
+- 渲染层 tab 顺序读此表。`available` 的才渲染；`planned`（OKR / 日历）不出现在 tab 行。顺序是沟通、看板、Wiki、OKR、日历。
 - 纯函数 `canWriteModule(moduleId, actor)` 与 `canManageEntry(moduleId, actor, createdBy)`（shared）+ 表驱动单测。`wiki` **立即启用** `canManageEntry`，`canWriteModule` 要到看板才有调用方。
 - **不预建宿主侧插件接口**（`contextSection` / 工具注册 / 服务生命周期）：wiki 与看板接入后，从真实共性里提炼，而不是先猜形状。
 
@@ -363,9 +363,11 @@ export const PROJECT_MODULES = [
 
 | 模块 | 现有机制 | 方向 |
 |---|---|---|
-| 看板 | D90 `todos`（`draft → scheduled → in_progress → delivered → done` 与看板列天然对应）、D75 任务、`dispatchWorkbenchMessage`、交付追踪 | `todos` 增 `project_id` 范围，看板 = 该项目事项的列视图；工作台自然汇总所有项目；指派卡片 = 沟通里一条派发消息。D90「普通 Bot 不能操作事项」放宽为「负责人可操作本项目事项」；成员改自己卡片状态由交付追踪推进，成员本身只读。**前置**：路径作用域写租约设计（§9.2） |
+| 看板 | D90 `todos`、D75 任务、派发与交付追踪。**已实施**（D103，[50](50-project-board.md)） | 自由分栏，不把列当成状态。卡片 = 事项 + `board_cards` 侧表；指派后在隐藏的 `card` 会话里派发，不进项目沟通。本期只有用户写看板。路径作用域写租约不是前置 |
 | 日历 | `schedules`（D80）、事项排期；`SchedulesPanel` 已按会话列出成员的定时任务 | 先做**聚合视图**（成员定时任务 + 事项排期 + 里程碑），写入仍走既有入口 |
 | OKR | 无 | 新表：目标 / 关键结果 / 负责成员 / 进度，负责人写；KR 可关联看板卡片；进度手填还是由卡片完成度推导待议 |
+
+看板已按 [50-project-board.md](50-project-board.md) 实施（D103）：「列 = 事项状态」（K8）改为自由分栏 + 派生状态。路径作用域写租约仍是独立设计，不是看板的前置。
 
 建议顺序 **看板 → 日历 → OKR**。**项目目标**（`goal`）本期仅用户可编辑；将来「负责人代为维护」属高敏感写（目标注入全员提示词），须套 D89 式闸门，不在本期。
 
@@ -575,7 +577,7 @@ WP11：设计与开发文档同步（删除各文档顶部的 D92 横幅并把�
 6. **项目内自动化的提示注入**：成员读恶意内容 → 汇报污染负责人 / 写入 wiki 来源污染其他成员。缓解：静默路由不携带 Bot 写的内容；Bot 写入的 wiki 来源与页面读取时标 `<untrusted>`；权力半径限定项目内、审批 / 沙箱闸门不豁免；熔断拦失控往返。这是缓解不是消除。
 7. **静默路由对用户不透明**：用户看不到谁把消息转给了成员。对策：执行记录里可审计；若将来需要，可加一个默认关闭的「显示由负责人转交」设置。
 8. **项目 wiki 的三处险点**（§8.8）：FTS 与存储布局、执行者付费与单写入者队列的归因 / 预算、来源 ACL 与删除的并发正确性；另有排队 job 不应占满全局槽位。
-9. **写入租约串行**：本期低压力，下期看板会放大；已规划路径作用域写租约（§9.2）。
+9. **写入租约串行**：看板已经会把同一目录上的写任务排成「排队中 · 等写入租约」，显示在卡面。路径作用域写租约仍是独立设计（§9.2），不是看板的前置。
 10. **新成员静默获得目录读写**：靠 §9.1 的系统消息补；加入前确认暂不做（K10）。
 11. **全局上下文预算未纳入**：Bot 提示词各段预算的移除需要「按模型窗口压缩」，是整个上下文装配的改造，单独评估（K15）。
 

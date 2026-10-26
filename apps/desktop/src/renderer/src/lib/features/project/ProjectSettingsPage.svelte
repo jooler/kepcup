@@ -61,9 +61,7 @@
     bind:this={scrollEl}
   >
     <div class="mx-auto w-full max-w-4xl px-6 pt-8 pb-12">
-      <p class="text-base font-semibold">{t('projectSettings.title')}</p>
-
-      <div class="mt-6 flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
+      <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
         <!-- 分区切换在所有宽度都可达：详情区同屏只渲染当前分区，导航藏掉窄屏
              用户就到不了成员/危险区（窗口最小宽 375）。同一个 nav 两副形态：
              md 以下横向滚动的 segmented 行（滚动时吸顶），md 起恢复竖排分类

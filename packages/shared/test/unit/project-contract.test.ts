@@ -38,6 +38,23 @@ describe('conversationSchema (D92 T1a)', () => {
     expect(conversation.leadBotId).toBeUndefined();
   });
 
+  it('parses a card conversation and defaults the new columns to null', () => {
+    const card = conversationSchema.parse({
+      ...baseConversation,
+      type: 'card',
+      title: '卡片',
+      directBotId: 'bot_a',
+      parentProjectId: 'conv_project',
+      cardTodoId: 'todo_1',
+    });
+    expect(card.type).toBe('card');
+    expect(card.parentProjectId).toBe('conv_project');
+    expect(card.cardTodoId).toBe('todo_1');
+    const legacy = conversationSchema.parse(baseConversation);
+    expect(legacy.parentProjectId).toBeNull();
+    expect(legacy.cardTodoId).toBeNull();
+  });
+
   it('rejects the legacy group type and the removed setupState field', () => {
     expect(() => conversationSchema.parse({ ...baseConversation, type: 'group' })).toThrow();
     // Unknown keys are stripped, but the field is gone from the contract: the

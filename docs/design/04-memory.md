@@ -17,7 +17,9 @@ MemoryItem
   content        一句自然语言陈述
   source         explicit（用户明确说的）| inferred（推断的）
   evidence       [message_id, run_id]      -- 来源链路，可追溯、可撤回
-  origin         private | group           -- 从哪类对话得来
+  origin         private | group           -- 从哪类对话得来（实现里项目组为 `project`）
+
+看板卡片对话没有单独的 origin：`projectScopeOf` 把它解析成所属项目，记忆按项目口径写入。
   confidence     0~1
   sensitivity    normal | sensitive
   valid_until    可选，时效性信息必填

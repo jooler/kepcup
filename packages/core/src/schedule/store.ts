@@ -192,6 +192,25 @@ export class SchedulesStore {
     return row ? rowToSchedule(row) : null;
   }
 
+  /**
+   * Active schedules of a conversation, plus — when it is a project — the
+   * schedules that live on its card conversations.
+   */
+  listActiveForConversationScope(conversationId: string): Schedule[] {
+    return this.#list(
+      `where status = 'active' and (
+         conversation_id = ?
+         or conversation_id in (
+           select id from conversations
+           where type = 'card' and parent_project_id = ?
+         )
+       )
+       order by next_fire_at is null, next_fire_at`,
+      conversationId,
+      conversationId,
+    );
+  }
+
   /** Active schedules of one conversation (list_schedules tool). */
   listActiveForConversation(conversationId: string): Schedule[] {
     return this.#list(

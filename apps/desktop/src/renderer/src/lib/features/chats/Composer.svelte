@@ -13,6 +13,7 @@
   import { cn } from '$lib/utils.js';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { getChatSession } from './chat-session-context';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
@@ -58,7 +59,14 @@
     readOnly = false,
     centered = false,
     readOnlyHint,
-  }: { readOnly?: boolean; centered?: boolean; readOnlyHint?: string } = $props();
+    placeholderText = undefined,
+  }: {
+    readOnly?: boolean;
+    centered?: boolean;
+    readOnlyHint?: string;
+    /** Replaces the default placeholder. A card dialog names the assignee. */
+    placeholderText?: string;
+  } = $props();
 
   /**
    * 输入区是 TipTap 编辑器（contenteditable）：列表（`- `/`1. ` 输入规则自动
@@ -110,8 +118,9 @@
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const isProject = $derived(chat.current?.conversation.type === 'project');
-  const replyTo = $derived(chat.replyTo);
+  const chatSession = getChatSession();
+  const isProject = $derived(chatSession.view?.conversation.type === 'project');
+  const replyTo = $derived(chatSession.replyTo);
   const replyToName = $derived(
     replyTo === null
       ? ''
@@ -131,7 +140,7 @@
    * 条草稿发出。数据源在 composerDrafts（按会话缓存），组件只持视图——
    * 切换会话/重启应用后按会话重载，不再切换即丢弃。
    */
-  const pendingUploads = $derived(composerDrafts.uploadsOf(chat.current?.conversation.id ?? ''));
+  const pendingUploads = $derived(composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''));
 
   const composerEmpty = $derived(isComposerDocEmpty(docJson));
   const hasContent = $derived(!composerEmpty || pendingUploads.length > 0);
@@ -143,7 +152,7 @@
   const stacked = $derived(multiline || pendingUploads.length > 0);
 
   const placeholder = $derived(
-    isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
+    placeholderText ?? (isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder')),
   );
 
   /**
@@ -153,18 +162,18 @@
    */
   const mentionTargets = $derived.by(() =>
     buildMentionTargets({
-      memberBots: (chat.current?.members ?? []).map((m) => m.bot),
+      memberBots: (chatSession.view?.members ?? []).map((m) => m.bot),
       allBots: contacts.bots,
       projects: chat.conversations
         .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
-      currentConversationId: chat.current?.conversation.id ?? null,
+      currentConversationId: chatSession.view?.conversation.id ?? null,
       // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；项目组的成员是
       // 主力候选，不排除。
       excludeBotIds:
-        isProject || chat.current?.conversation.directBotId == null
+        isProject || chatSession.view?.conversation.directBotId == null
           ? []
-          : [chat.current.conversation.directBotId],
+          : [chatSession.view.conversation.directBotId],
     }),
   );
 
@@ -177,7 +186,7 @@
    * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
    */
   const botAvatarColor = $derived(
-    parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
+    parsePresetAvatar(chatSession.view?.conversation.bot?.avatar ?? null)?.color ?? null,
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
@@ -737,11 +746,11 @@
   /** 会话草稿的按会话缓存：水合（JSON → 编辑器）与保存（编辑器 → JSON）。 */
   let activeConversationId: string | null = null;
   $effect(() => {
-    const conversationId = chat.current?.conversation.id ?? null;
+    const conversationId = chatSession.view?.conversation.id ?? null;
     const ed = editor;
     const currentDoc = docJson;
     const currentMentionTokens = mentionTokens;
-    const currentReply = chat.replyTo;
+    const currentReply = chatSession.replyTo;
     if (conversationId !== activeConversationId) {
       activeConversationId = conversationId;
       if (conversationId === null || ed === null) return;
@@ -757,7 +766,7 @@
         // 草稿缓存是编辑器原生 JSON：mention/列表节点原样回位，无需任何转换。
         ed.commands.setContent(saved.doc);
         syncFromEditor(ed);
-        chat.replyTo = saved.reply;
+        chatSession.replyTo = saved.reply;
       });
       return;
     }
@@ -782,13 +791,13 @@
    */
   async function sendCurrent(): Promise<void> {
     const ed = editor;
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = chatSession.view?.conversation.id;
     if (ed === null || !conversationId) return;
     if (sendGuard.isBusy(conversationId)) return;
     const markdown = ed.getMarkdown();
     const trimmed = markdown.trim();
     if (trimmed.length === 0 && pendingUploads.length === 0) return;
-    if (chat.gateForSend()) return;
+    if (chatSession.gateForSend()) return;
     const tokens = mergeMentionTokens(ed.getJSON(), markdown, mentionTargets);
     const replyToId = replyTo?.id ?? null;
     const docSnapshot = ed.getJSON();
@@ -798,7 +807,7 @@
         settle: () => composerDrafts.settle(conversationId),
         // 显式只发往发起发送时的会话：等上传期间用户可能已切走。
         send: (text, attachmentIds) =>
-          chat.send(conversationId, text, {
+          chatSession.send(conversationId, text, {
             ...(tokens.length > 0 ? { mentions: tokens } : {}),
             ...(replyToId !== null ? { replyTo: replyToId } : {}),
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
@@ -841,7 +850,7 @@
    *（那边仍为空才写，不覆盖），回到该会话即可见——内容不会因发送失败而丢。
    */
   function restoreComposerContent(ed: Editor, doc: JSONContent, conversationId: string): void {
-    if (editor !== ed || ed.isDestroyed || chat.current?.conversation.id !== conversationId) {
+    if (editor !== ed || ed.isDestroyed || chatSession.view?.conversation.id !== conversationId) {
       const cached = composerDrafts.loadDraft(conversationId);
       if (isComposerDocEmpty(cached.doc)) {
         composerDrafts.saveComposerDoc(
@@ -905,7 +914,7 @@
   async function startRecording(): Promise<void> {
     if (readOnly || recording !== null || voiceBusy) return;
     if (!settingsStore.isCapabilityReady('asr')) {
-      chat.requestCapabilitySetup('asr');
+      chatSession.requestCapabilitySetup('asr');
       return;
     }
     const session = ++recordingSession;
@@ -1040,7 +1049,7 @@
       }
     } catch (error) {
       if (isCapabilityError(error)) {
-        chat.requestCapabilitySetup('asr');
+        chatSession.requestCapabilitySetup('asr');
         return;
       }
       toast.error(
@@ -1091,13 +1100,13 @@
   }
 
   function uploadFiles(files: FileList | File[]): void {
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = chatSession.view?.conversation.id;
     if (!conversationId) return;
     composerDrafts.uploadFiles(conversationId, files);
   }
 
   function removePendingUpload(key: string): void {
-    const conversationId = chat.current?.conversation.id;
+    const conversationId = chatSession.view?.conversation.id;
     if (!conversationId) return;
     void composerDrafts.removeUpload(conversationId, key);
   }
@@ -1254,7 +1263,7 @@
               <button
                 type="button"
                 class="shrink-0 rounded-full p-1 hover:bg-accent"
-                onclick={() => chat.cancelReply()}
+                onclick={() => (chatSession.replyTo = null)}
                 data-testid="reply-cancel"
                 aria-label={t('composer.replyCancel')}
               >

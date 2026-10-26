@@ -45,7 +45,12 @@ export function buildMyState(input: MyStateInput): string[] {
   for (const run of elsewhere) {
     const conversation = input.getConversation(run.conversationId!);
     if (conversation === null) continue;
-    const name = conversation.type === 'project' ? (conversation.title ?? '项目组') : '与用户的单聊';
+    const name =
+      conversation.type === 'project'
+        ? (conversation.title ?? '项目组')
+        : conversation.type === 'card'
+          ? '项目组卡片对话'
+          : '与用户的单聊';
     const trigger: { content: unknown } | null | undefined = run.triggerMessageIds
       .map((id) => input.getMessage(id))
       .find((m) => m !== null);

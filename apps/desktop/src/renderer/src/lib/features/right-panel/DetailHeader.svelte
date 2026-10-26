@@ -1,6 +1,7 @@
 <script lang="ts">
   /** 下钻详情的头部：返回回二级菜单 + 详情标题（可选面包屑代替纯标题）。 */
   import { ChevronLeft } from '@lucide/svelte';
+  import type { Snippet } from 'svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
 
@@ -10,6 +11,7 @@
     testid = 'bot-detail-back',
     breadcrumb,
     breadcrumbTestid,
+    action,
   }: {
     title: string;
     onBack: () => void;
@@ -17,6 +19,8 @@
     /** 传入时以面包屑代替纯标题：有 onJump 的段可点击跳转，末段为当前位置。 */
     breadcrumb?: Array<{ label: string; onJump?: () => void }>;
     breadcrumbTestid?: string;
+    /** 头部最右侧的动作区（如 Wiki 页面删除）：与面包屑同一行，shrink-0。 */
+    action?: Snippet;
   } = $props();
 </script>
 
@@ -57,5 +61,8 @@
     </nav>
   {:else}
     <p class="min-w-0 flex-1 truncate text-sm font-medium">{title}</p>
+  {/if}
+  {#if action !== undefined}
+    {@render action()}
   {/if}
 </div>
