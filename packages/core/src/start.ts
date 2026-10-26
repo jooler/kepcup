@@ -2571,7 +2571,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
         }),
         new ScheduleAdapter({
-          todos: { onScheduleTransferred: (moved) => todos.onScheduleTransferred(moved) },
+          todos: {
+            onScheduleTransferred: (moved) => todos.onScheduleTransferred(moved),
+            isBoardTodo: (todoId) => todos.isBoardTodo(todoId),
+          },
           schedules: {
             listActiveForBot: (botId) => schedules.listActiveForBot(botId),
             get: (scheduleId) => schedules.store.get(scheduleId),
