@@ -397,6 +397,7 @@ export function ageOf(at: number, now: number): Age {
 // ---------------------------------------------------------------------------
 
 const DISPATCH_PREFIX = '【工作台】';
+const BOARD_DISPATCH_PREFIX = '【看板】';
 const BUTLER_NOTE = '（管家代你安排）';
 
 export interface DispatchText {
@@ -408,6 +409,8 @@ export interface DispatchText {
   lateNote: string | null;
   /** 「事项更新」通知（`【工作台】事项更新：标题` …）；派发正文没有这个字段。 */
   update?: boolean;
+  /** Board dispatch (`【看板】`). The card thread is already that conversation. */
+  board?: boolean;
   /** 事项更新：谁改的（正文末尾「（由用户 / 管家修改；…）」）；认不出时为 null。 */
   updatedBy?: 'user' | 'butler' | null;
 }
@@ -430,6 +433,22 @@ const LATE_NOTE = /（原定[^\n]*?延迟派发）/;
  */
 export function parseDispatchText(text: string, update?: boolean): DispatchText {
   const trimmed = text.replace(/^\s+/, '');
+  // A board card is dispatched as `【看板】` plus the card text. There is no
+  // separate title line and no workbench link.
+  if (update !== true && trimmed.startsWith(BOARD_DISPATCH_PREFIX)) {
+    let body = trimmed.slice(BOARD_DISPATCH_PREFIX.length);
+    const late = LATE_NOTE.exec(body);
+    const lateNote = late === null ? null : late[0];
+    if (late !== null) body = body.replace(late[0], '');
+    const [headLine = '', ...rest] = body.replace(/^\s+|\s+$/g, '').split(/\r?\n/);
+    return {
+      title: headLine.trim(),
+      notes: rest.join('\n').trim(),
+      byButler: false,
+      lateNote,
+      board: true,
+    };
+  }
   // `update`：消息内容里的 `todoUpdate` 标记（权威）；没给时按正文前缀判断。标题恰好以「事项更新：」
   // 开头的派发会和更新正文撞车，所以有标记时以标记为准。
   if (update ?? trimmed.startsWith(UPDATE_PREFIX)) {

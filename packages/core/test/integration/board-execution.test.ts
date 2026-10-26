@@ -390,4 +390,34 @@ describe('board execution', () => {
     expect(events).toHaveLength(1);
     expect(activeSchedule(stack, cardId)).toBeNull();
   }, 60_000);
+
+  it('lists a card schedule from the project and not from an unrelated chat', async () => {
+    const stack = await start();
+    const { projectId, memberId, cardId, directId } = await scaffold(stack, '周五核对');
+    board(stack).assign(cardId, memberId, 'user');
+    board(stack).schedule(cardId, '2099-01-01T00:00:00.000Z', 'user');
+    const onProject = stack.core.services.schedules!.listEntries(projectId);
+    expect(onProject.some((row) => row.todoId === cardId && row.origin === 'workbench')).toBe(true);
+    expect(onProject.find((row) => row.todoId === cardId)?.title.length).toBeGreaterThan(0);
+    expect(
+      stack.core.services.schedules!.listEntries(directId).some((row) => row.todoId === cardId),
+    ).toBe(false);
+  });
+
+  it('summary counts the open card conversation and not read-only history', async () => {
+    const stack = await start();
+    const { projectId, leadId, memberId, cardId } = await scaffold(stack);
+    const first = board(stack).assign(cardId, memberId, 'user');
+    stack.core.services.domain!.messages.append({
+      conversationId: first.card.conversationId!,
+      senderType: 'bot',
+      senderBotId: memberId,
+      kind: 'text',
+      text: '还没看',
+    });
+    expect(board(stack).summary(projectId).unread).toBeGreaterThan(0);
+    board(stack).assign(cardId, leadId, 'user');
+    expect(board(stack).summary(projectId).unread).toBe(0);
+    expect(cardOf(stack, projectId, cardId).unreadCount).toBe(0);
+  });
 });

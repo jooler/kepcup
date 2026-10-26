@@ -309,6 +309,25 @@ describe('parseDispatchText', () => {
       lateNote: null,
     });
   });
+
+  it('recognizes a board dispatch and keeps the card text', () => {
+    expect(parseDispatchText('【看板】调研竞品定价\n输出一页对比表')).toEqual({
+      title: '调研竞品定价',
+      notes: '输出一页对比表',
+      byButler: false,
+      lateNote: null,
+      board: true,
+    });
+    expect(parseDispatchText('【看板】周期核对\n（上一次执行尚未交付）').notes).toBe(
+      '（上一次执行尚未交付）',
+    );
+    expect(parseDispatchText('【看板】迟到的卡\n\n（原定 今天 08:00，延迟派发）')).toMatchObject({
+      title: '迟到的卡',
+      board: true,
+      lateNote: '（原定 今天 08:00，延迟派发）',
+    });
+    expect(parseDispatchText('【工作台】整理竞品\n说明').board).toBeUndefined();
+  });
 });
 
 function sched(nextFireAt: number): NonNullable<TodoEntry['schedule']> {

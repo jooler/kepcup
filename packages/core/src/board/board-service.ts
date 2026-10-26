@@ -467,7 +467,11 @@ export class BoardService {
     let delivered = 0;
     for (const card of this.#deps.store.listCards(projectId)) {
       if (card.status === 'delivered') delivered += 1;
+      // Read-only history stays out of the badge. Those threads have no UI,
+      // so counting them would leave a number the user cannot clear. The
+      // card face uses the same open conversation.
       for (const conversation of this.#deps.conversations.cardConversations({ todoId: card.todoId })) {
+        if (conversation.readOnly) continue;
         unread += Math.max(0, conversation.lastSeq - conversation.lastReadSeq);
         pendingApprovals += this.#deps.approvals.pendingCount(conversation.id);
       }

@@ -77,6 +77,9 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         });
       }
       if (method === 'board.get') return Promise.resolve({ columns, cards });
+      if (method === 'board.summary') {
+        return Promise.resolve({ unread: 1, pendingApprovals: 0, delivered: 0 });
+      }
       if (method === 'board.columns.create') {
         const input = params as { title: string; projectId: string };
         const created = column('bcol_real', input.title, 100);
@@ -429,6 +432,42 @@ describe('card conversation events reload only mapped cards', () => {
     emitEvent('approval.resolved', { conversationId: 'conv_card' });
     await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
     expect(count('board.get')).toBe(before + 3);
+  });
+});
+
+describe('watchSummary', () => {
+  it('reloads for a mapped card conversation and ignores the rest', async () => {
+    cards = [{ ...card('card_a', 'bcol_a', 'hello', 1), conversationId: 'conv_card' }];
+    const stop = board.watchSummary('p1');
+    try {
+      await wait(20);
+      const before = count('board.summary');
+      expect(before).toBeGreaterThanOrEqual(1);
+      expect(board.summary).toEqual({ unread: 1, pendingApprovals: 0, delivered: 0 });
+
+      emitEvent('message.created', { conversationId: 'conv_other' });
+      emitEvent('approval.created', { conversationId: 'conv_other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before);
+
+      emitEvent('message.created', { conversationId: 'conv_card' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 1);
+
+      emitEvent('board.changed', { projectId: 'p1' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 2);
+
+      emitEvent('todos.changed', { id: 'todo_other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 3);
+
+      emitEvent('board.changed', { projectId: 'other' });
+      await wait(BOARD_REFRESH_DEBOUNCE_MS + 40);
+      expect(count('board.summary')).toBe(before + 3);
+    } finally {
+      stop();
+    }
   });
 });
 
