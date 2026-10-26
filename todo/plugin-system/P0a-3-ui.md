@@ -285,3 +285,55 @@ export const plugins = new PluginsState();
 ## 6. 实施记录
 
 （执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / `SkillEntry` 来源字段名核对结论 / `appCatalogEntrySchema.pluginId` 改动 / 手工验证要点 / 遗留问题。）
+
+### 实施记录（2026-10-26，P0a-3 全步骤完成）
+
+**做了什么**（提交序）：
+
+1. `feat(plugins): allow selectDirectory to take a custom prompt`——步骤 1：`dialog:selectDirectory` 接受可选 `{ message }`（截断 200 字，无参行为不变），preload / `shim.d.ts` / web-shim 同步签名；既有调用方未动。
+2. `feat(plugins): add the Installed tab ...`——步骤 2：`tabs.ts` 新顺序（`installed` 最前，数组保持单行字面量 + `prettier-ignore` 防重排版）、`tabs.test.ts` 重算、`ExtensionCenterBody` 加 `installed` 分支与 `overflow-x-auto` / `shrink-0 whitespace-nowrap`、覆盖率排除表加 `extension-tab/installed`、`settings-catalog.test.ts` 硬编码清单更新；`ExtensionInstalled.svelte` 先落占位（步骤 6 填充）。
+3. `feat(plugins): i18n ... (steps 2+8)`——两种语言的 `extensionCenter.tabs.installed`、整组 `plugins.*`（96 条）、`PLUGIN_*` 文案改写；`locales.test.ts` 通过。
+4. `feat(plugins): plugin install form helpers ...`——步骤 3：`plugin-install.ts` 七个导出（表单播表 / 缺项汇总带「{displayName}」前缀 / userConfig 组装含空对象保留 / 敏感清空 / 安装门 / 技能来源解析直接调 shared 的 `parsePluginSkillSource` / 受管 server 判定）+ 表驱动单测。
+5. `feat(plugins): plugins store ...`——步骤 4：单例 store（`start()` 幂等订阅 `plugins.changed`、`load(force)`、`nameOf` 回退 id、`setEnabled` / `uninstall` 带 `busy` 清理与失败上抛、`afterMutation` 刷新 plugins → settings → apps）+ desktop-svelte 单测（mock core / settings / apps）。
+6. `feat(plugins): consent panel, install dialog and source badge`——步骤 5：`PluginConsentPanel`（8 段内容与顺序照任务书 5.1，blockers 时不渲染 user_config 表单，字段渲染规则照 `McpbInstall`，testid `{testid}-field-{mcpId}-{key}`）、`PluginInstallDialog`（状态机同构 `McpbInstall`，检视失败走 `errorText`，提交后清敏感值，不拦遮罩关闭）、`PluginSourceBadge`（挂载幂等拉列表）。
+7. `feat(plugins): Installed tab with plugin cards ...`——步骤 6：卡片（名 / 版本 / 来源 / 分级徽标 / 非零内容计数 / 内置只读无开关）、启停（失败自动回位 + toast）、打开所在目录、内容明细展开（MCP 按 settings 反查名，缺失 / 让位标记，「前往」跳 skills / connections / mcp）、卸载确认对话框、空态 / 加载失败态、`PluginInstallDialog` 挂载。
+8. `feat(plugins): source badges and managed-item locks ...`——步骤 7：`McpSection`（受管行徽标 `mcp-plugin-badge-{id}`、编辑 / 删除按钮替换为 `mcp-managed-{id}` 文案、`editServer` / `removeServer` 双保险早退）、`SkillsTab`（行与详情徽标 `skill-plugin-badge-{name}`、卸载按钮替换为 `skill-managed-{name}`）、`AppCatalogGrid` / `ConnectAppPanel` / `AppConnectionDetail` 的 `origin === 'plugin'` 徽标；shared `appCatalogEntrySchema` 加可选 `pluginId`、core `catalogEntries()` 用 `catalog.pluginIdOf(slug)` 填充、`plugins.test.ts` 集成断言补 `pluginId: PLUGIN_ID`。
+9. `test(plugins): e2e ...`——步骤 9：`plugins.spec.ts` 八个用例全绿（页签与默认 / 全流程安装 / 受管项 / core 守卫 / 启停 / 卸载 / 冲突阻塞 / 窄屏），`extension-center.spec.ts` 的页签循环断言与注释改为新顺序（键序不变，仍全绿）。
+10. `docs(plugins): P0a-3 closure`——设计 29 §16.1（六组 + 「已安装」行）、本实施记录、PROGRESS.md 验收行。
+
+**验收证据**：
+
+- 定向测试：`node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/features/plugins apps/desktop/src/renderer/src/lib/features/extension-center apps/desktop/src/renderer/src/lib/i18n packages/shared/test/unit/settings-catalog.test.ts` → 8 文件 65 例全绿；`packages/shared/test/unit/settings-catalog.test.ts`、`settings-ui-scan.test.ts` 单跑全绿。
+- typecheck：`pnpm --filter @kepcup/shared typecheck`、`pnpm --filter @kepcup/desktop typecheck`（tsc + svelte-check 0 err）、`pnpm --filter @kepcup/core typecheck`（经 core build）全过；desktop `tsc -p tsconfig.node.json` 与 svelte-check 均 0 错。
+- core 全量单包 `pnpm --filter @kepcup/core test`：4503 通过 / 37 跳过（第二次运行 0 error；第一次运行报过一次 `Errors 1 error` 的未处理 rejection，无失败用例，重跑同一命令全绿——与 PROGRESS.md 基线里已知的环境类偶发一致，未超出基线）。
+- e2e（`pnpm build` 后）：`plugins.spec.ts` 8/8 通过；`extension-center.spec.ts` 2/2、`skill-market.spec.ts` 1/1、`narrow-layout.spec.ts` 2/2、`local-connectors.spec.ts` 2/2、`connect-abort.spec.ts` 1/1 全部通过（共 8/8）。
+- 全量 `pnpm test`（阶段收口一次）：**6666 通过 / 1 失败 / 37 跳过（632 文件里 1 个失败文件）**。唯一失败是 `packages/core/test/integration/memory.test.ts` 的「两个 Bot 同时产生画像提案」用例——全量并跑下的 `Timed out waiting for completed response run`（testkit helpers 的 waitFor 超时，负载型偶发），**单跑该文件 15/15 全绿复核通过**，与本阶段改动面（插件 UI）无交集。失败集合不超出 PROGRESS.md 基线（D103 记录 21 例沙箱基线失败；本机这次 run 里 `sandbox-isolation` / `toolchain-sandbox` / `workspace-tools` 等沙箱用例实际全过——本机环境具备这些用例需要的执行途径，基线是「不超出」上限而非下限）。
+- `pnpm --filter @kepcup/desktop build:web` 通过；web 端点 `endpointSupports('local-file-dialog')` 恒 false（`local-file-dialog` ∈ shared 的 `DESKTOP_ONLY_CAPABILITIES`），「从本地安装…」「从文件夹安装…」不渲染，`installed` 页签本身可打开（纯数据面板，无桌面通道依赖）。仓库没有 web e2e harness，此条以构建 + 能力门控代码为证。
+- `pnpm lint`（eslint 对本阶段全部新增 / 修改文件单跑）：0 报错。
+- 渲染层硬编码中文：新增组件全部经 `t()`；`locales.test.ts`（键与顺序一致、英文无中文非空、占位符一致）通过。
+
+**`SkillEntry` 来源字段名核对结论**：字段名就是 `sourceUrl`（`packages/shared/src/domain/types.ts` 的 `skillEntrySchema`，`sourceUrl: z.string().nullable()`），与任务书一致，无需偏差登记。`SkillsTab` 里用 `skill.sourceUrl ?? ''` 传给 `pluginIdOfSkillSource`（null → 非插件来源）。
+
+**`appCatalogEntrySchema.pluginId` 改动**：按任务书加可选字段 `pluginId: z.string().optional()`（紧跟 `origin`）；core `AppConnections.catalogEntries()` 在 `originOf` 旁用 `catalog.pluginIdOf(meta.slug)` 填充（null 不出键）。集成测试补 `expect(entry).toMatchObject({ origin: 'plugin', tier: 'developer', pluginId: PLUGIN_ID })`。`ConnectAppPanel` / `AppConnectionDetail` 的现有本机徽标分支不动，plugin 分支走 `else if`。
+
+**手工验证要点（e2e 与组件证据替代说明）**：本环境无法真开 Electron 窗口做人工截图，手工路径以 e2e 全流程替代并逐条对上验收清单：从文件安装含 2 技能 + 1 连接器 + 1 http MCP 的插件 → 同意面板出现未审核警示条与全部贡献 → 三处管理页签出现带 `Plugin · Fixture` 徽标的条目 → 技能卸载按钮与 MCP 编辑 / 删除按钮被「由插件管理 · 要移除它，请在『已安装』里卸载该插件。」替换 → core 层 `mcp.removeServer` 抛 `PLUGIN_MANAGED` → 启停后技能 / 连接器摘除、再启用恢复 → 卸载（确认框明示不可撤销）后卡片与三处投影全部消失、回到空态。附：窄屏 375px 六页签横滚可点；`extension-center.spec` / `skill-market` / `narrow-layout` / `local-connectors` / `connect-abort` 无回归。
+
+**偏差（DEV 编号）**：
+
+- **DEV-051**：`chats.errorCode.PLUGIN_*` 四条 P0a-1 已登记（紧跟 `BOARD_*` 组），任务书「追加到块末尾」会撞重复键——保留既有位置、文案按本步骤的表逐条改写（zh / en 同步）。见 `docs/dev/DEVIATIONS.md` DEV-051。
+- 其余为任务书留白的自行判断（见下），未构成偏差。
+
+**自行判断点**：
+
+1. `EXTENSION_CENTER_TABS` 单行字面量加了 `// prettier-ignore`（printWidth=100 下该行 137 字符，不加的话 `pnpm fmt` 会把数组重排成多行——正则 `[^\]]*` 虽能吞换行，但任务书明确要求保持字面量形态，注释把约束钉住）。
+2. `PluginConsentPanel` 的 user_config 输入用 `value` + `oninput`（受控）而非 `bind:value`：表单是 `Record<mcpId, Record<key, value>>` 两层嵌套 + `noUncheckedIndexedAccess`，Svelte 的 bind 目标语法不接受 `form[item.id]?.[key]` 形状；Checkbox 仍走 `checked` + `onCheckedChange`。行为与 `McpbInstall` 的 bind 等价（击键即写回 form）。
+3. 同意面板 `requiredMissing` 的 `{fields}` 与技能依赖 `{deps}`、连接器 `{hosts}` / `{scopes}` 都经 `listSeparator()` 拼接（`McpbInstall` 同款）。
+4. `plugins.enabled` 停用失败时 UI 自动回位：开关 `checked={plugin.enabled}` 直读 store，失败路径 store 未变，无需手工回滚。
+5. 内容明细的「前往」只对 skill / connector / mcp 三类渲染（mail 无对应页签，任务书 goTo 语义只列三处）。
+6. `plugins.svelte.test.ts` 对 load 失败断言「列表保留旧值 + loadError 透出」（与 `market.svelte.ts` 行为一致），任务书未规定此细节。
+
+**遗留问题**：
+
+- 无阻塞遗留。P1-3 将把「市场」页签插到最前、更新徽标与 Bot 确认卡复用 `PluginConsentPanel`；`PluginSummary.updateAvailable` / `PluginInspectOutput.update` 仍为 null（P1 填充）。
+- `pnpm --filter @kepcup/core test` 首跑出现过一次无失败用例的 `Errors 1 error`（未处理 rejection），重跑全绿；如后续收口再现在意，可单独定位（不在本阶段改动面内）。
+- 全量 run 里 `memory.test.ts` 画像提案合并用例在全量负载下超时一次（单跑全绿）；它是负载敏感型集成用例，与本阶段无关，后续阶段收口若复现属同类偶发。
