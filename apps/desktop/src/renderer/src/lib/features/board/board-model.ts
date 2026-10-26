@@ -115,6 +115,41 @@ export function deriveCardBadges(card: BoardCard): CardBadges {
   };
 }
 
+/**
+ * Buttons on the dialog's status bar, in display order. Follows the todo
+ * state machine (a cron card stays `scheduled` while its latest run is
+ * shown separately). Reopen does not need an assignee.
+ */
+export type BoardAction =
+  | 'start'
+  | 'reschedule'
+  | 'runOnce'
+  | 'clearWhen'
+  | 'cancel'
+  | 'accept'
+  | 'reopen';
+
+export function primaryActions(card: BoardCard): BoardAction[] {
+  if (card.todo.status === 'done' || card.todo.status === 'cancelled') return ['reopen'];
+  if (card.todo.assignee === null) return [];
+  switch (card.todo.status) {
+    case 'draft':
+      return ['start'];
+    case 'scheduled': {
+      const actions: BoardAction[] = ['reschedule'];
+      if (card.todo.schedule?.kind === 'cron') actions.push('runOnce');
+      actions.push('clearWhen');
+      return actions;
+    }
+    case 'in_progress':
+      return ['cancel'];
+    case 'delivered':
+      return ['accept', 'cancel'];
+    default:
+      return [];
+  }
+}
+
 /** Footer row. Unassigned cards have none, including a blocked card whose executor left. */
 export function cardFooter(card: BoardCard, clock?: Partial<CardClock>): CardFooter | null {
   if (card.todo.assignee === null) return null;

@@ -422,6 +422,46 @@ export class BoardState {
     this.#moveChain = this.#moveChain.then(() => this.#drainCardMove(cardId));
   }
 
+  /**
+   * Apply an execution RPC. Keeps text that is still queued for save.
+   * `BOARD_CRON_TOO_FREQUENT` is returned instead of toasted so the time
+   * popover can show it in place.
+   */
+  async mutateCard(
+    method: string,
+    input: { cardId: string } & Record<string, unknown>,
+  ): Promise<{ ok: true; warnings: string[] } | { ok: false; code: string | undefined }> {
+    try {
+      const result = (await core.call(method, input)) as {
+        card?: BoardCard;
+        warnings?: string[];
+        conversationId?: string;
+      };
+      if (result.card !== undefined) {
+        this.#replaceCard(
+          result.card.id,
+          result.card,
+          this.#queuedCardText[result.card.id] !== undefined,
+        );
+      } else if (typeof result.conversationId === 'string') {
+        this.#patchCard(input.cardId, { conversationId: result.conversationId });
+      }
+      for (const warning of result.warnings ?? []) toast.warning(warning);
+      return { ok: true, warnings: result.warnings ?? [] };
+    } catch (error) {
+      const code = errorCode(error);
+      if (code !== 'BOARD_CRON_TOO_FREQUENT') {
+        toast.error(errorText(code, t('board.error.saveFailed')));
+      }
+      return { ok: false, code };
+    }
+  }
+
+  /** Zero the face badge after the dialog marks the card conversation read. */
+  noteCardRead(cardId: string): void {
+    this.#patchCard(cardId, { unreadCount: 0 });
+  }
+
   async deleteCard(cardId: string): Promise<boolean> {
     if (this.#cardById(cardId) === undefined) return false;
     const projectId = this.projectId;
