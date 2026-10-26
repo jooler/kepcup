@@ -8,6 +8,7 @@ import {
   deriveCardStatus,
   moveTargets,
   needsDeleteConfirm,
+  primaryActions,
 } from './board-model';
 
 function card(patch: Partial<BoardCard> = {}): BoardCard {
@@ -251,6 +252,50 @@ describe('cardFooter', () => {
     expect(footer?.when).toBe(
       describeScheduleWhen(schedule, { localTimeZone: 'UTC', now: CLOCK.now }),
     );
+  });
+});
+
+describe('primaryActions', () => {
+  it('offers nothing until someone is assigned', () => {
+    expect(primaryActions(card())).toEqual([]);
+  });
+
+  it('starts an assigned draft', () => {
+    expect(primaryActions(assigned())).toEqual(['start']);
+  });
+
+  it('reschedules a one-off and can run a cron once or clear it', () => {
+    const once = {
+      id: 'sch_1',
+      kind: 'once' as const,
+      runAt: CLOCK.now,
+      cron: null,
+      timezone: 'UTC',
+      nextFireAt: CLOCK.now,
+    };
+    const cron = { ...once, kind: 'cron' as const, runAt: null, cron: '0 9 * * 1' };
+    expect(primaryActions(assigned({ status: 'scheduled', schedule: once }))).toEqual([
+      'reschedule',
+      'clearWhen',
+    ]);
+    expect(primaryActions(assigned({ status: 'scheduled', schedule: cron }))).toEqual([
+      'reschedule',
+      'runOnce',
+      'clearWhen',
+    ]);
+  });
+
+  it('cancels work in progress', () => {
+    expect(primaryActions(assigned({ status: 'in_progress' }))).toEqual(['cancel']);
+  });
+
+  it('accepts or cancels a delivery', () => {
+    expect(primaryActions(assigned({ status: 'delivered' }))).toEqual(['accept', 'cancel']);
+  });
+
+  it('reopens a finished card, with or without an assignee', () => {
+    expect(primaryActions(assigned({ status: 'done' }))).toEqual(['reopen']);
+    expect(primaryActions(assigned({ status: 'cancelled', assignee: null }))).toEqual(['reopen']);
   });
 });
 

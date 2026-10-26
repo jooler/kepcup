@@ -59,7 +59,14 @@
     readOnly = false,
     centered = false,
     readOnlyHint,
-  }: { readOnly?: boolean; centered?: boolean; readOnlyHint?: string } = $props();
+    placeholderText = undefined,
+  }: {
+    readOnly?: boolean;
+    centered?: boolean;
+    readOnlyHint?: string;
+    /** Replaces the default placeholder. A card dialog names the assignee. */
+    placeholderText?: string;
+  } = $props();
 
   /**
    * 输入区是 TipTap 编辑器（contenteditable）：列表（`- `/`1. ` 输入规则自动
@@ -145,7 +152,7 @@
   const stacked = $derived(multiline || pendingUploads.length > 0);
 
   const placeholder = $derived(
-    isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
+    placeholderText ?? (isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder')),
   );
 
   /**

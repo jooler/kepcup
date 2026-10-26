@@ -45,7 +45,20 @@
    * （含输入坞上方的 ApprovalDock）是 display:none，任务停在 waiting_approval
    * 时用户在页内毫无感知——这里给出同源的卡片，批准 / 拒绝可直接在页内完成。
    */
-  let { taskId }: { taskId: string } = $props();
+  let {
+    taskId,
+    onBack,
+    approvalConversationId: approvalConversationIdProp = undefined,
+  }: {
+    taskId: string;
+    /** Dialog sessions pass this so Back does not close the main task page. */
+    onBack?: () => void;
+    /**
+     * Conversation whose approval cards belong on this page. Omitted on the
+     * main task page, which falls back to the open chat.
+     */
+    approvalConversationId?: string | null;
+  } = $props();
 
   let steps = $state<RunStep[]>([]);
   let loading = $state(true);
@@ -70,8 +83,18 @@
   // 审批条归属的会话（approvalConversationIdOf）：任务自带；任务视图还没读
   // 到时回退当前会话——详情页只在本会话内打开，切会话即关闭。
   const approvalConversationId = $derived(
-    approvalConversationIdOf(task, chat.current?.conversation.id),
+    approvalConversationIdOf(
+      task,
+      approvalConversationIdProp !== undefined
+        ? approvalConversationIdProp
+        : chat.current?.conversation.id,
+    ),
   );
+
+  function goBack(): void {
+    if (onBack !== undefined) onBack();
+    else tasks.closeDetail({ restoreFocus: true });
+  }
   const pendingApprovals = $derived(permissions.pendingOf(approvalConversationId));
 
   $effect(() => {
@@ -165,9 +188,13 @@
   });
 
   $effect(() => {
+    const back = onBack;
     return registerEscapeLayer({
       priority: ESCAPE_PRIORITY.overlay,
-      onEscape: () => tasks.closeDetail({ restoreFocus: true }),
+      onEscape: () => {
+        if (back !== undefined) back();
+        else tasks.closeDetail({ restoreFocus: true });
+      },
     });
   });
 
@@ -214,7 +241,7 @@
       variant="ghost"
       size="icon"
       class="app-no-drag mt-0.5 size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-      onclick={() => tasks.closeDetail({ restoreFocus: true })}
+      onclick={goBack}
       aria-label={t('task.run.back')}
       title={t('task.run.back')}
       data-testid="task-run-back"

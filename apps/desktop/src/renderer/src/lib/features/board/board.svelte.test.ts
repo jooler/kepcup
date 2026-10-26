@@ -50,7 +50,7 @@ function card(id: string, columnId: string, text: string, position: number): Boa
 }
 
 vi.mock('svelte-sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({
