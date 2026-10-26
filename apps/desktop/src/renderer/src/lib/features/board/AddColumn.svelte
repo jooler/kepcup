@@ -9,13 +9,15 @@
   }
 </script>
 
-<button
-  type="button"
-  class="flex h-10 shrink-0 cursor-pointer items-center gap-1 self-start rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-  aria-label={t('board.addColumn')}
-  onclick={add}
-  data-testid="board-add-column"
->
-  <Plus class="size-4" aria-hidden="true" />
-  {t('board.addColumn')}
-</button>
+<div class="shrink-0 self-start pb-2">
+  <button
+    type="button"
+    class="flex h-6 cursor-pointer items-center gap-1 rounded-md pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+    aria-label={t('board.addColumn')}
+    onclick={add}
+    data-testid="board-add-column"
+  >
+    <Plus class="size-4" aria-hidden="true" />
+    {t('board.addColumn')}
+  </button>
+</div>
