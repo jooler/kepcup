@@ -4,7 +4,6 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   pluginManifestSchema,
-  type PluginIdentity,
   type PluginItemKind,
   type PluginLedger,
   type PluginManifest,
@@ -79,11 +78,11 @@ function ownedOf(entries: Array<[ProjectedKind, string[]]>) {
 
 const SKILL_ID = 'io.github.tester/skills';
 
-function makeSkillDir(entries: Array<{ name: string; body?: string }>): string {
+function makeSkillDir(entries: Array<{ name: string; body?: string; dir?: string }>): string {
   const dir = path.join(root, `skills-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(dir, { recursive: true });
   for (const entry of entries) {
-    const skillDir = path.join(dir, 'skills', entry.name);
+    const skillDir = path.join(dir, 'skills', entry.dir ?? entry.name);
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
       path.join(skillDir, 'SKILL.md'),
@@ -151,8 +150,14 @@ function skillRig() {
 describe('SkillsProjector.update', () => {
   it('内容变化被替换（source_url / 内容哈希换新）、未变化不重装、删除的技能被清理', async () => {
     const rig = skillRig();
-    const oldDir = makeSkillDir([{ name: 'alpha', body: 'v1' }, { name: 'beta', body: 'same' }]);
-    const newDir = makeSkillDir([{ name: 'alpha', body: 'v2' }, { name: 'beta', body: 'same' }]);
+    const oldDir = makeSkillDir([
+      { name: 'alpha', body: 'v1' },
+      { name: 'beta', body: 'same' },
+    ]);
+    const newDir = makeSkillDir([
+      { name: 'alpha', body: 'v2' },
+      { name: 'beta', body: 'same' },
+    ]);
     const oldCtx = rig.ctxOf(oldDir, { dirs: ['alpha', 'beta'] });
     await rig.projector.project(oldCtx);
     const oldAlphaLibrary = rig.skills.publicSkillRow('alpha')!.library_id;
@@ -212,6 +217,34 @@ describe('SkillsProjector.update', () => {
     expect(rig.skills.libraryGet(rig.skills.publicSkillRow('alpha')!.library_id)!.source_url).toBe(
       'plugin://io.github.other/who/alpha',
     );
+  });
+
+  it('贡献目录改名（SKILL.md name 不变）不丢技能；SKILL.md name 改变则旧名清理', async () => {
+    const rig = skillRig();
+    const oldDir = makeSkillDir([{ name: 'alpha' }, { name: 'beta' }]);
+    const newDir = makeSkillDir([
+      { name: 'alpha', dir: 'alpha-moved', body: 'moved' }, // 同名技能换了目录 → 保留并换新内容
+      { name: 'beta2', dir: 'beta' }, // 同目录改了 SKILL.md name → 旧名清理、新名登记
+    ]);
+    const oldCtx = rig.ctxOf(oldDir, { dirs: ['alpha', 'beta'] });
+    await rig.projector.project(oldCtx);
+
+    const newCtx = rig.ctxOf(newDir, {
+      version: '2.0.0',
+      dirs: ['alpha-moved', 'beta'],
+      owned: ownedOf([['skill', ['alpha', 'beta']]]),
+    });
+    await rig.projector.update(oldCtx, newCtx);
+
+    // 技能身份 = SKILL.md name：目录改名后 alpha 仍在（内容已换新）
+    expect(rig.skills.publicSkillRow('alpha')).not.toBeNull();
+    expect(
+      rig.skills.libraryGet(rig.skills.publicSkillRow('alpha')!.library_id)!.content_hash,
+    ).toBe(hashDirectory(path.join(newDir, 'skills', 'alpha-moved')));
+    // SKILL.md name 改变：旧名被清理（若按贡献目录比对会误删仍存在的 alpha）
+    expect(rig.skills.publicSkillRow('beta')).toBeNull();
+    expect(rig.skills.publicSkillRow('beta2')).not.toBeNull();
+    expect(rig.ledger.list('skill')).toEqual(['alpha', 'beta2']);
   });
 
   it('inspect 的 owned 排除：更新自己不报同名冲突，不带 owned 仍冲突', async () => {
@@ -368,11 +401,14 @@ describe('ConnectorsProjector.update', () => {
       { slug: 'acme', body: rawEntry('acme', { url: 'https://mcp.acme.test/v2/mcp' }) },
     ]);
     rig.connections.set('conn_2', 'acme');
-    await rig.projector.update(sameCtx, rig.ctxOf(movedDir, {
-      version: '2.0.0',
-      slugs: ['acme'],
-      owned: ownedOf([['connector', ['acme']]]),
-    }));
+    await rig.projector.update(
+      sameCtx,
+      rig.ctxOf(movedDir, {
+        version: '2.0.0',
+        slugs: ['acme'],
+        owned: ownedOf([['connector', ['acme']]]),
+      }),
+    );
     expect([...rig.disconnectCalls].sort()).toEqual(['conn_1', 'conn_2']);
     expect(rig.connections.size).toBe(0);
     expect(rig.ledger.list('connector')).toEqual(['acme']);
@@ -389,14 +425,20 @@ describe('ConnectorsProjector.update', () => {
     rig.connections.set('conn_1', 'acme');
 
     const nextDir = makeConnDir([
-      { slug: 'acme', body: rawEntry('acme', { registration: 'preregistered', clientRef: 'client_1' }) },
+      {
+        slug: 'acme',
+        body: rawEntry('acme', { registration: 'preregistered', clientRef: 'client_1' }),
+      },
       { slug: 'added', body: rawEntry('added') },
     ]);
-    await rig.projector.update(oldCtx, rig.ctxOf(nextDir, {
-      version: '2.0.0',
-      slugs: ['acme', 'added'],
-      owned: ownedOf([['connector', ['acme', 'gone']]]),
-    }));
+    await rig.projector.update(
+      oldCtx,
+      rig.ctxOf(nextDir, {
+        version: '2.0.0',
+        slugs: ['acme', 'added'],
+        owned: ownedOf([['connector', ['acme', 'gone']]]),
+      }),
+    );
     expect(rig.disconnectCalls).toEqual(['conn_1']);
     expect(rig.connections.size).toBe(0);
     expect(rig.ledger.list('connector')).toEqual(['acme', 'added']);
@@ -411,11 +453,14 @@ describe('ConnectorsProjector.update', () => {
       { slug: 'acme', body: rawEntry('acme', { name: 'other.name/mcp' }) },
     ]);
     await expect(
-      rig.projector.update(oldCtx, rig.ctxOf(renamedDir, {
-        version: '2.0.0',
-        slugs: ['acme'],
-        owned: ownedOf([['connector', ['acme']]]),
-      })),
+      rig.projector.update(
+        oldCtx,
+        rig.ctxOf(renamedDir, {
+          version: '2.0.0',
+          slugs: ['acme'],
+          owned: ownedOf([['connector', ['acme']]]),
+        }),
+      ),
     ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
   });
 

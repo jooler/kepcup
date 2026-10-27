@@ -140,9 +140,7 @@ class NullLedger implements PluginLedger {
 }
 
 /** The consent items of one inspection, as the permission-token derivation wants them. */
-function itemsOf(inspection: {
-  items: ConsentItems;
-}): ConsentItems {
+function itemsOf(inspection: { items: ConsentItems }): ConsentItems {
   return inspection.items;
 }
 
@@ -686,14 +684,18 @@ export class PluginRegistry {
     }
     this.#prevalidateUpdateUserConfig(manifest, newInspection, input.userConfig, row.id);
     const diff = diffPermissions(
-      permissionTokens(itemsOf(await this.#inspectContext({
-        plugin: this.#identityOf(row),
-        manifest: oldManifest,
-        dir: oldDir,
-        userConfig: {},
-        ledger: new NullLedger(),
-        owned,
-      }))),
+      permissionTokens(
+        itemsOf(
+          await this.#inspectContext({
+            plugin: this.#identityOf(row),
+            manifest: oldManifest,
+            dir: oldDir,
+            userConfig: {},
+            ledger: new NullLedger(),
+            owned,
+          }),
+        ),
+      ),
       permissionTokens(itemsOf(newInspection)),
     );
     if (diff.expanded && !input.acknowledgeDiff) {
@@ -824,6 +826,7 @@ export class PluginRegistry {
         );
       }
     }
+    if (!row.enabled) await this.#convergeDisabled(row.id, manifest);
     await rm(oldCtxDir, { recursive: true, force: true });
     this.#deps.audit?.recordSystem('plugin_update', {
       pluginId: row.id,
@@ -1061,9 +1064,6 @@ export class PluginRegistry {
     }
     const rows = this.#deps.store.list();
     const occupied = new Set(rows.map((row) => row.dir.toLowerCase()));
-    const updating = new Set(
-      rows.filter((row) => row.updateTo !== null).map((row) => row.dir.toLowerCase()),
-    );
     let removed = 0;
     for (const namespace of namespaces) {
       if (namespace.startsWith('.')) continue; // `.staging` and friends
@@ -1072,6 +1072,10 @@ export class PluginRegistry {
       if (info === null || !info.isDirectory()) continue;
       for (const entry of await readdir(namespacePath)) {
         const relative = path.join(namespace, entry).toLowerCase();
+        // A row's own slot is never touched — including the odd-but-legal case of a
+        // prerelease version that itself ends in `.prev` (e.g. `1.0.0-a.prev`), which the
+        // `.prev`-parked heuristic below would otherwise strip and misread as garbage.
+        if (occupied.has(relative)) continue;
         const prevMatch = /^(.+)@([^@]+)\.prev$/.exec(entry.toLowerCase());
         if (prevMatch !== null) {
           const baseSlot = `${namespace}/${prevMatch[1]}@${prevMatch[2]}`.toLowerCase();
@@ -1084,7 +1088,6 @@ export class PluginRegistry {
           continue;
         }
         if (!PLUGIN_SLOT_PATTERN.test(entry.toLowerCase())) continue;
-        if (occupied.has(relative)) continue;
         await rm(path.join(namespacePath, entry), { recursive: true, force: true }).catch(
           () => undefined,
         );
@@ -1093,6 +1096,33 @@ export class PluginRegistry {
     }
     if (removed > 0) {
       this.#deps.logger.info({ removed }, 'plugin registry swept orphan dirs');
+    }
+  }
+
+  /**
+   * An update re-projects a DISABLED plugin: the skills projector installs public rows
+   * again and newly added servers come back `enabled`, contradicting design 51 §7
+   * (enabled=0 means every projection removed). Re-running the disable unwind after the
+   * commit converges the state; idempotent for projectors that kept their disabled state.
+   */
+  async #convergeDisabled(pluginId: string, manifest: PluginManifest): Promise<void> {
+    const row = this.#deps.store.get(pluginId);
+    if (row === null || row.enabled) return;
+    const ctx = await this.#contextFor(row, manifest, {});
+    for (const kind of [...PLUGIN_PROJECTOR_ORDER].reverse()) {
+      const refs = this.#deps.store.refs(pluginId, kind);
+      if (refs.length === 0) continue;
+      const projector = this.#projectorOf(kind);
+      if (projector === undefined) continue;
+      try {
+        await projector.setEnabled(ctx, refs, false);
+      } catch (error) {
+        // Best effort: the update itself is committed; a failed step only logs.
+        this.#deps.logger.warn(
+          { plugin: pluginId, kind, error: error instanceof Error ? error.message : String(error) },
+          'plugin update: disable converge failed',
+        );
+      }
     }
   }
 

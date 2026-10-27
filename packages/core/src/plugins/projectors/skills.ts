@@ -126,6 +126,14 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
    * lives in the library under its own hash — so there is no `beginUpdate` snapshot.
    */
   async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    // Skill identity is the parsed SKILL.md name, not the contribution dir: a version that
+    // only moved a skill's folder must keep the skill, and a kept dir whose NAME changed
+    // must remove the old one. Resolve both sides before touching anything.
+    const newNames = new Set<string>();
+    for (const contribution of newCtx.manifest.contributions.skills) {
+      const resolved = this.#resolve(newCtx, contribution.dir);
+      if (resolved !== null) newNames.add(resolved.name);
+    }
     for (const contribution of newCtx.manifest.contributions.skills) {
       const resolved = this.#resolve(newCtx, contribution.dir);
       if (resolved === null) {
@@ -148,14 +156,12 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
       }
       this.#installOne(newCtx.plugin, resolved);
     }
-    // Skills the new version dropped: the same guarded removal as `unproject`.
-    const kept = new Set(
-      newCtx.manifest.contributions.skills.map((contribution) => contribution.dir),
-    );
+    // Skills the new version dropped (no longer among the resolved names): the same guarded
+    // removal as `unproject`.
     for (const contribution of oldCtx.manifest.contributions.skills) {
-      if (kept.has(contribution.dir)) continue;
       const resolved = this.#resolve(oldCtx, contribution.dir);
       if (resolved === null) continue; // content unreadable: nothing projected to remove
+      if (newNames.has(resolved.name)) continue;
       this.#removeOne(oldCtx.plugin, resolved.name);
       oldCtx.ledger.remove('skill', resolved.name);
     }
