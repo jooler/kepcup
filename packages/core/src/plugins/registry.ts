@@ -216,9 +216,29 @@ export class PluginRegistry {
     const resolved = await this.#resolveSource(source);
     const staged = await this.#deps.packager.stage(resolved.stageSource);
     try {
+      this.#assertMatchesMarketplaceEntry(staged, resolved.marketplace);
       return await this.#inspectStagedOutput(staged, resolved.marketplace);
     } finally {
       await this.#deps.packager.discard(staged);
+    }
+  }
+
+  /**
+   * The staged package must be exactly what the signed index describes (design 51 §5,
+   * P1-1 step 4.1) — enforced for inspect (fail fast at consent time) and install alike:
+   * the manifest identity must match the entry and the bytes must hash to `entry.sha256`.
+   */
+  #assertMatchesMarketplaceEntry(
+    staged: StagedPlugin,
+    marketplace: ResolvedSource['marketplace'],
+  ): void {
+    if (marketplace === null) return;
+    const { entry } = marketplace;
+    if (staged.manifest.id !== entry.id || staged.manifest.version !== entry.version) {
+      throw new AppError('PLUGIN_INVALID', '包内清单与索引不符');
+    }
+    if (staged.packageSha256 !== entry.sha256) {
+      throw new AppError('PLUGIN_INVALID', '包内容与索引的 sha256 不符');
     }
   }
 
@@ -311,13 +331,12 @@ export class PluginRegistry {
       // No compatible version: show the highest one flagged incompatible (P1-1 step 4.6).
       const chosen =
         compatible ??
-        [...candidates].sort(
-          (a, b) => (compareConnectorVersions(b.version, a.version) ?? -1),
-        )[0]!;
+        [...candidates].sort((a, b) => compareConnectorVersions(b.version, a.version) ?? -1)[0]!;
       const row = rows.get(id) ?? null;
-      const revoked = row !== null
-        ? sync.revocationOf(row.id, row.version)
-        : sync.revocationOf(id, chosen.version);
+      const revoked =
+        row !== null
+          ? sync.revocationOf(row.id, row.version)
+          : sync.revocationOf(id, chosen.version);
       entries.push({
         id,
         version: chosen.version,
@@ -330,7 +349,9 @@ export class PluginRegistry {
         updatedAt: chosen.updatedAt,
         compatible: compatible !== null,
         incompatibleReason:
-          compatible !== null ? null : sync.incompatibleReason(chosen, this.#appVersion(), platform),
+          compatible !== null
+            ? null
+            : sync.incompatibleReason(chosen, this.#appVersion(), platform),
         installed:
           row === null
             ? null
@@ -382,16 +403,7 @@ export class PluginRegistry {
       if (staged.packageSha256 !== input.sha256) {
         throw new AppError('PLUGIN_INVALID', '包与确认时不一致，请重新选择');
       }
-      if (resolved.marketplace !== null) {
-        // The package must be exactly what the signed index describes (design 51 §5).
-        const { entry } = resolved.marketplace;
-        if (staged.manifest.id !== entry.id || staged.manifest.version !== entry.version) {
-          throw new AppError('PLUGIN_INVALID', '包内清单与索引不符');
-        }
-        if (staged.packageSha256 !== entry.sha256) {
-          throw new AppError('PLUGIN_INVALID', '包内容与索引的 sha256 不符');
-        }
-      }
+      this.#assertMatchesMarketplaceEntry(staged, resolved.marketplace);
       const manifest = staged.manifest;
       const { id, version } = manifest;
       // Reserved namespaces are rejected for marketplace / local installs.
@@ -479,9 +491,7 @@ export class PluginRegistry {
         origin,
         tier,
         via: input.via,
-        ...(resolved.marketplace !== null
-          ? { marketplace: resolved.marketplace.endpointId }
-          : {}),
+        ...(resolved.marketplace !== null ? { marketplace: resolved.marketplace.endpointId } : {}),
       });
       this.#deps.events.emit('plugins.changed', { ids: [id] });
       return this.#summaryOf(this.#deps.store.get(id)!);
@@ -740,19 +750,20 @@ export class PluginRegistry {
     staged: StagedPlugin,
     marketplace: ResolvedSource['marketplace'] = null,
   ): Promise<PluginInspectOutput> {
-    const identity: PluginIdentity = marketplace === null
-      ? {
-          id: staged.manifest.id,
-          version: staged.manifest.version,
-          origin: 'local',
-          tier: 'developer',
-        }
-      : {
-          id: staged.manifest.id,
-          version: staged.manifest.version,
-          origin: 'marketplace',
-          tier: marketplace.entry.tier,
-        };
+    const identity: PluginIdentity =
+      marketplace === null
+        ? {
+            id: staged.manifest.id,
+            version: staged.manifest.version,
+            origin: 'local',
+            tier: 'developer',
+          }
+        : {
+            id: staged.manifest.id,
+            version: staged.manifest.version,
+            origin: 'marketplace',
+            tier: marketplace.entry.tier,
+          };
     const inspection = await this.#inspectStaged(staged, identity);
     const manifest = staged.manifest;
     const existingRow = this.#deps.store.get(manifest.id);

@@ -7,7 +7,11 @@ import { withRemoteSource } from '@kepcup/core';
 import { buildPluginFixture, createTestStack, makeBot, type TestStack } from '@kepcup/testkit';
 import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
 import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
-import { buildPluginIndex, makeMarketKey, pluginIndexEntryFor } from '../support/plugin-market-fixture.js';
+import {
+  buildPluginIndex,
+  makeMarketKey,
+  pluginIndexEntryFor,
+} from '../support/plugin-market-fixture.js';
 
 /**
  * 插件市场集成（D104 P1-1 步骤 4）：签名索引同步 → `plugins.marketplace.list / refresh` →
@@ -26,6 +30,7 @@ const CUSTOM_BASE = 'https://self.test/plugins/v1';
 const T1 = Date.parse('2026-10-09T00:00:00.000Z');
 const T2 = Date.parse('2026-10-10T00:00:00.000Z');
 const T3 = Date.parse('2026-10-11T00:00:00.000Z');
+const T4 = Date.parse('2026-10-12T00:00:00.000Z');
 
 interface Package {
   id: string;
@@ -96,9 +101,10 @@ class Market {
       entries: input.entries,
       ...(input.revoked !== undefined ? { revoked: input.revoked } : {}),
     });
-    const indexBytes = input.tamperedIndex === true
-      ? Buffer.from(signed.indexBytes.toString('utf8').replace('"1.0.0"', '"9.9.9"'))
-      : signed.indexBytes;
+    const indexBytes =
+      input.tamperedIndex === true
+        ? Buffer.from(signed.indexBytes.toString('utf8').replace('"1.0.0"', '"9.9.9"'))
+        : signed.indexBytes;
     this.put(`${input.base}/index.json`, indexBytes);
     this.put(
       `${input.base}/index.json.sig`,
@@ -122,16 +128,18 @@ afterAll(() => {
   for (const stack of stacks.splice(0)) void stack.cleanup();
 });
 
-async function setup(options: {
-  officialKeys?: boolean;
-  /** Explicit official key (tests that publish the index before the stack starts). */
-  officialKey?: ReturnType<typeof makeMarketKey>;
-  baseUrl?: string;
-  fetch?: DirectoryFetch;
-  downloadFetch?: DirectoryFetch;
-  intervalMs?: number;
-  initialDelayMs?: number;
-} = {}): Promise<Rig> {
+async function setup(
+  options: {
+    officialKeys?: boolean;
+    /** Explicit official key (tests that publish the index before the stack starts). */
+    officialKey?: ReturnType<typeof makeMarketKey>;
+    baseUrl?: string;
+    fetch?: DirectoryFetch;
+    downloadFetch?: DirectoryFetch;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  } = {},
+): Promise<Rig> {
   const market = new Market();
   const officialKey = options.officialKey ?? makeMarketKey('official-test');
   const customKey = makeMarketKey('custom');
@@ -200,7 +208,12 @@ describe('plugins marketplace integration (P1-1)', () => {
     const pkg = await makePackage({ id: 'io.official/demo', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
     const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+      {
+        path: pkg.path,
+        sha256: pkg.sha256,
+        size: pkg.size,
+        manifest: { id: pkg.id, version: pkg.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
@@ -257,13 +270,30 @@ describe('plugins marketplace integration (P1-1)', () => {
     const pkg = await makePackage({ id: 'io.official/tamper', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
     const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+      {
+        path: pkg.path,
+        sha256: pkg.sha256,
+        size: pkg.size,
+        manifest: { id: pkg.id, version: pkg.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
     );
-    market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry], tamperedIndex: true });
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T1,
+      entries: [entry],
+      tamperedIndex: true,
+    });
     expect((await refresh(stack)).status.error).toContain('bad_signature');
 
-    market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T2, entries: [entry], badSignature: true });
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T2,
+      entries: [entry],
+      badSignature: true,
+    });
     expect((await refresh(stack)).status.error).toContain('bad_signature');
 
     // 索引正常但包字节被改：sha256 不符 → install 拒绝且没有装上。
@@ -279,9 +309,39 @@ describe('plugins marketplace integration (P1-1)', () => {
     ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
     market.servePackage(OFFICIAL_BASE, pkg);
 
-    // 包内清单 id 与索引不符。
+    // 服务端送来的包字节与索引 sha256 不符：inspect 也在同意面板之前拒绝（下载层校验，
+    // 到不了注册表的清单核对）。
     const other = await makePackage({ id: 'io.official/other', version: '1.0.0' });
     market.put(`${OFFICIAL_BASE}/${pkg.sha256}.kepcup`, readFileSync(other.path));
+    await expect(
+      stack.core.rpc.call('plugins.inspect', {
+        source: { kind: 'marketplace', id: pkg.id },
+      }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    await expect(
+      stack.core.rpc.call('plugins.install', {
+        source: { kind: 'marketplace', id: pkg.id },
+        sha256: pkg.sha256,
+        userConfig: {},
+      }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+    market.servePackage(OFFICIAL_BASE, pkg);
+
+    // 索引条目谎报身份（sha256 / 字节都对得上，但条目 version ≠ 包内清单 version）：
+    // 下载与 staging 一路通过，由注册表的「包内清单与索引一致」校验在 inspect（同意面板
+    // 之前）与 install 两处拒绝（P1-1 步骤 4.1）。
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T4,
+      entries: [{ ...entry, version: '9.9.9' }],
+    });
+    expect((await refresh(stack)).status.state).toBe('ok');
+    await expect(
+      stack.core.rpc.call('plugins.inspect', {
+        source: { kind: 'marketplace', id: pkg.id },
+      }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
     await expect(
       stack.core.rpc.call('plugins.install', {
         source: { kind: 'marketplace', id: pkg.id },
@@ -300,7 +360,12 @@ describe('plugins marketplace integration (P1-1)', () => {
     const pkg = await makePackage({ id: 'io.official/rollback', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
     const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+      {
+        path: pkg.path,
+        sha256: pkg.sha256,
+        size: pkg.size,
+        manifest: { id: pkg.id, version: pkg.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T2, entries: [entry] });
@@ -309,10 +374,20 @@ describe('plugins marketplace integration (P1-1)', () => {
     const newer = await makePackage({ id: 'io.official/rollback', version: '1.1.0' });
     market.servePackage(OFFICIAL_BASE, newer);
     const newerEntry = pluginIndexEntryFor(
-      { path: newer.path, sha256: newer.sha256, size: newer.size, manifest: { id: newer.id, version: newer.version } as never },
+      {
+        path: newer.path,
+        sha256: newer.sha256,
+        size: newer.size,
+        manifest: { id: newer.id, version: newer.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${newer.sha256}.kepcup` },
     );
-    market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T3, entries: [newerEntry] });
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T3,
+      entries: [newerEntry],
+    });
     expect((await refresh(stack)).status.state).toBe('ok');
 
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
@@ -403,7 +478,12 @@ describe('plugins marketplace integration (P1-1)', () => {
     const v1 = await makePackage({ id: 'io.official/updates', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, v1);
     const entryV1 = pluginIndexEntryFor(
-      { path: v1.path, sha256: v1.sha256, size: v1.size, manifest: { id: v1.id, version: v1.version } as never },
+      {
+        path: v1.path,
+        sha256: v1.sha256,
+        size: v1.size,
+        manifest: { id: v1.id, version: v1.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${v1.sha256}.kepcup` },
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entryV1] });
@@ -420,10 +500,20 @@ describe('plugins marketplace integration (P1-1)', () => {
     const v2 = await makePackage({ id: 'io.official/updates', version: '1.1.0' });
     market.servePackage(OFFICIAL_BASE, v2);
     const entryV2 = pluginIndexEntryFor(
-      { path: v2.path, sha256: v2.sha256, size: v2.size, manifest: { id: v2.id, version: v2.version } as never },
+      {
+        path: v2.path,
+        sha256: v2.sha256,
+        size: v2.size,
+        manifest: { id: v2.id, version: v2.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${v2.sha256}.kepcup` },
     );
-    market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T2, entries: [entryV1, entryV2] });
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T2,
+      entries: [entryV1, entryV2],
+    });
     await refresh(stack);
     let list = await marketList(stack);
     expect(list.entries[0]!.installed).toEqual({ version: '1.0.0', updateAvailable: true });
@@ -452,13 +542,22 @@ describe('plugins marketplace integration (P1-1)', () => {
     // 无公钥 → no_custom_key。
     await core.rpc.call('settings.update', { pluginMarketplaceUrl: CUSTOM_BASE });
     let list = await marketList(stack);
-    expect(list.status).toMatchObject({ state: 'disabled', disabledReason: 'no_custom_key', endpoint: 'custom' });
+    expect(list.status).toMatchObject({
+      state: 'disabled',
+      disabledReason: 'no_custom_key',
+      endpoint: 'custom',
+    });
 
     // 官方公钥签的索引被自建端点拒绝（unknown_key：官方 keyId 未登记）。
     const pkg = await makePackage({ id: 'io.self/demo', version: '1.0.0' });
     market.servePackage(CUSTOM_BASE, pkg);
     const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+      {
+        path: pkg.path,
+        sha256: pkg.sha256,
+        size: pkg.size,
+        manifest: { id: pkg.id, version: pkg.version } as never,
+      },
       { downloadUrl: `${CUSTOM_BASE}/${pkg.sha256}.kepcup` },
     );
     market.publish({ base: CUSTOM_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
@@ -503,7 +602,12 @@ describe('plugins marketplace integration (P1-1)', () => {
     const pkg = await makePackage({ id: 'io.remote/demo', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
     const entry = pluginIndexEntryFor(
-      { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+      {
+        path: pkg.path,
+        sha256: pkg.sha256,
+        size: pkg.size,
+        manifest: { id: pkg.id, version: pkg.version } as never,
+      },
       { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
@@ -536,7 +640,12 @@ describe('plugins marketplace integration (P1-1)', () => {
       generatedAt: T1,
       entries: [
         pluginIndexEntryFor(
-          { path: pkg.path, sha256: pkg.sha256, size: pkg.size, manifest: { id: pkg.id, version: pkg.version } as never },
+          {
+            path: pkg.path,
+            sha256: pkg.sha256,
+            size: pkg.size,
+            manifest: { id: pkg.id, version: pkg.version } as never,
+          },
           { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
         ),
       ],

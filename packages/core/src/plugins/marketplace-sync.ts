@@ -86,10 +86,7 @@ function incompatibleOf(
   appVersion: string,
   platform: NodeJS.Platform,
 ): IncompatibleReason {
-  if (
-    entry.platforms !== undefined &&
-    !(entry.platforms as readonly string[]).includes(platform)
-  ) {
+  if (entry.platforms !== undefined && !(entry.platforms as readonly string[]).includes(platform)) {
     return `平台不支持（仅 ${entry.platforms.join(' / ')}）`;
   }
   const range = entry.engines?.kepcup;
@@ -213,7 +210,11 @@ export class MarketplaceSync {
   }
 
   /** 版本挑选 / 列表展示共用的兼容判断。 */
-  incompatibleReason(entry: PluginIndexEntry, appVersion: string, platform: NodeJS.Platform): string | null {
+  incompatibleReason(
+    entry: PluginIndexEntry,
+    appVersion: string,
+    platform: NodeJS.Platform,
+  ): string | null {
     return incompatibleOf(entry, appVersion, platform);
   }
 
@@ -420,7 +421,10 @@ export class MarketplaceSync {
       const names = await readdir(this.#deps.packagesDir);
       const now = this.#deps.clock.now();
       for (const name of names) {
-        if (!name.endsWith(PACKAGE_SUFFIX) || name.startsWith('.tmp-')) continue;
+        // Content-addressed packages and `.tmp-*` residue from a crashed download (the
+        // failure path removes its own temp file; only a dead process leaves one behind).
+        // mtime-based, so an in-flight download's fresh temp file is never touched.
+        if (!name.endsWith(PACKAGE_SUFFIX) && !name.startsWith('.tmp-')) continue;
         try {
           const info = await stat(path.join(this.#deps.packagesDir, name));
           if (now - info.mtimeMs <= CLEANUP_AFTER_MS) continue;
