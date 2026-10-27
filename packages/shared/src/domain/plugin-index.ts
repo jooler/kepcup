@@ -42,10 +42,18 @@ export const PLUGIN_INDEX_MAX_REVOKED = 1000;
 export const PLUGIN_PACKAGE_MAX_BYTES = 512 * 1024 * 1024;
 
 /**
- * 生产公钥列表（形态同 CONNECTOR_INDEX_PUBLIC_KEYS）。**空 = 市场关闭**；用户生成密钥并
- * 登记前保持为空（见 infra/cloudflare/plugins/README.md 的用户待办）。
+ * 生产公钥列表（形态同 CONNECTOR_INDEX_PUBLIC_KEYS）。**空 = 市场关闭**。这是编译进应用的
+ * 信任锚：只能通过应用发版增删，绝不从设置 / 环境运行时读取。私钥只存在于发布侧
+ * （CI 机密 / 本机 `.env` 的 `KEPCUP_PLUGIN_SIGNING_KEY`），与这里永不同处。
  */
-export const PLUGIN_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [];
+export const PLUGIN_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [
+  {
+    keyId: 'kepcup-plugins-2026-1',
+    publicKey: '743SNAR3ZSUjoNZETb/NV1WDup6fFPtMcLT5LXrjtDw=',
+    validFrom: Date.UTC(2026, 9, 27),
+    revoked: false,
+  },
+];
 
 /**
  * 同步节奏：与连接器目录通道完全一致（每日 + 失败约 1 小时重试 + ±10% 抖动 + 3 天算过期），

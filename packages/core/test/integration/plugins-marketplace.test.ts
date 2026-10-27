@@ -149,7 +149,8 @@ async function setup(
   const stack = await createTestStack({
     mcpbRuntimes: { node: { command: process.execPath, version: '24.21.0' } },
     pluginMarketplace: {
-      ...(options.officialKeys === false ? {} : { keys: [officialKey.publicEntry] }),
+      // 空公钥列表 = 市场关闭（生产常量在公钥登记后非空，这里显式给空来测这个行为）。
+      ...(options.officialKeys === false ? { keys: [] } : { keys: [officialKey.publicEntry] }),
       baseUrl: options.baseUrl ?? OFFICIAL_BASE,
       fetch: options.fetch ?? market.fetch,
       ...(options.downloadFetch !== undefined ? { downloadFetch: options.downloadFetch } : {}),
@@ -191,7 +192,7 @@ async function refresh(stack: TestStack) {
 }
 
 describe('plugins marketplace integration (P1-1)', () => {
-  it('默认构建（官方公钥为空）不发任何网络请求，市场关闭', async () => {
+  it('官方公钥列表为空 → 不发任何网络请求，市场关闭', async () => {
     const { stack, market } = await setup({ officialKeys: false, initialDelayMs: 10 });
     const list = await marketList(stack);
     expect(list.status).toMatchObject({ state: 'disabled', disabledReason: 'no_keys' });
