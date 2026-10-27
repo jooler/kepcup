@@ -490,7 +490,7 @@ describe('PluginRegistry', () => {
 
     // P1-2：同 id 的本地重装走更新流；「市场来源的行 + 本地来源」仍冲突。
     const marketId = 'io.github.tester/mkt';
-    const v1 = await makeFixture({ id: marketId, version: '1.0.0' });
+    await makeFixture({ id: marketId, version: '1.0.0' });
     rig.store.insert(
       rowOf(marketId, {
         version: '1.0.0',
@@ -913,7 +913,11 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect(rig.fakes.skill.committed[0]).toMatchObject({ snapshot: 'snap:skill@1.0.0' });
     // ⑦ 单条 update 翻转一切
     expect(summary).toMatchObject({ version: '2.0.0', state: 'installed' });
-    expect(rig.store.get(id)).toMatchObject({ version: '2.0.0', updateTo: null, updateSnapshot: null });
+    expect(rig.store.get(id)).toMatchObject({
+      version: '2.0.0',
+      updateTo: null,
+      updateSnapshot: null,
+    });
     // 账本按 rowid：更新新增的 beta 追加在尾部。
     expect(rig.store.items(id)).toEqual([
       { kind: 'skill', ref: 'alpha' },
@@ -935,6 +939,23 @@ describe('PluginRegistry updates (P1-2)', () => {
       },
     });
     expect(rig.events.at(-1)).toEqual({ name: 'plugins.changed', payload: { ids: [id] } });
+  });
+
+  it('禁用插件更新：提交后收敛回禁用（重新投影不泄漏成启用态）', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/disableupd';
+    const first = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+    await rig.registry.setEnabled(id, false);
+    const callsBefore = rig.fakes.skill.setEnabledCalls.length;
+
+    // 同 id 同版本本地重装 = 更新：投影会重新安装技能，提交后必须再走一遍禁用回退
+    const second = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(second));
+
+    expect(rig.fakes.skill.setEnabledCalls.length).toBe(callsBefore + 1);
+    expect(rig.fakes.skill.setEnabledCalls.at(-1)).toMatchObject({ enabled: false });
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', enabled: false, updateTo: null });
   });
 
   it('update 抛错 → 逆序补偿（rollbackUpdate 优先于反向 update）、sameDir 的 .prev 换回、日志清空、重抛原错误', async () => {
@@ -959,9 +980,7 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect((error as Error).message).toContain('update skill failed');
     // 逆序补偿：mail 没有 rollbackUpdate → 反向 update（updates 记一条反转）；
     // skill 实现了 rollbackUpdate → 优先于反向 update，不被反向调用。
-    expect(rig.fakes.skill.rolledBack).toEqual([
-      { pluginId: id, snapshot: 'snap:skill@5.0.0' },
-    ]);
+    expect(rig.fakes.skill.rolledBack).toEqual([{ pluginId: id, snapshot: 'snap:skill@5.0.0' }]);
     expect(rig.fakes.mail.updates).toEqual([
       { from: version, to: version }, // 反向（update 在 skill 就抛了，没到 mail）
     ]);
@@ -1091,7 +1110,13 @@ describe('PluginRegistry updates (P1-2)', () => {
       updatedAt: 1,
     });
     const downgrade = await marketRig.registry
-      .update({ id: MARKET_ID, sha256: newer.sha256, userConfig: {}, acknowledgeDiff: true, via: 'marketplace' })
+      .update({
+        id: MARKET_ID,
+        sha256: newer.sha256,
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
       .then(
         () => null,
         (caught: unknown) => caught,
@@ -1114,7 +1139,13 @@ describe('PluginRegistry updates (P1-2)', () => {
       }),
     };
     const mismatch = await mismatchedRig.registry
-      .update({ id: MARKET_ID, sha256: 'a'.repeat(64), userConfig: {}, acknowledgeDiff: true, via: 'marketplace' })
+      .update({
+        id: MARKET_ID,
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
       .then(
         () => null,
         (caught: unknown) => caught,
@@ -1126,7 +1157,13 @@ describe('PluginRegistry updates (P1-2)', () => {
     const localId = 'io.github.tester/local';
     marketRig.store.insert(rowOf(localId));
     const localRefusal = await marketRig.registry
-      .update({ id: localId, sha256: 'a'.repeat(64), userConfig: {}, acknowledgeDiff: true, via: 'marketplace' })
+      .update({
+        id: localId,
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
       .then(
         () => null,
         (caught: unknown) => caught,
@@ -1134,7 +1171,13 @@ describe('PluginRegistry updates (P1-2)', () => {
     expectCode(localRefusal, 'INVALID_INPUT');
     expect((localRefusal as AppError).message).toContain('本地插件请重新选择');
     const missing = await marketRig.registry
-      .update({ id: 'io.github.tester/none', sha256: 'a'.repeat(64), userConfig: {}, acknowledgeDiff: true, via: 'marketplace' })
+      .update({
+        id: 'io.github.tester/none',
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
       .then(
         () => null,
         (caught: unknown) => caught,
@@ -1199,7 +1242,13 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect(existsSync(path.join(rig.pluginsDir, `${MARKET_ID}@1.0.0`.toLowerCase()))).toBe(false);
     expect(rig.audits.at(-1)).toMatchObject({
       action: 'plugin_update',
-      detail: { via: 'marketplace', origin: 'marketplace', tier: 'community', from: '1.0.0', to: '3.0.0' },
+      detail: {
+        via: 'marketplace',
+        origin: 'marketplace',
+        tier: 'community',
+        from: '1.0.0',
+        to: '3.0.0',
+      },
     });
   });
 
@@ -1208,7 +1257,12 @@ describe('PluginRegistry updates (P1-2)', () => {
     const id = 'io.github.tester/crashupd';
     const oldDir = seedDir(rig.pluginsDir, id, '1.0.0');
     rig.fakes.skill.snapshotDriven = true;
-    rig.store.insert(rowOf(id, { updateTo: '2.0.0', updateSnapshot: JSON.stringify({ skill: 'snap:skill@1.0.0' }) }));
+    rig.store.insert(
+      rowOf(id, {
+        updateTo: '2.0.0',
+        updateSnapshot: JSON.stringify({ skill: 'snap:skill@1.0.0' }),
+      }),
+    );
     rig.store.addItem(id, 'skill', 'alpha');
 
     // 分支一：newDir 已落盘（更新进行到投影 / 提交前崩溃）
@@ -1218,7 +1272,11 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect(rig.fakes.skill.rolledBack).toEqual([{ pluginId: id, snapshot: 'snap:skill@1.0.0' }]);
     expect(existsSync(newDir)).toBe(false); // 新目录删除
     expect(existsSync(oldDir)).toBe(true); // 旧目录完好（不同版本 → 无 .prev）
-    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', updateTo: null, updateSnapshot: null });
+    expect(rig.store.get(id)).toMatchObject({
+      version: '1.0.0',
+      updateTo: null,
+      updateSnapshot: null,
+    });
     expect(rig.store.items(id)).toEqual([{ kind: 'skill', ref: 'alpha' }]);
     expect(rig.audits.at(-1)).toMatchObject({ action: 'plugin_update', detail: { failed: true } });
 
@@ -1255,6 +1313,10 @@ describe('PluginRegistry updates (P1-2)', () => {
     const orphan = seedDir(rig.pluginsDir, id, '9.9.9');
     const stalePrev = seedDir(rig.pluginsDir, id, '4.0.0') + '.prev';
     mkdirSync(stalePrev, { recursive: true });
+    // 版本本身以 .prev 结尾的真实目录（如 prerelease 1.0.0-a.prev）→ 在用槽位，不是 .prev 残留
+    const prevSuffixId = 'io.github.tester/prevsuffix';
+    const prevSuffixDir = seedDir(rig.pluginsDir, prevSuffixId, '1.0.0-a.prev');
+    rig.store.insert(rowOf(prevSuffixId, { version: '1.0.0-a.prev' }));
     // 不符合模式：不应被动
     const foreign = path.join(rig.pluginsDir, 'io.github.tester', 'README.md');
     writeFileSync(foreign, 'keep me');
@@ -1266,6 +1328,7 @@ describe('PluginRegistry updates (P1-2)', () => {
     expect(rig.store.get(updatingId)).toMatchObject({ updateTo: null });
     expect(existsSync(orphan)).toBe(false);
     expect(existsSync(stalePrev)).toBe(false);
+    expect(existsSync(prevSuffixDir)).toBe(true); // .prev 后缀的真实槽位 → 保留
     expect(existsSync(foreign)).toBe(true);
   });
 });
