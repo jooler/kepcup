@@ -31,8 +31,8 @@ declare global {
       windowMaterial: 'acrylic' | 'opaque';
       platform: {
         info(): Promise<PlatformInfo>;
-        /** System directory picker (workdir selector, P04); null when cancelled. */
-        selectDirectory(): Promise<string | null>;
+        /** System directory picker (workdir selector, P04; optional prompt, D104 plugins); null when cancelled. */
+        selectDirectory(options?: { message?: string }): Promise<string | null>;
         /** System file picker (D73 P2 MCPB install); null when cancelled. */
         selectFile(extensions: string[]): Promise<string | null>;
         /** System save-as picker (D48 Bot 模板导出); null when cancelled. */

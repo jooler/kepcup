@@ -3,12 +3,7 @@
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { ExternalLink, Loader2, ShieldAlert } from '@lucide/svelte';
-  import {
-    connectorDescription,
-    connectorUnavailableText,
-    errorText,
-    t,
-  } from '$lib/i18n';
+  import { connectorDescription, connectorUnavailableText, errorText, t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -18,6 +13,7 @@
   import { Label } from '$lib/components/ui/label';
   import McpRiskBadge from '$lib/features/approvals/McpRiskBadge.svelte';
   import ConnectedSkillsPrompt from './ConnectedSkillsPrompt.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import { TIER_LABEL_KEYS, appIconSrc, appInitial } from './app-catalog';
   import {
     CONNECTION_STATUS_LABEL_KEYS,
@@ -334,6 +330,11 @@
             >
               {t('apps.local.badge')}
             </Badge>
+          {:else if entry.origin === 'plugin' && entry.pluginId !== undefined}
+            <PluginSourceBadge
+              pluginId={entry.pluginId}
+              testid={`${testid}-plugin-badge-${entry.connectorId}`}
+            />
           {/if}
         </p>
         {#if entry.description.length > 0}

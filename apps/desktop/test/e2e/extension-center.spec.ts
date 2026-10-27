@@ -7,7 +7,7 @@ import { startMockLlm } from '@kepcup/testkit';
 
 /**
  * 扩展中心分组 e2e：
- * - 四个分组：Skills / 连接 / MCP / 邮件；
+ * - 六个分组：已安装（插件）/ Skills / 连接 / MCP / 邮件 / 本机应用协作；
  * - 「连接」只有目录卡片，没有「填 URL」入口；
  * - 「MCP」可新建 server、管理已安装项、配置 BYO OAuth 客户端（不再挂开发者模式）；
  * - 设置「应用」只管已连接账号，并能跳到扩展中心「连接」；设置里不再有「开发者模式」分区。
@@ -99,7 +99,7 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
 
-    // 键盘：方向键切换分组（tabs: skills → connections → mcp → mail → localCollab）。
+    // 键盘：方向键切换分组（tabs: installed → skills → connections → mcp → mail → localCollab）。
     await dialog.locator('[data-testid="extension-center-tab-mcp"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-mail"]')).toHaveAttribute(
       'aria-selected',
@@ -109,9 +109,9 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(
       dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
     ).toHaveAttribute('aria-selected', 'true');
-    // 末项再往右循环回第一项。
+    // 末项再往右循环回第一项（installed）。
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );

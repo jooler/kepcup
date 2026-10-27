@@ -34,7 +34,7 @@ export function installWebShim(version: string): void {
     windowMaterial: 'opaque',
     platform: {
       info: () => Promise.resolve(platformInfo),
-      selectDirectory: () => Promise.resolve(null),
+      selectDirectory: (_options?: { message?: string }) => Promise.resolve(null),
       selectFile: () => Promise.resolve(null),
       saveFile: () => Promise.resolve(null),
       selectLocalPath: () => Promise.resolve(null),

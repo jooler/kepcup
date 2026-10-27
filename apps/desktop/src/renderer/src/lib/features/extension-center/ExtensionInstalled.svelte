@@ -1,0 +1,317 @@
+<script lang="ts">
+  import type { PluginSummary } from '@kepcup/shared';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { errorText, t } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
+  import { endpointSupports } from '../web-shell/endpoint';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
+  import { plugins } from '../plugins/plugins.svelte';
+  import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Label } from '$lib/components/ui/label';
+  import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+  } from '$lib/components/ui/dialog';
+
+  /**
+   * 扩展中心 →「已安装」分组（D104 P0a-3）：本机已装插件的装 / 卸 / 启停与内容总览。
+   * 页头的两个本地安装入口仅在桌面端点渲染（web / headless 隐藏）；启用开关与卸载按钮
+   * 不对内置插件渲染（内置只读，P0b 起出现在列表里）。内容明细按账本展开、可跳到
+   * 对应管理页签；「由插件管理」的锁定语义在 core 层（PLUGIN_MANAGED）。
+   */
+
+  $effect(() => {
+    plugins.start();
+    void plugins.load(true);
+  });
+
+  let installOpen = $state(false);
+  let installMode = $state<'file' | 'folder'>('file');
+  let uninstallTarget = $state<string | null>(null);
+  /** 展开了内容明细的插件 id。 */
+  const expanded = new SvelteSet<string>();
+
+  const DETAIL_KINDS = ['skill', 'connector', 'mcp', 'mail'] as const;
+
+  const KIND_LABEL_KEYS = {
+    skills: 'plugins.kind.skill',
+    connectors: 'plugins.kind.connector',
+    mcp: 'plugins.kind.mcp',
+    mail: 'plugins.kind.mail',
+  } as const;
+
+  const serverNames = $derived(
+    new Map((settingsStore.settings?.mcpServers ?? []).map((server) => [server.id, server.name])),
+  );
+
+  /** 内容计数里非零的类别（0 的不显示）。 */
+  function nonZeroCounts(plugin: PluginSummary): Array<{ kind: string; count: number }> {
+    return Object.entries(plugin.counts)
+      .filter(([, count]) => count > 0)
+      .map(([kind, count]) => ({ kind, count }));
+  }
+
+  /** 内容明细里的 MCP 服务器名：按 server id 反查，查不到显示 id。 */
+  function mcpLabel(ref: string): string {
+    return serverNames.get(ref) ?? ref;
+  }
+
+  function toggleDetails(id: string): void {
+    if (expanded.has(id)) expanded.delete(id);
+    else expanded.add(id);
+  }
+
+  function codeOf(caught: unknown): string | undefined {
+    return (caught as { code?: string } | undefined)?.code;
+  }
+
+  function reasonOf(caught: unknown): string {
+    const message = (caught as Error | undefined)?.message;
+    return errorText(
+      codeOf(caught),
+      message !== undefined && message !== '' ? message : String(caught),
+    );
+  }
+
+  function openInstall(mode: 'file' | 'folder'): void {
+    installMode = mode;
+    installOpen = true;
+  }
+
+  function reveal(plugin: PluginSummary): void {
+    if (plugin.dirPath !== null) void window.kepcup.showItemInFolder(plugin.dirPath);
+  }
+
+  async function toggle(plugin: PluginSummary, next: boolean): Promise<void> {
+    try {
+      await plugins.setEnabled(plugin.id, next);
+      toast.success(
+        t(next ? 'plugins.toast.enabled' : 'plugins.toast.disabled', { name: plugin.name }),
+      );
+    } catch (caught) {
+      // 失败：store 未变，开关自动回位。
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+    }
+  }
+
+  async function confirmUninstall(): Promise<void> {
+    const id = uninstallTarget;
+    if (id === null) return;
+    const name = plugins.nameOf(id);
+    try {
+      await plugins.uninstall(id);
+      toast.success(t('plugins.toast.uninstalled', { name }));
+      uninstallTarget = null;
+    } catch (caught) {
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+    }
+  }
+
+  /** 内容明细里每一类的「前往」目标（mail 没有对应页签，不显示前往）。 */
+  function goToTab(kind: (typeof DETAIL_KINDS)[number]): void {
+    shell.extensionCenterTab =
+      kind === 'skill' ? 'skills' : kind === 'connector' ? 'connections' : 'mcp';
+  }
+</script>
+
+<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-installed">
+  <div class="mb-3 flex items-start justify-between gap-2 px-0.5">
+    <div class="min-w-0">
+      <h2 class="text-sm font-medium">{t('plugins.title')}</h2>
+      <p class="text-xs text-muted-foreground">{t('plugins.hint')}</p>
+    </div>
+    {#if endpointSupports('local-file-dialog')}
+      <div class="flex shrink-0 items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          onclick={() => openInstall('file')}
+          data-testid="plugins-install-file"
+        >
+          {t('plugins.installFile')}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onclick={() => openInstall('folder')}
+          data-testid="plugins-install-folder"
+        >
+          {t('plugins.installFolder')}
+        </Button>
+      </div>
+    {/if}
+  </div>
+
+  {#if plugins.loadError !== null}
+    <p class="px-0.5 text-xs text-destructive" data-testid="plugins-error">
+      {t('plugins.loadFailed', { reason: plugins.loadError })}
+    </p>
+  {:else if plugins.plugins.length === 0 && !plugins.loading}
+    <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-empty">
+      {t('plugins.empty')}
+    </p>
+  {/if}
+
+  <div class="grid gap-2">
+    {#each plugins.plugins as plugin (plugin.id)}
+      {@const isBuiltin = plugin.origin === 'builtin'}
+      <div
+        class="rounded-lg border bg-card px-3 py-2.5 text-sm"
+        data-testid={`plugins-card-${plugin.id}`}
+        data-plugin-id={plugin.id}
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-medium">{plugin.name}</span>
+          <span class="text-xs text-muted-foreground">
+            {t('plugins.version', { version: plugin.version })}
+          </span>
+          <Badge variant="outline">{t(`plugins.origin.${plugin.origin}`)}</Badge>
+          <Badge
+            variant="outline"
+            class={plugin.tier === 'developer' ? 'border-destructive text-destructive' : ''}
+            data-testid={`plugins-tier-${plugin.id}`}
+          >
+            {t(`plugins.tier.${plugin.tier}`)}
+          </Badge>
+          {#each nonZeroCounts(plugin) as entry (`${entry.kind}:${entry.count}`)}
+            <span class="text-xs text-muted-foreground">
+              {t('plugins.countItem', {
+                kind: t(KIND_LABEL_KEYS[entry.kind as keyof typeof KIND_LABEL_KEYS]),
+                count: entry.count,
+              })}
+            </span>
+          {/each}
+          <div class="ms-auto flex items-center gap-1.5">
+            {#if !isBuiltin}
+              <Checkbox
+                checked={plugin.enabled}
+                disabled={plugins.busy.has(plugin.id)}
+                aria-label={t('plugins.toggleLabel')}
+                onCheckedChange={(checked) => void toggle(plugin, checked === true)}
+                data-testid={`plugins-toggle-${plugin.id}`}
+              />
+              {#if plugin.dirPath !== null && window.kepcup?.showItemInFolder !== undefined}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onclick={() => reveal(plugin)}
+                  data-testid={`plugins-reveal-${plugin.id}`}
+                >
+                  {t('plugins.reveal')}
+                </Button>
+              {/if}
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-destructive hover:text-destructive"
+                disabled={plugins.busy.has(plugin.id)}
+                onclick={() => (uninstallTarget = plugin.id)}
+                data-testid={`plugins-uninstall-${plugin.id}`}
+              >
+                {t('plugins.uninstall')}
+              </Button>
+            {:else}
+              <Badge variant="outline">{t('plugins.origin.builtin')}</Badge>
+            {/if}
+          </div>
+        </div>
+
+        {#if plugin.description.length > 0}
+          <p class="mt-1 text-xs text-muted-foreground">{plugin.description}</p>
+        {/if}
+
+        <div class="mt-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            class="h-6 px-2 text-xs text-muted-foreground"
+            onclick={() => toggleDetails(plugin.id)}
+            data-testid={`plugins-details-${plugin.id}`}
+          >
+            {expanded.has(plugin.id) ? t('plugins.hideDetails') : t('plugins.details')}
+          </Button>
+          {#if expanded.has(plugin.id)}
+            <div class="mt-1.5 grid gap-2 border-t pt-1.5">
+              {#each DETAIL_KINDS as kind (kind)}
+                {@const items = plugin.items.filter((item) => item.kind === kind)}
+                {#if items.length > 0}
+                  <div class="grid gap-0.5">
+                    <div class="flex items-center gap-2">
+                      <Label class="text-xs text-muted-foreground"
+                        >{t(`plugins.kind.${kind}`)}</Label
+                      >
+                      {#if kind !== 'mail'}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          class="h-6 px-2 text-xs"
+                          onclick={() => goToTab(kind)}
+                        >
+                          {t('plugins.goTo')}
+                        </Button>
+                      {/if}
+                    </div>
+                    {#each items as item (`${item.kind}:${item.ref}`)}
+                      <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                        <span>{kind === 'mcp' ? mcpLabel(item.ref) : item.ref}</span>
+                        {#if item.missing === true}
+                          <Badge variant="outline" class="text-destructive">
+                            {t('plugins.itemMissing')}
+                          </Badge>
+                        {/if}
+                        {#if item.yielded === true}
+                          <Badge variant="outline">{t('plugins.itemYielded')}</Badge>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/each}
+  </div>
+</div>
+
+<PluginInstallDialog bind:open={installOpen} mode={installMode} />
+
+<Dialog
+  open={uninstallTarget !== null}
+  onOpenChange={(next) => {
+    if (!next) uninstallTarget = null;
+  }}
+>
+  <DialogContent class="sm:max-w-md" data-testid="plugins-uninstall-dialog">
+    <DialogHeader>
+      <DialogTitle>{t('plugins.uninstallTitle')}</DialogTitle>
+      <DialogDescription>
+        {uninstallTarget === null
+          ? ''
+          : t('plugins.uninstallBody', { name: plugins.nameOf(uninstallTarget) })}
+      </DialogDescription>
+    </DialogHeader>
+    <div class="flex items-center gap-2">
+      <Button
+        size="sm"
+        variant="destructive"
+        disabled={uninstallTarget !== null && plugins.busy.has(uninstallTarget)}
+        onclick={() => void confirmUninstall()}
+        data-testid="plugins-uninstall-confirm"
+      >
+        {t('plugins.uninstallConfirm')}
+      </Button>
+      <Button size="sm" variant="ghost" onclick={() => (uninstallTarget = null)}>
+        {t('plugins.cancel')}
+      </Button>
+    </div>
+  </DialogContent>
+</Dialog>
