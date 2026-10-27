@@ -15,6 +15,7 @@ import {
   type PluginItemRef,
   type PluginManifest,
   type PluginMarketEntry,
+  type MailProviderTemplate,
   type PluginSource,
   type PluginSummary,
 } from '@kepcup/shared';
@@ -277,6 +278,34 @@ export class PluginRegistry {
     if (row === null) return null;
     const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
     return manifest?.contributions ?? null;
+  }
+
+  /**
+   * 已启用插件贡献的邮件预填模板（D104 P1-3，`mail.providerTemplates.list`）：遍历
+   * `installed && enabled` 的行读清单 `contributions.mail`；清单读不到的插件跳过。
+   */
+  async mailTemplates(): Promise<MailProviderTemplate[]> {
+    const templates: MailProviderTemplate[] = [];
+    for (const row of this.#deps.store.list()) {
+      if (row.state !== 'installed' || !row.enabled) continue;
+      const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
+      if (manifest === null) continue;
+      for (const contribution of manifest.contributions.mail) {
+        templates.push({
+          id: `${manifest.id}#${contribution.id}`,
+          pluginId: manifest.id,
+          pluginName: manifest.name,
+          label: contribution.label,
+          imap: { ...contribution.imap },
+          smtp: { ...contribution.smtp },
+          defaultMode: contribution.defaultMode,
+          defaultPollSec: contribution.defaultPollSec,
+          minPollSec: contribution.minPollSec,
+          helpUrl: contribution.helpUrl ?? null,
+        });
+      }
+    }
+    return templates;
   }
 
   async inspect(source: PluginSource): Promise<PluginInspectOutput> {

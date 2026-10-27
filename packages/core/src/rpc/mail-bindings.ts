@@ -11,6 +11,7 @@ import {
   mailAccountsListOutputSchema,
   mailBindingResumeInputSchema,
   mailBotSetAccountsInputSchema,
+  mailProviderTemplatesListOutputSchema,
   okOutputSchema,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
@@ -34,6 +35,7 @@ export function bindMailMethods(services: CoreServices): Record<string, RpcMetho
     if (services.mail === null) throw new AppError('NOT_IMPLEMENTED', '邮件模块未就绪');
     return services.mail;
   };
+  const plugins = () => services.plugins;
   return {
     'mail.accounts.list': method(voidInput, mailAccountsListOutputSchema, async () => ({
       accounts: mail().list(),
@@ -70,5 +72,11 @@ export function bindMailMethods(services: CoreServices): Record<string, RpcMetho
     'mail.bindings.resume': method(mailBindingResumeInputSchema, mailAccountGetOutputSchema, async (input) => ({
       account: mail().resumeAlerts(input.accountId, input.botId),
     })),
+    // 插件贡献的预填模板 overlay（D104 P1-3）：不落库，读注册表清单；插件模块未就绪时为空。
+    'mail.providerTemplates.list': method(
+      voidInput,
+      mailProviderTemplatesListOutputSchema,
+      async () => ({ templates: (await plugins()?.mailTemplates()) ?? [] }),
+    ),
   };
 }

@@ -2294,17 +2294,40 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
     // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
     const marketplaceOptions = directoryTest ? options.pluginMarketplace : undefined;
+    // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
+    // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
+    // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
+    const testMarketSeam = (() => {
+      if (!directoryTest || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
+      try {
+        const parsed = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET) as {
+          baseUrl?: unknown;
+          keys?: unknown;
+        };
+        if (typeof parsed.baseUrl !== 'string' || !Array.isArray(parsed.keys)) return undefined;
+        return { baseUrl: parsed.baseUrl, keys: parsed.keys as ConnectorIndexPublicKey[] };
+      } catch {
+        return undefined;
+      }
+    })();
+    const testMarketLoopbackHosts =
+      testMarketSeam !== undefined ? [new URL(testMarketSeam.baseUrl).host] : [];
+    const resolvedMarketOptions: CoreServicesOptions['pluginMarketplace'] | undefined =
+      testMarketSeam ?? marketplaceOptions;
     const marketplaceFetchFactory = (fetchOptions: {
       maxBytes: number;
       timeoutMs?: number;
     }): DirectoryFetch => {
-      if (marketplaceOptions?.fetch !== undefined) {
+      if (resolvedMarketOptions?.fetch !== undefined) {
         // Tests inject both channels directly; the download channel has the larger cap.
         return fetchOptions.maxBytes > PLUGIN_INDEX_MAX_BYTES
-          ? (marketplaceOptions.downloadFetch ?? marketplaceOptions.fetch)
-          : marketplaceOptions.fetch;
+          ? (resolvedMarketOptions.downloadFetch ?? resolvedMarketOptions.fetch)
+          : resolvedMarketOptions.fetch;
       }
-      return createSafeFetch(fetchOptions);
+      return createSafeFetch({
+        ...fetchOptions,
+        ...(testMarketLoopbackHosts.length > 0 ? { loopbackHosts: testMarketLoopbackHosts } : {}),
+      });
     };
     const marketplace = new MarketplaceService({
       settings,
@@ -2312,28 +2335,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       events,
-      ...(marketplaceOptions?.keys !== undefined || marketplaceOptions?.baseUrl !== undefined
+      ...(resolvedMarketOptions?.keys !== undefined || resolvedMarketOptions?.baseUrl !== undefined
         ? {
             official: {
-              keys: marketplaceOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
-              baseUrl: marketplaceOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
+              keys: resolvedMarketOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
+              baseUrl: resolvedMarketOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
             },
           }
         : {}),
       fetchFactory: marketplaceFetchFactory,
-      ...(marketplaceOptions?.intervalMs !== undefined ||
-      marketplaceOptions?.initialDelayMs !== undefined
+      ...(resolvedMarketOptions?.intervalMs !== undefined ||
+      resolvedMarketOptions?.initialDelayMs !== undefined
         ? {
             timing: {
-              ...(marketplaceOptions.intervalMs !== undefined
-                ? { intervalMs: marketplaceOptions.intervalMs }
+              ...(resolvedMarketOptions.intervalMs !== undefined
+                ? { intervalMs: resolvedMarketOptions.intervalMs }
                 : {}),
-              ...(marketplaceOptions.initialDelayMs !== undefined
-                ? { initialDelayMs: marketplaceOptions.initialDelayMs }
+              ...(resolvedMarketOptions.initialDelayMs !== undefined
+                ? { initialDelayMs: resolvedMarketOptions.initialDelayMs }
                 : {}),
             },
           }
         : {}),
+      ...(testMarketLoopbackHosts.length > 0 ? { testLoopbackHosts: testMarketLoopbackHosts } : {}),
     });
     services.marketplace = marketplace;
     const plugins = new PluginRegistry({
