@@ -27,10 +27,13 @@ export function initialPluginForm(info: PluginInspectOutput): PluginForm {
 
 /** 汇总各 MCPB 的必填缺项，每项带上「{displayName}」前缀。 */
 export function missingPluginConfig(info: PluginInspectOutput, form: PluginForm): string[] {
+  // 更新（P1-2）：必填敏感字段留空 = 保留已存 secret（面板的 keepSecrets 提示），
+  // 不算缺项——否则「留空保留」的更新流程会被禁用的确认按钮堵死。
+  const updating = info.update !== null;
   const missing: string[] = [];
   for (const item of info.mcp) {
     if (item.kind !== 'mcpb') continue;
-    for (const title of missingRequired(item.userConfigFields, form[item.id] ?? {})) {
+    for (const title of missingRequired(item.userConfigFields, form[item.id] ?? {}, updating)) {
       missing.push(`「${item.displayName}」${title}`);
     }
   }
