@@ -957,3 +957,45 @@
 - 推荐：方案 1。
 - 决定：方案 1（P2 实施记录 §6）。
 - 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-060 `kepcup-app pack` 校验的是打包后的归档，不再先对原目录跑 validate
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）审查修复
+- 是否阻塞：否
+- 问题：P2 步骤 5 的 `pack` 写法是「① `validatePlugin(dir)` 有 error 中止 → ② 按排除规则收集 → ③ 写包 → ⑥ 读回自检」。① 对**原目录**整树校验，排除规则在它之后才生效：跑过 `npm install` 的开发目录（`node_modules` 里有符号链接、常常超过 20000 条目）在 ① 就被 `plugin.files-path` / `plugin.files-limits` 拒绝，`.kepcup-ignore` 与内置排除形同虚设，而产物本身是合规的。
+- 影响范围：`packages/app-validator/src/plugin/pack.ts`。新顺序：收集（排除规则、符号链接即错）→ `buildZipBuffer` → 写到临时 `.kepcup` → `validatePlugin(临时归档, { displayTarget: dir })` → 零 error 才写 `--out`。校验对象与安装器看到的字节完全一致，失败时不会留下产物；`validate <dir>` 本身不变（仍同「从文件夹安装」规则，不排除任何路径）。
+- 可选方案：
+  1. 校验打包后的归档（当前实现）— 优点：校验即交付物、只跑一遍、不产出无效文件；缺点：与任务书步骤顺序不同。
+  2. 给 `validatePlugin` 加排除参数，仍先校验原目录 — 优点：改动小；缺点：两次校验、校验视图与产物仍可能不一致（排除目录里的符号链接等）。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`packages/app-validator/README.md`、`docs/guides/write-a-plugin.md`、`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-061 headless `plugin install` 对权限扩大的更新随确认带上 `acknowledgeDiff`
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）审查修复
+- 是否阻塞：否
+- 问题：P2 步骤 7.4 的 CLI 流程没有提到 `acknowledgeDiff`；P1-2 合入后本地同 id 重装 / 更新在权限扩大且未确认时被 core 以 `INVALID_INPUT` 拒绝。headless 的本地安装只有这条 CLI（设计 51 §6.2），于是「插件加了一个连接器主机再重装」成了死路。
+- 影响范围：`apps/server/src/cli.ts`。摘要已逐项列出新增权限；交互确认时提示语改为「此次更新新增了上述权限，继续安装？」，`--yes` 时打印一行提醒；随安装发送 `acknowledgeDiff: info.update?.permissionsExpanded === true`。与桌面端「勾选差异」等价（Q7「权限扩大再同意」的同意动作就是这次确认）。
+- 可选方案：
+  1. 确认即同意（当前实现）— 优点：脚本化更新不需要新旗标，摘要已给出知情前提；缺点：`--yes` 下没有第二道门。
+  2. 新增 `--ack-diff` 旗标 — 优点：显式；缺点：自动化更新必然要加这个旗标，否则在无人值守时失败。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`apps/server/README.md`、`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-062 更新路径的必填 `user_config` 判定接受字段默认值（与首装一致）
+
+- 状态：已落实
+- 阶段：插件系统 P1-2（D104）审查修复
+- 是否阻塞：否
+- 问题：首装的 `validateUserConfig` 把 `input[key] ?? field.default` 为空才算缺失；更新路径的 `PluginRegistry.#prevalidateUpdateUserConfig` 只看提交值与已存密钥，不看 `default`。新版本新增一个「必填但带默认值」的字段时，桌面端恰好因表单预填默认值而通过，而 CLI / `updateAll` 这类不预填的调用方会被拒；两条路径对同一清单给出不同结论。
+- 影响范围：`packages/core/src/plugins/registry.ts`（`#prevalidateUpdateUserConfig` 改为 `provided[key] ?? field.default` 为空才缺失）；`apps/server/src/plugin-cli.ts` 的 `missingRequiredUserConfig` 在 `info.update !== null` 时对必填敏感字段留空不报缺（core 保留已存密钥，与渲染端 `missingRequired(fields, form, updating)` 同规则）。
+- 可选方案：
+  1. core 统一两条路径 + CLI 跟随渲染端规则（当前实现）。
+  2. 只改 CLI 文案提示「重装可能要重传 --config」— 不解决根因。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6（集成测试 `plugins-update.test.ts` 新增用例）。

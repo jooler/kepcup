@@ -79,7 +79,8 @@ function parsePositiveInt(raw: string, what: string): number {
   return value;
 }
 
-function expandTilde(input: string): string {
+/** `~` / `~/x` → home-relative absolute path (shells do not expand a quoted tilde). */
+export function expandTilde(input: string): string {
   if (input === '~') return homedir();
   if (input.startsWith('~/')) return path.join(homedir(), input.slice(2));
   return input;

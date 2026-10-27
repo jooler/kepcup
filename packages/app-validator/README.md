@@ -98,12 +98,16 @@ kepcup-app validate ./my-plugin.kepcup
 
 - `init plugin` writes `plugin.json`, `README.md` and one sample skill. It refuses a non-empty
   directory unless `--force` is given; the id defaults to `io.github.your-name/<directory name>`.
-- `pack` first runs the same validation as `validate` and refuses to write an archive with
-  errors. Entries are sorted, timestamps are fixed and `.git/`, `node_modules/`, `.DS_Store`,
-  `*.kepcup`, `.kepcup-ignore` and paths listed in `.kepcup-ignore` (one relative path or
-  `directory/` per line, `#` comments, no wildcards) are excluded. The result is read back and
-  validated again before it is reported, so packing the same directory twice yields the same
-  sha256.
+- `pack` collects the directory minus `.git/`, `node_modules/`, `.DS_Store`, `*.kepcup`,
+  `.kepcup-ignore` and the paths listed in `.kepcup-ignore` (one relative path or `directory/`
+  per line, `#` comments, no wildcards), builds the archive with sorted entries and fixed
+  timestamps, and validates **the archive** through the same package-guard path the installer
+  uses before writing it. Nothing is written when that validation reports an error, and the
+  excluded trees may contain anything (symlinks, junk) — only what ships is judged. Packing the
+  same directory twice yields the same sha256 (on the same Node / zlib version).
+- `validate <directory>` checks the directory as-is, with the same rules as KepCup's "install
+  from folder" (no exclusions, symlinks rejected). For a development checkout with
+  `node_modules`, validate the `pack` output instead.
 - `--json` prints the same report object as connector mode, with `"mode": "plugin"`.
 
 The full developer guide is [docs/guides/write-a-plugin.md](../../docs/guides/write-a-plugin.md).
@@ -223,9 +227,9 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="plugin-files-limits"></a>`plugin.files-limits` (error): the directory exceeds the package limits (20,000 entries / 200 MB per file / 500 MB unpacked).
 - <a id="plugin-package-entries"></a>`plugin.package-entries` (error): the `.kepcup` archive is unreadable or has an unsafe path, symlink, duplicate entry, encryption or ZIP64.
 - <a id="plugin-skill-frontmatter"></a>`plugin.skill-frontmatter` (error): a skill's `SKILL.md` has no leading `---` frontmatter block, or the block lacks `name:` / `description:`. KepCup runs the full parser and sandbox-compatibility scan at install time.
-- <a id="plugin-connector-entry"></a>`plugin.connector-entry`: the connector `server.json` fails the regular connector checks; findings are forwarded with the file path.
+- <a id="plugin-connector-entry"></a>`plugin.connector-entry`: the connector `server.json` fails the regular connector checks (findings are forwarded with the file path), or does not parse with the strict catalog-entry schema the installer uses (for example a missing `releaseGate`; plugin entries must be complete as written).
 - <a id="plugin-connector-packages"></a>`plugin.connector-packages` (error): a connector entry inside a plugin declares `packages[]`; local execution belongs in an `mcp` contribution.
-- <a id="plugin-connector-remote"></a>`plugin.connector-remote` (error): a connector remote is not a public https URL.
+- <a id="plugin-connector-remote"></a>`plugin.connector-remote` (error): a connector remote is not a public https URL, or the entry has no remote at all.
 - <a id="plugin-connector-icon"></a>`plugin.connector-icon` (error): the icon file is not next to `server.json`.
 - <a id="plugin-mcpb-package"></a>`plugin.mcpb-package` (error): an embedded `.mcpb` is not a valid archive, lacks `manifest.json`, uses an unsupported `manifest_version`, or its `server.entry_point` (non-`uv`) is not in the bundle. Full validation runs at install time.
 - <a id="plugin-mcp-http"></a>`plugin.mcp-http` (error): an `http` contribution URL is not a public https URL. Remote servers that need OAuth must be connector contributions.

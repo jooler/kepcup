@@ -20,7 +20,9 @@
    * - main-model：两段式（供应商表单 → 选默认主模型，可顺带写当前 Bot 的模型），
    *   不是单条目录条目，保留独立 kind（MainModelSetupBody）；
    * - confirm-local-connector：本机连接确认卡，不是设置目录条目——用户点的是
-   *   apps.localConnectors.confirm / reject，保持独立 kind 与独立 body。
+   *   apps.localConnectors.confirm / reject，保持独立 kind 与独立 body；
+   * - confirm-plugin-install：Bot 提议安装官方插件的确认卡（D104 P1-3），body 自己
+   *   plugins.inspect 后渲染同意面板，用户点 plugins.install / 不装了。
    * 确认 / 保存后 session.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
    */
   let { requirement }: { requirement: SetupRequirement } = $props();

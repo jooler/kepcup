@@ -282,9 +282,10 @@ async function discover(
 /** Routes to plugin mode for a directory / `.kepcup` target, connector mode otherwise. */
 export async function validateTarget(options: ValidateOptions): Promise<ValidationReport> {
   const target = options.target;
-  if (target.toLowerCase().endsWith('.kepcup')) return validatePlugin(target);
+  const pluginOptions = { log: options.log };
+  if (target.toLowerCase().endsWith('.kepcup')) return validatePlugin(target, pluginOptions);
   try {
-    if ((await stat(target)).isDirectory()) return validatePlugin(target);
+    if ((await stat(target)).isDirectory()) return validatePlugin(target, pluginOptions);
   } catch {
     // Let connector mode produce its usual manifest.load error for a missing file.
   }

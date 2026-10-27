@@ -5,6 +5,7 @@ import {
   PLUGIN_FORMAT_VERSION,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_MAX_BYTES,
+  connectorCatalogEntrySchema,
   connectorMetaOf,
   isReservedPluginNamespace,
   isSafeDirectoryRemoteUrl,
@@ -29,17 +30,21 @@ import {
   type Check,
   type ValidationReport,
 } from '../types.js';
+import { errorMessage } from '../util.js';
 
 /**
  * Offline plugin validation (D104 P2): a plugin directory or a `.kepcup` archive is checked
  * without any network access and without executing package code. The package layer shares
  * `@kepcup/package-guard` with the installer, connector files go through the existing
- * `checkManifest`, and MCPB bundles only get a structural preview here — the full check
- * (runtimes, user_config, launch template) runs in KepCup during install.
+ * `checkManifest` plus the installer's strict schema, and MCPB bundles only get a structural
+ * preview here — the full check (runtimes, user_config, launch template) runs in KepCup
+ * during install.
  */
 
 export interface PluginValidateOptions {
   log?: ((line: string) => void) | undefined;
+  /** What `report.target` should say when `target` is an internal temp copy (`pack` self-check). */
+  displayTarget?: string | undefined;
 }
 
 const MCPB_MANIFEST_VERSIONS = new Set(['0.1', '0.2', '0.3']);
@@ -48,16 +53,17 @@ function guardError(message: string): Error {
   return new Error(message);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isInside(root: string, target: string): boolean {
   return target === root || target.startsWith(root + path.sep);
 }
 
-/** Same host policy as `isSafeSkillSourceUrl`'s host part (no IPs, localhost, private suffixes). */
+/**
+ * Same host policy as `isSafeSkillSourceUrl`'s host part (no IPs, localhost, private
+ * suffixes), plus the whole-string rule that the URL form enforces: no whitespace or control
+ * characters anywhere.
+ */
 function isPublicMailHost(raw: string): boolean {
+  if (/[\s\p{Cc}]/u.test(raw)) return false;
   const host = raw.toLowerCase().replace(/\.$/, '');
   if (host === '' || host === 'localhost' || host.endsWith('.localhost')) return false;
   if (host.startsWith('[') || host.includes(':') || /^[0-9.]+$/.test(host)) return false;
@@ -224,7 +230,13 @@ async function extractArchive(target: string, checks: Check[]): Promise<string |
   }
 }
 
-async function readManifest(root: string, checks: Check[]): Promise<PluginManifest | null> {
+interface ReadManifest {
+  manifest: PluginManifest;
+  /** The parsed JSON object before schema defaults, for "did the author declare X" checks. */
+  raw: Record<string, unknown>;
+}
+
+async function readManifest(root: string, checks: Check[]): Promise<ReadManifest | null> {
   const file = path.join(root, PLUGIN_MANIFEST_FILE);
   let bytes: Buffer;
   try {
@@ -265,10 +277,8 @@ async function readManifest(root: string, checks: Check[]): Promise<PluginManife
     );
     return null;
   }
-  const formatVersion =
-    typeof json === 'object' && json !== null
-      ? (json as Record<string, unknown>)['format_version']
-      : undefined;
+  const raw = typeof json === 'object' && json !== null ? (json as Record<string, unknown>) : {};
+  const formatVersion = raw['format_version'];
   if (typeof formatVersion === 'number' && formatVersion > PLUGIN_FORMAT_VERSION) {
     checks.push(
       makeCheck(
@@ -303,7 +313,7 @@ async function readManifest(root: string, checks: Check[]): Promise<PluginManife
     );
     return null;
   }
-  return parsed.data;
+  return { manifest: parsed.data, raw };
 }
 
 async function checkRequiredPath(
@@ -371,6 +381,11 @@ interface PermissionFacts {
   mail: string[];
 }
 
+/**
+ * Lightweight frontmatter check mirroring core's `splitFrontmatter` (skills/parse.ts): BOM
+ * stripped, CRLF normalized, the file must start with `---` and a later line must start with
+ * `---`. Anything the installer accepts must pass here too (no false errors).
+ */
 async function checkSkill(root: string, skillDir: string, checks: Check[]): Promise<void> {
   let text: string;
   try {
@@ -378,8 +393,11 @@ async function checkSkill(root: string, skillDir: string, checks: Check[]): Prom
   } catch {
     return;
   }
-  const lines = text.split(/\r?\n/);
-  if (lines[0] !== '---') {
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n');
+  if (!(lines[0] ?? '').startsWith('---')) {
     checks.push(
       makeCheck(
         'plugin.skill-frontmatter',
@@ -393,7 +411,7 @@ async function checkSkill(root: string, skillDir: string, checks: Check[]): Prom
     );
     return;
   }
-  const end = lines.indexOf('---', 1);
+  const end = lines.findIndex((line, index) => index >= 1 && line.startsWith('---'));
   if (end < 0) {
     checks.push(
       makeCheck('plugin.skill-frontmatter', 'error', 'SKILL.md frontmatter has no closing ---.', {
@@ -456,14 +474,47 @@ async function checkConnector(
       }),
     );
   }
-  const entry = result.entry;
-  if (entry === null) return;
+  // `checkManifest` is the submission-side check: it fills a `releaseGate` placeholder before
+  // parsing. The installer (`rewriteConnectorEntry`) parses the raw JSON strictly instead, so
+  // a file that only passes with the placeholder would validate here and still fail to
+  // install. Run the installer's parse too and report what it would reject.
+  const strict = connectorCatalogEntrySchema.safeParse(raw);
+  if (!strict.success) {
+    const issues = strict.error.issues.slice(0, 3).map((issue) => {
+      const where = issue.path.length > 0 ? issue.path.join('.') : file;
+      return `${where}: ${issue.message}`;
+    });
+    checks.push(
+      makeCheck(
+        'plugin.connector-entry',
+        'error',
+        `Connector file does not match the catalog entry schema the installer uses: ${issues.join('; ')}`,
+        {
+          hint: 'Plugin connector entries must be complete as written (KepCup rewrites releaseGate to "plugin" but does not fill it in).',
+          subject: file,
+          details: { issues },
+        },
+      ),
+    );
+    return;
+  }
+  const entry = strict.data;
   if (entry.packages.length > 0) {
     checks.push(
       makeCheck(
         'plugin.connector-packages',
         'error',
         'Connector entries inside a plugin must not carry packages[]; use mcp contributions for local execution.',
+        { subject: file },
+      ),
+    );
+  }
+  if (entry.remotes.length === 0) {
+    checks.push(
+      makeCheck(
+        'plugin.connector-remote',
+        'error',
+        'Connector entries inside a plugin need at least one remote endpoint.',
         { subject: file },
       ),
     );
@@ -653,7 +704,7 @@ export async function validatePlugin(
     return {
       schemaVersion: REPORT_SCHEMA_VERSION,
       mode: 'plugin',
-      target,
+      target: options.displayTarget ?? target,
       remote: null,
       auth: false,
       summary,
@@ -679,8 +730,9 @@ export async function validatePlugin(
     if (!(await scanDirectoryTree(root, checks))) return finish();
     const rootReal = await realpath(root);
     log('Checking plugin.json ...');
-    const manifest = await readManifest(root, checks);
-    if (manifest === null) return finish();
+    const read = await readManifest(root, checks);
+    if (read === null) return finish();
+    const { manifest, raw: rawManifest } = read;
 
     if (isReservedPluginNamespace(pluginNamespaceOf(manifest.id))) {
       checks.push(
@@ -696,9 +748,6 @@ export async function validatePlugin(
       );
     }
 
-    const rawManifest = JSON.parse(
-      await readFile(path.join(root, PLUGIN_MANIFEST_FILE), 'utf8'),
-    ) as Record<string, unknown>;
     for (const [key, hint] of [
       ['description', 'Users see the description on the consent card.'],
       ['author', 'Author information helps users judge the source.'],

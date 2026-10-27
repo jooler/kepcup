@@ -100,6 +100,31 @@ describe('extractZip', () => {
     }
   });
 
+  it('rejects a file and a directory sharing a path with a guard error, not a bare fs error', async () => {
+    for (const order of [
+      [
+        { name: 'a', data: 'file', deflate: false },
+        { name: 'a/b', data: 'nested', deflate: false },
+      ],
+      [
+        { name: 'a/b', data: 'nested', deflate: false },
+        { name: 'a', data: 'file', deflate: false },
+      ],
+    ]) {
+      const zip = await archive(buildZip(order));
+      try {
+        await expect(
+          extractZip(zip, path.join(await tmp(), 'dest'), { error: factory }),
+        ).rejects.toSatisfy(
+          (reason: unknown) =>
+            reason instanceof PackageGuardError && /路径冲突/.test(reason.message),
+        );
+      } finally {
+        await zip.close();
+      }
+    }
+  });
+
   it('enforces entry and unpacked-size limits', async () => {
     const zip = await archive(
       buildZip([

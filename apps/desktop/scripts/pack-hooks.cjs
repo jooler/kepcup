@@ -68,6 +68,8 @@ const FORBIDDEN_MARKERS = [
   'KEPCUP_FAKE_ACP_AGENT_RECORD',
   // D73 P3 MCP Apps e2e seam：渲染端 main.ts 的 window.__kepcupRpc（页面可直接调用 core RPC）
   '__kepcupRpc',
+  // D104 P1-3 插件市场 e2e seam（本地签名索引 + 回环包下载，start.ts）
+  'KEPCUP_TEST_PLUGIN_MARKET',
 ];
 
 /** 文本里出现的第一个禁止标记；干净 = null（导出供单测）。 */

@@ -113,6 +113,37 @@ describe('formatPluginInspection', () => {
     expect(text).toContain('阻断项：');
     expect(text).toContain('需要 Node.js 运行时');
   });
+
+  it('renders empty contribution groups, a runtime-free MCPB and no warning for verified plugins', () => {
+    const text = formatPluginInspection({
+      ...INFO,
+      origin: 'marketplace',
+      tier: 'verified',
+      skills: [],
+      connectors: [],
+      mail: [],
+      mcp: [
+        {
+          kind: 'mcpb',
+          id: 'bin',
+          displayName: 'Binary',
+          serverType: 'binary',
+          launchCommand: './server',
+          runtime: null,
+          mcpbSha256: 'c'.repeat(64),
+          unpackedSize: 10,
+          userConfigFields: [],
+          compatible: true,
+          incompatibleReason: null,
+        },
+      ],
+    });
+    expect(text).toContain('技能（0）：\n  （无）');
+    expect(text).toContain('连接器（0）：\n  （无）');
+    expect(text).toContain('邮件模板（0）：\n  （无）');
+    expect(text).toContain('运行时 不需要运行时');
+    expect(text).not.toContain('未经审核');
+  });
 });
 
 describe('missingRequiredUserConfig', () => {
@@ -136,6 +167,38 @@ describe('missingRequiredUserConfig', () => {
       ),
     };
     expect(missingRequiredUserConfig(info, {})).toEqual([]);
+  });
+
+  it('on an update, a blank required sensitive field keeps the stored secret (not missing); non-sensitive ones still are', () => {
+    const updating = {
+      ...INFO,
+      existing: { version: '0.9.0' },
+      update: { from: '0.9.0', permissionsExpanded: false, added: [] },
+    };
+    expect(missingRequiredUserConfig(updating, {})).toEqual([]);
+    const withPlain = {
+      ...updating,
+      mcp: updating.mcp.map((item) =>
+        item.kind === 'mcpb'
+          ? {
+              ...item,
+              userConfigFields: [
+                ...item.userConfigFields,
+                {
+                  key: 'REGION',
+                  type: 'string' as const,
+                  title: 'Region',
+                  description: '',
+                  required: true,
+                  sensitive: false,
+                  multiple: false,
+                },
+              ],
+            }
+          : item,
+      ),
+    };
+    expect(missingRequiredUserConfig(withPlain, {})).toEqual(['echo.REGION']);
   });
 });
 

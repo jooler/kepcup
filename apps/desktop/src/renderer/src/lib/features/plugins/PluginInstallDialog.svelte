@@ -82,9 +82,16 @@
     ackDiff = false;
   }
 
+  /**
+   * 检视请求序号：市场检视要拉索引 / 验签，可能耗时数秒；关掉对话框再打开另一个插件、
+   * 或改路径连按回车时，晚返回的旧请求不得覆盖新目标，也不得提前把 loading 置回去。
+   */
+  let inspectSeq = 0;
+
   function close(): void {
     open = false;
     path = '';
+    inspectSeq += 1;
     reset();
   }
 
@@ -115,16 +122,19 @@
 
   async function inspect(): Promise<void> {
     if (mode !== 'marketplace' && path.trim().length === 0) return;
+    const seq = ++inspectSeq;
     inspecting = true;
     reset();
     try {
       const result = (await core.call('plugins.inspect', { source })) as PluginInspectOutput;
+      if (seq !== inspectSeq) return;
       info = result;
       form = initialPluginForm(result);
     } catch (caught) {
+      if (seq !== inspectSeq) return;
       error = t('plugins.inspectFailed', { reason: reasonOf(caught) });
     } finally {
-      inspecting = false;
+      if (seq === inspectSeq) inspecting = false;
     }
   }
 

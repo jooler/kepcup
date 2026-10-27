@@ -120,17 +120,35 @@ describe('/admin/plugins/*', () => {
     expect(result.body).toEqual({ error: '包内路径不安全', code: 'PLUGIN_INVALID' });
   });
 
-  it('maps unexpected failures to a generic 500', async () => {
+  it('maps unexpected failures to a generic 500 and hands the cause to onInternalError', async () => {
+    const onInternalError = vi.fn();
+    const failure = new Error('secret detail');
     const result = await call(
       deps({
         pluginsInstall: async () => {
-          throw new Error('secret detail');
+          throw failure;
         },
+        onInternalError,
       }),
       { path: '/admin/plugins/install', body: JSON.stringify(SOURCE) },
     );
     expect(result.status).toBe(500);
     expect(result.body).toEqual({ error: 'internal' });
+    expect(onInternalError).toHaveBeenCalledWith('/admin/plugins/install', failure);
+  });
+
+  it('does not report AppError (400) failures as internal errors', async () => {
+    const onInternalError = vi.fn();
+    await call(
+      deps({
+        pluginsInspect: async () => {
+          throw new AppError('INVALID_INPUT', '请求体不符合要求：source.kind');
+        },
+        onInternalError,
+      }),
+      { path: '/admin/plugins/inspect', body: JSON.stringify({ source: { kind: 'url' } }) },
+    );
+    expect(onInternalError).not.toHaveBeenCalled();
   });
 
   it('rejects bodies over 64KB', async () => {

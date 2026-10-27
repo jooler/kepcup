@@ -65,8 +65,10 @@ kepcup-server plugin install ./demo.kepcup --yes --json
 ```
 
 - 路径可以是 `.kepcup` 文件，也可以是插件开发目录（按目录型插件安装，`developer` 分级）。
+- **同 id 重装 / 更新**：摘要会列出「更新：旧 → 新」与新增的权限；确认（或 `--yes`）即视为知情同意，CLI 随安装带上 `acknowledgeDiff`，与桌面端「勾选差异」等价。更新时留空的必填**敏感**配置保留已存密钥（`--config` 不必重传）；没有已存值时 core 会以 `INVALID_INPUT` 拒绝并指出缺哪个键。
 - 需要 MCPB 运行时（Node / Python / uv）时，KepCup 不会自动下载；先在客户端「设置 → 环境」安装。
-- **安全**：只有服务器本机、持有 `<data-dir>/admin-token` 的人能调用；`--config` 的内容不会出现在日志 / 错误输出里。远程客户端调用同一 `file` / `folder` 来源会被 `INVALID_INPUT` 拒绝（远程只能走市场来源）。
+- 连不上服务时提示会直接指出：先用同一 `--data-dir` 启动 `kepcup-server`，或用 `--port` 指向它监听的端口；inspect / install 请求超时 5 分钟。
+- **安全**：只有服务器本机、持有 `<data-dir>/admin-token` 的人能调用；`--config` 的内容不会出现在日志 / 错误输出里。远程客户端调用同一 `file` / `folder` 来源会被 `INVALID_INPUT` 拒绝（远程只能走市场来源）。不符合方法 schema 的请求体返回 `400 { code: "INVALID_INPUT" }`；真正的服务端故障返回 `500 { error: "internal" }` 并落服务日志。
 - 市场安装不需要 CLI：客户端「市场」页签在 headless 上照常可用（core 在服务端下载）。
 
 常用选项（环境变量 `KEPCUP_SERVER_HOST/_PORT/_DATA_DIR/_PUBLIC_URL/_RELAY/_TRUST_PROXY` 同名兜底）：

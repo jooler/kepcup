@@ -47,6 +47,7 @@ describe('buildZipBuffer', () => {
       ]);
       const byName = new Map(zip.entries.map((entry) => [entry.name, entry]));
       expect(byName.get('docs/')!.isDirectory).toBe(true);
+      expect(byName.get('docs/')!.unixMode & 0o777).toBe(0o755);
       expect(byName.get('bin/run.sh')!.unixMode & 0o777).toBe(0o755);
       expect(byName.get('docs/readme.txt')!.unixMode & 0o777).toBe(0o644);
       expect((await zip.read(byName.get('docs/readme.txt')!)).toString()).toBe('hello plugin');
@@ -93,6 +94,39 @@ describe('buildZipBuffer', () => {
     ).toThrow(/重复路径/);
   });
 
+  it('rejects a file and a directory sharing a path in either order', () => {
+    const factory = (message: string) => new PackageGuardError(message);
+    expect(() =>
+      buildZipBuffer(
+        [
+          { name: 'a', data: Buffer.from('file') },
+          { name: 'a/b', data: Buffer.from('nested') },
+        ],
+        { error: factory },
+      ),
+    ).toThrow(/路径冲突/);
+    expect(() =>
+      buildZipBuffer(
+        [
+          { name: 'a/b', data: Buffer.from('nested') },
+          { name: 'a', data: Buffer.from('file') },
+        ],
+        { error: factory },
+      ),
+    ).toThrow(/路径冲突/);
+    expect(() =>
+      buildZipBuffer([{ name: 'A/' }, { name: 'a', data: Buffer.from('file') }], {
+        error: factory,
+      }),
+    ).toThrow(/重复路径/);
+    // An explicit directory entry after its implicit parent is fine.
+    expect(() =>
+      buildZipBuffer([{ name: 'a/b.txt', data: Buffer.from('x') }, { name: 'a/' }], {
+        error: factory,
+      }),
+    ).not.toThrow();
+  });
+
   it('enforces the configurable caps with tiny test values', () => {
     const factory = (message: string) => new PackageGuardError(message);
     expect(() => buildZipBuffer(ENTRIES, { error: factory, limits: { maxEntries: 2 } })).toThrow(
@@ -115,6 +149,19 @@ describe('buildZipBuffer', () => {
     ).toThrow(/体积超过上限/);
     expect(() => buildZipBuffer(ENTRIES, { error: factory, limits: { maxFileBytes: 10 } })).toThrow(
       /包文件过大/,
+    );
+  });
+
+  it('keeps the default caps when a limit override is explicitly undefined', () => {
+    const factory = (message: string) => new PackageGuardError(message);
+    expect(() =>
+      buildZipBuffer(ENTRIES, {
+        error: factory,
+        limits: { maxEntries: undefined, maxFileBytes: undefined },
+      }),
+    ).not.toThrow();
+    expect(() => buildZipBuffer(ENTRIES, { error: factory, limits: { maxEntries: 0 } })).toThrow(
+      /上限 0/,
     );
   });
 

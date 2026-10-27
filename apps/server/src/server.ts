@@ -77,6 +77,30 @@ function readOrCreateAdminToken(dataDir: string): string {
   return token;
 }
 
+/** The slice of a zod schema the admin layer needs (the server package does not import zod). */
+interface AdminInputSchema<T> {
+  safeParse(
+    input: unknown,
+  ):
+    | { success: true; data: T }
+    | { success: false; error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey> }> } };
+}
+
+/**
+ * Admin-endpoint input validation with the RPC layer's error contract: a body that fails the
+ * method's schema is the caller's fault (`INVALID_INPUT`, mapped to 400), not a 500. Issue
+ * paths are reported, never the submitted values (`userConfig` may carry secrets).
+ */
+function parseAdminInput<T>(schema: AdminInputSchema<T>, body: unknown): T {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  const where = parsed.error.issues
+    .slice(0, 3)
+    .map((issue) => (issue.path.length > 0 ? issue.path.map(String).join('.') : '(root)'))
+    .join(', ');
+  throw new AppError('INVALID_INPUT', `请求体不符合要求：${where}`);
+}
+
 export async function createHeadlessServer(
   config: ServerConfig,
   test: HeadlessServerTestOptions = {},
@@ -159,16 +183,20 @@ export async function createHeadlessServer(
     devices: () => hub.devices(),
     revoke: (deviceId) => hub.revokeDevice(deviceId),
     // D104 P2：直接调 appMethods 的 handle，不经 RPC 层，因此 currentRemoteSource() 为
-    // null，file / folder 来源被允许——调用者在服务器本机且持有 admin token。
+    // null，file / folder 来源被允许——调用者在服务器本机且持有 admin token。RPC 层的
+    // 输入校验在这里补上（schema 不合法 → INVALID_INPUT → 400），输出校验由 CLI 侧做。
     pluginsInspect: (body) => {
       const method = services.appMethods['plugins.inspect'];
       if (method === undefined) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
-      return method.handle(pluginsInspectInputSchema.parse(body));
+      return method.handle(parseAdminInput(pluginsInspectInputSchema, body));
     },
     pluginsInstall: (body) => {
       const method = services.appMethods['plugins.install'];
       if (method === undefined) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
-      return method.handle(pluginsInstallInputSchema.parse(body));
+      return method.handle(parseAdminInput(pluginsInstallInputSchema, body));
+    },
+    onInternalError: (adminPath, error) => {
+      logger.error({ path: adminPath, error: String(error) }, 'admin plugin call failed');
     },
   };
 

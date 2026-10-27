@@ -153,24 +153,33 @@ describe('system prompt assembly', () => {
       conversation: makeConversation(),
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
-      loop: 'turn' as const,
+      loop: 'task' as const,
     };
-    // 任务面的附件阶梯：没有插件工具时逐字保持 D63 的「③都没有时用 web_search」。
-    const taskWithout = buildSystemPrompt({ ...common, loop: 'task' });
-    expect(taskWithout).not.toContain('plugin_search');
-    expect(taskWithout).toContain('③都没有时用 web_search 检索技能仓库');
-    expect(taskWithout).not.toContain('④仍然没有时用 web_search');
+    // 任务面的附件阶梯：没有插件工具时整段逐字保持 D63 原文（不是只钉一个子串）。
+    const ladderWithout =
+      '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。';
+    const ladderWith =
+      '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 plugin_search 检索官方插件市场，找到合适的认证插件后用 plugin_request_install 请用户确认安装（只出确认卡，由用户决定；安装后你会被续跑）；④仍然没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；⑤仍没有就如实告知用户该格式暂不支持，并建议替代做法。';
+    const pluginRule =
+      '缺少某项能力（如处理某类文件、接入某个服务）且已装技能与预置技能都解决不了时，先用 plugin_search 检索官方插件市场；有合适的认证插件再用 plugin_request_install 请用户确认安装（只会弹确认卡，由用户决定，安装后你会被续跑）；不要索要令牌或密钥，不要对同一插件重复请求。';
 
-    const taskWith = buildSystemPrompt({ ...common, loop: 'task', hasPluginTools: true });
-    expect(taskWith).toContain('plugin_search');
-    expect(taskWith).toContain('plugin_request_install');
-    expect(taskWith).toContain('③都没有时用 plugin_search 检索官方插件市场');
-    expect(taskWith).toContain('④仍然没有时用 web_search 检索技能仓库');
-    expect(taskWith).toContain('不要对同一插件重复请求');
+    const taskWithout = buildSystemPrompt(common);
+    expect(taskWithout).not.toContain('plugin_search');
+    expect(taskWithout).toContain(ladderWithout);
+    // 显式 false 与缺省完全等价。
+    expect(buildSystemPrompt({ ...common, hasPluginTools: false })).toBe(taskWithout);
+
+    const taskWith = buildSystemPrompt({ ...common, hasPluginTools: true });
+    expect(taskWith).toContain(ladderWith);
+    expect(taskWith).not.toContain(ladderWithout);
+    expect(taskWith).toContain(pluginRule);
 
     // 对话轮不注入阶梯（isTurn），但市场规则照样跟随工具注册。
-    expect(buildSystemPrompt({ ...common, hasPluginTools: true })).toContain('plugin_search');
-    expect(buildSystemPrompt(common)).not.toContain('plugin_search');
+    const turn = { ...common, loop: 'turn' as const };
+    const turnWith = buildSystemPrompt({ ...turn, hasPluginTools: true });
+    expect(turnWith).toContain(pluginRule);
+    expect(turnWith).not.toContain(ladderWith);
+    expect(buildSystemPrompt(turn)).not.toContain('plugin_search');
   });
 
   it('non-butler bots get no butler rules section', () => {

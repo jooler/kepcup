@@ -1,12 +1,19 @@
 import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { resolveZipGuard, safeEntryPath, type ZipArchive, type ZipGuardOptions } from './zip.js';
+import {
+  EntryPathTracker,
+  resolveZipGuard,
+  safeEntryPath,
+  type ZipArchive,
+  type ZipGuardOptions,
+} from './zip.js';
 
 /**
  * Safe shared extraction for the plugin pipeline and `kepcup-app validate/pack`:
- * entry names go through {@link safeEntryPath}, symlinks and case-folded duplicates are
- * rejected, the resolved target must stay inside `destDir`, and only the executable bit
- * of the archived mode is honoured (0o755 / 0o644).
+ * entry names go through {@link safeEntryPath}, symlinks, case-folded duplicates and
+ * file/directory nesting conflicts are rejected, the resolved target must stay inside
+ * `destDir`, and only the executable bit of the archived mode is honoured (0o755 / 0o644).
+ * Files are written in place; on failure the caller owns cleaning up `destDir`.
  */
 
 export interface ExtractResult {
@@ -38,15 +45,13 @@ export async function extractZip(
   if (!exists) await mkdir(destDir, { recursive: true });
 
   const root = path.resolve(destDir);
-  const seen = new Set<string>();
+  const paths = new EntryPathTracker(error);
   let files = 0;
   let bytes = 0;
   let unpacked = 0;
   for (const entry of archive.entries) {
     const safe = safeEntryPath(entry.name, error);
-    const key = safe.toLowerCase();
-    if (seen.has(key)) throw error(`包内有重复路径：${entry.name}`);
-    seen.add(key);
+    paths.add(safe, entry.isDirectory, entry.name);
     if (entry.isSymlink) throw error(`包内含符号链接，已拒绝：${entry.name}`);
     const target = path.resolve(root, ...safe.split('/'));
     if (target !== root && !target.startsWith(root + path.sep)) {

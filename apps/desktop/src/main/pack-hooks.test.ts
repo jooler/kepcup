@@ -52,6 +52,7 @@ describe('afterPack forbidden markers', () => {
       'KEPCUP_ONBOARDING',
       'KEPCUP_WSL_PROMPT',
       'KEPCUP_FILE_KEYSTORE_PATH',
+      'KEPCUP_TEST_PLUGIN_MARKET',
     ]) {
       expect(hooks.findForbiddenMarker(`x ${marker} y`), marker).toBe(marker);
     }

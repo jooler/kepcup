@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ZipArchive } from '@kepcup/package-guard';
 import { initPluginDirectory } from '../src/plugin/init.js';
-import { PluginPackError, packPluginDirectory } from '../src/plugin/pack.js';
+import { PluginPackError, packPlugin, packPluginDirectory } from '../src/plugin/pack.js';
 import { validatePlugin } from '../src/plugin/validate.js';
 
 /**
@@ -153,6 +153,58 @@ describe('packPluginDirectory', () => {
     await expect(failure).rejects.toMatchObject({ report: { exitCode: 1 } });
     const report = await failure.catch((error: PluginPackError) => error.report);
     expect(report?.checks.some((check) => check.id === 'plugin.files-path')).toBe(true);
+  });
+
+  it('validates the packed view, so excluded trees may contain anything (symlinks, junk)', async () => {
+    const dir = await minimalPlugin(await tmp());
+    // A real development directory: node_modules with symlinked binaries, an ignored build
+    // directory with a symlink, and an upper-case stale archive.
+    await mkdir(path.join(dir, 'node_modules', '.bin'), { recursive: true });
+    await symlink(path.join(dir, 'README.md'), path.join(dir, 'node_modules', '.bin', 'tool'));
+    await mkdir(path.join(dir, 'build'), { recursive: true });
+    await symlink(path.join(dir, 'README.md'), path.join(dir, 'build', 'link.md'));
+    await writeFile(path.join(dir, 'OLD.KEPCUP'), 'junk');
+    await writeFile(path.join(dir, '.kepcup-ignore'), 'build/\n');
+    const result = await packPluginDirectory({ dir, out: path.join(await tmp(), 'out.kepcup') });
+    const names = await zipNames(result.path);
+    expect(names).toEqual([
+      'README.md',
+      'plugin.json',
+      'skills/',
+      'skills/hello/',
+      'skills/hello/SKILL.md',
+    ]);
+    // The raw directory would NOT validate (symlinks) — pack judges what ships instead.
+    expect((await validatePlugin(dir)).exitCode).toBe(1);
+    expect((await validatePlugin(result.path)).exitCode).toBe(0);
+  });
+
+  it('CLI exit codes: plugin content problems → 1 with the report, tool failures → 2', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const io = {
+      stdout: (text: string) => out.push(text),
+      stderr: (text: string) => err.push(text),
+    };
+    const args = (dir: string, file: string, json = false) =>
+      ({ command: 'packPlugin', dir, out: file, json }) as const;
+
+    const linked = await minimalPlugin(await tmp());
+    await symlink(path.join(linked, 'README.md'), path.join(linked, 'link.md'));
+    expect(await packPlugin(args(linked, path.join(await tmp(), 'a.kepcup')), io)).toBe(1);
+    expect(err.join('')).toContain('plugin.files-path');
+
+    const badIgnore = await minimalPlugin(await tmp());
+    await writeFile(path.join(badIgnore, '.kepcup-ignore'), '../outside\n');
+    expect(await packPlugin(args(badIgnore, path.join(await tmp(), 'b.kepcup')), io)).toBe(2);
+    expect(err.join('')).toContain('.kepcup-ignore has an invalid path');
+
+    const ok = await minimalPlugin(await tmp());
+    out.length = 0;
+    expect(await packPlugin(args(ok, path.join(await tmp(), 'c.kepcup'), true), io)).toBe(0);
+    const parsed = JSON.parse(out.join('')) as { path: string; sha256: string; size: number };
+    expect(parsed.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(parsed.size).toBeGreaterThan(0);
   });
 
   it('writes no output when validation fails', async () => {

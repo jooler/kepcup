@@ -113,13 +113,14 @@ description: 用一句话说明这个技能做什么、什么时候该用。
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://acme.example/privacy"
+      "privacyPolicy": "https://acme.example/privacy",
+      "releaseGate": "plugin"               // 必填；安装时 KepCup 一律改写为 "plugin"
     }
   }
 }
 ```
 
-连接器端点必须是**公网 https**（不能是 IP、`localhost`、内网域名）；`packages[]` 必须为空——本地执行请改用 `mcp` 贡献。连接器装好后仍需用户逐项连接，工具走既有审批 / 风险 / 锁定语义。
+连接器端点必须是**公网 https**（不能是 IP、`localhost`、内网域名）且至少一个；`packages[]` 必须为空——本地执行请改用 `mcp` 贡献。条目要**按安装器的严格 schema 写全**（含 `releaseGate`），`kepcup-app validate` 会按同一 schema 检查，缺字段时报 `plugin.connector-entry`。连接器装好后仍需用户逐项连接，工具走既有审批 / 风险 / 锁定语义。
 
 ### 内嵌 MCPB
 
@@ -148,14 +149,16 @@ node packages/app-validator/dist/cli.js init plugin ./my-plugin --id io.github.a
 node packages/app-validator/dist/cli.js validate ./my-plugin
 
 # 4. 边改边调试：扩展中心 → 已安装 → 从文件夹安装…
-# 5. 打包（先跑同样的校验，有 error 不产出文件）
+# 5. 打包（对「排除规则之后、将要装进包里」的内容做同样的校验，有 error 不产出文件）
 node packages/app-validator/dist/cli.js pack ./my-plugin --out ./my-plugin.kepcup
 
 # 6. 验证产物（可再次 validate 或直接安装）
 node packages/app-validator/dist/cli.js validate ./my-plugin.kepcup
 ```
 
-`pack` 的输出是**可复现**的：条目排序、时间戳固定，同一目录两次打包 sha256 相同。默认排除 `.git/`、`node_modules/`、`.DS_Store`、`*.kepcup`、`.kepcup-ignore` 自身；`.kepcup-ignore` 每行一个相对路径或 `目录/`，`#` 注释，不支持通配符。
+`pack` 的输出是**可复现**的：条目排序、时间戳固定，同一目录在同一 Node 版本下两次打包 sha256 相同。默认排除 `.git/`、`node_modules/`、`.DS_Store`、`*.kepcup`、`.kepcup-ignore` 自身；`.kepcup-ignore` 每行一个相对路径或 `目录/`，`#` 注释，不支持通配符。校验针对的是**打包后的归档**，所以被排除的目录里有符号链接或海量文件也不影响打包。
+
+`validate ./my-plugin` 对目录**原样**检查（规则同「从文件夹安装」：不排除任何路径、拒绝符号链接），含 `node_modules` 的开发目录请改为校验 `pack` 产物。
 
 把 `kepcup-app` 加成 bin 后也可以直接 `kepcup-app validate ./my-plugin`。
 
@@ -180,9 +183,9 @@ node packages/app-validator/dist/cli.js validate ./my-plugin.kepcup
 | `plugin.files-limits` | 超过条目 / 单文件 / 解包体积上限 |
 | `plugin.package-entries` | zip 层问题：`..`、绝对路径、符号链接、大小写重名、加密、ZIP64 |
 | `plugin.skill-frontmatter` | `SKILL.md` 开头不是 `---`，或 frontmatter 缺 `name:` / `description:` |
-| `plugin.connector-entry` | 连接器 `server.json` 没通过既有连接器校验（消息里带文件名与原始检查 id） |
+| `plugin.connector-entry` | 连接器 `server.json` 没通过既有连接器校验（消息里带文件名与原始检查 id），或没过安装器的严格 schema（如缺 `releaseGate`） |
 | `plugin.connector-packages` | 连接器条目里有 `packages[]`，改用 `mcp` 贡献 |
-| `plugin.connector-remote` | 连接器端点是 http / IP / localhost / 内网域名 |
+| `plugin.connector-remote` | 连接器端点是 http / IP / localhost / 内网域名，或一个端点都没有 |
 | `plugin.connector-icon` | `_meta.icon` 指向的文件不在 `server.json` 同目录 |
 | `plugin.mcpb-package` | `.mcpb` 不是合法 zip、缺 `manifest.json`、`manifest_version` 不支持、入口文件不在包内 |
 | `plugin.mcp-http` | http 贡献 URL 不是公网 https；需要 OAuth 的远端请改连接器 |
