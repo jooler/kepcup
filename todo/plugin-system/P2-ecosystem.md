@@ -151,4 +151,76 @@ export function extractZip(archive: ZipArchive, destDir: string, options?: ZipGu
 
 ## 6. 实施记录
 
-（执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 既有测试因 `mode` 字段改动的清单 / 手工链路结果 / 遗留问题。）
+（2026-10-27，D104 P2；分支 `feat/plugins/p2-ecosystem`，从 P1-3 tip `846be723` 拉出。）
+
+### 做了什么
+
+- **步骤 1（`0ad889ff`）**：`@kepcup/package-guard` 新增 `zip-writer.ts`（`buildZipBuffer`：条目按 name 排序、固定 1980-01-01 时间戳、空文件 / 目录 stored、其余 deflate level 9、Unix host 3、`external attrs = mode << 16`、UTF-8 名标志、不写符号链接 / ZIP64 / 加密）与 `extract.ts`（`extractZip`：`safeEntryPath`、拒绝符号链接与大小写重名、目标 resolve 后必须在 destDir 内、目录 mkdir、文件 0o755 / 0o644、返回 files / bytes）。`ZipGuardOptions` 增加可选 `limits`，读取器与写入器统一经 `resolveZipGuard()` 取上限，默认值仍是 `ZIP_MAX_*`，读取器既有行为与测试不变。新增 `zip-writer.test.ts`（往返 / 确定性 / 拒绝项 / 小上限 / 时间戳 / 模式）与 `extract.test.ts`（正常解包 / zip-slip 不落盘 / 符号链接 / 重名 / 模式位 / 上限 / 空目录与非法目标）。
+- **步骤 1.4（`f512377b`，独立重构提交）**：`PluginPackager.#extract` 改调 `extractZip`；`plugin-package.test.ts`（12 例）与 `plugins.test.ts`（13 例）零改动全绿。
+- **步骤 2（`27bda90f`，独立重构提交）**：`isSafeDirectoryRemoteUrl` 逐字挪进 `packages/shared/src/domain/connector-catalog.ts`（紧挨 `isSafeSkillSourceUrl`，保留中文注释）；`directory-merge.ts` 改为从 shared 导入并保持原导出名 re-export，core 内调用方 / 测试不改。shared 新增 `test/unit/connector-catalog.test.ts`（2 例），原 `directory-merge.test.ts`（16 例）保留并通过。
+- **步骤 3 / 4 / 5 / 6（`c0a45b37`）**：
+  - `args.ts` 增 `initPlugin` / `packPlugin` 两种命令与 USAGE，既有 `validate` 解析行为不变；`cli.ts` 按 `parsed.command` 分发，`validate` 走新的 `validateTarget()`（目录 / `.kepcup` → 插件模式，否则原连接器模式）。
+  - `plugin/validate.ts` 离线校验：目录遍历（符号链接 / realpath 逃逸 / 条目 / 单文件 / 总量上限，规则同 `PluginPackager.stage(folder)`）；`.kepcup` 经 `ZipArchive` + `extractZip` 解到 `mkdtemp`，`finally` 清理；清单读取 / 格式 / schema / 保留命名空间 / 元数据 warn / README；贡献文件与技能 frontmatter；连接器 `checkManifest` 逐条转发 error+warn（subject 带文件路径）+ `packages[]` / 远端 https / 同目录图标；内嵌 MCPB 结构检查（zip / `manifest.json` / 版本 / `entry_point`）；http 贡献公网 https；邮件主机；`plugin.permissions` 汇总同意卡将展示的主机 / OAuth 范围 / MCPB 配置字段 / 邮件模板。报告新增可选 `mode`，连接器模式补 `mode: 'connector'`，`schemaVersion` 仍为 1。
+  - `plugin/init.ts`：`init plugin <dir> [--id] [--name] [--force]`，默认 id `io.github.your-name/<目录名小写>`，生成 `plugin.json` / `README.md` / `skills/hello/SKILL.md`；非空目录无 `--force` 报错（退出 2），非法 / 保留命名空间 id 报错。
+  - `plugin/pack.ts`：先 `validatePlugin`，有 error 不产出；遍历文件排除 `.git/`、`node_modules/`、`.DS_Store`、`*.kepcup`、`.kepcup-ignore` 及其中列出的精确路径 / `目录/` 前缀；符号链接拒绝；`buildZipBuffer` 写包（默认 `<id 中 / → __>-<version>.kepcup`，`--out` 覆盖，已存在覆盖）；打印 path / sha256 / size（`--json` 输出对象）；打包后读回 + `extractZip` 到临时目录再 `validatePlugin`，失败删产物并退出 1。
+  - `packages/app-validator` 增加 `@kepcup/package-guard` workspace 依赖；`README.md` 增「Plugin mode」与全部 `plugin.*` 检查项锚点；`docs/guides/write-a-plugin.md` 新写并登记到 `docs/guides/README.md`。
+  - 测试：`plugin-validate.test.ts`（19 例：合法插件零 error / 不联网 / 目录与 `.kepcup` 检查集合一致 / 恶意包 / 每个 `plugin.*` 的触发与非触发 / JSON 形状）、`plugin-init-pack.test.ts`（10 例：骨架可校验 / `--id` `--name` / 非空保护与 `--force` / 非法 id / 确定性 / 排除规则 / 符号链接 / 有 error 不产出 / 默认文件名 / 报告透传）、`cli.test.ts` 补 init / pack 解析与错误（既有用例零改动）、core `plugin-pack-compat.test.ts`（pack 产物经真实 `PluginPackager.stage({ kind: 'file' })` 接受并保留贡献树）。
+- **步骤 7（`6f8ff75d`）**：
+  - `config.ts`：`command` 增 `plugin`，新增 `pluginAction` / `pluginPath` / `pluginYes` / `pluginConfigFile`，解析 `plugin install <路径> [--yes] [--config <json>] [--json]`；缺子命令 / 缺路径 / 多余位置参数均 `ConfigError`；`usageText()` 同步。
+  - `admin.ts`：`isAdminPath` 增 `/admin/plugins/inspect`、`/admin/plugins/install`；`AdminDeps` 增 `pluginsInspect` / `pluginsInstall`；两个端点 POST + `readJson`（64KB 上限），环回 + token 校验沿用顶部统一逻辑，`AppError` → 400 `{ error, code }`，其它 → 500 `{ error: 'internal' }`；`createAdminClient` 增两个方法。
+  - `server.ts`：两项 deps 直接调用 `services.appMethods['plugins.*'].handle(...)`（schema 先 parse），不经 RPC 层，因此本机 admin 调用允许 `file` / `folder` 来源；方法缺失 → `NOT_IMPLEMENTED`。
+  - `cli.ts`：`path.resolve` → `stat` 判目录 / 文件 → `plugins.inspect` → 摘要 → `installable` 阻断退出 1 → `--config` 必填 `user_config` 缺失退出 1（敏感值不在终端输入）→ `--yes` 或 TTY `继续安装？[y/N]`（非 TTY 未给 `--yes` 退出 1）→ `plugins.install`（带 inspect 的 sha256）→ 文本 / `--json` 输出。摘要渲染抽为纯函数 `formatPluginInspection`（`plugin-cli.ts`），配置文件解析 / 缺失必填计算亦为纯函数且错误信息不含配置值。
+  - 测试：`config.test.ts`（+2 例：解析与错误）、`admin-plugins.test.ts`（7 例：非环回 403 / 错 token 401 / 两端点成功 / `AppError` → 400 / 未知错误 → 500 / 64KB 上限 / 仅 POST）、`plugin-cli.test.ts`（6 例）、`server-integration.test.ts`（+1 例：`createAdminClient` inspect → install → `plugins.list` 出现该插件；同一 file 来源在 `withRemoteSource` 下被 `INVALID_INPUT` 拒绝）。
+  - `apps/server/README.md` 增「安装插件」一节（命令、`--config` 格式、本机 + admin token 安全说明、远程来源拒绝）。
+
+### 偏差与自行判断
+
+- **DEV-058**：`plugin.mcpb-package` 的版本同时接受 `dxt_version`（与 core `parseMcpbManifest` 对齐），任务书只写了 `manifest_version`。
+- **DEV-059**：服务端集成测试的远程守卫用 `withRemoteSource` 直接包 `handle`（`RemoteHub` 的真实包裹点），未再起一套 `/ws` viewer 握手。
+- 自行判断点：`plugin.manifest-metadata` 把空字符串 `description` 视同缺失；`plugin.mcp-http` 对每个合法 http 贡献给一条 info；`plugin.connector-entry` 转发 error 与 warn、消息保留原始检查 id；`pack` 自检失败时删除已写出的产物；`validatePlugin` 对 `.kepcup` 后缀大小写不敏感；`pack` 的 zip 同时写入目录条目（空目录可保留）。
+
+### 既有测试因 `mode` 字段改动的清单
+
+- `packages/app-validator/test/cli.test.ts`：整份报告 `Object.keys` 增加 `'mode'`，并补 `expect(report.mode).toBe('connector')`；其余断言不变。
+- `packages/app-validator/test/readme-anchors.test.ts`：检查 id 正则加入 `plugin`（任务书要求，否则新 id 的锚点不被强制）。
+- `apps/server/test/server-integration.test.ts` / `session-hub.test.ts`：`ServerConfig` 字面量补 4 个新字段（纯编译面，无语义变化）。
+- 其余既有测试零改动。
+
+### 手工链路（实际执行）
+
+```text
+$ node packages/app-validator/dist/cli.js init plugin /tmp/demo-plugin --id io.github.test/demo
+Created plugin io.github.test/demo in /tmp/demo-plugin
+  plugin.json
+  README.md
+  skills/hello/SKILL.md
+$ ... validate /tmp/demo-plugin            # exit 0
+$ ... pack /tmp/demo-plugin --out /tmp/demo.kepcup
+Packed /tmp/demo.kepcup
+sha256: 5c6752c71b1d96e2b488be42f4c6b6a9b3c5fa5b88318f1a0e493dbd82b7fcc1
+size: 1391 bytes
+$ ... pack /tmp/demo-plugin --out /tmp/demo2.kepcup   # 同一 sha256（5c67…fcc1），逐字节相同
+$ ... validate /tmp/demo.kepcup            # exit 0
+$ kepcup-server plugin install /tmp/demo.kepcup --yes   # 临时数据目录 + 127.0.0.1:18462
+插件：demo-plugin（io.github.test/demo@0.1.0）… 警告：本地插件未经审核…
+已安装：demo-plugin（io.github.test/demo@0.1.0）     # exit 0
+$ kepcup-server plugin install /tmp/demo-plugin --yes --json
+{"plugin":{"id":"io.github.test/demo",…,"state":"installed","counts":{"skills":1,…}}}  # 摘要写 stderr
+```
+
+桌面「从本地安装…」没有起 GUI 手工点：`plugin-pack-compat.test.ts` 证明 pack 产物被真实 `PluginPackager.stage({ kind: 'file' })` 接受并保留贡献树，`plugins.test.ts` 的完整安装 / 投影链路已覆盖其后的 inspect → install → 技能 / MCP / 连接器投影；桌面 UI 的文件选择与同意卡在 P0a-3 的 e2e 已覆盖。
+
+### 验证
+
+- 定向：`node scripts/run-tests.mjs run packages/package-guard packages/app-validator packages/shared/test/unit/connector-catalog.test.ts packages/core/test/unit/plugin-pack-compat.test.ts packages/core/test/unit/plugin-package.test.ts apps/server/test` → **18 文件 / 207 例**（app-validator + package-guard + compat）+ server 63 例；全部通过（分两次跑，见下）。
+- 构建：`pnpm --filter @kepcup/package-guard build`、`pnpm --filter @kepcup/app-validator build`、`pnpm --filter @kepcup/server run build` 均通过。
+- `pnpm typecheck`：shared / package-guard / core / app-validator / server / desktop（svelte-check 0 error 0 warning）/ website 全部通过。
+- 收口全量（只跑一次）：`node scripts/run-tests.mjs run --maxWorkers=8` → **657 文件 / 6950 例：6910 通过 / 3 超时 / 37 跳过**。3 例均为负载敏感超时：`apps/server/test/auth.test.ts`、`apps/server/test/session-hub.test.ts`、`packages/core/test/unit/permission-bridge.test.ts`；各自单跑全绿（auth 10/10、session-hub 8/8、permission-bridge 29/29），失败集合不超出既有负载敏感基线。
+- 本阶段改动文件 prettier `--check` / eslint 干净；未对目录跑 `prettier --write`。
+
+### 遗留问题
+
+- P2 不做在线探测连接器远端（任务书范围外；仍用既有 `kepcup-app validate <server.json> --auth`）。
+- `plugin.mcpb-package` 只做结构预览，运行时 / `user_config` / 启动模板的完整校验仍在安装时由 core 执行（检查项 info 已写明）。
+- 未做 settings 贡献 / 智能体贡献 / Claude / Cursor 目录导入（README §2 明确不在本期）。
+- P3 提交 / 审核流水线仍需单独设计（设计 51 §11）。

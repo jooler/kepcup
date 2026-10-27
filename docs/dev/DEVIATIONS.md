@@ -929,3 +929,31 @@
 - 推荐：方案 1。
 - 决定：方案 1。
 - 已更新的文档：`todo/plugin-system/P1-3-marketplace-ui-bot.md` §6；`docs/dev/PROGRESS.md` 插件系统 P1 行。
+
+### DEV-058 `plugin.mcpb-package` 同时接受 `dxt_version`，任务书只写了 `manifest_version`
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）
+- 是否阻塞：否
+- 问题：P2 步骤 4 要求内嵌 `.mcpb` 的 `manifest_version` 必须在 0.1 / 0.2 / 0.3。core 的 `parseMcpbManifest` 对旧 MCPB 还接受 `dxt_version` 作为同一字段的回退；校验器若只认 `manifest_version`，会把 KepCup 安装管线实际接受的旧包判为 error，出现「validate 拒绝、安装却成功」的分叉。
+- 影响范围：`packages/app-validator/src/plugin/validate.ts` 的版本读取为 `manifest_version ?? dxt_version`，集合仍是 0.1 / 0.2 / 0.3；其余入口/版本检查不变。
+- 可选方案：
+  1. 与 core 对齐接受 `dxt_version`（当前实现）— 优点：校验器与安装器结论一致；缺点：与任务书字面有一处出入。
+  2. 严格只认 `manifest_version` — 优点：贴合任务书；缺点：旧包被校验器误报，和安装管线不一致。
+- 推荐：方案 1。
+- 决定：方案 1（P2 实施记录 §6「自行判断点」）。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-059 服务端集成测试的远程来源守卫用 `withRemoteSource` 替代真实 `/ws` viewer
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）
+- 是否阻塞：否
+- 问题：P2 步骤 7.5 要求「经远程端点（`/ws` viewer）调同样的 `file` 来源仍被拒」。真实 viewer 需要完整的配对握手、codec 与 hello 自举；同一测试文件已有这套链路，但把「admin 安装」与「远程守卫」塞进同一条握手会显著拉长用例，且守卫本身由 `RemoteHub` 用 `withRemoteSource` 包裹每个 `spec.handle`（core 的 `plugins.test.ts` 已有同口径回归）。
+- 影响范围：`apps/server/test/server-integration.test.ts` 在 admin 安装后用 `withRemoteSource('dev_integration', () => inspect.handle({ source }))` 断言 `INVALID_INPUT`；没有改动生产代码或远程守卫。
+- 可选方案：
+  1. 直接用 `withRemoteSource`（当前实现）— 优点：准确覆盖 `currentRemoteSource()` 判定，测试稳定且快；缺点：没有经过真实 WS 帧。
+  2. 新起一套 viewer 握手再发 `plugins.inspect` RPC — 优点：端到端更完整；缺点：重复配对样板、测试时长与 flake 面变大。
+- 推荐：方案 1。
+- 决定：方案 1（P2 实施记录 §6）。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6。
