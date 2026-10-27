@@ -188,7 +188,7 @@ import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
 import type { ConnectorsProjector } from './plugins/projectors/connectors.js';
-import { createPluginProjectors } from './plugins/projectors/index.js';
+import { createPluginProjectors, type PluginProjector } from './plugins/projectors/index.js';
 import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
@@ -456,7 +456,7 @@ export interface CoreServicesOptions {
    * D104 P1-2 test hook (`__KEPCUP_TEST_HOOKS__` builds only): wraps the plugin
    * projectors so integration tests can inject update failures (rollback coverage).
    */
-  projectorWrap?: (projector: import('./plugins/projectors/index.js').PluginProjector) => import('./plugins/projectors/index.js').PluginProjector;
+  projectorWrap?: (projector: PluginProjector) => PluginProjector;
   /**
    * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
    * share intake daily sweep cadence so integration tests can observe the
@@ -2394,6 +2394,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       registry: plugins,
       clock,
       appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
     });
 
     const orchestrator = new Orchestrator({

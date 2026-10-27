@@ -164,10 +164,7 @@ export function clampMailPollInterval(provider: MailProvider, seconds: number): 
  * 连接成功后的收信路径。有 IDLE 且模式为 auto 才走 IDLE；否则轮询。
  * 厂商「是否尝试 IDLE」体现在默认 mode（163 默认 poll_only），运行时以 CAPABILITY 为准。
  */
-export function resolveMailListen(
-  mode: MailMode,
-  capabilities: readonly string[],
-): MailListen {
+export function resolveMailListen(mode: MailMode, capabilities: readonly string[]): MailListen {
   const hasIdle = capabilities.some((item) => item.toUpperCase() === 'IDLE');
   return mode === 'auto' && hasIdle ? 'idle' : 'poll';
 }

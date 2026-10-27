@@ -166,21 +166,63 @@ export class MarketplaceSync {
     if (index === null) return [];
     const parsed: PluginIndexEntry[] = [];
     for (const [position, raw] of index.entries.entries()) {
-      const result = pluginIndexEntrySchema.safeParse(raw);
-      if (!result.success) {
-        this.#deps.logger.warn(
-          { position, issue: result.error.issues[0]?.message ?? 'invalid' },
-          'marketplace index entry skipped',
-        );
+      const result = this.#parseEntry(raw, position);
+      if (result === null) continue;
+      if (this.endpoint === 'custom' && result.tier !== 'community') {
+        parsed.push({ ...result, tier: 'community' });
         continue;
       }
-      if (this.endpoint === 'custom' && result.data.tier !== 'community') {
-        parsed.push({ ...result.data, tier: 'community' });
-        continue;
-      }
-      parsed.push(result.data);
+      parsed.push(result);
     }
     return parsed;
+  }
+
+  /**
+   * 逐条校验。测试缝例外：`KEPCUP_TEST_PLUGIN_MARKET` 的包只走回环 http，而共享的
+   * `pluginIndexEntrySchema` 要求 downloadUrl 是 https——仅当条目主机在测试回环白名单里
+   * 时，用一个占位 https URL 过 schema，再换回原地址。真正的下载守卫
+   * （`#downloadUrlAllowed`）仍会再检查一次；只有测试构建会注入 host 白名单，
+   * 普通构建里这个分支恒不生效。
+   */
+  #parseEntry(raw: unknown, position: number): PluginIndexEntry | null {
+    const result = pluginIndexEntrySchema.safeParse(raw);
+    if (result.success) return result.data;
+    const loopbackUrl = this.#testLoopbackDownloadUrl(raw);
+    if (loopbackUrl === null) {
+      this.#deps.logger.warn(
+        { position, issue: result.error.issues[0]?.message ?? 'invalid' },
+        'marketplace index entry skipped',
+      );
+      return null;
+    }
+    const relaxed = pluginIndexEntrySchema.safeParse({
+      ...(raw as Record<string, unknown>),
+      downloadUrl: 'https://test-seam.invalid/package.kepcup',
+    });
+    if (!relaxed.success) {
+      this.#deps.logger.warn(
+        { position, issue: relaxed.error.issues[0]?.message ?? 'invalid' },
+        'marketplace index entry skipped',
+      );
+      return null;
+    }
+    return { ...relaxed.data, downloadUrl: loopbackUrl };
+  }
+
+  /** The raw entry's downloadUrl when it is an http URL on a test-seam loopback host. */
+  #testLoopbackDownloadUrl(raw: unknown): string | null {
+    const hosts = this.#deps.testLoopbackHosts;
+    if (hosts === undefined || hosts.length === 0) return null;
+    if (raw === null || typeof raw !== 'object') return null;
+    const url = (raw as { downloadUrl?: unknown }).downloadUrl;
+    if (typeof url !== 'string') return null;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:') return null;
+      return hosts.includes(parsed.host) ? url : null;
+    } catch {
+      return null;
+    }
   }
 
   /** 已验签索引的撤销名单（schema 已补 `action` / `reason` 默认值）。 */
@@ -332,7 +374,8 @@ export class MarketplaceSync {
     const hosts = this.#deps.testLoopbackHosts;
     if (hosts === undefined || hosts.length === 0) return false;
     try {
-      return hosts.includes(new URL(url).host);
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' && hosts.includes(parsed.host);
     } catch {
       return false;
     }

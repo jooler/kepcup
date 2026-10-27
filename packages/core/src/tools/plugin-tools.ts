@@ -1,7 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import type { SetupRequirement } from '@kepcup/shared';
-import { untrustedBlock } from '../infra/data-boundary.js';
+import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import type { PluginSearchHit, PluginToolContext } from '../plugins/install-requests.js';
 import { TOOL_SETUP_REQUIRED } from './image-tools.js';
 
@@ -85,7 +85,11 @@ export function buildPluginTools(input: {
           .join('、');
         return `- ${hit.name}（plugin_id: ${hit.id}，v${hit.version}，${categories}）：${hit.description}`;
       });
-      const body = truncate(lines.join('\n'), SEARCH_OUTPUT_MAX);
+      const raw = lines.join('\n');
+      // 预算按「包裹后」算：先中和闭合标签（中和可能加反斜杠），再按码点截断到
+      // 包装器开销之外，保证最终 content ≤ SEARCH_OUTPUT_MAX。
+      const budget = SEARCH_OUTPUT_MAX - untrustedBlock('').length;
+      const body = truncate(neutralizeUntrusted(raw), budget);
       return { ok: true, content: untrustedBlock(body) };
     },
   };
@@ -126,5 +130,14 @@ export function buildPluginTools(input: {
 }
 
 function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  if (text.length <= max) return text;
+  // Budget in UTF-16 units (the contract is `content.length`), but never split a
+  // surrogate pair: iterate code points and count each one's UTF-16 width.
+  let out = '';
+  const budget = max - 1; // one unit for the ellipsis
+  for (const char of text) {
+    if (out.length + char.length > budget) break;
+    out += char;
+  }
+  return `${out}…`;
 }

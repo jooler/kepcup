@@ -157,8 +157,12 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.clock !== undefined ? { clock: options.clock as never } : {}),
     ...(options.timers !== undefined ? { timers: options.timers } : {}),
     ...(options.browserRpc !== undefined ? { browserRpc: options.browserRpc as never } : {}),
-    ...(options.enhancedSandbox !== undefined ? { enhancedSandbox: options.enhancedSandbox as never } : {}),
-    ...(options.distroInstaller !== undefined ? { distroInstaller: options.distroInstaller as never } : {}),
+    ...(options.enhancedSandbox !== undefined
+      ? { enhancedSandbox: options.enhancedSandbox as never }
+      : {}),
+    ...(options.distroInstaller !== undefined
+      ? { distroInstaller: options.distroInstaller as never }
+      : {}),
     ...(options.platform !== undefined ? { platform: options.platform } : {}),
     ...(options.diskUsageBudget !== undefined ? { diskUsageBudget: options.diskUsageBudget } : {}),
     ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog as never } : {}),

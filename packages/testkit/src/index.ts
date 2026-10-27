@@ -12,4 +12,5 @@ export * from './fake-oauth-mcp-server.js';
 export * from './fake-mcp-app-server.js';
 export * from './mcpb-fixture.js';
 export * from './plugin-fixture.js';
+export * from './plugin-market-fixture.js';
 export * from './builtin-plugins-fixture.js';

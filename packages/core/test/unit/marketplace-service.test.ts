@@ -7,13 +7,13 @@ import { PLUGIN_INDEX_BASE_URL, PLUGIN_INDEX_PUBLIC_KEYS } from '@kepcup/shared'
 import { MarketplaceService } from '../../src/plugins/marketplace-service.js';
 import type { MarketplaceSyncEvents } from '../../src/plugins/marketplace-sync.js';
 import {
+  buildPluginFixture,
   buildPluginIndex,
   makeMarketKey,
   memoryMarketFetch,
   pluginIndexEntryFor,
   type PluginMarketKey,
-} from '../support/plugin-market-fixture.js';
-import { buildPluginFixture } from '@kepcup/testkit';
+} from '@kepcup/testkit';
 
 /**
  * MarketplaceService 的单元测试（D104 P1-1 步骤 3.2）：官方 / 自建端点解析、公钥信任根、

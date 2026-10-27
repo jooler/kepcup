@@ -129,7 +129,7 @@
   }
 
   /** 已装同 id 且检视判定为「更新」时走 `plugins.update`（市场来源），否则 `plugins.install`。 */
-  const updating = $derived(info?.existing !== null && info?.update !== null);
+  const updating = $derived(info !== null && info.existing !== null && info.update !== null);
 
   async function install(): Promise<void> {
     if (info === null || !installable) return;

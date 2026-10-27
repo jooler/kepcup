@@ -133,8 +133,8 @@ export async function createTestStack(
 
 export function botProfile(
   overrides: { name: string } & Omit<Partial<Bot['profile']>, 'runtime'> & {
-    runtime?: Partial<Bot['profile']['runtime']>;
-  },
+      runtime?: Partial<Bot['profile']['runtime']>;
+    },
 ): Bot['profile'] {
   return {
     identity: {

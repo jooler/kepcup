@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PluginMarketEntry } from '@kepcup/shared';
-  import { t } from '$lib/i18n';
+  import { errorText, t } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
   import { plugins } from '../plugins/plugins.svelte';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -20,7 +21,9 @@
 
   $effect(() => {
     plugins.start();
-    void plugins.loadMarket();
+    // 每次挂载都强制拉一次：用户可能刚在「已安装」页切换了市场端点（关闭 ↔ 官方 ↔
+    // 自建），缓存里的 status / 条目已经不代表当前端点；disabled 时刷新按钮也不可点。
+    void plugins.loadMarket(true);
   });
 
   let query = $state('');
@@ -78,6 +81,16 @@
     if (!entry.compatible) return false;
     return entry.installed === null || entry.installed.updateAvailable;
   }
+
+  async function refresh(): Promise<void> {
+    try {
+      await plugins.refreshMarket();
+    } catch (caught) {
+      const code = (caught as { code?: string } | undefined)?.code;
+      const message = caught instanceof Error ? caught.message : String(caught);
+      toast.error(t('plugins.toast.failed', { reason: errorText(code, message) }));
+    }
+  }
 </script>
 
 <div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-market">
@@ -90,7 +103,7 @@
       variant="secondary"
       class="shrink-0"
       disabled={plugins.marketLoading || status?.state === 'disabled'}
-      onclick={() => void plugins.refreshMarket()}
+      onclick={() => void refresh()}
       data-testid="plugins-market-refresh"
     >
       {plugins.marketLoading ? t('plugins.market.refreshing') : t('plugins.market.refresh')}
@@ -144,6 +157,10 @@
 
   {#if status?.state === 'disabled'}
     <!-- 未启用：只显示上面的横幅，不渲染列表与空态（避免「市场里没有插件」的误导）。 -->
+  {:else if plugins.marketError !== null}
+    <p class="px-0.5 text-xs text-destructive" data-testid="plugins-market-error">
+      {t('plugins.loadFailed', { reason: plugins.marketError })}
+    </p>
   {:else if nothingToShow && !plugins.marketLoading}
     <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-market-empty">
       {plugins.market.length === 0 ? t('plugins.market.empty') : t('plugins.market.noMatch')}

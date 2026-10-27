@@ -10,7 +10,7 @@ import {
   makeMarketKey,
   memoryMarketFetch,
   pluginIndexEntryFor,
-} from '../support/plugin-market-fixture.js';
+} from '@kepcup/testkit';
 
 /**
  * PluginInstallRequests（D104 P1-3 步骤 2）：Bot 只能提议官方市场里 verified 级、
@@ -136,6 +136,33 @@ describe('PluginInstallRequests.search', () => {
     expect(h.requests.search('pdf')).toHaveLength(1);
     expect(h.requests.search('PDF conversions')).toHaveLength(1);
     expect(h.requests.search('pdf nomatch')).toHaveLength(0);
+  });
+
+  it('名称与描述经清洗（零宽 / 控制字符不进入结果）', async () => {
+    const h = await harness();
+    const raw = await entry({ id: 'io.github.a/one', tier: 'verified' });
+    raw.summary = {
+      name: 'Doc\u200bTools',
+      description: 'PDF\u0000 conversions',
+      author: 'Alice',
+    };
+    h.publish([raw]);
+    await h.sync.sync();
+    const [hit] = h.requests.search('doc');
+    expect(hit?.name).toBe('DocTools');
+    expect(hit?.description).toBe('PDF conversions');
+  });
+
+  it('无 version 的 request 与 search 解析同一个 verified 版本', async () => {
+    const h = await harness();
+    const v1 = await entry({ id: 'io.github.a/one', version: '1.0.0', tier: 'verified' });
+    const v2 = await entry({ id: 'io.github.a/one', version: '2.0.0', tier: 'community' });
+    h.publish([v1, v2]);
+    await h.sync.sync();
+    expect(h.requests.search('doc').map((hit) => hit.version)).toEqual(['1.0.0']);
+    const result = h.requests.request({ pluginId: 'io.github.a/one', reason: '需要它' }, context);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.requirement.version).toBe('1.0.0');
   });
 
   it('空查询与市场未启用返回空', async () => {

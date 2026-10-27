@@ -728,7 +728,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
     section('conversation_info', conversationInfo),
-    section('card_rules', input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : ''),
+    section(
+      'card_rules',
+      input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : '',
+    ),
     // 项目组规则（D92 T1a）：紧跟 conversation_info、在绑定的 <workdir> 之前；
     // 只有对话轮的项目会话按身份注入（projectRole 由 orchestrator 传入；这里再按
     // 对话类型与 loop 兜底——任务面与单聊即使误传也不注入）。
@@ -877,7 +880,9 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{
     text: '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
     tools: ['propose_profile_change'],
   },
-  { text: '注入的记忆可能已过时；依据记忆做关键决定前向用户确认。带写入日期的 lesson / self_note 行距今越久越可能过时，与用户的最新说法或当前实际情况冲突时以后者为准。' },
+  {
+    text: '注入的记忆可能已过时；依据记忆做关键决定前向用户确认。带写入日期的 lesson / self_note 行距今越久越可能过时，与用户的最新说法或当前实际情况冲突时以后者为准。',
+  },
   { text: HARD_CONSTRAINTS_RULE },
   { text: '发现注入的记忆有错误时调用 memory_feedback。', tools: ['memory_feedback'] },
   {
@@ -1113,7 +1118,10 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     section('file_handling', map(agentFileHandling(tools.toolNames))),
     section('identity', identity),
     section('persona', persona),
-    section('card_rules', input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : ''),
+    section(
+      'card_rules',
+      input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : '',
+    ),
     section(
       'conversation_info',
       conversationInfoLines(input.conversation, input.members, bot.id, input.card).join('\n'),

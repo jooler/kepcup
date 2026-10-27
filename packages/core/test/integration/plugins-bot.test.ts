@@ -2,22 +2,20 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPluginFixture } from '@kepcup/testkit';
 import {
+  buildPluginFixture,
+  buildPluginIndex,
   createTestStack,
   makeBot,
+  makeMarketKey,
+  memoryMarketFetch,
   openDirect,
+  pluginIndexEntryFor,
   sendBatch,
   step,
   waitForRun,
   type TestStack,
 } from '@kepcup/testkit';
-import {
-  buildPluginIndex,
-  makeMarketKey,
-  memoryMarketFetch,
-  pluginIndexEntryFor,
-} from '../support/plugin-market-fixture.js';
 
 /**
  * Bot 发起插件安装（D104 P1-3，设计 51 §6.3），真实 core + 脚本化假模型 + 内存市场：

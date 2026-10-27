@@ -21,6 +21,8 @@ class PluginsState {
   market = $state<PluginMarketEntry[]>([]);
   marketStatus = $state<PluginMarketStatus | null>(null);
   marketLoading = $state(false);
+  /** 最近一次市场视图加载失败的错误文本（null = 正常）；与已安装列表的 loadError 分开。 */
+  marketError = $state<string | null>(null);
   loading = $state(false);
   /** 最近一次列表加载失败的错误文本（null = 正常）；页面据此区分「空列表」与「加载失败」。 */
   loadError = $state<string | null>(null);
@@ -73,10 +75,11 @@ class PluginsState {
       };
       this.market = result.entries;
       this.marketStatus = result.status;
+      this.marketError = null;
       this.#marketLoaded = true;
     } catch (error) {
       console.error('[plugins] market load failed', error);
-      this.loadError =
+      this.marketError =
         error instanceof Error && error.message.length > 0 ? error.message : String(error);
     } finally {
       this.marketLoading = false;
@@ -110,9 +113,10 @@ class PluginsState {
         const info = (await core.call('plugins.inspect', {
           source: { kind: 'marketplace', id: plugin.id },
         })) as PluginInspectOutput;
-        // 权限扩大或需要填必填配置时，用户必须逐个确认（与单个更新对话框同一条纪律）。
+        // 权限扩大、需要填配置（含只带可选字段的 MCPB：非敏感值不会被保留，直接更新
+        // 会把用户改过的可选配置静默换回默认值）时，用户必须逐个确认。
         const needsInput = info.mcp.some(
-          (item) => item.kind === 'mcpb' && item.userConfigFields.some((field) => field.required),
+          (item) => item.kind === 'mcpb' && item.userConfigFields.length > 0,
         );
         if (!info.installable || info.update?.permissionsExpanded === true || needsInput) {
           skipped += 1;
@@ -163,9 +167,12 @@ class PluginsState {
     }
   }
 
-  /** 安装 / 启停 / 卸载成功后刷新受影响的 store：插件列表、MCP server（settings）、连接目录。 */
+  /** 安装 / 启停 / 卸载成功后刷新受影响的 store：插件列表、市场视图、MCP server（settings）、连接目录。 */
   async afterMutation(): Promise<void> {
     await this.load(true);
+    // 市场条目自带 installed / updateAvailable 结论：安装、更新、停用后都要重拉，
+    // 否则市场卡会停在「安装」按钮上（D104 P1-3）。
+    await this.loadMarket(true);
     await settingsStore.refresh();
     void appsStore.refresh().catch(() => undefined);
   }
@@ -175,6 +182,7 @@ class PluginsState {
     this.plugins = [];
     this.market = [];
     this.marketStatus = null;
+    this.marketError = null;
     this.loadError = null;
     this.#loaded = false;
     this.#marketLoaded = false;
