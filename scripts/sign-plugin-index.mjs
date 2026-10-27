@@ -249,7 +249,7 @@ export async function collectPluginEntries({
               : String(summary.author).slice(0, 100),
         },
         // Deterministic builds pass --generated-at; otherwise the package mtime stands.
-        updatedAt: generatedAt !== undefined ? generatedAt : statSync(filePath).mtimeMs,
+        updatedAt: generatedAt !== undefined ? generatedAt : Math.floor(statSync(filePath).mtimeMs),
       };
       entries.push(entry);
       packages.push({ sha256, sourcePath: filePath });

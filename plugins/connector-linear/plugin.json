@@ -9,9 +9,6 @@
     "url": "https://kepcup.com"
   },
   "homepage": "https://linear.app",
-  "engines": {
-    "kepcup": ">=0.4.0"
-  },
   "contributions": {
     "connectors": [
       {

@@ -9,9 +9,6 @@
     "url": "https://kepcup.com"
   },
   "homepage": "https://www.canva.com",
-  "engines": {
-    "kepcup": ">=0.4.0"
-  },
   "contributions": {
     "connectors": [
       {
