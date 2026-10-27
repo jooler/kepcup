@@ -18,7 +18,12 @@ import {
   ConnectorsProjector,
   rewriteConnectorEntry,
 } from '../../src/plugins/projectors/connectors.js';
-import type { PluginLedger, PluginProjectionContext } from '../../src/plugins/projectors/index.js';
+import {
+  emptyOwned,
+  type PluginLedger,
+  type PluginProjectionContext,
+  type ProjectedKind,
+} from '../../src/plugins/projectors/index.js';
 
 /**
  * 连接器投影器（D104 P0a-2 步骤 6.2）：rewriteConnectorEntry 的改写与拒绝表、
@@ -205,18 +210,20 @@ function withLedger(): {
     dir: string,
     manifest: PluginProjectionContext['manifest'],
     tier?: PluginIdentity['tier'],
+    owned?: Readonly<Record<ProjectedKind, ReadonlySet<string>>>,
   ) => PluginProjectionContext;
   ledger: MemLedger;
 } {
   const ledger = new MemLedger();
   return {
     ledger,
-    ctx: (dir, manifest, tier) => ({
+    ctx: (dir, manifest, tier, owned = emptyOwned()) => ({
       plugin: identity(tier ?? 'developer'),
       manifest,
       dir,
       userConfig: {},
       ledger,
+      owned,
     }),
   };
 }

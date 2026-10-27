@@ -88,6 +88,22 @@ describe('plugin install form helpers', () => {
     );
   });
 
+  it('treats an empty required sensitive field as kept (not missing) only for updates', () => {
+    const form = initialPluginForm(info);
+    const updating: PluginInspectOutput = {
+      ...info,
+      existing: { version: '1.1.0' },
+      update: { from: '1.1.0', permissionsExpanded: false, added: [] },
+    };
+    // P1-2 keepSecrets：更新时敏感留空 = 保留已存 secret，不算缺项（否则确认按钮永远禁用）。
+    expect(missingPluginConfig(updating, form)).toEqual([]);
+    expect(
+      missingPluginConfig(updating, { ...form, docs: { ...form.docs, api_key: 'rotated' } }),
+    ).toEqual([]);
+    // 全新安装没有已存 secret 可保留：必填敏感仍必须填。
+    expect(missingPluginConfig(info, form)).toEqual(['「Doc Tools」API Key']);
+  });
+
   it('builds typed userConfig per MCPB, keeping empty objects', () => {
     const form = initialPluginForm(info);
     expect(buildPluginUserConfig(info, { ...form, docs: { ...form.docs, api_key: 'sk' } })).toEqual(
@@ -110,6 +126,22 @@ describe('plugin install form helpers', () => {
     expect(canInstallPlugin(info, [])).toBe(true);
     expect(canInstallPlugin(info, ['「Doc Tools」API Key'])).toBe(false);
     expect(canInstallPlugin({ ...info, installable: false }, [])).toBe(false);
+  });
+
+  it('gates the confirm button on the acknowledged permission diff (updates only)', () => {
+    const expanded: PluginInspectOutput = {
+      ...info,
+      existing: { version: '1.0.0' },
+      update: { from: '1.0.0', permissionsExpanded: true, added: ['新增网络主机 api.x.com'] },
+    };
+    expect(canInstallPlugin(expanded, [], false)).toBe(false);
+    expect(canInstallPlugin(expanded, [], true)).toBe(true);
+    // 权限不扩大：无需勾选即可确认。
+    const notExpanded: PluginInspectOutput = {
+      ...expanded,
+      update: { from: '1.0.0', permissionsExpanded: false, added: [] },
+    };
+    expect(canInstallPlugin(notExpanded, [], false)).toBe(true);
   });
 
   it('parses plugin skill sources round-trip and rejects malformed ones', () => {

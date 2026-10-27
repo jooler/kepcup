@@ -57,6 +57,7 @@
 | main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
 | main | `0053_plugins.sql` | D104：新表 `plugins`（市场 / 本地插件，内置插件不入表）、`plugin_items`（投影账本，随插件 `ON DELETE CASCADE`） |
 | main | `0054_plugin_skill_source.sql` | D104 P0b：`skill_library.source_url` 的 `preset://{id}` 一次性改写为 `plugin://com.kepcup/starter-skills/{id}`（纯 UPDATE；预置技能改为内置插件 `com.kepcup/starter-skills` 的技能贡献，`SkillPresetsService` 按新前缀认领） |
+| main | `0055_plugin_update_journal.sql` | D104 P1-2：`plugins` 增 `update_to` / `update_snapshot` 两列（更新日志；`update_to` 非 NULL = 更新进行中，崩溃恢复按快照回滚） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -1036,6 +1037,7 @@ CREATE INDEX plugin_items_ref ON plugin_items(kind, ref);
 
 - **账本语义**：卸载 / 回滚 / 冲突检测 / 「已安装」详情都读 `plugin_items`，不靠各服务里的来源标记反推；先登记账本、后写入投影，任一步失败按账本反向回滚，`unproject` 全部幂等。
 - **状态机**：`installing` → `installed` → `uninstalling`；启动时对残留的 `installing` / `uninstalling` 行恢复（先例：`environment.recoverInterrupted`）。
+- **更新日志（0055，D104 P1-2）**：`update_to` / `update_snapshot` 两列，默认 NULL。更新事务先把 `update_to`（目标版本）与 `update_snapshot`（按投影器 kind 的 `{kind: 快照字符串}` JSON，来自 `projector.beginUpdate()`）写入日志，再做文件与投影改动；提交时单条 UPDATE 与 `version` / `tier` / `dir` 等一起翻转并把两列清回 NULL。进程中途崩溃 → 启动恢复先处理 `update_to IS NOT NULL` 的行（按快照补偿回滚到旧版本），再处理 `installing` / `uninstalling` 行。
 - **origin / tier 约束**：本地来源恒 `developer`（CHECK 落库），市场来源必须带 `marketplace` endpoint；分级由来源决定，清单自标一律无效。
 - **内置插件不入表**：`com.kepcup` 内置插件是只读应用资源，随启动从应用资源加载，不装 / 不卸 / 不启停。
 

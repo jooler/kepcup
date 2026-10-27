@@ -126,10 +126,11 @@ const EXTRA_METHOD_ITEMS: Readonly<Record<string, readonly string[]>> = {
   'mcp.setSecret': itemIdsForSettingsPaths(['mcpServers']),
   'mcp.removeSecret': itemIdsForSettingsPaths(['mcpServers']),
   'mcp.removeServer': itemIdsForSettingsPaths(['mcpServers']),
-  // D104：插件安装 / 卸载 / 启停间接改了 `mcpServers`（内嵌 MCPB / http server），补发 settings.changed。
+  // D104：插件安装 / 卸载 / 启停 / 更新间接改了 `mcpServers`（内嵌 MCPB / http server），补发 settings.changed。
   'plugins.install': itemIdsForSettingsPaths(['mcpServers']),
   'plugins.uninstall': itemIdsForSettingsPaths(['mcpServers']),
   'plugins.setEnabled': itemIdsForSettingsPaths(['mcpServers']),
+  'plugins.update': itemIdsForSettingsPaths(['mcpServers']),
   'agents.enable': itemIdsForSettingsPaths(['agents']),
   'agents.disable': itemIdsForSettingsPaths(['agents']),
   'agents.login': itemIdsForSettingsPaths(['agents']),

@@ -77,15 +77,82 @@ class FakeProjector implements PluginProjector {
   /** project 开始 / 结束时往共享 log 里写（互斥测试用）。 */
   log: string[] | null = null;
   projectDelayMs = 0;
+  // --- P1-2 update hooks ---
+  readonly updates: Array<{ from: string; to: string }> = [];
+  readonly committed: Array<{ pluginId: string; snapshot: string | null }> = [];
+  readonly rolledBack: Array<{ pluginId: string; snapshot: string | null }> = [];
+  /** update 抛错（补偿路径测试）。 */
+  failUpdate = false;
+  /**
+   * true 时「实现」beginUpdate / commitUpdate / rollbackUpdate（快照驱动的补偿）；
+   * false 时与真技能 / 连接器 / 邮件投影器一样没有这三个钩子 → 补偿走反向 update。
+   */
+  #snapshotDriven = false;
+  /** update 开始时回调（注册表此刻的账本 / 日志状态断言）。 */
+  onUpdate: (() => void) | null = null;
+  /** inspect 返回的条目（默认空；权限差异测试按 ctx.plugin.version 区分新旧）。 */
+  inspectItemsFor: ((ctx: PluginProjectionContext) => unknown[]) | null = null;
+  /** beginUpdate / commitUpdate / rollbackUpdate 往共享 log 写（顺序测试用）。 */
+  opLog: string[] | null = null;
+
+  get snapshotDriven(): boolean {
+    return this.#snapshotDriven;
+  }
+
+  set snapshotDriven(value: boolean) {
+    this.#snapshotDriven = value;
+    this.beginUpdate =
+      value === true
+        ? async (plugin: PluginIdentity) => {
+            if (this.opLog !== null) this.opLog.push(`${this.kind}.begin`);
+            return `snap:${this.kind}@${plugin.version}`;
+          }
+        : async () => null;
+    this.commitUpdate =
+      value === true
+        ? async (plugin: PluginIdentity, snapshot: string | null) => {
+            if (this.opLog !== null) this.opLog.push(`${this.kind}.commit`);
+            this.committed.push({ pluginId: plugin.id, snapshot });
+          }
+        : undefined;
+    this.rollbackUpdate =
+      value === true
+        ? async (plugin: PluginIdentity, snapshot: string | null) => {
+            this.rolledBack.push({ pluginId: plugin.id, snapshot });
+          }
+        : undefined;
+  }
 
   constructor(kind: ProjectedKind) {
     this.kind = kind;
+    this.snapshotDriven = false;
   }
 
-  async inspect(_ctx: PluginProjectionContext) {
+  async inspect(ctx: PluginProjectionContext) {
     this.inspected += 1;
-    return { items: [], conflicts: this.conflicts, blockers: this.blockers };
+    return {
+      items: this.inspectItemsFor?.(ctx) ?? [],
+      conflicts: this.conflicts,
+      blockers: this.blockers,
+    };
   }
+
+  async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    this.updates.push({ from: oldCtx.plugin.version, to: newCtx.plugin.version });
+    this.onUpdate?.();
+    if (this.opLog !== null) this.opLog.push(`${this.kind}.update:${newCtx.plugin.version}`);
+    // 与真投影器同一契约：账本同步到新清单（新增登记、删除移除）。
+    const refs = refsOf(newCtx.manifest, this.kind);
+    for (const ref of refs) newCtx.ledger.add(this.kind, ref);
+    for (const ref of refsOf(oldCtx.manifest, this.kind)) {
+      if (!refs.includes(ref)) oldCtx.ledger.remove(this.kind, ref);
+    }
+    if (this.failUpdate) throw new Error(`update ${this.kind} failed`);
+  }
+
+  beginUpdate: PluginProjector['beginUpdate'] = async () => null;
+  commitUpdate: PluginProjector['commitUpdate'] = undefined;
+  rollbackUpdate: PluginProjector['rollbackUpdate'] = undefined;
 
   async project(ctx: PluginProjectionContext): Promise<void> {
     this.log?.push(`${this.kind}.project.begin:${ctx.plugin.id}`);
@@ -181,6 +248,72 @@ function makeRig(): Rig {
     },
   });
   return { registry, store, packager, pluginsDir: paths.pluginsDir, fakes, events, audits, home };
+}
+
+/** 手工插入一行（更新 / 恢复 / 孤儿清理测试用）；dir 按小写槽位默认推导。 */
+function rowOf(id: string, patch: Partial<Parameters<PluginStore['insert']>[0]> = {}) {
+  const version = patch.version ?? '1.0.0';
+  return {
+    id,
+    version,
+    origin: 'local' as const,
+    tier: 'developer' as const,
+    state: 'installed' as const,
+    enabled: true,
+    packageSha256: 'a'.repeat(64),
+    marketplace: null,
+    dir: `${id}@${version}`.toLowerCase(),
+    updateTo: null,
+    updateSnapshot: null,
+    installedAt: 1,
+    updatedAt: 1,
+    ...patch,
+  };
+}
+
+/** 在磁盘上铺一个可读的旧版插件目录（v1 清单，含一个技能贡献）。 */
+function seedDir(pluginsDir: string, id: string, version: string, skillName = 'alpha'): string {
+  const dir = path.join(pluginsDir, `${id}@${version}`.toLowerCase());
+  mkdirSync(path.join(dir, 'skills', skillName), { recursive: true });
+  writeFileSync(
+    path.join(dir, 'plugin.json'),
+    JSON.stringify({
+      format_version: 1,
+      id,
+      name: 'Seeded',
+      version,
+      contributions: { skills: [{ dir: `skills/${skillName}` }] },
+    }),
+  );
+  writeFileSync(
+    path.join(dir, 'skills', skillName, 'SKILL.md'),
+    `---\nname: ${skillName}\ndescription: seeded\n---\nbody`,
+  );
+  return dir;
+}
+
+/** 市场服务桩：`current()` / `endpointId()`，find 恒返回 entry，download 给出指定文件。 */
+function makeMarketFake(id: string, endpointId: string) {
+  let entry: Record<string, unknown> | null = null;
+  let downloadPath = '';
+  return {
+    setEntry(next: Record<string, unknown> | null): void {
+      entry = next;
+    },
+    setDownload(path: string): void {
+      downloadPath = path;
+    },
+    service: {
+      current: () => ({
+        find: () => entry,
+        revocationOf: () => null,
+        download: async () => downloadPath,
+        entries: () => (entry === null ? [] : [entry]),
+        incompatibleReason: () => null,
+      }),
+      endpointId: () => endpointId,
+    } as never,
+  };
 }
 
 /** 内置插件桩（D104 P0b）：只提供 summaries / get，验证 list 头部插入与启停 / 卸载拒绝。 */
@@ -343,7 +476,7 @@ describe('PluginRegistry', () => {
     expect(rig.events).toEqual([]); // 失败不发 changed
   });
 
-  it('sha256 不符 → PLUGIN_INVALID 且无残留；同 id 已装 → PLUGIN_CONFLICT；保留命名空间 → PLUGIN_INVALID', async () => {
+  it('sha256 不符 → PLUGIN_INVALID 且无残留；市场来源已装 + 本地安装 → PLUGIN_CONFLICT；保留命名空间 → PLUGIN_INVALID', async () => {
     const rig = makeRig();
     const fixture = await makeFixture({ id: 'io.github.tester/sha' });
     const error = await rig.registry
@@ -355,14 +488,26 @@ describe('PluginRegistry', () => {
     expectCode(error, 'PLUGIN_INVALID');
     expect(rig.store.get('io.github.tester/sha')).toBeNull();
 
-    const ok = await makeFixture({ id: 'io.github.tester/dup' });
-    await rig.registry.install(installArgs(ok));
-    const dup = await makeFixture({ id: 'io.github.tester/dup' });
-    const conflict = await rig.registry.install(installArgs(dup)).then(
+    // P1-2：同 id 的本地重装走更新流；「市场来源的行 + 本地来源」仍冲突。
+    const marketId = 'io.github.tester/mkt';
+    await makeFixture({ id: marketId, version: '1.0.0' });
+    rig.store.insert(
+      rowOf(marketId, {
+        version: '1.0.0',
+        origin: 'marketplace',
+        tier: 'community',
+        marketplace: 'https://market.test/plugins/v1',
+        dir: `${marketId}@1.0.0`.toLowerCase(),
+      }),
+    );
+    const localAgainstMarket = await makeFixture({ id: marketId, version: '2.0.0' });
+    const conflict = await rig.registry.install(installArgs(localAgainstMarket)).then(
       () => null,
       (caught: unknown) => caught,
     );
     expectCode(conflict, 'PLUGIN_CONFLICT');
+    expect(conflict!.message).toContain('已安装同 id 插件');
+    expect(rig.store.get(marketId)).toMatchObject({ version: '1.0.0' });
 
     const reserved = await makeFixture({ id: 'com.kepcup/evil' });
     const reservedError = await rig.registry.install(installArgs(reserved)).then(
@@ -401,14 +546,19 @@ describe('PluginRegistry', () => {
     expect(rig.store.get('io.github.tester/block')).toBeNull();
   });
 
-  it('inspect：同 id 已装 → existing + blocker；installable=false', async () => {
+  it('inspect：市场来源已装 + 本地检视 → existing + blocker；installable=false', async () => {
     const rig = makeRig();
-    const first = await makeFixture({ id: 'io.github.tester/twice' });
-    await rig.registry.install(installArgs(first));
-    rig.fakes.skill.conflicts = [];
-    const again = await makeFixture({ id: 'io.github.tester/twice' });
+    const marketId = 'io.github.tester/twice';
+    rig.store.insert(
+      rowOf(marketId, {
+        origin: 'marketplace',
+        tier: 'verified',
+        marketplace: 'https://market.test/plugins/v1',
+      }),
+    );
+    const again = await makeFixture({ id: marketId });
     const output = await rig.registry.inspect({ kind: 'file', path: again.path });
-    expect(output.existing).toEqual({ version: first.manifest.version });
+    expect(output.existing).toEqual({ version: '1.0.0' });
     expect(output.blockers.some((line) => line.includes('已安装同 id 插件'))).toBe(true);
     expect(output.installable).toBe(false);
     expect(output.update).toBeNull();
@@ -501,6 +651,8 @@ describe('PluginRegistry', () => {
       packageSha256: 'c'.repeat(64),
       marketplace: null,
       dir: 'io.github.tester/crash@2.0.0',
+      updateTo: null,
+      updateSnapshot: null,
       installedAt: 1,
       updatedAt: 1,
     });
@@ -526,6 +678,8 @@ describe('PluginRegistry', () => {
       packageSha256: 'd'.repeat(64),
       marketplace: null,
       dir: 'io.github.tester/mid@1.0.0',
+      updateTo: null,
+      updateSnapshot: null,
       installedAt: 2,
       updatedAt: 2,
     });
@@ -706,5 +860,475 @@ describe('PluginRegistry', () => {
     });
     // 拒绝后无副作用：两个内置仍在列。
     expect(rig.registry.list()).toHaveLength(3);
+  });
+});
+
+// --- P1-2 更新流 -----------------------------------------------------------------
+
+const skillItem = (name: string) => ({
+  name,
+  description: '',
+  runtimeDeps: [],
+  compatible: true,
+  incompatibleReason: null,
+});
+
+const MARKET = 'https://market.test/plugins/v1';
+const MARKET_ID = 'io.github.tester/mkt';
+
+describe('PluginRegistry updates (P1-2)', () => {
+  it('更新成功：顺序 = 日志 → 文件 → 投影 → 提交翻转 → 提交钩子 → 删旧目录', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/upd';
+    rig.fakes.skill.snapshotDriven = true; // commitUpdate 钩子可见
+    const opLog: string[] = [];
+    for (const fake of Object.values(rig.fakes)) fake.opLog = opLog;
+    const first = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+    const oldDir = path.join(rig.pluginsDir, `${id}@1.0.0`.toLowerCase());
+
+    let duringUpdate: { updateTo: string | null; version: string; oldDirExists: boolean } | null =
+      null;
+    rig.fakes.skill.onUpdate = () => {
+      const row = rig.store.get(id)!;
+      duringUpdate = {
+        updateTo: row.updateTo,
+        version: row.version,
+        oldDirExists: existsSync(oldDir),
+      };
+    };
+
+    const second = await makeFixture({ id, version: '2.0.0', skills: ['alpha', 'beta'] });
+    const summary = await rig.registry.install(installArgs(second));
+
+    // ④ 日志先于 ⑥ 投影：投影运行时 updateTo 已写、行版本未翻转、旧目录还在
+    expect(duringUpdate).toEqual({ updateTo: '2.0.0', version: '1.0.0', oldDirExists: true });
+    // begin（快照驱动者才记日志）→ update（投影顺序）→ commit（同为投影顺序）
+    expect(opLog).toEqual([
+      'skill.begin',
+      'skill.update:2.0.0',
+      'mail.update:2.0.0',
+      'skill.commit',
+    ]);
+    expect(rig.fakes.skill.committed[0]).toMatchObject({ snapshot: 'snap:skill@1.0.0' });
+    // ⑦ 单条 update 翻转一切
+    expect(summary).toMatchObject({ version: '2.0.0', state: 'installed' });
+    expect(rig.store.get(id)).toMatchObject({
+      version: '2.0.0',
+      updateTo: null,
+      updateSnapshot: null,
+    });
+    // 账本按 rowid：更新新增的 beta 追加在尾部。
+    expect(rig.store.items(id)).toEqual([
+      { kind: 'skill', ref: 'alpha' },
+      { kind: 'mail', ref: 'mailtest' },
+      { kind: 'skill', ref: 'beta' },
+    ]);
+    expect(existsSync(oldDir)).toBe(false); // 旧目录被 GC
+    expect(existsSync(path.join(rig.pluginsDir, `${id}@2.0.0`.toLowerCase()))).toBe(true);
+    expect(rig.audits.at(-1)).toMatchObject({
+      action: 'plugin_update',
+      detail: {
+        pluginId: id,
+        from: '1.0.0',
+        to: '2.0.0',
+        origin: 'local',
+        tier: 'developer',
+        via: 'file',
+        permissionsExpanded: false,
+      },
+    });
+    expect(rig.events.at(-1)).toEqual({ name: 'plugins.changed', payload: { ids: [id] } });
+  });
+
+  it('禁用插件更新：提交后收敛回禁用（重新投影不泄漏成启用态）', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/disableupd';
+    const first = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+    await rig.registry.setEnabled(id, false);
+    const callsBefore = rig.fakes.skill.setEnabledCalls.length;
+
+    // 同 id 同版本本地重装 = 更新：投影会重新安装技能，提交后必须再走一遍禁用回退
+    const second = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(second));
+
+    expect(rig.fakes.skill.setEnabledCalls.length).toBe(callsBefore + 1);
+    expect(rig.fakes.skill.setEnabledCalls.at(-1)).toMatchObject({ enabled: false });
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', enabled: false, updateTo: null });
+  });
+
+  it('update 抛错 → 逆序补偿（rollbackUpdate 优先于反向 update）、sameDir 的 .prev 换回、日志清空、重抛原错误', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/rollback';
+    const version = '5.0.0'; // 同版本重装 = sameDir → 走 .prev 换入
+    rig.fakes.skill.snapshotDriven = true;
+    rig.fakes.skill.failUpdate = true;
+    const first = await makeFixture({ id, version, skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+    const slotDir = path.join(rig.pluginsDir, `${id}@${version}`.toLowerCase());
+    const prevDir = `${slotDir}.prev`;
+    expect(existsSync(slotDir)).toBe(true);
+
+    const second = await makeFixture({ id, version, skills: ['alpha', 'beta'] });
+    const error = await rig.registry.install(installArgs(second)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    // 非 AppError 的投影失败被包装为 INTERNAL，但原始信息保留
+    expectCode(error, 'INTERNAL');
+    expect((error as Error).message).toContain('update skill failed');
+    // 逆序补偿：mail 没有 rollbackUpdate → 反向 update（updates 记一条反转）；
+    // skill 实现了 rollbackUpdate → 优先于反向 update，不被反向调用。
+    expect(rig.fakes.skill.rolledBack).toEqual([{ pluginId: id, snapshot: 'snap:skill@5.0.0' }]);
+    expect(rig.fakes.mail.updates).toEqual([
+      { from: version, to: version }, // 反向（update 在 skill 就抛了，没到 mail）
+    ]);
+    // 文件还原：.prev 没了、旧目录回来；日志清空；账本回到旧集合
+    expect(existsSync(slotDir)).toBe(true);
+    expect(existsSync(prevDir)).toBe(false);
+    expect(rig.store.get(id)).toMatchObject({ version, updateTo: null, updateSnapshot: null });
+    expect(rig.store.items(id)).toEqual([
+      { kind: 'skill', ref: 'alpha' },
+      { kind: 'mail', ref: 'mailtest' },
+    ]);
+    expect(rig.audits.at(-1)).toMatchObject({
+      action: 'plugin_update',
+      detail: { failed: true, error: 'INTERNAL', to: version },
+    });
+    expect(rig.events).toHaveLength(1); // 只有首次安装发过 changed
+  });
+
+  it('权限扩大且无 acknowledgeDiff → INVALID_INPUT（零写入）；带 acknowledgeDiff 成功', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/diff';
+    rig.fakes.skill.inspectItemsFor = (ctx) =>
+      ctx.plugin.version === '2.0.0'
+        ? [skillItem('alpha'), skillItem('beta')]
+        : [skillItem('alpha')];
+    const first = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+    const before = rig.store.get(id);
+
+    const second = await makeFixture({ id, version: '2.0.0', skills: ['alpha', 'beta'] });
+    const refused = await rig.registry.install(installArgs(second)).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    const appError = expectCode(refused, 'INVALID_INPUT');
+    expect(appError.message).toContain('更新新增了权限');
+    expect(appError.details).toMatchObject({ permissionsExpanded: true, added: ['skill:beta'] });
+    // 零写入：行、账本、投影器调用、审计都不动
+    expect(rig.store.get(id)).toEqual(before);
+    expect(rig.fakes.skill.updates).toEqual([]);
+    expect(rig.audits.filter((entry) => entry.action === 'plugin_update')).toEqual([]);
+    expect(rig.events).toHaveLength(1);
+
+    // inspect 暴露差异；带 acknowledgeDiff 后成功
+    const view = await rig.registry.inspect({ kind: 'file', path: second.path });
+    expect(view.existing).toEqual({ version: '1.0.0' });
+    expect(view.update).toEqual({
+      from: '1.0.0',
+      permissionsExpanded: true,
+      added: ['新增技能 beta（对所有 Bot 可见）'],
+    });
+    expect(view.installable).toBe(true);
+
+    const done = await rig.registry.install({ ...installArgs(second), acknowledgeDiff: true });
+    expect(done).toMatchObject({ version: '2.0.0' });
+    // 账本按 rowid：更新新增的 beta 追加在已有行之后。
+    expect(rig.store.items(id)).toEqual([
+      { kind: 'skill', ref: 'alpha' },
+      { kind: 'mail', ref: 'mailtest' },
+      { kind: 'skill', ref: 'beta' },
+    ]);
+  });
+
+  it('权限不扩大无需 acknowledgeDiff；本地允许同版本 / 更低版本', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/same';
+    rig.fakes.skill.inspectItemsFor = () => [skillItem('alpha')];
+    const first = await makeFixture({ id, version: '2.0.0', skills: ['alpha'] });
+    await rig.registry.install(installArgs(first));
+
+    // 同版本、不同内容 → sameDir 更新
+    const same = await makeFixture({ id, version: '2.0.0', skills: ['alpha'] });
+    const sameSummary = await rig.registry.install(installArgs(same));
+    expect(sameSummary).toMatchObject({ version: '2.0.0' });
+    expect(rig.store.get(id)).toMatchObject({ updateTo: null });
+
+    // 更低版本也允许（本地来源）
+    const lower = await makeFixture({ id, version: '1.0.0', skills: ['alpha'] });
+    const lowerSummary = await rig.registry.install(installArgs(lower));
+    expect(lowerSummary).toMatchObject({ version: '1.0.0' });
+    expect(existsSync(path.join(rig.pluginsDir, `${id}@1.0.0`.toLowerCase()))).toBe(true);
+    expect(rig.audits.filter((entry) => entry.action === 'plugin_update')).toHaveLength(2);
+  });
+
+  it('市场来源：不允许降级 / 同版本；row.marketplace 与当前 endpoint 不符 → 拒；update 对 local 行 → INVALID_INPUT', async () => {
+    const rig = makeRig();
+    const market = makeMarketFake(MARKET_ID, MARKET);
+    const marketRig: Rig = {
+      ...rig,
+      registry: new PluginRegistry({
+        store: rig.store,
+        packager: rig.packager,
+        projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
+        marketplace: market.service,
+        pluginsDir: rig.pluginsDir,
+        clock: { now: () => 7_000_000 },
+        logger: noopLogger,
+        events: { emit: () => {} },
+        audit: { recordSystem: () => null },
+      }),
+    };
+    const oldDir = seedDir(marketRig.pluginsDir, MARKET_ID, '2.0.0');
+    marketRig.store.insert(
+      rowOf(MARKET_ID, {
+        version: '2.0.0',
+        origin: 'marketplace',
+        tier: 'community',
+        marketplace: MARKET,
+        dir: `${MARKET_ID}@2.0.0`.toLowerCase(),
+      }),
+    );
+
+    const newer = await makeFixture({ id: MARKET_ID, version: '2.0.0' });
+    market.setDownload(newer.path);
+    market.setEntry({
+      id: MARKET_ID,
+      version: '2.0.0',
+      tier: 'community',
+      sha256: newer.sha256,
+      size: newer.sha256.length,
+      downloadUrl: '',
+      manifestDigest: '',
+      engines: null,
+      platforms: [],
+      categories: [],
+      summary: { name: 'M', description: '', author: null, iconUrl: null },
+      updatedAt: 1,
+    });
+    const downgrade = await marketRig.registry
+      .update({
+        id: MARKET_ID,
+        sha256: newer.sha256,
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+    expectCode(downgrade, 'PLUGIN_INVALID');
+    expect((downgrade as AppError).message).toContain('不允许降级');
+
+    // endpoint 不符
+    const mismatchedRig: Rig = {
+      ...rig,
+      registry: new PluginRegistry({
+        store: rig.store,
+        packager: rig.packager,
+        projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
+        marketplace: makeMarketFake(MARKET_ID, 'https://other.test/plugins/v1').service,
+        pluginsDir: rig.pluginsDir,
+        clock: { now: () => 7_000_001 },
+        logger: noopLogger,
+        events: { emit: () => {} },
+      }),
+    };
+    const mismatch = await mismatchedRig.registry
+      .update({
+        id: MARKET_ID,
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+    expectCode(mismatch, 'INVALID_INPUT');
+    expect((mismatch as AppError).message).toContain('另一个市场');
+
+    // local 行不能走 update RPC；不存在的 id → NOT_FOUND
+    const localId = 'io.github.tester/local';
+    marketRig.store.insert(rowOf(localId));
+    const localRefusal = await marketRig.registry
+      .update({
+        id: localId,
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+    expectCode(localRefusal, 'INVALID_INPUT');
+    expect((localRefusal as AppError).message).toContain('本地插件请重新选择');
+    const missing = await marketRig.registry
+      .update({
+        id: 'io.github.tester/none',
+        sha256: 'a'.repeat(64),
+        userConfig: {},
+        acknowledgeDiff: true,
+        via: 'marketplace',
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+    expectCode(missing, 'NOT_FOUND');
+    expect(existsSync(oldDir)).toBe(true); // 拒绝路径不碰旧目录
+  });
+
+  it('市场来源更新成功：版本升高走完整事务（fake 市场提供更高版本）', async () => {
+    const rig = makeRig();
+    const market = makeMarketFake(MARKET_ID, MARKET);
+    const registry = new PluginRegistry({
+      store: rig.store,
+      packager: rig.packager,
+      projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
+      marketplace: market.service,
+      pluginsDir: rig.pluginsDir,
+      clock: { now: () => 7_100_000 },
+      logger: noopLogger,
+      events: { emit: () => {} },
+      audit: { recordSystem: (action, detail) => void rig.audits.push({ action, detail }) },
+    });
+    seedDir(rig.pluginsDir, MARKET_ID, '1.0.0');
+    rig.store.insert(
+      rowOf(MARKET_ID, {
+        origin: 'marketplace',
+        tier: 'community',
+        marketplace: MARKET,
+        dir: `${MARKET_ID}@1.0.0`.toLowerCase(),
+      }),
+    );
+    rig.store.addItem(MARKET_ID, 'skill', 'alpha');
+    const next = await makeFixture({ id: MARKET_ID, version: '3.0.0', skills: ['alpha', 'beta'] });
+    market.setDownload(next.path);
+    market.setEntry({
+      id: MARKET_ID,
+      version: '3.0.0',
+      tier: 'community',
+      sha256: next.sha256,
+      size: next.sha256.length,
+      downloadUrl: '',
+      manifestDigest: '',
+      engines: null,
+      platforms: [],
+      categories: [],
+      summary: { name: 'M', description: '', author: null, iconUrl: null },
+      updatedAt: 1,
+    });
+    const summary = await registry.update({
+      id: MARKET_ID,
+      sha256: next.sha256,
+      userConfig: {},
+      acknowledgeDiff: true,
+      via: 'marketplace',
+    });
+    expect(summary).toMatchObject({ version: '3.0.0', origin: 'marketplace', tier: 'community' });
+    expect(rig.store.get(MARKET_ID)).toMatchObject({
+      version: '3.0.0',
+      marketplace: MARKET,
+      updateTo: null,
+    });
+    expect(existsSync(path.join(rig.pluginsDir, `${MARKET_ID}@1.0.0`.toLowerCase()))).toBe(false);
+    expect(rig.audits.at(-1)).toMatchObject({
+      action: 'plugin_update',
+      detail: {
+        via: 'marketplace',
+        origin: 'marketplace',
+        tier: 'community',
+        from: '1.0.0',
+        to: '3.0.0',
+      },
+    });
+  });
+
+  it('崩溃恢复：newDir 存在 → 按快照补偿回滚；newDir 不存在 → 只清日志', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/crashupd';
+    const oldDir = seedDir(rig.pluginsDir, id, '1.0.0');
+    rig.fakes.skill.snapshotDriven = true;
+    rig.store.insert(
+      rowOf(id, {
+        updateTo: '2.0.0',
+        updateSnapshot: JSON.stringify({ skill: 'snap:skill@1.0.0' }),
+      }),
+    );
+    rig.store.addItem(id, 'skill', 'alpha');
+
+    // 分支一：newDir 已落盘（更新进行到投影 / 提交前崩溃）
+    const newDir = seedDir(rig.pluginsDir, id, '2.0.0', 'beta');
+    const recovered = await rig.registry.recoverInterrupted();
+    expect(recovered).toBe(1);
+    expect(rig.fakes.skill.rolledBack).toEqual([{ pluginId: id, snapshot: 'snap:skill@1.0.0' }]);
+    expect(existsSync(newDir)).toBe(false); // 新目录删除
+    expect(existsSync(oldDir)).toBe(true); // 旧目录完好（不同版本 → 无 .prev）
+    expect(rig.store.get(id)).toMatchObject({
+      version: '1.0.0',
+      updateTo: null,
+      updateSnapshot: null,
+    });
+    expect(rig.store.items(id)).toEqual([{ kind: 'skill', ref: 'alpha' }]);
+    expect(rig.audits.at(-1)).toMatchObject({ action: 'plugin_update', detail: { failed: true } });
+
+    // 分支二：newDir 不存在（崩溃发生在文件步之前）→ 只清日志
+    rig.fakes.skill.rolledBack.length = 0;
+    rig.store.update(id, { updateTo: '3.0.0', updateSnapshot: JSON.stringify({}) });
+    const recovered2 = await rig.registry.recoverInterrupted();
+    expect(recovered2).toBe(1);
+    expect(rig.fakes.skill.rolledBack).toEqual([]); // 没有投影器被调用
+    expect(rig.store.get(id)).toMatchObject({ version: '1.0.0', updateTo: null });
+    expect(existsSync(oldDir)).toBe(true);
+
+    // 分支二变体：sameDir 崩溃留下了 .prev → 换回旧目录并清日志
+    const prevDir = `${oldDir}.prev`;
+    await (await import('node:fs/promises')).rename(oldDir, prevDir);
+    rig.store.update(id, { updateTo: '1.0.0', updateSnapshot: JSON.stringify({}) });
+    await rig.registry.recoverInterrupted();
+    expect(existsSync(oldDir)).toBe(true);
+    expect(existsSync(prevDir)).toBe(false);
+    expect(rig.store.get(id)).toMatchObject({ updateTo: null });
+  });
+
+  it('start() 孤儿目录清理：无行的 {name}@{version} 与失效 .prev 被删，不符模式的目录不动；更新中的 .prev 先被恢复换回', async () => {
+    const rig = makeRig();
+    const id = 'io.github.tester/orphan';
+    const keepDir = seedDir(rig.pluginsDir, id, '1.0.0');
+    rig.store.insert(rowOf(id));
+    // 更新中的行：旧目录已停进 .prev（盘上只有 .prev）→ start() 先恢复换回，再清扫
+    const updatingId = 'io.github.tester/orphanupd';
+    const updatingSlot = path.join(rig.pluginsDir, `${updatingId}@1.0.0`.toLowerCase());
+    rig.store.insert(rowOf(updatingId, { updateTo: '2.0.0' }));
+    mkdirSync(`${updatingSlot}.prev`, { recursive: true });
+    // 孤儿：无行的版本目录、行存在但没在更新的失效 .prev
+    const orphan = seedDir(rig.pluginsDir, id, '9.9.9');
+    const stalePrev = seedDir(rig.pluginsDir, id, '4.0.0') + '.prev';
+    mkdirSync(stalePrev, { recursive: true });
+    // 版本本身以 .prev 结尾的真实目录（如 prerelease 1.0.0-a.prev）→ 在用槽位，不是 .prev 残留
+    const prevSuffixId = 'io.github.tester/prevsuffix';
+    const prevSuffixDir = seedDir(rig.pluginsDir, prevSuffixId, '1.0.0-a.prev');
+    rig.store.insert(rowOf(prevSuffixId, { version: '1.0.0-a.prev' }));
+    // 不符合模式：不应被动
+    const foreign = path.join(rig.pluginsDir, 'io.github.tester', 'README.md');
+    writeFileSync(foreign, 'keep me');
+
+    await rig.registry.start();
+    expect(existsSync(keepDir)).toBe(true); // 有行 → 保留
+    expect(existsSync(updatingSlot)).toBe(true); // 更新中的 .prev → 恢复换回旧目录
+    expect(existsSync(`${updatingSlot}.prev`)).toBe(false);
+    expect(rig.store.get(updatingId)).toMatchObject({ updateTo: null });
+    expect(existsSync(orphan)).toBe(false);
+    expect(existsSync(stalePrev)).toBe(false);
+    expect(existsSync(prevSuffixDir)).toBe(true); // .prev 后缀的真实槽位 → 保留
+    expect(existsSync(foreign)).toBe(true);
   });
 });

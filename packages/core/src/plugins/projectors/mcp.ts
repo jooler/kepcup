@@ -4,12 +4,13 @@ import {
   type McpServer,
   type PluginConflict,
   type PluginConsentMcp,
+  type PluginMcpContribution,
   type Settings,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
 import type { AppDisconnector } from '../../apps/disconnect.js';
 import { isSafeDirectoryRemoteUrl } from '../../apps/directory-merge.js';
-import type { McpbInstaller } from '../../apps/mcpb/install.js';
+import { mcpbPackageOf, type McpbInstaller, type McpbPackageRef } from '../../apps/mcpb/install.js';
 import type { McpService } from '../../mcp/service.js';
 import { oneLine } from '../../apps/prompt.js';
 import { pluginServerId } from '../ids.js';
@@ -63,6 +64,17 @@ export function mcpDescriptionFor(
   return oneLine(text, 200);
 }
 
+/** Parses an `update_snapshot` back into the server list it saved (worst case: empty). */
+function serversSnapshotOf(snapshot: string): McpServer[] {
+  try {
+    const parsed = JSON.parse(snapshot) as { servers?: unknown };
+    if (!Array.isArray(parsed.servers)) return [];
+    return parsed.servers.map((server) => mcpServerSchema.parse(server));
+  } catch {
+    return [];
+  }
+}
+
 export class McpProjector implements PluginProjector<PluginConsentMcp> {
   readonly kind = 'mcp' as const;
   readonly #deps: PluginMcpDeps;
@@ -78,7 +90,11 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
     for (const contribution of ctx.manifest.contributions.mcp) {
       const serverId = pluginServerId(ctx.plugin.id, contribution.id);
       // Deterministic ids make collisions a programming error, but check anyway (fail-safe).
-      if (this.#deps.settings.get().mcpServers.some((server) => server.id === serverId)) {
+      // An update's own previous servers are excluded via the ledger-owned set (D104 P1-2).
+      if (
+        this.#deps.settings.get().mcpServers.some((server) => server.id === serverId) &&
+        !ctx.owned.mcp.has(serverId)
+      ) {
         conflicts.push({
           kind: 'plugin',
           ref: serverId,
@@ -111,7 +127,7 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
           );
         }
         const slot = this.#deps.mcpb.slotConflict(r.name, r.version, r.sha256);
-        if (slot !== null) {
+        if (slot !== null && !ctx.owned.mcp.has(slot.serverId)) {
           conflicts.push({
             kind: 'mcpb',
             ref: `${r.name}@${r.version}`,
@@ -167,28 +183,236 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
           },
         });
       } else {
-        const tier = mcpTierFor(ctx.plugin.tier);
-        const description = mcpDescriptionFor(ctx.plugin.tier, contribution.description);
-        const server = mcpServerSchema.parse({
-          id: serverId,
-          name: contribution.name ?? `${ctx.manifest.name} · ${contribution.id}`,
-          transport: 'http',
-          url: contribution.url,
-          enabled: true,
-          autoApprove: false,
-          auth: 'none',
-          source: {
-            kind: 'plugin',
-            pluginId: ctx.plugin.id,
-            version: ctx.plugin.version,
-            key: contribution.id,
-          },
-          ...(tier !== undefined ? { tier } : {}),
-          ...(description !== undefined ? { description } : {}),
-        });
+        const server = this.#httpServer(ctx, contribution, serverId);
         // Synchronous section: read latest → mutate → write, no await in between.
         const current = this.#deps.settings.get();
         this.#deps.settings.update({ mcpServers: [...current.mcpServers, server] });
+      }
+    }
+  }
+
+  /**
+   * Update (D104 P1-2): owned mcpb servers go through the installer's replace mode (same
+   * id, `enabled` / `toolPolicies` kept, `autoApprove` reset, untouched sensitive
+   * user_config keeps its stored secret); owned http servers are swapped in place in one
+   * synchronous section. Servers the new manifest dropped are removed with the same
+   * four-step cleanup as `unproject`. Afterwards every replaced / removed cached
+   * connection is closed and the change fan-out runs once for the whole update.
+   */
+  async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    const previous = this.#deps.settings.get().mcpServers;
+    const touched: string[] = [];
+    const keptIds = new Set(newCtx.manifest.contributions.mcp.map((entry) => entry.id));
+    for (const contribution of newCtx.manifest.contributions.mcp) {
+      const serverId = pluginServerId(newCtx.plugin.id, contribution.id);
+      newCtx.ledger.add('mcp', serverId);
+      const wasOwned = oldCtx.owned.mcp.has(serverId);
+      if (contribution.kind === 'mcpb') {
+        const file = path.join(newCtx.dir, ...contribution.file.split('/'));
+        const r = await this.#deps.mcpb.inspect(file);
+        await this.#deps.mcpb.install({
+          filePath: file,
+          sha256: r.sha256,
+          userConfig: newCtx.userConfig[contribution.id] ?? {},
+          register: {
+            serverId,
+            source: {
+              kind: 'plugin',
+              pluginId: newCtx.plugin.id,
+              version: newCtx.plugin.version,
+              key: contribution.id,
+              mcpb: { name: r.name, version: r.version, sha256: r.sha256 },
+            },
+            tier: mcpTierFor(newCtx.plugin.tier),
+            name: contribution.name ?? r.displayName,
+            description: mcpDescriptionFor(newCtx.plugin.tier, contribution.description),
+            ...(wasOwned ? { replaceExisting: true as const } : {}),
+          },
+        });
+        if (wasOwned) touched.push(serverId);
+      } else {
+        // Synchronous section: an owned http server is replaced in place (array position,
+        // `enabled` and `toolPolicies` kept; `autoApprove` reset); otherwise appended.
+        const current = this.#deps.settings.get();
+        const existing = wasOwned
+          ? current.mcpServers.find((entry) => entry.id === serverId)
+          : undefined;
+        const server = this.#httpServer(newCtx, contribution, serverId, existing);
+        this.#deps.settings.update({
+          mcpServers:
+            existing !== undefined
+              ? current.mcpServers.map((entry) => (entry.id === serverId ? server : entry))
+              : [...current.mcpServers, server],
+        });
+        if (wasOwned) touched.push(serverId);
+      }
+    }
+    for (const contribution of oldCtx.manifest.contributions.mcp) {
+      if (keptIds.has(contribution.id)) continue;
+      const serverId = pluginServerId(oldCtx.plugin.id, contribution.id);
+      await this.#removeOne(serverId);
+      oldCtx.ledger.remove('mcp', serverId);
+      touched.push(serverId);
+    }
+    this.#deps.revokeMcpServerChanges(previous, this.#deps.settings.get().mcpServers);
+    for (const serverId of touched) {
+      try {
+        await this.#deps.mcp.closeServer(serverId);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp update: closeServer failed',
+        );
+      }
+    }
+  }
+
+  /** The plugin's current server entries — the only state a reverse update cannot rebuild. */
+  async beginUpdate(plugin: PluginIdentity): Promise<string | null> {
+    const servers = this.#pluginServers(plugin.id);
+    // `env` holds only `secret:env:KEY` placeholders — no secret values in the snapshot.
+    return JSON.stringify({ servers });
+  }
+
+  /** Releases the OLD packages' extracted trees once the update committed. */
+  async commitUpdate(plugin: PluginIdentity, snapshot: string | null): Promise<void> {
+    void plugin;
+    if (snapshot === null) return;
+    for (const server of serversSnapshotOf(snapshot)) {
+      const pkg = mcpbPackageOf(server.source);
+      if (pkg === null) continue;
+      try {
+        // Same-slot replaces parked the old tree for rollback; committed means never needed.
+        await this.#deps.mcpb.discardRollbackBackups(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp commitUpdate: discardRollbackBackups failed',
+        );
+      }
+      try {
+        await this.#deps.mcpb.releaseIfUnused(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp commitUpdate: releaseIfUnused failed',
+        );
+      }
+    }
+  }
+
+  /**
+   * Restores the snapshot exactly: snapshot servers go back in place (overwrite by id or
+   * append), plugin servers missing from the snapshot are removed (and their — new —
+   * package trees released). A null snapshot means the update started from "no servers".
+   */
+  async rollbackUpdate(plugin: PluginIdentity, snapshot: string | null): Promise<void> {
+    const previous = this.#deps.settings.get().mcpServers;
+    const desired = snapshot === null ? [] : serversSnapshotOf(snapshot);
+    const desiredIds = new Set(desired.map((server) => server.id));
+    const isMine = (server: McpServer): boolean =>
+      server.source?.kind === 'plugin' && server.source.pluginId === plugin.id;
+    const slotKey = (pkg: McpbPackageRef): string => `${pkg.name}@${pkg.version}`.toLowerCase();
+    // Slots the snapshot (old) packages occupy — same-slot replaces get their old tree
+    // parked aside and restored below, which consumes the new tree in that slot.
+    const restoredSlots = new Set(
+      desired.flatMap((server) => {
+        const pkg = mcpbPackageOf(server.source);
+        return pkg === null ? [] : [slotKey(pkg)];
+      }),
+    );
+    // A replaced server keeps its stable id, so the snapshot cannot be told apart by id
+    // alone: when its package changed, the pre-rollback package tree must be released.
+    const replacedPackages: McpbPackageRef[] = [];
+    for (const server of previous) {
+      if (!isMine(server) || !desiredIds.has(server.id)) continue;
+      const snapshotServer = desired.find((entry) => entry.id === server.id)!;
+      const currentPkg = mcpbPackageOf(server.source);
+      const snapshotPkg = mcpbPackageOf(snapshotServer.source);
+      if (currentPkg === null) continue;
+      if (
+        snapshotPkg === null ||
+        currentPkg.sha256 !== snapshotPkg.sha256 ||
+        currentPkg.version !== snapshotPkg.version
+      ) {
+        // Same slot as a restored package: its tree is consumed by the restore itself.
+        if (restoredSlots.has(slotKey(currentPkg))) continue;
+        replacedPackages.push(currentPkg);
+      }
+    }
+    // Synchronous section: read latest → restore → write, no await in between.
+    const current = this.#deps.settings.get();
+    const restored: McpServer[] = [];
+    for (const server of current.mcpServers) {
+      if (!isMine(server)) {
+        restored.push(server);
+        continue;
+      }
+      const snapshotServer = desired.find((entry) => entry.id === server.id);
+      if (snapshotServer !== undefined) restored.push(snapshotServer);
+      // Not in the snapshot: dropped below.
+    }
+    for (const server of desired) {
+      if (!restored.some((entry) => entry.id === server.id)) restored.push(server);
+    }
+    const next = this.#deps.settings.update({ mcpServers: restored }).mcpServers;
+    this.#deps.revokeMcpServerChanges(previous, next);
+    // Network side effects outside the synchronous section. First bring the snapshot
+    // packages' parked trees back: a same-slot replace overwrote the slot with the new
+    // content, and the rolled-back server still launches from that exact path.
+    for (const server of desired) {
+      const pkg = mcpbPackageOf(server.source);
+      if (pkg === null) continue;
+      try {
+        await this.#deps.mcpb.restoreRollbackBackup(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp rollbackUpdate: restoreRollbackBackup failed',
+        );
+      }
+    }
+    const dropped = previous.filter((server) => isMine(server) && !desiredIds.has(server.id));
+    for (const server of dropped) {
+      try {
+        await this.#deps.disconnector.removeCustomServer(server.id);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp rollbackUpdate: removeCustomServer failed',
+        );
+      }
+      try {
+        await this.#deps.mcpb.afterServerRemoved(previous, server.id);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp rollbackUpdate: afterServerRemoved failed',
+        );
+      }
+    }
+    for (const pkg of replacedPackages) {
+      try {
+        await this.#deps.mcpb.releaseIfUnused(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          {
+            name: pkg.name,
+            version: pkg.version,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'plugin mcp rollbackUpdate: releaseIfUnused failed',
+        );
+      }
+    }
+    for (const server of desired) {
+      try {
+        await this.#deps.mcp.closeServer(server.id);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp rollbackUpdate: closeServer failed',
+        );
       }
     }
   }
@@ -245,6 +469,44 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
   }
 
   // --- internals ---------------------------------------------------------------
+
+  /** Builds the http server for one contribution; `keep` preserves user state on updates. */
+  #httpServer(
+    ctx: PluginProjectionContext,
+    contribution: Extract<PluginMcpContribution, { kind: 'http' }>,
+    serverId: string,
+    keep?: McpServer,
+  ): McpServer {
+    const tier = mcpTierFor(ctx.plugin.tier);
+    const description = mcpDescriptionFor(ctx.plugin.tier, contribution.description);
+    const server = mcpServerSchema.parse({
+      id: serverId,
+      name: contribution.name ?? `${ctx.manifest.name} · ${contribution.id}`,
+      transport: 'http',
+      url: contribution.url,
+      enabled: keep?.enabled ?? true,
+      autoApprove: false,
+      auth: 'none',
+      source: {
+        kind: 'plugin',
+        pluginId: ctx.plugin.id,
+        version: ctx.plugin.version,
+        key: contribution.id,
+      },
+      ...(tier !== undefined ? { tier } : {}),
+      ...(description !== undefined ? { description } : {}),
+    });
+    if (keep?.toolPolicies !== undefined) server.toolPolicies = keep.toolPolicies;
+    return server;
+  }
+
+  #pluginServers(pluginId: string): McpServer[] {
+    return this.#deps.settings
+      .get()
+      .mcpServers.filter(
+        (server) => server.source?.kind === 'plugin' && server.source.pluginId === pluginId,
+      );
+  }
 
   /**
    * Mirrors `mcp.removeServer` (rpc/apps-runtime-bindings.ts) for one server, best

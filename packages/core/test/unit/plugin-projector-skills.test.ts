@@ -12,10 +12,12 @@ import type { Clock } from '../../src/infra/clock.js';
 import { resolvePaths } from '../../src/infra/paths.js';
 import { SkillsService } from '../../src/skills/registry.js';
 import { SkillsProjector } from '../../src/plugins/projectors/skills.js';
-import type {
-  PluginIdentity,
-  PluginLedger,
-  PluginProjectionContext,
+import {
+  emptyOwned,
+  type PluginIdentity,
+  type PluginLedger,
+  type PluginProjectionContext,
+  type ProjectedKind,
 } from '../../src/plugins/projectors/index.js';
 
 /**
@@ -132,8 +134,9 @@ function ctxOf(
   contentDir: string,
   manifest: PluginManifest,
   ledger: PluginLedger,
+  owned: Readonly<Record<ProjectedKind, ReadonlySet<string>>> = emptyOwned(),
 ): PluginProjectionContext {
-  return { plugin: identity, manifest, dir: contentDir, userConfig: {}, ledger };
+  return { plugin: identity, manifest, dir: contentDir, userConfig: {}, ledger, owned };
 }
 
 describe('SkillsProjector', () => {

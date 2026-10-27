@@ -45,9 +45,11 @@
   let info = $state<PluginInspectOutput | null>(null);
   let error = $state<string | null>(null);
   let form = $state<PluginForm>({});
+  /** P1-2：权限扩大差异的确认勾选（勾选后才允许确认，随 plugins.install 带回）。 */
+  let ackDiff = $state(false);
 
   const missing = $derived(info === null ? [] : missingPluginConfig(info, form));
-  const installable = $derived(info !== null && canInstallPlugin(info, missing));
+  const installable = $derived(info !== null && canInstallPlugin(info, missing, ackDiff));
 
   function codeOf(caught: unknown): string | undefined {
     return (caught as { code?: string } | undefined)?.code;
@@ -65,6 +67,7 @@
     info = null;
     error = null;
     form = {};
+    ackDiff = false;
   }
 
   function close(): void {
@@ -114,6 +117,7 @@
         source,
         sha256: current.packageSha256,
         userConfig: buildPluginUserConfig(current, form),
+        acknowledgeDiff: ackDiff,
       });
       toast.success(t('plugins.toast.installed', { name: current.name }));
       await plugins.afterMutation();
@@ -191,7 +195,7 @@
     {/if}
 
     {#if info !== null}
-      <PluginConsentPanel bind:form {info} {missing} />
+      <PluginConsentPanel bind:form bind:ackDiff {info} {missing} />
     {/if}
 
     <div class="flex items-center gap-2">

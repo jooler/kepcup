@@ -1622,6 +1622,10 @@ export const enUS = {
   'plugins.consent.conflictItem': '{ref}: {withWhat}',
   'plugins.consent.existing': 'A plugin with this id is already installed (v{version})',
   'plugins.consent.requiredMissing': 'Required fields missing: {fields}',
+  'plugins.update.from': 'Updating from v{from} to v{to}',
+  'plugins.update.expanded': 'The new version asks for additional permissions:',
+  'plugins.update.ack': 'I understand the new permissions',
+  'plugins.update.keepSecrets': 'Leave sensitive fields empty to keep the saved values.',
   'skillMarket.description':
     'Add ready-to-use office skills for all Bots: install once and every Bot can discover and use them. Manage them in the Skills panel afterward.',
   'skillMarket.searchPlaceholder': 'Search skills',

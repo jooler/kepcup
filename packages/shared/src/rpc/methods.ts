@@ -200,6 +200,8 @@ import {
   pluginsInspectInputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
+  pluginsUpdateInputSchema,
+  pluginsUpdateOutputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -2791,6 +2793,7 @@ export const rpcMethodSchemas = {
     output: pluginsSetEnabledOutputSchema,
   },
   'plugins.uninstall': { input: pluginsUninstallInputSchema, output: okOutput },
+  'plugins.update': { input: pluginsUpdateInputSchema, output: pluginsUpdateOutputSchema },
   'plugins.marketplace.list': {
     input: voidInput,
     output: pluginsMarketplaceListOutputSchema,
@@ -3156,6 +3159,7 @@ const APP_METHODS = [
   'plugins.install',
   'plugins.setEnabled',
   'plugins.uninstall',
+  'plugins.update',
   'plugins.marketplace.list',
   'plugins.marketplace.refresh',
 ] as const satisfies readonly RpcMethodName[];

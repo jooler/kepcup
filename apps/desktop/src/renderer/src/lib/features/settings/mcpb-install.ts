@@ -26,9 +26,22 @@ function isFilled(field: McpbUserConfigField, value: McpbFormValue | undefined):
   return value.trim().length > 0;
 }
 
-export function missingRequired(fields: readonly McpbUserConfigField[], form: McpbForm): string[] {
+/**
+ * 必填缺项标题。`keepSensitiveEmpty`（D104 P1-2 更新流）：插件更新时敏感字段留空表示
+ * 保留已存 secret——不算缺项；确实没有已存值时由 core 在确认时报 `INVALID_INPUT`。
+ */
+export function missingRequired(
+  fields: readonly McpbUserConfigField[],
+  form: McpbForm,
+  keepSensitiveEmpty = false,
+): string[] {
   return fields
-    .filter((field) => field.required && !isFilled(field, form[field.key]))
+    .filter(
+      (field) =>
+        field.required &&
+        !(keepSensitiveEmpty && field.sensitive) &&
+        !isFilled(field, form[field.key]),
+    )
     .map((field) => field.title);
 }
 

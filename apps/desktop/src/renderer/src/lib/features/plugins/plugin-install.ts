@@ -27,10 +27,13 @@ export function initialPluginForm(info: PluginInspectOutput): PluginForm {
 
 /** 汇总各 MCPB 的必填缺项，每项带上「{displayName}」前缀。 */
 export function missingPluginConfig(info: PluginInspectOutput, form: PluginForm): string[] {
+  // 更新（P1-2）：必填敏感字段留空 = 保留已存 secret（面板的 keepSecrets 提示），
+  // 不算缺项——否则「留空保留」的更新流程会被禁用的确认按钮堵死。
+  const updating = info.update !== null;
   const missing: string[] = [];
   for (const item of info.mcp) {
     if (item.kind !== 'mcpb') continue;
-    for (const title of missingRequired(item.userConfigFields, form[item.id] ?? {})) {
+    for (const title of missingRequired(item.userConfigFields, form[item.id] ?? {}, updating)) {
       missing.push(`「${item.displayName}」${title}`);
     }
   }
@@ -60,9 +63,14 @@ export function clearPluginSensitive(info: PluginInspectOutput, form: PluginForm
   return next;
 }
 
-/** 确认按钮能否点：检视判定可安装且必填项齐全。 */
-export function canInstallPlugin(info: PluginInspectOutput, missing: readonly string[]): boolean {
-  return info.installable && missing.length === 0;
+/** 确认按钮能否点：检视判定可安装、必填项齐全，且权限扩大差异已勾选确认（P1-2）。 */
+export function canInstallPlugin(
+  info: PluginInspectOutput,
+  missing: readonly string[],
+  ackDiff = false,
+): boolean {
+  const diffAcknowledged = info.update?.permissionsExpanded === true ? ackDiff : true;
+  return info.installable && missing.length === 0 && diffAcknowledged;
 }
 
 /** 技能来源标记 `plugin://{pluginId}/{skillName}` → 插件 id；其他来源返回 null。 */

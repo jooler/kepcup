@@ -1573,6 +1573,10 @@ export const zhCN = {
   'plugins.consent.conflictItem': '{ref}：{withWhat}',
   'plugins.consent.existing': '已安装同 id 的插件（v{version}）',
   'plugins.consent.requiredMissing': '还有必填项未填：{fields}',
+  'plugins.update.from': '从 v{from} 更新到 v{to}',
+  'plugins.update.expanded': '新版本新增了以下权限：',
+  'plugins.update.ack': '我已了解新增的权限',
+  'plugins.update.keepSecrets': '敏感配置项留空表示保留已保存的值。',
   'skillMarket.description':
     '为所有 Bot 添加开箱即用的办公技能：安装一次，每个 Bot 都能发现并调用。装完可在技能面板管理。',
   'skillMarket.searchPlaceholder': '搜索技能',

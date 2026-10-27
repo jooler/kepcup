@@ -20,6 +20,13 @@ export interface PluginRow {
   marketplace: string | null;
   /** Relative to `{home}/plugins`: `{ns}/{name}@{version}` (lower-cased). */
   dir: string;
+  /**
+   * Update journal (D104 P1-2): non-NULL = an update is in flight toward this version;
+   * the row keeps describing the OLD version/dir until the commit update flips everything.
+   */
+  updateTo: string | null;
+  /** JSON `{ [kind]: opaque string }` snapshots from `projector.beginUpdate()`, or null. */
+  updateSnapshot: string | null;
   installedAt: number;
   updatedAt: number;
 }
@@ -27,7 +34,16 @@ export interface PluginRow {
 export type PluginRowPatch = Partial<
   Pick<
     PluginRow,
-    'version' | 'tier' | 'state' | 'enabled' | 'packageSha256' | 'marketplace' | 'dir' | 'updatedAt'
+    | 'version'
+    | 'tier'
+    | 'state'
+    | 'enabled'
+    | 'packageSha256'
+    | 'marketplace'
+    | 'dir'
+    | 'updateTo'
+    | 'updateSnapshot'
+    | 'updatedAt'
   >
 >;
 
@@ -41,6 +57,8 @@ interface PluginDbRow {
   package_sha256: string;
   marketplace: string | null;
   dir: string;
+  update_to: string | null;
+  update_snapshot: string | null;
   installed_at: number;
   updated_at: number;
 }
@@ -61,6 +79,8 @@ function pluginFromRow(row: PluginDbRow): PluginRow {
     packageSha256: row.package_sha256,
     marketplace: row.marketplace,
     dir: row.dir,
+    updateTo: row.update_to,
+    updateSnapshot: row.update_snapshot,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
@@ -87,11 +107,19 @@ export class PluginStore {
     return row === undefined ? null : pluginFromRow(row);
   }
 
+  /** Rows with an update in flight (`update_to IS NOT NULL`) — crash recovery reads these first. */
+  listUpdating(): PluginRow[] {
+    const rows = this.#db
+      .prepare('select * from plugins where update_to is not null order by installed_at asc, id asc')
+      .all() as PluginDbRow[];
+    return rows.map(pluginFromRow);
+  }
+
   insert(row: PluginRow): void {
     this.#db
       .prepare(
-        `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, installed_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, update_to, update_snapshot, installed_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.id,
@@ -103,6 +131,8 @@ export class PluginStore {
         row.packageSha256,
         row.marketplace,
         row.dir,
+        row.updateTo,
+        row.updateSnapshot,
         row.installedAt,
         row.updatedAt,
       );
@@ -138,6 +168,14 @@ export class PluginStore {
     if (patch.dir !== undefined) {
       columns.push('dir = ?');
       values.push(patch.dir);
+    }
+    if (patch.updateTo !== undefined) {
+      columns.push('update_to = ?');
+      values.push(patch.updateTo);
+    }
+    if (patch.updateSnapshot !== undefined) {
+      columns.push('update_snapshot = ?');
+      values.push(patch.updateSnapshot);
     }
     if (patch.updatedAt !== undefined) {
       columns.push('updated_at = ?');
