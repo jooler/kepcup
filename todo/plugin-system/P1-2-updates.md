@@ -221,3 +221,37 @@ P0a-3 的界面把「已安装同 id」当作**阻塞**；P1-2 之后同 id 的�
 ## 6. 实施记录
 
 （执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 迁移实际编号 / `projectorWrap` 测试缝的取舍 / `hasValue` 依赖的 `SecretsService` 方法名 / 遗留问题。）
+
+### 实施记录（2026-10-27）
+
+**做了什么**（7 个提交）：
+
+| 提交 | 内容 |
+|---|---|
+| `ddad7c1e` | 步骤 1：迁移 `0055_plugin_update_journal.sql`（`update_to` / `update_snapshot` 两列）+ `PluginRow` 扩展与 `listUpdating()` + `plugins-migration` / `plugin-store` 测试 + `docs/dev/03-data-model.md` 迁移表行与 `plugins` 小节两列说明 |
+| `1a930a08` | 步骤 2（独立 `refactor(mcpb)`）：`McpbRegistration.replaceExisting`（要求现有 server 为同插件 plugin 来源，保留 `enabled` / `toolPolicies`、强制 `autoApprove: false`、原位替换保序）+ 敏感 `user_config` 留空保留已存 secret（内存占位 `'\u0000kept'`，绝不写入 secrets）+ `#releasePackage` 公开为 `releaseIfUnused` + 替换审计 `replaced: true`；新测试 `mcpb-replace.test.ts`（13 例），既有 mcpb 三测试文件零改动 |
+| `a6a7eaa4` | 步骤 3–6：`plugins/permissions.ts`（令牌推导 / `diffPermissions` / `describePermission`）；投影器接口加 `update` / `beginUpdate` / `commitUpdate` / `rollbackUpdate` 与 `ctx.owned`，四个投影器的更新实现（技能内容哈希原地换、MCP server id 稳定 + 快照回滚、连接器绑定变化断连 + slug 不得变、邮件只同步账本）；`PluginRegistry` 的 `#performUpdate` 八步事务（日志 → `.prev` 换入 → 正序投影 → 单条翻转提交 → `commitUpdate` → 删旧目录；失败逆序补偿 + 还原 + 审计 `failed`）、`inspect` 的 `existing` / `update` / `owned` 排除、市场更新入口 `plugins.update` RPC、崩溃恢复先回滚 `listUpdating()`、孤儿目录清理、`projectorWrap` 测试缝；集成 `plugins-update.test.ts`（12 例） |
+| （工作树收尾） | 步骤 7：`PluginConsentPanel` 的中性更新行 / 权限差异列表 / `plugins-install-ack-diff` 勾选 / `keepSecrets` 提示（`existing` 红块仅在 `update === null` 时显示）；`PluginInstallDialog` 的 `ackDiff` 状态与 `acknowledgeDiff` 回传；`canInstallPlugin` 加 `ackDiff` 参数；i18n 四键 × 两语言；`plugins.spec.ts` 原「同 id 冲突阻塞」改为真冲突（不同 id 抢同名技能）+ 新增「本地同 id 重装 = 更新」用例（9/9 全绿） |
+
+**偏差与 DEV 编号**：无新增 DEV（当前最大 DEV-055）。任务书与现实无冲突。
+
+**迁移实际编号**：`0055_plugin_update_journal.sql`（与任务书一致，开工核对无占用）。
+
+**`projectorWrap` 测试缝取舍**：按任务书推荐实现——`PluginRegistryDeps.projectorWrap?: (p) => p`，仅在 `__KEPCUP_TEST_HOOKS__ === true` 时生效（`registry.ts` 与 `start.ts` 双重门控），用于 `plugins-update.test.ts` 的「第二个 server 更新失败 → 回滚」用例。
+
+**`hasValue` 依赖的 `SecretsService` 方法名**：`hasValue(name: string): boolean`（`packages/core/src/domain/secrets.ts:130`，既有方法，非新增）；`McpbInstallerDeps.secrets.hasValue?` 缺省视为不存在，`start.ts` 显式转发（原型方法需绑定）。
+
+**验收证据**（全部真实执行）：
+- 核心 8 文件（mcpb-replace / plugin-permissions / plugin-projector-update / plugin-projector-mcp / plugin-registry / plugin-store / plugins-migration / 集成 plugins-update）→ **81 例全绿**；不回归 7 文件（plugins / plugins-marketplace / coverage / public-skills-migration / mcpb 三件套）→ **69 例全绿**；mcpb 既有测试零改动（`git diff` 对照基点为空）。
+- `plugin-projectors-coverage.test.ts` 已加「每个投影器都实现 `update`」断言。
+- `pnpm --filter @kepcup/shared run build` ✓；`@kepcup/core typecheck` ✓；`@kepcup/desktop typecheck`（tsc + svelte-check）0 errors ✓。
+- i18n / plugins 定向单测 19 例全绿；`plugins.spec.ts` e2e **9/9 全绿**（`pnpm build` 后）。
+- 本阶段未跑全量 `pnpm test`（P1-3 收口跑）。
+- 阶段文件 prettier / eslint 干净。
+
+**已知限制**（任务书要求写明）：① 更新失败时被断开的连接无法恢复（`AppDisconnector` 断连不可逆）；② 更新时非敏感 `user_config` 需重新确认（旧值不留存，仅敏感值留空保留 secret）；③ 同版本本地重装经 `.prev` 目录机制（`pluginPrevDirOf` 守卫）。
+
+**遗留问题**：
+- 执行过程说明：本阶段开发智能体在步骤 7 中途因配额中断，剩余收尾（e2e 断言补完、格式、实施记录）由调度方完成；步骤 1–6 的三个提交在中断前已落地。
+- P1-3 将复用本阶段的更新块（`plugins-install-update-block` 整理、市场模式对话框、`updateAll`）；`plugins.update.from` 等四键已就位，P1-3 勿重复添加。
+- 更新流的「条目级版本不降」校验（P1-1 遗留）已随本阶段市场更新入口实现（`compareConnectorVersions(新, 旧) > 0` 才允许）。
