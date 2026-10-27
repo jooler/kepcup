@@ -40,7 +40,9 @@ export class MailProjector implements PluginProjector<PluginConsentMail> {
         continue;
       }
       seen.add(template.id);
-      if (this.#builtinIds.has(template.id)) {
+      // An update's own previous templates are excluded via the ledger-owned set; builtin
+      // vendor ids can never be owned, so in practice only the builtin check fires.
+      if (this.#builtinIds.has(template.id) && !ctx.owned.mail.has(template.id)) {
         conflicts.push({
           kind: 'mail',
           ref: template.id,
@@ -62,6 +64,18 @@ export class MailProjector implements PluginProjector<PluginConsentMail> {
     // Registry-only: the ledger row is the whole projection in P0a.
     for (const template of ctx.manifest.contributions.mail) {
       ctx.ledger.add('mail', template.id);
+    }
+  }
+
+  /** Update (D104 P1-2): the ledger IS the projection — sync adds and removals only. */
+  async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    for (const template of newCtx.manifest.contributions.mail) {
+      newCtx.ledger.add('mail', template.id);
+    }
+    const kept = new Set(newCtx.manifest.contributions.mail.map((template) => template.id));
+    for (const template of oldCtx.manifest.contributions.mail) {
+      if (kept.has(template.id)) continue;
+      oldCtx.ledger.remove('mail', template.id);
     }
   }
 

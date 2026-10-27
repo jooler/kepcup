@@ -221,3 +221,50 @@ P0a-3 的界面把「已安装同 id」当作**阻塞**；P1-2 之后同 id 的�
 ## 6. 实施记录
 
 （执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 迁移实际编号 / `projectorWrap` 测试缝的取舍 / `hasValue` 依赖的 `SecretsService` 方法名 / 遗留问题。）
+
+### 实施记录（2026-10-27）
+
+**做了什么**（7 个提交）：
+
+| 提交 | 内容 |
+|---|---|
+| `ddad7c1e` | 步骤 1：迁移 `0055_plugin_update_journal.sql`（`update_to` / `update_snapshot` 两列）+ `PluginRow` 扩展与 `listUpdating()` + `plugins-migration` / `plugin-store` 测试 + `docs/dev/03-data-model.md` 迁移表行与 `plugins` 小节两列说明 |
+| `1a930a08` | 步骤 2（独立 `refactor(mcpb)`）：`McpbRegistration.replaceExisting`（要求现有 server 为同插件 plugin 来源，保留 `enabled` / `toolPolicies`、强制 `autoApprove: false`、原位替换保序）+ 敏感 `user_config` 留空保留已存 secret（内存占位 `'\u0000kept'`，绝不写入 secrets）+ `#releasePackage` 公开为 `releaseIfUnused` + 替换审计 `replaced: true`；新测试 `mcpb-replace.test.ts`（13 例），既有 mcpb 三测试文件零改动 |
+| `a6a7eaa4` | 步骤 3–6：`plugins/permissions.ts`（令牌推导 / `diffPermissions` / `describePermission`）；投影器接口加 `update` / `beginUpdate` / `commitUpdate` / `rollbackUpdate` 与 `ctx.owned`，四个投影器的更新实现（技能内容哈希原地换、MCP server id 稳定 + 快照回滚、连接器绑定变化断连 + slug 不得变、邮件只同步账本）；`PluginRegistry` 的 `#performUpdate` 八步事务（日志 → `.prev` 换入 → 正序投影 → 单条翻转提交 → `commitUpdate` → 删旧目录；失败逆序补偿 + 还原 + 审计 `failed`）、`inspect` 的 `existing` / `update` / `owned` 排除、市场更新入口 `plugins.update` RPC、崩溃恢复先回滚 `listUpdating()`、孤儿目录清理、`projectorWrap` 测试缝；集成 `plugins-update.test.ts`（12 例） |
+| （工作树收尾） | 步骤 7：`PluginConsentPanel` 的中性更新行 / 权限差异列表 / `plugins-install-ack-diff` 勾选 / `keepSecrets` 提示（`existing` 红块仅在 `update === null` 时显示）；`PluginInstallDialog` 的 `ackDiff` 状态与 `acknowledgeDiff` 回传；`canInstallPlugin` 加 `ackDiff` 参数；i18n 四键 × 两语言；`plugins.spec.ts` 原「同 id 冲突阻塞」改为真冲突（不同 id 抢同名技能）+ 新增「本地同 id 重装 = 更新」用例（9/9 全绿） |
+
+**偏差与 DEV 编号**：无新增 DEV（当前最大 DEV-055）。任务书与现实无冲突。
+
+**迁移实际编号**：`0055_plugin_update_journal.sql`（与任务书一致，开工核对无占用）。
+
+**`projectorWrap` 测试缝取舍**：按任务书推荐实现——`PluginRegistryDeps.projectorWrap?: (p) => p`，仅在 `__KEPCUP_TEST_HOOKS__ === true` 时生效（`registry.ts` 与 `start.ts` 双重门控），用于 `plugins-update.test.ts` 的「第二个 server 更新失败 → 回滚」用例。
+
+**`hasValue` 依赖的 `SecretsService` 方法名**：`hasValue(name: string): boolean`（`packages/core/src/domain/secrets.ts:130`，既有方法，非新增）；`McpbInstallerDeps.secrets.hasValue?` 缺省视为不存在，`start.ts` 显式转发（原型方法需绑定）。
+
+**验收证据**（全部真实执行）：
+- 核心 8 文件（mcpb-replace / plugin-permissions / plugin-projector-update / plugin-projector-mcp / plugin-registry / plugin-store / plugins-migration / 集成 plugins-update）→ **81 例全绿**；不回归 7 文件（plugins / plugins-marketplace / coverage / public-skills-migration / mcpb 三件套）→ **69 例全绿**；mcpb 既有测试零改动（`git diff` 对照基点为空）。
+- `plugin-projectors-coverage.test.ts` 已加「每个投影器都实现 `update`」断言。
+- `pnpm --filter @kepcup/shared run build` ✓；`@kepcup/core typecheck` ✓；`@kepcup/desktop typecheck`（tsc + svelte-check）0 errors ✓。
+- i18n / plugins 定向单测 19 例全绿；`plugins.spec.ts` e2e **9/9 全绿**（`pnpm build` 后）。
+- 本阶段未跑全量 `pnpm test`（P1-3 收口跑）。
+- 阶段文件 prettier / eslint 干净。
+
+**已知限制**（任务书要求写明）：① 更新失败时被断开的连接无法恢复（`AppDisconnector` 断连不可逆）；② 更新时非敏感 `user_config` 需重新确认（旧值不留存，仅敏感值留空保留 secret）；③ 同版本本地重装经 `.prev` 目录机制（`pluginPrevDirOf` 守卫）。
+
+**遗留问题**：
+- 执行过程说明：本阶段开发智能体在步骤 7 中途因配额中断，剩余收尾（e2e 断言补完、格式、实施记录）由调度方完成；步骤 1–6 的三个提交在中断前已落地。
+- P1-3 将复用本阶段的更新块（`plugins-install-update-block` 整理、市场模式对话框、`updateAll`）；`plugins.update.from` 等四键已就位，P1-3 勿重复添加。
+- 更新流的「条目级版本不降」校验（P1-1 遗留）已随本阶段市场更新入口实现（`compareConnectorVersions(新, 旧) > 0` 才允许）。
+
+### 审查修正（2026-10-27，独立审查智能体）
+
+审查（`git diff c38c3308..93d3e340`）确认八步事务顺序、`.prev` 换入 / 换回、单条翻转提交、逆序补偿、`McpbInstaller` 替换语义、权限令牌表与「零写入」拒绝均符合任务书；以下问题已修正（各自独立提交，均带回归测试）：
+
+1. **孤儿清扫会误删版本以 `.prev` 结尾的真实插件**（registry `#sweepOrphanDirs`）：`pluginVersionSchema` 允许 `1.0.0-a.prev` 这类 prerelease，旧逻辑先做 `.prev` 剥离匹配、真实槽位目录会被当垃圾删除。改为先查 `occupied`（有行的槽位一律不动），`.prev` 启发式只对无行目录生效。测试：`plugin-registry.test.ts` 孤儿清扫用例补「`.prev` 后缀真实槽位保留」。
+2. **技能更新按「贡献目录」而非「技能名」比对增删**（skills `update`）：新版本只挪了技能目录时会把刚装好的技能又删掉。改为两侧解析 SKILL.md name、按名字比对。测试：`plugin-projector-update.test.ts` 新增「目录改名不丢技能 / name 改变清理旧名」。
+3. **禁用插件的更新会把投影重新公开**（registry `#performUpdate`）：skills `update` 无条件 `installPublic`、新增 http server 落 `enabled: true`，违反设计 51 §7「enabled=0 → 投影层整体摘除」。提交后对 `enabled === false` 的行重跑一遍禁用回退（`#convergeDisabled`，尽力而为）。测试：`plugin-registry.test.ts` 新增「禁用插件更新收敛回禁用」。
+4. **同槽（同名同版本）不同内容的 mcpb 更新破坏回滚**（`McpbInstaller` + mcp 投影器）：`#extract` 会先 `rm` 旧解包树再换入新树，任务书「不释放旧包树（回滚可能还要用）」在这条路径上不成立——更新中途失败 / 崩溃后，回滚恢复的旧 server 仍指向该槽位、实际运行的是新代码。现在替换前把完整的旧树（marker 校验通过）停放到槽位旁 `{slot}.rb-{hex}`；`rollbackUpdate` 经 `restoreRollbackBackup`（marker 驱动、崩溃恢复同样生效）把旧内容换回原槽位，`commitUpdate` 经 `discardRollbackBackups` 清掉备份。测试：`mcpb-replace.test.ts` 3 例 + `plugin-projector-mcp.test.ts` 2 例（回滚后 `verify(旧包).ok`）。已知残留：提交后、`commitUpdate` 执行前崩溃会留下一个无引用的 `.rb-` 备份目录（纯垃圾，无害）。
+5. **更新时必填敏感留空被界面判为缺项**（renderer `missingPluginConfig` → `missingRequired` 加 `keepSensitiveEmpty`）：与同屏的 `plugins.update.keepSecrets` 提示自相矛盾，「留空保留 secret」流程被禁用的确认按钮堵死。更新检视（`info.update !== null`）跳过必填敏感字段；确实无已存值时由 core 报 `INVALID_INPUT`。测试：`plugin-install.test.ts` 2 例（敏感留空仅在更新时不算缺项；ack 勾选门控）。
+6. **实施记录证据修正**：上表「阶段文件 prettier / eslint 干净」抽查不实——`registry.ts` / `projectors/mcp.ts` / `plugin-registry.test.ts` / `plugin-projector-update.test.ts` 有 prettier 漂移、4 处 eslint 未用变量（`#sweepOrphanDirs` 的死变量 `updating` 等）。已全部清理；修正后上述文件 prettier / eslint 干净。
+
+以上均为实现层修正，不改变任何任务书契约与命名，无需新增 DEVIATIONS。修正后重跑：核心 8 文件 88 例、不回归 7 文件 69 例、desktop 单测、`shared build` + core/desktop typecheck 全绿。

@@ -16,6 +16,7 @@ import {
   AppError,
   type ConnectorCatalogEntry,
   type McpbInspectOutput,
+  type McpbUserConfigField,
   type McpbUserConfigValue,
   type McpServer,
   type McpServerSource,
@@ -52,6 +53,13 @@ import { MCPB_MAX_FILE_BYTES, safeEntryPath, ZipArchive } from './zip.js';
 export const MCPB_MARKER_FILE = '.kepcup-mcpb.json';
 const MANIFEST_MAX_BYTES = 1024 * 1024;
 
+/**
+ * In-memory stand-in for a sensitive value this update left empty (D104 P1-2 replace mode):
+ * lets validation / launch rendering produce the `secret:env:{KEY}` placeholder while the
+ * stored secret stays untouched. Tracked by field key, never persisted.
+ */
+const KEPT_SECRET_PLACEHOLDER = '\u0000kept';
+
 /** Package identity used for reference counting (`toolchains/mcpb/{name}@{version}` slots). */
 export interface McpbPackageRef {
   name: string;
@@ -66,7 +74,8 @@ export interface McpbPackageRef {
  */
 export function mcpbPackageOf(source: McpServerSource | undefined): McpbPackageRef | null {
   if (source === undefined) return null;
-  if (source.kind === 'mcpb') return { name: source.name, version: source.version, sha256: source.sha256 };
+  if (source.kind === 'mcpb')
+    return { name: source.name, version: source.version, sha256: source.sha256 };
   if (source.kind === 'plugin') return source.mcpb ?? null;
   return null;
 }
@@ -87,6 +96,14 @@ export interface McpbRegistration {
   name?: string | undefined;
   /** Written into `server.description`. */
   description?: string | undefined;
+  /**
+   * Plugin update mode (D104 P1-2): the server must already exist (same id, plugin source,
+   * same pluginId) and is replaced in place — `enabled` / `toolPolicies` are preserved,
+   * `autoApprove` is forced to false and untouched sensitive user_config keeps its stored
+   * secret. The old package tree is NOT released here (a failed update may still roll back
+   * into it); the registry releases it via {@link McpbInstaller.releaseIfUnused} after commit.
+   */
+  replaceExisting?: boolean | undefined;
 }
 
 export type McpbRuntimeKind = 'node' | 'python' | 'uv';
@@ -108,6 +125,11 @@ export interface McpbInstallerDeps {
   secrets: {
     setValue(name: string, value: string): void;
     removeByPrefix(prefix: string): string[];
+    /**
+     * Replace mode (D104 P1-2) consults this to keep stored secrets for sensitive
+     * fields the update left empty. Optional: absent means "never treat as kept".
+     */
+    hasValue?(name: string): boolean;
   };
   logger: CoreLogger;
   /** Managed runtime lookup (environment manager); null = not installed. */
@@ -372,10 +394,25 @@ export class McpbInstaller {
         throw invalid(`敏感配置项 ${field.key} 不能是多值`);
       }
     }
-    const values = validateUserConfig(fields, input.userConfig ?? {});
 
-    // Plugin registration: fail before any extraction when the caller-specified id is taken.
-    if (input.register !== undefined) {
+    // Replace mode (D104 P1-2 plugin update): the target must exist, be plugin-sourced and
+    // belong to the same plugin — otherwise NOT_FOUND (this path never reports ALREADY_EXISTS).
+    const replacing =
+      input.register?.replaceExisting === true
+        ? this.#existingPluginServerFor(input.register)
+        : null;
+    // Sensitive fields the update left empty keep the stored secret: validate against an
+    // in-memory placeholder (only so `validateUserConfig` / `renderLaunch` see a value and
+    // emit the `secret:env:{KEY}` placeholder); it is never persisted — see the write loop.
+    const kept = new Set<string>(
+      replacing === null ? [] : this.#keptSecretKeys(fields, input.userConfig ?? {}, replacing.id),
+    );
+    const provided: Record<string, McpbUserConfigValue> = { ...(input.userConfig ?? {}) };
+    for (const key of kept) provided[key] = KEPT_SECRET_PLACEHOLDER;
+    const values = validateUserConfig(fields, provided);
+
+    // Fresh registration: fail before any extraction when the caller-specified id is taken.
+    if (input.register !== undefined && replacing === null) {
       const taken = this.#deps.settings
         .get()
         .mcpServers.some((server) => server.id === input.register!.serverId);
@@ -402,11 +439,32 @@ export class McpbInstaller {
       commandOverride: this.#commandOverride(manifest, resolution),
     });
 
-    const conflicts = this.#findSlotConflicts(manifest.name, manifest.version, inspection.sha256);
+    const conflicts = this.#findSlotConflicts(manifest.name, manifest.version, inspection.sha256)
+      // The server being replaced holds its own slot (possibly the same name@version with
+      // different content); anything else occupying the slot still conflicts.
+      .filter((conflict) => conflict.serverId !== replacing?.id);
     if (conflicts.length > 0) {
       throw invalid(
         `已安装同名同版本（${manifest.name}@${manifest.version}）但内容不同的包，请先卸载再安装`,
       );
+    }
+
+    // Replace mode with a same-slot (same name@version) but different-content old package:
+    // extraction below would delete the old tree, which a failed update's rollback still
+    // needs at this exact path. Park the intact old tree beside the slot; the projector
+    // restores it via `restoreRollbackBackup` or discards it via `discardRollbackBackups`.
+    if (replacing !== null) {
+      const oldPkg = mcpbPackageOf(replacing.source);
+      if (
+        oldPkg !== null &&
+        sameSlot(oldPkg, { name: manifest.name, version: manifest.version }) &&
+        oldPkg.sha256 !== inspection.sha256
+      ) {
+        await this.#parkReplacedTree(
+          { name: manifest.name, version: manifest.version },
+          oldPkg.sha256,
+        );
+      }
     }
 
     if (input.approvalContext !== undefined) {
@@ -429,13 +487,12 @@ export class McpbInstaller {
 
     const extracted = await this.#extract(snapshot.path, manifest, inspection.sha256);
     const serverId = input.register?.serverId ?? `mcpb_${randomBytes(6).toString('hex')}`;
-    const source: McpServerSource =
-      input.register?.source ?? {
-        kind: 'mcpb',
-        name: manifest.name,
-        version: manifest.version,
-        sha256: inspection.sha256,
-      };
+    const source: McpServerSource = input.register?.source ?? {
+      kind: 'mcpb',
+      name: manifest.name,
+      version: manifest.version,
+      sha256: inspection.sha256,
+    };
     const server: McpServer = {
       id: serverId,
       name: input.register?.name ?? inspection.displayName,
@@ -443,8 +500,10 @@ export class McpbInstaller {
       command: spec.command,
       args: spec.args,
       ...(Object.keys(spec.env).length > 0 ? { env: spec.env } : {}),
-      ...(input.register?.description !== undefined ? { description: input.register.description } : {}),
-      enabled: true,
+      ...(input.register?.description !== undefined
+        ? { description: input.register.description }
+        : {}),
+      enabled: replacing !== null ? replacing.enabled : true,
       autoApprove: false,
       auth: 'none',
       source,
@@ -456,17 +515,27 @@ export class McpbInstaller {
           ? { tier: 'developer' as const }
           : {}),
     };
+    // Replace mode preserves the user's per-tool policies (only the bundle changes).
+    if (replacing?.toolPolicies !== undefined) server.toolPolicies = replacing.toolPolicies;
     try {
       for (const field of fields) {
         const value = values[field.key];
-        if (field.sensitive && value !== undefined) {
-          this.#deps.secrets.setValue(`mcp:${serverId}:env:${field.key}`, String(value));
-        }
+        if (!field.sensitive || value === undefined) continue;
+        if (kept.has(field.key)) continue; // in-memory placeholder — the stored secret stays
+        this.#deps.secrets.setValue(`mcp:${serverId}:env:${field.key}`, String(value));
       }
       const current = this.#deps.settings.get();
-      this.#deps.settings.update({ mcpServers: [...current.mcpServers, server] });
+      this.#deps.settings.update({
+        // Replace mode swaps the entry in place (array order and position unchanged).
+        mcpServers:
+          replacing !== null
+            ? current.mcpServers.map((entry) => (entry.id === serverId ? server : entry))
+            : [...current.mcpServers, server],
+      });
     } catch (error) {
-      this.#deps.secrets.removeByPrefix(`mcp:${serverId}:`);
+      // Replace mode must never wipe the stored secrets (kept fields were not rewritten and
+      // the old values stay authoritative for the rolled-back server).
+      if (replacing === null) this.#deps.secrets.removeByPrefix(`mcp:${serverId}:`);
       if (extracted.created) await rm(dir, { recursive: true, force: true });
       throw error;
     }
@@ -479,6 +548,7 @@ export class McpbInstaller {
       serverId,
       { name: manifest.name, version: manifest.version, sha256: inspection.sha256 },
       input.fromCatalog === undefined ? 'developer' : 'catalog',
+      replacing !== null ? { replaced: true } : undefined,
     );
     return { serverId };
   }
@@ -621,7 +691,7 @@ export class McpbInstaller {
       mcpServers: current.mcpServers.filter((entry) => entry.id !== serverId),
     });
     this.#deps.secrets.removeByPrefix(`mcp:${serverId}:`);
-    await this.#releasePackage(server.source);
+    await this.releaseIfUnused(server.source);
     this.#audit('mcpb_uninstall', serverId, server.source, server.tier ?? 'catalog');
     return true;
   }
@@ -636,12 +706,18 @@ export class McpbInstaller {
     const pkg = mcpbPackageOf(removed?.source);
     if (pkg === null) return;
     await this.#deps.closeServer?.(serverId);
-    await this.#releasePackage(pkg);
+    await this.releaseIfUnused(pkg);
     this.#audit('mcpb_uninstall', serverId, pkg, removed?.tier ?? 'catalog');
   }
 
   /** Audit details: package identity and tier only — never user_config values. */
-  #audit(action: string, serverId: string, source: McpbPackageRef, tier: string): void {
+  #audit(
+    action: string,
+    serverId: string,
+    source: McpbPackageRef,
+    tier: string,
+    extra?: Record<string, unknown>,
+  ): void {
     try {
       this.#deps.audit?.recordSystem(action, {
         serverId,
@@ -649,36 +725,157 @@ export class McpbInstaller {
         version: source.version,
         sha256: source.sha256,
         tier,
+        ...extra,
       });
     } catch (error) {
       this.#deps.logger.warn({ err: error, action }, 'mcpb audit write failed');
     }
   }
 
-  async #releasePackage(source: McpbPackageRef): Promise<void> {
-    const stillUsed = this.#deps.settings
-      .get()
-      .mcpServers.some((server) => {
-        const pkg = mcpbPackageOf(server.source);
-        return pkg !== null && sameSlot(pkg, source);
-      });
+  /**
+   * Releases the extracted tree of `pkg` when no server references the package any more
+   * (D104 P1-2 made this public: the plugin registry calls it in `commitUpdate` for the
+   * OLD package after the update committed). Behaviour unchanged from the private helper:
+   * reference-counted via `mcpbPackageOf`, and only a directory this installer created for
+   * exactly this package (marker check) is ever removed.
+   */
+  async releaseIfUnused(pkg: McpbPackageRef): Promise<void> {
+    const stillUsed = this.#deps.settings.get().mcpServers.some((server) => {
+      const used = mcpbPackageOf(server.source);
+      return used !== null && sameSlot(used, pkg);
+    });
     if (stillUsed) return;
     let dir: string;
     try {
-      dir = this.installDirOf(source.name, source.version);
+      dir = this.installDirOf(pkg.name, pkg.version);
     } catch {
       return;
     }
     // Only ever delete a directory this installer created for exactly this package.
     const marker = await readMarker(dir);
-    if (marker === null || marker.sha256 !== source.sha256 || !sameSlot(marker, source)) {
+    if (marker === null || marker.sha256 !== pkg.sha256 || !sameSlot(marker, pkg)) {
       this.#deps.logger.warn(
-        { name: source.name, version: source.version },
+        { name: pkg.name, version: pkg.version },
         'mcpb dir not removed: marker mismatch',
       );
       return;
     }
     await rm(dir, { recursive: true, force: true });
+  }
+
+  /**
+   * Renames the extracted tree of `slot` (only when it is the intact tree of
+   * `expectedSha256` per its marker) to a sibling `{slot}.rb-{hex}` backup. A no-op when
+   * the tree is missing or its content no longer matches (nothing restorable would be
+   * lost by a later overwrite).
+   */
+  async #parkReplacedTree(
+    slot: { name: string; version: string },
+    expectedSha256: string,
+  ): Promise<void> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(slot.name, slot.version);
+    } catch {
+      return;
+    }
+    const marker = await readMarker(dir);
+    if (marker === null || marker.sha256 !== expectedSha256) return;
+    const backupDir = path.join(
+      path.dirname(dir),
+      `${path.basename(dir)}.rb-${randomBytes(4).toString('hex')}`,
+    );
+    await rename(dir, backupDir);
+  }
+
+  /**
+   * Rollback support for same-slot replaces (D104 P1-2): makes sure the extracted tree of
+   * `pkg` holds `pkg`'s content again. An intact tree is left alone; otherwise a parked
+   * `{slot}.rb-{hex}` sibling whose marker matches `pkg` is swapped back in. True when the
+   * slot now holds `pkg`'s tree.
+   */
+  async restoreRollbackBackup(pkg: McpbPackageRef): Promise<boolean> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(pkg.name, pkg.version);
+    } catch {
+      return false;
+    }
+    const marker = await readMarker(dir);
+    if (marker !== null && marker.sha256 === pkg.sha256) return true;
+    const parent = path.dirname(dir);
+    const prefix = `${path.basename(dir)}.rb-`;
+    for (const entry of await readdir(parent).catch(() => [] as string[])) {
+      if (!entry.startsWith(prefix)) continue;
+      const backup = path.join(parent, entry);
+      const backupMarker = await readMarker(backup);
+      if (backupMarker === null || backupMarker.sha256 !== pkg.sha256) continue;
+      await rm(dir, { recursive: true, force: true });
+      await rename(backup, dir);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Post-commit GC for same-slot replace backups: removes every parked `{slot}.rb-{hex}`
+   * sibling of `pkg`'s slot whose marker matches `pkg` (the update committed, so the old
+   * tree will never be needed again).
+   */
+  async discardRollbackBackups(pkg: McpbPackageRef): Promise<void> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(pkg.name, pkg.version);
+    } catch {
+      return;
+    }
+    const parent = path.dirname(dir);
+    const prefix = `${path.basename(dir)}.rb-`;
+    for (const entry of await readdir(parent).catch(() => [] as string[])) {
+      if (!entry.startsWith(prefix)) continue;
+      const backup = path.join(parent, entry);
+      const backupMarker = await readMarker(backup);
+      if (backupMarker === null || backupMarker.sha256 !== pkg.sha256) continue;
+      await rm(backup, { recursive: true, force: true });
+    }
+  }
+
+  /** The existing plugin server a replace-mode registration targets, or a NOT_FOUND throw. */
+  #existingPluginServerFor(register: McpbRegistration): McpServer {
+    const existing = this.#deps.settings
+      .get()
+      .mcpServers.find((server) => server.id === register.serverId);
+    const source = existing?.source;
+    const expected = register.source.kind === 'plugin' ? register.source.pluginId : undefined;
+    if (
+      existing === undefined ||
+      source?.kind !== 'plugin' ||
+      expected === undefined ||
+      source.pluginId !== expected
+    ) {
+      throw new AppError('NOT_FOUND', `没有可替换的插件 MCP 服务器：${register.serverId}`);
+    }
+    return existing;
+  }
+
+  /** Sensitive keys left empty in this update whose stored secret should survive it. */
+  #keptSecretKeys(
+    fields: readonly McpbUserConfigField[],
+    provided: Record<string, McpbUserConfigValue>,
+    serverId: string,
+  ): string[] {
+    const kept: string[] = [];
+    for (const field of fields) {
+      if (!field.sensitive) continue;
+      const value = provided[field.key];
+      const empty =
+        value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
+      if (!empty) continue;
+      if (this.#deps.secrets.hasValue?.(`mcp:${serverId}:env:${field.key}`) === true) {
+        kept.push(field.key);
+      }
+    }
+    return kept;
   }
 }
 

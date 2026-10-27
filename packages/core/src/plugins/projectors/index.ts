@@ -33,6 +33,12 @@ export interface PluginProjectionContext {
   /** Embedded MCPB user_config values, keyed by the mcp contribution id; install-time only. */
   userConfig: Readonly<Record<string, Record<string, McpbUserConfigValue>>>;
   ledger: PluginLedger;
+  /**
+   * Refs this plugin currently owns per kind (from the ledger); inspect conflict checks
+   * EXCLUDE them — an update naturally collides with its own previous projection. Install
+   * passes an empty set per kind.
+   */
+  owned: Readonly<Record<ProjectedKind, ReadonlySet<string>>>;
 }
 
 export interface ProjectorInspection<T> {
@@ -71,6 +77,25 @@ export interface PluginProjector<T = unknown> {
   activate?(ctx: PluginProjectionContext): Promise<void>;
   /** Refs whose content was deleted outside the app (`plugins.list`'s `missing` flag). */
   missing?(plugin: PluginIdentity, refs: readonly string[]): string[];
+  /**
+   * Update (D104 P1-2): moves runtime state from the oldCtx version to the newCtx version,
+   * keeping user state (enabled / policies / connections). Re-entrant: after a failure the
+   * registry calls it again with the contexts swapped (unless `rollbackUpdate` exists).
+   */
+  update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void>;
+  /**
+   * Records state a reverse `update` cannot reconstruct precisely (the MCP server list);
+   * returns the string stored in `update_snapshot`, or null when compensation by reverse
+   * `update` alone is exact.
+   */
+  beginUpdate?(plugin: PluginIdentity): Promise<string | null>;
+  /** After the update committed: release the old version's leftovers (old package trees). */
+  commitUpdate?(plugin: PluginIdentity, snapshot: string | null): Promise<void>;
+  /**
+   * Update failed / crash recovery: restore exactly `snapshot`. A projector implementing
+   * this is NEVER compensated via a reverse `update`.
+   */
+  rollbackUpdate?(plugin: PluginIdentity, snapshot: string | null): Promise<void>;
 }
 
 /** Fixed order: skills and MCP first, then connectors and mail; uninstall / rollback reverse it. */
@@ -80,6 +105,11 @@ export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = [
   'connector',
   'mail',
 ];
+
+/** The install-time context's `owned` (nothing projected yet). */
+export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>>> {
+  return { skill: new Set(), connector: new Set(), mcp: new Set(), mail: new Set() };
+}
 
 // --- barrel -------------------------------------------------------------------
 // The concrete projectors are imported below (runtime values), so this file cannot be

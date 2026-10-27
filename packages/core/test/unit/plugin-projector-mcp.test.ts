@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,9 +12,18 @@ import {
 } from '@kepcup/shared';
 import { buildPluginDir } from '@kepcup/testkit';
 
-import { McpbInstaller, type McpbInstallerDeps } from '../../src/apps/mcpb/install.js';
+import {
+  McpbInstaller,
+  mcpbPackageOf,
+  type McpbInstallerDeps,
+} from '../../src/apps/mcpb/install.js';
 import { McpProjector, mcpDescriptionFor, mcpTierFor } from '../../src/plugins/projectors/mcp.js';
-import type { PluginLedger, PluginProjectionContext } from '../../src/plugins/projectors/index.js';
+import {
+  emptyOwned,
+  type PluginLedger,
+  type PluginProjectionContext,
+  type ProjectedKind,
+} from '../../src/plugins/projectors/index.js';
 
 /**
  * MCP 投影器（D104 P0a-2 步骤 5）：tier / description 推导纯函数、inspect 的
@@ -66,6 +75,8 @@ async function installerHarness(overrides: Partial<McpbInstallerDeps> = {}): Pro
         for (const name of removed) secrets.delete(name);
         return removed;
       },
+      // start.ts wires SecretsService.hasValue; replace mode (plugin update) needs it.
+      hasValue: (name) => secrets.has(name),
     },
     logger: noopLogger,
     homeDir: '/home/tester',
@@ -205,8 +216,9 @@ function ctxOf(
   plugin: PluginIdentity,
   dir: string,
   manifest: PluginProjectionContext['manifest'],
+  owned: Readonly<Record<ProjectedKind, ReadonlySet<string>>> = emptyOwned(),
 ): PluginProjectionContext {
-  return { plugin, manifest, dir, userConfig: {}, ledger: rig.ledger };
+  return { plugin, manifest, dir, userConfig: {}, ledger: rig.ledger, owned };
 }
 
 describe('mcpTierFor / mcpDescriptionFor', () => {
@@ -402,6 +414,245 @@ describe('McpProjector.project', () => {
     await expect(rig.projector.project(ctx)).rejects.toThrow();
     expect(rig.ledger.list('mcp')).toHaveLength(2); // both registered before the failure
     expect(rig.servers).toHaveLength(1); // only the http server was written
+  });
+});
+
+describe('McpProjector.update / beginUpdate / commitUpdate / rollbackUpdate', () => {
+  const ID = 'io.github.tester/mcp';
+
+  function ownedOf(refs: string[]): PluginProjectionContext['owned'] {
+    return {
+      skill: new Set(),
+      connector: new Set(),
+      mcp: new Set(refs),
+      mail: new Set(),
+    };
+  }
+
+  function identityV(version: string, tier: PluginIdentity['tier'] = 'developer'): PluginIdentity {
+    return { id: ID, version, origin: 'local', tier };
+  }
+
+  it('mcpb 更新：server id 不变、enabled / toolPolicies 保留、autoApprove 重置；旧树在 commitUpdate 之前仍在', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    oldCtx.owned = ownedOf([serverId]);
+    const beginSnapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+    rig.servers[0]!.enabled = false;
+    rig.servers[0]!.autoApprove = true;
+    rig.servers[0]!.toolPolicies = { dangerous: { mode: 'ask' } };
+
+    const v2 = await contentDir(
+      [{ id: 'dbtools', manifest: { ...mcpbManifest, name: 'echo-bundle', version: '2.0.0' } }],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
+    const newCtx = ctxOf(rig, identityV('2.0.0'), v2.dir, v2.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-kept' } };
+    await rig.projector.update(oldCtx, newCtx);
+
+    expect(rig.servers).toHaveLength(2);
+    const updated = rig.servers.find((server) => server.id === serverId)!;
+    expect(updated.id).toBe(serverId); // deterministic derivation — stable across versions
+    expect(updated.enabled).toBe(false);
+    expect(updated.toolPolicies).toEqual({ dangerous: { mode: 'ask' } });
+    expect(updated.autoApprove).toBe(false);
+    expect(updated.source).toMatchObject({ kind: 'plugin', version: '2.0.0' });
+    // The new bundle's tree exists; the OLD tree is only released by commitUpdate.
+    const newTree = path.join(rig.unpackedDir, '..', 'echo-bundle@2.0.0');
+    expect(existsSync(rig.unpackedDir)).toBe(true); // echo-bundle@1.0.0
+    expect(existsSync(newTree)).toBe(true); // echo-bundle@2.0.0
+    const parsed = JSON.parse(beginSnapshot!) as { servers: Array<{ id: string }> };
+    expect(parsed.servers.map((server) => server.id)).toEqual([serverId]);
+    await rig.projector.commitUpdate(identityV('2.0.0'), beginSnapshot);
+    expect(existsSync(rig.unpackedDir)).toBe(false); // old tree released, nothing references it
+    expect(rig.closed).toContain(serverId); // replaced server's cached connection closed
+  });
+
+  it('http 更新：就地替换 url，保留 enabled 与 toolPolicies，autoApprove 重置', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([], [{ id: 'docs', url: 'https://mcp.example.com/mcp' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    oldCtx.owned = ownedOf([serverId]);
+    rig.servers[0]!.enabled = false;
+    rig.servers[0]!.autoApprove = true;
+    rig.servers[0]!.toolPolicies = { risky: { mode: 'ask' } };
+
+    const v2 = await contentDir([], [{ id: 'docs', url: 'https://mcp2.example.com/mcp' }]);
+    await rig.projector.update(
+      oldCtx,
+      ctxOf(rig, identityV('2.0.0'), v2.dir, v2.manifestFile, ownedOf([serverId])),
+    );
+
+    expect(rig.servers).toHaveLength(1);
+    expect(rig.servers[0]).toMatchObject({
+      id: serverId,
+      transport: 'http',
+      url: 'https://mcp2.example.com/mcp',
+      enabled: false,
+      autoApprove: false,
+    });
+    expect(rig.servers[0]!.toolPolicies).toEqual({ risky: { mode: 'ask' } });
+    expect(rig.closed).toContain(serverId);
+  });
+
+  it('新版本删除的 server 走 unproject 同款清理并释放旧树；账本同步移除', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir(
+      [{ id: 'dbtools' }],
+      [{ id: 'docs', url: 'https://mcp.example.com/mcp' }],
+    );
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-x' } };
+    await rig.projector.project(oldCtx);
+    const mcpbServer = rig.servers.find((server) => server.transport === 'stdio')!;
+    const httpServer = rig.servers.find((server) => server.transport === 'http')!;
+    oldCtx.owned = ownedOf([mcpbServer.id, httpServer.id]);
+
+    const v2 = await contentDir([], [{ id: 'docs', url: 'https://mcp.example.com/mcp' }]);
+    await rig.projector.update(
+      oldCtx,
+      ctxOf(
+        rig,
+        identityV('2.0.0'),
+        v2.dir,
+        v2.manifestFile,
+        ownedOf([mcpbServer.id, httpServer.id]),
+      ),
+    );
+    expect(rig.servers).toHaveLength(1); // http kept
+    expect(rig.servers[0]!.id).toBe(httpServer.id);
+    expect(rig.ledger.list('mcp')).toEqual([httpServer.id]);
+    expect(rig.removed).toEqual([mcpbServer.id]);
+    expect(existsSync(rig.unpackedDir)).toBe(false); // the dropped bundle's tree was released
+  });
+
+  it('rollbackUpdate 还原快照并释放新包树；快照为 null 视为更新前没有 server', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    oldCtx.owned = ownedOf([serverId]);
+    const snapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+
+    // A "new version" install unpacks into a DIFFERENT bundle slot (2.0.0).
+    const v2 = await contentDir([
+      { id: 'dbtools', manifest: { ...mcpbManifest, name: 'echo-bundle', version: '2.0.0' } },
+    ]);
+    const newCtx = ctxOf(rig, identityV('2.0.0'), v2.dir, v2.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-new' } };
+    await rig.projector.update(oldCtx, newCtx);
+    const newTree = path.join(rig.unpackedDir, '..', 'echo-bundle@2.0.0');
+    expect(existsSync(newTree)).toBe(true);
+    expect(rig.servers[0]!.source).toMatchObject({ version: '2.0.0' });
+
+    await rig.projector.rollbackUpdate(identityV('2.0.0'), snapshot);
+    const restored = rig.servers[0]!;
+    expect(restored.id).toBe(serverId);
+    expect(restored.source).toMatchObject({ kind: 'plugin', version: '1.0.0' });
+    expect(restored.env).toEqual({ API_KEY: 'secret:env:api_key' }); // kept secret placeholder
+    // Secrets are not part of the snapshot: a value the new version PROVIDED stays rotated
+    // after the rollback (documented known limitation).
+    expect(rig.secrets.get(`mcp:${serverId}:env:api_key`)).toBe('sk-new');
+    expect(rig.closed).toContain(serverId);
+    expect(existsSync(newTree)).toBe(false); // the NEW package tree was released
+
+    // A null snapshot means "no servers before the update": everything of the plugin goes.
+    // (The ledger is re-synced by the registry after compensation, not here.)
+    await rig.projector.rollbackUpdate(identityV('2.0.0'), null);
+    expect(rig.servers).toHaveLength(0);
+  });
+
+  it('同槽不同内容的 mcpb 更新：回滚把旧包树内容还原到原槽位（不只是还原 server 条目）', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    const oldPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    oldCtx.owned = ownedOf([serverId]);
+    const snapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+
+    // 新版本内嵌同名同版本、内容不同（描述不同 → sha 不同）的 mcpb → 替换占用同一解包槽位
+    const v1b = await contentDir([
+      {
+        id: 'dbtools',
+        manifest: {
+          ...mcpbManifest,
+          name: 'echo-bundle',
+          version: '1.0.0',
+          description: 'rebuilt at the same version',
+        },
+      },
+    ]);
+    const newCtx = ctxOf(rig, identityV('1.0.0'), v1b.dir, v1b.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-new' } };
+    await rig.projector.update(oldCtx, newCtx);
+    const slot = rig.unpackedDir; // echo-bundle@1.0.0 —— 新旧共用
+    const newPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    expect(newPkg.sha256).not.toBe(oldPkg.sha256);
+    expect(await rig.installer.verify(newPkg)).toEqual({ ok: true });
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(1);
+
+    await rig.projector.rollbackUpdate(identityV('1.0.0'), snapshot);
+    // 槽位内容（不只是 settings 条目）回到旧版本：回滚后旧 server 启动的仍是旧代码
+    expect(await rig.installer.verify(oldPkg)).toEqual({ ok: true });
+    expect(await rig.installer.verify(newPkg)).toMatchObject({ ok: false });
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(0);
+    expect(rig.servers[0]!.source).toMatchObject({
+      kind: 'plugin',
+      version: '1.0.0',
+      mcpb: oldPkg,
+    });
+  });
+
+  it('同槽不同内容的 mcpb 更新：commitUpdate 清掉 .rb- 备份，槽位保持新内容', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    oldCtx.owned = ownedOf([serverId]);
+    const snapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+
+    const v1b = await contentDir([
+      {
+        id: 'dbtools',
+        manifest: {
+          ...mcpbManifest,
+          name: 'echo-bundle',
+          version: '1.0.0',
+          description: 'rebuilt at the same version',
+        },
+      },
+    ]);
+    const newCtx = ctxOf(rig, identityV('1.0.0'), v1b.dir, v1b.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-new' } };
+    await rig.projector.update(oldCtx, newCtx);
+    const slot = rig.unpackedDir;
+    const newPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(1);
+
+    await rig.projector.commitUpdate(identityV('1.0.0'), snapshot);
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(0);
+    expect(await rig.installer.verify(newPkg)).toEqual({ ok: true }); // 提交后新树留下
   });
 });
 

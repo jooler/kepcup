@@ -10,6 +10,8 @@ import {
   pluginsSetEnabledInputSchema,
   pluginsSetEnabledOutputSchema,
   pluginsUninstallInputSchema,
+  pluginsUpdateInputSchema,
+  pluginsUpdateOutputSchema,
   pluginsInspectInputSchema,
   pluginInspectOutputSchema,
   type PluginSource,
@@ -73,10 +75,25 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
             source: input.source,
             sha256: input.sha256,
             userConfig: input.userConfig,
+            acknowledgeDiff: input.acknowledgeDiff,
             via: input.source.kind,
           }),
         };
       },
+    ),
+    'plugins.update': method(
+      pluginsUpdateInputSchema,
+      pluginsUpdateOutputSchema,
+      async (input) => ({
+        plugin: await registry().update({
+          id: input.id,
+          ...(input.version !== undefined ? { version: input.version } : {}),
+          sha256: input.sha256,
+          userConfig: input.userConfig,
+          acknowledgeDiff: input.acknowledgeDiff,
+          via: 'marketplace',
+        }),
+      }),
     ),
     'plugins.setEnabled': method(
       pluginsSetEnabledInputSchema,
