@@ -55,12 +55,7 @@ describe('parseConfig', () => {
 
   it('子命令与参数解析', () => {
     savedEnv();
-    const config = parseConfig([
-      'pair',
-      '--data-dir', '/tmp/ks',
-      '--accept', 'req-1',
-      '--json',
-    ]);
+    const config = parseConfig(['pair', '--data-dir', '/tmp/ks', '--accept', 'req-1', '--json']);
     expect(config.command).toBe('pair');
     expect(config.acceptRequestId).toBe('req-1');
     expect(config.json).toBe(true);
@@ -68,6 +63,39 @@ describe('parseConfig', () => {
     const devices = parseConfig(['devices', 'revoke', '--revoke', 'dev-1']);
     expect(devices.command).toBe('devices');
     expect(devices.revokeDeviceId).toBe('dev-1');
+  });
+
+  it('plugin install：解析路径、--yes、--config 与 --json', () => {
+    savedEnv();
+    const config = parseConfig([
+      'plugin',
+      'install',
+      '/tmp/demo.kepcup',
+      '--yes',
+      '--config',
+      '/tmp/user-config.json',
+      '--json',
+      '--data-dir',
+      '/tmp/kepcup-data',
+      '--port',
+      '9001',
+    ]);
+    expect(config.command).toBe('plugin');
+    expect(config.pluginAction).toBe('install');
+    expect(config.pluginPath).toBe('/tmp/demo.kepcup');
+    expect(config.pluginYes).toBe(true);
+    expect(config.pluginConfigFile).toBe('/tmp/user-config.json');
+    expect(config.json).toBe(true);
+    expect(config.dataDir).toBe('/tmp/kepcup-data');
+    expect(config.port).toBe(9001);
+  });
+
+  it('plugin 子命令 / 路径错误', () => {
+    savedEnv();
+    expect(() => parseConfig(['plugin'])).toThrow(ConfigError);
+    expect(() => parseConfig(['plugin', 'remove', '/tmp/x'])).toThrow(/只支持 install/);
+    expect(() => parseConfig(['plugin', 'install'])).toThrow(/需要一个/);
+    expect(() => parseConfig(['plugin', 'install', '/tmp/a', '/tmp/b'])).toThrow(/多余的位置参数/);
   });
 
   it('非法端口 / keystore / 子命令报错', () => {
