@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,7 +12,11 @@ import {
 } from '@kepcup/shared';
 import { buildPluginDir } from '@kepcup/testkit';
 
-import { McpbInstaller, type McpbInstallerDeps } from '../../src/apps/mcpb/install.js';
+import {
+  McpbInstaller,
+  mcpbPackageOf,
+  type McpbInstallerDeps,
+} from '../../src/apps/mcpb/install.js';
 import { McpProjector, mcpDescriptionFor, mcpTierFor } from '../../src/plugins/projectors/mcp.js';
 import {
   emptyOwned,
@@ -564,6 +568,91 @@ describe('McpProjector.update / beginUpdate / commitUpdate / rollbackUpdate', ()
     // (The ledger is re-synced by the registry after compensation, not here.)
     await rig.projector.rollbackUpdate(identityV('2.0.0'), null);
     expect(rig.servers).toHaveLength(0);
+  });
+
+  it('同槽不同内容的 mcpb 更新：回滚把旧包树内容还原到原槽位（不只是还原 server 条目）', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    const oldPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    oldCtx.owned = ownedOf([serverId]);
+    const snapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+
+    // 新版本内嵌同名同版本、内容不同（描述不同 → sha 不同）的 mcpb → 替换占用同一解包槽位
+    const v1b = await contentDir([
+      {
+        id: 'dbtools',
+        manifest: {
+          ...mcpbManifest,
+          name: 'echo-bundle',
+          version: '1.0.0',
+          description: 'rebuilt at the same version',
+        },
+      },
+    ]);
+    const newCtx = ctxOf(rig, identityV('1.0.0'), v1b.dir, v1b.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-new' } };
+    await rig.projector.update(oldCtx, newCtx);
+    const slot = rig.unpackedDir; // echo-bundle@1.0.0 —— 新旧共用
+    const newPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    expect(newPkg.sha256).not.toBe(oldPkg.sha256);
+    expect(await rig.installer.verify(newPkg)).toEqual({ ok: true });
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(1);
+
+    await rig.projector.rollbackUpdate(identityV('1.0.0'), snapshot);
+    // 槽位内容（不只是 settings 条目）回到旧版本：回滚后旧 server 启动的仍是旧代码
+    expect(await rig.installer.verify(oldPkg)).toEqual({ ok: true });
+    expect(await rig.installer.verify(newPkg)).toMatchObject({ ok: false });
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(0);
+    expect(rig.servers[0]!.source).toMatchObject({
+      kind: 'plugin',
+      version: '1.0.0',
+      mcpb: oldPkg,
+    });
+  });
+
+  it('同槽不同内容的 mcpb 更新：commitUpdate 清掉 .rb- 备份，槽位保持新内容', async () => {
+    const rig = await makeRig();
+    const v1 = await contentDir([{ id: 'dbtools' }]);
+    const oldCtx = ctxOf(rig, identityV('1.0.0'), v1.dir, v1.manifestFile);
+    oldCtx.userConfig = { dbtools: { api_key: 'sk-old' } };
+    await rig.projector.project(oldCtx);
+    const serverId = rig.servers[0]!.id;
+    oldCtx.owned = ownedOf([serverId]);
+    const snapshot = await rig.projector.beginUpdate(identityV('1.0.0'));
+
+    const v1b = await contentDir([
+      {
+        id: 'dbtools',
+        manifest: {
+          ...mcpbManifest,
+          name: 'echo-bundle',
+          version: '1.0.0',
+          description: 'rebuilt at the same version',
+        },
+      },
+    ]);
+    const newCtx = ctxOf(rig, identityV('1.0.0'), v1b.dir, v1b.manifestFile, ownedOf([serverId]));
+    newCtx.userConfig = { dbtools: { api_key: 'sk-new' } };
+    await rig.projector.update(oldCtx, newCtx);
+    const slot = rig.unpackedDir;
+    const newPkg = mcpbPackageOf(rig.servers[0]!.source)!;
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(1);
+
+    await rig.projector.commitUpdate(identityV('1.0.0'), snapshot);
+    expect(
+      (await readdir(path.dirname(slot))).filter((entry) => entry.includes('.rb-')),
+    ).toHaveLength(0);
+    expect(await rig.installer.verify(newPkg)).toEqual({ ok: true }); // 提交后新树留下
   });
 });
 
