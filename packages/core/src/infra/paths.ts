@@ -30,6 +30,8 @@ export interface AppPaths {
   cacheDownloadsDir: string;
   /** Shared toolchains installed on request (P06): `{home}/toolchains/`. */
   toolchainsDir: string;
+  /** Installed plugin trees and the staging root (D104): `{home}/plugins/`. */
+  pluginsDir: string;
 }
 
 export function defaultHome(): string {
@@ -82,6 +84,7 @@ export function resolvePaths(homeOverride?: string): AppPaths {
     cacheUvDir: path.join(cacheDir, 'uv'),
     cacheDownloadsDir: path.join(cacheDir, 'downloads'),
     toolchainsDir: path.join(home, 'toolchains'),
+    pluginsDir: path.join(home, 'plugins'),
   };
 }
 

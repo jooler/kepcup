@@ -716,6 +716,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     mkdirSync(cacheDir, { recursive: true });
   }
   mkdirSync(paths.toolchainsDir, { recursive: true });
+  mkdirSync(paths.pluginsDir, { recursive: true });
 
   const logger = await createLogger({ logsDir: paths.logsDir, dev: options.dev === true });
   // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；

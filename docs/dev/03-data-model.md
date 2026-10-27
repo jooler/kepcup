@@ -55,6 +55,7 @@
 | main | `0050_project_board.sql` | D103：新表 `board_columns` / `board_cards`（卡片 id = 事项 id；`column_id` 无 `ON DELETE`，即 NO ACTION） |
 | main | `0051_card_conversations.sql` | D103：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`）——`type` 增 `card`；新列 `parent_project_id`（FK 自身 `ON DELETE CASCADE`）、`card_todo_id`（无 FK）；`CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL))`，另加「非 card 两列皆空」；唯一索引 `conversations_one_open_per_card`。旧行原样保留，新列为 NULL |
 | main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
+| main | `0053_plugins.sql` | D104：新表 `plugins`（市场 / 本地插件，内置插件不入表）、`plugin_items`（投影账本，随插件 `ON DELETE CASCADE`） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -1002,6 +1003,41 @@ CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id
 - 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
 - 删除对话 / 删除 Bot / 移出项目组经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
 
+### plugins / plugin_items（插件，D104，迁移 0053）
+
+设计见 [design 51](../design/51-plugin-system.md) §7。市场与本地来源的已安装插件；每类贡献（技能 / 连接器 / MCP / 邮件模板 / 由插件停用的连接）投影成功一行账本。
+
+```sql
+CREATE TABLE plugins (
+  id             TEXT PRIMARY KEY,                       -- 'io.github.alice/doc-tools'
+  version        TEXT NOT NULL,
+  origin         TEXT NOT NULL CHECK (origin IN ('marketplace','local')),
+  tier           TEXT NOT NULL CHECK (tier IN ('verified','community','developer')),
+  state          TEXT NOT NULL CHECK (state IN ('installing','installed','uninstalling')),
+  enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  package_sha256 TEXT NOT NULL,
+  marketplace    TEXT,                                   -- source endpoint; marketplace origin only
+  dir            TEXT NOT NULL,                          -- relative to {home}/plugins: '{ns}/{name}@{version}'
+  installed_at   INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  CHECK ((origin = 'marketplace') = (marketplace IS NOT NULL)),
+  CHECK ((origin = 'local') = (tier = 'developer'))
+);
+
+CREATE TABLE plugin_items (
+  plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+  kind      TEXT NOT NULL CHECK (kind IN ('skill','connector','mcp','mail','disabled_connection')),
+  ref       TEXT NOT NULL,                               -- skill name / connector slug / server id / template id / connection id
+  PRIMARY KEY (plugin_id, kind, ref)
+);
+CREATE INDEX plugin_items_ref ON plugin_items(kind, ref);
+```
+
+- **账本语义**：卸载 / 回滚 / 冲突检测 / 「已安装」详情都读 `plugin_items`，不靠各服务里的来源标记反推；先登记账本、后写入投影，任一步失败按账本反向回滚，`unproject` 全部幂等。
+- **状态机**：`installing` → `installed` → `uninstalling`；启动时对残留的 `installing` / `uninstalling` 行恢复（先例：`environment.recoverInterrupted`）。
+- **origin / tier 约束**：本地来源恒 `developer`（CHECK 落库），市场来源必须带 `marketplace` endpoint；分级由来源决定，清单自标一律无效。
+- **内置插件不入表**：`com.kepcup` 内置插件是只读应用资源，随启动从应用资源加载，不装 / 不卸 / 不启停。
+
 ## runs.db
 
 ### runs（P01）
@@ -1203,6 +1239,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 项目数据目录 `projects/{id}/`（项目 wiki git、wiki-store、`wiki.db`）与该项目的 wiki job | 删除（`lifecycle.deleteConversation`：先 `prepareProjectDeletion` 排空在途维护，再关 `wiki.db` 连接、`rmSync` 整目录；该会话的 jobs 已取消）；仅项目组会话 | D92 T1b |
 | 各 Bot 个人 Wiki 中从该对话入库的资料 | **保留**（项目 wiki 随上一行删除） | — |
+| plugins / plugin_items | 保留（全局数据，不随对话 / Bot 删除） | D104 |
 
 ### 删除 Bot
 
@@ -1231,6 +1268,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
 | usage_ledger | **保留**（用量统计） | — |
+| plugins / plugin_items | 保留（全局数据，不随对话 / Bot 删除） | D104 |
 
 删除前的弹框需要列出：记忆条数、Wiki 页面数、Skills 数、workspace 数量与占用空间。
 

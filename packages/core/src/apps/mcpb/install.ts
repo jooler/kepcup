@@ -52,6 +52,9 @@ import { MCPB_MAX_FILE_BYTES, safeEntryPath, ZipArchive } from './zip.js';
 export const MCPB_MARKER_FILE = '.kepcup-mcpb.json';
 const MANIFEST_MAX_BYTES = 1024 * 1024;
 
+/** The `kind: 'mcpb'` variant of {@link McpServerSource} — the only one this installer manages. */
+type McpbPackageSource = Extract<McpServerSource, { kind: 'mcpb' }>;
+
 export type McpbRuntimeKind = 'node' | 'python' | 'uv';
 export interface McpbRuntimeResolution {
   /** Absolute executable path of the managed runtime. */
@@ -383,7 +386,7 @@ export class McpbInstaller {
 
     const extracted = await this.#extract(snapshot.path, manifest, inspection.sha256);
     const serverId = `mcpb_${randomBytes(6).toString('hex')}`;
-    const source: McpServerSource = {
+    const source: McpbPackageSource = {
       kind: 'mcpb',
       name: manifest.name,
       version: manifest.version,
@@ -515,7 +518,7 @@ export class McpbInstaller {
   // --- verify / uninstall ----------------------------------------------------
 
   /** Re-hashes the extracted tree against the marker written at install time. */
-  async verify(source: McpServerSource): Promise<{ ok: true } | { ok: false; reason: string }> {
+  async verify(source: McpbPackageSource): Promise<{ ok: true } | { ok: false; reason: string }> {
     const dir = this.installDirOf(source.name, source.version);
     const marker = await readMarker(dir);
     if (marker === null) return { ok: false, reason: '安装目录缺失或标记文件损坏' };
@@ -560,7 +563,7 @@ export class McpbInstaller {
   }
 
   /** Audit details: package identity and tier only — never user_config values. */
-  #audit(action: string, serverId: string, source: McpServerSource, tier: string): void {
+  #audit(action: string, serverId: string, source: McpbPackageSource, tier: string): void {
     try {
       this.#deps.audit?.recordSystem(action, {
         serverId,
@@ -574,7 +577,7 @@ export class McpbInstaller {
     }
   }
 
-  async #releasePackage(source: McpServerSource): Promise<void> {
+  async #releasePackage(source: McpbPackageSource): Promise<void> {
     const stillUsed = this.#deps.settings
       .get()
       .mcpServers.some(
