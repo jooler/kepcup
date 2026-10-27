@@ -226,7 +226,11 @@ describe('the signed directory path never carries a local connector', () => {
         .href
     )) as { readBundledConnectorEntries(root?: string): Array<{ name: string }> };
     expect(await script.collectEntries()).toEqual(bundled.readBundledConnectorEntries(repoRoot));
-    expect(bundled.readBundledConnectorEntries(repoRoot)).toEqual(shipped);
+    // 签名脚本对首批官方条目做 tier 策展覆写（community → verified），夹具 reader
+    // 保持原样；两者条目集合与顺序必须一致。
+    expect(bundled.readBundledConnectorEntries(repoRoot).map((entry) => entry.name)).toEqual(
+      shipped.map((entry) => entry.name),
+    );
     for (const entry of shipped) {
       expect(entry.name.startsWith('local.kepcup/')).toBe(false);
       expect(entry._meta[CONNECTOR_META_KEY]?.releaseGate).not.toBe(LOCAL_CONNECTOR_GATE);

@@ -10,7 +10,7 @@ import { migrationsUrl } from '../../src/start.js';
 import type { Clock } from '../../src/infra/clock.js';
 import { resolvePaths } from '../../src/infra/paths.js';
 import { SkillsService } from '../../src/skills/registry.js';
-import { SkillPresetsService, PRESET_SOURCE_PREFIX } from '../../src/skills/presets.js';
+import { SkillPresetsService, PRESET_SOURCE_SCHEME } from '../../src/skills/presets.js';
 import { BuiltinPlugins } from '../../src/plugins/builtin.js';
 import { buildBuiltinPluginsDir, type BuiltinFixtureSkill } from '@kepcup/testkit';
 import { scanSkillDir } from '../../src/skills/scan.js';
@@ -140,15 +140,22 @@ describe('SkillPresetsService（公共作用域）', () => {
     ]);
 
     const after = presets.install('alpha');
-    expect(after[0]).toEqual(expect.objectContaining({ id: 'alpha', installed: true, upToDate: true }));
+    expect(after[0]).toEqual(
+      expect.objectContaining({ id: 'alpha', installed: true, upToDate: true }),
+    );
 
     for (const botId of ['bot_a', 'bot_b']) {
       const list = rig.skills.listForBot(botId);
       expect(list).toHaveLength(1);
       expect(list[0]).toEqual(
-        expect.objectContaining({ name: 'alpha', scope: 'public', status: 'active', kind: 'imported' }),
+        expect.objectContaining({
+          name: 'alpha',
+          scope: 'public',
+          status: 'active',
+          kind: 'imported',
+        }),
       );
-      expect(list[0]!.sourceUrl).toBe(`${PRESET_SOURCE_PREFIX}alpha`);
+      expect(list[0]!.sourceUrl).toBe(`${PRESET_SOURCE_SCHEME}com.kepcup/starter-skills/alpha`);
       // 提示词/沙箱可见面：activeSkills 包含公共技能
       expect(rig.skills.activeSkills(botId).map((skill) => skill.name)).toEqual(['alpha']);
     }
@@ -161,7 +168,12 @@ describe('SkillPresetsService（公共作用域）', () => {
   it('missingDeps：环境检查器判定缺失的运行依赖透出', async () => {
     const rig = makeRig();
     const builtinDir = await makePresetDir([
-      { dir: 'py', name: 'pyskill', description: '需要 python 的技能', script: '#!/usr/bin/env python3\nprint("hi")\n' },
+      {
+        dir: 'py',
+        name: 'pyskill',
+        description: '需要 python 的技能',
+        script: '#!/usr/bin/env python3\nprint("hi")\n',
+      },
     ]);
     const withEnv = await makeService(rig, builtinDir, (dep) => dep !== 'python');
     expect(withEnv.list()[0]!.missingDeps).toEqual(['python']);
@@ -174,7 +186,9 @@ describe('SkillPresetsService（公共作用域）', () => {
 
   it('预置版本升级：公共条目原位替换，旧库版本被引用计数回收', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '第一版描述' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: '第一版描述' },
+    ]);
     const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
     const oldLibraryId = rig.skills.publicSkillRow('alpha')!.library_id;
@@ -200,7 +214,9 @@ describe('SkillPresetsService（公共作用域）', () => {
 
   it('同名非预置公共条目：拒绝覆盖（ALREADY_EXISTS）', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '预置版描述' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: '预置版描述' },
+    ]);
     const presets = await makeService(rig, builtinDir);
 
     // 公共作用域里先有一个非预置来源的同名技能
@@ -236,7 +252,9 @@ describe('SkillPresetsService（公共作用域）', () => {
 
   it('私有同名技能遮蔽公共版本（仅对该 Bot），不影响其他 Bot', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: '公共版本' },
+    ]);
     const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
 
@@ -263,7 +281,12 @@ describe('SkillPresetsService（公共作用域）', () => {
     // bot_a：只见私有版本（遮蔽公共）；bot_b：仍见公共版本
     const a = rig.skills.listForBot('bot_a');
     expect(a).toHaveLength(1);
-    expect(a[0]).toEqual(expect.objectContaining({ scope: 'private', description: expect.stringContaining('bot_a 的私有版本') }));
+    expect(a[0]).toEqual(
+      expect.objectContaining({
+        scope: 'private',
+        description: expect.stringContaining('bot_a 的私有版本'),
+      }),
+    );
     const b = rig.skills.listForBot('bot_b');
     expect(b).toHaveLength(1);
     expect(b[0]).toEqual(expect.objectContaining({ scope: 'public' }));
@@ -281,7 +304,9 @@ describe('SkillPresetsService（公共作用域）', () => {
 
   it('启停与卸载是全局的：从任意 Bot 面板操作，全体生效', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: '公共版本' },
+    ]);
     const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
 
@@ -308,14 +333,18 @@ describe('SkillPresetsService（公共作用域）', () => {
 
   it('未知 presetId → NOT_FOUND', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: 'alpha 技能' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: 'alpha 技能' },
+    ]);
     const presets = await makeService(rig, builtinDir);
     expect(() => presets.install('nope')).toThrowError(/不存在/);
   });
 
   it('私有技能卸载不回收仍被公共引用的库版本', async () => {
     const rig = makeRig();
-    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: '公共版本' },
+    ]);
     const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
     // bot_a 又私有导入同名（同内容，哈希一致 → 引用同一库版本）
@@ -328,7 +357,7 @@ describe('SkillPresetsService（公共作用域）', () => {
       conversationId: 'conv',
       name: 'alpha',
       scan: scanSkillDir(absDir, parsed),
-      sourceUrl: `${PRESET_SOURCE_PREFIX}alpha`,
+      sourceUrl: `${PRESET_SOURCE_SCHEME}com.kepcup/starter-skills/alpha`,
       commitOid: 'c'.repeat(40),
       contentHash: rig.skills.libraryGet(libraryId)!.content_hash,
       stagingDir: absDir,
@@ -343,7 +372,9 @@ describe('SkillPresetsService（公共作用域）', () => {
   it('库目录在应用外被删除：列表/读取/市场各发现一次 skills.missing（去重）；purgeMissing 清掉 DB 行后可重装', async () => {
     const events: Array<{ event: string; payload: unknown }> = [];
     const rig = makeRig((event, payload) => events.push({ event, payload }));
-    const builtinDir = await makePresetDir([{ dir: 'gone', name: 'gone-skill', description: '会被删掉' }]);
+    const builtinDir = await makePresetDir([
+      { dir: 'gone', name: 'gone-skill', description: '会被删掉' },
+    ]);
     const service = await makeService(rig, builtinDir);
     service.install('gone-skill');
     const row = rig.skills.publicSkillRow('gone-skill')!;
@@ -387,10 +418,15 @@ describe('SkillPresetsService（公共作用域）', () => {
     service.install('gone-skill');
     expect(rig.skills.publicSkillRow('gone-skill')).not.toBeNull();
     expect(rig.skills.readSkill('bot_a', 'gone-skill').content).toContain('gone-skill');
-    rmSync(rig.skills.libraryDirOf(rig.skills.libraryGet(rig.skills.publicSkillRow('gone-skill')!.library_id)!), {
-      recursive: true,
-      force: true,
-    });
+    rmSync(
+      rig.skills.libraryDirOf(
+        rig.skills.libraryGet(rig.skills.publicSkillRow('gone-skill')!.library_id)!,
+      ),
+      {
+        recursive: true,
+        force: true,
+      },
+    );
     events.length = 0;
     rig.skills.listForBot('bot_a');
     expect(events.filter((entry) => entry.event === 'skills.missing')).toHaveLength(1);

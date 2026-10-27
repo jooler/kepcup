@@ -241,9 +241,9 @@ export class CoreHost implements CoreHostEvents {
   }
 
   /**
-   * Builtin plugins (D104 P0b), also an extraResource: the read-only
-   * resources/plugins tree holding com.kepcup/starter-skills and
-   * com.kepcup/connections (see plugins/builtin.ts).
+   * Builtin plugins (D104 P0b): since the marketplace conversion the app no
+   * longer ships any builtin plugins — the resource is absent and this env
+   * injection stays empty (the guard keeps dev overrides working).
    */
   private builtinPluginsEnv(): NodeJS.ProcessEnv {
     const dir = join(process.resourcesPath ?? '', 'plugins');

@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/skill-pptx",
+  "name": "PPT 演示",
+  "version": "1.0.0",
+  "description": "PPT 演示文稿（.pptx）创建与编辑。做周会/汇报/路演幻灯片，从大纲或长文档生成演示，改版式、换模板配色、提取现有 PPT 的文字结构。用户提到 PPT、pptx、幻灯片、演示、\"做个汇报\"、\"这页重做\" 时使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "skills": [
+      {
+        "dir": "skills/pptx"
+      }
+    ]
+  }
+}

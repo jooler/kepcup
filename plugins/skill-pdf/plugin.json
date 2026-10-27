@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/skill-pdf",
+  "name": "PDF 处理",
+  "version": "1.0.0",
+  "description": "PDF 处理与生成。提取文字/表格、合并拆分、加密解密、生成 PDF（从文本/HTML/图片），PDF 转图片或文本。用户提到 PDF、\"提取这一页\"、\"合并成一个 PDF\"、\"转成 PDF\"、\"填一下这个表\" 时使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "skills": [
+      {
+        "dir": "skills/pdf"
+      }
+    ]
+  }
+}

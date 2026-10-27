@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-linear",
+  "name": "Linear 连接",
+  "version": "1.0.0",
+  "description": "查找、创建与更新 Linear 的 issue、项目与评论",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://linear.app",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/linear/server.json"
+      }
+    ]
+  }
+}

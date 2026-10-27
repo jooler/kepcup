@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/skill-xlsx",
+  "name": "Excel 表格",
+  "version": "1.0.0",
+  "description": "Excel 表格（.xlsx/.xlsm/.csv）读写、汇总、透视、图表与格式转换。做数据报表、财务简表、多表合并、CSV/JSON 与 Excel 互转、数据清洗。用户提到 Excel、表格、xlsx、csv、\"做个表\"、\"汇总一下\"、\"数据透视\" 时使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "skills": [
+      {
+        "dir": "skills/xlsx"
+      }
+    ]
+  }
+}

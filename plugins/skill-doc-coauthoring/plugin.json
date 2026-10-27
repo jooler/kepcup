@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/skill-doc-coauthoring",
+  "name": "协作改稿",
+  "version": "1.0.0",
+  "description": "多轮协作打磨一份文档（方案、提案、规格说明、长文）。通过\"对齐提纲 → 分节成稿 → 批注修订 → 读者视角验收\"的流程与用户共同完成，而不是一次性甩一篇成品。用户说\"帮我打磨这篇文档\"、\"一起写个方案\"、\"这段再改改\"、\"按评审意见改\" 时使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "skills": [
+      {
+        "dir": "skills/doc-coauthoring"
+      }
+    ]
+  }
+}

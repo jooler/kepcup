@@ -10,29 +10,31 @@ import { scanSkillDir } from './scan.js';
 import type { SkillsService } from './registry.js';
 
 /**
- * Preset skills ("技能市场"): the skill contributions of the builtin
- * `com.kepcup/starter-skills` plugin (apps/desktop/resources/plugins/, read-only,
- * D104 P0b). Installation reuses the P08 import pipeline (parse → scan →
- * content-hash → installPublic) and lands in the PUBLIC scope — one install,
- * every bot discovers and calls it (`public_skills`). Presets are trusted app
- * content, so there is no approval card; the user's explicit 「添加」 click IS the
- * install decision (unlike git imports, which keep the per-bot private approval
- * flow).
+ * Preset skills ("技能市场"): the skill contributions of builtin plugins
+ * (read-only, D104 P0b; since the marketplace conversion the app ships none and
+ * the list is empty — the mechanism stays for dev/test overrides and future
+ * first-party preinstalls). Installation reuses the P08 import pipeline (parse →
+ * scan → content-hash → installPublic) and lands in the PUBLIC scope — one
+ * install, every bot discovers and calls it (`public_skills`). Presets are
+ * trusted app content, so there is no approval card; the user's explicit
+ * 「添加」 click IS the install decision (unlike git imports, which keep the
+ * per-bot private approval flow).
  *
  * Library entries installed from here carry
- * `source_url = plugin://com.kepcup/starter-skills/{id}`, the marker that lets a
- * newer app version REPLACE an outdated public preset in place (uninstall →
+ * `source_url = plugin://{builtinPluginId}/{id}`, the marker that lets a newer
+ * app version REPLACE an outdated public preset in place (uninstall →
  * reference-counted GC → install new content). Same-name PUBLIC entries from any
  * other source are never clobbered — ALREADY_EXISTS. A bot's private same-name
  * skill is not a conflict either: it shadows the public version for that bot only.
  */
 
 /**
- * source_url marker of library entries installed from the builtin starter-skills
- * plugin. Was `preset://` before D104 P0b; migration 0054 rewrites installed rows,
- * and the `foreign` check below treats everything under this prefix as ours.
+ * source_url scheme of library entries installed from builtin plugins. Was
+ * `preset://` before D104 P0b (migration 0054 rewrites installed rows); the
+ * `foreign` check compares against the OFFERING plugin's id, so rows from older
+ * builtin ids stay recognizable while per-plugin attribution stays exact.
  */
-export const PRESET_SOURCE_PREFIX = 'plugin://com.kepcup/starter-skills/';
+export const PRESET_SOURCE_SCHEME = 'plugin://';
 
 export interface SkillPresetsDeps {
   /** Builtin plugin loader (`BuiltinPlugins`); the presets are its skill contributions. */
@@ -111,7 +113,10 @@ export class SkillPresetsService {
       ...state,
     };
     if (state.foreign) {
-      this.#deps.logger.warn(log, 'preset install refused: same-name public skill from another source');
+      this.#deps.logger.warn(
+        log,
+        'preset install refused: same-name public skill from another source',
+      );
       throw new AppError(
         'ALREADY_EXISTS',
         `已存在同名公共技能「${preset.name}」（非预置来源），请先卸载后再添加`,
@@ -120,14 +125,17 @@ export class SkillPresetsService {
     if (state.installed && !state.upToDate && row !== null) {
       // Outdated preset install: drop the old public row first (GC collects
       // the library version when nothing references it), then reinstall.
-      this.#deps.logger.info({ ...log, oldLibraryId: row.library_id }, 'preset install: replacing outdated public entry');
+      this.#deps.logger.info(
+        { ...log, oldLibraryId: row.library_id },
+        'preset install: replacing outdated public entry',
+      );
       this.#deps.skills.uninstallPublic(preset.name);
     }
     try {
       this.#deps.skills.installPublic({
         name: preset.name,
         scan: preset.scan,
-        sourceUrl: `${PRESET_SOURCE_PREFIX}${preset.entry.id}`,
+        sourceUrl: `${PRESET_SOURCE_SCHEME}${preset.entry.pluginId}/${preset.entry.id}`,
         commitOid: preset.entry.version,
         contentHash: preset.contentHash,
         stagingDir: preset.dir,
@@ -176,7 +184,7 @@ export class SkillPresetsService {
     return {
       installed: true,
       upToDate: false,
-      foreign: !library.source_url.startsWith(PRESET_SOURCE_PREFIX),
+      foreign: !library.source_url.startsWith(`${PRESET_SOURCE_SCHEME}${preset.entry.pluginId}/`),
     };
   }
 
