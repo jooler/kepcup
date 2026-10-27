@@ -126,6 +126,25 @@ export function isSafeSkillSourceUrl(value: string): boolean {
   return true;
 }
 
+/**
+ * 目录来源条目的远程端点是否可接受：https、无用户信息、主机是带点的域名（不是 IP 字面量、
+ * 不是 `localhost` / `*.localhost`）。端口不限；解析到私网地址由连接时的 SSRF 守卫拒绝。
+ * 插件连接器 / http 贡献沿用同一判定（D104）。
+ */
+export function isSafeDirectoryRemoteUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === '' || host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host.startsWith('[') || /^[0-9.]+$/.test(host) || host.includes(':')) return false;
+  return host.includes('.');
+}
+
 export const connectorSkillSchema = z.object({
   name: z.string().min(1).max(64).regex(CONNECTOR_SKILL_NAME_PATTERN),
   source: z.string().max(CONNECTOR_SKILL_SOURCE_MAX).refine(isSafeSkillSourceUrl, {
