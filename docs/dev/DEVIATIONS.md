@@ -859,3 +859,45 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P0b-builtin.md` 实施记录。
+
+### DEV-053 市场索引条目不含 `manifestDigest` 与 `summary.icon`，详情页不拉取 README（设计 51 §6.1 / §9）
+
+- 状态：已决定
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：设计 51 §6.1 的索引条目含 `manifestDigest` 与 `summary.icon`，§9 的详情页按 digest 校验后拉取富文本（README）。这两处依赖额外的 RPC、体积上限与 Markdown 渲染的 XSS 评审，P1-1 阶段没有真实市场内容，做出来无法验收。
+- 影响范围：`packages/shared/src/domain/plugin-index.ts` 的 `pluginIndexEntrySchema` 只含 id / version / tier / sha256 / size / downloadUrl / engines / platforms / categories / summary(name, description, author) / updatedAt；详情页（P1-3）展示索引 `summary` + 同意面板。README 拉取待有真实市场内容后另立设计再补。
+- 可选方案：
+  1. 本期不做（当前实现）— 优点：不加无法验收的 RPC 与渲染面；缺点：详情页富文本要等下期。
+  2. 照设计全做 — 优点：与设计 51 逐字一致；缺点：XSS 评审与 RPC 面积大、无真实内容可测。
+- 推荐：方案 1。
+- 决定：按任务书（todo/plugin-system/P1-1-marketplace-core.md §6 第 1 条）。
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-054 市场同步的定时开关 `pluginAutoCheckUpdates` 只控制定时拉取（设计 51 §6.3）
+
+- 状态：已决定
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：设计 51 §6.3 写 `pluginAutoCheckUpdates`「只控制检查」，未定义手动路径是否也受限。P1-1 任务书明确：只控制**定时**拉取（`start()` 的定时循环每次 tick 前问一次开关），手动 `refresh` RPC / 打开市场页（`plugins.marketplace.list` 的补拉）仍联网——与 `DirectorySync` 的 `enabled`（同时封 sync / entries / status）不同。
+- 影响范围：`packages/core/src/plugins/marketplace-sync.ts` 自己实现定时循环（tick 前检查 `enabled()`，跳过拉取但保持循环，开关翻转立即生效）；`enabled` 不传给内层 `SignedIndexSync`，所以 `sync()` / `entries()` / `status()` 不受开关影响。`marketplace-sync.test.ts` 与 `plugins-marketplace.test.ts` 各有一条行为测试。
+- 可选方案：
+  1. 只控定时（当前实现）— 优点：关闭自动检查后市场页仍可用、手动刷新仍能拿到新索引；缺点：与 DirectorySync 语义不同（已写清并测试）。
+  2. 照 DirectorySync 全关 — 优点：两条通道语义一致；缺点：开关会顺手关掉市场页数据来源，超出「只控制检查」的意图。
+- 推荐：方案 1。
+- 决定：按任务书（todo/plugin-system/P1-1-marketplace-core.md §6 第 2 条、步骤 3.2）。
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-055 `pluginMarketplaceUrl` / `pluginMarketplacePublicKey` 两个 schema 定在 `domain/types.ts` 而非 `plugin-index.ts`（plain node 引 shared dist 踩模块环 TDZ）
+
+- 状态：已落实
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：任务书 2.2 把 `pluginMarketplaceUrlSchema` / `pluginMarketplacePublicKeySchema` 与设置键一起写在 `plugin-index.ts` 一带，`settingsSchema`（`domain/types.ts`）引用它们。实测发现 `types.ts → plugin-index.ts` 这条 import 边把 dist 的模块图连成环：`types → plugin-index → plugins → plugin-manifest → connector-catalog → types`——plain node 直接 `import('@kepcup/shared')`（签名脚本的 `loadShared()` 就这么干）时 connector-catalog 顶层读 `mcpToolRiskSchema` 踩 TDZ（`Cannot access 'mcpToolRiskSchema' before initialization`），CLI 冒烟失败；vitest（走源码图）不复现。
+- 影响范围：仅这两个 schema（与 `isHttpsMarketplaceUrl` 纯函数）挪进 `domain/types.ts`（紧邻 `settingsSchema`，只依赖 zod）；`plugin-index.ts` 不再含设置键；`rpc/methods.ts` 改从 `domain/types.js` 取。契约形状零变化（`packages/shared/test/unit/plugin-index.test.ts`、`settings-merge-validate.test.ts` 原样通过）。
+- 可选方案：
+  1. schema 定在 types.ts（当前实现）— 优点：环消失，plain node / 签名脚本恢复可用；缺点：市场设置键的 schema 与索引契约不同文件。
+  2. 断开 types.ts 的其它边（如 connectorNameSchema 从 plugin-manifest 挪走）— 优点：plugin-index 保持任务书位置；缺点：动的是 P0a-1 已交付的既有契约文件，影响面更大。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
