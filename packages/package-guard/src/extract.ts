@@ -1,11 +1,6 @@
 import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  resolveZipGuard,
-  safeEntryPath,
-  type ZipArchive,
-  type ZipGuardOptions,
-} from './zip.js';
+import { resolveZipGuard, safeEntryPath, type ZipArchive, type ZipGuardOptions } from './zip.js';
 
 /**
  * Safe shared extraction for the plugin pipeline and `kepcup-app validate/pack`:
