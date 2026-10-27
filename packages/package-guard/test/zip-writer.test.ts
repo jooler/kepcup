@@ -67,7 +67,10 @@ describe('buildZipBuffer', () => {
   });
 
   it('fixes the timestamp at 1980-01-01 00:00', async () => {
-    const file = await write('time.kepcup', buildZipBuffer([{ name: 'a.txt', data: Buffer.from('a') }]));
+    const file = await write(
+      'time.kepcup',
+      buildZipBuffer([{ name: 'a.txt', data: Buffer.from('a') }]),
+    );
     const bytes = await (await import('node:fs/promises')).readFile(file);
     const central = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
     expect(bytes.readUInt16LE(central + 12)).toBe(0);
@@ -76,9 +79,9 @@ describe('buildZipBuffer', () => {
 
   it('rejects unsafe names and case-folded duplicates', () => {
     const factory = (message: string) => new PackageGuardError(message);
-    expect(() => buildZipBuffer([{ name: '../x', data: Buffer.from('x') }], { error: factory })).toThrow(
-      /越界路径段/,
-    );
+    expect(() =>
+      buildZipBuffer([{ name: '../x', data: Buffer.from('x') }], { error: factory }),
+    ).toThrow(/越界路径段/);
     expect(() =>
       buildZipBuffer(
         [
@@ -92,9 +95,9 @@ describe('buildZipBuffer', () => {
 
   it('enforces the configurable caps with tiny test values', () => {
     const factory = (message: string) => new PackageGuardError(message);
-    expect(() =>
-      buildZipBuffer(ENTRIES, { error: factory, limits: { maxEntries: 2 } }),
-    ).toThrow(/条目过多/);
+    expect(() => buildZipBuffer(ENTRIES, { error: factory, limits: { maxEntries: 2 } })).toThrow(
+      /条目过多/,
+    );
     expect(() =>
       buildZipBuffer([{ name: 'a.txt', data: Buffer.from('abcdef') }], {
         error: factory,
@@ -110,9 +113,9 @@ describe('buildZipBuffer', () => {
         { error: factory, limits: { maxUnpackedBytes: 6 } },
       ),
     ).toThrow(/体积超过上限/);
-    expect(() =>
-      buildZipBuffer(ENTRIES, { error: factory, limits: { maxFileBytes: 10 } }),
-    ).toThrow(/包文件过大/);
+    expect(() => buildZipBuffer(ENTRIES, { error: factory, limits: { maxFileBytes: 10 } })).toThrow(
+      /包文件过大/,
+    );
   });
 
   it('drops the executable bit for non-executable modes and adds it for executable ones', async () => {

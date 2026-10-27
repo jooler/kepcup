@@ -63,9 +63,7 @@ describe('extractZip', () => {
 
   it('rejects zip-slip and leaves nothing outside the destination', async () => {
     const parent = await tmp();
-    const zip = await archive(
-      buildZip([{ name: '../escaped.txt', data: 'evil', deflate: false }]),
-    );
+    const zip = await archive(buildZip([{ name: '../escaped.txt', data: 'evil', deflate: false }]));
     try {
       await expect(
         extractZip(zip, path.join(parent, 'dest'), { error: factory, label: '.kepcup' }),
