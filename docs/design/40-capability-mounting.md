@@ -82,7 +82,7 @@ interface CapabilityEntry {
 
 ### 2.3 自定义 MCP 的用途说明
 
-`McpServer` 新增可选 `description`（≤200 字符）：扩展中心「MCP」添加 / 编辑表单可填；预置目录（`resources/mcp-presets/catalog.json`，当前为空）的条目将来带说明时，安装时一并写入。缺省时目录行写「（未填写用途说明，可用 capability_search 查看它的工具）」。只进提示词，不参与任何权限判断。
+`McpServer` 新增可选 `description`（≤200 字符）：扩展中心「MCP」添加 / 编辑表单可填；MCP 精选清单空壳已随 D104 删除，将来市场插件的 MCP 贡献带说明时，安装时一并写入。缺省时目录行写「（未填写用途说明，可用 capability_search 查看它的工具）」。只进提示词，不参与任何权限判断。
 
 ## 3 两件套：`capability_search` / `capability_call`
 

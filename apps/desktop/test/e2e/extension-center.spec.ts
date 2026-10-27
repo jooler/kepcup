@@ -1,9 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm } from '@kepcup/testkit';
+import { copyShippedPlugins } from './helpers/builtin-plugins';
 
 /**
  * 扩展中心分组 e2e：
@@ -13,9 +14,10 @@ import { startMockLlm } from '@kepcup/testkit';
  * - 设置「应用」只管已连接账号，并能跳到扩展中心「连接」；设置里不再有「开发者模式」分区。
  *
  * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
- * `KEPCUP_CONNECTORS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
+ * `KEPCUP_BUILTIN_PLUGINS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
  * 所以这里的空态**不**证明发行门禁；门禁语义由 core `connector-catalog.test.ts` 覆盖。
- * 第二个用例把 `KEPCUP_CONNECTORS` 指向临时目录（含一条取自随包目录的条目）来验证非空目录的渲染。
+ * 第二个用例把 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录（copyShippedPlugins 拷随包内置插件、
+ * 只保留 Notion 条目）来验证非空目录的渲染。
  */
 
 async function waitReady(page: Page): Promise<void> {
@@ -138,21 +140,11 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-extcenter2-'));
-  // 临时目录：一条取自随包目录的 Notion 条目（核心按 KEPCUP_CONNECTORS 读取；测试构建不过滤门禁）。
-  const shipped = path.resolve('resources/connectors');
-  const connectorsDir = path.join(home, 'connectors');
-  await mkdir(connectorsDir, { recursive: true });
-  await cp(path.join(shipped, 'icons'), path.join(connectorsDir, 'icons'), { recursive: true });
-  const full = JSON.parse(await readFile(path.join(shipped, 'catalog.json'), 'utf8')) as {
-    version: number;
-    connectors: Array<{ title: string }>;
-  };
-  const notion = full.connectors.find((entry) => entry.title === 'Notion');
-  expect(notion).toBeDefined();
-  await writeFile(
-    path.join(connectorsDir, 'catalog.json'),
-    JSON.stringify({ version: full.version, connectors: [notion] }),
-  );
+  // 临时目录：拷随包内置插件并只保留 Notion 条目（核心按 KEPCUP_BUILTIN_PLUGINS 读取；测试构建不过滤门禁）。
+  const pluginsDir = await copyShippedPlugins(path.join(home, 'builtin-plugins'), {
+    connectorSlugs: ['notion'],
+  });
+  expect(pluginsDir).toBeDefined();
   let app: ElectronApplication | null = null;
   try {
     app = await _electron.launch({
@@ -166,7 +158,7 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
         KEPCUP_ONBOARDING: 'off',
         KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
         KEPCUP_MOCK_LLM_URL: llm.url,
-        KEPCUP_CONNECTORS: connectorsDir,
+        KEPCUP_BUILTIN_PLUGINS: pluginsDir,
       },
     });
     const page = await app.firstWindow();

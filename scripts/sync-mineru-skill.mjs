@@ -1,18 +1,18 @@
 /**
  * sync-mineru-skill.mjs — 同步 vendored 预置技能 mineru 的上游原文。
  *
- * `mineru/SKILL.md` 是 opendatalab/MinerU 官方 Agent Skill 的逐字拷贝
- * （AGPL-3.0，来源与锚点记录在 preset-skills/NOTICE.md）。本脚本只做机械
- * 搬运：从上游拉取 → 校验 frontmatter → 写入。不自动递增 catalog version、
- * 不自动改 NOTICE——同步是否采纳是发版决策，由人做。
+ * `skills/mineru/SKILL.md` 是 opendatalab/MinerU 官方 Agent Skill 的逐字拷贝
+ * （AGPL-3.0，来源与锚点记录在内置插件 com.kepcup/starter-skills 的 NOTICE.md）。
+ * 本脚本只做机械搬运：从上游拉取 → 校验 frontmatter → 写入。不自动递增
+ * plugin.json 里该技能的 version、不自动改 NOTICE——同步是否采纳是发版决策，由人做。
  *
  * 用法：
  *   node scripts/sync-mineru-skill.mjs [ref]      # 拉取并写入（默认 master）
  *   node scripts/sync-mineru-skill.mjs --check    # 只比对，不一致退出码 1
  *   COMMIT=<sha> node scripts/sync-mineru-skill.mjs   # 锁定 commit 拉取
  *
- * 同步后必须（见 preset-skills/README.md）：
- *   1. 递增 catalog.json 中 mineru 条目的 version（市场「更新」按钮靠它）；
+ * 同步后必须（见 apps/desktop/resources/plugins/com.kepcup/starter-skills/README.md）：
+ *   1. 递增 plugin.json 中 mineru 技能贡献的 version（市场「更新」按钮靠它）；
  *   2. 更新 NOTICE.md 的锚点 commit 与引入日期。
  */
 
@@ -26,7 +26,11 @@ const UPSTREAM_PATH = 'skills/mineru/SKILL.md';
 const EXPECTED_NAME = 'mineru';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const target = path.join(scriptDir, '..', 'apps/desktop/resources/preset-skills/mineru/SKILL.md');
+const target = path.join(
+  scriptDir,
+  '..',
+  'apps/desktop/resources/plugins/com.kepcup/starter-skills/skills/mineru/SKILL.md',
+);
 
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
@@ -98,10 +102,10 @@ if (upstreamSha === localSha) {
 
 if (checkOnly) {
   console.error('本地与上游不一致——运行 `node scripts/sync-mineru-skill.mjs` 同步，'
-    + '然后递增 catalog.json 的 mineru version 并更新 NOTICE.md 锚点。');
+    + '然后递增 plugin.json 里 mineru 技能贡献的 version 并更新 NOTICE.md 锚点。');
   process.exit(1);
 }
 
 writeFileSync(target, upstream, 'utf8');
 console.log(`已写入 ${path.relative(process.cwd(), target)}`);
-console.log('后续动作（人工）：递增 catalog.json 的 mineru version；更新 NOTICE.md 锚点 commit 与日期。');
+console.log('后续动作（人工）：递增 plugin.json 里 mineru 技能贡献的 version；更新 NOTICE.md 锚点 commit 与日期。');

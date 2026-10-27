@@ -7,11 +7,16 @@
 // Looks each name up via the Registry API (`GET {base}/v0.1/servers/{name}/versions/latest`,
 // https://github.com/modelcontextprotocol/registry) — or in a local JSON file holding
 // `{ servers: [{ server, _meta }] }` / `[...]` / one `{ server }` — and prints a JSON array of
-// entries for apps/desktop/resources/connectors/catalog.json. Registry fields are copied
+// entries for the builtin connections plugin: write each entry to
+// apps/desktop/resources/plugins/com.kepcup/connections/connectors/<slug>/server.json
+// (D104 P0b; the per-repo catalog.json is gone). Registry fields are copied
 // verbatim (only the subset the catalog schema knows); `_meta["app.kepcup/connector"]` gets
 // placeholders that MUST be completed by hand: the privacy policy is left as the literal
 // "TODO" so the entry fails the catalog contract test until a human fills it in. Nothing is
-// ever written to the catalog automatically, and the release gate is NOT opened here.
+// ever written automatically, the release gate is NOT opened here, and each new server.json
+// must ALSO be registered in the plugin manifest
+// (apps/desktop/resources/plugins/com.kepcup/connections/plugin.json →
+// contributions.connectors, `{ "file": "connectors/<slug>/server.json" }`).
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 

@@ -11,13 +11,16 @@ import type { Clock } from '../../src/infra/clock.js';
 import { resolvePaths } from '../../src/infra/paths.js';
 import { SkillsService } from '../../src/skills/registry.js';
 import { SkillPresetsService, PRESET_SOURCE_PREFIX } from '../../src/skills/presets.js';
+import { BuiltinPlugins } from '../../src/plugins/builtin.js';
+import { buildBuiltinPluginsDir, type BuiltinFixtureSkill } from '@kepcup/testkit';
 import { scanSkillDir } from '../../src/skills/scan.js';
 import { parseSkillDir } from '../../src/skills/parse.js';
 
 /**
  * 技能市场服务（skills/presets.ts）：公共作用域语义——安装一次写入
  * public_skills，所有 Bot 发现并调用；私有同名技能对该 Bot 遮蔽公共版本；
- * 预置版本原位替换；同名非预置公共条目拒改。
+ * 预置版本原位替换；同名非预置公共条目拒改。夹具 = 内置插件目录
+ * （buildBuiltinPluginsDir → KEPCUP_BUILTIN_PLUGINS，D104 P0b）。
  */
 
 const root = mkdtempSync(path.join(tmpdir(), 'skills-presets-'));
@@ -57,42 +60,44 @@ function makeRig(publish: (event: string, payload: unknown) => void = () => {}):
   return { skills, db, paths };
 }
 
-/** 夹具预置目录：catalog + 技能目录（可选脚本做依赖推断）。 */
-function makePresetDir(entries: { dir: string; name: string; description: string; script?: string }[]): string {
-  const presetDir = path.join(root, `presets-${Math.random().toString(36).slice(2, 8)}`);
-  mkdirSync(presetDir, { recursive: true });
-  const catalog = {
-    version: 1,
-    presets: entries.map((entry, index) => ({
+/** 夹具内置插件目录：starter-skills 的技能贡献（可选脚本做依赖推断）。 */
+async function makePresetDir(
+  entries: { dir: string; name: string; description: string; script?: string }[],
+): Promise<string> {
+  const builtinDir = path.join(root, `builtin-${Math.random().toString(36).slice(2, 8)}`);
+  const skills: BuiltinFixtureSkill[] = [];
+  for (const [index, entry] of entries.entries()) {
+    skills.push({
       id: entry.name,
-      dir: entry.dir,
-      section: 'starter',
       displayName: `预置 ${entry.name}`,
       summary: `${entry.name} 的一句话`,
+      section: 'starter',
       icon: 'puzzle',
       version: `1.0.${index}`,
       tryIt: `试试 ${entry.name}`,
-    })),
-  };
-  writeFileSync(path.join(presetDir, 'catalog.json'), JSON.stringify(catalog));
-  for (const entry of entries) {
-    const dir = path.join(presetDir, entry.dir);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      path.join(dir, 'SKILL.md'),
-      `---\nname: ${entry.name}\ndescription: ${entry.description}\n---\n正文`,
-    );
-    if (entry.script !== undefined) {
-      mkdirSync(path.join(dir, 'scripts'), { recursive: true });
-      writeFileSync(path.join(dir, 'scripts', 'run.sh'), entry.script);
-    }
+      description: entry.description,
+    });
   }
-  return presetDir;
+  const dir = await buildBuiltinPluginsDir({ dir: builtinDir, skills });
+  for (const entry of entries) {
+    if (entry.script === undefined) continue;
+    const dir0 = path.join(dir, 'com.kepcup', 'starter-skills', 'skills', entry.name);
+    mkdirSync(path.join(dir0, 'scripts'), { recursive: true });
+    writeFileSync(path.join(dir0, 'scripts', 'run.sh'), entry.script);
+  }
+  return dir;
 }
 
-function makeService(rig: Rig, presetDir: string | null, depAvailable?: (dep: string) => boolean) {
+async function makeService(
+  rig: Rig,
+  builtinDir: string | null,
+  depAvailable?: (dep: string) => boolean,
+) {
   return new SkillPresetsService({
-    env: presetDir !== null ? { KEPCUP_PRESET_SKILLS: presetDir } : {},
+    builtin: new BuiltinPlugins({
+      env: builtinDir !== null ? { KEPCUP_BUILTIN_PLUGINS: builtinDir } : {},
+      logger: stubLogger,
+    }),
     logger: stubLogger,
     skills: rig.skills,
     ...(depAvailable !== undefined ? { environment: { depAvailable } } : {}),
@@ -100,34 +105,35 @@ function makeService(rig: Rig, presetDir: string | null, depAvailable?: (dep: st
 }
 
 describe('SkillPresetsService（公共作用域）', () => {
-  it('list：目录缺失时退化为空数组', () => {
+  it('list：目录缺失时退化为空数组', async () => {
     const rig = makeRig();
-    // env 覆盖指向不存在的路径 → resolvePresetSkillsDir 返回 null（打包异常场景）
-    const presets = makeService(rig, path.join(root, 'does-not-exist'));
+    // env 覆盖指向不存在的路径 → BuiltinPlugins.dir 为 null（打包异常场景）
+    const presets = await makeService(rig, path.join(root, 'does-not-exist'));
     expect(presets.list()).toEqual([]);
   });
 
-  it('catalog 指向不存在的技能目录时跳过该条目', () => {
+  it('清单里的技能目录被删：加载器按「贡献文件缺失」跳过整个插件，市场为空', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: 'alpha 技能' }]);
-    writeFileSync(
-      path.join(presetDir, 'catalog.json'),
-      JSON.stringify({
-        version: 1,
-        presets: [
-          { id: 'alpha', dir: 'alpha', section: 'starter', displayName: 'A', summary: 's', icon: 'puzzle', version: '1.0.0', tryIt: '' },
-          { id: 'ghost', dir: 'ghost', section: 'starter', displayName: 'G', summary: 's', icon: 'puzzle', version: '1.0.0', tryIt: '' },
-        ],
-      }),
-    );
-    const presets = makeService(rig, presetDir);
-    expect(presets.list().map((item) => item.id)).toEqual(['alpha']);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: 'alpha 技能' },
+      { dir: 'ghost', name: 'ghost', description: '目录将被删掉' },
+    ]);
+    rmSync(path.join(builtinDir, 'com.kepcup', 'starter-skills', 'skills', 'ghost'), {
+      recursive: true,
+      force: true,
+    });
+    // 旧 catalog 时代是逐条跳过；D104 P0b 起清单与贡献文件由 BuiltinPlugins 统一校验，
+    // 贡献缺失 = 该插件整体不可信 → warn 并跳过（fail-closed），市场列表为空。
+    const presets = await makeService(rig, builtinDir);
+    expect(presets.list()).toEqual([]);
   });
 
-  it('安装一次：所有 Bot 的清单都能看到（scope=public、active）', () => {
+  it('安装一次：所有 Bot 的清单都能看到（scope=public、active）', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: 'alpha 技能描述' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([
+      { dir: 'alpha', name: 'alpha', description: 'alpha 技能描述' },
+    ]);
+    const presets = await makeService(rig, builtinDir);
 
     expect(presets.list()).toEqual([
       expect.objectContaining({ id: 'alpha', installed: false, upToDate: false, foreign: false }),
@@ -152,30 +158,30 @@ describe('SkillPresetsService（公共作用域）', () => {
     expect(rig.skills.publicRows()).toHaveLength(1);
   });
 
-  it('missingDeps：环境检查器判定缺失的运行依赖透出', () => {
+  it('missingDeps：环境检查器判定缺失的运行依赖透出', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([
+    const builtinDir = await makePresetDir([
       { dir: 'py', name: 'pyskill', description: '需要 python 的技能', script: '#!/usr/bin/env python3\nprint("hi")\n' },
     ]);
-    const withEnv = makeService(rig, presetDir, (dep) => dep !== 'python');
+    const withEnv = await makeService(rig, builtinDir, (dep) => dep !== 'python');
     expect(withEnv.list()[0]!.missingDeps).toEqual(['python']);
-    const satisfied = makeService(rig, presetDir, () => true);
+    const satisfied = await makeService(rig, builtinDir, () => true);
     expect(satisfied.list()[0]!.missingDeps).toEqual([]);
     // 检查器缺席时按缺失处理（保守提示）
-    const strict = makeService(rig, presetDir);
+    const strict = await makeService(rig, builtinDir);
     expect(strict.list()[0]!.missingDeps).toEqual(['python']);
   });
 
-  it('预置版本升级：公共条目原位替换，旧库版本被引用计数回收', () => {
+  it('预置版本升级：公共条目原位替换，旧库版本被引用计数回收', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: '第一版描述' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '第一版描述' }]);
+    const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
     const oldLibraryId = rig.skills.publicSkillRow('alpha')!.library_id;
 
     // 应用发版：随包技能内容变化
     writeFileSync(
-      path.join(presetDir, 'alpha', 'SKILL.md'),
+      path.join(builtinDir, 'com.kepcup', 'starter-skills', 'skills', 'alpha', 'SKILL.md'),
       '---\nname: alpha\ndescription: 第二版描述\n---\n新正文',
     );
     expect(presets.list()[0]).toEqual(
@@ -192,10 +198,10 @@ describe('SkillPresetsService（公共作用域）', () => {
     expect(rig.skills.libraryGet(oldLibraryId)).toBeNull();
   });
 
-  it('同名非预置公共条目：拒绝覆盖（ALREADY_EXISTS）', () => {
+  it('同名非预置公共条目：拒绝覆盖（ALREADY_EXISTS）', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: '预置版描述' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '预置版描述' }]);
+    const presets = await makeService(rig, builtinDir);
 
     // 公共作用域里先有一个非预置来源的同名技能
     const staging = path.join(root, 'foreign-alpha');
@@ -228,10 +234,10 @@ describe('SkillPresetsService（公共作用域）', () => {
     );
   });
 
-  it('私有同名技能遮蔽公共版本（仅对该 Bot），不影响其他 Bot', () => {
+  it('私有同名技能遮蔽公共版本（仅对该 Bot），不影响其他 Bot', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
 
     // bot_a 私有导入同名技能
@@ -265,7 +271,7 @@ describe('SkillPresetsService（公共作用域）', () => {
 
     // 公共安装不再是冲突：预置更新对 bot_a 也只是更新公共行（仍被遮蔽）
     writeFileSync(
-      path.join(presetDir, 'alpha', 'SKILL.md'),
+      path.join(builtinDir, 'com.kepcup', 'starter-skills', 'skills', 'alpha', 'SKILL.md'),
       '---\nname: alpha\ndescription: 第二版公共\n---\n正文',
     );
     presets.install('alpha');
@@ -273,10 +279,10 @@ describe('SkillPresetsService（公共作用域）', () => {
     expect(rig.skills.listForBot('bot_b')[0]!.description).toContain('第二版公共');
   });
 
-  it('启停与卸载是全局的：从任意 Bot 面板操作，全体生效', () => {
+  it('启停与卸载是全局的：从任意 Bot 面板操作，全体生效', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
 
     // 从 bot_a 的面板停用 → 所有 Bot 停用
@@ -300,17 +306,17 @@ describe('SkillPresetsService（公共作用域）', () => {
     expect(presets.list()[0]).toEqual(expect.objectContaining({ installed: false }));
   });
 
-  it('未知 presetId → NOT_FOUND', () => {
+  it('未知 presetId → NOT_FOUND', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: 'alpha 技能' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: 'alpha 技能' }]);
+    const presets = await makeService(rig, builtinDir);
     expect(() => presets.install('nope')).toThrowError(/不存在/);
   });
 
-  it('私有技能卸载不回收仍被公共引用的库版本', () => {
+  it('私有技能卸载不回收仍被公共引用的库版本', async () => {
     const rig = makeRig();
-    const presetDir = makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
-    const presets = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'alpha', name: 'alpha', description: '公共版本' }]);
+    const presets = await makeService(rig, builtinDir);
     presets.install('alpha');
     // bot_a 又私有导入同名（同内容，哈希一致 → 引用同一库版本）
     const libraryId = rig.skills.publicSkillRow('alpha')!.library_id;
@@ -334,11 +340,11 @@ describe('SkillPresetsService（公共作用域）', () => {
     expect(rig.skills.listForBot('bot_a')[0]).toEqual(expect.objectContaining({ scope: 'public' }));
   });
 
-  it('库目录在应用外被删除：列表/读取/市场各发现一次 skills.missing（去重）；purgeMissing 清掉 DB 行后可重装', () => {
+  it('库目录在应用外被删除：列表/读取/市场各发现一次 skills.missing（去重）；purgeMissing 清掉 DB 行后可重装', async () => {
     const events: Array<{ event: string; payload: unknown }> = [];
     const rig = makeRig((event, payload) => events.push({ event, payload }));
-    const presetDir = makePresetDir([{ dir: 'gone', name: 'gone-skill', description: '会被删掉' }]);
-    const service = makeService(rig, presetDir);
+    const builtinDir = await makePresetDir([{ dir: 'gone', name: 'gone-skill', description: '会被删掉' }]);
+    const service = await makeService(rig, builtinDir);
     service.install('gone-skill');
     const row = rig.skills.publicSkillRow('gone-skill')!;
     const library = rig.skills.libraryGet(row.library_id)!;

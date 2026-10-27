@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,23 +19,30 @@ import {
   connectorReleaseGates,
   effectiveConnectorCatalog,
   parseConnectorEntries,
-  readConnectorCatalogSource,
-  resolveConnectorsDir,
 } from '../../src/apps/catalog.js';
+import { BuiltinPlugins } from '../../src/plugins/builtin.js';
+import { buildBuiltinPluginsDir } from '@kepcup/testkit';
 import { runConnectorCatalogContract } from '../contract/connector-catalog.contract.js';
+import { SHIPPED_PLUGINS_DIR, readShippedConnectorEntries } from '../support/shipped-connectors.js';
 
 /**
  * 连接应用目录（D73 P1 §5.2）：契约（内置目录 + 一个纯数据新增的条目）、
  * `filterReleasedConnectors` fail-closed、schema 反例与运行时加载。
+ * 打包快照来源是内置插件 com.kepcup/connections（D104 P0b）。
  * 契约本身在 `test/contract/connector-catalog.contract.ts`。
  */
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const connectorsDir = path.join(repoRoot, 'apps/desktop/resources/connectors');
-const shipped = JSON.parse(readFileSync(path.join(connectorsDir, 'catalog.json'), 'utf8')) as {
-  version: number;
-  connectors: unknown[];
-};
+const connectionsPluginDir = path.join(SHIPPED_PLUGINS_DIR, 'com.kepcup', 'connections');
+const shipped = readShippedConnectorEntries();
+
+/** 经 BuiltinPlugins 读随包内置插件（等价旧的环境变量目录注入）。 */
+function shippedSource() {
+  return new BuiltinPlugins({
+    env: { KEPCUP_BUILTIN_PLUGINS: SHIPPED_PLUGINS_DIR },
+    logger: { warn() {}, info() {} },
+  }).connectorSource();
+}
 
 function sample(
   slug: string,
@@ -83,12 +90,13 @@ afterEach(() => {
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-// --- contract: shipped catalog + a data-only extra catalog --------------------------------
+// --- contract: shipped builtin plugin + a data-only extra catalog --------------------------
 
 runConnectorCatalogContract({
-  label: 'shipped catalog.json',
-  entries: shipped.connectors,
-  iconsDir: path.join(connectorsDir, 'icons'),
+  label: 'shipped builtin plugin (com.kepcup/connections)',
+  entries: shipped,
+  iconsDir: connectionsPluginDir,
+  iconPaths: shippedSource().iconPaths,
 });
 
 {
@@ -104,8 +112,24 @@ runConnectorCatalogContract({
 }
 
 describe('shipped catalog', () => {
-  it('has the expected file version and unique gates, all closed in connector-release-gates.json', () => {
-    expect(shipped.version).toBe(1);
+  it('has the expected plugin manifest shape and unique gates, all closed in connector-release-gates.json', () => {
+    // D104 P0b：目录来源是内置插件；manifest 须完整声明这批条目（顺序即目录顺序）。
+    const manifest = JSON.parse(
+      readFileSync(path.join(connectionsPluginDir, 'plugin.json'), 'utf8'),
+    ) as {
+      id: string;
+      version: string;
+      contributions: { connectors: Array<{ file: string }> };
+    };
+    expect(manifest.id).toBe('com.kepcup/connections');
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(manifest.contributions.connectors).toHaveLength(shipped.length);
+    for (const contribution of manifest.contributions.connectors) {
+      // 每个 server.json 声明都真实存在（shipped 条目即从这些文件读出）。
+      expect(existsSync(path.join(connectionsPluginDir, ...contribution.file.split('/')))).toBe(
+        true,
+      );
+    }
     const gates = JSON.parse(
       readFileSync(path.join(repoRoot, 'apps/desktop/connector-release-gates.json'), 'utf8'),
     ) as { approved: unknown };
@@ -115,14 +139,14 @@ describe('shipped catalog', () => {
     expect(approved).not.toContain('testkit');
     // Opening a gate is a deliberate act (after the user's login testing, U2): every approved
     // gate must name an existing entry, so a typo cannot silently approve nothing.
-    const known = shipped.connectors.map(
+    const known = shipped.map(
       (c) => connectorMetaOf(connectorCatalogEntrySchema.parse(c)).releaseGate,
     );
     for (const gate of approved) expect(known).toContain(gate);
   });
 
   it('uses auto registration (CIMD/DCR) or the preregistered google client, on streamable-http', () => {
-    for (const raw of shipped.connectors) {
+    for (const raw of shipped) {
       const entry = connectorCatalogEntrySchema.parse(raw);
       const { auth } = connectorMetaOf(entry);
       if (auth.registration === 'preregistered') expect(auth.clientRef).toBe('google');
@@ -150,7 +174,7 @@ describe('filterReleasedConnectors', () => {
   });
 
   it('shipped Google entries are parked as hidden (code kept)', () => {
-    const google = shipped.connectors
+    const google = shipped
       .map((c) => connectorMetaOf(connectorCatalogEntrySchema.parse(c)))
       .filter((m) => m.slug === 'gcalendar' || m.slug === 'gdrive');
     expect(google.map((m) => m.slug)).toEqual(['gcalendar', 'gdrive']);
@@ -278,8 +302,8 @@ describe('ConnectorCatalog (runtime loader)', () => {
   const warnings: unknown[][] = [];
   const logger = { warn: (...args: unknown[]) => void warnings.push(args) };
 
-  it('loads the shipped resource JSON from the repo checkout and applies injected gates', () => {
-    const all = effectiveConnectorCatalog({ env: {}, approvedGates: null });
+  it('loads the shipped builtin plugin from the repo checkout and applies injected gates', () => {
+    const all = effectiveConnectorCatalog({ source: shippedSource(), approvedGates: null });
     expect(all.map((entry) => connectorMetaOf(entry).slug)).toEqual([
       'notion',
       'linear',
@@ -289,23 +313,30 @@ describe('ConnectorCatalog (runtime loader)', () => {
       'stripe',
       'cloudflare',
     ]);
-    const some = new ConnectorCatalog({ env: {}, approvedGates: ['linear', 'stripe'] });
+    const some = new ConnectorCatalog({
+      source: shippedSource(),
+      approvedGates: ['linear', 'stripe'],
+    });
     expect(some.list().map((entry) => connectorMetaOf(entry).slug)).toEqual(['linear', 'stripe']);
     expect(some.get('linear')?.name).toBe('app.linear/linear');
     expect(some.get('notion')).toBeNull();
-    expect(new ConnectorCatalog({ env: {}, approvedGates: [] }).list()).toEqual([]);
+    expect(new ConnectorCatalog({ source: shippedSource(), approvedGates: [] }).list()).toEqual([]);
   });
 
   it('dev/test builds (constant undefined) do not filter; an injected constant does', () => {
     expect(connectorReleaseGates()).toBeNull();
-    expect(new ConnectorCatalog({ env: {} }).list()).toHaveLength(7);
+    expect(new ConnectorCatalog({ source: shippedSource() }).list()).toHaveLength(7);
     vi.stubGlobal('__KEPCUP_CONNECTOR_RELEASE_GATES__', []);
     expect(connectorReleaseGates()).toEqual([]);
-    expect(new ConnectorCatalog({ env: {} }).list()).toEqual([]);
+    expect(new ConnectorCatalog({ source: shippedSource() }).list()).toEqual([]);
     vi.stubGlobal('__KEPCUP_CONNECTOR_RELEASE_GATES__', ['notion']);
-    expect(new ConnectorCatalog({ env: {} }).list().map((e) => e.name)).toEqual(['com.notion/mcp']);
+    expect(new ConnectorCatalog({ source: shippedSource() }).list().map((e) => e.name)).toEqual([
+      'com.notion/mcp',
+    ]);
     // An explicit null from the caller still wins (tests that need everything).
-    expect(new ConnectorCatalog({ env: {}, approvedGates: null }).list()).toHaveLength(7);
+    expect(
+      new ConnectorCatalog({ source: shippedSource(), approvedGates: null }).list(),
+    ).toHaveLength(7);
   });
 
   it('skips broken entries and duplicate slugs with warnings, keeps the rest', () => {
@@ -326,7 +357,6 @@ describe('ConnectorCatalog (runtime loader)', () => {
     const dupe = connectorCatalogEntrySchema.parse(sample('alpha', { name: 'com.dupe/mcp' }));
     const source = { entries: [sample('alpha')], iconsDir: null };
     const catalog = new ConnectorCatalog({
-      env: {},
       source,
       extra: [extra, dupe],
       approvedGates: ['zeta'],
@@ -334,7 +364,6 @@ describe('ConnectorCatalog (runtime loader)', () => {
     expect(catalog.list().map((entry) => entry.name)).toEqual(['com.zeta/mcp']);
     expect(findConnectorBySlug(catalog.list(), 'zeta')).not.toBeNull();
     const open = new ConnectorCatalog({
-      env: {},
       source,
       extra: [extra, dupe],
       approvedGates: null,
@@ -342,36 +371,46 @@ describe('ConnectorCatalog (runtime loader)', () => {
     expect(open.list().map((entry) => entry.name)).toEqual(['com.alpha/mcp', 'com.zeta/mcp']);
   });
 
-  it('resolves the resource dir from KEPCUP_CONNECTORS and tolerates missing/corrupt files', () => {
-    expect(resolveConnectorsDir({ KEPCUP_CONNECTORS: path.join(tmp(), 'nope') })).toBeNull();
-    const dir = tmp();
-    expect(resolveConnectorsDir({ KEPCUP_CONNECTORS: dir })).toBe(dir);
+  it('injects the packaged snapshot via BuiltinPlugins.connectorSource() and tolerates a broken plugin', async () => {
+    // 不存在的内置插件目录 → 空来源（等价旧环境变量指向缺失目录）。
+    const missing = new BuiltinPlugins({
+      env: { KEPCUP_BUILTIN_PLUGINS: path.join(tmp(), 'nope') },
+      logger,
+    });
+    expect(missing.connectorSource()).toEqual({
+      entries: [],
+      iconsDir: null,
+      iconPaths: new Map(),
+    });
+
+    // 坏 plugin.json → 整个插件被跳过（告警），来源为空。
+    const broken = tmp();
+    await buildBuiltinPluginsDir({ dir: broken, connectors: [sample('alpha')] });
+    rmSync(path.join(broken, 'com.kepcup', 'connections', 'plugin.json'));
+    writeFileSync(path.join(broken, 'com.kepcup', 'connections', 'plugin.json'), '{not json');
     warnings.length = 0;
-    // no catalog.json
-    expect(readConnectorCatalogSource({ KEPCUP_CONNECTORS: dir }, logger).entries).toEqual([]);
-    writeFileSync(path.join(dir, 'catalog.json'), '{not json');
-    expect(readConnectorCatalogSource({ KEPCUP_CONNECTORS: dir }, logger).entries).toEqual([]);
-    writeFileSync(path.join(dir, 'catalog.json'), JSON.stringify({ version: 2, connectors: [] }));
-    expect(readConnectorCatalogSource({ KEPCUP_CONNECTORS: dir }, logger).entries).toEqual([]);
-    expect(warnings.length).toBe(3);
-    // valid
-    mkdirSync(path.join(dir, 'icons'));
-    writeFileSync(
-      path.join(dir, 'icons', 'alpha.svg'),
-      '<svg xmlns="http://www.w3.org/2000/svg"/>',
-    );
-    writeFileSync(
-      path.join(dir, 'catalog.json'),
-      JSON.stringify({ version: 1, connectors: [sample('alpha')] }),
-    );
-    const catalog = new ConnectorCatalog({ env: { KEPCUP_CONNECTORS: dir }, approvedGates: null });
-    expect(catalog.list()).toHaveLength(1);
-    expect(catalog.iconSvg('alpha')).toContain('<svg');
+    expect(
+      new BuiltinPlugins({ env: { KEPCUP_BUILTIN_PLUGINS: broken }, logger }).connectorSource()
+        .entries,
+    ).toEqual([]);
+    expect(warnings.length).toBe(1);
+
+    // 正常注入：条目 + 每条目同目录图标经 iconPaths 供 iconSvg 读取。
+    const source = shippedSource();
+    const catalog = new ConnectorCatalog({ source, approvedGates: null });
+    // 条目顺序 = plugin.json 顺序；hidden（gcalendar/gdrive）任何构建都不放出。
+    const visibleSlugs = source.entries
+      .map((entry) => connectorMetaOf(connectorCatalogEntrySchema.parse(entry)))
+      .filter((meta) => meta.hidden !== true)
+      .map((meta) => meta.slug);
+    expect(catalog.list().map((entry) => connectorMetaOf(entry).slug)).toEqual(visibleSlugs);
+    expect(visibleSlugs).not.toContain('gcalendar');
+    expect(catalog.iconSvg('notion')).toContain('<svg');
     expect(catalog.iconSvg('missing')).toBeNull();
   });
 
   it('serves the shipped icons as svg text', () => {
-    const catalog = new ConnectorCatalog({ env: {}, approvedGates: null });
+    const catalog = new ConnectorCatalog({ source: shippedSource(), approvedGates: null });
     for (const entry of catalog.list()) {
       expect(catalog.iconSvg(connectorMetaOf(entry).slug)).toMatch(/^<svg /);
     }

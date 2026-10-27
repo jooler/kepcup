@@ -107,7 +107,7 @@
 | 对话内设置 | `setupRequirementSchema`：`main-model` / `capability-model` / `web-search`；`SETUP_REQUIRED` → run 改判 failed → 卡片完成后 `runs.retry`（**新 run**） | 无 `connect-app`；run 开头 `listTools` 失败的 server 被静默跳过（`mcp/tools.ts`），过期连接到不了卡片（§5.6） |
 | Electron | 主窗口禁止 `window.open` 与导航；`shell.openExternal` 仅用于 macOS 隐私设置；无自定义协议 / deep link | 需一个经校验的「用系统浏览器打开 URL」平台方法 |
 | 外部智能体 | 宿主 MCP 桥（127.0.0.1 随机端口、会话级 token、Host/Origin 校验）；能力包 `mcp`（`follow_bot`，前缀 `mcp_`） | 新增能力包 `apps` |
-| 目录模式 | ACP 智能体目录：随应用打包的锁版本 TS 数组 + 发行门禁 + 导入脚本 + Provider 契约测试；预置技能 `catalog.json` | 连接器目录可沿用同一模式起步 |
+| 目录模式 | ACP 智能体目录：随应用打包的锁版本 TS 数组 + 发行门禁 + 导入脚本 + Provider 契约测试；预置技能目录（D104 起为内置插件清单） | 连接器目录可沿用同一模式起步 |
 
 ## 3 总体架构
 
@@ -173,7 +173,7 @@ Connector 清单 = MCP Registry `server.json` + `_meta["app.kepcup/connector"]` 
 }
 ```
 
-- **本期来源**：随应用打包 `apps/desktop/resources/connectors/catalog.json`（锁版本 + `releaseGate`，与智能体目录同一模式）；附脚本从 MCP Registry 导入骨架后人工补扩展字段。
+- **本期来源**：随应用打包的连接应用条目（锁版本 + `releaseGate`，与智能体目录同一模式；D104 P0b 起为内置插件 `apps/desktop/resources/plugins/com.kepcup/connections/connectors/<slug>/server.json`）；附脚本从 MCP Registry 导入骨架后人工补扩展字段。
 - `toolPolicy` 只能把风险**调高**，不能把服务端声明为写的工具降为只读（防止目录错误放宽）。
 - `api-key` 类（少数只提供 API key 的服务）沿用现有 header 密钥机制，界面上同样呈现为「连接」。
 
@@ -467,7 +467,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 - 污点：`app_taint(bot_id, conversation_id, first_at, expires_at)`；审批 kind 新增 `egress`（P2，重建 `approvals` CHECK）。
 - 密钥：§5.3 命名（`conn:{id}:access|refresh`、`oauth:client:{issuerHash}:id|secret`）；「本对话内一直允许」与「对该 Bot 总是允许」都存 `app_tool_grants`（现有 `grants` 表按路径设计，不复用）。
 - Bot：`runtime.app_connection_ids`（Profile JSON）。
-- 目录：打包 `resources/connectors/catalog.json`（P3 起叠加 `~/.kepcup/cache/directory/` 的签名索引缓存）。
+- 目录：随应用打包的内置插件条目（D104 P0b；P3 起叠加 `~/.kepcup/cache/directory/` 的签名索引缓存）。
 - `settings.mcpServers` 保留为「自定义」来源；`mcpServerSchema` 新增字段 `auth: 'none' | 'headers' | 'oauth'`（`.catch` 缺省按现有 headers 推断，无需迁移数据；`oauth` 仅允许 `transport='http'`），OAuth 的自定义 server 同样建 `app_connections` 行（`connector_id = custom:{serverId}`）以复用令牌与状态；所有 server 的工具锁定共用 `app_connection_tools`（无 OAuth 的自定义 server 以 `custom:{serverId}` 建一行占位连接）。顺带修复删除 server 不清理 `mcp:{id}:*` 密钥的遗留问题。
 - RPC：`apps.catalog.list`、`apps.connect`（返回 flowId，结果经事件）、`apps.connect.continue`（自定义 / developer 授权端点经用户核对后继续）、`apps.connect.confirmTools`（首连工具复核）、`apps.connect.cancel`、`apps.setClientCredentials`（按 flowId 手填客户端）、`mcp.removeServer`（显式删除自定义 server 并清理密钥与令牌）、`apps.connections.list`、`apps.connections.update`（标签、停用、策略）、`apps.connections.reviewTools`、`apps.disconnect`；事件 `apps.connection_status`、`apps.connect_flow`。平台方法 `shell.openExternal`。`setupRequirementSchema` 增 `{kind:'connect-app', target: {kind:'custom', serverId} | {kind:'catalog', connectorId}, connectionId?, scopes?, reason: 'not_connected'|'expired'|'scope'}`；`HOST_CAPABILITIES` 增 `apps`。
 
@@ -551,9 +551,9 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | 分组 | 内容 | 数据来源 |
 | ---- | ---- | ---- |
 | **已安装**（插件） | 插件的装 / 卸 / 启停与内容总览，见设计 [51](51-plugin-system.md) | `plugins.*` RPC |
-| **Skills** | 原技能市场内容原样迁入，行为不变 | `preset-skills/catalog.json`，RPC `skills.presets.*` |
-| **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（`connectors/catalog.json` + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
-| **MCP** | 自定义 MCP 的完整管理（新建 stdio / HTTP / SSE、启停 / 状态 / 逐工具策略 / 编辑 / 删除、BYO OAuth 客户端、原始工具定义 / 授权日志）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
+| **Skills** | 原技能市场内容原样迁入，行为不变 | 预置技能（D104 P0b 起为内置插件 `com.kepcup/starter-skills` 的技能贡献），RPC `skills.presets.*` |
+| **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（内置插件 `com.kepcup/connections` 条目 + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
+| **MCP** | 自定义 MCP 的完整管理（新建 stdio / HTTP / SSE、启停 / 状态 / 逐工具策略 / 编辑 / 删除、BYO OAuth 客户端、原始工具定义 / 授权日志）+ MCPB 本地包安装 | `settings.mcpServers`、`mcpb.*`；精选清单空壳已随 D104 删除（市场插件将承担预置） |
 | **邮件** | IMAP/SMTP 本机邮件通道（非 MCP）：添加账号、绑定 Bot、IDLE/轮询状态（见 [35-mail-channel.md](35-mail-channel.md)，D84） | `mail.*` RPC / `mail_accounts` |
 
 组件复用：「连接」组 = 设置「应用」原「目录」网格（`AppCatalogGrid`）+ `AppConnectionsList` / `AppConnectionDetail`（多账号时先列账号，单账号直接进详情）；「MCP」组 = `McpSection` 的 `full` 形态（含 `McpbInstall`、`OAuthClientsPanel`、`McpDevTools`；2026-10-15 前是 `manage` 形态）。代码在 `renderer/.../features/extension-center/`。
@@ -576,7 +576,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 16.4 决定 C：「MCP」组首期范围
 
-首期 = 已安装 MCP 管理 + MCPB 本地包安装（复用 `McpbInstall` 与 `McpSection`）。精选清单先建**空壳**：`apps/desktop/resources/mcp-presets/catalog.json`（`{version:1, presets:[]}`）、zod schema 与加载器（`packages/core/src/mcp/presets.ts`）、单测；条目字段 `id/section/displayName/summary/icon/version/tryIt` + `install`（`mcpb` 包相对路径 + sha256 / `stdio` 命令 / `http` https 端点）。**不接 RPC、不进安装包**——第一个值得预置的无 OAuth MCP 出现时，再补 RPC、`extraResources`、core-host 环境变量与卡片渲染（见该目录 README）。需要 OAuth 的第三方应用一律走「连接」组，不进这份清单。
+首期 = 已安装 MCP 管理 + MCPB 本地包安装（复用 `McpbInstall` 与 `McpSection`）。精选清单曾建**空壳**（`mcp-presets/catalog.json` + `packages/core/src/mcp/presets.ts` 加载器，始终未接线）；该空壳已随 D104 删除——预置 MCP 的发现与分发由插件市场（设计 51）承担，需要 OAuth 的第三方应用一律走「连接」组。
 
 ### 16.5 不变量
 

@@ -1,11 +1,12 @@
 import { createServer, type Server } from 'node:http';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 import type { AddressInfo } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm } from '@kepcup/testkit';
+import { copyShippedPlugins } from './helpers/builtin-plugins';
 
 /**
  * 回归（用户实测）：目录应用（Linear）点「连接」→ 授权没走完就「取消」→ 卡片仍写着「已连接 1 个
@@ -13,8 +14,9 @@ import { startMockLlm } from '@kepcup/testkit';
  *
  * 这里用一个永远不应答的本机 MCP 端点充当「用户一直没授权」的服务器（流程停在发现 / 等待阶段），
  * 点「取消」，然后断言：卡片没有账号数 / 「管理」，没有 toast，渲染端没有对该连接发过
- * `apps.connections.tools` / `grants`。目录经 `KEPCUP_CONNECTORS` 指向临时目录（取自随包目录的
- * Notion 条目，远端地址改成本机）。真实 OAuth 授权页无法在 e2e 里走通，所以不覆盖「授权成功」。
+ * `apps.connections.tools` / `grants`。目录经 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录
+ * （copyShippedPlugins 拷随包内置插件、只保留 Notion 条目，远端地址改成本机）。真实
+ * OAuth 授权页无法在 e2e 里走通，所以不覆盖「授权成功」。
  */
 
 declare global {
@@ -52,20 +54,23 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
   await new Promise<void>((resolve) => hold.listen(0, '127.0.0.1', resolve));
   const holdUrl = `http://127.0.0.1:${(hold.address() as AddressInfo).port}/mcp`;
 
-  const shipped = path.resolve('resources/connectors');
-  const connectorsDir = path.join(home, 'connectors');
-  await mkdir(connectorsDir, { recursive: true });
-  await cp(path.join(shipped, 'icons'), path.join(connectorsDir, 'icons'), { recursive: true });
-  const full = JSON.parse(await readFile(path.join(shipped, 'catalog.json'), 'utf8')) as {
-    version: number;
-    connectors: Array<{ title: string; remotes: Array<{ url: string }> }>;
-  };
-  const notion = full.connectors.find((entry) => entry.title === 'Notion')!;
-  notion.remotes = [{ ...notion.remotes[0]!, url: holdUrl }];
-  await writeFile(
-    path.join(connectorsDir, 'catalog.json'),
-    JSON.stringify({ version: full.version, connectors: [notion] }),
+  // 拷随包内置插件、只保留 Notion 条目，再把它的远端地址改成本机永不应答端点。
+  const pluginsDir = await copyShippedPlugins(path.join(home, 'builtin-plugins'), {
+    connectorSlugs: ['notion'],
+  });
+  const serverJsonPath = path.join(
+    pluginsDir,
+    'com.kepcup',
+    'connections',
+    'connectors',
+    'notion',
+    'server.json',
   );
+  const notion = JSON.parse(await readFile(serverJsonPath, 'utf8')) as {
+    remotes: Array<{ type: string; url: string }>;
+  };
+  notion.remotes = [{ type: 'streamable-http', url: holdUrl }];
+  await writeFile(serverJsonPath, `${JSON.stringify(notion, null, 2)}\n`);
 
   let app: ElectronApplication | null = null;
   try {
@@ -80,7 +85,7 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
         KEPCUP_ONBOARDING: 'off',
         KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
         KEPCUP_MOCK_LLM_URL: llm.url,
-        KEPCUP_CONNECTORS: connectorsDir,
+        KEPCUP_BUILTIN_PLUGINS: pluginsDir,
       },
     });
     const page = await app.firstWindow();
