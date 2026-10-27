@@ -212,7 +212,7 @@ $ kepcup-server plugin install /tmp/demo-plugin --yes --json
 
 ### 验证
 
-- 定向：`node scripts/run-tests.mjs run packages/package-guard packages/app-validator packages/shared/test/unit/connector-catalog.test.ts packages/core/test/unit/plugin-pack-compat.test.ts packages/core/test/unit/plugin-package.test.ts apps/server/test` → **18 文件 / 207 例**（app-validator + package-guard + compat）+ server 63 例；全部通过（分两次跑，见下）。
+- 定向（验收命令原样）：`node scripts/run-tests.mjs run packages/package-guard packages/app-validator packages/shared/test/unit/connector-catalog.test.ts packages/core/test/unit/plugin-pack-compat.test.ts packages/core/test/unit/plugin-package.test.ts apps/server/test` → **28 文件 / 284 例全部通过**。
 - 构建：`pnpm --filter @kepcup/package-guard build`、`pnpm --filter @kepcup/app-validator build`、`pnpm --filter @kepcup/server run build` 均通过。
 - `pnpm typecheck`：shared / package-guard / core / app-validator / server / desktop（svelte-check 0 error 0 warning）/ website 全部通过。
 - 收口全量（只跑一次）：`node scripts/run-tests.mjs run --maxWorkers=8` → **657 文件 / 6950 例：6910 通过 / 3 超时 / 37 跳过**。3 例均为负载敏感超时：`apps/server/test/auth.test.ts`、`apps/server/test/session-hub.test.ts`、`packages/core/test/unit/permission-bridge.test.ts`；各自单跑全绿（auth 10/10、session-hub 8/8、permission-bridge 29/29），失败集合不超出既有负载敏感基线。
