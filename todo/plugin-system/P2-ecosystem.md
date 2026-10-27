@@ -208,7 +208,7 @@ $ kepcup-server plugin install /tmp/demo-plugin --yes --json
 {"plugin":{"id":"io.github.test/demo",…,"state":"installed","counts":{"skills":1,…}}}  # 摘要写 stderr
 ```
 
-桌面「从本地安装…」没有起 GUI 手工点：`plugin-pack-compat.test.ts` 证明 pack 产物被真实 `PluginPackager.stage({ kind: 'file' })` 接受并保留贡献树，`plugins.test.ts` 的完整安装 / 投影链路已覆盖其后的 inspect → install → 技能 / MCP / 连接器投影；桌面 UI 的文件选择与同意卡在 P0a-3 的 e2e 已覆盖。
+桌面「从本地安装…」没有起 GUI 手工点，改用真实 core（`createCoreServices` + 临时 home + memory keystore）对 `/tmp/demo.kepcup` 执行桌面安装走的同一条 core 路径：`plugins.inspect` → `installable=true`、sha256 `5c67…fcc1`；`plugins.install` → `io.github.test/demo installed`，`counts.skills=1`。另有 `plugin-pack-compat.test.ts` 证明 pack 产物被真实 `PluginPackager.stage({ kind: 'file' })` 接受并保留贡献树；桌面 UI 的文件选择与同意卡在 P0a-3 的 e2e 已覆盖。
 
 ### 验证
 
