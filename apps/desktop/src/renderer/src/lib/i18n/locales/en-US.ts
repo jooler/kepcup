@@ -1560,6 +1560,7 @@ export const enUS = {
   'plugins.kind.connector': 'Connected apps',
   'plugins.kind.mail': 'Mail templates',
   'plugins.countItem': '{kind} {count}',
+  'plugins.configEntry': 'Manage {kind} ({count})',
   'plugins.toggleLabel': 'Enable or disable this plugin',
   'plugins.uninstall': 'Uninstall',
   'plugins.reveal': 'Show in folder',

@@ -205,8 +205,8 @@
     }
   }
 
-  /** 内容明细里每一类的「前往」目标：切到已安装列表的对应筛选（mail 没有对应管理区）。 */
-  function goToFilter(kind: 'skill' | 'connector' | 'mcp'): void {
+  /** 卡片上的配置入口：切到已安装列表的对应筛选（四类都有内嵌管理区）。 */
+  function goToFilter(kind: 'skill' | 'connector' | 'mcp' | 'mail'): void {
     shell.extensionCenterFilter = kind;
   }
 </script>
@@ -314,14 +314,6 @@
           >
             {t(`plugins.tier.${plugin.tier}`)}
           </Badge>
-          {#each nonZeroCounts(plugin) as entry (`${entry.kind}:${entry.count}`)}
-            <span class="text-xs text-muted-foreground">
-              {t('plugins.countItem', {
-                kind: t(KIND_LABEL_KEYS[entry.kind as keyof typeof KIND_LABEL_KEYS]),
-                count: entry.count,
-              })}
-            </span>
-          {/each}
           {#if plugin.updateAvailable !== null}
             <Badge variant="outline" data-testid={`plugins-update-badge-${plugin.id}`}>
               {t('plugins.update.available', { version: plugin.updateAvailable.version })}
@@ -395,56 +387,79 @@
           </p>
         {/if}
 
-        <div class="mt-1.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            class="h-6 px-2 text-xs text-muted-foreground"
-            onclick={() => toggleDetails(plugin.id)}
-            data-testid={`plugins-details-${plugin.id}`}
+        {#if nonZeroCounts(plugin).length > 0}
+          <div
+            class="mt-1.5 flex flex-wrap items-center gap-1.5"
+            data-testid={`plugins-config-${plugin.id}`}
           >
-            {expanded.has(plugin.id) ? t('plugins.hideDetails') : t('plugins.details')}
-          </Button>
-          {#if expanded.has(plugin.id)}
-            <div class="mt-1.5 grid gap-2 border-t pt-1.5">
-              {#each DETAIL_KINDS as kind (kind)}
-                {@const items = plugin.items.filter((item) => item.kind === kind)}
-                {#if items.length > 0}
-                  <div class="grid gap-0.5">
-                    <div class="flex items-center gap-2">
-                      <Label class="text-xs text-muted-foreground"
-                        >{t(`plugins.kind.${kind}`)}</Label
-                      >
-                      {#if kind !== 'mail'}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          class="h-6 px-2 text-xs"
-                          onclick={() => goToFilter(kind)}
+            {#each nonZeroCounts(plugin) as entry (`${entry.kind}:${entry.count}`)}
+              <button
+                type="button"
+                class="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+                onclick={() => goToFilter(entry.kind as 'skill' | 'connector' | 'mcp' | 'mail')}
+                data-testid={`plugins-config-${entry.kind}-${plugin.id}`}
+              >
+                {t('plugins.configEntry', {
+                  kind: t(KIND_LABEL_KEYS[entry.kind as keyof typeof KIND_LABEL_KEYS]),
+                  count: entry.count,
+                })}
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        {#if plugin.items.length > 0}
+          <div class="mt-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              class="h-6 px-2 text-xs text-muted-foreground"
+              onclick={() => toggleDetails(plugin.id)}
+              data-testid={`plugins-details-${plugin.id}`}
+            >
+              {expanded.has(plugin.id) ? t('plugins.hideDetails') : t('plugins.details')}
+            </Button>
+            {#if expanded.has(plugin.id)}
+              <div class="mt-1.5 grid gap-2 border-t pt-1.5">
+                {#each DETAIL_KINDS as kind (kind)}
+                  {@const items = plugin.items.filter((item) => item.kind === kind)}
+                  {#if items.length > 0}
+                    <div class="grid gap-0.5">
+                      <div class="flex items-center gap-2">
+                        <Label class="text-xs text-muted-foreground"
+                          >{t(`plugins.kind.${kind}`)}</Label
                         >
-                          {t('plugins.goTo')}
-                        </Button>
-                      {/if}
-                    </div>
-                    {#each items as item (`${item.kind}:${item.ref}`)}
-                      <div class="flex flex-wrap items-center gap-1.5 text-xs">
-                        <span>{kind === 'mcp' ? mcpLabel(item.ref) : item.ref}</span>
-                        {#if item.missing === true}
-                          <Badge variant="outline" class="text-destructive">
-                            {t('plugins.itemMissing')}
-                          </Badge>
-                        {/if}
-                        {#if item.yielded === true}
-                          <Badge variant="outline">{t('plugins.itemYielded')}</Badge>
+                        {#if kind !== 'mail'}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            class="h-6 px-2 text-xs"
+                            onclick={() => goToFilter(kind)}
+                          >
+                            {t('plugins.goTo')}
+                          </Button>
                         {/if}
                       </div>
-                    {/each}
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
-        </div>
+                      {#each items as item (`${item.kind}:${item.ref}`)}
+                        <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                          <span>{kind === 'mcp' ? mcpLabel(item.ref) : item.ref}</span>
+                          {#if item.missing === true}
+                            <Badge variant="outline" class="text-destructive">
+                              {t('plugins.itemMissing')}
+                            </Badge>
+                          {/if}
+                          {#if item.yielded === true}
+                            <Badge variant="outline">{t('plugins.itemYielded')}</Badge>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/each}
   </div>
