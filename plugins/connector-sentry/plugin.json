@@ -9,9 +9,6 @@
     "url": "https://kepcup.com"
   },
   "homepage": "https://sentry.io",
-  "engines": {
-    "kepcup": ">=0.4.0"
-  },
   "contributions": {
     "connectors": [
       {
