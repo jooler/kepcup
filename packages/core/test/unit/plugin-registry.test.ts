@@ -501,6 +501,8 @@ describe('PluginRegistry', () => {
       packageSha256: 'c'.repeat(64),
       marketplace: null,
       dir: 'io.github.tester/crash@2.0.0',
+      updateTo: null,
+      updateSnapshot: null,
       installedAt: 1,
       updatedAt: 1,
     });
@@ -526,6 +528,8 @@ describe('PluginRegistry', () => {
       packageSha256: 'd'.repeat(64),
       marketplace: null,
       dir: 'io.github.tester/mid@1.0.0',
+      updateTo: null,
+      updateSnapshot: null,
       installedAt: 2,
       updatedAt: 2,
     });

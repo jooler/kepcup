@@ -459,6 +459,8 @@ export class PluginRegistry {
         packageSha256: staged.packageSha256,
         marketplace: resolved.marketplace?.endpointId ?? null,
         dir: path.relative(this.#deps.pluginsDir, finalDir),
+        updateTo: null,
+        updateSnapshot: null,
         installedAt: now,
         updatedAt: now,
       });
