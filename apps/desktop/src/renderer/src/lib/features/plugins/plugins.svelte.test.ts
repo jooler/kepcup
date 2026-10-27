@@ -194,6 +194,12 @@ describe('plugins store', () => {
         tier: 'verified',
         updateAvailable: { version: '1.1.0' },
       },
+      {
+        ...summary('io.github.a/optionalconfig', 'Opt'),
+        origin: 'marketplace',
+        tier: 'verified',
+        updateAvailable: { version: '1.1.0' },
+      },
     ];
     inspections = {
       'io.github.a/plain': {
@@ -220,10 +226,23 @@ describe('plugins store', () => {
           },
         ],
       },
+      // 只有可选字段也跳过：非敏感值不保留，全部更新会把用户改过的值换回默认。
+      'io.github.a/optionalconfig': {
+        id: 'io.github.a/optionalconfig',
+        installable: true,
+        update: { from: '1.0.0', permissionsExpanded: false, added: [] },
+        mcp: [
+          {
+            kind: 'mcpb',
+            id: 'proxy',
+            userConfigFields: [{ key: 'base_url', required: false, sensitive: false }],
+          },
+        ],
+      },
     };
     await plugins.load(true);
     const result = await plugins.updateAll();
-    expect(result).toEqual({ done: 1, skipped: 2 });
+    expect(result).toEqual({ done: 1, skipped: 3 });
     expect(calls.filter((entry) => entry.method === 'plugins.update')).toEqual([
       {
         method: 'plugins.update',

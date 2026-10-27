@@ -24,6 +24,8 @@ const REQUESTS_PER_CONVERSATION_HOURLY_MAX = 20;
 const HOUR_MS = 3_600_000;
 /** run 计数的裁剪上限（只保留最近的若干 run）。 */
 const RUN_COUNT_LIMIT = 200;
+/** 对话限频表的键上限（超过时清掉一小时前的旧键）。 */
+const CONVERSATION_KEY_LIMIT = 500;
 /** 搜索结果的条数上限。 */
 const SEARCH_HITS_MAX = 10;
 /** 搜索时给模型看的描述长度（超出的截断）。 */
@@ -90,8 +92,8 @@ export class PluginInstallRequests {
       hits.push({
         id: entry.id,
         version: entry.version,
-        name: entry.summary.name,
-        description: truncate(entry.summary.description, SEARCH_DESCRIPTION_MAX),
+        name: sanitizeDisplayText(entry.summary.name, 100),
+        description: sanitizeDisplayText(entry.summary.description, SEARCH_DESCRIPTION_MAX),
         categories: [...entry.categories],
       });
     }
@@ -118,11 +120,20 @@ export class PluginInstallRequests {
     }
     const appVersion = this.#deps.appVersion;
     const platform = this.#deps.platform ?? process.platform;
-    const entry = sync.find(input.pluginId, {
-      ...(input.version !== undefined ? { version: input.version } : {}),
-      appVersion,
-      platform,
-    });
+    // 无 version 时优先从与 search 相同的 verified 候选集里取，避免 search 展示旧版本、
+    // request 却按「最高版本」解析到更新的 community / 撤销版本；候选集为空时再回落到
+    // 普通 find，让下面按固定文案报出 community / 撤销 / 不兼容，而不是笼统的「没有」。
+    const preferred =
+      input.version === undefined
+        ? this.#verifiedEntries(sync).find((item) => item.id === input.pluginId)
+        : undefined;
+    const entry =
+      preferred ??
+      sync.find(input.pluginId, {
+        ...(input.version !== undefined ? { version: input.version } : {}),
+        appVersion,
+        platform,
+      });
     if (entry === null) {
       return { ok: false, message: '官方市场里没有这个插件。' };
     }
@@ -188,6 +199,8 @@ export class PluginInstallRequests {
       if (used >= REQUESTS_PER_RUN_MAX) {
         return '本次执行已经请求过插件安装，不要再重复请求。';
       }
+      // 先删后插：在用的 run 永远排到队尾，不会被「最近 200 个 run」的裁剪误删。
+      this.#runCounts.delete(context.runId);
       this.#runCounts.set(context.runId, used + 1);
       while (this.#runCounts.size > RUN_COUNT_LIMIT) {
         const oldest = this.#runCounts.keys().next().value as string | undefined;
@@ -196,6 +209,12 @@ export class PluginInstallRequests {
       }
     }
     if (context.conversationId !== null) {
+      if (this.#conversationHits.size > CONVERSATION_KEY_LIMIT) {
+        for (const [id, times] of this.#conversationHits) {
+          const last = times[times.length - 1] ?? 0;
+          if (now - last >= HOUR_MS) this.#conversationHits.delete(id);
+        }
+      }
       const hits = (this.#conversationHits.get(context.conversationId) ?? []).filter(
         (at) => now - at < HOUR_MS,
       );
@@ -207,8 +226,4 @@ export class PluginInstallRequests {
     }
     return null;
   }
-}
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }

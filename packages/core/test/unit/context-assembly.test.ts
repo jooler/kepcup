@@ -641,7 +641,9 @@ describe('message reply annotation', () => {
       makeMessage({ id: 'msg_c', seq: 4, replyTo: 'msg_img', content: { text: '图里是什么？' } }),
       optionsWithResolver,
     );
-    expect(line).toContain('（回复 msg_img [用户]：<untrusted>（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+    expect(line).toContain(
+      '（回复 msg_img [用户]：<untrusted>（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）',
+    );
   });
 
   it('combines quoted text and attachment entries in one annotation', () => {
@@ -655,7 +657,9 @@ describe('message reply annotation', () => {
       makeMessage({ id: 'msg_c2', seq: 4, replyTo: 'msg_mixed', content: { text: 'hi' } }),
       { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_mixed' ? mixed : null) },
     );
-    expect(line).toContain('（回复 msg_mixed [用户]：<untrusted>看这张（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+    expect(line).toContain(
+      '（回复 msg_mixed [用户]：<untrusted>看这张（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）',
+    );
   });
 
   it('keeps the workbench/butler origin qualification when quoting such a message', () => {
@@ -663,11 +667,18 @@ describe('message reply annotation', () => {
     const butlerDrafted = makeMessage({
       id: 'msg_butler',
       seq: 2,
-      content: { text: '把周报发出去', origin: 'workbench', butlerDrafted: true } as Message['content'],
+      content: {
+        text: '把周报发出去',
+        origin: 'workbench',
+        butlerDrafted: true,
+      } as Message['content'],
     });
     const line = renderMessageLine(
       makeMessage({ id: 'msg_b2', seq: 4, replyTo: 'msg_butler', content: { text: '好' } }),
-      { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_butler' ? butlerDrafted : null) },
+      {
+        ...renderOptions,
+        resolveReplyTarget: (id) => (id === 'msg_butler' ? butlerDrafted : null),
+      },
     );
     expect(line).toContain('（回复 msg_butler [用户（经工作台派发；事项由管家起草');
     expect(line).toContain('<untrusted>把周报发出去</untrusted>');
@@ -727,7 +738,7 @@ describe('message reply annotation', () => {
     expect(line).not.toContain('秘密');
   });
 
-  it('never renders another bot\'s private quoted row (ownerBotId visibility)', () => {
+  it("never renders another bot's private quoted row (ownerBotId visibility)", () => {
     const options: RenderMessageOptions = {
       ...renderOptions,
       resolveReplyTarget: (id) =>

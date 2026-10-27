@@ -4,14 +4,17 @@ import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { PluginInspectOutput, PluginSummary } from '@kepcup/shared';
 import { withRemoteSource } from '@kepcup/core';
-import { buildPluginFixture, createTestStack, makeBot, type TestStack } from '@kepcup/testkit';
-import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
-import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
 import {
+  buildPluginFixture,
   buildPluginIndex,
+  createTestStack,
+  makeBot,
   makeMarketKey,
   pluginIndexEntryFor,
-} from '../support/plugin-market-fixture.js';
+  type TestStack,
+} from '@kepcup/testkit';
+import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
+import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
 
 /**
  * 插件市场集成（D104 P1-1 步骤 4）：签名索引同步 → `plugins.marketplace.list / refresh` →

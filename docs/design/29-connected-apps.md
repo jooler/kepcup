@@ -546,10 +546,11 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 16.1 信息架构
 
-入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。页签（WAI-ARIA tabs；D104 起六组）：
+入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。页签（WAI-ARIA tabs；D104 P1 起七组）：
 
 | 分组 | 内容 | 数据来源 |
 | ---- | ---- | ---- |
+| **市场** | 官方插件市场：认证 / 社区分组浏览、搜索与类别筛选、从市场安装 / 更新；市场未启用时只显示状态横幅（见 [51-plugin-system.md](51-plugin-system.md) §6、§9） | `plugins.marketplace.*` RPC（签名索引同步） |
 | **已安装**（插件） | 插件的装 / 卸 / 启停与内容总览，见设计 [51](51-plugin-system.md) | `plugins.*` RPC |
 | **Skills** | 原技能市场内容原样迁入，行为不变 | 预置技能（D104 P0b 起为内置插件 `com.kepcup/starter-skills` 的技能贡献），RPC `skills.presets.*` |
 | **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（内置插件 `com.kepcup/connections` 条目 + 发行门禁；发行构建只含放行条目，开发构建全部可见） |

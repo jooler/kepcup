@@ -2297,7 +2297,10 @@ export const rpcMethodSchemas = {
   'widgets.ui.close': { input: widgetsUiCloseInputSchema, output: okOutput },
   'widgets.ui.source': { input: widgetsUiSourceInputSchema, output: widgetsUiSourceOutputSchema },
   'widgets.ui.poster': { input: widgetsUiPosterInputSchema, output: widgetsUiPosterOutputSchema },
-  'widgets.ui.storage': { input: widgetsUiStorageInputSchema, output: widgetsUiStorageOutputSchema },
+  'widgets.ui.storage': {
+    input: widgetsUiStorageInputSchema,
+    output: widgetsUiStorageOutputSchema,
+  },
   'widgets.ui.openLink': {
     input: widgetsUiOpenLinkInputSchema,
     output: widgetsUiOpenLinkOutputSchema,

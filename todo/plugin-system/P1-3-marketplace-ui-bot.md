@@ -235,36 +235,55 @@ export function buildPluginTools(input: { identity: RunIdentity; facade: PluginT
 
 ## 6. 实施记录
 
-### 进度（2026-10-27，未完成——交接给下一位执行智能体）
+### 完成（2026-10-27）
 
-本阶段在**步骤 6（e2e / 文档 / 收口）之前**中断，已完成步骤 1–5 与既有 e2e 的页签断言同步。
-**尚未完成**：新增 `plugins-market.spec.ts`、步骤 6.2 的四份文档更新、全量 `pnpm test` + e2e 收口、独立审查。
+P1-3 六个步骤全部完成，并经一轮独立审查 + 聚焦复核。收口改动在当前分支工作树（见文末「收口改动」），阶段末提交由人工确认后执行。
 
-**已完成（提交清单）**
+**提交清单（已完成部分）**
 
 | 提交 | 内容 |
 |---|---|
-| `84145246` | 步骤 1：`mailProviderTemplateSchema` + `mail.providerTemplates.list`；`PluginRegistry.mailTemplates()`；`KEPCUP_TEST_PLUGIN_MARKET` 测试缝（`testLoopbackHosts` 同时放行索引 fetch 与包下载；仅测试构建生效） |
+| `84145246` | 步骤 1：`mailProviderTemplateSchema` + `mail.providerTemplates.list`；`PluginRegistry.mailTemplates()`；`KEPCUP_TEST_PLUGIN_MARKET` 测试缝（`testLoopbackHosts` 同时放行索引 fetch 与包下载；仅测试钩子构建读取） |
 | `929083b2` | 步骤 2：`confirm-plugin-install` 设置需求（strict）；`PluginInstallRequests`（官方市场 only、`verified` only、限频先于校验、固定文案、名称 / 理由清洗）；`plugin_search` / `plugin_request_install`（turn + task，子代理结构性无此能力）；系统提示规则与 D63 阶梯（仅 `hasPluginTools`）；`docs/dev/04-agent-runtime.md` 两行 |
 | `b6e9f284` | 步骤 3–5：`market` 页签（最前）+ 覆盖率排除项 + `PENDING_DESKTOP_ANCHORS` 清空；store 的市场视图 / `refreshMarket` / `updateAll` / `marketplace.updated` 订阅；`ExtensionMarket.svelte`；`ExtensionInstalled` 的更新徽标 / 检查更新 / 全部更新 / 撤销提示 / 重新安装 / 两个设置锚点；`PluginInstallDialog` 的 `marketplace` 模式与 `plugins.update` 路径；`ConfirmPluginInstallBody`；`MailAccountAddForm` 的模板预填（`tpl:` 前缀）；i18n 两语言 |
 | `69f152a8` | 既有 e2e 的页签断言同步（`extension-center.spec.ts`、`plugins.spec.ts`：7 个页签、market 最前、键盘循环） |
 
-**已验证**（真实执行）
-- `pnpm --filter @kepcup/shared run build`、`@kepcup/core typecheck`、`@kepcup/desktop typecheck`（svelte-check 0 errors）均通过。
-- 定向单测：`packages/shared/test/unit/plugin-setup.test.ts`（6）、`plugin-install-requests.test.ts`（11）、`plugin-tools.test.ts`（5）、`context-assembly.test.ts`（35）、`integration/plugins-bot.test.ts`（3）、`integration/plugins.test.ts` + `plugin-registry.test.ts`（38）、`tool-effects` / `settings-catalog-host` / `app-prompt-capabilities`（103）、渲染层 `plugins` / `extension-center` / `mail` / `i18n` + `settings-catalog.test.ts`（72）——全绿。
-- 阶段文件 prettier / eslint 干净（注意：**不要用 `prettier --write` 扫整个 features 目录**，会误改大量无关文件；只对本次改动的文件跑）。
+**收口改动（本轮工作树，未提交）**
+
+- **步骤 6.1 e2e**：新增 `apps/desktop/test/e2e/plugins-market.spec.ts`（6 例）。本地 `startFileServer` 托管用测试密钥签名的 `index.json` / `.sig` 与 `.kepcup`，`KEPCUP_TEST_PLUGIN_MARKET` 指过去；覆盖未配置市场（no_keys、无卡片、无空态）、认证 / 社区分组与搜索 / 类别筛选、从市场安装（无 developer 警示、市场卡变已安装）、检查更新 → 权限扩大（新增技能 + 新增主机）→ 勾选差异 → 更新到 1.1.0、撤销（提示 + 自动停用 + 开关关）、自建市场缺公钥（no_custom_key）以及「清空自建地址 → 官方市场重新可用」。
+- **测试夹具上移**：`buildPluginIndex` / `pluginIndexEntryFor` / `makeMarketKey` / `memoryMarketFetch` / `PluginMarketKey` 从 `packages/core/test/support/plugin-market-fixture.ts` 搬到 `packages/testkit/src/plugin-market-fixture.ts`（e2e 不能引 core test support）；六个 core 测试改从 `@kepcup/testkit` 引。`makeMarketKey` 的原始公钥字节与 `memoryMarketFetch` 的 ETag / 304 行为逐字保留；`pluginIndexEntryFor` 的 `summary` 仍是「缺省字段不写入」的旧形状（schema 解析后等价）。
+- **市场同步测试缝**：`MarketplaceSync.#parseEntry` 在 `testLoopbackHosts` 命中且 `downloadUrl` 是回环 `http:` 时，用占位 https URL 过共享 schema 再换回原地址（DEV-057）；`#downloadUrlAllowed` 同时要求 `http:` 协议。仅测试钩子构建会注入白名单。
+- **UI 修复**：`ExtensionMarket` 每次挂载强制 `loadMarket(true)`（设置页切换市场端点后返回市场不会停在旧 status / 空列表）；新增市场专用 `marketError` 横幅与刷新失败 toast；`PluginInstallDialog` 的 `updating` 在 `info === null` 时不再误判为更新。
+- **`updateAll` 收紧**：任何带 `user_config` 字段的 MCPB 都计入「需逐个确认」（不只必填）——更新的非敏感可选字段不会保留，直接更新会把用户改过的值静默换回默认。
+- **Bot 工具加固**：`plugin_search` 的名称 / 描述经 `sanitizeDisplayText`；无 `version` 的 `request` 优先取与 `search` 相同的 verified 候选（找不到时回落到普通 `find`，保留 community / 撤销 / 不兼容的固定文案）；`platform` 从 `CoreServicesOptions` 透传；限频 Map 按使用刷新并在超限时清理过期对话键；搜索输出按 UTF-16 预算计算 `<untrusted>` 包裹开销（截断不劈开代理对）。
+- **P1-1 回归修复**：`DirectorySync.revision()` 改为单调递增（内层 revision 变化或开关翻转都 +1）。此前「关闭 → 重新打开」后首次读取会因 revision 回退到关闭前的数而误判「没变化」，目录保持空列表（`connected-apps-p3-tier-directory.test.ts` 实测）。
+- **文档**：设计 29 §16.1 加「市场」行；设计 22 D63 阶梯加插件市场一句；设计 35 加邮件模板一句；`docs/dev/PROGRESS.md` 加「插件系统 P1（D104）」行；`docs/dev/DEVIATIONS.md` 新增 DEV-056 / DEV-057。
+
+**验证（真实执行）**
+
+- 全量：`node scripts/run-tests.mjs run --maxWorkers=8` → **6844 通过 / 0 失败 / 37 跳过**（649 文件，2 skipped）。默认并发下 `user-avatar` 与 `watch` 两个既有负载敏感用例偶发超时；单跑分别通过（`user-avatar` 2/2、`watch` 13/13、`permission-bridge` 42 例批内全绿）。
+- 构建：`pnpm build` 通过；`pnpm --filter @kepcup/desktop test:e2e plugins-market + plugins + extension-center + narrow-layout` → **19 例全绿**（6 + 9 + 2 + 2）。
+- 类型检查：`pnpm --filter @kepcup/core typecheck`、`pnpm --filter @kepcup/desktop typecheck`（svelte-check 0 errors / 0 warnings）。
+- 格式与 lint：对本阶段全部改动文件（`git diff --name-only c38c3308` + untracked，排除 `.sql`）跑 `prettier --check` 与 `eslint`，均干净。
+- 定向：`plugin-install-requests`（13）、`plugin-tools`（6）、`marketplace-sync`（16）、`directory-sync`（28）、`context-assembly`（35）、`tool-effects`（34）、`plugins-bot`（3）、`connected-apps-p3-tier-directory`（4）、渲染端 `plugins` / `plugin-install` / `tabs`（19）全绿。
 
 **自行判断点**
-- `confirm-plugin-install` 用 `z.strictObject`（同块其它成员是普通 `z.object`）：需求由宿主生成、跨进程传递，多余字段是缺陷；shared 单测按任务书的「拒绝多余字段」断言。
-- `sanitizeDisplayText` **不剥离尖括号**（全仓共用助手只处理控制 / 零宽 / 空白）——任务书步骤 2.5 写的「尖括号被去掉」与实现不符；卡片按纯文本渲染，尖括号无害，测试按真实行为断言。**未登记 DEV**（属于任务书描述误差，下一位可在 DEVIATIONS 补一条或直接接受）。
-- `updateAll` 的「需逐个确认」判定：`installable === false`、`update.permissionsExpanded === true`、或任一 mcpb 有必填字段 → skip。
-- `PluginInstallRequests` 的 search 在上限内按 id 去重取最高兼容版本。
 
-**尚未完成（按任务书顺序，建议照做）**
+- `confirm-plugin-install` 用 `z.strictObject`（同块其它成员是普通 `z.object`）：需求由宿主生成、跨进程传递，多余字段是缺陷；shared 单测按「拒绝多余字段」断言。
+- `sanitizeDisplayText` **不剥离尖括号**（全仓共用助手只处理控制 / 双向 / 零宽 / 空白）——任务书步骤 2.5 写的「尖括号被去掉」与实现不符；卡片按纯文本渲染，尖括号无注入风险，测试按真实行为断言（DEV-056）。
+- `updateAll` 的「需逐个确认」判定：`installable === false`、`update.permissionsExpanded === true`、或任一 MCPB 有**任何** `user_config` 字段（含仅可选字段）→ skip。
+- `PluginInstallRequests.search` 在上限内按 id 去重取最高兼容版本；无 version 的 `request` 复用同一 verified 候选集。
+- **Bot 确认卡 e2e 用 core 集成测试替代**（任务书 §6.1 允许）：`packages/core/test/integration/plugins-bot.test.ts` 覆盖「plugin_search → plugin_request_install → setup 失败 → 用户安装 → retry 续跑」全流程；未再为 `ConfirmPluginInstallBody` 增加组件级测试。
+- **市场测试缝的 schema 例外**：共享 `pluginIndexEntrySchema` 保持 https-only；只有测试构建注入 `testLoopbackHosts` 时才接受回环 http 条目（DEV-057）。
+- **`__KEPCUP_TEST_PLUGIN_MARKET` 只在测试钩子构建 + `NODE_ENV=test` 读取**；打包构建被 define 折叠，普通构建市场公钥为空 = `no_keys`。
 
-1. **步骤 6.1 e2e**：新增 `apps/desktop/test/e2e/plugins-market.spec.ts`（本地 HTTP 服务托管用测试密钥签的 `index.json` / `.sig` 与 `.kepcup`，env 设 `KEPCUP_TEST_PLUGIN_MARKET`）。任务书给了判断权：`buildPluginIndex` / `pluginIndexEntryFor` 目前在 `packages/core/test/support/plugin-market-fixture.ts`，e2e 不能 import core 的 test support——**推荐搬进 `@kepcup/testkit`（`src/plugin-market-fixture.ts`）并让 core 测试改从 testkit 引**。Bot 确认卡用例若脚本化成本过高，可用已写的 core 集成测试（`integration/plugins-bot.test.ts`）替代并在记录说明。
-2. **步骤 6.2 文档**：`docs/design/29-connected-apps.md` §16.1 表加「市场」行；`docs/design/22-file-skill-routing.md` 的 D63 阶梯处加「P1 起升级为插件阶梯（设计 51 §6.3）」；`docs/design/35-mail-channel.md` 加插件模板一句；`docs/dev/PROGRESS.md` 验收表加「插件系统 P1（D104）」行。
-3. **步骤 6.3 收口**：全量 `pnpm test` 一次（对照 PROGRESS 基线）；`pnpm build` 后跑 `plugins-market` / `plugins` / `extension-center` / `narrow-layout` 四份 e2e。
-4. **独立审查**（本任务约定的流程）：审查 `c38c3308..HEAD` 的 P1-3 全部改动，重点：Bot 工具限频与固定文案、`plugin_search` 的 `<untrusted>` 逃逸防护、`updateAll` 的确认语义、市场页的 `disabled` 状态不渲染误导性空态、i18n 两语言键序、`hasPluginTools` 关闭时提示词逐字不变。
-5. 审查通过后写本文件 §6 的最终实施记录（替换本节），再进入 **P2**（`todo/plugin-system/P2-ecosystem.md`，分支 `feat/plugins/p2-ecosystem` 从 P1-3 合入点拉出）。
+**已知遗留（不阻塞本阶段）**
 
+- 详情页 README 拉取与远程图标仍未做（DEV-053）。
+- 「全部更新」的 UI 行为没有独立 e2e（store 单测覆盖三种分流）；市场「零网络请求」由 core 集成测试断言，e2e 只断言状态与无卡片。
+- 全量测试在本机默认并发下存在既有负载敏感超时（`user-avatar` / `watch` / `permission-bridge`）；`--maxWorkers=8` 收口运行全绿。
+
+**审查**
+
+- 一审（独立只读）：无 P0；P1 为市场端点切换后停旧状态、`updateAll` 静默丢失可选配置、阶段文件格式 / lint 回归；P2 若干（搜索 / 限频 / 错误展示 / 夹具形状等）。
+- 上述 P1 与可快速处理的 P2 已全部修复并补测试。二审聚焦复核除「搜索输出按码点截断、UTF-16 长度仍可能超 4000」一项外均通过；该项已改为按 UTF-16 预算截断（不劈开代理对）并补 emoji 用例，单测通过。

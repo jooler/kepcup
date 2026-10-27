@@ -438,7 +438,8 @@ export interface OrchestratorDeps {
    * Read on every run so an edited card is what the bot sees. Null when the
    * conversation is not a card chat.
    */
-  cardContext?: ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
+  cardContext?:
+    ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -470,15 +471,17 @@ export interface OrchestratorDeps {
    * 插件市场门面（D104 P1-3）：plugin_search 只读检索官方认证插件；plugin_request_install
    * 校验后把 `confirm-plugin-install` 需求写进本 run 的 setupHit。缺省 = 不注册这两个工具。
    */
-  pluginInstall?: {
-    search(query: string): PluginSearchHit[];
-    request(
-      input: { pluginId: string; version?: string | undefined; reason: string },
-      context: PluginToolContext,
-    ):
-      | { ok: true; requirement: Extract<SetupRequirement, { kind: 'confirm-plugin-install' }> }
-      | { ok: false; message: string };
-  } | undefined;
+  pluginInstall?:
+    | {
+        search(query: string): PluginSearchHit[];
+        request(
+          input: { pluginId: string; version?: string | undefined; reason: string },
+          context: PluginToolContext,
+        ):
+          | { ok: true; requirement: Extract<SetupRequirement, { kind: 'confirm-plugin-install' }> }
+          | { ok: false; message: string };
+      }
+    | undefined;
   /**
    * MCP 网关（docs/design/23-mcp-and-subagent.md D65）：null = 无 MCP 能力
    * （无 server 工具注册）。
@@ -2732,11 +2735,7 @@ export class Orchestrator {
   #shareAttachmentPath(attachment: Attachment, botId: string | null): string | null {
     if (botId === null) return null;
     try {
-      const workspacePath = workspacePathFor(
-        this.#deps.paths,
-        botId,
-        attachment.conversationId,
-      );
+      const workspacePath = workspacePathFor(this.#deps.paths, botId, attachment.conversationId);
       return ensureShareAttachmentCopy({
         attachments: this.#deps.attachments,
         workspacePath,

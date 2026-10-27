@@ -61,10 +61,7 @@ import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
-import {
-  ensureShareAttachmentCopy,
-  shareAttachmentCopyPath,
-} from '../share/materialize.js';
+import { ensureShareAttachmentCopy, shareAttachmentCopyPath } from '../share/materialize.js';
 
 export interface ResponseToolDeps {
   messages: MessagesService;
@@ -1155,9 +1152,7 @@ export function buildResponseTools(input: {
   const capabilityTools =
     deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
   const inkcopTools =
-    deps.inkcop !== undefined
-      ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop })
-      : [];
+    deps.inkcop !== undefined ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop }) : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
   // 插件市场（D104 P1-3）：只检索官方认证插件、只出确认卡；对话轮与任务都注册。
