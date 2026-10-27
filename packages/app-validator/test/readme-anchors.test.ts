@@ -17,7 +17,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('README check list', () => {
-  const idPattern = /'((?:manifest|remote|auth|tool|tools|ui|mcp)\.[a-z0-9-]+)'/g;
+  const idPattern = /'((?:manifest|remote|auth|tool|tools|ui|mcp|plugin)\.[a-z0-9-]+)'/g;
   const ids = new Set<string>();
   for (const file of sourceFiles(join(root, 'src'))) {
     for (const match of readFileSync(file, 'utf8').matchAll(idPattern)) ids.add(match[1] as string);

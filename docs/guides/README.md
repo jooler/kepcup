@@ -14,6 +14,7 @@
 | 指南 | 什么时候用 |
 |---|---|
 | [add-connected-app.md](add-connected-app.md) | 往 KepCup 的「扩展中心 → 连接」里新增一家连接应用（Notion、Linear 这种） |
+| [write-a-plugin.md](write-a-plugin.md) | 把一组技能 / 连接器 / MCP / 邮件模板打包成 `.kepcup` 插件并分发 |
 
 ## 写新指南的约定
 

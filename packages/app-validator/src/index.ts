@@ -1,5 +1,8 @@
 export * from './types.js';
 export * from './validate.js';
+export * from './plugin/validate.js';
+export { initPluginDirectory, type InitPluginResult } from './plugin/init.js';
+export { packPluginDirectory, type PackPluginResult } from './plugin/pack.js';
 export * from './report.js';
 export * from './args.js';
 export { runCli, VERSION, type CliIo } from './cli.js';
