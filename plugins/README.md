@@ -16,8 +16,8 @@ plugins/
 
 - 插件 id 用 `app.kepcup/<名>`：`com.kepcup` / `local.kepcup` 是保留命名空间，
   市场插件不得使用（`PLUGIN_RESERVED_NAMESPACES`）。
-- `server.json` 与连接器目录通道共用（`scripts/lib/builtin-connectors.mjs` 从这里
-  读条目构建 `dl.kepcup.com/connectors/v1`），**不要随意改动其 `_meta` 结构**。
+- 连接器目录通道（`dl.kepcup.com/connectors/v1`）已随商店化下线：连接能力完全由
+  这里的市场插件承担；`server.json` 的 `_meta` 结构保持 registry 兼容形状。
 - 技能展示字段（`displayName` / `icon` / `section` / `tryIt`）是内置插件专属，
   市场插件省略即可，界面回落到 SKILL.md 的 `name` / `description`。
 

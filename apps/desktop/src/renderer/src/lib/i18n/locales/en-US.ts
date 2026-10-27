@@ -2410,8 +2410,6 @@ export const enUS = {
   'apps.tier.communityWarningHint':
     'Its tools are provided by a third party and passed automated checks only. Write tools require your confirmation every time (you can allow them for this conversation at most) and can\'t be set to "always allow for this Bot".',
   'apps.tier.communityAck': 'I understand the risks and want to connect anyway',
-  'apps.directory.degraded':
-    'Catalog sync failed; using the built-in catalog or the last one that passed verification.',
   'apps.connected.hint':
     'Click an account to view its tools, approval policies, and authorized Bots.',
   'apps.connected.empty': 'No apps connected yet.',

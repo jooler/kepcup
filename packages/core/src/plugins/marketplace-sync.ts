@@ -18,21 +18,25 @@ import {
   type PluginIndexRevoked,
   type PluginIndex,
   type PluginMarketStatus,
-  type ConnectorIndexPublicKey,
+  type IndexPublicKey,
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { SignedIndexSync } from '../infra/signed-index.js';
-import { isSafeDirectoryRemoteUrl, compareConnectorVersions } from '../apps/directory-merge.js';
+import { compareConnectorVersions } from '../apps/connector-utils.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 import { satisfiesRange } from '../apps/mcpb/manifest.js';
-import type { DirectoryFetch } from '../apps/directory-sync.js';
+import type { IndexFetch } from '../infra/signed-index.js';
+
+/** 签名索引抓取函数形态（`infra/signed-index.ts` 的 `IndexFetch` 别名）。 */
+export type DirectoryFetch = IndexFetch;
 
 /**
  * 插件市场索引的客户端（D104 P1-1，设计 51 §6.1）：一条独立的签名索引通道，内部持有
  * `SignedIndexSync<PluginIndex>`（与连接器目录共用验签 / 棘轮 / 缓存机制，节奏常量相同），
  * 上面加了条目层：逐条校验（坏条目单独跳过）、兼容判断、版本挑选、撤销名单、下载缓存。
  *
- * 与 `DirectorySync` 的两点不同（任务书明确要求并测试）：
+ * 与通用签名索引机制的边界（任务书明确要求并测试）：
  * - `enabled` 只控制**定时**拉取（`start()` 的定时循环每次 tick 前问一次）；`sync()` 手动
  *   调用不看它——「自动检查更新」关掉时打开市场页仍会同步。
  * - 采纳新索引后会广播 `plugins.marketplace.updated` 与 `plugins.changed`（渲染端刷新
@@ -58,7 +62,7 @@ export interface MarketplaceSyncDeps {
   /** 包下载缓存目录：`{cacheDir}/plugins`（内容寻址，端点间共享）。 */
   packagesDir: string;
   baseUrl: string;
-  keys: readonly ConnectorIndexPublicKey[];
+  keys: readonly IndexPublicKey[];
   /** `custom` 端点的条目 tier 一律封顶 `community`（设计 51 §6.1，Q5）。 */
   endpoint: 'official' | 'custom';
   /** 索引 / 签名文件的拉取（SSRF 安全）。 */

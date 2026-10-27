@@ -28,8 +28,7 @@
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://sentry.io/privacy/",
-      "releaseGate": "sentry"
+      "privacyPolicy": "https://sentry.io/privacy/"
     }
   }
 }

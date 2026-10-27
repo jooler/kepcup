@@ -5,7 +5,11 @@ import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
-import { macTargetArches, macTargetArchesFromYml, shareExtensionSkipPlan } from './dist-share-extension.mjs';
+import {
+  macTargetArches,
+  macTargetArchesFromYml,
+  shareExtensionSkipPlan,
+} from './dist-share-extension.mjs';
 
 /**
  * 打包入口（P13 任务 1 + 产物剔除，docs/dev/phases/P13-release.md）。
@@ -27,8 +31,6 @@ import { macTargetArches, macTargetArchesFromYml, shareExtensionSkipPlan } from 
  *     `__KEPCUP_AGENT_RELEASE_GATES__`，D72）：`releaseGate` 未放行的目录条目
  *     （Claude Agent 等待定条目、testkit 假 Agent）在发行构建中不收录；开发
  *     构建与测试不注入该常量，全部条目照常可用；
-     连接应用目录同理（connector-release-gates.json →
-     `__KEPCUP_CONNECTOR_RELEASE_GATES__`，D73）：门禁未放行的条目发行构建不收录；
      预注册 OAuth 客户端表同样注入（oauth-clients.json → `__KEPCUP_OAUTH_CLIENTS__`，
      D73 P2 §6.4）：只放平台定义为非保密的桌面客户端凭据；
  *  3. 迁移文件拷到 out/migrations（打包后 core 的 import.meta.url 相对解析到那里）；
@@ -135,7 +137,9 @@ if (process.env.KEPCUP_DIST_SKIP_ROOTFS !== '1') {
   for (const arch of winArchsFromArgs()) {
     const tarPath = path.join(appDir, 'resources', 'wsl', arch, 'rootfs.tar');
     if (existsSync(tarPath)) continue;
-    console.log(`[dist] resources/wsl/${arch}/rootfs.tar 缺失——构建 rootfs（P12/P13；docker + bash）`);
+    console.log(
+      `[dist] resources/wsl/${arch}/rootfs.tar 缺失——构建 rootfs（P12/P13；docker + bash）`,
+    );
     run('bash', ['scripts/build-wsl-rootfs/build-rootfs.sh', arch]);
     if (!existsSync(tarPath)) {
       throw new Error(`[dist] build-rootfs.sh 运行成功但产物仍缺失：${tarPath}`);
@@ -163,17 +167,6 @@ if (releaseGates.includes('testkit')) {
   throw new Error('[dist] agent-release-gates.json: "testkit" must never be approved');
 }
 console.log(`[dist] agent release gates approved: ${JSON.stringify(releaseGates)}`);
-// Connected-apps catalog gates (D73): same shape, same fail-closed semantics.
-const connectorGates = JSON.parse(
-  readFileSync(path.join(appDir, 'connector-release-gates.json'), 'utf8'),
-).approved;
-if (!Array.isArray(connectorGates) || connectorGates.some((gate) => typeof gate !== 'string')) {
-  throw new Error('[dist] connector-release-gates.json: "approved" must be an array of strings');
-}
-if (connectorGates.includes('testkit')) {
-  throw new Error('[dist] connector-release-gates.json: "testkit" must never be approved');
-}
-console.log(`[dist] connector release gates approved: ${JSON.stringify(connectorGates)}`);
 // Pre-registered OAuth clients (D73 P2 §6.4): { [clientRef]: { issuer, clientId, clientSecret? } }.
 // Only credentials the platform defines as NON-confidential for desktop apps may live here.
 const oauthClients = JSON.parse(readFileSync(path.join(appDir, 'oauth-clients.json'), 'utf8'));
@@ -279,7 +272,6 @@ await esbuild.build({
   define: {
     __KEPCUP_TEST_HOOKS__: 'false',
     __KEPCUP_AGENT_RELEASE_GATES__: JSON.stringify(releaseGates),
-    __KEPCUP_CONNECTOR_RELEASE_GATES__: JSON.stringify(connectorGates),
     __KEPCUP_OAUTH_CLIENTS__: JSON.stringify(oauthClients),
   },
   logLevel: 'info',
@@ -334,9 +326,6 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
   // the catalog unfiltered in the packaged app.
   if (bundled.includes('__KEPCUP_AGENT_RELEASE_GATES__')) {
     throw new Error('[dist] core-entry bundle still references __KEPCUP_AGENT_RELEASE_GATES__');
-  }
-  if (bundled.includes('__KEPCUP_CONNECTOR_RELEASE_GATES__')) {
-    throw new Error('[dist] core-entry bundle still references __KEPCUP_CONNECTOR_RELEASE_GATES__');
   }
   if (bundled.includes('__KEPCUP_OAUTH_CLIENTS__')) {
     throw new Error('[dist] core-entry bundle still references __KEPCUP_OAUTH_CLIENTS__');

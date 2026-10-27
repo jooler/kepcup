@@ -69,7 +69,6 @@ function rawEntry(
     tier?: string;
     toolPolicy?: Record<string, { risk: string }>;
     packages?: unknown[];
-    hidden?: boolean;
   } = {},
 ): Record<string, unknown> {
   return {
@@ -95,8 +94,6 @@ function rawEntry(
         skills: [],
         ui: false,
         privacyPolicy: 'https://example.com/privacy',
-        releaseGate: 'test',
-        ...(options.hidden !== undefined ? { hidden: options.hidden } : {}),
       },
     },
   };
@@ -140,13 +137,11 @@ interface Rig {
 
 function makeRig(bundledSlugs: string[] = []): Rig {
   const catalog = new ConnectorCatalog({
-    env: {},
     logger: noopLogger,
     source: {
       entries: bundledSlugs.map((slug) => rawEntry(slug)),
       iconsDir: null,
     },
-    approvedGates: null,
   });
   const connections = new Map<string, { status: AppConnectionStatus; disabled: boolean }>();
   const disconnectCalls: string[] = [];
@@ -231,10 +226,9 @@ function withLedger(): {
 describe('rewriteConnectorEntry', () => {
   const plugin = identity('developer');
 
-  it('改写：tier 映射、releaseGate=plugin、删 hidden、toolPolicy 只留 destructive、packages 清空', () => {
+  it('改写：tier 映射、toolPolicy 只留 destructive、packages 清空', () => {
     const raw = rawEntry('acme', {
       tier: 'builtin',
-      hidden: true,
       toolPolicy: {
         read_items: { risk: 'read' },
         write_items: { risk: 'write' },
@@ -247,8 +241,6 @@ describe('rewriteConnectorEntry', () => {
     const rewritten = rewriteConnectorEntry(fixed, plugin, '/icon.svg');
     const meta = connectorMetaOf(rewritten);
     expect(meta.tier).toBe('developer');
-    expect(meta.releaseGate).toBe('plugin');
-    expect(meta.hidden).toBeUndefined();
     expect(Object.keys(meta.toolPolicy)).toEqual(['destroy_all']);
     expect(rewritten.packages).toEqual([]);
     expect(rewritten.remotes).toHaveLength(1);
@@ -297,7 +289,7 @@ describe('ConnectorsProjector', () => {
     rmSync(path.join(content.dir, 'connectors', 'noicon', 'noicon.svg'));
     const result = await rig.projector.inspect(ctx(content.dir, content.manifest));
     expect(result.conflicts.map((conflict) => conflict.ref).sort()).toEqual(['acme', 'nameshadow']);
-    expect(result.conflicts[0]!.withWhat).toContain('bundled');
+    expect(result.conflicts[0]!.withWhat).toContain('来源：plugin');
     expect(result.blockers).toHaveLength(1); // only the missing icon; conflicts are not blockers
     expect(result.blockers[0]).toContain('图标文件缺失');
     expect(result.items.map((item) => item.slug)).toEqual(['ok']);
@@ -329,7 +321,6 @@ describe('ConnectorsProjector', () => {
     const entry = rig.catalog.get('acme');
     expect(entry).not.toBeNull();
     expect(connectorMetaOf(entry!).tier).toBe('developer');
-    expect(connectorMetaOf(entry!).releaseGate).toBe('plugin');
     expect(rig.catalog.originOf('acme')).toBe('plugin');
     expect(rig.catalog.isDirectorySourced('acme')).toBe(true);
     expect(rig.catalog.iconSvg('acme')).toBe('<svg/>');

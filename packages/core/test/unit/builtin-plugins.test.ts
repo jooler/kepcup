@@ -36,25 +36,15 @@ describe('resolveBuiltinPluginsDir', () => {
     expect(
       resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: path.join(root, 'nope') }),
     ).toBeNull();
-    // 空串视为未设置（走向上查找）。
-    expect(resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: '' })).not.toBeNull();
-  });
-
-  it('walks up from this module to the repo checkout resources dir', () => {
-    const found = resolveBuiltinPluginsDir({});
-    expect(found).not.toBeNull();
-    expect(found!.endsWith(path.join('apps', 'desktop', 'resources', 'plugins'))).toBe(true);
-    expect(
-      readFileSync(path.join(found!, 'com.kepcup', 'starter-skills', 'plugin.json'), 'utf8'),
-    ).toContain('com.kepcup/starter-skills');
+    // 空串视为未设置：走向上查找——随包资源已随商店化移除，仓库检出现在为 null。
+    expect(resolveBuiltinPluginsDir({ KEPCUP_BUILTIN_PLUGINS: '' })).toBeNull();
   });
 });
 
 describe('BuiltinPlugins.list', () => {
-  it('loads both shipped plugins with id = {ns}/{name}', () => {
+  it('loads nothing without a builtin tree (app ships no builtin plugins)', () => {
     const builtin = new BuiltinPlugins({ env: {}, logger });
-    const loaded = builtin.list().map((plugin) => plugin.id);
-    expect(loaded).toEqual(['com.kepcup/connections', 'com.kepcup/starter-skills']);
+    expect(builtin.list()).toEqual([]);
   });
 
   it('skips unparseable plugin.json, id/directory mismatch and missing contribution files (warn, no throw)', async () => {
@@ -191,6 +181,7 @@ describe('BuiltinPlugins.skillOffers', () => {
     const offers = builtin.skillOffers();
     expect(offers[0]).toEqual({
       id: 'alpha',
+      pluginId: 'com.kepcup/starter-skills',
       dir: path.join(dir, 'com.kepcup', 'starter-skills', 'skills', 'alpha'),
       section: 'starter',
       displayName: 'A',

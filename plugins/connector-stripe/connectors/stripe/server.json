@@ -28,8 +28,7 @@
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://stripe.com/privacy",
-      "releaseGate": "stripe"
+      "privacyPolicy": "https://stripe.com/privacy"
     }
   }
 }

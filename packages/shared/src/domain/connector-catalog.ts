@@ -49,11 +49,11 @@ export const connectorTierSchema = z.enum(['builtin', 'verified', 'community', '
 export type ConnectorTier = z.infer<typeof connectorTierSchema>;
 
 /**
- * 目录条目的来源（`apps.catalog.list` 的 `origin`）：`bundled` 随应用打包；`directory` 来自已验签的
- * 远端目录且打包快照里没有；`local` 是本机连接（Bot 读文档生成、只存在于本机，不经发行门禁）；
- * `plugin` 来自已安装插件的连接器贡献（D104，目录型投影，发行门禁之后追加）。
+ * 目录条目的来源（`apps.catalog.list` 的 `origin`）：`local` 是本机连接（Bot 读文档生成、
+ * 只存在于本机）；`plugin` 来自已安装插件的连接器贡献（D104，目录型投影）。
+ * 随包快照与远端目录通道已随商店化移除（2026-10）。
  */
-export const connectorOriginSchema = z.enum(['bundled', 'directory', 'local', 'plugin']);
+export const connectorOriginSchema = z.enum(['local', 'plugin']);
 export type ConnectorOrigin = z.infer<typeof connectorOriginSchema>;
 
 export const connectorAuthSchema = z
@@ -192,21 +192,6 @@ export const connectorMetaSchema = z.object({
    * 中止，不静默跟随被换掉的授权服务器。预置 / 目录条目不设（授权服务器由厂商门禁与审核保证）。
    */
   expectedIssuer: z.string().url().optional(),
-  /**
-   * 发行门禁：发行构建只收录门禁已放行的条目；必填，缺省的条目无法被放行
-   * （fail-closed，见 {@link filterReleasedConnectors}）。开发构建与测试不受影响。
-   */
-  releaseGate: z.string().min(1),
-  /**
-   * 暂缓开放：`true` 的条目在**所有**构建（含 `pnpm dev`、测试缺省加载）里都不出现在目录中，
-   * 代码与配置（图标、预注册客户端、授权参数）原样保留，便于以后直接恢复。
-   * 与 `releaseGate` 不同：门禁只管发行构建，`hidden` 连开发构建也隐藏。
-   * 当前用途：Google Calendar / Drive（`gcalendar` / `gdrive`）——Google Workspace MCP 暂缓开放，
-   * 方案待定（内置客户端仅 `drive.file` / `calendar.events` 范围有限；完整 `drive` / Gmail 需过 CASA；
-   * 测试模式刷新令牌 7 天过期；备选 Mac 本机 EventKit + 同步盘方案）。
-   * 恢复：删掉该条目 `server.json` 里的 `"hidden": true` 即可（见 todo/connected-apps.md §6.4）。
-   */
-  hidden: z.boolean().optional(),
 });
 export type ConnectorMeta = z.infer<typeof connectorMetaSchema>;
 
@@ -283,40 +268,4 @@ export function findConnectorBySlug(
 /** 该 slug 下应用工具的名字前缀（`app_{slug}_`）。 */
 export function connectorToolPrefix(slug: string): string {
   return `app_${slug}_`;
-}
-
-/**
- * 按发行门禁过滤目录（fail-closed，照 {@link filterReleasedAgents}）。
- * `approvedGates === null` = 不过滤（开发构建 / 测试）；否则只留 `releaseGate`
- * 在放行清单里的条目，没有 `releaseGate` 的视为未放行。
- * `hidden: true` 的条目无论门禁如何一律剔除（开发构建也不例外）。
- */
-/**
- * 打包目录里当前标了 `hidden: true` 的 slug（与内置插件的 server.json 同步）。
- * core 的 `filterReleasedConnectors` 已会剔除它们；渲染端（扩展中心目录卡、
- * Bot 详情应用区）再滤一次，避免陈旧 `apps.catalog.list` 缓存或残留连接把
- * 暂缓应用重新露出来。恢复开放时：删掉对应 server.json 的 `"hidden": true`，
- * 并同步改掉本常量（见 todo/connected-apps.md §6.4）。
- */
-export const HIDDEN_CONNECTOR_SLUGS = ['gcalendar', 'gdrive'] as const;
-
-export function isHiddenConnectorId(connectorId: string): boolean {
-  return (HIDDEN_CONNECTOR_SLUGS as readonly string[]).includes(connectorId);
-}
-
-export function filterReleasedConnectors(
-  catalog: readonly ConnectorCatalogEntry[],
-  approvedGates: readonly string[] | null,
-): ConnectorCatalogEntry[] {
-  // `hidden` 条目任何构建都不放出（见 connectorMetaSchema.hidden），先于门禁判断。
-  const visible = catalog.filter(
-    (entry) =>
-      (entry._meta?.[CONNECTOR_META_KEY] as { hidden?: unknown } | undefined)?.hidden !== true,
-  );
-  if (approvedGates === null) return visible;
-  return visible.filter((entry) => {
-    const gate = (entry._meta?.[CONNECTOR_META_KEY] as { releaseGate?: unknown } | undefined)
-      ?.releaseGate;
-    return typeof gate === 'string' && gate.length > 0 && approvedGates.includes(gate);
-  });
 }

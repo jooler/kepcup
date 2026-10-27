@@ -19,7 +19,7 @@ import {
   type PluginSource,
   type PluginSummary,
 } from '@kepcup/shared';
-import { compareConnectorVersions } from '../apps/directory-merge.js';
+import { compareConnectorVersions } from '../apps/connector-utils.js';
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';

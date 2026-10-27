@@ -71,10 +71,8 @@ function makeCatalog(
   } = {},
 ): ConnectorCatalog {
   return new ConnectorCatalog({
-    env: {},
     logger: noopLogger,
     source: { entries: options.bundled ?? [], iconsDir: null },
-    approvedGates: null,
     ...(options.local !== undefined ? { local: options.local } : {}),
     ...(options.remote !== undefined
       ? { directory: { revision: () => 1, entries: () => options.remote! } }
@@ -85,9 +83,7 @@ function makeCatalog(
 describe('buildConnectorCatalog with plugin entries', () => {
   it('plugin entries land after the gate and before local entries', () => {
     const built = buildConnectorCatalog({
-      env: {},
       source: { entries: [entry('bundled')], iconsDir: null },
-      approvedGates: null,
       plugin: [pluginEntry('plugone')],
       local: [entry('localslug')],
     });
@@ -103,10 +99,8 @@ describe('buildConnectorCatalog with plugin entries', () => {
 
   it('yields to bundled / remote / already-appended plugin slugs and names', () => {
     const built = buildConnectorCatalog({
-      env: {},
       logger: noopLogger,
       source: { entries: [entry('takenglad')], iconsDir: null },
-      approvedGates: null,
       plugin: [
         pluginEntry('takenglad'),
         pluginEntry('takenname', { name: 'test.takenglad/mcp' }),
@@ -124,24 +118,20 @@ describe('buildConnectorCatalog with plugin entries', () => {
     expect(built.pluginOwners.get('secondone')).toBe('io.github.tester/other');
   });
 
-  it('a gated-out bundled entry still holds its slug against plugin entries', () => {
+  it('a builtin-source entry still holds its slug against plugin entries', () => {
     const built = buildConnectorCatalog({
-      env: {},
       logger: noopLogger,
       source: { entries: [entry('gated')], iconsDir: null },
-      approvedGates: ['some-other-gate'], // 'gated' has releaseGate 'test' → filtered out
       plugin: [pluginEntry('gated')],
     });
-    expect(built.entries.map((item) => connectorMetaOf(item).slug)).toEqual([]);
+    expect(built.entries.map((item) => connectorMetaOf(item).slug)).toEqual(['gated']);
     expect(built.yieldedPluginSlugs).toEqual(new Set(['gated']));
   });
 
   it('local entries yield to plugin entries (slug or name)', () => {
     const built = buildConnectorCatalog({
-      env: {},
       logger: noopLogger,
       source: { entries: [], iconsDir: null },
-      approvedGates: null,
       plugin: [pluginEntry('firstplug'), pluginEntry('nameholder', { name: 'local.holder/mcp' })],
       local: [entry('firstplug'), entry('loser', { name: 'local.holder/mcp' }), entry('winslocal')],
     });
@@ -164,7 +154,7 @@ describe('ConnectorCatalog.attachPlugins', () => {
     const slugs = () => catalog.list().map((item) => connectorMetaOf(item).slug);
     expect(slugs()).toEqual(['bundled', 'plugone']);
     expect(catalog.originOf('plugone')).toBe('plugin');
-    expect(catalog.originOf('bundled')).toBe('bundled');
+    expect(catalog.originOf('bundled')).toBe('plugin');
     expect(catalog.isPlugin('plugone')).toBe(true);
     expect(catalog.isPlugin('bundled')).toBe(false);
     expect(catalog.isDirectorySourced('plugone')).toBe(true);

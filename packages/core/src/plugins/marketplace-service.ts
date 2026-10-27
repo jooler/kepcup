@@ -4,15 +4,18 @@ import {
   PLUGIN_INDEX_MAX_BYTES,
   PLUGIN_INDEX_PUBLIC_KEYS,
   PLUGIN_PACKAGE_MAX_BYTES,
-  type ConnectorIndexPublicKey,
+  type IndexPublicKey,
   type PluginMarketStatus,
 } from '@kepcup/shared';
 import type { SettingsService } from '../domain/settings.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { sha256Hex } from '../infra/signed-index.js';
-import type { DirectoryFetch } from '../apps/directory-sync.js';
-import { MarketplaceSync, type MarketplaceSyncEvents } from './marketplace-sync.js';
+import {
+  MarketplaceSync,
+  type DirectoryFetch,
+  type MarketplaceSyncEvents,
+} from './marketplace-sync.js';
 
 /**
  * 根据设置解析出当前生效的市场端点（D104 P1-1，设计 51 §6.1）：官方（`pluginMarketplaceUrl`
@@ -36,7 +39,7 @@ export interface MarketplaceServiceDeps {
   logger: CoreLogger;
   events: MarketplaceSyncEvents;
   /** 默认 `PLUGIN_INDEX_PUBLIC_KEYS` / `PLUGIN_INDEX_BASE_URL`（测试可注入）。 */
-  official?: { keys: readonly ConnectorIndexPublicKey[]; baseUrl: string };
+  official?: { keys: readonly IndexPublicKey[]; baseUrl: string };
   fetchFactory: (options: { maxBytes: number; timeoutMs?: number }) => DirectoryFetch;
   timing?: { intervalMs?: number; retryMs?: number; initialDelayMs?: number };
   /** 仅测试构建：`KEPCUP_TEST_PLUGIN_MARKET` 的回环包下载主机（放行 download 的 URL 守卫）。 */
@@ -46,14 +49,14 @@ export interface MarketplaceServiceDeps {
 interface ResolvedEndpoint {
   endpoint: 'official' | 'custom';
   baseUrl: string;
-  keys: readonly ConnectorIndexPublicKey[];
+  keys: readonly IndexPublicKey[];
   dir: string;
   disabledReason: 'no_keys' | 'no_custom_key' | null;
 }
 
 export class MarketplaceService {
   readonly #deps: MarketplaceServiceDeps;
-  readonly #official: { keys: readonly ConnectorIndexPublicKey[]; baseUrl: string };
+  readonly #official: { keys: readonly IndexPublicKey[]; baseUrl: string };
   #current: MarketplaceSync | null = null;
   #signature: string | null = null;
   #stopped = true;

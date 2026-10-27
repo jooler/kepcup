@@ -28,8 +28,7 @@
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://www.canva.com/policies/privacy-policy/",
-      "releaseGate": "canva"
+      "privacyPolicy": "https://www.canva.com/policies/privacy-policy/"
     }
   }
 }

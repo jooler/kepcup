@@ -95,19 +95,6 @@ export function runConnectorCatalogContract(target: ConnectorCatalogContractTarg
       }
     });
 
-    it('carries a releaseGate (fail-closed), never the test-only "testkit" gate', () => {
-      for (const raw of target.entries) {
-        const gate = (raw as { _meta?: Record<string, { releaseGate?: unknown }> })._meta?.[
-          CONNECTOR_META_KEY
-        ]?.releaseGate;
-        expect(
-          typeof gate === 'string' && gate.length > 0,
-          `${(raw as { name?: string }).name}`,
-        ).toBe(true);
-        expect(gate).not.toBe('testkit');
-      }
-    });
-
     it('preregistered auth names its client, auto auth does not need one', () => {
       for (const entry of parsed()) {
         const { auth, slug } = connectorMetaOf(entry);

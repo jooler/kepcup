@@ -1,5 +1,5 @@
 import { sanitizeDisplayText, type PluginIndexEntry, type SetupRequirement } from '@kepcup/shared';
-import { compareConnectorVersions } from '../apps/directory-merge.js';
+import { compareConnectorVersions } from '../apps/connector-utils.js';
 import type { Clock } from '../infra/clock.js';
 import type { MarketplaceService } from './marketplace-service.js';
 import type { MarketplaceSync } from './marketplace-sync.js';

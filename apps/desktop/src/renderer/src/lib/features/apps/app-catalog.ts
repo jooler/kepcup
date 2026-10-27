@@ -1,6 +1,5 @@
 import type {
   AppCatalogEntry,
-  AppsDirectoryStatus,
   AppConnection,
   AppConnectionStatus,
   Bot,
@@ -148,11 +147,6 @@ export function showManageButton(
   hasManageHandler: boolean,
 ): boolean {
   return hasManageHandler && entry.connectedAccounts > 0;
-}
-
-/** 目录同步降级时的提示（`ok` / `stale` / `disabled` 不打扰用户）。 */
-export function directoryNoticeKey(state: AppsDirectoryStatus['state']): MessageKey | null {
-  return state === 'degraded' ? 'apps.directory.degraded' : null;
 }
 
 /** 目录里实际出现的分类，按 {@link CATEGORY_ORDER} 排序。 */

@@ -57,7 +57,7 @@ export class SignError extends Error {}
 
 export const sha256Hex = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-// --- keys (same shapes as sign-connector-index.mjs; independent secret) -----------------
+// --- keys (Ed25519, independent secret from the app's other signing material) -------------
 
 /** Private key from the env value: PKCS8 PEM, or base64 of the raw 32-byte seed. */
 export function privateKeyFromEnv(value) {

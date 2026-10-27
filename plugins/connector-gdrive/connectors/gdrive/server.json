@@ -21,18 +21,14 @@
         "registration": "preregistered",
         "clientRef": "google",
         "scopes": {
-          "default": [
-            "https://www.googleapis.com/auth/drive.file"
-          ],
+          "default": ["https://www.googleapis.com/auth/drive.file"],
           "write": []
         }
       },
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://policies.google.com/privacy",
-      "releaseGate": "google",
-      "hidden": true
+      "privacyPolicy": "https://policies.google.com/privacy"
     }
   }
 }

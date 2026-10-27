@@ -28,8 +28,7 @@
       "toolPolicy": {},
       "skills": [],
       "ui": false,
-      "privacyPolicy": "https://www.cloudflare.com/privacypolicy/",
-      "releaseGate": "cloudflare"
+      "privacyPolicy": "https://www.cloudflare.com/privacypolicy/"
     }
   }
 }

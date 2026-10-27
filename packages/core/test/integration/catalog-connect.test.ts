@@ -100,18 +100,6 @@ describe('catalog connect: client registration paths', () => {
 });
 
 describe('catalog connect: gate and unsupported registration', () => {
-  it('rejects a connector the release gate keeps closed', async () => {
-    const env = await start({ approvedGates: ['something-else'] });
-    expect(
-      ((await env.core.rpc.call('apps.catalog.list', undefined)) as { entries: unknown[] }).entries,
-    ).toEqual([]);
-    await expect(
-      env.core.rpc.call('apps.connect', { target: { kind: 'catalog', connectorId: 'fake' } }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(rows(env)).toHaveLength(0);
-    expect(env.shellCalls).toHaveLength(0);
-  });
-
   it('accepts the connector once its gate is approved', async () => {
     const env = await start({ approvedGates: ['fake'], fake: { tools: [ECHO] } });
     const outcome = await env.connect();

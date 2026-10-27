@@ -17,7 +17,7 @@ import type {
   PluginConnectorEntry,
   PluginConnectorSource,
 } from '../../apps/catalog.js';
-import { isSafeDirectoryRemoteUrl } from '../../apps/directory-merge.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 import type { AppConnectionStore } from '../../apps/connection-store.js';
 import type { AppConnectionsService } from '../../apps/connections.js';
 import type { EventBus } from '../../infra/events.js';
@@ -101,9 +101,7 @@ export function rewriteConnectorEntry(
       [CONNECTOR_META_KEY]: {
         ...meta,
         tier: tierFor(plugin.tier),
-        releaseGate: 'plugin',
         toolPolicy,
-        hidden: undefined,
       },
     },
   };

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectorIndexPublicKey } from '@kepcup/shared';
+import type { IndexPublicKey } from '@kepcup/shared';
 import { PLUGIN_INDEX_BASE_URL } from '@kepcup/shared';
 import { MarketplaceService } from '../../src/plugins/marketplace-service.js';
 import type { MarketplaceSyncEvents } from '../../src/plugins/marketplace-sync.js';
@@ -43,7 +43,7 @@ interface Harness {
   servers: Map<string, ReturnType<typeof memoryMarketFetch>>;
   requests: Map<string, number>;
   make(options?: {
-    officialKeys?: ConnectorIndexPublicKey[];
+    officialKeys?: IndexPublicKey[];
     officialBaseUrl?: string;
     settings?: Partial<FakeSettings>;
   }): MarketplaceService;

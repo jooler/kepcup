@@ -2,7 +2,7 @@ import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } f
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { rmSync } from './fs-rm.js';
 import path from 'node:path';
-import { selectIndexKey, type ConnectorIndexPublicKey } from '@kepcup/shared';
+import { selectIndexKey, type IndexPublicKey } from '@kepcup/shared';
 import type { Clock } from './clock.js';
 import type { CoreLogger } from './logger.js';
 
@@ -99,7 +99,7 @@ export interface SignedIndexLimits {
 export function verifySignedIndex<T extends { generatedAt: number; keyId: string }>(
   bytes: Uint8Array,
   signatureText: string,
-  keys: readonly ConnectorIndexPublicKey[],
+  keys: readonly IndexPublicKey[],
   schema: IndexSchemaLike<T>,
   limits: SignedIndexLimits,
 ): VerifiedIndexResult<T> {
@@ -220,7 +220,7 @@ export interface SignedIndexSyncDeps<T> {
   /** 缓存目录。 */
   dir: string;
   /** 编进应用的公钥列表；空 = 同步关闭。 */
-  keys: readonly ConnectorIndexPublicKey[];
+  keys: readonly IndexPublicKey[];
   fetch: IndexFetch;
   clock: Clock;
   logger: Pick<CoreLogger, 'warn' | 'info'>;
