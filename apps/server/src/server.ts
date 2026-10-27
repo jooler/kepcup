@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createFileKeystore,
   createCoreServices,
@@ -10,6 +11,7 @@ import {
   type Keystore,
 } from '@kepcup/core';
 import { handleAdminRequest, isAdminPath, readJson, type AdminDeps } from './admin.js';
+import { builtinPluginsEnv } from './builtin-plugins.js';
 import { DirectRelayServer } from './direct-relay.js';
 import { qrTerminal } from './qr.js';
 import { resolveWebDir, serveStatic } from './static.js';
@@ -106,7 +108,12 @@ export async function createHeadlessServer(
   let directRelay: DirectRelayServer | null = null;
   const services = await createCoreServices({
     home: config.dataDir,
-    env: test.env ?? process.env,
+    // D104 P0b（Q9）：打包布局里 plugins/ 与 dist/ 同级，未显式设置时注入；
+    // 开发态 / 已显式设置时原样透传（repo 检出由 core 自己向上查找）。
+    env: builtinPluginsEnv(
+      path.dirname(fileURLToPath(import.meta.url)),
+      test.env ?? process.env,
+    ),
     appVersion: serverVersion(),
     ...(keystore !== undefined ? { keystore } : {}),
     ...(pairingDirect

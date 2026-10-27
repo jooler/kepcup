@@ -45,7 +45,12 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
 
 ## S2 写目录条目
 
-编辑 `apps/desktop/resources/connectors/catalog.json`，在 `connectors` 里加一项（`server.json` 子集 + `_meta["app.kepcup/connector"]`）。schema 见 `packages/shared/src/domain/connector-catalog.ts`，字段含义：
+新建 `apps/desktop/resources/plugins/com.kepcup/connections/connectors/<slug>/server.json`
+（`server.json` 子集 + `_meta["app.kepcup/connector"]`，D104 P0b 起原 `catalog.json` 的
+每条 entry 即这里的 server.json），并在
+`apps/desktop/resources/plugins/com.kepcup/connections/plugin.json` 的
+`contributions.connectors` 里登记 `{ "file": "connectors/<slug>/server.json" }`。
+schema 见 `packages/shared/src/domain/connector-catalog.ts`，字段含义：
 
 ```jsonc
 {
@@ -58,7 +63,7 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
   "_meta": {
     "app.kepcup/connector": {
       "slug": "example",                // [a-z0-9]{2,16}，唯一；也是快照文件名与门禁名
-      "icon": "example.svg",            // resources/connectors/icons/ 下的文件
+      "icon": "example.svg",            // 同目录（connectors/<slug>/）下的图标文件
       "category": "productivity",       // productivity|development|project|design|payments|crm|communication|data|other
       "tier": "builtin",
       "auth": { "kind": "oauth", "registration": "auto", "clientRef": null,
@@ -173,14 +178,14 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
 
 ## S11 发布
 
-条目随应用发布（`catalog.json` 与门禁文件都会被打进发行构建）。想在两次应用发版之间更新目录，可走签名目录通道（`dl.kepcup.com`）：`infra/cloudflare/sign-directory.sh` 签名、`with-env.sh wrangler deploy` 部署，细节与限制见 [infra/cloudflare/directory/README.md](../../infra/cloudflare/directory/README.md) 与 DEV-022（目录合并与发行门禁的权威来源）。**放行类变更仍以随应用打包的门禁为准**，不要指望只靠目录远程放行。
+条目随应用发布（内置插件 `plugin.json` 与门禁文件都会被打进发行构建）。想在两次应用发版之间更新目录，可走签名目录通道（`dl.kepcup.com`）：`infra/cloudflare/sign-directory.sh` 签名、`with-env.sh wrangler deploy` 部署，细节与限制见 [infra/cloudflare/directory/README.md](../../infra/cloudflare/directory/README.md) 与 DEV-022（目录合并与发行门禁的权威来源）。**放行类变更仍以随应用打包的门禁为准**，不要指望只靠目录远程放行。
 
 ## 本机生成（不进目录，只在这台电脑上用）
 
 长尾厂商不值得走 S0–S11（预置 + 放行）时，可以让 Bot 读厂商文档，**在本机生成一条连接**——方案与边界见 [todo/local-connector-authoring.md](../../todo/local-connector-authoring.md) 与[设计 29 §17](../design/29-connected-apps.md)。和本指南的预置流程的关系：
 
 - 做的事是 S0–S3 的一个子集（找 MCP 地址、判断授权方式、探测），但**由 core 的探测结果决定条目内容**，Bot 只提供展示名 / 描述 / 分类 / 文档链接；没有 S4–S9（无 `toolPolicy`、无 `whoami`、无快照、无放行门禁）。
-- 条目是 `tier: developer`（未审核）：每次工具调用都要用户确认、没有持续授权；只存在 `settings.apps.localConnectors`，**永不进 `catalog.json`、签名索引或发行构建**。
+- 条目是 `tier: developer`（未审核）：每次工具调用都要用户确认、没有持续授权；只存在 `settings.apps.localConnectors`，**永不进内置插件条目、签名索引或发行构建**。
 - 前提（2026-10-15 起不再需要开发者模式，任何 Bot 都能发起）：服务是 https 域名的 Streamable HTTP MCP，授权是支持 CIMD 或 DCR（+ PKCE S256）的 OAuth。需要 API Key / 预注册密钥、匿名服务、只有 REST 的，都不走这条路。
 - 使用：对 Bot 说「帮我接入 XXX，文档在 …」，Bot 会调 `app_local_connector_guide` → `app_propose_local_connector`，对话里出确认卡（MCP 域名大字显示，另有完整地址、认证方式、授权服务器、将请求的范围、风险说明；文档链接只是纯文本）。点「添加」后卡片直接接上连接步骤（授权前先核对完整授权地址 → 首次工具复核），完成后对话自动继续；之后在扩展中心「连接」组底部的「本机自建」区（带「未审核」徽标）管理，「删除」会先确认，再断开全部账号、吊销并清令牌。
 - 授权服务器与 MCP 域名**不是同一个站点**时，卡片会出红色警告并点名两个域名，必须勾选「我了解」才能添加（可能是借用别家的登录来骗取授权）。

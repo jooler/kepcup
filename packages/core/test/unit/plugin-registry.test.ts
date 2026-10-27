@@ -183,6 +183,44 @@ function makeRig(): Rig {
   return { registry, store, packager, pluginsDir: paths.pluginsDir, fakes, events, audits, home };
 }
 
+/** 内置插件桩（D104 P0b）：只提供 summaries / get，验证 list 头部插入与启停 / 卸载拒绝。 */
+function makeRigWithBuiltin(): Rig & { builtinIds: string[] } {
+  const rig = makeRig();
+  const builtinIds = ['com.kepcup/starter-skills', 'com.kepcup/connections'];
+  const builtinSummaries = builtinIds.map((id) => ({
+    id,
+    name: id,
+    version: '1.0.0',
+    description: '',
+    author: null,
+    origin: 'builtin' as const,
+    tier: 'builtin' as const,
+    state: 'installed' as const,
+    enabled: true,
+    dirPath: null,
+    marketplace: null,
+    installedAt: null,
+    updatedAt: null,
+    counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
+    items: [],
+    updateAvailable: null,
+  }));
+  const registry = new PluginRegistry({
+    store: rig.store,
+    packager: rig.packager,
+    projectors: [rig.fakes.skill, rig.fakes.mcp, rig.fakes.connector, rig.fakes.mail],
+    builtin: {
+      summaries: () => builtinSummaries,
+      get: (id: string) => (builtinIds.includes(id) ? ({ id } as never) : null),
+    },
+    pluginsDir: rig.pluginsDir,
+    clock: { now: () => 9_000_000 },
+    logger: noopLogger,
+    events: { emit: () => {} },
+  });
+  return { ...rig, registry, builtinIds };
+}
+
 let fixtureCounter = 0;
 async function makeFixture(
   options: {
@@ -644,5 +682,29 @@ describe('PluginRegistry', () => {
     const alpha = summary.items.find((item) => item.ref === 'alpha');
     expect(alpha).toMatchObject({ kind: 'skill', missing: true });
     expect(summary.items.find((item) => item.ref === 'beta')?.missing).toBeUndefined();
+  });
+
+  it('内置插件：list 头部插入只读摘要，setEnabled / uninstall 报 INVALID_INPUT', async () => {
+    const rig = makeRigWithBuiltin();
+    const fixture = await makeFixture();
+    await rig.registry.install(installArgs(fixture));
+
+    const listed = rig.registry.list();
+    expect(
+      listed.filter((plugin) => plugin.origin === 'builtin').map((plugin) => plugin.id),
+    ).toEqual(rig.builtinIds);
+    // 已装插件跟在内置之后。
+    expect(listed[rig.builtinIds.length]).toMatchObject({ id: 'io.github.tester/reg' });
+
+    await expect(rig.registry.setEnabled('com.kepcup/starter-skills', false)).rejects.toMatchObject(
+      {
+        code: 'INVALID_INPUT',
+      },
+    );
+    await expect(rig.registry.uninstall('com.kepcup/connections')).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+    // 拒绝后无副作用：两个内置仍在列。
+    expect(rig.registry.list()).toHaveLength(3);
   });
 });

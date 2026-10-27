@@ -1,6 +1,6 @@
 # 连接应用的真实工具定义快照（逐家适配用）
 
-每家一个文件：`<slug>.tools.json`，`slug` 与 `apps/desktop/resources/connectors/catalog.json` 的条目一致。
+每家一个文件：`<slug>.tools.json`，`slug` 与内置插件 `apps/desktop/resources/plugins/com.kepcup/connections/connectors/<slug>/server.json` 的条目一致（D104 P0b 起原 `catalog.json` 的每条 entry 即这里的 server.json）。
 内容是该应用 MCP server 的 `tools/list` 原样输出（JSON 数组，元素含 `name` / `title` / `description` /
 `inputSchema` / `annotations`，有的带 `_meta`）。**不含令牌、授权码或账号信息。**
 

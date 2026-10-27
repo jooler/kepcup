@@ -18,6 +18,7 @@ import {
 import { validateUserConfig } from '../apps/mcpb/manifest.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
+import type { BuiltinPlugins } from './builtin.js';
 import type { PluginRow, PluginStore } from './store.js';
 import { assertInstallablePluginId, pluginDirName, pluginDirOf } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
@@ -44,6 +45,8 @@ export interface PluginRegistryDeps {
   packager: PluginPackager;
   /** `createPluginProjectors()` 的结果（顺序 = PLUGIN_PROJECTOR_ORDER）。 */
   projectors: readonly PluginProjector[];
+  /** Builtin plugin loader (D104 P0b): read-only summaries first in `list()`, and the guard for mutating them. */
+  builtin?: Pick<BuiltinPlugins, 'summaries' | 'get'> | undefined;
   pluginsDir: string;
   clock: Clock;
   logger: CoreLogger;
@@ -168,7 +171,14 @@ export class PluginRegistry {
   // --- queries ------------------------------------------------------------------
 
   list(): PluginSummary[] {
-    return this.#deps.store.list().map((row) => this.#summaryOf(row));
+    // Builtin plugins first (read-only, never in the store), then installed ones.
+    const builtins = this.#deps.builtin?.summaries() ?? [];
+    return [...builtins, ...this.#deps.store.list().map((row) => this.#summaryOf(row))];
+  }
+
+  /** Is this id a read-only builtin plugin (disable / uninstall refused)? */
+  #isBuiltin(id: string): boolean {
+    return (this.#deps.builtin?.get(id) ?? null) !== null;
   }
 
   ownerOf(kind: PluginItemKind, ref: string): string | null {
@@ -302,6 +312,9 @@ export class PluginRegistry {
   }
 
   async #setEnabledLocked(id: string, enabled: boolean): Promise<PluginSummary> {
+    if (this.#isBuiltin(id)) {
+      throw new AppError('INVALID_INPUT', '内置插件不能停用或卸载');
+    }
     const row = this.#deps.store.get(id);
     if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${id}`);
     if (row.state !== 'installed') {
@@ -342,6 +355,9 @@ export class PluginRegistry {
   }
 
   async #uninstallLocked(id: string): Promise<void> {
+    if (this.#isBuiltin(id)) {
+      throw new AppError('INVALID_INPUT', '内置插件不能停用或卸载');
+    }
     const row = this.#deps.store.get(id);
     if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${id}`);
     // Best effort: the row is gone either way, so audit + event fire even when a
