@@ -1,6 +1,7 @@
 import {
   CONNECTOR_META_KEY,
   LOCAL_CONNECTOR_GATE,
+  isSafeDirectoryRemoteUrl,
   LOCAL_CONNECTOR_NAME_PREFIX,
   connectorCatalogEntrySchema,
   connectorMetaOf,
@@ -40,23 +41,9 @@ import type { CoreLogger } from '../infra/logger.js';
 /** 远端独有条目被改写成的发行门禁值（不属于任何厂商门禁）。 */
 export const DIRECTORY_RELEASE_GATE = 'directory';
 
-/**
- * 目录来源条目的远程端点是否可接受：https、无用户信息、主机是带点的域名（不是 IP 字面量、
- * 不是 `localhost` / `*.localhost`）。端口不限；解析到私网地址由连接时的 SSRF 守卫拒绝。
- */
-export function isSafeDirectoryRemoteUrl(raw: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return false;
-  const host = url.hostname.toLowerCase().replace(/\.$/, '');
-  if (host === '' || host === 'localhost' || host.endsWith('.localhost')) return false;
-  if (host.startsWith('[') || /^[0-9.]+$/.test(host) || host.includes(':')) return false;
-  return host.includes('.');
-}
+// Moved to @kepcup/shared (D104 P2) so the app validator reuses the exact same rule;
+// the re-export keeps every core caller and test unchanged.
+export { isSafeDirectoryRemoteUrl };
 
 const RISK_ORDER: Record<McpToolRisk, number> = { read: 0, write: 1, destructive: 2 };
 

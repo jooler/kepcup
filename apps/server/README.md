@@ -45,6 +45,30 @@ kepcup-server pair                # 出配对码（多设备）
 kepcup-server devices            # 设备列表 / devices revoke <id> 撤销
 ```
 
+## 安装插件
+
+网页外壳没有本地文件选择器，服务器本机的插件安装走 `plugin install`（运行中的服务 + 本机
+admin 接口，同一套环回 + admin token 校验）：
+
+```bash
+# 先看一眼会装什么（技能 / MCP / 连接器主机与范围 / 邮件模板 / 冲突 / 阻断项）
+kepcup-server plugin install /srv/plugins/demo.kepcup
+
+# 非交互（脚本 / systemd）确认安装
+kepcup-server plugin install /srv/plugins/demo.kepcup --yes
+
+# 带 MCPB 必填 user_config：{"<mcpId>": {"<key>": 值}}（敏感值不要在命令行里给）
+kepcup-server plugin install ./my-plugin-dir --yes --config /srv/kepcup/user-config.json
+
+# 机器可读结果（plugins.install 的返回）
+kepcup-server plugin install ./demo.kepcup --yes --json
+```
+
+- 路径可以是 `.kepcup` 文件，也可以是插件开发目录（按目录型插件安装，`developer` 分级）。
+- 需要 MCPB 运行时（Node / Python / uv）时，KepCup 不会自动下载；先在客户端「设置 → 环境」安装。
+- **安全**：只有服务器本机、持有 `<data-dir>/admin-token` 的人能调用；`--config` 的内容不会出现在日志 / 错误输出里。远程客户端调用同一 `file` / `folder` 来源会被 `INVALID_INPUT` 拒绝（远程只能走市场来源）。
+- 市场安装不需要 CLI：客户端「市场」页签在 headless 上照常可用（core 在服务端下载）。
+
 常用选项（环境变量 `KEPCUP_SERVER_HOST/_PORT/_DATA_DIR/_PUBLIC_URL/_RELAY/_TRUST_PROXY` 同名兜底）：
 
 | 选项 | 说明 |

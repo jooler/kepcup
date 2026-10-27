@@ -10,7 +10,6 @@ import {
   readFile,
   rm,
   stat,
-  writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -20,6 +19,7 @@ import {
   type PluginManifest,
 } from '@kepcup/shared';
 import {
+  extractZip,
   safeEntryPath,
   ZIP_MAX_ENTRIES,
   ZIP_MAX_ENTRY_BYTES,
@@ -184,21 +184,8 @@ export class PluginPackager {
 
   async #extract(zip: ZipArchive, manifest: PluginManifest): Promise<string> {
     const stagingDir = path.join(this.#stagingRoot, randomBytes(8).toString('hex'));
-    await mkdir(stagingDir, { recursive: true });
-    for (const entry of zip.entries) {
-      const relative = safeEntryPath(entry.name, error);
-      const target = path.resolve(stagingDir, ...relative.split('/'));
-      if (!target.startsWith(stagingDir + path.sep)) throw invalid(`包内路径越界：${entry.name}`);
-      if (entry.isDirectory) {
-        await mkdir(target, { recursive: true });
-        continue;
-      }
-      const data = await zip.read(entry);
-      await mkdir(path.dirname(target), { recursive: true });
-      // Never group/world-writable: only the executable bit of the archive is honoured.
-      const mode = (entry.unixMode & 0o111) !== 0 ? 0o755 : 0o644;
-      await writeFile(target, data, { mode });
-    }
+    // Shared guard: zip-slip / symlinks / case-folded duplicates / caps / 0o755|0o644.
+    await extractZip(zip, stagingDir, { error, label: '.kepcup' });
     await verifyContributionFiles(manifest, stagingDir);
     return stagingDir;
   }

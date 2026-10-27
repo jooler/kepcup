@@ -9,7 +9,7 @@ import { relayEndpointSchema } from '@kepcup/shared';
  */
 
 export interface ServerConfig {
-  command: 'run' | 'pair' | 'devices' | 'password' | 'version';
+  command: 'run' | 'pair' | 'devices' | 'password' | 'version' | 'plugin';
   /** run：HTTP/WS 绑定地址（默认 127.0.0.1，公网/局域网部署显式给 0.0.0.0）。 */
   host: string;
   /** run：端口（默认 8642）。 */
@@ -45,6 +45,14 @@ export interface ServerConfig {
   revokeDeviceId: string | null;
   /** pair/devices：JSON 输出（脚本友好）。 */
   json: boolean;
+  /** plugin 子命令：目前只有 install。 */
+  pluginAction: 'install' | null;
+  /** plugin install：本机 .kepcup 文件或插件目录的绝对路径。 */
+  pluginPath: string | null;
+  /** plugin install：跳过交互确认。 */
+  pluginYes: boolean;
+  /** plugin install：MCPB user_config 的 JSON 文件（内容不会进日志）。 */
+  pluginConfigFile: string | null;
   /**
    * 反代后信任 X-Forwarded-For（限流与登录日志取真实客户端 IP）。仅当服务
    * 直接暴露在不可信网络且前面没有会伪造该头的代理时保持默认 false。
@@ -106,7 +114,7 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       // 布尔开关表；其余都按取值参数解析（值里的 -- 开头串需要转义的场景不存在）。
-      if (['pairing-manual', 'no-auto-pair', 'json', 'help', 'trust-proxy'].includes(key)) {
+      if (['pairing-manual', 'no-auto-pair', 'json', 'help', 'trust-proxy', 'yes'].includes(key)) {
         flags.add(key);
         continue;
       }
@@ -123,15 +131,34 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
   if (flags.has('help')) throw new ConfigError('help');
 
   const command = (positionals[0] ?? 'run') as ServerConfig['command'];
-  if (!['run', 'pair', 'devices', 'version', 'password'].includes(command)) {
-    throw new ConfigError(`未知子命令 "${command}"（可用：run / pair / devices / password / version）`);
+  if (!['run', 'pair', 'devices', 'version', 'password', 'plugin'].includes(command)) {
+    throw new ConfigError(
+      `未知子命令 "${command}"（可用：run / pair / devices / password / plugin / version）`,
+    );
   }
   if (command === 'version') {
     return emptyConfig('version');
   }
-  // 位置参数只允许子命令本身，例外：`devices revoke <id>`（id 也可走 --revoke）。
+  // plugin install <path>：路径是位置参数；其余子命令只允许子命令本身
+  //（例外：`devices revoke <id>`，id 也可走 --revoke）。
+  let pluginAction: 'install' | null = null;
+  let pluginPath: string | null = null;
   let positionalRevoke: string | null = null;
-  if (positionals.length > 1) {
+  if (command === 'plugin') {
+    if (positionals[1] !== 'install') {
+      throw new ConfigError(
+        `plugin 只支持 install 子命令（收到 "${positionals[1] ?? ''}"）；用法：plugin install <路径>`,
+      );
+    }
+    if (positionals[2] === undefined || positionals[2] === '') {
+      throw new ConfigError('plugin install 需要一个 .kepcup 文件或插件目录的路径');
+    }
+    if (positionals.length > 3) {
+      throw new ConfigError(`多余的位置参数 "${positionals.slice(3).join(' ')}"`);
+    }
+    pluginAction = 'install';
+    pluginPath = positionals[2];
+  } else if (positionals.length > 1) {
     const revokeTail =
       command === 'devices' && positionals[1] === 'revoke' && positionals.length <= 3;
     if (!revokeTail) {
@@ -179,12 +206,18 @@ export function parseConfig(argv: readonly string[]): ServerConfig {
     adminUser,
     adminPassword,
     keystore,
-    webDir: values.get('web-dir') !== undefined ? path.resolve(values.get('web-dir') as string) : null,
+    webDir:
+      values.get('web-dir') !== undefined ? path.resolve(values.get('web-dir') as string) : null,
     pairingManual: flags.has('pairing-manual'),
     autoPair: !flags.has('no-auto-pair'),
     acceptRequestId: values.get('accept') ?? null,
     revokeDeviceId: values.get('revoke') ?? positionalRevoke,
     json: flags.has('json'),
+    pluginAction,
+    pluginPath,
+    pluginYes: flags.has('yes'),
+    pluginConfigFile:
+      values.get('config') !== undefined ? path.resolve(values.get('config') as string) : null,
     trustProxy: flags.has('trust-proxy') || trustProxyEnv === '1' || trustProxyEnv === 'true',
     publicUrlExplicit: explicitPublicUrl !== undefined,
   };
@@ -208,6 +241,10 @@ function emptyConfig(command: ServerConfig['command']): ServerConfig {
     acceptRequestId: null,
     revokeDeviceId: null,
     json: false,
+    pluginAction: null,
+    pluginPath: null,
+    pluginYes: false,
+    pluginConfigFile: null,
     trustProxy: false,
     publicUrlExplicit: false,
   };
@@ -222,7 +259,13 @@ export function usageText(): string {
   kepcup-server devices [list]       列出已配对设备
   kepcup-server devices revoke <id>  撤销设备（踢下线并删除）
   kepcup-server password             修改管理员密码（交互式输入旧密码与新密码）
+  kepcup-server plugin install <路径>  在服务器本机安装 .kepcup 文件或插件目录
   kepcup-server version              打印版本
+
+plugin install 选项：
+  --yes                  跳过交互确认
+  --config <json 文件>   MCPB user_config：{ "<mcpId>": { "<key>": 值 } }（内容不会写日志）
+  --json                 输出 plugins.install 的 JSON 结果
 
 run 选项：
   --host <addr>          绑定地址（默认 127.0.0.1；局域网/公网用 0.0.0.0）

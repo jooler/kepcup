@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-mcp": "1.4.0",
+    "@kepcup/package-guard": "workspace:*",
     "@kepcup/shared": "workspace:*"
   }
 }
