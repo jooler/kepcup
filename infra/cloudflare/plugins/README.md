@@ -12,6 +12,25 @@ CI 离线用 Ed25519 对 `index.json` **原始字节**签名，客户端（`pack
 - **包**（`{sha256}.kepcup`，单包可达数百 MB）：Workers Static Assets 单文件上限 25 MiB
   装不下，走 **R2 + 自定义域**，对象键内容寻址、不可变。
 
+## 0. 当前状态（2026-10-28，基础设施已就绪）
+
+- ✅ R2 bucket `kepcup-plugins` 已创建（location WNAM）；
+- ✅ 自定义域 `pkg.kepcup.com` 已绑定到该 bucket（zone kepcup.com，CNAME → `public.r2.dev`
+  已自动创建并代理，TLS / 所有权 active；冒烟：上传对象经 `https://pkg.kepcup.com/<key>` 返回
+  200 且 `cache-control: public, max-age=31536000, immutable`，验证后已删除）；
+- ✅ 索引域：`kepcup-directory` Worker 已带 `/plugins/v1/` 配置重新部署（`public/_headers`
+  的 plugins 缓存头生效；顺带新增 `public/.assetsignore`，`.gitkeep` / `.gitignore` 不再作为
+  静态资源上线）。连接器通道部署后复核通过（`directory/verify.mjs` 线上验签 OK）；
+- ✅ 本机发布包装 `infra/cloudflare/sign-plugins.sh`：从仓库根 `.env` 读
+  `KEPCUP_PLUGIN_SIGNING_KEY`，参数原样传给 `scripts/sign-plugin-index.mjs`（与连接器的
+  `sign-directory.sh` 同款）。`.env` 里已留好注释条目待填值。
+- ⚠️ **从本机检出重新部署 directory 前**，先把线上产物拉回本地：`public/connectors/v1/` 的
+  签名产物不入库，直接 `wrangler deploy` 会把线上连接器索引顶成 404。拉回
+  `index.json` / `index.json.sig`（有 deltas 一并）后再部署。
+
+仍未完成（§1–§4）：真实签名密钥与 `PLUGIN_INDEX_PUBLIC_KEYS` 登记、首次签名发布、CI 步骤。
+在此之前客户端 `PLUGIN_INDEX_PUBLIC_KEYS` 为空 = 市场关闭、不发任何网络请求（按设计）。
+
 ## 1. 生成真实签名密钥（不与连接器目录共用）
 
 ```bash
@@ -62,8 +81,10 @@ KEPCUP_PLUGIN_SIGNING_KEY="$SECRET" node scripts/sign-plugin-index.mjs \
 node scripts/sign-plugin-index.mjs --verify dist-market --keys <(echo '[{"keyId":"kepcup-plugins-2026-1","publicKey":"<登记的公钥>","validFrom":0,"revoked":false}]')
 
 # 5. 上传包到 R2（内容寻址、immutable），再部署索引
-npx wrangler r2 object put "kepcup-plugins/<sha256>.kepcup" --file "dist-market/packages/<sha256>.kepcup" \
+#    （r2 object 命令必须带 --remote，否则对象写进本地 miniflare 而不是真桶）
+npx wrangler r2 object put "kepcup-plugins/<sha256>.kepcup" --remote --file "dist-market/packages/<sha256>.kepcup" \
   --cache-control "public, max-age=31536000, immutable"   # 逐个包
+#    部署 directory 前若本地 public/connectors/v1/ 为空，先拉回线上产物（见 §0 ⚠️）
 cd infra/cloudflare/directory && npx wrangler deploy      # /plugins/v1/ 静态资源一起部署
 node infra/cloudflare/directory/verify.mjs                # 连接器目录线上复核（本通道同理可自写）
 ```
