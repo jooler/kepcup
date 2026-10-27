@@ -66,6 +66,8 @@ export async function createTestStack(
     directorySync?: CreateTestCoreOptions['directorySync'];
     /** D104 P1-1 test hook (see CoreServicesOptions.pluginMarketplace). */
     pluginMarketplace?: CreateTestCoreOptions['pluginMarketplace'];
+    /** D104 P1-2 test hook (see CoreServicesOptions.projectorWrap). */
+    projectorWrap?: CreateTestCoreOptions['projectorWrap'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -114,6 +116,7 @@ export async function createTestStack(
     ...(options.pluginMarketplace !== undefined
       ? { pluginMarketplace: options.pluginMarketplace }
       : {}),
+    ...(options.projectorWrap !== undefined ? { projectorWrap: options.projectorWrap } : {}),
   });
   return {
     core,

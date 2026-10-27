@@ -228,14 +228,14 @@ export class ConnectorsProjector
         continue;
       }
       // Conflicts against the FULL current catalog (bundled / directory / local / other
-      // plugins) — this plugin is not installed yet, so it cannot collide with itself.
+      // plugins). An update's own slugs are excluded via the ledger-owned set (D104 P1-2).
       const existing = this.#deps.catalog
         .list()
         .find(
           (candidate) =>
             connectorMetaOf(candidate).slug === meta.slug || candidate.name === entry.name,
         );
-      if (existing !== undefined) {
+      if (existing !== undefined && !ctx.owned.connector.has(meta.slug)) {
         const existingSlug = connectorMetaOf(existing).slug;
         conflicts.push({
           kind: 'connector',
@@ -288,6 +288,72 @@ export class ConnectorsProjector
         connectorId: connectorMetaOf(item.entry).slug,
         change: 'added',
       });
+    }
+  }
+
+  /**
+   * Update (D104 P1-2): entries are replaced in place, keyed by slug. A slug whose
+   * endpoint / auth binding changed loses its connections first (`AppDisconnector`, same
+   * double sweep as uninstall — the token audience no longer holds); a same-slug entry
+   * whose `name` drifted is rejected (directory-merge rule 2: the slug is the
+   * `app_{slug}_*` tool prefix and the connection rows' key). A reverse `update`
+   * (new → old) restores the previous entries — they derive from the installed files —
+   * but connections disconnected on the way are gone (known limitation).
+   */
+  async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    const state = this.#byPlugin.get(oldCtx.plugin.id);
+    const currentEntries = new Map(
+      (state?.entries ?? []).map((item) => [connectorMetaOf(item.entry).slug, item]),
+    );
+    const loaded: PluginConnectorEntry[] = [];
+    const presentSlugs: string[] = [];
+    for (const contribution of newCtx.manifest.contributions.connectors) {
+      const { entry, iconPath } = this.#loadOne(newCtx, contribution.file);
+      const slug = connectorMetaOf(entry).slug;
+      const previous = currentEntries.get(slug);
+      if (previous === undefined) {
+        newCtx.ledger.add('connector', slug);
+      } else {
+        if (previous.entry.name !== entry.name) {
+          throw new AppError(
+            'PLUGIN_INVALID',
+            `连接器 ${slug} 的 name 不得变化（${previous.entry.name} → ${entry.name}）`,
+          );
+        }
+        if (connectorBindingChanged(previous.entry, entry)) {
+          // The token audience no longer holds: disconnect (revoke + clear selections)
+          // before the entry is swapped.
+          await this.#sweepConnections(slug);
+        }
+      }
+      presentSlugs.push(slug);
+      loaded.push({ entry, pluginId: newCtx.plugin.id, iconPath });
+    }
+    // Slugs the new version dropped: the same removal path as `unproject`.
+    const newSlugs = new Set(presentSlugs);
+    for (const slug of currentEntries.keys()) {
+      if (newSlugs.has(slug)) continue;
+      this.#removeFromMap(oldCtx.plugin.id, slug);
+      this.#bump();
+      try {
+        await this.#sweepConnections(slug);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { plugin: oldCtx.plugin.id, slug, error: error instanceof Error ? error.message : String(error) },
+          'plugin connector update: disconnect failed',
+        );
+      }
+      this.#deps.events.emit('apps.catalog_changed', { connectorId: slug, change: 'removed' });
+      oldCtx.ledger.remove('connector', slug);
+    }
+    this.#byPlugin.set(newCtx.plugin.id, {
+      pluginId: newCtx.plugin.id,
+      entries: loaded,
+      disabled: state?.disabled ?? false,
+    });
+    this.#bump();
+    for (const slug of presentSlugs) {
+      this.#deps.events.emit('apps.catalog_changed', { connectorId: slug, change: 'added' });
     }
   }
 
@@ -407,4 +473,29 @@ function safeHost(url: string): string {
   } catch {
     return url;
   }
+}
+
+function firstStreamableHttpUrl(entry: ConnectorCatalogEntry): string | null {
+  const remote = entry.remotes.find((item) => item.type === 'streamable-http');
+  return remote?.url ?? null;
+}
+
+/**
+ * D73's "URL changed → the token audience no longer holds", narrowed to connector
+ * entries (design 51 §6.3): the first streamable-http endpoint, the auth kind,
+ * registration or client ref. Scope changes go through D73 step-up and are NOT a
+ * binding change.
+ */
+function connectorBindingChanged(
+  oldEntry: ConnectorCatalogEntry,
+  newEntry: ConnectorCatalogEntry,
+): boolean {
+  const oldMeta = connectorMetaOf(oldEntry);
+  const newMeta = connectorMetaOf(newEntry);
+  return (
+    firstStreamableHttpUrl(oldEntry) !== firstStreamableHttpUrl(newEntry) ||
+    oldMeta.auth.kind !== newMeta.auth.kind ||
+    oldMeta.auth.registration !== newMeta.auth.registration ||
+    oldMeta.auth.clientRef !== newMeta.auth.clientRef
+  );
 }

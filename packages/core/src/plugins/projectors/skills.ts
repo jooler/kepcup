@@ -92,7 +92,12 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
         continue;
       }
       seen.add(parsed.name.toLowerCase());
-      if (this.#deps.skills.publicSkillRow(parsed.name) !== null) {
+      // An update collides only with SOMEONE ELSE's public skill — the plugin's own
+      // previous skills are excluded via the ledger-owned set (D104 P1-2).
+      if (
+        this.#deps.skills.publicSkillRow(parsed.name) !== null &&
+        !ctx.owned.skill.has(parsed.name)
+      ) {
         // ANY source counts: a Bot's private same-name skill only shadows, that is not a conflict.
         conflicts.push({ kind: 'skill', ref: parsed.name, withWhat: '已有同名公共技能' });
       }
@@ -110,6 +115,49 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
       }
       ctx.ledger.add('skill', resolved.name);
       this.#installOne(ctx.plugin, resolved);
+    }
+  }
+
+  /**
+   * Update (D104 P1-2): skills are replaced in place along the content hash
+   * (`uninstallPublic` + `installPublic`, the preset update mechanism); skills the new
+   * manifest dropped are removed with the same ownership check as `unproject`. A reverse
+   * `update` (new → old) restores the previous version exactly — the old content still
+   * lives in the library under its own hash — so there is no `beginUpdate` snapshot.
+   */
+  async update(oldCtx: PluginProjectionContext, newCtx: PluginProjectionContext): Promise<void> {
+    for (const contribution of newCtx.manifest.contributions.skills) {
+      const resolved = this.#resolve(newCtx, contribution.dir);
+      if (resolved === null) {
+        throw new AppError('PLUGIN_INVALID', `技能 ${contribution.dir} 的 SKILL.md 无法解析`);
+      }
+      newCtx.ledger.add('skill', resolved.name);
+      const row = this.#deps.skills.publicSkillRow(resolved.name);
+      if (row !== null) {
+        const library = this.#deps.skills.libraryGet(row.library_id);
+        const source = library?.source_url ?? '';
+        if (library !== null && parsePluginSkillSource(source)?.pluginId !== newCtx.plugin.id) {
+          // Someone else's skill — the shared name is not ours to replace.
+          throw new AppError(
+            'PLUGIN_CONFLICT',
+            `公共技能 ${resolved.name} 由其它来源提供，不能由本插件更新`,
+          );
+        }
+        if (library?.content_hash === resolved.contentHash) continue;
+        this.#deps.skills.uninstallPublic(resolved.name);
+      }
+      this.#installOne(newCtx.plugin, resolved);
+    }
+    // Skills the new version dropped: the same guarded removal as `unproject`.
+    const kept = new Set(
+      newCtx.manifest.contributions.skills.map((contribution) => contribution.dir),
+    );
+    for (const contribution of oldCtx.manifest.contributions.skills) {
+      if (kept.has(contribution.dir)) continue;
+      const resolved = this.#resolve(oldCtx, contribution.dir);
+      if (resolved === null) continue; // content unreadable: nothing projected to remove
+      this.#removeOne(oldCtx.plugin, resolved.name);
+      oldCtx.ledger.remove('skill', resolved.name);
     }
   }
 

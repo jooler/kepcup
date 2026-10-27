@@ -452,6 +452,11 @@ export interface CoreServicesOptions {
     initialDelayMs?: number;
   };
   /**
+   * D104 P1-2 test hook (`__KEPCUP_TEST_HOOKS__` builds only): wraps the plugin
+   * projectors so integration tests can inject update failures (rollback coverage).
+   */
+  projectorWrap?: (projector: import('./plugins/projectors/index.js').PluginProjector) => import('./plugins/projectors/index.js').PluginProjector;
+  /**
    * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
    * share intake daily sweep cadence so integration tests can observe the
    * timer firing without waiting a real day.
@@ -2337,6 +2342,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       projectors: pluginProjectors,
       builtin: builtinPlugins,
       marketplace,
+      ...(options.projectorWrap !== undefined && __KEPCUP_TEST_HOOKS__ === true
+        ? { projectorWrap: options.projectorWrap }
+        : {}),
+      secrets: {
+        // P1-2 更新的 user_config 预校验：必填敏感字段已有存值即视为满足。
+        hasValue: (name) => secrets.hasValue(name),
+      },
       pluginsDir: paths.pluginsDir,
       appVersion: options.appVersion ?? '0.0.0',
       ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
