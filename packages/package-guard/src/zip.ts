@@ -41,15 +41,46 @@ export class PackageGuardError extends Error {}
 
 export type ZipErrorFactory = (message: string) => Error;
 
+export interface ZipLimits {
+  maxEntries: number;
+  maxEntryBytes: number;
+  maxUnpackedBytes: number;
+  maxFileBytes: number;
+}
+
 export interface ZipGuardOptions {
   /** Factory for every rejection; default throws {@link PackageGuardError}. */
   error?: ZipErrorFactory;
   /** Human label of the archive kind in messages; default `'zip'`. */
   label?: string;
+  /** Overrides of the hard caps (tests use tiny values); defaults are the `ZIP_MAX_*` constants. */
+  limits?: Partial<ZipLimits>;
 }
+
+const DEFAULT_LIMITS: ZipLimits = {
+  maxEntries: ZIP_MAX_ENTRIES,
+  maxEntryBytes: ZIP_MAX_ENTRY_BYTES,
+  maxUnpackedBytes: ZIP_MAX_UNPACKED_BYTES,
+  maxFileBytes: ZIP_MAX_FILE_BYTES,
+};
 
 const defaultError: ZipErrorFactory = (message) => new PackageGuardError(message);
 const defaultLabel = 'zip';
+
+export interface ResolvedZipGuard {
+  error: ZipErrorFactory;
+  label: string;
+  limits: ZipLimits;
+}
+
+/** Normalizes {@link ZipGuardOptions} into the error / label / limit policy used everywhere. */
+export function resolveZipGuard(options: ZipGuardOptions = {}): ResolvedZipGuard {
+  return {
+    error: options.error ?? defaultError,
+    label: options.label ?? defaultLabel,
+    limits: { ...DEFAULT_LIMITS, ...options.limits },
+  };
+}
 
 /** Reserved Windows device names, with or without an extension. */
 const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
@@ -75,13 +106,13 @@ export class ZipArchive {
 
   readonly #fileSize: number;
   /** Both policies live on the instance: opening used them, `read()` keeps using them. */
-  readonly #guard: Required<ZipGuardOptions>;
+  readonly #guard: ResolvedZipGuard;
 
   private constructor(
     handle: FileHandle,
     entries: ZipEntry[],
     fileSize: number,
-    guard: Required<ZipGuardOptions>,
+    guard: ResolvedZipGuard,
   ) {
     this.#handle = handle;
     this.entries = entries;
@@ -90,15 +121,12 @@ export class ZipArchive {
   }
 
   static async open(filePath: string, options: ZipGuardOptions = {}): Promise<ZipArchive> {
-    const guard: Required<ZipGuardOptions> = {
-      error: options.error ?? defaultError,
-      label: options.label ?? defaultLabel,
-    };
-    const { error, label } = guard;
+    const guard = resolveZipGuard(options);
+    const { error, label, limits } = guard;
     const handle = await open(filePath, 'r');
     try {
       const { size } = await handle.stat();
-      if (size > ZIP_MAX_FILE_BYTES) throw error('包文件过大');
+      if (size > limits.maxFileBytes) throw error('包文件过大');
       if (size < 22) throw error(`不是有效的 ${label}（ZIP）文件`);
       const tailLength = Math.min(size, 22 + 0xffff);
       const tail = Buffer.alloc(tailLength);
@@ -117,7 +145,7 @@ export class ZipArchive {
       if (total === 0xffff || cenSize === 0xffffffff || cenOffset === 0xffffffff) {
         throw error(`不支持 ZIP64 的 ${label} 包`);
       }
-      if (total > ZIP_MAX_ENTRIES) throw error(`包内文件过多（上限 ${ZIP_MAX_ENTRIES}）`);
+      if (total > limits.maxEntries) throw error(`包内文件过多（上限 ${limits.maxEntries}）`);
       if (cenOffset + cenSize > size) throw error('ZIP 目录越界');
       const cen = Buffer.alloc(cenSize);
       await handle.read(cen, 0, cenSize, cenOffset);
@@ -146,7 +174,7 @@ export class ZipArchive {
         if (compressedSize === 0xffffffff || entrySize === 0xffffffff) {
           throw error(`不支持 ZIP64 的 ${label} 包`);
         }
-        if (entrySize > ZIP_MAX_ENTRY_BYTES || compressedSize > ZIP_MAX_ENTRY_BYTES) {
+        if (entrySize > limits.maxEntryBytes || compressedSize > limits.maxEntryBytes) {
           throw error(`包内文件过大：${name}`);
         }
         // Declared sizes come from the (untrusted) central directory: bound them by the real
@@ -158,7 +186,7 @@ export class ZipArchive {
           throw error(`ZIP 条目大小与目录不符：${name}`);
         }
         unpacked += entrySize;
-        if (unpacked > ZIP_MAX_UNPACKED_BYTES) throw error('包解压后体积超过上限');
+        if (unpacked > limits.maxUnpackedBytes) throw error('包解压后体积超过上限');
         // Unix mode bits only mean something when the archive was made on Unix (host 3).
         const unixMode = versionMadeBy >> 8 === 3 ? (externalAttrs >>> 16) & 0xffff : 0;
         const isSymlink = (unixMode & 0xf000) === 0xa000;
