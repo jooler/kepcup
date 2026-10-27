@@ -58,6 +58,8 @@ export interface ReportSummary {
 /** Machine output of `--json` (schema version {@link REPORT_SCHEMA_VERSION}, documented in README.md). */
 export interface ValidationReport {
   schemaVersion: typeof REPORT_SCHEMA_VERSION;
+  /** Connector and plugin reports share the shape; `mode` tells them apart. */
+  mode?: 'connector' | 'plugin';
   /** What was validated: the argument as given. */
   target: string;
   /** The MCP endpoint that was probed, if any. */
