@@ -83,10 +83,19 @@ async function launch(
   return { app, page };
 }
 
-async function makeFixture(): Promise<{ path: string; sha256: string }> {
+async function makeFixture(
+  options: { id?: string; version?: string; skillADescription?: string } = {},
+): Promise<{ path: string; sha256: string }> {
   const built = await buildPluginFixture({
     dir: await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugin-fx-')),
-    skills: [{ name: SKILL_A, description: '插件技能 A' }, { name: SKILL_B }],
+    manifest: {
+      ...(options.id !== undefined ? { id: options.id } : {}),
+      ...(options.version !== undefined ? { version: options.version } : {}),
+    },
+    skills: [
+      { name: SKILL_A, description: options.skillADescription ?? '插件技能 A' },
+      { name: SKILL_B },
+    ],
     connectors: [{ slug: CONNECTOR_SLUG }],
     http: [{ id: HTTP_KEY, url: 'https://mcp.docs.test/mcp' }],
   });
@@ -424,7 +433,7 @@ test('plugins: uninstall removes the card and every projection', async () => {
   }
 });
 
-test('plugins: reinstalling the same fixture inspects into a blocked consent panel', async () => {
+test('plugins: a DIFFERENT plugin claiming an installed skill name is a blocked conflict', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-conflict-'));
@@ -433,21 +442,96 @@ test('plugins: reinstalling the same fixture inspects into a blocked consent pan
     const launched = await launch(home, llm.url);
     app = launched.app;
     const page = launched.page;
-    const fixture = await makeFixture();
-    await installViaRpc(page, fixture);
+    // 插件 A 占住 plg-alpha 公共技能。
+    const fixtureA = await makeFixture();
+    await installViaRpc(page, fixtureA);
     await page.reload();
     await waitReady(page);
 
+    // 另一个 id 的插件 B 也带同名技能 plg-alpha → 真冲突（P1-2 起，同 id 重装不再是冲突）。
+    const fixtureB = await buildPluginFixture({
+      dir: await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugin-fx-')),
+      manifest: { id: 'io.github.tester/other' },
+      skills: [{ name: SKILL_A, description: '撞名技能' }],
+    });
     const dialog = await openInstalledTab(page);
     await dialog.locator('[data-testid="plugins-install-file"]').click();
     const installDialog = page.locator('[data-testid="plugins-install-dialog"]');
-    await installDialog.locator('[data-testid="plugins-install-path"]').fill(fixture.path);
+    await installDialog.locator('[data-testid="plugins-install-path"]').fill(fixtureB.path);
     await installDialog.locator('[data-testid="plugins-install-inspect"]').click();
 
     await expect(installDialog.locator('[data-testid="plugins-consent-blockers"]')).toBeVisible({
       timeout: 30_000,
     });
     await expect(installDialog.locator('[data-testid="plugins-install-confirm"]')).toBeDisabled();
+  } finally {
+    await app?.close();
+    await llm.stop();
+    await rmHomeTolerant(home);
+  }
+});
+
+test('plugins: reinstalling the SAME id from a local file is an update, not a conflict', async () => {
+  test.setTimeout(240_000);
+  const llm = await startMockLlm();
+  const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-update-'));
+  let app: ElectronApplication | null = null;
+  try {
+    const launched = await launch(home, llm.url);
+    app = launched.app;
+    const page = launched.page;
+    const fixtureV1 = await makeFixture({
+      version: '1.0.0',
+      skillADescription: '插件技能 A 第一版',
+    });
+    await installViaRpc(page, fixtureV1);
+    const { botId } = await createBotAndOpenChat(page, 'Update Bot');
+    await page.reload();
+    await waitReady(page);
+    await openConversationByName(page, 'Update Bot');
+    await dismissStartPanel(page);
+
+    // 同 id 同版本、不同内容（技能描述变化）→ 检视 = 中性更新提示，无红色阻塞。
+    const fixtureV1b = await makeFixture({
+      version: '1.0.0',
+      skillADescription: '插件技能 A 第二版',
+    });
+    const dialog = await openInstalledTab(page);
+    await dialog.locator('[data-testid="plugins-install-file"]').click();
+    const installDialog = page.locator('[data-testid="plugins-install-dialog"]');
+    await installDialog.locator('[data-testid="plugins-install-path"]').fill(fixtureV1b.path);
+    await installDialog.locator('[data-testid="plugins-install-inspect"]').click();
+
+    await expect(installDialog.locator('[data-testid="plugins-consent-update-from"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(
+      installDialog.locator('[data-testid="plugins-consent-update-from"]'),
+    ).toContainText('v1.0.0');
+    await expect(installDialog.locator('[data-testid="plugins-consent-blockers"]')).toHaveCount(0);
+    await expect(installDialog.locator('[data-testid="plugins-install-confirm"]')).toBeEnabled();
+
+    await installDialog.locator('[data-testid="plugins-install-confirm"]').click();
+    await expect(installDialog).toBeHidden({ timeout: 30_000 });
+
+    // 插件 id 与版本不变，技能内容已换新。
+    const list = (await page.evaluate(() =>
+      (window as unknown as { __kepcupRpc: Rpc }).__kepcupRpc('plugins.list', undefined),
+    )) as { plugins: Array<{ id: string; version: string }> };
+    expect(list.plugins).toHaveLength(1);
+    expect(list.plugins[0]).toMatchObject({ id: PLUGIN_ID, version: '1.0.0' });
+    const settings = (await page.evaluate(() =>
+      (window as unknown as { __kepcupRpc: Rpc }).__kepcupRpc('settings.get', undefined),
+    )) as { mcpServers: Array<{ id: string; source?: { kind: string } }> };
+    expect(settings.mcpServers.some((item) => item.source?.kind === 'plugin')).toBe(true);
+    // 技能内容已换新（公共技能对所有 Bot 可见，任一 botId 都能看到新描述）。
+    const skills = (await page.evaluate(
+      (id) => (window as unknown as { __kepcupRpc: Rpc }).__kepcupRpc('skills.list', { botId: id }),
+      botId,
+    )) as { skills: Array<{ name: string; description: string }> };
+    expect(skills.skills.find((skill) => skill.name === SKILL_A)?.description).toContain(
+      '插件技能 A 第二版',
+    );
   } finally {
     await app?.close();
     await llm.stop();

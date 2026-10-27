@@ -60,9 +60,14 @@ export function clearPluginSensitive(info: PluginInspectOutput, form: PluginForm
   return next;
 }
 
-/** 确认按钮能否点：检视判定可安装且必填项齐全。 */
-export function canInstallPlugin(info: PluginInspectOutput, missing: readonly string[]): boolean {
-  return info.installable && missing.length === 0;
+/** 确认按钮能否点：检视判定可安装、必填项齐全，且权限扩大差异已勾选确认（P1-2）。 */
+export function canInstallPlugin(
+  info: PluginInspectOutput,
+  missing: readonly string[],
+  ackDiff = false,
+): boolean {
+  const diffAcknowledged = info.update?.permissionsExpanded === true ? ackDiff : true;
+  return info.installable && missing.length === 0 && diffAcknowledged;
 }
 
 /** 技能来源标记 `plugin://{pluginId}/{skillName}` → 插件 id；其他来源返回 null。 */

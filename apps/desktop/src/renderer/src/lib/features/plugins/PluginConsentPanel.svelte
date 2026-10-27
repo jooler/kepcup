@@ -18,16 +18,22 @@
     info,
     form = $bindable(),
     missing,
+    ackDiff = $bindable(false),
     testid = 'plugins-consent',
   }: {
     info: PluginInspectOutput;
     form: PluginForm;
     missing: string[];
+    /** P1-2：权限扩大时的确认勾选（未勾选时确认按钮禁用）。 */
+    ackDiff?: boolean;
     testid?: string;
   } = $props();
 
+  const updating = $derived(info.update !== null);
   const hasBlockers = $derived(
-    info.blockers.length > 0 || info.conflicts.length > 0 || info.existing !== null,
+    info.blockers.length > 0 ||
+      info.conflicts.length > 0 ||
+      (info.existing !== null && info.update === null),
   );
   const mcpbItems = $derived(info.mcp.filter((item) => item.kind === 'mcpb'));
 </script>
@@ -85,9 +91,33 @@
           </p>
         {/each}
       {/if}
-      {#if info.existing !== null}
+      {#if info.existing !== null && info.update === null}
         <p>{t('plugins.consent.existing', { version: info.existing.version })}</p>
       {/if}
+    </div>
+  {/if}
+
+  {#if updating}
+    <p class="text-xs text-muted-foreground" data-testid={`${testid}-update-from`}>
+      {t('plugins.update.from', { from: info.update!.from, to: info.version })}
+    </p>
+  {/if}
+  {#if info.update?.permissionsExpanded === true}
+    <div class="space-y-1" data-testid={`${testid}-update-added`}>
+      <Label class="text-xs">{t('plugins.update.expanded')}</Label>
+      {#each info.update.added as line (line)}
+        <p class="text-xs">{line}</p>
+      {/each}
+      <label class="mt-1 flex items-center gap-2">
+        <Checkbox
+          checked={ackDiff}
+          onCheckedChange={(checked) => {
+            ackDiff = checked === true;
+          }}
+          data-testid="plugins-install-ack-diff"
+        />
+        <span class="text-xs">{t('plugins.update.ack')}</span>
+      </label>
     </div>
   {/if}
 
@@ -148,6 +178,9 @@
   {/if}
 
   {#if !hasBlockers}
+    {#if updating && mcpbItems.some((item) => item.userConfigFields.length > 0)}
+      <p class="text-xs text-muted-foreground">{t('plugins.update.keepSecrets')}</p>
+    {/if}
     {#each mcpbItems as item (item.id)}
       {#if item.userConfigFields.length > 0}
         <div class="space-y-2" data-testid={`${testid}-config-${item.id}`}>
