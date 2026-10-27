@@ -204,8 +204,9 @@ describe('find', () => {
     h.publish([v1.entry, v2.entry, v11.entry], NOW);
     const sync = h.make();
     await sync.sync();
-    expect(sync.find((v1.entry as { id: string }).id, { appVersion: '1.0.0', platform: 'darwin' }))
-      .toMatchObject({ version: '1.2.0' });
+    expect(
+      sync.find((v1.entry as { id: string }).id, { appVersion: '1.0.0', platform: 'darwin' }),
+    ).toMatchObject({ version: '1.2.0' });
   });
 
   it('matches an exact version even when incompatible', async () => {
@@ -221,9 +222,7 @@ describe('find', () => {
     expect(
       sync.find(id, { version: '1.0.0', appVersion: '1.0.0', platform: 'darwin' }),
     ).toMatchObject({ version: '1.0.0' });
-    expect(
-      sync.find(id, { appVersion: '1.0.0', platform: 'darwin' }),
-    ).toBeNull();
+    expect(sync.find(id, { appVersion: '1.0.0', platform: 'darwin' })).toBeNull();
   });
 
   it('filters by platform and engine range', async () => {
@@ -234,14 +233,23 @@ describe('find', () => {
     const sync = h.make();
     await sync.sync();
     const appVersion = '1.5.0';
-    expect(sync.find((winOnly.entry as { id: string }).id, { appVersion, platform: 'darwin' })).toBeNull();
-    expect(sync.find((winOnly.entry as { id: string }).id, { appVersion, platform: 'win32' })).not.toBeNull();
-    // 0.0.0 cores (dev / test) skip the engine check entirely.
-    expect(sync.find((engine.entry as { id: string }).id, { appVersion: '0.0.0-test', platform: 'darwin' })).not.toBeNull();
-    expect(sync.find((engine.entry as { id: string }).id, { appVersion, platform: 'darwin' })).toBeNull();
     expect(
-      sync.incompatibleReason(engine.entry, appVersion, 'darwin'),
-    ).toContain('2.0.0');
+      sync.find((winOnly.entry as { id: string }).id, { appVersion, platform: 'darwin' }),
+    ).toBeNull();
+    expect(
+      sync.find((winOnly.entry as { id: string }).id, { appVersion, platform: 'win32' }),
+    ).not.toBeNull();
+    // 0.0.0 cores (dev / test) skip the engine check entirely.
+    expect(
+      sync.find((engine.entry as { id: string }).id, {
+        appVersion: '0.0.0-test',
+        platform: 'darwin',
+      }),
+    ).not.toBeNull();
+    expect(
+      sync.find((engine.entry as { id: string }).id, { appVersion, platform: 'darwin' }),
+    ).toBeNull();
+    expect(sync.incompatibleReason(engine.entry, appVersion, 'darwin')).toContain('2.0.0');
   });
 });
 
@@ -274,10 +282,8 @@ describe('download', () => {
     const filePath = await sync.download(entry);
     expect(filePath).toBe(path.join(h.packagesDir, `${entry.sha256}.kepcup`));
     expect(existsSync(filePath)).toBe(true);
-    expect(
-      createHash('sha256').update(readFileSync(filePath)).digest('hex'),
-    ).toBe(entry.sha256);
-    expect((readFileSync(filePath)).length).toBe(entry.size);
+    expect(createHash('sha256').update(readFileSync(filePath)).digest('hex')).toBe(entry.sha256);
+    expect(readFileSync(filePath).length).toBe(entry.size);
   });
 
   it('rejects a package whose bytes do not match the indexed sha256', async () => {
@@ -295,7 +301,10 @@ describe('download', () => {
     const h = await harness();
     const { entry } = await registerPackage(h);
     // Serve extra bytes behind the same URL: the streamed size check aborts mid-write.
-    h.files.set(entry.downloadUrl, Buffer.concat([readFileSync(h.packages[`${entry.id}`].fixture.path), Buffer.alloc(10, 1)]));
+    h.files.set(
+      entry.downloadUrl,
+      Buffer.concat([readFileSync(h.packages[`${entry.id}`].fixture.path), Buffer.alloc(10, 1)]),
+    );
     h.publish([entry], NOW);
     const sync = h.make();
     await sync.sync();
@@ -357,16 +366,25 @@ describe('download', () => {
     const h = await harness();
     const stale = path.join(h.packagesDir, `${'a'.repeat(64)}.kepcup`);
     const fresh = path.join(h.packagesDir, `${'b'.repeat(64)}.kepcup`);
+    // `.tmp-*` residue from a crashed download is cleaned too; a fresh temp file
+    // (an in-flight download) is never touched.
+    const staleTmp = path.join(h.packagesDir, '.tmp-deadbeef');
+    const freshTmp = path.join(h.packagesDir, '.tmp-cafe');
     writeFileSync(stale, 'old');
     writeFileSync(fresh, 'new');
+    writeFileSync(staleTmp, 'residue');
+    writeFileSync(freshTmp, 'in-flight');
     const oldTime = new Date(NOW - 8 * 24 * 3600_000);
     utimesSync(stale, oldTime, oldTime);
+    utimesSync(staleTmp, oldTime, oldTime);
     const sync = h.make();
     sync.start();
     await vi.waitFor(() => {
       expect(existsSync(stale)).toBe(false);
+      expect(existsSync(staleTmp)).toBe(false);
     });
     expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(freshTmp)).toBe(true);
     sync.stop();
   });
 });
@@ -378,7 +396,12 @@ describe('enabled gates only the timer', () => {
     const { entry } = await registerPackage(h);
     h.publish([entry], NOW);
     let on = false;
-    const sync = h.make({ enabled: () => on, initialDelayMs: 10, intervalMs: 1000, random: () => 0.5 });
+    const sync = h.make({
+      enabled: () => on,
+      initialDelayMs: 10,
+      intervalMs: 1000,
+      random: () => 0.5,
+    });
     const pulls = () => h.server.requests.filter((url) => url === `${BASE}/index.json`).length;
     sync.start();
     await vi.advanceTimersByTimeAsync(50);
