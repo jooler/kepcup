@@ -74,7 +74,8 @@ export interface McpbPackageRef {
  */
 export function mcpbPackageOf(source: McpServerSource | undefined): McpbPackageRef | null {
   if (source === undefined) return null;
-  if (source.kind === 'mcpb') return { name: source.name, version: source.version, sha256: source.sha256 };
+  if (source.kind === 'mcpb')
+    return { name: source.name, version: source.version, sha256: source.sha256 };
   if (source.kind === 'plugin') return source.mcpb ?? null;
   return null;
 }
@@ -448,6 +449,24 @@ export class McpbInstaller {
       );
     }
 
+    // Replace mode with a same-slot (same name@version) but different-content old package:
+    // extraction below would delete the old tree, which a failed update's rollback still
+    // needs at this exact path. Park the intact old tree beside the slot; the projector
+    // restores it via `restoreRollbackBackup` or discards it via `discardRollbackBackups`.
+    if (replacing !== null) {
+      const oldPkg = mcpbPackageOf(replacing.source);
+      if (
+        oldPkg !== null &&
+        sameSlot(oldPkg, { name: manifest.name, version: manifest.version }) &&
+        oldPkg.sha256 !== inspection.sha256
+      ) {
+        await this.#parkReplacedTree(
+          { name: manifest.name, version: manifest.version },
+          oldPkg.sha256,
+        );
+      }
+    }
+
     if (input.approvalContext !== undefined) {
       if (this.#deps.requestApproval === undefined) {
         throw new AppError('NOT_IMPLEMENTED', '审批服务未就绪');
@@ -468,13 +487,12 @@ export class McpbInstaller {
 
     const extracted = await this.#extract(snapshot.path, manifest, inspection.sha256);
     const serverId = input.register?.serverId ?? `mcpb_${randomBytes(6).toString('hex')}`;
-    const source: McpServerSource =
-      input.register?.source ?? {
-        kind: 'mcpb',
-        name: manifest.name,
-        version: manifest.version,
-        sha256: inspection.sha256,
-      };
+    const source: McpServerSource = input.register?.source ?? {
+      kind: 'mcpb',
+      name: manifest.name,
+      version: manifest.version,
+      sha256: inspection.sha256,
+    };
     const server: McpServer = {
       id: serverId,
       name: input.register?.name ?? inspection.displayName,
@@ -722,12 +740,10 @@ export class McpbInstaller {
    * exactly this package (marker check) is ever removed.
    */
   async releaseIfUnused(pkg: McpbPackageRef): Promise<void> {
-    const stillUsed = this.#deps.settings
-      .get()
-      .mcpServers.some((server) => {
-        const used = mcpbPackageOf(server.source);
-        return used !== null && sameSlot(used, pkg);
-      });
+    const stillUsed = this.#deps.settings.get().mcpServers.some((server) => {
+      const used = mcpbPackageOf(server.source);
+      return used !== null && sameSlot(used, pkg);
+    });
     if (stillUsed) return;
     let dir: string;
     try {
@@ -745,6 +761,83 @@ export class McpbInstaller {
       return;
     }
     await rm(dir, { recursive: true, force: true });
+  }
+
+  /**
+   * Renames the extracted tree of `slot` (only when it is the intact tree of
+   * `expectedSha256` per its marker) to a sibling `{slot}.rb-{hex}` backup. A no-op when
+   * the tree is missing or its content no longer matches (nothing restorable would be
+   * lost by a later overwrite).
+   */
+  async #parkReplacedTree(
+    slot: { name: string; version: string },
+    expectedSha256: string,
+  ): Promise<void> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(slot.name, slot.version);
+    } catch {
+      return;
+    }
+    const marker = await readMarker(dir);
+    if (marker === null || marker.sha256 !== expectedSha256) return;
+    const backupDir = path.join(
+      path.dirname(dir),
+      `${path.basename(dir)}.rb-${randomBytes(4).toString('hex')}`,
+    );
+    await rename(dir, backupDir);
+  }
+
+  /**
+   * Rollback support for same-slot replaces (D104 P1-2): makes sure the extracted tree of
+   * `pkg` holds `pkg`'s content again. An intact tree is left alone; otherwise a parked
+   * `{slot}.rb-{hex}` sibling whose marker matches `pkg` is swapped back in. True when the
+   * slot now holds `pkg`'s tree.
+   */
+  async restoreRollbackBackup(pkg: McpbPackageRef): Promise<boolean> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(pkg.name, pkg.version);
+    } catch {
+      return false;
+    }
+    const marker = await readMarker(dir);
+    if (marker !== null && marker.sha256 === pkg.sha256) return true;
+    const parent = path.dirname(dir);
+    const prefix = `${path.basename(dir)}.rb-`;
+    for (const entry of await readdir(parent).catch(() => [] as string[])) {
+      if (!entry.startsWith(prefix)) continue;
+      const backup = path.join(parent, entry);
+      const backupMarker = await readMarker(backup);
+      if (backupMarker === null || backupMarker.sha256 !== pkg.sha256) continue;
+      await rm(dir, { recursive: true, force: true });
+      await rename(backup, dir);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Post-commit GC for same-slot replace backups: removes every parked `{slot}.rb-{hex}`
+   * sibling of `pkg`'s slot whose marker matches `pkg` (the update committed, so the old
+   * tree will never be needed again).
+   */
+  async discardRollbackBackups(pkg: McpbPackageRef): Promise<void> {
+    let dir: string;
+    try {
+      dir = this.installDirOf(pkg.name, pkg.version);
+    } catch {
+      return;
+    }
+    const parent = path.dirname(dir);
+    const prefix = `${path.basename(dir)}.rb-`;
+    for (const entry of await readdir(parent).catch(() => [] as string[])) {
+      if (!entry.startsWith(prefix)) continue;
+      const backup = path.join(parent, entry);
+      const backupMarker = await readMarker(backup);
+      if (backupMarker === null || backupMarker.sha256 !== pkg.sha256) continue;
+      await rm(backup, { recursive: true, force: true });
+    }
   }
 
   /** The existing plugin server a replace-mode registration targets, or a NOT_FOUND throw. */

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -134,6 +134,74 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<AppE
   expect(error).toBeInstanceOf(AppError);
   expect((error as AppError).code).toBe(code);
   return error as AppError;
+}
+
+/**
+ * 同槽（同名同版本）不同内容的替换现场：槽位已被新内容占用，旧树完整停在旁边的
+ * `.rb-` 备份里。这是唯一一条 `#extract` 会覆盖旧树、因而必须先停放的替换路径。
+ */
+async function parkedSameSlotHarness(): Promise<{
+  h: Harness;
+  slot: string;
+  siblings: string[];
+  oldPkg: { name: string; version: string; sha256: string };
+  newSha: string;
+}> {
+  const h = await harness();
+  const v1 = await bundle(h.home, 'v1');
+  const r1 = await h.installer.inspect(v1.path);
+  await h.installer.install({
+    filePath: v1.path,
+    sha256: r1.sha256,
+    userConfig: { api_key: 'sk-1' },
+    register: fresh('v1', r1.sha256),
+  });
+  const v1b = await buildMcpbFixture({
+    dir: h.home,
+    fileName: 'echo-bundle-v1b.mcpb',
+    manifest: {
+      ...SENSITIVE_MANIFEST,
+      name: 'echo-bundle',
+      version: '1.0.0',
+      description: 'rebuilt at the same version',
+    },
+  });
+  const r1b = await h.installer.inspect(v1b.path);
+  expect(r1b.sha256).not.toBe(r1.sha256);
+  const reg = replace('v1', r1b.sha256);
+  reg.source = {
+    kind: 'plugin',
+    pluginId: PLUGIN_ID,
+    version: '1.0.0',
+    key: 'dbtools',
+    mcpb: { name: 'echo-bundle', version: '1.0.0', sha256: r1b.sha256 },
+  };
+  await h.installer.install({
+    filePath: v1b.path,
+    sha256: r1b.sha256,
+    userConfig: {},
+    register: reg,
+  });
+
+  const slot = h.installer.installDirOf('echo-bundle', '1.0.0');
+  // 槽位现在是新内容；旧树被完整停放在旁边的 .rb- 备份里（回滚仍需要它）
+  expect(
+    await h.installer.verify({ name: 'echo-bundle', version: '1.0.0', sha256: r1b.sha256 }),
+  ).toEqual({ ok: true });
+  const siblings = (await readdir(path.dirname(slot))).filter((entry) =>
+    entry.startsWith('echo-bundle@1.0.0.rb-'),
+  );
+  expect(siblings).toHaveLength(1);
+  expect(
+    await h.installer.verify({ name: 'echo-bundle', version: '1.0.0', sha256: r1.sha256 }),
+  ).toEqual({ ok: false, reason: '安装目录与记录的包不一致' });
+  return {
+    h,
+    slot,
+    siblings,
+    oldPkg: { name: 'echo-bundle', version: '1.0.0', sha256: r1.sha256 },
+    newSha: r1b.sha256,
+  };
 }
 
 describe('McpbInstaller replaceExisting', () => {
@@ -387,6 +455,34 @@ describe('McpbInstaller replaceExisting', () => {
     // A marker mismatch (wrong sha) is never removed.
     await h.installer.releaseIfUnused({ ...oldPkg, sha256: 'a'.repeat(64) });
     expect(existsSync(h.installer.installDirOf('echo-bundle', '2.0.0'))).toBe(true);
+  });
+
+  it('同槽不同内容替换：旧树停进 .rb- 备份，槽位被新内容占用', async () => {
+    await parkedSameSlotHarness(); // 断言都在 helper 里
+  });
+
+  it('同槽替换后 restoreRollbackBackup：旧内容回到原槽位，备份被消费', async () => {
+    const parked = await parkedSameSlotHarness();
+    expect(await parked.h.installer.restoreRollbackBackup(parked.oldPkg)).toBe(true);
+    expect(await parked.h.installer.verify(parked.oldPkg)).toEqual({ ok: true });
+    expect(existsSync(path.join(path.dirname(parked.slot), parked.siblings[0]!))).toBe(false);
+  });
+
+  it('同槽替换后 discardRollbackBackups：备份被清理，槽位保持新内容', async () => {
+    const parked = await parkedSameSlotHarness();
+    await parked.h.installer.discardRollbackBackups(parked.oldPkg);
+    expect(
+      (await readdir(path.dirname(parked.slot))).filter((entry) =>
+        entry.startsWith('echo-bundle@1.0.0.rb-'),
+      ),
+    ).toHaveLength(0);
+    expect(
+      await parked.h.installer.verify({
+        name: 'echo-bundle',
+        version: '1.0.0',
+        sha256: parked.newSha,
+      }),
+    ).toEqual({ ok: true });
   });
 
   it('无 replaceExisting：id 已存在仍报 ALREADY_EXISTS（既有路径不变）', async () => {

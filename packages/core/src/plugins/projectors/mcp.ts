@@ -10,11 +10,7 @@ import {
 import type { CoreLogger } from '../../infra/logger.js';
 import type { AppDisconnector } from '../../apps/disconnect.js';
 import { isSafeDirectoryRemoteUrl } from '../../apps/directory-merge.js';
-import {
-  mcpbPackageOf,
-  type McpbInstaller,
-  type McpbPackageRef,
-} from '../../apps/mcpb/install.js';
+import { mcpbPackageOf, type McpbInstaller, type McpbPackageRef } from '../../apps/mcpb/install.js';
 import type { McpService } from '../../mcp/service.js';
 import { oneLine } from '../../apps/prompt.js';
 import { pluginServerId } from '../ids.js';
@@ -286,6 +282,15 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
       const pkg = mcpbPackageOf(server.source);
       if (pkg === null) continue;
       try {
+        // Same-slot replaces parked the old tree for rollback; committed means never needed.
+        await this.#deps.mcpb.discardRollbackBackups(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp commitUpdate: discardRollbackBackups failed',
+        );
+      }
+      try {
         await this.#deps.mcpb.releaseIfUnused(pkg);
       } catch (error) {
         this.#deps.logger.warn(
@@ -307,6 +312,15 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
     const desiredIds = new Set(desired.map((server) => server.id));
     const isMine = (server: McpServer): boolean =>
       server.source?.kind === 'plugin' && server.source.pluginId === plugin.id;
+    const slotKey = (pkg: McpbPackageRef): string => `${pkg.name}@${pkg.version}`.toLowerCase();
+    // Slots the snapshot (old) packages occupy — same-slot replaces get their old tree
+    // parked aside and restored below, which consumes the new tree in that slot.
+    const restoredSlots = new Set(
+      desired.flatMap((server) => {
+        const pkg = mcpbPackageOf(server.source);
+        return pkg === null ? [] : [slotKey(pkg)];
+      }),
+    );
     // A replaced server keeps its stable id, so the snapshot cannot be told apart by id
     // alone: when its package changed, the pre-rollback package tree must be released.
     const replacedPackages: McpbPackageRef[] = [];
@@ -315,12 +329,14 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
       const snapshotServer = desired.find((entry) => entry.id === server.id)!;
       const currentPkg = mcpbPackageOf(server.source);
       const snapshotPkg = mcpbPackageOf(snapshotServer.source);
+      if (currentPkg === null) continue;
       if (
-        currentPkg !== null &&
-        (snapshotPkg === null ||
-          currentPkg.sha256 !== snapshotPkg.sha256 ||
-          currentPkg.version !== snapshotPkg.version)
+        snapshotPkg === null ||
+        currentPkg.sha256 !== snapshotPkg.sha256 ||
+        currentPkg.version !== snapshotPkg.version
       ) {
+        // Same slot as a restored package: its tree is consumed by the restore itself.
+        if (restoredSlots.has(slotKey(currentPkg))) continue;
         replacedPackages.push(currentPkg);
       }
     }
@@ -341,7 +357,21 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
     }
     const next = this.#deps.settings.update({ mcpServers: restored }).mcpServers;
     this.#deps.revokeMcpServerChanges(previous, next);
-    // Network side effects outside the synchronous section.
+    // Network side effects outside the synchronous section. First bring the snapshot
+    // packages' parked trees back: a same-slot replace overwrote the slot with the new
+    // content, and the rolled-back server still launches from that exact path.
+    for (const server of desired) {
+      const pkg = mcpbPackageOf(server.source);
+      if (pkg === null) continue;
+      try {
+        await this.#deps.mcpb.restoreRollbackBackup(pkg);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+          'plugin mcp rollbackUpdate: restoreRollbackBackup failed',
+        );
+      }
+    }
     const dropped = previous.filter((server) => isMine(server) && !desiredIds.has(server.id));
     for (const server of dropped) {
       try {
@@ -366,7 +396,11 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
         await this.#deps.mcpb.releaseIfUnused(pkg);
       } catch (error) {
         this.#deps.logger.warn(
-          { name: pkg.name, version: pkg.version, error: error instanceof Error ? error.message : String(error) },
+          {
+            name: pkg.name,
+            version: pkg.version,
+            error: error instanceof Error ? error.message : String(error),
+          },
           'plugin mcp rollbackUpdate: releaseIfUnused failed',
         );
       }
@@ -467,9 +501,11 @@ export class McpProjector implements PluginProjector<PluginConsentMcp> {
   }
 
   #pluginServers(pluginId: string): McpServer[] {
-    return this.#deps.settings.get().mcpServers.filter(
-      (server) => server.source?.kind === 'plugin' && server.source.pluginId === pluginId,
-    );
+    return this.#deps.settings
+      .get()
+      .mcpServers.filter(
+        (server) => server.source?.kind === 'plugin' && server.source.pluginId === pluginId,
+      );
   }
 
   /**
