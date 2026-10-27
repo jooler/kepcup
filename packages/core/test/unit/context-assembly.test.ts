@@ -147,6 +147,32 @@ describe('system prompt assembly', () => {
     expect(buildSystemPrompt({ ...common, loop: 'task' })).not.toContain('mail_request_setup');
   });
 
+  it('D104 P1-3: the plugin-market rule and ladder step follow hasPluginTools', () => {
+    const common = {
+      bot: makeBot('bot_self', '小艾'),
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+      loop: 'turn' as const,
+    };
+    // 任务面的附件阶梯：没有插件工具时逐字保持 D63 的「③都没有时用 web_search」。
+    const taskWithout = buildSystemPrompt({ ...common, loop: 'task' });
+    expect(taskWithout).not.toContain('plugin_search');
+    expect(taskWithout).toContain('③都没有时用 web_search 检索技能仓库');
+    expect(taskWithout).not.toContain('④仍然没有时用 web_search');
+
+    const taskWith = buildSystemPrompt({ ...common, loop: 'task', hasPluginTools: true });
+    expect(taskWith).toContain('plugin_search');
+    expect(taskWith).toContain('plugin_request_install');
+    expect(taskWith).toContain('③都没有时用 plugin_search 检索官方插件市场');
+    expect(taskWith).toContain('④仍然没有时用 web_search 检索技能仓库');
+    expect(taskWith).toContain('不要对同一插件重复请求');
+
+    // 对话轮不注入阶梯（isTurn），但市场规则照样跟随工具注册。
+    expect(buildSystemPrompt({ ...common, hasPluginTools: true })).toContain('plugin_search');
+    expect(buildSystemPrompt(common)).not.toContain('plugin_search');
+  });
+
   it('non-butler bots get no butler rules section', () => {
     const prompt = buildSystemPrompt({
       bot: makeBot('bot_self', '小艾'),
