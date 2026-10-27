@@ -186,11 +186,31 @@ export const pluginsInstallInputSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** mcp contribution id → that MCPB's user_config values. */
   userConfig: z.record(z.string(), z.record(z.string(), mcpbUserConfigValueSchema)).default({}),
+  /**
+   * P1-2: required when the update expands the derived permission set
+   * (`inspect.update.permissionsExpanded`); without it core refuses the update.
+   */
+  acknowledgeDiff: z.boolean().default(false),
 });
 export type PluginsInstallInput = z.infer<typeof pluginsInstallInputSchema>;
 
 export const pluginsInstallOutputSchema = z.object({ plugin: pluginSummarySchema });
 export type PluginsInstallOutput = z.infer<typeof pluginsInstallOutputSchema>;
+
+/** `plugins.update` (D104 P1-2): marketplace updates; local plugins reinstall via install. */
+export const pluginsUpdateInputSchema = z.object({
+  id: pluginIdSchema,
+  /** Absent = the highest compatible version in the current market's index. */
+  version: pluginVersionSchema.optional(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  userConfig: z.record(z.string(), z.record(z.string(), mcpbUserConfigValueSchema)).default({}),
+  /** Required when the update expands the derived permission set. */
+  acknowledgeDiff: z.boolean().default(false),
+});
+export type PluginsUpdateInput = z.infer<typeof pluginsUpdateInputSchema>;
+
+export const pluginsUpdateOutputSchema = z.object({ plugin: pluginSummarySchema });
+export type PluginsUpdateOutput = z.infer<typeof pluginsUpdateOutputSchema>;
 
 export const pluginsSetEnabledInputSchema = z.object({
   id: pluginIdSchema,

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { pluginManifestSchema, type PluginManifest } from '@kepcup/shared';
 
 import { MailProjector } from '../../src/plugins/projectors/mail.js';
-import type {
-  PluginIdentity,
-  PluginLedger,
-  PluginItemKind,
+import {
+  emptyOwned,
+  type PluginIdentity,
+  type PluginLedger,
+  type PluginItemKind,
 } from '../../src/plugins/projectors/index.js';
 
 /**
@@ -62,6 +63,7 @@ function ctx(manifest: ReturnType<typeof manifestOf>) {
     dir: '/irrelevant',
     userConfig: {},
     ledger: new MemLedger(),
+    owned: emptyOwned(),
   };
 }
 

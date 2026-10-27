@@ -51,4 +51,11 @@ describe('plugin projectors coverage', () => {
   it('PLUGIN_PROJECTOR_ORDER itself stays exhaustive and duplicate-free', () => {
     expect(new Set(PLUGIN_PROJECTOR_ORDER).size).toBe(pluginContributionKindSchema.options.length);
   });
+
+  it('every projector implements update (P1-2): a new contribution kind cannot skip the update flow', () => {
+    const projectors = createPluginProjectors(deps);
+    for (const projector of projectors) {
+      expect(typeof projector.update).toBe('function');
+    }
+  });
 });

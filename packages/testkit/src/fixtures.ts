@@ -107,6 +107,11 @@ export interface CreateTestCoreOptions {
    * the index base URL, in-memory fetches for the index and package channels, and the timer
    * cadence.
    */
+  /**
+   * D104 P1-2 test hook (see CoreServicesOptions.projectorWrap): wrap plugin projectors
+   * so integration tests can inject update failures (rollback coverage).
+   */
+  projectorWrap?: unknown;
   pluginMarketplace?: {
     keys?: Array<{
       keyId: string;
@@ -183,6 +188,9 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
     ...(options.pluginMarketplace !== undefined
       ? { pluginMarketplace: options.pluginMarketplace as never }
+      : {}),
+    ...(options.projectorWrap !== undefined
+      ? { projectorWrap: options.projectorWrap as never }
       : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });

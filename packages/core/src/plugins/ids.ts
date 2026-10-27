@@ -42,6 +42,23 @@ export function pluginDirOf(pluginsDir: string, id: string, version: string): st
   return dir;
 }
 
+/** The lower-cased `{name}@{version}` slot an install dir's basename must be. */
+export const PLUGIN_SLOT_PATTERN = /^[a-z0-9][a-z0-9._-]*@[0-9a-z][0-9a-z.+-]*$/;
+
+/**
+ * `{name}@{version}.prev` — where the old directory waits while a same-slot update is in
+ * flight (D104 P1-2). Derived only from a plain slot basename, never from a `.prev` or
+ * `.staging` path, and always a sibling of the input.
+ */
+export function pluginPrevDirOf(dir: string): string {
+  const resolved = path.resolve(dir);
+  const base = path.basename(resolved);
+  if (!PLUGIN_SLOT_PATTERN.test(base) || base.endsWith('.prev')) {
+    throw new AppError('PLUGIN_INVALID', `非法的插件目录：${base}`);
+  }
+  return path.resolve(path.dirname(resolved), `${base}.prev`);
+}
+
 /**
  * `plg_` + first 12 hex chars of sha256(`{pluginId}#{key}`) — stable across updates so
  * `mcp:{serverId}` capabilities, per-tool policies and Bot selections survive them.
