@@ -87,7 +87,9 @@ interface Harness {
   key: TestKey;
   clock: { t: number; now(): number };
   warnings: Array<Record<string, unknown>>;
-  make(overrides?: Partial<ConstructorParameters<typeof SignedIndexSync<TestIndex>>[0]>): SignedIndexSync<TestIndex>;
+  make(
+    overrides?: Partial<ConstructorParameters<typeof SignedIndexSync<TestIndex>>[0]>,
+  ): SignedIndexSync<TestIndex>;
 }
 
 function harness(options: { key?: TestKey } = {}): Harness {
@@ -128,11 +130,10 @@ function publish(h: Harness, items: string[], generatedAt: number, key = h.key):
   h.server.publish(sign({ items, key, generatedAt }));
 }
 
-function sign(input: {
-  items: string[];
-  key: TestKey;
-  generatedAt: number;
-}): { indexBytes: Buffer; sig: string } {
+function sign(input: { items: string[]; key: TestKey; generatedAt: number }): {
+  indexBytes: Buffer;
+  sig: string;
+} {
   const index: TestIndex = {
     version: 1,
     generatedAt: input.generatedAt,

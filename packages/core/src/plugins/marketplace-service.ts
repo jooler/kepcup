@@ -122,8 +122,12 @@ export class MarketplaceService {
 
   #reasonOf(): 'no_keys' | 'no_custom_key' | null {
     return this.#settingsUrl() === ''
-      ? (this.#official.keys.length === 0 ? 'no_keys' : null)
-      : (this.#deps.settings.get().pluginMarketplacePublicKey === '' ? 'no_custom_key' : null);
+      ? this.#official.keys.length === 0
+        ? 'no_keys'
+        : null
+      : this.#deps.settings.get().pluginMarketplacePublicKey === ''
+        ? 'no_custom_key'
+        : null;
   }
 
   /** 每次读 current() / status() 前解析：设置里的 url / publicKey 变了就停旧建新。 */
@@ -180,7 +184,10 @@ export class MarketplaceService {
       baseUrl: resolved.baseUrl,
       keys: resolved.keys,
       endpoint: resolved.endpoint,
-      fetch: this.#deps.fetchFactory({ maxBytes: PLUGIN_INDEX_MAX_BYTES, timeoutMs: INDEX_FETCH_TIMEOUT_MS }),
+      fetch: this.#deps.fetchFactory({
+        maxBytes: PLUGIN_INDEX_MAX_BYTES,
+        timeoutMs: INDEX_FETCH_TIMEOUT_MS,
+      }),
       downloadFetch: this.#deps.fetchFactory({
         maxBytes: PLUGIN_PACKAGE_MAX_BYTES,
         timeoutMs: DOWNLOAD_TIMEOUT_MS,

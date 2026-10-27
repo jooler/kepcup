@@ -62,9 +62,9 @@ describe('plugins RPC / event / error-code contracts', () => {
 
   it('registers the plugins.changed and plugins.marketplace.updated events', () => {
     expect(RPC_EVENT_NAMES).toContain('plugins.marketplace.updated');
-    expect(rpcEventSchemas['plugins.marketplace.updated'].safeParse({ generatedAt: 1 }).success).toBe(
-      true,
-    );
+    expect(
+      rpcEventSchemas['plugins.marketplace.updated'].safeParse({ generatedAt: 1 }).success,
+    ).toBe(true);
     expect(
       rpcEventSchemas['plugins.marketplace.updated'].safeParse({ generatedAt: null }).success,
     ).toBe(true);

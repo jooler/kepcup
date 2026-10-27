@@ -323,3 +323,14 @@ export class MarketplaceService {
 - `pluginMarketplacePublicKey` 轮换：自建公钥变更 = 换端点（缓存目录按 URL 哈希隔离），公钥本身变更（同 URL）会触发 `#resolve` 重建（签名含公钥），旧索引缓存被新公钥重验——行为已在 service 单测覆盖「切换后旧实例停止」，无遗留。
 - 任务书步骤 4.7 的 `plugins.changed { ids: [] }` 全量刷新事件已实现；渲染端对 `ids` 不过滤的语义由 P1-3 的 UI 消费（本阶段无新界面）。
 
+
+### 审查修正（2026-10-27，独立审查）
+
+- **收编前次审查中断留下的工作树修正**（两处均复核为正确）：
+  1. `MarketplaceSync` 包缓存清理纳入 `.tmp-*` 崩溃残留——原实现先 `continue` 跳过临时文件，进程崩溃残留的 `.tmp-*` 永不清理；改为与内容寻址包同等按 mtime 判定（在途下载的新临时文件不受影响，下载超时 10 分钟远小于 7 天阈值）。
+  2. 「包内清单与索引一致 + sha256 一致」校验抽为 `PluginRegistry.#assertMatchesMarketplaceEntry`，`inspect`（同意面板）与 `install` 两条路径都校验——任务书步骤 4.1 写的是 inspect / install 共同管线步骤，原实现只在 install 做，同意面板可能展示一个与索引不符的包。错误文案与原实现一字不差。
+- **审查补强**（前次审查的测试断言有覆盖空洞）：
+  - integration「篡改」用例新加的 inspect 断言（服务端换包字节）实际被**下载层 sha256 校验**拦截，到不了清单核对分支；已改为诚实标注，并新增「索引条目谎报身份」用例（条目 `version` ≠ 包内清单 `version`、sha256 相符，下载与 staging 一路通过）——真实触发 `#assertMatchesMarketplaceEntry` 的 inspect 与 install 两处（变异验证：注释掉 inspect 侧调用该用例即红）。
+  - `marketplace-sync.test.ts` 清理用例补 `.tmp-*` 残留删除与在途文件保留断言。
+- **格式**：本阶段文件 prettier 不干净（实施记录只验证了 `pnpm lint` = eslint）——本阶段新增 / 改脏的 15 个文件已全部格式化；`rpc/methods.ts`（widgets 行）与 testkit `fixtures.ts` / `helpers.ts` 的 3 处为 **84a5b0b4 基线既有**（其它车道在途代码），不在本阶段修正。
+- **验证**：§5 验收 11 文件 + 回归 6 文件共 309 例全绿（与实施记录同集合）；`pnpm --filter @kepcup/shared run build`、core / desktop typecheck、stage 文件 eslint 与 prettier 全部通过。
