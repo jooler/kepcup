@@ -591,12 +591,12 @@ describe('plugins integration (P0a-2)', () => {
       installedAt: null,
       counts: { connectors: 1, skills: 0, mcp: 0, mail: 0 },
     });
-    // 内置连接器条目进目录（origin bundled——内置插件条目走快照来源，不是 plugin 投影）。
+    // 内置连接器条目进目录（内置来源条目在商店化后归入 plugin origin 语义）。
     const catalog = (await core.rpc.call('apps.catalog.list', undefined)) as {
       entries: Array<{ connectorId: string; origin?: string }>;
     };
     expect(catalog.entries.find((item) => item.connectorId === 'demoapp')).toMatchObject({
-      origin: 'bundled',
+      origin: 'plugin',
     });
 
     for (const method of ['plugins.setEnabled', 'plugins.uninstall']) {

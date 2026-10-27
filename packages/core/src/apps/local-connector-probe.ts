@@ -12,7 +12,7 @@ import {
 import type { CoreLogger } from '../infra/logger.js';
 import { sameSite } from './auth/flow.js';
 import { isLoopbackAllowed } from './auth/safe-fetch.js';
-import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 
 /**
  * 本机连接的探测（todo/local-connector-authoring.md §2.3）：对 Bot 给出的 MCP 地址做一次

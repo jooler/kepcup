@@ -1,101 +1,61 @@
-# plugins — KepCup 插件市场的签名与分发（用户待办清单）
+# plugins — KepCup 插件市场的签名与分发（已上线）
 
-插件市场（D104，设计 51 §6.1）复用连接器目录（`../directory/`）的签名索引机制：
-CI 离线用 Ed25519 对 `index.json` **原始字节**签名，客户端（`packages/core/src/plugins/marketplace-sync.ts`）
-每日拉取、验签、防回滚、落缓存。**在本清单完成之前，客户端的
-`PLUGIN_INDEX_PUBLIC_KEYS` 是空数组 = 市场关闭，不发任何网络请求。**
+插件市场（D104，设计 51 §6.1）的签名索引机制：CI / 本机离线用 Ed25519 对 `index.json`
+**原始字节**签名，客户端（`packages/core/src/plugins/marketplace-sync.ts`）每日拉取、验签、
+防回滚、落缓存。通道分工：
 
-通道分工：
+- **索引**（`index.json` + `index.json.sig`）：`dl.kepcup.com/plugins/v1/`（`kepcup-directory`
+  Worker 的静态资源，见 `../directory/README.md`）；
+- **包**（`{sha256}.kepcup`）：R2 bucket `kepcup-plugins` + 自定义域 `pkg.kepcup.com`
+  （Workers Static Assets 单文件上限 25 MiB 装不下；对象键内容寻址、不可变）。
 
-- **索引**（`index.json` + `index.json.sig`）：走现有 `dl.kepcup.com` 的 Workers Static
-  Assets，新路径 `/plugins/v1/`（`../directory/` 已配好缓存头与 .gitignore）；
-- **包**（`{sha256}.kepcup`，单包可达数百 MB）：Workers Static Assets 单文件上限 25 MiB
-  装不下，走 **R2 + 自定义域**，对象键内容寻址、不可变。
+历史上有过一条连接器目录通道（同一 Worker 的 `/connectors/v1/`），已随 D104 商店化于
+2026-10-28 移除——连接能力完全由市场插件承担，该路径已 404。
 
-## 0. 当前状态（2026-10-28，基础设施已就绪）
+## 0. 当前状态（2026-10-28：全部就绪，市场已上线）
 
-- ✅ R2 bucket `kepcup-plugins` 已创建（location WNAM）；
-- ✅ 自定义域 `pkg.kepcup.com` 已绑定到该 bucket（zone kepcup.com，CNAME → `public.r2.dev`
-  已自动创建并代理，TLS / 所有权 active；冒烟：上传对象经 `https://pkg.kepcup.com/<key>` 返回
-  200 且 `cache-control: public, max-age=31536000, immutable`，验证后已删除）；
-- ✅ 索引域：`kepcup-directory` Worker 已带 `/plugins/v1/` 配置重新部署（`public/_headers`
-  的 plugins 缓存头生效；顺带新增 `public/.assetsignore`，`.gitkeep` / `.gitignore` 不再作为
-  静态资源上线）。连接器通道部署后复核通过（`directory/verify.mjs` 线上验签 OK）；
-- ✅ 本机发布包装 `infra/cloudflare/sign-plugins.sh`：从仓库根 `.env` 读
-  `KEPCUP_PLUGIN_SIGNING_KEY`，参数原样传给 `scripts/sign-plugin-index.mjs`（与连接器的
-  `sign-directory.sh` 同款）。`.env` 里已留好注释条目待填值。
-- ⚠️ **从本机检出重新部署 directory 前**，先把线上产物拉回本地：`public/connectors/v1/` 的
-  签名产物不入库，直接 `wrangler deploy` 会把线上连接器索引顶成 404。拉回
-  `index.json` / `index.json.sig`（有 deltas 一并）后再部署。
+- ✅ R2 bucket `kepcup-plugins`（WNAM）+ 自定义域 `pkg.kepcup.com`（CNAME 自动创建、
+  已代理、TLS active）；
+- ✅ 索引域 `dl.kepcup.com/plugins/v1/` 上线（`public/_headers` 配好缓存头；
+  `public/.assetsignore` 让 `.gitkeep` / `.gitignore` 不上线）；
+- ✅ 签名密钥 `kepcup-plugins-2026-1`：私钥（Ed25519 32 字节种子 base64）在仓库根
+  `.env` 的 `KEPCUP_PLUGIN_SIGNING_KEY`（绝不入库、绝不写日志、**不进 Workers Secrets**）；
+  公钥登记在 `packages/shared/src/domain/plugin-index.ts` 的 `PLUGIN_INDEX_PUBLIC_KEYS`
+  （`validFrom 2026-10-27`）；
+- ✅ 首批 18 个官方插件（`plugins/` 开发目录：技能 9 + 连接器 9）已发布，线上索引验签与
+  包 sha256 抽检通过；
+- ✅ 本机发布包装 `infra/cloudflare/sign-plugins.sh`（从根 `.env` 读私钥）。
 
-仍未完成（§1–§4）：真实签名密钥与 `PLUGIN_INDEX_PUBLIC_KEYS` 登记、首次签名发布、CI 步骤。
-在此之前客户端 `PLUGIN_INDEX_PUBLIC_KEYS` 为空 = 市场关闭、不发任何网络请求（按设计）。
-
-## 1. 生成真实签名密钥（不与连接器目录共用）
+## 1. 日常发布（新插件 / 版本更新）
 
 ```bash
-# 仅用于本地试跑 / 测试的一次性密钥（脚本拒绝写进仓库内）：
-node scripts/sign-plugin-index.mjs --generate-dev-key /tmp/plugin-market-key --key-id kepcup-plugins-2026-1
+# 1. 在 plugins/ 里开发：validate → pack（见仓库 plugins/README.md）
+# 2. 打包全部插件 + 更新策展文件 catalog.json（tier 只能来自策展，绝不来自包内清单）
+# 3. 签名（私钥只从 .env 读；generatedAt 默认现在，必须严格递增）
+infra/cloudflare/sign-plugins.sh --out /tmp/market/dist --key-id kepcup-plugins-2026-1 \
+  --packages /tmp/market/packages --catalog /tmp/market/catalog.json \
+  --download-base https://pkg.kepcup.com
+# 4. 本地验签（含每个包副本的 sha256 / 大小核对）
+node scripts/sign-plugin-index.mjs --verify /tmp/market/dist --keys <登记公钥的 keys.json>
+# 5. 上传包到 R2（逐个；必须带 --remote，否则对象写进本地 miniflare）
+npx wrangler r2 object put "kepcup-plugins/<sha256>.kepcup" --remote \
+  --file "/tmp/market/dist/packages/<sha256>.kepcup" \
+  --cache-control "public, max-age=31536000, immutable"
+# 6. 部署索引（⚠️ 先确认 public/plugins/v1/ 里的 index.json / .sig 在位——签名产物
+#    不入库，缺了就是把线上索引顶成 404）
+cp /tmp/market/dist/plugins/v1/* infra/cloudflare/directory/public/plugins/v1/
+cd infra/cloudflare/directory && npx wrangler deploy
+# 7. 线上复核：curl 索引 + sig，node scripts/sign-plugin-index.mjs --verify <拉回的目录>
 ```
 
-生产密钥（Ed25519）在受控环境生成，**私钥只进 CI 机密 `KEPCUP_PLUGIN_SIGNING_KEY`**
-（PKCS8 PEM，或 32 字节原始种子的 base64），绝不入库、绝不写日志、不进 Workers Secrets。
-生产密钥与连接器目录的 `KEPCUP_CONNECTOR_SIGNING_KEY` **不共用**（两条通道独立轮换与吊销）。
+## 2. 撤销与轮换
 
-把公钥登记进 `packages/shared/src/domain/plugin-index.ts` 的
-`PLUGIN_INDEX_PUBLIC_KEYS`（`keyId` 建议形如 `kepcup-plugins-2026-1`，
-`publicKey` = 原始 32 字节公钥的 base64，`validFrom` 设为计划上线时间之前）并发一个应用版本。
-**在此之前客户端不联网同步**；登记后见 `../directory/README.md` 的轮换流程（同样适用）。
+- 撤销：下次发布在索引的 `revoked` 数组带上条目（`warn` 标记 / `disable` 自动停用）；
+- 密钥轮换：生成新密钥 → 公钥以新 `keyId` 追加进 `PLUGIN_INDEX_PUBLIC_KEYS`（`validFrom`
+  设为切换时间之前）并发应用版本 → 签名切到新密钥 → 旧密钥设 `validUntil`；泄露立即
+  `revoked: true` 并发版。被吊销密钥签的索引客户端一律拒绝，用户回落上一份已验签缓存。
 
-## 2. 建包分发：R2 bucket + 自定义域
+## 3. 首次部署后的端到端验收
 
-- 建 R2 bucket（建议名 `kepcup-plugins`）与自定义域（建议 `pkg.kepcup.com`）；
-- 对象键 = `{sha256}.kepcup`（脚本产物 `<out>/packages/{sha256}.kepcup` 直接对号上传）；
-- 对象头：`Cache-Control: public, max-age=31536000, immutable`（内容寻址，永不覆盖——
-  同名即同字节）；
-- 包不可变，**重新发布同 sha256 = 同字节**，无需失效缓存。
-
-## 3. CI 步骤序列（签名 → 核对 → 上传 → 部署）
-
-```bash
-pnpm --filter @kepcup/shared build && pnpm --filter @kepcup/package-guard build
-
-# 1. 取上一版索引（用于核对 generatedAt 递增；首次发布跳过）
-mkdir -p prev && curl -fsS https://dl.kepcup.com/plugins/v1/index.json -o prev/index.json || true
-
-# 2. 组包目录 + 策展文件（tier 是信任元数据，只能来自策展，绝不来自包内清单）
-#    packages/   <- 待发布 *.kepcup
-#    catalog.json <- [{ "file": "x.kepcup", "tier": "verified"|"community",
-#                       "summary": { "name", "description", "author" } }]
-#    revoked.json <- 可选，[{ "id", "version?", "action": "warn"|"disable", "reason" }]
-
-# 3. 签名（离线；私钥只从环境变量读）
-KEPCUP_PLUGIN_SIGNING_KEY="$SECRET" node scripts/sign-plugin-index.mjs \
-  --out dist-market \
-  --key-id kepcup-plugins-2026-1 \
-  --packages packages --catalog catalog.json [--revoked revoked.json] \
-  --download-base https://pkg.kepcup.com \
-  [--generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"]
-
-# 4. 签完先本地验一遍（含每个包副本的 sha256 / 大小核对）
-node scripts/sign-plugin-index.mjs --verify dist-market --keys <(echo '[{"keyId":"kepcup-plugins-2026-1","publicKey":"<登记的公钥>","validFrom":0,"revoked":false}]')
-
-# 5. 上传包到 R2（内容寻址、immutable），再部署索引
-#    （r2 object 命令必须带 --remote，否则对象写进本地 miniflare 而不是真桶）
-npx wrangler r2 object put "kepcup-plugins/<sha256>.kepcup" --remote --file "dist-market/packages/<sha256>.kepcup" \
-  --cache-control "public, max-age=31536000, immutable"   # 逐个包
-#    部署 directory 前若本地 public/connectors/v1/ 为空，先拉回线上产物（见 §0 ⚠️）
-cd infra/cloudflare/directory && npx wrangler deploy      # /plugins/v1/ 静态资源一起部署
-node infra/cloudflare/directory/verify.mjs                # 连接器目录线上复核（本通道同理可自写）
-```
-
-- `generatedAt` 必须**严格递增**（客户端防回滚；`--generated-at` 可固定时间，默认现在，
-  且不许超前一天以上）。
-- 脚本签完自检；输出里打印的是**公钥**（base64），私钥从不打印。
-- 撤销名单：新索引的 `revoked` 数组随下次发布带上即可（`warn` 标记 / `disable` 自动停用）。
-
-## 4. 首次部署后
-
-1. 记入 `docs/dev/PROGRESS.md`；
-2. 走一遍端到端验收：篡改 / 回滚被拒、离线回落上一份已验签缓存、撤销 `disable` 自动停用
-   （任务书 `todo/plugin-system/P1-1-marketplace-core.md` §5 的对应条目）。
+任务书 `todo/plugin-system/P1-1-marketplace-core.md` §5：篡改 / 回滚被拒、离线回落上一份
+已验签缓存、撤销 `disable` 自动停用。已随 2026-10-28 的首次发布记录进 `docs/dev/PROGRESS.md`。

@@ -73,7 +73,7 @@ async function start(
 
   const stack = await createTestStack({
     ...(options.noKeys === true
-      ? {}
+      ? { pluginMarketplace: { keys: [], baseUrl: BASE, fetch: server.fetch } }
       : {
           pluginMarketplace: {
             keys: [key.publicEntry],
@@ -169,7 +169,7 @@ describe('Bot plugin install flow', () => {
     expect(toolResults).toContain('只有官方认证的插件可以由 Bot 提议安装。');
   }, 120_000);
 
-  it('without marketplace keys the search returns nothing and the request is refused', async () => {
+  it('official key list empty (injected) → the search returns nothing and the request is refused', async () => {
     const env = await start({ noKeys: true });
     const { core, llm } = env.stack;
     const bot = await makeBot(core, '小插');

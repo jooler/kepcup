@@ -8,14 +8,11 @@ import { z } from 'zod';
 import {
   AGENT_CATALOG,
   AppError,
-  CONNECTOR_INDEX_MAX_BYTES,
   PLUGIN_INDEX_BASE_URL,
   PLUGIN_INDEX_MAX_BYTES,
   PLUGIN_INDEX_PUBLIC_KEYS,
-  CONNECTOR_INDEX_PUBLIC_KEYS,
   SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
-  connectorIndexPublicKeySchema,
   findAgentEntry,
   systemInfoOutputSchema,
   systemPingOutputSchema,
@@ -35,6 +32,7 @@ import {
   shareConsumeInputSchema,
   shareConsumeOutputSchema,
   shareTargetsSchema,
+  indexPublicKeySchema,
   type AgentCatalogEntry,
   type AppNoticePayload,
   type Bot,
@@ -45,7 +43,7 @@ import {
   type ShareTargets,
 } from '@kepcup/shared';
 import type {
-  ConnectorIndexPublicKey,
+  IndexPublicKey,
   DiagnosticsDatabaseRow,
   DiagnosticsToolRow,
   PreregisteredClientTable,
@@ -75,6 +73,7 @@ import './infra/test-hooks.js';
 import { realTimerScheduler, systemClock, type Clock, type TimerScheduler } from './infra/clock.js';
 import { createEventBus, type EventBus } from './infra/events.js';
 import { withDirectConversationBots } from './infra/conversation-events.js';
+import type { DirectoryFetch } from './plugins/marketplace-sync.js';
 import type { RpcMethodSpec, RpcServerHandle } from './rpc/server.js';
 import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
@@ -213,7 +212,6 @@ import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './rpc/files-preview-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
-import { DirectorySync, type DirectoryFetch } from './apps/directory-sync.js';
 import { createSafeFetch, loopbackHostOf } from './apps/auth/safe-fetch.js';
 import { MarketplaceService } from './plugins/marketplace-service.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
@@ -428,17 +426,7 @@ export interface CoreServicesOptions {
   appSkillSourceOverride?: (source: string) => string;
   /**
    * D73 P3 §7.1 test hook (NODE_ENV=test in a test-hooks build only): the signed-directory
-   * public key list (production list lives in shared `CONNECTOR_INDEX_PUBLIC_KEYS`, empty
-   * until the real key exists), the directory base URL (a loopback fake; its host is added
-   * to the SSRF-safe fetch allowlist) and the timer cadence. Without `keys` here the
-   * production list applies.
-   */
-  directorySync?: {
-    keys?: ConnectorIndexPublicKey[];
-    baseUrl?: string;
-    intervalMs?: number;
-    initialDelayMs?: number;
-  };
+   * public key list (production list lives in shared `PLUGIN_INDEX_PUBLIC_KEYS`, empty
   /**
    * D104 P1-1 test hook (NODE_ENV=test in a test-hooks build only): the marketplace public
    * key list (production list lives in shared `PLUGIN_INDEX_PUBLIC_KEYS`, empty until the
@@ -446,7 +434,7 @@ export interface CoreServicesOptions {
    * the index and the package downloads, plus the timer cadence.
    */
   pluginMarketplace?: {
-    keys?: ConnectorIndexPublicKey[];
+    keys?: IndexPublicKey[];
     baseUrl?: string;
     fetch?: DirectoryFetch;
     downloadFetch?: DirectoryFetch;
@@ -672,8 +660,6 @@ export interface CoreServices {
   connectorCatalog: ConnectorCatalog | null;
   /** 本机连接（Bot 读文档生成、只存本机的目录条目）：提案 / 确认 / 删除；null with `apps`. */
   localConnectors: LocalConnectors | null;
-  /** D73 P3 signed directory sync (daily pull of the signed index; null before ready). */
-  directorySync: DirectorySync | null;
   /** D73 P1 catalog connection service (connect flow host, tools / policy / grants management). */
   appConnections: AppConnectionsService | null;
   /** D73 P3 §7.6 bundled-skills offers after a catalog connection (installs go through skill_import). */
@@ -941,7 +927,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
-    directorySync: null,
     appConnections: null,
     appSkills: null,
     appMethods: {},
@@ -966,7 +951,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       servicesClosed.closed = true;
       await services.remote?.close();
       services.jobsRunner?.stop();
-      services.directorySync?.stop();
       services.marketplace?.stop();
       services.appSkills?.stop();
       try {
@@ -1285,37 +1269,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D73 P1: the connector catalog + the exposure facade (catalog connections → synthesized
     // servers, risk overlay, Bot prompt sections). The tool lock reads catalog `toolPolicy`
     // through it, so it is declared first and filled right after the lock exists.
-    // D73 P3 §7.1: signed directory index (daily pull → verify → merge with the bundled
-    // snapshot). An empty production key list = disabled, snapshot only.
-    // D104 P0b: builtin plugin loader first — both the connector catalog's packaged
-    // snapshot source and the skill presets are its contributions now.
+    // D104 P0b: builtin plugin loader — skill presets and (historically) the connector
+    // catalog's bundled source. Since the marketplace conversion the app ships no
+    // builtin plugins; the loader stays for dev/test overrides.
     const builtinPlugins = new BuiltinPlugins({ env, logger });
-    const directoryTest = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
-    const directoryBase = directoryTest ? options.directorySync?.baseUrl : undefined;
-    const directorySync = new DirectorySync({
-      dir: path.join(paths.cacheDir, 'directory'),
-      keys:
-        (directoryTest ? options.directorySync?.keys : undefined) ?? CONNECTOR_INDEX_PUBLIC_KEYS,
-      fetch: createSafeFetch({
-        maxBytes: CONNECTOR_INDEX_MAX_BYTES,
-        ...(directoryBase !== undefined ? { loopbackHosts: [new URL(directoryBase).host] } : {}),
-      }),
-      clock,
-      logger,
-      enabled: () => settings.get().apps.directorySync,
-      ...(directoryBase !== undefined ? { baseUrl: directoryBase } : {}),
-      ...(directoryTest && options.directorySync?.intervalMs !== undefined
-        ? { intervalMs: options.directorySync.intervalMs }
-        : {}),
-      ...(directoryTest && options.directorySync?.initialDelayMs !== undefined
-        ? { initialDelayMs: options.directorySync.initialDelayMs }
-        : {}),
-    });
     const connectorCatalog =
       options.connectorCatalog ??
       new ConnectorCatalog({
         logger,
-        directory: directorySync,
         source: builtinPlugins.connectorSource(),
         // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断
         // 变量换成 KEPCUP_BUILTIN_PLUGINS，原为旧连接器目录的环境变量）。
@@ -2295,16 +2256,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
     // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
-    const marketplaceOptions = directoryTest ? options.pluginMarketplace : undefined;
+    const testHooksBuild = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
+    const marketplaceOptions = testHooksBuild ? options.pluginMarketplace : undefined;
     // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
     // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
     // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
     // 只接受回环地址：缝的放行是「免私网校验 + 明文 http」，不能被指向任意内网主机。
     const testMarketSeam = (() => {
-      if (!directoryTest || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
+      if (!testHooksBuild || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
       const seamSchema = z.object({
         baseUrl: z.string().url(),
-        keys: z.array(connectorIndexPublicKeySchema).min(1),
+        keys: z.array(indexPublicKeySchema).min(1),
       });
       let raw: unknown;
       try {
@@ -3388,8 +3350,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;
-    services.directorySync = directorySync;
-    directorySync.start();
     // D104 P1-1：市场定时拉取在插件注册表启动（含启动撤销检查）之后。
     marketplace.start();
     services.appConnections = appConnections;

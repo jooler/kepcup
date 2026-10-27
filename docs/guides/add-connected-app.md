@@ -178,7 +178,7 @@ schema 见 `packages/shared/src/domain/connector-catalog.ts`，字段含义：
 
 ## S11 发布
 
-条目随应用发布（内置插件 `plugin.json` 与门禁文件都会被打进发行构建）。想在两次应用发版之间更新目录，可走签名目录通道（`dl.kepcup.com`）：`infra/cloudflare/sign-directory.sh` 签名、`with-env.sh wrangler deploy` 部署，细节与限制见 [infra/cloudflare/directory/README.md](../../infra/cloudflare/directory/README.md) 与 DEV-022（目录合并与发行门禁的权威来源）。**放行类变更仍以随应用打包的门禁为准**，不要指望只靠目录远程放行。
+条目以**市场插件**的形式发布（D104 商店化：原随包内置与签名目录通道已移除）：在仓库 `plugins/connector-<slug>/` 开发、`kepcup-app pack` 打包、`infra/cloudflare/sign-plugins.sh` 签名后发布到官方市场（流程见仓库 `plugins/README.md` 与 [infra/cloudflare/plugins/README.md](../../infra/cloudflare/plugins/README.md)）。用户在扩展中心市场里按需安装，装哪个、配置哪个、启用哪个。
 
 ## 本机生成（不进目录，只在这台电脑上用）
 

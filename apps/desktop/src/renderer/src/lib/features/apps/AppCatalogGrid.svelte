@@ -1,11 +1,6 @@
 <script lang="ts">
-  import {
-    isHiddenConnectorId,
-    type AppCatalogEntry,
-    type AppsDirectoryStatus,
-  } from '@kepcup/shared';
+  import type { AppCatalogEntry } from '@kepcup/shared';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import { t, connectorDescription, connectorUnavailableText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
@@ -26,7 +21,6 @@
     catalogLoadState,
     catalogView,
     communityExpanded,
-    directoryNoticeKey,
     isVerifiedTier,
     showManageButton,
     type CategoryFilter,
@@ -52,12 +46,10 @@
   );
   // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
   const catalog = $derived(
-    withoutLocalEntries(appsStore.catalog)
-      .filter((entry) => !isHiddenConnectorId(entry.connectorId))
-      .map((entry) => ({
-        ...entry,
-        description: connectorDescription(entry.connectorId, entry.description),
-      })),
+    withoutLocalEntries(appsStore.catalog).map((entry) => ({
+      ...entry,
+      description: connectorDescription(entry.connectorId, entry.description),
+    })),
   );
   const categories = $derived(catalogCategories(catalog));
   const entries = $derived(catalogView(catalog, { query, category }));
@@ -72,18 +64,6 @@
       communityCount: sections.community.length,
     }),
   );
-  /** 目录同步降级（验签失败 / 离线）时的一行提示；拿不到状态不打扰用户。 */
-  let directoryNotice = $state<ReturnType<typeof directoryNoticeKey>>(null);
-
-  onMount(() => {
-    void core
-      .call('apps.directory.status')
-      .then((status) => {
-        directoryNotice = directoryNoticeKey((status as AppsDirectoryStatus).state);
-      })
-      .catch(() => undefined);
-  });
-
   function toggle(entry: AppCatalogEntry): void {
     openConnectorId = openConnectorId === entry.connectorId ? null : entry.connectorId;
   }
@@ -91,11 +71,6 @@
 
 <div class="space-y-3" data-testid="apps-catalog">
   <p class="text-xs text-muted-foreground">{t('apps.catalog.hint')}</p>
-  {#if directoryNotice !== null}
-    <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="apps-directory-notice">
-      {t(directoryNotice)}
-    </p>
-  {/if}
 
   {#if loadState !== 'ready' || catalog.length > 0}
     <div class="flex flex-wrap items-center gap-2 px-1">

@@ -18,7 +18,7 @@ import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginStore } from '../../src/plugins/store.js';
 import { pluginServerId } from '../../src/plugins/ids.js';
 import type { PluginProjector } from '../../src/plugins/projectors/index.js';
-import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
+import type { DirectoryFetch } from '../../src/plugins/marketplace-sync.js';
 import { readFileSync } from 'node:fs';
 
 /**

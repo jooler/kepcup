@@ -168,7 +168,7 @@ flowchart LR
 
 ### 6.1 市场索引（`plugins/marketplace-sync.ts`）
 
-- **复用而非另起炉灶**：把 `directory-sync.ts` 的 `verifySignedIndex`、防回滚 `state.json`、原子缓存抽成共享的 `signed-index.ts`，两条通道（连接器目录 / 插件市场）各自配置 URL、公钥列表与 schema。连接器目录通道**保持不动**（Q4）。
+- **复用而非另起炉灶**：把签名验签、防回滚 `state.json`、原子缓存抽成共享的 `signed-index.ts`。（实施修订 2026-10-28：连接器目录通道随后续商店化决策**整体移除**——Q4 的「并存不动」被推翻，市场成为唯一通道；`SignedIndexSync` 保留为市场同步的通用底座。）
 - **索引**：`{base}/plugins/v1/index.json` + `index.json.sig`（对原始字节的 Ed25519 分离签名，与连接器目录一致）。信封 `{ version, generatedAt, keyId, entries[], revoked[] }`；条目 `{ id, version, tier, sha256, size, downloadUrl, manifestDigest, engines, platforms, categories, summary, updatedAt }`（`categories` 由贡献推导，签名时写入；`summary` 含本地化展示名 / 描述 / 图标 URL，详情页富文本按 `manifestDigest` 校验后拉取）；`revoked[]` 元素 `{ id, version?, action: 'warn' | 'disable' }`。
 - **签名与公钥**：CI 离线签名、私钥不上云（新脚本 `scripts/sign-plugin-index.mjs`，对照 `sign-connector-index.mjs`）；公钥列表是**独立常量** `PLUGIN_INDEX_PUBLIC_KEYS`（形态同 `CONNECTOR_INDEX_PUBLIC_KEYS`：`keyId / publicKey / validFrom / validUntil / revoked`），不与连接器目录共用，轮换与吊销互不牵连；列表为空 = 市场关闭，只剩本地与内置。
 - **同步**：每日 + 打开市场页时拉取；校验失败 / 离线回落上一份已验签缓存；防回滚沿用现有规则（`generatedAt` 严格递增、超前当前时间一天以上拒绝），另加条目级「版本不降」。`revoked` 命中：`warn` = 显著标记并阻止**更新**（已装不动、卸载自由）；`disable` = 另自动停用该插件（恶意件可止血，卸载权仍归用户）。
@@ -308,7 +308,7 @@ P0 拆成两步：先用「第三方式」的插件把管线跑通，再动已�
 | Q1 | 内置插件的语义 | **只读、目录型、不入 `plugins` 表**：预置技能仍逐条安装（保 D63 的逐条授权与提示词 token 预算） | 内置插件入表、整体启停：9 个预置技能默认全装并对所有 Bot 可见，破坏 D63 的「预置轻授权、逐条」语义 |
 | Q2 | 邮件预设 | 内置五家**留代码**；插件只贡献基于 `custom` 的预填模板 | 全迁 overlay：要把 `MailProvider` 放开为字符串、`Record` 穷尽性与 `available` / `minPollSec` 改成运行时查表，联动 DB 与 RPC schema，收益只是少一份常量 |
 | Q3 | 智能体贡献 | **首期不做**，`AGENT_CATALOG` 留代码 | P2 起开放：限 verified 及以上、只能引用已注册 Provider，并要把锁文件生成改为包内携带——且它是主机执行通道，需单独过安全评审 |
-| Q4 | 连接器签名目录通道 | **并存不动**，只抽共享验签模块 | 并入市场：要迁签名脚本、`apps.directory.status`、基础设施路径与测试，且「builtin 条目远端升版」语义需重写 |
+| Q4 | 连接器签名目录通道 | **并存不动**，只抽共享验签模块（后已被 2026-10-28 商店化决策推翻：通道整体移除，市场成为唯一通道） | 并入市场：要迁签名脚本、`apps.directory.status`、基础设施路径与测试，且「builtin 条目远端升版」语义需重写 |
 | Q5 | 自托管市场的信任 | 自登记公钥 + 封顶 `community` + `user-only` 设置 | 只允许官方市场（放弃自托管）；或允许无签名索引（等于信任传输层，不推荐） |
 | Q6 | Bot 发起安装的范围 | 仅官方索引的 `verified` 及以上 | 含 community：Bot 可推荐带可执行内容的社区插件，风险高 |
 | Q7 | 更新策略 | 用户点击；权限集扩大再同意 | 自动更新（VS Code 式）：体验好，但新代码继承旧信任 |

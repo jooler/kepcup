@@ -2323,7 +2323,6 @@ export const zhCN = {
   'apps.tier.communityWarningHint':
     '它的工具由第三方提供，仅通过了自动校验。写入类工具每次都要你确认（至多可在本对话内允许），不能设为「对该 Bot 总是允许」。',
   'apps.tier.communityAck': '我了解风险，仍要连接',
-  'apps.directory.degraded': '目录同步失败，当前使用内置或上次校验通过的目录。',
   'apps.connected.hint': '点击一个账号查看工具、审批策略与已授权的 Bot。',
   'apps.connected.empty': '还没有连接任何应用。',
   'apps.connected.goCatalog': '去扩展中心添加',

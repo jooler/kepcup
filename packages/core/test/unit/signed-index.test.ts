@@ -4,7 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { SignedIndexSync, verifySignedIndex } from '../../src/infra/signed-index.js';
-import { makeKey, signScript, type TestKey } from '../support/directory-fixture.js';
+import { makeKey, type TestKey } from '../support/directory-fixture.js';
+import { sign as cryptoSign } from 'node:crypto';
 
 /**
  * `SignedIndexSync` 的直接测试（D104 P1-1 步骤 1.4）：通用签名索引机制脱离连接器目录通道
@@ -141,7 +142,10 @@ function sign(input: { items: string[]; key: TestKey; generatedAt: number }): {
     items: input.items,
   };
   const indexBytes = Buffer.from(`${JSON.stringify(index)}\n`);
-  return { indexBytes, sig: signScript.signBytes(indexBytes, input.key.privateKey) };
+  return {
+    indexBytes,
+    sig: Buffer.from(cryptoSign(null, indexBytes, input.key.privateKey)).toString('base64'),
+  };
 }
 
 describe('verifySignedIndex (generic)', () => {

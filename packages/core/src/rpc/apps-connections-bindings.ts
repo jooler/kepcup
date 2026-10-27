@@ -3,7 +3,6 @@ import {
   AppError,
   appsCatalogListOutputSchema,
   appsConnectionIdInputSchema,
-  appsDirectoryStatusOutputSchema,
   appsConnectionsGrantsOutputSchema,
   appsConnectionsReviewToolsInputSchema,
   appsConnectionsReviewToolsOutputSchema,
@@ -26,7 +25,6 @@ import {
   okOutputSchema,
 } from '@kepcup/shared';
 import type { AppConnectionsService } from '../apps/connections.js';
-import type { DirectorySync } from '../apps/directory-sync.js';
 import type { LocalConnectors } from '../apps/local-connectors.js';
 import type { CoreServices } from '../start.js';
 import type { RpcMethodSpec } from './server.js';
@@ -55,12 +53,6 @@ export function bindAppsConnectionMethods(
       throw new AppError('NOT_IMPLEMENTED', '应用连接模块未就绪');
     }
     return services.appConnections;
-  };
-  const directory = (): DirectorySync => {
-    if (services.directorySync === null) {
-      throw new AppError('NOT_IMPLEMENTED', '目录同步模块未就绪');
-    }
-    return services.directorySync;
   };
   const local = (): LocalConnectors => {
     if (services.localConnectors === null) {
@@ -104,13 +96,6 @@ export function bindAppsConnectionMethods(
         await local().remove(input.connectorId);
         return { ok: true as const };
       },
-    ),
-    // D73 P3 §7.1: signed directory sync status / manual sync (off = no network, status only).
-    'apps.directory.status': method(z.void(), appsDirectoryStatusOutputSchema, async () =>
-      directory().status(),
-    ),
-    'apps.directory.sync': method(z.void(), appsDirectoryStatusOutputSchema, async () =>
-      directory().sync(),
     ),
     'apps.connections.update': method(
       appsConnectionsUpdateInputSchema,

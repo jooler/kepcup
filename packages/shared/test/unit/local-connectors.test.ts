@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_RPC_METHODS,
   CONNECTOR_META_KEY,
-  LOCAL_CONNECTOR_GATE,
   LOCAL_CONNECTOR_ICON,
   LOCAL_CONNECTOR_SLUG_PATTERN,
   connectorSlugSchema,
@@ -59,7 +58,6 @@ function record(
           skills: [],
           ui: false,
           privacyPolicy: 'https://mcp.example.com/',
-          releaseGate: LOCAL_CONNECTOR_GATE,
           expectedIssuer: 'https://auth.example.com',
           ...overrides.meta,
         },
@@ -156,7 +154,6 @@ describe('localConnectorRecordSchema', () => {
         },
       },
     ],
-    ['releaseGate 不是 local（想借某个放行门禁混进发行目录）', { meta: { releaseGate: 'notion' } }],
     ['带 toolPolicy', { meta: { toolPolicy: { t: { risk: 'read' } } } }],
     ['带 whoami', { meta: { whoami: { tool: 't', labelPath: 'a' } } }],
     ['带随附技能', { meta: { skills: ['x'] } }],

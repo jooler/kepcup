@@ -569,7 +569,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                     ...latestApps,
                     developerMode: appsPatch.developerMode ?? latestApps.developerMode,
                     taintGuard: appsPatch.taintGuard ?? latestApps.taintGuard,
-                    directorySync: appsPatch.directorySync ?? latestApps.directorySync,
                   },
                 }
               : {}),
@@ -933,10 +932,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       userAvatarUploadOutputSchema,
       async (input) => {
         const avatar = await settingsLocked(() =>
-          domain.userProfileAvatars.upload(
-            input.mime,
-            Buffer.from(input.bytesBase64, 'base64'),
-          ),
+          domain.userProfileAvatars.upload(input.mime, Buffer.from(input.bytesBase64, 'base64')),
         );
         publishSettingsChanged(itemIdsForSettingsPaths(['userProfileAvatar']));
         return { avatar };
@@ -1736,8 +1732,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'wiki.commitTree': method(wikiCommitInputSchema, wikiCommitTreeOutputSchema, async (input) => ({
       pages: await services.wiki!.commitTree(wikiOwnerOf(input.owner), input.commitOid),
     })),
-    'wiki.commitPage': method(wikiCommitPageInputSchema, wikiCommitPageOutputSchema, async (input) =>
-      services.wiki!.readCommitPage(wikiOwnerOf(input.owner), input.commitOid, input.path),
+    'wiki.commitPage': method(
+      wikiCommitPageInputSchema,
+      wikiCommitPageOutputSchema,
+      async (input) =>
+        services.wiki!.readCommitPage(wikiOwnerOf(input.owner), input.commitOid, input.path),
     ),
     'wiki.rollback': method(wikiRollbackInputSchema, wikiRollbackOutputSchema, async (input) => {
       await services.wiki!.rollback(wikiOwnerOf(input.owner), input.commitOid);
@@ -1910,9 +1909,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'board.cards.start': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
       card: requireBoard(services).start(input.cardId, 'user'),
     })),
-    'board.cards.complete': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
-      card: requireBoard(services).complete(input.cardId, 'user'),
-    })),
+    'board.cards.complete': method(
+      boardCardIdInputSchema,
+      boardCardOutputSchema,
+      async (input) => ({
+        card: requireBoard(services).complete(input.cardId, 'user'),
+      }),
+    ),
     'board.cards.cancel': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
       card: requireBoard(services).cancel(input.cardId, 'user'),
     })),
@@ -1926,14 +1929,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         conversationId: requireBoard(services).conversation(input.cardId, 'user'),
       }),
     ),
-    'board.cards.delete': method(
-      boardCardIdInputSchema,
-      boardEmptyOutputSchema,
-      async (input) => {
-        await requireBoard(services).deleteCard(input.cardId, 'user');
-        return {};
-      },
-    ),
+    'board.cards.delete': method(boardCardIdInputSchema, boardEmptyOutputSchema, async (input) => {
+      await requireBoard(services).deleteCard(input.cardId, 'user');
+      return {};
+    }),
 
     // --- schedules (P10) -----------------------------------------------------
     'schedules.list': method(

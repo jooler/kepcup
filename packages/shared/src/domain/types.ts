@@ -715,11 +715,6 @@ export const appsSettingsSchema = z
      */
     taintGuard: z.boolean().default(true).catch(true),
     /**
-     * 目录同步（D73 P3 §7.1）：每日拉取签名目录索引并与打包快照合并。默认开；关闭 = 只用
-     * 打包快照。只经 `settings.update` 的 `apps.directorySync` 写。
-     */
-    directorySync: z.boolean().default(true).catch(true),
-    /**
      * 本机连接（todo/local-connector-authoring.md）：slug → `LocalConnectorRecord`（core 自有，
      * 只经 `apps.localConnectors.*` 写；`settings.update` 不接受）。值读取时由 core 逐条校验
      * （`domain/local-connectors.ts`），所以这里不收紧类型：一条坏记录只丢弃它自己。
@@ -730,7 +725,6 @@ export const appsSettingsSchema = z
     toolLockBaselineDone: false,
     developerMode: false,
     taintGuard: true,
-    directorySync: true,
     localConnectors: {},
   });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;

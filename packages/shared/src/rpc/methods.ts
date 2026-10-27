@@ -25,7 +25,6 @@ import {
   appsSkillsOffersInputSchema,
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
-import { appsDirectoryStatusSchema } from '../domain/directory-index.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import {
   settingCardStateSchema,
@@ -412,7 +411,6 @@ export const settingsUpdateInputSchema = z.object({
     .object({
       developerMode: z.boolean().optional(),
       taintGuard: z.boolean().optional(),
-      directorySync: z.boolean().optional(),
     })
     .optional(),
   /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
@@ -627,8 +625,6 @@ export const mcpRefreshToolsOutputSchema = mcpRawToolsOutputSchema;
 
 // --- 连接应用 P1：目录 / 连接管理 / 工具复核 / 持续授权 ---------------------
 export const appsCatalogListOutputSchema = z.object({ entries: z.array(appCatalogEntrySchema) });
-/** 目录同步状态（D73 P3 §7.1）：`apps.directory.status` / 手动同步 `apps.directory.sync` 共用。 */
-export const appsDirectoryStatusOutputSchema = appsDirectoryStatusSchema;
 export const appsConnectionsUpdateInputSchema = z.object({
   connectionId: z.string().min(1),
   /** 账号显示名。 */
@@ -2234,8 +2230,6 @@ export const rpcMethodSchemas = {
     output: appsSkillsInstallOutputSchema,
   },
   /** D73 P3 §7.1 签名目录索引：同步状态 / 手动立即同步（关闭时不联网，直接返回状态）。 */
-  'apps.directory.status': { input: voidInput, output: appsDirectoryStatusOutputSchema },
-  'apps.directory.sync': { input: voidInput, output: appsDirectoryStatusOutputSchema },
   'apps.connections.update': {
     input: appsConnectionsUpdateInputSchema,
     output: appsConnectionsUpdateOutputSchema,
@@ -2931,8 +2925,6 @@ const APP_METHODS = [
   'apps.localConnectors.remove',
   'apps.skills.offers',
   'apps.skills.install',
-  'apps.directory.status',
-  'apps.directory.sync',
   'apps.connections.update',
   'apps.connections.setToolPolicy',
   'apps.connections.tools',

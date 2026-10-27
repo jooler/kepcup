@@ -4,7 +4,7 @@ import {
   sign as cryptoSign,
   type KeyObject,
 } from 'node:crypto';
-import type { ConnectorIndexPublicKey, PluginIndexEntry } from '@kepcup/shared';
+import type { IndexPublicKey, PluginIndexEntry } from '@kepcup/shared';
 import type { PluginFixture } from './plugin-fixture.js';
 
 /**
@@ -20,7 +20,7 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 export interface PluginMarketKey {
   keyId: string;
   privateKey: KeyObject;
-  publicEntry: ConnectorIndexPublicKey;
+  publicEntry: IndexPublicKey;
 }
 
 /** Throwaway Ed25519 keypair with the public entry an official/custom market needs. */

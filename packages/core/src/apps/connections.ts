@@ -31,7 +31,7 @@ import type {
 } from './auth/flow.js';
 import type { ConnectionAuthRegistry } from './auth/registry.js';
 import type { ConnectorCatalog } from './catalog.js';
-import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 import {
   customConnectionId,
   isCustomConnectionId,

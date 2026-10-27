@@ -9,7 +9,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreLogger } from '../../infra/logger.js';
 import type { AppDisconnector } from '../../apps/disconnect.js';
-import { isSafeDirectoryRemoteUrl } from '../../apps/directory-merge.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 import { mcpbPackageOf, type McpbInstaller, type McpbPackageRef } from '../../apps/mcpb/install.js';
 import type { McpService } from '../../mcp/service.js';
 import { oneLine } from '../../apps/prompt.js';

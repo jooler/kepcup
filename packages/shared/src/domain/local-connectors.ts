@@ -12,8 +12,6 @@ import { containsUnsafeText, sanitizeDisplayText } from './text-sanitize.js';
  * {@link localConnectorRecordSchema}；读取时逐条校验，坏条目只丢弃该条。
  */
 
-/** 本机条目的发行门禁值：不在任何放行清单里，也不经门禁过滤（走独立来源）。 */
-export const LOCAL_CONNECTOR_GATE = 'local';
 /** 本机条目没有打包图标：占位文件名（满足图标 schema，core 不会去读它）。 */
 export const LOCAL_CONNECTOR_ICON = 'local.svg';
 /** 本机条目的 Registry 命名空间前缀；打包 / 远端目录条目不得占用。 */
@@ -122,7 +120,7 @@ export interface LocalConnectorSchemaOptions {
 
 /**
  * 本机条目记录：完整的目录条目 + 添加时间 + 文档链接。强制：`tier: developer`、自动注册的
- * OAuth、唯一一个 `streamable-http` 远端（https 域名）、`releaseGate: local`、无 `toolPolicy`
+ * OAuth、唯一一个 `streamable-http` 远端（https 域名）、`tier: developer`、无 `toolPolicy`
  * / `whoami` / 随附技能 / 界面、slug = 对 origin 的派生值、name 在本机命名空间下。
  * 与打包 / 远端条目的 slug / name 冲突由 core 在添加与装载目录时检查（需要目录内容）。
  */
@@ -155,7 +153,6 @@ export function createLocalConnectorRecordSchema(options: LocalConnectorSchemaOp
       if (meta.auth.registration !== 'auto' || meta.auth.clientRef !== null) {
         fail('auth.registration must be "auto" without a clientRef');
       }
-      if (meta.releaseGate !== LOCAL_CONNECTOR_GATE) fail('releaseGate must be "local"');
       // 探测到的授权服务器 issuer 钉在条目里：连接时重新发现的 issuer 必须与之相同（评审 A2）。
       if (meta.expectedIssuer === undefined) fail('expectedIssuer is required');
       if (Object.keys(meta.toolPolicy).length > 0) fail('toolPolicy must be empty');

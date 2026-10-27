@@ -1,14 +1,4 @@
 import { z } from 'zod';
-import {
-  CONNECTOR_INDEX_INITIAL_DELAY_MS,
-  CONNECTOR_INDEX_RETRY_MS,
-  CONNECTOR_INDEX_STALE_AFTER_MS,
-  CONNECTOR_INDEX_SYNC_INTERVAL_MS,
-  CONNECTOR_INDEX_SYNC_JITTER_RATIO,
-  connectorIndexKeyIdSchema,
-  generatedAtSchema,
-  type ConnectorIndexPublicKey,
-} from './directory-index.js';
 import { pluginContributionKindSchema } from './plugins.js';
 import { pluginIdSchema, pluginVersionSchema } from './plugin-manifest.js';
 
@@ -24,6 +14,59 @@ import { pluginIdSchema, pluginVersionSchema } from './plugin-manifest.js';
  * Deliberate difference from design 51 §6.1: entries carry no `manifestDigest` and no
  * `summary.icon` — remote rich-text / icon fetch is out of scope for P1-1 (DEV-053).
  */
+
+// --- signed-index primitives（原 directory-index 的通用部分；连接器目录通道已移除）---------
+
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+export const indexKeyIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+
+/**
+ * 编进应用的公钥条目（支持轮换）：`publicKey` 是 Ed25519 **原始** 32 字节公钥的 base64；
+ * `validFrom` / `validUntil` 是该密钥可签发索引的 `generatedAt` 范围（毫秒，含起不含止，
+ * `validUntil` 缺省 = 无期限）。轮换：先发带新密钥的应用版本，再切签名密钥，旧密钥设
+ * `validUntil`，泄露设 `revoked: true`（infra/cloudflare/plugins/README.md）。
+ */
+export const indexPublicKeySchema = z.object({
+  keyId: indexKeyIdSchema,
+  publicKey: z.string().length(44).regex(BASE64_PATTERN),
+  validFrom: z.number().int().min(0),
+  validUntil: z.number().int().min(0).optional(),
+  revoked: z.boolean().default(false),
+});
+export type IndexPublicKey = z.input<typeof indexPublicKeySchema>;
+
+export type IndexKeySelection =
+  | { ok: true; key: IndexPublicKey }
+  | { ok: false; reason: 'unknown_key' | 'revoked_key' | 'key_not_valid_at' };
+
+/** 按 `keyId` 取验签用的公钥：未知 / 已吊销 / `generatedAt` 不在其有效期内都拒绝。 */
+export function selectIndexKey(
+  keys: readonly IndexPublicKey[],
+  keyId: string,
+  generatedAt: number,
+): IndexKeySelection {
+  const key = keys.find((candidate) => candidate.keyId === keyId);
+  if (key === undefined) return { ok: false, reason: 'unknown_key' };
+  if (key.revoked === true) return { ok: false, reason: 'revoked_key' };
+  if (
+    generatedAt < key.validFrom ||
+    (key.validUntil !== undefined && generatedAt >= key.validUntil)
+  ) {
+    return { ok: false, reason: 'key_not_valid_at' };
+  }
+  return { ok: true, key };
+}
+
+/** `generatedAt`：ISO 8601 字符串或 epoch 毫秒；统一规范化为毫秒。 */
+export const generatedAtSchema = z
+  .union([
+    z.number().int().min(1),
+    z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+      message: 'generatedAt must be an ISO 8601 date or epoch milliseconds',
+    }),
+  ])
+  .transform((value) => (typeof value === 'number' ? value : Date.parse(value)));
 
 // --- constants -----------------------------------------------------------------------------
 
@@ -42,11 +85,11 @@ export const PLUGIN_INDEX_MAX_REVOKED = 1000;
 export const PLUGIN_PACKAGE_MAX_BYTES = 512 * 1024 * 1024;
 
 /**
- * 生产公钥列表（形态同 CONNECTOR_INDEX_PUBLIC_KEYS）。**空 = 市场关闭**。这是编译进应用的
+ * 生产公钥列表。**空 = 市场关闭**。这是编译进应用的
  * 信任锚：只能通过应用发版增删，绝不从设置 / 环境运行时读取。私钥只存在于发布侧
  * （CI 机密 / 本机 `.env` 的 `KEPCUP_PLUGIN_SIGNING_KEY`），与这里永不同处。
  */
-export const PLUGIN_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [
+export const PLUGIN_INDEX_PUBLIC_KEYS: readonly IndexPublicKey[] = [
   {
     keyId: 'kepcup-plugins-2026-1',
     publicKey: '743SNAR3ZSUjoNZETb/NV1WDup6fFPtMcLT5LXrjtDw=',
@@ -55,15 +98,12 @@ export const PLUGIN_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [
   },
 ];
 
-/**
- * 同步节奏：与连接器目录通道完全一致（每日 + 失败约 1 小时重试 + ±10% 抖动 + 3 天算过期），
- * 不另造一套常量。
- */
-export const PLUGIN_INDEX_SYNC_INTERVAL_MS = CONNECTOR_INDEX_SYNC_INTERVAL_MS;
-export const PLUGIN_INDEX_RETRY_MS = CONNECTOR_INDEX_RETRY_MS;
-export const PLUGIN_INDEX_SYNC_JITTER_RATIO = CONNECTOR_INDEX_SYNC_JITTER_RATIO;
-export const PLUGIN_INDEX_INITIAL_DELAY_MS = CONNECTOR_INDEX_INITIAL_DELAY_MS;
-export const PLUGIN_INDEX_STALE_AFTER_MS = CONNECTOR_INDEX_STALE_AFTER_MS;
+/** 同步节奏：每日 + 失败约 1 小时重试 + ±10% 抖动 + 3 天算过期。 */
+export const PLUGIN_INDEX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const PLUGIN_INDEX_RETRY_MS = 60 * 60 * 1000;
+export const PLUGIN_INDEX_SYNC_JITTER_RATIO = 0.1;
+export const PLUGIN_INDEX_INITIAL_DELAY_MS = { min: 20_000, max: 120_000 } as const;
+export const PLUGIN_INDEX_STALE_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
 
 // --- index schema --------------------------------------------------------------------------
 
@@ -118,7 +158,7 @@ export type PluginIndexRevoked = z.infer<typeof pluginIndexRevokedSchema>;
 export const pluginIndexSchema = z.object({
   version: z.literal(1),
   generatedAt: generatedAtSchema,
-  keyId: connectorIndexKeyIdSchema,
+  keyId: indexKeyIdSchema,
   entries: z.array(z.unknown()).max(PLUGIN_INDEX_MAX_ENTRIES),
   revoked: z.array(pluginIndexRevokedSchema).max(PLUGIN_INDEX_MAX_REVOKED).default([]),
 });
