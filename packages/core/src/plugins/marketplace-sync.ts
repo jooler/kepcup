@@ -65,6 +65,11 @@ export interface MarketplaceSyncDeps {
   fetch: DirectoryFetch;
   /** 包下载用（体积上限更大）；缺省复用 `fetch`。 */
   downloadFetch?: DirectoryFetch;
+  /**
+   * 仅测试构建（P1-3 的 `KEPCUP_TEST_PLUGIN_MARKET` e2e 缝）放行的回环包下载主机：
+   * 命中列表的 `host:port` 视同安全（`isSafeDirectoryRemoteUrl` 只放行 https 公网）。
+   */
+  testLoopbackHosts?: readonly string[];
   clock: Clock;
   logger: CoreLogger;
   /** 只控制定时拉取（`start()` 的循环）；`sync()` / `entries()` / `download()` 不看它。 */
@@ -321,9 +326,21 @@ export class MarketplaceSync {
 
   // --- 下载 -----------------------------------------------------------------------------
 
+  /** 包下载地址守卫：https 公网，或（仅测试缝）测试市场的回环主机。 */
+  #downloadUrlAllowed(url: string): boolean {
+    if (isSafeDirectoryRemoteUrl(url)) return true;
+    const hosts = this.#deps.testLoopbackHosts;
+    if (hosts === undefined || hosts.length === 0) return false;
+    try {
+      return hosts.includes(new URL(url).host);
+    } catch {
+      return false;
+    }
+  }
+
   /** 下载索引条目指向的包到内容寻址缓存，返回 `.kepcup` 的绝对路径。 */
   download(entry: PluginIndexEntry): Promise<string> {
-    if (!isSafeDirectoryRemoteUrl(entry.downloadUrl)) {
+    if (!this.#downloadUrlAllowed(entry.downloadUrl)) {
       return Promise.reject(
         new AppError('PLUGIN_INVALID', `包下载地址不安全：${entry.downloadUrl}`),
       );

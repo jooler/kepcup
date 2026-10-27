@@ -17,6 +17,7 @@ import {
   mailAccountsListOutputSchema,
   mailBindingResumeInputSchema,
   mailBotSetAccountsInputSchema,
+  mailProviderTemplatesListOutputSchema,
 } from '../domain/mail.js';
 import {
   appsSkillsInstallInputSchema,
@@ -2722,6 +2723,10 @@ export const rpcMethodSchemas = {
     input: mailBindingResumeInputSchema,
     output: mailAccountGetOutputSchema,
   },
+  'mail.providerTemplates.list': {
+    input: voidInput,
+    output: mailProviderTemplatesListOutputSchema,
+  },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -3137,6 +3142,7 @@ const APP_METHODS = [
   'mail.accounts.pause',
   'mail.accounts.resume',
   'mail.bindings.resume',
+  'mail.providerTemplates.list',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

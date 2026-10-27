@@ -450,6 +450,33 @@ describe('PluginRegistry', () => {
     ]);
   });
 
+  it('mailTemplates：只列已启用插件的模板，id 形如 `{pluginId}#{localId}`', async () => {
+    const rig = makeRig();
+    expect(await rig.registry.mailTemplates()).toEqual([]);
+    const fixture = await makeFixture();
+    await rig.registry.install(installArgs(fixture));
+    const templates = await rig.registry.mailTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0]).toMatchObject({
+      id: 'io.github.tester/reg#mailtest',
+      pluginId: 'io.github.tester/reg',
+      pluginName: 'Fixture',
+      label: 'Mail mailtest',
+      imap: { host: 'imap.test', port: 993, secure: 'ssl' },
+      smtp: { host: 'smtp.test', port: 465, secure: 'ssl' },
+      defaultMode: 'auto',
+      helpUrl: null,
+    });
+    // 停用的插件不出现。
+    await rig.registry.setEnabled('io.github.tester/reg', false);
+    expect(await rig.registry.mailTemplates()).toEqual([]);
+    await rig.registry.setEnabled('io.github.tester/reg', true);
+    expect(await rig.registry.mailTemplates()).toHaveLength(1);
+    // 卸载后消失。
+    await rig.registry.uninstall('io.github.tester/reg');
+    expect(await rig.registry.mailTemplates()).toEqual([]);
+  });
+
   it('第 2 项投影失败 → 按账本回滚、目录与行被清、重抛原错误', async () => {
     const rig = makeRig();
     rig.fakes.skill.failProjectAt = 2;

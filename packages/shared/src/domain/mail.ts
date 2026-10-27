@@ -279,6 +279,29 @@ export const mailBindingResumeInputSchema = z.object({
   botId: z.string().min(1),
 });
 
+/**
+ * 邮件预填模板（D104 P1-3，设计 51 §4「mail」行）：插件贡献的 overlay，不落库。
+ * `id` = `${pluginId}#${localId}`；端点 / 模式 / 轮询下限只用于预填「添加邮箱」表单，
+ * 创建出的账号仍是 `provider:'custom'`，全局 60 秒轮询下限照常生效。
+ */
+export const mailProviderTemplateSchema = z.object({
+  id: z.string(),
+  pluginId: z.string(),
+  pluginName: z.string(),
+  label: z.string(),
+  imap: z.object({ host: z.string(), port: z.number().int(), secure: mailSecureSchema }),
+  smtp: z.object({ host: z.string(), port: z.number().int(), secure: mailSecureSchema }),
+  defaultMode: mailModeSchema,
+  defaultPollSec: z.number().int(),
+  minPollSec: z.number().int(),
+  helpUrl: z.string().nullable(),
+});
+export type MailProviderTemplate = z.infer<typeof mailProviderTemplateSchema>;
+
+export const mailProviderTemplatesListOutputSchema = z.object({
+  templates: z.array(mailProviderTemplateSchema),
+});
+
 /** 发信审批卡的载荷：收件人与正文完整列出，不走摘要截断。 */
 export const mailSendApprovalPayloadSchema = z.object({
   accountId: z.string(),
