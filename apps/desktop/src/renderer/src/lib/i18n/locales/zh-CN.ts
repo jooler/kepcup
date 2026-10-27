@@ -1512,6 +1512,7 @@ export const zhCN = {
   'plugins.kind.connector': '连接应用',
   'plugins.kind.mail': '邮件模板',
   'plugins.countItem': '{kind} {count}',
+  'plugins.configEntry': '管理{kind}（{count}）',
   'plugins.toggleLabel': '启用或停用该插件',
   'plugins.uninstall': '卸载',
   'plugins.reveal': '打开所在目录',
