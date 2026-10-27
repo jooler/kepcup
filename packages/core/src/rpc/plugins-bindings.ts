@@ -87,21 +87,17 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
       await registry().uninstall(input.id);
       return { ok: true as const };
     }),
-    'plugins.marketplace.list': method(
-      voidInput,
-      pluginsMarketplaceListOutputSchema,
-      async () => {
-        const market = marketplace();
-        const sync = market.current();
-        const status = market.status();
-        if (sync === null) return { status, entries: [] };
-        // 距上次成功同步超过 10 分钟（或从未同步）→ 后台补一次，不等待。
-        if (status.lastSync === null || Date.now() - status.lastSync > RESYNC_AFTER_MS) {
-          void sync.sync().catch(() => undefined);
-        }
-        return { status, entries: registry().marketplaceEntries() };
-      },
-    ),
+    'plugins.marketplace.list': method(voidInput, pluginsMarketplaceListOutputSchema, async () => {
+      const market = marketplace();
+      const sync = market.current();
+      const status = market.status();
+      if (sync === null) return { status, entries: [] };
+      // 距上次成功同步超过 10 分钟（或从未同步）→ 后台补一次，不等待。
+      if (status.lastSync === null || Date.now() - status.lastSync > RESYNC_AFTER_MS) {
+        void sync.sync().catch(() => undefined);
+      }
+      return { status, entries: registry().marketplaceEntries() };
+    }),
     'plugins.marketplace.refresh': method(
       voidInput,
       pluginsMarketplaceRefreshOutputSchema,

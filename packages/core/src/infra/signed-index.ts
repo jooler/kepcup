@@ -81,9 +81,9 @@ export function writeAtomic(file: string, data: string | Uint8Array): void {
 
 /** 信封 schema 的最小形状（zod schema 兼容；不引 zod 类型，保持本文件依赖最小）。 */
 export interface IndexSchemaLike<T> {
-  safeParse(input: unknown):
-    | { success: true; data: T }
-    | { success: false; error: { issues: Array<{ message: string }> } };
+  safeParse(
+    input: unknown,
+  ): { success: true; data: T } | { success: false; error: { issues: Array<{ message: string }> } };
 }
 
 export interface SignedIndexLimits {
@@ -362,7 +362,10 @@ export class SignedIndexSync<T extends { generatedAt: number; keyId: string }> {
       if (state.generatedAt > this.#deps.clock.now() + FUTURE_SKEW_MS) {
         // 状态里的 generatedAt 远在未来（损坏 / 篡改）：它会把棘轮永久卡死。缓存索引自己验过签，
         // 棘轮重置为它的 generatedAt。
-        this.#deps.logger.warn({}, 'signed index state is future-dated; ratchet reset to the cache');
+        this.#deps.logger.warn(
+          {},
+          'signed index state is future-dated; ratchet reset to the cache',
+        );
         accepted = { ...state, generatedAt: verified.index.generatedAt, sha256: verified.sha256 };
       }
       if (
@@ -406,10 +409,7 @@ export class SignedIndexSync<T extends { generatedAt: number; keyId: string }> {
     this.#revision += 1;
   }
 
-  #verify(
-    bytes: Uint8Array,
-    signatureText: string,
-  ): VerifiedIndexResult<T> {
+  #verify(bytes: Uint8Array, signatureText: string): VerifiedIndexResult<T> {
     return verifySignedIndex(bytes, signatureText, this.#deps.keys, this.#deps.schema, {
       maxBytes: this.#deps.limits.maxBytes,
       maxSigBytes: this.#deps.limits.maxSigBytes,

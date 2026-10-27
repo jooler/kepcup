@@ -35,7 +35,11 @@ export type PluginItemKind = z.infer<typeof pluginItemKindSchema>;
 export const pluginSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), path: z.string().min(1).max(4096) }),
   z.object({ kind: z.literal('folder'), path: z.string().min(1).max(4096) }),
-  z.object({ kind: z.literal('marketplace'), id: pluginIdSchema, version: pluginVersionSchema.optional() }),
+  z.object({
+    kind: z.literal('marketplace'),
+    id: pluginIdSchema,
+    version: pluginVersionSchema.optional(),
+  }),
 ]);
 export type PluginSource = z.infer<typeof pluginSourceSchema>;
 
@@ -243,9 +247,7 @@ export type PluginsMarketplaceListOutput = z.infer<typeof pluginsMarketplaceList
 export const pluginsMarketplaceRefreshOutputSchema = z.object({
   status: pluginMarketStatusSchema,
 });
-export type PluginsMarketplaceRefreshOutput = z.infer<
-  typeof pluginsMarketplaceRefreshOutputSchema
->;
+export type PluginsMarketplaceRefreshOutput = z.infer<typeof pluginsMarketplaceRefreshOutputSchema>;
 
 /** `plugins.marketplace.updated`：索引采纳 / 端点切换后广播；null = 视图清空待重同步。 */
 export const pluginsMarketplaceUpdatedPayloadSchema = z.object({

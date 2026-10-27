@@ -2237,9 +2237,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       pluginsDir: paths.pluginsDir,
       logger,
       appVersion: options.appVersion ?? '0.0.0',
-      ...(options.platform !== undefined
-        ? { platform: options.platform as NodeJS.Platform }
-        : {}),
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
     });
     const pluginProjectors = createPluginProjectors({
       skills: {
@@ -2335,9 +2333,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       marketplace,
       pluginsDir: paths.pluginsDir,
       appVersion: options.appVersion ?? '0.0.0',
-      ...(options.platform !== undefined
-        ? { platform: options.platform as NodeJS.Platform }
-        : {}),
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
       clock,
       logger,
       events,

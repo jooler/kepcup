@@ -89,8 +89,10 @@ describe('pluginIndexEntrySchema', () => {
         .success,
     ).toBe(false);
     expect(
-      pluginIndexEntrySchema.safeParse({ ...entry, downloadUrl: `https://x.test/${'a'.repeat(500)}` })
-        .success,
+      pluginIndexEntrySchema.safeParse({
+        ...entry,
+        downloadUrl: `https://x.test/${'a'.repeat(500)}`,
+      }).success,
     ).toBe(false);
   });
 
@@ -180,9 +182,9 @@ describe('marketplace RPC views', () => {
 describe('marketplace settings keys', () => {
   it('the URL accepts empty or https without credentials and rejects the rest', () => {
     expect(pluginMarketplaceUrlSchema.safeParse('').success).toBe(true);
-    expect(pluginMarketplaceUrlSchema.safeParse('https://market.example.com/plugins/v1').success).toBe(
-      true,
-    );
+    expect(
+      pluginMarketplaceUrlSchema.safeParse('https://market.example.com/plugins/v1').success,
+    ).toBe(true);
     expect(pluginMarketplaceUrlSchema.safeParse('http://market.example.com').success).toBe(false);
     expect(
       pluginMarketplaceUrlSchema.safeParse('https://user:pass@market.example.com').success,
@@ -204,8 +206,9 @@ describe('source and summary additions', () => {
     expect(
       pluginSourceSchema.safeParse({ kind: 'marketplace', id: 'io.a/b', version: '1.0.0' }).success,
     ).toBe(true);
-    expect(pluginSourceSchema.safeParse({ kind: 'marketplace', id: 'io.a/b', version: 'x' }).success)
-      .toBe(false);
+    expect(
+      pluginSourceSchema.safeParse({ kind: 'marketplace', id: 'io.a/b', version: 'x' }).success,
+    ).toBe(false);
     expect(pluginSourceSchema.safeParse({ kind: 'marketplace' }).success).toBe(false);
   });
 

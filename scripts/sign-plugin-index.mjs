@@ -23,7 +23,14 @@
 // printed. The production public key list is compiled into @kepcup/shared
 // (PLUGIN_INDEX_PUBLIC_KEYS — empty = the marketplace is closed until the key is registered).
 // The marketplace key is INDEPENDENT of the connector-directory key (do not reuse KEPCUP_CONNECTOR_SIGNING_KEY).
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
@@ -153,7 +160,13 @@ export function categoriesOf(manifest) {
  * @kepcup/shared's pluginManifestSchema (when built). Returns the entries plus the
  * content-addressed package copies to make (`{ sha256, sourcePath }`).
  */
-export async function collectPluginEntries({ packagesDir, catalog, downloadBase, generatedAt, log }) {
+export async function collectPluginEntries({
+  packagesDir,
+  catalog,
+  downloadBase,
+  generatedAt,
+  log,
+}) {
   if (downloadBase === undefined) {
     throw new SignError('--download-base is required (e.g. https://pkg.kepcup.com)');
   }
@@ -171,7 +184,9 @@ export async function collectPluginEntries({ packagesDir, catalog, downloadBase,
 
   const guard = await loadPackageGuard();
   const shared = await loadShared();
-  const files = readdirSync(packagesDir).filter((name) => name.endsWith('.kepcup')).sort();
+  const files = readdirSync(packagesDir)
+    .filter((name) => name.endsWith('.kepcup'))
+    .sort();
   if (files.length === 0) {
     throw new SignError(`no .kepcup packages found in ${packagesDir}`);
   }
@@ -193,7 +208,10 @@ export async function collectPluginEntries({ packagesDir, catalog, downloadBase,
     const size = bytes.length;
 
     // Reading through the guarded zip rejects hostile archives before anything is published.
-    const zip = await guard.ZipArchive.open(filePath, { error: (m) => new SignError(m), label: name });
+    const zip = await guard.ZipArchive.open(filePath, {
+      error: (m) => new SignError(m),
+      label: name,
+    });
     try {
       const manifestEntry = zip.entries.find((candidate) => candidate.name === 'plugin.json');
       if (manifestEntry === undefined) {
@@ -225,7 +243,10 @@ export async function collectPluginEntries({ packagesDir, catalog, downloadBase,
         summary: {
           name: String(summary.name).slice(0, 100),
           description: String(summary.description ?? '').slice(0, 500),
-          author: summary.author === null || summary.author === undefined ? null : String(summary.author).slice(0, 100),
+          author:
+            summary.author === null || summary.author === undefined
+              ? null
+              : String(summary.author).slice(0, 100),
         },
         // Deterministic builds pass --generated-at; otherwise the package mtime stands.
         updatedAt: generatedAt !== undefined ? generatedAt : statSync(filePath).mtimeMs,
@@ -294,9 +315,10 @@ export function verifyPluginIndexBytes(indexBytes, sigText, keys, { readFile } =
   ) {
     return fail('index.json has the wrong shape');
   }
-  const generatedAt = typeof index.generatedAt === 'number'
-    ? index.generatedAt
-    : Date.parse(String(index.generatedAt));
+  const generatedAt =
+    typeof index.generatedAt === 'number'
+      ? index.generatedAt
+      : Date.parse(String(index.generatedAt));
   const key = keys.find((candidate) => candidate.keyId === index.keyId);
   if (!key) return fail(`unknown keyId "${String(index.keyId).slice(0, 64)}"`);
   if (key.revoked === true) return fail(`key "${key.keyId}" is revoked`);

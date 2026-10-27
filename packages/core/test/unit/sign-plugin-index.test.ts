@@ -26,9 +26,7 @@ interface SignScript {
     io?: { out(message: string): void; err(message: string): void },
   ): Promise<number>;
 }
-const script = (await import(
-  /* @vite-ignore */ pathToFileURL(scriptPath).href
-)) as SignScript;
+const script = (await import(/* @vite-ignore */ pathToFileURL(scriptPath).href)) as SignScript;
 
 const root = mkdtempSync(path.join(tmpdir(), 'sign-plugin-index-'));
 afterAll(() => {
@@ -43,11 +41,13 @@ interface Artifact {
   pem: string;
 }
 
-async function signFixture(options: {
-  tier?: string;
-  engines?: Record<string, string>;
-  platforms?: string[];
-} = {}): Promise<{ artifact: Artifact; sha256: string; id: string; version: string }> {
+async function signFixture(
+  options: {
+    tier?: string;
+    engines?: Record<string, string>;
+    platforms?: string[];
+  } = {},
+): Promise<{ artifact: Artifact; sha256: string; id: string; version: string }> {
   const outDir = path.join(root, `out-${Math.random().toString(36).slice(2, 8)}`);
   const keyDir = path.join(root, `key-${Math.random().toString(36).slice(2, 8)}`);
   const keyId = 'sign-plugin-test';
@@ -151,18 +151,23 @@ describe('sign-plugin-index.mjs', () => {
     expect(marker).toBeGreaterThan(0);
     const digit = tampered[marker + '"sha256":"'.length]!;
     tampered[marker + '"sha256":"'.length] = digit === 0x61 ? 0x62 : 0x61;
-    expect(
-      verifySignedIndex(tampered, sig, keys, pluginIndexSchema, PLUGIN_LIMITS),
-    ).toMatchObject({ ok: false, reason: 'bad_signature' });
+    expect(verifySignedIndex(tampered, sig, keys, pluginIndexSchema, PLUGIN_LIMITS)).toMatchObject({
+      ok: false,
+      reason: 'bad_signature',
+    });
   });
 
   it('--verify checks the index signature and the package copies', async () => {
     const { artifact, sha256 } = await signFixture();
     const quiet = { out: () => {}, err: () => {} };
-    expect(await script.run(['--verify', artifact.outDir, '--keys', artifact.keysFile], {}, quiet)).toBe(0);
+    expect(
+      await script.run(['--verify', artifact.outDir, '--keys', artifact.keysFile], {}, quiet),
+    ).toBe(0);
     // Corrupt the package copy → verify fails.
     writeFileSync(path.join(artifact.outDir, 'packages', `${sha256}.kepcup`), Buffer.from('x'));
-    expect(await script.run(['--verify', artifact.outDir, '--keys', artifact.keysFile], {}, quiet)).toBe(1);
+    expect(
+      await script.run(['--verify', artifact.outDir, '--keys', artifact.keysFile], {}, quiet),
+    ).toBe(1);
   });
 
   it('refuses an uncurated package', async () => {
@@ -172,7 +177,11 @@ describe('sign-plugin-index.mjs', () => {
     const pem = readFileSync(path.join(keyDir, 'dev-key.pem'), 'utf8');
     const keysFile = path.join(keyDir, 'dev-keys.json');
     const packagesDir = path.join(root, `pkg-bad-${Math.random().toString(36).slice(2, 8)}`);
-    await buildPluginFixture({ dir: packagesDir, fileName: 'demo.kepcup', skills: [{ name: 'x' }] });
+    await buildPluginFixture({
+      dir: packagesDir,
+      fileName: 'demo.kepcup',
+      skills: [{ name: 'x' }],
+    });
     const catalog = path.join(root, 'catalog-bad.json');
     writeFileSync(catalog, JSON.stringify([]));
     await expect(

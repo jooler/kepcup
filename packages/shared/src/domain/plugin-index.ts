@@ -79,7 +79,10 @@ export const pluginIndexEntrySchema = z.object({
   /** 内容寻址的包下载地址（CI 写 `{download-base}/{sha256}.kepcup`）。 */
   downloadUrl: httpsUrl(500),
   engines: z.object({ kepcup: z.string().min(1).max(100) }).optional(),
-  platforms: z.array(z.enum(['darwin', 'win32', 'linux'])).min(1).optional(),
+  platforms: z
+    .array(z.enum(['darwin', 'win32', 'linux']))
+    .min(1)
+    .optional(),
   /** 签名时由贡献推导写入（skills→skill、connectors→connector、mcp→mcp、mail→mail）。 */
   categories: z.array(pluginContributionKindSchema).max(4),
   summary: z.object({
