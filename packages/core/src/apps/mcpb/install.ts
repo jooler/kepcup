@@ -52,8 +52,42 @@ import { MCPB_MAX_FILE_BYTES, safeEntryPath, ZipArchive } from './zip.js';
 export const MCPB_MARKER_FILE = '.kepcup-mcpb.json';
 const MANIFEST_MAX_BYTES = 1024 * 1024;
 
-/** The `kind: 'mcpb'` variant of {@link McpServerSource} — the only one this installer manages. */
-type McpbPackageSource = Extract<McpServerSource, { kind: 'mcpb' }>;
+/** Package identity used for reference counting (`toolchains/mcpb/{name}@{version}` slots). */
+export interface McpbPackageRef {
+  name: string;
+  version: string;
+  sha256: string;
+}
+
+/**
+ * Normalizes any server source into the package it references: `kind: 'mcpb'` is the
+ * source itself; `kind: 'plugin'` contributes its embedded `mcpb` (null without one);
+ * anything else references no package.
+ */
+export function mcpbPackageOf(source: McpServerSource | undefined): McpbPackageRef | null {
+  if (source === undefined) return null;
+  if (source.kind === 'mcpb') return { name: source.name, version: source.version, sha256: source.sha256 };
+  if (source.kind === 'plugin') return source.mcpb ?? null;
+  return null;
+}
+
+/**
+ * Caller-specified registration (D104 plugin projector): lets the plugin pipeline
+ * install a bundle under a deterministic server id with a plugin-shaped source and
+ * tier, instead of the random `mcpb_{hex}` / `{kind:'mcpb'}` defaults.
+ */
+export interface McpbRegistration {
+  /** Overrides the random `mcpb_{hex}` id. */
+  serverId: string;
+  /** Overrides the `{kind:'mcpb', …}` source. */
+  source: McpServerSource;
+  /** Overrides the default tier (non-catalog installs default to `'developer'`). */
+  tier: 'developer' | undefined;
+  /** Overrides `server.name` (default: the inspection display name). */
+  name?: string | undefined;
+  /** Written into `server.description`. */
+  description?: string | undefined;
+}
 
 export type McpbRuntimeKind = 'node' | 'python' | 'uv';
 export interface McpbRuntimeResolution {
@@ -101,6 +135,12 @@ export interface McpbInstallRequest {
   userConfig?: Record<string, McpbUserConfigValue>;
   approvalContext?: McpbApprovalContext | undefined;
   fromCatalog?: { slug: string } | undefined;
+  /**
+   * Plugin pipeline registration (D104): fixed server id, plugin-shaped source and
+   * overridden tier / name / description. Absent for the standalone `mcpb.install`
+   * path, whose behaviour is unchanged.
+   */
+  register?: McpbRegistration | undefined;
 }
 
 export interface McpbInspection extends McpbInspectOutput {
@@ -334,6 +374,16 @@ export class McpbInstaller {
     }
     const values = validateUserConfig(fields, input.userConfig ?? {});
 
+    // Plugin registration: fail before any extraction when the caller-specified id is taken.
+    if (input.register !== undefined) {
+      const taken = this.#deps.settings
+        .get()
+        .mcpServers.some((server) => server.id === input.register!.serverId);
+      if (taken) {
+        throw new AppError('ALREADY_EXISTS', `MCP 服务器 ID 已存在：${input.register.serverId}`);
+      }
+    }
+
     const runtimeKind = runtimeOf(manifest);
     const resolution = runtimeKind === null ? null : this.#deps.resolveRuntime(runtimeKind);
     if (runtimeKind !== null && resolution === null) {
@@ -352,14 +402,7 @@ export class McpbInstaller {
       commandOverride: this.#commandOverride(manifest, resolution),
     });
 
-    const conflicts = this.#deps.settings
-      .get()
-      .mcpServers.filter(
-        (server) =>
-          server.source?.kind === 'mcpb' &&
-          sameSlot(server.source, manifest) &&
-          server.source.sha256 !== inspection.sha256,
-      );
+    const conflicts = this.#findSlotConflicts(manifest.name, manifest.version, inspection.sha256);
     if (conflicts.length > 0) {
       throw invalid(
         `已安装同名同版本（${manifest.name}@${manifest.version}）但内容不同的包，请先卸载再安装`,
@@ -385,25 +428,33 @@ export class McpbInstaller {
     }
 
     const extracted = await this.#extract(snapshot.path, manifest, inspection.sha256);
-    const serverId = `mcpb_${randomBytes(6).toString('hex')}`;
-    const source: McpbPackageSource = {
-      kind: 'mcpb',
-      name: manifest.name,
-      version: manifest.version,
-      sha256: inspection.sha256,
-    };
+    const serverId = input.register?.serverId ?? `mcpb_${randomBytes(6).toString('hex')}`;
+    const source: McpServerSource =
+      input.register?.source ?? {
+        kind: 'mcpb',
+        name: manifest.name,
+        version: manifest.version,
+        sha256: inspection.sha256,
+      };
     const server: McpServer = {
       id: serverId,
-      name: inspection.displayName,
+      name: input.register?.name ?? inspection.displayName,
       transport: 'stdio',
       command: spec.command,
       args: spec.args,
       ...(Object.keys(spec.env).length > 0 ? { env: spec.env } : {}),
+      ...(input.register?.description !== undefined ? { description: input.register.description } : {}),
       enabled: true,
       autoApprove: false,
       auth: 'none',
       source,
-      ...(input.fromCatalog === undefined ? { tier: 'developer' as const } : {}),
+      ...(input.register !== undefined
+        ? input.register.tier !== undefined
+          ? { tier: input.register.tier }
+          : {}
+        : input.fromCatalog === undefined
+          ? { tier: 'developer' as const }
+          : {}),
     };
     try {
       for (const field of fields) {
@@ -426,10 +477,31 @@ export class McpbInstaller {
     this.#audit(
       'mcpb_install',
       serverId,
-      source,
+      { name: manifest.name, version: manifest.version, sha256: inspection.sha256 },
       input.fromCatalog === undefined ? 'developer' : 'catalog',
     );
     return { serverId };
+  }
+
+  /**
+   * Servers occupying the same `name@version` package slot with different content.
+   * Counts every source kind that references an MCPB package (`mcpbPackageOf`), so a
+   * plugin-registered server also holds its slot. Shared by the install-time rejection
+   * and the registry's pre-check ({@link slotConflict}).
+   */
+  #findSlotConflicts(name: string, version: string, sha256: string): Array<{ serverId: string }> {
+    return this.#deps.settings
+      .get()
+      .mcpServers.filter((server) => {
+        const pkg = mcpbPackageOf(server.source);
+        return pkg !== null && sameSlot(pkg, { name, version }) && pkg.sha256 !== sha256;
+      })
+      .map((server) => ({ serverId: server.id }));
+  }
+
+  /** Public pre-check for the plugin registry: an occupied slot with different content. */
+  slotConflict(name: string, version: string, sha256: string): { serverId: string } | null {
+    return this.#findSlotConflicts(name, version, sha256)[0] ?? null;
   }
 
   #checkCatalog(slug: string, inspection: McpbInspection): void {
@@ -518,11 +590,16 @@ export class McpbInstaller {
   // --- verify / uninstall ----------------------------------------------------
 
   /** Re-hashes the extracted tree against the marker written at install time. */
-  async verify(source: McpbPackageSource): Promise<{ ok: true } | { ok: false; reason: string }> {
-    const dir = this.installDirOf(source.name, source.version);
+  async verify(
+    source: McpbPackageRef | McpServerSource,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    // Normalize first: a full server source counts only when it references a package.
+    const pkg = 'kind' in source ? mcpbPackageOf(source) : source;
+    if (pkg === null) return { ok: false, reason: '该来源不引用 MCPB 包' };
+    const dir = this.installDirOf(pkg.name, pkg.version);
     const marker = await readMarker(dir);
     if (marker === null) return { ok: false, reason: '安装目录缺失或标记文件损坏' };
-    if (marker.sha256 !== source.sha256) return { ok: false, reason: '安装目录与记录的包不一致' };
+    if (marker.sha256 !== pkg.sha256) return { ok: false, reason: '安装目录与记录的包不一致' };
     const entries: string[] = [];
     await walkFiles(dir, '', async (relative, absolute) => {
       if (relative === MCPB_MARKER_FILE) return;
@@ -552,18 +629,19 @@ export class McpbInstaller {
   /**
    * `mcp.removeServer` / settings-replacement hook: the settings entry is already gone (and
    * the generic path removed the secrets); drop the extracted directory when no other server
-   * uses it.
+   * (of either source kind — `mcpbPackageOf` counts both) uses the package.
    */
   async afterServerRemoved(previous: readonly McpServer[], serverId: string): Promise<void> {
     const removed = previous.find((server) => server.id === serverId);
-    if (removed?.source?.kind !== 'mcpb') return;
+    const pkg = mcpbPackageOf(removed?.source);
+    if (pkg === null) return;
     await this.#deps.closeServer?.(serverId);
-    await this.#releasePackage(removed.source);
-    this.#audit('mcpb_uninstall', serverId, removed.source, removed.tier ?? 'catalog');
+    await this.#releasePackage(pkg);
+    this.#audit('mcpb_uninstall', serverId, pkg, removed?.tier ?? 'catalog');
   }
 
   /** Audit details: package identity and tier only — never user_config values. */
-  #audit(action: string, serverId: string, source: McpbPackageSource, tier: string): void {
+  #audit(action: string, serverId: string, source: McpbPackageRef, tier: string): void {
     try {
       this.#deps.audit?.recordSystem(action, {
         serverId,
@@ -577,12 +655,13 @@ export class McpbInstaller {
     }
   }
 
-  async #releasePackage(source: McpbPackageSource): Promise<void> {
+  async #releasePackage(source: McpbPackageRef): Promise<void> {
     const stillUsed = this.#deps.settings
       .get()
-      .mcpServers.some(
-        (server) => server.source?.kind === 'mcpb' && sameSlot(server.source, source),
-      );
+      .mcpServers.some((server) => {
+        const pkg = mcpbPackageOf(server.source);
+        return pkg !== null && sameSlot(pkg, source);
+      });
     if (stillUsed) return;
     let dir: string;
     try {

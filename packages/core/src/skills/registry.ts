@@ -211,6 +211,13 @@ export function resolveEffectiveCompatibility(
 export class SkillsService {
   readonly #deps: SkillsDeps;
   /**
+   * PLUGIN_MANAGED guard (D104): invoked just before the PUBLIC uninstall branch of
+   * `uninstall` — a name owned by a plugin's ledger must be uninstalled through the
+   * plugin, not by single-item deletion. `uninstallPublic` itself stays unguarded
+   * (the plugin projector and the preset update flow call it directly).
+   */
+  #publicUninstallGuard: ((name: string) => void) | null = null;
+  /**
    * One bot's authored-skill git repository is a shared mutable resource:
    * promote (authoring loop, background concurrency 2) and rollback (RPC)
    * must not interleave their addAll/writeTree/commit sequences on the same
@@ -648,6 +655,11 @@ export class SkillsService {
     return this.entryFor(botId, name)!;
   }
 
+  /** 接入「插件管理的公共技能不许单项删除」守卫（`start.ts`，D104）。 */
+  attachPublicUninstallGuard(guard: (name: string) => void): void {
+    this.#publicUninstallGuard = guard;
+  }
+
   /**
    * Removes one reference. Private rows (bot_skills) are per-bot; a name with
    * no private row but a public_skills row is a PUBLIC skill — uninstalling
@@ -661,6 +673,7 @@ export class SkillsService {
   uninstall(botId: string, name: string): SkillEntry[] {
     const row = this.botSkillRow(botId, name);
     if (row === null) {
+      this.#publicUninstallGuard?.(name);
       this.uninstallPublic(name);
       return this.listForBot(botId);
     }

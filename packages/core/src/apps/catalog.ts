@@ -81,12 +81,28 @@ export interface ConnectorCatalogOptions {
   remote?: readonly unknown[] | undefined;
   /** 本机连接条目（已校验）：合并之后追加，不经发行门禁。 */
   local?: readonly ConnectorCatalogEntry[] | undefined;
+  /** 插件贡献条目（已由投影器改写）：门禁之后、本机条目之前追加。 */
+  plugin?: readonly PluginConnectorEntry[] | undefined;
 }
 
 /** 本机连接的来源：`revision()` 变化 = 条目变了，目录需要重新合并。 */
 export interface LocalConnectorSource {
   revision(): number;
   entries(): readonly ConnectorCatalogEntry[];
+}
+
+/** 插件贡献的连接器条目（已由连接器投影器改写过 tier / releaseGate / toolPolicy / packages）。 */
+export interface PluginConnectorEntry {
+  entry: ConnectorCatalogEntry;
+  pluginId: string;
+  /** 绝对路径，已确认在插件目录内；null = 没有图标。 */
+  iconPath: string | null;
+}
+
+/** 插件连接器来源（`ConnectorsProjector`）：`revision()` 变化 = 条目变了。 */
+export interface PluginConnectorSource {
+  revision(): number;
+  entries(): readonly PluginConnectorEntry[];
 }
 
 /** 远端目录的来源：`revision()` 变化 = 条目变了，目录需要重新合并。 */
@@ -153,12 +169,20 @@ export function effectiveConnectorCatalog(
   return buildConnectorCatalog(options).entries;
 }
 
-/** {@link effectiveConnectorCatalog} 加上远端独有条目的 slug（这些条目没有打包图标）。 */
+/** {@link effectiveConnectorCatalog} 加上来源簿记（远端独有 / 本机 / 插件、插件图标与归属、让位记录）。 */
 export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
   entries: ConnectorCatalogEntry[];
   remoteOnlySlugs: ReadonlySet<string>;
   /** 本机连接条目的 slug（已并入 `entries`）。 */
   localSlugs: ReadonlySet<string>;
+  /** 插件贡献条目的 slug（已并入 `entries`）。 */
+  pluginSlugs: ReadonlySet<string>;
+  /** 插件条目的图标路径（slug → 插件目录内文件的绝对路径；null = 无图标）。 */
+  pluginIcons: ReadonlyMap<string, string | null>;
+  /** 插件条目的归属（slug → pluginId）。 */
+  pluginOwners: ReadonlyMap<string, string>;
+  /** 因 slug / name 冲突而让位的插件条目 slug。 */
+  yieldedPluginSlugs: ReadonlySet<string>;
 } {
   const source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
   let entries = parseConnectorEntries(source.entries, options.logger);
@@ -192,10 +216,41 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
     ),
   );
   const result = entries.filter((entry) => isRemoteOnly(entry) || released.has(entry));
-  // 本机连接：独立来源，追加在门禁之后。与任何已有条目（含被门禁挡掉的）的 slug / name 冲突即丢弃。
+  // 插件贡献条目（D104）：独立来源，追加在门禁之后、本机条目之前，不经门禁
+  // （`releaseGate` 已被投影器改写为 'plugin'）。与任何已有条目（含被门禁挡掉的——
+  // 用门禁前的全集 `entries` 检查）的 slug / name 冲突即让位，运行期不自动卸载。
+  const pluginSlugs = new Set<string>();
+  const pluginIcons = new Map<string, string | null>();
+  const pluginOwners = new Map<string, string>();
+  const yieldedPluginSlugs = new Set<string>();
+  const appendedPluginNames = new Set<string>();
+  const pluginTakenSlugs = new Set(entries.map((entry) => connectorMetaOf(entry).slug));
+  const pluginTakenNames = new Set(entries.map((entry) => entry.name));
+  for (const plugin of options.plugin ?? []) {
+    const slug = connectorMetaOf(plugin.entry).slug;
+    if (pluginTakenSlugs.has(slug) || pluginTakenNames.has(plugin.entry.name)) {
+      options.logger?.warn(
+        { slug, pluginId: plugin.pluginId },
+        'plugin connector yielded: slug or name already taken',
+      );
+      yieldedPluginSlugs.add(slug);
+      continue;
+    }
+    pluginTakenSlugs.add(slug);
+    pluginTakenNames.add(plugin.entry.name);
+    appendedPluginNames.add(plugin.entry.name);
+    pluginSlugs.add(slug);
+    pluginIcons.set(slug, plugin.iconPath);
+    pluginOwners.set(slug, plugin.pluginId);
+    result.push(plugin.entry);
+  }
+  // 本机连接：独立来源，追加在插件条目之后。与任何已有条目（含被门禁挡掉的与刚追加的
+  // 插件条目的 slug 与 name）冲突即丢弃——本机让位于插件。
   const localSlugs = new Set<string>();
   const takenSlugs = new Set(entries.map((entry) => connectorMetaOf(entry).slug));
   const takenNames = new Set(entries.map((entry) => entry.name));
+  for (const pluginSlug of pluginSlugs) takenSlugs.add(pluginSlug);
+  for (const pluginName of appendedPluginNames) takenNames.add(pluginName);
   for (const local of options.local ?? []) {
     const slug = connectorMetaOf(local).slug;
     if (takenSlugs.has(slug) || takenNames.has(local.name)) {
@@ -207,7 +262,15 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
     localSlugs.add(slug);
     result.push(local);
   }
-  return { entries: result, remoteOnlySlugs, localSlugs };
+  return {
+    entries: result,
+    remoteOnlySlugs,
+    localSlugs,
+    pluginSlugs,
+    pluginIcons,
+    pluginOwners,
+    yieldedPluginSlugs,
+  };
 }
 
 /**
@@ -218,11 +281,16 @@ export class ConnectorCatalog {
   readonly #options: ConnectorCatalogOptions;
   readonly #directory: RemoteDirectorySource | undefined;
   #local: LocalConnectorSource | undefined;
+  #plugins: PluginConnectorSource | undefined;
   readonly #iconsDir: string | null;
   readonly #source: ConnectorCatalogSource;
   #entries: readonly ConnectorCatalogEntry[] = [];
   #remoteOnlySlugs: ReadonlySet<string> = new Set();
   #localSlugs: ReadonlySet<string> = new Set();
+  #pluginSlugs: ReadonlySet<string> = new Set();
+  #pluginIcons: ReadonlyMap<string, string | null> = new Map();
+  #pluginOwners: ReadonlyMap<string, string> = new Map();
+  #yieldedPluginSlugs: ReadonlySet<string> = new Set();
   #revision = '';
 
   /**
@@ -250,8 +318,16 @@ export class ConnectorCatalog {
     this.#revision = '';
   }
 
+  /** 接入插件连接器来源（D104，`ConnectorsProjector`）。条目变化在下一次读取时合并。 */
+  attachPlugins(source: PluginConnectorSource): void {
+    this.#plugins = source;
+    this.#revision = '';
+  }
+
   #refresh(): void {
-    const revision = `${this.#directory?.revision() ?? 0}:${this.#local?.revision() ?? 0}`;
+    const revision = `${this.#directory?.revision() ?? 0}:${this.#local?.revision() ?? 0}:${
+      this.#plugins?.revision() ?? 0
+    }`;
     if (revision === this.#revision) return;
     this.#revision = revision;
     const built = buildConnectorCatalog({
@@ -259,10 +335,15 @@ export class ConnectorCatalog {
       source: this.#source,
       ...(this.#directory !== undefined ? { remote: this.#directory.entries() } : {}),
       ...(this.#local !== undefined ? { local: this.#local.entries() } : {}),
+      ...(this.#plugins !== undefined ? { plugin: this.#plugins.entries() } : {}),
     });
     this.#entries = built.entries;
     this.#remoteOnlySlugs = built.remoteOnlySlugs;
     this.#localSlugs = built.localSlugs;
+    this.#pluginSlugs = built.pluginSlugs;
+    this.#pluginIcons = built.pluginIcons;
+    this.#pluginOwners = built.pluginOwners;
+    this.#yieldedPluginSlugs = built.yieldedPluginSlugs;
   }
 
   /** 门禁放行后的全部条目（目录顺序）。 */
@@ -272,12 +353,13 @@ export class ConnectorCatalog {
   }
 
   /**
-   * 该条目是否来自已验签的远端目录（不在打包快照里）。这类条目永远拿不到回环例外：连接前
-   * 端点要重新校验为公网 https（`isSafeDirectoryRemoteUrl`）。
+   * 该条目是否需要「目录级」的端点再校验（连接前重新断言为公网 https，永不给回环例外）：
+   * 已验签远端目录的独有条目，以及（D104 起）插件贡献的条目——其端点来自未经审核的包，
+   * 与目录来源同口径。`apps/connections.ts` 的连接入口调用它。
    */
   isDirectorySourced(slug: string): boolean {
     this.#refresh();
-    return this.#remoteOnlySlugs.has(slug);
+    return this.#remoteOnlySlugs.has(slug) || this.#pluginSlugs.has(slug);
   }
 
   /** 该条目是否是本机连接（Bot 读文档生成、只在本机；不经发行门禁、永不外传）。 */
@@ -286,14 +368,34 @@ export class ConnectorCatalog {
     return this.#localSlugs.has(slug);
   }
 
+  /** 该条目是否是插件贡献（D104）。 */
+  isPlugin(slug: string): boolean {
+    this.#refresh();
+    return this.#pluginSlugs.has(slug);
+  }
+
+  /** 插件条目的归属插件 id；非插件条目 = null。 */
+  pluginIdOf(slug: string): string | null {
+    this.#refresh();
+    return this.#pluginOwners.get(slug) ?? null;
+  }
+
+  /** 因 slug / name 冲突而让位的插件条目 slug（「已安装」页标「冲突，已让位」）。 */
+  yieldedPluginSlugs(): ReadonlySet<string> {
+    this.#refresh();
+    return this.#yieldedPluginSlugs;
+  }
+
   /** 条目来源：`apps.catalog.list` 的 `origin`。 */
   originOf(slug: string): ConnectorOrigin {
     this.#refresh();
     return this.#localSlugs.has(slug)
       ? 'local'
-      : this.#remoteOnlySlugs.has(slug)
-        ? 'directory'
-        : 'bundled';
+      : this.#pluginSlugs.has(slug)
+        ? 'plugin'
+        : this.#remoteOnlySlugs.has(slug)
+          ? 'directory'
+          : 'bundled';
   }
 
   /** 按 slug 查（过滤后）；不在目录 = null。 */
@@ -305,7 +407,19 @@ export class ConnectorCatalog {
   /** 图标 SVG 文本（供界面内联成 data URI）；非 svg / 缺失 = null。 */
   iconSvg(slug: string): string | null {
     const entry = this.get(slug);
-    if (entry === null || this.#iconsDir === null) return null;
+    if (entry === null) return null;
+    // 插件条目读插件目录里的图标文件（`iconPath` 由投影器确认在插件目录内）。
+    if (this.#pluginSlugs.has(slug)) {
+      const iconPath = this.#pluginIcons.get(slug);
+      if (iconPath === undefined || iconPath === null) return null;
+      if (!iconPath.endsWith('.svg')) return null;
+      try {
+        return readFileSync(iconPath, 'utf8');
+      } catch {
+        return null;
+      }
+    }
+    if (this.#iconsDir === null) return null;
     // 远端独有的条目没有打包图标：不能按它声明的文件名去读（会冒用快照条目的图标）。
     if (this.#remoteOnlySlugs.has(slug)) return null;
     // 本机条目同理：图标文件名是占位，不去读。

@@ -296,6 +296,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { RemoteHub } from '../remote/hub.js';
+import { assertPluginServersIntact } from '../plugins/guards.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
@@ -311,6 +312,7 @@ import { bindAppsMethods } from './apps-bindings.js';
 import { bindMailMethods } from './mail-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
+import { bindPluginsMethods } from './plugins-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './files-preview-bindings.js';
@@ -523,6 +525,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             taskLoop: taskLoopPatch,
             ...rest
           } = resolve(current);
+          // D104：插件登记的 MCP server 只能经插件管线增删改结构。必须在锁内、用最新设置
+          // 比对（表单提交的是整份快照，不能拿它自带的 `base` 比）。
+          if (rest.mcpServers !== undefined) {
+            assertPluginServersIntact(current.mcpServers, rest.mcpServers);
+          }
           const latestApps = current.apps;
           // P13 任务 4: the onboarding patch is partial; store the merged state so
           // a step writing one flag never erases the others.
@@ -1542,6 +1549,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.
     ...bindMcpbMethods(services),
+    // D104 P0a-2: plugins.list / inspect / install / setEnabled / uninstall.
+    ...bindPluginsMethods(services),
     // D73 P3 §7.5: apps.ui.open / close / callTool / openLink (MCP Apps rendering).
     ...bindAppsUiMethods(services).app,
     ...bindWidgetsUiMethods(services).app,
