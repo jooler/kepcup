@@ -817,3 +817,17 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
+
+### DEV-050 `withRemoteSource` 包住进程内 `core.rpc.call` 不能让 handler 看到远程来源（MessagePort 不传播 AsyncLocalStorage）
+
+- 状态：已落实
+- 阶段：插件系统 P0a-2（D104）
+- 是否阻塞：否
+- 问题：P0a-2 步骤 11 的集成测试写「经 `withRemoteSource('dev_x', …)` 调 `plugins.inspect` 的 file 来源 → `INVALID_INPUT`」。核对 RPC 链路：测试里的 `core.rpc.call` 走 `createRpcChannel` 的 Node MessagePort（`create-core.ts` 的 `nodePortToTransport`），handler 在端口事件的宏任务里执行——AsyncLocalStorage 不跨 MessagePort 传播，测试侧包 `withRemoteSource` 到不了 `assertLocalSource` 的 `currentRemoteSource()` 读点（真实远程端点的来源标记是 `remote/hub.ts` 在 handler 外层包的，链路成立；只是进程内 rpc 通道不经过它）。
+- 影响范围：仅测试（`packages/core/test/integration/plugins.test.ts`）：改为取 `bindPluginsMethods(core.services)` 的 `plugins.inspect` handler，按 hub 的方式 `withRemoteSource('dev_x', () => spec.handle(input))` 调用断言 `INVALID_INPUT`，并补同 handler 无远程来源时正常返回的对照。生产行为零改动。
+- 可选方案：
+  1. 按 hub 的调用形状直接测绑定 handler（当前实现）— 优点：不引入整套 remote hub 夹具就能覆盖 `assertLocalSource` 的两个分支；缺点：没有走过 hub 的包装点，依赖 hub 的包装（`remote/hub.ts:576`）保持不变。
+  2. 起 fake relay + 远程端点全套夹具走真实 hub — 优点：链路最真；缺点：`remote-relay` e2e 已覆盖 hub 包装本身，这里再搭一套只为一个断言，成本不成比例。
+- 推荐：方案 1。
+- 决定：（由人工填写）
+- 已更新的文档：`todo/plugin-system/P0a-2-projection.md` 实施记录。

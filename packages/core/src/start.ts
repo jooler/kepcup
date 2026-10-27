@@ -183,6 +183,12 @@ import {
 import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
+import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
+import { ConnectorsProjector } from './plugins/projectors/connectors.js';
+import { createPluginProjectors } from './plugins/projectors/index.js';
+import { PluginPackager } from './plugins/package.js';
+import { PluginRegistry } from './plugins/registry.js';
+import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
 import { TaintService } from './apps/taint.js';
@@ -618,6 +624,8 @@ export interface CoreServices {
   appRuntime: AppRuntime | null;
   /** D73 P2 §6.5 MCPB local bundle installer; null with `apps`. */
   mcpb: McpbInstaller | null;
+  /** D104 插件系统：账本 + 投影器 + 注册表；未装配时为 null（RPC 报 NOT_IMPLEMENTED）。 */
+  plugins: PluginRegistry | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
   toolLock: ToolLockService | null;
   /** D73 P1 persistent per-(bot, connection, tool) grants; null with `apps`. */
@@ -894,6 +902,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     apps: null,
     appRuntime: null,
     mcpb: null,
+    plugins: null,
     toolLock: null,
     appToolGrants: null,
     taint: null,
@@ -1294,10 +1303,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     connectorCatalog.attachLocal(localConnectors);
     localConnectors.attachCatalog(connectorCatalog);
     // 本机条目的地址由 Bot 提供：其 MCP 流量同样走 SSRF 守卫（连接时校验解析地址、同源重定向）。
+    // D104：插件登记的 server（http 端点）与其连接器条目同口径走守卫（纯谓词见 http-fetch-policy.ts）。
     const guardedMcpFetch = createGuardedMcpFetch(apps.loopbackAllowlist);
     mcp.attachHttpFetch((server) => {
-      const row = apps.store.get(server.id);
-      return row !== null && connectorCatalog.isLocal(row.connectorId)
+      return useGuardedMcpFetch(server, { store: apps.store, catalog: connectorCatalog })
         ? guardedMcpFetch
         : undefined;
     });
@@ -2192,6 +2201,70 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     services.settingsCatalog = settingsCatalog;
 
+    // D104 插件系统（P0a-2）：账本 store + 投影器 + 注册表。放在设置宿主之后（MCP 投影器的
+    // 撤销效果要接 settingsPermissionEffects）、orchestrator 之前（唤醒不依赖插件，但启动恢复
+    // 与 RPC 装配会用到）。启动时 `plugins.start()` 在下方 environment.recoverInterrupted() 后调用。
+    const pluginStore = new PluginStore(mainDb);
+    const pluginPackager = new PluginPackager({
+      pluginsDir: paths.pluginsDir,
+      logger,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined
+        ? { platform: options.platform as NodeJS.Platform }
+        : {}),
+    });
+    const pluginProjectors = createPluginProjectors({
+      skills: {
+        skills,
+        environment: {
+          depAvailable: (dep) => environment.depAvailable(dep),
+        },
+        enhancedSandbox: {
+          available: enhancedAvailability.available,
+        },
+        logger,
+      },
+      mcp: {
+        settings,
+        mcpb,
+        mcp,
+        disconnector: appRuntime.disconnector,
+        revokeMcpServerChanges: (previous, next) =>
+          settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        logger,
+      },
+      connectors: {
+        catalog: connectorCatalog,
+        connectionStore: apps.store,
+        disconnector: appRuntime.disconnector,
+        connections: appConnections,
+        events,
+        logger,
+      },
+    });
+    const connectorsProjector = pluginProjectors.find(
+      (projector): projector is ConnectorsProjector => projector.kind === 'connector',
+    ) as ConnectorsProjector;
+    connectorCatalog.attachPlugins(connectorsProjector);
+    skills.attachPublicUninstallGuard((name) => {
+      if (plugins.ownerOf('skill', name) !== null) {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `技能「${name}」由插件管理，请在扩展中心「已安装」里卸载该插件`,
+        );
+      }
+    });
+    const plugins = new PluginRegistry({
+      store: pluginStore,
+      packager: pluginPackager,
+      projectors: pluginProjectors,
+      pluginsDir: paths.pluginsDir,
+      clock,
+      logger,
+      events,
+      audit,
+    });
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -2869,6 +2942,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // a dead process's work. Doctor runs at startup and once a day
     // (docs/dev/phases/P06-environment.md 范围: 体检时机), both best-effort.
     environment.recoverInterrupted();
+    // D104: interrupted plugin installs / uninstalls are rolled back the same way, and
+    // the installed+enabled plugins' runtime state (connector entries) is rebuilt. A
+    // failure here must never keep core from starting — the list simply shows what is
+    // missing until the next restart.
+    try {
+      await plugins.start();
+    } catch (error) {
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'plugin registry start failed',
+      );
+    }
     // 安装通报是 Bot 内部事务（事件自带 internal 标记）：照常触发 Bot 续任务，
     // 但不进用户可见对话。
     environment.setNotifier((botId, conversationId, event, text, opts) => {
@@ -3142,6 +3227,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.apps = apps;
     services.appRuntime = appRuntime;
     services.mcpb = mcpb;
+    services.plugins = plugins;
     services.toolLock = toolLock;
     services.appToolGrants = appToolGrants;
     services.taint = taint;
