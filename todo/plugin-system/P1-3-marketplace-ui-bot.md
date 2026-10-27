@@ -235,4 +235,36 @@ export function buildPluginTools(input: { identity: RunIdentity; facade: PluginT
 
 ## 6. 实施记录
 
-（执行智能体在最后一个提交里填写：做了什么 / 偏差与 DEV 编号 / 夹具搬入 testkit 的取舍 / Bot e2e 是否降级及原因 / 遗留问题。）
+### 进度（2026-10-27，未完成——交接给下一位执行智能体）
+
+本阶段在**步骤 6（e2e / 文档 / 收口）之前**中断，已完成步骤 1–5 与既有 e2e 的页签断言同步。
+**尚未完成**：新增 `plugins-market.spec.ts`、步骤 6.2 的四份文档更新、全量 `pnpm test` + e2e 收口、独立审查。
+
+**已完成（提交清单）**
+
+| 提交 | 内容 |
+|---|---|
+| `84145246` | 步骤 1：`mailProviderTemplateSchema` + `mail.providerTemplates.list`；`PluginRegistry.mailTemplates()`；`KEPCUP_TEST_PLUGIN_MARKET` 测试缝（`testLoopbackHosts` 同时放行索引 fetch 与包下载；仅测试构建生效） |
+| `929083b2` | 步骤 2：`confirm-plugin-install` 设置需求（strict）；`PluginInstallRequests`（官方市场 only、`verified` only、限频先于校验、固定文案、名称 / 理由清洗）；`plugin_search` / `plugin_request_install`（turn + task，子代理结构性无此能力）；系统提示规则与 D63 阶梯（仅 `hasPluginTools`）；`docs/dev/04-agent-runtime.md` 两行 |
+| `b6e9f284` | 步骤 3–5：`market` 页签（最前）+ 覆盖率排除项 + `PENDING_DESKTOP_ANCHORS` 清空；store 的市场视图 / `refreshMarket` / `updateAll` / `marketplace.updated` 订阅；`ExtensionMarket.svelte`；`ExtensionInstalled` 的更新徽标 / 检查更新 / 全部更新 / 撤销提示 / 重新安装 / 两个设置锚点；`PluginInstallDialog` 的 `marketplace` 模式与 `plugins.update` 路径；`ConfirmPluginInstallBody`；`MailAccountAddForm` 的模板预填（`tpl:` 前缀）；i18n 两语言 |
+| `69f152a8` | 既有 e2e 的页签断言同步（`extension-center.spec.ts`、`plugins.spec.ts`：7 个页签、market 最前、键盘循环） |
+
+**已验证**（真实执行）
+- `pnpm --filter @kepcup/shared run build`、`@kepcup/core typecheck`、`@kepcup/desktop typecheck`（svelte-check 0 errors）均通过。
+- 定向单测：`packages/shared/test/unit/plugin-setup.test.ts`（6）、`plugin-install-requests.test.ts`（11）、`plugin-tools.test.ts`（5）、`context-assembly.test.ts`（35）、`integration/plugins-bot.test.ts`（3）、`integration/plugins.test.ts` + `plugin-registry.test.ts`（38）、`tool-effects` / `settings-catalog-host` / `app-prompt-capabilities`（103）、渲染层 `plugins` / `extension-center` / `mail` / `i18n` + `settings-catalog.test.ts`（72）——全绿。
+- 阶段文件 prettier / eslint 干净（注意：**不要用 `prettier --write` 扫整个 features 目录**，会误改大量无关文件；只对本次改动的文件跑）。
+
+**自行判断点**
+- `confirm-plugin-install` 用 `z.strictObject`（同块其它成员是普通 `z.object`）：需求由宿主生成、跨进程传递，多余字段是缺陷；shared 单测按任务书的「拒绝多余字段」断言。
+- `sanitizeDisplayText` **不剥离尖括号**（全仓共用助手只处理控制 / 零宽 / 空白）——任务书步骤 2.5 写的「尖括号被去掉」与实现不符；卡片按纯文本渲染，尖括号无害，测试按真实行为断言。**未登记 DEV**（属于任务书描述误差，下一位可在 DEVIATIONS 补一条或直接接受）。
+- `updateAll` 的「需逐个确认」判定：`installable === false`、`update.permissionsExpanded === true`、或任一 mcpb 有必填字段 → skip。
+- `PluginInstallRequests` 的 search 在上限内按 id 去重取最高兼容版本。
+
+**尚未完成（按任务书顺序，建议照做）**
+
+1. **步骤 6.1 e2e**：新增 `apps/desktop/test/e2e/plugins-market.spec.ts`（本地 HTTP 服务托管用测试密钥签的 `index.json` / `.sig` 与 `.kepcup`，env 设 `KEPCUP_TEST_PLUGIN_MARKET`）。任务书给了判断权：`buildPluginIndex` / `pluginIndexEntryFor` 目前在 `packages/core/test/support/plugin-market-fixture.ts`，e2e 不能 import core 的 test support——**推荐搬进 `@kepcup/testkit`（`src/plugin-market-fixture.ts`）并让 core 测试改从 testkit 引**。Bot 确认卡用例若脚本化成本过高，可用已写的 core 集成测试（`integration/plugins-bot.test.ts`）替代并在记录说明。
+2. **步骤 6.2 文档**：`docs/design/29-connected-apps.md` §16.1 表加「市场」行；`docs/design/22-file-skill-routing.md` 的 D63 阶梯处加「P1 起升级为插件阶梯（设计 51 §6.3）」；`docs/design/35-mail-channel.md` 加插件模板一句；`docs/dev/PROGRESS.md` 验收表加「插件系统 P1（D104）」行。
+3. **步骤 6.3 收口**：全量 `pnpm test` 一次（对照 PROGRESS 基线）；`pnpm build` 后跑 `plugins-market` / `plugins` / `extension-center` / `narrow-layout` 四份 e2e。
+4. **独立审查**（本任务约定的流程）：审查 `c38c3308..HEAD` 的 P1-3 全部改动，重点：Bot 工具限频与固定文案、`plugin_search` 的 `<untrusted>` 逃逸防护、`updateAll` 的确认语义、市场页的 `disabled` 状态不渲染误导性空态、i18n 两语言键序、`hasPluginTools` 关闭时提示词逐字不变。
+5. 审查通过后写本文件 §6 的最终实施记录（替换本节），再进入 **P2**（`todo/plugin-system/P2-ecosystem.md`，分支 `feat/plugins/p2-ecosystem` 从 P1-3 合入点拉出）。
+
