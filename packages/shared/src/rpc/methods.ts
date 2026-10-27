@@ -17,6 +17,7 @@ import {
   mailAccountsListOutputSchema,
   mailBindingResumeInputSchema,
   mailBotSetAccountsInputSchema,
+  mailProviderTemplatesListOutputSchema,
 } from '../domain/mail.js';
 import {
   appsSkillsInstallInputSchema,
@@ -2296,7 +2297,10 @@ export const rpcMethodSchemas = {
   'widgets.ui.close': { input: widgetsUiCloseInputSchema, output: okOutput },
   'widgets.ui.source': { input: widgetsUiSourceInputSchema, output: widgetsUiSourceOutputSchema },
   'widgets.ui.poster': { input: widgetsUiPosterInputSchema, output: widgetsUiPosterOutputSchema },
-  'widgets.ui.storage': { input: widgetsUiStorageInputSchema, output: widgetsUiStorageOutputSchema },
+  'widgets.ui.storage': {
+    input: widgetsUiStorageInputSchema,
+    output: widgetsUiStorageOutputSchema,
+  },
   'widgets.ui.openLink': {
     input: widgetsUiOpenLinkInputSchema,
     output: widgetsUiOpenLinkOutputSchema,
@@ -2722,6 +2726,10 @@ export const rpcMethodSchemas = {
     input: mailBindingResumeInputSchema,
     output: mailAccountGetOutputSchema,
   },
+  'mail.providerTemplates.list': {
+    input: voidInput,
+    output: mailProviderTemplatesListOutputSchema,
+  },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -3137,6 +3145,7 @@ const APP_METHODS = [
   'mail.accounts.pause',
   'mail.accounts.resume',
   'mail.bindings.resume',
+  'mail.providerTemplates.list',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

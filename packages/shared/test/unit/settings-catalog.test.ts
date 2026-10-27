@@ -328,6 +328,7 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     expect(scan.extensionCenterTabs).toEqual([
+      'market',
       'installed',
       'skills',
       'connections',

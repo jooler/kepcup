@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { PluginConsentMcp } from '@kepcup/shared';
 
-import { describePermission, diffPermissions, permissionTokens } from '../../src/plugins/permissions.js';
+import {
+  describePermission,
+  diffPermissions,
+  permissionTokens,
+} from '../../src/plugins/permissions.js';
 
 /**
  * 权限令牌推导（D104 P1-2 步骤 3）：一类一种的小写前缀令牌、mcpb / http 两种 MCP、
@@ -39,7 +43,15 @@ const mcpbItem = (overrides: Partial<Extract<PluginConsentMcp, { kind: 'mcpb' }>
 describe('permissionTokens', () => {
   it('derives one token per demanded capability', () => {
     const tokens = permissionTokens({
-      skills: [{ name: 'docx', description: '', runtimeDeps: [], compatible: true, incompatibleReason: null }],
+      skills: [
+        {
+          name: 'docx',
+          description: '',
+          runtimeDeps: [],
+          compatible: true,
+          incompatibleReason: null,
+        },
+      ],
       connectors: [
         {
           slug: 'notion',
@@ -52,7 +64,13 @@ describe('permissionTokens', () => {
       ],
       mcp: [
         mcpbItem(),
-        { kind: 'http', id: 'docs', displayName: 'Docs', url: 'https://docs.test/mcp', host: 'docs.test' },
+        {
+          kind: 'http',
+          id: 'docs',
+          displayName: 'Docs',
+          url: 'https://docs.test/mcp',
+          host: 'docs.test',
+        },
       ],
       mail: [{ id: 'corporate', label: 'Corporate', imapHost: 'imap.x', smtpHost: 'smtp.x' }],
     });
@@ -86,7 +104,9 @@ describe('permissionTokens', () => {
 describe('diffPermissions', () => {
   it('expands only on tokens the old set lacks; removals never expand', () => {
     const old = permissionTokens({
-      skills: [{ name: 'a', description: '', runtimeDeps: [], compatible: true, incompatibleReason: null }],
+      skills: [
+        { name: 'a', description: '', runtimeDeps: [], compatible: true, incompatibleReason: null },
+      ],
       connectors: [],
       mcp: [],
       mail: [{ id: 'x', label: '', imapHost: '', smtpHost: '' }],

@@ -19,7 +19,7 @@ import {
   memoryMarketFetch,
   pluginIndexEntryFor,
   type PluginMarketKey,
-} from '../support/plugin-market-fixture.js';
+} from '@kepcup/testkit';
 
 /**
  * MarketplaceSync 的单元测试（D104 P1-1 步骤 3）：条目逐条校验、custom 封顶 community、
@@ -193,6 +193,22 @@ describe('entries', () => {
     await sync.sync();
     expect(sync.entries()[0]!.tier).toBe('community');
   });
+
+  it('accepts an http loopback download URL only when the test seam allows the host', async () => {
+    const h = await harness();
+    const { entry } = await registerPackage(h, {
+      downloadUrl: 'http://127.0.0.1:4567/plugins/v1/package.kepcup',
+    });
+    h.publish([entry], NOW);
+    const strict = h.make();
+    await strict.sync();
+    expect(strict.entries()).toEqual([]);
+
+    const seam = h.make({ testLoopbackHosts: ['127.0.0.1:4567'] });
+    await seam.sync();
+    expect(seam.entries()).toHaveLength(1);
+    expect(seam.entries()[0]!.downloadUrl).toBe('http://127.0.0.1:4567/plugins/v1/package.kepcup');
+  });
 });
 
 describe('find', () => {
@@ -330,6 +346,26 @@ describe('download', () => {
     const sync = h.make();
     await sync.sync();
     await expect(sync.download(entry)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+  });
+
+  it('allows a loopback http download only when the test seam lists the host', async () => {
+    const h = await harness();
+    const { entry } = await registerPackage(h, {
+      downloadUrl: 'http://127.0.0.1:4567/plugins/v1/package.kepcup',
+    });
+    h.publish([entry], NOW);
+
+    const strict = h.make();
+    await strict.sync();
+    await expect(strict.download(entry)).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
+
+    const seam = h.make({ testLoopbackHosts: ['127.0.0.1:4567'] });
+    await seam.sync();
+    expect(existsSync(await seam.download(entry))).toBe(true);
+    // 白名单只放行 http；其它协议即使 host 命中也不放行。
+    await expect(
+      seam.download({ ...entry, downloadUrl: 'ftp://127.0.0.1:4567/package.kepcup' }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
   });
 
   it('reuses a valid cache hit and re-downloads a corrupted one', async () => {

@@ -52,6 +52,7 @@ import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-to
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
+import { buildPluginTools, type PluginToolFacade } from './plugin-tools.js';
 import { buildCapabilityTools } from './capability-tools.js';
 import { buildInkcopAgentTools, type InkcopToolFacade } from './inkcop-tools.js';
 import type { CapabilityDiscovery } from '../capabilities/discovery.js';
@@ -60,10 +61,7 @@ import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
-import {
-  ensureShareAttachmentCopy,
-  shareAttachmentCopyPath,
-} from '../share/materialize.js';
+import { ensureShareAttachmentCopy, shareAttachmentCopyPath } from '../share/materialize.js';
 
 export interface ResponseToolDeps {
   messages: MessagesService;
@@ -199,6 +197,11 @@ export interface ResponseToolDeps {
    * 勾选了 OAuth 自定义应用时提供，其余 Bot 工具集不变）。
    */
   apps?: AppToolFacade | undefined;
+  /**
+   * 插件市场门面（D104 P1-3）：present 时注册 `plugin_search` / `plugin_request_install`
+   * （对话轮与任务都挂；子代理不挂）。core 未装配插件模块时不给。
+   */
+  pluginInstall?: PluginToolFacade | undefined;
   /** Warnings for dropped MCP / app tools whose names collide with built-in ones (D73 §5.7). */
   logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   /**
@@ -1149,11 +1152,14 @@ export function buildResponseTools(input: {
   const capabilityTools =
     deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
   const inkcopTools =
-    deps.inkcop !== undefined
-      ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop })
-      : [];
+    deps.inkcop !== undefined ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop }) : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
+  // 插件市场（D104 P1-3）：只检索官方认证插件、只出确认卡；对话轮与任务都注册。
+  const pluginTools =
+    deps.pluginInstall !== undefined
+      ? buildPluginTools({ identity, pluginInstall: deps.pluginInstall })
+      : [];
 
   // 跨 Bot 委派（D71）：异步转交给另一个联系人 Bot。
   const delegationTools =
@@ -1256,6 +1262,7 @@ export function buildResponseTools(input: {
       ...capabilityTools,
       ...inkcopTools,
       ...appTools,
+      ...pluginTools,
       ...setupTools,
     ]);
   }
@@ -1303,6 +1310,7 @@ export function buildResponseTools(input: {
     ...capabilityTools,
     ...inkcopTools,
     ...appTools,
+    ...pluginTools,
     ...setupTools,
   ]);
 }

@@ -162,6 +162,8 @@ import {
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
 import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
+import type { PluginToolFacade } from '../tools/plugin-tools.js';
+import type { PluginSearchHit, PluginToolContext } from '../plugins/install-requests.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody } from '../apps/prompt.js';
 import { LOCAL_CONNECTOR_GUIDE } from '../apps/local-connector-guide.js';
@@ -436,7 +438,8 @@ export interface OrchestratorDeps {
    * Read on every run so an edited card is what the bot sees. Null when the
    * conversation is not a card chat.
    */
-  cardContext?: ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
+  cardContext?:
+    ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -464,6 +467,21 @@ export interface OrchestratorDeps {
    * 的预置安装 / 外部仓库导入（阻塞审批）后端；omitted in stripped test setups。
    */
   skillInstall?: SkillInstallFacade | undefined;
+  /**
+   * 插件市场门面（D104 P1-3）：plugin_search 只读检索官方认证插件；plugin_request_install
+   * 校验后把 `confirm-plugin-install` 需求写进本 run 的 setupHit。缺省 = 不注册这两个工具。
+   */
+  pluginInstall?:
+    | {
+        search(query: string): PluginSearchHit[];
+        request(
+          input: { pluginId: string; version?: string | undefined; reason: string },
+          context: PluginToolContext,
+        ):
+          | { ok: true; requirement: Extract<SetupRequirement, { kind: 'confirm-plugin-install' }> }
+          | { ok: false; message: string };
+      }
+    | undefined;
   /**
    * MCP 网关（docs/design/23-mcp-and-subagent.md D65）：null = 无 MCP 能力
    * （无 server 工具注册）。
@@ -2717,11 +2735,7 @@ export class Orchestrator {
   #shareAttachmentPath(attachment: Attachment, botId: string | null): string | null {
     if (botId === null) return null;
     try {
-      const workspacePath = workspacePathFor(
-        this.#deps.paths,
-        botId,
-        attachment.conversationId,
-      );
+      const workspacePath = workspacePathFor(this.#deps.paths, botId, attachment.conversationId);
       return ensureShareAttachmentCopy({
         attachments: this.#deps.attachments,
         workspacePath,
@@ -3925,6 +3939,7 @@ export class Orchestrator {
       // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
       const availableEntries = this.#deps.connectedApps?.availableFor(catalog.apps.views) ?? [];
       const availableAppsSection = availableAppsPromptBody(availableEntries);
+      const pluginFacade = this.#pluginInstallFacade(setupHit, identity);
       const appFacade = this.#appToolFacade(
         setupHit,
         bot.profile.runtime.mcp_server_ids,
@@ -4103,6 +4118,7 @@ export class Orchestrator {
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
+        ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
         logger: this.#deps.logger,
         ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),
         batchMessages: batch.messages,
@@ -4675,6 +4691,8 @@ export class Orchestrator {
             ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
             ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            // D104 P1-3: the plugin-marketplace rule and the D63 ladder only with the tools.
+            ...(pluginFacade !== undefined ? { hasPluginTools: true } : {}),
             ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
@@ -5583,6 +5601,32 @@ export class Orchestrator {
   }
 
   /**
+   * 插件市场的工具门面（D104 P1-3）。`request` 经 core 校验（官方市场、verified、未撤销、
+   * 未安装、限频）后把 `confirm-plugin-install` 需求写进本 run 的 setupHit；工具随即返回
+   * SETUP_REQUIRED，run 中断、对话里出确认卡。拒绝原因原样回给模型（固定文案，不回显索引原文）。
+   */
+  #pluginInstallFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    identity: RunIdentity,
+  ): PluginToolFacade | undefined {
+    const requests = this.#deps.pluginInstall;
+    if (requests === undefined) return undefined;
+    return {
+      search: (query) => requests.search(query),
+      request: (input) => {
+        const result = requests.request(input, {
+          botId: identity.botId,
+          conversationId: identity.conversationId,
+          runId: identity.runId,
+        });
+        if (!result.ok) return Promise.resolve(result);
+        setupHit.requirement = result.requirement;
+        return Promise.resolve({ ok: true as const });
+      },
+    };
+  }
+
+  /**
    * 本机连接的工具门面。`propose` 经 core 探测；通过后把
    * `confirm-local-connector` 需求写进本 run 的 `setupHit`（工具随即返回 SETUP_REQUIRED，run 中断、
    * 对话里出确认卡）。拒绝原因（`LOCAL_CONNECTOR_REJECTED`）原样回给模型；其余错误上抛。
@@ -5943,6 +5987,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
       return agentSetupMessage(requirement.agentId, requirement.reason);
     case 'confirm-local-connector':
       return '等待你确认添加本机连接：请在对话里的确认卡上核对域名后选择「添加」或「取消」';
+    case 'confirm-plugin-install':
+      return `Bot 建议安装插件「${requirement.name}」，请在对话里确认`;
     case 'connect-app':
       return requirement.reason === 'scope'
         ? '需要追加应用权限：请在设置中重新连接该应用'

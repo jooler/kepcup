@@ -1642,6 +1642,22 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     /** 给用户看的一句话原因。 */
     reason: z.string(),
   }),
+  /**
+   * Bot 提议安装一个插件（D104 P1-3，设计 51 §6.3）：`plugin_request_install` 只允许官方市场
+   * `verified` 级插件；确认卡内嵌同意面板，用户点「确认安装」→ `plugins.install`
+   * （`source: { kind: 'marketplace', id, version }`）后经 `runs.retry` 续跑。
+   * 字段用本地 `z.string()` 约束，不引 `plugin-manifest.ts`（避免循环引用）。
+   */
+  // strict：需求由宿主生成、跨进程传递，多余字段是缺陷而不是需要兼容的输入。
+  z.strictObject({
+    kind: z.literal('confirm-plugin-install'),
+    pluginId: z.string().min(3).max(200),
+    version: z.string().min(1).max(64),
+    /** 插件名（索引 summary 经清洗的展示文本，不是 Bot 原文）。 */
+    name: z.string().min(1).max(100),
+    /** Bot 给用户看的理由（已清洗，纯文本渲染）。 */
+    reason: z.string().max(300),
+  }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;
 

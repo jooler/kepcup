@@ -105,7 +105,6 @@ export function changedSettingsPaths(
   return paths;
 }
 
-
 /**
  * 设置页原有的保存路径（专用 RPC）成功后受影响的目录条目（§4.1「设置页原有的保存路径也补发」）。
  * `settings.update` / `bots.update` 按前后差异在各自 handler 里算，不在这里。

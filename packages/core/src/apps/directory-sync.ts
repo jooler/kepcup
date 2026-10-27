@@ -85,6 +85,10 @@ export class DirectorySync {
   readonly #inner: SignedIndexSync<ConnectorIndex>;
   readonly #deps: DirectorySyncDeps;
   #lastEnabled: boolean;
+  /** 上一次对外报告时内层同步的 revision（只为检测变化，不直接透传）。 */
+  #lastInner: number;
+  /** 单调递增的对外 revision：索引采纳与开关翻转都 +1，绝不回退。 */
+  #revision: number;
 
   constructor(deps: DirectorySyncDeps) {
     this.#deps = deps;
@@ -113,6 +117,8 @@ export class DirectorySync {
       },
     });
     this.#lastEnabled = this.#enabledNow();
+    this.#lastInner = this.#inner.revision();
+    this.#revision = 0;
   }
 
   /**
@@ -125,16 +131,18 @@ export class DirectorySync {
 
   /**
    * 条目变化计数（`ConnectorCatalog` 据此重新合并）。开关状态的翻转也算一次变化——调用方每次
-   * 读目录都会问一次，所以运行时切换设置立即生效。
+   * 读目录都会问一次，所以运行时切换设置立即生效。计数单调递增：关闭 / 重新打开各占一个
+   * 新值，不能退回到关闭前的数（否则「关 → 开」后第一次读会误判为没变化）。
    */
   revision(): number {
     const enabled = this.#enabledNow();
-    let revision = this.#inner.revision();
-    if (enabled !== this.#lastEnabled) {
+    const inner = this.#inner.revision();
+    if (enabled !== this.#lastEnabled || inner !== this.#lastInner) {
       this.#lastEnabled = enabled;
-      revision += 1;
+      this.#lastInner = inner;
+      this.#revision += 1;
     }
-    return revision;
+    return this.#revision;
   }
 
   #enabledNow(): boolean {

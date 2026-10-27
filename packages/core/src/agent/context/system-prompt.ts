@@ -104,6 +104,11 @@ export interface SystemPromptInput {
    */
   hasAppRequestTool?: boolean | undefined;
   /**
+   * D104 P1-3：已注册 `plugin_search` / `plugin_request_install`（与工具注册同源）。
+   * 为真时多一条插件市场规则，并把 D63 阶梯插上「官方插件市场」一级。
+   */
+  hasPluginTools?: boolean | undefined;
+  /**
    * 对话内应用设置：settings_search / settings_read / settings_change 已注册（与工具注册同源，
    * orchestrator 按 `settingsCatalog` 是否装配给出）；为假时那一条规则不出现。
    */
@@ -156,14 +161,19 @@ export interface SystemPromptInput {
  * 附件处理阶梯（docs/design/22-file-skill-routing.md，D63）：模型面对自己
  * 处理不了的文件时的升级路径与纪律。静态注入（策略，非状态）。
  */
-const FILE_HANDLING_GUIDANCE = [
-  '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用工具处理）。',
-  '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接 read / bash 读它，文件正文不在上下文里；副本丢了用 get_attachment 重建。要改写文件先复制到 workspace 的其它位置再改。',
-  '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。',
-  '不要假装已经读取或处理过附件：没拿到内容就说明做不到或先去获取；安装技能的请求被用户拒绝后不要反复重试，降级处理或如实说明。',
-]
-  .map((rule, index) => `${index + 1}. ${rule}`)
-  .join('\n');
+function fileHandlingGuidance(hasPluginTools: boolean): string {
+  const upgrade = hasPluginTools
+    ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 plugin_search 检索官方插件市场，找到合适的认证插件后用 plugin_request_install 请用户确认安装（只出确认卡，由用户决定；安装后你会被续跑）；④仍然没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；⑤仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
+    : '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。';
+  return [
+    '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用工具处理）。',
+    '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接 read / bash 读它，文件正文不在上下文里；副本丢了用 get_attachment 重建。要改写文件先复制到 workspace 的其它位置再改。',
+    upgrade,
+    '不要假装已经读取或处理过附件：没拿到内容就说明做不到或先去获取；安装技能的请求被用户拒绝后不要反复重试，降级处理或如实说明。',
+  ]
+    .map((rule, index) => `${index + 1}. ${rule}`)
+    .join('\n');
+}
 
 /**
  * 管家（D70，docs/design/27-butler-and-delegation.md）的专属规则：只对
@@ -424,6 +434,13 @@ const TURN_FILE_HANDLING_GUIDANCE = [
   .join('\n');
 
 /**
+ * 插件市场（D104 P1-3）规则：只在确实注册了 plugin_search / plugin_request_install 时注入。
+ * 没有这两个工具的 Bot（以及 ACP 外部智能体）看到的文本逐字不变。
+ */
+const PLUGIN_TOOLS_RULE =
+  '缺少某项能力（如处理某类文件、接入某个服务）且已装技能与预置技能都解决不了时，先用 plugin_search 检索官方插件市场；有合适的认证插件再用 plugin_request_install 请用户确认安装（只会弹确认卡，由用户决定，安装后你会被续跑）；不要索要令牌或密钥，不要对同一插件重复请求。';
+
+/**
  * <user_profile> 注入的是编译后的摘要卡片，不是完整条目。提示词在注入点再说一次，
  * 让漏读平台规则的模型也知道可以按分类查全文（ACP 版工具名由平台规则 / tool_policy
  * 按 Provider 的写法给出，这里不写死工具名）。
@@ -658,6 +675,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     if (input.hasAppRequestTool === true) {
       rules = [...rules, `${rules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`];
     }
+    if (input.hasPluginTools === true) {
+      rules = [...rules, `${rules.length + 1}. ${PLUGIN_TOOLS_RULE}`];
+    }
     if (input.hasInkcopAgentTool === true) {
       rules = [...rules, `${rules.length + 1}. ${INKCOP_AGENT_TOOL_RULE}`];
     }
@@ -708,7 +728,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
     section('conversation_info', conversationInfo),
-    section('card_rules', input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : ''),
+    section(
+      'card_rules',
+      input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : '',
+    ),
     // 项目组规则（D92 T1a）：紧跟 conversation_info、在绑定的 <workdir> 之前；
     // 只有对话轮的项目会话按身份注入（projectRole 由 orchestrator 传入；这里再按
     // 对话类型与 loop 兜底——任务面与单聊即使误传也不注入）。
@@ -739,7 +762,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('recommended_skills', isTurn ? '' : (input.recommendedSkills ?? '')),
     section('capabilities', input.capabilities ?? ''),
     section('available_apps', input.availableApps ?? ''),
-    section('file_handling', isTurn ? TURN_FILE_HANDLING_GUIDANCE : FILE_HANDLING_GUIDANCE),
+    section(
+      'file_handling',
+      isTurn ? TURN_FILE_HANDLING_GUIDANCE : fileHandlingGuidance(input.hasPluginTools === true),
+    ),
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -854,7 +880,9 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{
     text: '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
     tools: ['propose_profile_change'],
   },
-  { text: '注入的记忆可能已过时；依据记忆做关键决定前向用户确认。带写入日期的 lesson / self_note 行距今越久越可能过时，与用户的最新说法或当前实际情况冲突时以后者为准。' },
+  {
+    text: '注入的记忆可能已过时；依据记忆做关键决定前向用户确认。带写入日期的 lesson / self_note 行距今越久越可能过时，与用户的最新说法或当前实际情况冲突时以后者为准。',
+  },
   { text: HARD_CONSTRAINTS_RULE },
   { text: '发现注入的记忆有错误时调用 memory_feedback。', tools: ['memory_feedback'] },
   {
@@ -1090,7 +1118,10 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     section('file_handling', map(agentFileHandling(tools.toolNames))),
     section('identity', identity),
     section('persona', persona),
-    section('card_rules', input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : ''),
+    section(
+      'card_rules',
+      input.card !== undefined || input.conversation.type === 'card' ? CARD_RULES : '',
+    ),
     section(
       'conversation_info',
       conversationInfoLines(input.conversation, input.members, bot.id, input.card).join('\n'),

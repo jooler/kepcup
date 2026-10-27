@@ -14,6 +14,7 @@
   import ConnectAppSetupBody from '$lib/features/chats/ConnectAppSetupBody.svelte';
   import MainModelSetupBody from '$lib/features/chats/MainModelSetupBody.svelte';
   import ConfirmLocalConnectorBody from '$lib/features/chats/ConfirmLocalConnectorBody.svelte';
+  import ConfirmPluginInstallBody from '$lib/features/chats/ConfirmPluginInstallBody.svelte';
   import { setupAliasOf } from '$lib/features/chats/setup-alias';
 
   /**
@@ -89,6 +90,9 @@
 {:else if requirement.kind === 'main-model'}
   <!-- 两段式：无已配置厂商先嵌供应商表单，保存后才选默认主模型（可顺带写 Bot 模型） -->
   <MainModelSetupBody />
+{:else if requirement.kind === 'confirm-plugin-install'}
+  <!-- 插件安装（D104 P1-3）：Bot 只能提议官方认证插件，确认后才安装并续跑 -->
+  <ConfirmPluginInstallBody {requirement} />
 {:else if requirement.kind === 'confirm-local-connector'}
   <!-- 本机连接（设计 29 §17）：Bot 提议添加，core 探测后生成的确认卡，不并入设置卡 -->
   <ConfirmLocalConnectorBody {requirement} />
@@ -126,7 +130,11 @@
           size="sm"
           variant="outline"
           onclick={() =>
-            void openSettingDeepLink(item, botId !== null ? { botId } : {}, session.view?.conversation ?? null)}
+            void openSettingDeepLink(
+              item,
+              botId !== null ? { botId } : {},
+              session.view?.conversation ?? null,
+            )}
           data-testid="setup-card-setting-open"
         >
           <ExternalLink class="size-3.5" aria-hidden="true" />

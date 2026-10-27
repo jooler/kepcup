@@ -6,6 +6,7 @@
   import { endpointSupports } from '../web-shell/endpoint';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import SettingsCatalogFields from '../settings/SettingsCatalogFields.svelte';
   import { plugins } from '../plugins/plugins.svelte';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -33,7 +34,11 @@
   });
 
   let installOpen = $state(false);
-  let installMode = $state<'file' | 'folder'>('file');
+  let installMode = $state<'file' | 'folder' | 'marketplace'>('file');
+  /** market 模式的目标插件（更新 / 重新安装）；file / folder 模式为 undefined。 */
+  let installTarget = $state<{ id: string; version?: string } | undefined>(undefined);
+  let checking = $state(false);
+  let updatingAll = $state(false);
   let uninstallTarget = $state<string | null>(null);
   /** 展开了内容明细的插件 id。 */
   const expanded = new SvelteSet<string>();
@@ -46,6 +51,8 @@
     mcp: 'plugins.kind.mcp',
     mail: 'plugins.kind.mail',
   } as const;
+
+  const hasUpdates = $derived(plugins.plugins.some((plugin) => plugin.updateAvailable !== null));
 
   const serverNames = $derived(
     new Map((settingsStore.settings?.mcpServers ?? []).map((server) => [server.id, server.name])),
@@ -82,7 +89,44 @@
 
   function openInstall(mode: 'file' | 'folder'): void {
     installMode = mode;
+    installTarget = undefined;
     installOpen = true;
+  }
+
+  function openUpdate(plugin: PluginSummary): void {
+    installMode = 'marketplace';
+    installTarget = { id: plugin.id };
+    installOpen = true;
+  }
+
+  /** 本地来源的「重新安装」：同 id 重新选包 = 更新流（core 按 id 判定）。 */
+  function openReinstall(): void {
+    installMode = 'file';
+    installTarget = undefined;
+    installOpen = true;
+  }
+
+  async function checkUpdates(): Promise<void> {
+    checking = true;
+    try {
+      await plugins.refreshMarket();
+    } catch (caught) {
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function updateAll(): Promise<void> {
+    updatingAll = true;
+    try {
+      const result = await plugins.updateAll();
+      toast.success(t('plugins.update.allResult', { done: result.done, skipped: result.skipped }));
+    } catch (caught) {
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+    } finally {
+      updatingAll = false;
+    }
   }
 
   function reveal(plugin: PluginSummary): void {
@@ -127,8 +171,28 @@
       <h2 class="text-sm font-medium">{t('plugins.title')}</h2>
       <p class="text-xs text-muted-foreground">{t('plugins.hint')}</p>
     </div>
-    {#if endpointSupports('local-file-dialog')}
-      <div class="flex shrink-0 items-center gap-2">
+    <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={checking || plugins.marketLoading}
+        onclick={() => void checkUpdates()}
+        data-testid="plugins-check-updates"
+      >
+        {checking ? t('plugins.update.checking') : t('plugins.update.check')}
+      </Button>
+      {#if hasUpdates}
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={updatingAll}
+          onclick={() => void updateAll()}
+          data-testid="plugins-update-all"
+        >
+          {t('plugins.update.all')}
+        </Button>
+      {/if}
+      {#if endpointSupports('local-file-dialog')}
         <Button
           size="sm"
           variant="secondary"
@@ -145,8 +209,8 @@
         >
           {t('plugins.installFolder')}
         </Button>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </div>
 
   {#if plugins.loadError !== null}
@@ -188,7 +252,32 @@
               })}
             </span>
           {/each}
+          {#if plugin.updateAvailable !== null}
+            <Badge variant="outline" data-testid={`plugins-update-badge-${plugin.id}`}>
+              {t('plugins.update.available', { version: plugin.updateAvailable.version })}
+            </Badge>
+          {/if}
           <div class="ms-auto flex items-center gap-1.5">
+            {#if !isBuiltin && plugin.updateAvailable !== null}
+              <Button
+                size="sm"
+                variant="secondary"
+                onclick={() => openUpdate(plugin)}
+                data-testid={`plugins-update-${plugin.id}`}
+              >
+                {t('plugins.update.button')}
+              </Button>
+            {/if}
+            {#if !isBuiltin && plugin.origin === 'local'}
+              <Button
+                size="sm"
+                variant="ghost"
+                onclick={() => openReinstall()}
+                data-testid={`plugins-reinstall-${plugin.id}`}
+              >
+                {t('plugins.reinstall')}
+              </Button>
+            {/if}
             {#if !isBuiltin}
               <Checkbox
                 checked={plugin.enabled}
@@ -225,6 +314,14 @@
 
         {#if plugin.description.length > 0}
           <p class="mt-1 text-xs text-muted-foreground">{plugin.description}</p>
+        {/if}
+
+        {#if plugin.revoked !== null}
+          <p class="mt-1 text-xs text-destructive" data-testid={`plugins-revoked-${plugin.id}`}>
+            {plugin.revoked === 'disable'
+              ? t('plugins.revoked.disable')
+              : t('plugins.revoked.warn')}
+          </p>
         {/if}
 
         <div class="mt-1.5">
@@ -280,9 +377,19 @@
       </div>
     {/each}
   </div>
+
+  <div class="mt-4 border-t pt-3">
+    <h3 class="mb-2 text-xs font-medium text-muted-foreground">{t('plugins.settings.title')}</h3>
+    <div data-settings-anchor="plugins-updates">
+      <SettingsCatalogFields itemIds={['plugins.updates']} />
+    </div>
+    <div data-settings-anchor="plugins-marketplace">
+      <SettingsCatalogFields itemIds={['plugins.marketplace']} />
+    </div>
+  </div>
 </div>
 
-<PluginInstallDialog bind:open={installOpen} mode={installMode} />
+<PluginInstallDialog bind:open={installOpen} mode={installMode} marketplace={installTarget} />
 
 <Dialog
   open={uninstallTarget !== null}

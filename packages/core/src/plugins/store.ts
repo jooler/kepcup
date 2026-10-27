@@ -110,7 +110,9 @@ export class PluginStore {
   /** Rows with an update in flight (`update_to IS NOT NULL`) — crash recovery reads these first. */
   listUpdating(): PluginRow[] {
     const rows = this.#db
-      .prepare('select * from plugins where update_to is not null order by installed_at asc, id asc')
+      .prepare(
+        'select * from plugins where update_to is not null order by installed_at asc, id asc',
+      )
       .all() as PluginDbRow[];
     return rows.map(pluginFromRow);
   }

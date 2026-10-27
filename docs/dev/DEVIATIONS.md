@@ -901,3 +901,31 @@
 - 推荐：方案 1。
 - 决定：（由人工填写）
 - 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-056 `sanitizeDisplayText` 不剥离尖括号，与 P1-3 步骤 2.5 的清洗描述不符
+
+- 状态：已登记（P1-3 实现按真实行为测试）
+- 阶段：插件系统 P1-3（D104）
+- 是否阻塞：否
+- 问题：任务书步骤 2.5 写 `reason` 清洗后「控制 / 零宽 / 尖括号被去掉」，但全仓共享助手 `sanitizeDisplayText` 只处理控制字符、双向 / 零宽字符与空白折叠，不移除 `<` / `>`。`PluginInstallRequests.request` 按要求复用该助手，因此尖括号会保留。
+- 影响范围：`packages/core/src/plugins/install-requests.ts` 保持复用共享助手；`packages/core/test/unit/plugin-install-requests.test.ts` 按真实行为断言。确认卡（`ConfirmPluginInstallBody.svelte`）把 `reason` 当纯文本插值，不解析 HTML / Markdown，尖括号没有注入风险。
+- 可选方案：
+  1. 保持共享助手语义、渲染端纯文本展示（当前实现）— 优点：清洗规则全仓一致；缺点：与任务书描述有一处出入（已在测试与实施记录写明）。
+  2. 在 `install-requests.ts` 额外剥离尖括号 — 优点：贴合任务书字面；缺点：与共享助手语义分叉，其他展示名场景仍保留尖括号。
+- 推荐：方案 1。
+- 决定：方案 1（P1-3 实施记录 §6「自行判断点」）。
+- 已更新的文档：`todo/plugin-system/P1-3-marketplace-ui-bot.md` §6。
+
+### DEV-057 市场索引条目的 `downloadUrl` 强制 https，e2e 测试市场只能走回环 http
+
+- 状态：已落实
+- 阶段：插件系统 P1-3（D104）
+- 是否阻塞：否
+- 问题：步骤 1 的 `KEPCUP_TEST_PLUGIN_MARKET` 用本地 HTTP 服务托管 `index.json` / `.sig` / `.kepcup`，并只要求放行 `MarketplaceSync.download()` 的 URL 守卫。实测发现共享的 `pluginIndexEntrySchema.downloadUrl` 是 https-only：用回环 http 的条目会在 `MarketplaceSync.#parseEntries` 被逐条丢弃，市场页显示空态（e2e 首轮失败即此原因）。
+- 影响范围：`packages/core/src/plugins/marketplace-sync.ts` 增加 `#parseEntry` 的测试缝例外——仅当 `testLoopbackHosts` 非空、且原始 `downloadUrl` 是该白名单里的 `http:` 主机时，用一个占位 https URL 过 schema，再换回原地址；真正的下载守卫 `#downloadUrlAllowed` 仍会再检查一次。`testLoopbackHosts` 只由 `KEPCUP_TEST_PLUGIN_MARKET`（测试钩子构建 + `NODE_ENV=test`）注入；普通构建里白名单恒为空、该分支恒不生效，共享契约保持 https-only。
+- 可选方案：
+  1. 在市场同步层做测试缝例外（当前实现）— 优点：生产契约不变，测试市场可用；缺点：多一条只在测试构建存在的解析分支。
+  2. 放宽 `pluginIndexEntrySchema` 接受回环 http — 优点：无需例外；缺点：削弱共享契约，生产构建也会接受非 https 的签名索引条目。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`todo/plugin-system/P1-3-marketplace-ui-bot.md` §6；`docs/dev/PROGRESS.md` 插件系统 P1 行。

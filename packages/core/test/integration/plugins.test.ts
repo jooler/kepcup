@@ -18,6 +18,7 @@ import { createMemoryKeystore } from '../../src/infra/keystore.js';
 import { bindPluginsMethods } from '../../src/rpc/plugins-bindings.js';
 import { hashDirectory } from '../../src/skills/library.js';
 import { pluginServerId } from '../../src/plugins/ids.js';
+import { FakeImapServer, FakeSmtpServer } from '../support/fake-mail-server.js';
 
 /**
  * 插件系统集成（D104 P0a-2 步骤 11）：`plugins.inspect` → `plugins.install` 全管线
@@ -619,5 +620,110 @@ describe('plugins integration (P0a-2)', () => {
     // 内置插件始终在列（未受拒绝的启停 / 卸载影响）。
     const after = (await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] };
     expect(after.plugins.filter((plugin) => plugin.origin === 'builtin')).toHaveLength(2);
+  }, 90_000);
+
+  it('邮件预填模板（P1-3）：mail.providerTemplates.list 返回插件贡献，按模板创建账号且 60 秒全局下限仍生效', async () => {
+    const imap = new FakeImapServer();
+    const smtp = new FakeSmtpServer();
+    await imap.start();
+    await smtp.start();
+    const previous = process.env.KEPCUP_MAIL_ALLOW_PRIVATE;
+    process.env.KEPCUP_MAIL_ALLOW_PRIVATE = '1';
+    try {
+      const { core } = await setup();
+      const mailId = 'fastmail';
+      const built = await buildPluginFixture({
+        dir: path.join(root, `fx-mail-${Math.random().toString(36).slice(2, 8)}`),
+        manifest: {
+          id: 'io.github.tester/mailplug',
+          name: 'Mail Plug',
+          contributions: {
+            skills: [],
+            connectors: [],
+            mcp: [],
+            mail: [
+              {
+                id: mailId,
+                label: 'Fast Mail',
+                imap: { host: '127.0.0.1', port: imap.port, secure: 'ssl' },
+                smtp: { host: '127.0.0.1', port: smtp.port, secure: 'ssl' },
+                defaultMode: 'poll_only',
+                defaultPollSec: 120,
+                minPollSec: 90,
+                helpUrl: 'https://help.example.com/fastmail',
+              },
+            ],
+          },
+        },
+      });
+
+      // 安装前列表为空。
+      expect(
+        (await core.rpc.call('mail.providerTemplates.list', undefined)) as { templates: unknown[] },
+      ).toMatchObject({ templates: [] });
+
+      await core.rpc.call('plugins.install', {
+        source: { kind: 'file', path: built.path },
+        sha256: built.sha256,
+        userConfig: {},
+      });
+
+      const listed = (await core.rpc.call('mail.providerTemplates.list', undefined)) as {
+        templates: Array<Record<string, unknown>>;
+      };
+      expect(listed.templates).toHaveLength(1);
+      expect(listed.templates[0]).toMatchObject({
+        id: `io.github.tester/mailplug#${mailId}`,
+        pluginId: 'io.github.tester/mailplug',
+        pluginName: 'Mail Plug',
+        label: 'Fast Mail',
+        imap: { host: '127.0.0.1', port: imap.port, secure: 'ssl' },
+        smtp: { host: '127.0.0.1', port: smtp.port, secure: 'ssl' },
+        defaultMode: 'poll_only',
+        defaultPollSec: 120,
+        minPollSec: 90,
+        helpUrl: 'https://help.example.com/fastmail',
+      });
+
+      // 用模板的字段创建账号（provider 恒 custom）；传 30 秒被夹到全局 60 秒下限。
+      const created = (await core.rpc.call('mail.accounts.create', {
+        provider: 'custom',
+        address: 'bot@example.com',
+        password: 'authcode',
+        imapHost: '127.0.0.1',
+        imapPort: imap.port,
+        imapSecure: 'ssl',
+        smtpHost: '127.0.0.1',
+        smtpPort: smtp.port,
+        smtpSecure: 'ssl',
+        mode: 'poll_only',
+        pollIntervalSec: 30,
+      })) as { account: Record<string, unknown> };
+      expect(created.account).toMatchObject({
+        provider: 'custom',
+        imapHost: '127.0.0.1',
+        imapPort: imap.port,
+        imapSecure: 'ssl',
+        smtpHost: '127.0.0.1',
+        smtpPort: smtp.port,
+        smtpSecure: 'ssl',
+        mode: 'poll_only',
+        pollIntervalSec: 60,
+      });
+
+      // 停用插件后模板撤下。
+      await core.rpc.call('plugins.setEnabled', {
+        id: 'io.github.tester/mailplug',
+        enabled: false,
+      });
+      expect(
+        (await core.rpc.call('mail.providerTemplates.list', undefined)) as { templates: unknown[] },
+      ).toMatchObject({ templates: [] });
+    } finally {
+      if (previous === undefined) delete process.env.KEPCUP_MAIL_ALLOW_PRIVATE;
+      else process.env.KEPCUP_MAIL_ALLOW_PRIVATE = previous;
+      await imap.stop();
+      await smtp.stop();
+    }
   }, 90_000);
 });

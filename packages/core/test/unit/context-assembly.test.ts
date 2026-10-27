@@ -147,6 +147,32 @@ describe('system prompt assembly', () => {
     expect(buildSystemPrompt({ ...common, loop: 'task' })).not.toContain('mail_request_setup');
   });
 
+  it('D104 P1-3: the plugin-market rule and ladder step follow hasPluginTools', () => {
+    const common = {
+      bot: makeBot('bot_self', '小艾'),
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+      loop: 'turn' as const,
+    };
+    // 任务面的附件阶梯：没有插件工具时逐字保持 D63 的「③都没有时用 web_search」。
+    const taskWithout = buildSystemPrompt({ ...common, loop: 'task' });
+    expect(taskWithout).not.toContain('plugin_search');
+    expect(taskWithout).toContain('③都没有时用 web_search 检索技能仓库');
+    expect(taskWithout).not.toContain('④仍然没有时用 web_search');
+
+    const taskWith = buildSystemPrompt({ ...common, loop: 'task', hasPluginTools: true });
+    expect(taskWith).toContain('plugin_search');
+    expect(taskWith).toContain('plugin_request_install');
+    expect(taskWith).toContain('③都没有时用 plugin_search 检索官方插件市场');
+    expect(taskWith).toContain('④仍然没有时用 web_search 检索技能仓库');
+    expect(taskWith).toContain('不要对同一插件重复请求');
+
+    // 对话轮不注入阶梯（isTurn），但市场规则照样跟随工具注册。
+    expect(buildSystemPrompt({ ...common, hasPluginTools: true })).toContain('plugin_search');
+    expect(buildSystemPrompt(common)).not.toContain('plugin_search');
+  });
+
   it('non-butler bots get no butler rules section', () => {
     const prompt = buildSystemPrompt({
       bot: makeBot('bot_self', '小艾'),
@@ -615,7 +641,9 @@ describe('message reply annotation', () => {
       makeMessage({ id: 'msg_c', seq: 4, replyTo: 'msg_img', content: { text: '图里是什么？' } }),
       optionsWithResolver,
     );
-    expect(line).toContain('（回复 msg_img [用户]：<untrusted>（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+    expect(line).toContain(
+      '（回复 msg_img [用户]：<untrusted>（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）',
+    );
   });
 
   it('combines quoted text and attachment entries in one annotation', () => {
@@ -629,7 +657,9 @@ describe('message reply annotation', () => {
       makeMessage({ id: 'msg_c2', seq: 4, replyTo: 'msg_mixed', content: { text: 'hi' } }),
       { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_mixed' ? mixed : null) },
     );
-    expect(line).toContain('（回复 msg_mixed [用户]：<untrusted>看这张（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）');
+    expect(line).toContain(
+      '（回复 msg_mixed [用户]：<untrusted>看这张（附件：att_img1 photo.png [image/png] 2KB）</untrusted>）',
+    );
   });
 
   it('keeps the workbench/butler origin qualification when quoting such a message', () => {
@@ -637,11 +667,18 @@ describe('message reply annotation', () => {
     const butlerDrafted = makeMessage({
       id: 'msg_butler',
       seq: 2,
-      content: { text: '把周报发出去', origin: 'workbench', butlerDrafted: true } as Message['content'],
+      content: {
+        text: '把周报发出去',
+        origin: 'workbench',
+        butlerDrafted: true,
+      } as Message['content'],
     });
     const line = renderMessageLine(
       makeMessage({ id: 'msg_b2', seq: 4, replyTo: 'msg_butler', content: { text: '好' } }),
-      { ...renderOptions, resolveReplyTarget: (id) => (id === 'msg_butler' ? butlerDrafted : null) },
+      {
+        ...renderOptions,
+        resolveReplyTarget: (id) => (id === 'msg_butler' ? butlerDrafted : null),
+      },
     );
     expect(line).toContain('（回复 msg_butler [用户（经工作台派发；事项由管家起草');
     expect(line).toContain('<untrusted>把周报发出去</untrusted>');
@@ -701,7 +738,7 @@ describe('message reply annotation', () => {
     expect(line).not.toContain('秘密');
   });
 
-  it('never renders another bot\'s private quoted row (ownerBotId visibility)', () => {
+  it("never renders another bot's private quoted row (ownerBotId visibility)", () => {
     const options: RenderMessageOptions = {
       ...renderOptions,
       resolveReplyTarget: (id) =>

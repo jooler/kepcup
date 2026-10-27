@@ -65,6 +65,11 @@ export interface MarketplaceSyncDeps {
   fetch: DirectoryFetch;
   /** 包下载用（体积上限更大）；缺省复用 `fetch`。 */
   downloadFetch?: DirectoryFetch;
+  /**
+   * 仅测试构建（P1-3 的 `KEPCUP_TEST_PLUGIN_MARKET` e2e 缝）放行的回环包下载主机：
+   * 命中列表的 `host:port` 视同安全（`isSafeDirectoryRemoteUrl` 只放行 https 公网）。
+   */
+  testLoopbackHosts?: readonly string[];
   clock: Clock;
   logger: CoreLogger;
   /** 只控制定时拉取（`start()` 的循环）；`sync()` / `entries()` / `download()` 不看它。 */
@@ -161,21 +166,63 @@ export class MarketplaceSync {
     if (index === null) return [];
     const parsed: PluginIndexEntry[] = [];
     for (const [position, raw] of index.entries.entries()) {
-      const result = pluginIndexEntrySchema.safeParse(raw);
-      if (!result.success) {
-        this.#deps.logger.warn(
-          { position, issue: result.error.issues[0]?.message ?? 'invalid' },
-          'marketplace index entry skipped',
-        );
+      const result = this.#parseEntry(raw, position);
+      if (result === null) continue;
+      if (this.endpoint === 'custom' && result.tier !== 'community') {
+        parsed.push({ ...result, tier: 'community' });
         continue;
       }
-      if (this.endpoint === 'custom' && result.data.tier !== 'community') {
-        parsed.push({ ...result.data, tier: 'community' });
-        continue;
-      }
-      parsed.push(result.data);
+      parsed.push(result);
     }
     return parsed;
+  }
+
+  /**
+   * 逐条校验。测试缝例外：`KEPCUP_TEST_PLUGIN_MARKET` 的包只走回环 http，而共享的
+   * `pluginIndexEntrySchema` 要求 downloadUrl 是 https——仅当条目主机在测试回环白名单里
+   * 时，用一个占位 https URL 过 schema，再换回原地址。真正的下载守卫
+   * （`#downloadUrlAllowed`）仍会再检查一次；只有测试构建会注入 host 白名单，
+   * 普通构建里这个分支恒不生效。
+   */
+  #parseEntry(raw: unknown, position: number): PluginIndexEntry | null {
+    const result = pluginIndexEntrySchema.safeParse(raw);
+    if (result.success) return result.data;
+    const loopbackUrl = this.#testLoopbackDownloadUrl(raw);
+    if (loopbackUrl === null) {
+      this.#deps.logger.warn(
+        { position, issue: result.error.issues[0]?.message ?? 'invalid' },
+        'marketplace index entry skipped',
+      );
+      return null;
+    }
+    const relaxed = pluginIndexEntrySchema.safeParse({
+      ...(raw as Record<string, unknown>),
+      downloadUrl: 'https://test-seam.invalid/package.kepcup',
+    });
+    if (!relaxed.success) {
+      this.#deps.logger.warn(
+        { position, issue: relaxed.error.issues[0]?.message ?? 'invalid' },
+        'marketplace index entry skipped',
+      );
+      return null;
+    }
+    return { ...relaxed.data, downloadUrl: loopbackUrl };
+  }
+
+  /** The raw entry's downloadUrl when it is an http URL on a test-seam loopback host. */
+  #testLoopbackDownloadUrl(raw: unknown): string | null {
+    const hosts = this.#deps.testLoopbackHosts;
+    if (hosts === undefined || hosts.length === 0) return null;
+    if (raw === null || typeof raw !== 'object') return null;
+    const url = (raw as { downloadUrl?: unknown }).downloadUrl;
+    if (typeof url !== 'string') return null;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:') return null;
+      return hosts.includes(parsed.host) ? url : null;
+    } catch {
+      return null;
+    }
   }
 
   /** 已验签索引的撤销名单（schema 已补 `action` / `reason` 默认值）。 */
@@ -321,9 +368,22 @@ export class MarketplaceSync {
 
   // --- 下载 -----------------------------------------------------------------------------
 
+  /** 包下载地址守卫：https 公网，或（仅测试缝）测试市场的回环主机。 */
+  #downloadUrlAllowed(url: string): boolean {
+    if (isSafeDirectoryRemoteUrl(url)) return true;
+    const hosts = this.#deps.testLoopbackHosts;
+    if (hosts === undefined || hosts.length === 0) return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' && hosts.includes(parsed.host);
+    } catch {
+      return false;
+    }
+  }
+
   /** 下载索引条目指向的包到内容寻址缓存，返回 `.kepcup` 的绝对路径。 */
   download(entry: PluginIndexEntry): Promise<string> {
-    if (!isSafeDirectoryRemoteUrl(entry.downloadUrl)) {
+    if (!this.#downloadUrlAllowed(entry.downloadUrl)) {
       return Promise.reject(
         new AppError('PLUGIN_INVALID', `包下载地址不安全：${entry.downloadUrl}`),
       );
