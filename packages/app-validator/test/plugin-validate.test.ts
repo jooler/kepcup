@@ -110,13 +110,21 @@ describe('validatePlugin: archive input', () => {
   });
 
   it('turns a hostile archive into plugin.package-entries', async () => {
-    const packed = await buildPluginFixture({
+    const traversal = await buildPluginFixture({
       dir: await tmp(),
       extraEntries: [{ name: '../escape.txt', data: 'evil' }],
     });
-    const report = await validatePlugin(packed.path);
-    expect(report.exitCode).toBe(1);
-    expect(ids(report, 'error')).toEqual(['plugin.package-entries']);
+    const traversalReport = await validatePlugin(traversal.path);
+    expect(traversalReport.exitCode).toBe(1);
+    expect(ids(traversalReport, 'error')).toEqual(['plugin.package-entries']);
+
+    const symlink = await buildPluginFixture({
+      dir: await tmp(),
+      extraEntries: [{ name: 'link', data: '/etc/passwd', symlink: true, deflate: false }],
+    });
+    const symlinkReport = await validatePlugin(symlink.path);
+    expect(symlinkReport.exitCode).toBe(1);
+    expect(ids(symlinkReport, 'error')).toEqual(['plugin.package-entries']);
   });
 
   it('rejects a non-zip file with the .kepcup suffix', async () => {
