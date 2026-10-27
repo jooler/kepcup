@@ -188,10 +188,11 @@ import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
 import type { ConnectorsProjector } from './plugins/projectors/connectors.js';
-import { createPluginProjectors } from './plugins/projectors/index.js';
+import { createPluginProjectors, type PluginProjector } from './plugins/projectors/index.js';
 import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { PluginInstallRequests } from './plugins/install-requests.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -455,7 +456,7 @@ export interface CoreServicesOptions {
    * D104 P1-2 test hook (`__KEPCUP_TEST_HOOKS__` builds only): wraps the plugin
    * projectors so integration tests can inject update failures (rollback coverage).
    */
-  projectorWrap?: (projector: import('./plugins/projectors/index.js').PluginProjector) => import('./plugins/projectors/index.js').PluginProjector;
+  projectorWrap?: (projector: PluginProjector) => PluginProjector;
   /**
    * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
    * share intake daily sweep cadence so integration tests can observe the
@@ -2294,17 +2295,40 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
     // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
     const marketplaceOptions = directoryTest ? options.pluginMarketplace : undefined;
+    // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
+    // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
+    // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
+    const testMarketSeam = (() => {
+      if (!directoryTest || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
+      try {
+        const parsed = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET) as {
+          baseUrl?: unknown;
+          keys?: unknown;
+        };
+        if (typeof parsed.baseUrl !== 'string' || !Array.isArray(parsed.keys)) return undefined;
+        return { baseUrl: parsed.baseUrl, keys: parsed.keys as ConnectorIndexPublicKey[] };
+      } catch {
+        return undefined;
+      }
+    })();
+    const testMarketLoopbackHosts =
+      testMarketSeam !== undefined ? [new URL(testMarketSeam.baseUrl).host] : [];
+    const resolvedMarketOptions: CoreServicesOptions['pluginMarketplace'] | undefined =
+      testMarketSeam ?? marketplaceOptions;
     const marketplaceFetchFactory = (fetchOptions: {
       maxBytes: number;
       timeoutMs?: number;
     }): DirectoryFetch => {
-      if (marketplaceOptions?.fetch !== undefined) {
+      if (resolvedMarketOptions?.fetch !== undefined) {
         // Tests inject both channels directly; the download channel has the larger cap.
         return fetchOptions.maxBytes > PLUGIN_INDEX_MAX_BYTES
-          ? (marketplaceOptions.downloadFetch ?? marketplaceOptions.fetch)
-          : marketplaceOptions.fetch;
+          ? (resolvedMarketOptions.downloadFetch ?? resolvedMarketOptions.fetch)
+          : resolvedMarketOptions.fetch;
       }
-      return createSafeFetch(fetchOptions);
+      return createSafeFetch({
+        ...fetchOptions,
+        ...(testMarketLoopbackHosts.length > 0 ? { loopbackHosts: testMarketLoopbackHosts } : {}),
+      });
     };
     const marketplace = new MarketplaceService({
       settings,
@@ -2312,28 +2336,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       clock,
       logger,
       events,
-      ...(marketplaceOptions?.keys !== undefined || marketplaceOptions?.baseUrl !== undefined
+      ...(resolvedMarketOptions?.keys !== undefined || resolvedMarketOptions?.baseUrl !== undefined
         ? {
             official: {
-              keys: marketplaceOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
-              baseUrl: marketplaceOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
+              keys: resolvedMarketOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
+              baseUrl: resolvedMarketOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
             },
           }
         : {}),
       fetchFactory: marketplaceFetchFactory,
-      ...(marketplaceOptions?.intervalMs !== undefined ||
-      marketplaceOptions?.initialDelayMs !== undefined
+      ...(resolvedMarketOptions?.intervalMs !== undefined ||
+      resolvedMarketOptions?.initialDelayMs !== undefined
         ? {
             timing: {
-              ...(marketplaceOptions.intervalMs !== undefined
-                ? { intervalMs: marketplaceOptions.intervalMs }
+              ...(resolvedMarketOptions.intervalMs !== undefined
+                ? { intervalMs: resolvedMarketOptions.intervalMs }
                 : {}),
-              ...(marketplaceOptions.initialDelayMs !== undefined
-                ? { initialDelayMs: marketplaceOptions.initialDelayMs }
+              ...(resolvedMarketOptions.initialDelayMs !== undefined
+                ? { initialDelayMs: resolvedMarketOptions.initialDelayMs }
                 : {}),
             },
           }
         : {}),
+      ...(testMarketLoopbackHosts.length > 0 ? { testLoopbackHosts: testMarketLoopbackHosts } : {}),
     });
     services.marketplace = marketplace;
     const plugins = new PluginRegistry({
@@ -2362,6 +2387,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       void plugins.applyRevocations().catch((error: unknown) => {
         logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
       });
+    });
+    // D104 P1-3：Bot 只能检索官方认证插件、只能出确认卡（不自己安装）。
+    const pluginInstallRequests = new PluginInstallRequests({
+      marketplace,
+      registry: plugins,
+      clock,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
     });
 
     const orchestrator = new Orchestrator({
@@ -2407,6 +2440,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mcp,
       connectedApps,
       localConnectors,
+      pluginInstall: pluginInstallRequests,
       appUi,
       widgets: {
         craft: (input) => widgetCraft.craft(input),

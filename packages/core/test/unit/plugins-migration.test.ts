@@ -59,7 +59,10 @@ describe('0053 plugins migration', () => {
     insertPlugin(db);
     const row = db
       .prepare('select update_to, update_snapshot from plugins where id = ?')
-      .get('io.github.alice/doc-tools') as { update_to: string | null; update_snapshot: string | null };
+      .get('io.github.alice/doc-tools') as {
+      update_to: string | null;
+      update_snapshot: string | null;
+    };
     expect(row).toEqual({ update_to: null, update_snapshot: null });
     closeDatabase(db);
   });

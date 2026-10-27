@@ -69,6 +69,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   request_environment: 'local',
   /** 连接应用（D73）：只记下本 run 的 setup 需求（run 中断、对话出连接卡），与 request_* 同类。 */
   app_request_connection: 'local',
+  /** 插件市场（D104 P1-3）：检索只读；安装请求只记下确认卡需求（run 中断），Bot 侧无外部副作用。 */
+  plugin_search: 'none',
+  plugin_request_install: 'local',
   /** 能力按需发现（D91，由 D73 P2 §6.3 泛化）：只在本 run 的能力范围里搜索，无副作用。 */
   capability_search: 'none',
   /**

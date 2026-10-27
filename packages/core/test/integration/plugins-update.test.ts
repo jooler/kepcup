@@ -6,7 +6,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { McpServer, PluginInspectOutput, PluginSummary } from '@kepcup/shared';
 import {
   buildPluginFixture,
+  buildPluginIndex,
   createTestStack,
+  makeMarketKey,
+  pluginIndexEntryFor,
   type TestStack,
 } from '@kepcup/testkit';
 
@@ -15,11 +18,6 @@ import { PluginPackager } from '../../src/plugins/package.js';
 import { PluginStore } from '../../src/plugins/store.js';
 import { pluginServerId } from '../../src/plugins/ids.js';
 import type { PluginProjector } from '../../src/plugins/projectors/index.js';
-import {
-  buildPluginIndex,
-  makeMarketKey,
-  pluginIndexEntryFor,
-} from '../support/plugin-market-fixture.js';
 import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
 import { readFileSync } from 'node:fs';
 
@@ -73,7 +71,9 @@ async function makeFixture(options: FixtureOptions): Promise<{
 }> {
   const skills = (options.skills ?? ['plg-alpha']).map((name) => ({
     name,
-    ...(options.skillSuffix !== undefined ? { description: `技能 ${name} ${options.skillSuffix}` } : {}),
+    ...(options.skillSuffix !== undefined
+      ? { description: `技能 ${name} ${options.skillSuffix}` }
+      : {}),
   }));
   if (options.removedSkill !== undefined) skills.push({ name: options.removedSkill });
   const built = await buildPluginFixture({
@@ -190,8 +190,8 @@ const pluginsList = async (stack: TestStack): Promise<PluginSummary[]> =>
   ((await stack.core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] }).plugins;
 
 const pluginServers = (stack: TestStack) =>
-  stack.core.services.domain!.settings
-    .get()
+  stack.core.services
+    .domain!.settings.get()
     .mcpServers.filter((server) => server.source?.kind === 'plugin');
 
 /** 单包发布（手动 publish 的回滚 / 撤销 / 重启用例共用）。 */
@@ -244,13 +244,15 @@ describe('plugins update integration (P1-2)', () => {
     const stdioId = pluginServerId(PLUGIN_ID, MCPB_KEY);
     const httpId = pluginServerId(PLUGIN_ID, 'docs');
     core.services.domain!.settings.update({
-      mcpServers: core.services.domain!.settings.get().mcpServers.map((server) =>
-        server.id === stdioId
-          ? { ...server, autoApprove: true, toolPolicies: { echo: { approval: 'ask' } } }
-          : server.id === httpId
-            ? { ...server, enabled: false }
-            : server,
-      ),
+      mcpServers: core.services
+        .domain!.settings.get()
+        .mcpServers.map((server) =>
+          server.id === stdioId
+            ? { ...server, autoApprove: true, toolPolicies: { echo: { approval: 'ask' } } }
+            : server.id === httpId
+              ? { ...server, enabled: false }
+              : server,
+        ),
     });
     const connection = core.services.apps!.store.create({
       connectorId: 'plgconn',
@@ -278,7 +280,10 @@ describe('plugins update integration (P1-2)', () => {
     expect(updated.plugin).toMatchObject({ version: '1.1.0', origin: 'marketplace' });
 
     // 版本与日志清零
-    expect((await pluginsList(rig.stack))[0]).toMatchObject({ version: '1.1.0', updateAvailable: null });
+    expect((await pluginsList(rig.stack))[0]).toMatchObject({
+      version: '1.1.0',
+      updateAvailable: null,
+    });
     // 技能内容换新（库新行、旧行被回收）
     const alpha = skills.publicSkillRow('plg-alpha')!;
     expect(alpha.library_id).not.toBe(oldAlphaLibrary);
@@ -293,7 +298,9 @@ describe('plugins update integration (P1-2)', () => {
       source: { kind: 'plugin', version: '1.1.0' },
     });
     expect(servers.find((server) => server.id === httpId)!.enabled).toBe(false);
-    const echo = await core.services.mcp!.callTool(stdio as McpServer, 'read_env', { name: 'API_KEY' });
+    const echo = await core.services.mcp!.callTool(stdio as McpServer, 'read_env', {
+      name: 'API_KEY',
+    });
     expect(echo.content).toEqual([{ type: 'text', text: 'env:sk-v1' }]);
     // 解包树：新树在、旧树提交后被 GC
     expect(existsSync(path.join(toolchains, 'echo-bundle@2.0.0'))).toBe(true);
@@ -368,7 +375,11 @@ describe('plugins update integration (P1-2)', () => {
     expect(pluginServers(rig.stack).some((server) => server.id === docsId)).toBe(true);
 
     await publish(rig, T2, [{ fixture: { ...trimmed, size: trimmed.size } }]);
-    await core.rpc.call('plugins.update', { id: PLUGIN_ID, sha256: trimmed.sha256, userConfig: {} });
+    await core.rpc.call('plugins.update', {
+      id: PLUGIN_ID,
+      sha256: trimmed.sha256,
+      userConfig: {},
+    });
 
     const summary = (await pluginsList(rig.stack))[0]!;
     expect(summary.items.map((item) => [item.kind, item.ref]).sort()).toEqual([
@@ -428,9 +439,21 @@ describe('plugins update integration (P1-2)', () => {
   it('敏感配置：更新提供新值 → secret 被覆盖；再次更新留空 → 覆盖后的值保留', async () => {
     const rig = await setup();
     const { core } = rig.stack;
-    const v1 = await makeFixture({ version: '1.0.0', mcpbVersion: '1.0.0', fileName: 'sec-v1.kepcup' });
-    const v2 = await makeFixture({ version: '1.1.0', mcpbVersion: '2.0.0', fileName: 'sec-v2.kepcup' });
-    const v3 = await makeFixture({ version: '1.2.0', mcpbVersion: '3.0.0', fileName: 'sec-v3.kepcup' });
+    const v1 = await makeFixture({
+      version: '1.0.0',
+      mcpbVersion: '1.0.0',
+      fileName: 'sec-v1.kepcup',
+    });
+    const v2 = await makeFixture({
+      version: '1.1.0',
+      mcpbVersion: '2.0.0',
+      fileName: 'sec-v2.kepcup',
+    });
+    const v3 = await makeFixture({
+      version: '1.2.0',
+      mcpbVersion: '3.0.0',
+      fileName: 'sec-v3.kepcup',
+    });
     await publish(rig, T1, [{ fixture: v1 }]);
     await core.rpc.call('plugins.install', {
       source: { kind: 'marketplace', id: PLUGIN_ID },
@@ -466,7 +489,11 @@ describe('plugins update integration (P1-2)', () => {
     });
     stacks.push(stack);
     const { core } = stack;
-    const v1 = await makeFixture({ version: '2.0.0', skills: ['plg-alpha'], fileName: 'local-v1.kepcup' });
+    const v1 = await makeFixture({
+      version: '2.0.0',
+      skills: ['plg-alpha'],
+      fileName: 'local-v1.kepcup',
+    });
     await core.rpc.call('plugins.install', {
       source: { kind: 'file', path: v1.path },
       sha256: v1.sha256,
@@ -515,7 +542,8 @@ describe('plugins update integration (P1-2)', () => {
     const failingWrap = (projector: PluginProjector): PluginProjector => {
       if (projector.kind !== 'mcp') return projector;
       // 委托对象：update 在目标版本上抛错，其余方法原样转发。
-      const delegate = (name: 'inspect' | 'project' | 'unproject' | 'setEnabled') =>
+      const delegate =
+        (name: 'inspect' | 'project' | 'unproject' | 'setEnabled') =>
         async (...args: Parameters<NonNullable<PluginProjector[name]>>) =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (projector[name] as any)(...args);
@@ -527,15 +555,14 @@ describe('plugins update integration (P1-2)', () => {
         setEnabled: delegate('setEnabled'),
         ...(projector.activate !== undefined
           ? {
-              activate: async (
-                ...args: Parameters<NonNullable<PluginProjector['activate']>>
-              ) => projector.activate!(...args)
+              activate: async (...args: Parameters<NonNullable<PluginProjector['activate']>>) =>
+                projector.activate!(...args),
             }
           : {}),
         ...(projector.missing !== undefined
           ? {
               missing: (...args: Parameters<NonNullable<PluginProjector['missing']>>) =>
-                projector.missing!(...args)
+                projector.missing!(...args),
             }
           : {}),
         update: async (oldCtx, newCtx) => {
@@ -546,21 +573,21 @@ describe('plugins update integration (P1-2)', () => {
           ? {
               beginUpdate: async (
                 ...args: Parameters<NonNullable<PluginProjector['beginUpdate']>>
-              ) => projector.beginUpdate!(...args)
+              ) => projector.beginUpdate!(...args),
             }
           : {}),
         ...(projector.commitUpdate !== undefined
           ? {
               commitUpdate: async (
                 ...args: Parameters<NonNullable<PluginProjector['commitUpdate']>>
-              ) => projector.commitUpdate!(...args)
+              ) => projector.commitUpdate!(...args),
             }
           : {}),
         ...(projector.rollbackUpdate !== undefined
           ? {
               rollbackUpdate: async (
                 ...args: Parameters<NonNullable<PluginProjector['rollbackUpdate']>>
-              ) => projector.rollbackUpdate!(...args)
+              ) => projector.rollbackUpdate!(...args),
             }
           : {}),
       };
@@ -579,8 +606,16 @@ describe('plugins update integration (P1-2)', () => {
     });
     stacks.push(stack);
     const { core } = stack;
-    const v1 = await makeFixture({ version: '1.0.0', mcpbVersion: '1.0.0', fileName: 'rb-v1.kepcup' });
-    const v2 = await makeFixture({ version: '1.1.0', mcpbVersion: '2.0.0', fileName: 'rb-v2.kepcup' });
+    const v1 = await makeFixture({
+      version: '1.0.0',
+      mcpbVersion: '1.0.0',
+      fileName: 'rb-v1.kepcup',
+    });
+    const v2 = await makeFixture({
+      version: '1.1.0',
+      mcpbVersion: '2.0.0',
+      fileName: 'rb-v2.kepcup',
+    });
     await publishOne(stack, market, key, T1, v1);
     await core.rpc.call('plugins.install', {
       source: { kind: 'marketplace', id: PLUGIN_ID },
@@ -599,8 +634,8 @@ describe('plugins update integration (P1-2)', () => {
 
     // 一切回到旧版本
     expect((await pluginsList(stack))[0]).toMatchObject({ version: '1.0.0' });
-    const row = core.services.domain!.settings
-      .get()
+    const row = core.services
+      .domain!.settings.get()
       .mcpServers.find((server) => server.id === stdioId)!;
     expect(row).toMatchObject({
       source: { kind: 'plugin', version: '1.0.0' },
@@ -627,9 +662,12 @@ describe('plugins update integration (P1-2)', () => {
       sha256: v1.sha256,
       userConfig: { [MCPB_KEY]: { api_key: 'sk-x' } },
     });
-    await publish(rig, T2, [{ fixture: v2 }], [
-      { id: PLUGIN_ID, version: '1.1.0', action: 'warn' },
-    ]);
+    await publish(
+      rig,
+      T2,
+      [{ fixture: v2 }],
+      [{ id: PLUGIN_ID, version: '1.1.0', action: 'warn' }],
+    );
     await expect(
       core.rpc.call('plugins.inspect', { source: { kind: 'marketplace', id: PLUGIN_ID } }),
     ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
@@ -657,8 +695,16 @@ describe('plugins update integration (P1-2)', () => {
     };
     const stack1 = await createTestStack(options);
     // stack1 在用例内自close（同一 home 重启语义）；不进 afterAll 的 stacks 列表，避免二次 close。
-    const v1 = await makeFixture({ version: '1.0.0', mcpbVersion: '1.0.0', fileName: 'rs-v1.kepcup' });
-    const v2 = await makeFixture({ version: '1.1.0', mcpbVersion: '2.0.0', fileName: 'rs-v2.kepcup' });
+    const v1 = await makeFixture({
+      version: '1.0.0',
+      mcpbVersion: '1.0.0',
+      fileName: 'rs-v1.kepcup',
+    });
+    const v2 = await makeFixture({
+      version: '1.1.0',
+      mcpbVersion: '2.0.0',
+      fileName: 'rs-v2.kepcup',
+    });
     await publishOne(stack1, market, key, T1, v1);
     await stack1.core.rpc.call('plugins.install', {
       source: { kind: 'marketplace', id: PLUGIN_ID },
@@ -678,8 +724,8 @@ describe('plugins update integration (P1-2)', () => {
     const newDir = path.join(pluginsDir, `${PLUGIN_ID}@1.1.0`.toLowerCase());
     await rename(staged.stagingDir, newDir);
     // 快照形状 = { [kind]: projector.beginUpdate() 的字符串 }；mcp 的字符串是 {servers}。
-    const pluginServers = stack1.core.services.domain!.settings
-      .get()
+    const pluginServers = stack1.core.services
+      .domain!.settings.get()
       .mcpServers.filter((server) => server.source?.kind === 'plugin');
     new PluginStore(stack1.core.services.mainDb!).update(PLUGIN_ID, {
       updateTo: '1.1.0',
@@ -698,8 +744,8 @@ describe('plugins update integration (P1-2)', () => {
     expect(store2.get(PLUGIN_ID)).toMatchObject({ version: '1.0.0', updateTo: null });
     // 旧版本可用：server 还在、secret 还在、技能还在
     const stdioId = pluginServerId(PLUGIN_ID, MCPB_KEY);
-    const server = stack2.core.services.domain!.settings
-      .get()
+    const server = stack2.core.services
+      .domain!.settings.get()
       .mcpServers.find((entry) => entry.id === stdioId)!;
     const result = await stack2.core.services.mcp!.callTool(server as McpServer, 'read_env', {
       name: 'API_KEY',

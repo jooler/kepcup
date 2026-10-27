@@ -339,7 +339,11 @@ export class ConnectorsProjector
         await this.#sweepConnections(slug);
       } catch (error) {
         this.#deps.logger.warn(
-          { plugin: oldCtx.plugin.id, slug, error: error instanceof Error ? error.message : String(error) },
+          {
+            plugin: oldCtx.plugin.id,
+            slug,
+            error: error instanceof Error ? error.message : String(error),
+          },
           'plugin connector update: disconnect failed',
         );
       }

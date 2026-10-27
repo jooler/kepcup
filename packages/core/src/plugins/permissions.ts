@@ -21,14 +21,6 @@ export interface ConsentItems {
   mail: PluginConsentMail[];
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
 /** Canonical permission tokens of one consent view (one kind per prefix, prefix + colon). */
 export function permissionTokens(items: ConsentItems): Set<string> {
   const tokens = new Set<string>();

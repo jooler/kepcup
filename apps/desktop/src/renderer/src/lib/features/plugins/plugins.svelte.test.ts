@@ -9,6 +9,16 @@ const calls: Array<{ method: string; params: unknown }> = [];
 const handlers = new Map<string, (payload: unknown) => void>();
 let list: Array<Record<string, unknown>> = [];
 let callError: unknown = null;
+const marketStatus: Record<string, unknown> = {
+  state: 'ok',
+  disabledReason: null,
+  lastSync: null,
+  generatedAt: null,
+  error: null,
+  endpoint: 'official',
+};
+let marketEntries: Array<Record<string, unknown>> = [];
+let inspections: Record<string, Record<string, unknown>> = {};
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
@@ -24,7 +34,14 @@ vi.mock('$lib/rpc/client.svelte', () => ({
           return { plugins: list };
         case 'plugins.setEnabled':
         case 'plugins.uninstall':
+        case 'plugins.update':
           return { ok: true };
+        case 'plugins.marketplace.list':
+          return { status: marketStatus, entries: marketEntries };
+        case 'plugins.marketplace.refresh':
+          return { status: marketStatus };
+        case 'plugins.inspect':
+          return inspections[(params as { source: { id: string } }).source.id] ?? {};
         default:
           return {};
       }
@@ -74,9 +91,11 @@ const count = (method: string): number => calls.filter((entry) => entry.method =
 beforeEach(() => {
   calls.length = 0;
   refreshCalls.length = 0;
-  handlers.clear();
+  // handlers 不清空：store 是单例，`start()` 只注册一次（reset() 只清数据）。
   list = [summary('io.github.alice/doc-tools', 'Doc Tools')];
   callError = null;
+  marketEntries = [];
+  inspections = {};
   plugins.reset();
 });
 
@@ -138,5 +157,102 @@ describe('plugins store', () => {
     await plugins.load();
     expect(plugins.nameOf('io.github.alice/doc-tools')).toBe('Doc Tools');
     expect(plugins.nameOf('missing/plugin')).toBe('missing/plugin');
+  });
+
+  it('marketplace.updated 事件刷新市场与已安装列表', async () => {
+    // 单例的 #started 跨用例保持为 true（reset() 只清数据）；直接调用已注册的处理器。
+    plugins.start();
+    await plugins.loadMarket();
+    expect(count('plugins.marketplace.list')).toBe(1);
+    const changed = handlers.get('plugins.marketplace.updated');
+    expect(changed).toBeDefined();
+    marketEntries = [{ id: 'io.github.a/one', version: '1.0.0' }];
+    changed!({ generatedAt: 1 });
+    await vi.waitFor(() => {
+      expect(count('plugins.marketplace.list')).toBe(2);
+    });
+    expect(plugins.market).toHaveLength(1);
+  });
+
+  it('updateAll 只直接更新无需确认的插件，其余计入 skipped', async () => {
+    list = [
+      {
+        ...summary('io.github.a/plain', 'Plain'),
+        origin: 'marketplace',
+        tier: 'verified',
+        updateAvailable: { version: '1.1.0' },
+      },
+      {
+        ...summary('io.github.a/permdiff', 'Perm'),
+        origin: 'marketplace',
+        tier: 'verified',
+        updateAvailable: { version: '1.1.0' },
+      },
+      {
+        ...summary('io.github.a/needsconfig', 'Cfg'),
+        origin: 'marketplace',
+        tier: 'verified',
+        updateAvailable: { version: '1.1.0' },
+      },
+      {
+        ...summary('io.github.a/optionalconfig', 'Opt'),
+        origin: 'marketplace',
+        tier: 'verified',
+        updateAvailable: { version: '1.1.0' },
+      },
+    ];
+    inspections = {
+      'io.github.a/plain': {
+        id: 'io.github.a/plain',
+        installable: true,
+        update: { from: '1.0.0', permissionsExpanded: false, added: [] },
+        mcp: [],
+      },
+      'io.github.a/permdiff': {
+        id: 'io.github.a/permdiff',
+        installable: true,
+        update: { from: '1.0.0', permissionsExpanded: true, added: ['新增主机 api.x.com'] },
+        mcp: [],
+      },
+      'io.github.a/needsconfig': {
+        id: 'io.github.a/needsconfig',
+        installable: true,
+        update: { from: '1.0.0', permissionsExpanded: false, added: [] },
+        mcp: [
+          {
+            kind: 'mcpb',
+            id: 'db',
+            userConfigFields: [{ key: 'token', required: true, sensitive: true }],
+          },
+        ],
+      },
+      // 只有可选字段也跳过：非敏感值不保留，全部更新会把用户改过的值换回默认。
+      'io.github.a/optionalconfig': {
+        id: 'io.github.a/optionalconfig',
+        installable: true,
+        update: { from: '1.0.0', permissionsExpanded: false, added: [] },
+        mcp: [
+          {
+            kind: 'mcpb',
+            id: 'proxy',
+            userConfigFields: [{ key: 'base_url', required: false, sensitive: false }],
+          },
+        ],
+      },
+    };
+    await plugins.load(true);
+    const result = await plugins.updateAll();
+    expect(result).toEqual({ done: 1, skipped: 3 });
+    expect(calls.filter((entry) => entry.method === 'plugins.update')).toEqual([
+      {
+        method: 'plugins.update',
+        params: {
+          id: 'io.github.a/plain',
+          sha256: undefined,
+          userConfig: {},
+          acknowledgeDiff: false,
+        },
+      },
+    ]);
   });
 });

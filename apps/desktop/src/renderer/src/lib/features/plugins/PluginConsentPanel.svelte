@@ -98,26 +98,31 @@
   {/if}
 
   {#if updating}
-    <p class="text-xs text-muted-foreground" data-testid={`${testid}-update-from`}>
-      {t('plugins.update.from', { from: info.update!.from, to: info.version })}
-    </p>
-  {/if}
-  {#if info.update?.permissionsExpanded === true}
-    <div class="space-y-1" data-testid={`${testid}-update-added`}>
-      <Label class="text-xs">{t('plugins.update.expanded')}</Label>
-      {#each info.update.added as line (line)}
-        <p class="text-xs">{line}</p>
-      {/each}
-      <label class="mt-1 flex items-center gap-2">
-        <Checkbox
-          checked={ackDiff}
-          onCheckedChange={(checked) => {
-            ackDiff = checked === true;
-          }}
-          data-testid="plugins-install-ack-diff"
-        />
-        <span class="text-xs">{t('plugins.update.ack')}</span>
-      </label>
+    <div
+      class="space-y-2 rounded-md border px-2.5 py-1.5"
+      data-testid="plugins-install-update-block"
+    >
+      <p class="text-xs text-muted-foreground" data-testid={`${testid}-update-from`}>
+        {t('plugins.update.from', { from: info.update!.from, to: info.version })}
+      </p>
+      {#if info.update?.permissionsExpanded === true}
+        <div class="space-y-1" data-testid={`${testid}-update-added`}>
+          <Label class="text-xs">{t('plugins.update.expanded')}</Label>
+          {#each info.update.added as line (line)}
+            <p class="text-xs">{line}</p>
+          {/each}
+          <label class="mt-1 flex items-center gap-2">
+            <Checkbox
+              checked={ackDiff}
+              onCheckedChange={(checked) => {
+                ackDiff = checked === true;
+              }}
+              data-testid="plugins-install-ack-diff"
+            />
+            <span class="text-xs">{t('plugins.update.ack')}</span>
+          </label>
+        </div>
+      {/if}
     </div>
   {/if}
 

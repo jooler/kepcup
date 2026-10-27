@@ -19,7 +19,7 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 插件系统「已安装」页签 e2e（D104 P0a-3）：
- * - 页签顺序（installed 最前、方向键循环回它）与默认选中不变（skills）；
+ * - 页签顺序（market 最前、方向键循环回它）与默认选中不变（skills）；
  * - 本地安装全流程（路径输入框 → 检视 → 同意面板 → 确认安装）；
  * - 技能 / MCP / 连接三处来源徽标与管理项锁定；core 层 PLUGIN_MANAGED 守卫；
  * - 启停 / 卸载的投影摘除与恢复；同 id 重装的冲突阻塞；窄屏页签条。
@@ -163,28 +163,31 @@ test('plugins: tab order, default tab and keyboard cycle land on installed', asy
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 六个页签、installed 在最前；默认选中仍是 skills。
-    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(6);
+    // 七个页签、market 在最前；默认选中仍是 skills。
+    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(7);
     await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    // 键盘循环从当前选中项起算：先点中 localCollab，再往右循环回第一项（installed）。
+    // 键盘循环从当前选中项起算：先点中 localCollab，再往右循环回第一项（market）。
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').click();
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
+    // installed 仍可点进「已安装」主体（第一项现在是 market，installed 紧随其后）。
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();
-    // installed + ArrowLeft → 末项 localCollab；connections + Home → installed。
+    // installed + ArrowLeft → market；connections + Home → market。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowLeft');
-    await expect(
-      dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
-    ).toHaveAttribute('aria-selected', 'true');
+    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
     await dialog.locator('[data-testid="extension-center-tab-connections"]').press('Home');
-    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );

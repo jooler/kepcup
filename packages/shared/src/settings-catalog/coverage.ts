@@ -103,19 +103,21 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     id: 'profile.retract',
     reason: '删除用户画像条目：破坏性动作；改写走设置页「用户画像」',
   },
+  {
+    kind: 'extension-tab',
+    id: 'market',
+    reason:
+      '插件市场的浏览与安装是对象管理，不是设置；市场地址与公钥、自动检查更新在「已安装」页签的插件设置区',
+  },
 ];
 
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
  * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 曾登记项目详情页的四个锚点，
  * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除。
- * D104 P1-1：`plugins.updates` / `plugins.marketplace` 深链到扩展中心「已安装」页签，
- * 锚点在 P1-3 的市场 / 更新 UI 落地——届时必须同时从这里删掉。
+ * D104 P1-1 登记的 `plugins-updates` / `plugins-marketplace` 已在 P1-3 的「已安装」页落地并删除。
  */
-export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
-  'plugins-updates',
-  'plugins-marketplace',
-];
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
 
 /** 对话框类深链的固定 section 名。 */
 export const DIALOG_SURFACE_SECTIONS = {

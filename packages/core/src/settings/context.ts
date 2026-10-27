@@ -99,6 +99,8 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'app_request_connection',
   'app_local_connector_guide',
   'app_propose_local_connector',
+  // 插件安装请求只记下确认卡需求（宿主校验，不读外部内容）
+  'plugin_request_install',
 ]);
 
 /**
@@ -107,6 +109,8 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
  * 两者之外的名字（MCP / 连接应用的动态工具、未来新增的工具）同样按不可信处理。
  */
 export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
+  // 插件检索返回市场索引里的文案（外部内容）
+  'plugin_search',
   'web_search',
   'web_fetch',
   'mail_list',
