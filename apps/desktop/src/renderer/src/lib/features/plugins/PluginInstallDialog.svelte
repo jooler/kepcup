@@ -34,9 +34,12 @@
   let {
     open = $bindable(false),
     mode,
+    marketplace,
   }: {
     open: boolean;
-    mode: 'file' | 'folder';
+    /** `marketplace`：不选路径，打开即按 id 检视；已装同 id 时确认走 `plugins.update`。 */
+    mode: 'file' | 'folder' | 'marketplace';
+    marketplace?: { id: string; version?: string } | undefined;
   } = $props();
 
   let path = $state('');
@@ -48,6 +51,15 @@
   /** P1-2：权限扩大差异的确认勾选（勾选后才允许确认，随 plugins.install 带回）。 */
   let ackDiff = $state(false);
 
+  const source = $derived(
+    mode === 'marketplace'
+      ? {
+          kind: 'marketplace' as const,
+          id: marketplace?.id ?? '',
+          ...(marketplace?.version !== undefined ? { version: marketplace.version } : {}),
+        }
+      : { kind: mode, path: path.trim() },
+  );
   const missing = $derived(info === null ? [] : missingPluginConfig(info, form));
   const installable = $derived(info !== null && canInstallPlugin(info, missing, ackDiff));
 
@@ -76,6 +88,18 @@
     reset();
   }
 
+  // 市场模式：对话框打开即检视一次（没有路径可填，也没有选择按钮）。失败不自动重试。
+  let autoInspected = $state(false);
+  $effect(() => {
+    if (!open) {
+      autoInspected = false;
+      return;
+    }
+    if (mode !== 'marketplace' || autoInspected) return;
+    autoInspected = true;
+    void inspect();
+  });
+
   async function pick(): Promise<void> {
     const picked =
       mode === 'file'
@@ -90,14 +114,11 @@
   }
 
   async function inspect(): Promise<void> {
-    const target = path.trim();
-    if (target.length === 0) return;
+    if (mode !== 'marketplace' && path.trim().length === 0) return;
     inspecting = true;
     reset();
     try {
-      const result = (await core.call('plugins.inspect', {
-        source: { kind: mode, path: target },
-      })) as PluginInspectOutput;
+      const result = (await core.call('plugins.inspect', { source })) as PluginInspectOutput;
       info = result;
       form = initialPluginForm(result);
     } catch (caught) {
@@ -107,23 +128,34 @@
     }
   }
 
+  /** 已装同 id 且检视判定为「更新」时走 `plugins.update`（市场来源），否则 `plugins.install`。 */
+  const updating = $derived(info?.existing !== null && info?.update !== null);
+
   async function install(): Promise<void> {
     if (info === null || !installable) return;
     const current = info;
-    const source = { kind: mode, path: path.trim() };
+    const payload = {
+      sha256: current.packageSha256,
+      userConfig: buildPluginUserConfig(current, form),
+      acknowledgeDiff: ackDiff,
+    };
     installing = true;
     try {
-      await core.call('plugins.install', {
-        source,
-        sha256: current.packageSha256,
-        userConfig: buildPluginUserConfig(current, form),
-        acknowledgeDiff: ackDiff,
-      });
-      toast.success(t('plugins.toast.installed', { name: current.name }));
+      if (updating && mode === 'marketplace') {
+        await core.call('plugins.update', { id: current.id, ...payload });
+        toast.success(t('plugins.update.done', { name: current.name, version: current.version }));
+      } else {
+        await core.call('plugins.install', { source, ...payload });
+        toast.success(t('plugins.toast.installed', { name: current.name }));
+      }
       await plugins.afterMutation();
       close();
     } catch (caught) {
-      toast.error(t('plugins.installFailed', { reason: reasonOf(caught) }));
+      toast.error(
+        updating
+          ? t('plugins.update.failed', { reason: reasonOf(caught) })
+          : t('plugins.installFailed', { reason: reasonOf(caught) }),
+      );
     } finally {
       // Never keep secret text in the form after a submit, successful or not.
       form = clearPluginSensitive(current, form);
@@ -143,52 +175,56 @@
     data-testid="plugins-install-dialog"
   >
     <DialogHeader>
-      <DialogTitle>{t('plugins.installTitle')}</DialogTitle>
+      <DialogTitle>
+        {updating ? t('plugins.update.title') : t('plugins.installTitle')}
+      </DialogTitle>
       <DialogDescription>{t('plugins.installHint')}</DialogDescription>
     </DialogHeader>
 
-    <div class="grid gap-1.5">
-      <Label for="plugins-install-path-input">{t('plugins.pathLabel')}</Label>
-      <div class="flex items-center gap-2">
-        <Input
-          id="plugins-install-path-input"
-          class="h-9 flex-1"
-          bind:value={path}
-          placeholder={t('plugins.pathPlaceholder')}
-          onkeydown={(event) => {
-            if (event.key === 'Enter') void inspect();
-          }}
-          data-testid="plugins-install-path"
-        />
-        {#if mode === 'file' && window.kepcup?.platform?.selectFile !== undefined}
+    {#if mode !== 'marketplace'}
+      <div class="grid gap-1.5">
+        <Label for="plugins-install-path-input">{t('plugins.pathLabel')}</Label>
+        <div class="flex items-center gap-2">
+          <Input
+            id="plugins-install-path-input"
+            class="h-9 flex-1"
+            bind:value={path}
+            placeholder={t('plugins.pathPlaceholder')}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') void inspect();
+            }}
+            data-testid="plugins-install-path"
+          />
+          {#if mode === 'file' && window.kepcup?.platform?.selectFile !== undefined}
+            <Button
+              size="sm"
+              variant="outline"
+              onclick={() => void pick()}
+              data-testid="plugins-install-pick"
+            >
+              {t('plugins.pickFile')}
+            </Button>
+          {:else if mode === 'folder' && window.kepcup?.platform?.selectDirectory !== undefined}
+            <Button
+              size="sm"
+              variant="outline"
+              onclick={() => void pick()}
+              data-testid="plugins-install-pick"
+            >
+              {t('plugins.pickFolder')}
+            </Button>
+          {/if}
           <Button
             size="sm"
-            variant="outline"
-            onclick={() => void pick()}
-            data-testid="plugins-install-pick"
+            disabled={inspecting || path.trim().length === 0}
+            onclick={() => void inspect()}
+            data-testid="plugins-install-inspect"
           >
-            {t('plugins.pickFile')}
+            {inspecting ? t('plugins.inspecting') : t('plugins.inspect')}
           </Button>
-        {:else if mode === 'folder' && window.kepcup?.platform?.selectDirectory !== undefined}
-          <Button
-            size="sm"
-            variant="outline"
-            onclick={() => void pick()}
-            data-testid="plugins-install-pick"
-          >
-            {t('plugins.pickFolder')}
-          </Button>
-        {/if}
-        <Button
-          size="sm"
-          disabled={inspecting || path.trim().length === 0}
-          onclick={() => void inspect()}
-          data-testid="plugins-install-inspect"
-        >
-          {inspecting ? t('plugins.inspecting') : t('plugins.inspect')}
-        </Button>
+        </div>
       </div>
-    </div>
+    {/if}
 
     {#if error !== null}
       <p class="text-xs text-destructive" data-testid="plugins-install-error">{error}</p>
@@ -206,7 +242,11 @@
           onclick={() => void install()}
           data-testid="plugins-install-confirm"
         >
-          {installing ? t('plugins.installing') : t('plugins.confirm')}
+          {installing
+            ? t('plugins.installing')
+            : updating
+              ? t('plugins.update.button')
+              : t('plugins.confirm')}
         </Button>
       {/if}
       <Button size="sm" variant="ghost" onclick={close} data-testid="plugins-install-cancel">
