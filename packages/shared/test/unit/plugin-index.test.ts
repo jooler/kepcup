@@ -236,7 +236,9 @@ describe('source and summary additions', () => {
     expect(pluginSummarySchema.safeParse({ ...summary, revoked: 'nope' }).success).toBe(false);
   });
 
-  it('the production public-key list is empty (marketplace closed until the real key exists)', () => {
-    expect(PLUGIN_INDEX_PUBLIC_KEYS).toEqual([]);
+  it('the production public-key list carries exactly the registered marketplace key', () => {
+    expect(PLUGIN_INDEX_PUBLIC_KEYS).toHaveLength(1);
+    expect(PLUGIN_INDEX_PUBLIC_KEYS[0].keyId).toBe('kepcup-plugins-2026-1');
+    expect(PLUGIN_INDEX_PUBLIC_KEYS[0].revoked).toBe(false);
   });
 });

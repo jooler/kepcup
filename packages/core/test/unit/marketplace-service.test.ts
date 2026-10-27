@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectorIndexPublicKey } from '@kepcup/shared';
-import { PLUGIN_INDEX_BASE_URL, PLUGIN_INDEX_PUBLIC_KEYS } from '@kepcup/shared';
+import { PLUGIN_INDEX_BASE_URL } from '@kepcup/shared';
 import { MarketplaceService } from '../../src/plugins/marketplace-service.js';
 import type { MarketplaceSyncEvents } from '../../src/plugins/marketplace-sync.js';
 import {
@@ -131,9 +131,9 @@ describe('official endpoint', () => {
     expect(service.status()).toMatchObject({ state: 'stale', endpoint: 'official' });
   });
 
-  it('is disabled with no_keys when the official key list is empty (production default)', () => {
+  it('is disabled with no_keys when the official key list is empty', () => {
     const h = harness();
-    const service = h.make({ officialKeys: PLUGIN_INDEX_PUBLIC_KEYS }); // empty
+    const service = h.make({ officialKeys: [] });
     expect(service.current()).toBeNull();
     expect(service.status()).toMatchObject({
       state: 'disabled',
@@ -250,10 +250,7 @@ describe('endpointId normalization', () => {
 
   it('falls back to the shared official base url constant by default', () => {
     const h = harness();
-    const service = h.make({
-      officialBaseUrl: PLUGIN_INDEX_BASE_URL,
-      officialKeys: PLUGIN_INDEX_PUBLIC_KEYS,
-    });
+    const service = h.make({ officialBaseUrl: PLUGIN_INDEX_BASE_URL, officialKeys: [] });
     expect(service.endpointId()).toBe(PLUGIN_INDEX_BASE_URL);
     expect(service.status().disabledReason).toBe('no_keys');
   });
