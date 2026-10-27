@@ -13,6 +13,9 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import { customConnectionId } from '$lib/features/apps/connect-flow';
+  import { managedServerPluginId } from '../plugins/plugin-install';
+  import { plugins } from '../plugins/plugins.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import McpRiskBadge from '../approvals/McpRiskBadge.svelte';
   import McpToolPolicies from './McpToolPolicies.svelte';
   import McpbInstall from './McpbInstall.svelte';
@@ -313,6 +316,8 @@
   let editInitial = $state<McpServer | null>(null);
 
   function editServer(server: McpServer): void {
+    // 插件投影的 server 由插件整体管理（core 的 PLUGIN_MANAGED 是权威，这里是双保险）。
+    if (managedServerPluginId(server) !== null) return;
     draft = { ...server, secretDrafts: {} };
     editInitial = $state.snapshot(server) as McpServer;
     editingId = server.id;
@@ -429,6 +434,8 @@
   }
 
   async function removeServer(server: McpServer): Promise<void> {
+    // 插件投影的 server 由插件整体管理（core 的 PLUGIN_MANAGED 是权威，这里是双保险）。
+    if (managedServerPluginId(server) !== null) return;
     busy = true;
     try {
       // D73：core 删除 settings 条目并清理密钥 / 令牌 / 连接行（不再整体覆盖 mcpServers）。
@@ -588,6 +595,12 @@
           {#if !server.enabled}
             <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
           {/if}
+          {#if managedServerPluginId(server) !== null}
+            <PluginSourceBadge
+              pluginId={managedServerPluginId(server)!}
+              testid={`mcp-plugin-badge-${server.id}`}
+            />
+          {/if}
           {#if appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
             <Badge
               variant="outline"
@@ -644,23 +657,30 @@
             >
               {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onclick={() => editServer(server)}
-              data-testid={`mcp-edit-${server.id}`}
-            >
-              {t('settings.mcpEdit')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              class="text-destructive hover:text-destructive"
-              disabled={busy}
-              onclick={() => void removeServer(server)}
-            >
-              {t('settings.mcpRemove')}
-            </Button>
+            {#if managedServerPluginId(server) === null}
+              <Button
+                size="sm"
+                variant="ghost"
+                onclick={() => editServer(server)}
+                data-testid={`mcp-edit-${server.id}`}
+              >
+                {t('settings.mcpEdit')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-destructive hover:text-destructive"
+                disabled={busy}
+                onclick={() => void removeServer(server)}
+              >
+                {t('settings.mcpRemove')}
+              </Button>
+            {:else}
+              <span class="text-xs text-muted-foreground" data-testid={`mcp-managed-${server.id}`}>
+                {t('plugins.managedBy', { name: plugins.nameOf(managedServerPluginId(server)!) })}
+                · {t('plugins.managedHint')}
+              </span>
+            {/if}
           </div>
         </div>
         {#if testServerId === server.id}

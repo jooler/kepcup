@@ -44,6 +44,12 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'bot-panel-tab', id: 'widget', reason: 'Bot 自制组件是产出物，不是设置' },
   {
+    kind: 'extension-tab',
+    id: 'installed',
+    reason:
+      '已安装插件的对象管理（装 / 卸 / 启停），不是设置；插件相关设置项在 P1 以 plugins.* 条目登记并改指此页签',
+  },
+  {
     kind: 'bot-panel-tab',
     id: 'wiki',
     reason: '知识库内容是 Bot 的数据，不是设置；收录走 wiki_enqueue',

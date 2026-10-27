@@ -546,10 +546,11 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 16.1 信息架构
 
-入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。页签（WAI-ARIA tabs；D84 起四组）：
+入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。页签（WAI-ARIA tabs；D104 起六组）：
 
 | 分组 | 内容 | 数据来源 |
 | ---- | ---- | ---- |
+| **已安装**（插件） | 插件的装 / 卸 / 启停与内容总览，见设计 [51](51-plugin-system.md) | `plugins.*` RPC |
 | **Skills** | 原技能市场内容原样迁入，行为不变 | `preset-skills/catalog.json`，RPC `skills.presets.*` |
 | **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（`connectors/catalog.json` + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
 | **MCP** | 自定义 MCP 的完整管理（新建 stdio / HTTP / SSE、启停 / 状态 / 逐工具策略 / 编辑 / 删除、BYO OAuth 客户端、原始工具定义 / 授权日志）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
