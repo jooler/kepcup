@@ -1544,7 +1544,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const mcpb = new McpbInstaller({
       paths,
       settings,
-      secrets,
+      secrets: {
+        // Prototype methods need explicit forwarding; `hasValue` feeds replace mode
+        // (plugin update keeps stored secrets for untouched sensitive fields).
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeByPrefix: (prefix) => secrets.removeByPrefix(prefix),
+        hasValue: (name) => secrets.hasValue(name),
+      },
       logger,
       homeDir: os.homedir(),
       audit,
