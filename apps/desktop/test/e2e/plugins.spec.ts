@@ -163,9 +163,9 @@ test('plugins: tab order, default tab and keyboard cycle land on market', async 
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 七个页签、market 在最前；默认选中仍是 skills。
-    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(7);
-    await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
+    // 三个页签、market 在最前；默认选中「已安装」（技能 / 连接 / MCP / 邮件是其内容筛选）。
+    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(3);
+    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -176,17 +176,17 @@ test('plugins: tab order, default tab and keyboard cycle land on market', async 
       'aria-selected',
       'true',
     );
-    // installed 仍可点进「已安装」主体（第一项现在是 market，installed 紧随其后）。
+    // installed 仍可点进「已安装」主体。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();
-    // installed + ArrowLeft → market；connections + Home → market。
+    // installed + ArrowLeft → market；localCollab + Home → market。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowLeft');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').press('Home');
+    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('Home');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
@@ -275,7 +275,7 @@ test('plugins: managed items carry source badges and lose single-item delete ent
     // MCP：server 行有来源徽标与「由插件管理」，编辑入口不存在（「测试」「工具」保留）。
     const serverId = await pluginServerId(page);
     const dialog = await openExtensionCenter(page);
-    await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
+    await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
     const serverRow = dialog.locator(`[data-testid="mcp-server-${serverId}"]`);
     await expect(serverRow).toBeVisible({ timeout: 30_000 });
     await expect(serverRow.locator(`[data-testid="mcp-plugin-badge-${serverId}"]`)).toBeVisible();
@@ -283,8 +283,8 @@ test('plugins: managed items carry source badges and lose single-item delete ent
     await expect(dialog.locator(`[data-testid="mcp-edit-${serverId}"]`)).toHaveCount(0);
     await expect(serverRow.locator(`[data-testid="mcp-tools-toggle-${serverId}"]`)).toBeVisible();
 
-    // 连接页签：连接器卡带插件徽标。
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    // 连接筛选：连接器卡带插件徽标。
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     const connectorCard = dialog.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`);
     await expect(connectorCard).toBeVisible({ timeout: 30_000 });
     await expect(
@@ -360,7 +360,7 @@ test('plugins: disable hides projections, re-enable restores them', async () => 
       timeout: 30_000,
     });
     const dialog2 = await openExtensionCenter(page);
-    await dialog2.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog2.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(
       dialog2.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`),
     ).toHaveCount(0, { timeout: 30_000 });
@@ -425,7 +425,7 @@ test('plugins: uninstall removes the card and every projection', async () => {
       timeout: 30_000,
     });
     const dialog2 = await openExtensionCenter(page);
-    await dialog2.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog2.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(
       dialog2.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`),
     ).toHaveCount(0, { timeout: 30_000 });
@@ -542,7 +542,7 @@ test('plugins: reinstalling the SAME id from a local file is an update, not a co
   }
 });
 
-test('plugins: narrow viewport shows the tabs scrollable with Installed reachable', async () => {
+test('plugins: narrow viewport shows the three tabs with Installed and content filters reachable', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-narrow-'));
@@ -558,15 +558,13 @@ test('plugins: narrow viewport shows the tabs scrollable with Installed reachabl
     await page.locator('[data-testid="narrow-tab-extensions"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tabs"]')).toBeVisible();
-    // 页签条在 375px 下真的横向溢出（overflow-x-auto 生效），而不是挤压或换行。
-    const scrollable = await page
-      .locator('[data-testid="extension-center-tabs"]')
-      .evaluate((el) => el.scrollWidth > el.clientWidth);
-    expect(scrollable).toBe(true);
-    // installed 可点进「已安装」主体。
+    // 三个页签在 375px 下完整可见；installed 可点进「已安装」主体，筛选条随在。
+    await expect(page.locator('[data-testid="extension-center-tab-market"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tab-installed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="extension-center-tab-localCollab"]')).toBeVisible();
     await page.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(page.locator('[data-testid="extension-installed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="plugins-filters"]')).toBeVisible();
     await expect(page.locator('[data-testid="plugins-install-file"]')).toBeVisible();
   } finally {
     await app?.close();

@@ -78,13 +78,13 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect
       .poll(() => page.evaluate(() => document.body.lastElementChild?.getAttribute('data-testid')))
       .toBe('window-drag-band');
-    await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
 
-    // 连接：测试构建默认空目录 → 空态；没有填 URL 的入口。
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    // 连接筛选（内嵌完整连接管理）：测试构建默认空目录 → 空态；没有填 URL 的入口。
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(dialog.locator('[data-testid="apps-catalog-none"]')).toHaveText(
       '暂无已适配的应用',
       {
@@ -95,25 +95,25 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
 
-    // MCP：完整管理（可新建 server / BYO 客户端 / .mcpb），不依赖开发者模式。
-    await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
+    // MCP 筛选（内嵌完整管理，可新建 server / BYO 客户端 / .mcpb），不依赖开发者模式。
+    await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
     await expect(dialog.locator('[data-testid="mcp-section"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
 
-    // 键盘：方向键切换分组（tabs: market → installed → skills → connections → mcp → mail → localCollab）。
-    await dialog.locator('[data-testid="extension-center-tab-mcp"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-mail"]')).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    await dialog.locator('[data-testid="extension-center-tab-mail"]').press('ArrowRight');
+    // 键盘：方向键切换分组（tabs: market → installed → localCollab）。
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowRight');
     await expect(
       dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
     ).toHaveAttribute('aria-selected', 'true');
-    // 末项再往右循环回第一项（installed）。
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    // 末项再往右循环回第一项（market → installed）。
+    await dialog.locator('[data-testid="extension-center-tab-market"]').press('ArrowRight');
+    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -166,8 +166,9 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await page.locator('[data-testid="extension-center-button"]').click();
 
-    // 连接：非空目录 → 卡片、连接按钮；未连接 → 没有「管理」、没有账号数；没有填 URL 的入口。
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    // 连接筛选：非空目录 → 卡片、连接按钮；未连接 → 没有「管理」、没有账号数；没有填 URL 的入口。
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     const card = dialog.locator('[data-testid="apps-catalog-card-notion"]');
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(card).toContainText('Notion');
@@ -201,7 +202,7 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     await page.reload();
     await waitReady(page);
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
+    await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
     await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible({
       timeout: 30_000,
     });

@@ -107,7 +107,7 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     kind: 'extension-tab',
     id: 'market',
     reason:
-      '插件市场的浏览与安装是对象管理，不是设置；市场地址与公钥、自动检查更新在「已安装」页签的插件设置区',
+      '插件市场的浏览与安装是对象管理，不是设置；市场地址与公钥、自动检查更新在设置「插件」分区',
   },
 ];
 

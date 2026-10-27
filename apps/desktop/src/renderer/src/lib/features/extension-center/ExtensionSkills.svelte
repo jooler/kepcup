@@ -21,6 +21,9 @@
    * 保留（状态在 `skillMarket` 单例里）；只有弹框关闭时才复位（`ExtensionCenterDialog`）。
    */
 
+  /** embedded：嵌进「已安装」的技能筛选视图（不再是独立页签），去掉自带的弹性滚动高度。 */
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   $effect(() => {
     skillMarket.start();
     void skillMarket.load(true);
@@ -84,7 +87,10 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-4" data-testid="skill-market-panel">
+<div
+  class={embedded ? 'flex flex-col gap-4' : 'flex min-h-0 flex-1 flex-col gap-4'}
+  data-testid="skill-market-panel"
+>
   <p class="shrink-0 pt-3 text-xs text-muted-foreground">{t('skillMarket.description')}</p>
 
   <div class="relative shrink-0">
@@ -147,10 +153,14 @@
                     </Badge>
                   {/if}
                 </span>
-                <span class="truncate text-xs text-muted-foreground">{presetSkillText(preset.id, 'summary', preset.summary)}</span>
+                <span class="truncate text-xs text-muted-foreground"
+                  >{presetSkillText(preset.id, 'summary', preset.summary)}</span
+                >
                 {#if preset.tryIt.length > 0}
                   <span class="truncate text-xs text-muted-foreground/70">
-                    {t('skillMarket.tryIt', { tryIt: presetSkillText(preset.id, 'tryIt', preset.tryIt) })}
+                    {t('skillMarket.tryIt', {
+                      tryIt: presetSkillText(preset.id, 'tryIt', preset.tryIt),
+                    })}
                   </span>
                 {/if}
               </span>

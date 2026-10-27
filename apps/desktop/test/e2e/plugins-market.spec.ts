@@ -199,32 +199,35 @@ function card(dialog: Locator, id: string): Locator {
   return dialog.locator(`[data-testid="plugins-market-card-${id}"]`);
 }
 
-test('plugins market: without a test marketplace the tab shows the disabled banner and no cards', async () => {
+test('plugins market: without a published index the market shows a failed-sync banner and no cards', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-market-off-'));
+  // 官方公钥已内置（市场开启）：起一个测试市场但**不发布索引**，模拟不可达的市场源，
+  // 断言降级横幅与空列表（替代公钥登记前的「尚未启用」关闭态）。
+  const market = await startMarket();
   let app: ElectronApplication | null = null;
   try {
-    const launched = await launch(home, llm.url);
+    const launched = await launch(home, llm.url, market.env);
     app = launched.app;
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 市场是第一个页签。
+    // 市场是第一个页签（D104 UI 修正：共三个页签）。
     const tabs = dialog.locator('[data-testid^="extension-center-tab-"]');
     await expect(tabs.first()).toHaveAttribute('data-testid', 'extension-center-tab-market');
-    await expect(tabs).toHaveCount(7);
+    await expect(tabs).toHaveCount(3);
     await dialog.locator('[data-testid="extension-center-tab-market"]').click();
 
-    await expect(dialog.locator('[data-testid="plugins-market-status"]')).toContainText(
-      '插件市场尚未启用',
-    );
+    const status = dialog.locator('[data-testid="plugins-market-status"]');
+    await expect(status).toContainText(/同步失败|市场数据已超过 3 天/, { timeout: 30_000 });
     await expect(dialog.locator('[data-testid^="plugins-market-card-"]')).toHaveCount(0);
-    // 关闭状态不渲染「市场里没有插件」的误导性空态。
+    // 失败状态不渲染「市场里没有插件」的误导性空态。
     await expect(dialog.locator('[data-testid="plugins-market-empty"]')).toHaveCount(0);
   } finally {
     await app?.close();
     await llm.stop();
+    await market.stop();
     await rmHomeTolerant(home);
   }
 });
@@ -488,8 +491,25 @@ test('plugins market: a custom marketplace without a signing key shows no_custom
     const page = launched.page;
     const installed = await openInstalled(page);
 
-    const anchor = installed.locator('[data-settings-anchor="plugins-marketplace"]');
-    const urlInput = anchor.locator('[data-testid="setting-card-fields-url"]');
+    // 市场设置在应用「设置 → 插件」（D104 UI 修正）：填自建市场地址。
+    const openMarketSettings = async (): Promise<Locator> => {
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="extension-center-dialog"]')).toBeHidden();
+      await page.locator('[data-testid="user-menu-trigger"]').click();
+      await page.locator('[data-testid="menu-settings"]').click();
+      await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+      await page.locator('[data-testid="settings-nav-plugins"]').click();
+      const anchor = page.locator('[data-settings-anchor="plugins-marketplace"]');
+      return anchor.locator('[data-testid="setting-card-fields-url"]');
+    };
+    const backToMarket = async (): Promise<void> => {
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+      await page.locator('[data-testid="extension-center-button"]').click();
+      await installed.locator('[data-testid="extension-center-tab-market"]').click();
+    };
+
+    const urlInput = await openMarketSettings();
     await urlInput.fill('https://self.test/plugins/v1');
     await urlInput.press('Enter');
     await expect
@@ -502,7 +522,7 @@ test('plugins market: a custom marketplace without a signing key shows no_custom
       )
       .toBe('https://self.test/plugins/v1');
 
-    await installed.locator('[data-testid="extension-center-tab-market"]').click();
+    await backToMarket();
     await expect(installed.locator('[data-testid="plugins-market-status"]')).toContainText(
       '已设置自建市场地址但没有填写签名公钥',
       { timeout: 30_000 },
@@ -510,9 +530,9 @@ test('plugins market: a custom marketplace without a signing key shows no_custom
     await expect(installed.locator('[data-testid^="plugins-market-card-"]')).toHaveCount(0);
 
     // 清空自建地址 → 回到官方市场：重新进入市场页必须重新拉取（不能停在 no_custom_key）。
-    await installed.locator('[data-testid="extension-center-tab-installed"]').click();
-    await urlInput.fill('');
-    await urlInput.press('Enter');
+    const urlInput2 = await openMarketSettings();
+    await urlInput2.fill('');
+    await urlInput2.press('Enter');
     await expect
       .poll(
         async () => {
@@ -522,7 +542,7 @@ test('plugins market: a custom marketplace without a signing key shows no_custom
         { timeout: 30_000 },
       )
       .toBe('');
-    await installed.locator('[data-testid="extension-center-tab-market"]').click();
+    await backToMarket();
     await expect(card(installed, VERIFIED_ID)).toBeVisible({ timeout: 30_000 });
   } finally {
     await app?.close();

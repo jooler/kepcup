@@ -299,7 +299,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     ],
     write: viaTool('app_request_connection', 'form', true),
     card: 'connect-app',
-    deepLink: { surface: 'extension-center', section: 'connections' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-connector',
+    },
     store: { kind: 'none' },
   }),
   item({
@@ -325,8 +329,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 卡片按页面档位保存（allow → auto，deny → 停用），不把目录词写进 McpToolPolicy。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
     card: 'tool-policy',
-    // 设置「应用」分区已移除：逐工具策略在扩展中心「连接」分组的账号详情里管理。
-    deepLink: { surface: 'extension-center', section: 'connections' },
+    // 设置「应用」分区已移除：逐工具策略在扩展中心「已安装」→ 连接筛选的账号详情里管理。
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-connector',
+    },
     store: { kind: 'service', methods: ['apps.connections.setToolPolicy'] },
   }),
   item({
@@ -361,7 +369,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 卡片只改这一个服务的 enabled，组件自己 settings.update。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
     card: 'mcp-servers',
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),
 
@@ -381,7 +393,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     ],
     write: viaTool('mail_request_setup', 'form', true),
     card: 'mail-account',
-    deepLink: { surface: 'extension-center', section: 'mail' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mail',
+    },
     store: { kind: 'none' },
   }),
 
@@ -626,7 +642,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [field('preset', '技能', 'select', { options: 'skill-presets' })],
     write: viaTool('install_skill', 'confirm', true),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'skills' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-skill',
+    },
     store: { kind: 'none' },
   }),
 
@@ -1031,7 +1051,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),
   item({
@@ -1043,7 +1067,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'service', methods: ['apps.oauthClients.set'] },
   }),
   item({
@@ -1055,7 +1083,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'service', methods: ['mcpb.install'] },
   }),
 
@@ -1146,7 +1178,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [field('enabled', '自动检查更新', 'toggle', { path: 'pluginAutoCheckUpdates' })],
     write: write('confirm'),
     card: 'field-editor',
-    deepLink: { surface: 'extension-center', section: 'installed', anchor: 'plugins-updates' },
+    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-updates' },
     store: { kind: 'settings', paths: ['pluginAutoCheckUpdates'], generic: true },
   }),
   item({
@@ -1169,11 +1201,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 供应链信任根：Bot 可以出卡，但宿主绝不采用会话里给的值（设计 51 §6.1）。
     write: write('user-only'),
     card: 'field-editor',
-    deepLink: {
-      surface: 'extension-center',
-      section: 'installed',
-      anchor: 'plugins-marketplace',
-    },
+    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-marketplace' },
     store: {
       kind: 'settings',
       paths: ['pluginMarketplaceUrl', 'pluginMarketplacePublicKey'],

@@ -2,11 +2,7 @@
   import { onMount } from 'svelte';
   import { Mail } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import {
-    AppError,
-    type Bot,
-    type MailAccount,
-  } from '@kepcup/shared';
+  import { AppError, type Bot, type MailAccount } from '@kepcup/shared';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -63,7 +59,6 @@
     if (error instanceof AppError) return errorText(error.code, error.message);
     return error instanceof Error ? error.message : String(error);
   }
-
 
   /** 授权码失效（登录被拒后会话已停止重试）或换了新码：测连通过后保存并重新连接。 */
   async function updatePassword(account: MailAccount): Promise<void> {
@@ -143,9 +138,14 @@
       toast.error(explain(error));
     }
   }
+  /** embedded：嵌进「已安装」的邮件筛选视图（不再是独立页签），去掉自带的滚动容器。 */
+  let { embedded = false }: { embedded?: boolean } = $props();
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-mail">
+<div
+  class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
+  data-testid="extension-mail"
+>
   {#if view === 'list'}
     <div class="mb-3 flex items-center justify-between gap-2">
       <p class="text-xs text-muted-foreground">{t('mail.intro')}</p>
@@ -300,7 +300,11 @@
         {/each}
       </div>
       <div class="flex gap-2">
-        <Button variant="secondary" onclick={() => void pauseOrResume(selected)} data-testid="mail-pause">
+        <Button
+          variant="secondary"
+          onclick={() => void pauseOrResume(selected)}
+          data-testid="mail-pause"
+        >
           {selected.status === 'paused' ? t('mail.resume') : t('mail.pause')}
         </Button>
         <Button variant="outline" onclick={() => void remove(selected)} data-testid="mail-delete">

@@ -6,8 +6,16 @@
   import { endpointSupports } from '../web-shell/endpoint';
   import { shell } from '$lib/stores/shell.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
-  import SettingsCatalogFields from '../settings/SettingsCatalogFields.svelte';
   import { plugins } from '../plugins/plugins.svelte';
+  import ExtensionSkills from './ExtensionSkills.svelte';
+  import ExtensionConnections from './ExtensionConnections.svelte';
+  import ExtensionMcp from './ExtensionMcp.svelte';
+  import ExtensionMail from './ExtensionMail.svelte';
+  import {
+    FILTER_COUNT_KEYS,
+    type ExtensionCenterFilter,
+    type ExtensionCenterKindFilter,
+  } from './tabs';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -26,6 +34,11 @@
    * 页头的两个本地安装入口仅在桌面端点渲染（web / headless 隐藏）；启用开关与卸载按钮
    * 不对内置插件渲染（内置只读，P0b 起出现在列表里）。内容明细按账本展开、可跳到
    * 对应管理页签；「由插件管理」的锁定语义在 core 层（PLUGIN_MANAGED）。
+   *
+   * 顶部筛选（D104 UI 修正）：技能 / 连接 / MCP / 邮件四类内容由插件贡献、安装后自动
+   * 归类（`PluginSummary.counts`），不再是独立分组而是这里的筛选条件；选中某类时在
+   * 插件卡片下方嵌入该类的完整管理区（预置技能 / 连接目录 / 自定义 MCP / 邮箱）。
+   * 可更新的插件卡片恒置顶——「检查更新」后自动浮起，支持全部更新或逐条更新。
    */
 
   $effect(() => {
@@ -53,6 +66,40 @@
   } as const;
 
   const hasUpdates = $derived(plugins.plugins.some((plugin) => plugin.updateAvailable !== null));
+
+  /** 内容筛选：状态在 shell store（旧分组深链 / 设置卡深链会带筛选直达）。 */
+  const filter = $derived(shell.extensionCenterFilter);
+
+  const FILTER_CHIPS: ReadonlyArray<{
+    id: ExtensionCenterFilter;
+    labelKey: Parameters<typeof t>[0];
+  }> = [
+    { id: 'all', labelKey: 'plugins.filter.all' },
+    { id: 'skill', labelKey: 'plugins.kind.skill' },
+    { id: 'connector', labelKey: 'plugins.kind.connector' },
+    { id: 'mcp', labelKey: 'plugins.kind.mcp' },
+    { id: 'mail', labelKey: 'plugins.kind.mail' },
+  ];
+
+  /** 各筛选下的插件数量（含「全部」）；为 0 的筛选也显示，点了给空态。 */
+  const filterCounts = $derived.by(() => {
+    const counts = new Map<ExtensionCenterFilter, number>([['all', plugins.plugins.length]]);
+    for (const kind of Object.keys(FILTER_COUNT_KEYS) as ExtensionCenterKindFilter[]) {
+      const countKey = FILTER_COUNT_KEYS[kind];
+      counts.set(kind, plugins.plugins.filter((plugin) => plugin.counts[countKey] > 0).length);
+    }
+    return counts;
+  });
+
+  /** 展示顺序：可更新的插件恒置顶（「检查更新」后自动浮起），其余保持 plugins.list 顺序。 */
+  const visiblePlugins = $derived.by(() => {
+    const sorted = [...plugins.plugins].sort(
+      (a, b) => Number(b.updateAvailable !== null) - Number(a.updateAvailable !== null),
+    );
+    if (filter === 'all') return sorted;
+    const countKey = FILTER_COUNT_KEYS[filter];
+    return sorted.filter((plugin) => plugin.counts[countKey] > 0);
+  });
 
   const serverNames = $derived(
     new Map((settingsStore.settings?.mcpServers ?? []).map((server) => [server.id, server.name])),
@@ -158,10 +205,9 @@
     }
   }
 
-  /** 内容明细里每一类的「前往」目标（mail 没有对应页签，不显示前往）。 */
-  function goToTab(kind: (typeof DETAIL_KINDS)[number]): void {
-    shell.extensionCenterTab =
-      kind === 'skill' ? 'skills' : kind === 'connector' ? 'connections' : 'mcp';
+  /** 内容明细里每一类的「前往」目标：切到已安装列表的对应筛选（mail 没有对应管理区）。 */
+  function goToFilter(kind: 'skill' | 'connector' | 'mcp'): void {
+    shell.extensionCenterFilter = kind;
   }
 </script>
 
@@ -221,10 +267,34 @@
     <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-empty">
       {t('plugins.empty')}
     </p>
+  {:else if filter !== 'all' && visiblePlugins.length === 0 && !plugins.loading}
+    <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-filter-empty">
+      {t('plugins.filter.empty')}
+    </p>
   {/if}
 
+  <div
+    class="mb-2 flex flex-wrap items-center gap-1.5 px-0.5"
+    role="group"
+    data-testid="plugins-filters"
+  >
+    {#each FILTER_CHIPS as chip (chip.id)}
+      <button
+        type="button"
+        class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {filter === chip.id
+          ? 'border-foreground bg-foreground text-background'
+          : 'text-muted-foreground hover:text-foreground'}"
+        onclick={() => (shell.extensionCenterFilter = chip.id)}
+        data-testid={`plugins-filter-${chip.id}`}
+      >
+        {t(chip.labelKey)}
+        <span class="ms-0.5 opacity-70">{filterCounts.get(chip.id) ?? 0}</span>
+      </button>
+    {/each}
+  </div>
+
   <div class="grid gap-2">
-    {#each plugins.plugins as plugin (plugin.id)}
+    {#each visiblePlugins as plugin (plugin.id)}
       {@const isBuiltin = plugin.origin === 'builtin'}
       <div
         class="rounded-lg border bg-card px-3 py-2.5 text-sm"
@@ -350,7 +420,7 @@
                           size="sm"
                           variant="ghost"
                           class="h-6 px-2 text-xs"
-                          onclick={() => goToTab(kind)}
+                          onclick={() => goToFilter(kind)}
                         >
                           {t('plugins.goTo')}
                         </Button>
@@ -379,15 +449,23 @@
     {/each}
   </div>
 
-  <div class="mt-4 border-t pt-3">
-    <h3 class="mb-2 text-xs font-medium text-muted-foreground">{t('plugins.settings.title')}</h3>
-    <div data-settings-anchor="plugins-updates">
-      <SettingsCatalogFields itemIds={['plugins.updates']} />
+  {#if filter === 'skill'}
+    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-skill">
+      <ExtensionSkills embedded />
     </div>
-    <div data-settings-anchor="plugins-marketplace">
-      <SettingsCatalogFields itemIds={['plugins.marketplace']} />
+  {:else if filter === 'connector'}
+    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-connector">
+      <ExtensionConnections embedded />
     </div>
-  </div>
+  {:else if filter === 'mcp'}
+    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-mcp">
+      <ExtensionMcp embedded />
+    </div>
+  {:else if filter === 'mail'}
+    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-mail">
+      <ExtensionMail embedded />
+    </div>
+  {/if}
 </div>
 
 <PluginInstallDialog bind:open={installOpen} mode={installMode} marketplace={installTarget} />

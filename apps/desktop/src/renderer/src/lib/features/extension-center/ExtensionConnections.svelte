@@ -61,9 +61,14 @@
       detailConnectionId = null;
     }
   }
+  /** embedded：嵌进「已安装」的连接筛选视图（不再是独立页签），去掉自带的滚动容器。 */
+  let { embedded = false }: { embedded?: boolean } = $props();
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-connections">
+<div
+  class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
+  data-testid="extension-connections"
+>
   {#if detailConnectionId !== null}
     <AppConnectionDetail
       connectionId={detailConnectionId}

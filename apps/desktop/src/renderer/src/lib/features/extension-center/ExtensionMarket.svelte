@@ -58,6 +58,16 @@
   const nothingToShow = $derived(
     plugins.market.length === 0 || (verified.length === 0 && community.length === 0),
   );
+  /**
+   * 同步不可用（失败 degraded / 从未成功过 stale）且从未加载到任何条目：横幅已经解释了
+   * 原因，不再渲染「市场里暂时没有可用的插件」的误导性空态（真的同步成功但市场为空
+   * 是 `ok` 状态，空态照常显示；有缓存条目或搜索无结果也照常显示）。
+   */
+  const syncFailedWithoutEntries = $derived(
+    plugins.marketStatus !== null &&
+      (plugins.marketStatus.state === 'degraded' || plugins.marketStatus.state === 'stale') &&
+      plugins.market.length === 0,
+  );
 
   function openInstall(entry: PluginMarketEntry): void {
     target = { id: entry.id, version: entry.version };
@@ -168,7 +178,7 @@
     <p class="px-0.5 text-xs text-destructive" data-testid="plugins-market-error">
       {t('plugins.loadFailed', { reason: plugins.marketError })}
     </p>
-  {:else if nothingToShow && !plugins.marketLoading}
+  {:else if nothingToShow && !syncFailedWithoutEntries && !plugins.marketLoading}
     <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-market-empty">
       {plugins.market.length === 0 ? t('plugins.market.empty') : t('plugins.market.noMatch')}
     </p>

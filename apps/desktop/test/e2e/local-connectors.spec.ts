@@ -63,7 +63,8 @@ test('local connectors: section always visible; Bot proposal → card → add �
 
     // --- 「本机自建」区始终可见（空态）----------------------------------------------------
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(dialog.locator('[data-testid="apps-catalog"]')).toBeVisible({ timeout: 30_000 });
     await expect(dialog.locator('[data-testid="local-connectors-section"]')).toBeVisible({
       timeout: 15_000,
@@ -133,7 +134,8 @@ test('local connectors: section always visible; Bot proposal → card → add �
     expect(listed.connectors[0]!.mcpHost).toBe(`127.0.0.1:${fake.port}`);
 
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     const entry = dialog.locator(`[data-testid="local-connector-${connectorId}"]`);
     await expect(entry).toBeVisible({ timeout: 30_000 });
     await expect(entry.locator('[data-testid="local-connector-badge"]')).toHaveText('未审核');

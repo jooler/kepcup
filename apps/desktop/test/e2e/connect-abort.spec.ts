@@ -107,7 +107,8 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
 
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     const card = dialog.locator('[data-testid="apps-catalog-card-notion"]');
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
@@ -142,7 +143,8 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     // 关掉「连接」再进：列表仍然没有账号（不靠手动刷新）。
     await page.keyboard.press('Escape');
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(dialog.locator('[data-testid="apps-catalog-card-notion"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
   } finally {

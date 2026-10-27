@@ -22,6 +22,7 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'mcp',
   'browser',
   'agents',
+  'plugins',
   'profile',
   'contacts',
   'unattended',
@@ -34,7 +35,7 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
 
 export type SettingDeepLinkAction =
   | { kind: 'settings'; section: SettingsSectionId; anchor: string | null }
-  | { kind: 'extension-center'; tab: ExtensionCenterTab }
+  | { kind: 'extension-center'; tab: ExtensionCenterTab; anchor: string | null }
   /** 右栏 Bot 详情的页签；`botId` 与当前会话的 Bot 不同时先打开该 Bot 的单聊。 */
   | { kind: 'bot-panel'; tab: string; anchor: string | null; botId: string | null }
   /** 项目详情页的分区（∈ PROJECT_DETAIL_SECTIONS）。 */
@@ -66,11 +67,14 @@ export function settingDeepLinkAction(
         anchor,
       };
     case 'extension-center':
+      // 锚点随动作带回（`plugins-filter-*` 会映射成「已安装」的内容筛选）；旧分组名
+      // （skills / connections / mcp / mail）由 shell 映射到对应筛选。
       return {
         kind: 'extension-center',
         tab: (EXTENSION_CENTER_TABS as readonly string[]).includes(link.section)
           ? (link.section as ExtensionCenterTab)
-          : 'skills',
+          : 'installed',
+        anchor,
       };
     case 'bot-panel':
       return { kind: 'bot-panel', tab: link.section, anchor, botId: target.botId ?? null };
