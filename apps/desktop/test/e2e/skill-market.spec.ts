@@ -77,13 +77,14 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await page.locator('[data-testid="extension-center-button"]').click();
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await expect(dialog).toBeVisible();
-    // 默认落在 Skills 分组，三个分组都在。
-    await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
+    // 默认落在「已安装」；技能 / 连接 / MCP / 邮件是列表顶部的筛选条件。
+    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    await expect(dialog.locator('[data-testid="extension-center-tab-connections"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="extension-center-tab-mcp"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="plugins-filter-connector"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="plugins-filter-mcp"]')).toBeVisible();
+    await dialog.locator('[data-testid="plugins-filter-skill"]').click();
     await expect(dialog.locator('[data-testid="skill-market-bot-select"]')).toHaveCount(0);
 
     // 办公起步包分区 + 条目渲染（图标位 / 一句话 / 本地即可标签）。
@@ -98,10 +99,10 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await expect(dialog.locator('[data-testid="skill-market-empty"]')).toBeVisible();
     await dialog.locator('[data-testid="skill-market-search"]').fill('市场演示');
 
-    // 切到「连接」再切回 Skills：搜索词与已加载的列表保留（只在弹框关闭时才复位）。
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    // 切到「连接」筛选再切回技能：搜索词与已加载的列表保留（只在弹框关闭时才复位）。
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveCount(0);
-    await dialog.locator('[data-testid="extension-center-tab-skills"]').click();
+    await dialog.locator('[data-testid="plugins-filter-skill"]').click();
     await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveValue('市场演示');
     await expect(item).toBeVisible();
 
@@ -119,6 +120,8 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
     await page.locator('[data-testid="extension-center-button"]').click();
+    // 重开默认落「已安装」全部视图：切回技能筛选看全局安装态（弹框关闭已复位搜索词）。
+    await dialog.locator('[data-testid="plugins-filter-skill"]').click();
     await expect(item).toBeVisible({ timeout: 30_000 });
     // 关闭过弹框：搜索词已复位。
     await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveValue('');
