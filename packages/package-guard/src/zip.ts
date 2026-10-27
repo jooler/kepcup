@@ -75,11 +75,55 @@ export interface ResolvedZipGuard {
 
 /** Normalizes {@link ZipGuardOptions} into the error / label / limit policy used everywhere. */
 export function resolveZipGuard(options: ZipGuardOptions = {}): ResolvedZipGuard {
+  const limits = { ...DEFAULT_LIMITS };
+  for (const key of Object.keys(DEFAULT_LIMITS) as (keyof ZipLimits)[]) {
+    const override = options.limits?.[key];
+    if (override !== undefined) limits[key] = override;
+  }
   return {
     error: options.error ?? defaultError,
     label: options.label ?? defaultLabel,
-    limits: { ...DEFAULT_LIMITS, ...options.limits },
+    limits,
   };
+}
+
+/**
+ * Tracks the entry paths of one archive while it is written or extracted. Rejects
+ * case-folded duplicates and file/directory nesting conflicts (`a` as a file next to
+ * `a/b`), which the filesystem would otherwise surface as bare EEXIST / EISDIR errors.
+ */
+export class EntryPathTracker {
+  readonly #explicit = new Set<string>();
+  readonly #files = new Set<string>();
+  readonly #directories = new Set<string>();
+  readonly #error: ZipErrorFactory;
+
+  constructor(error: ZipErrorFactory = defaultError) {
+    this.#error = error;
+  }
+
+  /** `safe` is the output of {@link safeEntryPath}; `name` is the raw name used in messages. */
+  add(safe: string, isDirectory: boolean, name: string): void {
+    const key = safe.toLowerCase();
+    if (this.#explicit.has(key)) throw this.#error(`包内有重复路径：${name}`);
+    this.#explicit.add(key);
+    const conflict = () => this.#error(`包内路径冲突（文件与目录同名）：${name}`);
+    const segments = key.split('/');
+    const ancestors: string[] = [];
+    for (let index = 1; index < segments.length; index += 1) {
+      const ancestor = segments.slice(0, index).join('/');
+      if (this.#files.has(ancestor)) throw conflict();
+      ancestors.push(ancestor);
+    }
+    if (isDirectory) {
+      if (this.#files.has(key)) throw conflict();
+      this.#directories.add(key);
+    } else {
+      if (this.#directories.has(key)) throw conflict();
+      this.#files.add(key);
+    }
+    for (const ancestor of ancestors) this.#directories.add(ancestor);
+  }
 }
 
 /** Reserved Windows device names, with or without an extension. */

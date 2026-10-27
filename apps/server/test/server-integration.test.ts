@@ -330,6 +330,12 @@ it('admin 插件安装：inspect → install → plugins.list；远程来源仍�
     await expect(
       withRemoteSource('dev_integration' as never, () => inspect.handle({ source })),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    // JSON 合法但不符合方法 schema 的请求体是调用方的错：400 + INVALID_INPUT，不是 500。
+    await expect(client.pluginsInspect({ source: { kind: 'url', path: 'x' } })).rejects.toThrow(
+      /HTTP 400.*INVALID_INPUT/s,
+    );
+    await expect(client.pluginsInstall({})).rejects.toThrow(/HTTP 400.*INVALID_INPUT/s);
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }

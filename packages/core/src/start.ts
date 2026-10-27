@@ -15,6 +15,7 @@ import {
   CONNECTOR_INDEX_PUBLIC_KEYS,
   SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
+  connectorIndexPublicKeySchema,
   findAgentEntry,
   systemInfoOutputSchema,
   systemPingOutputSchema,
@@ -213,7 +214,7 @@ import { bindFilesPreviewMethods } from './rpc/files-preview-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
 import { DirectorySync, type DirectoryFetch } from './apps/directory-sync.js';
-import { createSafeFetch } from './apps/auth/safe-fetch.js';
+import { createSafeFetch, loopbackHostOf } from './apps/auth/safe-fetch.js';
 import { MarketplaceService } from './plugins/marketplace-service.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
@@ -2298,23 +2299,40 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
     // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
     // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
+    // 只接受回环地址：缝的放行是「免私网校验 + 明文 http」，不能被指向任意内网主机。
     const testMarketSeam = (() => {
       if (!directoryTest || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
+      const seamSchema = z.object({
+        baseUrl: z.string().url(),
+        keys: z.array(connectorIndexPublicKeySchema).min(1),
+      });
+      let raw: unknown;
       try {
-        const parsed = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET) as {
-          baseUrl?: unknown;
-          keys?: unknown;
-        };
-        if (typeof parsed.baseUrl !== 'string' || !Array.isArray(parsed.keys)) return undefined;
-        return { baseUrl: parsed.baseUrl, keys: parsed.keys as ConnectorIndexPublicKey[] };
+        raw = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET);
       } catch {
+        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: not valid JSON');
         return undefined;
       }
+      const parsed = seamSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn(
+          { issues: parsed.error.issues.map((issue) => issue.path.join('.')) },
+          'KEPCUP_TEST_PLUGIN_MARKET ignored: unexpected shape',
+        );
+        return undefined;
+      }
+      if (loopbackHostOf(parsed.data.baseUrl) === null) {
+        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: baseUrl is not a loopback address');
+        return undefined;
+      }
+      return { ...parsed.data, loopbackHost: new URL(parsed.data.baseUrl).host };
     })();
     const testMarketLoopbackHosts =
-      testMarketSeam !== undefined ? [new URL(testMarketSeam.baseUrl).host] : [];
+      testMarketSeam !== undefined ? [testMarketSeam.loopbackHost] : [];
     const resolvedMarketOptions: CoreServicesOptions['pluginMarketplace'] | undefined =
-      testMarketSeam ?? marketplaceOptions;
+      testMarketSeam !== undefined
+        ? { baseUrl: testMarketSeam.baseUrl, keys: testMarketSeam.keys }
+        : marketplaceOptions;
     const marketplaceFetchFactory = (fetchOptions: {
       maxBytes: number;
       timeoutMs?: number;

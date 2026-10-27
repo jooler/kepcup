@@ -30,6 +30,29 @@ const CONVERSATION_KEY_LIMIT = 500;
 const SEARCH_HITS_MAX = 10;
 /** 搜索时给模型看的描述长度（超出的截断）。 */
 const SEARCH_DESCRIPTION_MAX = 120;
+/** 与 `setupRequirementSchema` 的 `confirm-plugin-install` 成员一致（UTF-16 码元）。 */
+const REQUIREMENT_NAME_MAX = 100;
+const REQUIREMENT_REASON_MAX = 300;
+
+/**
+ * `sanitizeDisplayText` 按码点截断，而 zod 的 `.max()` 按 UTF-16 码元计：星面字符（emoji 等）
+ * 占两个码元，只按码点截会让需求对象过不了 schema（run 列表 / retry 的 RPC 输出校验失败）。
+ * 这里再按码元预算收一刀，不劈开代理对。
+ */
+function fitUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let out = '';
+  for (const char of text) {
+    if (out.length + char.length > max) break;
+    out += char;
+  }
+  return out.trimEnd();
+}
+
+/** 清洗并限长到 schema 允许的码元数。 */
+function displayField(text: string, max: number): string {
+  return fitUtf16(sanitizeDisplayText(text, max), max);
+}
 
 export interface PluginToolContext {
   botId: string | null;
@@ -146,20 +169,26 @@ export class PluginInstallRequests {
     if (sync.incompatibleReason(entry, appVersion, platform) !== null) {
       return { ok: false, message: '该插件与当前 KepCup 版本或操作系统不兼容。' };
     }
-    if (this.#deps.registry.list().some((plugin) => plugin.id === entry.id)) {
-      return { ok: false, message: '已经安装了该插件，无需再次请求。' };
+    const installed = this.#deps.registry.list().find((plugin) => plugin.id === entry.id);
+    if (installed !== undefined) {
+      return {
+        ok: false,
+        message: `已经安装了该插件（v${installed.version}），无需再次请求。`,
+      };
     }
-    const reason = sanitizeDisplayText(input.reason, 300).trim();
+    const reason = displayField(input.reason, REQUIREMENT_REASON_MAX);
     if (reason.length === 0) {
       return { ok: false, message: '请说明为什么需要这个插件（给用户看的一句话）。' };
     }
+    // 索引里的名称清洗后可能为空（全是不可见字符）；schema 要求 name 非空，退回到 id。
+    const name = displayField(entry.summary.name, REQUIREMENT_NAME_MAX);
     return {
       ok: true,
       requirement: {
         kind: 'confirm-plugin-install',
         pluginId: entry.id,
         version: entry.version,
-        name: sanitizeDisplayText(entry.summary.name, 100),
+        name: name.length > 0 ? name : fitUtf16(entry.id, REQUIREMENT_NAME_MAX),
         reason,
       },
     };

@@ -237,6 +237,17 @@ describe('validatePlugin: contribution checks', () => {
     expect(ids(report, 'error')).toContain('plugin.skill-frontmatter');
   });
 
+  it('accepts what the installer parser accepts: BOM, CRLF and a closing line that starts with ---', async () => {
+    const dir = await tmp();
+    await buildPluginDir({ dir, skills: [{ name: 'hello' }] });
+    await writeFile(
+      path.join(dir, 'skills', 'hello', 'SKILL.md'),
+      '\uFEFF---\r\nname: hello\r\ndescription: Says hello\r\n--- \r\n\r\nBody\r\n',
+    );
+    const report = await validatePlugin(dir);
+    expect(ids(report, 'error')).not.toContain('plugin.skill-frontmatter');
+  });
+
   it('forwards connector manifest checks with the file path', async () => {
     const dir = await tmp();
     await buildPluginDir({
@@ -253,6 +264,34 @@ describe('validatePlugin: contribution checks', () => {
     expect(forwarded.length).toBeGreaterThan(0);
     expect(forwarded[0]?.subject).toContain('connectors/acme/server.json');
     expect(forwarded.some((check) => check.message.includes('manifest.tier'))).toBe(true);
+  });
+
+  it('rejects a connector file the installer would reject even when checkManifest passes it (no releaseGate)', async () => {
+    const dir = await tmp();
+    const entry = connectorFixtureEntry('acme', { tier: 'community' });
+    const meta = (entry._meta as Record<string, Record<string, unknown>>)['app.kepcup/connector']!;
+    delete meta.releaseGate;
+    await buildPluginDir({ dir, connectors: [{ slug: 'acme', entry }] });
+    const report = await validatePlugin(dir);
+    const strict = report.checks.filter(
+      (check) => check.id === 'plugin.connector-entry' && check.severity === 'error',
+    );
+    expect(strict.some((check) => check.message.includes('releaseGate'))).toBe(true);
+    expect(report.exitCode).toBe(1);
+  });
+
+  it('requires at least one remote endpoint on a plugin connector (packages alone do not count)', async () => {
+    const dir = await tmp();
+    const entry = {
+      ...connectorFixtureEntry('acme', { tier: 'community' }),
+      remotes: [],
+      packages: [{ registryType: 'npm', identifier: 'x', version: '1.0.0' }],
+    };
+    await buildPluginDir({ dir, connectors: [{ slug: 'acme', entry }] });
+    const report = await validatePlugin(dir);
+    const errors = ids(report, 'error');
+    expect(errors).toContain('plugin.connector-packages');
+    expect(errors).toContain('plugin.connector-remote');
   });
 
   it('rejects connector packages, unsafe remotes and a misplaced icon', async () => {
@@ -307,6 +346,22 @@ describe('validatePlugin: contribution checks', () => {
           ...MAIL,
           imap: { host: 'localhost', port: 993, secure: 'ssl' },
           smtp: { host: '192.168.1.5', port: 465, secure: 'ssl' },
+        },
+      ],
+    });
+    const report = await validatePlugin(dir);
+    expect(report.checks.filter((check) => check.id === 'plugin.mail-host')).toHaveLength(2);
+  });
+
+  it('rejects mail hosts with whitespace or control characters', async () => {
+    const dir = await tmp();
+    await buildPluginDir({
+      dir,
+      mail: [
+        {
+          ...MAIL,
+          imap: { host: 'imap example.com', port: 993, secure: 'ssl' },
+          smtp: { host: 'smtp.example.com\t', port: 465, secure: 'ssl' },
         },
       ],
     });

@@ -31,6 +31,8 @@ class PluginsState {
   #loaded = false;
   #marketLoaded = false;
   #started = false;
+  /** `refreshMarket()` 进行中：core 采纳新索引时广播的事件由刷新尾部的显式重载覆盖，不重复拉。 */
+  #refreshing = false;
 
   start(): void {
     if (this.#started) return;
@@ -40,6 +42,7 @@ class PluginsState {
     });
     // 采纳新索引后市场视图与「已安装」的 updateAvailable / revoked 都要重拉。
     core.onEvent('plugins.marketplace.updated', () => {
+      if (this.#refreshing) return;
       void this.loadMarket(true);
       void this.load(true);
     });
@@ -89,6 +92,7 @@ class PluginsState {
   /** 手动同步索引（「刷新」/「检查更新」）：拉取后重载市场与已安装列表。 */
   async refreshMarket(): Promise<void> {
     this.marketLoading = true;
+    this.#refreshing = true;
     try {
       const result = (await core.call('plugins.marketplace.refresh', undefined)) as {
         status: PluginMarketStatus;
@@ -97,6 +101,7 @@ class PluginsState {
       await this.loadMarket(true);
       await this.load(true);
     } finally {
+      this.#refreshing = false;
       this.marketLoading = false;
     }
   }

@@ -19,6 +19,9 @@ const marketStatus: Record<string, unknown> = {
 };
 let marketEntries: Array<Record<string, unknown>> = [];
 let inspections: Record<string, Record<string, unknown>> = {};
+const PLAIN_SHA256 = 'a'.repeat(64);
+/** `plugins.marketplace.refresh` 返回前的钩子（模拟 core 在采纳新索引时同步广播事件）。 */
+let onRefresh: (() => void) | null = null;
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
@@ -39,6 +42,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         case 'plugins.marketplace.list':
           return { status: marketStatus, entries: marketEntries };
         case 'plugins.marketplace.refresh':
+          onRefresh?.();
           return { status: marketStatus };
         case 'plugins.inspect':
           return inspections[(params as { source: { id: string } }).source.id] ?? {};
@@ -96,6 +100,7 @@ beforeEach(() => {
   callError = null;
   marketEntries = [];
   inspections = {};
+  onRefresh = null;
   plugins.reset();
 });
 
@@ -174,6 +179,25 @@ describe('plugins store', () => {
     expect(plugins.market).toHaveLength(1);
   });
 
+  it('refreshMarket 进行中收到 marketplace.updated 不重复拉取；之后的事件照常刷新', async () => {
+    plugins.start();
+    await plugins.loadMarket();
+    await plugins.load();
+    calls.length = 0;
+    onRefresh = () => handlers.get('plugins.marketplace.updated')!({ generatedAt: 2 });
+    await plugins.refreshMarket();
+    // 刷新 RPC 一次 + 刷新尾部的显式重载各一次；事件被吞掉，没有第二轮。
+    expect(count('plugins.marketplace.refresh')).toBe(1);
+    expect(count('plugins.marketplace.list')).toBe(1);
+    expect(count('plugins.list')).toBe(1);
+
+    handlers.get('plugins.marketplace.updated')!({ generatedAt: 3 });
+    await vi.waitFor(() => {
+      expect(count('plugins.marketplace.list')).toBe(2);
+      expect(count('plugins.list')).toBe(2);
+    });
+  });
+
   it('updateAll 只直接更新无需确认的插件，其余计入 skipped', async () => {
     list = [
       {
@@ -205,6 +229,7 @@ describe('plugins store', () => {
       'io.github.a/plain': {
         id: 'io.github.a/plain',
         installable: true,
+        packageSha256: PLAIN_SHA256,
         update: { from: '1.0.0', permissionsExpanded: false, added: [] },
         mcp: [],
       },
@@ -243,12 +268,13 @@ describe('plugins store', () => {
     await plugins.load(true);
     const result = await plugins.updateAll();
     expect(result).toEqual({ done: 1, skipped: 3 });
+    // sha256 必须是检视结果里的那一个（core 据此拒绝「检视后包被替换」）。
     expect(calls.filter((entry) => entry.method === 'plugins.update')).toEqual([
       {
         method: 'plugins.update',
         params: {
           id: 'io.github.a/plain',
-          sha256: undefined,
+          sha256: PLAIN_SHA256,
           userConfig: {},
           acknowledgeDiff: false,
         },

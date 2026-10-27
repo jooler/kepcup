@@ -41,6 +41,8 @@
    * - confirm-local-connector 不是设置目录条目：payload 是 core 探测生成的确认卡
    *   （proposalId + card），用户点 `apps.localConnectors.confirm` / `reject`，不走
    *   `settings.items.apply`——不并入 SettingCard，保持独立 kind 与独立 body。
+   * - confirm-plugin-install 同样不是设置目录条目（D104 P1-3）：Bot 提议安装官方插件的
+   *   确认卡，body 自己 `plugins.inspect` 渲染同意面板，用户点 `plugins.install` / 不装了。
    */
   let { requirement }: { requirement: SetupRequirement } = $props();
   const session = getChatSession();

@@ -289,7 +289,13 @@ export class PluginRegistry {
     for (const row of this.#deps.store.list()) {
       if (row.state !== 'installed' || !row.enabled) continue;
       const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
-      if (manifest === null) continue;
+      if (manifest === null) {
+        this.#deps.logger.warn(
+          { plugin: row.id },
+          'plugin mail templates skipped: manifest unreadable',
+        );
+        continue;
+      }
       for (const contribution of manifest.contributions.mail) {
         templates.push({
           id: `${manifest.id}#${contribution.id}`,
@@ -1157,8 +1163,9 @@ export class PluginRegistry {
 
   /**
    * Required user_config fields of the NEW version's mcpb contributions must be
-   * satisfiable BEFORE any persistent write: provided values count, and a required
-   * sensitive field with a stored secret counts as satisfied (P1-2 keep-secrets).
+   * satisfiable BEFORE any persistent write: provided values count, a declared default
+   * counts (same rule as `validateUserConfig` on first install), and a required sensitive
+   * field with a stored secret counts as satisfied (P1-2 keep-secrets).
    */
   #prevalidateUpdateUserConfig(
     manifest: PluginManifest,
@@ -1166,6 +1173,8 @@ export class PluginRegistry {
     userConfig: Record<string, Record<string, McpbUserConfigValue>>,
     pluginId: string,
   ): void {
+    const isEmpty = (value: McpbUserConfigValue | undefined): boolean =>
+      value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
     for (const contribution of manifest.contributions.mcp) {
       if (contribution.kind !== 'mcpb') continue;
       const item = inspection.items.mcp.find(
@@ -1176,10 +1185,7 @@ export class PluginRegistry {
       const serverId = pluginServerId(pluginId, contribution.id);
       for (const field of item.userConfigFields) {
         if (!field.required) continue;
-        const value = provided[field.key];
-        const filled =
-          value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0);
-        if (filled) continue;
+        if (!isEmpty(provided[field.key] ?? field.default)) continue;
         if (
           field.sensitive &&
           this.#deps.secrets?.hasValue(`mcp:${serverId}:env:${field.key}`) === true

@@ -5,8 +5,12 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import type { Interface as RlInterface } from 'node:readline/promises';
-import { pluginInspectOutputSchema, type PluginInspectOutput } from '@kepcup/shared';
-import { ConfigError, parseConfig, usageText, type ServerConfig } from './config.js';
+import {
+  pluginInspectOutputSchema,
+  pluginsInstallOutputSchema,
+  type PluginInspectOutput,
+} from '@kepcup/shared';
+import { ConfigError, expandTilde, parseConfig, usageText, type ServerConfig } from './config.js';
 import { createAdminClient } from './admin.js';
 import { qrTerminal } from './qr.js';
 import { AuthStore, MIN_PASSWORD_LENGTH } from './auth.js';
@@ -111,7 +115,7 @@ async function installPlugin(config: ServerConfig): Promise<void> {
     throw new ConfigError('plugin 子命令不完整（需要 plugin install <路径>）');
   }
   const client = createAdminClient(config.port, readAdminToken(config.dataDir));
-  const target = path.resolve(config.pluginPath);
+  const target = path.resolve(expandTilde(config.pluginPath));
   let source: { kind: 'folder' | 'file'; path: string };
   let info: PluginInspectOutput;
   try {
@@ -120,17 +124,14 @@ async function installPlugin(config: ServerConfig): Promise<void> {
       : { kind: 'file', path: target };
     info = pluginInspectOutputSchema.parse(await client.pluginsInspect({ source }));
   } catch (error) {
-    console.error(`读取插件失败：${error instanceof Error ? error.message : String(error)}`);
+    console.error(`读取插件失败：${describeAdminError(error, config)}`);
     process.exit(1);
   }
 
+  // 摘要（含阻断项 / 冲突 / 权限扩大明细）；--json 时走 stderr，让 stdout 只有结果对象。
   (config.json ? console.error : console.log)(formatPluginInspection(info));
   if (!info.installable) {
-    console.error('插件不可安装：');
-    for (const blocker of info.blockers) console.error(`  - ${blocker}`);
-    for (const conflict of info.conflicts) {
-      console.error(`  - 冲突 ${conflict.kind} ${conflict.ref} ↔ ${conflict.withWhat}`);
-    }
+    console.error('插件不可安装，见上方「阻断项」/「冲突」。');
     process.exit(1);
   }
 
@@ -150,6 +151,9 @@ async function installPlugin(config: ServerConfig): Promise<void> {
     process.exit(1);
   }
 
+  // 权限扩大的更新 / 同 id 重装：摘要已逐项列出新增权限，确认动作本身即为知情同意
+  // （桌面端对应「勾选差异」）；core 没有这个标记会拒绝更新，headless 就没有别的出口了。
+  const permissionsExpanded = info.update?.permissionsExpanded === true;
   if (!config.pluginYes) {
     if (!process.stdin.isTTY) {
       console.error('非交互环境不能确认安装；确认无误后加 --yes 重试。');
@@ -158,7 +162,13 @@ async function installPlugin(config: ServerConfig): Promise<void> {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     let answer: string;
     try {
-      answer = (await rl.question('继续安装？[y/N] ')).trim().toLowerCase();
+      answer = (
+        await rl.question(
+          permissionsExpanded ? '此次更新新增了上述权限，继续安装？[y/N] ' : '继续安装？[y/N] ',
+        )
+      )
+        .trim()
+        .toLowerCase();
     } finally {
       rl.close();
     }
@@ -166,23 +176,37 @@ async function installPlugin(config: ServerConfig): Promise<void> {
       console.log('已取消。');
       process.exit(1);
     }
+  } else if (permissionsExpanded) {
+    console.error('注意：此次更新新增了上述权限，已按 --yes 确认。');
   }
 
   try {
-    const result = await client.pluginsInstall({
-      source,
-      sha256: info.packageSha256,
-      userConfig,
-    });
+    const result = pluginsInstallOutputSchema.parse(
+      await client.pluginsInstall({
+        source,
+        sha256: info.packageSha256,
+        userConfig,
+        acknowledgeDiff: permissionsExpanded,
+      }),
+    );
     if (config.json) {
       console.log(JSON.stringify(result));
     } else {
       console.log(`已安装：${info.name}（${info.id}@${info.version}）`);
     }
   } catch (error) {
-    console.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
+    console.error(`安装失败：${describeAdminError(error, config)}`);
     process.exit(1);
   }
+}
+
+/** Admin 调用失败的可行动文案：服务没起 / 端口不对时直接说，而不是只给 ECONNREFUSED。 */
+function describeAdminError(error: unknown, config: { port: number; dataDir: string }): string {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (code === 'ECONNREFUSED') {
+    return `连不上 127.0.0.1:${config.port} 的运行中服务。请先用同一 --data-dir 启动 kepcup-server，或用 --port 指向它监听的端口。`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**

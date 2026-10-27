@@ -25,9 +25,17 @@ export interface AdminDeps {
   /** D104 P2: admin-token-guarded local plugin install (the web shell has no file picker). */
   pluginsInspect(input: unknown): Promise<unknown>;
   pluginsInstall(input: unknown): Promise<unknown>;
+  /**
+   * Called for failures that become a 500: the admin path bypasses the RPC layer's error
+   * logging, so without this the cause would be lost (the response body stays `internal`).
+   */
+  onInternalError?: ((path: string, error: unknown) => void) | undefined;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** Client-side timeouts: plugin inspect / install may unpack large archives and set up runtimes. */
+const ADMIN_CALL_TIMEOUT_MS = 30_000;
+const PLUGIN_CALL_TIMEOUT_MS = 5 * 60_000;
 
 export function isAdminPath(pathname: string): boolean {
   return (
@@ -113,19 +121,25 @@ export function handleAdminRequest(
     return;
   }
   if (pathname === '/admin/plugins/inspect' && req.method === 'POST') {
-    handlePluginCall(deps.pluginsInspect, req, res);
+    handlePluginCall(deps, deps.pluginsInspect, pathname, req, res);
     return;
   }
   if (pathname === '/admin/plugins/install' && req.method === 'POST') {
-    handlePluginCall(deps.pluginsInstall, req, res);
+    handlePluginCall(deps, deps.pluginsInstall, pathname, req, res);
     return;
   }
   send(res, 404, { error: 'unknown admin endpoint' });
 }
 
-/** Body read / schema errors are the caller's fault (400); AppError is mapped, anything else is a 500. */
+/**
+ * Body read failures are 400 `invalid request body`; the dep is expected to turn schema
+ * failures into `AppError('INVALID_INPUT')` (400 with the code); anything else is a 500 whose
+ * cause is handed to `onInternalError` and never echoed to the caller.
+ */
 function handlePluginCall(
+  deps: Pick<AdminDeps, 'onInternalError'>,
   handle: (input: unknown) => Promise<unknown>,
+  pathname: string,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
@@ -134,8 +148,12 @@ function handlePluginCall(
       try {
         send(res, 200, await handle(body));
       } catch (error) {
-        if (isAppError(error)) send(res, 400, { error: error.message, code: error.code });
-        else send(res, 500, { error: 'internal' });
+        if (isAppError(error)) {
+          send(res, 400, { error: error.message, code: error.code });
+          return;
+        }
+        deps.onInternalError?.(pathname, error);
+        send(res, 500, { error: 'internal' });
       }
     })
     .catch(() => send(res, 400, { error: 'invalid request body' }));
@@ -177,7 +195,12 @@ export interface AdminClient {
 }
 
 export function createAdminClient(port: number, token: string): AdminClient {
-  const call = <T>(method: string, path: string, body?: unknown): Promise<T> =>
+  const call = <T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs: number = ADMIN_CALL_TIMEOUT_MS,
+  ): Promise<T> =>
     new Promise((resolve, reject) => {
       const payload = body === undefined ? null : JSON.stringify(body);
       const req = requestAdmin(method, path, port, token, payload, (data, code) => {
@@ -191,6 +214,11 @@ export function createAdminClient(port: number, token: string): AdminClient {
           reject(error);
         }
       });
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(
+          new Error(`admin ${path} 超时（${Math.round(timeoutMs / 1000)} 秒内服务没有响应）`),
+        );
+      });
       req.on('error', reject);
       if (payload !== null) req.write(payload);
       req.end();
@@ -202,8 +230,10 @@ export function createAdminClient(port: number, token: string): AdminClient {
       call('POST', '/admin/pairing/confirm', { requestId, accept }),
     devices: () => call('GET', '/admin/devices'),
     revoke: (deviceId) => call('POST', '/admin/devices/revoke', { deviceId }),
-    pluginsInspect: (source) => call('POST', '/admin/plugins/inspect', source),
-    pluginsInstall: (input) => call('POST', '/admin/plugins/install', input),
+    pluginsInspect: (source) =>
+      call('POST', '/admin/plugins/inspect', source, PLUGIN_CALL_TIMEOUT_MS),
+    pluginsInstall: (input) =>
+      call('POST', '/admin/plugins/install', input, PLUGIN_CALL_TIMEOUT_MS),
   };
 }
 

@@ -152,7 +152,7 @@ async function pluginServerId(page: Page): Promise<string> {
   return server!.id;
 }
 
-test('plugins: tab order, default tab and keyboard cycle land on installed', async () => {
+test('plugins: tab order, default tab and keyboard cycle land on market', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-tabs-'));

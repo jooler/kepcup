@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -93,6 +93,12 @@ async function startMarket(): Promise<Market> {
   };
 }
 
+/** 每个用例造的 `.kepcup` 夹具目录；用例结束后删掉，不留在系统临时目录里。 */
+const fixtureDirs: string[] = [];
+test.afterEach(async () => {
+  for (const dir of fixtureDirs.splice(0)) await rm(dir, { recursive: true, force: true });
+});
+
 async function makeFixture(options: {
   id: string;
   name: string;
@@ -101,8 +107,10 @@ async function makeFixture(options: {
   skills?: string[];
   connectors?: string[];
 }): Promise<PluginFixture> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-market-fx-'));
+  fixtureDirs.push(dir);
   return buildPluginFixture({
-    dir: await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-market-fx-')),
+    dir,
     manifest: {
       id: options.id,
       name: options.name,
@@ -318,7 +326,7 @@ test('plugins market: install from the marketplace, then the market card is inst
 
     // 市场卡变成「已安装」，按钮禁用。
     const installedButton = card(dialog, VERIFIED_ID).locator(
-      `[data-testid="plugins-market-update-${VERIFIED_ID}"]`,
+      `[data-testid="plugins-market-installed-${VERIFIED_ID}"]`,
     );
     await expect(installedButton).toContainText('已安装 · v1.0.0', { timeout: 30_000 });
     await expect(installedButton).toBeDisabled();
@@ -448,13 +456,13 @@ test('plugins market: a revoked version is flagged and the plugin is disabled', 
       installed.locator(`[data-testid="plugins-toggle-${VERIFIED_ID}"]`),
     ).toHaveAttribute('aria-checked', 'false');
 
-    // 市场卡也带撤销徽标，且安装 / 更新按钮禁用。
+    // 市场卡也带撤销徽标，且安装 / 更新按钮禁用（同版本已装、无更新 → installed 态）。
     await installed.locator('[data-testid="extension-center-tab-market"]').click();
     const marketCard = card(installed, VERIFIED_ID);
     await expect(marketCard).toBeVisible({ timeout: 30_000 });
     await expect(marketCard).toContainText('已被撤销并停用');
     await expect(
-      marketCard.locator(`[data-testid="plugins-market-update-${VERIFIED_ID}"]`),
+      marketCard.locator(`[data-testid="plugins-market-installed-${VERIFIED_ID}"]`),
     ).toBeDisabled();
   } finally {
     await app?.close();

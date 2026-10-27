@@ -61,6 +61,12 @@
   );
   /** `<select>` 的当前值：模板选择用 `tpl:` 前缀，其余是内置厂商 id。 */
   const providerOption = $derived(templateId === null ? provider : templateOptionValue(templateId));
+  /** 模板的帮助链接来自市场 / 本地插件数据，渲染前只认 https（不依赖上游单点校验）。 */
+  const templateHelpUrl = $derived(
+    template !== null && template.helpUrl !== null && template.helpUrl.startsWith('https://')
+      ? template.helpUrl
+      : null,
+  );
 
   $effect(() => {
     void (async () => {
@@ -76,9 +82,22 @@
     })();
   });
 
+  /** 模板带出的连接参数回到表单缺省值（从模板切回内置厂商 / 自定义时不留残值）。 */
+  function resetConnectionFields(): void {
+    imapHost = '';
+    smtpHost = '';
+    imapPort = '993';
+    smtpPort = '465';
+    imapSecure = 'ssl';
+    smtpSecure = 'ssl';
+    mode = 'auto';
+    pollIntervalSec = '300';
+  }
+
   function onProviderChange(value: string): void {
     const picked = parseTemplateOption(value);
     if (picked === null) {
+      if (templateId !== null) resetConnectionFields();
       templateId = null;
       provider = value as MailProvider;
       return;
@@ -179,8 +198,8 @@
       <p class="text-xs text-muted-foreground">
         {t('mail.template.note', { plugin: template.pluginName })}
       </p>
-      {#if template.helpUrl !== null}
-        <a class="text-xs underline" href={template.helpUrl} target="_blank" rel="noreferrer">
+      {#if templateHelpUrl !== null}
+        <a class="text-xs underline" href={templateHelpUrl} target="_blank" rel="noreferrer">
           {t('mail.help')}
         </a>
       {/if}

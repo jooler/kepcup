@@ -224,3 +224,28 @@ $ kepcup-server plugin install /tmp/demo-plugin --yes --json
 - `plugin.mcpb-package` 只做结构预览，运行时 / `user_config` / 启动模板的完整校验仍在安装时由 core 执行（检查项 info 已写明）。
 - 未做 settings 贡献 / 智能体贡献 / Claude / Cursor 目录导入（README §2 明确不在本期）。
 - P3 提交 / 审核流水线仍需单独设计（设计 51 §11）。
+
+### 合入 v0.5.0 后的独立审查修复（2026-10-27）
+
+六个域并行只读审查后按「长期收益最大化」修正，本阶段相关：
+
+- **`package-guard`**
+  - 目录条目缺省 mode 原来落成 `0o644`（`drw-r--r--`）：`kepcup-app pack` 的产物用 Info-ZIP / macOS 归档工具手动解开时目录不可遍历（应用内 `extractZip` 对目录走 `mkdir` 缺省 mode，所以安装不受影响）。`permissionMode` 对目录缺省 `0o755`，与参照实现 `buildZip` 一致；往返用例补断言。
+  - `resolveZipGuard` 的 `limits` 合并对显式 `undefined` 不设防（`{ maxEntries: undefined }` 会让上限比较恒为 false，静默关掉硬上限）：改为逐键只接受非 `undefined` 的覆盖，补用例。
+  - 文件 / 目录同名嵌套（`a` 文件 + `a/b`）以前到 fs 层才以裸 `EEXIST` / `EISDIR` 逃逸：新增 `EntryPathTracker`（写入器与解包器共用）在守卫层报 `包内路径冲突（文件与目录同名）`，重复路径的既有文案不变；两侧补用例（两种顺序）。
+  - 写入器超过 65535 条目时 EOCD 的 16 位计数会截断：加 ZIP64 防御报错；确定性注释限定「同一 Node / zlib 版本」；`data` 缺省写空文件在接口注释写明。
+  - 实施记录补登记：`f512377b` 的 `#extract` 改用 `extractZip` 时多了一步 `chmod` 把 mode 钉成精确 `0o755` / `0o644`（旧实现 `writeFile({ mode })` 受 umask 掩码）。staging 根目录本就是 `0o700`，默认 umask 下结果一致；属任务书「mode 只留 0o755 / 0o644」语义的忠实实现，不算行为回归，此处补记。
+- **`kepcup-app`（app-validator）**
+  - **校验器与安装器分叉（P1）**：`checkManifest` 是提交侧检查，解析前会补 `releaseGate` 占位；安装器 `rewriteConnectorEntry` 对原始 JSON 严格 `parse`。照指南写的连接器（无 `releaseGate`）validate / pack 全绿但安装被拒。`checkConnector` 增加同口径的 `connectorCatalogEntrySchema.safeParse(raw)`，失败按 `plugin.connector-entry` error 转发（前 3 条 issue）；同时要求至少一个远端（`plugin.connector-remote`，packages 不算）；指南示例补 `"releaseGate": "plugin"` 并写明安装时会改写。
+  - `SKILL.md` 轻量检查对齐 core `splitFrontmatter`：剥 BOM、CRLF 归一、开头与闭合行按 `startsWith('---')` 判定（此前带 BOM 或闭合行尾随空格会被 validate 拒、安装却收）。
+  - `pack` 的校验对象改为**打包后的归档**（DEV-060）：含 `node_modules` 的开发目录此前在第一步整树校验就被拒；现在收集 → 构包 → 临时归档 `validatePlugin`（`displayTarget` 显示用户目录）→ 零 error 才写 `--out`，失败不留产物。`PluginPackError` 带 report 时 CLI 退 1，否则（`.kepcup-ignore` 非法、IO 故障）退 2，与 `init` / USAGE 的「2 = 用法错误或工具故障」一致；`*.kepcup` 排除改为大小写不敏感（与输入判定对称）。
+  - `isPublicMailHost` 拒绝含空白 / 控制字符的 host（母本 `isSafeSkillSourceUrl` 对整串有此规则，复制时漏了）；`readManifest` 返回 `{ manifest, raw }`，metadata 检查不再第二次读文件；`errorMessage` 改用 `util.ts` 的导出；`validateTarget` 把 `log` 透传给插件模式（CLI 文本模式有进度行）；USAGE 的 `--out` 缺省说明改为「`/` → `__`」。
+  - 测试：BOM / CRLF / 闭合行、缺 `releaseGate`、无远端、空白 host、打包后视图（排除目录里有符号链接 + 大写 `.KEPCUP`）、CLI 退出码 1 / 2、`init → validate --json → pack --json → validate 归档` 端到端。
+- **`kepcup-server plugin install`**
+  - **权限扩大的更新无出口（P1，DEV-061）**：CLI 从不发送 `acknowledgeDiff`。现在交互确认语区分「此次更新新增了上述权限」，`--yes` 时打印提醒，随安装发送 `acknowledgeDiff: permissionsExpanded`。
+  - admin 端点对「JSON 合法但不符合 schema」的请求体此前落 500 `internal`（`ZodError` 不是 `AppError`）：`server.ts` 用 `safeParse` 转成 `AppError('INVALID_INPUT', 请求体不符合要求：<issue 路径>)` → 400，不回显值；`AdminDeps` 新增可选 `onInternalError(path, error)`，500 分支把原因写进服务日志（直调 `handle` 绕过了 RPC 层的 `onError`）。
+  - 必填配置预检与 core 对齐（DEV-062）：core 更新路径的 `#prevalidateUpdateUserConfig` 接受字段默认值；CLI 在 `info.update !== null` 时对必填敏感字段留空不报缺（core 保留已存密钥）。
+  - 阻断项 / 冲突只在摘要里打印一次；`ECONNREFUSED` 给出「用同一 --data-dir 启动服务或 --port 指向它」的定向提示；`pluginPath` 过 `expandTilde`；admin 客户端加超时（普通 30 秒、插件 inspect / install 5 分钟）；`--json` 输出先过 `pluginsInstallOutputSchema`。
+  - 测试：`admin-plugins` 的 500 分支断言 `onInternalError` 收到路径与原因、400 分支不触发；`server-integration` 补「schema 不合法 → HTTP 400 + INVALID_INPUT」；`plugin-cli` 补空分组 / 无运行时 / verified 不打警告与更新态必填判定。
+- **文档**：`apps/server/README.md`、`packages/app-validator/README.md`、`docs/guides/write-a-plugin.md` 同步；`docs/dev/DEVIATIONS.md` 新增 DEV-060 / 061 / 062。
+- **验证（真实执行）**：`pnpm typecheck` 全部通过（shared / package-guard / core / app-validator / server / desktop svelte-check 0 error 0 warning / website）；改动文件 `prettier --check` 与 `eslint` 干净（`apps/desktop/scripts/pack-hooks.cjs`、`src/main/pack-hooks.test.ts` 在 HEAD 本就不合 prettier，只加了标记行、未顺手重排）；全量 `node scripts/run-tests.mjs run --maxWorkers=8` → **657 文件 / 6971 例：6932 通过 / 2 失败 / 37 跳过**，2 例为既有负载敏感基线（`permission-bridge` 5 秒超时、`user-avatar` 毫秒时间戳碰撞），单跑均通过（29/29、2/2），失败集合不超出基线。定向：package-guard 27、plugin-install-requests 19、plugin-tools 6、context-assembly 35、tool-effects 34、plugins-update 集成（新用例）、plugin-registry 25、marketplace-sync 16、plugin-package 12、plugin-pack-compat 1、pack-hooks 21、渲染端 plugins / mail-template / tabs 23、app-validator 全包 14 文件、server 4 文件 33 例，全绿。

@@ -82,6 +82,13 @@
     return entry.installed === null || entry.installed.updateAvailable;
   }
 
+  /** 按钮 testid 跟随三种状态：未装 → install；已装有更新 → update；已装无更新 → installed（禁用）。 */
+  function actionTestId(entry: PluginMarketEntry): string {
+    if (entry.installed === null) return `plugins-market-install-${entry.id}`;
+    if (entry.installed.updateAvailable) return `plugins-market-update-${entry.id}`;
+    return `plugins-market-installed-${entry.id}`;
+  }
+
   async function refresh(): Promise<void> {
     try {
       await plugins.refreshMarket();
@@ -252,9 +259,7 @@
         variant={entry.installed === null ? 'secondary' : 'ghost'}
         disabled={!canAct(entry)}
         onclick={() => openInstall(entry)}
-        data-testid={entry.installed === null
-          ? `plugins-market-install-${entry.id}`
-          : `plugins-market-update-${entry.id}`}
+        data-testid={actionTestId(entry)}
       >
         {actionLabel(entry)}
       </Button>

@@ -248,7 +248,7 @@ P1-3 六个步骤全部完成，并经一轮独立审查 + 聚焦复核。收口
 | `b6e9f284` | 步骤 3–5：`market` 页签（最前）+ 覆盖率排除项 + `PENDING_DESKTOP_ANCHORS` 清空；store 的市场视图 / `refreshMarket` / `updateAll` / `marketplace.updated` 订阅；`ExtensionMarket.svelte`；`ExtensionInstalled` 的更新徽标 / 检查更新 / 全部更新 / 撤销提示 / 重新安装 / 两个设置锚点；`PluginInstallDialog` 的 `marketplace` 模式与 `plugins.update` 路径；`ConfirmPluginInstallBody`；`MailAccountAddForm` 的模板预填（`tpl:` 前缀）；i18n 两语言 |
 | `69f152a8` | 既有 e2e 的页签断言同步（`extension-center.spec.ts`、`plugins.spec.ts`：7 个页签、market 最前、键盘循环） |
 
-**收口改动（本轮工作树，未提交）**
+**收口改动（已随 `846be723` 等收口提交入库）**
 
 - **步骤 6.1 e2e**：新增 `apps/desktop/test/e2e/plugins-market.spec.ts`（6 例）。本地 `startFileServer` 托管用测试密钥签名的 `index.json` / `.sig` 与 `.kepcup`，`KEPCUP_TEST_PLUGIN_MARKET` 指过去；覆盖未配置市场（no_keys、无卡片、无空态）、认证 / 社区分组与搜索 / 类别筛选、从市场安装（无 developer 警示、市场卡变已安装）、检查更新 → 权限扩大（新增技能 + 新增主机）→ 勾选差异 → 更新到 1.1.0、撤销（提示 + 自动停用 + 开关关）、自建市场缺公钥（no_custom_key）以及「清空自建地址 → 官方市场重新可用」。
 - **测试夹具上移**：`buildPluginIndex` / `pluginIndexEntryFor` / `makeMarketKey` / `memoryMarketFetch` / `PluginMarketKey` 从 `packages/core/test/support/plugin-market-fixture.ts` 搬到 `packages/testkit/src/plugin-market-fixture.ts`（e2e 不能引 core test support）；六个 core 测试改从 `@kepcup/testkit` 引。`makeMarketKey` 的原始公钥字节与 `memoryMarketFetch` 的 ETag / 304 行为逐字保留；`pluginIndexEntryFor` 的 `summary` 仍是「缺省字段不写入」的旧形状（schema 解析后等价）。
@@ -287,3 +287,15 @@ P1-3 六个步骤全部完成，并经一轮独立审查 + 聚焦复核。收口
 
 - 一审（独立只读）：无 P0；P1 为市场端点切换后停旧状态、`updateAll` 静默丢失可选配置、阶段文件格式 / lint 回归；P2 若干（搜索 / 限频 / 错误展示 / 夹具形状等）。
 - 上述 P1 与可快速处理的 P2 已全部修复并补测试。二审聚焦复核除「搜索输出按码点截断、UTF-16 长度仍可能超 4000」一项外均通过；该项已改为按 UTF-16 预算截断（不劈开代理对）并补 emoji 用例，单测通过。
+
+### 合入 v0.5.0 后的独立审查修复（2026-10-27）
+
+六个域并行只读审查（核心 Bot 工具 / 核心市场同步与邮件模板 / 渲染层 / package-guard / app-validator / server），本阶段相关的修复：
+
+- **`confirm-plugin-install` 需求过不了 schema（P2）**：`reason` / `name` 由 `sanitizeDisplayText` 按码点截断，而 `setupRequirementSchema` 的 `.max()` 按 UTF-16 码元计；200 个 emoji 的 reason 会让该对话的 `runs.list` / `runs.retry` 输出校验失败（INTERNAL）。`install-requests.ts` 增加 UTF-16 预算收口（不劈代理对），名称清洗后为空退回插件 id；`plugin_request_install` 的三个参数加硬上限（`plugin_id` 200 / `version` 64 / `reason` 1000）。补用例：400 字与 200 emoji 的 reason 产出的需求均 `safeParse` 通过。
+- **测试补齐**：`request` 的「不兼容」固定文案（指定版本）与「无版本时当作没有可装版本」、`search` 排除不兼容条目、描述截断到 120 码点、`runId` / `conversationId` 为 null 时对应维度不计数；`context-assembly` 对 D63 阶梯「关」态改为**整段逐字**断言并断言 `hasPluginTools: false` 与缺省完全等价。
+- **按任务书回正**：`plugin-tools.ts` 的 `name:` 改为字面量独占一行（`tool-effects` 两条扫描正则都能命中）；「已安装」拒绝文案带上已装版本（`已经安装了该插件（v1.0.0），无需再次请求。`）。
+- **测试缝加固**：`KEPCUP_TEST_PLUGIN_MARKET` 改为 zod 解析（`baseUrl` 必须是 URL、`keys` 按 `connectorIndexPublicKeySchema` 校验且非空），`new URL` 挪进解析分支，**只接受回环地址**（`loopbackHostOf`），任何不合法的缝打 warn 日志后整体忽略；`apps/desktop/scripts/pack-hooks.cjs` 的 `FORBIDDEN_MARKERS` 加入该 env 名（此前是唯一没有产物 grep 兜底的缝）。
+- **`mailTemplates()`**：清单读不到的插件跳过时打 `warn`（与启动路径同款），不再静默。
+- **渲染层**：`PluginInstallDialog` 的检视加请求序号（关闭 / 换目标后晚返回的旧结果不覆盖、不提前解除 loading）；邮件表单从模板切回内置厂商 / 自定义时清掉模板带出的主机 / 端口 / secure / mode / 轮询（否则会建出「模板 host + 默认参数」的混搭账号）；模板 `helpUrl` 渲染前只认 `https://`；`refreshMarket()` 进行中吞掉 `plugins.marketplace.updated` 事件（避免同一轮刷新拉两遍）；市场卡「已装无更新」态独立 testid `plugins-market-installed-{id}`（e2e 同步）；「全部更新」进行中禁用「检查更新」与单个「更新」；`SettingSetupBody` / `SetupRequiredCard` 的 kind 清单注释补 `confirm-plugin-install`；`plugins.svelte.test.ts` 的 `updateAll` 用例改为断言真实 `sha256` 透传（此前断言的是 `undefined`）并新增「刷新期间事件去重」用例；e2e 夹具目录 `afterEach` 清理、`plugins.spec.ts` 用例名改为 land on market。
+- 未改的审查意见：新增源码注释为中文——与各文件既有风格一致，README §1.7 的「注释用英文」与仓库现实的既有张力，不在本次返工范围；`refreshMarket` 与 `afterMutation` 的事件双拉在 `plugins.changed` 路径保持 P0a-3 既有模式。

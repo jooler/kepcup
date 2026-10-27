@@ -175,7 +175,7 @@
       <Button
         size="sm"
         variant="ghost"
-        disabled={checking || plugins.marketLoading}
+        disabled={checking || updatingAll || plugins.marketLoading}
         onclick={() => void checkUpdates()}
         data-testid="plugins-check-updates"
       >
@@ -262,6 +262,7 @@
               <Button
                 size="sm"
                 variant="secondary"
+                disabled={updatingAll}
                 onclick={() => openUpdate(plugin)}
                 data-testid={`plugins-update-${plugin.id}`}
               >

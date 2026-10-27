@@ -41,17 +41,24 @@ export function parseUserConfigText(text: string): PluginUserConfig {
   return result;
 }
 
-/** Required MCPB user_config keys that neither the file nor the field default provides. */
+/**
+ * Required MCPB user_config keys that neither the file nor the field default provides. On an
+ * update / same-id reinstall (`info.update !== null`) a blank required **sensitive** field is
+ * not missing: core keeps the stored secret (P1-2 keep-secrets) and rejects with a clear
+ * INVALID_INPUT if none is stored — the same rule the desktop consent panel applies.
+ */
 export function missingRequiredUserConfig(
-  info: Pick<PluginInspectOutput, 'mcp'>,
+  info: Pick<PluginInspectOutput, 'mcp' | 'update'>,
   provided: PluginUserConfig,
 ): string[] {
+  const updating = info.update !== null;
   const missing: string[] = [];
   for (const item of info.mcp) {
     if (item.kind !== 'mcpb') continue;
     const values = provided[item.id] ?? {};
     for (const field of item.userConfigFields) {
       if (!field.required) continue;
+      if (updating && field.sensitive) continue;
       const value = values[field.key] ?? field.default;
       const empty =
         value === undefined || value === '' || (Array.isArray(value) && value.length === 0);

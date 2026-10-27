@@ -34,7 +34,7 @@ const OFFICIAL_BASE = 'https://market.test/plugins/v1';
 const T1 = Date.parse('2026-10-20T00:00:00.000Z');
 const T2 = Date.parse('2026-10-21T00:00:00.000Z');
 
-const mcpbManifest = (version: string) => ({
+const mcpbManifest = (version: string, extraUserConfig: Record<string, unknown> = {}) => ({
   server: {
     type: 'node',
     entry_point: 'server/index.cjs',
@@ -46,6 +46,7 @@ const mcpbManifest = (version: string) => ({
   },
   user_config: {
     api_key: { type: 'string', title: 'API Key', sensitive: true, required: true },
+    ...extraUserConfig,
   },
   // Every generation gets its own unpacked slot (echo-bundle@{version}).
   name: 'echo-bundle',
@@ -61,6 +62,8 @@ interface FixtureOptions {
   fileName?: string;
   /** 追加到每个技能描述后（同版本 / 跨版本制造内容差异）。 */
   skillSuffix?: string;
+  /** 追加到内嵌 MCPB 的 `user_config`（新版本新增配置项的场景）。 */
+  extraUserConfig?: Record<string, unknown>;
 }
 
 async function makeFixture(options: FixtureOptions): Promise<{
@@ -85,7 +88,9 @@ async function makeFixture(options: FixtureOptions): Promise<{
     mcpb: [
       {
         id: MCPB_KEY,
-        mcpb: { manifest: mcpbManifest(options.mcpbVersion ?? '1.0.0') },
+        mcpb: {
+          manifest: mcpbManifest(options.mcpbVersion ?? '1.0.0', options.extraUserConfig ?? {}),
+        },
       },
     ],
     http: [{ id: 'docs', url: 'https://mcp.docs.test/mcp' }],
@@ -481,6 +486,64 @@ describe('plugins update integration (P1-2)', () => {
     await publish(rig, T2 + 1, [{ fixture: v3 }]);
     await core.rpc.call('plugins.update', { id: PLUGIN_ID, sha256: v3.sha256, userConfig: {} });
     expect(await readSecret()).toBe('env:sk-rotated'); // 留空 = 保留
+  }, 180_000);
+
+  it('新版本新增的必填配置：带默认值不要求用户提供（与首装 validateUserConfig 同规则）；无默认值且未提供 → INVALID_INPUT 且旧版本完好', async () => {
+    const rig = await setup();
+    const { core } = rig.stack;
+    const v1 = await makeFixture({
+      version: '1.0.0',
+      mcpbVersion: '1.0.0',
+      fileName: 'req-v1.kepcup',
+    });
+    const withDefault = await makeFixture({
+      version: '1.1.0',
+      mcpbVersion: '2.0.0',
+      fileName: 'req-v2.kepcup',
+      extraUserConfig: {
+        region: { type: 'string', title: 'Region', required: true, default: 'us' },
+      },
+    });
+    const withoutDefault = await makeFixture({
+      version: '1.2.0',
+      mcpbVersion: '3.0.0',
+      fileName: 'req-v3.kepcup',
+      extraUserConfig: { tenant: { type: 'string', title: 'Tenant', required: true } },
+    });
+    await publish(rig, T1, [{ fixture: v1 }]);
+    await core.rpc.call('plugins.install', {
+      source: { kind: 'marketplace', id: PLUGIN_ID },
+      sha256: v1.sha256,
+      userConfig: { [MCPB_KEY]: { api_key: 'sk-x' } },
+    });
+
+    // 新增 user_config 字段算权限扩大，这里一律带 acknowledgeDiff，只考必填判定。
+    await publish(rig, T2, [{ fixture: withDefault }]);
+    await core.rpc.call('plugins.update', {
+      id: PLUGIN_ID,
+      sha256: withDefault.sha256,
+      userConfig: {},
+      acknowledgeDiff: true,
+    });
+    expect((await pluginsList(rig.stack))[0]).toMatchObject({ version: '1.1.0' });
+
+    await publish(rig, T2 + 1, [{ fixture: withoutDefault }]);
+    await expect(
+      core.rpc.call('plugins.update', {
+        id: PLUGIN_ID,
+        sha256: withoutDefault.sha256,
+        userConfig: {},
+        acknowledgeDiff: true,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT', message: '请填写必填配置项：Tenant' });
+    expect((await pluginsList(rig.stack))[0]).toMatchObject({ version: '1.1.0' });
+    await core.rpc.call('plugins.update', {
+      id: PLUGIN_ID,
+      sha256: withoutDefault.sha256,
+      userConfig: { [MCPB_KEY]: { tenant: 'acme' } },
+      acknowledgeDiff: true,
+    });
+    expect((await pluginsList(rig.stack))[0]).toMatchObject({ version: '1.2.0' });
   }, 180_000);
 
   it('本地同 id 重装 = 更新：同版本不同内容也行；.prev 在成功后消失', async () => {

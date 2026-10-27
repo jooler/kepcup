@@ -44,7 +44,8 @@ Commands:
   validate <target>      Connector mode for a server.json path / https URL; plugin
                          mode when <target> is a directory or ends with .kepcup
   init plugin <dir>      Write a minimal plugin skeleton into <dir>
-  pack <dir>             Validate <dir>, then write a reproducible .kepcup archive
+  pack <dir>             Pack <dir> (minus .git / node_modules / .kepcup-ignore paths) into a
+                         reproducible .kepcup, validating the archive before writing it
 
 Options:
   --auth           Authorize once in a browser with KepCup's client identity, then
@@ -55,7 +56,7 @@ Options:
   --id <id>        With init: plugin id (default io.github.your-name/<directory name>)
   --name <name>    With init: display name (default: the directory name)
   --force          With init: write into a non-empty directory
-  --out <file>     With pack: output path (default <id with / and @ replaced>-<version>.kepcup)
+  --out <file>     With pack: output path (default <id with / replaced by __>-<version>.kepcup)
   -h, --help       Show this help
   -v, --version    Show the version
 

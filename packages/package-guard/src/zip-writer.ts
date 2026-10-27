@@ -1,20 +1,29 @@
 import { deflateRawSync } from 'node:zlib';
-import { crc32, resolveZipGuard, safeEntryPath, type ZipGuardOptions } from './zip.js';
+import {
+  EntryPathTracker,
+  crc32,
+  resolveZipGuard,
+  safeEntryPath,
+  type ZipGuardOptions,
+} from './zip.js';
 
 /**
  * Deterministic ZIP writer for plugin packages (`kepcup-app pack`). The byte layout
  * mirrors `testkit/src/mcpb-fixture.ts`'s `buildZip`: stored / deflate entries, Unix
  * "version made by", UTF-8 names, no ZIP64, encryption or symlinks. Entries are sorted by
- * name and timestamps are fixed at 1980-01-01 00:00 so identical input always produces
- * identical bytes.
+ * name and timestamps are fixed at 1980-01-01 00:00, so identical input produces identical
+ * bytes on the same Node / zlib version (deflate output is only stable per zlib build).
  */
 
 export interface ZipWriteEntry {
   /** Relative POSIX path; a trailing `/` marks a directory. Always goes through {@link safeEntryPath}. */
   name: string;
-  /** File content; omitted for directories. */
+  /** File content; omitted for directories. A file without `data` is written empty. */
   data?: Uint8Array;
-  /** Unix permission bits; only the executable bit is honoured (0o755 vs 0o644). */
+  /**
+   * Unix permission bits; only the executable bit is honoured (0o755 vs 0o644). Omitted
+   * means 0o644 for files and 0o755 for directories, like `buildZip`.
+   */
   mode?: number;
 }
 
@@ -27,9 +36,12 @@ interface PlannedEntry {
 
 const DOS_DATE = 0x0021;
 const DOS_TIME = 0;
+/** EOCD stores the entry count in 16 bits; beyond that an archive would need ZIP64. */
+const MAX_ENTRIES_WITHOUT_ZIP64 = 0xffff;
 
-function permissionMode(mode: number | undefined): number {
-  return mode !== undefined && (mode & 0o111) !== 0 ? 0o755 : 0o644;
+function permissionMode(mode: number | undefined, isDirectory: boolean): number {
+  if (mode === undefined) return isDirectory ? 0o755 : 0o644;
+  return (mode & 0o111) !== 0 ? 0o755 : 0o644;
 }
 
 /** Builds a ZIP archive; throws via the configured error factory on any guard violation. */
@@ -41,15 +53,16 @@ export function buildZipBuffer(
   if (entries.length > limits.maxEntries) {
     throw error(`包内条目过多（上限 ${limits.maxEntries}）`);
   }
+  if (entries.length > MAX_ENTRIES_WITHOUT_ZIP64) {
+    throw error(`包内条目过多（不支持 ZIP64，上限 ${MAX_ENTRIES_WITHOUT_ZIP64}）`);
+  }
   const planned: PlannedEntry[] = [];
-  const seen = new Set<string>();
+  const paths = new EntryPathTracker(error);
   let unpacked = 0;
   for (const entry of entries) {
     const isDirectory = entry.name.endsWith('/');
     const safe = safeEntryPath(entry.name, error);
-    const key = safe.toLowerCase();
-    if (seen.has(key)) throw error(`包内有重复路径：${entry.name}`);
-    seen.add(key);
+    paths.add(safe, isDirectory, entry.name);
     const data = isDirectory ? Buffer.alloc(0) : Buffer.from(entry.data ?? new Uint8Array());
     if (data.length > limits.maxEntryBytes) throw error(`包内文件过大：${entry.name}`);
     unpacked += data.length;
@@ -58,7 +71,7 @@ export function buildZipBuffer(
       name: isDirectory ? `${safe}/` : safe,
       isDirectory,
       data,
-      mode: permissionMode(entry.mode),
+      mode: permissionMode(entry.mode, isDirectory),
     });
   }
   planned.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

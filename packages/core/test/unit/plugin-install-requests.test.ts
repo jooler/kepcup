@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { setupRequirementSchema } from '@kepcup/shared';
 import { buildPluginFixture } from '@kepcup/testkit';
 import { PluginInstallRequests } from '../../src/plugins/install-requests.js';
 import { MarketplaceSync } from '../../src/plugins/marketplace-sync.js';
@@ -153,6 +154,28 @@ describe('PluginInstallRequests.search', () => {
     expect(hit?.description).toBe('PDF conversions');
   });
 
+  it('描述截断到 120 个码点', async () => {
+    const h = await harness();
+    const raw = await entry({ id: 'io.github.a/one', tier: 'verified' });
+    raw.summary = { name: 'Doc Tools', description: `PDF ${'x'.repeat(300)}`, author: 'Alice' };
+    h.publish([raw]);
+    await h.sync.sync();
+    const [hit] = h.requests.search('doc');
+    expect(hit?.description).toHaveLength(120);
+    expect(hit?.description.startsWith('PDF x')).toBe(true);
+  });
+
+  it('与当前版本 / 平台不兼容的条目不出现', async () => {
+    const h = await harness();
+    const engine = await entry({ id: 'io.github.a/engine', tier: 'verified' });
+    engine.engines = { kepcup: '>=99.0.0' };
+    const winOnly = await entry({ id: 'io.github.a/win', tier: 'verified' });
+    winOnly.platforms = ['win32'];
+    h.publish([engine, winOnly, await entry({ id: 'io.github.a/ok', tier: 'verified' })]);
+    await h.sync.sync();
+    expect(h.requests.search('doc').map((hit) => hit.id)).toEqual(['io.github.a/ok']);
+  });
+
   it('无 version 的 request 与 search 解析同一个 verified 版本', async () => {
     const h = await harness();
     const v1 = await entry({ id: 'io.github.a/one', version: '1.0.0', tier: 'verified' });
@@ -248,7 +271,24 @@ describe('PluginInstallRequests.request', () => {
     installed.installed.push('io.github.tester/fixture');
     expect(
       installed.requests.request({ pluginId: 'io.github.tester/fixture', reason: 'x' }, context),
-    ).toEqual({ ok: false, message: '已经安装了该插件，无需再次请求。' });
+    ).toEqual({ ok: false, message: '已经安装了该插件（v1.0.0），无需再次请求。' });
+  });
+
+  it('不兼容被拒：指定版本报固定文案，不指定版本当作没有可装的版本', async () => {
+    const h = await harness();
+    const raw = await entry({ tier: 'verified' });
+    raw.engines = { kepcup: '>=99.0.0' };
+    h.publish([raw]);
+    await h.sync.sync();
+    expect(
+      h.requests.request(
+        { pluginId: 'io.github.tester/fixture', version: '1.0.0', reason: 'x' },
+        context,
+      ),
+    ).toEqual({ ok: false, message: '该插件与当前 KepCup 版本或操作系统不兼容。' });
+    expect(
+      h.requests.request({ pluginId: 'io.github.tester/fixture', reason: 'x' }, context),
+    ).toEqual({ ok: false, message: '官方市场里没有这个插件。' });
   });
 
   it('非官方市场被拒', async () => {
@@ -266,6 +306,69 @@ describe('PluginInstallRequests.request', () => {
         context,
       ),
     ).toEqual({ ok: false, message: '请说明为什么需要这个插件（给用户看的一句话）。' });
+  });
+
+  it('理由与名称按 UTF-16 预算截断，产出的需求能过 setupRequirementSchema', async () => {
+    const h = await setup();
+    const long = h.requests.request(
+      { pluginId: 'io.github.tester/fixture', reason: '需'.repeat(400) },
+      context,
+    );
+    expect(long.ok).toBe(true);
+    if (long.ok) {
+      expect(long.requirement.reason).toHaveLength(300);
+      expect(setupRequirementSchema.safeParse(long.requirement).success).toBe(true);
+    }
+    // 200 个 emoji 是 200 个码点、400 个码元：只按码点截会让 schema 的 .max(300) 失败。
+    const emoji = h.requests.request(
+      { pluginId: 'io.github.tester/fixture', reason: '😀'.repeat(200) },
+      { ...context, runId: 'run_emoji' },
+    );
+    expect(emoji.ok).toBe(true);
+    if (emoji.ok) {
+      expect(emoji.requirement.reason.length).toBeLessThanOrEqual(300);
+      expect(emoji.requirement.reason.endsWith('😀')).toBe(true);
+      expect(setupRequirementSchema.safeParse(emoji.requirement).success).toBe(true);
+    }
+  });
+
+  it('索引里的名称清洗后为空时退回到插件 id', async () => {
+    const h = await harness();
+    const raw = await entry({ tier: 'verified' });
+    raw.summary = { name: '\u200b\u200b', description: 'PDF conversions', author: 'Alice' };
+    h.publish([raw]);
+    await h.sync.sync();
+    const result = h.requests.request(
+      { pluginId: 'io.github.tester/fixture', reason: 'x' },
+      context,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.requirement.name).toBe('io.github.tester/fixture');
+      expect(setupRequirementSchema.safeParse(result.requirement).success).toBe(true);
+    }
+  });
+
+  it('runId / conversationId 为 null 时对应维度不计数', async () => {
+    const h = await setup();
+    const anonymous = { botId: null, conversationId: null, runId: null };
+    for (let index = 0; index < 30; index += 1) {
+      expect(h.requests.request({ pluginId: 'io.github.none/x', reason: 'x' }, anonymous)).toEqual({
+        ok: false,
+        message: '官方市场里没有这个插件。',
+      });
+    }
+    // 只有对话 id 时仍按对话维度限频。
+    const conversationOnly = { botId: null, conversationId: 'conv_only', runId: null };
+    for (let index = 0; index < 20; index += 1) {
+      h.requests.request({ pluginId: 'io.github.none/x', reason: 'x' }, conversationOnly);
+    }
+    expect(
+      h.requests.request({ pluginId: 'io.github.none/x', reason: 'x' }, conversationOnly),
+    ).toEqual({
+      ok: false,
+      message: '这个对话里插件安装请求太频繁了（每小时有上限），请稍后再试。',
+    });
   });
 
   it('限频：run 内第 6 次被拒，失败也计数', async () => {
