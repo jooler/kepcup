@@ -44,12 +44,6 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
   },
   { kind: 'bot-panel-tab', id: 'widget', reason: 'Bot 自制组件是产出物，不是设置' },
   {
-    kind: 'extension-tab',
-    id: 'installed',
-    reason:
-      '已安装插件的对象管理（装 / 卸 / 启停），不是设置；插件相关设置项在 P1 以 plugins.* 条目登记并改指此页签',
-  },
-  {
     kind: 'bot-panel-tab',
     id: 'wiki',
     reason: '知识库内容是 Bot 的数据，不是设置；收录走 wiki_enqueue',
@@ -114,9 +108,14 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
  * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 曾登记项目详情页的四个锚点，
- * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除（当前为空）。
+ * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除。
+ * D104 P1-1：`plugins.updates` / `plugins.marketplace` 深链到扩展中心「已安装」页签，
+ * 锚点在 P1-3 的市场 / 更新 UI 落地——届时必须同时从这里删掉。
  */
-export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
+  'plugins-updates',
+  'plugins-marketplace',
+];
 
 /** 对话框类深链的固定 section 名。 */
 export const DIALOG_SURFACE_SECTIONS = {

@@ -127,6 +127,7 @@ describe('settings catalog integrity', () => {
         'environment.allowlist',
         'environment.sandbox',
         'environment.toolchains',
+        'plugins.marketplace',
         'remote.devices',
         'workdir.ports',
         'workdir.protect-rules',
@@ -138,6 +139,7 @@ describe('settings catalog integrity', () => {
       expect(getSettingItem(id)?.write.wideningMode, id).toBe('user-only');
     }
     for (const entry of items) {
+      if (entry.id === 'plugins.marketplace') continue; // 供应链信任根但 generic：不出权限（§4.2.4）
       if (entry.write.maxMode === 'user-only' || entry.write.wideningMode !== undefined) {
         expect(entry.write.widensPermission, entry.id).toBe(true);
       }
@@ -406,6 +408,8 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
       'general.workbench',
       'remote.enabled',
       'remote.relay',
+      'plugins.updates',
+      'plugins.marketplace',
     ]);
     const defaults = settingsSchema.parse({}) as Record<string, unknown>;
     for (const entry of generic) {

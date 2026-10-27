@@ -9,6 +9,9 @@ import {
   AGENT_CATALOG,
   AppError,
   CONNECTOR_INDEX_MAX_BYTES,
+  PLUGIN_INDEX_BASE_URL,
+  PLUGIN_INDEX_MAX_BYTES,
+  PLUGIN_INDEX_PUBLIC_KEYS,
   CONNECTOR_INDEX_PUBLIC_KEYS,
   SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
@@ -208,8 +211,9 @@ import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './rpc/files-preview-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
-import { DirectorySync } from './apps/directory-sync.js';
+import { DirectorySync, type DirectoryFetch } from './apps/directory-sync.js';
 import { createSafeFetch } from './apps/auth/safe-fetch.js';
+import { MarketplaceService } from './plugins/marketplace-service.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
 import { AppSkillsOffers } from './apps/skills-offer.js';
@@ -434,6 +438,20 @@ export interface CoreServicesOptions {
     initialDelayMs?: number;
   };
   /**
+   * D104 P1-1 test hook (NODE_ENV=test in a test-hooks build only): the marketplace public
+   * key list (production list lives in shared `PLUGIN_INDEX_PUBLIC_KEYS`, empty until the
+   * real key exists), the index base URL (a loopback fake) and in-memory fetches for both
+   * the index and the package downloads, plus the timer cadence.
+   */
+  pluginMarketplace?: {
+    keys?: ConnectorIndexPublicKey[];
+    baseUrl?: string;
+    fetch?: DirectoryFetch;
+    downloadFetch?: DirectoryFetch;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  };
+  /**
    * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
    * share intake daily sweep cadence so integration tests can observe the
    * timer firing without waiting a real day.
@@ -627,6 +645,8 @@ export interface CoreServices {
   mcpb: McpbInstaller | null;
   /** D104 插件系统：账本 + 投影器 + 注册表；未装配时为 null（RPC 报 NOT_IMPLEMENTED）。 */
   plugins: PluginRegistry | null;
+  /** D104 P1-1 插件市场端点解析与同步；close() 停定时器，RPC 绑定取用。 */
+  marketplace: MarketplaceService | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
   toolLock: ToolLockService | null;
   /** D73 P1 persistent per-(bot, connection, tool) grants; null with `apps`. */
@@ -904,6 +924,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appRuntime: null,
     mcpb: null,
     plugins: null,
+    marketplace: null,
     toolLock: null,
     appToolGrants: null,
     taint: null,
@@ -939,6 +960,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       await services.remote?.close();
       services.jobsRunner?.stop();
       services.directorySync?.stop();
+      services.marketplace?.stop();
       services.appSkills?.stop();
       try {
         services.schedules?.stop();
@@ -2215,9 +2237,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       pluginsDir: paths.pluginsDir,
       logger,
       appVersion: options.appVersion ?? '0.0.0',
-      ...(options.platform !== undefined
-        ? { platform: options.platform as NodeJS.Platform }
-        : {}),
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
     });
     const pluginProjectors = createPluginProjectors({
       skills: {
@@ -2260,16 +2280,70 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         );
       }
     });
+    // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
+    // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
+    const marketplaceOptions = directoryTest ? options.pluginMarketplace : undefined;
+    const marketplaceFetchFactory = (fetchOptions: {
+      maxBytes: number;
+      timeoutMs?: number;
+    }): DirectoryFetch => {
+      if (marketplaceOptions?.fetch !== undefined) {
+        // Tests inject both channels directly; the download channel has the larger cap.
+        return fetchOptions.maxBytes > PLUGIN_INDEX_MAX_BYTES
+          ? (marketplaceOptions.downloadFetch ?? marketplaceOptions.fetch)
+          : marketplaceOptions.fetch;
+      }
+      return createSafeFetch(fetchOptions);
+    };
+    const marketplace = new MarketplaceService({
+      settings,
+      cacheDir: paths.cacheDir,
+      clock,
+      logger,
+      events,
+      ...(marketplaceOptions?.keys !== undefined || marketplaceOptions?.baseUrl !== undefined
+        ? {
+            official: {
+              keys: marketplaceOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
+              baseUrl: marketplaceOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
+            },
+          }
+        : {}),
+      fetchFactory: marketplaceFetchFactory,
+      ...(marketplaceOptions?.intervalMs !== undefined ||
+      marketplaceOptions?.initialDelayMs !== undefined
+        ? {
+            timing: {
+              ...(marketplaceOptions.intervalMs !== undefined
+                ? { intervalMs: marketplaceOptions.intervalMs }
+                : {}),
+              ...(marketplaceOptions.initialDelayMs !== undefined
+                ? { initialDelayMs: marketplaceOptions.initialDelayMs }
+                : {}),
+            },
+          }
+        : {}),
+    });
+    services.marketplace = marketplace;
     const plugins = new PluginRegistry({
       store: pluginStore,
       packager: pluginPackager,
       projectors: pluginProjectors,
       builtin: builtinPlugins,
+      marketplace,
       pluginsDir: paths.pluginsDir,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
       clock,
       logger,
       events,
       audit,
+    });
+    // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
+    marketplace.onAdopted(() => {
+      void plugins.applyRevocations().catch((error: unknown) => {
+        logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
+      });
     });
 
     const orchestrator = new Orchestrator({
@@ -3246,6 +3320,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.localConnectors = localConnectors;
     services.directorySync = directorySync;
     directorySync.start();
+    // D104 P1-1：市场定时拉取在插件注册表启动（含启动撤销检查）之后。
+    marketplace.start();
     services.appConnections = appConnections;
     // D73 P3 §7.6: bundled skills of a catalog entry are offered after the connection completes;
     // installing goes through the existing skill_import approval (never automatic).

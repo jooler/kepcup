@@ -13,8 +13,8 @@ import {
 } from '../../src/index.js';
 
 /**
- * 插件系统 RPC / 事件 / 错误码 / 既有契约改动（D104，P0a-1 步骤 2.2–2.4）：
- * 五个方法都进了 `APP_RPC_METHODS`、事件与错误码登记、`McpServerSource` 联合、
+ * 插件系统 RPC / 事件 / 错误码 / 既有契约改动（D104，P0a-1 步骤 2.2–2.4；市场方法 P1-1 步骤 2.3）：
+ * 方法都进了 `APP_RPC_METHODS`、事件与错误码登记、`McpServerSource` 联合、
  * 同意面板与 summary 的 schema 往返。
  */
 
@@ -24,6 +24,8 @@ const PLUGIN_METHODS = [
   'plugins.install',
   'plugins.setEnabled',
   'plugins.uninstall',
+  'plugins.marketplace.list',
+  'plugins.marketplace.refresh',
 ];
 
 const summary = {
@@ -47,6 +49,7 @@ const summary = {
     { kind: 'connector', ref: 'notion', yielded: true },
   ],
   updateAvailable: null,
+  revoked: null,
 };
 
 describe('plugins RPC / event / error-code contracts', () => {
@@ -55,6 +58,16 @@ describe('plugins RPC / event / error-code contracts', () => {
       expect(APP_RPC_METHODS).toContain(method);
       expect(rpcMethodSchemas).toHaveProperty(method);
     }
+  });
+
+  it('registers the plugins.changed and plugins.marketplace.updated events', () => {
+    expect(RPC_EVENT_NAMES).toContain('plugins.marketplace.updated');
+    expect(
+      rpcEventSchemas['plugins.marketplace.updated'].safeParse({ generatedAt: 1 }).success,
+    ).toBe(true);
+    expect(
+      rpcEventSchemas['plugins.marketplace.updated'].safeParse({ generatedAt: null }).success,
+    ).toBe(true);
   });
 
   it('registers the plugins.changed event', () => {

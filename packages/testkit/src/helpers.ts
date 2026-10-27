@@ -64,6 +64,8 @@ export async function createTestStack(
     connectorCatalog?: CreateTestCoreOptions['connectorCatalog'];
     mcpbRuntimes?: CreateTestCoreOptions['mcpbRuntimes'];
     directorySync?: CreateTestCoreOptions['directorySync'];
+    /** D104 P1-1 test hook (see CoreServicesOptions.pluginMarketplace). */
+    pluginMarketplace?: CreateTestCoreOptions['pluginMarketplace'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -109,6 +111,9 @@ export async function createTestStack(
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
     ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
+    ...(options.pluginMarketplace !== undefined
+      ? { pluginMarketplace: options.pluginMarketplace }
+      : {}),
   });
   return {
     core,

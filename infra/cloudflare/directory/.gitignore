@@ -2,5 +2,7 @@
 public/connectors/v1/index.json
 public/connectors/v1/index.json.sig
 public/connectors/v1/deltas/
+public/plugins/v1/index.json
+public/plugins/v1/index.json.sig
 node_modules/
 .wrangler/

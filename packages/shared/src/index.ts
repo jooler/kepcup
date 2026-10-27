@@ -33,6 +33,7 @@ export * from './domain/watches.js';
 export * from './domain/mail.js';
 export * from './domain/plugin-manifest.js';
 export * from './domain/plugins.js';
+export * from './domain/plugin-index.js';
 export * from './domain/handover.js';
 export * from './domain/stickies.js';
 export * from './domain/agent-status.js';

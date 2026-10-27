@@ -125,6 +125,45 @@ describe('appLanguage (renderer-synced UI language)', () => {
   });
 });
 
+describe('plugin marketplace settings keys (D104 P1-1)', () => {
+  it('settings.update accepts the three keys and rejects malformed ones', () => {
+    expect(
+      settingsUpdateInputSchema.parse({
+        pluginAutoCheckUpdates: false,
+        pluginMarketplaceUrl: 'https://market.example.com/plugins/v1',
+        pluginMarketplacePublicKey: `${'A'.repeat(43)}=`,
+      }),
+    ).toEqual({
+      pluginAutoCheckUpdates: false,
+      pluginMarketplaceUrl: 'https://market.example.com/plugins/v1',
+      pluginMarketplacePublicKey: `${'A'.repeat(43)}=`,
+    });
+  });
+
+  it('a partial update does not erase the stored marketplace values', () => {
+    expect(settingsUpdateInputSchema.parse({ pluginAutoCheckUpdates: true })).toEqual({
+      pluginAutoCheckUpdates: true,
+    });
+  });
+
+  it('rejects a non-https marketplace url and a malformed public key', () => {
+    expect(
+      settingsUpdateInputSchema.safeParse({ pluginMarketplaceUrl: 'http://market.example.com' })
+        .success,
+    ).toBe(false);
+    expect(
+      settingsUpdateInputSchema.safeParse({ pluginMarketplacePublicKey: 'not-a-key' }).success,
+    ).toBe(false);
+  });
+
+  it('settings defaults backfill the three keys', () => {
+    const defaults = settingsSchema.parse({}) as Record<string, unknown>;
+    expect(defaults['pluginAutoCheckUpdates']).toBe(true);
+    expect(defaults['pluginMarketplaceUrl']).toBe('');
+    expect(defaults['pluginMarketplacePublicKey']).toBe('');
+  });
+});
+
 describe('settingValuesProblems', () => {
   it('accepts well-formed values for every catalog field type', () => {
     expect(

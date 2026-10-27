@@ -1134,4 +1134,50 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     deepLink: { surface: 'settings', section: 'remote', anchor: 'remote-devices' },
     store: { kind: 'service', methods: ['remote.devices', 'remote.revokeDevice'] },
   }),
+
+  // --- 插件（D104 P1-1，设计 51 §8；市场地址与公钥是供应链信任根） -------------
+  item({
+    id: 'plugins.updates',
+    group: 'plugins',
+    title: '自动检查更新',
+    summary: '插件市场索引每日定时拉取，发现新版本时在扩展中心提示（更新仍需手动确认）',
+    keywords: ['插件', '更新', '市场', '自动检查'],
+    scope: 'global',
+    fields: [field('enabled', '自动检查更新', 'toggle', { path: 'pluginAutoCheckUpdates' })],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'extension-center', section: 'installed', anchor: 'plugins-updates' },
+    store: { kind: 'settings', paths: ['pluginAutoCheckUpdates'], generic: true },
+  }),
+  item({
+    id: 'plugins.marketplace',
+    group: 'plugins',
+    title: '插件市场',
+    summary: '市场地址与签名公钥：留空用官方市场；自建市场用自己的密钥签名、插件按社区级对待',
+    keywords: ['插件', '市场', '公钥', '签名', '自建', '供应链'],
+    scope: 'global',
+    fields: [
+      field('url', '市场地址', 'text', {
+        path: 'pluginMarketplaceUrl',
+        hint: '留空 = 官方市场；自建市场须 https',
+      }),
+      field('publicKey', '签名公钥（base64）', 'text', {
+        path: 'pluginMarketplacePublicKey',
+        hint: '自建市场用自己的密钥签名索引；留空 = 官方公钥。自建市场的插件最高按「社区」级对待',
+      }),
+    ],
+    // 供应链信任根：Bot 可以出卡，但宿主绝不采用会话里给的值（设计 51 §6.1）。
+    write: write('user-only'),
+    card: 'field-editor',
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-marketplace',
+    },
+    store: {
+      kind: 'settings',
+      paths: ['pluginMarketplaceUrl', 'pluginMarketplacePublicKey'],
+      generic: true,
+    },
+  }),
 ];

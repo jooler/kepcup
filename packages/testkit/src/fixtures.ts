@@ -102,6 +102,25 @@ export interface CreateTestCoreOptions {
     intervalMs?: number;
     initialDelayMs?: number;
   };
+  /**
+   * D104 P1-1 test hook (see CoreServicesOptions.pluginMarketplace): marketplace public keys,
+   * the index base URL, in-memory fetches for the index and package channels, and the timer
+   * cadence.
+   */
+  pluginMarketplace?: {
+    keys?: Array<{
+      keyId: string;
+      publicKey: string;
+      validFrom: number;
+      validUntil?: number;
+      revoked?: boolean;
+    }>;
+    baseUrl?: string;
+    fetch?: unknown;
+    downloadFetch?: unknown;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  };
 }
 
 /**
@@ -162,6 +181,9 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
     ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
+    ...(options.pluginMarketplace !== undefined
+      ? { pluginMarketplace: options.pluginMarketplace as never }
+      : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });
 }
