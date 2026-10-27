@@ -801,7 +801,7 @@
   1. 方法签名收窄到 mcpb 分支（当前实现）— 优点：最小、语义精确（该 installer 今天只管 mcpb 来源）；缺点：P0a-2 改造时要把 plugin 来源引入新的卸载 / 释放路径，届时再放宽。
   2. 在方法体里运行时判 `source.kind !== 'mcpb'` 提前返回 — 优点：签名不动；缺点：把「类型上不可能」变成死分支，掩盖联合的语义。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。该 installer 今天只服务 mcpb 来源，签名收窄比运行时死分支诚实；plugin 来源的卸载/释放路径由 P0a-2 的 `PluginProjector` 引入，届时按各自语义实现，不回填这里。
 - 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
 
 ### DEV-049 任务书称「`satisfiesRange` 不支持的写法会返回 false」，实际实现是忽略未知子句（返回 true）
@@ -815,7 +815,7 @@
   1. 保持复用 `satisfiesRange`（当前实现）— 优点：与 MCPB 同一语义、零重复实现；缺点：畸形 range 偏向放行，但清单 schema 已把 `engines.kepcup` 限为 1–100 字符字符串，畸形写法的实际风险低。
   2. 在 `manifest-loader.ts` 里加一层「未知子句视为不兼容」的预判 — 优点：更保守；缺点：与 `satisfiesRange` 语义分叉，两处规则会漂移。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。兼容性判断全仓只有 `satisfiesRange` 一份实现，MCPB 与插件共用同一语义；清单 schema 已限 `engines.kepcup` 长度，畸形 range 偏向放行的风险可接受，不为其造第二份会漂移的预判。
 - 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
 
 ### DEV-050 `withRemoteSource` 包住进程内 `core.rpc.call` 不能让 handler 看到远程来源（MessagePort 不传播 AsyncLocalStorage）
@@ -829,7 +829,7 @@
   1. 按 hub 的调用形状直接测绑定 handler（当前实现）— 优点：不引入整套 remote hub 夹具就能覆盖 `assertLocalSource` 的两个分支；缺点：没有走过 hub 的包装点，依赖 hub 的包装（`remote/hub.ts:576`）保持不变。
   2. 起 fake relay + 远程端点全套夹具走真实 hub — 优点：链路最真；缺点：`remote-relay` e2e 已覆盖 hub 包装本身，这里再搭一套只为一个断言，成本不成比例。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。按 hub 的真实调用形状（`withRemoteSource` 包 `spec.handle`）测绑定 handler，准确覆盖 `assertLocalSource` 两个分支；hub 包装点本身由 `remote-relay` e2e 守住，不为单个断言搭整套远程夹具。
 - 已更新的文档：`todo/plugin-system/P0a-2-projection.md` 实施记录。
 
 ### DEV-051 `chats.errorCode.PLUGIN_*` 四条已在 P0a-1 登记，P0a-3 步骤 8 要求的「追加到块末尾」位置不可用
@@ -843,7 +843,7 @@
   1. 保留既有位置、只更新文案（当前实现）— 优点：不产生重复键，键序在两份文件里仍然一致；缺点：与任务书「放在块末尾」的字面位置不符。
   2. 把四条从块首移到块末尾 — 优点：贴合任务书字面；缺点：纯位置挪动要同时改两份文件并重跑校验，收益为零。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。键位置以先落地的 P0a-1 为准（紧跟 `BOARD_*` 组），P0a-3 只改文案；`locales.test.ts` 强制两份词典键集合与顺序一致，纯位置挪动零收益还引入重复键风险。
 - 已更新的文档：`todo/plugin-system/P0a-3-ui.md` 实施记录。
 
 ### DEV-052 步骤 9 称「其余规格不涉及」，但 `plugins.spec.ts` 的 `plugins-empty` 断言因 `plugins.list` 新增内置条目而失效
@@ -857,7 +857,7 @@
   1. 该规格指向空内置目录（当前实现）— 优点：规格继续只测本地插件生命周期，断言零改动；缺点：e2e 不再顺带覆盖「内置卡片在已安装页签出现」。
   2. 改写空态断言为「内置卡片恒在」— 优点：多一层 UI 覆盖；缺点：本规格断言语义被稀释，且内置展示另有集成测试。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。该规格继续只测本地插件生命周期，空目录 env 让既有断言原样保留；内置卡片在「已安装」页签的出现由集成测试覆盖，不为顺带覆盖稀释断言语义。
 - 已更新的文档：`todo/plugin-system/P0b-builtin.md` 实施记录。
 
 ### DEV-053 市场索引条目不含 `manifestDigest` 与 `summary.icon`，详情页不拉取 README（设计 51 §6.1 / §9）
@@ -899,7 +899,7 @@
   1. schema 定在 types.ts（当前实现）— 优点：环消失，plain node / 签名脚本恢复可用；缺点：市场设置键的 schema 与索引契约不同文件。
   2. 断开 types.ts 的其它边（如 connectorNameSchema 从 plugin-manifest 挪走）— 优点：plugin-index 保持任务书位置；缺点：动的是 P0a-1 已交付的既有契约文件，影响面更大。
 - 推荐：方案 1。
-- 决定：（由人工填写）
+- 决定：方案 1。plain node（签名脚本 `loadShared()`）踩 TDZ 是实际故障，环必须断；两个 schema 挪到 `types.ts` 只依赖 zod，契约形状零变化，市场设置键与索引契约分处两文件是可接受代价。
 - 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
 
 ### DEV-056 `sanitizeDisplayText` 不剥离尖括号，与 P1-3 步骤 2.5 的清洗描述不符
