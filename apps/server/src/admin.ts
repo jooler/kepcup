@@ -1,10 +1,11 @@
 import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import type {
-  PairedDevice,
-  PairingOffer,
-  PendingPairingRequest,
-  RemoteStatusOutput,
+import {
+  isAppError,
+  type PairedDevice,
+  type PairingOffer,
+  type PendingPairingRequest,
+  type RemoteStatusOutput,
 } from '@kepcup/shared';
 
 /**
@@ -21,14 +22,23 @@ export interface AdminDeps {
   confirmPairing(requestId: string, accept: boolean): { status: string };
   devices(): { devices: PairedDevice[] };
   revoke(deviceId: string): PairedDevice;
+  /** D104 P2: admin-token-guarded local plugin install (the web shell has no file picker). */
+  pluginsInspect(input: unknown): Promise<unknown>;
+  pluginsInstall(input: unknown): Promise<unknown>;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
 
 export function isAdminPath(pathname: string): boolean {
-  return pathname === '/admin/pair' || pathname === '/admin/status' ||
-    pathname === '/admin/devices' || pathname === '/admin/devices/revoke' ||
-    pathname === '/admin/pairing/confirm';
+  return (
+    pathname === '/admin/pair' ||
+    pathname === '/admin/status' ||
+    pathname === '/admin/devices' ||
+    pathname === '/admin/devices/revoke' ||
+    pathname === '/admin/pairing/confirm' ||
+    pathname === '/admin/plugins/inspect' ||
+    pathname === '/admin/plugins/install'
+  );
 }
 
 function isLoopback(req: IncomingMessage): boolean {
@@ -102,7 +112,33 @@ export function handleAdminRequest(
       .catch((error) => send(res, 400, { error: String(error) }));
     return;
   }
+  if (pathname === '/admin/plugins/inspect' && req.method === 'POST') {
+    handlePluginCall(deps.pluginsInspect, req, res);
+    return;
+  }
+  if (pathname === '/admin/plugins/install' && req.method === 'POST') {
+    handlePluginCall(deps.pluginsInstall, req, res);
+    return;
+  }
   send(res, 404, { error: 'unknown admin endpoint' });
+}
+
+/** Body read / schema errors are the caller's fault (400); AppError is mapped, anything else is a 500. */
+function handlePluginCall(
+  handle: (input: unknown) => Promise<unknown>,
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  readJson(req)
+    .then(async (body) => {
+      try {
+        send(res, 200, await handle(body));
+      } catch (error) {
+        if (isAppError(error)) send(res, 400, { error: error.message, code: error.code });
+        else send(res, 500, { error: 'internal' });
+      }
+    })
+    .catch(() => send(res, 400, { error: 'invalid request body' }));
 }
 
 export function readJson(req: IncomingMessage): Promise<unknown> {
@@ -136,6 +172,8 @@ export interface AdminClient {
   confirmPairing(requestId: string, accept: boolean): Promise<{ status: string }>;
   devices(): Promise<{ devices: PairedDevice[] }>;
   revoke(deviceId: string): Promise<PairedDevice>;
+  pluginsInspect(source: unknown): Promise<unknown>;
+  pluginsInstall(input: unknown): Promise<unknown>;
 }
 
 export function createAdminClient(port: number, token: string): AdminClient {
@@ -164,6 +202,8 @@ export function createAdminClient(port: number, token: string): AdminClient {
       call('POST', '/admin/pairing/confirm', { requestId, accept }),
     devices: () => call('GET', '/admin/devices'),
     revoke: (deviceId) => call('POST', '/admin/devices/revoke', { deviceId }),
+    pluginsInspect: (source) => call('POST', '/admin/plugins/inspect', source),
+    pluginsInstall: (input) => call('POST', '/admin/plugins/install', input),
   };
 }
 

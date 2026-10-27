@@ -39,6 +39,10 @@ beforeAll(async () => {
       acceptRequestId: null,
       revokeDeviceId: null,
       json: false,
+      pluginAction: null,
+      pluginPath: null,
+      pluginYes: false,
+      pluginConfigFile: null,
       trustProxy: false,
     },
     {
@@ -54,7 +58,11 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function post(pathname: string, body: unknown, headers: Record<string, string> = {}): Promise<{ code: number; body: string; setCookie: string[] }> {
+function post(
+  pathname: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ code: number; body: string; setCookie: string[] }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const req = request(
@@ -82,7 +90,10 @@ function post(pathname: string, body: unknown, headers: Record<string, string> =
   });
 }
 
-function get(pathname: string, headers: Record<string, string> = {}): Promise<{ code: number; body: string }> {
+function get(
+  pathname: string,
+  headers: Record<string, string> = {},
+): Promise<{ code: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = request(
       { host: '127.0.0.1', port: server.port, method: 'GET', path: pathname, headers },
@@ -148,7 +159,10 @@ it('login：正确凭据发 HttpOnly Cookie；错误凭据 401；whoami 状态�
   expect(anonymous.code).toBe(401);
   expect((JSON.parse(anonymous.body) as { mode: string }).mode).toBe('password');
 
-  const ok = await post('/api/auth/login', { username: 'tester', password: 'a-long-enough-passphrase' });
+  const ok = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'a-long-enough-passphrase',
+  });
   expect(ok.code).toBe(200);
   const parsed = JSON.parse(ok.body) as { ok: boolean; username: string; token: string };
   expect(parsed.username).toBe('tester');
@@ -185,7 +199,10 @@ it('/rpc 会话：未登录升级被拒；登录后 bootstrap + system.ping + �
   unauth.terminate();
 
   // Bearer token 也能过（脚本路径）。
-  const login = await post('/api/auth/login', { username: 'tester', password: 'a-long-enough-passphrase' });
+  const login = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'a-long-enough-passphrase',
+  });
   const token = (JSON.parse(login.body) as { token: string }).token;
   const bearer = await new RpcClient({ authorization: `Bearer ${token}` }).open();
   bearer.call('system.ping', 'bearer-1');
@@ -194,9 +211,7 @@ it('/rpc 会话：未登录升级被拒；登录后 bootstrap + system.ping + �
 
   // Cookie 路径：连接 → 首帧即 core.status 快照（birpc 事件推送）→ RPC 往返。
   const client = await new RpcClient({ cookie }).open();
-  await client.next(
-    (message) => (message as { m?: string })?.m === 'core.status',
-  );
+  await client.next((message) => (message as { m?: string })?.m === 'core.status');
   client.call('system.ping', 'it-1');
   const response = await client.next((message) => (message as { i?: string })?.i === 'it-1');
   expect((response as { t?: string }).t).toBe('s');
@@ -219,9 +234,7 @@ it('跨源 /rpc 升级被拒（CSWSH 纵深，即使带上有效 Cookie）', asy
     password: 'a-long-enough-passphrase',
   });
   expect(login.code).toBe(200);
-  const freshCookie = (login.setCookie ?? []).find((value) =>
-    value.startsWith('kepcup_session='),
-  );
+  const freshCookie = (login.setCookie ?? []).find((value) => value.startsWith('kepcup_session='));
   expect(freshCookie).toBeDefined();
   const evil = new WebSocket(rpcUrl(), {
     headers: { cookie: freshCookie, origin: 'https://evil.example' },
@@ -243,21 +256,26 @@ it('改密码后旧 cookie 失效', async () => {
   const stale = await get('/api/auth/whoami', { cookie });
   expect(stale.code).toBe(401);
   // 新密码可登录。
-  const fresh = await post('/api/auth/login', { username: 'tester', password: 'another-long-passphrase' });
+  const fresh = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'another-long-passphrase',
+  });
   expect(fresh.code).toBe(200);
 });
 
 it('应用层心跳：会话连接后按 ping 间隔推 session.heartbeat（客户端自愈判据）', async () => {
-  const login = await post('/api/auth/login', { username: 'tester', password: 'another-long-passphrase' });
-  const freshCookie = (login.setCookie ?? []).find((value) => value.startsWith(`${SESSION_COOKIE}=`));
+  const login = await post('/api/auth/login', {
+    username: 'tester',
+    password: 'another-long-passphrase',
+  });
+  const freshCookie = (login.setCookie ?? []).find((value) =>
+    value.startsWith(`${SESSION_COOKIE}=`),
+  );
   const client = await new RpcClient({ cookie: freshCookie ?? '' }).open();
   try {
     // 测试注入 pingIntervalMs=50ms；协议级 ping 浏览器 JS 不可见，这里验证的是
     // 客户端可观测的那一帧（birpc 事件推送形如 {m: 'session.heartbeat'}）。
-    await client.next(
-      (message) => (message as { m?: string })?.m === 'session.heartbeat',
-      5_000,
-    );
+    await client.next((message) => (message as { m?: string })?.m === 'session.heartbeat', 5_000);
   } finally {
     client.ws.close();
   }

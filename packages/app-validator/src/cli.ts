@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs, USAGE } from './args.js';
 import { isAcceptableUrl } from './util.js';
 import { formatReport } from './report.js';
-import { validate, type ValidateOptions } from './validate.js';
+import { validateTarget, type ValidateOptions } from './validate.js';
+import { initPlugin } from './plugin/init.js';
+import { packPlugin } from './plugin/pack.js';
 
 export const VERSION = '0.0.0';
 
@@ -17,7 +19,7 @@ export interface CliIo {
   /** Extra options merged into every validate call (tests: client id, ports, fetch). */
   validateOverrides?: Partial<ValidateOptions>;
   /** Replace the validator (tests: simulate an internal failure). */
-  validate?: typeof validate;
+  validate?: typeof validateTarget;
 }
 
 /** Best-effort system browser launch; the URL is also printed so a headless user can copy it. */
@@ -55,6 +57,9 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
     io.stderr(`kepcup-app: ${parsed.message}\n\n${USAGE}`);
     return 2;
   }
+  if (parsed.command === 'initPlugin') return initPlugin(parsed, io);
+  if (parsed.command === 'packPlugin') return packPlugin(parsed, io);
+
   const log = (line: string): void => {
     if (!parsed.json) io.stderr(`${line}\n`);
   };
@@ -65,7 +70,7 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       if (!parsed.noBrowser) systemOpen(url);
     });
   try {
-    const report = await (io.validate ?? validate)({
+    const report = await (io.validate ?? validateTarget)({
       target: parsed.target,
       auth: parsed.auth,
       timeoutMs: parsed.timeoutMs,

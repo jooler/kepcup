@@ -67,6 +67,47 @@ describe('parseArgs', () => {
     expect(parseArgs(['validate', 'x', '-h']).command).toBe('help');
     expect(parseArgs(['--version']).command).toBe('version');
   });
+
+  it('parses init plugin and pack', () => {
+    expect(
+      parseArgs([
+        'init',
+        'plugin',
+        './demo',
+        '--id',
+        'io.github.a/demo',
+        '--name',
+        'Demo',
+        '--force',
+      ]),
+    ).toEqual({
+      command: 'initPlugin',
+      dir: './demo',
+      id: 'io.github.a/demo',
+      name: 'Demo',
+      force: true,
+    });
+    expect(parseArgs(['pack', './demo', '--out=./out.kepcup', '--json'])).toEqual({
+      command: 'packPlugin',
+      dir: './demo',
+      out: './out.kepcup',
+      json: true,
+    });
+  });
+
+  it.each([
+    [['init', 'server', './demo'], 'plugin'],
+    [['init', 'plugin'], 'Missing the plugin directory'],
+    [['init', 'plugin', './demo', '--id'], '--id needs'],
+    [['init', 'plugin', './demo', '--bogus'], 'Unknown option'],
+    [['pack'], 'Missing the plugin directory'],
+    [['pack', './demo', '--out'], '--out needs'],
+    [['pack', './demo', '--bogus'], 'Unknown option'],
+  ])('rejects %j', (argv, message) => {
+    const parsed = parseArgs(argv);
+    expect(parsed.command).toBe('error');
+    expect((parsed as { message: string }).message).toContain(message);
+  });
 });
 
 describe('formatReport', () => {
@@ -139,11 +180,13 @@ describe('runCli', () => {
       'auth',
       'checks',
       'exitCode',
+      'mode',
       'remote',
       'schemaVersion',
       'summary',
       'target',
     ]);
+    expect(report.mode).toBe('connector');
     expect(report.exitCode).toBe(0);
     expect(report.checks[0]).toMatchObject({
       id: expect.any(String),
