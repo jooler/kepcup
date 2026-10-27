@@ -101,7 +101,7 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
 
-    // 键盘：方向键切换分组（tabs: installed → skills → connections → mcp → mail → localCollab）。
+    // 键盘：方向键切换分组（tabs: market → installed → skills → connections → mcp → mail → localCollab）。
     await dialog.locator('[data-testid="extension-center-tab-mcp"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-mail"]')).toHaveAttribute(
       'aria-selected',
@@ -113,7 +113,7 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     ).toHaveAttribute('aria-selected', 'true');
     // 末项再往右循环回第一项（installed）。
     await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
