@@ -11,7 +11,7 @@
  *   node scripts/sync-mineru-skill.mjs --check    # 只比对，不一致退出码 1
  *   COMMIT=<sha> node scripts/sync-mineru-skill.mjs   # 锁定 commit 拉取
  *
- * 同步后必须（见 apps/desktop/resources/plugins/com.kepcup/starter-skills/README.md）：
+ * 同步后必须（见 plugins/README.md 与 plugins/skill-mineru/NOTICE.md）：
  *   1. 递增 plugin.json 中 mineru 技能贡献的 version（市场「更新」按钮靠它）；
  *   2. 更新 NOTICE.md 的锚点 commit 与引入日期。
  */
@@ -29,7 +29,11 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const target = path.join(
   scriptDir,
   '..',
-  'apps/desktop/resources/plugins/com.kepcup/starter-skills/skills/mineru/SKILL.md',
+  'plugins',
+  'skill-mineru',
+  'skills',
+  'mineru',
+  'SKILL.md',
 );
 
 const args = process.argv.slice(2);
@@ -78,7 +82,9 @@ function assertValidSkill(text) {
 }
 
 const upstream = await fetchUpstream(ref).catch((error) => {
-  console.error(`拉取上游失败（ref=${ref}）：${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `拉取上游失败（ref=${ref}）：${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 });
 assertValidSkill(upstream);
@@ -101,11 +107,15 @@ if (upstreamSha === localSha) {
 }
 
 if (checkOnly) {
-  console.error('本地与上游不一致——运行 `node scripts/sync-mineru-skill.mjs` 同步，'
-    + '然后递增 plugin.json 里 mineru 技能贡献的 version 并更新 NOTICE.md 锚点。');
+  console.error(
+    '本地与上游不一致——运行 `node scripts/sync-mineru-skill.mjs` 同步，' +
+      '然后递增 plugin.json 里 mineru 技能贡献的 version 并更新 NOTICE.md 锚点。',
+  );
   process.exit(1);
 }
 
 writeFileSync(target, upstream, 'utf8');
 console.log(`已写入 ${path.relative(process.cwd(), target)}`);
-console.log('后续动作（人工）：递增 plugin.json 里 mineru 技能贡献的 version；更新 NOTICE.md 锚点 commit 与日期。');
+console.log(
+  '后续动作（人工）：递增 plugin.json 里 mineru 技能贡献的 version；更新 NOTICE.md 锚点 commit 与日期。',
+);

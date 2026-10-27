@@ -33,7 +33,6 @@ import { SHIPPED_PLUGINS_DIR, readShippedConnectorEntries } from '../support/shi
  */
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const connectionsPluginDir = path.join(SHIPPED_PLUGINS_DIR, 'com.kepcup', 'connections');
 const shipped = readShippedConnectorEntries();
 
 /** 经 BuiltinPlugins 读随包内置插件（等价旧的环境变量目录注入）。 */
@@ -93,9 +92,9 @@ afterEach(() => {
 // --- contract: shipped builtin plugin + a data-only extra catalog --------------------------
 
 runConnectorCatalogContract({
-  label: 'shipped builtin plugin (com.kepcup/connections)',
+  label: 'shipped builtin plugin (plugins/connector-*)',
   entries: shipped,
-  iconsDir: connectionsPluginDir,
+  iconsDir: SHIPPED_PLUGINS_DIR,
   iconPaths: shippedSource().iconPaths,
 });
 
@@ -113,22 +112,28 @@ runConnectorCatalogContract({
 
 describe('shipped catalog', () => {
   it('has the expected plugin manifest shape and unique gates, all closed in connector-release-gates.json', () => {
-    // D104 P0b：目录来源是内置插件；manifest 须完整声明这批条目（顺序即目录顺序）。
-    const manifest = JSON.parse(
-      readFileSync(path.join(connectionsPluginDir, 'plugin.json'), 'utf8'),
-    ) as {
-      id: string;
-      version: string;
-      contributions: { connectors: Array<{ file: string }> };
-    };
-    expect(manifest.id).toBe('com.kepcup/connections');
-    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
-    expect(manifest.contributions.connectors).toHaveLength(shipped.length);
-    for (const contribution of manifest.contributions.connectors) {
+    // D104 商店化：目录来源是 plugins/connector-* 独立插件（每个插件恰好一条贡献）。
+    const slugs = shipped.map((c) => connectorMetaOf(connectorCatalogEntrySchema.parse(c)).slug);
+    expect(slugs).toHaveLength(shipped.length);
+    for (const slug of slugs) {
+      const manifest = JSON.parse(
+        readFileSync(path.join(SHIPPED_PLUGINS_DIR, `connector-${slug}`, 'plugin.json'), 'utf8'),
+      ) as { id: string; version: string; contributions: { connectors: Array<{ file: string }> } };
+      expect(manifest.id).toBe(`app.kepcup/connector-${slug}`);
+      expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
+      expect(manifest.contributions.connectors).toEqual([
+        { file: `connectors/${slug}/server.json` },
+      ]);
       // 每个 server.json 声明都真实存在（shipped 条目即从这些文件读出）。
-      expect(existsSync(path.join(connectionsPluginDir, ...contribution.file.split('/')))).toBe(
-        true,
-      );
+      expect(
+        existsSync(
+          path.join(
+            SHIPPED_PLUGINS_DIR,
+            `connector-${slug}`,
+            ...manifest.contributions.connectors[0]!.file.split('/'),
+          ),
+        ),
+      ).toBe(true);
     }
     const gates = JSON.parse(
       readFileSync(path.join(repoRoot, 'apps/desktop/connector-release-gates.json'), 'utf8'),
@@ -304,14 +309,15 @@ describe('ConnectorCatalog (runtime loader)', () => {
 
   it('loads the shipped builtin plugin from the repo checkout and applies injected gates', () => {
     const all = effectiveConnectorCatalog({ source: shippedSource(), approvedGates: null });
+    // 目录顺序 = plugins/ 下的 slug 排序（商店化后每插件一目录）。
     expect(all.map((entry) => connectorMetaOf(entry).slug)).toEqual([
-      'notion',
-      'linear',
       'atlassian',
-      'sentry',
       'canva',
-      'stripe',
       'cloudflare',
+      'linear',
+      'notion',
+      'sentry',
+      'stripe',
     ]);
     const some = new ConnectorCatalog({
       source: shippedSource(),
@@ -398,7 +404,7 @@ describe('ConnectorCatalog (runtime loader)', () => {
     // 正常注入：条目 + 每条目同目录图标经 iconPaths 供 iconSvg 读取。
     const source = shippedSource();
     const catalog = new ConnectorCatalog({ source, approvedGates: null });
-    // 条目顺序 = plugin.json 顺序；hidden（gcalendar/gdrive）任何构建都不放出。
+    // 条目顺序 = plugins/ 的 slug 排序；hidden（gcalendar/gdrive）任何构建都不放出。
     const visibleSlugs = source.entries
       .map((entry) => connectorMetaOf(connectorCatalogEntrySchema.parse(entry)))
       .filter((meta) => meta.hidden !== true)

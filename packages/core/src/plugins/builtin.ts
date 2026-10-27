@@ -6,10 +6,13 @@ import type { CoreLogger } from '../infra/logger.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 
 /**
- * Builtin plugin loader (D104 P0b): reads the read-only, first-party plugin trees
- * shipped under `apps/desktop/resources/plugins/{ns}/{name}/` (no version suffix —
- * they release with the app). Builtin plugins never enter the `plugins` table and
- * never go through install / uninstall; this loader is the only accessor for
+ * Builtin plugin loader (D104 P0b; marketplace conversion): reads the read-only,
+ * first-party plugin trees resolved by `resolveBuiltinPluginsDir` (two-level
+ * `{ns}/{name}/`). Since the marketplace conversion the app ships NO builtin
+ * plugins — the tree is absent and every accessor returns empty; the mechanism
+ * stays for dev/test overrides (`KEPCUP_BUILTIN_PLUGINS`) and future first-party
+ * preinstalls. Builtin plugins never enter the `plugins` table and never go
+ * through install / uninstall; this loader is the only accessor for
  * `SkillPresetsService` (skill offers) and `ConnectorCatalog` (the packaged snapshot
  * source), plus the read-only summaries `plugins.list` shows.
  *
@@ -21,7 +24,7 @@ import { parsePluginManifestText } from './manifest-loader.js';
  * (they ship with the app itself).
  */
 
-/** env 覆盖 → 向上最多 8 层查找 `apps/desktop/resources/plugins` → null（照 resolveBundledBinDir 的写法）。 */
+/** env 覆盖 → 向上最多 8 层查找旧随包目录（商店化后不存在，仅兼容旧检出）→ null。 */
 export function resolveBuiltinPluginsDir(env: NodeJS.ProcessEnv): string | null {
   const override = env.KEPCUP_BUILTIN_PLUGINS;
   if (override !== undefined && override.length > 0) {
@@ -44,10 +47,12 @@ export interface LoadedBuiltinPlugin {
   manifest: PluginManifest;
 }
 
-/** One skill contribution of the builtin starter-skills plugin, resolved to its absolute dir. */
+/** One skill contribution of a builtin plugin, resolved to its absolute dir. */
 export interface BuiltinSkillOffer {
   /** Skill preset id: `path.basename(contribution.dir)` (presets keep `dir = skills/<id>`). */
   id: string;
+  /** Owning builtin plugin id (source_url marker: `plugin://{pluginId}/{id}`). */
+  pluginId: string;
   /** Absolute path of the skill folder (inside the plugin dir; the loader verified it). */
   dir: string;
   section: string;
@@ -59,10 +64,6 @@ export interface BuiltinSkillOffer {
   vendored: boolean;
 }
 
-/** The builtin ids the skill / connector accessors read from (design 51 §12). */
-const SKILLS_PLUGIN_ID = 'com.kepcup/starter-skills';
-const CONNECTORS_PLUGIN_ID = 'com.kepcup/connections';
-
 export class BuiltinPlugins {
   readonly #deps: { env: NodeJS.ProcessEnv; logger: Pick<CoreLogger, 'warn' | 'info'> };
   readonly #rootDir: string | null;
@@ -72,7 +73,7 @@ export class BuiltinPlugins {
     this.#rootDir = resolveBuiltinPluginsDir(deps.env);
   }
 
-  /** Resolved builtin root (`resources/plugins`), or null when absent (marketplace lists nothing). */
+  /** Resolved builtin root, or null when absent (no builtin plugins → accessors return empty). */
   get dir(): string | null {
     return this.#rootDir;
   }
@@ -81,7 +82,12 @@ export class BuiltinPlugins {
     this.#deps.logger.warn(record, message);
   }
 
-  /** Re-reads and validates every two-level `{ns}/{name}/plugin.json`; broken plugins warn and are skipped. */
+  /**
+   * Re-reads and validates every plugin dir; broken plugins warn and are skipped.
+   * Two layouts: `{ns}/{name}/plugin.json` (dir name = identity, must equal the
+   * manifest id) and flat `{dir}/plugin.json` (identity = the manifest id itself —
+   * the marketplace-era `plugins/` development tree uses this shape).
+   */
   list(): LoadedBuiltinPlugin[] {
     if (this.#rootDir === null) return [];
     let namespaces: string[];
@@ -98,10 +104,24 @@ export class BuiltinPlugins {
       return [];
     }
     const loaded: LoadedBuiltinPlugin[] = [];
+    const seen = new Set<string>();
     for (const namespace of namespaces) {
+      const dir = path.join(this.#rootDir, namespace);
+      if (existsSync(path.join(dir, PLUGIN_MANIFEST_FILE))) {
+        // Flat layout: the manifest id is the identity.
+        const manifest = this.#loadOne(dir, null);
+        if (manifest === null) continue;
+        if (seen.has(manifest.id)) {
+          this.#warn({ id: manifest.id }, 'duplicate builtin plugin id, skipped');
+          continue;
+        }
+        seen.add(manifest.id);
+        loaded.push({ id: manifest.id, dir, manifest });
+        continue;
+      }
       let names: string[];
       try {
-        names = readdirSync(path.join(this.#rootDir, namespace), { withFileTypes: true })
+        names = readdirSync(dir, { withFileTypes: true })
           .filter((entry) => entry.isDirectory())
           .map((entry) => entry.name)
           .sort();
@@ -109,10 +129,15 @@ export class BuiltinPlugins {
         continue;
       }
       for (const name of names) {
-        const dir = path.join(this.#rootDir, namespace, name);
-        const manifest = this.#loadOne(dir, `${namespace}/${name}`);
+        const pluginDir = path.join(dir, name);
+        const manifest = this.#loadOne(pluginDir, `${namespace}/${name}`);
         if (manifest === null) continue;
-        loaded.push({ id: manifest.id, dir, manifest });
+        if (seen.has(manifest.id)) {
+          this.#warn({ id: manifest.id }, 'duplicate builtin plugin id, skipped');
+          continue;
+        }
+        seen.add(manifest.id);
+        loaded.push({ id: manifest.id, dir: pluginDir, manifest });
       }
     }
     return loaded;
@@ -122,7 +147,7 @@ export class BuiltinPlugins {
     return this.list().find((plugin) => plugin.id === id) ?? null;
   }
 
-  #loadOne(dir: string, expectedId: string): PluginManifest | null {
+  #loadOne(dir: string, expectedId: string | null): PluginManifest | null {
     const file = path.join(dir, PLUGIN_MANIFEST_FILE);
     let manifest: PluginManifest;
     try {
@@ -134,8 +159,9 @@ export class BuiltinPlugins {
       );
       return null;
     }
-    // The directory layout is the identity: `{ns}/{name}` must equal `manifest.id`.
-    if (manifest.id !== expectedId) {
+    // The two-level directory layout is the identity: `{ns}/{name}` must equal `manifest.id`
+    // (flat roots identify by the manifest id itself).
+    if (expectedId !== null && manifest.id !== expectedId) {
       this.#warn(
         { file, manifestId: manifest.id, expectedId },
         'builtin plugin id does not match its directory',
@@ -150,43 +176,55 @@ export class BuiltinPlugins {
     return manifest;
   }
 
-  /** Skill contributions of `com.kepcup/starter-skills`; entries missing required display fields warn and skip. */
+  /**
+   * Skill contributions of every loaded builtin plugin (aggregated; a skill
+   * preset id must be unique across plugins — later plugins warn and skip on
+   * collision). Entries missing required display fields warn and skip.
+   */
   skillOffers(): BuiltinSkillOffer[] {
-    const plugin = this.get(SKILLS_PLUGIN_ID);
-    if (plugin === null) return [];
     const offers: BuiltinSkillOffer[] = [];
-    for (const contribution of plugin.manifest.contributions.skills) {
-      const { displayName, summary, section, version } = contribution;
-      if (
-        displayName === undefined ||
-        summary === undefined ||
-        section === undefined ||
-        version === undefined
-      ) {
-        this.#warn(
-          { plugin: SKILLS_PLUGIN_ID, dir: contribution.dir },
-          'builtin skill contribution missing displayName/summary/section/version',
-        );
-        continue;
+    const seen = new Set<string>();
+    for (const plugin of this.list()) {
+      for (const contribution of plugin.manifest.contributions.skills) {
+        const { displayName, summary, section, version } = contribution;
+        const id = path.basename(contribution.dir);
+        if (
+          displayName === undefined ||
+          summary === undefined ||
+          section === undefined ||
+          version === undefined
+        ) {
+          this.#warn(
+            { plugin: plugin.id, dir: contribution.dir },
+            'builtin skill contribution missing displayName/summary/section/version',
+          );
+          continue;
+        }
+        if (seen.has(id)) {
+          this.#warn({ plugin: plugin.id, id }, 'duplicate builtin skill preset id, skipped');
+          continue;
+        }
+        seen.add(id);
+        offers.push({
+          id,
+          pluginId: plugin.id,
+          dir: path.join(plugin.dir, ...contribution.dir.split('/')),
+          section,
+          displayName,
+          summary,
+          icon: contribution.icon ?? 'puzzle',
+          version,
+          tryIt: contribution.tryIt ?? '',
+          vendored: contribution.vendored === true,
+        });
       }
-      offers.push({
-        id: path.basename(contribution.dir),
-        dir: path.join(plugin.dir, ...contribution.dir.split('/')),
-        section,
-        displayName,
-        summary,
-        icon: contribution.icon ?? 'puzzle',
-        version,
-        tryIt: contribution.tryIt ?? '',
-        vendored: contribution.vendored === true,
-      });
     }
     return offers;
   }
 
   /**
-   * Connector entries of `com.kepcup/connections`, shaped like the old packaged catalog
-   * source (raw `server.json` objects in `plugin.json` order; schema validation stays in
+   * Connector entries of every loaded builtin plugin, shaped like the old packaged
+   * catalog source (raw `server.json` objects; schema validation stays in
    * `parseConnectorEntries`). `iconPaths` = slug → icon file next to `server.json`
    * (missing files are simply not in the map).
    */
@@ -195,31 +233,29 @@ export class BuiltinPlugins {
     iconsDir: string | null;
     iconPaths: ReadonlyMap<string, string>;
   } {
-    const plugin = this.get(CONNECTORS_PLUGIN_ID);
-    if (plugin === null) return { entries: [], iconsDir: null, iconPaths: new Map() };
     const entries: unknown[] = [];
     const iconPaths = new Map<string, string>();
-    for (const contribution of plugin.manifest.contributions.connectors) {
-      const file = path.join(plugin.dir, ...contribution.file.split('/'));
-      let raw: unknown;
-      try {
-        raw = JSON.parse(readFileSync(file, 'utf8'));
-      } catch (error) {
-        this.#warn(
-          { file, error: error instanceof Error ? error.message : String(error) },
-          'builtin connector server.json unreadable',
-        );
-        continue;
+    for (const plugin of this.list())
+      for (const contribution of plugin.manifest.contributions.connectors) {
+        const file = path.join(plugin.dir, ...contribution.file.split('/'));
+        let raw: unknown;
+        try {
+          raw = JSON.parse(readFileSync(file, 'utf8'));
+        } catch (error) {
+          this.#warn(
+            { file, error: error instanceof Error ? error.message : String(error) },
+            'builtin connector server.json unreadable',
+          );
+          continue;
+        }
+        entries.push(raw);
+        const meta = (raw as { _meta?: Record<string, { slug?: unknown; icon?: unknown }> })
+          ._meta?.['app.kepcup/connector'];
+        if (typeof meta?.slug === 'string' && typeof meta?.icon === 'string') {
+          const iconPath = path.join(path.dirname(file), meta.icon);
+          if (existsSync(iconPath)) iconPaths.set(meta.slug, iconPath);
+        }
       }
-      entries.push(raw);
-      const meta = (raw as { _meta?: Record<string, { slug?: unknown; icon?: unknown }> })._meta?.[
-        'app.kepcup/connector'
-      ];
-      if (typeof meta?.slug === 'string' && typeof meta?.icon === 'string') {
-        const iconPath = path.join(path.dirname(file), meta.icon);
-        if (existsSync(iconPath)) iconPaths.set(meta.slug, iconPath);
-      }
-    }
     return { entries, iconsDir: null, iconPaths };
   }
 

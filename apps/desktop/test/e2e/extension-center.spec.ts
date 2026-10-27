@@ -16,7 +16,7 @@ import { copyShippedPlugins } from './helpers/builtin-plugins';
  * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
  * `KEPCUP_BUILTIN_PLUGINS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
  * 所以这里的空态**不**证明发行门禁；门禁语义由 core `connector-catalog.test.ts` 覆盖。
- * 第二个用例把 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录（copyShippedPlugins 拷随包内置插件、
+ * 第二个用例把 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录（copyShippedPlugins 从 plugins/ 开发目录组装夹具、
  * 只保留 Notion 条目）来验证非空目录的渲染。
  */
 

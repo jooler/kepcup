@@ -1,58 +1,57 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * e2e helper (D104 P0b): copies the shipped builtin plugins tree
- * (`apps/desktop/resources/plugins`) into a temp directory, optionally keeping
- * only a subset of the connector entries (rewriting the connections
- * plugin.json accordingly) or dropping the skills plugin entirely. The returned
- * directory is what `KEPCUP_BUILTIN_PLUGINS` should point at.
+ * e2e helper (D104 P0b; marketplace conversion): assembles a builtin-plugins
+ * fixture directory from the repo's `plugins/` development tree — the former
+ * shipped builtins com.kepcup/starter-skills + com.kepcup/connections now live
+ * there as per-item marketplace plugins (`app.kepcup/skill-*` / `connector-*`).
+ * The loader expects the `{namespace}/{name}/plugin.json` two-level layout, so
+ * each selected plugin is copied under its manifest id's namespace. The
+ * returned directory is what `KEPCUP_BUILTIN_PLUGINS` should point at.
+ *
+ * This is a content fixture for UI specs, not a statement about shipping:
+ * real builds ship no builtin plugins at all.
  */
 
 /** Repo-relative resolution: e2e specs run with cwd = apps/desktop. */
-function shippedPluginsDir(): string {
-  return path.resolve('resources', 'plugins');
+function repoPluginsDir(): string {
+  return path.resolve('..', '..', 'plugins');
 }
 
 export interface CopyShippedPluginsOptions {
-  /** Given, only these connector slugs survive (plugin.json rewritten to match). */
+  /** Given, only these connector plugin dirs survive (by slug). */
   connectorSlugs?: string[];
-  /** `'none'` removes the starter-skills plugin (default keeps everything). */
+  /** `'none'` removes the skill plugins (default keeps everything). */
   skills?: 'all' | 'none';
 }
 
-/** Copies the shipped resources/plugins into `dest` and returns that directory. */
+/** Copies the selected plugins from `plugins/` into `dest` and returns that directory. */
 export async function copyShippedPlugins(
   dest: string,
   options: CopyShippedPluginsOptions = {},
 ): Promise<string> {
-  const shipped = shippedPluginsDir();
-  await mkdir(path.dirname(dest), { recursive: true });
-  await cp(shipped, dest, { recursive: true });
-  if (options.skills === 'none') {
-    await rm(path.join(dest, 'com.kepcup', 'starter-skills'), { recursive: true, force: true });
-  }
-  if (options.connectorSlugs !== undefined) {
-    const pluginDir = path.join(dest, 'com.kepcup', 'connections');
-    const manifestPath = path.join(pluginDir, 'plugin.json');
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      contributions: { connectors: Array<{ file: string }> };
-    };
-    const wanted = new Set(options.connectorSlugs);
-    const kept: Array<{ file: string }> = [];
-    for (const contribution of manifest.contributions.connectors) {
-      const slug = path.basename(path.dirname(contribution.file));
-      if (wanted.has(slug)) {
-        kept.push(contribution);
-      } else {
-        await rm(path.join(pluginDir, ...contribution.file.split('/')), {
-          force: true,
-          recursive: true,
-        });
-      }
+  const source = repoPluginsDir();
+  const names = readdirSync(source, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  for (const name of names) {
+    if (options.skills === 'none' && name.startsWith('skill-')) continue;
+    if (
+      name.startsWith('connector-') &&
+      options.connectorSlugs !== undefined &&
+      !options.connectorSlugs.includes(name.slice('connector-'.length))
+    ) {
+      continue;
     }
-    manifest.contributions.connectors = kept;
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const manifest = JSON.parse(await readFile(path.join(source, name, 'plugin.json'), 'utf8'));
+    const namespace = String(manifest.id).split('/')[0];
+    if (namespace === undefined || namespace.length === 0) continue;
+    const target = path.join(dest, namespace, name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(path.join(source, name), target, { recursive: true });
   }
   return dest;
 }

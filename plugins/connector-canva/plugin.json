@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-canva",
+  "name": "Canva 连接",
+  "version": "1.0.0",
+  "description": "生成、编辑、检索与导出 Canva 设计",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://www.canva.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/canva/server.json"
+      }
+    ]
+  }
+}

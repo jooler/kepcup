@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/skill-weekly-report",
+  "name": "周报日报",
+  "version": "1.0.0",
+  "description": "按固定模板产出周报/日报：本周进展、数据指标、问题风险、下周计划。支持从对话历史、 wiki、任务素材里汇总。用户说\"写周报\"、\"出个日报\"、\"这周总结一下\"、\"给老板的周报\" 时使用。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "skills": [
+      {
+        "dir": "skills/weekly-report"
+      }
+    ]
+  }
+}

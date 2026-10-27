@@ -1,0 +1,35 @@
+{
+  "name": "com.stripe/mcp",
+  "title": "Stripe",
+  "description": "查询与管理 Stripe 的客户、商品与支付",
+  "version": "0.2.4",
+  "websiteUrl": "https://stripe.com",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.stripe.com"
+    }
+  ],
+  "_meta": {
+    "app.kepcup/connector": {
+      "slug": "stripe",
+      "icon": "stripe.svg",
+      "category": "payments",
+      "tier": "community",
+      "auth": {
+        "kind": "oauth",
+        "registration": "auto",
+        "clientRef": null,
+        "scopes": {
+          "default": [],
+          "write": []
+        }
+      },
+      "toolPolicy": {},
+      "skills": [],
+      "ui": false,
+      "privacyPolicy": "https://stripe.com/privacy",
+      "releaseGate": "stripe"
+    }
+  }
+}

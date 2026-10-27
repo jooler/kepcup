@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-stripe",
+  "name": "Stripe 连接",
+  "version": "1.0.0",
+  "description": "查询与管理 Stripe 的客户、商品与支付",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://stripe.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/stripe/server.json"
+      }
+    ]
+  }
+}

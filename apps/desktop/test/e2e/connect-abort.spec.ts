@@ -15,7 +15,7 @@ import { copyShippedPlugins } from './helpers/builtin-plugins';
  * 这里用一个永远不应答的本机 MCP 端点充当「用户一直没授权」的服务器（流程停在发现 / 等待阶段），
  * 点「取消」，然后断言：卡片没有账号数 / 「管理」，没有 toast，渲染端没有对该连接发过
  * `apps.connections.tools` / `grants`。目录经 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录
- * （copyShippedPlugins 拷随包内置插件、只保留 Notion 条目，远端地址改成本机）。真实
+ * （copyShippedPlugins 从 plugins/ 开发目录组装夹具、只保留 Notion 连接插件，远端地址改成本机）。真实
  * OAuth 授权页无法在 e2e 里走通，所以不覆盖「授权成功」。
  */
 
@@ -60,8 +60,8 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
   });
   const serverJsonPath = path.join(
     pluginsDir,
-    'com.kepcup',
-    'connections',
+    'app.kepcup',
+    'connector-notion',
     'connectors',
     'notion',
     'server.json',

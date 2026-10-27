@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-gdrive",
+  "name": "Google Drive 连接",
+  "version": "1.0.0",
+  "description": "搜索、读取与创建 Google Drive 文件（仅限授权给 KepCup 的文件）",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://drive.google.com",
+  "engines": {
+    "kepcup": ">=0.5.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/gdrive/server.json"
+      }
+    ]
+  }
+}

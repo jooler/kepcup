@@ -97,10 +97,6 @@ mac:
     # 平台私有二进制（rg）只打包本机架构一份（${arch} 宏按目标展开）。
     - from: resources/bin/darwin-${arch}
       to: bin/darwin-${arch}
-    # 内置插件目录（D104 P0b：com.kepcup/starter-skills + com.kepcup/connections，
-    # 与平台无关，三平台同源；core-host 注入 KEPCUP_BUILTIN_PLUGINS 指向 Resources/plugins）。
-    - from: resources/plugins
-      to: plugins
     # D94：App Group 容器 id（带 TeamID 前缀）——主进程据此定位扩展写的 inbox。
     # to 必须写完整文件名：单文件源的 to 不带文件名时，electron-builder 会把它
     # 当目标文件路径，拷出一个名为 share-extension 的文件（主进程读
