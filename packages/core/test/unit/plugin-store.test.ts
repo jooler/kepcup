@@ -47,6 +47,8 @@ function row(id: string, patch: Partial<PluginRow> = {}): PluginRow {
     packageSha256: 'a'.repeat(64),
     marketplace: null,
     dir: `${id.split('/')[0]}/${id.split('/')[1]}@1.0.0`.toLowerCase(),
+    updateTo: null,
+    updateSnapshot: null,
     installedAt: 1000,
     updatedAt: 1000,
     ...patch,
@@ -101,6 +103,36 @@ describe('PluginStore', () => {
     store.update('io.github.tester/off', { enabled: true });
     expect(store.get('io.github.tester/on')?.enabled).toBe(false);
     expect(store.get('io.github.tester/off')?.enabled).toBe(true);
+  });
+
+  it('round-trips the update journal columns and lists updating rows', () => {
+    const { store } = makeRig();
+    store.insert(row('io.github.tester/still'));
+    store.insert(row('io.github.tester/updating'));
+    expect(store.listUpdating().map((entry) => entry.id)).toEqual([]);
+
+    const snapshot = JSON.stringify({ mcp: '{"servers":[]}' });
+    store.update('io.github.tester/updating', {
+      updateTo: '2.0.0',
+      updateSnapshot: snapshot,
+      updatedAt: 3000,
+    });
+    const got = store.get('io.github.tester/updating');
+    expect(got).toMatchObject({ updateTo: '2.0.0', updateSnapshot: snapshot });
+    expect(store.listUpdating().map((entry) => entry.id)).toEqual(['io.github.tester/updating']);
+    expect(store.get('io.github.tester/still')).toMatchObject({
+      updateTo: null,
+      updateSnapshot: null,
+    });
+
+    // The commit / rollback path clears both columns again.
+    store.update('io.github.tester/updating', { updateTo: null, updateSnapshot: null });
+    expect(store.listUpdating()).toEqual([]);
+    expect(store.get('io.github.tester/updating')).toMatchObject({
+      updateTo: null,
+      updateSnapshot: null,
+      updatedAt: 3000,
+    });
   });
 
   it('keeps ledger insertion order, is idempotent on addItem, and cascades on delete', () => {
