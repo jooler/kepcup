@@ -169,6 +169,7 @@ function scannedBuiltinToolNames(): string[] {
       'watch-tools.ts',
       'wiki-tools.ts',
       'widget-tools.ts',
+      'plugin-tools.ts',
       'present-tools.ts',
       'settings-tools.ts',
       'workbench-tools.ts',

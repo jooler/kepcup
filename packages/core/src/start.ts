@@ -192,6 +192,7 @@ import { createPluginProjectors } from './plugins/projectors/index.js';
 import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { PluginInstallRequests } from './plugins/install-requests.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -2387,6 +2388,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
       });
     });
+    // D104 P1-3：Bot 只能检索官方认证插件、只能出确认卡（不自己安装）。
+    const pluginInstallRequests = new PluginInstallRequests({
+      marketplace,
+      registry: plugins,
+      clock,
+      appVersion: options.appVersion ?? '0.0.0',
+    });
 
     const orchestrator = new Orchestrator({
       engine,
@@ -2431,6 +2439,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mcp,
       connectedApps,
       localConnectors,
+      pluginInstall: pluginInstallRequests,
       appUi,
       widgets: {
         craft: (input) => widgetCraft.craft(input),
