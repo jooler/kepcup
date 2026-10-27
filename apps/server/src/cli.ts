@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import type { Interface as RlInterface } from 'node:readline/promises';
-import { ConfigError, parseConfig, usageText } from './config.js';
+import { pluginInspectOutputSchema, type PluginInspectOutput } from '@kepcup/shared';
+import { ConfigError, parseConfig, usageText, type ServerConfig } from './config.js';
 import { createAdminClient } from './admin.js';
 import { qrTerminal } from './qr.js';
 import { AuthStore, MIN_PASSWORD_LENGTH } from './auth.js';
+import {
+  formatPluginInspection,
+  missingRequiredUserConfig,
+  parseUserConfigText,
+  type PluginUserConfig,
+} from './plugin-cli.js';
 import { runServer, serverVersion } from './server.js';
 
 /**
@@ -34,6 +42,11 @@ async function main(): Promise<void> {
 
   if (config.command === 'password') {
     await changeAdminPassword(config);
+    return;
+  }
+
+  if (config.command === 'plugin') {
+    await installPlugin(config);
     return;
   }
 
@@ -90,12 +103,103 @@ async function main(): Promise<void> {
 }
 
 /**
+ * `kepcup-server plugin install <path>`（D104 P2）：运行中服务的本机 admin 接口薄客户端。
+ * file / folder 来源只在服务器本机可用；网页端没有本地文件选择器。
+ */
+async function installPlugin(config: ServerConfig): Promise<void> {
+  if (config.pluginAction !== 'install' || config.pluginPath === null) {
+    throw new ConfigError('plugin 子命令不完整（需要 plugin install <路径>）');
+  }
+  const client = createAdminClient(config.port, readAdminToken(config.dataDir));
+  const target = path.resolve(config.pluginPath);
+  let source: { kind: 'folder' | 'file'; path: string };
+  let info: PluginInspectOutput;
+  try {
+    source = (await stat(target)).isDirectory()
+      ? { kind: 'folder', path: target }
+      : { kind: 'file', path: target };
+    info = pluginInspectOutputSchema.parse(await client.pluginsInspect({ source }));
+  } catch (error) {
+    console.error(`读取插件失败：${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+
+  (config.json ? console.error : console.log)(formatPluginInspection(info));
+  if (!info.installable) {
+    console.error('插件不可安装：');
+    for (const blocker of info.blockers) console.error(`  - ${blocker}`);
+    for (const conflict of info.conflicts) {
+      console.error(`  - 冲突 ${conflict.kind} ${conflict.ref} ↔ ${conflict.withWhat}`);
+    }
+    process.exit(1);
+  }
+
+  let userConfig: PluginUserConfig = {};
+  if (config.pluginConfigFile !== null) {
+    try {
+      userConfig = parseUserConfigText(readFileSync(config.pluginConfigFile, 'utf8'));
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  }
+  const missing = missingRequiredUserConfig(info, userConfig);
+  if (missing.length > 0) {
+    console.error(`缺少必填配置：${missing.join(', ')}`);
+    console.error('用 --config <json 文件> 提供（终端里不输入敏感值）。');
+    process.exit(1);
+  }
+
+  if (!config.pluginYes) {
+    if (!process.stdin.isTTY) {
+      console.error('非交互环境不能确认安装；确认无误后加 --yes 重试。');
+      process.exit(1);
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    let answer: string;
+    try {
+      answer = (await rl.question('继续安装？[y/N] ')).trim().toLowerCase();
+    } finally {
+      rl.close();
+    }
+    if (answer !== 'y' && answer !== 'yes') {
+      console.log('已取消。');
+      process.exit(1);
+    }
+  }
+
+  try {
+    const result = await client.pluginsInstall({
+      source,
+      sha256: info.packageSha256,
+      userConfig,
+    });
+    if (config.json) {
+      console.log(JSON.stringify(result));
+    } else {
+      console.log(`已安装：${info.name}（${info.id}@${info.version}）`);
+    }
+  } catch (error) {
+    console.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+/**
  * 密码模式首启建号（D102 修订）：已配置（auth.json 存在）直接过；否则优先用
  * --admin-user/--admin-password（systemd 非交互），都没有且是交互终端则提示输入
  * （用户名默认 admin，密码输两次、不回显），非交互又没给参数则由 server 层报错。
  */
-async function ensureAdminAccount(dataDir: string, adminUser: string | null, adminPassword: string | null): Promise<void>;
-async function ensureAdminAccount(config: { dataDir: string; adminUser: string | null; adminPassword: string | null }): Promise<void>;
+async function ensureAdminAccount(
+  dataDir: string,
+  adminUser: string | null,
+  adminPassword: string | null,
+): Promise<void>;
+async function ensureAdminAccount(config: {
+  dataDir: string;
+  adminUser: string | null;
+  adminPassword: string | null;
+}): Promise<void>;
 async function ensureAdminAccount(
   configOrDir: { dataDir: string; adminUser: string | null; adminPassword: string | null } | string,
   maybeUser?: string | null,
@@ -161,7 +265,9 @@ async function changeAdminPassword(config: ReturnType<typeof parseConfig>): Prom
   mkdirSync(config.dataDir, { recursive: true });
   const auth = new AuthStore(config.dataDir);
   if (!process.stdin.isTTY) {
-    console.error('password 子命令需要交互终端；脚本场景请删除 <data-dir>/auth.json 后用 --admin-user/--admin-password 重建。');
+    console.error(
+      'password 子命令需要交互终端；脚本场景请删除 <data-dir>/auth.json 后用 --admin-user/--admin-password 重建。',
+    );
     process.exit(2);
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
