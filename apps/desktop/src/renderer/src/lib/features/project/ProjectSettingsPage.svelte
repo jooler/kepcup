@@ -7,6 +7,7 @@
   import ProjectSettingsGrants from './ProjectSettingsGrants.svelte';
   import ProjectSettingsMembers from './ProjectSettingsMembers.svelte';
   import ProjectSettingsOverview from './ProjectSettingsOverview.svelte';
+  import ProjectSettingsPlugins from './ProjectSettingsPlugins.svelte';
   import ProjectSettingsSchedules from './ProjectSettingsSchedules.svelte';
   import { projectSettingsNav } from './project-settings-nav';
 
@@ -98,6 +99,11 @@
           {:else if section === 'members'}
             <section data-testid="project-settings-section-members">
               <ProjectSettingsMembers {conversationId} />
+            </section>
+          {:else if section === 'plugins'}
+            <!-- P2 注入模型：项目会话内的叠加授权（锚点 project-plugins，静态写）。 -->
+            <section data-testid="project-settings-section-plugins">
+              <ProjectSettingsPlugins {conversationId} {conversation} />
             </section>
           {:else if section === 'grants'}
             <section data-testid="project-settings-section-grants">
