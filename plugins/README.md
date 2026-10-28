@@ -11,6 +11,7 @@
 plugins/
   skill-<id>/          技能插件：skills/<id>/SKILL.md（+ requirements.txt）
   connector-<slug>/    连接器插件：connectors/<slug>/server.json（+ 图标）
+  mail-<id>/           邮件插件（D105 P3）：instances: ['mail'] + 一份 mail 贡献
   README.md
 ```
 
@@ -20,6 +21,10 @@ plugins/
   这里的市场插件承担；`server.json` 的 `_meta` 结构保持 registry 兼容形状。
 - 技能展示字段（`displayName` / `icon` / `section` / `tryIt`）是内置插件专属，
   市场插件省略即可，界面回落到 SKILL.md 的 `name` / `description`。
+- **邮件插件**：清单声明 `instances: ['mail']` 且恰好一份 `contributions.mail`
+  （实例供给规范）。厂商插件锁定端点（imap/smtp host 非空，两侧成对声明），
+  账号表单只有 地址 / 用户名 / 授权码（+ 插件 `instanceFields`）；通用插件
+  （host 留空）的 IMAP/SMTP 端点变成必填实例字段，用户自填。
 
 ## 开发流程（D104，docs/guides/write-a-plugin.md）
 
@@ -53,9 +58,17 @@ cd infra/cloudflare/directory && npx wrangler deploy
 
 完整密钥 / 轮换 / 撤销说明见 [infra/cloudflare/plugins/README.md](../infra/cloudflare/plugins/README.md)。
 
-## 首批清单（18 个，2026-10-28 发布）
+## 批次清单
+
+### 首批（18 个，2026-10-28 发布）
 
 - 技能 9：docx / xlsx / pptx / pdf / mineru / meeting-notes / weekly-report /
   doc-coauthoring / internal-comms（原内置 `com.kepcup/starter-skills` 逐个拆分）；
 - 连接器 9：notion / linear / atlassian / sentry / canva / stripe / cloudflare /
   gcalendar / gdrive（原内置 `com.kepcup/connections` 逐个拆分，server.json 未改）。
+
+### D105 P3 追加（4 个邮件插件，2026-10-28 随插件平台 P3 开发；发布沿上方流程）
+
+- 邮件 4：mail-generic（通用，自填 IMAP/SMTP）/ mail-163 / mail-126 / mail-qq
+  （厂商，锁定端点）。实例型插件首批落地：一个插件可添加多个邮箱账号，
+  添加入口在插件卡「管理」；卸载插件级联删除其全部账号、绑定与授权码。

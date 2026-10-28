@@ -116,18 +116,16 @@ export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>
 import { CAPABILITY_KINDS } from '../kinds.js';
 
 import type { ConnectorsProjectorDeps } from './connectors.js';
-import type { MailProjectorDeps } from './mail.js';
 import type { PluginMcpDeps } from './mcp.js';
 import type { SkillsProjectorDeps } from './skills.js';
 
-export type { ConnectorsProjectorDeps, MailProjectorDeps, PluginMcpDeps, SkillsProjectorDeps };
+export type { ConnectorsProjectorDeps, PluginMcpDeps, SkillsProjectorDeps };
 
 /** Dependencies for the registry-order projector set (`start.ts` wires them once). */
 export interface PluginProjectorsDeps {
   skills: SkillsProjectorDeps;
   mcp: PluginMcpDeps;
   connectors: ConnectorsProjectorDeps;
-  mail?: MailProjectorDeps | undefined;
 }
 
 /**

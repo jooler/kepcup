@@ -8,7 +8,6 @@ import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
-import { mailProviderSchema } from './mail.js';
 import {
   settingCardContentSchema,
   settingCardResolvedSchema,
@@ -1622,8 +1621,8 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
    */
   z.object({
     kind: z.literal('mail-account'),
-    /** 可选的厂商预填（qq / gmail / …）；用户仍可改选。 */
-    provider: mailProviderSchema.optional(),
+    // P3：厂商预填已随 MAIL_PROVIDER_PRESETS 删除——添加入口是邮件插件卡，
+    // 卡上列已安装的邮件插件（无则引导安装）。
     /** 给用户看的简短原因。 */
     reason: z.string().optional(),
   }),

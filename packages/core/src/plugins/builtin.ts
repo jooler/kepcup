@@ -293,6 +293,7 @@ export class BuiltinPlugins {
         updateAvailable: null,
         revoked: null,
         configFields: [],
+        instanceFields: [],
         instanceCounts: { mail: 0, mcp: 0 },
         providesInstances: [],
       };

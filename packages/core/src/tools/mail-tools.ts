@@ -1,5 +1,5 @@
 import { Type } from '@earendil-works/pi-ai';
-import { AppError, type MailProvider, type SetupRequirement } from '@kepcup/shared';
+import { AppError, type SetupRequirement } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import type { MailService } from '../mail/service.js';
@@ -30,7 +30,6 @@ export const MAIL_REQUEST_SETUP_TOOL = 'mail_request_setup';
 export function decideMailSetupRequest(input: {
   botId: string | null;
   bound: ReadonlyArray<{ label: string; address: string }>;
-  provider?: MailProvider | undefined;
   reason?: string | undefined;
 }):
   | { ok: true; requirement: Extract<SetupRequirement, { kind: 'mail-account' }>; message: string }
@@ -40,7 +39,6 @@ export function decideMailSetupRequest(input: {
   }
   const requirement: Extract<SetupRequirement, { kind: 'mail-account' }> = {
     kind: 'mail-account',
-    ...(input.provider !== undefined ? { provider: input.provider } : {}),
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
   };
   const existing =
@@ -75,7 +73,7 @@ export function mailBoundFor(
 
 /** 对话内「添加邮箱」卡的门面（orchestrator 写入本 run 的 setupHit）。 */
 export interface MailSetupFacade {
-  requestSetup(input: { provider?: MailProvider; reason?: string }): {
+  requestSetup(input: { reason?: string }): {
     ok: boolean;
     message: string;
   };
@@ -265,43 +263,19 @@ export function buildMailTools(input: {
   const tools: ToolDefinition[] = input.bound ? [accounts, list, read, search, send] : [];
   if (input.setup !== undefined) {
     const setupFacade = input.setup;
-    const requestSetup: ToolDefinition<{ provider?: string; reason?: string }> = {
+    // P3：无 provider 参数——添加入口是邮件插件卡（表单由插件实例字段构建），卡片上
+    // 列已安装的邮件插件，没有就引导安装。
+    const requestSetup: ToolDefinition<{ reason?: string }> = {
       name: MAIL_REQUEST_SETUP_TOOL,
       description:
-        '请用户在对话里添加邮箱并交给你。用户一说「帮我接管邮箱 / 代管邮箱 / 添加（更多）邮箱 / 把邮箱交给你」时，**立刻**调用本工具——不要先指路扩展中心、不要先口头确认；你已有绑定邮箱时也一样，会新增一个，原有的保持不变。provider 可选（qq / netease_163 / netease_126 / gmail / custom）；reason 简述原因（给用户看）。调用后本次执行暂停，用户填好并测试保存后自动继续并绑定给你。不要索要授权码贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover。',
+        '请用户在对话里添加邮箱并交给你。用户一说「帮我接管邮箱 / 代管邮箱 / 添加（更多）邮箱 / 把邮箱交给你」时，**立刻**调用本工具——不要先指路扩展中心、不要先口头确认；你已有绑定邮箱时也一样，会新增一个，原有的保持不变。reason 简述原因（给用户看）。调用后本次执行暂停，用户在卡片上选一个已安装的邮件插件、填好账号并测试保存后自动继续并绑定给你。不要索要授权码贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover。',
       parameters: Type.Object({
-        provider: Type.Optional(
-          Type.String({
-            description: '邮箱厂商预填：qq、netease_163、netease_126、gmail、custom（outlook 当前不可用）',
-          }),
-        ),
         reason: Type.Optional(Type.String({ description: '为什么需要这个邮箱（给用户看）' })),
       }),
       execute: async (params) => {
         if (botId === null) return noContext();
-        const clean = (value: string | undefined): string | undefined => {
-          const trimmed = value?.trim();
-          return trimmed === undefined || trimmed === '' ? undefined : trimmed;
-        };
-        const provider = clean(params.provider);
-        const reason = clean(params.reason);
-        const allowed = new Set([
-          'qq',
-          'netease_163',
-          'netease_126',
-          'gmail',
-          'outlook',
-          'custom',
-        ]);
-        if (provider !== undefined && !allowed.has(provider)) {
-          return {
-            ok: false,
-            content: `不支持的邮箱厂商「${provider}」：可用 qq、netease_163、netease_126、gmail、custom`,
-            errorCode: 'INVALID_INPUT',
-          };
-        }
+        const reason = params.reason?.trim() || undefined;
         const result = setupFacade.requestSetup({
-          ...(provider !== undefined ? { provider: provider as MailProvider } : {}),
           ...(reason !== undefined ? { reason } : {}),
         });
         if (!result.ok) return { ok: false, content: result.message, errorCode: 'INVALID_INPUT' };

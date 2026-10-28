@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mail-126",
+  "name": "126 邮箱",
+  "version": "1.0.0",
+  "description": "添加网易 126 邮箱账号：服务器已内置并锁定，只需填写邮箱地址和客户端授权码。网易邮箱没有推送，默认约 5 分钟轮询一次。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://help.mail.126.com/",
+  "instances": ["mail"],
+  "contributions": {
+    "mail": [
+      {
+        "id": "netease126",
+        "label": "126 邮箱",
+        "imap": { "host": "imap.126.com", "port": 993, "secure": "ssl" },
+        "smtp": { "host": "smtp.126.com", "port": 465, "secure": "ssl" },
+        "defaultMode": "poll_only",
+        "defaultPollSec": 300,
+        "minPollSec": 180
+      }
+    ]
+  }
+}

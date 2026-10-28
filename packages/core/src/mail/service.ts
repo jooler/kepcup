@@ -2,18 +2,16 @@ import {
   AppError,
   MAIL_ALERT_EVENT,
   MAIL_CARD_TYPE,
-  MAIL_PROVIDER_PRESETS,
+  MAIL_POLL_MIN_SEC,
   clampMailPollInterval,
   isMailAddress,
   mailAlertDedupeKey,
   newId,
   type AppNoticePayload,
   type MailAccount,
-  type MailAccountCreateInput,
-  type MailAccountTestInput,
   type MailAccountUpdateInput,
   type MailListen,
-  type MailProvider,
+  type MailMode,
   type MailSecure,
   type MailSendApprovalPayload,
   type Message,
@@ -75,6 +73,58 @@ export function mailPasswordName(accountId: string): string {
   return `mail:${accountId}:password`;
 }
 
+/**
+ * 实例归属解析（P3，start.ts 注入）：邮件服务不感知插件表，密码 secret 名、轮询
+ * 下限与展示名都经这个端口向插件层解析。密码的单一事实来源是实例 secret
+ * （`plugin:{pluginId}:instance:{id}:password`，DEV-063 转义）；无主账号回落
+ * `mail:{accountId}:password` 旧键。
+ */
+export interface MailInstanceOwnerPort {
+  /** 实例所属插件；实例不存在 / 已删 = null。 */
+  ownerOf(instanceId: string): { pluginId: string } | null;
+  /** 插件展示名（用于账号列表的归属显示）；未知 = null。 */
+  pluginName(pluginId: string): string | null;
+  /** 实例账号的密码 secret 名。 */
+  passwordSecretName(pluginId: string, instanceId: string): string;
+  /** 轮询间隔下限 / 缺省（来自插件贡献声明；清单不可读时回落全局硬限）。 */
+  pollBounds(pluginId: string): Promise<{ minPollSec: number; defaultPollSec: number }>;
+}
+
+/** 无主账号的轮询口径：只有全局 60 秒硬限，缺省 300 秒。 */
+const LEGACY_POLL_BOUNDS = { minPollSec: MAIL_POLL_MIN_SEC, defaultPollSec: 300 };
+
+/** 实例建号入参（materializer 专用）：端点已由贡献锁或实例字段解析完毕。 */
+export interface MailInstanceAccountInput {
+  address: string;
+  username?: string | undefined;
+  password: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: MailSecure;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: MailSecure;
+  mode?: MailMode | undefined;
+  pollIntervalSec?: number | undefined;
+  /** 贡献声明的轮询下限 / 缺省（clampMailPollInterval 的边界）。 */
+  minPollSec?: number | undefined;
+  defaultPollSec?: number | undefined;
+  instanceId: string;
+}
+
+/** 连接测传入参：端点完整（服务内部用；RPC 已随 P3 收敛删除）。 */
+export interface MailEndpointTestInput {
+  address: string;
+  username?: string | undefined;
+  password: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: MailSecure;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: MailSecure;
+}
+
 export interface MailServiceDeps {
   db: SqliteDatabase;
   clock: Clock;
@@ -99,6 +149,8 @@ export interface MailServiceDeps {
   openImap?: MailImapOpener;
   /** 测试注入：缩短会话重连退避。 */
   sessionBackoffMs?: (streak: number) => number;
+  /** 实例归属解析（P3）；测试 / 无插件环境可省（全部回落无主账号行为）。 */
+  instanceOwner?: MailInstanceOwnerPort | undefined;
 }
 
 interface AlertPayload {
@@ -129,7 +181,11 @@ export class MailService {
     this.#hub = new MailSessionHub({
       open: deps.openImap ?? createImapflowOpener(),
       load: (id) => this.store.get(id),
-      password: (id) => deps.secrets.getValue(mailPasswordName(id)),
+      // P3：实例账号的密码在实例 secret（经 #passwordName 解析）；无主账号在旧键。
+      password: (id) => {
+        const row = this.store.get(id);
+        return row === null ? null : this.#deps.secrets.getValue(this.#passwordName(row));
+      },
       onReady: (id, listen, mailbox) => this.#markReady(id, listen, mailbox),
       onMessages: (id, messages) => this.ingest(id, messages),
       onFailure: (id, error, streak, info) => this.#markFailure(id, error, streak, info.fatal),
@@ -151,15 +207,15 @@ export class MailService {
   }
 
   list(): MailAccount[] {
-    return this.store.listActive().map((row) => toPublicAccount(row, this.store.bindings(row.id)));
+    return this.store.listActive().map((row) => this.#public(row));
   }
 
   get(id: string): MailAccount {
     return this.#public(this.#require(id));
   }
 
-  async test(input: MailAccountTestInput): Promise<{ ok: true; idle: boolean; smtp: boolean }> {
-    const endpoint = resolveEndpoint(input);
+  async test(input: MailEndpointTestInput): Promise<{ ok: true; idle: boolean; smtp: boolean }> {
+    const endpoint = resolveInstanceEndpoint(input);
     await assertMailHost(endpoint.imapHost);
     await assertMailHost(endpoint.smtpHost);
     const client = await this.#open(endpoint, input.password);
@@ -179,33 +235,37 @@ export class MailService {
     return { ok: true, idle, smtp: true };
   }
 
-  async create(input: MailAccountCreateInput): Promise<MailAccount> {
-    const endpoint = resolveEndpoint(input);
-    // 先验 Bot：无效就别测连、别落库（否则 RPC 报错了账号却已经在库里，重试还会重复创建）。
-    if (input.botIds !== undefined) this.#assertBots(input.botIds);
-    // D91 后续：Bot 可以继续添加更多邮箱（追加绑定）；同一地址已绑给该 Bot 就别再建一个重复账号
-    // （两个账号监听同一个信箱会让新信提醒重复，也让 account_id 按地址解析有歧义）。
-    for (const botId of input.botIds ?? []) {
-      const same = this.accountsForBot(botId).find(
-        (account) => account.address.toLowerCase() === endpoint.address.toLowerCase(),
-      );
-      if (same !== undefined) {
-        throw new AppError('INVALID_INPUT', `这个 Bot 已绑定邮箱 ${same.address}，不用重复添加`, {
-          accountId: same.id,
-        });
-      }
+  /**
+   * 实例建号（P3，materializer 专用路径）：端点已由贡献锁 / 实例字段解析完毕，
+   * 这里只做地址校验、测连、落库（带 instance_id）与密码入 secret。密码写入
+   * `#passwordName` 解析出的键——实例账号即实例 secret；随后启动会话。
+   * 失败自清理（软删 + 删 secret），不留半个账号。
+   */
+  async createForInstance(input: MailInstanceAccountInput): Promise<MailAccount> {
+    const endpoint = resolveInstanceEndpoint(input);
+    // 一个邮箱 = 一个账号（旧 create 的防重语义收严到全局）：同一地址两个账号会让
+    // 新信提醒翻倍，也让按地址解析账号有歧义。实例创建在注册表互斥内串行，无竞态。
+    const same = this.store
+      .listActive()
+      .find((account) => account.address.toLowerCase() === endpoint.address.toLowerCase());
+    if (same !== undefined) {
+      throw new AppError('INVALID_INPUT', `邮箱 ${same.address} 已添加，不用重复添加`, {
+        accountId: same.id,
+      });
     }
     await this.test(input);
-    // 测连期间 Bot 可能被删：落库前再核一次，之后到启动之间没有 await。
-    if (input.botIds !== undefined) this.#assertBots(input.botIds);
     const now = this.#deps.clock.now();
-    const preset = MAIL_PROVIDER_PRESETS[input.provider];
     const id = this.#newId();
+    const bounds = {
+      minPollSec: input.minPollSec ?? MAIL_POLL_MIN_SEC,
+      defaultPollSec: input.defaultPollSec ?? 300,
+    };
     const row: MailAccountRecord = {
       id,
       address: endpoint.address,
-      label: input.label?.trim() || endpoint.address,
-      provider: input.provider,
+      label: endpoint.address,
+      provider: 'custom',
+      instanceId: input.instanceId,
       imapHost: endpoint.imapHost,
       imapPort: endpoint.imapPort,
       imapSecure: endpoint.imapSecure,
@@ -213,8 +273,8 @@ export class MailService {
       smtpPort: endpoint.smtpPort,
       smtpSecure: endpoint.smtpSecure,
       username: endpoint.username,
-      mode: input.mode ?? preset.defaultMode,
-      pollIntervalSec: clampMailPollInterval(input.provider, input.pollIntervalSec ?? preset.defaultPollSec),
+      mode: input.mode ?? 'auto',
+      pollIntervalSec: clampMailPollInterval(input.pollIntervalSec ?? bounds.defaultPollSec, bounds),
       status: 'idle',
       listen: null,
       lastUid: null,
@@ -229,14 +289,9 @@ export class MailService {
     };
     this.store.insert(row);
     try {
-      this.#deps.secrets.setValue(mailPasswordName(id), input.password);
-      if (input.botIds !== undefined && input.botIds.length > 0) {
-        this.store.replaceBots(id, input.botIds, now);
-      }
+      this.#deps.secrets.setValue(this.#passwordName(row), input.password);
     } catch (error) {
-      // 任何一步失败都不留下半个账号：软删除并清掉已写入的授权码。
-      this.#deps.secrets.removeValue(mailPasswordName(id));
-      this.store.deleteBindings(id);
+      // 落库后写 secret 失败：软删回滚（全新 id，不存在需保护的旧值）。
       this.store.patch(id, { deletedAt: now, updatedAt: now });
       throw error;
     }
@@ -248,18 +303,95 @@ export class MailService {
 
   async update(input: MailAccountUpdateInput): Promise<MailAccount> {
     const current = this.#require(input.id);
-    const endpoint = resolveEndpoint({
-      provider: current.provider,
-      address: current.address,
-      username: input.username ?? current.username,
-      imapHost: input.imapHost ?? current.imapHost,
-      imapPort: input.imapPort ?? current.imapPort,
-      imapSecure: input.imapSecure ?? current.imapSecure,
-      smtpHost: input.smtpHost ?? current.smtpHost,
-      smtpPort: input.smtpPort ?? current.smtpPort,
-      smtpSecure: input.smtpSecure ?? current.smtpSecure,
+    // 实例账号的端点 / 登录名只能走实例路径（插件卡实例表单 → plugins.instances.update →
+    // updateInstanceAccount），全局视图只保留 label / 模式 / 间隔 / 授权码——防止绕过贡献锁
+    // 改厂商端点。
+    if (current.instanceId !== null) {
+      const touchesLocked =
+        input.username !== undefined ||
+        input.imapHost !== undefined ||
+        input.imapPort !== undefined ||
+        input.imapSecure !== undefined ||
+        input.smtpHost !== undefined ||
+        input.smtpPort !== undefined ||
+        input.smtpSecure !== undefined;
+      if (touchesLocked) {
+        throw new AppError('INVALID_INPUT', '实例账号的服务器与登录信息请到所属插件的卡片上修改');
+      }
+    }
+    return this.#applyAccountUpdate(current, {
+      username: input.username,
+      password: input.password,
+      imapHost: input.imapHost,
+      imapPort: input.imapPort,
+      imapSecure: input.imapSecure,
+      smtpHost: input.smtpHost,
+      smtpPort: input.smtpPort,
+      smtpSecure: input.smtpSecure,
+      label: input.label,
+      mode: input.mode,
+      pollIntervalSec: input.pollIntervalSec,
     });
-    const password = input.password ?? this.#deps.secrets.getValue(mailPasswordName(current.id));
+  }
+
+  /**
+   * 实例路径的端点 / 凭据更新（materializer 专用；不受上面的全局视图守卫限制）。
+   * 端点已由 materializer 按贡献锁 / 提交值解析完毕；授权码必传（缺省语义已在上层
+   * 用存量 secret 回填）。
+   */
+  async updateInstanceAccount(input: {
+    id: string;
+    username?: string | undefined;
+    password: string;
+    imapHost: string;
+    imapPort: number;
+    imapSecure: MailSecure;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: MailSecure;
+  }): Promise<MailAccount> {
+    const current = this.#require(input.id);
+    return this.#applyAccountUpdate(current, {
+      username: input.username,
+      password: input.password,
+      imapHost: input.imapHost,
+      imapPort: input.imapPort,
+      imapSecure: input.imapSecure,
+      smtpHost: input.smtpHost,
+      smtpPort: input.smtpPort,
+      smtpSecure: input.smtpSecure,
+    });
+  }
+
+  /** 账号更新的公共内核：测连 → 写 secret → 落库 → 重启会话。 */
+  async #applyAccountUpdate(
+    current: MailAccountRecord,
+    patch: {
+      username?: string | undefined;
+      password?: string | undefined;
+      imapHost?: string | undefined;
+      imapPort?: number | undefined;
+      imapSecure?: MailSecure | undefined;
+      smtpHost?: string | undefined;
+      smtpPort?: number | undefined;
+      smtpSecure?: MailSecure | undefined;
+      label?: string | undefined;
+      mode?: MailMode | undefined;
+      pollIntervalSec?: number | undefined;
+    },
+  ): Promise<MailAccount> {
+    const endpoint = resolveInstanceEndpoint({
+      address: current.address,
+      username: patch.username ?? current.username,
+      imapHost: patch.imapHost ?? current.imapHost,
+      imapPort: patch.imapPort ?? current.imapPort,
+      imapSecure: patch.imapSecure ?? current.imapSecure,
+      smtpHost: patch.smtpHost ?? current.smtpHost,
+      smtpPort: patch.smtpPort ?? current.smtpPort,
+      smtpSecure: patch.smtpSecure ?? current.smtpSecure,
+    });
+    const passwordName = this.#passwordName(current);
+    const password = patch.password ?? this.#deps.secrets.getValue(passwordName);
     if (password === null) throw new AppError('MAIL_AUTH_FAILED', '邮箱授权码不存在，请重新填写');
     const serversChanged =
       endpoint.imapHost !== current.imapHost ||
@@ -269,10 +401,9 @@ export class MailService {
       endpoint.smtpPort !== current.smtpPort ||
       endpoint.smtpSecure !== current.smtpSecure ||
       endpoint.username !== current.username ||
-      input.password !== undefined;
+      patch.password !== undefined;
     if (serversChanged) {
       await this.test({
-        provider: current.provider,
         address: current.address,
         password,
         username: endpoint.username,
@@ -284,8 +415,8 @@ export class MailService {
         smtpSecure: endpoint.smtpSecure,
       });
     }
-    if (input.password !== undefined) {
-      this.#deps.secrets.setValue(mailPasswordName(current.id), input.password);
+    if (patch.password !== undefined) {
+      this.#deps.secrets.setValue(passwordName, patch.password);
     }
     const now = this.#deps.clock.now();
     // 收信地址（服务器 / 端口 / 加密 / 登录名）变了，可能已经是另一个邮箱：旧 UID 游标与 UIDVALIDITY
@@ -297,12 +428,12 @@ export class MailService {
       endpoint.username !== current.username;
     this.store.patch(current.id, {
       ...(inboxChanged ? { lastUid: null, uidValidity: null, unseenCount: null } : {}),
-      label: input.label?.trim() || current.label,
+      label: patch.label?.trim() || current.label,
       username: endpoint.username,
-      mode: input.mode ?? current.mode,
+      mode: patch.mode ?? current.mode,
       pollIntervalSec: clampMailPollInterval(
-        current.provider,
-        input.pollIntervalSec ?? current.pollIntervalSec,
+        patch.pollIntervalSec ?? current.pollIntervalSec,
+        await this.#pollBounds(current),
       ),
       imapHost: endpoint.imapHost,
       imapPort: endpoint.imapPort,
@@ -322,13 +453,21 @@ export class MailService {
     const current = this.#require(id);
     this.#hub.stop(id);
     this.#deps.jobs.cancelByDedupePrefix(`mail:${id}:`);
-    this.#deps.secrets.removeValue(mailPasswordName(id));
+    this.#deps.secrets.removeValue(this.#passwordName(current));
     this.store.deleteBindings(id);
     const now = this.#deps.clock.now();
-    this.store.patch(id, { deletedAt: now, updatedAt: now, status: 'paused', listen: null });
+    // 软删的同时松开实例引用：mail_accounts.instance_id 是真外键，留着会让
+    // plugin_instances 行（进而插件行）永远删不掉。
+    this.store.patch(id, {
+      instanceId: null,
+      deletedAt: now,
+      updatedAt: now,
+      status: 'paused',
+      listen: null,
+    });
     this.#dismissOutage(id);
     this.#deps.publishAccount(null, id);
-    return toPublicAccount({ ...current, deletedAt: now, status: 'paused' }, []);
+    return toPublicAccount({ ...current, instanceId: null, deletedAt: now, status: 'paused' }, []);
   }
 
   setBots(accountId: string, botIds: readonly string[]): MailAccount {
@@ -715,7 +854,7 @@ export class MailService {
       throw new AppError('INVALID_INPUT', '至少要有一个收件人');
     }
     // 提前失败，省得用户批准了一封发不出去的信。真正用的授权码在批准之后再取。
-    if (this.#deps.secrets.getValue(mailPasswordName(account.id)) === null) {
+    if (this.#deps.secrets.getValue(this.#passwordName(account)) === null) {
       throw new AppError('MAIL_AUTH_FAILED', '邮箱授权码不存在，请重新填写');
     }
     const taint = this.#deps.taint.guard(identity.botId, identity.conversationId);
@@ -740,7 +879,7 @@ export class MailService {
     }
     // 审批可能挂了很久：账号可能已被删除或解绑，授权码和服务器也可能已更新。以现在的状态为准。
     const current = this.#bound(identity.botId, account.id);
-    const password = this.#deps.secrets.getValue(mailPasswordName(current.id));
+    const password = this.#deps.secrets.getValue(this.#passwordName(current));
     if (password === null) throw new AppError('MAIL_AUTH_FAILED', '邮箱授权码不存在，请重新填写');
     try {
       await sendSmtp({
@@ -764,6 +903,58 @@ export class MailService {
 
   prepareBotDeletion(botId: string): number {
     return this.store.deleteBindingsForBot(botId);
+  }
+
+  // --- 实例（P3，materializer 专用） ------------------------------------------------
+
+  /** 一个插件实例落地的活跃账号（无 / 已删 = null，materializer 据此幂等）。 */
+  accountByInstance(instanceId: string): MailAccount | null {
+    const id = this.store.idByInstance(instanceId);
+    return id === null ? null : this.#public(this.#require(id));
+  }
+
+  /**
+   * 实例拆除：按 instance_id 找到账号并走既有删除级联（绑定、secret、作业、会话）。
+   * 找不到账号 = 已被删除，幂等成功。
+   */
+  deleteByInstance(instanceId: string): void {
+    const id = this.store.idByInstance(instanceId);
+    if (id !== null) this.delete(id);
+  }
+
+  /** 账号密码的 secret 名：实例账号 = 实例 secret（单一事实来源，授权码更新经实例
+   * 路径或本服务写入同一把键）；无主账号 = 旧键 `mail:{id}:password`。
+   */
+  #passwordName(account: { id: string; instanceId: string | null }): string {
+    if (account.instanceId === null) return mailPasswordName(account.id);
+    const owner = this.#deps.instanceOwner?.ownerOf(account.instanceId) ?? null;
+    if (owner === null) return mailPasswordName(account.id);
+    return this.#deps.instanceOwner!.passwordSecretName(owner.pluginId, account.instanceId);
+  }
+
+  /** 轮询间隔边界：实例账号取所属插件贡献声明，无主账号只有全局硬限。 */
+  async #pollBounds(account: { instanceId: string | null }): Promise<{
+    minPollSec: number;
+    defaultPollSec: number;
+  }> {
+    if (account.instanceId === null) return LEGACY_POLL_BOUNDS;
+    const port = this.#deps.instanceOwner;
+    const owner = port?.ownerOf(account.instanceId) ?? null;
+    if (port === undefined || owner === null) return LEGACY_POLL_BOUNDS;
+    return port.pollBounds(owner.pluginId);
+  }
+
+  /** 账号列表的归属展示（pluginId / pluginName）；无主账号两列为 null。 */
+  #ownerLabel(account: MailAccount): MailAccount {
+    if (account.instanceId === null) return account;
+    const port = this.#deps.instanceOwner;
+    const owner = port?.ownerOf(account.instanceId) ?? null;
+    if (port === undefined || owner === null) return account;
+    return {
+      ...account,
+      pluginId: owner.pluginId,
+      pluginName: port.pluginName(owner.pluginId) ?? owner.pluginId,
+    };
   }
 
   async #withAccount<T>(account: MailAccountRecord, fn: (client: MailImap) => Promise<T>): Promise<T> {
@@ -951,7 +1142,7 @@ export class MailService {
   }
 
   #public(row: MailAccountRecord): MailAccount {
-    return toPublicAccount(row, this.store.bindings(row.id));
+    return this.#ownerLabel(toPublicAccount(row, this.store.bindings(row.id)));
   }
 
   #emit(accountId: string): void {
@@ -975,52 +1166,37 @@ interface ResolvedEndpoint {
   smtpSecure: MailSecure;
 }
 
-function resolveEndpoint(input: {
-  provider: MailProvider;
+/**
+ * P3：端点不再来自厂商预设——实例账号的端点由贡献锁（厂商插件）或实例字段
+ * （通用插件）在 materializer 里解析完毕传进来；这里只做裁剪与地址格式校验。
+ * 遗留账号的 update 路径用现值回填同一形状。
+ */
+function resolveInstanceEndpoint(input: {
   address: string;
   username?: string | undefined;
-  imapHost?: string | undefined;
-  imapPort?: number | undefined;
-  imapSecure?: MailSecure | undefined;
-  smtpHost?: string | undefined;
-  smtpPort?: number | undefined;
-  smtpSecure?: MailSecure | undefined;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: MailSecure;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: MailSecure;
 }): ResolvedEndpoint {
   const address = input.address.trim();
   if (!isMailAddress(address)) throw new AppError('INVALID_INPUT', '邮箱地址不正确');
-  const preset = MAIL_PROVIDER_PRESETS[input.provider];
-  if (!preset.available) {
-    throw new AppError(
-      'MAIL_PROVIDER_UNAVAILABLE',
-      'Outlook 需要 OAuth，当前版本还不能用授权码登录。可以等后续版本，或用「自定义」填写服务器（密码登录不保证可用）。',
-    );
-  }
-  if (input.provider === 'custom') {
-    const imapHost = input.imapHost?.trim() ?? '';
-    const smtpHost = input.smtpHost?.trim() ?? '';
-    if (imapHost.length === 0 || smtpHost.length === 0) {
-      throw new AppError('INVALID_INPUT', '自定义邮箱需要填写 IMAP 和 SMTP 服务器');
-    }
-    return {
-      address,
-      username: input.username?.trim() || address,
-      imapHost,
-      imapPort: input.imapPort ?? preset.imap.port,
-      imapSecure: input.imapSecure ?? preset.imap.secure,
-      smtpHost,
-      smtpPort: input.smtpPort ?? preset.smtp.port,
-      smtpSecure: input.smtpSecure ?? preset.smtp.secure,
-    };
+  const imapHost = input.imapHost.trim();
+  const smtpHost = input.smtpHost.trim();
+  if (imapHost.length === 0 || smtpHost.length === 0) {
+    throw new AppError('INVALID_INPUT', '需要填写 IMAP 和 SMTP 服务器');
   }
   return {
     address,
     username: input.username?.trim() || address,
-    imapHost: preset.imap.host,
-    imapPort: preset.imap.port,
-    imapSecure: preset.imap.secure,
-    smtpHost: preset.smtp.host,
-    smtpPort: preset.smtp.port,
-    smtpSecure: preset.smtp.secure,
+    imapHost,
+    imapPort: input.imapPort,
+    imapSecure: input.imapSecure,
+    smtpHost,
+    smtpPort: input.smtpPort,
+    smtpSecure: input.smtpSecure,
   };
 }
 

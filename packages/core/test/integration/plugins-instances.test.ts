@@ -84,6 +84,10 @@ async function install(core: TestStack['core'], fixture: { path: string; sha256:
   })) as { plugin: { id: string } };
 }
 
+// P3：mail 内置实例字段（address / username / password）已生效——实例机制的通用用例
+// 也按真实字段提交（address / password 必填）。
+const MAIL_VALUES = { address: 'bot@example.com', password: 'authcode' };
+
 const instanceRows = (core: TestStack['core']) =>
   core.services.mainDb!.prepare('select * from plugin_instances').all() as Array<
     Record<string, unknown>
@@ -229,10 +233,10 @@ describe('plugin config & instances (D105 P1)', () => {
 
     const created = (await core.rpc.call('plugins.instances.create', {
       pluginId: PLUGIN_ID,
-      values: {},
+      values: MAIL_VALUES,
     })) as { instance: PluginInstanceSummary };
     expect(created.instance.kind).toBe('mail');
-    expect(created.instance.values).toEqual({});
+    expect(created.instance.values).toEqual({ address: MAIL_VALUES.address });
     expect(materializer.calls).toHaveLength(1);
 
     const list = (await core.rpc.call('plugins.instances.list', {
@@ -242,11 +246,13 @@ describe('plugin config & instances (D105 P1)', () => {
     const summary = (await core.rpc.call('plugins.list', undefined)) as {
       plugins: Array<{ id: string; instanceCounts: { mail: number } }>;
     };
-    expect(summary.plugins.find((entry) => entry.id === PLUGIN_ID)!.instanceCounts.mail).toBe(1);
+    // P3 口径：instanceCounts.mail 按 mail_accounts 活跃账号统计——假 materializer
+    // 不落真实账号，实例行存在也计 0。
+    expect(summary.plugins.find((entry) => entry.id === PLUGIN_ID)!.instanceCounts.mail).toBe(0);
 
     await core.rpc.call('plugins.instances.update', {
       id: created.instance.id,
-      values: {},
+      values: MAIL_VALUES,
     });
     expect(materializer.calls).toContain(`update:${created.instance.id}`);
 
@@ -258,7 +264,7 @@ describe('plugin config & instances (D105 P1)', () => {
     const failing = fakeMaterializer({ createError: new Error('domain landing failed') });
     core.services.pluginInstances!.registerMaterializer('mail', failing);
     await expect(
-      core.rpc.call('plugins.instances.create', { pluginId: PLUGIN_ID, values: {} }),
+      core.rpc.call('plugins.instances.create', { pluginId: PLUGIN_ID, values: MAIL_VALUES }),
     ).rejects.toMatchObject({ code: 'INTERNAL' });
     expect(instanceRows(core)).toHaveLength(0);
   });
@@ -278,7 +284,7 @@ describe('plugin config & instances (D105 P1)', () => {
     core.services.pluginInstances!.registerMaterializer('mail', materializer);
     const { instance } = (await core.rpc.call('plugins.instances.create', {
       pluginId: PLUGIN_ID,
-      values: {},
+      values: MAIL_VALUES,
     })) as { instance: PluginInstanceSummary };
     expect(instanceRows(core)).toHaveLength(1);
 
@@ -300,7 +306,7 @@ describe('plugin config & instances (D105 P1)', () => {
     core.services.pluginInstances!.registerMaterializer('mail', materializer);
     const { instance } = (await core.rpc.call('plugins.instances.create', {
       pluginId: PLUGIN_ID,
-      values: {},
+      values: MAIL_VALUES,
     })) as { instance: PluginInstanceSummary };
 
     // 模拟：卸载把行标成 uninstalling 后进程死亡。
@@ -331,12 +337,12 @@ describe('plugin config & instances (D105 P1)', () => {
     core.services.pluginInstances!.registerMaterializer('mail', materializer);
     const { instance } = (await core.rpc.call('plugins.instances.create', {
       pluginId: PLUGIN_ID,
-      values: {},
+      values: MAIL_VALUES,
     })) as { instance: PluginInstanceSummary };
 
     failUpdate = true;
     await expect(
-      core.rpc.call('plugins.instances.update', { id: instance.id, values: {} }),
+      core.rpc.call('plugins.instances.update', { id: instance.id, values: MAIL_VALUES }),
     ).rejects.toMatchObject({ code: 'INTERNAL' });
     const row = core.services.mainDb!
       .prepare('select config_json, updated_at from plugin_instances where id = ?')
@@ -346,7 +352,7 @@ describe('plugin config & instances (D105 P1)', () => {
     failUpdate = false;
     const updated = (await core.rpc.call('plugins.instances.update', {
       id: instance.id,
-      values: {},
+      values: MAIL_VALUES,
     })) as { instance: PluginInstanceSummary };
     expect(updated.instance.id).toBe(instance.id);
   });
@@ -356,7 +362,7 @@ describe('plugin config & instances (D105 P1)', () => {
     const fixture = await pureInstanceFixture();
     await install(core, fixture);
     core.services.pluginInstances!.registerMaterializer('mail', fakeMaterializer());
-    await core.rpc.call('plugins.instances.create', { pluginId: PLUGIN_ID, values: {} });
+    await core.rpc.call('plugins.instances.create', { pluginId: PLUGIN_ID, values: MAIL_VALUES });
     expect(instanceRows(core)).toHaveLength(1);
     core.services.mainDb!.prepare('delete from plugins where id = ?').run(PLUGIN_ID);
     expect(instanceRows(core)).toHaveLength(0);

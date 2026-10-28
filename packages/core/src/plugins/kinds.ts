@@ -55,10 +55,12 @@ export interface CapabilityKindAdapter {
   /** Can users create instances of this kind on the plugin card? */
   readonly hasInstances: boolean;
   /**
-   * Kind built-in instance form fields (NOT manifest-declared); a plugin's
-   * `instanceFields` append after these. Mail's built-ins land with its materializer (P3).
+   * The FULL instance form field list for one plugin: kind built-ins first, then the
+   * manifest's declared `instanceFields` (mail, P3). Non-instantiable kinds return [].
+   * This is the single source shared by instance-value validation
+   * (`PluginInstanceService`) and the `PluginSummary.instanceFields` safe projection.
    */
-  instanceFields(): PluginField[];
+  instanceFields(manifest: PluginManifest): PluginField[];
   /** Manifest-level: does this manifest carry contributions of this kind? */
   hasContribution(manifest: PluginManifest): boolean;
   /**
@@ -113,14 +115,115 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     kind: 'mail',
     contributionSchema: pluginMailContributionSchema,
     consentKey: 'mail',
-    // P3 lands the materializer + built-in instance fields; the registry declares it now.
     hasInstances: true,
-    instanceFields: () => [],
+    instanceFields: mailInstanceFields,
     hasContribution: (manifest) => manifest.contributions.mail.length > 0,
     consentItems: (inspection) => inspection.items as ConsentItem[],
-    createProjector: (deps) => new MailProjector(deps.mail ?? {}),
+    createProjector: () => new MailProjector(),
   }),
 ] satisfies readonly CapabilityKindAdapter[];
+
+/**
+ * Mail instance form fields (P3, todo/plugin-platform P3-mail.md §3.1): the kind's
+ * built-ins (address / username / password) come first; a GENERIC contribution
+ * (hosts declared empty) appends the six endpoint fields as required per-instance
+ * entries, a VENDOR one locks its endpoints (never form fields); the manifest's
+ * `instanceFields` append last (dup / builtin-key clashes are rejected by the schema).
+ * Titles are core-derived zh text — the same posture as every other core-derived
+ * user-facing string (P1 review disposition P1-6).
+ */
+function mailInstanceFields(manifest: PluginManifest): PluginField[] {
+  const contribution = manifest.contributions.mail[0];
+  const fields: PluginField[] = [
+    {
+      key: 'address',
+      type: 'string',
+      title: '邮箱地址',
+      description: '',
+      required: true,
+      sensitive: false,
+      multiple: false,
+    },
+    {
+      key: 'username',
+      type: 'string',
+      title: '登录用户名',
+      description: '不填则使用邮箱地址',
+      required: false,
+      sensitive: false,
+      multiple: false,
+    },
+    {
+      key: 'password',
+      type: 'string',
+      title: '授权码',
+      description: '在邮箱服务商设置里生成的授权码，不是网页登录密码',
+      required: true,
+      sensitive: true,
+      multiple: false,
+    },
+  ];
+  if (contribution !== undefined && contribution.imap.host === '') {
+    fields.push(
+      {
+        key: 'imapHost',
+        type: 'string',
+        title: '收信（IMAP）服务器',
+        description: '例如 imap.example.com',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+      {
+        key: 'imapPort',
+        type: 'number',
+        title: 'IMAP 端口',
+        description: '通常是 993',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+      {
+        key: 'imapSecure',
+        type: 'string',
+        title: 'IMAP 加密方式',
+        description: 'ssl 或 starttls，通常是 ssl',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+      {
+        key: 'smtpHost',
+        type: 'string',
+        title: '发信（SMTP）服务器',
+        description: '例如 smtp.example.com',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+      {
+        key: 'smtpPort',
+        type: 'number',
+        title: 'SMTP 端口',
+        description: '通常是 465',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+      {
+        key: 'smtpSecure',
+        type: 'string',
+        title: 'SMTP 加密方式',
+        description: 'ssl 或 starttls，通常是 ssl',
+        required: true,
+        sensitive: false,
+        multiple: false,
+      },
+    );
+  }
+  fields.push(...(contribution?.instanceFields ?? []));
+  return fields;
+}
 
 export function capabilityKindOf(kind: PluginContributionKind): CapabilityKindAdapter {
   const adapter = CAPABILITY_KINDS.find((candidate) => candidate.kind === kind);

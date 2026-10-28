@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mail-qq",
+  "name": "QQ 邮箱",
+  "version": "1.0.0",
+  "description": "添加 QQ 邮箱账号：服务器已内置并锁定，只需填写邮箱地址和 16 位授权码（QQ 邮箱设置 → 账号 → 开启 IMAP/SMTP 服务后生成）。优先近实时收信。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://help.mail.qq.com/detail/108/1089/",
+  "instances": ["mail"],
+  "contributions": {
+    "mail": [
+      {
+        "id": "qq",
+        "label": "QQ 邮箱",
+        "imap": { "host": "imap.qq.com", "port": 993, "secure": "ssl" },
+        "smtp": { "host": "smtp.qq.com", "port": 465, "secure": "ssl" },
+        "defaultMode": "auto",
+        "defaultPollSec": 300,
+        "minPollSec": 120
+      }
+    ]
+  }
+}

@@ -19,7 +19,6 @@ import {
   type PluginItemRef,
   type PluginManifest,
   type PluginMarketEntry,
-  type MailProviderTemplate,
   type PluginSource,
   type PluginSummary,
 } from '@kepcup/shared';
@@ -109,6 +108,12 @@ export interface PluginRegistryDeps {
     | undefined;
   /** Instance rows (D105): `list()` instance counts read it directly. */
   instanceStore?: PluginInstanceStore | undefined;
+  /**
+   * D105 P3: active domain accounts that are this plugin's mail instances — the truth
+   * `instanceCounts.mail` reports (soft-deleted rows and legacy unowned accounts don't
+   * count). Wired from the mail store in start.ts; absent in tests without mail.
+   */
+  mailInstanceCount?: ((pluginId: string) => number) | undefined;
   pluginsDir: string;
   /** App version for marketplace compatibility (`engines`); core `0.0.0` skips the check. */
   appVersion?: string;
@@ -333,7 +338,10 @@ export class PluginRegistry {
     return this.#readManifestFromDir(this.#dirOf(row.id, row.version));
   }
 
-  /** 已装插件清单的贡献（P1 的邮件模板 overlay 读取用）；未装 / 清单损坏 = null。 */
+  /**
+   * 已装插件清单的贡献（未装 / 清单损坏 = null）。P3 起邮件贡献即实例供给规范，
+   * 运行时按清单直读；不再有「模板 overlay」读取口。
+   */
   async contributionsOf(id: string): Promise<PluginManifest['contributions'] | null> {
     const row = this.#deps.store.get(id);
     if (row === null) return null;
@@ -342,37 +350,14 @@ export class PluginRegistry {
   }
 
   /**
-   * 已启用插件贡献的邮件预填模板（D104 P1-3，`mail.providerTemplates.list`）：遍历
-   * `installed && enabled` 的行读清单 `contributions.mail`；清单读不到的插件跳过。
+   * Sync display-name lookup for the mail owner decoration (P3): the cached manifest's
+   * name, null when the cache is cold or the plugin unknown (caller falls back to the
+   * id). Registry startup / install warm the cache for installed rows.
    */
-  async mailTemplates(): Promise<MailProviderTemplate[]> {
-    const templates: MailProviderTemplate[] = [];
-    for (const row of this.#deps.store.list()) {
-      if (row.state !== 'installed' || !row.enabled) continue;
-      const manifest = await this.#readManifestFromDir(this.#dirOf(row.id, row.version));
-      if (manifest === null) {
-        this.#deps.logger.warn(
-          { plugin: row.id },
-          'plugin mail templates skipped: manifest unreadable',
-        );
-        continue;
-      }
-      for (const contribution of manifest.contributions.mail) {
-        templates.push({
-          id: `${manifest.id}#${contribution.id}`,
-          pluginId: manifest.id,
-          pluginName: manifest.name,
-          label: contribution.label,
-          imap: { ...contribution.imap },
-          smtp: { ...contribution.smtp },
-          defaultMode: contribution.defaultMode,
-          defaultPollSec: contribution.defaultPollSec,
-          minPollSec: contribution.minPollSec,
-          helpUrl: contribution.helpUrl ?? null,
-        });
-      }
-    }
-    return templates;
+  displayNameOf(pluginId: string): string | null {
+    const row = this.#deps.store.get(pluginId);
+    if (row === null) return null;
+    return this.#manifests.get(`${row.id}@${row.version}`)?.name ?? null;
   }
 
   // --- plugin config (D105) --------------------------------------------------------
@@ -1769,9 +1754,22 @@ export class PluginRegistry {
       dirPath = null;
     }
     const manifest = this.#manifests.get(`${row.id}@${row.version}`) ?? null;
+    // D105 P3: the resolved instance form fields (kind built-ins + manifest
+    // instanceFields), same safe projection as configFields.
+    const instanceFields =
+      manifest === null
+        ? []
+        : (manifest.instances ?? []).flatMap((kind) =>
+            capabilityKindOf(kind).instanceFields(manifest).map(pluginFieldSummaryOf),
+          );
+    const instanceRowCounts = this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0 };
     return {
       configFields: (manifest?.config?.fields ?? []).map(pluginFieldSummaryOf),
-      instanceCounts: this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0 },
+      instanceFields,
+      instanceCounts: {
+        mail: this.#deps.mailInstanceCount?.(row.id) ?? instanceRowCounts.mail,
+        mcp: instanceRowCounts.mcp,
+      },
       providesInstances: manifest?.instances ?? [],
       id: row.id,
       name: manifest?.name ?? row.id,

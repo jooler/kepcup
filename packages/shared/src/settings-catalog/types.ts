@@ -91,7 +91,6 @@ export const settingOptionSourceSchema = z.enum([
   'app-catalog',
   'connections',
   'mcp-servers',
-  'mail-providers',
   'agents',
   'agent-models',
   'skills',
