@@ -78,6 +78,22 @@ export function pluginIdOfSkillSource(sourceUrl: string): string | null {
   return parsePluginSkillSource(sourceUrl)?.pluginId ?? null;
 }
 
+/**
+ * 技能的管理方插件 id：来源标记指向的插件要**确实在已安装清单里**才算受管（卸载走插件
+ * 整体，与 core 按账本判定的 PLUGIN_MANAGED 守卫一致）。指向不存在插件的来源是孤儿——
+ * 插件系统上线前从技能市场装的预置被 0054 迁移改写成了 `plugin://com.kepcup/starter-skills/…`，
+ * 而该 id 既不在插件表也不在内置目录——按普通公共技能给卸载入口，否则用户两头都删不掉。
+ * 清单尚未拉到时按受管处理：宁可晚一拍出现卸载按钮，不闪一下点了就报错的按钮。
+ */
+export function managingPluginOfSkill(
+  sourceUrl: string,
+  installed: { readonly loaded: boolean; has(pluginId: string): boolean },
+): string | null {
+  const pluginId = pluginIdOfSkillSource(sourceUrl);
+  if (pluginId === null) return null;
+  return !installed.loaded || installed.has(pluginId) ? pluginId : null;
+}
+
 /** 受插件管理的 MCP server → 插件 id；其他 server 返回 null。 */
 export function managedServerPluginId(server: McpServer): string | null {
   return server.source?.kind === 'plugin' ? server.source.pluginId : null;

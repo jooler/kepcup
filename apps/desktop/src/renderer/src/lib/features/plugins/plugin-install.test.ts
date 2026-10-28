@@ -6,6 +6,7 @@ import {
   clearPluginSensitive,
   initialPluginForm,
   managedServerPluginId,
+  managingPluginOfSkill,
   missingPluginConfig,
   pluginIdOfSkillSource,
 } from './plugin-install';
@@ -152,6 +153,29 @@ describe('plugin install form helpers', () => {
     expect(pluginIdOfSkillSource('plugin://no-skill-name')).toBeNull();
     expect(pluginIdOfSkillSource('plugin://a/b/')).toBeNull();
     expect(pluginIdOfSkillSource('')).toBeNull();
+  });
+
+  it('a skill is plugin-managed only when its source plugin is actually installed', () => {
+    const installed = (ids: string[], loaded = true) => ({
+      loaded,
+      has: (id: string) => ids.includes(id),
+    });
+    const docTools = 'plugin://io.github.alice/doc-tools/pdf-guide';
+    expect(managingPluginOfSkill(docTools, installed(['io.github.alice/doc-tools']))).toBe(
+      'io.github.alice/doc-tools',
+    );
+    // 插件系统上线前装的预置：来源指向的内置 id 不在清单里 → 孤儿，按普通技能给卸载入口
+    expect(
+      managingPluginOfSkill(
+        'plugin://com.kepcup/starter-skills/docx',
+        installed(['io.github.alice/doc-tools']),
+      ),
+    ).toBeNull();
+    // 清单尚未拉到：先按受管处理，不闪错误按钮
+    expect(managingPluginOfSkill(docTools, installed([], false))).toBe('io.github.alice/doc-tools');
+    // 非插件来源从不受管
+    expect(managingPluginOfSkill('https://github.com/x/y', installed([], false))).toBeNull();
+    expect(managingPluginOfSkill('', installed(['io.github.alice/doc-tools']))).toBeNull();
   });
 
   it('reads the plugin id off managed MCP servers', () => {

@@ -14,7 +14,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { parseSkillDraftChecks } from './skill-draft-checks';
   import { skillNav } from './skills-nav.svelte';
-  import { pluginIdOfSkillSource } from '../plugins/plugin-install';
+  import { managingPluginOfSkill, pluginIdOfSkillSource } from '../plugins/plugin-install';
   import { plugins } from '../plugins/plugins.svelte';
   import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -391,7 +391,10 @@
           </Button>
         {/if}
         {#if skill.status !== 'draft'}
-          {#if pluginIdOfSkillSource(skill.sourceUrl ?? '') === null}
+          {@const managedBy = managingPluginOfSkill(skill.sourceUrl ?? '', plugins)}
+          {#if managedBy === null}
+            <!-- 普通公共 / 私有技能，以及来源指向已不存在插件的孤儿（插件系统上线前装的
+                预置）：卸载入口照常给，core 的 PLUGIN_MANAGED 守卫（查账本）是最终裁决。 -->
             <Button
               size="sm"
               variant="ghost"
@@ -402,15 +405,13 @@
               {t('skills.uninstall')}
             </Button>
           {:else}
-            <!-- 插件投影的技能由插件整体管理（core 的 PLUGIN_MANAGED 是权威）。
+            <!-- 已安装插件投影的技能由插件整体管理。
                 用 min-w-0 占住 ml-auto 的右端，文案不挤压左侧按钮。 -->
             <span
               class="ml-auto max-w-[60%] min-w-0 text-right text-[10px] text-muted-foreground"
               data-testid={`skill-managed-${skill.name}`}
             >
-              {t('plugins.managedBy', {
-                name: plugins.nameOf(pluginIdOfSkillSource(skill.sourceUrl ?? '')!),
-              })}
+              {t('plugins.managedBy', { name: plugins.nameOf(managedBy) })}
               · {t('plugins.managedHint')}
             </span>
           {/if}

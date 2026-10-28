@@ -219,6 +219,48 @@ describe('SkillsProjector.update', () => {
     );
   });
 
+  it('新版本新增的技能若已被内置预置装过：inspect 不冲突，update 收编为插件的', async () => {
+    const rig = skillRig();
+    const oldDir = makeSkillDir([{ name: 'alpha' }]);
+    const oldCtx = rig.ctxOf(oldDir, { dirs: ['alpha'] });
+    await rig.projector.project(oldCtx);
+
+    // 插件系统上线前从技能市场装的预置 gamma（0054 迁移后的来源标记），内容是另一版
+    const presetSkillDir = path.join(
+      makeSkillDir([{ name: 'gamma', body: '预置版' }]),
+      'skills',
+      'gamma',
+    );
+    rig.skills.installPublic({
+      name: 'gamma',
+      scan: {
+        compatibility: 'compatible',
+        compatibilityReasons: [],
+        runtimeDeps: [],
+        sandboxDeclaration: null,
+        files: [],
+      } as never,
+      sourceUrl: 'plugin://com.kepcup/starter-skills/gamma',
+      commitOid: '0.9.0',
+      contentHash: hashDirectory(presetSkillDir),
+      stagingDir: presetSkillDir,
+    });
+
+    const newDir = makeSkillDir([{ name: 'alpha' }, { name: 'gamma', body: '插件版' }]);
+    const newCtx = rig.ctxOf(newDir, {
+      version: '2.0.0',
+      dirs: ['alpha', 'gamma'],
+      owned: ownedOf([['skill', ['alpha']]]),
+    });
+    expect((await rig.projector.inspect(newCtx)).conflicts).toEqual([]);
+    await rig.projector.update(oldCtx, newCtx);
+
+    const gamma = rig.skills.libraryGet(rig.skills.publicSkillRow('gamma')!.library_id)!;
+    expect(gamma.source_url).toBe(`plugin://${SKILL_ID}/gamma`);
+    expect(gamma.content_hash).toBe(hashDirectory(path.join(newDir, 'skills', 'gamma')));
+    expect(rig.ledger.list('skill')).toEqual(['alpha', 'gamma']);
+  });
+
   it('贡献目录改名（SKILL.md name 不变）不丢技能；SKILL.md name 改变则旧名清理', async () => {
     const rig = skillRig();
     const oldDir = makeSkillDir([{ name: 'alpha' }, { name: 'beta' }]);

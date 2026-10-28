@@ -11,6 +11,7 @@ import {
 import type { CoreLogger } from '../../infra/logger.js';
 import { hashDirectory } from '../../skills/library.js';
 import { parseSkillDir } from '../../skills/parse.js';
+import { isBuiltinSkillSource } from '../../skills/presets.js';
 import { scanSkillDir } from '../../skills/scan.js';
 import { resolveEffectiveCompatibility, type SkillsService } from '../../skills/registry.js';
 import type {
@@ -28,6 +29,8 @@ import type {
  * `skill_library.source_url = plugin://{pluginId}/{skillName}`. Ownership lives in
  * the ledger; `source_url` is only consulted to avoid deleting someone else's
  * same-name skill (the library dedupes by `name@hash`, so it is not authoritative).
+ * A same-name public skill installed from a builtin plugin (preset marketplace; never
+ * in any ledger) is taken over on install / update instead of reported as a conflict.
  */
 
 export interface SkillsProjectorDeps {
@@ -93,12 +96,14 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
       }
       seen.add(parsed.name.toLowerCase());
       // An update collides only with SOMEONE ELSE's public skill — the plugin's own
-      // previous skills are excluded via the ledger-owned set (D104 P1-2).
+      // previous skills are excluded via the ledger-owned set (D104 P1-2), and a
+      // builtin-installed preset is taken over by `project` rather than fought over.
       if (
         this.#deps.skills.publicSkillRow(parsed.name) !== null &&
-        !ctx.owned.skill.has(parsed.name)
+        !ctx.owned.skill.has(parsed.name) &&
+        !this.#builtinInstalled(parsed.name)
       ) {
-        // ANY source counts: a Bot's private same-name skill only shadows, that is not a conflict.
+        // Any other source counts: a Bot's private same-name skill only shadows, that is not a conflict.
         conflicts.push({ kind: 'skill', ref: parsed.name, withWhat: '已有同名公共技能' });
       }
     }
@@ -114,6 +119,7 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
         throw new AppError('PLUGIN_INVALID', `技能 ${contribution.dir} 的 SKILL.md 无法解析`);
       }
       ctx.ledger.add('skill', resolved.name);
+      this.#adopt(ctx, resolved.name);
       this.#installOne(ctx.plugin, resolved);
     }
   }
@@ -144,14 +150,18 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
       if (row !== null) {
         const library = this.#deps.skills.libraryGet(row.library_id);
         const source = library?.source_url ?? '';
-        if (library !== null && parsePluginSkillSource(source)?.pluginId !== newCtx.plugin.id) {
+        const ours =
+          library === null || parsePluginSkillSource(source)?.pluginId === newCtx.plugin.id;
+        if (!ours && !isBuiltinSkillSource(source)) {
           // Someone else's skill — the shared name is not ours to replace.
           throw new AppError(
             'PLUGIN_CONFLICT',
             `公共技能 ${resolved.name} 由其它来源提供，不能由本插件更新`,
           );
         }
-        if (library?.content_hash === resolved.contentHash) continue;
+        // A builtin-installed preset is taken over as in `project`: dropped and re-owned
+        // even when the content is identical, so the name ends up marked as ours.
+        if (ours && library?.content_hash === resolved.contentHash) continue;
         this.#deps.skills.uninstallPublic(resolved.name);
       }
       this.#installOne(newCtx.plugin, resolved);
@@ -239,6 +249,32 @@ export class SkillsProjector implements PluginProjector<PluginConsentSkill> {
       if (resolved !== null && resolved.name === name) return resolved;
     }
     return null;
+  }
+
+  /**
+   * Is the public skill under `name` a builtin-installed preset (the preset marketplace,
+   * or a `preset://` row migration 0054 rewrote)? Builtins never enter a plugin ledger,
+   * so an installable plugin shipping the same name takes it over instead of conflicting.
+   */
+  #builtinInstalled(name: string): boolean {
+    const row = this.#deps.skills.publicSkillRow(name);
+    if (row === null) return false;
+    const library = this.#deps.skills.libraryGet(row.library_id);
+    return library !== null && isBuiltinSkillSource(library.source_url);
+  }
+
+  /**
+   * Drops a builtin-installed same-name public row ahead of `#installOne`, so the install
+   * re-owns the name: `installPublic` would reject a different version as ALREADY_EXISTS,
+   * and the ledger's later `#removeOne` only deletes rows marked with this plugin's id.
+   */
+  #adopt(ctx: PluginProjectionContext, name: string): void {
+    if (ctx.owned.skill.has(name) || !this.#builtinInstalled(name)) return;
+    this.#deps.logger.info(
+      { plugin: ctx.plugin.id, skill: name },
+      'plugin skill install: taking over a builtin-installed public skill',
+    );
+    this.#deps.skills.uninstallPublic(name);
   }
 
   #installOne(plugin: PluginIdentity, resolved: ResolvedSkill): void {

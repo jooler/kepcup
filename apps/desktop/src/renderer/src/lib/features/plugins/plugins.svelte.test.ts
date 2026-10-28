@@ -164,6 +164,18 @@ describe('plugins store', () => {
     expect(plugins.nameOf('missing/plugin')).toBe('missing/plugin');
   });
 
+  it('loaded / has：拉到清单前 loaded 为 false；拉到后按 id 判断是否在清单里', async () => {
+    expect(plugins.loaded).toBe(false);
+    expect(plugins.has('io.github.alice/doc-tools')).toBe(false);
+    await plugins.load();
+    expect(plugins.loaded).toBe(true);
+    expect(plugins.has('io.github.alice/doc-tools')).toBe(true);
+    // 插件系统上线前装的预置来源：内置 id 不在清单里
+    expect(plugins.has('com.kepcup/starter-skills')).toBe(false);
+    plugins.reset();
+    expect(plugins.loaded).toBe(false);
+  });
+
   it('marketplace.updated 事件刷新市场与已安装列表', async () => {
     // 单例的 #started 跨用例保持为 true（reset() 只清数据）；直接调用已注册的处理器。
     plugins.start();

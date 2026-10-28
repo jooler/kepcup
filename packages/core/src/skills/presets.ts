@@ -1,6 +1,13 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { AppError, type SkillPresetInfo, type SkillScan } from '@kepcup/shared';
+import {
+  AppError,
+  isReservedPluginNamespace,
+  parsePluginSkillSource,
+  pluginNamespaceOf,
+  type SkillPresetInfo,
+  type SkillScan,
+} from '@kepcup/shared';
 
 import type { CoreLogger } from '../infra/logger.js';
 import type { BuiltinPlugins, BuiltinSkillOffer } from '../plugins/builtin.js';
@@ -35,6 +42,18 @@ import type { SkillsService } from './registry.js';
  * builtin ids stay recognizable while per-plugin attribution stays exact.
  */
 export const PRESET_SOURCE_SCHEME = 'plugin://';
+
+/**
+ * Was this library entry installed from a builtin plugin — the preset marketplace, or a
+ * pre-D104 `preset://` row migration 0054 rewrote? Builtin ids live in the reserved
+ * namespaces no marketplace / local install may claim, so such an entry is never in a
+ * plugin ledger: an installable plugin shipping the same skill name takes it over
+ * instead of reporting a conflict (`SkillsProjector`).
+ */
+export function isBuiltinSkillSource(sourceUrl: string): boolean {
+  const parsed = parsePluginSkillSource(sourceUrl);
+  return parsed !== null && isReservedPluginNamespace(pluginNamespaceOf(parsed.pluginId));
+}
 
 export interface SkillPresetsDeps {
   /** Builtin plugin loader (`BuiltinPlugins`); the presets are its skill contributions. */
