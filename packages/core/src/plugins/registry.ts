@@ -46,6 +46,12 @@ import {
 } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 import {
+  CAPABILITY_KINDS,
+  capabilityKindOf,
+  mergeConsentItems,
+  type ConsentItem,
+} from './kinds.js';
+import {
   pluginConfigSecretName,
   validatePluginFieldValues,
   type PluginInstanceStore,
@@ -241,7 +247,7 @@ export class PluginRegistry {
       const ctx = await this.#contextFor(row, manifest, {});
       for (const projector of this.#projectors) {
         if (projector.activate === undefined) continue;
-        if (!this.#hasContribution(manifest, projector.kind)) continue;
+        if (!capabilityKindOf(projector.kind).hasContribution(manifest)) continue;
         try {
           await projector.activate(ctx);
         } catch (error) {
@@ -689,7 +695,7 @@ export class PluginRegistry {
       const ctx = await this.#contextFor(insertedRow, manifest, input.userConfig);
       try {
         for (const projector of this.#projectors) {
-          if (!this.#hasContribution(manifest, projector.kind)) continue;
+          if (!capabilityKindOf(projector.kind).hasContribution(manifest)) continue;
           await projector.project(ctx);
         }
       } catch (error) {
@@ -851,10 +857,8 @@ export class PluginRegistry {
     const snapshots: Partial<Record<ProjectedKind, string | null>> = {};
     for (const projector of this.#projectors) {
       if (projector.beginUpdate === undefined) continue;
-      if (
-        !this.#hasContribution(manifest, projector.kind) &&
-        !this.#hasContribution(oldManifest, projector.kind)
-      ) {
+      const adapter = capabilityKindOf(projector.kind);
+      if (!adapter.hasContribution(manifest) && !adapter.hasContribution(oldManifest)) {
         continue;
       }
       snapshots[projector.kind] = await projector.beginUpdate(this.#identityOf(row));
@@ -903,7 +907,8 @@ export class PluginRegistry {
     };
     try {
       for (const kind of PLUGIN_PROJECTOR_ORDER) {
-        if (!this.#hasContribution(manifest, kind) && !this.#hasContribution(oldManifest, kind)) {
+        const adapter = capabilityKindOf(kind);
+        if (!adapter.hasContribution(manifest) && !adapter.hasContribution(oldManifest)) {
           continue;
         }
         const projector = this.#projectorOf(kind);
@@ -1008,7 +1013,7 @@ export class PluginRegistry {
   ): Promise<void> {
     const errorCode = context.error instanceof AppError ? context.error.code : 'INTERNAL';
     const hasContribution = (kind: ProjectedKind, ctx: PluginProjectionContext | null): boolean =>
-      ctx !== null && this.#hasContribution(ctx.manifest, kind);
+      ctx !== null && capabilityKindOf(kind).hasContribution(ctx.manifest);
     for (const kind of [...PLUGIN_PROJECTOR_ORDER].reverse()) {
       const involved =
         kind in context.snapshots ||
@@ -1489,19 +1494,6 @@ export class PluginRegistry {
     return this.#projectors.find((projector) => projector.kind === kind);
   }
 
-  #hasContribution(manifest: PluginManifest, kind: ProjectedKind): boolean {
-    switch (kind) {
-      case 'skill':
-        return manifest.contributions.skills.length > 0;
-      case 'connector':
-        return manifest.contributions.connectors.length > 0;
-      case 'mcp':
-        return manifest.contributions.mcp.length > 0;
-      case 'mail':
-        return manifest.contributions.mail.length > 0;
-    }
-  }
-
   #identityOf(row: PluginRow): PluginIdentity {
     return { id: row.id, version: row.version, origin: row.origin, tier: row.tier };
   }
@@ -1576,22 +1568,10 @@ export class PluginRegistry {
     const conflicts: PluginInspectOutput['conflicts'] = [];
     const blockers: string[] = [];
     for (const projector of this.#projectors) {
-      if (!this.#hasContribution(ctx.manifest, projector.kind)) continue;
+      const adapter = capabilityKindOf(projector.kind);
+      if (!adapter.hasContribution(ctx.manifest)) continue;
       const inspection = await projector.inspect(ctx);
-      switch (projector.kind) {
-        case 'skill':
-          items.skills.push(...(inspection.items as PluginConsentSkill[]));
-          break;
-        case 'connector':
-          items.connectors.push(...(inspection.items as PluginConsentConnector[]));
-          break;
-        case 'mcp':
-          items.mcp.push(...(inspection.items as PluginConsentMcp[]));
-          break;
-        case 'mail':
-          items.mail.push(...(inspection.items as PluginConsentMail[]));
-          break;
-      }
+      mergeConsentItems(items, adapter.consentKey, inspection.items as ConsentItem[]);
       conflicts.push(...inspection.conflicts);
       blockers.push(...inspection.blockers);
     }
@@ -1744,22 +1724,16 @@ export class PluginRegistry {
     };
   }
 
-  static readonly #COUNT_KEYS: Record<ProjectedKind, keyof PluginSummary['counts']> = {
-    skill: 'skills',
-    connector: 'connectors',
-    mcp: 'mcp',
-    mail: 'mail',
-  };
-
   #summaryOf(row: PluginRow): PluginSummary {
     const identity = this.#identityOf(row);
     const items: PluginItemRef[] = [];
     const counts = { skills: 0, connectors: 0, mcp: 0, mail: 0 };
     // Connector yields come from the connectors projector (which owns the catalog view).
     const yielded = this.#yieldedSlugs();
-    for (const kind of ['skill', 'connector', 'mcp', 'mail'] as const) {
+    for (const adapter of CAPABILITY_KINDS) {
+      const kind = adapter.kind;
       const refs = this.#deps.store.refs(row.id, kind);
-      counts[PluginRegistry.#COUNT_KEYS[kind]] = refs.length;
+      counts[adapter.consentKey] = refs.length;
       if (refs.length === 0) continue;
       const missing = new Set(this.#projectorOf(kind)?.missing?.(identity, refs) ?? []);
       for (const ref of refs) {
