@@ -15,7 +15,6 @@ import {
 } from '@kepcup/shared';
 import type { ConsentItems } from './permissions.js';
 import type {
-  PluginProjectionContext,
   PluginProjector,
   PluginProjectorsDeps,
   ProjectedKind,
@@ -63,13 +62,10 @@ export interface CapabilityKindAdapter {
   /** Manifest-level: does this manifest carry contributions of this kind? */
   hasContribution(manifest: PluginManifest): boolean;
   /**
-   * Consent-card items of one inspection (absorbed from the projector's inspect — the
-   * projector owns the file reads; the adapter owns where the items land).
+   * Maps one projector inspection's items to this kind's consent entries (the projector
+   * owns the file reads; the adapter owns what the consent card gets).
    */
-  consentItems(
-    projector: PluginProjector,
-    ctx: PluginProjectionContext,
-  ): Promise<ConsentItem[]>;
+  consentItems(inspection: { items: unknown }): ConsentItem[];
   /** The projection engine of this kind (one per registry wiring). */
   createProjector(deps: PluginProjectorsDeps): PluginProjector;
 }
@@ -90,8 +86,7 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     hasInstances: false,
     instanceFields: () => [],
     hasContribution: (manifest) => manifest.contributions.skills.length > 0,
-    consentItems: async (projector, ctx) =>
-      (await projector.inspect(ctx)).items as ConsentItem[],
+    consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: (deps) => new SkillsProjector(deps.skills),
   }),
   defineCapabilityKind({
@@ -101,8 +96,7 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     hasInstances: false,
     instanceFields: () => [],
     hasContribution: (manifest) => manifest.contributions.mcp.length > 0,
-    consentItems: async (projector, ctx) =>
-      (await projector.inspect(ctx)).items as ConsentItem[],
+    consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: (deps) => new McpProjector(deps.mcp),
   }),
   defineCapabilityKind({
@@ -112,8 +106,7 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     hasInstances: false,
     instanceFields: () => [],
     hasContribution: (manifest) => manifest.contributions.connectors.length > 0,
-    consentItems: async (projector, ctx) =>
-      (await projector.inspect(ctx)).items as ConsentItem[],
+    consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: (deps) => new ConnectorsProjector(deps.connectors),
   }),
   defineCapabilityKind({
@@ -124,8 +117,7 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     hasInstances: true,
     instanceFields: () => [],
     hasContribution: (manifest) => manifest.contributions.mail.length > 0,
-    consentItems: async (projector, ctx) =>
-      (await projector.inspect(ctx)).items as ConsentItem[],
+    consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: (deps) => new MailProjector(deps.mail ?? {}),
   }),
 ] satisfies readonly CapabilityKindAdapter[];

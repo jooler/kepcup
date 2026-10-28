@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   AppError,
   PLUGIN_FORMAT_VERSION,
+  PLUGIN_INSTANCE_KINDS,
   PLUGIN_MANIFEST_MAX_BYTES,
   pluginManifestSchema,
   type PluginManifest,
@@ -41,19 +42,27 @@ export function parsePluginManifestText(text: string): PluginManifest {
     // Unknown fields / unknown instance kinds mean the manifest came from a NEWER
     // KepCup (additive contract, D105): prompt an upgrade instead of a generic
     // invalid-package error. Everything else stays PLUGIN_INVALID.
-    const upgradePaths = parsed.error.issues
-      .filter(
-        (issue) =>
-          issue.code === 'unrecognized_keys' ||
-          (issue.path[0] === 'instances' && issue.code === 'invalid_value'),
-      )
-      .map((issue) => {
-        if (issue.code === 'unrecognized_keys') {
-          const keys = (issue as { keys?: readonly string[] }).keys ?? [];
-          return keys.length > 0 ? keys.join('/') : 'plugin.json';
+    const upgradePaths: string[] = [];
+    for (const issue of parsed.error.issues) {
+      if (issue.code === 'unrecognized_keys') {
+        const keys = (issue as { keys?: readonly string[] }).keys ?? [];
+        upgradePaths.push(...(keys.length > 0 ? keys : ['plugin.json']));
+      }
+    }
+    // An enum issue does not carry the received value (zod 4.6) — look at the raw
+    // JSON: only a STRING that is not a known kind reads as "a future kind"; numbers
+    // / objects are a genuinely malformed manifest.
+    const instances = (json as { instances?: unknown } | null)?.['instances'];
+    if (Array.isArray(instances)) {
+      for (const value of instances) {
+        if (
+          typeof value === 'string' &&
+          !(PLUGIN_INSTANCE_KINDS as readonly string[]).includes(value)
+        ) {
+          upgradePaths.push(`instances.${value}`);
         }
-        return issue.path.length > 0 ? issue.path.join('.') : 'plugin.json';
-      });
+      }
+    }
     if (upgradePaths.length > 0) {
       throw new AppError(
         'PLUGIN_UPGRADE_REQUIRED',

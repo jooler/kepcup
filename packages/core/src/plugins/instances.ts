@@ -25,16 +25,29 @@ import type { PluginStore } from './store.js';
 // --- secret naming --------------------------------------------------------------
 
 /**
- * Secret names allow only `[a-z0-9:_-]`, plugin ids contain `/` and `.`: this escaping
- * (`_`→`__`, `.`→`_`, `/`→`:`) keeps the mapping injective and the names greppable.
+ * Secret names allow only `[a-z0-9:_-]`, plugin ids contain `/`, `.` and `_`: the
+ * `_u` / `_d` / `_s` escapes (every output `_` is always followed by its escape char,
+ * so decoding is deterministic) keep the mapping injective and the names greppable.
  */
 export function pluginSecretScope(pluginId: string): string {
-  const encoded = pluginId.replaceAll('_', '__').replaceAll('.', '_').replace('/', ':');
+  const encoded = pluginId
+    .replaceAll('_', '_u')
+    .replaceAll('.', '_d')
+    .replaceAll('/', '_s');
   return `plugin:${encoded}`;
 }
 
+/** Secret names cap at 128 chars (SECRET_NAME_PATTERN); fail before any domain landing. */
+function assertSecretNameFits(name: string): void {
+  if (name.length > 128) {
+    throw new AppError('INVALID_INPUT', '插件标识过长，无法安全保存敏感配置');
+  }
+}
+
 export function pluginConfigSecretName(pluginId: string, key: string): string {
-  return `${pluginSecretScope(pluginId)}:config:${key}`;
+  const name = `${pluginSecretScope(pluginId)}:config:${key}`;
+  assertSecretNameFits(name);
+  return name;
 }
 
 export function pluginInstanceSecretName(
@@ -42,7 +55,9 @@ export function pluginInstanceSecretName(
   instanceId: string,
   key: string,
 ): string {
-  return `${pluginSecretScope(pluginId)}:instance:${instanceId}:${key}`;
+  const name = `${pluginSecretScope(pluginId)}:instance:${instanceId}:${key}`;
+  assertSecretNameFits(name);
+  return name;
 }
 
 // --- field value validation -------------------------------------------------------
@@ -246,7 +261,11 @@ export interface InstanceMaterializerContext {
 }
 
 export interface InstanceMaterializer {
-  /** Land domain data for a NEW instance (the plugin_instances row already exists). */
+  /**
+   * Land domain data for a NEW instance (the plugin_instances row already exists).
+   * NOTE: `values` carries non-sensitive values as-is, but sensitive values arrive as
+   * STRINGS — numbers / arrays were JSON.stringify'd on their way into secrets.
+   */
   create(ctx: InstanceMaterializerContext): Promise<{ title?: string }>;
   /** Update domain data after an edit; may return a new title. */
   update(ctx: InstanceMaterializerContext): Promise<{ title?: string }>;
@@ -264,6 +283,8 @@ export interface PluginInstanceServiceDeps {
     hasValue(name: string): boolean;
     setValue(name: string, value: string): void;
     removeValue(name: string): void;
+    /** All stored secret names (prefix scans for instance-secret enumeration / cleanup). */
+    names(): string[];
   };
   clock: Clock;
   logger: CoreLogger;
@@ -287,6 +308,7 @@ export class PluginInstanceService {
     this.#materializers.set(kind, materializer);
   }
 
+  /** Unknown / uninstalled plugin → []（卸载后界面残留调用幂等返回空，不报错）。 */
   list(pluginId: string): PluginInstanceSummary[] {
     return this.#deps.store.list(pluginId).map((row) => this.#summaryOf(row));
   }
@@ -370,23 +392,27 @@ export class PluginInstanceService {
           pluginInstanceSecretName(instance.pluginId, instance.id, key),
         ),
     });
+    // Materializer FIRST (same ordering as create): a failure leaves the stored row and
+    // secrets exactly as they were — no compensation window.
     const merged = { ...this.#storedValues(instance), ...split.nonSensitive };
     const now = this.#deps.clock.now();
-    this.#deps.store.update(id, { configJson: JSON.stringify(merged), updatedAt: now });
-    const current = this.#deps.store.get(id)!;
     const materializer = this.#materializers.get(instance.kind);
+    let title = instance.title;
     if (materializer !== undefined) {
       const result = await materializer.update({
         pluginId: instance.pluginId,
         instanceId: instance.id,
         kind: instance.kind,
-        title: current.title,
+        title: instance.title,
         values: { ...merged, ...split.sensitive },
       });
-      if (result.title !== undefined && result.title !== current.title) {
-        this.#deps.store.update(id, { title: result.title, updatedAt: now });
-      }
+      if (result.title !== undefined) title = result.title;
     }
+    this.#deps.store.update(id, {
+      ...(title !== instance.title ? { title } : {}),
+      configJson: JSON.stringify(merged),
+      updatedAt: now,
+    });
     this.#writeInstanceSecrets(instance.pluginId, instance.id, split.sensitive);
     this.#deps.audit?.recordSystem('plugin_instance_update', {
       pluginId: instance.pluginId,
@@ -427,7 +453,7 @@ export class PluginInstanceService {
         );
       }
     }
-    this.#removeInstanceSecrets(instance.pluginId, instance.id, instance.kind);
+    this.#removeInstanceSecrets(instance.pluginId, instance.id);
     this.#deps.store.delete(instance.id);
     this.#deps.audit?.recordSystem('plugin_instance_delete', {
       pluginId: instance.pluginId,
@@ -518,24 +544,29 @@ export class PluginInstanceService {
     }
   }
 
-  #removeInstanceSecrets(pluginId: string, instanceId: string, kind: PluginInstanceKind): void {
-    // Only declared field keys can have stored secrets; removeValue on a missing name is a no-op.
-    const fields = capabilityKindOf(kind).instanceFields();
-    for (const field of fields) {
-      const name = pluginInstanceSecretName(pluginId, instanceId, field.key);
-      if (this.#deps.secrets.hasValue(name)) this.#deps.secrets.removeValue(name);
+  /**
+   * Stored secret keys of one instance, discovered by PREFIX SCAN over the secrets
+   * table (not by the declared field set): a manifest update that renames or drops a
+   * field can never strand a secret, and cleanup enumerates exactly what exists.
+   */
+  #storedInstanceSecretKeys(pluginId: string, instanceId: string): string[] {
+    const prefix = `${pluginSecretScope(pluginId)}:instance:${instanceId}:`;
+    return this.#deps.secrets
+      .names()
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => name.slice(prefix.length))
+      .sort();
+  }
+
+  #removeInstanceSecrets(pluginId: string, instanceId: string): void {
+    const prefix = `${pluginSecretScope(pluginId)}:instance:${instanceId}:`;
+    for (const name of this.#deps.secrets.names()) {
+      if (name.startsWith(prefix)) this.#deps.secrets.removeValue(name);
     }
   }
 
   #summaryOf(instance: PluginInstanceRow): PluginInstanceSummary {
-    const fields = capabilityKindOf(instance.kind).instanceFields();
-    const storedSensitiveKeys = fields
-      .filter((field) =>
-        this.#deps.secrets.hasValue(
-          pluginInstanceSecretName(instance.pluginId, instance.id, field.key),
-        ),
-      )
-      .map((field) => field.key);
+    const storedSensitiveKeys = this.#storedInstanceSecretKeys(instance.pluginId, instance.id);
     return {
       id: instance.id,
       pluginId: instance.pluginId,

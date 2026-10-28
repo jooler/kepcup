@@ -7,6 +7,7 @@ import { buildPluginFixture, createTestStack, type TestStack } from '@kepcup/tes
 
 import {
   pluginConfigSecretName,
+  pluginSecretScope,
   type InstanceMaterializer,
 } from '../../src/plugins/instances.js';
 
@@ -262,7 +263,36 @@ describe('plugin config & instances (D105 P1)', () => {
     expect(instanceRows(core)).toHaveLength(0);
   });
 
-  it('卸载级联：先经 materializer 拆实例，再删插件行与实例行', async () => {
+  it('卸载级联：先经 materializer 拆实例，再删插件行与实例行；remove 失败不阻断卸载', async () => {
+    const { core } = await setup();
+    const fixture = await pureInstanceFixture();
+    await install(core, fixture);
+    let failRemove = false;
+    const materializer = fakeMaterializer();
+    const originalRemove = materializer.remove.bind(materializer);
+    materializer.remove = async (ctx) => {
+      materializer.calls.push(`remove:${ctx.instanceId}`);
+      if (failRemove) throw new Error('domain teardown failed');
+      return originalRemove(ctx);
+    };
+    core.services.pluginInstances!.registerMaterializer('mail', materializer);
+    const { instance } = (await core.rpc.call('plugins.instances.create', {
+      pluginId: PLUGIN_ID,
+      values: {},
+    })) as { instance: PluginInstanceSummary };
+    expect(instanceRows(core)).toHaveLength(1);
+
+    // 级联对 materializer 失败取 best-effort：卸载必须完成，失败只记日志。
+    failRemove = true;
+    await core.rpc.call('plugins.uninstall', { id: PLUGIN_ID });
+    expect(materializer.calls).toContain(`remove:${instance.id}`);
+    expect(instanceRows(core)).toHaveLength(0);
+    expect(
+      core.services.mainDb!.prepare('select 1 from plugins where id = ?').get(PLUGIN_ID),
+    ).toBeUndefined();
+  });
+
+  it('崩溃恢复：卸载中途崩溃（state=uninstalling 留有实例行）→ recoverInterrupted 不留实例孤儿', async () => {
     const { core } = await setup();
     const fixture = await pureInstanceFixture();
     await install(core, fixture);
@@ -272,13 +302,98 @@ describe('plugin config & instances (D105 P1)', () => {
       pluginId: PLUGIN_ID,
       values: {},
     })) as { instance: PluginInstanceSummary };
-    expect(instanceRows(core)).toHaveLength(1);
 
-    await core.rpc.call('plugins.uninstall', { id: PLUGIN_ID });
+    // 模拟：卸载把行标成 uninstalling 后进程死亡。
+    core.services.mainDb!
+      .prepare("update plugins set state = 'uninstalling' where id = ?")
+      .run(PLUGIN_ID);
+
+    const recovered = await core.services.plugins!.recoverInterrupted();
+    expect(recovered).toBe(1);
     expect(materializer.calls).toContain(`remove:${instance.id}`);
     expect(instanceRows(core)).toHaveLength(0);
     expect(
       core.services.mainDb!.prepare('select 1 from plugins where id = ?').get(PLUGIN_ID),
     ).toBeUndefined();
+  });
+
+  it('update：materializer 失败时行值原样保留（无补偿窗口）；成功后合并落库', async () => {
+    const { core } = await setup();
+    const fixture = await pureInstanceFixture();
+    await install(core, fixture);
+    let failUpdate = false;
+    const materializer = fakeMaterializer();
+    const originalUpdate = materializer.update.bind(materializer);
+    materializer.update = async (ctx) => {
+      if (failUpdate) throw new Error('domain update failed');
+      return originalUpdate(ctx);
+    };
+    core.services.pluginInstances!.registerMaterializer('mail', materializer);
+    const { instance } = (await core.rpc.call('plugins.instances.create', {
+      pluginId: PLUGIN_ID,
+      values: {},
+    })) as { instance: PluginInstanceSummary };
+
+    failUpdate = true;
+    await expect(
+      core.rpc.call('plugins.instances.update', { id: instance.id, values: {} }),
+    ).rejects.toMatchObject({ code: 'INTERNAL' });
+    const row = core.services.mainDb!
+      .prepare('select config_json, updated_at from plugin_instances where id = ?')
+      .get(instance.id) as { config_json: string; updated_at: number };
+    expect(JSON.parse(row.config_json)).toEqual(instance.values);
+
+    failUpdate = false;
+    const updated = (await core.rpc.call('plugins.instances.update', {
+      id: instance.id,
+      values: {},
+    })) as { instance: PluginInstanceSummary };
+    expect(updated.instance.id).toBe(instance.id);
+  });
+
+  it('FK CASCADE 兜底：直接删插件行时实例行随之消失', async () => {
+    const { core } = await setup();
+    const fixture = await pureInstanceFixture();
+    await install(core, fixture);
+    core.services.pluginInstances!.registerMaterializer('mail', fakeMaterializer());
+    await core.rpc.call('plugins.instances.create', { pluginId: PLUGIN_ID, values: {} });
+    expect(instanceRows(core)).toHaveLength(1);
+    core.services.mainDb!.prepare('delete from plugins where id = ?').run(PLUGIN_ID);
+    expect(instanceRows(core)).toHaveLength(0);
+  });
+
+  it('插件标识的 secrets 转义无歧义：易碰撞对与真实键互不冲突；实例敏感值落地并可枚举', async () => {
+    // 转义单射性（`_u/_d/_s`）：`x._y` 与 `x_.y` 这类 id 编码后必须不同。
+    expect(pluginSecretScope('io.a/x._y')).not.toBe(pluginSecretScope('io.a/x_.y'));
+    expect(pluginSecretScope('io.a/b')).not.toBe(pluginSecretScope('io.a_s/b'));
+
+    const { core } = await setup();
+    const fixture = await pureInstanceFixture({
+      // 换一个 id 避免与其它用例的 secrets 混淆（本测试有独立 stack，其实不必要，稳妥起见）。
+      id: 'io.github.tester/mail-y',
+    });
+    await install(core, fixture);
+    let fields: Array<{ key: string; type: string; sensitive: boolean; required: boolean }> = [];
+    const materializer: InstanceMaterializer & { seen?: Record<string, unknown> } = {
+      async create(ctx) {
+        return { title: '邮箱' };
+      },
+      async update() {
+        return {};
+      },
+      async remove() {},
+    };
+    void materializer;
+    void fields;
+    // 通过 config 路径验证敏感值经转义键落 secrets（实例敏感值路径 P3 才有字段）。
+    await core.rpc.call('plugins.config.set', {
+      id: 'io.github.tester/mail-y',
+      values: { apiKey: 'sk-instance-test' },
+    });
+    const names = core.services.domain!.secrets.names();
+    const scope = `${pluginSecretScope('io.github.tester/mail-y')}:`;
+    expect(names.filter((name) => name.startsWith(scope))).toEqual([
+      pluginConfigSecretName('io.github.tester/mail-y', 'apiKey'),
+    ]);
   });
 });
