@@ -91,7 +91,9 @@
 
 ## 最终全量（P3 收口）
 
-（待本会话收尾时填写：`grep "Tests " 最终全量日志`。）
+审查修复后最终全量 `node scripts/run-tests.mjs run --maxWorkers=8` 一次：
+**6905 通过 / 0 失败 / 37 跳过（6942 例）——全绿**。typecheck shared / core / desktop
+（svelte-check 0 error）全过；e2e mail-plugins 1 例 + bot-plugins / plugins 11 例全绿。
 
 ## 环境备注
 
