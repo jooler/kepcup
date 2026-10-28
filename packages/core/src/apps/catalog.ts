@@ -32,6 +32,8 @@ export interface ConnectorCatalogOptions {
   logger?: Pick<CoreLogger, 'warn'> | undefined;
   /** 内置来源数据（`BuiltinPlugins.connectorSource()`；应用已无内置插件，测试可注入）。 */
   source?: ConnectorCatalogSource | undefined;
+  /** 内置条目的 slug → 归属插件 id（D105：内置插件的目录条目也要能被插件圈定）。 */
+  sourceOwners?: ReadonlyMap<string, string> | undefined;
   /** 追加的已校验条目（测试）。 */
   extra?: readonly ConnectorCatalogEntry[] | undefined;
   /** 本机连接条目（已校验）：合并之后追加。 */
@@ -144,6 +146,11 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
     pluginIcons.set(slug, plugin.iconPath);
     pluginOwners.set(slug, plugin.pluginId);
     result.push(plugin.entry);
+  }
+  // 内置来源条目的归属（D105）：投影器条目优先，内置条目补在其后——
+  // 目录条目的 pluginId 因此对内置插件也可用（插件圈定的管理网格）。
+  for (const [slug, ownerId] of options.sourceOwners ?? []) {
+    if (!pluginOwners.has(slug) && pluginTakenSlugs.has(slug)) pluginOwners.set(slug, ownerId);
   }
   // 本机连接：追加在插件条目之后。与任何已有条目（含刚追加的插件条目的 slug 与 name）
   // 冲突即丢弃——本机让位于插件。

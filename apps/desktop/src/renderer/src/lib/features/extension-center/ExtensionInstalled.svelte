@@ -162,6 +162,30 @@
         manage(refs[0]!);
         return;
       }
+      if (refs.length === 0) {
+        // 内置插件不进账本（items 恒空）：按目录条目的归属插件回退——
+        // 恰一个属主连接器时同样直达；目录未加载则先刷新一次再判。
+        const decide = (): void => {
+          const owned = [
+            ...new Set(
+              appsStore.catalog
+                .filter((entry) => entry.pluginId === plugin.id)
+                .map((entry) => entry.connectorId),
+            ),
+          ];
+          if (owned.length === 1) manage(owned[0]!);
+          else contentView = { kind, pluginId: plugin.id };
+        };
+        if (appsStore.catalogLoaded) decide();
+        else
+          void appsStore
+            .refresh()
+            .then(decide)
+            .catch(() => {
+              contentView = { kind, pluginId: plugin.id };
+            });
+        return;
+      }
     }
     contentView = { kind, pluginId: plugin.id };
   }
@@ -177,8 +201,11 @@
       detailConnectionId = null;
     }
     const connectorId = untrack(() => managingConnectorId);
+    // 0 账号的首连面板本身就是「该连接器没有任何连接」——只有当应用里还存在
+    // 别的连接（即被删的是这个连接器唯一的那条）时才清管理态，否则首连面板不可达。
     if (
       connectorId !== null &&
+      appsStore.connections.length > 0 &&
       !appsStore.connections.some((connection) => connection.connectorId === connectorId)
     ) {
       managingConnectorId = null;
