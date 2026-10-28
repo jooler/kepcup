@@ -999,3 +999,68 @@
 - 推荐：方案 1。
 - 决定：方案 1。
 - 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6（集成测试 `plugins-update.test.ts` 新增用例）。
+
+### DEV-063 插件 secrets 键采用转义前缀式（任务书字面格式进不了 secrets 字符集）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：README §4.1/§2.2 把插件敏感值的 secrets 键写为字面 `{pluginId}:{instanceId|'config'}:{fieldKey}`，但 `SecretsService` 的名字字符集是 `[a-z0-9:_-]{1,128}`，不含插件 id 必然携带的 `/` 与 `.`——字面格式不可实现。首版实现的 `_`→`__`、`.`→`_` 转义还有歧义（`x._y` 与 `x_.y` 编码相同，独立审查 P0-2）。
+- 影响范围：`packages/core/src/plugins/instances.ts` 的 `pluginSecretScope` / `pluginConfigSecretName` / `pluginInstanceSecretName`。
+- 可选方案：
+  1. 前缀 + 无歧义转义：`plugin:{id 经 _`→`_u、.→`_d、/→`_s}`，配置键 `…:config:{key}`、实例键 `…:instance:{pliId}:{key}`；输出中每个 `_` 必后跟转义字符，解码确定（当前实现，附单射性测试）。
+  2. 对 pluginId 做 sha256 截断——无碰撞但不可读、不可 grep。
+- 推荐：方案 1（可读、可注入、可前缀扫描枚举）。
+- 决定：方案 1；另在键名构造处预检 128 上限（pluginId 允许 200 字符，超长在落任何领域数据**之前**以 INVALID_INPUT 拒绝）。
+
+### DEV-064 `plugins.instances.create` 入参增加可选 `kind`（任务书只写 `{ pluginId, values }`）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）
+- 是否阻塞：否
+- 问题：README §4.1 固定 create 入参为 `{ pluginId, values }`，但清单 `instances` 允许声明多个实例能力类型（上限 4）；多类型插件创建实例时必须能指定类型，否则无法区分。
+- 影响范围：`packages/shared/src/domain/plugins.ts`（`pluginsInstancesCreateInputSchema` 增 `kind?: PluginInstanceKind`，加性变更）；`packages/core/src/plugins/instances.ts`（缺省 = 唯一声明类型；多类型且未指定 → INVALID_INPUT；指定值必须 ∈ 声明集合）。
+- 可选方案：
+  1. 可选 `kind` 入参（当前实现）：单类型插件零负担，多类型插件显式指定。
+  2. 限制清单只能声明一个实例类型——与 `instances` 数组上限 4 的可扩展设计冲突。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-065 实例崩溃恢复的边界：CREATE 窗口由 kind materializer 对账（P3），卸载崩溃由 FK CASCADE + 重放覆盖
+
+- 状态：已落实（边界登记）
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：任务书步骤 4.3 要求「中途崩溃后 `recoverInterrupted` 不留实例孤儿」。两类窗口：① 卸载中途崩溃（`state=uninstalling`）——`recoverInterrupted` 重放 `#teardown`，实例级联（materializer 拆领域数据 + FK CASCADE 删行）幂等重放，**不留孤儿**（已加失败注入测试）；② CREATE 中途崩溃（`plugin_instances` 行已插、materializer 未落领域数据）——插件仍 `installed`，账本状态无法区分「已落地」与「未落地」，通用层无从对账；P1 无任何 materializer，该窗口不可能发生。
+- 影响范围：`packages/core/src/plugins/instances.ts`（create 失败的进程内补偿已实现：materializer 抛错 → 删行回滚）；P3 的 mail materializer 须在启动对账时核对 `mail_accounts.instance_id` 与实例行的双向一致性（写进 P3 菜谱）。卸载级联对 materializer.remove 失败取 best-effort（记日志继续），直接 delete 则上抛——任务书「先拆领域数据再删行」在卸载路径为尽力而为语义。
+- 可选方案：
+  1. 当前：①覆盖测试，②推迟到首个 materializer（P3 mail）落地对账（当前实现）。
+  2. 给 plugin_instances 加 state 列做两阶段提交——DDL 已被 README §4.2 固定，且 P1 无消费者。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-066 `pluginFieldSchema` 定义在 plugin-manifest.ts（README 指定 plugins.ts）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）
+- 是否阻塞：否
+- 问题：README §2.3/§4.1 指定 `pluginFieldSchema` 唯一定义放 `shared/src/domain/plugins.ts`。但 `plugin-manifest.ts` 的 `config.fields` 需要引用它，而 `plugins.ts` 已运行时依赖 `plugin-manifest.ts`（`pluginIdSchema` 等）——按 README 位置会形成 ESM 初始化环（zod schema 在模块求值期构造）。
+- 影响范围：定义与全部约束在 `plugin-manifest.ts`（与 `config` / `instances` 同处）；`plugins.ts` re-export（`@kepcup/shared` 的导入面不变，README 期望的“唯一定义 + mcpb re-export 别名”语义保持）；`mcpb.ts` 的 `mcpbUserConfigFieldSchema` / `mcpbUserConfigValueSchema` 改为别名 re-export，MCPB 解析行为不变（core 自有 looseObject 解析不动，输出字段与 strict 化后的共享 schema 逐字段对齐）。
+- 可选方案：
+  1. 定义在 plugin-manifest.ts + 两处 re-export（当前实现）。
+  2. 新建 `plugin-field.ts` 第三模块——多一个文件只为满足文档字面位置。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-067 `CapabilityKindAdapter` 的两处形状微调（README §2.1 草图 vs 实现）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：README §2.1 的接口草图有两处落地差异：① `consentItems(ctx)` ——同意卡条目的推导需要投影器实例（文件读取），适配器实际签名是 `consentItems(inspection)`（把一次投影器检视的 items 映射为本类型同意条目；registry 经 `mergeConsentItems` 归位）；② `materializer?` 字段——README §4.3 更具体地规定 materializer 注册在 `PluginInstanceService.registerMaterializer(kind, impl)`（per-core、可测试），适配器不再携带该槽位，避免双事实来源 / 模块级可变状态。
+- 影响范围：`packages/core/src/plugins/kinds.ts`；注册菜谱（“注册一个适配器 + 实例服务注册 materializer”）不受影响。
+- 可选方案：
+  1. 按实现签名落地（当前实现，适配器保持纯数据 + 工厂）。
+  2. 严格照抄草图（consentItems 需注入投影器、materializer 做模块级可变槽）。
+- 推荐：方案 1。
+- 决定：方案 1。

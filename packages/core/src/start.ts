@@ -2386,6 +2386,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         hasValue: (name) => secrets.hasValue(name),
         setValue: (name, value) => secrets.setValue(name, value),
         removeValue: (name) => secrets.removeValue(name),
+        names: () => secrets.names(),
       },
       clock,
       logger,

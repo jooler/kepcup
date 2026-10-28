@@ -407,6 +407,10 @@ export class PluginRegistry {
         hasStoredSecret: (key) =>
           this.#deps.secrets?.hasValue(pluginConfigSecretName(id, key)) === true,
       });
+      if (Object.keys(split.sensitive).length > 0 && this.#deps.secrets?.setValue === undefined) {
+        // Better an explicit refusal than validation passing while the value vanishes.
+        throw new AppError('INVALID_INPUT', '当前环境无法安全保存敏感配置');
+      }
       this.#deps.store.update(id, {
         configJson: JSON.stringify(split.nonSensitive),
         updatedAt: this.#deps.clock.now(),
@@ -1571,7 +1575,7 @@ export class PluginRegistry {
       const adapter = capabilityKindOf(projector.kind);
       if (!adapter.hasContribution(ctx.manifest)) continue;
       const inspection = await projector.inspect(ctx);
-      mergeConsentItems(items, adapter.consentKey, inspection.items as ConsentItem[]);
+      mergeConsentItems(items, adapter.consentKey, adapter.consentItems(inspection));
       conflicts.push(...inspection.conflicts);
       blockers.push(...inspection.blockers);
     }

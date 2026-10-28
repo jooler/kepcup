@@ -88,6 +88,23 @@ describe('parsePluginManifestText', () => {
     expectCodeSync(() => parsePluginManifestText(text), 'PLUGIN_INCOMPATIBLE', /更新版本的 KepCup/);
   });
 
+  it('maps an unknown instance kind to PLUGIN_UPGRADE_REQUIRED but garbage stays PLUGIN_INVALID', () => {
+    const withKind = JSON.stringify({
+      ...JSON.parse(manifestText),
+      instances: ['sms'],
+    });
+    expect(() => parsePluginManifestText(withKind)).toThrowError(
+      expect.objectContaining({ code: 'PLUGIN_UPGRADE_REQUIRED' }),
+    );
+    const withGarbage = JSON.stringify({
+      ...JSON.parse(manifestText),
+      instances: [5],
+    });
+    expect(() => parsePluginManifestText(withGarbage)).toThrowError(
+      expect.objectContaining({ code: 'PLUGIN_INVALID' }),
+    );
+  });
+
   it('rejects unknown fields as an upgrade prompt with the offending paths', () => {
     const text = JSON.stringify({
       ...JSON.parse(manifestText),

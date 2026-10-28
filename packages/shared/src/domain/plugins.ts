@@ -306,7 +306,7 @@ export const pluginsInstancesCreateOutputSchema = z.object({
 });
 export type PluginsInstancesCreateOutput = z.infer<typeof pluginsInstancesCreateOutputSchema>;
 
-/** `plugins.instances.update`: same merge semantics as config.set (sensitive keep-stored). */
+/** `plugins.instances.update`: non-sensitive values MERGE over stored ones (unlike config.set's full replace); sensitive keep-stored when absent. */
 export const pluginsInstancesUpdateInputSchema = z.object({
   id: pluginInstanceIdSchema,
   values: z.record(z.string(), pluginFieldValueSchema),

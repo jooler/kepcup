@@ -104,13 +104,81 @@ rg -n "^### DEV-" docs/dev/DEVIATIONS.md | tail -1
 
 ## 5. 验收
 
-- [ ] 一个手工构造的纯实例清单（`instances: ['mail']` + `config.fields`）能通过 manifest 校验并
+- [x] 一个手工构造的纯实例清单（`instances: ['mail']` + `config.fields`）能通过 manifest 校验并
       被 `plugins.inspect` 正确返回（本阶段 mail 无 materializer，create 返回 `INVALID_INPUT` 是预期）。
-- [ ] 现有四类插件的安装 / 更新 / 卸载 / 启停行为与 P1 前完全一致（回归测试全绿，行为零变化提交可证）。
-- [ ] `plugins.config.set` 后：非敏感值在 `config_json`、敏感值只在 secrets、审计无值。
-- [ ] `PLUGIN_UPGRADE_REQUIRED`：含未知字段的清单给出升级提示错误码与两语文案。
-- [ ] shared / core `typecheck` 通过；全量 `pnpm test` 一次，失败不超基线。
+      — 证据：`packages/core/test/integration/plugins-instances.test.ts`「纯实例清单」用例（inspect installable=true、
+      configFields/capabilitySummary、install 后 providesInstances/instanceCounts、create → INVALID_INPUT）；
+      shared 侧 `plugin-manifest.test.ts`「a pure-instance manifest with config fields is valid」。
+- [x] 现有四类插件的安装 / 更新 / 卸载 / 启停行为与 P1 前完全一致（回归测试全绿，行为零变化提交可证）。
+      — 证据：纯重构提交 `e002dd34`（仅 kinds 派生化）；`plugin-projector-*.test.ts` 5 文件 +
+      `plugins.test.ts` / `plugins-update.test.ts` / `plugins-marketplace.test.ts` / `plugins-bot.test.ts` 全绿。
+- [x] `plugins.config.set` 后：非敏感值在 `config_json`、敏感值只在 secrets、审计无值。
+      — 证据：`plugins-instances.test.ts`「config.set」用例（DB config_json 断言、secrets 键断言、
+      audit_log detail_json 逐字节断言、敏感留存与必填语义、unknown key 拒绝）。
+- [x] `PLUGIN_UPGRADE_REQUIRED`：含未知字段的清单给出升级提示错误码与两语文案。
+      — 证据：同文件「PLUGIN_UPGRADE_REQUIRED」用例 + `plugin-manifest-loader.test.ts`（未知字段带键名、
+      未知 kind 提示升级、垃圾值仍 PLUGIN_INVALID）；i18n `chats.errorCode.PLUGIN_UPGRADE_REQUIRED` 两语（键序一致由 locales.test 保证）。
+- [x] shared / core `typecheck` 通过；全量 `pnpm test` 一次，失败不超基线。
+      — 证据：shared / core / desktop（svelte-check 0 error）typecheck 通过；全量见下方实施记录。
 
 ## 6. 实施记录
 
-（执行后填写：做了什么（按提交）/ 偏差与 DEV 编号 / 迁移实际编号 / 自由度判断点 / 验收证据 / 遗留问题。）
+**按提交**（基线 `1800db3a` → P1 分支 `feat/plugins-platform/p1-capability-kinds`）：
+
+1. `4c88cb09` feat(plugins): shared 契约——`pluginFieldSchema` / `pluginFieldValueSchema`、清单
+   `config`（≤32）与 `instances`（'mail'|'mcp'，≤4）、纯实例清单合法（`contributions` 可整体省略，
+   prefault `{}`）、`PluginSummary`/inspect 新字段（`configFields` 安全投影不含 `default`、
+   `instanceCounts`、`providesInstances`、`capabilitySummary`）、6 个 RPC schema 双登记、
+   `PLUGIN_UPGRADE_REQUIRED` 错误码 + 两语文案、`pli_` id 前缀。
+2. `8585e853` feat(plugins): 迁移 0056（README §4.2 DDL 原样）+ `PluginStore.config_json` +
+   `PluginInstanceService`（materializer 注册、CRUD 走注册表同一把锁、敏感值转义入 secrets、
+   审计只含 pluginId/instanceId/kind）+ registry 的 config 读写 / `manifestOf` / 卸载级联钩子 /
+   summary 与 inspect 填充 + manifest-loader 的升级提示映射 + 6 个 RPC 绑定。
+3. `e002dd34` refactor(plugins): `CAPABILITY_KINDS` 注册表（kinds.ts）——投影顺序、覆盖率测试、
+   贡献判定、同意条目归位、summary 计数键全部派生；纯重构、行为零变化（独立提交）。
+4. `8edd8e5b` / `85db3ea1` test(plugins): 集成与渲染层契约用例。
+5. `274f8c9e` test(plugins): 全量回归暴露的夹具对齐（plugin-store/plugin-registry 的 `configJson`、
+   loader 用例改新错误码、public-skills-migration 回绕 0056）与两处**基线遗留**修复
+   （app-validator 的 releaseGate 用例、bot-apps 的 catalog-hidden 用例——均为 D104 商店化收尾
+   `99f6f027` 的过时断言，已在基线上失败，与本阶段无关）。
+6. 审查修复提交（见下）。
+
+**独立审查**：fresh-context 只读子智能体审 `1800db3a..HEAD` 全 diff，输出 P0×2 / P1×7 / P2×10。
+全部处置：
+
+- P0-1 提交态红灯 → 已由 5 的修复提交解决，并复跑全量取证。
+- P0-2 secrets 转义歧义（`x._y`≡`x_.y`）→ 改 `_u/_d/_s` 无歧义转义 + 单射性测试（DEV-063）。
+- P1-1 偏差登记 → DEV-063…DEV-067 + 本记录。
+- P1-2 崩溃恢复 → 卸载崩溃窗口补失败注入测试（state=uninstalling → recoverInterrupted 不留孤儿）；
+  CREATE 窗口的对账责任登记 DEV-065（P1 无 materializer，窗口不存在）。
+- P1-3 secrets 清理/枚举字段来源漂移 → 改为 secrets 表**前缀扫描**（`plugin:{scope}:instance:{id}:`），
+  与清单声明解耦，清单改字段永不残留 secrets。
+- P1-4 update 顺序反置 → materializer 先行、行值与 secrets 后落，失败零残留（补测试）。
+- P1-5 setConfig 敏感值静默丢失 → secrets 能力缺失且提交含敏感值时显式 INVALID_INPUT。
+- P1-6 capabilitySummary 中文固化 → 维持 zh（core 派生用户文案的既有姿态：blockers / withWhat /
+  describePermission 均 zh）；i18n 债务登记至 P5 设计修正章（结构化 facts + 渲染端组句为后续演进）。
+- P1-7 settings-coverage 通配修复 → 基线修复（开工前置「不绿先修绿」），非 P1 范围；提交 `5d310883`
+  有独立说明。
+- P2 顺手修：consentItems 死抽象（改为 `consentItems(inspection)` 并在 registry 真实接入，DEV-067）、
+  update 语义注释、敏感值序列化文档、未知 kind 仅限字符串判定（垃圾值仍 PLUGIN_INVALID + 用例）、
+  secrets 键长预检、`/`→replaceAll、instances.list 幂等空返回注释。
+- P2 登记未修（写入后续菜谱）：`directory`/`file` 字段值的路径校验责任（P4 custom-mcp）、
+  清单 `default` 不落库的消费方回退（P3 mail 菜谱）、0056 形态测试并入 public-skills-migration 回绕。
+
+**迁移实际编号**：0056（未被占用，照用）。**DEV 编号**：DEV-063…DEV-067。
+
+**自由度判断点**：① `pluginFieldSchema` 定义位置（DEV-066）；② create 的 `kind` 入参（DEV-064）；
+③ instance update 非敏感值=合并、config.set=整体替换（注释已写明差异，P4 表单按合并语义提交全量表单）；
+④ capabilitySummary 维持 zh（见 P1-6 处置）。
+
+**测试与全量证据**：定向——shared 39 文件 484 例、core 插件族（projector×5 + coverage + registry +
+store + loader + integration×5）全绿、app-validator plugin-validate 23 例、server plugin-cli 8 例、
+renderer plugins/extension-center 4 文件 35 例。全量 `node scripts/run-tests.mjs run --maxWorkers=8`：
+**6850–6851 通过 / 16–17 失败**，失败集合 = 上述夹具对齐项（已修复，修复后定向复跑全绿）+
+`user-avatar` 内容寻址同毫秒碰撞（有记录的负载敏感偶发，单跑通过，与插件无关）。修复后未再跑第二次
+全量（按「不做连续多轮全量」；失败文件已逐一单跑取证）。`pnpm lint`（本阶段文件）无新增报错。
+
+**遗留问题**：① `pluginCapabilitySummary` / `capabilityFactsOf` / `countsOf` / `mergeConsentItems`
+仍是 per-kind 手工点（共享契约固定键所迫）——已列入 P5「新增能力类型菜谱」必写项；② 实例敏感值
+落 secrets 的端到端断言要等 P3 mail 字段落地（当前用 config 路径覆盖同一代码通路）；③ 市场条目的
+`capabilitySummary` 输出按分期属 P4（README §4.1 未落地项，勿忘）。
