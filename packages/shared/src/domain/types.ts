@@ -2812,33 +2812,6 @@ export const skillEntrySchema = z.object({
 });
 export type SkillEntry = z.infer<typeof skillEntrySchema>;
 
-/**
- * One row of the skill marketplace (preset catalog shipped with the app).
- * Install state is per bot: `installed` + `upToDate` drive the button
- * (添加 / 已添加 / 更新), `foreign` marks a same-name skill from another
- * source that must not be clobbered (button disabled with a hint).
- */
-export const skillPresetInfoSchema = z.object({
-  /** Catalog id (skills.presets.install input). */
-  id: z.string(),
-  /** Registry-level name from the SKILL.md frontmatter. */
-  skillName: z.string(),
-  displayName: z.string(),
-  summary: z.string(),
-  /** Lucide icon name resolved by the renderer (fallback on unknown). */
-  icon: z.string(),
-  /** Scenario pack grouping ('starter' …); titles live in the renderer i18n. */
-  section: z.string(),
-  version: z.string(),
-  tryIt: z.string().default(''),
-  /** Runtime deps missing on this machine (e.g. python) → 需环境安装 badge. */
-  missingDeps: z.array(z.string()).default([]),
-  installed: z.boolean(),
-  upToDate: z.boolean(),
-  foreign: z.boolean(),
-});
-export type SkillPresetInfo = z.infer<typeof skillPresetInfoSchema>;
-
 /** A skill directory found inside a cloned repository (multi-skill repos). */
 export const skillCandidateSchema = z.object({
   name: z.string(),

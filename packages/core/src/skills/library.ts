@@ -179,7 +179,7 @@ export class SkillImporter {
   // --- prepare / commit 两段（docs/design/22-file-skill-routing.md，D63）-----
   //
   // RPC 导入入口（上）保持「提交即返回 + 回调落位」的非阻塞形态；工具发起的
-  // 安装（install_skill source_url）走阻塞审批：prepare 在工具执行体内完成
+  // 导入（skills.import RPC，右栏技能面板）走扫描 + 审批：prepare 由调用方先完成
   // clone+scan 并产出审批 payload，approvals.request 挂起 run 等用户决定，
   // 批准后 commit 落位并返回技能位置，拒绝/取消由工具拿到 APPROVAL_DENIED。
 

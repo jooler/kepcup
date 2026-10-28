@@ -629,7 +629,7 @@ describe('background bridge tools (P5, Codex MCP timeout)', () => {
       release = resolve;
     });
     const tool: ToolDefinition = {
-      name: 'install_skill',
+      name: 'create_skill',
       description: 'waits for approval',
       parameters: Type.Object({}),
       execute: async () => {
@@ -642,7 +642,7 @@ describe('background bridge tools (P5, Codex MCP timeout)', () => {
         turns: [
           agentTurn()
             .text('我来装技能。')
-            .mcpCall('m1', 'install_skill', {})
+            .mcpCall('m1', 'create_skill', {})
             .text('已提交，等结果。'),
           agentTurn().text('技能装好了，可以用了。'),
         ],

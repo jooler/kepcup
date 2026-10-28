@@ -192,7 +192,6 @@ import {
 } from '../apps/exposure.js';
 import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
-import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
   questionCapReached,
   setupFirstOptions,
@@ -469,11 +468,6 @@ export interface OrchestratorDeps {
    */
   search?: SearchToolFacade | undefined;
   /**
-   * 技能安装门面（docs/design/22-file-skill-routing.md）：install_skill 工具
-   * 的预置安装 / 外部仓库导入（阻塞审批）后端；omitted in stripped test setups。
-   */
-  skillInstall?: SkillInstallFacade | undefined;
-  /**
    * 插件市场门面（D104 P1-3）：plugin_search 只读检索官方认证插件；plugin_request_install
    * 校验后把 `confirm-plugin-install` 需求写进本 run 的 setupHit。缺省 = 不注册这两个工具。
    */
@@ -563,8 +557,6 @@ export interface OrchestratorWikiFacade {
 export interface OrchestratorSkillsFacade {
   /** <skills> section body (names + descriptions only), '' when none. */
   promptSection(botId: string, extraPluginIds: ReadonlySet<string>): string;
-  /** <recommended_skills> section body（未安装预置，D63），'' when none. */
-  recommendedSkillsSection(): string;
   /** Skill directories the file tools may read / sandbox sees read-only. */
   readableDirs(botId: string, extraPluginIds: ReadonlySet<string>): string[];
   /** create_skill backend. */
@@ -3014,7 +3006,6 @@ export class Orchestrator {
     /** D92 T1b WP10: <project_wiki_topics> body ('' = omitted). */
     projectWikiTopics: string;
     skills: string;
-    recommendedSkills: string;
     /** D91: `<capabilities>` body (connected apps + custom MCP servers); '' = omitted. */
     capabilities?: string;
     /** D73 P1: `<available_apps>` body (catalog apps without an authorized connection); '' = omitted. */
@@ -3217,9 +3208,6 @@ export class Orchestrator {
             ? { projectWikiTopics: input.projectWikiTopics }
             : {}),
           ...(input.skills.length > 0 ? { skills: input.skills } : {}),
-          ...(input.recommendedSkills.length > 0
-            ? { recommendedSkills: input.recommendedSkills }
-            : {}),
           // The sections name `app_request_connection` and the capability pair: spelled the way
           // this agent sees them.
           ...(input.capabilities !== undefined && input.capabilities.length > 0
@@ -4158,7 +4146,6 @@ export class Orchestrator {
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
         ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
         logger: this.#deps.logger,
-        ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),
         batchMessages: batch.messages,
         onBotMessage: (message) => this.#recordBotMessage(runId, message),
         // D75 §4.1: the turn's task management (buildResponseTools registers
@@ -4313,8 +4300,6 @@ export class Orchestrator {
       // P2 注入模型：插件贡献的公共技能按有效启用集过滤（Bot 私有技能不受影响）。
       const skillsSection =
         this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
-      // D63：未安装的预置技能列表（install_skill 的匹配来源）。
-      const recommendedSkillsSection = this.#deps.skills?.recommendedSkillsSection() ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection =
         this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
@@ -4566,7 +4551,6 @@ export class Orchestrator {
               wikiTopics: wikiTopicsSection,
               projectWikiTopics: projectWikiTopicsSection,
               skills: skillsSection,
-              recommendedSkills: recommendedSkillsSection,
               capabilities: capabilitiesSection,
               availableApps: availableAppsSection,
               conversationText: `${contextAndContinuation}\n\n${triggerContent}`,
@@ -4723,9 +4707,6 @@ export class Orchestrator {
               ? { projectWikiTopics: projectWikiTopicsSection }
               : {}),
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
-            ...(recommendedSkillsSection.length > 0
-              ? { recommendedSkills: recommendedSkillsSection }
-              : {}),
             ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；五个读写工具另按绑定门控。

@@ -195,10 +195,6 @@ import {
   skillsHistoryOutputSchema,
   skillsRollbackInputSchema,
   skillsReadOutputSchema,
-  skillsPresetsListInputSchema,
-  skillsPresetsListOutputSchema,
-  skillsPresetsInstallInputSchema,
-  skillsPresetsInstallOutputSchema,
   skillsPurgeMissingInputSchema,
   skillsPurgeMissingOutputSchema,
   wikiTreeOutputSchema,
@@ -1704,18 +1700,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     'skills.read': method(skillNameInputSchema, skillsReadOutputSchema, async (input) =>
       services.skills!.readSkill(input.botId, input.name),
-    ),
-    // 技能市场（随应用分发的预置目录）：目录与安装态是全局的（公共技能）；
-    // 点「添加」即装入 public_skills——所有 Bot 发现并调用（无审批卡片）。
-    'skills.presets.list': method(
-      skillsPresetsListInputSchema,
-      skillsPresetsListOutputSchema,
-      async () => ({ presets: services.skillPresets!.list() }),
-    ),
-    'skills.presets.install': method(
-      skillsPresetsInstallInputSchema,
-      skillsPresetsInstallOutputSchema,
-      async (input) => ({ presets: services.skillPresets!.install(input.presetId) }),
     ),
     // 技能目录在应用外被删除：用户在弹框点「知道了」后清理 DB 记录。
     'skills.purgeMissing': method(

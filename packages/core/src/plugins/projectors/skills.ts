@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   AppError,
+  isReservedPluginNamespace,
   parsePluginSkillSource,
+  pluginNamespaceOf,
   pluginSkillSource,
   type PluginConflict,
   type PluginConsentSkill,
@@ -11,7 +13,6 @@ import {
 import type { CoreLogger } from '../../infra/logger.js';
 import { hashDirectory } from '../../skills/library.js';
 import { parseSkillDir } from '../../skills/parse.js';
-import { isBuiltinSkillSource } from '../../skills/presets.js';
 import { scanSkillDir } from '../../skills/scan.js';
 import { resolveEffectiveCompatibility, type SkillsService } from '../../skills/registry.js';
 import type {
@@ -21,6 +22,18 @@ import type {
   PluginProjector,
   ProjectorInspection,
 } from './index.js';
+
+/**
+ * A public skill installed by an app-shipped builtin (`plugin://com.kepcup/…` — the
+ * 0054 migration rewrote the old `preset://` rows to this scheme). Builtins never
+ * enter a plugin ledger, so an installable plugin shipping the same name takes the
+ * row over instead of conflicting. (Moved here from the deleted skills/presets.ts,
+ * D105 P4 — semantics unchanged, 0054 rows stay recognized.)
+ */
+export function isBuiltinSkillSource(sourceUrl: string): boolean {
+  const parsed = parsePluginSkillSource(sourceUrl);
+  return parsed !== null && isReservedPluginNamespace(pluginNamespaceOf(parsed.pluginId));
+}
 
 /**
  * Skills projector (D104 P0a-2 步骤 3): packaged skill folders land in the PUBLIC

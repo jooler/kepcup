@@ -7,6 +7,8 @@
 - **D63 文件技能路由**：模型面对自己处理不了的文件按四级阶梯升级——①已安装技能（既有 `<skills>` 渐进披露）；②应用内置推荐技能：系统提示新增 `<recommended_skills>` 段列出未安装的预置技能（名称/一句话摘要/安装方式），模型匹配后调 `install_skill {preset_id}`，经**阻塞审批** `skill_preset`（卡片展示技能名/摘要/版本/缺失依赖）由用户授权，批准即安装为公共技能并立即可用，拒绝则原 run 继续走下一级；③全网检索：`web_search` 搜技能仓库（Agent Skills 生态），命中后 `install_skill {source_url}` 走既有 `skill_import` 审批流（clone + 静态扫描 + 用户批准）按 Bot 安装；④仍无 → 如实告知用户不支持该文件格式；系统提示注入该阶梯与「不要假装处理过文件」的纪律；无人值守模式下 `skill_preset` 与 `skill_import` 同属自动批准类（内容均落应用自有技能库，无数据目录逃逸，扫描结果记录在卡）；安装成功后 `skills.changed` 发布、`prepareRequest` 每请求刷新系统提示，新技能当次 run 内即可用（见 22）。
 
 > P1 起该阶梯升级为插件阶梯（设计 [51](51-plugin-system.md) §6.3）：在预置技能与 `web_search` 之间增加「官方插件市场」一级（`plugin_search` / `plugin_request_install`，只出确认卡，由用户决定安装）；只有 `hasPluginTools` 的构建多这一级，否则阶梯文本逐字不变。
+>
+> **D105 P4 补记（现状事实）**：预置技能目录随商店化清空后，`install_skill` 工具、`<recommended_skills>` 段、`skills.presets.*` RPC 与 `SkillPresetsService` 已整体删除；技能获取阶梯收敛为 **插件阶梯**——①已安装技能（`<skills>`）；②`plugin_search` → `plugin_request_install`（官方插件市场）；无人值守场景无第三级。右栏技能面板的手动导入（`skills.import` RPC，clone + 扫描 + 审批）不受影响。本文其余小节描述的 install_skill 机制为历史记录，以本补记与设计 51 的现状修正为准（P5 全文改写）。
 
 ## 1 阶梯与用户授权的位置
 

@@ -53,19 +53,19 @@ describe.each(['turn', 'task'] as const)('D91 mail gating (%s)', (loopType) => {
   });
 
   it('1 binding → the five tools plus mail_request_setup (adding more mailboxes stays possible)', () => {
-    const names = mailNames({ loopType, bound: [{ id: 'mal_1' }] });
+    const names = mailNames({ loopType, bound: [{ id: 'mal_1', pluginId: null }] });
     expect([...names].sort()).toEqual([...MAIL_FIVE, 'mail_request_setup'].sort());
   });
 
   it('an explicit mailBound decision wins over a second lookup', () => {
-    expect(mailNames({ loopType, bound: [{ id: 'mal_1' }], mailBound: false })).toEqual([
+    expect(mailNames({ loopType, bound: [{ id: 'mal_1', pluginId: null }], mailBound: false })).toEqual([
       'mail_request_setup',
     ]);
     expect(mailNames({ loopType, bound: [], mailBound: true })).toHaveLength(6);
   });
 
   it('no bot context → counts as unbound', () => {
-    expect(mailNames({ loopType, bound: [{ id: 'mal_1' }], botId: null })).toEqual([
+    expect(mailNames({ loopType, bound: [{ id: 'mal_1', pluginId: null }], botId: null })).toEqual([
       'mail_request_setup',
     ]);
   });

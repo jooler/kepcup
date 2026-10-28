@@ -1997,18 +1997,6 @@ export function botFileAccessAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-export function skillInstallAdapter(deps: AdapterDeps): ItemAdapter {
-  return {
-    read: (_item, target) => {
-      if (deps.skills === undefined || target.botId === null) {
-        return snapshot('unknown', null, '还看不到已安装的技能');
-      }
-      const count = deps.skills.list(target.botId).length;
-      return counted(count, '还没有安装技能', `已安装 ${count} 个技能`);
-    },
-  };
-}
-
 export function scheduleCountAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {

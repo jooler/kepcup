@@ -250,7 +250,7 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     id: 'skills',
     category: 'host',
     default: 'inject',
-    tools: ['install_skill', 'create_skill'],
+    tools: ['create_skill'],
   }),
   pack({
     id: 'host_ops',

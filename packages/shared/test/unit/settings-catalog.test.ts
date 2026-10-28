@@ -65,7 +65,6 @@ describe('settings catalog integrity', () => {
       'bot.apps',
       'bot.skills',
       'bot.identity',
-      'skills.install',
       'schedules.schedule',
       'schedules.watch',
       'profile.user-facts',
@@ -111,7 +110,6 @@ describe('settings catalog integrity', () => {
       'mail.account': 'mail_request_setup',
       'bot.identity': 'propose_profile_change',
       'bot.file-access': 'request_access',
-      'skills.install': 'install_skill',
       'schedules.schedule': 'schedule',
       'schedules.watch': 'watch_create',
     });
