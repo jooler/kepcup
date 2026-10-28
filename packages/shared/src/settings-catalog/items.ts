@@ -428,7 +428,9 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'localCollab' },
+    // D105 P4：localCollab 页签收敛进「已安装」，本机应用协作以系统卡落在该页
+    // （旧 localCollab 深链也由 shell 映射到 installed + 滚动到系统卡）。
+    deepLink: { surface: 'extension-center', section: 'installed' },
     store: { kind: 'settings', paths: ['inkcopLocalCollab'] },
   }),
   item({

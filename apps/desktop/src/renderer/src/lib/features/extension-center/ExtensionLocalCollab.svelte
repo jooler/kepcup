@@ -14,9 +14,12 @@
   } from '$lib/features/inkcop-collab';
 
   /**
-   * 扩展中心 →「本机应用协作」（契约 v0.3）：
-   * InkCop 卡片：启停 + 桥状态 chip + 说明 + API 密钥 + 可选服务地址。
+   * 本机应用协作（契约 v0.3）：InkCop 卡片——启停 + 桥状态 chip + 说明 + API 密钥 + 可选服务地址。
+   * D105 P4：不再占独立页签，收编为「已安装」页的系统卡展开内容（`embedded`）。
    */
+
+  /** embedded：作为系统卡的展开内容渲染（无自带滚动容器与页边距）。 */
+  let { embedded = false }: { embedded?: boolean } = $props();
 
   let busy = $state(false);
   let online = $state<boolean | null>(null);
@@ -171,7 +174,10 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-3" data-testid="extension-local-collab">
+<div
+  class={embedded ? 'space-y-3' : 'flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-3'}
+  data-testid="extension-local-collab"
+>
   <p class="text-xs text-muted-foreground">{t('extensionCenter.localCollab.hint')}</p>
 
   <div
