@@ -2898,37 +2898,13 @@ export const enUS = {
   'chats.errorCode.MAIL_PROVIDER_UNAVAILABLE':
     "This mail service can't sign in with an authorization code yet",
   'mail.intro':
-    'Uses authorization codes over IMAP/SMTP, suitable for QQ, NetEase, and similar. This is different from the official apps under "Connections".',
+    'Mailboxes come from mail plugins: add accounts on a mail plugin card; one plugin can hold several accounts.',
   'mail.add': 'Add mailbox',
   'mail.empty': 'After you add a mailbox, Bots can send, receive, and handle new mail for you.',
   'mail.back': 'Back',
-  'mail.provider': 'Mail service',
-  'mail.provider.qq': 'QQ Mail',
-  'mail.provider.netease_163': '163 Mail',
-  'mail.provider.netease_126': '126 Mail',
-  'mail.provider.gmail': 'Gmail',
-  'mail.provider.outlook': 'Outlook',
-  'mail.provider.custom': 'Custom',
-  'mail.providerNote.qq':
-    "Enable IMAP/SMTP in QQ Mail on the web and use a 16-character authorization code. Near-real-time delivery is preferred; if you switch to polling, don't use an interval shorter than 2 minutes.",
-  'mail.providerNote.netease_163':
-    'Use a client authorization code. NetEase Mail has no push, so it polls about every 5 minutes by default. Too short an interval may be flagged as an insecure sign-in.',
-  'mail.providerNote.netease_126':
-    'Use a client authorization code. NetEase Mail has no push, so it polls about every 5 minutes by default. Too short an interval may be flagged as an insecure sign-in.',
-  'mail.providerNote.gmail':
-    "Use an app password generated after enabling two-step verification. Official OAuth connection is planned for later and isn't on this page.",
-  'mail.providerNote.outlook':
-    "Outlook personal mailboxes require OAuth; the current version can't sign in with a password or authorization code.",
-  'mail.providerNote.custom':
-    'Enter your own IMAP/SMTP server. Only the public mail host you enter will be connected.',
   'mail.help': 'How to get an authorization code',
   'mail.address': 'Email address',
   'mail.password': 'Authorization code',
-  'mail.passwordHint': 'Enter an authorization code or app password, not your web login password.',
-  'mail.label': 'Display name',
-  'mail.port': 'Port',
-  'mail.customWarning':
-    "A custom server connects to the address you enter. Don't enter a local or intranet address.",
   'mail.testing': 'Testing connection…',
   'mail.save': 'Test and save',
   'mail.added': 'Mailbox added',
@@ -2967,12 +2943,15 @@ export const enUS = {
   'mail.botSectionEmpty': 'No mailboxes yet. Add one on the Mail page in the Extension Center.',
   'mail.botSectionBound': 'Handling {count} mailboxes',
   'mail.openExtension': 'Open Mail in the Extension Center',
-  'mail.outlookUnavailable':
-    "Outlook requires OAuth; please wait for a future version. Don't enter your login password for a custom server.",
-  'mail.template.group': 'Templates from plugins',
-  'mail.template.option': '{label} ({plugin})',
-  'mail.template.note':
-    'This template comes from the plugin "{plugin}"; the account is saved as a Custom mailbox.',
+  'mail.noPlugin':
+    'No mail plugin can add mailboxes yet. Install a mail plugin from the market first, or add accounts from its plugin card.',
+  'mail.openMarket': 'Open plugin market',
+  'mail.pickPlugin': 'Choose a mail plugin',
+  'mail.instanceCount': '{count} accounts',
+  'mail.group.legacy': 'Not linked to a plugin',
+  'mail.ownerOf': 'From plugin: {plugin}',
+  'mail.instanceFormNote':
+    'A mailbox of "{plugin}". Fields are declared by the plugin; the connection test runs when you save.',
   'approvals.mailSendTitle': 'Send email',
   'sidebar.workbench': 'Workbench',
   'workbench.title': 'Workbench',

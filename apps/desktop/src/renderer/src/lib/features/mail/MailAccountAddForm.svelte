@@ -1,162 +1,86 @@
 <script lang="ts">
-  import {
-    AppError,
-    MAIL_PROVIDER_PRESETS,
-    type MailAccount,
-    type MailMode,
-    type MailProvider,
-    type MailSecure,
-    type MailProviderTemplate,
-  } from '@kepcup/shared';
+  import { AppError, type MailAccount, type PluginSummary } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { applyTemplate, parseTemplateOption, templateOptionValue } from './mail-template';
+  import PluginFieldForm from '$lib/features/plugins/PluginFieldForm.svelte';
 
   /**
-   * 添加邮箱表单（D84）：扩展中心「邮件」与对话内 mail-account 设置卡共用。
-   * 测连在 `mail.accounts.create` 内完成；`bindBotId` 有值时创建后直接绑定该 Bot。
+   * 邮件实例表单（P3）：宿主按插件声明的实例字段自动构建——厂商插件只有
+   * 地址 / 授权码（/ 用户名）与厂商附加字段，通用插件多出 IMAP/SMTP 端点；
+   * 连接测试在 `plugins.instances.create` 内完成。一个插件可添加多个账号。
+   * 扩展中心「已安装 → 邮件插件 → 管理」与对话内 mail setup 卡共用。
    */
+
   let {
-    initialProvider = 'qq',
+    pluginId,
     bindBotId = undefined,
     testidPrefix = 'mail',
     onSaved,
   }: {
-    initialProvider?: MailProvider;
+    /** 提供邮件实例能力的插件 id（已安装且启用）。 */
+    pluginId: string;
     /** 创建成功后绑定的 Bot（对话内设置卡传入当前 Bot）。 */
     bindBotId?: string | undefined;
     testidPrefix?: string;
     onSaved?: (account: MailAccount) => void;
   } = $props();
 
-  const PROVIDERS = Object.values(MAIL_PROVIDER_PRESETS);
+  const plugin = $derived(
+    plugins.plugins.find((candidate) => candidate.id === pluginId) ?? null,
+  );
+  /** 实例表单字段（core 按清单解析的安全投影；厂商插件的端点不出现）。 */
+  const fields = $derived(plugin?.instanceFields ?? []);
 
-  // initialProvider 变化时同步厂商（可写 derived：用户手选后保持到下次 prop 变化）。
-  let provider = $derived<MailProvider>(initialProvider);
-  let address = $state('');
-  let password = $state('');
-  let label = $state('');
-  let imapHost = $state('');
-  let smtpHost = $state('');
-  let imapPort = $state('993');
-  let smtpPort = $state('465');
+  let values = $state<Record<string, unknown>>({});
   let busy = $state(false);
   let formError = $state('');
-  /** 选中的插件模板 id（`pluginId#localId`）；非模板选择时为 null。 */
-  let templateId = $state<string | null>(null);
-  let templates = $state<MailProviderTemplate[]>([]);
-  // 模板带出的连接参数（只有选中模板时才随创建请求发送；普通自定义邮箱保持原样）。
-  let imapSecure = $state<MailSecure>('ssl');
-  let smtpSecure = $state<MailSecure>('ssl');
-  let mode = $state<MailMode>('auto');
-  let pollIntervalSec = $state('300');
-
-  const preset = $derived(MAIL_PROVIDER_PRESETS[provider]);
-  const template = $derived(
-    templateId === null ? null : (templates.find((item) => item.id === templateId) ?? null),
-  );
-  /** `<select>` 的当前值：模板选择用 `tpl:` 前缀，其余是内置厂商 id。 */
-  const providerOption = $derived(templateId === null ? provider : templateOptionValue(templateId));
-  /** 模板的帮助链接来自市场 / 本地插件数据，渲染前只认 https（不依赖上游单点校验）。 */
-  const templateHelpUrl = $derived(
-    template !== null && template.helpUrl !== null && template.helpUrl.startsWith('https://')
-      ? template.helpUrl
-      : null,
-  );
-
-  $effect(() => {
-    void (async () => {
-      try {
-        const result = (await core.call('mail.providerTemplates.list', undefined)) as {
-          templates: MailProviderTemplate[];
-        };
-        templates = result.templates;
-      } catch {
-        // 模板只是预填便利：读不到就当没有（不影响手动添加）。
-        templates = [];
-      }
-    })();
-  });
-
-  /** 模板带出的连接参数回到表单缺省值（从模板切回内置厂商 / 自定义时不留残值）。 */
-  function resetConnectionFields(): void {
-    imapHost = '';
-    smtpHost = '';
-    imapPort = '993';
-    smtpPort = '465';
-    imapSecure = 'ssl';
-    smtpSecure = 'ssl';
-    mode = 'auto';
-    pollIntervalSec = '300';
-  }
-
-  function onProviderChange(value: string): void {
-    const picked = parseTemplateOption(value);
-    if (picked === null) {
-      if (templateId !== null) resetConnectionFields();
-      templateId = null;
-      provider = value as MailProvider;
-      return;
-    }
-    const found = templates.find((item) => item.id === picked);
-    if (found === undefined) return;
-    const form = applyTemplate(found);
-    templateId = found.id;
-    provider = 'custom';
-    imapHost = form.imapHost;
-    imapPort = form.imapPort;
-    smtpHost = form.smtpHost;
-    smtpPort = form.smtpPort;
-    imapSecure = form.imapSecure;
-    smtpSecure = form.smtpSecure;
-    mode = form.mode;
-    pollIntervalSec = form.pollIntervalSec;
-  }
 
   function explain(error: unknown): string {
     if (error instanceof AppError) return errorText(error.code, error.message);
     return error instanceof Error ? error.message : String(error);
   }
 
+  /** 必填项就绪：非敏感必填有值，敏感必填有值或已有存值。 */
+  function ready(): boolean {
+    return fields.every((field) => {
+      if (!field.required) return true;
+      const raw = values[field.key];
+      if (typeof raw === 'string' && raw.trim().length > 0) return true;
+      if (typeof raw === 'number') return true;
+      if (typeof raw === 'boolean') return true;
+      return false;
+    });
+  }
+
   async function submit(): Promise<void> {
     formError = '';
-    if (!preset.available) {
-      formError = t('mail.outlookUnavailable');
-      return;
-    }
+    if (plugin === null) return;
     busy = true;
     try {
-      const created = (await core.call('mail.accounts.create', {
-        provider,
-        address: address.trim(),
-        password,
-        ...(label.trim().length > 0 ? { label: label.trim() } : {}),
-        ...(bindBotId !== undefined ? { botIds: [bindBotId] } : {}),
-        ...(provider === 'custom'
-          ? {
-              imapHost: imapHost.trim(),
-              imapPort: Number(imapPort) || 993,
-              smtpHost: smtpHost.trim(),
-              smtpPort: Number(smtpPort) || 465,
-              // 模板选中时才带出这些参数；普通自定义邮箱的请求体保持原样。
-              ...(templateId !== null
-                ? {
-                    imapSecure,
-                    smtpSecure,
-                    mode,
-                    pollIntervalSec: Number(pollIntervalSec) || 300,
-                  }
-                : {}),
-            }
-          : {}),
-      })) as { account: MailAccount };
-      password = '';
+      const result = (await core.call('plugins.instances.create', {
+        pluginId: plugin.id,
+        values,
+      })) as { instance: { id: string; title: string } };
+      values = {};
+      // 对话内设置卡：创建后直接绑定当前 Bot（实例路径不管绑定，写 mail_account_bots）。
+      if (bindBotId !== undefined) {
+        const accounts = (await core.call('mail.accounts.list', undefined)) as {
+          accounts: MailAccount[];
+        };
+        const account = accounts.accounts.find(
+          (row) => row.instanceId === result.instance.id,
+        );
+        if (account !== undefined) {
+          await core.call('mail.accounts.setBots', { id: account.id, botIds: [bindBotId] });
+        }
+      }
       toast.success(t('mail.added'));
-      onSaved?.(created.account);
+      // 实例标题即账号地址；账号列表随后由 mail.account_updated 事件刷新，
+      // 这里用标题给调用方一个可显示的标识。
+      onSaved?.({ address: result.instance.title } as MailAccount);
     } catch (error) {
       formError = explain(error);
     } finally {
@@ -173,119 +97,29 @@
   }}
   data-testid={`${testidPrefix}-add-form`}
 >
-  <div class="grid gap-1.5">
-    <Label>{t('mail.provider')}</Label>
-    <select
-      class="h-9 rounded-md border bg-background px-2 text-sm"
-      value={providerOption}
-      onchange={(event) => onProviderChange(event.currentTarget.value)}
-      data-testid={`${testidPrefix}-provider`}
-    >
-      {#each PROVIDERS as item (item.id)}
-        <option value={item.id}>{t(`mail.provider.${item.id}`)}</option>
-      {/each}
-      {#if templates.length > 0}
-        <optgroup label={t('mail.template.group')}>
-          {#each templates as item (item.id)}
-            <option value={templateOptionValue(item.id)}>
-              {t('mail.template.option', { label: item.label, plugin: item.pluginName })}
-            </option>
-          {/each}
-        </optgroup>
-      {/if}
-    </select>
-    {#if template !== null}
-      <p class="text-xs text-muted-foreground">
-        {t('mail.template.note', { plugin: template.pluginName })}
-      </p>
-      {#if templateHelpUrl !== null}
-        <a class="text-xs underline" href={templateHelpUrl} target="_blank" rel="noreferrer">
-          {t('mail.help')}
-        </a>
-      {/if}
-    {:else}
-      <p class="text-xs text-muted-foreground">{t(`mail.providerNote.${provider}`)}</p>
-      {#if preset.helpUrl.length > 0}
-        <a class="text-xs underline" href={preset.helpUrl} target="_blank" rel="noreferrer">
-          {t('mail.help')}
-        </a>
-      {/if}
-    {/if}
-  </div>
-  {#if !preset.available}
-    <p
-      class="text-sm text-amber-700 dark:text-amber-400"
-      data-testid={`${testidPrefix}-outlook-unavailable`}
-    >
-      {t('mail.outlookUnavailable')}
+  <p class="text-xs text-muted-foreground">
+    {t('mail.instanceFormNote', { plugin: plugin?.name ?? pluginId })}
+  </p>
+  {#if fields.length === 0}
+    <p class="text-xs text-muted-foreground" data-testid={`${testidPrefix}-fields-loading`}>
+      {t('apps.catalog.loading')}
     </p>
   {:else}
-    <div class="grid gap-1.5">
-      <Label for={`${testidPrefix}-address`}>{t('mail.address')}</Label>
-      <Input
-        id={`${testidPrefix}-address`}
-        bind:value={address}
-        autocomplete="off"
-        data-testid={`${testidPrefix}-address`}
-      />
-    </div>
-    <div class="grid gap-1.5">
-      <Label for={`${testidPrefix}-password`}>{t('mail.password')}</Label>
-      <Input
-        id={`${testidPrefix}-password`}
-        type="password"
-        bind:value={password}
-        autocomplete="new-password"
-        data-testid={`${testidPrefix}-password`}
-      />
-      <p class="text-xs text-muted-foreground">{t('mail.passwordHint')}</p>
-    </div>
-    <div class="grid gap-1.5">
-      <Label for={`${testidPrefix}-label`}>{t('mail.label')}</Label>
-      <Input
-        id={`${testidPrefix}-label`}
-        bind:value={label}
-        data-testid={`${testidPrefix}-label`}
-      />
-    </div>
-    {#if provider === 'custom'}
-      <p class="text-xs text-amber-700 dark:text-amber-400">{t('mail.customWarning')}</p>
-      <div class="grid grid-cols-2 gap-2">
-        <div class="grid gap-1.5">
-          <Label for={`${testidPrefix}-imap-host`}>IMAP</Label>
-          <Input
-            id={`${testidPrefix}-imap-host`}
-            bind:value={imapHost}
-            data-testid={`${testidPrefix}-imap-host`}
-          />
-        </div>
-        <div class="grid gap-1.5">
-          <Label for={`${testidPrefix}-imap-port`}>{t('mail.port')}</Label>
-          <Input id={`${testidPrefix}-imap-port`} bind:value={imapPort} />
-        </div>
-        <div class="grid gap-1.5">
-          <Label for={`${testidPrefix}-smtp-host`}>SMTP</Label>
-          <Input
-            id={`${testidPrefix}-smtp-host`}
-            bind:value={smtpHost}
-            data-testid={`${testidPrefix}-smtp-host`}
-          />
-        </div>
-        <div class="grid gap-1.5">
-          <Label for={`${testidPrefix}-smtp-port`}>{t('mail.port')}</Label>
-          <Input id={`${testidPrefix}-smtp-port`} bind:value={smtpPort} />
-        </div>
-      </div>
-    {/if}
-    {#if formError}
-      <p class="text-sm text-destructive" data-testid={`${testidPrefix}-form-error`}>{formError}</p>
-    {/if}
-    <Button
-      type="submit"
-      disabled={busy || address.trim().length === 0 || password.length === 0}
-      data-testid={`${testidPrefix}-save`}
-    >
-      {busy ? t('mail.testing') : t('mail.save')}
-    </Button>
+    <PluginFieldForm
+      {fields}
+      bind:values
+      idScope={`${testidPrefix}-instance`}
+      testid={`${testidPrefix}-instance-fields`}
+    />
   {/if}
+  {#if formError}
+    <p class="text-sm text-destructive" data-testid={`${testidPrefix}-form-error`}>{formError}</p>
+  {/if}
+  <Button
+    type="submit"
+    disabled={busy || fields.length === 0 || !ready()}
+    data-testid={`${testidPrefix}-save`}
+  >
+    {busy ? t('mail.testing') : t('mail.save')}
+  </Button>
 </form>

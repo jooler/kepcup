@@ -28,13 +28,10 @@ describe('setupAliasOf（旧 kind → kind:"setting" 兼容别名）', () => {
     });
   });
 
-  it('mail-account 的 provider 映到 prefill.provider，reason 原样保留', () => {
-    expect(
-      setupAliasOf({ kind: 'mail-account', provider: 'gmail', reason: '帮我收邮件' }, text),
-    ).toEqual({
+  it('mail-account 映到目录条目，reason 原样保留（P3：无厂商预填）', () => {
+    expect(setupAliasOf({ kind: 'mail-account', reason: '帮我收邮件' }, text)).toEqual({
       kind: 'setting',
       itemId: 'mail.account',
-      prefill: { provider: 'gmail' },
       reason: '帮我收邮件',
     });
   });
