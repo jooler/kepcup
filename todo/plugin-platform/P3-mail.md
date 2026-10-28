@@ -179,7 +179,12 @@ DEV-073（`mail.accounts.test/create` 收敛删除的取舍）。
 locales 键序测试通过；settings 目录四文件 90 例全绿（AGENTS 约定定向）；
 typecheck：shared / core / desktop（svelte-check 0 error）全过；
 e2e：mail-plugins 1 例 + bot-plugins / extension-center / plugins 13 例全绿。
-全量 `node scripts/run-tests.mjs run --maxWorkers=8` 一次：结果见下方补记（阶段收口）。
+全量 `node scripts/run-tests.mjs run --maxWorkers=8` 一次：**6902 通过 / 1 失败 / 37 跳过**
+（6940 例）——失败为 shared `connected-apps.test.ts` 的 mail-account 契约用例（改动直接
+波及：provider 预填字段已删），已按剥离语义修复并单跑全绿；另有首跑的 app-validator
+夹具 3 例（同因：夹具缺 `instances: ['mail']`）也在全量后修复。修复后未再跑第二次全量
+（按「不做连续多轮全量」；失败文件已逐一单跑取证）。`permission-bridge` 一例 5 秒超时
+为本轮全量的负载偶发，单跑全绿（基线已记录的同类）。
 
 **遗留问题**：① `instanceCounts` 的 mcp 仍按实例行数（P4-M2 custom-mcp 落地时对齐
 「活跃口径」）；② 市场条目的 `capabilitySummary` 输出（README §4.1 未落地项）仍待 P4；
