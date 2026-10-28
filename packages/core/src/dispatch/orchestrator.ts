@@ -4051,7 +4051,8 @@ export class Orchestrator {
             })
           : undefined;
       // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
-      // P2：extraPluginIds 传给 mailBoundFor（P3 前账号无 instance_id，恒放行——参数就位）。
+      // P2 §3.5 / P4 落地：mailBoundFor 按有效启用集过滤（实例账号属主插件未启用 →
+      // 不注册读写工具），与 <mail_accounts> 段、工具内清单同源。
       const mailBound =
         this.#deps.mail !== undefined &&
         mailBoundFor(this.#deps.mail, identity.botId, extraPluginIds);

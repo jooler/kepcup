@@ -70,7 +70,8 @@
   let configValues = $state<Record<string, unknown>>({});
   /** 有存值 secret 的敏感字段键（表单占位「已保存」；core 永不回传敏感明文）。 */
   let configStoredKeys = $state<string[]>([]);
-  let configLoading = $state(false);
+  /** 正在拉取初始值的卡（面板渲染 loading 的依据）；与 configPanelId 分开防并发闪错。 */
+  let configLoadingId = $state<string | null>(null);
   let configSaving = $state(false);
   /** 系统卡（本机应用协作 / 本机自建连接）的展开状态；折叠时只显示标题与说明。 */
   let systemLocalCollabOpen = $state(false);
@@ -291,10 +292,10 @@
     configPanelId = plugin.id;
     configValues = {};
     configStoredKeys = [];
-    configLoading = true;
+    configLoadingId = plugin.id;
     try {
       const config = await plugins.loadConfig(plugin.id);
-      // 并发展开另一张卡时丢弃旧结果。
+      // 请求在途时用户可能已切到另一张卡：只把结果交给仍是当前卡的面板。
       if (configPanelId === plugin.id) {
         configValues = { ...config.values };
         configStoredKeys = config.storedSensitiveKeys;
@@ -303,7 +304,7 @@
       toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
       if (configPanelId === plugin.id) configPanelId = null;
     } finally {
-      configLoading = false;
+      if (configLoadingId === plugin.id) configLoadingId = null;
     }
   }
 
@@ -318,7 +319,8 @@
     try {
       await plugins.saveConfig(plugin.id, configValues);
       toast.success(t('plugins.config.saved'));
-      closeConfig();
+      // 保存在途时用户可能已切到另一张卡：只收起发起保存的那张。
+      if (configPanelId === plugin.id) closeConfig();
     } catch (caught) {
       // core 校验（必填 / 类型 / min/max）失败：表单留在原地改。
       toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
@@ -603,7 +605,7 @@
         data-testid={`plugins-config-${plugin.id}`}
       >
         <p class="text-xs font-medium">{t('plugins.config.heading')}</p>
-        {#if configLoading}
+        {#if configLoadingId === plugin.id}
           <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>
         {:else}
           <PluginFieldForm

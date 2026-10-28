@@ -372,12 +372,21 @@ export class PluginRegistry {
       const row = this.#deps.store.get(id);
       if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${id}`);
       const fields = await this.#configFieldsOf(id);
-      let values: Record<string, PluginFieldValue> = {};
+      let stored: Record<string, PluginFieldValue> = {};
       try {
-        values = JSON.parse(row.configJson) as Record<string, PluginFieldValue>;
+        stored = JSON.parse(row.configJson) as Record<string, PluginFieldValue>;
       } catch {
         this.#deps.logger.warn({ plugin: id }, 'plugin config_json unreadable; treated as empty');
       }
+      // Project to the CURRENT manifest's declared keys: an update that removed/renamed a
+      // field leaves its old value in config_json — returning it verbatim would make the
+      // auto-built form round-trip an unknown key and setConfig (full replace, unknown
+      // keys rejected) would refuse every save with no way to clear it from the UI. The
+      // stale key leaves config_json on the next save (form submits declared keys only).
+      const declared = new Set(fields.filter((field) => !field.sensitive).map((field) => field.key));
+      const values = Object.fromEntries(
+        Object.entries(stored).filter(([key]) => declared.has(key)),
+      );
       const storedSensitiveKeys = fields
         .filter((field) => this.#deps.secrets?.hasValue(pluginConfigSecretName(id, field.key)) === true)
         .map((field) => field.key);

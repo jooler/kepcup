@@ -339,7 +339,6 @@ describe('plugin injection model (P2)', () => {
     '项目叠加：projects.plugins.set 启用插件 X（成员未启用）→ 项目会话 run 可见 X，私聊会话不可见，成员 profile 不变',
     async () => {
       const { core, llm } = await setup();
-      const skills = core.services.skills!;
       await installPlugin(core, (dir) =>
         buildPluginFixture({
           dir,

@@ -86,6 +86,9 @@ export const pluginFieldSummarySchema = z.strictObject({
   description: z.string().optional(),
   sensitive: z.boolean().optional(),
   multiple: z.boolean().optional(),
+  /** number 字段的表单预约束（D105 P4）：数值本身无文案面，随安全投影携带。 */
+  min: z.number().optional(),
+  max: z.number().optional(),
 });
 export type PluginFieldSummary = z.infer<typeof pluginFieldSummarySchema>;
 
@@ -98,6 +101,8 @@ export function pluginFieldSummaryOf(field: PluginField): PluginFieldSummary {
     ...(field.description !== '' ? { description: field.description } : {}),
     ...(field.sensitive ? { sensitive: true } : {}),
     ...(field.multiple ? { multiple: true } : {}),
+    ...(field.min !== undefined ? { min: field.min } : {}),
+    ...(field.max !== undefined ? { max: field.max } : {}),
   };
 }
 

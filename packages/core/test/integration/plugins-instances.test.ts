@@ -242,6 +242,55 @@ describe('plugin config & instances (D105 P1)', () => {
     }
   });
 
+  it('P4 审查 P1-1：更新删除 config 字段后，getConfig 按新清单投影、表单仍可保存（旧键随全量替换清除）', async () => {
+    const { core } = await setup();
+    const v1 = await pureInstanceFixture({
+      version: '1.0.0',
+      config: {
+        fields: [
+          { key: 'pollSec', type: 'number', title: '轮询间隔', min: 60, max: 3600 },
+          { key: 'legacy', type: 'string', title: '已废弃字段' },
+          { key: 'apiKey', type: 'string', title: 'API Key', required: true, sensitive: true },
+        ],
+      },
+    });
+    await install(core, v1);
+    await core.rpc.call('plugins.config.set', {
+      id: PLUGIN_ID,
+      values: { pollSec: 300, legacy: 'stale', apiKey: 'sk-plugin-config' },
+    });
+    expect(
+      JSON.parse(
+        (core.services.mainDb!.prepare('select config_json from plugins where id = ?').get(PLUGIN_ID) as {
+          config_json: string;
+        }).config_json,
+      ),
+    ).toEqual({ pollSec: 300, legacy: 'stale' });
+
+    // 同 id 更新到删除了 legacy 字段的 v2。
+    const v2 = await pureInstanceFixture({ version: '1.1.0' });
+    await install(core, v2);
+
+    // get 投影到当前清单声明键：legacy 不再出给表单（否则表单整对象回传会被
+    // setConfig 的未知键拒绝，且 UI 无途径清掉 → 设置永久存不了）。
+    const read = (await core.rpc.call('plugins.config.get', { id: PLUGIN_ID })) as {
+      values: Record<string, unknown>;
+      storedSensitiveKeys: string[];
+    };
+    expect(read.values).toEqual({ pollSec: 300 });
+    expect(read.storedSensitiveKeys).toEqual(['apiKey']);
+
+    // 保存成功；config_json 里的旧键随全量替换清除。
+    await core.rpc.call('plugins.config.set', { id: PLUGIN_ID, values: { pollSec: 600 } });
+    expect(
+      JSON.parse(
+        (core.services.mainDb!.prepare('select config_json from plugins where id = ?').get(PLUGIN_ID) as {
+          config_json: string;
+        }).config_json,
+      ),
+    ).toEqual({ pollSec: 600 });
+  });
+
   it('实例 CRUD：materializer 落领域数据、敏感值入 secrets、失败回滚不留孤儿行', async () => {
     const { core } = await setup();
     const fixture = await pureInstanceFixture();
