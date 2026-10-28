@@ -192,6 +192,7 @@ import { createPluginProjectors, type PluginProjector } from './plugins/projecto
 import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { effectivePluginIds } from './plugins/effective.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
 import { PluginInstanceService, PluginInstanceStore } from './plugins/instances.js';
 import { PluginStore } from './plugins/store.js';
@@ -1189,7 +1190,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         events.emit('conversation.updated', {
           conversation:
             conversation.type === 'project'
-              ? { ...conversation, memberPreviews: projects.memberPreviews(conversationId) }
+              ? {
+                  ...conversation,
+                  memberPreviews: projects.memberPreviews(conversationId),
+                  // P2 注入模型：项目插件授权变更也走这条推送（设置分区回显）。
+                  plugins: projects.pluginsOf(conversationId),
+                }
               : conversation,
         });
       },
@@ -1209,6 +1215,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         const conversation = conversations.get(conversationId);
         if (conversation === null || conversation.workdirId === null) return null;
         return workdirsService.get(conversation.workdirId)?.name ?? null;
+      },
+      // P2 注入模型：项目插件授权变更 → 扩展中心 / 右栏刷新。
+      emitPluginsChanged: (pluginIds) => {
+        events.emit('plugins.changed', { ids: pluginIds });
       },
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
@@ -1671,6 +1681,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
+    /**
+     * P2 注入模型：一次 (bot, conversation) 的有效启用集（`plugin_ids ∪ 项目叠加`），
+     * 给网关 / 外部智能体权限桥的技能目录过滤用（与 orchestrator 的 #effectivePlugins
+     * 同一套计算；这里按 run 身份现读，不进缓存）。恒返回集合——空集 = 未启用任何
+     * 插件，其贡献不可见。
+     */
+    const effectivePluginSetFor = (
+      botId: string | null | undefined,
+      conversationId: string | null | undefined,
+    ): ReadonlySet<string> => {
+      if (botId === null || botId === undefined) return new Set();
+      const bot = bots.get(botId);
+      if (bot === null) return new Set();
+      const conversation =
+        conversationId !== null && conversationId !== undefined
+          ? conversations.get(conversationId)
+          : null;
+      const overlay =
+        conversation !== null && conversation.type === 'project'
+          ? projects.pluginsOf(conversation.id)
+          : [];
+      return effectivePluginIds(bot.profile, overlay);
+    };
     const gateway = new ToolGateway({
       paths,
       sandbox,
@@ -1694,7 +1727,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         noteToolchainUse: () => environment.noteToolchainUse(),
       },
       skills: {
-        readableDirs: (botId) => skills.readableDirs(botId),
+        // P2 注入模型：沙箱 / 文件工具的可读技能目录与 <skills> 段同源过滤（BR-P08-003）。
+        readableDirs: (botId, conversationId) =>
+          skills.readableDirs(botId, effectivePluginSetFor(botId, conversationId)),
       },
       // W5: risk re-resolved at call time from the server's current tool
       // annotations; policy / autoApprove re-read from settings. A server the
@@ -1843,7 +1878,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       grants,
       allowlist,
-      skillDirs: (botId) => skills.readableDirs(botId),
+      // P2 注入模型：外部 Agent 的技能目录同样按有效启用集过滤（与 <skills> 段同源）。
+      skillDirs: (botId, conversationId) =>
+        skills.readableDirs(botId, effectivePluginSetFor(botId, conversationId)),
       redact: (text) => secrets.redact(text),
       // D75 审查 M2: the bound workdir when this run does not hold its lease.
       unleasedWorkdir: (identity) => {
@@ -2251,6 +2288,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       (projector): projector is ConnectorsProjector => projector.kind === 'connector',
     ) as ConnectorsProjector;
     connectorCatalog.attachPlugins(connectorsProjector);
+    // P2 注入模型：注入模型写路径的插件目录（store 行存在且 installed 才算已安装）。
+    const pluginInstalled = (id: string): boolean => {
+      const row = pluginStore.get(id);
+      return row !== null && row.state === 'installed';
+    };
+    bots.attachPluginDirectory({ installed: pluginInstalled });
+    projects.attachPluginDirectory({ installed: pluginInstalled });
+    // 连接器 slug 的属主插件查询（forBot 的可见性过滤用；账本即事实来源）。
+    connectedApps.attachPluginOwnerOf((connectorSlug) => plugins.ownerOf('connector', connectorSlug));
     skills.attachPublicUninstallGuard((name) => {
       if (plugins.ownerOf('skill', name) !== null) {
         throw new AppError(
@@ -2455,8 +2501,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       widgetCraft,
       skills: {
-        promptSection: (botId) => skills.promptSection(botId),
-        readableDirs: (botId) => skills.readableDirs(botId),
+        // P2 注入模型：orchestrator 传入本次 run 的有效启用集，透传给技能装配。
+        promptSection: (botId, extraPluginIds) =>
+          skills.promptSection(botId, extraPluginIds),
+        readableDirs: (botId, extraPluginIds) =>
+          skills.readableDirs(botId, extraPluginIds),
         // D72 P4 审查 #3 / P6：技能生成 loop 需要内置模型，或在设置「后台任务」
         // 里允许外部 Agent 生成技能（默认关）；都没有时登记前直接告诉 Bot，而不是
         // 回「已登记」后静默不做。

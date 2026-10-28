@@ -164,6 +164,7 @@ import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../t
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import type { PluginToolFacade } from '../tools/plugin-tools.js';
 import type { PluginSearchHit, PluginToolContext } from '../plugins/install-requests.js';
+import { effectivePluginIds } from '../plugins/effective.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody } from '../apps/prompt.js';
 import { LOCAL_CONNECTOR_GUIDE } from '../apps/local-connector-guide.js';
@@ -556,11 +557,11 @@ export interface OrchestratorWikiFacade {
 /** The slice of SkillsService the response loop consumes. */
 export interface OrchestratorSkillsFacade {
   /** <skills> section body (names + descriptions only), '' when none. */
-  promptSection(botId: string): string;
+  promptSection(botId: string, extraPluginIds?: ReadonlySet<string>): string;
   /** <recommended_skills> section body（未安装预置，D63），'' when none. */
   recommendedSkillsSection(): string;
   /** Skill directories the file tools may read / sandbox sees read-only. */
-  readableDirs(botId: string): string[];
+  readableDirs(botId: string, extraPluginIds?: ReadonlySet<string>): string[];
   /** create_skill backend. */
   requestAuthoring(input: {
     botId: string;
@@ -935,11 +936,17 @@ export class Orchestrator {
         return agentId.length > 0 ? agentEngineKey(agentId) : null;
       },
       // D91: start_task validates declared capability ids against the bot's current catalog
-      // (pure read — nothing connects).
-      capabilitiesOf: (botId) => {
+      // (pure read — nothing connects). P2: the catalog follows the conversation's effective
+      // plugin set (project conversations overlay project_plugins).
+      capabilitiesOf: (botId, conversationId) => {
         const bot = deps.bots.get(botId);
         if (bot === null) return [];
-        return this.#capabilityCatalog(bot).entries.map((entry) => ({
+        return this.#capabilityCatalog(
+          bot,
+          conversationId !== null && conversationId !== undefined
+            ? this.#effectivePlugins(bot, conversationId)
+            : undefined,
+        ).entries.map((entry) => ({
           id: entry.id,
           ready: entry.status === 'ready',
         }));
@@ -2561,13 +2568,32 @@ export class Orchestrator {
     return { bot, conversationId: conversation.id, created };
   }
 
-  /** D91: the bot's capability catalog (pure read of its profile selections; nothing connects). */
-  #capabilityCatalog(bot: Bot): CapabilityCatalog {
+  /**
+   * P2 注入模型：一次会话的有效启用集 = `profile.runtime.plugin_ids ∪
+   * （项目会话 ? project_plugins : ∅）`（todo/plugin-platform/P2-injection.md §3.1）。
+   * 项目会话时读一次 `project_plugins`（不进缓存）；返回值恒非 undefined——
+   * 空集同样是语义（未启用任何插件，其能力不可见）。
+   */
+  #effectivePlugins(bot: Bot, conversationId: string): ReadonlySet<string> {
+    const conversation = this.#deps.conversations.get(conversationId);
+    const overlay =
+      conversation !== null && conversation.type === 'project'
+        ? this.#deps.projects.pluginsOf(conversationId)
+        : [];
+    return effectivePluginIds(bot.profile, overlay);
+  }
+
+  /**
+   * D91: the bot's capability catalog (pure read of its profile selections; nothing connects).
+   * P2: `extraPluginIds`（有效启用集）过滤插件贡献的连接 / MCP server；缺省 = 不过滤。
+   */
+  #capabilityCatalog(bot: Bot, extraPluginIds?: ReadonlySet<string>): CapabilityCatalog {
     return buildCapabilityCatalog({
       connectedApps: this.#deps.connectedApps ?? null,
       mcp: this.#deps.mcp ?? null,
       appConnectionIds: bot.profile.runtime.app_connection_ids,
       mcpServerIds: bot.profile.runtime.mcp_server_ids,
+      extraPluginIds,
       logger: this.#deps.logger,
     });
   }
@@ -3811,7 +3837,9 @@ export class Orchestrator {
       // 不列工具**——对话轮 run 开头因此零 listTools。对话轮的外部工具只经 `capability_search` /
       // `capability_call` 懒解析取用；任务只挂 start_task 声明的能力（超 EXTERNAL_TOOLS_INLINE_MAX
       // 的、连不上的声明能力，以及未声明的 ready 能力，都走任务面两件套）。
-      const catalog = this.#capabilityCatalog(bot);
+      // P2 注入模型：本次 run 的有效启用集（项目会话一次读 project_plugins 叠加），五处装配同源。
+      const extraPluginIds = this.#effectivePlugins(bot, batch.conversationId);
+      const catalog = this.#capabilityCatalog(bot, extraPluginIds);
       // 外部智能体只拿它选中的能力包对应的能力（apps ↔ 目录连接，mcp ↔ 自定义 MCP；design 40 §7）。
       const externalKinds =
         isTask && agentId.length > 0 ? this.#externalCapabilityKinds(bot, agentId) : null;
@@ -3947,6 +3975,7 @@ export class Orchestrator {
         catalog.apps,
         availableEntries,
         identity,
+        extraPluginIds,
       );
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
@@ -4029,8 +4058,10 @@ export class Orchestrator {
             })
           : undefined;
       // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
+      // P2：extraPluginIds 传给 mailBoundFor（P3 前账号无 instance_id，恒放行——参数就位）。
       const mailBound =
-        this.#deps.mail !== undefined && mailBoundFor(this.#deps.mail, identity.botId);
+        this.#deps.mail !== undefined &&
+        mailBoundFor(this.#deps.mail, identity.botId, extraPluginIds);
       // D93 P3: only built-in tasks spill oversized tool output; external
       // agents keep their own native harness and turn contexts stay bounded.
       const toolOutputSpill =
@@ -4271,7 +4302,9 @@ export class Orchestrator {
           };
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
-      const skillsSection = this.#deps.skills?.promptSection(batch.botId) ?? '';
+      // P2 注入模型：插件贡献的公共技能按有效启用集过滤（Bot 私有技能不受影响）。
+      const skillsSection =
+        this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
       // D63：未安装的预置技能列表（install_skill 的匹配来源）。
       const recommendedSkillsSection = this.#deps.skills?.recommendedSkillsSection() ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
@@ -5476,13 +5509,16 @@ export class Orchestrator {
     apps: BotAppsExposure,
     availableEntries: readonly ConnectorCatalogEntry[],
     identity: RunIdentity,
+    extraPluginIds?: ReadonlySet<string>,
   ): AppToolFacade | undefined {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
     const candidates =
       mcp == null
         ? []
-        : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
+        : mcp
+            .serversForBot(selectedServerIds, extraPluginIds)
+            .filter((server) => server.auth === 'oauth');
     const localConnectors = this.#localConnectorFacade(setupHit, identity);
     if (
       candidates.length === 0 &&

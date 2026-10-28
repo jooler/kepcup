@@ -58,6 +58,7 @@ beforeEach(() => {
     publishConversation: () => undefined,
     appendSystemEvent: () => undefined,
     workdirLabelOf: () => null,
+    emitPluginsChanged: () => undefined,
   });
   bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
   const deps: LifecycleDeps = {

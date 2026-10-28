@@ -51,6 +51,7 @@ beforeEach(() => {
     publishConversation: () => undefined,
     appendSystemEvent: () => undefined,
     workdirLabelOf: () => null,
+    emitPluginsChanged: () => undefined,
   });
   rig = { db, bots, conversations, projects };
 });

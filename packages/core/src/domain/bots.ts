@@ -10,6 +10,7 @@ import {
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import type { PluginDirectory } from './projects.js';
 
 /** 对话式新建（setup interview）期间 bots.setup_state 的唯一取值。 */
 export const BOT_SETUP_INTERVIEWING = 'interviewing';
@@ -110,6 +111,8 @@ export class BotsService {
   #connections: AppConnectionDirectory | null = null;
   /** D92 T1a：start.ts 在 projects 服务构造后接入。 */
   #leadProjectGuard: LeadProjectGuard | null = null;
+  /** P2 注入模型：start.ts 在插件账本构造后接入；未接入时 `setPluginIds` 只能清空。 */
+  #pluginDirectory: PluginDirectory | null = null;
 
   constructor(
     private readonly db: SqliteDatabase,
@@ -125,6 +128,11 @@ export class BotsService {
   /** D92 T1a：接入负责人守卫（`markDeleted` 的后盾）。 */
   attachLeadProjectGuard(guard: LeadProjectGuard): void {
     this.#leadProjectGuard = guard;
+  }
+
+  /** P2 注入模型：接入插件目录（`PluginStore`），`setPluginIds` 校验 pluginIds 均已安装。 */
+  attachPluginDirectory(directory: PluginDirectory): void {
+    this.#pluginDirectory = directory;
   }
 
   /**
@@ -211,6 +219,32 @@ export class BotsService {
     this.db
       .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
       .run(JSON.stringify(profile), this.clock.now(), bot.id);
+  }
+
+  /**
+   * P2 注入模型：整体替换该 Bot 的插件启用集（`profile_json.runtime.plugin_ids`，
+   * 沿 `#writeAppConnectionIds` 的 Profile-JSON 先例——只动这一个字段，其余 Profile
+   * 保持不动）。pluginIds 去重后逐个校验已安装；缺失 / 空数组 = 未启用任何插件。
+   */
+  setPluginIds(botId: string, pluginIds: string[]): Bot {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const unique = [...new Set(pluginIds)];
+    for (const pluginId of unique) {
+      if (!this.#pluginDirectory?.installed(pluginId)) {
+        throw new AppError('INVALID_INPUT', `插件 ${pluginId} 未安装，不能启用`);
+      }
+    }
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, plugin_ids: unique },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), botId);
+    return this.getOrThrow(botId);
   }
 
   create(
