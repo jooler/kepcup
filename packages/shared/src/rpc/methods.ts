@@ -212,6 +212,7 @@ import {
   pluginsInstancesUpdateInputSchema,
   pluginsInstancesUpdateOutputSchema,
   pluginsInstancesDeleteInputSchema,
+  pluginsSetBotPluginsInputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -1091,6 +1092,11 @@ export const projectsAddMembersInputSchema = z.object({
 export const projectsRemoveMemberInputSchema = z.object({
   conversationId: z.string().min(1),
   botId: z.string().min(1),
+});
+/** D105 P2：项目会话内叠加授权的插件集（project_plugins 表，整体替换）。 */
+export const projectsPluginsSetInputSchema = z.object({
+  conversationId: z.string().min(1),
+  pluginIds: z.array(z.string().min(1).max(200)).max(200),
 });
 export const projectMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
 export type ProjectMember = z.infer<typeof projectMemberSchema>;
@@ -2445,6 +2451,7 @@ export const rpcMethodSchemas = {
     output: conversationsMembersOutputSchema,
   },
   'projects.removeMember': { input: projectsRemoveMemberInputSchema, output: okOutput },
+  'projects.plugins.set': { input: projectsPluginsSetInputSchema, output: okOutput },
   'episodes.get': { input: episodesGetInputSchema, output: episodesGetOutputSchema },
   'episodes.resume': { input: episodesResumeInputSchema, output: episodesResumeOutputSchema },
   'episodes.stop': { input: episodesStopInputSchema, output: episodesStopOutputSchema },
@@ -2833,6 +2840,7 @@ export const rpcMethodSchemas = {
     output: pluginsInstancesUpdateOutputSchema,
   },
   'plugins.instances.delete': { input: pluginsInstancesDeleteInputSchema, output: okOutput },
+  'plugins.setBotPlugins': { input: pluginsSetBotPluginsInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -3022,6 +3030,7 @@ const APP_METHODS = [
   'projects.update',
   'projects.addMembers',
   'projects.removeMember',
+  'projects.plugins.set',
   'messages.list',
   'messages.edit',
   'messages.send',
@@ -3198,6 +3207,7 @@ const APP_METHODS = [
   'plugins.instances.create',
   'plugins.instances.update',
   'plugins.instances.delete',
+  'plugins.setBotPlugins',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;

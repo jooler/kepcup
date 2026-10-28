@@ -87,6 +87,11 @@ export const botRuntimeSchema = z.object({
    */
   inkcop_agent_keys: z.array(z.string().min(1)).default([]).catch([]),
   /**
+   * D105 注入模型：该 Bot 启用的插件 id 集合（沿 mcp_server_ids 的 Profile-JSON 先例）。
+   * 缺失 / 空 = 未启用任何插件（显式添加制）；项目会话内再并上 project_plugins 的授权。
+   */
+  plugin_ids: z.array(z.string().min(1).max(200)).max(200).optional(),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -970,6 +975,11 @@ export const conversationSchema = z.object({
   createdAt: z.number(),
   /** Present in list output: the direct bot (single chat). */
   bot: botSchema.nullable().optional(),
+  /**
+   * D105：项目详情输出——该项目会话内叠加授权的插件 id（project_plugins 表）；
+   * 非项目会话缺省。
+   */
+  plugins: z.array(z.string()).optional(),
   /**
    * 项目成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
    * 只在列表/详情视图上补，不入库；至多 {@link PROJECT_MEMBER_PREVIEW_MAX} 个。
