@@ -366,8 +366,10 @@ describe('validatePlugin: contribution checks', () => {
       mail: [
         {
           ...MAIL,
+          // P3 分层：首尾空白由 manifest schema 的 trim 纪律拒绝；内部空格 /
+          // 控制字符由 mail-host 出口规则拒绝（两值都过 schema，mail-host 才可达）。
           imap: { host: 'imap example.com', port: 993, secure: 'ssl' },
-          smtp: { host: 'smtp.example.com\t', port: 465, secure: 'ssl' },
+          smtp: { host: 'smtp.example.com\u0001', port: 465, secure: 'ssl' },
         },
       ],
     });
