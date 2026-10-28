@@ -16,6 +16,11 @@ export interface ProjectMember {
   joinedAt: number;
 }
 
+/** 注入模型校验用的插件目录（`PluginStore` 的子集，由 start.ts 接线）。 */
+export interface PluginDirectory {
+  installed(id: string): boolean;
+}
+
 export interface ProjectsDeps {
   db: SqliteDatabase;
   clock: Clock;
@@ -28,6 +33,8 @@ export interface ProjectsDeps {
   appendSystemEvent(input: { conversationId: string; event: string; text: string }): void;
   /** Label of the conversation's bound workdir (for the "member joined" message), or null. */
   workdirLabelOf(conversationId: string): string | null;
+  /** P2 注入模型：`projects.plugins.set` 写后广播（扩展中心 / 右栏刷新）。 */
+  emitPluginsChanged(pluginIds: string[]): void;
 }
 
 interface MemberRow {
@@ -42,7 +49,15 @@ interface MemberRow {
  * reuses the conversation cascade. The butler is never a participant.
  */
 export class ProjectsService {
+  /** P2 注入模型：插件目录（`installed(id)` 校验写 RPC 的 pluginIds）；start.ts 在插件账本构造后接入。 */
+  #pluginDirectory: PluginDirectory | null = null;
+
   constructor(private readonly deps: ProjectsDeps) {}
+
+  /** P2：接入插件目录（`PluginStore`），`setPlugins` 校验 pluginIds 均已安装。 */
+  attachPluginDirectory(directory: PluginDirectory): void {
+    this.#pluginDirectory = directory;
+  }
 
   create(input: {
     title: string;
@@ -228,6 +243,48 @@ export class ProjectsService {
         'select b.id as id, b.name as name, b.avatar as avatar from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
       )
       .all(conversationId, limit) as Array<{ id: string; name: string; avatar: string | null }>;
+  }
+
+  /**
+   * P2 注入模型：该项目会话内叠加授权的插件 id（`project_plugins`，按 plugin_id
+   * 排序稳定）。读路径——运行时装配一次读取，不进缓存。
+   */
+  pluginsOf(conversationId: string): string[] {
+    const rows = this.deps.db
+      .prepare('select plugin_id from project_plugins where conversation_id = ? order by plugin_id')
+      .all(conversationId) as Array<{ plugin_id: string }>;
+    return rows.map((row) => row.plugin_id);
+  }
+
+  /**
+   * P2 注入模型：整体替换该项目的叠加授权集（`projects.plugins.set`）。会话必须是
+   * 项目组；每个 pluginId 都须已安装（经注入的插件目录）。只对「该项目会话内的
+   * 对话轮与任务」生效，不修改成员 Bot 的个人配置。
+   */
+  setPlugins(conversationId: string, pluginIds: string[]): string[] {
+    this.#requireProject(conversationId);
+    const unique = [...new Set(pluginIds)].sort();
+    // 与 setBotPlugins 一致：新旧并集广播，被移除的插件视图同样要刷新。
+    const previous = new Set(this.pluginsOf(conversationId));
+    for (const pluginId of unique) {
+      if (!this.#pluginDirectory?.installed(pluginId)) {
+        throw new AppError('INVALID_INPUT', `插件 ${pluginId} 未安装，不能授权给项目组`);
+      }
+    }
+    const run = this.deps.db.transaction(() => {
+      this.deps.db
+        .prepare('delete from project_plugins where conversation_id = ?')
+        .run(conversationId);
+      for (const pluginId of unique) {
+        this.deps.db
+          .prepare('insert into project_plugins (conversation_id, plugin_id) values (?, ?)')
+          .run(conversationId, pluginId);
+      }
+    });
+    run.immediate();
+    this.deps.publishConversation(conversationId);
+    this.deps.emitPluginsChanged([...new Set([...unique, ...previous])]);
+    return unique;
   }
 
   leadOf(conversationId: string): string | null {

@@ -316,8 +316,11 @@ export interface AgentPermissionBridgeDeps {
   approvals: Pick<ApprovalsService, 'request' | 'publishEvent'>;
   grants: Pick<GrantsService, 'create' | 'listActive' | 'hasEffectiveGrant'>;
   allowlist: Pick<AllowlistService, 'match'>;
-  /** 本 Bot 的技能目录（数据目录内，只读）。 */
-  skillDirs(botId: string): string[];
+  /**
+   * 本 Bot 的技能目录（数据目录内，只读）。P2 注入模型：`conversationId` 用于项目
+   * 会话的叠加授权（与 <skills> 段同源过滤）。
+   */
+  skillDirs(botId: string, conversationId?: string | null): string[];
   /** secrets.redact：卡片上的命令 / 标题先脱敏（L1）。 */
   redact?(text: string): string;
   /**
@@ -1033,7 +1036,11 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       ...(workspace !== null ? [canonicalPath(workspace)] : []),
     ];
     const skillDirs =
-      identity.botId !== null ? this.#deps.skillDirs(identity.botId).map(canonicalPath) : [];
+      identity.botId !== null
+        ? this.#deps
+            .skillDirs(identity.botId, identity.conversationId)
+            .map(canonicalPath)
+        : [];
     const exempt = [...new Set([...cwdRoots, ...skillDirs])].filter((dir) =>
       isInsidePath(this.#norm(dir), this.#norm(dataHome)),
     );

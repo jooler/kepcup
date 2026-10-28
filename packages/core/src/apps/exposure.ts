@@ -91,6 +91,11 @@ export interface ConnectedAppsDeps {
   mcp: Pick<McpService, 'serverFor'>;
   catalog: Pick<ConnectorCatalog, 'list' | 'get'> & Partial<Pick<ConnectorCatalog, 'isLocal'>>;
   toolLock: Pick<ToolLockService, 'getUserPolicy'>;
+  /**
+   * P2 注入模型：连接器 slug 的属主插件（`PluginRegistry.ownerOf('connector', slug)`）。
+   * 缺省 = 查不到属主（无插件连接器，`forBot` 的过滤恒放行——现状语义）。
+   */
+  pluginOwnerOf?: ((connectorSlug: string) => string | null) | undefined;
 }
 
 function catalogPolicyOf(entry: ConnectorCatalogEntry): CatalogToolPolicyInput {
@@ -103,6 +108,14 @@ export class ConnectedApps {
 
   constructor(deps: ConnectedAppsDeps) {
     this.#deps = deps;
+  }
+
+  /**
+   * P2 注入模型：接入连接器属主插件查询（`start.ts` 在插件账本构造后接
+   * `registry.ownerOf('connector', slug)`；McpService 先于插件系统构造，同 attach 模式）。
+   */
+  attachPluginOwnerOf(query: (connectorSlug: string) => string | null): void {
+    this.#deps.pluginOwnerOf = query;
   }
 
   /**
@@ -156,8 +169,12 @@ export class ConnectedApps {
   /**
    * Bot 勾选的连接 → 合成 server（仅可用状态）与全部视图。不存在 / 已删除 / 孤儿的 id 静默
    * 跳过（删除连接时 `removeConnectionFromAll` 会清掉它们）。
+   *
+   * P2 注入模型：`extraPluginIds`（有效启用集）给出后，连接器贡献插件（经
+   * {@link ConnectedAppsDeps.pluginOwnerOf} 查属主）∉ 启用集的连接整个不进视图与
+   * server 列表（`app_connection_ids` 细选保留，属主放行才生效）；缺省 = 旧语义不变。
    */
-  forBot(connectionIds: readonly string[]): BotAppsExposure {
+  forBot(connectionIds: readonly string[], extraPluginIds?: ReadonlySet<string>): BotAppsExposure {
     const views: ConnectedAppView[] = [];
     const servers: McpServer[] = [];
     const seen = new Set<string>();
@@ -166,6 +183,10 @@ export class ConnectedApps {
       seen.add(id);
       const view = this.view(id);
       if (view === null) continue;
+      if (extraPluginIds !== undefined) {
+        const owner = this.#deps.pluginOwnerOf?.(view.slug) ?? null;
+        if (owner !== null && !extraPluginIds.has(owner)) continue;
+      }
       views.push(view);
       if (!isExposableStatus(view.connection.status)) continue;
       const server = this.#deps.mcp.serverFor(id);

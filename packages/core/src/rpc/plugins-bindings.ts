@@ -17,6 +17,7 @@ import {
   pluginsListOutputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
+  pluginsSetBotPluginsInputSchema,
   pluginsSetEnabledInputSchema,
   pluginsSetEnabledOutputSchema,
   pluginsUninstallInputSchema,
@@ -72,6 +73,26 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
     'plugins.list': method(voidInput, pluginsListOutputSchema, async () => ({
       plugins: registry().list(),
     })),
+    /**
+     * P2 注入模型：整体替换 Bot 的插件启用集（`profile_json.runtime.plugin_ids`，其余
+     * Profile 字段不动）。远程端点允许（无本地路径语义）。写后广播 `bot.updated` +
+     * `plugins.changed`（ids = 去重后的新旧并集，让扩展中心与右栏两侧都刷新）。
+     */
+    'plugins.setBotPlugins': method(
+      pluginsSetBotPluginsInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const domain = services.domain;
+        if (domain === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        const before = new Set(domain.bots.get(input.botId)?.profile.runtime.plugin_ids ?? []);
+        const bot = domain.bots.setPluginIds(input.botId, input.pluginIds);
+        services.events.emit('bot.updated', { bot });
+        services.events.emit('plugins.changed', {
+          ids: [...new Set([...before, ...input.pluginIds])],
+        });
+        return { ok: true as const };
+      },
+    ),
     'plugins.inspect': method(
       pluginsInspectInputSchema,
       pluginInspectOutputSchema,

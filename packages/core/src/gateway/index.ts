@@ -80,9 +80,10 @@ export interface GatewayDeps {
    * P08 skills: directories this bot's active skills live in. They are
    * inside the data directory (otherwise forbidden) and become readable —
    * never writable — for the file tools, and read-only inside the sandbox.
+   * P2 注入模型：`conversationId` 用于项目会话的叠加授权（与 <skills> 段同源过滤）。
    */
   skills?: {
-    readableDirs(botId: string): string[];
+    readableDirs(botId: string, conversationId?: string | null): string[];
   };
   /**
    * D65 / W5: call-time decision for an MCP tool — risk re-resolved from the
@@ -302,9 +303,16 @@ export class ToolGateway {
     }
   }
 
-  /** Canonical skill directories of one bot (library + authored). */
-  #skillDirs(botId: string): string[] {
-    return this.#deps.skills?.readableDirs(botId).map(resolveStandingPath) ?? [];
+  /**
+   * Canonical skill directories of one bot (library + authored). P2: the
+   * conversation scopes the project plugin overlay (same effective set as the
+   * prompt section, BR-P08-003 keeps the two listings in sync).
+   */
+  #skillDirs(botId: string, conversationId?: string | null): string[] {
+    return (
+      this.#deps.skills?.readableDirs(botId, conversationId ?? null).map(resolveStandingPath) ??
+      []
+    );
   }
 
   /** The executing identity's workspace; the only writable data location. */
@@ -408,7 +416,10 @@ export class ToolGateway {
     // 2. The data directory: everything except the current workspace (above)
     //    and this bot's skill directories (below). Never grantable — checked
     //    before grants on purpose.
-    const skillDirs = identity.botId !== null ? this.#skillDirs(identity.botId) : [];
+    const skillDirs =
+      identity.botId !== null
+        ? this.#skillDirs(identity.botId, identity.conversationId)
+        : [];
     for (const dir of skillDirs) {
       if (isInsidePath(resolvedNorm, norm(dir))) {
         if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
@@ -819,7 +830,10 @@ export class ToolGateway {
             : undefined,
         ...(toolchainPrefix !== null ? { toolchainPathPrefix: toolchainPrefix } : {}),
         toolchainsRoot: this.#deps.environment?.toolchainsRoot() ?? this.#deps.paths.toolchainsDir,
-        skillReadOnlyDirs: identity.botId !== null ? this.#skillDirs(identity.botId) : [],
+        skillReadOnlyDirs:
+          identity.botId !== null
+            ? this.#skillDirs(identity.botId, identity.conversationId)
+            : [],
         ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
       });
       const result = await backend.exec({

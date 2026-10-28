@@ -283,7 +283,8 @@ export interface TaskHostDeps {
    * validation needs (id + whether it is `ready`). Narrow on purpose — the host never depends on
    * the orchestrator. Absent = no catalog: a task declaring capabilities is refused.
    */
-  capabilitiesOf?(botId: string): Array<{ id: string; ready: boolean }>;
+  /** D91: the bot's current capability catalog (P2: conversation-scoped — project overlays apply). */
+  capabilitiesOf?(botId: string, conversationId: string): Array<{ id: string; ready: boolean }>;
   /**
    * D75 W3 (design 30 §4.3): pushes a task's card / status-line view
    * (`task.updated`). Absent = no UI (unit tests).
@@ -693,7 +694,7 @@ export class TaskHost implements TaskToolFacade {
     // accepted but not mounted — the tool result says so); a continuation inherits the continued
     // task's capabilities (design 40 §4.1).
     const declared = input.capabilities ?? [];
-    const catalog = this.#deps.capabilitiesOf?.(botId) ?? [];
+    const catalog = this.#deps.capabilitiesOf?.(botId, conversationId) ?? [];
     const unknown = declared.filter((id) => !catalog.some((entry) => entry.id === id));
     if (unknown.length > 0) {
       throw new AppError(

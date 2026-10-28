@@ -98,6 +98,7 @@ import {
   projectsUpdateOutputSchema,
   projectsAddMembersInputSchema,
   projectsRemoveMemberInputSchema,
+  projectsPluginsSetInputSchema,
   episodesGetInputSchema,
   episodesGetOutputSchema,
   episodesResumeInputSchema,
@@ -445,6 +446,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...(conversation.type === 'project'
       ? {
           memberPreviews: domain.projects.memberPreviews(conversation.id),
+          // P2 注入模型：项目详情输出叠加授权的插件（project_plugins 表）。
+          plugins: domain.projects.pluginsOf(conversation.id),
         }
       : {}),
   });
@@ -1120,6 +1123,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       okOutputSchema,
       async (input) => {
         await domain.projects.removeMember(input.conversationId, input.botId);
+        return { ok: true as const };
+      },
+    ),
+    /** P2 注入模型：整体替换项目组的叠加授权插件集（事件由领域层广播：conversation.updated + plugins.changed）。 */
+    'projects.plugins.set': method(
+      projectsPluginsSetInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.projects.setPlugins(input.conversationId, input.pluginIds);
         return { ok: true as const };
       },
     ),

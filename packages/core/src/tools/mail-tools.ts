@@ -58,8 +58,18 @@ export function decideMailSetupRequest(input: {
   };
 }
 
-/** D91：Bot 是否已有绑定邮箱——工具注册与提示词规则共用的判定（run 开头调一次）。 */
-export function mailBoundFor(mail: Pick<MailService, 'accountsForBot'>, botId: string | null): boolean {
+/**
+ * D91：Bot 是否已有绑定邮箱——工具注册与提示词规则共用的判定（run 开头调一次）。
+ *
+ * P2 注入模型：`extraPluginIds`（有效启用集）为账号所属插件的过滤预留——P3
+ * `mail_accounts.instance_id` 落地前，所有账号都视为系统账号恒放行（行为不变，
+ * 参数就位，见 todo/plugin-platform/P2-injection.md §3.5）。
+ */
+export function mailBoundFor(
+  mail: Pick<MailService, 'accountsForBot'>,
+  botId: string | null,
+  _extraPluginIds?: ReadonlySet<string>,
+): boolean {
   return botId !== null && mail.accountsForBot(botId).length > 0;
 }
 

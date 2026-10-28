@@ -3,7 +3,10 @@ import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import {
   AppError,
+  isReservedPluginNamespace,
   newId,
+  parsePluginSkillSource,
+  pluginNamespaceOf,
   SKILLS_LIST_TOKEN_BUDGET,
   SKILL_PROMPT_DESCRIPTION_MAX_CHARS,
   type BotSkillStatus,
@@ -498,6 +501,34 @@ export class SkillsService {
     return existsSync(dir) ? dir : null;
   }
 
+  /**
+   * P2 注入模型：公共技能行的属主插件（`skill_library.source_url` 的 `plugin://`
+   * 标记）。无标记 = 系统公共技能，视为无属主、恒入选。
+   */
+  #pluginOwnerOfPublic(row: PublicSkillRow): string | null {
+    const library = this.libraryGet(row.library_id);
+    if (library === null) return null;
+    return parsePluginSkillSource(library.source_url)?.pluginId ?? null;
+  }
+
+  /**
+   * P2 可见性过滤（唯一规则，`<skills>` 段 / 沙箱目录 / 技能活动列表同源）：
+   * 属主插件 ∈ 有效启用集才入选。保留命名空间（`com.kepcup/…`，内置插件的预置
+   * 技能）视为系统内容恒入选——内置插件不进 plugins 表、无法被启用，不过滤。
+   * `extraPluginIds` 缺省 = 不过滤（管理面板等旧调用点的行为与现状完全一致）；
+   * Bot 私有行不经此判定。
+   */
+  #publicSkillVisible(
+    row: PublicSkillRow,
+    extraPluginIds: ReadonlySet<string> | undefined,
+  ): boolean {
+    if (extraPluginIds === undefined) return true;
+    const owner = this.#pluginOwnerOfPublic(row);
+    if (owner === null) return true;
+    if (isReservedPluginNamespace(pluginNamespaceOf(owner))) return true;
+    return extraPluginIds.has(owner);
+  }
+
   #requirePublicRow(name: string): PublicSkillRow {
     const row = this.publicSkillRow(name);
     if (row === null) {
@@ -810,8 +841,9 @@ export class SkillsService {
   /**
    * 一个 Bot 的技能清单 = 私有行 + 未被同名私有行遮蔽的公共技能
    * （docs/design/05-wiki-and-skills.md 遮蔽规则：Bot 自己的同名技能优先）。
+   * `extraPluginIds`（有效启用集）只过滤公共技能行里的插件贡献；缺省 = 不过滤。
    */
-  listForBot(botId: string): SkillEntry[] {
+  listForBot(botId: string, extraPluginIds?: ReadonlySet<string>): SkillEntry[] {
     const rows = this.rowsForBot(botId);
     const ownNames = new Set(rows.map((row) => row.name));
     const entries: SkillEntry[] = [];
@@ -830,6 +862,7 @@ export class SkillsService {
     }
     for (const pub of this.publicRows()) {
       if (ownNames.has(pub.name)) continue;
+      if (!this.#publicSkillVisible(pub, extraPluginIds)) continue;
       const entry = this.#publicEntry(botId, pub);
       if (entry !== null) entries.push(entry);
     }
@@ -843,7 +876,7 @@ export class SkillsService {
    * since uninstalled — P12 fail-closed) stay invisible to the prompt
    * (BR-P08-003 semantics, availability-aware).
    */
-  activeSkills(botId: string): Skill[] {
+  activeSkills(botId: string, extraPluginIds?: ReadonlySet<string>): Skill[] {
     const ownNames = new Set(this.rowsForBot(botId).map((row) => row.name));
     const skills: Skill[] = [];
     for (const row of this.rowsForBot(botId)) {
@@ -861,6 +894,7 @@ export class SkillsService {
       if (ownNames.has(pub.name)) continue; // 私有遮蔽公共
       if (pub.status !== 'active') continue;
       if (this.#effectiveIncompatibleLibrary(pub.library_id)) continue;
+      if (!this.#publicSkillVisible(pub, extraPluginIds)) continue;
       const dir = this.#publicDirOf(pub);
       if (dir === null) {
         this.#reportMissingPublic(pub);
@@ -880,8 +914,8 @@ export class SkillsService {
    * opens with a data-not-instructions boundary line (BR-P08-005, same
    * posture as BR-P07-007).
    */
-  promptSection(botId: string): string {
-    const skills = this.activeSkills(botId);
+  promptSection(botId: string, extraPluginIds?: ReadonlySet<string>): string {
+    const skills = this.activeSkills(botId, extraPluginIds);
     if (skills.length === 0) return '';
     const bounded = skills.map((skill) => ({
       ...skill,
@@ -900,7 +934,7 @@ export class SkillsService {
    * had not). P12: an effectively-incompatible row (enhanced backend gone)
    * drops out here too.
    */
-  readableDirs(botId: string): string[] {
+  readableDirs(botId: string, extraPluginIds?: ReadonlySet<string>): string[] {
     const ownNames = new Set(this.rowsForBot(botId).map((row) => row.name));
     const dirs: string[] = [];
     for (const row of this.rowsForBot(botId)) {
@@ -913,6 +947,7 @@ export class SkillsService {
       if (ownNames.has(pub.name)) continue; // 私有遮蔽公共
       if (pub.status !== 'active') continue;
       if (this.#effectiveIncompatibleLibrary(pub.library_id)) continue;
+      if (!this.#publicSkillVisible(pub, extraPluginIds)) continue;
       const dir = this.#publicDirOf(pub);
       if (dir !== null) dirs.push(dir);
     }
