@@ -138,9 +138,15 @@ export interface ResponseToolDeps {
   /**
    * D91：Bot 是否已有绑定邮箱（orchestrator run 开头判定一次）。
    * 假 → 只注册 mail_request_setup；真 → 注册五个读写工具，mail_request_setup 照样注册（可继续添加邮箱）。
-   * 缺省时这里按 `mail.accountsForBot` 现算（单测可省略）。
+   * 缺省时按 `mail.accountsForBot` 现算（单测可省略；真实装配恒由 orchestrator 传入）。
    */
   mailBound?: boolean | undefined;
+  /**
+   * P2 注入模型：本 run 的有效启用集（必传字段见 orchestrator；单测夹具可缺省——
+   * 缺省按空集处理，无 `pluginId` 的系统账号仍可见，无插件夹具行为不变）。
+   * 邮件工具内清单与注册门控（mailBound）同源。
+   */
+  extraPluginIds?: ReadonlySet<string> | undefined;
   /**
    * 对话内添加邮箱卡（design 18）：present 时注册 mail_request_setup（有无绑定都一样，D91）；
    * orchestrator 写入 setupHit。缺省则不注册该工具（单测可省略）。
@@ -1037,8 +1043,12 @@ export function buildResponseTools(input: {
           identity,
           mail: deps.mail,
           gateway,
-          // D91：对话轮与任务分支共用这一份（邮箱绑定门控，design 40 §6）。
-          bound: deps.mailBound ?? mailBoundFor(deps.mail, identity.botId),
+          // D91：对话轮与任务分支共用这一份（邮箱绑定门控，design 40 §6）。缺省现算：
+          // 没有启用集的单测夹具按空集——无 pluginId 的系统账号恒放行，行为不变。
+          bound:
+            deps.mailBound ??
+            mailBoundFor(deps.mail, identity.botId, deps.extraPluginIds ?? new Set<string>()),
+          extraPluginIds: deps.extraPluginIds ?? new Set<string>(),
           ...(deps.mailSetup !== undefined ? { setup: deps.mailSetup } : {}),
         })
       : [];

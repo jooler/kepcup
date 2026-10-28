@@ -8,7 +8,7 @@
    */
   import { untrack } from 'svelte';
   import type { AppChoiceGroup } from './bot-apps';
-  import type { BotProfile, PluginSummary } from '@kepcup/shared';
+  import type { BotProfile, MailAccount, PluginSummary } from '@kepcup/shared';
   import { ChevronDown, Plus, X } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
@@ -67,6 +67,26 @@
   });
   $effect(() => {
     appsStore.start();
+  });
+
+  // --- 「插件已停用」标记的邮件面（P4，P2 遗留②）：本 Bot 绑定的邮箱账号列表 -------
+  let mailAccounts = $state<MailAccount[]>([]);
+  $effect(() => {
+    let cancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const result = (await core.call('mail.accounts.list', undefined)) as {
+          accounts: MailAccount[];
+        };
+        if (!cancelled) mailAccounts = result.accounts;
+      } catch {
+        // 标记是提示性的：拉不到（如旧端点）不阻塞区块。
+      }
+    };
+    void load();
+    return core.onEvent('mail.account_updated', () => {
+      void load();
+    });
   });
 
   // --- 启用开关（plugin_ids 整集写入） --------------------------------------
@@ -144,7 +164,15 @@
   /** 属主插件已停用（或插件行上已勾账号但插件未启用）→ 行上标「插件已停用」。 */
   function pluginDisabledWithAccounts(plugin: PluginSummary): boolean {
     if (plugin.enabled && enabledIds.has(plugin.id)) return false;
-    return groupsOf(plugin).some((group) => group.selectedConnectionId !== null);
+    const hasConnections = groupsOf(plugin).some((group) => group.selectedConnectionId !== null);
+    // P4（P2 遗留②复核）：邮件实例账号一并计入——绑定给本 Bot、属主是该插件的账号，
+    // 插件未启用时对该 Bot 不可见（core 装配层同口径），提示标记覆盖到邮件。
+    const hasMail =
+      botId !== undefined &&
+      mailAccounts.some(
+        (account) => account.botIds.includes(botId) && account.pluginId === plugin.id,
+      );
+    return hasConnections || hasMail;
   }
 
   const selectedAppConnections = $derived(

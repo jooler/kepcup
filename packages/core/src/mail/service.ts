@@ -74,6 +74,20 @@ export function mailPasswordName(accountId: string): string {
 }
 
 /**
+ * P2 注入模型 §3.5（P4 落地过滤体）：给定有效启用集，账号的可见性判定——无 `pluginId`
+ * 的账号是系统账号恒放行；实例账号的属主插件 ∉ 启用集则不暴露。工具注册门控
+ * （`mailBoundFor`）、`<mail_accounts>` 段（`contextSection`）与工具内清单共用。
+ */
+export function visibleMailAccounts(
+  accounts: readonly MailAccount[],
+  extraPluginIds: ReadonlySet<string>,
+): MailAccount[] {
+  return accounts.filter(
+    (account) => account.pluginId === null || extraPluginIds.has(account.pluginId),
+  );
+}
+
+/**
  * 实例归属解析（P3，start.ts 注入）：邮件服务不感知插件表，密码 secret 名、轮询
  * 下限与展示名都经这个端口向插件层解析。密码的单一事实来源是实例 secret
  * （`plugin:{pluginId}:instance:{id}:password`，DEV-063 转义）；无主账号回落
@@ -599,8 +613,12 @@ export class MailService {
       .map((row) => this.#public(row));
   }
 
-  contextSection(botId: string): string {
-    const accounts = this.accountsForBot(botId);
+  /**
+   * `<mail_accounts>` 段。P2 §3.5（P4 落地过滤体）：与工具注册同源——`extraPluginIds`
+   * （有效启用集，必传）里没有属主插件的实例账号不进段；无 `pluginId` 的系统账号恒放行。
+   */
+  contextSection(botId: string, extraPluginIds: ReadonlySet<string>): string {
+    const accounts = visibleMailAccounts(this.accountsForBot(botId), extraPluginIds);
     if (accounts.length === 0) return '';
     const lines = accounts.map((account) => {
       const mode =

@@ -607,7 +607,7 @@ describe('A7 <available_apps> reserves slots for local connectors', () => {
       catalog,
       toolLock,
     });
-    const available = apps.availableFor([]);
+    const available = apps.availableFor([], new Set());
     expect(available).toHaveLength(30);
     const slugs = available.map(
       (entry) => (entry._meta['app.kepcup/connector'] as { slug: string }).slug,
