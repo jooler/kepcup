@@ -219,20 +219,16 @@ describe('连接应用 schema', () => {
     ).toBe(false);
   });
 
-  it('setupRequirementSchema 的 mail-account 变体', () => {
+  it('setupRequirementSchema 的 mail-account 变体（P3：无 provider 预填）', () => {
     expect(
       setupRequirementSchema.parse({ kind: 'mail-account' }),
     ).toMatchObject({ kind: 'mail-account' });
     expect(
-      setupRequirementSchema.parse({
-        kind: 'mail-account',
-        provider: 'qq',
-        reason: '帮我接管邮箱',
-      }),
-    ).toMatchObject({ kind: 'mail-account', provider: 'qq', reason: '帮我接管邮箱' });
-    expect(
-      setupRequirementSchema.safeParse({ kind: 'mail-account', provider: 'nope' }).success,
-    ).toBe(false);
+      setupRequirementSchema.parse({ kind: 'mail-account', reason: '帮我接管邮箱' }),
+    ).toMatchObject({ kind: 'mail-account', reason: '帮我接管邮箱' });
+    // 未知键被剥离（discriminatedUnion 的 z.object 语义）：provider 不再是合法字段。
+    const stripped = setupRequirementSchema.parse({ kind: 'mail-account', provider: 'qq' });
+    expect(stripped).toEqual({ kind: 'mail-account' });
   });
 });
 
