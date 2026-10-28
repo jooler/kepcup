@@ -1078,9 +1078,9 @@
 - 推荐：方案 1。
 - 决定：方案 1。
 
-### DEV-069 `<available_apps>` 与 Bot 目录提案未按启用集过滤（P2 §3.4 的次要面，推迟）
+### DEV-069 `<available_apps>` 与 Bot 目录提案未按启用集过滤（P2 §3.4 的次要面；审查后收回本阶段修复）
 
-- 状态：已落实（P2 范围内不做）
+- 状态：已落实（P2 审查修复：`availableFor` 与 `app_request_connection` 连接器分支已按 `pluginOwnerOf ∈ 启用集` 过滤，本机连接恒放行）
 - 阶段：插件平台 P2（D105 注入模型）
 - 是否阻塞：否
 - 问题：P2-injection.md §3.4 提到「`<available_apps>` 不列该插件目录条目、Bot 提案不推荐」，但本阶段实现契约（注入装配五处）只要求 `ConnectedApps.forBot` 的视图 / 合成 server 过滤；`availableFor`（未授权目录条目的推荐来源）与 Bot 提案管线不在五处装配点内。
@@ -1088,5 +1088,16 @@
 - 可选方案：
   1. P2 只做 forBot，`availableFor` / 提案过滤留给 P4（当前实现）。
   2. 本阶段顺手给 `availableFor` 加启用集参数——超出阶段装配点范围，且 P4 会重构目录来源。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-070 `mcp` 类别显示名直接改既有键值，未新增 `plugins.kind.tool` 键
+
+- 状态：已落实
+- 阶段：插件平台 P2（D105）
+- 是否阻塞：否
+- 问题：README §4.4 提出新增 i18n 键 `plugins.kind.tool`（mcp 显示名改「工具」）。实现直接把既有键 `plugins.kind.mcp` 的值改为「工具 / Tools」——键 id 非用户可见面，kind id 与键名保持一一对应，避免冗余同义键。
+- 影响范围：`apps/desktop/src/renderer/src/lib/i18n/locales/{zh-CN,en-US}.ts`。
+- 可选方案：1）改既有键值（当前实现）；2）新增 `plugins.kind.tool` 并弃用旧键（多一个死键）。
 - 推荐：方案 1。
 - 决定：方案 1。
