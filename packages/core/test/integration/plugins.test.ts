@@ -330,6 +330,60 @@ describe('plugins integration (P0a-2)', () => {
     ).rejects.toMatchObject({ code: 'PLUGIN_CONFLICT' });
   }, 90_000);
 
+  it('收编：插件系统上线前装的预置同名公共技能 → 守卫放行单项卸载；安装不冲突并接管（账本 + 守卫 + 卸载级联）', async () => {
+    const { core } = await setup();
+    const skills = core.services.skills!;
+    // 两条 0054 迁移后的预置公共技能：来源指向从不进账本的内置插件 id
+    const installPreset = (name: string): void => {
+      const dir = path.join(root, `pre-${Math.random().toString(36).slice(2, 8)}`, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(dir, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: 预置\n---\n旧版预置`,
+      );
+      skills.installPublic({
+        name,
+        scan: {
+          compatibility: 'compatible',
+          compatibilityReasons: [],
+          runtimeDeps: [],
+          sandboxDeclaration: null,
+          files: [],
+        } as never,
+        sourceUrl: `plugin://com.kepcup/starter-skills/${name}`,
+        commitOid: '0.9.0',
+        contentHash: hashDirectory(dir),
+        stagingDir: dir,
+      });
+    };
+    installPreset('plg-alpha');
+    installPreset('plg-beta');
+    const bot = await makeBot(core, '小收编');
+
+    // 孤儿预置不在任何账本里：技能面板的单项卸载由守卫放行
+    await core.rpc.call('skills.uninstall', { botId: bot.id, name: 'plg-beta' });
+    expect(skills.publicSkillRow('plg-beta')).toBeNull();
+
+    // 剩下的 plg-alpha 由插件接管，而不是报同名冲突
+    const fixture = await makeFileFixture();
+    const inspect = (await core.rpc.call('plugins.inspect', {
+      source: { kind: 'file', path: fixture.path },
+    })) as PluginInspectOutput;
+    expect(inspect.conflicts.filter((conflict) => conflict.kind === 'skill')).toEqual([]);
+    await core.rpc.call('plugins.install', installInput(fixture));
+    expect(core.services.plugins!.ownerOf('skill', 'plg-alpha')).toBe(PLUGIN_ID);
+    expect(skills.libraryGet(skills.publicSkillRow('plg-alpha')!.library_id)!.source_url).toBe(
+      `plugin://${PLUGIN_ID}/plg-alpha`,
+    );
+    // 接管后归插件管：单项卸载改为被守卫拒绝
+    await expect(
+      core.rpc.call('skills.uninstall', { botId: bot.id, name: 'plg-alpha' }),
+    ).rejects.toMatchObject({ code: 'PLUGIN_MANAGED' });
+    // 卸载插件：接管来的技能一并删除（来源标记已是插件的，不会被跳过而留下孤儿）
+    await core.rpc.call('plugins.uninstall', { id: PLUGIN_ID });
+    expect(await publicSkills(core, bot.id)).toEqual([]);
+  }, 90_000);
+
   it('运行时缺失 → inspect blocker + install PLUGIN_INCOMPATIBLE', async () => {
     const { core } = await setup({ runtimes: false });
     const fixture = await makeFileFixture();

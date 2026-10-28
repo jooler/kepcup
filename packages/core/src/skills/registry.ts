@@ -433,7 +433,9 @@ export class SkillsService {
    * identical-content reinstall is a no-op refresh; a different version is
    * rejected (the marketplace preset flow uninstalls its own outdated version
    * first). A bot's private same-name skill is NOT a conflict — it shadows
-   * the public one for that bot only.
+   * the public one for that bot only. The library row the install lands on is
+   * re-marked with the caller's source: the public name belongs to whoever
+   * installed it last, and plugin ownership checks read `source_url`.
    */
   installPublic(input: {
     name: string;
@@ -451,6 +453,14 @@ export class SkillsService {
       }
     }
     const library = this.#ensureLibrary(input);
+    if (library.source_url !== input.sourceUrl || library.commit_oid !== input.commitOid) {
+      // Identical content may already sit in the library under another marker — a bot's
+      // private import, or a builtin preset a plugin takes over while a bot still
+      // references the version (so `uninstallPublic` kept the row).
+      this.#db
+        .prepare('update skill_library set source_url = ?, commit_oid = ? where id = ?')
+        .run(input.sourceUrl, input.commitOid, library.id);
+    }
     const effective = resolveEffectiveCompatibility(input.scan, this.#enhancedAvailable());
     const status: BotSkillStatus = effective.incompatible ? 'incompatible' : 'active';
     const statusReason = effective.incompatible

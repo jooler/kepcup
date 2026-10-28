@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import type { Clock } from '../../src/infra/clock.js';
 import { resolvePaths } from '../../src/infra/paths.js';
+import { hashDirectory } from '../../src/skills/library.js';
 import { SkillsService } from '../../src/skills/registry.js';
 import { SkillsProjector } from '../../src/plugins/projectors/skills.js';
 import {
@@ -23,7 +24,8 @@ import {
 /**
  * 技能投影器（D104 P0a-2 步骤 3）：inspect 的同名冲突（Bot 私有同名不算）、
  * project 后 public_skills 行与 `plugin://` 来源标记、unproject 只删自己的、
- * setEnabled 往返、missing 判定。
+ * setEnabled 往返、missing 判定；内置预置（保留命名空间来源、从不进账本）装的
+ * 同名公共技能被收编而不是冲突。
  */
 
 const root = mkdtempSync(path.join(tmpdir(), 'plugin-projector-skills-'));
@@ -139,6 +141,31 @@ function ctxOf(
   return { plugin: identity, manifest, dir: contentDir, userConfig: {}, ledger, owned };
 }
 
+/** 直接往公共域装一份技能（模拟预置 / 其它来源），返回其库行 id。 */
+function installPublicFrom(
+  rig: Rig,
+  input: { name: string; dir: string; sourceUrl: string; commitOid?: string },
+): string {
+  rig.skills.installPublic({
+    name: input.name,
+    scan: {
+      compatibility: 'compatible',
+      compatibilityReasons: [],
+      runtimeDeps: [],
+      sandboxDeclaration: null,
+      files: [],
+    } as never,
+    sourceUrl: input.sourceUrl,
+    commitOid: input.commitOid ?? '0.9.0',
+    contentHash: hashDirectory(input.dir),
+    stagingDir: input.dir,
+  });
+  return rig.skills.publicSkillRow(input.name)!.library_id;
+}
+
+const STARTER_SOURCE = 'plugin://com.kepcup/starter-skills/beta';
+const OWN_SOURCE = 'plugin://io.github.tester/skills/beta';
+
 describe('SkillsProjector', () => {
   it('inspect：同名公共技能冲突（任何来源），Bot 私有同名不算；无法解析进 blockers', async () => {
     const rig = makeRig();
@@ -178,6 +205,91 @@ describe('SkillsProjector', () => {
       { kind: 'skill', ref: 'beta', withWhat: '已有同名公共技能' },
     ]);
     expect(result.blockers).toEqual([]);
+  });
+
+  it('inspect：其它可安装插件的同名公共技能仍是冲突（收编只认保留命名空间）', async () => {
+    const rig = makeRig();
+    const contentDir = makeContentDir([{ name: 'beta' }]);
+    installPublicFrom(rig, {
+      name: 'beta',
+      dir: path.join(makeContentDir([{ name: 'beta', description: '别家插件' }]), 'skills', 'beta'),
+      sourceUrl: 'plugin://io.github.other/pack/beta',
+    });
+    const result = await rig.projector.inspect(
+      ctxOf(rig, contentDir, manifestOf(['beta']), new MemLedger()),
+    );
+    expect(result.conflicts).toEqual([
+      { kind: 'skill', ref: 'beta', withWhat: '已有同名公共技能' },
+    ]);
+  });
+
+  it('收编：内置预置装的同名公共技能不算冲突，project 换成插件来源并回收旧版本，之后卸载能删', async () => {
+    const rig = makeRig();
+    const contentDir = makeContentDir([{ name: 'beta' }]);
+    // 插件系统上线前从技能市场装的预置（0054 迁移后的来源标记），内容是另一个版本
+    const presetDir = path.join(
+      makeContentDir([{ name: 'beta', description: '旧版预置' }]),
+      'skills',
+      'beta',
+    );
+    const presetLibraryId = installPublicFrom(rig, {
+      name: 'beta',
+      dir: presetDir,
+      sourceUrl: STARTER_SOURCE,
+    });
+
+    const ledger = new MemLedger();
+    const ctx = ctxOf(rig, contentDir, manifestOf(['beta']), ledger);
+    expect((await rig.projector.inspect(ctx)).conflicts).toEqual([]);
+
+    await rig.projector.project(ctx);
+    const row = rig.skills.publicSkillRow('beta')!;
+    const library = rig.skills.libraryGet(row.library_id)!;
+    expect(library.source_url).toBe(OWN_SOURCE);
+    expect(library.content_hash).toBe(hashDirectory(path.join(contentDir, 'skills', 'beta')));
+    expect(ledger.list('skill')).toEqual(['beta']);
+    // 旧预置版本无人引用：行与目录都回收
+    expect(rig.skills.libraryGet(presetLibraryId)).toBeNull();
+    expect(
+      existsSync(rig.skills.libraryDirOf({ name: 'beta', content_hash: hashDirectory(presetDir) })),
+    ).toBe(false);
+
+    // 归属已在插件名下：卸载插件删得掉（之前 source_url 不匹配会被跳过而留下孤儿）
+    await rig.projector.unproject(identity, ['beta'], ledger);
+    expect(rig.skills.publicSkillRow('beta')).toBeNull();
+    expect(ledger.list('skill')).toEqual([]);
+  });
+
+  it('收编同内容预置且有 Bot 私有引用：库行保留，来源标记与版本改成插件的', async () => {
+    const rig = makeRig();
+    const contentDir = makeContentDir([{ name: 'beta' }]);
+    const skillDir = path.join(contentDir, 'skills', 'beta');
+    const libraryId = installPublicFrom(rig, {
+      name: 'beta',
+      dir: skillDir,
+      sourceUrl: STARTER_SOURCE,
+      commitOid: '0.9.0',
+    });
+    // bot_a 私有导入了同一份内容（同一库行）
+    rig.db
+      .prepare(
+        "insert into bot_skills (bot_id, name, kind, library_id, status, status_reason, created_at, updated_at) values ('bot_a', 'beta', 'imported', ?, 'active', null, 1, 1)",
+      )
+      .run(libraryId);
+
+    const ledger = new MemLedger();
+    await rig.projector.project(ctxOf(rig, contentDir, manifestOf(['beta']), ledger));
+    const library = rig.skills.libraryGet(libraryId)!;
+    expect(library.source_url).toBe(OWN_SOURCE);
+    expect(library.commit_oid).toBe(identity.version);
+    expect(existsSync(rig.skills.libraryDirOf(library))).toBe(true);
+    expect(rig.skills.publicSkillRow('beta')!.library_id).toBe(libraryId);
+
+    // 卸载插件：公共行删掉；库行因 Bot 私有引用保留
+    await rig.projector.unproject(identity, ['beta'], ledger);
+    expect(rig.skills.publicSkillRow('beta')).toBeNull();
+    expect(rig.skills.libraryGet(libraryId)).not.toBeNull();
+    expect(existsSync(rig.skills.libraryDirOf(library))).toBe(true);
   });
 
   it('inspect：SKILL.md 解析失败 → blocker；运行时依赖出现在条目里', async () => {

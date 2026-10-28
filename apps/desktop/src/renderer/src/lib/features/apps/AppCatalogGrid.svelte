@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AppCatalogEntry } from '@kepcup/shared';
+  import type { Snippet } from 'svelte';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
   import { t, connectorDescription, connectorUnavailableText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
@@ -34,7 +35,17 @@
    * 由宿主打开该应用的账号详情。
    */
 
-  let { onManage }: { onManage?: ((connectorId: string) => void) | undefined } = $props();
+  let {
+    onManage,
+    /** 只显示该插件贡献的条目（已安装页从插件卡「管理」进入时圈定）；缺省 = 全部目录。 */
+    pluginId = undefined,
+    /** 归属插件的操作（启停 / 打开目录 / 更新 / 卸载 ⋮ 菜单）：`entry.pluginId` 非空时渲染在卡片右上角。 */
+    pluginActions,
+  }: {
+    onManage?: ((connectorId: string) => void) | undefined;
+    pluginId?: string | undefined;
+    pluginActions?: Snippet<[string]> | undefined;
+  } = $props();
 
   let query = $state('');
   let category = $state<CategoryFilter>('all');
@@ -44,12 +55,15 @@
   const loadState = $derived(
     catalogLoadState({ loaded: appsStore.catalogLoaded, error: appsStore.catalogError }),
   );
-  // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
+  // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格；
+  // `pluginId` 圈定时只保留该插件贡献的条目。
   const catalog = $derived(
-    withoutLocalEntries(appsStore.catalog).map((entry) => ({
-      ...entry,
-      description: connectorDescription(entry.connectorId, entry.description),
-    })),
+    withoutLocalEntries(appsStore.catalog)
+      .filter((entry) => pluginId === undefined || entry.pluginId === pluginId)
+      .map((entry) => ({
+        ...entry,
+        description: connectorDescription(entry.connectorId, entry.description),
+      })),
   );
   const categories = $derived(catalogCategories(catalog));
   const entries = $derived(catalogView(catalog, { query, category }));
@@ -203,14 +217,18 @@
   {@const action = catalogAction(entry, appsStore.hasActiveFlow(target))}
   {@const icon = appIconSrc(entry.iconDataUri)}
   <div
-    class="flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
+    class="relative flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
       ? 'col-span-full'
       : ''} {entry.connectable ? '' : 'opacity-60'}"
     data-testid={`apps-catalog-card-${entry.connectorId}`}
     data-connectable={entry.connectable}
     data-tier={entry.tier}
   >
-    <div class="flex items-start gap-3">
+    <!-- 归属插件的 ⋮ 操作菜单：恒在卡片右上角；标题行留出右侧内边距避免文字顶到菜单 -->
+    {#if pluginActions !== undefined && entry.origin === 'plugin' && entry.pluginId !== undefined}
+      <div class="absolute top-2.5 right-2.5">{@render pluginActions(entry.pluginId)}</div>
+    {/if}
+    <div class="flex items-start gap-3 pe-6">
       {#if icon !== null}
         <img src={icon} alt="" class="size-9 shrink-0 rounded-lg" />
       {:else}

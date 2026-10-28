@@ -28,7 +28,8 @@ class PluginsState {
   loadError = $state<string | null>(null);
   /** 正在启停 / 卸载的插件 id（行内按钮禁用）。 */
   busy = new SvelteSet<string>();
-  #loaded = false;
+  /** 已安装清单至少成功拉过一次；模板据此区分「清单里没有」和「还没拉到」。 */
+  #loaded = $state(false);
   #marketLoaded = false;
   #started = false;
   /** `refreshMarket()` 进行中：core 采纳新索引时广播的事件由刷新尾部的显式重载覆盖，不重复拉。 */
@@ -150,6 +151,15 @@ class PluginsState {
   /** 插件展示名；找不到（并发卸载后）时回退为 id。 */
   nameOf(id: string): string {
     return this.plugins.find((plugin) => plugin.id === id)?.name ?? id;
+  }
+
+  get loaded(): boolean {
+    return this.#loaded;
+  }
+
+  /** 该 id 是否在已安装清单（含内置只读项）里。 */
+  has(id: string): boolean {
+    return this.plugins.some((plugin) => plugin.id === id);
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {

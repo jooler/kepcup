@@ -1,16 +1,21 @@
 <script lang="ts">
   import type { PluginSummary } from '@kepcup/shared';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { untrack } from 'svelte';
+  import { ArrowLeft, Ellipsis } from '@lucide/svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { endpointSupports } from '../web-shell/endpoint';
   import { shell } from '$lib/stores/shell.svelte';
-  import { settingsStore } from '$lib/stores/settings.svelte';
+  import { appsStore } from '$lib/stores/apps.svelte';
   import { plugins } from '../plugins/plugins.svelte';
-  import ExtensionSkills from './ExtensionSkills.svelte';
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
+  import LocalConnectorsSection from './LocalConnectorsSection.svelte';
+  import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
+  import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
+  import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
+  import { isCustomConnection } from '$lib/features/apps/app-catalog';
   import {
     FILTER_COUNT_KEYS,
     type ExtensionCenterFilter,
@@ -19,8 +24,7 @@
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import { Checkbox } from '$lib/components/ui/checkbox';
-  import { Label } from '$lib/components/ui/label';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import {
     Dialog,
     DialogContent,
@@ -30,15 +34,18 @@
   } from '$lib/components/ui/dialog';
 
   /**
-   * 扩展中心 →「已安装」分组（D104 P0a-3）：本机已装插件的装 / 卸 / 启停与内容总览。
-   * 页头的两个本地安装入口仅在桌面端点渲染（web / headless 隐藏）；启用开关与卸载按钮
-   * 不对内置插件渲染（内置只读，P0b 起出现在列表里）。内容明细按账本展开、可跳到
-   * 对应管理页签；「由插件管理」的锁定语义在 core 层（PLUGIN_MANAGED）。
+   * 扩展中心 →「已安装」分组（D104 P0a-3；插件列表模型）：
    *
-   * 顶部筛选（D104 UI 修正）：技能 / 连接 / MCP / 邮件四类内容由插件贡献、安装后自动
-   * 归类（`PluginSummary.counts`），不再是独立分组而是这里的筛选条件；选中某类时在
-   * 插件卡片下方嵌入该类的完整管理区（预置技能 / 连接目录 / 自定义 MCP / 邮箱）。
-   * 可更新的插件卡片恒置顶——「检查更新」后自动浮起，支持全部更新或逐条更新。
+   * - 已安装 = **一张插件卡片网格**（core 只有一张插件注册表；技能 / 连接 / MCP / 邮件
+   *   是插件的贡献类别，投影到各领域存储）。顶部筛选只过滤这张网格；「全部」显示全部
+   *   插件，不按内容类型拆分列表。
+   * - 每张卡片：名称 / 版本 / 来源徽标 / 描述 + 类别标签；操作收进右上角 ⋮ 菜单
+   *   （启停 / 打开所在目录 / 更新 / 重新安装 / 卸载）；底部按贡献类别给「管理」入口：
+   *   单连接插件**直达账号管理流**（1 个账号 = 详情，多个 = 账号列表，0 个 = 首连面板，
+   *   不再经过应用卡网格），多连接插件进按插件圈定的目录网格，MCP / 邮箱进对应管理区——
+   *   扩展中心只做管理与展示，不入侵插件自身逻辑。
+   * - 页头的本地安装入口仅在桌面端点渲染；内置插件只读，不出操作菜单；
+   *   被吊销的插件在页顶统一警告；「由插件管理」的锁定语义在 core 层（PLUGIN_MANAGED）。
    */
 
   $effect(() => {
@@ -53,22 +60,31 @@
   let checking = $state(false);
   let updatingAll = $state(false);
   let uninstallTarget = $state<string | null>(null);
-  /** 展开了内容明细的插件 id。 */
-  const expanded = new SvelteSet<string>();
-
-  const DETAIL_KINDS = ['skill', 'connector', 'mcp', 'mail'] as const;
-
-  const KIND_LABEL_KEYS = {
-    skills: 'plugins.kind.skill',
-    connectors: 'plugins.kind.connector',
-    mcp: 'plugins.kind.mcp',
-    mail: 'plugins.kind.mail',
-  } as const;
+  /** 插件卡片「管理」进入的内容管理视图；null = 插件网格。 */
+  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail'; pluginId: string } | null>(null);
+  /** 账号管理流当前的应用（连接 slug：插件直达与本机自建共用一套组件）。 */
+  let managingConnectorId = $state<string | null>(null);
+  /** 账号管理流里点开的账号详情；null = 未点开（单账号由流自动直进详情）。 */
+  let detailConnectionId = $state<string | null>(null);
 
   const hasUpdates = $derived(plugins.plugins.some((plugin) => plugin.updateAvailable !== null));
 
   /** 内容筛选：状态在 shell store（旧分组深链 / 设置卡深链会带筛选直达）。 */
   const filter = $derived(shell.extensionCenterFilter);
+
+  $effect(() => {
+    plugins.start();
+    appsStore.start();
+    void plugins.load(true);
+  });
+
+  // 深链 / 手动切换筛选时退出内容管理视图，回到插件网格。
+  $effect(() => {
+    void filter;
+    contentView = null;
+    managingConnectorId = null;
+    detailConnectionId = null;
+  });
 
   const FILTER_CHIPS: ReadonlyArray<{
     id: ExtensionCenterFilter;
@@ -91,7 +107,7 @@
     return counts;
   });
 
-  /** 展示顺序：可更新的插件恒置顶（「检查更新」后自动浮起），其余保持 plugins.list 顺序。 */
+  /** 网格里的插件（可更新的恒置顶）：筛选只按贡献类别过滤这一张列表。 */
   const visiblePlugins = $derived.by(() => {
     const sorted = [...plugins.plugins].sort(
       (a, b) => Number(b.updateAvailable !== null) - Number(a.updateAvailable !== null),
@@ -101,25 +117,82 @@
     return sorted.filter((plugin) => plugin.counts[countKey] > 0);
   });
 
-  const serverNames = $derived(
-    new Map((settingsStore.settings?.mcpServers ?? []).map((server) => [server.id, server.name])),
-  );
+  /** 被市场索引吊销的插件：不论哪种视图都在页顶统一警告。 */
+  const revokedPlugins = $derived(plugins.plugins.filter((plugin) => plugin.revoked !== null));
 
-  /** 内容计数里非零的类别（0 的不显示）。 */
-  function nonZeroCounts(plugin: PluginSummary): Array<{ kind: string; count: number }> {
-    return Object.entries(plugin.counts)
-      .filter(([, count]) => count > 0)
-      .map(([kind, count]) => ({ kind, count }));
+  /** 卡片上的类别标签（非零贡献）。 */
+  const KIND_TAG_KEYS = [
+    ['skills', 'plugins.kind.skill'],
+    ['connectors', 'plugins.kind.connector'],
+    ['mcp', 'plugins.kind.mcp'],
+    ['mail', 'plugins.kind.mail'],
+  ] as const;
+
+  /** 卡片的「管理」入口类别（按连接 → MCP → 邮件排序；纯技能插件没有管理面）。 */
+  const MANAGE_KINDS: ReadonlyArray<{
+    kind: 'connector' | 'mcp' | 'mail';
+    countKey: 'connectors' | 'mcp' | 'mail';
+    labelKey: Parameters<typeof t>[0];
+  }> = [
+    { kind: 'connector', countKey: 'connectors', labelKey: 'plugins.kind.connector' },
+    { kind: 'mcp', countKey: 'mcp', labelKey: 'plugins.kind.mcp' },
+    { kind: 'mail', countKey: 'mail', labelKey: 'plugins.kind.mail' },
+  ];
+
+  function manageKinds(
+    plugin: PluginSummary,
+  ): Array<{ kind: 'connector' | 'mcp' | 'mail'; labelKey: Parameters<typeof t>[0] }> {
+    return MANAGE_KINDS.filter(({ countKey }) => plugin.counts[countKey] > 0).map(
+      ({ kind, labelKey }) => ({ kind, labelKey }),
+    );
   }
 
-  /** 内容明细里的 MCP 服务器名：按 server id 反查，查不到显示 id。 */
-  function mcpLabel(ref: string): string {
-    return serverNames.get(ref) ?? ref;
+  function openManage(plugin: PluginSummary, kind: 'connector' | 'mcp' | 'mail'): void {
+    if (kind === 'connector') {
+      // 单连接插件直达账号管理流（账本 ref = 连接 slug = 目录 connectorId），
+      // 不再经过应用卡网格；多连接插件回落到按插件圈定的目录网格。
+      const refs = [
+        ...new Set(
+          plugin.items
+            .filter((item) => item.kind === 'connector' && item.missing !== true)
+            .map((item) => item.ref),
+        ),
+      ];
+      if (refs.length === 1) {
+        manage(refs[0]!);
+        return;
+      }
+    }
+    contentView = { kind, pluginId: plugin.id };
   }
 
-  function toggleDetails(id: string): void {
-    if (expanded.has(id)) expanded.delete(id);
-    else expanded.add(id);
+  // 连接 / 账号在流外被删（卸载插件、删除本机自建、失败的首次连接）后，别停在失效的详情 / 空列表上。
+  $effect(() => {
+    if (!appsStore.loaded) return;
+    const ids = new Set(appsStore.connections.map((connection) => connection.id));
+    if (
+      untrack(() => detailConnectionId) !== null &&
+      !ids.has(untrack(() => detailConnectionId)!)
+    ) {
+      detailConnectionId = null;
+    }
+    const connectorId = untrack(() => managingConnectorId);
+    if (
+      connectorId !== null &&
+      !appsStore.connections.some((connection) => connection.connectorId === connectorId)
+    ) {
+      managingConnectorId = null;
+    }
+  });
+
+  /**
+   * 进入一个连接应用的账号管理流；视图按当前账号数反应式选择——
+   * 1 个账号直进详情，多个先列账号，0 个给连接面板（首连）。
+   * 插件卡「管理」与本机自建「管理」共用。
+   */
+  function manage(connectorId: string): void {
+    detailConnectionId = null;
+    managingConnectorId = connectorId;
   }
 
   function codeOf(caught: unknown): string | undefined {
@@ -187,7 +260,7 @@
         t(next ? 'plugins.toast.enabled' : 'plugins.toast.disabled', { name: plugin.name }),
       );
     } catch (caught) {
-      // 失败：store 未变，开关自动回位。
+      // 失败：store 未变，菜单项状态自动回位。
       toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
     }
   }
@@ -204,12 +277,136 @@
       toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
     }
   }
-
-  /** 卡片上的配置入口：切到已安装列表的对应筛选（四类都有内嵌管理区）。 */
-  function goToFilter(kind: 'skill' | 'connector' | 'mcp' | 'mail'): void {
-    shell.extensionCenterFilter = kind;
-  }
 </script>
+
+<!-- 插件操作菜单：启停 / 打开所在目录 / 更新 / 重新安装 / 卸载。插件卡右上角与内容卡共用。 -->
+{#snippet pluginMenu(plugin: PluginSummary)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger
+      class="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+      disabled={plugins.busy.has(plugin.id)}
+      aria-label={t('plugins.menu.more')}
+      title={t('plugins.menu.more')}
+      data-testid={`plugins-menu-${plugin.id}`}
+    >
+      <Ellipsis class="size-4" aria-hidden="true" />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content class="w-44" align="end">
+      <DropdownMenu.Item
+        onSelect={() => void toggle(plugin, !plugin.enabled)}
+        data-testid={`plugins-toggle-${plugin.id}`}
+      >
+        {plugin.enabled ? t('plugins.menu.disable') : t('plugins.menu.enable')}
+      </DropdownMenu.Item>
+      {#if plugin.dirPath !== null && window.kepcup?.showItemInFolder !== undefined}
+        <DropdownMenu.Item
+          onSelect={() => reveal(plugin)}
+          data-testid={`plugins-reveal-${plugin.id}`}
+        >
+          {t('plugins.reveal')}
+        </DropdownMenu.Item>
+      {/if}
+      {#if plugin.updateAvailable !== null}
+        <DropdownMenu.Item
+          onSelect={() => openUpdate(plugin)}
+          data-testid={`plugins-update-${plugin.id}`}
+        >
+          {t('plugins.update.button')}
+        </DropdownMenu.Item>
+      {/if}
+      {#if plugin.origin === 'local'}
+        <DropdownMenu.Item
+          onSelect={() => openReinstall()}
+          data-testid={`plugins-reinstall-${plugin.id}`}
+        >
+          {t('plugins.reinstall')}
+        </DropdownMenu.Item>
+      {/if}
+      <DropdownMenu.Separator />
+      <DropdownMenu.Item
+        class="text-destructive hover:text-destructive"
+        onSelect={() => (uninstallTarget = plugin.id)}
+        data-testid={`plugins-uninstall-${plugin.id}`}
+      >
+        {t('plugins.uninstall')}
+      </DropdownMenu.Item>
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/snippet}
+
+<!-- 归属插件的操作（内容卡右上角）：由 AppCatalogGrid 按 `entry.pluginId` 调用；内置插件只读，不出菜单。 -->
+{#snippet pluginActions(pluginId: string)}
+  {@const plugin = plugins.plugins.find((candidate) => candidate.id === pluginId)}
+  {#if plugin !== undefined && plugin.origin !== 'builtin'}
+    {@render pluginMenu(plugin)}
+  {/if}
+{/snippet}
+
+<!-- 一张插件卡：名称 / 徽标 / 描述 + 类别标签；右上角 ⋮ 菜单；底部按贡献类别给管理入口。 -->
+{#snippet pluginCard(plugin: PluginSummary)}
+  {@const kinds = manageKinds(plugin)}
+  <div
+    class="relative flex flex-col gap-1.5 rounded-xl border bg-card px-4 py-3.5 text-sm"
+    data-testid={`plugins-card-${plugin.id}`}
+    data-plugin-id={plugin.id}
+  >
+    {#if plugin.origin !== 'builtin'}
+      <div class="absolute top-2.5 right-2.5">{@render pluginMenu(plugin)}</div>
+    {/if}
+    <div class="flex flex-wrap items-center gap-2 pe-7">
+      <span class="font-medium">{plugin.name}</span>
+      <span class="text-xs text-muted-foreground">
+        {t('plugins.version', { version: plugin.version })}
+      </span>
+      <Badge variant="outline">{t(`plugins.origin.${plugin.origin}`)}</Badge>
+      <Badge
+        variant="outline"
+        class={plugin.tier === 'developer' ? 'border-destructive text-destructive' : ''}
+        data-testid={`plugins-tier-${plugin.id}`}
+      >
+        {t(`plugins.tier.${plugin.tier}`)}
+      </Badge>
+      {#if plugin.updateAvailable !== null}
+        <Badge variant="outline" data-testid={`plugins-update-badge-${plugin.id}`}>
+          {t('plugins.update.available', { version: plugin.updateAvailable.version })}
+        </Badge>
+      {/if}
+    </div>
+    {#if plugin.description.length > 0}
+      <p class="text-xs text-muted-foreground">{plugin.description}</p>
+    {/if}
+    {#if !plugin.enabled}
+      <p class="text-xs text-muted-foreground" data-testid={`plugins-disabled-${plugin.id}`}>
+        {t('plugins.state.disabled')}
+      </p>
+    {/if}
+    <div class="flex flex-wrap items-center gap-1">
+      {#each KIND_TAG_KEYS as [countKey, labelKey] (countKey)}
+        {#if plugin.counts[countKey] > 0}
+          <Badge variant="secondary" data-testid={`plugins-tag-${countKey}-${plugin.id}`}>
+            {t(labelKey)}
+          </Badge>
+        {/if}
+      {/each}
+    </div>
+    {#if kinds.length > 0}
+      <div class="mt-1 flex flex-wrap items-center justify-end gap-2">
+        {#each kinds as entry (entry.kind)}
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => openManage(plugin, entry.kind)}
+            data-testid={`plugins-manage-${entry.kind}-${plugin.id}`}
+          >
+            {kinds.length > 1
+              ? `${t('plugins.manage')} · ${t(entry.labelKey)}`
+              : t('plugins.manage')}
+          </Button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-installed">
   <div class="mb-3 flex items-start justify-between gap-2 px-0.5">
@@ -267,217 +464,156 @@
     <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-empty">
       {t('plugins.empty')}
     </p>
-  {:else if filter !== 'all' && visiblePlugins.length === 0 && !plugins.loading}
-    <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-filter-empty">
-      {t('plugins.filter.empty')}
-    </p>
   {/if}
 
-  <div
-    class="mb-2 flex flex-wrap items-center gap-1.5 px-0.5"
-    role="group"
-    data-testid="plugins-filters"
-  >
-    {#each FILTER_CHIPS as chip (chip.id)}
-      <button
-        type="button"
-        class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {filter === chip.id
-          ? 'border-foreground bg-foreground text-background'
-          : 'text-muted-foreground hover:text-foreground'}"
-        onclick={() => (shell.extensionCenterFilter = chip.id)}
-        data-testid={`plugins-filter-${chip.id}`}
-      >
-        {t(chip.labelKey)}
-        <span class="ms-0.5 opacity-70">{filterCounts.get(chip.id) ?? 0}</span>
-      </button>
-    {/each}
-  </div>
-
-  <div class="grid gap-2">
-    {#each visiblePlugins as plugin (plugin.id)}
-      {@const isBuiltin = plugin.origin === 'builtin'}
-      <div
-        class="rounded-lg border bg-card px-3 py-2.5 text-sm"
-        data-testid={`plugins-card-${plugin.id}`}
-        data-plugin-id={plugin.id}
-      >
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-medium">{plugin.name}</span>
-          <span class="text-xs text-muted-foreground">
-            {t('plugins.version', { version: plugin.version })}
-          </span>
-          <Badge variant="outline">{t(`plugins.origin.${plugin.origin}`)}</Badge>
-          <Badge
-            variant="outline"
-            class={plugin.tier === 'developer' ? 'border-destructive text-destructive' : ''}
-            data-testid={`plugins-tier-${plugin.id}`}
+  {#if contentView === null}
+    {#if detailConnectionId !== null}
+      <AppConnectionDetail
+        connectionId={detailConnectionId}
+        onBack={() => (detailConnectionId = null)}
+      />
+    {:else if managingConnectorId !== null}
+      {@const accounts = appsStore.connections.filter(
+        (connection) =>
+          connection.connectorId === managingConnectorId && !isCustomConnection(connection),
+      )}
+      {#if accounts.length === 1}
+        <!-- 单账号：直进账号详情 -->
+        <AppConnectionDetail
+          connectionId={accounts[0]!.id}
+          onBack={() => (managingConnectorId = null)}
+        />
+      {:else}
+        <div class="space-y-3">
+          <Button
+            size="sm"
+            variant="ghost"
+            class="-ml-2 gap-1"
+            onclick={() => (managingConnectorId = null)}
+            data-testid="plugins-manage-back"
           >
-            {t(`plugins.tier.${plugin.tier}`)}
-          </Badge>
-          {#if plugin.updateAvailable !== null}
-            <Badge variant="outline" data-testid={`plugins-update-badge-${plugin.id}`}>
-              {t('plugins.update.available', { version: plugin.updateAvailable.version })}
-            </Badge>
-          {/if}
-          <div class="ms-auto flex items-center gap-1.5">
-            {#if !isBuiltin && plugin.updateAvailable !== null}
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={updatingAll}
-                onclick={() => openUpdate(plugin)}
-                data-testid={`plugins-update-${plugin.id}`}
-              >
-                {t('plugins.update.button')}
-              </Button>
-            {/if}
-            {#if !isBuiltin && plugin.origin === 'local'}
-              <Button
-                size="sm"
-                variant="ghost"
-                onclick={() => openReinstall()}
-                data-testid={`plugins-reinstall-${plugin.id}`}
-              >
-                {t('plugins.reinstall')}
-              </Button>
-            {/if}
-            {#if !isBuiltin}
-              <Checkbox
-                checked={plugin.enabled}
-                disabled={plugins.busy.has(plugin.id)}
-                aria-label={t('plugins.toggleLabel')}
-                onCheckedChange={(checked) => void toggle(plugin, checked === true)}
-                data-testid={`plugins-toggle-${plugin.id}`}
+            <ArrowLeft class="size-3.5" aria-hidden="true" />
+            {t('plugins.backToList')}
+          </Button>
+          {#if accounts.length > 1}
+            <AppConnectionsList
+              connectorId={managingConnectorId}
+              onOpen={(id) => (detailConnectionId = id)}
+              onGoCatalog={() => (managingConnectorId = null)}
+            />
+          {:else}
+            <!-- 0 账号：直给首连面板 -->
+            {@const entry = appsStore.catalog.find(
+              (candidate) => candidate.connectorId === managingConnectorId,
+            )}
+            {#if entry !== undefined}
+              <ConnectAppPanel
+                target={{ kind: 'catalog', connectorId: managingConnectorId }}
+                name={entry.title}
+                allowDisconnect={false}
+                testid="plugins-manage-connect-panel"
               />
-              {#if plugin.dirPath !== null && window.kepcup?.showItemInFolder !== undefined}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onclick={() => reveal(plugin)}
-                  data-testid={`plugins-reveal-${plugin.id}`}
-                >
-                  {t('plugins.reveal')}
-                </Button>
-              {/if}
-              <Button
-                size="sm"
-                variant="ghost"
-                class="text-destructive hover:text-destructive"
-                disabled={plugins.busy.has(plugin.id)}
-                onclick={() => (uninstallTarget = plugin.id)}
-                data-testid={`plugins-uninstall-${plugin.id}`}
-              >
-                {t('plugins.uninstall')}
-              </Button>
             {:else}
-              <Badge variant="outline">{t('plugins.origin.builtin')}</Badge>
+              <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>
             {/if}
-          </div>
+          {/if}
         </div>
-
-        {#if plugin.description.length > 0}
-          <p class="mt-1 text-xs text-muted-foreground">{plugin.description}</p>
-        {/if}
-
-        {#if plugin.revoked !== null}
-          <p class="mt-1 text-xs text-destructive" data-testid={`plugins-revoked-${plugin.id}`}>
-            {plugin.revoked === 'disable'
-              ? t('plugins.revoked.disable')
-              : t('plugins.revoked.warn')}
-          </p>
-        {/if}
-
-        {#if nonZeroCounts(plugin).length > 0}
-          <div
-            class="mt-1.5 flex flex-wrap items-center gap-1.5"
-            data-testid={`plugins-config-${plugin.id}`}
+      {/if}
+    {:else}
+      <div
+        class="mb-2 flex flex-wrap items-center gap-1.5 px-0.5"
+        role="group"
+        data-testid="plugins-filters"
+      >
+        {#each FILTER_CHIPS as chip (chip.id)}
+          <button
+            type="button"
+            class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {filter === chip.id
+              ? 'border-foreground bg-foreground text-background'
+              : 'text-muted-foreground hover:text-foreground'}"
+            onclick={() => (shell.extensionCenterFilter = chip.id)}
+            data-testid={`plugins-filter-${chip.id}`}
+            data-settings-anchor={`plugins-filter-${chip.id}`}
           >
-            {#each nonZeroCounts(plugin) as entry (`${entry.kind}:${entry.count}`)}
-              <button
-                type="button"
-                class="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
-                onclick={() => goToFilter(entry.kind as 'skill' | 'connector' | 'mcp' | 'mail')}
-                data-testid={`plugins-config-${entry.kind}-${plugin.id}`}
-              >
-                {t('plugins.configEntry', {
-                  kind: t(KIND_LABEL_KEYS[entry.kind as keyof typeof KIND_LABEL_KEYS]),
-                  count: entry.count,
-                })}
-              </button>
-            {/each}
-          </div>
-        {/if}
-
-        {#if plugin.items.length > 0}
-          <div class="mt-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              class="h-6 px-2 text-xs text-muted-foreground"
-              onclick={() => toggleDetails(plugin.id)}
-              data-testid={`plugins-details-${plugin.id}`}
-            >
-              {expanded.has(plugin.id) ? t('plugins.hideDetails') : t('plugins.details')}
-            </Button>
-            {#if expanded.has(plugin.id)}
-              <div class="mt-1.5 grid gap-2 border-t pt-1.5">
-                {#each DETAIL_KINDS as kind (kind)}
-                  {@const items = plugin.items.filter((item) => item.kind === kind)}
-                  {#if items.length > 0}
-                    <div class="grid gap-0.5">
-                      <div class="flex items-center gap-2">
-                        <Label class="text-xs text-muted-foreground"
-                          >{t(`plugins.kind.${kind}`)}</Label
-                        >
-                        {#if kind !== 'mail'}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            class="h-6 px-2 text-xs"
-                            onclick={() => goToFilter(kind)}
-                          >
-                            {t('plugins.goTo')}
-                          </Button>
-                        {/if}
-                      </div>
-                      {#each items as item (`${item.kind}:${item.ref}`)}
-                        <div class="flex flex-wrap items-center gap-1.5 text-xs">
-                          <span>{kind === 'mcp' ? mcpLabel(item.ref) : item.ref}</span>
-                          {#if item.missing === true}
-                            <Badge variant="outline" class="text-destructive">
-                              {t('plugins.itemMissing')}
-                            </Badge>
-                          {/if}
-                          {#if item.yielded === true}
-                            <Badge variant="outline">{t('plugins.itemYielded')}</Badge>
-                          {/if}
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
+            {t(chip.labelKey)}
+            <span class="ms-0.5 opacity-70">{filterCounts.get(chip.id) ?? 0}</span>
+          </button>
+        {/each}
       </div>
-    {/each}
-  </div>
 
-  {#if filter === 'skill'}
-    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-skill">
-      <ExtensionSkills embedded />
+      {#if revokedPlugins.length > 0}
+        <div class="mb-3 grid gap-1">
+          {#each revokedPlugins as plugin (plugin.id)}
+            <p class="px-0.5 text-xs text-destructive" data-testid={`plugins-revoked-${plugin.id}`}>
+              {plugin.name}：{plugin.revoked === 'disable'
+                ? t('plugins.revoked.disable')
+                : t('plugins.revoked.warn')}
+            </p>
+          {/each}
+        </div>
+      {/if}
+
+      {#if visiblePlugins.length === 0 && plugins.plugins.length > 0 && !plugins.loading}
+        <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-filter-empty">
+          {t('plugins.filter.empty')}
+        </p>
+      {:else if visiblePlugins.length > 0}
+        <div
+          class="grid grid-cols-1 gap-3 @xl:grid-cols-2 @3xl:grid-cols-3"
+          data-testid="plugins-grid"
+        >
+          {#each visiblePlugins as plugin (plugin.id)}
+            {@render pluginCard(plugin)}
+          {/each}
+        </div>
+      {/if}
+
+      <!-- 本机自建（设计 29 §17）：不是插件内容，在「全部 / 连接应用」视图挂在网格下方；
+         「管理」进入上面的账号管理流。 -->
+      {#if filter === 'all' || filter === 'connector'}
+        <LocalConnectorsSection onManage={manage} />
+      {/if}
+    {/if}
+  {:else if contentView.kind === 'connector'}
+    <div class="space-y-2" data-testid="plugins-content-connector">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="-ml-2 gap-1"
+        onclick={() => (contentView = null)}
+        data-testid="plugins-content-back"
+      >
+        <ArrowLeft class="size-3.5" aria-hidden="true" />
+        {t('plugins.backToList')}
+      </Button>
+      <ExtensionConnections embedded pluginId={contentView.pluginId} {pluginActions} />
     </div>
-  {:else if filter === 'connector'}
-    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-connector">
-      <ExtensionConnections embedded />
-    </div>
-  {:else if filter === 'mcp'}
-    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-mcp">
+  {:else if contentView.kind === 'mcp'}
+    <div class="space-y-2" data-testid="plugins-content-mcp">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="-ml-2 gap-1"
+        onclick={() => (contentView = null)}
+        data-testid="plugins-content-back"
+      >
+        <ArrowLeft class="size-3.5" aria-hidden="true" />
+        {t('plugins.backToList')}
+      </Button>
       <ExtensionMcp embedded />
     </div>
-  {:else if filter === 'mail'}
-    <div class="mt-4 border-t pt-1" data-settings-anchor="plugins-filter-mail">
+  {:else}
+    <div class="space-y-2" data-testid="plugins-content-mail">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="-ml-2 gap-1"
+        onclick={() => (contentView = null)}
+        data-testid="plugins-content-back"
+      >
+        <ArrowLeft class="size-3.5" aria-hidden="true" />
+        {t('plugins.backToList')}
+      </Button>
       <ExtensionMail embedded />
     </div>
   {/if}
