@@ -68,6 +68,8 @@ const info: PluginInspectOutput = {
   existing: null,
   update: null,
   installable: true,
+  configFields: [],
+  capabilitySummary: '提供 1 个工具',
   blockers: [],
 };
 
