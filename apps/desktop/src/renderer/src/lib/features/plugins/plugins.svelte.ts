@@ -4,6 +4,7 @@ import type {
   PluginMarketStatus,
   McpbUserConfigValue,
   PluginSummary,
+  PluginsConfigGetOutput,
 } from '@kepcup/shared';
 import { SvelteSet } from 'svelte/reactivity';
 import { core } from '$lib/rpc/client.svelte';
@@ -170,6 +171,19 @@ class PluginsState {
     } finally {
       this.busy.delete(id);
     }
+  }
+
+  /**
+   * 插件卡「设置」（D105 P4）：声明字段 config 的读写。`loadConfig` 每次展开都拉一次
+   * （值只有这张表单会改，不缓存旧值）；敏感值 core 永不回传，只有 `storedSensitiveKeys`。
+   */
+  async loadConfig(id: string): Promise<PluginsConfigGetOutput> {
+    const result = (await core.call('plugins.config.get', { id })) as PluginsConfigGetOutput;
+    return result;
+  }
+
+  async saveConfig(id: string, values: Record<string, unknown>): Promise<void> {
+    await core.call('plugins.config.set', { id, values });
   }
 
   async uninstall(id: string): Promise<void> {
