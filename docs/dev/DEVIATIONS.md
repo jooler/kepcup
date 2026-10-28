@@ -1137,3 +1137,11 @@
 - 问题：README §5「用户可见文案不出现协议词汇……协议细节只进同意面板与开发文档」。P3 有两处协议词：① mail 通用插件的实例字段标题（审查前写作「收信（IMAP）服务器」「IMAP 加密方式」等）；② 官方邮件插件 `plugin.json` 的 `description`（「支持 IMAP/SMTP 的邮箱」「16 位授权码」等）。
 - 影响范围：①已收敛——`packages/core/src/plugins/kinds.ts` 的字段标题改为「收信服务器 / 收信端口 / 收信加密方式 / 发信服务器 / 发信端口 / 发信加密方式」，`ssl / starttls` 只出现在字段 description（字段值本身就是这个枚举，用户必须知道填什么）。②保留——任务书 P3-mail.md §3.5 明确要求 mail-generic「帮助文案覆盖如何获取 IMAP/SMTP 授权码」，插件 description 是配置指南而非功能文案，市场 / 插件卡展示它正是用户配置时需要的信息；与 §2.1「OAuth / MCP / IMAP 是给开发者看的接口契约」不冲突的场景按任务书更具体的条目执行（README §5 规则 2：阶段文件为准）。
 - 决定：字段标题收敛 + description 保留，各自边界如上；后续新增能力类型的字段标题一律沿用「收信 / 发信」式中性命名。
+### DEV-075 全局手动 MCP 管理的保留入口：「工具」筛选视图下的无圈定 McpSection（M2 顺延的必然结果）
+
+- 状态：已落实
+- 阶段：插件平台 P4（D105）
+- 是否阻塞：否
+- 问题：P4-extension-center.md §3.2 只规定插件卡「管理 · 工具」按 `pluginId` 圈定（只看该插件投影的 server、隐藏新建 / .mcpb 入口），但 M2（custom-mcp 实例化、`McpSection` 全局视图退役）按任务书顺延后，手动 MCP server 的新建 / 编辑 / .mcpb 安装在 M1 失去了全部 UI 入口——插件卡内容视图已圈定，设置深链落到的「工具」筛选视图又只有插件卡网格。这是任务书未写到的缺口（§2 范围表「不包含：custom-mcp 实例化（M2，可顺延）」隐含手动 server 管理在 M1 仍须可用）。
+- 影响范围：`ExtensionInstalled.svelte` 的「工具」筛选（`filter === 'mcp'`）网格下方新增 `manual-mcp-section`——无圈定的完整 `McpSection`（新建 stdio/HTTP/SSE、.mcpb 安装、BYO OAuth 客户端、手动 server 编辑）。插件卡内容视图的圈定语义不受影响；Bot 侧手动 server 的 `mcp_server_ids` 细选不受影响。
+- 决定：M1 以「工具」筛选视图为全局手动工具管理入口；P4-M2（custom-mcp 实例化）落地时把手动 server 收编为 `app.kepcup/custom-mcp` 插件实例后，整块退役（P4 §4.5 原计划不变）。e2e `extension-center.spec.ts` 第二用例按此模型对齐（圈定视图无手动 server / 无新建入口；全局区可见可编辑）。

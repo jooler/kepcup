@@ -187,30 +187,25 @@ test('plugins: tab order, default tab and keyboard cycle land on market', async 
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 三个页签、market 在最前；默认选中「已安装」（技能 / 连接 / MCP / 邮件是其内容筛选）。
-    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(3);
+    // 两个页签（D105 P4 收敛）、market 在最前；默认选中「已安装」（技能 / 连接 / MCP /
+    // 邮件是其内容筛选）。
+    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(2);
     await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    // 键盘循环从当前选中项起算：先点中 localCollab，再往右循环回第一项（market）。
-    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
+    // 键盘循环：installed + ArrowRight → market（第一项）。
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    // installed 仍可点进「已安装」主体。
+    // market 仍可点进市场主体；installed + ArrowLeft → market。
+    await dialog.locator('[data-testid="extension-center-tab-market"]').click();
+    await expect(dialog.locator('[data-testid="extension-market"]')).toBeVisible();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();
-    // installed + ArrowLeft → market；localCollab + Home → market。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowLeft');
-    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('Home');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
@@ -608,7 +603,7 @@ test('plugins: reinstalling the SAME id from a local file is an update, not a co
   }
 });
 
-test('plugins: narrow viewport shows the three tabs with Installed and content filters reachable', async () => {
+test('plugins: narrow viewport shows the two tabs with Installed and content filters reachable', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-narrow-'));
@@ -624,10 +619,9 @@ test('plugins: narrow viewport shows the three tabs with Installed and content f
     await page.locator('[data-testid="narrow-tab-extensions"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tabs"]')).toBeVisible();
-    // 三个页签在 375px 下完整可见；installed 可点进「已安装」主体，筛选条随在。
+    // 两个页签在 375px 下完整可见；installed 可点进「已安装」主体，筛选条随在。
     await expect(page.locator('[data-testid="extension-center-tab-market"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tab-installed"]')).toBeVisible();
-    await expect(page.locator('[data-testid="extension-center-tab-localCollab"]')).toBeVisible();
     await page.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(page.locator('[data-testid="extension-installed"]')).toBeVisible();
     await expect(page.locator('[data-testid="plugins-filters"]')).toBeVisible();

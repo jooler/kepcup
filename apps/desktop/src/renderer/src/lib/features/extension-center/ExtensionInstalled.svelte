@@ -17,6 +17,7 @@
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import { isCustomConnection } from '$lib/features/apps/app-catalog';
+  import McpSection from '$lib/features/settings/McpSection.svelte';
   import {
     FILTER_COUNT_KEYS,
     type ExtensionCenterFilter,
@@ -790,6 +791,15 @@
           {#if filter === 'all'}
             {@render systemCards()}
           {/if}
+        </div>
+      {/if}
+
+      <!-- 手动工具服务（M2 顺延期间的保留入口，DEV-075）：插件圈定后插件卡只看得到
+         自己投影的 server，新建 / .mcpb 安装与手动 server 的编辑在这个无圈定的全局
+         管理区（custom-mcp 实例化落地后整块退役，见 todo/plugin-platform P4-M2）。 -->
+      {#if filter === 'mcp'}
+        <div class="mt-5 border-t pt-4" data-testid="manual-mcp-section">
+          <McpSection />
         </div>
       {/if}
     {/if}

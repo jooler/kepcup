@@ -18,5 +18,7 @@
   class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
   data-testid="extension-mcp"
 >
-  <McpSection {embedded} {pluginId} />
+  <!-- McpSection 不收 embedded：它的 embedded 是设置卡片段形态（只改一个开关），
+       扩展中心内容视图要的是完整管理区（pluginId 圈定）。 -->
+  <McpSection {pluginId} />
 </div>
