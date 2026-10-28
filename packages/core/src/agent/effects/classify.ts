@@ -179,7 +179,6 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   submit_review: 'none',
 
   // --- 技能、引导、管家 ---
-  install_skill: 'local',
   create_skill: 'local',
   save_profile: 'local',
   finish_setup: 'local',

@@ -2154,7 +2154,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     const mcpb = rig.host.read('developer.mcpb', globalTarget);
     const identity = rig.host.read('bot.identity', botTarget);
     const access = rig.host.read('bot.file-access', botTarget);
-    const skills = rig.host.read('skills.install', botTarget);
     const schedule = rig.host.read('schedules.schedule', botTarget);
     const watch = rig.host.read('schedules.watch', botTarget);
     expect(custom).toMatchObject({ values: { count: 1 } });
@@ -2162,7 +2161,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(mcpb).toMatchObject({ values: { count: 1 } });
     expect(identity?.values).toEqual({ digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(access).toMatchObject({ values: { count: 3 } });
-    expect(skills).toMatchObject({ values: { count: 1 } });
     expect(schedule).toMatchObject({ values: { count: 4 } });
     expect(watch).toMatchObject({ values: { count: 5 } });
 
@@ -2172,7 +2170,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
       mcpb,
       identity,
       access,
-      skills,
       schedule,
       watch,
     });
@@ -2190,7 +2187,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     }
     const facade = rig.host.forRun(runCtx(rig));
     expect(facade.read('developer.custom-mcp', undefined).content).not.toContain(command);
-    expect(facade.read('skills.install', undefined).content).not.toContain(skillName);
     expect(facade.read('bot.identity', undefined).content).not.toContain(persona);
     expect(facade.read('bot.identity', undefined).content).not.toContain(duty);
   });

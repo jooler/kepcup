@@ -148,7 +148,6 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'widget_template',
   'stage_done',
   'submit_review',
-  'install_skill',
   'inspect_bot_assets',
   'capability_search',
   'capability_call',

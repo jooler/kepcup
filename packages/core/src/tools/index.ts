@@ -41,7 +41,6 @@ import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { createGeneratedMediaDelivery } from './media-delivery.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
-import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
@@ -177,11 +176,6 @@ export interface ResponseToolDeps {
    * web_search / web_fetch 工具；web_search 缺配置返回 SETUP_REQUIRED。
    */
   search?: SearchToolFacade | undefined;
-  /**
-   * 技能安装门面（docs/design/22-file-skill-routing.md）：present 时注册
-   * install_skill 工具（预置轻授权 / 外部仓库扫描审批，均阻塞等用户决定）。
-   */
-  skillInstall?: SkillInstallFacade | undefined;
   /**
    * 宿主 SubAgent 门面（docs/design/23-mcp-and-subagent.md D66）：present 时
    * 注册 delegate_task 工具（嵌套减配子 run，结果压缩回传）。
@@ -1146,12 +1140,6 @@ export function buildResponseTools(input: {
         })
       : [];
 
-  // 技能安装（docs/design/22-file-skill-routing.md）：门面就绪才注册。
-  const skillTools =
-    deps.skillInstall !== undefined
-      ? buildSkillTools({ identity, skills: deps.skillInstall, gateway })
-      : [];
-
   // 宿主 SubAgent（docs/design/23-mcp-and-subagent.md D66）：门面就绪才注册。
   const delegateTools =
     deps.subagent !== undefined ? buildDelegateTools({ identity, subagent: deps.subagent }) : [];
@@ -1302,7 +1290,6 @@ export function buildResponseTools(input: {
     ...imageTools,
     ...speechTools,
     ...webTools,
-    ...skillTools,
     ...delegateTools,
     ...presentTools,
     ...settingsTools,

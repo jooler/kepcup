@@ -98,7 +98,6 @@ const RESPONSE_TOOL_NAMES = [
   'generate_video',
   'web_search',
   'web_fetch',
-  'install_skill',
   'delegate_task',
   'delegate_to_bot',
   'cancel_delegation',

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
-  import { skillMarket } from './market.svelte';
   import ExtensionInstalled from './ExtensionInstalled.svelte';
   import ExtensionMarket from './ExtensionMarket.svelte';
   import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
@@ -9,12 +8,12 @@
   /**
    * 扩展中心的分组 tab 条 + 内容（市场 / 已安装）：
    * ExtensionCenterDialog（宽屏弹框）与窄屏「扩展」tab 页共用，当前分组都在 shell store 里，
-   * 两边切换状态互通。卸载（弹框关闭 / 窄屏切走 tab）时复位 Skills 目录的搜索词——切
-   * 分组不复发位，避免同一次浏览内闪现陈旧内容。
+   * 两边切换状态互通。
    *
    * D105 P4：两页签收敛。技能 / 连接 / MCP / 邮件由插件贡献、安装后自动归类，作为
    * 「已安装」列表顶部的筛选条件呈现；本机应用协作收编为已安装页的系统卡，旧
-   * `localCollab` 深链由 shell 落到已安装页并滚动到该卡。
+   * `localCollab` 深链由 shell 落到已安装页并滚动到该卡。旧技能目录死代码
+   * （ExtensionSkills / skillMarket / skills.presets）已随本阶段删除。
    */
 
   const TAB_LABEL_KEYS = {
@@ -23,11 +22,6 @@
   } as const;
 
   const tab = $derived(shell.extensionCenterTab);
-
-  // unmount 复位（弹框关闭 / 窄屏扩展页切走）：effect 的 cleanup 在卸载时执行。
-  $effect(() => {
-    return () => skillMarket.reset();
-  });
 
   let tablist = $state<HTMLDivElement | null>(null);
 

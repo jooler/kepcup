@@ -147,7 +147,6 @@ import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { SkillImporter } from './skills/library.js';
 import { SkillsService } from './skills/registry.js';
-import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
@@ -601,7 +600,6 @@ export interface CoreServices {
   /** P08 git import pipeline (null while locked / errored). */
   skillImporter: SkillImporter | null;
   /** P08 skill marketplace over the app-shipped preset catalog (null likewise). */
-  skillPresets: SkillPresetsService | null;
   /** P09 wiki domain (null while locked / errored). */
   wiki: WikiService | null;
   /** D92 T1b WP9: project wiki wiki.db connection pool (null with the wiki domain). */
@@ -903,7 +901,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     llmRouter: null,
     skills: null,
     skillImporter: null,
-    skillPresets: null,
     wiki: null,
     wikiIndexes: null,
     schedules: null,
@@ -1653,19 +1650,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Staged clones never survive a restart: pending approvals are cancelled
     // below (recoverInterrupted), so nothing can decide them anymore.
     skillImporter.sweepStaging();
-    // 技能市场（内置插件 com.kepcup/starter-skills 的技能贡献，D104 P0b）：安装复用
-    // registry 管线；缺依赖与增强沙箱判定与导入同源。贡献缺失（异常打包）时市场列表为空。
-    const skillPresets = new SkillPresetsService({
-      builtin: builtinPlugins,
-      logger,
-      skills,
-      environment: {
-        depAvailable: (dep) => environment.depAvailable(dep),
-      },
-      enhancedSandbox: {
-        available: enhancedAvailability.available,
-      },
-    });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
     // per-owner maintenance mutex, RPC reads and weekly lint scheduling (the
     // ingest/lint job runners consume it in jobs-runner).
@@ -2532,7 +2516,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           }
           return skills.requestAuthoring(input);
         },
-        recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {
         topicsSection: (owner, options) => wiki.topicsSection(owner, options),
@@ -2567,41 +2550,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       cardContext: (conversationId) => boardService?.cardContext(conversationId) ?? null,
       settingsCatalog,
       browser: services.browserRpc,
-      // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
-      // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。
-      skillInstall: {
-        describePreset: (presetId) => skillPresets.describePreset(presetId),
-        installPreset: (presetId) => {
-          const info = skillPresets.describePreset(presetId);
-          skillPresets.install(presetId);
-          return { skillPath: skillPresets.installedSkillPath(info.name) };
-        },
-        prepareFromUrl: async (input) => {
-          const prepared = await skillImporter.prepare({
-            sourceUrl: input.sourceUrl,
-            ...(input.ref !== undefined ? { ref: input.ref } : {}),
-            ...(input.subdirectory !== undefined ? { subdirectory: input.subdirectory } : {}),
-            botId: input.botId,
-            conversationId: input.conversationId,
-          });
-          if (prepared.status === 'candidates') {
-            throw new AppError(
-              'SKILL_IMPORT_FAILED',
-              `仓库包含多个技能（${prepared.candidates.map((c) => c.name).join('、')}）：请带 subdirectory 指定其一`,
-            );
-          }
-          return prepared;
-        },
-        commitImport: (prepared) => skillImporter.commit(prepared),
-        discardImport: (prepared) => skillImporter.discard(prepared),
-        requestApproval: async (identity, kind, payload, signal) => {
-          const outcome = await approvals.request(identity, kind, payload, { signal });
-          return { decision: outcome.decision, approvalId: outcome.approval.id };
-        },
-        failApproval: (approvalId, reason) => {
-          approvals.fail(approvalId, reason);
-        },
-      },
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));
@@ -3437,7 +3385,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.search = search;
     services.skills = skills;
     services.skillImporter = skillImporter;
-    services.skillPresets = skillPresets;
     services.wiki = wiki;
     services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;

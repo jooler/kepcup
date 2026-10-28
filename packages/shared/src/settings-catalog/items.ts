@@ -629,26 +629,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'none' },
   }),
 
-  // --- 技能 ---------------------------------------------------------------
-  item({
-    id: 'skills.install',
-    group: 'skills',
-    title: '安装预置技能',
-    summary: '从技能市场给这个 Bot 安装一个预置技能',
-    enables: ['学会新技能'],
-    keywords: ['技能', '安装技能', '技能市场', 'skill'],
-    scope: 'bot',
-    fields: [field('preset', '技能', 'select', { options: 'skill-presets' })],
-    write: viaTool('install_skill', 'confirm', true),
-    card: null,
-    deepLink: {
-      surface: 'extension-center',
-      section: 'installed',
-      anchor: 'plugins-filter-skill',
-    },
-    store: { kind: 'none' },
-  }),
-
   // --- 定时 / 监看 ---------------------------------------------------------
   item({
     id: 'schedules.schedule',

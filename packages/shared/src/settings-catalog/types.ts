@@ -94,7 +94,6 @@ export const settingOptionSourceSchema = z.enum([
   'agents',
   'agent-models',
   'skills',
-  'skill-presets',
   'browser-profiles',
   'bots',
   'microphones',

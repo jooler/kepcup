@@ -607,15 +607,6 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
         fsState: new FileReadState(),
         onBotMessage: () => {},
         environment: { request: note('environment.request'), offeredItems: () => [] },
-        skillInstall: {
-          describePreset: note('describePreset'),
-          installPreset: note('installPreset'),
-          prepareFromUrl: note('prepareFromUrl'),
-          commitImport: note('commitImport'),
-          discardImport: note('discardImport'),
-          requestApproval: note('requestApproval'),
-          failApproval: note('failApproval'),
-        },
         browser,
         media: {
           generateImage: note('generateImage'),
@@ -630,12 +621,12 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
     return { tools: new Map(tools.map((t) => [t.name, t])), called, browser };
   }
 
-  it('media generation, install_skill and request_environment return RUN_READ_ONLY before any side effect', async () => {
+  it('media generation and request_environment return RUN_READ_ONLY before any side effect', async () => {
     const gateway = makeGateway();
     // D75 W2: a turn is not even offered these tools (its toolset is
     // read-only + task management); the execution-time refusal guards tasks.
     const turnTools = responseTools(gateway, ids.turn).tools;
-    for (const name of ['generate_image', 'generate_speech', 'generate_video', 'install_skill', 'request_environment', 'browser_open']) {
+    for (const name of ['generate_image', 'generate_speech', 'generate_video', 'request_environment', 'browser_open']) {
       expect(turnTools.has(name), name).toBe(false);
     }
     for (const identity of [ids.readTask]) {
@@ -644,7 +635,6 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
         ['generate_image', { prompt: '猫' }],
         ['generate_speech', { text: '你好' }],
         ['generate_video', { prompt: '海浪' }],
-        ['install_skill', { preset_id: 'pdf', reason: '读 PDF' }],
         ['request_environment', { item: 'python', reason: '跑脚本' }],
       ];
       for (const [name, params] of cases) {

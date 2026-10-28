@@ -13,12 +13,12 @@ import { parsePluginManifestText } from './manifest-loader.js';
  * stays for dev/test overrides (`KEPCUP_BUILTIN_PLUGINS`) and future first-party
  * preinstalls. Builtin plugins never enter the `plugins` table and never go
  * through install / uninstall; this loader is the only accessor for
- * `SkillPresetsService` (skill offers) and `ConnectorCatalog` (the packaged snapshot
+ * `ConnectorCatalog` (the packaged snapshot
  * source), plus the read-only summaries `plugins.list` shows.
  *
  * Every call re-reads the manifests (they are tiny) — this keeps the
  * "shipped-content edits are visible immediately" behaviour the old
- * `SkillPresetsService` catalog reads had. Broken plugins warn and are skipped.
+ * the ConnectorCatalog reads had. Broken plugins warn and are skipped.
  * `assertInstallablePluginId` is deliberately NOT called (builtin plugins own the
  * reserved `com.kepcup` namespace) and `checkPluginCompatibility` is not run
  * (they ship with the app itself).
@@ -305,7 +305,7 @@ export class BuiltinPlugins {
  * Synchronous on-disk check for the read-only builtin trees (same rules as the async
  * `verifyContributionFiles`: regular files / skill dirs with SKILL.md, no symlinks,
  * nothing resolving outside the plugin dir). Sync because the loader's readers
- * (`SkillPresetsService.#resolveAll`) are synchronous by contract.
+ * (the catalog read paths) are synchronous by contract.
  */
 function verifyBuiltinContributionFiles(manifest: PluginManifest, dir: string): string | null {
   const rootReal = realpathSync(dir);

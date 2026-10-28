@@ -175,7 +175,6 @@ import {
   skillHistoryEntrySchema,
   pluginMarketplacePublicKeySchema,
   pluginMarketplaceUrlSchema,
-  skillPresetInfoSchema,
   unattendedStateSchema,
   usageSummaryOutputSchema,
   wikiHistoryEntrySchema,
@@ -1572,18 +1571,6 @@ export const skillsReadOutputSchema = z.object({
   dirPath: z.string(),
 });
 
-/** Skill marketplace (app-shipped preset catalog). Catalog and install state
- * are GLOBAL: presets install as public skills (public_skills), visible to
- * every bot; no per-bot targeting. */
-export const skillsPresetsListInputSchema = z.void();
-export const skillsPresetsListOutputSchema = z.object({ presets: z.array(skillPresetInfoSchema) });
-export type SkillsPresetsListOutput = z.infer<typeof skillsPresetsListOutputSchema>;
-export const skillsPresetsInstallInputSchema = z.object({
-  presetId: z.string().min(1),
-});
-export const skillsPresetsInstallOutputSchema = z.object({
-  presets: z.array(skillPresetInfoSchema),
-});
 /** 用户确认「技能目录已被删除」后清理其 DB 记录（见 skills.missing 事件）。 */
 export const skillsPurgeMissingInputSchema = z.object({ name: z.string().min(1) });
 export const skillsPurgeMissingOutputSchema = z.object({
@@ -2585,14 +2572,6 @@ export const rpcMethodSchemas = {
   'skills.history': { input: skillsSetNameInputSchema, output: skillsHistoryOutputSchema },
   'skills.rollback': { input: skillsRollbackInputSchema, output: skillsListOutputSchema },
   'skills.read': { input: skillNameInputSchema, output: skillsReadOutputSchema },
-  'skills.presets.list': {
-    input: skillsPresetsListInputSchema,
-    output: skillsPresetsListOutputSchema,
-  },
-  'skills.presets.install': {
-    input: skillsPresetsInstallInputSchema,
-    output: skillsPresetsInstallOutputSchema,
-  },
   'skills.purgeMissing': {
     input: skillsPurgeMissingInputSchema,
     output: skillsPurgeMissingOutputSchema,
@@ -3099,8 +3078,6 @@ const APP_METHODS = [
   'skills.history',
   'skills.rollback',
   'skills.read',
-  'skills.presets.list',
-  'skills.presets.install',
   'wiki.tree',
   'wiki.page',
   'wiki.search',

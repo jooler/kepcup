@@ -144,11 +144,6 @@ export interface SystemPromptInput {
   /** Skills names + descriptions (formatSkillsForPrompt) for <skills> (P08). */
   skills?: string | undefined;
   /**
-   * 未安装的内置推荐技能（docs/design/22-file-skill-routing.md，D63）：
-   * <recommended_skills> 段，install_skill 的匹配来源；空 = 全部已装/无预置。
-   */
-  recommendedSkills?: string | undefined;
-  /**
    * D91：`<capabilities>` 段正文（该 Bot 接入的外部能力：连接应用 / 自定义 MCP，状态 + 用法规则，
    * 见 capabilities/prompt.ts）；空 = 整段省略。取代 D73 的 `<connected_apps>` 与 W5 的 `<mcp_tools>`。
    */
@@ -162,9 +157,10 @@ export interface SystemPromptInput {
  * 处理不了的文件时的升级路径与纪律。静态注入（策略，非状态）。
  */
 function fileHandlingGuidance(hasPluginTools: boolean): string {
+  // P4（D105）：技能获取阶梯 = 插件阶梯（install_skill 工具已删除）。
   const upgrade = hasPluginTools
-    ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 plugin_search 检索官方插件市场，找到合适的认证插件后用 plugin_request_install 请用户确认安装（只出确认卡，由用户决定；安装后你会被续跑）；④仍然没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；⑤仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
-    : '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时用 web_search 检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。';
+    ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②都没有时用 plugin_search 检索官方插件市场，找到合适的认证插件后用 plugin_request_install 请用户确认安装（只出确认卡，由用户决定；安装后你会被续跑）；③仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
+    : '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），先看已安装技能（<skills>）里有没有能处理的；没有就如实告知用户该格式暂不支持，并建议替代做法。';
   return [
     '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用工具处理）。',
     '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接 read / bash 读它，文件正文不在上下文里；副本丢了用 get_attachment 重建。要改写文件先复制到 workspace 的其它位置再改。',
@@ -753,13 +749,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('workspace', workspaceSection),
     section('access', accessSection),
     // 04 文档段落顺序：<wiki_topics>（P09，段 11）之后是 <skills>（P08，段 12）、
-    // <recommended_skills> 与附件阶梯（D63）。
+    // 附件阶梯（D63；P4 起技能获取阶梯 = 插件阶梯）。
     section('wiki_topics', input.wikiTopics ?? ''),
     // D92 T1b WP10：项目 wiki（团队共享）主题段，紧跟 Bot 个人段；K15 不设预算。
     section('project_wiki_topics', input.projectWikiTopics ?? ''),
     section('skills', input.skills ?? ''),
-    // The install ladder (install_skill) is a task's; a turn routes the work.
-    section('recommended_skills', isTurn ? '' : (input.recommendedSkills ?? '')),
+    // The plugin-install ladder (plugin_search / plugin_request_install) is a task's; a turn routes the work.
     section('capabilities', input.capabilities ?? ''),
     section('available_apps', input.availableApps ?? ''),
     section(
@@ -830,7 +825,6 @@ export interface AgentRunContextInput {
   /** D92 T1b WP10：项目 wiki 主题段（同 SystemPromptInput.projectWikiTopics）。 */
   projectWikiTopics?: string | undefined;
   skills?: string | undefined;
-  recommendedSkills?: string | undefined;
   /** D91: `<capabilities>` 段正文（同 SystemPromptInput.capabilities）。 */
   capabilities?: string | undefined;
   /** D73 P1：`<available_apps>` 段正文（同 SystemPromptInput.availableApps）。 */
@@ -978,7 +972,7 @@ const HOST_POLICY_LINES: ReadonlyArray<{
     tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],
     text: (names) => `查阅、收录与清理知识库用 ${names}。`,
   },
-  { tools: ['install_skill', 'create_skill'], text: (names) => `安装或创建技能用 ${names}。` },
+  { tools: ['create_skill'], text: (names) => `创建技能用 ${names}（获取技能改走 plugin_search / plugin_request_install）。` },
   {
     tools: ['call_inkcop_agent'],
     text: (names) =>
@@ -1082,8 +1076,8 @@ function agentFileHandling(toolNames: readonly string[]): string {
       ? '用户消息可能带附件（上下文行中「附件：att_… [mime]」列出 id、文件名、类型与大小）。处理附件前先取得内容：图片随消息附带给你的可直接看，其他文件用 get_attachment 获取（文本返回内容，二进制复制到 workspace 后用你自己的工具处理）。'
       : '',
     '附件行里带 path= 的是宿主在你的 workspace 里物化好的只读副本（系统分享导入的附件）：可以直接读它，文件正文不在上下文里。',
-    toolNames.includes('install_skill')
-      ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②<recommended_skills> 里匹配的应用内置推荐技能，用 install_skill(preset_id) 请求用户授权安装；③都没有时联网检索技能仓库（搜索「格式 + Agent Skill」，如 GitHub 上的 anthropics/skills 生态），找到后用 install_skill(source_url=…) 请求导入（会先做安全扫描）；④仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
+    toolNames.includes('plugin_request_install')
+      ? '遇到当前能力处理不了的文件格式（如 PDF、Office 文档），按以下顺序升级：①已安装技能（<skills>）里有能处理的就用；②都没有时用 plugin_search 检索官方插件市场，找到合适的认证插件后用 plugin_request_install 请用户确认安装（只出确认卡，由用户决定；安装后你会被续跑）；③仍没有就如实告知用户该格式暂不支持，并建议替代做法。'
       : '遇到当前能力处理不了的文件格式，先看已安装技能（<skills>）里有没有能处理的；没有就如实告知用户该格式暂不支持，并建议替代做法。',
     '不要假装已经读取或处理过附件：没拿到内容就说明做不到或先去获取；安装技能的请求被用户拒绝后不要反复重试，降级处理或如实说明。',
   ].filter((rule) => rule.length > 0);
@@ -1140,7 +1134,7 @@ const PERMISSION_TIER_TEXT: Readonly<Record<AgentPermissionTier, string>> = {
 /**
  * run 级动态段（§5「run 级」，每个 run 的 prompt 首个 text 块）：当前时间、
  * `<user_profile>`、`<my_state>`、`<relevant_memories>`、`<workdir>`、
- * `<workspace>`、`<access>`、`<wiki_topics>`、`<skills>`、`<recommended_skills>`。
+ * `<workspace>`、`<access>`、`<wiki_topics>`、`<skills>`。
  * 只读上下文与能力包解耦：未注入对应工具也照常注入。
  */
 export function buildAgentRunContext(input: AgentRunContextInput): string {
@@ -1182,7 +1176,6 @@ export function buildAgentRunContext(input: AgentRunContextInput): string {
     section('wiki_topics', input.wikiTopics ?? ''),
     section('project_wiki_topics', input.projectWikiTopics ?? ''),
     section('skills', input.skills ?? ''),
-    section('recommended_skills', input.recommendedSkills ?? ''),
     section('capabilities', input.capabilities ?? ''),
     section('available_apps', input.availableApps ?? ''),
   ]
