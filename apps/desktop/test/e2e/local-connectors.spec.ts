@@ -61,15 +61,17 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await waitReady(page);
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
 
-    // --- 「本机自建」区始终可见（空态）----------------------------------------------------
+    // --- 「本机自建」始终可达（D105 P4：收编为已安装页的系统卡，空态在卡展开里）----------
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
-    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
-    await expect(dialog.locator('[data-testid="apps-catalog"]')).toBeVisible({ timeout: 30_000 });
-    await expect(dialog.locator('[data-testid="local-connectors-section"]')).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(dialog.locator('[data-testid="local-connectors-empty"]')).toBeVisible();
+    const connectorsCard = dialog.locator(
+      '[data-testid="extension-system-card-local-connectors"]',
+    );
+    await expect(connectorsCard).toBeVisible({ timeout: 30_000 });
+    await connectorsCard.locator('[data-testid="extension-system-card-local-connectors-toggle"]').click();
+    await expect(
+      connectorsCard.locator('[data-testid="local-connectors-empty"]'),
+    ).toBeVisible({ timeout: 15_000 });
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
 
@@ -135,8 +137,12 @@ test('local connectors: section always visible; Bot proposal → card → add �
 
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
-    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
-    const entry = dialog.locator(`[data-testid="local-connector-${connectorId}"]`);
+    // D105 P4：本机自建条目在「本机自建连接」系统卡的展开内容里（不再是连接筛选下的独立区）。
+    const listedCard = dialog.locator('[data-testid="extension-system-card-local-connectors"]');
+    await listedCard
+      .locator('[data-testid="extension-system-card-local-connectors-toggle"]')
+      .click();
+    const entry = listedCard.locator(`[data-testid="local-connector-${connectorId}"]`);
     await expect(entry).toBeVisible({ timeout: 30_000 });
     await expect(entry.locator('[data-testid="local-connector-badge"]')).toHaveText('未审核');
     await expect(entry.locator('[data-testid="local-connector-title"]')).toHaveText('E2E 笔记');

@@ -217,7 +217,8 @@ test('plugins market: without a published index the market shows a failed-sync b
     // 市场是第一个页签（D104 UI 修正：共三个页签）。
     const tabs = dialog.locator('[data-testid^="extension-center-tab-"]');
     await expect(tabs.first()).toHaveAttribute('data-testid', 'extension-center-tab-market');
-    await expect(tabs).toHaveCount(3);
+    // D105 P4：两页签收敛。
+    await expect(tabs).toHaveCount(2);
     await dialog.locator('[data-testid="extension-center-tab-market"]').click();
 
     const status = dialog.locator('[data-testid="plugins-market-status"]');
@@ -327,6 +328,11 @@ test('plugins market: install from the marketplace, then the market card is inst
     await expect(install.locator('[data-testid="plugins-consent"]')).toContainText('Alpha Tool');
     await install.locator('[data-testid="plugins-install-confirm"]').click();
     await expect(install).toBeHidden({ timeout: 30_000 });
+    // D105 P4：安装成功后接入引导弹框（市场路径同样弹）——「完成」收掉再继续。
+    const hint = page.locator('[data-testid="plugins-install-hint"]');
+    await expect(hint).toBeVisible({ timeout: 15_000 });
+    await hint.locator('[data-testid="plugins-install-hint-done"]').click();
+    await expect(hint).toBeHidden({ timeout: 15_000 });
 
     // 市场卡变成「已安装」，按钮禁用。
     const installedButton = card(dialog, VERIFIED_ID).locator(

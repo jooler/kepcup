@@ -8,14 +8,15 @@ import { rpc } from './helpers/create-bot';
 import { copyShippedPlugins } from './helpers/builtin-plugins';
 
 /**
- * 扩展中心分组 e2e（197db376 起为插件卡模型）：
- * - 三个分组页签：市场 / 已安装（插件）/ 本机应用协作；「技能 / 连接 / MCP / 邮件」是
+ * 扩展中心分组 e2e（197db376 起为插件卡模型；D105 P4 两页签收敛）：
+ * - 两个分组页签：市场 / 已安装（插件）；「技能 / 连接 / MCP / 邮件」是
  *   「已安装」顶部的内容筛选 chips，只过滤插件卡网格，不再是独立分组视图；
+ *   本机应用协作 / 本机自建连接是已安装页网格末尾的系统卡（旧 localCollab 深链滚动到它）；
  * - 「连接」筛选视图 = 插件卡网格 + 本机自建独立区，没有「填 URL」入口；
  *   连接应用的目录 / 账号管理从插件卡「管理 · 连接应用」进入（多连接插件进目录网格，
  *   单连接直达账号管理流）；
- * - MCP 完整管理（新建 server / BYO 客户端）从插件卡「管理 · 工具」进入
- *   plugins-content-mcp 内容视图，不依赖开发者模式；
+ * - MCP 管理从插件卡「管理 · 工具」进入 plugins-content-mcp 内容视图（按插件圈定：
+ *   只见该插件投影的 server，新建 / .mcpb / BYO 客户端等全局入口只在无圈定视图出现）；
  * - 设置「应用」只管已连接账号，并能跳到扩展中心；设置里不再有「开发者模式」分区。
  *
  * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
@@ -105,43 +106,33 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
       'true',
     );
 
-    // 连接筛选只作用于插件卡网格：装的是纯 MCP 插件 → 该类别空态；
-    // 本机自建是网格下方的独立区（空态引导 Bot 提案）；没有填 URL 的入口
-    // （无目录卡、无 mcp-add / mcp-new-kind）。
+    // 连接筛选只作用于插件卡网格：装的是纯 MCP 插件 → 该类别空态；本机自建收编为
+    // 「已安装 / 全部」的系统卡（另测）；没有填 URL 的入口（无目录卡）。
     await dialog.locator('[data-testid="plugins-filter-connector"]').click();
     await expect(dialog.locator('[data-testid="plugins-filter-empty"]')).toBeVisible({
       timeout: 30_000,
     });
     await expect(dialog.locator('[data-testid^="apps-catalog-card-"]')).toHaveCount(0);
-    await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
-    await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
-    await expect(dialog.locator('[data-testid="local-connectors-section"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="local-connectors-empty"]')).toBeVisible();
 
-    // MCP：筛选里有插件卡 →「管理 · 工具」进内容视图（plugins-content-mcp，内嵌完整
-    // 管理：可新建 server / BYO 客户端 / .mcpb），不依赖开发者模式；插件的受管
-    // server 行也在其中。
+    // MCP：筛选里有插件卡 →「管理 · 工具」进内容视图（plugins-content-mcp，按插件
+    // 圈定：只有该插件的 server，无新建 / BYO / .mcpb 入口），不依赖开发者模式。
     await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
     const mcpCard = dialog.locator('[data-testid="plugins-card-io.github.tester/mcp-only"]');
     await expect(mcpCard).toBeVisible({ timeout: 30_000 });
     await mcpCard.locator('[data-testid="plugins-manage-mcp-io.github.tester/mcp-only"]').click();
     await expect(dialog.locator('[data-testid="plugins-content-mcp"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-section"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
+    // D105 P4：插件圈定视图只列该插件的 server，全局新建 / .mcpb 入口隐藏。
+    await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid^="mcp-server-plg_"]')).toBeVisible();
 
-    // 键盘：方向键切换分组（tabs: market → installed → localCollab）。
+    // 键盘：方向键在两页签间循环（market ↔ installed）。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowRight');
-    await expect(
-      dialog.locator('[data-testid="extension-center-tab-localCollab"]'),
-    ).toHaveAttribute('aria-selected', 'true');
-    await dialog.locator('[data-testid="extension-center-tab-localCollab"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    // 末项再往右循环回第一项（market → installed）。
     await dialog.locator('[data-testid="extension-center-tab-market"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
@@ -256,11 +247,20 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     const mcpCard = dialog.locator('[data-testid="plugins-card-io.github.tester/mcp-only"]');
     await expect(mcpCard).toBeVisible({ timeout: 30_000 });
+    // 插件圈定视图：只有插件投影的 server；手动 server（ro）与新建入口都在
+    // 「工具」筛选视图下方的全局管理区（DEV-075：M2 顺延期间的保留入口）。
     await mcpCard.locator('[data-testid="plugins-manage-mcp-io.github.tester/mcp-only"]').click();
     await expect(dialog.locator('[data-testid="plugins-content-mcp"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(
+      dialog.locator('[data-testid^="mcp-server-plg_"]'),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
+    await dialog.locator('[data-testid="plugins-content-back"]').click();
+    await expect(mcpCard).toBeVisible();
+    await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
+    await expect(dialog.locator('[data-testid="manual-mcp-section"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
     await dialog.locator('[data-testid="mcp-edit-ro"]').click();
     await expect(dialog.locator('[data-testid="mcp-target-locked"]')).toHaveCount(0);
