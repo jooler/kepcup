@@ -254,6 +254,11 @@
       {#if entry.description.length > 0}
         <p class="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
       {/if}
+      {#if entry.capabilitySummary.length > 0}
+        <p class="mt-0.5 text-xs" data-testid={`plugins-market-summary-${entry.id}`}>
+          {entry.capabilitySummary}
+        </p>
+      {/if}
       {#if entry.author !== null}
         <p class="mt-0.5 text-xs text-muted-foreground">{entry.author}</p>
       {/if}

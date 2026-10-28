@@ -22,6 +22,7 @@
     type ExtensionCenterKindFilter,
   } from './tabs';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
+  import PluginFieldForm from '../plugins/PluginFieldForm.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -62,6 +63,13 @@
   let uninstallTarget = $state<string | null>(null);
   /** 插件卡片「管理」进入的内容管理视图；null = 插件网格。 */
   let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail'; pluginId: string } | null>(null);
+  /** 卡片「设置」就地展开的插件 config 表单（声明了 config.fields 的插件）；null = 收起。 */
+  let configPanelId = $state<string | null>(null);
+  let configValues = $state<Record<string, unknown>>({});
+  /** 有存值 secret 的敏感字段键（表单占位「已保存」；core 永不回传敏感明文）。 */
+  let configStoredKeys = $state<string[]>([]);
+  let configLoading = $state(false);
+  let configSaving = $state(false);
   /** 账号管理流当前的应用（连接 slug：插件直达与本机自建共用一套组件）。 */
   let managingConnectorId = $state<string | null>(null);
   /** 账号管理流里点开的账号详情；null = 未点开（单账号由流自动直进详情）。 */
@@ -78,12 +86,13 @@
     void plugins.load(true);
   });
 
-  // 深链 / 手动切换筛选时退出内容管理视图，回到插件网格。
+  // 深链 / 手动切换筛选时退出内容管理视图与设置表单，回到插件网格。
   $effect(() => {
     void filter;
     contentView = null;
     managingConnectorId = null;
     detailConnectionId = null;
+    closeConfig();
   });
 
   const FILTER_CHIPS: ReadonlyArray<{
@@ -102,10 +111,27 @@
     const counts = new Map<ExtensionCenterFilter, number>([['all', plugins.plugins.length]]);
     for (const kind of Object.keys(FILTER_COUNT_KEYS) as ExtensionCenterKindFilter[]) {
       const countKey = FILTER_COUNT_KEYS[kind];
-      counts.set(kind, plugins.plugins.filter((plugin) => plugin.counts[countKey] > 0).length);
+      counts.set(
+        kind,
+        plugins.plugins.filter((plugin) => matchesKind(plugin, countKey)).length,
+      );
     }
     return counts;
   });
+
+  /**
+   * 筛选命中口径（D105 P4）：贡献计数之外，`instanceCounts` 也算——纯实例插件
+   * （如邮件插件，贡献只是供给规范）加过账号后能被对应类别筛出。
+   */
+  function matchesKind(
+    plugin: PluginSummary,
+    countKey: 'skills' | 'connectors' | 'mcp' | 'mail',
+  ): boolean {
+    if (plugin.counts[countKey] > 0) return true;
+    if (countKey === 'mail') return plugin.instanceCounts.mail > 0;
+    if (countKey === 'mcp') return plugin.instanceCounts.mcp > 0;
+    return false;
+  }
 
   /** 网格里的插件（可更新的恒置顶）：筛选只按贡献类别过滤这一张列表。 */
   const visiblePlugins = $derived.by(() => {
@@ -114,7 +140,7 @@
     );
     if (filter === 'all') return sorted;
     const countKey = FILTER_COUNT_KEYS[filter];
-    return sorted.filter((plugin) => plugin.counts[countKey] > 0);
+    return sorted.filter((plugin) => matchesKind(plugin, countKey));
   });
 
   /** 被市场索引吊销的插件：不论哪种视图都在页顶统一警告。 */
@@ -240,6 +266,48 @@
     installOpen = true;
   }
 
+  // --- 卡片「设置」（D105 P4）：声明字段 config 的就地展开表单 ------------------
+
+  async function openConfig(plugin: PluginSummary): Promise<void> {
+    configPanelId = plugin.id;
+    configValues = {};
+    configStoredKeys = [];
+    configLoading = true;
+    try {
+      const config = await plugins.loadConfig(plugin.id);
+      // 并发展开另一张卡时丢弃旧结果。
+      if (configPanelId === plugin.id) {
+        configValues = { ...config.values };
+        configStoredKeys = config.storedSensitiveKeys;
+      }
+    } catch (caught) {
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+      if (configPanelId === plugin.id) configPanelId = null;
+    } finally {
+      configLoading = false;
+    }
+  }
+
+  function closeConfig(): void {
+    configPanelId = null;
+    configValues = {};
+    configStoredKeys = [];
+  }
+
+  async function saveConfig(plugin: PluginSummary): Promise<void> {
+    configSaving = true;
+    try {
+      await plugins.saveConfig(plugin.id, configValues);
+      toast.success(t('plugins.config.saved'));
+      closeConfig();
+    } catch (caught) {
+      // core 校验（必填 / 类型 / min/max）失败：表单留在原地改。
+      toast.error(t('plugins.toast.failed', { reason: reasonOf(caught) }));
+    } finally {
+      configSaving = false;
+    }
+  }
+
   function openUpdate(plugin: PluginSummary): void {
     installMode = 'marketplace';
     installTarget = { id: plugin.id };
@@ -325,6 +393,14 @@
       >
         {plugin.enabled ? t('plugins.menu.disable') : t('plugins.menu.enable')}
       </DropdownMenu.Item>
+      {#if plugin.configFields.length > 0}
+        <DropdownMenu.Item
+          onSelect={() => void openConfig(plugin)}
+          data-testid={`plugins-config-menu-${plugin.id}`}
+        >
+          {t('plugins.menu.settings')}
+        </DropdownMenu.Item>
+      {/if}
       {#if plugin.dirPath !== null && window.kepcup?.showItemInFolder !== undefined}
         <DropdownMenu.Item
           onSelect={() => reveal(plugin)}
@@ -430,6 +506,37 @@
               : t('plugins.manage')}
           </Button>
         {/each}
+      </div>
+    {/if}
+    {#if configPanelId === plugin.id}
+      <div
+        class="mt-2 space-y-2.5 rounded-lg border bg-muted/30 px-3 py-3"
+        data-testid={`plugins-config-${plugin.id}`}
+      >
+        <p class="text-xs font-medium">{t('plugins.config.heading')}</p>
+        {#if configLoading}
+          <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>
+        {:else}
+          <PluginFieldForm
+            fields={plugin.configFields}
+            bind:values={configValues}
+            idScope={`plugins-config-${plugin.id}`}
+            storedSensitiveKeys={configStoredKeys}
+          />
+          <div class="flex items-center justify-end gap-2">
+            <Button size="sm" variant="ghost" onclick={closeConfig} data-testid={`plugins-config-${plugin.id}-cancel`}>
+              {t('plugins.cancel')}
+            </Button>
+            <Button
+              size="sm"
+              disabled={configSaving}
+              onclick={() => void saveConfig(plugin)}
+              data-testid={`plugins-config-${plugin.id}-save`}
+            >
+              {t('settings.save')}
+            </Button>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
