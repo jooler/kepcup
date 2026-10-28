@@ -18,20 +18,29 @@ import {
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
- * 插件系统「已安装」页签 e2e（D104 P0a-3）：
- * - 页签顺序（market 最前、方向键循环回它）与默认选中不变（skills）；
+ * 插件系统「已安装」页签 e2e（D104 P0a-3；197db376 起改为插件卡模型）：
+ * - 页签顺序（market 最前、方向键循环回它）与默认选中不变（installed）；
+ *   「技能 / 连接 / MCP / 邮件」是已安装页顶部的内容筛选 chips，只过滤插件卡网格；
  * - 本地安装全流程（路径输入框 → 检视 → 同意面板 → 确认安装）；
- * - 技能 / MCP / 连接三处来源徽标与管理项锁定；core 层 PLUGIN_MANAGED 守卫；
- * - 启停 / 卸载的投影摘除与恢复；同 id 重装的冲突阻塞；窄屏页签条。
+ * - 每张插件卡：来源徽标 + 类别标签；启停 / 卸载收进卡右上角 ⋮ 菜单（内容渲染在
+ *   body 下的 portal，不在弹框 DOM 里）；按贡献类别给「管理 · 连接应用 / 管理 · 工具」
+ *   入口，打开 plugins-content-connector（按插件圈定的目录网格）/ plugins-content-mcp
+ *   （内嵌完整 MCP 管理）内容视图；
+ * - 技能（右栏面板）/ MCP（内容视图）/ 连接（内容视图目录卡）三处来源徽标与
+ *   管理项锁定；core 层 PLUGIN_MANAGED 守卫；启停 / 卸载的投影摘除与恢复；
+ *   同 id 重装的冲突阻塞；窄屏页签条。
  *
  * 界面里打不开原生文件对话框，安装全程用路径输入框。夹具不含 mcpb（e2e 环境没有
- * 受管 Node 运行时）：2 个技能 + 1 个连接器 + 1 个 http MCP。
+ * 受管 Node 运行时）：2 个技能 + 连接器（徽标 / 投影用例带 2 个，多连接插件才进
+ * 目录网格视图）+ 1 个 http MCP。
  */
 
 const PLUGIN_ID = 'io.github.tester/fixture';
 const SKILL_A = 'plg-alpha';
 const SKILL_B = 'plg-beta';
 const CONNECTOR_SLUG = 'plgconn';
+/** 第二个连接器（slug 只许小写字母数字）：单连接插件的「管理」直达账号流，目录网格视图需要 ≥2 个连接器。 */
+const CONNECTOR_SLUG_B = 'plgconnb';
 const HTTP_KEY = 'docs';
 
 type Rpc = (method: string, input?: unknown) => Promise<unknown>;
@@ -84,7 +93,13 @@ async function launch(
 }
 
 async function makeFixture(
-  options: { id?: string; version?: string; skillADescription?: string } = {},
+  options: {
+    id?: string;
+    version?: string;
+    skillADescription?: string;
+    /** 连接器 slug 列表；缺省单个 plgconn。 */
+    connectors?: string[];
+  } = {},
 ): Promise<{ path: string; sha256: string }> {
   const built = await buildPluginFixture({
     dir: await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugin-fx-')),
@@ -96,7 +111,7 @@ async function makeFixture(
       { name: SKILL_A, description: options.skillADescription ?? '插件技能 A' },
       { name: SKILL_B },
     ],
-    connectors: [{ slug: CONNECTOR_SLUG }],
+    connectors: (options.connectors ?? [CONNECTOR_SLUG]).map((slug) => ({ slug })),
     http: [{ id: HTTP_KEY, url: 'https://mcp.docs.test/mcp' }],
   });
   return { path: built.path, sha256: built.sha256 };
@@ -128,6 +143,15 @@ async function openInstalledTab(page: Page): Promise<Locator> {
   await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
   await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();
   return dialog;
+}
+
+/**
+ * 插件卡 ⋮ 菜单操作：启停 / 更新 / 卸载等菜单项收在卡右上角的菜单里，
+ * 内容渲染在 body 下的 portal（不在扩展中心弹框 DOM 里），按页级定位点。
+ */
+async function clickPluginMenuItem(page: Page, trigger: Locator, itemId: string): Promise<void> {
+  await trigger.click();
+  await page.locator(`[data-testid="${itemId}"]`).click();
 }
 
 async function openSkillsPanel(page: Page): Promise<Page> {
@@ -249,7 +273,8 @@ test('plugins: managed items carry source badges and lose single-item delete ent
     const launched = await launch(home, llm.url);
     app = launched.app;
     const page = launched.page;
-    const fixture = await makeFixture();
+    // 两个连接器：多连接插件的「管理 · 连接应用」才进按插件圈定的目录网格（单连接直达账号流）。
+    const fixture = await makeFixture({ connectors: [CONNECTOR_SLUG, CONNECTOR_SLUG_B] });
     await createBotAndOpenChat(page, 'Plugin Bot');
     await installViaRpc(page, fixture);
     await page.reload();
@@ -272,10 +297,15 @@ test('plugins: managed items carry source badges and lose single-item delete ent
       ),
     ).toBeVisible();
 
-    // MCP：server 行有来源徽标与「由插件管理」，编辑入口不存在（「测试」「工具」保留）。
+    // MCP：从插件卡「管理 · 工具」进内容视图（plugins-content-mcp，内嵌完整 MCP 管理），
+    // server 行有来源徽标与「由插件管理」，编辑入口不存在（「测试」「工具」保留）。
     const serverId = await pluginServerId(page);
-    const dialog = await openExtensionCenter(page);
-    await dialog.locator('[data-testid="plugins-filter-mcp"]').click();
+    const dialog = await openInstalledTab(page);
+    const card = dialog.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`);
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await card.locator(`[data-testid="plugins-manage-mcp-${PLUGIN_ID}"]`).click();
+    await expect(dialog.locator('[data-testid="plugins-content-mcp"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="plugins-content-back"]')).toBeVisible();
     const serverRow = dialog.locator(`[data-testid="mcp-server-${serverId}"]`);
     await expect(serverRow).toBeVisible({ timeout: 30_000 });
     await expect(serverRow.locator(`[data-testid="mcp-plugin-badge-${serverId}"]`)).toBeVisible();
@@ -283,13 +313,18 @@ test('plugins: managed items carry source badges and lose single-item delete ent
     await expect(dialog.locator(`[data-testid="mcp-edit-${serverId}"]`)).toHaveCount(0);
     await expect(serverRow.locator(`[data-testid="mcp-tools-toggle-${serverId}"]`)).toBeVisible();
 
-    // 连接筛选：连接器卡带插件徽标。
-    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
+    // 连接：「管理 · 连接应用」进按插件圈定的目录网格，连接器卡带插件徽标；
+    // 卡上操作也是插件的 ⋮ 菜单（没有条目自己的删除 / 卸载入口）。
+    await dialog.locator('[data-testid="plugins-content-back"]').click();
+    await expect(card).toBeVisible();
+    await card.locator(`[data-testid="plugins-manage-connector-${PLUGIN_ID}"]`).click();
+    await expect(dialog.locator('[data-testid="plugins-content-connector"]')).toBeVisible();
     const connectorCard = dialog.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`);
     await expect(connectorCard).toBeVisible({ timeout: 30_000 });
     await expect(
       connectorCard.locator(`[data-testid="apps-catalog-plugin-badge-${CONNECTOR_SLUG}"]`),
     ).toBeVisible();
+    await expect(connectorCard.locator(`[data-testid="plugins-menu-${PLUGIN_ID}"]`)).toBeVisible();
   } finally {
     await app?.close();
     await llm.stop();
@@ -339,7 +374,7 @@ test('plugins: disable hides projections, re-enable restores them', async () => 
     const launched = await launch(home, llm.url);
     app = launched.app;
     const page = launched.page;
-    const fixture = await makeFixture();
+    const fixture = await makeFixture({ connectors: [CONNECTOR_SLUG, CONNECTOR_SLUG_B] });
     await createBotAndOpenChat(page, 'Plugin Bot');
     await installViaRpc(page, fixture);
     await page.reload();
@@ -350,26 +385,47 @@ test('plugins: disable hides projections, re-enable restores them', async () => 
     const dialog = await openInstalledTab(page);
     const card = dialog.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`);
     await expect(card).toBeVisible({ timeout: 30_000 });
-    await card.locator(`[data-testid="plugins-toggle-${PLUGIN_ID}"]`).click();
+    // 停用入口在插件卡 ⋮ 菜单里（内容在 body 下的 portal）；停用后卡面出现「已停用」。
+    await clickPluginMenuItem(
+      page,
+      card.locator(`[data-testid="plugins-menu-${PLUGIN_ID}"]`),
+      `plugins-toggle-${PLUGIN_ID}`,
+    );
+    await expect(dialog.locator(`[data-testid="plugins-disabled-${PLUGIN_ID}"]`)).toBeVisible();
 
-    // 停用后：技能与连接器摘除。
+    // 停用后：技能摘除。
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
     const skills = await openSkillsPanel(page);
     await expect(skills.locator(`[data-testid="skill-item-${SKILL_A}"]`)).toHaveCount(0, {
       timeout: 30_000,
     });
-    const dialog2 = await openExtensionCenter(page);
-    await dialog2.locator('[data-testid="plugins-filter-connector"]').click();
+
+    // 连接投影摘除：「管理 · 连接应用」的目录网格里没有该插件的连接卡（目录空态）。
+    const dialog2 = await openInstalledTab(page);
+    const card2 = dialog2.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`);
+    await expect(card2).toBeVisible({ timeout: 30_000 });
+    await card2.locator(`[data-testid="plugins-manage-connector-${PLUGIN_ID}"]`).click();
+    await expect(dialog2.locator('[data-testid="plugins-content-connector"]')).toBeVisible();
     await expect(
       dialog2.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`),
     ).toHaveCount(0, { timeout: 30_000 });
+    await expect(dialog2.locator('[data-testid="apps-catalog-none"]')).toBeVisible();
 
-    // 再启用：技能与连接器恢复。
-    await dialog2.locator('[data-testid="extension-center-tab-installed"]').click();
-    await dialog2.locator(`[data-testid="plugins-toggle-${PLUGIN_ID}"]`).click();
+    // 再启用（菜单项换向「启用」）：连接卡恢复且带插件徽标，技能恢复。
+    await dialog2.locator('[data-testid="plugins-content-back"]').click();
+    await expect(card2).toBeVisible();
+    await clickPluginMenuItem(
+      page,
+      card2.locator(`[data-testid="plugins-menu-${PLUGIN_ID}"]`),
+      `plugins-toggle-${PLUGIN_ID}`,
+    );
+    await expect(dialog2.locator(`[data-testid="plugins-disabled-${PLUGIN_ID}"]`)).toHaveCount(0);
+    await card2.locator(`[data-testid="plugins-manage-connector-${PLUGIN_ID}"]`).click();
+    const restoredCard = dialog2.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`);
+    await expect(restoredCard).toBeVisible({ timeout: 30_000 });
     await expect(
-      dialog2.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`).first(),
+      restoredCard.locator(`[data-testid="apps-catalog-plugin-badge-${CONNECTOR_SLUG}"]`),
     ).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog2).toBeHidden({ timeout: 15_000 });
@@ -393,7 +449,7 @@ test('plugins: uninstall removes the card and every projection', async () => {
     const launched = await launch(home, llm.url);
     app = launched.app;
     const page = launched.page;
-    const fixture = await makeFixture();
+    const fixture = await makeFixture({ connectors: [CONNECTOR_SLUG, CONNECTOR_SLUG_B] });
     await createBotAndOpenChat(page, 'Plugin Bot');
     await installViaRpc(page, fixture);
     await page.reload();
@@ -401,19 +457,34 @@ test('plugins: uninstall removes the card and every projection', async () => {
     await openConversationByName(page, 'Plugin Bot');
     await dismissStartPanel(page);
 
+    // 先进「管理 · 连接应用」内容视图（多连接插件 → 按插件圈定的目录网格）：
+    // 从目录卡上的插件 ⋮ 菜单卸载，目录里的连接卡必须随之摘除（目录空态出现）。
     const dialog = await openInstalledTab(page);
     const card = dialog.locator(`[data-testid="plugins-card-${PLUGIN_ID}"]`);
     await expect(card).toBeVisible({ timeout: 30_000 });
-    await card.locator(`[data-testid="plugins-uninstall-${PLUGIN_ID}"]`).click();
+    await card.locator(`[data-testid="plugins-manage-connector-${PLUGIN_ID}"]`).click();
+    await expect(dialog.locator('[data-testid="plugins-content-connector"]')).toBeVisible();
+    const connectorCard = dialog.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`);
+    await expect(connectorCard).toBeVisible({ timeout: 30_000 });
+    await clickPluginMenuItem(
+      page,
+      connectorCard.locator(`[data-testid="plugins-menu-${PLUGIN_ID}"]`),
+      `plugins-uninstall-${PLUGIN_ID}`,
+    );
 
     const confirmDialog = page.locator('[data-testid="plugins-uninstall-dialog"]');
     await expect(confirmDialog).toBeVisible();
     await confirmDialog.locator('[data-testid="plugins-uninstall-confirm"]').click();
 
+    await expect(connectorCard).toHaveCount(0, { timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="apps-catalog-none"]')).toBeVisible();
+
+    // 返回插件列表：插件卡与全部投影摘除。
+    await dialog.locator('[data-testid="plugins-content-back"]').click();
     await expect(card).toHaveCount(0, { timeout: 30_000 });
     await expect(dialog.locator('[data-testid="plugins-empty"]')).toBeVisible();
 
-    // 三处投影全部摘除：MCP server 行、公共技能、连接器卡。
+    // MCP 投影（core settings）与公共技能同样摘除。
     const settings = (await page.evaluate(() =>
       (window as unknown as { __kepcupRpc: Rpc }).__kepcupRpc('settings.get', undefined),
     )) as { mcpServers: Array<{ id: string; source?: { kind: string } }> };
@@ -424,11 +495,6 @@ test('plugins: uninstall removes the card and every projection', async () => {
     await expect(skills.locator(`[data-testid="skill-item-${SKILL_A}"]`)).toHaveCount(0, {
       timeout: 30_000,
     });
-    const dialog2 = await openExtensionCenter(page);
-    await dialog2.locator('[data-testid="plugins-filter-connector"]').click();
-    await expect(
-      dialog2.locator(`[data-testid="apps-catalog-card-${CONNECTOR_SLUG}"]`),
-    ).toHaveCount(0, { timeout: 30_000 });
   } finally {
     await app?.close();
     await llm.stop();

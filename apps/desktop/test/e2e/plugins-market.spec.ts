@@ -30,8 +30,9 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  * 把官方市场指到它（仅测试钩子构建读取）。
  *
  * 覆盖：未配置市场（no_keys，无卡片）、浏览与筛选（认证 / 社区折叠、搜索、类别）、
- * 从市场安装（同意面板无 developer 警示）、检查更新 → 权限扩大差异勾选 → 更新、
- * 撤销（卡片提示 + 自动停用）、自建市场缺公钥（no_custom_key）。
+ * 从市场安装（同意面板无 developer 警示）、检查更新 → 权限扩大差异勾选 → 更新
+ * （更新入口在插件卡 ⋮ 菜单，卡面带「可更新」徽标）、撤销（页顶提示 + 卡面
+ * 「已停用」态 + 菜单项换向「启用」）、自建市场缺公钥（no_custom_key）。
  *
  * Bot 确认卡不在这里脚本化：core 集成测试 `packages/core/test/integration/plugins-bot.test.ts`
  * 已覆盖「plugin_search → plugin_request_install → setup 失败 → 安装 → 重试续跑」全流程
@@ -386,9 +387,12 @@ test('plugins market: check updates, acknowledge expanded permissions, update to
 
     const installed = await openInstalled(page);
     await installed.locator('[data-testid="plugins-check-updates"]').click();
-    const updateButton = installed.locator(`[data-testid="plugins-update-${VERIFIED_ID}"]`);
-    await expect(updateButton).toBeVisible({ timeout: 30_000 });
-    await updateButton.click();
+    // 卡面出现「可更新」徽标；更新入口收在插件卡 ⋮ 菜单里（内容在 body 下的 portal）。
+    await expect(
+      installed.locator(`[data-testid="plugins-update-badge-${VERIFIED_ID}"]`),
+    ).toBeVisible({ timeout: 30_000 });
+    await installed.locator(`[data-testid="plugins-menu-${VERIFIED_ID}"]`).click();
+    await page.locator(`[data-testid="plugins-update-${VERIFIED_ID}"]`).click();
 
     const install = page.locator('[data-testid="plugins-install-dialog"]');
     await expect(install).toBeVisible();
@@ -412,7 +416,10 @@ test('plugins market: check updates, acknowledge expanded permissions, update to
 
     const installedCard = installed.locator(`[data-testid="plugins-card-${VERIFIED_ID}"]`);
     await expect(installedCard).toContainText('版本 1.1.0', { timeout: 30_000 });
-    await expect(installed.locator(`[data-testid="plugins-update-${VERIFIED_ID}"]`)).toHaveCount(0);
+    // 更新完成后卡面不再有「可更新」徽标。
+    await expect(
+      installed.locator(`[data-testid="plugins-update-badge-${VERIFIED_ID}"]`),
+    ).toHaveCount(0, { timeout: 30_000 });
   } finally {
     await app?.close();
     await llm.stop();
@@ -455,9 +462,18 @@ test('plugins market: a revoked version is flagged and the plugin is disabled', 
     const revoked = installed.locator(`[data-testid="plugins-revoked-${VERIFIED_ID}"]`);
     await expect(revoked).toBeVisible({ timeout: 30_000 });
     await expect(revoked).toContainText('已被撤销并自动停用');
+    // 自动停用落在卡面上：「已停用」状态行 + ⋮ 菜单里的启停项换向「启用」。
     await expect(
-      installed.locator(`[data-testid="plugins-toggle-${VERIFIED_ID}"]`),
-    ).toHaveAttribute('aria-checked', 'false');
+      installed.locator(`[data-testid="plugins-disabled-${VERIFIED_ID}"]`),
+    ).toBeVisible();
+    await installed.locator(`[data-testid="plugins-menu-${VERIFIED_ID}"]`).click();
+    await expect(page.locator(`[data-testid="plugins-toggle-${VERIFIED_ID}"]`)).toContainText(
+      '启用',
+    );
+    // 关掉 ⋮ 菜单（不关弹框），再去看市场卡。
+    await page.keyboard.press('Escape');
+    await expect(page.locator(`[data-testid="plugins-toggle-${VERIFIED_ID}"]`)).toHaveCount(0);
+    await expect(installed).toBeVisible();
 
     // 市场卡也带撤销徽标，且安装 / 更新按钮禁用（同版本已装、无更新 → installed 态）。
     await installed.locator('[data-testid="extension-center-tab-market"]').click();
