@@ -41,8 +41,7 @@ export function setupAliasOf(
       return {
         kind: 'setting',
         itemId: 'mail.account',
-        // 厂商预填（qq / gmail / …）映到目录字段 `provider`；用户仍可改选。
-        ...(requirement.provider !== undefined ? { prefill: { provider: requirement.provider } } : {}),
+        // P3：无厂商预填——卡上列已安装的邮件插件，表单由插件实例字段构建。
         reason:
           requirement.reason !== undefined && requirement.reason.trim().length > 0
             ? requirement.reason

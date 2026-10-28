@@ -3,10 +3,10 @@
   import { t, listSeparator } from '$lib/i18n';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
-  import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { formatBytes, runtimeLabel } from '../settings/mcpb-install';
   import type { PluginForm } from './plugin-install';
+  import PluginFieldForm from './PluginFieldForm.svelte';
 
   /**
    * 插件同意面板（D104 设计 51 §5 第 5 步）：`plugins.inspect` 推导结果的渲染，本地安装
@@ -192,55 +192,12 @@
           <Label class="text-xs">
             {t('plugins.consent.configTitle')} · {item.displayName}
           </Label>
-          {#each item.userConfigFields as field (field.key)}
-            <div class="grid gap-1">
-              <Label for={`plugin-field-${item.id}-${field.key}`} class="text-xs">
-                {field.title}
-                {#if field.required}<span class="text-destructive"
-                    >· {t('plugins.consent.required')}</span
-                  >{/if}
-                {#if field.sensitive}<span class="text-muted-foreground"
-                    >· {t('plugins.consent.sensitive')}</span
-                  >{/if}
-              </Label>
-              {#if field.type === 'boolean'}
-                <Checkbox
-                  id={`plugin-field-${item.id}-${field.key}`}
-                  checked={form[item.id]?.[field.key] === true}
-                  onCheckedChange={(checked) => {
-                    const current = form[item.id] ?? {};
-                    form[item.id] = { ...current, [field.key]: checked === true };
-                  }}
-                />
-              {:else if field.multiple}
-                <textarea
-                  id={`plugin-field-${item.id}-${field.key}`}
-                  class="min-h-16 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
-                  value={(form[item.id]?.[field.key] as string | undefined) ?? ''}
-                  oninput={(event) => {
-                    const current = form[item.id] ?? {};
-                    form[item.id] = { ...current, [field.key]: event.currentTarget.value };
-                  }}
-                  data-testid={`${testid}-field-${item.id}-${field.key}`}></textarea>
-              {:else}
-                <Input
-                  id={`plugin-field-${item.id}-${field.key}`}
-                  class="h-8"
-                  type={field.sensitive ? 'password' : field.type === 'number' ? 'number' : 'text'}
-                  autocomplete="off"
-                  value={(form[item.id]?.[field.key] as string | undefined) ?? ''}
-                  oninput={(event) => {
-                    const current = form[item.id] ?? {};
-                    form[item.id] = { ...current, [field.key]: event.currentTarget.value };
-                  }}
-                  data-testid={`${testid}-field-${item.id}-${field.key}`}
-                />
-              {/if}
-              {#if field.description.length > 0}
-                <p class="text-xs text-muted-foreground">{field.description}</p>
-              {/if}
-            </div>
-          {/each}
+          <PluginFieldForm
+            fields={item.userConfigFields}
+            values={form[item.id] ?? (form[item.id] = {})}
+            idScope={`plugin-field-${item.id}`}
+            testid={`${testid}-fields-${item.id}`}
+          />
         </div>
       {/if}
     {/each}

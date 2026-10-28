@@ -34,6 +34,7 @@ const summary = (overrides: Partial<PluginSummary>): PluginSummary => ({
   updateAvailable: null,
   revoked: null,
   configFields: [],
+  instanceFields: [],
   instanceCounts: { mail: 0, mcp: 0 },
   providesInstances: [],
   ...overrides,
