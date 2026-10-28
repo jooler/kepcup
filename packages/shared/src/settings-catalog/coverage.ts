@@ -32,6 +32,18 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     reason: 'AgentCard 按智能体生成的动态锚点；由 agents.external 经分区锚点 agents 覆盖',
   },
   {
+    kind: 'anchor',
+    id: 'bot-plugins',
+    reason:
+      'D105 Bot「插件」区块的容器锚点；细选仍由 bot.mcp-servers / bot.apps 条目经别名锚点（bot-apps / bot-mcp）覆盖',
+  },
+  {
+    kind: 'anchor',
+    id: 'project-plugins',
+    reason:
+      'D105 项目组「插件」分区：项目内叠加授权，不改成员 Bot 个人配置，不经对话读写（无目录条目）',
+  },
+  {
     kind: 'settings-section',
     id: 'contacts',
     reason:
@@ -131,6 +143,7 @@ export const DIALOG_SURFACE_SECTIONS = {
 export const PROJECT_DETAIL_SECTIONS = [
   'overview',
   'members',
+  'plugins',
   'grants',
   'schedules',
   'danger',

@@ -321,6 +321,16 @@ export type PluginsInstancesUpdateOutput = z.infer<typeof pluginsInstancesUpdate
 export const pluginsInstancesDeleteInputSchema = z.object({ id: pluginInstanceIdSchema });
 export type PluginsInstancesDeleteInput = z.infer<typeof pluginsInstancesDeleteInputSchema>;
 
+/**
+ * D105 P2 注入模型：写 Bot 的插件启用集（`profile_json.runtime.plugin_ids`，整体替换）。
+ * 插件 id 均须已安装；Bot 的其他 Profile 字段保持三方合并语义不变。
+ */
+export const pluginsSetBotPluginsInputSchema = z.object({
+  botId: z.string().min(1),
+  pluginIds: z.array(pluginIdSchema).max(200),
+});
+export type PluginsSetBotPluginsInput = z.infer<typeof pluginsSetBotPluginsInputSchema>;
+
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });
 export type PluginsChangedPayload = z.infer<typeof pluginsChangedPayloadSchema>;
