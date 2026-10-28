@@ -1,6 +1,14 @@
 import { z } from 'zod';
-import { mcpbUserConfigFieldSchema, mcpbUserConfigValueSchema } from './mcpb.js';
-import { pluginIdSchema, pluginVersionSchema } from './plugin-manifest.js';
+import {
+  pluginFieldSchema,
+  pluginFieldSummarySchema,
+  pluginFieldValueSchema,
+  pluginIdSchema,
+  pluginInstanceKindSchema,
+  pluginVersionSchema,
+} from './plugin-manifest.js';
+
+export { pluginFieldSchema, pluginFieldValueSchema } from './plugin-manifest.js';
 
 /**
  * Plugin system RPC contracts (D104, docs/design/51-plugin-system.md §5 / §8):
@@ -78,6 +86,12 @@ export const pluginSummarySchema = z.object({
   updateAvailable: z.object({ version: z.string() }).nullable(),
   /** P1-1: revocation marker from the marketplace index (`warn` flags, `disable` auto-disabled). */
   revoked: z.enum(['warn', 'disable']).nullable().default(null),
+  /** D105 P1: declared plugin config fields (safe projection — no `default`). */
+  configFields: z.array(pluginFieldSummarySchema),
+  /** D105 P1: created instances per instantiable kind. */
+  instanceCounts: z.object({ mail: z.number().int(), mcp: z.number().int() }),
+  /** D105 P1: instantiable capability kinds the manifest declares. */
+  providesInstances: z.array(pluginInstanceKindSchema),
 });
 export type PluginSummary = z.infer<typeof pluginSummarySchema>;
 
@@ -114,7 +128,7 @@ export const pluginConsentMcpSchema = z.discriminatedUnion('kind', [
       .nullable(),
     mcpbSha256: z.string(),
     unpackedSize: z.number().int(),
-    userConfigFields: z.array(mcpbUserConfigFieldSchema),
+    userConfigFields: z.array(pluginFieldSchema),
     compatible: z.boolean(),
     incompatibleReason: z.string().nullable(),
   }),
@@ -170,6 +184,10 @@ export const pluginInspectOutputSchema = z.object({
   installable: z.boolean(),
   /** Human-readable blockers (conflicts, incompatibility, missing runtimes, …). */
   blockers: z.array(z.string()),
+  /** D105 P1: declared plugin config fields (safe projection — no `default`). */
+  configFields: z.array(pluginFieldSummarySchema),
+  /** D105 P1: one-line capability summary derived from the manifest. */
+  capabilitySummary: z.string(),
 });
 export type PluginInspectOutput = z.infer<typeof pluginInspectOutputSchema>;
 
@@ -185,7 +203,7 @@ export const pluginsInstallInputSchema = z.object({
   source: pluginSourceSchema,
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** mcp contribution id → that MCPB's user_config values. */
-  userConfig: z.record(z.string(), z.record(z.string(), mcpbUserConfigValueSchema)).default({}),
+  userConfig: z.record(z.string(), z.record(z.string(), pluginFieldValueSchema)).default({}),
   /**
    * P1-2: required when the update expands the derived permission set
    * (`inspect.update.permissionsExpanded`); without it core refuses the update.
@@ -203,7 +221,7 @@ export const pluginsUpdateInputSchema = z.object({
   /** Absent = the highest compatible version in the current market's index. */
   version: pluginVersionSchema.optional(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
-  userConfig: z.record(z.string(), z.record(z.string(), mcpbUserConfigValueSchema)).default({}),
+  userConfig: z.record(z.string(), z.record(z.string(), pluginFieldValueSchema)).default({}),
   /** Required when the update expands the derived permission set. */
   acknowledgeDiff: z.boolean().default(false),
 });
@@ -223,6 +241,83 @@ export type PluginsSetEnabledOutput = z.infer<typeof pluginsSetEnabledOutputSche
 
 export const pluginsUninstallInputSchema = z.object({ id: pluginIdSchema });
 export type PluginsUninstallInput = z.infer<typeof pluginsUninstallInputSchema>;
+
+// --- plugin config & instances (D105 P1, todo/plugin-platform README §4.1) -------------------
+
+export const pluginInstanceIdSchema = z.string().regex(/^pli_[0-9A-Za-z]{26}$/);
+export type PluginInstanceId = z.infer<typeof pluginInstanceIdSchema>;
+
+/**
+ * Non-sensitive stored values plus which sensitive fields have a stored secret — the
+ * auto-built edit form never receives secret plaintext back.
+ */
+export const pluginInstanceSummarySchema = z.object({
+  id: pluginInstanceIdSchema,
+  pluginId: pluginIdSchema,
+  kind: pluginInstanceKindSchema,
+  title: z.string().max(200),
+  values: z.record(z.string(), pluginFieldValueSchema),
+  storedSensitiveKeys: z.array(z.string()),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PluginInstanceSummary = z.infer<typeof pluginInstanceSummarySchema>;
+
+export const pluginsConfigGetInputSchema = z.object({ id: pluginIdSchema });
+export type PluginsConfigGetInput = z.infer<typeof pluginsConfigGetInputSchema>;
+
+export const pluginsConfigGetOutputSchema = z.object({
+  /** Non-sensitive stored values keyed by field key. */
+  values: z.record(z.string(), pluginFieldValueSchema),
+  /** Sensitive fields with a stored secret (the form shows a「已设置」placeholder). */
+  storedSensitiveKeys: z.array(z.string()),
+});
+export type PluginsConfigGetOutput = z.infer<typeof pluginsConfigGetOutputSchema>;
+
+/**
+ * `plugins.config.set`: replaces the plugin config with the submitted form — sensitive
+ * fields absent from `values` keep their stored secret; required fields must end with a
+ * value (submitted or previously stored secret).
+ */
+export const pluginsConfigSetInputSchema = z.object({
+  id: pluginIdSchema,
+  values: z.record(z.string(), pluginFieldValueSchema),
+});
+export type PluginsConfigSetInput = z.infer<typeof pluginsConfigSetInputSchema>;
+
+export const pluginsInstancesListInputSchema = z.object({ pluginId: pluginIdSchema });
+export type PluginsInstancesListInput = z.infer<typeof pluginsInstancesListInputSchema>;
+
+export const pluginsInstancesListOutputSchema = z.object({
+  instances: z.array(pluginInstanceSummarySchema),
+});
+export type PluginsInstancesListOutput = z.infer<typeof pluginsInstancesListOutputSchema>;
+
+export const pluginsInstancesCreateInputSchema = z.object({
+  pluginId: pluginIdSchema,
+  values: z.record(z.string(), pluginFieldValueSchema),
+});
+export type PluginsInstancesCreateInput = z.infer<typeof pluginsInstancesCreateInputSchema>;
+
+export const pluginsInstancesCreateOutputSchema = z.object({
+  instance: pluginInstanceSummarySchema,
+});
+export type PluginsInstancesCreateOutput = z.infer<typeof pluginsInstancesCreateOutputSchema>;
+
+/** `plugins.instances.update`: same merge semantics as config.set (sensitive keep-stored). */
+export const pluginsInstancesUpdateInputSchema = z.object({
+  id: pluginInstanceIdSchema,
+  values: z.record(z.string(), pluginFieldValueSchema),
+});
+export type PluginsInstancesUpdateInput = z.infer<typeof pluginsInstancesUpdateInputSchema>;
+
+export const pluginsInstancesUpdateOutputSchema = z.object({
+  instance: pluginInstanceSummarySchema,
+});
+export type PluginsInstancesUpdateOutput = z.infer<typeof pluginsInstancesUpdateOutputSchema>;
+
+export const pluginsInstancesDeleteInputSchema = z.object({ id: pluginInstanceIdSchema });
+export type PluginsInstancesDeleteInput = z.infer<typeof pluginsInstancesDeleteInputSchema>;
 
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });

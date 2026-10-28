@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { connectorNameSchema } from './connector-catalog.js';
 import { mailModeSchema, mailSecureSchema } from './mail.js';
+import { sanitizeDisplayText } from './text-sanitize.js';
 
 /**
  * Plugin manifest (`plugin.json`, D104, docs/design/51-plugin-system.md §3).
@@ -24,6 +25,77 @@ export const PLUGIN_MAX_SKILLS = 50;
 export const PLUGIN_MAX_CONNECTORS = 20;
 export const PLUGIN_MAX_MCP = 10;
 export const PLUGIN_MAX_MAIL = 10;
+
+// --- declarative fields / instances (D105, todo/plugin-platform README §2.2–2.3) ---------
+
+/**
+ * Form field keys shared by MCPB `user_config`, plugin `config.fields` and instance
+ * fields — same rule as the MCPB loader (`apps/mcpb/manifest.ts`).
+ */
+export const PLUGIN_FIELD_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** Instantiable capability kinds a pure-instance manifest may declare. */
+export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp'] as const;
+export const pluginInstanceKindSchema = z.enum(PLUGIN_INSTANCE_KINDS);
+export type PluginInstanceKind = z.infer<typeof pluginInstanceKindSchema>;
+export const PLUGIN_MAX_INSTANCES = 4;
+export const PLUGIN_MAX_CONFIG_FIELDS = 32;
+
+/** One form value: MCPB user_config, plugin config and instance fields all use this union. */
+export const pluginFieldValueSchema = z.union([
+  z.string().max(10_000),
+  z.number(),
+  z.boolean(),
+  z.array(z.string().max(10_000)).max(100),
+]);
+export type PluginFieldValue = z.infer<typeof pluginFieldValueSchema>;
+
+/**
+ * The single field schema (`PluginField`, README §4.1). Hosts auto-build every form
+ * (MCPB user_config / plugin config / instance fields) from it; constraints mirror the
+ * MCPB loader so shared-schema output checks never reject a validated MCPB field.
+ */
+export const pluginFieldSchema = z.strictObject({
+  key: z.string().regex(PLUGIN_FIELD_KEY_PATTERN),
+  type: z.enum(['string', 'number', 'boolean', 'directory', 'file']),
+  title: z.string().min(1).max(200),
+  description: z.string().max(2000).default(''),
+  required: z.boolean().default(false),
+  sensitive: z.boolean().default(false),
+  multiple: z.boolean().default(false),
+  default: pluginFieldValueSchema.optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+});
+export type PluginField = z.infer<typeof pluginFieldSchema>;
+
+/**
+ * Safe projection of a declared field for `PluginSummary` / inspect output: the shape
+ * the auto-built form needs, minus `default` (manifest-authored text never travels into
+ * snapshots through the summary path).
+ */
+export const pluginFieldSummarySchema = z.strictObject({
+  key: z.string(),
+  title: z.string(),
+  type: z.enum(['string', 'number', 'boolean', 'directory', 'file']),
+  required: z.boolean(),
+  description: z.string().optional(),
+  sensitive: z.boolean().optional(),
+  multiple: z.boolean().optional(),
+});
+export type PluginFieldSummary = z.infer<typeof pluginFieldSummarySchema>;
+
+export function pluginFieldSummaryOf(field: PluginField): PluginFieldSummary {
+  return {
+    key: field.key,
+    title: field.title,
+    type: field.type,
+    required: field.required,
+    ...(field.description !== '' ? { description: field.description } : {}),
+    ...(field.sensitive ? { sensitive: true } : {}),
+    ...(field.multiple ? { multiple: true } : {}),
+  };
+}
 
 /** Same shape as the Registry namespace rule (`反向域名/名字`). */
 export const pluginIdSchema = connectorNameSchema;
@@ -92,6 +164,62 @@ export function parsePluginSkillSource(
     return null;
   }
   return { pluginId: `${namespace}/${name}`, skillName };
+}
+
+// --- capability summary (README §2.3) -----------------------------------------
+
+/** What the one-line capability summary is derived from (counts only — names where the manifest has them). */
+export interface PluginCapabilityFacts {
+  skills: number;
+  connectors: number;
+  mcp: number;
+  mail: number;
+  instances: readonly PluginInstanceKind[];
+  /** Up to two skill display names from the manifest (shown in parentheses). */
+  skillNames: readonly string[];
+}
+
+export function capabilityFactsOf(manifest: PluginManifest): PluginCapabilityFacts {
+  return {
+    skills: manifest.contributions.skills.length,
+    connectors: manifest.contributions.connectors.length,
+    mcp: manifest.contributions.mcp.length,
+    mail: manifest.contributions.mail.length,
+    instances: manifest.instances ?? [],
+    skillNames: manifest.contributions.skills
+      .map((skill) => skill.displayName ?? skill.dir.split('/').pop() ?? skill.dir)
+      .slice(0, 2),
+  };
+}
+
+/**
+ * One readable line describing what an installed plugin provides (market card, installed
+ * card and consent panel reuse it). Manifest text passes through {@link sanitizeDisplayText}
+ * (control / bidi / zero-width characters collapsed or removed — same rule as every other
+ * untrusted display string).
+ */
+export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
+  const parts: string[] = [];
+  if (facts.skills > 0) {
+    const names = facts.skillNames
+      .slice(0, 2)
+      .map((name) => sanitizeDisplayText(name, 30))
+      .filter((name) => name !== '');
+    parts.push(`${facts.skills} 个技能${names.length > 0 ? `（${names.join('、')}）` : ''}`);
+  }
+  if (facts.connectors > 0) parts.push(`${facts.connectors} 个连接`);
+  if (facts.mcp > 0) parts.push(`${facts.mcp} 个工具`);
+  if (facts.mail > 0) parts.push(`${facts.mail} 个邮件模板`);
+  const tail: string[] = [];
+  if (facts.instances.includes('mail')) tail.push('可添加多个邮箱账号');
+  if (facts.instances.includes('mcp')) tail.push('可添加自定义工具');
+  const head =
+    parts.length > 0
+      ? `提供 ${parts.slice(0, -1).join('、')}${parts.length > 1 ? ' 与 ' : ''}${parts[parts.length - 1]!}`
+      : '';
+  const summary =
+    tail.length > 0 ? (head !== '' ? `${head}；${tail.join('；')}` : tail.join('；')) : head;
+  return sanitizeDisplayText(summary === '' ? '提供扩展能力' : summary, 200);
 }
 
 // --- contributions -----------------------------------------------------------
@@ -190,20 +318,32 @@ export const pluginManifestSchema = z
       .array(z.enum(['darwin', 'win32', 'linux']))
       .min(1)
       .optional(),
-    contributions: z.strictObject({
-      skills: z.array(pluginSkillContributionSchema).max(PLUGIN_MAX_SKILLS).default([]),
-      connectors: z.array(pluginConnectorContributionSchema).max(PLUGIN_MAX_CONNECTORS).default([]),
-      mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
-      mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
-    }),
+    contributions: z
+      .strictObject({
+        skills: z.array(pluginSkillContributionSchema).max(PLUGIN_MAX_SKILLS).default([]),
+        connectors: z
+          .array(pluginConnectorContributionSchema)
+          .max(PLUGIN_MAX_CONNECTORS)
+          .default([]),
+        mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
+        mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
+      })
+      // D105：纯实例插件（只声明 `instances`）可以整个省略 contributions；解析输出恒为完整对象。
+      .prefault({}),
+    /** Plugin-level global config (host auto-builds the form; ≤32 fields). */
+    config: z
+      .strictObject({ fields: z.array(pluginFieldSchema).max(PLUGIN_MAX_CONFIG_FIELDS) })
+      .optional(),
+    /** Pure-instance capability kinds this plugin provides (no contributions needed). */
+    instances: z.array(pluginInstanceKindSchema).max(PLUGIN_MAX_INSTANCES).optional(),
   })
   .superRefine((manifest, ctx) => {
     const { skills, connectors, mcp, mail } = manifest.contributions;
-    if (skills.length + connectors.length + mcp.length + mail.length < 1) {
+    if (skills.length + connectors.length + mcp.length + mail.length + (manifest.instances?.length ?? 0) < 1) {
       ctx.addIssue({
         code: 'custom',
         path: ['contributions'],
-        message: '插件至少要包含一类贡献',
+        message: '插件至少要包含一类贡献或实例能力',
       });
     }
     // Entries carry their index in the containing array so the issue path points at the
@@ -253,5 +393,33 @@ export const pluginManifestSchema = z
       ['contributions', 'mail'],
       'id',
     );
+    // Declarative fields / instances (D105): duplicate config keys and duplicate
+    // instance kinds are rejected up front — the host builds forms keyed by them.
+    if (manifest.config !== undefined) {
+      const seenFields = new Set<string>();
+      manifest.config.fields.forEach((field, index) => {
+        if (seenFields.has(field.key)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['config', 'fields', index, 'key'],
+            message: `配置字段重复：${field.key}`,
+          });
+        }
+        seenFields.add(field.key);
+      });
+    }
+    if (manifest.instances !== undefined) {
+      const seenKinds = new Set<PluginInstanceKind>();
+      manifest.instances.forEach((kind, index) => {
+        if (seenKinds.has(kind)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['instances', index],
+            message: `实例能力类型重复：${kind}`,
+          });
+        }
+        seenKinds.add(kind);
+      });
+    }
   });
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;

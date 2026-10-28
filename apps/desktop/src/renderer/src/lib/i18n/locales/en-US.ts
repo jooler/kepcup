@@ -109,6 +109,8 @@ export const enUS = {
   'chats.errorCode.PLUGIN_CONFLICT': 'The plugin conflicts with existing content',
   'chats.errorCode.PLUGIN_MANAGED':
     'This item is managed by a plugin; uninstall the plugin under Installed',
+  'chats.errorCode.PLUGIN_UPGRADE_REQUIRED':
+    'This plugin needs a newer KepCup; please upgrade the app first',
   'runStatus.pleaseWait': 'Please wait…',
   'runStatus.callingVerb': '{verb}…',
   'runStatus.callingTool': 'Calling {tool}…',

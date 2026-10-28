@@ -202,6 +202,16 @@ import {
   pluginsMarketplaceRefreshOutputSchema,
   pluginsUpdateInputSchema,
   pluginsUpdateOutputSchema,
+  pluginsConfigGetInputSchema,
+  pluginsConfigGetOutputSchema,
+  pluginsConfigSetInputSchema,
+  pluginsInstancesListInputSchema,
+  pluginsInstancesListOutputSchema,
+  pluginsInstancesCreateInputSchema,
+  pluginsInstancesCreateOutputSchema,
+  pluginsInstancesUpdateInputSchema,
+  pluginsInstancesUpdateOutputSchema,
+  pluginsInstancesDeleteInputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -2804,6 +2814,25 @@ export const rpcMethodSchemas = {
     input: voidInput,
     output: pluginsMarketplaceRefreshOutputSchema,
   },
+  // D105 P1（todo/plugin-platform README §4.1）：插件配置与实例（通用 CRUD + materializer）。
+  'plugins.config.get': {
+    input: pluginsConfigGetInputSchema,
+    output: pluginsConfigGetOutputSchema,
+  },
+  'plugins.config.set': { input: pluginsConfigSetInputSchema, output: okOutput },
+  'plugins.instances.list': {
+    input: pluginsInstancesListInputSchema,
+    output: pluginsInstancesListOutputSchema,
+  },
+  'plugins.instances.create': {
+    input: pluginsInstancesCreateInputSchema,
+    output: pluginsInstancesCreateOutputSchema,
+  },
+  'plugins.instances.update': {
+    input: pluginsInstancesUpdateInputSchema,
+    output: pluginsInstancesUpdateOutputSchema,
+  },
+  'plugins.instances.delete': { input: pluginsInstancesDeleteInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -3163,6 +3192,12 @@ const APP_METHODS = [
   'plugins.update',
   'plugins.marketplace.list',
   'plugins.marketplace.refresh',
+  'plugins.config.get',
+  'plugins.config.set',
+  'plugins.instances.list',
+  'plugins.instances.create',
+  'plugins.instances.update',
+  'plugins.instances.delete',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
