@@ -266,18 +266,20 @@ describe('validatePlugin: contribution checks', () => {
     expect(forwarded.some((check) => check.message.includes('manifest.tier'))).toBe(true);
   });
 
-  it('rejects a connector file the installer would reject even when checkManifest passes it (no releaseGate)', async () => {
+  it('accepts a connector file without meta.releaseGate (the plugin rewrite assigns it)', async () => {
+    // D104 商店化收尾：连接器目录通道下线后 catalog schema 不再有 releaseGate 字段，
+    // 插件来源条目的分级门禁由投影器改写（releaseGate ← 'plugin'）——不再要求作者自填。
     const dir = await tmp();
     const entry = connectorFixtureEntry('acme', { tier: 'community' });
     const meta = (entry._meta as Record<string, Record<string, unknown>>)['app.kepcup/connector']!;
     delete meta.releaseGate;
     await buildPluginDir({ dir, connectors: [{ slug: 'acme', entry }] });
     const report = await validatePlugin(dir);
-    const strict = report.checks.filter(
+    const strictErrors = report.checks.filter(
       (check) => check.id === 'plugin.connector-entry' && check.severity === 'error',
     );
-    expect(strict.some((check) => check.message.includes('releaseGate'))).toBe(true);
-    expect(report.exitCode).toBe(1);
+    expect(strictErrors).toEqual([]);
+    expect(report.exitCode).toBe(0);
   });
 
   it('requires at least one remote endpoint on a plugin connector (packages alone do not count)', async () => {

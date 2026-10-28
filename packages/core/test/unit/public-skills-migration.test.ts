@@ -107,6 +107,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table board_cards;');
     db.exec('drop table board_columns;');
     // main 0053（D104 插件系统）的两表同样摘除：plugin_items 外键指向 plugins，先摘账本。
+    // main 0056（D105）的实例表同样摘除（config_json 列随 plugins 整表回退）。
+    db.exec('drop table plugin_instances;');
     db.exec('drop table plugin_items;');
     db.exec('drop table plugins;');
     db.exec('drop table todo_runs;');

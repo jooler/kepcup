@@ -88,7 +88,7 @@ describe('parsePluginManifestText', () => {
     expectCodeSync(() => parsePluginManifestText(text), 'PLUGIN_INCOMPATIBLE', /更新版本的 KepCup/);
   });
 
-  it('rejects unknown fields with the first three issue paths', () => {
+  it('rejects unknown fields as an upgrade prompt with the offending paths', () => {
     const text = JSON.stringify({
       ...JSON.parse(manifestText),
       tier: 'verified',
@@ -100,7 +100,8 @@ describe('parsePluginManifestText', () => {
       parsePluginManifestText(text);
       expect.unreachable();
     } catch (error) {
-      expect((error as AppError).code).toBe('PLUGIN_INVALID');
+      // D105 可加性契约：未知字段来自更新版本的 KepCup → 提示升级而非「包无效」。
+      expect((error as AppError).code).toBe('PLUGIN_UPGRADE_REQUIRED');
       expect((error as AppError).message).toMatch(/tier/);
     }
   });

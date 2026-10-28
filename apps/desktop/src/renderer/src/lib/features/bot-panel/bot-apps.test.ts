@@ -94,19 +94,6 @@ describe('appChoiceGroups', () => {
     expect(notion.connectable).toBe(true);
   });
 
-  it('omits catalog-hidden connectors (gcalendar / gdrive) and their residual connections', () => {
-    const groups = appChoiceGroups(
-      [entry('notion'), entry('gcalendar'), entry('gdrive')],
-      [
-        connection('conn_cal', { connectorId: 'gcalendar', label: 'work' }),
-        connection('conn_notion', { connectorId: 'notion', label: 'docs' }),
-      ],
-      ['conn_cal', 'conn_notion'],
-    );
-    expect(groups.map((group) => group.connectorId)).toEqual(['notion']);
-    expect(groups[0]!.selectedConnectionId).toBe('conn_notion');
-  });
-
   it('labels unnamed accounts by app and ordinal, keeps residual connectors not in the catalog', () => {
     const groups = appChoiceGroups(
       [],

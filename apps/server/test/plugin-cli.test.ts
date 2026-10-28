@@ -80,6 +80,8 @@ const INFO = pluginInspectOutputSchema.parse({
   existing: null,
   update: null,
   installable: true,
+  configFields: [],
+  capabilitySummary: '提供 1 个技能、1 个连接与 1 个工具',
   blockers: [],
 });
 
