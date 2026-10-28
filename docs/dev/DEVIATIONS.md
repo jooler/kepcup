@@ -1101,3 +1101,30 @@
 - 可选方案：1）改既有键值（当前实现）；2）新增 `plugins.kind.tool` 并弃用旧键（多一个死键）。
 - 推荐：方案 1。
 - 决定：方案 1。
+
+### DEV-071 官方邮件插件的贡献 id 不能以数字开头（`netease_163` → `netease163`）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：`plugins/mail-163` / `mail-126` 的贡献 id 沿用了旧 `MailProvider` 枚举值 `netease_163` / `netease_126`，但贡献 id 的既有校验是 `PLUGIN_MCP_KEY_PATTERN`（`/^[a-z0-9][a-z0-9-]{0,31}$/`，语义：小写字母或数字开头）。`netease_163` 含下划线，本就不合法——之前没有任何插件带 mail 贡献所以从未暴露。
+- 影响范围：`plugins/mail-163/plugin.json` / `plugins/mail-126/plugin.json` 的 `contributions.mail[0].id` 改为 `netease163` / `netease126`（账本 ref / 同意条目标识，无用户可见面；插件 id `app.kepcup/mail-163` 与显示名不变）。`MailProvider` 枚举值（DB 列 / zod）不受影响——实例账号恒 `provider:'custom'`。
+- 决定：改贡献 id 而不是放宽 key 正则（放宽会让 `mail-163` 的「163 开头」类 id 混入，换取零收益）。
+
+### DEV-072 实例账号密码的单一来源是实例 secret（非 `mail:{accountId}:password` 旧键）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：任务书 P3-mail.md §3.2 写「密码入 secrets `mail:{accountId}:password` 不变」。P1 的实例敏感值契约（DEV-063）与 `pluginInstanceSecretName` 已建立实例 secret 的统一规则；若 mail materializer 把密码写入旧键，同一实例的敏感值就有两套寻址，P1-3 的「前缀扫描清理」会把实例 secret 扫掉而旧键残留，卸载后授权码泄漏面扩大。
+- 影响范围：`packages/core/src/plugins/materializers/mail.ts`（不改 mail 建号函数签名，密码在 `PluginInstanceService` 落实例 secret 后经 `MailService.createForInstance` 落地）；`MailService` 经 `instanceOwner` 端口把实例账号的密码读取重定向到实例 secret（会话 hub / 发信 / 更新授权码同源）；无主账号仍走 `mail:{id}:password` 旧键，行为不变。
+- 决定：实例账号 = 实例 secret（单一事实来源）；任务书的旧键写法只适用于遗留无主账号。
+
+### DEV-073 `mail.accounts.test` / `mail.accounts.create` RPC 收敛删除（任务书允许的「收敛」取舍）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：P3-mail.md §3.3 写「`mail.accounts.create` 校验改由实例层负责（直接 RPC 调用保留兼容行为或收敛，实施记录写明取舍）」。选**收敛删除**：直接 RPC 建号没有插件归属（instance_id 为空），建出来的账号永远标「未关联插件」，与「添加账号唯一入口 = 插件卡」的 UI 归属（§3.4）直接矛盾；保留兼容行为会让 Bot 对话内 mail_request_setup 卡（改走插件选择 + 实例表单）之外的第二条入口长期存在。`mail.accounts.test` 仅为 create/update 的预检服务，一并删除。
+- 影响范围：`packages/shared/src/rpc/methods.ts`（3 个 RPC 注销）、`packages/core/src/rpc/mail-bindings.ts`；`MailService` 的建号能力保留为内部方法 `createForInstance`（materializer 专用）与 `updateInstanceAccount`（实例更新专用）。对话内 mail setup 卡改渲染插件选择 + 实例表单。
+- 决定：收敛；实施记录 §6 已写明。
