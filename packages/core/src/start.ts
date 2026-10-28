@@ -2440,6 +2440,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       audit,
     });
     plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
+    // 卸载清洗引用面：Bot 的 plugin_ids 与项目叠加授权（写路径保持严格校验）。
+    plugins.attachReferenceCleanup((pluginId) => {
+      bots.removePluginFromAll(pluginId);
+      projects.removePluginFromAll(pluginId);
+    });
     // D104 P1-3：Bot 只能检索官方认证插件、只能出确认卡（不自己安装）。
     const pluginInstallRequests = new PluginInstallRequests({
       marketplace,

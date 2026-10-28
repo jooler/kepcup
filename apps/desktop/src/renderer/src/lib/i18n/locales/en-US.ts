@@ -583,6 +583,8 @@ export const enUS = {
   'botPanel.plugins.connections': 'Connected accounts',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
+  'botPanel.plugins.localAccounts': 'Local connections',
+  'botPanel.plugins.pluginDisabled': 'Plugin disabled',
   'botPanel.plugins.manualServers': 'Manually added tool services',
   'botPanel.plugins.manualServersHint':
     'When checked, this bot can use tools from the corresponding services: read-only tools run directly, while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled).',

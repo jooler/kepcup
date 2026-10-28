@@ -3965,7 +3965,8 @@ export class Orchestrator {
         hasDiscovery: discovery !== undefined,
       });
       // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
-      const availableEntries = this.#deps.connectedApps?.availableFor(catalog.apps.views) ?? [];
+      const availableEntries =
+        this.#deps.connectedApps?.availableFor(catalog.apps.views, extraPluginIds) ?? [];
       const availableAppsSection = availableAppsPromptBody(availableEntries);
       const pluginFacade = this.#pluginInstallFacade(setupHit, identity);
       const appFacade = this.#appToolFacade(
@@ -5572,6 +5573,17 @@ export class Orchestrator {
               ok: false,
               message: `没有应用「${input.connector}」：只能请求连接 <available_apps> 里列出的应用`,
             };
+          }
+          // D105 P2 §3.4：未启用插件的连接器不给发起连接（连了也对该 Bot 不可见）。
+          if (extraPluginIds !== undefined) {
+            const owner =
+              connectedApps?.pluginOwnerOfEntry?.(connectorMetaOf(entry).slug) ?? null;
+            if (owner !== null && !extraPluginIds.has(owner)) {
+              return {
+                ok: false,
+                message: `「${entry.title}」的插件未启用：请先让用户在 Bot 详情的「插件」里启用后重试。`,
+              };
+            }
           }
           const existing = apps.views.find((view) => view.slug === connectorMetaOf(entry).slug);
           if (existing !== undefined) {

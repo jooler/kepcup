@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { McpServer, PluginSummary } from '@kepcup/shared';
+import { connectorMetaOf, type McpServer, type PluginSummary } from '@kepcup/shared';
 import {
   buildPluginFixture,
   createTestStack,
@@ -442,4 +442,83 @@ describe('plugin injection model (P2)', () => {
     },
     60_000,
   );
+  it(
+    'available_apps 与卸载清洗：未启用插件的目录条目不进推荐位；卸载后引用面不残留、写路径不被卡死',
+    async () => {
+      const { core } = await setup();
+      const connectedApps = core.services.connectedApps!;
+      await installPlugin(core, (dir) =>
+        buildPluginFixture({
+          dir,
+          manifest: { id: CONN_PLUGIN },
+          connectors: [{ slug: 'injectconn' }],
+        }),
+      );
+
+      // availableFor：未启用（空集）→ 插件目录条目不进；启用 → 进。
+      const off = connectedApps.availableFor([], new Set());
+      expect(off.map((entry) => connectorMetaOf(entry).slug)).not.toContain('injectconn');
+      const on = connectedApps.availableFor([], new Set([CONN_PLUGIN]));
+      expect(on.map((entry) => connectorMetaOf(entry).slug)).toContain('injectconn');
+      // 缺省（无启用集）= 现状。
+      expect(connectedApps.availableFor([], undefined).map((entry) => connectorMetaOf(entry).slug)).toContain(
+        'injectconn',
+      );
+
+      // 卸载清洗：Bot 与项目都启用过 → 卸载 → 引用面清空，之后的整集写入不再被残留卡死。
+      const bot = await makeBot(core, '清引用甲');
+      const other = await makeBot(core, '清引用乙');
+      await core.rpc.call('plugins.setBotPlugins', { botId: bot.id, pluginIds: [CONN_PLUGIN] });
+      const group = await makeProject(core, '清引用项目', [bot.id, other.id]);
+      await core.rpc.call('projects.plugins.set', {
+        conversationId: group.id,
+        pluginIds: [CONN_PLUGIN],
+      });
+      await core.rpc.call('plugins.uninstall', { id: CONN_PLUGIN });
+      expect(core.services.domain!.bots.get(bot.id)!.profile.runtime.plugin_ids ?? []).toEqual([]);
+      expect(core.services.domain!.projects.pluginsOf(group.id)).toEqual([]);
+
+      // 再装一个新插件并启用——写路径畅通（此前会被残留 id 整笔拒绝）。
+      await installPlugin(core, (dir) =>
+        buildPluginFixture({
+          dir,
+          manifest: { id: 'io.github.tester/inject-skill-b' },
+          skills: [{ name: 'plg-inject-b', description: '清洗后技能' }],
+        }),
+      );
+      await expect(
+        core.rpc.call('plugins.setBotPlugins', {
+          botId: bot.id,
+          pluginIds: ['io.github.tester/inject-skill-b'],
+        }),
+      ).resolves.toMatchObject({ ok: true });
+    },
+    90_000,
+  );
+
+  it('审批对照：同一插件工具在启用 / 停用两态下的风险注解一致（可见性过滤不触碰审批）', async () => {
+    const { core } = await setup();
+    const mcp = core.services.mcp!;
+    await installPlugin(core, (dir) =>
+      buildPluginFixture({
+        dir,
+        manifest: { id: SKILL_PLUGIN },
+        http: [{ id: 'docs', url: 'https://mcp.docs.test/mcp' }],
+      }),
+    );
+    const servers = mcp.listSettingsServers();
+    const pluginServer = servers.find((server) => server.source?.kind === 'plugin');
+    expect(pluginServer).toBeDefined();
+    // 启停插件只改 serversForBot 的可见集；server 本体的风险档位（W5 默认）不动。
+    const off = mcp.serversForBot([pluginServer!.id], new Set());
+    const on = mcp.serversForBot([pluginServer!.id], new Set([SKILL_PLUGIN]));
+    expect(off).toEqual([]);
+    expect(on.map((server) => server.id)).toEqual([pluginServer!.id]);
+    expect(mcp.riskOf(pluginServer!.id, 'anything')).toStrictEqual(
+      mcp.riskOf(pluginServer!.id, 'anything'),
+    );
+    // 缺省（无启用集）与空集下的 server 定义（锁定哈希基础）一致。
+    const serverDefault = mcp.listSettingsServers().find((item) => item.id === pluginServer!.id);
+    expect(serverDefault?.enabled).toBe(true);
+  });
 });

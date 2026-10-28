@@ -114,6 +114,11 @@ export class ConnectedApps {
    * P2 注入模型：接入连接器属主插件查询（`start.ts` 在插件账本构造后接
    * `registry.ownerOf('connector', slug)`；McpService 先于插件系统构造，同 attach 模式）。
    */
+  /** Owning plugin id of a catalog connector slug (null = local / no plugin owner). */
+  pluginOwnerOfEntry(connectorSlug: string): string | null {
+    return this.#deps.pluginOwnerOf?.(connectorSlug) ?? null;
+  }
+
   attachPluginOwnerOf(query: (connectorSlug: string) => string | null): void {
     this.#deps.pluginOwnerOf = query;
   }
@@ -271,11 +276,20 @@ export class ConnectedApps {
    * `<available_apps>`：目录里**这个 Bot 还没有授权连接**的已发行条目（含用户已连接过、但没勾给
    * 这个 Bot 的应用——请求连接的卡片同样能把已有账号授权给它），≤ {@link AVAILABLE_APPS_MAX} 条。
    */
-  availableFor(authorized: readonly ConnectedAppView[]): ConnectorCatalogEntry[] {
+  availableFor(
+    authorized: readonly ConnectedAppView[],
+    extraPluginIds?: ReadonlySet<string>,
+  ): ConnectorCatalogEntry[] {
     const taken = new Set(authorized.map((view) => view.slug));
     const open = this.#deps.catalog
       .list()
-      .filter((entry) => !taken.has(connectorMetaOf(entry).slug));
+      .filter((entry) => !taken.has(connectorMetaOf(entry).slug))
+      // D105 P2 §3.4：未启用插件的目录条目不进推荐位（本机连接无属主，恒放行）。
+      .filter((entry) => {
+        if (extraPluginIds === undefined) return true;
+        const owner = this.#deps.pluginOwnerOf?.(connectorMetaOf(entry).slug) ?? null;
+        return owner === null || extraPluginIds.has(owner);
+      });
     // 本机连接（用户刚添加、Bot 要帮着连的）永远占位：先放至多 {@link AVAILABLE_LOCAL_MAX} 个，再用
     // 预置 / 目录条目补满上限——预置条目再多也不会把它们挤出提示词。
     const isLocal = (entry: ConnectorCatalogEntry): boolean =>

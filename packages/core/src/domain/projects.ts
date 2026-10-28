@@ -287,6 +287,18 @@ export class ProjectsService {
     return unique;
   }
 
+  /**
+   * D105 P2：插件卸载时清掉所有项目对该 id 的叠加授权（幂等；行级删除即可，
+   * 各项目视图经 conversation 事件刷新）。
+   */
+  removePluginFromAll(pluginId: string): void {
+    const rows = this.deps.db
+      .prepare('select distinct conversation_id from project_plugins where plugin_id = ?')
+      .all(pluginId) as Array<{ conversation_id: string }>;
+    this.deps.db.prepare('delete from project_plugins where plugin_id = ?').run(pluginId);
+    for (const row of rows) this.deps.publishConversation(row.conversation_id);
+  }
+
   leadOf(conversationId: string): string | null {
     const row = this.deps.db
       .prepare('select lead_bot_id as lead_bot_id from conversations where id = ?')
