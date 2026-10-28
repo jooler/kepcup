@@ -205,6 +205,8 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 12.6 | `<available_apps>` | D73 P1：目录里该 Bot 还没有授权连接的已发行应用（标题、`connector` slug、一句话，≤ `AVAILABLE_APPS_MAX`=30 条）+ 调用 `app_request_connection({connector, reason})` 的指引；目录为空（门禁未开）或全部已连接则省略 | — | D73 P1 |
 | 13 | `<recommended_skills>` / `<file_handling>` | 任务版：预置技能与附件处理阶梯（P19）；对话轮版：只有「附件派任务处理」的简短指引，无 `<recommended_skills>` | — | P19 |
 
+> **D105 P4 补记（现状事实）**：`<recommended_skills>` 段与 `install_skill` 工具已删除（预置技能目录随商店化清空），第 13 行的阶梯收敛为**插件阶梯**——①已安装技能（`<skills>`）；②`plugin_search` → `plugin_request_install`（官方插件市场确认卡）。`skill_preset` 审批 kind 不再有产出方；`skill_import` 仍服务于右栏技能面板的手动导入（`skills.import` RPC）。详见 design/22 的 D105 P4 补记。
+
 管家另有 `<butler_rules>`，初始化访谈期间另有 `<setup_interview>`（访谈只在内置引擎上跑）。对话轮的 MCP 说明并入 `<capabilities>`，没有单独的 `<mcp_tools>` 段。
 
 **`<capabilities>` 段（D91，design 40 §2；`capabilities/prompt.ts` `capabilitiesPromptBody`，`buildSystemPrompt` 与 ACP 版 `buildAgentSessionPrompt` 都有，位于 `<recommended_skills>` 之后）**：orchestrator 每个 run 先 `buildCapabilityCatalog`（`capabilities/catalog.ts`，**纯读取**：`ConnectedApps.forBot` 的连接视图 + `McpService.serversForBot`，不连接、不 `listTools`），产出 `CapabilityEntry[]`——id（`app:{connectorSlug}` / `mcp:{serverId}`）、名称、账号、状态（`ready` / `reconnect` / `unavailable` / `disabled`，目录连接取连接行状态，自定义 OAuth MCP 取 `custom:{serverId}` 连接行，没有连接行 = `ready`）、说明（目录条目说明 / `McpServer.description`，缺省写「（未填写用途说明，可用 capability_search 查看它的工具）」）。名称、账号、说明一律经 `oneLine` 清洗（去 `<` `>`、控制字符、限长），不能借标签逃出本段；`developer` 分级的说明前标「未审核的本机连接」。段落形如：

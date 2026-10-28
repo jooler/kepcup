@@ -343,6 +343,8 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `skill_preset`（P19/D63）：payload `{presetId, name, displayName, summary, version, missingDeps}`——`install_skill` 的预置轻授权卡；`skill_import` 既有 payload（P08）不变，工具路径复用同一 kind（阻塞审批）。无人值守模式下两者同属自动批准类。
 
+> **D105 P4 补记**：`install_skill` 已删除，`skill_preset` 审批 kind 不再有产出方（机制保留在审批 schema 中）；`skill_import` 仍由右栏技能面板的手动导入使用。
+
 `butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'bots' | 'bot' | 'project'` 区分（见 `butlerProposalPayloadSchema`；D92 T1a WP4 起取值改名，`project` 分支字段 `{ title, goal, leadBotId, memberBotIds, reason }`——`propose_project` 的载荷带负责人）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）与 `leadBotId`（审批卡上改过的负责人，改过才写）。
 
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, workdirPath?, configHash}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：workdir 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、workdir 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。

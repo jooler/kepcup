@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AppError, type Bot, type MailAccount, type PluginSummary } from '@kepcup/shared';
+  import { AppError, type Bot, type MailAccount } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';

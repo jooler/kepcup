@@ -96,6 +96,8 @@
           class="h-8"
           type={field.sensitive ? 'password' : field.type === 'number' ? 'number' : 'text'}
           autocomplete="off"
+          min={field.type === 'number' && field.min !== undefined ? field.min : undefined}
+          max={field.type === 'number' && field.max !== undefined ? field.max : undefined}
           placeholder={field.sensitive && storedSensitiveKeys.includes(field.key)
             ? t('plugins.fieldForm.stored')
             : undefined}

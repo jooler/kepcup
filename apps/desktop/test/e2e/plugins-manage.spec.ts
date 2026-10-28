@@ -26,8 +26,6 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  * 安装全走路径输入框（e2e 环境无原生对话框）；config 夹具不含 mcpb。
  */
 
-type Rpc = (method: string, input?: unknown) => Promise<unknown>;
-
 const CONFIG_PLUGIN_ID = 'io.github.tester/configured';
 const SECOND_PLUGIN_ID = 'io.github.tester/second';
 
