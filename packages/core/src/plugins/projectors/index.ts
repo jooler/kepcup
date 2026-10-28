@@ -98,13 +98,10 @@ export interface PluginProjector<T = unknown> {
   rollbackUpdate?(plugin: PluginIdentity, snapshot: string | null): Promise<void>;
 }
 
-/** Fixed order: skills and MCP first, then connectors and mail; uninstall / rollback reverse it. */
-export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = [
-  'skill',
-  'mcp',
-  'connector',
-  'mail',
-];
+/** Fixed order: derived from the capability kind registry (D105 `kinds.ts`); uninstall / rollback reverse it. */
+export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = CAPABILITY_KINDS.map(
+  (adapter) => adapter.kind,
+);
 
 /** The install-time context's `owned` (nothing projected yet). */
 export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>>> {
@@ -112,17 +109,20 @@ export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>
 }
 
 // --- barrel -------------------------------------------------------------------
-// The concrete projectors are imported below (runtime values), so this file cannot be
-// imported by them at runtime — they only take types from here (erased at build time).
+// The registry (kinds.ts) owns the concrete projector classes (runtime values); this
+// barrel only re-exports the set / types. Projectors take types from here (erased at
+// build time), so kinds.ts must never import this module at runtime — it doesn't.
 
-import { ConnectorsProjector, type ConnectorsProjectorDeps } from './connectors.js';
-import { MailProjector, type MailProjectorDeps } from './mail.js';
-import { McpProjector, type PluginMcpDeps } from './mcp.js';
-import { SkillsProjector, type SkillsProjectorDeps } from './skills.js';
+import { CAPABILITY_KINDS } from '../kinds.js';
+
+import type { ConnectorsProjectorDeps } from './connectors.js';
+import type { MailProjectorDeps } from './mail.js';
+import type { PluginMcpDeps } from './mcp.js';
+import type { SkillsProjectorDeps } from './skills.js';
 
 export type { ConnectorsProjectorDeps, MailProjectorDeps, PluginMcpDeps, SkillsProjectorDeps };
 
-/** Dependencies for the fixed-order projector set (`start.ts` wires them once). */
+/** Dependencies for the registry-order projector set (`start.ts` wires them once). */
 export interface PluginProjectorsDeps {
   skills: SkillsProjectorDeps;
   mcp: PluginMcpDeps;
@@ -131,15 +131,10 @@ export interface PluginProjectorsDeps {
 }
 
 /**
- * Builds one projector per contribution kind in {@link PLUGIN_PROJECTOR_ORDER}.
- * The coverage test asserts this set stays exhaustive: a new contribution kind in
- * `pluginContributionKindSchema` without a projector fails the test.
+ * Builds one projector per registered capability kind, in {@link PLUGIN_PROJECTOR_ORDER}.
+ * The coverage test derives from `CAPABILITY_KINDS`: a new contribution kind in
+ * `pluginContributionKindSchema` without a registered adapter fails the test.
  */
 export function createPluginProjectors(deps: PluginProjectorsDeps): readonly PluginProjector[] {
-  return [
-    new SkillsProjector(deps.skills),
-    new McpProjector(deps.mcp),
-    new ConnectorsProjector(deps.connectors),
-    new MailProjector(deps.mail ?? {}),
-  ];
+  return CAPABILITY_KINDS.map((adapter) => adapter.createProjector(deps));
 }
