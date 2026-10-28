@@ -7,12 +7,10 @@
     HostCapabilityPrerequisite,
     InkcopAgent,
   } from '@kepcup/shared';
-  import { ChevronDown, Plus, X } from '@lucide/svelte';
   import { t, listSeparator } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
-  import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
   import { core } from '$lib/rpc/client.svelte';
   import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -29,11 +27,8 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
-  import { permissions } from '$lib/stores/permissions.svelte';
-  import { shell } from '$lib/stores/shell.svelte';
-  import { appIconSrc, appInitial } from '$lib/features/apps/app-catalog';
-  import { CONNECTION_STATUS_LABEL_KEYS } from '$lib/features/apps/connect-flow';
-  import { appUnattendedNotice, countRiskyTools, mcpUnattendedNotice } from '../approvals/mcp-risk';
+  import { appToolEstimate, shouldShowAcpAppsNotice } from './bot-apps';
+  import BotPluginsSection from './BotPluginsSection.svelte';
   import {
     capabilityRows,
     engineValue,
@@ -44,13 +39,6 @@
     toggleCapabilityOptIn,
     AGENT_OPTION_PREFIX,
   } from './agent-capabilities';
-  import {
-    accountHintKey,
-    appChoiceGroups,
-    appToolEstimate,
-    selectAppConnection,
-    shouldShowAcpAppsNotice,
-  } from './bot-apps';
   import type { BotConfigSection } from './bot-config-sections';
 
   let {
@@ -132,66 +120,12 @@
       pendingBrowserProfile = null;
     }
   }
-  // D65：应用级已启用的 MCP server 才出现在勾选列表里。
-  const mcpOptions = $derived(
-    (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled),
-  );
-
-  // W5（§5 护栏 7）：选了任一 MCP server 就常驻风险提示；无人值守生效时取选中
-  // server 的工具风险档，含写入 / 破坏性工具则升级为警示并列出数量。
-  const selectedMcpServers = $derived(
-    mcpOptions.filter((server) => profile.runtime.mcp_server_ids.includes(server.id)),
-  );
-  let mcpRiskyCount = $state<number | null>(null);
-  let mcpRiskUnknown = $state(false);
-  // Refetch only when the selection itself changes (ids), not on every
-  // settings write — the queries connect to the servers.
-  const selectedMcpKey = $derived(selectedMcpServers.map((server) => server.id).join(','));
-  $effect(() => {
-    const key = selectedMcpKey;
-    const unattendedOn = permissions.unattended.enabled;
-    if (!unattendedOn || key.length === 0) {
-      mcpRiskyCount = null;
-      mcpRiskUnknown = false;
-      return;
-    }
-    const servers = untrack(() => selectedMcpServers);
-    let cancelled = false;
-    // An unreachable server (error / rejection) is unknown, never "0 risky".
-    void Promise.all(
-      servers.map((server) =>
-        settingsStore
-          .mcpToolRisks(server.id)
-          .then((report) =>
-            report.error !== undefined ? null : countRiskyTools(server, report.tools),
-          )
-          .catch(() => null),
-      ),
-    ).then((counts) => {
-      if (cancelled) return;
-      mcpRiskyCount = counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
-      mcpRiskUnknown = counts.some((count) => count === null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  });
-  const mcpNotice = $derived(
-    mcpUnattendedNotice({
-      selectedServerCount: selectedMcpServers.length,
-      unattendedEnabled: permissions.unattended.enabled,
-      riskyCount: mcpRiskyCount,
-      riskUnknown: mcpRiskUnknown,
-    }),
-  );
-
-  // --- 连接应用（D73 §5.7 / §5.9）：按应用分组、单选账号 ------------------------
+  // --- 连接应用（D73 §5.7 / §5.9）：智能体能力区的工具数估计仍在这里算 ----------
+  // 列表 / 选择器 / 无人值守提示已随 P2 注入模型移入「插件」区块
+  // （BotPluginsSection）；这里保留 agent 区摘要依赖的派生。
   $effect(() => {
     appsStore.start();
   });
-  const appGroups = $derived(
-    appChoiceGroups(appsStore.catalog, appsStore.connections, profile.runtime.app_connection_ids),
-  );
   const selectedAppConnections = $derived(
     appsStore.connections.filter((connection) =>
       profile.runtime.app_connection_ids.includes(connection.id),
@@ -216,57 +150,6 @@
     }
   });
   const appTools = $derived(appToolEstimate(selectedAppConnections, appsStore.toolsByConnection));
-  const appNotice = $derived(
-    appUnattendedNotice({
-      selectedConnectionCount: selectedAppConnections.length,
-      unattendedEnabled: permissions.unattended.enabled,
-    }),
-  );
-
-  function selectApp(connectorId: string, connectionId: string | null): void {
-    profile.runtime.app_connection_ids = selectAppConnection(
-      profile.runtime.app_connection_ids,
-      appsStore.connections,
-      connectorId,
-      connectionId,
-    );
-    if (connectionId !== null) maybeShowAcpAppsNotice();
-  }
-
-  // --- 连接应用（D73 §5.7 / §5.9）：只列在用的，添加 / 移除走选择器 ---------------
-  /** Bot 正在使用的应用（选了账号的分组）：列表区只渲染这些。 */
-  const usedAppGroups = $derived(appGroups.filter((group) => group.selectedConnectionId !== null));
-  /** 添加选择器的候选：有已连接账号的应用（未连接的去扩展中心连接，不直接展示）。 */
-  const addableAppGroups = $derived(appGroups.filter((group) => group.accounts.length > 0));
-  let appsPickerOpen = $state(false);
-  /** 多账号应用在选择器里展开后的 connectorId。 */
-  let expandedPickerApps = $state<string[]>([]);
-
-  function openAppsPicker(): void {
-    expandedPickerApps = [];
-    appsPickerOpen = true;
-  }
-
-  function togglePickerApp(connectorId: string): void {
-    expandedPickerApps = expandedPickerApps.includes(connectorId)
-      ? expandedPickerApps.filter((id) => id !== connectorId)
-      : [...expandedPickerApps, connectorId];
-  }
-
-  /** 选中应用的某个账号（或整行移除）。多账号的先展开再挑。 */
-  function pickAppAccount(connectorId: string, connectionId: string): void {
-    selectApp(connectorId, connectionId);
-    appsPickerOpen = false;
-    expandedPickerApps = [];
-  }
-
-  function removeApp(connectorId: string): void {
-    selectApp(connectorId, null);
-  }
-
-  function openCatalog(): void {
-    shell.openExtensionCenter('connections');
-  }
 
   // --- §5.10：外部智能体 + `apps` 能力包的一次性残余风险说明 -------------------------
   const ACP_APPS_ACK_KEY = 'kepcup.apps.acpNoticeAck';
@@ -515,10 +398,6 @@
     profile.runtime.agent.capabilities = normalizeCapabilities(next, capabilityContext);
   }
 
-  function toggleMcpServer(id: string, checked: boolean): void {
-    const selected = profile.runtime.mcp_server_ids.filter((entry) => entry !== id);
-    profile.runtime.mcp_server_ids = checked ? [...selected, id] : selected;
-  }
   let boundariesText = $state(profile.boundaries.join('\n'));
   let allowlistText = $state(profile.runtime.network_allowlist.join('\n'));
 
@@ -979,156 +858,10 @@
       </div>
     {/if}
   {/if}
-  <!-- MCP 服务器 -->
-  {#if show('mcp') && mcpOptions.length > 0}
-    <div class="grid gap-1.5" data-settings-anchor="bot-mcp">
-      <Label>{t('contacts.mcpServers')}</Label>
-      <div class="space-y-1.5" data-testid="bot-mcp-servers">
-        {#each mcpOptions as server (server.id)}
-          <label class="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={profile.runtime.mcp_server_ids.includes(server.id)}
-              onCheckedChange={(checked) => toggleMcpServer(server.id, checked === true)}
-              data-testid={`bot-mcp-${server.id}`}
-            />
-            {server.name}
-            {#if server.autoApprove}
-              <span class="text-xs text-muted-foreground">({t('contacts.mcpAutoApproveTag')})</span>
-            {/if}
-          </label>
-        {/each}
-      </div>
-      <p class="text-xs text-muted-foreground">{t('contacts.mcpServersHint')}</p>
-      {#if mcpNotice.show}
-        <p
-          class={mcpNotice.warning
-            ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
-            : 'text-xs text-amber-700 dark:text-amber-400'}
-          data-testid="bot-mcp-unattended-notice"
-          data-warning={mcpNotice.warning}
-        >
-          {t('contacts.mcpUnattendedNotice')}
-          {#if mcpNotice.unknown}
-            {t('contacts.mcpUnattendedUnknown')}
-          {:else if mcpNotice.warning}
-            {t('contacts.mcpUnattendedActive', { count: mcpNotice.riskyCount })}
-          {/if}
-        </p>
-      {/if}
-    </div>
-  {/if}
-  {#if show('apps')}
-    <!-- D73 §5.7 / §5.9：只列 Bot 在用的应用；「+」选择器挑应用与账号，行内可移除。
-         未连接 / 未使用的应用不直接展示（选择器只列有账号的，其余去扩展中心连接）。 -->
-    <div class="grid gap-1.5" data-settings-anchor="bot-apps">
-      <div class="flex items-center gap-2">
-        <Label>{t('contacts.apps')}</Label>
-        <Button
-          size="sm"
-          variant="ghost"
-          class="ml-auto h-7 gap-1 px-2 text-xs"
-          onclick={openAppsPicker}
-          data-testid="bot-apps-add"
-        >
-          <Plus class="size-3.5" aria-hidden="true" />
-          {t('rightPanel.appsAdd')}
-        </Button>
-      </div>
-      <div class="space-y-2" data-testid="bot-apps">
-        {#if usedAppGroups.length === 0}
-          <p class="text-xs text-muted-foreground" data-testid="bot-apps-empty">
-            {t('rightPanel.appsUsedEmpty')}
-          </p>
-        {/if}
-        {#each usedAppGroups as group (group.connectorId)}
-          {@const icon = appIconSrc(group.iconDataUri)}
-          {@const account =
-            group.accounts.find((entry) => entry.connection.id === group.selectedConnectionId) ??
-            null}
-          <div
-            class="rounded-lg border px-2.5 py-2"
-            data-testid={`bot-apps-${group.connectorId}`}
-            data-selected={group.selectedConnectionId ?? ''}
-          >
-            <div class="flex items-center gap-2">
-              {#if icon !== null}
-                <img src={icon} alt="" class="size-5 shrink-0 rounded" aria-hidden="true" />
-              {:else}
-                <span
-                  class="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground"
-                  aria-hidden="true">{appInitial(group.title)}</span
-                >
-              {/if}
-              <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-medium">{group.title}</span>
-                {#if account !== null}
-                  <span class="block truncate text-xs text-muted-foreground">{account.label}</span>
-                {/if}
-              </span>
-              {#if account !== null && account.connection.status !== 'connected'}
-                <span
-                  class={account.needsReconnect || account.connection.status === 'error'
-                    ? 'rounded border border-amber-500/60 px-1 text-[10px] text-amber-700 dark:text-amber-400'
-                    : 'rounded border px-1 text-[10px] text-muted-foreground'}
-                  data-status={account.connection.status}
-                  >{t(CONNECTION_STATUS_LABEL_KEYS[account.connection.status])}</span
-                >
-              {/if}
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                title={t('rightPanel.appsRemove')}
-                onclick={() => removeApp(group.connectorId)}
-                data-testid={`bot-apps-${group.connectorId}-remove`}
-              >
-                <X class="size-3.5" aria-hidden="true" />
-              </Button>
-            </div>
-            {#if account !== null && accountHintKey(account.connection.status) !== null}
-              <p
-                class="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                data-testid={`bot-apps-${group.connectorId}-hint`}
-              >
-                {t(accountHintKey(account.connection.status)!)}
-              </p>
-            {/if}
-          </div>
-        {/each}
-      </div>
-      <p class="text-xs text-muted-foreground">{t('contacts.appsHint')}</p>
-      {#if selectedAppConnections.length > 0}
-        <p
-          class="text-xs text-muted-foreground"
-          data-testid="bot-apps-tool-count"
-          data-count={appTools.count}
-          data-unknown={appTools.unknown}
-        >
-          {appTools.unknown
-            ? t('contacts.appsToolCountUnknown', { count: appTools.count })
-            : t('contacts.appsToolCount', { count: appTools.count })}
-        </p>
-      {/if}
-      {#if appNotice.show}
-        <p
-          class={appNotice.warning
-            ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
-            : 'text-xs text-amber-700 dark:text-amber-400'}
-          data-testid="bot-apps-unattended-notice"
-          data-warning={appNotice.warning}
-        >
-          {t('contacts.appsUnattendedNotice')}
-          {#if appNotice.warning}
-            {t('contacts.appsUnattendedActive')}
-            {#if appTools.unknown}
-              {t('contacts.appsUnattendedUnknown')}
-            {:else if appTools.risky > 0}
-              {t('contacts.appsUnattendedRisky', { count: appTools.risky })}
-            {/if}
-          {/if}
-        </p>
-      {/if}
-    </div>
+  <!-- 插件（P2 注入模型）：应用 / MCP / 邮箱三区块收编为一张插件列表 + 展开细选；
+       深链锚点 bot-plugins（bot-apps / bot-mcp 别名见 BotPluginsSection）。 -->
+  {#if show('plugins')}
+    <BotPluginsSection {profile} {botId} onConnectionSelected={maybeShowAcpAppsNotice} />
   {/if}
   {#if show('inkcop') && inkcopCollabOn}
     <div class="space-y-2" data-testid="bot-inkcop-agents" data-settings-anchor="bot-inkcop-agents">
@@ -1192,98 +925,7 @@
       {/if}
     </div>
   {/if}
-
-  {#if show('mail')}
-    <BotMailBindings {botId} />
-  {/if}
 </div>
-
-<!-- 「添加应用」选择器：只列有已连接账号的应用；多账号展开挑账号，选中即用并关闭。
-     未连接的应用不在这里出现——去扩展中心连接后再选。 -->
-<Dialog bind:open={appsPickerOpen}>
-  <DialogContent class="max-w-md" data-testid="bot-apps-picker">
-    <DialogHeader>
-      <DialogTitle>{t('rightPanel.appsPickerTitle')}</DialogTitle>
-      <DialogDescription>{t('rightPanel.appsPickerHint')}</DialogDescription>
-    </DialogHeader>
-    <div class="max-h-80 space-y-1.5 overflow-y-auto" data-testid="bot-apps-picker-list">
-      {#each addableAppGroups as group (group.connectorId)}
-        {@const icon = appIconSrc(group.iconDataUri)}
-        {@const expanded =
-          group.accounts.length === 1 || expandedPickerApps.includes(group.connectorId)}
-        <div class="rounded-md border" data-testid={`bot-apps-picker-${group.connectorId}`}>
-          <button
-            type="button"
-            class="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent/60"
-            onclick={() =>
-              group.accounts.length === 1
-                ? pickAppAccount(group.connectorId, group.accounts[0]!.connection.id)
-                : togglePickerApp(group.connectorId)}
-          >
-            {#if icon !== null}
-              <img src={icon} alt="" class="size-5 shrink-0 rounded" aria-hidden="true" />
-            {:else}
-              <span
-                class="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground"
-                aria-hidden="true">{appInitial(group.title)}</span
-              >
-            {/if}
-            <span class="min-w-0 flex-1 truncate font-medium">{group.title}</span>
-            <span class="shrink-0 text-xs text-muted-foreground">
-              {t('rightPanel.appsAccountCount', { count: group.accounts.length })}
-            </span>
-            {#if group.accounts.length > 1}
-              <ChevronDown
-                class="size-4 shrink-0 text-muted-foreground transition-transform {expanded
-                  ? 'rotate-180'
-                  : ''}"
-                aria-hidden="true"
-              />
-            {/if}
-          </button>
-          {#if expanded && group.accounts.length > 1}
-            <div class="space-y-0.5 border-t px-2.5 py-1.5">
-              {#each group.accounts as account (account.connection.id)}
-                <button
-                  type="button"
-                  class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/60"
-                  onclick={() => pickAppAccount(group.connectorId, account.connection.id)}
-                  data-testid={`bot-apps-${group.connectorId}-${account.connection.id}`}
-                >
-                  <span class="min-w-0 flex-1 truncate">{account.label}</span>
-                  {#if account.connection.status !== 'connected'}
-                    <span
-                      class={account.needsReconnect || account.connection.status === 'error'
-                        ? 'rounded border border-amber-500/60 px-1 text-[10px] text-amber-700 dark:text-amber-400'
-                        : 'rounded border px-1 text-[10px] text-muted-foreground'}
-                      data-status={account.connection.status}
-                      >{t(CONNECTION_STATUS_LABEL_KEYS[account.connection.status])}</span
-                    >
-                  {/if}
-                  {#if account.selected}
-                    <span class="shrink-0 text-xs text-muted-foreground">✓</span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <p
-          class="px-3 py-4 text-center text-xs text-muted-foreground"
-          data-testid="bot-apps-picker-empty"
-        >
-          {t('rightPanel.appsPickerEmpty')}
-        </p>
-      {/each}
-    </div>
-    <DialogFooter>
-      <Button variant="outline" size="sm" onclick={openCatalog} data-testid="bot-apps-open-catalog">
-        {t('rightPanel.appsOpenCatalog')}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
 
 <!-- §5.10：外部智能体自带的 shell / fetch 不经 KepCup 网关——首次（每台设备一次）说明 -->
 <Dialog bind:open={acpNoticeOpen}>

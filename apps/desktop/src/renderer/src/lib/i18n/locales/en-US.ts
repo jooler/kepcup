@@ -483,8 +483,6 @@ export const enUS = {
   'contacts.mainModel': 'Main model (leave blank to use the default)',
   'contacts.lightModel': 'Lightweight model (leave blank to use the default)',
   'contacts.mcpServers': 'MCP tool servers',
-  'contacts.mcpServersHint':
-    'When checked, this bot can use tools from the corresponding servers: read-only tools run directly (and can be queried in chat), while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled). Manage them in Extension Center → MCP.',
   'contacts.mcpAutoApproveTag': 'Auto-approve',
   'contacts.browserProfile': 'Browser profile',
   'contacts.browserProfilePrivate': 'Private (default)',
@@ -558,19 +556,13 @@ export const enUS = {
   'rightPanel.configRowPersona': 'Persona & tone',
   'rightPanel.configRowRole': 'Role & boundaries',
   'rightPanel.configRowModel': 'Model & agent',
-  'rightPanel.configRowApps': 'Apps',
-  'rightPanel.configRowMcp': 'MCP servers',
-  'rightPanel.configRowMail': 'Mail accounts',
   'rightPanel.configRowInkcop': 'InkCop agents',
   'rightPanel.configRowNetwork': 'Network access',
   'rightPanel.configRowBrowser': 'Browser profile',
   'rightPanel.configNotSet': 'Not set',
   'rightPanel.configNetworkOpen': 'Open',
   'rightPanel.configBrowserPrivate': 'Private',
-  'rightPanel.configAppsSummary': '{count} apps',
-  'rightPanel.configAppsNone': 'None',
   'rightPanel.appsAdd': 'Add apps',
-  'rightPanel.appsUsedEmpty': 'No apps in use yet',
   'rightPanel.appsRemove': 'Remove',
   'rightPanel.appsPickerTitle': 'Add apps',
   'rightPanel.appsPickerHint':
@@ -578,6 +570,23 @@ export const enUS = {
   'rightPanel.appsPickerEmpty': 'No connected apps yet',
   'rightPanel.appsAccountCount': '{count} account(s)',
   'rightPanel.appsOpenCatalog': 'Open extension center',
+  // --- P2 injection model: the bot-panel "Plugins" section (apps / mcp / mail merged)
+  'botPanel.sections.plugins': 'Plugins',
+  'botPanel.plugins.hint':
+    'Enable installed plugins for this bot; skills, tools and accounts of disabled plugins stay invisible to it.',
+  'botPanel.plugins.empty': 'No plugins installed yet — take a look at the plugin store.',
+  'botPanel.plugins.openStore': 'Plugin store',
+  'botPanel.plugins.appDisabled': 'Plugin is disabled in the extension center',
+  'botPanel.plugins.detail': 'Configure',
+  'botPanel.plugins.summaryEnabled': '{count} enabled',
+  'botPanel.plugins.summaryNone': 'None enabled',
+  'botPanel.plugins.connections': 'Connected accounts',
+  'botPanel.plugins.serversAuto':
+    "This plugin's tool services come with the plugin — no per-server checkbox needed.",
+  'botPanel.plugins.manualServers': 'Manually added tool services',
+  'botPanel.plugins.manualServersHint':
+    'When checked, this bot can use tools from the corresponding services: read-only tools run directly, while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled).',
+  'botPanel.plugins.otherAccounts': 'Selected accounts (source plugin uninstalled)',
   'rightPanel.exportTemplate': 'Export as template',
   // --- Secondary menu rows of the other tabs (details hold the original content) -
   'rightPanel.menuSectionKnowledge': 'Knowledge',
@@ -900,9 +909,13 @@ export const enUS = {
   'projectSettings.title': 'Project details',
   'projectSettings.nav.overview': 'Overview',
   'projectSettings.nav.members': 'Members',
+  'projectSettings.nav.plugins': 'Plugins',
   'projectSettings.nav.grants': 'Access',
   'projectSettings.nav.schedules': 'Schedules & monitoring',
   'projectSettings.nav.danger': 'Other',
+  'projectSettings.plugins.hint':
+    "Available to every member bot in this project's conversations and tasks; member bots' own settings stay unchanged.",
+  'projectSettings.plugins.empty': 'No plugins installed yet — take a look at the plugin store.',
   'projectSettings.name': 'Project name',
   'projectSettings.goal': 'Project goal',
   'projectSettings.goalHint':
@@ -1503,7 +1516,7 @@ export const enUS = {
   'sidebar.extensionCenter': 'Extension Center',
   'extensionCenter.title': 'Extension Center',
   'extensionCenter.description':
-    'Add skills for Bots, connect everyday apps, manage installed MCP tool servers, let Bots handle your email, or enable local app collaboration.',
+    'Add skills for Bots, connect everyday apps, manage installed tool services, let Bots handle your email, or enable local app collaboration.',
   'extensionCenter.tabs.market': 'Market',
   'extensionCenter.tabs.installed': 'Installed',
   'extensionCenter.tabs.localCollab': 'Local app collaboration',
@@ -1544,7 +1557,7 @@ export const enUS = {
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
   'plugins.title': 'Installed plugins',
   'plugins.hint':
-    'Plugins bundle skills, MCP servers and connected apps into one distributable extension.',
+    'Plugins bundle skills, tools and connected apps into one distributable extension.',
   'plugins.installFile': 'Install from file…',
   'plugins.installFolder': 'Install from folder…',
   'plugins.empty': 'No plugins installed yet.',
@@ -1558,7 +1571,7 @@ export const enUS = {
   'plugins.tier.community': 'Community',
   'plugins.tier.developer': 'Unreviewed',
   'plugins.kind.skill': 'Skills',
-  'plugins.kind.mcp': 'MCP servers',
+  'plugins.kind.mcp': 'Tools',
   'plugins.kind.connector': 'Connected apps',
   'plugins.kind.mail': 'Mail templates',
   'plugins.menu.enable': 'Enable',
@@ -1578,7 +1591,7 @@ export const enUS = {
   'plugins.toast.failed': 'Operation failed: {reason}',
   'plugins.uninstallTitle': 'Uninstall plugin',
   'plugins.uninstallBody':
-    'This removes everything "{name}" installed (skills, MCP servers, connected apps) and disconnects every account connected through its apps. This cannot be undone.',
+    'This removes everything "{name}" installed (skills, tools, connected apps) and disconnects every account connected through its apps. This cannot be undone.',
   'plugins.uninstallConfirm': 'Uninstall',
   'plugins.cancel': 'Cancel',
   'plugins.badge': 'Plugin · {name}',
@@ -1631,7 +1644,7 @@ export const enUS = {
   'plugins.market.category.all': 'All',
   'plugins.market.category.skill': 'Skills',
   'plugins.market.category.connector': 'Apps',
-  'plugins.market.category.mcp': 'MCP',
+  'plugins.market.category.mcp': 'Tools',
   'plugins.market.category.mail': 'Mail',
   'plugins.market.refresh': 'Refresh',
   'plugins.market.refreshing': 'Syncing…',
@@ -2009,6 +2022,12 @@ export const enUS = {
   'onboarding.botTitle': 'Meet your butler',
   'onboarding.botBody':
     'Your butler is your fixed entry point: chat a bit so it can learn what you need, then it helps you assemble a Bot team with each member covering its own area.',
+  // P2 injection model: the final-step "recommended plugins" multi-select.
+  'onboarding.pluginsTitle': 'Recommended plugins',
+  'onboarding.pluginsHint':
+    'Optional. Enable some installed plugins for the butler; you can adjust this later in its details.',
+  'onboarding.pluginsEmpty': 'No plugins installed yet.',
+  'onboarding.pluginsOpenStore': 'Open the plugin store',
   'onboarding.butlerPoint.team':
     'Based on your work and life scenarios, suggest 3–5 domain Bots and create them automatically once you confirm',
   'onboarding.butlerPoint.route':
@@ -2693,8 +2712,8 @@ export const enUS = {
   'agents.capabilities.host_ops.name': 'Host operations',
   'agents.capabilities.host_ops.description':
     'Request environment installs and Git remote operations in the working directory',
-  'agents.capabilities.mcp.name': 'MCP tools',
-  'agents.capabilities.mcp.description': 'Tools from the MCP servers this Bot has selected',
+  'agents.capabilities.mcp.name': 'Tools',
+  'agents.capabilities.mcp.description': 'Tools from the tool services this bot has selected',
   'agents.capabilities.apps.name': 'Connected apps',
   'agents.capabilities.apps.description':
     'Tools from connected apps this Bot has authorized (GitHub, Notion, etc.)',
@@ -2740,7 +2759,7 @@ export const enUS = {
     'This agent has this capability built in; injecting it only serves as a fallback',
   'contacts.agentToolCount': 'About {count} tools will be injected',
   'contacts.agentToolCountMcp':
-    'About {count} tools will be injected, plus tools from the selected MCP servers',
+    'About {count} tools will be injected, plus tools from the selected tool services',
   'contacts.agentCapabilitiesReset': 'Reset to defaults',
   'contacts.agentIsolationNote':
     "Isolation comes from the agent's own sandbox: network reads are not confirmed each time; some agents (such as Codex) can read files across the entire computer from their sandbox, including KepCup's app data directory.",

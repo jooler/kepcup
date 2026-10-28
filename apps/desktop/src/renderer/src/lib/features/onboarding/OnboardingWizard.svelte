@@ -9,6 +9,8 @@
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { ENDPOINT_KIND } from '$lib/features/web-shell/endpoint';
   import AgentCard from '$lib/features/settings/AgentCard.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -83,6 +85,24 @@
 
   // --- 管家步骤（D70） ---
   let creating = $state(false);
+
+  // --- 推荐插件（P2 注入模型）：末步多选，默认全不选；写管家的 plugin_ids ---
+  $effect(() => {
+    if (step !== 'bot') return;
+    plugins.start();
+    void plugins.load().catch(() => undefined);
+  });
+  let chosenPluginIds = $state<string[]>([]);
+
+  function toggleWizardPlugin(pluginId: string, checked: boolean): void {
+    chosenPluginIds = checked
+      ? [...chosenPluginIds.filter((id) => id !== pluginId), pluginId]
+      : chosenPluginIds.filter((id) => id !== pluginId);
+  }
+
+  function openPluginStore(): void {
+    shell.openExtensionCenter('market');
+  }
 
   const stepIndex = $derived(STEPS.indexOf(step));
 
@@ -350,8 +370,21 @@
       });
       // 订阅分支：管家由外部 Agent 驱动，组队访谈（内置引擎）不开启。
       const result = (await core.call('butler.ensure', { interview: !agentPath })) as {
+        bot: { id: string };
         conversationId: string;
       };
+      // 末步勾选的推荐插件：写入管家的启用集（显式添加制，默认不启用任何插件）。
+      // 失败不阻塞完成：管家已建好，插件可在其详情里随时启用。
+      if (chosenPluginIds.length > 0) {
+        try {
+          await core.call('plugins.setBotPlugins', {
+            botId: result.bot.id,
+            pluginIds: chosenPluginIds,
+          });
+        } catch {
+          // 留给管家详情的「插件」区块补启。
+        }
+      }
       await persist({ onboarding: { completed: true } });
       onboarding.close();
       void chat.select(result.conversationId);
@@ -728,6 +761,40 @@
           {t('onboarding.butlerAgentNote', { name: agentPathName })}
         </p>
       {/if}
+      <!-- P2 注入模型：推荐插件多选（默认全不选；无已装插件时给商店引导）。 -->
+      <div class="mt-4 grid gap-1.5" data-testid="onboarding-plugins">
+        <p class="text-sm font-medium">{t('onboarding.pluginsTitle')}</p>
+        <p class="text-xs text-muted-foreground">{t('onboarding.pluginsHint')}</p>
+        {#if plugins.plugins.length === 0}
+          <div class="flex items-center gap-2">
+            <p class="text-xs text-muted-foreground" data-testid="onboarding-plugins-empty">
+              {t('onboarding.pluginsEmpty')}
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="h-7 px-2 text-xs"
+              onclick={openPluginStore}
+              data-testid="onboarding-plugins-open-store"
+            >
+              {t('onboarding.pluginsOpenStore')}
+            </Button>
+          </div>
+        {:else}
+          <div class="max-h-40 space-y-1 overflow-y-auto" data-testid="onboarding-plugins-list">
+            {#each plugins.plugins as plugin (plugin.id)}
+              <label class="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={chosenPluginIds.includes(plugin.id)}
+                  onCheckedChange={(checked) => toggleWizardPlugin(plugin.id, checked === true)}
+                  data-testid={`onboarding-plugin-${plugin.id}`}
+                />
+                <span class="truncate">{plugin.name}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <footer class="mt-6 flex items-center justify-between">
         <Button size="sm" variant="ghost" onclick={back} data-testid="onboarding-back"
           >{t('onboarding.back')}</Button

@@ -17,13 +17,11 @@
     FolderOpen,
     Globe,
     ListChecks,
-    Mail,
     MessageSquareDot,
-    Plug,
+    Package,
     Puzzle,
     ShieldCheck,
     Trash2,
-    Wrench,
   } from '@lucide/svelte';
   import type { BotProfile, WidgetsListItem } from '@kepcup/shared';
   import { t } from '$lib/i18n';
@@ -32,12 +30,12 @@
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
-  import { appsStore } from '$lib/stores/apps.svelte';
   import { memoryStore } from '$lib/stores/memory.svelte';
   import { skillsStore } from '$lib/stores/skills.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { engineValue, AGENT_OPTION_PREFIX } from '$lib/features/bot-panel/agent-capabilities';
-  import { appChoiceGroups } from '$lib/features/bot-panel/bot-apps';
+  import { enabledPluginCount } from '$lib/features/bot-panel/bot-plugins';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { inkcopCollabEnabled } from '$lib/features/inkcop-collab';
   import type { BotConfigSection } from '$lib/features/bot-panel/bot-config-sections';
   import ConfigMenuGroup from './ConfigMenuGroup.svelte';
@@ -109,7 +107,8 @@
     if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
   });
   $effect(() => {
-    appsStore.start();
+    plugins.start();
+    void plugins.load().catch(() => undefined);
   });
   $effect(() => {
     void memoryStore.load(botId).catch(() => undefined);
@@ -151,20 +150,8 @@
     return option?.label ?? value;
   });
 
-  const usedAppCount = $derived(
-    appChoiceGroups(
-      appsStore.catalog,
-      appsStore.connections,
-      profile.runtime.app_connection_ids,
-    ).filter((group) => group.selectedConnectionId !== null).length,
-  );
-
-  const mcpEnabled = $derived(
-    (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled),
-  );
-  const mcpSummary = $derived(
-    mcpEnabled.filter((server) => profile.runtime.mcp_server_ids.includes(server.id)).length,
-  );
+  // P2 注入模型：应用 / MCP / 邮箱三行合并为「插件」，摘要 = 与已装清单求交的启用数。
+  const pluginCount = $derived(enabledPluginCount(profile.runtime.plugin_ids, plugins.plugins));
 
   const inkcopOn = $derived(inkcopCollabEnabled(settingsStore.settings));
   const inkcopSummary = $derived(profile.runtime.inkcop_agent_keys?.length ?? 0);
@@ -288,28 +275,13 @@
 
   <ConfigMenuGroup label={t('rightPanel.configSectionConnections')}>
     <MenuRow
-      icon={Plug}
-      title={t('rightPanel.configRowApps')}
-      summary={usedAppCount > 0
-        ? t('rightPanel.configAppsSummary', { count: usedAppCount })
-        : t('rightPanel.configAppsNone')}
-      testid="bot-config-row-apps"
-      onclick={() => onOpenSection('apps')}
-    />
-    {#if mcpEnabled.length > 0}
-      <MenuRow
-        icon={Wrench}
-        title={t('rightPanel.configRowMcp')}
-        summary={String(mcpSummary)}
-        testid="bot-config-row-mcp"
-        onclick={() => onOpenSection('mcp')}
-      />
-    {/if}
-    <MenuRow
-      icon={Mail}
-      title={t('rightPanel.configRowMail')}
-      testid="bot-config-row-mail"
-      onclick={() => onOpenSection('mail')}
+      icon={Package}
+      title={t('botPanel.sections.plugins')}
+      summary={pluginCount > 0
+        ? t('botPanel.plugins.summaryEnabled', { count: pluginCount })
+        : t('botPanel.plugins.summaryNone')}
+      testid="bot-config-row-plugins"
+      onclick={() => onOpenSection('plugins')}
     />
     {#if inkcopOn}
       <MenuRow
