@@ -224,6 +224,8 @@ describe('BuiltinPlugins.connectorSource', () => {
     expect(source.iconPaths.get('notion')).toBe(
       path.join(dir, 'com.kepcup', 'connections', 'connectors', 'notion', 'notion.svg'),
     );
+    // D105：slug → 归属内置插件 id（目录条目的 pluginId 透传）。
+    expect(source.owners.get('notion')).toBe('com.kepcup/connections');
 
     // 图标缺失：不进 map（条目仍在）。
     rmSync(path.join(dir, 'com.kepcup', 'connections', 'connectors', 'notion', 'notion.svg'));
@@ -239,6 +241,7 @@ describe('BuiltinPlugins.connectorSource', () => {
       entries: [],
       iconsDir: null,
       iconPaths: new Map(),
+      owners: new Map(),
     });
   });
 });

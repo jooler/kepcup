@@ -280,6 +280,7 @@ describe('ConnectorCatalog (runtime loader)', () => {
       entries: [],
       iconsDir: null,
       iconPaths: new Map(),
+      owners: new Map(),
     });
 
     // 坏 plugin.json → 整个插件被跳过（告警），来源为空。

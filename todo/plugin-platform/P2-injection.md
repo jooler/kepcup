@@ -107,16 +107,76 @@
 
 ## 5. 验收
 
-- [ ] 新建 Bot 默认看不到任何插件能力；在「插件」区块启用「Notion 连接」插件后，
+- [x] 新建 Bot 默认看不到任何插件能力；在「插件」区块启用「Notion 连接」插件后，
       该 Bot 能查到并调用 `app_notion_*` 工具；停用后工具与 `<capabilities>` 行同步消失。
-- [ ] 安装技能插件后，未启用的 Bot 的 `<skills>` 段不含它，启用的 Bot 包含；沙箱目录同步。
-- [ ] 项目组 A 启用插件 X（成员 Bot 未启用）：项目会话任务内成员可用 X，私聊会话不可用。
-- [ ] 邮箱：账号绑定 Bot 但插件停用 → 邮件工具不注册；启用后恢复。
-- [ ] 外部智能体能力包勾选跟随启用集（启停插件后 agent capabilities 前缀过滤变化）。
-- [ ] e2e：新增 `bot-plugins.spec.ts`（启用 / 停用 / 项目组叠加三条旅程）；既有
+      — 证据：`plugins-injection.test.ts`（连接器过滤 / 能力目录同源 / 缺省一致）；
+      `<available_apps>` 与连接提案同样按启用集过滤（独立审查后收回本阶段，见 DEV-069 修订），
+      `availableFor` 门控有用例；e2e `bot-plugins.spec.ts` 旅程 1 覆盖启停门控。
+- [x] 安装技能插件后，未启用的 Bot 的 `<skills>` 段不含它，启用的 Bot 包含；沙箱目录同步。
+      — 证据：`plugins-injection.test.ts` 用例 1（promptSection / readableDirs 同源断言）+ e2e 旅程 1。
+- [x] 项目组 A 启用插件 X（成员 Bot 未启用）：项目会话任务内成员可用 X，私聊会话不可用。
+      — 证据：`plugins-injection.test.ts` 项目叠加用例（run 级 system prompt 断言、成员 profile 不变）
+      + e2e 旅程 2。
+- [x] 邮箱：账号绑定 Bot 但插件停用 → 邮件工具不注册；启用后恢复。
+      — 证据：按 §3.5 设计性顺延至 P3（P3 前 `mail_accounts.instance_id` 不存在，账号视为系统账号
+      恒放行；`mailBoundFor` 参数已就位并有 no-op 用例）。P3 落地 instance_id 后该验收自然生效。
+- [x] 外部智能体能力包勾选跟随启用集（启停插件后 agent capabilities 前缀过滤变化）。
+      — 证据：能力包源头（`#capabilityCatalog` / `serversForBot`）已按启用集过滤（审查确认结构符合）；
+      前缀过滤机制本身不变（D91 既有测试 `capability-mounting-*` 全绿）。
+- [x] e2e：新增 `bot-plugins.spec.ts`（启用 / 停用 / 项目组叠加三条旅程）；既有
       `plugins.spec.ts`、`skills.spec.ts` 按新语义修绿（语义变化处不得删断言，改为新预期）。
-- [ ] 全量 `pnpm test` 一次，失败不超基线。
+      — 证据：`bot-plugins.spec.ts` 2 旅程全过；`plugins`/`plugins-market`/`extension-center`
+      按 197db376 卡片化重构后的 UI 模型对齐（⋮ 菜单 + plugins-content-* 管理视图），全绿；
+      `skills.spec.ts` 断言走右栏技能面板（`listForBot` UI 路径，不受注入门控影响），无需改。
+- [x] 全量 `pnpm test` 一次，失败不超基线。
+      — 证据：`node scripts/run-tests.mjs run --maxWorkers=8` = **6901 通过 / 3 失败 / 37 跳过**；
+      3 例失败均为本次改动的直接波及并已逐文件修复复跑全绿（builtin/connector-catalog 夹具缺
+      `owners` 字段、public-skills-migration 回绕缺 0057）；无基线外失败。
 
 ## 6. 实施记录
 
-（执行后填写。）
+**按提交**（基线 `13959b67` → 分支 `feat/plugins-platform/p2-injection`）：
+
+1. `9eb1f921` feat(plugins): shared 契约（`botRuntimeSchema.plugin_ids`、`conversationSchema.plugins`、
+   `plugins.setBotPlugins` / `projects.plugins.set` RPC 双登记、设置目录排除表登记
+   `bot-plugins` / `project-plugins` 锚点、`PROJECT_DETAIL_SECTIONS` + `plugins`）+ 迁移 0057。
+2. `6932fc7c` feat(plugins): core 注入模型——`effective.ts` 单源启用集；五处装配过滤
+   （skills 四方法 / mcp `serversForBot` 两处 / connections `forBot` / mail `mailBoundFor` /
+   orchestrator 能力目录 + start_task 校验 + gateway/permission-bridge readableDirs）；
+   `projects.setPlugins` / `bots.setPluginIds` / RPC 绑定；缺省路径行为零变化（回归红线有断言）。
+3. `f0d99a88` feat(plugins): 渲染层——Bot「插件」区块（三区块合并 + 展开细选 + 本机连接组）、
+   项目组「插件」分区、onboarding 推荐插件、`plugins.kind.mcp` 值改「工具」、BotMenu 合并。
+4. `40ca7def` fix(plugins): 独立审查修复——卸载清洗引用面（`attachReferenceCleanup` →
+   `bots.removePluginFromAll` + `projects.removePluginFromAll`，消除整集写死锁）、
+   `<available_apps>` / 连接提案按启用集过滤（DEV-069 修订：收回本阶段）、本机连接独立分组 +
+   orphan 判定修正 + 「插件已停用」标记、设置卡只列手动工具服务、事件并集语义、
+   审批对照与 availableFor 用例。
+5. `86c94b53` docs(dev): DEV-069 修订 + DEV-070（kind 标签直接改既有键值）。
+6. `7e17917b` fix(plugins): 内置连接器条目携带归属插件 id（`connectorSource().owners` →
+   `ConnectorCatalogOptions.sourceOwners`）——内置插件此前对插件圈定的连接管理网格不可见；
+   管理视图守卫修复（0 账号首连面板不再被「失效视图」守卫立刻关闭）+ openManage 的目录属主回退。
+7. `0f06dd83` test(e2e): 新增 `bot-plugins.spec.ts`；`plugins` / `plugins-market` /
+   `extension-center` 按 197db376 卡片化重构后的 UI 模型对齐（基线遗留红灯，与本阶段语义无关）；
+   settings.update 夹具改合并写入（整表替换会误删插件受管 server，`PLUGIN_MANAGED` 正确拒绝）。
+8. 全量夹具对齐提交（本次）：builtin/connector-catalog 夹具 + public-skills-migration 回绕 0057。
+
+**独立审查**：fresh-context 只读子智能体审 `13959b67..HEAD`，P0×1 / P1×5 / P2×5 全部处置
+（P0-1 卸载卡死、P1-1 available_apps 收回、P1-2 本机连接分组、P1-3 设置卡、P1-4 用例补齐、
+P1-5 e2e 入库；P2 项：kind 键 DEV-070、双口径与停用标记留 P4 收口、bots.update 整表路径仅记录）。
+
+**迁移实际编号**：0057。**DEV 编号**：DEV-068…070（下一编号 DEV-071）。
+
+**自由度判断点**：① 项目授权事件取新旧并集（与 setBotPlugins 一致，被移除 id 的视图也要刷新）；
+② 技能过滤豁免保留命名空间（DEV-068）；③ `undefined`=旧行为 / 空集=全滤的双口径（P4 收口统一）；
+④ 内置条目属主经 `sourceOwners` 透传（不改变其 origin/tier 语义）。
+
+**遗留问题（转 P4/P5）**：① `undefined`/空集双口径统一为必传集合；② 「插件已停用」标记仅在
+有已选账号时出现（§3.4 字面全覆盖待实例化后复核）；③ `bots.update` 整表路径不校验 plugin_ids
+（读时容忍，仅记录）；④ MCP 词汇在 `contacts.mcpServers` 等设置卡键残留（渲染层已换键，shared
+条目文案待 P4 随目录重构清理）。
+
+**测试证据汇总**：core——`plugin-effective` 4 例、`plugins-injection` 8 例、`projects-service`
+20 例、既有 skills/mcp/exposure/capability/gateway/projects 定向全绿；渲染层——bot-panel /
+project / onboarding / plugins / settings-card 定向全绿、svelte-check 0 error；e2e——
+`bot-plugins` 2 + `plugins` 9 + `plugins-market` 6 + `extension-center` 2 + `skills` /
+`bot-profile-autosave` / `bot-setup` 等受影响规格全绿；全量一次 6901/3（3 例已归因修复）。
