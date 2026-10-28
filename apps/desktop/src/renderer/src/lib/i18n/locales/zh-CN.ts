@@ -97,6 +97,7 @@ export const zhCN = {
   'chats.errorCode.PLUGIN_INCOMPATIBLE': '插件与当前环境不兼容',
   'chats.errorCode.PLUGIN_CONFLICT': '插件与已有内容冲突',
   'chats.errorCode.PLUGIN_MANAGED': '该项由插件管理，请在「已安装」里卸载插件',
+  'chats.errorCode.PLUGIN_UPGRADE_REQUIRED': '此插件需要更新版本的 KepCup，请先升级应用',
   'runStatus.pleaseWait': '请稍等…',
   'runStatus.callingVerb': '正在{verb}…',
   'runStatus.callingTool': '正在调用 {tool}…',

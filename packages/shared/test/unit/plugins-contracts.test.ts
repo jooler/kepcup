@@ -24,8 +24,15 @@ const PLUGIN_METHODS = [
   'plugins.install',
   'plugins.setEnabled',
   'plugins.uninstall',
+  'plugins.update',
   'plugins.marketplace.list',
   'plugins.marketplace.refresh',
+  'plugins.config.get',
+  'plugins.config.set',
+  'plugins.instances.list',
+  'plugins.instances.create',
+  'plugins.instances.update',
+  'plugins.instances.delete',
 ];
 
 const summary = {
@@ -50,6 +57,11 @@ const summary = {
   ],
   updateAvailable: null,
   revoked: null,
+  configFields: [
+    { key: 'defaultRepo', title: '默认仓库', type: 'string', required: false },
+  ],
+  instanceCounts: { mail: 0, mcp: 0 },
+  providesInstances: [],
 };
 
 describe('plugins RPC / event / error-code contracts', () => {
@@ -220,6 +232,8 @@ describe('payload round-trips', () => {
       update: null,
       installable: false,
       blockers: ['与公共技能 docx 冲突'],
+      configFields: [],
+      capabilitySummary: '提供 1 个连接与 1 个技能',
     };
     expect(pluginInspectOutputSchema.parse(inspect)).toEqual(inspect);
   });

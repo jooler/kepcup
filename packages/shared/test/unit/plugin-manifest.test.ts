@@ -12,6 +12,10 @@ import {
   isReservedPluginNamespace,
   isSafePluginRelPath,
   parsePluginSkillSource,
+  pluginCapabilitySummary,
+  pluginFieldSchema,
+  pluginFieldSummaryOf,
+  capabilityFactsOf,
   pluginIdSchema,
   pluginManifestSchema,
   pluginNamespaceOf,
@@ -334,4 +338,179 @@ describe('plugin skill source marker', () => {
       expect(parsePluginSkillSource(value)).toBeNull();
     });
   }
+});
+
+describe('declarative fields & instances (D105)', () => {
+  it('a pure-instance manifest with config fields is valid', () => {
+    const manifest = parse({
+      format_version: 1,
+      id: 'app.kepcup.example/mail-x',
+      name: '示例邮件',
+      version: '1.0.0',
+      instances: ['mail'],
+      config: {
+        fields: [
+          { key: 'pollSec', type: 'number', title: '轮询间隔（秒）', min: 60, max: 3600 },
+        ],
+      },
+    });
+    expect(manifest.instances).toEqual(['mail']);
+    expect(manifest.config?.fields[0]?.key).toBe('pollSec');
+    expect(manifest.config?.fields[0]?.required).toBe(false);
+  });
+
+  it('rejects duplicate config keys and duplicate instance kinds', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        config: {
+          fields: [
+            { key: 'a', type: 'string', title: 'A' },
+            { key: 'a', type: 'string', title: 'A2' },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        instances: ['mail', 'mail'],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown instance kinds and bad field shapes', () => {
+    expect(pluginManifestSchema.safeParse({ ...minimalManifest, instances: ['sms'] }).success).toBe(
+      false,
+    );
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        config: { fields: [{ key: 'a', type: 'json', title: 'A' }] },
+      }).success,
+    ).toBe(false);
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        config: { fields: [{ key: 'has space', type: 'string', title: 'A' }] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('caps config fields and instances at the documented limits', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...minimalManifest,
+        config: {
+          fields: Array.from({ length: 33 }, (_, i) => ({
+            key: `f${i}`,
+            type: 'string',
+            title: `F${i}`,
+          })),
+        },
+      }).success,
+    ).toBe(false);
+    // Only two kinds exist; >4 entries is structurally impossible without duplicates, so
+    // the cap is asserted through the duplicate rejection above.
+  });
+});
+
+describe('plugin field schema (D105: MCPB user_config 泛化)', () => {
+  it('accepts a full field and applies defaults', () => {
+    const field = pluginFieldSchema.parse({ key: 'apiKey', type: 'string', title: 'API Key' });
+    expect(field).toMatchObject({
+      key: 'apiKey',
+      type: 'string',
+      title: 'API Key',
+      description: '',
+      required: false,
+      sensitive: false,
+      multiple: false,
+    });
+    expect('default' in field).toBe(false);
+  });
+
+  it('is strict: unknown keys are rejected, not stripped', () => {
+    expect(
+      pluginFieldSchema.safeParse({ key: 'a', type: 'string', title: 'A', placeholder: 'x' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('pluginFieldSummaryOf drops default and keeps the form-relevant bits', () => {
+    const field = pluginFieldSchema.parse({
+      key: 'apiKey',
+      type: 'string',
+      title: 'API Key',
+      required: true,
+      sensitive: true,
+      default: 'never-travels',
+    });
+    const summary = pluginFieldSummaryOf(field);
+    expect(summary).toEqual({
+      key: 'apiKey',
+      title: 'API Key',
+      type: 'string',
+      required: true,
+      sensitive: true,
+    });
+  });
+});
+
+describe('capability summary (D105)', () => {
+  it('describes contributions with names and instance offers', () => {
+    const manifest = parse({
+      format_version: 1,
+      id: 'io.github.alice/doc-tools',
+      name: '文档工具集',
+      version: '1.2.0',
+      contributions: {
+        skills: [
+          { dir: 'skills/docx', displayName: 'Word 工具' },
+          { dir: 'skills/pptx' },
+        ],
+        connectors: [{ file: 'connectors/notion.json' }],
+        mcp: [],
+        mail: [],
+      },
+      instances: ['mail'],
+    });
+    expect(pluginCapabilitySummary(capabilityFactsOf(manifest))).toBe(
+      '提供 2 个技能（Word 工具、pptx） 与 1 个连接；可添加多个邮箱账号',
+    );
+    // contributions 可整体省略（纯实例插件）；解析输出恒为完整对象。
+    const pure = parse({
+      format_version: 1,
+      id: 'app.kepcup.example/mail-only',
+      name: '纯邮件',
+      version: '1.0.0',
+      instances: ['mail'],
+    });
+    expect(pure.contributions).toEqual({ skills: [], connectors: [], mcp: [], mail: [] });
+  });
+
+  it('sanitizes untrusted skill names', () => {
+    const summary = pluginCapabilitySummary({
+      skills: 1,
+      connectors: 0,
+      mcp: 0,
+      mail: 0,
+      instances: [],
+      skillNames: ['a\nb\u202ec'],
+    });
+    expect(summary).not.toMatch(/[\n\u202e]/);
+  });
+
+  it('falls back for a pure-instance manifest', () => {
+    expect(
+      pluginCapabilitySummary({
+        skills: 0,
+        connectors: 0,
+        mcp: 0,
+        mail: 0,
+        instances: ['mcp'],
+        skillNames: [],
+      }),
+    ).toBe('可添加自定义工具');
+  });
 });

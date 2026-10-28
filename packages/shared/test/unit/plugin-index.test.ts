@@ -230,6 +230,9 @@ describe('source and summary additions', () => {
       counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
       items: [],
       updateAvailable: null,
+      configFields: [],
+      instanceCounts: { mail: 0, mcp: 0 },
+      providesInstances: [],
     };
     expect(pluginSummarySchema.parse(summary).revoked).toBeNull();
     expect(pluginSummarySchema.safeParse({ ...summary, revoked: 'disable' }).success).toBe(true);
