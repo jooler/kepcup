@@ -1064,3 +1064,29 @@
   2. 严格照抄草图（consentItems 需注入投影器、materializer 做模块级可变槽）。
 - 推荐：方案 1。
 - 决定：方案 1。
+
+### DEV-068 P2 技能可见性过滤豁免保留命名空间（内置插件预置技能恒可见）
+
+- 状态：已落实
+- 阶段：插件平台 P2（D105 注入模型）
+- 是否阻塞：否
+- 问题：P2-injection.md §3.2 字面上「公共技能行的 `plugin://` 属主 ∉ 启用集即过滤」会把内置插件（`com.kepcup/…` 保留命名空间）的预置技能一并滤掉——技能市场的预置安装（`SkillPresetsService`，`source_url = plugin://{builtinId}/{id}`）就死掉：内置插件**不进 `plugins` 表**（builtin.ts），`plugins.setBotPlugins` 的已安装校验（store 行存在且 `state==='installed'`）永远过不去，用户没有任何途径「启用」它们。
+- 影响范围：`packages/core/src/skills/registry.ts` 的 `#publicSkillVisible`：属主在保留命名空间（`isReservedPluginNamespace`）→ 恒入选，视同系统技能（与 §3.2「无 `plugin://` 标记视为系统技能」同一档）。安装型插件的技能不受影响。
+- 可选方案：
+  1. 保留命名空间豁免（当前实现）。
+  2. `pluginInstalled` 同时接受 builtin 目录（`BuiltinPlugins.get`）并让用户显式启用内置插件——改写 RPC 校验语义，且与「预置安装是用户点『添加』的显式决定」冲突。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-069 `<available_apps>` 与 Bot 目录提案未按启用集过滤（P2 §3.4 的次要面，推迟）
+
+- 状态：已落实（P2 范围内不做）
+- 阶段：插件平台 P2（D105 注入模型）
+- 是否阻塞：否
+- 问题：P2-injection.md §3.4 提到「`<available_apps>` 不列该插件目录条目、Bot 提案不推荐」，但本阶段实现契约（注入装配五处）只要求 `ConnectedApps.forBot` 的视图 / 合成 server 过滤；`availableFor`（未授权目录条目的推荐来源）与 Bot 提案管线不在五处装配点内。
+- 影响范围：插件连接器被停用时，已授权连接不可见（已实现），但 `<available_apps>` 仍可能列出该插件「未连接」的目录条目 / 提案推荐——展示面问题，不产生任何可调用的能力（未授权连接本就无 server / 工具）。P4 扩展中心收口时随目录重构一并处理。
+- 可选方案：
+  1. P2 只做 forBot，`availableFor` / 提案过滤留给 P4（当前实现）。
+  2. 本阶段顺手给 `availableFor` 加启用集参数——超出阶段装配点范围，且 P4 会重构目录来源。
+- 推荐：方案 1。
+- 决定：方案 1。

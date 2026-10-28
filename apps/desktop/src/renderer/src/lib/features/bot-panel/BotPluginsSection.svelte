@@ -127,12 +127,25 @@
     return appGroups.filter((group) => groupPluginId(group) === plugin.id);
   }
 
-  /** Bot 已选用但归属不到已装插件的账号（插件卸载后残留）：单独列出便于移除。 */
+  /** 本机自建连接（无属主插件）的分组：不受插件启用集约束，独立成组管理。 */
+  const localGroups = $derived(appGroups.filter((group) => groupPluginId(group) === null));
+
+  /**
+   * Bot 已选用、但属主插件已不在已装清单的账号（插件卸载后残留）：单独列出便于移除。
+   * 本机连接（属主为 null）不算残留——它们没有可卸载的插件。
+   */
   const orphanGroups = $derived(
-    appGroups.filter(
-      (group) => group.selectedConnectionId !== null && !plugins.has(groupPluginId(group) ?? ''),
-    ),
+    appGroups.filter((group) => {
+      const owner = groupPluginId(group);
+      return owner !== null && group.selectedConnectionId !== null && !plugins.has(owner);
+    }),
   );
+
+  /** 属主插件已停用（或插件行上已勾账号但插件未启用）→ 行上标「插件已停用」。 */
+  function pluginDisabledWithAccounts(plugin: PluginSummary): boolean {
+    if (plugin.enabled && enabledIds.has(plugin.id)) return false;
+    return groupsOf(plugin).some((group) => group.selectedConnectionId !== null);
+  }
 
   const selectedAppConnections = $derived(
     appsStore.connections.filter((connection) =>
@@ -176,14 +189,23 @@
   }
 
   /** 账号选择器（从旧 apps 区块搬入）：只列有已连接账号的应用，多账号展开挑。 */
-  let pickerPlugin = $state<PluginSummary | null>(null);
+  let pickerTitle = $state('');
+  let pickerOpen = $state(false);
   let pickerGroups = $state<AppChoiceGroup[]>([]);
   let expandedPickerApps = $state<string[]>([]);
 
   function openAppsPicker(plugin: PluginSummary): void {
     pickerGroups = groupsOf(plugin).filter((group) => group.accounts.length > 0);
     expandedPickerApps = [];
-    pickerPlugin = plugin;
+    pickerTitle = plugin.name;
+    pickerOpen = true;
+  }
+
+  function openLocalAppsPicker(): void {
+    pickerGroups = localGroups.filter((group) => group.accounts.length > 0);
+    expandedPickerApps = [];
+    pickerTitle = t('botPanel.plugins.localAccounts');
+    pickerOpen = true;
   }
 
   function togglePickerApp(connectorId: string): void {
@@ -194,7 +216,7 @@
 
   function pickAppAccount(connectorId: string, connectionId: string): void {
     selectApp(connectorId, connectionId);
-    pickerPlugin = null;
+    pickerOpen = false;
     expandedPickerApps = [];
   }
 
@@ -318,6 +340,14 @@
             />
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium">{plugin.name}</span>
+              {#if pluginDisabledWithAccounts(plugin)}
+                <span
+                  class="text-xs text-muted-foreground"
+                  data-testid={`bot-plugins-app-disabled-${plugin.id}`}
+                >
+                  {t('botPanel.plugins.pluginDisabled')}
+                </span>
+              {/if}
               {#if !plugin.enabled}
                 <span
                   class="block truncate text-xs text-muted-foreground"
@@ -460,6 +490,39 @@
     </div>
   {/if}
 
+  {#if localGroups.some((group) => group.accounts.length > 0)}
+    <!-- 本机自建连接的账号：不属于任何插件，独立成组（沿用旧 apps 区块的全局选择器语义）。 -->
+    <div class="space-y-1.5" data-testid="bot-plugins-local-accounts">
+      <div class="flex items-center gap-2">
+        <Label class="text-xs">{t('botPanel.plugins.localAccounts')}</Label>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="ml-auto h-7 gap-1 px-2 text-xs"
+          onclick={openLocalAppsPicker}
+          data-testid="bot-plugins-add-local"
+        >
+          <Plus class="size-3.5" aria-hidden="true" />
+          {t('rightPanel.appsAdd')}
+        </Button>
+      </div>
+      <div class="space-y-2">
+        {#each localGroups as group (group.connectorId)}
+          {#if group.selectedConnectionId !== null || group.accounts.length > 0}
+            <div class="flex items-center gap-2 text-sm" data-testid={`bot-apps-${group.connectorId}`}>
+              <span class="min-w-0 flex-1 truncate">{group.title}</span>
+              {#if group.selectedConnectionId !== null}
+                <span class="text-xs text-muted-foreground">
+                  · {group.accounts.find((entry) => entry.connection.id === group.selectedConnectionId)?.label ?? ''}
+                </span>
+              {/if}
+            </div>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if orphanGroups.length > 0}
     <!-- 插件卸载后残留的已选账号：不再归属任何已装插件，列出便于移除。 -->
     <div class="space-y-1.5" data-testid="bot-plugins-orphans">
@@ -569,10 +632,10 @@
 
 <!-- 「添加账号」选择器（从旧 apps 区块搬入，限定在该插件的连接器里）：
      只列有已连接账号的应用；多账号展开挑账号，选中即用并关闭。 -->
-<Dialog open={pickerPlugin !== null} onOpenChange={(next) => !next && (pickerPlugin = null)}>
+<Dialog open={pickerOpen} onOpenChange={(next) => !next && (pickerOpen = false)}>
   <DialogContent class="max-w-md" data-testid="bot-apps-picker">
     <DialogHeader>
-      <DialogTitle>{t('rightPanel.appsPickerTitle')}</DialogTitle>
+      <DialogTitle>{t('rightPanel.appsPickerTitle')} · {pickerTitle}</DialogTitle>
       <DialogDescription>{t('rightPanel.appsPickerHint')}</DialogDescription>
     </DialogHeader>
     <div class="max-h-80 space-y-1.5 overflow-y-auto" data-testid="bot-apps-picker-list">

@@ -191,6 +191,29 @@ export class BotsService {
     return { replaced };
   }
 
+  /**
+   * D105 P2：插件卸载时从所有 Bot 的 `plugin_ids` 里移除该 id（幂等）。返回受影响的
+   * Bot id；不校验存在（清理面，读时容忍的写侧对偶）。
+   */
+  removePluginFromAll(pluginId: string): string[] {
+    const affected: string[] = [];
+    for (const bot of this.listActive()) {
+      if (!bot.profile.runtime.plugin_ids?.includes(pluginId)) continue;
+      const profile = botProfileSchema.parse({
+        ...bot.profile,
+        runtime: {
+          ...bot.profile.runtime,
+          plugin_ids: bot.profile.runtime.plugin_ids.filter((id) => id !== pluginId),
+        },
+      });
+      this.db
+        .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+        .run(JSON.stringify(profile), this.clock.now(), bot.id);
+      affected.push(bot.id);
+    }
+    return affected;
+  }
+
   /** 连接被删除：从所有 Bot 的授权里移除它。返回受影响的 Bot id（调用方据此中断其运行中的任务）。 */
   removeConnectionFromAll(connectionId: string): string[] {
     const affected: string[] = [];

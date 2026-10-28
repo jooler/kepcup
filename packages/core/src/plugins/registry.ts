@@ -177,6 +177,11 @@ export class PluginRegistry {
   readonly #manifests = new Map<string, PluginManifest>();
   /** Instance teardown (D105), wired by start.ts: `PluginInstanceService.deleteAllOf`. */
   #instanceTeardown: ((pluginId: string) => Promise<void>) | null = null;
+  /**
+   * Reference cleanup (D105 P2): strip the plugin id from every bot's plugin_ids and
+   * every project_plugins row on uninstall — write paths stay strict, nothing dangles.
+   */
+  #referenceCleanup: ((pluginId: string) => void) | null = null;
 
   constructor(deps: PluginRegistryDeps) {
     // Test-only failure injection (P1-2): the wrapper applies only with test hooks on and
@@ -216,6 +221,11 @@ export class PluginRegistry {
   /** Wires the uninstall-time instance cascade (`PluginInstanceService.deleteAllOf`). */
   attachInstanceTeardown(fn: (pluginId: string) => Promise<void>): void {
     this.#instanceTeardown = fn;
+  }
+
+  /** Wires the uninstall-time reference cleanup (bots' plugin_ids + project_plugins). */
+  attachReferenceCleanup(fn: (pluginId: string) => void): void {
+    this.#referenceCleanup = fn;
   }
 
   // --- lifecycle ----------------------------------------------------------------
@@ -1415,6 +1425,9 @@ export class PluginRegistry {
     } catch (error) {
       firstError = error;
     }
+    // Reference faces first (idempotent): stale ids in bot profiles / project overlays
+    // would otherwise deadlock every whole-set write (write paths validate existence).
+    this.#referenceCleanup?.(id);
     this.#deps.audit?.recordSystem('plugin_uninstall', {
       pluginId: id,
       version: row.version,
