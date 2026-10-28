@@ -425,21 +425,32 @@ describe('plugin skill source marker', () => {
 
 describe('declarative fields & instances (D105)', () => {
   it('a pure-instance manifest with config fields is valid', () => {
+    // P3：mail 实例声明必须伴随 mail 贡献（供给规范），纯实例形态只剩 mcp。
     const manifest = parse({
       format_version: 1,
-      id: 'app.kepcup.example/mail-x',
-      name: '示例邮件',
+      id: 'app.kepcup.example/tools-x',
+      name: '示例工具',
       version: '1.0.0',
-      instances: ['mail'],
+      instances: ['mcp'],
       config: {
         fields: [
           { key: 'pollSec', type: 'number', title: '轮询间隔（秒）', min: 60, max: 3600 },
         ],
       },
     });
-    expect(manifest.instances).toEqual(['mail']);
+    expect(manifest.instances).toEqual(['mcp']);
     expect(manifest.config?.fields[0]?.key).toBe('pollSec');
     expect(manifest.config?.fields[0]?.required).toBe(false);
+    // 反向校验：instances 带 mail 而无 mail 贡献 → 拒绝（审查 P2-1）。
+    expect(() =>
+      parse({
+        format_version: 1,
+        id: 'app.kepcup.example/mail-y',
+        name: '示例邮件',
+        version: '1.0.0',
+        instances: ['mail'],
+      }),
+    ).toThrow();
   });
 
   it('rejects duplicate config keys and duplicate instance kinds', () => {
@@ -554,20 +565,27 @@ describe('capability summary (D105)', () => {
         ],
         connectors: [{ file: 'connectors/notion.json' }],
         mcp: [],
-        mail: [],
+        mail: [
+          {
+            id: 'generic',
+            label: '通用',
+            imap: { host: '', port: 993, secure: 'ssl' },
+            smtp: { host: '', port: 465, secure: 'ssl' },
+          },
+        ],
       },
       instances: ['mail'],
     });
     expect(pluginCapabilitySummary(capabilityFactsOf(manifest))).toBe(
       '提供 2 个技能（Word 工具、pptx） 与 1 个连接；可添加多个邮箱账号',
     );
-    // contributions 可整体省略（纯实例插件）；解析输出恒为完整对象。
+    // contributions 可整体省略（纯实例插件，P3 起只剩 mcp）；解析输出恒为完整对象。
     const pure = parse({
       format_version: 1,
-      id: 'app.kepcup.example/mail-only',
-      name: '纯邮件',
+      id: 'app.kepcup.example/tools-only',
+      name: '纯工具',
       version: '1.0.0',
-      instances: ['mail'],
+      instances: ['mcp'],
     });
     expect(pure.contributions).toEqual({ skills: [], connectors: [], mcp: [], mail: [] });
   });

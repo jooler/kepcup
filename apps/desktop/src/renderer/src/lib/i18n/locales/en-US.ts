@@ -2902,7 +2902,6 @@ export const enUS = {
   'mail.add': 'Add mailbox',
   'mail.empty': 'After you add a mailbox, Bots can send, receive, and handle new mail for you.',
   'mail.back': 'Back',
-  'mail.help': 'How to get an authorization code',
   'mail.address': 'Email address',
   'mail.password': 'Authorization code',
   'mail.testing': 'Testing connection…',
@@ -2918,8 +2917,6 @@ export const enUS = {
   'mail.mode.auto': 'Auto (use IDLE if supported)',
   'mail.mode.poll': 'Polling only',
   'mail.interval': 'Polling interval (minutes)',
-  'mail.pollWarning':
-    'Using the shortest interval increases the risk of blocks and "insecure sign-in" flags.',
   'mail.bots': 'Assign to Bots',
   'mail.pause': 'Pause receiving',
   'mail.resume': 'Resume receiving',

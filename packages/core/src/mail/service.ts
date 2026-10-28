@@ -291,8 +291,10 @@ export class MailService {
     try {
       this.#deps.secrets.setValue(this.#passwordName(row), input.password);
     } catch (error) {
-      // 落库后写 secret 失败：软删回滚（全新 id，不存在需保护的旧值）。
-      this.store.patch(id, { deletedAt: now, updatedAt: now });
+      // 落库后写 secret 失败：软删回滚（全新 id，不存在需保护的旧值）；同时松开
+      // 实例引用——上层补偿要删实例行，引用留着会 FK 卡死（0058 也有 ON DELETE
+      // SET NULL 兜底，这里显式置空让补偿语义自足）。
+      this.store.patch(id, { instanceId: null, deletedAt: now, updatedAt: now });
       throw error;
     }
     this.#hub.start(id);
@@ -316,7 +318,7 @@ export class MailService {
         input.smtpPort !== undefined ||
         input.smtpSecure !== undefined;
       if (touchesLocked) {
-        throw new AppError('INVALID_INPUT', '实例账号的服务器与登录信息请到所属插件的卡片上修改');
+        throw new AppError('INVALID_INPUT', '实例账号的服务器与登录信息由所属插件管理；如需更换，请删除该账号后重新添加');
       }
     }
     return this.#applyAccountUpdate(current, {

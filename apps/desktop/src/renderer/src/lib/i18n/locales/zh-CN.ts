@@ -2772,7 +2772,6 @@ export const zhCN = {
   'mail.empty': '添加邮箱后，Bot 就能代你收发并处理新邮件。',
   'mail.back': '返回',
   // P3：厂商预设下拉已删——添加入口是邮件插件卡，表单字段由插件声明构建。
-  'mail.help': '如何获取授权码',
   'mail.address': '邮箱地址',
   'mail.password': '授权码',
   'mail.testing': '正在测试连接…',
@@ -2788,7 +2787,6 @@ export const zhCN = {
   'mail.mode.auto': '自动（服务器支持就用 IDLE）',
   'mail.mode.poll': '仅轮询',
   'mail.interval': '轮询间隔（分钟）',
-  'mail.pollWarning': '间隔拧到下限会增加封禁和「不安全登录」的风险。',
   'mail.bots': '交给哪些 Bot',
   'mail.pause': '暂停收信',
   'mail.resume': '恢复收信',

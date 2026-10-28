@@ -25,7 +25,8 @@
     /** 创建成功后绑定的 Bot（对话内设置卡传入当前 Bot）。 */
     bindBotId?: string | undefined;
     testidPrefix?: string;
-    onSaved?: (account: MailAccount) => void;
+    /** 创建成功回调（参数 = 账号地址，即实例标题）。 */
+    onSaved?: (address: string) => void;
   } = $props();
 
   const plugin = $derived(
@@ -78,9 +79,8 @@
         }
       }
       toast.success(t('mail.added'));
-      // 实例标题即账号地址；账号列表随后由 mail.account_updated 事件刷新，
-      // 这里用标题给调用方一个可显示的标识。
-      onSaved?.({ address: result.instance.title } as MailAccount);
+      // 实例标题即账号地址；账号列表随后由 mail.account_updated 事件刷新。
+      onSaved?.(result.instance.title);
     } catch (error) {
       formError = explain(error);
     } finally {

@@ -41,8 +41,22 @@ async function pureInstanceFixture(
     dir: path.join(root, `fx-${(fixtureCounter += 1)}`),
     manifest: {
       id: PLUGIN_ID,
-      contributions: null, // 纯实例清单：整个省略 contributions
+      // 缺省：mail 供给规范 + 机制用例的假 materializer（不会真连，锁定端点写占位主机）。
+      // 覆盖 `instances` / `contributions` / `config` 的用例直接传 manifest 覆盖。
       instances: ['mail'],
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [],
+        mail: [
+          {
+            id: 'generic',
+            label: '机制用例',
+            imap: { host: 'imap.invalid', port: 993, secure: 'ssl' },
+            smtp: { host: 'smtp.invalid', port: 465, secure: 'ssl' },
+          },
+        ],
+      },
       config: {
         fields: [
           { key: 'pollSec', type: 'number', title: '轮询间隔', min: 60, max: 3600 },
@@ -96,7 +110,11 @@ const instanceRows = (core: TestStack['core']) =>
 describe('plugin config & instances (D105 P1)', () => {
   it('纯实例清单：inspect 正确、可安装；create 实例在本版本被拒（无 materializer）', async () => {
     const { core } = await setup();
-    const fixture = await pureInstanceFixture();
+    // P3：纯实例形态（无贡献）只剩 mcp；mail 声明必须伴随供给规范贡献。
+    const fixture = await pureInstanceFixture({
+      instances: ['mcp'],
+      contributions: null,
+    });
     const inspect = (await core.rpc.call('plugins.inspect', {
       source: { kind: 'file', path: fixture.path },
     })) as {
@@ -106,7 +124,7 @@ describe('plugin config & instances (D105 P1)', () => {
     };
     expect(inspect.installable).toBe(true);
     expect(inspect.configFields.map((field) => field.key)).toEqual(['pollSec', 'apiKey']);
-    expect(inspect.capabilitySummary).toBe('可添加多个邮箱账号');
+    expect(inspect.capabilitySummary).toBe('可添加自定义工具');
 
     const { plugin } = await install(core, fixture);
     expect(plugin.id).toBe(PLUGIN_ID);
@@ -119,17 +137,17 @@ describe('plugin config & instances (D105 P1)', () => {
       }>;
     };
     const summary = list.plugins.find((entry) => entry.id === PLUGIN_ID)!;
-    expect(summary.providesInstances).toEqual(['mail']);
+    expect(summary.providesInstances).toEqual(['mcp']);
     expect(summary.instanceCounts).toEqual({ mail: 0, mcp: 0 });
     expect(summary.configFields).toHaveLength(2);
 
-    // P1：mail materializer P3 才接入 —— create 在这里停下（预期 INVALID_INPUT）。
+    // P1：mcp 实例 P4-M2 才接入 —— create 在适配器层停下（预期 PLUGIN_INVALID）。
     await expect(
       core.rpc.call('plugins.instances.create', {
         pluginId: PLUGIN_ID,
-        values: { address: 'a@b.c' },
+        values: {},
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    ).rejects.toMatchObject({ code: 'PLUGIN_INVALID' });
     expect(instanceRows(core)).toHaveLength(0);
   });
 

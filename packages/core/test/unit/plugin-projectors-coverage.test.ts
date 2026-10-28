@@ -58,7 +58,8 @@ const emptyMailManifest = pluginManifestSchema.parse({
   id: 'io.a/b',
   name: 'x',
   version: '1.0.0',
-  instances: ['mail'],
+  // P3：纯实例形态只剩 mcp（mail 声明必须伴随供给规范贡献）。
+  instances: ['mcp'],
 });
 
 describe('capability kind registry (D105)', () => {
@@ -102,7 +103,7 @@ describe('capability kind registry (D105)', () => {
         ...extra,
       });
     // A contribution-less manifest is legal via `instances`; every kind reports false.
-    const empty = parse({ instances: ['mail'] });
+    const empty = parse({ instances: ['mcp'] });
     for (const adapter of CAPABILITY_KINDS) {
       expect(adapter.hasContribution(empty)).toBe(false);
     }
