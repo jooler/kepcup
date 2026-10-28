@@ -183,6 +183,11 @@ export function settingsCoverageProblems(
   const pending = new Set(options.pendingAnchors ?? PENDING_DESKTOP_ANCHORS);
   const anchors = new Set(scan.anchors);
   const problems: string[] = [];
+  // 模板串动态锚点被扫描成「静态前缀*」（如 `plugins-filter-*`、`agent-*`）：条目里的具体
+  // 锚点（`plugins-filter-connector`）与之互相匹配——同排除表通配的判定法。
+  const anchorMatches = (scanned: string, concrete: string): boolean =>
+    scanned === concrete ||
+    (scanned.endsWith('*') && concrete.startsWith(scanned.slice(0, -1)));
 
   const linked = (surface: string, section: string) =>
     items.some((entry) => entry.deepLink.surface === surface && entry.deepLink.section === section);
@@ -192,7 +197,9 @@ export function settingsCoverageProblems(
     }
   }
   for (const anchor of scan.anchors) {
-    const covered = items.some((entry) => entry.deepLink.anchor === anchor);
+    const covered = items.some(
+      (entry) => entry.deepLink.anchor !== undefined && anchorMatches(anchor, entry.deepLink.anchor),
+    );
     if (!covered && !excluded(exclusions, 'anchor', anchor)) {
       problems.push(`锚点 ${anchor} 没有目录条目，也不在排除表里`);
     }
@@ -231,7 +238,11 @@ export function settingsCoverageProblems(
       }
     }
     if (anchor === undefined) continue;
-    if (!anchors.has(anchor) && !pending.has(anchor)) {
+    if (
+      !anchors.has(anchor) &&
+      !pending.has(anchor) &&
+      ![...anchors].some((scanned) => anchorMatches(scanned, anchor))
+    ) {
       problems.push(`${entry.id}：深链锚点 ${anchor} 不存在（也未登记为待补锚点）`);
     }
     const anchorSection = scan.anchorSections[anchor];
