@@ -47,7 +47,13 @@ export function parsePluginManifestText(text: string): PluginManifest {
           issue.code === 'unrecognized_keys' ||
           (issue.path[0] === 'instances' && issue.code === 'invalid_value'),
       )
-      .map((issue) => (issue.path.length > 0 ? issue.path.join('.') : 'plugin.json'));
+      .map((issue) => {
+        if (issue.code === 'unrecognized_keys') {
+          const keys = (issue as { keys?: readonly string[] }).keys ?? [];
+          return keys.length > 0 ? keys.join('/') : 'plugin.json';
+        }
+        return issue.path.length > 0 ? issue.path.join('.') : 'plugin.json';
+      });
     if (upgradePaths.length > 0) {
       throw new AppError(
         'PLUGIN_UPGRADE_REQUIRED',

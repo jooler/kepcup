@@ -49,6 +49,7 @@ function row(id: string, patch: Partial<PluginRow> = {}): PluginRow {
     dir: `${id.split('/')[0]}/${id.split('/')[1]}@1.0.0`.toLowerCase(),
     updateTo: null,
     updateSnapshot: null,
+    configJson: '{}',
     installedAt: 1000,
     updatedAt: 1000,
     ...patch,

@@ -265,6 +265,7 @@ function rowOf(id: string, patch: Partial<Parameters<PluginStore['insert']>[0]> 
     dir: `${id}@${version}`.toLowerCase(),
     updateTo: null,
     updateSnapshot: null,
+      configJson: '{}',
     installedAt: 1,
     updatedAt: 1,
     ...patch,
@@ -680,6 +681,7 @@ describe('PluginRegistry', () => {
       dir: 'io.github.tester/crash@2.0.0',
       updateTo: null,
       updateSnapshot: null,
+      configJson: '{}',
       installedAt: 1,
       updatedAt: 1,
     });
@@ -707,6 +709,7 @@ describe('PluginRegistry', () => {
       dir: 'io.github.tester/mid@1.0.0',
       updateTo: null,
       updateSnapshot: null,
+      configJson: '{}',
       installedAt: 2,
       updatedAt: 2,
     });
@@ -944,6 +947,7 @@ describe('PluginRegistry updates (P1-2)', () => {
       version: '2.0.0',
       updateTo: null,
       updateSnapshot: null,
+      configJson: '{}',
     });
     // 账本按 rowid：更新新增的 beta 追加在尾部。
     expect(rig.store.items(id)).toEqual([
@@ -1303,6 +1307,7 @@ describe('PluginRegistry updates (P1-2)', () => {
       version: '1.0.0',
       updateTo: null,
       updateSnapshot: null,
+      configJson: '{}',
     });
     expect(rig.store.items(id)).toEqual([{ kind: 'skill', ref: 'alpha' }]);
     expect(rig.audits.at(-1)).toMatchObject({ action: 'plugin_update', detail: { failed: true } });
