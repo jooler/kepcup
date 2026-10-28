@@ -168,6 +168,7 @@ describe('marketplace RPC views', () => {
       description: '',
       author: null,
       categories: ['skill'],
+      capabilitySummary: '提供技能能力',
       size: 1,
       updatedAt: 1,
       compatible: true,
@@ -176,6 +177,23 @@ describe('marketplace RPC views', () => {
       revoked: null,
     };
     expect(pluginMarketEntrySchema.safeParse(marketEntry).success).toBe(true);
+    // P4: the entry output requires the derived capabilitySummary; the INDEX entry's
+    // field is optional (old indexes stay valid).
+    expect(
+      pluginMarketEntrySchema.safeParse({ ...marketEntry, capabilitySummary: undefined }).success,
+    ).toBe(false);
+    const indexEntry = pluginIndexEntrySchema.parse({
+      id: 'io.github.alice/doc-tools',
+      version: '1.2.0',
+      tier: 'verified',
+      sha256: 'a'.repeat(64),
+      size: 1,
+      downloadUrl: 'https://pkg.test/a.kepcup',
+      categories: ['skill'],
+      summary: { name: '文档工具集' },
+      updatedAt: 1,
+    });
+    expect(indexEntry.capabilitySummary).toBeUndefined();
   });
 });
 

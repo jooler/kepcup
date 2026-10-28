@@ -63,6 +63,8 @@ export function pluginIndexEntryFor(
     tier?: 'verified' | 'community';
     downloadUrl?: string;
     categories?: PluginIndexEntry['categories'];
+    /** D105 P4: index-carried capability summary (omitted = old-style entry). */
+    capabilitySummary?: string;
     summary?: { name?: string; description?: string; author?: string | null };
   } = {},
 ): PluginIndexEntry {
@@ -90,6 +92,9 @@ export function pluginIndexEntryFor(
     size: fixture.size,
     downloadUrl: extra.downloadUrl ?? `https://pkg.test/${fixture.sha256}.kepcup`,
     categories: extra.categories ?? [],
+    ...(extra.capabilitySummary !== undefined
+      ? { capabilitySummary: extra.capabilitySummary }
+      : {}),
     summary: summary as PluginIndexEntry['summary'],
     updatedAt: 0,
   };

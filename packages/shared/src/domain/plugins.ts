@@ -27,8 +27,11 @@ export type PluginTier = z.infer<typeof pluginTierSchema>;
 export const pluginStateSchema = z.enum(['installing', 'installed', 'uninstalling']);
 export type PluginState = z.infer<typeof pluginStateSchema>;
 
-export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail']);
-export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
+// D105 P4: the kind enum moved to plugin-manifest.ts (its natural owner — no circular
+// import for the capability-summary helpers); re-exported here for existing importers.
+import { pluginContributionKindSchema } from './plugin-manifest.js';
+export { pluginContributionKindSchema };
+export type { PluginContributionKind } from './plugin-manifest.js';
 
 export const pluginItemKindSchema = z.enum([
   'skill',
@@ -365,6 +368,8 @@ export const pluginMarketEntrySchema = z.object({
   description: z.string(),
   author: z.string().nullable(),
   categories: z.array(pluginContributionKindSchema),
+  /** D105 P4: one-line capability summary (index-carried; kinds-derived fallback for old indexes). */
+  capabilitySummary: z.string(),
   size: z.number().int(),
   updatedAt: z.number().int(),
   compatible: z.boolean(),
