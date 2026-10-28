@@ -369,20 +369,19 @@ describe('ACP prompt', () => {
     expect(line).not.toContain('优先使用自带');
   });
 
-  it('run context carries both app sections (after <recommended_skills>) and omits them when empty', () => {
-    const base = { timeZone: 'UTC', now: new Date(0), permission: 'ask' as never };
+  it('run context carries both app sections (capabilities before available_apps; P4: no <recommended_skills>) and omits them when empty', () => {
+    const base = { timeZone: 'UTC', now: new Date(0), permission: 'ask' as const };
     const empty = buildAgentRunContext(base);
     expect(empty).not.toContain('<capabilities>');
     expect(empty).not.toContain('<available_apps>');
+    expect(empty).not.toContain('<recommended_skills>');
     const full = buildAgentRunContext({
       ...base,
-      recommendedSkills: '- x',
       capabilities: '- app:github（GitHub，账号 work）：可用',
       availableApps: '- Notion（connector: notion）—— 笔记',
     });
     expect(full).toContain('<capabilities>');
     expect(full).toContain('<available_apps>');
-    expect(full.indexOf('<capabilities>')).toBeGreaterThan(full.indexOf('<recommended_skills>'));
     expect(full.indexOf('<available_apps>')).toBeGreaterThan(full.indexOf('<capabilities>'));
   });
 });
