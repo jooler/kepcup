@@ -1557,6 +1557,9 @@ export const enUS = {
     'Add and manage MCP tool servers (command, URL, or .mcpb local package) and configure manual OAuth clients. Once enabled, select it in Bot settings to let that Bot use its tools; each call requires approval by default. For everyday apps, add them in the Connections tab.',
   'extensionCenter.mcp.empty':
     'No MCP servers installed yet. Create one below (stdio / HTTP / SSE) or install a .mcpb local package; for everyday apps, add them in the Connections tab.',
+  'extensionCenter.mcp.hintScoped':
+    'Tool servers provided by this plugin: enable, test connections and tune per-tool policies here. Enable the plugin in Bot settings and its tools become available; each call requires approval by default.',
+  'extensionCenter.mcp.emptyScoped': 'This plugin provides no tool servers yet.',
   'plugins.title': 'Installed plugins',
   'plugins.hint':
     'Plugins bundle skills, tools and connected apps into one distributable extension.',
