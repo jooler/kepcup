@@ -44,6 +44,8 @@ function legalOptions(dir: string): PluginFixtureOptions {
       author: { name: 'Tester' },
       homepage: 'https://example.com/plugin',
       engines: { kepcup: '>=0.4.0' },
+      // P3：邮件贡献必须伴随 instances: ['mail']（实例供给规范）。
+      instances: ['mail'],
     },
     skills: [{ name: 'hello', description: 'Says hello' }],
     connectors: [{ slug: 'acme', entry: connectorFixtureEntry('acme', { tier: 'community' }) }],
@@ -343,6 +345,7 @@ describe('validatePlugin: contribution checks', () => {
     const dir = await tmp();
     await buildPluginDir({
       dir,
+      manifest: { instances: ['mail'] },
       mail: [
         {
           ...MAIL,
@@ -359,6 +362,7 @@ describe('validatePlugin: contribution checks', () => {
     const dir = await tmp();
     await buildPluginDir({
       dir,
+      manifest: { instances: ['mail'] },
       mail: [
         {
           ...MAIL,
