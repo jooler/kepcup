@@ -232,9 +232,12 @@ export class BuiltinPlugins {
     entries: unknown[];
     iconsDir: string | null;
     iconPaths: ReadonlyMap<string, string>;
+    /** slug → owning builtin plugin id（目录条目的 pluginId 透传，D105 插件圈定管理用）。 */
+    owners: ReadonlyMap<string, string>;
   } {
     const entries: unknown[] = [];
     const iconPaths = new Map<string, string>();
+    const owners = new Map<string, string>();
     for (const plugin of this.list())
       for (const contribution of plugin.manifest.contributions.connectors) {
         const file = path.join(plugin.dir, ...contribution.file.split('/'));
@@ -251,12 +254,15 @@ export class BuiltinPlugins {
         entries.push(raw);
         const meta = (raw as { _meta?: Record<string, { slug?: unknown; icon?: unknown }> })
           ._meta?.['app.kepcup/connector'];
-        if (typeof meta?.slug === 'string' && typeof meta?.icon === 'string') {
-          const iconPath = path.join(path.dirname(file), meta.icon);
-          if (existsSync(iconPath)) iconPaths.set(meta.slug, iconPath);
+        if (typeof meta?.slug === 'string') {
+          owners.set(meta.slug, plugin.manifest.id);
+          if (typeof meta.icon === 'string') {
+            const iconPath = path.join(path.dirname(file), meta.icon);
+            if (existsSync(iconPath)) iconPaths.set(meta.slug, iconPath);
+          }
         }
       }
-    return { entries, iconsDir: null, iconPaths };
+    return { entries, iconsDir: null, iconPaths, owners };
   }
 
   /** Read-only `plugins.list` entries: origin/tier = builtin, state = installed, dirPath = null. */

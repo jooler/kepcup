@@ -1287,11 +1287,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // catalog's bundled source. Since the marketplace conversion the app ships no
     // builtin plugins; the loader stays for dev/test overrides.
     const builtinPlugins = new BuiltinPlugins({ env, logger });
+    const builtinConnectorSource = builtinPlugins.connectorSource();
     const connectorCatalog =
       options.connectorCatalog ??
       new ConnectorCatalog({
         logger,
-        source: builtinPlugins.connectorSource(),
+        source: builtinConnectorSource,
+        // D105：内置条目也带归属插件 id（插件圈定的连接管理网格依赖它）。
+        sourceOwners: builtinConnectorSource.owners,
         // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断
         // 变量换成 KEPCUP_BUILTIN_PLUGINS，原为旧连接器目录的环境变量）。
         ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_BUILTIN_PLUGINS
