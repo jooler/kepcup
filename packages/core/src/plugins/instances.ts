@@ -24,9 +24,13 @@ import type { PluginStore } from './store.js';
 
 // --- secret naming --------------------------------------------------------------
 
-/** Secret names forbid `/`, plugin ids contain exactly one: the mapping is injective. */
+/**
+ * Secret names allow only `[a-z0-9:_-]`, plugin ids contain `/` and `.`: this escaping
+ * (`_`→`__`, `.`→`_`, `/`→`:`) keeps the mapping injective and the names greppable.
+ */
 export function pluginSecretScope(pluginId: string): string {
-  return `plugin:${pluginId.replace('/', ':')}`;
+  const encoded = pluginId.replaceAll('_', '__').replaceAll('.', '_').replace('/', ':');
+  return `plugin:${encoded}`;
 }
 
 export function pluginConfigSecretName(pluginId: string, key: string): string {
