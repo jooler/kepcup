@@ -179,6 +179,7 @@ async function marketList(stack: TestStack) {
       tier: string;
       compatible: boolean;
       incompatibleReason: string | null;
+      capabilitySummary: string;
       installed: { version: string; updateAvailable: boolean } | null;
       revoked: string | null;
     }>;
@@ -267,6 +268,46 @@ describe('plugins marketplace integration (P1-1)', () => {
       tier: 'verified',
       marketplace: OFFICIAL_BASE,
     });
+  }, 60_000);
+
+  it('capabilitySummary：索引携带则原样透出；老条目缺省按 categories 回退推导（P4）', async () => {
+    const { stack, market, officialKey } = await setup();
+    const carried = await makePackage({ id: 'io.official/summarized', version: '1.0.0' });
+    const legacy = await makePackage({ id: 'io.official/legacy', version: '1.0.0' });
+    market.servePackage(OFFICIAL_BASE, carried);
+    market.servePackage(OFFICIAL_BASE, legacy);
+    const carriedEntry = pluginIndexEntryFor(
+      {
+        path: carried.path,
+        sha256: carried.sha256,
+        size: carried.size,
+        manifest: { id: carried.id, version: carried.version } as never,
+      },
+      { downloadUrl: `${OFFICIAL_BASE}/${carried.sha256}.kepcup`, capabilitySummary: '提供 1 个技能（market-demo）' },
+    );
+    const legacyEntry = pluginIndexEntryFor(
+      {
+        path: legacy.path,
+        sha256: legacy.sha256,
+        size: legacy.size,
+        manifest: { id: legacy.id, version: legacy.version } as never,
+      },
+      { downloadUrl: `${OFFICIAL_BASE}/${legacy.sha256}.kepcup`, categories: ['skill', 'mcp'] },
+    );
+    market.publish({
+      base: OFFICIAL_BASE,
+      key: officialKey,
+      generatedAt: T1,
+      entries: [carriedEntry, legacyEntry],
+    });
+    expect((await refresh(stack)).status.state).toBe('ok');
+    const list = await marketList(stack);
+    expect(list.entries.find((entry) => entry.id === carried.id)?.capabilitySummary).toBe(
+      '提供 1 个技能（market-demo）',
+    );
+    expect(list.entries.find((entry) => entry.id === legacy.id)?.capabilitySummary).toBe(
+      '提供技能、工具能力',
+    );
   }, 60_000);
 
   it('篡改：索引字节 / 签名 / 包字节 / 包内清单与索引不符 → 全部拒绝', async () => {

@@ -13,6 +13,7 @@ import {
   isSafePluginRelPath,
   parsePluginSkillSource,
   pluginCapabilitySummary,
+  pluginCapabilitySummaryFromCategories,
   pluginFieldSchema,
   pluginFieldSummaryOf,
   capabilityFactsOf,
@@ -613,5 +614,11 @@ describe('capability summary (D105)', () => {
         skillNames: [],
       }),
     ).toBe('可添加自定义工具');
+  });
+
+  it('derives the coarse market fallback from categories alone (P4)', () => {
+    expect(pluginCapabilitySummaryFromCategories(['skill', 'mcp'])).toBe('提供技能、工具能力');
+    expect(pluginCapabilitySummaryFromCategories(['mail'])).toBe('提供邮件能力');
+    expect(pluginCapabilitySummaryFromCategories([])).toBe('提供扩展能力');
   });
 });

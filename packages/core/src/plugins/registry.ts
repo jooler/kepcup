@@ -6,6 +6,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   capabilityFactsOf,
   pluginCapabilitySummary,
+  pluginCapabilitySummaryFromCategories,
   pluginFieldSummaryOf,
   type McpbUserConfigValue,
   type PluginFieldValue,
@@ -557,6 +558,11 @@ export class PluginRegistry {
         description: chosen.summary.description,
         author: chosen.summary.author,
         categories: chosen.categories,
+        // D105 P4: index-carried line; entries signed before the field existed fall
+        // back to the coarser kinds-derived summary.
+        capabilitySummary:
+          chosen.capabilitySummary ??
+          pluginCapabilitySummaryFromCategories(chosen.categories),
         size: chosen.size,
         updatedAt: chosen.updatedAt,
         compatible: compatible !== null,

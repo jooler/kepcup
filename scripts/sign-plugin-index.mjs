@@ -240,6 +240,12 @@ export async function collectPluginEntries({
         ...(manifest.engines !== undefined ? { engines: manifest.engines } : {}),
         ...(manifest.platforms !== undefined ? { platforms: manifest.platforms } : {}),
         categories: categoriesOf(manifest),
+        // D105 P4: one-line capability summary derived from the manifest (the same
+        // shared function the app's consent and plugin cards use); omitted when the
+        // shared build is unavailable — the field is optional in the index schema.
+        ...(shared !== null
+          ? { capabilitySummary: shared.pluginCapabilitySummary(shared.capabilityFactsOf(manifest)) }
+          : {}),
         summary: {
           name: String(summary.name).slice(0, 100),
           description: String(summary.description ?? '').slice(0, 500),

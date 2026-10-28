@@ -26,6 +26,10 @@ export const PLUGIN_MAX_CONNECTORS = 20;
 export const PLUGIN_MAX_MCP = 10;
 export const PLUGIN_MAX_MAIL = 10;
 
+/** Contribution kinds (defined here so plugin-manifest.ts stays dependency-free; plugins.ts re-exports). */
+export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail']);
+export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
+
 // --- declarative fields / instances (D105, todo/plugin-platform README §2.2–2.3) ---------
 
 /**
@@ -221,6 +225,25 @@ export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
   const summary =
     tail.length > 0 ? (head !== '' ? `${head}；${tail.join('；')}` : tail.join('；')) : head;
   return sanitizeDisplayText(summary === '' ? '提供扩展能力' : summary, 200);
+}
+
+/**
+ * Market-card fallback (D105 P4): the signed index only guarantees the contribution
+ * kinds (`categories`), so entries that predate the index's `capabilitySummary` field
+ * get this coarser line derived from the kinds alone — same tone, no counts or names.
+ */
+export function pluginCapabilitySummaryFromCategories(
+  categories: readonly PluginContributionKind[],
+): string {
+  const labels: string[] = [];
+  if (categories.includes('skill')) labels.push('技能');
+  if (categories.includes('connector')) labels.push('连接');
+  if (categories.includes('mcp')) labels.push('工具');
+  if (categories.includes('mail')) labels.push('邮件');
+  return sanitizeDisplayText(
+    labels.length === 0 ? '提供扩展能力' : `提供${labels.join('、')}能力`,
+    200,
+  );
 }
 
 // --- contributions -----------------------------------------------------------

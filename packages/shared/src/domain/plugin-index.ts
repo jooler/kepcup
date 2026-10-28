@@ -133,6 +133,8 @@ export const pluginIndexEntrySchema = z.object({
     .optional(),
   /** 签名时由贡献推导写入（skills→skill、connectors→connector、mcp→mcp、mail→mail）。 */
   categories: z.array(pluginContributionKindSchema).max(4),
+  /** 签名时由贡献推导的一句话能力概述（D105 P4）；老索引没有此字段，消费端按 categories 回退推导。 */
+  capabilitySummary: z.string().max(200).optional(),
   summary: z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(500).default(''),
