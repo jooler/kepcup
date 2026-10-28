@@ -734,7 +734,7 @@
         <ArrowLeft class="size-3.5" aria-hidden="true" />
         {t('plugins.backToList')}
       </Button>
-      <ExtensionMcp embedded />
+      <ExtensionMcp embedded pluginId={contentView.pluginId} />
     </div>
   {:else}
     <div class="space-y-2" data-testid="plugins-content-mail">

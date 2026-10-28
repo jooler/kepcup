@@ -1508,6 +1508,9 @@ export const zhCN = {
     '添加与管理 MCP 工具服务器（命令、网址或 .mcpb 本地包），并可配置手填 OAuth 客户端。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。常用应用请到「连接」分组添加。',
   'extensionCenter.mcp.empty':
     '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
+  'extensionCenter.mcp.hintScoped':
+    '该插件提供的工具服务器：启停、连接测试与逐工具策略在这里管理。在 Bot 编辑里启用该插件后，Bot 即可使用这些工具；每次调用默认需要批准。',
+  'extensionCenter.mcp.emptyScoped': '该插件还没有提供工具服务器。',
   'plugins.title': '已安装的插件',
   'plugins.hint': '插件把技能、工具、连接应用打包成一份可分发的扩展。',
   'plugins.installFile': '从本地安装…',
