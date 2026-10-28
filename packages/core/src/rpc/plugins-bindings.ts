@@ -2,8 +2,18 @@ import { z } from 'zod';
 import {
   AppError,
   okOutputSchema,
+  pluginsConfigGetInputSchema,
+  pluginsConfigGetOutputSchema,
+  pluginsConfigSetInputSchema,
   pluginsInstallInputSchema,
   pluginsInstallOutputSchema,
+  pluginsInstancesCreateInputSchema,
+  pluginsInstancesCreateOutputSchema,
+  pluginsInstancesDeleteInputSchema,
+  pluginsInstancesListInputSchema,
+  pluginsInstancesListOutputSchema,
+  pluginsInstancesUpdateInputSchema,
+  pluginsInstancesUpdateOutputSchema,
   pluginsListOutputSchema,
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
@@ -14,6 +24,7 @@ import {
   pluginsUpdateOutputSchema,
   pluginsInspectInputSchema,
   pluginInspectOutputSchema,
+  type PluginInstanceKind,
   type PluginSource,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
@@ -45,6 +56,10 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
   const marketplace = () => {
     if (services.marketplace === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
     return services.marketplace;
+  };
+  const instances = () => {
+    if (services.pluginInstances === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+    return services.pluginInstances;
   };
   const assertLocalSource = (source: PluginSource): void => {
     // P0a only has file / folder; P1 adds `marketplace` additively (allowed from remote).
@@ -124,6 +139,45 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
         if (sync === null) return { status: market.status() };
         await sync.sync();
         return { status: market.status() };
+      },
+    ),
+    // D105 P1：插件配置与实例。值里有敏感项时只进 secrets，出参 / 审计都不带值。
+    'plugins.config.get': method(
+      pluginsConfigGetInputSchema,
+      pluginsConfigGetOutputSchema,
+      async (input) => registry().getConfig(input.id),
+    ),
+    'plugins.config.set': method(pluginsConfigSetInputSchema, okOutputSchema, async (input) => {
+      await registry().setConfig(input.id, input.values);
+      return { ok: true as const };
+    }),
+    'plugins.instances.list': method(
+      pluginsInstancesListInputSchema,
+      pluginsInstancesListOutputSchema,
+      async (input) => ({ instances: instances().list(input.pluginId) }),
+    ),
+    'plugins.instances.create': method(
+      pluginsInstancesCreateInputSchema,
+      pluginsInstancesCreateOutputSchema,
+      async (input) => ({
+        instance: await instances().create(
+          input.pluginId,
+          input.values,
+          input.kind as PluginInstanceKind | undefined,
+        ),
+      }),
+    ),
+    'plugins.instances.update': method(
+      pluginsInstancesUpdateInputSchema,
+      pluginsInstancesUpdateOutputSchema,
+      async (input) => ({ instance: await instances().update(input.id, input.values) }),
+    ),
+    'plugins.instances.delete': method(
+      pluginsInstancesDeleteInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await instances().delete(input.id);
+        return { ok: true as const };
       },
     ),
   };

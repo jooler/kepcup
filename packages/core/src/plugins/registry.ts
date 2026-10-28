@@ -4,7 +4,11 @@ import path from 'node:path';
 import {
   AppError,
   PLUGIN_MANIFEST_FILE,
+  capabilityFactsOf,
+  pluginCapabilitySummary,
+  pluginFieldSummaryOf,
   type McpbUserConfigValue,
+  type PluginFieldValue,
   type PluginItemKind,
   type PluginConsentConnector,
   type PluginConsentMail,
@@ -41,6 +45,11 @@ import {
   pluginServerId,
 } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
+import {
+  pluginConfigSecretName,
+  validatePluginFieldValues,
+  type PluginInstanceStore,
+} from './instances.js';
 import type { PluginPackager, StagedPlugin } from './package.js';
 import {
   PLUGIN_PROJECTOR_ORDER,
@@ -80,11 +89,20 @@ export interface PluginRegistryDeps {
   /** Marketplace service (D104 P1-1): marketplace installs, revocations, update markers. Absent in P0a tests. */
   marketplace?: MarketplaceService | undefined;
   /**
-   * Secrets presence checks for the update's user_config pre-validation (P1-2): a
-   * required sensitive field with a stored value counts as satisfied. Optional — absent
-   * means "no stored secrets" (rigs without a secrets service).
+   * Secrets for the update's user_config pre-validation (P1-2) and plugin config /
+   * instance sensitive values (D105): a required sensitive field with a stored value
+   * counts as satisfied. Optional — absent means "no stored secrets" (rigs without a
+   * secrets service).
    */
-  secrets?: { hasValue(name: string): boolean } | undefined;
+  secrets?:
+    | {
+        hasValue(name: string): boolean;
+        setValue?(name: string, value: string): void;
+        removeValue?(name: string): void;
+      }
+    | undefined;
+  /** Instance rows (D105): `list()` instance counts read it directly. */
+  instanceStore?: PluginInstanceStore | undefined;
   pluginsDir: string;
   /** App version for marketplace compatibility (`engines`); core `0.0.0` skips the check. */
   appVersion?: string;
@@ -151,6 +169,8 @@ export class PluginRegistry {
   #tail: Promise<void> = Promise.resolve();
   /** Manifest cache keyed by `{id}@{version}`; invalidated when the plugin goes away. */
   readonly #manifests = new Map<string, PluginManifest>();
+  /** Instance teardown (D105), wired by start.ts: `PluginInstanceService.deleteAllOf`. */
+  #instanceTeardown: ((pluginId: string) => Promise<void>) | null = null;
 
   constructor(deps: PluginRegistryDeps) {
     // Test-only failure injection (P1-2): the wrapper applies only with test hooks on and
@@ -177,6 +197,19 @@ export class PluginRegistry {
         releaseTail();
       }
     });
+  }
+
+  /**
+   * The registry's ONE mutex, shared with `PluginInstanceService` (D105: instance
+   * mutations must never race installs / updates / uninstalls of the same plugin).
+   */
+  runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    return this.#runExclusive(task);
+  }
+
+  /** Wires the uninstall-time instance cascade (`PluginInstanceService.deleteAllOf`). */
+  attachInstanceTeardown(fn: (pluginId: string) => Promise<void>): void {
+    this.#instanceTeardown = fn;
   }
 
   // --- lifecycle ----------------------------------------------------------------
@@ -272,6 +305,18 @@ export class PluginRegistry {
     return this.#deps.store.ownerOf(kind, ref);
   }
 
+  /**
+   * 已装插件的完整清单（缓存 → 磁盘）；未装 / 清单损坏 = null。实例服务与 config
+   * 读写用它取 `config.fields` / `instances` 声明（D105）。
+   */
+  async manifestOf(id: string): Promise<PluginManifest | null> {
+    const row = this.#deps.store.get(id);
+    if (row === null) return null;
+    const cached = this.#manifests.get(`${row.id}@${row.version}`);
+    if (cached !== undefined) return cached;
+    return this.#readManifestFromDir(this.#dirOf(row.id, row.version));
+  }
+
   /** 已装插件清单的贡献（P1 的邮件模板 overlay 读取用）；未装 / 清单损坏 = null。 */
   async contributionsOf(id: string): Promise<PluginManifest['contributions'] | null> {
     const row = this.#deps.store.get(id);
@@ -312,6 +357,66 @@ export class PluginRegistry {
       }
     }
     return templates;
+  }
+
+  // --- plugin config (D105) --------------------------------------------------------
+
+  /** Stored non-sensitive config values + which sensitive fields have a secret. */
+  async getConfig(id: string): Promise<{
+    values: Record<string, PluginFieldValue>;
+    storedSensitiveKeys: string[];
+  }> {
+    return this.#runExclusive(async () => {
+      const row = this.#deps.store.get(id);
+      if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${id}`);
+      const fields = await this.#configFieldsOf(id);
+      let values: Record<string, PluginFieldValue> = {};
+      try {
+        values = JSON.parse(row.configJson) as Record<string, PluginFieldValue>;
+      } catch {
+        this.#deps.logger.warn({ plugin: id }, 'plugin config_json unreadable; treated as empty');
+      }
+      const storedSensitiveKeys = fields
+        .filter((field) => this.#deps.secrets?.hasValue(pluginConfigSecretName(id, field.key)) === true)
+        .map((field) => field.key);
+      return { values, storedSensitiveKeys };
+    });
+  }
+
+  /**
+   * Replaces the plugin config with the submitted form (D105): non-sensitive values go
+   * to `config_json`, sensitive ones to secrets; sensitive fields absent from the
+   * submission keep their stored secret; required fields must resolve (submitted /
+   * declared default / stored secret).
+   */
+  setConfig(id: string, values: Readonly<Record<string, PluginFieldValue>>): Promise<void> {
+    return this.#runExclusive(async () => {
+      const row = this.#deps.store.get(id);
+      if (row === null) throw new AppError('NOT_FOUND', `没有已安装的插件：${id}`);
+      if (row.state !== 'installed') {
+        throw new AppError('INVALID_INPUT', `插件当前状态（${row.state}）不允许修改配置`);
+      }
+      const fields = await this.#configFieldsOf(id);
+      const split = validatePluginFieldValues(fields, values, {
+        hasStoredSecret: (key) =>
+          this.#deps.secrets?.hasValue(pluginConfigSecretName(id, key)) === true,
+      });
+      this.#deps.store.update(id, {
+        configJson: JSON.stringify(split.nonSensitive),
+        updatedAt: this.#deps.clock.now(),
+      });
+      for (const [key, value] of Object.entries(split.sensitive)) {
+        this.#deps.secrets?.setValue?.(pluginConfigSecretName(id, key), value);
+      }
+      // Values never reach the audit trail (only the plugin identity).
+      this.#deps.audit?.recordSystem('plugin_config_set', { pluginId: id });
+      this.#deps.events.emit('plugins.changed', { ids: [id] });
+    });
+  }
+
+  async #configFieldsOf(id: string): Promise<NonNullable<PluginManifest['config']>['fields']> {
+    const manifest = await this.manifestOf(id);
+    return manifest?.config?.fields ?? [];
   }
 
   async inspect(source: PluginSource): Promise<PluginInspectOutput> {
@@ -574,6 +679,7 @@ export class PluginRegistry {
         dir: path.relative(this.#deps.pluginsDir, finalDir),
         updateTo: null,
         updateSnapshot: null,
+        configJson: '{}',
         installedAt: now,
         updatedAt: now,
       });
@@ -1323,6 +1429,18 @@ export class PluginRegistry {
     identity: PluginIdentity,
     options: { throwOnError: boolean },
   ): Promise<void> {
+    // D105: instances go FIRST — materializers may still read projected state, and the
+    // rows must be gone before the plugin row deletes (FK CASCADE would drop them raw).
+    if (this.#instanceTeardown !== null) {
+      try {
+        await this.#instanceTeardown(id);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { plugin: id, error: error instanceof Error ? error.message : String(error) },
+          'plugin teardown: instance cascade failed (continuing)',
+        );
+      }
+    }
     const row = this.#deps.store.get(id);
     if (row !== null && row.state !== 'uninstalling') {
       this.#deps.store.update(id, { state: 'uninstalling' });
@@ -1610,6 +1728,8 @@ export class PluginRegistry {
       homepage: manifest.homepage ?? null,
       packageSha256: staged.packageSha256,
       sizeBytes: staged.sizeBytes,
+      configFields: (manifest.config?.fields ?? []).map(pluginFieldSummaryOf),
+      capabilitySummary: pluginCapabilitySummary(capabilityFactsOf(manifest)),
       skills: inspection.items.skills,
       connectors: inspection.items.connectors,
       mcp: inspection.items.mcp,
@@ -1659,6 +1779,9 @@ export class PluginRegistry {
     }
     const manifest = this.#manifests.get(`${row.id}@${row.version}`) ?? null;
     return {
+      configFields: (manifest?.config?.fields ?? []).map(pluginFieldSummaryOf),
+      instanceCounts: this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0 },
+      providesInstances: manifest?.instances ?? [],
       id: row.id,
       name: manifest?.name ?? row.id,
       version: row.version,

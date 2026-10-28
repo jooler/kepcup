@@ -193,6 +193,7 @@ import { BuiltinPlugins } from './plugins/builtin.js';
 import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
+import { PluginInstanceService, PluginInstanceStore } from './plugins/instances.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -640,6 +641,8 @@ export interface CoreServices {
   mcpb: McpbInstaller | null;
   /** D104 插件系统：账本 + 投影器 + 注册表；未装配时为 null（RPC 报 NOT_IMPLEMENTED）。 */
   plugins: PluginRegistry | null;
+  /** D105 插件实例服务（配置 / 实例 RPC 与卸载级联）；未装配时为 null。 */
+  pluginInstances: PluginInstanceService | null;
   /** D104 P1-1 插件市场端点解析与同步；close() 停定时器，RPC 绑定取用。 */
   marketplace: MarketplaceService | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
@@ -917,6 +920,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appRuntime: null,
     mcpb: null,
     plugins: null,
+    pluginInstances: null,
     marketplace: null,
     toolLock: null,
     appToolGrants: null,
@@ -2207,6 +2211,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 撤销效果要接 settingsPermissionEffects）、orchestrator 之前（唤醒不依赖插件，但启动恢复
     // 与 RPC 装配会用到）。启动时 `plugins.start()` 在下方 environment.recoverInterrupted() 后调用。
     const pluginStore = new PluginStore(mainDb);
+    const pluginInstanceStore = new PluginInstanceStore(mainDb);
     const pluginPackager = new PluginPackager({
       pluginsDir: paths.pluginsDir,
       logger,
@@ -2351,9 +2356,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         ? { projectorWrap: options.projectorWrap }
         : {}),
       secrets: {
-        // P1-2 更新的 user_config 预校验：必填敏感字段已有存值即视为满足。
+        // P1-2 更新的 user_config 预校验：必填敏感字段已有存值即视为满足；
+        // D105 插件 config 的敏感值落 secrets（setValue/removeValue）。
         hasValue: (name) => secrets.hasValue(name),
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeValue: (name) => secrets.removeValue(name),
       },
+      instanceStore: pluginInstanceStore,
       pluginsDir: paths.pluginsDir,
       appVersion: options.appVersion ?? '0.0.0',
       ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
@@ -2368,6 +2377,22 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
       });
     });
+    // D105：插件实例服务（materializer 由 P3 mail / P4-M2 custom-mcp 注册）；卸载级联挂到注册表。
+    const pluginInstances = new PluginInstanceService({
+      registry: plugins,
+      pluginStore,
+      store: pluginInstanceStore,
+      secrets: {
+        hasValue: (name) => secrets.hasValue(name),
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeValue: (name) => secrets.removeValue(name),
+      },
+      clock,
+      logger,
+      events,
+      audit,
+    });
+    plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
     // D104 P1-3：Bot 只能检索官方认证插件、只能出确认卡（不自己安装）。
     const pluginInstallRequests = new PluginInstallRequests({
       marketplace,
@@ -3341,6 +3366,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.appRuntime = appRuntime;
     services.mcpb = mcpb;
     services.plugins = plugins;
+    services.pluginInstances = pluginInstances;
     services.toolLock = toolLock;
     services.appToolGrants = appToolGrants;
     services.taint = taint;

@@ -295,6 +295,8 @@ export type PluginsInstancesListOutput = z.infer<typeof pluginsInstancesListOutp
 
 export const pluginsInstancesCreateInputSchema = z.object({
   pluginId: pluginIdSchema,
+  /** May be omitted when the plugin declares exactly one instance kind. */
+  kind: pluginInstanceKindSchema.optional(),
   values: z.record(z.string(), pluginFieldValueSchema),
 });
 export type PluginsInstancesCreateInput = z.infer<typeof pluginsInstancesCreateInputSchema>;

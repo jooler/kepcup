@@ -27,6 +27,8 @@ export interface PluginRow {
   updateTo: string | null;
   /** JSON `{ [kind]: opaque string }` snapshots from `projector.beginUpdate()`, or null. */
   updateSnapshot: string | null;
+  /** Non-sensitive plugin config values (D105; sensitive ones live in secrets). */
+  configJson: string;
   installedAt: number;
   updatedAt: number;
 }
@@ -43,6 +45,7 @@ export type PluginRowPatch = Partial<
     | 'dir'
     | 'updateTo'
     | 'updateSnapshot'
+    | 'configJson'
     | 'updatedAt'
   >
 >;
@@ -59,6 +62,7 @@ interface PluginDbRow {
   dir: string;
   update_to: string | null;
   update_snapshot: string | null;
+  config_json: string;
   installed_at: number;
   updated_at: number;
 }
@@ -81,6 +85,7 @@ function pluginFromRow(row: PluginDbRow): PluginRow {
     dir: row.dir,
     updateTo: row.update_to,
     updateSnapshot: row.update_snapshot,
+    configJson: row.config_json,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
@@ -120,8 +125,8 @@ export class PluginStore {
   insert(row: PluginRow): void {
     this.#db
       .prepare(
-        `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, update_to, update_snapshot, installed_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, update_to, update_snapshot, config_json, installed_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.id,
@@ -135,6 +140,7 @@ export class PluginStore {
         row.dir,
         row.updateTo,
         row.updateSnapshot,
+        row.configJson,
         row.installedAt,
         row.updatedAt,
       );
@@ -178,6 +184,10 @@ export class PluginStore {
     if (patch.updateSnapshot !== undefined) {
       columns.push('update_snapshot = ?');
       values.push(patch.updateSnapshot);
+    }
+    if (patch.configJson !== undefined) {
+      columns.push('config_json = ?');
+      values.push(patch.configJson);
     }
     if (patch.updatedAt !== undefined) {
       columns.push('updated_at = ?');
