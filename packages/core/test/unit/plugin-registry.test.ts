@@ -372,6 +372,8 @@ async function makeFixture(
     manifest: {
       id,
       version,
+      // P3：邮件贡献必须伴随 instances: ['mail']（实例供给规范）。
+      instances: options.mail !== undefined && options.mail.length === 0 ? undefined : ['mail'],
       contributions: {
         skills: (options.skills ?? ['alpha', 'beta']).map((name) => ({ dir: `skills/${name}` })),
         connectors: [],
@@ -451,31 +453,23 @@ describe('PluginRegistry', () => {
     ]);
   });
 
-  it('mailTemplates：只列已启用插件的模板，id 形如 `{pluginId}#{localId}`', async () => {
+  it('summary：邮件插件透出实例声明与实例表单字段（安全投影，无 default）；卸载后消失', async () => {
+    // P3：mail.providerTemplates.list 已删——贡献即实例供给规范，经 summary 消费。
     const rig = makeRig();
-    expect(await rig.registry.mailTemplates()).toEqual([]);
+    expect(rig.registry.list().find((row) => row.id === 'io.github.tester/reg')).toBeUndefined();
     const fixture = await makeFixture();
     await rig.registry.install(installArgs(fixture));
-    const templates = await rig.registry.mailTemplates();
-    expect(templates).toHaveLength(1);
-    expect(templates[0]).toMatchObject({
-      id: 'io.github.tester/reg#mailtest',
-      pluginId: 'io.github.tester/reg',
-      pluginName: 'Fixture',
-      label: 'Mail mailtest',
-      imap: { host: 'imap.test', port: 993, secure: 'ssl' },
-      smtp: { host: 'smtp.test', port: 465, secure: 'ssl' },
-      defaultMode: 'auto',
-      helpUrl: null,
-    });
-    // 停用的插件不出现。
-    await rig.registry.setEnabled('io.github.tester/reg', false);
-    expect(await rig.registry.mailTemplates()).toEqual([]);
-    await rig.registry.setEnabled('io.github.tester/reg', true);
-    expect(await rig.registry.mailTemplates()).toHaveLength(1);
-    // 卸载后消失。
+    const summary = rig.registry.list().find((row) => row.id === 'io.github.tester/reg')!;
+    expect(summary.providesInstances).toEqual(['mail']);
+    expect(summary.instanceFields.map((field) => field.key)).toEqual([
+      'address',
+      'username',
+      'password',
+    ]);
+    expect(summary.instanceFields.every((field) => (field as { default?: unknown }).default === undefined)).toBe(true);
+    // 停用 / 卸载后消失。
     await rig.registry.uninstall('io.github.tester/reg');
-    expect(await rig.registry.mailTemplates()).toEqual([]);
+    expect(rig.registry.list().find((row) => row.id === 'io.github.tester/reg')).toBeUndefined();
   });
 
   it('第 2 项投影失败 → 按账本回滚、目录与行被清、重抛原错误', async () => {

@@ -676,7 +676,7 @@ describe('plugins integration (P0a-2)', () => {
     expect(after.plugins.filter((plugin) => plugin.origin === 'builtin')).toHaveLength(2);
   }, 90_000);
 
-  it('邮件预填模板（P1-3）：mail.providerTemplates.list 返回插件贡献，按模板创建账号且 60 秒全局下限仍生效', async () => {
+  it('邮件插件化（P3）：实例建号落地账号、贡献锁端点、全局 60 秒下限生效、卸载级联删号', async () => {
     const imap = new FakeImapServer();
     const smtp = new FakeSmtpServer();
     await imap.start();
@@ -691,6 +691,7 @@ describe('plugins integration (P0a-2)', () => {
         manifest: {
           id: 'io.github.tester/mailplug',
           name: 'Mail Plug',
+          instances: ['mail'],
           contributions: {
             skills: [],
             connectors: [],
@@ -699,6 +700,7 @@ describe('plugins integration (P0a-2)', () => {
               {
                 id: mailId,
                 label: 'Fast Mail',
+                // 厂商贡献：端点锁定（host 非空），不出表单。
                 imap: { host: '127.0.0.1', port: imap.port, secure: 'ssl' },
                 smtp: { host: '127.0.0.1', port: smtp.port, secure: 'ssl' },
                 defaultMode: 'poll_only',
@@ -711,10 +713,13 @@ describe('plugins integration (P0a-2)', () => {
         },
       });
 
-      // 安装前列表为空。
-      expect(
-        (await core.rpc.call('mail.providerTemplates.list', undefined)) as { templates: unknown[] },
-      ).toMatchObject({ templates: [] });
+      // 安装前：实例创建不可用。
+      await expect(
+        core.rpc.call('plugins.instances.create', {
+          pluginId: 'io.github.tester/mailplug',
+          values: {},
+        }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
 
       await core.rpc.call('plugins.install', {
         source: { kind: 'file', path: built.path },
@@ -722,28 +727,49 @@ describe('plugins integration (P0a-2)', () => {
         userConfig: {},
       });
 
-      const listed = (await core.rpc.call('mail.providerTemplates.list', undefined)) as {
-        templates: Array<Record<string, unknown>>;
+      // 清单摘要携带实例声明与实例表单字段（内置 address/username/password，厂商端点不出现）。
+      const listed = (await core.rpc.call('plugins.list', undefined)) as {
+        plugins: Array<Record<string, unknown>>;
       };
-      expect(listed.templates).toHaveLength(1);
-      expect(listed.templates[0]).toMatchObject({
-        id: `io.github.tester/mailplug#${mailId}`,
+      const plugin = listed.plugins.find((row) => row.id === 'io.github.tester/mailplug')!;
+      expect(plugin.providesInstances).toEqual(['mail']);
+      expect(plugin.instanceFields).toMatchObject([
+        { key: 'address', required: true },
+        { key: 'username', required: false },
+        { key: 'password', required: true, sensitive: true },
+      ]);
+      expect(plugin.instanceCounts).toEqual({ mail: 0, mcp: 0 });
+
+      // 厂商贡献锁定端点：实例值里根本不收端点字段（未声明即拒绝）；30 秒意图无从
+      // 传入，轮询取贡献缺省 120（贡献下限 90 / 全局 60 秒夹取）。
+      const { instance } = (await core.rpc.call('plugins.instances.create', {
+        pluginId: 'io.github.tester/mailplug',
+        values: {
+          address: 'bot@example.com',
+          password: 'authcode',
+        },
+      })) as { instance: { id: string; title: string } };
+      expect(instance.title).toBe('bot@example.com');
+      await expect(
+        core.rpc.call('plugins.instances.create', {
+          pluginId: 'io.github.tester/mailplug',
+          values: {
+            address: 'other@example.com',
+            password: 'authcode',
+            imapHost: 'evil.example.com',
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+      const accounts = (await core.rpc.call('mail.accounts.list', undefined)) as {
+        accounts: Array<Record<string, unknown>>;
+      };
+      expect(accounts.accounts).toHaveLength(1);
+      expect(accounts.accounts[0]).toMatchObject({
+        provider: 'custom',
+        instanceId: instance.id,
         pluginId: 'io.github.tester/mailplug',
         pluginName: 'Mail Plug',
-        label: 'Fast Mail',
-        imap: { host: '127.0.0.1', port: imap.port, secure: 'ssl' },
-        smtp: { host: '127.0.0.1', port: smtp.port, secure: 'ssl' },
-        defaultMode: 'poll_only',
-        defaultPollSec: 120,
-        minPollSec: 90,
-        helpUrl: 'https://help.example.com/fastmail',
-      });
-
-      // 用模板的字段创建账号（provider 恒 custom）；传 30 秒被夹到全局 60 秒下限。
-      const created = (await core.rpc.call('mail.accounts.create', {
-        provider: 'custom',
-        address: 'bot@example.com',
-        password: 'authcode',
         imapHost: '127.0.0.1',
         imapPort: imap.port,
         imapSecure: 'ssl',
@@ -751,28 +777,30 @@ describe('plugins integration (P0a-2)', () => {
         smtpPort: smtp.port,
         smtpSecure: 'ssl',
         mode: 'poll_only',
-        pollIntervalSec: 30,
-      })) as { account: Record<string, unknown> };
-      expect(created.account).toMatchObject({
-        provider: 'custom',
-        imapHost: '127.0.0.1',
-        imapPort: imap.port,
-        imapSecure: 'ssl',
-        smtpHost: '127.0.0.1',
-        smtpPort: smtp.port,
-        smtpSecure: 'ssl',
-        mode: 'poll_only',
-        pollIntervalSec: 60,
+        pollIntervalSec: 120,
       });
 
-      // 停用插件后模板撤下。
-      await core.rpc.call('plugins.setEnabled', {
-        id: 'io.github.tester/mailplug',
-        enabled: false,
-      });
+      // 卡片计数按 mail_accounts 活跃账号统计。
+      const afterCreate = (await core.rpc.call('plugins.list', undefined)) as {
+        plugins: Array<Record<string, unknown>>;
+      };
       expect(
-        (await core.rpc.call('mail.providerTemplates.list', undefined)) as { templates: unknown[] },
-      ).toMatchObject({ templates: [] });
+        afterCreate.plugins.find((row) => row.id === 'io.github.tester/mailplug')!.instanceCounts,
+      ).toEqual({ mail: 1, mcp: 0 });
+
+      // 实例账号不能从全局视图直删（防悬空实例行），只能走实例路径级联。
+      const accountId = (accounts.accounts[0] as { id: string }).id;
+      await expect(
+        core.rpc.call('mail.accounts.delete', { id: accountId }),
+      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+      // 卸载插件 → 实例级联删账号（绑定、secret、会话一并清）。
+      await core.rpc.call('plugins.uninstall', { id: 'io.github.tester/mailplug' });
+      expect(((await core.rpc.call('mail.accounts.list', undefined)) as { accounts: unknown[] }).accounts).toEqual([]);
+      const instancesAfter = (await core.rpc.call('plugins.instances.list', {
+        pluginId: 'io.github.tester/mailplug',
+      })) as { instances: unknown[] };
+      expect(instancesAfter.instances).toEqual([]);
     } finally {
       if (previous === undefined) delete process.env.KEPCUP_MAIL_ALLOW_PRIVATE;
       else process.env.KEPCUP_MAIL_ALLOW_PRIVATE = previous;

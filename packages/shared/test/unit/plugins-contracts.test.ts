@@ -60,6 +60,7 @@ const summary = {
   configFields: [
     { key: 'defaultRepo', title: '默认仓库', type: 'string', required: false },
   ],
+  instanceFields: [],
   instanceCounts: { mail: 0, mcp: 0 },
   providesInstances: [],
 };

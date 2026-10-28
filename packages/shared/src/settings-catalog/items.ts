@@ -386,11 +386,8 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     enables: ['读我的邮件', '发邮件', '代收邮件'],
     keywords: ['邮件', '邮箱', 'IMAP', 'SMTP', 'mail', 'Gmail', 'QQ 邮箱'],
     scope: 'bot',
-    fields: [
-      field('provider', '邮箱服务商', 'select', { options: 'mail-providers' }),
-      field('address', '邮箱账号', 'account'),
-      field('password', '授权码 / 密码', 'secret'),
-    ],
+    // P3：添加入口是邮件插件卡（表单由插件声明的实例字段动态构建，目录不再声明字段）。
+    fields: [],
     write: viaTool('mail_request_setup', 'form', true),
     card: 'mail-account',
     deepLink: {

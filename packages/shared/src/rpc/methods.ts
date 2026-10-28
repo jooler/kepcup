@@ -7,17 +7,13 @@ import {
   widgetPreviewRunOutputSchema,
 } from '../domain/widget-craft.js';
 import {
-  mailAccountCreateInputSchema,
   mailAccountGetOutputSchema,
   mailAccountIdInputSchema,
   mailAccountSetBotsInputSchema,
-  mailAccountTestInputSchema,
-  mailAccountTestOutputSchema,
   mailAccountUpdateInputSchema,
   mailAccountsListOutputSchema,
   mailBindingResumeInputSchema,
   mailBotSetAccountsInputSchema,
-  mailProviderTemplatesListOutputSchema,
 } from '../domain/mail.js';
 import {
   appsSkillsInstallInputSchema,
@@ -2716,11 +2712,6 @@ export const rpcMethodSchemas = {
 
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
-  'mail.accounts.test': { input: mailAccountTestInputSchema, output: mailAccountTestOutputSchema },
-  'mail.accounts.create': {
-    input: mailAccountCreateInputSchema,
-    output: mailAccountGetOutputSchema,
-  },
   'mail.accounts.update': {
     input: mailAccountUpdateInputSchema,
     output: mailAccountGetOutputSchema,
@@ -2736,10 +2727,6 @@ export const rpcMethodSchemas = {
   'mail.bindings.resume': {
     input: mailBindingResumeInputSchema,
     output: mailAccountGetOutputSchema,
-  },
-  'mail.providerTemplates.list': {
-    input: voidInput,
-    output: mailProviderTemplatesListOutputSchema,
   },
 
   // P11: served by the main process (browser-host) on port B — see the
@@ -3166,8 +3153,6 @@ const APP_METHODS = [
   'stickies.delete',
   'mail.accounts.list',
   'mail.accounts.get',
-  'mail.accounts.test',
-  'mail.accounts.create',
   'mail.accounts.update',
   'mail.accounts.delete',
   'mail.accounts.setBots',
@@ -3175,7 +3160,6 @@ const APP_METHODS = [
   'mail.accounts.pause',
   'mail.accounts.resume',
   'mail.bindings.resume',
-  'mail.providerTemplates.list',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

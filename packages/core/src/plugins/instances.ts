@@ -5,6 +5,7 @@ import {
   type PluginFieldValue,
   type PluginInstanceKind,
   type PluginInstanceSummary,
+  type PluginManifest,
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
@@ -189,6 +190,13 @@ export class PluginInstanceStore {
     return rows.map(instanceFromRow);
   }
 
+  listKind(kind: PluginInstanceKind): PluginInstanceRow[] {
+    const rows = this.#db
+      .prepare('select * from plugin_instances where kind = ? order by created_at asc, id asc')
+      .all(kind) as InstanceDbRow[];
+    return rows.map(instanceFromRow);
+  }
+
   get(id: string): PluginInstanceRow | null {
     const row = this.#db.prepare('select * from plugin_instances where id = ?').get(id) as
       | InstanceDbRow
@@ -256,15 +264,24 @@ export interface InstanceMaterializerContext {
   instanceId: string;
   kind: PluginInstanceKind;
   title: string;
+  /** The installed plugin's manifest (contribution locks / defaults live there). */
+  manifest: PluginManifest;
   /** Submitted values (sensitive ones included — materializers land credentials). */
   values: Readonly<Record<string, PluginFieldValue>>;
+  /**
+   * Reads one of this instance's stored secrets (null = none). Update flows that
+   * re-test a connection need the CURRENT credential when the form omitted it.
+   */
+  readStoredSecret(key: string): string | null;
 }
 
 export interface InstanceMaterializer {
   /**
-   * Land domain data for a NEW instance (the plugin_instances row already exists).
-   * NOTE: `values` carries non-sensitive values as-is, but sensitive values arrive as
-   * STRINGS — numbers / arrays were JSON.stringify'd on their way into secrets.
+   * Land domain data for a NEW instance (the plugin_instances row and the instance
+   * secrets ALREADY exist — a materializer may resolve credentials through secrets
+   * while landing, e.g. before starting a session). NOTE: `values` carries
+   * non-sensitive values as-is, but sensitive values arrive as STRINGS — numbers /
+   * arrays were JSON.stringify'd on their way into secrets.
    */
   create(ctx: InstanceMaterializerContext): Promise<{ title?: string }>;
   /** Update domain data after an edit; may return a new title. */
@@ -281,6 +298,7 @@ export interface PluginInstanceServiceDeps {
   store: PluginInstanceStore;
   secrets: {
     hasValue(name: string): boolean;
+    getValue(name: string): string | null;
     setValue(name: string, value: string): void;
     removeValue(name: string): void;
     /** All stored secret names (prefix scans for instance-secret enumeration / cleanup). */
@@ -300,7 +318,7 @@ export class PluginInstanceService {
     this.#deps = deps;
   }
 
-  /** One materializer per instantiable kind; mail lands P3, custom-mcp P4-M2. */
+  /** One materializer per instantiable kind; mail landed P3, custom-mcp lands P4-M2. */
   registerMaterializer(kind: PluginInstanceKind, materializer: InstanceMaterializer): void {
     if (!capabilityKindOf(kind).hasInstances) {
       throw new AppError('PLUGIN_INVALID', `能力类型 ${kind} 不支持实例`);
@@ -311,6 +329,20 @@ export class PluginInstanceService {
   /** Unknown / uninstalled plugin → []（卸载后界面残留调用幂等返回空，不报错）。 */
   list(pluginId: string): PluginInstanceSummary[] {
     return this.#deps.store.list(pluginId).map((row) => this.#summaryOf(row));
+  }
+
+  /** One kind's rows across all plugins (P3: the mail startup reconciliation). */
+  listKind(kind: PluginInstanceKind): PluginInstanceRow[] {
+    return this.#deps.store.listKind(kind);
+  }
+
+  /**
+   * Owning plugin of one instance (mail's password / poll-bounds resolution and the
+   * mail→plugin decoration in start.ts read through this). Null = no such instance.
+   */
+  ownerOf(instanceId: string): { pluginId: string; kind: PluginInstanceKind } | null {
+    const row = this.#deps.store.get(instanceId);
+    return row === null ? null : { pluginId: row.pluginId, kind: row.kind };
   }
 
   create(
@@ -329,7 +361,7 @@ export class PluginInstanceService {
     const { row, manifest } = await this.#pluginForInstances(pluginId);
     const kind = this.#resolveKind(manifest.instances ?? [], kindHint);
     const materializer = this.#materializerOf(kind);
-    const fields = await this.#fieldsOf(pluginId, kind);
+    const fields = capabilityKindOf(kind).instanceFields(manifest);
     const split = validatePluginFieldValues(fields, values, {
       hasStoredSecret: () => false,
     });
@@ -344,6 +376,11 @@ export class PluginInstanceService {
       createdAt: now,
       updatedAt: now,
     });
+    // Secrets land BEFORE the materializer: landing may need them resolvable through
+    // secrets (the mail materializer starts a session that reads the password back).
+    // Failure compensation removes exactly what was written (row + secrets) — the
+    // materializer cleans its own domain data, so nothing survives a failed create.
+    this.#writeInstanceSecrets(pluginId, instanceId, split.sensitive);
     const instance = this.#deps.store.get(instanceId)!;
     try {
       const result = await materializer.create({
@@ -351,18 +388,19 @@ export class PluginInstanceService {
         instanceId,
         kind,
         title: instance.title,
+        manifest,
         values: { ...split.nonSensitive, ...split.sensitive },
+        readStoredSecret: (key) =>
+          this.#deps.secrets.getValue(pluginInstanceSecretName(pluginId, instanceId, key)),
       });
       if (result.title !== undefined && result.title !== instance.title) {
         this.#deps.store.update(instanceId, { title: result.title, updatedAt: now });
       }
     } catch (error) {
-      // Compensate: no domain data, no row (a crash in between leaves the row for the
-      // kind's materializer to reconcile — P3 adds that recovery).
+      this.#removeInstanceSecrets(pluginId, instanceId);
       this.#deps.store.delete(instanceId);
       throw error;
     }
-    this.#writeInstanceSecrets(pluginId, instanceId, split.sensitive);
     this.#deps.audit?.recordSystem('plugin_instance_create', { pluginId, instanceId, kind });
     this.#deps.events.emit('plugins.changed', { ids: [pluginId] });
     return this.#summaryOf(this.#deps.store.get(instanceId)!);
@@ -385,15 +423,16 @@ export class PluginInstanceService {
     if (manifest === null) {
       throw new AppError('PLUGIN_INVALID', '插件内容不可读，无法修改实例');
     }
-    const fields = await this.#fieldsOf(instance.pluginId, instance.kind);
+    const fields = capabilityKindOf(instance.kind).instanceFields(manifest);
     const split = validatePluginFieldValues(fields, values, {
       hasStoredSecret: (key) =>
         this.#deps.secrets.hasValue(
           pluginInstanceSecretName(instance.pluginId, instance.id, key),
         ),
     });
-    // Materializer FIRST (same ordering as create): a failure leaves the stored row and
-    // secrets exactly as they were — no compensation window.
+    // Materializer FIRST (same ordering as update has always had): a failure leaves the
+    // stored row and secrets exactly as they were — no compensation window. (Create is
+    // the mirror image: secrets precede the materializer there, see #createLocked.)
     const merged = { ...this.#storedValues(instance), ...split.nonSensitive };
     const now = this.#deps.clock.now();
     const materializer = this.#materializers.get(instance.kind);
@@ -404,7 +443,12 @@ export class PluginInstanceService {
         instanceId: instance.id,
         kind: instance.kind,
         title: instance.title,
+        manifest,
         values: { ...merged, ...split.sensitive },
+        readStoredSecret: (key) =>
+          this.#deps.secrets.getValue(
+            pluginInstanceSecretName(instance.pluginId, instance.id, key),
+          ),
       });
       if (result.title !== undefined) title = result.title;
     }
@@ -518,16 +562,10 @@ export class PluginInstanceService {
     }
     const materializer = this.#materializers.get(kind);
     if (materializer === undefined) {
-      // P1: mail/mcp materializers land in P3 / P4-M2 — until then create stops here.
+      // mcp (custom servers) lands in P4-M2 — until then create stops here.
       throw new AppError('INVALID_INPUT', '该能力类型的实例创建尚未在本版本开放');
     }
     return materializer;
-  }
-
-  /** Kind built-in fields (manifest-declared instance fields append from P3 mail). */
-  async #fieldsOf(pluginId: string, kind: PluginInstanceKind): Promise<PluginField[]> {
-    void pluginId;
-    return [...capabilityKindOf(kind).instanceFields()];
   }
 
   #storedValues(instance: PluginInstanceRow): Record<string, PluginFieldValue> {

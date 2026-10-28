@@ -231,6 +231,7 @@ describe('source and summary additions', () => {
       items: [],
       updateAvailable: null,
       configFields: [],
+      instanceFields: [],
       instanceCounts: { mail: 0, mcp: 0 },
       providesInstances: [],
     };

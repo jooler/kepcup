@@ -534,8 +534,10 @@ function mailManifest(version: string, ids: string[]): PluginManifest {
     id: 'io.github.tester/mail',
     name: 'Mail',
     version,
+    // P3：邮件贡献必须伴随 instances: ['mail']；schema 已限定至多一个，单 id 语义不变。
+    instances: ['mail'],
     contributions: {
-      mail: ids.map((id) => ({
+      mail: ids.slice(0, 1).map((id) => ({
         id,
         label: `Mail ${id}`,
         imap: { host: 'imap.test', port: 993, secure: 'ssl' },
@@ -547,11 +549,12 @@ function mailManifest(version: string, ids: string[]): PluginManifest {
 
 describe('MailProjector.update', () => {
   it('只同步账本：新增登记、删除移除', async () => {
+    // P3：一个清单至多一个邮件贡献（实例供给规范）——update 同步单 id 的增删。
     const projector = new MailProjector();
     const ledger = new MemLedger();
     const oldCtx: PluginProjectionContext = {
       plugin: { id: 'io.github.tester/mail', version: '1.0.0', origin: 'local', tier: 'developer' },
-      manifest: mailManifest('1.0.0', ['alpha', 'beta']),
+      manifest: mailManifest('1.0.0', ['alpha']),
       dir: '/nowhere',
       userConfig: {},
       ledger,
@@ -561,10 +564,10 @@ describe('MailProjector.update', () => {
     const newCtx: PluginProjectionContext = {
       ...oldCtx,
       plugin: { ...oldCtx.plugin, version: '2.0.0' },
-      manifest: mailManifest('2.0.0', ['beta', 'gamma']),
+      manifest: mailManifest('2.0.0', ['gamma']),
     };
     await projector.update(oldCtx, newCtx);
-    expect(ledger.list('mail')).toEqual(['beta', 'gamma']);
+    expect(ledger.list('mail')).toEqual(['gamma']);
   });
 
   it('inspect 的 owned 排除：自己已拥有的模板 id 不冲突', async () => {

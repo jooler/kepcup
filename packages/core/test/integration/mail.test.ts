@@ -20,6 +20,29 @@ function mailOf(stack: { core: { services: { mail: MailService | null } } }): Ma
   if (service === null) throw new Error('mail service not wired');
   return service;
 }
+/**
+ * mail_accounts.instance_id 是真外键（P3）：服务级建号前先播一颗 mail 实例行
+ * （插件行幂等插入，实例行每次一颗）。
+ */
+let seededSeq = 0;
+async function seedMailInstance(stack: {
+  core: { services: { mainDb: { prepare(sql: string): { run(...args: unknown[]): unknown } } | null } };
+}): Promise<string> {
+  const db = stack.core.services.mainDb;
+  if (db === undefined || db === null) throw new Error('core db not ready');
+  db.prepare(
+    `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, update_to, update_snapshot, config_json, installed_at, updated_at)
+     values ('io.github.tester/maildom', '1.0.0', 'local', 'developer', 'installed', 1, 'seeded', NULL, 'io.github.tester/maildom@1.0.0', NULL, NULL, '{}', 0, 0)
+     on conflict(id) do nothing`,
+  ).run();
+  const id = `pli_seed_${seededSeq++}`;
+  db.prepare(
+    `insert into plugin_instances (id, plugin_id, kind, title, config_json, created_at, updated_at)
+     values (?, 'io.github.tester/maildom', 'mail', 'seeded', '{}', 0, 0)`,
+  ).run(id);
+  return id;
+}
+
 
 function mailCards(messages: Message[], event: string): Message[] {
   return messages.filter((message) => {
@@ -108,18 +131,21 @@ describe('mail channel', () => {
             .replyText('看到新邮件了'),
         ),
       );
-      const created = (await stack.core.rpc.call('mail.accounts.create', {
-        provider: 'custom',
+      // P3：建号收敛到实例路径（服务直调；实例账号的 Bot 绑定仍是 mail_account_bots）。
+      const createdAccount = await mailOf(stack).createForInstance({
         address: 'bot@example.com',
         password: 'authcode',
-        label: '工作邮箱',
         mode: 'auto',
         imapHost: '127.0.0.1',
         imapPort: imap.port,
+        imapSecure: 'ssl',
         smtpHost: '127.0.0.1',
         smtpPort: smtp.port,
-        botIds: [botA.id, botB.id],
-      })) as { account: { id: string } };
+        smtpSecure: 'ssl',
+        instanceId: await seedMailInstance(stack),
+      });
+      mailOf(stack).setBots(createdAccount.id, [botA.id, botB.id]);
+      const created = { account: { id: createdAccount.id } };
       await waitFor(async () => {
         const row = (await stack.core.rpc.call('mail.accounts.get', { id: created.account.id })) as {
           account: { status: string };
@@ -208,16 +234,19 @@ describe('mail channel', () => {
         const direct = (await stack.core.rpc.call('conversations.openDirect', { botId: bot.id })) as {
           conversation: { id: string };
         };
-        const created = (await stack.core.rpc.call('mail.accounts.create', {
-          provider: 'custom',
+        const createdAccount = await mailOf(stack).createForInstance({
           address: 'bot@example.com',
           password: 'authcode',
           imapHost: '127.0.0.1',
           imapPort: imap.port,
+          imapSecure: 'ssl',
           smtpHost: '127.0.0.1',
           smtpPort: smtp.port,
-          botIds: [bot.id],
-        })) as { account: { id: string } };
+          smtpSecure: 'ssl',
+          instanceId: await seedMailInstance(stack),
+        });
+        mailOf(stack).setBots(createdAccount.id, [bot.id]);
+        const created = { account: { id: createdAccount.id } };
         await stack.core.rpc.call('unattended.enable', { hours: null, acknowledgeRisk: true });
         const pending = mailOf(stack).sendMessage(
           {
@@ -278,18 +307,20 @@ describe('mail channel', () => {
         const direct = (await stack.core.rpc.call('conversations.openDirect', { botId: bot.id })) as {
           conversation: { id: string };
         };
-        await stack.core.rpc.call('mail.accounts.create', {
-          provider: 'custom',
+        const listedAccount = await mailOf(stack).createForInstance({
           address: 'bot@example.com',
           password: 'authcode',
           mode: 'poll_only',
           pollIntervalSec: 3600,
           imapHost: '127.0.0.1',
           imapPort: imap.port,
+          imapSecure: 'ssl',
           smtpHost: '127.0.0.1',
           smtpPort: smtp.port,
-          botIds: [bot.id],
+          smtpSecure: 'ssl',
+          instanceId: await seedMailInstance(stack),
         });
+        mailOf(stack).setBots(listedAccount.id, [bot.id]);
         imap.lastSearchCommand = '';
         const listed = await mailOf(stack).listMessages(bot.id, direct.conversation.id, { limit: 5 });
         expect(listed).toContain('UID');

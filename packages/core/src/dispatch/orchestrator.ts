@@ -5746,7 +5746,6 @@ export class Orchestrator {
         const decided = decideMailSetupRequest({
           botId: identity.botId,
           bound,
-          ...(input.provider !== undefined ? { provider: input.provider } : {}),
           ...(input.reason !== undefined ? { reason: input.reason } : {}),
         });
         if (!decided.ok) return { ok: false, message: decided.message };

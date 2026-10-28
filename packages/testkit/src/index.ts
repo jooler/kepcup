@@ -14,3 +14,4 @@ export * from './mcpb-fixture.js';
 export * from './plugin-fixture.js';
 export * from './plugin-market-fixture.js';
 export * from './builtin-plugins-fixture.js';
+export * from './fake-mail-server.js';

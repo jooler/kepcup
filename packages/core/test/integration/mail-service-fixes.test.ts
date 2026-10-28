@@ -110,23 +110,48 @@ async function setup(
   return local;
 }
 
+/**
+ * mail_accounts.instance_id 是真外键：服务级建号前先播一颗 mail 实例行
+ * （插件行幂等插入，实例行每次一颗）。
+ */
+async function seedMailInstance(local: Local): Promise<string> {
+  const db = local.stack.core.services.mainDb;
+  if (db === null) throw new Error('core db not ready');
+  db.prepare(
+    `insert into plugins (id, version, origin, tier, state, enabled, package_sha256, marketplace, dir, update_to, update_snapshot, config_json, installed_at, updated_at)
+     values ('io.github.tester/maildom', '1.0.0', 'local', 'developer', 'installed', 1, 'seeded', NULL, 'io.github.tester/maildom@1.0.0', NULL, NULL, '{}', 0, 0)
+     on conflict(id) do nothing`,
+  ).run();
+  const id = `pli_seed_${seededSeq++}`;
+  db.prepare(
+    `insert into plugin_instances (id, plugin_id, kind, title, config_json, created_at, updated_at)
+     values (?, 'io.github.tester/maildom', 'mail', 'seeded', '{}', 0, 0)`,
+  ).run(id);
+  return id;
+}
+
+let seededSeq = 0;
+
 async function createAccount(
   local: Local,
   botIds: string[],
   extra: { mode?: 'auto' | 'poll_only' } = {},
 ): Promise<string> {
-  const account = await local.mail.create({
-    provider: 'custom',
+  // P3：建号走实例路径（createForInstance），Bot 绑定仍是独立的绑定表动作。
+  const account = await local.mail.createForInstance({
     address: 'bot@example.com',
     password: 'authcode',
     mode: extra.mode ?? 'poll_only',
     pollIntervalSec: 3600,
     imapHost: '127.0.0.1',
     imapPort: local.imap.port,
+    imapSecure: 'ssl',
     smtpHost: '127.0.0.1',
     smtpPort: local.smtp.port,
-    botIds,
+    smtpSecure: 'ssl',
+    instanceId: await seedMailInstance(local),
   });
+  if (botIds.length > 0) local.mail.setBots(account.id, botIds);
   await waitFor(() => (local.mail.get(account.id).status === 'running' ? true : null), {
     label: 'account running',
   });
@@ -279,7 +304,19 @@ describe('UIDVALIDITY (review #7)', () => {
     expect(local.mail.store.get(id)?.lastUid).toBe(3);
 
     // 登录名变了：可能已经是另一个邮箱，旧游标作废（重连后重新取基线）。
-    await local.mail.update({ id, username: 'other@example.com' });
+    // P3：账号带实例，端点 / 登录名走实例路径（updateInstanceAccount）。
+    const row = local.mail.store.get(id)!;
+    await local.mail.updateInstanceAccount({
+      id,
+      username: 'other@example.com',
+      password: 'another-code',
+      imapHost: row.imapHost,
+      imapPort: row.imapPort,
+      imapSecure: row.imapSecure,
+      smtpHost: row.smtpHost,
+      smtpPort: row.smtpPort,
+      smtpSecure: row.smtpSecure,
+    });
     expect(local.mail.store.get(id)?.lastUid).toBeNull();
     expect(local.mail.store.get(id)?.uidValidity).toBeNull();
     await waitFor(() => (local.mail.store.get(id)?.lastUid === 3 ? true : null), {
@@ -529,26 +566,31 @@ describe('re-saving bot bindings keeps the storm pause (review #13)', () => {
   });
 });
 
-describe('create validates bots before persisting (review #14)', () => {
-  it('leaves no ghost account, secret or connection behind when botIds are invalid', async () => {
+describe('instance creation (P3) validates address and bots', () => {
+  it('createForInstance rejects a duplicate active address; binding validates bots', async () => {
     const local = await setup();
     const input = {
-      provider: 'custom' as const,
       address: 'bot@example.com',
       password: 'authcode',
       imapHost: '127.0.0.1',
       imapPort: local.imap.port,
+      imapSecure: 'ssl' as const,
       smtpHost: '127.0.0.1',
       smtpPort: local.smtp.port,
+      smtpSecure: 'ssl' as const,
     };
-    await expect(local.mail.create({ ...input, botIds: ['bot_missing'] })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
-    expect(local.mail.list()).toEqual([]);
-    expect(local.imap.connections).toBe(0);
-    // 重试不会因为留下的半个账号而重复。
     const bot = await makeBot(local.stack.core, '甲');
-    await local.mail.create({ ...input, botIds: [bot.id] });
+    const account = await local.mail.createForInstance({
+      ...input,
+      instanceId: await seedMailInstance(local),
+    });
+    local.mail.setBots(account.id, [bot.id]);
+    // 同一地址不能再建第二个账号（防重复提醒与按地址解析歧义）。
+    await expect(
+      local.mail.createForInstance({ ...input, instanceId: await seedMailInstance(local) }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT', details: { accountId: account.id } });
+    // 绑定校验仍拒绝不存在的 Bot（旧 create 的 botIds 预检语义移到绑定写入）。
+    await expect(() => local.mail.setBots(account.id, ['bot_missing'])).toThrow();
     expect(local.mail.list()).toHaveLength(1);
   });
 });

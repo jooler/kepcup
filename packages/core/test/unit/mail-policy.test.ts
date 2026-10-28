@@ -12,12 +12,18 @@ import { mailAlertsExceeded, mailBackoffMs, recentMailAlerts } from '../../src/m
 import { resolveBoundAccount } from '../../src/mail/resolve.js';
 
 describe('mail policy', () => {
-  it('clamps poll intervals to the global range and the provider floor', () => {
-    expect(clampMailPollInterval('gmail', 10)).toBe(MAIL_POLL_MIN_SEC);
-    expect(clampMailPollInterval('qq', 60)).toBe(120);
-    expect(clampMailPollInterval('netease_163', 60)).toBe(180);
-    expect(clampMailPollInterval('netease_126', 200)).toBe(200);
-    expect(clampMailPollInterval('custom', MAIL_POLL_MAX_SEC + 100)).toBe(MAIL_POLL_MAX_SEC);
+  it('clamps poll intervals to the global range and the declared floor (P3: bounds come from the contribution)', () => {
+    expect(clampMailPollInterval(10, { minPollSec: 300, defaultPollSec: 300 })).toBe(300);
+    expect(clampMailPollInterval(60, { minPollSec: MAIL_POLL_MIN_SEC, defaultPollSec: 300 })).toBe(
+      MAIL_POLL_MIN_SEC,
+    );
+    expect(clampMailPollInterval(200, { minPollSec: 180, defaultPollSec: 300 })).toBe(200);
+    expect(
+      clampMailPollInterval(MAIL_POLL_MAX_SEC + 100, { minPollSec: 60, defaultPollSec: 300 }),
+    ).toBe(MAIL_POLL_MAX_SEC);
+    // 非数字输入回落缺省。
+    const nan = Number.NaN;
+    expect(clampMailPollInterval(nan, { minPollSec: 90, defaultPollSec: 120 })).toBe(120);
   });
 
   it('uses IDLE only when the server advertises it and the account is on auto', () => {

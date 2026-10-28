@@ -679,6 +679,12 @@ function checkMail(
     ['imap', template.imap.host],
     ['smtp', template.smtp.host],
   ] as const) {
+    // D105 P3: an empty host is the GENERIC mail plugin shape — endpoints become
+    // per-instance form fields instead of locked values (the manifest schema enforces
+    // both sides empty at once).
+    if (host === '') {
+      continue;
+    }
     if (isPublicMailHost(host)) {
       permissions.hosts.add(host);
       continue;

@@ -88,6 +88,11 @@ export const pluginSummarySchema = z.object({
   revoked: z.enum(['warn', 'disable']).nullable().default(null),
   /** D105 P1: declared plugin config fields (safe projection — no `default`). */
   configFields: z.array(pluginFieldSummarySchema),
+  /**
+   * D105 P3: resolved instance form fields (kind built-ins + manifest `instanceFields`)
+   * for `providesInstances` kinds — same safe projection, no `default`.
+   */
+  instanceFields: z.array(pluginFieldSummarySchema),
   /** D105 P1: created instances per instantiable kind. */
   instanceCounts: z.object({ mail: z.number().int(), mcp: z.number().int() }),
   /** D105 P1: instantiable capability kinds the manifest declares. */

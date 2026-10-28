@@ -195,9 +195,10 @@ describe('plugin manifest schema', () => {
     ).toThrow();
   });
 
-  it('applies the mail defaults', () => {
+  it('applies the mail defaults (P3: a mail contribution requires instances: [mail])', () => {
     const manifest = parse({
       ...minimalManifest,
+      instances: ['mail'],
       contributions: {
         skills: [],
         connectors: [],
@@ -216,6 +217,88 @@ describe('plugin manifest schema', () => {
     expect(template.defaultMode).toBe('auto');
     expect(template.defaultPollSec).toBe(300);
     expect(template.minPollSec).toBe(60);
+    expect(template.imap.port).toBe(993);
+    expect(template.smtp.secure).toBe('ssl');
+  });
+
+  it('mail contribution rules: requires instances, at most one, paired hosts, no builtin field keys', () => {
+    const vendor = {
+      id: 'fastmail',
+      label: 'Fastmail',
+      imap: { host: 'imap.fastmail.com', port: 993, secure: 'ssl' },
+      smtp: { host: 'smtp.fastmail.com', port: 465, secure: 'ssl' },
+    };
+    // A mail contribution without instances: ['mail'] is rejected.
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        contributions: { skills: [], connectors: [], mcp: [], mail: [vendor] },
+      }),
+    ).toThrow();
+    // At most one mail contribution.
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['mail'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [vendor, { ...vendor, id: 'other' }],
+        },
+      }),
+    ).toThrow();
+    // Hosts must be locked on both sides or neither.
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['mail'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [{ ...vendor, smtp: { host: '', port: 465, secure: 'ssl' } }],
+        },
+      }),
+    ).toThrow();
+    // instanceFields may not shadow the kind's built-in keys and may not repeat.
+    const generic = (instanceFields: Array<Record<string, unknown>>): unknown => ({
+      ...minimalManifest,
+      instances: ['mail'],
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [],
+        mail: [
+          {
+            id: 'generic',
+            label: '通用邮箱',
+            imap: { host: '', port: 993, secure: 'ssl' },
+            smtp: { host: '', port: 465, secure: 'ssl' },
+            instanceFields,
+          },
+        ],
+      },
+    });
+    expect(() =>
+      parse(
+        generic([
+          { key: 'password', type: 'string', title: '授权码', required: true, sensitive: true },
+        ]),
+      ),
+    ).toThrow();
+    expect(() =>
+      parse(
+        generic([
+          { key: 'vendorPlan', type: 'string', title: '套餐' },
+          { key: 'vendorPlan', type: 'string', title: '套餐' },
+        ]),
+      ),
+    ).toThrow();
+    expect(
+      parse(generic([{ key: 'vendorPlan', type: 'string', title: '套餐' }])).contributions.mail[0]!
+        .instanceFields,
+    ).toHaveLength(1);
   });
 
   it('rejects http (non-https) author url / homepage / helpUrl', () => {

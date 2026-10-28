@@ -8,6 +8,7 @@ import { z } from 'zod';
 import {
   AGENT_CATALOG,
   AppError,
+  MAIL_POLL_MIN_SEC,
   PLUGIN_INDEX_BASE_URL,
   PLUGIN_INDEX_MAX_BYTES,
   PLUGIN_INDEX_PUBLIC_KEYS,
@@ -194,7 +195,8 @@ import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { effectivePluginIds } from './plugins/effective.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
-import { PluginInstanceService, PluginInstanceStore } from './plugins/instances.js';
+import { PluginInstanceService, PluginInstanceStore, pluginInstanceSecretName } from './plugins/instances.js';
+import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -2412,6 +2414,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         removeValue: (name) => secrets.removeValue(name),
       },
       instanceStore: pluginInstanceStore,
+      // P3：instanceCounts.mail 的口径是 mail_accounts 里的活跃账号（软删 / 无主不算）。
+      mailInstanceCount: (pluginId) => mailService?.store.countActiveForPlugin(pluginId) ?? 0,
       pluginsDir: paths.pluginsDir,
       appVersion: options.appVersion ?? '0.0.0',
       ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
@@ -2433,6 +2437,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: pluginInstanceStore,
       secrets: {
         hasValue: (name) => secrets.hasValue(name),
+        getValue: (name) => secrets.getValue(name),
         setValue: (name, value) => secrets.setValue(name, value),
         removeValue: (name) => secrets.removeValue(name),
         names: () => secrets.names(),
@@ -2755,9 +2760,34 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),
       notice: publishAppNotice,
+      // P3：实例账号的密码 secret 名 / 轮询边界 / 归属展示都向插件层解析（端口注入，
+      // mail 不 import 插件模块）。实例账号密码的单一事实来源是实例 secret。
+      instanceOwner: {
+        ownerOf: (instanceId) => {
+          const owner = pluginInstances.ownerOf(instanceId);
+          return owner === null ? null : { pluginId: owner.pluginId };
+        },
+        pluginName: (pluginId) => plugins.displayNameOf(pluginId),
+        passwordSecretName: (pluginId, instanceId) =>
+          pluginInstanceSecretName(pluginId, instanceId, 'password'),
+        pollBounds: async (pluginId) => {
+          const FALLBACK = { minPollSec: MAIL_POLL_MIN_SEC, defaultPollSec: 300 };
+          const manifest = await plugins.manifestOf(pluginId);
+          const contribution = manifest?.contributions.mail[0];
+          if (contribution === undefined) return FALLBACK;
+          return {
+            minPollSec: Math.max(MAIL_POLL_MIN_SEC, contribution.minPollSec),
+            defaultPollSec: contribution.defaultPollSec,
+          };
+        },
+      },
     });
     mail.start();
     mailService = mail;
+    // P3：邮件 materializer 落地（实例 = 邮箱账号）。注册在 mail 构造之后（materializer
+    // 持有 mail 引用）；DEV-065 的启动对账：实例行存在而账号缺失时清掉孤儿实例行。
+    pluginInstances.registerMaterializer('mail', createMailMaterializer(mail));
+    reconcileMailInstanceRows(pluginInstances, mail, logger);
     // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
     const handoverBotWriter: HandoverBotWriter = {
       get: (botId) => bots.get(botId),

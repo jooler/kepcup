@@ -209,7 +209,8 @@ export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
   }
   if (facts.connectors > 0) parts.push(`${facts.connectors} 个连接`);
   if (facts.mcp > 0) parts.push(`${facts.mcp} 个工具`);
-  if (facts.mail > 0) parts.push(`${facts.mail} 个邮件模板`);
+  // P3: a mail contribution is the instance provisioning spec, not a capability unit —
+  // the instances tail below is the user-facing line for it.
   const tail: string[] = [];
   if (facts.instances.includes('mail')) tail.push('可添加多个邮箱账号');
   if (facts.instances.includes('mcp')) tail.push('可添加自定义工具');
@@ -276,26 +277,83 @@ export const pluginMcpContributionSchema = z.discriminatedUnion('kind', [
 ]);
 export type PluginMcpContribution = z.infer<typeof pluginMcpContributionSchema>;
 
-/** Fields mirror `MailProviderPreset`; the template only pre-fills the add-account form. */
-export const pluginMailContributionSchema = z.strictObject({
-  id: pluginMcpIdSchema,
-  label: z.string().min(1).max(60),
-  imap: z.strictObject({
-    host: z.string().min(1).max(253),
-    port: z.number().int().min(1).max(65535),
-    secure: mailSecureSchema,
-  }),
-  smtp: z.strictObject({
-    host: z.string().min(1).max(253),
-    port: z.number().int().min(1).max(65535),
-    secure: mailSecureSchema,
-  }),
-  defaultMode: mailModeSchema.default('auto'),
-  defaultPollSec: z.number().int().min(60).max(21600).default(300),
-  minPollSec: z.number().int().min(60).max(21600).default(60),
-  helpUrl: httpsUrl(500).optional(),
-});
+/**
+ * Mail contribution (D105 P3): the provisioning spec of ONE mail instance kind. The
+ * kind adapter owns the built-in form fields ({@link PLUGIN_MAIL_BUILTIN_INSTANCE_FIELD_KEYS});
+ * these manifest fields are instance DEFAULTS and LOCKS — a vendor plugin declares
+ * non-empty hosts (locked, hidden from the form), the generic plugin declares empty
+ * hosts and the endpoints become required per-instance fields. `defaultMode` /
+ * `defaultPollSec` / `minPollSec` seed new accounts; the global 60 s poll floor stays a
+ * hard limit. A manifest carries at most one entry and only alongside
+ * `instances: ['mail']` (enforced in `pluginManifestSchema`).
+ */
+export const pluginMailContributionSchema = z
+  .strictObject({
+    id: pluginMcpIdSchema,
+    label: z.string().min(1).max(60),
+    imap: z.strictObject({
+      host: z.string().max(253),
+      port: z.number().int().min(1).max(65535).default(993),
+      secure: mailSecureSchema.default('ssl'),
+    }),
+    smtp: z.strictObject({
+      host: z.string().max(253),
+      port: z.number().int().min(1).max(65535).default(465),
+      secure: mailSecureSchema.default('ssl'),
+    }),
+    defaultMode: mailModeSchema.default('auto'),
+    defaultPollSec: z.number().int().min(60).max(21600).default(300),
+    minPollSec: z.number().int().min(60).max(21600).default(60),
+    helpUrl: httpsUrl(500).optional(),
+    /** Vendor-extra form fields, appended after the kind's built-ins (≤16). */
+    instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+  })
+  .superRefine((contribution, ctx) => {
+    // Locks are per-protocol pairs: locking one side only is a manifest authoring bug.
+    if ((contribution.imap.host === '') !== (contribution.smtp.host === '')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['imap', 'host'],
+        message: 'IMAP 与 SMTP 必须同时锁定或同时留空',
+      });
+    }
+    const declared = contribution.instanceFields ?? [];
+    const seen = new Set<string>();
+    declared.forEach((field, index) => {
+      if (PLUGIN_MAIL_BUILTIN_INSTANCE_FIELD_KEYS.includes(field.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'key'],
+          message: `字段与内置实例字段重名：${field.key}`,
+        });
+      }
+      if (seen.has(field.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'key'],
+          message: `实例字段重复：${field.key}`,
+        });
+      }
+      seen.add(field.key);
+    });
+  });
 export type PluginMailContribution = z.infer<typeof pluginMailContributionSchema>;
+
+/**
+ * Instance form keys the mail kind adapter generates itself — never manifest-declarable
+ * (`instanceFields` entries with these keys are rejected by the schema above).
+ */
+export const PLUGIN_MAIL_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = [
+  'address',
+  'username',
+  'password',
+  'imapHost',
+  'imapPort',
+  'imapSecure',
+  'smtpHost',
+  'smtpPort',
+  'smtpSecure',
+] as const;
 
 // --- manifest ----------------------------------------------------------------
 
@@ -393,6 +451,22 @@ export const pluginManifestSchema = z
       ['contributions', 'mail'],
       'id',
     );
+    // D105 P3: a mail contribution IS the mail-instance provisioning spec — exactly one
+    // per manifest, and only together with the `instances: ['mail']` declaration.
+    if (mail.length > 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'mail'],
+        message: '邮件实例能力只能声明一个配置',
+      });
+    }
+    if (mail.length > 0 && !manifest.instances?.includes('mail')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'mail'],
+        message: '声明邮件贡献时必须同时声明 instances: [\'mail\']',
+      });
+    }
     // Declarative fields / instances (D105): duplicate config keys and duplicate
     // instance kinds are rejected up front — the host builds forms keyed by them.
     if (manifest.config !== undefined) {

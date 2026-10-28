@@ -53,6 +53,14 @@ const CONTRIBUTION_SCHEMAS = {
   mail: pluginMailContributionSchema,
 } as const;
 
+const emptyMailManifest = pluginManifestSchema.parse({
+  format_version: 1,
+  id: 'io.a/b',
+  name: 'x',
+  version: '1.0.0',
+  instances: ['mail'],
+});
+
 describe('capability kind registry (D105)', () => {
   it('covers every contribution kind exactly once, and PLUGIN_PROJECTOR_ORDER derives from it', () => {
     expect(CAPABILITY_KINDS.map((adapter) => adapter.kind)).toEqual([...PLUGIN_PROJECTOR_ORDER]);
@@ -78,7 +86,7 @@ describe('capability kind registry (D105)', () => {
     const consentKeys = CAPABILITY_KINDS.map((adapter) => adapter.consentKey);
     expect(new Set(consentKeys).size).toBe(consentKeys.length);
     for (const adapter of CAPABILITY_KINDS) {
-      expect(typeof adapter.instanceFields()).toBe('object');
+      expect(Array.isArray(adapter.instanceFields(emptyMailManifest))).toBe(true);
       expect(typeof adapter.hasContribution).toBe('function');
       expect(typeof adapter.consentItems).toBe('function');
     }
@@ -105,6 +113,7 @@ describe('capability kind registry (D105)', () => {
         contributions: { mcp: [{ kind: 'http', id: 'docs', url: 'https://mcp.example.com/mcp' }] },
       }),
       mail: parse({
+        instances: ['mail'],
         contributions: {
           mail: [
             {
