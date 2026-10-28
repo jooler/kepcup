@@ -286,6 +286,9 @@ export class BuiltinPlugins {
         items: [],
         updateAvailable: null,
         revoked: null,
+        configFields: [],
+        instanceCounts: { mail: 0, mcp: 0 },
+        providesInstances: [],
       };
     });
   }

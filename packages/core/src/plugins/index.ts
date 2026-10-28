@@ -1,5 +1,7 @@
 export * from './ids.js';
 export * from './builtin.js';
+export * from './kinds.js';
+export * from './instances.js';
 export * from './manifest-loader.js';
 export * from './package.js';
 export * from './store.js';

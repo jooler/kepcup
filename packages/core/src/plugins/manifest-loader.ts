@@ -38,6 +38,22 @@ export function parsePluginManifestText(text: string): PluginManifest {
   }
   const parsed = pluginManifestSchema.safeParse(json);
   if (!parsed.success) {
+    // Unknown fields / unknown instance kinds mean the manifest came from a NEWER
+    // KepCup (additive contract, D105): prompt an upgrade instead of a generic
+    // invalid-package error. Everything else stays PLUGIN_INVALID.
+    const upgradePaths = parsed.error.issues
+      .filter(
+        (issue) =>
+          issue.code === 'unrecognized_keys' ||
+          (issue.path[0] === 'instances' && issue.code === 'invalid_value'),
+      )
+      .map((issue) => (issue.path.length > 0 ? issue.path.join('.') : 'plugin.json'));
+    if (upgradePaths.length > 0) {
+      throw new AppError(
+        'PLUGIN_UPGRADE_REQUIRED',
+        `插件清单包含当前版本不认识的内容（${[...new Set(upgradePaths)].slice(0, 3).join('、')}），请升级 KepCup`,
+      );
+    }
     const lines = parsed.error.issues.slice(0, 3).map((issue) => {
       const where = issue.path.length > 0 ? issue.path.join('.') : 'plugin.json';
       return `${where}：${issue.message}`;
