@@ -23,13 +23,18 @@
     type PluginForm,
   } from './plugin-install';
   import PluginConsentPanel from './PluginConsentPanel.svelte';
+  import PluginInstallHintDialog from './PluginInstallHintDialog.svelte';
 
   /**
    * 本地安装插件对话框（D104 P0a-3，结构同 `McpbInstall.svelte`）：选路径（文件 / 文件夹）
    * → `plugins.inspect` 展示同意面板（含 MCPB 的 user_config 表单）→ 确认安装（`plugins.install`
    * 带回检视时的 sha256；包被替换则 core 拒绝）。路径输入框始终可手填（e2e 走这里，不碰
    * 原生文件对话框）。提交后立即清空敏感值；失败时对话框保持打开。
+   * D105 P4：安装（非更新）成功后弹接入引导 `PluginInstallHintDialog`——市场与本地两条
+   * 安装路径都经这里，Bot 发起的对话内确认卡不经过这里所以不弹。
    */
+
+  const INSTALL_HINT_DISMISSED_KEY = 'kepcup.plugins.installHint.dismissed';
 
   let {
     open = $bindable(false),
@@ -50,6 +55,9 @@
   let form = $state<PluginForm>({});
   /** P1-2：权限扩大差异的确认勾选（勾选后才允许确认，随 plugins.install 带回）。 */
   let ackDiff = $state(false);
+  /** P4：安装成功后的接入引导弹框（更新不弹）。 */
+  let hintOpen = $state(false);
+  let hintPlugin = $state<{ id: string; name: string } | null>(null);
 
   const source = $derived(
     mode === 'marketplace'
@@ -141,6 +149,17 @@
   /** 已装同 id 且检视判定为「更新」时走 `plugins.update`（市场来源），否则 `plugins.install`。 */
   const updating = $derived(info !== null && info.existing !== null && info.update !== null);
 
+  /** 安装成功后的接入引导：本设备勾过「不再提醒」就不弹（键不在设置目录，先例 acpNoticeAck）。 */
+  function maybeShowInstallHint(installed: { id: string; name: string }): void {
+    try {
+      if (localStorage.getItem(INSTALL_HINT_DISMISSED_KEY) === '1') return;
+    } catch {
+      // localStorage 不可用：按未勾处理，引导照常弹。
+    }
+    hintPlugin = installed;
+    hintOpen = true;
+  }
+
   async function install(): Promise<void> {
     if (info === null || !installable) return;
     const current = info;
@@ -157,6 +176,7 @@
       } else {
         await core.call('plugins.install', { source, ...payload });
         toast.success(t('plugins.toast.installed', { name: current.name }));
+        maybeShowInstallHint({ id: current.id, name: current.name });
       }
       await plugins.afterMutation();
       close();
@@ -265,3 +285,5 @@
     </div>
   </DialogContent>
 </Dialog>
+
+<PluginInstallHintDialog bind:open={hintOpen} plugin={hintPlugin} />
