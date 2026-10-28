@@ -160,7 +160,12 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
+import {
+  decideMailSetupRequest,
+  mailBoundFor,
+  type MailSetupFacade,
+} from '../tools/mail-tools.js';
+import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import type { PluginToolFacade } from '../tools/plugin-tools.js';
 import type { PluginSearchHit, PluginToolContext } from '../plugins/install-requests.js';
@@ -557,11 +562,11 @@ export interface OrchestratorWikiFacade {
 /** The slice of SkillsService the response loop consumes. */
 export interface OrchestratorSkillsFacade {
   /** <skills> section body (names + descriptions only), '' when none. */
-  promptSection(botId: string, extraPluginIds?: ReadonlySet<string>): string;
+  promptSection(botId: string, extraPluginIds: ReadonlySet<string>): string;
   /** <recommended_skills> section body（未安装预置，D63），'' when none. */
   recommendedSkillsSection(): string;
   /** Skill directories the file tools may read / sandbox sees read-only. */
-  readableDirs(botId: string, extraPluginIds?: ReadonlySet<string>): string[];
+  readableDirs(botId: string, extraPluginIds: ReadonlySet<string>): string[];
   /** create_skill backend. */
   requestAuthoring(input: {
     botId: string;
@@ -943,9 +948,7 @@ export class Orchestrator {
         if (bot === null) return [];
         return this.#capabilityCatalog(
           bot,
-          conversationId !== null && conversationId !== undefined
-            ? this.#effectivePlugins(bot, conversationId)
-            : undefined,
+          this.#effectivePlugins(bot, conversationId ?? null),
         ).entries.map((entry) => ({
           id: entry.id,
           ready: entry.status === 'ready',
@@ -2574,20 +2577,21 @@ export class Orchestrator {
    * 项目会话时读一次 `project_plugins`（不进缓存）；返回值恒非 undefined——
    * 空集同样是语义（未启用任何插件，其能力不可见）。
    */
-  #effectivePlugins(bot: Bot, conversationId: string): ReadonlySet<string> {
-    const conversation = this.#deps.conversations.get(conversationId);
+  #effectivePlugins(bot: Bot, conversationId: string | null): ReadonlySet<string> {
+    const conversation =
+      conversationId === null ? null : this.#deps.conversations.get(conversationId);
     const overlay =
       conversation !== null && conversation.type === 'project'
-        ? this.#deps.projects.pluginsOf(conversationId)
+        ? this.#deps.projects.pluginsOf(conversation.id)
         : [];
     return effectivePluginIds(bot.profile, overlay);
   }
 
   /**
    * D91: the bot's capability catalog (pure read of its profile selections; nothing connects).
-   * P2: `extraPluginIds`（有效启用集）过滤插件贡献的连接 / MCP server；缺省 = 不过滤。
+   * P2: `extraPluginIds`（有效启用集，必传——P4 收口统一）过滤插件贡献的连接 / MCP server。
    */
-  #capabilityCatalog(bot: Bot, extraPluginIds?: ReadonlySet<string>): CapabilityCatalog {
+  #capabilityCatalog(bot: Bot, extraPluginIds: ReadonlySet<string>): CapabilityCatalog {
     return buildCapabilityCatalog({
       connectedApps: this.#deps.connectedApps ?? null,
       mcp: this.#deps.mcp ?? null,
@@ -4097,9 +4101,11 @@ export class Orchestrator {
           ? {
               mail: this.#deps.mail,
               mailBound,
-              mailSetup: this.#mailSetupFacade(setupHit, identity),
+              mailSetup: this.#mailSetupFacade(setupHit, identity, extraPluginIds),
             }
           : {}),
+        // P2 注入模型：本次 run 的有效启用集，邮件工具内清单与注册门控同源。
+        extraPluginIds,
         ...(settingsFacade !== undefined ? { settings: settingsFacade } : {}),
         // D81：组件工具只在任务分支注册（tools/index.ts），门面这里无条件给。
         ...(this.#deps.widgets != null ? { widgets: this.#deps.widgets } : {}),
@@ -4269,7 +4275,8 @@ export class Orchestrator {
       // W7 <watches>: this bot's live web-page watches here.
       const watchesSection =
         this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
-      const mailSection = this.#deps.mail?.contextSection(batch.botId) ?? '';
+      const mailSection =
+        this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
       // D90 <workbench>: the butler's turn only (counts + the items that need attention).
       const workbenchSection =
         !isTask && bot.systemRole === 'butler'
@@ -5510,7 +5517,7 @@ export class Orchestrator {
     apps: BotAppsExposure,
     availableEntries: readonly ConnectorCatalogEntry[],
     identity: RunIdentity,
-    extraPluginIds?: ReadonlySet<string>,
+    extraPluginIds: ReadonlySet<string>,
   ): AppToolFacade | undefined {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
@@ -5575,15 +5582,13 @@ export class Orchestrator {
             };
           }
           // D105 P2 §3.4：未启用插件的连接器不给发起连接（连了也对该 Bot 不可见）。
-          if (extraPluginIds !== undefined) {
-            const owner =
-              connectedApps?.pluginOwnerOfEntry?.(connectorMetaOf(entry).slug) ?? null;
-            if (owner !== null && !extraPluginIds.has(owner)) {
-              return {
-                ok: false,
-                message: `「${entry.title}」的插件未启用：请先让用户在 Bot 详情的「插件」里启用后重试。`,
-              };
-            }
+          const entryOwner =
+            connectedApps?.pluginOwnerOfEntry?.(connectorMetaOf(entry).slug) ?? null;
+          if (entryOwner !== null && !extraPluginIds.has(entryOwner)) {
+            return {
+              ok: false,
+              message: `「${entry.title}」的插件未启用：请先让用户在 Bot 详情的「插件」里启用后重试。`,
+            };
           }
           const existing = apps.views.find((view) => view.slug === connectorMetaOf(entry).slug);
           if (existing !== undefined) {
@@ -5738,11 +5743,19 @@ export class Orchestrator {
   #mailSetupFacade(
     setupHit: { requirement: SetupRequirement | null },
     identity: RunIdentity,
+    extraPluginIds: ReadonlySet<string>,
   ): MailSetupFacade {
     return {
       requestSetup: (input) => {
+        // P2 §3.5：可见账号与工具注册 / <mail_accounts> 段同口径——属主插件未启用的
+        // 实例账号不算「已有绑定」，Bot 仍可请求添加邮箱。
         const bound =
-          identity.botId === null ? [] : (this.#deps.mail?.accountsForBot(identity.botId) ?? []);
+          identity.botId === null
+            ? []
+            : visibleMailAccounts(
+                this.#deps.mail?.accountsForBot(identity.botId) ?? [],
+                extraPluginIds,
+              );
         const decided = decideMailSetupRequest({
           botId: identity.botId,
           bound,

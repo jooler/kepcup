@@ -88,7 +88,7 @@ function systemPromptsOf(llm: MockLlmServer, marker: string): string[] {
 
 describe('plugin injection model (P2)', () => {
   it(
-    'skills：未启用 <skills> 不含插件技能；setBotPlugins 启用后含、停用后消失；readableDirs 同步；缺省调用维持现状',
+    'skills：未启用 <skills> 不含插件技能；setBotPlugins 启用后含、停用后消失；readableDirs 同步',
     async () => {
       const { core } = await setup();
       const skills = core.services.skills!;
@@ -107,10 +107,6 @@ describe('plugin injection model (P2)', () => {
       expect(none).toEqual(new Set());
       expect(skills.promptSection(bot.id, none)).not.toContain(SKILL_NAME);
       expect(skills.readableDirs(bot.id, none).join('\n')).not.toContain(SKILL_NAME);
-
-      // 缺省调用（管理面板 / 旧调用点）与现状一致：不过滤。
-      expect(skills.promptSection(bot.id)).toContain(SKILL_NAME);
-      expect(skills.readableDirs(bot.id).join('\n')).toContain(SKILL_NAME);
 
       // 启用：bot.updated + plugins.changed 广播；profile 只改 plugin_ids。
       const botEvent = waitForEvent(core, 'bot.updated', () => true);
@@ -190,7 +186,7 @@ describe('plugin injection model (P2)', () => {
   );
 
   it(
-    'mcp：插件 server 按启用集判定（不要求勾选）；手动 server 的 mcp_server_ids 语义不变；缺省行为一致',
+    'mcp：插件 server 按启用集判定（不要求勾选）；手动 server 的 mcp_server_ids 语义不变',
     async () => {
       const { core } = await setup();
       const mcp = core.services.mcp!;
@@ -217,10 +213,10 @@ describe('plugin injection model (P2)', () => {
       settings.update({ mcpServers: [...settings.get().mcpServers, manual] });
       const servers = () => settings.get().mcpServers;
 
-      // 缺省（无启用集）：现状语义——selectedIds 交集，未勾选的插件 server 不暴露。
-      expect(mcp.serversForBot([manual.id])).toEqual([manual]);
-      expect(serversForBotPure(servers(), [manual.id])).toEqual([manual]);
-      expect(mcp.serversForBot([])).toEqual([]);
+      // 空启用集：插件 server 不可见；手动 server 仍按 selectedIds 交集（P4 收口：启用集必传）。
+      expect(mcp.serversForBot([manual.id], new Set())).toEqual([manual]);
+      expect(serversForBotPure(servers(), [manual.id], new Set())).toEqual([manual]);
+      expect(mcp.serversForBot([], new Set())).toEqual([]);
 
       // 启用集为空：插件 server 不可见；手动 server 仍按勾选。
       expect(
@@ -278,7 +274,7 @@ describe('plugin injection model (P2)', () => {
   );
 
   it(
-    'connections：连接器属主插件未启用 → forBot 不列（勾了 app_connection_ids 也不出）；启用后恢复；缺省一致',
+    'connections：连接器属主插件未启用 → forBot 不列（勾了 app_connection_ids 也不出）；启用后恢复',
     async () => {
       const { core } = await setup();
       const connectedApps = core.services.connectedApps!;
@@ -301,11 +297,11 @@ describe('plugin injection model (P2)', () => {
         status: 'connected',
       });
 
-      // 缺省（无启用集）：现状——勾选即列出。
-      expect(connectedApps.forBot([connection.id]).views.map((view) => view.slug)).toEqual([
-        'injectconn',
-      ]);
-      expect(connectedApps.forBot([connection.id]).servers).toHaveLength(1);
+      // 属主在启用集里：勾选即列出（P4 收口：启用集必传，undefined 口径已删）。
+      expect(
+        connectedApps.forBot([connection.id], new Set([CONN_PLUGIN])).views.map((view) => view.slug),
+      ).toEqual(['injectconn']);
+      expect(connectedApps.forBot([connection.id], new Set([CONN_PLUGIN])).servers).toHaveLength(1);
 
       // 启用集为空：视图与合成 server 都不进。
       const off = connectedApps.forBot([connection.id], new Set());
@@ -430,15 +426,14 @@ describe('plugin injection model (P2)', () => {
   );
 
   it(
-    'mail：mailBoundFor 参数就位、行为不变（P3 前账号均为系统账号恒放行）',
+    'mail：mailBoundFor 按启用集过滤（P4 落地）——无绑定恒 false',
     async () => {
       const { core } = await setup();
       const mail = core.services.mail!;
       const bot = await makeBot(core, '邮件 Bot');
-      // 无绑定：两参形态一致为 false。
+      // 无绑定：空集也为 false（P4 收口：启用集必传）。
       const { mailBoundFor } = await import('../../src/tools/mail-tools.js');
       expect(mailBoundFor(mail, bot.id, new Set())).toBe(false);
-      expect(mailBoundFor(mail, bot.id)).toBe(false);
     },
     60_000,
   );
@@ -460,10 +455,6 @@ describe('plugin injection model (P2)', () => {
       expect(off.map((entry) => connectorMetaOf(entry).slug)).not.toContain('injectconn');
       const on = connectedApps.availableFor([], new Set([CONN_PLUGIN]));
       expect(on.map((entry) => connectorMetaOf(entry).slug)).toContain('injectconn');
-      // 缺省（无启用集）= 现状。
-      expect(connectedApps.availableFor([], undefined).map((entry) => connectorMetaOf(entry).slug)).toContain(
-        'injectconn',
-      );
 
       // 卸载清洗：Bot 与项目都启用过 → 卸载 → 引用面清空，之后的整集写入不再被残留卡死。
       const bot = await makeBot(core, '清引用甲');

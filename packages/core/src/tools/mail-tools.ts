@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai';
 import { AppError, type SetupRequirement } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
-import type { MailService } from '../mail/service.js';
+import { visibleMailAccounts, type MailService } from '../mail/service.js';
 import { readOnlyRefusal } from './read-only.js';
 import type { ToolGateway } from '../gateway/index.js';
 import { TOOL_SETUP_REQUIRED } from './image-tools.js';
@@ -59,16 +59,16 @@ export function decideMailSetupRequest(input: {
 /**
  * D91：Bot 是否已有绑定邮箱——工具注册与提示词规则共用的判定（run 开头调一次）。
  *
- * P2 注入模型：`extraPluginIds`（有效启用集）为账号所属插件的过滤预留——P3
- * `mail_accounts.instance_id` 落地前，所有账号都视为系统账号恒放行（行为不变，
- * 参数就位，见 todo/plugin-platform/P2-injection.md §3.5）。
+ * P2 注入模型 §3.5：绑定存在 **且** 可见账号非空。`extraPluginIds`（有效启用集）必传——
+ * `undefined` 不再是「不过滤」；可见性判定与 `<mail_accounts>` 段、工具内清单同源
+ * （`visibleMailAccounts`，mail/service.ts）。
  */
 export function mailBoundFor(
   mail: Pick<MailService, 'accountsForBot'>,
   botId: string | null,
-  _extraPluginIds?: ReadonlySet<string>,
+  extraPluginIds: ReadonlySet<string>,
 ): boolean {
-  return botId !== null && mail.accountsForBot(botId).length > 0;
+  return botId !== null && visibleMailAccounts(mail.accountsForBot(botId), extraPluginIds).length > 0;
 }
 
 /** 对话内「添加邮箱」卡的门面（orchestrator 写入本 run 的 setupHit）。 */
@@ -88,6 +88,11 @@ export function buildMailTools(input: {
    * 真 → 五个读写工具（外加 mail_request_setup）；假 → 只有 mail_request_setup。
    */
   bound: boolean;
+  /**
+   * P2 §3.5：本 run 的有效启用集（必传）。工具注册（`bound`）与工具内清单同源——
+   * 属主插件 ∉ 启用集的实例账号在 `mail_accounts` 清单里同样不出现。
+   */
+  extraPluginIds: ReadonlySet<string>;
   /** 注册 mail_request_setup 用（有无绑定都注册；正常运行时总是提供，缺省则不注册它）。 */
   setup?: MailSetupFacade | undefined;
 }): ToolDefinition[] {
@@ -120,7 +125,7 @@ export function buildMailTools(input: {
     parameters: Type.Object({}),
     execute: async () => {
       if (botId === null) return noContext();
-      const rows = mail.accountsForBot(botId);
+      const rows = visibleMailAccounts(mail.accountsForBot(botId), input.extraPluginIds);
       // D91：本工具只在有绑定时注册；run 中途邮箱被移交走时才会走到这里。
       if (rows.length === 0) return { ok: true, content: '当前没有交给你的邮箱（可能刚被移交走）。' };
       return {

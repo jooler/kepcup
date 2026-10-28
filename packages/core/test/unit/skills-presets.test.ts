@@ -157,7 +157,7 @@ describe('SkillPresetsService（公共作用域）', () => {
       );
       expect(list[0]!.sourceUrl).toBe(`${PRESET_SOURCE_SCHEME}com.kepcup/starter-skills/alpha`);
       // 提示词/沙箱可见面：activeSkills 包含公共技能
-      expect(rig.skills.activeSkills(botId).map((skill) => skill.name)).toEqual(['alpha']);
+      expect(rig.skills.activeSkills(botId, new Set()).map((skill) => skill.name)).toEqual(['alpha']);
     }
 
     // 幂等：同内容重装是刷新，不产生第二个版本
@@ -290,7 +290,7 @@ describe('SkillPresetsService（公共作用域）', () => {
     const b = rig.skills.listForBot('bot_b');
     expect(b).toHaveLength(1);
     expect(b[0]).toEqual(expect.objectContaining({ scope: 'public' }));
-    expect(rig.skills.activeSkills('bot_a').map((skill) => skill.name)).toEqual(['alpha']);
+    expect(rig.skills.activeSkills('bot_a', new Set()).map((skill) => skill.name)).toEqual(['alpha']);
 
     // 公共安装不再是冲突：预置更新对 bot_a 也只是更新公共行（仍被遮蔽）
     writeFileSync(
@@ -314,7 +314,7 @@ describe('SkillPresetsService（公共作用域）', () => {
     const disabled = rig.skills.disable('bot_a', 'alpha');
     expect(disabled.scope).toBe('public');
     expect(rig.skills.listForBot('bot_b')[0]!.status).toBe('disabled');
-    expect(rig.skills.activeSkills('bot_a')).toHaveLength(0);
+    expect(rig.skills.activeSkills('bot_a', new Set())).toHaveLength(0);
 
     rig.skills.enable('bot_b', 'alpha');
     expect(rig.skills.listForBot('bot_a')[0]!.status).toBe('active');
@@ -385,7 +385,7 @@ describe('SkillPresetsService（公共作用域）', () => {
 
     rig.skills.listForBot('bot_a');
     rig.skills.listForBot('bot_b');
-    expect(rig.skills.activeSkills('bot_a')).toHaveLength(0);
+    expect(rig.skills.activeSkills('bot_a', new Set())).toHaveLength(0);
     expect(() => rig.skills.readSkill('bot_a', 'gone-skill')).toThrow(/技能目录不存在/);
     // 市场：按「可更新」显示而非「✓ 已添加」。
     expect(service.list().find((preset) => preset.id === 'gone-skill')).toMatchObject({

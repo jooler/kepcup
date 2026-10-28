@@ -175,11 +175,11 @@ export class ConnectedApps {
    * Bot 勾选的连接 → 合成 server（仅可用状态）与全部视图。不存在 / 已删除 / 孤儿的 id 静默
    * 跳过（删除连接时 `removeConnectionFromAll` 会清掉它们）。
    *
-   * P2 注入模型：`extraPluginIds`（有效启用集）给出后，连接器贡献插件（经
-   * {@link ConnectedAppsDeps.pluginOwnerOf} 查属主）∉ 启用集的连接整个不进视图与
-   * server 列表（`app_connection_ids` 细选保留，属主放行才生效）；缺省 = 旧语义不变。
+   * P2 注入模型：`extraPluginIds`（有效启用集，**必传**——P4 收口去掉 undefined=不过滤
+   * 的旧口径）下，连接器贡献插件（经 {@link ConnectedAppsDeps.pluginOwnerOf} 查属主）
+   * ∉ 启用集的连接整个不进视图与 server 列表（`app_connection_ids` 细选保留，属主放行才生效）。
    */
-  forBot(connectionIds: readonly string[], extraPluginIds?: ReadonlySet<string>): BotAppsExposure {
+  forBot(connectionIds: readonly string[], extraPluginIds: ReadonlySet<string>): BotAppsExposure {
     const views: ConnectedAppView[] = [];
     const servers: McpServer[] = [];
     const seen = new Set<string>();
@@ -188,10 +188,8 @@ export class ConnectedApps {
       seen.add(id);
       const view = this.view(id);
       if (view === null) continue;
-      if (extraPluginIds !== undefined) {
-        const owner = this.#deps.pluginOwnerOf?.(view.slug) ?? null;
-        if (owner !== null && !extraPluginIds.has(owner)) continue;
-      }
+      const owner = this.#deps.pluginOwnerOf?.(view.slug) ?? null;
+      if (owner !== null && !extraPluginIds.has(owner)) continue;
       views.push(view);
       if (!isExposableStatus(view.connection.status)) continue;
       const server = this.#deps.mcp.serverFor(id);
@@ -278,7 +276,7 @@ export class ConnectedApps {
    */
   availableFor(
     authorized: readonly ConnectedAppView[],
-    extraPluginIds?: ReadonlySet<string>,
+    extraPluginIds: ReadonlySet<string>,
   ): ConnectorCatalogEntry[] {
     const taken = new Set(authorized.map((view) => view.slug));
     const open = this.#deps.catalog
@@ -286,7 +284,6 @@ export class ConnectedApps {
       .filter((entry) => !taken.has(connectorMetaOf(entry).slug))
       // D105 P2 §3.4：未启用插件的目录条目不进推荐位（本机连接无属主，恒放行）。
       .filter((entry) => {
-        if (extraPluginIds === undefined) return true;
         const owner = this.#deps.pluginOwnerOf?.(connectorMetaOf(entry).slug) ?? null;
         return owner === null || extraPluginIds.has(owner);
       });

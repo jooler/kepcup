@@ -78,6 +78,7 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
     return {
       imap,
       smtp,
+      pluginId: MAIL_PLUGIN_ID,
       createAccount: async (core: TestStack['core'], address: string, botId: string) => {
         if (!installed) {
           const built = await buildPluginFixture({
@@ -152,8 +153,19 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       for (const name of MAIL_FIVE) expect(unboundTools).not.toContain(name);
       expect(systemOf(unbound)).toContain('mail_request_setup');
 
-      // Binding finishes → the next run (what `runs.retry` also starts) rebuilds its tools.
+      // Binding finishes while the owning plugin is NOT enabled for this bot:
+      // the gated account stays invisible — no five tools, no <mail_accounts> (P2 §3.5).
       await env.createAccount(stack.core, 'bot@example.com', bot.id);
+      const gated = await turn(stack, conv.id, '再看看');
+      for (const name of MAIL_FIVE) expect(toolNamesOf(gated)).not.toContain(name);
+      expect(systemOf(gated)).not.toContain('bot@example.com');
+
+      // Enabling the plugin for the bot (the setup card's quick-enable; the Bot panel
+      // toggle does the same) makes the bound account visible on the next run.
+      await stack.core.rpc.call('plugins.setBotPlugins', {
+        botId: bot.id,
+        pluginIds: [env.pluginId],
+      });
       const bound = await turn(stack, conv.id, '再看看');
       const boundTools = toolNamesOf(bound);
       for (const name of MAIL_FIVE) expect(boundTools).toContain(name);
@@ -175,6 +187,8 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       const bot = await makeBot(core, '小艾');
       const conv = await openDirect(core, bot.id);
       await env.createAccount(core, 'first@example.com', bot.id);
+      // 实例账号的注入门控：属主插件要对这个 Bot 启用（setup 卡保存路径的快速启用语义）。
+      await core.rpc.call('plugins.setBotPlugins', { botId: bot.id, pluginIds: [env.pluginId] });
       const mail = core.services.mail!;
       expect(mail.accountsForBot(bot.id).map((a) => a.address)).toEqual(['first@example.com']);
 

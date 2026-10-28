@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AppError, type MailAccount, type PluginSummary } from '@kepcup/shared';
+  import { AppError, type Bot, type MailAccount, type PluginSummary } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
@@ -76,6 +76,17 @@
         );
         if (account !== undefined) {
           await core.call('mail.accounts.setBots', { id: account.id, botIds: [bindBotId] });
+        }
+        // P2 §3.5 注入门控下的快速启用（README §2.4）：用户明确把该插件的邮箱交给这个
+        // Bot——绑定同时合并启用属主插件，续跑的 run 才能看到这个账号。
+        const bots = (await core.call('bots.list', undefined)) as { bots: Bot[] };
+        const bot = bots.bots.find((row) => row.id === bindBotId);
+        const current = bot?.profile.runtime.plugin_ids ?? [];
+        if (bot !== undefined && !current.includes(plugin.id)) {
+          await core.call('plugins.setBotPlugins', {
+            botId: bindBotId,
+            pluginIds: [...current, plugin.id],
+          });
         }
       }
       toast.success(t('mail.added'));

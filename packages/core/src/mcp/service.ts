@@ -221,21 +221,20 @@ export function enabledServers(servers: McpServer[]): McpServer[] {
 /**
  * 「应用级 enabled ∩ Bot 选中」——Bot 未勾选的 server 不暴露。
  *
- * P2 注入模型（`extraPluginIds` = 有效启用集，缺省 = 旧语义不变）：
- * `source.kind === 'plugin'` 的 server 改按「应用级 enabled ∧ 其 `pluginId` ∈
- * 启用集」判定——不再要求出现在 `selectedIds`（插件 server 的历史勾选读时忽略）；
+ * P2 注入模型（`extraPluginIds` = 有效启用集，**必传**——P4 收口去掉 undefined=不过滤
+ * 的旧口径）：`source.kind === 'plugin'` 的 server 按「应用级 enabled ∧ 其 `pluginId` ∈
+ * 启用集」判定——不要求出现在 `selectedIds`（插件 server 的历史勾选读时忽略）；
  * 其他 server（手动 / MCPB 独立安装）维持 `selectedIds` 子集勾选不变。
  */
 export function serversForBot(
   servers: McpServer[],
   selectedIds: string[],
-  extraPluginIds?: ReadonlySet<string>,
+  extraPluginIds: ReadonlySet<string>,
 ): McpServer[] {
   const selected = new Set(selectedIds);
   return enabledServers(servers).filter((server) => {
-    // P2: a plugin-contributed server is gated by the effective plugin set
-    // (only when one was passed in — undefined keeps the legacy selection semantics).
-    if (extraPluginIds !== undefined && server.source?.kind === 'plugin') {
+    // P2: a plugin-contributed server is gated by the effective plugin set.
+    if (server.source?.kind === 'plugin') {
       return extraPluginIds.has(server.source.pluginId);
     }
     return selected.has(server.id);
@@ -382,11 +381,11 @@ export class McpService {
    * 目录连接 id（`app_connection_ids`，由 orchestrator 合并后传入）。向后兼容：只含 settings server
    * id 时结果与旧实现一致（settings 顺序）；目录连接排在后面，按 `selectedIds` 的顺序。
    *
-   * P2 注入模型：`extraPluginIds`（有效启用集）给出后，`source.kind === 'plugin'` 的
-   * settings server 改按「enabled ∧ 属主插件 ∈ 启用集」判定（不再要求逐个勾选，
-   * `mcp_server_ids` 里插件 server 的历史勾选读时忽略）；缺省 = 旧语义不变。
+   * P2 注入模型：`extraPluginIds`（有效启用集）**必传**（P4 收口统一）——`source.kind === 'plugin'` 的
+   * settings server 按「enabled ∧ 属主插件 ∈ 启用集」判定（不要求逐个勾选，
+   * `mcp_server_ids` 里插件 server 的历史勾选读时忽略）。
    */
-  serversForBot(selectedIds: string[], extraPluginIds?: ReadonlySet<string>): McpServer[] {
+  serversForBot(selectedIds: string[], extraPluginIds: ReadonlySet<string>): McpServer[] {
     const custom = serversForBot(this.listSettingsServers(), selectedIds, extraPluginIds);
     if (this.#connectionSource === null) return custom;
     const taken = new Set(custom.map((server) => server.id));

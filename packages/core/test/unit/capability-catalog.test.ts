@@ -69,6 +69,8 @@ function setup(input: {
     mcp,
     appConnectionIds: views.map((v) => v.connection.id),
     mcpServerIds: (input.mcpServers ?? []).map((s) => s.id),
+    // 本单测不涉及插件启用集；空集 = 未启用任何插件（夹具 server 无插件来源，行为不变）。
+    extraPluginIds: new Set<string>(),
     ...(input.logger !== undefined ? { logger: input.logger } : {}),
   });
   return { catalog, listTools };

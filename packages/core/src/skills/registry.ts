@@ -518,10 +518,11 @@ export class SkillsService {
    * `extraPluginIds` 缺省 = 不过滤（管理面板等旧调用点的行为与现状完全一致）；
    * Bot 私有行不经此判定。
    */
-  #publicSkillVisible(
-    row: PublicSkillRow,
-    extraPluginIds: ReadonlySet<string> | undefined,
-  ): boolean {
+  /**
+   * `extraPluginIds` 缺省（undefined）只允许来自 `listForBot` 的 UI 清单语境（无会话语境，
+   * 恒显全量）；run 装配点（promptSection / readableDirs / activeSkills）类型上必传集合。
+   */
+  #publicSkillVisible(row: PublicSkillRow, extraPluginIds: ReadonlySet<string> | undefined): boolean {
     if (extraPluginIds === undefined) return true;
     const owner = this.#pluginOwnerOfPublic(row);
     if (owner === null) return true;
@@ -841,7 +842,9 @@ export class SkillsService {
   /**
    * 一个 Bot 的技能清单 = 私有行 + 未被同名私有行遮蔽的公共技能
    * （docs/design/05-wiki-and-skills.md 遮蔽规则：Bot 自己的同名技能优先）。
-   * `extraPluginIds`（有效启用集）只过滤公共技能行里的插件贡献；缺省 = 不过滤。
+   * `extraPluginIds`（有效启用集）只过滤公共技能行里的插件贡献。**本方法不是 run 装配点**
+   * （UI 清单没有会话语境，恒显全量；run 侧的 promptSection / readableDirs 才按启用集过滤），
+   * 所以参数保持可选。
    */
   listForBot(botId: string, extraPluginIds?: ReadonlySet<string>): SkillEntry[] {
     const rows = this.rowsForBot(botId);
@@ -876,7 +879,7 @@ export class SkillsService {
    * since uninstalled — P12 fail-closed) stay invisible to the prompt
    * (BR-P08-003 semantics, availability-aware).
    */
-  activeSkills(botId: string, extraPluginIds?: ReadonlySet<string>): Skill[] {
+  activeSkills(botId: string, extraPluginIds: ReadonlySet<string>): Skill[] {
     const ownNames = new Set(this.rowsForBot(botId).map((row) => row.name));
     const skills: Skill[] = [];
     for (const row of this.rowsForBot(botId)) {
@@ -914,7 +917,7 @@ export class SkillsService {
    * opens with a data-not-instructions boundary line (BR-P08-005, same
    * posture as BR-P07-007).
    */
-  promptSection(botId: string, extraPluginIds?: ReadonlySet<string>): string {
+  promptSection(botId: string, extraPluginIds: ReadonlySet<string>): string {
     const skills = this.activeSkills(botId, extraPluginIds);
     if (skills.length === 0) return '';
     const bounded = skills.map((skill) => ({
@@ -934,7 +937,7 @@ export class SkillsService {
    * had not). P12: an effectively-incompatible row (enhanced backend gone)
    * drops out here too.
    */
-  readableDirs(botId: string, extraPluginIds?: ReadonlySet<string>): string[] {
+  readableDirs(botId: string, extraPluginIds: ReadonlySet<string>): string[] {
     const ownNames = new Set(this.rowsForBot(botId).map((row) => row.name));
     const dirs: string[] = [];
     for (const row of this.rowsForBot(botId)) {
