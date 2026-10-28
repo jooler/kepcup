@@ -93,7 +93,11 @@ export const pluginSummarySchema = z.object({
    * for `providesInstances` kinds — same safe projection, no `default`.
    */
   instanceFields: z.array(pluginFieldSummarySchema),
-  /** D105 P1: created instances per instantiable kind. */
+  /**
+   * D105 P1: created instances per instantiable kind. P3 口径：mail 按
+   * `mail_accounts` 的活跃账号统计（软删 / 无主不计）；mcp 仍按实例行数
+   * （P4-M2 custom-mcp 落地时对齐「活跃」口径）。
+   */
   instanceCounts: z.object({ mail: z.number().int(), mcp: z.number().int() }),
   /** D105 P1: instantiable capability kinds the manifest declares. */
   providesInstances: z.array(pluginInstanceKindSchema),

@@ -7,13 +7,16 @@ import { FakeImapServer, FakeSmtpServer, buildPluginFixture, startMockLlm } from
 import { rpc } from './helpers/create-bot';
 
 /**
- * 邮件插件化 e2e（D105 P3，P3-mail.md §4.6）：
+ * 邮件插件化 e2e（D105 P3，P3-mail.md §4.6）——覆盖卡片管理主旅程：
  * - 安装厂商形态的邮件插件（锁定端点）→ 插件卡「管理 · 邮件」→ 实例表单只有
  *   地址 / 授权码（/ 用户名），主机不可见不可改；
  * - 创建成功后全局邮件视图出现该账号（按插件分组）；
  * - 同一插件添加第二个账号成功；
- * - 卸载插件 → 两个账号（与绑定）级联清除；
- * - 遗留无主账号（先建后装插件）仍显示、可删除，标「未关联插件」。
+ * - 卸载插件 → 两个账号（与绑定）级联清除。
+ *
+ * 不在本 spec（黑盒无服务缝，由更底层测试补位，见 P3-mail.md §6 遗留④）：
+ * 遗留无主账号的 UI 旅程（core `mail-service-fixes.test.ts` 服务层回归）、
+ * 「Bot 启用插件 → 会话内邮件工具可用」（core `capability-mounting-p2.test.ts`）。
  *
  * 建号走真实连接测试：FakeImapServer / FakeSmtpServer 起在本机环回，
  * 测试构建 + KEPCUP_MAIL_ALLOW_PRIVATE=1 放行（core hosts.ts 的既有测试缝）。

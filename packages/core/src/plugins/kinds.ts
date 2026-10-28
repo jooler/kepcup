@@ -168,7 +168,7 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'imapHost',
         type: 'string',
-        title: '收信（IMAP）服务器',
+        title: '收信服务器',
         description: '例如 imap.example.com',
         required: true,
         sensitive: false,
@@ -177,7 +177,7 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'imapPort',
         type: 'number',
-        title: 'IMAP 端口',
+        title: '收信端口',
         description: '通常是 993',
         required: true,
         sensitive: false,
@@ -186,8 +186,8 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'imapSecure',
         type: 'string',
-        title: 'IMAP 加密方式',
-        description: 'ssl 或 starttls，通常是 ssl',
+        title: '收信加密方式',
+        description: '填 ssl 或 starttls，通常 ssl',
         required: true,
         sensitive: false,
         multiple: false,
@@ -195,7 +195,7 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'smtpHost',
         type: 'string',
-        title: '发信（SMTP）服务器',
+        title: '发信服务器',
         description: '例如 smtp.example.com',
         required: true,
         sensitive: false,
@@ -204,7 +204,7 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'smtpPort',
         type: 'number',
-        title: 'SMTP 端口',
+        title: '发信端口',
         description: '通常是 465',
         required: true,
         sensitive: false,
@@ -213,8 +213,8 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
       {
         key: 'smtpSecure',
         type: 'string',
-        title: 'SMTP 加密方式',
-        description: 'ssl 或 starttls，通常是 ssl',
+        title: '发信加密方式',
+        description: '填 ssl 或 starttls，通常 ssl',
         required: true,
         sensitive: false,
         multiple: false,

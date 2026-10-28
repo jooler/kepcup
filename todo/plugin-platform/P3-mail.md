@@ -189,5 +189,26 @@ e2e：mail-plugins 1 例 + bot-plugins / extension-center / plugins 13 例全绿
 **遗留问题**：① `instanceCounts` 的 mcp 仍按实例行数（P4-M2 custom-mcp 落地时对齐
 「活跃口径」）；② 市场条目的 `capabilitySummary` 输出（README §4.1 未落地项）仍待 P4；
 ③ ExtensionMail 的遗留账号分组在归属插件被卸载后按 id 显示（`plugins.nameOf` 回退），
-P4 卡片收口时再核对文案；④ e2e 未覆盖「遗留无主账号」UI 旅程（黑盒无播种缝，
-服务层回归在 `mail-service-fixes.test.ts`）。
+P4 卡片收口时再核对文案；④ e2e 未覆盖「遗留无主账号」UI 旅程与「Bot 启用 → 会话内
+邮件工具」段（黑盒无播种缝：前者服务层回归在 `mail-service-fixes.test.ts`，后者在
+`capability-mounting-p2.test.ts`，e2e 头注释已写明去向）。
+
+**审查修复**（fresh-context 子代理审 `cbd77a4a..HEAD`，P0×1 / P2×8 全部处置）：
+
+- P0-1 createForInstance 失败回滚不清 `instance_id` → FK 死锁（补偿删实例行失败、
+  插件不可卸载）：0058 外键改 `ON DELETE SET NULL`（未发布，直接改 DDL——实例行删除
+  恒 detach 账号，一次性覆盖直删 / 卸载级联 / 崩溃对账全部路径）；回滚补丁显式置空
+  `instance_id`（语义自足）；回绕测试调整摘表顺序（mail 先于 plugin_instances）；
+  补 2 条测试（secret 写入失败回滚干净、SET NULL detach）。
+- P2-1 manifest 反向校验（`instances:['mail']` 无贡献 → 拒绝）+ host trim 纪律；
+  纯实例清单合法形态收窄为 `['mcp']`（P1 夹具同步改）。
+- P2-2 实例字段标题收敛为「收信/发信服务器」等无协议词；官方插件 description 保留
+  IMAP/SMTP（任务书 §3.5 帮助文案要求）→ DEV-074 登记取舍。
+- P2-3 删死 i18n 键 `mail.help` / `mail.pollWarning`（两语）。
+- P2-4 e2e 头注释对齐实际覆盖面（见遗留④）。
+- P2-5 守卫文案改「由所属插件管理；如需更换，请删除该账号后重新添加」。
+- P2-6 官方插件未带 `instanceFields` 的取舍：QQ 授权码说明并入插件 description
+  （卡上可见），附加字段留给真实需求出现再加（本条即登记）。
+- P2-7 `PluginSummary.instanceCounts` 注释补 P3 口径（mail=活跃账号、mcp=实例行）。
+- P2-8 `MailAccountAddForm.onSaved` 签名失真（伪造成完整 MailAccount）→ 改
+  `(address: string)`。

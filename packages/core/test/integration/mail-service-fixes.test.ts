@@ -595,6 +595,82 @@ describe('instance creation (P3) validates address and bots', () => {
   });
 });
 
+describe('instance creation failure rollback (review P0-1, P3)', () => {
+  it('a failing secret write rolls back cleanly: no active account, no dangling FK, instance row deletable', async () => {
+    const local = await setup();
+    const instanceId = await seedMailInstance(local);
+    const failingSecrets = {
+      ...local.stack.core.services.domain!.secrets,
+      setValue: () => {
+        throw new Error('keystore unavailable');
+      },
+    };
+    const broken = new MailService({
+      db: local.stack.core.services.mainDb!,
+      clock: local.clock,
+      logger: local.stack.core.services.logger,
+      secrets: failingSecrets,
+      bots: local.stack.core.services.domain!.bots,
+      conversations: local.stack.core.services.domain!.conversations,
+      messages: local.stack.core.services.domain!.messages,
+      jobs: local.jobs as never,
+      taint: local.stack.core.services.taint!,
+      requestApproval: (identity, kind, payload, opts) =>
+        local.stack.core.services.domain!.approvals.request(identity, kind, payload, opts),
+      deliverAlert: () => undefined,
+      publishAccount: () => undefined,
+      publishMessage: () => undefined,
+      notice: () => undefined,
+      sessionBackoffMs: () => 15,
+    });
+    const db = local.stack.core.services.mainDb!;
+    await expect(
+      broken.createForInstance({
+        address: 'bot@example.com',
+        password: 'authcode',
+        imapHost: '127.0.0.1',
+        imapPort: local.imap.port,
+        imapSecure: 'ssl',
+        smtpHost: '127.0.0.1',
+        smtpPort: local.smtp.port,
+        smtpSecure: 'ssl',
+        instanceId,
+      }),
+    ).rejects.toThrow('keystore unavailable');
+    // 回滚干净：无活跃账号（软删行 instance_id 已置空），实例行不被引用、可直接删。
+    expect(local.mail.list()).toEqual([]);
+    const row = db
+      .prepare('select instance_id from mail_accounts where address = ?')
+      .get('bot@example.com') as { instance_id: string | null };
+    expect(row.instance_id).toBeNull();
+    expect(() => db.prepare('delete from plugin_instances where id = ?').run(instanceId)).not.toThrow();
+  });
+
+  it('deleting an instance row detaches the account (ON DELETE SET NULL, 0058)', async () => {
+    const local = await setup();
+    const instanceId = await seedMailInstance(local);
+    const account = await local.mail.createForInstance({
+      address: 'bot@example.com',
+      password: 'authcode',
+      imapHost: '127.0.0.1',
+      imapPort: local.imap.port,
+      imapSecure: 'ssl',
+      smtpHost: '127.0.0.1',
+      smtpPort: local.smtp.port,
+      smtpSecure: 'ssl',
+      instanceId,
+    });
+    const db = local.stack.core.services.mainDb!;
+    db.prepare('delete from plugin_instances where id = ?').run(instanceId);
+    const row = db.prepare('select instance_id from mail_accounts where id = ?').get(account.id) as {
+      instance_id: string | null;
+    };
+    expect(row.instance_id).toBeNull();
+    // 账号仍在（无主），可正常管理。
+    expect(local.mail.list()).toHaveLength(1);
+  });
+});
+
 describe('sending mail (review #15)', () => {
   async function send(
     local: Local,

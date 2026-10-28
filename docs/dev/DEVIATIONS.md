@@ -1128,3 +1128,12 @@
 - 问题：P3-mail.md §3.3 写「`mail.accounts.create` 校验改由实例层负责（直接 RPC 调用保留兼容行为或收敛，实施记录写明取舍）」。选**收敛删除**：直接 RPC 建号没有插件归属（instance_id 为空），建出来的账号永远标「未关联插件」，与「添加账号唯一入口 = 插件卡」的 UI 归属（§3.4）直接矛盾；保留兼容行为会让 Bot 对话内 mail_request_setup 卡（改走插件选择 + 实例表单）之外的第二条入口长期存在。`mail.accounts.test` 仅为 create/update 的预检服务，一并删除。
 - 影响范围：`packages/shared/src/rpc/methods.ts`（3 个 RPC 注销）、`packages/core/src/rpc/mail-bindings.ts`；`MailService` 的建号能力保留为内部方法 `createForInstance`（materializer 专用）与 `updateInstanceAccount`（实例更新专用）。对话内 mail setup 卡改渲染插件选择 + 实例表单。
 - 决定：收敛；实施记录 §6 已写明。
+
+### DEV-074 协议词汇的收敛边界：实例字段标题去 IMAP/SMTP，官方插件 description 保留
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）审查修复
+- 是否阻塞：否
+- 问题：README §5「用户可见文案不出现协议词汇……协议细节只进同意面板与开发文档」。P3 有两处协议词：① mail 通用插件的实例字段标题（审查前写作「收信（IMAP）服务器」「IMAP 加密方式」等）；② 官方邮件插件 `plugin.json` 的 `description`（「支持 IMAP/SMTP 的邮箱」「16 位授权码」等）。
+- 影响范围：①已收敛——`packages/core/src/plugins/kinds.ts` 的字段标题改为「收信服务器 / 收信端口 / 收信加密方式 / 发信服务器 / 发信端口 / 发信加密方式」，`ssl / starttls` 只出现在字段 description（字段值本身就是这个枚举，用户必须知道填什么）。②保留——任务书 P3-mail.md §3.5 明确要求 mail-generic「帮助文案覆盖如何获取 IMAP/SMTP 授权码」，插件 description 是配置指南而非功能文案，市场 / 插件卡展示它正是用户配置时需要的信息；与 §2.1「OAuth / MCP / IMAP 是给开发者看的接口契约」不冲突的场景按任务书更具体的条目执行（README §5 规则 2：阶段文件为准）。
+- 决定：字段标题收敛 + description 保留，各自边界如上；后续新增能力类型的字段标题一律沿用「收信 / 发信」式中性命名。

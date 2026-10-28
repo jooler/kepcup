@@ -292,12 +292,24 @@ export const pluginMailContributionSchema = z
     id: pluginMcpIdSchema,
     label: z.string().min(1).max(60),
     imap: z.strictObject({
-      host: z.string().max(253),
+      // Trim discipline: a whitespace-padded host must not pass as a vendor lock
+      // (core would only fail at create time with a confusing message).
+      host: z
+        .string()
+        .max(253)
+        .refine((value) => value === '' || value.trim() === value, {
+          message: 'host must not have leading/trailing whitespace',
+        }),
       port: z.number().int().min(1).max(65535).default(993),
       secure: mailSecureSchema.default('ssl'),
     }),
     smtp: z.strictObject({
-      host: z.string().max(253),
+      host: z
+        .string()
+        .max(253)
+        .refine((value) => value === '' || value.trim() === value, {
+          message: 'host must not have leading/trailing whitespace',
+        }),
       port: z.number().int().min(1).max(65535).default(465),
       secure: mailSecureSchema.default('ssl'),
     }),
@@ -452,7 +464,9 @@ export const pluginManifestSchema = z
       'id',
     );
     // D105 P3: a mail contribution IS the mail-instance provisioning spec — exactly one
-    // per manifest, and only together with the `instances: ['mail']` declaration.
+    // per manifest, and ONLY together with the `instances: ['mail']` declaration. The
+    // reverse holds too (review P2-1): a declared mail instance kind without its
+    // provisioning spec would render a form whose fields can never satisfy create.
     if (mail.length > 1) {
       ctx.addIssue({
         code: 'custom',
@@ -465,6 +479,13 @@ export const pluginManifestSchema = z
         code: 'custom',
         path: ['contributions', 'mail'],
         message: '声明邮件贡献时必须同时声明 instances: [\'mail\']',
+      });
+    }
+    if (mail.length === 0 && manifest.instances?.includes('mail')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances'],
+        message: '声明 instances: [\'mail\'] 时必须同时声明一份邮件贡献',
       });
     }
     // Declarative fields / instances (D105): duplicate config keys and duplicate
