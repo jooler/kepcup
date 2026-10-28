@@ -328,7 +328,8 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     // D104 UI 修正：技能 / 连接 / MCP / 邮件不再是页签，是「已安装」的内容筛选。
-    expect(scan.extensionCenterTabs).toEqual(['market', 'installed', 'localCollab']);
+    // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）。
+    expect(scan.extensionCenterTabs).toEqual(['market', 'installed']);
     expect(scan.botPanelTabs).toEqual(
       expect.arrayContaining(['profile', 'skills', 'access', 'schedules']),
     );

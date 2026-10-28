@@ -133,6 +133,11 @@ class ShellState {
    * 不再是独立页签而是筛选条件）。深链旧分组名 / `plugins-filter-*` 锚点都会落到这里。
    */
   extensionCenterFilter = $state<ExtensionCenterFilter>('all');
+  /**
+   * D105 P4：`localCollab` 旧深链 → 已安装页 + 滚动到「本机应用协作」系统卡。
+   * ExtensionInstalled 消费后即复位（同 autoOpenStartPanel 的模式）。
+   */
+  extensionCenterSystemCardFocus = $state(false);
 
   /**
    * 全局搜索层是否打开（侧栏搜索按钮 / Cmd+K 共用）。状态放 shell 而不是 AppSidebar：
@@ -150,14 +155,16 @@ class ShellState {
   }
 
   /**
-   * 打开扩展中心。旧的四个分组页名（skills / connections / mcp / mail）是深链别名：
-   * 落到「已安装」并选中对应内容筛选（分组收缩为插件筛选条件后的兼容入口）；
+   * 打开扩展中心。旧的分组页名（skills / connections / mcp / mail / localCollab）是深链别名：
+   * 前四个落到「已安装」并选中对应内容筛选；`localCollab` 落到「已安装 / 全部」并滚动到
+   * 系统卡（本机应用协作收编为卡片，不再占页签）。
    * `anchor` 为目录条目的 `plugins-filter-*` 锚点时同样选中筛选。
    */
   openExtensionCenter(tab: ExtensionCenterTarget = 'installed', anchor?: string): void {
     const resolved = resolveExtensionCenterTarget(tab, anchor);
     this.extensionCenterTab = resolved.tab;
     this.extensionCenterFilter = resolved.filter;
+    this.extensionCenterSystemCardFocus = resolved.systemCard;
     this.extensionCenterOpen = true;
   }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PluginSummary } from '@kepcup/shared';
   import { untrack } from 'svelte';
-  import { ArrowLeft, Ellipsis } from '@lucide/svelte';
+  import { ArrowLeft, ChevronDown, Ellipsis } from '@lucide/svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { endpointSupports } from '../web-shell/endpoint';
@@ -11,6 +11,7 @@
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
+  import ExtensionLocalCollab from './ExtensionLocalCollab.svelte';
   import LocalConnectorsSection from './LocalConnectorsSection.svelte';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
@@ -70,6 +71,9 @@
   let configStoredKeys = $state<string[]>([]);
   let configLoading = $state(false);
   let configSaving = $state(false);
+  /** 系统卡（本机应用协作 / 本机自建连接）的展开状态；折叠时只显示标题与说明。 */
+  let systemLocalCollabOpen = $state(false);
+  let systemLocalConnectorsOpen = $state(false);
   /** 账号管理流当前的应用（连接 slug：插件直达与本机自建共用一套组件）。 */
   let managingConnectorId = $state<string | null>(null);
   /** 账号管理流里点开的账号详情；null = 未点开（单账号由流自动直进详情）。 */
@@ -93,6 +97,20 @@
     managingConnectorId = null;
     detailConnectionId = null;
     closeConfig();
+  });
+
+  // localCollab 旧深链：展开并滚动到「本机应用协作」系统卡（shell 深链置位，消费即复位）。
+  $effect(() => {
+    if (!shell.extensionCenterSystemCardFocus) return;
+    untrack(() => {
+      shell.extensionCenterSystemCardFocus = false;
+      systemLocalCollabOpen = true;
+    });
+    requestAnimationFrame(() => {
+      document
+        .getElementById('extension-system-local-collab')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
   });
 
   const FILTER_CHIPS: ReadonlyArray<{
@@ -445,6 +463,76 @@
   {/if}
 {/snippet}
 
+<!--
+  系统卡（D105 P4 §3.4）：本机应用协作（InkCop）与本机自建连接是宿主能力，**不是插件**——
+  不进插件菜单、不计贡献筛选、无启停卸载；收编进「已安装 / 全部」网格末尾，旧 localCollab
+  深链滚动到第一张卡。路标（把系统能力也表达为插件或长期保持系统卡）见设计文稿修正（P5）。
+-->
+{#snippet systemCards()}
+  <div
+    class="relative flex flex-col gap-1.5 rounded-xl border bg-card px-4 py-3.5 text-sm"
+    id="extension-system-local-collab"
+    data-testid="extension-system-card-local-collab"
+  >
+    <div class="flex flex-wrap items-center gap-2 pe-7">
+      <span class="font-medium">{t('plugins.system.localCollab.title')}</span>
+      <Badge variant="outline">{t('plugins.system.badge')}</Badge>
+      <button
+        type="button"
+        class="absolute top-2.5 right-2.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        aria-expanded={systemLocalCollabOpen}
+        aria-label={systemLocalCollabOpen
+          ? t('plugins.system.collapse')
+          : t('plugins.system.expand')}
+        onclick={() => (systemLocalCollabOpen = !systemLocalCollabOpen)}
+        data-testid="extension-system-card-local-collab-toggle"
+      >
+        <ChevronDown
+          class="size-4 transition-transform {systemLocalCollabOpen ? 'rotate-180' : ''}"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
+    <p class="text-xs text-muted-foreground">{t('extensionCenter.localCollab.hint')}</p>
+    {#if systemLocalCollabOpen}
+      <div class="border-t pt-3">
+        <ExtensionLocalCollab embedded />
+      </div>
+    {/if}
+  </div>
+  <div
+    class="relative flex flex-col gap-1.5 rounded-xl border bg-card px-4 py-3.5 text-sm"
+    id="extension-system-local-connectors"
+    data-testid="extension-system-card-local-connectors"
+  >
+    <div class="flex flex-wrap items-center gap-2 pe-7">
+      <span class="font-medium">{t('plugins.system.localConnectors.title')}</span>
+      <Badge variant="outline">{t('plugins.system.badge')}</Badge>
+      <button
+        type="button"
+        class="absolute top-2.5 right-2.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        aria-expanded={systemLocalConnectorsOpen}
+        aria-label={systemLocalConnectorsOpen
+          ? t('plugins.system.collapse')
+          : t('plugins.system.expand')}
+        onclick={() => (systemLocalConnectorsOpen = !systemLocalConnectorsOpen)}
+        data-testid="extension-system-card-local-connectors-toggle"
+      >
+        <ChevronDown
+          class="size-4 transition-transform {systemLocalConnectorsOpen ? 'rotate-180' : ''}"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
+    <p class="text-xs text-muted-foreground">{t('apps.local.section.hint')}</p>
+    {#if systemLocalConnectorsOpen}
+      <div class="border-t pt-3">
+        <LocalConnectorsSection embedded onManage={manage} />
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <!-- 一张插件卡：名称 / 徽标 / 描述 + 类别标签；右上角 ⋮ 菜单；底部按贡献类别给管理入口。 -->
 {#snippet pluginCard(plugin: PluginSummary)}
   {@const kinds = manageKinds(plugin)}
@@ -691,7 +779,7 @@
         <p class="px-0.5 text-xs text-muted-foreground" data-testid="plugins-filter-empty">
           {t('plugins.filter.empty')}
         </p>
-      {:else if visiblePlugins.length > 0}
+      {:else if visiblePlugins.length > 0 || filter === 'all'}
         <div
           class="grid grid-cols-1 gap-3 @xl:grid-cols-2 @3xl:grid-cols-3"
           data-testid="plugins-grid"
@@ -699,13 +787,10 @@
           {#each visiblePlugins as plugin (plugin.id)}
             {@render pluginCard(plugin)}
           {/each}
+          {#if filter === 'all'}
+            {@render systemCards()}
+          {/if}
         </div>
-      {/if}
-
-      <!-- 本机自建（设计 29 §17）：不是插件内容，在「全部 / 连接应用」视图挂在网格下方；
-         「管理」进入上面的账号管理流。 -->
-      {#if filter === 'all' || filter === 'connector'}
-        <LocalConnectorsSection onManage={manage} />
       {/if}
     {/if}
   {:else if contentView.kind === 'connector'}
