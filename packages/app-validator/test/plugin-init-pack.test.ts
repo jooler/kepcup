@@ -70,6 +70,23 @@ describe('initPluginDirectory', () => {
     expect(report.checks.some((check) => check.id === 'plugin.manifest-metadata')).toBe(true);
   });
 
+  it('seeds an example config field and previews the capability line (D105 P5)', async () => {
+    const dir = path.join(await tmp(), 'demo-config');
+    await initPluginDirectory({ dir });
+    const manifest = JSON.parse(await readFile(path.join(dir, 'plugin.json'), 'utf8')) as {
+      config?: { fields: Array<Record<string, unknown>> };
+    };
+    expect(manifest.config?.fields.map((field) => field.key)).toEqual(['greetingPrefix']);
+    const report = await validatePlugin(dir);
+    expect(report.checks.filter((check) => check.severity === 'error')).toEqual([]);
+    const capabilities = report.checks.find((check) => check.id === 'plugin.capabilities');
+    expect((capabilities?.details as { configFields: number }).configFields).toBe(1);
+    // README points at the development guide and the instances declaration.
+    const readme = await readFile(path.join(dir, 'README.md'), 'utf8');
+    expect(readme).toContain('write-a-plugin.md');
+    expect(readme).toContain('instances');
+  });
+
   it('honours --id and --name', async () => {
     const dir = path.join(await tmp(), 'demo');
     await initPluginDirectory({ dir, id: 'io.github.alice/demo-tools', name: 'Alice Tools' });

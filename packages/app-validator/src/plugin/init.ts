@@ -39,14 +39,20 @@ function readme(skillName: string): string {
   return `# Plugin skeleton
 
 This directory is a KepCup plugin: a declarative package of skills, connectors, MCP
-servers and mail templates. A plugin never runs code inside the KepCup process; local
-execution is packaged as an embedded \`.mcpb\` bundle or reached over public https.
+servers and instance capabilities. A plugin never runs code inside the KepCup process;
+local execution is packaged as an embedded \`.mcpb\` bundle or reached over public https.
 
 ## What it contributes
 
 - \`skills/${skillName}/SKILL.md\` — one Agent Skill (edit the frontmatter and the body).
+- \`plugin.json\` → \`config.fields\` — one example plugin config field. The host builds
+  the 「设置」form on the plugin card from it automatically; delete or edit the entry.
 
 \`plugin.json\` is the manifest. Add more contributions there and in this directory.
+To provide per-user capability units (mailbox accounts), declare \`instances\` plus a
+mail contribution — see the plugin development guide
+(\`docs/guides/write-a-plugin.md\` in the KepCup repository) for the full field
+reference, per-kind contracts and the install-time consent model.
 
 ## Local workflow
 
@@ -115,6 +121,18 @@ export async function initPluginDirectory(options: {
     version: '0.1.0',
     description: 'TODO',
     engines: { kepcup: '>=0.4.0' },
+    // D105 P5: one example plugin config field — the host builds the card's 「设置」
+    // form from `config.fields` automatically. Edit or delete it.
+    config: {
+      fields: [
+        {
+          key: 'greetingPrefix',
+          type: 'string',
+          title: 'Greeting prefix',
+          description: 'Example config field shown on the plugin card settings form.',
+        },
+      ],
+    },
     contributions: { skills: [{ dir: 'skills/hello' }] },
   };
   const files = [PLUGIN_MANIFEST_FILE, 'README.md', 'skills/hello/SKILL.md'];

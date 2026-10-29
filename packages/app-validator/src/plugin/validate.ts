@@ -5,12 +5,15 @@ import {
   PLUGIN_FORMAT_VERSION,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_MAX_BYTES,
+  capabilityFactsOf,
   connectorCatalogEntrySchema,
   connectorMetaOf,
   isReservedPluginNamespace,
   isSafeDirectoryRemoteUrl,
+  pluginCapabilitySummary,
   pluginManifestSchema,
   pluginNamespaceOf,
+  type PluginField,
   type PluginManifest,
 } from '@kepcup/shared';
 import {
@@ -669,6 +672,96 @@ async function checkMcpb(
   }
 }
 
+/** The scalar JS type a declared field type accepts (`directory` / `file` are strings). */
+function expectedScalarOf(field: PluginField): 'string' | 'number' | 'boolean' {
+  return field.type === 'number' ? 'number' : field.type === 'boolean' ? 'boolean' : 'string';
+}
+
+/** null = the default agrees with the declared type (and min/max for numbers). */
+function defaultMismatch(field: PluginField): string | null {
+  if (field.default === undefined) return null;
+  const scalar = expectedScalarOf(field);
+  const checkScalar = (value: unknown): string | null => {
+    if (typeof value === 'string') return scalar === 'string' ? null : 'expected a non-string';
+    if (typeof value === 'boolean') return scalar === 'boolean' ? null : 'expected a non-boolean';
+    if (typeof value === 'number') {
+      if (scalar !== 'number') return 'expected a non-number';
+      if (field.min !== undefined && value < field.min) return `below min (${field.min})`;
+      if (field.max !== undefined && value > field.max) return `above max (${field.max})`;
+      return null;
+    }
+    return 'unsupported default type';
+  };
+  if (field.multiple) {
+    if (!Array.isArray(field.default)) return 'multiple fields take an array default';
+    for (const item of field.default) {
+      const issue = checkScalar(item);
+      if (issue !== null) return `array item ${issue}`;
+    }
+    return null;
+  }
+  return checkScalar(field.default);
+}
+
+/**
+ * Declarative config / instance fields (D105): the manifest schema already enforces the
+ * shape (strict field schema, count caps, duplicate keys, mail builtin-key clashes) —
+ * these checks cover what a schema cannot say: `default`/type agreement, the two default
+ * semantics traps (manifest defaults never materialize into `config_json` — consumers
+ * fall back to the declared default themselves; a sensitive field's default never lands
+ * anywhere readable), and a preview of the one-line capability summary the consent card
+ * and the market/installed cards will show (generated from the manifest, never authored).
+ */
+function checkDeclarativeFields(manifest: PluginManifest, checks: Check[]): void {
+  const fieldSets: Array<{ subject: string; fields: readonly PluginField[] }> = [
+    { subject: 'config', fields: manifest.config?.fields ?? [] },
+  ];
+  for (const template of manifest.contributions.mail) {
+    fieldSets.push({ subject: `mail:${template.id}`, fields: template.instanceFields ?? [] });
+  }
+  for (const { subject, fields } of fieldSets) {
+    fields.forEach((field, index) => {
+      const where = `${subject}[${index}] ${field.key}`;
+      if (field.sensitive && field.default !== undefined) {
+        checks.push(
+          makeCheck(
+            'plugin.field-default',
+            'warn',
+            `Sensitive field declares a default: ${where}. The default is never readable for a sensitive field — drop it and let the user enter the value.`,
+            { subject: where },
+          ),
+        );
+      }
+      const mismatch = defaultMismatch(field);
+      if (mismatch !== null) {
+        checks.push(
+          makeCheck(
+            'plugin.field-default',
+            'warn',
+            `default does not match the declared type: ${where} (${mismatch}).`,
+            { subject: where },
+          ),
+        );
+      }
+    });
+  }
+  const summary = pluginCapabilitySummary(capabilityFactsOf(manifest));
+  checks.push(
+    makeCheck(
+      'plugin.capabilities',
+      'info',
+      `Users will see the capability line "${summary}" on the consent and plugin cards.`,
+      {
+        details: {
+          capabilitySummary: summary,
+          configFields: manifest.config?.fields.length ?? 0,
+          instanceKinds: manifest.instances ?? [],
+        },
+      },
+    ),
+  );
+}
+
 function checkMail(
   id: string,
   template: PluginManifest['contributions']['mail'][number],
@@ -781,6 +874,8 @@ export async function validatePlugin(
         }),
       );
     }
+
+    checkDeclarativeFields(manifest, checks);
 
     const permissions: PermissionFacts = {
       hosts: new Set<string>(),
