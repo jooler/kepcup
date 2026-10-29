@@ -1617,7 +1617,7 @@ export const enUS = {
   'plugins.toast.failed': 'Operation failed: {reason}',
   'plugins.uninstallTitle': 'Uninstall plugin',
   'plugins.uninstallBody':
-    'This removes everything "{name}" installed (skills, tools, connected apps) and disconnects every account connected through its apps. This cannot be undone.',
+    'This removes everything "{name}" installed (skills, tools, connected apps), deletes the plugin instances it created (such as mailbox accounts, including stored credentials), and disconnects every account connected through its apps. This cannot be undone.',
   'plugins.uninstallConfirm': 'Uninstall',
   'plugins.cancel': 'Cancel',
   'plugins.badge': 'Plugin · {name}',

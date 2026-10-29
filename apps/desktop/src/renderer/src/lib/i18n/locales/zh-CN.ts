@@ -1566,7 +1566,7 @@ export const zhCN = {
   'plugins.toast.failed': '操作失败：{reason}',
   'plugins.uninstallTitle': '卸载插件',
   'plugins.uninstallBody':
-    '将移除「{name}」安装的全部内容（技能、工具、连接应用），并断开其连接应用的所有账号连接。此操作不可撤销。',
+    '将移除「{name}」安装的全部内容（技能、工具、连接应用），并删除它创建的插件实例（如邮箱账号，含已保存的凭据），同时断开其连接应用的所有账号连接。此操作不可撤销。',
   'plugins.uninstallConfirm': '确认卸载',
   'plugins.cancel': '取消',
   'plugins.badge': '插件 · {name}',
