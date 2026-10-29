@@ -30,10 +30,16 @@ describe('kepcup-app pack → PluginPackager.stage', () => {
   it('stages the packed archive and keeps the contribution tree', async () => {
     const home = await tmp();
     const source = path.join(home, 'demo-plugin');
+    const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"/>';
     await buildPluginDir({
       dir: source,
       skills: [{ name: 'hello' }],
-      manifest: { author: { name: 'Tester' }, homepage: 'https://example.com' },
+      manifest: {
+        author: { name: 'Tester' },
+        homepage: 'https://example.com',
+        icon: 'icon.svg',
+      },
+      extraEntries: [{ name: 'icon.svg', data: iconSvg }],
     });
     await writeFile(path.join(source, 'README.md'), '# Demo\n');
     const packed = await packPluginDirectory({
