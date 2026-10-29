@@ -1608,9 +1608,12 @@ catalog 定 verified；**生产部署待维护者**），顺带修复 P4 签名�
 `blind-acceptance.spec.ts`（env 门控）走扩展中心安装 → 同意卡 config 字段 → 引导弹框 →
 Bot 启用 → `<skills>` 会话生效全链路全绿。
 
-**验证**：全量 `node scripts/run-tests.mjs run --maxWorkers=8` **654 文件 / 6894 通过 / 0 失败 /
-37 跳过**（历史 flake 本轮零命中）；typecheck shared / core / app-validator / desktop
-（svelte-check 0 error 0 warning）全过；改动文件 eslint 干净。DEVIATIONS 用掉 DEV-075（P4）/
-DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示例字段 + README 指引）；迁移 0056–0058 已用。
+**验证**：全量 `node scripts/run-tests.mjs run --maxWorkers=8` **654 文件 / 6895 通过 / 0 失败 /
+37 跳过**（审查修复后的新基线；历史 flake 本轮零命中）；typecheck shared / core / app-validator /
+desktop（svelte-check 0 error 0 warning）全过；改动文件 eslint 干净。P5 审查因模型额度上限
+（限额 11-03 重置）无法派独立子代理，改为按同一清单自查并处置 P1×1 / P2×2（`46ede4ef`：
+enableForBots 软删 Bot 落半、技能名规则漂移、卸载确认未明示实例级联）。DEVIATIONS 用掉
+DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示例字段 + README 指引）；
+迁移 0056–0058 已用。
 遗留：市场生产部署（R2 + 索引 deploy）待维护者；M2 custom-mcp 实例化与邮件 OAuth 顺延
 （P4 §4 路标）；capabilitySummary 多语言重建路标（51 §15.2）。
