@@ -11,8 +11,10 @@ import { pluginIdSchema, pluginVersionSchema } from './plugin-manifest.js';
  * The contract lives here; verification / sync is core's `infra/signed-index.ts`, signing
  * is `scripts/sign-plugin-index.mjs`.
  *
- * Deliberate difference from design 51 §6.1: entries carry no `manifestDigest` and no
- * `summary.icon` — remote rich-text / icon fetch is out of scope for P1-1 (DEV-053).
+ * Deliberate difference from design 51 §6.1: entries carry no `manifestDigest` (remote
+ * rich-text / README fetch is out of scope, DEV-053). `summary.icon` IS carried inline as
+ * a data URI so marketplace cards can show the plugin's own icon without any remote image
+ * fetch; a missing / unusable icon degrades to the host default icon.
  */
 
 // --- signed-index primitives（原 directory-index 的通用部分；连接器目录通道已移除）---------
@@ -139,6 +141,14 @@ export const pluginIndexEntrySchema = z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(500).default(''),
     author: z.string().max(100).nullable().default(null),
+    /**
+     * Package icon inlined by the signer (`data:image/svg+xml;base64,…` /
+     * `data:image/png;base64,…`, ≤ `PLUGIN_MARKET_ICON_MAX_BYTES` raw). Old indexes and
+     * packages without an icon carry null; the market card then shows the default icon.
+     * Not range-checked here: a bad value must not drop the whole entry — core sanitizes
+     * with `isPluginIconDataUri` before exposing it to the renderer.
+     */
+    icon: z.string().nullable().default(null),
   }),
   updatedAt: z.number().int().min(0),
 });

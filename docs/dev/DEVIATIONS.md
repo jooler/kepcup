@@ -860,19 +860,20 @@
 - 决定：方案 1。该规格继续只测本地插件生命周期，空目录 env 让既有断言原样保留；内置卡片在「已安装」页签的出现由集成测试覆盖，不为顺带覆盖稀释断言语义。
 - 已更新的文档：`todo/plugin-system/P0b-builtin.md` 实施记录。
 
-### DEV-053 市场索引条目不含 `manifestDigest` 与 `summary.icon`，详情页不拉取 README（设计 51 §6.1 / §9）
+### DEV-053 市场索引不含 `manifestDigest`；`summary.icon` 改为内联 data URI；详情页不拉取 README（设计 51 §6.1 / §9）
 
-- 状态：已决定
+- 状态：已决定（2026-10-29 修订图标部分）
 - 阶段：插件系统 P1-1（D104）
 - 是否阻塞：否
 - 问题：设计 51 §6.1 的索引条目含 `manifestDigest` 与 `summary.icon`，§9 的详情页按 digest 校验后拉取富文本（README）。这两处依赖额外的 RPC、体积上限与 Markdown 渲染的 XSS 评审，P1-1 阶段没有真实市场内容，做出来无法验收。
-- 影响范围：`packages/shared/src/domain/plugin-index.ts` 的 `pluginIndexEntrySchema` 只含 id / version / tier / sha256 / size / downloadUrl / engines / platforms / categories / summary(name, description, author) / updatedAt；详情页（P1-3）展示索引 `summary` + 同意面板。README 拉取待有真实市场内容后另立设计再补。
+- 影响范围：`packages/shared/src/domain/plugin-index.ts` 的 `pluginIndexEntrySchema` 含 id / version / tier / sha256 / size / downloadUrl / engines / platforms / categories / capabilitySummary / summary(name, description, author, **icon**) / updatedAt；**`summary.icon` 是签名脚本从包内读取的内联 data URI（原始图标 ≤64 KiB）**，不是远程 URL，市场卡片不发起任何图片请求。`manifestDigest` 与 README 拉取仍不做；详情页（P1-3）展示索引 `summary` + 同意面板。缺图标 / 图标不可用时 `summary.icon` 为 null，市场卡片回落宿主默认图标。
 - 可选方案：
-  1. 本期不做（当前实现）— 优点：不加无法验收的 RPC 与渲染面；缺点：详情页富文本要等下期。
-  2. 照设计全做 — 优点：与设计 51 逐字一致；缺点：XSS 评审与 RPC 面积大、无真实内容可测。
-- 推荐：方案 1。
-- 决定：按任务书（todo/plugin-system/P1-1-marketplace-core.md §6 第 1 条）。
-- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+  1. 图标随签名索引内联（当前实现）— 优点：一次验签索引即可离线渲染全部市场卡片，不新增网络面 / SSRF / 缓存 / XSS 评审；图标与包内文件同源（签名时读取）；缺点：索引体积随图标增长，故设 64 KiB/图标上限。
+  2. 索引只带图标 URL，客户端按需下载 — 优点：索引体积小；缺点：新增远程抓取与缓存、图片主机 SSRF / 体积 / 重定向策略，P1-1 无法验收。
+  3. `manifestDigest` / README 富文本仍按设计以后另立。
+- 推荐：方案 1 + 方案 3。
+- 决定：图标采用方案 1（2026-10-29，市场卡片必须显示插件自有图标）；`manifestDigest` 与 README 拉取仍按原任务书推迟。
+- 已更新的文档：`docs/design/51-plugin-system.md` §3 / §6.1、`docs/guides/write-a-plugin.md` §2.4 / §7、`plugins/README.md`、`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
 
 ### DEV-054 市场同步的定时开关 `pluginAutoCheckUpdates` 只控制定时拉取（设计 51 §6.3）
 

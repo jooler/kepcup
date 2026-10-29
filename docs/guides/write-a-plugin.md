@@ -123,7 +123,7 @@
 | `format_version` | `1` | ✔ | 目前只能是 `1`（可加性契约见 §5.2） |
 | `id` | string | ✔ | `{命名空间}/{名字}`：`/^[A-Za-z0-9][A-Za-z0-9.-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/`，3–200 字符（命名空间段可含点，多段反向域名可用）；同时是插件主键，同一 id 不能跨来源并存；`com.kepcup` / `local.kepcup` 是保留命名空间（小写比对） |
 | `name` | string | ✔ | 1–100 字符，市场与卡片标题 |
-| `icon` | string | ✔（市场发布） | 包内相对路径，必须是 `.svg` 或 `.png`（≤256 KiB）。插件列表、Bot 详情与扩展中心都显示它；缺省时宿主显示**默认图标**，本地开发可用，但发布到官方市场前必须补上自己的图标（见 §2.4） |
+| `icon` | string | ✔（市场发布） | 包内相对路径，必须是 `.svg` 或 `.png`（≤256 KiB；进入市场索引的图标需 ≤64 KiB）。插件列表、Bot 详情、扩展中心与**市场卡片**都显示它；缺省时宿主显示**默认图标**，`validate` 报 error，市场发布不允许缺图标（见 §2.4） |
 | `version` | string | ✔ | semver（`1.2.0`、可带 `-beta.1` / `+build`）；≤64 字符 |
 | `description` | string | 建议 | ≤1000 字符；用户在同意卡与市场卡看到的第一句话 |
 | `author` | `{ name, url? }` | 建议 | `url` 必须是 https；帮助用户判断来源 |
@@ -153,19 +153,24 @@
   （推荐放包根 `icon.svg` / `icon.png`）；连接器插件可以直接指向已有的
   `connectors/<slug>/<slug>.svg`，不必再复制一份。
 
-### 2.4 插件图标（必须有自己的图标）
+### 2.4 插件图标（市场插件必须有自己的图标）
 
-插件是用户看到的一个**实体**，列表、添加弹框与 Bot 详情都只以插件为单位展示，因此每个
-插件都必须有能代表自己的图标：
+插件是用户看到的一个**实体**，市场卡片、已安装列表、添加弹框与 Bot 详情都只以插件为
+单位展示，因此每个提交到市场的插件都必须有能代表自己的图标：
 
 - 在 `plugin.json` 里写 `"icon": "icon.svg"`（或 `.png`），文件放进包里；建议 64×64 或
   更大、正方形、透明或纯色背景，避免小尺寸下糊成一团。
 - 支持 `.svg` / `.png`，单文件 ≤256 KiB；宿主按扩展名与文件头校验，读不到 / 格式不对 /
   超限都回落到**默认图标**（拼图），不会阻断安装，但 `validate` 会报 error。
-- 没有声明 `icon` 时 `validate` 给 `plugin.icon` warning（本地开发可以先用默认图标），
-  **发布到官方市场前必须为零 warning**，策展审查也会检查图标是否清晰可辨。
-- 图标只在安装后从包内读取并内联为 data URI；市场索引不携带图标，因此市场卡片在安装前
-  仍显示名称首字母。
+- **没有 `icon` 的插件不能提交到市场**：`validate` 的 `plugin.icon` 直接报 error。运行期
+  仍保留默认图标兜底——历史索引或手工构建的索引里确实没有图标时，市场卡片显示拼图默认
+  图标，不会退回名称首字。
+- **市场卡片图标内联在签名索引里**：签名脚本读取包内图标并写入 `summary.icon`
+  （`data:image/…;base64`，原始文件 ≤64 KiB）。图标超过 64 KiB 或格式不可用时，签名直接
+  失败 / `validate` 给 warning，避免市场卡片静默回落。市场索引导出图标不发起任何远程图片
+  请求；安装后 `PluginSummary.iconDataUri` 仍从插件目录读取同一文件。
+- 超过 64 KiB 的图标本地安装仍可用（上限 256 KiB），但不会进入市场索引；发布前请压缩到
+  64 KiB 以内。
 - `kepcup-app init plugin` 生成的骨架自带一个占位 `icon.svg`，替换成自己的图标即可。
 
 ### 2.3 字段 schema（`PluginField`）——config、实例、MCPB 共用
@@ -445,13 +450,16 @@ node packages/app-validator/dist/cli.js validate ./my-plugin.kepcup
    是否值得 `verified`。
 2. **策展**：维护者在发布 catalog（`[{ file, tier, summary }]`）里给每个包定
    `verified` / `community`（tier 只来自策展，绝不来自包）；`summary` 提供市场卡的
-   名称 / 描述 / 作者。
+   名称 / 描述 / 作者。市场卡图标**不写在 catalog 里**：签名脚本从包内 `icon` 读取并内联
+   到索引条目（`summary.icon`，原始文件 ≤64 KiB），保证卡片图标与包内图标一致。
 3. **打包 + 签名 + 部署**（维护者操作，完整命令见 [plugins/README.md](../../plugins/README.md)
    与 [infra/cloudflare/plugins/README.md](../../infra/cloudflare/plugins/README.md)）：
    `pack` 全部插件 → `infra/cloudflare/sign-plugins.sh` 用 Ed25519 私钥对 `index.json`
    原始字节签名（keyId `kepcup-plugins-2026-1`；索引条目携带由清单派生的
-   `capabilitySummary` 一句话概述）→ 包体按 `{sha256}.kepcup` 传 R2（`pkg.kepcup.com`）→
-   索引部署到 `dl.kepcup.com/plugins/v1/`。`--verify` 本地验签留档。
+   `capabilitySummary` 一句话概述与内联 `summary.icon`）→ 包体按 `{sha256}.kepcup` 传
+   R2（`pkg.kepcup.com`）→ 索引部署到 `dl.kepcup.com/plugins/v1/`。`--verify` 本地验签
+   留档。声明了 `icon` 但文件缺失 / 格式不可用 / 超过 64 KiB 时签名失败；完全没声明图标
+   时签名告警并在索引里留空，卡片回落默认图标。
 4. **撤销与轮换**：索引 `revoked` 数组支持 `warn` 标记与 `disable` 自动停用；密钥轮换走
    公钥列表（`PLUGIN_INDEX_PUBLIC_KEYS`）追加 + `validFrom` / `validUntil` 窗口。
 
@@ -476,7 +484,8 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 **自检清单**（交付前逐条过）：
 
 - [ ] `validate --json` 零 error（warning 逐条看：`manifest-metadata` 缺描述/作者/主页/engines、
-      `readme` 缺 README、`icon` 缺图标、`field-default` default 用法问题——都应修掉而不是忽略）。
+      `readme` 缺 README、`icon` 图标超过 64 KiB 市场化上限、`field-default` default 用法
+      问题——都应修掉而不是忽略）。
 - [ ] 清单只含 §2.2 表里的字段；id 不用保留命名空间；每类贡献数量与路径约束满足。
 - [ ] `description` 写了「装了能干什么」的一句话（用户在同意卡读它）；含 config / 实例的
       插件，每个字段的 `title` / `description` 用用户能懂的话（不含协议词汇）。
@@ -484,8 +493,8 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
       写全（含 `releaseGate`）；MCPB 是合法 zip 且含 `manifest.json`。
 - [ ] 敏感字段标了 `sensitive: true` 且没有声明 default；必填字段想清楚 default 回退语义
       （§2.3 框注）。
-- [ ] 有自己的图标：`icon` 指向包内 `.svg` / `.png`（≤256 KiB），`plugin.icon` 为 info 而不是
-      warning / error（§2.4）。
+- [ ] 有自己的图标：`icon` 指向包内 `.svg` / `.png`，市场发布用图标 ≤64 KiB（本地安装上限
+      256 KiB），`plugin.icon` 为 info 而不是 warning / error（§2.4）。
 - [ ] README.md 在包根。
 
 **常见错误与修复**：
@@ -504,7 +513,7 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 | `plugin.mcpb-package` | `.mcpb` 不是合法 zip、缺 `manifest.json`、`manifest_version` 不支持、入口不在包内 |
 | `plugin.mcp-http` | http 贡献 URL 非公网 https；要 OAuth 的远端改做连接贡献 |
 | `plugin.mail-host` | 邮件主机是 IP / localhost / 不含点 / 内网后缀 |
-| `plugin.icon` | 声明了 `icon` 但文件缺失 / 不在包内 / 不是 `.svg` / `.png` / 超过 256 KiB；未声明时为 warning（界面回落默认图标） |
+| `plugin.icon` | 未声明 `icon`（市场发布必须补）；声明了但文件缺失 / 不在包内 / 不是 `.svg` / `.png` / 超过 256 KiB；市场索引内联图标超过 64 KiB 时给 warning |
 | `plugin.field-default`（warning） | `default` 与类型 / min-max 不符；sensitive 字段声明了 default |
 | 安装后「插件能力没生效」 | 正常——插件需要在 Bot 详情「插件」区块用 `+` 添加（或项目组设置）；用安装引导弹框的「立即添加到 Bot」 |
 
@@ -556,11 +565,11 @@ materializer 落地（领域行通过外键 `ON DELETE SET NULL` / 级联与实�
 | `plugin.mcpb-package` | `.mcpb` 不是合法 zip / 缺 manifest / 版本不支持 / 入口不在包内 |
 | `plugin.mcp-http` | http 贡献 URL 非公网 https |
 | `plugin.mail-host` | 邮件主机非公网域名 |
-| `plugin.icon` | 声明了 `icon` 但文件缺失 / 溢出包目录 / 不是合法 SVG / PNG / 超过 256 KiB |
+| `plugin.icon` | 未声明图标 / 声明了但文件缺失 / 溢出包目录 / 不是合法 SVG / PNG / 超过 256 KiB；超过 64 KiB 时另有市场化 warning |
 
 **warn**（不拦打包，但应修掉）：`plugin.manifest-metadata`（缺 description / author /
-homepage / engines）、`plugin.readme`（缺包根 README.md）、`plugin.icon`（未声明图标，界面
-回落默认图标；市场发布前必须补）、`plugin.field-default`（§2.3 的 default 用法问题）。
+homepage / engines）、`plugin.readme`（缺包根 README.md）、`plugin.icon`（图标超过 64 KiB 的
+市场化上限，市场卡片会回落默认图标）、`plugin.field-default`（§2.3 的 default 用法问题）。
 
 **info**（说明性）：`plugin.capabilities`（能力概述预览 + config / 实例计数）、
 `plugin.permissions`（同意卡将展示的权限推导：主机 / OAuth 范围 / MCPB / 邮件）、

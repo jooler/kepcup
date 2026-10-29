@@ -46,6 +46,7 @@ async function signFixture(
     tier?: string;
     engines?: Record<string, string>;
     platforms?: string[];
+    icon?: string;
   } = {},
 ): Promise<{ artifact: Artifact; sha256: string; id: string; version: string }> {
   const outDir = path.join(root, `out-${Math.random().toString(36).slice(2, 8)}`);
@@ -62,7 +63,11 @@ async function signFixture(
     manifest: {
       ...(options.engines !== undefined ? { engines: options.engines } : {}),
       ...(options.platforms !== undefined ? { platforms: options.platforms } : {}),
+      ...(options.icon !== undefined ? { icon: 'icon.svg' } : {}),
     },
+    ...(options.icon !== undefined
+      ? { extraEntries: [{ name: 'icon.svg', data: options.icon }] }
+      : {}),
     skills: [{ name: 'signed-demo' }],
   });
   const manifestShape = fixture.manifest as { id: string; version: string };
@@ -135,10 +140,24 @@ describe('sign-plugin-index.mjs', () => {
       summary: { name: 'Signed Demo', author: 'Tester' },
     });
     expect(index.entries[0] as { updatedAt: number }).toMatchObject({ updatedAt: GENERATED_AT });
+    // No declared icon → null; the market card falls back to the host default icon.
+    expect((index.entries[0] as { summary: { icon: unknown } }).summary.icon).toBeNull();
     // Content-addressed package copy with the exact bytes.
     const copy = path.join(artifact.outDir, 'packages', `${sha256}.kepcup`);
     expect(existsSync(copy)).toBe(true);
     expect(createHash('sha256').update(readFileSync(copy)).digest('hex')).toBe(sha256);
+  });
+
+  it('embeds the declared package icon into the signed index', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>';
+    const { artifact } = await signFixture({ icon: svg });
+    const { indexBytes, sig, keys } = readArtifact(artifact);
+    const verified = verifySignedIndex(indexBytes, sig, keys, pluginIndexSchema, PLUGIN_LIMITS);
+    expect(verified.ok).toBe(true);
+    const index = (verified as { ok: true; index: { entries: unknown[] } }).index;
+    expect((index.entries[0] as { summary: { icon: string } }).summary.icon).toBe(
+      `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,
+    );
   });
 
   it('a one-byte tamper breaks the verification', async () => {

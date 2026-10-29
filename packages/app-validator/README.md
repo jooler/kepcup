@@ -223,7 +223,7 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="plugin-manifest-namespace"></a>`plugin.manifest-namespace` (error): the id uses the builtin-only `com.kepcup` or `local.kepcup` namespace.
 - <a id="plugin-manifest-metadata"></a>`plugin.manifest-metadata` (warn): `description`, `author`, `homepage` or `engines` is missing.
 - <a id="plugin-readme"></a>`plugin.readme` (warn): the plugin has no `README.md`.
-- <a id="plugin-icon"></a>`plugin.icon`: the manifest declares no `icon` (warn; the app falls back to its default icon), or the declared `.svg` / `.png` is missing, escapes the package, is not a valid image of that type, or exceeds 256 KiB (error).
+- <a id="plugin-icon"></a>`plugin.icon`: the manifest declares no `icon` (error; a marketplace plugin must ship its own icon — the runtime still falls back to the default icon for legacy indexes), the declared `.svg` / `.png` is missing, escapes the package, is not a valid image of that type, or exceeds 256 KiB (error). An otherwise valid icon above 64 KiB (the marketplace-index inline cap) is a warning: market cards would show the default icon.
 - <a id="plugin-files-path"></a>`plugin.files-path` (error): a contribution file or directory is missing, has the wrong type, is a symbolic link or escapes the plugin directory.
 - <a id="plugin-files-limits"></a>`plugin.files-limits` (error): the directory exceeds the package limits (20,000 entries / 200 MB per file / 500 MB unpacked).
 - <a id="plugin-package-entries"></a>`plugin.package-entries` (error): the `.kepcup` archive is unreadable or has an unsafe path, symlink, duplicate entry, encryption or ZIP64.

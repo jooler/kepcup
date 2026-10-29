@@ -16,9 +16,11 @@ plugins/
 ```
 
 - 每个插件**必须有自己的图标**：`plugin.json` 的 `icon` 指向包内 `.svg` / `.png`
-  （≤256 KiB）。技能 / 邮件插件放包根 `icon.svg`；连接器插件直接指向
-  `connectors/<slug>/<slug>.svg`。缺省时界面回落宿主默认图标，`validate` 给 warning，
-  市场发布前必须为零 warning。详见 [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §2.4。
+  （本地安装上限 256 KiB，**进入市场索引的图标必须 ≤64 KiB**）。技能 / 邮件插件放包根
+  `icon.svg`；连接器插件直接指向 `connectors/<slug>/<slug>.svg`。市场卡片图标由签名
+  脚本从包内读取并内联进索引（`summary.icon`），不发起远程图片请求；完全没图标时
+  `validate` 报 error、签名告警，界面回落宿主默认图标（拼图），**不会**显示名称首字。
+  详见 [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §2.4。
 
 - 插件 id 用 `app.kepcup/<名>`：`com.kepcup` / `local.kepcup` 是保留命名空间，
   市场插件不得使用（`PLUGIN_RESERVED_NAMESPACES`）。
@@ -82,3 +84,9 @@ cd infra/cloudflare/directory && npx wrangler deploy
   并重新签名，R2 上传 22 个包 + 索引部署到 `dl.kepcup.com/plugins/v1/`。线上索引由
   18 条（1.0.0）变为 22 条（1.0.1），四个邮件插件正式进入市场。线上索引验签与
   22 个包的 sha256 / 大小逐一复核通过。
+
+- **2026-10-29 市场卡片图标**：签名脚本现在从每个包内读取 `icon` 并内联到索引条目
+  `summary.icon`（原始图标 ≤64 KiB），市场卡片直接显示插件自有图标，缺失时回落宿主
+  默认图标。**已重新签名并部署**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致
+  （R2 内容寻址对象无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`、
+  22/22 带图标，线上拉回验签通过。

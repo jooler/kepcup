@@ -97,7 +97,7 @@ describe('validatePlugin: a complete legal plugin', () => {
     expect(ids(report, 'info')).toContain('plugin.icon');
   });
 
-  it('warns when no icon is declared and rejects an unusable one', async () => {
+  it('requires an icon and rejects an unusable one', async () => {
     const dir = await tmp();
     await buildPluginDir({
       ...legalOptions(dir),
@@ -105,9 +105,7 @@ describe('validatePlugin: a complete legal plugin', () => {
     });
     await writeFile(path.join(dir, 'README.md'), '# Demo plugin\n');
     const missing = await validatePlugin(dir);
-    expect(
-      missing.checks.find((check) => check.id === 'plugin.icon')?.severity,
-    ).toBe('warn');
+    expect(missing.checks.find((check) => check.id === 'plugin.icon')?.severity).toBe('error');
 
     const manifest = JSON.parse(
       await readFile(path.join(dir, 'plugin.json'), 'utf8'),
@@ -122,6 +120,15 @@ describe('validatePlugin: a complete legal plugin', () => {
       broken.checks.some(
         (check) => check.id === 'plugin.icon' && check.severity === 'error',
       ),
+    ).toBe(true);
+  });
+
+  it('warns when the icon exceeds the marketplace-index cap', async () => {
+    const dir = await legalDir();
+    await writeFile(path.join(dir, 'icon.svg'), `<svg>${'x'.repeat(65 * 1024)}</svg>`);
+    const report = await validatePlugin(dir);
+    expect(
+      report.checks.some((check) => check.id === 'plugin.icon' && check.severity === 'warn'),
     ).toBe(true);
   });
 
@@ -312,7 +319,12 @@ describe('validatePlugin: contribution checks', () => {
     const entry = connectorFixtureEntry('acme', { tier: 'community' });
     const meta = (entry._meta as Record<string, Record<string, unknown>>)['app.kepcup/connector']!;
     delete meta.releaseGate;
-    await buildPluginDir({ dir, connectors: [{ slug: 'acme', entry }] });
+    await buildPluginDir({
+      dir,
+      connectors: [{ slug: 'acme', entry }],
+      manifest: { icon: 'icon.svg' },
+    });
+    await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
     const report = await validatePlugin(dir);
     const strictErrors = report.checks.filter(
       (check) => check.id === 'plugin.connector-entry' && check.severity === 'error',
@@ -449,6 +461,7 @@ describe('validatePlugin: declarative config / instance fields (D105 P5)', () =>
     await buildPluginDir({
       ...legalOptions(dir),
       manifest: {
+        icon: 'icon.svg',
         author: { name: 'Tester' },
         instances: ['mail'],
         config: {
@@ -463,6 +476,7 @@ describe('validatePlugin: declarative config / instance fields (D105 P5)', () =>
       },
       skills: [{ name: 'hello', description: 'Says hello' }],
     });
+    await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
     const report = await validatePlugin(dir);
     // 全部是 authoring 警告：不拦打包（core 对 default 的消费语义见开发文档）。
     expect(ids(report, 'error')).toEqual([]);

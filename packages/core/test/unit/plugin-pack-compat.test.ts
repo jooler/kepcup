@@ -33,8 +33,16 @@ describe('kepcup-app pack → PluginPackager.stage', () => {
     await buildPluginDir({
       dir: source,
       skills: [{ name: 'hello' }],
-      manifest: { author: { name: 'Tester' }, homepage: 'https://example.com' },
+      manifest: {
+        author: { name: 'Tester' },
+        homepage: 'https://example.com',
+        icon: 'icon.svg',
+      },
     });
+    await writeFile(
+      path.join(source, 'icon.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"/>',
+    );
     await writeFile(path.join(source, 'README.md'), '# Demo\n');
     const packed = await packPluginDirectory({
       dir: source,
