@@ -1,5 +1,7 @@
 # 29 连接应用（Connected Apps）与开放平台基座
 
+> **D105 修订（插件平台迭代，现状事实）**：§16.1 的扩展中心七页签已收敛为**两页签**（`market / installed`）——原 Skills / 连接 / MCP / 邮件 / 本机协作五个管理页签不再独立存在：技能 / 连接 / 工具 / 邮件以**插件卡**（类别筛选 + ⋮ 设置 / 管理）承载，InkCop 本机协作与本机自建连接以「系统卡」进已安装网格（系统能力不是插件）；MCP 管理按插件圈定（插件卡内只见该插件的 server，全局手动管理暂留「工具」筛选视图）。连接能力完全来自市场插件（签名目录通道已随 D104 商店化删除）；连接的 Bot 级绑定（`app_connection_ids` 细选，同 Connector 至多一个）保留，但**所属插件未 ∈ 该 Bot 的插件启用集（`profile.runtime.plugin_ids`）时整体隐藏**（`<available_apps>` 与提案同口径）。现状总述见 [51-plugin-system.md](51-plugin-system.md) §15。
+
 用户把自己的 Google、GitHub、Notion、Figma、Slack、Linear 等第三方账号**授权**给 KepCup，Bot 即可代用户读取与操作这些账号中的数据（查邮件、建 issue、改文档、发消息……），体验对标 Grok「Connect apps / Connectors」。本文同时规定一个**开放平台基座**：连接应用的描述格式、授权方式、目录分发、审批与界面渲染全部采用业界开放标准，使「第三方开发者自由开发并入驻」成为后续增量，而不是推倒重来。
 
 决策：D73（连接应用）、D74（开放平台基座）。执行方案见 [todo/connected-apps.md](../../todo/connected-apps.md)。

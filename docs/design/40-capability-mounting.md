@@ -1,5 +1,7 @@
 # 40 能力目录与按需挂载（Capability Mounting）
 
+> **D105 修订（插件平台迭代，现状事实）**：能力目录行按**有效启用集**过滤——`orchestrator#capabilityCatalog` 接收 `extraPluginIds`（P4 收口后必传，空集同样是语义）：插件贡献的 `app:{slug}` / `mcp:{serverId}` 能力行仅当所属插件 ∈ `effectivePluginIds(bot, conversation)`（Bot `plugin_ids` ∪ 项目会话 `project_plugins`，见 `packages/core/src/plugins/effective.ts`）才进 `<capabilities>`；未启用的插件能力对目录、懒解析与任务挂载整体不可见。邮箱仍不进能力目录，但邮箱工具 / `<mail_accounts>` 现同样按启用集过滤（属主插件未启用则不暴露）。审批 / 风险 / 锁定语义不变。现状总述见 [51-plugin-system.md](51-plugin-system.md) §15.3。
+
 用户会不断给 Bot 接入连接应用、自定义 MCP、邮箱。今天这些能力的工具在每个 run 开头整批挂进工具列表：对话轮挂只读子集（≤20 个 MCP 只读工具），任务挂全部。接入越多，每一轮的工具定义越长、开头要先连一遍服务器（对话轮最多等 3 秒），任务也总是背着与本次无关的几百个工具。本篇把它改成：**对话轮只知道「我接入了哪些能力」，派任务时声明要用哪些，任务启动时只挂这些**。决策：**D91**。
 
 **状态：已实现，已合入 main**（2026-10-16 经用户确认三项关键选择：对话轮保留只读两件套、按服务器 / 应用粒度挂载、邮箱不进能力目录但无绑定不挂邮箱工具）。实施编排见 [todo/capability-mounting.md](../../todo/capability-mounting.md)。早期阶段：不做向后兼容，旧的 `app_search_tools` / `app_call_tool` / `turnMcpNote` / `<connected_apps>` 直接替换，不保留别名。
