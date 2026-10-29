@@ -551,7 +551,6 @@ export const enUS = {
   // --- Config tab secondary menu (grouped entries + drill-down details) ---------
   'rightPanel.configSectionWidgets': 'Widgets',
   'rightPanel.configSectionPersona': 'Persona & engine',
-  'rightPanel.configSectionConnections': 'Connections',
   'rightPanel.configSectionSecurity': 'Safety & access',
   'rightPanel.configRowPersona': 'Persona & tone',
   'rightPanel.configRowRole': 'Role & boundaries',
@@ -573,13 +572,26 @@ export const enUS = {
   // --- P2 injection model: the bot-panel "Plugins" section (apps / mcp / mail merged)
   'botPanel.sections.plugins': 'Plugins',
   'botPanel.plugins.hint':
-    'Enable installed plugins for this bot; skills, tools and accounts of disabled plugins stay invisible to it.',
+    'Add plugins to this bot; skills, tools and accounts of plugins you have not added stay invisible to it.',
   'botPanel.plugins.empty': 'No plugins installed yet — take a look at the plugin store.',
+  'botPanel.plugins.noneAdded': 'No plugins added to this bot yet.',
   'botPanel.plugins.openStore': 'Plugin store',
+  'botPanel.plugins.add': 'Add plugin',
+  'botPanel.plugins.addTitle': 'Add plugins',
+  'botPanel.plugins.addHint': 'Choose installed plugins to add to this bot.',
+  'botPanel.plugins.search': 'Search plugins',
+  'botPanel.plugins.addToBot': 'Add to bot',
+  'botPanel.plugins.addedToBot': 'Added to this bot',
+  'botPanel.plugins.remove': 'Remove',
+  'botPanel.plugins.done': 'Done',
+  'botPanel.plugins.noMatch': 'No matching plugins',
+  'botPanel.plugins.globallyDisabled': 'Disabled in extension center',
+  'botPanel.plugins.addDialogEmptyStore':
+    'No plugins installed yet — open the plugin store to install one.',
   'botPanel.plugins.appDisabled': 'Plugin is disabled in the extension center',
   'botPanel.plugins.detail': 'Configure',
-  'botPanel.plugins.summaryEnabled': '{count} enabled',
-  'botPanel.plugins.summaryNone': 'None enabled',
+  'botPanel.plugins.summaryEnabled': '{count} added',
+  'botPanel.plugins.summaryNone': 'None added',
   'botPanel.plugins.connections': 'Connected accounts',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
@@ -591,7 +603,7 @@ export const enUS = {
   'botPanel.plugins.otherAccounts': 'Selected accounts (source plugin uninstalled)',
   'rightPanel.exportTemplate': 'Export as template',
   // --- Secondary menu rows of the other tabs (details hold the original content) -
-  'rightPanel.menuSectionKnowledge': 'Knowledge',
+  'rightPanel.menuSectionKnowledge': 'Knowledge & capabilities',
   'rightPanel.menuSectionTasks': 'Tasks',
   'rightPanel.menuAccessRow': 'Active grants',
   'rightPanel.accessCountSummary': '{count} active',

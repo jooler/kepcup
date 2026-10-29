@@ -271,9 +271,6 @@
       testid="bot-menu-row-wiki"
       onclick={onOpenWiki}
     />
-  </ConfigMenuGroup>
-
-  <ConfigMenuGroup label={t('rightPanel.configSectionConnections')}>
     <MenuRow
       icon={Package}
       title={t('botPanel.sections.plugins')}
