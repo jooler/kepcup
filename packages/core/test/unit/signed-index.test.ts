@@ -44,6 +44,8 @@ const INTERVALS = {
 class FakeServer {
   readonly requests: string[] = [];
   offline = false;
+  /** 离线时抛出的错误；缺省裸 `TypeError: fetch failed`（undici 会带 cause，测试可注入）。 */
+  offlineError: Error | null = null;
   status: number | null = null;
   #files = new Map<string, { bytes: Buffer; etag: string }>();
   #version = 0;
@@ -67,7 +69,7 @@ class FakeServer {
   ): Promise<Response> => {
     const url = new URL(input);
     this.requests.push(url.pathname);
-    if (this.offline) throw new TypeError('fetch failed');
+    if (this.offline) throw this.offlineError ?? new TypeError('fetch failed');
     if (this.status !== null) return new Response('boom', { status: this.status });
     const file = this.#files.get(url.pathname);
     if (file === undefined) return new Response('not found', { status: 404 });
@@ -361,6 +363,32 @@ describe('failure fallback', () => {
     expect(status.state).toBe('degraded');
     expect(status.error).toContain('fetch failed');
     expect(sync.index()).toMatchObject({ items: ['alpha'] });
+  });
+
+  it('surfaces the undici cause chain instead of a doubled "fetch failed"', async () => {
+    const h = harness();
+    publish(h, ['alpha'], T1);
+    const sync = h.make();
+    await sync.sync();
+    h.server.offline = true;
+    // undici 的真实形态：`TypeError: fetch failed`，根因挂在 cause 链上。
+    h.server.offlineError = new TypeError('fetch failed', {
+      cause: new Error('getaddrinfo ENOTFOUND idx.example.com'),
+    });
+    expect((await sync.sync()).error).toBe('getaddrinfo ENOTFOUND idx.example.com');
+    // 连接超时（ConnectTimeoutError）同样取 cause 消息。
+    h.server.offlineError = new TypeError('fetch failed', {
+      cause: new Error('Connect Timeout Error (attempted addresses: 1.2.3.4:443, timeout: 10000ms)'),
+    });
+    expect((await sync.sync()).error).toBe(
+      'Connect Timeout Error (attempted addresses: 1.2.3.4:443, timeout: 10000ms)',
+    );
+    // 裸 `TypeError: fetch failed`（无 cause）不再自我重复。
+    h.server.offlineError = new TypeError('fetch failed');
+    expect((await sync.sync()).error).toBe('fetch failed');
+    // 成功后错误清空。
+    h.server.offline = false;
+    expect((await sync.sync()).state).toBe('ok');
   });
 });
 
