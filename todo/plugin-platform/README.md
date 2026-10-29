@@ -1,11 +1,12 @@
 # 插件平台迭代（Plugin Platform）· 总览
 
-> 状态：**待实施**（2026-10-28）。
+> 状态：**已完成**（2026-10-29，P1–P5 全部收口；实施记录见各阶段文件 §5/§6，迭代收尾行在
+> `docs/dev/PROGRESS.md`；剩余维护者操作与路标见 [HANDOFF.md](HANDOFF.md) 顶部注）。
 > 上一期任务书 [todo/plugin-system/](../plugin-system/README.md)（D104 P0a–P2 + 商店化）**已完成**，
 > 其固定契约（表 `plugins`/`plugin_items`、`plugins.*` RPC、`PLUGIN_*` 错误码等）仍然有效，本迭代在其上叠加。
 > 本目录是给**执行智能体**的任务书：**先读本文件与 [CURRENT-STATE.md](CURRENT-STATE.md)，再读你被分配的阶段文件。**
-> 设计文稿 [docs/design/51-plugin-system.md](../../docs/design/51-plugin-system.md) 仍是「第一期」的记录；
-> 本迭代引入的新模型以本目录为准，**P5 阶段收口时再把设计文档改写成现状事实**。
+> 设计文稿 [docs/design/51-plugin-system.md](../../docs/design/51-plugin-system.md) 的 **§15 已改写为现状事实**（D105），
+> 其 §0–§14 为第一期（D104）历史记录。
 
 ## 0. 一句话目标
 

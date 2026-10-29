@@ -1145,3 +1145,12 @@
 - 问题：P4-extension-center.md §3.2 只规定插件卡「管理 · 工具」按 `pluginId` 圈定（只看该插件投影的 server、隐藏新建 / .mcpb 入口），但 M2（custom-mcp 实例化、`McpSection` 全局视图退役）按任务书顺延后，手动 MCP server 的新建 / 编辑 / .mcpb 安装在 M1 失去了全部 UI 入口——插件卡内容视图已圈定，设置深链落到的「工具」筛选视图又只有插件卡网格。这是任务书未写到的缺口（§2 范围表「不包含：custom-mcp 实例化（M2，可顺延）」隐含手动 server 管理在 M1 仍须可用）。
 - 影响范围：`ExtensionInstalled.svelte` 的「工具」筛选（`filter === 'mcp'`）网格下方新增 `manual-mcp-section`——无圈定的完整 `McpSection`（新建 stdio/HTTP/SSE、.mcpb 安装、BYO OAuth 客户端、手动 server 编辑）。插件卡内容视图的圈定语义不受影响；Bot 侧手动 server 的 `mcp_server_ids` 细选不受影响。
 - 决定：M1 以「工具」筛选视图为全局手动工具管理入口；P4-M2（custom-mcp 实例化）落地时把手动 server 收编为 `app.kepcup/custom-mcp` 插件实例后，整块退役（P4 §4.5 原计划不变）。e2e `extension-center.spec.ts` 第二用例按此模型对齐（圈定视图无手动 server / 无新建入口；全局区可见可编辑）。
+
+### DEV-076 init 模板的「注释骨架」在 JSON 中不可表达：真实示例字段 + README 指引
+
+- 状态：已落实
+- 阶段：插件平台 P5（D105）
+- 是否阻塞：否
+- 问题：P5-docs-market.md §3.2 要求「`init plugin` 模板更新：生成含 `config` + `instances` **注释**骨架的 `plugin.json`」，但 `plugin.json` 是 strict JSON（清单 schema 拒绝注释语法），「注释骨架」字面不可实现；且 `instances: ['mail']` 有配对约束（必须伴随一份邮件贡献），骨架里塞 `instances` 会让新骨架直接 validate 失败。
+- 影响范围：`packages/app-validator/src/plugin/init.ts`——plugin.json 生成一个真实可校验的示例 config 字段（`greetingPrefix`，宿主自动出「设置」表单，删改即学）；`instances` 的声明方式与邮件配对示例写进 init 生成的 README 模板并指向 `docs/guides/write-a-plugin.md`。
+- 决定：以「可运行的示例 + 文档指引」替代「注释骨架」；示例 config 字段对骨架插件的唯一代价是设置表单多一项，可即刻删除。测试 `plugin-init-pack.test.ts` 断言骨架 validate 零 error 且 capabilities 报告 configFields=1。
