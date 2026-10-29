@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-atlassian",
+  "name": "Atlassian 连接",
+  "icon": "connectors/atlassian/atlassian.svg",
+  "version": "1.0.1",
+  "description": "访问 Jira、Confluence 与 Compass（Rovo MCP）",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://www.atlassian.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/atlassian/server.json"
+      }
+    ]
+  }
+}

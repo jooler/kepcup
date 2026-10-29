@@ -2,6 +2,15 @@
 
 [English](README.md)
 
+## 核心目标
+
+思考与行动逻辑与真人一致的智能助理。
+
+## 核心思路
+
+- 对话是沟通记录。助理的执行记录是它自己的工作数据，不必默认留在用户对话里——就像真人协作：你交代任务，对方交付成果；过程你可以追问，但对方没必要把全过程都甩给你，你也没必要全部看完。
+- 双 Loop 分离响应与执行，逻辑与真人一致：助理收到指令后先回复；若需执行，再拉起独立任务并回到待命。任务结束后结果返回助理，由助理总结后再回复用户。全程助理保持可响应，任务独立执行、不阻塞对话，并按状态反馈。
+
 ![KepCup](apps/website/public/images/Meet_KepCup.png)
 
 **创建一个团队，只为你服务！**
@@ -249,7 +258,7 @@ KepCup 站在许多开源项目与产品灵感之上。以下致谢**不暗示**
 | [Zod](https://zod.dev) | 运行时校验与 RPC 契约 |
 | [birpc](https://github.com/antfu-collective/birpc) | 主进程 ↔ core RPC |
 | [undici](https://undici.nodejs.org) | HTTP |
-| [MinerU](https://github.com/opendatalab/MinerU) | 文档解析预置技能（AGPL-3.0；见 [NOTICE](apps/desktop/resources/preset-skills/NOTICE.md)） |
+| [MinerU](https://github.com/opendatalab/MinerU) | 文档解析预置技能（AGPL-3.0；见 [NOTICE](apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md)） |
 | [cron-parser](https://github.com/harrisiirak/cron-parser)；[bash-parser](https://github.com/vorpaljs/bash-parser) + [acorn](https://github.com/acornjs/acorn)；[pino](https://github.com/pinojs/pino) / [ulid](https://github.com/ulid/javascript) | 定时、命令解析、日志与 ID |
 
 以及我们传递依赖的各位维护者（ESLint / Prettier / Vitest / `@types`、纯工具库如 `clsx` / `tailwind-merge` 等；Playwright 用于 e2e，产品内浏览器 Electron CDP）。
@@ -323,4 +332,4 @@ node apps/server/dist/cli.js --host 0.0.0.0 --public-url ws://<你的IP>:8642
 
 ### 许可
 
-根许可为 [GPL-3.0](LICENSE)。预置技能中 vendored 的 MinerU 技能单独以 AGPL-3.0 再分发，说明见 [apps/desktop/resources/preset-skills/NOTICE.md](apps/desktop/resources/preset-skills/NOTICE.md)。仓库级 NOTICE 尚未单列。
+根许可为 [GPL-3.0](LICENSE)。预置技能中 vendored 的 MinerU 技能单独以 AGPL-3.0 再分发，说明见 [apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md](apps/desktop/resources/plugins/com.kepcup/starter-skills/NOTICE.md)。仓库级 NOTICE 尚未单列。

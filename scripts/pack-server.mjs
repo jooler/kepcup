@@ -79,6 +79,8 @@ for (const extra of ['src', 'test']) {
   }
 }
 
+// 3.6) 内置插件已随 D104 商店化移除（plugins/ 开发目录 → 市场分发，应用与 server 均不再随包内置）。
+
 // 4) 改写 package.json：bundledDependencies 让 npm 把 node_modules 视为包内容
 //    （npm i -g <tarball> 不再尝试解析依赖）；发布名 kepcup-server（npm i -g 后
 //    命令即 kepcup-server）。

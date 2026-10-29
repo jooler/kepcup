@@ -8,12 +8,12 @@
   },
   "packageManager": "pnpm@11.22.0",
   "scripts": {
-    "dev": "pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/core run build && pnpm --filter @kepcup/desktop dev",
+    "dev": "pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/package-guard run build && pnpm --filter @kepcup/core run build && pnpm --filter @kepcup/desktop dev",
     "build": "pnpm -r build",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check .",
-    "typecheck": "pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/core run build && pnpm -r typecheck",
+    "typecheck": "pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/package-guard run build && pnpm --filter @kepcup/core run build && pnpm -r typecheck",
     "test": "node scripts/run-tests.mjs run",
     "test:watch": "node scripts/run-tests.mjs",
     "test:e2e": "pnpm --filter @kepcup/desktop test:e2e"

@@ -299,7 +299,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     ],
     write: viaTool('app_request_connection', 'form', true),
     card: 'connect-app',
-    deepLink: { surface: 'extension-center', section: 'connections' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-connector',
+    },
     store: { kind: 'none' },
   }),
   item({
@@ -325,8 +329,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 卡片按页面档位保存（allow → auto，deny → 停用），不把目录词写进 McpToolPolicy。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
     card: 'tool-policy',
-    // 设置「应用」分区已移除：逐工具策略在扩展中心「连接」分组的账号详情里管理。
-    deepLink: { surface: 'extension-center', section: 'connections' },
+    // 设置「应用」分区已移除：逐工具策略在扩展中心「已安装」→ 连接筛选的账号详情里管理。
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-connector',
+    },
     store: { kind: 'service', methods: ['apps.connections.setToolPolicy'] },
   }),
   item({
@@ -361,7 +369,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 卡片只改这一个服务的 enabled，组件自己 settings.update。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
     card: 'mcp-servers',
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),
 
@@ -374,14 +386,15 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     enables: ['读我的邮件', '发邮件', '代收邮件'],
     keywords: ['邮件', '邮箱', 'IMAP', 'SMTP', 'mail', 'Gmail', 'QQ 邮箱'],
     scope: 'bot',
-    fields: [
-      field('provider', '邮箱服务商', 'select', { options: 'mail-providers' }),
-      field('address', '邮箱账号', 'account'),
-      field('password', '授权码 / 密码', 'secret'),
-    ],
+    // P3：添加入口是邮件插件卡（表单由插件声明的实例字段动态构建，目录不再声明字段）。
+    fields: [],
     write: viaTool('mail_request_setup', 'form', true),
     card: 'mail-account',
-    deepLink: { surface: 'extension-center', section: 'mail' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mail',
+    },
     store: { kind: 'none' },
   }),
 
@@ -415,7 +428,9 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'localCollab' },
+    // D105 P4：localCollab 页签收敛进「已安装」，本机应用协作以系统卡落在该页
+    // （旧 localCollab 深链也由 shell 映射到 installed + 滚动到系统卡）。
+    deepLink: { surface: 'extension-center', section: 'installed' },
     store: { kind: 'settings', paths: ['inkcopLocalCollab'] },
   }),
   item({
@@ -611,22 +626,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: viaTool('request_access', 'confirm', true),
     card: null,
     deepLink: { surface: 'bot-panel', section: 'access' },
-    store: { kind: 'none' },
-  }),
-
-  // --- 技能 ---------------------------------------------------------------
-  item({
-    id: 'skills.install',
-    group: 'skills',
-    title: '安装预置技能',
-    summary: '从技能市场给这个 Bot 安装一个预置技能',
-    enables: ['学会新技能'],
-    keywords: ['技能', '安装技能', '技能市场', 'skill'],
-    scope: 'bot',
-    fields: [field('preset', '技能', 'select', { options: 'skill-presets' })],
-    write: viaTool('install_skill', 'confirm', true),
-    card: null,
-    deepLink: { surface: 'extension-center', section: 'skills' },
     store: { kind: 'none' },
   }),
 
@@ -1031,7 +1030,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),
   item({
@@ -1043,7 +1046,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'service', methods: ['apps.oauthClients.set'] },
   }),
   item({
@@ -1055,7 +1062,11 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     write: write('link', { widensPermission: true }),
     card: null,
-    deepLink: { surface: 'extension-center', section: 'mcp' },
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mcp',
+    },
     store: { kind: 'service', methods: ['mcpb.install'] },
   }),
 
@@ -1133,5 +1144,47 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     card: 'remote-devices',
     deepLink: { surface: 'settings', section: 'remote', anchor: 'remote-devices' },
     store: { kind: 'service', methods: ['remote.devices', 'remote.revokeDevice'] },
+  }),
+
+  // --- 插件（D104 P1-1，设计 51 §8；市场地址与公钥是供应链信任根） -------------
+  item({
+    id: 'plugins.updates',
+    group: 'plugins',
+    title: '自动检查更新',
+    summary: '插件市场索引每日定时拉取，发现新版本时在扩展中心提示（更新仍需手动确认）',
+    keywords: ['插件', '更新', '市场', '自动检查'],
+    scope: 'global',
+    fields: [field('enabled', '自动检查更新', 'toggle', { path: 'pluginAutoCheckUpdates' })],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-updates' },
+    store: { kind: 'settings', paths: ['pluginAutoCheckUpdates'], generic: true },
+  }),
+  item({
+    id: 'plugins.marketplace',
+    group: 'plugins',
+    title: '插件市场',
+    summary: '市场地址与签名公钥：留空用官方市场；自建市场用自己的密钥签名、插件按社区级对待',
+    keywords: ['插件', '市场', '公钥', '签名', '自建', '供应链'],
+    scope: 'global',
+    fields: [
+      field('url', '市场地址', 'text', {
+        path: 'pluginMarketplaceUrl',
+        hint: '留空 = 官方市场；自建市场须 https',
+      }),
+      field('publicKey', '签名公钥（base64）', 'text', {
+        path: 'pluginMarketplacePublicKey',
+        hint: '自建市场用自己的密钥签名索引；留空 = 官方公钥。自建市场的插件最高按「社区」级对待',
+      }),
+    ],
+    // 供应链信任根：Bot 可以出卡，但宿主绝不采用会话里给的值（设计 51 §6.1）。
+    write: write('user-only'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-marketplace' },
+    store: {
+      kind: 'settings',
+      paths: ['pluginMarketplaceUrl', 'pluginMarketplacePublicKey'],
+      generic: true,
+    },
   }),
 ];

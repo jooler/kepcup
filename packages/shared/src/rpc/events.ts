@@ -33,6 +33,10 @@ import {
   shareFailedChangedPayloadSchema,
   shareTargetsChangedPayloadSchema,
 } from '../domain/share.js';
+import {
+  pluginsChangedPayloadSchema,
+  pluginsMarketplaceUpdatedPayloadSchema,
+} from '../domain/plugins.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -453,6 +457,10 @@ export const rpcEventSchemas = {
   'remote.deviceChanged': remoteDeviceChangedPayloadSchema,
   /** D96: 配对请求到达、等桌面确认（确认卡）。 */
   'remote.pairingRequested': remotePairingRequestedPayloadSchema,
+  /** 插件（D104）：安装 / 卸载 / 启停 / 更新后，渲染端重拉全部投影视图。 */
+  'plugins.changed': pluginsChangedPayloadSchema,
+  /** 插件市场（D104 P1-1）：索引采纳或端点切换后刷新市场视图（generatedAt null = 清空）。 */
+  'plugins.marketplace.updated': pluginsMarketplaceUpdatedPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

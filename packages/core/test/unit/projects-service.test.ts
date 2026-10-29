@@ -32,6 +32,8 @@ interface Rig {
   systemEvents: Array<{ conversationId: string; event: string; text: string }>;
   cascades: Array<{ conversationId: string; botId: string }>;
   workdirLabels: Map<string, string>;
+  pluginsChanged: string[][];
+  installedPlugins: Set<string>;
 }
 
 let rig: Rig;
@@ -48,6 +50,8 @@ beforeEach(() => {
   const systemEvents: Array<{ conversationId: string; event: string; text: string }> = [];
   const cascades: Array<{ conversationId: string; botId: string }> = [];
   const workdirLabels = new Map<string, string>();
+  const pluginsChanged: string[][] = [];
+  const installedPlugins = new Set<string>();
   const projects = new ProjectsService({
     db,
     clock,
@@ -59,8 +63,21 @@ beforeEach(() => {
     publishConversation: (conversationId) => published.push(conversationId),
     appendSystemEvent: (input) => systemEvents.push(input),
     workdirLabelOf: (conversationId) => workdirLabels.get(conversationId) ?? null,
+    emitPluginsChanged: (pluginIds) => pluginsChanged.push([...pluginIds]),
   });
-  rig = { db, projects, bots, conversations, published, systemEvents, cascades, workdirLabels };
+  projects.attachPluginDirectory({ installed: (id) => installedPlugins.has(id) });
+  rig = {
+    db,
+    projects,
+    bots,
+    conversations,
+    published,
+    systemEvents,
+    cascades,
+    workdirLabels,
+    pluginsChanged,
+    installedPlugins,
+  };
 });
 
 function makeBot(id: string, options: { role?: 'butler'; profileName?: string } = {}) {
@@ -328,5 +345,63 @@ describe('ProjectsService.ledProjectsOf', () => {
       { id: two.id, title: null },
     ]);
     expect(rig.projects.leadOf(one.id)).toBe(a.id);
+  });
+});
+
+describe('ProjectsService project_plugins (P2 注入模型)', () => {
+  it('setPlugins 校验项目会话与已安装插件，整体替换去重排序，广播两个事件', () => {
+    const a = makeBot('甲');
+    const b = makeBot('乙');
+    const project = rig.projects.create({
+      title: '项目',
+      leadBotId: a.id,
+      memberBotIds: [a.id, b.id],
+    });
+    const { conversation: direct } = rig.conversations.openDirect(a.id);
+
+    // 非项目会话拒绝。
+    expect(() => rig.projects.setPlugins(direct.id, [])).toThrowError(/不是项目组/);
+    // 未安装的插件拒绝。
+    expect(() => rig.projects.setPlugins(project.id, ['io.github.tester/missing'])).toThrowError(
+      /未安装/,
+    );
+
+    rig.installedPlugins.add('io.github.tester/beta');
+    rig.installedPlugins.add('io.github.tester/alpha');
+    const written = rig.projects.setPlugins(project.id, [
+      'io.github.tester/beta',
+      'io.github.tester/alpha',
+      'io.github.tester/beta',
+    ]);
+    expect(written).toEqual(['io.github.tester/alpha', 'io.github.tester/beta']);
+    expect(rig.projects.pluginsOf(project.id)).toEqual([
+      'io.github.tester/alpha',
+      'io.github.tester/beta',
+    ]);
+    expect(rig.published).toContain(project.id);
+    // 事件 ids = 新旧并集（此前为空 → 即新集；与 setBotPlugins 的刷新语义一致）。
+    expect(rig.pluginsChanged.at(-1)).toEqual(
+      expect.arrayContaining(['io.github.tester/alpha', 'io.github.tester/beta']),
+    );
+
+    // 整体替换：清空后读为空，事件仍发（并集含刚移除的 id）。
+    rig.projects.setPlugins(project.id, []);
+    expect(rig.projects.pluginsOf(project.id)).toEqual([]);
+    expect(rig.pluginsChanged.at(-1)).toEqual(
+      expect.arrayContaining(['io.github.tester/alpha', 'io.github.tester/beta']),
+    );
+    expect(rig.pluginsChanged).toHaveLength(2);
+  });
+
+  it('pluginsOf：不存在的会话 / 无授权时为空数组（读路径容错）', () => {
+    expect(rig.projects.pluginsOf('conv_none')).toEqual([]);
+    const a = makeBot('丙');
+    const b = makeBot('丁');
+    const project = rig.projects.create({
+      title: '空项目',
+      leadBotId: a.id,
+      memberBotIds: [a.id, b.id],
+    });
+    expect(rig.projects.pluginsOf(project.id)).toEqual([]);
   });
 });

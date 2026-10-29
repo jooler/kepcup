@@ -14,14 +14,14 @@ Bot 需要读到 PDF（及扫描件、Office 文档、EPUB、网页存档等）�
 
 第三方方案被排除的原因：打包 venv（约 3.4GB）超出技能库单文件 50MB 上限且已过时；双通道路由的语义官方 Skill 已内置（本地优先 + 显式上云授权）；MCP 形态进不了本宿主运行时（技能扫描把 `mcp__` 判为不兼容，Bot 无 MCP 客户端）；其他宿主的脚本封装绑定了别家的执行环境。
 
-**引入方式为逐字 vendored**（不改写、不翻译、不删节）：本宿主的静态扫描（宿主专有能力词、frontmatter 声明）对官方原文全部通过，逐字引入让"跟随官方更新"成为纯机械操作（同步脚本 + 递增版本号）；任何改写都会让每次同步变成人工比对。代价是技能正文为英文——市场的中文名、一句话介绍与试用语由 `catalog.json` 承担，不影响发现与触发。
+**引入方式为逐字 vendored**（不改写、不翻译、不删节）：本宿主的静态扫描（宿主专有能力词、frontmatter 声明）对官方原文全部通过，逐字引入让"跟随官方更新"成为纯机械操作（同步脚本 + 递增版本号）；任何改写都会让每次同步变成人工比对。代价是技能正文为英文——市场的中文名、一句话介绍与试用语由内置插件 `plugin.json` 的技能贡献承担，不影响发现与触发。
 
 ## 交付形态
 
 ```text
-apps/desktop/resources/preset-skills/
-  mineru/SKILL.md        -- 官方原文逐字拷贝（锁定上游 commit，见 NOTICE.md）
-  catalog.json           -- 增加条目（id=mineru，vendored=true 标记）
+apps/desktop/resources/plugins/com.kepcup/starter-skills/
+  skills/mineru/SKILL.md -- 官方原文逐字拷贝（锁定上游 commit，见 NOTICE.md）
+  plugin.json            -- 技能贡献增加条目（dir=skills/mineru，vendored=true 标记）
   NOTICE.md              -- 记录上游来源、commit 锚点、许可证（AGPL-3.0）
 scripts/
   sync-mineru-skill.mjs  -- 从上游拉取最新 SKILL.md（--check 模式只比对）
@@ -65,5 +65,5 @@ Skill 安装后，Bot 在响应 loop 中按官方手册使用 `mineru` CLI，两
 ## 跟随官方更新
 
 - 锚点：NOTICE.md 记录引入时的上游 commit（当前 `bea1f6f`，2026-09-23）。
-- 同步：`node scripts/sync-mineru-skill.mjs`（默认 master；`--check` 只比对，可挂 CI）；同步后**必须递增** `catalog.json` 中该条目的 version，市场才能给出「更新」。
-- 版本约束由官方文本自身承载（`mineru>=4.0,<5`），catalog 条目使用同一约束。CLI 小版本升级可由 Skill 内置的审批式升级流程或环境管理器完成，两者作用于同一安装；宿主派生前校验版本落在约束内，不需要随应用发版。
+- 同步：`node scripts/sync-mineru-skill.mjs`（默认 master；`--check` 只比对，可挂 CI）；同步后**必须递增** `plugin.json` 里该技能贡献的 version，市场才能给出「更新」。
+- 版本约束由官方文本自身承载（`mineru>=4.0,<5`），插件清单条目使用同一约束。CLI 小版本升级可由 Skill 内置的审批式升级流程或环境管理器完成，两者作用于同一安装；宿主派生前校验版本落在约束内，不需要随应用发版。

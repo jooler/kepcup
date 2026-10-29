@@ -160,8 +160,16 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
+import {
+  decideMailSetupRequest,
+  mailBoundFor,
+  type MailSetupFacade,
+} from '../tools/mail-tools.js';
+import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
+import type { PluginToolFacade } from '../tools/plugin-tools.js';
+import type { PluginSearchHit, PluginToolContext } from '../plugins/install-requests.js';
+import { effectivePluginIds } from '../plugins/effective.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody } from '../apps/prompt.js';
 import { LOCAL_CONNECTOR_GUIDE } from '../apps/local-connector-guide.js';
@@ -184,7 +192,6 @@ import {
 } from '../apps/exposure.js';
 import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
-import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
   questionCapReached,
   setupFirstOptions,
@@ -436,7 +443,8 @@ export interface OrchestratorDeps {
    * Read on every run so an edited card is what the bot sees. Null when the
    * conversation is not a card chat.
    */
-  cardContext?: ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
+  cardContext?:
+    ((conversationId: string) => Omit<CardPromptContext, 'wikiTopics'> | null) | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -460,10 +468,20 @@ export interface OrchestratorDeps {
    */
   search?: SearchToolFacade | undefined;
   /**
-   * 技能安装门面（docs/design/22-file-skill-routing.md）：install_skill 工具
-   * 的预置安装 / 外部仓库导入（阻塞审批）后端；omitted in stripped test setups。
+   * 插件市场门面（D104 P1-3）：plugin_search 只读检索官方认证插件；plugin_request_install
+   * 校验后把 `confirm-plugin-install` 需求写进本 run 的 setupHit。缺省 = 不注册这两个工具。
    */
-  skillInstall?: SkillInstallFacade | undefined;
+  pluginInstall?:
+    | {
+        search(query: string): PluginSearchHit[];
+        request(
+          input: { pluginId: string; version?: string | undefined; reason: string },
+          context: PluginToolContext,
+        ):
+          | { ok: true; requirement: Extract<SetupRequirement, { kind: 'confirm-plugin-install' }> }
+          | { ok: false; message: string };
+      }
+    | undefined;
   /**
    * MCP 网关（docs/design/23-mcp-and-subagent.md D65）：null = 无 MCP 能力
    * （无 server 工具注册）。
@@ -538,11 +556,9 @@ export interface OrchestratorWikiFacade {
 /** The slice of SkillsService the response loop consumes. */
 export interface OrchestratorSkillsFacade {
   /** <skills> section body (names + descriptions only), '' when none. */
-  promptSection(botId: string): string;
-  /** <recommended_skills> section body（未安装预置，D63），'' when none. */
-  recommendedSkillsSection(): string;
+  promptSection(botId: string, extraPluginIds: ReadonlySet<string>): string;
   /** Skill directories the file tools may read / sandbox sees read-only. */
-  readableDirs(botId: string): string[];
+  readableDirs(botId: string, extraPluginIds: ReadonlySet<string>): string[];
   /** create_skill backend. */
   requestAuthoring(input: {
     botId: string;
@@ -917,11 +933,15 @@ export class Orchestrator {
         return agentId.length > 0 ? agentEngineKey(agentId) : null;
       },
       // D91: start_task validates declared capability ids against the bot's current catalog
-      // (pure read — nothing connects).
-      capabilitiesOf: (botId) => {
+      // (pure read — nothing connects). P2: the catalog follows the conversation's effective
+      // plugin set (project conversations overlay project_plugins).
+      capabilitiesOf: (botId, conversationId) => {
         const bot = deps.bots.get(botId);
         if (bot === null) return [];
-        return this.#capabilityCatalog(bot).entries.map((entry) => ({
+        return this.#capabilityCatalog(
+          bot,
+          this.#effectivePlugins(bot, conversationId ?? null),
+        ).entries.map((entry) => ({
           id: entry.id,
           ready: entry.status === 'ready',
         }));
@@ -2543,13 +2563,33 @@ export class Orchestrator {
     return { bot, conversationId: conversation.id, created };
   }
 
-  /** D91: the bot's capability catalog (pure read of its profile selections; nothing connects). */
-  #capabilityCatalog(bot: Bot): CapabilityCatalog {
+  /**
+   * P2 注入模型：一次会话的有效启用集 = `profile.runtime.plugin_ids ∪
+   * （项目会话 ? project_plugins : ∅）`（todo/plugin-platform/P2-injection.md §3.1）。
+   * 项目会话时读一次 `project_plugins`（不进缓存）；返回值恒非 undefined——
+   * 空集同样是语义（未启用任何插件，其能力不可见）。
+   */
+  #effectivePlugins(bot: Bot, conversationId: string | null): ReadonlySet<string> {
+    const conversation =
+      conversationId === null ? null : this.#deps.conversations.get(conversationId);
+    const overlay =
+      conversation !== null && conversation.type === 'project'
+        ? this.#deps.projects.pluginsOf(conversation.id)
+        : [];
+    return effectivePluginIds(bot.profile, overlay);
+  }
+
+  /**
+   * D91: the bot's capability catalog (pure read of its profile selections; nothing connects).
+   * P2: `extraPluginIds`（有效启用集，必传——P4 收口统一）过滤插件贡献的连接 / MCP server。
+   */
+  #capabilityCatalog(bot: Bot, extraPluginIds: ReadonlySet<string>): CapabilityCatalog {
     return buildCapabilityCatalog({
       connectedApps: this.#deps.connectedApps ?? null,
       mcp: this.#deps.mcp ?? null,
       appConnectionIds: bot.profile.runtime.app_connection_ids,
       mcpServerIds: bot.profile.runtime.mcp_server_ids,
+      extraPluginIds,
       logger: this.#deps.logger,
     });
   }
@@ -2717,11 +2757,7 @@ export class Orchestrator {
   #shareAttachmentPath(attachment: Attachment, botId: string | null): string | null {
     if (botId === null) return null;
     try {
-      const workspacePath = workspacePathFor(
-        this.#deps.paths,
-        botId,
-        attachment.conversationId,
-      );
+      const workspacePath = workspacePathFor(this.#deps.paths, botId, attachment.conversationId);
       return ensureShareAttachmentCopy({
         attachments: this.#deps.attachments,
         workspacePath,
@@ -2970,7 +3006,6 @@ export class Orchestrator {
     /** D92 T1b WP10: <project_wiki_topics> body ('' = omitted). */
     projectWikiTopics: string;
     skills: string;
-    recommendedSkills: string;
     /** D91: `<capabilities>` body (connected apps + custom MCP servers); '' = omitted. */
     capabilities?: string;
     /** D73 P1: `<available_apps>` body (catalog apps without an authorized connection); '' = omitted. */
@@ -3173,9 +3208,6 @@ export class Orchestrator {
             ? { projectWikiTopics: input.projectWikiTopics }
             : {}),
           ...(input.skills.length > 0 ? { skills: input.skills } : {}),
-          ...(input.recommendedSkills.length > 0
-            ? { recommendedSkills: input.recommendedSkills }
-            : {}),
           // The sections name `app_request_connection` and the capability pair: spelled the way
           // this agent sees them.
           ...(input.capabilities !== undefined && input.capabilities.length > 0
@@ -3797,7 +3829,9 @@ export class Orchestrator {
       // 不列工具**——对话轮 run 开头因此零 listTools。对话轮的外部工具只经 `capability_search` /
       // `capability_call` 懒解析取用；任务只挂 start_task 声明的能力（超 EXTERNAL_TOOLS_INLINE_MAX
       // 的、连不上的声明能力，以及未声明的 ready 能力，都走任务面两件套）。
-      const catalog = this.#capabilityCatalog(bot);
+      // P2 注入模型：本次 run 的有效启用集（项目会话一次读 project_plugins 叠加），五处装配同源。
+      const extraPluginIds = this.#effectivePlugins(bot, batch.conversationId);
+      const catalog = this.#capabilityCatalog(bot, extraPluginIds);
       // 外部智能体只拿它选中的能力包对应的能力（apps ↔ 目录连接，mcp ↔ 自定义 MCP；design 40 §7）。
       const externalKinds =
         isTask && agentId.length > 0 ? this.#externalCapabilityKinds(bot, agentId) : null;
@@ -3923,8 +3957,10 @@ export class Orchestrator {
         hasDiscovery: discovery !== undefined,
       });
       // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
-      const availableEntries = this.#deps.connectedApps?.availableFor(catalog.apps.views) ?? [];
+      const availableEntries =
+        this.#deps.connectedApps?.availableFor(catalog.apps.views, extraPluginIds) ?? [];
       const availableAppsSection = availableAppsPromptBody(availableEntries);
+      const pluginFacade = this.#pluginInstallFacade(setupHit, identity);
       const appFacade = this.#appToolFacade(
         setupHit,
         bot.profile.runtime.mcp_server_ids,
@@ -3932,6 +3968,7 @@ export class Orchestrator {
         catalog.apps,
         availableEntries,
         identity,
+        extraPluginIds,
       );
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
@@ -4014,8 +4051,11 @@ export class Orchestrator {
             })
           : undefined;
       // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
+      // P2 §3.5 / P4 落地：mailBoundFor 按有效启用集过滤（实例账号属主插件未启用 →
+      // 不注册读写工具），与 <mail_accounts> 段、工具内清单同源。
       const mailBound =
-        this.#deps.mail !== undefined && mailBoundFor(this.#deps.mail, identity.botId);
+        this.#deps.mail !== undefined &&
+        mailBoundFor(this.#deps.mail, identity.botId, extraPluginIds);
       // D93 P3: only built-in tasks spill oversized tool output; external
       // agents keep their own native harness and turn contexts stay bounded.
       const toolOutputSpill =
@@ -4050,9 +4090,11 @@ export class Orchestrator {
           ? {
               mail: this.#deps.mail,
               mailBound,
-              mailSetup: this.#mailSetupFacade(setupHit, identity),
+              mailSetup: this.#mailSetupFacade(setupHit, identity, extraPluginIds),
             }
           : {}),
+        // P2 注入模型：本次 run 的有效启用集，邮件工具内清单与注册门控同源。
+        extraPluginIds,
         ...(settingsFacade !== undefined ? { settings: settingsFacade } : {}),
         // D81：组件工具只在任务分支注册（tools/index.ts），门面这里无条件给。
         ...(this.#deps.widgets != null ? { widgets: this.#deps.widgets } : {}),
@@ -4103,8 +4145,8 @@ export class Orchestrator {
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
+        ...(pluginFacade !== undefined ? { pluginInstall: pluginFacade } : {}),
         logger: this.#deps.logger,
-        ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),
         batchMessages: batch.messages,
         onBotMessage: (message) => this.#recordBotMessage(runId, message),
         // D75 §4.1: the turn's task management (buildResponseTools registers
@@ -4221,7 +4263,8 @@ export class Orchestrator {
       // W7 <watches>: this bot's live web-page watches here.
       const watchesSection =
         this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
-      const mailSection = this.#deps.mail?.contextSection(batch.botId) ?? '';
+      const mailSection =
+        this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
       // D90 <workbench>: the butler's turn only (counts + the items that need attention).
       const workbenchSection =
         !isTask && bot.systemRole === 'butler'
@@ -4255,9 +4298,9 @@ export class Orchestrator {
           };
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
-      const skillsSection = this.#deps.skills?.promptSection(batch.botId) ?? '';
-      // D63：未安装的预置技能列表（install_skill 的匹配来源）。
-      const recommendedSkillsSection = this.#deps.skills?.recommendedSkillsSection() ?? '';
+      // P2 注入模型：插件贡献的公共技能按有效启用集过滤（Bot 私有技能不受影响）。
+      const skillsSection =
+        this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection =
         this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
@@ -4509,7 +4552,6 @@ export class Orchestrator {
               wikiTopics: wikiTopicsSection,
               projectWikiTopics: projectWikiTopicsSection,
               skills: skillsSection,
-              recommendedSkills: recommendedSkillsSection,
               capabilities: capabilitiesSection,
               availableApps: availableAppsSection,
               conversationText: `${contextAndContinuation}\n\n${triggerContent}`,
@@ -4666,15 +4708,14 @@ export class Orchestrator {
               ? { projectWikiTopics: projectWikiTopicsSection }
               : {}),
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
-            ...(recommendedSkillsSection.length > 0
-              ? { recommendedSkills: recommendedSkillsSection }
-              : {}),
             ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；五个读写工具另按绑定门控。
             ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
             // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
             ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
+            // D104 P1-3: the plugin-marketplace rule and the D63 ladder only with the tools.
+            ...(pluginFacade !== undefined ? { hasPluginTools: true } : {}),
             ...(inkcopFacade !== undefined ? { hasInkcopAgentTool: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
@@ -5458,13 +5499,16 @@ export class Orchestrator {
     apps: BotAppsExposure,
     availableEntries: readonly ConnectorCatalogEntry[],
     identity: RunIdentity,
+    extraPluginIds: ReadonlySet<string>,
   ): AppToolFacade | undefined {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
     const candidates =
       mcp == null
         ? []
-        : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
+        : mcp
+            .serversForBot(selectedServerIds, extraPluginIds)
+            .filter((server) => server.auth === 'oauth');
     const localConnectors = this.#localConnectorFacade(setupHit, identity);
     if (
       candidates.length === 0 &&
@@ -5517,6 +5561,15 @@ export class Orchestrator {
             return {
               ok: false,
               message: `没有应用「${input.connector}」：只能请求连接 <available_apps> 里列出的应用`,
+            };
+          }
+          // D105 P2 §3.4：未启用插件的连接器不给发起连接（连了也对该 Bot 不可见）。
+          const entryOwner =
+            connectedApps?.pluginOwnerOfEntry?.(connectorMetaOf(entry).slug) ?? null;
+          if (entryOwner !== null && !extraPluginIds.has(entryOwner)) {
+            return {
+              ok: false,
+              message: `「${entry.title}」的插件未启用：请先让用户在 Bot 详情的「插件」里启用后重试。`,
             };
           }
           const existing = apps.views.find((view) => view.slug === connectorMetaOf(entry).slug);
@@ -5578,6 +5631,32 @@ export class Orchestrator {
           ok: true,
           message: `已请求用户连接「${server.name}」：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
         };
+      },
+    };
+  }
+
+  /**
+   * 插件市场的工具门面（D104 P1-3）。`request` 经 core 校验（官方市场、verified、未撤销、
+   * 未安装、限频）后把 `confirm-plugin-install` 需求写进本 run 的 setupHit；工具随即返回
+   * SETUP_REQUIRED，run 中断、对话里出确认卡。拒绝原因原样回给模型（固定文案，不回显索引原文）。
+   */
+  #pluginInstallFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    identity: RunIdentity,
+  ): PluginToolFacade | undefined {
+    const requests = this.#deps.pluginInstall;
+    if (requests === undefined) return undefined;
+    return {
+      search: (query) => requests.search(query),
+      request: (input) => {
+        const result = requests.request(input, {
+          botId: identity.botId,
+          conversationId: identity.conversationId,
+          runId: identity.runId,
+        });
+        if (!result.ok) return Promise.resolve(result);
+        setupHit.requirement = result.requirement;
+        return Promise.resolve({ ok: true as const });
       },
     };
   }
@@ -5646,15 +5725,22 @@ export class Orchestrator {
   #mailSetupFacade(
     setupHit: { requirement: SetupRequirement | null },
     identity: RunIdentity,
+    extraPluginIds: ReadonlySet<string>,
   ): MailSetupFacade {
     return {
       requestSetup: (input) => {
+        // P2 §3.5：可见账号与工具注册 / <mail_accounts> 段同口径——属主插件未启用的
+        // 实例账号不算「已有绑定」，Bot 仍可请求添加邮箱。
         const bound =
-          identity.botId === null ? [] : (this.#deps.mail?.accountsForBot(identity.botId) ?? []);
+          identity.botId === null
+            ? []
+            : visibleMailAccounts(
+                this.#deps.mail?.accountsForBot(identity.botId) ?? [],
+                extraPluginIds,
+              );
         const decided = decideMailSetupRequest({
           botId: identity.botId,
           bound,
-          ...(input.provider !== undefined ? { provider: input.provider } : {}),
           ...(input.reason !== undefined ? { reason: input.reason } : {}),
         });
         if (!decided.ok) return { ok: false, message: decided.message };
@@ -5943,6 +6029,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
       return agentSetupMessage(requirement.agentId, requirement.reason);
     case 'confirm-local-connector':
       return '等待你确认添加本机连接：请在对话里的确认卡上核对域名后选择「添加」或「取消」';
+    case 'confirm-plugin-install':
+      return `Bot 建议安装插件「${requirement.name}」，请在对话里确认`;
     case 'connect-app':
       return requirement.reason === 'scope'
         ? '需要追加应用权限：请在设置中重新连接该应用'

@@ -44,9 +44,9 @@ describe('serversForBot', () => {
   it('应用 enabled ∩ Bot 选中', () => {
     const servers = [serverOf('a', true), serverOf('b', false), serverOf('c', true)];
     expect(enabledServers(servers).map((s) => s.id)).toEqual(['a', 'c']);
-    expect(serversForBot(servers, ['a', 'b']).map((s) => s.id)).toEqual(['a']);
-    expect(serversForBot(servers, [])).toEqual([]);
-    expect(serversForBot(servers, ['b'])).toEqual([]);
+    expect(serversForBot(servers, ['a', 'b'], new Set()).map((s) => s.id)).toEqual(['a']);
+    expect(serversForBot(servers, [], new Set())).toEqual([]);
+    expect(serversForBot(servers, ['b'], new Set())).toEqual([]);
   });
 });
 

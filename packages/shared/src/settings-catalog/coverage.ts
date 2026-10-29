@@ -32,6 +32,18 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     reason: 'AgentCard 按智能体生成的动态锚点；由 agents.external 经分区锚点 agents 覆盖',
   },
   {
+    kind: 'anchor',
+    id: 'bot-plugins',
+    reason:
+      'D105 Bot「插件」区块的容器锚点；细选仍由 bot.mcp-servers / bot.apps 条目经别名锚点（bot-apps / bot-mcp）覆盖',
+  },
+  {
+    kind: 'anchor',
+    id: 'project-plugins',
+    reason:
+      'D105 项目组「插件」分区：项目内叠加授权，不改成员 Bot 个人配置，不经对话读写（无目录条目）',
+  },
+  {
     kind: 'settings-section',
     id: 'contacts',
     reason:
@@ -103,12 +115,19 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     id: 'profile.retract',
     reason: '删除用户画像条目：破坏性动作；改写走设置页「用户画像」',
   },
+  {
+    kind: 'extension-tab',
+    id: 'market',
+    reason:
+      '插件市场的浏览与安装是对象管理，不是设置；市场地址与公钥、自动检查更新在设置「插件」分区',
+  },
 ];
 
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
  * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。WP4 曾登记项目详情页的四个锚点，
- * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除（当前为空）。
+ * WP7 在 `ProjectSettingsPage` / `ProjectMembersEditor` 里补上后已删除。
+ * D104 P1-1 登记的 `plugins-updates` / `plugins-marketplace` 已在 P1-3 的「已安装」页落地并删除。
  */
 export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
 
@@ -124,6 +143,7 @@ export const DIALOG_SURFACE_SECTIONS = {
 export const PROJECT_DETAIL_SECTIONS = [
   'overview',
   'members',
+  'plugins',
   'grants',
   'schedules',
   'danger',
@@ -176,6 +196,11 @@ export function settingsCoverageProblems(
   const pending = new Set(options.pendingAnchors ?? PENDING_DESKTOP_ANCHORS);
   const anchors = new Set(scan.anchors);
   const problems: string[] = [];
+  // 模板串动态锚点被扫描成「静态前缀*」（如 `plugins-filter-*`、`agent-*`）：条目里的具体
+  // 锚点（`plugins-filter-connector`）与之互相匹配——同排除表通配的判定法。
+  const anchorMatches = (scanned: string, concrete: string): boolean =>
+    scanned === concrete ||
+    (scanned.endsWith('*') && concrete.startsWith(scanned.slice(0, -1)));
 
   const linked = (surface: string, section: string) =>
     items.some((entry) => entry.deepLink.surface === surface && entry.deepLink.section === section);
@@ -185,7 +210,9 @@ export function settingsCoverageProblems(
     }
   }
   for (const anchor of scan.anchors) {
-    const covered = items.some((entry) => entry.deepLink.anchor === anchor);
+    const covered = items.some(
+      (entry) => entry.deepLink.anchor !== undefined && anchorMatches(anchor, entry.deepLink.anchor),
+    );
     if (!covered && !excluded(exclusions, 'anchor', anchor)) {
       problems.push(`锚点 ${anchor} 没有目录条目，也不在排除表里`);
     }
@@ -224,7 +251,11 @@ export function settingsCoverageProblems(
       }
     }
     if (anchor === undefined) continue;
-    if (!anchors.has(anchor) && !pending.has(anchor)) {
+    if (
+      !anchors.has(anchor) &&
+      !pending.has(anchor) &&
+      ![...anchors].some((scanned) => anchorMatches(scanned, anchor))
+    ) {
       problems.push(`${entry.id}：深链锚点 ${anchor} 不存在（也未登记为待补锚点）`);
     }
     const anchorSection = scan.anchorSections[anchor];

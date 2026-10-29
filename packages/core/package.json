@@ -20,6 +20,7 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@earendil-works/pi-mcp": "1.4.0",
+    "@kepcup/package-guard": "workspace:*",
     "@kepcup/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@napi-rs/keyring": "2.1.0",

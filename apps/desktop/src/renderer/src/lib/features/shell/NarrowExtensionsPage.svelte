@@ -8,7 +8,7 @@
    * 分组在 shell store 里互通。各分组内容自己管理滚动（页面骨架不滚动）。
    * 顶部只有红绿灯拖拽带（不渲染标题，见 NarrowPage）。
    *
-   * 水平内边距在这里补：弹框形态由 DialogContent 的 p-4 提供，ExtensionSkills
+   * 水平内边距在这里补：弹框形态由 DialogContent 的 p-4 提供，分组主体
    * 等分组内容自身不带内边距，直接平铺会顶到窗口边缘。
    */
 </script>

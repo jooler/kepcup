@@ -7,12 +7,9 @@ import {
   widgetPreviewRunOutputSchema,
 } from '../domain/widget-craft.js';
 import {
-  mailAccountCreateInputSchema,
   mailAccountGetOutputSchema,
   mailAccountIdInputSchema,
   mailAccountSetBotsInputSchema,
-  mailAccountTestInputSchema,
-  mailAccountTestOutputSchema,
   mailAccountUpdateInputSchema,
   mailAccountsListOutputSchema,
   mailBindingResumeInputSchema,
@@ -24,7 +21,6 @@ import {
   appsSkillsOffersInputSchema,
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
-import { appsDirectoryStatusSchema } from '../domain/directory-index.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import {
   settingCardStateSchema,
@@ -177,7 +173,8 @@ import {
   webSearchConfigSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
-  skillPresetInfoSchema,
+  pluginMarketplacePublicKeySchema,
+  pluginMarketplaceUrlSchema,
   unattendedStateSchema,
   usageSummaryOutputSchema,
   wikiHistoryEntrySchema,
@@ -187,6 +184,32 @@ import {
 } from '../domain/types.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
 import { boardCardSchema, boardColumnSchema, boardSummarySchema } from '../domain/board.js';
+import {
+  pluginInspectOutputSchema,
+  pluginsInstallInputSchema,
+  pluginsInstallOutputSchema,
+  pluginsListOutputSchema,
+  pluginsSetEnabledInputSchema,
+  pluginsSetEnabledOutputSchema,
+  pluginsUninstallInputSchema,
+  pluginsInspectInputSchema,
+  pluginsMarketplaceListOutputSchema,
+  pluginsMarketplaceRefreshOutputSchema,
+  pluginsUpdateInputSchema,
+  pluginsUpdateOutputSchema,
+  pluginsConfigGetInputSchema,
+  pluginsConfigGetOutputSchema,
+  pluginsConfigSetInputSchema,
+  pluginsInstancesListInputSchema,
+  pluginsInstancesListOutputSchema,
+  pluginsInstancesCreateInputSchema,
+  pluginsInstancesCreateOutputSchema,
+  pluginsInstancesUpdateInputSchema,
+  pluginsInstancesUpdateOutputSchema,
+  pluginsInstancesDeleteInputSchema,
+  pluginsSetBotPluginsInputSchema,
+  pluginsEnableForBotsInputSchema,
+} from '../domain/plugins.js';
 import {
   pairingOfferSchema,
   pairedDeviceSchema,
@@ -395,7 +418,6 @@ export const settingsUpdateInputSchema = z.object({
     .object({
       developerMode: z.boolean().optional(),
       taintGuard: z.boolean().optional(),
-      directorySync: z.boolean().optional(),
     })
     .optional(),
   /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
@@ -413,6 +435,13 @@ export const settingsUpdateInputSchema = z.object({
   /** D96 远程遥控：总开关与中转地址（部分 patch；条目 `remote.enabled` / `remote.relay`）。 */
   remoteEnabled: z.boolean().optional(),
   remoteRelayUrl: relayEndpointSchema.optional(),
+  /**
+   * D104 P1-1 插件市场：定时检查开关、市场地址与自建签名公钥（部分 patch；条目
+   * `plugins.updates` / `plugins.marketplace`）。公钥是供应链信任根，目录档位 user-only。
+   */
+  pluginAutoCheckUpdates: z.boolean().optional(),
+  pluginMarketplaceUrl: pluginMarketplaceUrlSchema.optional(),
+  pluginMarketplacePublicKey: pluginMarketplacePublicKeySchema.optional(),
   /** 用户个人资料（Profile）：显示名与头像引用（条目 `profile.user-name` / `profile.user-avatar`）。 */
   userProfileName: z.string().optional(),
   userProfileAvatar: z.string().optional(),
@@ -603,8 +632,6 @@ export const mcpRefreshToolsOutputSchema = mcpRawToolsOutputSchema;
 
 // --- 连接应用 P1：目录 / 连接管理 / 工具复核 / 持续授权 ---------------------
 export const appsCatalogListOutputSchema = z.object({ entries: z.array(appCatalogEntrySchema) });
-/** 目录同步状态（D73 P3 §7.1）：`apps.directory.status` / 手动同步 `apps.directory.sync` 共用。 */
-export const appsDirectoryStatusOutputSchema = appsDirectoryStatusSchema;
 export const appsConnectionsUpdateInputSchema = z.object({
   connectionId: z.string().min(1),
   /** 账号显示名。 */
@@ -1061,6 +1088,11 @@ export const projectsAddMembersInputSchema = z.object({
 export const projectsRemoveMemberInputSchema = z.object({
   conversationId: z.string().min(1),
   botId: z.string().min(1),
+});
+/** D105 P2：项目会话内叠加授权的插件集（project_plugins 表，整体替换）。 */
+export const projectsPluginsSetInputSchema = z.object({
+  conversationId: z.string().min(1),
+  pluginIds: z.array(z.string().min(1).max(200)).max(200),
 });
 export const projectMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
 export type ProjectMember = z.infer<typeof projectMemberSchema>;
@@ -1540,18 +1572,6 @@ export const skillsReadOutputSchema = z.object({
   dirPath: z.string(),
 });
 
-/** Skill marketplace (app-shipped preset catalog). Catalog and install state
- * are GLOBAL: presets install as public skills (public_skills), visible to
- * every bot; no per-bot targeting. */
-export const skillsPresetsListInputSchema = z.void();
-export const skillsPresetsListOutputSchema = z.object({ presets: z.array(skillPresetInfoSchema) });
-export type SkillsPresetsListOutput = z.infer<typeof skillsPresetsListOutputSchema>;
-export const skillsPresetsInstallInputSchema = z.object({
-  presetId: z.string().min(1),
-});
-export const skillsPresetsInstallOutputSchema = z.object({
-  presets: z.array(skillPresetInfoSchema),
-});
 /** 用户确认「技能目录已被删除」后清理其 DB 记录（见 skills.missing 事件）。 */
 export const skillsPurgeMissingInputSchema = z.object({ name: z.string().min(1) });
 export const skillsPurgeMissingOutputSchema = z.object({
@@ -2210,8 +2230,6 @@ export const rpcMethodSchemas = {
     output: appsSkillsInstallOutputSchema,
   },
   /** D73 P3 §7.1 签名目录索引：同步状态 / 手动立即同步（关闭时不联网，直接返回状态）。 */
-  'apps.directory.status': { input: voidInput, output: appsDirectoryStatusOutputSchema },
-  'apps.directory.sync': { input: voidInput, output: appsDirectoryStatusOutputSchema },
   'apps.connections.update': {
     input: appsConnectionsUpdateInputSchema,
     output: appsConnectionsUpdateOutputSchema,
@@ -2273,7 +2291,10 @@ export const rpcMethodSchemas = {
   'widgets.ui.close': { input: widgetsUiCloseInputSchema, output: okOutput },
   'widgets.ui.source': { input: widgetsUiSourceInputSchema, output: widgetsUiSourceOutputSchema },
   'widgets.ui.poster': { input: widgetsUiPosterInputSchema, output: widgetsUiPosterOutputSchema },
-  'widgets.ui.storage': { input: widgetsUiStorageInputSchema, output: widgetsUiStorageOutputSchema },
+  'widgets.ui.storage': {
+    input: widgetsUiStorageInputSchema,
+    output: widgetsUiStorageOutputSchema,
+  },
   'widgets.ui.openLink': {
     input: widgetsUiOpenLinkInputSchema,
     output: widgetsUiOpenLinkOutputSchema,
@@ -2414,6 +2435,7 @@ export const rpcMethodSchemas = {
     output: conversationsMembersOutputSchema,
   },
   'projects.removeMember': { input: projectsRemoveMemberInputSchema, output: okOutput },
+  'projects.plugins.set': { input: projectsPluginsSetInputSchema, output: okOutput },
   'episodes.get': { input: episodesGetInputSchema, output: episodesGetOutputSchema },
   'episodes.resume': { input: episodesResumeInputSchema, output: episodesResumeOutputSchema },
   'episodes.stop': { input: episodesStopInputSchema, output: episodesStopOutputSchema },
@@ -2551,14 +2573,6 @@ export const rpcMethodSchemas = {
   'skills.history': { input: skillsSetNameInputSchema, output: skillsHistoryOutputSchema },
   'skills.rollback': { input: skillsRollbackInputSchema, output: skillsListOutputSchema },
   'skills.read': { input: skillNameInputSchema, output: skillsReadOutputSchema },
-  'skills.presets.list': {
-    input: skillsPresetsListInputSchema,
-    output: skillsPresetsListOutputSchema,
-  },
-  'skills.presets.install': {
-    input: skillsPresetsInstallInputSchema,
-    output: skillsPresetsInstallOutputSchema,
-  },
   'skills.purgeMissing': {
     input: skillsPurgeMissingInputSchema,
     output: skillsPurgeMissingOutputSchema,
@@ -2678,11 +2692,6 @@ export const rpcMethodSchemas = {
 
   'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
   'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
-  'mail.accounts.test': { input: mailAccountTestInputSchema, output: mailAccountTestOutputSchema },
-  'mail.accounts.create': {
-    input: mailAccountCreateInputSchema,
-    output: mailAccountGetOutputSchema,
-  },
   'mail.accounts.update': {
     input: mailAccountUpdateInputSchema,
     output: mailAccountGetOutputSchema,
@@ -2760,6 +2769,46 @@ export const rpcMethodSchemas = {
     input: widgetPreviewRunInputSchema,
     output: widgetPreviewRunOutputSchema,
   },
+
+  // --- plugins (D104, docs/design/51-plugin-system.md §8) ------------------------
+  'plugins.list': { input: voidInput, output: pluginsListOutputSchema },
+  'plugins.inspect': { input: pluginsInspectInputSchema, output: pluginInspectOutputSchema },
+  'plugins.install': { input: pluginsInstallInputSchema, output: pluginsInstallOutputSchema },
+  'plugins.setEnabled': {
+    input: pluginsSetEnabledInputSchema,
+    output: pluginsSetEnabledOutputSchema,
+  },
+  'plugins.uninstall': { input: pluginsUninstallInputSchema, output: okOutput },
+  'plugins.update': { input: pluginsUpdateInputSchema, output: pluginsUpdateOutputSchema },
+  'plugins.marketplace.list': {
+    input: voidInput,
+    output: pluginsMarketplaceListOutputSchema,
+  },
+  'plugins.marketplace.refresh': {
+    input: voidInput,
+    output: pluginsMarketplaceRefreshOutputSchema,
+  },
+  // D105 P1（todo/plugin-platform README §4.1）：插件配置与实例（通用 CRUD + materializer）。
+  'plugins.config.get': {
+    input: pluginsConfigGetInputSchema,
+    output: pluginsConfigGetOutputSchema,
+  },
+  'plugins.config.set': { input: pluginsConfigSetInputSchema, output: okOutput },
+  'plugins.instances.list': {
+    input: pluginsInstancesListInputSchema,
+    output: pluginsInstancesListOutputSchema,
+  },
+  'plugins.instances.create': {
+    input: pluginsInstancesCreateInputSchema,
+    output: pluginsInstancesCreateOutputSchema,
+  },
+  'plugins.instances.update': {
+    input: pluginsInstancesUpdateInputSchema,
+    output: pluginsInstancesUpdateOutputSchema,
+  },
+  'plugins.instances.delete': { input: pluginsInstancesDeleteInputSchema, output: okOutput },
+  'plugins.setBotPlugins': { input: pluginsSetBotPluginsInputSchema, output: okOutput },
+  'plugins.enableForBots': { input: pluginsEnableForBotsInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -2881,8 +2930,6 @@ const APP_METHODS = [
   'apps.localConnectors.remove',
   'apps.skills.offers',
   'apps.skills.install',
-  'apps.directory.status',
-  'apps.directory.sync',
   'apps.connections.update',
   'apps.connections.setToolPolicy',
   'apps.connections.tools',
@@ -2951,6 +2998,7 @@ const APP_METHODS = [
   'projects.update',
   'projects.addMembers',
   'projects.removeMember',
+  'projects.plugins.set',
   'messages.list',
   'messages.edit',
   'messages.send',
@@ -3032,8 +3080,6 @@ const APP_METHODS = [
   'skills.history',
   'skills.rollback',
   'skills.read',
-  'skills.presets.list',
-  'skills.presets.install',
   'wiki.tree',
   'wiki.page',
   'wiki.search',
@@ -3086,8 +3132,6 @@ const APP_METHODS = [
   'stickies.delete',
   'mail.accounts.list',
   'mail.accounts.get',
-  'mail.accounts.test',
-  'mail.accounts.create',
   'mail.accounts.update',
   'mail.accounts.delete',
   'mail.accounts.setBots',
@@ -3112,6 +3156,21 @@ const APP_METHODS = [
   'remote.devices',
   'remote.config.get',
   'remote.config.set',
+  'plugins.list',
+  'plugins.inspect',
+  'plugins.install',
+  'plugins.setEnabled',
+  'plugins.uninstall',
+  'plugins.update',
+  'plugins.marketplace.list',
+  'plugins.marketplace.refresh',
+  'plugins.config.get',
+  'plugins.config.set',
+  'plugins.instances.list',
+  'plugins.instances.create',
+  'plugins.instances.update',
+  'plugins.instances.delete',
+  'plugins.setBotPlugins',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;

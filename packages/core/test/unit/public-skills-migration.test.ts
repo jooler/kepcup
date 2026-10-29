@@ -106,6 +106,16 @@ describe('0013 public_skills 迁移', () => {
     // board_cards 外键指向 todos，必须先于 todos 摘除。
     db.exec('drop table board_cards;');
     db.exec('drop table board_columns;');
+    // main 0053（D104 插件系统）的两表同样摘除：plugin_items 外键指向 plugins，先摘账本。
+    // main 0056（D105）的实例表同样摘除（config_json 列随 plugins 整表回退）。
+    // mail_accounts.instance_id 外键指向 plugin_instances（0058），先摘 mail 侧再摘实例表。
+    db.exec('drop table mail_account_bots;');
+    db.exec('drop table mail_accounts;');
+    db.exec('drop table plugin_instances;');
+    // main 0057（D105 P2）的项目叠加授权表同样摘除。
+    db.exec('drop table project_plugins;');
+    db.exec('drop table plugin_items;');
+    db.exec('drop table plugins;');
     db.exec('drop table todo_runs;');
     db.exec('drop table todos;');
     db.exec('drop table memos;');
@@ -128,9 +138,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table widget_docs;');
     db.exec('drop table widget_versions;');
     db.exec('drop table widgets;');
-    // main 0031（D84 邮件）的新表同样摘除，回放时才能重建。
-    db.exec('drop table mail_account_bots;');
-    db.exec('drop table mail_accounts;');
+    // main 0031（D84 邮件）的新表同样摘除，回放时才能重建（0058 的 instance_id 列
+    // 已随整表摘除，回放 0058 时重建）。
     // main 0036（D88 资产移交）的两张表同样摘除（先子后父）。
     db.exec('drop table bot_handover_items;');
     db.exec('drop table bot_handovers;');

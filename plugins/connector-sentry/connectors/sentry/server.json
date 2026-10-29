@@ -1,0 +1,34 @@
+{
+  "name": "io.github.getsentry/sentry-mcp",
+  "title": "Sentry",
+  "description": "查看 Sentry 的问题、错误与 Seer 分析",
+  "version": "0.42.0",
+  "websiteUrl": "https://sentry.io",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.sentry.dev/mcp"
+    }
+  ],
+  "_meta": {
+    "app.kepcup/connector": {
+      "slug": "sentry",
+      "icon": "sentry.svg",
+      "category": "development",
+      "tier": "community",
+      "auth": {
+        "kind": "oauth",
+        "registration": "auto",
+        "clientRef": null,
+        "scopes": {
+          "default": [],
+          "write": []
+        }
+      },
+      "toolPolicy": {},
+      "skills": [],
+      "ui": false,
+      "privacyPolicy": "https://sentry.io/privacy/"
+    }
+  }
+}

@@ -181,8 +181,12 @@
   });
 
   const browserProfiles = $derived(settingsStore.settings?.browserProfiles ?? []);
+  // D105 P2：插件贡献的 server 由插件启用集接管（勾选读时被忽略）——设置卡只列
+  // 手动 / mcpb 独立安装的 server，与 Bot「插件」区块的手动工具服务同源。
   const mcpOptions = $derived(
-    (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled !== false),
+    (settingsStore.settings?.mcpServers ?? []).filter(
+      (server) => server.enabled !== false && server.source?.kind !== 'plugin',
+    ),
   );
   const agentOptions = $derived.by(() => {
     const list = agentsStore.experimental ? agentsStore.selectable : [];
@@ -299,7 +303,7 @@
       />
     {/if}
   {:else if itemId === 'bot.mcp-servers'}
-    <Label>{t('contacts.mcpServers')}</Label>
+    <Label>{t('botPanel.plugins.manualServers')}</Label>
     {#if mcpOptions.length === 0}
       <p class="text-xs text-muted-foreground">{t('settingCard.botConfig.noMcp')}</p>
     {:else}

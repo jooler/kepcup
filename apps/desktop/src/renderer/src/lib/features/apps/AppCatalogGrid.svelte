@@ -1,19 +1,15 @@
 <script lang="ts">
-  import {
-    isHiddenConnectorId,
-    type AppCatalogEntry,
-    type AppsDirectoryStatus,
-  } from '@kepcup/shared';
+  import type { AppCatalogEntry } from '@kepcup/shared';
+  import type { Snippet } from 'svelte';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import { t, connectorDescription, connectorUnavailableText } from '$lib/i18n';
-  import { core } from '$lib/rpc/client.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import ConnectAppPanel from './ConnectAppPanel.svelte';
   import { withoutLocalEntries } from './local-connectors';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import {
     CATEGORY_LABEL_KEYS,
     TIER_LABEL_KEYS,
@@ -25,7 +21,6 @@
     catalogLoadState,
     catalogView,
     communityExpanded,
-    directoryNoticeKey,
     isVerifiedTier,
     showManageButton,
     type CategoryFilter,
@@ -39,7 +34,17 @@
    * 由宿主打开该应用的账号详情。
    */
 
-  let { onManage }: { onManage?: ((connectorId: string) => void) | undefined } = $props();
+  let {
+    onManage,
+    /** 只显示该插件贡献的条目（已安装页从插件卡「管理」进入时圈定）；缺省 = 全部目录。 */
+    pluginId = undefined,
+    /** 归属插件的操作（启停 / 打开目录 / 更新 / 卸载 ⋮ 菜单）：`entry.pluginId` 非空时渲染在卡片右上角。 */
+    pluginActions,
+  }: {
+    onManage?: ((connectorId: string) => void) | undefined;
+    pluginId?: string | undefined;
+    pluginActions?: Snippet<[string]> | undefined;
+  } = $props();
 
   let query = $state('');
   let category = $state<CategoryFilter>('all');
@@ -49,10 +54,11 @@
   const loadState = $derived(
     catalogLoadState({ loaded: appsStore.catalogLoaded, error: appsStore.catalogError }),
   );
-  // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
+  // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格；
+  // `pluginId` 圈定时只保留该插件贡献的条目。
   const catalog = $derived(
     withoutLocalEntries(appsStore.catalog)
-      .filter((entry) => !isHiddenConnectorId(entry.connectorId))
+      .filter((entry) => pluginId === undefined || entry.pluginId === pluginId)
       .map((entry) => ({
         ...entry,
         description: connectorDescription(entry.connectorId, entry.description),
@@ -71,18 +77,6 @@
       communityCount: sections.community.length,
     }),
   );
-  /** 目录同步降级（验签失败 / 离线）时的一行提示；拿不到状态不打扰用户。 */
-  let directoryNotice = $state<ReturnType<typeof directoryNoticeKey>>(null);
-
-  onMount(() => {
-    void core
-      .call('apps.directory.status')
-      .then((status) => {
-        directoryNotice = directoryNoticeKey((status as AppsDirectoryStatus).state);
-      })
-      .catch(() => undefined);
-  });
-
   function toggle(entry: AppCatalogEntry): void {
     openConnectorId = openConnectorId === entry.connectorId ? null : entry.connectorId;
   }
@@ -90,11 +84,6 @@
 
 <div class="space-y-3" data-testid="apps-catalog">
   <p class="text-xs text-muted-foreground">{t('apps.catalog.hint')}</p>
-  {#if directoryNotice !== null}
-    <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="apps-directory-notice">
-      {t(directoryNotice)}
-    </p>
-  {/if}
 
   {#if loadState !== 'ready' || catalog.length > 0}
     <div class="flex flex-wrap items-center gap-2 px-1">
@@ -227,14 +216,18 @@
   {@const action = catalogAction(entry, appsStore.hasActiveFlow(target))}
   {@const icon = appIconSrc(entry.iconDataUri)}
   <div
-    class="flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
+    class="relative flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
       ? 'col-span-full'
       : ''} {entry.connectable ? '' : 'opacity-60'}"
     data-testid={`apps-catalog-card-${entry.connectorId}`}
     data-connectable={entry.connectable}
     data-tier={entry.tier}
   >
-    <div class="flex items-start gap-3">
+    <!-- 归属插件的 ⋮ 操作菜单：恒在卡片右上角；标题行留出右侧内边距避免文字顶到菜单 -->
+    {#if pluginActions !== undefined && entry.origin === 'plugin' && entry.pluginId !== undefined}
+      <div class="absolute top-2.5 right-2.5">{@render pluginActions(entry.pluginId)}</div>
+    {/if}
+    <div class="flex items-start gap-3 pe-6">
       {#if icon !== null}
         <img src={icon} alt="" class="size-9 shrink-0 rounded-lg" />
       {:else}
@@ -266,6 +259,12 @@
           <span class="text-[11px] text-muted-foreground">
             {t(CATEGORY_LABEL_KEYS[entry.category])}
           </span>
+          {#if entry.origin === 'plugin' && entry.pluginId !== undefined}
+            <PluginSourceBadge
+              pluginId={entry.pluginId}
+              testid={`apps-catalog-plugin-badge-${entry.connectorId}`}
+            />
+          {/if}
         </div>
         <p
           class="line-clamp-2 text-xs text-muted-foreground"

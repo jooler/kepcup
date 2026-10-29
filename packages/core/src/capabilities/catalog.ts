@@ -121,18 +121,22 @@ export interface CapabilityCatalog {
  * 该 Bot 的能力目录（纯读取，不连接、不列工具）。来源：`ConnectedApps.forBot(app_connection_ids)`
  * 的 views（任何状态）+ `McpService.serversForBot(mcp_server_ids)`。顺序：目录连接（按勾选顺序）
  * 在前，自定义 MCP（设置顺序）在后。
+ *
+ * P2 注入模型：`extraPluginIds`（有效启用集，**必传**——P4 收口去掉 undefined=不过滤
+ * 的旧口径）原样传给两处来源——插件贡献的连接器 / MCP server 不在启用集内时不进目录。
  */
 export function buildCapabilityCatalog(input: {
   connectedApps: Pick<ConnectedApps, 'forBot' | 'connectionStatus'> | null;
   mcp: Pick<McpService, 'serversForBot'> | null;
   appConnectionIds: readonly string[];
   mcpServerIds: readonly string[];
+  extraPluginIds: ReadonlySet<string>;
   logger?: Pick<CoreLogger, 'warn'> | undefined;
 }): CapabilityCatalog {
   const noApps: BotAppsExposure = { servers: [], views: [] };
   const apps =
     input.connectedApps !== null && input.appConnectionIds.length > 0
-      ? input.connectedApps.forBot(input.appConnectionIds)
+      ? input.connectedApps.forBot(input.appConnectionIds, input.extraPluginIds)
       : noApps;
   const entries: CapabilityEntry[] = [];
   const serverById = new Map(apps.servers.map((server) => [server.id, server]));
@@ -157,8 +161,10 @@ export function buildCapabilityCatalog(input: {
       tier: view.tier,
     });
   }
-  if (input.mcp !== null && input.mcpServerIds.length > 0) {
-    for (const server of input.mcp.serversForBot([...input.mcpServerIds])) {
+  // P2：插件贡献的 server 只看启用集（不要求勾选），所以即便 `mcp_server_ids`
+  // 为空也要向来源查询（空启用集同样是语义：插件 server 全部不可见）。
+  if (input.mcp !== null && (input.mcpServerIds.length > 0 || input.extraPluginIds.size > 0)) {
+    for (const server of input.mcp.serversForBot([...input.mcpServerIds], input.extraPluginIds)) {
       // 目录连接合成的 server 也会被 serversForBot 认出（id = 连接 id）：它们已在上面处理。
       if (serverById.has(server.id)) continue;
       // 防御（D91 后续）：`McpServer.id` 由 schema 保证字符集，读设置时也会丢掉不合规条目；这里再兜一层——

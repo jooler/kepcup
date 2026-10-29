@@ -2,32 +2,59 @@
   import { onMount } from 'svelte';
   import { Mail } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import {
-    AppError,
-    type Bot,
-    type MailAccount,
-  } from '@kepcup/shared';
+  import { AppError, type Bot, type MailAccount } from '@kepcup/shared';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import MailAccountAddForm from '$lib/features/mail/MailAccountAddForm.svelte';
 
   /**
-   * 扩展中心「邮件」（D84）。账号、授权码、收信模式和 Bot 绑定都在这一页。
-   * 授权码只在填写时出现，列表和详情不再回显。
+   * 扩展中心「邮件」（D84；P3 语义）：已建账号的聚合视图——按归属插件分组，每行
+   * 显示所属插件；遗留无主账号标「未关联插件」。添加入口在邮件插件卡（本视图的
+   * 「添加」引导过去：`installed?filter=mail` 深链）；没有任何邮件插件时给市场深链。
+   * 账号 / 授权码 / 收信模式 / Bot 绑定的管理动作保留。授权码只在填写时出现。
    */
 
   let accounts = $state<MailAccount[]>([]);
   let bots = $state<Bot[]>([]);
   let view = $state<'list' | 'add' | 'detail'>('list');
+  /** 添加流程选中的邮件插件 id（本视图提供选择；深链场景由插件卡直接进入）。 */
+  let addPluginId = $state<string | null>(null);
   let selectedId = $state<string | null>(null);
 
   let newPassword = $state('');
   let passwordBusy = $state(false);
 
   const selected = $derived(accounts.find((account) => account.id === selectedId) ?? null);
+
+  /** 提供邮件实例能力的已启用插件（添加入口的候选）。 */
+  const mailPlugins = $derived(
+    plugins.plugins.filter((plugin) => plugin.enabled && plugin.providesInstances.includes('mail')),
+  );
+
+  /** 按归属插件分组的账号（无主账号归 `null` 组）。 */
+  const groups = $derived.by(() => {
+    // Plain Map: group accounts for one render pass, not reactive UI state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const map = new Map<string | null, MailAccount[]>();
+    for (const account of accounts) {
+      const key = account.instanceId === null ? null : (account.pluginId ?? null);
+      const list = map.get(key) ?? [];
+      list.push(account);
+      map.set(key, list);
+    }
+    return [...map.entries()];
+  });
+
+  /** 无任何邮件插件且有账号时的分组名回退（归属插件已卸载的残留实例账号）。 */
+  function groupName(pluginId: string | null): string {
+    if (pluginId === null) return t('mail.group.legacy');
+    return plugins.nameOf(pluginId);
+  }
 
   function statusText(account: MailAccount): string {
     if (account.status === 'paused') return t('mail.status.paused');
@@ -47,6 +74,7 @@
   }
 
   onMount(() => {
+    void plugins.load().catch(() => undefined);
     void reload().catch((error: unknown) => {
       toast.error(error instanceof AppError ? errorText(error.code, error.message) : String(error));
     });
@@ -55,15 +83,10 @@
     });
   });
 
-  function resetForm(): void {
-    // 表单状态在 MailAccountAddForm 内；这里只切视图。
-  }
-
   function explain(error: unknown): string {
     if (error instanceof AppError) return errorText(error.code, error.message);
     return error instanceof Error ? error.message : String(error);
   }
-
 
   /** 授权码失效（登录被拒后会话已停止重试）或换了新码：测连通过后保存并重新连接。 */
   async function updatePassword(account: MailAccount): Promise<void> {
@@ -124,9 +147,14 @@
     }
   }
 
+  /** 删除：实例账号走实例路径（级联），遗留账号走旧路径。 */
   async function remove(account: MailAccount): Promise<void> {
     try {
-      await core.call('mail.accounts.delete', { id: account.id });
+      if (account.instanceId !== null) {
+        await core.call('plugins.instances.delete', { id: account.instanceId });
+      } else {
+        await core.call('mail.accounts.delete', { id: account.id });
+      }
       selectedId = null;
       view = 'list';
       await reload();
@@ -143,23 +171,46 @@
       toast.error(explain(error));
     }
   }
+  /** embedded：嵌进「已安装」的邮件筛选视图（不再是独立页签），去掉自带的滚动容器。 */
+  let { embedded = false }: { embedded?: boolean } = $props();
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-mail">
+<div
+  class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
+  data-testid="extension-mail"
+>
   {#if view === 'list'}
     <div class="mb-3 flex items-center justify-between gap-2">
       <p class="text-xs text-muted-foreground">{t('mail.intro')}</p>
       <Button
         size="sm"
         onclick={() => {
-          resetForm();
+          addPluginId = mailPlugins.length === 1 ? (mailPlugins[0]!.id ?? null) : null;
           view = 'add';
         }}
+        disabled={mailPlugins.length === 0}
         data-testid="mail-add"
       >
         {t('mail.add')}
       </Button>
     </div>
+    {#if mailPlugins.length === 0}
+      <div
+        class="mb-3 rounded-xl border border-dashed px-4 py-3 text-center text-sm text-muted-foreground"
+        data-testid="mail-no-plugin"
+      >
+        <p>{t('mail.noPlugin')}</p>
+        <Button
+          size="sm"
+          variant="outline"
+          class="mt-2"
+          onclick={() => shell.openExtensionCenter('market')}
+          data-testid="mail-market-deeplink"
+        >
+          {t('mail.openMarket')}
+        </Button>
+      </div>
+    {/if}
     {#if accounts.length === 0}
       <div
         class="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground"
@@ -169,43 +220,92 @@
         <p>{t('mail.empty')}</p>
       </div>
     {:else}
-      <ul class="space-y-2">
-        {#each accounts as account (account.id)}
-          <li>
-            <button
-              type="button"
-              class="flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm hover:bg-accent/40"
-              onclick={() => {
-                selectedId = account.id;
-                view = 'detail';
-              }}
-              data-testid={`mail-account-${account.id}`}
-            >
-              <span class="min-w-0">
-                <span class="block truncate font-medium">{account.label}</span>
-                <span class="block truncate text-xs text-muted-foreground">{account.address}</span>
-              </span>
-              <span class="shrink-0 text-xs text-muted-foreground">
-                {statusText(account)} · {t('mail.botCount', { count: account.botIds.length })}
-              </span>
-            </button>
-          </li>
+      <div class="space-y-4">
+        {#each groups as [pluginKey, groupAccounts] (pluginKey ?? '__legacy__')}
+          <section>
+            <p class="mb-1.5 text-xs font-medium text-muted-foreground" data-testid={`mail-group-${pluginKey ?? 'legacy'}`}>
+              {groupName(pluginKey)}
+            </p>
+            <ul class="space-y-2">
+              {#each groupAccounts as account (account.id)}
+                <li>
+                  <button
+                    type="button"
+                    class="flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm hover:bg-accent/40"
+                    onclick={() => {
+                      selectedId = account.id;
+                      view = 'detail';
+                    }}
+                    data-testid={`mail-account-${account.id}`}
+                  >
+                    <span class="min-w-0">
+                      <span class="block truncate font-medium">{account.label}</span>
+                      <span class="block truncate text-xs text-muted-foreground"
+                        >{account.address}</span
+                      >
+                    </span>
+                    <span class="shrink-0 text-xs text-muted-foreground">
+                      {statusText(account)} · {t('mail.botCount', { count: account.botIds.length })}
+                    </span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </section>
         {/each}
-      </ul>
+      </div>
     {/if}
   {:else if view === 'add'}
     <div class="space-y-3" data-testid="mail-add-view">
       <Button type="button" variant="ghost" size="sm" onclick={() => (view = 'list')}>
         {t('mail.back')}
       </Button>
-      <MailAccountAddForm
-        testidPrefix="mail"
-        onSaved={async (account) => {
-          await reload();
-          selectedId = account.id;
-          view = 'detail';
-        }}
-      />
+      {#if mailPlugins.length === 0}
+        <p class="text-sm text-muted-foreground">{t('mail.noPlugin')}</p>
+      {:else if mailPlugins.length === 1 && addPluginId !== null}
+        <MailAccountAddForm
+          pluginId={addPluginId}
+          testidPrefix="mail"
+          onSaved={async () => {
+            await reload();
+            view = 'list';
+          }}
+        />
+      {:else}
+        <div class="space-y-2">
+          <Label>{t('mail.pickPlugin')}</Label>
+          {#each mailPlugins as plugin (plugin.id)}
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm hover:bg-accent/40"
+              onclick={() => (addPluginId = plugin.id)}
+              data-testid={`mail-pick-${plugin.id}`}
+            >
+              <span class="min-w-0">
+                <span class="block truncate font-medium">{plugin.name}</span>
+                {#if plugin.description.length > 0}
+                  <span class="block truncate text-xs text-muted-foreground"
+                    >{plugin.description}</span
+                  >
+                {/if}
+              </span>
+              <span class="shrink-0 text-xs text-muted-foreground">
+                {t('mail.instanceCount', { count: plugin.instanceCounts.mail })}
+              </span>
+            </button>
+          {/each}
+        </div>
+        {#if addPluginId !== null}
+          <MailAccountAddForm
+            pluginId={addPluginId}
+            testidPrefix="mail"
+            onSaved={async () => {
+              await reload();
+              view = 'list';
+            }}
+          />
+        {/if}
+      {/if}
     </div>
   {:else if selected}
     <div class="space-y-4" data-testid="mail-detail">
@@ -216,6 +316,15 @@
         <h2 class="text-sm font-medium">{selected.label}</h2>
         <p class="text-xs text-muted-foreground">{selected.address}</p>
         <p class="mt-1 text-xs" data-testid="mail-detail-status">{statusText(selected)}</p>
+        <p class="mt-1 text-xs text-muted-foreground" data-testid="mail-detail-owner">
+          {selected.instanceId === null
+            ? t('mail.group.legacy')
+            : t('mail.ownerOf', {
+                plugin:
+                  selected.pluginName ??
+                  (selected.pluginId !== null ? plugins.nameOf(selected.pluginId) : ''),
+              })}
+        </p>
         {#if selected.lastError}
           <p class="mt-1 text-xs text-destructive">{selected.lastError}</p>
         {/if}
@@ -246,9 +355,6 @@
           }}
           data-testid="mail-interval"
         />
-        {#if selected.provider === 'netease_163' || selected.provider === 'netease_126'}
-          <p class="text-xs text-amber-700 dark:text-amber-400">{t('mail.pollWarning')}</p>
-        {/if}
       </div>
       <form
         class="grid gap-1.5 text-sm"
@@ -300,7 +406,11 @@
         {/each}
       </div>
       <div class="flex gap-2">
-        <Button variant="secondary" onclick={() => void pauseOrResume(selected)} data-testid="mail-pause">
+        <Button
+          variant="secondary"
+          onclick={() => void pauseOrResume(selected)}
+          data-testid="mail-pause"
+        >
           {selected.status === 'paused' ? t('mail.resume') : t('mail.pause')}
         </Button>
         <Button variant="outline" onclick={() => void remove(selected)} data-testid="mail-delete">

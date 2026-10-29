@@ -177,8 +177,7 @@ export class CoreHost implements CoreHostEvents {
         ...process.env,
         KEPCUP_APP_VERSION: this.appVersion,
         ...this.bundledBinEnv(),
-        ...this.presetSkillsEnv(),
-        ...this.connectorsEnv(),
+        ...this.builtinPluginsEnv(),
         ...this.wslRootfsEnv(),
       },
     });
@@ -241,16 +240,14 @@ export class CoreHost implements CoreHostEvents {
     return existsSync(dir) ? { KEPCUP_BUNDLED_BIN: dir } : {};
   }
 
-  /** Skill-marketplace preset catalog, also an extraResource (see paths.ts). */
-  private presetSkillsEnv(): NodeJS.ProcessEnv {
-    const dir = join(process.resourcesPath ?? '', 'preset-skills');
-    return existsSync(dir) ? { KEPCUP_PRESET_SKILLS: dir } : {};
-  }
-
-  /** Connected-apps catalog (D73), an extraResource too (see core apps/catalog.ts). */
-  private connectorsEnv(): NodeJS.ProcessEnv {
-    const dir = join(process.resourcesPath ?? '', 'connectors');
-    return existsSync(dir) ? { KEPCUP_CONNECTORS: dir } : {};
+  /**
+   * Builtin plugins (D104 P0b): since the marketplace conversion the app no
+   * longer ships any builtin plugins — the resource is absent and this env
+   * injection stays empty (the guard keeps dev overrides working).
+   */
+  private builtinPluginsEnv(): NodeJS.ProcessEnv {
+    const dir = join(process.resourcesPath ?? '', 'plugins');
+    return existsSync(dir) ? { KEPCUP_BUILTIN_PLUGINS: dir } : {};
   }
 
   /**

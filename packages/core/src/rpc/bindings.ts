@@ -98,6 +98,7 @@ import {
   projectsUpdateOutputSchema,
   projectsAddMembersInputSchema,
   projectsRemoveMemberInputSchema,
+  projectsPluginsSetInputSchema,
   episodesGetInputSchema,
   episodesGetOutputSchema,
   episodesResumeInputSchema,
@@ -194,10 +195,6 @@ import {
   skillsHistoryOutputSchema,
   skillsRollbackInputSchema,
   skillsReadOutputSchema,
-  skillsPresetsListInputSchema,
-  skillsPresetsListOutputSchema,
-  skillsPresetsInstallInputSchema,
-  skillsPresetsInstallOutputSchema,
   skillsPurgeMissingInputSchema,
   skillsPurgeMissingOutputSchema,
   wikiTreeOutputSchema,
@@ -296,6 +293,7 @@ import {
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { RemoteHub } from '../remote/hub.js';
+import { assertPluginServersIntact } from '../plugins/guards.js';
 import type { WatchService } from '../watch/service.js';
 import type { MemoService } from '../workbench/memo-service.js';
 import type { TodoService } from '../workbench/todo-service.js';
@@ -311,6 +309,7 @@ import { bindAppsMethods } from './apps-bindings.js';
 import { bindMailMethods } from './mail-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
+import { bindPluginsMethods } from './plugins-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './files-preview-bindings.js';
@@ -443,6 +442,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...(conversation.type === 'project'
       ? {
           memberPreviews: domain.projects.memberPreviews(conversation.id),
+          // P2 注入模型：项目详情输出叠加授权的插件（project_plugins 表）。
+          plugins: domain.projects.pluginsOf(conversation.id),
         }
       : {}),
   });
@@ -523,6 +524,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             taskLoop: taskLoopPatch,
             ...rest
           } = resolve(current);
+          // D104：插件登记的 MCP server 只能经插件管线增删改结构。必须在锁内、用最新设置
+          // 比对（表单提交的是整份快照，不能拿它自带的 `base` 比）。
+          if (rest.mcpServers !== undefined) {
+            assertPluginServersIntact(current.mcpServers, rest.mcpServers);
+          }
           const latestApps = current.apps;
           // P13 任务 4: the onboarding patch is partial; store the merged state so
           // a step writing one flag never erases the others.
@@ -562,7 +568,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                     ...latestApps,
                     developerMode: appsPatch.developerMode ?? latestApps.developerMode,
                     taintGuard: appsPatch.taintGuard ?? latestApps.taintGuard,
-                    directorySync: appsPatch.directorySync ?? latestApps.directorySync,
                   },
                 }
               : {}),
@@ -926,10 +931,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       userAvatarUploadOutputSchema,
       async (input) => {
         const avatar = await settingsLocked(() =>
-          domain.userProfileAvatars.upload(
-            input.mime,
-            Buffer.from(input.bytesBase64, 'base64'),
-          ),
+          domain.userProfileAvatars.upload(input.mime, Buffer.from(input.bytesBase64, 'base64')),
         );
         publishSettingsChanged(itemIdsForSettingsPaths(['userProfileAvatar']));
         return { avatar };
@@ -1117,6 +1119,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       okOutputSchema,
       async (input) => {
         await domain.projects.removeMember(input.conversationId, input.botId);
+        return { ok: true as const };
+      },
+    ),
+    /** P2 注入模型：整体替换项目组的叠加授权插件集（事件由领域层广播：conversation.updated + plugins.changed）。 */
+    'projects.plugins.set': method(
+      projectsPluginsSetInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.projects.setPlugins(input.conversationId, input.pluginIds);
         return { ok: true as const };
       },
     ),
@@ -1542,6 +1553,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.
     ...bindMcpbMethods(services),
+    // D104 P0a-2: plugins.list / inspect / install / setEnabled / uninstall.
+    ...bindPluginsMethods(services),
     // D73 P3 §7.5: apps.ui.open / close / callTool / openLink (MCP Apps rendering).
     ...bindAppsUiMethods(services).app,
     ...bindWidgetsUiMethods(services).app,
@@ -1688,18 +1701,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'skills.read': method(skillNameInputSchema, skillsReadOutputSchema, async (input) =>
       services.skills!.readSkill(input.botId, input.name),
     ),
-    // 技能市场（随应用分发的预置目录）：目录与安装态是全局的（公共技能）；
-    // 点「添加」即装入 public_skills——所有 Bot 发现并调用（无审批卡片）。
-    'skills.presets.list': method(
-      skillsPresetsListInputSchema,
-      skillsPresetsListOutputSchema,
-      async () => ({ presets: services.skillPresets!.list() }),
-    ),
-    'skills.presets.install': method(
-      skillsPresetsInstallInputSchema,
-      skillsPresetsInstallOutputSchema,
-      async (input) => ({ presets: services.skillPresets!.install(input.presetId) }),
-    ),
     // 技能目录在应用外被删除：用户在弹框点「知道了」后清理 DB 记录。
     'skills.purgeMissing': method(
       skillsPurgeMissingInputSchema,
@@ -1727,8 +1728,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'wiki.commitTree': method(wikiCommitInputSchema, wikiCommitTreeOutputSchema, async (input) => ({
       pages: await services.wiki!.commitTree(wikiOwnerOf(input.owner), input.commitOid),
     })),
-    'wiki.commitPage': method(wikiCommitPageInputSchema, wikiCommitPageOutputSchema, async (input) =>
-      services.wiki!.readCommitPage(wikiOwnerOf(input.owner), input.commitOid, input.path),
+    'wiki.commitPage': method(
+      wikiCommitPageInputSchema,
+      wikiCommitPageOutputSchema,
+      async (input) =>
+        services.wiki!.readCommitPage(wikiOwnerOf(input.owner), input.commitOid, input.path),
     ),
     'wiki.rollback': method(wikiRollbackInputSchema, wikiRollbackOutputSchema, async (input) => {
       await services.wiki!.rollback(wikiOwnerOf(input.owner), input.commitOid);
@@ -1901,9 +1905,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'board.cards.start': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
       card: requireBoard(services).start(input.cardId, 'user'),
     })),
-    'board.cards.complete': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
-      card: requireBoard(services).complete(input.cardId, 'user'),
-    })),
+    'board.cards.complete': method(
+      boardCardIdInputSchema,
+      boardCardOutputSchema,
+      async (input) => ({
+        card: requireBoard(services).complete(input.cardId, 'user'),
+      }),
+    ),
     'board.cards.cancel': method(boardCardIdInputSchema, boardCardOutputSchema, async (input) => ({
       card: requireBoard(services).cancel(input.cardId, 'user'),
     })),
@@ -1917,14 +1925,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         conversationId: requireBoard(services).conversation(input.cardId, 'user'),
       }),
     ),
-    'board.cards.delete': method(
-      boardCardIdInputSchema,
-      boardEmptyOutputSchema,
-      async (input) => {
-        await requireBoard(services).deleteCard(input.cardId, 'user');
-        return {};
-      },
-    ),
+    'board.cards.delete': method(boardCardIdInputSchema, boardEmptyOutputSchema, async (input) => {
+      await requireBoard(services).deleteCard(input.cardId, 'user');
+      return {};
+    }),
 
     // --- schedules (P10) -----------------------------------------------------
     'schedules.list': method(

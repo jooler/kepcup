@@ -19,14 +19,19 @@
   import { removeImpactKey } from '$lib/features/apps/local-connectors';
 
   /**
-   * 扩展中心 →「连接」→「本机自建」区（设计 29 §17）：Bot 读厂商文档生成、只保存在这台电脑上的
+   * 本机自建连接区（设计 29 §17）：Bot 读厂商文档生成、只保存在这台电脑上的
    * 连接。条目**只在这里出现一次**（预置目录网格按 `origin` 过滤掉本机条目）；卡片带「未审核」
    * 徽标、MCP 域名、简介、账号数；「连接」展开同一个 ConnectAppPanel（授权前核对完整授权地址、
    * 首连工具复核都沿用），「管理」进账号详情，「删除」确认后断开该条目的全部账号并移除条目。
    * 区块始终显示（没有条目时是空态，引导让 Bot 读厂商文档发起提案）。
    * 条目没有隐私政策与厂商图标：用中性占位图标。
+   * D105 P4：不再作为网格下的独立分区——收编为「已安装」页的系统卡展开内容（`embedded`，
+   * 无自带折叠头与分区边框；折叠由系统卡承担）。
    */
-  let { onManage }: { onManage: (connectorId: string) => void } = $props();
+  let {
+    onManage,
+    embedded = false,
+  }: { onManage: (connectorId: string) => void; embedded?: boolean } = $props();
 
   const views = $derived(appsStore.localConnectors);
   let expanded = $state(true);
@@ -82,142 +87,163 @@
   }
 </script>
 
-<section class="mt-5 space-y-2.5 border-t pt-3" data-testid="local-connectors-section">
-  <button
-    type="button"
-    class="flex w-full items-center gap-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
-    aria-expanded={expanded}
-    aria-controls="local-connectors-panel"
-    onclick={() => (expanded = !expanded)}
-    data-testid="local-connectors-toggle"
+<!-- 一条本机自建连接卡（独立分区与系统卡展开共用）。 -->
+{#snippet localConnectorCard(view: LocalConnectorView)}
+  {@const open = openConnectorId === view.connectorId}
+  {@const accounts = accountsOf(view.connectorId)}
+  {@const target = { kind: 'catalog', connectorId: view.connectorId } as const}
+  <div
+    class="flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open ? 'sm:col-span-2' : ''}"
+    data-testid={`local-connector-${view.connectorId}`}
+    data-origin="local"
   >
-    <ChevronRight
-      class="size-3.5 transition-transform {expanded ? 'rotate-90' : ''}"
-      aria-hidden="true"
-    />
-    {t('apps.local.section.title')}
-    <span class="font-normal"
-      >{t('common.parenthesized', {
-        text: t('apps.local.section.count', { count: views.length }),
-      })}</span
-    >
-  </button>
-  <div id="local-connectors-panel" class="space-y-2.5" hidden={!expanded}>
-    {#if expanded}
-      <p class="text-[11px] text-muted-foreground">{t('apps.local.section.hint')}</p>
-      {#if views.length === 0}
-        <p class="text-xs text-muted-foreground" data-testid="local-connectors-empty">
-          {t('apps.local.section.empty')}
-        </p>
-      {:else}
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="local-connectors-list">
-          {#each views as view (view.connectorId)}
-            {@const open = openConnectorId === view.connectorId}
-            {@const accounts = accountsOf(view.connectorId)}
-            {@const target = { kind: 'catalog', connectorId: view.connectorId } as const}
-            <div
-              class="flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
-                ? 'sm:col-span-2'
-                : ''}"
-              data-testid={`local-connector-${view.connectorId}`}
-              data-origin="local"
-            >
-              <div class="flex items-start gap-3">
-                <div
-                  class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
-                  aria-hidden="true"
-                >
-                  <Laptop class="size-4" />
-                </div>
-                <div class="min-w-0 flex-1 space-y-1">
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="text-sm font-medium" data-testid="local-connector-title">
-                      {view.title}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
-                      title={t('apps.local.badgeHint')}
-                      data-testid="local-connector-badge"
-                    >
-                      {t('apps.local.badge')}
-                    </Badge>
-                  </div>
-                  <p
-                    class="font-mono text-[11px] break-all text-muted-foreground"
-                    title={view.mcpUrl}
-                    data-testid="local-connector-host-label"
-                  >
-                    {view.mcpHost}
-                  </p>
-                  <p class="line-clamp-2 text-xs text-muted-foreground" title={view.description}>
-                    {view.description}
-                  </p>
-                  {#if accounts > 0}
-                    <p
-                      class="text-[11px] text-emerald-700 dark:text-emerald-400"
-                      data-testid="local-connector-accounts"
-                    >
-                      {t('apps.local.entry.accounts', { count: accounts })}
-                    </p>
-                  {/if}
-                </div>
-                <div class="flex shrink-0 flex-col items-end gap-1.5">
-                  <div class="flex items-center gap-1.5">
-                    {#if accounts > 0}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onclick={() => onManage(view.connectorId)}
-                        data-testid={`local-connector-manage-${view.connectorId}`}
-                      >
-                        {t('apps.local.entry.manage')}
-                      </Button>
-                    {/if}
-                    <Button
-                      size="sm"
-                      variant={open ? 'ghost' : accounts > 0 ? 'secondary' : 'default'}
-                      onclick={() => (openConnectorId = open ? null : view.connectorId)}
-                      data-testid={`local-connector-connect-${view.connectorId}`}
-                    >
-                      {open
-                        ? t('apps.catalog.close')
-                        : accounts > 0
-                          ? t('apps.catalog.connectAnother')
-                          : t('apps.catalog.connect')}
-                    </Button>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    class="text-destructive hover:text-destructive"
-                    disabled={appsStore.removingLocal[view.connectorId] === true}
-                    onclick={() => askRemove(view)}
-                    data-testid={`local-connector-delete-${view.connectorId}`}
-                  >
-                    {appsStore.removingLocal[view.connectorId] === true
-                      ? t('apps.local.entry.deleting')
-                      : t('apps.local.entry.delete')}
-                  </Button>
-                </div>
-              </div>
-              {#if open}
-                <div class="border-t pt-2.5">
-                  <ConnectAppPanel
-                    {target}
-                    name={view.title}
-                    allowDisconnect={false}
-                    testid={`local-connector-panel-${view.connectorId}`}
-                  />
-                </div>
-              {/if}
-            </div>
-          {/each}
+    <div class="flex items-start gap-3">
+      <div
+        class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+        aria-hidden="true"
+      >
+        <Laptop class="size-4" />
+      </div>
+      <div class="min-w-0 flex-1 space-y-1">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-sm font-medium" data-testid="local-connector-title">
+            {view.title}
+          </span>
+          <Badge
+            variant="outline"
+            class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+            title={t('apps.local.badgeHint')}
+            data-testid="local-connector-badge"
+          >
+            {t('apps.local.badge')}
+          </Badge>
         </div>
-      {/if}
+        <p
+          class="font-mono text-[11px] break-all text-muted-foreground"
+          title={view.mcpUrl}
+          data-testid="local-connector-host-label"
+        >
+          {view.mcpHost}
+        </p>
+        <p class="line-clamp-2 text-xs text-muted-foreground" title={view.description}>
+          {view.description}
+        </p>
+        {#if accounts > 0}
+          <p
+            class="text-[11px] text-emerald-700 dark:text-emerald-400"
+            data-testid="local-connector-accounts"
+          >
+            {t('apps.local.entry.accounts', { count: accounts })}
+          </p>
+        {/if}
+      </div>
+      <div class="flex shrink-0 flex-col items-end gap-1.5">
+        <div class="flex items-center gap-1.5">
+          {#if accounts > 0}
+            <Button
+              size="sm"
+              variant="outline"
+              onclick={() => onManage(view.connectorId)}
+              data-testid={`local-connector-manage-${view.connectorId}`}
+            >
+              {t('apps.local.entry.manage')}
+            </Button>
+          {/if}
+          <Button
+            size="sm"
+            variant={open ? 'ghost' : accounts > 0 ? 'secondary' : 'default'}
+            onclick={() => (openConnectorId = open ? null : view.connectorId)}
+            data-testid={`local-connector-connect-${view.connectorId}`}
+          >
+            {open
+              ? t('apps.catalog.close')
+              : accounts > 0
+                ? t('apps.catalog.connectAnother')
+                : t('apps.catalog.connect')}
+          </Button>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          class="text-destructive hover:text-destructive"
+          disabled={appsStore.removingLocal[view.connectorId] === true}
+          onclick={() => askRemove(view)}
+          data-testid={`local-connector-delete-${view.connectorId}`}
+        >
+          {appsStore.removingLocal[view.connectorId] === true
+            ? t('apps.local.entry.deleting')
+            : t('apps.local.entry.delete')}
+        </Button>
+      </div>
+    </div>
+    {#if open}
+      <div class="border-t pt-2.5">
+        <ConnectAppPanel
+          {target}
+          name={view.title}
+          allowDisconnect={false}
+          testid={`local-connector-panel-${view.connectorId}`}
+        />
+      </div>
     {/if}
   </div>
-</section>
+{/snippet}
+
+{#if embedded}
+  <!-- 系统卡展开内容：无折叠头 / 边框（折叠由系统卡承担），空态照给。 -->
+  <div class="space-y-2.5" data-testid="local-connectors-section">
+    <p class="text-[11px] text-muted-foreground">{t('apps.local.section.hint')}</p>
+    {#if views.length === 0}
+      <p class="text-xs text-muted-foreground" data-testid="local-connectors-empty">
+        {t('apps.local.section.empty')}
+      </p>
+    {:else}
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="local-connectors-list">
+        {#each views as view (view.connectorId)}
+          {@render localConnectorCard(view)}
+        {/each}
+      </div>
+    {/if}
+  </div>
+{:else}
+  <section class="mt-5 space-y-2.5 border-t pt-3" data-testid="local-connectors-section">
+    <button
+      type="button"
+      class="flex w-full items-center gap-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+      aria-expanded={expanded}
+      aria-controls="local-connectors-panel"
+      onclick={() => (expanded = !expanded)}
+      data-testid="local-connectors-toggle"
+    >
+      <ChevronRight
+        class="size-3.5 transition-transform {expanded ? 'rotate-90' : ''}"
+        aria-hidden="true"
+      />
+      {t('apps.local.section.title')}
+      <span class="font-normal"
+        >{t('common.parenthesized', {
+          text: t('apps.local.section.count', { count: views.length }),
+        })}</span
+      >
+    </button>
+    <div id="local-connectors-panel" class="space-y-2.5" hidden={!expanded}>
+      {#if expanded}
+        <p class="text-[11px] text-muted-foreground">{t('apps.local.section.hint')}</p>
+        {#if views.length === 0}
+          <p class="text-xs text-muted-foreground" data-testid="local-connectors-empty">
+            {t('apps.local.section.empty')}
+          </p>
+        {:else}
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="local-connectors-list">
+            {#each views as view (view.connectorId)}
+              {@render localConnectorCard(view)}
+            {/each}
+          </div>
+        {/if}
+      {/if}
+    </div>
+  </section>
+{/if}
 
 <Dialog bind:open={removeOpen}>
   <DialogContent data-testid="local-connector-remove-dialog">

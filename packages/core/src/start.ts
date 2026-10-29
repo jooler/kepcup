@@ -8,8 +8,10 @@ import { z } from 'zod';
 import {
   AGENT_CATALOG,
   AppError,
-  CONNECTOR_INDEX_MAX_BYTES,
-  CONNECTOR_INDEX_PUBLIC_KEYS,
+  MAIL_POLL_MIN_SEC,
+  PLUGIN_INDEX_BASE_URL,
+  PLUGIN_INDEX_MAX_BYTES,
+  PLUGIN_INDEX_PUBLIC_KEYS,
   SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
   findAgentEntry,
@@ -31,6 +33,7 @@ import {
   shareConsumeInputSchema,
   shareConsumeOutputSchema,
   shareTargetsSchema,
+  indexPublicKeySchema,
   type AgentCatalogEntry,
   type AppNoticePayload,
   type Bot,
@@ -41,7 +44,7 @@ import {
   type ShareTargets,
 } from '@kepcup/shared';
 import type {
-  ConnectorIndexPublicKey,
+  IndexPublicKey,
   DiagnosticsDatabaseRow,
   DiagnosticsToolRow,
   PreregisteredClientTable,
@@ -71,6 +74,7 @@ import './infra/test-hooks.js';
 import { realTimerScheduler, systemClock, type Clock, type TimerScheduler } from './infra/clock.js';
 import { createEventBus, type EventBus } from './infra/events.js';
 import { withDirectConversationBots } from './infra/conversation-events.js';
+import type { DirectoryFetch } from './plugins/marketplace-sync.js';
 import type { RpcMethodSpec, RpcServerHandle } from './rpc/server.js';
 import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
@@ -143,7 +147,6 @@ import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { SkillImporter } from './skills/library.js';
 import { SkillsService } from './skills/registry.js';
-import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
@@ -183,6 +186,17 @@ import {
 import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
+import { useGuardedMcpFetch } from './apps/http-fetch-policy.js';
+import type { ConnectorsProjector } from './plugins/projectors/connectors.js';
+import { createPluginProjectors, type PluginProjector } from './plugins/projectors/index.js';
+import { BuiltinPlugins } from './plugins/builtin.js';
+import { PluginPackager } from './plugins/package.js';
+import { PluginRegistry } from './plugins/registry.js';
+import { effectivePluginIds } from './plugins/effective.js';
+import { PluginInstallRequests } from './plugins/install-requests.js';
+import { PluginInstanceService, PluginInstanceStore, pluginInstanceSecretName } from './plugins/instances.js';
+import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
+import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
 import { TaintService } from './apps/taint.js';
@@ -201,8 +215,8 @@ import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { bindFilesPreviewMethods } from './rpc/files-preview-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
-import { DirectorySync } from './apps/directory-sync.js';
-import { createSafeFetch } from './apps/auth/safe-fetch.js';
+import { createSafeFetch, loopbackHostOf } from './apps/auth/safe-fetch.js';
+import { MarketplaceService } from './plugins/marketplace-service.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
 import { AppSkillsOffers } from './apps/skills-offer.js';
@@ -415,17 +429,26 @@ export interface CoreServicesOptions {
   appSkillSourceOverride?: (source: string) => string;
   /**
    * D73 P3 §7.1 test hook (NODE_ENV=test in a test-hooks build only): the signed-directory
-   * public key list (production list lives in shared `CONNECTOR_INDEX_PUBLIC_KEYS`, empty
-   * until the real key exists), the directory base URL (a loopback fake; its host is added
-   * to the SSRF-safe fetch allowlist) and the timer cadence. Without `keys` here the
-   * production list applies.
+   * public key list (production list lives in shared `PLUGIN_INDEX_PUBLIC_KEYS`, empty
+  /**
+   * D104 P1-1 test hook (NODE_ENV=test in a test-hooks build only): the marketplace public
+   * key list (production list lives in shared `PLUGIN_INDEX_PUBLIC_KEYS`, empty until the
+   * real key exists), the index base URL (a loopback fake) and in-memory fetches for both
+   * the index and the package downloads, plus the timer cadence.
    */
-  directorySync?: {
-    keys?: ConnectorIndexPublicKey[];
+  pluginMarketplace?: {
+    keys?: IndexPublicKey[];
     baseUrl?: string;
+    fetch?: DirectoryFetch;
+    downloadFetch?: DirectoryFetch;
     intervalMs?: number;
     initialDelayMs?: number;
   };
+  /**
+   * D104 P1-2 test hook (`__KEPCUP_TEST_HOOKS__` builds only): wraps the plugin
+   * projectors so integration tests can inject update failures (rollback coverage).
+   */
+  projectorWrap?: (projector: PluginProjector) => PluginProjector;
   /**
    * D94 test hook (NODE_ENV=test in a test-hooks build only): overrides the
    * share intake daily sweep cadence so integration tests can observe the
@@ -577,7 +600,6 @@ export interface CoreServices {
   /** P08 git import pipeline (null while locked / errored). */
   skillImporter: SkillImporter | null;
   /** P08 skill marketplace over the app-shipped preset catalog (null likewise). */
-  skillPresets: SkillPresetsService | null;
   /** P09 wiki domain (null while locked / errored). */
   wiki: WikiService | null;
   /** D92 T1b WP9: project wiki wiki.db connection pool (null with the wiki domain). */
@@ -618,6 +640,12 @@ export interface CoreServices {
   appRuntime: AppRuntime | null;
   /** D73 P2 §6.5 MCPB local bundle installer; null with `apps`. */
   mcpb: McpbInstaller | null;
+  /** D104 插件系统：账本 + 投影器 + 注册表；未装配时为 null（RPC 报 NOT_IMPLEMENTED）。 */
+  plugins: PluginRegistry | null;
+  /** D105 插件实例服务（配置 / 实例 RPC 与卸载级联）；未装配时为 null。 */
+  pluginInstances: PluginInstanceService | null;
+  /** D104 P1-1 插件市场端点解析与同步；close() 停定时器，RPC 绑定取用。 */
+  marketplace: MarketplaceService | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
   toolLock: ToolLockService | null;
   /** D73 P1 persistent per-(bot, connection, tool) grants; null with `apps`. */
@@ -636,8 +664,6 @@ export interface CoreServices {
   connectorCatalog: ConnectorCatalog | null;
   /** 本机连接（Bot 读文档生成、只存本机的目录条目）：提案 / 确认 / 删除；null with `apps`. */
   localConnectors: LocalConnectors | null;
-  /** D73 P3 signed directory sync (daily pull of the signed index; null before ready). */
-  directorySync: DirectorySync | null;
   /** D73 P1 catalog connection service (connect flow host, tools / policy / grants management). */
   appConnections: AppConnectionsService | null;
   /** D73 P3 §7.6 bundled-skills offers after a catalog connection (installs go through skill_import). */
@@ -716,6 +742,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     mkdirSync(cacheDir, { recursive: true });
   }
   mkdirSync(paths.toolchainsDir, { recursive: true });
+  mkdirSync(paths.pluginsDir, { recursive: true });
 
   const logger = await createLogger({ logsDir: paths.logsDir, dev: options.dev === true });
   // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；
@@ -874,7 +901,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     llmRouter: null,
     skills: null,
     skillImporter: null,
-    skillPresets: null,
     wiki: null,
     wikiIndexes: null,
     schedules: null,
@@ -893,6 +919,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     apps: null,
     appRuntime: null,
     mcpb: null,
+    plugins: null,
+    pluginInstances: null,
+    marketplace: null,
     toolLock: null,
     appToolGrants: null,
     taint: null,
@@ -902,7 +931,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
-    directorySync: null,
     appConnections: null,
     appSkills: null,
     appMethods: {},
@@ -927,7 +955,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       servicesClosed.closed = true;
       await services.remote?.close();
       services.jobsRunner?.stop();
-      services.directorySync?.stop();
+      services.marketplace?.stop();
       services.appSkills?.stop();
       try {
         services.schedules?.stop();
@@ -1161,7 +1189,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         events.emit('conversation.updated', {
           conversation:
             conversation.type === 'project'
-              ? { ...conversation, memberPreviews: projects.memberPreviews(conversationId) }
+              ? {
+                  ...conversation,
+                  memberPreviews: projects.memberPreviews(conversationId),
+                  // P2 注入模型：项目插件授权变更也走这条推送（设置分区回显）。
+                  plugins: projects.pluginsOf(conversationId),
+                }
               : conversation,
         });
       },
@@ -1181,6 +1214,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         const conversation = conversations.get(conversationId);
         if (conversation === null || conversation.workdirId === null) return null;
         return workdirsService.get(conversation.workdirId)?.name ?? null;
+      },
+      // P2 注入模型：项目插件授权变更 → 扩展中心 / 右栏刷新。
+      emitPluginsChanged: (pluginIds) => {
+        events.emit('plugins.changed', { ids: pluginIds });
       },
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
@@ -1245,37 +1282,22 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D73 P1: the connector catalog + the exposure facade (catalog connections → synthesized
     // servers, risk overlay, Bot prompt sections). The tool lock reads catalog `toolPolicy`
     // through it, so it is declared first and filled right after the lock exists.
-    // D73 P3 §7.1: signed directory index (daily pull → verify → merge with the bundled
-    // snapshot). An empty production key list = disabled, snapshot only.
-    const directoryTest = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
-    const directoryBase = directoryTest ? options.directorySync?.baseUrl : undefined;
-    const directorySync = new DirectorySync({
-      dir: path.join(paths.cacheDir, 'directory'),
-      keys:
-        (directoryTest ? options.directorySync?.keys : undefined) ?? CONNECTOR_INDEX_PUBLIC_KEYS,
-      fetch: createSafeFetch({
-        maxBytes: CONNECTOR_INDEX_MAX_BYTES,
-        ...(directoryBase !== undefined ? { loopbackHosts: [new URL(directoryBase).host] } : {}),
-      }),
-      clock,
-      logger,
-      enabled: () => settings.get().apps.directorySync,
-      ...(directoryBase !== undefined ? { baseUrl: directoryBase } : {}),
-      ...(directoryTest && options.directorySync?.intervalMs !== undefined
-        ? { intervalMs: options.directorySync.intervalMs }
-        : {}),
-      ...(directoryTest && options.directorySync?.initialDelayMs !== undefined
-        ? { initialDelayMs: options.directorySync.initialDelayMs }
-        : {}),
-    });
+    // D104 P0b: builtin plugin loader — skill presets and (historically) the connector
+    // catalog's bundled source. Since the marketplace conversion the app ships no
+    // builtin plugins; the loader stays for dev/test overrides.
+    const builtinPlugins = new BuiltinPlugins({ env, logger });
+    const builtinConnectorSource = builtinPlugins.connectorSource();
     const connectorCatalog =
       options.connectorCatalog ??
       new ConnectorCatalog({
-        env,
         logger,
-        directory: directorySync,
-        ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_CONNECTORS
-          ? { source: { entries: [], iconsDir: null } }
+        source: builtinConnectorSource,
+        // D105：内置条目也带归属插件 id（插件圈定的连接管理网格依赖它）。
+        sourceOwners: builtinConnectorSource.owners,
+        // 测试构建且未显式指定内置插件目录 → 连接目录为空（与旧行为一致；判断
+        // 变量换成 KEPCUP_BUILTIN_PLUGINS，原为旧连接器目录的环境变量）。
+        ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_BUILTIN_PLUGINS
+          ? { source: { entries: [], iconsDir: null, iconPaths: new Map() } }
           : {}),
       });
     // 本机连接（todo/local-connector-authoring.md）：目录的第三个来源。无论目录是内部构造还是
@@ -1293,10 +1315,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     connectorCatalog.attachLocal(localConnectors);
     localConnectors.attachCatalog(connectorCatalog);
     // 本机条目的地址由 Bot 提供：其 MCP 流量同样走 SSRF 守卫（连接时校验解析地址、同源重定向）。
+    // D104：插件登记的 server（http 端点）与其连接器条目同口径走守卫（纯谓词见 http-fetch-policy.ts）。
     const guardedMcpFetch = createGuardedMcpFetch(apps.loopbackAllowlist);
     mcp.attachHttpFetch((server) => {
-      const row = apps.store.get(server.id);
-      return row !== null && connectorCatalog.isLocal(row.connectorId)
+      return useGuardedMcpFetch(server, { store: apps.store, catalog: connectorCatalog })
         ? guardedMcpFetch
         : undefined;
     });
@@ -1506,7 +1528,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const mcpb = new McpbInstaller({
       paths,
       settings,
-      secrets,
+      secrets: {
+        // Prototype methods need explicit forwarding; `hasValue` feeds replace mode
+        // (plugin update keeps stored secrets for untouched sensitive fields).
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeByPrefix: (prefix) => secrets.removeByPrefix(prefix),
+        hasValue: (name) => secrets.hasValue(name),
+      },
       logger,
       homeDir: os.homedir(),
       audit,
@@ -1622,19 +1650,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Staged clones never survive a restart: pending approvals are cancelled
     // below (recoverInterrupted), so nothing can decide them anymore.
     skillImporter.sweepStaging();
-    // 技能市场（resources/preset-skills 随应用分发）：安装复用 registry 管线；
-    // 缺依赖与增强沙箱判定与导入同源。目录缺失（异常打包）时市场列表为空。
-    const skillPresets = new SkillPresetsService({
-      env,
-      logger,
-      skills,
-      environment: {
-        depAvailable: (dep) => environment.depAvailable(dep),
-      },
-      enhancedSandbox: {
-        available: enhancedAvailability.available,
-      },
-    });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
     // per-owner maintenance mutex, RPC reads and weekly lint scheduling (the
     // ingest/lint job runners consume it in jobs-runner).
@@ -1655,6 +1670,29 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
+    /**
+     * P2 注入模型：一次 (bot, conversation) 的有效启用集（`plugin_ids ∪ 项目叠加`），
+     * 给网关 / 外部智能体权限桥的技能目录过滤用（与 orchestrator 的 #effectivePlugins
+     * 同一套计算；这里按 run 身份现读，不进缓存）。恒返回集合——空集 = 未启用任何
+     * 插件，其贡献不可见。
+     */
+    const effectivePluginSetFor = (
+      botId: string | null | undefined,
+      conversationId: string | null | undefined,
+    ): ReadonlySet<string> => {
+      if (botId === null || botId === undefined) return new Set();
+      const bot = bots.get(botId);
+      if (bot === null) return new Set();
+      const conversation =
+        conversationId !== null && conversationId !== undefined
+          ? conversations.get(conversationId)
+          : null;
+      const overlay =
+        conversation !== null && conversation.type === 'project'
+          ? projects.pluginsOf(conversation.id)
+          : [];
+      return effectivePluginIds(bot.profile, overlay);
+    };
     const gateway = new ToolGateway({
       paths,
       sandbox,
@@ -1678,7 +1716,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         noteToolchainUse: () => environment.noteToolchainUse(),
       },
       skills: {
-        readableDirs: (botId) => skills.readableDirs(botId),
+        // P2 注入模型：沙箱 / 文件工具的可读技能目录与 <skills> 段同源过滤（BR-P08-003）。
+        readableDirs: (botId, conversationId) =>
+          skills.readableDirs(botId, effectivePluginSetFor(botId, conversationId)),
       },
       // W5: risk re-resolved at call time from the server's current tool
       // annotations; policy / autoApprove re-read from settings. A server the
@@ -1827,7 +1867,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       grants,
       allowlist,
-      skillDirs: (botId) => skills.readableDirs(botId),
+      // P2 注入模型：外部 Agent 的技能目录同样按有效启用集过滤（与 <skills> 段同源）。
+      skillDirs: (botId, conversationId) =>
+        skills.readableDirs(botId, effectivePluginSetFor(botId, conversationId)),
       redact: (text) => secrets.redact(text),
       // D75 审查 M2: the bound workdir when this run does not hold its lease.
       unleasedWorkdir: (identity) => {
@@ -2191,6 +2233,219 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     services.settingsCatalog = settingsCatalog;
 
+    // D104 插件系统（P0a-2）：账本 store + 投影器 + 注册表。放在设置宿主之后（MCP 投影器的
+    // 撤销效果要接 settingsPermissionEffects）、orchestrator 之前（唤醒不依赖插件，但启动恢复
+    // 与 RPC 装配会用到）。启动时 `plugins.start()` 在下方 environment.recoverInterrupted() 后调用。
+    const pluginStore = new PluginStore(mainDb);
+    const pluginInstanceStore = new PluginInstanceStore(mainDb);
+    const pluginPackager = new PluginPackager({
+      pluginsDir: paths.pluginsDir,
+      logger,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
+    });
+    const pluginProjectors = createPluginProjectors({
+      skills: {
+        skills,
+        environment: {
+          depAvailable: (dep) => environment.depAvailable(dep),
+        },
+        enhancedSandbox: {
+          available: enhancedAvailability.available,
+        },
+        logger,
+      },
+      mcp: {
+        settings,
+        mcpb,
+        mcp,
+        disconnector: appRuntime.disconnector,
+        revokeMcpServerChanges: (previous, next) =>
+          settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+        logger,
+      },
+      connectors: {
+        catalog: connectorCatalog,
+        connectionStore: apps.store,
+        disconnector: appRuntime.disconnector,
+        connections: appConnections,
+        events,
+        logger,
+      },
+    });
+    const connectorsProjector = pluginProjectors.find(
+      (projector): projector is ConnectorsProjector => projector.kind === 'connector',
+    ) as ConnectorsProjector;
+    connectorCatalog.attachPlugins(connectorsProjector);
+    // P2 注入模型：注入模型写路径的插件目录（store 行存在且 installed 才算已安装）。
+    const pluginInstalled = (id: string): boolean => {
+      const row = pluginStore.get(id);
+      return row !== null && row.state === 'installed';
+    };
+    bots.attachPluginDirectory({ installed: pluginInstalled });
+    projects.attachPluginDirectory({ installed: pluginInstalled });
+    // 连接器 slug 的属主插件查询（forBot 的可见性过滤用；账本即事实来源）。
+    connectedApps.attachPluginOwnerOf((connectorSlug) => plugins.ownerOf('connector', connectorSlug));
+    skills.attachPublicUninstallGuard((name) => {
+      if (plugins.ownerOf('skill', name) !== null) {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `技能「${name}」由插件管理，请在扩展中心「已安装」里卸载该插件`,
+        );
+      }
+    });
+    // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
+    // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
+    const testHooksBuild = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
+    const marketplaceOptions = testHooksBuild ? options.pluginMarketplace : undefined;
+    // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
+    // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
+    // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
+    // 只接受回环地址：缝的放行是「免私网校验 + 明文 http」，不能被指向任意内网主机。
+    const testMarketSeam = (() => {
+      if (!testHooksBuild || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
+      const seamSchema = z.object({
+        baseUrl: z.string().url(),
+        keys: z.array(indexPublicKeySchema).min(1),
+      });
+      let raw: unknown;
+      try {
+        raw = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET);
+      } catch {
+        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: not valid JSON');
+        return undefined;
+      }
+      const parsed = seamSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn(
+          { issues: parsed.error.issues.map((issue) => issue.path.join('.')) },
+          'KEPCUP_TEST_PLUGIN_MARKET ignored: unexpected shape',
+        );
+        return undefined;
+      }
+      if (loopbackHostOf(parsed.data.baseUrl) === null) {
+        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: baseUrl is not a loopback address');
+        return undefined;
+      }
+      return { ...parsed.data, loopbackHost: new URL(parsed.data.baseUrl).host };
+    })();
+    const testMarketLoopbackHosts =
+      testMarketSeam !== undefined ? [testMarketSeam.loopbackHost] : [];
+    const resolvedMarketOptions: CoreServicesOptions['pluginMarketplace'] | undefined =
+      testMarketSeam !== undefined
+        ? { baseUrl: testMarketSeam.baseUrl, keys: testMarketSeam.keys }
+        : marketplaceOptions;
+    const marketplaceFetchFactory = (fetchOptions: {
+      maxBytes: number;
+      timeoutMs?: number;
+    }): DirectoryFetch => {
+      if (resolvedMarketOptions?.fetch !== undefined) {
+        // Tests inject both channels directly; the download channel has the larger cap.
+        return fetchOptions.maxBytes > PLUGIN_INDEX_MAX_BYTES
+          ? (resolvedMarketOptions.downloadFetch ?? resolvedMarketOptions.fetch)
+          : resolvedMarketOptions.fetch;
+      }
+      return createSafeFetch({
+        ...fetchOptions,
+        ...(testMarketLoopbackHosts.length > 0 ? { loopbackHosts: testMarketLoopbackHosts } : {}),
+      });
+    };
+    const marketplace = new MarketplaceService({
+      settings,
+      cacheDir: paths.cacheDir,
+      clock,
+      logger,
+      events,
+      ...(resolvedMarketOptions?.keys !== undefined || resolvedMarketOptions?.baseUrl !== undefined
+        ? {
+            official: {
+              keys: resolvedMarketOptions.keys ?? PLUGIN_INDEX_PUBLIC_KEYS,
+              baseUrl: resolvedMarketOptions.baseUrl ?? PLUGIN_INDEX_BASE_URL,
+            },
+          }
+        : {}),
+      fetchFactory: marketplaceFetchFactory,
+      ...(resolvedMarketOptions?.intervalMs !== undefined ||
+      resolvedMarketOptions?.initialDelayMs !== undefined
+        ? {
+            timing: {
+              ...(resolvedMarketOptions.intervalMs !== undefined
+                ? { intervalMs: resolvedMarketOptions.intervalMs }
+                : {}),
+              ...(resolvedMarketOptions.initialDelayMs !== undefined
+                ? { initialDelayMs: resolvedMarketOptions.initialDelayMs }
+                : {}),
+            },
+          }
+        : {}),
+      ...(testMarketLoopbackHosts.length > 0 ? { testLoopbackHosts: testMarketLoopbackHosts } : {}),
+    });
+    services.marketplace = marketplace;
+    const plugins = new PluginRegistry({
+      store: pluginStore,
+      packager: pluginPackager,
+      projectors: pluginProjectors,
+      builtin: builtinPlugins,
+      marketplace,
+      ...(options.projectorWrap !== undefined && __KEPCUP_TEST_HOOKS__ === true
+        ? { projectorWrap: options.projectorWrap }
+        : {}),
+      secrets: {
+        // P1-2 更新的 user_config 预校验：必填敏感字段已有存值即视为满足；
+        // D105 插件 config 的敏感值落 secrets（setValue/removeValue）。
+        hasValue: (name) => secrets.hasValue(name),
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeValue: (name) => secrets.removeValue(name),
+      },
+      instanceStore: pluginInstanceStore,
+      // P3：instanceCounts.mail 的口径是 mail_accounts 里的活跃账号（软删 / 无主不算）。
+      mailInstanceCount: (pluginId) => mailService?.store.countActiveForPlugin(pluginId) ?? 0,
+      pluginsDir: paths.pluginsDir,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
+      clock,
+      logger,
+      events,
+      audit,
+    });
+    // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
+    marketplace.onAdopted(() => {
+      void plugins.applyRevocations().catch((error: unknown) => {
+        logger.warn({ error: String(error) }, 'plugin revocation enforcement failed');
+      });
+    });
+    // D105：插件实例服务（materializer 由 P3 mail / P4-M2 custom-mcp 注册）；卸载级联挂到注册表。
+    const pluginInstances = new PluginInstanceService({
+      registry: plugins,
+      pluginStore,
+      store: pluginInstanceStore,
+      secrets: {
+        hasValue: (name) => secrets.hasValue(name),
+        getValue: (name) => secrets.getValue(name),
+        setValue: (name, value) => secrets.setValue(name, value),
+        removeValue: (name) => secrets.removeValue(name),
+        names: () => secrets.names(),
+      },
+      clock,
+      logger,
+      events,
+      audit,
+    });
+    plugins.attachInstanceTeardown((pluginId) => pluginInstances.deleteAllOf(pluginId));
+    // 卸载清洗引用面：Bot 的 plugin_ids 与项目叠加授权（写路径保持严格校验）。
+    plugins.attachReferenceCleanup((pluginId) => {
+      bots.removePluginFromAll(pluginId);
+      projects.removePluginFromAll(pluginId);
+    });
+    // D104 P1-3：Bot 只能检索官方认证插件、只能出确认卡（不自己安装）。
+    const pluginInstallRequests = new PluginInstallRequests({
+      marketplace,
+      registry: plugins,
+      clock,
+      appVersion: options.appVersion ?? '0.0.0',
+      ...(options.platform !== undefined ? { platform: options.platform as NodeJS.Platform } : {}),
+    });
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -2234,6 +2489,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mcp,
       connectedApps,
       localConnectors,
+      pluginInstall: pluginInstallRequests,
       appUi,
       widgets: {
         craft: (input) => widgetCraft.craft(input),
@@ -2242,8 +2498,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       widgetCraft,
       skills: {
-        promptSection: (botId) => skills.promptSection(botId),
-        readableDirs: (botId) => skills.readableDirs(botId),
+        // P2 注入模型：orchestrator 传入本次 run 的有效启用集，透传给技能装配。
+        promptSection: (botId, extraPluginIds) =>
+          skills.promptSection(botId, extraPluginIds),
+        readableDirs: (botId, extraPluginIds) =>
+          skills.readableDirs(botId, extraPluginIds),
         // D72 P4 审查 #3 / P6：技能生成 loop 需要内置模型，或在设置「后台任务」
         // 里允许外部 Agent 生成技能（默认关）；都没有时登记前直接告诉 Bot，而不是
         // 回「已登记」后静默不做。
@@ -2257,7 +2516,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           }
           return skills.requestAuthoring(input);
         },
-        recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {
         topicsSection: (owner, options) => wiki.topicsSection(owner, options),
@@ -2292,41 +2550,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       cardContext: (conversationId) => boardService?.cardContext(conversationId) ?? null,
       settingsCatalog,
       browser: services.browserRpc,
-      // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
-      // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。
-      skillInstall: {
-        describePreset: (presetId) => skillPresets.describePreset(presetId),
-        installPreset: (presetId) => {
-          const info = skillPresets.describePreset(presetId);
-          skillPresets.install(presetId);
-          return { skillPath: skillPresets.installedSkillPath(info.name) };
-        },
-        prepareFromUrl: async (input) => {
-          const prepared = await skillImporter.prepare({
-            sourceUrl: input.sourceUrl,
-            ...(input.ref !== undefined ? { ref: input.ref } : {}),
-            ...(input.subdirectory !== undefined ? { subdirectory: input.subdirectory } : {}),
-            botId: input.botId,
-            conversationId: input.conversationId,
-          });
-          if (prepared.status === 'candidates') {
-            throw new AppError(
-              'SKILL_IMPORT_FAILED',
-              `仓库包含多个技能（${prepared.candidates.map((c) => c.name).join('、')}）：请带 subdirectory 指定其一`,
-            );
-          }
-          return prepared;
-        },
-        commitImport: (prepared) => skillImporter.commit(prepared),
-        discardImport: (prepared) => skillImporter.discard(prepared),
-        requestApproval: async (identity, kind, payload, signal) => {
-          const outcome = await approvals.request(identity, kind, payload, { signal });
-          return { decision: outcome.decision, approvalId: outcome.approval.id };
-        },
-        failApproval: (approvalId, reason) => {
-          approvals.fail(approvalId, reason);
-        },
-      },
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));
@@ -2485,9 +2708,34 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),
       notice: publishAppNotice,
+      // P3：实例账号的密码 secret 名 / 轮询边界 / 归属展示都向插件层解析（端口注入，
+      // mail 不 import 插件模块）。实例账号密码的单一事实来源是实例 secret。
+      instanceOwner: {
+        ownerOf: (instanceId) => {
+          const owner = pluginInstances.ownerOf(instanceId);
+          return owner === null ? null : { pluginId: owner.pluginId };
+        },
+        pluginName: (pluginId) => plugins.displayNameOf(pluginId),
+        passwordSecretName: (pluginId, instanceId) =>
+          pluginInstanceSecretName(pluginId, instanceId, 'password'),
+        pollBounds: async (pluginId) => {
+          const FALLBACK = { minPollSec: MAIL_POLL_MIN_SEC, defaultPollSec: 300 };
+          const manifest = await plugins.manifestOf(pluginId);
+          const contribution = manifest?.contributions.mail[0];
+          if (contribution === undefined) return FALLBACK;
+          return {
+            minPollSec: Math.max(MAIL_POLL_MIN_SEC, contribution.minPollSec),
+            defaultPollSec: contribution.defaultPollSec,
+          };
+        },
+      },
     });
     mail.start();
     mailService = mail;
+    // P3：邮件 materializer 落地（实例 = 邮箱账号）。注册在 mail 构造之后（materializer
+    // 持有 mail 引用）；DEV-065 的启动对账：实例行存在而账号缺失时清掉孤儿实例行。
+    pluginInstances.registerMaterializer('mail', createMailMaterializer(mail));
+    reconcileMailInstanceRows(pluginInstances, mail, logger);
     // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
     const handoverBotWriter: HandoverBotWriter = {
       get: (botId) => bots.get(botId),
@@ -2868,6 +3116,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // a dead process's work. Doctor runs at startup and once a day
     // (docs/dev/phases/P06-environment.md 范围: 体检时机), both best-effort.
     environment.recoverInterrupted();
+    // D104: interrupted plugin installs / uninstalls are rolled back the same way, and
+    // the installed+enabled plugins' runtime state (connector entries) is rebuilt. A
+    // failure here must never keep core from starting — the list simply shows what is
+    // missing until the next restart.
+    try {
+      await plugins.start();
+    } catch (error) {
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'plugin registry start failed',
+      );
+    }
     // 安装通报是 Bot 内部事务（事件自带 internal 标记）：照常触发 Bot 续任务，
     // 但不进用户可见对话。
     environment.setNotifier((botId, conversationId, event, text, opts) => {
@@ -3125,7 +3385,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.search = search;
     services.skills = skills;
     services.skillImporter = skillImporter;
-    services.skillPresets = skillPresets;
     services.wiki = wiki;
     services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;
@@ -3141,6 +3400,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.apps = apps;
     services.appRuntime = appRuntime;
     services.mcpb = mcpb;
+    services.plugins = plugins;
+    services.pluginInstances = pluginInstances;
     services.toolLock = toolLock;
     services.appToolGrants = appToolGrants;
     services.taint = taint;
@@ -3150,8 +3411,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;
-    services.directorySync = directorySync;
-    directorySync.start();
+    // D104 P1-1：市场定时拉取在插件注册表启动（含启动撤销检查）之后。
+    marketplace.start();
     services.appConnections = appConnections;
     // D73 P3 §7.6: bundled skills of a catalog entry are offered after the connection completes;
     // installing goes through the existing skill_import approval (never automatic).

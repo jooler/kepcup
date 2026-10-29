@@ -5,7 +5,12 @@
  * 用户画像直达底部 tab——见 openSettings 的重路由；窄屏暂无工作台入口，`mainView` 不生效。
  */
 import type { SettingsSectionId } from '$lib/features/settings/sections';
-import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
+import type {
+  ExtensionCenterFilter,
+  ExtensionCenterTab,
+  ExtensionCenterTarget,
+} from '$lib/features/extension-center/tabs';
+import { resolveExtensionCenterTarget } from '$lib/features/extension-center/tabs';
 import { PROJECT_MODULES, type ProjectModuleId, type ProjectSettingsSection } from '@kepcup/shared';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
@@ -17,7 +22,11 @@ import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layo
 import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
 
 export type { SettingsSectionId } from '$lib/features/settings/sections';
-export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
+export type {
+  ExtensionCenterFilter,
+  ExtensionCenterTab,
+  ExtensionCenterTarget,
+} from '$lib/features/extension-center/tabs';
 
 export type MainView = 'chats' | 'workbench';
 
@@ -117,8 +126,18 @@ class ShellState {
   autoOpenStartPanel = $state(false);
   /** 扩展中心弹框（原技能市场；左栏底部入口 / 右栏技能面板入口 / 设置里的「去添加」共用）。 */
   extensionCenterOpen = $state(false);
-  /** 扩展中心当前分组（Skills / 连接 / MCP）；`openExtensionCenter(tab)` 指定，用户可在弹框内切换。 */
-  extensionCenterTab = $state<ExtensionCenterTab>('skills');
+  /** 扩展中心当前分组（市场 / 已安装 / 本机应用协作）；`openExtensionCenter(tab)` 指定，用户可在弹框内切换。 */
+  extensionCenterTab = $state<ExtensionCenterTab>('installed');
+  /**
+   * 「已安装」列表的内容筛选（D104：技能 / 连接 / MCP / 邮件由插件贡献自动归类，
+   * 不再是独立页签而是筛选条件）。深链旧分组名 / `plugins-filter-*` 锚点都会落到这里。
+   */
+  extensionCenterFilter = $state<ExtensionCenterFilter>('all');
+  /**
+   * D105 P4：`localCollab` 旧深链 → 已安装页 + 滚动到「本机应用协作」系统卡。
+   * ExtensionInstalled 消费后即复位（同 autoOpenStartPanel 的模式）。
+   */
+  extensionCenterSystemCardFocus = $state(false);
 
   /**
    * 全局搜索层是否打开（侧栏搜索按钮 / Cmd+K 共用）。状态放 shell 而不是 AppSidebar：
@@ -135,8 +154,17 @@ class ShellState {
     this.searchOpen = false;
   }
 
-  openExtensionCenter(tab: ExtensionCenterTab = 'skills'): void {
-    this.extensionCenterTab = tab;
+  /**
+   * 打开扩展中心。旧的分组页名（skills / connections / mcp / mail / localCollab）是深链别名：
+   * 前四个落到「已安装」并选中对应内容筛选；`localCollab` 落到「已安装 / 全部」并滚动到
+   * 系统卡（本机应用协作收编为卡片，不再占页签）。
+   * `anchor` 为目录条目的 `plugins-filter-*` 锚点时同样选中筛选。
+   */
+  openExtensionCenter(tab: ExtensionCenterTarget = 'installed', anchor?: string): void {
+    const resolved = resolveExtensionCenterTarget(tab, anchor);
+    this.extensionCenterTab = resolved.tab;
+    this.extensionCenterFilter = resolved.filter;
+    this.extensionCenterSystemCardFocus = resolved.systemCard;
     this.extensionCenterOpen = true;
   }
 

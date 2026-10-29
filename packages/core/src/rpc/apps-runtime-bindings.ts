@@ -43,6 +43,14 @@ export function bindAppsRuntimeMethods(
     // 删 settings 条目 → 吊销并清令牌 / 连接行 / `mcp:{id}:*` 密钥 → 关闭缓存连接。幂等。
     'mcp.removeServer': method(mcpRemoveServerInputSchema, okOutputSchema, async (input) => {
       const domain = services.domain!;
+      // D104: a plugin-registered server is managed by the plugin — uninstall the plugin instead.
+      const target = domain.settings.get().mcpServers.find((server) => server.id === input.serverId);
+      if (target?.source?.kind === 'plugin') {
+        throw new AppError(
+          'PLUGIN_MANAGED',
+          `「${target.name}」由插件 ${target.source.pluginId} 管理，请在扩展中心「已安装」里卸载该插件`,
+        );
+      }
       const previous = domain.settings.get();
       if (previous.mcpServers.some((server) => server.id === input.serverId)) {
         const next = domain.settings.update({

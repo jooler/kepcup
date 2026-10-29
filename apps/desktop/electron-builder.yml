@@ -97,13 +97,6 @@ mac:
     # 平台私有二进制（rg）只打包本机架构一份（${arch} 宏按目标展开）。
     - from: resources/bin/darwin-${arch}
       to: bin/darwin-${arch}
-    # 技能市场预置目录（与平台无关，三平台同源；core-host 注入
-    # KEPCUP_PRESET_SKILLS 指向 Resources/preset-skills）。
-    - from: resources/preset-skills
-      to: preset-skills
-    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
-    - from: resources/connectors
-      to: connectors
     # D94：App Group 容器 id（带 TeamID 前缀）——主进程据此定位扩展写的 inbox。
     # to 必须写完整文件名：单文件源的 to 不带文件名时，electron-builder 会把它
     # 当目标文件路径，拷出一个名为 share-extension 的文件（主进程读
@@ -141,11 +134,9 @@ win:
     # ${arch} 插值模式与上方 resources/bin/${os}-${arch} 一致。
     - from: resources/wsl/${arch}
       to: wsl
-    - from: resources/preset-skills
-      to: preset-skills
-    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
-    - from: resources/connectors
-      to: connectors
+    # 内置插件目录（D104 P0b，与 mac 块同源）。
+    - from: resources/plugins
+      to: plugins
 
 # --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
 # deb 默认名用 package.json 的 name（@kepcup/desktop），斜杠会把文件写进子目录。
@@ -171,11 +162,9 @@ linux:
       to: tray
     - from: resources/bin/linux-${arch}
       to: bin/linux-${arch}
-    - from: resources/preset-skills
-      to: preset-skills
-    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
-    - from: resources/connectors
-      to: connectors
+    # 内置插件目录（D104 P0b，与 mac 块同源）。
+    - from: resources/plugins
+      to: plugins
 
 # 打包前确保按平台条件的 extraResources 源目录存在（缺文件只警告不阻塞）；
 # 打包后校验产物：测试路径标记必须不存在、@kepcup/core|testkit 不得进 asar、

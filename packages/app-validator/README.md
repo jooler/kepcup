@@ -14,7 +14,9 @@ node packages/app-validator/dist/cli.js validate ./server.json
 ## Usage
 
 ```
-kepcup-app validate <server.json path | https URL> [--auth] [--json] [--timeout ms] [--no-browser]
+kepcup-app validate <server.json path | https URL | plugin directory | .kepcup file> [options]
+kepcup-app init plugin <directory> [--id <id>] [--name <name>] [--force]
+kepcup-app pack <directory> [--out <file>] [--json]
 ```
 
 | Option | Meaning |
@@ -31,6 +33,10 @@ What happens without `--auth`:
   authorization / tool checks are **skipped** (`auth.skipped`, an `info`). Re-run with `--auth`.
 
 Plain `http://` is accepted only for loopback hosts (local development); everything else must be `https`.
+
+When the target is a directory or ends with `.kepcup`, the validator switches to **plugin mode**
+(see [Plugin mode](#plugin-mode)). The mode is decided from the target alone; `--auth` is ignored
+there because plugin validation is fully offline.
 
 Network safety (the CLI follows URLs a submission controls):
 
@@ -53,6 +59,7 @@ Network safety (the CLI follows URLs a submission controls):
 ```jsonc
 {
   "schemaVersion": 1,
+  "mode": "connector",                 // "connector" | "plugin"
   "target": "./server.json",          // the argument as given
   "remote": "https://mcp.example.com/mcp", // probed MCP endpoint, or null
   "auth": false,                       // --auth was requested
@@ -73,6 +80,37 @@ Network safety (the CLI follows URLs a submission controls):
 ```
 
 Passing checks are reported as `info`, so the report shows what was verified.
+
+## Plugin mode
+
+A KepCup plugin is a declaration-only package: a `plugin.json` manifest plus skills,
+connectors, MCP servers (embedded `.mcpb` or public https) and mail templates. `validate`
+accepts either an unpacked development directory or a packed `.kepcup` archive and checks it
+**without network access and without executing package code**. The package layer is the same
+`@kepcup/package-guard` used by the installer.
+
+```sh
+kepcup-app init plugin ./my-plugin --id io.github.alice/my-plugin
+kepcup-app validate ./my-plugin
+kepcup-app pack ./my-plugin --out ./my-plugin.kepcup
+kepcup-app validate ./my-plugin.kepcup
+```
+
+- `init plugin` writes `plugin.json`, `README.md` and one sample skill. It refuses a non-empty
+  directory unless `--force` is given; the id defaults to `io.github.your-name/<directory name>`.
+- `pack` collects the directory minus `.git/`, `node_modules/`, `.DS_Store`, `*.kepcup`,
+  `.kepcup-ignore` and the paths listed in `.kepcup-ignore` (one relative path or `directory/`
+  per line, `#` comments, no wildcards), builds the archive with sorted entries and fixed
+  timestamps, and validates **the archive** through the same package-guard path the installer
+  uses before writing it. Nothing is written when that validation reports an error, and the
+  excluded trees may contain anything (symlinks, junk) — only what ships is judged. Packing the
+  same directory twice yields the same sha256 (on the same Node / zlib version).
+- `validate <directory>` checks the directory as-is, with the same rules as KepCup's "install
+  from folder" (no exclusions, symlinks rejected). For a development checkout with
+  `node_modules`, validate the `pack` output instead.
+- `--json` prints the same report object as connector mode, with `"mode": "plugin"`.
+
+The full developer guide is [docs/guides/write-a-plugin.md](../../docs/guides/write-a-plugin.md).
 
 ## Running in CI
 
@@ -177,9 +215,33 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="ui-csp-insecure"></a>`ui.csp-insecure` (warn): a non-loopback `http://` / `ws://` origin.
 - <a id="ui-csp-undeclared-origin"></a>`ui.csp-undeclared-origin` (warn): the HTML references origins missing from the allowlists.
 
+### Plugin packages
+
+- <a id="plugin-manifest-read"></a>`plugin.manifest-read` (error): `plugin.json` is missing, larger than 64 KB or not valid JSON.
+- <a id="plugin-manifest-format"></a>`plugin.manifest-format` (error): `format_version` is newer than the supported 1.
+- <a id="plugin-manifest-schema"></a>`plugin.manifest-schema` (error): the manifest does not match the plugin schema (the first three issues are shown).
+- <a id="plugin-manifest-namespace"></a>`plugin.manifest-namespace` (error): the id uses the builtin-only `com.kepcup` or `local.kepcup` namespace.
+- <a id="plugin-manifest-metadata"></a>`plugin.manifest-metadata` (warn): `description`, `author`, `homepage` or `engines` is missing.
+- <a id="plugin-readme"></a>`plugin.readme` (warn): the plugin has no `README.md`.
+- <a id="plugin-icon"></a>`plugin.icon`: the manifest declares no `icon` (warn; the app falls back to its default icon), or the declared `.svg` / `.png` is missing, escapes the package, is not a valid image of that type, or exceeds 256 KiB (error).
+- <a id="plugin-files-path"></a>`plugin.files-path` (error): a contribution file or directory is missing, has the wrong type, is a symbolic link or escapes the plugin directory.
+- <a id="plugin-files-limits"></a>`plugin.files-limits` (error): the directory exceeds the package limits (20,000 entries / 200 MB per file / 500 MB unpacked).
+- <a id="plugin-package-entries"></a>`plugin.package-entries` (error): the `.kepcup` archive is unreadable or has an unsafe path, symlink, duplicate entry, encryption or ZIP64.
+- <a id="plugin-skill-frontmatter"></a>`plugin.skill-frontmatter` (error): a skill's `SKILL.md` has no leading `---` frontmatter block, or the block lacks `name:` / `description:`. KepCup runs the full parser and sandbox-compatibility scan at install time.
+- <a id="plugin-connector-entry"></a>`plugin.connector-entry`: the connector `server.json` fails the regular connector checks (findings are forwarded with the file path), or does not parse with the strict catalog-entry schema the installer uses (for example a missing `releaseGate`; plugin entries must be complete as written).
+- <a id="plugin-connector-packages"></a>`plugin.connector-packages` (error): a connector entry inside a plugin declares `packages[]`; local execution belongs in an `mcp` contribution.
+- <a id="plugin-connector-remote"></a>`plugin.connector-remote` (error): a connector remote is not a public https URL, or the entry has no remote at all.
+- <a id="plugin-connector-icon"></a>`plugin.connector-icon` (error): the icon file is not next to `server.json`.
+- <a id="plugin-mcpb-package"></a>`plugin.mcpb-package` (error): an embedded `.mcpb` is not a valid archive, lacks `manifest.json`, uses an unsupported `manifest_version`, or its `server.entry_point` (non-`uv`) is not in the bundle. Full validation runs at install time.
+- <a id="plugin-mcp-http"></a>`plugin.mcp-http` (error): an `http` contribution URL is not a public https URL. Remote servers that need OAuth must be connector contributions.
+- <a id="plugin-mail-host"></a>`plugin.mail-host` (error): a mail template host is an IP literal, `localhost`, has no dot, or uses a private suffix.
+- <a id="plugin-field-default"></a>`plugin.field-default` (warn, D105): a declared config / instance field's `default` disagrees with its type or bounds, or a sensitive field declares a default (never readable — a sensitive value must come from the user). Authoring warnings only; they do not block packing.
+- <a id="plugin-capabilities"></a>`plugin.capabilities` (info, D105): the one-line capability summary generated from the manifest (shown on the consent and plugin cards), with the config-field and instance-kind counts.
+- <a id="plugin-permissions"></a>`plugin.permissions` (info): the derived permissions the consent card will show (hosts, OAuth scopes, MCPB `user_config` keys, mail templates).
+
 ## Library use
 
-`import { validate, checkManifest, checkTools, ... } from '@kepcup/app-validator'`. The `check*` functions are
-pure (no I/O) and unit-testable; `validate()` does the I/O and returns the report object above. The risk
+`import { validate, validateTarget, validatePlugin, checkManifest, checkTools, ... } from '@kepcup/app-validator'`. The `check*` functions are
+pure (no I/O) and unit-testable; `validateTarget()` picks connector or plugin mode, and `validate()` / `validatePlugin()` do the I/O and return the report object above. The risk
 classifier, tool-definition hash and `app_{slug}_` naming come from `@kepcup/shared` (`policy/`), so the
 validator agrees with what the KepCup client will do.

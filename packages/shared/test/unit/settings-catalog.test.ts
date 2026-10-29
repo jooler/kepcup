@@ -65,7 +65,6 @@ describe('settings catalog integrity', () => {
       'bot.apps',
       'bot.skills',
       'bot.identity',
-      'skills.install',
       'schedules.schedule',
       'schedules.watch',
       'profile.user-facts',
@@ -111,7 +110,6 @@ describe('settings catalog integrity', () => {
       'mail.account': 'mail_request_setup',
       'bot.identity': 'propose_profile_change',
       'bot.file-access': 'request_access',
-      'skills.install': 'install_skill',
       'schedules.schedule': 'schedule',
       'schedules.watch': 'watch_create',
     });
@@ -127,6 +125,7 @@ describe('settings catalog integrity', () => {
         'environment.allowlist',
         'environment.sandbox',
         'environment.toolchains',
+        'plugins.marketplace',
         'remote.devices',
         'workdir.ports',
         'workdir.protect-rules',
@@ -138,6 +137,7 @@ describe('settings catalog integrity', () => {
       expect(getSettingItem(id)?.write.wideningMode, id).toBe('user-only');
     }
     for (const entry of items) {
+      if (entry.id === 'plugins.marketplace') continue; // 供应链信任根但 generic：不出权限（§4.2.4）
       if (entry.write.maxMode === 'user-only' || entry.write.wideningMode !== undefined) {
         expect(entry.write.widensPermission, entry.id).toBe(true);
       }
@@ -318,20 +318,16 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
 
   it('scans the real settings UI', () => {
     // 宽松扫描也必须扫到已知位置，否则说明扫描规则失效。
-    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models']));
+    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models', 'plugins']));
     // 「应用」分区已移除（连接相关都在扩展中心）。
     expect(scan.settingsSections).not.toContain('apps');
     expect(scan.anchors).toEqual(
       expect.arrayContaining(['default-models', 'web-search', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
-    expect(scan.extensionCenterTabs).toEqual([
-      'skills',
-      'connections',
-      'mcp',
-      'mail',
-      'localCollab',
-    ]);
+    // D104 UI 修正：技能 / 连接 / MCP / 邮件不再是页签，是「已安装」的内容筛选。
+    // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）。
+    expect(scan.extensionCenterTabs).toEqual(['market', 'installed']);
     expect(scan.botPanelTabs).toEqual(
       expect.arrayContaining(['profile', 'skills', 'access', 'schedules']),
     );
@@ -405,6 +401,8 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
       'general.workbench',
       'remote.enabled',
       'remote.relay',
+      'plugins.updates',
+      'plugins.marketplace',
     ]);
     const defaults = settingsSchema.parse({}) as Record<string, unknown>;
     for (const entry of generic) {

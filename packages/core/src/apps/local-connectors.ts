@@ -5,7 +5,6 @@ import {
   CONNECTOR_META_KEY,
   LOCAL_CONNECTORS_MAX,
   LOCAL_CONNECTOR_DESCRIPTION_MAX,
-  LOCAL_CONNECTOR_GATE,
   LOCAL_CONNECTOR_ICON,
   LOCAL_CONNECTOR_PROPOSAL_TTL_MS,
   LOCAL_CONNECTOR_TITLE_MAX,
@@ -304,7 +303,6 @@ export class LocalConnectors implements LocalConnectorSource {
           ui: false,
           // 本机条目没有隐私政策：占位为服务自己的站点（界面不应把它当成「已审核的隐私政策」展示）。
           privacyPolicy: `${origin}/`,
-          releaseGate: LOCAL_CONNECTOR_GATE,
           // 探测到的授权服务器 issuer 钉在条目里：连接时重新发现到不同的 issuer 就中止（评审 A2）。
           expectedIssuer: probe.issuer,
         },

@@ -41,7 +41,6 @@ import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { createGeneratedMediaDelivery } from './media-delivery.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
-import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
@@ -52,6 +51,7 @@ import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-to
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
+import { buildPluginTools, type PluginToolFacade } from './plugin-tools.js';
 import { buildCapabilityTools } from './capability-tools.js';
 import { buildInkcopAgentTools, type InkcopToolFacade } from './inkcop-tools.js';
 import type { CapabilityDiscovery } from '../capabilities/discovery.js';
@@ -60,10 +60,7 @@ import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
-import {
-  ensureShareAttachmentCopy,
-  shareAttachmentCopyPath,
-} from '../share/materialize.js';
+import { ensureShareAttachmentCopy, shareAttachmentCopyPath } from '../share/materialize.js';
 
 export interface ResponseToolDeps {
   messages: MessagesService;
@@ -140,9 +137,15 @@ export interface ResponseToolDeps {
   /**
    * D91：Bot 是否已有绑定邮箱（orchestrator run 开头判定一次）。
    * 假 → 只注册 mail_request_setup；真 → 注册五个读写工具，mail_request_setup 照样注册（可继续添加邮箱）。
-   * 缺省时这里按 `mail.accountsForBot` 现算（单测可省略）。
+   * 缺省时按 `mail.accountsForBot` 现算（单测可省略；真实装配恒由 orchestrator 传入）。
    */
   mailBound?: boolean | undefined;
+  /**
+   * P2 注入模型：本 run 的有效启用集（必传字段见 orchestrator；单测夹具可缺省——
+   * 缺省按空集处理，无 `pluginId` 的系统账号仍可见，无插件夹具行为不变）。
+   * 邮件工具内清单与注册门控（mailBound）同源。
+   */
+  extraPluginIds?: ReadonlySet<string> | undefined;
   /**
    * 对话内添加邮箱卡（design 18）：present 时注册 mail_request_setup（有无绑定都一样，D91）；
    * orchestrator 写入 setupHit。缺省则不注册该工具（单测可省略）。
@@ -174,11 +177,6 @@ export interface ResponseToolDeps {
    */
   search?: SearchToolFacade | undefined;
   /**
-   * 技能安装门面（docs/design/22-file-skill-routing.md）：present 时注册
-   * install_skill 工具（预置轻授权 / 外部仓库扫描审批，均阻塞等用户决定）。
-   */
-  skillInstall?: SkillInstallFacade | undefined;
-  /**
    * 宿主 SubAgent 门面（docs/design/23-mcp-and-subagent.md D66）：present 时
    * 注册 delegate_task 工具（嵌套减配子 run，结果压缩回传）。
    */
@@ -199,6 +197,11 @@ export interface ResponseToolDeps {
    * 勾选了 OAuth 自定义应用时提供，其余 Bot 工具集不变）。
    */
   apps?: AppToolFacade | undefined;
+  /**
+   * 插件市场门面（D104 P1-3）：present 时注册 `plugin_search` / `plugin_request_install`
+   * （对话轮与任务都挂；子代理不挂）。core 未装配插件模块时不给。
+   */
+  pluginInstall?: PluginToolFacade | undefined;
   /** Warnings for dropped MCP / app tools whose names collide with built-in ones (D73 §5.7). */
   logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   /**
@@ -1034,8 +1037,12 @@ export function buildResponseTools(input: {
           identity,
           mail: deps.mail,
           gateway,
-          // D91：对话轮与任务分支共用这一份（邮箱绑定门控，design 40 §6）。
-          bound: deps.mailBound ?? mailBoundFor(deps.mail, identity.botId),
+          // D91：对话轮与任务分支共用这一份（邮箱绑定门控，design 40 §6）。缺省现算：
+          // 没有启用集的单测夹具按空集——无 pluginId 的系统账号恒放行，行为不变。
+          bound:
+            deps.mailBound ??
+            mailBoundFor(deps.mail, identity.botId, deps.extraPluginIds ?? new Set<string>()),
+          extraPluginIds: deps.extraPluginIds ?? new Set<string>(),
           ...(deps.mailSetup !== undefined ? { setup: deps.mailSetup } : {}),
         })
       : [];
@@ -1133,12 +1140,6 @@ export function buildResponseTools(input: {
         })
       : [];
 
-  // 技能安装（docs/design/22-file-skill-routing.md）：门面就绪才注册。
-  const skillTools =
-    deps.skillInstall !== undefined
-      ? buildSkillTools({ identity, skills: deps.skillInstall, gateway })
-      : [];
-
   // 宿主 SubAgent（docs/design/23-mcp-and-subagent.md D66）：门面就绪才注册。
   const delegateTools =
     deps.subagent !== undefined ? buildDelegateTools({ identity, subagent: deps.subagent }) : [];
@@ -1149,11 +1150,14 @@ export function buildResponseTools(input: {
   const capabilityTools =
     deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
   const inkcopTools =
-    deps.inkcop !== undefined
-      ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop })
-      : [];
+    deps.inkcop !== undefined ? buildInkcopAgentTools({ identity, inkcop: deps.inkcop }) : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
+  // 插件市场（D104 P1-3）：只检索官方认证插件、只出确认卡；对话轮与任务都注册。
+  const pluginTools =
+    deps.pluginInstall !== undefined
+      ? buildPluginTools({ identity, pluginInstall: deps.pluginInstall })
+      : [];
 
   // 跨 Bot 委派（D71）：异步转交给另一个联系人 Bot。
   const delegationTools =
@@ -1256,6 +1260,7 @@ export function buildResponseTools(input: {
       ...capabilityTools,
       ...inkcopTools,
       ...appTools,
+      ...pluginTools,
       ...setupTools,
     ]);
   }
@@ -1285,7 +1290,6 @@ export function buildResponseTools(input: {
     ...imageTools,
     ...speechTools,
     ...webTools,
-    ...skillTools,
     ...delegateTools,
     ...presentTools,
     ...settingsTools,
@@ -1303,6 +1307,7 @@ export function buildResponseTools(input: {
     ...capabilityTools,
     ...inkcopTools,
     ...appTools,
+    ...pluginTools,
     ...setupTools,
   ]);
 }

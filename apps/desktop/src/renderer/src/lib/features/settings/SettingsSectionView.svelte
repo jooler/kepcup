@@ -20,6 +20,7 @@
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import PluginsSection from './PluginsSection.svelte';
   import type { SettingsViewSection } from './settings-sections-list';
 
   /**
@@ -110,6 +111,10 @@
     <div data-settings-anchor="allowlist">
       <AllowlistSection />
     </div>
+  </div>
+{:else if section === 'plugins'}
+  <div data-settings-section="plugins" class="space-y-6">
+    <PluginsSection />
   </div>
 {:else if section === 'usage'}
   <div data-settings-section="usage">

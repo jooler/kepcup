@@ -32,6 +32,8 @@ export interface MailAccountRecord {
   address: string;
   label: string;
   provider: MailProvider;
+  /** 所属插件实例（P3）；null = 遗留无主账号。 */
+  instanceId: string | null;
   imapHost: string;
   imapPort: number;
   imapSecure: MailSecure;
@@ -68,6 +70,7 @@ interface AccountSqlRow {
   address: string;
   label: string;
   provider: string;
+  instance_id: string | null;
   imap_host: string;
   imap_port: number;
   imap_secure: string;
@@ -104,6 +107,7 @@ function accountFromRow(row: AccountSqlRow): MailAccountRecord {
     address: row.address,
     label: row.label,
     provider: row.provider as MailProvider,
+    instanceId: row.instance_id,
     imapHost: row.imap_host,
     imapPort: row.imap_port,
     imapSecure: row.imap_secure as MailSecure,
@@ -155,6 +159,10 @@ export function toPublicAccount(
     address: row.address,
     label: row.label,
     provider: row.provider,
+    instanceId: row.instanceId,
+    // 归属展示由 MailService 注入的实例端口装饰（#ownerLabel）；store 层恒 null。
+    pluginId: null,
+    pluginName: null,
     imapHost: row.imapHost,
     imapPort: row.imapPort,
     imapSecure: row.imapSecure,
@@ -176,7 +184,7 @@ export function toPublicAccount(
   };
 }
 
-const ACCOUNT_COLUMNS = `id, address, label, provider, imap_host, imap_port, imap_secure, smtp_host, smtp_port,
+const ACCOUNT_COLUMNS = `id, address, label, provider, instance_id, imap_host, imap_port, imap_secure, smtp_host, smtp_port,
   smtp_secure, username, mode, poll_interval_sec, status, listen, last_uid, uid_validity, unseen_count, last_error,
   last_ok_at, failure_streak, created_at, updated_at, deleted_at`;
 
@@ -190,6 +198,29 @@ export class MailStore {
     return rows.map(accountFromRow);
   }
 
+  /**
+   * Active（未软删）且归属本插件的账号数——`PluginSummary.instanceCounts.mail` 的口径
+   * （P3）：软删的与遗留无主的都不算。
+   */
+  countActiveForPlugin(pluginId: string): number {
+    const row = this.db
+      .prepare(
+        `select count(*) as n from mail_accounts
+         where deleted_at is null
+           and instance_id in (select id from plugin_instances where plugin_id = ? and kind = 'mail')`,
+      )
+      .get(pluginId) as { n: number };
+    return row.n;
+  }
+
+  /** 一个插件实例落地的活跃账号 id（materializer 拆除 / 更新时定位）；无则 null。 */
+  idByInstance(instanceId: string): string | null {
+    const row = this.db
+      .prepare('select id from mail_accounts where instance_id = ? and deleted_at is null limit 1')
+      .get(instanceId) as { id: string } | undefined;
+    return row === undefined ? null : row.id;
+  }
+
   get(id: string): MailAccountRecord | null {
     const row = this.db
       .prepare(`select ${ACCOUNT_COLUMNS} from mail_accounts where id = ? and deleted_at is null`)
@@ -201,16 +232,17 @@ export class MailStore {
     this.db
       .prepare(
         `insert into mail_accounts (
-           id, address, label, provider, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure,
+           id, address, label, provider, instance_id, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure,
            username, mode, poll_interval_sec, status, listen, last_uid, uid_validity, unseen_count, last_error, last_ok_at,
            failure_streak, created_at, updated_at, deleted_at
-         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.id,
         row.address,
         row.label,
         row.provider,
+        row.instanceId,
         row.imapHost,
         row.imapPort,
         row.imapSecure,
@@ -240,6 +272,7 @@ export class MailStore {
     patch: Partial<
       Pick<
         MailAccountRecord,
+        | 'instanceId'
         | 'label'
         | 'username'
         | 'mode'
@@ -264,6 +297,7 @@ export class MailStore {
     >,
   ): void {
     const columns: Record<string, unknown> = {
+      instance_id: patch.instanceId,
       label: patch.label,
       username: patch.username,
       mode: patch.mode,

@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/connector-sentry",
+  "name": "Sentry 连接",
+  "icon": "connectors/sentry/sentry.svg",
+  "version": "1.0.1",
+  "description": "查看 Sentry 的问题、错误与 Seer 分析",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://sentry.io",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
+  "contributions": {
+    "connectors": [
+      {
+        "file": "connectors/sentry/server.json"
+      }
+    ]
+  }
+}

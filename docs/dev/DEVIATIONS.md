@@ -789,3 +789,368 @@
 - 推荐：方案 1。
 - 决定：方案 1，并钉住移交后的卡片终态。看板排期不进移交清单，`validate` / `apply` 拒绝，**也不取消**。移交不把该 Bot 移出项目组，所以不能走 `#dropExecutor`：那会写「执行成员已移出项目组」或「执行成员已删除」，等于假装成员已经离开。移交结束后卡片仍指派给原执行成员，状态仍是 `scheduled`，`blocked_reason` 为空，卡片对话保持可写，排期仍挂在这条卡片对话上、`bot_id` 仍是该 Bot。这样「不随移交带走」和「Bot 还在项目里、仍执行这张卡」是同一件事，不会出现「排期没了、人还在、也没有原因」的半截卡片。真正清空指派仍只发生在移出成员和删除 Bot。
 - 已更新的文档：`todo/project-board/P2-card-conversation.md` 实施记录。
+
+### DEV-048 `mcpServerSourceSchema` 改联合后，`McpbInstaller` 三个私有/公共方法签名收窄到 mcpb 分支
+
+- 状态：已落实
+- 阶段：插件系统 P0a-1（D104）
+- 是否阻塞：否
+- 问题：P0a-1 任务书步骤 2.3 把 `mcpServerSourceSchema` 从单一 `kind:'mcpb'` 对象改为 `mcpb | plugin` 判别联合，并称「读 `kind === 'mcpb'` 的原有逻辑收窄后仍成立（不改 install.ts）」。核对发现 `McpbInstaller.verify(source: McpServerSource)`、`#releasePackage(source)`、`#audit(…, source, …)` 直接在整个联合类型上取 `name` / `version` / `sha256`（未先判 `kind`），联合化后 typecheck 报 9 个 TS2339/TS2345——「不改 install.ts」的前提在这三处不成立。
+- 影响范围：`packages/core/src/apps/mcpb/install.ts`（仅类型层：新增 `type McpbPackageSource = Extract<McpServerSource, { kind: 'mcpb' }>`，`verify` / `#releasePackage` / `#audit` 参数与 `#installSnapshot` 里的局部 `source` 改用它）；行为零改动（三个方法的调用方本就都已先判 `kind === 'mcpb'`）。`McpbInstaller` 面向插件来源的完整改造仍在 P0a-2。
+- 可选方案：
+  1. 方法签名收窄到 mcpb 分支（当前实现）— 优点：最小、语义精确（该 installer 今天只管 mcpb 来源）；缺点：P0a-2 改造时要把 plugin 来源引入新的卸载 / 释放路径，届时再放宽。
+  2. 在方法体里运行时判 `source.kind !== 'mcpb'` 提前返回 — 优点：签名不动；缺点：把「类型上不可能」变成死分支，掩盖联合的语义。
+- 推荐：方案 1。
+- 决定：方案 1。该 installer 今天只服务 mcpb 来源，签名收窄比运行时死分支诚实；plugin 来源的卸载/释放路径由 P0a-2 的 `PluginProjector` 引入，届时按各自语义实现，不回填这里。
+- 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
+
+### DEV-049 任务书称「`satisfiesRange` 不支持的写法会返回 false」，实际实现是忽略未知子句（返回 true）
+
+- 状态：已登记（审查阶段发现，P0a-1 实现本身无需改动）
+- 阶段：插件系统 P0a-1（D104）
+- 是否阻塞：否
+- 问题：P0a-1 步骤 6 写「`range` 含 `satisfiesRange` 不支持的写法时它会返回 false，这是预期（按不兼容处理）」。核对 `packages/core/src/apps/mcpb/manifest.ts` 的实际实现：未知子句形状走 `continue`（「unknown clause shape: ignore」），整串都是未知子句时返回 `true`（按兼容放行），与任务书的描述相反。
+- 影响范围：`packages/core/src/plugins/manifest-loader.ts` 的 `checkPluginCompatibility` 按任务书的可操作指令直接复用 `satisfiesRange`（与 MCPB 兼容检查同一实现，不允许另写一份），因此未知写法的 `engines.kepcup`（如 `latest`、`||`）会被当作满足而不是不兼容。这是既有共享助手的语义，本阶段不改它。
+- 可选方案：
+  1. 保持复用 `satisfiesRange`（当前实现）— 优点：与 MCPB 同一语义、零重复实现；缺点：畸形 range 偏向放行，但清单 schema 已把 `engines.kepcup` 限为 1–100 字符字符串，畸形写法的实际风险低。
+  2. 在 `manifest-loader.ts` 里加一层「未知子句视为不兼容」的预判 — 优点：更保守；缺点：与 `satisfiesRange` 语义分叉，两处规则会漂移。
+- 推荐：方案 1。
+- 决定：方案 1。兼容性判断全仓只有 `satisfiesRange` 一份实现，MCPB 与插件共用同一语义；清单 schema 已限 `engines.kepcup` 长度，畸形 range 偏向放行的风险可接受，不为其造第二份会漂移的预判。
+- 已更新的文档：`todo/plugin-system/P0a-1-foundation.md` 实施记录。
+
+### DEV-050 `withRemoteSource` 包住进程内 `core.rpc.call` 不能让 handler 看到远程来源（MessagePort 不传播 AsyncLocalStorage）
+
+- 状态：已落实
+- 阶段：插件系统 P0a-2（D104）
+- 是否阻塞：否
+- 问题：P0a-2 步骤 11 的集成测试写「经 `withRemoteSource('dev_x', …)` 调 `plugins.inspect` 的 file 来源 → `INVALID_INPUT`」。核对 RPC 链路：测试里的 `core.rpc.call` 走 `createRpcChannel` 的 Node MessagePort（`create-core.ts` 的 `nodePortToTransport`），handler 在端口事件的宏任务里执行——AsyncLocalStorage 不跨 MessagePort 传播，测试侧包 `withRemoteSource` 到不了 `assertLocalSource` 的 `currentRemoteSource()` 读点（真实远程端点的来源标记是 `remote/hub.ts` 在 handler 外层包的，链路成立；只是进程内 rpc 通道不经过它）。
+- 影响范围：仅测试（`packages/core/test/integration/plugins.test.ts`）：改为取 `bindPluginsMethods(core.services)` 的 `plugins.inspect` handler，按 hub 的方式 `withRemoteSource('dev_x', () => spec.handle(input))` 调用断言 `INVALID_INPUT`，并补同 handler 无远程来源时正常返回的对照。生产行为零改动。
+- 可选方案：
+  1. 按 hub 的调用形状直接测绑定 handler（当前实现）— 优点：不引入整套 remote hub 夹具就能覆盖 `assertLocalSource` 的两个分支；缺点：没有走过 hub 的包装点，依赖 hub 的包装（`remote/hub.ts:576`）保持不变。
+  2. 起 fake relay + 远程端点全套夹具走真实 hub — 优点：链路最真；缺点：`remote-relay` e2e 已覆盖 hub 包装本身，这里再搭一套只为一个断言，成本不成比例。
+- 推荐：方案 1。
+- 决定：方案 1。按 hub 的真实调用形状（`withRemoteSource` 包 `spec.handle`）测绑定 handler，准确覆盖 `assertLocalSource` 两个分支；hub 包装点本身由 `remote-relay` e2e 守住，不为单个断言搭整套远程夹具。
+- 已更新的文档：`todo/plugin-system/P0a-2-projection.md` 实施记录。
+
+### DEV-051 `chats.errorCode.PLUGIN_*` 四条已在 P0a-1 登记，P0a-3 步骤 8 要求的「追加到块末尾」位置不可用
+
+- 状态：已落实
+- 阶段：插件系统 P0a-3（D104）
+- 是否阻塞：否
+- 问题：P0a-3 步骤 8 写「`chats.errorCode.PLUGIN_*` 四条：放在各自 `chats.errorCode.*` 块的末尾」。核对现实：P0a-1 已经把这四条加进了两个语言文件（紧随 `BOARD_*` 组之后，`git log -S` 定位到 2a5853c3），且 `locales.test.ts` 强制两份词典键集合与顺序一致、对象字面量不允许重复键——再按任务书追加到 `chats.errorCode.*` 块末尾（`MAIL_PROVIDER_UNAVAILABLE` 之后）会产生重复键，typecheck 直接失败。
+- 影响范围：仅 `apps/desktop/src/renderer/src/lib/i18n/locales/{zh-CN,en-US}.ts`：保留 P0a-1 的键位置（紧跟 `BOARD_LOCKED` 之后），把四条文案按 P0a-3 步骤 8 的文案表逐条改写（zh 与 en 同步、占位符一致，本组无占位符）。无代码路径受影响。
+- 可选方案：
+  1. 保留既有位置、只更新文案（当前实现）— 优点：不产生重复键，键序在两份文件里仍然一致；缺点：与任务书「放在块末尾」的字面位置不符。
+  2. 把四条从块首移到块末尾 — 优点：贴合任务书字面；缺点：纯位置挪动要同时改两份文件并重跑校验，收益为零。
+- 推荐：方案 1。
+- 决定：方案 1。键位置以先落地的 P0a-1 为准（紧跟 `BOARD_*` 组），P0a-3 只改文案；`locales.test.ts` 强制两份词典键集合与顺序一致，纯位置挪动零收益还引入重复键风险。
+- 已更新的文档：`todo/plugin-system/P0a-3-ui.md` 实施记录。
+
+### DEV-052 步骤 9 称「其余规格不涉及」，但 `plugins.spec.ts` 的 `plugins-empty` 断言因 `plugins.list` 新增内置条目而失效
+
+- 状态：已落实
+- 阶段：插件系统 P0b（D104）
+- 是否阻塞：否
+- 问题：P0b 步骤 9 的 e2e 表只列 `skill-market` / `extension-center` / `connect-abort` 三份规格，并写「其余规格不涉及」。但同一任务书 §1 明确 `plugins.list` 「多出两条只读的内置插件」，于是 P0a-3 的 `plugins.spec.ts` 里两处「卸载后 / 安装前 `plugins-empty` 空态可见」的断言在仓库检出（未设 `KEPCUP_BUILTIN_PLUGINS`，向上查找命中真实随包资源）下失败——列表里恒有 2 张内置卡片，全列表空态不再出现。
+- 影响范围：仅 `apps/desktop/test/e2e/plugins.spec.ts` 的 `launch()`：把 `KEPCUP_BUILTIN_PLUGINS` 指向 home 下一个空目录（与任务书给其它规格「env 指向临时目录」同一手法），全部既有断言原样保留。内置插件在「已安装」页签的展示由集成测试（`integration/plugins.test.ts` 新增用例）覆盖。
+- 可选方案：
+  1. 该规格指向空内置目录（当前实现）— 优点：规格继续只测本地插件生命周期，断言零改动；缺点：e2e 不再顺带覆盖「内置卡片在已安装页签出现」。
+  2. 改写空态断言为「内置卡片恒在」— 优点：多一层 UI 覆盖；缺点：本规格断言语义被稀释，且内置展示另有集成测试。
+- 推荐：方案 1。
+- 决定：方案 1。该规格继续只测本地插件生命周期，空目录 env 让既有断言原样保留；内置卡片在「已安装」页签的出现由集成测试覆盖，不为顺带覆盖稀释断言语义。
+- 已更新的文档：`todo/plugin-system/P0b-builtin.md` 实施记录。
+
+### DEV-053 市场索引条目不含 `manifestDigest` 与 `summary.icon`，详情页不拉取 README（设计 51 §6.1 / §9）
+
+- 状态：已决定
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：设计 51 §6.1 的索引条目含 `manifestDigest` 与 `summary.icon`，§9 的详情页按 digest 校验后拉取富文本（README）。这两处依赖额外的 RPC、体积上限与 Markdown 渲染的 XSS 评审，P1-1 阶段没有真实市场内容，做出来无法验收。
+- 影响范围：`packages/shared/src/domain/plugin-index.ts` 的 `pluginIndexEntrySchema` 只含 id / version / tier / sha256 / size / downloadUrl / engines / platforms / categories / summary(name, description, author) / updatedAt；详情页（P1-3）展示索引 `summary` + 同意面板。README 拉取待有真实市场内容后另立设计再补。
+- 可选方案：
+  1. 本期不做（当前实现）— 优点：不加无法验收的 RPC 与渲染面；缺点：详情页富文本要等下期。
+  2. 照设计全做 — 优点：与设计 51 逐字一致；缺点：XSS 评审与 RPC 面积大、无真实内容可测。
+- 推荐：方案 1。
+- 决定：按任务书（todo/plugin-system/P1-1-marketplace-core.md §6 第 1 条）。
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-054 市场同步的定时开关 `pluginAutoCheckUpdates` 只控制定时拉取（设计 51 §6.3）
+
+- 状态：已决定
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：设计 51 §6.3 写 `pluginAutoCheckUpdates`「只控制检查」，未定义手动路径是否也受限。P1-1 任务书明确：只控制**定时**拉取（`start()` 的定时循环每次 tick 前问一次开关），手动 `refresh` RPC / 打开市场页（`plugins.marketplace.list` 的补拉）仍联网——与 `DirectorySync` 的 `enabled`（同时封 sync / entries / status）不同。
+- 影响范围：`packages/core/src/plugins/marketplace-sync.ts` 自己实现定时循环（tick 前检查 `enabled()`，跳过拉取但保持循环，开关翻转立即生效）；`enabled` 不传给内层 `SignedIndexSync`，所以 `sync()` / `entries()` / `status()` 不受开关影响。`marketplace-sync.test.ts` 与 `plugins-marketplace.test.ts` 各有一条行为测试。
+- 可选方案：
+  1. 只控定时（当前实现）— 优点：关闭自动检查后市场页仍可用、手动刷新仍能拿到新索引；缺点：与 DirectorySync 语义不同（已写清并测试）。
+  2. 照 DirectorySync 全关 — 优点：两条通道语义一致；缺点：开关会顺手关掉市场页数据来源，超出「只控制检查」的意图。
+- 推荐：方案 1。
+- 决定：按任务书（todo/plugin-system/P1-1-marketplace-core.md §6 第 2 条、步骤 3.2）。
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-055 `pluginMarketplaceUrl` / `pluginMarketplacePublicKey` 两个 schema 定在 `domain/types.ts` 而非 `plugin-index.ts`（plain node 引 shared dist 踩模块环 TDZ）
+
+- 状态：已落实
+- 阶段：插件系统 P1-1（D104）
+- 是否阻塞：否
+- 问题：任务书 2.2 把 `pluginMarketplaceUrlSchema` / `pluginMarketplacePublicKeySchema` 与设置键一起写在 `plugin-index.ts` 一带，`settingsSchema`（`domain/types.ts`）引用它们。实测发现 `types.ts → plugin-index.ts` 这条 import 边把 dist 的模块图连成环：`types → plugin-index → plugins → plugin-manifest → connector-catalog → types`——plain node 直接 `import('@kepcup/shared')`（签名脚本的 `loadShared()` 就这么干）时 connector-catalog 顶层读 `mcpToolRiskSchema` 踩 TDZ（`Cannot access 'mcpToolRiskSchema' before initialization`），CLI 冒烟失败；vitest（走源码图）不复现。
+- 影响范围：仅这两个 schema（与 `isHttpsMarketplaceUrl` 纯函数）挪进 `domain/types.ts`（紧邻 `settingsSchema`，只依赖 zod）；`plugin-index.ts` 不再含设置键；`rpc/methods.ts` 改从 `domain/types.js` 取。契约形状零变化（`packages/shared/test/unit/plugin-index.test.ts`、`settings-merge-validate.test.ts` 原样通过）。
+- 可选方案：
+  1. schema 定在 types.ts（当前实现）— 优点：环消失，plain node / 签名脚本恢复可用；缺点：市场设置键的 schema 与索引契约不同文件。
+  2. 断开 types.ts 的其它边（如 connectorNameSchema 从 plugin-manifest 挪走）— 优点：plugin-index 保持任务书位置；缺点：动的是 P0a-1 已交付的既有契约文件，影响面更大。
+- 推荐：方案 1。
+- 决定：方案 1。plain node（签名脚本 `loadShared()`）踩 TDZ 是实际故障，环必须断；两个 schema 挪到 `types.ts` 只依赖 zod，契约形状零变化，市场设置键与索引契约分处两文件是可接受代价。
+- 已更新的文档：`todo/plugin-system/P1-1-marketplace-core.md` 实施记录。
+
+### DEV-056 `sanitizeDisplayText` 不剥离尖括号，与 P1-3 步骤 2.5 的清洗描述不符
+
+- 状态：已登记（P1-3 实现按真实行为测试）
+- 阶段：插件系统 P1-3（D104）
+- 是否阻塞：否
+- 问题：任务书步骤 2.5 写 `reason` 清洗后「控制 / 零宽 / 尖括号被去掉」，但全仓共享助手 `sanitizeDisplayText` 只处理控制字符、双向 / 零宽字符与空白折叠，不移除 `<` / `>`。`PluginInstallRequests.request` 按要求复用该助手，因此尖括号会保留。
+- 影响范围：`packages/core/src/plugins/install-requests.ts` 保持复用共享助手；`packages/core/test/unit/plugin-install-requests.test.ts` 按真实行为断言。确认卡（`ConfirmPluginInstallBody.svelte`）把 `reason` 当纯文本插值，不解析 HTML / Markdown，尖括号没有注入风险。
+- 可选方案：
+  1. 保持共享助手语义、渲染端纯文本展示（当前实现）— 优点：清洗规则全仓一致；缺点：与任务书描述有一处出入（已在测试与实施记录写明）。
+  2. 在 `install-requests.ts` 额外剥离尖括号 — 优点：贴合任务书字面；缺点：与共享助手语义分叉，其他展示名场景仍保留尖括号。
+- 推荐：方案 1。
+- 决定：方案 1（P1-3 实施记录 §6「自行判断点」）。
+- 已更新的文档：`todo/plugin-system/P1-3-marketplace-ui-bot.md` §6。
+
+### DEV-057 市场索引条目的 `downloadUrl` 强制 https，e2e 测试市场只能走回环 http
+
+- 状态：已落实
+- 阶段：插件系统 P1-3（D104）
+- 是否阻塞：否
+- 问题：步骤 1 的 `KEPCUP_TEST_PLUGIN_MARKET` 用本地 HTTP 服务托管 `index.json` / `.sig` / `.kepcup`，并只要求放行 `MarketplaceSync.download()` 的 URL 守卫。实测发现共享的 `pluginIndexEntrySchema.downloadUrl` 是 https-only：用回环 http 的条目会在 `MarketplaceSync.#parseEntries` 被逐条丢弃，市场页显示空态（e2e 首轮失败即此原因）。
+- 影响范围：`packages/core/src/plugins/marketplace-sync.ts` 增加 `#parseEntry` 的测试缝例外——仅当 `testLoopbackHosts` 非空、且原始 `downloadUrl` 是该白名单里的 `http:` 主机时，用一个占位 https URL 过 schema，再换回原地址；真正的下载守卫 `#downloadUrlAllowed` 仍会再检查一次。`testLoopbackHosts` 只由 `KEPCUP_TEST_PLUGIN_MARKET`（测试钩子构建 + `NODE_ENV=test`）注入；普通构建里白名单恒为空、该分支恒不生效，共享契约保持 https-only。
+- 可选方案：
+  1. 在市场同步层做测试缝例外（当前实现）— 优点：生产契约不变，测试市场可用；缺点：多一条只在测试构建存在的解析分支。
+  2. 放宽 `pluginIndexEntrySchema` 接受回环 http — 优点：无需例外；缺点：削弱共享契约，生产构建也会接受非 https 的签名索引条目。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`todo/plugin-system/P1-3-marketplace-ui-bot.md` §6；`docs/dev/PROGRESS.md` 插件系统 P1 行。
+
+### DEV-058 `plugin.mcpb-package` 同时接受 `dxt_version`，任务书只写了 `manifest_version`
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）
+- 是否阻塞：否
+- 问题：P2 步骤 4 要求内嵌 `.mcpb` 的 `manifest_version` 必须在 0.1 / 0.2 / 0.3。core 的 `parseMcpbManifest` 对旧 MCPB 还接受 `dxt_version` 作为同一字段的回退；校验器若只认 `manifest_version`，会把 KepCup 安装管线实际接受的旧包判为 error，出现「validate 拒绝、安装却成功」的分叉。
+- 影响范围：`packages/app-validator/src/plugin/validate.ts` 的版本读取为 `manifest_version ?? dxt_version`，集合仍是 0.1 / 0.2 / 0.3；其余入口/版本检查不变。
+- 可选方案：
+  1. 与 core 对齐接受 `dxt_version`（当前实现）— 优点：校验器与安装器结论一致；缺点：与任务书字面有一处出入。
+  2. 严格只认 `manifest_version` — 优点：贴合任务书；缺点：旧包被校验器误报，和安装管线不一致。
+- 推荐：方案 1。
+- 决定：方案 1（P2 实施记录 §6「自行判断点」）。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-059 服务端集成测试的远程来源守卫用 `withRemoteSource` 替代真实 `/ws` viewer
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）
+- 是否阻塞：否
+- 问题：P2 步骤 7.5 要求「经远程端点（`/ws` viewer）调同样的 `file` 来源仍被拒」。真实 viewer 需要完整的配对握手、codec 与 hello 自举；同一测试文件已有这套链路，但把「admin 安装」与「远程守卫」塞进同一条握手会显著拉长用例，且守卫本身由 `RemoteHub` 用 `withRemoteSource` 包裹每个 `spec.handle`（core 的 `plugins.test.ts` 已有同口径回归）。
+- 影响范围：`apps/server/test/server-integration.test.ts` 在 admin 安装后用 `withRemoteSource('dev_integration', () => inspect.handle({ source }))` 断言 `INVALID_INPUT`；没有改动生产代码或远程守卫。
+- 可选方案：
+  1. 直接用 `withRemoteSource`（当前实现）— 优点：准确覆盖 `currentRemoteSource()` 判定，测试稳定且快；缺点：没有经过真实 WS 帧。
+  2. 新起一套 viewer 握手再发 `plugins.inspect` RPC — 优点：端到端更完整；缺点：重复配对样板、测试时长与 flake 面变大。
+- 推荐：方案 1。
+- 决定：方案 1（P2 实施记录 §6）。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-060 `kepcup-app pack` 校验的是打包后的归档，不再先对原目录跑 validate
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）审查修复
+- 是否阻塞：否
+- 问题：P2 步骤 5 的 `pack` 写法是「① `validatePlugin(dir)` 有 error 中止 → ② 按排除规则收集 → ③ 写包 → ⑥ 读回自检」。① 对**原目录**整树校验，排除规则在它之后才生效：跑过 `npm install` 的开发目录（`node_modules` 里有符号链接、常常超过 20000 条目）在 ① 就被 `plugin.files-path` / `plugin.files-limits` 拒绝，`.kepcup-ignore` 与内置排除形同虚设，而产物本身是合规的。
+- 影响范围：`packages/app-validator/src/plugin/pack.ts`。新顺序：收集（排除规则、符号链接即错）→ `buildZipBuffer` → 写到临时 `.kepcup` → `validatePlugin(临时归档, { displayTarget: dir })` → 零 error 才写 `--out`。校验对象与安装器看到的字节完全一致，失败时不会留下产物；`validate <dir>` 本身不变（仍同「从文件夹安装」规则，不排除任何路径）。
+- 可选方案：
+  1. 校验打包后的归档（当前实现）— 优点：校验即交付物、只跑一遍、不产出无效文件；缺点：与任务书步骤顺序不同。
+  2. 给 `validatePlugin` 加排除参数，仍先校验原目录 — 优点：改动小；缺点：两次校验、校验视图与产物仍可能不一致（排除目录里的符号链接等）。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`packages/app-validator/README.md`、`docs/guides/write-a-plugin.md`、`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-061 headless `plugin install` 对权限扩大的更新随确认带上 `acknowledgeDiff`
+
+- 状态：已落实
+- 阶段：插件系统 P2（D104）审查修复
+- 是否阻塞：否
+- 问题：P2 步骤 7.4 的 CLI 流程没有提到 `acknowledgeDiff`；P1-2 合入后本地同 id 重装 / 更新在权限扩大且未确认时被 core 以 `INVALID_INPUT` 拒绝。headless 的本地安装只有这条 CLI（设计 51 §6.2），于是「插件加了一个连接器主机再重装」成了死路。
+- 影响范围：`apps/server/src/cli.ts`。摘要已逐项列出新增权限；交互确认时提示语改为「此次更新新增了上述权限，继续安装？」，`--yes` 时打印一行提醒；随安装发送 `acknowledgeDiff: info.update?.permissionsExpanded === true`。与桌面端「勾选差异」等价（Q7「权限扩大再同意」的同意动作就是这次确认）。
+- 可选方案：
+  1. 确认即同意（当前实现）— 优点：脚本化更新不需要新旗标，摘要已给出知情前提；缺点：`--yes` 下没有第二道门。
+  2. 新增 `--ack-diff` 旗标 — 优点：显式；缺点：自动化更新必然要加这个旗标，否则在无人值守时失败。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`apps/server/README.md`、`todo/plugin-system/P2-ecosystem.md` §6。
+
+### DEV-062 更新路径的必填 `user_config` 判定接受字段默认值（与首装一致）
+
+- 状态：已落实
+- 阶段：插件系统 P1-2（D104）审查修复
+- 是否阻塞：否
+- 问题：首装的 `validateUserConfig` 把 `input[key] ?? field.default` 为空才算缺失；更新路径的 `PluginRegistry.#prevalidateUpdateUserConfig` 只看提交值与已存密钥，不看 `default`。新版本新增一个「必填但带默认值」的字段时，桌面端恰好因表单预填默认值而通过，而 CLI / `updateAll` 这类不预填的调用方会被拒；两条路径对同一清单给出不同结论。
+- 影响范围：`packages/core/src/plugins/registry.ts`（`#prevalidateUpdateUserConfig` 改为 `provided[key] ?? field.default` 为空才缺失）；`apps/server/src/plugin-cli.ts` 的 `missingRequiredUserConfig` 在 `info.update !== null` 时对必填敏感字段留空不报缺（core 保留已存密钥，与渲染端 `missingRequired(fields, form, updating)` 同规则）。
+- 可选方案：
+  1. core 统一两条路径 + CLI 跟随渲染端规则（当前实现）。
+  2. 只改 CLI 文案提示「重装可能要重传 --config」— 不解决根因。
+- 推荐：方案 1。
+- 决定：方案 1。
+- 已更新的文档：`todo/plugin-system/P2-ecosystem.md` §6（集成测试 `plugins-update.test.ts` 新增用例）。
+
+### DEV-063 插件 secrets 键采用转义前缀式（任务书字面格式进不了 secrets 字符集）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：README §4.1/§2.2 把插件敏感值的 secrets 键写为字面 `{pluginId}:{instanceId|'config'}:{fieldKey}`，但 `SecretsService` 的名字字符集是 `[a-z0-9:_-]{1,128}`，不含插件 id 必然携带的 `/` 与 `.`——字面格式不可实现。首版实现的 `_`→`__`、`.`→`_` 转义还有歧义（`x._y` 与 `x_.y` 编码相同，独立审查 P0-2）。
+- 影响范围：`packages/core/src/plugins/instances.ts` 的 `pluginSecretScope` / `pluginConfigSecretName` / `pluginInstanceSecretName`。
+- 可选方案：
+  1. 前缀 + 无歧义转义：`plugin:{id 经 _`→`_u、.→`_d、/→`_s}`，配置键 `…:config:{key}`、实例键 `…:instance:{pliId}:{key}`；输出中每个 `_` 必后跟转义字符，解码确定（当前实现，附单射性测试）。
+  2. 对 pluginId 做 sha256 截断——无碰撞但不可读、不可 grep。
+- 推荐：方案 1（可读、可注入、可前缀扫描枚举）。
+- 决定：方案 1；另在键名构造处预检 128 上限（pluginId 允许 200 字符，超长在落任何领域数据**之前**以 INVALID_INPUT 拒绝）。
+
+### DEV-064 `plugins.instances.create` 入参增加可选 `kind`（任务书只写 `{ pluginId, values }`）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）
+- 是否阻塞：否
+- 问题：README §4.1 固定 create 入参为 `{ pluginId, values }`，但清单 `instances` 允许声明多个实例能力类型（上限 4）；多类型插件创建实例时必须能指定类型，否则无法区分。
+- 影响范围：`packages/shared/src/domain/plugins.ts`（`pluginsInstancesCreateInputSchema` 增 `kind?: PluginInstanceKind`，加性变更）；`packages/core/src/plugins/instances.ts`（缺省 = 唯一声明类型；多类型且未指定 → INVALID_INPUT；指定值必须 ∈ 声明集合）。
+- 可选方案：
+  1. 可选 `kind` 入参（当前实现）：单类型插件零负担，多类型插件显式指定。
+  2. 限制清单只能声明一个实例类型——与 `instances` 数组上限 4 的可扩展设计冲突。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-065 实例崩溃恢复的边界：CREATE 窗口由 kind materializer 对账（P3），卸载崩溃由 FK CASCADE + 重放覆盖
+
+- 状态：已落实（边界登记）
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：任务书步骤 4.3 要求「中途崩溃后 `recoverInterrupted` 不留实例孤儿」。两类窗口：① 卸载中途崩溃（`state=uninstalling`）——`recoverInterrupted` 重放 `#teardown`，实例级联（materializer 拆领域数据 + FK CASCADE 删行）幂等重放，**不留孤儿**（已加失败注入测试）；② CREATE 中途崩溃（`plugin_instances` 行已插、materializer 未落领域数据）——插件仍 `installed`，账本状态无法区分「已落地」与「未落地」，通用层无从对账；P1 无任何 materializer，该窗口不可能发生。
+- 影响范围：`packages/core/src/plugins/instances.ts`（create 失败的进程内补偿已实现：materializer 抛错 → 删行回滚）；P3 的 mail materializer 须在启动对账时核对 `mail_accounts.instance_id` 与实例行的双向一致性（写进 P3 菜谱）。卸载级联对 materializer.remove 失败取 best-effort（记日志继续），直接 delete 则上抛——任务书「先拆领域数据再删行」在卸载路径为尽力而为语义。
+- 可选方案：
+  1. 当前：①覆盖测试，②推迟到首个 materializer（P3 mail）落地对账（当前实现）。
+  2. 给 plugin_instances 加 state 列做两阶段提交——DDL 已被 README §4.2 固定，且 P1 无消费者。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-066 `pluginFieldSchema` 定义在 plugin-manifest.ts（README 指定 plugins.ts）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）
+- 是否阻塞：否
+- 问题：README §2.3/§4.1 指定 `pluginFieldSchema` 唯一定义放 `shared/src/domain/plugins.ts`。但 `plugin-manifest.ts` 的 `config.fields` 需要引用它，而 `plugins.ts` 已运行时依赖 `plugin-manifest.ts`（`pluginIdSchema` 等）——按 README 位置会形成 ESM 初始化环（zod schema 在模块求值期构造）。
+- 影响范围：定义与全部约束在 `plugin-manifest.ts`（与 `config` / `instances` 同处）；`plugins.ts` re-export（`@kepcup/shared` 的导入面不变，README 期望的“唯一定义 + mcpb re-export 别名”语义保持）；`mcpb.ts` 的 `mcpbUserConfigFieldSchema` / `mcpbUserConfigValueSchema` 改为别名 re-export，MCPB 解析行为不变（core 自有 looseObject 解析不动，输出字段与 strict 化后的共享 schema 逐字段对齐）。
+- 可选方案：
+  1. 定义在 plugin-manifest.ts + 两处 re-export（当前实现）。
+  2. 新建 `plugin-field.ts` 第三模块——多一个文件只为满足文档字面位置。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-067 `CapabilityKindAdapter` 的两处形状微调（README §2.1 草图 vs 实现）
+
+- 状态：已落实
+- 阶段：插件平台 P1（D105）审查修复
+- 是否阻塞：否
+- 问题：README §2.1 的接口草图有两处落地差异：① `consentItems(ctx)` ——同意卡条目的推导需要投影器实例（文件读取），适配器实际签名是 `consentItems(inspection)`（把一次投影器检视的 items 映射为本类型同意条目；registry 经 `mergeConsentItems` 归位）；② `materializer?` 字段——README §4.3 更具体地规定 materializer 注册在 `PluginInstanceService.registerMaterializer(kind, impl)`（per-core、可测试），适配器不再携带该槽位，避免双事实来源 / 模块级可变状态。
+- 影响范围：`packages/core/src/plugins/kinds.ts`；注册菜谱（“注册一个适配器 + 实例服务注册 materializer”）不受影响。
+- 可选方案：
+  1. 按实现签名落地（当前实现，适配器保持纯数据 + 工厂）。
+  2. 严格照抄草图（consentItems 需注入投影器、materializer 做模块级可变槽）。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-068 P2 技能可见性过滤豁免保留命名空间（内置插件预置技能恒可见）
+
+- 状态：已落实
+- 阶段：插件平台 P2（D105 注入模型）
+- 是否阻塞：否
+- 问题：P2-injection.md §3.2 字面上「公共技能行的 `plugin://` 属主 ∉ 启用集即过滤」会把内置插件（`com.kepcup/…` 保留命名空间）的预置技能一并滤掉——技能市场的预置安装（`SkillPresetsService`，`source_url = plugin://{builtinId}/{id}`）就死掉：内置插件**不进 `plugins` 表**（builtin.ts），`plugins.setBotPlugins` 的已安装校验（store 行存在且 `state==='installed'`）永远过不去，用户没有任何途径「启用」它们。
+- 影响范围：`packages/core/src/skills/registry.ts` 的 `#publicSkillVisible`：属主在保留命名空间（`isReservedPluginNamespace`）→ 恒入选，视同系统技能（与 §3.2「无 `plugin://` 标记视为系统技能」同一档）。安装型插件的技能不受影响。
+- 可选方案：
+  1. 保留命名空间豁免（当前实现）。
+  2. `pluginInstalled` 同时接受 builtin 目录（`BuiltinPlugins.get`）并让用户显式启用内置插件——改写 RPC 校验语义，且与「预置安装是用户点『添加』的显式决定」冲突。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-069 `<available_apps>` 与 Bot 目录提案未按启用集过滤（P2 §3.4 的次要面；审查后收回本阶段修复）
+
+- 状态：已落实（P2 审查修复：`availableFor` 与 `app_request_connection` 连接器分支已按 `pluginOwnerOf ∈ 启用集` 过滤，本机连接恒放行）
+- 阶段：插件平台 P2（D105 注入模型）
+- 是否阻塞：否
+- 问题：P2-injection.md §3.4 提到「`<available_apps>` 不列该插件目录条目、Bot 提案不推荐」，但本阶段实现契约（注入装配五处）只要求 `ConnectedApps.forBot` 的视图 / 合成 server 过滤；`availableFor`（未授权目录条目的推荐来源）与 Bot 提案管线不在五处装配点内。
+- 影响范围：插件连接器被停用时，已授权连接不可见（已实现），但 `<available_apps>` 仍可能列出该插件「未连接」的目录条目 / 提案推荐——展示面问题，不产生任何可调用的能力（未授权连接本就无 server / 工具）。P4 扩展中心收口时随目录重构一并处理。
+- 可选方案：
+  1. P2 只做 forBot，`availableFor` / 提案过滤留给 P4（当前实现）。
+  2. 本阶段顺手给 `availableFor` 加启用集参数——超出阶段装配点范围，且 P4 会重构目录来源。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-070 `mcp` 类别显示名直接改既有键值，未新增 `plugins.kind.tool` 键
+
+- 状态：已落实
+- 阶段：插件平台 P2（D105）
+- 是否阻塞：否
+- 问题：README §4.4 提出新增 i18n 键 `plugins.kind.tool`（mcp 显示名改「工具」）。实现直接把既有键 `plugins.kind.mcp` 的值改为「工具 / Tools」——键 id 非用户可见面，kind id 与键名保持一一对应，避免冗余同义键。
+- 影响范围：`apps/desktop/src/renderer/src/lib/i18n/locales/{zh-CN,en-US}.ts`。
+- 可选方案：1）改既有键值（当前实现）；2）新增 `plugins.kind.tool` 并弃用旧键（多一个死键）。
+- 推荐：方案 1。
+- 决定：方案 1。
+
+### DEV-071 官方邮件插件的贡献 id 不能以数字开头（`netease_163` → `netease163`）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：`plugins/mail-163` / `mail-126` 的贡献 id 沿用了旧 `MailProvider` 枚举值 `netease_163` / `netease_126`，但贡献 id 的既有校验是 `PLUGIN_MCP_KEY_PATTERN`（`/^[a-z0-9][a-z0-9-]{0,31}$/`，语义：小写字母或数字开头）。`netease_163` 含下划线，本就不合法——之前没有任何插件带 mail 贡献所以从未暴露。
+- 影响范围：`plugins/mail-163/plugin.json` / `plugins/mail-126/plugin.json` 的 `contributions.mail[0].id` 改为 `netease163` / `netease126`（账本 ref / 同意条目标识，无用户可见面；插件 id `app.kepcup/mail-163` 与显示名不变）。`MailProvider` 枚举值（DB 列 / zod）不受影响——实例账号恒 `provider:'custom'`。
+- 决定：改贡献 id 而不是放宽 key 正则（放宽会让 `mail-163` 的「163 开头」类 id 混入，换取零收益）。
+
+### DEV-072 实例账号密码的单一来源是实例 secret（非 `mail:{accountId}:password` 旧键）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：任务书 P3-mail.md §3.2 写「密码入 secrets `mail:{accountId}:password` 不变」。P1 的实例敏感值契约（DEV-063）与 `pluginInstanceSecretName` 已建立实例 secret 的统一规则；若 mail materializer 把密码写入旧键，同一实例的敏感值就有两套寻址，P1-3 的「前缀扫描清理」会把实例 secret 扫掉而旧键残留，卸载后授权码泄漏面扩大。
+- 影响范围：`packages/core/src/plugins/materializers/mail.ts`（不改 mail 建号函数签名，密码在 `PluginInstanceService` 落实例 secret 后经 `MailService.createForInstance` 落地）；`MailService` 经 `instanceOwner` 端口把实例账号的密码读取重定向到实例 secret（会话 hub / 发信 / 更新授权码同源）；无主账号仍走 `mail:{id}:password` 旧键，行为不变。
+- 决定：实例账号 = 实例 secret（单一事实来源）；任务书的旧键写法只适用于遗留无主账号。
+
+### DEV-073 `mail.accounts.test` / `mail.accounts.create` RPC 收敛删除（任务书允许的「收敛」取舍）
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）
+- 是否阻塞：否
+- 问题：P3-mail.md §3.3 写「`mail.accounts.create` 校验改由实例层负责（直接 RPC 调用保留兼容行为或收敛，实施记录写明取舍）」。选**收敛删除**：直接 RPC 建号没有插件归属（instance_id 为空），建出来的账号永远标「未关联插件」，与「添加账号唯一入口 = 插件卡」的 UI 归属（§3.4）直接矛盾；保留兼容行为会让 Bot 对话内 mail_request_setup 卡（改走插件选择 + 实例表单）之外的第二条入口长期存在。`mail.accounts.test` 仅为 create/update 的预检服务，一并删除。
+- 影响范围：`packages/shared/src/rpc/methods.ts`（3 个 RPC 注销）、`packages/core/src/rpc/mail-bindings.ts`；`MailService` 的建号能力保留为内部方法 `createForInstance`（materializer 专用）与 `updateInstanceAccount`（实例更新专用）。对话内 mail setup 卡改渲染插件选择 + 实例表单。
+- 决定：收敛；实施记录 §6 已写明。
+
+### DEV-074 协议词汇的收敛边界：实例字段标题去 IMAP/SMTP，官方插件 description 保留
+
+- 状态：已落实
+- 阶段：插件平台 P3（D105）审查修复
+- 是否阻塞：否
+- 问题：README §5「用户可见文案不出现协议词汇……协议细节只进同意面板与开发文档」。P3 有两处协议词：① mail 通用插件的实例字段标题（审查前写作「收信（IMAP）服务器」「IMAP 加密方式」等）；② 官方邮件插件 `plugin.json` 的 `description`（「支持 IMAP/SMTP 的邮箱」「16 位授权码」等）。
+- 影响范围：①已收敛——`packages/core/src/plugins/kinds.ts` 的字段标题改为「收信服务器 / 收信端口 / 收信加密方式 / 发信服务器 / 发信端口 / 发信加密方式」，`ssl / starttls` 只出现在字段 description（字段值本身就是这个枚举，用户必须知道填什么）。②保留——任务书 P3-mail.md §3.5 明确要求 mail-generic「帮助文案覆盖如何获取 IMAP/SMTP 授权码」，插件 description 是配置指南而非功能文案，市场 / 插件卡展示它正是用户配置时需要的信息；与 §2.1「OAuth / MCP / IMAP 是给开发者看的接口契约」不冲突的场景按任务书更具体的条目执行（README §5 规则 2：阶段文件为准）。
+- 决定：字段标题收敛 + description 保留，各自边界如上；后续新增能力类型的字段标题一律沿用「收信 / 发信」式中性命名。
+### DEV-075 全局手动 MCP 管理的保留入口：「工具」筛选视图下的无圈定 McpSection（M2 顺延的必然结果）
+
+- 状态：已落实
+- 阶段：插件平台 P4（D105）
+- 是否阻塞：否
+- 问题：P4-extension-center.md §3.2 只规定插件卡「管理 · 工具」按 `pluginId` 圈定（只看该插件投影的 server、隐藏新建 / .mcpb 入口），但 M2（custom-mcp 实例化、`McpSection` 全局视图退役）按任务书顺延后，手动 MCP server 的新建 / 编辑 / .mcpb 安装在 M1 失去了全部 UI 入口——插件卡内容视图已圈定，设置深链落到的「工具」筛选视图又只有插件卡网格。这是任务书未写到的缺口（§2 范围表「不包含：custom-mcp 实例化（M2，可顺延）」隐含手动 server 管理在 M1 仍须可用）。
+- 影响范围：`ExtensionInstalled.svelte` 的「工具」筛选（`filter === 'mcp'`）网格下方新增 `manual-mcp-section`——无圈定的完整 `McpSection`（新建 stdio/HTTP/SSE、.mcpb 安装、BYO OAuth 客户端、手动 server 编辑）。插件卡内容视图的圈定语义不受影响；Bot 侧手动 server 的 `mcp_server_ids` 细选不受影响。
+- 决定：M1 以「工具」筛选视图为全局手动工具管理入口；P4-M2（custom-mcp 实例化）落地时把手动 server 收编为 `app.kepcup/custom-mcp` 插件实例后，整块退役（P4 §4.5 原计划不变）。e2e `extension-center.spec.ts` 第二用例按此模型对齐（圈定视图无手动 server / 无新建入口；全局区可见可编辑）。
+
+### DEV-076 init 模板的「注释骨架」在 JSON 中不可表达：真实示例字段 + README 指引
+
+- 状态：已落实
+- 阶段：插件平台 P5（D105）
+- 是否阻塞：否
+- 问题：P5-docs-market.md §3.2 要求「`init plugin` 模板更新：生成含 `config` + `instances` **注释**骨架的 `plugin.json`」，但 `plugin.json` 是 strict JSON（清单 schema 拒绝注释语法），「注释骨架」字面不可实现；且 `instances: ['mail']` 有配对约束（必须伴随一份邮件贡献），骨架里塞 `instances` 会让新骨架直接 validate 失败。
+- 影响范围：`packages/app-validator/src/plugin/init.ts`——plugin.json 生成一个真实可校验的示例 config 字段（`greetingPrefix`，宿主自动出「设置」表单，删改即学）；`instances` 的声明方式与邮件配对示例写进 init 生成的 README 模板并指向 `docs/guides/write-a-plugin.md`。
+- 决定：以「可运行的示例 + 文档指引」替代「注释骨架」；示例 config 字段对骨架插件的唯一代价是设置表单多一项，可即刻删除。测试 `plugin-init-pack.test.ts` 断言骨架 validate 零 error 且 capabilities 报告 configFields=1。

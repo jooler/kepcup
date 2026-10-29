@@ -12,6 +12,9 @@ import {
 } from '@kepcup/testkit';
 import type { Settings } from '@kepcup/shared';
 import { FakeImapServer, FakeSmtpServer } from '../support/fake-mail-server.js';
+import { buildPluginFixture } from '@kepcup/testkit';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 
 /**
  * D91 P2 (design 40 §2.3, §6): the five mailbox tools are gated on the bot's bound mailboxes
@@ -61,6 +64,8 @@ async function turn(
 }
 
 describe('D91 P2: mailbox gating (design 40 §6)', () => {
+  // P3：建号走实例路径——先装一个通用邮件插件（端点自填），再经 plugins.instances.create。
+  let fixtureSeq = 0;
   const imapSmtp = async () => {
     const imap = new FakeImapServer({ requireId: true, advertiseIdle: true, advertiseId: true });
     const smtp = new FakeSmtpServer();
@@ -68,21 +73,63 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
     await smtp.start();
     const previous = process.env.KEPCUP_MAIL_ALLOW_PRIVATE;
     process.env.KEPCUP_MAIL_ALLOW_PRIVATE = '1';
+    const MAIL_PLUGIN_ID = 'io.github.tester/p2-mail';
+    let installed = false;
     return {
       imap,
       smtp,
-      account: (address: string, botId: string) => ({
-        provider: 'custom' as const,
-        address,
-        password: 'authcode',
-        label: address,
-        mode: 'auto' as const,
-        imapHost: '127.0.0.1',
-        imapPort: imap.port,
-        smtpHost: '127.0.0.1',
-        smtpPort: smtp.port,
-        botIds: [botId],
-      }),
+      pluginId: MAIL_PLUGIN_ID,
+      createAccount: async (core: TestStack['core'], address: string, botId: string) => {
+        if (!installed) {
+          const built = await buildPluginFixture({
+            dir: path.join(tmpdir(), `kepcup-p2-mail-${(fixtureSeq += 1)}`),
+            manifest: {
+              id: MAIL_PLUGIN_ID,
+              name: 'P2 Mail',
+              instances: ['mail'],
+              contributions: {
+                skills: [],
+                connectors: [],
+                mcp: [],
+                mail: [
+                  {
+                    id: 'generic',
+                    label: '通用邮箱',
+                    imap: { host: '', port: 993, secure: 'ssl' },
+                    smtp: { host: '', port: 465, secure: 'ssl' },
+                    defaultMode: 'auto',
+                    defaultPollSec: 300,
+                    minPollSec: 60,
+                  },
+                ],
+              },
+            },
+          });
+          await core.rpc.call('plugins.install', {
+            source: { kind: 'file', path: built.path },
+            sha256: built.sha256,
+            userConfig: {},
+          });
+          installed = true;
+        }
+        const { instance } = (await core.rpc.call('plugins.instances.create', {
+          pluginId: MAIL_PLUGIN_ID,
+          values: {
+            address,
+            password: 'authcode',
+            imapHost: '127.0.0.1',
+            imapPort: imap.port,
+            imapSecure: 'ssl',
+            smtpHost: '127.0.0.1',
+            smtpPort: smtp.port,
+            smtpSecure: 'ssl',
+          },
+        })) as { instance: { id: string } };
+        const account = core.services.mail!.accountByInstance(instance.id);
+        if (account === null) throw new Error('instance account not landed');
+        core.services.mail!.setBots(account.id, [botId]);
+        return account;
+      },
       async stop() {
         if (previous === undefined) delete process.env.KEPCUP_MAIL_ALLOW_PRIVATE;
         else process.env.KEPCUP_MAIL_ALLOW_PRIVATE = previous;
@@ -106,8 +153,19 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       for (const name of MAIL_FIVE) expect(unboundTools).not.toContain(name);
       expect(systemOf(unbound)).toContain('mail_request_setup');
 
-      // Binding finishes → the next run (what `runs.retry` also starts) rebuilds its tools.
-      await stack.core.rpc.call('mail.accounts.create', env.account('bot@example.com', bot.id));
+      // Binding finishes while the owning plugin is NOT enabled for this bot:
+      // the gated account stays invisible — no five tools, no <mail_accounts> (P2 §3.5).
+      await env.createAccount(stack.core, 'bot@example.com', bot.id);
+      const gated = await turn(stack, conv.id, '再看看');
+      for (const name of MAIL_FIVE) expect(toolNamesOf(gated)).not.toContain(name);
+      expect(systemOf(gated)).not.toContain('bot@example.com');
+
+      // Enabling the plugin for the bot (the setup card's quick-enable; the Bot panel
+      // toggle does the same) makes the bound account visible on the next run.
+      await stack.core.rpc.call('plugins.setBotPlugins', {
+        botId: bot.id,
+        pluginIds: [env.pluginId],
+      });
       const bound = await turn(stack, conv.id, '再看看');
       const boundTools = toolNamesOf(bound);
       for (const name of MAIL_FIVE) expect(boundTools).toContain(name);
@@ -128,14 +186,16 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       const { core } = stack;
       const bot = await makeBot(core, '小艾');
       const conv = await openDirect(core, bot.id);
-      await core.rpc.call('mail.accounts.create', env.account('first@example.com', bot.id));
+      await env.createAccount(core, 'first@example.com', bot.id);
+      // 实例账号的注入门控：属主插件要对这个 Bot 启用（setup 卡保存路径的快速启用语义）。
+      await core.rpc.call('plugins.setBotPlugins', { botId: bot.id, pluginIds: [env.pluginId] });
       const mail = core.services.mail!;
       expect(mail.accountsForBot(bot.id).map((a) => a.address)).toEqual(['first@example.com']);
 
       stack.llm.script('mock-main', [
         step()
           .inTurn()
-          .replyToolCall('mail_request_setup', { provider: 'qq', reason: '再接一个工作邮箱' }),
+          .replyToolCall('mail_request_setup', { reason: '再接一个工作邮箱' }),
         step().inTurn().replyText('请在对话里添加'),
       ]);
       await sendBatch(core, conv.id, ['再帮我接管一个邮箱']);
@@ -148,12 +208,11 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       );
       expect(failed.setup).toEqual({
         kind: 'mail-account',
-        provider: 'qq',
         reason: '再接一个工作邮箱',
       });
 
-      // The card's form: mail.accounts.create with botIds [bot] — a new account, appended.
-      await core.rpc.call('mail.accounts.create', env.account('second@example.com', bot.id));
+      // The card's form: a second instance on the same plugin — a new account, appended.
+      await env.createAccount(core, 'second@example.com', bot.id);
       expect(
         mail
           .accountsForBot(bot.id)
@@ -162,9 +221,9 @@ describe('D91 P2: mailbox gating (design 40 §6)', () => {
       ).toEqual(['first@example.com', 'second@example.com']);
 
       // The same address again (case-insensitive) is rejected and leaves the bindings alone.
-      await expect(
-        core.rpc.call('mail.accounts.create', env.account('Second@Example.com', bot.id)),
-      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      await expect(env.createAccount(core, 'Second@Example.com', bot.id)).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
       expect(mail.accountsForBot(bot.id)).toHaveLength(2);
       expect(mail.list()).toHaveLength(2);
 

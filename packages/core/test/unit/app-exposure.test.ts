@@ -96,7 +96,7 @@ describe('ConnectedApps.forBot: which connections expose tools', () => {
     const { apps, connect } = setup();
     connect('conn_gh', 'github', 'work');
     connect('conn_nt', 'notion', 'me', 'expired');
-    const exposure = apps.forBot(['conn_gh', 'conn_nt']);
+    const exposure = apps.forBot(['conn_gh', 'conn_nt'], new Set());
     expect(exposure.servers.map((server) => server.id)).toEqual(['conn_gh']);
     expect(exposure.servers[0]).toMatchObject({
       name: 'GitHub（work）',
@@ -125,8 +125,8 @@ describe('ConnectedApps.forBot: which connections expose tools', () => {
     const { apps, connect } = setup();
     connect('conn_x', 'github', 'work', status);
     expect(isExposableStatus(status)).toBe(exposable);
-    expect(apps.forBot(['conn_x']).servers).toHaveLength(exposable ? 1 : 0);
-    expect(apps.forBot(['conn_x']).views).toHaveLength(1); // always a status line
+    expect(apps.forBot(['conn_x'], new Set()).servers).toHaveLength(exposable ? 1 : 0);
+    expect(apps.forBot(['conn_x'], new Set()).views).toHaveLength(1); // always a status line
   });
 
   it('skips unknown / deleted / custom ids and connectors that are no longer in the catalog', () => {
@@ -385,8 +385,8 @@ describe('prompt sections', () => {
     );
     const { apps, connect } = setup({ entries });
     connect('conn_0', 'app00', 'me');
-    const views = apps.forBot(['conn_0']).views;
-    const available = apps.availableFor(views);
+    const views = apps.forBot(['conn_0'], new Set()).views;
+    const available = apps.availableFor(views, new Set());
     expect(available).toHaveLength(AVAILABLE_APPS_MAX);
     expect(available.map((entry) => entry.title)).not.toContain('App 0');
     const body = availableAppsPromptBody(available);

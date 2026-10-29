@@ -31,7 +31,7 @@ import type {
 } from './auth/flow.js';
 import type { ConnectionAuthRegistry } from './auth/registry.js';
 import type { ConnectorCatalog } from './catalog.js';
-import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
+import { isSafeDirectoryRemoteUrl } from '@kepcup/shared';
 import {
   customConnectionId,
   isCustomConnectionId,
@@ -150,6 +150,7 @@ export class AppConnectionsService {
         .filter((row) => !isUnsettledScratch(row, this.#deps.vault.getTokens(row.id) !== null));
       const unavailable = this.#unavailableReason(entry);
       const svg = catalog.iconSvg(meta.slug);
+      const pluginId = catalog.pluginIdOf(meta.slug);
       return {
         connectorId: meta.slug,
         name: entry.name,
@@ -161,6 +162,7 @@ export class AppConnectionsService {
         category: meta.category,
         tier: meta.tier,
         origin: catalog.originOf(meta.slug),
+        ...(pluginId !== null ? { pluginId } : {}),
         authKind: meta.auth.kind,
         registration: meta.auth.registration,
         connectable: unavailable === null,

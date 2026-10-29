@@ -10,6 +10,7 @@ import {
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import type { PluginDirectory } from './projects.js';
 
 /** 对话式新建（setup interview）期间 bots.setup_state 的唯一取值。 */
 export const BOT_SETUP_INTERVIEWING = 'interviewing';
@@ -110,6 +111,8 @@ export class BotsService {
   #connections: AppConnectionDirectory | null = null;
   /** D92 T1a：start.ts 在 projects 服务构造后接入。 */
   #leadProjectGuard: LeadProjectGuard | null = null;
+  /** P2 注入模型：start.ts 在插件账本构造后接入；未接入时 `setPluginIds` 只能清空。 */
+  #pluginDirectory: PluginDirectory | null = null;
 
   constructor(
     private readonly db: SqliteDatabase,
@@ -125,6 +128,11 @@ export class BotsService {
   /** D92 T1a：接入负责人守卫（`markDeleted` 的后盾）。 */
   attachLeadProjectGuard(guard: LeadProjectGuard): void {
     this.#leadProjectGuard = guard;
+  }
+
+  /** P2 注入模型：接入插件目录（`PluginStore`），`setPluginIds` 校验 pluginIds 均已安装。 */
+  attachPluginDirectory(directory: PluginDirectory): void {
+    this.#pluginDirectory = directory;
   }
 
   /**
@@ -183,6 +191,29 @@ export class BotsService {
     return { replaced };
   }
 
+  /**
+   * D105 P2：插件卸载时从所有 Bot 的 `plugin_ids` 里移除该 id（幂等）。返回受影响的
+   * Bot id；不校验存在（清理面，读时容忍的写侧对偶）。
+   */
+  removePluginFromAll(pluginId: string): string[] {
+    const affected: string[] = [];
+    for (const bot of this.listActive()) {
+      if (!bot.profile.runtime.plugin_ids?.includes(pluginId)) continue;
+      const profile = botProfileSchema.parse({
+        ...bot.profile,
+        runtime: {
+          ...bot.profile.runtime,
+          plugin_ids: bot.profile.runtime.plugin_ids.filter((id) => id !== pluginId),
+        },
+      });
+      this.db
+        .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+        .run(JSON.stringify(profile), this.clock.now(), bot.id);
+      affected.push(bot.id);
+    }
+    return affected;
+  }
+
   /** 连接被删除：从所有 Bot 的授权里移除它。返回受影响的 Bot id（调用方据此中断其运行中的任务）。 */
   removeConnectionFromAll(connectionId: string): string[] {
     const affected: string[] = [];
@@ -211,6 +242,63 @@ export class BotsService {
     this.db
       .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
       .run(JSON.stringify(profile), this.clock.now(), bot.id);
+  }
+
+  /**
+   * P2 注入模型：整体替换该 Bot 的插件启用集（`profile_json.runtime.plugin_ids`，
+   * 沿 `#writeAppConnectionIds` 的 Profile-JSON 先例——只动这一个字段，其余 Profile
+   * 保持不动）。pluginIds 去重后逐个校验已安装；缺失 / 空数组 = 未启用任何插件。
+   */
+  setPluginIds(botId: string, pluginIds: string[]): Bot {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const unique = [...new Set(pluginIds)];
+    for (const pluginId of unique) {
+      if (!this.#pluginDirectory?.installed(pluginId)) {
+        throw new AppError('INVALID_INPUT', `插件 ${pluginId} 未安装，不能启用`);
+      }
+    }
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, plugin_ids: unique },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), botId);
+    return this.getOrThrow(botId);
+  }
+
+  /**
+   * P5（P4 审查 P2-2 处置）：合并追加启用集——`plugins.enableForBots` 的落点。读-并-写
+   * 在这一次同步调用里完成（无跨进程读改写窗口），新 id 追加在既有顺序之后；已启用 =
+   * 不写不返回 added（调用方不发事件）。pluginIds 去重后逐个校验已安装，语义与
+   * `setPluginIds` 相同。
+   */
+  addPluginIds(botId: string, pluginIds: string[]): { bot: Bot; added: boolean } {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const unique = [...new Set(pluginIds)];
+    for (const pluginId of unique) {
+      if (!this.#pluginDirectory?.installed(pluginId)) {
+        throw new AppError('INVALID_INPUT', `插件 ${pluginId} 未安装，不能启用`);
+      }
+    }
+    const current = bot.profile.runtime.plugin_ids ?? [];
+    const additions = unique.filter((pluginId) => !current.includes(pluginId));
+    if (additions.length === 0) return { bot, added: false };
+    const next = [...current, ...additions];
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, plugin_ids: next },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), botId);
+    return { bot: this.getOrThrow(botId), added: true };
   }
 
   create(

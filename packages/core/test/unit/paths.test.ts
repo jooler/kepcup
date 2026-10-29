@@ -12,6 +12,11 @@ describe('resolvePaths', () => {
     expect(paths.runsDbPath).toBe(path.join(paths.home, 'runs.db'));
   });
 
+  it('places plugins under {home}/plugins (D104)', () => {
+    const paths = resolvePaths();
+    expect(paths.pluginsDir).toBe(path.join(paths.home, 'plugins'));
+  });
+
   it('honors the KEPCUP_HOME override passed by the caller', () => {
     const paths = resolvePaths('/tmp/kepcup-home-x');
     // macOS canonicalizes /tmp → /private/tmp (resolvePaths realpaths).

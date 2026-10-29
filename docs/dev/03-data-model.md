@@ -55,6 +55,9 @@
 | main | `0050_project_board.sql` | D103：新表 `board_columns` / `board_cards`（卡片 id = 事项 id；`column_id` 无 `ON DELETE`，即 NO ACTION） |
 | main | `0051_card_conversations.sql` | D103：重建 `conversations`（首行 `-- kepcup:foreign-keys=off`）——`type` 增 `card`；新列 `parent_project_id`（FK 自身 `ON DELETE CASCADE`）、`card_todo_id`（无 FK）；`CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL))`，另加「非 card 两列皆空」；唯一索引 `conversations_one_open_per_card`。旧行原样保留，新列为 NULL |
 | main | `0052_todo_pending_when.sql` | D103：`todos` 增 `pending_when`（未指派先定时间；指派时转成 schedule，见上文不变式） |
+| main | `0053_plugins.sql` | D104：新表 `plugins`（市场 / 本地插件，内置插件不入表）、`plugin_items`（投影账本，随插件 `ON DELETE CASCADE`） |
+| main | `0054_plugin_skill_source.sql` | D104 P0b：`skill_library.source_url` 的 `preset://{id}` 一次性改写为 `plugin://com.kepcup/starter-skills/{id}`（纯 UPDATE；预置技能改为内置插件 `com.kepcup/starter-skills` 的技能贡献，`SkillPresetsService` 按新前缀认领） |
+| main | `0055_plugin_update_journal.sql` | D104 P1-2：`plugins` 增 `update_to` / `update_snapshot` 两列（更新日志；`update_to` 非 NULL = 更新进行中，崩溃恢复按快照回滚） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -80,7 +83,7 @@ CREATE TABLE settings (
 
 已知键：`providers`（厂商与自定义接口配置，不含 key）、`models.default_main`、`models.default_light`、`provider_concurrency`、`unattended`（无人值守模式状态）、`notifications`、`embedding`、`webSearch`（联网检索供应商，P18：`{provider: 'tavily'|'brave'|'bocha'|null}`；key 不在此处，存 secrets）。
 
-连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。P3 再加 `apps.directorySync`（签名目录索引同步开关，默认 `true`；同一入口写；关闭 → 远端目录条目立即清空，只用打包快照）。签名目录索引的本地缓存不在数据库里，而在数据目录 `cache/directory/`（`index.json`、`index.json.sig`、`state.json`；`state.json` 记最后接受的索引的 `generatedAt`、字节 sha256、`keyId`、ETag 与最近成功时间，是防回滚棘轮，缓存被清也不会放过更旧的索引；缓存启动时重新验签）。
+连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。P3 曾加 `apps.directorySync`（签名目录同步开关），已随 D104 商店化移除（连接器目录通道整体下线，连接能力由市场插件承担）。
 
 外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig, model}`，本机启用状态与默认模型（`model` 为空 = 智能体自己的默认）；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 项目组对话摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, projectMentionOnly=true（经 Agent 的项目组路由判断需用户关掉此项；D92 T1a WP8 由 groupMentionOnly 改名，无迁移，旧 JSON 缺省值被 `.default(true)` 吸收）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
@@ -339,6 +342,8 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 ```
 
 `skill_preset`（P19/D63）：payload `{presetId, name, displayName, summary, version, missingDeps}`——`install_skill` 的预置轻授权卡；`skill_import` 既有 payload（P08）不变，工具路径复用同一 kind（阻塞审批）。无人值守模式下两者同属自动批准类。
+
+> **D105 P4 补记**：`install_skill` 已删除，`skill_preset` 审批 kind 不再有产出方（机制保留在审批 schema 中）；`skill_import` 仍由右栏技能面板的手动导入使用。
 
 `butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'bots' | 'bot' | 'project'` 区分（见 `butlerProposalPayloadSchema`；D92 T1a WP4 起取值改名，`project` 分支字段 `{ title, goal, leadBotId, memberBotIds, reason }`——`propose_project` 的载荷带负责人）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）与 `leadBotId`（审批卡上改过的负责人，改过才写）。
 
@@ -1002,6 +1007,42 @@ CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id
 - 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
 - 删除对话 / 删除 Bot / 移出项目组经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
 
+### plugins / plugin_items（插件，D104，迁移 0053）
+
+设计见 [design 51](../design/51-plugin-system.md) §7。市场与本地来源的已安装插件；每类贡献（技能 / 连接器 / MCP / 邮件模板 / 由插件停用的连接）投影成功一行账本。
+
+```sql
+CREATE TABLE plugins (
+  id             TEXT PRIMARY KEY,                       -- 'io.github.alice/doc-tools'
+  version        TEXT NOT NULL,
+  origin         TEXT NOT NULL CHECK (origin IN ('marketplace','local')),
+  tier           TEXT NOT NULL CHECK (tier IN ('verified','community','developer')),
+  state          TEXT NOT NULL CHECK (state IN ('installing','installed','uninstalling')),
+  enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  package_sha256 TEXT NOT NULL,
+  marketplace    TEXT,                                   -- source endpoint; marketplace origin only
+  dir            TEXT NOT NULL,                          -- relative to {home}/plugins: '{ns}/{name}@{version}'
+  installed_at   INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  CHECK ((origin = 'marketplace') = (marketplace IS NOT NULL)),
+  CHECK ((origin = 'local') = (tier = 'developer'))
+);
+
+CREATE TABLE plugin_items (
+  plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+  kind      TEXT NOT NULL CHECK (kind IN ('skill','connector','mcp','mail','disabled_connection')),
+  ref       TEXT NOT NULL,                               -- skill name / connector slug / server id / template id / connection id
+  PRIMARY KEY (plugin_id, kind, ref)
+);
+CREATE INDEX plugin_items_ref ON plugin_items(kind, ref);
+```
+
+- **账本语义**：卸载 / 回滚 / 冲突检测 / 「已安装」详情都读 `plugin_items`，不靠各服务里的来源标记反推；先登记账本、后写入投影，任一步失败按账本反向回滚，`unproject` 全部幂等。
+- **状态机**：`installing` → `installed` → `uninstalling`；启动时对残留的 `installing` / `uninstalling` 行恢复（先例：`environment.recoverInterrupted`）。
+- **更新日志（0055，D104 P1-2）**：`update_to` / `update_snapshot` 两列，默认 NULL。更新事务先把 `update_to`（目标版本）与 `update_snapshot`（按投影器 kind 的 `{kind: 快照字符串}` JSON，来自 `projector.beginUpdate()`）写入日志，再做文件与投影改动；提交时单条 UPDATE 与 `version` / `tier` / `dir` 等一起翻转并把两列清回 NULL。进程中途崩溃 → 启动恢复先处理 `update_to IS NOT NULL` 的行（按快照补偿回滚到旧版本），再处理 `installing` / `uninstalling` 行。
+- **origin / tier 约束**：本地来源恒 `developer`（CHECK 落库），市场来源必须带 `marketplace` endpoint；分级由来源决定，清单自标一律无效。
+- **内置插件不入表**：`com.kepcup` 内置插件是只读应用资源，随启动从应用资源加载，不装 / 不卸 / 不启停。
+
 ## runs.db
 
 ### runs（P01）
@@ -1203,6 +1244,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 项目数据目录 `projects/{id}/`（项目 wiki git、wiki-store、`wiki.db`）与该项目的 wiki job | 删除（`lifecycle.deleteConversation`：先 `prepareProjectDeletion` 排空在途维护，再关 `wiki.db` 连接、`rmSync` 整目录；该会话的 jobs 已取消）；仅项目组会话 | D92 T1b |
 | 各 Bot 个人 Wiki 中从该对话入库的资料 | **保留**（项目 wiki 随上一行删除） | — |
+| plugins / plugin_items | 保留（全局数据，不随对话 / Bot 删除） | D104 |
 
 ### 删除 Bot
 
@@ -1231,6 +1273,7 @@ projects/{projectId}/            # 项目数据根（projectId = 根会话 id）
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
 | usage_ledger | **保留**（用量统计） | — |
+| plugins / plugin_items | 保留（全局数据，不随对话 / Bot 删除） | D104 |
 
 删除前的弹框需要列出：记忆条数、Wiki 页面数、Skills 数、workspace 数量与占用空间。
 

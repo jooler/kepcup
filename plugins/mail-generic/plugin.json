@@ -1,0 +1,40 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/mail-generic",
+  "name": "通用邮箱",
+  "icon": "icon.svg",
+  "version": "1.0.1",
+  "description": "添加任意支持 IMAP/SMTP 的邮箱：自己填写收发服务器（如自建邮箱、企业邮箱、Fastmail 等），一个插件可以添加多个账号。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
+  "instances": [
+    "mail"
+  ],
+  "contributions": {
+    "mail": [
+      {
+        "id": "generic",
+        "label": "通用邮箱",
+        "imap": {
+          "host": "",
+          "port": 993,
+          "secure": "ssl"
+        },
+        "smtp": {
+          "host": "",
+          "port": 465,
+          "secure": "ssl"
+        },
+        "defaultMode": "auto",
+        "defaultPollSec": 300,
+        "minPollSec": 60
+      }
+    ]
+  }
+}

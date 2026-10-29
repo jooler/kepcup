@@ -73,90 +73,16 @@ export interface MailServerEndpoint {
   secure: MailSecure;
 }
 
-export interface MailProviderPreset {
-  id: MailProvider;
-  /** 能否用授权码在 P0 创建。Outlook 需要 OAuth，预设可见但不可保存。 */
-  available: boolean;
-  imap: MailServerEndpoint;
-  smtp: MailServerEndpoint;
-  /** 新建账号的默认收信模式。163/126 无 IDLE，默认仅轮询。 */
-  defaultMode: MailMode;
-  defaultPollSec: number;
-  /** 与全局下限取较大者。 */
-  minPollSec: number;
-  /** 授权码获取说明。空字符串 = 自定义，没有厂商帮助页。 */
-  helpUrl: string;
-}
-
-export const MAIL_PROVIDER_PRESETS: Record<MailProvider, MailProviderPreset> = {
-  qq: {
-    id: 'qq',
-    available: true,
-    imap: { host: 'imap.qq.com', port: 993, secure: 'ssl' },
-    smtp: { host: 'smtp.qq.com', port: 465, secure: 'ssl' },
-    defaultMode: 'auto',
-    defaultPollSec: 300,
-    minPollSec: 120,
-    helpUrl: 'https://help.mail.qq.com/detail/108/1089/',
-  },
-  netease_163: {
-    id: 'netease_163',
-    available: true,
-    imap: { host: 'imap.163.com', port: 993, secure: 'ssl' },
-    smtp: { host: 'smtp.163.com', port: 465, secure: 'ssl' },
-    defaultMode: 'poll_only',
-    defaultPollSec: 300,
-    minPollSec: 180,
-    helpUrl: 'https://help.mail.163.com/',
-  },
-  netease_126: {
-    id: 'netease_126',
-    available: true,
-    imap: { host: 'imap.126.com', port: 993, secure: 'ssl' },
-    smtp: { host: 'smtp.126.com', port: 465, secure: 'ssl' },
-    defaultMode: 'poll_only',
-    defaultPollSec: 300,
-    minPollSec: 180,
-    helpUrl: 'https://help.mail.126.com/',
-  },
-  gmail: {
-    id: 'gmail',
-    available: true,
-    imap: { host: 'imap.gmail.com', port: 993, secure: 'ssl' },
-    smtp: { host: 'smtp.gmail.com', port: 465, secure: 'ssl' },
-    defaultMode: 'auto',
-    defaultPollSec: 300,
-    minPollSec: MAIL_POLL_MIN_SEC,
-    helpUrl: 'https://developers.google.com/workspace/gmail/imap/imap-smtp',
-  },
-  outlook: {
-    id: 'outlook',
-    available: false,
-    imap: { host: 'outlook.office365.com', port: 993, secure: 'ssl' },
-    smtp: { host: 'smtp-mail.outlook.com', port: 587, secure: 'starttls' },
-    defaultMode: 'auto',
-    defaultPollSec: 300,
-    minPollSec: MAIL_POLL_MIN_SEC,
-    helpUrl:
-      'https://support.microsoft.com/office/pop-imap-and-smtp-settings-for-outlook-com-d088b986-291d-42b8-9564-9c414e2aa040',
-  },
-  custom: {
-    id: 'custom',
-    available: true,
-    imap: { host: '', port: 993, secure: 'ssl' },
-    smtp: { host: '', port: 465, secure: 'ssl' },
-    defaultMode: 'auto',
-    defaultPollSec: 300,
-    minPollSec: MAIL_POLL_MIN_SEC,
-    helpUrl: '',
-  },
-};
-
-/** 把用户填的间隔夹进全局硬限和该厂商的下限。 */
-export function clampMailPollInterval(provider: MailProvider, seconds: number): number {
-  const preset = MAIL_PROVIDER_PRESETS[provider];
-  const min = Math.max(MAIL_POLL_MIN_SEC, preset.minPollSec);
-  const rounded = Number.isFinite(seconds) ? Math.round(seconds) : preset.defaultPollSec;
+/**
+ * 把用户填的间隔夹进全局硬限和该账号的下限（P3：下限来自所属插件贡献的
+ * `minPollSec`，无主账号只有全局 60 秒硬限；`defaultPollSec` 兜底非数字输入）。
+ */
+export function clampMailPollInterval(
+  seconds: number,
+  bounds: { minPollSec: number; defaultPollSec: number },
+): number {
+  const min = Math.max(MAIL_POLL_MIN_SEC, bounds.minPollSec);
+  const rounded = Number.isFinite(seconds) ? Math.round(seconds) : bounds.defaultPollSec;
   return Math.min(MAIL_POLL_MAX_SEC, Math.max(min, rounded));
 }
 
@@ -164,10 +90,7 @@ export function clampMailPollInterval(provider: MailProvider, seconds: number): 
  * 连接成功后的收信路径。有 IDLE 且模式为 auto 才走 IDLE；否则轮询。
  * 厂商「是否尝试 IDLE」体现在默认 mode（163 默认 poll_only），运行时以 CAPABILITY 为准。
  */
-export function resolveMailListen(
-  mode: MailMode,
-  capabilities: readonly string[],
-): MailListen {
+export function resolveMailListen(mode: MailMode, capabilities: readonly string[]): MailListen {
   const hasIdle = capabilities.some((item) => item.toUpperCase() === 'IDLE');
   return mode === 'auto' && hasIdle ? 'idle' : 'poll';
 }
@@ -204,6 +127,11 @@ export const mailAccountSchema = z.object({
   botIds: z.array(z.string()),
   /** 提醒风暴后暂停唤醒的 Bot；账号会话仍在，UID 游标照常前进。 */
   alertPausedBotIds: z.array(z.string()),
+  /** 所属插件实例（D105 P3）；null = 遗留无主账号，标「未关联插件」。 */
+  instanceId: z.string().nullable(),
+  /** 归属插件 id / 名称（core 联查回填；无主账号为 null）。 */
+  pluginId: z.string().nullable(),
+  pluginName: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -230,29 +158,6 @@ const mailEndpointInput = {
   smtpSecure: mailSecureSchema.optional(),
 };
 
-export const mailAccountTestInputSchema = z.object({
-  provider: mailProviderSchema,
-  address: z.string().min(3),
-  password: z.string().min(1),
-  username: z.string().optional(),
-  ...mailEndpointInput,
-});
-export type MailAccountTestInput = z.infer<typeof mailAccountTestInputSchema>;
-
-export const mailAccountTestOutputSchema = z.object({
-  ok: z.literal(true),
-  idle: z.boolean(),
-  smtp: z.boolean(),
-});
-
-export const mailAccountCreateInputSchema = mailAccountTestInputSchema.extend({
-  label: z.string().optional(),
-  mode: mailModeSchema.optional(),
-  pollIntervalSec: z.number().int().optional(),
-  botIds: z.array(z.string()).optional(),
-});
-export type MailAccountCreateInput = z.infer<typeof mailAccountCreateInputSchema>;
-
 export const mailAccountUpdateInputSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1).optional(),
@@ -278,6 +183,11 @@ export const mailBindingResumeInputSchema = z.object({
   accountId: z.string().min(1),
   botId: z.string().min(1),
 });
+
+/**
+ * 邮件预填模板（D104 P1-3）已于 P3 删除：邮件贡献升级为实例供给规范
+ * （`pluginMailContributionSchema`），「模板 overlay + 预设下拉」机制不复存在。
+ */
 
 /** 发信审批卡的载荷：收件人与正文完整列出，不走摘要截断。 */
 export const mailSendApprovalPayloadSchema = z.object({

@@ -8,7 +8,6 @@ import { presentCardSchema } from './present.js';
 import { SHARE_INTAKE_ID_PATTERN } from './share.js';
 import { DEFAULT_RELAY_URL, relayEndpointSchema } from './remote.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
-import { mailProviderSchema } from './mail.js';
 import {
   settingCardContentSchema,
   settingCardResolvedSchema,
@@ -86,6 +85,11 @@ export const botRuntimeSchema = z.object({
    * 空 = 未关联；非空且扩展中心已启协作时注册 `call_inkcop_agent`（非整轮 divert）。
    */
   inkcop_agent_keys: z.array(z.string().min(1)).default([]).catch([]),
+  /**
+   * D105 注入模型：该 Bot 启用的插件 id 集合（沿 mcp_server_ids 的 Profile-JSON 先例）。
+   * 缺失 / 空 = 未启用任何插件（显式添加制）；项目会话内再并上 project_plugins 的授权。
+   */
+  plugin_ids: z.array(z.string().min(1).max(200)).max(200).optional(),
   /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
@@ -375,14 +379,29 @@ export type McpToolPolicy = z.infer<typeof mcpToolPolicySchema>;
 export const mcpServerAuthSchema = z.enum(['none', 'headers', 'oauth']);
 export type McpServerAuth = z.infer<typeof mcpServerAuthSchema>;
 
-export const mcpServerSourceSchema = z.object({
-  kind: z.literal('mcpb'),
-  // Same patterns as the MCPB manifest: these become a directory name under toolchains/mcpb
-  // (and get `rm -r`-ed on uninstall), so no separators / dot-dot can ever get in.
+// Same patterns as the MCPB manifest: these become a directory name under toolchains/mcpb
+// (and get `rm -r`-ed on uninstall), so no separators / dot-dot can ever get in.
+const mcpbPackageRefSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),
   version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
+/**
+ * 来源（D73 P2 §6.5 / D104 插件系统）：独立 `.mcpb` 安装记 `kind:'mcpb'`（包名 / 版本 /
+ * 包文件 sha256）；插件登记的 server 记 `kind:'plugin'`（`key` 是清单里该 mcp 贡献的
+ * `id`，内嵌 MCPB 另带 `mcpb` 包引用）。本文件不 import `plugin-manifest.ts`
+ * （会与 connector-catalog.ts 成环），id 形状用本地约束。
+ */
+export const mcpServerSourceSchema = z.discriminatedUnion('kind', [
+  mcpbPackageRefSchema.extend({ kind: z.literal('mcpb') }),
+  z.object({
+    kind: z.literal('plugin'),
+    pluginId: z.string().min(3).max(200),
+    version: z.string().min(1).max(64),
+    key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
+    mcpb: mcpbPackageRefSchema.optional(),
+  }),
+]);
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
 /**
@@ -700,11 +719,6 @@ export const appsSettingsSchema = z
      */
     taintGuard: z.boolean().default(true).catch(true),
     /**
-     * 目录同步（D73 P3 §7.1）：每日拉取签名目录索引并与打包快照合并。默认开；关闭 = 只用
-     * 打包快照。只经 `settings.update` 的 `apps.directorySync` 写。
-     */
-    directorySync: z.boolean().default(true).catch(true),
-    /**
      * 本机连接（todo/local-connector-authoring.md）：slug → `LocalConnectorRecord`（core 自有，
      * 只经 `apps.localConnectors.*` 写；`settings.update` 不接受）。值读取时由 core 逐条校验
      * （`domain/local-connectors.ts`），所以这里不收紧类型：一条坏记录只丢弃它自己。
@@ -715,7 +729,6 @@ export const appsSettingsSchema = z
     toolLockBaselineDone: false,
     developerMode: false,
     taintGuard: true,
-    directorySync: true,
     localConnectors: {},
   });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;
@@ -750,6 +763,37 @@ export type InkcopLocalCollabSettings = z.infer<typeof inkcopLocalCollabSettings
 /** UI language selected in the renderer; core mirrors it for prompts and deterministic copy. */
 export const appLanguageSchema = z.enum(['zh-CN', 'en-US']);
 export type AppLanguage = z.infer<typeof appLanguageSchema>;
+
+/**
+ * D104 P1-1 插件市场的两个设置键 schema（条目 `plugins.marketplace`）。故意定义在本文件而
+ * 不是 `plugin-index.ts`：settingsSchema 在这里，而 plugin-index 一带（plugins →
+ * plugin-manifest → connector-catalog → types）会把 dist 的 import 图连成环，plain node
+ * 直接引 `@kepcup/shared` 会踩 TDZ。
+ */
+const RAW_PUBLIC_KEY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** 自建市场地址：只 https、无用户信息；'' = 官方市场。 */
+export function isHttpsMarketplaceUrl(value: string): boolean {
+  if (value === '') return true;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && url.username === '' && url.password === '';
+}
+
+export const pluginMarketplaceUrlSchema = z.union([
+  z.literal(''),
+  z.string().max(500).refine(isHttpsMarketplaceUrl),
+]);
+
+/** 自建市场的 Ed25519 公钥：Ed25519 原始 32 字节的 base64（44 字符）；'' = 用官方公钥。 */
+export const pluginMarketplacePublicKeySchema = z.union([
+  z.literal(''),
+  z.string().length(44).regex(RAW_PUBLIC_KEY_PATTERN),
+]);
 
 export const settingsSchema = z.object({
   /** Renderer UI language; core reads it for prompts and onboarding copy. */
@@ -853,6 +897,21 @@ export const settingsSchema = z.object({
   /** D96 远程遥控：中转地址，默认公共服务，自建用户可改（条目 `remote.relay`）。 */
   remoteRelayUrl: relayEndpointSchema.default(DEFAULT_RELAY_URL),
   /**
+   * D104 P1-1 插件市场：是否随市场索引定时检查更新（只控制定时拉取；手动 refresh /
+   * 打开市场页仍联网）。条目 `plugins.updates`。
+   */
+  pluginAutoCheckUpdates: z.boolean().default(true),
+  /**
+   * D104 P1-1 插件市场：市场地址；'' = 官方市场（`PLUGIN_INDEX_BASE_URL`），自建须 https 且
+   * 同时登记自己的签名公钥（`pluginMarketplacePublicKey`）。条目 `plugins.marketplace`。
+   */
+  pluginMarketplaceUrl: pluginMarketplaceUrlSchema.default(''),
+  /**
+   * D104 P1-1 插件市场：自建市场的 Ed25519 公钥（原始 32 字节的 base64）；'' = 用内置
+   * 官方公钥。这是供应链信任根，只能由用户在卡片里改（条目 `plugins.marketplace`）。
+   */
+  pluginMarketplacePublicKey: pluginMarketplacePublicKeySchema.default(''),
+  /**
    * 用户个人资料（Profile）显示名；'' = 未设置（界面显示默认称呼）。条目
    * `profile.user-name`，设置页「个人资料」编辑。
    */
@@ -915,6 +974,11 @@ export const conversationSchema = z.object({
   createdAt: z.number(),
   /** Present in list output: the direct bot (single chat). */
   bot: botSchema.nullable().optional(),
+  /**
+   * D105：项目详情输出——该项目会话内叠加授权的插件 id（project_plugins 表）；
+   * 非项目会话缺省。
+   */
+  plugins: z.array(z.string()).optional(),
   /**
    * 项目成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
    * 只在列表/详情视图上补，不入库；至多 {@link PROJECT_MEMBER_PREVIEW_MAX} 个。
@@ -1557,8 +1621,8 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
    */
   z.object({
     kind: z.literal('mail-account'),
-    /** 可选的厂商预填（qq / gmail / …）；用户仍可改选。 */
-    provider: mailProviderSchema.optional(),
+    // P3：厂商预填已随 MAIL_PROVIDER_PRESETS 删除——添加入口是邮件插件卡，
+    // 卡上列已安装的邮件插件（无则引导安装）。
     /** 给用户看的简短原因。 */
     reason: z.string().optional(),
   }),
@@ -1580,6 +1644,22 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     before: settingValuesSchema.optional(),
     /** 给用户看的一句话原因。 */
     reason: z.string(),
+  }),
+  /**
+   * Bot 提议安装一个插件（D104 P1-3，设计 51 §6.3）：`plugin_request_install` 只允许官方市场
+   * `verified` 级插件；确认卡内嵌同意面板，用户点「确认安装」→ `plugins.install`
+   * （`source: { kind: 'marketplace', id, version }`）后经 `runs.retry` 续跑。
+   * 字段用本地 `z.string()` 约束，不引 `plugin-manifest.ts`（避免循环引用）。
+   */
+  // strict：需求由宿主生成、跨进程传递，多余字段是缺陷而不是需要兼容的输入。
+  z.strictObject({
+    kind: z.literal('confirm-plugin-install'),
+    pluginId: z.string().min(3).max(200),
+    version: z.string().min(1).max(64),
+    /** 插件名（索引 summary 经清洗的展示文本，不是 Bot 原文）。 */
+    name: z.string().min(1).max(100),
+    /** Bot 给用户看的理由（已清洗，纯文本渲染）。 */
+    reason: z.string().max(300),
   }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;
@@ -2731,33 +2811,6 @@ export const skillEntrySchema = z.object({
   updatedAt: z.number(),
 });
 export type SkillEntry = z.infer<typeof skillEntrySchema>;
-
-/**
- * One row of the skill marketplace (preset catalog shipped with the app).
- * Install state is per bot: `installed` + `upToDate` drive the button
- * (添加 / 已添加 / 更新), `foreign` marks a same-name skill from another
- * source that must not be clobbered (button disabled with a hint).
- */
-export const skillPresetInfoSchema = z.object({
-  /** Catalog id (skills.presets.install input). */
-  id: z.string(),
-  /** Registry-level name from the SKILL.md frontmatter. */
-  skillName: z.string(),
-  displayName: z.string(),
-  summary: z.string(),
-  /** Lucide icon name resolved by the renderer (fallback on unknown). */
-  icon: z.string(),
-  /** Scenario pack grouping ('starter' …); titles live in the renderer i18n. */
-  section: z.string(),
-  version: z.string(),
-  tryIt: z.string().default(''),
-  /** Runtime deps missing on this machine (e.g. python) → 需环境安装 badge. */
-  missingDeps: z.array(z.string()).default([]),
-  installed: z.boolean(),
-  upToDate: z.boolean(),
-  foreign: z.boolean(),
-});
-export type SkillPresetInfo = z.infer<typeof skillPresetInfoSchema>;
 
 /** A skill directory found inside a cloned repository (multi-skill repos). */
 export const skillCandidateSchema = z.object({
