@@ -1,6 +1,8 @@
 # 51 插件系统（Plugin System）
 
 > 状态：**已确认（2026-10-26：§14 的 Q1–Q9 与开放问题均按推荐；同日对照代码审查修订），按 §13 分期实施**；执行方案见 [todo/plugin-system/](../../todo/plugin-system/README.md)；决策 D104。上游：[29-connected-apps.md](29-connected-apps.md)（D73 连接应用 / D74 开放平台基座，§16 扩展中心）、[35-mail-channel.md](35-mail-channel.md)（D84）、[38-conversational-settings.md](38-conversational-settings.md)（D89 设置目录）、[40-capability-mounting.md](40-capability-mounting.md)（D91 能力挂载）、[28-external-agents-acp.md](28-external-agents-acp.md)（D72 外部智能体）、[22-file-skill-routing.md](22-file-skill-routing.md)（D63 技能升级阶梯）。应用处于早期开发阶段：**本方案不做向后兼容**，存量内容按 §12 一次性改造。审查中对原稿的修正见文末「审查修订记录」；§14 的决策均已按推荐确认。
+>
+> **D105 现状注（2026-10-29）**：本文 §0–§14 描述 D104 第一期模型。其后 **D105 插件平台迭代**（[todo/plugin-platform/](../../todo/plugin-platform/README.md)）把插件升级为「应用一切能力的载体」——能力类型注册表、实例与插件配置、以插件为唯一注入单位、邮件插件化、安装引导。**现状事实见 §15；与 §0–§14 冲突处以 §15 为准**（各处历史叙述保留为决策记录）。
 
 ## 0. 背景与问题
 
@@ -381,7 +383,122 @@ P0 拆成两步：先用「第三方式」的插件把管线跑通，再动已�
 | 28 | §5 / §11 | zip 层泛化到 `infra/zip.ts`，校验器共用方式待定 | 开放问题 7 已定：抽 `@kepcup/package-guard`，P0a 先抽、P2 补写入 |
 | 29 | §12 | `pack-server` 拷入内置插件 | server 没有发行门禁的 `define`，拷贝时必须按 `connector-release-gates.json` 在打包阶段过滤连接器 |
 
-## 参考
+## 15 现状（D105 插件平台迭代，2026-10-29 收口）
+
+> 本节是 D105 五个阶段（[todo/plugin-platform/](../../todo/plugin-platform/README.md)：P1 能力类型基座 →
+> P2 注入模型 → P3 邮件插件化 → P4 扩展中心收口 → P5 文档/市场/设计修正）完成后的**现状事实**，
+> 与 §0–§14 冲突处以本节为准。开发者面向的完整契约见 [docs/guides/write-a-plugin.md](../guides/write-a-plugin.md)。
+
+### 15.1 能力类型注册表
+
+- `packages/core/src/plugins/kinds.ts`：`CAPABILITY_KINDS: readonly CapabilityKindAdapter[]` 是
+  能力类型的**唯一登记处**（`kind / contributionSchema / consentKey / hasInstances /
+  instanceFields() / hasContribution() / consentItems() / createProjector()`）。投影顺序
+  （skill→mcp→connector→mail）、卸载/回滚反序、清单贡献存在性判定、同意项映射、覆盖率测试
+  全部由注册表派生（`projectors/index.ts#PLUGIN_PROJECTOR_ORDER`、`createPluginProjectors`）。
+- **新增能力类型的四个 per-kind 手工点**（菜谱全文见开发文档 §9）：shared
+  `PLUGIN_INSTANCE_KINDS`、`PluginInstanceStore.countsOf` 的 kind 计数列表、
+  `pluginCapabilitySummary` / `…FromCategories` 文案、`kinds.ts#mergeConsentItems` 收口 switch。
+- 实例落地不进适配器：`PluginInstanceService.registerMaterializer(kind, impl)` 按核心装配注册
+  （mail 已落地；`mcp` 适配器 `hasInstances` 已声明但 materializer 未注册 → 创建报「尚未开放」）。
+
+### 15.2 贡献 / 实例 / 配置模型
+
+- 清单新增（additive，`format_version` 仍为 1）：`config: { fields: PluginField[] }`（≤32）、
+  `instances: PluginInstanceKind[]`（`'mail' | 'mcp'`，≤4 去重）；「至少一类贡献」放宽为
+  「贡献或 instances 至少其一」；邮件贡献恰一份且必须与 `instances: ['mail']` 配对（双向强制）。
+- **字段 schema 唯一定义** `pluginFieldSchema`（`shared/domain/plugin-manifest.ts`；`mcpb.ts`
+  re-export 别名）——MCPB `user_config`、插件 `config`、实例 `instanceFields` 三者共用同一套
+  schema 与同一套自动表单（`PluginFieldForm`：boolean→复选框、multiple→多行、sensitive→密码框
+  「已设置」占位、number→min/max、directory/file→路径选择器）。
+- **`default` 的语义（P4 审查确认，易错点）**：config / 实例字段的 `default` 不预填表单、
+  不物化进 `config_json`，只参与必填判定；**运行时消费方必须自己回退清单 default**（宿主不代劳）。
+  MCPB `user_config` 的 `default` 仍是安装表单预填。`directory` / `file` 值宿主只按字符串存储，
+  存在性 / 安全校验是消费方（适配器 / materializer）的责任。
+- 存储：`plugin_instances` 表（迁移 0056，`kind CHECK (mail,mcp)`、`config_json` 非敏感值）+
+  `plugins.config_json`；敏感值入 secrets（键 `plugin:{pluginId}:config:{key}` 与
+  `plugin:{pluginId}:instance:{instanceId}:{key}`，pluginId 经 `_u/_d/_s` 转义）。实例增删改走
+  `PluginRegistry` 同一把互斥锁；创建先落行+secrets 再 materializer（失败精确补偿），更新先
+  materializer 后落行；卸载级联拆实例（幂等 best-effort）。
+- RPC（`plugins-bindings.ts` + shared methods）：P1 的 `plugins.config.get/set`、
+  `plugins.instances.list/create/update/delete`；P2 的 `plugins.setBotPlugins`（**整集替换**，
+  编辑器 / 初始化语义）；P5 新增 **`plugins.enableForBots { pluginId, botIds }`**（合并追加，
+  core 侧原子并集——P4 审查 P2-2 处置：安装引导、对话内设置卡等「添加」流程改走它，
+  渲染端不再跨进程读-改-写）。
+- `PluginSummary` / inspect / 市场条目输出 `configFields`（安全投影：无 `default`）、
+  `instanceFields`、`instanceCounts`（mail 按 `mail_accounts` 活跃账号、mcp 按实例行）、
+  `providesInstances`、`capabilitySummary`（core 由清单派生的一句话概述；市场条目由签名脚本
+  写入索引，老索引按 `categories` 回退）。**多语言决策（P5）**：`capabilitySummary` 维持
+  core / 签名侧派生的单一中文句子——与 core 派生的实例字段标题同一姿态（P1 审查 P1-6、
+  DEV-074 先例）；结构化事实 + 渲染端 i18n 重建（或索引多语言字段）登记为路标
+  （英文市场上线时再兑现）。
+- 校验与脚手架（P5）：`app-validator` 新增 `plugin.field-default`（warn：default 与类型 /
+  min-max 不符、sensitive 声明 default）与 `plugin.capabilities`（info：capabilitySummary
+  预览 + 计数）；`init plugin` 骨架带示例 config 字段。
+
+### 15.3 注入模型：插件 = 唯一注入单位
+
+- Bot 级：`profile.runtime.plugin_ids`（缺失 = 未启用任何插件，显式添加制）；项目组级：
+  `project_plugins(conversation_id, plugin_id)`（迁移 0057）= 项目会话内的**叠加授权**。
+  **有效启用集**：`effectivePluginIds(bot, conversation) = plugin_ids ∪ (项目 ? project_plugins : ∅)`
+  （`packages/core/src/plugins/effective.ts` 唯一实现）。
+- 五处装配点（skills 提示段/沙箱目录/activeSkills、MCP `serversForBot`、连接暴露与 `<available_apps>`、
+  邮件、外部智能体能力包）按启用集**只做可见性过滤**——审批 / 风险 / 锁定 / 污点语义一字不改；
+  P4 收口后 `extraPluginIds` 全部必传（undefined = 不过滤的旧口径已删；唯一例外是 UI 清单
+  `skills.listForBot`）。MCP：插件贡献 server 由启用集接管（不再逐个勾选 `mcp_server_ids`）；
+  手动 server 的勾选保留为实例细选。邮件：`visibleMailAccounts` 三处同源过滤（工具注册 /
+  `<mail_accounts>` 段 / 工具内清单），无 pluginId 的系统账号恒放行。
+- UI：Bot 详情「连接应用 / MCP / 邮箱 / InkCop」四区块 → 「**插件**」一个区块（`BotPluginsSection`，
+  开关 + 展开实例细选；InkCop 是宿主能力，独立于插件）；项目组设置新增「插件」分区
+  （`projectSettings.plugins`）。协议不可见：`mcp` kind 显示名「工具」，OAuth / MCP / IMAP 等
+  词只在同意面板与开发文档。
+
+### 15.4 邮件插件化（实例型能力首个落地）
+
+- 迁移 0058：`mail_accounts.instance_id REFERENCES plugin_instances(id) ON DELETE SET NULL`。
+- 邮件贡献 = **实例供给规范**（`projectors/mail.ts` 只记账本行与同意视图）：厂商插件锁定端点
+  （imap/smtp host 非空成对，表单只剩 地址/用户名/授权码 + `instanceFields`≤16），通用插件
+  （host 留空成对）端点成为六个必填实例字段；`defaultMode`（auto/poll_only）/`defaultPollSec` /
+  `minPollSec` 种子新账号，全局 60 秒轮询下限是硬限。
+- `materializers/mail.ts`：create 复用 mail 服务内部落地路径（连接测试 → 账号行 + instance_id
+  → secrets → 会话启动），实例 title = 邮箱地址；update 对厂商锁重加、地址不可改；remove 走
+  既有删除级联；启动对账 `reconcileMailInstanceRows` 清孤儿实例行（DEV-065）。
+- 官方批次追加四个邮件插件（mail-generic / mail-163 / mail-126 / mail-qq）；`MAIL_PROVIDER_PRESETS`
+  与厂商预设机制删除（`MailProvider` 枚举保留，账号仍 `provider:'custom'`）；P3-M2 的 OAuth
+  子 schema 未落地（顺延）。
+
+### 15.5 扩展中心现状与安装引导
+
+- 页签收敛为 `['market', 'installed']`（设计 29 §16.1 的七页签表作废）：已安装 = 插件卡网格
+  （类别是筛选条件；`instanceCounts` 参与计数，纯实例插件可被筛出）+ 网格末尾两张**系统卡**
+  （本机应用协作 / 本机自建连接——系统能力不是插件，无插件菜单）；`localCollab` 旧深链解析为
+  installed + 系统卡聚焦。
+- 插件卡：⋮ 菜单「设置」（config 自动表单）/「管理」按 kind 落地（mail = 账号领域视图、
+  工具 = 圈定 `McpSection`——`pluginId` 过滤 `server.source.pluginId`，插件视图内无新建 / .mcpb
+  入口；全局手动 MCP 管理暂留「工具」筛选视图，DEV-075，M2 落地后退役）。
+- 安装成功引导：`PluginInstallHintDialog`（市场 + 本地两条路径；更新与 Bot 对话内确认卡不弹）
+  ——「能力需在 Bot 详情或项目组设置启用才生效」+「以后不再提醒」（localStorage
+  `kepcup.plugins.installHint.dismissed`，不入设置目录）+「立即添加到 Bot…」（走
+  `plugins.enableForBots`）。对话内给邮箱绑定 Bot 时合并启用属主插件（README §2.4 的快速
+  启用入口）。
+
+### 15.6 已删除面（D105 清理）
+
+`skills.presets.*` RPC、`install_skill` 工具、`<recommended_skills>` 段、
+`SkillPresetsService` / 预置目录（`ExtensionSkills`、`market.svelte.ts` 随删）、
+`MAIL_PROVIDER_PRESETS`（P3）、邮件预填模板 overlay（§4「mail（P1）」行作废）。
+`isBuiltinSkillSource` 迁至 `projectors/skills.ts`（0054 迁移产物 `plugin://` 行语义不变）。
+技能获取阶梯 = 插件阶梯（`plugin_search` → `plugin_request_install`；见设计 22 的 D105 补记）。
+
+### 15.7 后续路标（本迭代未做）
+
+custom-mcp 实例化（`instances: ['mcp']` 的 materializer、手动 MCP 收编 `app.kepcup/custom-mcp`、
+`mcpServerSourceSchema` 加 `instance` 分支、启动惰性迁移——P4 §4 全节为路标）；M2 邮件 OAuth
+子 schema；custom-connector 实例化；短信 / 电话 / 传感器能力类型（按 §15.1 菜谱）；
+插件依赖与合集；多市场并列；developer-portal 提交审核；`capabilitySummary` 多语言重建。
+迁移号 0056–0058 已用，新迁移从 0059 起。
+
+
 
 - VS Code：[Extension Anatomy](https://code.visualstudio.com/api/get-started/extension-anatomy)、[Publishing Extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)（VSIX / `--install-extension` / 平台分发包 / Entra ID 发布）
 - Open VSX：<https://open-vsx.org>（Eclipse 基金会开放市场；REST API + 静态托管，fork 以 endpoint 消费）

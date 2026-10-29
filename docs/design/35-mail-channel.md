@@ -1,5 +1,7 @@
 # 35 邮件通道（Mail Channel）
 
+> **D105 修订（插件平台迭代，现状事实）**：邮箱账号 = **插件实例**——`mail_accounts.instance_id` 外键指向 `plugin_instances`（迁移 0058，卸载插件级联删账号/绑定/授权码）；厂商预设机制（`MAIL_PROVIDER_PRESETS` 与「添加邮箱」预设下拉）已删除，取而代之的是官方市场的四个**邮件插件**（mail-generic 自填端点 / mail-163 / mail-126 / mail-qq 锁定端点）——插件清单里的邮件贡献是「实例供给规范」（默认值 + 锁定项），账号由用户在插件卡上逐个添加，表单字段由宿主按声明 schema 自动构建；实例的授权码存 secrets（`plugin:{pluginId}:instance:{instanceId}:password`）。轮询下限（60 秒）不变；`MailProvider` 枚举保留，实例账号仍 `provider:'custom'`。**插件未 ∈ Bot 启用集时账号对该 Bot 不可见**（工具注册、`<mail_accounts>` 段、工具内清单三处同源过滤）；无 instance_id 的遗留账号照常工作、列表标「未关联插件」。OAuth 子 schema（P3-M2）顺延未落地。入口在扩展中心「已安装」页的邮件插件卡（原独立「邮件」页签已并入）。现状总述见 [51-plugin-system.md](51-plugin-system.md) §15.4。
+
 Bot 可以接管用户邮箱：宿主用 IMAP 收信、SMTP 发信，新信到达时唤醒绑定的 Bot 私聊处理。这是与 D73「连接应用」并列的本机**通道（Channel）**——协议是 IMAP/SMTP，不是 MCP；入口在扩展中心「邮件」页签。决策：**D84**。
 
 **状态：P0 已实现（2026-10-12，main：e0f6500 + 审查修复 7b0aa93 + 提示改造 ae79978），实机验收（§9：QQ IDLE、163 ID + 轮询、发信审批卡）待完成；P1 未开始。** 产品拍板（2026-10-12）：扩展中心页签叫「邮件」；同一邮箱可被多个 Bot 接管；新信唤醒进**该 Bot 的私聊（DM）**；P0 必须收发都支持；优先做接近邮件客户端的近实时（IMAP IDLE），否则可配轮询间隔。；**对话内添加邮箱卡**（`mail_request_setup` → `mail-account` 设置卡，2026-10-13）已接入。
