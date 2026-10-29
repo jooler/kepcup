@@ -119,13 +119,13 @@
 | 字段 | 类型 | 必填 | 约束 |
 |---|---|---|---|
 | `format_version` | `1` | ✔ | 目前只能是 `1`（可加性契约见 §5.2） |
-| `id` | string | ✔ | `反向域名/名字`（如 `io.github.alice/doc-tools`）；同时是插件主键，同一 id 不能跨来源并存；`com.kepcup` / `local.kepcup` 是保留命名空间 |
+| `id` | string | ✔ | `{命名空间}/{名字}`：`/^[A-Za-z0-9][A-Za-z0-9.-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/`，3–200 字符（命名空间段可含点，多段反向域名可用）；同时是插件主键，同一 id 不能跨来源并存；`com.kepcup` / `local.kepcup` 是保留命名空间（小写比对） |
 | `name` | string | ✔ | 1–100 字符，市场与卡片标题 |
 | `version` | string | ✔ | semver（`1.2.0`、可带 `-beta.1` / `+build`）；≤64 字符 |
 | `description` | string | 建议 | ≤1000 字符；用户在同意卡与市场卡看到的第一句话 |
 | `author` | `{ name, url? }` | 建议 | `url` 必须是 https；帮助用户判断来源 |
 | `homepage` | string | 建议 | https URL，≤500 字符 |
-| `engines` | `{ kepcup }` | 建议 | semver 范围（如 `">=0.4.0"`）；开发版宿主（`0.0.0`）跳过该检查 |
+| `engines` | `{ kepcup }` | 建议 | semver 范围（如 `">=0.4.0"`，当前应用版本 0.4.0）；开发版宿主（`0.0.0`）跳过该检查 |
 | `platforms` | `['darwin'\|'win32'\|'linux']` | | 缺省 = 全平台；不匹配则拒绝安装（`PLUGIN_INCOMPATIBLE`） |
 | `config` | `{ fields: PluginField[] }` | | ≤32 个字段，key 查重；见 §2.3 |
 | `instances` | `['mail'\|'mcp']` | | ≤4 个、去重；声明哪些**纯实例能力**（§1.2） |
@@ -133,6 +133,8 @@
 
 - **「至少有一类贡献」已放宽为「贡献或 `instances` 至少其一」**；纯实例插件（只有
   `instances`，如未来 `app.kepcup/custom-mcp`）合法。
+- 每类贡献数量上限：技能 50、连接 20、工具 10、邮件 10——但**邮件贡献实际只能 1 份**
+  （必须与 `instances: ['mail']` 配对，见下）。
 - 邮件贡献的配对约束（schema 强制）：**邮件贡献 ≤1 份**且必须伴随 `instances: ['mail']`；
   反过来 `instances: ['mail']` 必须伴随一份邮件贡献（否则实例表单永远无法满足创建）。
 - 清单 ≤ 64KB；`.kepcup` 上限 512MB / 解包 500MB / 条目 20,000 / 单文件 200MB；不支持 ZIP64
@@ -175,6 +177,12 @@
 > - **任何 `sensitive: true` 的字段都不要声明 default**（校验器警告）：敏感值只能来自用户
 >   输入并落到 secrets，manifest 里的「默认密码」既不安全也永远不会被读取。
 
+> **config 的运行时消费方（重要预期管理）**：当前版本里，config 值的**自动**消费随能力类型
+> 适配器落地（例如未来邮件适配器读「轮询间隔」）。**技能贡献没有运行时 config 读取路径**——
+> 宿主不会把 config 值注入技能正文；技能插件声明 config 时，请在 `SKILL.md` 里指示 Bot
+> 「若配置了 X 则…，否则向用户确认」（用户填写的值对 Bot 不可见，Bot 不能读
+> `plugins.config.get`）。声明 config 仍然有意义：它给用户一个稳定的设置入口与存储。
+
 **宿主自动表单的渲染对照**（开发者据此预期 UI）：
 
 | 字段声明 | 渲染 | 校验 |
@@ -210,6 +218,10 @@ description: 用一句话说明这个技能做什么、什么时候该用。
 ```
 
 - frontmatter 缺 `name:` / `description:`、没有闭合 `---` 都会被拒（`plugin.skill-frontmatter`）。
+  frontmatter 是**扁平 `key: value` 行**（列表用 `- item` 或行内 `[a, b]`，不支持嵌套 YAML）；
+  `name` 规则：小写 `a-z` / `0-9` / 连字符，无连续或首尾连字符，≤64 字符，**建议与目录同名**
+  （安装后的来源标记用 `name`）；`description` 超过 1024 字符会被截断；其他键（如 `metadata`）
+  允许存在并交给扫描器，宿主只消费它认识的。
 - 运行时依赖在**同意卡**上展示（`runtimeDeps` + 本机是否可用）；不兼容不阻断安装——技能以
   「不兼容」状态登记、同意卡标注，依赖由用户在「设置 → 环境」安装。
 - **注入语义（按 Bot 启用）**：插件技能带 `plugin://{pluginId}/{skillName}` 来源标记，只有
@@ -391,8 +403,12 @@ node packages/app-validator/dist/cli.js validate ./my-plugin.kepcup
 
 **文案清洗**：清单与贡献里的用户可见文本（名称、描述、技能名等）在展示前经过统一清洗
 （控制字符 / 双向书写标记 / 零宽字符折叠或移除）。插件作者仍应：名称与描述写人话，
-**用户可见文案不出现协议词汇**（OAuth / MCP / IMAP / stdio…）——协议细节只出现在同意面板
-与开发文档（本文）里。
+**用户可见文案不出现协议词汇**——具体指：`OAuth`、`MCP`、`IMAP`、`SMTP`、`stdio`、
+`sse` / `streamable-http` 这类传输与授权协议名，不要出现在插件名、插件与贡献的
+`description`、字段 `title` / `description` 里（宿主自己的界面也遵守同一条规则；说
+「连接 Notion」「收发邮件」而不是「OAuth 连接」「IMAP 收信」）。**适用范围是展示文本**：
+`SKILL.md` 正文是给 Agent 的指令、不是用户可见文案，写 `curl https://api.github.com`
+这类内容完全没问题；协议细节出现在同意面板与开发文档（本文）里。
 
 **好的同意卡描述怎么写**：一句话说清「装了能干什么 + 会访问哪些外部服务 + 是否本地执行」。
 例如：「连接 Notion：授权后 Bot 可以读写你的 Notion 页面（OAuth，notion.so）」；
@@ -493,7 +509,40 @@ materializer 落地（领域行通过外键 `ON DELETE SET NULL` / 级联与实�
 **`directory` / `file` 字段值**——宿主只按字符串存储，存在性与安全校验是消费方
 （适配器 / materializer）的责任（§2.3）。
 
+## 附录：`plugin.*` 检查项速览
+
+（`validate --json` 报告里 `checks[].id` 的全集；error 会让 `pack` 拒绝产出、exit code 1。）
+
+**error**：
+
+| 检查项 | 触发条件 |
+|---|---|
+| `plugin.manifest-read` | 包根没有 `plugin.json`、超过 64KB、JSON 语法错误 |
+| `plugin.manifest-format` | `format_version` 高于支持的 `1` |
+| `plugin.manifest-schema` | 清单不符合 §2 的 schema（消息带路径，一次最多显示 3 条 issue） |
+| `plugin.manifest-namespace` | `id` 用了保留命名空间 |
+| `plugin.files-path` | 贡献路径缺失 / 类型不对 / 符号链接 / 逃逸插件目录 |
+| `plugin.files-limits` | 超过条目 / 单文件 / 解包体积上限 |
+| `plugin.package-entries` | zip 层问题（`..`、绝对路径、符号链接、大小写重名、加密、ZIP64） |
+| `plugin.skill-frontmatter` | frontmatter 缺失 / 不闭合 / 缺 `name:` / `description:` |
+| `plugin.connector-entry` | `server.json` 没过连接器检查，或没过安装器严格 schema（如缺 `releaseGate`） |
+| `plugin.connector-packages` | 连接器条目带 `packages[]` |
+| `plugin.connector-remote` | 端点非公网 https，或一个端点都没有 |
+| `plugin.connector-icon` | 图标不在 `server.json` 同目录 |
+| `plugin.mcpb-package` | `.mcpb` 不是合法 zip / 缺 manifest / 版本不支持 / 入口不在包内 |
+| `plugin.mcp-http` | http 贡献 URL 非公网 https |
+| `plugin.mail-host` | 邮件主机非公网域名 |
+
+**warn**（不拦打包，但应修掉）：`plugin.manifest-metadata`（缺 description / author /
+homepage / engines）、`plugin.readme`（缺包根 README.md）、`plugin.field-default`
+（§2.3 的 default 用法问题）。
+
+**info**（说明性）：`plugin.capabilities`（能力概述预览 + config / 实例计数）、
+`plugin.permissions`（同意卡将展示的权限推导：主机 / OAuth 范围 / MCPB / 邮件）、
+`plugin.mcpb-package`（结构合法提示）、`plugin.mcp-http`（公网 https 确认）。
+
 ---
 
-`--json` 校验报告（`mode: "plugin"`、`schemaVersion: 1`）适合 CI；完整检查项清单见
+`--json` 校验报告（`mode: "plugin"`、`schemaVersion: 1`）适合 CI；同一实现也是安装管线的
+校验层。宿主侧开发的检查项锚点见
 [packages/app-validator/README.md](../../packages/app-validator/README.md#plugin-packages)。
