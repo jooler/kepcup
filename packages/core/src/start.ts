@@ -2296,39 +2296,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // D104 P1-1：插件市场端点解析（官方 / 自建）与签名索引同步。构造在注册表之前（注册表
     // 的市场来源安装 / 撤销名单 / 更新标记都读它）；启停在下方 registry.start() 之后。
-    const testHooksBuild = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
-    const marketplaceOptions = testHooksBuild ? options.pluginMarketplace : undefined;
-    // D104 P1-3 e2e 缝（测试钩子构建 + NODE_ENV=test；打包构建被 define 折叠剔除）：
-    // KEPCUP_TEST_PLUGIN_MARKET = JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，
-    // 并把 baseUrl 的 host 同时作为回环允许主机（createSafeFetch 白名单 + download 的 URL 守卫）。
-    // 只接受回环地址：缝的放行是「免私网校验 + 明文 http」，不能被指向任意内网主机。
-    const testMarketSeam = (() => {
-      if (!testHooksBuild || env.KEPCUP_TEST_PLUGIN_MARKET === undefined) return undefined;
-      const seamSchema = z.object({
-        baseUrl: z.string().url(),
-        keys: z.array(indexPublicKeySchema).min(1),
-      });
-      let raw: unknown;
-      try {
-        raw = JSON.parse(env.KEPCUP_TEST_PLUGIN_MARKET);
-      } catch {
-        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: not valid JSON');
-        return undefined;
-      }
-      const parsed = seamSchema.safeParse(raw);
-      if (!parsed.success) {
-        logger.warn(
-          { issues: parsed.error.issues.map((issue) => issue.path.join('.')) },
-          'KEPCUP_TEST_PLUGIN_MARKET ignored: unexpected shape',
-        );
-        return undefined;
-      }
-      if (loopbackHostOf(parsed.data.baseUrl) === null) {
-        logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: baseUrl is not a loopback address');
-        return undefined;
-      }
-      return { ...parsed.data, loopbackHost: new URL(parsed.data.baseUrl).host };
-    })();
+    // D104 P1-3 e2e 缝：测试钩子构建 + NODE_ENV=test 时读环境变量（打包构建 define 折叠，
+    // 整函数 DCE，标记不得进 asar——与 fakeAcpAgentSeamFromEnv 同型）。
+    const marketplaceOptions =
+      __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test'
+        ? options.pluginMarketplace
+        : undefined;
+    const testMarketSeam =
+      __KEPCUP_TEST_HOOKS__ === true ? testPluginMarketSeamFromEnv(env, logger) : undefined;
     const testMarketLoopbackHosts =
       testMarketSeam !== undefined ? [testMarketSeam.loopbackHost] : [];
     const resolvedMarketOptions: CoreServicesOptions['pluginMarketplace'] | undefined =
@@ -3542,6 +3517,44 @@ function parseEpisodeLimits(env: NodeJS.ProcessEnv): { hops?: number; pair?: num
   if (Number.isFinite(hops) && hops > 0) limits.hops = Math.floor(hops);
   if (Number.isFinite(pair) && pair > 0) limits.pair = Math.floor(pair);
   return limits.hops !== undefined || limits.pair !== undefined ? limits : undefined;
+}
+
+/**
+ * D104 P1-3 插件市场 e2e 缝（仅 `__KEPCUP_TEST_HOOKS__` 调用；打包产物 DCE）。
+ * 环境变量值为 JSON `{ baseUrl, keys }`，等价 options.pluginMarketplace，并把
+ * baseUrl 的 host 作为回环允许主机。只接受回环地址。
+ */
+function testPluginMarketSeamFromEnv(
+  env: NodeJS.ProcessEnv,
+  logger: CoreLogger,
+): { baseUrl: string; keys: IndexPublicKey[]; loopbackHost: string } | undefined {
+  if (env.NODE_ENV !== 'test') return undefined;
+  const rawEnv = env.KEPCUP_TEST_PLUGIN_MARKET;
+  if (rawEnv === undefined) return undefined;
+  const seamSchema = z.object({
+    baseUrl: z.string().url(),
+    keys: z.array(indexPublicKeySchema).min(1),
+  });
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawEnv);
+  } catch {
+    logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: not valid JSON');
+    return undefined;
+  }
+  const parsed = seamSchema.safeParse(raw);
+  if (!parsed.success) {
+    logger.warn(
+      { issues: parsed.error.issues.map((issue) => issue.path.join('.')) },
+      'KEPCUP_TEST_PLUGIN_MARKET ignored: unexpected shape',
+    );
+    return undefined;
+  }
+  if (loopbackHostOf(parsed.data.baseUrl) === null) {
+    logger.warn('KEPCUP_TEST_PLUGIN_MARKET ignored: baseUrl is not a loopback address');
+    return undefined;
+  }
+  return { ...parsed.data, loopbackHost: new URL(parsed.data.baseUrl).host };
 }
 
 /**

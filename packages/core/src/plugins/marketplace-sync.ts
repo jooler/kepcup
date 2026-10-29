@@ -70,7 +70,7 @@ export interface MarketplaceSyncDeps {
   /** 包下载用（体积上限更大）；缺省复用 `fetch`。 */
   downloadFetch?: DirectoryFetch;
   /**
-   * 仅测试构建（P1-3 的 `KEPCUP_TEST_PLUGIN_MARKET` e2e 缝）放行的回环包下载主机：
+   * 仅测试构建（P1-3 的 the plugin-market e2e seam env e2e 缝）放行的回环包下载主机：
    * 命中列表的 `host:port` 视同安全（`isSafeDirectoryRemoteUrl` 只放行 https 公网）。
    */
   testLoopbackHosts?: readonly string[];
@@ -182,7 +182,7 @@ export class MarketplaceSync {
   }
 
   /**
-   * 逐条校验。测试缝例外：`KEPCUP_TEST_PLUGIN_MARKET` 的包只走回环 http，而共享的
+   * 逐条校验。测试缝例外：the plugin-market e2e seam env 的包只走回环 http，而共享的
    * `pluginIndexEntrySchema` 要求 downloadUrl 是 https——仅当条目主机在测试回环白名单里
    * 时，用一个占位 https URL 过 schema，再换回原地址。真正的下载守卫
    * （`#downloadUrlAllowed`）仍会再检查一次；只有测试构建会注入 host 白名单，
