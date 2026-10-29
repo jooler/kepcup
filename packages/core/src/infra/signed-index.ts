@@ -68,6 +68,24 @@ export function shortId(value: string): string {
   return value.length > 64 ? `${value.slice(0, 64)}…` : value;
 }
 
+/**
+ * 非 `SignedIndexRejection` 失败的状态文案：undici 把连接层失败包成 `TypeError: fetch failed`，
+ * 真实原因（连接超时 / DNS / 证书错误等）在 `cause` 链上。沿链取第一条与最外层不同且非空
+ * 的消息（shallowest distinct），避免「fetch failed: fetch failed」这种自我重复又无信息的
+ * 文案；cause 链上没有更具体的原因时原样返回最外层消息。
+ */
+export function fetchFailureMessage(error: unknown): string {
+  const root = error instanceof Error ? error.message : String(error);
+  let current = error instanceof Error ? error : undefined;
+  for (let depth = 0; current !== undefined && depth < 5; depth += 1) {
+    const cause = current.cause instanceof Error ? current.cause : undefined;
+    if (cause === undefined) break;
+    if (cause.message.length > 0 && cause.message !== root) return cause.message;
+    current = cause;
+  }
+  return root;
+}
+
 export function writeAtomic(file: string, data: string | Uint8Array): void {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   try {
@@ -462,7 +480,7 @@ export class SignedIndexSync<T extends { generatedAt: number; keyId: string }> {
       const message =
         error instanceof SignedIndexRejection
           ? `${error.reason}: ${error.message}`
-          : `fetch failed: ${error instanceof Error ? error.message : String(error)}`;
+          : fetchFailureMessage(error);
       this.#error = message.slice(0, 300);
       // 回落：继续用上一份已验签缓存；对调用方可见的只是警告。
       this.#deps.logger.warn(
