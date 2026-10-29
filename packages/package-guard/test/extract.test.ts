@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PackageGuardError, ZipArchive, buildZipBuffer, extractZip } from '@kepcup/package-guard';
@@ -42,8 +42,11 @@ describe('extractZip', () => {
       expect(result.files).toBe(3);
       expect(result.bytes).toBe(Buffer.byteLength('skill#!/bin/sh\nx'));
       expect(await readFile(path.join(dest, 'skills/a/SKILL.md'), 'utf8')).toBe('skill');
-      expect((await stat(path.join(dest, 'run'))).mode & 0o777).toBe(0o755);
-      expect((await stat(path.join(dest, 'plain'))).mode & 0o777).toBe(0o644);
+      // Windows ACLs do not preserve Unix mode bits the way chmod(2) does.
+      if (platform() !== 'win32') {
+        expect((await stat(path.join(dest, 'run'))).mode & 0o777).toBe(0o755);
+        expect((await stat(path.join(dest, 'plain'))).mode & 0o777).toBe(0o644);
+      }
       expect((await stat(path.join(dest, 'skills'))).isDirectory()).toBe(true);
     } finally {
       await zip.close();

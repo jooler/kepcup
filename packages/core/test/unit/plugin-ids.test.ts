@@ -21,9 +21,10 @@ describe('pluginDirName / pluginDirOf', () => {
   });
 
   it('resolves to {pluginsDir}/{ns}/{name}@{version} and maps case-variant ids to the same dir', () => {
-    const dir = pluginDirOf('/home/.kepcup/plugins', 'io.github.alice/doc-tools', '1.2.0');
-    expect(dir).toBe(path.join('/home/.kepcup/plugins', 'io.github.alice', 'doc-tools@1.2.0'));
-    expect(pluginDirOf('/home/.kepcup/plugins', 'IO.GITHUB.ALICE/DOC-TOOLS', '1.2.0')).toBe(dir);
+    const root = path.resolve('/home/.kepcup/plugins');
+    const dir = pluginDirOf(root, 'io.github.alice/doc-tools', '1.2.0');
+    expect(dir).toBe(path.join(root, 'io.github.alice', 'doc-tools@1.2.0'));
+    expect(pluginDirOf(root, 'IO.GITHUB.ALICE/DOC-TOOLS', '1.2.0')).toBe(dir);
   });
 
   it('rejects path-escaping ids and versions even if the schema missed them', () => {

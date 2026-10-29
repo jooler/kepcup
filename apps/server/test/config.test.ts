@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseConfig, ConfigError } from '../src/config.js';
 
@@ -84,9 +85,9 @@ describe('parseConfig', () => {
     expect(config.pluginAction).toBe('install');
     expect(config.pluginPath).toBe('/tmp/demo.kepcup');
     expect(config.pluginYes).toBe(true);
-    expect(config.pluginConfigFile).toBe('/tmp/user-config.json');
+    expect(config.pluginConfigFile).toBe(path.resolve('/tmp/user-config.json'));
     expect(config.json).toBe(true);
-    expect(config.dataDir).toBe('/tmp/kepcup-data');
+    expect(config.dataDir).toBe(path.resolve('/tmp/kepcup-data'));
     expect(config.port).toBe(9001);
   });
 

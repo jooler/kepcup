@@ -109,29 +109,33 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await dialog.locator('[data-testid="plugins-filter-connector"]').click();
-    const card = dialog.locator('[data-testid="apps-catalog-card-notion"]');
-    await expect(card).toBeVisible({ timeout: 30_000 });
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    // 单连接内置插件：已安装列表是插件卡；「管理」直达 0 账号首连面板（不再渲染目录卡）。
+    const pluginCard = dialog.locator('[data-testid="plugins-card-app.kepcup/connector-notion"]');
+    await expect(pluginCard).toBeVisible({ timeout: 30_000 });
+    await pluginCard
+      .locator('[data-testid="plugins-manage-connector-app.kepcup/connector-notion"]')
+      .click();
+    const panel = dialog.locator('[data-testid="plugins-manage-connect-panel"]');
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
 
-    // 点「连接」展开面板 → 面板里「连接」发起授权 → 流程进行中（停在永不应答的端点上）。
-    await dialog.locator('[data-testid="apps-catalog-connect-notion"]').click();
-    const panel = dialog.locator('[data-testid="apps-catalog-panel-notion"]');
-    await panel.locator('[data-testid="apps-catalog-panel-notion-connect"]').click();
-    await expect(panel.locator('[data-testid="apps-catalog-panel-notion-progress"]')).toBeVisible({
+    // 面板里「连接」发起授权 → 流程进行中（停在永不应答的端点上）。
+    await panel.locator('[data-testid="plugins-manage-connect-panel-connect"]').click();
+    await expect(panel.locator('[data-testid="plugins-manage-connect-panel-progress"]')).toBeVisible({
       timeout: 30_000,
     });
     await expect.poll(() => hits, { timeout: 30_000 }).toBeGreaterThan(0);
 
-    // 进行中：临时行不算账号。
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    // 进行中：临时行不算账号；单连接插件管理流也没有目录卡「管理」。
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="apps-catalog-manage-notion"]')).toHaveCount(0);
 
-    // 取消：卡片不会留下「已连接 N 个账号」，也没有「管理」。
-    await panel.locator('[data-testid="apps-catalog-panel-notion-cancel"]').click();
-    await expect(panel.locator('[data-testid="apps-catalog-panel-notion-cancelled"]')).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    // 取消：回到已取消态，不会留下「已连接 N 个账号」。
+    await panel.locator('[data-testid="plugins-manage-connect-panel-cancel"]').click();
+    await expect(
+      panel.locator('[data-testid="plugins-manage-connect-panel-cancelled"]'),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="apps-catalog-manage-notion"]')).toHaveCount(0);
 
     // 等几秒：没有任何 toast，渲染端没有对连接发过 tools / grants 请求。
@@ -140,12 +144,14 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     const log = await page.evaluate(() => window.__rpcLog);
     expect(log.filter((entry) => entry.includes('apps.connections.tools'))).toHaveLength(0);
     expect(log.filter((entry) => entry.includes('apps.connections.grants'))).toHaveLength(0);
-    // 关掉「连接」再进：列表仍然没有账号（不靠手动刷新）。
+    // 关掉扩展中心再进：插件卡仍在、没有账号（不靠手动刷新）。
     await page.keyboard.press('Escape');
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await dialog.locator('[data-testid="plugins-filter-connector"]').click();
-    await expect(dialog.locator('[data-testid="apps-catalog-card-notion"]')).toBeVisible();
+    await expect(
+      dialog.locator('[data-testid="plugins-card-app.kepcup/connector-notion"]'),
+    ).toBeVisible();
     await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
   } finally {
     await app?.close();
