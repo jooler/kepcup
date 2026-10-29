@@ -26,6 +26,8 @@ async function tmp(): Promise<string> {
   return dir;
 }
 
+const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"/>';
+
 async function minimalPlugin(dir: string): Promise<string> {
   await mkdir(path.join(dir, 'skills', 'hello'), { recursive: true });
   await writeFile(
@@ -38,11 +40,13 @@ async function minimalPlugin(dir: string): Promise<string> {
       description: 'A demo plugin',
       author: { name: 'Tester' },
       homepage: 'https://example.com',
+      icon: 'icon.svg',
       engines: { kepcup: '>=0.4.0' },
       contributions: { skills: [{ dir: 'skills/hello' }] },
     }),
   );
   await writeFile(path.join(dir, 'README.md'), '# Demo\n');
+  await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
   await writeFile(
     path.join(dir, 'skills', 'hello', 'SKILL.md'),
     '---\nname: hello\ndescription: Says hello\n---\n# Hello\n',
@@ -134,10 +138,12 @@ describe('packPluginDirectory', () => {
     const second = await tmp();
     await writeFile(path.join(second, 'README.md'), '# Demo\n');
     const manifest = await readFile(path.join(first, 'plugin.json'));
+    const icon = await readFile(path.join(first, 'icon.svg'));
     const skill = await readFile(path.join(first, 'skills/hello/SKILL.md'));
     await mkdir(path.join(second, 'skills', 'hello'), { recursive: true });
     await writeFile(path.join(second, 'skills/hello/SKILL.md'), skill);
     await writeFile(path.join(second, 'plugin.json'), manifest);
+    await writeFile(path.join(second, 'icon.svg'), icon);
     const c = await packPluginDirectory({ dir: second, out: path.join(await tmp(), 'c.kepcup') });
     expect(c.sha256).toBe(a.sha256);
   });
@@ -191,6 +197,7 @@ describe('packPluginDirectory', () => {
     const names = await zipNames(result.path);
     expect(names).toEqual([
       'README.md',
+      'icon.svg',
       'plugin.json',
       'skills/',
       'skills/hello/',

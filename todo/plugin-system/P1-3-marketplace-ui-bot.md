@@ -12,7 +12,7 @@
 | 包含 | 不包含 |
 |---|---|
 | 核心：e2e 测试缝（`KEPCUP_TEST_PLUGIN_MARKET`）、`mail.providerTemplates.list`、`PluginInstallRequests`、`plugin_search` / `plugin_request_install` 及其全部登记、`confirm-plugin-install` 设置需求 | ACP 外部智能体的插件工具（**不提供**；不进任何能力包） |
-| 渲染：`market` 页签、`ExtensionMarket`、对话框的市场 / 更新模式、「已安装」页的更新 / 撤销 / 设置区、Bot 确认卡、邮件表单模板 | 详情页 README 拉取、远程图标（见 P1-1 §6） |
+| 渲染：`market` 页签、`ExtensionMarket`、对话框的市场 / 更新模式、「已安装」页的更新 / 撤销 / 设置区、Bot 确认卡、邮件表单模板 | 详情页 README 拉取、远程图标 URL（**图标已改为签名索引内联，见 DEV-053 修订**） |
 | i18n、单测、e2e、文档 | |
 
 ## 3. 开工前核对
@@ -127,7 +127,7 @@ export function buildPluginTools(input: { identity: RunIdentity; facade: PluginT
 - 顶栏：搜索框 `plugins-market-search`、类别筛选 `plugins-market-cat-all|skill|connector|mcp|mail`（按 `categories` 过滤）、「刷新」`plugins-market-refresh`（调 `plugins.refreshMarket()`，进行中禁用并显示 `plugins.market.refreshing`）；
 - 状态横幅 `plugins-market-status`：`state==='disabled'` → `plugins.market.status.disabled.{reason}`；`degraded` / `stale` → 对应文案；`endpoint==='custom'` → 常驻 `plugins.market.status.custom`；
 - 列表分两组：**认证**（`tier==='verified'`，默认展开，标题 `plugins.market.verifiedSection`）与**社区**（默认折叠，标题 `plugins.market.communitySection`，开关 `plugins-market-community-toggle`）；客户端按搜索词与类别过滤；空态 `plugins-market-empty` / `plugins-market-nomatch`；
-- 卡片 `plugins-market-card-{id}`：字母头像（取名称首字符，**不加载任何远程图标**）、名称、版本、分级徽标、类别标签、描述（截断）、右侧按钮：未装 → 「安装」（`plugins-market-install-{id}`）；已装且 `installed.updateAvailable` → 「更新到 v…」（`plugins-market-update-{id}`）；已装 → 「已安装 · v…」（禁用）；`compatible === false` → 禁用并显示 `plugins.market.incompatible`；`revoked` → 红色徽标 `plugins.market.revokedWarn|Disable`，安装按钮禁用；
+- 卡片 `plugins-market-card-{id}`：插件图标（`PluginIcon`，来自签名索引内联的 `summary.icon`，**不发起远程图片请求**；缺失 / 不可用时回落宿主默认拼图图标，不再显示名称首字母）、名称、版本、分级徽标、类别标签、描述（截断）、右侧按钮：未装 → 「安装」（`plugins-market-install-{id}`）；已装且 `installed.updateAvailable` → 「更新到 v…」（`plugins-market-update-{id}`）；已装 → 「已安装 · v…」（禁用）；`compatible === false` → 禁用并显示 `plugins.market.incompatible`；`revoked` → 红色徽标 `plugins.market.revokedWarn|Disable`，安装按钮禁用；
 - 点击安装 / 更新 → 打开 `PluginInstallDialog`（`mode:'marketplace'`）。
 
 **4.2 `ExtensionInstalled.svelte` 补充**：
@@ -279,7 +279,7 @@ P1-3 六个步骤全部完成，并经一轮独立审查 + 聚焦复核。收口
 
 **已知遗留（不阻塞本阶段）**
 
-- 详情页 README 拉取与远程图标仍未做（DEV-053）。
+- 详情页 README 拉取仍未做（DEV-053）；市场图标已改为签名索引内联（原始图标 ≤64 KiB），不再需要远程图标 URL。
 - 「全部更新」的 UI 行为没有独立 e2e（store 单测覆盖三种分流）；市场「零网络请求」由 core 集成测试断言，e2e 只断言状态与无卡片。
 - 全量测试在本机默认并发下存在既有负载敏感超时（`user-avatar` / `watch` / `permission-bridge`）；`--maxWorkers=8` 收口运行全绿。
 

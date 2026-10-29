@@ -65,7 +65,13 @@ export function pluginIndexEntryFor(
     categories?: PluginIndexEntry['categories'];
     /** D105 P4: index-carried capability summary (omitted = old-style entry). */
     capabilitySummary?: string;
-    summary?: { name?: string; description?: string; author?: string | null };
+    summary?: {
+      name?: string;
+      description?: string;
+      author?: string | null;
+      /** Inline marketplace icon (data URI); omitted = old-style entry / default icon. */
+      icon?: string | null;
+    };
   } = {},
 ): PluginIndexEntry {
   const manifest = fixture.manifest as {
@@ -83,6 +89,9 @@ export function pluginIndexEntryFor(
   }
   if (extra.summary?.author !== undefined || manifest.author !== undefined) {
     summary.author = extra.summary?.author ?? manifest.author?.name ?? null;
+  }
+  if (extra.summary?.icon !== undefined) {
+    summary.icon = extra.summary.icon;
   }
   return {
     id: manifest.id,

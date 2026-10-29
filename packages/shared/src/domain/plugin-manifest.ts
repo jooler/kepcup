@@ -46,6 +46,82 @@ export const PLUGIN_MAX_INSTANCES = 4;
 export const PLUGIN_MAX_CONFIG_FIELDS = 32;
 /** Icon bytes cap: larger files are ignored (the UI falls back to the default icon). */
 export const PLUGIN_ICON_MAX_BYTES = 256 * 1024;
+/**
+ * Marketplace index icon cap: the signed index carries the package icon inline (data URI),
+ * so it stays much smaller than the installed-tree cap. A declared icon above this is not
+ * embedded; market cards fall back to the default icon.
+ */
+export const PLUGIN_MARKET_ICON_MAX_BYTES = 64 * 1024;
+
+const PLUGIN_ICON_MIME_BY_EXT: Readonly<Record<string, string>> = {
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+};
+
+const PLUGIN_ICON_BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+
+function base64Encode(bytes: Uint8Array): string {
+  let out = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index]!;
+    const second = index + 1 < bytes.length ? bytes[index + 1]! : 0;
+    const third = index + 2 < bytes.length ? bytes[index + 2]! : 0;
+    out += PLUGIN_ICON_BASE64[first >> 2]!;
+    out += PLUGIN_ICON_BASE64[((first & 0x03) << 4) | (second >> 4)]!;
+    out +=
+      index + 1 < bytes.length ? PLUGIN_ICON_BASE64[((second & 0x0f) << 2) | (third >> 6)]! : '=';
+    out += index + 2 < bytes.length ? PLUGIN_ICON_BASE64[third & 0x3f]! : '=';
+  }
+  return out;
+}
+
+function looksLikeSvgIcon(bytes: Uint8Array): boolean {
+  const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 512))).trimStart();
+  return head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'));
+}
+
+function looksLikeIcon(bytes: Uint8Array, ext: string): boolean {
+  if (ext === '.png') {
+    return PNG_SIGNATURE.every((value, index) => bytes[index] === value);
+  }
+  return looksLikeSvgIcon(bytes);
+}
+
+/**
+ * Inlines package icon bytes as a data URI, using the same extension / magic-byte / size
+ * rules everywhere they are read (installed tree and the signed marketplace index).
+ * Returns null for an unsupported extension, an empty / oversized payload or bad bytes.
+ */
+export function pluginIconDataUriFromBytes(
+  iconPath: string,
+  bytes: Uint8Array,
+  options: { maxBytes?: number } = {},
+): string | null {
+  const ext = iconPath.slice(iconPath.lastIndexOf('.')).toLowerCase();
+  const mime = PLUGIN_ICON_MIME_BY_EXT[ext];
+  if (mime === undefined) return null;
+  const maxBytes = options.maxBytes ?? PLUGIN_ICON_MAX_BYTES;
+  if (bytes.length === 0 || bytes.length > maxBytes) return null;
+  if (!looksLikeIcon(bytes, ext)) return null;
+  return `data:${mime};base64,${base64Encode(bytes)}`;
+}
+
+/**
+ * True for a value the renderer can safely put in `<img src>` as an icon: an SVG / PNG
+ * data URI within the installed-icon cap. Used to sanitize signed-index input (an old or
+ * custom index may carry anything) before it reaches `PluginMarketEntry`.
+ */
+export function isPluginIconDataUri(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = /^data:image\/(?:svg\+xml|png);base64,(.*)$/.exec(value);
+  if (match === null) return false;
+  const body = match[1]!;
+  if (body.length === 0 || body.length % 4 !== 0) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return false;
+  return Math.floor((body.length * 3) / 4) <= PLUGIN_ICON_MAX_BYTES;
+}
 
 /** One form value: MCPB user_config, plugin config and instance fields all use this union. */
 export const pluginFieldValueSchema = z.union([
