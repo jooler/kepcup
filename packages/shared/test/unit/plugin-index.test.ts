@@ -80,7 +80,23 @@ describe('pluginIndexSchema (envelope)', () => {
 describe('pluginIndexEntrySchema', () => {
   it('accepts a full entry and defaults summary fields', () => {
     const parsed = pluginIndexEntrySchema.parse(entry);
-    expect(parsed.summary).toEqual({ name: '文档工具集', description: '', author: null });
+    expect(parsed.summary).toEqual({
+      name: '文档工具集',
+      description: '',
+      author: null,
+      icon: null,
+    });
+  });
+
+  it('carries the marketplace icon inline and defaults it to null for old indexes', () => {
+    const icon =
+      'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
+    const parsed = pluginIndexEntrySchema.parse({
+      ...entry,
+      summary: { name: '文档工具集', icon },
+    });
+    expect(parsed.summary.icon).toBe(icon);
+    expect(pluginIndexEntrySchema.parse(entry).summary.icon).toBeNull();
   });
 
   it('rejects a non-https / overlong downloadUrl', () => {
@@ -177,6 +193,14 @@ describe('marketplace RPC views', () => {
       revoked: null,
     };
     expect(pluginMarketEntrySchema.safeParse(marketEntry).success).toBe(true);
+    // Old indexes / packages without an icon leave the card on the default icon.
+    expect(pluginMarketEntrySchema.parse(marketEntry).iconDataUri).toBeNull();
+    expect(
+      pluginMarketEntrySchema.parse({
+        ...marketEntry,
+        iconDataUri: 'data:image/svg+xml;base64,PHN2Zy8+',
+      }).iconDataUri,
+    ).toBe('data:image/svg+xml;base64,PHN2Zy8+');
     // P4: the entry output requires the derived capabilitySummary; the INDEX entry's
     // field is optional (old indexes stay valid).
     expect(

@@ -90,7 +90,7 @@ export const PLUGIN_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [];
   });
   ```
 
-  （设计 51 §6.1 的 `manifestDigest` 与 `summary.icon` 本期**不进 schema**：详情页 README 拉取与远程图标不做，见 §6。）
+  （设计 51 §6.1 的 `manifestDigest` 本期**不进 schema**；`summary.icon` 已于 2026-10-29 改为签名脚本内联的 data URI，原始图标 ≤64 KiB，见 DEV-053 修订。）
 
 **2.2 设置键与目录**（先读 `remote.relay` 条目与 `remoteRelayUrl` 的 schema 写法，照抄）：
 
@@ -272,7 +272,7 @@ export class MarketplaceService {
 
 ## 6. 与设计 51 的有意差异（在 DEVIATIONS 各记一条，状态「已决定」，决定栏写「按任务书」）
 
-1. 索引条目**不含 `manifestDigest` 与 `summary.icon`**，市场详情**不拉取 README**：设计 51 §6.1 / §9 的这两处依赖「按 digest 校验拉取富文本」，需要额外的 RPC、体积上限与 Markdown 渲染的 XSS 评审，推迟到有真实市场内容之后另立设计；本期详情页展示索引 `summary` + 同意面板。
+1. 索引条目**不含 `manifestDigest`**，市场详情**不拉取 README**：设计 51 §6.1 / §9 的这两处依赖「按 digest 校验拉取富文本」，需要额外的 RPC、体积上限与 Markdown 渲染的 XSS 评审，推迟到有真实市场内容之后另立设计；本期详情页展示索引 `summary` + 同意面板。`summary.icon` 已按 2026-10-29 的需求改为签名时内联（data URI，≤64 KiB），不引入远程图标抓取（DEV-053 修订）。
 2. 市场同步的定时开关 `pluginAutoCheckUpdates` 只控制**定时**拉取，手动 `refresh` / 打开市场页仍联网（设计 51 §6.3「只控制检查」的落地解释）。
 
 ## 7. 实施记录
@@ -301,7 +301,7 @@ export class MarketplaceService {
 
 ### 偏差与 DEV
 
-- **DEV-053 / DEV-054**：§6 两条有意差异（索引不含 `manifestDigest` / `summary.icon`、不拉 README；`pluginAutoCheckUpdates` 只控定时），状态「已决定」，决定「按任务书」。
+- **DEV-053 / DEV-054**：§6 两条有意差异（索引不含 `manifestDigest`、不拉 README；`summary.icon` 2026-10-29 起内联；`pluginAutoCheckUpdates` 只控定时），状态「已决定」，决定「按任务书」。
 - **DEV-055**：`pluginMarketplaceUrlSchema` / `pluginMarketplacePublicKeySchema` 定在 `domain/types.ts` 而非 `plugin-index.ts`——任务书位置会让 shared dist 的模块图成环（`types → plugin-index → plugins → plugin-manifest → connector-catalog → types`），plain node 直接 import shared dist（签名脚本的 `loadShared()`）踩 TDZ；CLI 冒烟实证后挪动，契约形状零变化。
 
 ### `CoreServices.marketplace` 的取舍

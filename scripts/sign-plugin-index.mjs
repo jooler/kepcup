@@ -213,12 +213,27 @@ export async function collectPluginEntries({
       label: name,
     });
     let rawManifest;
+    let iconBytes = null;
     try {
       const manifestEntry = zip.entries.find((candidate) => candidate.name === 'plugin.json');
       if (manifestEntry === undefined) {
         throw new SignError(`${name} has no plugin.json`);
       }
       rawManifest = JSON.parse((await zip.read(manifestEntry)).toString('utf8'));
+      // The icon is embedded into the signed index so market cards do not fetch images.
+      // A declared icon must be present and readable; a manifest without one is allowed
+      // (the app falls back to its default icon), but every published plugin SHOULD have one.
+      const declaredIcon =
+        rawManifest !== null && typeof rawManifest === 'object' ? rawManifest.icon : undefined;
+      if (typeof declaredIcon === 'string') {
+        const iconEntry = zip.entries.find((candidate) => candidate.name === declaredIcon);
+        if (iconEntry === undefined) {
+          throw new SignError(
+            `${name}: declared icon "${declaredIcon}" is missing from the package`,
+          );
+        }
+        iconBytes = await zip.read(iconEntry);
+      }
     } finally {
       await zip.close();
     }
@@ -231,6 +246,14 @@ export async function collectPluginEntries({
         'packages/shared/dist is not built; run `pnpm --filter @kepcup/shared build` (entry facts come from the parsed manifest)',
       );
     }
+    if (
+      typeof shared.pluginIconDataUriFromBytes !== 'function' ||
+      typeof shared.PLUGIN_MARKET_ICON_MAX_BYTES !== 'number'
+    ) {
+      throw new SignError(
+        'packages/shared/dist is stale; run `pnpm --filter @kepcup/shared build` (marketplace icon contract)',
+      );
+    }
     const parsed = shared.pluginManifestSchema.safeParse(rawManifest);
     if (!parsed.success) {
       throw new SignError(
@@ -238,6 +261,19 @@ export async function collectPluginEntries({
       );
     }
     const manifest = parsed.data;
+    let iconDataUri = null;
+    if (manifest.icon !== undefined) {
+      iconDataUri = shared.pluginIconDataUriFromBytes(manifest.icon, iconBytes, {
+        maxBytes: shared.PLUGIN_MARKET_ICON_MAX_BYTES,
+      });
+      if (iconDataUri === null) {
+        throw new SignError(
+          `${name}: icon "${manifest.icon}" is not a usable SVG/PNG within ${Math.floor(shared.PLUGIN_MARKET_ICON_MAX_BYTES / 1024)} KiB (market cards embed it inline)`,
+        );
+      }
+    } else {
+      log?.(`warning: ${name} has no icon; the marketplace will show the default icon`);
+    }
     const summary = item.summary ?? {};
     if (typeof summary.name !== 'string' || summary.name.length === 0) {
       throw new SignError(`curation entry ${name}: summary.name is required`);
@@ -262,6 +298,7 @@ export async function collectPluginEntries({
           summary.author === null || summary.author === undefined
             ? null
             : String(summary.author).slice(0, 100),
+        icon: iconDataUri,
       },
       // Deterministic builds pass --generated-at; otherwise the package mtime stands.
       updatedAt: generatedAt !== undefined ? generatedAt : Math.floor(statSync(filePath).mtimeMs),

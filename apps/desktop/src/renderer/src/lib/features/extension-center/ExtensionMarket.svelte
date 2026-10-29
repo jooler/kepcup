@@ -3,6 +3,7 @@
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { plugins } from '../plugins/plugins.svelte';
+  import PluginIcon from '../plugins/PluginIcon.svelte';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -13,7 +14,8 @@
    * 认证插件默认展开、社区插件默认折叠；安装 / 更新都走同一个同意面板对话框。
    *
    * 市场未启用（本版本没有内置公钥 / 自建市场缺公钥）时只显示状态横幅，不发任何请求；
-   * 远程图标一律不加载（列表用名称首字母头像），详情页 README 也不拉取（设计 51 §6.1）。
+   * 卡片图标来自签名索引内联的 `summary.icon`（不发起远程图片请求），索引 / 包里没有
+   * 可用图标时回落宿主默认图标；详情页 README 仍不拉取（设计 51 §6.1）。
    */
 
   const CATEGORY_FILTERS = ['all', 'skill', 'connector', 'mcp', 'mail'] as const;
@@ -72,10 +74,6 @@
   function openInstall(entry: PluginMarketEntry): void {
     target = { id: entry.id, version: entry.version };
     installOpen = true;
-  }
-
-  function initial(name: string): string {
-    return Array.from(name.trim())[0]?.toUpperCase() ?? '?';
   }
 
   function actionLabel(entry: PluginMarketEntry): string {
@@ -234,12 +232,7 @@
     data-testid={`plugins-market-card-${entry.id}`}
   >
     <div class="flex items-start gap-2.5">
-      <div
-        class="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-sm font-medium"
-        aria-hidden="true"
-      >
-        {initial(entry.name)}
-      </div>
+      <PluginIcon src={entry.iconDataUri} label={entry.name} class="size-9" />
       <div class="min-w-0 flex-1">
         <div class="flex min-w-0 items-baseline gap-1.5">
           <span class="truncate text-sm font-medium" title={entry.name}>{entry.name}</span>
