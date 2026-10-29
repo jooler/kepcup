@@ -218,10 +218,12 @@ description: 用一句话说明这个技能做什么、什么时候该用。
 ```
 
 - frontmatter 缺 `name:` / `description:`、没有闭合 `---` 都会被拒（`plugin.skill-frontmatter`）。
-  frontmatter 是**扁平 `key: value` 行**（列表用 `- item` 或行内 `[a, b]`，不支持嵌套 YAML）；
-  `name` 规则：小写 `a-z` / `0-9` / 连字符，无连续或首尾连字符，≤64 字符，**建议与目录同名**
-  （安装后的来源标记用 `name`）；`description` 超过 1024 字符会被截断；其他键（如 `metadata`）
-  允许存在并交给扫描器，宿主只消费它认识的。
+  frontmatter 是**扁平 `key: value` 行**（列表用 `- item` 或行内 `[a, b]`，不支持嵌套 YAML）。
+  `name` **约定**用 Agent Skills 的名字规则：小写 `a-z` / 数字 / 连字符，无连续或首尾连字符，
+  ≤64 字符，并与目录同名。注意宿主**不强制**这条（非规范名照常安装，只是会带一条诊断）——但
+  技能名是 `<skills>` 里的标识、也是 `plugin://{pluginId}/{name}` 来源标记的末段，改它等于换技能
+  （重装后旧名技能会被回收）。`description` 超过 1024 字符会被截断；`metadata` 等其他键允许存在
+  并交给扫描器，宿主只消费它认识的。
 - 运行时依赖在**同意卡**上展示（`runtimeDeps` + 本机是否可用）；不兼容不阻断安装——技能以
   「不兼容」状态登记、同意卡标注，依赖由用户在「设置 → 环境」安装。
 - **注入语义（按 Bot 启用）**：插件技能带 `plugin://{pluginId}/{skillName}` 来源标记，只有

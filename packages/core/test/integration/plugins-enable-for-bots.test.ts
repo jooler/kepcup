@@ -111,4 +111,21 @@ describe('plugins.enableForBots (merge semantics)', () => {
     expect(pluginIdsOf(core, botA.id)).toEqual([]);
     expect(pluginIdsOf(core, botB.id)).toEqual([]);
   }, 90_000);
+
+  it('a soft-deleted bot later in the batch rejects the call before any write', async () => {
+    const { core } = await setup();
+    await installSkillPlugin(core, PLUGIN_A);
+    const alive = await makeBot(core, '活着的');
+    const doomed = await makeBot(core, '将被删');
+    await core.rpc.call('bots.delete', { id: doomed.id });
+
+    // 活 Bot 排在前面：预检必须在写入之前拒绝，否则它会被白写一次。
+    await expect(
+      core.rpc.call('plugins.enableForBots', {
+        pluginId: PLUGIN_A,
+        botIds: [alive.id, doomed.id],
+      }),
+    ).rejects.toMatchObject({ code: 'CONVERSATION_READ_ONLY' });
+    expect(pluginIdsOf(core, alive.id)).toEqual([]);
+  }, 90_000);
 });
