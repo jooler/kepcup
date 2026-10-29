@@ -67,8 +67,15 @@ cd infra/cloudflare/directory && npx wrangler deploy
 - 连接器 9：notion / linear / atlassian / sentry / canva / stripe / cloudflare /
   gcalendar / gdrive（原内置 `com.kepcup/connections` 逐个拆分，server.json 未改）。
 
-### D105 P3 追加（4 个邮件插件，2026-10-28 随插件平台 P3 开发；发布沿上方流程）
+### D105 P3 追加（4 个邮件插件，2026-10-28 随插件平台 P3 开发；P5 打包 + 签名本地留档）
 
 - 邮件 4：mail-generic（通用，自填 IMAP/SMTP）/ mail-163 / mail-126 / mail-qq
   （厂商，锁定端点）。实例型插件首批落地：一个插件可添加多个邮箱账号，
   添加入口在插件卡「管理」；卸载插件级联删除其全部账号、绑定与授权码。
+- **P5（2026-10-29）**：22 个插件全部重打包（18 个既有包 sha256 与线上索引逐字节一致——
+  打包可复现性得到验证）并重签索引本地留档（`--verify` 通过）；4 个邮件插件 catalog
+  定为 `verified`（主机锁定 + 文案已随 P3 审查）。索引自本批起携带由清单派生的
+  `capabilitySummary`（签名脚本按 schema 解析后的清单生成——修复了 P4 引入的对省略空
+  数组清单崩溃的问题）。**待维护者执行生产部署**：R2 上传全部 22 包 + 索引部署
+  （`plugins/README.md` 上方流程第 5–6 步；直接署名会顶掉线上 18 条索引，部署前确认
+  22 包已全部上传 R2）。
