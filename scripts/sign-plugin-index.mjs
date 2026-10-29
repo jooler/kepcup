@@ -212,57 +212,63 @@ export async function collectPluginEntries({
       error: (m) => new SignError(m),
       label: name,
     });
+    let rawManifest;
     try {
       const manifestEntry = zip.entries.find((candidate) => candidate.name === 'plugin.json');
       if (manifestEntry === undefined) {
         throw new SignError(`${name} has no plugin.json`);
       }
-      const manifest = JSON.parse((await zip.read(manifestEntry)).toString('utf8'));
-      if (shared !== null) {
-        const parsed = shared.pluginManifestSchema.safeParse(manifest);
-        if (!parsed.success) {
-          throw new SignError(
-            `${name}: manifest is not a valid plugin manifest: ${parsed.error.issues[0]?.message ?? 'invalid'}`,
-          );
-        }
-      }
-      const summary = item.summary ?? {};
-      if (typeof summary.name !== 'string' || summary.name.length === 0) {
-        throw new SignError(`curation entry ${name}: summary.name is required`);
-      }
-      const entry = {
-        id: manifest.id,
-        version: manifest.version,
-        tier: item.tier,
-        sha256,
-        size,
-        downloadUrl: `${downloadBase.replace(/\/+$/, '')}/${sha256}.kepcup`,
-        ...(manifest.engines !== undefined ? { engines: manifest.engines } : {}),
-        ...(manifest.platforms !== undefined ? { platforms: manifest.platforms } : {}),
-        categories: categoriesOf(manifest),
-        // D105 P4: one-line capability summary derived from the manifest (the same
-        // shared function the app's consent and plugin cards use); omitted when the
-        // shared build is unavailable — the field is optional in the index schema.
-        ...(shared !== null
-          ? { capabilitySummary: shared.pluginCapabilitySummary(shared.capabilityFactsOf(manifest)) }
-          : {}),
-        summary: {
-          name: String(summary.name).slice(0, 100),
-          description: String(summary.description ?? '').slice(0, 500),
-          author:
-            summary.author === null || summary.author === undefined
-              ? null
-              : String(summary.author).slice(0, 100),
-        },
-        // Deterministic builds pass --generated-at; otherwise the package mtime stands.
-        updatedAt: generatedAt !== undefined ? generatedAt : Math.floor(statSync(filePath).mtimeMs),
-      };
-      entries.push(entry);
-      packages.push({ sha256, sourcePath: filePath });
-      log?.(`packaged ${name} (${manifest.id}@${manifest.version}, ${item.tier})`);
+      rawManifest = JSON.parse((await zip.read(manifestEntry)).toString('utf8'));
     } finally {
       await zip.close();
     }
+    // Entry facts (categories / capabilitySummary) read the SCHEMA-PARSED manifest:
+    // parsed output fills the per-kind default [] arrays that real-world manifests omit
+    // (a mail plugin carries only `contributions.mail`). Parsing without a shared build
+    // cannot happen — fail closed instead of signing facts off an unvalidated manifest.
+    if (shared === null) {
+      throw new SignError(
+        'packages/shared/dist is not built; run `pnpm --filter @kepcup/shared build` (entry facts come from the parsed manifest)',
+      );
+    }
+    const parsed = shared.pluginManifestSchema.safeParse(rawManifest);
+    if (!parsed.success) {
+      throw new SignError(
+        `${name}: manifest is not a valid plugin manifest: ${parsed.error.issues[0]?.message ?? 'invalid'}`,
+      );
+    }
+    const manifest = parsed.data;
+    const summary = item.summary ?? {};
+    if (typeof summary.name !== 'string' || summary.name.length === 0) {
+      throw new SignError(`curation entry ${name}: summary.name is required`);
+    }
+    const entry = {
+      id: manifest.id,
+      version: manifest.version,
+      tier: item.tier,
+      sha256,
+      size,
+      downloadUrl: `${downloadBase.replace(/\/+$/, '')}/${sha256}.kepcup`,
+      ...(manifest.engines !== undefined ? { engines: manifest.engines } : {}),
+      ...(manifest.platforms !== undefined ? { platforms: manifest.platforms } : {}),
+      categories: categoriesOf(manifest),
+      // D105 P4: one-line capability summary derived from the parsed manifest (the same
+      // shared function the app's consent and plugin cards use).
+      capabilitySummary: shared.pluginCapabilitySummary(shared.capabilityFactsOf(manifest)),
+      summary: {
+        name: String(summary.name).slice(0, 100),
+        description: String(summary.description ?? '').slice(0, 500),
+        author:
+          summary.author === null || summary.author === undefined
+            ? null
+            : String(summary.author).slice(0, 100),
+      },
+      // Deterministic builds pass --generated-at; otherwise the package mtime stands.
+      updatedAt: generatedAt !== undefined ? generatedAt : Math.floor(statSync(filePath).mtimeMs),
+    };
+    entries.push(entry);
+    packages.push({ sha256, sourcePath: filePath });
+    log?.(`packaged ${name} (${manifest.id}@${manifest.version}, ${item.tier})`);
   }
   const seen = new Set();
   for (const entry of entries) {
