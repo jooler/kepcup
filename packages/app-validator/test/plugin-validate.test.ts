@@ -391,3 +391,73 @@ describe('validatePlugin: JSON shape', () => {
     expect(Array.isArray(parsed.checks)).toBe(true);
   });
 });
+
+describe('validatePlugin: declarative config / instance fields (D105 P5)', () => {
+  it('previews the generated capability line and instance kinds as info', async () => {
+    const report = await validatePlugin(await legalDir());
+    expect(ids(report, 'error')).toEqual([]);
+    const capabilities = report.checks.find((check) => check.id === 'plugin.capabilities');
+    expect(capabilities?.severity).toBe('info');
+    expect(capabilities?.details).toMatchObject({
+      instanceKinds: ['mail'],
+      configFields: 0,
+    });
+    expect(String((capabilities?.details as { capabilitySummary: string }).capabilitySummary)).toContain(
+      '1 个技能',
+    );
+  });
+
+  it('warns when a default disagrees with the declared type / bounds, and on sensitive defaults', async () => {
+    const dir = await tmp();
+    await buildPluginDir({
+      ...legalOptions(dir),
+      manifest: {
+        author: { name: 'Tester' },
+        instances: ['mail'],
+        config: {
+          fields: [
+            { key: 'okText', type: 'string', title: '正常' },
+            { key: 'badNumber', type: 'number', title: '类型错', default: 'nope' },
+            { key: 'outOfRange', type: 'number', title: '越界', min: 5, default: 1 },
+            { key: 'secretDefault', type: 'string', title: '敏感默认', sensitive: true, default: 'x' },
+            { key: 'badMultiple', type: 'string', title: '多值错', multiple: true, default: 'x' },
+          ],
+        },
+      },
+      skills: [{ name: 'hello', description: 'Says hello' }],
+    });
+    const report = await validatePlugin(dir);
+    // 全部是 authoring 警告：不拦打包（core 对 default 的消费语义见开发文档）。
+    expect(ids(report, 'error')).toEqual([]);
+    const warnings = report.checks.filter(
+      (check) => check.id === 'plugin.field-default' && check.severity === 'warn',
+    );
+    const subjects = warnings.map((check) => check.subject);
+    expect(subjects).toContain('config[1] badNumber');
+    expect(subjects).toContain('config[2] outOfRange');
+    expect(subjects).toContain('config[3] secretDefault');
+    expect(subjects).toContain('config[4] badMultiple');
+    expect(subjects).not.toContain('config[0] okText');
+  });
+
+  it('also checks mail instanceFields defaults', async () => {
+    const dir = await tmp();
+    await buildPluginDir({
+      ...legalOptions(dir),
+      mail: [
+        {
+          ...MAIL,
+          instanceFields: [
+            { key: 'folder', type: 'string', title: '文件夹' },
+            { key: 'pageSize', type: 'number', title: '分页', default: true },
+          ],
+        },
+      ],
+    });
+    const report = await validatePlugin(dir);
+    const warnings = report.checks.filter(
+      (check) => check.id === 'plugin.field-default' && check.severity === 'warn',
+    );
+    expect(warnings.map((check) => check.subject)).toEqual(['mail:fastmail[1] pageSize']);
+  });
+});

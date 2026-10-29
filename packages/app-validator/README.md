@@ -234,6 +234,8 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="plugin-mcpb-package"></a>`plugin.mcpb-package` (error): an embedded `.mcpb` is not a valid archive, lacks `manifest.json`, uses an unsupported `manifest_version`, or its `server.entry_point` (non-`uv`) is not in the bundle. Full validation runs at install time.
 - <a id="plugin-mcp-http"></a>`plugin.mcp-http` (error): an `http` contribution URL is not a public https URL. Remote servers that need OAuth must be connector contributions.
 - <a id="plugin-mail-host"></a>`plugin.mail-host` (error): a mail template host is an IP literal, `localhost`, has no dot, or uses a private suffix.
+- <a id="plugin-field-default"></a>`plugin.field-default` (warn, D105): a declared config / instance field's `default` disagrees with its type or bounds, or a sensitive field declares a default (never readable — a sensitive value must come from the user). Authoring warnings only; they do not block packing.
+- <a id="plugin-capabilities"></a>`plugin.capabilities` (info, D105): the one-line capability summary generated from the manifest (shown on the consent and plugin cards), with the config-field and instance-kind counts.
 - <a id="plugin-permissions"></a>`plugin.permissions` (info): the derived permissions the consent card will show (hosts, OAuth scopes, MCPB `user_config` keys, mail templates).
 
 ## Library use
