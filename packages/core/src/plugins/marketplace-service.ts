@@ -42,7 +42,7 @@ export interface MarketplaceServiceDeps {
   official?: { keys: readonly IndexPublicKey[]; baseUrl: string };
   fetchFactory: (options: { maxBytes: number; timeoutMs?: number }) => DirectoryFetch;
   timing?: { intervalMs?: number; retryMs?: number; initialDelayMs?: number };
-  /** 仅测试构建：`KEPCUP_TEST_PLUGIN_MARKET` 的回环包下载主机（放行 download 的 URL 守卫）。 */
+  /** 仅测试构建：the plugin-market e2e seam env 的回环包下载主机（放行 download 的 URL 守卫）。 */
   testLoopbackHosts?: readonly string[];
 }
 
