@@ -1585,3 +1585,32 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **desktop**：记忆 Tab 移除勾选与「只属于该 Bot」徽标；同轮 UI：分类目录菜单逐层下钻（关系记忆/自我状态/用户事实与偏好 → kind；已过时条目叶子底部折叠，非菜单层级）、「查看证据：」+ 纯数字编号按钮（索引从 1 起，同消息多证据按 messageId 去重）。
 - **文档**：design/04（修订注 + 共享规则/用户控制）、README D8/D88、37（永不提供清单）、P07（工具参数/右栏 UI/画像提案校验/任务清单）、03-data-model（schema + 迁移表 0004 行）、04-agent-runtime（盘点/提议工具）。
 - **验证**：core 记忆相关单测/集成/安全 41+74 例定向全绿（validate rule3 收敛为 sensitive、约束标注 origin 化、迁移 0004 断言、移交 refusal 改走 self_note、审查 #7 改「提议后撤回」场景）；desktop typecheck + memory/handover e2e；全量 `pnpm test` 见下轮记录。
+
+## 插件平台 D105：P1–P5 全程收口（2026-10-29，分支 feat/plugins-platform/p5-*，未合回）
+
+按 `todo/plugin-platform/`（总任务书 + 五阶段文件）完成插件平台迭代全部五阶段：P1 能力类型注册表
+（`CAPABILITY_KINDS`、`pluginFieldSchema`、插件 `config`、`plugin_instances` + 实例 RPC、
+`PLUGIN_UPGRADE_REQUIRED`）→ P2 注入模型（`plugin_ids` / `project_plugins`、五处装配点按有效
+启用集过滤、Bot「插件」区块、项目组「插件」分区）→ P3 邮件插件化（账号 = 插件实例、
+`MAIL_PROVIDER_PRESETS` 删除、官方邮件四插件）→ P4 扩展中心收口（卡片设置 / 实例 UI、安装引导
+弹框、MCP 按插件圈定、两页签 + 系统卡、死代码清零）→ P5 文档 / 市场 / 设计修正。每阶段独立审查
+闭环（P1 P0×2/P1×7/P2×10、P2 P0×1/P1×5、P3 P0×1/P2×8、P4 P1×1/P2×6 全部处置），实施记录与
+验收证据在各阶段文件 §5/§6。P5 交付：`docs/guides/write-a-plugin.md` 全面重写（八章节 +
+盲测反馈六条修订，含 default 不物化语义、四个 per-kind 手工点菜谱）；`plugins.enableForBots`
+合并语义 RPC（P4 审查 P2-2 读改写竞态收口）；app-validator `plugin.field-default` /
+`plugin.capabilities` + init 模板 config 示例（DEV-076）；同意面板「插件配置」小节（验收标准
+「同意卡展示 config 字段」宿主面补齐）；设计文稿 51 §15 现状大节 + 29/35/40/41/23 五处 D105
+补记；官方批次 22 包重打包 + 重签 + 本地验签（18 条既有包与线上 sha256 逐字节一致、邮件四插件
+catalog 定 verified；**生产部署待维护者**），顺带修复 P4 签名脚本对省略空数组清单崩溃的真 bug。
+
+**盲测验收（迭代最终门槛）通过**：fresh-context Agent 仅凭 write-a-plugin.md 产出
+「GitHub 仓库摘要」插件（validate 零 error 零 warning、可复现打包）；宿主侧
+`blind-acceptance.spec.ts`（env 门控）走扩展中心安装 → 同意卡 config 字段 → 引导弹框 →
+Bot 启用 → `<skills>` 会话生效全链路全绿。
+
+**验证**：全量 `node scripts/run-tests.mjs run --maxWorkers=8` **654 文件 / 6894 通过 / 0 失败 /
+37 跳过**（历史 flake 本轮零命中）；typecheck shared / core / app-validator / desktop
+（svelte-check 0 error 0 warning）全过；改动文件 eslint 干净。DEVIATIONS 用掉 DEV-075（P4）/
+DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示例字段 + README 指引）；迁移 0056–0058 已用。
+遗留：市场生产部署（R2 + 索引 deploy）待维护者；M2 custom-mcp 实例化与邮件 OAuth 顺延
+（P4 §4 路标）；capabilitySummary 多语言重建路标（51 §15.2）。

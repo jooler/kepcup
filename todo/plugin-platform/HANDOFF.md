@@ -1,7 +1,13 @@
-# 插件平台迭代（D105）· 执行交接（2026-10-29，P4 收口后）
+# 插件平台迭代（D105）· 执行交接（2026-10-29，P5 收口 → 迭代全部完成）
 
 > 给下一个会话的执行智能体：本文是中断现场的完整交接。总任务书仍是本目录 [README.md](README.md)，
 > 按阶段循环协议执行（实现 → 独立审查 → 修正 → 提交 → 下一阶段）。已定决策不要重新讨论。
+>
+> **2026-10-29 更新：P5 已收口，本迭代 P1–P5 全部完成。** 各阶段实施记录与验收证据见各阶段文件
+> §5/§6；迭代整体收尾行在 `docs/dev/PROGRESS.md`（含全量 6894 通过 / 0 失败证据）。剩余事项只有
+> 两件**维护者操作**：①官方市场生产部署（R2 上传 22 包 + 索引 deploy，命令与顺序见
+> `plugins/README.md` 的 P5 注记）；②后续路标见 51 §15.7（M2 custom-mcp / 邮件 OAuth /
+> capabilitySummary 多语言重建等）。本目录不再有待执行阶段。
 
 ## 已完成
 
@@ -50,10 +56,18 @@
 
 ## 下一步（新会话从这里开始）
 
-1. 从当前分支 `feat/plugins-platform/p4-extension-center` 拉 `feat/plugins-platform/p5-docs-market`，进入 P5。
-2. P5 按阶段文件执行（要点见下节）；实现 → 独立审查 → 修正 → 提交循环不变。
-3. P5 收口时：PROGRESS.md 加行（本迭代整体收尾）、设计文稿修正（51 重写现状 + 六设计补记）、
-   盲测验收必须真实执行。
+（P5 已完成——本节原指向 P5 的开工指引移入 git 历史；无待执行阶段。若要继续插件方向的工作，
+从 51 §15.7 的路标里选题并新开任务书。）
+
+## P5（已完成，分支 `feat/plugins-platform/p5-docs-market`）
+
+- 提交链：`f1a884f3`（plugins.enableForBots 合并语义 RPC）→ `f0ec7fb0`（app-validator
+  field-default/capabilities + init config 示例）→ `3958867f`（write-a-plugin.md 全面重写）→
+  `97053c87`（官方批次 + 签名脚本 schema 解析修复）→ `3c66e2a0`（51 §15 + 五设计补记）→
+  同意面板 config 小节 + blind-acceptance.spec.ts → `08a2a03f`（盲测反馈六条修订）→ 收口
+  docs（本文件 + PROGRESS + 实施记录）。
+- 盲测验收真实执行通过（fresh-context Agent 产物零 error 零 warning + 验收 e2e 全链路绿）；
+  全量 6894/0/37。DEV-076 已登记；下一编号 DEV-077。迁移号 0059 起未用。
 
 ## 后续阶段要点（详见阶段文件）
 
