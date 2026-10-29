@@ -245,7 +245,7 @@ describe('packPluginDirectory', () => {
     process.chdir(cwd);
     try {
       const result = await packPluginDirectory({ dir });
-      expect(result.path).toBe(
+      expect(await realpath(result.path)).toBe(
         path.join(await realpath(cwd), 'io.github.tester__demo-1.0.0.kepcup'),
       );
       expect(await zipNames(result.path)).toContain('plugin.json');

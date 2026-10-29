@@ -171,6 +171,11 @@ function itemsOf(inspection: { items: ConsentItems }): ConsentItems {
   return inspection.items;
 }
 
+/** Ledger `dir` is always `{ns}/{name}@{version}` with `/`, never `path.sep`. */
+function pluginLedgerDir(pluginsDir: string, absoluteDir: string): string {
+  return path.relative(pluginsDir, absoluteDir).split(path.sep).join('/');
+}
+
 export class PluginRegistry {
   readonly #deps: PluginRegistryDeps;
   readonly #projectors: readonly PluginProjector[];
@@ -692,7 +697,7 @@ export class PluginRegistry {
         enabled: true,
         packageSha256: staged.packageSha256,
         marketplace: resolved.marketplace?.endpointId ?? null,
-        dir: path.relative(this.#deps.pluginsDir, finalDir),
+        dir: pluginLedgerDir(this.#deps.pluginsDir, finalDir),
         updateTo: null,
         updateSnapshot: null,
         configJson: '{}',
@@ -956,7 +961,7 @@ export class PluginRegistry {
       version: manifest.version,
       tier,
       packageSha256: staged.packageSha256,
-      dir: path.relative(this.#deps.pluginsDir, newDir),
+      dir: pluginLedgerDir(this.#deps.pluginsDir, newDir),
       marketplace: origin === 'marketplace' ? resolved.marketplace!.endpointId : row.marketplace,
       updateTo: null,
       updateSnapshot: null,
@@ -1227,7 +1232,7 @@ export class PluginRegistry {
       const info = await stat(namespacePath).catch(() => null);
       if (info === null || !info.isDirectory()) continue;
       for (const entry of await readdir(namespacePath)) {
-        const relative = path.join(namespace, entry).toLowerCase();
+        const relative = path.join(namespace, entry).split(path.sep).join('/').toLowerCase();
         // A row's own slot is never touched — including the odd-but-legal case of a
         // prerelease version that itself ends in `.prev` (e.g. `1.0.0-a.prev`), which the
         // `.prev`-parked heuristic below would otherwise strip and misread as garbage.
