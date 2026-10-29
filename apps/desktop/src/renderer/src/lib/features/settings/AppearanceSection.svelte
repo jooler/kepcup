@@ -93,11 +93,14 @@
     }
   }
 
-  const themeOptions: Array<{ value: ModeValue; label: string }> = [
+  // $derived：调用 t() 读到 i18n.locale 信号，语言切换后选项文案即时更新。
+  // 普通 const 只在组件初始化时求值一次，会固化旧语言的文案（要切走设置分组
+  // 重挂组件才恢复）。
+  const themeOptions: Array<{ value: ModeValue; label: string }> = $derived([
     { value: 'system', label: t('settings.themeSystem') },
     { value: 'light', label: t('settings.themeLight') },
     { value: 'dark', label: t('settings.themeDark') },
-  ];
+  ]);
 
   const currentMode = $derived(userPrefersMode.current);
 </script>
