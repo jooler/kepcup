@@ -190,14 +190,28 @@ catalog 以脚本从各插件清单现读生成（summary.name/description/autho
 
 **遗留问题（转后续路标，均为任务书既有路标非本阶段新增）**：①市场生产部署（R2 + 索引
 deploy）待维护者执行；②M2 custom-mcp 实例化 + 邮件 OAuth（P3/P4 顺延不变）；③
-capabilitySummary 多语言重建（51 §15.2 路标）；④`plugins.enableForBots` 尚无 e2e 直接
-断言（引导弹框旅程经它写入，e2e 断言的是落点而非 RPC 本身；core 集成测试 3 例覆盖契约）。
+capabilitySummary 多语言重建（51 §15.2 路标）。
+
+**审查**：独立审查子代理因模型额度上限不可用（2026-10-29，限额 11-03 重置），改为按同一
+清单自查（并发语义 / 文档与代码漂移 / 渲染层红线），**P1×1 / P2×2 全部处置**（`46ede4ef`）：
+P1 `enableForBots` 整批预检只查 Bot 存在——批量混入软删除 Bot 时排在前面的 Bot 已写入才抛
+`CONVERSATION_READ_ONLY`，与「任一失败整体拒绝」不符（预检补活跃状态 + 回归用例「活 Bot 在前
++ 已删 Bot 在后 → 拒绝且零写入」）；P2 文档把技能 `name` 字符集写成宿主强制规则，实际
+`sanitizeSkillName` 只用于 create_skill / import 流（插件技能名不强制，仅带诊断）→ 改写为
+「约定 + 不强制 + 改名即换技能」；P2 主任务书 §2.2 要求卸载确认明示实例级联，而文案只提
+技能 / 工具 / 连接应用 → 补「删除它创建的插件实例（如邮箱账号，含已保存的凭据）」（两语言，
+e2e 卸载旅程复跑通过）。已核对无问题：`enableForBots` 单次 tick 内无 await（读-并-写对同进程
+其他 RPC 原子）、`addPluginIds` 保序与去重、事件只对实际写入的 Bot 广播；文档其余事实（上限
+常量、id 正则、secrets 键形、server id 推导、localStorage 键、60 秒下限、`.kepcup-ignore` 规则、
+`plugins.config.get` 无 Bot 侧读取路径）逐条对照实现；`configFields` 安全投影的可选字段
+（sensitive / description / min / max）在同意面板的用法与类型一致；渲染层无硬编码中文、
+i18n 键序测试过、svelte-check 0 error。
 
 **测试证据汇总**：定向——core 插件面 7 文件 71 例全绿（injection / capability-mounting-p2 /
-instances / plugins / plugins-bot / registry / migration）+ `plugins-enable-for-bots` 3 例 +
+instances / plugins / plugins-bot / registry / migration）+ `plugins-enable-for-bots` 4 例 +
 app-validator plugin-validate / plugin-init-pack / readme-anchors / cli 全绿 + sign-plugin-index
 4 例；renderer plugins / extension-center / mail 36 例全绿；locales 两语言键序测试过。
 e2e——`plugins` 14 + `plugins-market` 11 + `plugins-manage` + `bot-plugins` + `blind-acceptance`
 1（新增）+ `extension-center` + `local-connectors` + `mail-plugins` 全绿。typecheck：shared /
-core / app-validator / desktop（svelte-check 0 error 0 warning）全过。全量一次见 PROGRESS.md
+core / app-validator / desktop（svelte-check 0 error 0 warning）全过。全量见 PROGRESS.md
 本迭代收尾行。
