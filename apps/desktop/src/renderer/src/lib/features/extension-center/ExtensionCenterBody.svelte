@@ -48,8 +48,11 @@
   }
 </script>
 
+<!-- 页签按钮的 -mb-px 让选中下划线压住分隔线，代价是内容比容器高 1px；
+     overflow-x-auto 会把另一轴的 visible 计算成 auto，那 1px 就变成常驻的纵向
+     滚动条。overflow-y-hidden 必须保留（裁掉的正是下划线外溢的那 1px）。 -->
 <div
-  class="flex shrink-0 items-center gap-1 overflow-x-auto border-b"
+  class="flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-b"
   role="tablist"
   bind:this={tablist}
   data-testid="extension-center-tabs"
