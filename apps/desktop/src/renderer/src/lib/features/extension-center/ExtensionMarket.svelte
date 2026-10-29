@@ -183,20 +183,22 @@
       {plugins.market.length === 0 ? t('plugins.market.empty') : t('plugins.market.noMatch')}
     </p>
   {:else}
-    <div class="grid gap-3">
+    <div class="flex flex-col gap-3">
       {#if verified.length > 0}
-        <section class="grid gap-2">
+        <section class="flex flex-col gap-2">
           <h3 class="text-xs font-medium text-muted-foreground">
             {t('plugins.market.verifiedSection')}
           </h3>
-          {#each verified as entry (entry.id)}
-            {@render card(entry)}
-          {/each}
+          <div class="market-cards">
+            {#each verified as entry (entry.id)}
+              {@render card(entry)}
+            {/each}
+          </div>
         </section>
       {/if}
 
       {#if community.length > 0}
-        <section class="grid gap-2">
+        <section class="flex flex-col gap-2">
           <div class="flex items-center gap-2">
             <h3 class="text-xs font-medium text-muted-foreground">
               {t('plugins.market.communitySection')}
@@ -214,9 +216,11 @@
             </Button>
           </div>
           {#if showCommunity}
-            {#each community as entry (entry.id)}
-              {@render card(entry)}
-            {/each}
+            <div class="market-cards">
+              {#each community as entry (entry.id)}
+                {@render card(entry)}
+              {/each}
+            </div>
           {/if}
         </section>
       {/if}
@@ -226,52 +230,57 @@
 
 {#snippet card(entry: PluginMarketEntry)}
   <div
-    class="flex items-start gap-3 rounded-lg border bg-card px-3 py-2.5"
+    class="flex min-w-0 flex-col gap-2 rounded-lg border bg-card p-3"
     data-testid={`plugins-market-card-${entry.id}`}
   >
-    <div
-      class="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-sm font-medium"
-      aria-hidden="true"
-    >
-      {initial(entry.name)}
-    </div>
-    <div class="min-w-0 flex-1">
-      <div class="flex flex-wrap items-center gap-1.5">
-        <span class="text-sm font-medium">{entry.name}</span>
-        <span class="text-xs text-muted-foreground">v{entry.version}</span>
-        <Badge variant="outline">{t(`plugins.tier.${entry.tier}`)}</Badge>
-        {#each entry.categories as item (item)}
-          <Badge variant="outline" class="text-xs">{t(`plugins.market.category.${item}`)}</Badge>
-        {/each}
-        {#if entry.revoked !== null}
-          <Badge variant="outline" class="border-destructive text-destructive">
-            {entry.revoked === 'disable'
-              ? t('plugins.market.revokedDisable')
-              : t('plugins.market.revokedWarn')}
-          </Badge>
-        {/if}
+    <div class="flex items-start gap-2.5">
+      <div
+        class="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-sm font-medium"
+        aria-hidden="true"
+      >
+        {initial(entry.name)}
       </div>
-      {#if entry.description.length > 0}
-        <p class="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
-      {/if}
-      {#if entry.capabilitySummary.length > 0}
-        <p class="mt-0.5 text-xs" data-testid={`plugins-market-summary-${entry.id}`}>
-          {entry.capabilitySummary}
-        </p>
-      {/if}
-      {#if entry.author !== null}
-        <p class="mt-0.5 text-xs text-muted-foreground">{entry.author}</p>
-      {/if}
-      {#if !entry.compatible}
-        <p class="mt-1 text-xs text-destructive">
-          {t('plugins.market.incompatible', { reason: entry.incompatibleReason ?? '' })}
-        </p>
+      <div class="min-w-0 flex-1">
+        <div class="flex min-w-0 items-baseline gap-1.5">
+          <span class="truncate text-sm font-medium" title={entry.name}>{entry.name}</span>
+          <span class="shrink-0 text-xs text-muted-foreground">v{entry.version}</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-1">
+      <Badge variant="outline">{t(`plugins.tier.${entry.tier}`)}</Badge>
+      {#each entry.categories as item (item)}
+        <Badge variant="outline" class="text-xs">{t(`plugins.market.category.${item}`)}</Badge>
+      {/each}
+      {#if entry.revoked !== null}
+        <Badge variant="outline" class="border-destructive text-destructive">
+          {entry.revoked === 'disable'
+            ? t('plugins.market.revokedDisable')
+            : t('plugins.market.revokedWarn')}
+        </Badge>
       {/if}
     </div>
-    <div class="shrink-0">
+    {#if entry.description.length > 0}
+      <p class="line-clamp-2 text-xs break-words text-muted-foreground">{entry.description}</p>
+    {/if}
+    {#if entry.capabilitySummary.length > 0}
+      <p class="text-xs break-words" data-testid={`plugins-market-summary-${entry.id}`}>
+        {entry.capabilitySummary}
+      </p>
+    {/if}
+    {#if !entry.compatible}
+      <p class="text-xs text-destructive">
+        {t('plugins.market.incompatible', { reason: entry.incompatibleReason ?? '' })}
+      </p>
+    {/if}
+    <div class="mt-auto flex items-center justify-between gap-2 pt-0.5">
+      <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        {entry.author ?? ''}
+      </span>
       <Button
         size="sm"
         variant={entry.installed === null ? 'secondary' : 'ghost'}
+        class="shrink-0"
         disabled={!canAct(entry)}
         onclick={() => openInstall(entry)}
         data-testid={actionTestId(entry)}
@@ -283,3 +292,15 @@
 {/snippet}
 
 <PluginInstallDialog bind:open={installOpen} mode="marketplace" marketplace={target} />
+
+<style>
+  /*
+   * 市场条目按面板可用宽度自适应列数：auto-fill 保持卡片最小可读宽度（17rem），
+   * min(17rem, 100%) 兜底比一张卡还窄的容器（窄屏单列不横向溢出）。
+   */
+  .market-cards {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr));
+  }
+</style>
