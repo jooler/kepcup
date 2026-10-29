@@ -35,6 +35,12 @@ Replace this file with your own skill instructions. KepCup reads the frontmatter
 (\`name\`, \`description\`) and exposes the folder to the Bot as an Agent Skill.
 `;
 
+const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#4f46e5"/>
+  <path d="M20 20h10v10H20zM34 20h10v10H34zM20 34h10v10H20zM34 34h10v10H34z" fill="#fff" opacity=".92"/>
+</svg>
+`;
+
 function readme(skillName: string): string {
   return `# Plugin skeleton
 
@@ -118,6 +124,7 @@ export async function initPluginDirectory(options: {
     format_version: 1,
     id,
     name: options.name ?? base,
+    icon: 'icon.svg',
     version: '0.1.0',
     description: 'TODO',
     engines: { kepcup: '>=0.4.0' },
@@ -135,9 +142,10 @@ export async function initPluginDirectory(options: {
     },
     contributions: { skills: [{ dir: 'skills/hello' }] },
   };
-  const files = [PLUGIN_MANIFEST_FILE, 'README.md', 'skills/hello/SKILL.md'];
+  const files = [PLUGIN_MANIFEST_FILE, 'README.md', 'icon.svg', 'skills/hello/SKILL.md'];
   await writeFile(path.join(dir, PLUGIN_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(path.join(dir, 'README.md'), readme('hello'));
+  await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
   await writeFile(path.join(skillDir, 'SKILL.md'), SKILL_MD);
   return { dir, id, files };
 }

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   PLUGIN_FORMAT_VERSION,
+  PLUGIN_ICON_MAX_BYTES,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_MAX_BYTES,
   capabilityFactsOf,
@@ -704,6 +705,75 @@ function defaultMismatch(field: PluginField): string | null {
 }
 
 /**
+ * Plugin icon (top-level `icon`): required for a good marketplace listing, but the
+ * host has a built-in fallback, so a missing declaration is a warning. A DECLARED icon
+ * must actually exist, stay in the package, be SVG / PNG and fit the size cap —
+ * otherwise the app would silently show the fallback and the author would never know.
+ */
+async function checkPluginIcon(
+  root: string,
+  rootReal: string,
+  manifest: PluginManifest,
+  checks: Check[],
+): Promise<void> {
+  const icon = manifest.icon;
+  if (icon === undefined) {
+    checks.push(
+      makeCheck(
+        'plugin.icon',
+        'warn',
+        'The plugin has no icon; the app shows its default icon instead.',
+        {
+          hint: 'Add icon.svg (64×64 or larger) or icon.png to the package and set "icon" in plugin.json.',
+          subject: 'icon',
+        },
+      ),
+    );
+    return;
+  }
+  const ok = await checkRequiredPath(root, rootReal, { relative: icon, expect: 'file' }, checks);
+  if (!ok) return;
+  const absolute = path.join(root, ...icon.split('/'));
+  try {
+    const info = await lstat(absolute);
+    if (info.size > PLUGIN_ICON_MAX_BYTES) {
+      checks.push(
+        makeCheck(
+          'plugin.icon',
+          'error',
+          `The icon is larger than ${Math.floor(PLUGIN_ICON_MAX_BYTES / 1024)} KiB: ${icon}`,
+          { hint: 'Use a small SVG, or a PNG no larger than the cap.', subject: icon },
+        ),
+      );
+      return;
+    }
+    const bytes = await readFile(absolute);
+    const svg = icon.toLowerCase().endsWith('.svg');
+    const usable = svg
+      ? /<svg[\s>]/i.test(bytes.subarray(0, 512).toString('utf8'))
+      : bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    if (!usable) {
+      checks.push(
+        makeCheck(
+          'plugin.icon',
+          'error',
+          `The icon is not a valid ${svg ? 'SVG' : 'PNG'} file: ${icon}`,
+          { subject: icon },
+        ),
+      );
+      return;
+    }
+    checks.push(makeCheck('plugin.icon', 'info', `Plugin icon: ${icon}.`));
+  } catch (error) {
+    checks.push(
+      makeCheck('plugin.icon', 'error', `The icon cannot be read: ${errorMessage(error)}`, {
+        subject: icon,
+      }),
+    );
+  }
+}
+
+/**
  * Declarative config / instance fields (D105): the manifest schema already enforces the
  * shape (strict field schema, count caps, duplicate keys, mail builtin-key clashes) —
  * these checks cover what a schema cannot say: `default`/type agreement, the two default
@@ -876,6 +946,7 @@ export async function validatePlugin(
     }
 
     checkDeclarativeFields(manifest, checks);
+    await checkPluginIcon(root, rootReal, manifest, checks);
 
     const permissions: PermissionFacts = {
       hosts: new Set<string>(),

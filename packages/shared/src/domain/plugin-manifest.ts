@@ -44,6 +44,8 @@ export const pluginInstanceKindSchema = z.enum(PLUGIN_INSTANCE_KINDS);
 export type PluginInstanceKind = z.infer<typeof pluginInstanceKindSchema>;
 export const PLUGIN_MAX_INSTANCES = 4;
 export const PLUGIN_MAX_CONFIG_FIELDS = 32;
+/** Icon bytes cap: larger files are ignored (the UI falls back to the default icon). */
+export const PLUGIN_ICON_MAX_BYTES = 256 * 1024;
 
 /** One form value: MCPB user_config, plugin config and instance fields all use this union. */
 export const pluginFieldValueSchema = z.union([
@@ -144,6 +146,16 @@ export function isSafePluginRelPath(value: string): boolean {
 export const pluginRelPathSchema = z
   .string()
   .refine(isSafePluginRelPath, { message: 'unsafe relative path' });
+
+/**
+ * Plugin icon file (top-level `icon`): a plain in-package path ending in `.svg` or
+ * `.png`. The host reads it for `PluginSummary.iconDataUri` and falls back to its
+ * built-in default icon when the field is absent or the file is unusable.
+ */
+export const pluginIconPathSchema = pluginRelPathSchema.refine(
+  (value) => /\.(svg|png)$/i.test(value),
+  { message: 'icon must end in .svg or .png' },
+);
 
 /** Skill source marker written into `skill_library.source_url`: `plugin://{pluginId}/{skillName}`. */
 export function pluginSkillSource(pluginId: string, skillName: string): string {
@@ -402,6 +414,8 @@ export const pluginManifestSchema = z
     format_version: z.literal(PLUGIN_FORMAT_VERSION),
     id: pluginIdSchema,
     name: z.string().min(1).max(100),
+    /** Package-relative icon file (`.svg` / `.png`); absent = the host's default icon. */
+    icon: pluginIconPathSchema.optional(),
     version: pluginVersionSchema,
     description: z.string().max(1000).default(''),
     author: z
