@@ -208,6 +208,7 @@ import {
   pluginsInstancesUpdateOutputSchema,
   pluginsInstancesDeleteInputSchema,
   pluginsSetBotPluginsInputSchema,
+  pluginsEnableForBotsInputSchema,
 } from '../domain/plugins.js';
 import {
   pairingOfferSchema,
@@ -2807,6 +2808,7 @@ export const rpcMethodSchemas = {
   },
   'plugins.instances.delete': { input: pluginsInstancesDeleteInputSchema, output: okOutput },
   'plugins.setBotPlugins': { input: pluginsSetBotPluginsInputSchema, output: okOutput },
+  'plugins.enableForBots': { input: pluginsEnableForBotsInputSchema, output: okOutput },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;

@@ -343,6 +343,18 @@ export const pluginsSetBotPluginsInputSchema = z.object({
 });
 export type PluginsSetBotPluginsInput = z.infer<typeof pluginsSetBotPluginsInputSchema>;
 
+/**
+ * `plugins.enableForBots`（D105 P5，P4 审查 P2-2 处置）：把一个已安装插件**合并追加**进
+ * 多个 Bot 的启用集（`profile.runtime.plugin_ids` 并集，已启用 = 幂等 no-op）。与
+ * `plugins.setBotPlugins`（整集替换 = 编辑器 / 初始化语义）互补：安装引导、对话内设置卡
+ * 等「添加」流程用它——读-并-写在 core 一侧同步完成，渲染端不再跨进程读-改-写。
+ */
+export const pluginsEnableForBotsInputSchema = z.object({
+  pluginId: pluginIdSchema,
+  botIds: z.array(z.string().min(1)).min(1).max(200),
+});
+export type PluginsEnableForBotsInput = z.infer<typeof pluginsEnableForBotsInputSchema>;
+
 /** `plugins.changed` (P0a): the renderer refreshes every projected view. */
 export const pluginsChangedPayloadSchema = z.object({ ids: z.array(pluginIdSchema).max(200) });
 export type PluginsChangedPayload = z.infer<typeof pluginsChangedPayloadSchema>;

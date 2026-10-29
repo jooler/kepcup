@@ -270,6 +270,37 @@ export class BotsService {
     return this.getOrThrow(botId);
   }
 
+  /**
+   * P5（P4 审查 P2-2 处置）：合并追加启用集——`plugins.enableForBots` 的落点。读-并-写
+   * 在这一次同步调用里完成（无跨进程读改写窗口），新 id 追加在既有顺序之后；已启用 =
+   * 不写不返回 added（调用方不发事件）。pluginIds 去重后逐个校验已安装，语义与
+   * `setPluginIds` 相同。
+   */
+  addPluginIds(botId: string, pluginIds: string[]): { bot: Bot; added: boolean } {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const unique = [...new Set(pluginIds)];
+    for (const pluginId of unique) {
+      if (!this.#pluginDirectory?.installed(pluginId)) {
+        throw new AppError('INVALID_INPUT', `插件 ${pluginId} 未安装，不能启用`);
+      }
+    }
+    const current = bot.profile.runtime.plugin_ids ?? [];
+    const additions = unique.filter((pluginId) => !current.includes(pluginId));
+    if (additions.length === 0) return { bot, added: false };
+    const next = [...current, ...additions];
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, plugin_ids: next },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), botId);
+    return { bot: this.getOrThrow(botId), added: true };
+  }
+
   create(
     profileInput: Partial<BotProfile> & { identity: { name: string } },
     options: {
