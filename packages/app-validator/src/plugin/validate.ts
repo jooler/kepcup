@@ -6,6 +6,7 @@ import {
   PLUGIN_ICON_MAX_BYTES,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_MAX_BYTES,
+  PLUGIN_MARKET_ICON_MAX_BYTES,
   capabilityFactsOf,
   connectorCatalogEntrySchema,
   connectorMetaOf,
@@ -705,10 +706,12 @@ function defaultMismatch(field: PluginField): string | null {
 }
 
 /**
- * Plugin icon (top-level `icon`): required for a good marketplace listing, but the
- * host has a built-in fallback, so a missing declaration is a warning. A DECLARED icon
- * must actually exist, stay in the package, be SVG / PNG and fit the size cap —
- * otherwise the app would silently show the fallback and the author would never know.
+ * Plugin icon (top-level `icon`): every marketplace plugin must ship its own icon — the
+ * market card and every installed-plugin list show it. A missing declaration is an error
+ * (the runtime still falls back to the host default icon for legacy / hand-built indexes,
+ * but a submitted package must not rely on that). A DECLARED icon must actually exist,
+ * stay in the package, be SVG / PNG and fit the installed cap; icons above the smaller
+ * marketplace-index cap are a warning because the market card would show the fallback.
  */
 async function checkPluginIcon(
   root: string,
@@ -721,8 +724,8 @@ async function checkPluginIcon(
     checks.push(
       makeCheck(
         'plugin.icon',
-        'warn',
-        'The plugin has no icon; the app shows its default icon instead.',
+        'error',
+        'The plugin has no icon; a marketplace plugin must ship its own icon.',
         {
           hint: 'Add icon.svg (64×64 or larger) or icon.png to the package and set "icon" in plugin.json.',
           subject: 'icon',
@@ -746,6 +749,19 @@ async function checkPluginIcon(
         ),
       );
       return;
+    }
+    if (info.size > PLUGIN_MARKET_ICON_MAX_BYTES) {
+      checks.push(
+        makeCheck(
+          'plugin.icon',
+          'warn',
+          `The icon is larger than the ${Math.floor(PLUGIN_MARKET_ICON_MAX_BYTES / 1024)} KiB marketplace-index cap: ${icon}`,
+          {
+            hint: 'Market cards fall back to the default icon above this size; shrink the icon before publishing.',
+            subject: icon,
+          },
+        ),
+      );
     }
     const bytes = await readFile(absolute);
     const svg = icon.toLowerCase().endsWith('.svg');

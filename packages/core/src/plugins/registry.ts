@@ -8,6 +8,7 @@ import {
   pluginCapabilitySummary,
   pluginCapabilitySummaryFromCategories,
   pluginFieldSummaryOf,
+  isPluginIconDataUri,
   type McpbUserConfigValue,
   type PluginFieldValue,
   type PluginItemKind,
@@ -573,6 +574,9 @@ export class PluginRegistry {
         capabilitySummary:
           chosen.capabilitySummary ??
           pluginCapabilitySummaryFromCategories(chosen.categories),
+        // Signed-index input is untrusted relative to the renderer: only a well-formed
+        // image data URI reaches the card; anything else falls back to the default icon.
+        iconDataUri: isPluginIconDataUri(chosen.summary.icon) ? chosen.summary.icon : null,
         size: chosen.size,
         updatedAt: chosen.updatedAt,
         compatible: compatible !== null,

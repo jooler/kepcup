@@ -182,6 +182,7 @@ async function marketList(stack: TestStack) {
       capabilitySummary: string;
       installed: { version: string; updateAvailable: boolean } | null;
       revoked: string | null;
+      iconDataUri: string | null;
     }>;
   };
 }
@@ -212,6 +213,8 @@ describe('plugins marketplace integration (P1-1)', () => {
     const { stack, market, officialKey } = await setup();
     const pkg = await makePackage({ id: 'io.official/demo', version: '1.0.0' });
     market.servePackage(OFFICIAL_BASE, pkg);
+    const icon =
+      'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
     const entry = pluginIndexEntryFor(
       {
         path: pkg.path,
@@ -219,7 +222,10 @@ describe('plugins marketplace integration (P1-1)', () => {
         size: pkg.size,
         manifest: { id: pkg.id, version: pkg.version } as never,
       },
-      { downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup` },
+      {
+        downloadUrl: `${OFFICIAL_BASE}/${pkg.sha256}.kepcup`,
+        summary: { icon },
+      },
     );
     market.publish({ base: OFFICIAL_BASE, key: officialKey, generatedAt: T1, entries: [entry] });
 
@@ -234,6 +240,7 @@ describe('plugins marketplace integration (P1-1)', () => {
       compatible: true,
       installed: null,
       revoked: null,
+      iconDataUri: icon,
     });
 
     const inspect = (await stack.core.rpc.call('plugins.inspect', {

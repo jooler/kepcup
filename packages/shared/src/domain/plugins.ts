@@ -388,6 +388,12 @@ export const pluginMarketEntrySchema = z.object({
   categories: z.array(pluginContributionKindSchema),
   /** D105 P4: one-line capability summary (index-carried; kinds-derived fallback for old indexes). */
   capabilitySummary: z.string(),
+  /**
+   * The plugin's own icon as a data URI (market index `summary.icon`, sanitized by core).
+   * Null when the index / package has no usable icon — the market card shows the host's
+   * default icon (never the name's first letter).
+   */
+  iconDataUri: z.string().nullable().default(null),
   size: z.number().int(),
   updatedAt: z.number().int(),
   compatible: z.boolean(),

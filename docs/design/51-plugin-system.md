@@ -83,7 +83,7 @@ flowchart LR
 
 ## 3. 插件包格式
 
-- 文件：`*.kepcup`（zip）；清单：包根 `plugin.json`；`README.md`（详情页展示）、`icon.png|svg`（≤ 256KB）可选。
+- 文件：`*.kepcup`（zip）；清单：包根 `plugin.json`；`README.md`（详情页展示）、`icon.png|svg`（本地 ≤256KB；市场索引内联版 ≤64KB）。**市场发布必须有图标**，缺失时 `validate` 报 error；运行期对历史 / 手工索引仍回落宿主默认图标。
 - 清单 schema（落在 `packages/shared/src/domain/plugin-manifest.ts`，zod；示意）：
 
 ```jsonc
@@ -171,7 +171,7 @@ flowchart LR
 ### 6.1 市场索引（`plugins/marketplace-sync.ts`）
 
 - **复用而非另起炉灶**：把签名验签、防回滚 `state.json`、原子缓存抽成共享的 `signed-index.ts`。（实施修订 2026-10-28：连接器目录通道随后续商店化决策**整体移除**——Q4 的「并存不动」被推翻，市场成为唯一通道；`SignedIndexSync` 保留为市场同步的通用底座。）
-- **索引**：`{base}/plugins/v1/index.json` + `index.json.sig`（对原始字节的 Ed25519 分离签名，与连接器目录一致）。信封 `{ version, generatedAt, keyId, entries[], revoked[] }`；条目 `{ id, version, tier, sha256, size, downloadUrl, manifestDigest, engines, platforms, categories, summary, updatedAt }`（`categories` 由贡献推导，签名时写入；`summary` 含本地化展示名 / 描述 / 图标 URL，详情页富文本按 `manifestDigest` 校验后拉取）；`revoked[]` 元素 `{ id, version?, action: 'warn' | 'disable' }`。
+- **索引**：`{base}/plugins/v1/index.json` + `index.json.sig`（对原始字节的 Ed25519 分离签名，与连接器目录一致）。信封 `{ version, generatedAt, keyId, entries[], revoked[] }`；条目 `{ id, version, tier, sha256, size, downloadUrl, engines, platforms, categories, capabilitySummary, summary, updatedAt }`（`categories` 由贡献推导，签名时写入；`summary` 含本地化展示名 / 描述 / 作者与**内联图标** `icon`——签名脚本从包内读取，`data:image/…;base64`，原始文件 ≤64 KiB，不发起远程图片请求；缺图标时 `icon: null`，卡片回落默认图标；`manifestDigest` 与 README 按 digest 拉取仍不在本期）；`revoked[]` 元素 `{ id, version?, action: 'warn' | 'disable' }`。
 - **签名与公钥**：CI 离线签名、私钥不上云（新脚本 `scripts/sign-plugin-index.mjs`，对照 `sign-connector-index.mjs`）；公钥列表是**独立常量** `PLUGIN_INDEX_PUBLIC_KEYS`（形态同 `CONNECTOR_INDEX_PUBLIC_KEYS`：`keyId / publicKey / validFrom / validUntil / revoked`），不与连接器目录共用，轮换与吊销互不牵连；列表为空 = 市场关闭，只剩本地与内置。
 - **同步**：每日 + 打开市场页时拉取；校验失败 / 离线回落上一份已验签缓存；防回滚沿用现有规则（`generatedAt` 严格递增、超前当前时间一天以上拒绝），另加条目级「版本不降」。`revoked` 命中：`warn` = 显著标记并阻止**更新**（已装不动、卸载自由）；`disable` = 另自动停用该插件（恶意件可止血，卸载权仍归用户）。
 - **托管**：索引走 Workers Static Assets（同现有 `dl.kepcup.com/connectors/v1/`，新路径 `/plugins/v1/`）；**包放 R2 自定义域**（Static Assets 单文件上限 25 MiB，装不下 ≤200MB 的包；设计 29 §15 已把 `dl.kepcup.com` 的托管方式留为「Static Assets 或 R2」）。包不可变（内容寻址路径 `{sha256}.kepcup`）。
