@@ -5,7 +5,6 @@ import {
   expect,
   test,
   type ElectronApplication,
-  type Locator,
   type Page,
   _electron,
 } from '@playwright/test';

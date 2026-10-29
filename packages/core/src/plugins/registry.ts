@@ -11,10 +11,6 @@ import {
   type McpbUserConfigValue,
   type PluginFieldValue,
   type PluginItemKind,
-  type PluginConsentConnector,
-  type PluginConsentMail,
-  type PluginConsentMcp,
-  type PluginConsentSkill,
   type PluginIndexEntry,
   type PluginInspectOutput,
   type PluginItemRef,
@@ -50,7 +46,6 @@ import {
   CAPABILITY_KINDS,
   capabilityKindOf,
   mergeConsentItems,
-  type ConsentItem,
 } from './kinds.js';
 import {
   pluginConfigSecretName,

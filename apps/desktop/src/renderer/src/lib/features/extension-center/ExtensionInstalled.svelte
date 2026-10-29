@@ -129,6 +129,8 @@
 
   /** 各筛选下的插件数量（含「全部」）；为 0 的筛选也显示，点了给空态。 */
   const filterCounts = $derived.by(() => {
+    // Plain Map: derived snapshot for filter chips, not reactive UI state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const counts = new Map<ExtensionCenterFilter, number>([['all', plugins.plugins.length]]);
     for (const kind of Object.keys(FILTER_COUNT_KEYS) as ExtensionCenterKindFilter[]) {
       const countKey = FILTER_COUNT_KEYS[kind];

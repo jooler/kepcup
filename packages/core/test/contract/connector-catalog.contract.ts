@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  CONNECTOR_META_KEY,
   CONNECTOR_SLUG_PATTERN,
   connectorCatalogEntrySchema,
   connectorMetaOf,
