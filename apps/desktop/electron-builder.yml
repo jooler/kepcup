@@ -134,9 +134,8 @@ win:
     # ${arch} 插值模式与上方 resources/bin/${os}-${arch} 一致。
     - from: resources/wsl/${arch}
       to: wsl
-    # 内置插件目录（D104 P0b，与 mac 块同源）。
-    - from: resources/plugins
-      to: plugins
+    # 内置插件目录已随市场改造移除（core-host.builtinPluginsEnv）；勿再声明
+    # resources/plugins，源目录不存在时 electron-builder 会告警。
 
 # --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
 # deb 默认名用 package.json 的 name（@kepcup/desktop），斜杠会把文件写进子目录。
@@ -162,9 +161,7 @@ linux:
       to: tray
     - from: resources/bin/linux-${arch}
       to: bin/linux-${arch}
-    # 内置插件目录（D104 P0b，与 mac 块同源）。
-    - from: resources/plugins
-      to: plugins
+    # 内置插件目录已随市场改造移除（见 win 块注释）。
 
 # 打包前确保按平台条件的 extraResources 源目录存在（缺文件只警告不阻塞）；
 # 打包后校验产物：测试路径标记必须不存在、@kepcup/core|testkit 不得进 asar、

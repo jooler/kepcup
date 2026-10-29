@@ -310,6 +310,8 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
     'KEPCUP_FAKE_ACP_AGENT_BIN',
     'KEPCUP_FAKE_ACP_AGENT_SCRIPT',
     'KEPCUP_FAKE_ACP_AGENT_RECORD',
+    // D104 P1-3 plugin-market e2e seam (must DCE with __KEPCUP_TEST_HOOKS__).
+    'KEPCUP_TEST_PLUGIN_MARKET',
   ];
   for (const marker of markers) {
     if (bundled.includes(marker)) {
