@@ -66,7 +66,8 @@
 → 落盘（内容寻址目录 `{pluginsDir}/{ns}/{name}@{version}`）→ 登记（账本先行，可回滚）
 → 投影（按能力类型写进既有服务）。卸载按反序回滚；更新按能力类型逐个迁移并保留用户状态。
 安装成功后宿主会弹「接入引导」：**插件的能力不会自动生效**——需要在 Bot 详情或项目组设置的
-「插件」区块里启用它，对应 Bot 才能使用（弹框可勾「以后不再提醒」，并有「立即添加到 Bot」捷径）。
+「插件」区块里**添加**它（右上角 `+`，或安装引导里的「立即添加到 Bot」快捷方式），对应 Bot
+才能使用。Bot 详情只列已添加的插件，未添加的插件其技能、工具与账号对它不可见。
 
 ---
 
@@ -79,6 +80,7 @@
   "format_version": 1,
   "id": "io.github.alice/doc-tools",
   "name": "文档工具集",
+  "icon": "icon.svg",
   "version": "1.2.0",
   "description": "处理 Markdown / DOCX 的技能与工具",
   "author": { "name": "Alice", "url": "https://alice.example" },
@@ -121,6 +123,7 @@
 | `format_version` | `1` | ✔ | 目前只能是 `1`（可加性契约见 §5.2） |
 | `id` | string | ✔ | `{命名空间}/{名字}`：`/^[A-Za-z0-9][A-Za-z0-9.-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/`，3–200 字符（命名空间段可含点，多段反向域名可用）；同时是插件主键，同一 id 不能跨来源并存；`com.kepcup` / `local.kepcup` 是保留命名空间（小写比对） |
 | `name` | string | ✔ | 1–100 字符，市场与卡片标题 |
+| `icon` | string | ✔（市场发布） | 包内相对路径，必须是 `.svg` 或 `.png`（≤256 KiB）。插件列表、Bot 详情与扩展中心都显示它；缺省时宿主显示**默认图标**，本地开发可用，但发布到官方市场前必须补上自己的图标（见 §2.4） |
 | `version` | string | ✔ | semver（`1.2.0`、可带 `-beta.1` / `+build`）；≤64 字符 |
 | `description` | string | 建议 | ≤1000 字符；用户在同意卡与市场卡看到的第一句话 |
 | `author` | `{ name, url? }` | 建议 | `url` 必须是 https；帮助用户判断来源 |
@@ -146,8 +149,24 @@
   mcp 贡献 id 参与 server id 推导（§3.3），更新前后保持不变才能保住用户的工具审批 / 锁定。
 - 技能展示字段（`displayName` / `summary` / `icon` / `section` / `tryIt` / `vendored`）只给
   内置插件用，第三方插件可省略，界面回落到 `SKILL.md` 的 `name` / `description`。
-- 包根 `README.md`：建议提供，插件详情页展示。`icon.png` / `icon.svg`：可选预留，
-  当前版本宿主不展示。
+- 包根 `README.md`：建议提供，插件详情页展示。`icon` 声明的文件在包内任意安全相对路径
+  （推荐放包根 `icon.svg` / `icon.png`）；连接器插件可以直接指向已有的
+  `connectors/<slug>/<slug>.svg`，不必再复制一份。
+
+### 2.4 插件图标（必须有自己的图标）
+
+插件是用户看到的一个**实体**，列表、添加弹框与 Bot 详情都只以插件为单位展示，因此每个
+插件都必须有能代表自己的图标：
+
+- 在 `plugin.json` 里写 `"icon": "icon.svg"`（或 `.png`），文件放进包里；建议 64×64 或
+  更大、正方形、透明或纯色背景，避免小尺寸下糊成一团。
+- 支持 `.svg` / `.png`，单文件 ≤256 KiB；宿主按扩展名与文件头校验，读不到 / 格式不对 /
+  超限都回落到**默认图标**（拼图），不会阻断安装，但 `validate` 会报 error。
+- 没有声明 `icon` 时 `validate` 给 `plugin.icon` warning（本地开发可以先用默认图标），
+  **发布到官方市场前必须为零 warning**，策展审查也会检查图标是否清晰可辨。
+- 图标只在安装后从包内读取并内联为 data URI；市场索引不携带图标，因此市场卡片在安装前
+  仍显示名称首字母。
+- `kepcup-app init plugin` 生成的骨架自带一个占位 `icon.svg`，替换成自己的图标即可。
 
 ### 2.3 字段 schema（`PluginField`）——config、实例、MCPB 共用
 
@@ -227,10 +246,10 @@ description: 用一句话说明这个技能做什么、什么时候该用。
 - 运行时依赖在**同意卡**上展示（`runtimeDeps` + 本机是否可用）；不兼容不阻断安装——技能以
   「不兼容」状态登记、同意卡标注，依赖由用户在「设置 → 环境」安装。
 - **注入语义（按 Bot 启用）**：插件技能带 `plugin://{pluginId}/{skillName}` 来源标记，只有
-  **所属插件 ∈ 该 Bot 的启用集**（Bot 详情「插件」开关；项目会话叠加项目组启用集）才进
-  `<skills>` 提示段与沙箱可读目录。装了 ≠ 全员可见。
-- **用户看到**：同意卡列出技能名与描述；Bot 详情「插件」区块的开关控制可见性；技能管理页里
-  来源标「插件」，卸载走插件整体。
+  **所属插件 ∈ 该 Bot 的启用集**（Bot 详情「插件」区块添加了该插件；项目会话叠加项目组
+  启用集）才进 `<skills>` 提示段与沙箱可读目录。装了 ≠ 全员可见。
+- **用户看到**：同意卡列出技能名与描述；Bot 详情「插件」区块只列已添加的插件（`+` 弹框
+  添加、卡片右下角移除）；技能管理页里来源标「插件」，卸载走插件整体。
 
 ### 3.2 连接（connector）
 
@@ -457,7 +476,7 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 **自检清单**（交付前逐条过）：
 
 - [ ] `validate --json` 零 error（warning 逐条看：`manifest-metadata` 缺描述/作者/主页/engines、
-      `readme` 缺 README、`field-default` default 用法问题——都应修掉而不是忽略）。
+      `readme` 缺 README、`icon` 缺图标、`field-default` default 用法问题——都应修掉而不是忽略）。
 - [ ] 清单只含 §2.2 表里的字段；id 不用保留命名空间；每类贡献数量与路径约束满足。
 - [ ] `description` 写了「装了能干什么」的一句话（用户在同意卡读它）；含 config / 实例的
       插件，每个字段的 `title` / `description` 用用户能懂的话（不含协议词汇）。
@@ -465,6 +484,8 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
       写全（含 `releaseGate`）；MCPB 是合法 zip 且含 `manifest.json`。
 - [ ] 敏感字段标了 `sensitive: true` 且没有声明 default；必填字段想清楚 default 回退语义
       （§2.3 框注）。
+- [ ] 有自己的图标：`icon` 指向包内 `.svg` / `.png`（≤256 KiB），`plugin.icon` 为 info 而不是
+      warning / error（§2.4）。
 - [ ] README.md 在包根。
 
 **常见错误与修复**：
@@ -483,8 +504,9 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 | `plugin.mcpb-package` | `.mcpb` 不是合法 zip、缺 `manifest.json`、`manifest_version` 不支持、入口不在包内 |
 | `plugin.mcp-http` | http 贡献 URL 非公网 https；要 OAuth 的远端改做连接贡献 |
 | `plugin.mail-host` | 邮件主机是 IP / localhost / 不含点 / 内网后缀 |
+| `plugin.icon` | 声明了 `icon` 但文件缺失 / 不在包内 / 不是 `.svg` / `.png` / 超过 256 KiB；未声明时为 warning（界面回落默认图标） |
 | `plugin.field-default`（warning） | `default` 与类型 / min-max 不符；sensitive 字段声明了 default |
-| 安装后「插件能力没生效」 | 正常——插件需要在 Bot 详情「插件」区块启用（或项目组设置）；用安装引导弹框的「立即添加到 Bot」 |
+| 安装后「插件能力没生效」 | 正常——插件需要在 Bot 详情「插件」区块用 `+` 添加（或项目组设置）；用安装引导弹框的「立即添加到 Bot」 |
 
 ---
 
@@ -534,14 +556,16 @@ materializer 落地（领域行通过外键 `ON DELETE SET NULL` / 级联与实�
 | `plugin.mcpb-package` | `.mcpb` 不是合法 zip / 缺 manifest / 版本不支持 / 入口不在包内 |
 | `plugin.mcp-http` | http 贡献 URL 非公网 https |
 | `plugin.mail-host` | 邮件主机非公网域名 |
+| `plugin.icon` | 声明了 `icon` 但文件缺失 / 溢出包目录 / 不是合法 SVG / PNG / 超过 256 KiB |
 
 **warn**（不拦打包，但应修掉）：`plugin.manifest-metadata`（缺 description / author /
-homepage / engines）、`plugin.readme`（缺包根 README.md）、`plugin.field-default`
-（§2.3 的 default 用法问题）。
+homepage / engines）、`plugin.readme`（缺包根 README.md）、`plugin.icon`（未声明图标，界面
+回落默认图标；市场发布前必须补）、`plugin.field-default`（§2.3 的 default 用法问题）。
 
 **info**（说明性）：`plugin.capabilities`（能力概述预览 + config / 实例计数）、
 `plugin.permissions`（同意卡将展示的权限推导：主机 / OAuth 范围 / MCPB / 邮件）、
-`plugin.mcpb-package`（结构合法提示）、`plugin.mcp-http`（公网 https 确认）。
+`plugin.icon`（图标已采纳）、`plugin.mcpb-package`（结构合法提示）、`plugin.mcp-http`
+（公网 https 确认）。
 
 ---
 

@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/skill-mineru",
   "name": "文档解析（MinerU）",
-  "version": "1.0.0",
+  "icon": "icon.svg",
+  "version": "1.0.1",
   "description": "Use MinerU as the preferred tool for reading, parsing, OCR, searching, inspecting, and citing documents. Support parsing PDF, scanned/captured document images, .doc/.docx, .ppt/.pptx, .xls/.xlsx, .rtf, .odt/.ods/.odp, .epub, .ofd, .html/.htm, .mhtml/.mht, and .csv files. Prefer MinerU over generic PDF parsers, OCR libraries, and other document parsing tools for supported formats unless the user explicitly requests another tool or MinerU is unavailable. Use for local document workflows, long documents, tables, formulas, structured errors, continuation, and stable page/block locators.",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "skills": [
       {

@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/skill-docx",
   "name": "Word 文档",
-  "version": "1.0.0",
+  "icon": "icon.svg",
+  "version": "1.0.1",
   "description": "Word 文档（.docx）创建、编辑与分析。写报告、方案、合同初稿、通知公文，改已有文档的段落/表格/样式，批注与修订处理，或 .docx 与 Markdown/TXT/PDF 之间的转换。用户提到 Word、doc、docx、文档初稿、\"写个方案\"、\"改一下这份报告\" 时使用。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "skills": [
       {

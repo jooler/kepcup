@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/connector-gcalendar",
   "name": "Google Calendar 连接",
-  "version": "1.0.0",
+  "icon": "connectors/gcalendar/gcalendar.svg",
+  "version": "1.0.1",
   "description": "查看、搜索与安排 Google 日历日程",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://calendar.google.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "connectors": [
       {
