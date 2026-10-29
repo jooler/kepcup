@@ -2,6 +2,15 @@
 
 [中文](README.zh-CN.md)
 
+## Core goal
+
+An intelligent assistant whose thinking and action logic match how real people work.
+
+## Core ideas
+
+- Conversation is a communication record. The assistant's execution trail is its own working data and need not live in the user chat by default—same as collaborating with a person: you assign the work, they deliver the outcome; you can ask about the process, but they do not need to dump every step on you, and you do not need to read it all.
+- Dual loops separate reply from execution, matching how people work: after an instruction, the assistant replies first; if work is needed, it starts an independent task and returns to standby. When the task finishes, the result comes back to the assistant, which summarizes and replies. Throughout, the assistant stays responsive; tasks run independently without blocking the conversation and report progress by status.
+
 ![KepCup](apps/website/public/images/Meet_KepCup.png)
 
 **Build a team. Only for you.**
