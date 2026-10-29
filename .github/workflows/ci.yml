@@ -40,8 +40,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # sign-connector-index (and schema imports) need @kepcup/shared dist.
+      # sign-connector-index / sign-plugin-index need shared + package-guard dist.
       - run: pnpm --filter @kepcup/shared run build
+      - run: pnpm --filter @kepcup/package-guard run build
       # Sandbox tests (P02) need user namespaces on Ubuntu 24.04 (AppArmor)
       # and srt's Linux dependencies; see docs/dev/05-testing.md "CI 矩阵".
       - name: Enable sandboxing (Ubuntu)
