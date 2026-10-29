@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/connector-cloudflare",
   "name": "Cloudflare 连接",
-  "version": "1.0.0",
+  "icon": "connectors/cloudflare/cloudflare.svg",
+  "version": "1.0.1",
   "description": "查看与管理 Cloudflare 账号下的域名、Workers 与其他产品",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://www.cloudflare.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "connectors": [
       {

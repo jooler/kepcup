@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/connector-notion",
   "name": "Notion 连接",
-  "version": "1.0.0",
+  "icon": "connectors/notion/notion.svg",
+  "version": "1.0.1",
   "description": "搜索、阅读与编辑 Notion 页面和数据库",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://www.notion.so",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "connectors": [
       {

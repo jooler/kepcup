@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/skill-internal-comms",
   "name": "对内沟通稿",
-  "version": "1.0.0",
+  "icon": "icon.svg",
+  "version": "1.0.1",
   "description": "撰写对内沟通文稿：公告、全员信、变更通知、制度说明、活动动员。按场景选择体例（正式公告/部门通知/轻松动员），控制在合适的正式程度。用户说\"发个通知\"、\"写个全员信\"、\"公告一下\"、\"变更说明\" 时使用。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "skills": [
       {

@@ -2,13 +2,17 @@
   "format_version": 1,
   "id": "app.kepcup/skill-meeting-notes",
   "name": "会议纪要",
-  "version": "1.0.0",
+  "icon": "icon.svg",
+  "version": "1.0.1",
   "description": "把杂乱的会议记录、聊天片段或口述要点整理成结构化会议纪要：出席情况、议题讨论、决议编号、待办清单（负责人+截止时间）。用户说\"整理一下会议纪要\"、\"这是刚才开会记的\"、\"把讨论变成待办\" 时使用。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.4.0"
+  },
   "contributions": {
     "skills": [
       {

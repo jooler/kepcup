@@ -15,6 +15,11 @@ plugins/
   README.md
 ```
 
+- 每个插件**必须有自己的图标**：`plugin.json` 的 `icon` 指向包内 `.svg` / `.png`
+  （≤256 KiB）。技能 / 邮件插件放包根 `icon.svg`；连接器插件直接指向
+  `connectors/<slug>/<slug>.svg`。缺省时界面回落宿主默认图标，`validate` 给 warning，
+  市场发布前必须为零 warning。详见 [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §2.4。
+
 - 插件 id 用 `app.kepcup/<名>`：`com.kepcup` / `local.kepcup` 是保留命名空间，
   市场插件不得使用（`PLUGIN_RESERVED_NAMESPACES`）。
 - 连接器目录通道（`dl.kepcup.com/connectors/v1`）已随商店化下线：连接能力完全由
@@ -72,10 +77,8 @@ cd infra/cloudflare/directory && npx wrangler deploy
 - 邮件 4：mail-generic（通用，自填 IMAP/SMTP）/ mail-163 / mail-126 / mail-qq
   （厂商，锁定端点）。实例型插件首批落地：一个插件可添加多个邮箱账号，
   添加入口在插件卡「管理」；卸载插件级联删除其全部账号、绑定与授权码。
-- **P5（2026-10-29）**：22 个插件全部重打包（18 个既有包 sha256 与线上索引逐字节一致——
-  打包可复现性得到验证）并重签索引本地留档（`--verify` 通过）；4 个邮件插件 catalog
-  定为 `verified`（主机锁定 + 文案已随 P3 审查）。索引自本批起携带由清单派生的
-  `capabilitySummary`（签名脚本按 schema 解析后的清单生成——修复了 P4 引入的对省略空
-  数组清单崩溃的问题）。**待维护者执行生产部署**：R2 上传全部 22 包 + 索引部署
-  （`plugins/README.md` 上方流程第 5–6 步；直接署名会顶掉线上 18 条索引，部署前确认
-  22 包已全部上传 R2）。
+- **2026-10-29 插件图标 + 商店补全（1.0.1）**：22 个插件全部补齐自有图标与 `engines`
+  （4 个邮件插件补 README），重新校验为零 error / 零 warning；全部重打包为 `1.0.1`
+  并重新签名，R2 上传 22 个包 + 索引部署到 `dl.kepcup.com/plugins/v1/`。线上索引由
+  18 条（1.0.0）变为 22 条（1.0.1），四个邮件插件正式进入市场。线上索引验签与
+  22 个包的 sha256 / 大小逐一复核通过。
