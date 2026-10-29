@@ -38,6 +38,7 @@ const PLUGIN_METHODS = [
 const summary = {
   id: 'io.github.alice/doc-tools',
   name: '文档工具集',
+  iconDataUri: null,
   version: '1.2.0',
   description: '',
   author: null,

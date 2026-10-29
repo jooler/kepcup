@@ -66,6 +66,12 @@ export type PluginItemRef = z.infer<typeof pluginItemRefSchema>;
 export const pluginSummarySchema = z.object({
   id: pluginIdSchema,
   name: z.string(),
+  /**
+   * Plugin icon as a data URI (manifest `icon`, read from the installed tree); null
+   * when the plugin declares none or the file is unusable — the renderer then shows
+   * its default icon.
+   */
+  iconDataUri: z.string().nullable(),
   version: pluginVersionSchema,
   description: z.string(),
   author: z.string().nullable(),

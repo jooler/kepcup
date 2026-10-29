@@ -82,11 +82,17 @@ async function makeFileFixture(options: FixtureOptions = {}): Promise<{
 }> {
   const built = await buildPluginFixture({
     dir: path.join(root, `fx-${Math.random().toString(36).slice(2, 8)}`),
-    manifest: { id: options.id ?? PLUGIN_ID },
+    manifest: { id: options.id ?? PLUGIN_ID, icon: 'icon.svg' },
     skills: [{ name: 'plg-alpha' }, { name: 'plg-beta' }],
     connectors: [{ slug: options.slug ?? 'plgconn' }],
     mcpb: [{ id: MCPB_KEY, mcpb: { manifest: mcpbManifest } }],
     http: [{ id: 'docs', url: 'https://mcp.docs.test/mcp' }],
+    extraEntries: [
+      {
+        name: 'icon.svg',
+        data: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64"/></svg>',
+      },
+    ],
   });
   return { path: built.path, sha256: built.sha256, size: built.size };
 }
@@ -147,6 +153,7 @@ describe('plugins integration (P0a-2)', () => {
       enabled: true,
       counts: { skills: 2, connectors: 1, mcp: 2, mail: 0 },
     });
+    expect(summary.iconDataUri).toMatch(/^data:image\/svg\+xml;base64,/);
 
     // 技能：公共作用域
     const bot = await makeBot(core, '小插件');

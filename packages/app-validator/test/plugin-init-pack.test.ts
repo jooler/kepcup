@@ -64,7 +64,12 @@ describe('initPluginDirectory', () => {
     const dir = path.join(await tmp(), 'demo-plugin');
     const result = await initPluginDirectory({ dir });
     expect(result.id).toBe('io.github.your-name/demo-plugin');
-    expect(result.files).toEqual(['plugin.json', 'README.md', 'skills/hello/SKILL.md']);
+    expect(result.files).toEqual([
+      'plugin.json',
+      'README.md',
+      'icon.svg',
+      'skills/hello/SKILL.md',
+    ]);
     const report = await validatePlugin(dir);
     expect(report.checks.filter((check) => check.severity === 'error')).toEqual([]);
     expect(report.checks.some((check) => check.id === 'plugin.manifest-metadata')).toBe(true);

@@ -237,6 +237,7 @@ describe('source and summary additions', () => {
       version: '1.2.0',
       description: '',
       author: null,
+      iconDataUri: null,
       origin: 'local',
       tier: 'developer',
       state: 'installed',

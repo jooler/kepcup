@@ -45,6 +45,7 @@ import {
   pluginServerId,
 } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
+import { pluginIconDataUri } from './icon.js';
 import {
   CAPABILITY_KINDS,
   capabilityKindOf,
@@ -1788,6 +1789,7 @@ export class PluginRegistry {
       providesInstances: manifest?.instances ?? [],
       id: row.id,
       name: manifest?.name ?? row.id,
+      iconDataUri: pluginIconDataUri(dirPath, manifest),
       version: row.version,
       description: manifest?.description ?? '',
       author: manifest?.author?.name ?? null,

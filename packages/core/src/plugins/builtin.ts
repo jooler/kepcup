@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PLUGIN_MANIFEST_FILE, type PluginManifest, type PluginSummary } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import { parsePluginManifestText } from './manifest-loader.js';
+import { pluginIconDataUri } from './icon.js';
 
 /**
  * Builtin plugin loader (D104 P0b; marketplace conversion): reads the read-only,
@@ -272,6 +273,7 @@ export class BuiltinPlugins {
       return {
         id: manifest.id,
         name: manifest.name,
+        iconDataUri: pluginIconDataUri(plugin.dir, manifest),
         version: manifest.version,
         description: manifest.description,
         author: manifest.author?.name ?? null,

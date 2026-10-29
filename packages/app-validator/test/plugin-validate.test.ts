@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -37,10 +37,14 @@ const MAIL = {
   smtp: { host: 'smtp.fastmail.com', port: 465, secure: 'ssl' },
 };
 
+const ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64"/></svg>';
+
 function legalOptions(dir: string): PluginFixtureOptions {
   return {
     dir,
     manifest: {
+      icon: 'icon.svg',
       author: { name: 'Tester' },
       homepage: 'https://example.com/plugin',
       engines: { kepcup: '>=0.4.0' },
@@ -59,6 +63,7 @@ async function legalDir(): Promise<string> {
   const dir = await tmp();
   await buildPluginDir(legalOptions(dir));
   await writeFile(path.join(dir, 'README.md'), '# Demo plugin\n');
+  await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
   return dir;
 }
 
@@ -89,6 +94,35 @@ describe('validatePlugin: a complete legal plugin', () => {
     });
     expect(ids(report)).toContain('plugin.mcpb-package');
     expect(ids(report)).toContain('plugin.mcp-http');
+    expect(ids(report, 'info')).toContain('plugin.icon');
+  });
+
+  it('warns when no icon is declared and rejects an unusable one', async () => {
+    const dir = await tmp();
+    await buildPluginDir({
+      ...legalOptions(dir),
+      manifest: { ...legalOptions(dir).manifest, icon: null },
+    });
+    await writeFile(path.join(dir, 'README.md'), '# Demo plugin\n');
+    const missing = await validatePlugin(dir);
+    expect(
+      missing.checks.find((check) => check.id === 'plugin.icon')?.severity,
+    ).toBe('warn');
+
+    const manifest = JSON.parse(
+      await readFile(path.join(dir, 'plugin.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    await writeFile(
+      path.join(dir, 'plugin.json'),
+      JSON.stringify({ ...manifest, icon: 'icon.svg' }),
+    );
+    await writeFile(path.join(dir, 'icon.svg'), 'not an svg');
+    const broken = await validatePlugin(dir);
+    expect(
+      broken.checks.some(
+        (check) => check.id === 'plugin.icon' && check.severity === 'error',
+      ),
+    ).toBe(true);
   });
 
   it('does not touch the network', async () => {
@@ -104,7 +138,10 @@ describe('validatePlugin: archive input', () => {
     const dir = await legalDir();
     const packed = await buildPluginFixture({
       ...legalOptions(await tmp()),
-      extraEntries: [{ name: 'README.md', data: '# Demo plugin\n' }],
+      extraEntries: [
+        { name: 'README.md', data: '# Demo plugin\n' },
+        { name: 'icon.svg', data: ICON_SVG },
+      ],
     });
     const fromDir = await validatePlugin(dir);
     const fromArchive = await validatePlugin(packed.path);
