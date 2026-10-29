@@ -97,17 +97,19 @@ describe('窄屏设置页返回（审查 #11d）', () => {
 });
 
 describe('窄屏深链路由', () => {
-  it('openSettings(mcp/developer) 旧深链改开扩展中心 MCP，不打开设置', () => {
+  it('openSettings(mcp/developer) 旧深链改开扩展中心「已安装」的 MCP 筛选，不打开设置', () => {
     shell.settingsOpen = true;
     shell.openSettings('mcp');
     expect(shell.settingsOpen).toBe(false);
     expect(shell.extensionCenterOpen).toBe(true);
-    expect(shell.extensionCenterTab).toBe('mcp');
+    expect(shell.extensionCenterTab).toBe('installed');
+    expect(shell.extensionCenterFilter).toBe('mcp');
 
     shell.extensionCenterOpen = false;
     shell.openSettings('developer');
     expect(shell.extensionCenterOpen).toBe(true);
-    expect(shell.extensionCenterTab).toBe('mcp');
+    expect(shell.extensionCenterTab).toBe('installed');
+    expect(shell.extensionCenterFilter).toBe('mcp');
   });
 
   it('openSettings("contacts") 在窄屏切通讯录 tab，不打开设置页', () => {

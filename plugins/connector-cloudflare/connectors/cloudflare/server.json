@@ -1,0 +1,34 @@
+{
+  "name": "com.cloudflare/mcp",
+  "title": "Cloudflare",
+  "description": "查看与管理 Cloudflare 账号下的域名、Workers 与其他产品",
+  "version": "1.0.0",
+  "websiteUrl": "https://www.cloudflare.com",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  ],
+  "_meta": {
+    "app.kepcup/connector": {
+      "slug": "cloudflare",
+      "icon": "cloudflare.svg",
+      "category": "development",
+      "tier": "community",
+      "auth": {
+        "kind": "oauth",
+        "registration": "auto",
+        "clientRef": null,
+        "scopes": {
+          "default": [],
+          "write": []
+        }
+      },
+      "toolPolicy": {},
+      "skills": [],
+      "ui": false,
+      "privacyPolicy": "https://www.cloudflare.com/privacypolicy/"
+    }
+  }
+}

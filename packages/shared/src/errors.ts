@@ -206,6 +206,17 @@ export const ERROR_CODES = [
   'BOARD_ASSIGNEE_INVALID',
   /** An in-flight or closed card cannot change assignee or schedule (P2). */
   'BOARD_LOCKED',
+  // 插件系统（D104）
+  /** 清单 / 包结构 / 路径 / 哈希非法。 */
+  'PLUGIN_INVALID',
+  /** format_version / engines / platforms 与当前环境不兼容。 */
+  'PLUGIN_INCOMPATIBLE',
+  /** 与已装内容冲突（技能名 / slug / name@version / 模板 id / 插件 id）。 */
+  'PLUGIN_CONFLICT',
+  /** 目标由插件管理，拒绝单项删除或结构改写。 */
+  'PLUGIN_MANAGED',
+  /** 清单含当前版本不认识的字段 / 能力类型（D105：提示升级 KepCup，不静默忽略）。 */
+  'PLUGIN_UPGRADE_REQUIRED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

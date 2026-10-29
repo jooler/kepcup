@@ -128,10 +128,10 @@ describe('McpService: catalog connections as servers', () => {
     expect(mcp.serverFor('conn_unknown')).toBeUndefined();
 
     // serversForBot: backward compatible for settings ids, resolves connection ids, drops disabled.
-    expect(mcp.serversForBot(['plain']).map((s) => s.id)).toEqual(['plain']);
-    expect(mcp.serversForBot([id, 'plain']).map((s) => s.id)).toEqual(['plain', id]);
-    expect(mcp.serversForBot(['conn_unknown', 'missing'])).toEqual([]);
-    expect(mcp.serversForBot([])).toEqual([]);
+    expect(mcp.serversForBot(['plain'], new Set()).map((s) => s.id)).toEqual(['plain']);
+    expect(mcp.serversForBot([id, 'plain'], new Set()).map((s) => s.id)).toEqual(['plain', id]);
+    expect(mcp.serversForBot(['conn_unknown', 'missing'], new Set())).toEqual([]);
+    expect(mcp.serversForBot([], new Set())).toEqual([]);
   });
 
   it('connects with the token of the connection id; status events use that id; auth loss → needs_auth', async () => {
@@ -193,7 +193,7 @@ describe('apps.connections.update', () => {
     })) as { connection: { status: string } };
     expect(disabled.connection.status).toBe('disabled');
     expect(mcp.serverFor(id)!.enabled).toBe(false);
-    expect(mcp.serversForBot([id])).toEqual([]);
+    expect(mcp.serversForBot([id], new Set())).toEqual([]);
     expect(env.mcpStatus).toContainEqual(
       expect.objectContaining({ serverId: id, status: 'closed' }),
     );
@@ -204,7 +204,7 @@ describe('apps.connections.update', () => {
       disabled: false,
     })) as { connection: { status: string } };
     expect(enabled.connection.status).toBe('connected');
-    expect(mcp.serversForBot([id]).map((s) => s.id)).toEqual([id]);
+    expect(mcp.serversForBot([id], new Set()).map((s) => s.id)).toEqual([id]);
   });
 
   it('refuses custom: rows (they are managed in settings)', async () => {

@@ -13,6 +13,9 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import { customConnectionId } from '$lib/features/apps/connect-flow';
+  import { managedServerPluginId } from '../plugins/plugin-install';
+  import { plugins } from '../plugins/plugins.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import McpRiskBadge from '../approvals/McpRiskBadge.svelte';
   import McpToolPolicies from './McpToolPolicies.svelte';
   import McpbInstall from './McpbInstall.svelte';
@@ -57,6 +60,8 @@
     messageId = undefined,
     onSaved,
     onConflict,
+    /** D105 P4：插件卡圈定——只显示该插件投影的 server，并隐藏新建 / .mcpb 等全局入口。 */
+    pluginId = undefined,
   }: {
     embedded?: boolean;
     /** 出卡时的当前值（读适配器快照）：`server`、`enabled`；也是 CAS 的 `expected`。 */
@@ -68,11 +73,18 @@
     onSaved?: () => void;
     /** 出卡之后这个服务的启用状态在别处变过（CAS 冲突）。 */
     onConflict?: (current: SettingValues | null) => void;
+    pluginId?: string | undefined;
   } = $props();
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
 
-  const servers = $derived(settingsStore.settings?.mcpServers ?? []);
+  const allServers = $derived(settingsStore.settings?.mcpServers ?? []);
+  /** 插件圈定视图：按投影来源过滤（core 的 PLUGIN_MANAGED 守卫同口径）。 */
+  const servers = $derived(
+    pluginId === undefined
+      ? allServers
+      : allServers.filter((server) => managedServerPluginId(server) === pluginId),
+  );
   let editingId = $state<string | null>(null);
   let draft = $state<Draft | null>(null);
   let busy = $state(false);
@@ -313,6 +325,8 @@
   let editInitial = $state<McpServer | null>(null);
 
   function editServer(server: McpServer): void {
+    // 插件投影的 server 由插件整体管理（core 的 PLUGIN_MANAGED 是权威，这里是双保险）。
+    if (managedServerPluginId(server) !== null) return;
     draft = { ...server, secretDrafts: {} };
     editInitial = $state.snapshot(server) as McpServer;
     editingId = server.id;
@@ -429,6 +443,8 @@
   }
 
   async function removeServer(server: McpServer): Promise<void> {
+    // 插件投影的 server 由插件整体管理（core 的 PLUGIN_MANAGED 是权威，这里是双保险）。
+    if (managedServerPluginId(server) !== null) return;
     busy = true;
     try {
       // D73：core 删除 settings 条目并清理密钥 / 令牌 / 连接行（不再整体覆盖 mcpServers）。
@@ -565,12 +581,14 @@
   <section class="space-y-3" data-testid="mcp-section">
     <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
     <p class="text-xs text-muted-foreground">
-      {t('extensionCenter.mcp.hint')}
+      {pluginId === undefined ? t('extensionCenter.mcp.hint') : t('extensionCenter.mcp.hintScoped')}
     </p>
 
     {#if servers.length === 0 && draft === null}
       <p class="text-xs text-muted-foreground" data-testid="mcp-empty">
-        {t('extensionCenter.mcp.empty')}
+        {pluginId === undefined
+          ? t('extensionCenter.mcp.empty')
+          : t('extensionCenter.mcp.emptyScoped')}
       </p>
     {/if}
 
@@ -587,6 +605,12 @@
           >
           {#if !server.enabled}
             <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
+          {/if}
+          {#if managedServerPluginId(server) !== null}
+            <PluginSourceBadge
+              pluginId={managedServerPluginId(server)!}
+              testid={`mcp-plugin-badge-${server.id}`}
+            />
           {/if}
           {#if appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
             <Badge
@@ -644,23 +668,30 @@
             >
               {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onclick={() => editServer(server)}
-              data-testid={`mcp-edit-${server.id}`}
-            >
-              {t('settings.mcpEdit')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              class="text-destructive hover:text-destructive"
-              disabled={busy}
-              onclick={() => void removeServer(server)}
-            >
-              {t('settings.mcpRemove')}
-            </Button>
+            {#if managedServerPluginId(server) === null}
+              <Button
+                size="sm"
+                variant="ghost"
+                onclick={() => editServer(server)}
+                data-testid={`mcp-edit-${server.id}`}
+              >
+                {t('settings.mcpEdit')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="text-destructive hover:text-destructive"
+                disabled={busy}
+                onclick={() => void removeServer(server)}
+              >
+                {t('settings.mcpRemove')}
+              </Button>
+            {:else}
+              <span class="text-xs text-muted-foreground" data-testid={`mcp-managed-${server.id}`}>
+                {t('plugins.managedBy', { name: plugins.nameOf(managedServerPluginId(server)!) })}
+                · {t('plugins.managedHint')}
+              </span>
+            {/if}
           </div>
         </div>
         {#if testServerId === server.id}
@@ -940,7 +971,8 @@
           </p>
         {/if}
       </div>
-    {:else}
+    {:else if pluginId === undefined}
+      <!-- 插件圈定视图不出现：新建 / .mcpb 安装是无圈定时的全局能力（D105 P4 §3.2）。 -->
       <div class="flex items-center gap-2">
         <select
           class="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
@@ -956,6 +988,8 @@
       </div>
     {/if}
 
-    <OAuthClientsPanel />
+    {#if pluginId === undefined}
+      <OAuthClientsPanel />
+    {/if}
   </section>
 {/if}

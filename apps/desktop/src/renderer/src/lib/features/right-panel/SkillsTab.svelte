@@ -14,6 +14,9 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { parseSkillDraftChecks } from './skill-draft-checks';
   import { skillNav } from './skills-nav.svelte';
+  import { managingPluginOfSkill, pluginIdOfSkillSource } from '../plugins/plugin-install';
+  import { plugins } from '../plugins/plugins.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import {
@@ -169,7 +172,8 @@
 {#snippet skillRow(skill: SkillEntry)}
   <button
     type="button"
-    class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/50 {skill.status === 'draft'
+    class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/50 {skill.status ===
+    'draft'
       ? 'opacity-60'
       : ''}"
     data-testid={`skill-item-${skill.name}`}
@@ -185,6 +189,12 @@
         <Badge variant="secondary" class="text-[10px]" data-testid="skill-scope">
           {t('skills.scope.public')}
         </Badge>
+      {/if}
+      {#if pluginIdOfSkillSource(skill.sourceUrl ?? '') !== null}
+        <PluginSourceBadge
+          pluginId={pluginIdOfSkillSource(skill.sourceUrl ?? '')!}
+          testid={`skill-plugin-badge-${skill.name}`}
+        />
       {/if}
       <Badge variant="secondary" class="text-[10px]" data-testid="skill-kind">
         {t(KIND_KEYS[skill.kind])}
@@ -208,7 +218,6 @@
     </span>
   </button>
 {/snippet}
-
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="skills-tab">
   {#if selected}
@@ -235,6 +244,14 @@
           >
             {t('skills.scope.public')}
           </Badge>
+        {/if}
+        {#if pluginIdOfSkillSource(skill.sourceUrl ?? '') !== null}
+          <span class="ml-1 inline-flex align-middle">
+            <PluginSourceBadge
+              pluginId={pluginIdOfSkillSource(skill.sourceUrl ?? '')!}
+              testid={`skill-plugin-badge-${skill.name}`}
+            />
+          </span>
         {/if}
       </p>
       <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
@@ -286,7 +303,8 @@
       {/if}
       {#if (skill.status === 'draft' || skill.status === 'disabled') && skill.statusReason !== null}
         <!-- draft = 生成失败原因（TAP 风格逐条还原：绿勾/红叉/无图标行）；disabled = 未启用原因 -->
-        {@const draftChecks = skill.status === 'draft' ? parseSkillDraftChecks(skill.statusReason) : null}
+        {@const draftChecks =
+          skill.status === 'draft' ? parseSkillDraftChecks(skill.statusReason) : null}
         {#if draftChecks !== null}
           <ul class="mt-2 space-y-1" data-testid="skill-check-list">
             {#each draftChecks as check, index (index)}
@@ -301,10 +319,7 @@
                     aria-hidden="true"
                   />
                 {:else if check.kind === 'fail'}
-                  <X
-                    class="mt-0.5 size-3.5 shrink-0 text-destructive"
-                    aria-hidden="true"
-                  />
+                  <X class="mt-0.5 size-3.5 shrink-0 text-destructive" aria-hidden="true" />
                 {:else}
                   <Minus
                     class="mt-0.5 size-3.5 shrink-0 text-muted-foreground/50"
@@ -315,8 +330,8 @@
                   class="min-w-0 break-words {check.kind === 'fail'
                     ? 'font-medium'
                     : check.kind === 'info'
-                    ? 'text-muted-foreground'
-                    : ''}"
+                      ? 'text-muted-foreground'
+                      : ''}"
                 >
                   {check.label}
                 </span>
@@ -376,15 +391,30 @@
           </Button>
         {/if}
         {#if skill.status !== 'draft'}
-          <Button
-            size="sm"
-            variant="ghost"
-            class="ml-auto h-6 px-2 text-xs text-destructive"
-            onclick={() => (uninstallTarget = skill)}
-            data-testid={`skill-uninstall-${skill.name}`}
-          >
-            {t('skills.uninstall')}
-          </Button>
+          {@const managedBy = managingPluginOfSkill(skill.sourceUrl ?? '', plugins)}
+          {#if managedBy === null}
+            <!-- 普通公共 / 私有技能，以及来源指向已不存在插件的孤儿（插件系统上线前装的
+                预置）：卸载入口照常给，core 的 PLUGIN_MANAGED 守卫（查账本）是最终裁决。 -->
+            <Button
+              size="sm"
+              variant="ghost"
+              class="ml-auto h-6 px-2 text-xs text-destructive"
+              onclick={() => (uninstallTarget = skill)}
+              data-testid={`skill-uninstall-${skill.name}`}
+            >
+              {t('skills.uninstall')}
+            </Button>
+          {:else}
+            <!-- 已安装插件投影的技能由插件整体管理。
+                用 min-w-0 占住 ml-auto 的右端，文案不挤压左侧按钮。 -->
+            <span
+              class="ml-auto max-w-[60%] min-w-0 text-right text-[10px] text-muted-foreground"
+              data-testid={`skill-managed-${skill.name}`}
+            >
+              {t('plugins.managedBy', { name: plugins.nameOf(managedBy) })}
+              · {t('plugins.managedHint')}
+            </span>
+          {/if}
         {/if}
       </div>
     </div>

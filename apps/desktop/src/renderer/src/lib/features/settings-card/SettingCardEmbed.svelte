@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { MailProvider, SettingItem, SettingValues } from '@kepcup/shared';
-  import { mailProviderSchema } from '@kepcup/shared';
+  import type { SettingItem, SettingValues } from '@kepcup/shared';
+  import { t } from '$lib/i18n';
   import { agentsStore } from '$lib/stores/agents.svelte';
+  import { plugins } from '$lib/features/plugins/plugins.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import ProviderSetupForm from '$lib/features/settings/ProviderSetupForm.svelte';
@@ -86,10 +87,24 @@
     }),
   );
   const agent = $derived(agentId === null ? null : agentsStore.get(agentId));
-  const mailProvider = $derived.by((): MailProvider => {
-    const parsed = mailProviderSchema.safeParse(prefill?.provider);
-    return parsed.success ? parsed.data : 'qq';
+  // P3：添加入口是邮件插件卡——已启用的邮件插件（表单字段由插件声明构建）。
+  // 恰一个时直接进它的表单；多个时表单组件外再给一次选择（先取第一个作默认）。
+  const mailSetupCandidates = $derived(
+    plugins.plugins.filter(
+      (plugin) => plugin.enabled && plugin.providesInstances.includes('mail'),
+    ),
+  );
+  let mailSetupPickedId = $state<string | null>(null);
+  $effect(() => {
+    // 候选集变化（安装 / 卸载邮件插件）时收敛选择。
+    if (mailSetupPickedId !== null && !mailSetupCandidates.some((row) => row.id === mailSetupPickedId)) {
+      mailSetupPickedId = null;
+    }
   });
+  const mailSetupPluginId = $derived(
+    mailSetupPickedId ?? mailSetupCandidates[0]?.id ?? null,
+  );
+  const mailSetupPickVisible = $derived(mailSetupCandidates.length > 1);
   const connectorId = $derived(prefillString(prefill, 'app'));
   const grantBot = $derived.by(() => {
     if (botId === null) return undefined;
@@ -273,12 +288,32 @@
 {:else if item.card === 'sensor' && sensor !== null}
   <SensorCard kind={sensor} embedded onSaved={() => onSaved()} />
 {:else if item.card === 'mail-account' && botId !== null}
-  <MailAccountAddForm
-    initialProvider={mailProvider}
-    bindBotId={botId}
-    testidPrefix={`${testidPrefix}-mail`}
-    onSaved={() => onSaved()}
-  />
+  {#if mailSetupPluginId === null}
+    <p class="text-sm text-muted-foreground" data-testid={`${testidPrefix}-mail-no-plugin`}>
+      {t('mail.noPlugin')}
+    </p>
+  {:else}
+    <MailAccountAddForm
+      pluginId={mailSetupPluginId}
+      bindBotId={botId}
+      testidPrefix={`${testidPrefix}-mail`}
+      onSaved={() => onSaved()}
+    />
+    {#if mailSetupPickVisible}
+      <div class="space-y-1">
+        {#each mailSetupCandidates as candidate (candidate.id)}
+          <button
+            type="button"
+            class="w-full rounded-lg border px-3 py-1.5 text-left text-sm hover:bg-accent/40"
+            onclick={() => (mailSetupPickedId = candidate.id)}
+            data-testid={`${testidPrefix}-mail-pick-${candidate.id}`}
+          >
+            {candidate.name}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
 {:else if item.card === 'connect-app' && connectorId !== null}
   <ConnectAppPanel
     target={{ kind: 'catalog', connectorId }}

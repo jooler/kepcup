@@ -8,11 +8,12 @@ import {
   connectorMetaOf,
   type McpToolRisk,
 } from '@kepcup/shared';
+import { readShippedConnectorEntries } from '../support/shipped-connectors.js';
 
 /**
  * 真实工具定义快照（`test/fixtures/connectors/<slug>.tools.json`，README 有导出方法）与目录条目的
  * 一致性——「测好一家，放行一家」的守门测试（todo/extension-center.md §4）：
- * - 每个已放行（`connector-release-gates.json`）的条目必须有快照；
+ * - 每个有快照的条目（新连接器上架前先导出）必须有完整注解覆盖；
  * - 快照里每个工具都带风险注解（注解覆盖率 100%），否则放行前必须在 `toolPolicy` 里逐个定档；
  * - `toolPolicy` 的键必须是快照里真实存在的工具（防拼写错误）；`whoami.tool` 必须存在且判为只读；
  * - 分级分布钉死：上游悄悄改了工具 / 注解后重新导出快照，这里会红，逼着人重新看一遍。
@@ -20,19 +21,14 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const fixturesDir = path.join(repoRoot, 'packages/core/test/fixtures/connectors');
-const catalog = JSON.parse(
-  readFileSync(path.join(repoRoot, 'apps/desktop/resources/connectors/catalog.json'), 'utf8'),
-) as { connectors: unknown[] };
-const gates = JSON.parse(
-  readFileSync(path.join(repoRoot, 'apps/desktop/connector-release-gates.json'), 'utf8'),
-) as { approved: string[] };
+const shipped = readShippedConnectorEntries();
 
 interface SnapshotTool {
   name: string;
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
-const entries = catalog.connectors.map((raw) => {
+const entries = shipped.map((raw) => {
   const entry = connectorCatalogEntrySchema.parse(raw);
   return { entry, meta: connectorMetaOf(entry) };
 });
@@ -58,22 +54,25 @@ function distribution(slug: string): Record<McpToolRisk, number> {
   return counts;
 }
 
-describe('released connectors have a tool snapshot', () => {
-  for (const gate of gates.approved) {
-    const found = entries.find((candidate) => candidate.meta.releaseGate === gate);
-    it(`${gate}: snapshot exists, unique tool names, full annotation coverage`, () => {
-      expect(found).toBeDefined();
-      const tools = loadSnapshot(found?.meta.slug ?? gate);
-      expect(tools, `missing fixtures/connectors/${found?.meta.slug}.tools.json`).not.toBeNull();
-      const list = tools ?? [];
-      expect(list.length).toBeGreaterThan(0);
-      expect(new Set(list.map((tool) => tool.name)).size).toBe(list.length);
-      const missing = list
+describe('connectors with a tool snapshot: unique names, full annotation coverage', () => {
+  // 目录通道及其发行门禁已随商店化移除；守门对象 = 快照存在的条目
+  // （新连接器上架时先导出快照，这里逼着人把注解 / toolPolicy 定全）。
+  const snapshotSlugs = entries
+    .map((e) => e.meta.slug)
+    .filter((slug) => loadSnapshot(slug) !== null);
+  expect(snapshotSlugs.length).toBeGreaterThan(0);
+  for (const slug of snapshotSlugs) {
+    const found = entries.find((candidate) => candidate.meta.slug === slug)!;
+    it(`${slug}: unique tool names, full annotation coverage`, () => {
+      const tools = loadSnapshot(slug) ?? [];
+      expect(tools.length).toBeGreaterThan(0);
+      expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
+      const missing = tools
         .filter(
           (tool) =>
             tool.annotations?.readOnlyHint === undefined &&
             tool.annotations?.destructiveHint === undefined &&
-            found?.meta.toolPolicy[tool.name] === undefined,
+            found.meta.toolPolicy[tool.name] === undefined,
         )
         .map((tool) => tool.name);
       expect(missing, 'tools with neither annotations nor a toolPolicy entry').toEqual([]);

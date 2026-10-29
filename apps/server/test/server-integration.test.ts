@@ -5,13 +5,16 @@ import { once } from 'node:events';
 import { request } from 'node:http';
 import { describe, expect, it, afterAll, beforeAll } from 'vitest';
 import WebSocket from 'ws';
+import { RELAY_PROTOCOL_VERSION, type PairingOffer, type RelayEnvelope } from '@kepcup/shared';
 import {
-  RELAY_PROTOCOL_VERSION,
-  type PairingOffer,
-  type RelayEnvelope,
-} from '@kepcup/shared';
-import { createFileKeystore, createMemoryKeystore, FrameCodec } from '@kepcup/core';
+  createFileKeystore,
+  createMemoryKeystore,
+  FrameCodec,
+  withRemoteSource,
+} from '@kepcup/core';
 import { createHeadlessServer, type HeadlessServer } from '../src/server.js';
+import { createAdminClient } from '../src/admin.js';
+import { buildPluginFixture } from '../../../packages/testkit/src/plugin-fixture.js';
 import type { ServerConfig } from '../src/config.js';
 
 /**
@@ -43,6 +46,10 @@ function testConfig(dataDir: string): ServerConfig {
     acceptRequestId: null,
     revokeDeviceId: null,
     json: false,
+    pluginAction: null,
+    pluginPath: null,
+    pluginYes: false,
+    pluginConfigFile: null,
     trustProxy: false,
   };
 }
@@ -91,7 +98,10 @@ class ViewerConnection {
     return this;
   }
 
-  async next(predicate: (frame: RelayEnvelope) => boolean, timeoutMs = 5000): Promise<RelayEnvelope> {
+  async next(
+    predicate: (frame: RelayEnvelope) => boolean,
+    timeoutMs = 5000,
+  ): Promise<RelayEnvelope> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const index = this.inbox.findIndex(predicate);
@@ -206,7 +216,11 @@ it('配对 → confirm 出帧 → hello 自举 → system.ping → 断线重连'
   viewer.setCodec(codec);
 
   // 6. hello 自举 → 状态快照事件应先于任何 RPC 响应到达。
-  for (const frame of codec.seal('hello', { token: donePayload.token, ts: Date.now() }, { did: DEVICE_ID })) {
+  for (const frame of codec.seal(
+    'hello',
+    { token: donePayload.token, ts: Date.now() },
+    { did: DEVICE_ID },
+  )) {
     viewer.send(frame);
   }
   await viewer.awaitName('core.status');
@@ -276,6 +290,55 @@ it('admin 接口：环回 + Bearer token', async () => {
   expect(ok.code).toBe(200);
   const body = JSON.parse(ok.body) as { remote: { enabled: boolean } };
   expect(body.remote.enabled).toBe(true);
+});
+
+it('admin 插件安装：inspect → install → plugins.list；远程来源仍被拒', async () => {
+  const token = readFileSync(path.join(dataDir, 'admin-token'), 'utf8').trim();
+  const client = createAdminClient(server.port, token);
+  const fixtureDir = mkdtempSync(path.join(tmpdir(), 'kepcup-server-plugin-'));
+  try {
+    const fixture = await buildPluginFixture({
+      dir: fixtureDir,
+      skills: [
+        { name: 'admin-installed-skill', description: 'Installed through the admin endpoint' },
+      ],
+    });
+    const source = { kind: 'file' as const, path: fixture.path };
+    const info = (await client.pluginsInspect({ source })) as {
+      id: string;
+      packageSha256: string;
+      installable: boolean;
+    };
+    expect(info.id).toBe('io.github.tester/fixture');
+    expect(info.packageSha256).toBe(fixture.sha256);
+    expect(info.installable).toBe(true);
+
+    const installed = (await client.pluginsInstall({
+      source,
+      sha256: info.packageSha256,
+      userConfig: {},
+    })) as { plugin: { id: string } };
+    expect(installed.plugin.id).toBe('io.github.tester/fixture');
+
+    const listed = (await server.services.appMethods['plugins.list']!.handle(undefined)) as {
+      plugins: Array<{ id: string }>;
+    };
+    expect(listed.plugins.map((plugin) => plugin.id)).toContain('io.github.tester/fixture');
+
+    // 远程端点（RemoteHub 用 withRemoteSource 包裹每个 handle）：同一 file 来源仍被拒。
+    const inspect = server.services.appMethods['plugins.inspect']!;
+    await expect(
+      withRemoteSource('dev_integration' as never, () => inspect.handle({ source })),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    // JSON 合法但不符合方法 schema 的请求体是调用方的错：400 + INVALID_INPUT，不是 500。
+    await expect(client.pluginsInspect({ source: { kind: 'url', path: 'x' } })).rejects.toThrow(
+      /HTTP 400.*INVALID_INPUT/s,
+    );
+    await expect(client.pluginsInstall({})).rejects.toThrow(/HTTP 400.*INVALID_INPUT/s);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 describe('启动路径回归（独立子代理审查修复：P0 二次启动 / P1 --relay 劫持）', () => {

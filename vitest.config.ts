@@ -22,6 +22,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@kepcup/shared': fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url)),
+      '@kepcup/package-guard': fileURLToPath(
+        new URL('./packages/package-guard/src/index.ts', import.meta.url),
+      ),
       '@kepcup/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@kepcup/testkit': fileURLToPath(new URL('./packages/testkit/src/index.ts', import.meta.url)),
     },
@@ -58,6 +61,7 @@ export default defineConfig({
           include: ['packages/app-validator/test/**/*.test.ts'],
         },
       },
+      { test: { name: 'package-guard', include: ['packages/package-guard/test/**/*.test.ts'] } },
       // D102 headless 服务端：直连监听层 / CLI 解析 / 全链路（临时目录 + memory keystore）。
       {
         test: {

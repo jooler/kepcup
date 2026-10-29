@@ -105,7 +105,6 @@ export function changedSettingsPaths(
   return paths;
 }
 
-
 /**
  * 设置页原有的保存路径（专用 RPC）成功后受影响的目录条目（§4.1「设置页原有的保存路径也补发」）。
  * `settings.update` / `bots.update` 按前后差异在各自 handler 里算，不在这里。
@@ -126,6 +125,11 @@ const EXTRA_METHOD_ITEMS: Readonly<Record<string, readonly string[]>> = {
   'mcp.setSecret': itemIdsForSettingsPaths(['mcpServers']),
   'mcp.removeSecret': itemIdsForSettingsPaths(['mcpServers']),
   'mcp.removeServer': itemIdsForSettingsPaths(['mcpServers']),
+  // D104：插件安装 / 卸载 / 启停 / 更新间接改了 `mcpServers`（内嵌 MCPB / http server），补发 settings.changed。
+  'plugins.install': itemIdsForSettingsPaths(['mcpServers']),
+  'plugins.uninstall': itemIdsForSettingsPaths(['mcpServers']),
+  'plugins.setEnabled': itemIdsForSettingsPaths(['mcpServers']),
+  'plugins.update': itemIdsForSettingsPaths(['mcpServers']),
   'agents.enable': itemIdsForSettingsPaths(['agents']),
   'agents.disable': itemIdsForSettingsPaths(['agents']),
   'agents.login': itemIdsForSettingsPaths(['agents']),

@@ -10,6 +10,7 @@ export type SettingsSectionId =
   | 'search'
   | 'browser'
   | 'agents'
+  | 'plugins'
   | 'profile'
   | 'contacts'
   | 'unattended'

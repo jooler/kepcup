@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { ArrowLeft } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
@@ -61,9 +61,22 @@
       detailConnectionId = null;
     }
   }
+  /**
+   * embedded：嵌进「已安装」的插件管理视图（不再是独立页签），去掉自带的滚动容器。
+   * pluginId：只显示该插件贡献的连接条目（从插件卡「管理」进入时圈定），并隐藏本机自建区。
+   */
+  let {
+    embedded = false,
+    pluginId = undefined,
+    /** 归属插件的操作（启停 / 打开目录 / 卸载）：渲染在插件贡献的应用卡片上。 */
+    pluginActions,
+  }: { embedded?: boolean; pluginId?: string; pluginActions?: Snippet<[string]> } = $props();
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-connections">
+<div
+  class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
+  data-testid="extension-connections"
+>
   {#if detailConnectionId !== null}
     <AppConnectionDetail
       connectionId={detailConnectionId}
@@ -88,8 +101,11 @@
       />
     </div>
   {:else}
-    <AppCatalogGrid onManage={manage} />
-    <!-- 本机自建（设计 29 §17）：始终显示（无条目时是空态）；本机条目只在这里出现，不进上面的网格 -->
-    <LocalConnectorsSection onManage={manage} />
+    <AppCatalogGrid onManage={manage} {pluginId} {pluginActions} />
+    <!-- 本机自建（设计 29 §17）：始终显示（无条目时是空态）；本机条目只在这里出现，不进上面的网格。
+         按插件圈定时不显示（本机自建与插件无关）。 -->
+    {#if pluginId === undefined}
+      <LocalConnectorsSection onManage={manage} />
+    {/if}
   {/if}
 </div>

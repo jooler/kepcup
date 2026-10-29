@@ -1,15 +1,19 @@
 # 35 邮件通道（Mail Channel）
 
+> **D105 修订（插件平台迭代，现状事实）**：邮箱账号 = **插件实例**——`mail_accounts.instance_id` 外键指向 `plugin_instances`（迁移 0058，卸载插件级联删账号/绑定/授权码）；厂商预设机制（`MAIL_PROVIDER_PRESETS` 与「添加邮箱」预设下拉）已删除，取而代之的是官方市场的四个**邮件插件**（mail-generic 自填端点 / mail-163 / mail-126 / mail-qq 锁定端点）——插件清单里的邮件贡献是「实例供给规范」（默认值 + 锁定项），账号由用户在插件卡上逐个添加，表单字段由宿主按声明 schema 自动构建；实例的授权码存 secrets（`plugin:{pluginId}:instance:{instanceId}:password`）。轮询下限（60 秒）不变；`MailProvider` 枚举保留，实例账号仍 `provider:'custom'`。**插件未 ∈ Bot 启用集时账号对该 Bot 不可见**（工具注册、`<mail_accounts>` 段、工具内清单三处同源过滤）；无 instance_id 的遗留账号照常工作、列表标「未关联插件」。OAuth 子 schema（P3-M2）顺延未落地。入口在扩展中心「已安装」页的邮件插件卡（原独立「邮件」页签已并入）。现状总述见 [51-plugin-system.md](51-plugin-system.md) §15.4。
+
 Bot 可以接管用户邮箱：宿主用 IMAP 收信、SMTP 发信，新信到达时唤醒绑定的 Bot 私聊处理。这是与 D73「连接应用」并列的本机**通道（Channel）**——协议是 IMAP/SMTP，不是 MCP；入口在扩展中心「邮件」页签。决策：**D84**。
 
 **状态：P0 已实现（2026-10-12，main：e0f6500 + 审查修复 7b0aa93 + 提示改造 ae79978），实机验收（§9：QQ IDLE、163 ID + 轮询、发信审批卡）待完成；P1 未开始。** 产品拍板（2026-10-12）：扩展中心页签叫「邮件」；同一邮箱可被多个 Bot 接管；新信唤醒进**该 Bot 的私聊（DM）**；P0 必须收发都支持；优先做接近邮件客户端的近实时（IMAP IDLE），否则可配轮询间隔。；**对话内添加邮箱卡**（`mail_request_setup` → `mail-account` 设置卡，2026-10-13）已接入。
 
 相关：D73（连接应用 / 污点 / 外发审批）、D75（对话轮 mailbox）、D79（网页监看：确定性轮询 → 持久作业 → 唤醒）、D37 / D78（审批与副作用）、D65（工具风险档）、[29 §16](29-connected-apps.md#16-扩展中心extension-center2026-10-10)（扩展中心信息架构）。
 
+插件可提供基于自定义邮箱的预填模板（「添加账号」里按「来自插件的模板」分组出现，创建后仍按自定义邮箱保存；设计 [51](51-plugin-system.md) §4 / §6.3）。
+
 ## 决策
 
 - **D84 邮件通道**：
-  1. **平行通道，不是 MCP Connector**。账号、凭据、收信会话、Bot 绑定与 `mail_*` 宿主工具自成模块；不进 `connectors/catalog.json`，不复用 `app_connections` / OAuth vault / MCP 工具锁定。将来 Gmail / Outlook 的官方 MCP（OAuth）仍走 D73「连接」；本通道覆盖 QQ / 163 / 自定义域名等以授权码登录的场景，二者可并存。
+  1. **平行通道，不是 MCP Connector**。账号、凭据、收信会话、Bot 绑定与 `mail_*` 宿主工具自成模块；不进内置连接应用插件（`com.kepcup/connections`）的条目，不复用 `app_connections` / OAuth vault / MCP 工具锁定。将来 Gmail / Outlook 的官方 MCP（OAuth）仍走 D73「连接」；本通道覆盖 QQ / 163 / 自定义域名等以授权码登录的场景，二者可并存。
   2. **入口**：扩展中心新增第 4 页签 **「邮件」**（`ExtensionCenterTab = 'skills' | 'connections' | 'mcp' | 'mail'`）。设置里不单开「邮件」分区；需要时可在设置「应用」旁放一条指针跳转扩展中心（与现 Apps → 扩展中心指针同模式）。
   3. **收信优先 IDLE，轮询兜底**。登录后 `CAPABILITY` 含 `IDLE` → 对 INBOX 做 IDLE（近实时）；不含 → 按账号配置的间隔轮询。用户可强制「仅轮询」并改间隔。厂商预设给出默认间隔与是否尝试 IDLE（见 §4）。
   4. **多 Bot 可绑同一邮箱**。绑定存 `mail_account_bots`（或等价）；每个绑定的 Bot 在**自己的私聊**被唤醒（同一封信可唤醒多个 Bot；幂等按「账号 + UID + botId」去重）。

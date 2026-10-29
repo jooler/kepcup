@@ -43,16 +43,12 @@ describe('decideMailSetupRequest', () => {
     const decided = decideMailSetupRequest({
       botId: 'bot_1',
       bound: [],
-      provider: 'custom',
       reason: '帮我接管邮箱',
     });
     expect(decided.ok).toBe(true);
     if (!decided.ok) return;
-    expect(decided.requirement).toEqual({
-      kind: 'mail-account',
-      provider: 'custom',
-      reason: '帮我接管邮箱',
-    });
+    // P3：无 provider 预填——添加入口是邮件插件卡。
+    expect(decided.requirement).toEqual({ kind: 'mail-account', reason: '帮我接管邮箱' });
     expect(decided.message).toContain('已请求用户添加邮箱');
   });
 
@@ -60,12 +56,11 @@ describe('decideMailSetupRequest', () => {
     const decided = decideMailSetupRequest({
       botId: 'bot_1',
       bound: [{ label: '工作', address: 'me@example.com' }],
-      provider: 'qq',
       reason: '再加一个',
     });
     expect(decided.ok).toBe(true);
     if (!decided.ok) return;
-    expect(decided.requirement).toEqual({ kind: 'mail-account', provider: 'qq', reason: '再加一个' });
+    expect(decided.requirement).toEqual({ kind: 'mail-account', reason: '再加一个' });
     expect(decided.message).toContain('me@example.com');
     expect(decided.message).toContain('新增');
     expect(decided.message).toContain('propose_handover');
@@ -132,10 +127,10 @@ describe('mail_request_setup', () => {
     });
     const tool = toolsWith({ requestSetup }).find((entry) => entry.name === MAIL_REQUEST_SETUP_TOOL)!;
     const result = await tool.execute(
-      { provider: 'qq', reason: '帮我接管邮箱' },
+      { reason: '帮我接管邮箱' },
       { identity, signal: new AbortController().signal, terminate: () => {}, progress: () => {} },
     );
-    expect(requestSetup).toHaveBeenCalledWith({ provider: 'qq', reason: '帮我接管邮箱' });
+    expect(requestSetup).toHaveBeenCalledWith({ reason: '帮我接管邮箱' });
     expect(result).toMatchObject({
       ok: false,
       errorCode: TOOL_SETUP_REQUIRED,
@@ -179,17 +174,6 @@ describe('mail_request_setup', () => {
     );
     expect(result).toMatchObject({ ok: true, content: expect.stringContaining('没有交给你的邮箱') });
     expect(result.content).not.toContain('mail_request_setup');
-  });
-
-  it('rejects unknown provider before calling the facade', async () => {
-    const requestSetup = vi.fn();
-    const tool = toolsWith({ requestSetup }).find((entry) => entry.name === MAIL_REQUEST_SETUP_TOOL)!;
-    const result = await tool.execute(
-      { provider: 'yahoo' },
-      { identity, signal: new AbortController().signal, terminate: () => {}, progress: () => {} },
-    );
-    expect(requestSetup).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
   });
 
   it('fails without bot context', async () => {

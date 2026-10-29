@@ -1,30 +1,18 @@
 import { z } from 'zod';
+import { pluginFieldSchema, pluginFieldValueSchema } from './plugin-manifest.js';
 
 /**
  * MCPB 本地包（D73 P2，todo/connected-apps.md §6.5）的 RPC 契约。manifest 本身的解析在
  * core（`apps/mcpb/manifest.ts`）；这里只放界面需要的摘要与 `mcpb.*` 入参 / 出参。
+ *
+ * D105 起 `user_config` 字段与值改用唯一的 `pluginFieldSchema` / `pluginFieldValueSchema`
+ * （plugin-manifest.ts 定义，插件 config / 实例字段共用）；本文件保留 MCPB 旧名 re-export。
  */
 
-export const mcpbUserConfigValueSchema = z.union([
-  z.string().max(10_000),
-  z.number(),
-  z.boolean(),
-  z.array(z.string().max(10_000)).max(100),
-]);
+export const mcpbUserConfigValueSchema = pluginFieldValueSchema;
 export type McpbUserConfigValue = z.infer<typeof mcpbUserConfigValueSchema>;
 
-export const mcpbUserConfigFieldSchema = z.object({
-  key: z.string(),
-  type: z.enum(['string', 'number', 'boolean', 'directory', 'file']),
-  title: z.string(),
-  description: z.string().default(''),
-  required: z.boolean().default(false),
-  sensitive: z.boolean().default(false),
-  multiple: z.boolean().default(false),
-  default: mcpbUserConfigValueSchema.optional(),
-  min: z.number().optional(),
-  max: z.number().optional(),
-});
+export const mcpbUserConfigFieldSchema = pluginFieldSchema;
 export type McpbUserConfigField = z.infer<typeof mcpbUserConfigFieldSchema>;
 
 export const mcpbInspectInputSchema = z.object({ path: z.string().min(1).max(4096) });

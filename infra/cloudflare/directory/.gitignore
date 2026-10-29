@@ -1,6 +1,5 @@
 # 签名产物由 CI 生成并直接部署，不入库。
-public/connectors/v1/index.json
-public/connectors/v1/index.json.sig
-public/connectors/v1/deltas/
+public/plugins/v1/index.json
+public/plugins/v1/index.json.sig
 node_modules/
 .wrangler/

@@ -87,8 +87,8 @@ describe('connectionToMcpServer (synthesis contract)', () => {
         auth: 'none',
       }) as McpServer;
     const list = [server('a', true), server('b', false), server('c', true)];
-    expect(serversForBot(list, ['c', 'b', 'a', 'zzz']).map((s) => s.id)).toEqual(['a', 'c']);
-    expect(serversForBot(list, [])).toEqual([]);
+    expect(serversForBot(list, ['c', 'b', 'a', 'zzz'], new Set()).map((s) => s.id)).toEqual(['a', 'c']);
+    expect(serversForBot(list, [], new Set())).toEqual([]);
   });
 });
 

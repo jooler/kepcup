@@ -32,7 +32,8 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
       settingDeepLinkAction({ surface: 'extension-center', section: 'nope' }, {}, null),
     ).toEqual({
       kind: 'extension-center',
-      tab: 'skills',
+      tab: 'installed',
+      anchor: null,
     });
   });
 

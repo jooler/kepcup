@@ -35,6 +35,8 @@ export const appCatalogEntrySchema = z.object({
   tier: connectorTierSchema,
   /** 来源（本机连接 = `local`）；缺省按 `bundled` 处理。 */
   origin: connectorOriginSchema.optional(),
+  /** 来源插件 id（`origin: 'plugin'` 时有值，来源徽标用）。 */
+  pluginId: z.string().optional(),
   authKind: z.enum(['oauth', 'api-key', 'none']),
   registration: z.enum(['auto', 'preregistered']),
   /** false = 当前版本不能连接（预注册客户端 / 非 OAuth，P2）；界面置灰并显示 `unavailableReason`。 */

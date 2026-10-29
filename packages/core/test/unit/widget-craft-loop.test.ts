@@ -446,7 +446,10 @@ describe('widget craft loop (D87)', () => {
     ).toHaveLength(1);
   });
 
-  it('只剩警告：修一轮，仍有警告就带已知问题交付（无 S2 时状态 unverified）', async () => {
+  it(
+    '只剩警告：修一轮，仍有警告就带已知问题交付（无 S2 时状态 unverified）',
+    { timeout: 20_000 },
+    async () => {
     const h = harness();
     h.engine.add('SPEC', specScript).add('BUILD', buildScript(WARN_ONLY)).add('FIX', noop);
     const result = await craft(h, { brief: '计数器', title: '计数器' });

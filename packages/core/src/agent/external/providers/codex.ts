@@ -26,7 +26,7 @@ import { genericAcpProvider } from './generic-acp.js';
  * - MCP 工具超时：codex-acp 2.1.1 把 ACP 的 http server 只译成
  *   `{url, http_headers}`（`createMcpSeverConfig`），且会话配置的 `mcp_servers`
  *   整体覆盖 `CODEX_CONFIG` 里的同名键——无法为桥设 `tool_timeout_sec`，沿用
- *   Codex 默认（约 60 s）。等待用户审批的工具（install_skill /
+ *   Codex 默认（约 60 s）。等待用户审批的工具（plugin_request_install /
  *   request_environment / git_remote）与 generate_video 会超时 → P5 由桥在
  *   `AGENT_BRIDGE_TOOL_DETACH_MS`（45 s）时先应答「已转入后台」、结果在 prompt
  *   结束后以 follow-up prompt 送回同一 run（engine.ts）。按会话随机的桥名也避开了 Codex

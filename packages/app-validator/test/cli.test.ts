@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseArgs } from '../src/args.js';
 import { runCli } from '../src/cli.js';
@@ -66,6 +69,47 @@ describe('parseArgs', () => {
     expect(parseArgs(['--help']).command).toBe('help');
     expect(parseArgs(['validate', 'x', '-h']).command).toBe('help');
     expect(parseArgs(['--version']).command).toBe('version');
+  });
+
+  it('parses init plugin and pack', () => {
+    expect(
+      parseArgs([
+        'init',
+        'plugin',
+        './demo',
+        '--id',
+        'io.github.a/demo',
+        '--name',
+        'Demo',
+        '--force',
+      ]),
+    ).toEqual({
+      command: 'initPlugin',
+      dir: './demo',
+      id: 'io.github.a/demo',
+      name: 'Demo',
+      force: true,
+    });
+    expect(parseArgs(['pack', './demo', '--out=./out.kepcup', '--json'])).toEqual({
+      command: 'packPlugin',
+      dir: './demo',
+      out: './out.kepcup',
+      json: true,
+    });
+  });
+
+  it.each([
+    [['init', 'server', './demo'], 'plugin'],
+    [['init', 'plugin'], 'Missing the plugin directory'],
+    [['init', 'plugin', './demo', '--id'], '--id needs'],
+    [['init', 'plugin', './demo', '--bogus'], 'Unknown option'],
+    [['pack'], 'Missing the plugin directory'],
+    [['pack', './demo', '--out'], '--out needs'],
+    [['pack', './demo', '--bogus'], 'Unknown option'],
+  ])('rejects %j', (argv, message) => {
+    const parsed = parseArgs(argv);
+    expect(parsed.command).toBe('error');
+    expect((parsed as { message: string }).message).toContain(message);
   });
 });
 
@@ -139,11 +183,13 @@ describe('runCli', () => {
       'auth',
       'checks',
       'exitCode',
+      'mode',
       'remote',
       'schemaVersion',
       'summary',
       'target',
     ]);
+    expect(report.mode).toBe('connector');
     expect(report.exitCode).toBe(0);
     expect(report.checks[0]).toMatchObject({
       id: expect.any(String),
@@ -173,5 +219,42 @@ describe('runCli', () => {
     const report = JSON.parse(run.out.join('')) as ValidationReport;
     expect(report.auth).toBe(true);
     expect(report.checks.some((c) => c.id === 'auth.flow' && c.severity === 'info')).toBe(true);
+  });
+
+  it('plugin mode end to end: init → validate --json → pack --json → validate the archive', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'app-validator-cli-plugin-'));
+    try {
+      const dir = path.join(root, 'demo');
+      const init = io();
+      expect(await runCli(['init', 'plugin', dir, '--id', 'io.github.tester/demo'], init.io)).toBe(
+        0,
+      );
+
+      const text = io();
+      expect(await runCli(['validate', dir], text.io)).toBe(0);
+      // Progress lines reach stderr in plugin mode too (text output only).
+      expect(text.err.join('')).toContain('Checking plugin.json');
+
+      const validated = io();
+      expect(await runCli(['validate', dir, '--json'], validated.io)).toBe(0);
+      const report = JSON.parse(validated.out.join('')) as ValidationReport;
+      expect(report.mode).toBe('plugin');
+      expect(report.schemaVersion).toBe(REPORT_SCHEMA_VERSION);
+      expect(report.target).toBe(dir);
+      expect(validated.err.join('')).toBe('');
+
+      const out = path.join(root, 'demo.kepcup');
+      const packed = io();
+      expect(await runCli(['pack', dir, '--out', out, '--json'], packed.io)).toBe(0);
+      const result = JSON.parse(packed.out.join('')) as { path: string; sha256: string };
+      expect(result.path).toBe(out);
+      expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+
+      const archive = io();
+      expect(await runCli(['validate', out, '--json'], archive.io)).toBe(0);
+      expect((JSON.parse(archive.out.join('')) as ValidationReport).mode).toBe('plugin');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

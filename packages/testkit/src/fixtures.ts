@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -101,6 +102,30 @@ export interface CreateTestCoreOptions {
     intervalMs?: number;
     initialDelayMs?: number;
   };
+  /**
+   * D104 P1-1 test hook (see CoreServicesOptions.pluginMarketplace): marketplace public keys,
+   * the index base URL, in-memory fetches for the index and package channels, and the timer
+   * cadence.
+   */
+  /**
+   * D104 P1-2 test hook (see CoreServicesOptions.projectorWrap): wrap plugin projectors
+   * so integration tests can inject update failures (rollback coverage).
+   */
+  projectorWrap?: unknown;
+  pluginMarketplace?: {
+    keys?: Array<{
+      keyId: string;
+      publicKey: string;
+      validFrom: number;
+      validUntil?: number;
+      revoked?: boolean;
+    }>;
+    baseUrl?: string;
+    fetch?: unknown;
+    downloadFetch?: unknown;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  };
 }
 
 /**
@@ -108,10 +133,19 @@ export interface CreateTestCoreOptions {
  * Defaults follow docs/dev/05-testing.md ("Test fixtures").
  */
 export async function createTestCore(options: CreateTestCoreOptions = {}): Promise<CoreHarness> {
+  // D104 P0b: builtin plugins resolve the repo's real shipped resources by walking up —
+  // that would leak marketplace/preset/catalog content into every test. Default to an
+  // EMPTY builtin dir inside the test home unless the caller injects one explicitly.
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', KEPCUP_KEYSTORE: 'memory', ...options.env };
+  if (env.KEPCUP_BUILTIN_PLUGINS === undefined && options.home !== undefined) {
+    const empty = path.join(options.home, '.empty-builtin-plugins');
+    mkdirSync(empty, { recursive: true });
+    env.KEPCUP_BUILTIN_PLUGINS = empty;
+  }
   return createCore({
     home: options.home,
     appVersion: options.appVersion ?? '0.0.0-test',
-    env: { NODE_ENV: 'test', KEPCUP_KEYSTORE: 'memory', ...options.env },
+    env,
     ...(options.keystore ? { keystore: options.keystore } : {}),
     ...(options.envCatalog !== undefined ? { envCatalog: options.envCatalog as never } : {}),
     ...(options.envManagerHooks !== undefined
@@ -123,8 +157,12 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.clock !== undefined ? { clock: options.clock as never } : {}),
     ...(options.timers !== undefined ? { timers: options.timers } : {}),
     ...(options.browserRpc !== undefined ? { browserRpc: options.browserRpc as never } : {}),
-    ...(options.enhancedSandbox !== undefined ? { enhancedSandbox: options.enhancedSandbox as never } : {}),
-    ...(options.distroInstaller !== undefined ? { distroInstaller: options.distroInstaller as never } : {}),
+    ...(options.enhancedSandbox !== undefined
+      ? { enhancedSandbox: options.enhancedSandbox as never }
+      : {}),
+    ...(options.distroInstaller !== undefined
+      ? { distroInstaller: options.distroInstaller as never }
+      : {}),
     ...(options.platform !== undefined ? { platform: options.platform } : {}),
     ...(options.diskUsageBudget !== undefined ? { diskUsageBudget: options.diskUsageBudget } : {}),
     ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog as never } : {}),
@@ -152,6 +190,12 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
     ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
+    ...(options.pluginMarketplace !== undefined
+      ? { pluginMarketplace: options.pluginMarketplace as never }
+      : {}),
+    ...(options.projectorWrap !== undefined
+      ? { projectorWrap: options.projectorWrap as never }
+      : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });
 }

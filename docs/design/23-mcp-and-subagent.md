@@ -1,5 +1,7 @@
 # 23 MCP 与 SubAgent
 
+> **D105 注记（插件平台迭代）**：MCP server 的**可见性**改由插件启用集接管——插件贡献的 server（`source.kind='plugin'`，id = `plg_` + sha256 前 12 位、跨更新稳定）不再逐个出现在 `mcp_server_ids` 勾选里，所属插件 ∈ Bot 启用集即可用；手动 / MCPB server 的 Bot 级勾选保留为实例细选。受管字段守卫 `PLUGIN_MANAGED`（transport/command/args/env/url/headers/auth/source/tier 只能走插件生命周期）见设计 51 §7。自定义 MCP 的实例化收编（`app.kepcup/custom-mcp` 纯实例插件）**顺延未做**：全局手动 MCP 管理暂留扩展中心「工具」筛选视图（DEV-075），落地后迁入插件卡。现状总述见 [51-plugin-system.md](51-plugin-system.md) §15。
+
 Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务器；在 loop 内把「只要结论、材料很长」的子任务委派给宿主自有 SubAgent。两者都不改变群聊与消息规则（D2 / D4 / D5），不引入「群里的新联系人」。跨联系人 Bot 的代办与管家分诊见 [27-butler-and-delegation.md](27-butler-and-delegation.md)（D70/D71）——**不是**本篇 SubAgent。
 
 决策：D64（Pi 1.x）、D65（MCP）、D66（SubAgent）。执行方案见 [todo/pi-1x-upgrade-mcp-subagent.md](../../todo/pi-1x-upgrade-mcp-subagent.md)。

@@ -348,7 +348,6 @@ describe('the Bot path: guide → propose → confirmation card → add', () => 
     expect(stored.entry.remotes).toEqual([{ type: 'streamable-http', url: env.fake.mcpUrl }]);
     expect(stored.entry._meta['app.kepcup/connector']).toMatchObject({
       tier: 'developer',
-      releaseGate: 'local',
       toolPolicy: {},
       skills: [],
       ui: false,

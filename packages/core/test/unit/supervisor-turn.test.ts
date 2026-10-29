@@ -475,7 +475,6 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).not.toContain('步工具调用');
     expect(prompt).toContain('这一轮只读，任务可读写');
     expect(prompt).not.toContain('沙箱状态');
-    expect(prompt).not.toContain('<recommended_skills>');
     expect(prompt).not.toContain('acquire_workdir_write');
   });
 
@@ -534,7 +533,8 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).not.toContain('delegate_to_bot');
     expect(prompt).toContain('acquire_workdir_write');
     expect(prompt).toContain('沙箱状态：可用');
-    expect(prompt).toContain('<recommended_skills>');
+    // P4：<recommended_skills> 段已随 install_skill 删除，不再出现。
+    expect(prompt).not.toContain('<recommended_skills>');
     expect(prompt).not.toContain('forward_task_result');
   });
 });

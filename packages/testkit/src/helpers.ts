@@ -64,6 +64,10 @@ export async function createTestStack(
     connectorCatalog?: CreateTestCoreOptions['connectorCatalog'];
     mcpbRuntimes?: CreateTestCoreOptions['mcpbRuntimes'];
     directorySync?: CreateTestCoreOptions['directorySync'];
+    /** D104 P1-1 test hook (see CoreServicesOptions.pluginMarketplace). */
+    pluginMarketplace?: CreateTestCoreOptions['pluginMarketplace'];
+    /** D104 P1-2 test hook (see CoreServicesOptions.projectorWrap). */
+    projectorWrap?: CreateTestCoreOptions['projectorWrap'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -109,6 +113,10 @@ export async function createTestStack(
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
     ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
+    ...(options.pluginMarketplace !== undefined
+      ? { pluginMarketplace: options.pluginMarketplace }
+      : {}),
+    ...(options.projectorWrap !== undefined ? { projectorWrap: options.projectorWrap } : {}),
   });
   return {
     core,
@@ -125,8 +133,8 @@ export async function createTestStack(
 
 export function botProfile(
   overrides: { name: string } & Omit<Partial<Bot['profile']>, 'runtime'> & {
-    runtime?: Partial<Bot['profile']['runtime']>;
-  },
+      runtime?: Partial<Bot['profile']['runtime']>;
+    },
 ): Bot['profile'] {
   return {
     identity: {

@@ -37,6 +37,13 @@
 | 系统分享接收（D94） | 待验收 | 2026-10-22 | — | macOS Share Extension 接收系统分享（微信合并转发 / Finder / Safari / 邮件附件）→ 扩展内选 Bot / 项目组 + 附言 → App Group inbox + `kepcup://` 唤醒 → core 以 `share.consume` 事务落附件 + 发普通用户消息（`share_intakes` 幂等、失败保留 7 天可恢复）；上下文附件行带当前查看 Bot 的 workspace 副本 path（按 Bot 物化、`0444`、被改写会重建），普通上传附件格式不变；P0 已实施（S1–S10：shared 契约 / 迁移 0047 / core 分享服务与物化 / 平台与 App RPC / 主进程协调器 / 恢复面板 / Swift 扩展 / 打包签名钩子），全量 5888 例通过、lint + typecheck 通过；**待真机验收**（微信是否走系统 Share sheet、真实 ZIP 体积、扩展唤起主应用、签名公证后的系统分享列表可见性）——实施记录与偏差见 [design/44-macos-share-extension.md](../design/44-macos-share-extension.md) §19 |
 
 | 项目组看板（D103） | 待验收 | 2026-10-26 | — | 三阶段一次做完：P1 分栏 / 卡片 / 拖拽（`svelte-dnd-action@0.9.80`，精确锁定）、P2 `card` 会话与 `ChatSession`、P3 卡片弹框 / 徽标 / 深链。全量 `pnpm test`：6425 通过 / 21 失败 / 44 跳过（610 个文件里 6 个失败）。21 例全部是沙箱基线（本环境没有 bubblewrap / socat），与 P2 记录的 21 例同一集合：`sandbox-isolation`、`toolchain-sandbox`、`skills-authoring`、`skills`、`workdirs` 的 OS sandbox、`workspace-tools`。没有非沙箱失败。`pnpm lint` 仍失败在既有文件（`infra/cloudflare/relay/public/assets` 的打包产物，以及 P2 留下的 `SvelteSet` / 未使用绑定），本阶段新增文件没有 lint 报错。e2e：`project-board` 两条与 `project-shell` 通过；收口清单其余规格里只剩已知的 `project-chat` 引用按钮和两条 `workbench` 抽屉不关（37 例中 34 过）。实施记录见 [todo/project-board](../../todo/project-board/README.md)。 |
+| 插件系统 P0a（D104） | 待验收 | 2026-10-26 | — | P0a-1（包防护 / shared 契约 / 迁移 0053 / staging 管线）、P0a-2（账本与投影器 / PluginRegistry / 守卫 / RPC）、P0a-3（扩展中心「已安装」页签 / 同意面板 / 本地安装对话框 / 来源徽标与管理项锁定 / e2e）三阶段一次做完，见 [todo/plugin-system](../../todo/plugin-system/README.md)。P0a-3 收口：全量 `pnpm test` 6666 通过 / 1 失败 / 37 跳过，唯一失败为 `memory.test.ts` 画像提案用例在全量负载下超时（单跑 15/15 全绿复核），失败集合不超出 D103 基线（本机沙箱用例实际全过）；e2e `plugins` 8 例 + `extension-center` 2 例 + `skill-market` / `narrow-layout` / `local-connectors` / `connect-abort` 共 16 例全绿（`pnpm build` 后）；web 构建（`build:web`）通过、本地安装入口按端点能力隐藏；desktop / shared / core typecheck 与 `pnpm lint`（本阶段文件）全绿。P0b 起内置插件入列表。 |
+| 插件系统 P0b（D104） | 待验收 | 2026-10-26 | — | 内置插件化：`resources/plugins/com.kepcup/{starter-skills,connections}`（`git mv` 保历史，等价性逐条核对）、`BuiltinPlugins` 加载器、技能市场 / 连接目录改读插件贡献（`preset://` → `plugin://com.kepcup/starter-skills/`，迁移 0054 改写存量）、`KEPCUP_BUILTIN_PLUGINS` 合并两个旧环境变量、桌面三平台块与 headless server 打包（pack-server 按发行门禁过滤连接器，headless 首次获得预置技能与连接目录）、`mcp-presets` 空壳删除、脚本 / README / 设计文档同步。收口：定向验收 12 项 187 例 + 行为回归 119 例全绿；e2e 五规格 14 例全绿；全量 `pnpm test` **6678 通过 / 0 失败 / 37 跳过**；typecheck / 本阶段文件 lint 干净；sign 脚本 dev key 实跑签名 + verify 且条目与改前 catalog 等价；pack-server tarball 实测含 starter-skills 9 技能、仅 7 家已放行连接器。偏差 DEV-052（plugins e2e 规格的内置目录隔离）。实施记录见 [todo/plugin-system/P0b-builtin.md](../../todo/plugin-system/P0b-builtin.md) §6。 |
+| 插件系统 P1（D104） | 待验收 | 2026-10-27 | — | P1-1（签名市场索引 / `MarketplaceService` / marketplace 来源安装 / 更新标记）、P1-2（更新事务 / 权限扩大再同意 / 撤销执行 / 重装）、P1-3（市场页签 / 安装与更新界面 / Bot 检索并提议安装 / 邮件预填模板 / e2e）三阶段一次做完，见 [todo/plugin-system](../../todo/plugin-system/README.md)。P1-3 收口：全量 `node scripts/run-tests.mjs run --maxWorkers=8` **6844 通过 / 0 失败 / 37 跳过**（默认并发下 `user-avatar` / `watch` 两个既有负载敏感用例偶发超时，单跑全绿）；`pnpm build` 后 e2e `plugins-market` 6 + `plugins` 9 + `extension-center` 2 + `narrow-layout` 2 共 19 例全绿；desktop typecheck（svelte-check 0 errors）/ core typecheck / prettier / 本阶段文件 eslint 干净。收口时修复 P1-1 抽 `SignedIndexSync` 后 `DirectorySync.revision` 会回退、导致目录开关「关 → 开」后首次读取仍为空的问题（`connected-apps-p3-tier-directory` 集成测试实测）。Bot 确认卡 e2e 用 core 集成测试 `plugins-bot.test.ts` 替代（任务书允许）；偏差 DEV-056 / DEV-057。实施记录见 [todo/plugin-system/P1-3-marketplace-ui-bot.md](../../todo/plugin-system/P1-3-marketplace-ui-bot.md) §6。 |
+| 插件系统 P2（D104） | 待验收 | 2026-10-27 | — | 生态工具：`@kepcup/package-guard` 确定性 zip 写入（`buildZipBuffer`）与共享安全解包（`extractZip`，core `PluginPackager` 改用，独立重构提交）、`isSafeDirectoryRemoteUrl` 挪入 shared（独立重构提交）、`kepcup-app validate` 插件模式（离线 / `--json` / 目录与 `.kepcup` 同检查集合）、`init plugin` 脚手架、可复现 `pack`（排除规则 / 符号链接拒绝 / 打包后自检）、headless `kepcup-server plugin install`（`/admin/plugins/{inspect,install}` + 本机 token 薄客户端 + `--config`）。收口：定向 284 例全绿；`pnpm typecheck`（含 desktop svelte-check 0 error）与 package-guard / app-validator / server 构建通过；全量 `node scripts/run-tests.mjs run --maxWorkers=8` **6910 通过 / 3 负载超时 / 37 跳过**（`auth`、`session-hub`、`permission-bridge` 各自单跑全绿，失败集合不超出既有负载敏感基线）。偏差 DEV-058 / DEV-059。实施记录见 [todo/plugin-system/P2-ecosystem.md](../../todo/plugin-system/P2-ecosystem.md) §6。 |
+| 插件系统商店化（D104） | 已发布 | 2026-10-28 | — | 内置插件转市场首批：`plugins/` 官方插件开发目录（`app.kepcup/skill-*` 9 + `app.kepcup/connector-*` 9，server.json 原样迁移、连接器目录通道改从该目录策展 tier=verified），`kepcup-app` validate/pack 18/18 通过；**官方市场首次发布**：`KEPCUP_PLUGIN_SIGNING_KEY`（Ed25519，`kepcup-plugins-2026-1`）签名索引 18 条 → R2 `kepcup-plugins`（pkg.kepcup.com，immutable）→ `dl.kepcup.com/plugins/v1/` 上线，线上验签 + 包 sha256 抽检通过。应用去内置：`resources/plugins` 删除、desktop extraResources / pack-server 内置拷贝移除（core-host 注入已有 existsSync 守卫）、`BuiltinPlugins` 泛化（任意内置插件聚合 skillOffers / connectorSource + 扁平目录布局）、技能市场预设与连接目录在无内置时为空（机制保留）、迁移 0054 的 `plugin://com.kepcup/starter-skills/` 存量行由按插件 id 的前缀比较兼容。UI：扩展中心 7 页签收缩为 3（技能/连接/MCP/邮件改为「已安装」筛选条件 + 内嵌管理区）、插件设置迁入设置「插件」分区、可更新插件卡片置顶。验证：core 全量通过（0 失败）、desktop typecheck 0 error、e2e extension-center / connect-abort / skill-market / plugins / plugins-market / narrow-layout 全绿。 |
+| 连接器目录通道下线（D104 商店化收尾） | 已完成 | 2026-10-28 | — | 按 B 方案（用户确认，无真实用户、不留向后兼容）：`DirectorySync` / `directory-merge` / 发行门禁（`filterReleasedConnectors` / `connectorReleaseGates` / `connector-release-gates.json` / `hidden` 标记）/ `apps.directory.*` RPC / `settings.apps.directorySync` / `sign-connector-index.mjs` / `sign-directory.sh` / `builtin-connectors.mjs` / `verify.mjs` 全部删除；`directory-index.ts` 解散（签名原语并入 `plugin-index.ts`，`ConnectorIndexPublicKey` → `IndexPublicKey`），`compareConnectorVersions` 迁入 `apps/connector-utils.ts`；`ConnectorCatalog` 只剩插件贡献 + 本机连接两来源（origin 收缩为 `plugin | local`）；9 个连接器 server.json 去 `releaseGate` / `hidden` 后第三次发布（线上索引 19:46Z 验签 OK）。线上 `dl.kepcup.com/connectors/v1/` 已 404。用户报告的两个问题定位：连接页 6 条目来自目录通道（非本地旧数据，随通道下线消失）；市场空为 engines >=0.5.0 对 dev 0.4.0 全判不兼容（已改 >=0.4.0 重新发布，18/18 兼容验证）。验证：core 全量 4575 通过 / 0 失败、shared 474 通过、desktop typecheck 0 error、e2e 五规格 15 例全绿。 |
+| 插件实体化 UI + 图标 + 商店补全（D104/D105 收尾） | 已完成 | 2026-10-29 | — | Bot 详情「插件」区块改为插件实体语义：只列已添加给该 Bot 的插件卡片（`+` 打开添加弹框：全宽搜索、已安装插件卡片网格、`添加到 Bot` / 绿色 `已添加给该 Bot`、卡片右下角 `移除`）；无邮件插件且无存量系统账号时不再渲染独立邮箱段。插件清单新增 `icon`（`.svg` / `.png`，≤256 KiB），`PluginSummary.iconDataUri` 由 core 读取并内联，渲染端统一 `PluginIcon`（缺省回落拼图默认图标）。`kepcup-app`：清单 schema / 校验器 `plugin.icon`（缺省 warn、声明后缺失/坏格式/超限 error）、`init` 骨架自带 `icon.svg`。官方 `plugins/` 22 个插件全部补图标 + `engines`（邮件补 README），validate 零 error / 零 warning，版本 1.0.1；重签名并部署线上市场：R2 22 包 + `dl.kepcup.com/plugins/v1/` 索引（18→22 条，4 个邮件插件正式上架），线上验签与 22 个包 sha256 / 大小逐一复核通过。验证：core / desktop typecheck 0 error；定向 73 例 + 图标 31 例 + core 插件集成 14 例全绿；e2e `bot-plugins` 2 例全绿（含添加/移除门控 `<skills>` 注入）；`write-a-plugin.md` §2.4 与检查项表同步。 |
 
 
 ## 验收记录
@@ -1579,3 +1586,35 @@ Windows 11 x64 真机首启走 P12-B 沙箱准备向导，四个独立问题逐�
 - **desktop**：记忆 Tab 移除勾选与「只属于该 Bot」徽标；同轮 UI：分类目录菜单逐层下钻（关系记忆/自我状态/用户事实与偏好 → kind；已过时条目叶子底部折叠，非菜单层级）、「查看证据：」+ 纯数字编号按钮（索引从 1 起，同消息多证据按 messageId 去重）。
 - **文档**：design/04（修订注 + 共享规则/用户控制）、README D8/D88、37（永不提供清单）、P07（工具参数/右栏 UI/画像提案校验/任务清单）、03-data-model（schema + 迁移表 0004 行）、04-agent-runtime（盘点/提议工具）。
 - **验证**：core 记忆相关单测/集成/安全 41+74 例定向全绿（validate rule3 收敛为 sensitive、约束标注 origin 化、迁移 0004 断言、移交 refusal 改走 self_note、审查 #7 改「提议后撤回」场景）；desktop typecheck + memory/handover e2e；全量 `pnpm test` 见下轮记录。
+
+## 插件平台 D105：P1–P5 全程收口（2026-10-29，分支 feat/plugins-platform/p5-*，未合回）
+
+按 `todo/plugin-platform/`（总任务书 + 五阶段文件）完成插件平台迭代全部五阶段：P1 能力类型注册表
+（`CAPABILITY_KINDS`、`pluginFieldSchema`、插件 `config`、`plugin_instances` + 实例 RPC、
+`PLUGIN_UPGRADE_REQUIRED`）→ P2 注入模型（`plugin_ids` / `project_plugins`、五处装配点按有效
+启用集过滤、Bot「插件」区块、项目组「插件」分区）→ P3 邮件插件化（账号 = 插件实例、
+`MAIL_PROVIDER_PRESETS` 删除、官方邮件四插件）→ P4 扩展中心收口（卡片设置 / 实例 UI、安装引导
+弹框、MCP 按插件圈定、两页签 + 系统卡、死代码清零）→ P5 文档 / 市场 / 设计修正。每阶段独立审查
+闭环（P1 P0×2/P1×7/P2×10、P2 P0×1/P1×5、P3 P0×1/P2×8、P4 P1×1/P2×6 全部处置），实施记录与
+验收证据在各阶段文件 §5/§6。P5 交付：`docs/guides/write-a-plugin.md` 全面重写（八章节 +
+盲测反馈六条修订，含 default 不物化语义、四个 per-kind 手工点菜谱）；`plugins.enableForBots`
+合并语义 RPC（P4 审查 P2-2 读改写竞态收口）；app-validator `plugin.field-default` /
+`plugin.capabilities` + init 模板 config 示例（DEV-076）；同意面板「插件配置」小节（验收标准
+「同意卡展示 config 字段」宿主面补齐）；设计文稿 51 §15 现状大节 + 29/35/40/41/23 五处 D105
+补记；官方批次 22 包重打包 + 重签 + 本地验签（18 条既有包与线上 sha256 逐字节一致、邮件四插件
+catalog 定 verified；**生产部署待维护者**），顺带修复 P4 签名脚本对省略空数组清单崩溃的真 bug。
+
+**盲测验收（迭代最终门槛）通过**：fresh-context Agent 仅凭 write-a-plugin.md 产出
+「GitHub 仓库摘要」插件（validate 零 error 零 warning、可复现打包）；宿主侧
+`blind-acceptance.spec.ts`（env 门控）走扩展中心安装 → 同意卡 config 字段 → 引导弹框 →
+Bot 启用 → `<skills>` 会话生效全链路全绿。
+
+**验证**：全量 `node scripts/run-tests.mjs run --maxWorkers=8` **654 文件 / 6895 通过 / 0 失败 /
+37 跳过**（审查修复后的新基线；历史 flake 本轮零命中）；typecheck shared / core / app-validator /
+desktop（svelte-check 0 error 0 warning）全过；改动文件 eslint 干净。P5 审查因模型额度上限
+（限额 11-03 重置）无法派独立子代理，改为按同一清单自查并处置 P1×1 / P2×2（`46ede4ef`：
+enableForBots 软删 Bot 落半、技能名规则漂移、卸载确认未明示实例级联）。DEVIATIONS 用掉
+DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示例字段 + README 指引）；
+迁移 0056–0058 已用。
+遗留：市场生产部署（R2 + 索引 deploy）待维护者；M2 custom-mcp 实例化与邮件 OAuth 顺延
+（P4 §4 路标）；capabilitySummary 多语言重建路标（51 §15.2）。

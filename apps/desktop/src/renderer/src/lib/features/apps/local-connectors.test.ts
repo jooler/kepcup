@@ -65,20 +65,15 @@ const entry = (connectorId: string, origin?: AppCatalogEntry['origin']): AppCata
 });
 
 describe('目录去重：本机条目只出现在「本机自建」区一次', () => {
-  const all = [
-    entry('notion', 'bundled'),
-    entry('lab', 'local'),
-    entry('old'),
-    entry('dir', 'directory'),
-  ];
+  const all = [entry('notion', 'plugin'), entry('lab', 'local'), entry('old')];
 
   it('预置网格不含 origin=local；本机区只含 origin=local；二者不重叠且无遗漏', () => {
     const grid = withoutLocalEntries(all).map((item) => item.connectorId);
     const local = localEntries(all).map((item) => item.connectorId);
-    expect(grid).toEqual(['notion', 'old', 'dir']);
+    expect(grid).toEqual(['notion', 'old']);
     expect(local).toEqual(['lab']);
     expect([...grid, ...local].sort()).toEqual(all.map((item) => item.connectorId).sort());
-    // origin 缺省（旧 core）按预置处理
+    // origin 缺省（旧 core）按非本机处理
     expect(isLocalEntry(entry('x'))).toBe(false);
   });
 });

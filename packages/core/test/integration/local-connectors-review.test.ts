@@ -1,7 +1,12 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AppConnectFlowPayload, AppToolView, LocalConnectorCard } from '@kepcup/shared';
+import {
+  connectorMetaOf,
+  type AppConnectFlowPayload,
+  type AppToolView,
+  type LocalConnectorCard,
+} from '@kepcup/shared';
 import {
   createTestStack,
   makeBot,
@@ -602,7 +607,7 @@ describe('A7 <available_apps> reserves slots for local connectors', () => {
       catalog,
       toolLock,
     });
-    const available = apps.availableFor([]);
+    const available = apps.availableFor([], new Set());
     expect(available).toHaveLength(30);
     const slugs = available.map(
       (entry) => (entry._meta['app.kepcup/connector'] as { slug: string }).slug,
@@ -634,7 +639,6 @@ describe('B settings.update does not lose or resurrect local connectors', () => 
     const connectorId = await addLocal(env);
     const parked = parkSettingsUpdate(env);
     const update = core.rpc.call('settings.update', {
-      apps: { directorySync: false },
       mcpServers: [],
     });
     await parked.reached;
@@ -643,7 +647,6 @@ describe('B settings.update does not lose or resurrect local connectors', () => 
     await update;
     const apps = core.services.domain!.settings.get().apps;
     expect(apps.localConnectors).toEqual({});
-    expect(apps.directorySync).toBe(false); // the patch itself still applied
   }, 60_000);
 
   it('an entry added while an apps patch is in flight is not dropped', async () => {
@@ -698,15 +701,16 @@ describe('D DNS rebinding with the guarded MCP fetch', () => {
 });
 
 describe('D isolation is behavioural', () => {
-  it("a real local entry never reaches the directory source nor the signing script's default input", async () => {
+  it('a real local entry lands in the catalog as a local-origin entry', async () => {
     const env = await start();
     const connectorId = await addLocal(env);
     const { core } = env.stack;
     expect(core.services.connectorCatalog!.list().map((e) => e.name)).toContain(
       `local.kepcup/${connectorId}`,
     );
-    expect(
-      core.services.directorySync!.entries().map((e) => (e as { name: string }).name),
-    ).not.toContain(`local.kepcup/${connectorId}`);
+    const entry = core.services
+      .connectorCatalog!.list()
+      .find((e) => e.name === `local.kepcup/${connectorId}`)!;
+    expect(core.services.connectorCatalog!.originOf(connectorMetaOf(entry).slug)).toBe('local');
   }, 60_000);
 });

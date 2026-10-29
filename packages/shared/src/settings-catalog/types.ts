@@ -28,6 +28,7 @@ export const settingGroupSchema = z.enum([
   'developer',
   'diagnostics',
   'remote',
+  'plugins',
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
@@ -90,11 +91,9 @@ export const settingOptionSourceSchema = z.enum([
   'app-catalog',
   'connections',
   'mcp-servers',
-  'mail-providers',
   'agents',
   'agent-models',
   'skills',
-  'skill-presets',
   'browser-profiles',
   'bots',
   'microphones',

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import {
   OAuthIssuerMismatchError,
   discoverAuthorizationServerMetadata,
@@ -31,6 +31,7 @@ import {
 } from './types.js';
 import { redactCheck, redactUrl } from './redact.js';
 import { errorMessage, isLoopbackUrl, isTlsErrorCode, networkErrorCode } from './util.js';
+import { validatePlugin } from './plugin/validate.js';
 
 export interface ValidateOptions {
   /** Path or http(s) URL of the server.json. */
@@ -278,6 +279,19 @@ async function discover(
   return { facts: { challenge, prm: prmFact, as: asFact }, prm, as };
 }
 
+/** Routes to plugin mode for a directory / `.kepcup` target, connector mode otherwise. */
+export async function validateTarget(options: ValidateOptions): Promise<ValidationReport> {
+  const target = options.target;
+  const pluginOptions = { log: options.log };
+  if (target.toLowerCase().endsWith('.kepcup')) return validatePlugin(target, pluginOptions);
+  try {
+    if ((await stat(target)).isDirectory()) return validatePlugin(target, pluginOptions);
+  } catch {
+    // Let connector mode produce its usual manifest.load error for a missing file.
+  }
+  return validate(options);
+}
+
 export async function validate(options: ValidateOptions): Promise<ValidationReport> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const log = options.log ?? (() => undefined);
@@ -287,6 +301,7 @@ export async function validate(options: ValidateOptions): Promise<ValidationRepo
     const summary = summarize(checks);
     return {
       schemaVersion: REPORT_SCHEMA_VERSION,
+      mode: 'connector',
       target: redactUrl(options.target),
       remote: remoteUrl === null ? null : redactUrl(remoteUrl),
       auth: options.auth === true,

@@ -23,6 +23,7 @@
   import McpRiskBadge from '$lib/features/approvals/McpRiskBadge.svelte';
   import ConnectAppPanel from './ConnectAppPanel.svelte';
   import ConnectedSkillsPrompt from './ConnectedSkillsPrompt.svelte';
+  import PluginSourceBadge from '../plugins/PluginSourceBadge.svelte';
   import {
     BADGE_TONE_CLASSES,
     appIconSrc,
@@ -397,6 +398,8 @@
               >
                 {t('apps.local.badge')}
               </Badge>
+            {:else if entry?.origin === 'plugin' && entry?.pluginId !== undefined}
+              <PluginSourceBadge pluginId={entry.pluginId} testid="apps-detail-plugin-badge" />
             {/if}
           </div>
           <div class="grid gap-1.5">

@@ -1,57 +1,41 @@
-import { generateKeyPairSync, type KeyObject } from 'node:crypto';
+import {
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  type KeyObject,
+} from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { ConnectorIndexPublicKey } from '@kepcup/shared';
-import type { DirectoryFetch } from '../../src/apps/directory-sync.js';
+import { fileURLToPath } from 'node:url';
+import type { IndexPublicKey } from '@kepcup/shared';
+import type { IndexFetch } from '../../src/infra/signed-index.js';
 
 /**
- * Fixtures for the signed directory tests (D73 P3 §7.1): throwaway Ed25519 keys, signed
- * indexes built with the REAL signing script's functions, and an in-memory directory server.
+ * Fixtures for the generic signed-index tests: throwaway Ed25519 keys, signed indexes
+ * (detached Ed25519 signature over the EXACT index bytes — same scheme as the marketplace
+ * publishing script), and an in-memory index server with ETag support and failure injection.
  */
 
-interface SignScript {
-  buildIndex(input: {
-    entries: unknown[];
-    keyId: string;
-    generatedAt: number;
-    previous?: unknown;
-  }): { index: Record<string, unknown>; indexBytes: Buffer; files: Map<string, Buffer> };
-  signBytes(bytes: Uint8Array, key: KeyObject): string;
-  rawPublicKeyBase64(key: KeyObject): string;
-  entriesHash(entries: unknown[]): string;
-  canonicalEntriesJson(entries: unknown[]): string;
-  stableStringify(value: unknown): string;
-  verifyIndexBytes(
-    bytes: Uint8Array,
-    sig: string,
-    keys: unknown[],
-    options?: { readFile?: (rel: string) => Buffer },
-  ): { ok: boolean; reason?: string };
-}
+const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-export const SIGN_SCRIPT_PATH = path.resolve(here, '../../../../scripts/sign-connector-index.mjs');
-export const signScript = (await import(
-  /* @vite-ignore */ pathToFileURL(SIGN_SCRIPT_PATH).href
-)) as SignScript;
+export function rawPublicKeyBase64(key: KeyObject): string {
+  const der = createPublicKey(key).export({ format: 'der', type: 'spki' });
+  return Buffer.from(der).subarray(SPKI_PREFIX.length).toString('base64');
+}
 
 export interface TestKey {
   keyId: string;
   privateKey: KeyObject;
-  publicEntry: ConnectorIndexPublicKey;
+  publicEntry: IndexPublicKey;
 }
 
-export function makeKey(
-  keyId = 'test-1',
-  overrides: Partial<ConnectorIndexPublicKey> = {},
-): TestKey {
+export function makeKey(keyId = 'test-1', overrides: Partial<IndexPublicKey> = {}): TestKey {
   const { privateKey } = generateKeyPairSync('ed25519');
   return {
     keyId,
     privateKey,
     publicEntry: {
       keyId,
-      publicKey: signScript.rawPublicKeyBase64(privateKey),
+      publicKey: rawPublicKeyBase64(privateKey),
       validFrom: 0,
       revoked: false,
       ...overrides,
@@ -71,18 +55,24 @@ export function signIndex(input: {
   key: TestKey;
   generatedAt: number;
   keyIdOverride?: string;
-  previous?: unknown;
 }): SignedIndex {
-  const { index, indexBytes, files } = signScript.buildIndex({
-    entries: input.entries,
-    keyId: input.keyIdOverride ?? input.key.keyId,
+  const index = {
+    version: 1,
     generatedAt: input.generatedAt,
-    ...(input.previous !== undefined ? { previous: input.previous } : {}),
-  });
-  return { index, indexBytes, files, sig: signScript.signBytes(indexBytes, input.key.privateKey) };
+    keyId: input.keyIdOverride ?? input.key.keyId,
+    entries: input.entries,
+  };
+  const indexBytes = Buffer.from(JSON.stringify(index), 'utf8');
+  const signature = cryptoSign(null, indexBytes, input.key.privateKey);
+  const sig = Buffer.from(signature).toString('base64');
+  const files = new Map<string, Buffer>([
+    ['index.json', indexBytes],
+    ['index.json.sig', Buffer.from(`${sig}\n`)],
+  ]);
+  return { index, indexBytes, files, sig };
 }
 
-/** In-memory `dl.kepcup.com/connectors/v1/` with ETag support and failure injection. */
+/** In-memory signed index server with ETag support and failure injection. */
 export class FakeDirectory {
   readonly requests: Array<{ path: string; ifNoneMatch: string | null }> = [];
   offline = false;
@@ -104,9 +94,9 @@ export class FakeDirectory {
     this.#files.set(name, { bytes, etag: `"t${++this.#version}"` });
   }
 
-  readonly fetch: DirectoryFetch = async (input, init) => {
+  readonly fetch: IndexFetch = async (input, init) => {
     const url = new URL(input);
-    const name = url.pathname.replace(/^.*\/connectors\/v1\//, '');
+    const name = url.pathname.replace(/^.*\/v1\//, '');
     const ifNoneMatch = init?.headers?.['if-none-match'] ?? null;
     this.requests.push({ path: name, ifNoneMatch });
     if (this.offline) throw new TypeError('fetch failed');
@@ -119,3 +109,6 @@ export class FakeDirectory {
     return new Response(new Uint8Array(file.bytes), { status: 200, headers: { etag: file.etag } });
   };
 }
+
+/** Keep the path helper referenced (the repo-root fixture path may be useful in tests). */
+export const fixtureDir = path.dirname(fileURLToPath(import.meta.url));

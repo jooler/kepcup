@@ -186,7 +186,7 @@ describe('rug pull: an approved tool whose definition changes disappears until r
     const second = await oneTurn(stack, conv.id, '再看看笔记');
     expect(second).not.toContain('mcp_srv1_list_notes');
     const resolution = await resolveMcpToolEntries({
-      servers: stack.mcp.serversForBot(['srv1']),
+      servers: stack.mcp.serversForBot(['srv1'], new Set()),
       mcp: stack.mcp,
       logger,
       toolFilter: stack.mcp.toolFilter,
@@ -265,7 +265,7 @@ describe('a server added after the baseline is locked until the tested list is s
     expect(stack.lock.list(CONN).every((row) => row.state === 'new')).toBe(true);
     expect(stack.services.apps!.store.get(CONN)).toMatchObject({ status: 'tools_changed' });
     const held = await resolveMcpToolEntries({
-      servers: stack.mcp.serversForBot(['srv1']),
+      servers: stack.mcp.serversForBot(['srv1'], new Set()),
       mcp: stack.mcp,
       logger,
       toolFilter: stack.mcp.toolFilter,
@@ -277,7 +277,7 @@ describe('a server added after the baseline is locked until the tested list is s
 
     stack.lock.approveAfterTest(saved, tools);
     const open = await resolveMcpToolEntries({
-      servers: stack.mcp.serversForBot(['srv1']),
+      servers: stack.mcp.serversForBot(['srv1'], new Set()),
       mcp: stack.mcp,
       logger,
       toolFilter: stack.mcp.toolFilter,

@@ -473,11 +473,20 @@ function bootstrap(): void {
 
   // System directory picker (docs/dev/02-architecture.md: the result goes to
   // the core through port A as a plain path; the main process only dialogs).
-  ipcMain.handle('dialog:selectDirectory', async () => {
+  // Optional custom prompt (D104 P0a-3 plugin install); no-arg behavior unchanged.
+  ipcMain.handle('dialog:selectDirectory', async (_event, options?: unknown) => {
     if (window === null) return null;
+    const customMessage =
+      typeof options === 'object' && options !== null
+        ? (options as { message?: unknown }).message
+        : undefined;
+    const message =
+      typeof customMessage === 'string' && customMessage.length > 0
+        ? customMessage.slice(0, 200)
+        : '选择要作为工作目录的目录';
     const result = await dialog.showOpenDialog(window, {
       properties: ['openDirectory', 'createDirectory'],
-      message: '选择要作为工作目录的目录',
+      message,
     });
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });

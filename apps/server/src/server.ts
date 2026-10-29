@@ -1,7 +1,13 @@
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createFileKeystore,
   createCoreServices,
@@ -9,7 +15,9 @@ import {
   type CoreServices,
   type Keystore,
 } from '@kepcup/core';
+import { AppError, pluginsInspectInputSchema, pluginsInstallInputSchema } from '@kepcup/shared';
 import { handleAdminRequest, isAdminPath, readJson, type AdminDeps } from './admin.js';
+import { builtinPluginsEnv } from './builtin-plugins.js';
 import { DirectRelayServer } from './direct-relay.js';
 import { qrTerminal } from './qr.js';
 import { resolveWebDir, serveStatic } from './static.js';
@@ -52,9 +60,9 @@ export interface HeadlessServer {
 }
 
 export function serverVersion(): string {
-  const pkg = JSON.parse(
-    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-  ) as { version: string };
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  };
   return pkg.version;
 }
 
@@ -67,6 +75,30 @@ function readOrCreateAdminToken(dataDir: string): string {
   const token = randomBytes(32).toString('base64url');
   writeFileSync(file, `${token}\n`, { encoding: 'utf8', mode: 0o600 });
   return token;
+}
+
+/** The slice of a zod schema the admin layer needs (the server package does not import zod). */
+interface AdminInputSchema<T> {
+  safeParse(
+    input: unknown,
+  ):
+    | { success: true; data: T }
+    | { success: false; error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey> }> } };
+}
+
+/**
+ * Admin-endpoint input validation with the RPC layer's error contract: a body that fails the
+ * method's schema is the caller's fault (`INVALID_INPUT`, mapped to 400), not a 500. Issue
+ * paths are reported, never the submitted values (`userConfig` may carry secrets).
+ */
+function parseAdminInput<T>(schema: AdminInputSchema<T>, body: unknown): T {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  const where = parsed.error.issues
+    .slice(0, 3)
+    .map((issue) => (issue.path.length > 0 ? issue.path.map(String).join('.') : '(root)'))
+    .join(', ');
+  throw new AppError('INVALID_INPUT', `请求体不符合要求：${where}`);
 }
 
 export async function createHeadlessServer(
@@ -106,7 +138,9 @@ export async function createHeadlessServer(
   let directRelay: DirectRelayServer | null = null;
   const services = await createCoreServices({
     home: config.dataDir,
-    env: test.env ?? process.env,
+    // D104 P0b（Q9）：打包布局里 plugins/ 与 dist/ 同级，未显式设置时注入；
+    // 开发态 / 已显式设置时原样透传（repo 检出由 core 自己向上查找）。
+    env: builtinPluginsEnv(path.dirname(fileURLToPath(import.meta.url)), test.env ?? process.env),
     appVersion: serverVersion(),
     ...(keystore !== undefined ? { keystore } : {}),
     ...(pairingDirect
@@ -127,7 +161,9 @@ export async function createHeadlessServer(
   });
   if (services.status !== 'ready' || services.remote === null || services.domain === null) {
     await services.close().catch(() => {});
-    throw new Error(`core 未就绪：${services.status}${services.statusReason ? `（${services.statusReason}）` : ''}`);
+    throw new Error(
+      `core 未就绪：${services.status}${services.statusReason ? `（${services.statusReason}）` : ''}`,
+    );
   }
   const logger = services.logger;
 
@@ -146,6 +182,22 @@ export async function createHeadlessServer(
     confirmPairing: (requestId, accept) => hub.confirmPairing(requestId, accept),
     devices: () => hub.devices(),
     revoke: (deviceId) => hub.revokeDevice(deviceId),
+    // D104 P2：直接调 appMethods 的 handle，不经 RPC 层，因此 currentRemoteSource() 为
+    // null，file / folder 来源被允许——调用者在服务器本机且持有 admin token。RPC 层的
+    // 输入校验在这里补上（schema 不合法 → INVALID_INPUT → 400），输出校验由 CLI 侧做。
+    pluginsInspect: (body) => {
+      const method = services.appMethods['plugins.inspect'];
+      if (method === undefined) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+      return method.handle(parseAdminInput(pluginsInspectInputSchema, body));
+    },
+    pluginsInstall: (body) => {
+      const method = services.appMethods['plugins.install'];
+      if (method === undefined) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+      return method.handle(parseAdminInput(pluginsInstallInputSchema, body));
+    },
+    onInternalError: (adminPath, error) => {
+      logger.error({ path: adminPath, error: String(error) }, 'admin plugin call failed');
+    },
   };
 
   const webDir = resolveWebDir(config.webDir);
@@ -175,9 +227,9 @@ export async function createHeadlessServer(
       serveStatic(webDir, url.pathname, res);
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(
-      'kepcup-server is running. Web UI not bundled in this install (pass --web-dir).\n',
-    );
+    res
+      .writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+      .end('kepcup-server is running. Web UI not bundled in this install (pass --web-dir).\n');
   });
 
   httpServer.on('upgrade', (req, socket, head) => {
@@ -341,10 +393,7 @@ function handleAuthRequest(
       })
       .catch((error) => {
         if (error instanceof AuthError) {
-          logger.warn(
-            { ip: clientIp(req, trustProxy), code: error.code },
-            'admin login failed',
-          );
+          logger.warn({ ip: clientIp(req, trustProxy), code: error.code }, 'admin login failed');
           const headers: Record<string, string> =
             error.code === 'RATE_LIMITED' && error.retryAfterSec !== undefined
               ? { 'retry-after': String(error.retryAfterSec) }
@@ -370,10 +419,7 @@ function handleAuthRequest(
  * 管理员）；--pairing-manual 时只打印待确认请求，由 `pair --accept` 人工确认。
  * 首台设备配对成功即自停（后续出码走 `kepcup-server pair` / admin）。
  */
-function startPairingFlow(
-  config: ServerConfig,
-  services: CoreServices,
-): { stop(): void } {
+function startPairingFlow(config: ServerConfig, services: CoreServices): { stop(): void } {
   if (!config.autoPair) return { stop: () => {} };
   const hub = services.remote;
   if (hub === null) return { stop: () => {} };

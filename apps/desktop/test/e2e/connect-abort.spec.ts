@@ -1,11 +1,12 @@
 import { createServer, type Server } from 'node:http';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 import type { AddressInfo } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm } from '@kepcup/testkit';
+import { copyShippedPlugins } from './helpers/builtin-plugins';
 
 /**
  * 回归（用户实测）：目录应用（Linear）点「连接」→ 授权没走完就「取消」→ 卡片仍写着「已连接 1 个
@@ -13,8 +14,9 @@ import { startMockLlm } from '@kepcup/testkit';
  *
  * 这里用一个永远不应答的本机 MCP 端点充当「用户一直没授权」的服务器（流程停在发现 / 等待阶段），
  * 点「取消」，然后断言：卡片没有账号数 / 「管理」，没有 toast，渲染端没有对该连接发过
- * `apps.connections.tools` / `grants`。目录经 `KEPCUP_CONNECTORS` 指向临时目录（取自随包目录的
- * Notion 条目，远端地址改成本机）。真实 OAuth 授权页无法在 e2e 里走通，所以不覆盖「授权成功」。
+ * `apps.connections.tools` / `grants`。目录经 `KEPCUP_BUILTIN_PLUGINS` 指向临时目录
+ * （copyShippedPlugins 从 plugins/ 开发目录组装夹具、只保留 Notion 连接插件，远端地址改成本机）。真实
+ * OAuth 授权页无法在 e2e 里走通，所以不覆盖「授权成功」。
  */
 
 declare global {
@@ -52,20 +54,23 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
   await new Promise<void>((resolve) => hold.listen(0, '127.0.0.1', resolve));
   const holdUrl = `http://127.0.0.1:${(hold.address() as AddressInfo).port}/mcp`;
 
-  const shipped = path.resolve('resources/connectors');
-  const connectorsDir = path.join(home, 'connectors');
-  await mkdir(connectorsDir, { recursive: true });
-  await cp(path.join(shipped, 'icons'), path.join(connectorsDir, 'icons'), { recursive: true });
-  const full = JSON.parse(await readFile(path.join(shipped, 'catalog.json'), 'utf8')) as {
-    version: number;
-    connectors: Array<{ title: string; remotes: Array<{ url: string }> }>;
-  };
-  const notion = full.connectors.find((entry) => entry.title === 'Notion')!;
-  notion.remotes = [{ ...notion.remotes[0]!, url: holdUrl }];
-  await writeFile(
-    path.join(connectorsDir, 'catalog.json'),
-    JSON.stringify({ version: full.version, connectors: [notion] }),
+  // 拷随包内置插件、只保留 Notion 条目，再把它的远端地址改成本机永不应答端点。
+  const pluginsDir = await copyShippedPlugins(path.join(home, 'builtin-plugins'), {
+    connectorSlugs: ['notion'],
+  });
+  const serverJsonPath = path.join(
+    pluginsDir,
+    'app.kepcup',
+    'connector-notion',
+    'connectors',
+    'notion',
+    'server.json',
   );
+  const notion = JSON.parse(await readFile(serverJsonPath, 'utf8')) as {
+    remotes: Array<{ type: string; url: string }>;
+  };
+  notion.remotes = [{ type: 'streamable-http', url: holdUrl }];
+  await writeFile(serverJsonPath, `${JSON.stringify(notion, null, 2)}\n`);
 
   let app: ElectronApplication | null = null;
   try {
@@ -80,7 +85,7 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
         KEPCUP_ONBOARDING: 'off',
         KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
         KEPCUP_MOCK_LLM_URL: llm.url,
-        KEPCUP_CONNECTORS: connectorsDir,
+        KEPCUP_BUILTIN_PLUGINS: pluginsDir,
       },
     });
     const page = await app.firstWindow();
@@ -102,30 +107,35 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
 
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
-    const card = dialog.locator('[data-testid="apps-catalog-card-notion"]');
-    await expect(card).toBeVisible({ timeout: 30_000 });
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
+    // 单连接内置插件：已安装列表是插件卡；「管理」直达 0 账号首连面板（不再渲染目录卡）。
+    const pluginCard = dialog.locator('[data-testid="plugins-card-app.kepcup/connector-notion"]');
+    await expect(pluginCard).toBeVisible({ timeout: 30_000 });
+    await pluginCard
+      .locator('[data-testid="plugins-manage-connector-app.kepcup/connector-notion"]')
+      .click();
+    const panel = dialog.locator('[data-testid="plugins-manage-connect-panel"]');
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
 
-    // 点「连接」展开面板 → 面板里「连接」发起授权 → 流程进行中（停在永不应答的端点上）。
-    await dialog.locator('[data-testid="apps-catalog-connect-notion"]').click();
-    const panel = dialog.locator('[data-testid="apps-catalog-panel-notion"]');
-    await panel.locator('[data-testid="apps-catalog-panel-notion-connect"]').click();
-    await expect(panel.locator('[data-testid="apps-catalog-panel-notion-progress"]')).toBeVisible({
+    // 面板里「连接」发起授权 → 流程进行中（停在永不应答的端点上）。
+    await panel.locator('[data-testid="plugins-manage-connect-panel-connect"]').click();
+    await expect(panel.locator('[data-testid="plugins-manage-connect-panel-progress"]')).toBeVisible({
       timeout: 30_000,
     });
     await expect.poll(() => hits, { timeout: 30_000 }).toBeGreaterThan(0);
 
-    // 进行中：临时行不算账号。
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    // 进行中：临时行不算账号；单连接插件管理流也没有目录卡「管理」。
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="apps-catalog-manage-notion"]')).toHaveCount(0);
 
-    // 取消：卡片不会留下「已连接 N 个账号」，也没有「管理」。
-    await panel.locator('[data-testid="apps-catalog-panel-notion-cancel"]').click();
-    await expect(panel.locator('[data-testid="apps-catalog-panel-notion-cancelled"]')).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    // 取消：回到已取消态，不会留下「已连接 N 个账号」。
+    await panel.locator('[data-testid="plugins-manage-connect-panel-cancel"]').click();
+    await expect(
+      panel.locator('[data-testid="plugins-manage-connect-panel-cancelled"]'),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="apps-catalog-manage-notion"]')).toHaveCount(0);
 
     // 等几秒：没有任何 toast，渲染端没有对连接发过 tools / grants 请求。
@@ -134,11 +144,14 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     const log = await page.evaluate(() => window.__rpcLog);
     expect(log.filter((entry) => entry.includes('apps.connections.tools'))).toHaveLength(0);
     expect(log.filter((entry) => entry.includes('apps.connections.grants'))).toHaveLength(0);
-    // 关掉「连接」再进：列表仍然没有账号（不靠手动刷新）。
+    // 关掉扩展中心再进：插件卡仍在、没有账号（不靠手动刷新）。
     await page.keyboard.press('Escape');
     await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
-    await expect(dialog.locator('[data-testid="apps-catalog-card-notion"]')).toBeVisible();
+    await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
+    await dialog.locator('[data-testid="plugins-filter-connector"]').click();
+    await expect(
+      dialog.locator('[data-testid="plugins-card-app.kepcup/connector-notion"]'),
+    ).toBeVisible();
     await expect(dialog.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
   } finally {
     await app?.close();

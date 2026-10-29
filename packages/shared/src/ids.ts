@@ -63,6 +63,8 @@ export const ID_PREFIXES = {
   memo: 'memo_',
   /** 看板分栏（D103，main.db board_columns）。卡片 id 复用事项 id，没有单独前缀。 */
   bcol: 'bcol_',
+  /** 插件实例（D105，main.db plugin_instances）。 */
+  pli: 'pli_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

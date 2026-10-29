@@ -1,5 +1,4 @@
 import {
-  isHiddenConnectorId,
   type AppCatalogEntry,
   type AppConnection,
   type AppConnectionStatus,
@@ -62,8 +61,6 @@ export function appChoiceGroups(
   const selected = new Set(selectedIds);
   const groups = new Map<string, AppChoiceGroup>();
   for (const entry of entries) {
-    // 与扩展中心目录同一规则：catalog `hidden: true` 的应用不出现在 Bot 勾选区。
-    if (isHiddenConnectorId(entry.connectorId)) continue;
     groups.set(entry.connectorId, {
       connectorId: entry.connectorId,
       title: entry.title,
@@ -77,7 +74,6 @@ export function appChoiceGroups(
   }
   const sorted = [...connections]
     .filter(isCatalogConnection)
-    .filter((connection) => !isHiddenConnectorId(connection.connectorId))
     .sort((a, b) => a.createdAt - b.createdAt);
   for (const connection of sorted) {
     let group = groups.get(connection.connectorId);

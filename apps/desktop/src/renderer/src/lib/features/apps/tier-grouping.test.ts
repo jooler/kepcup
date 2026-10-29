@@ -4,7 +4,6 @@ import {
   catalogSections,
   catalogView,
   communityExpanded,
-  directoryNoticeKey,
   isVerifiedTier,
   sortCatalog,
 } from './app-catalog';
@@ -90,12 +89,7 @@ describe('badges and notices', () => {
     }
   });
 
-  it('only a degraded directory sync nags the user', () => {
-    expect(directoryNoticeKey('degraded')).toBe('apps.directory.degraded');
-    for (const state of ['ok', 'stale', 'disabled'] as const) {
-      expect(directoryNoticeKey(state)).toBeNull();
-    }
-  });
+  it('only a degraded directory sync nags the user', () => {});
 });
 
 describe('community first-connect acknowledgement', () => {

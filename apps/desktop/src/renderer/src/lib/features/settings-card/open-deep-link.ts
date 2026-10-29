@@ -21,7 +21,7 @@ export async function openSettingDeepLink(
       shell.openSettings(action.section, action.anchor ?? undefined);
       return;
     case 'extension-center':
-      shell.openExtensionCenter(action.tab);
+      shell.openExtensionCenter(action.tab, action.anchor ?? undefined);
       return;
     case 'bot-panel': {
       // 右栏只展示当前单聊的 Bot：改的是别的 Bot（管家出的卡）时先切到它的单聊。
@@ -38,10 +38,7 @@ export async function openSettingDeepLink(
       // current one (select folds the view back to chat, so the following
       // openProjectSettings lands on the details section), then scroll the
       // anchor into view and focus it once the page has rendered.
-      if (
-        action.conversationId !== null &&
-        action.conversationId !== current?.id
-      ) {
+      if (action.conversationId !== null && action.conversationId !== current?.id) {
         await chat.select(action.conversationId);
       }
       shell.openProjectSettings(action.section);
