@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * Bot 详情「插件」区块（P2 注入模型，todo/plugin-platform/P2-injection.md 步骤 3）：
-   * 已安装插件列表 + 启用开关（`plugins.setBotPlugins` 整集写入），展开做实例细选
-   * （连接账号 / 邮箱账号 / 手动工具服务——控件从旧 apps / mcp / mail 三区块原样
-   * 搬入，Bot 私有语义不变）。未启用的插件其能力对该 Bot 不可见；InkCop 与智能体
-   * 引擎不属插件，仍在各自区块。
+   * Bot 详情「插件」区块（P5 插件实体化）：只列**已添加给该 Bot** 的插件（卡片），
+   * 右上角 `+` 打开「添加插件」弹框（已安装插件网格 + 搜索 + 添加到 Bot）；卡片右下角
+   * 移除。展开仍承载连接账号 / 邮箱账号 / 手动工具服务的细选——控件从旧 apps / mcp /
+   * mail 三区块原样搬入，Bot 私有语义不变。未添加的插件其能力对该 Bot 不可见；
+   * InkCop 与智能体引擎不属插件，仍在各自区块。
    */
   import { untrack } from 'svelte';
   import type { AppChoiceGroup } from './bot-apps';
   import type { BotProfile, MailAccount, PluginSummary } from '@kepcup/shared';
-  import { ChevronDown, Plus, X } from '@lucide/svelte';
+  import { ChevronDown, Plus, Search, X } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
@@ -18,6 +18,7 @@
   import { appsStore } from '$lib/stores/apps.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { plugins } from '$lib/features/plugins/plugins.svelte';
+  import PluginIcon from '$lib/features/plugins/PluginIcon.svelte';
   import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
   import { appIconSrc, appInitial } from '$lib/features/apps/app-catalog';
   import { CONNECTION_STATUS_LABEL_KEYS } from '$lib/features/apps/connect-flow';
@@ -25,6 +26,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import {
     Dialog,
@@ -42,8 +44,10 @@
   } from './bot-apps';
   import {
     PLUGIN_KIND_LABEL_KEYS,
+    addedPlugins,
     enabledPluginCount,
     manualToolServers,
+    matchesPluginQuery,
     pluginKindBadges,
     pluginProvides,
     togglePluginId,
@@ -92,6 +96,25 @@
   // --- 启用开关（plugin_ids 整集写入） --------------------------------------
   let saving = $state(false);
   const enabledIds = $derived(new Set(profile.runtime.plugin_ids ?? []));
+  /** 这个 Bot 已添加的插件（只列这些；未添加的能力对它不可见）。 */
+  const added = $derived(addedPlugins(plugins.plugins, profile.runtime.plugin_ids));
+
+  // --- 添加弹框：已安装插件的卡片网格 + 全宽搜索 ----------------------------
+  let addOpen = $state(false);
+  let addQuery = $state('');
+  const addCandidates = $derived(
+    plugins.plugins.filter((plugin) => matchesPluginQuery(plugin, addQuery)),
+  );
+
+  function openAddDialog(): void {
+    addQuery = '';
+    addOpen = true;
+  }
+
+  async function addPlugin(plugin: PluginSummary): Promise<void> {
+    if (enabledIds.has(plugin.id) || !plugin.enabled) return;
+    await togglePlugin(plugin, true);
+  }
 
   async function togglePlugin(plugin: PluginSummary, on: boolean): Promise<void> {
     const next = togglePluginId(profile.runtime.plugin_ids, plugin.id, on);
@@ -301,9 +324,10 @@
     profile.runtime.mcp_server_ids = checked ? [...selected, id] : selected;
   }
 
-  // --- 邮箱（现 BotMailBindings 控件）：邮件插件展开区承载；还没有邮件插件时
-  //     （P3 前的存量账号都是「系统账号」）单独列出，能力不丢。
+  // --- 邮箱（现 BotMailBindings 控件）：邮件插件展开区承载；还没有邮件插件时，
+  //     只有存量「系统账号」（无属主插件）才单独列出，避免空白邮箱段干扰插件列表。
   const mailPlugins = $derived(plugins.plugins.filter((plugin) => pluginProvides(plugin, 'mail')));
+  const legacyMailAccounts = $derived(mailAccounts.filter((account) => account.pluginId === null));
 
   function openStore(): void {
     shell.openExtensionCenter('market');
@@ -330,13 +354,16 @@
         : t('botPanel.plugins.summaryNone')}
     </span>
     <Button
-      size="sm"
+      size="icon"
       variant="ghost"
-      class="ml-auto h-7 px-2 text-xs"
-      onclick={openStore}
-      data-testid="bot-plugins-open-store"
+      class="ml-auto size-7 shrink-0 text-muted-foreground"
+      title={t('botPanel.plugins.add')}
+      aria-label={t('botPanel.plugins.add')}
+      disabled={plugins.loading}
+      onclick={openAddDialog}
+      data-testid="bot-plugins-add"
     >
-      {t('botPanel.plugins.openStore')}
+      <Plus class="size-4" aria-hidden="true" />
     </Button>
   </div>
   <p class="text-xs text-muted-foreground">{t('botPanel.plugins.hint')}</p>
@@ -346,51 +373,86 @@
       {t('plugins.loadFailed', { reason: plugins.loadError })}
     </p>
   {:else if plugins.plugins.length === 0 && !plugins.loading}
-    <p class="text-xs text-muted-foreground" data-testid="bot-plugins-empty">
-      {t('botPanel.plugins.empty')}
-    </p>
+    <div class="flex items-center gap-2">
+      <p class="min-w-0 flex-1 text-xs text-muted-foreground" data-testid="bot-plugins-empty">
+        {t('botPanel.plugins.empty')}
+      </p>
+      <Button
+        size="sm"
+        variant="ghost"
+        class="h-7 shrink-0 px-2 text-xs"
+        onclick={openStore}
+        data-testid="bot-plugins-open-store"
+      >
+        {t('botPanel.plugins.openStore')}
+      </Button>
+    </div>
+  {:else if added.length === 0}
+    <div
+      class="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5"
+      data-testid="bot-plugins-none-added"
+    >
+      <p class="min-w-0 flex-1 text-xs text-muted-foreground">
+        {t('botPanel.plugins.noneAdded')}
+      </p>
+      <Button
+        size="sm"
+        variant="secondary"
+        class="h-7 shrink-0 gap-1 px-2 text-xs"
+        onclick={openAddDialog}
+        data-testid="bot-plugins-add-empty"
+      >
+        <Plus class="size-3.5" aria-hidden="true" />
+        {t('botPanel.plugins.add')}
+      </Button>
+    </div>
   {:else}
     <div class="space-y-1.5">
-      {#each plugins.plugins as plugin (plugin.id)}
+      {#each added as plugin (plugin.id)}
         {@const kinds = pluginKindBadges(plugin)}
-        {@const pluginEnabled = enabledIds.has(plugin.id)}
+        {@const expandable = groupsOf(plugin).length > 0 || pluginProvides(plugin, 'mail')}
         <div
           class="rounded-lg border px-2.5 py-2"
           data-testid={`bot-plugins-${plugin.id}`}
-          data-enabled={pluginEnabled}
+          data-enabled="true"
         >
-          <div class="flex items-center gap-2">
-            <Checkbox
-              checked={pluginEnabled}
-              disabled={saving}
-              onCheckedChange={(checked) => void togglePlugin(plugin, checked === true)}
-              data-testid={`bot-plugins-toggle-${plugin.id}`}
-            />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium">{plugin.name}</span>
-              {#if pluginDisabledWithAccounts(plugin)}
-                <span
-                  class="text-xs text-muted-foreground"
-                  data-testid={`bot-plugins-app-disabled-${plugin.id}`}
-                >
-                  {t('botPanel.plugins.pluginDisabled')}
-                </span>
+          <div class="flex items-start gap-2">
+            <PluginIcon src={plugin.iconDataUri} label={plugin.name} class="size-8" />
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="min-w-0 truncate text-sm font-medium">{plugin.name}</span>
+                {#each kinds as kind (kind)}
+                  <Badge
+                    variant="secondary"
+                    data-testid={`bot-plugins-kind-${kind}-${plugin.id}`}
+                  >
+                    {t(PLUGIN_KIND_LABEL_KEYS[kind])}
+                  </Badge>
+                {/each}
+              </div>
+              {#if plugin.description.length > 0}
+                <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                  {plugin.description}
+                </p>
               {/if}
               {#if !plugin.enabled}
-                <span
-                  class="block truncate text-xs text-muted-foreground"
+                <p
+                  class="mt-0.5 text-xs text-muted-foreground"
                   data-testid={`bot-plugins-app-disabled-${plugin.id}`}
                 >
                   {t('botPanel.plugins.appDisabled')}
-                </span>
+                </p>
               {/if}
-            </span>
-            {#each kinds as kind (kind)}
-              <Badge variant="secondary" data-testid={`bot-plugins-kind-${kind}-${plugin.id}`}>
-                {t(PLUGIN_KIND_LABEL_KEYS[kind])}
-              </Badge>
-            {/each}
-            {#if pluginEnabled && (groupsOf(plugin).length > 0 || pluginProvides(plugin, 'mail'))}
+              {#if pluginDisabledWithAccounts(plugin)}
+                <p
+                  class="mt-0.5 text-xs text-muted-foreground"
+                  data-testid={`bot-plugins-plugin-disabled-${plugin.id}`}
+                >
+                  {t('botPanel.plugins.pluginDisabled')}
+                </p>
+              {/if}
+            </div>
+            {#if expandable}
               <Button
                 variant="ghost"
                 size="icon"
@@ -410,7 +472,7 @@
             {/if}
           </div>
 
-          {#if pluginEnabled && expanded.includes(plugin.id)}
+          {#if expanded.includes(plugin.id)}
             <div
               class="mt-2 space-y-2 border-t pt-2"
               data-testid={`bot-plugins-detail-${plugin.id}`}
@@ -513,6 +575,19 @@
               {/if}
             </div>
           {/if}
+
+          <div class="mt-1.5 flex justify-end">
+            <Button
+              size="sm"
+              variant="ghost"
+              class="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+              disabled={saving}
+              onclick={() => void togglePlugin(plugin, false)}
+              data-testid={`bot-plugins-remove-${plugin.id}`}
+            >
+              {t('botPanel.plugins.remove')}
+            </Button>
+          </div>
         </div>
       {/each}
     </div>
@@ -620,8 +695,8 @@
     </div>
   {/if}
 
-  {#if mailPlugins.length === 0}
-    <!-- 还没有邮件插件：存量账号按系统账号放行（P2 §3.5），勾选控件保持可用。 -->
+  {#if mailPlugins.length === 0 && legacyMailAccounts.length > 0}
+    <!-- 还没有邮件插件：存量系统账号按系统账号放行（P2 §3.5），勾选控件保持可用。 -->
     <BotMailBindings {botId} />
   {/if}
 
@@ -657,6 +732,109 @@
     </p>
   {/if}
 </div>
+
+<!-- 添加插件弹框：已安装插件的卡片网格 + 全宽搜索；添加是幂等的（已添加显示绿色状态）。 -->
+<Dialog
+  open={addOpen}
+  onOpenChange={(next) => {
+    if (!next) addOpen = false;
+  }}
+>
+  <DialogContent class="sm:max-w-2xl" data-testid="bot-plugins-add-dialog">
+    <DialogHeader>
+      <DialogTitle>{t('botPanel.plugins.addTitle')}</DialogTitle>
+      <DialogDescription>{t('botPanel.plugins.addHint')}</DialogDescription>
+    </DialogHeader>
+    <div class="relative">
+      <Search
+        class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <Input
+        class="h-9 w-full pl-8"
+        placeholder={t('botPanel.plugins.search')}
+        bind:value={addQuery}
+        data-testid="bot-plugins-add-search"
+      />
+    </div>
+    <div class="max-h-[min(60vh,32rem)] overflow-y-auto pr-1" data-testid="bot-plugins-add-list">
+      {#if plugins.plugins.length === 0}
+        <p class="px-1 py-4 text-center text-xs text-muted-foreground">
+          {t('botPanel.plugins.addDialogEmptyStore')}
+        </p>
+      {:else if addCandidates.length === 0}
+        <p
+          class="px-1 py-4 text-center text-xs text-muted-foreground"
+          data-testid="bot-plugins-add-no-match"
+        >
+          {t('botPanel.plugins.noMatch')}
+        </p>
+      {:else}
+        <div class="grid gap-2 sm:grid-cols-2">
+          {#each addCandidates as plugin (plugin.id)}
+            {@const isAdded = enabledIds.has(plugin.id)}
+            {@const kinds = pluginKindBadges(plugin)}
+            <div
+              class="flex min-w-0 flex-col gap-2 rounded-lg border bg-card p-3"
+              data-testid={`bot-plugins-add-card-${plugin.id}`}
+              data-added={isAdded}
+            >
+              <div class="flex items-start gap-2.5">
+                <PluginIcon src={plugin.iconDataUri} label={plugin.name} class="size-9" />
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-sm font-medium" title={plugin.name}>{plugin.name}</div>
+                  <div class="mt-1 flex flex-wrap items-center gap-1">
+                    {#each kinds as kind (kind)}
+                      <Badge variant="outline" class="text-[10px]">
+                        {t(PLUGIN_KIND_LABEL_KEYS[kind])}
+                      </Badge>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+              {#if plugin.description.length > 0}
+                <p class="line-clamp-2 text-xs break-words text-muted-foreground">
+                  {plugin.description}
+                </p>
+              {/if}
+              {#if !plugin.enabled}
+                <p class="text-xs text-amber-700 dark:text-amber-400">
+                  {t('botPanel.plugins.appDisabled')}
+                </p>
+              {/if}
+              <div class="mt-auto flex justify-end pt-0.5">
+                <Button
+                  size="sm"
+                  variant={isAdded ? 'default' : 'secondary'}
+                  class={isAdded
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-600 disabled:opacity-100 dark:bg-emerald-600'
+                    : ''}
+                  disabled={isAdded || !plugin.enabled || saving}
+                  onclick={() => void addPlugin(plugin)}
+                  data-testid={`bot-plugins-add-to-bot-${plugin.id}`}
+                >
+                  {isAdded
+                    ? t('botPanel.plugins.addedToBot')
+                    : !plugin.enabled
+                      ? t('botPanel.plugins.globallyDisabled')
+                      : t('botPanel.plugins.addToBot')}
+                </Button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <DialogFooter class="justify-between sm:justify-between">
+      <Button variant="outline" size="sm" onclick={openStore} data-testid="bot-plugins-add-store">
+        {t('botPanel.plugins.openStore')}
+      </Button>
+      <Button size="sm" onclick={() => (addOpen = false)} data-testid="bot-plugins-add-done">
+        {t('botPanel.plugins.done')}
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
 
 <!-- 「添加账号」选择器（从旧 apps 区块搬入，限定在该插件的连接器里）：
      只列有已连接账号的应用；多账号展开挑账号，选中即用并关闭。 -->

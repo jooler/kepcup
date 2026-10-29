@@ -5,9 +5,11 @@ import { enUS } from '../../i18n/locales/en-US';
 import { zhCN } from '../../i18n/locales/zh-CN';
 import {
   PLUGIN_KIND_LABEL_KEYS,
+  addedPlugins,
   dedupePluginIds,
   enabledPluginCount,
   manualToolServers,
+  matchesPluginQuery,
   pluginKindBadges,
   pluginProvides,
   togglePluginId,
@@ -18,6 +20,7 @@ import {
 const summary = (overrides: Partial<PluginSummary>): PluginSummary => ({
   id: 'io.github.a/x',
   name: 'X',
+  iconDataUri: null,
   version: '1.0.0',
   description: '',
   author: null,
@@ -65,6 +68,24 @@ describe('enabledPluginCount（菜单 / 区块摘要）', () => {
     expect(enabledPluginCount(['a', 'gone'], installed)).toBe(1);
     expect(enabledPluginCount(undefined, installed)).toBe(0);
     expect(enabledPluginCount(['a', 'b'], installed)).toBe(2);
+  });
+});
+
+describe('addedPlugins / matchesPluginQuery（添加弹框）', () => {
+  const alpha = summary({ id: 'p/alpha', name: 'Alpha', author: 'Alice', description: '文档工具' });
+  const beta = summary({ id: 'p/beta', name: 'Beta', author: null, description: '邮件插件' });
+
+  it('只保留已添加且仍在已安装清单里的插件，保持清单顺序', () => {
+    expect(addedPlugins([alpha, beta], ['p/gone', 'p/beta'])).toEqual([beta]);
+    expect(addedPlugins([alpha, beta], undefined)).toEqual([]);
+  });
+
+  it('搜索命中名称 / id / 描述 / 作者；多个关键词取交集；空查询恒命中', () => {
+    expect(matchesPluginQuery(alpha, 'alpha')).toBe(true);
+    expect(matchesPluginQuery(alpha, 'p/alp')).toBe(true);
+    expect(matchesPluginQuery(alpha, '文档 alice')).toBe(true);
+    expect(matchesPluginQuery(alpha, '文档 beta')).toBe(false);
+    expect(matchesPluginQuery(alpha, '   ')).toBe(true);
   });
 });
 

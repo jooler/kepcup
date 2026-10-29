@@ -119,7 +119,7 @@ async function openBotPluginsSection(page: Page): Promise<Locator> {
 }
 
 
-test('bot plugins: enable / disable gates the <skills> injection', async () => {
+test('bot plugins: add / remove gates the <skills> injection', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-bot-plugins-');
   const { page, llm } = session;
@@ -133,25 +133,34 @@ test('bot plugins: enable / disable gates the <skills> injection', async () => {
     await openConversationByName(page, '插件甲');
     await dismissStartPanel(page);
 
-    // 「插件」区块：已装插件一行（技能徽标），默认未启用。
+    // 「插件」区块：默认没有添加任何插件（已装插件只在「添加」弹框里列出）。
     const section = await openBotPluginsSection(page);
+    await expect(section.locator(`[data-testid="bot-plugins-${PLUGIN_ID}"]`)).toHaveCount(0);
+    await expect(section.locator('[data-testid="bot-plugins-none-added"]')).toBeVisible();
+
+    // 未添加：技能不进 <skills>。
+    llm.script('mock-main', [step().replyText('回复一')]);
+    await sendAndAwait(page, '第一句', '回复一');
+    expect(await skillInjected(llm, SKILL)).toBe(false);
+
+    // 添加弹框：已装插件卡片 + 添加到 Bot（幂等，已添加显示绿色状态）。
+    await section.locator('[data-testid="bot-plugins-add"]').click();
+    const dialog = page.locator('[data-testid="bot-plugins-add-dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    await dialog.locator('[data-testid="bot-plugins-add-search"]').fill(PLUGIN_ID);
+    const addButton = dialog.locator(`[data-testid="bot-plugins-add-to-bot-${PLUGIN_ID}"]`);
+    await expect(addButton).toContainText('添加到 Bot');
+    await addButton.click();
+    await expect(addButton).toContainText('已添加给该 Bot', { timeout: 15_000 });
+    await dialog.locator('[data-testid="bot-plugins-add-done"]').click();
+
+    // 已添加：插件出现在列表里，技能进入 <skills>（profile 只改 plugin_ids）。
     const row = section.locator(`[data-testid="bot-plugins-${PLUGIN_ID}"]`);
     await expect(row).toBeVisible({ timeout: 15_000 });
     await expect(
       row.locator(`[data-testid="bot-plugins-kind-skill-${PLUGIN_ID}"]`),
     ).toBeVisible();
-    const toggle = row.locator(`[data-testid="bot-plugins-toggle-${PLUGIN_ID}"]`);
-    await expect(toggle).toHaveAttribute('data-state', 'unchecked');
-
-    // 未启用：技能不进 <skills>。
-    llm.script('mock-main', [step().replyText('回复一')]);
-    await sendAndAwait(page, '第一句', '回复一');
-    expect(await skillInjected(llm, SKILL)).toBe(false);
-
-    // 启用：技能进入 <skills>（profile 只改 plugin_ids）。
     llm.script('mock-main', [step().replyText('回复二')]);
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('data-state', 'checked', { timeout: 15_000 });
     await sendAndAwait(page, '第二句', '回复二');
     expect(await skillInjected(llm, SKILL)).toBe(true);
     const got = (await rpc(page, 'bots.get', { id: bot.botId })) as {
@@ -159,10 +168,10 @@ test('bot plugins: enable / disable gates the <skills> injection', async () => {
     };
     expect(got.bot.profile.runtime.plugin_ids).toEqual([PLUGIN_ID]);
 
-    // 停用：技能同步消失。
+    // 移除：技能同步消失。
     llm.script('mock-main', [step().replyText('回复三')]);
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('data-state', 'unchecked', { timeout: 15_000 });
+    await row.locator(`[data-testid="bot-plugins-remove-${PLUGIN_ID}"]`).click();
+    await expect(row).toHaveCount(0, { timeout: 15_000 });
     await sendAndAwait(page, '第三句', '回复三');
     expect(await skillInjected(llm, SKILL)).toBe(false);
   } finally {

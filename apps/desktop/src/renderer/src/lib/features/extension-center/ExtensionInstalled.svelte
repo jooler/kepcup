@@ -25,6 +25,7 @@
   } from './tabs';
   import PluginInstallDialog from '../plugins/PluginInstallDialog.svelte';
   import PluginFieldForm from '../plugins/PluginFieldForm.svelte';
+  import PluginIcon from '../plugins/PluginIcon.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -548,6 +549,7 @@
       <div class="absolute top-2.5 right-2.5">{@render pluginMenu(plugin)}</div>
     {/if}
     <div class="flex flex-wrap items-center gap-2 pe-7">
+      <PluginIcon src={plugin.iconDataUri} label={plugin.name} class="size-7" />
       <span class="font-medium">{plugin.name}</span>
       <span class="text-xs text-muted-foreground">
         {t('plugins.version', { version: plugin.version })}

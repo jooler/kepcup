@@ -34,6 +34,32 @@ export function enabledPluginCount(
   return dedupePluginIds(current ?? []).filter((id) => ids.has(id)).length;
 }
 
+/** 添加弹框的搜索口径：名称 / id / 描述 / 作者的任一字段包含全部关键词（空查询恒命中）。 */
+export function matchesPluginQuery(
+  plugin: Pick<PluginSummary, 'id' | 'name' | 'description' | 'author'>,
+  query: string,
+): boolean {
+  const terms = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term.length > 0);
+  if (terms.length === 0) return true;
+  const haystack = [plugin.name, plugin.id, plugin.description, plugin.author ?? '']
+    .join('\n')
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+/** 该 Bot 已添加、且仍在已安装清单里的插件（保持已安装清单的顺序）。 */
+export function addedPlugins(
+  installed: readonly PluginSummary[],
+  current: readonly string[] | undefined,
+): PluginSummary[] {
+  const ids = new Set(dedupePluginIds(current ?? []));
+  return installed.filter((plugin) => ids.has(plugin.id));
+}
+
 /** 类别徽标的文案键（`mcp` 的显示名即 i18n `plugins.kind.mcp` =「工具」）。 */
 export const PLUGIN_KIND_LABEL_KEYS: Readonly<Record<PluginContributionKind, MessageKey>> = {
   skill: 'plugins.kind.skill',
