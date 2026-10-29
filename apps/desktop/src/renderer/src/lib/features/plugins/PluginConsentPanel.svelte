@@ -150,6 +150,32 @@
     </div>
   {/if}
 
+  {#if info.configFields.length > 0}
+    <div class="space-y-1.5" data-testid={`${testid}-plugin-config`}>
+      <Label class="text-xs">{t('plugins.consent.pluginConfig')}</Label>
+      {#each info.configFields as field (field.key)}
+        <div class="grid gap-0.5">
+          <span class="text-sm">
+            {field.title}
+            {#if field.required}
+              <Badge variant="outline" class="ml-1 align-middle">
+                {t('plugins.consent.required')}
+              </Badge>
+            {/if}
+            {#if field.sensitive === true}
+              <Badge variant="outline" class="ml-1 align-middle">
+                {t('plugins.consent.sensitive')}
+              </Badge>
+            {/if}
+          </span>
+          {#if field.description !== undefined && field.description.length > 0}
+            <span class="text-xs text-muted-foreground">{field.description}</span>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if info.mcp.length > 0}
     <div class="space-y-1.5">
       <Label class="text-xs">{t('plugins.consent.mcp')}</Label>
