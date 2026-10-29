@@ -1600,6 +1600,7 @@ export const zhCN = {
   'plugins.consent.configTitle': '配置',
   'plugins.consent.required': '必填',
   'plugins.consent.sensitive': '敏感',
+  'plugins.consent.pluginConfig': '插件配置（安装后在插件卡「设置」里填写）',
   'plugins.consent.connectors': '连接应用（安装后仍需你逐个连接）',
   'plugins.consent.connectorHosts': '服务地址：{hosts}',
   'plugins.consent.connectorScopes': '申请范围：{scopes}',

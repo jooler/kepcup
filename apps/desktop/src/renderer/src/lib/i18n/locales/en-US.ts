@@ -1652,6 +1652,7 @@ export const enUS = {
   'plugins.consent.configTitle': 'Configuration',
   'plugins.consent.required': 'Required',
   'plugins.consent.sensitive': 'Sensitive',
+  'plugins.consent.pluginConfig': "Plugin config (fill in the plugin card's Settings after install)",
   'plugins.consent.connectors': 'Connected apps (you still connect each one yourself)',
   'plugins.consent.connectorHosts': 'Service: {hosts}',
   'plugins.consent.connectorScopes': 'Scopes: {scopes}',
