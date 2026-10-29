@@ -446,9 +446,9 @@ describe('plugin config & instances (D105 P1)', () => {
       id: 'io.github.tester/mail-y',
     });
     await install(core, fixture);
-    let fields: Array<{ key: string; type: string; sensitive: boolean; required: boolean }> = [];
+    const fields: Array<{ key: string; type: string; sensitive: boolean; required: boolean }> = [];
     const materializer: InstanceMaterializer & { seen?: Record<string, unknown> } = {
-      async create(ctx) {
+      async create(_ctx) {
         return { title: '邮箱' };
       },
       async update() {

@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm } from 'node:fs/promises';
+import { cp, mkdir, readFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 

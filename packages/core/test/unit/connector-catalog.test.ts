@@ -1,7 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CONNECTOR_META_KEY,
@@ -9,7 +8,6 @@ import {
   connectorMetaOf,
   connectorRemoteOf,
   findConnectorBySlug,
-  type ConnectorCatalogEntry,
 } from '@kepcup/shared';
 import {
   ConnectorCatalog,
@@ -27,7 +25,6 @@ import { SHIPPED_PLUGINS_DIR, readShippedConnectorEntries } from '../support/shi
  * 契约本身在 `test/contract/connector-catalog.contract.ts`。
  */
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const shipped = readShippedConnectorEntries();
 
 /** 经 BuiltinPlugins 读随包内置插件（等价旧的环境变量目录注入）。 */

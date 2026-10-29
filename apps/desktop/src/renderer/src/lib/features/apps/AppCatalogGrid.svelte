@@ -3,7 +3,6 @@
   import type { Snippet } from 'svelte';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
   import { t, connectorDescription, connectorUnavailableText } from '$lib/i18n';
-  import { core } from '$lib/rpc/client.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';

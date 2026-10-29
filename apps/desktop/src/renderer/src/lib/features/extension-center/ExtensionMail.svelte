@@ -38,6 +38,8 @@
 
   /** 按归属插件分组的账号（无主账号归 `null` 组）。 */
   const groups = $derived.by(() => {
+    // Plain Map: group accounts for one render pass, not reactive UI state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const map = new Map<string | null, MailAccount[]>();
     for (const account of accounts) {
       const key = account.instanceId === null ? null : (account.pluginId ?? null);

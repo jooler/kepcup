@@ -24,6 +24,8 @@ import { MailProjector } from './projectors/mail.js';
 import { McpProjector } from './projectors/mcp.js';
 import { SkillsProjector } from './projectors/skills.js';
 
+import type { ZodType } from 'zod';
+
 /**
  * Capability kind registry (D105, todo/plugin-platform README §2.1): the single place a
  * contribution kind is described. Projector order, manifest contribution presence, the
@@ -49,7 +51,7 @@ export type CapabilityConsentKey = 'skills' | 'connectors' | 'mcp' | 'mail';
 export interface CapabilityKindAdapter {
   readonly kind: ProjectedKind;
   /** Schema of ONE entry of the manifest's `contributions[kind]` array (shared source). */
-  readonly contributionSchema: import('zod').ZodType;
+  readonly contributionSchema: ZodType;
   /** Consent output / summary counts key (fixed shared contracts). */
   readonly consentKey: CapabilityConsentKey;
   /** Can users create instances of this kind on the plugin card? */

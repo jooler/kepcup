@@ -1,14 +1,11 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   RPC_EVENT_NAMES,
   type AppConnectFlowPayload,
   type AppConnectionStatusPayload,
   type Approval,
-  type Bot,
   type Run,
 } from '@kepcup/shared';
 import {
@@ -24,7 +21,6 @@ import {
   step,
   viaTask,
   waitFor,
-  waitForMessage,
   type FakeMcpTool,
   type FakeOAuthMcpServer,
   type MockChatRequest,
@@ -281,25 +277,6 @@ async function nextTask(
   return run;
 }
 
-async function botOf(env: GateEnv, id: string): Promise<Bot> {
-  return ((await env.call('bots.get', { id })) as { bot: Bot }).bot;
-}
-
-function allFiles(dir: string): string[] {
-  const found: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = path.join(dir, entry);
-    let info;
-    try {
-      info = statSync(full);
-    } catch {
-      continue;
-    }
-    if (info.isDirectory()) found.push(...allFiles(full));
-    else if (info.size < 64 * 1024 * 1024) found.push(full);
-  }
-  return found;
-}
 
 describe('§5.11 risk tiers (W5 classification + catalog overlay)', () => {
   it('read → no card; write → three durations; destructive (default or raised) → only once; unattended → all auto with audit', async () => {
