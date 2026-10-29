@@ -68,19 +68,19 @@
   }
 
   /**
-   * 合并写入：`plugins.setBotPlugins` 是整集替换，这里读各 Bot 现有启用集并集上新
-   * 插件再逐个写（Bot 数量小，串行即可）。
+   * 合并写入走 `plugins.enableForBots`（P5，P4 审查 P2-2 处置）：并集在 core 一侧
+   * 原子完成，渲染端不再读-改-写整集；已启用的 Bot 幂等跳过。
    */
   async function addToSelectedBots(): Promise<void> {
     if (plugin === null || adding) return;
     adding = true;
     try {
-      for (const bot of bots.filter((candidate) => selectedBotIds.includes(candidate.id))) {
-        const next = [
-          ...new Set([...(bot.profile.runtime.plugin_ids ?? []), plugin.id]),
-        ];
-        await core.call('plugins.setBotPlugins', { botId: bot.id, pluginIds: next });
-      }
+      await core.call('plugins.enableForBots', {
+        pluginId: plugin.id,
+        botIds: bots
+          .filter((candidate) => selectedBotIds.includes(candidate.id))
+          .map((candidate) => candidate.id),
+      });
       toast.success(t('plugins.installHint.added', { count: selectedBotIds.length }));
       finish();
     } catch (error) {

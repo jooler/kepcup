@@ -18,6 +18,7 @@ import {
   pluginsMarketplaceListOutputSchema,
   pluginsMarketplaceRefreshOutputSchema,
   pluginsSetBotPluginsInputSchema,
+  pluginsEnableForBotsInputSchema,
   pluginsSetEnabledInputSchema,
   pluginsSetEnabledOutputSchema,
   pluginsUninstallInputSchema,
@@ -90,6 +91,32 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
         services.events.emit('plugins.changed', {
           ids: [...new Set([...before, ...input.pluginIds])],
         });
+        return { ok: true as const };
+      },
+    ),
+    /**
+     * D105 P5（P4 审查 P2-2 处置）：合并追加一个插件到多个 Bot 的启用集。整批 Bot 先校验
+     * （存在且活跃——`addPluginIds` 内部再校验插件已安装），再逐个写；任一 Bot 失败即整体
+     * 拒绝，不落一半。已启用的 Bot 幂等跳过（不发事件）；写过的 Bot 各广播 `bot.updated`，
+     * `plugins.changed` 只发一次（ids = 该插件）。
+     */
+    'plugins.enableForBots': method(
+      pluginsEnableForBotsInputSchema,
+      okOutputSchema,
+      async (input) => {
+        const domain = services.domain;
+        if (domain === null) throw new AppError('NOT_IMPLEMENTED', '插件模块未就绪');
+        for (const botId of input.botIds) domain.bots.getOrThrow(botId);
+        let touched = 0;
+        for (const botId of input.botIds) {
+          const { bot, added } = domain.bots.addPluginIds(botId, [input.pluginId]);
+          if (!added) continue;
+          touched += 1;
+          services.events.emit('bot.updated', { bot });
+        }
+        if (touched > 0) {
+          services.events.emit('plugins.changed', { ids: [input.pluginId] });
+        }
         return { ok: true as const };
       },
     ),
