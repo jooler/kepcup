@@ -188,7 +188,8 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 顺序 | 段落标签 | 内容 | 预算常量 | 引入阶段 |
 |---|---|---|---|---|
 | 1 | `<platform_rules>` | 平台规则（对话轮版 / 任务版，下文） | — | P01（D75 分两版） |
-| 2 | `<identity>` | 名字、简介、职责、边界 | `PERSONA_TOKEN_BUDGET`（与 3 合计） | P01 |
+| 1.5 | `<coding_rules>` | 编程 / 开发类 Bot 专属：`bot.kind === 'coding'` 时注入；未分类的旧 Bot 回退看画像（简介、擅长、职责）是否命中编码关键词。任务版要求复杂任务先 `update_plan` 拆解、只读调研用 `delegate_task` / `collect_delegate_results` 交给子代理，改代码与验证留在主 loop；对话轮版要求复杂请求用 `start_task` 派任务并把验收标准写进 instruction。访谈期间不注入（由 `<setup_interview>` 引导 LLM 用 `save_profile` 的 `kind` 参数设置分类，并把领域写进画像）。非编程 Bot 整段省略 | — | v0.5.x |
+| 2 | `<identity>` | 名字、分类（`bot.kind`，内置给中文标签 + id，自定义原样）、简介、职责、边界 | `PERSONA_TOKEN_BUDGET`（与 3 合计） | P01 |
 | 3 | `<persona>` | 性格、语气、风格、价值观、示例对话 | 同上 | P01 |
 | 4 | `<user_profile>` | 画像卡片 | `PROFILE_CARD_TOKEN_BUDGET` | P07 |
 | 5 | `<my_state>` | 到期的承诺、进行中事项的标题（跨对话） | `MY_STATE_TOKEN_BUDGET` | P07 |

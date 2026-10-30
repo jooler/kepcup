@@ -121,9 +121,9 @@ CREATE TABLE bots (
 
 - 通讯录即 `status = 'active'` 的 Bot。
 - `profile_json.runtime.agent`（D72，无迁移）：`{id, model, effort, permission: 'read_only'|'workspace'|'ask', capabilities: string[]|null}`。`id = ''` = 内置 pi 引擎（默认，其余字段忽略）；非空 = 由智能体目录中该 Agent 驱动，`model` / `effort` 为空表示 Agent 默认，`capabilities = null` 表示跟随能力包默认值。P3 起运行时按 `permission` 生效（Windows 下 `workspace` 降为 `ask`，见 04-agent-runtime「P3 落地要点」）。
-- 后续列（增量迁移）：`setup_state TEXT`（0012，对话式新建访谈中 = `'interviewing'`）；`system_role TEXT`（0016，D70）——系统角色，目前只有 `'butler'`（管家），`bots_one_active_butler` partial unique index 保证至多一个 active 管家。**与 Profile 内 `role.{expertise,responsibilities}` 无关。** 管家不可删除（`lifecycle.deleteBot` 在任何级联前拒绝，`BOT_UNDELETABLE`）。
+- 后续列（增量迁移）：`setup_state TEXT`（0012，对话式新建访谈中 = `'interviewing'`）；`system_role TEXT`（0016，D70）——系统角色，目前只有 `'butler'`（管家），`bots_one_active_butler` partial unique index 保证至多一个 active 管家。**与 Profile 内 `role.{expertise,responsibilities}` 无关。** 管家不可删除（`lifecycle.deleteBot` 在任何级联前拒绝，`BOT_UNDELETABLE`）；`kind TEXT`（0059）——Bot 分类，初始化访谈中由 LLM 根据对话通过 `save_profile` 的 `kind` 参数设置（内置 id 见 shared `domain/bot-kind.ts`，也允许自定义短分类）；NULL = 未分类（旧行、管家提议、模板导入等非访谈路径，读取方回退画像关键词）。
 - 头像遮罩 `avatar_mask TEXT`（0060）：只影响 `upload:` 头像的外形——`'circle'` 圆形（默认）/ `'rounded'` 圆角正方形；NULL = circle（旧行不回填，读侧 `normalizeBotAvatarMask` 兜底）。预置头像与首字母占位恒为圆形。写入口是 `bots.avatar.mask`（单独一列，不进 Profile 的三方合并）；删除 Bot 时一并清空。
-- 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`profile_json`（写入 `{}`），`status = 'deleted'`。界面对已删除 Bot 显示其 id。
+- 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`profile_json`（写入 `{}`）、`kind`，`status = 'deleted'`。界面对已删除 Bot 显示其 id。
 
 ### conversations（P01）
 
