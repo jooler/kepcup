@@ -34,6 +34,7 @@ import { installFileAppProtocol, watchFileAppFrameScripts } from './file-apps';
 import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
+import { installProductionAppMenu } from './devtools';
 import { createTray } from './tray';
 import { applyLoginItem } from './login-item';
 import { createRemoteKeepAwake } from './remote-keep-awake';
@@ -285,6 +286,9 @@ function startShareScanTimer(): void {
 }
 
 function bootstrap(): void {
+  // 生产构建：重建应用菜单，去掉「Toggle Developer Tools」及其快捷键（见 devtools.ts）。
+  installProductionAppMenu();
+
   // dev 的 Dock 图标：打包版由 .app bundle（icns）/ exe 资源自带；dev 壳
   // （Electron.app）需要手动指定仓库主图标（名称由 patch-dev-electron.cjs 改）。
   if (!app.isPackaged && process.platform === 'darwin' && app.dock) {
