@@ -56,6 +56,7 @@ import {
 } from './browser-actions.js';
 import { HostDnsResolver } from './dns-resolver.js';
 import { uniqueDownloadPath } from './download-name.js';
+import { DEVTOOLS_ENABLED } from './devtools.js';
 
 /**
  * Hosts one bot browser page per "bot + conversation" (docs/dev/phases/
@@ -319,6 +320,8 @@ export class BrowserHost {
       webPreferences: {
         partition: profile.partition,
         backgroundThrottling: false,
+        // 生产构建不开放 DevTools（见 devtools.ts）；CDP 自动化不受影响。
+        devTools: DEVTOOLS_ENABLED,
       },
     });
     view.setBounds({
@@ -423,12 +426,18 @@ export class BrowserHost {
       height: BROWSER_VIEWPORT_HEIGHT + VIEWER_TOOLBAR_HEIGHT,
       title: input.title && input.title.length > 0 ? input.title : 'Bot 浏览器',
       autoHideMenuBar: true,
+      webPreferences: { devTools: DEVTOOLS_ENABLED },
     });
     // W8 工具条: a tiny data: page above the bot's page (state + 交还给 Bot).
     // Its own in-memory session; no node, sandboxed; the button speaks through
     // document.title (page-title-updated) — no IPC surface.
     const toolbar = new WebContentsView({
-      webPreferences: { partition: 'kepcup-viewer-toolbar', sandbox: true, javascript: true },
+      webPreferences: {
+        partition: 'kepcup-viewer-toolbar',
+        sandbox: true,
+        javascript: true,
+        devTools: DEVTOOLS_ENABLED,
+      },
     });
     const viewer: Viewer = { win, toolbar, labels: parseViewerLabels(input.labels) };
     toolbar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -1136,7 +1145,7 @@ export class BrowserHost {
         show: false,
         width: BROWSER_VIEWPORT_WIDTH,
         height: BROWSER_VIEWPORT_HEIGHT,
-        webPreferences: { backgroundThrottling: false },
+        webPreferences: { backgroundThrottling: false, devTools: DEVTOOLS_ENABLED },
       });
     }
     return this.#hostWindow;
