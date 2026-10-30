@@ -340,7 +340,7 @@
   {/if}
 
   {#if plan !== null}
-    <div class="shrink-0 border-b px-4 py-2">
+    <div class="shrink-0 px-4 py-2">
       <div class="mx-auto w-full max-w-3xl">
         <TaskPlanPanel {plan} />
       </div>
