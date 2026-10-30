@@ -163,6 +163,102 @@ linux:
       to: bin/linux-${arch}
     # 内置插件目录已随市场改造移除（见 win 块注释）。
 
+# --- Linux RPM（RHEL 9 / RHEL 10） --------------------------------------------
+# 不在 Ubuntu runner 上出 rpm：Ubuntu 24.04（glibc 2.39）上编译/rebuild 出来的
+# 原生模块可能引用 RHEL 9（2.34）没有的符号。release.yml 的 linux-rpm job 在
+# AlmaLinux 9 容器里构建一份 rpm，依靠 glibc 向后兼容同时支持 RHEL 9/10；
+# linux-rpm-verify 再分别在两个发行版里 dnf install + ldd 验证。
+rpm:
+  packageName: kepcup
+  artifactName: kepcup-${version}.${arch}.${ext}
+  synopsis: 本地优先的 AI Bot 运行时
+  # RHEL 9/10 的包名；备选名用 rpm 富依赖（gnome 之外其他发行版也能解析）。
+  # 这些是 Electron 在 Linux 上的运行时依赖，缺一个会出现空白窗口或崩溃。
+  # libXScrnSaver 是 Electron 官方文档里的老依赖，Electron 44 已不再链接
+  # libXss，而且 RHEL 10 仓库里没有这个包——不要加回来。
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - (libXtst or libXtst6)
+    - xdg-utils
+    - at-spi2-core
+    - (libuuid or libuuid1)
+    - libsecret
+    - (mesa-libgbm or libgbm)
+    - (libxkbcommon or libxkbcommon0)
+    - alsa-lib
+    - cups-libs
+    # Electron 44 的 ELF NEEDED 里有 libdbus-1 / libudev；不要依赖
+    # gtk3 的传递依赖（rpm 的 AutoReq 被 fpm 关闭了）。
+    - dbus-libs
+    - systemd-libs
+
+# --- Linux Flatpak（freedesktop 26.08，最新稳定运行时） ------------------------
+# electron-builder 的 flatpak target 会从 Flathub 安装 runtime/sdk/base 后
+# 调用 flatpak-builder（CI 见 release.yml 的 linux-flatpak job）。26.08 是当前
+# 最新的 freedesktop-sdk 分支，Fedora 43+ 默认仓库里的 flatpak 可直接运行；
+# 更老的 Fedora 也能装对应 runtime。不发布到 Flathub（见 docs/dev/06-release.md
+# 「Linux 与 Flathub」），.flatpak bundle 作为 GitHub Release 资产分发。
+flatpak:
+  artifactName: kepcup-${version}-${arch}.flatpak
+  runtime: org.freedesktop.Platform
+  runtimeVersion: '26.08'
+  sdk: org.freedesktop.Sdk
+  base: org.electronjs.Electron2.BaseApp
+  baseVersion: '26.08'
+  # zypak 包装器；Wayland 会话下走 Ozone，X11 下照常。
+  useWaylandFlags: true
+  finishArgs:
+    - --socket=wayland
+    - --socket=x11
+    - --share=ipc
+    - --device=dri
+    # 摄像头（设置页预览 / 传感器）与麦克风（语音输入）。
+    - --device=all
+    - --socket=pulseaudio
+    - --filesystem=home
+    - --share=network
+    - --talk-name=org.freedesktop.Notifications
+    # 需要执行宿主工具时走 flatpak-spawn --host。
+    - --talk-name=org.freedesktop.Flatpak
+    - --talk-name=org.freedesktop.secrets
+    - --filesystem=xdg-run/pipewire-0
+
+# --- Linux Snap（base core24，Ubuntu 22.04+） --------------------------------
+# electron-builder 生成 snapcraft.yaml 并调用 snapcraft（CI 的 linux-snap job 在
+# Ubuntu 24.04 runner 上以 --destructive-mode 构建，不需要 LXD/Multipass）。
+# core24 的 glibc 2.39 同时覆盖 Ubuntu 22.04 / 24.04 / 最新版；Electron 44 的
+# 原生模块在 core24 里可加载。
+snapcraft:
+  base: core24
+  artifactName: kepcup_${version}_${arch}.${ext}
+  core24:
+    # 经典约束：应用要执行用户机器上的 CLI/工具，严格约束下这些全部不可见。
+    # 代价：不能直接上架 Snap Store（需人工审核），本地安装要 --classic。
+    confinement: classic
+    useDestructiveMode: true
+    extensions: []
+    # core24（noble）的包名：ALSA/GTK/ATK/CUPS 是 t64；托盘用 ayatana 实现。
+    stagePackages:
+      - libnspr4
+      - libnss3
+      - libxss1
+      - libgtk-3-0t64
+      - libnotify4
+      - libgbm1
+      - libsecret-1-0
+      - libayatana-appindicator3-1
+      - libasound2t64
+      - libatk1.0-0t64
+      - libatk-bridge2.0-0t64
+      - libcups2t64
+      - libdrm2
+      - libxcomposite1
+      - libxdamage1
+      - libxrandr2
+      - libxkbcommon0
+
 # 打包前确保按平台条件的 extraResources 源目录存在（缺文件只警告不阻塞）；
 # 打包后校验产物：测试路径标记必须不存在、@kepcup/core|testkit 不得进 asar、
 # 平台二进制布局正确（scripts/pack-hooks.cjs）。

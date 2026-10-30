@@ -6,6 +6,7 @@ import {
   type UpdateStatusPayload,
 } from '@kepcup/shared';
 import { UpdateGate } from './update-gate';
+import { externalUpdateChannel } from './update-channel';
 import {
   GITHUB_OWNER,
   GITHUB_REPO,
@@ -59,19 +60,10 @@ export function updateFeedUrlFromEnv(env: NodeJS.ProcessEnv): string | null {
 }
 
 /**
- * Distribution channels whose updates the platform owns (docs/dev/06-release.md
- * 「各渠道的更新方式」): Microsoft Store (MSIX), Mac App Store and Flatpak
- * (Flathub). There electron-updater must never run — it cannot replace a
- * store-signed or sandboxed install, and a GitHub feed would fight the store.
+ * Distribution channels whose updates the platform owns. 判定实现放在
+ * Electron-free 的 update-channel.ts（本文件会加载 electron-updater，不能单测）。
  */
-export function externalUpdateChannel(
-  proc: { windowsStore?: boolean; mas?: boolean; env: NodeJS.ProcessEnv } = process,
-): 'microsoft-store' | 'mac-app-store' | 'flatpak' | null {
-  if (proc.windowsStore === true) return 'microsoft-store';
-  if (proc.mas === true) return 'mac-app-store';
-  if (proc.env.FLATPAK_ID !== undefined && proc.env.FLATPAK_ID.length > 0) return 'flatpak';
-  return null;
-}
+export { externalUpdateChannel } from './update-channel';
 
 export function wireUpdater(options: {
   host: UpdateHost;
