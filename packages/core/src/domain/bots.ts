@@ -1,9 +1,12 @@
 import {
   AppError,
   BUILTIN_AGENT_RUNTIME,
+  botKindSchema,
   botProfileSchema,
   botAvatarMaskSchema,
   normalizeBotAvatarMask,
+  normalizeBotKind,
+  parseBotKind,
   newId,
   type Bot,
   type BotAvatarMask,
@@ -29,6 +32,12 @@ interface BotRow {
   bio: string | null;
   profile_json: string;
   status: 'active' | 'deleted';
+  /**
+   * 0059 新增列。可选：迁移编号 0059 排在已上线的 0060（头像遮罩）之前，
+   * 已经跑到 `user_version = 60` 的库不会再执行 0059，`select *` 出来的行
+   * 没有这一列（读侧走 `parseBotKind` 容忍缺列）。
+   */
+  kind?: string | null;
   setup_state: string | null;
   system_role: string | null;
   created_at: number;
@@ -74,6 +83,7 @@ function stripLegacyInkcopTransport(profile: BotProfile): BotProfile {
 function rowToBot(row: BotRow): Bot {
   const parsed = botProfileSchema.safeParse(JSON.parse(row.profile_json));
   const profile = stripLegacyInkcopTransport(parsed.success ? parsed.data : emptyProfile());
+  const kind = parseBotKind(row.kind);
   return {
     id: row.id,
     name: row.name,
@@ -82,6 +92,7 @@ function rowToBot(row: BotRow): Bot {
     bio: row.bio ?? '',
     profile,
     status: row.status,
+    kind,
     setupState: row.setup_state === BOT_SETUP_INTERVIEWING ? BOT_SETUP_INTERVIEWING : null,
     systemRole: row.system_role === 'butler' ? 'butler' : null,
     createdAt: row.created_at,
@@ -488,6 +499,29 @@ export class BotsService {
     return this.getOrThrow(id);
   }
 
+  /**
+   * 初始化访谈中由 LLM 设置分类（`save_profile` 的 kind 参数落点，D66 同层）。
+   * 只允许在访谈期间写：分类描述的是这次创建谈出来的定位，访谈结束后不再
+   * 由模型随意改动；内置 id 大小写归一，自定义分类保留原文。
+   */
+  setKindDuringSetup(id: string, rawKind: string): Bot {
+    const existing = this.getOrThrow(id);
+    if (existing.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
+    }
+    if (existing.setupState !== BOT_SETUP_INTERVIEWING) {
+      throw new AppError('INVALID_INPUT', `Bot ${id} is not in setup interview`);
+    }
+    const parsed = botKindSchema.safeParse(normalizeBotKind(rawKind));
+    if (!parsed.success) {
+      throw new AppError('INVALID_INPUT', parsed.error.issues[0]?.message ?? '分类不合法');
+    }
+    this.db
+      .prepare('update bots set kind = ?, updated_at = ? where id = ?')
+      .run(parsed.data, this.clock.now(), id);
+    return this.getOrThrow(id);
+  }
+
   /** 结束初始化访谈（finish_setup 工具落点）：访谈期间攒下的名字在此生效。 */
   finishSetup(id: string): Bot {
     const existing = this.getOrThrow(id);
@@ -564,7 +598,7 @@ export class BotsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update bots set name = '', avatar = NULL, avatar_mask = NULL, bio = '', profile_json = '{}', status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
+        "update bots set name = '', avatar = NULL, avatar_mask = NULL, bio = '', profile_json = '{}', kind = NULL, status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
       )
       .run(now, now, id);
   }
