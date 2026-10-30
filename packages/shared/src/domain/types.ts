@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { botKindSchema } from './bot-kind.js';
 import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.js';
 import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
 import { agentSetupReasonSchema } from './agent-status.js';
@@ -204,6 +205,12 @@ export const botSchema = z.object({
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
+  /**
+   * Bot 分类（domain/bot-kind.ts）：初始化访谈中由 LLM 根据对话设置，内置
+   * 分类 id（coding / writing / …）或自拟短分类；NULL / 缺省 = 未分类（旧数据
+   * 与管家提议、模板导入等非访谈路径）。消费方应回退到画像关键词判断。
+   */
+  kind: botKindSchema.nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
   /**
