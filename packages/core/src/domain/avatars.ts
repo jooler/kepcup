@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError, type Bot } from '@kepcup/shared';
@@ -46,7 +46,14 @@ export class BotAvatarService {
     }
     const dir = this.#avatarDir(botId);
     mkdirSync(dir, { recursive: true });
-    const fileName = `avatar-${this.deps.clock.now()}${ext}`;
+    // clock.now() can collide within the same millisecond under fast CI;
+    // bump the stamp until the path is free so re-uploads always get a new name.
+    let stamp = this.deps.clock.now();
+    let fileName = `avatar-${stamp}${ext}`;
+    while (existsSync(path.join(dir, fileName))) {
+      stamp += 1;
+      fileName = `avatar-${stamp}${ext}`;
+    }
     writeFileSync(path.join(dir, fileName), bytes);
     // One avatar slot per bot: drop earlier uploads so the directory stays
     // bounded (the renderer caches by file name, so in-flight readers of the
