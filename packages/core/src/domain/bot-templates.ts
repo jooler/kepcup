@@ -189,6 +189,9 @@ export class BotTemplateService {
       );
     }
 
+    // 遮罩形状只在需要非默认值且确实内嵌了上传头像时写入；旧模板无该项 → circle。
+    const avatarMask = avatar !== undefined && bot.avatarMask === 'rounded' ? 'rounded' : undefined;
+
     // 防御纵深：文件名已过滤，这里 safeParse 兜底任何残余的 schema 违规，
     // 不让裸 ZodError 变成 INTERNAL 吐给用户。
     const parsed = botTemplateSchema.safeParse({
@@ -197,6 +200,7 @@ export class BotTemplateService {
       exportedAt: this.deps.clock.now(),
       profile,
       ...(avatar !== undefined ? { avatar } : {}),
+      ...(avatarMask !== undefined ? { avatarMask } : {}),
       skills: { authored, imported },
     });
     if (!parsed.success) {
@@ -471,6 +475,10 @@ export class BotTemplateService {
         // 头像失败不阻塞导入（Bot 已建好），留默认头像。
         this.deps.logger.warn({ botId: bot.id, error }, 'template avatar import skipped');
       }
+    }
+    // 遮罩形状单独一列（不在 Profile 里），建完 Bot 再写；上传失败时写了也无害。
+    if (template.avatar !== undefined && template.avatarMask === 'rounded') {
+      this.deps.bots.setAvatarMask(bot.id, template.avatarMask);
     }
 
     const installedSkills: { name: string; status: 'active' | 'disabled' }[] = [];

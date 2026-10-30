@@ -93,7 +93,14 @@
             onclick={() => void pick(bot.id)}
             data-testid={`${testid}-option-${bot.id}`}
           >
-            <BotAvatar botId={bot.id} name={bot.name} avatar={bot.avatar ?? null} class="size-6 shrink-0" animated={false} />
+            <BotAvatar
+              botId={bot.id}
+              name={bot.name}
+              avatar={bot.avatar ?? null}
+              mask={bot.avatarMask}
+              class="size-6 shrink-0"
+              animated={false}
+            />
             <span class="min-w-0 truncate">{bot.name}</span>
           </button>
         </li>

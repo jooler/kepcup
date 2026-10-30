@@ -191,6 +191,7 @@
           botId={lead.id}
           name={lead.name}
           avatar={lead.avatar}
+          mask={lead.avatarMask}
           class="size-5"
           animated={false}
         />
@@ -231,6 +232,7 @@
             botId={bot.id}
             name={bot.name}
             avatar={bot.avatar}
+            mask={bot.avatarMask}
             class="size-5"
             animated={false}
           />
@@ -306,6 +308,7 @@
               botId={bot.id}
               name={bot.name}
               avatar={bot.avatar}
+              mask={bot.avatarMask}
               class="size-7"
               animated={false}
             />

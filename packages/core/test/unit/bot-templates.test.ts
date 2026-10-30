@@ -272,6 +272,29 @@ describe('Bot 模板导入', () => {
     expect(target.skills.botSkillRow(result.botId, 'deploy')).toBeNull();
   });
 
+  it('上传头像的圆角方遮罩随模板导出/导入；圆形（默认）不写入模板', async () => {
+    const source = makeRig();
+    const rounded = source.bots.create({ identity: { name: '圆角', bio: '' } });
+    const png = Buffer.from([9, 8, 7, 6]);
+    source.avatars.upload(rounded.id, 'image/png', png);
+    source.bots.setAvatarMask(rounded.id, 'rounded');
+
+    const circle = source.bots.create({ identity: { name: '圆形', bio: '' } });
+    source.avatars.upload(circle.id, 'image/png', png);
+
+    const roundedTemplate = source.templates.buildTemplate(rounded.id);
+    expect(roundedTemplate.avatarMask).toBe('rounded');
+    expect(source.templates.buildTemplate(circle.id).avatarMask).toBeUndefined();
+
+    const file = path.join(dir, `mask-${Math.random().toString(36).slice(2, 8)}.json`);
+    source.templates.exportTo(rounded.id, file);
+
+    const target = makeRig();
+    const { sha256 } = target.templates.inspect(file);
+    const result = await target.templates.importFrom(file, sha256);
+    expect(target.bots.getOrThrow(result.botId).avatarMask).toBe('rounded');
+  });
+
   it('upload 头像随模板恢复；agent 引擎在本机不可用回退内置', async () => {
     const source = makeRig();
     const bot = source.bots.create({

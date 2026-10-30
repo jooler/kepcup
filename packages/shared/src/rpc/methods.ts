@@ -130,6 +130,7 @@ import {
   attachmentSchema,
   botProfileSchema,
   botSchema,
+  botAvatarMaskSchema,
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
@@ -958,6 +959,15 @@ export const botsAvatarDataInputSchema = z.object({
   file: z.string().min(1),
 });
 export const botsAvatarDataOutputSchema = z.object({ mime: z.string(), base64: z.string() });
+/**
+ * 设置 Bot 头像的遮罩形状（圆 / 圆角方）。单独一条 RPC 而不进 `bots.update`：
+ * `bots.update` 是整份 Profile 的三方合并语义，遮罩不是 Profile 字段（只影响上传
+ * 图片的裁切外观，存在 `bots.avatar_mask` 列）。
+ */
+export const botsAvatarMaskInputSchema = z.object({
+  id: z.string().min(1),
+  mask: botAvatarMaskSchema,
+});
 /**
  * Upload the user's own avatar (Profile settings). Core writes the file under
  * `user/avatar/`, keeps only the latest upload, points
@@ -2353,6 +2363,7 @@ export const rpcMethodSchemas = {
     output: botsAvatarUploadOutputSchema,
   },
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
+  'bots.avatar.mask': { input: botsAvatarMaskInputSchema, output: botGetOutputSchema },
   'user.avatar.upload': {
     input: userAvatarUploadInputSchema,
     output: userAvatarUploadOutputSchema,
@@ -2973,6 +2984,7 @@ const APP_METHODS = [
   'bots.update',
   'bots.avatar.upload',
   'bots.avatar.data',
+  'bots.avatar.mask',
   'bots.delete',
   'bots.deletionPreview',
   'bots.templatePreview',

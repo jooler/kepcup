@@ -5,14 +5,16 @@
    * （组件内部元素均为 size-full）。
    */
   import * as Avatar from '$lib/components/ui/avatar';
+  import type { BotAvatarMask } from '@kepcup/shared';
   import { avatarImages } from './avatar-images.svelte';
   import BotPresetAvatar from './BotPresetAvatar.svelte';
-  import { parsePresetAvatar, parseUploadedAvatar } from './presets';
+  import { avatarMaskClass, parsePresetAvatar, parseUploadedAvatar } from './presets';
 
   let {
     botId,
     name = '',
     avatar = null,
+    mask = null,
     class: klass = 'size-8',
     testId,
     animated = true,
@@ -22,6 +24,11 @@
     botId: string;
     name?: string;
     avatar?: string | null;
+    /**
+     * 上传头像的遮罩形状：'circle'（缺省）/ 'rounded' 圆角正方形。只作用于上传
+     * 图片——预置头像自带轮廓、首字母占位保持圆形。
+     */
+    mask?: BotAvatarMask | null;
     class?: string;
     testId?: string;
     animated?: boolean;
@@ -40,6 +47,7 @@
       : `--group-avatar-sx:${glyphShadowOffset.x}px; --group-avatar-sy:${glyphShadowOffset.y}px`,
   );
   const glyphShadowClass = $derived(glyphShadowOffset !== null ? 'group-avatar-glyph-shadow' : '');
+  const maskClass = $derived(avatarMaskClass(mask));
   const letterShadowClass = $derived(
     glyphShadowOffset !== null ? 'group-avatar-letter-shadow' : '',
   );
@@ -55,7 +63,11 @@
     <BotPresetAvatar value={avatar ?? ''} class="size-full {glyphShadowClass}" {animated} />
   </span>
 {:else if uploadFile !== null && uploadedUrl !== null}
-  <span class="inline-block {klass} shrink-0 overflow-hidden rounded-full" data-testid={testId}>
+  <span
+    class="inline-block {klass} shrink-0 overflow-hidden {maskClass}"
+    data-testid={testId}
+    data-avatar-mask={mask ?? 'circle'}
+  >
     <img src={uploadedUrl} alt={name} class="size-full object-cover" />
   </span>
 {:else if glyphShadowOffset !== null}

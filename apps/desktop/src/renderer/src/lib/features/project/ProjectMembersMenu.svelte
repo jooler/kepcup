@@ -78,6 +78,7 @@
           botId={member.bot.id}
           name={member.bot.name}
           avatar={member.bot.avatar ?? null}
+          mask={member.bot.avatarMask}
           class="size-7"
           animated={false}
         />
@@ -110,6 +111,7 @@
               botId={member.bot.id}
               name={member.bot.name}
               avatar={member.bot.avatar ?? null}
+              mask={member.bot.avatarMask}
               class="size-7 shrink-0"
               animated={false}
             />

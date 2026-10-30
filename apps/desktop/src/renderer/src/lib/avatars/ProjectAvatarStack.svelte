@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Users } from '@lucide/svelte';
+  import type { BotAvatarMask } from '@kepcup/shared';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from './BotAvatar.svelte';
@@ -16,7 +17,13 @@
     class: klass = 'size-10',
     includeUser = true,
   }: {
-    members: Array<{ id: string; name: string; avatar?: string | null }>;
+    members: Array<{
+      id: string;
+      name: string;
+      avatar?: string | null;
+      /** 上传头像的遮罩形状；缺省 = 圆形。 */
+      avatarMask?: BotAvatarMask | null;
+    }>;
     class?: string;
     /** 项目组始终含当前用户；个别场景可关掉。 */
     includeUser?: boolean;
@@ -66,6 +73,7 @@
               botId={member.id}
               name={member.name}
               avatar={member.avatar ?? null}
+              mask={member.avatarMask ?? null}
               class="size-full"
               animated={false}
               glyphShadowOffset={shadow}
