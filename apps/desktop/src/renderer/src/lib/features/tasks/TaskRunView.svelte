@@ -311,6 +311,11 @@
         </div>
       {/if}
     </div>
+
+    {#if plan !== null}
+      <!-- 右上角「任务清单」入口：清单内容在浮层里，不再占正文顶部。 -->
+      <TaskPlanPanel {plan} {narrow} />
+    {/if}
   </header>
 
   {#if task !== null}
@@ -337,14 +342,6 @@
         {hint}
       </div>
     {/if}
-  {/if}
-
-  {#if plan !== null}
-    <div class="shrink-0 px-4 py-2">
-      <div class="mx-auto w-full max-w-3xl">
-        <TaskPlanPanel {plan} />
-      </div>
-    </div>
   {/if}
 
   <div
