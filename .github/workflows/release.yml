@@ -5,8 +5,10 @@
 # 不发版；0.0.0 与预发布版本（带 -）永不发布。
 #
 # 流程：prepare（判定版本）→ rootfs（Windows 包要的 WSL rootfs）→ build（五个平台 job，
-# 一律 --publish never，见 BR-P13-003）+ server（headless 服务端 tar.gz，D102）→
-# publish（合并 mac 双架构更新清单，草稿 Release 上传全部产物后再转正式，用户端
+# 一律 --publish never，见 BR-P13-003）→ linux-rpm（AlmaLinux 9 容器，RHEL 9/10
+# x86_64+aarch64）→ linux-rpm-verify（RHEL 9/10 实装验证）→ linux-flatpak /
+# linux-snap（x64+arm64）→ server（headless 服务端 tar.gz，D102）→ publish（合并
+# mac 双架构与 Linux rpm 更新清单，草稿 Release 上传全部产物后再转正式，用户端
 # electron-updater 不会看到缺文件的半成品）。任一平台构建失败则整个版本不发布；
 # 修好后重新推送或手动重跑本工作流即可。
 #
@@ -258,6 +260,242 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+  # Linux RPM（RHEL 9 / RHEL 10）：在 AlmaLinux 9 容器里构建一份 rpm，同时支持
+  # RHEL 9 与 RHEL 10。选 9 作基线：glibc 向后兼容（RHEL 10 能跑 2.34 构建的
+  # 二进制），同时避免在 Ubuntu 24.04（glibc 2.39）上构建导致 RHEL 9 缺符号。
+  # 构建后由 linux-rpm-verify 在 RHEL 9 / 10 两个容器里分别安装验证。
+  #
+  # es-git 0.7.0 的官方 gnu 预编译绑定引用 glibc 2.38 的 __isoc23_strtol，RHEL 9 上
+  # Node 加载即失败（core 启动就 import es-git）。所以构建前用
+  # scripts/release/rebuild-es-git.sh 从同一 tag 源码重建（Alma 9 的 glibc 2.34）。
+  linux-rpm:
+    name: RPM (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: almalinux:9
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # checkout 依赖 git，node-gyp / rpmbuild / cargo 的构建依赖也在这里装。
+      # Node 用 actions/setup-node 下载官方产物（glibc 2.28+，两个发行版都能跑）。
+      - name: Install build toolchain
+        run: |
+          dnf install -y git tar gzip xz findutils which \
+            gcc gcc-c++ make python3 pkgconf cmake \
+            perl perl-IPC-Cmd perl-FindBin perl-Time-Piece perl-File-Copy perl-Digest-SHA \
+            rpm-build
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Rebuild es-git against RHEL 9 glibc
+        run: bash scripts/release/rebuild-es-git.sh
+      - run: pnpm -r build
+      - name: Build RPM
+        working-directory: apps/desktop
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          node scripts/dist.mjs --linux rpm --${{ matrix.arch }} -c.buildNumber=1
+          rpmfile=$(ls release/*.rpm)
+          rpm -qp --requires "$rpmfile"
+          # sed 读完整输入（避免 pipefail 下 head 提前关管道让 rpm 收到 SIGPIPE）。
+          rpm -qpl "$rpmfile" | sed -n '1,20p'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-rpm-${{ matrix.arch }}
+          # latest-linux*.yml 里有 rpm 的 sha512/size，publish 会把它并进
+          # AppImage/deb 的更新清单（electron-updater 按 .rpm 后缀选文件）。
+          path: |
+            apps/desktop/release/*.rpm
+            apps/desktop/release/latest-linux*.yml
+          retention-days: 14
+          if-no-files-found: error
+
+  # 同一份 rpm 在 RHEL 9 与 RHEL 10 上都要装得上：依赖名在两个发行版的仓库里都能
+  # 解析，安装后主程序没有 missing shared library（rpm 的 AutoReq 被 fpm 关闭，
+  # 只校验我们显式声明的 depends，所以必须真装一遍）。
+  linux-rpm-verify:
+    name: RPM install (${{ matrix.distro }} ${{ matrix.arch }})
+    needs: [prepare, linux-rpm]
+    if: needs.prepare.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: RHEL 9
+            image: almalinux:9
+            arch: x64
+            runner: ubuntu-24.04
+          - distro: RHEL 10
+            image: almalinux:10
+            arch: x64
+            runner: ubuntu-24.04
+          - distro: RHEL 9
+            image: almalinux:9
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - distro: RHEL 10
+            image: almalinux:10
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-linux-rpm-${{ matrix.arch }}
+          path: rpm
+      - name: Install and check shared libraries
+        run: |
+          rpmfile=$(find rpm -name '*.rpm' -print -quit)
+          test -n "$rpmfile"
+          rpm -qp --requires "$rpmfile"
+          dnf install -y --setopt=install_weak_deps=False "$rpmfile"
+          missing=$(ldd /opt/KepCup/KepCup | grep "not found" || true)
+          if [ -n "$missing" ]; then
+            echo "$missing"
+            exit 1
+          fi
+
+  # Linux Flatpak：electron-builder 的 flatpak target 会从 Flathub 拉 freedesktop
+  # runtime/sdk 与 Electron2 BaseApp，再调 flatpak-builder 打 .flatpak bundle。
+  # 只作为 GitHub Release 资产分发（不上 Flathub，原因见 docs/dev/06-release.md）。
+  linux-flatpak:
+    name: Flatpak (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder ostree
+          # flatpak-builder 用 bwrap；Ubuntu 24.04 默认限制非特权 user namespace。
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build Flatpak bundle
+        working-directory: apps/desktop
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: node scripts/dist.mjs --linux flatpak --${{ matrix.arch }}
+      - name: Verify bundle
+        run: |
+          bundle=$(ls apps/desktop/release/*.flatpak)
+          test -n "$bundle"
+          repo=$(mktemp -d)
+          ostree init --mode=archive --repo="$repo"
+          # 解包导入一遍：bundle 结构/元数据坏了会在这一步失败，而不是等用户安装。
+          flatpak build-import-bundle "$repo" "$bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-flatpak-${{ matrix.arch }}
+          path: apps/desktop/release/*.flatpak
+          retention-days: 14
+          if-no-files-found: error
+
+  # Linux Snap：electron-builder 生成 snapcraft.yaml（core24、classic）并调用
+  # snapcraft。CI 用 --destructive-mode 直接在 Ubuntu 24.04 runner 上构建，
+  # 不需要 LXD/Multipass。core24 覆盖 Ubuntu 22.04 / 24.04 / 最新版。
+  linux-snap:
+    name: Snap (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: Install snapcraft
+        run: |
+          sudo snap wait system seed.loaded || true
+          sudo snap install snapcraft --classic
+      - name: Build snap
+        working-directory: apps/desktop
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: node scripts/dist.mjs --linux snap --${{ matrix.arch }}
+      - name: Verify snap contents
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools
+          snapfile=$(ls apps/desktop/release/*.snap)
+          test -n "$snapfile"
+          unsquashfs -l "$snapfile" > /tmp/snap-contents.txt
+          grep -q 'meta/snap.yaml' /tmp/snap-contents.txt
+          grep -q 'app/KepCup$' /tmp/snap-contents.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-snap-${{ matrix.arch }}
+          path: apps/desktop/release/*.snap
+          retention-days: 14
+          if-no-files-found: error
+
   # D102 headless 服务端：自包含 tar.gz（npm i -g 与解压直跑同一产物）。平台由
   # 构建机决定——NAS 主场景出 linux-x64 / linux-arm64；产物名 dist-server-* 落入
   # publish job 既有 dist-* 下载 pattern，无需改收集逻辑。
@@ -303,7 +541,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [prepare, build, server]
+    needs: [prepare, build, linux-rpm, linux-rpm-verify, linux-flatpak, linux-snap, server]
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
@@ -324,11 +562,30 @@ jobs:
             echo "expected 2 latest-mac.yml, found ${#mac_manifests[@]}"; exit 1
           fi
           node scripts/release/merge-update-manifests.mjs assets/latest-mac.yml "${mac_manifests[@]}"
+          # 每个架构有两份 Linux 清单：Ubuntu job（AppImage/deb）与 rpm job（rpm）。
+          # 按文件名直接 cp 会让其中一份覆盖另一份，rpm 安装就收不到应用内更新
+          # （或 AppImage/deb 清单丢掉）。合并后 electron-updater 按后缀选文件。
+          for pair in "x64:latest-linux.yml" "arm64:latest-linux-arm64.yml"; do
+            name=${pair#*:}
+            mapfile -t manifests < <(find dist -name "$name")
+            if [ "${#manifests[@]}" -ne 2 ]; then
+              echo "expected 2 $name, found ${#manifests[@]}"; exit 1
+            fi
+            main=""; rpm=""
+            for manifest in "${manifests[@]}"; do
+              if grep -qE '^path: .*\.rpm"?$' "$manifest"; then rpm="$manifest"; else main="$manifest"; fi
+            done
+            [ -n "$main" ] && [ -n "$rpm" ] || {
+              echo "$name: expected one AppImage/deb manifest and one rpm manifest"; exit 1
+            }
+            node scripts/release/merge-update-manifests.mjs "assets/$name" "$main" "$rpm"
+          done
           while IFS= read -r file; do
             name=$(basename "$file")
             [ ! -e "assets/$name" ] || { echo "duplicate asset $name (two jobs built the same file)"; exit 1; }
             cp "$file" "assets/$name"
-          done < <(find dist -type f ! -name latest-mac.yml)
+          done < <(find dist -type f \
+            ! -name latest-mac.yml ! -name latest-linux.yml ! -name latest-linux-arm64.yml)
           ls -la assets
           for required in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do
             [ -f "assets/$required" ] || { echo "missing $required"; exit 1; }

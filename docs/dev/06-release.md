@@ -10,12 +10,15 @@ KepCup 怎么打包、发布到哪些渠道、用户怎么收到更新，以及�
 | Windows（x64 / arm64） | GitHub Releases：一个合并 NSIS 安装包 | 推 main 后 CI 自动构建、发布 | 应用内自动更新 |
 | Windows | Microsoft Store：MSIX（x64，arm64 机器走仿真） | CI 构建 MSIX，本地跑 `store-upload.mjs` 提交 | 商店更新，应用内更新关闭 |
 | Linux（x64 / arm64） | GitHub Releases：AppImage + deb | 推 main 后 CI 自动构建、发布 | AppImage 应用内静默更新；deb 应用内更新（会弹 pkexec 要密码） |
+| Linux RHEL 9 / 10（x86_64 / aarch64） | GitHub Releases：rpm（`kepcup-<version>.x86_64.rpm`，AlmaLinux 9 基线） | 推 main 后 CI 在 AlmaLinux 9 容器里构建，再分别在 RHEL 9/10 容器安装冒烟 | 应用内更新（electron-updater 按 rpm 安装类型更新；会弹 pkexec 要密码） |
+| Linux Flatpak（x64 / arm64） | GitHub Releases：`.flatpak` bundle（freedesktop 26.08 运行时） | 推 main 后 CI 构建；不上 Flathub（见下文） | 由 Flatpak 渠道更新（重新安装新 bundle）；应用内更新关闭 |
+| Linux Snap（x64 / arm64） | GitHub Releases：`.snap`（core24，classic） | 推 main 后 CI 用 snapcraft 构建；不自动上架 Snap Store | 由 snapd 更新（`snap refresh`）；应用内更新关闭 |
 | Linux x64 / arm64（headless 服务端） | GitHub Releases：`kepcup-server-v{v}-{platform}-{arch}.tar.gz`（`npm i -g <url>` 或解压 `./dist/cli.js` 直跑） | release.yml 的 `server` job（pack + 干净解压冒烟）随桌面版一起发；部署见 `apps/server/README.md` | 暂无自动更新：重新下载安装（数据目录不受影响） |
 
 **不做的渠道：**
 
 - **Mac App Store**：上架必须开 App Sandbox，子进程会继承应用的沙箱，用户机器上的 CLI（git、claude、brew 装的工具）读不到家目录和 `/opt/homebrew`；KepCup 自己的命令沙箱用的 `sandbox-exec` 在 App Sandbox 里也用不了。另外审核指南 2.5.2 禁止执行会改变功能的代码。核心能力无法保留，所以不做 Mac App Store。Developer ID 签名 + 公证同样没有「未知开发者」警告，你的 Apple 开发者身份用在这里。
-- **Flathub**：见 [Linux 与 Flathub](#linux-与-flathub)。
+- **Flathub**：不上架（原因见 [Linux 与 Flathub](#linux-与-flathub)），但 CI 会构建自托管的 `.flatpak` bundle，作为 GitHub Release 资产分发。
 
 ## 分支与版本
 
@@ -117,20 +120,27 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
    - `windows-latest`：`--x64 --arm64` 在同一次构建里出合并的 NSIS 安装包和唯一的 `latest.yml`（分开构建的话，两个 `latest.yml` 会互相覆盖）。配了商店变量时再单独构建一次 x64 MSIX：不签名（用 Windows 证书签会因为发布者和商店身份不符而失败），输出到 `release-store/`。
    - 每个 job 都写全目标（如 `--mac dmg zip --arm64`）：只给架构时 electron-builder 会沿用配置里的 arch 列表，两个架构都构建。
    - `ubuntu-24.04` / `ubuntu-24.04-arm`：AppImage + deb。
-4. **publish**：同名文件出现在两个 job 的产物里时直接失败。两个 macOS job 各写了一份 `latest-mac.yml`，用 `scripts/release/merge-update-manifests.mjs` 合并成一份（electron-updater 按文件名里有没有 `arm64` 选架构）。确认 4 份更新清单齐全后，建草稿 Release、上传全部文件，再转为正式版并标记为 latest。上次中途失败留下的同名草稿会先删掉。
+4. **linux-rpm**（2 个 job：x86_64 / aarch64）：在 `almalinux:9` 容器里 `pnpm install` + `pnpm -r build` + `dist.mjs --linux rpm`，而不是在 Ubuntu 上交叉打包。选 RHEL 9 作基线是因为 glibc 向后兼容（RHEL 10 能跑 2.34 构建的二进制），一份 rpm 同时支持 RHEL 9/10；同时避免 Ubuntu 24.04 的 glibc 2.39 污染原生模块（RHEL 9 加载时报 missing symbol）。
+   - `es-git@0.7.0` 的官方 gnu 预编译绑定引用 glibc 2.38 才有的 `__isoc23_strtol`，RHEL 9 上 Node 加载即失败（core 启动就 import es-git）。所以构建前跑 `scripts/release/rebuild-es-git.sh`，从同一 tag 源码重建。
+   - rpm job 产出的 `latest-linux*.yml` 里有 rpm 的 sha512/size；publish 会把它和 AppImage/deb 的清单合并，rpm 安装才能走应用内更新。
+5. **linux-rpm-verify**（4 个 job：RHEL 9/10 × x86_64/aarch64）：下载 rpm 后在对应发行版容器里 `dnf install`，再对 `/opt/KepCup/KepCup` 跑 `ldd` 确认没有 missing shared library。rpm 的 AutoReq 被 fpm 关闭，只校验我们显式声明的 `depends`，所以必须真装一遍。
+6. **linux-flatpak**（x64 / arm64）：Ubuntu runner 上安装 `flatpak` + `flatpak-builder`，从 Flathub 拉 freedesktop `26.08` runtime/sdk 和 `org.electronjs.Electron2.BaseApp`，由 electron-builder 的 `flatpak` target 打 `.flatpak` bundle；构建后用 `flatpak build-import-bundle` 导入一遍验证结构。
+7. **linux-snap**（x64 / arm64）：Ubuntu runner 上 `snap install snapcraft --classic`，electron-builder 生成 `snapcraft.yaml`（core24、classic）并以 `--destructive-mode` 构建（不需要 LXD/Multipass）；构建后用 `unsquashfs -l` 校验 `meta/snap.yaml` 与应用入口。
+8. **publish**：同名文件出现在两个 job 的产物里时直接失败。两个 macOS job 各写了一份 `latest-mac.yml`，用 `scripts/release/merge-update-manifests.mjs` 合并成一份（electron-updater 按文件名里有没有 `arm64` 选架构）；Linux 每个架构的 AppImage/deb 与 rpm 清单同样合并。确认 4 份更新清单齐全后，建草稿 Release、上传全部文件，再转为正式版并标记为 latest。上次中途失败留下的同名草稿会先删掉。
 
 上传到 Release 的文件：
 
 | 文件 | 用途 |
 |---|---|
 | `latest.yml`、`latest-mac.yml`、`latest-linux.yml`、`latest-linux-arm64.yml` | electron-updater 的更新清单 |
-| `*.exe`、`*-mac.zip`、`*.AppImage`、`*.deb` 及各自的 `.blockmap` | 安装与增量更新 |
+| `*.exe`、`*-mac.zip`、`*.AppImage`、`*.deb`、`*.rpm` 及各自的 `.blockmap` | 安装与增量更新 |
 | `*.dmg` | macOS 首次安装 |
+| `*.flatpak`、`*.snap` | Linux 渠道包（手动安装；无应用内更新） |
 
 ## 各渠道的更新方式
 
-- **GitHub 渠道**（dmg/zip、NSIS、AppImage、deb）：electron-updater 读 `electron-builder.yml` 里 `publish` 写入的 `app-update.yml`（`jooler/kepcup`），启动后延迟检查、之后定时检查，后台下载；有执行在进行时由 update-gate 等它结束或请用户确认后再重启安装（P13 任务 2）。`KEPCUP_UPDATE_URL` 环境变量可以在运行时改成任意 generic HTTPS 源。
-- **商店 / Flatpak 渠道**：`externalUpdateChannel()` 检测到 `process.windowsStore`、`process.mas` 或 `FLATPAK_ID` 时不配置更新源、不检查，更新状态一直是 idle。
+- **GitHub 渠道**（dmg/zip、NSIS、AppImage、deb、rpm）：electron-updater 读 `electron-builder.yml` 里 `publish` 写入的 `app-update.yml`（`jooler/kepcup`），启动后延迟检查、之后定时检查，后台下载；有执行在进行时由 update-gate 等它结束或请用户确认后再重启安装（P13 任务 2）。`KEPCUP_UPDATE_URL` 环境变量可以在运行时改成任意 generic HTTPS 源。
+- **商店 / Flatpak / Snap 渠道**：`externalUpdateChannel()` 检测到 `process.windowsStore`、`process.mas`、`FLATPAK_ID` 或 `SNAP_NAME` 时不配置更新源、不检查，更新状态一直是 idle。Flatpak / Snap 的只读挂载无法被 electron-updater 替换，更新由对应渠道负责。
 
 ## 更新镜像与选源（R2 + OSS）
 
@@ -153,7 +163,30 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
 3. **沙箱冲突**：Flatpak 的 seccomp 禁止建新的用户命名空间，KepCup 在 Linux 上用的 bubblewrap 沙箱（srt）在 Flatpak 里跑不起来；执行用户机器上的工具也要走 `flatpak-spawn --host`，需要改执行层代码。
 4. **更新节奏不是「推送触发」**：Flathub 靠 external-data-checker 定时检查上游 Release，一个仓库大约每 24 小时轮到一次，然后开 PR、构建、合并；自动合并（`automerge-flathubbot-prs`）还要申请 linter 例外，只批给已验证的应用。
 
-结论：Linux 走 GitHub Releases 的 AppImage + deb，它们都有应用内自动更新，体验上已经覆盖「推送即更新」。仍然想上 Linux 应用商店的话，可以评估 Snap Store：经典约束（classic confinement）可以访问宿主，适合开发工具类应用，但需要人工审核，也要先确认其政策；electron-builder 有 `snap` 目标。这件事等有明确需求时再单独立项。
+结论：**不上 Flathub**，但 CI 会构建自托管的 `.flatpak` bundle（GitHub Release 资产）；Linux 同时还出 RPM 与 Snap，见下节。
+
+## Linux 渠道包（RPM / Flatpak / Snap）
+
+三类包都在 release.yml 里随版本构建。RPM 与 AppImage/deb 一样走 electron-updater（见 `latest-linux.yml`）；Flatpak/Snap 是只读安装，无法应用内替换，更新由对应渠道负责。
+
+**RPM（RHEL 9 / RHEL 10）**
+
+- 在 `almalinux:9` 容器里从源码构建，一份 rpm 同时支持 RHEL 9 与 RHEL 10（glibc 向后兼容），覆盖 x86_64 与 aarch64。不要在 Ubuntu runner 上出 rpm：Ubuntu 24.04 的 glibc 2.39 会让 `npmRebuild` 产出的原生模块依赖 RHEL 9（2.34）没有的符号。
+- `es-git@0.7.0` 的 gnu 预编译绑定引用 `__isoc23_strtol`（glibc 2.38），RHEL 9 上 Node 一加载就失败。构建前用 `scripts/release/rebuild-es-git.sh` 从同一 tag 源码重建；升级 `es-git` 时脚本会自动跟随 `packages/core/package.json` 的版本。若上游源码构建不再可用，CI 会直接失败，不会静默发布一个起不来的包。
+- 安装：`sudo dnf install ./kepcup-<version>.x86_64.rpm`（aarch64 文件名对应 `aarch64`）。安装后应用内更新会按 rpm 类型走 electron-updater（与 deb 一样会弹 pkexec 要密码）。CI 的 `linux-rpm-verify` 会在 RHEL 9 和 RHEL 10 容器里各装一次并检查 `ldd`。
+
+**Flatpak（freedesktop 26.08）**
+
+- `.flatpak` bundle 由 electron-builder 的 `flatpak` target 产出，runtime/sdk 用当前最新的 freedesktop 26.08，`org.electronjs.Electron2.BaseApp//26.08`；Fedora 43+ 及更老版本都能安装（runtime 与宿主发行版解耦）。
+- 安装：`flatpak install --user ./kepcup-<version>-x86_64.flatpak`，运行 `flatpak run app.kepcup.desktop`。finish-args 给了 `home`、网络、摄像头/麦克风（`--device=all`）与 `org.freedesktop.Flatpak`（供 `flatpak-spawn --host`）。
+- **已知限制**：Flatpak 的 seccomp 禁止创建用户命名空间，KepCup 在 Linux 上的 bubblewrap/srt 命令沙箱在 Flatpak 内跑不起来；执行宿主工具也需要执行层改用 `flatpak-spawn --host`（当前没改）。这两项属于产品适配，不是打包问题。
+
+**Snap（core24，classic）**
+
+- CI 在 Ubuntu 24.04 runner 上用 snapcraft `--destructive-mode` 构建，不需要 LXD/Multipass。base 是 core24（Ubuntu 24.04 用户态），同一份 snap 可运行在 Ubuntu 22.04 / 24.04 / 最新版上。
+- 采用 **classic confinement**：应用要执行用户机器上的 CLI/工具，严格约束下这些都不可见。代价是 classic snap 不能直接自动上架 Snap Store（需要人工审核），本地安装要显式加 `--classic`：
+  `sudo snap install --dangerous --classic ./kepcup_<version>_amd64.snap`
+- 若以后要上架 Snap Store，先确认其经典约束审核政策；打包本身已就绪。
 
 ## 待补充
 
@@ -163,7 +196,8 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
   - 已修：`scripts/dist.mjs` 用 `process.execPath` 直接跑 `electron-vite` / `electron-builder` CLI（避免 Windows 上 `spawnSync('pnpm')` 找不到 `pnpm.cmd`）；Linux `executableName: KepCup`（避免 AppImage 因 `@kepcup/desktop` 含 `@` 失败）。
 - [ ] **自动更新端到端**：装 `0.1.0` → 发 `0.1.1` → 三平台确认能收到更新并安装（[todo/cross-platform-acceptance.md](../../todo/cross-platform-acceptance.md) P13「自动更新端到端」）。
 - [ ] **商店版开机自启**：MSIX 里 `app.setLoginItemSettings` 不生效，需要在清单里声明 StartupTask（electron-builder `appx.customExtensionsPath`），运行时改用 StartupTask API。在此之前，商店版设置页的「开机自启」开关不起作用。
-- [ ] **商店版更新界面**：应用内更新关闭后状态一直是 idle，点「检查更新」会显示「已是最新」，容易误导。商店/Flatpak 版应该显示「由 Microsoft Store 更新」。
+- [ ] **商店版更新界面**：应用内更新关闭后状态一直是 idle，点「检查更新」会显示「已是最新」，容易误导。商店/Flatpak/Snap 版应该显示「由 Microsoft Store / Flatpak / Snap 更新」。
+- [ ] **Linux 新渠道首跑**：第一次带 rpm/flatpak/snap 的版本观察 `linux-rpm`（2 个容器 job）、`linux-rpm-verify`（4 个）、`linux-flatpak`、`linux-snap`。重点看 RHEL 9/10 容器里 `dnf install` 的依赖解析、es-git 源码重建耗时（vendored libgit2/openssl，约 10 分钟）、flatpak-builder 在 GitHub runner 上的 bwrap/rofiles-fuse 可用性。失败只影响该版本发布，修好后重跑工作流即可。
 - [x] **Windows arm64 的 WSL rootfs**（2026-10-18 双架构接线解决）：rootfs job 现产 `resources/wsl/{x64,arm64}/` 双目录（arm64 容器跑在 qemu 上，`--platform` 与目标架构一一对应），electron-builder 按 `${arch}` 子目录取件；arm64 安装包不再带 x64 rootfs。**arm64 WSL2 真机自检仍留验证**——见 [todo/cross-platform-acceptance.md](../../todo/cross-platform-acceptance.md) P12。
 - [ ] **品牌信息统一**：`apps/desktop/package.json` 的 `homepage`/`author.email` 用的是 `kepcup.app`，官方域名是 `kepcup.com`。商店和 Linux 包的元数据都会显示这些值。
 - [ ] **隐私政策 URL**：Microsoft Store 提交要求提供（应用会访问网络、调用用户配置的模型服务）。
