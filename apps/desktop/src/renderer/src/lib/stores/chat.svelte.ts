@@ -1,17 +1,13 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
 import {
-  PROJECT_MEMBER_PREVIEW_MAX,
   isArchivedConversation,
   projectTitleFromMemberNames,
   isSparseBotProfile,
   messagePreviewText,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
-import {
-  ChatSession,
-  type ConversationView,
-  type ProjectMemberView,
-} from './chat-session.svelte';
+import { ChatSession, type ConversationView, type ProjectMemberView } from './chat-session.svelte';
+import { memberPreviewsOf, withUpdatedBot } from './member-preview';
 
 export type { ActiveRunView, ConversationView, ProjectMemberView } from './chat-session.svelte';
 
@@ -337,12 +333,8 @@ class ChatState {
   }
 
   #syncMemberPreviews(conversationId: string, members: ProjectMemberView[]): void {
-    // 与 core 下发的 memberPreviews 同一上限（左栏群头像只画这么多）。
-    const memberPreviews = members.slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
-      id: member.bot.id,
-      name: member.bot.name,
-      avatar: member.bot.avatar,
-    }));
+    // 与 core 下发的 memberPreviews 同一形状 / 同一上限（含头像遮罩）。
+    const memberPreviews = memberPreviewsOf(members);
     this.conversations = this.conversations.map((conversation) =>
       conversation.id === conversationId ? { ...conversation, memberPreviews } : conversation,
     );
@@ -869,7 +861,9 @@ class ChatState {
     }
     this.runningByConversation[run.conversationId] = running;
     this.conversations = this.conversations.map((conversation) =>
-      conversation.id === run.conversationId ? { ...conversation, runningBotIds: running } : conversation,
+      conversation.id === run.conversationId
+        ? { ...conversation, runningBotIds: running }
+        : conversation,
     );
   }
 
@@ -877,12 +871,7 @@ class ChatState {
     this.conversations = this.conversations.map((conversation) => {
       const withBot = conversation.bot?.id === bot.id ? { ...conversation, bot } : conversation;
       if (!withBot.memberPreviews?.some((member) => member.id === bot.id)) return withBot;
-      return {
-        ...withBot,
-        memberPreviews: withBot.memberPreviews.map((member) =>
-          member.id === bot.id ? { id: bot.id, name: bot.name, avatar: bot.avatar } : member,
-        ),
-      };
+      return { ...withBot, memberPreviews: withUpdatedBot(withBot.memberPreviews, bot) };
     });
   }
 
