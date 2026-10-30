@@ -1981,9 +1981,11 @@ export const enUS = {
   'update.downloadingProgress': 'Downloading v{version} - {percent}%',
   'update.downloadedWaiting': 'New version v{version} downloaded; waiting for runs to finish…',
   'update.applyNow': 'Restart and update',
+  'update.readyTitle': 'Update ready',
   'update.readyToInstall':
     'Version {version} has been downloaded. The update takes effect after the app restarts. Restart now?',
   'update.restartLater': 'Restart later',
+  'update.awaitingTitle': 'Update paused',
   'update.awaitingUser':
     '{count} runs are still in progress, so the update is paused. Keep waiting (it installs automatically once they finish), or interrupt them and update now (unfinished runs will be canceled).',
   'update.keepWaiting': 'Keep waiting',
