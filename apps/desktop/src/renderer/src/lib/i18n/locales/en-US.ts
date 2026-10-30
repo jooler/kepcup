@@ -621,6 +621,10 @@ export const enUS = {
   'rightPanel.avatarUploadCropHint': 'You can crop it next; the avatar becomes square',
   'rightPanel.avatarUploadFailed': 'Avatar upload failed: {reason}',
   'rightPanel.avatarSaveFailed': 'Avatar save failed: {reason}',
+  'rightPanel.avatarMaskTitle': 'Avatar shape',
+  'rightPanel.avatarMask.circle': 'Circle',
+  'rightPanel.avatarMask.rounded': 'Rounded square',
+  'rightPanel.avatarMask.hint': 'Only affects uploaded images; presets keep their own outline',
   // --- D48: bot template export/import (docs/design/48-bot-template-export.md) ----
   'botTemplate.exportButton': 'Export as template',
   'botTemplate.desktopOnly': 'Desktop only',

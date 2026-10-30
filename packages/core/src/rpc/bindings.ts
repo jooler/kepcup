@@ -43,6 +43,7 @@ import {
   botsAvatarUploadOutputSchema,
   botsAvatarDataInputSchema,
   botsAvatarDataOutputSchema,
+  botsAvatarMaskInputSchema,
   userAvatarUploadInputSchema,
   userAvatarUploadOutputSchema,
   userAvatarDataInputSchema,
@@ -924,6 +925,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { mime: data.mime, base64: data.base64 };
       },
     ),
+    // 遮罩形状只写 `bots.avatar_mask`（不是 Profile 字段），与头像上传分开。
+    'bots.avatar.mask': method(botsAvatarMaskInputSchema, botGetOutputSchema, async (input) => {
+      const bot = domain.bots.setAvatarMask(input.id, input.mask);
+      publish('bot.updated', { bot });
+      return { bot };
+    }),
     // 用户头像：落盘 + 写 settings.userProfileAvatar 在同一把设置写锁里；发布
     // settings.changed 让设置页 / 侧栏头像即时刷新。
     'user.avatar.upload': method(

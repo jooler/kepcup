@@ -1,3 +1,4 @@
+import type { BotAvatarMask } from '@kepcup/shared';
 import { parsePresetAvatar } from '$lib/avatars/presets';
 import { chat } from '$lib/stores/chat.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
@@ -11,6 +12,15 @@ export function botAvatarOf(botId: string): string | null {
     chat.main.members.find((member) => member.bot.id === botId)?.bot.avatar ??
     contacts.bots.find((bot) => bot.id === botId)?.avatar ??
     null
+  );
+}
+
+/** 与 `botAvatarOf` 同源的头像遮罩：项目成员 → 通讯录 → 缺省圆形。 */
+export function botMaskOf(botId: string): BotAvatarMask {
+  return (
+    chat.main.members.find((member) => member.bot.id === botId)?.bot.avatarMask ??
+    contacts.bots.find((bot) => bot.id === botId)?.avatarMask ??
+    'circle'
   );
 }
 

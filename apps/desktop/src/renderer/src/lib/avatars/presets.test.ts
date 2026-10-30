@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   AVATAR_COLORS,
   AVATAR_FOREGROUND_LIGHT,
+  AVATAR_MASKS,
   AVATAR_SHAPES,
+  avatarMaskClass,
   avatarOnFillForeground,
   parsePresetAvatar,
   presetForName,
@@ -65,5 +67,20 @@ describe('presetForName', () => {
     const avatars = new Set(names.map(presetForName));
     expect(avatars.size).toBeGreaterThanOrEqual(names.length - 1);
     expect(presetForName('阿甲')).not.toBe(presetForName('阿乙'));
+  });
+});
+
+describe('avatarMaskClass', () => {
+  it('maps the mask to the outer rounding class, defaulting to a circle', () => {
+    expect(avatarMaskClass('rounded')).toBe('rounded-[28%]');
+    // 旧数据 / 未设置 / 未知值一律圆形（与 core 的 normalizeBotAvatarMask 同义）。
+    expect(avatarMaskClass('circle')).toBe('rounded-full');
+    expect(avatarMaskClass(null)).toBe('rounded-full');
+    expect(avatarMaskClass(undefined)).toBe('rounded-full');
+    expect(avatarMaskClass('square' as never)).toBe('rounded-full');
+  });
+
+  it('offers exactly the two switchable options, circle first', () => {
+    expect(AVATAR_MASKS).toEqual(['circle', 'rounded']);
   });
 });

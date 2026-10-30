@@ -231,6 +231,7 @@
       botId={message.senderBotId ?? ''}
       {name}
       avatar={senderBot?.avatar ?? null}
+      mask={senderBot?.avatarMask ?? null}
       class="mt-0.5 size-7 shrink-0"
       animated={false}
       testId="bot-avatar"

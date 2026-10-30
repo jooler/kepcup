@@ -6,19 +6,22 @@
    * 裁成方形（弹窗 Portal 到 body），确认再上传。
    */
   import { ImagePlus, RotateCcw } from '@lucide/svelte';
-  import type { Bot } from '@kepcup/shared';
+  import { normalizeBotAvatarMask, type Bot, type BotAvatarMask } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import {
     AVATAR_COLORS,
+    AVATAR_MASKS,
     AVATAR_SHAPES,
     DEFAULT_AVATAR,
     formatPresetAvatar,
     parsePresetAvatar,
+    parseUploadedAvatar,
   } from '$lib/avatars/presets';
   import AvatarCropper from '$lib/avatars/AvatarCropper.svelte';
+  import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import BotPresetAvatar from '$lib/avatars/BotPresetAvatar.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
@@ -42,6 +45,11 @@
   );
   // 预置网格里实时反显的颜色：上传态等没有预置颜色时用默认色。
   const activeColor = $derived(selected.color);
+
+  // 遮罩切换只对上传头像露出：预置头像自带轮廓，改形状没有意义。
+  const uploadedFile = $derived(parseUploadedAvatar(bot.avatar));
+  const mask = $derived(normalizeBotAvatarMask(bot.avatarMask));
+  const MASK_OPTIONS = AVATAR_MASKS;
 
   // Esc 经层级仲裁：头像选择器开着时，一次 Esc 只收起它，不连带关外层的 Bot 详情覆盖层。
   $effect(() => {
@@ -74,6 +82,20 @@
         },
         base,
       );
+    } catch (error) {
+      toast.error(
+        t('rightPanel.avatarSaveFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+
+  /** 遮罩单独一条 RPC（不是 Profile 字段）：core 发布 bot.updated，头像即时换形状。 */
+  async function applyMask(next: BotAvatarMask): Promise<void> {
+    if (next === mask) return;
+    try {
+      await core.call('bots.avatar.mask', { id: bot.id, mask: next });
     } catch (error) {
       toast.error(
         t('rightPanel.avatarSaveFailed', {
@@ -200,6 +222,41 @@
       </div>
     {:else}
       <div class="p-2">
+        {#if uploadedFile !== null}
+          <div class="mb-2" data-testid="avatar-mask-picker">
+            <p class="flex items-baseline gap-1.5 px-1 pb-1.5">
+              <span class="text-xs font-medium">{t('rightPanel.avatarMaskTitle')}</span>
+              <span class="text-[11px] text-muted-foreground"
+                >{t('rightPanel.avatarMask.hint')}</span
+              >
+            </p>
+            <div class="flex gap-2">
+              {#each MASK_OPTIONS as option (option)}
+                <button
+                  type="button"
+                  class="flex flex-1 items-center justify-center gap-2 rounded-xl border px-2 py-2 transition-colors hover:bg-accent {mask ===
+                  option
+                    ? 'border-ring bg-accent'
+                    : 'border-border/60'}"
+                  onclick={() => void applyMask(option)}
+                  aria-pressed={mask === option}
+                  data-testid={`avatar-mask-${option}`}
+                >
+                  <!-- 直接用当前上传图做预览：选的就是最终效果。 -->
+                  <BotAvatar
+                    botId={bot.id}
+                    name={bot.name}
+                    avatar={bot.avatar}
+                    mask={option}
+                    class="size-8"
+                    animated={false}
+                  />
+                  <span class="text-xs">{t(`rightPanel.avatarMask.${option}` as MessageKey)}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
         <label
           class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed p-2 px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent {uploading
             ? 'pointer-events-none opacity-60'
@@ -227,6 +284,7 @@
 {#if cropFile !== null}
   <AvatarCropper
     file={cropFile}
+    {mask}
     busy={uploading}
     onconfirm={onCropConfirm}
     oncancel={() => (cropFile = null)}

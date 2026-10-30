@@ -6,6 +6,8 @@
    * SVG 输入经 <img> 光栅化（裁切输出恒为位图），与整图上传共用体积约束。
    */
   import { ZoomIn, ZoomOut } from '@lucide/svelte';
+  import type { BotAvatarMask } from '@kepcup/shared';
+  import { avatarMaskClass } from './presets';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -13,11 +15,14 @@
 
   let {
     file,
+    mask = null,
     busy = false,
     onconfirm,
     oncancel,
   }: {
     file: File;
+    /** Bot 头像的遮罩形状：右下预览小窗跟随（缺省 / null = 圆形）。 */
+    mask?: BotAvatarMask | null;
     busy?: boolean;
     onconfirm: (payload: { mime: 'image/png'; bytesBase64: string }) => void;
     oncancel: () => void;
@@ -181,7 +186,7 @@
         </div>
         <div class="flex flex-col items-center gap-2">
           <div
-            class="relative shrink-0 overflow-hidden rounded-full border shadow-sm"
+            class="relative shrink-0 overflow-hidden {avatarMaskClass(mask)} border shadow-sm"
             style="width:{PREVIEW}px;height:{PREVIEW}px;"
             data-testid="avatar-cropper-preview"
           >

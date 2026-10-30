@@ -2,8 +2,11 @@ import {
   AppError,
   BUILTIN_AGENT_RUNTIME,
   botProfileSchema,
+  botAvatarMaskSchema,
+  normalizeBotAvatarMask,
   newId,
   type Bot,
+  type BotAvatarMask,
   type BotProfile,
   type AgentPermissionTier,
   type BotSystemRole,
@@ -22,6 +25,7 @@ interface BotRow {
   id: string;
   name: string;
   avatar: string | null;
+  avatar_mask: string | null;
   bio: string | null;
   profile_json: string;
   status: 'active' | 'deleted';
@@ -74,6 +78,7 @@ function rowToBot(row: BotRow): Bot {
     id: row.id,
     name: row.name,
     avatar: row.avatar,
+    avatarMask: normalizeBotAvatarMask(row.avatar_mask),
     bio: row.bio ?? '',
     profile,
     status: row.status,
@@ -516,6 +521,22 @@ export class BotsService {
   }
 
   /**
+   * 头像遮罩写入（只动 `avatar_mask`，与 `setAvatar` 同级）：'circle' 圆 / 'rounded'
+   * 圆角方。与 avatar 分开写——`bots.update` 是整份 Profile 的三方合并，遮罩不在
+   * Profile 里；换成预置头像时遮罩保留，换回上传图片仍沿用上次的形状。
+   */
+  setAvatarMask(id: string, mask: BotAvatarMask): Bot {
+    const existing = this.getOrThrow(id);
+    if (existing.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
+    }
+    this.db
+      .prepare('update bots set avatar_mask = ?, updated_at = ? where id = ?')
+      .run(botAvatarMaskSchema.parse(mask), this.clock.now(), id);
+    return this.getOrThrow(id);
+  }
+
+  /**
    * Turns the row into a placeholder: identity fields are cleared so the id
    * stays reserved for history rendering, but no profile survives.
    */
@@ -538,7 +559,7 @@ export class BotsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update bots set name = '', avatar = NULL, bio = '', profile_json = '{}', status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
+        "update bots set name = '', avatar = NULL, avatar_mask = NULL, bio = '', profile_json = '{}', status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
       )
       .run(now, now, id);
   }

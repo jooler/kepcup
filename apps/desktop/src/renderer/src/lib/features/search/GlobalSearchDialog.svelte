@@ -460,6 +460,7 @@
           botId={row.bot.id}
           name={row.bot.name}
           avatar={row.bot.avatar}
+          mask={row.bot.avatarMask}
           class="size-10"
           fallbackClass="text-base"
         />
@@ -481,6 +482,7 @@
             botId={row.conversation.directBotId ?? row.conversation.id}
             name={row.conversation.bot?.name ?? row.conversation.directBotId ?? '?'}
             avatar={row.conversation.bot?.avatar ?? null}
+            mask={row.conversation.bot?.avatarMask ?? null}
             class="size-10"
             fallbackClass="text-base"
           />

@@ -147,7 +147,13 @@
             data-testid={`bot-card-${bot.id}`}
           >
             <div class="flex items-center gap-3">
-              <BotAvatar botId={bot.id} name={bot.name} avatar={bot.avatar} class="size-10" />
+              <BotAvatar
+                botId={bot.id}
+                name={bot.name}
+                avatar={bot.avatar}
+                mask={bot.avatarMask}
+                class="size-10"
+              />
               <div class="min-w-0">
                 <p class="truncate text-sm font-medium" data-testid="bot-card-name">{bot.name}</p>
                 <p class="truncate text-xs text-muted-foreground">{bot.bio}</p>

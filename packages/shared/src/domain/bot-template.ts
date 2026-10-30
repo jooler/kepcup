@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { botProfileSchema } from './types.js';
+import { botAvatarMaskSchema, botProfileSchema } from './types.js';
 
 /**
  * Bot 模板（docs/design/48-bot-template-export.md）：把一个 Bot 导出为单个 JSON
@@ -103,6 +103,11 @@ export const botTemplateSchema = z
     profile: botProfileSchema,
     /** `upload:` 头像内嵌字节；`preset:` 标识直接留在 profile.identity.avatar。 */
     avatar: botTemplateAvatarSchema.optional(),
+    /**
+     * 上传头像的遮罩形状（'rounded' 圆角方；缺省 = 'circle'）。只在上传头像需要
+     * 非默认遮罩时写入，旧模板缺这一项照样能读——不破坏模板格式版本。
+     */
+    avatarMask: botAvatarMaskSchema.optional(),
     skills: z
       .object({
         authored: z.array(botTemplateAuthoredSkillSchema).max(BOT_TEMPLATE_LIMITS.authoredSkills),

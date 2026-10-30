@@ -179,10 +179,28 @@ export type BotStatus = z.infer<typeof botStatusSchema>;
 export const botSystemRoleSchema = z.enum(['butler']);
 export type BotSystemRole = z.infer<typeof botSystemRoleSchema>;
 
+/**
+ * 上传头像的遮罩形状（`bots.avatar_mask` 列）：'circle' 圆形（默认）、'rounded'
+ * 圆角正方形。只影响 `upload:` 头像——预置头像自带轮廓，首字母占位保持圆形。
+ * 列值 NULL = 'circle'（旧数据与默认行为不变）。
+ */
+export const botAvatarMaskSchema = z.enum(['circle', 'rounded']);
+export type BotAvatarMask = z.infer<typeof botAvatarMaskSchema>;
+
+/** 列值 → 契约值：NULL / 未知一律按 'circle'（读侧容忍的写侧对偶）。 */
+export function normalizeBotAvatarMask(value: string | null | undefined): BotAvatarMask {
+  return value === 'rounded' ? 'rounded' : 'circle';
+}
+
 export const botSchema = z.object({
   id: z.string(),
   name: z.string(),
   avatar: z.string().nullable(),
+  /**
+   * 上传头像的遮罩形状；缺省 / 缺失 = 'circle'（旧行、未设置过遮罩的行）。
+   * 可选而非默认值，是为了不改变已有 schema 生产方的严格性（模板导入、测试夹具）。
+   */
+  avatarMask: botAvatarMaskSchema.optional(),
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
@@ -989,6 +1007,8 @@ export const conversationSchema = z.object({
         id: z.string(),
         name: z.string(),
         avatar: z.string().nullable(),
+        /** 上传头像的遮罩形状；缺省 = 'circle'。 */
+        avatarMask: botAvatarMaskSchema.optional(),
       }),
     )
     .optional(),
