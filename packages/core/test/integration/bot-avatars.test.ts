@@ -197,6 +197,10 @@ describe('bot avatars (upload / read / validation)', () => {
     await expect(
       core.rpc.call('bots.avatar.mask', { id: 'bot_missing', mask: 'rounded' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // 领域层直接调用（不经 RPC 校验）也应归一为 INVALID_INPUT，而不是裸 ZodError。
+    expect(() => core.services.domain!.bots.setAvatarMask(bot.id, 'square' as never)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_INPUT' }),
+    );
   });
 
   it('preset avatar strings round-trip through bots.update without touching the disk', async () => {

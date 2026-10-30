@@ -530,9 +530,14 @@ export class BotsService {
     if (existing.status !== 'active') {
       throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
     }
+    // RPC 边界已校验；这里兜住领域层直接调用，免得裸 ZodError 变成 INTERNAL。
+    const parsed = botAvatarMaskSchema.safeParse(mask);
+    if (!parsed.success) {
+      throw new AppError('INVALID_INPUT', parsed.error.issues[0]?.message ?? '头像遮罩不合法');
+    }
     this.db
       .prepare('update bots set avatar_mask = ?, updated_at = ? where id = ?')
-      .run(botAvatarMaskSchema.parse(mask), this.clock.now(), id);
+      .run(parsed.data, this.clock.now(), id);
     return this.getOrThrow(id);
   }
 
