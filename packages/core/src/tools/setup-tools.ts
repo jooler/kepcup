@@ -1,9 +1,13 @@
 import type { AppLanguage } from '@kepcup/shared';
 import { Type } from '@earendil-works/pi-ai';
 import {
+  BOT_KIND_MAX_CHARS,
+  BOT_KIND_PRESETS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_OPTIONS_MAX,
   SETUP_QUESTION_OPTIONS_MIN,
+  botKindSchema,
+  normalizeBotKind,
 } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { PROFILE_CHANGE_FIELDS } from './memory-tools.js';
@@ -79,6 +83,7 @@ export interface SetupToolFacade {
   saveProfile(
     botId: string,
     changes: Array<{ field: string; value: string }>,
+    kind?: string,
   ): { ok: boolean; message: string };
   /** Clears setup_state ('interviewing' → null) + publishes bot.updated. */
   finishSetup(botId: string): { ok: boolean; message: string };
@@ -101,6 +106,16 @@ export interface SetupToolFacade {
 
 export const SETUP_PROFILE_FIELDS = ['identity.name', ...PROFILE_CHANGE_FIELDS] as const;
 
+/** 内置分类提示（id + 中文标签），与 shared 的唯一清单同步。 */
+const BOT_KIND_CHOICES = BOT_KIND_PRESETS.map((preset) => `${preset.id}（${preset.label}）`).join(
+  '、',
+);
+
+const SAVE_PROFILE_KIND_HINT =
+  `kind（可选）：给这个 Bot 定分类。优先用内置分类 ${BOT_KIND_CHOICES} 之一；` +
+  `都不合适时给一个简短的自定义分类（≤ ${BOT_KIND_MAX_CHARS} 个字符，如「法务」「招聘」）。` +
+  '在访谈前两问内根据用户回答设置一次即可，之后除非用户明显改变定位不要反复改。';
+
 export function buildSetupTools(input: {
   identity: RunIdentity;
   setup: SetupToolFacade;
@@ -119,15 +134,20 @@ export function buildSetupTools(input: {
   const butler = input.variant === 'butler';
 
   const saveProfile: ToolDefinition<{
-    changes: Array<{ field: string; value: string }>;
+    changes?: Array<{ field: string; value: string }>;
+    kind?: string;
   }> = {
     name: 'save_profile',
     description:
-      '把你从用户回答中提炼的信息写入你自己的 Profile（初始化访谈期间可直接生效，无需审批）。field 只能是：identity.name、identity.bio、persona.personality、persona.tone、persona.style、persona.values、persona.sample_dialogues、role.expertise、role.responsibilities。只提交用户实际说过的内容。',
+      '把你从用户回答中提炼的信息写入你自己的 Profile（初始化访谈期间可直接生效，无需审批）。field 只能是：identity.name、identity.bio、persona.personality、persona.tone、persona.style、persona.values、persona.sample_dialogues、role.expertise、role.responsibilities。只提交用户实际说过的内容。' +
+      SAVE_PROFILE_KIND_HINT,
     parameters: Type.Object({
-      changes: Type.Array(Type.Object({ field: Type.String(), value: Type.String() }), {
-        description: '要写入的字段与内容',
-      }),
+      changes: Type.Optional(
+        Type.Array(Type.Object({ field: Type.String(), value: Type.String() }), {
+          description: '要写入的字段与内容；只设置分类时可省略或传空数组',
+        }),
+      ),
+      kind: Type.Optional(Type.String({ description: SAVE_PROFILE_KIND_HINT })),
     }),
     execute: async (params) => {
       if (identity.botId === null) {
@@ -137,17 +157,37 @@ export function buildSetupTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
-      const invalid = params.changes.filter(
+      const changes = params.changes ?? [];
+      const rawKind = params.kind?.trim() ?? '';
+      const kind = rawKind.length > 0 ? normalizeBotKind(rawKind) : undefined;
+      if (kind !== undefined) {
+        const parsed = botKindSchema.safeParse(kind);
+        if (!parsed.success) {
+          return {
+            ok: false,
+            content: parsed.error.issues[0]?.message ?? '分类不合法',
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+      }
+      if (changes.length === 0 && kind === undefined) {
+        return {
+          ok: false,
+          content: 'changes 与 kind 至少提供一个',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      const invalid = changes.filter(
         (change) => !(SETUP_PROFILE_FIELDS as readonly string[]).includes(change.field),
       );
-      if (invalid.length > 0 || params.changes.length === 0) {
+      if (invalid.length > 0) {
         return {
           ok: false,
           content: `field 只能是：${SETUP_PROFILE_FIELDS.join('、')}`,
           errorCode: 'INVALID_INPUT',
         };
       }
-      const result = setup.saveProfile(identity.botId, params.changes);
+      const result = setup.saveProfile(identity.botId, changes, kind);
       return result.ok
         ? { ok: true, content: result.message }
         : { ok: false, content: result.message, errorCode: 'INVALID_INPUT' };

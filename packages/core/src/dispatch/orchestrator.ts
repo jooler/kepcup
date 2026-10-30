@@ -32,6 +32,7 @@ import {
   findAgentEntry,
   projectMentionToken,
   newId,
+  parseBotKind,
   resolveCapabilities,
   resolveCapabilityOptIns,
   type SettingCardResolved,
@@ -4405,18 +4406,34 @@ export class Orchestrator {
                   saveProfile: (
                     setupBotId: string,
                     changes: Array<{ field: string; value: string }>,
+                    kind?: string,
                   ) => {
                     try {
                       const source = this.#deps.bots.get(setupBotId);
                       if (source === null) return { ok: false, message: 'Bot 不存在' };
-                      const updated = this.#deps.bots.updateDuringSetup(
-                        setupBotId,
-                        applyProfileChanges(source.profile, changes),
-                      );
+                      // 先归一并校验分类再写：下面是「profile → kind」两次写入，
+                      // 分类非法时若已经落了 profile 却不广播，库与 UI 会不一致。
+                      const nextKind = kind === undefined ? undefined : parseBotKind(kind);
+                      if (nextKind === null) {
+                        return { ok: false, message: '分类不合法（1~32 个字符）' };
+                      }
+                      let updated =
+                        changes.length > 0
+                          ? this.#deps.bots.updateDuringSetup(
+                              setupBotId,
+                              applyProfileChanges(source.profile, changes),
+                            )
+                          : source;
+                      if (nextKind !== undefined) {
+                        updated = this.#deps.bots.setKindDuringSetup(setupBotId, nextKind);
+                      }
                       this.#deps.publish('bot.updated', { bot: updated });
                       return {
                         ok: true,
-                        message: `已保存 ${changes.length} 个字段到你的 profile。`,
+                        message:
+                          changes.length > 0
+                            ? `已保存 ${changes.length} 个字段到你的 profile${kind !== undefined ? `，分类设为 ${updated.kind}` : ''}。`
+                            : `已把你的分类设为 ${updated.kind}。`,
                       };
                     } catch (error) {
                       return {
