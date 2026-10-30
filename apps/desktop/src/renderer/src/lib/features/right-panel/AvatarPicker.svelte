@@ -32,6 +32,8 @@
 
   let tab = $state<'preset' | 'upload'>('preset');
   let uploading = $state(false);
+  // 遮罩写入中：两个按钮一起禁用，避免连点把旧值写到最后。
+  let maskPending = $state<BotAvatarMask | null>(null);
   let cropFile = $state<File | null>(null);
   let node = $state<HTMLDivElement | null>(null);
 
@@ -49,7 +51,6 @@
   // 遮罩切换只对上传头像露出：预置头像自带轮廓，改形状没有意义。
   const uploadedFile = $derived(parseUploadedAvatar(bot.avatar));
   const mask = $derived(normalizeBotAvatarMask(bot.avatarMask));
-  const MASK_OPTIONS = AVATAR_MASKS;
 
   // Esc 经层级仲裁：头像选择器开着时，一次 Esc 只收起它，不连带关外层的 Bot 详情覆盖层。
   $effect(() => {
@@ -93,7 +94,8 @@
 
   /** 遮罩单独一条 RPC（不是 Profile 字段）：core 发布 bot.updated，头像即时换形状。 */
   async function applyMask(next: BotAvatarMask): Promise<void> {
-    if (next === mask) return;
+    if (next === mask || maskPending !== null) return;
+    maskPending = next;
     try {
       await core.call('bots.avatar.mask', { id: bot.id, mask: next });
     } catch (error) {
@@ -102,6 +104,8 @@
           reason: error instanceof Error ? error.message : String(error),
         }),
       );
+    } finally {
+      maskPending = null;
     }
   }
 
@@ -230,16 +234,19 @@
                 >{t('rightPanel.avatarMask.hint')}</span
               >
             </p>
-            <div class="flex gap-2">
-              {#each MASK_OPTIONS as option (option)}
+            <div class="flex gap-2" role="group" aria-label={t('rightPanel.avatarMaskTitle')}>
+              {#each AVATAR_MASKS as option (option)}
                 <button
                   type="button"
                   class="flex flex-1 items-center justify-center gap-2 rounded-xl border px-2 py-2 transition-colors hover:bg-accent {mask ===
                   option
                     ? 'border-ring bg-accent'
-                    : 'border-border/60'}"
+                    : 'border-border/60'} {maskPending !== null
+                    ? 'pointer-events-none opacity-60'
+                    : ''}"
                   onclick={() => void applyMask(option)}
                   aria-pressed={mask === option}
+                  disabled={maskPending !== null}
                   data-testid={`avatar-mask-${option}`}
                 >
                   <!-- 直接用当前上传图做预览：选的就是最终效果。 -->

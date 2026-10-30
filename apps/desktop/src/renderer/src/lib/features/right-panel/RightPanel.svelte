@@ -21,7 +21,7 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import { avatarMaskClass, parseUploadedAvatar } from '$lib/avatars/presets';
+  import { uploadedAvatarShapeClass } from '$lib/avatars/presets';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
   import {
@@ -59,11 +59,7 @@
    * 头像按钮的形状跟随遮罩：只有「上传头像 + 圆角方」才变方，预置头像 / 首字母
    * 占位仍是圆，避免圆按钮里套方图（按钮本身、hover 蒙层、焦点环共用这一个类）。
    */
-  const avatarShapeClass = $derived(
-    bot !== null && parseUploadedAvatar(bot.avatar) !== null
-      ? avatarMaskClass(bot.avatarMask)
-      : 'rounded-full',
-  );
+  const avatarShapeClass = $derived(uploadedAvatarShapeClass(bot?.avatar, bot?.avatarMask));
   browserPages.start();
   // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。
   const browserOpen = $derived(
