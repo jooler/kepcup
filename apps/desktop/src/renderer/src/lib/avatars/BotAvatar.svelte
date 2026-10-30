@@ -5,7 +5,7 @@
    * （组件内部元素均为 size-full）。
    */
   import * as Avatar from '$lib/components/ui/avatar';
-  import type { BotAvatarMask } from '@kepcup/shared';
+  import { normalizeBotAvatarMask, type BotAvatarMask } from '@kepcup/shared';
   import { avatarImages } from './avatar-images.svelte';
   import BotPresetAvatar from './BotPresetAvatar.svelte';
   import { avatarMaskClass, parsePresetAvatar, parseUploadedAvatar } from './presets';
@@ -47,7 +47,9 @@
       : `--group-avatar-sx:${glyphShadowOffset.x}px; --group-avatar-sy:${glyphShadowOffset.y}px`,
   );
   const glyphShadowClass = $derived(glyphShadowOffset !== null ? 'group-avatar-glyph-shadow' : '');
-  const maskClass = $derived(avatarMaskClass(mask));
+  // 归一后的遮罩值同时驱动 class 与 data 属性（测试 / 调试看得到的就是实际生效的那个）。
+  const maskValue = $derived(normalizeBotAvatarMask(mask));
+  const maskClass = $derived(avatarMaskClass(maskValue));
   const letterShadowClass = $derived(
     glyphShadowOffset !== null ? 'group-avatar-letter-shadow' : '',
   );
@@ -66,7 +68,7 @@
   <span
     class="inline-block {klass} shrink-0 overflow-hidden {maskClass}"
     data-testid={testId}
-    data-avatar-mask={mask ?? 'circle'}
+    data-avatar-mask={maskValue}
   >
     <img src={uploadedUrl} alt={name} class="size-full object-cover" />
   </span>

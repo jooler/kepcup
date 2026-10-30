@@ -9,6 +9,7 @@ import {
   avatarOnFillForeground,
   parsePresetAvatar,
   presetForName,
+  uploadedAvatarShapeClass,
 } from './presets';
 
 /**
@@ -82,5 +83,16 @@ describe('avatarMaskClass', () => {
 
   it('offers exactly the two switchable options, circle first', () => {
     expect(AVATAR_MASKS).toEqual(['circle', 'rounded']);
+  });
+});
+
+describe('uploadedAvatarShapeClass', () => {
+  it('follows the mask only for uploaded images', () => {
+    expect(uploadedAvatarShapeClass('upload:avatar-1.png', 'rounded')).toBe('rounded-[28%]');
+    expect(uploadedAvatarShapeClass('upload:avatar-1.png', 'circle')).toBe('rounded-full');
+    // 预置头像 / 首字母占位不跟遮罩变方：圆按钮不能套方图。
+    expect(uploadedAvatarShapeClass('preset:orb:orange', 'rounded')).toBe('rounded-full');
+    expect(uploadedAvatarShapeClass(null, 'rounded')).toBe('rounded-full');
+    expect(uploadedAvatarShapeClass(undefined, undefined)).toBe('rounded-full');
   });
 });
