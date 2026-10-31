@@ -58,6 +58,7 @@
 | main | `0053_plugins.sql` | D104：新表 `plugins`（市场 / 本地插件，内置插件不入表）、`plugin_items`（投影账本，随插件 `ON DELETE CASCADE`） |
 | main | `0054_plugin_skill_source.sql` | D104 P0b：`skill_library.source_url` 的 `preset://{id}` 一次性改写为 `plugin://com.kepcup/starter-skills/{id}`（纯 UPDATE；预置技能改为内置插件 `com.kepcup/starter-skills` 的技能贡献，`SkillPresetsService` 按新前缀认领） |
 | main | `0055_plugin_update_journal.sql` | D104 P1-2：`plugins` 增 `update_to` / `update_snapshot` 两列（更新日志；`update_to` 非 NULL = 更新进行中，崩溃恢复按快照回滚） |
+| main | `0063_memo_groups.sql` | D90 增强：新表 `memo_groups`（备忘分组）；`memos` 增 `group_id`（FK ON DELETE SET NULL）与 `position`、`todos` 增 `position`（均按改动前显示顺序回填，手动拖拽排序键）；`memos_live` 索引改按 `position`、增 `memos_group` |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -689,10 +690,23 @@ CREATE TABLE memos (
   source     TEXT NOT NULL CHECK (source IN ('user', 'butler')),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,                      -- 最后修改时间（卡片上的相对时间用它）
-  sort_at    INTEGER NOT NULL,                      -- 列表排序键（0046）：创建时间，只随置顶变化刷新
-  deleted_at INTEGER                                 -- 非空 = 在「最近删除」
+  sort_at    INTEGER NOT NULL,                      -- 旧排序键（0046，0063 起仅随置顶变化同步，不再参与 live 排序）
+  deleted_at INTEGER,                               -- 非空 = 在「最近删除」
+  group_id   TEXT REFERENCES memo_groups(id) ON DELETE SET NULL,  -- 0063；NULL = 未分组
+  position   REAL NOT NULL DEFAULT 0                -- 0063：组内手动拖拽排序键（升序）
 );
-CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
+CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, position ASC);
+CREATE INDEX memos_group ON memos(group_id);
+
+CREATE TABLE memo_groups (                           -- 0063：用户自建的备忘分组；「未分组」不是行
+  id         TEXT PRIMARY KEY,                       -- mmg_...
+  title      TEXT NOT NULL CHECK (
+               length(title) BETWEEN 1 AND 60 AND instr(title, char(0)) = 0
+             ),
+  position   REAL NOT NULL,                          -- 分组排序键（升序），新分组追加在末尾
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 ```
 
 - **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`；`leadBotId` 记指派时解析的负责人，派发时按会话现状取生效负责人 `assignee.leadBotId ?? conversation.leadBotId`）。`assignee_bot_id` 与 `assignee_project_id` 都不设 FK：Bot 行是占位行、id 不复用；项目组若用 `ON DELETE SET NULL`，删除后「项目组 + 负责 Bot」会被读成 Bot 执行者、「项目组已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
@@ -700,7 +714,7 @@ CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, sort_at DESC);
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「项目组已解散」「项目里无人回应」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
 - **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
-- **备忘排序**（0046）：列表按 `pinned desc, sort_at desc, id desc`。`sort_at` 是排序键，创建时取创建时间，**只有置顶状态变化才刷新**（置顶卡提到置顶组最前）；改正文只动 `updated_at`（卡片上的相对时间、管家上下文里的「最近备忘」），**卡片不换位**。软删 / 恢复不动 `sort_at`，恢复后回到原位。
+- **备忘排序**（0046 → 0063）：live 列表按 `pinned desc, position asc, id desc`。`position`（0063）是手动拖拽排序键，迁移按当时的 `sort_at` 顺序回填——拖动之前看到的一切不变；新备忘取未分组最小 `position` 之前（组顶），改正文与置顶切换都**不动 position**（置顶靠 `pinned desc` 浮组顶）。`sort_at` 保留为旧键（仍只在置顶变化时刷新），不再参与 live 排序。软删 / 恢复不动 `position`，恢复后回到原位。分组（`memo_groups`）删除时组内备忘 `group_id` 置空（FK 兜底 + 服务显式清空），备忘本身不删。
 - 检索用 `LIKE`（量级千条以内）。
 - 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
 

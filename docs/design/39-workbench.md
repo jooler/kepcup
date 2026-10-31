@@ -88,7 +88,7 @@ Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任�
 
 纯文本闪念，一条一段（≤ 10000 字）。不绑对话，不进任何 Bot 的上下文。唯一例外：**管家可通过工具读写**。
 
-可置顶，可「转为事项」（新事项记 `memo_id`，备忘保留并显示「已转事项」）。删除进「最近删除」，30 天后在启动时清理。管家也能删，因此必须可恢复。
+可置顶，可归入用户自建的**分组**（「未分组」不是一个行，`group_id is null`），可跨分组拖拽、组内拖拽排序。可「转为事项」（新事项记 `memo_id`，备忘保留并显示「已转事项」）。删除进「最近删除」，30 天后在启动时清理。管家也能删，因此必须可恢复。
 
 ## 3 数据、服务与派发
 
@@ -96,9 +96,10 @@ Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任�
 
 main 库三张新表（迁移 `0037_workbench`，字段见 [dev/03-data-model.md](../dev/03-data-model.md)）：
 
-- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`（内容出处：用户建的，或内容由管家起草 / 改写过，见 §5.2）；执行者编码在 `assignee_bot_id` + `assignee_project_id` 上（main 0042 改名）。
+- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`（内容出处：用户建的，或内容由管家起草 / 改写过，见 §5.2）；执行者编码在 `assignee_bot_id` + `assignee_project_id` 上（main 0042 改名）。`position`（main 0063）= 道内手动拖拽排序键，迁移按状态顺序回填，看板卡不用它。
 - `todo_runs`：每次派发一条（单次事项通常只有一条）。`status ∈ {dispatched, delivered, unclaimed, failed}`；`conversation_id` 不设外键，对话删了记录仍可读。
-- `memos`：备忘。`deleted_at` 非空 = 在「最近删除」。
+- `memos`：备忘。`deleted_at` 非空 = 在「最近删除」。`group_id` + `position`（main 0063）= 分组与组内拖拽排序键，回填按旧的 `sort_at` 顺序展开。
+- `memo_groups`（main 0063）：用户自建的备忘分组（标题 + 排序键）；「未分组」不是行。删组不删备忘，组内备忘回到未分组。
 
 执行者编码：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层统一表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`）。`leadBotId` 记指派时解析的负责人，派发时再按会话现状取生效负责人。
 
@@ -192,16 +193,20 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | `todos.update` | `{ id, title?, notes?, assignee?: TodoAssignee \| null, when?: string \| null }` | `{ todo: TodoEntry, warnings: string[], notified?: boolean }` |
 | `todos.start` | `{ id }` 立即派发（需已有执行者） | `{ todo: TodoEntry }` |
 | `todos.complete` / `todos.cancel` / `todos.reopen` | `{ id }` | `{ todo: TodoEntry }` |
-| `memos.list` | `{ query?, trashed? }` | `{ memos: Memo[] }` |
+| `memos.list` | `{ query?, trashed? }` | `{ memos: Memo[], groups: MemoGroup[] }`（trashed 时 groups 为空） |
 | `memos.create` | `{ body }` | `{ memo: Memo }` |
 | `memos.update` | `{ id, body?, pinned? }` | `{ memo: Memo }` |
 | `memos.delete` / `memos.restore` | `{ id }`；`delete` = 移入最近删除 | `{ memo: Memo }` |
+| `memos.groups.create` / `memos.groups.rename` | `{ title }` / `{ id, title }`（标题 1–60 字） | `{ group: MemoGroup }` |
+| `memos.groups.delete` | `{ id }`；组内备忘回到未分组 | `{ ok: true }` |
+| `memos.move` | `{ id, groupId \| null, beforeId \| null }`；`null` = 未分组 / 组尾 | `{ memo: Memo }` |
+| `todos.move` | `{ id, beforeId \| null, assignee? }`；`assignee` 只在换道时发送，已在执行（进行中 / 待验收，含周期在跑）会被拒绝 | `{ todo: TodoEntry }` |
 
 - `TodoEntry` = 事项 + `assigneeName` / `leadBotName`（Bot 名或项目组名）+ 当前 active `schedule`（`id` / `kind` / `runAt` / `cron` / `timezone` / `nextFireAt`，无排期为 `null`）+ `lastRun`。人话时间由界面用 `describeScheduleWhen` 渲染。
 - `when` 的口径：`'now'` = 立即派发；ISO 8601 = 单次；其它按 cron 解析（同 `createFromWhen`）；`null` = 清空排期；省略 = 不变（create 时即不定时）。`assignee: null` = 清空执行者，会连带清排期、退回草案。
 - `notified`（仅 `todos.update`）：标题 / 说明变了且有在途派发，已排队给执行者的「事项更新」通知；界面提示「已保存，将通知执行者」（§3.4）。
 - `warnings` 就地显示在界面上，例如「该 Bot 未配置模型」「项目组已只读」。主动消息相关的警告对事项不再出现（§3.4）。
-- 事件：`todos.changed { todoId }`、`memos.changed { memoId }`（管家在后台改了，工作台要实时跟上）。`schedules.changed` 保留。
+- 事件：`todos.changed { todoId }`、`memos.changed { memoId? }`（`memoId` 缺省 = 分组级变更；管家在后台改了，工作台要实时跟上）。`schedules.changed` 保留。
 - 汇总方法 `workbench.summary`（需要你处理 / 进行中 / 待验收 / 今天的计数与条目）属于后续增强，不在首批契约内。
 
 ## 4 界面
@@ -239,6 +244,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
   - 第一道为「未指派」，之后是有事的 Bot 和项目组。Bot 在前，排序依次为：有待验收的、有进行中的、下次时间最近的。
   - 道头显示忙闲：进行中任务数取自 `runningBotIds` / 任务，再加下次排期时间。
   - 没有打开事项的 Bot / 项目组不占道；需要派活时从详情弹框的执行者选择器里选。
+  - **道内拖拽排序**（`todos.move`）：道内顺序 = 手动拖拽顺序（`position`，迁移按状态顺序回填，拖动前不变；新事项插道顶），状态不再自动重排、只显示在胶囊上。**跨道拖拽 = 改派执行者**（走与执行者选择器相同的改派路径）；已在执行的事项（进行中 / 待验收，含周期事项在跑的投影）拒绝改派，道内排序不受限。
 - **按时间**：逾期未交付 / 今天 / 明天 / 本周 / 以后 / 未排期。周期事项按下次触发时间归组。
 - **事项卡**：标题、执行者徽标、人话时间、状态胶囊、来源徽标（管家）、`blocked_reason` 警示。主操作随状态变化：草案 → 指派 / 立即开始；已排期 → 改期；进行中 → 打开对话；待验收 → 查看结果 / 完成 / 退回。
 - **自排卡**（§2.3）：来源徽标、人话时间、`deferredReason` 警示（如「该 Bot 已关闭主动消息」）、取消、打开对话。
@@ -265,8 +271,10 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 ### 4.4 备忘栏
 
-- 顶部常驻输入框：回车保存，Shift+回车换行，存完清空并保持焦点，连续记录不打断。
-- 列表：置顶在前，其余按排序键（创建时间）倒序。**改正文不改变排序**——卡片留在原位，只有置顶 / 新建 / 恢复才动位置。卡片正文最多显示 6 行，显示相对时间（最后修改时间）和来源徽标（管家记的）。备忘栏较宽：输入框、搜索与卡片区共用同一个最大宽度并整体居中；卡片按最小 15rem 的等宽列自动换行，满行占满总宽，末行从左排列。
+- 顶部常驻输入框：回车保存，Shift+回车换行，存完清空并保持焦点，连续记录不打断。列表底部有「添加分组」按钮（与「最近删除」同排）：弹框输入名称创建分组。
+- **分组**（main 0063）：所有备忘默认「未分组」；一旦存在命名分组，列表按「未分组（伪分组，恒在最前）→ 各分组（可拖拽排序）」分区展示，每组有 header。点击分组名（或折叠箭头）切换组内条目是否显示；命名分组 header 整行是拖拽把手（`memos.groups.move` 重排，照看板列头的把手层模式），hover 出铅笔（输入框重命名）与删除（确认后组内备忘回到未分组，备忘本身不删）；空分组显示「拖备忘到这里」提示并作为投放区。没有命名分组时保持旧的扁平列表（无 header）。搜索时隐藏没有命中的分区。
+- 列表：置顶在前，其余按手动拖拽顺序（`position` 升序，迁移按旧的排序键回填）。**改正文不改变排序**——卡片留在原位，只有置顶 / 新建 / 恢复才动位置。新备忘插到「未分组」顶部。卡片正文最多显示 6 行，显示相对时间（最后修改时间）和来源徽标（管家记的）。备忘栏较宽：输入框、搜索与卡片区共用同一个最大宽度并整体居中；卡片按最小 15rem 的等宽列自动换行，满行占满总宽，末行从左排列。
+- **拖拽**（`memos.move`）：每个分区是一个 dnd 区（与看板同款 `svelte-dnd-action`），组内可排序、跨组可拖动（拖回「未分组」即移出分组）。正文 contenteditable 区域不触发拖拽，整卡的其余部分可拖。置顶卡仍浮在组顶。
 - 操作：编辑（原地）、置顶、转为事项（打开事项详情并预填：首行作标题，全文作说明）、删除。
 - 搜索：本地即时过滤，空态和无结果分别给文案。
 - 「最近删除」：可恢复，30 天后启动时清理。

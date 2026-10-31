@@ -1707,3 +1707,51 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   检测同语义）+ preload / shim.d.ts / web-shim（web 安全默认值）+ i18n zh/en 四键。验证：
   desktop typecheck 0 error，定向 26 例全绿（host 落盘 4 + record 4 + i18n 2 + sidecar 14 +
   入口路径 2）。打包版缺 computer-use（/Applications 0.5.1）属 WP5 发布验收清单既有项，未动。
+
+## 工作台备忘分组与拖拽（D90 增强）
+
+按用户需求实施（2026-10-31 定向确认三项决策：未分组 header 文案用「未分组」、分组支持重命名 +
+删除、事项拖拽 = 道内排序 + 未开始的可跨道改派执行者、已在执行的不改派）：
+
+- **shared 契约**：`memoGroupSchema`（main 0063 新表 `memo_groups`）、`Memo.groupId/position`、
+  `Todo.position`；新 RPC `memos.groups.create / rename / delete`、`memos.move`、`todos.move`
+  （assignee 只在换道时发送）；`memos.list` 回带 `groups`；`memos.changed` 载荷 `memoId` 变可选
+  （分组级变更没有 memoId）。常量 `WORKBENCH_POSITION_STEP / MIN_GAP`、`MEMO_GROUP_TITLE_MAX_CHARS`。
+- **core**：迁移 `0063_memo_groups.sql`（memo_groups + memos.group_id FK ON DELETE SET NULL +
+  备忘/事项 position 回填，按改动前显示顺序展开，拖动前一切不变）；`MemoStore` 分组 CRUD 与
+  `move`（placeItem 复用 `board/positions.ts`，参数化步长）；`MemoService` 分组校验与事件；
+  `TodoStore.listLaneOpen / updatePositions`（排除看板卡）、`insert` 落道顶；`TodoService.move`
+  （跨道走与抽屉一致的改派路径，`#effectiveStatus ∈ {in_progress, delivered}` 拒绝改派；纯重排
+  不动 `updated_at`，落回原位不发事件）。
+- **渲染层**：`workbench-model.memoSections`（未分组伪分组在最前、无分组时保持扁平列表、搜索隐藏
+  空分区）+ `canReassignTodo`；道内排序改 position 升序（`compareTodos` 移除）；`workbench` store
+  增 `memoGroups` / 分组操作 / `moveMemo` / `moveTodo`（乐观上屏 + 失败 toast 重拉）与拖拽期刷新
+  冻结（`memoDragging` / `todoDragging`，照 board 模式）；`MemoPane` 顶部 + 按钮（Tooltip「添加
+  分组」）+ 新建分组弹框；新组件 `MemoGroupSection`（header 就地重命名 InlineEditable + 删除确认，
+  dnd 区 type `memo`，shadow 占位钉高度，复用 `board-dnd` 的 anchorFromFinalize / click guard）；
+  `MemoCard` 加拖拽把手提示（正文 contenteditable 由 dnd-action 原生豁免）；`TodoLane` 事项卡区
+  type `todo`（自排卡不入区），点卡开抽屉经 click guard 防拖后误触。i18n zh/en 各 18 键。
+- **验证**：全量 `pnpm test` 7195 通过 / 2 失败 / 42 跳过——其中 `public-skills-migration` 回放
+  用例因未摘除新表 `memo_groups` 而挂（已补 drop 并复验 2/2 绿），另一失败 `settings-card/deep-link`
+  （computer.control → computer-use 分区映射）为本分支 D105 提交 9defc083 的既有失败，与本阶段
+  无关（stash 本阶段改动后单跑同样失败）。e2e `workbench.spec` 整包 16/16 全绿（新增「分组创建 →
+  未分组 header → 重命名 → 跨组拖拽 → 删组回未分组」一条；两处时序要点：连续创建备忘须等输入框
+  清空（保存返回的 `memoDraft=''` 会抹掉下一份草稿）、合成拖拽在中途与落点前各留 300ms 等
+  dnd-action 的 rAF 观察循环登记目标区，拖拽起点用卡片把手——正文 contenteditable 会被 dnd-action
+  跳过）。shared 42 文件 508 例、core 定向（workbench-service / stores / 迁移×4 / board positions /
+  workbench 集成）与 renderer workbench+board+i18n 166 例全绿；desktop / core / shared typecheck
+  0 error；本阶段文件 eslint 干净。
+  文档同步 [design/39](../design/39-workbench.md) §2.4 / §3.1 / §3.6 / §4.2 / §4.4 与
+  [03-data-model](03-data-model.md)（迁移表 + memos/memo_groups 结构）。
+
+- **跟进一轮（2026-11-01，用户反馈三项）**：①「添加分组」按钮从输入行右侧移到列表底部（与
+  「最近删除」同排，去掉 Tooltip 改文字按钮）；②分组可拖拽排序——新 RPC `memos.groups.move`
+  （store `moveGroup` 用 placeItem，无变化不发 `memos.changed`；`{ memo, changed }` 返回形状同
+  步用于 `memos.move`），渲染层照看板列层做 `dragHandleZone`（type `group`）+ 分区 header 整行
+  把手，未分组伪分组不进拖拽区恒在最前，`workbench.moveGroup` 乐观重排 + 失败 toast 重拉，
+  拖拽期 `groupDragging` 冻结刷新；③点击分组名 / 折叠箭头切换组内条目显示（重命名改为 hover
+  铅笔 → 行内输入框，Enter 提交 / Esc 取消 / 失焦提交，不再用 InlineEditable 的点入即改）。
+  e2e 两处坑记档：bits-ui 模态关闭后 body 的滚动锁（`pointer-events:none`）下一拍才解除，关框
+  后要等它清掉再做指针操作（`waitDialogScrollLockCleared`）；分组拖拽的落点取目标分区上部。
+  验证（按约定只跑改动文件）：shared / core（service+stores）/ renderer workbench 定向 258 例、
+  e2e `workbench.spec` 全文件、desktop typecheck 0 error、本阶段文件 eslint 干净。

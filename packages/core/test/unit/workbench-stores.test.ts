@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { memoSchema, todoRunSchema, todoSchema } from '@kepcup/shared';
+import { memoSchema, todoRunSchema, todoSchema, WORKBENCH_POSITION_STEP } from '@kepcup/shared';
 
 import type { Clock } from '../../src/infra/clock.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
@@ -58,6 +58,8 @@ describe('TodoStore', () => {
       createdAt: 1_000,
       updatedAt: 1_000,
       closedAt: null,
+      // 空道里的第一张卡从步长起步；后续插入取道内最小 position 之前（道顶）。
+      position: WORKBENCH_POSITION_STEP,
     });
     expect(todoSchema.parse(todo)).toEqual(todo);
   });
@@ -329,6 +331,44 @@ describe('TodoStore', () => {
       const run = store.insertRun({ todoId: todo.id, conversationId: 'conv_deleted' });
       expect(store.getRun(run.id)?.conversationId).toBe('conv_deleted');
     });
+
+    it('lanes: 新事项插到道顶（position 升序），listLaneOpen 排除已结束与看板卡', () => {
+      db.prepare(
+        "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_2', 'B', '{}', 'active', 0, 0)",
+      ).run();
+      const a = store.insert({ title: 'a', source: 'user', assignee: { kind: 'bot', botId: 'bot_2' } });
+      const b = store.insert({ title: 'b', source: 'user', assignee: { kind: 'bot', botId: 'bot_2' } });
+      expect(b.position).toBeLessThan(a.position);
+      // 未指派 / 项目组道互不干扰。
+      const unassigned = store.insert({ title: 'u', source: 'user' });
+      expect(store.listLaneOpen({ kind: 'bot', botId: 'bot_2' }).map((t) => t.id)).toEqual([
+        b.id,
+        a.id,
+      ]);
+      expect(store.listLaneOpen(null).map((t) => t.id)).toEqual([unassigned.id]);
+
+      store.update(a.id, { status: 'done', closedAt: 1 });
+      expect(store.listLaneOpen({ kind: 'bot', botId: 'bot_2' }).map((t) => t.id)).toEqual([b.id]);
+
+      // 看板卡不在工作台道里。
+      insertProjectConversation(db, { id: 'conv_b', leadBotId: 'bot_2' });
+      db.prepare(
+        "insert into board_columns (id, project_id, title, position, created_at) values ('col_x', 'conv_b', '待办', 1024, 0)",
+      ).run();
+      db.prepare(
+        "insert into todos (id, title, notes, assignee_bot_id, status, source, created_at, updated_at, position) values ('todo_board', 'card', '', 'bot_2', 'draft', 'user', 0, 0, 1)",
+      ).run();
+      db.prepare(
+        "insert into board_cards (todo_id, project_id, column_id, position, created_at) values ('todo_board', 'conv_b', 'col_x', 1, 0)",
+      ).run();
+      expect(store.listLaneOpen({ kind: 'bot', botId: 'bot_2' }).map((t) => t.id)).toEqual([b.id]);
+
+      store.updatePositions([
+        { id: b.id, position: 50 },
+        { id: unassigned.id, position: 60 },
+      ]);
+      expect(store.get(b.id)?.position).toBe(50);
+    });
   });
 });
 
@@ -353,29 +393,34 @@ describe('MemoStore', () => {
       updatedAt: 1_000,
       sortAt: 1_000,
       deletedAt: null,
+      groupId: null,
+      position: WORKBENCH_POSITION_STEP,
     });
     expect(memoSchema.parse(memo)).toEqual(memo);
     expect(store.insert({ body: 'x', source: 'butler', pinned: true })).toMatchObject({
       pinned: true,
       source: 'butler',
+      // 新备忘插到未分组顶（比现有最小 position 更小）。
+      position: 0,
     });
     expect(store.get('memo_missing')).toBeNull();
   });
 
-  it('lists live memos pinned first then by sort key; editing the body keeps the place', () => {
+  it('lists live memos pinned first then by manual position; editing the body keeps the place', () => {
     const a = store.insert({ body: 'alpha', source: 'user' });
     now = 2_000;
     const b = store.insert({ body: 'beta 50%', source: 'user' });
     now = 3_000;
     const c = store.insert({ body: 'gamma', source: 'user', pinned: true });
     expect(store.list().map((m) => m.id)).toEqual([c.id, b.id, a.id]);
-    // 改正文：更新时间前移，但排序键不动 → 卡片不换位。
+    // 改正文：更新时间前移，但 position 不动 → 卡片不换位。
     now = 4_000;
     store.update(a.id, { body: 'alpha edited' });
     expect(store.list().map((m) => m.id)).toEqual([c.id, b.id, a.id]);
-    // 置顶：排序键刷新 → 提到置顶组最前。
+    // 置顶：拖拽顺序不变，靠 `pinned desc` 浮到置顶组（position 仍是 b < ... 顺序）。
     store.update(b.id, { pinned: true });
-    expect(store.list().map((m) => m.id)).toEqual([b.id, c.id, a.id]);
+    expect(store.list().map((m) => m.id)).toEqual([c.id, b.id, a.id]);
+    expect(store.get(b.id)?.sortAt).toBe(4_000);
 
     expect(store.list({ query: 'ALPHA' }).map((m) => m.id)).toEqual([a.id]);
     expect(store.list({ query: '50%' }).map((m) => m.id)).toEqual([b.id]);
@@ -439,6 +484,88 @@ describe('MemoStore', () => {
     expect(store.purgeTrashed(10_000)).toBe(1);
     expect(store.list({ trashed: true })).toEqual([]);
     expect(store.list().map((m) => m.id)).toEqual([live.id]);
+  });
+});
+
+describe('MemoStore：分组与拖拽（D90 §5.4）', () => {
+  let db: SqliteDatabase;
+  let store: MemoStore;
+  beforeEach(() => {
+    now = 1_000;
+    db = openMainDb();
+    store = new MemoStore(db, clock);
+  });
+
+  it('分组按创建顺序排列，新分组追加在末尾；重命名只动标题与 updated_at', () => {
+    const g1 = store.insertGroup('工作');
+    now = 2_000;
+    const g2 = store.insertGroup('生活');
+    expect(store.listGroups().map((g) => [g.id, g.title])).toEqual([
+      [g1.id, '工作'],
+      [g2.id, '生活'],
+    ]);
+    expect(g2.position).toBeGreaterThan(g1.position);
+    now = 3_000;
+    const renamed = store.renameGroup(g1.id, '上班');
+    expect(renamed).toMatchObject({ id: g1.id, title: '上班', createdAt: 1_000, updatedAt: 3_000 });
+    expect(store.renameGroup('mmg_missing', 'x')).toBeNull();
+    expect(store.getGroup('mmg_missing')).toBeNull();
+  });
+
+  it('moveGroup：beforeId 落位并持久化；重排不动 updated_at；锚点缺失 / 指向自己抛错', () => {
+    const g1 = store.insertGroup('一');
+    const g2 = store.insertGroup('二');
+    const g3 = store.insertGroup('三');
+    const updatedAt = store.getGroup(g3.id)!.updatedAt;
+
+    expect(store.moveGroup(g3.id, g1.id)!.group.id).toBe(g3.id);
+    expect(store.listGroups().map((g) => g.id)).toEqual([g3.id, g1.id, g2.id]);
+    expect(store.getGroup(g3.id)!.updatedAt).toBe(updatedAt);
+
+    expect(store.moveGroup(g3.id, null)!.group.id).toBe(g3.id);
+    expect(store.listGroups().map((g) => g.id)).toEqual([g1.id, g2.id, g3.id]);
+
+    expect(store.moveGroup('mmg_missing', null)).toBeNull();
+    expect(() => store.moveGroup(g1.id, g1.id)).toThrow();
+    expect(() => store.moveGroup(g1.id, 'mmg_missing')).toThrow();
+  });
+
+  it('move：换组 + beforeId 落位；组内重排不改 updated_at；锚点缺失 / 指向自己报错', () => {
+    const a = store.insert({ body: 'a', source: 'user' });
+    const b = store.insert({ body: 'b', source: 'user' });
+    const g = store.insertGroup('工作');
+    const updatedAtA = store.get(a.id)!.updatedAt;
+
+    // a 进组（组尾），b 拖到 a 前面。
+    expect(store.move(a.id, g.id, null)?.memo.groupId).toBe(g.id);
+    expect(store.move(b.id, g.id, a.id)?.memo).toMatchObject({ groupId: g.id });
+    expect(store.listInGroup(g.id).map((m) => m.id)).toEqual([b.id, a.id]);
+    expect(store.listInGroup(null)).toEqual([]);
+    expect(store.get(a.id)?.updatedAt).toBe(updatedAtA);
+
+    // 未分组（null）也是合法目标。
+    expect(store.move(b.id, null, null)?.memo.groupId).toBeNull();
+    expect(store.listInGroup(g.id).map((m) => m.id)).toEqual([a.id]);
+
+    expect(() => store.move(a.id, g.id, 'memo_missing')).toThrow();
+    expect(() => store.move(a.id, g.id, a.id)).toThrow();
+  });
+
+  it('move 后新备忘仍插到未分组顶；删除分组后备望回到未分组并保持相对次序', () => {
+    const a = store.insert({ body: 'a', source: 'user' });
+    const b = store.insert({ body: 'b', source: 'user' });
+    const g = store.insertGroup('工作');
+    store.move(a.id, g.id, null);
+    const c = store.insert({ body: 'c', source: 'user' });
+    // 未分组里只剩 b；c 插到 b 前面。
+    expect(store.listInGroup(null).map((m) => m.id)).toEqual([c.id, b.id]);
+
+    expect(store.deleteGroup(g.id)).toBe(true);
+    expect(store.deleteGroup(g.id)).toBe(false);
+    expect(store.listGroups()).toEqual([]);
+    // a 回到未分组：position 保持（c=-1024 < b=0 < a=1024），相对次序不变。
+    expect(store.listInGroup(null).map((m) => m.id)).toEqual([c.id, b.id, a.id]);
+    expect(store.get(a.id)?.groupId).toBeNull();
   });
 });
 

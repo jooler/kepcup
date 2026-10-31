@@ -123,6 +123,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table plugins;');
     db.exec('drop table todo_runs;');
     db.exec('drop table todos;');
+    // main 0063（D90 增强）的 memo_groups 表同样摘除（memos.group_id 的 FK 指向它）。
+    db.exec('drop table memo_groups;');
     db.exec('drop table memos;');
     // main 0023（W7）的 watches 表同样摘除。
     db.exec('drop table watches;');

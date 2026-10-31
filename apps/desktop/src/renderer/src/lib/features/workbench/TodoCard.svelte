@@ -3,6 +3,7 @@
   import { CircleAlert, Clock, Sparkles } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
+  import { cardClickGuard } from '$lib/features/board/board-dnd';
   import MemberAvatar from './MemberAvatar.svelte';
   import { describeAt, describeTodoWhen } from './describe';
   import { blockedNotice, effectiveStatus } from './workbench-model';
@@ -65,6 +66,8 @@
   }
 
   function open(): void {
+    // 拖拽结束的合成 click 不当点击（120ms 窗口，见 board-dnd）。
+    if (cardClickGuard.ignores() || workbench.todoDragging) return;
     workbench.openTodo(todo.id);
   }
 

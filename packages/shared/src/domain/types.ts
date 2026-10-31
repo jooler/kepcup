@@ -3073,6 +3073,13 @@ export const todoSchema = z.object({
   updatedAt: z.number(),
   /** done / cancelled time. */
   closedAt: z.number().nullable(),
+  /**
+   * Workbench lane sort key (docs/design/39-workbench.md): fractional, ordered
+   * ascending within a lane; the board keeps its own `board_cards.position` and
+   * never reads this. Backfilled from the status order, so nothing reorders
+   * until the first manual drag.
+   */
+  position: z.number(),
 });
 export type Todo = z.infer<typeof todoSchema>;
 
@@ -3140,15 +3147,35 @@ export const memoSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   /**
-   * List sort key: creation time, only refreshed when the pin state changes.
-   * Editing the body moves `updatedAt` but not `sortAt`, so the card keeps its
-   * place in the workbench list.
+   * Legacy sort key: creation time, only refreshed when the pin state changes.
+   * Editing the body moves `updatedAt` but not `sortAt`. Superseded by
+   * `position` for live ordering; kept in sync on pin changes.
    */
   sortAt: z.number(),
   /** Non-null = in 最近删除 (purged after MEMO_TRASH_RETENTION_MS). */
   deletedAt: z.number().nullable(),
+  /** Workbench group this memo belongs to; null = 未分组 (docs/design/39-workbench.md). */
+  groupId: z.string().nullable(),
+  /**
+   * Manual sort key within its group (ascending; pinned still floats to the
+   * top via the `pinned desc` order). Backfilled from the old `sort_at` order,
+   * so nothing reorders until the first manual drag.
+   */
+  position: z.number(),
 });
 export type Memo = z.infer<typeof memoSchema>;
+
+/** A user-created memo group (main.db memo_groups). The 未分组 pseudo-group is not a row. */
+export const memoGroupSchema = z.object({
+  id: z.string(),
+  /** 1..MEMO_GROUP_TITLE_MAX_CHARS code points; bounded at the RPC input and by a SQL CHECK. */
+  title: z.string(),
+  /** Sort key among groups (ascending); new groups append at the end. */
+  position: z.number(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+export type MemoGroup = z.infer<typeof memoGroupSchema>;
 
 /** Per bot / loop type / local day usage aggregate (usage.summary RPC). */
 export const usageSummaryEntrySchema = z.object({

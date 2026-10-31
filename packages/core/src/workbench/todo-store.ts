@@ -6,7 +6,7 @@ import type {
   TodoSource,
   TodoStatus,
 } from '@kepcup/shared';
-import { newId } from '@kepcup/shared';
+import { WORKBENCH_POSITION_STEP, newId } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
@@ -24,6 +24,7 @@ interface TodoRow {
   created_at: number;
   updated_at: number;
   closed_at: number | null;
+  position: number;
 }
 
 interface TodoRunRow {
@@ -77,6 +78,7 @@ export function rowToTodo(row: TodoRow): Todo {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
+    position: row.position,
   };
 }
 
@@ -177,8 +179,8 @@ export class TodoStore {
       .prepare(
         `insert into todos
            (id, title, notes, assignee_bot_id, assignee_project_id, status, source,
-            memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at, position)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -194,6 +196,7 @@ export class TodoStore {
         now,
         now,
         CLOSED_TODO_STATUSES.includes(status) ? now : null,
+        this.#nextLanePosition(input.assignee ?? null),
       );
     return this.#getOrThrow(id);
   }
@@ -293,6 +296,59 @@ export class TodoStore {
         .prepare(`select * from todos ${clause} order by updated_at desc, id desc`)
         .all(...params) as TodoRow[]
     ).map(rowToTodo);
+  }
+
+  // --- 工作台拖拽排序（D90 §5.2） ----------------------------------------------
+
+  /** SQL 谓词：该执行者的道（未指派 / Bot / 项目组；Bot 道不含项目组覆盖行）。 */
+  #laneWhere(assignee: TodoAssignee | null): { where: string; params: string[] } {
+    if (assignee === null) {
+      return { where: 'assignee_bot_id is null and assignee_project_id is null', params: [] };
+    }
+    if (assignee.kind === 'bot') {
+      return { where: 'assignee_bot_id = ? and assignee_project_id is null', params: [assignee.botId] };
+    }
+    return { where: 'assignee_project_id = ?', params: [assignee.projectId] };
+  }
+
+  /**
+   * One lane's open todos as the workbench shows them (no board cards), ordered
+   * by the manual drag key ascending (backfilled from the status order).
+   */
+  listLaneOpen(assignee: TodoAssignee | null): Todo[] {
+    const lane = this.#laneWhere(assignee);
+    return (
+      this.db
+        .prepare(
+          `select * from todos where ${lane.where}
+             and status not in ('done', 'cancelled')
+             and id not in (select todo_id from board_cards)
+           order by position asc, id desc`,
+        )
+        .all(...lane.params) as TodoRow[]
+    ).map(rowToTodo);
+  }
+
+  /** Persist a whole renumbered (or partially recomputed) position list. */
+  updatePositions(pairs: ReadonlyArray<{ id: string; position: number }>): void {
+    this.db.transaction(() => {
+      const stmt = this.db.prepare('update todos set position = ? where id = ?');
+      for (const pair of pairs) stmt.run(pair.position, pair.id);
+    })();
+  }
+
+  /** 新事项插到道顶：取道内最小 position 之前（道空则从步长起步）。 */
+  #nextLanePosition(assignee: TodoAssignee | null): number {
+    const lane = this.#laneWhere(assignee);
+    const row = this.db
+      .prepare(
+        `select min(position) as m from todos
+         where ${lane.where}
+           and status not in ('done', 'cancelled')
+           and id not in (select todo_id from board_cards)`,
+      )
+      .get(...lane.params) as { m: number | null };
+    return row.m === null ? WORKBENCH_POSITION_STEP : row.m - WORKBENCH_POSITION_STEP;
   }
 
   /** Todos whose executor is this bot (bot assignee or project lead override). */
