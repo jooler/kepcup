@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { step, viaTask, type TestStack } from '@kepcup/testkit';
 import {
@@ -118,6 +120,17 @@ async function waitLatestTask(
     },
     { label: 'latest task completed', timeoutMs: 90_000 },
   );
+}
+
+/** pino-roll 按日切分，日志文件名不定；读整个目录拼接。 */
+async function readLogs(dir: string): Promise<string> {
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const parts: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.log')) continue;
+    parts.push(await readFile(path.join(dir, name), 'utf8').catch(() => ''));
+  }
+  return parts.join('\n');
 }
 
 async function runSteps(core: TestStack, runId: string) {
@@ -308,5 +321,51 @@ describe('computer-use tools in a task run (D105)', () => {
     expect(scroll?.payload['outcome']).toBe('not_started');
     const messages = await listMessages(core, conv2.id);
     expect(JSON.stringify(messages)).not.toContain('先观察');
+  }, 120_000);
+
+  it('a failed capabilities handshake logs a warn and leaves computer_* unregistered', async () => {
+    let capabilitiesCalls = 0;
+    const host: ComputerHostRpc = {
+      ...fakeComputerHost(() => notesSnapshot),
+      capabilities: (async () => {
+        capabilitiesCalls += 1;
+        throw new Error('sidecar exited before handshake');
+      }) as never,
+    };
+    const { core, llm } = await start({ computerRpc: host });
+    await core.rpc.call('settings.update', { computerUseEnabled: true });
+    const bot = await makeBot(core, '小门');
+    const conv = await openDirect(core, bot.id);
+    llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().replyToolCall('computer_list_apps', {}),
+          step().replyText('RELAY-GATE'),
+        ],
+        relay: 'RELAY-GATE',
+      }),
+    );
+    const beforeGate = (await latestTask(core, conv.id))?.createdAt ?? 0;
+    await sendBatch(core, conv.id, ['列一下应用']);
+
+    // 握手抛错：门控照旧不注册 computer_*，模型调用以 unknown-tool 失败收场。
+    const task = await waitLatestTask(core, conv.id, beforeGate - 1);
+    const steps = await runSteps(core, task.id);
+    const call = steps.find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'computer_list_apps',
+    );
+    expect(call?.payload['ok'], '握手失败时 computer_* 不注册').not.toBe(true);
+    expect(capabilitiesCalls).toBeGreaterThan(0);
+
+    // 但失败不再静默：core 日志里留一条 warn（含错误文本，便于事后定位）。
+    const logs = await waitFor(
+      async () => {
+        const text = await readLogs(core.services.paths.logsDir);
+        return text.includes('computer capabilities handshake failed') ? text : null;
+      },
+      { label: 'handshake warn log', timeoutMs: 15_000 },
+    );
+    expect(logs).toContain('sidecar exited before handshake');
   }, 120_000);
 });

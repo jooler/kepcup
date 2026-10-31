@@ -3656,8 +3656,15 @@ export class Orchestrator {
     let available = false;
     try {
       available = (await computer.host.capabilities()) !== null;
-    } catch {
-      available = false;
+    } catch (error) {
+      // A broken sidecar / failed handshake used to leave the tools out of the
+      // registry with nothing in the logs (the desktop main process warns on its
+      // own side, which is invisible after the fact). Diagnose only: `available`
+      // stays false and the gate below is unchanged, so computer_* never registers.
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'computer capabilities handshake failed; computer tools not registered',
+      );
     }
     if (!available) return {};
     return {
