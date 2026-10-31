@@ -625,6 +625,9 @@ export const enUS = {
   'rightPanel.avatarMask.circle': 'Circle',
   'rightPanel.avatarMask.rounded': 'Rounded square',
   'rightPanel.avatarMask.hint': 'Only affects uploaded images; presets keep their own outline',
+  'rightPanel.avatarPaddingTitle': 'Avatar padding',
+  'rightPanel.avatarPaddingDecrease': 'Decrease padding',
+  'rightPanel.avatarPaddingIncrease': 'Increase padding',
   // --- D48: bot template export/import (docs/design/48-bot-template-export.md) ----
   'botTemplate.exportButton': 'Export as template',
   'botTemplate.desktopOnly': 'Desktop only',

@@ -192,6 +192,7 @@
           name={lead.name}
           avatar={lead.avatar}
           mask={lead.avatarMask}
+          padding={lead.avatarPadding}
           class="size-5"
           animated={false}
         />
@@ -233,6 +234,7 @@
             name={bot.name}
             avatar={bot.avatar}
             mask={bot.avatarMask}
+            padding={bot.avatarPadding}
             class="size-5"
             animated={false}
           />
@@ -309,6 +311,7 @@
               name={bot.name}
               avatar={bot.avatar}
               mask={bot.avatarMask}
+              padding={bot.avatarPadding}
               class="size-7"
               animated={false}
             />

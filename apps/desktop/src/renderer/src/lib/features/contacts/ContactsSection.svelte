@@ -152,6 +152,7 @@
                 name={bot.name}
                 avatar={bot.avatar}
                 mask={bot.avatarMask}
+                padding={bot.avatarPadding}
                 class="size-10"
               />
               <div class="min-w-0">

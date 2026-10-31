@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { botAvatarMaskSchema, botProfileSchema } from './types.js';
+import { botAvatarMaskSchema, botAvatarPaddingSchema, botProfileSchema } from './types.js';
 
 /**
  * Bot 模板（docs/design/48-bot-template-export.md）：把一个 Bot 导出为单个 JSON
@@ -108,6 +108,11 @@ export const botTemplateSchema = z
      * 非默认遮罩时写入，旧模板缺这一项照样能读——不破坏模板格式版本。
      */
     avatarMask: botAvatarMaskSchema.optional(),
+    /**
+     * 上传头像的内边距（像素 0-16；缺省 = 0）。只在上传头像需要非默认值时写入，
+     * 旧模板缺这一项照样能读——不破坏模板格式版本。
+     */
+    avatarPadding: botAvatarPaddingSchema.optional(),
     skills: z
       .object({
         authored: z.array(botTemplateAuthoredSkillSchema).max(BOT_TEMPLATE_LIMITS.authoredSkills),

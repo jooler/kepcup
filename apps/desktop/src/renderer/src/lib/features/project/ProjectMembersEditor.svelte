@@ -63,6 +63,7 @@
       name={member.bot.name}
       avatar={member.bot.avatar}
       mask={member.bot.avatarMask}
+      padding={member.bot.avatarPadding}
       class="size-8"
     />
     <span class="min-w-0 flex-1">

@@ -193,6 +193,33 @@ export function normalizeBotAvatarMask(value: string | null | undefined): BotAva
   return value === 'rounded' ? 'rounded' : 'circle';
 }
 
+/**
+ * 上传头像内边距的上限（像素）：足够在 96px 详情头像上做明显收缩，又不至于把
+ * 32px 侧栏头像缩没。
+ */
+export const MAX_BOT_AVATAR_PADDING = 16;
+
+/**
+ * 上传头像的内边距（`bots.avatar_padding` 列，像素整数）：容器尺寸不变，图片
+ * 内缩 padding 后填充剩余空间——不同图片自带留白不一、显示尺寸相同视觉大小
+ * 却不同，用它把视觉大小调齐。只影响 `upload:` 头像。0 = 不内缩（旧行为）。
+ */
+export const botAvatarPaddingSchema = z.number().int().min(0).max(MAX_BOT_AVATAR_PADDING);
+export type BotAvatarPadding = z.infer<typeof botAvatarPaddingSchema>;
+
+/** 列值 → 契约值：NULL / 缺列 / 越界一律按 0（读侧容忍的写侧对偶）。 */
+export function normalizeBotAvatarPadding(value: number | null | undefined): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > MAX_BOT_AVATAR_PADDING
+  ) {
+    return 0;
+  }
+  return value;
+}
+
 export const botSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -202,6 +229,11 @@ export const botSchema = z.object({
    * 可选而非默认值，是为了不改变已有 schema 生产方的严格性（模板导入、测试夹具）。
    */
   avatarMask: botAvatarMaskSchema.optional(),
+  /**
+   * 上传头像的内边距（像素，0-16）；缺省 / 缺失 = 0（旧行、未设置过的行）。
+   * 可选而非默认值，同 avatarMask：不改变已有 schema 生产方的严格性。
+   */
+  avatarPadding: botAvatarPaddingSchema.optional(),
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
@@ -1016,6 +1048,8 @@ export const conversationSchema = z.object({
         avatar: z.string().nullable(),
         /** 上传头像的遮罩形状；缺省 = 'circle'。 */
         avatarMask: botAvatarMaskSchema.optional(),
+        /** 上传头像的内边距（像素，0-16）；缺省 = 0。 */
+        avatarPadding: botAvatarPaddingSchema.optional(),
       }),
     )
     .optional(),

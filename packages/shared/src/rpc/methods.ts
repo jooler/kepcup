@@ -131,6 +131,7 @@ import {
   botProfileSchema,
   botSchema,
   botAvatarMaskSchema,
+  botAvatarPaddingSchema,
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
@@ -967,6 +968,15 @@ export const botsAvatarDataOutputSchema = z.object({ mime: z.string(), base64: z
 export const botsAvatarMaskInputSchema = z.object({
   id: z.string().min(1),
   mask: botAvatarMaskSchema,
+});
+/**
+ * 设置 Bot 上传头像的内边距（像素，0-16）。与遮罩同一条 RPC 模式：不是 Profile
+ * 字段（`bots.update` 是整份 Profile 的三方合并），单独写 `bots.avatar_padding` 列、
+ * 单独发布 bot.updated。
+ */
+export const botsAvatarPaddingInputSchema = z.object({
+  id: z.string().min(1),
+  padding: botAvatarPaddingSchema,
 });
 /**
  * Upload the user's own avatar (Profile settings). Core writes the file under
@@ -2364,6 +2374,7 @@ export const rpcMethodSchemas = {
   },
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.avatar.mask': { input: botsAvatarMaskInputSchema, output: botGetOutputSchema },
+  'bots.avatar.padding': { input: botsAvatarPaddingInputSchema, output: botGetOutputSchema },
   'user.avatar.upload': {
     input: userAvatarUploadInputSchema,
     output: userAvatarUploadOutputSchema,

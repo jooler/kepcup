@@ -5,7 +5,7 @@
    * （组件内部元素均为 size-full）。
    */
   import * as Avatar from '$lib/components/ui/avatar';
-  import { normalizeBotAvatarMask, type BotAvatarMask } from '@kepcup/shared';
+  import { normalizeBotAvatarMask, normalizeBotAvatarPadding, type BotAvatarMask } from '@kepcup/shared';
   import { avatarImages } from './avatar-images.svelte';
   import BotPresetAvatar from './BotPresetAvatar.svelte';
   import { avatarMaskClass, parsePresetAvatar, parseUploadedAvatar } from './presets';
@@ -15,6 +15,7 @@
     name = '',
     avatar = null,
     mask = null,
+    padding = null,
     class: klass = 'size-8',
     testId,
     animated = true,
@@ -29,6 +30,12 @@
      * 图片——预置头像自带轮廓、首字母占位保持圆形。
      */
     mask?: BotAvatarMask | null;
+    /**
+     * 上传头像的内边距（像素整数 0-16，上限见 shared MAX_BOT_AVATAR_PADDING）：
+     * 容器尺寸不变，图片内缩 padding 后填充剩余空间，用来把自带留白不一的图片
+     * 调到视觉大小一致。只作用于上传图片；null / 越界按 0。
+     */
+    padding?: number | null;
     class?: string;
     testId?: string;
     animated?: boolean;
@@ -50,6 +57,9 @@
   // 归一后的遮罩值同时驱动 class 与 data 属性（测试 / 调试看得到的就是实际生效的那个）。
   const maskValue = $derived(normalizeBotAvatarMask(mask));
   const maskClass = $derived(avatarMaskClass(maskValue));
+  // 内边距同遮罩：归一后驱动 style 与 data 属性；0 不写 style（与旧行为逐像素一致）。
+  const paddingValue = $derived(normalizeBotAvatarPadding(padding));
+  const paddingStyle = $derived(paddingValue > 0 ? `padding:${paddingValue}px` : undefined);
   const letterShadowClass = $derived(
     glyphShadowOffset !== null ? 'group-avatar-letter-shadow' : '',
   );
@@ -65,12 +75,17 @@
     <BotPresetAvatar value={avatar ?? ''} class="size-full {glyphShadowClass}" {animated} />
   </span>
 {:else if uploadFile !== null && uploadedUrl !== null}
+  <!-- 遮罩圆角打在 img 上而不是容器上：border-radius 百分比按图片自身盒子解析，
+       padding 内缩后形状仍跟随可见图片（容器上的圆角会够不着内缩的图——圆形把
+       图片四角斜切掉、圆角方的直角直接露出来）。padding = 0 时与旧结构逐像素一致。 -->
   <span
-    class="inline-block {klass} shrink-0 overflow-hidden {maskClass}"
+    class="inline-block {klass} shrink-0"
+    style={paddingStyle}
     data-testid={testId}
     data-avatar-mask={maskValue}
+    data-avatar-padding={paddingValue}
   >
-    <img src={uploadedUrl} alt={name} class="size-full object-cover" />
+    <img src={uploadedUrl} alt={name} class="size-full object-cover {maskClass}" />
   </span>
 {:else if glyphShadowOffset !== null}
   <!-- 字母占位：text-shadow 只打在字上，避免整圆 filter 看起来像瓦片描边。 -->

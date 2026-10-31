@@ -5,8 +5,14 @@
    * 形状网格 + 颜色色板，点选即保存；上传页签选图后先经 AvatarCropper
    * 裁成方形（弹窗 Portal 到 body），确认再上传。
    */
-  import { ImagePlus, RotateCcw } from '@lucide/svelte';
-  import { normalizeBotAvatarMask, type Bot, type BotAvatarMask } from '@kepcup/shared';
+  import { ImagePlus, Minus, Plus, RotateCcw } from '@lucide/svelte';
+  import {
+    MAX_BOT_AVATAR_PADDING,
+    normalizeBotAvatarMask,
+    normalizeBotAvatarPadding,
+    type Bot,
+    type BotAvatarMask,
+  } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
@@ -34,6 +40,8 @@
   let uploading = $state(false);
   // 遮罩写入中：两个按钮一起禁用，避免连点把旧值写到最后。
   let maskPending = $state<BotAvatarMask | null>(null);
+  // 内边距写入中：步进器乐观显示目标值，连点按目标值继续加减。
+  let paddingPending = $state<number | null>(null);
   let cropFile = $state<File | null>(null);
   let node = $state<HTMLDivElement | null>(null);
 
@@ -51,6 +59,10 @@
   // 遮罩切换只对上传头像露出：预置头像自带轮廓，改形状没有意义。
   const uploadedFile = $derived(parseUploadedAvatar(bot.avatar));
   const mask = $derived(normalizeBotAvatarMask(bot.avatarMask));
+  // 步进器展示值：写入中乐观显示目标值，否则用已保存的（读侧归一，缺省 0）。
+  const padding = $derived(
+    paddingPending ?? normalizeBotAvatarPadding(bot.avatarPadding),
+  );
 
   // Esc 经层级仲裁：头像选择器开着时，一次 Esc 只收起它，不连带关外层的 Bot 详情覆盖层。
   $effect(() => {
@@ -106,6 +118,27 @@
       );
     } finally {
       maskPending = null;
+    }
+  }
+
+  /**
+   * 内边距同遮罩：单独一条 RPC（bots.avatar.padding），core 发布 bot.updated。
+   * 步进连点：pending 期间按乐观值继续加减，全部落到最新的目标值。
+   */
+  async function applyPadding(next: number): Promise<void> {
+    const clamped = Math.min(Math.max(Math.round(next), 0), MAX_BOT_AVATAR_PADDING);
+    if (clamped === padding) return;
+    paddingPending = clamped;
+    try {
+      await core.call('bots.avatar.padding', { id: bot.id, padding: clamped });
+    } catch (error) {
+      toast.error(
+        t('rightPanel.avatarSaveFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      paddingPending = null;
     }
   }
 
@@ -228,9 +261,12 @@
       <div class="p-2">
         {#if uploadedFile !== null}
           <div class="mb-2" data-testid="avatar-mask-picker">
+            <!-- 标题不换行不收缩（6 字标题也不折行），说明占满剩余宽度自动换行。 -->
             <p class="flex items-baseline gap-1.5 px-1 pb-1.5">
-              <span class="text-xs font-medium">{t('rightPanel.avatarMaskTitle')}</span>
-              <span class="text-[11px] text-muted-foreground"
+              <span class="shrink-0 whitespace-nowrap text-xs font-medium"
+                >{t('rightPanel.avatarMaskTitle')}</span
+              >
+              <span class="min-w-0 flex-1 text-[11px] text-muted-foreground"
                 >{t('rightPanel.avatarMask.hint')}</span
               >
             </p>
@@ -238,7 +274,7 @@
               {#each AVATAR_MASKS as option (option)}
                 <button
                   type="button"
-                  class="flex flex-1 items-center justify-center gap-2 rounded-xl border px-2 py-2 transition-colors hover:bg-accent {mask ===
+                  class="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 transition-colors hover:bg-accent {mask ===
                   option
                     ? 'border-ring bg-accent'
                     : 'border-border/60'} {maskPending !== null
@@ -255,12 +291,49 @@
                     name={bot.name}
                     avatar={bot.avatar}
                     mask={option}
-                    class="size-8"
+                    padding={padding}
+                    class="size-12"
                     animated={false}
                   />
                   <span class="text-xs">{t(`rightPanel.avatarMask.${option}` as MessageKey)}</span>
                 </button>
               {/each}
+            </div>
+          </div>
+          <!-- 内边距：标题一行，右侧 − / 数值 / + 步进（说明与预览图已并入形状预览）。 -->
+          <div
+            class="flex items-center gap-1.5 px-1 pb-2"
+            role="group"
+            aria-label={t('rightPanel.avatarPaddingTitle')}
+            data-testid="avatar-padding-picker"
+          >
+            <span class="shrink-0 whitespace-nowrap text-xs font-medium"
+              >{t('rightPanel.avatarPaddingTitle')}</span
+            >
+            <div class="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                class="flex size-6 items-center justify-center rounded-md border border-border/60 transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+                onclick={() => void applyPadding(padding - 1)}
+                aria-label={t('rightPanel.avatarPaddingDecrease')}
+                disabled={padding <= 0}
+                data-testid="avatar-padding-decrease"
+              >
+                <Minus class="size-3.5" aria-hidden="true" />
+              </button>
+              <span class="w-9 text-center text-xs tabular-nums" data-testid="avatar-padding-value">
+                {padding}px
+              </span>
+              <button
+                type="button"
+                class="flex size-6 items-center justify-center rounded-md border border-border/60 transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+                onclick={() => void applyPadding(padding + 1)}
+                aria-label={t('rightPanel.avatarPaddingIncrease')}
+                disabled={padding >= MAX_BOT_AVATAR_PADDING}
+                data-testid="avatar-padding-increase"
+              >
+                <Plus class="size-3.5" aria-hidden="true" />
+              </button>
             </div>
           </div>
         {/if}
