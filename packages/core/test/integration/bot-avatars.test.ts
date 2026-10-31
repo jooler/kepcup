@@ -203,6 +203,69 @@ describe('bot avatars (upload / read / validation)', () => {
     );
   });
 
+  it('avatar padding defaults to 0, round-trips through bots.avatar.padding and survives avatar changes', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
+    const core = await createTestCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { KEPCUP_MOCK_LLM_URL: 'http://mock.invalid' },
+    });
+    cores.push(core);
+    homes.push(home);
+    const bot = await makeBot(core, '小启');
+    // 新建行的 avatar_padding 是 NULL（0061 之后的旧数据同形）：读出归一为 0。
+    expect(bot.avatarPadding).toBe(0);
+
+    const padded = (await core.rpc.call('bots.avatar.padding', {
+      id: bot.id,
+      padding: 4,
+    })) as { bot: Bot };
+    expect(padded.bot.avatarPadding).toBe(4);
+
+    // 边距单独成列：换上传头像 / 换预置头像都不动它，重新上传仍沿用上次的边距。
+    const uploaded = (await core.rpc.call('bots.avatar.upload', {
+      id: bot.id,
+      mime: 'image/png',
+      bytesBase64: PNG_1PX.toString('base64'),
+    })) as { bot: Bot };
+    expect(uploaded.bot.avatarPadding).toBe(4);
+    const preset = (await core.rpc.call('bots.update', {
+      id: bot.id,
+      profile: {
+        ...bot.profile,
+        identity: { ...bot.profile.identity, avatar: 'preset:orb:orange' },
+      },
+    })) as { bot: Bot };
+    expect(preset.bot.avatarPadding).toBe(4);
+    const refetched = (await core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
+    expect(refetched.bot.avatarPadding).toBe(4);
+
+    const zeroed = (await core.rpc.call('bots.avatar.padding', {
+      id: bot.id,
+      padding: 0,
+    })) as { bot: Bot };
+    expect(zeroed.bot.avatarPadding).toBe(0);
+
+    // 范围（0-16）与整数约束在 RPC 边界就被拦下。
+    await expect(
+      core.rpc.call('bots.avatar.padding', { id: bot.id, padding: -1 }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      core.rpc.call('bots.avatar.padding', { id: bot.id, padding: 17 }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      core.rpc.call('bots.avatar.padding', { id: bot.id, padding: 1.5 }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    // 不存在的 Bot 不能写边距。
+    await expect(
+      core.rpc.call('bots.avatar.padding', { id: 'bot_missing', padding: 4 }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // 领域层直接调用（不经 RPC 校验）也应归一为 INVALID_INPUT，而不是裸 ZodError。
+    expect(() => core.services.domain!.bots.setAvatarPadding(bot.id, 99)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_INPUT' }),
+    );
+  });
+
   it('preset avatar strings round-trip through bots.update without touching the disk', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
     const core = await createTestCore({

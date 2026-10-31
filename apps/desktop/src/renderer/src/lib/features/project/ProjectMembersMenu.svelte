@@ -79,6 +79,7 @@
           name={member.bot.name}
           avatar={member.bot.avatar ?? null}
           mask={member.bot.avatarMask}
+          padding={member.bot.avatarPadding}
           class="size-7"
           animated={false}
         />
@@ -112,6 +113,7 @@
               name={member.bot.name}
               avatar={member.bot.avatar ?? null}
               mask={member.bot.avatarMask}
+              padding={member.bot.avatarPadding}
               class="size-7 shrink-0"
               animated={false}
             />

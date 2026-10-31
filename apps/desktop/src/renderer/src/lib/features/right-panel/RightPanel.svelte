@@ -448,6 +448,7 @@
               name={bot.name}
               avatar={bot.avatar}
               mask={bot.avatarMask}
+              padding={bot.avatarPadding}
               class="size-24"
               fallbackClass="text-2xl"
               testId="bot-avatar"

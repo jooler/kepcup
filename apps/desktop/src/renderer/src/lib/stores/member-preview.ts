@@ -1,6 +1,7 @@
 import {
   PROJECT_MEMBER_PREVIEW_MAX,
   normalizeBotAvatarMask,
+  normalizeBotAvatarPadding,
   type Bot,
   type BotAvatarMask,
 } from '@kepcup/shared';
@@ -17,20 +18,23 @@ export interface MemberPreview {
   name: string;
   avatar: string | null;
   avatarMask: BotAvatarMask;
+  avatarPadding: number;
 }
 
 /** 预览需要的 Bot 字段子集：core 下发的 `Bot` 直接可用，测试可用最小对象。 */
 export type PreviewBot = Pick<Bot, 'id' | 'name' | 'avatar'> & {
   avatarMask?: BotAvatarMask | null;
+  avatarPadding?: number | null;
 };
 
-/** 单个 Bot → 预览（遮罩按读侧规则归一：缺省 / 未知 = circle）。 */
+/** 单个 Bot → 预览（遮罩 / 边距按读侧规则归一：缺省 = circle / 0）。 */
 export function memberPreviewOf(bot: PreviewBot): MemberPreview {
   return {
     id: bot.id,
     name: bot.name,
     avatar: bot.avatar ?? null,
     avatarMask: normalizeBotAvatarMask(bot.avatarMask),
+    avatarPadding: normalizeBotAvatarPadding(bot.avatarPadding),
   };
 }
 

@@ -5,6 +5,8 @@ import {
   botProfileSchema,
   botAvatarMaskSchema,
   normalizeBotAvatarMask,
+  botAvatarPaddingSchema,
+  normalizeBotAvatarPadding,
   normalizeBotKind,
   parseBotKind,
   newId,
@@ -29,6 +31,11 @@ interface BotRow {
   name: string;
   avatar: string | null;
   avatar_mask: string | null;
+  /**
+   * 0061 新增列。可选：与 kind 同理，开发期库里 user_version 可能已越过本迁移
+   * （旧编号排序问题），`select *` 出来的行没有这一列（读侧按 0 兜底）。
+   */
+  avatar_padding?: number | null;
   bio: string | null;
   profile_json: string;
   status: 'active' | 'deleted';
@@ -89,6 +96,7 @@ function rowToBot(row: BotRow): Bot {
     name: row.name,
     avatar: row.avatar,
     avatarMask: normalizeBotAvatarMask(row.avatar_mask),
+    avatarPadding: normalizeBotAvatarPadding(row.avatar_padding),
     bio: row.bio ?? '',
     profile,
     status: row.status,
@@ -576,6 +584,27 @@ export class BotsService {
   }
 
   /**
+   * 头像内边距写入（只动 `avatar_padding`，与 `setAvatarMask` 同级）：0-16 像素，
+   * 容器尺寸不变、图片内缩后填充剩余空间。与 avatar 分开写的理由同遮罩——不在
+   * Profile 里；换成预置头像时数值保留，换回上传图片仍沿用上次的边距。
+   */
+  setAvatarPadding(id: string, padding: number): Bot {
+    const existing = this.getOrThrow(id);
+    if (existing.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
+    }
+    // RPC 边界已校验；这里兜住领域层直接调用，免得裸 ZodError 变成 INTERNAL。
+    const parsed = botAvatarPaddingSchema.safeParse(padding);
+    if (!parsed.success) {
+      throw new AppError('INVALID_INPUT', parsed.error.issues[0]?.message ?? '头像内边距不合法');
+    }
+    this.db
+      .prepare('update bots set avatar_padding = ?, updated_at = ? where id = ?')
+      .run(parsed.data, this.clock.now(), id);
+    return this.getOrThrow(id);
+  }
+
+  /**
    * Turns the row into a placeholder: identity fields are cleared so the id
    * stays reserved for history rendering, but no profile survives.
    */
@@ -598,7 +627,7 @@ export class BotsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update bots set name = '', avatar = NULL, avatar_mask = NULL, bio = '', profile_json = '{}', kind = NULL, status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
+        "update bots set name = '', avatar = NULL, avatar_mask = NULL, avatar_padding = NULL, bio = '', profile_json = '{}', kind = NULL, status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
       )
       .run(now, now, id);
   }

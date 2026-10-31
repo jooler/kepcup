@@ -594,6 +594,9 @@ export const zhCN = {
   'rightPanel.avatarMask.circle': '圆形',
   'rightPanel.avatarMask.rounded': '圆角方',
   'rightPanel.avatarMask.hint': '只影响上传的图片，预置头像保持自己的轮廓',
+  'rightPanel.avatarPaddingTitle': '头像边距',
+  'rightPanel.avatarPaddingDecrease': '减小边距',
+  'rightPanel.avatarPaddingIncrease': '增大边距',
   // --- D48：Bot 模板导出/导入（docs/design/48-bot-template-export.md） -------------
   'botTemplate.exportButton': '导出为模板',
   'botTemplate.desktopOnly': '仅桌面端可用',

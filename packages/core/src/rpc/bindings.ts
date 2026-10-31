@@ -44,6 +44,7 @@ import {
   botsAvatarDataInputSchema,
   botsAvatarDataOutputSchema,
   botsAvatarMaskInputSchema,
+  botsAvatarPaddingInputSchema,
   userAvatarUploadInputSchema,
   userAvatarUploadOutputSchema,
   userAvatarDataInputSchema,
@@ -928,6 +929,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // 遮罩形状只写 `bots.avatar_mask`（不是 Profile 字段），与头像上传分开。
     'bots.avatar.mask': method(botsAvatarMaskInputSchema, botGetOutputSchema, async (input) => {
       const bot = domain.bots.setAvatarMask(input.id, input.mask);
+      publish('bot.updated', { bot });
+      return { bot };
+    }),
+    // 内边距同遮罩：只写 `bots.avatar_padding`（不是 Profile 字段），单独发布 bot.updated。
+    'bots.avatar.padding': method(botsAvatarPaddingInputSchema, botGetOutputSchema, async (input) => {
+      const bot = domain.bots.setAvatarPadding(input.id, input.padding);
       publish('bot.updated', { bot });
       return { bot };
     }),
