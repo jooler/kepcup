@@ -49,12 +49,12 @@ test('renders the three-column skeleton and reaches the core service', async () 
   const statusText = await page.locator('[data-testid="ping-result"]').innerText();
   expect(statusText).toMatch(/Node \d+\.\d+\.\d+/);
 
-  // 设置与通讯录是全局设置弹框（主区域常驻对话）：左栏菜单打开，分组定位。
+  // 设置与通讯录在整页设置页（主区域被设置接管，左栏是分类列表）：菜单打开，分组定位。
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-contacts"]').click();
   await expect(page.locator('[data-testid="contacts-page-content"]')).toBeVisible();

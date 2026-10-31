@@ -1484,11 +1484,9 @@ export const zhCN = {
   'chats.errorCode.BOT_UNDELETABLE': '管家不能删除',
 
   'sidebar.extensionCenter': '扩展中心',
-  'extensionCenter.title': '扩展中心',
-  'extensionCenter.description':
-    '为 Bot 添加技能、连接常用应用、管理已安装的工具服务、让 Bot 接管邮箱，或启停本机应用协作。',
   'extensionCenter.tabs.market': '市场',
   'extensionCenter.tabs.installed': '已安装',
+  'extensionCenter.tabs.settings': '设置',
   'extensionCenter.localCollab.hint': '与同一台电脑上的其它应用直接协作（不经云端）。',
   'extensionCenter.localCollab.inkcop.enable': '启用 InkCop 协作',
   'extensionCenter.localCollab.inkcop.description':
@@ -2051,6 +2049,7 @@ export const zhCN = {
   'chatHeader.collapsePanel': '收起 Bot 面板',
   'settings.navGeneral': '通用',
   'settings.navModels': '模型',
+  'settings.backToChats': '返回对话',
   'settings.navProfile': '个人资料',
   'settings.navContacts': '通讯录',
   'settings.navUnattended': '无人值守',
@@ -2454,7 +2453,6 @@ export const zhCN = {
   'search.themeApplied': '外观已切换为「{mode}」',
   // --- 外部智能体（D72，docs/design/28-external-agents-acp.md）---------------
   'settings.navAgents': '智能体',
-  'settings.navPlugins': '插件',
   'approvals.environmentLicense': '许可',
   'agents.title': '外部智能体',
   'agents.defaultAgent': '新建 Bot 默认使用的智能体',

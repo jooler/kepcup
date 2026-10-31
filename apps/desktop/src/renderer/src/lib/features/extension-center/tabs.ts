@@ -1,17 +1,20 @@
 /**
- * 扩展中心（原技能市场）的分组：市场 / 已安装（插件）。
- * 纯函数，便于单测；shell store、弹框与各入口（`openExtensionCenter(tab)`）共用。
+ * 扩展中心（原技能市场）的分组：市场 / 已安装（插件）/ 设置。
+ * 纯函数，便于单测；shell store、各入口（`openExtensionCenter(tab)`）与设置页共用。
  *
- * D105 P4 收敛为两页签：技能 / 连接 / MCP / 邮件由插件贡献、安装后自动确认类别
+ * D105 P4 收敛：技能 / 连接 / MCP / 邮件由插件贡献、安装后自动确认类别
  * （`PluginSummary.counts` + `instanceCounts`），是「已安装」列表顶部的筛选条件；
  * 本机应用协作（InkCop）与本机自建连接不是插件，以「系统卡」进已安装网格
  * （系统能力不占页签，旧 `localCollab` 页名保留为深链别名 → 已安装 + 滚动到系统卡）。
+ *
+ * 「设置」页签（设置并页后新增）：原设置「插件」分区（供应链与更新设置）并入
+ * 扩展中心，作为最右侧的页签；旧设置深链 `plugins` 由 shell 改开本页签。
  */
-export type ExtensionCenterTab = 'market' | 'installed';
+export type ExtensionCenterTab = 'market' | 'installed' | 'settings';
 
 // prettier-ignore
 // settings-ui-scan.ts parses the array below with a regex; keep it a single-line literal.
-export const EXTENSION_CENTER_TABS: readonly ExtensionCenterTab[] = ['market', 'installed'];
+export const EXTENSION_CENTER_TABS: readonly ExtensionCenterTab[] = ['market', 'installed', 'settings'];
 
 /** 「已安装」列表的内容筛选：全部 + 插件贡献的四类内容。 */
 export type ExtensionCenterFilter = 'all' | 'skill' | 'connector' | 'mcp' | 'mail';

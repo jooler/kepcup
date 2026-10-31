@@ -1,5 +1,5 @@
 /**
- * 设置分区内锚点滚动（宽屏 SettingsDialog 与窄屏 NarrowSettings 共用）：
+ * 设置分区内锚点滚动（宽屏 SettingsPage 与窄屏 NarrowSettings 共用）：
  * 打开设置带 anchor（如「模型 → 默认模型」）时，目标分区渲染完成后把
  * `[data-settings-anchor]` 滚到容器顶部附近，然后清掉锚点（一次性消费）。
  *

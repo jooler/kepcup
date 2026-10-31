@@ -92,7 +92,7 @@ test('blind acceptance: artifact installs, consent shows config field, enables a
 
     // —— 扩展中心 → 已安装 → 从文件安装（UI 全流程：路径输入 → 检视 → 同意面板）——
     await page.locator('[data-testid="extension-center-button"]').click();
-    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    const dialog = page.locator('[data-testid="settings-page"]');
     await expect(dialog).toBeVisible();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await expect(dialog.locator('[data-testid="extension-installed"]')).toBeVisible();

@@ -168,7 +168,7 @@ async function launch(
 }
 
 async function openExtensionCenter(page: Page): Promise<Locator> {
-  const dialog = page.locator('[data-testid="extension-center-dialog"]');
+  const dialog = page.locator('[data-testid="settings-page"]');
   await page.locator('[data-testid="extension-center-button"]').click();
   await expect(dialog).toBeVisible();
   return dialog;
@@ -214,11 +214,11 @@ test('plugins market: without a published index the market shows a failed-sync b
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 市场是第一个页签（D104 UI 修正：共三个页签）。
+    // 市场是第一个页签。
     const tabs = dialog.locator('[data-testid^="extension-center-tab-"]');
     await expect(tabs.first()).toHaveAttribute('data-testid', 'extension-center-tab-market');
-    // D105 P4：两页签收敛。
-    await expect(tabs).toHaveCount(2);
+    // D105 P4：两页签收敛；「设置」页签（原设置「插件」分区并入）共三个。
+    await expect(tabs).toHaveCount(3);
     await dialog.locator('[data-testid="extension-center-tab-market"]').click();
 
     const status = dialog.locator('[data-testid="plugins-market-status"]');
@@ -513,20 +513,21 @@ test('plugins market: a custom marketplace without a signing key shows no_custom
     const page = launched.page;
     const installed = await openInstalled(page);
 
-    // 市场设置在应用「设置 → 插件」（D104 UI 修正）：填自建市场地址。
+    // 市场设置在「扩展中心 → 设置」页签（原设置「插件」分区已并入）：填自建市场地址。
     const openMarketSettings = async (): Promise<Locator> => {
       await page.keyboard.press('Escape');
-      await expect(page.locator('[data-testid="extension-center-dialog"]')).toBeHidden();
+      await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
       await page.locator('[data-testid="user-menu-trigger"]').click();
       await page.locator('[data-testid="menu-settings"]').click();
       await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-      await page.locator('[data-testid="settings-nav-plugins"]').click();
+      await page.locator('[data-testid="settings-nav-extension-center"]').click();
+      await page.locator('[data-testid="extension-center-tab-settings"]').click();
       const anchor = page.locator('[data-settings-anchor="plugins-marketplace"]');
       return anchor.locator('[data-testid="setting-card-fields-url"]');
     };
     const backToMarket = async (): Promise<void> => {
       await page.keyboard.press('Escape');
-      await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+      await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
       await page.locator('[data-testid="extension-center-button"]').click();
       await installed.locator('[data-testid="extension-center-tab-market"]').click();
     };

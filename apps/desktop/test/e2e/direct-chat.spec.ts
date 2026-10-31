@@ -301,7 +301,7 @@ test('removing the conversation archives it (restorable from the contacts); dele
     await expect(removedBot.locator('[data-testid^="bot-archived-"]')).toBeVisible();
     await removedBot.locator('[data-testid^="bot-restore-"]').click();
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(1);
 
     // Delete a bot from the contacts page: its data is kept, but the UI shows
@@ -329,7 +329,7 @@ test('removing the conversation archives it (restorable from the contacts); dele
     ).toBeHidden({ timeout: 60_000 });
 
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 10_000 });
     // Only 小艾's restored chat is left; 小明's is gone with its bot.
     await expect(page.locator('[data-testid^="conversation-row-"]')).toHaveCount(1);

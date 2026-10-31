@@ -3,6 +3,9 @@
  * 组件，单测环境加载不了；标题的 i18n 单独放这里。label 存 i18n key，在
  * visibleSectionSources / sectionLabel 被调用时才翻译——组件在 $derived 中调用，
  * 语言切换即响应式更新；若在模块顶层固化成字符串，就要刷新前端才能恢复。
+ *
+ * 「插件」分区已并入扩展中心「设置」页签，不在设置分区清单里；扩展中心作为
+ * 设置页的分类由左栏导航（AppSidebar）插入「个人资料」之后，也不在本清单。
  */
 import { t, type MessageKey } from '$lib/i18n';
 import type { ResolvedSection } from './sections';
@@ -23,7 +26,6 @@ export const settingsSectionSources: SettingsSectionSource[] = [
   { id: 'search', labelKey: 'settings.navWebSearch' },
   { id: 'browser', labelKey: 'settings.navBrowserProfiles' },
   { id: 'agents', labelKey: 'settings.navAgents' },
-  { id: 'plugins', labelKey: 'settings.navPlugins' },
   { id: 'contacts', labelKey: 'settings.navContacts' },
   { id: 'unattended', labelKey: 'settings.navUnattended' },
   { id: 'remote', labelKey: 'settings.navRemote' },

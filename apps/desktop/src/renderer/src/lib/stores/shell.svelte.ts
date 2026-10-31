@@ -1,10 +1,15 @@
 /**
- * 全局外壳状态。宽屏主区有两个视图：对话（默认）与工作台（D90，`mainView`）；
- * 设置与通讯录都以弹框呈现（通讯录是设置弹框中的一个分组），不再整页替换主区域。
- * 窄屏（33-narrow-layout）例外：设置改走 NarrowSettings 全屏页，通讯录 /
- * 用户画像直达底部 tab——见 openSettings 的重路由；窄屏暂无工作台入口，`mainView` 不生效。
+ * 全局外壳状态。宽屏主区有三个视图：对话（默认）、工作台（D90，`mainView`）与
+ * 设置页（`settingsOpen`）——设置是整页视图：左栏变成分类列表（顶部「返回对话」
+ * 退出），主体渲染对应分区；扩展中心并入设置页（`settingsSection` 为
+ * 'extension-center' 的伪分区），不再有独立弹框。`mainView` 在设置页打开期间保持
+ * 不变，退出设置回到原视图。
+ *
+ * 窄屏（33-narrow-layout）例外：设置改走 NarrowSettings 全屏页，扩展中心直达
+ * 底部「扩展」tab，通讯录 / 用户画像直达底部 tab——见 openSettings /
+ * openExtensionCenter 的重路由；窄屏暂无工作台入口，`mainView` 不生效。
  */
-import type { SettingsSectionId } from '$lib/features/settings/sections';
+import type { SettingsSectionId, SettingsPageSection } from '$lib/features/settings/sections';
 import type {
   ExtensionCenterFilter,
   ExtensionCenterTab,
@@ -16,7 +21,7 @@ import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
 import {
   resolveSettingsSection,
-  settingsSectionOpensExtensionMcp,
+  settingsSectionExtensionTarget,
 } from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 import { loadLastMainView, saveLastMainView } from '$lib/features/shell/last-main-view-persist';
@@ -68,13 +73,16 @@ class ShellState {
     saveLastMainView(globalThis.localStorage ?? null, 'chats');
   }
 
-  /** 设置弹框是否打开。 */
+  /**
+   * 宽屏设置页是否打开（整页视图，左栏是分类列表；窄屏不用——窄屏走
+   * NarrowSettings 全屏页）。
+   */
   settingsOpen = $state(false);
-  /** 设置弹框当前分区（左栏条目）。 */
-  settingsSection = $state<SettingsSectionId>('general');
+  /** 设置页当前分类（左栏条目）；'extension-center' 渲染扩展中心主体。 */
+  settingsSection = $state<SettingsPageSection>('general');
   /**
    * 打开时要滚动到的分区内锚点（[data-settings-anchor]，如「默认模型」）；
-   * SettingsDialog 渲染完目标分区后消费并复位。
+   * SettingsPage（宽屏设置页）/ NarrowSettings 渲染完目标分区后消费并复位。
    */
   settingsAnchor = $state<string | null>(null);
   /** 右栏（Bot 详情）默认收起，保持界面简单；只在用户点击顶部药丸时展开。 */
@@ -124,9 +132,7 @@ class ShellState {
    * AppSidebar 消费后即复位。
    */
   autoOpenStartPanel = $state(false);
-  /** 扩展中心弹框（原技能市场；左栏底部入口 / 右栏技能面板入口 / 设置里的「去添加」共用）。 */
-  extensionCenterOpen = $state(false);
-  /** 扩展中心当前分组（市场 / 已安装 / 本机应用协作）；`openExtensionCenter(tab)` 指定，用户可在弹框内切换。 */
+  /** 扩展中心当前分组（市场 / 已安装 / 设置）；`openExtensionCenter(tab)` 指定，用户可再切换。 */
   extensionCenterTab = $state<ExtensionCenterTab>('installed');
   /**
    * 「已安装」列表的内容筛选（D104：技能 / 连接 / MCP / 邮件由插件贡献自动归类，
@@ -159,29 +165,44 @@ class ShellState {
    * 前四个落到「已安装」并选中对应内容筛选；`localCollab` 落到「已安装 / 全部」并滚动到
    * 系统卡（本机应用协作收编为卡片，不再占页签）。
    * `anchor` 为目录条目的 `plugins-filter-*` 锚点时同样选中筛选。
+   *
+   * 宽屏：扩展中心是设置页里的一个分类（`settingsSection = 'extension-center'`），
+   * 打开它即打开设置页；`settings` 页签带锚点时（如 `plugins-updates`）一并设置
+   * 分区内锚点。窄屏：直达底部「扩展」tab（覆盖层随之收起，selectTab 语义）。
    */
   openExtensionCenter(tab: ExtensionCenterTarget = 'installed', anchor?: string): void {
     const resolved = resolveExtensionCenterTarget(tab, anchor);
     this.extensionCenterTab = resolved.tab;
     this.extensionCenterFilter = resolved.filter;
     this.extensionCenterSystemCardFocus = resolved.systemCard;
-    this.extensionCenterOpen = true;
+    if (narrowLayout.narrow) {
+      narrowLayout.selectTab('extensions');
+      return;
+    }
+    this.closeNarrowSettings();
+    this.settingsAnchor = null;
+    this.settingsSection = 'extension-center';
+    this.settingsOpen = true;
+    if (resolved.tab === 'settings' && anchor !== undefined) this.settingsAnchor = anchor;
   }
 
   /**
-   * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）。
-   * 旧深链 `mcp` / `developer` 改开扩展中心 MCP（「应用」分区已移除，连接相关都在
-   * 扩展中心对应分组）。
+   * 打开设置页，可指定初始分区与分区内锚点（如「模型 → 默认模型」）。
+   * 旧深链 `mcp` / `developer` / `plugins` 改开扩展中心（「应用」「插件」分区已移除，
+   * 连接相关在扩展中心对应分组、插件供应链设置在扩展中心「设置」页签）。
    *
-   * 窄屏重路由（33-narrow-layout）：不打开弹框——不带分区落到 NarrowSettings
-   * 分组列表页，带分区直达该分组详情页；「通讯录」「用户画像」是底部 tab，
-   * 深链直接切 tab。
+   * 窄屏重路由（33-narrow-layout）：不打开宽屏设置页——不带分区落到 NarrowSettings
+   * 分组列表页，带分区直达该分区详情页；「通讯录」「用户画像」是底部 tab，
+   * 深链直接切 tab；旧深链（含 plugins）照旧先改开扩展中心（窄屏即「扩展」tab）。
    */
   openSettings(section?: SettingsSectionId, anchor?: string): void {
-    if (section !== undefined && settingsSectionOpensExtensionMcp(section)) {
-      this.closeSettings();
-      this.openExtensionCenter('mcp');
-      return;
+    if (section !== undefined) {
+      const target = settingsSectionExtensionTarget(section);
+      if (target !== null) {
+        this.closeSettings();
+        this.openExtensionCenter(target, anchor);
+        return;
+      }
     }
     if (narrowLayout.narrow) {
       if (section === undefined) {
@@ -203,14 +224,16 @@ class ShellState {
       this.narrowSettingsOpen = true;
       return;
     }
-    this.settingsSection = section ?? 'general';
+    // 旧深链别名已在上面改开扩展中心，到这里的一定是真实分区。
+    this.settingsSection = (section ?? 'general') as SettingsPageSection;
     this.settingsAnchor = anchor ?? null;
     this.settingsOpen = true;
   }
 
   /**
-   * 收起设置：宽屏弹框与窄屏全屏页统一关闭——调用方（设置里「去扩展中心」、新建 Bot
-   * 后进会话等）不用区分当前是哪种形态，否则窄屏的 z-50 设置页会盖在已切走的 tab 之上。
+   * 退出设置：宽屏设置页（回到打开前的对话 / 工作台）与窄屏全屏页统一关闭——
+   * 调用方（设置左栏「返回对话」、新建 Bot 后进会话等）不用区分当前是哪种形态，
+   * 否则窄屏的 z-50 设置页会盖在已切走的 tab 之上。
    */
   closeSettings(): void {
     this.settingsOpen = false;
@@ -256,9 +279,9 @@ class ShellState {
   }
 
   /**
-   * 宽 / 窄形态切换时统一复位设置类浮层状态：宽屏的 SettingsDialog 与窄屏的
-   * NarrowSettings 是两套互不相通的状态，不复位会出现「窄屏设置页开着→拉宽→再拉窄，
-   * 设置页自己弹出」或「宽屏弹框开着拉窄，弹框还留在窄屏里」。底部 tab 回到「对话」，
+   * 宽 / 窄形态切换时统一复位设置类浮层状态：宽屏的设置页与窄屏的 NarrowSettings
+   * 是两套互不相通的状态，不复位会出现「窄屏设置页开着→拉宽→再拉窄，设置页自己
+   * 弹出」或「宽屏设置页开着拉窄，页面还留在窄屏里」。底部 tab 回到「对话」，
    * 往返后落点可预期。Bot 详情覆盖层由 BotDetailOverlay 按「是否仍需覆盖层」自行收放。
    */
   resetForLayoutChange(): void {
