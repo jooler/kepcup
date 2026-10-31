@@ -61,6 +61,8 @@ export const ID_PREFIXES = {
   tdr: 'tdr_',
   /** 工作台备忘（D90，main.db memos）；与记忆条目 `mem_` 无关。 */
   memo: 'memo_',
+  /** 工作台备忘分组（D90，main.db memo_groups）。 */
+  mmg: 'mmg_',
   /** 看板分栏（D103，main.db board_columns）。卡片 id 复用事项 id，没有单独前缀。 */
   bcol: 'bcol_',
   /** 插件实例（D105，main.db plugin_instances）。 */

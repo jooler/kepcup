@@ -66,7 +66,8 @@ describe('main 0046 memo sort key', () => {
         | { sql: string }
         | undefined
     )?.sql;
-    expect(indexSql).toContain('sort_at');
+    // 0063 之后 live 排序改按 position（拖拽顺序），索引随之重建；sort_at 列保留。
+    expect(indexSql).toContain('position');
     db.close();
   });
 

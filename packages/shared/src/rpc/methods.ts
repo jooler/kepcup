@@ -160,6 +160,7 @@ import {
   runSchema,
   runStepSchema,
   memoSchema,
+  memoGroupSchema,
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
@@ -231,6 +232,7 @@ import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
   BROWSER_PROFILE_NAME_MAX_CHARS,
   MEMO_BODY_MAX_CHARS,
+  MEMO_GROUP_TITLE_MAX_CHARS,
   PROJECT_GOAL_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
@@ -1770,6 +1772,19 @@ export const todosWriteOutputSchema = z.object({
   notified: z.boolean().optional(),
 });
 export const todosTransitionOutputSchema = z.object({ todo: todoEntrySchema });
+/**
+ * Drag a workbench todo inside its lane or into another lane. `assignee` is
+ * only sent (and only accepted) when the drop lands in a different lane; an
+ * in-progress / delivered todo rejects a reassign.
+ */
+export const todosMoveInputSchema = z.object({
+  id: z.string().min(1),
+  /** Anchor in the target lane (place before it); null = end. */
+  beforeId: z.string().min(1).nullable(),
+  /** Send only when the drop changes the lane; omit to keep the assignee. */
+  assignee: todoAssigneeSchema.nullable().optional(),
+});
+export const todosMoveOutputSchema = z.object({ todo: todoEntrySchema });
 
 // --- project board (D103, docs/design/50-project-board.md §10) -------------------
 // `board.cards.reject` is P1 backlog and is intentionally absent.
@@ -1871,7 +1886,11 @@ export const memosListInputSchema = z.object({
   /** true = 最近删除 (soft-deleted memos); default = live memos. */
   trashed: z.boolean().optional(),
 });
-export const memosListOutputSchema = z.object({ memos: z.array(memoSchema) });
+export const memosListOutputSchema = z.object({
+  memos: z.array(memoSchema),
+  /** Live memo groups (creation order). Empty for the trashed listing. */
+  groups: z.array(memoGroupSchema),
+});
 export const memosIdInputSchema = z.object({ id: z.string().min(1) });
 export const memosCreateInputSchema = z.object({
   body: z.string().min(1).max(MEMO_BODY_MAX_CHARS),
@@ -1882,6 +1901,30 @@ export const memosUpdateInputSchema = z.object({
   pinned: z.boolean().optional(),
 });
 export const memosMemoOutputSchema = z.object({ memo: memoSchema });
+
+// --- 备忘分组与拖拽排序（D90 §5.4） ----------------------------------------------
+export const memosGroupsCreateInputSchema = z.object({
+  title: z.string().trim().min(1).max(MEMO_GROUP_TITLE_MAX_CHARS),
+});
+export const memosGroupOutputSchema = z.object({ group: memoGroupSchema });
+export const memosGroupsRenameInputSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().trim().min(1).max(MEMO_GROUP_TITLE_MAX_CHARS),
+});
+export const memosGroupsDeleteInputSchema = memosIdInputSchema;
+/** Drag-reorder groups: `beforeId` null = end (未分组伪分组不参与，恒在最前). */
+export const memosGroupsMoveInputSchema = z.object({
+  id: z.string().min(1),
+  beforeId: z.string().min(1).nullable(),
+});
+export const memosMoveInputSchema = z.object({
+  id: z.string().min(1),
+  /** Target group; null = 未分组. */
+  groupId: z.string().min(1).nullable(),
+  /** Anchor in the target group (place before it); null = end. */
+  beforeId: z.string().min(1).nullable(),
+});
+export const memosMoveOutputSchema = z.object({ memo: memoSchema });
 
 // --- watches (W7) -------------------------------------------------------------------
 export const watchesListInputSchema = z.object({
@@ -2722,6 +2765,12 @@ export const rpcMethodSchemas = {
   'memos.update': { input: memosUpdateInputSchema, output: memosMemoOutputSchema },
   'memos.delete': { input: memosIdInputSchema, output: memosMemoOutputSchema },
   'memos.restore': { input: memosIdInputSchema, output: memosMemoOutputSchema },
+  'memos.groups.create': { input: memosGroupsCreateInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.rename': { input: memosGroupsRenameInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.move': { input: memosGroupsMoveInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.delete': { input: memosGroupsDeleteInputSchema, output: okOutputSchema },
+  'memos.move': { input: memosMoveInputSchema, output: memosMoveOutputSchema },
+  'todos.move': { input: todosMoveInputSchema, output: todosMoveOutputSchema },
 
   // W7 确定性监看：右侧面板列表与对话内监看卡。
   'watches.list': { input: watchesListInputSchema, output: watchesListOutputSchema },
@@ -3222,6 +3271,12 @@ const APP_METHODS = [
   'memos.update',
   'memos.delete',
   'memos.restore',
+  'memos.groups.create',
+  'memos.groups.rename',
+  'memos.groups.move',
+  'memos.groups.delete',
+  'memos.move',
+  'todos.move',
   'watches.list',
   'watches.get',
   'watches.pause',

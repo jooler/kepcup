@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   MEMO_BODY_MAX_CHARS,
+  MEMO_GROUP_TITLE_MAX_CHARS,
   MEMO_TRASH_RETENTION_MS,
   RPC_EVENT_NAMES,
   TODO_CLOSED_VISIBLE_MS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
   isId,
+  memoGroupSchema,
   memoSchema,
   newId,
   rpcEventSchemas,
@@ -39,6 +41,7 @@ const todo = {
   createdAt: 1,
   updatedAt: 1,
   closedAt: null,
+  position: 1024,
 };
 
 const run = {
@@ -131,10 +134,29 @@ describe('memo schema', () => {
       updatedAt: 1,
       sortAt: 1,
       deletedAt: null,
+      groupId: null,
+      position: 1024,
     };
     expect(memoSchema.parse(memo)).toEqual(memo);
     expect(memoSchema.parse({ ...memo, deletedAt: 5 }).deletedAt).toBe(5);
+    expect(memoSchema.parse({ ...memo, groupId: 'mmg_1' }).groupId).toBe('mmg_1');
     expect(memoSchema.safeParse({ ...memo, pinned: 1 }).success).toBe(false);
+  });
+
+  it('memo group: 标题行 + 排序键；标题上限在 RPC 输入层校验', () => {
+    const group = {
+      id: 'mmg_1',
+      title: '工作',
+      position: 1024,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(memoGroupSchema.parse(group)).toEqual(group);
+    const create = rpcMethodSchemas['memos.groups.create'].input;
+    expect(create.safeParse({ title: '' }).success).toBe(false);
+    expect(
+      create.safeParse({ title: 'x'.repeat(MEMO_GROUP_TITLE_MAX_CHARS + 1) }).success,
+    ).toBe(false);
   });
 });
 
@@ -181,11 +203,17 @@ describe('workbench rpc contract', () => {
     'todos.complete',
     'todos.cancel',
     'todos.reopen',
+    'todos.move',
     'memos.list',
     'memos.create',
     'memos.update',
     'memos.delete',
     'memos.restore',
+    'memos.groups.create',
+    'memos.groups.rename',
+    'memos.groups.move',
+    'memos.groups.delete',
+    'memos.move',
   ] as const;
 
   it('every method is defined and exposed to the renderer', () => {
@@ -270,13 +298,63 @@ describe('workbench rpc contract', () => {
     });
   });
 
+  it('分组与拖拽方法的契约：组标题上限、move 的 null 语义', () => {
+    const create = rpcMethodSchemas['memos.groups.create'].input;
+    expect(create.parse({ title: '工作' })).toEqual({ title: '工作' });
+    expect(create.safeParse({ title: '  ' }).success).toBe(false);
+    expect(
+      create.safeParse({ title: 'x'.repeat(MEMO_GROUP_TITLE_MAX_CHARS + 1) }).success,
+    ).toBe(false);
+    expect(rpcMethodSchemas['memos.groups.rename'].input.parse({ id: 'mmg_1', title: '上班' }));
+    expect(rpcMethodSchemas['memos.groups.delete'].input.parse({ id: 'mmg_1' }));
+    // 分组拖拽排序：beforeId null = 末尾；beforeId 不能是自己。
+    const groupsMove = rpcMethodSchemas['memos.groups.move'].input;
+    expect(groupsMove.parse({ id: 'mmg_1', beforeId: null })).toEqual({ id: 'mmg_1', beforeId: null });
+    expect(groupsMove.parse({ id: 'mmg_1', beforeId: 'mmg_2' }));
+    expect(groupsMove.safeParse({ id: 'mmg_1' }).success).toBe(false);
+
+    const move = rpcMethodSchemas['memos.move'].input;
+    // groupId / beforeId 为 null = 未分组 / 组尾，必须有这两个键。
+    expect(move.parse({ id: 'memo_1', groupId: null, beforeId: null })).toEqual({
+      id: 'memo_1',
+      groupId: null,
+      beforeId: null,
+    });
+    expect(move.parse({ id: 'memo_1', groupId: 'mmg_1', beforeId: 'memo_2' }));
+    expect(move.safeParse({ id: 'memo_1' }).success).toBe(false);
+
+    const todosMove = rpcMethodSchemas['todos.move'].input;
+    expect(todosMove.parse({ id: 'todo_1', beforeId: null })).toEqual({
+      id: 'todo_1',
+      beforeId: null,
+    });
+    expect(
+      todosMove.parse({ id: 'todo_1', beforeId: null, assignee: { kind: 'bot', botId: 'b' } }),
+    );
+    // assignee 缺省 = 只排序不改派。
+    expect('assignee' in todosMove.parse({ id: 'todo_1', beforeId: null })).toBe(false);
+    const entry = {
+      ...todo,
+      assigneeName: null,
+      leadBotName: null,
+      schedule: null,
+      lastRun: null,
+      board: null,
+    };
+    expect(rpcMethodSchemas['todos.move'].output.parse({ todo: entry }).todo).toEqual(entry);
+  });
+
   it('changed events are registered', () => {
     expect(RPC_EVENT_NAMES).toContain('todos.changed');
     expect(RPC_EVENT_NAMES).toContain('memos.changed');
     expect(rpcEventSchemas['todos.changed'].parse({ todoId: 'todo_1' })).toEqual({
       todoId: 'todo_1',
     });
-    expect(rpcEventSchemas['memos.changed'].safeParse({}).success).toBe(false);
+    // 备忘变更带 memoId；分组变更（建 / 改名 / 删组）没有 memoId。
+    expect(rpcEventSchemas['memos.changed'].parse({ memoId: 'memo_1' })).toEqual({
+      memoId: 'memo_1',
+    });
+    expect(rpcEventSchemas['memos.changed'].parse({})).toEqual({});
   });
 });
 

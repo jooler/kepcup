@@ -255,6 +255,15 @@ import {
   memosCreateInputSchema,
   memosUpdateInputSchema,
   memosMemoOutputSchema,
+  memosGroupsCreateInputSchema,
+  memosGroupOutputSchema,
+  memosGroupsRenameInputSchema,
+  memosGroupsMoveInputSchema,
+  memosGroupsDeleteInputSchema,
+  memosMoveInputSchema,
+  memosMoveOutputSchema,
+  todosMoveInputSchema,
+  todosMoveOutputSchema,
   schedulesListInputSchema,
   schedulesListOutputSchema,
   schedulesCancelInputSchema,
@@ -2008,11 +2017,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'todos.reopen': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
       todo: requireTodos(services).reopen(input.id),
     })),
+    'todos.move': method(todosMoveInputSchema, todosMoveOutputSchema, async (input) => ({
+      todo: requireTodos(services).move(input.id, {
+        beforeId: input.beforeId,
+        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+      }),
+    })),
     'memos.list': method(memosListInputSchema, memosListOutputSchema, async (input) => ({
       memos: requireMemos(services).list({
         ...(input.query !== undefined ? { query: input.query } : {}),
         ...(input.trashed !== undefined ? { trashed: input.trashed } : {}),
       }),
+      groups: input.trashed === true ? [] : requireMemos(services).listGroups(),
     })),
     'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).create({ body: input.body, source: 'user' }),
@@ -2028,6 +2044,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     'memos.restore': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).restore(input.id),
+    })),
+    'memos.groups.create': method(memosGroupsCreateInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).createGroup(input.title),
+    })),
+    'memos.groups.rename': method(memosGroupsRenameInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).renameGroup(input.id, input.title),
+    })),
+    'memos.groups.move': method(memosGroupsMoveInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).moveGroup(input.id, input.beforeId),
+    })),
+    'memos.groups.delete': method(memosGroupsDeleteInputSchema, okOutputSchema, async (input) => {
+      requireMemos(services).deleteGroup(input.id);
+      return { ok: true as const };
+    }),
+    'memos.move': method(memosMoveInputSchema, memosMoveOutputSchema, async (input) => ({
+      memo: requireMemos(services).move(input.id, input.groupId, input.beforeId),
     })),
 
     // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---
