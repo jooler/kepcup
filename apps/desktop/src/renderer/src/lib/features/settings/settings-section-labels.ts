@@ -25,6 +25,7 @@ export const settingsSectionSources: SettingsSectionSource[] = [
   { id: 'models', labelKey: 'settings.navModels' },
   { id: 'search', labelKey: 'settings.navWebSearch' },
   { id: 'browser', labelKey: 'settings.navBrowserProfiles' },
+  { id: 'computer-use', labelKey: 'settings.navComputerUse' },
   { id: 'agents', labelKey: 'settings.navAgents' },
   { id: 'contacts', labelKey: 'settings.navContacts' },
   { id: 'unattended', labelKey: 'settings.navUnattended' },

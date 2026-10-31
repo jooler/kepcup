@@ -12,7 +12,7 @@
   },
   "license": "GPL-3.0",
   "scripts": {
-    "dev": "node scripts/patch-dev-electron.cjs && electron-vite dev",
+    "dev": "node scripts/dev.mjs",
     "icons": "node scripts/generate-icons.mjs",
     "build": "electron-vite build",
     "build:web": "vite build -c vite.config.web.ts",

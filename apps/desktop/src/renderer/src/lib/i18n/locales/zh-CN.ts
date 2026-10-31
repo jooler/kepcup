@@ -539,8 +539,7 @@ export const zhCN = {
   'rightPanel.appsOpenCatalog': '打开扩展中心',
   // --- P2 注入模型：Bot 详情「插件」区块（apps / mcp / mail 三区块收编） ---------
   'botPanel.sections.plugins': '插件',
-  'botPanel.plugins.hint':
-    '为这个 Bot 添加插件；没有添加的插件，其技能、工具与账号对它不可见。',
+  'botPanel.plugins.hint': '为这个 Bot 添加插件；没有添加的插件，其技能、工具与账号对它不可见。',
   'botPanel.plugins.empty': '还没有安装插件，可以去插件商店看看。',
   'botPanel.plugins.noneAdded': '还没有给这个 Bot 添加插件。',
   'botPanel.plugins.openStore': '插件商店',
@@ -2069,12 +2068,17 @@ export const zhCN = {
   'settings.computerUseGranted': '已授权',
   'settings.computerUseNotGranted': '未授权',
   'settings.computerUseUnknown': '未知',
+  'settings.computerUseAvailability': '可用性（helper 与 sidecar 握手）',
+  'settings.computerUseAvailable': '可用',
+  'settings.computerUseUnavailable': '不可用',
+  'settings.computerUseChecking': '检查中…',
   'settings.computerUseAccessibility': '辅助功能（读取与操作应用界面）',
   'settings.computerUseScreenRecording': '屏幕录制（截取应用窗口）',
   'settings.computerUseOpenSettings': '打开系统设置',
   'settings.computerUseOpening': '正在打开…',
   'settings.computerUseRefresh': '刷新状态',
-  'settings.computerUsePermissionHint': '授权对象是「KepCup Computer Use」这个独立助手应用（不是主应用）；检测状态会短暂拉起它注册系统权限。',
+  'settings.computerUsePermissionHint':
+    '授权对象是「KepCup Computer Use」这个独立助手应用（不是主应用）；检测状态会短暂拉起它注册系统权限。',
   // --- D96 远程遥控 -----------------------------------------------------------
   'settings.navRemote': '远程遥控',
   'settings.remoteSectionTitle': '远程遥控',
@@ -2114,6 +2118,7 @@ export const zhCN = {
   'settings.remotePairCopyFailed': '复制失败：请手动选中上方链接复制',
   // --- W8 共享浏览器资料 ------------------------------------------------------
   'settings.navBrowserProfiles': '浏览器资料',
+  'settings.navComputerUse': '计算机操控',
   'settings.browserProfilesTitle': '共享浏览器资料',
   'settings.browserProfilesHint':
     '默认每个 Bot 使用私有浏览器资料，登录状态互不相通。共享资料让多个 Bot 共用同一份 cookie 与网站存储：在 Bot 详情里把它们挂到同一份资料，再在任一 Bot 的浏览器窗口里登录即可。网络规则仍按各 Bot 判断。',

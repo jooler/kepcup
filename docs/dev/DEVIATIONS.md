@@ -1195,3 +1195,21 @@
 - 问题：设计文档头部写「无 DB 迁移」——新 kind 落进 approvals 表的封闭 CHECK 枚举，必须按 0031/0036 流程重建表（`migrations/main/0062_computer_control.sql`）。
 - 影响范围：仅 `0062_computer_control.sql`（kind CHECK 追加一行）；无新表、无数据改写。
 - 决定：补迁移；集成测试（test/integration/computer-use.test.ts）以真实 DB 验证插入路径。
+
+### DEV-081 helper 公证不做「嵌入前单独 notarize」，由外层 .app 公证连带校验
+
+- 状态：已落实
+- 阶段：计算机操控 WP5 打包（D105）
+- 是否阻塞：否（notarytool 扫描整个 bundle，Resources 里签名缺失/无效的嵌套可执行文件本来就会让外层提交失败，helper 缺陷同样 fail-fast）
+- 问题：设计 §1 决策 7 与 §3 写「helper 嵌入主包前单独 notarize 并 staple」。helper 只会作为 `extraResources` 嵌入、从不独立分发：Gatekeeper 对嵌套代码的评估跟随外层 app 的公证票据，单独公证没有正确性收益，只是把同一次校验提前做一遍（外加每架构一次 notarytool 往返与 staple 维护成本）。
+- 影响范围：`scripts/dist.mjs` 新增 0c 步骤——每个 mac 目标架构强制新鲜构建 helper（`KEPCUP_MAC_RELEASE=1` → Developer ID + hardened runtime + timestamp，签名身份继承 CI 已导出的 `CSC_NAME`），绝不复用 dev 产物；release.yml 无需改动。附带发现：AMFI 的 entitlements 解析器不支持 XML 注释，`resources/entitlements.computer-use.mac.plist` 必须保持纯净结构（本地 dist 首跑即暴露）。
+- 决定：嵌套代码随外层公证校验（Apple 官方语义）；「真公证构建验证」归入 WP5 发布验收（CI 首个 release 构建通过即验收）。若未来 helper 需要脱离 app 独立分发，再补单独公证 + staple。
+
+### DEV-082 helper 显示文案品牌化：vendored main.swift 的第二处例外
+
+- 状态：已落实
+- 阶段：计算机操控 WP5 真机冒烟（D105，2026-10-31 用户反馈）
+- 是否阻塞：是（不改则用户与 Bot 直接看到竞品品牌——`get_app_state` 错误文案原样返回 "may need Orca Computer Use toggled off and on again"，权限引导窗口标题也挂 "Enable Orca Computer Use"）
+- 问题：todo/computer-use.md 硬约束「vendored 的 Swift helper 源码一行不改」（DEV-077 是第一例外），但 main.swift 里 12 处用户可见显示文案仍写 orca 品牌：3 条错误文案（667 / 714 / 1199）、权限引导窗口标题与副标题（3202 / 3328 / 3330 / 3432 / 3438 / 3439 / 3611 / 4023）、stderr 提示（4393）。构建脚本只改 Info.plist 层的显示名，源内文案够不到；TS 层无绕路（字符串由 helper 直接返回/渲染）。
+- 影响范围：仅 `Sources/OrcaComputerUseMacOS/main.swift` 显示字符串——`Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`（全局替换，计数校验）；另改写一处失效指引：错误文案让用户跑上游 CLI `orca computer permissions`（KepCup 无此命令），改为只指设置页。标识符（可执行名 `orca-computer-use-macos`、`ORCA_*` env、socket 前缀、`OrcaComputerUse*` 包名）零改动——协议与 peer 校验依赖。`swift test` 6/6；NOTICE.md「例外」小节同步。
+- 决定：品牌串随源码改（属本地化/品牌适配，与 DEV-077 同级的可回退最小例外）；上游跟进人工 diff 时需留意这两处例外文件的再应用。测试 fixture 里的 `/Applications/Orca Computer Use.app` 路径是 mock 数据，不改。

@@ -33,6 +33,9 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.dirname(scriptDir);
 const packagePath = path.join(appDir, 'native', 'computer-use-macos');
 const outputRoot = path.join(appDir, 'resources', 'computer-use');
+// 空 dict：helper 无特殊 entitlement，辅助功能 / 屏幕录制的 TCC 授权由系统按
+// （bundle id + 签名）记账。注意 AMFI 的 entitlements 解析器不支持 XML 注释——
+// 该 plist 必须保持纯净结构（根因记录见 DEVIATIONS DEV-081），说明只能写在这里。
 const entitlementsPath = path.join(appDir, 'resources', 'entitlements.computer-use.mac.plist');
 const iconPath = path.join(appDir, 'resources', 'icon.icns');
 

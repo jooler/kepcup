@@ -87,6 +87,12 @@ declare global {
         screenRecording: 'granted' | 'not-granted' | 'unknown';
       }>;
       computerPermissionOpen(permission: 'accessibility' | 'screen-recording'): Promise<void>;
+      /** D105 设置页可用性行：重新握手（结果落盘 userData），「本次能不能用」与 TCC 分开。 */
+      computerCapabilitiesStatus(): Promise<{
+        available: boolean;
+        error: string | null;
+        checkedAt: number;
+      }>;
       /** P13 任务 2 update gate surface. */
       updateStatus(): Promise<unknown>;
       installUpdateNow(): Promise<{ ok: boolean; message?: string }>;

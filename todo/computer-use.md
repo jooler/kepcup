@@ -65,7 +65,7 @@ WP2 与 WP3 可并行（接口以设计文档 §2/§3 的方法面为准）；WP
 
 ## WP5 权限引导 UI、打包与收口（M4）
 
-文件：`apps/desktop/src/main/sensor-permission.ts`（仿其加 `computer-permissions` IPC）+ `apps/desktop/src/preload/index.ts` + `apps/desktop/src/main/index.ts`（`ipcMain.handle`）+ 设置页 browser 分区 `computer-use` anchor 区块（开关 + 权限状态 + 打开系统设置按钮）+ renderer 停止控件（输入坞 / 任务详情在 computer run 活跃时显示「停止操控」）+ `apps/desktop/electron-builder.yml`（mac `extraResources`：`resources/computer-use/darwin-${arch}` → `KepCup Computer Use.app`）+ `apps/desktop/scripts/pack-hooks.cjs`（mac 包 helper 存在性硬校验）+ 公证流水线（helper 嵌入前单独 notarize 并 staple）+ `docs/dev/PROGRESS.md` / `DEVIATIONS.md` 记录。
+文件：`apps/desktop/src/main/sensor-permission.ts`（仿其加 `computer-permissions` IPC）+ `apps/desktop/src/preload/index.ts` + `apps/desktop/src/main/index.ts`（`ipcMain.handle`）+ 设置页 browser 分区 `computer-use` anchor 区块（开关 + 权限状态 + 打开系统设置按钮）+ renderer 停止控件（输入坞 / 任务详情在 computer run 活跃时显示「停止操控」）+ `apps/desktop/electron-builder.yml`（mac `extraResources`：`resources/computer-use/darwin-${arch}` → `KepCup Computer Use.app`）+ `apps/desktop/scripts/pack-hooks.cjs`（mac 包 helper 存在性硬校验）+ 公证流水线（helper 由外层 .app 公证连带校验嵌套代码，不单独 notarize，见 DEVIATIONS DEV-081；`dist.mjs` 0c 每架构强制新鲜构建）+ `docs/dev/PROGRESS.md` / `DEVIATIONS.md` 记录。
 
 - [x] 权限引导：状态三态（已授权 / 未授权 / 未知）；「打开辅助功能设置」「打开屏幕录制设置」按钮（`x-apple.systempreferences:` 深链）+ 首次拉起 helper 注册 TCC（沿 orca permission-status 静置检测）。
 - [ ] 打包验证清单：dev（Apple Development）与 release（Developer ID + runtime + timestamp + notarize）各出一包；**真机验收**——新装包首次使用 TCC 弹窗指向 helper；升级重装后授权不丢（公证有效时）；无签名身份构建 → 打包 fail-fast（pack-hooks）。

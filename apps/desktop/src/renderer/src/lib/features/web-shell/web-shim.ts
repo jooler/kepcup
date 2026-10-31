@@ -64,6 +64,8 @@ export function installWebShim(version: string): void {
     computerPermissionStatus: () =>
       Promise.resolve({ accessibility: 'unknown', screenRecording: 'unknown' }),
     computerPermissionOpen: noop,
+    computerCapabilitiesStatus: () =>
+      Promise.resolve({ available: false, error: null, checkedAt: 0 }),
     updateStatus: () => Promise.resolve(null),
     installUpdateNow: () => Promise.resolve({ ok: false, message: 'desktop-only' }),
     checkForUpdate: () => Promise.resolve({ ok: false, message: 'desktop-only' }),

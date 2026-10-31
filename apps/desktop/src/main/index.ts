@@ -630,13 +630,15 @@ function bootstrap(): void {
   // D105 计算机操控（docs/design/52 §3）：宿主单例（B 口 serverMethods 与 IPC 共用）。
   // 用户 kill switch 直达编排层（terminate helper + 回收 provider），不经 core——
   // core 卡死也要能停；权限引导三件套仿 sensor-permission（设置页 computer-use 区块）。
-  computerHost = createComputerHost();
+  computerHost = createComputerHost(() => app.getPath('userData'));
   ipcMain.handle('computer:stop', (_event, reason?: unknown) =>
     Promise.resolve(
       computerHost!.stop(typeof reason === 'string' ? `user stop: ${reason}` : 'user stop'),
     ),
   );
   ipcMain.handle('computer:permissions-status', () => computerHost!.permissionsStatus());
+  // 设置页可用性行（2026-10-31 冒烟反馈）：重新握手并落盘，「本次能不能用」与 TCC 分开呈现。
+  ipcMain.handle('computer:capabilities-status', () => computerHost!.capabilitiesStatus());
   ipcMain.handle(
     'computer:permissions-open',
     (_event, permission: unknown) => {

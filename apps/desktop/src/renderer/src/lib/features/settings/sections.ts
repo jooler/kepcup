@@ -13,6 +13,7 @@ export type SettingsSectionId =
   | 'models'
   | 'search'
   | 'browser'
+  | 'computer-use'
   | 'agents'
   | 'profile'
   | 'contacts'
@@ -52,9 +53,7 @@ export function resolveSettingsSection(id: SettingsSectionId): ResolvedSection {
  * `mcp` / `developer` → 「已安装」的 MCP 筛选；`plugins` → 「设置」页签。
  * 其余分区返回 null（正常打开设置分区）。
  */
-export function settingsSectionExtensionTarget(
-  id: SettingsSectionId,
-): 'mcp' | 'settings' | null {
+export function settingsSectionExtensionTarget(id: SettingsSectionId): 'mcp' | 'settings' | null {
   if (id === 'mcp' || id === 'developer') return 'mcp';
   if (id === 'plugins') return 'settings';
   return null;

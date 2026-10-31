@@ -71,6 +71,9 @@
     <div data-settings-anchor="browser-profiles">
       <BrowserProfilesSection />
     </div>
+  </div>
+{:else if section === 'computer-use'}
+  <div data-settings-section="computer-use" class="space-y-6">
     <div data-settings-anchor="computer-use">
       <ComputerUseSection />
     </div>

@@ -659,8 +659,23 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
 
   // --- 浏览器 -------------------------------------------------------------
   item({
-    id: 'browser.computer-use',
+    id: 'browser.shared-profiles',
     group: 'browser',
+    title: '共享浏览器资料',
+    summary: '新建或重命名可被多个 Bot 共用的浏览器资料',
+    keywords: ['浏览器资料', '共享登录', '浏览器'],
+    scope: 'global',
+    fields: [field('name', '资料名称', 'text')],
+    write: write('confirm'),
+    card: 'browser-profiles',
+    deepLink: { surface: 'settings', section: 'browser', anchor: 'browser-profiles' },
+    store: { kind: 'service', methods: ['browserProfiles.create', 'browserProfiles.rename'] },
+  }),
+
+  // --- 计算机操控 -------------------------------------------------------------
+  item({
+    id: 'computer.control',
+    group: 'computer',
     title: '计算机操控',
     summary: '让 Bot 在任务中读取并操作本机桌面应用（无障碍树优先，截屏与键鼠兜底；仅 macOS）',
     enables: ['操控本机桌面应用', '读取应用界面', '后台点击与输入'],
@@ -673,21 +688,8 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: write('user-only'),
     // 简单顶层布尔：走通用标量适配器（generic-adapter.ts），不写自定义适配器。
     card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'browser', anchor: 'computer-use' },
+    deepLink: { surface: 'settings', section: 'computer-use', anchor: 'computer-use' },
     store: { kind: 'settings', paths: ['computerUseEnabled'], generic: true },
-  }),
-  item({
-    id: 'browser.shared-profiles',
-    group: 'browser',
-    title: '共享浏览器资料',
-    summary: '新建或重命名可被多个 Bot 共用的浏览器资料',
-    keywords: ['浏览器资料', '共享登录', '浏览器'],
-    scope: 'global',
-    fields: [field('name', '资料名称', 'text')],
-    write: write('confirm'),
-    card: 'browser-profiles',
-    deepLink: { surface: 'settings', section: 'browser', anchor: 'browser-profiles' },
-    store: { kind: 'service', methods: ['browserProfiles.create', 'browserProfiles.rename'] },
   }),
 
   // --- 项目组 / 工作目录 ----------------------------------------------------------
