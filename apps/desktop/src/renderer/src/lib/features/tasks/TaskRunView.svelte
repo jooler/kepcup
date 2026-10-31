@@ -20,13 +20,16 @@
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
   import TaskRunToolCard from './TaskRunToolCard.svelte';
   import TaskPlanPanel from './TaskPlanPanel.svelte';
+  import TaskQuestionCard from './TaskQuestionCard.svelte';
   import {
     approvalConversationIdOf,
     buildTaskRunTimeline,
     formatElapsed,
     latestPlan,
+    pendingTaskQuestionOf,
     taskElapsedMs,
     type TaskRunEntry,
   } from './task-run-view';
@@ -44,6 +47,9 @@
    * 本会话的待审批卡（权限请求）在时间线下方固定渲染：详情页打开期间原对话
    * （含输入坞上方的 ApprovalDock）是 display:none，任务停在 waiting_approval
    * 时用户在页内毫无感知——这里给出同源的卡片，批准 / 拒绝可直接在页内完成。
+   * 任务提问卡（ask_user，D75 §2.4.6）同理：它是会话消息而非 run step，对话
+   * 被隐藏时用户在页内看不到提问——从会话消息里取该任务未答的卡固定在时间线
+   * 下方，点选回答直接注入任务（与对话里的卡同源，答完即收起）。
    */
   let {
     taskId,
@@ -73,6 +79,10 @@
   const entries = $derived(buildTaskRunTimeline(steps));
   const plan = $derived(latestPlan(steps));
   const active = $derived(task !== null && isActiveTask(task));
+  // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
+  // session）：提问卡从它取，message.created / updated 事件保持同源实时。
+  const chatSession = getChatSession();
+  const pendingQuestion = $derived(pendingTaskQuestionOf(chatSession.messages, taskId));
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
   );
@@ -422,6 +432,25 @@
       {/if}
     </div>
   </div>
+
+  {#if active && pendingQuestion !== null}
+    <!--
+      任务提问条：任务等用户拍板时（awaiting_input），把该任务未答的提问卡
+      固定在时间线下方（与审批条同思路）。卡片与对话完全同源（session.messages
+      随 message.created / updated 实时增改），点选 / 表单回答直接注入任务，
+      答完卡带上 answer，这里随之收起；任务已终态时不再渲染（提问已作废，
+      时间线里有终态说明）。
+    -->
+    <div
+      class="shrink-0 border-t px-4 py-2"
+      data-testid="task-run-question"
+      data-question-message-id={pendingQuestion.id}
+    >
+      <div class="mx-auto flex w-full max-w-3xl justify-center">
+        <TaskQuestionCard message={pendingQuestion} />
+      </div>
+    </div>
+  {/if}
 
   {#if approvalConversationId !== null && pendingApprovals.length > 0}
     <!--
