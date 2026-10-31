@@ -1192,6 +1192,6 @@
 - 状态：已落实
 - 阶段：计算机操控 WP4（D105）
 - 是否阻塞：是（不迁移则 computer_control 审批插入被 SQLite CHECK 拒绝，工具报 INTERNAL）
-- 问题：设计文档头部写「无 DB 迁移」——新 kind 落进 approvals 表的封闭 CHECK 枚举，必须按 0031/0036 流程重建表（`migrations/main/0061_computer_control.sql`）。
-- 影响范围：仅 `0061_computer_control.sql`（kind CHECK 追加一行）；无新表、无数据改写。
+- 问题：设计文档头部写「无 DB 迁移」——新 kind 落进 approvals 表的封闭 CHECK 枚举，必须按 0031/0036 流程重建表（`migrations/main/0062_computer_control.sql`）。
+- 影响范围：仅 `0062_computer_control.sql`（kind CHECK 追加一行）；无新表、无数据改写。
 - 决定：补迁移；集成测试（test/integration/computer-use.test.ts）以真实 DB 验证插入路径。

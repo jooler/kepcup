@@ -1646,7 +1646,7 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   type/paste/set_value 的 sensitiveParams 与结果/审批卡脱敏、审批三档（默认 conversation，卡面勾选）
   + conversation/bot 跨 run 复用、orchestrator 门控（任务 loop + 设置 + capabilities 预查）、
   renderer 审批卡与 i18n；core 装配链（facade/start/process-entry）与 headless 拒调。新增单测 14 +
-  集成测试 2（mock LLM 任务全链：门控→出卡→批准→复用→脱敏→uncertain→deny），迁移 0061
+  集成测试 2（mock LLM 任务全链：门控→出卡→批准→复用→脱敏→uncertain→deny），迁移 0062（0061 与 dd9b3cca 的 bot_avatar_padding 撞号，合并后改号）
   （approvals.kind CHECK，DEV-080）。
 - **WP5 代码部分**：设置页权限引导（三态 + 系统设置深链，检测即注册 TCC）、托盘「停止计算机操控」、
   `computer:stop` / `computer:permissions-*` IPC + preload/shim（web 端 desktop-only 拒绝）、
