@@ -122,6 +122,12 @@ const api = {
   }> => ipcRenderer.invoke('computer:permissions-status'),
   computerPermissionOpen: (permission: 'accessibility' | 'screen-recording'): Promise<void> =>
     ipcRenderer.invoke('computer:permissions-open', permission),
+  /** 设置页可用性行：重新握手并落盘（computer-use-capabilities.json），失败原因随结果返回。 */
+  computerCapabilitiesStatus: (): Promise<{
+    available: boolean;
+    error: string | null;
+    checkedAt: number;
+  }> => ipcRenderer.invoke('computer:capabilities-status'),
   /** Open bot browser pages (bot × conversation); pushed on every open / close. */
   getBotBrowserPages: (): Promise<Array<{ botId: string; conversationId: string }>> =>
     ipcRenderer.invoke('browser:pages'),

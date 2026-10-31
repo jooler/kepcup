@@ -18,6 +18,7 @@ export const settingGroupSchema = z.enum([
   'schedules',
   'profile',
   'browser',
+  'computer',
   'project',
   'workdir',
   'hardware',

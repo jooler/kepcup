@@ -90,9 +90,10 @@ describe('computer sidecar client', () => {
     children[0]!.emit('message', { id: children[0]!.sent[0]!.id, ok: true, result: {} })
 
     await expect(call).resolves.toEqual({})
-    // KepCup forked-child-entry-path：本模块在 src/main/computer（构建产物
-    // out/main/computer），sidecar 与主进程入口同级；打包后同名路径经 asar 解包替换。
-    const sidecarEntry = join(dirname(fileURLToPath(import.meta.url)), '..', 'computer-sidecar.js')
+    // KepCup forked-child-entry-path：入口与引用它的模块同目录（源码空间下就是
+    // src/main/computer/；bundle 空间下即 out/main/，回归测试见
+    // forked-child-entry-path.test.ts），打包后同名路径经 asar 解包替换。
+    const sidecarEntry = join(dirname(fileURLToPath(import.meta.url)), 'computer-sidecar.js')
     expect(forkMock).toHaveBeenCalledWith(sidecarEntry, [], expect.anything())
   })
 

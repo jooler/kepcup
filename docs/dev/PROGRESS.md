@@ -1655,4 +1655,55 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   契约 98、集成 2）；shared/core/desktop typecheck 全过；收口全量 `pnpm test` 见基线记录。
 - **遗留（待维护者/后续）**：dev 应用真机任务端到端（审批卡需人工点击，冒烟路径已就绪：
   `node scripts/computer-use-smoke.mjs` / `node scripts/computer-orchestration-smoke.mjs`）；release
-  出包 + helper 独立公证 + 干净机器 TCC 首弹验收（WP5 发布清单）；DEVIATIONS DEV-077/078/079/080。
+  出包 + helper 随外层 .app 公证（嵌套代码校验，无需单独公证）+ 干净机器 TCC 首弹验收（WP5 发布清单）；
+  DEVIATIONS DEV-077/078/079/080。
+- **dev 环境补全（2026-10-31，合并后真机验收发现）**：helper .app 是 gitignored 构建产物，新
+  checkout 首次 dev 缺产物会让权限引导报 `accessibility_error: KepCup Computer Use.app was not
+  found`。接入 `pnpm dev`：`scripts/dev.mjs` 薄包装（pnpm 把 `pnpm dev --rebuild` 的追加参数放在
+  链尾命令 argv 上，故在此消费 `--rebuild` 后透传 electron-vite）→ `ensure-computer-use-helper.mjs`
+  （非 darwin / `KEPCUP_SKIP_COMPUTER_USE=1` 跳过；产物在直接复用，缺失自动构建，`--rebuild` 删旧
+  重建）。dev 产物只需稳定 Developer ID 签名、无需公证：Gatekeeper 只拦带 quarantine 属性的下载
+  产物，TCC 按（bundle id + 签名）记账，同身份重签不丢授权；公证只在发版发生，helper 作为嵌套
+  代码被外层 .app 的 notarytool 提交连带校验。
+- **CI 公证接线（2026-10-31）**：`dist.mjs` 新增 0c 步骤——mac 目标架构逐个**强制新鲜构建** helper
+  （`KEPCUP_MAC_RELEASE=1` → Developer ID + hardened runtime + timestamp，签名身份继承 release.yml
+  已导出的 `CSC_NAME`），绝不复用 dev 产物；release.yml 无需改动（证书/keychain/公证凭据/Swift 工具链
+  均已就绪）。helper 不单独公证——外层 .app 的 notarytool 提交连带校验嵌套代码（DEV-081，设计「helper
+  独立公证」按此实现）。首跑即暴露 AMFI entitlements 解析器不支持 XML 注释——`entitlements.computer-use.
+  mac.plist` 去掉注释保持纯净结构。本地以 CI 同参数（`dist.mjs --mac dmg zip --arm64`，含镜像 env 应对
+  GitHub 下载超时）全管线验证：0c 构建进包 → pack-hooks「computer-use helper 校验通过」→ dmg/zip 产物内
+  helper 实测 Developer ID + runtime + timestamp、`codesign --verify --strict` 通过。既有坑备注：
+  electron-builder 的 CLI 架构参数只在显式给目标列表时生效（yml target 钉死双 arch，裸 `--mac --arm64`
+  会按双架构打包并在缺产物的架构上挂断——Share Extension 先于本功能就受同样影响）。
+- **设置分区调整（2026-10-31，用户反馈）**：计算机操控从「浏览器资料」分区提取为独立设置分区——
+  目录条目迁为 `computer.control`（settingGroupSchema 新增 `computer` 组，`SETTING_GROUP_TITLES`
+  补「计算机操控」，deepLink section/anchor 均为 `computer-use`），设置页新增 `computer-use` 分区
+  （sections.ts 联合类型 / 导航清单 `settings.navComputerUse` / MousePointerClick 图标 /
+  SettingsSectionView 独立分支，锚点 id 不变），ComputerUseSection 挂载点随迁；i18n zh/en 补
+  `settings.navComputerUse`。验证：shared settings-catalog 34 + core 设置纪律 43 + desktop i18n/卡片
+  33 全绿；shared/desktop typecheck 0 error。
+- **sidecar 入口路径修复（2026-10-31，真机任务端到端首跑冒烟发现）**：dev 任务 loop 里 computer_*
+  工具一个都没注册。根因是 capabilities 握手必挂——`forked-child-entry-path.ts` 按源码目录层级回溯
+  （`dirname(import.meta.url)/..`），rollup 把该模块内联进 out/main/index.js 后 `import.meta.url`
+  指向 bundle 自身，解析到不存在的 `out/computer-sidecar.js`，`ensureStarted` 抛
+  `unsupported_capability` → 门控第四条件（capabilities 非空）不成立，工具组永不注册；打包版同坏
+  （asar.unpacked 下路径同样差一级）。WP2 全链路冒烟未拦截：orchestration-smoke-host 硬编码产物路径
+  直接 fork，绕开了这个解析函数。修复为「与引用它的 bundle 同目录」（同 stdio-proxy 先例；helper 的
+  socket peer 校验与 electron-builder asarUnpack 均锚定 `/out/main/computer-sidecar.js` 前缀），
+  `moduleUrl` 参数化，新增回归测试 2 例（dev / app.asar.unpacked 布局），sidecar-client fork 路径
+  断言同步。验证：定向 16 例全绿、desktop typecheck 0 error、重建 bundle 实测解析指向存在产物。
+  备注：loopType 语义不变——computer_* 仅任务 loop 注册，普通对话 turn 看不到是设计行为。
+- **真机冒烟修复轮 2（2026-10-31，冒烟通过后用户反馈三项）**：①helper 显示文案品牌化——
+  `main.swift` 12 处用户可见 `Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`
+  （错误文案原样返回给用户与 Bot、权限引导窗口标题 / 副标题 / stderr），其中一处失效指引改写
+  （`orca computer permissions` 是上游 CLI，KepCup 没有，改指设置页）；标识符零动（可执行名 /
+  `ORCA_*` env / socket 前缀是协议与 peer 校验的一部分），`swift test` 6/6，vendored 第二例外
+  DEV-082 + NOTICE.md「例外」小节同步，dev helper 重建（同 bundle id + Developer ID 重签，TCC
+  授权保持）。②capabilities 握手结果落盘——`computer/capabilities-record.ts` 成败都写
+  `userData/computer-use-capabilities.json`（损坏容错、写失败静默），computer-host 注入
+  userDataDir 并在 `capabilities()` 里记录；无终端也能定位「工具为什么没注册」。③设置页可用性
+  行——状态卡首行呈现握手可用性（可用 / 不可用 + 原因 / 检查中，与 TCC 权限三态分开），
+  `computer:capabilities-status` IPC（每次重新握手取最新结论，检查本身会拉起 helper，与权限
+  检测同语义）+ preload / shim.d.ts / web-shim（web 安全默认值）+ i18n zh/en 四键。验证：
+  desktop typecheck 0 error，定向 26 例全绿（host 落盘 4 + record 4 + i18n 2 + sidecar 14 +
+  入口路径 2）。打包版缺 computer-use（/Applications 0.5.1）属 WP5 发布验收清单既有项，未动。

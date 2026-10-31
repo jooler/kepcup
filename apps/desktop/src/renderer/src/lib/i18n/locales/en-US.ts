@@ -1612,8 +1612,7 @@ export const enUS = {
   'plugins.installHint.done': 'Done',
   'plugins.installHint.dismiss': "Don't remind me again",
   'plugins.installHint.pickTitle': 'Add to which Bots?',
-  'plugins.installHint.pickHint':
-    'Selected Bots will enable "{name}" and can use it right away.',
+  'plugins.installHint.pickHint': 'Selected Bots will enable "{name}" and can use it right away.',
   'plugins.installHint.add': 'Add',
   'plugins.installHint.added': 'Added to {count} Bot(s)',
   'plugins.installHint.noBots': 'No Bots yet. Create one in the sidebar first.',
@@ -1671,7 +1670,8 @@ export const enUS = {
   'plugins.consent.configTitle': 'Configuration',
   'plugins.consent.required': 'Required',
   'plugins.consent.sensitive': 'Sensitive',
-  'plugins.consent.pluginConfig': "Plugin config (fill in the plugin card's Settings after install)",
+  'plugins.consent.pluginConfig':
+    "Plugin config (fill in the plugin card's Settings after install)",
   'plugins.consent.connectors': 'Connected apps (you still connect each one yourself)',
   'plugins.consent.connectorHosts': 'Service: {hosts}',
   'plugins.consent.connectorScopes': 'Scopes: {scopes}',
@@ -2138,12 +2138,17 @@ export const enUS = {
   'settings.computerUseGranted': 'Granted',
   'settings.computerUseNotGranted': 'Not granted',
   'settings.computerUseUnknown': 'Unknown',
+  'settings.computerUseAvailability': 'Availability (helper & sidecar handshake)',
+  'settings.computerUseAvailable': 'Available',
+  'settings.computerUseUnavailable': 'Unavailable',
+  'settings.computerUseChecking': 'Checking…',
   'settings.computerUseAccessibility': 'Accessibility (read & drive app UIs)',
   'settings.computerUseScreenRecording': 'Screen Recording (capture app windows)',
   'settings.computerUseOpenSettings': 'Open System Settings',
   'settings.computerUseOpening': 'Opening…',
   'settings.computerUseRefresh': 'Refresh',
-  'settings.computerUsePermissionHint': 'Permissions go to the standalone "KepCup Computer Use" helper (not the main app); checking its status briefly launches it to register with TCC.',
+  'settings.computerUsePermissionHint':
+    'Permissions go to the standalone "KepCup Computer Use" helper (not the main app); checking its status briefly launches it to register with TCC.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',
@@ -2186,6 +2191,7 @@ export const enUS = {
   'settings.remotePairDone': 'Paired: {name}',
   'settings.remotePairCopyFailed': 'Copy failed: select and copy the link above manually',
   'settings.navBrowserProfiles': 'Browser profiles',
+  'settings.navComputerUse': 'Computer use',
   'settings.browserProfilesTitle': 'Shared browser profiles',
   'settings.browserProfilesHint':
     "By default each Bot uses a private browser profile with separate sign-in state. Shared profiles let multiple Bots use the same cookies and site storage: attach them to the same profile in Bot details, then sign in in any Bot's browser window. Network rules are still evaluated per Bot.",
