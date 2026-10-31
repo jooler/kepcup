@@ -1,5 +1,6 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
-import { PROJECT_MEMBER_PREVIEW_MAX, isArchivedConversation } from '@kepcup/shared';
+import { isArchivedConversation } from '@kepcup/shared';
+import { memberPreviewsOf } from './member-preview';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
@@ -401,11 +402,7 @@ export class ChatSession {
     view.members = result.members;
     view.conversation = {
       ...view.conversation,
-      memberPreviews: result.members.slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
-        id: member.bot.id,
-        name: member.bot.name,
-        avatar: member.bot.avatar,
-      })),
+      memberPreviews: memberPreviewsOf(result.members),
     };
     this.#host.syncMemberPreviews(view.conversation.id, result.members);
   }

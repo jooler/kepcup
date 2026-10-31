@@ -137,7 +137,12 @@ describe('project conversations', () => {
       ).conversations;
 
     const previewsOf = (members: Array<{ bot: Bot }>) =>
-      members.map((m) => ({ id: m.bot.id, name: m.bot.name, avatar: m.bot.avatar }));
+      members.map((m) => ({
+        id: m.bot.id,
+        name: m.bot.name,
+        avatar: m.bot.avatar,
+        avatarMask: m.bot.avatarMask,
+      }));
     const group = (await listed()).find((c) => c.id === conv.id)!;
     expect(group.memberPreviews).toEqual(previewsOf(await listMembers(core, conv.id)));
     expect(group.memberPreviews?.map((p) => p.name).sort()).toEqual(

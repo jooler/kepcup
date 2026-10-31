@@ -29,6 +29,7 @@
     botId={id}
     {name}
     avatar={bot?.avatar ?? null}
+    mask={bot?.avatarMask ?? null}
     class={klass}
     fallbackClass="text-xs"
     animated={false}

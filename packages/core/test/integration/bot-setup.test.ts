@@ -294,6 +294,53 @@ describe('conversational bot setup (interview)', () => {
     expect(JSON.stringify(request.body.tools)).not.toContain('save_profile');
   }, 20_000);
 
+  it('save_profile sets bot.kind from the interview: built-in id then a custom kind', async () => {
+    const { core, llm } = await start();
+    const { bot, conversationId } = await createInterviewBot(core);
+
+    // 第一轮：随画像字段一起写内置分类（大小写不敏感 → coding）。
+    llm.script('mock-main', [
+      step().replyToolCall('save_profile', {
+        changes: [{ field: 'role.responsibilities', value: '写代码与调试' }],
+        kind: 'Coding',
+      }),
+      step().replyToolCall('ask_question', {
+        question: '还要我做什么？',
+        options: ['代码审查', '写测试'],
+      }),
+    ]);
+    await answerInterview(core, conversationId, '你就是我的编程助手');
+    await skipSetupPath(core, conversationId);
+    await waitForMessage(
+      core,
+      conversationId,
+      (m) =>
+        m.kind === 'system_event' && 'text' in m.content && m.content.text === '还要我做什么？',
+    );
+    const first = (await core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
+    expect(first.bot.kind).toBe('coding');
+
+    // 第二轮：只设自定义分类（changes 为空也合法），然后结束访谈。
+    llm.script('mock-main', [
+      step().replyToolCall('save_profile', { changes: [], kind: '法务' }),
+      step().replyToolCall('finish_setup', {}),
+      step().replyText('分类改好了。'),
+    ]);
+    await answerInterview(core, conversationId, '其实我更想让你做合同审阅');
+    await waitForMessage(
+      core,
+      conversationId,
+      (m) =>
+        m.senderBotId === bot.id &&
+        m.kind === 'text' &&
+        'text' in m.content &&
+        m.content.text.includes('分类改好了'),
+    );
+    const finished = (await core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
+    expect(finished.bot.kind).toBe('法务');
+    expect(finished.bot.setupState ?? null).toBeNull();
+  }, 20_000);
+
   it('an interviewing bot @-mentioned in a group only gets save_profile (setupSurface group)', async () => {
     const { core, llm } = await start();
     const created = (await core.rpc.call('bots.create', { profile: {}, interview: true })) as {

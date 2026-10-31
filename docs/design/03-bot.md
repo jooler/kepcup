@@ -62,6 +62,13 @@ runtime:     { model, light_model, network_policy, budget,
 - 删除后保留一条仅含 id 与删除时间的记录，用于在历史消息中显示发送者，并占用该 id。
 - 新建的 Bot 即使与已删除的 Bot 同名，也是新的 id，不继承任何数据。
 
+### Bot 分类（`kind`）
+
+- 顶层字段（0059），与 Profile、`system_role` 都不是同一层：初始化访谈中由 LLM 根据用户回答通过 `save_profile` 的 `kind` 参数设置。
+- 内置分类是稳定 id（`shared/domain/bot-kind.ts`）：`coding`（编程与开发）、`writing`、`data`、`marketing`、`research`、`design`、`operations`、`life`、`general`；内置都不合适时允许一个自定义短分类（如「法务」「招聘」）。
+- `NULL` = 未分类（旧数据、管家提议、模板导入等非访谈路径）。消费方优先看 `kind`，未分类时回退画像关键词（例如 `<coding_rules>` 的注入判断）。
+- 访谈结束后模型不再改 `kind`；删除 Bot 时清空。
+
 ### 删除 Bot 时的数据处理
 
 删除前弹框提醒，列出将被清理的内容并说明不可恢复。交互表现见 [01-conversation.md](01-conversation.md#删除-bot)。

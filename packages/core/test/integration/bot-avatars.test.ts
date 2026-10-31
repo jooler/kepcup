@@ -146,6 +146,63 @@ describe('bot avatars (upload / read / validation)', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it('avatar mask defaults to circle, round-trips through bots.avatar.mask and survives avatar changes', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
+    const core = await createTestCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { KEPCUP_MOCK_LLM_URL: 'http://mock.invalid' },
+    });
+    cores.push(core);
+    homes.push(home);
+    const bot = await makeBot(core, '小启');
+    // 新建行的 avatar_mask 是 NULL（0060 之后的旧数据同形）：读出归一为 circle。
+    expect(bot.avatarMask).toBe('circle');
+
+    const rounded = (await core.rpc.call('bots.avatar.mask', {
+      id: bot.id,
+      mask: 'rounded',
+    })) as { bot: Bot };
+    expect(rounded.bot.avatarMask).toBe('rounded');
+
+    // 遮罩单独成列：换上传头像 / 换预置头像都不动它，重新上传仍沿用上次形状。
+    const uploaded = (await core.rpc.call('bots.avatar.upload', {
+      id: bot.id,
+      mime: 'image/png',
+      bytesBase64: PNG_1PX.toString('base64'),
+    })) as { bot: Bot };
+    expect(uploaded.bot.avatarMask).toBe('rounded');
+    const preset = (await core.rpc.call('bots.update', {
+      id: bot.id,
+      profile: {
+        ...bot.profile,
+        identity: { ...bot.profile.identity, avatar: 'preset:orb:orange' },
+      },
+    })) as { bot: Bot };
+    expect(preset.bot.avatarMask).toBe('rounded');
+    const refetched = (await core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
+    expect(refetched.bot.avatarMask).toBe('rounded');
+
+    const circle = (await core.rpc.call('bots.avatar.mask', {
+      id: bot.id,
+      mask: 'circle',
+    })) as { bot: Bot };
+    expect(circle.bot.avatarMask).toBe('circle');
+
+    // 枚举之外的取值在 RPC 边界就被拦下。
+    await expect(
+      core.rpc.call('bots.avatar.mask', { id: bot.id, mask: 'square' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    // 不存在的 Bot 不能写遮罩。
+    await expect(
+      core.rpc.call('bots.avatar.mask', { id: 'bot_missing', mask: 'rounded' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // 领域层直接调用（不经 RPC 校验）也应归一为 INVALID_INPUT，而不是裸 ZodError。
+    expect(() => core.services.domain!.bots.setAvatarMask(bot.id, 'square' as never)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_INPUT' }),
+    );
+  });
+
   it('preset avatar strings round-trip through bots.update without touching the disk', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
     const core = await createTestCore({

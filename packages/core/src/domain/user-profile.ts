@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError } from '@kepcup/shared';
@@ -46,7 +46,14 @@ export class UserProfileAvatarService {
     }
     const dir = this.#avatarDir();
     mkdirSync(dir, { recursive: true });
-    const fileName = `avatar-${this.deps.clock.now()}${ext}`;
+    // clock.now() can collide within the same millisecond under fast CI;
+    // bump the stamp until the path is free so re-uploads always get a new name.
+    let stamp = this.deps.clock.now();
+    let fileName = `avatar-${stamp}${ext}`;
+    while (existsSync(path.join(dir, fileName))) {
+      stamp += 1;
+      fileName = `avatar-${stamp}${ext}`;
+    }
     writeFileSync(path.join(dir, fileName), bytes);
     // 只保留当前一张：渲染层按文件名缓存 dataURL，旧文件的在途读取已解析完毕。
     for (const entry of readdirSync(dir)) {

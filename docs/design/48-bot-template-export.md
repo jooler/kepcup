@@ -10,6 +10,7 @@
 
 - **模板是单个 JSON 文件**，带 `format: 'kepcup-bot-template'` 与 `version: 1`；未知版本导入直接拒绝（明确报错，不猜语义）。契约在 `packages/shared/src/domain/bot-template.ts`（`botTemplateSchema`），导入在边界处 zod 全量校验（仓库惯例：磁盘上的配置在边界校验）。
 - **包含**：清洗后的完整 Profile（identity / persona / role / boundaries / behavior / runtime 子集）、自写技能（authored，文件全量内嵌 base64，status 照搬）、头像（`upload:` 内嵌字节，`preset:` 标识直接保留）、已导入技能清单（仅 name + sourceUrl）。
+- **头像遮罩**：`avatarMask` 只在上传头像且遮罩为 `rounded` 时写入（缺省 = `circle`，旧模板无这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_mask`。
 - **不包含**（与 D37 移交的「永不移交」清单同源）：对话（conversations / messages / attachments…）、记忆（`bots/{id}/memory.db`）、知识库（`bots/{id}/wiki/`）、任务（runs / todos / schedules / watches / delegations / jobs）、组件（widgets 四表）、密钥（secrets 表永不出现在导出路径上）、路径与应用写授权、审批与审计记录、浏览器登录态、workspace 目录。
 - **唯一需要字段级清洗的位置是 `profile.runtime` 的本机引用**：`mcp_server_ids` / `app_connection_ids`（指向本机全局配置的 id，别的设备无意义）、`browser_profile`（本机共享资料）、`inkcop_agent_keys`（同机协作）、`network_allowlist`（可能含内网域名）、`message_transport`（已废弃恒空）。保留：`model` / `light_model`（模型偏好，空 = 跟随设置默认）、`network_policy`、`agent` 的 effort / permission / **capabilities**（18 个宿主能力包是应用级语义，可移植）。**导出侧清洗一次，导入侧再强制清洗一次**（防御纵深：无论模板里残留什么都清空）。
 - **导入只新建 Bot**：`BotsService.create(profile, { skipDefaultAgent: true })`（模板带空模型 / Agent = 跟随设置默认，不被 onboarding 默认外部 Agent 覆盖，与 D88 同语义）。外部智能体引擎 id 在本机不可用（实验开关关闭或不在目录）时回退内置引擎（`id` / `model` 清空，permission / capabilities 保留）。
@@ -27,6 +28,7 @@
   "exportedAt": 1760000000000,      // epoch ms
   "profile": { /* 完整 botProfileSchema，runtime 本机引用已清空 */ },
   "avatar": { "mime": "image/png", "base64": "…" },   // 可选：upload 头像字节
+  "avatarMask": "rounded",                          // 可选：上传头像遮罩，缺省 / 缺项 = "circle"
   "skills": {
     "authored": [                    // 自写技能，文件 base64 内嵌
       { "name": "weekly-report", "status": "active", "files": [{ "path": "SKILL.md", "base64": "…" }] }

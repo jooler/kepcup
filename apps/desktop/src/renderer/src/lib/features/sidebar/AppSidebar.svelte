@@ -757,6 +757,7 @@
       botId={conversation.directBotId ?? conversation.id}
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
+      mask={conversation.bot?.avatarMask ?? null}
       class="size-11"
       fallbackClass="text-base"
       testId="conversation-avatar"
@@ -1331,6 +1332,7 @@
             botId={bot.id}
             name={bot.name}
             avatar={bot.avatar}
+            mask={bot.avatarMask}
             class="size-7"
             fallbackClass="text-xs"
           />

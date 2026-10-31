@@ -4,9 +4,11 @@
 //   node scripts/release/merge-update-manifests.mjs <out.yml> <in1.yml> <in2.yml> ...
 //
 // macOS arm64 and x64 build on different runners and each writes its own latest-mac.yml listing
-// only its own zip/dmg. Uploading both would let the last one win and strand the other arch.
-// The merged file lists every file; electron-updater's MacUpdater picks the arm64 or x64 zip by
-// file name. Top-level path/sha512 (read only by very old updaters) come from the x64 manifest.
+// only its own zip/dmg. Linux has the same shape: the Ubuntu job lists AppImage/deb and the
+// AlmaLinux rpm job lists the rpm, per arch. Uploading the inputs as-is would let the last one
+// win. The merged file lists every file; electron-updater's MacUpdater / AppImageUpdater /
+// DebUpdater / RpmUpdater pick by file name/extension. Top-level path/sha512 (read only by very
+// old updaters) prefer a non-rpm, non-arm64 entry.
 //
 // The input is electron-builder's fixed output shape, so this parses just that shape and fails
 // loudly on anything else instead of pulling a YAML library into the publish job.
@@ -62,7 +64,14 @@ const files = new Map();
 for (const manifest of manifests) {
   for (const file of manifest.files) files.set(file.url, file);
 }
-const primary = manifests.find((m) => !/arm64/.test(m.top.path)) ?? manifests[0];
+// Top-level path/sha512 (read only by very old updaters) prefer a non-rpm,
+// non-arm64 file: on Linux the rpm job also writes a manifest whose path ends
+// in `.rpm` (and arm64 rpm paths contain `aarch64`, not `arm64`), so a plain
+// "first manifest" pick could point the merged file at the rpm.
+const primary =
+  manifests.find((m) => !/arm64/.test(m.top.path) && !/\.rpm$/.test(m.top.path)) ??
+  manifests.find((m) => !/\.rpm$/.test(m.top.path)) ??
+  manifests[0];
 const releaseDate = manifests
   .map((m) => m.top.releaseDate)
   .filter(Boolean)

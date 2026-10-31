@@ -11,6 +11,8 @@
  * 100×100 viewBox 的静态 SVG 片段，由 BotPresetAvatar 着色并叠加眼睛。
  */
 
+import { normalizeBotAvatarMask, type BotAvatarMask } from '@kepcup/shared';
+
 type Pt = readonly [number, number];
 
 const f = (n: number): string => String(Math.round(n * 100) / 100);
@@ -74,6 +76,28 @@ function starPoints(
 
 const circles = (list: Array<readonly [number, number, number]>): string =>
   list.map(([cx, cy, r]) => `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}"/>`).join('');
+
+/**
+ * 上传头像的遮罩（`bots.avatar_mask` / `Bot.avatarMask`）：'circle' 圆形（默认）、
+ * 'rounded' 圆角正方形。只作用于上传图片——预置头像自带轮廓、首字母占位始终圆形。
+ */
+export function avatarMaskClass(mask: BotAvatarMask | null | undefined): string {
+  return normalizeBotAvatarMask(mask) === 'rounded' ? 'rounded-[28%]' : 'rounded-full';
+}
+
+/**
+ * 头像外框的形状类：只有 `upload:` 图片跟随遮罩，预置头像 / 首字母占位恒为圆形。
+ * 右栏头像按钮、hover 蒙层与焦点环共用它，避免「圆按钮套方图」。
+ */
+export function uploadedAvatarShapeClass(
+  avatar: string | null | undefined,
+  mask: BotAvatarMask | null | undefined,
+): string {
+  return parseUploadedAvatar(avatar) === null ? 'rounded-full' : avatarMaskClass(mask);
+}
+
+/** 遮罩的两个可选项（头像编辑面板的切换按钮顺序）。 */
+export const AVATAR_MASKS = ['circle', 'rounded'] as const satisfies readonly BotAvatarMask[];
 
 export interface AvatarPresetShape {
   id: string;

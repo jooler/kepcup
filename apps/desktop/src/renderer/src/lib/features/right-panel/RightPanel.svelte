@@ -21,6 +21,7 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import { uploadedAvatarShapeClass } from '$lib/avatars/presets';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
   import {
@@ -54,6 +55,11 @@
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const bot = $derived(chat.current?.conversation.bot ?? null);
+  /**
+   * 头像按钮的形状跟随遮罩：只有「上传头像 + 圆角方」才变方，预置头像 / 首字母
+   * 占位仍是圆，避免圆按钮里套方图（按钮本身、hover 蒙层、焦点环共用这一个类）。
+   */
+  const avatarShapeClass = $derived(uploadedAvatarShapeClass(bot?.avatar, bot?.avatarMask));
   browserPages.start();
   // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。
   const browserOpen = $derived(
@@ -432,7 +438,7 @@
         <div class="flex flex-col items-center gap-1 text-center">
           <button
             type="button"
-            class="group relative size-24 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="group relative size-24 shrink-0 {avatarShapeClass} outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onclick={() => (pickerOpen = !pickerOpen)}
             title={t('rightPanel.avatarEditTitle')}
             data-testid="bot-avatar-button"
@@ -441,12 +447,13 @@
               botId={bot.id}
               name={bot.name}
               avatar={bot.avatar}
+              mask={bot.avatarMask}
               class="size-24"
               fallbackClass="text-2xl"
               testId="bot-avatar"
             />
             <span
-              class="absolute inset-0 flex items-center justify-center rounded-full bg-black/35 text-white opacity-0 transition-opacity group-hover:opacity-100"
+              class="absolute inset-0 flex items-center justify-center {avatarShapeClass} bg-black/35 text-white opacity-0 transition-opacity group-hover:opacity-100"
             >
               <Pencil class="size-6" aria-hidden="true" />
             </span>
