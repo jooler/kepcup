@@ -1,5 +1,5 @@
 /**
- * 设置分区图标清单（SettingsDialog 宽屏弹框与 NarrowSettings 窄屏全屏页共用），
+ * 设置分区图标清单（宽屏设置页左栏导航与 NarrowSettings 窄屏全屏页共用），
  * 标题 / 顺序的事实源在 settings-section-labels.ts（lucide-free，可单测）。分区
  * 内容的渲染在 SettingsSectionView.svelte。单独成文件是因为图标清单引用 lucide
  * 组件，不能进 sections.ts（node 单测环境）。
@@ -15,7 +15,6 @@ import {
   Mic,
   Monitor,
   MoonStar,
-  Puzzle,
   Settings2,
   Cpu,
   Smartphone,
@@ -45,7 +44,6 @@ const SECTION_ICONS: Record<SettingsViewSection, LucideIcon> = {
   search: Globe,
   browser: Compass,
   agents: Bot,
-  plugins: Puzzle,
   contacts: BookUser,
   unattended: MoonStar,
   remote: Smartphone,

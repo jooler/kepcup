@@ -1147,6 +1147,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   }),
 
   // --- 插件（D104 P1-1，设计 51 §8；市场地址与公钥是供应链信任根） -------------
+  // 深链落扩展中心「设置」页签（设置「插件」分区已并入扩展中心）。
   item({
     id: 'plugins.updates',
     group: 'plugins',
@@ -1157,7 +1158,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [field('enabled', '自动检查更新', 'toggle', { path: 'pluginAutoCheckUpdates' })],
     write: write('confirm'),
     card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-updates' },
+    deepLink: { surface: 'extension-center', section: 'settings', anchor: 'plugins-updates' },
     store: { kind: 'settings', paths: ['pluginAutoCheckUpdates'], generic: true },
   }),
   item({
@@ -1180,7 +1181,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 供应链信任根：Bot 可以出卡，但宿主绝不采用会话里给的值（设计 51 §6.1）。
     write: write('user-only'),
     card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-marketplace' },
+    deepLink: { surface: 'extension-center', section: 'settings', anchor: 'plugins-marketplace' },
     store: {
       kind: 'settings',
       paths: ['pluginMarketplaceUrl', 'pluginMarketplacePublicKey'],

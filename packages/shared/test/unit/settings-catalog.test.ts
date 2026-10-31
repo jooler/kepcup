@@ -318,16 +318,18 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
 
   it('scans the real settings UI', () => {
     // 宽松扫描也必须扫到已知位置，否则说明扫描规则失效。
-    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models', 'plugins']));
-    // 「应用」分区已移除（连接相关都在扩展中心）。
+    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models']));
+    // 「应用」分区已移除（连接相关都在扩展中心）；「插件」分区并入扩展中心「设置」页签。
     expect(scan.settingsSections).not.toContain('apps');
+    expect(scan.settingsSections).not.toContain('plugins');
     expect(scan.anchors).toEqual(
       expect.arrayContaining(['default-models', 'web-search', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     // D104 UI 修正：技能 / 连接 / MCP / 邮件不再是页签，是「已安装」的内容筛选。
     // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）。
-    expect(scan.extensionCenterTabs).toEqual(['market', 'installed']);
+    // 「设置」页签：原设置「插件」分区并入扩展中心后的落点。
+    expect(scan.extensionCenterTabs).toEqual(['market', 'installed', 'settings']);
     expect(scan.botPanelTabs).toEqual(
       expect.arrayContaining(['profile', 'skills', 'access', 'schedules']),
     );

@@ -296,6 +296,9 @@ class ChatState {
         shell.projectSettingsSection = 'overview';
         board.closeCard();
         tasks.closeDetail();
+        // 宽屏设置页（整页视图）开着时选会话即退出设置：通知 / 通讯录 / 搜索深链的
+        // 落点要可见，不能被盖在设置页后面。
+        shell.closeSettings();
         saveLastConversationId(globalThis.localStorage ?? null, conversationId);
         const messages = this.main.messages;
         for (let i = messages.length - 1; i >= 0; i -= 1) {

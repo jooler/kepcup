@@ -1531,11 +1531,9 @@ export const enUS = {
   'chats.errorCode.ALREADY_EXISTS': 'Object already exists',
   'chats.errorCode.BOT_UNDELETABLE': 'The manager cannot be deleted',
   'sidebar.extensionCenter': 'Extension Center',
-  'extensionCenter.title': 'Extension Center',
-  'extensionCenter.description':
-    'Add skills for Bots, connect everyday apps, manage installed tool services, let Bots handle your email, or enable local app collaboration.',
   'extensionCenter.tabs.market': 'Market',
   'extensionCenter.tabs.installed': 'Installed',
+  'extensionCenter.tabs.settings': 'Settings',
   'extensionCenter.localCollab.hint':
     'Collaborate directly with other apps on the same computer (no cloud involved).',
   'extensionCenter.localCollab.inkcop.enable': 'Enable InkCop collaboration',
@@ -2120,6 +2118,7 @@ export const enUS = {
   'chatHeader.collapsePanel': 'Collapse Bot panel',
   'settings.navGeneral': 'General',
   'settings.navModels': 'Models',
+  'settings.backToChats': 'Back to chats',
   'settings.navProfile': 'Profile',
   'settings.navContacts': 'Contacts',
   'settings.navUnattended': 'Unattended',
@@ -2548,7 +2547,6 @@ export const enUS = {
   'search.themeDark': 'Dark mode',
   'search.themeApplied': 'Appearance switched to "{mode}"',
   'settings.navAgents': 'Agents',
-  'settings.navPlugins': 'Plugins',
   'approvals.environmentLicense': 'License',
   'agents.title': 'External agents',
   'agents.defaultAgent': 'Agent used by default for new Bots',

@@ -20,8 +20,8 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  *   表单只见「已保存」占位）；重开回显非敏感值；
  * - 安装成功接入引导弹框：UI 安装路径成功后出现（标题含插件名），「立即添加到 Bot…」
  *   多选写入各 Bot 的 plugin_ids；勾「以后不再提醒」落 localStorage，之后的安装不再弹；
- * - 两页签收敛：market / installed 两个页签；已安装页网格末尾的系统卡
- *   （本机应用协作 / 本机自建连接，badge「系统」、无插件菜单）可展开。
+ * - 页签：market / installed / settings 三个（设置页签是原设置「插件」分区的落点）；
+ *   已安装页网格末尾的系统卡（本机应用协作 / 本机自建连接，badge「系统」、无插件菜单）可展开。
  *
  * 安装全走路径输入框（e2e 环境无原生对话框）；config 夹具不含 mcpb。
  */
@@ -119,7 +119,7 @@ async function makePlainFixture(
 }
 
 async function openInstalledTab(page: Page): Promise<Locator> {
-  const dialog = page.locator('[data-testid="extension-center-dialog"]');
+  const dialog = page.locator('[data-testid="settings-page"]');
   await page.locator('[data-testid="extension-center-button"]').click();
   await expect(dialog).toBeVisible();
   await dialog.locator('[data-testid="extension-center-tab-installed"]').click();

@@ -100,7 +100,7 @@ async function openSettings(page: Page, section: string): Promise<void> {
 
 async function closeSettings(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="settings-page"]')).toHaveCount(0);
 }
 
 /**
