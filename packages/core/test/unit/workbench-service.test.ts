@@ -1797,7 +1797,7 @@ describe('工作台备忘', () => {
     const { rig, memos, published } = memoRig();
     const g1 = memos.createGroup('一');
     rig.clock.advance(1000);
-    const g2 = memos.createGroup('二');
+    memos.createGroup('二');
     rig.clock.advance(1000);
     const g3 = memos.createGroup('三');
     expect(memos.listGroups().map((g) => g.title)).toEqual(['一', '二', '三']);
@@ -1824,7 +1824,7 @@ describe('工作台备忘', () => {
   });
 
   it('拖拽：move 换组 + beforeId 落位；重排不改 updated_at；最近删除里的不能移动', () => {
-    const { rig, memos, published } = memoRig();
+    const { memos, published } = memoRig();
     const a = memos.create({ body: 'a' });
     const b = memos.create({ body: 'b' });
     const g = memos.createGroup('工作');
