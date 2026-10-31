@@ -257,15 +257,20 @@ describe('card project scope', () => {
       title: 'Scope the card',
     }).conversation.id;
     const before = ingestJobs().length;
+    // 上一条用例的收尾请求如果落在 script() 之后，会吃掉没有 expect 的第一步，
+    // 本轮就只剩文本回复，断言里找不到 wiki_enqueue 的 tool_result。两步都钉住
+    // 这条用户消息，迟到请求对不上就不会消费队列。
+    const outsiderTurn = (req: MockChatRequest) => req.lastUserText().includes('也帮我入库');
     stack.llm.script('mock-main', [
       step()
+        .expect(outsiderTurn)
         .inTurn()
         .replyToolCall('wiki_enqueue', {
           source_type: 'url',
           ref: 'https://example.com/outsider',
           note: '非成员',
         }),
-      step().inTurn().replyText('做不到。'),
+      step().expect(outsiderTurn).inTurn().replyText('做不到。'),
     ]);
     stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
     await sendDrafts(stack.core, outsiderCardId, [{ text: '也帮我入库' }]);
