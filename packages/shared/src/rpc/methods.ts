@@ -1143,6 +1143,10 @@ export const messagesEditInputSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1).max(100_000),
 });
+/** 撤回一条用户消息（design/02 §撤回与编辑）：置 status='recalled'，从可见历史移除。 */
+export const messagesRecallInputSchema = z.object({
+  id: z.string().min(1),
+});
 
 /**
  * 发送一条用户消息（直发，无待发送队列）：单次发送 = 一条消息 = 一个批次
@@ -2464,6 +2468,7 @@ export const rpcMethodSchemas = {
 
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },
+  'messages.recall': { input: messagesRecallInputSchema, output: messagesListOutputSchema },
 
   'messages.send': { input: messagesSendInputSchema, output: messagesSendOutputSchema },
 
@@ -3024,6 +3029,7 @@ const APP_METHODS = [
   'projects.plugins.set',
   'messages.list',
   'messages.edit',
+  'messages.recall',
   'messages.send',
   'attachments.upload',
   'attachments.get',

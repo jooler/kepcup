@@ -629,11 +629,14 @@ class ChatState {
 
   // --- messages ---------------------------------------------------------------
 
-  async edit(id: string, text: string): Promise<void> {
+  /** 撤回一条用户消息（design/02 §撤回与编辑）；失败时 toast，不抛给调用方。 */
+  async recall(id: string): Promise<boolean> {
     try {
-      await core.call('messages.edit', { id, text });
+      await core.call('messages.recall', { id });
+      return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 

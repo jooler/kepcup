@@ -166,13 +166,13 @@
     <!-- 内容区限宽居中，与输入药丸（max-w-3xl）同轴 -->
     <div class="mx-auto flex w-full max-w-3xl flex-col">
       {#each messages as message, index (message.id)}
-        {@const showEdit = index === messages.length - 1}
+        {@const isLastVisible = index === messages.length - 1}
         {@const key = chainKeys[index]}
         {@const merge = {
           above: key !== null && chainKeys[index - 1] === key,
           below: key !== null && chainKeys[index + 1] === key,
         }}
-        <MessageBubble {message} editing={showEdit} {merge} />
+        <MessageBubble {message} isLast={isLastVisible} {merge} />
       {/each}
       <!--
         执行状态行（12-ui-layout 焦点二）：排在消息流末尾——它的位置就是下

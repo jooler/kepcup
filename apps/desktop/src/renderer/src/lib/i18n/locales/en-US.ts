@@ -26,16 +26,13 @@ export const enUS = {
   'chats.empty': 'Select or start a conversation',
   'chats.loadEarlier': 'Load earlier messages',
   'chats.recalled': 'Message recalled',
-  'chats.edited': 'Edited',
+  'chats.recall': 'Recall',
   'chats.deleteConversation': 'Delete conversation',
   'chats.deleteConversationTitle': 'Delete conversation with {name}',
   'chats.deleteConversationBody':
     "This conversation's messages, attachments, and run history will be deleted. This can't be undone.",
   'chats.deleteConversationKeepsBot':
     'The bot will stay in your contacts and you can chat with it again later. To delete the bot, go to Settings > Contacts.',
-  'chats.edit': 'Edit',
-  'chats.saveEdit': 'Save',
-  'chats.cancelEdit': 'Cancel',
   'chats.retry': 'Retry',
   'chats.runFailed': 'Run failed: {reason}',
   'chats.setupCustomPlaceholder': 'Or type your answer…',

@@ -1529,6 +1529,19 @@ export class Orchestrator {
   }
 
   /**
+   * Recall a user message (docs/design/02-execution.md 撤回与编辑): the store
+   * marks it `recalled` and every visible-history query drops it. No fresh
+   * trigger and no notification to running turns — a trigger batch still
+   * buffered when the recall lands re-reads the database at turn start and
+   * drops the message (mailbox `refreshTriggerBatch`).
+   */
+  recallMessage(id: string): Message {
+    const message = this.#deps.messages.recall(id);
+    this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
+    return message;
+  }
+
+  /**
    * Turns that already saw the edited message get it again in their next
    * turn (an `event` trigger, `message_edited` — D75: turns are never
    * steered). False when no running turn saw it (the edit is a fresh trigger).

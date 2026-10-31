@@ -775,6 +775,20 @@
   });
 
   /**
+   * 撤回回填（ChatMessageRow 经 session.requestComposerInsert 请求）：把撤回
+   * 消息的正文交回输入框，语义与语音转写回填一致——已有内容则空格追加，
+   * 焦点落到结尾。消费即清引用；nonce 让同文本的两次撤回也会各触发一次。
+   */
+  $effect(() => {
+    const insertion = chatSession.composerInsertion;
+    const ed = editor;
+    if (insertion === null || ed === null) return;
+    chatSession.composerInsertion = null;
+    ed.commands.insertContent(!composerEmpty ? ` ${insertion.text}` : insertion.text);
+    ed.commands.focus('end');
+  });
+
+  /**
    * 防重入（按会话分闸）：同一会话上传未完成时连按两次 Enter / 点发送，第二次直接
    * 忽略；会话 A 还在等上传时切到 B，B 的发送不受 A 影响。
    */

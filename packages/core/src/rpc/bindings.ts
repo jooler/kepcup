@@ -110,6 +110,7 @@ import {
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
+  messagesRecallInputSchema,
   messagesSendInputSchema,
   messagesSendOutputSchema,
   attachmentsUploadInputSchema,
@@ -1172,6 +1173,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     'messages.edit': method(messagesEditInputSchema, messagesListOutputSchema, async (input) => ({
       messages: [orchestrator.editMessage(input.id, input.text)],
+    })),
+    'messages.recall': method(messagesRecallInputSchema, messagesListOutputSchema, async (input) => ({
+      messages: [orchestrator.recallMessage(input.id)],
     })),
 
     'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) =>
