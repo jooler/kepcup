@@ -70,6 +70,9 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table delegations;');
     db.exec('drop index bots_one_active_butler;');
     db.exec('alter table bots drop column system_role;');
+    // 0059（Bot 分类）也是增量列：回拨后要摘除，回放时才会重新 ADD COLUMN。
+    db.exec('alter table bots drop column kind;');
+    db.exec('alter table bots drop column avatar_mask;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
     // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。

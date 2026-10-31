@@ -1,17 +1,28 @@
+import { normalizeBotAvatarMask, type Bot, type BotAvatarMask } from '@kepcup/shared';
 import { parsePresetAvatar } from '$lib/avatars/presets';
 import { chat } from '$lib/stores/chat.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 
 /**
- * 执行者的头像：优先取项目会话里的成员数据（改头像会即时反映），
- * 退回落通讯录名册。都没有时返回 null，BotAvatar 退回首字母占位。
+ * 执行者（项目成员）的 Bot 记录：优先取项目会话里的成员数据（改头像 / 名字会即时
+ * 反映），退回落通讯录名册。两处查找只写一份，头像与遮罩不会各查各的、查出不同 Bot。
  */
-export function botAvatarOf(botId: string): string | null {
+function findBot(botId: string): Bot | null {
   return (
-    chat.main.members.find((member) => member.bot.id === botId)?.bot.avatar ??
-    contacts.bots.find((bot) => bot.id === botId)?.avatar ??
+    chat.main.members.find((member) => member.bot.id === botId)?.bot ??
+    contacts.bots.find((bot) => bot.id === botId) ??
     null
   );
+}
+
+/** 头像值；都没有时返回 null，BotAvatar 退回首字母占位。 */
+export function botAvatarOf(botId: string): string | null {
+  return findBot(botId)?.avatar ?? null;
+}
+
+/** 与 `botAvatarOf` 同源的头像遮罩（缺省 / 未知 = circle）。 */
+export function botMaskOf(botId: string): BotAvatarMask {
+  return normalizeBotAvatarMask(findBot(botId)?.avatarMask);
 }
 
 /**

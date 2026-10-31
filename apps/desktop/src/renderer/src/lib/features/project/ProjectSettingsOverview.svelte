@@ -147,6 +147,7 @@
           botId={leadMember.bot.id}
           name={leadMember.bot.name}
           avatar={leadMember.bot.avatar}
+          mask={leadMember.bot.avatarMask}
           class="size-8"
         />
         <span class="min-w-0 flex-1 truncate">{leadMember.bot.name}</span>

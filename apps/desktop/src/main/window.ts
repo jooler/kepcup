@@ -9,6 +9,7 @@ import {
   type BrowserWindowConstructorOptions,
 } from 'electron';
 import { APP_NAME, appIconPath } from './app-brand';
+import { DEVTOOLS_ENABLED } from './devtools';
 import {
   captureWindowState,
   loadWindowState,
@@ -42,6 +43,8 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
+    // 生产构建不开放 DevTools（见 devtools.ts）。
+    devTools: DEVTOOLS_ENABLED,
     // Chromium 内置 PDF 查看器是 plugin：对话文件卡里的 PDF 直接 <embed>
     // 在覆盖层查看（不弹外部应用）。只启用 Electron 自带的查看器，不装第三方插件。
     plugins: true,

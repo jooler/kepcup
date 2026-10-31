@@ -32,11 +32,13 @@ metadata 行按可用字段展示：
 
 ## 执行计划（D93）
 
-内置 pi 任务可以调用 `update_plan`（[43-task-loop-harness.md](43-task-loop-harness.md)）。执行过程页在顶部提示条下方增加可折叠的计划区：
+内置 pi 任务可以调用 `update_plan`（[43-task-loop-harness.md](43-task-loop-harness.md)）。有计划的执行过程页在顶部信息右侧显示绿色「任务清单」按钮，清单内容放在点击展开的浮层里（不再占正文顶部的固定区块）：
 
 - 数据来源是 `runs.steps` 里最后一个 `tool_call.toolName === 'update_plan'` 的 `args.plan`，不新增 RPC 或数据库字段；
-- 标题显示「执行计划」与 `已完成 / 总数`，每项按 `completed` / `in_progress` / `pending` 显示状态；
-- 任务运行中随现有事件 / 轮询刷新；没有计划时不渲染；
+- 按钮显示「任务清单」与完成进度（`已完成 / 总数`）；窄屏只留图标与进度，把宽度让给标题；
+- 浮层宽度 20rem、右对齐按钮、内容超过 60vh 时内部滚动；每项按 `completed` / `in_progress` / `pending` 显示状态，长条目换行显示，有 `explanation` 时在末尾补一段说明；
+- 浮层用 bits-ui Popover（portal 到 body，不会被 header 裁切），内容只读、不参与键盘焦点；
+- 任务运行中随现有事件 / 轮询刷新，浮层打开时内容跟着更新；没有计划时不渲染任何入口；
 - 任务卡卡面不新增字段：`update_plan` 的 progress 事件已让卡面最近进度显示「计划 x/y：…」。
 
 外部智能体任务的原生 `plan` 更新当前仍映射为 `progress` 行（见 `外部智能体引擎` 的 `plan → progress`），不进入本计划区；如需统一结构，后续在 ACP 事件映射里归一化。
@@ -94,7 +96,7 @@ metadata 行按可用字段展示：
 | 文件 | 内容 |
 |---|---|
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、审批卡条 |
-| `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划区（`update_plan` 的最新计划；可折叠、完成计数） |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划入口：右上角绿色「任务清单」按钮 + 浮层（`update_plan` 的最新计划；完成计数、只读清单） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 工具调用行（摘要、状态、参数 / 结果展开） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化、审批条会话回退 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts` | 上述逻辑的单测 |

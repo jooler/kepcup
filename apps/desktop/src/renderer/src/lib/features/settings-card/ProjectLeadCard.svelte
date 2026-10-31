@@ -104,6 +104,7 @@
             botId={member.bot.id}
             name={member.bot.name}
             avatar={member.bot.avatar}
+            mask={member.bot.avatarMask}
             class="size-6"
             animated={false}
           />
