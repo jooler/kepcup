@@ -120,12 +120,12 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
    - `windows-latest`：`--x64 --arm64` 在同一次构建里出合并的 NSIS 安装包和唯一的 `latest.yml`（分开构建的话，两个 `latest.yml` 会互相覆盖）。配了商店变量时再单独构建一次 x64 MSIX：不签名（用 Windows 证书签会因为发布者和商店身份不符而失败），输出到 `release-store/`。
    - 每个 job 都写全目标（如 `--mac dmg zip --arm64`）：只给架构时 electron-builder 会沿用配置里的 arch 列表，两个架构都构建。
    - `ubuntu-24.04` / `ubuntu-24.04-arm`：AppImage + deb。
-4. **linux-rpm**（2 个 job：x86_64 / aarch64）：在 `almalinux:9` 容器里 `pnpm install` + `pnpm -r build` + `dist.mjs --linux rpm`，而不是在 Ubuntu 上交叉打包。选 RHEL 9 作基线是因为 glibc 向后兼容（RHEL 10 能跑 2.34 构建的二进制），一份 rpm 同时支持 RHEL 9/10；同时避免 Ubuntu 24.04 的 glibc 2.39 污染原生模块（RHEL 9 加载时报 missing symbol）。
+4. **linux-rpm**（2 个 job：x86_64 / aarch64）：在 `almalinux:9` 容器里 `pnpm install` + `pnpm -r build` + `dist.mjs --linux rpm`，而不是在 Ubuntu 上交叉打包。选 RHEL 9 作基线是因为 glibc 向后兼容（RHEL 10 能跑 2.34 构建的二进制），一份 rpm 同时支持 RHEL 9/10；同时避免 Ubuntu 24.04 的 glibc 2.39 污染原生模块（RHEL 9 加载时报 missing symbol）。构建容器里还要 `dnf install` 与 `rpm.depends` 相同的 Electron 运行时库（`nss` 等）：`afterPack` 会用打包后的二进制做组件查询冒烟，最小镜像里没有 `libnspr4.so`。
    - `es-git@0.7.0` 的官方 gnu 预编译绑定引用 glibc 2.38 才有的 `__isoc23_strtol`，RHEL 9 上 Node 加载即失败（core 启动就 import es-git）。所以构建前跑 `scripts/release/rebuild-es-git.sh`，从同一 tag 源码重建。
    - rpm job 产出的 `latest-linux*.yml` 里有 rpm 的 sha512/size；publish 会把它和 AppImage/deb 的清单合并，rpm 安装才能走应用内更新。
 5. **linux-rpm-verify**（4 个 job：RHEL 9/10 × x86_64/aarch64）：下载 rpm 后在对应发行版容器里 `dnf install`，再对 `/opt/KepCup/KepCup` 跑 `ldd` 确认没有 missing shared library。rpm 的 AutoReq 被 fpm 关闭，只校验我们显式声明的 `depends`，所以必须真装一遍。
 6. **linux-flatpak**（x64 / arm64）：Ubuntu runner 上安装 `flatpak` + `flatpak-builder`，从 Flathub 拉 freedesktop `26.08` runtime/sdk 和 `org.electronjs.Electron2.BaseApp`，由 electron-builder 的 `flatpak` target 打 `.flatpak` bundle；构建后用 `flatpak build-import-bundle` 导入一遍验证结构。
-7. **linux-snap**（x64 / arm64）：Ubuntu runner 上 `snap install snapcraft --classic`，electron-builder 生成 `snapcraft.yaml`（core24、classic）并以 `--destructive-mode` 构建（不需要 LXD/Multipass）；构建后用 `unsquashfs -l` 校验 `meta/snap.yaml` 与应用入口。
+7. **linux-snap**（x64 / arm64）：Ubuntu runner 上 `snap install snapcraft --classic --channel=8.x/stable`（不要装 latest：snapcraft 9.1+ 的 GUI 中介回归会让 `meta/gui/*.desktop` 在 prime 时找不到，见 [canonical/snapcraft#6519](https://github.com/canonical/snapcraft/issues/6519)），electron-builder 生成 `snapcraft.yaml`（core24、classic）并以 `--destructive-mode` 构建（不需要 LXD/Multipass）；构建后用 `unsquashfs -l` 校验 `meta/snap.yaml` 与应用入口。
 8. **publish**：同名文件出现在两个 job 的产物里时直接失败。两个 macOS job 各写了一份 `latest-mac.yml`，用 `scripts/release/merge-update-manifests.mjs` 合并成一份（electron-updater 按文件名里有没有 `arm64` 选架构）；Linux 每个架构的 AppImage/deb 与 rpm 清单同样合并。确认 4 份更新清单齐全后，建草稿 Release、上传全部文件，再转为正式版并标记为 latest。上次中途失败留下的同名草稿会先删掉。
 
 上传到 Release 的文件：
@@ -171,7 +171,7 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
 
 **RPM（RHEL 9 / RHEL 10）**
 
-- 在 `almalinux:9` 容器里从源码构建，一份 rpm 同时支持 RHEL 9 与 RHEL 10（glibc 向后兼容），覆盖 x86_64 与 aarch64。不要在 Ubuntu runner 上出 rpm：Ubuntu 24.04 的 glibc 2.39 会让 `npmRebuild` 产出的原生模块依赖 RHEL 9（2.34）没有的符号。
+- 在 `almalinux:9` 容器里从源码构建，一份 rpm 同时支持 RHEL 9 与 RHEL 10（glibc 向后兼容），覆盖 x86_64 与 aarch64。不要在 Ubuntu runner 上出 rpm：Ubuntu 24.04 的 glibc 2.39 会让 `npmRebuild` 产出的原生模块依赖 RHEL 9（2.34）没有的符号。构建容器要装上 `electron-builder.yml` 里 `rpm.depends` 的同一组包（AlmaLinux 9 包名），否则 `afterPack` 冒烟加载 Electron 时会缺 `libnspr4.so`。这些包仍然是安装时的 `Requires`，`linux-rpm-verify` 的 `ldd` 检查不变。
 - `es-git@0.7.0` 的 gnu 预编译绑定引用 `__isoc23_strtol`（glibc 2.38），RHEL 9 上 Node 一加载就失败。构建前用 `scripts/release/rebuild-es-git.sh` 从同一 tag 源码重建；升级 `es-git` 时脚本会自动跟随 `packages/core/package.json` 的版本。若上游源码构建不再可用，CI 会直接失败，不会静默发布一个起不来的包。
 - 安装：`sudo dnf install ./kepcup-<version>.x86_64.rpm`（aarch64 文件名对应 `aarch64`）。安装后应用内更新会按 rpm 类型走 electron-updater（与 deb 一样会弹 pkexec 要密码）。CI 的 `linux-rpm-verify` 会在 RHEL 9 和 RHEL 10 容器里各装一次并检查 `ldd`。
 
@@ -183,7 +183,7 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
 
 **Snap（core24，classic）**
 
-- CI 在 Ubuntu 24.04 runner 上用 snapcraft `--destructive-mode` 构建，不需要 LXD/Multipass。base 是 core24（Ubuntu 24.04 用户态），同一份 snap 可运行在 Ubuntu 22.04 / 24.04 / 最新版上。
+- CI 在 Ubuntu 24.04 runner 上用 snapcraft 8.x（`--channel=8.x/stable`）和 `--destructive-mode` 构建，不需要 LXD/Multipass。base 是 core24（Ubuntu 24.04 用户态），同一份 snap 可运行在 Ubuntu 22.04 / 24.04 / 最新版上。snapcraft 9.1+ 不能用：electron-builder 把桌面文件写在 `snap/gui/` 并设置 `desktop: meta/gui/<app>.desktop`，9.1 的中介逻辑会去不存在的 `snap/meta/gui/` 找它（[canonical/snapcraft#6519](https://github.com/canonical/snapcraft/issues/6519)）。
 - 采用 **classic confinement**：应用要执行用户机器上的 CLI/工具，严格约束下这些都不可见。代价是 classic snap 不能直接自动上架 Snap Store（需要人工审核），本地安装要显式加 `--classic`：
   `sudo snap install --dangerous --classic ./kepcup_<version>_amd64.snap`
 - 若以后要上架 Snap Store，先确认其经典约束审核政策；打包本身已就绪。
@@ -208,6 +208,8 @@ GitHub Releases 是唯一写入口；publish job 在转正式后把 Release 资�
 | 现象 | 原因与处理 |
 |---|---|
 | 推了 main 但没有发布 | 看 release 工作流 prepare job 的运行摘要：版本号没改（tag 已存在）、仍是 `0.0.0`，或带了预发布后缀 |
+| Snap 报 `Failed to generate desktop file .../snap/meta/gui/kepcup.desktop` | snapcraft 9.1+ 回归。`linux-snap` 必须钉 `8.x/stable`，不要改回不带 `--channel` 的 `snap install snapcraft --classic` |
+| RPM 冒烟报 `libnspr4.so: cannot open shared object file` | AlmaLinux 9 构建容器没装 Electron 运行时库。`dnf install` 要包含 `rpm.depends` 那一组（`nss` 带上 `nspr`），不能只写进 spec |
 | macOS job 报 notarization 需要 3 个变量 | `APPLE_API_KEY_P8_PATH`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` 只填了一部分。同步脚本会拦截这种情况，但 GitHub 网页上手改机密时不会 |
 | 公证失败 `The signature of the binary is invalid` | 证书类型不对（必须是 Developer ID Application），或 `.p12` 导出时没带私钥 |
 | publish job 报 `expected 2 latest-mac.yml` | 某个 macOS job 没产出更新清单。看该 job 日志，通常是签名失败 |
