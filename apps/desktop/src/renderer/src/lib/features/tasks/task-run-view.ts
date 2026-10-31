@@ -1,6 +1,7 @@
 import {
   TASK_PLAN_MAX_STEPS,
   TASK_PLAN_STEP_MAX_CHARS,
+  type Message,
   type RunStep,
 } from '@kepcup/shared';
 
@@ -287,4 +288,26 @@ export function approvalConversationIdOf(
   currentConversationId: string | null | undefined,
 ): string | null {
   return task?.conversationId ?? currentConversationId ?? null;
+}
+
+/**
+ * 详情页问题条（D75 §2.4.6）：该任务绑定、还没回答的 task_question 提问卡。
+ * 提问卡是会话消息（不在 run_steps 里），详情页打开期间对话被 display:none
+ * 隐藏，按审批条同一思路把未答的卡固定在时间线下方。core 保证一个任务同时
+ * 最多一个未答问题（上一个没答时 ask 直接拒绝），取最新一条即可；已答 /
+ * 作废 / 超时的卡带 `content.answer`，不再算待回答。
+ */
+export function pendingTaskQuestionOf(
+  messages: readonly Message[],
+  taskId: string,
+): Message | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.taskId !== taskId || message.kind !== 'system_event') continue;
+    const content = message.content;
+    if (!('event' in content) || content.event !== 'task_question') continue;
+    if (typeof content.answer === 'string') continue;
+    return message;
+  }
+  return null;
 }
