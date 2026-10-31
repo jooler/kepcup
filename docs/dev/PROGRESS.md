@@ -1619,3 +1619,40 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
 迁移 0056–0058 已用。
 遗留：市场生产部署（R2 + 索引 deploy）待维护者；M2 custom-mcp 实例化与邮件 OAuth 顺延
 （P4 §4 路标）；capabilitySummary 多语言重建路标（51 §15.2）。
+
+## D105 计算机操控（Computer Use）
+
+按 [docs/design/52](../design/52-computer-use.md) 与 `todo/computer-use.md` 完成 WP1–WP4 与 WP5 的
+代码部分，在独立 worktree（`feat/computer-use`）实施。G0 四项经用户确认：helper
+`KepCup Computer Use.app` / `app.kepcup.desktop.computer-use`、Developer ID 8CL9PRK85J（dev 直接
+同身份）、审批默认 conversation、P0 仅 macOS。
+
+- **WP1 vendored 原生层**：`apps/desktop/native/computer-use-macos/` 与上游 `55507b87` 逐字节一致
+  （唯一例外见 DEV-077）；构建脚本 `build-computer-use-macos.mjs`（单架构出包、KepCup 命名/图标/
+  签名，非 darwin exit 0）、空 entitlements、NOTICE.md；`swift test` 6/6；真机冒烟（Electron 宿主 →
+  helper socket）handshake / listApps / Notes getAppState（174 元素树 + 截图）/ click（后台投递 +
+  verification 元数据）全通。
+- **WP2 编排层移植**：orca `src/main/computer/` 36 生产文件 + 17 单测（159 用例）移植到
+  `apps/desktop/src/main/computer/`（文件名保持），7 个解耦点全部落地（process-host 垫片 / asar.
+  unpacked 入口解析 / ELECTRON_RUN_AS_NODE / 类型走 @kepcup/shared / helper 路径与 env 覆盖 /
+  `[computer]` 日志前缀 / desktop-script 休眠移植）；B 口 `computer.*` 五方法（shared 契约 +
+  main specs + CoreHost 装配）、`computer-sidecar` 独立构建入口 + asarUnpack + extraResources；
+  真机验收 5/5（capabilities 全链路 / listApps / getAppState / 二次观察 / stop 清理 helper 进程归零）。
+- **WP3 契约与设置**：`shared/domain/computer.ts`（zod 契约 + invoke 白名单）、`computer_control`
+  审批枚举 + NEVER_AUTO_DECIDED、settings `browser.computer-use`（generic 标量 `computerUseEnabled`，
+  DEV-078）、host-capabilities desktop-only `'computer-use'`、设置页锚点区块；四件套 + 新契约测试全绿。
+- **WP4 工具与审批**：12 个 `computer_*` 工具（一对一映射，pressKey/hotkey 合一）、三态 outcome
+  （verification.unverified → uncertain + 先观察文案；WINDOW_NOT_FOCUSED maybe-sent → uncertain）、
+  type/paste/set_value 的 sensitiveParams 与结果/审批卡脱敏、审批三档（默认 conversation，卡面勾选）
+  + conversation/bot 跨 run 复用、orchestrator 门控（任务 loop + 设置 + capabilities 预查）、
+  renderer 审批卡与 i18n；core 装配链（facade/start/process-entry）与 headless 拒调。新增单测 14 +
+  集成测试 2（mock LLM 任务全链：门控→出卡→批准→复用→脱敏→uncertain→deny），迁移 0061
+  （approvals.kind CHECK，DEV-080）。
+- **WP5 代码部分**：设置页权限引导（三态 + 系统设置深链，检测即注册 TCC）、托盘「停止计算机操控」、
+  `computer:stop` / `computer:permissions-*` IPC + preload/shim（web 端 desktop-only 拒绝）、
+  pack-hooks helper 硬校验（存在性/bundle id/签名，+3 用例）。
+- **验证**：定向测试全绿（编排层 159、computer 工具 14、审批回归 46、pack-hooks 24、设置四件套 +
+  契约 98、集成 2）；shared/core/desktop typecheck 全过；收口全量 `pnpm test` 见基线记录。
+- **遗留（待维护者/后续）**：dev 应用真机任务端到端（审批卡需人工点击，冒烟路径已就绪：
+  `node scripts/computer-use-smoke.mjs` / `node scripts/computer-orchestration-smoke.mjs`）；release
+  出包 + helper 独立公证 + 干净机器 TCC 首弹验收（WP5 发布清单）；DEVIATIONS DEV-077/078/079/080。

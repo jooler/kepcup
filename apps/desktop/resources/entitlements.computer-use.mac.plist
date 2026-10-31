@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the computer-use helper (D105,
+  docs/design/52-computer-use.md D105-7)。对齐 orca：空 dict——helper 无特殊
+  entitlement，辅助功能 / 屏幕录制的 TCC 授权由系统按 bundle id 记账，不需要
+  （也不能）用 entitlements 声明。只随 release 签名
+  （build-computer-use-macos.mjs 的 --options runtime --timestamp）使用。
+-->
+<plist version="1.0">
+  <dict/>
+</plist>

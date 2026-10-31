@@ -23,6 +23,12 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           'core-entry/index': resolve(__dirname, 'src/core-entry/index.ts'),
+          // D105 computer-use sidecar：独立入口（对齐 orca 的多入口做法）。文件名
+          // 固定为 computer-sidecar.js——helper 的 socket peer 校验按命令行路径
+          // `/out/main/computer-sidecar.js`（打包后 app.asar.unpacked 前缀）识别
+          // sidecar，改名会让连接被拒。运行时由 src/main/computer/forked-child-entry-path.ts
+          // 解析（asar.unpacked 同 stdio-proxy 先例）。
+          'computer-sidecar': resolve(__dirname, 'src/main/computer/computer-sidecar.ts'),
         },
         output: {
           entryFileNames: '[name].js',

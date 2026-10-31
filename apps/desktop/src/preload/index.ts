@@ -110,6 +110,18 @@ const api = {
   /** 强制释放该 (Bot, 对话) 的浏览器页面（接管中也直接关；会话数据保留）。 */
   closeBotBrowser: (botId: string, conversationId: string): Promise<void> =>
     ipcRenderer.invoke('browser:close', botId, conversationId),
+  /**
+   * D105 计算机操控（docs/design/52 §3）：用户 kill switch 直达 main（不经 core，
+   * core 卡死也要能停）+ helper 的 TCC 权限三态与系统设置深链（设置页引导区块）。
+   */
+  computerStop: (reason?: string): Promise<{ stopped: boolean }> =>
+    ipcRenderer.invoke('computer:stop', reason),
+  computerPermissionStatus: (): Promise<{
+    accessibility: 'granted' | 'not-granted' | 'unknown';
+    screenRecording: 'granted' | 'not-granted' | 'unknown';
+  }> => ipcRenderer.invoke('computer:permissions-status'),
+  computerPermissionOpen: (permission: 'accessibility' | 'screen-recording'): Promise<void> =>
+    ipcRenderer.invoke('computer:permissions-open', permission),
   /** Open bot browser pages (bot × conversation); pushed on every open / close. */
   getBotBrowserPages: (): Promise<Array<{ botId: string; conversationId: string }>> =>
     ipcRenderer.invoke('browser:pages'),

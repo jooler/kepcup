@@ -470,6 +470,12 @@ export const endpointCapabilityIdSchema = z.enum([
   'launch-at-login',
   /** 沙箱准备向导（WSL 安装等 OS 级操作）。 */
   'sandbox-wizard',
+  /**
+   * 计算机操控（D105）：helper 与被操控的桌面都在本机——远程端点无法发起，
+   * B 口无此能力时工具拒调（对齐 DeferredBrowserHostRpc）。设置页的权限引导
+   * 按钮同理仅桌面可点。
+   */
+  'computer-use',
 ]);
 export type EndpointCapabilityId = z.infer<typeof endpointCapabilityIdSchema>;
 
@@ -483,6 +489,7 @@ export const DESKTOP_ONLY_CAPABILITIES: readonly EndpointCapabilityId[] = [
   'shutdown-app',
   'launch-at-login',
   'sandbox-wizard',
+  'computer-use',
 ];
 
 /**
