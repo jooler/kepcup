@@ -293,12 +293,14 @@ jobs:
       # AlmaLinux 9 上的包名一致，富依赖取第一项）。afterPack 会用打包后的二进制
       # 以 ELECTRON_RUN_AS_NODE 跑组件查询冒烟；只把这些写进 rpm Requires 不够，
       # 最小镜像里没有 libnspr4.so 等，动态链接器会在冒烟脚本启动前失败。
+      # libxcrypt-compat 提供 libcrypt.so.1。系统 libxcrypt 只有 .so.2，
+      # electron-builder 自带的 fpm（Ruby 3.4）因此在冒烟通过后以退出码 127 失败。
       - name: Install build toolchain
         run: |
           dnf install -y git tar gzip xz findutils which \
             gcc gcc-c++ make python3 pkgconf cmake \
             perl perl-IPC-Cmd perl-FindBin perl-Time-Piece perl-File-Copy perl-Digest-SHA \
-            rpm-build \
+            rpm-build libxcrypt-compat \
             gtk3 libnotify nss libXtst xdg-utils at-spi2-core libuuid libsecret \
             mesa-libgbm libxkbcommon alsa-lib cups-libs dbus-libs systemd-libs
       - uses: actions/checkout@v4
