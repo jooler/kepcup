@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
+import {
+  COMPUTER_INVOKE_METHODS,
+  computerProviderCapabilitiesSchema,
+} from '../domain/computer.js';
 import { PROJECT_TITLE_MAX } from '../domain/project-title.js';
 import {
   widgetPreviewRunInputSchema,
@@ -413,6 +417,8 @@ export const settingsUpdateInputSchema = z.object({
   webSearch: webSearchConfigSchema.optional(),
   /** 外部智能体启用状态（D72）：整体覆盖 patch。 */
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
+  /** 计算机操控（D105）：安全开关（平铺布尔，受 user-only 档位约束）。 */
+  computerUseEnabled: z.boolean().optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
   experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
   /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
@@ -2088,6 +2094,42 @@ export const browserFetchTextOutputSchema = z.object({
 });
 export type BrowserFetchTextOutput = z.infer<typeof browserFetchTextOutputSchema>;
 
+// --- computer (D105, docs/design/52-computer-use.md §3) ------------------------------
+// Served by the MAIN process on port B (mirrors browser.*): core's computer_*
+// tools are the client. 控制面（capabilities / permissions / stop）与数据面
+//（invoke 透传 sidecar 方法）分离，main 保持薄。
+
+/** 数据面：method 白名单 = sidecar 方法面（domain/computer.ts 的 COMPUTER_INVOKE_METHODS）。 */
+export const computerInvokeInputSchema = z.object({
+  method: z.enum(COMPUTER_INVOKE_METHODS),
+  /** sidecar 参数原样透传（各方法参数形态由编排层 / helper 校验）。 */
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+/** invoke 的输出形态按方法各异（快照 / 动作 / 列表），core 工具层按需窄化校验。 */
+export const computerInvokeOutputSchema = z.unknown();
+
+export const computerCapabilitiesOutputSchema = computerProviderCapabilitiesSchema.nullable();
+
+/** helper TCC 权限三态（设置页权限引导区块共用；helper 不可用时为 unknown）。 */
+export const computerPermissionStateSchema = z.enum(['granted', 'not-granted', 'unknown']);
+export type ComputerPermissionState = z.infer<typeof computerPermissionStateSchema>;
+
+export const computerPermissionsStatusOutputSchema = z.object({
+  accessibility: computerPermissionStateSchema,
+  screenRecording: computerPermissionStateSchema,
+});
+export type ComputerPermissionsStatus = z.infer<typeof computerPermissionsStatusOutputSchema>;
+
+export const computerPermissionsOpenInputSchema = z.object({
+  permission: z.enum(['accessibility', 'screen-recording']),
+});
+
+export const computerStopInputSchema = z.object({
+  /** 便于日志与通知说明停止原因（用户点「停止操控」/ 模型 computer_stop）。 */
+  reason: z.string().max(500).optional(),
+});
+export const computerStopOutputSchema = z.object({ stopped: z.boolean() });
+
 // --- browser profiles (W8) ---------------------------------------------------------
 
 /** A shared browser profile with the bots currently using it. */
@@ -2766,6 +2808,23 @@ export const rpcMethodSchemas = {
     output: browserControlReturnedOutputSchema,
   },
 
+  // D105: served by the main process on port B (like browser.*) — see the
+  // ComputerRpcMethods type below. Not in APP_METHODS.
+  'computer.invoke': { input: computerInvokeInputSchema, output: computerInvokeOutputSchema },
+  'computer.capabilities': {
+    input: voidInput,
+    output: computerCapabilitiesOutputSchema,
+  },
+  'computer.permissionsStatus': {
+    input: voidInput,
+    output: computerPermissionsStatusOutputSchema,
+  },
+  'computer.permissionsOpen': {
+    input: computerPermissionsOpenInputSchema,
+    output: okOutput,
+  },
+  'computer.stop': { input: computerStopInputSchema, output: computerStopOutputSchema },
+
   // W8 共享浏览器资料（renderer → core）。
   'browserProfiles.list': { input: voidInput, output: browserProfilesListOutputSchema },
   'browserProfiles.create': {
@@ -2909,6 +2968,19 @@ export const BROWSER_RPC_METHODS = [
 
 /** Methods the MAIN process serves on port B for core's use (D73): system-shell integration. */
 export const SHELL_RPC_METHODS = ['shell.openExternal'] as const satisfies readonly RpcMethodName[];
+
+/**
+ * The computer-use methods the MAIN process serves on port B (D105,
+ * docs/design/52-computer-use.md §3): data plane is a single whitelisted
+ * `computer.invoke` passthrough over the sidecar method surface.
+ */
+export const COMPUTER_RPC_METHODS = [
+  'computer.invoke',
+  'computer.capabilities',
+  'computer.permissionsStatus',
+  'computer.permissionsOpen',
+  'computer.stop',
+] as const satisfies readonly RpcMethodName[];
 
 /** Methods the MAIN process serves on port B for core's use (D87): widget preview (S2). */
 export const WIDGET_PREVIEW_RPC_METHODS = [

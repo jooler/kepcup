@@ -80,6 +80,13 @@ declare global {
       sensorOpenSettings(kind: SensorKind): Promise<void>;
       /** P13 任务 3: verdict of applying the launch-at-login setting to the OS. */
       onAutostartResult(callback: (result: AutostartResult) => void): () => void;
+      /** D105 计算机操控：kill switch 直达 main + helper TCC 权限三态与设置深链。 */
+      computerStop(reason?: string): Promise<{ stopped: boolean }>;
+      computerPermissionStatus(): Promise<{
+        accessibility: 'granted' | 'not-granted' | 'unknown';
+        screenRecording: 'granted' | 'not-granted' | 'unknown';
+      }>;
+      computerPermissionOpen(permission: 'accessibility' | 'screen-recording'): Promise<void>;
       /** P13 任务 2 update gate surface. */
       updateStatus(): Promise<unknown>;
       installUpdateNow(): Promise<{ ok: boolean; message?: string }>;

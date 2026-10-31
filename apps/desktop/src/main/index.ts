@@ -24,6 +24,9 @@ import { browserMethodSpecs } from './browser-methods';
 import { shellMethodSpecs } from './shell-methods';
 import { WidgetPreviewHost } from './widget-preview';
 import { widgetPreviewMethodSpecs } from './widget-preview-methods';
+import { createComputerHost, type ComputerHost } from './computer-host';
+import { computerMethodSpecs } from './computer-methods';
+import { markHostShuttingDown } from './computer/host-shutdown-state';
 import {
   guardAllAppFrames,
   installAppsUiProtocol,
@@ -56,6 +59,8 @@ let coreHost: CoreHost | null = null;
 let browserHost: BrowserHost | null = null;
 /** D87 P3b: hidden S2 preview window for widget drafts (never the app's main window). */
 let widgetPreviewHost: WidgetPreviewHost | null = null;
+/** D105: computer-use orchestration host (helper / sidecar lifecycle in main). */
+let computerHost: ComputerHost | null = null;
 let tray: ReturnType<typeof createTray> | null = null;
 /** Tracked to honour "no notifications while the window is in the foreground". */
 let windowFocused = true;
@@ -106,6 +111,11 @@ function beginQuit(): void {
   // freshly created hidden host window (that window would keep the app alive).
   browserHost?.closeAll();
   widgetPreviewHost?.dispose();
+  // D105：计算机操控 helper 的 terminate / provider 回收（编排层的 shutdown 语义，
+  // 沿 orca 的 beforeExit 处理）；host-shutdown-state 先立标志，权限引导等在途
+  // 流程不再拉起新 helper。
+  markHostShuttingDown();
+  computerHost?.shutdown();
 }
 
 /** 窗口尚未建好时暂存的「连接手机」请求：did-finish-load 后补发（审查修复：
@@ -335,6 +345,10 @@ function bootstrap(): void {
     },
     onPairPhone: () => {
       openRemotePairing();
+    },
+    // D105：托盘 kill switch——直达 main 的编排层（不经 core）。
+    onComputerStop: () => {
+      computerHost?.stop('user stop (tray)');
     },
   });
 
@@ -613,6 +627,26 @@ function bootstrap(): void {
     },
   });
 
+  // D105 计算机操控（docs/design/52 §3）：宿主单例（B 口 serverMethods 与 IPC 共用）。
+  // 用户 kill switch 直达编排层（terminate helper + 回收 provider），不经 core——
+  // core 卡死也要能停；权限引导三件套仿 sensor-permission（设置页 computer-use 区块）。
+  computerHost = createComputerHost();
+  ipcMain.handle('computer:stop', (_event, reason?: unknown) =>
+    Promise.resolve(
+      computerHost!.stop(typeof reason === 'string' ? `user stop: ${reason}` : 'user stop'),
+    ),
+  );
+  ipcMain.handle('computer:permissions-status', () => computerHost!.permissionsStatus());
+  ipcMain.handle(
+    'computer:permissions-open',
+    (_event, permission: unknown) => {
+      if (permission !== 'accessibility' && permission !== 'screen-recording') {
+        throw new Error(`unknown computer permission: ${String(permission)}`);
+      }
+      return computerHost!.permissionsOpen(permission);
+    },
+  );
+
   // kepcup-file（docs/design/47）：目录预览协议——FileViewer 的 HTML 在该源下按完整 WebApp
   // 运行，handler 经平台 RPC 向 core 取会话目录内的文件字节（token 由 core 登记与校验）。
   installFileAppProtocol(session.defaultSession, {
@@ -648,6 +682,8 @@ function bootstrap(): void {
       ...shellMethodSpecs((url) => shell.openExternal(url)),
       // D87 P3b: S2 widget preview (hidden window, created lazily on the first run).
       ...widgetPreviewMethodSpecs(widgetPreviewHost),
+      // D105: …and computer.* (computer-use orchestration, docs/design/52 §3).
+      ...computerMethodSpecs(computerHost),
     },
   });
   coreHost.onState((state: CoreProcessState) => {

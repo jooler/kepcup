@@ -32,6 +32,8 @@ export function createTray(options: {
   onToggleRemote: () => void;
   /** D96: 「连接手机…」→ 打开窗口并弹出二维码小窗。 */
   onPairPhone: () => void;
+  /** D105: 「停止计算机操控」→ main 直达 kill switch（不经 core，docs/design/52 §3）。 */
+  onComputerStop: () => void;
 }): TrayController {
   const icon = loadTrayIcon();
   if (icon.isEmpty()) {
@@ -92,6 +94,9 @@ export function createTray(options: {
           enabled: remote.enabled,
           click: () => options.onPairPhone(),
         },
+        // D105：用户 kill switch——terminate helper / 回收 provider，随时可点
+        //（没有会话时是无害的幂等动作）。
+        { label: '停止计算机操控', click: () => options.onComputerStop() },
         { type: 'separator' },
         { label: '退出', click: () => options.onQuit() },
       ]),

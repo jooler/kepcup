@@ -121,6 +121,7 @@ describe('settings catalog integrity', () => {
       .map((entry) => entry.id);
     expect(userOnly.sort()).toEqual(
       [
+        'browser.computer-use',
         'connections.taint-guard',
         'environment.allowlist',
         'environment.sandbox',
@@ -137,7 +138,8 @@ describe('settings catalog integrity', () => {
       expect(getSettingItem(id)?.write.wideningMode, id).toBe('user-only');
     }
     for (const entry of items) {
-      if (entry.id === 'plugins.marketplace') continue; // 供应链信任根但 generic：不出权限（§4.2.4）
+      // 供应链信任根 / 计算机操控开关：user-only 但 generic——不出权限（§4.2.4）。
+      if (entry.id === 'plugins.marketplace' || entry.id === 'browser.computer-use') continue;
       if (entry.write.maxMode === 'user-only' || entry.write.wideningMode !== undefined) {
         expect(entry.write.widensPermission, entry.id).toBe(true);
       }
@@ -400,6 +402,7 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
     );
     expect(generic.map((entry) => entry.id)).toEqual([
       'profile.user-name',
+      'browser.computer-use',
       'general.workbench',
       'remote.enabled',
       'remote.relay',

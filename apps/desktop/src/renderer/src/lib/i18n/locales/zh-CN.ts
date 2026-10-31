@@ -956,6 +956,12 @@ export const zhCN = {
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',
   'approvals.gitRemoteTitle': 'git 远程操作请求',
+  // D105 计算机操控审批卡（design 52 §5）
+  'approvals.computerControlTitle': '计算机操控请求',
+  'approvals.computerControlApp': '目标应用',
+  'approvals.computerControlAction': '首个动作',
+  'approvals.computerControlRisk':
+    'Bot 将读取并操作你本机桌面应用的界面（点击 / 输入等）。授权「本对话内」后本次会话不再逐动作询问；随时可用界面上的「停止操控」结束。敏感输入内容不会显示在卡上。',
   'approvals.gitRemoteOperation': '操作',
   'approvals.gitRemoteArgs': '参数',
   'approvals.gitRemoteRisk':
@@ -2056,6 +2062,19 @@ export const zhCN = {
   'settings.navEnvironment': '环境',
   'settings.navUsage': '用量',
   'settings.navDiagnostics': '诊断',
+  // --- D105 计算机操控 --------------------------------------------------------
+  'settings.computerUseSectionTitle': '计算机操控',
+  'settings.computerUseSectionHint':
+    '让 Bot 在任务中读取并操作本机桌面应用：无障碍树优先，截屏与键鼠兜底，不抢焦点。首次使用需给「KepCup Computer Use」授予辅助功能与屏幕录制权限（仅 macOS，默认关闭）。',
+  'settings.computerUseGranted': '已授权',
+  'settings.computerUseNotGranted': '未授权',
+  'settings.computerUseUnknown': '未知',
+  'settings.computerUseAccessibility': '辅助功能（读取与操作应用界面）',
+  'settings.computerUseScreenRecording': '屏幕录制（截取应用窗口）',
+  'settings.computerUseOpenSettings': '打开系统设置',
+  'settings.computerUseOpening': '正在打开…',
+  'settings.computerUseRefresh': '刷新状态',
+  'settings.computerUsePermissionHint': '授权对象是「KepCup Computer Use」这个独立助手应用（不是主应用）；检测状态会短暂拉起它注册系统权限。',
   // --- D96 远程遥控 -----------------------------------------------------------
   'settings.navRemote': '远程遥控',
   'settings.remoteSectionTitle': '远程遥控',

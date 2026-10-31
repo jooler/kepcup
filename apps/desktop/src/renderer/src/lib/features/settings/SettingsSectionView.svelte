@@ -16,6 +16,7 @@
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
+  import ComputerUseSection from './ComputerUseSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
@@ -69,6 +70,9 @@
   <div data-settings-section="browser" class="space-y-6">
     <div data-settings-anchor="browser-profiles">
       <BrowserProfilesSection />
+    </div>
+    <div data-settings-anchor="computer-use">
+      <ComputerUseSection />
     </div>
   </div>
 {:else if section === 'agents'}

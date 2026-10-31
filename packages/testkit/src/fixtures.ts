@@ -62,6 +62,8 @@ export interface CreateTestCoreOptions {
   shellRpc?: unknown;
   /** D87 P3b: fake widget preview host (`widgetPreview.run`). */
   widgetPreviewRpc?: unknown;
+  /** D105 test hook: fake computer-use host (binds core's deferred computerRpc). */
+  computerRpc?: unknown;
   /** D73 test hooks for the OAuth engine (see CoreServicesOptions.oauth*). */
   oauthLoopbackAllowlist?: string[];
   oauthCimdUrl?: string;
@@ -171,6 +173,9 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc as never } : {}),
     ...(options.widgetPreviewRpc !== undefined
       ? { widgetPreviewRpc: options.widgetPreviewRpc as never }
+      : {}),
+    ...(options.computerRpc !== undefined
+      ? { computerRpc: options.computerRpc as never }
       : {}),
     ...(options.oauthLoopbackAllowlist !== undefined
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }

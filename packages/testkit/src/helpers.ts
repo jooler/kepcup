@@ -55,6 +55,8 @@ export async function createTestStack(
     /** D73 test hooks (see CreateTestCoreOptions). */
     shellRpc?: CreateTestCoreOptions['shellRpc'];
     widgetPreviewRpc?: CreateTestCoreOptions['widgetPreviewRpc'];
+    /** D105 test hook: fake computer-use host (see ComputerHostRpc in core). */
+    computerRpc?: CreateTestCoreOptions['computerRpc'];
     oauthLoopbackAllowlist?: CreateTestCoreOptions['oauthLoopbackAllowlist'];
     oauthCimdUrl?: CreateTestCoreOptions['oauthCimdUrl'];
     oauthCallbackPorts?: CreateTestCoreOptions['oauthCallbackPorts'];
@@ -92,6 +94,7 @@ export async function createTestStack(
     ...(options.widgetPreviewRpc !== undefined
       ? { widgetPreviewRpc: options.widgetPreviewRpc }
       : {}),
+    ...(options.computerRpc !== undefined ? { computerRpc: options.computerRpc } : {}),
     ...(options.oauthLoopbackAllowlist !== undefined
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
       : {}),

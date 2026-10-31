@@ -1000,6 +1000,12 @@ export const enUS = {
   'messages.quotedLine': 'Quoting {name}: {text}',
   'messages.quotedDeleted': 'The quoted message was recalled or deleted',
   'approvals.gitRemoteTitle': 'Git remote operation request',
+  // D105 computer-use approval card (design 52 §5)
+  'approvals.computerControlTitle': 'Computer control request',
+  'approvals.computerControlApp': 'Target app',
+  'approvals.computerControlAction': 'First action',
+  'approvals.computerControlRisk':
+    'The bot will read and drive native desktop apps on this machine (clicks, typing). "This conversation" skips per-action prompts for the session; the on-screen "Stop control" button ends it any time. Sensitive text never appears on this card.',
   'approvals.gitRemoteOperation': 'Operation',
   'approvals.gitRemoteArgs': 'Arguments',
   'approvals.gitRemoteRisk':
@@ -2125,6 +2131,19 @@ export const enUS = {
   'settings.navEnvironment': 'Environment',
   'settings.navUsage': 'Usage',
   'settings.navDiagnostics': 'Diagnostics',
+  // --- D105 computer use ------------------------------------------------------
+  'settings.computerUseSectionTitle': 'Computer use',
+  'settings.computerUseSectionHint':
+    'Let bots read and drive native desktop apps in tasks: accessibility-tree first, screenshots and synthetic input as fallback, without stealing focus. First use needs Accessibility & Screen Recording granted to "KepCup Computer Use" (macOS only, off by default).',
+  'settings.computerUseGranted': 'Granted',
+  'settings.computerUseNotGranted': 'Not granted',
+  'settings.computerUseUnknown': 'Unknown',
+  'settings.computerUseAccessibility': 'Accessibility (read & drive app UIs)',
+  'settings.computerUseScreenRecording': 'Screen Recording (capture app windows)',
+  'settings.computerUseOpenSettings': 'Open System Settings',
+  'settings.computerUseOpening': 'Opening…',
+  'settings.computerUseRefresh': 'Refresh',
+  'settings.computerUsePermissionHint': 'Permissions go to the standalone "KepCup Computer Use" helper (not the main app); checking its status briefly launches it to register with TCC.',
   // --- D96 remote control -----------------------------------------------------
   'settings.navRemote': 'Remote',
   'settings.remoteSectionTitle': 'Remote control',

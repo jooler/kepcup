@@ -919,6 +919,14 @@ export const settingsSchema = z.object({
    */
   onboarding: onboardingStateSchema.prefault({}),
   /**
+   * 计算机操控（D105，docs/design/52 §6）：全局安全开关，默认关闭。
+   * 平铺顶层布尔（generic 标量条目纪律：不嵌套，settings-catalog.test 的
+   *「plain top-level scalars」pin）；开启后任务 loop 里才可能注册 `computer_*`
+   * 工具（还需平台支持 + helper 可用）；权限引导在设置页 browser 分区
+   * 的 computer-use 锚点区块。
+   */
+  computerUseEnabled: z.boolean().default(false),
+  /**
    * 外部智能体（D72）：目录 id → 本机启用状态。并发不另设字段，沿用
    * `providerConcurrency['agent:{id}']`（catchall）。
    */
@@ -2007,6 +2015,13 @@ export const approvalKindSchema = z.enum([
    * B（已有或新建），用户逐项勾选后确认，core 确定性执行。
    */
   'bot_handover',
+  /**
+   * 计算机操控（D105，docs/design/52 §5）：本机桌面应用的读取与键鼠操控。
+   * 审批时长复用 once / conversation / bot 分档（默认 conversation），无「永不问」档；
+   * **无人值守永不自动批准**（core `NEVER_AUTO_DECIDED`）；敏感文本参数
+   * （type / paste / set_value）不进审批卡明文。
+   */
+  'computer_control',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -2107,6 +2122,21 @@ export const gitRemoteApprovalPayloadSchema = z.object({
   taintedSince: z.number().optional(),
 });
 export type GitRemoteApprovalPayload = z.infer<typeof gitRemoteApprovalPayloadSchema>;
+
+/**
+ * Payload of a `computer_control` approval（D105，docs/design/52 §5）：同一 run 内
+ * 首个 computer 动作前出卡一次；`summary` 只含动作名与目标，不含敏感文本
+ * （type / paste / set_value 的文本走 sensitiveParams，不进卡面与日志）。
+ */
+export const computerControlApprovalPayloadSchema = z.object({
+  /** 目标应用（名称或 bundle id，如 "Notes" / "com.apple.Notes"）。 */
+  app: z.string().default(''),
+  /** 首个动作的摘要（如「读取应用界面」/「点击元素 12」）。 */
+  summary: z.string().default(''),
+  /** 卡片可选的授权时长（缺省 = 只有「仅这一次」）：`['once','conversation','bot']`，默认勾选 conversation。 */
+  durations: z.array(approvalDurationSchema).optional(),
+});
+export type ComputerControlApprovalPayload = z.infer<typeof computerControlApprovalPayloadSchema>;
 
 /** Payload of an `environment` approval (P06, docs/dev/phases/P06-environment.md). */
 export const environmentApprovalPayloadSchema = z.object({
