@@ -229,7 +229,8 @@ flatpak:
 # electron-builder 生成 snapcraft.yaml 并调用 snapcraft（CI 的 linux-snap job 在
 # Ubuntu 24.04 runner 上以 --destructive-mode 构建，不需要 LXD/Multipass）。
 # core24 的 glibc 2.39 同时覆盖 Ubuntu 22.04 / 24.04 / 最新版；Electron 44 的
-# 原生模块在 core24 里可加载。
+# 原生模块在 core24 里可加载。CI 把 snapcraft 钉在 8.x/stable：9.1+ 找不到
+# 生成器写到 snap/gui/ 的桌面文件（canonical/snapcraft#6519）。
 snapcraft:
   base: core24
   artifactName: kepcup_${version}_${arch}.${ext}

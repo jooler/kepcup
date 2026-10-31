@@ -289,12 +289,18 @@ jobs:
     steps:
       # checkout 依赖 git，node-gyp / rpmbuild / cargo 的构建依赖也在这里装。
       # Node 用 actions/setup-node 下载官方产物（glibc 2.28+，两个发行版都能跑）。
+      # 后半段是 Electron 44 的运行时库（与 electron-builder.yml 的 rpm.depends 在
+      # AlmaLinux 9 上的包名一致，富依赖取第一项）。afterPack 会用打包后的二进制
+      # 以 ELECTRON_RUN_AS_NODE 跑组件查询冒烟；只把这些写进 rpm Requires 不够，
+      # 最小镜像里没有 libnspr4.so 等，动态链接器会在冒烟脚本启动前失败。
       - name: Install build toolchain
         run: |
           dnf install -y git tar gzip xz findutils which \
             gcc gcc-c++ make python3 pkgconf cmake \
             perl perl-IPC-Cmd perl-FindBin perl-Time-Piece perl-File-Copy perl-Digest-SHA \
-            rpm-build
+            rpm-build \
+            gtk3 libnotify nss libXtst xdg-utils at-spi2-core libuuid libsecret \
+            mesa-libgbm libxkbcommon alsa-lib cups-libs dbus-libs systemd-libs
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -444,6 +450,9 @@ jobs:
   # Linux Snap：electron-builder 生成 snapcraft.yaml（core24、classic）并调用
   # snapcraft。CI 用 --destructive-mode 直接在 Ubuntu 24.04 runner 上构建，
   # 不需要 LXD/Multipass。core24 覆盖 Ubuntu 22.04 / 24.04 / 最新版。
+  # snapcraft 钉在 8.x/stable：9.1+ 的 GUI 资源中介（canonical/snapcraft#6519）
+  # 会在 prime 时按 apps.*.desktop=meta/gui/<app>.desktop 去 snap/meta/gui/ 找文件，
+  # 不再先拷贝 snap/gui/。electron-builder 26 的 core24 目标正是这种布局。
   linux-snap:
     name: Snap (${{ matrix.arch }})
     needs: prepare
@@ -472,7 +481,19 @@ jobs:
       - name: Install snapcraft
         run: |
           sudo snap wait system seed.loaded || true
-          sudo snap install snapcraft --classic
+          # latest/stable 现为 9.2.1，会触发上面的桌面文件回归。镜像若已装其他
+          # 轨道，install 不会换轨，这时改走 refresh，并核对主版本。
+          if snap list snapcraft >/dev/null 2>&1; then
+            sudo snap refresh snapcraft --classic --channel=8.x/stable
+          else
+            sudo snap install snapcraft --classic --channel=8.x/stable
+          fi
+          ver=$(snapcraft --version)
+          echo "$ver"
+          case "$ver" in
+            *" 8."*) ;;
+            *) echo "需要 snapcraft 8.x（canonical/snapcraft#6519），实际: $ver"; exit 1 ;;
+          esac
       - name: Build snap
         working-directory: apps/desktop
         env:
