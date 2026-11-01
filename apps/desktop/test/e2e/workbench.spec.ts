@@ -450,11 +450,18 @@ test('memo groups: create via + button, ungrouped header, rename, drag across gr
     await expect(section.locator('[data-testid="memo-group-title"]')).toHaveText('上班');
 
     // 跨组拖拽：把「要拖进分组的备忘」拖到空分组的提示行上。
-    // 起点用卡片 footer 的拖拽把手——正文是 contenteditable，dnd-action 会跳过它。
-    const dragged = page
+    // 起点是卡片 footer 的把手覆盖层（footer 的空白处）——正文是 contenteditable、footer 上的
+    // 文字 / 按钮浮在把手之上，都不会启动拖拽；grip 只是 hover 才出现的提示，平时 display:none。
+    const dragCard = page
       .locator('[data-testid="memo-card"]')
-      .filter({ hasText: '要拖进分组的备忘' })
-      .locator('[data-testid="memo-drag-grip"]');
+      .filter({ hasText: '要拖进分组的备忘' });
+    const grip = dragCard.locator('[data-testid="memo-drag-grip"]');
+    await expect(grip).toBeHidden();
+    await dragCard.hover();
+    await expect(grip).toBeVisible();
+    const handle = dragCard.locator('[data-testid="memo-drag-handle"]');
+    await expect(handle).toHaveAttribute('role', 'button');
+    const dragged = dragCard.locator('[data-testid="memo-footer-blank"]');
     const dropTarget = section.locator('[data-testid="memo-group-empty"]');
     const from = await dragged.boundingBox();
     const to = await dropTarget.boundingBox();
@@ -594,8 +601,8 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
     await input.pressSequentially('带上去年的报价单');
     await input.press('Enter');
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(1, { timeout: 15_000 });
-
-    // 转为事项：抽屉预填，首行作标题，全文作说明。
+    // 还没转事项：卡片不降透明度。
+    await expect(page.locator('[data-testid="memo-card"]')).not.toHaveClass(/opacity-50/);
     await page.locator('[data-testid="memo-to-todo"]').click();
     const drawer = page.locator('[data-testid="todo-drawer"]');
     await expect(drawer).toBeVisible();
@@ -617,6 +624,15 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
 
     // 备忘显示「已转事项」。
     await expect(page.locator('[data-testid="memo-converted"]')).toBeVisible();
+
+    // 已转事项：整卡半透明，hover 恢复不透明（focus-within 也会恢复，所以先清焦点再断言）。
+    const convertedCard = page.locator('[data-testid="memo-card"]');
+    await expect(convertedCard).toHaveClass(/opacity-50/);
+    await expect(convertedCard).toHaveClass(/hover:opacity-100/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(convertedCard).toHaveCSS('opacity', '0.5');
+    await convertedCard.hover();
+    await expect(convertedCard).toHaveCSS('opacity', '1');
 
     // 阿勤执行后交付 → 事项进入待验收（在阿勤的分道里）。
     const card = todoCard(page, '下周和甲公司谈价');
