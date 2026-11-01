@@ -28,10 +28,11 @@
   import AudioPlayer from '$lib/features/chats/AudioPlayer.svelte';
 
   /**
-   * The cards under a Bot reply for the local files it created / modified
-   * (screenshot reference: one row per file, click opens the overlay). The
-   * first few stay visible; a longer list folds behind「还有 N 个」so a batch
-   * task cannot dominate the transcript.
+   * The single card under a Bot reply for the local files it created /
+   * modified: one compact row per file — icon + name on the left, kind /
+   * change / size on the right; click opens the overlay. The first few stay
+   * visible; a longer list folds behind「还有 N 个」so a batch task cannot
+   * dominate the transcript.
    */
   const COLLAPSED_COUNT = 6;
 
@@ -85,63 +86,69 @@
 </script>
 
 {#if artifacts.length > 0}
-  <div class="mt-2 flex w-full flex-col gap-1.5" data-testid="message-artifacts">
-    {#each shown as artifact (artifact.path)}
-      {@const kind = artifactKindOf(artifact.path)}
-      {@const Icon = KIND_ICONS[kind] as unknown as Component<{ class?: string }>}
-      {@const audioUrl = isAudioArtifact(artifact.path)
-        ? (audioLoads[artifact.path]?.url ?? null)
-        : null}
-      {#if audioUrl !== null}
-        <!-- 音频产物（53 号修订 v2 V2-2）：同一 AudioPlayer 行；查看 / 下载走查看器。 -->
-        <div
-          class="flex w-full items-center gap-3 rounded-[16px] border bg-background/70 px-3 py-2.5"
-          title={artifact.path}
-          data-testid="message-artifact-audio"
-          data-kind={kind}
-        >
-          <span
-            class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground"
+  <div class="mt-2 flex w-full flex-col gap-1" data-testid="message-artifacts">
+    <div
+      class="w-full overflow-hidden rounded-[14px] border bg-background/70 [&>*+*]:border-t [&>*+*]:border-border/60"
+    >
+      {#each shown as artifact (artifact.path)}
+        {@const kind = artifactKindOf(artifact.path)}
+        {@const Icon = KIND_ICONS[kind] as unknown as Component<{ class?: string }>}
+        {@const audioUrl = isAudioArtifact(artifact.path)
+          ? (audioLoads[artifact.path]?.url ?? null)
+          : null}
+        {#if audioUrl !== null}
+          <!-- 音频产物（53 号修订 v2 V2-2）：同一 AudioPlayer 行；查看 / 下载走查看器。 -->
+          <div
+            class="flex w-full items-center gap-2.5 px-3 py-2"
+            title={artifact.path}
+            data-testid="message-artifact-audio"
+            data-kind={kind}
           >
-            <AudioLines class="size-5" aria-hidden="true" />
-          </span>
-          <div class="min-w-0 flex-1">
-            <AudioPlayer
-              src={audioUrl}
-              name={artifact.name}
-              testId="message-artifact-audio-player"
-            />
+            <span
+              class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+            >
+              <AudioLines class="size-3.5" aria-hidden="true" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <AudioPlayer
+                src={audioUrl}
+                name={artifact.name}
+                testId="message-artifact-audio-player"
+              />
+            </div>
+            <button
+              type="button"
+              class="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => fileViewer.show(artifact, conversationId)}
+              aria-label={t('attachments.openPreview', { name: artifact.name })}
+              title={t('attachments.openPreview', { name: artifact.name })}
+              data-testid="message-artifact-audio-viewer"
+            >
+              <Expand class="size-3.5" aria-hidden="true" />
+            </button>
           </div>
+        {:else}
           <button
             type="button"
-            class="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="group flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-accent/40"
+            title={artifact.path}
             onclick={() => fileViewer.show(artifact, conversationId)}
-            aria-label={t('attachments.openPreview', { name: artifact.name })}
-            title={t('attachments.openPreview', { name: artifact.name })}
-            data-testid="message-artifact-audio-viewer"
+            data-testid="message-artifact-card"
+            data-kind={kind}
           >
-            <Expand class="size-4" aria-hidden="true" />
-          </button>
-        </div>
-      {:else}
-        <button
-          type="button"
-          class="group flex w-full items-center gap-3 rounded-[16px] border bg-background/70 px-3 py-2.5 text-left transition-colors hover:bg-accent/40"
-          title={artifact.path}
-          onclick={() => fileViewer.show(artifact, conversationId)}
-          data-testid="message-artifact-card"
-          data-kind={kind}
-        >
-          <span
-            class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground"
-          >
-            <Icon class="size-5" />
-          </span>
-          <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-medium" data-testid="message-artifact-name"
-              >{artifact.name}</span
+            <span
+              class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
             >
-            <span class="block truncate text-xs text-muted-foreground">
+              <Icon class="size-3.5" />
+            </span>
+            <span
+              class="min-w-0 flex-1 truncate text-[13px] font-medium"
+              data-testid="message-artifact-name">{artifact.name}</span
+            >
+            <span
+              class="shrink-0 text-[11px] whitespace-nowrap text-muted-foreground tabular-nums"
+              data-testid="message-artifact-meta"
+            >
               {t(artifactKindLabelKey(kind))}
               <span class="mx-1 opacity-50">·</span>
               {t(artifact.change === 'created' ? 'files.change.created' : 'files.change.modified')}
@@ -150,10 +157,10 @@
                 {formatFileSize(artifact.size)}
               {/if}
             </span>
-          </span>
-        </button>
-      {/if}
-    {/each}
+          </button>
+        {/if}
+      {/each}
+    </div>
     {#if artifacts.length > COLLAPSED_COUNT}
       <button
         type="button"
