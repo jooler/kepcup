@@ -128,7 +128,7 @@ export const zhCN = {
     '附件已不存在（未发送的附件超过 7 天会被清理），已从输入框移除：{names}。请重新添加后再发送',
   'composer.attachmentIssueSent':
     '附件已随先前的消息发出（可能上次发送已成功、只是没收到确认），已从输入框移除：{names}。请先查看会话，必要时再重新发送',
-  // 语音输入（docs/design/26-voice-input.md）：点击式录音（语音对话模式暂缓）
+  // 语音输入（docs/design/26-voice-input.md）：点击式录音；语音对话模式见 53 号
   'composer.voiceStart': '开始语音输入',
   'composer.recordingStop': '停止录音并转为文字',
   'composer.voiceTooShort': '录音时间太短',
@@ -142,6 +142,16 @@ export const zhCN = {
   'composer.micDisabled': '麦克风已在设置中停用，请先在「设置 → 硬件」启用',
   'composer.micOpenHardware': '打开硬件设置',
   'composer.micFellBack': '所选麦克风不可用，已改用系统默认设备',
+  // 语音对话模式（docs/design/53-voice-conversation.md，D106）：输入坞原位切语音条
+  'voiceMode.entry': '语音对话',
+  'voiceMode.startRecording': '开始录音',
+  'voiceMode.stopAndSend': '停止录音并发送',
+  'voiceMode.idleHint': '点击麦克风说话',
+  'voiceMode.thinking': '正在思考…',
+  'voiceMode.transcribing': '识别中…',
+  'voiceMode.speaking': '播报中…',
+  'voiceMode.settings': '语音能力设置',
+  'voiceMode.close': '退出语音对话',
   // 设置页「硬件」分区与传感器（docs/design/31-sensors.md，D76）
   'settings.navHardware': '硬件',
   'settings.hardwareSection': '硬件',
