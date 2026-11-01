@@ -53,7 +53,7 @@
   );
   /**
    * D75 §6.1：任务发出的可见消息（origin = 'task'）——任务执行中的进度
-   * （run_id = 任务）或对话轮原文转发的任务结果（forward_task_result）——
+   * （run_id = 任务）或旧版本 forward_task_result 留下的原文转发行——
    * 标出所属任务，与 Bot 的直接回复区分。
    */
   const taskOrigin = $derived(

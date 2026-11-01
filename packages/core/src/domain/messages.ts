@@ -326,12 +326,12 @@ function ephemeralCardExcludeFilter(alias = ''): { sql: string; params: string[]
 }
 
 /**
- * 转发的任务结果排除（D75 §6.1，2026-11 修订）：`forward_task_result` 发出的
- * 原文行（origin='task' 且 run_id 是转发它的对话轮而非任务本身）只供用户
- * 阅读，不进任何 Bot 读路径——同一份结果全文已经在 owner Bot 的私有结果
- * 条目里（`get_messages_around` / search 可取回），转发行留在模型上下文里
- * 只会重复膨胀。判别式与渲染端（ChatMessageRow）与转发去重一致：run_id 为
- * 空视为任务自己发的行，不算转发。
+ * 转发结果行的排除（D75 §6.1，2026-11 修订）：`forward_task_result` 已移除
+ * （执行报告改为在任务卡里查看），这里只兜住旧版本留下的原文行
+ * （origin='task' 且 run_id 是转发它的对话轮而非任务本身）——它们只供用户
+ * 阅读，不进任何 Bot 读路径。同一份结果全文在 owner Bot 的私有结果条目里，
+ * 需要时经 `get_messages_around` / search 取回。判别式与渲染端
+ * （ChatMessageRow）一致：run_id 为空视为任务自己发的行，不算转发。
  */
 function forwardedResultExcludeFilter(alias = ''): { sql: string; params: string[] } {
   const c = (expr: string) => `${alias}${expr}`;

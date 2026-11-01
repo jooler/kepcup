@@ -1223,7 +1223,7 @@ export const textContentSchema = z.object({
   /**
    * origin = 'task' 且为任务自动投送的中间说明（D54 / D75 §6.1）：界面可见，
    * 不进 Bot / 任务的模型上下文（滚动摘要、最近窗口、消息工具、`<tasks>`）。
-   * `forward_task_result` 与任务主动 `send_message` 不带此标记。
+   * 任务主动 `send_message` 不带此标记。
    */
   interim: z.boolean().optional(),
   /**
@@ -3331,6 +3331,17 @@ export const taskInjectViewSchema = z.object({
   at: z.number(),
 });
 
+/**
+ * A settled task's execution report (the private terminal entry's text). Shown
+ * on the task detail page — the report is read there, never forwarded into the
+ * conversation (§6.1 2026-11 修订). `status` is the terminal status of the entry.
+ */
+export const taskResultViewSchema = z.object({
+  text: z.string(),
+  status: runStatusSchema,
+});
+export type TaskResultView = z.infer<typeof taskResultViewSchema>;
+
 /** Projection of a task run for its card and the status line (`task.updated`, `tasks.get`). */
 export const taskViewSchema = z.object({
   taskId: z.string(),
@@ -3375,5 +3386,10 @@ export const taskViewSchema = z.object({
    * 须先在「检查后重试」面板核实（runs.retry reviewed:true）。与 core 的重试闸门同一判定。
    */
   reviewRequired: z.boolean().optional(),
+  /**
+   * 终态任务的执行报告（私有终态条目原文）；运行中 / 未结算为 null。任务详情
+   * 页据此直接展示报告，对话里不再出现原文（§6.1 2026-11 修订）。
+   */
+  result: taskResultViewSchema.nullable().optional(),
 });
 export type TaskView = z.infer<typeof taskViewSchema>;

@@ -16,10 +16,11 @@ import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js'
 
 /**
  * 任务管理工具（D75，docs/design/30-supervisor-and-tasks.md §4.1）：对话层用
- * `start_task` / `inject_task` / `cancel_task` / `list_tasks` 枚举化地路由，
- * `forward_task_result` 原文转发任务结果（§6.1）。宿主（TaskHost）逐项校验
- * 归属、状态与配额；这里只做参数校验与执行期的深度校验——任务内调用
- * `start_task` 一律拒绝（深度 1，§2.2）。本文件只定义工具，不注册进任何
+ * `start_task` / `inject_task` / `cancel_task` / `list_tasks` 枚举化地路由。
+ * 任务结果不进对话（不提供原文转发工具）：用户在任务卡上自行查看执行报告，
+ * 对话轮只负责高度总结结果与注意事项（§6.1 2026-11 修订）。宿主（TaskHost）
+ * 逐项校验归属、状态与配额；这里只做参数校验与执行期的深度校验——任务内
+ * 调用 `start_task` 一律拒绝（深度 1，§2.2）。本文件只定义工具，不注册进任何
  * 工具面（对话轮工具面由 W2 组装）。
  */
 
@@ -103,10 +104,6 @@ export interface TaskSummary {
   capabilities?: string[] | undefined;
 }
 
-export interface ForwardTaskResultOutput {
-  messageId: string;
-}
-
 /**
  * The host the task tools drive (implemented by `TaskHost`). Validation
  * failures throw `AppError` (codes INVALID_INPUT / NOT_FOUND /
@@ -118,7 +115,6 @@ export interface TaskToolFacade {
   inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult;
   cancel(identity: RunIdentity, input: { taskId: string; reason: string }): CancelTaskResult;
   list(identity: RunIdentity): TaskSummary[];
-  forwardResult(identity: RunIdentity, taskId: string): ForwardTaskResultOutput;
   /**
    * §2.4.6 (task side): asks the user on a visible question card and waits for
    * the answer (a card option, or the turn's inject_task). Optional: only the
@@ -513,23 +509,5 @@ export function buildTaskTools(input: {
       }),
   };
 
-  const forwardTaskResult: ToolDefinition<{ task_id: string }> = {
-    name: 'forward_task_result',
-    description:
-      '把一条已完成任务的结果原文作为你的消息发给用户（长报告、代码、表格等，用户直接读原文；这条消息你之后读不到）。你的最终回复仍要写出关键结果与结论，作为这份结果的长久记录；不要整段复述原文。',
-    parameters: Type.Object(
-      { task_id: Type.String({ description: '已完成的任务 id' }) },
-      { additionalProperties: false },
-    ),
-    execute: async (params) =>
-      guarded(() => {
-        const forwarded = tasks.forwardResult(identity, nonEmpty(params.task_id, 'task_id', 200));
-        return {
-          ok: true,
-          content: `已把任务 ${params.task_id} 的结果原文发给用户（消息 ${forwarded.messageId}）。`,
-        };
-      }),
-  };
-
-  return [startTask, injectTask, cancelTask, listTasks, forwardTaskResult] as ToolDefinition[];
+  return [startTask, injectTask, cancelTask, listTasks] as ToolDefinition[];
 }

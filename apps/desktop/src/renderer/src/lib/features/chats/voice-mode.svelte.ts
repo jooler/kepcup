@@ -245,9 +245,9 @@ export interface AnnounceContext {
  * message → 播报条目（53 号入队条件，纯函数）：当前会话的**可见** bot 文本
  * 消息、文本非空、且提取后仍有可朗读文字。可见性复用 isVisibleInTranscript
  * （setupAnswer / task interim / 临时审批卡等列表不可见的消息不播——「播的 =
- * 列表记的」，风险 #3）。`origin: 'task'` 的可见说明（任务侧消息：
- * forward_task_result 转发结果与任务 run 内 send_message / send_media 的可见
- * 说明，D75）只供阅读不播报（53 号修订 v2 V2-1）。返回 null = 不入队。
+ * 列表记的」，风险 #3）。`origin: 'task'` 的可见说明（任务侧消息：任务 run
+ * 内 send_message / send_media 的可见说明，以及旧版本 forward_task_result
+ * 留言，D75）只供阅读不播报（53 号修订 v2 V2-1）。返回 null = 不入队。
  */
 export function announceEntryFor(message: Message, context: AnnounceContext): AnnounceEntry | null {
   if (!context.active) return null;

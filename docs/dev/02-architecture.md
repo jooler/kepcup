@@ -380,7 +380,7 @@ sequenceDiagram
   E-->>C: 完成（最终文本）
   C->>T: settle：result 条目（私有）→ runs 终态
   T->>MB: deliver(reason='task', [result 条目])
-  MB->>S: submit(对话轮)，转述或 forward_task_result，终态时 markConsumed
+  MB->>S: submit(对话轮)，高度总结结果（报告在任务卡），终态时 markConsumed
 ```
 
 ## 执行（Run）状态机

@@ -1418,8 +1418,11 @@ export const zhCN = {
   'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
-  // 任务执行过程页（docs/design/42-task-run-view.md）
+  // 任务详情页（docs/design/42-task-run-view.md）：执行报告 + 折叠的执行过程
   'task.run.open': '查看执行过程',
+  'task.run.openCompleted': '任务已完成，点击查看执行报告',
+  'task.run.process': '执行过程',
+  'task.run.reportTitle': '执行报告',
   'task.run.back': '返回对话',
   'task.run.loading': '执行记录加载中…',
   'task.run.loadFailed': '执行记录读取失败',
