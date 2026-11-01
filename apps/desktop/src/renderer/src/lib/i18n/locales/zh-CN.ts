@@ -3035,6 +3035,7 @@ export const zhCN = {
   'workbench.memo.deleteGroup': '删除分组',
   'workbench.memo.toggleGroup': '展开 / 折叠「{name}」',
   'workbench.memo.groupHandle': '拖动调整分组顺序',
+  'workbench.memo.cardHandle': '拖动调整备忘顺序',
   'workbench.memo.groupDeleteTitle': '删除「{title}」？',
   'workbench.memo.groupDeleteBody': '分组里的 {count} 条备忘会回到未分组，不会被删除。',
   'workbench.memo.groupDeleteCancel': '取消',

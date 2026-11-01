@@ -3172,6 +3172,7 @@ export const enUS = {
   'workbench.memo.deleteGroup': 'Delete group',
   'workbench.memo.toggleGroup': 'Expand or collapse "{name}"',
   'workbench.memo.groupHandle': 'Drag to reorder groups',
+  'workbench.memo.cardHandle': 'Drag to reorder memos',
   'workbench.memo.groupDeleteTitle': 'Delete "{title}"?',
   'workbench.memo.groupDeleteBody':
     'The {count} memos in this group will move back to ungrouped; they are not deleted.',

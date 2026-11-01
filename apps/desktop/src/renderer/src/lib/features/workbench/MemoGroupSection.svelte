@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Pencil, Trash2 } from '@lucide/svelte';
-  import { dragHandle, dndzone, type DndEvent } from 'svelte-dnd-action';
+  import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import { MEMO_GROUP_TITLE_MAX_CHARS } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
@@ -23,7 +23,9 @@
    *   照看板列头：把手层垫底，可点子元素浮在上面）；「未分组」伪分组不在拖拽区里，恒在最前。
    * - 点击分组名（或折叠箭头）切换组内条目是否显示；重命名走 hover 出现的铅笔（换成输入框，
    *   Enter 提交 / Esc 取消 / 失焦提交）；删除走 hover 的垃圾桶 + 确认弹框。
-   * - 网格本身是备忘拖拽区（type 'memo'），同 type 的区之间天然可跨组拖拽。
+   * - 网格本身是备忘拖拽区（type 'memo'，同 type 的区之间天然可跨组拖拽）。用 dragHandleZone +
+   *   卡片 footer 里的 `use:dragHandle`：只有卡片 footer 的空白处能拖起卡片，正文（contenteditable）
+   *   与 footer 上的文字 / 按钮都不启动拖拽。
    * - 拖拽中冻结外部数据同步（shadow 占位会被重拉冲掉），见 store。
    */
   let {
@@ -254,7 +256,7 @@
       class="grid min-h-10 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2"
       class:mt-1={showHeader}
       data-testid="memo-section-list"
-      use:dndzone={{
+      use:dragHandleZone={{
         items,
         type: 'memo',
         flipDurationMs,
