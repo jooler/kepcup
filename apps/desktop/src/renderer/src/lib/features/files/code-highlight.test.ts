@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_HIGHLIGHT_CHARS,
   MAX_HIGHLIGHT_LINES,
   countCodeLines,
   highlightCodeLines,
@@ -20,11 +19,11 @@ describe('code view limits', () => {
     expect(countCodeLines('a\n\n')).toBe(3);
   });
 
-  it('only highlights files below the line / character thresholds', () => {
+  it('only highlights files below the line threshold', () => {
     expect(shouldHighlightCode('const a = 1;')).toBe(true);
-    expect(shouldHighlightCode('x'.repeat(MAX_HIGHLIGHT_CHARS))).toBe(true);
-    expect(shouldHighlightCode('x'.repeat(MAX_HIGHLIGHT_CHARS + 1))).toBe(false);
-    // 正好 5000 行仍高亮，多一行退化。
+    // 不再有字符数阈值：单行超长文本（几十万字符）仍然高亮。
+    expect(shouldHighlightCode('x'.repeat(500_000))).toBe(true);
+    // 正好 20000 行仍高亮，多一行退化。
     expect(countCodeLines('x\n'.repeat(MAX_HIGHLIGHT_LINES - 1) + 'x')).toBe(MAX_HIGHLIGHT_LINES);
     expect(shouldHighlightCode('x\n'.repeat(MAX_HIGHLIGHT_LINES - 1) + 'x')).toBe(true);
     expect(shouldHighlightCode('x\n'.repeat(MAX_HIGHLIGHT_LINES) + 'x')).toBe(false);

@@ -16,12 +16,10 @@ export interface CodeToken {
 export type CodeLine = CodeToken[];
 
 /**
- * 高亮阈值（超出即退化为纯文本）。取值依据：一次打开的文件要同步生成
- * token（每个 token 一个 span），5000 行 / 400k 字符约等于 3000–5000 个
- * span，是 Chromium 里还能一次渲染完的规模；再大就该走纯文本。
+ * 高亮阈值（超出即退化为纯文本）：只按行数判断，超过 20000 行不做高亮，
+ * 避免一次渲染过多行节点卡住界面。
  */
-export const MAX_HIGHLIGHT_LINES = 5_000;
-export const MAX_HIGHLIGHT_CHARS = 400_000;
+export const MAX_HIGHLIGHT_LINES = 20_000;
 
 /** 与渲染时的 `text.split('\n')` 行数一致；空文件也算一行。 */
 export function countCodeLines(text: string): number {
@@ -32,9 +30,9 @@ export function countCodeLines(text: string): number {
   return count;
 }
 
-/** 是否值得高亮：超大 / 超长的文件直接显示纯文本，避免一次渲染卡住界面。 */
+/** 是否值得高亮：超过行数上限的大文件直接显示纯文本，避免一次渲染卡住界面。 */
 export function shouldHighlightCode(text: string): boolean {
-  return text.length <= MAX_HIGHLIGHT_CHARS && countCodeLines(text) <= MAX_HIGHLIGHT_LINES;
+  return countCodeLines(text) <= MAX_HIGHLIGHT_LINES;
 }
 
 /** 纯文本兜底：每行一个无颜色 token，与高亮结果结构一致，渲染分支只需一套。 */
