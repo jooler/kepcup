@@ -327,6 +327,24 @@ describe('ChatSession', () => {
     session.dispose();
   });
 
+  it('send voiceMode（53 号修订 v2 V2-1）：voiceMode: true 透传 messages.send；文字直发不带该键', async () => {
+    const session = new ChatSession();
+    const ok = await session.send('c1', '明天有什么安排', { voiceMode: true });
+    expect(ok).toEqual({ ok: true });
+    expect(state.calls.filter((call) => call.method === 'messages.send')).toEqual([
+      { method: 'messages.send', params: { conversationId: 'c1', text: '明天有什么安排', voiceMode: true } },
+    ]);
+
+    state.calls = [];
+    await session.send('c1', '普通文字');
+    const [plain] = state.calls.filter((call) => call.method === 'messages.send');
+    expect(plain).toEqual({
+      method: 'messages.send',
+      params: { conversationId: 'c1', text: '普通文字' },
+    });
+    session.dispose();
+  });
+
   it('gateForSend and markRead are per session', async () => {
     const session = new ChatSession();
     const other = new ChatSession();

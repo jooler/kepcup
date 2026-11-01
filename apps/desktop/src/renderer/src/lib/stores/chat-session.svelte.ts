@@ -300,7 +300,13 @@ export class ChatSession {
   async send(
     conversationId: string,
     text: string,
-    options: { mentions?: string[]; replyTo?: string | null; attachmentIds?: string[] } = {},
+    options: {
+      mentions?: string[];
+      replyTo?: string | null;
+      attachmentIds?: string[];
+      /** 语音对话模式发送（53 号修订 v2 V2-1）：core 记 content.origin='voice'。 */
+      voiceMode?: boolean;
+    } = {},
   ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
     try {
       await core.call('messages.send', {
@@ -313,6 +319,7 @@ export class ChatSession {
         ...(options.attachmentIds !== undefined && options.attachmentIds.length > 0
           ? { attachmentIds: options.attachmentIds }
           : {}),
+        ...(options.voiceMode === true ? { voiceMode: true } : {}),
       });
       if (this.view?.conversation.id === conversationId) this.replyTo = null;
       return { ok: true };

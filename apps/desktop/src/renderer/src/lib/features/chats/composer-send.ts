@@ -57,11 +57,20 @@ export function hasAttachmentIssue(issue: AttachmentIssue): boolean {
   return issue.missing.length > 0 || issue.sent.length > 0;
 }
 
+/**
+ * 发送选项（53 号修订 v2 V2-1）：语音对话模式的发送带 `voiceMode: true`——
+ * core 据此在消息 content 记 `origin: 'voice'`（正文即语音转写的纯文本语义）。
+ * 文字直发不传（字段缺省），core 侧不记 origin。
+ */
+export interface ComposerSendOptions {
+  voiceMode?: boolean;
+}
+
 export interface ComposerSendDeps {
   /** 等在途上传落定，返回可发送的附件 id（不移除 chip）。 */
   settle(): Promise<string[]>;
   /** 发出消息（只发往发起发送时的那个会话）；ok = core 已受理。不负责 toast。 */
-  send(text: string, attachmentIds: string[]): Promise<SendResult>;
+  send(text: string, attachmentIds: string[], opts?: ComposerSendOptions): Promise<SendResult>;
   /** 发送成功后移除已随消息发出的附件 chip（不 detach：附件已属于该消息）。 */
   commit(attachmentIds: string[]): void;
   /** 发送失败：把清掉的输入内容放回编辑器。 */
@@ -79,10 +88,11 @@ export type ComposerSendOutcome = 'sent' | 'empty' | 'failed';
 export async function performComposerSend(
   text: string,
   deps: ComposerSendDeps,
+  opts: ComposerSendOptions = {},
 ): Promise<ComposerSendOutcome> {
   const attachmentIds = await deps.settle();
   if (text.length === 0 && attachmentIds.length === 0) return 'empty';
-  const result = await deps.send(text, attachmentIds);
+  const result = await deps.send(text, attachmentIds, opts);
   if (!result.ok) {
     let issue = NO_ATTACHMENT_ISSUE;
     if (result.code === 'INVALID_INPUT' && attachmentIds.length > 0) {

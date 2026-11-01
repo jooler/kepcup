@@ -65,6 +65,11 @@ export interface AppendMessageInput {
   /** text messages only: setup-interview answer (hidden bubble in the UI). */
   setupAnswer?: boolean | undefined;
   /**
+   * text messages only (53 号修订 v2 V2-1): sent from voice-conversation mode —
+   * content records `origin: 'voice'`（正文即语音转写，音频附件仅为原始录音存档）.
+   */
+  voiceMode?: boolean | undefined;
+  /**
    * text messages only (D71): a user message proxied by another bot (A) on
    * the user's behalf — `origin: 'delegation'` + the delegation row + A's id.
    */
@@ -429,6 +434,7 @@ export class MessagesService {
           ? JSON.stringify({
               text: input.text ?? '',
               ...(input.setupAnswer ? { setupAnswer: true } : {}),
+              ...(input.voiceMode === true ? { origin: 'voice' } : {}),
               ...(input.delegation !== undefined
                 ? {
                     origin: 'delegation',

@@ -11,12 +11,14 @@ import {
 function harness(overrides: Partial<ComposerSendDeps> = {}) {
   const calls: string[] = [];
   const sent: Array<{ text: string; ids: string[] }> = [];
+  const sendOpts: Array<{ voiceMode?: boolean } | undefined> = [];
   const issues: AttachmentIssue[] = [];
   const deps: ComposerSendDeps = {
     settle: async () => [],
-    send: async (text, ids) => {
+    send: async (text, ids, opts) => {
       calls.push('send');
       sent.push({ text, ids });
+      sendOpts.push(opts);
       return { ok: true };
     },
     commit: (ids) => calls.push(`commit:${ids.join(',')}`),
@@ -29,7 +31,7 @@ function harness(overrides: Partial<ComposerSendDeps> = {}) {
     reportFailure: (code) => calls.push(`report:${code ?? 'none'}`),
     ...overrides,
   };
-  return { deps, calls, sent, issues };
+  return { deps, calls, sent, sendOpts, issues };
 }
 
 describe('performComposerSend', () => {
@@ -51,6 +53,16 @@ describe('performComposerSend', () => {
     const { deps, sent } = harness({ settle: async () => ['att_9'] });
     expect(await performComposerSend('', deps)).toBe('sent');
     expect(sent).toEqual([{ text: '', ids: ['att_9'] }]);
+  });
+
+  it('opts 原样透传给 send；缺省时 send 收到空对象（53 号修订 v2 V2-1 voiceMode 通道）', async () => {
+    const withOpts = harness({ settle: async () => ['att_1'] });
+    await performComposerSend('语音', withOpts.deps, { voiceMode: true });
+    expect(withOpts.sendOpts).toEqual([{ voiceMode: true }]);
+
+    const withoutOpts = harness({ settle: async () => ['att_1'] });
+    await performComposerSend('文字', withoutOpts.deps);
+    expect(withoutOpts.sendOpts).toEqual([{}]);
   });
 
   it('发送失败：回填内容，附件 chip 不摘（可直接重试）', async () => {

@@ -1129,7 +1129,11 @@ export const textContentSchema = z.object({
    * `task`（D75 §2.4.2）：任务发出的可见中间说明（进度），渲染为「你（任务
    * t_x）」；`taskId` 指向任务 run。
    */
-  origin: z.enum(['delegation', 'task', 'widget', 'workbench']).optional(),
+  /**
+   * `voice`（53 号修订 v2 V2-1）：语音对话模式的用户消息——正文即语音转写文本，
+   * 随附音频附件仅为原始录音存档；Bot 回复由客户端自动转语音播报。
+   */
+  origin: z.enum(['delegation', 'task', 'widget', 'workbench', 'voice']).optional(),
   /**
    * origin = 'workbench'（D90）时：工作台代用户派发事项的可见消息，对应的事项与
    * 执行记录。界面渲染成派发卡；记忆反思不把 source='butler' 的派发当用户原话。

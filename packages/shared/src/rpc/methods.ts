@@ -1167,6 +1167,12 @@ export const messagesSendInputSchema = z.object({
   replyTo: z.string().min(1).nullable().optional(),
   /** 随消息发送的附件（attachments.upload 先行上传）：core 校验归属后挂到本消息。 */
   attachmentIds: z.array(z.string().min(1)).optional(),
+  /**
+   * 语音对话模式（53 号修订 v2 V2-1）：本消息来自语音模式发送。正文即用户语音的
+   * 转写文本，随附音频附件仅为原始录音存档；core 据此在 content 记 origin: 'voice'，
+   * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
+   */
+  voiceMode: z.boolean().optional(),
 });
 export const messagesSendOutputSchema = z.object({
   message: messageSchema,
