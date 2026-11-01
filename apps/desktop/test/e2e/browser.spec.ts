@@ -1305,7 +1305,7 @@ async function openBrowserProfilesSettings(page: Page): Promise<void> {
 
 async function closeSettings(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 }
 
 /** Partition directories of a profile (Electron's on-disk spelling may be lower-cased). */

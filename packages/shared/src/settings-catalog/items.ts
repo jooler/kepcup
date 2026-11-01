@@ -672,6 +672,26 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'service', methods: ['browserProfiles.create', 'browserProfiles.rename'] },
   }),
 
+  // --- 计算机操控 -------------------------------------------------------------
+  item({
+    id: 'computer.control',
+    group: 'computer',
+    title: '计算机操控',
+    summary: '让 Bot 在任务中读取并操作本机桌面应用（无障碍树优先，截屏与键鼠兜底；仅 macOS）',
+    enables: ['操控本机桌面应用', '读取应用界面', '后台点击与输入'],
+    keywords: ['计算机操控', '桌面自动化', '辅助功能', 'computer use', '键鼠', '无障碍树'],
+    scope: 'global',
+    // 安全开关：user-only——Bot 可出卡，但宿主不采用 values（D89 惯例，AGENTS.md）。
+    // 与 plugins.marketplace 同形态：user-only + generic 且不出权限（widensPermission
+    // false，generic 纪律 pin），user-only pin 测试里同列豁免。
+    fields: [field('enabled', '启用计算机操控', 'toggle', { path: 'computerUseEnabled' })],
+    write: write('user-only'),
+    // 简单顶层布尔：走通用标量适配器（generic-adapter.ts），不写自定义适配器。
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'computer-use', anchor: 'computer-use' },
+    store: { kind: 'settings', paths: ['computerUseEnabled'], generic: true },
+  }),
+
   // --- 项目组 / 工作目录 ----------------------------------------------------------
   item({
     id: 'project.title',
@@ -1147,6 +1167,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   }),
 
   // --- 插件（D104 P1-1，设计 51 §8；市场地址与公钥是供应链信任根） -------------
+  // 深链落扩展中心「设置」页签（设置「插件」分区已并入扩展中心）。
   item({
     id: 'plugins.updates',
     group: 'plugins',
@@ -1157,7 +1178,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     fields: [field('enabled', '自动检查更新', 'toggle', { path: 'pluginAutoCheckUpdates' })],
     write: write('confirm'),
     card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-updates' },
+    deepLink: { surface: 'extension-center', section: 'settings', anchor: 'plugins-updates' },
     store: { kind: 'settings', paths: ['pluginAutoCheckUpdates'], generic: true },
   }),
   item({
@@ -1180,7 +1201,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     // 供应链信任根：Bot 可以出卡，但宿主绝不采用会话里给的值（设计 51 §6.1）。
     write: write('user-only'),
     card: 'field-editor',
-    deepLink: { surface: 'settings', section: 'plugins', anchor: 'plugins-marketplace' },
+    deepLink: { surface: 'extension-center', section: 'settings', anchor: 'plugins-marketplace' },
     store: {
       kind: 'settings',
       paths: ['pluginMarketplaceUrl', 'pluginMarketplacePublicKey'],

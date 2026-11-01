@@ -5,9 +5,9 @@
     AlarmClock,
     ClipboardList,
     Copy,
-    Pencil,
     Pin,
     Reply,
+    Undo2,
     type LucideIcon,
   } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
@@ -30,21 +30,21 @@
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
-   * 排列、项目组头像列、引用行、已编辑标记、hover 操作（引用/复制/固定/编辑）与
-   * 右键菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
+   * 排列、项目组头像列、引用行、hover 操作（引用/复制/固定/撤回）与右键
+   * 菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
    * MessageAttachments（附件在上、正文在下）：后续多模态支持（图片、音
    * 频、视频等）只扩展那两层，本行的布局与操作保持稳定。merge 为连排信
-   * 息，透传给 MessageBody
-   * 决定对齐侧圆角。
+   * 息，透传给 MessageBody 决定对齐侧圆角。isLast 标记本行是否为会话记录
+   * 最后一条（撤回按钮只挂在其用户消息上）。
    */
   let {
     message,
-    editing = false,
+    isLast = false,
     merge = { above: false, below: false },
-  }: { message: Message; editing?: boolean; merge?: { above: boolean; below: boolean } } = $props();
+  }: { message: Message; isLast?: boolean; merge?: { above: boolean; below: boolean } } = $props();
 
   const isUser = $derived(message.senderType === 'user');
-  /** D71：另一个 Bot 代用户转交的消息（B 的私聊）——标注来源，不可编辑。 */
+  /** D71：另一个 Bot 代用户转交的消息（B 的私聊）——标注来源，不可撤回。 */
   const delegatedBy = $derived(
     isUser && 'origin' in message.content && message.content.origin === 'delegation'
       ? (message.content.delegatedBy ?? '')
@@ -137,12 +137,10 @@
         })),
   );
 
-  let editText = $state('');
-  let isEditing = $state(false);
   let menuPos = $state<{ x: number; y: number } | null>(null);
 
   // hover / 右键共用的操作集合：引用对所有消息可用。
-  const canAct = $derived(message.status !== 'recalled' && !isEditing);
+  const canAct = $derived(message.status !== 'recalled');
   /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
   const messageText = $derived('text' in message.content ? message.content.text : '');
   const hasText = $derived(messageText.length > 0);
@@ -155,16 +153,13 @@
   const canCopy = $derived(canAct && hasText);
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
   const canPin = $derived(canAct && hasText);
+  /** 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息除外）。 */
+  const canRecall = $derived(canAct && isLast && isUser && delegatedBy === null);
 
-  function startEdit(): void {
-    editText = 'text' in message.content ? message.content.text : '';
-    isEditing = true;
-  }
-
-  async function saveEdit(): Promise<void> {
-    if (editText.trim().length === 0) return;
-    await chat.edit(message.id, editText);
-    isEditing = false;
+  /** 撤回最后一条用户消息：正文交回输入框，改写后可重发；失败 toast 不回填。 */
+  async function recallMessage(): Promise<void> {
+    const text = messageText;
+    if (await chat.recall(message.id)) session.requestComposerInsert(text);
   }
 
   function quote(): void {
@@ -232,6 +227,7 @@
       {name}
       avatar={senderBot?.avatar ?? null}
       mask={senderBot?.avatarMask ?? null}
+      padding={senderBot?.avatarPadding ?? null}
       class="mt-0.5 size-7 shrink-0"
       animated={false}
       testId="bot-avatar"
@@ -285,16 +281,10 @@
       <MessageAttachments attachments={message.attachments} />
     {/if}
 
-    <MessageBody {message} {merge} bind:isEditing bind:editText onsave={() => void saveEdit()} />
+    <MessageBody {message} {merge} />
 
     {#if artifacts.length > 0}
       <FileArtifacts {artifacts} conversationId={message.conversationId} />
-    {/if}
-
-    {#if message.status === 'edited' && !isEditing}
-      <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-edited"
-        >{t('chats.edited')}</span
-      >
     {/if}
 
     {#if isShareImport}
@@ -387,17 +377,17 @@
           <Tooltip.Content>{t('messages.pinMessage')}</Tooltip.Content>
         </Tooltip.Root>
       {/if}
-      {#if isUser && editing && delegatedBy === null}
+      {#if canRecall}
         <Tooltip.Root>
           <Tooltip.Trigger
             class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            onclick={startEdit}
-            aria-label={t('chats.edit')}
-            data-testid="message-edit"
+            onclick={() => void recallMessage()}
+            aria-label={t('chats.recall')}
+            data-testid="message-recall"
           >
-            <Pencil class="size-3.5" aria-hidden="true" />
+            <Undo2 class="size-3.5" aria-hidden="true" />
           </Tooltip.Trigger>
-          <Tooltip.Content>{t('chats.edit')}</Tooltip.Content>
+          <Tooltip.Content>{t('chats.recall')}</Tooltip.Content>
         </Tooltip.Root>
       {/if}
     </div>

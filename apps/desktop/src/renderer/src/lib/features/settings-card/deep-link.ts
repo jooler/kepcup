@@ -14,6 +14,7 @@ import { EXTENSION_CENTER_TABS, type ExtensionCenterTab } from '../extension-cen
  * 项目设置与工作目录设置对话框。
  */
 
+/** 须覆盖 `SettingsSectionId`（含旧深链别名）。漏登记会让目录深链退回「通用」。 */
 const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'general',
   'hardware',
@@ -21,6 +22,7 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'search',
   'mcp',
   'browser',
+  'computer-use',
   'agents',
   'plugins',
   'profile',

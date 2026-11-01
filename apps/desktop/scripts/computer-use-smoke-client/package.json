@@ -1,0 +1,5 @@
+{
+  "comment": "computer-use 冒烟客户端需要 CommonJS（文件名必须是 computer-sidecar.js 以过 helper 的 peer 校验，不能改 .cjs），用本 package.json 覆盖 apps/desktop 的 type:module。",
+  "type": "commonjs",
+  "private": true
+}

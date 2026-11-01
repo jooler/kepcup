@@ -1593,6 +1593,99 @@ describe('工作台排期：Bot 自己的工具面不能动用户派的活', () 
   });
 });
 
+describe('工作台事项：拖拽（todos.move，D90 §5.2）', () => {
+  it('道内排序：beforeId 落位并持久化；重排不动 updated_at；落回原位不发事件', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const a = rig.todos.create({ title: 'a', assignee: botAssignee('bot_a') }).todo;
+    const b = rig.todos.create({ title: 'b', assignee: botAssignee('bot_a') }).todo;
+    const c = rig.todos.create({ title: 'c', assignee: botAssignee('bot_a') }).todo;
+    // 新事项插道顶：c, b, a（position 升序）。
+    const laneOrder = () =>
+      rig.todos
+        .list({})
+        .filter((t) => t.assignee?.kind === 'bot' && t.assignee.botId === 'bot_a')
+        .sort((x, y) => x.position - y.position)
+        .map((t) => t.id);
+    expect(laneOrder()).toEqual([c.id, b.id, a.id]);
+
+    // a 拖到 b 前面；重排不动 updated_at（不是内容修改）。
+    const updatedAtA = rig.todos.get(a.id).todo.updatedAt;
+    rig.todos.move(a.id, { beforeId: b.id });
+    expect(laneOrder()).toEqual([c.id, a.id, b.id]);
+    expect(rig.todos.get(a.id).todo.updatedAt).toBe(updatedAtA);
+
+    // 再拖一次落在同一位置（b 前面）：无变化，不发事件。
+    const before = rig.published.filter((p) => p.event === 'todos.changed').length;
+    rig.todos.move(a.id, { beforeId: b.id });
+    expect(rig.published.filter((p) => p.event === 'todos.changed').length).toBe(before);
+  });
+
+  it('跨道拖拽 = 改派执行者：bot → bot、bot → 未指派（走改派路径，排期语义一致）', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const t = rig.todos
+      .create({ title: '周报', assignee: botAssignee('bot_a'), when: futureIso(rig) })
+      .todo;
+    expect(t.schedule).not.toBeNull();
+
+    // 拖去 bot_b 的道：执行者换人，排期跟着走（同 drawer 改派）。
+    const moved = rig.todos.move(t.id, { beforeId: null, assignee: botAssignee('bot_b') });
+    expect(moved.assignee).toEqual(botAssignee('bot_b'));
+    expect(moved.schedule).not.toBeNull();
+
+    // 拖回未指派：清执行者 → 退回草案、排期取消（与 update({assignee:null}) 一致）。
+    const back = rig.todos.move(t.id, { beforeId: null, assignee: null });
+    expect(back.assignee).toBeNull();
+    expect(back.status).toBe('draft');
+    expect(back.schedule).toBeNull();
+  });
+
+  it('已在执行（进行中 / 周期在跑 / 已交付的投影）不能改派；道内排序仍然可用', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const insertRun = (todoId: string, status: 'dispatched' | 'delivered'): void => {
+      rig.db
+        .prepare(
+          `insert into todo_runs (id, todo_id, conversation_id, message_id, status, result_message_id, dispatched_at, settled_at)
+           values (?, ?, 'conv_direct_bot_a', null, ?, null, 1, null)`,
+        )
+        .run(`tdr_${todoId}`, todoId, status);
+    };
+
+    const running = rig.todos
+      .create({ title: '在跑', assignee: botAssignee('bot_a'), when: 'now' })
+      .todo;
+    expect(running.status).toBe('in_progress');
+    expect(
+      codeOf(() => rig.todos.move(running.id, { beforeId: null, assignee: botAssignee('bot_b') })),
+    ).toBe('INVALID_INPUT');
+
+    // 周期事项停在 scheduled，但最近一次执行在跑 / 已交付待验收：投影后同样不能改派。
+    const periodic = rig.todos
+      .create({ title: '周期', assignee: botAssignee('bot_a'), when: '0 9 * * *' })
+      .todo;
+    rig.todos.start(periodic.id);
+    expect(periodic.status).toBe('scheduled');
+    insertRun(periodic.id, 'dispatched');
+    expect(
+      codeOf(() => rig.todos.move(periodic.id, { beforeId: null, assignee: botAssignee('bot_b') })),
+    ).toBe('INVALID_INPUT');
+    // 换成已交付的 run（待验收投影）。
+    rig.db.prepare('delete from todo_runs where todo_id = ?').run(periodic.id);
+    insertRun(periodic.id, 'delivered');
+    expect(
+      codeOf(() => rig.todos.move(periodic.id, { beforeId: null, assignee: botAssignee('bot_b') })),
+    ).toBe('INVALID_INPUT');
+
+    // 道内排序不受限（执行中的卡也能在自己道里挪位置）。
+    const reordered = rig.todos.move(running.id, { beforeId: null });
+    expect(reordered.status).toBe('in_progress');
+  });
+});
+
 describe('工作台备忘', () => {
   function memoRig() {
     const rig = makeRig();
@@ -1672,6 +1765,91 @@ describe('工作台备忘', () => {
     rig.clock.advance(MEMO_TRASH_RETENTION_MS + 1000);
     memos.purgeExpired();
     expect(rig.todos.get(todo.id).todo.memoId).toBe(memo.id);
+  });
+
+  it('分组：标题校验、按创建顺序排列、重命名、删除后备望回到未分组', () => {
+    const { rig, memos } = memoRig();
+    expect(codeOf(() => memos.createGroup('  '))).toBe('INVALID_INPUT');
+    expect(codeOf(() => memos.createGroup('x'.repeat(61)))).toBe('INVALID_INPUT');
+    const g1 = memos.createGroup('  工作  ');
+    expect(g1).toMatchObject({ title: '工作' });
+    rig.clock.advance(1000);
+    const g2 = memos.createGroup('生活');
+    expect(memos.listGroups().map((g) => [g.id, g.title])).toEqual([
+      [g1.id, '工作'],
+      [g2.id, '生活'],
+    ]);
+    expect(g2.position).toBeGreaterThan(g1.position);
+
+    expect(memos.renameGroup(g1.id, '上班').title).toBe('上班');
+    expect(codeOf(() => memos.renameGroup('mmg_none', 'x'))).toBe('NOT_FOUND');
+
+    const a = memos.create({ body: 'a' });
+    memos.move(a.id, g2.id, null);
+    expect(memos.list().find((m) => m.id === a.id)?.groupId).toBe(g2.id);
+    memos.deleteGroup(g2.id);
+    expect(memos.listGroups().map((g) => g.id)).toEqual([g1.id]);
+    expect(memos.list().find((m) => m.id === a.id)?.groupId).toBeNull();
+    expect(codeOf(() => memos.deleteGroup(g2.id))).toBe('NOT_FOUND');
+  });
+
+  it('分组拖拽排序：beforeId 落位并持久化；重排不动 updated_at；锚点无效报错', () => {
+    const { rig, memos, published } = memoRig();
+    const g1 = memos.createGroup('一');
+    rig.clock.advance(1000);
+    memos.createGroup('二');
+    rig.clock.advance(1000);
+    const g3 = memos.createGroup('三');
+    expect(memos.listGroups().map((g) => g.title)).toEqual(['一', '二', '三']);
+
+    // 三拖到最前。
+    const updatedAt = memos.listGroups().find((g) => g.id === g3.id)!.updatedAt;
+    memos.moveGroup(g3.id, g1.id);
+    expect(memos.listGroups().map((g) => g.title)).toEqual(['三', '一', '二']);
+    expect(memos.listGroups().find((g) => g.id === g3.id)!.updatedAt).toBe(updatedAt);
+
+    // 落回原位（二前面）：无变化，不发事件。
+    const before = published.filter((p) => p.event === 'memos.changed').length;
+    memos.moveGroup(g3.id, g1.id);
+    expect(memos.listGroups().map((g) => g.title)).toEqual(['三', '一', '二']);
+    expect(published.filter((p) => p.event === 'memos.changed').length).toBe(before);
+
+    // 末尾（beforeId null）。
+    memos.moveGroup(g3.id, null);
+    expect(memos.listGroups().map((g) => g.title)).toEqual(['一', '二', '三']);
+
+    expect(codeOf(() => memos.moveGroup('mmg_none', null))).toBe('NOT_FOUND');
+    expect(codeOf(() => memos.moveGroup(g1.id, g1.id))).toBe('INVALID_INPUT');
+    expect(codeOf(() => memos.moveGroup(g1.id, 'mmg_none'))).toBe('INVALID_INPUT');
+  });
+
+  it('拖拽：move 换组 + beforeId 落位；重排不改 updated_at；最近删除里的不能移动', () => {
+    const { memos, published } = memoRig();
+    const a = memos.create({ body: 'a' });
+    const b = memos.create({ body: 'b' });
+    const g = memos.createGroup('工作');
+
+    memos.move(a.id, g.id, null);
+    memos.move(b.id, g.id, a.id);
+    expect(memos.list().map((m) => m.id)).toEqual([b.id, a.id]);
+    expect(memos.list().every((m) => m.groupId === g.id)).toBe(true);
+
+    // 组内重排：a 提到 b 前面，updated_at 不动（重排不是内容修改）。
+    const updatedAtA = memos.get(a.id).updatedAt;
+    memos.move(a.id, g.id, b.id);
+    expect(memos.list().map((m) => m.id)).toEqual([a.id, b.id]);
+    expect(memos.get(a.id).updatedAt).toBe(updatedAtA);
+
+    expect(codeOf(() => memos.move(a.id, 'mmg_none', null))).toBe('NOT_FOUND');
+    expect(codeOf(() => memos.move(a.id, g.id, 'memo_none'))).toBe('INVALID_INPUT');
+    expect(codeOf(() => memos.move(a.id, g.id, a.id))).toBe('INVALID_INPUT');
+
+    memos.delete(a.id);
+    expect(codeOf(() => memos.move(a.id, null, null))).toBe('INVALID_INPUT');
+    memos.restore(a.id);
+    expect(memos.list().map((m) => m.id)).toEqual([a.id, b.id]);
+    expect(published.filter((p) => (p as { event: string }).event === 'memos.changed').length)
+      .toBeGreaterThanOrEqual(6);
   });
 });
 

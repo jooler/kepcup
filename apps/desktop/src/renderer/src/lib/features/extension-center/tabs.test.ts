@@ -3,17 +3,20 @@ import { EXTENSION_CENTER_TABS, extensionTabForKey, resolveExtensionCenterTarget
 
 describe('extensionTabForKey', () => {
   it('lists the groups in display order', () => {
-    // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）。
-    expect(EXTENSION_CENTER_TABS).toEqual(['market', 'installed']);
+    // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）；
+    // 「设置」页签：原设置「插件」分区并入扩展中心。
+    expect(EXTENSION_CENTER_TABS).toEqual(['market', 'installed', 'settings']);
   });
 
   it('cycles with the arrow keys and jumps with Home / End', () => {
     expect(extensionTabForKey('market', 'ArrowRight')).toBe('installed');
-    expect(extensionTabForKey('installed', 'ArrowRight')).toBe('market');
+    expect(extensionTabForKey('installed', 'ArrowRight')).toBe('settings');
+    expect(extensionTabForKey('settings', 'ArrowRight')).toBe('market');
+    expect(extensionTabForKey('settings', 'ArrowLeft')).toBe('installed');
     expect(extensionTabForKey('installed', 'ArrowLeft')).toBe('market');
-    expect(extensionTabForKey('market', 'ArrowLeft')).toBe('installed');
-    expect(extensionTabForKey('installed', 'Home')).toBe('market');
-    expect(extensionTabForKey('installed', 'End')).toBe('installed');
+    expect(extensionTabForKey('market', 'ArrowLeft')).toBe('settings');
+    expect(extensionTabForKey('settings', 'Home')).toBe('market');
+    expect(extensionTabForKey('market', 'End')).toBe('settings');
   });
 
   it('ignores other keys', () => {
@@ -75,6 +78,11 @@ describe('resolveExtensionCenterTarget', () => {
     });
     expect(resolveExtensionCenterTarget('installed')).toEqual({
       tab: 'installed',
+      filter: 'all',
+      systemCard: false,
+    });
+    expect(resolveExtensionCenterTarget('settings')).toEqual({
+      tab: 'settings',
       filter: 'all',
       systemCard: false,
     });

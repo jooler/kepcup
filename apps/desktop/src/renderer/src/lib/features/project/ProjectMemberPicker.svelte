@@ -98,6 +98,7 @@
               name={bot.name}
               avatar={bot.avatar ?? null}
               mask={bot.avatarMask}
+              padding={bot.avatarPadding}
               class="size-6 shrink-0"
               animated={false}
             />

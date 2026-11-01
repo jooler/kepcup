@@ -193,6 +193,33 @@ export function normalizeBotAvatarMask(value: string | null | undefined): BotAva
   return value === 'rounded' ? 'rounded' : 'circle';
 }
 
+/**
+ * 上传头像内边距的上限（像素）：足够在 96px 详情头像上做明显收缩，又不至于把
+ * 32px 侧栏头像缩没。
+ */
+export const MAX_BOT_AVATAR_PADDING = 16;
+
+/**
+ * 上传头像的内边距（`bots.avatar_padding` 列，像素整数）：容器尺寸不变，图片
+ * 内缩 padding 后填充剩余空间——不同图片自带留白不一、显示尺寸相同视觉大小
+ * 却不同，用它把视觉大小调齐。只影响 `upload:` 头像。0 = 不内缩（旧行为）。
+ */
+export const botAvatarPaddingSchema = z.number().int().min(0).max(MAX_BOT_AVATAR_PADDING);
+export type BotAvatarPadding = z.infer<typeof botAvatarPaddingSchema>;
+
+/** 列值 → 契约值：NULL / 缺列 / 越界一律按 0（读侧容忍的写侧对偶）。 */
+export function normalizeBotAvatarPadding(value: number | null | undefined): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > MAX_BOT_AVATAR_PADDING
+  ) {
+    return 0;
+  }
+  return value;
+}
+
 export const botSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -202,6 +229,11 @@ export const botSchema = z.object({
    * 可选而非默认值，是为了不改变已有 schema 生产方的严格性（模板导入、测试夹具）。
    */
   avatarMask: botAvatarMaskSchema.optional(),
+  /**
+   * 上传头像的内边距（像素，0-16）；缺省 / 缺失 = 0（旧行、未设置过的行）。
+   * 可选而非默认值，同 avatarMask：不改变已有 schema 生产方的严格性。
+   */
+  avatarPadding: botAvatarPaddingSchema.optional(),
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
@@ -887,6 +919,14 @@ export const settingsSchema = z.object({
    */
   onboarding: onboardingStateSchema.prefault({}),
   /**
+   * 计算机操控（D105，docs/design/52 §6）：全局安全开关，默认关闭。
+   * 平铺顶层布尔（generic 标量条目纪律：不嵌套，settings-catalog.test 的
+   *「plain top-level scalars」pin）；开启后任务 loop 里才可能注册 `computer_*`
+   * 工具（还需平台支持 + helper 可用）；权限引导在设置页 browser 分区
+   * 的 computer-use 锚点区块。
+   */
+  computerUseEnabled: z.boolean().default(false),
+  /**
    * 外部智能体（D72）：目录 id → 本机启用状态。并发不另设字段，沿用
    * `providerConcurrency['agent:{id}']`（catchall）。
    */
@@ -1016,6 +1056,8 @@ export const conversationSchema = z.object({
         avatar: z.string().nullable(),
         /** 上传头像的遮罩形状；缺省 = 'circle'。 */
         avatarMask: botAvatarMaskSchema.optional(),
+        /** 上传头像的内边距（像素，0-16）；缺省 = 0。 */
+        avatarPadding: botAvatarPaddingSchema.optional(),
       }),
     )
     .optional(),
@@ -1973,6 +2015,13 @@ export const approvalKindSchema = z.enum([
    * B（已有或新建），用户逐项勾选后确认，core 确定性执行。
    */
   'bot_handover',
+  /**
+   * 计算机操控（D105，docs/design/52 §5）：本机桌面应用的读取与键鼠操控。
+   * 审批时长复用 once / conversation / bot 分档（默认 conversation），无「永不问」档；
+   * **无人值守永不自动批准**（core `NEVER_AUTO_DECIDED`）；敏感文本参数
+   * （type / paste / set_value）不进审批卡明文。
+   */
+  'computer_control',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -2073,6 +2122,21 @@ export const gitRemoteApprovalPayloadSchema = z.object({
   taintedSince: z.number().optional(),
 });
 export type GitRemoteApprovalPayload = z.infer<typeof gitRemoteApprovalPayloadSchema>;
+
+/**
+ * Payload of a `computer_control` approval（D105，docs/design/52 §5）：同一 run 内
+ * 首个 computer 动作前出卡一次；`summary` 只含动作名与目标，不含敏感文本
+ * （type / paste / set_value 的文本走 sensitiveParams，不进卡面与日志）。
+ */
+export const computerControlApprovalPayloadSchema = z.object({
+  /** 目标应用（名称或 bundle id，如 "Notes" / "com.apple.Notes"）。 */
+  app: z.string().default(''),
+  /** 首个动作的摘要（如「读取应用界面」/「点击元素 12」）。 */
+  summary: z.string().default(''),
+  /** 卡片可选的授权时长（缺省 = 只有「仅这一次」）：`['once','conversation','bot']`，默认勾选 conversation。 */
+  durations: z.array(approvalDurationSchema).optional(),
+});
+export type ComputerControlApprovalPayload = z.infer<typeof computerControlApprovalPayloadSchema>;
 
 /** Payload of an `environment` approval (P06, docs/dev/phases/P06-environment.md). */
 export const environmentApprovalPayloadSchema = z.object({
@@ -3009,6 +3073,13 @@ export const todoSchema = z.object({
   updatedAt: z.number(),
   /** done / cancelled time. */
   closedAt: z.number().nullable(),
+  /**
+   * Workbench lane sort key (docs/design/39-workbench.md): fractional, ordered
+   * ascending within a lane; the board keeps its own `board_cards.position` and
+   * never reads this. Backfilled from the status order, so nothing reorders
+   * until the first manual drag.
+   */
+  position: z.number(),
 });
 export type Todo = z.infer<typeof todoSchema>;
 
@@ -3076,15 +3147,35 @@ export const memoSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   /**
-   * List sort key: creation time, only refreshed when the pin state changes.
-   * Editing the body moves `updatedAt` but not `sortAt`, so the card keeps its
-   * place in the workbench list.
+   * Legacy sort key: creation time, only refreshed when the pin state changes.
+   * Editing the body moves `updatedAt` but not `sortAt`. Superseded by
+   * `position` for live ordering; kept in sync on pin changes.
    */
   sortAt: z.number(),
   /** Non-null = in 最近删除 (purged after MEMO_TRASH_RETENTION_MS). */
   deletedAt: z.number().nullable(),
+  /** Workbench group this memo belongs to; null = 未分组 (docs/design/39-workbench.md). */
+  groupId: z.string().nullable(),
+  /**
+   * Manual sort key within its group (ascending; pinned still floats to the
+   * top via the `pinned desc` order). Backfilled from the old `sort_at` order,
+   * so nothing reorders until the first manual drag.
+   */
+  position: z.number(),
 });
 export type Memo = z.infer<typeof memoSchema>;
+
+/** A user-created memo group (main.db memo_groups). The 未分组 pseudo-group is not a row. */
+export const memoGroupSchema = z.object({
+  id: z.string(),
+  /** 1..MEMO_GROUP_TITLE_MAX_CHARS code points; bounded at the RPC input and by a SQL CHECK. */
+  title: z.string(),
+  /** Sort key among groups (ascending); new groups append at the end. */
+  position: z.number(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+export type MemoGroup = z.infer<typeof memoGroupSchema>;
 
 /** Per bot / loop type / local day usage aggregate (usage.summary RPC). */
 export const usageSummaryEntrySchema = z.object({

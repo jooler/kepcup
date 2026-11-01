@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { RunStep } from '@kepcup/shared';
+import type { Message, RunStep } from '@kepcup/shared';
 import {
   approvalConversationIdOf,
   buildTaskRunTimeline,
   formatElapsed,
   formatToolArgs,
   latestPlan,
+  pendingTaskQuestionOf,
   resultPreview,
   taskElapsedMs,
   toolCallSummary,
@@ -16,6 +17,34 @@ import {
 
 function step(seq: number, type: RunStep['type'], payload: unknown): RunStep {
   return { id: `s${seq}`, runId: 'run_task', seq, type, payload, createdAt: seq };
+}
+
+let messageSeq = 0;
+
+function systemEvent(
+  content: { event: string; text: string; options?: string[]; answer?: string },
+  taskId: string | null = null,
+): Message {
+  messageSeq += 1;
+  return {
+    id: `m${messageSeq}`,
+    conversationId: 'conv1',
+    seq: messageSeq,
+    senderType: 'system',
+    senderBotId: null,
+    kind: 'system_event',
+    content,
+    replyTo: null,
+    mentions: [],
+    batchId: null,
+    runId: null,
+    status: 'normal',
+    editedAt: null,
+    createdAt: messageSeq,
+    attachments: [],
+    ownerBotId: null,
+    taskId,
+  };
 }
 
 describe('buildTaskRunTimeline', () => {
@@ -214,5 +243,48 @@ describe('approvalConversationIdOf（详情页审批条的会话）', () => {
     expect(source).toContain('data-testid="task-run-approvals"');
     expect(source).toContain('<ApprovalDock conversationId={approvalConversationId} />');
     expect(source).toContain('void permissions.reloadApprovals(id)');
+  });
+});
+
+describe('pendingTaskQuestionOf（详情页提问条）', () => {
+  const questionCard = (taskId: string, extra: Record<string, unknown> = {}): Message =>
+    systemEvent({ event: 'task_question', text: '用哪个方案？', options: ['A', 'B'], ...extra }, taskId);
+
+  it('取该任务绑定的最新一条未答提问卡', () => {
+    const older = questionCard('task_1');
+    const newer = questionCard('task_1');
+    expect(pendingTaskQuestionOf([older, newer], 'task_1')).toBe(newer);
+  });
+
+  it('别的任务的提问卡不算', () => {
+    const other = questionCard('task_2');
+    expect(pendingTaskQuestionOf([other], 'task_1')).toBeNull();
+  });
+
+  it('已答 / 作废（content.answer 回写）的卡不再算待回答', () => {
+    const answered = questionCard('task_1', { answer: 'A' });
+    expect(pendingTaskQuestionOf([answered], 'task_1')).toBeNull();
+  });
+
+  it('非 task_question 的系统事件与别的绑定行不干扰', () => {
+    const unrelated = systemEvent({ event: 'bot_setup_question', text: '', options: ['x'] }, 'task_1');
+    const taskEvent = systemEvent({ event: 'run_interrupted', text: '中断' }, 'task_1');
+    expect(pendingTaskQuestionOf([unrelated, taskEvent], 'task_1')).toBeNull();
+  });
+
+  it('没有消息时为 null', () => {
+    expect(pendingTaskQuestionOf([], 'task_1')).toBeNull();
+  });
+
+  it('详情页从会话消息取未答提问卡并固定在时间线下方（源码契约锁接线）', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain(
+      "import { getChatSession } from '$lib/features/chats/chat-session-context';",
+    );
+    expect(source).toContain("import TaskQuestionCard from './TaskQuestionCard.svelte';");
+    expect(source).toContain('pendingTaskQuestionOf(chatSession.messages, taskId)');
+    expect(source).toContain('{#if active && pendingQuestion !== null}');
+    expect(source).toContain('data-testid="task-run-question"');
+    expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');
   });
 });

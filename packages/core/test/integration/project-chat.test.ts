@@ -142,6 +142,7 @@ describe('project conversations', () => {
         name: m.bot.name,
         avatar: m.bot.avatar,
         avatarMask: m.bot.avatarMask,
+        avatarPadding: m.bot.avatarPadding,
       }));
     const group = (await listed()).find((c) => c.id === conv.id)!;
     expect(group.memberPreviews).toEqual(previewsOf(await listMembers(core, conv.id)));

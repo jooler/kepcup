@@ -295,6 +295,29 @@ describe('Bot 模板导入', () => {
     expect(target.bots.getOrThrow(result.botId).avatarMask).toBe('rounded');
   });
 
+  it('上传头像的非零内边距随模板导出/导入；0（默认）不写入模板', async () => {
+    const source = makeRig();
+    const padded = source.bots.create({ identity: { name: '有边距', bio: '' } });
+    const png = Buffer.from([9, 8, 7, 6]);
+    source.avatars.upload(padded.id, 'image/png', png);
+    source.bots.setAvatarPadding(padded.id, 4);
+
+    const plain = source.bots.create({ identity: { name: '无边距', bio: '' } });
+    source.avatars.upload(plain.id, 'image/png', png);
+
+    const paddedTemplate = source.templates.buildTemplate(padded.id);
+    expect(paddedTemplate.avatarPadding).toBe(4);
+    expect(source.templates.buildTemplate(plain.id).avatarPadding).toBeUndefined();
+
+    const file = path.join(dir, `padding-${Math.random().toString(36).slice(2, 8)}.json`);
+    source.templates.exportTo(padded.id, file);
+
+    const target = makeRig();
+    const { sha256 } = target.templates.inspect(file);
+    const result = await target.templates.importFrom(file, sha256);
+    expect(target.bots.getOrThrow(result.botId).avatarPadding).toBe(4);
+  });
+
   it('upload 头像随模板恢复；agent 引擎在本机不可用回退内置', async () => {
     const source = makeRig();
     const bot = source.bots.create({

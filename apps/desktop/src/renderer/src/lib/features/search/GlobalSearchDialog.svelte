@@ -461,6 +461,7 @@
           name={row.bot.name}
           avatar={row.bot.avatar}
           mask={row.bot.avatarMask}
+          padding={row.bot.avatarPadding}
           class="size-10"
           fallbackClass="text-base"
         />
@@ -483,6 +484,7 @@
             name={row.conversation.bot?.name ?? row.conversation.directBotId ?? '?'}
             avatar={row.conversation.bot?.avatar ?? null}
             mask={row.conversation.bot?.avatarMask ?? null}
+            padding={row.conversation.bot?.avatarPadding ?? null}
             class="size-10"
             fallbackClass="text-base"
           />

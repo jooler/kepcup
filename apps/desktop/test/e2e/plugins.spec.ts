@@ -132,7 +132,7 @@ async function installViaRpc(page: Page, fixture: { path: string; sha256: string
 }
 
 async function openExtensionCenter(page: Page): Promise<Locator> {
-  const dialog = page.locator('[data-testid="extension-center-dialog"]');
+  const dialog = page.locator('[data-testid="settings-page"]');
   await page.locator('[data-testid="extension-center-button"]').click();
   await expect(dialog).toBeVisible();
   return dialog;
@@ -176,7 +176,7 @@ async function pluginServerId(page: Page): Promise<string> {
   return server!.id;
 }
 
-test('plugins: tab order, default tab and keyboard cycle land on market', async () => {
+test('plugins: tab order, default tab and keyboard cycle land on settings', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-plugins-tabs-'));
@@ -187,16 +187,16 @@ test('plugins: tab order, default tab and keyboard cycle land on market', async 
     const page = launched.page;
     const dialog = await openExtensionCenter(page);
 
-    // 两个页签（D105 P4 收敛）、market 在最前；默认选中「已安装」（技能 / 连接 / MCP /
-    // 邮件是其内容筛选）。
-    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(2);
+    // 三个页签（D105 P4 收敛 + 「设置」页签：原设置「插件」分区并入；market 在最前、
+    // settings 推到行右端）；默认选中「已安装」（技能 / 连接 / MCP / 邮件是其内容筛选）。
+    await expect(dialog.locator('[data-testid^="extension-center-tab-"]')).toHaveCount(3);
     await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    // 键盘循环：installed + ArrowRight → market（第一项）。
+    // 键盘循环：installed + ArrowRight → settings（最后一项）。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-settings"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -619,7 +619,7 @@ test('plugins: narrow viewport shows the two tabs with Installed and content fil
     await page.locator('[data-testid="narrow-tab-extensions"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tabs"]')).toBeVisible();
-    // 两个页签在 375px 下完整可见；installed 可点进「已安装」主体，筛选条随在。
+    // 页签行在 375px 下可用（「设置」在行右端）；installed 可点进「已安装」主体，筛选条随在。
     await expect(page.locator('[data-testid="extension-center-tab-market"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tab-installed"]')).toBeVisible();
     await page.locator('[data-testid="extension-center-tab-installed"]').click();

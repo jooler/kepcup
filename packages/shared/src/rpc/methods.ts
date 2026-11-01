@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
+import {
+  COMPUTER_INVOKE_METHODS,
+  computerProviderCapabilitiesSchema,
+} from '../domain/computer.js';
 import { PROJECT_TITLE_MAX } from '../domain/project-title.js';
 import {
   widgetPreviewRunInputSchema,
@@ -131,6 +135,7 @@ import {
   botProfileSchema,
   botSchema,
   botAvatarMaskSchema,
+  botAvatarPaddingSchema,
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
@@ -155,6 +160,7 @@ import {
   runSchema,
   runStepSchema,
   memoSchema,
+  memoGroupSchema,
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
@@ -226,6 +232,7 @@ import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
   BROWSER_PROFILE_NAME_MAX_CHARS,
   MEMO_BODY_MAX_CHARS,
+  MEMO_GROUP_TITLE_MAX_CHARS,
   PROJECT_GOAL_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
@@ -412,6 +419,8 @@ export const settingsUpdateInputSchema = z.object({
   webSearch: webSearchConfigSchema.optional(),
   /** 外部智能体启用状态（D72）：整体覆盖 patch。 */
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
+  /** 计算机操控（D105）：安全开关（平铺布尔，受 user-only 档位约束）。 */
+  computerUseEnabled: z.boolean().optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
   experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
   /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
@@ -969,6 +978,15 @@ export const botsAvatarMaskInputSchema = z.object({
   mask: botAvatarMaskSchema,
 });
 /**
+ * 设置 Bot 上传头像的内边距（像素，0-16）。与遮罩同一条 RPC 模式：不是 Profile
+ * 字段（`bots.update` 是整份 Profile 的三方合并），单独写 `bots.avatar_padding` 列、
+ * 单独发布 bot.updated。
+ */
+export const botsAvatarPaddingInputSchema = z.object({
+  id: z.string().min(1),
+  padding: botAvatarPaddingSchema,
+});
+/**
  * Upload the user's own avatar (Profile settings). Core writes the file under
  * `user/avatar/`, keeps only the latest upload, points
  * `settings.userProfileAvatar` at it (`upload:{fileName}`) and publishes
@@ -1132,6 +1150,10 @@ export const messagesListOutputSchema = z.object({ messages: z.array(messageSche
 export const messagesEditInputSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1).max(100_000),
+});
+/** 撤回一条用户消息（design/02 §撤回与编辑）：置 status='recalled'，从可见历史移除。 */
+export const messagesRecallInputSchema = z.object({
+  id: z.string().min(1),
 });
 
 /**
@@ -1750,6 +1772,19 @@ export const todosWriteOutputSchema = z.object({
   notified: z.boolean().optional(),
 });
 export const todosTransitionOutputSchema = z.object({ todo: todoEntrySchema });
+/**
+ * Drag a workbench todo inside its lane or into another lane. `assignee` is
+ * only sent (and only accepted) when the drop lands in a different lane; an
+ * in-progress / delivered todo rejects a reassign.
+ */
+export const todosMoveInputSchema = z.object({
+  id: z.string().min(1),
+  /** Anchor in the target lane (place before it); null = end. */
+  beforeId: z.string().min(1).nullable(),
+  /** Send only when the drop changes the lane; omit to keep the assignee. */
+  assignee: todoAssigneeSchema.nullable().optional(),
+});
+export const todosMoveOutputSchema = z.object({ todo: todoEntrySchema });
 
 // --- project board (D103, docs/design/50-project-board.md §10) -------------------
 // `board.cards.reject` is P1 backlog and is intentionally absent.
@@ -1851,7 +1886,11 @@ export const memosListInputSchema = z.object({
   /** true = 最近删除 (soft-deleted memos); default = live memos. */
   trashed: z.boolean().optional(),
 });
-export const memosListOutputSchema = z.object({ memos: z.array(memoSchema) });
+export const memosListOutputSchema = z.object({
+  memos: z.array(memoSchema),
+  /** Live memo groups (creation order). Empty for the trashed listing. */
+  groups: z.array(memoGroupSchema),
+});
 export const memosIdInputSchema = z.object({ id: z.string().min(1) });
 export const memosCreateInputSchema = z.object({
   body: z.string().min(1).max(MEMO_BODY_MAX_CHARS),
@@ -1862,6 +1901,30 @@ export const memosUpdateInputSchema = z.object({
   pinned: z.boolean().optional(),
 });
 export const memosMemoOutputSchema = z.object({ memo: memoSchema });
+
+// --- 备忘分组与拖拽排序（D90 §5.4） ----------------------------------------------
+export const memosGroupsCreateInputSchema = z.object({
+  title: z.string().trim().min(1).max(MEMO_GROUP_TITLE_MAX_CHARS),
+});
+export const memosGroupOutputSchema = z.object({ group: memoGroupSchema });
+export const memosGroupsRenameInputSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().trim().min(1).max(MEMO_GROUP_TITLE_MAX_CHARS),
+});
+export const memosGroupsDeleteInputSchema = memosIdInputSchema;
+/** Drag-reorder groups: `beforeId` null = end (未分组伪分组不参与，恒在最前). */
+export const memosGroupsMoveInputSchema = z.object({
+  id: z.string().min(1),
+  beforeId: z.string().min(1).nullable(),
+});
+export const memosMoveInputSchema = z.object({
+  id: z.string().min(1),
+  /** Target group; null = 未分组. */
+  groupId: z.string().min(1).nullable(),
+  /** Anchor in the target group (place before it); null = end. */
+  beforeId: z.string().min(1).nullable(),
+});
+export const memosMoveOutputSchema = z.object({ memo: memoSchema });
 
 // --- watches (W7) -------------------------------------------------------------------
 export const watchesListInputSchema = z.object({
@@ -2073,6 +2136,42 @@ export const browserFetchTextOutputSchema = z.object({
   extraTexts: z.array(z.string().nullable()).optional(),
 });
 export type BrowserFetchTextOutput = z.infer<typeof browserFetchTextOutputSchema>;
+
+// --- computer (D105, docs/design/52-computer-use.md §3) ------------------------------
+// Served by the MAIN process on port B (mirrors browser.*): core's computer_*
+// tools are the client. 控制面（capabilities / permissions / stop）与数据面
+//（invoke 透传 sidecar 方法）分离，main 保持薄。
+
+/** 数据面：method 白名单 = sidecar 方法面（domain/computer.ts 的 COMPUTER_INVOKE_METHODS）。 */
+export const computerInvokeInputSchema = z.object({
+  method: z.enum(COMPUTER_INVOKE_METHODS),
+  /** sidecar 参数原样透传（各方法参数形态由编排层 / helper 校验）。 */
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+/** invoke 的输出形态按方法各异（快照 / 动作 / 列表），core 工具层按需窄化校验。 */
+export const computerInvokeOutputSchema = z.unknown();
+
+export const computerCapabilitiesOutputSchema = computerProviderCapabilitiesSchema.nullable();
+
+/** helper TCC 权限三态（设置页权限引导区块共用；helper 不可用时为 unknown）。 */
+export const computerPermissionStateSchema = z.enum(['granted', 'not-granted', 'unknown']);
+export type ComputerPermissionState = z.infer<typeof computerPermissionStateSchema>;
+
+export const computerPermissionsStatusOutputSchema = z.object({
+  accessibility: computerPermissionStateSchema,
+  screenRecording: computerPermissionStateSchema,
+});
+export type ComputerPermissionsStatus = z.infer<typeof computerPermissionsStatusOutputSchema>;
+
+export const computerPermissionsOpenInputSchema = z.object({
+  permission: z.enum(['accessibility', 'screen-recording']),
+});
+
+export const computerStopInputSchema = z.object({
+  /** 便于日志与通知说明停止原因（用户点「停止操控」/ 模型 computer_stop）。 */
+  reason: z.string().max(500).optional(),
+});
+export const computerStopOutputSchema = z.object({ stopped: z.boolean() });
 
 // --- browser profiles (W8) ---------------------------------------------------------
 
@@ -2364,6 +2463,7 @@ export const rpcMethodSchemas = {
   },
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.avatar.mask': { input: botsAvatarMaskInputSchema, output: botGetOutputSchema },
+  'bots.avatar.padding': { input: botsAvatarPaddingInputSchema, output: botGetOutputSchema },
   'user.avatar.upload': {
     input: userAvatarUploadInputSchema,
     output: userAvatarUploadOutputSchema,
@@ -2453,6 +2553,7 @@ export const rpcMethodSchemas = {
 
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },
+  'messages.recall': { input: messagesRecallInputSchema, output: messagesListOutputSchema },
 
   'messages.send': { input: messagesSendInputSchema, output: messagesSendOutputSchema },
 
@@ -2664,6 +2765,12 @@ export const rpcMethodSchemas = {
   'memos.update': { input: memosUpdateInputSchema, output: memosMemoOutputSchema },
   'memos.delete': { input: memosIdInputSchema, output: memosMemoOutputSchema },
   'memos.restore': { input: memosIdInputSchema, output: memosMemoOutputSchema },
+  'memos.groups.create': { input: memosGroupsCreateInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.rename': { input: memosGroupsRenameInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.move': { input: memosGroupsMoveInputSchema, output: memosGroupOutputSchema },
+  'memos.groups.delete': { input: memosGroupsDeleteInputSchema, output: okOutputSchema },
+  'memos.move': { input: memosMoveInputSchema, output: memosMoveOutputSchema },
+  'todos.move': { input: todosMoveInputSchema, output: todosMoveOutputSchema },
 
   // W7 确定性监看：右侧面板列表与对话内监看卡。
   'watches.list': { input: watchesListInputSchema, output: watchesListOutputSchema },
@@ -2749,6 +2856,23 @@ export const rpcMethodSchemas = {
     input: browserControlReturnedInputSchema,
     output: browserControlReturnedOutputSchema,
   },
+
+  // D105: served by the main process on port B (like browser.*) — see the
+  // ComputerRpcMethods type below. Not in APP_METHODS.
+  'computer.invoke': { input: computerInvokeInputSchema, output: computerInvokeOutputSchema },
+  'computer.capabilities': {
+    input: voidInput,
+    output: computerCapabilitiesOutputSchema,
+  },
+  'computer.permissionsStatus': {
+    input: voidInput,
+    output: computerPermissionsStatusOutputSchema,
+  },
+  'computer.permissionsOpen': {
+    input: computerPermissionsOpenInputSchema,
+    output: okOutput,
+  },
+  'computer.stop': { input: computerStopInputSchema, output: computerStopOutputSchema },
 
   // W8 共享浏览器资料（renderer → core）。
   'browserProfiles.list': { input: voidInput, output: browserProfilesListOutputSchema },
@@ -2894,6 +3018,19 @@ export const BROWSER_RPC_METHODS = [
 /** Methods the MAIN process serves on port B for core's use (D73): system-shell integration. */
 export const SHELL_RPC_METHODS = ['shell.openExternal'] as const satisfies readonly RpcMethodName[];
 
+/**
+ * The computer-use methods the MAIN process serves on port B (D105,
+ * docs/design/52-computer-use.md §3): data plane is a single whitelisted
+ * `computer.invoke` passthrough over the sidecar method surface.
+ */
+export const COMPUTER_RPC_METHODS = [
+  'computer.invoke',
+  'computer.capabilities',
+  'computer.permissionsStatus',
+  'computer.permissionsOpen',
+  'computer.stop',
+] as const satisfies readonly RpcMethodName[];
+
 /** Methods the MAIN process serves on port B for core's use (D87): widget preview (S2). */
 export const WIDGET_PREVIEW_RPC_METHODS = [
   'widgetPreview.run',
@@ -3013,6 +3150,7 @@ const APP_METHODS = [
   'projects.plugins.set',
   'messages.list',
   'messages.edit',
+  'messages.recall',
   'messages.send',
   'attachments.upload',
   'attachments.get',
@@ -3133,6 +3271,12 @@ const APP_METHODS = [
   'memos.update',
   'memos.delete',
   'memos.restore',
+  'memos.groups.create',
+  'memos.groups.rename',
+  'memos.groups.move',
+  'memos.groups.delete',
+  'memos.move',
+  'todos.move',
   'watches.list',
   'watches.get',
   'watches.pause',

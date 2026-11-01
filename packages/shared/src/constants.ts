@@ -802,8 +802,14 @@ export const TODO_TITLE_MAX_CHARS = 120;
 export const TODO_NOTES_MAX_CHARS = 4000;
 /** Max characters of a memo body (plain text). */
 export const MEMO_BODY_MAX_CHARS = 10_000;
+/** Max characters of a memo group title (code points). */
+export const MEMO_GROUP_TITLE_MAX_CHARS = 60;
 /** A memo in 最近删除 is purged for good after this long (checked at startup). */
 export const MEMO_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Gap between freshly inserted or renumbered workbench positions (memo groups, memos, todos). */
+export const WORKBENCH_POSITION_STEP = 1024;
+/** Neighbor gap below which a workbench position list is renumbered. */
+export const WORKBENCH_POSITION_MIN_GAP = 1e-3;
 /** todos.list hides done / cancelled todos closed longer ago than this (unless includeClosed). */
 export const TODO_CLOSED_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;
 

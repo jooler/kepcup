@@ -98,7 +98,7 @@ async function vendorMailFixture(imap: FakeImapServer, smtp: FakeSmtpServer) {
 
 async function openInstalledMailFilter(page: Page): Promise<void> {
   await page.locator('[data-testid="extension-center-button"]').click();
-  const dialog = page.locator('[data-testid="extension-center-dialog"]');
+  const dialog = page.locator('[data-testid="settings-page"]');
   await expect(dialog).toBeVisible();
   await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
   await expect(page.locator('[data-testid="extension-installed"]')).toBeVisible();

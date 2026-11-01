@@ -121,6 +121,7 @@ describe('settings catalog integrity', () => {
       .map((entry) => entry.id);
     expect(userOnly.sort()).toEqual(
       [
+        'computer.control',
         'connections.taint-guard',
         'environment.allowlist',
         'environment.sandbox',
@@ -137,7 +138,8 @@ describe('settings catalog integrity', () => {
       expect(getSettingItem(id)?.write.wideningMode, id).toBe('user-only');
     }
     for (const entry of items) {
-      if (entry.id === 'plugins.marketplace') continue; // 供应链信任根但 generic：不出权限（§4.2.4）
+      // 供应链信任根 / 计算机操控开关：user-only 但 generic——不出权限（§4.2.4）。
+      if (entry.id === 'plugins.marketplace' || entry.id === 'computer.control') continue;
       if (entry.write.maxMode === 'user-only' || entry.write.wideningMode !== undefined) {
         expect(entry.write.widensPermission, entry.id).toBe(true);
       }
@@ -318,16 +320,18 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
 
   it('scans the real settings UI', () => {
     // 宽松扫描也必须扫到已知位置，否则说明扫描规则失效。
-    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models', 'plugins']));
-    // 「应用」分区已移除（连接相关都在扩展中心）。
+    expect(scan.settingsSections).toEqual(expect.arrayContaining(['general', 'models']));
+    // 「应用」分区已移除（连接相关都在扩展中心）；「插件」分区并入扩展中心「设置」页签。
     expect(scan.settingsSections).not.toContain('apps');
+    expect(scan.settingsSections).not.toContain('plugins');
     expect(scan.anchors).toEqual(
       expect.arrayContaining(['default-models', 'web-search', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     // D104 UI 修正：技能 / 连接 / MCP / 邮件不再是页签，是「已安装」的内容筛选。
     // D105 P4：两页签收敛（本机应用协作收编为已安装页的系统卡）。
-    expect(scan.extensionCenterTabs).toEqual(['market', 'installed']);
+    // 「设置」页签：原设置「插件」分区并入扩展中心后的落点。
+    expect(scan.extensionCenterTabs).toEqual(['market', 'installed', 'settings']);
     expect(scan.botPanelTabs).toEqual(
       expect.arrayContaining(['profile', 'skills', 'access', 'schedules']),
     );
@@ -398,6 +402,7 @@ describe('store.generic discipline (todo/settings-catalog-registry.md §4.2.4)',
     );
     expect(generic.map((entry) => entry.id)).toEqual([
       'profile.user-name',
+      'computer.control',
       'general.workbench',
       'remote.enabled',
       'remote.relay',

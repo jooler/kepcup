@@ -44,6 +44,7 @@ import {
   botsAvatarDataInputSchema,
   botsAvatarDataOutputSchema,
   botsAvatarMaskInputSchema,
+  botsAvatarPaddingInputSchema,
   userAvatarUploadInputSchema,
   userAvatarUploadOutputSchema,
   userAvatarDataInputSchema,
@@ -109,6 +110,7 @@ import {
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
+  messagesRecallInputSchema,
   messagesSendInputSchema,
   messagesSendOutputSchema,
   attachmentsUploadInputSchema,
@@ -253,6 +255,15 @@ import {
   memosCreateInputSchema,
   memosUpdateInputSchema,
   memosMemoOutputSchema,
+  memosGroupsCreateInputSchema,
+  memosGroupOutputSchema,
+  memosGroupsRenameInputSchema,
+  memosGroupsMoveInputSchema,
+  memosGroupsDeleteInputSchema,
+  memosMoveInputSchema,
+  memosMoveOutputSchema,
+  todosMoveInputSchema,
+  todosMoveOutputSchema,
   schedulesListInputSchema,
   schedulesListOutputSchema,
   schedulesCancelInputSchema,
@@ -931,6 +942,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       publish('bot.updated', { bot });
       return { bot };
     }),
+    // 内边距同遮罩：只写 `bots.avatar_padding`（不是 Profile 字段），单独发布 bot.updated。
+    'bots.avatar.padding': method(botsAvatarPaddingInputSchema, botGetOutputSchema, async (input) => {
+      const bot = domain.bots.setAvatarPadding(input.id, input.padding);
+      publish('bot.updated', { bot });
+      return { bot };
+    }),
     // 用户头像：落盘 + 写 settings.userProfileAvatar 在同一把设置写锁里；发布
     // settings.changed 让设置页 / 侧栏头像即时刷新。
     'user.avatar.upload': method(
@@ -1165,6 +1182,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     'messages.edit': method(messagesEditInputSchema, messagesListOutputSchema, async (input) => ({
       messages: [orchestrator.editMessage(input.id, input.text)],
+    })),
+    'messages.recall': method(messagesRecallInputSchema, messagesListOutputSchema, async (input) => ({
+      messages: [orchestrator.recallMessage(input.id)],
     })),
 
     'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) =>
@@ -1997,11 +2017,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'todos.reopen': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
       todo: requireTodos(services).reopen(input.id),
     })),
+    'todos.move': method(todosMoveInputSchema, todosMoveOutputSchema, async (input) => ({
+      todo: requireTodos(services).move(input.id, {
+        beforeId: input.beforeId,
+        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+      }),
+    })),
     'memos.list': method(memosListInputSchema, memosListOutputSchema, async (input) => ({
       memos: requireMemos(services).list({
         ...(input.query !== undefined ? { query: input.query } : {}),
         ...(input.trashed !== undefined ? { trashed: input.trashed } : {}),
       }),
+      groups: input.trashed === true ? [] : requireMemos(services).listGroups(),
     })),
     'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).create({ body: input.body, source: 'user' }),
@@ -2017,6 +2044,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     'memos.restore': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).restore(input.id),
+    })),
+    'memos.groups.create': method(memosGroupsCreateInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).createGroup(input.title),
+    })),
+    'memos.groups.rename': method(memosGroupsRenameInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).renameGroup(input.id, input.title),
+    })),
+    'memos.groups.move': method(memosGroupsMoveInputSchema, memosGroupOutputSchema, async (input) => ({
+      group: requireMemos(services).moveGroup(input.id, input.beforeId),
+    })),
+    'memos.groups.delete': method(memosGroupsDeleteInputSchema, okOutputSchema, async (input) => {
+      requireMemos(services).deleteGroup(input.id);
+      return { ok: true as const };
+    }),
+    'memos.move': method(memosMoveInputSchema, memosMoveOutputSchema, async (input) => ({
+      memo: requireMemos(services).move(input.id, input.groupId, input.beforeId),
     })),
 
     // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---

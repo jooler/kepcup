@@ -1,7 +1,17 @@
 import { untrack } from 'svelte';
-import type { Memo, ScheduleEntry, TodoAssignee, TodoEntry } from '@kepcup/shared';
+import { toast } from 'svelte-sonner';
+import type { Memo, MemoGroup, ScheduleEntry, TodoAssignee, TodoEntry } from '@kepcup/shared';
+import { WORKBENCH_POSITION_STEP } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { shell } from '$lib/stores/shell.svelte';
+import { errorText, t } from '$lib/i18n';
+import { rpcErrorText } from './todo-actions';
+import {
+  canReassignTodo,
+  isOpenTodo,
+  laneIdOfTodo,
+  UNASSIGNED_LANE_ID,
+} from './workbench-model';
 
 /**
  * 工作台数据与抽屉状态（D90）。数据源是 `todos.list` / `schedules.list` / `memos.list`；
@@ -38,6 +48,8 @@ export class WorkbenchState {
   /** `schedules.list` 全量（工作台只用其中非 workbench 来源的自排行）。 */
   schedules = $state<ScheduleEntry[]>([]);
   memos = $state<Memo[]>([]);
+  /** 备忘分组（创建顺序）；「未分组」伪分组不在其中。 */
+  memoGroups = $state<MemoGroup[]>([]);
   /** 最近删除；只在打开该视图时拉取。 */
   trashed = $state<Memo[]>([]);
   trashOpen = $state(false);
@@ -45,6 +57,12 @@ export class WorkbenchState {
   drawer = $state<DrawerState | null>(null);
   /** 每次 todos 重拉后 +1：抽屉据此重读自己打开的事项。 */
   todosVersion = $state(0);
+
+  /** 拖拽进行中：冻结事件刷新（shadow 占位会被重拉冲掉），结束后补一次重拉。 */
+  memoDragging = $state(false);
+  todoDragging = $state(false);
+  /** 分组（section 整体）拖拽进行中。 */
+  groupDragging = $state(false);
 
   /**
    * 面板上常驻输入框的文本（备忘草稿 / 备忘搜索词 / 事项快速新建草稿）。宽屏主区
@@ -167,6 +185,7 @@ export class WorkbenchState {
   }
 
   refreshTodos(): Promise<boolean> {
+    if (this.todoDragging) return Promise.resolve(false);
     return this.#fetch(
       'todos',
       async () => ((await core.call('todos.list', {})) as { todos: TodoEntry[] }).todos,
@@ -189,11 +208,13 @@ export class WorkbenchState {
   }
 
   refreshMemos(): Promise<boolean> {
+    if (this.memoDragging) return Promise.resolve(false);
     return this.#fetch(
       'memos',
-      async () => ((await core.call('memos.list', {})) as { memos: Memo[] }).memos,
-      (memos) => {
-        this.memos = memos;
+      async () => (await core.call('memos.list', {})) as { memos: Memo[]; groups: MemoGroup[] },
+      (result) => {
+        this.memos = result.memos;
+        this.memoGroups = result.groups;
       },
     );
   }
@@ -239,6 +260,180 @@ export class WorkbenchState {
 
   // --- 本地缓存的就地更新（写操作返回后立即上屏，事件随后校正） ------------------
 
+  /** 拖拽开始 / 结束：冻结期间跳过事件刷新，结束时补一次去抖重拉（照 board.svelte.ts）。 */
+  setMemoDragging(value: boolean): void {
+    this.memoDragging = value;
+    if (!value) this.#soon('memos', () => this.refreshMemos());
+  }
+
+  setTodoDragging(value: boolean): void {
+    this.todoDragging = value;
+    if (!value) this.#soon('todos', () => this.refreshTodos());
+  }
+
+  setGroupDragging(value: boolean): void {
+    this.groupDragging = value;
+    if (!value) this.#soon('memos', () => this.refreshMemos());
+  }
+
+  // --- 备忘分组与拖拽（D90 §5.4） ----------------------------------------------
+
+  /** 新建分组；返回是否成功（失败已 toast，调用方据此关弹框）。 */
+  async createGroup(title: string): Promise<boolean> {
+    try {
+      const result = (await core.call('memos.groups.create', { title })) as { group: MemoGroup };
+      this.memoGroups = [...this.memoGroups, result.group];
+      return true;
+    } catch (error) {
+      this.#memoGroupError(error);
+      return false;
+    }
+  }
+
+  /** 就地重命名分组（InlineEditable 的 onSave 契约：true = 提交成功）。 */
+  async renameGroup(id: string, title: string): Promise<boolean> {
+    const group = this.memoGroups.find((item) => item.id === id);
+    if (group === undefined) return false;
+    const next = title.trim();
+    if (next.length === 0) return false;
+    if (next === group.title) return true;
+    try {
+      const result = (await core.call('memos.groups.rename', { id, title: next })) as {
+        group: MemoGroup;
+      };
+      this.memoGroups = this.memoGroups.map((item) => (item.id === id ? result.group : item));
+      return true;
+    } catch (error) {
+      this.#memoGroupError(error);
+      return false;
+    }
+  }
+
+  /** 删除分组：组内备忘回到未分组（本地先就地归位，事件随后校正）。 */
+  async deleteGroup(id: string): Promise<boolean> {
+    try {
+      await core.call('memos.groups.delete', { id });
+      this.memoGroups = this.memoGroups.filter((group) => group.id !== id);
+      this.memos = this.memos.map((memo) =>
+        memo.groupId === id ? { ...memo, groupId: null } : memo,
+      );
+      return true;
+    } catch (error) {
+      this.#memoGroupError(error);
+      return false;
+    }
+  }
+
+  /** 拖拽分组排序：`beforeId` null = 排到末尾。乐观重排 + RPC，失败 toast 重拉。 */
+  async moveGroup(id: string, beforeId: string | null): Promise<void> {
+    const group = this.memoGroups.find((item) => item.id === id);
+    if (group === undefined) return;
+    const list = this.memoGroups.filter((item) => item.id !== id);
+    const index = beforeId === null ? list.length : list.findIndex((item) => item.id === beforeId);
+    if (index < 0) return;
+    const position = positionBetween(
+      index > 0 ? list[index - 1]!.position : null,
+      index < list.length ? list[index]!.position : null,
+    );
+    this.memoGroups = [
+      ...list.slice(0, index),
+      { ...group, position },
+      ...list.slice(index),
+    ];
+    try {
+      await core.call('memos.groups.move', { id, beforeId });
+    } catch (error) {
+      this.#memoGroupError(error);
+      void this.refreshMemos();
+    }
+  }
+
+  #memoGroupError(error: unknown): void {
+    toast.error(
+      errorText((error as { code?: string } | undefined)?.code, t('workbench.memo.groupSaveFailed')),
+    );
+  }
+
+  /**
+   * 拖拽备忘：换组（null = 未分组）+ 落到 `beforeId` 之前（null = 组尾）。先乐观上屏
+   * （与 core 的 placeItem 同规则取中点），RPC 失败时 toast 并靠重拉还原。
+   */
+  async moveMemo(memoId: string, groupId: string | null, beforeId: string | null): Promise<void> {
+    const memo = this.memos.find((item) => item.id === memoId);
+    if (memo === undefined) return;
+    const list = this.memos
+      .filter((item) => item.deletedAt === null && item.groupId === groupId && item.id !== memoId)
+      .sort(
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          a.position - b.position ||
+          (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+      );
+    const index = beforeId === null ? list.length : list.findIndex((item) => item.id === beforeId);
+    if (index < 0) return;
+    const position = positionBetween(
+      index > 0 ? list[index - 1]!.position : null,
+      index < list.length ? list[index]!.position : null,
+    );
+    this.memos = this.memos.map((item) =>
+      item.id === memoId ? { ...item, groupId, position } : item,
+    );
+    try {
+      const result = (await core.call('memos.move', { id: memoId, groupId, beforeId })) as {
+        memo: Memo;
+      };
+      this.upsertMemo(result.memo);
+    } catch (error) {
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('workbench.memo.moveFailed')),
+      );
+      void this.refreshMemos();
+    }
+  }
+
+  /**
+   * 拖拽事项：`laneId` 与当前道相同 = 道内排序；不同 = 改派执行者（走 todos.move 的
+   * assignee 分支，已在执行的事项由 core 拒绝）。乐观上屏 + 失败 toast 重拉。
+   */
+  async moveTodo(todoId: string, laneId: string, beforeId: string | null): Promise<void> {
+    const todo = this.todos.find((item) => item.id === todoId);
+    if (todo === undefined) return;
+    const changingLane = laneId !== laneIdOfTodo(todo);
+    if (changingLane && !canReassignTodo(todo)) {
+      toast.info(t('workbench.todos.reassignBlocked'));
+      return;
+    }
+    const assignee = changingLane ? assigneeOfLane(laneId) : todo.assignee;
+    const list = this.todos
+      .filter(
+        (item) =>
+          item.id !== todoId &&
+          isOpenTodo(item) &&
+          laneIdOfTodo(item) === (changingLane ? laneId : laneIdOfTodo(todo)),
+      )
+      .sort((a, b) => a.position - b.position || b.updatedAt - a.updatedAt);
+    const index = beforeId === null ? list.length : list.findIndex((item) => item.id === beforeId);
+    if (index < 0) return;
+    const position = positionBetween(
+      index > 0 ? list[index - 1]!.position : null,
+      index < list.length ? list[index]!.position : null,
+    );
+    this.todos = this.todos.map((item) =>
+      item.id === todoId ? { ...item, assignee, position } : item,
+    );
+    try {
+      const result = (await core.call('todos.move', {
+        id: todoId,
+        beforeId,
+        ...(changingLane ? { assignee } : {}),
+      })) as { todo: TodoEntry };
+      this.upsertTodo(result.todo);
+    } catch (error) {
+      toast.error(rpcErrorText(error, t('workbench.todos.moveFailed')));
+      void this.refreshTodos();
+    }
+  }
+
   upsertTodo(todo: TodoEntry): void {
     const index = this.todos.findIndex((item) => item.id === todo.id);
     if (index < 0) this.todos = [todo, ...this.todos];
@@ -260,6 +455,24 @@ export class WorkbenchState {
 }
 
 export const workbench = new WorkbenchState();
+
+/** 与 core 的 positionBetween 同规则（中点 / 边界步长）；乐观上屏用，真值以 RPC 结果为准。 */
+function positionBetween(before: number | null, after: number | null): number {
+  if (before === null && after === null) return WORKBENCH_POSITION_STEP;
+  if (before === null) return (after as number) / 2;
+  if (after === null) return before + WORKBENCH_POSITION_STEP;
+  return (before + after) / 2;
+}
+
+/** 道 id → 执行者（跨道拖拽改派用；项目组道不带负责 Bot 覆盖，与道头 + 一致）。 */
+function assigneeOfLane(laneId: string): TodoAssignee | null {
+  if (laneId === UNASSIGNED_LANE_ID) return null;
+  if (laneId.startsWith('bot:')) return { kind: 'bot', botId: laneId.slice('bot:'.length) };
+  if (laneId.startsWith('project:')) {
+    return { kind: 'project', projectId: laneId.slice('project:'.length), leadBotId: null };
+  }
+  return null;
+}
 
 /**
  * 组件里用：挂载期间保持数据与事件订阅。attach 里会读写 store 的响应式状态，必须放进

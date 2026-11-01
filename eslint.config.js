@@ -30,6 +30,11 @@ export default tseslint.config(
       // require('electron') 改 dev 壳 Info.plist——均为构建工具链，非应用代码。
       'apps/desktop/scripts/generate-icons-electron.cjs',
       'apps/desktop/scripts/patch-dev-electron.cjs',
+      // D105 computer-use smoke hosts: Electron main-process scripts
+      // (package.json "type": "commonjs", launched as `<Electron> <directory>`).
+      // CommonJS by contract — helper peer checks the parent bundle id — not app source.
+      'apps/desktop/scripts/computer-use-smoke-host/**',
+      'apps/desktop/scripts/computer-orchestration-smoke-host/**',
       // D87 P3-0 spike: a standalone Electron main-process script (CommonJS, run by the electron
       // binary directly) kept for re-running the sandbox measurements on macOS / Windows.
       'apps/desktop/scripts/spikes/**',

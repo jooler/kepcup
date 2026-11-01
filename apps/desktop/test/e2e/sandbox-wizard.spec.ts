@@ -102,7 +102,7 @@ async function waitReady(page: Page): Promise<void> {
 async function openSettings(page: Page): Promise<void> {
   // 弹框可能已开着（嵌套向导关闭后设置仍在）：先 Escape 归零再走菜单入口。
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
   // 空态启动时「+」面板可能自动展开：先收起（Esc 或点背景）再走菜单。
   try {
     await page.locator('[data-testid="start-chat-backdrop"]').click({ timeout: 1_500 });
@@ -259,7 +259,7 @@ test('wizard with enterprise policy disabled (injected fixture): keeps per-comma
     await page.keyboard.press('Escape');
     // 第二次 Escape 关闭设置弹框（向导是嵌套弹框，设置弹框仍在）。
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
     // 对话内的逐条确认横幅持续提示（P03 链路消费同一 probe 结果）。
     await createBotAndOpenChat(page, '阿确');

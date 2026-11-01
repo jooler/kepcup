@@ -1155,3 +1155,61 @@
 - 问题：P5-docs-market.md §3.2 要求「`init plugin` 模板更新：生成含 `config` + `instances` **注释**骨架的 `plugin.json`」，但 `plugin.json` 是 strict JSON（清单 schema 拒绝注释语法），「注释骨架」字面不可实现；且 `instances: ['mail']` 有配对约束（必须伴随一份邮件贡献），骨架里塞 `instances` 会让新骨架直接 validate 失败。
 - 影响范围：`packages/app-validator/src/plugin/init.ts`——plugin.json 生成一个真实可校验的示例 config 字段（`greetingPrefix`，宿主自动出「设置」表单，删改即学）；`instances` 的声明方式与邮件配对示例写进 init 生成的 README 模板并指向 `docs/guides/write-a-plugin.md`。
 - 决定：以「可运行的示例 + 文档指引」替代「注释骨架」；示例 config 字段对骨架插件的唯一代价是设置表单多一项，可即刻删除。测试 `plugin-init-pack.test.ts` 断言骨架 validate 零 error 且 capabilities 报告 configFields=1。
+
+### DEV-077 computer-use helper 的 peer 信任列表硬编码 orca bundle id：vendored 最小例外修改
+
+- 状态：已落实
+- 阶段：计算机操控 WP1（D105）
+- 是否阻塞：是（不改则 release 版 helper 拒绝一切 KepCup 连接，能力整体不可用）
+- 问题：todo/computer-use.md 硬约束「vendored 的 Swift helper 源码一行不改」，但上游 `TrustedOrcaApplication.swift` + `main.swift` 的 socket peer 校验要求连接方 bundle id ∈ {`com.stablyai.orca` 系列, `com.github.Electron`}，且 `--agent` 模式强制 token（有 token 必做 peer 校验，无绕路）。KepCup dev 壳（官方 Electron，`com.github.Electron`）恰好能过，打包版 `app.kepcup.desktop` 必被拒——设计文档与执行方案均未覆盖此点。
+- 影响范围：`apps/desktop/native/computer-use-macos/Sources/OrcaComputerUseMacOSCore/TrustedOrcaApplication.swift`（唯一改动文件）；`native/NOTICE.md` 改动说明同步。
+- 可选方案：
+  1. vendored 最小例外：信任列表追加 `app.kepcup.desktop`（精确 + 点号前缀）两条 — 透明、纯增量（上游条目全保留）、该文件本就是宿主身份配置点；代价是打破「一行不改」的字面约束（须记录留痕）。
+  2. 构建期注入补丁（Sources 拷到 .build 后追加条目再编译）— vendored 目录零改动，但产物源 ≠ 目录源，构建复杂、调试困惑，本质仍是改、只是藏进脚本。
+  3. dev-only 先行 — dev 能过纯属 Electron 壳巧合；WP2 路径解析与 WP5 打包验收都被此决定绑定，越晚定返工越多。
+- 决定：方案 1。改动两行判断、上游条目全部保留，NOTICE.md「唯一例外」小节 + 本条目留痕；向用户报备（2026-10-31 会话），可随时回退（改动仅一处）。helper 其余 Swift 源码维持与上游 `55507b87` 逐字节一致。
+
+### DEV-078 computerUse 设置键平铺为 computerUseEnabled（generic 条目纪律优先）
+
+- 状态：已落实
+- 阶段：计算机操控 WP3（D105）
+- 是否阻塞：否
+- 问题：docs/design/52 §6 与 todo/computer-use.md WP3 写的顶层键是嵌套的 `computerUse.enabled`，但 shared 的设置目录纪律（settings-catalog.test.ts「generic items are plain top-level scalars: no sensitive / multiple / nested / widening」pin）要求 `store.generic` 条目的字段 path 必须是 settingsSchema 的顶层标量键——嵌套路径会让该 pin 失败；给嵌套键写专用适配器又违背「简单全局标量优先 generic」的 AGENTS.md 约定。
+- 影响范围：settings 顶层键改为 `computerUseEnabled: z.boolean().default(false)`（domain/types.ts）、settingsUpdate patch（rpc/methods.ts）、目录条目 `browser.computer-use` 的 field path 与 store paths。语义与默认值不变。
+- 决定：平铺 `computerUseEnabled`，通用标量适配器直接可用（不写 core 适配器、不加卡片）；设计文档的字面路径以本条目为准修订。
+
+### DEV-079 CONTROLLER_BUSY 是 ZCode 的错误码，orca 侧不存在：并发互斥与 possibly-sent 的真实落点
+
+- 状态：已落实
+- 阶段：计算机操控 WP2/WP4（D105）
+- 是否阻塞：否
+- 问题：docs/design/52 D105-2/§4 与执行文档 WP2/WP4 验收列把 `CONTROLLER_BUSY` 当作 sidecar/helper 错误码（「并发第二会话报 CONTROLLER_BUSY」），并举例错误码「PERMISSION_DENIED / APP_NOT_FOUND / CONTROLLER_BUSY / STALE_STATE」。核对 orca `55507b87`：编排层与 helper 均**无此码**——它来自设计调研里参照的 ZCode（cua-helper）；orca 的对应错误码是 `window_stale`（STALE_STATE）。互斥的真实语义：①KepCup main 单例 sidecar（一个 provider 一个 helper），并发 core 调用天然共用；②helper 内 `AgentSessionOwnership` 对同一实例的第二个 authenticated 连接 rejected（单测覆盖）；③两个独立 sidecar 进程各自 spawn 各自 helper，进程隔离、系统允许——真机冒烟证实。
+- 影响范围：`packages/core/src/tools/computer-tools.ts`——MAYBE_SENT 错误码由 CONTROLLER_BUSY 改为 `WINDOW_NOT_FOCUSED`（helper 的 focusRecordFailed 以它报出且消息明示 "input may already have been delivered"，才是真正的 possibly-sent 信号）；删 CONTROLLER_BUSY 的人话引导分支。WP2 验收脚本的并发断言改为 informational（进程隔离事实）。
+- 决定：按 orca 真实语义实现；`uncertain` 的防重放主通道本来就是 `action.verification`（ComputerActionVerification），错误码只是补充。设计文档 §4 错误码清单以 shared `computerErrorCodeSchema` 为准。
+
+### DEV-080 「无 DB 迁移」不成立：approvals.kind 的 CHECK 需要重建
+
+- 状态：已落实
+- 阶段：计算机操控 WP4（D105）
+- 是否阻塞：是（不迁移则 computer_control 审批插入被 SQLite CHECK 拒绝，工具报 INTERNAL）
+- 问题：设计文档头部写「无 DB 迁移」——新 kind 落进 approvals 表的封闭 CHECK 枚举，必须按 0031/0036 流程重建表（`migrations/main/0062_computer_control.sql`）。
+- 影响范围：仅 `0062_computer_control.sql`（kind CHECK 追加一行）；无新表、无数据改写。
+- 决定：补迁移；集成测试（test/integration/computer-use.test.ts）以真实 DB 验证插入路径。
+
+### DEV-081 helper 公证不做「嵌入前单独 notarize」，由外层 .app 公证连带校验
+
+- 状态：已落实
+- 阶段：计算机操控 WP5 打包（D105）
+- 是否阻塞：否（notarytool 扫描整个 bundle，Resources 里签名缺失/无效的嵌套可执行文件本来就会让外层提交失败，helper 缺陷同样 fail-fast）
+- 问题：设计 §1 决策 7 与 §3 写「helper 嵌入主包前单独 notarize 并 staple」。helper 只会作为 `extraResources` 嵌入、从不独立分发：Gatekeeper 对嵌套代码的评估跟随外层 app 的公证票据，单独公证没有正确性收益，只是把同一次校验提前做一遍（外加每架构一次 notarytool 往返与 staple 维护成本）。
+- 影响范围：`scripts/dist.mjs` 新增 0c 步骤——每个 mac 目标架构强制新鲜构建 helper（`KEPCUP_MAC_RELEASE=1` → Developer ID + hardened runtime + timestamp，签名身份继承 CI 已导出的 `CSC_NAME`），绝不复用 dev 产物；release.yml 无需改动。附带发现：AMFI 的 entitlements 解析器不支持 XML 注释，`resources/entitlements.computer-use.mac.plist` 必须保持纯净结构（本地 dist 首跑即暴露）。
+- 决定：嵌套代码随外层公证校验（Apple 官方语义）；「真公证构建验证」归入 WP5 发布验收（CI 首个 release 构建通过即验收）。若未来 helper 需要脱离 app 独立分发，再补单独公证 + staple。
+
+### DEV-082 helper 显示文案品牌化：vendored main.swift 的第二处例外
+
+- 状态：已落实
+- 阶段：计算机操控 WP5 真机冒烟（D105，2026-10-31 用户反馈）
+- 是否阻塞：是（不改则用户与 Bot 直接看到竞品品牌——`get_app_state` 错误文案原样返回 "may need Orca Computer Use toggled off and on again"，权限引导窗口标题也挂 "Enable Orca Computer Use"）
+- 问题：todo/computer-use.md 硬约束「vendored 的 Swift helper 源码一行不改」（DEV-077 是第一例外），但 main.swift 里 12 处用户可见显示文案仍写 orca 品牌：3 条错误文案（667 / 714 / 1199）、权限引导窗口标题与副标题（3202 / 3328 / 3330 / 3432 / 3438 / 3439 / 3611 / 4023）、stderr 提示（4393）。构建脚本只改 Info.plist 层的显示名，源内文案够不到；TS 层无绕路（字符串由 helper 直接返回/渲染）。
+- 影响范围：仅 `Sources/OrcaComputerUseMacOS/main.swift` 显示字符串——`Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`（全局替换，计数校验）；另改写一处失效指引：错误文案让用户跑上游 CLI `orca computer permissions`（KepCup 无此命令），改为只指设置页。标识符（可执行名 `orca-computer-use-macos`、`ORCA_*` env、socket 前缀、`OrcaComputerUse*` 包名）零改动——协议与 peer 校验依赖。`swift test` 6/6；NOTICE.md「例外」小节同步。
+- 决定：品牌串随源码改（属本地化/品牌适配，与 DEV-077 同级的可回退最小例外）；上游跟进人工 diff 时需留意这两处例外文件的再应用。测试 fixture 里的 `/Applications/Orca Computer Use.app` 路径是 mock 数据，不改。

@@ -4,6 +4,7 @@ import {
   PROJECT_MEMBER_PREVIEW_MAX,
   newId,
   normalizeBotAvatarMask,
+  normalizeBotAvatarPadding,
   type Bot,
   type BotAvatarMask,
   type Conversation,
@@ -239,18 +240,29 @@ export class ProjectsService {
   memberPreviews(
     conversationId: string,
     limit: number = PROJECT_MEMBER_PREVIEW_MAX,
-  ): Array<{ id: string; name: string; avatar: string | null; avatarMask: BotAvatarMask }> {
+  ): Array<{
+    id: string;
+    name: string;
+    avatar: string | null;
+    avatarMask: BotAvatarMask;
+    avatarPadding: number;
+  }> {
     const rows = this.deps.db
       .prepare(
-        'select b.id as id, b.name as name, b.avatar as avatar, b.avatar_mask as avatarMask from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
+        'select b.id as id, b.name as name, b.avatar as avatar, b.avatar_mask as avatarMask, b.avatar_padding as avatarPadding from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
       )
       .all(conversationId, limit) as Array<{
       id: string;
       name: string;
       avatar: string | null;
       avatarMask: string | null;
+      avatarPadding: number | null;
     }>;
-    return rows.map((row) => ({ ...row, avatarMask: normalizeBotAvatarMask(row.avatarMask) }));
+    return rows.map((row) => ({
+      ...row,
+      avatarMask: normalizeBotAvatarMask(row.avatarMask),
+      avatarPadding: normalizeBotAvatarPadding(row.avatarPadding),
+    }));
   }
 
   /**

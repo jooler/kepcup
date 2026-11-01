@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import type { Memo } from '@kepcup/shared';
   import { MEMO_BODY_MAX_CHARS } from '@kepcup/shared';
-  import { ListPlus, Pin, PinOff, Sparkles, Trash2 } from '@lucide/svelte';
+  import { GripVertical, ListPlus, Pin, PinOff, Sparkles, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
@@ -225,6 +225,12 @@
     onkeydown={onKeydown}
   ></div>
   <div class="mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
+    <!-- 拖拽提示：整卡可拖（正文 contenteditable 除外，dnd-action 自动跳过可编辑目标）。 -->
+    <GripVertical
+      class="size-3 shrink-0 opacity-0 transition-opacity group-focus-within/memo:opacity-60 group-hover/memo:opacity-60"
+      aria-hidden="true"
+      data-testid="memo-drag-grip"
+    />
     {#if memo.pinned}
       <Pin class="size-3 shrink-0 text-amber-600" aria-hidden="true" />
     {/if}

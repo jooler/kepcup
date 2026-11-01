@@ -1,0 +1,7 @@
+{
+  "comment": "computer-use 编排层冒烟宿主（WP2 验收）。必须以真 Electron app 跑：sidecar 子进程连 helper 时的 peer 校验查父进程 bundle id（com.github.Electron 在上游信任列表内）。",
+  "name": "kepcup-computer-orchestration-smoke-host",
+  "private": true,
+  "type": "commonjs",
+  "main": "main.js"
+}

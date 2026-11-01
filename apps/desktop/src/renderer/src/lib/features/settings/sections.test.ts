@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { resolveSettingsSection, settingsSectionOpensExtensionMcp } from './sections';
+import { resolveSettingsSection, settingsSectionExtensionTarget } from './sections';
 
 describe('resolveSettingsSection', () => {
-  it('兜底旧深链 mcp / developer 到「通用」（正常由 shell 改开扩展中心 MCP）', () => {
+  it('兜底旧深链 mcp / developer / plugins 到「通用」（正常由 shell 改开扩展中心）', () => {
     expect(resolveSettingsSection('mcp')).toEqual({ section: 'general' });
     expect(resolveSettingsSection('developer')).toEqual({ section: 'general' });
+    expect(resolveSettingsSection('plugins')).toEqual({ section: 'general' });
   });
 
   it('其余分区原样返回', () => {
@@ -13,11 +14,18 @@ describe('resolveSettingsSection', () => {
   });
 });
 
-describe('settingsSectionOpensExtensionMcp', () => {
-  it('flags mcp and developer legacy deep links', () => {
-    expect(settingsSectionOpensExtensionMcp('mcp')).toBe(true);
-    expect(settingsSectionOpensExtensionMcp('developer')).toBe(true);
-    expect(settingsSectionOpensExtensionMcp('models')).toBe(false);
-    expect(settingsSectionOpensExtensionMcp('general')).toBe(false);
+describe('settingsSectionExtensionTarget', () => {
+  it('mcp / developer 旧深链改开扩展中心「已安装」的 MCP 筛选', () => {
+    expect(settingsSectionExtensionTarget('mcp')).toBe('mcp');
+    expect(settingsSectionExtensionTarget('developer')).toBe('mcp');
+  });
+
+  it('plugins 旧深链改开扩展中心「设置」页签（原设置插件分区已并入）', () => {
+    expect(settingsSectionExtensionTarget('plugins')).toBe('settings');
+  });
+
+  it('真实分区返回 null（正常打开设置分区）', () => {
+    expect(settingsSectionExtensionTarget('models')).toBeNull();
+    expect(settingsSectionExtensionTarget('general')).toBeNull();
   });
 });

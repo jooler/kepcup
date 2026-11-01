@@ -3,22 +3,27 @@
   import { shell } from '$lib/stores/shell.svelte';
   import ExtensionInstalled from './ExtensionInstalled.svelte';
   import ExtensionMarket from './ExtensionMarket.svelte';
+  import PluginsSection from '../settings/PluginsSection.svelte';
   import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
 
   /**
-   * 扩展中心的分组 tab 条 + 内容（市场 / 已安装）：
-   * ExtensionCenterDialog（宽屏弹框）与窄屏「扩展」tab 页共用，当前分组都在 shell store 里，
-   * 两边切换状态互通。
+   * 扩展中心的分组 tab 条 + 内容（市场 / 已安装 / 设置）：
+   * 宽屏设置页（设置 → 扩展中心分类）与窄屏「扩展」tab 页共用，当前分组都在
+   * shell store 里，两边切换状态互通。
    *
-   * D105 P4：两页签收敛。技能 / 连接 / MCP / 邮件由插件贡献、安装后自动归类，作为
+   * D105 P4：技能 / 连接 / MCP / 邮件由插件贡献、安装后自动归类，作为
    * 「已安装」列表顶部的筛选条件呈现；本机应用协作收编为已安装页的系统卡，旧
    * `localCollab` 深链由 shell 落到已安装页并滚动到该卡。旧技能目录死代码
    * （ExtensionSkills / skillMarket / skills.presets）已随本阶段删除。
+   *
+   * 「设置」页签：原设置「插件」分区（插件供应链与更新设置）并入扩展中心后的落点，
+   * 渲染与设置分区同一份 PluginsSection。
    */
 
   const TAB_LABEL_KEYS = {
     market: 'extensionCenter.tabs.market',
     installed: 'extensionCenter.tabs.installed',
+    settings: 'extensionCenter.tabs.settings',
   } as const;
 
   const tab = $derived(shell.extensionCenterTab);
@@ -58,6 +63,8 @@
   data-testid="extension-center-tabs"
 >
   {#each EXTENSION_CENTER_TABS as item (item)}
+    <!-- 「设置」是管理动作、不是内容分组：ml-auto 推到行右端，与市场 / 已安装隔开
+         （DOM 顺序不变，方向键仍按 market → installed → settings 循环）。 -->
     <button
       type="button"
       role="tab"
@@ -65,8 +72,9 @@
       aria-selected={tab === item}
       aria-controls={panelId(item)}
       tabindex={tab === item ? 0 : -1}
-      class="-mb-px shrink-0 border-b-2 px-3 py-1.5 text-sm whitespace-nowrap transition-colors {tab ===
-      item
+      class="-mb-px shrink-0 border-b-2 px-3 py-1.5 text-sm whitespace-nowrap transition-colors
+        {item === 'settings' ? 'ml-auto pl-4' : ''}
+        {tab === item
         ? 'border-foreground font-medium text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
       onclick={() => select(item)}
@@ -86,6 +94,15 @@
 >
   {#if tab === 'market'}
     <ExtensionMarket />
+  {:else if tab === 'settings'}
+    <!-- 与市场 / 已安装同构：内容自己滚动。高度不受限时（宽屏设置页由外层
+         内容区滚动）自然撑开，窄屏「扩展」tab 页里 flex-1 收敛出内层滚动。 -->
+    <div
+      class="min-h-0 w-full flex-1 overflow-y-auto pt-3 pr-0.5 pb-4"
+      data-testid="extension-center-settings"
+    >
+      <PluginsSection />
+    </div>
   {:else}
     <ExtensionInstalled />
   {/if}

@@ -52,6 +52,14 @@ metadata 行按可用字段展示：
 - 打开详情页时补拉一次会话审批（`permissions.reloadApprovals`，只并入审批记录、不动右栏数据），覆盖连接中断期间错过的事件。
 - 焦点与键盘：打开详情页时已有待审批卡、或新卡到达时，焦点交给队首卡片（与对话一致；此时返回键不抢焦点）；卡片聚焦时 Esc 先被卡片消费（拒绝），不会误退详情页。
 
+## 任务提问卡（ask_user）
+
+任务用 `ask_user` 提问时，提问卡是会话里的一条 `task_question` 系统事件消息（不在 `run_steps` 里）；执行过程页打开期间对话被隐藏，提问同样会在页内消失。与审批卡同一思路，执行过程页在时间线下方（审批条之上）固定渲染该任务未答的提问卡（`task-run-question`）：
+
+- 数据源是当前会话 session 的 messages（主页面回退 `chat.main`，卡片弹层是弹层自己的 ChatSession），经 `pendingTaskQuestionOf(messages, taskId)` 取该任务绑定、`content.answer` 尚未回写的最新一条；`message.created` / `message.updated` 事件保持与对话同源实时。
+- 卡片复用对话里的 `TaskQuestionCard`，点选 / 多选 / 表单回答直接注入任务（`tasks.answer`），答完卡带上 `answer`，提问条随之收起；没有未答提问或任务已终态（提问作废，时间线里有终态说明）时不渲染。
+- core 保证一个任务同时最多一个未答问题（上一个没答时 `ask_user` 直接拒绝），提问条至多一张卡。
+
 ## 消息列表
 
 数据源是 `runs.steps` RPC（`RunStep[]`），按 `seq` 升序渲染。步骤到列表条目的映射：
@@ -95,10 +103,10 @@ metadata 行按可用字段展示：
 
 | 文件 | 内容 |
 |---|---|
-| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、审批卡条 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、提问卡条、审批卡条 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划入口：右上角绿色「任务清单」按钮 + 浮层（`update_plan` 的最新计划；完成计数、只读清单） |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 工具调用行（摘要、状态、参数 / 结果展开） |
-| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化、审批条会话回退 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化、审批条会话回退、待答提问卡筛选 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts` | 上述逻辑的单测 |
 
 i18n 文案在 `apps/desktop/src/renderer/src/lib/i18n/locales/zh-CN.ts` 的 `task.run.*`。

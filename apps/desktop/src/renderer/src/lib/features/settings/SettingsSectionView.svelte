@@ -16,19 +16,24 @@
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
+  import ComputerUseSection from './ComputerUseSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
-  import PluginsSection from './PluginsSection.svelte';
-  import type { SettingsViewSection } from './settings-sections-list';
+  import ExtensionCenterBody from '$lib/features/extension-center/ExtensionCenterBody.svelte';
+  import type { SettingsPageSection } from './sections';
 
   /**
-   * 设置分区内容（分区 id → 对应分区组件，含 data-settings-section /
-   * data-settings-anchor 锚点）：SettingsDialog（宽屏弹框）与 NarrowSettings
-   * （窄屏全屏页）共用。容器与滚动归调用方。
+   * 设置页主体内容（分类 id → 对应分区组件，含 data-settings-section /
+   * data-settings-anchor 锚点）：宽屏设置页（SettingsPage）与窄屏设置页
+   * （NarrowSettings）共用。容器与滚动归调用方。
+   *
+   * 'extension-center' 是宽屏设置页的伪分区：渲染扩展中心主体（市场 / 已安装 /
+   * 设置页签），不带 data-settings-section——它不是设置分区，深链走
+   * extension-center surface（shared 覆盖测试按扩展中心页签校验）。
    */
-  let { section }: { section: SettingsViewSection } = $props();
+  let { section }: { section: SettingsPageSection } = $props();
 </script>
 
 {#if section === 'general'}
@@ -65,6 +70,12 @@
   <div data-settings-section="browser" class="space-y-6">
     <div data-settings-anchor="browser-profiles">
       <BrowserProfilesSection />
+    </div>
+  </div>
+{:else if section === 'computer-use'}
+  <div data-settings-section="computer-use" class="space-y-6">
+    <div data-settings-anchor="computer-use">
+      <ComputerUseSection />
     </div>
   </div>
 {:else if section === 'agents'}
@@ -112,10 +123,8 @@
       <AllowlistSection />
     </div>
   </div>
-{:else if section === 'plugins'}
-  <div data-settings-section="plugins" class="space-y-6">
-    <PluginsSection />
-  </div>
+{:else if section === 'extension-center'}
+  <ExtensionCenterBody />
 {:else if section === 'usage'}
   <div data-settings-section="usage">
     <UsageSection />

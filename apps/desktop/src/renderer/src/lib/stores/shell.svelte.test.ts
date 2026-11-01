@@ -16,30 +16,33 @@ function setNarrow(narrow: boolean): void {
 beforeEach(() => {
   setNarrow(false);
   shell.closeSettings();
-  shell.extensionCenterOpen = false;
   shell.searchOpen = false;
   narrowLayout.tab = 'chats';
   narrowLayout.botDetailOpen = false;
 });
 
-describe('closeSettings 统一收起宽屏弹框与窄屏设置页（审查 #2）', () => {
+describe('closeSettings 统一收起宽屏设置页与窄屏设置页（审查 #2）', () => {
   it('窄屏设置页开着时 closeSettings 关掉它（设置里「去扩展中心」不再被 z-50 的设置页盖住）', () => {
     setNarrow(true);
     shell.openSettings('models');
     expect(shell.narrowSettingsOpen).toBe(true);
-    // 扩展中心跳转：先 closeSettings 再 openExtensionCenter。
+    // 扩展中心跳转：先 closeSettings 再 openExtensionCenter（窄屏直达「扩展」tab）。
     shell.closeSettings();
     shell.openExtensionCenter('connections');
     expect(shell.narrowSettingsOpen).toBe(false);
     expect(shell.narrowSettingsSection).toBeNull();
-    expect(shell.extensionCenterOpen).toBe(true);
+    expect(narrowLayout.tab).toBe('extensions');
+    expect(shell.settingsOpen).toBe(false);
   });
 
-  it('宽屏弹框同样关闭', () => {
+  it('宽屏设置页同样关闭（mainView 不受影响，回到打开前的视图）', () => {
+    shell.mainView = 'workbench';
     shell.openSettings('general');
     expect(shell.settingsOpen).toBe(true);
+    expect(shell.mainView).toBe('workbench');
     shell.closeSettings();
     expect(shell.settingsOpen).toBe(false);
+    shell.mainView = 'chats';
   });
 });
 
@@ -57,7 +60,7 @@ describe('宽 / 窄切换统一复位（审查 #7）', () => {
     expect(narrowLayout.tab).toBe('chats');
   });
 
-  it('宽屏弹框开着 → 拉窄复位：弹框不留在窄屏里', () => {
+  it('宽屏设置页开着 → 拉窄复位：页面不留在窄屏里', () => {
     shell.openSettings('models');
     setNarrow(true);
     shell.resetForLayoutChange();
@@ -96,20 +99,46 @@ describe('窄屏设置页返回（审查 #11d）', () => {
   });
 });
 
-describe('窄屏深链路由', () => {
-  it('openSettings(mcp/developer) 旧深链改开扩展中心「已安装」的 MCP 筛选，不打开设置', () => {
-    shell.settingsOpen = true;
+describe('旧深链改开扩展中心（设置页里的扩展中心分类）', () => {
+  it('openSettings(mcp/developer) 改开扩展中心「已安装」的 MCP 筛选', () => {
     shell.openSettings('mcp');
-    expect(shell.settingsOpen).toBe(false);
-    expect(shell.extensionCenterOpen).toBe(true);
+    expect(shell.settingsOpen).toBe(true);
+    expect(shell.settingsSection).toBe('extension-center');
     expect(shell.extensionCenterTab).toBe('installed');
     expect(shell.extensionCenterFilter).toBe('mcp');
 
-    shell.extensionCenterOpen = false;
     shell.openSettings('developer');
-    expect(shell.extensionCenterOpen).toBe(true);
+    expect(shell.settingsOpen).toBe(true);
+    expect(shell.settingsSection).toBe('extension-center');
     expect(shell.extensionCenterTab).toBe('installed');
     expect(shell.extensionCenterFilter).toBe('mcp');
+  });
+
+  it('openSettings(plugins) 旧深链改开扩展中心「设置」页签，带分区内锚点', () => {
+    shell.openSettings('plugins', 'plugins-updates');
+    expect(shell.settingsOpen).toBe(true);
+    expect(shell.settingsSection).toBe('extension-center');
+    expect(shell.extensionCenterTab).toBe('settings');
+    expect(shell.settingsAnchor).toBe('plugins-updates');
+  });
+
+  it('openExtensionCenter 宽屏打开设置页的扩展中心分类；带锚点落到 settings 页签', () => {
+    shell.openExtensionCenter();
+    expect(shell.settingsOpen).toBe(true);
+    expect(shell.settingsSection).toBe('extension-center');
+    expect(shell.extensionCenterTab).toBe('installed');
+
+    shell.openExtensionCenter('settings');
+    expect(shell.settingsOpen).toBe(true);
+    expect(shell.extensionCenterTab).toBe('settings');
+  });
+
+  it('openExtensionCenter 在窄屏直达底部「扩展」tab，不打开宽屏设置页', () => {
+    setNarrow(true);
+    shell.openExtensionCenter('market');
+    expect(narrowLayout.tab).toBe('extensions');
+    expect(shell.settingsOpen).toBe(false);
+    expect(shell.extensionCenterTab).toBe('market');
   });
 
   it('openSettings("contacts") 在窄屏切通讯录 tab，不打开设置页', () => {

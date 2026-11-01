@@ -3,6 +3,7 @@
   import {
     ArrowDown,
     ArrowUp,
+    ArrowLeft,
     Search,
     Plus,
     Users,
@@ -45,7 +46,6 @@
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
   import BotTemplateImportDialog from '$lib/features/bot-template/BotTemplateImportDialog.svelte';
   import { endpointSupports } from '$lib/features/web-shell/endpoint';
   import { remotePairing } from '$lib/features/remote/remote-pairing.svelte';
@@ -53,6 +53,11 @@
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
   import { sidebarSections } from './sidebar-sections.svelte';
   import { workbenchIconDarkUrl, workbenchIconLightUrl } from './sidebar-icons';
+  import {
+    asIconComponent,
+    visibleSettingsSections,
+  } from '$lib/features/settings/settings-sections-list';
+  import type { SettingsPageSection } from '$lib/features/settings/sections';
   import {
     UNASSIGNED_SECTION_ID,
     SECTION_NAME_MAX,
@@ -85,7 +90,9 @@
    * 置顶条目固定在组内最前。管理操作（置顶 / 移动到分组 / 重命名 /
    * 复制会话 id / 群设置 / 删除）收进右键上下文菜单，不再有常驻「…」按钮。
    * 新建只保留「+」面板里的对话式新建和新建项目组。搜索按钮打开全局
-   * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
+   * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。
+   * 设置页（宽屏整页视图）打开时，左栏内容区换成设置分类列表（顶部「返回对话」），
+   * 底部 footer（头像菜单 / 扩展中心 / 更新圆钮）保持不变。
    *
    * 工作台入口（D90）在管家之上：只改 `shell.mainView`，不清当前会话；对话行的选中高亮
    * 据此派生（工作台打开时没有对话高亮）。窄屏（本组件复用为对话 tab）暂不显示入口。
@@ -111,6 +118,48 @@
   const workbenchActive = $derived(shell.workbenchShown);
   /** 设置 → 通用「显示工作台」；未加载快照前按默认关闭，避免闪一下。 */
   const workbenchNavVisible = $derived(settingsStore.settings?.workbenchEnabled === true);
+
+  /**
+   * 设置页（宽屏整页视图）打开时，左栏内容区换成分类列表：顶部「返回对话」退出
+   * 设置，随后是分类条目——「个人资料」之后是「扩展中心」（伪分区，主体渲染扩展
+   * 中心的市场 / 已安装 / 设置页签），其下分隔线与「通用」开始的设置分区隔开。
+   * 图标模式（收窄到最小宽）下同一份列表只剩图标 + hover 提示。底部 footer
+   * （头像菜单 / 扩展中心 / 更新圆钮）两种形态都保留。
+   */
+
+  /** 设置页是否接管左栏：窄屏没有整页设置（NarrowSettings 全屏页），恒为 false。 */
+  const settingsPage = $derived(!narrow && shell.settingsOpen);
+
+  interface SettingsNavEntry {
+    id: SettingsPageSection;
+    label: string;
+    icon: LucideIcon;
+  }
+
+  /**
+   * 设置分类条目：分区清单的事实源在 settings-section-labels（可见分区，宽屏全集），
+   * 这里在「个人资料」之后插入「扩展中心」。主体内容渲染在 SettingsSectionView。
+   */
+  const settingsNavEntries = $derived.by(() => {
+    const entries: SettingsNavEntry[] = visibleSettingsSections(false).map((section) => ({
+      id: section.id,
+      label: section.label,
+      icon: section.icon,
+    }));
+    const profileIndex = entries.findIndex((entry) => entry.id === 'profile');
+    entries.splice(profileIndex + 1, 0, {
+      id: 'extension-center',
+      label: t('sidebar.extensionCenter'),
+      icon: Blocks,
+    });
+    return entries;
+  });
+
+  /** 点分类条目：清掉可能残留的深链锚点（换分类不滚动），再落到目标分类。 */
+  function selectSettingsSection(id: SettingsPageSection): void {
+    shell.settingsAnchor = null;
+    shell.settingsSection = id;
+  }
 
   $effect(() => {
     // 设置快照未到时不要抢先复位：启动恢复可能已经按记忆切到工作台，
@@ -758,11 +807,95 @@
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
       mask={conversation.bot?.avatarMask ?? null}
+      padding={conversation.bot?.avatarPadding ?? null}
       class="size-11"
       fallbackClass="text-base"
       testId="conversation-avatar"
     />
   {/if}
+{/snippet}
+
+<!-- 设置页分类条目（展开/图标两模式共用；激活态同对话行的本地覆盖底色）。 -->
+{#snippet settingsNavEntry(entry: SettingsNavEntry, iconMode: boolean)}
+  {@const Icon = asIconComponent(entry.icon)}
+  {@const active = shell.settingsSection === entry.id}
+  {#if iconMode}
+    <Tooltip.Root>
+      <Tooltip.Trigger
+        class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
+          transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+          dark:data-active:bg-[oklch(0.16_0_0)]"
+        data-active={active ? 'true' : undefined}
+        aria-label={entry.label}
+        onclick={() => selectSettingsSection(entry.id)}
+        data-testid={`settings-nav-${entry.id}`}
+      >
+        <Icon class="size-5" />
+      </Tooltip.Trigger>
+      <Tooltip.Content side="right">{entry.label}</Tooltip.Content>
+    </Tooltip.Root>
+  {:else}
+    <button
+      type="button"
+      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors
+        {active
+        ? 'bg-accent text-accent-foreground'
+        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+      onclick={() => selectSettingsSection(entry.id)}
+      data-testid={`settings-nav-${entry.id}`}
+    >
+      <Icon class="size-4" />
+      <span class="min-w-0 flex-1 truncate">{entry.label}</span>
+    </button>
+  {/if}
+{/snippet}
+
+<!-- 设置页左栏分类列表：顶部「返回对话」退出设置（closeSettings 回到打开前的
+     对话 / 工作台），「个人资料」之后是「扩展中心」，其下分隔线隔开设置分区。
+     iconMode 是收窄到最小宽的图标形态（同一份清单只剩图标 + hover 提示）。 -->
+{#snippet settingsNav(iconMode: boolean)}
+  <div
+    class="flex min-h-0 flex-col {iconMode ? 'items-center gap-1' : 'gap-0.5'}"
+    data-testid="settings-nav"
+  >
+    {#if iconMode}
+      <Tooltip.Root>
+        <Tooltip.Trigger
+          class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
+            transition-colors hover:bg-sidebar-accent"
+          aria-label={t('settings.backToChats')}
+          onclick={() => shell.closeSettings()}
+          data-testid="settings-nav-back"
+        >
+          <ArrowLeft class="size-5" />
+        </Tooltip.Trigger>
+        <Tooltip.Content side="right">{t('settings.backToChats')}</Tooltip.Content>
+      </Tooltip.Root>
+      <div role="separator" class="my-1 h-px w-6 shrink-0 bg-foreground/10"></div>
+    {:else}
+      <button
+        type="button"
+        class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-muted-foreground
+          transition-colors hover:bg-accent/50 hover:text-foreground"
+        onclick={() => shell.closeSettings()}
+        data-testid="settings-nav-back"
+      >
+        <ArrowLeft class="size-4" />
+        {t('settings.backToChats')}
+      </button>
+      <div role="separator" class="mx-1 my-2 h-px shrink-0 bg-foreground/10"></div>
+    {/if}
+    {#each settingsNavEntries as entry (entry.id)}
+      {@render settingsNavEntry(entry, iconMode)}
+      {#if entry.id === 'extension-center'}
+        {#if iconMode}
+          <div role="separator" class="my-1 h-px w-6 shrink-0 bg-foreground/10"></div>
+        {:else}
+          <div role="separator" class="mx-3 my-2 h-px shrink-0 bg-foreground/10"></div>
+        {/if}
+      {/if}
+    {/each}
+  </div>
 {/snippet}
 
 {#snippet conversationRow(conversation: ConversationView)}
@@ -924,206 +1057,215 @@
   <Sidebar.Content class="px-2">
     <Sidebar.Group>
       <Sidebar.GroupContent>
-        {#if !narrow && workbenchNavVisible}
-          <!-- 工作台入口（D90）：管家之上，不参与分组；图标模式只剩图标。关闭时入口与分隔线一并隐藏。 -->
-          {#if collapsed}
-            <Sidebar.Menu class="items-center">
-              <Sidebar.MenuItem class="w-auto">
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.16_0_0)]"
-                    data-active={workbenchActive ? 'true' : undefined}
-                    aria-label={t('sidebar.workbench')}
-                    onclick={() => shell.openWorkbench()}
-                    data-testid="workbench-nav"
-                  >
-                    {@render workbenchIcon()}
-                  </Tooltip.Trigger>
-                  <Tooltip.Content side="right">{t('sidebar.workbench')}</Tooltip.Content>
-                </Tooltip.Root>
-              </Sidebar.MenuItem>
-            </Sidebar.Menu>
-          {:else}
-            <Sidebar.Menu>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton
-                  class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
-                    dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
-                  isActive={workbenchActive}
-                  onclick={() => shell.openWorkbench()}
-                  data-testid="workbench-nav"
-                >
-                  {@render workbenchIcon()}
-                  <span class="min-w-0 flex-1 truncate text-left text-sm">
-                    {t('sidebar.workbench')}
-                  </span>
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-            </Sidebar.Menu>
-          {/if}
-          <!-- 不用 Sidebar.Separator：其 data-horizontal 样式对不上 bits-ui 的
-               data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
-          <div
-            role="separator"
-            class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
-            data-testid="workbench-nav-separator"
-          ></div>
-        {/if}
-        {#if chat.conversations.length === 0}
-          {#if !collapsed}
-            <p class="px-3 py-2 text-xs text-muted-foreground">{t('sidebar.chatsEmpty')}</p>
-          {/if}
-        {:else if collapsed}
-          <!-- 图标模式：只剩头像，名称/预览走 hover 提示；未读/待确认/执行中
-               叠在头像角上（待确认优先于未读，都是必须看见的信号）。 -->
-          {#each iconGroups as group, groupIndex (group.id)}
-            <!-- 组名在图标模式隐藏，分组之间用分隔线区分（同工作台下方的分隔线）。 -->
-            {#if groupIndex > 0}
-              <div
-                role="separator"
-                class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
-                data-testid="sidebar-group-separator"
-              ></div>
-            {/if}
-            <Sidebar.Menu class="items-center">
-              {#each group.conversations as conversation (conversation.id)}
+        {#if settingsPage}
+          <!-- 设置页接管左栏：分类列表替换对话列表（工作台入口一并隐藏）。 -->
+          {@render settingsNav(collapsed)}
+        {:else}
+          {#if !narrow && workbenchNavVisible}
+            <!-- 工作台入口（D90）：管家之上，不参与分组；图标模式只剩图标。关闭时入口与分隔线一并隐藏。 -->
+            {#if collapsed}
+              <Sidebar.Menu class="items-center">
                 <Sidebar.MenuItem class="w-auto">
                   <Tooltip.Root>
                     <Tooltip.Trigger
                       class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                        transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                        dark:data-active:bg-[oklch(0.16_0_0)]"
-                      data-active={activeConversationId === conversation.id ? 'true' : undefined}
-                      onclick={() => void selectConversation(conversation.id)}
-                      oncontextmenu={(event) => openContextMenu(event, conversation.id)}
-                      data-testid={`conversation-item-${conversation.id}`}
+                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+                      dark:data-active:bg-[oklch(0.16_0_0)]"
+                      data-active={workbenchActive ? 'true' : undefined}
+                      aria-label={t('sidebar.workbench')}
+                      onclick={() => shell.openWorkbench()}
+                      data-testid="workbench-nav"
                     >
-                      {@render conversationAvatar(conversation)}
-                      {#if (conversation.runningBotIds?.length ?? 0) > 0}
-                        <span
-                          class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
-                          title={t('sidebar.runningSuffix')}
-                          data-testid="running-dot"
-                        ></span>
-                      {/if}
-                      {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-                        <span
-                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
-                          title={t('sidebar.pendingSuffix')}
-                          data-testid="pending-badge"
-                        >
-                          {permissions.pendingByConversation[conversation.id]}
-                        </span>
-                      {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
-                        <span
-                          class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
-                          data-testid="unread-badge"
-                        >
-                          {conversation.unreadCount}
-                        </span>
-                      {/if}
+                      {@render workbenchIcon()}
                     </Tooltip.Trigger>
-                    <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
-                         名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
-                    <Tooltip.Content
-                      side="right"
-                      class="flex max-w-64 flex-col items-stretch gap-0.5"
-                    >
-                      <span class="truncate text-sm">{nameOf(conversation)}</span>
-                      {#if previewOf(conversation).length > 0}
-                        <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
-                      {/if}
-                    </Tooltip.Content>
+                    <Tooltip.Content side="right">{t('sidebar.workbench')}</Tooltip.Content>
                   </Tooltip.Root>
                 </Sidebar.MenuItem>
-              {/each}
-            </Sidebar.Menu>
-          {/each}
-        {:else}
-          {#if sectionLayout.showHeaders && butlerConversations.length > 0}
-            <!-- 管家不归属任何分组，固定在分组标题之上。 -->
-            <Sidebar.Menu class="mb-4">
-              {#each butlerConversations as conversation (conversation.id)}
-                {@render conversationRow(conversation)}
-              {/each}
-            </Sidebar.Menu>
+              </Sidebar.Menu>
+            {:else}
+              <Sidebar.Menu>
+                <Sidebar.MenuItem>
+                  <Sidebar.MenuButton
+                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
+                    dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
+                    isActive={workbenchActive}
+                    onclick={() => shell.openWorkbench()}
+                    data-testid="workbench-nav"
+                  >
+                    {@render workbenchIcon()}
+                    <span class="min-w-0 flex-1 truncate text-left text-sm">
+                      {t('sidebar.workbench')}
+                    </span>
+                  </Sidebar.MenuButton>
+                </Sidebar.MenuItem>
+              </Sidebar.Menu>
+            {/if}
+            <!-- 不用 Sidebar.Separator：其 data-horizontal 样式对不上 bits-ui 的
+               data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
+            <div
+              role="separator"
+              class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+              data-testid="workbench-nav-separator"
+            ></div>
           {/if}
-          {#each sectionLayout.groups as group, groupIndex (group.id)}
-            {@const rows = conversationsInGroup(group.id, group.conversations)}
-            <div class="relative {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}">
-              {#if sectionLayout.showHeaders}
-                {#if sectionDrag !== null && sectionDrag.beforeId === group.id && !dropIsNoop(sectionDrag.beforeId, sectionDrag.id)}
+          {#if chat.conversations.length === 0}
+            {#if !collapsed}
+              <p class="px-3 py-2 text-xs text-muted-foreground">{t('sidebar.chatsEmpty')}</p>
+            {/if}
+          {:else if collapsed}
+            <!-- 图标模式：只剩头像，名称/预览走 hover 提示；未读/待确认/执行中
+               叠在头像角上（待确认优先于未读，都是必须看见的信号）。 -->
+            {#each iconGroups as group, groupIndex (group.id)}
+              <!-- 组名在图标模式隐藏，分组之间用分隔线区分（同工作台下方的分隔线）。 -->
+              {#if groupIndex > 0}
+                <div
+                  role="separator"
+                  class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+                  data-testid="sidebar-group-separator"
+                ></div>
+              {/if}
+              <Sidebar.Menu class="items-center">
+                {#each group.conversations as conversation (conversation.id)}
+                  <Sidebar.MenuItem class="w-auto">
+                    <Tooltip.Root>
+                      <Tooltip.Trigger
+                        class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
+                        transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+                        dark:data-active:bg-[oklch(0.16_0_0)]"
+                        data-active={activeConversationId === conversation.id ? 'true' : undefined}
+                        onclick={() => void selectConversation(conversation.id)}
+                        oncontextmenu={(event) => openContextMenu(event, conversation.id)}
+                        data-testid={`conversation-item-${conversation.id}`}
+                      >
+                        {@render conversationAvatar(conversation)}
+                        {#if (conversation.runningBotIds?.length ?? 0) > 0}
+                          <span
+                            class="absolute right-0.5 bottom-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-sidebar"
+                            title={t('sidebar.runningSuffix')}
+                            data-testid="running-dot"
+                          ></span>
+                        {/if}
+                        {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+                          <span
+                            class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
+                            title={t('sidebar.pendingSuffix')}
+                            data-testid="pending-badge"
+                          >
+                            {permissions.pendingByConversation[conversation.id]}
+                          </span>
+                        {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
+                          <span
+                            class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
+                            data-testid="unread-badge"
+                          >
+                            {conversation.unreadCount}
+                          </span>
+                        {/if}
+                      </Tooltip.Trigger>
+                      <!-- 套件浮层基类是 inline-flex（横排）：这里改列方向，
+                         名称一行、单行预览一行，超宽各自截断（上限 16rem）。 -->
+                      <Tooltip.Content
+                        side="right"
+                        class="flex max-w-64 flex-col items-stretch gap-0.5"
+                      >
+                        <span class="truncate text-sm">{nameOf(conversation)}</span>
+                        {#if previewOf(conversation).length > 0}
+                          <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
+                        {/if}
+                      </Tooltip.Content>
+                    </Tooltip.Root>
+                  </Sidebar.MenuItem>
+                {/each}
+              </Sidebar.Menu>
+            {/each}
+          {:else}
+            {#if sectionLayout.showHeaders && butlerConversations.length > 0}
+              <!-- 管家不归属任何分组，固定在分组标题之上。 -->
+              <Sidebar.Menu class="mb-4">
+                {#each butlerConversations as conversation (conversation.id)}
+                  {@render conversationRow(conversation)}
+                {/each}
+              </Sidebar.Menu>
+            {/if}
+            {#each sectionLayout.groups as group, groupIndex (group.id)}
+              {@const rows = conversationsInGroup(group.id, group.conversations)}
+              <div class="relative {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}">
+                {#if sectionLayout.showHeaders}
+                  {#if sectionDrag !== null && sectionDrag.beforeId === group.id && !dropIsNoop(sectionDrag.beforeId, sectionDrag.id)}
+                    <div
+                      class="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-foreground/70"
+                      data-testid="section-drop-line"
+                    ></div>
+                  {/if}
+                  {#if renamingSectionId === group.id}
+                    <form
+                      onsubmit={(event) => {
+                        event.preventDefault();
+                        commitRename(group.id);
+                      }}
+                    >
+                      <Input
+                        bind:value={renameDraft}
+                        bind:ref={renameInput}
+                        maxlength={SECTION_NAME_MAX}
+                        class="h-8 text-sm"
+                        data-testid={`section-rename-input-${group.id}`}
+                        onkeydown={cancelRename}
+                        onblur={() => commitRename(group.id)}
+                      />
+                    </form>
+                  {:else}
+                    <button
+                      type="button"
+                      class="flex w-full touch-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground select-none hover:bg-sidebar-accent hover:text-foreground
+                      {sectionDrag?.id === group.id
+                        ? 'cursor-grabbing opacity-50'
+                        : 'cursor-pointer'}"
+                      aria-expanded={!group.collapsed}
+                      data-section-header
+                      data-section-id={group.id}
+                      data-testid={`section-header-${group.id}`}
+                      onclick={() => onSectionClick(group.id)}
+                      onpointerdown={(event) => onSectionPointerDown(event, group.id)}
+                      oncontextmenu={(event) => openSectionMenu(event, group.id)}
+                    >
+                      <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
+                      {#if group.collapsed}
+                        <span
+                          class="shrink-0 tabular-nums"
+                          data-testid={`section-count-${group.id}`}
+                        >
+                          {group.count}
+                        </span>
+                      {/if}
+                    </button>
+                  {/if}
+                {/if}
+                {#if !group.collapsed && rows.length > 0}
+                  <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
+                    {#each rows as conversation (conversation.id)}
+                      {@render conversationRow(conversation)}
+                    {/each}
+                  </Sidebar.Menu>
+                {/if}
+                {#if sectionLayout.showHeaders && groupIndex === sectionLayout.groups.length - 1 && sectionDrag !== null && sectionDrag.beforeId === null && !dropIsNoop(null, sectionDrag.id)}
                   <div
-                    class="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-foreground/70"
+                    class="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-foreground/70"
                     data-testid="section-drop-line"
                   ></div>
                 {/if}
-                {#if renamingSectionId === group.id}
-                  <form
-                    onsubmit={(event) => {
-                      event.preventDefault();
-                      commitRename(group.id);
-                    }}
-                  >
-                    <Input
-                      bind:value={renameDraft}
-                      bind:ref={renameInput}
-                      maxlength={SECTION_NAME_MAX}
-                      class="h-8 text-sm"
-                      data-testid={`section-rename-input-${group.id}`}
-                      onkeydown={cancelRename}
-                      onblur={() => commitRename(group.id)}
-                    />
-                  </form>
-                {:else}
-                  <button
-                    type="button"
-                    class="flex w-full touch-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground select-none hover:bg-sidebar-accent hover:text-foreground
-                      {sectionDrag?.id === group.id
-                      ? 'cursor-grabbing opacity-50'
-                      : 'cursor-pointer'}"
-                    aria-expanded={!group.collapsed}
-                    data-section-header
-                    data-section-id={group.id}
-                    data-testid={`section-header-${group.id}`}
-                    onclick={() => onSectionClick(group.id)}
-                    onpointerdown={(event) => onSectionPointerDown(event, group.id)}
-                    oncontextmenu={(event) => openSectionMenu(event, group.id)}
-                  >
-                    <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
-                    {#if group.collapsed}
-                      <span class="shrink-0 tabular-nums" data-testid={`section-count-${group.id}`}>
-                        {group.count}
-                      </span>
-                    {/if}
-                  </button>
-                {/if}
-              {/if}
-              {#if !group.collapsed && rows.length > 0}
-                <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
-                  {#each rows as conversation (conversation.id)}
-                    {@render conversationRow(conversation)}
-                  {/each}
-                </Sidebar.Menu>
-              {/if}
-              {#if sectionLayout.showHeaders && groupIndex === sectionLayout.groups.length - 1 && sectionDrag !== null && sectionDrag.beforeId === null && !dropIsNoop(null, sectionDrag.id)}
-                <div
-                  class="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-foreground/70"
-                  data-testid="section-drop-line"
-                ></div>
-              {/if}
-            </div>
-          {/each}
+              </div>
+            {/each}
+          {/if}
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
   </Sidebar.Content>
 
   <!-- 底部 footer 窄屏隐藏：扩展中心（底部 tab「扩展」）与用户菜单（「我」页）
-       移到了全局 tab 栏。 -->
-  {#if !narrow}
+       移到了全局 tab 栏。设置页打开时同样隐藏：左栏只剩设置分类列表（头像 /
+       扩展中心 / 更新圆钮等入口退出设置后回来）。 -->
+  {#if !narrow && !settingsPage}
     <Sidebar.Footer>
       {#if collapsed}
         <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。 -->
@@ -1237,8 +1379,8 @@
           <button
             type="button"
             class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
-              rounded-full border border-border bg-white dark:bg-accent px-3 text-sm
-              text-muted-foreground shadow-none transition-colors hover:text-foreground"
+              rounded-full border border-border bg-white px-3 text-sm text-muted-foreground
+              shadow-none transition-colors hover:text-foreground dark:bg-accent"
             onclick={() => shell.openExtensionCenter()}
             aria-label={t('sidebar.extensionCenter')}
             title={t('sidebar.extensionCenter')}
@@ -1333,6 +1475,7 @@
             name={bot.name}
             avatar={bot.avatar}
             mask={bot.avatarMask}
+            padding={bot.avatarPadding}
             class="size-7"
             fallbackClass="text-xs"
           />
@@ -1602,5 +1745,4 @@
   </div>
 {/if}
 
-<ExtensionCenterDialog bind:open={shell.extensionCenterOpen} />
 <BotTemplateImportDialog bind:open={templateImportOpen} />

@@ -24,6 +24,7 @@ export const SETTING_GROUP_TITLES: Readonly<Record<SettingGroup, string>> = {
   skills: '技能',
   schedules: '定时与监看',
   browser: '浏览器',
+  computer: '计算机操控',
   project: '项目组设置',
   workdir: '工作目录设置',
   hardware: '硬件',

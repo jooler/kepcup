@@ -120,7 +120,7 @@ async function giveMockProviderAKey(page: Page): Promise<void> {
     timeout: 15_000,
   });
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 }
 
 function settingCard(page: Page, itemId: string) {
