@@ -49,8 +49,13 @@
   let cropFile = $state<File | null>(null);
   let node = $state<HTMLDivElement | null>(null);
 
-  // 当前形状：只有预置头像才有；上传态没有形状，预置网格不画选中环。
-  const selectedShape = $derived(parsePresetAvatar(bot.avatar)?.shape ?? null);
+  // 遮罩切换只对上传头像露出：预置头像自带轮廓，改形状没有意义。
+  const uploadedFile = $derived(parseUploadedAvatar(bot.avatar));
+  // 当前形状：预置头像用其形状。尚未设置头像时视为第一个形状（重置目标），
+  // 选择器画出选中环。上传态没有形状，预置网格不画选中环。
+  const selectedShape = $derived(
+    parsePresetAvatar(bot.avatar)?.shape ?? (uploadedFile === null ? AVATAR_SHAPES[0]! : null),
+  );
   /**
    * 当前强调色：显式 `accentColor` → 预置头像内嵌色 → 默认「黑白」。上传头像不会
    * 改变它（旧 bug：上传后颜色回退成第一个自动色）。
@@ -59,8 +64,6 @@
   // 写入中乐观显示目标色，避免连点在旧色上重复写。
   const activeAccentId = $derived(accentPending ?? accent.id);
 
-  // 遮罩切换只对上传头像露出：预置头像自带轮廓，改形状没有意义。
-  const uploadedFile = $derived(parseUploadedAvatar(bot.avatar));
   const mask = $derived(normalizeBotAvatarMask(bot.avatarMask));
   // 步进器展示值：写入中乐观显示目标值，否则用已保存的（读侧归一，缺省 0）。
   const padding = $derived(paddingPending ?? normalizeBotAvatarPadding(bot.avatarPadding));
