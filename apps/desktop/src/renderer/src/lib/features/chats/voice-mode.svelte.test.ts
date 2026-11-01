@@ -141,6 +141,26 @@ describe('voiceMode store', () => {
     voiceMode.exit();
   });
 
+  it('发送 / 播报收尾都不退出语音模式：active 与归属会话保持，可连续语音发送', () => {
+    voiceMode.enter('conv_1');
+    voiceMode.dispatch('record-started');
+    voiceMode.dispatch('stop-requested');
+    voiceMode.dispatch('settled'); // 发送链路收尾
+    expect(voiceMode.active).toBe(true);
+    expect(voiceMode.ownerConversationId).toBe('conv_1');
+
+    voiceMode.dispatch('speech-started'); // Bot 自动播报
+    voiceMode.setSpeakingStage('playing');
+    voiceMode.dispatch('speech-ended'); // 播完
+    expect(voiceMode.active).toBe(true);
+    expect(voiceMode.ownerConversationId).toBe('conv_1');
+
+    // 下一句照常可录（不要求重新进入模式）。
+    voiceMode.dispatch('record-started');
+    expect(voiceMode.phase).toBe('recording');
+    voiceMode.exit();
+  });
+
   it('speech 两事件驱动 store：speakingStage 起步 synthesizing、播完清空回 idle', () => {
     voiceMode.enter();
     voiceMode.dispatch('speech-started');

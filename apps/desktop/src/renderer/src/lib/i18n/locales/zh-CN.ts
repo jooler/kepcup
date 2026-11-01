@@ -163,9 +163,10 @@ export const zhCN = {
   'voiceMode.openSettings': '打开设置',
   'voiceMode.settings': '语音能力设置',
   'voiceMode.close': '退出语音对话',
-  // Bot 气泡「朗读」键（53 号修订 v2 V2-2）
-  'voiceMode.readAloud': '朗读',
-  'voiceMode.readAloudStop': '停止朗读',
+  // 语音消息气泡（53 号修订 v3：点击气泡播放 / 暂停 / 续播）
+  'voiceMode.playVoice': '播放语音',
+  'voiceMode.pauseVoice': '暂停播放',
+  'voiceMode.resumeVoice': '继续播放',
   // 统一音频播放器（53 号修订 v2 V2-2：附件音频 / 音频产物共用）
   'audioPlayer.play': '播放',
   'audioPlayer.pause': '暂停',

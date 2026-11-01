@@ -25,6 +25,25 @@ async function start(): Promise<TestStack> {
 }
 
 describe('edit', () => {
+  it('editing a voice message keeps origin=voice（不变成普通文本气泡）', async () => {
+    const { core, llm } = await start();
+    llm.script('mock-main', [step().replyText('收到'), step().replyText('看到修改了')]);
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+
+    const sent = (await core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '语音转写原文',
+      voiceMode: true,
+    })) as { message: { id: string } };
+    await waitForRun(core, conv.id, 'completed');
+
+    await core.rpc.call('messages.edit', { id: sent.message.id, text: '改过的文字' });
+    const all = await listMessages(core, conv.id);
+    const edited = all.find((message) => message.id === sent.message.id);
+    expect(edited?.content).toMatchObject({ text: '改过的文字', origin: 'voice' });
+  });
+
   it('an edit after the loop ended triggers a new run', async () => {
     const { core, llm } = await start();
     llm.script('mock-main', [step().replyText('收到第一条'), step().replyText('看到修改了')]);

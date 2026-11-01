@@ -263,6 +263,35 @@ export function announceEntryFor(message: Message, context: AnnounceContext): An
   return { id: message.id, text, truncated };
 }
 
+/** 列表扫描结果：新条目 + 推进后的水位（下次从它之后继续扫）。 */
+export interface AnnounceScan {
+  entries: AnnounceEntry[];
+  /** 已扫描到的最大 seq（基线之后没有消息时原样返回）。 */
+  lastSeq: number;
+}
+
+/**
+ * 以消息列表为源的播报扫描（53 号修订 v3 审查）：按 seq 水位只取**进入语音
+ * 模式之后**的新消息，逐条走 announceEntryFor。相比依赖 message.created 事件
+ * 订阅，这里与「列表里看得见什么」同一份数据——事件漏投 / 订阅晚挂载都不会
+ * 漏播，也不会在进入模式时补播历史（水位基线由接线方在 enter 时记下）。
+ */
+export function collectAnnounceEntries(
+  messages: readonly Message[],
+  sinceSeq: number,
+  context: AnnounceContext,
+): AnnounceScan {
+  let lastSeq = sinceSeq;
+  const entries: AnnounceEntry[] = [];
+  for (const message of messages) {
+    if (message.seq > lastSeq) lastSeq = message.seq;
+    if (message.seq <= sinceSeq) continue;
+    const entry = announceEntryFor(message, context);
+    if (entry !== null) entries.push(entry);
+  }
+  return { entries, lastSeq };
+}
+
 /** 一次播放的句柄（真实实现 = HTMLAudioElement 包装，由接线方提供）。 */
 export interface PlaybackHandle {
   /** 自然播完 resolve；被 stop() 打断后 resolve（不 reject）；播放出错 reject。 */
@@ -275,13 +304,13 @@ export interface PlaybackHandle {
 export interface AnnounceDeps {
   /**
    * messageId + 朗读文本 → objectURL（speech-audio 缓存未命中才合成，53 号
-   * 修订 v2 V2-3；缓存与手动朗读共享）。失败 reject → 第一条失败停队路径。
+   * 修订 v2 V2-3；缓存与语音气泡重播共享）。失败 reject → 第一条失败停队路径。
    */
   resolveAudio(messageId: string, text: string): Promise<string>;
   /**
-   * objectURL → 播放（仲裁在 speech-audio：播报与手动朗读互斥）。自然播完
-   * resolve、出错 reject、stop() 立停；被新播放抢占时 onPreempted **先**触发
-   * （队列据此作废剩余队列）再 resolve ended。objectURL 归缓存管，播完不
+   * objectURL → 播放（仲裁在 speech-audio：播报与语音气泡点击互斥）。自然
+   * 播完 resolve、出错 reject、stop() 立停；被新播放抢占时 onPreempted **先**
+   * 触发（队列据此作废剩余队列）再 resolve ended。objectURL 归缓存管，播完不
    * revoke（修订 v2 V2-3：播报音频可回放）。
    */
   play(input: { messageId: string; audio: string; onPreempted: () => void }): PlaybackHandle;
@@ -485,6 +514,11 @@ class VoiceModeState implements AnnounceHost {
    * 渲染 / 播报入队 / 武装与全部收尾路径都用 owns() 门禁。
    */
   ownerConversationId = $state<string | null>(null);
+  /**
+   * 手动接管（53 号修订 v3）：用户点了某条语音气泡后，本轮后续新音频不再自动
+   * 播报（队列已清空，由用户自己点）；下一段用户语音开始时恢复自动播报。
+   */
+  manualPlaybackOverride = $state(false);
   #announcer: AnnounceController | null = null;
   /** 端点状态机簿记（段追踪；非响应式——界面从 hasSpoken / sendReady 派生）。 */
   #endpoint: VoiceEndpointState = initialEndpointState();
@@ -527,6 +561,8 @@ class VoiceModeState implements AnnounceHost {
     // 开始，离开 recording（含防御路径）= 待发送 / 已说话标记不残留。recording
     // 期间没有 dispatch（电平喂入走 feedLevel），在转移边界清一次即全覆盖。
     this.#clearEndpoint();
+    // 新手势 = 新的对话轮：恢复自动播报（用户此前的「手动接管」到此结束）。
+    if (event === 'record-started') this.manualPlaybackOverride = false;
     if (event === 'speech-started') this.speakingStage = 'synthesizing';
     // settled 从 speaking 收尾是防御路径（接线里 speaking 不会被 settled 触达），
     // 万一发生同样要把播报停掉，不留僵尸播放。
@@ -550,8 +586,10 @@ class VoiceModeState implements AnnounceHost {
     this.#announcer = createAnnounceQueue(this, deps);
   }
 
-  /** 入队一条播报（订阅口收到可见 bot 文本时由接线方调用）。 */
+  /** 入队一条播报（列表扫描收到可见 bot 文本时由接线方调用）。 */
   announce(entry: AnnounceEntry): boolean {
+    // 用户已手动接管本轮播放：后续新音频只留在列表里，由用户自己点（v3）。
+    if (this.manualPlaybackOverride) return false;
     return this.#announcer?.enqueue(entry) ?? false;
   }
 
@@ -564,6 +602,19 @@ class VoiceModeState implements AnnounceHost {
     if (this.phase !== 'speaking') return;
     this.#announcer?.interrupt();
     this.dispatch('speech-ended');
+  }
+
+  /**
+   * 用户手动点了语音气泡：接管本轮播报——停当前、清空未播队列，并关闭后续
+   * 自动播报（直到下一段用户语音开始，dispatch('record-started') 恢复）。相位
+   * 若在 speaking 则回 idle；idle / recording / transcribing 下只清队与置标志，
+   * 不改变相位（用户点的消息由 speech-audio 直接播放）。
+   */
+  takeManualControl(): void {
+    if (!this.active) return; // 语音模式之外点气泡：只播这一条，不碰播报/接管状态
+    this.manualPlaybackOverride = true;
+    this.#announcer?.interrupt();
+    if (this.phase === 'speaking') this.dispatch('speech-ended');
   }
 
   /**
@@ -613,6 +664,7 @@ class VoiceModeState implements AnnounceHost {
     this.level = 0;
     this.elapsedMs = 0;
     this.recordingStartedAt = 0;
+    this.manualPlaybackOverride = false;
     this.#clearEndpoint();
   }
 }

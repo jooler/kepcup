@@ -1817,6 +1817,39 @@ Bot 上下文里只有一行附件条目，系统提示词的附件阶梯与 `tr
   （barge-in 的 AEC 消回声、阈值/持续时长标定、静音 3s+2s 手感、双实例场景）待用户执行，常量均注释
   「真机可调」。
 
+## 语音对话模式修订 v3（D106，2026-11-01 第二轮真机验收反馈）
+
+第二轮真机验收反馈：① 朗读键被加到了所有 Bot 消息上（需求只是语音模式下自动播报）；② 语音模式下
+Bot 回复仍是文本气泡，消息列表不像通话；③ 语音模式在录音 / 发送后没有保持，无法连续语音沟通；④
+系统提示词未声明语音模式，Bot 长篇汇报、派任务前没有即时反馈；⑤ Bot 语音消息没有持久语义标记，
+列表无法识别与回放。按「语音模式下双方消息都是语音气泡、Bot 回复自动播报；其它消息维持原样」修订
+（设计与决策见 [design/53](../design/53-voice-conversation.md)「修订 v3」）：
+
+- **WP9 删除全局朗读键**：撤销 V2-2 的 `message-read-aloud` 与 TTS 预检；`speech-audio` 保留为语音
+  气泡 / 播报队列 / 用户录音回放共用的唯一音频声道。
+- **WP10 双方语音气泡**：新 `VoiceMessageBubble`（药丸 + 左侧麦克风 + 波形 + 点击播放/暂停 + 波形
+  进度 + caption 在下方）与纯函数 `voice-message`（`origin:'voice'` 判定、用户音频附件、稳定波形）；
+  `speech-audio` 增加 `currentTime`/`duration`/`progress`（timeupdate）与 `toggleSource`（用户 WAV）；
+  非语音消息、任务消息、卡片保持原渲染，语音附件不再重复出现在附件行。
+- **WP11 语音模式持续**：core 新增会话级即时态 `conversations.setVoiceMode`（内存 Set，不落库）与
+  `messages.send(voiceMode:true)` 兜底置真；进入 / 退出 / 卸载由归属 Composer 同步，发送与播报收尾不
+  退出，会话删除清除。
+- **WP12 系统提示词 + 回复标记**：`SystemPromptInput.voiceMode` → 对话轮 `<voice_conversation>`（立刻
+  反馈：先 `send_message` 再 `start_task`；只给结论；口语化；不调 `generate_speech`；英文同义）；语音
+  轮 Bot 最终回复与 `send_message` 记 `origin:'voice'`（任务消息保持 `origin:'task'`、不播报）。barge-in
+  武装放宽为「active + 任意音频在播」，手动重播也能被开口打断。
+- **验证**：shared 契约（`conversations.setVoiceMode`）、core typecheck、desktop typecheck 0 error；
+  chats 定向 30 文件 317 例、core 提示词 4 例 + 集成 2 例、shared 42 文件 512 例、i18n 三文件全绿。
+  真机复验（双方气泡形态 / 连续发送 / 即时反馈与结论式回复 / 任务结果不播报 / 打断与停止播放）待用户
+  执行。
+- **审查修正（独立子代理）**：① 去掉「语音发送即写会话态」的推断（改为 run 起点按触发批识别），
+  退出后完成的在途语音发送不会把后续文字轮变成语音轮；② `speechAudio.stop()` / 任意 `play()` 作废
+  在途手动取源，语音气泡在录音 / 识别中禁用，消除「录音开始后 TTS 才落地外放」；③ core 单会话语义
+  （置真清其它）+ 进入新会话释放旧归属 + 卸载清理改用进入时登记的会话 id（不再依赖已被
+  `session.clear()` 置空的 view）；④ 无模型降级路径的可见说明也标 `origin:'voice'`；⑤
+  `messages.edit` 保留 origin（编辑语音消息不再降级成文本气泡）、RPC 拒绝项目组、提示词补「长报告
+  不整段转发」。补对应单测 / 集成用例（speech-audio 25 例、voice-mode 集成 3 例、edit 4 例）。
+
 ## 任务执行过程页按会话记忆（D75/42 修订，2026-11-01）
 
 真机反馈：Bot A 对话里打开「任务详情」（`TaskRunView`），切到 Bot B 再切回 A，主区回到消息列表。
@@ -1830,3 +1863,20 @@ Bot 上下文里只有一行附件条目，系统提示词的附件阶梯与 `tr
 - 设计 42 的「入口与层级」与实现位置、审批条会话归属说明同步更新；`ChatsArea` 卸载注释同步。
 - 验证：`tasks.svelte.test` 7 例、`chat-session.svelte.test` 15 例、相关 chats/shell/board 4 文件
   42 例全绿；desktop typecheck 0 error（1 条既有 ApprovalCard 警告）。
+
+### 第二轮反馈补充（2026-11-02）
+
+- **自动播报漏播修复**：播报入队从 `message.created` 订阅改为**消息列表扫描**（按进入模式时的
+  seq 水位，`collectAnnounceEntries`）——列表更新即触发，事件漏投/订阅晚挂载不再导致 Bot 语音
+  不自动播放；水位保证不补播历史。
+- **手动接管**：点任意语音气泡 → `takeManualControl()` 停当前 + 清队 + 本轮关闭后续自动播报，
+  下一段用户语音恢复自动播报；自动播放期间新音频顺序排队。
+- **连续听评估**：常开麦克风 + 按静音切段 + 段间裁剪需要重做录音管道（按样点切片）、并发 ASR/
+  发送编排与全双工 AEC，回声会直接污染用户消息；按用户授权维持点击式录音，评估结论写入设计
+  53 号「非目标」与 V3-7。
+- **实现修订（P1）**：`speechAudio.toggleSource` 的世代号改到 `onManualPlayStart`/抢占之后
+  获取——手动接管触发的停播会递增世代，先取号会让用户点击的消息被自己的停播作废；补
+  「播报中手动点另一条仍能播放」单测。
+- **用户语音气泡强调色（2026-11-02）**：用户语音气泡的底色/前景改为与用户文本气泡同源——
+  `resolveAccentColor(bot.accentColor, bot.avatar)` + `avatarOnFillForeground`，无对话 Bot 时回退
+  主色；波形与麦克风圆底用 `currentColor` 跟随前景，保证任意强调色下可读。
