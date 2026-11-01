@@ -1274,8 +1274,16 @@ test('drawer: view from chat, dirty-close guard, repeat preset; deleting the exe
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
+    // bits-ui 关掉弹框后 body 的滚动锁（pointer-events:none）还要再等一拍才清。
+    await waitDialogScrollLockCleared(page);
+
     // 改了没存就关：先问「放弃并继续 / 继续编辑」。
-    await todoCard(page, '核对账目').click();
+    // 点标题，不点卡片中心。待验收卡右侧是「查看结果 / 完成」（stopPropagation，
+    // 不打开抽屉）。macOS runner 把窗口钳在约 1024×677，事项栏只有约 240px，
+    // 卡片中心正好落在「查看结果」上，随后跳进对话，说明框不再出现。
+    await todoCard(page, '核对账目').locator('[data-testid="todo-card-title"]').click();
+    await expect(drawer).toBeVisible();
+    await expect(page.locator('[data-testid="todo-notes"]')).toBeVisible();
     await page.locator('[data-testid="todo-notes"]').fill('补充说明');
     await page.locator('[data-testid="todo-drawer-close"]').click();
     await expect(page.locator('[data-testid="todo-discard"]')).toBeVisible();
