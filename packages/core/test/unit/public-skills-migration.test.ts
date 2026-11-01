@@ -73,6 +73,8 @@ describe('0013 public_skills 迁移', () => {
     // 0059（Bot 分类）也是增量列：回拨后要摘除，回放时才会重新 ADD COLUMN。
     db.exec('alter table bots drop column kind;');
     db.exec('alter table bots drop column avatar_mask;');
+    // 0061（上传头像内边距）同为增量列，一并摘除。
+    db.exec('alter table bots drop column avatar_padding;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
     // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。
@@ -121,6 +123,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table plugins;');
     db.exec('drop table todo_runs;');
     db.exec('drop table todos;');
+    // main 0063（D90 增强）的 memo_groups 表同样摘除（memos.group_id 的 FK 指向它）。
+    db.exec('drop table memo_groups;');
     db.exec('drop table memos;');
     // main 0023（W7）的 watches 表同样摘除。
     db.exec('drop table watches;');

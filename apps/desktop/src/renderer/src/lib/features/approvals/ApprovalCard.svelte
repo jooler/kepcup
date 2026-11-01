@@ -3,6 +3,7 @@
   import {
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
+    computerControlApprovalPayloadSchema,
     describeScheduleWhen,
     egressApprovalPayloadSchema,
     mailSendApprovalPayloadSchema,
@@ -82,7 +83,10 @@
   const sensitive = $derived(approval.payload['sensitive'] === true);
 
   let cardEl: HTMLDivElement | undefined = $state();
-  let duration = $state<ApprovalDuration>('once');
+  // D105：computer_control 默认勾选「本对话内」（G0 决策：首次出卡，会话内不再逐动作询问）。
+  let duration = $state<ApprovalDuration>(
+    approval.kind === 'computer_control' ? 'conversation' : 'once',
+  );
 
   /** kind===command only: expand「加入白名单」editor before add+approve. */
   let allowlistOpen = $state(false);
@@ -163,9 +167,33 @@
     approval.kind === 'git_remote' &&
       mcpChoosesDuration(approval.payload as { durations?: ApprovalDuration[] }),
   );
+  // D105 computer_control payload：目标应用 + 首个动作摘要（敏感文本不进卡面）。
+  const computerControl = $derived.by(() => {
+    if (approval.kind !== 'computer_control') return null;
+    const parsed = computerControlApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  /**
+   * D105：三档时长（仅这一次 / 本对话内 / 对该 Bot），默认勾选 conversation
+   * （G0 决策；docs/design/52 §5）。
+   */
+  const computerDurations = $derived<ApprovalDuration[]>(
+    approval.kind === 'computer_control'
+      ? mcpDurationOptions(approval.payload as { durations?: ApprovalDuration[] })
+      : ['once'],
+  );
+  const computerChoosesDur = $derived(
+    approval.kind === 'computer_control' &&
+      mcpChoosesDuration(approval.payload as { durations?: ApprovalDuration[] }),
+  );
   /** 卡片是否显示时长选择（access：仅这一次 / 本对话内；agent_tool 路径类；应用工具按 durations）。 */
   const choosesDuration = $derived(
-    access !== null || agentToolDurations || mcpChoosesDur || egressChoosesDur || gitRemoteChoosesDur,
+    access !== null ||
+      agentToolDurations ||
+      mcpChoosesDur ||
+      egressChoosesDur ||
+      gitRemoteChoosesDur ||
+      computerChoosesDur,
   );
 
   $effect(() => {
@@ -470,25 +498,27 @@
         ? t('approvals.unsandboxedTitle')
         : approval.kind === 'git_remote'
           ? t('approvals.gitRemoteTitle')
-          : approval.kind === 'environment'
-            ? t('approvals.environmentTitle')
-            : approval.kind === 'skill_import'
-              ? t('approvals.skillImportTitle')
-              : approval.kind === 'skill_preset'
-                ? t('approvals.skillPresetTitle')
-                : approval.kind === 'mcp_tool'
-                  ? appIdentity !== null
-                    ? t('approvals.appToolTitle')
-                    : t('approvals.mcpToolTitle')
-                  : approval.kind === 'agent_tool'
-                    ? agentToolTitle
-                    : approval.kind === 'butler_proposal'
-                      ? butlerProposal?.proposalType === 'project'
-                        ? t('approvals.butlerProjectTitle')
-                        : butlerProposal?.proposalType === 'bot'
-                          ? t('approvals.butlerBotTitle')
-                          : t('approvals.butlerTeamTitle')
-                      : t('approvals.commandTitle'),
+          : approval.kind === 'computer_control'
+            ? t('approvals.computerControlTitle')
+            : approval.kind === 'environment'
+              ? t('approvals.environmentTitle')
+              : approval.kind === 'skill_import'
+                ? t('approvals.skillImportTitle')
+                : approval.kind === 'skill_preset'
+                  ? t('approvals.skillPresetTitle')
+                  : approval.kind === 'mcp_tool'
+                    ? appIdentity !== null
+                      ? t('approvals.appToolTitle')
+                      : t('approvals.mcpToolTitle')
+                    : approval.kind === 'agent_tool'
+                      ? agentToolTitle
+                      : approval.kind === 'butler_proposal'
+                        ? butlerProposal?.proposalType === 'project'
+                          ? t('approvals.butlerProjectTitle')
+                          : butlerProposal?.proposalType === 'bot'
+                            ? t('approvals.butlerBotTitle')
+                            : t('approvals.butlerTeamTitle')
+                        : t('approvals.commandTitle'),
   );
 </script>
 
@@ -1285,6 +1315,41 @@
         >
           {t('approvals.egress.taintedHint')}
         </p>
+      {/if}
+    {:else if approval.kind === 'computer_control'}
+      <!-- D105 计算机操控卡：目标应用 + 首个动作摘要（敏感文本不进卡面），三档时长默认
+           「本对话内」；正文摘要取 describe 的 payload（app / summary）。 -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <span class="text-muted-foreground">{t('approvals.computerControlApp')}</span>
+        <code class="break-all" data-testid="approval-computer-app">
+          {computerControl?.app || approval.payload['app'] || '-'}
+        </code>
+        <span class="text-muted-foreground">{t('approvals.computerControlAction')}</span>
+        <span class="break-all" data-testid="approval-computer-action">
+          {computerControl?.summary || approval.payload['summary'] || '-'}
+        </span>
+      </div>
+      <p
+        class="mt-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
+        data-testid="approval-computer-risk"
+      >
+        {t('approvals.computerControlRisk')}
+      </p>
+      {#if computerChoosesDur}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each computerDurations as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
+        </div>
       {/if}
     {:else}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">

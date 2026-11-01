@@ -133,6 +133,33 @@ if (macArches.length > 0) {
   }
 }
 
+/**
+ * 0c. macOS 的 computer-use helper（D105，docs/design/52-computer-use.md §7）。
+ *
+ *     每个目标架构强制新鲜构建一次，绝不复用 dev 产物——dev 里可能是 ad-hoc 或
+ *     旧身份签名，混进发版包会让公证链失效（build 脚本自身也会先删旧 .app 再写）。
+ *     签名身份按 KEPCUP_COMPUTER_MACOS_SIGN_IDENTITY / CSC_NAME 解析（release.yml
+ *     的 mac job 已把 Developer ID 导入 keychain 并导出 CSC_NAME，这里继承即可），
+ *     KEPCUP_MAC_RELEASE=1 附加 hardened runtime + timestamp——公证由外层 .app 的
+ *     notarytool 提交连带校验嵌套代码，helper 不需要单独公证（docs/dev/06-release.md）。
+ *     KEPCUP_SKIP_COMPUTER_USE=1 可整段跳过（与 pack-hooks.cjs 的同名豁免一致，
+ *     产物将不具备计算机操控能力）。
+ */
+if (macArches.length > 0) {
+  if (process.env.KEPCUP_SKIP_COMPUTER_USE === '1') {
+    console.warn(
+      '[dist] KEPCUP_SKIP_COMPUTER_USE=1——跳过 computer-use helper 构建，产物不带计算机操控能力。',
+    );
+  } else {
+    for (const arch of macArches) {
+      console.log(`[dist] 构建 computer-use helper（${arch}，release 签名）`);
+      run(process.execPath, ['scripts/build-computer-use-macos.mjs', arch], {
+        KEPCUP_MAC_RELEASE: '1',
+      });
+    }
+  }
+}
+
 if (process.env.KEPCUP_DIST_SKIP_ROOTFS !== '1') {
   for (const arch of winArchsFromArgs()) {
     const tarPath = path.join(appDir, 'resources', 'wsl', arch, 'rootfs.tar');

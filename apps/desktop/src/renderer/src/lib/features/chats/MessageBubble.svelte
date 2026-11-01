@@ -35,9 +35,9 @@
    */
   let {
     message,
-    editing = false,
+    isLast = false,
     merge = { above: false, below: false },
-  }: { message: Message; editing?: boolean; merge?: { above: boolean; below: boolean } } = $props();
+  }: { message: Message; isLast?: boolean; merge?: { above: boolean; below: boolean } } = $props();
 
   const isCard = $derived(message.kind === 'card');
   const isChangesCard = $derived(
@@ -309,5 +309,5 @@
     </span>
   </div>
 {:else}
-  <ChatMessageRow {message} {editing} {merge} />
+  <ChatMessageRow {message} {isLast} {merge} />
 {/if}

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { shell } from '$lib/stores/shell.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -37,11 +36,10 @@
     showNarrowTabBar(narrowLayout.tab, showDetail, narrowLayout.botDetailOpen),
   );
 
-  // 会话变化 → 对话 tab；扩展中心深链 → 扩展 tab。两条 effect 共享 tab，依赖细节与
-  // 回归见 narrow-routing.svelte.ts。
+  // 会话变化 → 对话 tab。扩展中心深链 → 扩展 tab 由 shell.openExtensionCenter 直接
+  // selectTab（narrow-routing.svelte.ts 的头注释）。依赖细节与回归见该模块。
   bindNarrowRouting({
     currentChat: () => chat.current,
-    shell,
     layout: narrowLayout,
   });
 </script>

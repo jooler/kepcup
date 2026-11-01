@@ -1,32 +1,132 @@
 <script lang="ts">
   import type { Memo } from '@kepcup/shared';
   import { MEMO_BODY_MAX_CHARS } from '@kepcup/shared';
-  import { ArrowLeft, Search, Trash2 } from '@lucide/svelte';
+  import { ArrowLeft, Plus, Search, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
+  import { dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
-  import MemoCard from './MemoCard.svelte';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import {
+    anchorFromFinalize,
+    boardFlipDurationMs,
+    isNoopMove,
+    isShadow,
+    stripShadow,
+  } from '$lib/features/board/board-dnd';
+  import MemoGroupSection from './MemoGroupSection.svelte';
   import { ageText } from './age-text';
-  import { filterMemos, sortMemos } from './workbench-model';
+  import { memoSections, type MemoSection } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
-   * 备忘栏（D90 §5.4）：常驻输入框（回车保存、Shift+回车换行、存完清空并保持焦点）→ 本地
-   * 即时搜索 → 列表（置顶在前，其余按更新时间倒序）；「最近删除」切到回收视图，可恢复。
+   * 备忘栏（D90 §5.4）：常驻输入框（回车保存、Shift+回车换行、存完清空并保持焦点）→
+   * 分区列表（未分组伪分组在最前，其后按顺序的命名分组；无命名分组时保持旧的扁平列表）
+   * → 底部「添加分组」「最近删除」。命名分组的列表包在分组拖拽区（type 'group'，拖分区
+   * header 重排，照看板列层）；每个分区内部是备忘拖拽区（type 'memo'），可组内排序、
+   * 跨组拖拽。「最近删除」切到回收视图，可恢复。
    *
-   * 草稿与搜索词存在 `workbench` store 里（不是组件 `$state`）：切到对话会把工作台整棵
-   * 卸载，放组件里切回来就没了（见 workbench.svelte.ts 的字段注释）。
+   * 草稿与搜索词存在 `workbench` store 里（不是组件 `$state`）：切到对话会把工作台
+   * 整棵卸载，放组件里切回来就没了（见 workbench.svelte.ts 的字段注释）。
    */
   let saving = $state(false);
   let input = $state<HTMLTextAreaElement | null>(null);
+  let reducedMotion = $state(false);
 
-  const visible = $derived(sortMemos(filterMemos(workbench.memos, workbench.memoQuery)));
+  // 新建分组弹框：工作台离开即卸载（与抽屉一致），状态放组件内即可。
+  let createOpen = $state(false);
+  let groupName = $state('');
+  let nameInput = $state<HTMLInputElement | null>(null);
+  let creating = $state(false);
+
+  const sections = $derived(
+    memoSections({ memos: workbench.memos, groups: workbench.memoGroups, query: workbench.memoQuery }),
+  );
+  const showHeaders = $derived(workbench.memoGroups.length > 0);
+  const flipDurationMs = $derived(boardFlipDurationMs(reducedMotion));
+  const ungroupedSection = $derived(sections.find((section) => section.groupId === null) ?? null);
+  /** 分组拖拽区的 items 需要 `id` 字段（dnd-action 的标识），即 groupId。 */
+  const namedSections = $derived(
+    sections
+      .filter((section): section is MemoSection & { groupId: string } => section.groupId !== null)
+      .map((section) => ({ ...section, id: section.groupId })),
+  );
   const trashed = $derived(
     [...workbench.trashed].sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)),
   );
+
+  let groupItems = $state.raw<(MemoSection & { id: string })[]>([]);
+  /** 分组拖拽浮动副本的实测高度（钉住占位，同看板列层）。 */
+  let groupShadowHeight = $state<number | null>(null);
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reducedMotion = media.matches;
+    const onChange = (): void => {
+      reducedMotion = media.matches;
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  });
+
+  // 弹框打开时聚焦输入框并全选（重命名类对话框的惯例）。
+  $effect(() => {
+    if (!createOpen) return;
+    queueMicrotask(() => {
+      nameInput?.focus();
+      nameInput?.select();
+    });
+  });
+
+  $effect(() => {
+    const next = namedSections;
+    if (workbench.groupDragging) return;
+    groupItems = next;
+  });
+
+  function onGroupConsider(event: CustomEvent<DndEvent<MemoSection & { id: string }>>): void {
+    const info = event.detail.info;
+    if (info.trigger === 'dragStopped') {
+      groupShadowHeight = null;
+      workbench.setGroupDragging(false);
+      return;
+    }
+    if (info.trigger === 'dragStarted') groupShadowHeight = draggedElementHeight();
+    groupItems = event.detail.items;
+    workbench.setGroupDragging(true);
+  }
+
+  function draggedElementHeight(): number | null {
+    if (typeof document === 'undefined') return null;
+    const el = document.getElementById('dnd-action-dragged-el');
+    return el === null ? null : el.getBoundingClientRect().height;
+  }
+
+  function onGroupFinalize(event: CustomEvent<DndEvent<MemoSection & { id: string }>>): void {
+    const info = event.detail.info;
+    groupShadowHeight = null;
+    const decision = anchorFromFinalize({
+      items: event.detail.items,
+      droppedId: info.id,
+      info,
+    });
+    if (decision.kind === 'ignore') {
+      if (info.trigger === 'droppedIntoAnother') groupItems = stripShadow(event.detail.items);
+      if (info.source !== 'keyboard') workbench.setGroupDragging(false);
+      return;
+    }
+    const next = stripShadow(event.detail.items);
+    const prevIds = namedSections.map((section) => section.id);
+    groupItems = next;
+    if (!isNoopMove(prevIds, next.map((section) => section.id))) {
+      void workbench.moveGroup(info.id, decision.beforeId);
+    }
+    if (info.source !== 'keyboard') workbench.setGroupDragging(false);
+  }
 
   async function save(): Promise<void> {
     const body = workbench.memoDraft.trim();
@@ -51,6 +151,28 @@
       return;
     event.preventDefault();
     void save();
+  }
+
+  function openCreateGroup(): void {
+    groupName = '';
+    createOpen = true;
+  }
+
+  async function confirmCreateGroup(): Promise<void> {
+    const title = groupName.trim();
+    if (title.length === 0 || creating) return;
+    creating = true;
+    try {
+      if (await workbench.createGroup(title)) createOpen = false;
+    } finally {
+      creating = false;
+    }
+  }
+
+  function onCreateGroupKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    void confirmCreateGroup();
   }
 
   async function restore(id: string): Promise<void> {
@@ -137,13 +259,10 @@
         data-testid="memo-search"
       />
     </div>
-    <div
-      class="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2 overflow-y-auto"
-      data-testid="memo-list"
-    >
+    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1" data-testid="memo-list">
       {#if workbench.memos.length === 0 && (workbench.loadState === 'loading' || workbench.loadState === 'idle')}
         <p
-          class="col-span-full py-6 text-center text-sm text-muted-foreground"
+          class="py-6 text-center text-sm text-muted-foreground"
           data-testid="memo-loading"
         >
           {t('workbench.loading')}
@@ -152,30 +271,101 @@
         <!-- 错误提示在视图顶部（带重试），这里不显示「空」 -->
       {:else if workbench.memos.length === 0}
         <p
-          class="col-span-full py-6 text-center text-sm text-muted-foreground"
+          class="py-6 text-center text-sm text-muted-foreground"
           data-testid="memo-empty"
         >
           {t('workbench.memo.empty')}
         </p>
-      {:else if visible.length === 0}
+      {:else if sections.length === 0}
         <p
-          class="col-span-full py-6 text-center text-sm text-muted-foreground"
+          class="py-6 text-center text-sm text-muted-foreground"
           data-testid="memo-no-match"
         >
           {t('workbench.memo.noMatch')}
         </p>
       {/if}
-      {#each visible as memo (memo.id)}
-        <MemoCard {memo} />
-      {/each}
+      {#if ungroupedSection}
+        <MemoGroupSection section={ungroupedSection} showHeader={showHeaders} {flipDurationMs} />
+      {/if}
+      {#if namedSections.length > 0}
+        <div
+          class="flex flex-col gap-4"
+          data-testid="memo-groups-zone"
+          use:dragHandleZone={{
+            items: groupItems,
+            type: 'group',
+            flipDurationMs,
+            morphDisabled: true,
+            dropTargetStyle: {},
+          }}
+          onconsider={onGroupConsider}
+          onfinalize={onGroupFinalize}
+        >
+          {#each groupItems as section (section.id)}
+            {#if isShadow(section)}
+              <div
+                class="min-h-10 rounded-lg"
+                style:height={groupShadowHeight === null ? undefined : `${groupShadowHeight}px`}
+                aria-hidden="true"
+              ></div>
+            {:else}
+              <MemoGroupSection {section} showHeader={showHeaders} {flipDurationMs} />
+            {/if}
+          {/each}
+        </div>
+      {/if}
     </div>
-    <button
-      type="button"
-      class="flex shrink-0 cursor-pointer items-center gap-1 self-start px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
-      onclick={() => void workbench.openTrash()}
-      data-testid="memo-trash"
-    >
-      <Trash2 class="size-3.5" aria-hidden="true" />{t('workbench.memo.trash')}
-    </button>
+    <div class="flex shrink-0 items-center gap-3">
+      <button
+        type="button"
+        class="flex cursor-pointer items-center gap-1 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+        onclick={openCreateGroup}
+        data-testid="memo-add-group"
+      >
+        <Plus class="size-3.5" aria-hidden="true" />{t('workbench.memo.addGroup')}
+      </button>
+      <button
+        type="button"
+        class="flex cursor-pointer items-center gap-1 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+        onclick={() => void workbench.openTrash()}
+        data-testid="memo-trash"
+      >
+        <Trash2 class="size-3.5" aria-hidden="true" />{t('workbench.memo.trash')}
+      </button>
+    </div>
   {/if}
 </div>
+
+<Dialog.Root
+  open={createOpen}
+  onOpenChange={(open) => {
+    if (!open) createOpen = false;
+  }}
+>
+  <Dialog.Content class="sm:max-w-sm" data-testid="memo-group-dialog">
+    <Dialog.Header>
+      <Dialog.Title>{t('workbench.memo.addGroup')}</Dialog.Title>
+      <Dialog.Description>{t('workbench.memo.groupDialogHint')}</Dialog.Description>
+    </Dialog.Header>
+    <Input
+      bind:ref={nameInput}
+      bind:value={groupName}
+      maxlength={60}
+      placeholder={t('workbench.memo.groupPlaceholder')}
+      onkeydown={onCreateGroupKeydown}
+      data-testid="memo-group-name"
+    />
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (createOpen = false)}>
+        {t('workbench.memo.groupCancel')}
+      </Button>
+      <Button
+        disabled={groupName.trim().length === 0 || creating}
+        onclick={() => void confirmCreateGroup()}
+        data-testid="memo-group-create"
+      >
+        {t('workbench.memo.groupCreate')}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

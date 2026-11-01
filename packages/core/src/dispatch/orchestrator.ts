@@ -202,6 +202,9 @@ import {
   setupPathSkipText,
 } from '../tools/setup-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
+import type { ComputerHostRpc } from '../computer/facade.js';
+import type { ApprovalOutcome } from '../permissions/approvals.js';
+import type { ComputerToolGate } from '../tools/index.js';
 import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profiles.js';
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
@@ -457,6 +460,16 @@ export interface OrchestratorDeps {
    * stripped test setups, which then simply have no browser_* tools.
    */
   browser?: BrowserHostRpc | undefined;
+  /**
+   * D105 计算机操控（docs/design/52）：宿主门面 + computer_control 审批。
+   * present 时任务 loop（设置开启且 helper 可用）注册 computer_* 工具组。
+   */
+  computer?:
+    | {
+        host: ComputerHostRpc;
+        requestApproval: (identity: RunIdentity, kind: 'computer_control', payload: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<ApprovalOutcome>;
+      }
+    | undefined;
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）；omitted in stripped test
    * setups, which then simply have no generate_image tool.
@@ -1525,6 +1538,19 @@ export class Orchestrator {
         });
       }
     }
+    return message;
+  }
+
+  /**
+   * Recall a user message (docs/design/02-execution.md 撤回与编辑): the store
+   * marks it `recalled` and every visible-history query drops it. No fresh
+   * trigger and no notification to running turns — a trigger batch still
+   * buffered when the recall lands re-reads the database at turn start and
+   * drops the message (mailbox `refreshTriggerBatch`).
+   */
+  recallMessage(id: string): Message {
+    const message = this.#deps.messages.recall(id);
+    this.#deps.publish('message.updated', { conversationId: message.conversationId, message });
     return message;
   }
 
@@ -3615,6 +3641,42 @@ export class Orchestrator {
   }
 
   /**
+   * D105: the `computer` tools deps when the gate passes — task loop, the
+   * safety setting on, and a successful capabilities handshake with the host
+   * (platform support + helper availability are the main process's call).
+   * Returns an empty spread otherwise so the tool group never registers.
+   */
+  async #computerToolDeps(
+    _identity: RunIdentity,
+    loopType: 'turn' | 'task' | 'subagent' | 'widget_authoring',
+  ): Promise<{ computer?: ComputerToolGate } | Record<string, never>> {
+    const computer = this.#deps.computer;
+    if (computer === undefined || loopType !== 'task') return {};
+    if (this.#deps.settings.get().computerUseEnabled !== true) return {};
+    let available = false;
+    try {
+      available = (await computer.host.capabilities()) !== null;
+    } catch (error) {
+      // A broken sidecar / failed handshake used to leave the tools out of the
+      // registry with nothing in the logs (the desktop main process warns on its
+      // own side, which is invisible after the fact). Diagnose only: `available`
+      // stays false and the gate below is unchanged, so computer_* never registers.
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'computer capabilities handshake failed; computer tools not registered',
+      );
+    }
+    if (!available) return {};
+    return {
+      computer: {
+        host: computer.host,
+        requestApproval: computer.requestApproval,
+        approvals: this.#deps.approvals,
+      },
+    };
+  }
+
+  /**
    * The shared run skeleton (D75 supervisor turns and tasks, see
    * RunExecution): gates → context / trigger → tools → engine run → interim
    * texts → outcome → usage → lease release → settle. The variants differ
@@ -4143,6 +4205,11 @@ export class Orchestrator {
                 ),
             }
           : {}),
+        // D105 计算机操控：仅任务 loop、设置开启且宿主能力握手成功时注册
+        //（docs/design/52 §4「仅当平台支持 + 设置开启 + helper 可用时注册」——
+        // 平台与 helper 可用性由 main 侧 capabilities 承载）。握手失败不挂工具组，
+        // 模型看不到 computer_*（调用期错误引导只对已注册工具存在）。
+        ...(await this.#computerToolDeps(identity, loopType)),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),

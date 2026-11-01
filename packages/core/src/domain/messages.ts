@@ -982,6 +982,26 @@ export class MessagesService {
   }
 
   /**
+   * Recall a user message (docs/design/02-execution.md 撤回与编辑): marked
+   * `recalled`, dropped from every visible-history query (search, context,
+   * memory evidence), FTS row removed. The row and its content stay — the
+   * renderer shows a「已撤回」placeholder, and buffered trigger batches
+   * re-read at turn start drop it.
+   */
+  recall(id: string): Message {
+    const message = this.getOrThrow(id);
+    if (message.senderType !== 'user') {
+      throw new AppError('MESSAGE_NOT_RECALLABLE', 'Only user messages can be recalled');
+    }
+    if (message.status === 'recalled') {
+      throw new AppError('MESSAGE_NOT_RECALLABLE', 'The message was already recalled');
+    }
+    this.db.prepare("update messages set status = 'recalled' where id = ?").run(id);
+    this.db.prepare('delete from messages_fts where message_id = ?').run(id);
+    return this.getOrThrow(id);
+  }
+
+  /**
    * Full-text search inside one conversation, as seen by `viewerBotId` (D75
    * §2.4.3: shared rows + the viewer's own private rows; null = shared only).
    * messages_fts indexes task_event text too, so the owner filter joins

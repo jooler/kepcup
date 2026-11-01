@@ -1619,3 +1619,139 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
 迁移 0056–0058 已用。
 遗留：市场生产部署（R2 + 索引 deploy）待维护者；M2 custom-mcp 实例化与邮件 OAuth 顺延
 （P4 §4 路标）；capabilitySummary 多语言重建路标（51 §15.2）。
+
+## D105 计算机操控（Computer Use）
+
+按 [docs/design/52](../design/52-computer-use.md) 与 `todo/computer-use.md` 完成 WP1–WP4 与 WP5 的
+代码部分，在独立 worktree（`feat/computer-use`）实施。G0 四项经用户确认：helper
+`KepCup Computer Use.app` / `app.kepcup.desktop.computer-use`、Developer ID 8CL9PRK85J（dev 直接
+同身份）、审批默认 conversation、P0 仅 macOS。
+
+- **WP1 vendored 原生层**：`apps/desktop/native/computer-use-macos/` 与上游 `55507b87` 逐字节一致
+  （唯一例外见 DEV-077）；构建脚本 `build-computer-use-macos.mjs`（单架构出包、KepCup 命名/图标/
+  签名，非 darwin exit 0）、空 entitlements、NOTICE.md；`swift test` 6/6；真机冒烟（Electron 宿主 →
+  helper socket）handshake / listApps / Notes getAppState（174 元素树 + 截图）/ click（后台投递 +
+  verification 元数据）全通。
+- **WP2 编排层移植**：orca `src/main/computer/` 36 生产文件 + 17 单测（159 用例）移植到
+  `apps/desktop/src/main/computer/`（文件名保持），7 个解耦点全部落地（process-host 垫片 / asar.
+  unpacked 入口解析 / ELECTRON_RUN_AS_NODE / 类型走 @kepcup/shared / helper 路径与 env 覆盖 /
+  `[computer]` 日志前缀 / desktop-script 休眠移植）；B 口 `computer.*` 五方法（shared 契约 +
+  main specs + CoreHost 装配）、`computer-sidecar` 独立构建入口 + asarUnpack + extraResources；
+  真机验收 5/5（capabilities 全链路 / listApps / getAppState / 二次观察 / stop 清理 helper 进程归零）。
+- **WP3 契约与设置**：`shared/domain/computer.ts`（zod 契约 + invoke 白名单）、`computer_control`
+  审批枚举 + NEVER_AUTO_DECIDED、settings `browser.computer-use`（generic 标量 `computerUseEnabled`，
+  DEV-078）、host-capabilities desktop-only `'computer-use'`、设置页锚点区块；四件套 + 新契约测试全绿。
+- **WP4 工具与审批**：12 个 `computer_*` 工具（一对一映射，pressKey/hotkey 合一）、三态 outcome
+  （verification.unverified → uncertain + 先观察文案；WINDOW_NOT_FOCUSED maybe-sent → uncertain）、
+  type/paste/set_value 的 sensitiveParams 与结果/审批卡脱敏、审批三档（默认 conversation，卡面勾选）
+  + conversation/bot 跨 run 复用、orchestrator 门控（任务 loop + 设置 + capabilities 预查）、
+  renderer 审批卡与 i18n；core 装配链（facade/start/process-entry）与 headless 拒调。新增单测 14 +
+  集成测试 2（mock LLM 任务全链：门控→出卡→批准→复用→脱敏→uncertain→deny），迁移 0062（0061 与 dd9b3cca 的 bot_avatar_padding 撞号，合并后改号）
+  （approvals.kind CHECK，DEV-080）。
+- **WP5 代码部分**：设置页权限引导（三态 + 系统设置深链，检测即注册 TCC）、托盘「停止计算机操控」、
+  `computer:stop` / `computer:permissions-*` IPC + preload/shim（web 端 desktop-only 拒绝）、
+  pack-hooks helper 硬校验（存在性/bundle id/签名，+3 用例）。
+- **验证**：定向测试全绿（编排层 159、computer 工具 14、审批回归 46、pack-hooks 24、设置四件套 +
+  契约 98、集成 2）；shared/core/desktop typecheck 全过；收口全量 `pnpm test` 见基线记录。
+- **遗留（待维护者/后续）**：dev 应用真机任务端到端（审批卡需人工点击，冒烟路径已就绪：
+  `node scripts/computer-use-smoke.mjs` / `node scripts/computer-orchestration-smoke.mjs`）；release
+  出包 + helper 随外层 .app 公证（嵌套代码校验，无需单独公证）+ 干净机器 TCC 首弹验收（WP5 发布清单）；
+  DEVIATIONS DEV-077/078/079/080。
+- **dev 环境补全（2026-10-31，合并后真机验收发现）**：helper .app 是 gitignored 构建产物，新
+  checkout 首次 dev 缺产物会让权限引导报 `accessibility_error: KepCup Computer Use.app was not
+  found`。接入 `pnpm dev`：`scripts/dev.mjs` 薄包装（pnpm 把 `pnpm dev --rebuild` 的追加参数放在
+  链尾命令 argv 上，故在此消费 `--rebuild` 后透传 electron-vite）→ `ensure-computer-use-helper.mjs`
+  （非 darwin / `KEPCUP_SKIP_COMPUTER_USE=1` 跳过；产物在直接复用，缺失自动构建，`--rebuild` 删旧
+  重建）。dev 产物只需稳定 Developer ID 签名、无需公证：Gatekeeper 只拦带 quarantine 属性的下载
+  产物，TCC 按（bundle id + 签名）记账，同身份重签不丢授权；公证只在发版发生，helper 作为嵌套
+  代码被外层 .app 的 notarytool 提交连带校验。
+- **CI 公证接线（2026-10-31）**：`dist.mjs` 新增 0c 步骤——mac 目标架构逐个**强制新鲜构建** helper
+  （`KEPCUP_MAC_RELEASE=1` → Developer ID + hardened runtime + timestamp，签名身份继承 release.yml
+  已导出的 `CSC_NAME`），绝不复用 dev 产物；release.yml 无需改动（证书/keychain/公证凭据/Swift 工具链
+  均已就绪）。helper 不单独公证——外层 .app 的 notarytool 提交连带校验嵌套代码（DEV-081，设计「helper
+  独立公证」按此实现）。首跑即暴露 AMFI entitlements 解析器不支持 XML 注释——`entitlements.computer-use.
+  mac.plist` 去掉注释保持纯净结构。本地以 CI 同参数（`dist.mjs --mac dmg zip --arm64`，含镜像 env 应对
+  GitHub 下载超时）全管线验证：0c 构建进包 → pack-hooks「computer-use helper 校验通过」→ dmg/zip 产物内
+  helper 实测 Developer ID + runtime + timestamp、`codesign --verify --strict` 通过。既有坑备注：
+  electron-builder 的 CLI 架构参数只在显式给目标列表时生效（yml target 钉死双 arch，裸 `--mac --arm64`
+  会按双架构打包并在缺产物的架构上挂断——Share Extension 先于本功能就受同样影响）。
+- **设置分区调整（2026-10-31，用户反馈）**：计算机操控从「浏览器资料」分区提取为独立设置分区——
+  目录条目迁为 `computer.control`（settingGroupSchema 新增 `computer` 组，`SETTING_GROUP_TITLES`
+  补「计算机操控」，deepLink section/anchor 均为 `computer-use`），设置页新增 `computer-use` 分区
+  （sections.ts 联合类型 / 导航清单 `settings.navComputerUse` / MousePointerClick 图标 /
+  SettingsSectionView 独立分支，锚点 id 不变），ComputerUseSection 挂载点随迁；i18n zh/en 补
+  `settings.navComputerUse`。验证：shared settings-catalog 34 + core 设置纪律 43 + desktop i18n/卡片
+  33 全绿；shared/desktop typecheck 0 error。
+- **sidecar 入口路径修复（2026-10-31，真机任务端到端首跑冒烟发现）**：dev 任务 loop 里 computer_*
+  工具一个都没注册。根因是 capabilities 握手必挂——`forked-child-entry-path.ts` 按源码目录层级回溯
+  （`dirname(import.meta.url)/..`），rollup 把该模块内联进 out/main/index.js 后 `import.meta.url`
+  指向 bundle 自身，解析到不存在的 `out/computer-sidecar.js`，`ensureStarted` 抛
+  `unsupported_capability` → 门控第四条件（capabilities 非空）不成立，工具组永不注册；打包版同坏
+  （asar.unpacked 下路径同样差一级）。WP2 全链路冒烟未拦截：orchestration-smoke-host 硬编码产物路径
+  直接 fork，绕开了这个解析函数。修复为「与引用它的 bundle 同目录」（同 stdio-proxy 先例；helper 的
+  socket peer 校验与 electron-builder asarUnpack 均锚定 `/out/main/computer-sidecar.js` 前缀），
+  `moduleUrl` 参数化，新增回归测试 2 例（dev / app.asar.unpacked 布局），sidecar-client fork 路径
+  断言同步。验证：定向 16 例全绿、desktop typecheck 0 error、重建 bundle 实测解析指向存在产物。
+  备注：loopType 语义不变——computer_* 仅任务 loop 注册，普通对话 turn 看不到是设计行为。
+- **真机冒烟修复轮 2（2026-10-31，冒烟通过后用户反馈三项）**：①helper 显示文案品牌化——
+  `main.swift` 12 处用户可见 `Orca Computer Use` / `Orca` → `KepCup Computer Use` / `KepCup`
+  （错误文案原样返回给用户与 Bot、权限引导窗口标题 / 副标题 / stderr），其中一处失效指引改写
+  （`orca computer permissions` 是上游 CLI，KepCup 没有，改指设置页）；标识符零动（可执行名 /
+  `ORCA_*` env / socket 前缀是协议与 peer 校验的一部分），`swift test` 6/6，vendored 第二例外
+  DEV-082 + NOTICE.md「例外」小节同步，dev helper 重建（同 bundle id + Developer ID 重签，TCC
+  授权保持）。②capabilities 握手结果落盘——`computer/capabilities-record.ts` 成败都写
+  `userData/computer-use-capabilities.json`（损坏容错、写失败静默），computer-host 注入
+  userDataDir 并在 `capabilities()` 里记录；无终端也能定位「工具为什么没注册」。③设置页可用性
+  行——状态卡首行呈现握手可用性（可用 / 不可用 + 原因 / 检查中，与 TCC 权限三态分开），
+  `computer:capabilities-status` IPC（每次重新握手取最新结论，检查本身会拉起 helper，与权限
+  检测同语义）+ preload / shim.d.ts / web-shim（web 安全默认值）+ i18n zh/en 四键。验证：
+  desktop typecheck 0 error，定向 26 例全绿（host 落盘 4 + record 4 + i18n 2 + sidecar 14 +
+  入口路径 2）。打包版缺 computer-use（/Applications 0.5.1）属 WP5 发布验收清单既有项，未动。
+
+## 工作台备忘分组与拖拽（D90 增强）
+
+按用户需求实施（2026-10-31 定向确认三项决策：未分组 header 文案用「未分组」、分组支持重命名 +
+删除、事项拖拽 = 道内排序 + 未开始的可跨道改派执行者、已在执行的不改派）：
+
+- **shared 契约**：`memoGroupSchema`（main 0063 新表 `memo_groups`）、`Memo.groupId/position`、
+  `Todo.position`；新 RPC `memos.groups.create / rename / delete`、`memos.move`、`todos.move`
+  （assignee 只在换道时发送）；`memos.list` 回带 `groups`；`memos.changed` 载荷 `memoId` 变可选
+  （分组级变更没有 memoId）。常量 `WORKBENCH_POSITION_STEP / MIN_GAP`、`MEMO_GROUP_TITLE_MAX_CHARS`。
+- **core**：迁移 `0063_memo_groups.sql`（memo_groups + memos.group_id FK ON DELETE SET NULL +
+  备忘/事项 position 回填，按改动前显示顺序展开，拖动前一切不变）；`MemoStore` 分组 CRUD 与
+  `move`（placeItem 复用 `board/positions.ts`，参数化步长）；`MemoService` 分组校验与事件；
+  `TodoStore.listLaneOpen / updatePositions`（排除看板卡）、`insert` 落道顶；`TodoService.move`
+  （跨道走与抽屉一致的改派路径，`#effectiveStatus ∈ {in_progress, delivered}` 拒绝改派；纯重排
+  不动 `updated_at`，落回原位不发事件）。
+- **渲染层**：`workbench-model.memoSections`（未分组伪分组在最前、无分组时保持扁平列表、搜索隐藏
+  空分区）+ `canReassignTodo`；道内排序改 position 升序（`compareTodos` 移除）；`workbench` store
+  增 `memoGroups` / 分组操作 / `moveMemo` / `moveTodo`（乐观上屏 + 失败 toast 重拉）与拖拽期刷新
+  冻结（`memoDragging` / `todoDragging`，照 board 模式）；`MemoPane` 顶部 + 按钮（Tooltip「添加
+  分组」）+ 新建分组弹框；新组件 `MemoGroupSection`（header 就地重命名 InlineEditable + 删除确认，
+  dnd 区 type `memo`，shadow 占位钉高度，复用 `board-dnd` 的 anchorFromFinalize / click guard）；
+  `MemoCard` 加拖拽把手提示（正文 contenteditable 由 dnd-action 原生豁免）；`TodoLane` 事项卡区
+  type `todo`（自排卡不入区），点卡开抽屉经 click guard 防拖后误触。i18n zh/en 各 18 键。
+- **验证**：全量 `pnpm test` 7195 通过 / 2 失败 / 42 跳过——其中 `public-skills-migration` 回放
+  用例因未摘除新表 `memo_groups` 而挂（已补 drop 并复验 2/2 绿），另一失败 `settings-card/deep-link`
+  （computer.control → computer-use 分区映射）为本分支 D105 提交 9defc083 的既有失败，与本阶段
+  无关（stash 本阶段改动后单跑同样失败）。e2e `workbench.spec` 整包 16/16 全绿（新增「分组创建 →
+  未分组 header → 重命名 → 跨组拖拽 → 删组回未分组」一条；两处时序要点：连续创建备忘须等输入框
+  清空（保存返回的 `memoDraft=''` 会抹掉下一份草稿）、合成拖拽在中途与落点前各留 300ms 等
+  dnd-action 的 rAF 观察循环登记目标区，拖拽起点用卡片把手——正文 contenteditable 会被 dnd-action
+  跳过）。shared 42 文件 508 例、core 定向（workbench-service / stores / 迁移×4 / board positions /
+  workbench 集成）与 renderer workbench+board+i18n 166 例全绿；desktop / core / shared typecheck
+  0 error；本阶段文件 eslint 干净。
+  文档同步 [design/39](../design/39-workbench.md) §2.4 / §3.1 / §3.6 / §4.2 / §4.4 与
+  [03-data-model](03-data-model.md)（迁移表 + memos/memo_groups 结构）。
+
+- **跟进一轮（2026-11-01，用户反馈三项）**：①「添加分组」按钮从输入行右侧移到列表底部（与
+  「最近删除」同排，去掉 Tooltip 改文字按钮）；②分组可拖拽排序——新 RPC `memos.groups.move`
+  （store `moveGroup` 用 placeItem，无变化不发 `memos.changed`；`{ memo, changed }` 返回形状同
+  步用于 `memos.move`），渲染层照看板列层做 `dragHandleZone`（type `group`）+ 分区 header 整行
+  把手，未分组伪分组不进拖拽区恒在最前，`workbench.moveGroup` 乐观重排 + 失败 toast 重拉，
+  拖拽期 `groupDragging` 冻结刷新；③点击分组名 / 折叠箭头切换组内条目显示（重命名改为 hover
+  铅笔 → 行内输入框，Enter 提交 / Esc 取消 / 失焦提交，不再用 InlineEditable 的点入即改）。
+  e2e 两处坑记档：bits-ui 模态关闭后 body 的滚动锁（`pointer-events:none`）下一拍才解除，关框
+  后要等它清掉再做指针操作（`waitDialogScrollLockCleared`）；分组拖拽的落点取目标分区上部。
+  验证（按约定只跑改动文件）：shared / core（service+stores）/ renderer workbench 定向 258 例、
+  e2e `workbench.spec` 全文件、desktop typecheck 0 error、本阶段文件 eslint 干净。

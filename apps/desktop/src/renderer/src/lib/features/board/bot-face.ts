@@ -1,4 +1,9 @@
-import { normalizeBotAvatarMask, type Bot, type BotAvatarMask } from '@kepcup/shared';
+import {
+  normalizeBotAvatarMask,
+  normalizeBotAvatarPadding,
+  type Bot,
+  type BotAvatarMask,
+} from '@kepcup/shared';
 import { parsePresetAvatar } from '$lib/avatars/presets';
 import { chat } from '$lib/stores/chat.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
@@ -23,6 +28,11 @@ export function botAvatarOf(botId: string): string | null {
 /** 与 `botAvatarOf` 同源的头像遮罩（缺省 / 未知 = circle）。 */
 export function botMaskOf(botId: string): BotAvatarMask {
   return normalizeBotAvatarMask(findBot(botId)?.avatarMask);
+}
+
+/** 与 `botAvatarOf` 同源的上传头像内边距（缺省 / 越界 = 0）。 */
+export function botPaddingOf(botId: string): number {
+  return normalizeBotAvatarPadding(findBot(botId)?.avatarPadding);
 }
 
 /**

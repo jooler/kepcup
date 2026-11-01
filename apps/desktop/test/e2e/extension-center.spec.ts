@@ -8,8 +8,9 @@ import { rpc } from './helpers/create-bot';
 import { copyShippedPlugins } from './helpers/builtin-plugins';
 
 /**
- * 扩展中心分组 e2e（197db376 起为插件卡模型；D105 P4 两页签收敛）：
- * - 两个分组页签：市场 / 已安装（插件）；「技能 / 连接 / MCP / 邮件」是
+ * 扩展中心分组 e2e（197db376 起为插件卡模型；D105 P4 两页签收敛；扩展中心并入
+ * 设置页后是整页视图，不再是弹框）：
+ * - 三个分组页签：市场 / 已安装（插件）/ 设置；「技能 / 连接 / MCP / 邮件」是
  *   「已安装」顶部的内容筛选 chips，只过滤插件卡网格，不再是独立分组视图；
  *   本机应用协作 / 本机自建连接是已安装页网格末尾的系统卡（旧 localCollab 深链滚动到它）；
  * - 「连接」筛选视图 = 插件卡网格 + 本机自建独立区，没有「填 URL」入口；
@@ -17,7 +18,8 @@ import { copyShippedPlugins } from './helpers/builtin-plugins';
  *   单连接直达账号管理流）；
  * - MCP 管理从插件卡「管理 · 工具」进入 plugins-content-mcp 内容视图（按插件圈定：
  *   只见该插件投影的 server，新建 / .mcpb / BYO 客户端等全局入口只在无圈定视图出现）；
- * - 设置「应用」只管已连接账号，并能跳到扩展中心；设置里不再有「开发者模式」分区。
+ * - 设置里不再有「应用」「插件」分区（连接相关在扩展中心对应分组、插件供应链设置在
+ *   扩展中心「设置」页签），也不再有「开发者模式」分区。
  *
  * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
  * `KEPCUP_BUILTIN_PLUGINS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
@@ -89,15 +91,15 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     // 补装一个只带 MCP 贡献的插件：MCP 管理入口挂在插件卡「管理 · 工具」上。
     await installMcpOnlyPlugin(page);
 
-    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    const dialog = page.locator('[data-testid="settings-page"]');
     await page.locator('[data-testid="extension-center-button"]').click();
     await expect(dialog).toBeVisible();
 
-    // 全局弹层拖拽带（window-drag-band.ts）：弹框开着时激活，且必须是 body
-    // 最后一个子节点（app-region 矩形按 DOM 顺序后者胜出，沉不了底就压不过
-    // 浮层的 no-drag，窗口拖不动的问题会复发）。
+    // 全局弹层拖拽带（window-drag-band.ts）：只随 [data-window-overlay] 浮层激活。
+    // 扩展中心并入设置页后是整页视图（不是浮层），拖拽带保持未激活；带仍是 body
+    // 最后一个子节点（app-region 矩形按 DOM 顺序后者胜出）。
     const dragBand = page.locator('[data-testid="window-drag-band"]');
-    await expect(dragBand).toHaveAttribute('data-active', 'true');
+    await expect(dragBand).toHaveAttribute('data-active', 'false');
     await expect
       .poll(() => page.evaluate(() => document.body.lastElementChild?.getAttribute('data-testid')))
       .toBe('window-drag-band');
@@ -127,14 +129,14 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid^="mcp-server-plg_"]')).toBeVisible();
 
-    // 键盘：方向键在两页签间循环（market ↔ installed）。
+    // 键盘：方向键在三页签间循环（market → installed → settings → market）。
     await dialog.locator('[data-testid="extension-center-tab-installed"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
+    await expect(dialog.locator('[data-testid="extension-center-tab-settings"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    await dialog.locator('[data-testid="extension-center-tab-market"]').press('ArrowRight');
-    await expect(dialog.locator('[data-testid="extension-center-tab-installed"]')).toHaveAttribute(
+    await dialog.locator('[data-testid="extension-center-tab-settings"]').press('ArrowRight');
+    await expect(dialog.locator('[data-testid="extension-center-tab-market"]')).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -186,7 +188,7 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     await waitReady(page);
     // 补装一个只带 MCP 贡献的插件：MCP 管理入口挂在插件卡「管理 · 工具」上。
     await installMcpOnlyPlugin(page);
-    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    const dialog = page.locator('[data-testid="settings-page"]');
     await page.locator('[data-testid="extension-center-button"]').click();
 
     // 连接筛选：非空目录 → Notion 插件卡；「管理」直达账号管理流（单连接插件，

@@ -1,0 +1,7 @@
+{
+  "comment": "computer-use 冒烟宿主（Electron 主进程）。必须以真 Electron app 跑（不设 ELECTRON_RUN_AS_NODE）：helper 的 peer 校验查的是 sidecar 进程或其父进程的 bundle id，dev 壳 Electron 是 com.github.Electron（上游信任列表内）。",
+  "name": "kepcup-computer-use-smoke-host",
+  "private": true,
+  "type": "commonjs",
+  "main": "main.js"
+}

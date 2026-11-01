@@ -200,8 +200,12 @@ export const boardChangedPayloadSchema = z.object({
 });
 export type BoardChangedPayload = z.infer<typeof boardChangedPayloadSchema>;
 
-/** A workbench memo was created / changed / deleted / restored (D90). */
-export const memosChangedPayloadSchema = z.object({ memoId: z.string() });
+/**
+ * A workbench memo was created / changed / deleted / restored, or a memo group
+ * was created / renamed / deleted (D90). `memoId` is absent for group-only
+ * changes; the renderer just re-pulls the whole list either way.
+ */
+export const memosChangedPayloadSchema = z.object({ memoId: z.string().optional() });
 
 // --- P09 events (docs/dev/phases/P09-wiki.md) ----------------------------------
 

@@ -111,7 +111,7 @@ test('update downloads silently; settings and sidebar expose progress and apply'
     await expect(updateRow).toContainText('正在下载 v9.9.9 - 42%', { timeout: 15_000 });
     await expect(page.locator('[data-testid="settings-check-update"]')).toHaveCount(0);
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
     // 经 dev/e2e seam 驱动【真实门控】走 evaluate()（无在途执行 → ready），
     // 下载完成后不弹横幅，只在设置页出现绿色按钮、左栏底部出现圆形更新按钮。
@@ -129,7 +129,7 @@ test('update downloads silently; settings and sidebar expose progress and apply'
       timeout: 15_000,
     });
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
 
     // 点击左栏圆形按钮 → 先弹确认浮层（提醒需要重启才能生效），确认后才走
     // preload update:installNow → 主进程门控退出并安装；门控先广播
@@ -274,12 +274,12 @@ test('launch-at-login switch persists in settings; in dev the OS login item is n
 
     // 离开设置页再回来：开关状态从 settings 读回（持久化证据）。
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await page.locator('[data-testid="user-menu-trigger"]').click();
     await page.locator('[data-testid="menu-contacts"]').click();
     await expect(page.locator('[data-testid="contacts-page-content"]')).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await page.locator('[data-testid="user-menu-trigger"]').click();
     await page.locator('[data-testid="menu-settings"]').click();
     await expect(page.locator('[data-testid="settings-launch-at-login"]')).toHaveAttribute(

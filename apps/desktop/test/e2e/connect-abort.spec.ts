@@ -105,7 +105,7 @@ test('catalog connect cancelled before authorizing: no ghost account, no detail 
     await page.reload();
     await waitReady(page);
 
-    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    const dialog = page.locator('[data-testid="settings-page"]');
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-installed"]').click();
     await dialog.locator('[data-testid="plugins-filter-connector"]').click();

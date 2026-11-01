@@ -30,6 +30,7 @@
     {name}
     avatar={bot?.avatar ?? null}
     mask={bot?.avatarMask ?? null}
+    padding={bot?.avatarPadding ?? null}
     class={klass}
     fallbackClass="text-xs"
     animated={false}

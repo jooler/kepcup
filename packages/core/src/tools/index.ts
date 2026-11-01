@@ -37,6 +37,9 @@ import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
 import { buildMailTools, mailBoundFor, type MailSetupFacade } from './mail-tools.js';
 import type { MailService } from '../mail/service.js';
 import { buildBrowserTools } from './browser.js';
+import { buildComputerTools, type ComputerToolDeps } from './computer-tools.js';
+import type { ComputerHostRpc } from '../computer/facade.js';
+import type { ApprovalsService } from '../permissions/approvals.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { createGeneratedMediaDelivery } from './media-delivery.js';
@@ -61,6 +64,13 @@ import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 import { ensureShareAttachmentCopy, shareAttachmentCopyPath } from '../share/materialize.js';
+
+/** D105 计算机操控的工具门（orchestrator 预查通过后提供；见 ResponseToolDeps.computer）。 */
+export interface ComputerToolGate {
+  host: ComputerHostRpc;
+  requestApproval: ComputerToolDeps['requestApproval'];
+  approvals?: Pick<ApprovalsService, 'list'> | undefined;
+}
 
 export interface ResponseToolDeps {
   messages: MessagesService;
@@ -158,6 +168,12 @@ export interface ResponseToolDeps {
   browser?: BrowserHostRpc | undefined;
   /** W8: the bot's current browser profile key (`bot:{id}` / `shared:{id}`). */
   browserProfileKey?: ((botId: string) => string) | undefined;
+  /**
+   * D105 计算机操控（docs/design/52 §4，仅任务 loop 注册）：present = 宿主门面 +
+   * computer_control 审批 + 既有批准查询。orchestrator 按「平台支持 + 设置开启 +
+   * helper 可用」决定是否提供；对话轮不传。
+   */
+  computer?: ComputerToolGate | undefined;
   /**
    * 对话式新建（setup interview，UI 改版）：仅在 bots.setup_state =
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
@@ -1067,6 +1083,19 @@ export function buildResponseTools(input: {
         })
       : [];
 
+  // D105 computer-use tools（docs/design/52 §4）：重副作用能力，仅任务 loop——
+  // 对话轮分支不挂（见下方 finalize 前 return 的对话轮清单）。审批（computer_control）
+  // 在 run 内首个动作前出卡；type / paste / set_value 的文本走 sensitiveParams。
+  const computerTools =
+    deps.computer !== undefined
+      ? buildComputerTools({
+          identity,
+          computer: deps.computer.host,
+          requestApproval: deps.computer.requestApproval,
+          ...(deps.computer.approvals !== undefined ? { approvals: deps.computer.approvals } : {}),
+        })
+      : [];
+
   // 对话式新建（setup interview）：访谈期间才注册，正常运行的 Bot 不可见。
   const setupTools =
     deps.setup !== undefined
@@ -1287,6 +1316,8 @@ export function buildResponseTools(input: {
     ...watchTools,
     ...mailTools,
     ...browserTools,
+    // D105：计算机操控只在任务面（重副作用；对话轮不注册）。
+    ...computerTools,
     ...imageTools,
     ...speechTools,
     ...webTools,

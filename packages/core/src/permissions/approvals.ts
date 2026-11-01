@@ -141,6 +141,9 @@ type Resolver = (outcome: ApprovalOutcome) => void;
  *   user to come back. This floor is also the premise for the proactive-propose
  *   rule (the cards only appear when the user corrected the bot): each one still
  *   needs a human decision.
+ * - computer_control (D105): drives the user's keyboard and mouse — the most
+ *   physical side-effect a bot can have; unattended auto-approval is forbidden
+ *   outright (docs/design/52 §5, hard constraint).
  */
 const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
   'butler_proposal',
@@ -148,6 +151,8 @@ const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
   // D88: moves mailboxes / apps / schedules between bots — always waits for the user.
   'bot_handover',
   'profile_change',
+  // D105: 键鼠操控永不无人值守自动批准（硬约束）。
+  'computer_control',
 ]);
 
 /**
@@ -612,14 +617,17 @@ export class ApprovalsService {
           // durations (conversation / bash-same-command) where the gateway offered them.
           approval.kind === 'egress' ||
           // git_remote 卡按 gateway 提供的 durations（仅这一次 / 本对话内 / 对该 Bot）。
-          approval.kind === 'git_remote') &&
+          approval.kind === 'git_remote' ||
+          // D105 computer_control 卡同 git_remote：三档由 payload.durations 提供。
+          approval.kind === 'computer_control') &&
         !offeredDurations(approval.payload).includes(duration)
       ) {
         duration = 'once';
       } else if (
         duration === 'bot' &&
         approval.kind !== 'mcp_tool' &&
-        approval.kind !== 'git_remote'
+        approval.kind !== 'git_remote' &&
+        approval.kind !== 'computer_control'
       ) {
         duration = 'once';
       } else if (duration === 'command' && approval.kind !== 'egress') {
@@ -1034,6 +1042,10 @@ export class ApprovalsService {
         const subject = String(approval.payload['subject'] ?? '');
         return `${botName} 申请发送邮件${to.length > 0 ? `给 ${to}` : ''}${subject.length > 0 ? `：${subject}` : ''}`;
       }
+      case 'computer_control':
+        // D105：动作摘要只含方法名与目标应用；文本参数（type / paste / set_value）
+        // 走 sensitiveParams，不进审批卡明文（docs/design/52 §5）。
+        return `${botName} 申请操控本机桌面应用${approval.payload['app'] ? `：${String(approval.payload['app'])}` : ''}`;
       default:
         return `${botName} 请求确认（${approval.kind}）`;
     }

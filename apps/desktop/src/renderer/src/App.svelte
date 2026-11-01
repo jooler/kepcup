@@ -37,7 +37,7 @@
   import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
-  import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
+  import SettingsPage from '$lib/features/settings/SettingsPage.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
   import CoreStatusBar from '$lib/features/shell/CoreStatusBar.svelte';
   import TopBanners from '$lib/features/shell/TopBanners.svelte';
@@ -85,7 +85,7 @@
   // 逐帧触发），narrow 抽值带滞回（640 进入 / 680 退出，narrow-layout.ts）切换
   // 宽/窄布局形态（narrow-layout.svelte.ts）。
   //
-  // 宽 / 窄切换时：设置类浮层状态统一复位（宽屏 SettingsDialog 与窄屏 NarrowSettings 是两套
+  // 宽 / 窄切换时：设置类浮层状态统一复位（宽屏设置页与窄屏 NarrowSettings 是两套
   // 互不相通的状态，shell.resetForLayoutChange）；窄屏拉回宽屏时，窄屏「返回列表」
   // （chat.leaveCurrent）留下的空选中恢复到上次查看的会话（宽屏没有「列表层」，右侧聊天区
   // 不该是空的）。Bot 详情覆盖层由 BotDetailOverlay 按「是否仍需要覆盖层」自行收放。
@@ -268,9 +268,12 @@
             {:else if !coreReady}
               <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
             {:else}
-              <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
-                 回到对话（chat.select）后重新水合。 -->
-              {#if shell.mainView === 'workbench'}
+              <!-- 宽屏主区三选一：设置页打开时接管主区（左栏同时变成分类列表）；
+                 工作台开着时对话区卸载；草稿在 composerDrafts 里，回到对话
+                 （chat.select）后重新水合。 -->
+              {#if shell.settingsOpen}
+                <SettingsPage />
+              {:else if shell.mainView === 'workbench'}
                 <WorkbenchView />
               {:else}
                 <ChatsArea />
@@ -289,11 +292,6 @@
     <!-- 全局顶部浮层通知（重连 / 无模型 / 无人值守）：固定定位、不占布局高度，
        挂在主布局之后压过各栏顶部的窗口拖拽矩形；z-40 仍低于全屏浮层（z-50）。 -->
     <TopBanners />
-
-    <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
-    {#if coreReady}
-      <SettingsDialog />
-    {/if}
 
     <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
     <FileViewer />

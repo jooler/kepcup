@@ -112,6 +112,12 @@ export class ChatSession {
   view = $state<ChatSessionView | null>(null);
   replyTo = $state<ComposerReplyRef | null>(null);
   highlightMessageId = $state<string | null>(null);
+  /**
+   * 待回填输入框的文本（消息撤回后把原文交回 Composer，Composer 消费即清）。
+   * nonce 区分两次相同文本的撤回，保证 effect 一定重跑。
+   */
+  composerInsertion = $state<{ text: string; nonce: number } | null>(null);
+  #composerNonce = 0;
   /** Send-gate setup card for this session. Not shared across instances. */
   pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
 
@@ -243,6 +249,7 @@ export class ChatSession {
     };
     this.replyTo = null;
     this.pendingSetup = null;
+    this.composerInsertion = null;
     this.#holdConversation(id);
     this.#recheckPendingLinkCards(messages);
     // Shell side effects (leave the workbench, close the task page) before
@@ -261,6 +268,7 @@ export class ChatSession {
     this.view = null;
     this.replyTo = null;
     this.highlightMessageId = null;
+    this.composerInsertion = null;
     this.pendingSetup = null;
   }
 
@@ -424,6 +432,11 @@ export class ChatSession {
           }
         : {}),
     };
+  }
+
+  /** 请求把一段文本回填进输入框（撤回回填；Composer 消费后清空）。 */
+  requestComposerInsert(text: string): void {
+    this.composerInsertion = { text, nonce: (this.#composerNonce += 1) };
   }
 
   #holdConversation(id: string): void {

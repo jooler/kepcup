@@ -158,7 +158,7 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     // key 配好后横幅消失；关闭设置弹框回到对话发送消息。
     await expect(banner).toBeHidden({ timeout: 15_000 });
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await page.locator('[data-testid^="conversation-item-"]').first().click();
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
     const composer = page.locator('[data-testid="composer-input"]');

@@ -97,7 +97,7 @@ async function waitReady(page: Page): Promise<void> {
 async function openSettings(page: Page): Promise<void> {
   // 弹框可能已开着（嵌套向导关闭后设置仍在）：先 Escape 归零再走菜单入口。
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
@@ -106,7 +106,7 @@ async function openSettings(page: Page): Promise<void> {
 async function backToChats(page: Page): Promise<void> {
   // 设置是弹框（主区域常驻对话）：Escape 关闭即可回到对话。
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
   await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
 }
 

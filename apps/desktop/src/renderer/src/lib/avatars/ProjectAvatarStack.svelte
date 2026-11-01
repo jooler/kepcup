@@ -23,6 +23,8 @@
       avatar?: string | null;
       /** 上传头像的遮罩形状；缺省 = 圆形。 */
       avatarMask?: BotAvatarMask | null;
+      /** 上传头像的内边距（像素）；缺省 / 越界 = 0。 */
+      avatarPadding?: number | null;
     }>;
     class?: string;
     /** 项目组始终含当前用户；个别场景可关掉。 */
@@ -74,6 +76,7 @@
               name={member.name}
               avatar={member.avatar ?? null}
               mask={member.avatarMask ?? null}
+              padding={member.avatarPadding ?? null}
               class="size-full"
               animated={false}
               glyphShadowOffset={shadow}

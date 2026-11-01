@@ -561,6 +561,55 @@ function ensureWslRootfsSource(wslDir, targetArch, projectDir) {
   return { kept: null, warnMissing: true };
 }
 
+/**
+ * 校验 macOS 产物里的 computer-use helper（D105，docs/design/52 §7）：.app 在
+ * Resources/computer-use/ 下（extraResources 源目录缺失时 electron-builder 会静默
+ * 跳过——TCC 授权、乃至整个能力都依赖它随包分发，必须硬校验）、可执行文件在
+ * （vendored 产物名固定 orca-computer-use-macos）、bundle id 是
+ * app.kepcup.desktop.computer-use（TCC 记账身份，改了授权就反复丢）、签名可验
+ * （ad-hoc 本地包警告放行，发版流水线必须真签名）。返回校验摘要（导出供单测）。
+ */
+function assertComputerUseHelper(appBundlePath) {
+  const helperPath = path.join(
+    appBundlePath,
+    'Contents',
+    'Resources',
+    'computer-use',
+    'KepCup Computer Use.app',
+  );
+  if (!existsSync(helperPath)) {
+    throw new Error(
+      `[pack] 缺少 computer-use helper：${helperPath}（先跑 scripts/build-computer-use-macos.mjs；` +
+        '构建脚本在非 darwin 直接跳过，release 必须在 macOS 上构建）',
+    );
+  }
+  const executable = path.join(helperPath, 'Contents', 'MacOS', 'orca-computer-use-macos');
+  if (!existsSync(executable)) {
+    throw new Error(`[pack] computer-use helper 可执行文件缺失：${executable}`);
+  }
+  const info = readPlist(path.join(helperPath, 'Contents', 'Info.plist'));
+  const bundleId = String(info?.CFBundleIdentifier ?? '');
+  if (bundleId !== 'app.kepcup.desktop.computer-use') {
+    throw new Error(
+      `[pack] computer-use helper bundle id 不对：${bundleId || '（不可解析）'}（应为 app.kepcup.desktop.computer-use——TCC 授权按它记账，改了授权会在升级后丢失）`,
+    );
+  }
+  const signed = existsSync(path.join(helperPath, 'Contents', '_CodeSignature'));
+  if (signed) {
+    const verify = spawnSync('/usr/bin/codesign', ['--verify', '--strict', helperPath], {
+      encoding: 'utf8',
+    });
+    if (verify.status !== 0) {
+      throw new Error(
+        `[pack] computer-use helper 签名校验失败：${helperPath}（${verify.stderr?.trim() || `退出码 ${verify.status}`}）`,
+      );
+    }
+  } else {
+    console.warn(`[pack] computer-use helper 未签名：${helperPath}（本地 ad-hoc 验证可用；发版必须 Developer ID 签名 + 公证）。`);
+  }
+  return { bundleId, executable };
+}
+
 function afterPack(context) {
   // macOS: everything lives inside the .app bundle; win/linux: resources/ next
   // to the executable. (Detect by bundle presence — packager.platform naming
@@ -648,6 +697,15 @@ function afterPack(context) {
         `[pack] Share Extension 校验通过（${summary.bundleId}，${summary.extensionPoint}）。`,
       );
     }
+    // D105 §7：computer-use helper 随包分发与身份校验。
+    if (process.env.KEPCUP_SKIP_COMPUTER_USE === '1') {
+      console.warn(
+        '[pack] computer-use helper 未构建（KEPCUP_SKIP_COMPUTER_USE=1）——产物没有计算机操控能力。',
+      );
+    } else {
+      const helper = assertComputerUseHelper(appBundlePath);
+      console.log(`[pack] computer-use helper 校验通过（${helper.bundleId}）。`);
+    }
   } else {
     assertNoShareExtension(context.appOutDir);
   }
@@ -662,6 +720,7 @@ module.exports = {
   afterPack,
   assertShareExtension,
   assertNoShareExtension,
+  assertComputerUseHelper,
   readPlist,
   firstAppGroupFromEntitlements,
   shareGroupIdFromProject,

@@ -59,7 +59,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
     });
     const page = await app.firstWindow();
     await waitReady(page);
-    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    const dialog = page.locator('[data-testid="settings-page"]');
 
     // --- 「本机自建」始终可达（D105 P4：收编为已安装页的系统卡，空态在卡展开里）----------
     await page.locator('[data-testid="extension-center-button"]').click();

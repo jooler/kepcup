@@ -31,6 +31,7 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
     signed: boolean;
     appGroup: string | null;
   };
+  assertComputerUseHelper(appBundlePath: string): { bundleId: string; executable: string };
   assertNoShareExtension(outDir: string): void;
   readPlist(plistPath: string): unknown;
   firstAppGroupFromEntitlements(text: string): string | null;
@@ -412,6 +413,62 @@ describe('share extension packaging checks', () => {
       expect(() => hooks.assertNoShareExtension(outDir)).toThrow(/非 macOS 产物里出现了 Share Extension/);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// D105 §7：computer-use helper 必须随 mac 包分发且身份正确（TCC 记账靠 bundle id）。
+describe('afterPack computer-use helper checks', () => {
+  function fakeHelperApp(overrides: { bundleId?: string; withHelper?: boolean } = {}): string {
+    const bundle = mkdtempSync(path.join(tmpdir(), 'kepcup-pack-computer-'));
+    const app = path.join(bundle, 'KepCup.app');
+    if (overrides.withHelper !== false) {
+      const helper = path.join(app, 'Contents', 'Resources', 'computer-use', 'KepCup Computer Use.app');
+      mkdirSync(path.join(helper, 'Contents', 'MacOS'), { recursive: true });
+      writeFileSync(
+        path.join(helper, 'Contents', 'Info.plist'),
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<plist version="1.0">',
+          '<dict>',
+          '<key>CFBundleIdentifier</key>',
+          `<string>${overrides.bundleId ?? 'app.kepcup.desktop.computer-use'}</string>`,
+          '</dict>',
+          '</plist>',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(path.join(helper, 'Contents', 'MacOS', 'orca-computer-use-macos'), '#!/bin/sh\n');
+    }
+    return app;
+  }
+
+  test('a well-formed helper passes and reports its bundle id', () => {
+    const appBundle = fakeHelperApp();
+    try {
+      const summary = hooks.assertComputerUseHelper(appBundle);
+      expect(summary.bundleId).toBe('app.kepcup.desktop.computer-use');
+      expect(summary.executable).toContain('orca-computer-use-macos');
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a missing helper fails the build (extraResources silently skips absent sources)', () => {
+    const appBundle = fakeHelperApp({ withHelper: false });
+    try {
+      expect(() => hooks.assertComputerUseHelper(appBundle)).toThrow(/缺少 computer-use helper/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong bundle id fails the build (TCC would lose the grant)', () => {
+    const appBundle = fakeHelperApp({ bundleId: 'com.stablyai.orca.computer-use' });
+    try {
+      expect(() => hooks.assertComputerUseHelper(appBundle)).toThrow(/bundle id 不对/);
+    } finally {
+      rmSync(path.dirname(appBundle), { recursive: true, force: true });
     }
   });
 });

@@ -22,6 +22,8 @@ import type { ConversationsService } from '../domain/conversations.js';
 import type { ScheduleService, WorkbenchDispatchPort } from '../schedule/service.js';
 import { isValidCron, nextCronFireAt } from '../schedule/cron.js';
 import { parseIsoOrThrow } from '../schedule/when.js';
+import { placeItem } from '../board/positions.js';
+import { WORKBENCH_POSITION_MIN_GAP, WORKBENCH_POSITION_STEP } from '@kepcup/shared';
 import { MemoStore } from './memo-store.js';
 import { TodoStore } from './todo-store.js';
 
@@ -547,7 +549,67 @@ export class TodoService implements WorkbenchDispatchPort {
     });
   }
 
+  /**
+   * Drag a workbench todo (D90 §5.2): reorder inside its lane, or drop it into
+   * another lane, which reassigns it through the same path as the drawer's
+   * executor selector (`#reassign` / `#toDraft`…). Reassigning a todo that is
+   * already executing (in progress / delivered, including a periodic one whose
+   * run is out) is rejected — the UI blocks it, this is the backstop. A pure
+   * reorder never touches `updated_at`.
+   */
+  move(id: string, input: { beforeId: string | null; assignee?: TodoAssignee | null }): TodoEntry {
+    this.#assertBoardWritable(id, 'user');
+    const todo = this.#getOrThrow(id);
+    if (todo.status === 'done' || todo.status === 'cancelled') {
+      throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不在工作台道里`);
+    }
+    const assigneeChanged =
+      input.assignee !== undefined && !sameAssignee(todo.assignee, input.assignee);
+    if (assigneeChanged) {
+      const effective = this.#effectiveStatus(todo);
+      if (effective === 'in_progress' || effective === 'delivered') {
+        throw new AppError('INVALID_INPUT', '事项已在执行，不能改派执行者');
+      }
+      this.update(id, { assignee: input.assignee });
+    }
+    // Reorder within the (possibly new) target lane, display order = position asc.
+    const target = this.store.get(id);
+    if (target === null) throw new AppError('NOT_FOUND', `事项 ${id} 不存在`);
+    const placed = placeItem(
+      this.store.listLaneOpen(target.assignee).map((item) => ({
+        id: item.id,
+        position: item.position,
+      })),
+      id,
+      input.beforeId,
+      { step: WORKBENCH_POSITION_STEP, minGap: WORKBENCH_POSITION_MIN_GAP },
+    );
+    if (placed.changed) {
+      const moved = placed.items.find((item) => item.id === id);
+      if (moved === undefined) throw new Error(`todo ${id} missing after placeItem`);
+      this.store.updatePositions(
+        placed.renumbered ? placed.items : [{ id, position: moved.position }],
+      );
+      this.#changed(id);
+    }
+    return this.toEntry(this.store.get(id) ?? target);
+  }
+
   // --- update notices (D90: tell the executor of an in-flight dispatch what changed) ---
+
+  /**
+   * Status as the workbench renders it: a periodic todo parked in `scheduled`
+   * shows as in progress / delivered while its latest run is still out (same
+   * projection as the renderer's `effectiveStatus`).
+   */
+  #effectiveStatus(todo: Todo): TodoStatus {
+    if (todo.status !== 'scheduled') return todo.status;
+    const run = this.store.lastRun(todo.id);
+    if (run === null) return todo.status;
+    if (run.status === 'dispatched') return 'in_progress';
+    if (run.status === 'delivered') return 'delivered';
+    return todo.status;
+  }
 
   /** The dispatch of `todo` that is still being worked on, if any. */
   #inflightRun(todo: Todo): TodoRun | null {

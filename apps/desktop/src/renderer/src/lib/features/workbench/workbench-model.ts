@@ -1,4 +1,11 @@
-import type { Memo, ScheduleEntry, ScheduleOrigin, TodoEntry, TodoStatus } from '@kepcup/shared';
+import type {
+  Memo,
+  MemoGroup,
+  ScheduleEntry,
+  ScheduleOrigin,
+  TodoEntry,
+  TodoStatus,
+} from '@kepcup/shared';
 import { TODO_NOTES_MAX_CHARS, TODO_TITLE_MAX_CHARS } from '@kepcup/shared';
 
 /**
@@ -102,25 +109,21 @@ export function effectiveStatus(todo: Pick<TodoEntry, 'status' | 'lastRun'>): To
   return todo.status;
 }
 
-/** 同一道内的事项顺序：待验收 → 进行中 → 已排期（下次时间近者在前）→ 草案（新改动在前）。 */
-const STATUS_RANK: Record<TodoStatus, number> = {
-  delivered: 0,
-  in_progress: 1,
-  scheduled: 2,
-  draft: 3,
-  done: 4,
-  cancelled: 5,
-};
+/**
+ * 道内顺序 = 手动拖拽顺序（`position` 升序，迁移已按状态顺序回填，新事项插到道顶）。
+ * 状态仍显示在卡片的徽标上，只是不再自动重排。
+ */
+function compareLaneTodos(a: TodoEntry, b: TodoEntry): number {
+  return a.position - b.position || b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+}
 
-export function compareTodos(a: TodoEntry, b: TodoEntry): number {
-  const rank = STATUS_RANK[effectiveStatus(a)] - STATUS_RANK[effectiveStatus(b)];
-  if (rank !== 0) return rank;
-  if (a.status === 'scheduled') {
-    const an = a.schedule?.nextFireAt ?? Number.POSITIVE_INFINITY;
-    const bn = b.schedule?.nextFireAt ?? Number.POSITIVE_INFINITY;
-    if (an !== bn) return an - bn;
-  }
-  return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
+/**
+ * 该事项是否还允许被拖去别的道（改派执行者）：已经在跑 / 待验收的不行——
+ * 执行中的事项换人等于打断，草案与已排期的可以。
+ */
+export function canReassignTodo(todo: TodoEntry): boolean {
+  const status = effectiveStatus(todo);
+  return status === 'draft' || status === 'scheduled';
 }
 
 function earliest(values: Array<number | null | undefined>): number | null {
@@ -202,7 +205,7 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
   }
 
   for (const lane of lanes.values()) {
-    lane.todos.sort(compareTodos);
+    lane.todos.sort(compareLaneTodos);
     for (const todo of lane.todos) {
       const status = effectiveStatus(todo);
       if (status === 'draft') lane.counts.draft += 1;
@@ -330,14 +333,15 @@ export function selfScheduleSource(origin: ScheduleOrigin): SelfScheduleSource {
 // ---------------------------------------------------------------------------
 
 /**
- * 置顶在前，其余按排序键 `sortAt` 倒序（id 兜底，保证稳定）。
- * 排序键只随置顶变化，改正文不会让卡片换位。
+ * 置顶在前，其余按手动拖拽顺序 `position` 升序（id 兜底，保证稳定）。
+ * `position` 由迁移按旧的 `sortAt` 顺序回填，拖动之前看到的一切不变；
+ * 改正文不会让卡片换位。
  */
 export function sortMemos(memos: readonly Memo[]): Memo[] {
   return [...memos].sort(
     (a, b) =>
       Number(b.pinned) - Number(a.pinned) ||
-      b.sortAt - a.sortAt ||
+      a.position - b.position ||
       (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   );
 }
@@ -347,6 +351,52 @@ export function filterMemos(memos: readonly Memo[], query: string): Memo[] {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return [...memos];
   return memos.filter((memo) => memo.body.toLowerCase().includes(needle));
+}
+
+/** 备忘列表的一个分区：命名分组（header 常显）或「未分组」伪分组。 */
+export interface MemoSection {
+  /** 分组 id；null = 未分组伪分组（`memo_groups` 里没有这一行）。 */
+  groupId: string | null;
+  /** 命名分组的标题；未分组伪分组为空串（文案由界面按 locale 给出）。 */
+  title: string;
+  memos: Memo[];
+}
+
+/**
+ * 备忘列表分区（D90 §5.4）：未分组伪分组在最前，其后按分组的创建顺序。
+ * 没有命名分组时返回单个无 header 的未分组区（保持旧的扁平列表）；有命名分组时
+ * 未分组也显示 header。搜索中隐藏没有命中的分区（空命名分组随之消失）。
+ */
+export function memoSections(input: {
+  memos: readonly Memo[];
+  groups: readonly MemoGroup[];
+  query: string;
+}): MemoSection[] {
+  const filtered = sortMemos(filterMemos(input.memos, input.query));
+  const hasQuery = input.query.trim() !== '';
+  // 没有命名分组 = 旧的扁平列表：全部备忘进同一个无 header 区（忽略陈旧的 groupId）。
+  if (input.groups.length === 0) {
+    if (filtered.length === 0 && hasQuery) return [];
+    return [{ groupId: null, title: '', memos: filtered }];
+  }
+  const byGroup = new Map<string | null, Memo[]>();
+  for (const memo of filtered) {
+    const list = byGroup.get(memo.groupId);
+    if (list === undefined) byGroup.set(memo.groupId, [memo]);
+    else list.push(memo);
+  }
+  const sections: MemoSection[] = [];
+  const ungrouped = byGroup.get(null) ?? [];
+  if (ungrouped.length > 0 || !hasQuery) {
+    sections.push({ groupId: null, title: '', memos: ungrouped });
+  }
+  for (const group of input.groups) {
+    const memos = byGroup.get(group.id) ?? [];
+    if (memos.length > 0 || !hasQuery) {
+      sections.push({ groupId: group.id, title: group.title, memos });
+    }
+  }
+  return sections;
 }
 
 /**

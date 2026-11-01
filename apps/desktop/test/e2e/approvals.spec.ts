@@ -214,7 +214,7 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
 
     // 开启期间审批自动批准：让 Bot 的任务发起一次访问授权。
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await createBotAndOpenChat(page, '小无');
     const target = externalFile('kepcup-e2e-unattended-');
     llm.script('mock-main', readInTask(target, '自动批准了'));
@@ -234,7 +234,7 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
 
     // 关闭后弹出汇总（设置弹框仍开着：先关再从菜单重开到无人值守分组）。
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await page.locator('[data-testid="user-menu-trigger"]').click();
     await page.locator('[data-testid="menu-settings"]').click();
     await page.locator('[data-testid="settings-nav-unattended"]').click();

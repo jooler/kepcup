@@ -210,6 +210,7 @@ describe('board RPC and events', () => {
       createdAt: 1,
       updatedAt: 1,
       closedAt: null,
+      position: 1024,
       assigneeName: null,
       leadBotName: null,
       schedule: null,

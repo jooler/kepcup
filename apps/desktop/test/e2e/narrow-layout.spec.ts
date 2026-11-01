@@ -252,7 +252,7 @@ test('narrow layout: single column, bottom tabs, detail layers, fullscreen overl
     await page.locator('[data-testid="narrow-tab-extensions"]').click();
     await expect(page.locator('[data-testid="narrow-extensions-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="extension-center-tabs"]')).toBeVisible();
-    await expect(page.locator('[data-testid="extension-center-dialog"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="settings-page"]')).toHaveCount(0);
     await settle(page);
     await page.screenshot({ path: path.join(SHOT_DIR, '05-extensions.png') });
 
@@ -469,7 +469,7 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await resizeWindow(app, 1280, 840); // 拉宽：窄屏设置页必须消失，且不是被「挪」成宽屏弹框。
     await expect(page.locator('[data-testid="narrow-shell"]')).toHaveCount(0);
     await expect(settingsPage).toHaveCount(0);
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="settings-page"]')).toHaveCount(0);
     await resizeWindow(app, 375, 812); // 再拉窄：设置页不会自己弹出。
     await expect(page.locator('[data-testid="narrow-shell"]')).toBeVisible();
     await expect(settingsPage).toHaveCount(0);
@@ -479,10 +479,10 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await page.keyboard.press('ControlOrMeta+k');
     await page.locator('[data-testid="global-search-input"]').fill('默认模型');
     await page.locator('[data-testid^="global-search-item-settings-"]').first().click();
-    await expect(page.locator('[data-testid="settings-dialog"]')).toBeVisible();
+    await expect(page.locator('[data-testid="settings-page"]')).toBeVisible();
     await page.locator('[data-testid="settings-nav-hardware"]').click();
     await resizeWindow(app, 375, 812);
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="settings-page"]')).toHaveCount(0);
     await expect(settingsPage).toHaveCount(0);
     // 滞回：窄屏下拉到 660（>640、<680）仍是窄屏；到 700 才回宽屏；宽屏下 660 仍是宽屏。
     await resizeWindow(app, 660, 812);

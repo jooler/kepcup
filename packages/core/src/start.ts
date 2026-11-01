@@ -183,6 +183,11 @@ import {
   type BrowserHostRpc,
   type DeferredBrowserHostRpc,
 } from './browser/facade.js';
+import {
+  createComputerHostRpc,
+  type ComputerHostRpc,
+  type DeferredComputerHostRpc,
+} from './computer/facade.js';
 import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
@@ -396,6 +401,12 @@ export interface CoreServicesOptions {
    * inject a fake directly.
    */
   browserRpc?: BrowserHostRpc;
+  /**
+   * D105 test hook: the computer-use capability hosted by the main process
+   * (`computer.*`). Same deferred pattern as browserRpc — the Electron entry
+   * binds the platform channel; tests inject a fake.
+   */
+  computerRpc?: ComputerHostRpc;
   /**
    * D73 test hook: the system-shell capability hosted by the main process
    * (`shell.openExternal`). The Electron entry binds the deferred default to
@@ -632,6 +643,8 @@ export interface CoreServices {
   browserRpc: DeferredBrowserHostRpc;
   /** D73 system shell (open the browser for OAuth consent); same deferred pattern as browserRpc. */
   shellRpc: DeferredShellHostRpc;
+  /** D105 计算机操控（computer.*）；同 browserRpc 的 deferred 模式。 */
+  computerRpc: DeferredComputerHostRpc;
   /** D87 P3b widget preview host (S2 of the authoring loop); same deferred pattern as shellRpc. */
   widgetPreviewRpc: DeferredWidgetPreviewRpc;
   /** D73 connected apps: Token Vault, connection rows, interactive auth flows (null while locked / errored). */
@@ -916,6 +929,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     browserRpc: createBrowserHostRpc(),
     shellRpc: createShellHostRpc(),
     widgetPreviewRpc: createWidgetPreviewRpc(),
+    computerRpc: createComputerHostRpc(),
     apps: null,
     appRuntime: null,
     mcpb: null,
@@ -1020,6 +1034,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   if (options.widgetPreviewRpc !== undefined) {
     services.widgetPreviewRpc.bindFacade(options.widgetPreviewRpc);
   }
+  // D105：同 browserRpc 的测试注入优先。
+  if (options.computerRpc !== undefined) services.computerRpc.bindFacade(options.computerRpc);
 
   const systemMethods = createSystemMethods(services, options.appVersion, options.diskUsageBudget);
   const fail = (message: string): CoreServices => {
@@ -2525,6 +2541,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       cardContext: (conversationId) => boardService?.cardContext(conversationId) ?? null,
       settingsCatalog,
       browser: services.browserRpc,
+      // D105：任务 loop 的 computer_* 工具组（orchestrator 预查设置 + capabilities）。
+      computer: {
+        host: services.computerRpc,
+        requestApproval: (identity, kind, payload, options) =>
+          approvals.request(identity, kind, payload, options),
+      },
     });
     // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
     revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));

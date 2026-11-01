@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { Memo, ScheduleEntry, TodoEntry } from '@kepcup/shared';
+import type { Memo, MemoGroup, ScheduleEntry, TodoEntry } from '@kepcup/shared';
 import {
   ageOf,
   blockedNotice,
   botMembers,
   buildLanes,
+  canReassignTodo,
   closedTodos,
   cutUtf16,
   effectiveStatus,
   filterMemos,
   laneIdOfTodo,
+  memoSections,
   projectMembers,
   memoToTodoDraft,
   parseDispatchText,
@@ -33,6 +35,7 @@ function todo(id: string, patch: Partial<TodoEntry> = {}): TodoEntry {
     createdAt: 1,
     updatedAt: 1,
     closedAt: null,
+    position: 1,
     assigneeName: null,
     leadBotName: null,
     schedule: null,
@@ -136,15 +139,15 @@ describe('buildLanes', () => {
     expect(lanes.map((lane) => lane.memberId)).toEqual(['c', 'a', 'b']);
   });
 
-  it('道内事项顺序与计数；下次时间取事项排期与自排任务的最早者', () => {
+  it('道内事项顺序 = 手动 position 升序（同位按更新时间倒序）；计数与 nextAt 不变', () => {
     const lanes = buildLanes({
       todos: [
-        todo('draft-old', toBot('a', { updatedAt: 1 })),
-        todo('draft-new', toBot('a', { updatedAt: 9 })),
-        todo('sch-late', toBot('a', { status: 'scheduled', schedule: sched(8_000) })),
-        todo('sch-soon', toBot('a', { status: 'scheduled', schedule: sched(7_000) })),
-        todo('run', toBot('a', { status: 'in_progress' })),
-        todo('deliv', toBot('a', { status: 'delivered' })),
+        todo('run', toBot('a', { status: 'in_progress', position: 2 })),
+        todo('draft-old', toBot('a', { updatedAt: 1, position: 5 })),
+        todo('sch-late', toBot('a', { status: 'scheduled', schedule: sched(8_000), position: 3 })),
+        todo('deliv', toBot('a', { status: 'delivered', position: 1 })),
+        todo('sch-soon', toBot('a', { status: 'scheduled', schedule: sched(7_000), position: 4 })),
+        todo('draft-new', toBot('a', { updatedAt: 9, position: 6 })),
       ],
       schedules: [self('s1', 'a', { nextFireAt: 3_000 })],
       bots,
@@ -154,10 +157,10 @@ describe('buildLanes', () => {
     expect(lane.todos.map((item) => item.id)).toEqual([
       'deliv',
       'run',
-      'sch-soon',
       'sch-late',
-      'draft-new',
+      'sch-soon',
       'draft-old',
+      'draft-new',
     ]);
     expect(lane.counts).toEqual({ draft: 2, scheduled: 2, inProgress: 1, delivered: 1 });
     expect(lane.nextAt).toBe(3_000);
@@ -236,19 +239,25 @@ function memo(id: string, patch: Partial<Memo> = {}): Memo {
     updatedAt: 1,
     sortAt: 1,
     deletedAt: null,
+    groupId: null,
+    position: 1,
     ...patch,
   };
 }
 
+function group(id: string, title: string, position: number): MemoGroup {
+  return { id, title, position, createdAt: 1, updatedAt: 1 };
+}
+
 describe('备忘', () => {
-  it('置顶在前，其余按排序键倒序；改正文不换位', () => {
+  it('置顶在前，其余按 position 升序（拖拽顺序）；id 兜底', () => {
     const out = sortMemos([
-      memo('a', { sortAt: 5, updatedAt: 99 }),
-      memo('b', { sortAt: 9 }),
-      memo('c', { sortAt: 1, pinned: true }),
-      memo('d', { sortAt: 3, pinned: true }),
+      memo('a', { position: 5 }),
+      memo('b', { position: 9 }),
+      memo('c', { position: 1, pinned: true }),
+      memo('d', { position: 3, pinned: true }),
     ]);
-    expect(out.map((m) => m.id)).toEqual(['d', 'c', 'b', 'a']);
+    expect(out.map((m) => m.id)).toEqual(['c', 'd', 'a', 'b']);
   });
 
   it('本地过滤：忽略大小写与首尾空白，空查询全部返回', () => {
@@ -268,6 +277,88 @@ describe('备忘', () => {
     const long = memoToTodoDraft('字'.repeat(300));
     expect(Array.from(long.title).length).toBe(120);
     expect(Array.from(long.notes).length).toBe(300);
+  });
+});
+
+describe('memoSections（D90 §5.4 备忘分区）', () => {
+  it('没有命名分组：单个无 header 的未分组区（保持旧的扁平列表）', () => {
+    const sections = memoSections({
+      memos: [memo('a'), memo('b', { groupId: 'g1' })],
+      groups: [],
+      query: '',
+    });
+    expect(sections.map((s) => [s.groupId, s.title])).toEqual([[null, '']]);
+    expect(sections[0]!.memos.map((m) => m.id)).toEqual(['b', 'a']);
+  });
+
+  it('有命名分组：未分组伪分组在最前，其后按分组顺序；各区只装自己的备忘', () => {
+    const sections = memoSections({
+      memos: [
+        memo('a'),
+        memo('b', { groupId: 'g2', position: 1 }),
+        memo('c', { groupId: 'g1', pinned: true }),
+        memo('d', { groupId: 'g1', position: 2 }),
+      ],
+      groups: [group('g1', '工作', 1024), group('g2', '生活', 2048)],
+      query: '',
+    });
+    expect(sections.map((s) => s.groupId)).toEqual([null, 'g1', 'g2']);
+    expect(sections.map((s) => s.title)).toEqual(['', '工作', '生活']);
+    expect(sections[0]!.memos.map((m) => m.id)).toEqual(['a']);
+    expect(sections[1]!.memos.map((m) => m.id)).toEqual(['c', 'd']);
+    expect(sections[2]!.memos.map((m) => m.id)).toEqual(['b']);
+  });
+
+  it('搜索中隐藏没有命中的分区；全部未命中时返回空（界面显示 noMatch）', () => {
+    const memos = [memo('a', { body: '咖啡豆' }), memo('b', { groupId: 'g1', body: '周报' })];
+    const groups = [group('g1', '工作', 1024)];
+    expect(
+      memoSections({ memos, groups, query: '周报' }).map((s) => s.groupId),
+    ).toEqual(['g1']);
+    expect(memoSections({ memos, groups, query: '不存在' })).toEqual([]);
+  });
+
+  it('搜索为空时，空的命名分区仍然显示（可拖入）', () => {
+    const sections = memoSections({
+      memos: [memo('a')],
+      groups: [group('g1', '工作', 1024)],
+      query: '  ',
+    });
+    expect(sections.map((s) => s.groupId)).toEqual([null, 'g1']);
+    expect(sections[1]!.memos).toEqual([]);
+  });
+});
+
+describe('canReassignTodo（跨道拖拽 = 改派执行者）', () => {
+  const run = (status: 'dispatched' | 'delivered' | 'unclaimed') =>
+    ({
+      id: 'r',
+      todoId: 't',
+      conversationId: 'c',
+      messageId: null,
+      status,
+      resultMessageId: null,
+      dispatchedAt: 1,
+      settledAt: null,
+    }) as TodoEntry['lastRun'];
+
+  it('草案 / 已排期可以改派', () => {
+    expect(canReassignTodo(todo('t'))).toBe(true);
+    expect(canReassignTodo(todo('t', { status: 'scheduled' }))).toBe(true);
+  });
+
+  it('进行中 / 待验收不行；已排期但最近一次执行在跑（周期事项）也不行', () => {
+    expect(canReassignTodo(todo('t', { status: 'in_progress' }))).toBe(false);
+    expect(canReassignTodo(todo('t', { status: 'delivered' }))).toBe(false);
+    expect(
+      canReassignTodo(todo('t', { status: 'scheduled', lastRun: run('dispatched') })),
+    ).toBe(false);
+    expect(
+      canReassignTodo(todo('t', { status: 'scheduled', lastRun: run('delivered') })),
+    ).toBe(false);
+    expect(
+      canReassignTodo(todo('t', { status: 'scheduled', lastRun: run('unclaimed') })),
+    ).toBe(true);
   });
 });
 

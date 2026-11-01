@@ -4,14 +4,17 @@ import type { NarrowTab } from './narrow-layout';
 import { bindNarrowRouting } from './narrow-routing.svelte';
 
 /**
- * 回归：窄屏会话详情里所有 openExtensionCenter 深链失效（审查 #1）。
+ * 回归：任意 tab 下的会话打开路由（通讯录「打开对话」/ 通知点击 / 深链）不被
+ * tab 读取依赖弹回。
  *
- * 根因：「有会话 → 切对话 tab」的 effect 在 chat.current 非空时读了 `narrowLayout.tab`
- * （成为依赖），「扩展中心深链」effect 调 selectTab('extensions') 改了 tab，前者随即重跑，
- * 又把 tab 切回 'chats'（selectTab 还会把 Bot 详情覆盖层关掉）。
+ * 根因（历史）：「有会话 → 切对话 tab」的 effect 曾在 chat.current 非空时读了
+ * `narrowLayout.tab`（成为依赖），别的 effect 调 selectTab 改了 tab，前者随即重跑，
+ * 又把 tab 切回 'chats'，所有深链在会话详情里失效。现在对 tab 的读取必须 untrack
+ * （见 narrow-routing.svelte.ts）。
  *
  * 这里在真实的 Svelte 响应式运行时（desktop-svelte 项目）里用与 NarrowShell 完全相同的
- * 路由函数 + 与真实 store 同形的响应式替身复现。
+ * 路由函数 + 与真实 store 同形的响应式替身复现。（扩展中心深链 → 「扩展」tab 不走本
+ * 模块：openExtensionCenter 在 shell store 里直接 selectTab。）
  */
 
 class FakeLayout {
@@ -25,10 +28,6 @@ class FakeLayout {
   }
 }
 
-class FakeShell {
-  extensionCenterOpen = $state(false);
-}
-
 /** chat.current：select 时落新对象，属性更新不换引用。 */
 class FakeChat {
   current = $state<{ id: string; messages: string[] } | null>(null);
@@ -39,37 +38,20 @@ class FakeChat {
 
 function setup() {
   const layout = new FakeLayout();
-  const shell = new FakeShell();
   const chat = new FakeChat();
   const stop = $effect.root(() => {
-    bindNarrowRouting({ currentChat: () => chat.current, shell, layout });
+    bindNarrowRouting({ currentChat: () => chat.current, layout });
   });
   flushSync();
-  return { layout, shell, chat, stop };
+  return { layout, chat, stop };
 }
 
 describe('bindNarrowRouting', () => {
-  it('会话详情里 openExtensionCenter 深链：停在「扩展」tab，不被弹回「对话」，Bot 覆盖层按 selectTab 关闭', () => {
-    const { layout, shell, chat, stop } = setup();
-    chat.select('conv_1');
-    flushSync();
-    expect(layout.tab).toBe('chats');
-    layout.botDetailOpen = true; // Bot 详情覆盖层开着（技能面板里点「去添加」）
-
-    shell.extensionCenterOpen = true;
-    flushSync();
-
-    expect(layout.tab).toBe('extensions');
-    expect(shell.extensionCenterOpen).toBe(false);
-    // 只切了一次到 extensions，没有反复弹回 chats。
-    expect(layout.selectCalls).toEqual(['extensions']);
-    stop();
-  });
-
-  it('会话详情里切到「通讯录」tab（openSettings("contacts") 的路由）同样不被弹回', () => {
+  it('会话详情里切到「通讯录」tab（openSettings("contacts") 的路由）不被弹回「对话」', () => {
     const { layout, chat, stop } = setup();
     chat.select('conv_1');
     flushSync();
+    expect(layout.tab).toBe('chats');
     layout.selectTab('contacts');
     flushSync();
     expect(layout.tab).toBe('contacts');

@@ -67,4 +67,29 @@ describe('createLogger', () => {
     expect(text).not.toContain('tok-123');
     expect(text).toContain(REDACTED);
   });
+
+  it('a log after close does not throw or reject', async () => {
+    const dir = tempLogsDir();
+    const logger = await createLogger({ logsDir: path.join(dir, 'logs') });
+    logger.info('before close');
+    await logger.close();
+
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      expect(() =>
+        logger.info({ item: 'git' }, 'system approval handler failed (fire-and-forget)'),
+      ).not.toThrow();
+      await Promise.reject(new Error('db closed')).catch(() => {
+        logger.info({ item: 'git', error: 'db closed' }, 'system approval handler failed');
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
 });
