@@ -1,6 +1,6 @@
 # 语音对话模式（D106）— 执行方案
 
-> 状态：**v1 开发完成已合并 v0.5.4；修订 v2 进行中（2026-11-01 首轮真机验收反馈，WP5–WP8）**。设计见 [docs/design/53-voice-conversation.md](../docs/design/53-voice-conversation.md)（D106，修订 v2 见文末一节，先读再开工），发送链路按 [docs/design/26-voice-input.md](../docs/design/26-voice-input.md)「语音消息语义」一节。
+> 状态：**v1 已合并 v0.5.4；修订 v2 开发收口（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a，自动化全绿），真机复验待用户执行**。设计见 [docs/design/53-voice-conversation.md](../docs/design/53-voice-conversation.md)（D106，修订 v2 见文末一节，先读再开工），发送链路按 [docs/design/26-voice-input.md](../docs/design/26-voice-input.md)「语音消息语义」一节。
 > 现状锚点：录音管道 / 传感器层 / asr+tts 能力卡 / 附件管道全部现成，core 零改动（仅 loopType 加值）；`Composer.svelte:1078-1079` 有「语音对话模式暂缓」旧注释，实现时删除并指向本方案。
 > 约定：迭代中只跑定向测试（AGENTS.md：`node scripts/run-tests.mjs run <文件>`）；涉及 shared 契约先 `pnpm --filter @kepcup/shared build`；改设置相关代码跑 settings 四件套（语音功能本身无 settings 改动；收口期顺带修复 9defc083 遗留的 deep-link 白名单漏登，四件套 + deep-link 定向 96/96 已跑绿）；i18n 改动跑 `locales.test.ts`；收口跑一次全量 `pnpm test`。
 
@@ -88,40 +88,40 @@ WP2 不依赖 WP1（发送侧只用既有 `voice_input` 转写）；WP3 依赖 W
 
 文件：`packages/shared/src/domain/types.ts`（`textContentSchema.origin` 加 `'voice'`）、`packages/shared/src/rpc/methods.ts`（`messages.send` 输入加 `voiceMode?: boolean`）、`packages/core/src/rpc/bindings.ts` + `dispatch/orchestrator.ts` + `domain/messages.ts`（透传，content 写 `origin:'voice'`）、`packages/core/src/agent/context/conversation.ts`（附件条目标注 + `voiceWakeHint`）、渲染层 `voice-send.ts` / `chat-session.svelte.ts`（send 透传）、`voice-mode.svelte.ts`（`announceEntryFor` 排除）。
 
-- [ ] shared：origin 枚举加 `'voice'`；`messages.send` 输入加 `voiceMode`；**先 `pnpm --filter @kepcup/shared build`**
-- [ ] core：绑定 / 编排器 / `AppendMessageInput` / content 写入透传；`conversation.ts` 两处标注——voice 消息音频附件条目追加「语音原始录音，正文即其转写」、`buildTriggerSegment` 加 `voiceWakeHint`（文案见 53 号 V2-1）
-- [ ] 渲染层：`voice-send` 走 `chatSession.send` 传 `voiceMode: true`；`announceEntryFor` 增加 `content.origin !== 'task'`（任务侧消息不播：forward_task_result 转发结果与任务 run 内 send_message / send_media 的可见说明）
-- [ ] 定向测试：shared 契约、core 上下文渲染（hint / 附件标注 / 非 voice 消息不受影响）、chat-session 透传、`voice-announce` 排除分支
+- [x] shared：origin 枚举加 `'voice'`；`messages.send` 输入加 `voiceMode`；**先 `pnpm --filter @kepcup/shared build`**
+- [x] core：绑定 / 编排器 / `AppendMessageInput` / content 写入透传；`conversation.ts` 两处标注——voice 消息音频附件条目追加「语音原始录音，正文即其转写」、`buildTriggerSegment` 加 `voiceWakeHint`（文案见 53 号 V2-1）
+- [x] 渲染层：`voice-send` 走 `chatSession.send` 传 `voiceMode: true`；`announceEntryFor` 增加 `content.origin !== 'task'`（任务侧消息不播：forward_task_result 转发结果与任务 run 内 send_message / send_media 的可见说明）
+- [x] 定向测试：shared 契约、core 上下文渲染（hint / 附件标注 / 非 voice 消息不受影响）、chat-session 透传、`voice-announce` 排除分支
 - 验收（真机）：语音模式下 Bot 不再派 `transcribe_audio` 任务、不自行 `generate_speech`；任务转发消息不播报
 
 ### WP6 双方语音统一播放器 + 朗读键 + 音频缓存仲裁（V2-2 / V2-3）
 
 文件：`AudioPlayer.svelte`（新）、`MessageAttachments.svelte`（音频分支换统一播放器）、`FileArtifacts.svelte`（音频产物播放器行，扩展名识别）、`ChatMessageRow.svelte`（bot 气泡朗读键）、`speech-audio.svelte.ts`（新：LRU 缓存 + 播放仲裁）、`voice-mode.svelte.ts`（播报队列接缓存，播完不 revoke）、i18n 两语言。
 
-- [ ] `AudioPlayer`：播放/暂停 + 进度 + 时长，点击切换（懒加载字节）
-- [ ] `MessageAttachments` 音频分支与 `FileArtifacts` 音频产物换用 `AudioPlayer`；保留查看 / 下载入口
-- [ ] bot text 气泡朗读键（`isCapabilityReady('tts')` 才显示）；`speech-audio` 缓存（~20 条 LRU，逐出 revoke）+ 播报 / 朗读互斥仲裁
-- [ ] 播报队列经 `speech-audio` 取音频；退出 / 清理路径适配（revoke 归缓存管）
-- [ ] i18n（朗读键等）+ `locales.test.ts`；定向测试（缓存 / 仲裁 / 队列改造回归）
+- [x] `AudioPlayer`：播放/暂停 + 进度 + 时长，点击切换（懒加载字节）
+- [x] `MessageAttachments` 音频分支与 `FileArtifacts` 音频产物换用 `AudioPlayer`；保留查看 / 下载入口
+- [x] bot text 气泡朗读键（`isCapabilityReady('tts')` 才显示）；`speech-audio` 缓存（~20 条 LRU，逐出 revoke）+ 播报 / 朗读互斥仲裁
+- [x] 播报队列经 `speech-audio` 取音频；退出 / 清理路径适配（revoke 归缓存管）
+- [x] i18n（朗读键等）+ `locales.test.ts`；定向测试（缓存 / 仲裁 / 队列改造回归）
 
 ### WP7 静音自动发送（端点检测，V2-4）
 
 文件：`voice-mode.svelte.ts`（端点状态机纯函数 + 待发送子态）、`Composer.svelte`（onLevel 接入、自动发送 / 自动取消、计时器清理）、`VoiceModeBar.svelte`（绿色发送键）、i18n。
 
-- [ ] 端点状态机：电平 ≥ 阈值持续 ~250ms 记 hasSpoken；说话后静音 3s → 待发送；hasSpoken=false 持续 5s → 自动取消 + toast「未检测到语音」
-- [ ] 待发送：绿键（Send 图标）点击立即停止转写发送；2s 倒计时自动发；cancel / exit / stop 全路径清计时器
-- [ ] i18n + 定向测试（状态机纯逻辑：阈值 / 持续 / 3s / 2s / 5s 边界）
+- [x] 端点状态机：电平 ≥ 阈值持续 ~250ms 记 hasSpoken；说话后静音 3s → 待发送；hasSpoken=false 持续 5s → 自动取消 + toast「未检测到语音」
+- [x] 待发送：绿键（Send 图标）点击立即停止转写发送；2s 倒计时自动发；cancel / exit / stop 全路径清计时器
+- [x] i18n + 定向测试（状态机纯逻辑：阈值 / 持续 / 3s / 2s / 5s 边界）
 
 ### WP8 播放中语音打断（barge-in）+ 停止播放键（V2-5）
 
 文件：`voice-mode.svelte.ts`（监听编排）、`Composer.svelte`（打断 → 录音衔接）、`VoiceModeBar.svelte`（停止播放键）、`sensors/microphone.ts`（确认 `echoCancellation: true`）、i18n。
 
-- [ ] 播报 playing 期武装监听：AEC 约束、播放开始 ~500ms 后武装、电平超阈值持续 ~200ms → interruptSpeech → 释放监听 → `acquireRecording`
-- [ ] 监听失败 / 隐私总闸关闭静默降级；退出 / 播完 / 打断 / 切会话全路径拆除监听
-- [ ] 播放中停止播放键（■）：停当前 + 清队回 idle，不录音
-- [ ] 定向测试（监听武装 / 触发 / 拆除的纯逻辑）
+- [x] 播报 playing 期武装监听：AEC 约束、播放开始 ~500ms 后武装、电平超阈值持续 ~200ms → interruptSpeech → 释放监听 → `acquireRecording`
+- [x] 监听失败 / 隐私总闸关闭静默降级；退出 / 播完 / 打断 / 切会话全路径拆除监听
+- [x] 播放中停止播放键（■）：停当前 + 清队回 idle，不录音
+- [x] 定向测试（监听武装 / 触发 / 拆除的纯逻辑）
 
 ### 收口（v2）
 
-- [ ] 全量 `pnpm test` 一次；PROGRESS 记录；53 号 / todo 勾结
+- [x] 全量 `pnpm test` 一次；PROGRESS 记录；53 号 / todo 勾结
 - [ ] 真机验收：WP5–WP8 各验收项 + 原 WP4 清单回归（9 项）

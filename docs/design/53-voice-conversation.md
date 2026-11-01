@@ -4,7 +4,7 @@
 
 与 Grok 全屏语音模式的关键差异：Grok 进入语音模式后聊天列表被盖住，需要「切文字」键展开记录；KepCup 的语音条**只接管输入坞，消息列表始终可见可滚动**——「全部转为文字记录到消息列表」是一等需求，天然满足，因此不设「切文字」键，关闭即回文字输入。
 
-**状态：已实施（2026-11-01，开发收口）；首轮真机验收后修订中——见文末[「修订 v2」](#修订-v22026-1101首轮真机验收反馈)（2026-11-01，用户反馈 Bot 把转写/合成当任务派发等 5 点，修订实施中）。** 决策 **D106**；执行方案与实施记录见 [todo/voice-conversation.md](../../todo/voice-conversation.md)。实现与本文的偏差已就地加「实现修订」注。
+**状态：已实施（2026-11-01，开发收口）；首轮真机验收后修订 v2 已实施（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a，自动化全绿，真机复验待用户执行）——见文末[「修订 v2」](#修订-v22026-1101首轮真机验收反馈)。** 决策 **D106**；执行方案与实施记录见 [todo/voice-conversation.md](../../todo/voice-conversation.md)。实现与本文的偏差已就地加「实现修订」注。
 
 ## 决策
 
@@ -98,29 +98,37 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
 - 用户语音消息发送时经 `messages.send` 新输入 `voiceMode: true` → 消息 content 记 `origin: 'voice'`（`textContentSchema.origin` 枚举加值，沿用 `workbench` / `delegation` / `widget` 先例；content 是 JSON 列，零迁移）。
 - core 上下文两处标注（`agent/context/conversation.ts`）：① `renderMessageLine` 对 voice 消息的音频附件条目追加「语音原始录音，正文即其转写」；② `buildTriggerSegment` 新增 `voiceWakeHint`（与 `delegationWakeHint` / `projectWakeHint` 同模式）：本批消息来自语音对话模式——正文即用户语音的转写文本，音频附件仅为原始录音存档，无需再用 `transcribe_audio` 转写或读取；回复将由客户端自动转为语音播报——不要调用 `generate_speech`，回复请口语化、简短、适合朗读（代码块 / 表格不会被播报）。
 - 播报排除：`announceEntryFor` 增加 `content.origin !== 'task'`——任务侧消息（`forward_task_result` 转发结果与任务 run 内 `send_message` / `send_media` 的可见说明，D75）只供阅读、不播报。
+- **实现修订（转写失败降级）**：标注与 `voiceWakeHint` 只对**正文非空**的 voice 消息生效（`isVoiceMessageWithTranscript`）。转写失败分支发的是「空文本 + 附件」，此时若仍声称「正文即其转写」会堵死 Bot 的 `transcribe_audio` 兜底、丢掉用户话语；空正文的 voice 消息退回普通音频附件语义（`origin: 'voice'` 照常落库，仅上下文标注条件化）。
+- **实现修订（标注时机）**：core 的服务端 schema parse 会剥离未声明键——`messages.send` 输入必须加 `voiceMode` 字段，否则渲染层传了也会被静默丢掉（`rpc/server.ts` 的 `parseOrThrow`）。
 
 ### V2-2 双方语音统一播放器（H5 音频组件）
 
 - 新组件 `AudioPlayer.svelte`（features/chats）：播放/暂停键 + 进度条 + 时长，点击切换播放/暂停；替代 MessageAttachments 音频分支的裸 `<audio controls>`（用户 wav 附件，点击播放即懒加载字节）。
 - Bot 发回的音频文件产物（`FileArtifacts.svelte`，如 `generate_speech` 的 mp3/wav）：MessageArtifact 无 mime 字段，按扩展名识别音频，渲染为同一 AudioPlayer 行（字节经 `files.preview` 取），保留原卡片的查看 / 下载入口。
 - Bot 文本气泡「朗读」键：bot text 气泡操作区加播放/暂停小键（tts 能力 ready 才显示）——对任意历史回复按需 TTS 朗读，与播报队列共用音频缓存与打断仲裁（V2-3）。
+- **实现修订（视图与逻辑分离）**：仓库没有可挂组件的 vitest DOM 项目，播放器状态机放在 `audio-player.svelte.ts`（idle / playing / paused / ended、ended 归零重播、metadata 未到不 seek），`AudioPlayer.svelte` 只做视图。文件产物的音频识别在 `artifact-kind.ts` 的 `isAudioArtifact()`（扩展名集合，`.webm` / `.ogv` 已归视频的不吞）；字节走 FileViewer 同一条 `files.preview` 通道。
 
 ### V2-3 播报音频缓存与仲裁
 
 - 新模块 `speech-audio.svelte.ts`：Bot 语音音频缓存 messageId → { objectURL, mimeType }，内存 LRU（约 20 条，逐出即 revoke）；播报队列与手动朗读都经它取音频（未命中才 `synthesizeSpeech`），播完不再立即 revoke（生命周期归缓存管）。
 - 仲裁：任一播放开始都停掉另一个（播报中点朗读 = 打断播报、播指定消息；朗读中新播报到来 = 打断朗读）；语音模式录音开始仍走既有 `interruptSpeech` 清队。
+- **实现修订（录音接管扬声器）**：录音开始（`acquireRecording` 拿到流，TCC 等待期不算）统一 `speechAudio.stop()`——语音模式与文字语音输入两路共点收口。`stop()` 以**抢占语义**收尾：等待中的播放 promise 解析为 preempted（不挂起），与 `interruptSpeech` 的 epoch 作废互为幂等（先到者生效、后到者 no-op），不会双 toast。否则会出现「语音模式 idle 但朗读键在出声」时开口说话、TTS 与录音同开、转写收进回声。
+- **实现修订（缓存存活期）**：播报音频缓存是**全局会话级**（退出语音模式不清），历史回复朗读与重播都依赖它；播完不 revoke，逐出（LRU 20）才 revoke。
 
 ### V2-4 静音自动发送（端点检测）
 
 - 录音电平（`onLevel` 已有 50ms 节流的映射电平）接纯函数端点状态机（voice-mode.svelte.ts 扩展 + 单测）：电平 ≥ 阈值持续 ~250ms 记为「已说话」（hasSpoken），此后电平持续低于阈值 3s → 进入「待发送」子态。
 - 待发送态：停止键变**绿色发送键**，点击立即停止 + 转写 + 发送；不点击则 2s 后自动发送——用户停止说话后 5s 内内容必然发出（业界端点 500–800ms，此处取长换「可见的发送确认」，常量可调）。
 - 全程未说话（hasSpoken=false）持续 5s：自动取消录音并 toast「未检测到语音」，不再干等 60s 上限。60s / 500ms 既有边界不变。
+- **实现修订（信号来源与安全侧）**：端点机由**电平帧驱动**（worklet 静音帧照发，仅 50ms 节流），不另起 5s 定时器——纯状态机可单测；帧停流的设备故障由 60s 上限兜底。`speech-resumed` 不做 250ms 持续确认（倒计时只剩 2s，等确认会把用户开口截在倒计时尾部）；误退回的代价只是再等一轮 3s 静音。2s 倒计时与 60s 上限汇入同一个 `stopVoiceModeRecording`，相位守卫保证后到者 no-op；`clearVoiceModeRecordingTimers()` 单点覆盖 stop / cancel / exit / 卸载四类收尾。
 
 ### V2-5 播放中语音打断（barge-in）与停止播放键
 
 - 播报**播放中**（仅 playing；合成中无声音可打断、不监听）开一路麦克风监听：`sensors.open('microphone')` 约束带 `echoCancellation: true` 消除扬声器 TTS 回声；播放开始 ~500ms 后再武装（规避 AEC 收敛期泄漏），电平超阈值持续 ~200ms 判定用户开口 → 停播清队（`interruptSpeech`）→ 释放监听 → 走正常 `acquireRecording` 开始录音。
 - 监听失败（权限 / 设备）静默降级为点击打断；隐私总闸关闭时监听流随传感器 hub 统一停止；退出模式 / 播完 / 打断全路径拆除监听。
 - 语音条播报中新增**停止播放键**（■，设置键与麦克风键之间）：点击 = 停当前 + 清队，回 idle，不开始录音。
+- **实现修订（归属门禁，审查 P2）**：主聊天与卡片对话两个 Composer 可同时挂载（项目会话的 `ProjectView` 只 CSS 隐藏聊天体，卡片对话再挂一个），而 voiceMode 是模块单例——第一版实现里隐藏实例也会渲染语音条、武装自己的监听，并可能抢先触发 barge-in，把录音写进**错误的会话**。现 `voiceMode` 记录 `ownerConversationId`（enter 写入、exit 清空），语音条渲染 / 播报入队 / 播报器注入 / barge-in 武装与触发 / 全部收尾路径（Esc、切会话、readOnly 翻转、麦克风停用、组件卸载）统一走 `voiceModeOwned` 门禁，只有归属实例接管（同源也修掉了既有的播报串扰）。同时 barge-in 触发回调用「相位仍是 speaking」二次守卫，双实例同拍触发只起一条录音链路。
+- **实现修订（权限门）**：监听武装额外要求 `sensors.state.microphone.permission === 'granted'`——未授权时空开流会在**播报中弹 TCC 授权框**（用户只是在听回复），违背「静默降级」；进入语音模式时 `sensors.refresh('microphone')` 刷新快照（hub 启动不查权限），用户录过一次音后监听自然可用。AEC 消回声、阈值与持续时长只能真机校准（`SPEECH_LEVEL_THRESHOLD` / `BARGE_IN_SUSTAIN_MS` / `BARGE_IN_ARM_DELAY_MS` 均注明真机可调）；`AudioContext` 若停在 suspended，`getFloatTimeDomainData` 返回全零 → 监听静默失效，降级为点击打断。
 
 ### 调研锚点（2026-11-01）
 
