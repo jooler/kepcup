@@ -17,6 +17,7 @@ import {
   parseDispatchText,
   runningBotSet,
   selfScheduleSource,
+  shouldShowUngrouped,
   sortMemos,
   type MemberInfo,
 } from './workbench-model';
@@ -326,6 +327,32 @@ describe('memoSections（D90 §5.4 备忘分区）', () => {
     });
     expect(sections.map((s) => s.groupId)).toEqual([null, 'g1']);
     expect(sections[1]!.memos).toEqual([]);
+  });
+
+  it('未分组区空着时界面隐藏（display:none），有备忘就显示', () => {
+    const sections = memoSections({
+      memos: [memo('a', { groupId: 'g1' })],
+      groups: [group('g1', '工作', 1024)],
+      query: '',
+    });
+    const ungrouped = sections.find((s) => s.groupId === null) ?? null;
+    // memoSections 照旧返回空未分组区（拖拽落点与顺序靠它），显隐由 shouldShowUngrouped 决定。
+    expect(ungrouped).not.toBeNull();
+    expect(shouldShowUngrouped(ungrouped)).toBe(false);
+    expect(shouldShowUngrouped(ungrouped, true)).toBe(true);
+
+    const withMemo = memoSections({
+      memos: [memo('a', { groupId: 'g1' }), memo('b')],
+      groups: [group('g1', '工作', 1024)],
+      query: '',
+    });
+    expect(shouldShowUngrouped(withMemo.find((s) => s.groupId === null) ?? null)).toBe(true);
+  });
+
+  it('未分组为空且没在拖拽 → 隐藏；没有未分组区 / 传错区也返回 false', () => {
+    expect(shouldShowUngrouped(null)).toBe(false);
+    expect(shouldShowUngrouped({ groupId: null, memos: [] })).toBe(false);
+    expect(shouldShowUngrouped({ groupId: 'g1', memos: [] }, true)).toBe(false);
   });
 });
 

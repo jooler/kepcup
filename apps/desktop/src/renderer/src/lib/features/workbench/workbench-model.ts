@@ -400,6 +400,21 @@ export function memoSections(input: {
 }
 
 /**
+ * 未分组区要不要显示。
+ *
+ * 没内容时整块隐藏（界面用 `display: none`，不是 `{#if}` 移除）：没有备忘就没什么可展示的，
+ * 连 header 和空提示都不该占位。唯一例外是拖拽中（`memoDragging`）——卡片得能把「未分组」
+ * 当落点拖回来，所以那时即使为空也要显示。
+ */
+export function shouldShowUngrouped(
+  section: Pick<MemoSection, 'groupId' | 'memos'> | null,
+  memoDragging = false,
+): boolean {
+  if (section === null || section.groupId !== null) return false;
+  return section.memos.length > 0 || memoDragging;
+}
+
+/**
  * 备忘 → 事项预填：首个非空行作标题（超长截断），全文作说明（超长截断）。
  * 标题已是全文时说明为空，避免重复。
  */

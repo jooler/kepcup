@@ -577,6 +577,45 @@ test('memo groups: create via + button, ungrouped header, rename, drag across gr
   }
 });
 
+test('memo ungrouped: hidden while empty, appears as soon as a memo is saved', async () => {
+  test.setTimeout(120_000);
+  const session = await startSession('kepcup-e2e-wb-memo-ungrouped-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    await openWorkbench(page);
+    await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
+
+    // 建一个命名分组：还没有任何备忘，未分组区只是 display:none，不占位、不出 header。
+    await page.locator('[data-testid="memo-add-group"]').click();
+    await page.locator('[data-testid="memo-group-name"]').fill('工作');
+    await page.locator('[data-testid="memo-group-create"]').click();
+    await expect(page.locator('[data-testid="memo-group-dialog"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+    await waitDialogScrollLockCleared(page);
+    const ungroupedSlot = page.locator('[data-testid="memo-ungrouped-slot"]');
+    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'true');
+    await expect(ungroupedSlot).not.toBeVisible();
+    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).not.toBeVisible();
+
+    // 新备忘默认进未分组：存完立刻重新出现，不用刷新或切视图。
+    const input = page.locator('[data-testid="memo-input"]');
+    await input.fill('马上出现的备忘');
+    await input.press('Enter');
+    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'false', { timeout: 15_000 });
+    await expect(ungroupedSlot).toBeVisible();
+    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).toBeVisible();
+    await expect(
+      page.locator(
+        '[data-testid="memo-section"][data-section-group-id="ungrouped"] [data-testid="memo-card"]',
+      ),
+    ).toHaveCount(1);
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('memo → todo → assign a bot → start now → dispatch card → delivered → complete', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-wb-flow-');
