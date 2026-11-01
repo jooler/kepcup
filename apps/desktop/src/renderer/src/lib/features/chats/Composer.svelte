@@ -46,6 +46,7 @@
     MAX_RECORDING_MS,
     MIN_RECORDING_MS,
     formatRecordingDuration,
+    levelToHeight,
     startVoiceRecording,
     type ActiveRecording,
     type VoiceRecording,
@@ -67,6 +68,7 @@
   import { speechAudio, type SpeechAudioDeps } from './speech-audio.svelte';
   import { isCapabilityError, sendVoiceRecording, type VoiceSendDeps } from './voice-send';
   import { SPEECH_TEXT_LIMIT } from './extractSpeechText';
+  import { createBargeInMonitor, type BargeInSession } from './voice-barge-in';
 
   let {
     readOnly = false,
@@ -949,7 +951,7 @@
   // 语音模式 Esc 分档（53 号）：recording 中 = 取消录音丢弃，其余态 = 退出语音
   // 模式。同样走 inline 档——覆盖层开着时 Esc 先关那层（两态互斥，不会同时注册）。
   $effect(() => {
-    if (!voiceMode.active) return;
+    if (!voiceModeOwned) return;
     return registerEscapeLayer({
       priority: ESCAPE_PRIORITY.inline,
       onEscape: () => {
@@ -966,8 +968,9 @@
     clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
-    // 语音模式随组件卸载退出（状态复位即可，录音资源上面已释放）。
-    voiceMode.exit();
+    // 语音模式随组件卸载退出（状态复位即可，录音资源上面已释放）；非归属
+    // 实例卸载不得关掉别人的语音模式。
+    if (voiceModeOwned) voiceMode.exit();
   });
   // 切换会话 = 退出语音模式（会话内即时态，不跨会话，53 号 D106）：停录音、
   // 释放流；文字草稿按会话缓存原样保留。
@@ -976,20 +979,23 @@
     const conversationId = chatSession.view?.conversation.id ?? null;
     const previous = voiceModeConversationId;
     voiceModeConversationId = conversationId;
-    if (voiceMode.active && previous !== null && conversationId !== previous) exitVoiceMode();
+    // 归属门禁：只有本实例曾是本次语音模式的归属会话才退出——否则隐藏的
+    // 项目会话 Composer 一切会话就会把卡片对话的语音模式关掉（P2 同源）。
+    const ownedBefore = voiceMode.active && voiceMode.ownerConversationId === previous;
+    if (ownedBefore && previous !== null && conversationId !== previous) exitVoiceMode();
   });
   // readOnly 动态翻转（卡片会话可在打开中被置 readOnly/blocked，ChatView /
   // CardChat 直接下传 prop）：{#if readOnly} 分支会顶掉语音条——没有关闭键可
   // 点，状态机却仍 active。在这里主动退出（含停录音释放流），与切换会话同语义。
   $effect(() => {
-    if (readOnly && voiceMode.active) exitVoiceMode();
+    if (readOnly && voiceModeOwned) exitVoiceMode();
   });
 
   // 录音中麦克风被停用（设置页取消勾选）：立即取消，hub 同时已切断轨道（D76-5）。
   $effect(() => {
     if (sensors.state.microphone.enabled) return;
     if (recording !== null) void finishRecording(false);
-    if (voiceMode.phase === 'recording') cancelVoiceModeRecording();
+    if (voiceModeOwned && voiceMode.phase === 'recording') cancelVoiceModeRecording();
   });
 
   function openHardwareSettings(): void {
@@ -1181,6 +1187,13 @@
   const voiceModeEntryVisible = $derived(!isProject);
   /** 录音中禁用入口（文字语音输入进行时不得切入语音模式）。 */
   const voiceModeEntryDisabled = $derived(recording !== null || voiceBusy);
+  /**
+   * 本实例是否接管语音模式（修订 v2 V2-5 审查 P2）：voiceMode 是模块单例，而
+   * 主聊天与卡片对话两个 Composer 可同时挂载（项目会话的 ProjectView 只 CSS
+   * 隐藏聊天体）——语音条渲染、播报入队、barge-in 武装与全部收尾路径都只归
+   * 归属会话那个实例，否则隐藏实例会抢先把录音写进自己的会话。
+   */
+  const voiceModeOwned = $derived(voiceMode.owns(chatSession.view?.conversation.id ?? null));
 
   /**
    * 入口键：预检 asr 与 tts（缺哪个置哪张能力卡、不进入；快照未加载时放行，
@@ -1188,6 +1201,8 @@
    */
   function enterVoiceMode(): void {
     if (recording !== null || voiceBusy) return;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    if (conversationId === null) return; // 视图未载入：无归属会话，不进入
     if (!settingsStore.isCapabilityReady('asr')) {
       chatSession.requestCapabilitySetup('asr');
       return;
@@ -1196,7 +1211,11 @@
       chatSession.requestCapabilitySetup('tts');
       return;
     }
-    voiceMode.enter();
+    // 刷新麦克风权限快照（修订 v2 V2-5 审查 P3）：barge-in 监听只在
+    // permission === 'granted' 时武装（不在播报中弹 TCC），hub 启动时不查权限，
+    // 不刷新会让本轮播报静默失去语音打断。
+    void sensors.refresh('microphone');
+    voiceMode.enter(conversationId);
   }
 
   /**
@@ -1239,7 +1258,8 @@
    * 作废、phase 复位——queue 语义，裸停音频不覆盖；idle 态 no-op）。
    */
   async function startVoiceModeRecording(): Promise<void> {
-    if (!voiceMode.active || (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking')) return;
+    if (!voiceModeOwned) return;
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
     const session = ++recordingSession;
     const started = await acquireRecording(session, (level) => {
       voiceMode.level = level;
@@ -1450,6 +1470,9 @@
   // 卸载清理走既有的 voiceMode.exit()。
   $effect(() => {
     speechAudio.configure(speechAudioDeps());
+    // 播报器归属（P2 同源）：两个 Composer 都挂载时只有归属实例注入队列依赖，
+    // 否则后挂载的隐藏实例会顶掉 owner 的 toast / 合成接线。
+    if (!voiceModeOwned) return;
     voiceMode.attachAnnouncer(announceDeps());
   });
 
@@ -1457,7 +1480,7 @@
   // 入队条件与朗读文本提取在 announceEntryFor（可见性口径 = 消息列表）；截断
   // toast 每条消息一次（enqueue 去重后 announce 返回 false 的不提示）。
   $effect(() => {
-    if (!voiceMode.active) return;
+    if (!voiceModeOwned) return;
     const conversationId = chatSession.view?.conversation.id ?? null;
     return chatSession.onIncomingMessage((_conversationId, message) => {
       const entry = announceEntryFor(message, {
@@ -1472,6 +1495,125 @@
         toast.info(t('voiceMode.truncated', { limit: SPEECH_TEXT_LIMIT }));
       }
     });
+  });
+
+  // --- 停止播放键 + 播报中语音打断（barge-in，docs/design/53 修订 v2 V2-5）----
+  // 停止播放键（■，VoiceModeBar）：只停播清队回 idle，不开始录音——走既有语义
+  // 组合（interruptSpeech 清队 + speechAudio.stop 兜底静音），不新造停止语义。
+  // 语音触发打断：纯逻辑状态机在 voice-barge-in.ts（武装 / 拆除 / 一次性触发，
+  // 零 DOM import），本文件持有依赖注入（传感器层开流 + AnalyserNode 电平 /
+  // clock / 计时器）并挂武装窗口；监听电平只喂 barge-in 判定，不进 feedLevel
+  // （端点检测仅 recording 相位生效，互不干扰）。
+
+  /**
+   * 停止播放键（修订 v2 V2-5）：speaking 相位停当前音频 + 清播报队列（含合成
+   * 中的条目，epoch 作废），相位回 idle，**不开始录音**。interruptSpeech 的
+   * 当前播放 stop 经 speech-audio 句柄落为仲裁抢占；speechAudio.stop() 兜底
+   * 静音唯一声道（缓存条目保留，可回放）。
+   */
+  function stopVoiceModePlayback(): void {
+    if (!voiceModeOwned || voiceMode.phase !== 'speaking') return;
+    voiceMode.interruptSpeech();
+    speechAudio.stop();
+  }
+
+  /**
+   * barge-in 监听会话（DOM 实现，注入给 createBargeInMonitor）：复用传感器层
+   * 开一路麦克风流（隐私总闸关闭时 hub 会统一停流；不弹 TCC——监听失败静默
+   * 降级，点麦克风打断始终可用）→ AudioContext + AnalyserNode 读 RMS →
+   * levelToHeight 映射（与 SPEECH_LEVEL_THRESHOLD / 录音电平同一口径）。
+   */
+  async function openBargeInSession(): Promise<BargeInSession> {
+    const opened = await sensors.open('microphone');
+    let context: AudioContext | null = null;
+    try {
+      context = new AudioContext();
+      void context.resume().catch(() => {}); // 挂起态防御（sticky 激活下通常已在运行）
+      const source = context.createMediaStreamSource(opened.stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      // 零增益落地（voice-recorder 同款）：不接目的地不会被 graph 拉动。
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      analyser.connect(mute);
+      mute.connect(context.destination);
+      const buffer = new Float32Array(analyser.fftSize);
+      return {
+        readLevel: () => {
+          analyser.getFloatTimeDomainData(buffer);
+          let sum = 0;
+          for (let i = 0; i < buffer.length; i += 1) {
+            const sample = buffer[i] ?? 0;
+            sum += sample * sample;
+          }
+          return levelToHeight(Math.sqrt(sum / buffer.length));
+        },
+        close: () => {
+          source.disconnect();
+          analyser.disconnect();
+          mute.disconnect();
+          for (const track of opened.stream.getTracks()) track.stop();
+          void context?.close().catch(() => {});
+        },
+      };
+    } catch (error) {
+      for (const track of opened.stream.getTracks()) track.stop();
+      void context?.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  const bargeInMonitor = createBargeInMonitor({
+    timers: {
+      timeout: (delayMs, handler) => {
+        const handle = setTimeout(handler, delayMs);
+        return () => clearTimeout(handle);
+      },
+      interval: (intervalMs, handler) => {
+        const handle = setInterval(handler, intervalMs);
+        return () => clearInterval(handle);
+      },
+    },
+    now: () => Date.now(),
+    open: () => openBargeInSession(),
+    onTrigger: () => void onBargeInTriggered(),
+  });
+
+  /**
+   * barge-in 触发（监听判定用户开口，监听已在状态机内自拆）：先停播清队——
+   * TCC 等待期不回播（打断时机绑定「触发即停播、录音拿到流才开始」，53 号
+   * 风险 #1 同语义）；再走与点麦克风同一条 startVoiceModeRecording 链路
+   * （acquireRecording 内含隐私总闸 / TCC 门 / sensors.open 全部守卫）。
+   */
+  function onBargeInTriggered(): void {
+    // 两个 Composer（主聊天 + 卡片对话）并存时各挂一份监听，同拍触发会走两次
+    // 本回调：先到者 interruptSpeech 已把相位翻出 speaking，后到者在此放弃——
+    // 只起一条录音链路。
+    if (!voiceModeOwned || voiceMode.phase !== 'speaking') return;
+    voiceMode.interruptSpeech();
+    speechAudio.stop();
+    void startVoiceModeRecording();
+  }
+
+  /**
+   * 武装窗口（仅播报队列 playing 阶段；合成中无声音不监听，手动朗读开播即打断
+   * 播报、相位已不在 speaking）。active / phase / speakingStage / 麦克风总闸任一
+   * 变化都会重跑：条件不再成立（播完 / 打断 / 清队 / 退出模式 / 切会话 / 组件
+   * 卸载）即走 cleanup 拆除（含取消未到点的武装定时器与在途 open）。主聊天与
+   * 卡片对话两个 Composer 并存时会各挂一份监听——触发后 interruptSpeech 只在
+   * speaking 相位生效一次、effects cleanup 同拍拆除另一份，不会双重起录音。
+   */
+  $effect(() => {
+    if (!voiceModeOwned) return;
+    if (voiceMode.phase !== 'speaking' || voiceMode.speakingStage !== 'playing') return;
+    if (!sensors.state.microphone.enabled) return; // 隐私总闸：不开监听
+    // 权限门：只对已授权设备开监听流——未授权 / 未查询时空 `sensors.open` 会在
+    // 播报中弹 TCC 授权框（用户只是在听回复），违背「监听失败静默降级」。用户
+    // 经由本模式录过一次音即授权，之后监听自然可用。
+    if (sensors.state.microphone.permission !== 'granted') return;
+    bargeInMonitor.arm();
+    return () => bargeInMonitor.disarm();
   });
 
   // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
@@ -1554,11 +1696,15 @@
   {:else}
     <div class="mx-auto w-full max-w-3xl">
       <div class="relative flex flex-col">
-        {#if voiceMode.active}
+        {#if voiceModeOwned}
           <!-- 语音对话条（53 号 D106）：语音模式占输入坞原位（同层替换，不走
                fixed/Portal，不接 data-window-overlay），消息列表始终可见可滚动；
                待发送附件 chips / 引用条不在此渲染（草稿仍共用 composerDrafts）。 -->
-          <VoiceModeBar onMicClick={onVoiceModeMicClick} onClose={exitVoiceMode} />
+          <VoiceModeBar
+            onMicClick={onVoiceModeMicClick}
+            onStopClick={stopVoiceModePlayback}
+            onClose={exitVoiceMode}
+          />
         {:else}
           <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里；
              输入区垫底；单行＝输入与按钮同行，多行＝输入占满整宽、按钮沉底。

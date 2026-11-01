@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Loader2, Mic, Send, Settings, X } from '@lucide/svelte';
+  import { Loader2, Mic, Send, Settings, Square, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { cn } from '$lib/utils.js';
@@ -12,18 +12,22 @@
   /**
    * 语音对话条（docs/design/53-voice-conversation.md，D106）：语音模式下占据
    * 输入坞原位（Composer 同层替换渲染，不走 fixed / Portal——不与窗口拖拽带
-   * 重叠）。布局：Bot 头像 ｜ 波形/状态区（弹性）｜ 设置键 · 麦克风键 · 关闭键。
-   * 只做展示与转发（mic / close 回调交给 Composer 编排）；录音 / 转写 / 发送
-   * 编排在 Composer，speaking 态由 voice-mode 播报队列驱动（合成中 / 播放中）。
-   * 待发送子态（修订 v2 V2-4）：静音 3s 后麦克风键变绿色发送键（点击 = 立即
-   * 停止转写发送，2s 无操作自动发送），状态区追加提示。
+   * 重叠）。布局：Bot 头像 ｜ 波形/状态区（弹性）｜ 设置键 · 停止播放键 ·
+   * 麦克风键 · 关闭键。只做展示与转发（stop / mic / close 回调交给 Composer
+   * 编排）；录音 / 转写 / 发送编排在 Composer，speaking 态由 voice-mode 播报
+   * 队列驱动（合成中 / 播放中）。待发送子态（修订 v2 V2-4）：静音 3s 后麦克风
+   * 键变绿色发送键（点击 = 立即停止转写发送，2s 无操作自动发送）。停止播放键
+   * （修订 v2 V2-5）：仅 speaking 相位出现，点击只停播清队回 idle，不开始录音。
    */
   let {
     onMicClick,
+    onStopClick,
     onClose,
   }: {
     /** 麦克风键点击（idle = 开始录音，recording = 停止并转写发送）。 */
     onMicClick: () => void;
+    /** 停止播放键（V2-5，仅 speaking 相位渲染）：停当前 + 清播报队列，不录音。 */
+    onStopClick: () => void;
     /** 关闭键 / 退出语音模式（停止录音 + 释放流 + 回文字输入）。 */
     onClose: () => void;
   } = $props();
@@ -152,6 +156,21 @@
   >
     <Settings class="size-4" />
   </Button>
+  {#if phase === 'speaking'}
+    <!-- 停止播放键（修订 v2 V2-5）：合成中与播放中都显示（合成中点击 = 连还没播
+         的队列一起取消）；点击只停播清队回 idle，不开始录音（录音走麦克风键）。 -->
+    <Button
+      variant="ghost"
+      size="icon"
+      class="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+      onclick={onStopClick}
+      title={t('voiceMode.stopPlayback')}
+      aria-label={t('voiceMode.stopPlayback')}
+      data-testid="voice-mode-stop"
+    >
+      <Square class="size-4" />
+    </Button>
+  {/if}
   <Button
     variant="ghost"
     size="icon"

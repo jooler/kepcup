@@ -172,6 +172,8 @@ export const enUS = {
   'voiceMode.speaking': 'Speaking…',
   'voiceMode.synthesizing': 'Synthesizing…',
   'voiceMode.interruptAndRecord': 'Interrupt and speak',
+  // Stop-playback button (53 revision v2 V2-5: stops playback only, no recording)
+  'voiceMode.stopPlayback': 'Stop playback',
   'voiceMode.truncated': 'Too long; reading the first {limit} characters',
   'voiceMode.speakFailed': 'Voice playback failed',
   'voiceMode.openSettings': 'Open settings',

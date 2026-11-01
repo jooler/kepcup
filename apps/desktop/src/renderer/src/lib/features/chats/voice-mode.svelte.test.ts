@@ -515,3 +515,32 @@ describe('voiceMode store × 端点检测（V2-4 接线）', () => {
     voiceMode.exit();
   });
 });
+
+describe('归属会话门禁（修订 v2 V2-5 审查 P2：双 Composer 并存）', () => {
+  it('enter 记录归属、exit 清空；owns 只认归属会话', () => {
+    voiceMode.enter('conv-a');
+    expect(voiceMode.ownerConversationId).toBe('conv-a');
+    expect(voiceMode.owns('conv-a')).toBe(true);
+    expect(voiceMode.owns('conv-b')).toBe(false); // 隐藏实例不得接管
+    expect(voiceMode.owns(null)).toBe(false);
+
+    voiceMode.exit();
+    expect(voiceMode.ownerConversationId).toBeNull();
+    expect(voiceMode.owns('conv-a')).toBe(false); // 未开启时一律不接管
+  });
+
+  it('未记录归属（无参 enter 的旧路径）视作全局，向后兼容', () => {
+    voiceMode.enter();
+    expect(voiceMode.owns('any-conv')).toBe(true);
+    voiceMode.exit();
+    expect(voiceMode.owns('any-conv')).toBe(false);
+  });
+
+  it('重新 enter 到另一会话后归属跟随（旧会话立即失去接管）', () => {
+    voiceMode.enter('conv-a');
+    voiceMode.enter('conv-b');
+    expect(voiceMode.owns('conv-a')).toBe(false);
+    expect(voiceMode.owns('conv-b')).toBe(true);
+    voiceMode.exit();
+  });
+});
