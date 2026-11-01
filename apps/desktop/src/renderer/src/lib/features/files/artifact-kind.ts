@@ -14,6 +14,7 @@ export type ArtifactKind =
   | 'spreadsheet'
   | 'presentation'
   | 'text'
+  | 'code'
   | 'other';
 
 const KIND_BY_EXTENSION: Readonly<Record<string, ArtifactKind>> = {
@@ -48,31 +49,49 @@ const KIND_BY_EXTENSION: Readonly<Record<string, ArtifactKind>> = {
   '.pptx': 'presentation',
   '.odp': 'presentation',
   '.txt': 'text',
-  '.json': 'text',
   '.log': 'text',
-  '.yaml': 'text',
-  '.yml': 'text',
-  '.toml': 'text',
-  '.xml': 'text',
-  '.ts': 'text',
-  '.tsx': 'text',
-  '.js': 'text',
-  '.jsx': 'text',
-  '.mjs': 'text',
-  '.cjs': 'text',
-  '.css': 'text',
-  '.scss': 'text',
-  '.svelte': 'text',
-  '.py': 'text',
-  '.rb': 'text',
-  '.go': 'text',
-  '.rs': 'text',
-  '.java': 'text',
-  '.c': 'text',
-  '.h': 'text',
-  '.cpp': 'text',
-  '.sh': 'text',
-  '.sql': 'text',
+  // 代码 / 数据配置档：FileViewer 交给 CodeViewer 按语言高亮（code-language.ts）。
+  '.json': 'code',
+  '.jsonc': 'code',
+  '.yaml': 'code',
+  '.yml': 'code',
+  '.toml': 'code',
+  '.xml': 'code',
+  '.ini': 'code',
+  '.ts': 'code',
+  '.mts': 'code',
+  '.cts': 'code',
+  '.tsx': 'code',
+  '.js': 'code',
+  '.jsx': 'code',
+  '.mjs': 'code',
+  '.cjs': 'code',
+  '.css': 'code',
+  '.scss': 'code',
+  '.sass': 'code',
+  '.less': 'code',
+  '.svelte': 'code',
+  '.vue': 'code',
+  '.py': 'code',
+  '.rb': 'code',
+  '.go': 'code',
+  '.rs': 'code',
+  '.java': 'code',
+  '.kt': 'code',
+  '.swift': 'code',
+  '.php': 'code',
+  '.lua': 'code',
+  '.dart': 'code',
+  '.cs': 'code',
+  '.c': 'code',
+  '.h': 'code',
+  '.cpp': 'code',
+  '.hpp': 'code',
+  '.cc': 'code',
+  '.sh': 'code',
+  '.bash': 'code',
+  '.zsh': 'code',
+  '.sql': 'code',
 };
 
 export function extensionOf(filePath: string): string {
@@ -87,7 +106,7 @@ export function artifactKindOf(filePath: string): ArtifactKind {
 }
 
 export function isTextualKind(kind: ArtifactKind): boolean {
-  return kind === 'html' || kind === 'markdown' || kind === 'text';
+  return kind === 'html' || kind === 'markdown' || kind === 'text' || kind === 'code';
 }
 
 export function artifactKindLabelKey(kind: ArtifactKind): MessageKey {

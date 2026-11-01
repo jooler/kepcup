@@ -45,6 +45,7 @@
     "jsqr": "1.4.0",
     "mammoth": "1.13.0",
     "mode-watcher": "1.1.0",
+    "shiki": "3.23.0",
     "streamdown-svelte": "3.0.6",
     "svelte-dnd-action": "0.9.80",
     "svelte-sonner": "1.2.1",

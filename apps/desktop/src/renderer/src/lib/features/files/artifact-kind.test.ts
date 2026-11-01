@@ -11,7 +11,10 @@ describe('artifact kinds', () => {
     expect(artifactKindOf('/a/b/report.docx')).toBe('document');
     expect(artifactKindOf('/a/b/sheet.xlsx')).toBe('spreadsheet');
     expect(artifactKindOf('/a/b/deck.pptx')).toBe('presentation');
-    expect(artifactKindOf('/a/b/main.ts')).toBe('text');
+    expect(artifactKindOf('/a/b/main.ts')).toBe('code');
+    expect(artifactKindOf('/a/b/settings.JSON')).toBe('code');
+    expect(artifactKindOf('/a/b/notes.txt')).toBe('text');
+    expect(artifactKindOf('/a/b/server.log')).toBe('text');
     expect(artifactKindOf('/a/b/archive.zip')).toBe('other');
   });
 
@@ -20,10 +23,17 @@ describe('artifact kinds', () => {
     expect(extensionOf('no-extension')).toBe('');
   });
 
+  it('keeps plain prose and logs out of the code renderer', () => {
+    expect(artifactKindOf('/a/b/CHANGELOG.txt')).toBe('text');
+    expect(artifactKindOf('/a/b/build.log')).toBe('text');
+    expect(artifactKindOf('/a/b/Dockerfile')).toBe('other');
+  });
+
   it('marks only document-like text as textual', () => {
     expect(isTextualKind('html')).toBe(true);
     expect(isTextualKind('markdown')).toBe(true);
     expect(isTextualKind('text')).toBe(true);
+    expect(isTextualKind('code')).toBe(true);
     expect(isTextualKind('image')).toBe(false);
   });
 
