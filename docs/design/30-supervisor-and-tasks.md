@@ -199,7 +199,7 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 | 视角 | 规则 |
 |---|---|
 | 用户（UI 列表、实时推送、未读数、会话预览） | `owner_bot_id IS NULL` 且非内部事务；`task_event` 一律不推送 `message.created` |
-| Bot X（上下文、触发、工具查询） | `owner_bot_id IS NULL OR owner_bot_id = X` |
+| Bot X（上下文、触发、工具查询） | `owner_bot_id IS NULL OR owner_bot_id = X`；另排除转发的任务结果原文行（只供用户阅读，§6.1 2026-11 修订） |
 
 必须覆盖的读路径：上下文构建（`list` → `listForBot`）、`search_messages`（FTS 查询 join `messages` 按 `owner_bot_id` 过滤，FTS 表结构不变）、`get_messages_around`、外部 Agent 会话增量（`buildConversationDelta`）、路由判断输入、反思输入、会话列表预览与未读数。**任何一处漏掉都是 Bot 间泄露**——项目组里 Y 用 `search_messages` 就能搜出 X 与任务的往返。因此加一组契约测试：构造多 Bot 项目组对话，断言每条私有条目在 owner 以外的所有视角、所有读路径下都不可见。
 
@@ -437,7 +437,9 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 **为什么进度不经对话轮**：进度的价值在实时；每条进度都过一次对话轮，长任务会多出成倍的模型调用与延迟，换来的只是措辞统一。
 
-**原文转发**：长报告、代码清单、表格这类结果，让对话轮重新生成既费输出 token 又可能失真。对话轮调用 `forward_task_result(task_id)`，宿主把结果条目全文作为一条可见消息发出（Bot 身份、带任务归属），对话轮的最终回复只写衔接（「详情如上，要我顺手改掉吗？」）。转不转发由对话轮决定，宿主不替它判断。
+**原文转发**：长报告、代码清单、表格这类结果，让对话轮重新生成既费输出 token 又可能失真。对话轮调用 `forward_task_result(task_id)`，宿主把结果条目全文作为一条可见消息发出（Bot 身份、带任务归属）。转不转发由对话轮决定，宿主不替它判断。
+
+**转发行只供用户阅读**（2026-11 修订，执行报告不入模型上下文）：原文行不进任何 Bot 读路径——最近窗口、`search_messages` / `get_messages_around`、滚动摘要、外部 Agent 增量、路由输入都排除它（存储层 `forwardedResultExcludeFilter`，判别式 `origin='task'` 且 `run_id` 是转发它的对话轮而非任务本身，与转发去重、渲染端归属徽标同一判别）。同一份全文已躺在 owner Bot 的私有结果条目里，`get_messages_around` / search 随时可取回，转发行再进上下文只会让一份长报告占两份窗口。相应地，转发后的对话轮回复**必须写出关键结果与结论**（不整段复述原文，也不只写「详情如上」这类衔接语）——总结消息是这份结果在对话里唯一被 Bot 长期读到的记录，提示词与工具描述照此约束。
 
 ### 6.2 项目组沟通
 

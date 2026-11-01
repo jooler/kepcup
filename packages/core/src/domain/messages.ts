@@ -318,6 +318,25 @@ function ephemeralCardExcludeFilter(alias = ''): { sql: string; params: string[]
   };
 }
 
+/**
+ * 转发的任务结果排除（D75 §6.1，2026-11 修订）：`forward_task_result` 发出的
+ * 原文行（origin='task' 且 run_id 是转发它的对话轮而非任务本身）只供用户
+ * 阅读，不进任何 Bot 读路径——同一份结果全文已经在 owner Bot 的私有结果
+ * 条目里（`get_messages_around` / search 可取回），转发行留在模型上下文里
+ * 只会重复膨胀。判别式与渲染端（ChatMessageRow）与转发去重一致：run_id 为
+ * 空视为任务自己发的行，不算转发。
+ */
+function forwardedResultExcludeFilter(alias = ''): { sql: string; params: string[] } {
+  const c = (expr: string) => `${alias}${expr}`;
+  return {
+    sql:
+      `not (${c('kind')} = 'text' and coalesce(json_extract(${c('content_json')}, '$.origin'), '') = 'task' ` +
+      `and json_extract(${c('content_json')}, '$.taskId') is not null ` +
+      `and ${c('run_id')} is not null and ${c('run_id')} != json_extract(${c('content_json')}, '$.taskId'))`,
+    params: [],
+  };
+}
+
 /** 连接多个行过滤：SQL 顺序与 params 顺序保持一致。 */
 function composeFilter(...parts: Array<{ sql: string; params: string[] }>): {
   sql: string;
@@ -818,8 +837,8 @@ export class MessagesService {
   /**
    * Every row of the conversation regardless of viewer, private task_event
    * rows of all bots included (D75). Host-internal / test use only: anything
-   * that feeds a bot reads `listForBot` / `listShared`, the user UI reads
-   * `listVisible` (design 30 §2.4.3).
+   * that feeds a bot reads `listForBot` / `listShared` (which also exclude
+   * forwarded task results), the user UI reads `listVisible` (design 30 §2.4.3).
    */
   list(conversationId: string, options: { beforeSeq?: number; limit?: number } = {}): Message[] {
     return this.#listWhere(conversationId, { sql: '1 = 1', params: [] }, options);
@@ -827,7 +846,8 @@ export class MessagesService {
 
   /**
    * What bot `botId` sees of the conversation (D75 design 30 §2.4.3): shared
-   * rows plus its own private rows, by seq. Filtered in SQL so a page holds
+   * rows plus its own private rows, by seq; forwarded task results are
+   * user-only and excluded (D75 §6.1). Filtered in SQL so a page holds
    * `limit` rows the bot may see (same paging as `list`).
    */
   listForBot(
@@ -837,14 +857,19 @@ export class MessagesService {
   ): Message[] {
     return this.#listWhere(
       conversationId,
-      composeFilter(viewerFilter(botId), ephemeralCardExcludeFilter()),
+      composeFilter(
+        viewerFilter(botId),
+        ephemeralCardExcludeFilter(),
+        forwardedResultExcludeFilter(),
+      ),
       options,
     );
   }
 
   /**
    * Shared rows only (`owner_bot_id IS NULL`): what every member may see — a
-   * task's conversation layer, the rolling summary, cross-conversation reads.
+   * task's conversation layer, the rolling summary, cross-conversation reads;
+   * forwarded task results are user-only and excluded (D75 §6.1).
    */
   listShared(
     conversationId: string,
@@ -852,7 +877,11 @@ export class MessagesService {
   ): Message[] {
     return this.#listWhere(
       conversationId,
-      composeFilter(viewerFilter(null), ephemeralCardExcludeFilter()),
+      composeFilter(
+        viewerFilter(null),
+        ephemeralCardExcludeFilter(),
+        forwardedResultExcludeFilter(),
+      ),
       options,
     );
   }
@@ -1004,6 +1033,8 @@ export class MessagesService {
   /**
    * Full-text search inside one conversation, as seen by `viewerBotId` (D75
    * §2.4.3: shared rows + the viewer's own private rows; null = shared only).
+   * Forwarded task results are user-only and excluded (D75 §6.1) — the same
+   * text stays reachable through the owner's private result entry.
    * messages_fts indexes task_event text too, so the owner filter joins
    * `messages` at query time. Recalled messages never match (their FTS rows
    * are deleted).
@@ -1021,7 +1052,7 @@ export class MessagesService {
       .prepare(
         'select m.* from messages_fts f join messages m on m.id = f.message_id ' +
           "where f.conversation_id = ? and messages_fts match ? and m.status != 'recalled' " +
-          `and ${viewer.sql} order by m.seq limit ?`,
+          `and ${viewer.sql} and ${forwardedResultExcludeFilter('m.').sql} order by m.seq limit ?`,
       )
       .all(conversationId, ftsQuery, ...viewer.params, limit) as MessageRow[];
     return rows.map(messageRowToMessage);
@@ -1092,10 +1123,15 @@ export class MessagesService {
    * Messages around an anchor as seen by `viewerBotId` (D75 §2.4.3; null =
    * shared only): up to N viewer-visible, non-recalled rows before, the
    * anchor itself (when visible to the viewer), and up to N after, by seq.
-   * Rows hidden from the viewer neither appear nor use up the N.
+   * Forwarded task results are user-only and excluded (D75 §6.1). Rows
+   * hidden from the viewer neither appear nor use up the N.
    */
   around(conversationId: string, seq: number, n: number, viewerBotId: string | null): Message[] {
-    const viewer = composeFilter(viewerFilter(viewerBotId), ephemeralCardExcludeFilter());
+    const viewer = composeFilter(
+      viewerFilter(viewerBotId),
+      ephemeralCardExcludeFilter(),
+      forwardedResultExcludeFilter(),
+    );
     const base = `conversation_id = ? and status != 'recalled' and ${viewer.sql}`;
     const before = this.db
       .prepare(`select * from messages where ${base} and seq < ? order by seq desc limit ?`)
@@ -1117,12 +1153,14 @@ export class MessagesService {
    * Loads unsummarized messages (between summary_upto_seq and beforeSeq).
    * Shared rows only (D75 §2.4.3): the rolling summary is one per
    * conversation, read by every member bot — summarizing a private row would
-   * leak it.
+   * leak it. Forwarded task results are user-only and excluded too (D75
+   * §6.1): the turn's own summary reply (with the key results) is what gets
+   * summarized, not the verbatim report.
    */
   unsummarized(conversationId: string, beforeSeq: number): Message[] {
     const rows = this.db
       .prepare(
-        "select * from messages where conversation_id = ? and seq > ? and seq <= ? and status != 'recalled' and owner_bot_id is null order by seq",
+        `select * from messages where conversation_id = ? and seq > ? and seq <= ? and status != 'recalled' and owner_bot_id is null and ${forwardedResultExcludeFilter().sql} order by seq`,
       )
       .all(conversationId, 0, beforeSeq) as MessageRow[];
     const conv = this.db
