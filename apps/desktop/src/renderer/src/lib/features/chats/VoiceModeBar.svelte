@@ -13,7 +13,7 @@
    * 输入坞原位（Composer 同层替换渲染，不走 fixed / Portal——不与窗口拖拽带
    * 重叠）。布局：Bot 头像 ｜ 波形/状态区（弹性）｜ 设置键 · 麦克风键 · 关闭键。
    * 只做展示与转发（mic / close 回调交给 Composer 编排）；录音 / 转写 / 发送
-   * 的编排在 Composer，speaking 态是 WP3 播报队列的占位。
+   * 编排在 Composer，speaking 态由 voice-mode 播报队列驱动（合成中 / 播放中）。
    */
   let {
     onMicClick,
@@ -51,7 +51,11 @@
   );
 
   const micLabel = $derived(
-    phase === 'recording' ? t('voiceMode.stopAndSend') : t('voiceMode.startRecording'),
+    phase === 'recording'
+      ? t('voiceMode.stopAndSend')
+      : phase === 'speaking'
+        ? t('voiceMode.interruptAndRecord')
+        : t('voiceMode.startRecording'),
   );
 </script>
 
@@ -61,6 +65,7 @@
   aria-label={t('voiceMode.entry')}
   data-testid="voice-mode-bar"
   data-phase={phase}
+  data-speaking-stage={voiceMode.speakingStage ?? undefined}
 >
   <BotAvatar
     botId={chatSession.view?.conversation.directBotId ?? ''}
@@ -85,11 +90,34 @@
       </span>
     {:else if phase === 'transcribing'}
       <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
-      <span class="truncate text-sm text-muted-foreground">{t('voiceMode.transcribing')}</span>
+      <!-- 识别与发送共用 transcribing 相位：转写落定后（onSending）切「发送中…」。 -->
+      <span class="truncate text-sm text-muted-foreground" data-testid="voice-mode-transcribing">
+        {voiceMode.sending ? t('voiceMode.sending') : t('voiceMode.transcribing')}
+      </span>
     {:else if phase === 'speaking'}
-      <!-- speaking（WP3 播报队列接入）的占位：先按「合成中 Loader」形态。 -->
-      <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
-      <span class="truncate text-sm text-muted-foreground">{t('voiceMode.speaking')}</span>
+      <!-- speaking 两阶段（53 号交互状态机）：合成中 Loader（TTS 整段非流式，长
+           回复可能合成数秒，风险 #2）→ 播放中动画波形（真实电平是 P3）。 -->
+      {#if voiceMode.speakingStage === 'playing'}
+        <span
+          class="flex items-end gap-1"
+          aria-hidden="true"
+          data-testid="voice-mode-speaking-wave"
+        >
+          {#each WAVE_PROFILE as factor, index (index)}
+            <span
+              class="voice-dot w-1 rounded-full bg-foreground/70"
+              style="height:{Math.round(factor * 16) + 3}px; animation-delay:{index * 0.18}s"
+            ></span>
+          {/each}
+        </span>
+      {:else}
+        <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+      {/if}
+      <span class="truncate text-sm text-muted-foreground" data-testid="voice-mode-speaking">
+        {voiceMode.speakingStage === 'playing'
+          ? t('voiceMode.speaking')
+          : t('voiceMode.synthesizing')}
+      </span>
     {:else if runActive}
       <span class="truncate text-sm text-muted-foreground" data-run-active="true">
         {t('voiceMode.thinking')}

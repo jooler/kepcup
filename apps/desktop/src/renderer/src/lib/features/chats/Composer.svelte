@@ -53,10 +53,19 @@
   import { sensors } from '$lib/sensors/sensors.svelte';
   import { SensorDisabledError } from '$lib/sensors/types';
   import { shell } from '$lib/stores/shell.svelte';
+  import { permissions } from '$lib/stores/permissions.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import VoiceModeBar from './VoiceModeBar.svelte';
-  import { escapeActionForVoiceMode, micIntentFor, voiceMode } from './voice-mode.svelte';
+  import {
+    announceEntryFor,
+    escapeActionForVoiceMode,
+    micIntentFor,
+    voiceMode,
+    type AnnounceDeps,
+    type PlaybackHandle,
+  } from './voice-mode.svelte';
   import { isCapabilityError, sendVoiceRecording, type VoiceSendDeps } from './voice-send';
+  import { SPEECH_TEXT_LIMIT } from './extractSpeechText';
 
   let {
     readOnly = false,
@@ -1143,8 +1152,8 @@
   // 输入坞原位切语音条（VoiceModeBar），说话停止后按 26 号「语音消息语义」
   // 发送：转写文本作消息正文 + WAV 音频附件。UI 状态在 voice-mode.svelte.ts
   //（四态状态机），录音传感器链路复用 acquireRecording，发送编排在
-  // voice-send.ts（复用 performComposerSend / sendGuard）。播报（speaking 态）
-  // 是 WP3 的扩展。
+  // voice-send.ts（复用 performComposerSend / sendGuard）；Bot 播报（speaking
+  // 态）见下方「Bot 播报」分段（队列在 voice-mode，依赖在此注入）。
 
   /** 入口可见性：仅私聊（direct / card）且非项目组；readOnly 分支整体不出输入坞。 */
   const voiceModeEntryVisible = $derived(!isProject);
@@ -1181,22 +1190,29 @@
     voiceMode.exit();
   }
 
-  /** 语音条麦克风键（idle = 开始录音 / recording = 停止并转写发送）。 */
+  /** 语音条麦克风键（idle = 开始录音 / recording = 停止并转写发送 / speaking = 打断并录音）。 */
   function onVoiceModeMicClick(): void {
     const intent = micIntentFor(voiceMode.phase);
-    if (intent === 'start') void startVoiceModeRecording();
+    if (intent === 'start' || intent === 'interrupt') void startVoiceModeRecording();
     else if (intent === 'stop-send') void stopVoiceModeRecording();
-    // transcribing 禁用；speaking 的打断语义由 WP3 接入。
+    // transcribing 禁用（识别在途）。
   }
 
-  /** 语音条录音：与文字语音输入同一条传感器链路（acquireRecording）。 */
+  /**
+   * 语音条录音：与文字语音输入同一条传感器链路（acquireRecording）。speaking
+   * 态点麦克风也走这里——**拿到流之后**才打断播报（voiceMode.interruptSpeech，
+   * 53 号风险 #1：TCC 授权弹框等待期播报继续，不在用户还没开口时白打断）；
+   * idle 态 interruptSpeech 是 no-op，两条路径共用同一实现。
+   */
   async function startVoiceModeRecording(): Promise<void> {
-    if (!voiceMode.active || voiceMode.phase !== 'idle') return;
+    if (!voiceMode.active || (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking')) return;
     const session = ++recordingSession;
     const started = await acquireRecording(session, (level) => {
       voiceMode.level = level;
     });
     if (!started) return;
+    // 拿到流才打断：停当前音频 + 清空未播队列（插话作废），随即进 recording。
+    voiceMode.interruptSpeech();
     voiceMode.dispatch('record-started');
     // 60s 到点自动停止并转写发送；上限从真正开始采集起算（与文字语音输入一致）。
     maxRecordingTimer = setTimeout(() => void stopVoiceModeRecording(), MAX_RECORDING_MS);
@@ -1284,6 +1300,10 @@
       // 与文字直发共用同一 sendGuard（按会话分闸）：语音侧在 guard 忙时等待
       // 前一条完成后再发（voice-send.ts 头注释，P2-1）。
       guard: sendGuard,
+      // 转写落定、进入上传/排队/发送：语音条文案「识别中…」→「发送中…」。
+      onSending: () => {
+        voiceMode.sending = true;
+      },
       composerSend: {
         settle: () => composerDrafts.settle(conversationId),
         // 显式只发往发起录音时的会话：转写/上传/排队期间用户可能已切走。
@@ -1300,6 +1320,111 @@
       },
     };
   }
+
+  // --- Bot 播报（docs/design/53-voice-conversation.md「Bot 语音播报链路」，WP3）
+  // 队列与状态机在 voice-mode.svelte.ts（可注入纯逻辑，单测在那边）；这里只注
+  // 入真实依赖（合成 RPC / objectURL / Audio 播放 / 失败 toast）并订阅消息事件。
+  // 播报音频不落附件——文字已在列表，落附件会拖慢落库且污染上下文附件行（53 号）。
+
+  /** atob 手动解码（CSP 同 attachments.svelte.ts：connect-src 不含 data:）。 */
+  function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  /**
+   * blob objectURL → HTMLAudioElement 播放（MessageAttachments 已验证 CSP 放行）：
+   * 自然播完 resolve、stop() 立停并 resolve、error 事件 / play() 拒绝 reject
+   * （交给队列的失败停队路径）。
+   */
+  function playSpeechAudio(url: string): PlaybackHandle {
+    const audio = new Audio(url);
+    let settle: ((mode: 'resolve' | 'reject', error?: unknown) => void) | null = null;
+    const ended = new Promise<void>((resolve, reject) => {
+      let done = false;
+      const finish = (rejectWith?: unknown): void => {
+        if (done) return;
+        done = true;
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+        if (rejectWith === undefined) resolve();
+        else reject(rejectWith);
+      };
+      const onEnded = (): void => finish();
+      const onError = (): void => finish(audio.error ?? new Error('audio playback failed'));
+      settle = (mode, error) => (mode === 'reject' ? finish(error) : finish());
+      audio.addEventListener('ended', onEnded);
+      audio.addEventListener('error', onError);
+    });
+    audio
+      .play()
+      .catch((error: unknown) =>
+        settle?.('reject', error instanceof Error ? error : new Error(String(error))),
+      );
+    return {
+      ended,
+      stop() {
+        audio.pause();
+        settle?.('resolve');
+      },
+    };
+  }
+
+  /** 播报队列依赖：第一条失败停队 + toast（带「打开设置」深链到 models 分区，53 号）。 */
+  function announceDeps(): AnnounceDeps {
+    return {
+      synthesize: async (text) => {
+        const result = (await core.call('media.synthesizeSpeech', {
+          text,
+          format: 'mp3',
+        })) as { audioBase64: string; mimeType: string };
+        return { blob: new Blob([base64ToBytes(result.audioBase64)], { type: result.mimeType }) };
+      },
+      createObjectUrl: (blob) => URL.createObjectURL(blob),
+      revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+      play: (url) => playSpeechAudio(url),
+      onFirstFailure: (error) => {
+        toast.error(
+          errorText((error as { code?: string } | undefined)?.code, t('voiceMode.speakFailed')),
+          {
+            action: {
+              label: t('voiceMode.openSettings'),
+              onClick: () => shell.openSettings('models'),
+            },
+          },
+        );
+      },
+    };
+  }
+
+  // 挂载即注入（无响应式依赖，只跑一次）；重复挂载（主聊天 + 卡片对话）时后者
+  // 替换前者（attachAnnouncer 先清理旧实例）。卸载清理走既有的 voiceMode.exit()。
+  $effect(() => {
+    voiceMode.attachAnnouncer(announceDeps());
+  });
+
+  // 入队（53 号）：语音模式开启期间经 chat-session 订阅口收 message.created，
+  // 入队条件与朗读文本提取在 announceEntryFor（可见性口径 = 消息列表）；截断
+  // toast 每条消息一次（enqueue 去重后 announce 返回 false 的不提示）。
+  $effect(() => {
+    if (!voiceMode.active) return;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    return chatSession.onIncomingMessage((_conversationId, message) => {
+      const entry = announceEntryFor(message, {
+        conversationId,
+        active: voiceMode.active,
+        approvals: permissions.approvals,
+      });
+      if (entry === null) return;
+      const enqueued = voiceMode.announce(entry);
+      if (enqueued && entry.truncated) {
+        // {limit} 占位符：locales.test.ts 的占位符一致性校验兜住 zh/en 同步。
+        toast.info(t('voiceMode.truncated', { limit: SPEECH_TEXT_LIMIT }));
+      }
+    });
+  });
 
   // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
   // 上传管道在 composerDrafts（按会话缓存）；这里只负责收集文件与视图操作。

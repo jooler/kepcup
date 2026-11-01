@@ -48,6 +48,7 @@ function harness(
     onNoSpeech: () => events.push('no-speech'),
     onCapabilityMissing: () => events.push('capability-missing'),
     onTranscribeFailed: () => events.push('transcribe-failed'),
+    onSending: () => events.push('sending'),
     uploadVoiceRecording: (file) => {
       uploads.push(file);
       events.push('upload');
@@ -84,7 +85,7 @@ describe('sendVoiceRecording（53 号发送链路编排）', () => {
   it('正常链路：转写文本作正文、附件 id 随消息发出、成功后 commit；转写拿的是录音 base64', async () => {
     const { deps, events, sent, transcribeInputs } = harness();
     expect(await sendVoiceRecording(recording, CONV, deps)).toBe('sent');
-    expect(events).toEqual(['upload', 'settle', 'send', 'commit:att_voice']);
+    expect(events).toEqual(['sending', 'upload', 'settle', 'send', 'commit:att_voice']);
     expect(sent).toEqual([{ text: '你好', ids: ['att_voice'] }]);
     expect(transcribeInputs).toEqual(['QUJD']);
   });
@@ -138,7 +139,14 @@ describe('sendVoiceRecording（53 号发送链路编排）', () => {
       },
     });
     expect(await sendVoiceRecording(recording, CONV, deps)).toBe('sent');
-    expect(events).toEqual(['transcribe-failed', 'upload', 'settle', 'send', 'commit:att_voice']);
+    expect(events).toEqual([
+      'transcribe-failed',
+      'sending',
+      'upload',
+      'settle',
+      'send',
+      'commit:att_voice',
+    ]);
     // 空文本 + 纯附件对 messages.send 合法（26 号语义）。
     expect(sent).toEqual([{ text: '', ids: ['att_voice'] }]);
   });
@@ -153,7 +161,7 @@ describe('sendVoiceRecording（53 号发送链路编排）', () => {
     });
     setSettledIds([]);
     expect(await sendVoiceRecording(recording, CONV, deps)).toBe('empty');
-    expect(events).toEqual(['transcribe-failed', 'upload', 'settle']);
+    expect(events).toEqual(['transcribe-failed', 'sending', 'upload', 'settle']);
     expect(sent).toEqual([]);
   });
 
@@ -162,7 +170,31 @@ describe('sendVoiceRecording（53 号发送链路编排）', () => {
       send: { send: async () => ({ ok: false, code: 'PROVIDER_UNREACHABLE' }) },
     });
     expect(await sendVoiceRecording(recording, CONV, deps)).toBe('failed');
-    expect(events).toEqual(['upload', 'settle', 'report:PROVIDER_UNREACHABLE', 'restore']);
+    expect(events).toEqual([
+      'sending',
+      'upload',
+      'settle',
+      'report:PROVIDER_UNREACHABLE',
+      'restore',
+    ]);
+  });
+
+  it('onSending（WP3 小项）：只在「即将进入发送」时于上传前触发——空识别 / 缺设置不触发', async () => {
+    // 正常路径：sending 在 upload 之前（上面各用例的事件序已覆盖）。这里补
+    // 两个不发出的分支，钩子不该误报「发送中」。
+    const noSpeech = harness({ deps: { transcribe: async () => '' } });
+    await sendVoiceRecording(recording, CONV, noSpeech.deps);
+    expect(noSpeech.events).toEqual(['no-speech']);
+
+    const missing = harness({
+      deps: {
+        transcribe: async () => {
+          throw Object.assign(new Error('no asr'), { code: 'CAPABILITY_NOT_CONFIGURED' });
+        },
+      },
+    });
+    await sendVoiceRecording(recording, CONV, missing.deps);
+    expect(missing.events).toEqual(['capability-missing']);
   });
 });
 
@@ -183,14 +215,14 @@ describe('guard 忙时串行（P2-1：不允许静默丢转写文本）', () => 
     const pending = sendVoiceRecording(recording, CONV, deps);
     await wait(10);
     // 转写 / 上传已就绪，但闸被占：未 settle 未 send，也不静默丢弃。
-    expect(events).toEqual(['upload']);
+    expect(events).toEqual(['sending', 'upload']);
     expect(sent).toEqual([]);
     expect(guard.isBusy(CONV)).toBe(true);
 
     release();
     await inFlight;
     expect(await pending).toBe('sent');
-    expect(events).toEqual(['upload', 'settle', 'send', 'commit:att_voice']);
+    expect(events).toEqual(['sending', 'upload', 'settle', 'send', 'commit:att_voice']);
     expect(sent).toEqual([{ text: '你好', ids: ['att_voice'] }]);
   });
 

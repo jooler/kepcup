@@ -59,6 +59,12 @@ export interface VoiceSendDeps {
   onCapabilityMissing(): void;
   /** 非缺设置的转写失败：提示后仍按「空文本 + 附件照发」继续。 */
   onTranscribeFailed(error: unknown): void;
+  /**
+   * 转写已落定、即将进入上传 / 排队 / 发送（可选钩子）：语音条文案从「识别中…」
+   * 切到「发送中…」——识别与发送共用 transcribing 相位，不等长的是后者
+   * （sendGuard 排队 + settle），此前该窗口 UI 显示失真。
+   */
+  onSending?(): void;
   /** WAV 包 File 走 composerDrafts 上传管道（voice-{ts}.wav / audio/wav）。 */
   uploadVoiceRecording(file: File): void;
   /** 防重入闸：与文字直发共用（按会话分闸），语音侧排队而非忽略（见头注释）。 */
@@ -107,6 +113,12 @@ export async function sendVoiceRecording(
     // 非缺设置（网络等）：提示后空文本 + 附件照发（模型侧 transcribe_audio 兜底）。
     deps.onTranscribeFailed(error);
   }
+  // 走到这里 = 即将进入发送：转写已落定且非缺设置（no-speech / capability-
+  // missing 已在上面 return）；但 settle 为空（无文本无附件）时仍可能返回
+  // empty 不实发——钩子只是 UI 预告，不承诺结果。
+  deps.onSending?.();
   deps.uploadVoiceRecording(new File([rec.blob], `voice-${Date.now()}.wav`, { type: 'audio/wav' }));
-  return runWhenGuardIdle(deps.guard, conversationId, () => performComposerSend(text, deps.composerSend));
+  return runWhenGuardIdle(deps.guard, conversationId, () =>
+    performComposerSend(text, deps.composerSend),
+  );
 }
