@@ -145,7 +145,9 @@ export class ChatSession {
    * dialog can replace this so the card does not take over the main view.
    */
   openTask = (taskId: string, trigger: HTMLElement | null = null): void => {
-    tasks.openDetail(taskId, trigger);
+    // Keyed by this session's conversation so switching bots keeps the page:
+    // `chat.select` calls `tasks.enterConversation` for the new one.
+    tasks.openDetail(taskId, trigger, this.conversationId);
   };
 
   constructor(

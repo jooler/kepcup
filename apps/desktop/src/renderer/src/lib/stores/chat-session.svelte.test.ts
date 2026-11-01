@@ -332,7 +332,10 @@ describe('ChatSession', () => {
     const ok = await session.send('c1', '明天有什么安排', { voiceMode: true });
     expect(ok).toEqual({ ok: true });
     expect(state.calls.filter((call) => call.method === 'messages.send')).toEqual([
-      { method: 'messages.send', params: { conversationId: 'c1', text: '明天有什么安排', voiceMode: true } },
+      {
+        method: 'messages.send',
+        params: { conversationId: 'c1', text: '明天有什么安排', voiceMode: true },
+      },
     ]);
 
     state.calls = [];
@@ -381,14 +384,57 @@ describe('ChatSession', () => {
     expect(chat.replyTo).toBeNull();
   });
 
-  it('shows the chat and closes the task page before loading project members', async () => {
+  it('shows the chat before loading project members', async () => {
     chat.start();
-    tasks.openDetail('task_open');
     shell.openWorkbench();
     await chat.select('proj1');
     expect(state.membersSnapshot).toEqual({ mainView: 'chats', openTaskId: null });
     expect(chat.currentId).toBe('proj1');
     expect(tasks.openTaskId).toBeNull();
+  });
+
+  it('keeps each conversation on the task page it was left on', async () => {
+    chat.start();
+    await chat.select('bot-a');
+    chat.main.openTask('task_a');
+    expect(tasks.openTaskId).toBe('task_a');
+
+    await chat.select('bot-b');
+    expect(tasks.openTaskId).toBeNull();
+
+    await chat.select('bot-a');
+    expect(tasks.openTaskId).toBe('task_a');
+
+    // An explicit back forgets the page: the next visit shows the message list.
+    tasks.closeDetail();
+    await chat.select('bot-b');
+    await chat.select('bot-a');
+    expect(tasks.openTaskId).toBeNull();
+    chat.close();
+  });
+
+  it('leaves the task page in memory when returning to the narrow list', async () => {
+    chat.start();
+    await chat.select('bot-narrow');
+    chat.main.openTask('task_narrow');
+    chat.leaveCurrent();
+    expect(tasks.openTaskId).toBeNull();
+    await chat.select('bot-narrow');
+    expect(tasks.openTaskId).toBe('task_narrow');
+    tasks.closeDetail();
+    chat.leaveCurrent();
+  });
+
+  it('forgets the task page when the conversation closes', async () => {
+    chat.start();
+    await chat.select('bot-gone');
+    chat.main.openTask('task_gone');
+    expect(tasks.openTaskId).toBe('task_gone');
+    chat.close();
+    expect(tasks.openTaskId).toBeNull();
+    await chat.select('bot-gone');
+    expect(tasks.openTaskId).toBeNull();
+    chat.close();
   });
 
   it('keeps the merged unread count on the open conversation when the event omits it', async () => {

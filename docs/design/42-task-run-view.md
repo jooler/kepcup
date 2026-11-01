@@ -6,11 +6,11 @@
 
 - 任务卡卡面（按钮、链接、输入控件以外）点击打开任务执行过程页；卡底的「查看执行过程 ›」按钮是同一入口，也是键盘入口（Enter / Space）。拖选卡片文字不会触发打开。
 - 打开后主区的当前对话组件保留在 DOM 中，以 `display: none` 隐藏；任务执行过程页占用同一主区。右栏随对话组件一起隐藏。
-- 顶部返回按钮或 Esc 返回对话，焦点回到触发入口（「查看执行过程」按钮）。切换会话（`chat.select`）、窄屏返回列表（`chat.leaveCurrent`）、关闭会话（`chat.close`）以及主区卸载（切工作台、窄屏换 tab、宽窄切换）都会关闭执行过程页，但不回焦。
+- 顶部返回按钮或 Esc 返回对话，焦点回到触发入口（「查看执行过程」按钮）。执行过程页**按会话记忆**：切换会话（`chat.select`）只切到目标会话自己的页面（它没有打开任务页时显示消息列表），离开的会话保留原页面，切回来原地恢复、不再回到消息列表。显式返回（返回按钮 / Esc）才丢弃该会话的记忆；关闭会话（`chat.close`，含删除会话 / 删除 Bot）一并丢弃。窄屏返回列表（`chat.leaveCurrent`）与主区卸载（切工作台、窄屏换 tab、宽窄切换）只退出可见层、不丢弃记忆，重新进入该会话时恢复。除显式返回外都不回焦。
 
 实现位置：
 
-- `apps/desktop/src/renderer/src/lib/stores/tasks.svelte.ts`：`openTaskId` / `openDetail(taskId, trigger)` / `closeDetail({ restoreFocus })`。
+- `apps/desktop/src/renderer/src/lib/stores/tasks.svelte.ts`：`openTaskId` / `openDetail(taskId, trigger, conversationId)` / `enterConversation(conversationId)` / `forgetConversation(conversationId)` / `closeDetail({ restoreFocus })`（按会话记忆的执行过程页）。
 - `apps/desktop/src/renderer/src/lib/features/chats/ChatsArea.svelte`：对话子树 `display: none` 与 `TaskRunView` 的条件渲染。
 - `apps/desktop/src/renderer/src/lib/features/tasks/TaskCard.svelte`：卡片点击与「查看执行过程」按钮入口。
 
@@ -48,7 +48,7 @@ metadata 行按可用字段展示：
 任务执行中触发权限请求时，卡片照常进入对话输入坞上方的 ApprovalDock；但执行过程页打开期间原对话以 `display:none` 隐藏，任务停在 `waiting_approval` 时用户在页内毫无感知。因此执行过程页在时间线下方固定渲染同一会话的 ApprovalDock（`task-run-approvals`）：
 
 - 卡片与对话完全同源（`permissions` store 的 pending 列表），可直接在页内批准 / 拒绝，任务随之继续；没有待审批时不渲染，页面布局不变。
-- 会话取 `TaskView.conversationId`，任务视图未读到时回退当前会话（`approvalConversationIdOf`；详情页只在本会话内打开，切会话即关闭）。
+- 会话取 `TaskView.conversationId`，任务视图未读到时回退当前会话（`approvalConversationIdOf`；详情页只属于打开它的会话，切到别的会话时不会渲染）。
 - 打开详情页时补拉一次会话审批（`permissions.reloadApprovals`，只并入审批记录、不动右栏数据），覆盖连接中断期间错过的事件。
 - 焦点与键盘：打开详情页时已有待审批卡、或新卡到达时，焦点交给队首卡片（与对话一致；此时返回键不抢焦点）；卡片聚焦时 Esc 先被卡片消费（拒绝），不会误退详情页。
 
