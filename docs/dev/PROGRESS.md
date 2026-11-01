@@ -1780,3 +1780,39 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   task-timeline-render / context-assembly / supervisor-turn / agent-sessions-per-task /
   delegation-host / runs-tasks 定向 136 例全绿（过滤谓词对空 `origin` 键用 `coalesce` 收口，规避
   SQLite 三值逻辑把普通行误滤掉）；core typecheck 0 error；改动文件 eslint 干净。
+
+## 语音对话模式修订 v2（D106，2026-11-01 首轮真机验收反馈）
+
+首轮真机验收暴露：客户端 ASR 其实已生效（气泡正文就是转写），但按 26 号语义随消息发出的原始 WAV 在
+Bot 上下文里只有一行附件条目，系统提示词的附件阶梯与 `transcribe_audio` 工具描述要求「用户发来语音
+必须用本工具获取内容」——Bot 于是派任务自行转写；用户要求语音回复时它又调 `generate_speech` 发音频
+文件产物（只有下载没有播放）。观感成了「上传附件 → Bot 干活」。本轮按「对用户是一场通话、对模型仍是
+文本问答」重做交互闭环（设计与决策见 [design/53](../design/53-voice-conversation.md)「修订 v2」）：
+
+- **WP5 Bot 收到纯文本（9ebb59ec）**：`messages.send` 加 `voiceMode` → 消息 content 记 `origin:'voice'`
+  （content 是 JSON 列，零迁移）；core 上下文对**正文非空**的语音消息给音频附件加「语音原始录音，正文
+  即其转写」并在 `<trigger>` 注入 `voiceWakeHint`（勿 `transcribe_audio` / 勿 `generate_speech`、回复口语化
+  适合朗读）。空正文（转写失败分支）不标注不 hint——保留 Bot 的转写兜底，用户话语不丢（审查 P2-1）。
+  播报队列同时排除 `origin:'task'` 的任务侧消息（转发结果 + 任务 run 内 send_message/send_media）。
+- **WP6 统一音频播放器（0d4ffa1b）**：新 `AudioPlayer`（播放/暂停 + 进度 + 时长）替换附件音频的裸
+  `<audio controls>`，音频文件产物按扩展名走同一播放器；bot 文本气泡加「朗读」键（按需 TTS）。新
+  `speech-audio`：messageId → objectURL 的 LRU(20) 缓存 + 单流仲裁（播报与手动朗读互斥抢占），播完不
+  revoke → 播过的回复可点击重播。修正审查 P2-1：录音开始（拿到流）统一 `speechAudio.stop()`（语音模式
+  与文字语音输入两路共点），`stop()` 以抢占语义收尾等待中的播放，避免「朗读出声时开口说话」把 TTS 回声
+  录进转写。
+- **WP7 静音自动发送（f3d8a86d）**：录音电平接纯端点状态机——≥ 阈值持续 250ms 记已说话（单帧尖峰
+  拒绝），之后静音 3s → 停止键变绿色发送键（点击即发），2s 无操作自动发（用户停话后 5s 内必发出）；
+  绿色态重新开口退回录音；全程未说话 5s 自动取消 + toast，不再干等 60s。2s 倒计时与 60s 上限汇入同一个
+  `stopVoiceModeRecording`，相位守卫防双停；`clearVoiceModeRecordingTimers()` 单点覆盖 stop/cancel/
+  exit/卸载四类收尾。
+- **WP8 barge-in + 停止播放键（b67a420a）**：播报 playing 期延迟 500ms 武装麦克风监听（规避 AEC 收敛
+  期），AnalyserNode RMS 映射电平 ≥ 阈值持续 200ms → 停播清队 → 走与点麦克风同一条录音链路；失败/未
+  授权静默降级；语音条新增停止播放键（■，只停播不录音）。修正审查 P2：`voiceMode` 记录
+  `ownerConversationId`，语音条渲染 / 播报入队 / 播报器注入 / barge-in 武装与全部收尾走归属门禁——主
+  聊天与卡片对话双 Composer 并存时隐藏实例不再抢录音或串扰播报（同源修掉既有缺陷）；监听额外要求
+  麦克风权限已授权（不在播报中弹 TCC），进入语音模式刷新权限快照。
+- **验证**：WP5 shared 契约 + core 上下文/集成 + 渲染层 30 文件 318 例；WP6 定向 289 例；WP7 定向 287
+  例；WP8 定向 30 文件 308 例；各阶段 desktop / core typecheck 0 error、改动文件 eslint/prettier 干净；
+  收口全量 `pnpm test`：**700 文件 / 7418 用例全绿**（3 文件 42 例 skip 为既有跳过）。真机复验
+  （barge-in 的 AEC 消回声、阈值/持续时长标定、静音 3s+2s 手感、双实例场景）待用户执行，常量均注释
+  「真机可调」。
