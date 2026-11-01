@@ -1755,3 +1755,27 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   后要等它清掉再做指针操作（`waitDialogScrollLockCleared`）；分组拖拽的落点取目标分区上部。
   验证（按约定只跑改动文件）：shared / core（service+stores）/ renderer workbench 定向 258 例、
   e2e `workbench.spec` 全文件、desktop typecheck 0 error、本阶段文件 eslint 干净。
+
+## 任务结果转发行只供用户阅读（D75 §6.1 修订，2026-11-01）
+
+按用户定向：`forward_task_result` 的原文行继续对用户可见，但不再进任何 Bot 读路径（此前 Bot 在最近
+窗口里把同一份结果读三遍：私有结果条目 + 转发原文 + 自己的总结，长报告严重膨胀上下文）：
+
+- **存储层过滤**（`packages/core/src/domain/messages.ts`）：新增 `forwardedResultExcludeFilter`
+  （判别式 `origin='task'` 且 `run_id` 非空且 `run_id != taskId`——与转发去重 SQL、渲染端
+  ChatMessageRow 归属徽标同一判别，`run_id` 为空视为任务自己发的行），组合进 `listForBot` /
+  `listShared` / `around` / `search`（带 `m.` 别名）/ `unsummarized` 五个 Bot 读路径；SQL 层过滤保住
+  分页取满语义（同 `listVisible` 的理由）。`list()`（宿主内部 / 测试）与 `listVisible()`（用户 UI）
+  不变，旧转发行无需迁移即被覆盖。受影响的调用方无需改动：上下文与外部增量都走 orchestrator
+  `#contextMessages` 单口，路由判断（light-judgement）走 `listForBot`；delegation `#finalReply` 顺带
+  修掉一个边角（B 的对话轮若转发过结果，原 `runId` 匹配可能取到转发行而非最终回复）。
+- **提示词**：`system-prompt.ts` 对话轮规则与 `forward_task_result` 工具描述改为「转发的原文只有
+  用户能看、你之后读不到；回复仍必须写出关键结果与结论，作为这份结果的长久记录；不要整段复述，
+  也不要只写衔接语」——转发行退出 Bot 读路径后，总结消息成为结果唯一被 Bot 长期读到的记录。
+- **文档**：[design/30](../design/30-supervisor-and-tasks.md) §2.4.3 Bot 视角行与 §6.1「原文转发」段
+  （2026-11 修订注记）、[design/02](../design/02-execution.md) `forward_task_result` 工具行。
+- **验证**：`messages-viewer` 新增 4 例（五个读路径排除转发行、`list`/`listVisible` 仍含、私有条目
+  仍可搜到全文、around 不占名额、unsummarized 不含）；messages-visible / messages-task-events /
+  task-timeline-render / context-assembly / supervisor-turn / agent-sessions-per-task /
+  delegation-host / runs-tasks 定向 136 例全绿（过滤谓词对空 `origin` 键用 `coalesce` 收口，规避
+  SQLite 三值逻辑把普通行误滤掉）；core typecheck 0 error；改动文件 eslint 干净。

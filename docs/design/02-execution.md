@@ -34,7 +34,7 @@
 | `inject_task` | 把新指令转给进行中 / 排队中的任务 | 已在跑：经 steering 注入（`delivered`）；尚未启动：并入简报；引擎收不下（外部智能体不支持或异步拒绝 steering、执行已收尾）：条目记为 `queued`（「未送达」），对话轮可改为取消后接续重做 |
 | `cancel_task` | 取消 submitted / running 的任务 | 写 `cancel` 条目后当场结算为 `cancelled`；Bot 自己的取消不唤醒对话轮 |
 | `list_tasks` | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS`（24 小时）内已结算的任务 | 平时不必调用，`<tasks>` 段已列出进行中的任务 |
-| `forward_task_result` | 把已完成任务的结果原文作为可见消息发出（Bot 身份，`origin:'task'`） | 每个任务只能转发一次；不是路由，是转述动作 |
+| `forward_task_result` | 把已完成任务的结果原文作为可见消息发出（Bot 身份，`origin:'task'`） | 每个任务只能转发一次；不是路由，是转述动作；转发行只供用户阅读，不进任何 Bot 读路径，转发后的回复必须写出关键结果与结论（[30 §6.1](30-supervisor-and-tasks.md) 2026-11 修订） |
 
 - 「重新执行」= `cancel_task` + `start_task({continues_task_id})`，不设原子的 `restart`（取消在外部智能体上有时延）。
 - **路由必须留痕**：派出的任务在对话中有一张任务卡（`kind='card'`，`cardType='task'`），注入、取消、结算都会重绘它（`task.updated`）；对话轮的平台规则要求在回复里说明把消息交给了哪条任务。

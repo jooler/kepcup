@@ -516,7 +516,7 @@ export function buildTaskTools(input: {
   const forwardTaskResult: ToolDefinition<{ task_id: string }> = {
     name: 'forward_task_result',
     description:
-      '把一条已完成任务的结果原文作为你的消息发给用户（长报告、代码、表格等不必重新转述）。之后你的回复只需写衔接的话，不要再复述结果。',
+      '把一条已完成任务的结果原文作为你的消息发给用户（长报告、代码、表格等，用户直接读原文；这条消息你之后读不到）。你的最终回复仍要写出关键结果与结论，作为这份结果的长久记录；不要整段复述原文。',
     parameters: Type.Object(
       { task_id: Type.String({ description: '已完成的任务 id' }) },
       { additionalProperties: false },

@@ -125,6 +125,9 @@ export interface RenderMessageOptions {
  * `forward_task_result` keeps `origin:'task'` without `interim` (and uses the
  * turn's run id). Rows written before the `interim` flag still match when
  * `runId === taskId` (the task's own run emitted them).
+ * Forwarded rows themselves never reach bot reads — the storage layer
+ * excludes them (`forwardedResultExcludeFilter` in domain/messages.ts, D75
+ * §6.1), so bot-facing lists only ever need this helper to skip interim rows.
  */
 export function isTaskInterimProgress(message: Message): boolean {
   if (message.kind !== 'text' || message.senderType !== 'bot') return false;
