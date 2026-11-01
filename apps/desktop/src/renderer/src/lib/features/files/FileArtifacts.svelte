@@ -42,7 +42,8 @@
     document: FileText,
     spreadsheet: FileSpreadsheet,
     presentation: Presentation,
-    text: FileCode2,
+    text: FileText,
+    code: FileCode2,
     other: FileIcon,
   };
 
