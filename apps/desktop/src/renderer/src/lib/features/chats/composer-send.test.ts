@@ -194,6 +194,48 @@ describe('createSendGuard', () => {
     await pendingA;
     expect(guard.isBusy('conv_a')).toBe(false);
   });
+
+  it('waitForIdle：空闲立即返回；busy→idle 时唤醒等待方且唤醒后可再 run（语音连发排队）', async () => {
+    const guard = createSendGuard();
+    await guard.waitForIdle('conv_a'); // 已空闲：不挂起
+    let release: () => void = () => {};
+    const first = guard.run('conv_a', async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return 'a';
+    });
+    let idle = false;
+    const waiter = guard.waitForIdle('conv_a').then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false); // 在途期间不误醒
+    release();
+    expect(await first).toBe('a');
+    await waiter;
+    expect(idle).toBe(true);
+    expect(guard.isBusy('conv_a')).toBe(false);
+    expect(await guard.run('conv_a', async () => 'next')).toBe('next');
+  });
+
+  it('waitForIdle：任务抛错也唤醒（finally 收尾）；多个等待方全部唤醒', async () => {
+    const guard = createSendGuard();
+    let release: () => void = () => {};
+    const first = guard.run(
+      'conv_a',
+      () =>
+        new Promise<never>((_, reject) => {
+          release = () => reject(new Error('boom'));
+        }),
+    );
+    const w1 = guard.waitForIdle('conv_a');
+    const w2 = guard.waitForIdle('conv_a');
+    release();
+    await expect(first).rejects.toThrow('boom');
+    await Promise.all([w1, w2]);
+    expect(guard.isBusy('conv_a')).toBe(false);
+  });
 });
 
 describe('会话切换不误投', () => {
