@@ -52,6 +52,57 @@ interface RedactableTarget {
   write(chunk: unknown): unknown;
   end(): void;
   once(event: string, listener: () => void): unknown;
+  /** SonicBoom sets this once `end()` has torn the fd down. */
+  destroyed?: boolean;
+}
+
+/** Sync throw from SonicBoom.write, or a stream write after destroy/end. */
+function isClosedDestinationError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const message = 'message' in error ? String(error.message) : '';
+  if (message === 'SonicBoom destroyed') return true;
+  const code = 'code' in error ? error.code : undefined;
+  return (
+    code === 'ERR_STREAM_DESTROYED' ||
+    code === 'ERR_STREAM_CLOSED' ||
+    code === 'ERR_STREAM_WRITE_AFTER_END'
+  );
+}
+
+/**
+ * A log after `close()` must not throw. Callers often log from a fire-and-forget
+ * `.catch()` (env install, startup checks); a throw there is an unhandled rejection
+ * and fails the process. Real IO errors still propagate.
+ */
+function writeOrIgnoreClosed(target: RedactableTarget, chunk: unknown): void {
+  if (target.destroyed === true) return;
+  try {
+    const result = target.write(chunk);
+    if (isThenable(result)) {
+      void result.then(
+        () => undefined,
+        (error: unknown) => {
+          if (isClosedDestinationError(error)) return;
+          // A rejected write must not sit as an unhandled rejection. Surface it
+          // the same way an 'error' event with no listener would.
+          process.nextTick(() => {
+            throw error instanceof Error ? error : new Error(String(error));
+          });
+        },
+      );
+    }
+  } catch (error) {
+    if (!isClosedDestinationError(error)) throw error;
+  }
+}
+
+function isThenable(value: unknown): value is Promise<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof value.then === 'function'
+  );
 }
 
 /**
@@ -63,15 +114,23 @@ function redactingStream(target: RedactableTarget): RedactableTarget {
   return {
     write(chunk) {
       const text = typeof chunk === 'string' ? chunk : String(chunk);
+      // Parse/redact failures fall back to the original chunk. Write failures
+      // are separate: a destroyed SonicBoom throws, and retrying the write
+      // throws again.
       try {
         const record = JSON.parse(text) as unknown;
-        target.write(`${JSON.stringify(redactRecord(record))}\n`);
-      } catch {
-        target.write(chunk);
+        writeOrIgnoreClosed(target, `${JSON.stringify(redactRecord(record))}\n`);
+      } catch (error) {
+        if (isClosedDestinationError(error)) return;
+        writeOrIgnoreClosed(target, chunk);
       }
     },
     end() {
-      target.end();
+      try {
+        target.end();
+      } catch (error) {
+        if (!isClosedDestinationError(error)) throw error;
+      }
     },
     once(event, listener) {
       return target.once(event, listener);
@@ -100,6 +159,13 @@ export async function createLogger(options: CreateLoggerOptions): Promise<CoreLo
     limit: { count: RETAINED_LOG_FILES },
     mkdir: true,
     extension: 'log',
+  });
+  // pino-roll's SonicBoom emits 'error' from async flush/reopen/close. With no
+  // listener Node throws. Destroyed/closed is expected after shutdown; other
+  // IO errors still fail the process.
+  rollStream.on('error', (error: unknown) => {
+    if (isClosedDestinationError(error)) return;
+    throw error instanceof Error ? error : new Error(String(error));
   });
 
   const streams: RedactableTarget[] = [rollStream];
@@ -138,7 +204,13 @@ export async function createLogger(options: CreateLoggerOptions): Promise<CoreLo
         clearTimeout(timer);
         resolve();
       });
-      rollStream.end();
+      try {
+        rollStream.end();
+      } catch (error) {
+        if (!isClosedDestinationError(error)) throw error;
+        clearTimeout(timer);
+        resolve();
+      }
     });
   };
   return coreLogger;
