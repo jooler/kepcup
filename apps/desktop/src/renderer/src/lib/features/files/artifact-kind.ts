@@ -101,6 +101,29 @@ export function extensionOf(filePath: string): string {
   return dot > 0 ? name.slice(dot).toLowerCase() : '';
 }
 
+/**
+ * 音频产物（53 号修订 v2 V2-2）：MessageArtifact 无 mime 字段，按扩展名识别，
+ * 在消息卡里渲染成 AudioPlayer 行（TTS 语音回复的 mp3/wav 等）。`.webm` 在
+ * KIND_BY_EXTENSION 里是视频档——已判为 video 的扩展名不按音频处理，避免
+ * 视频产物被塞进纯音频播放器。
+ */
+const AUDIO_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.mp3',
+  '.wav',
+  '.opus',
+  '.m4a',
+  '.aac',
+  '.flac',
+  '.ogg',
+  '.oga',
+  '.webm',
+  '.weba',
+]);
+
+export function isAudioArtifact(filePath: string): boolean {
+  return AUDIO_EXTENSIONS.has(extensionOf(filePath)) && artifactKindOf(filePath) !== 'video';
+}
+
 export function artifactKindOf(filePath: string): ArtifactKind {
   return KIND_BY_EXTENSION[extensionOf(filePath)] ?? 'other';
 }

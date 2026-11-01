@@ -5,9 +5,11 @@
     AlarmClock,
     ClipboardList,
     Copy,
+    Pause,
     Pin,
     Reply,
     Undo2,
+    Volume2,
     type LucideIcon,
   } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
@@ -27,6 +29,9 @@
   import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
+  import { extractSpeechText } from './extractSpeechText';
+  import { speechAudio } from './speech-audio.svelte';
+  import { voiceMode } from './voice-mode.svelte';
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
@@ -155,6 +160,29 @@
   const canPin = $derived(canAct && hasText);
   /** 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息除外）。 */
   const canRecall = $derived(canAct && isLast && isUser && delegatedBy === null);
+  /**
+   * Bot 文本气泡「朗读」键（53 号修订 v2 V2-2）：bot text 且提取后仍有可朗读
+   * 文字；TTS 能力 ready 才显示（与 Composer 语音入口同一预检，快照未加载时
+   * 放行、core 错误码兜底）。
+   */
+  const canReadAloud = $derived(
+    canAct &&
+      !isUser &&
+      message.kind === 'text' &&
+      settingsStore.isCapabilityReady('tts') &&
+      'text' in message.content &&
+      typeof message.content.text === 'string' &&
+      extractSpeechText(message.content.text).text.trim().length > 0,
+  );
+  /** 本条正在朗读（播报或手动）：图标切暂停。 */
+  const readingThis = $derived(speechAudio.isPlaying && speechAudio.currentId === message.id);
+  /** 麦克风占用（录音 / 识别中）不开朗读，避免抢路音频注意力（打断留给插话）。 */
+  const readAloudDisabled = $derived(
+    voiceMode.phase === 'recording' || voiceMode.phase === 'transcribing',
+  );
+  const readAloudLabel = $derived(
+    readingThis ? t('voiceMode.readAloudStop') : t('voiceMode.readAloud'),
+  );
 
   /** 撤回最后一条用户消息：正文交回输入框，改写后可重发；失败 toast 不回填。 */
   async function recallMessage(): Promise<void> {
@@ -362,6 +390,24 @@
             <Copy class="size-3.5" aria-hidden="true" />
           </Tooltip.Trigger>
           <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
+      {#if canReadAloud}
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            disabled={readAloudDisabled}
+            onclick={() => speechAudio.toggle(message)}
+            aria-label={readAloudLabel}
+            data-testid="message-read-aloud"
+          >
+            {#if readingThis}
+              <Pause class="size-3.5" aria-hidden="true" />
+            {:else}
+              <Volume2 class="size-3.5" aria-hidden="true" />
+            {/if}
+          </Tooltip.Trigger>
+          <Tooltip.Content>{readAloudLabel}</Tooltip.Content>
         </Tooltip.Root>
       {/if}
       {#if canPin}

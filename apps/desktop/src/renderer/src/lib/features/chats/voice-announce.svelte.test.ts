@@ -8,10 +8,12 @@ import {
 } from './voice-mode.svelte';
 
 /**
- * Bot 播报队列（docs/design/53-voice-conversation.md「Bot 语音播报链路」，WP3）：
- * 入队条件、顺序消费（一次一条、两阶段 speaking）、插话作废清队、暂播与恢复、
- * 失败停队（新消息重启）、退出清理与 objectURL 无泄漏。事件源 / 合成器 / 播放器
- * 全部注入假实现；宿主用真实 voiceMode store（$state 状态机一并被驱动）。
+ * Bot 播报队列（docs/design/53-voice-conversation.md「Bot 语音播报链路」，WP3 +
+ * 修订 v2 V2-3）：入队条件、顺序消费（一次一条、两阶段 speaking）、插话作废
+ * 清队、暂播与恢复、失败停队（新消息重启）、退出清理、朗读抢占（onPreempted
+ * → epoch 作废）。音频经 speech-audio 缓存与仲裁（objectURL 归缓存管：播完
+ * 不 revoke、逐出才 revoke，在那边的单测），事件源 / 取音频 / 播放器全部注入
+ * 假实现；宿主用真实 voiceMode store（$state 状态机一并被驱动）。
  */
 
 /** 微任务排空（队列循环的每个 await 都只需一个宏任务拍点）。 */
@@ -45,38 +47,35 @@ interface FakeHandle extends PlaybackHandle {
   end(): void;
   /** 模拟播放出错。 */
   fail(error: unknown): void;
+  /** 模拟被手动朗读抢占（speech-audio 仲裁：onPreempted 先触发，ended 随之 resolve）。 */
+  preempt(): void;
 }
 
 function createHarness() {
   const synthCalls: string[] = [];
+  const synthMessages: string[] = [];
   const synthPending: Array<{
-    resolve(value: { blob: Blob }): void;
+    resolve(url: string): void;
     reject(error: unknown): void;
   }> = [];
-  const createdUrls: string[] = [];
-  const revokedUrls: string[] = [];
+  const resolvedUrls: string[] = [];
   const playedUrls: string[] = [];
+  const playInputs: Array<{ messageId: string; audio: string }> = [];
   const stoppedUrls: string[] = [];
   const failures: unknown[] = [];
   const handles = new Map<string, FakeHandle>();
 
   const deps: AnnounceDeps = {
-    synthesize: (text) => {
+    resolveAudio: (messageId, text) => {
+      synthMessages.push(messageId);
       synthCalls.push(text);
-      return new Promise<{ blob: Blob }>((resolve, reject) => {
+      return new Promise<string>((resolve, reject) => {
         synthPending.push({ resolve, reject });
       });
     },
-    createObjectUrl: () => {
-      const url = `blob:mock-${createdUrls.length + 1}`;
-      createdUrls.push(url);
-      return url;
-    },
-    revokeObjectUrl: (url) => {
-      revokedUrls.push(url);
-    },
-    play: (url) => {
-      playedUrls.push(url);
+    play: (input) => {
+      playInputs.push({ messageId: input.messageId, audio: input.audio });
+      playedUrls.push(input.audio);
       let resolveEnded!: () => void;
       let rejectEnded!: (error: unknown) => void;
       const ended = new Promise<void>((resolve, reject) => {
@@ -86,13 +85,17 @@ function createHarness() {
       const handle: FakeHandle = {
         ended,
         stop() {
-          stoppedUrls.push(url);
+          stoppedUrls.push(input.audio);
           resolveEnded();
         },
         end: () => resolveEnded(),
         fail: (error) => rejectEnded(error),
+        preempt: () => {
+          input.onPreempted();
+          resolveEnded();
+        },
       };
-      handles.set(url, handle);
+      handles.set(input.audio, handle);
       return handle;
     },
     onFirstFailure: (error) => {
@@ -103,14 +106,17 @@ function createHarness() {
   return {
     deps,
     synthCalls,
-    createdUrls,
-    revokedUrls,
+    synthMessages,
+    resolvedUrls,
     playedUrls,
+    playInputs,
     stoppedUrls,
     failures,
-    /** 让最早一条在途合成成功落地。 */
+    /** 让最早一条在途合成成功落地（返回缓存语义的 objectURL）。 */
     resolveSynth(): void {
-      synthPending.shift()?.resolve({ blob: new Blob(['audio']) });
+      const url = `blob:mock-${resolvedUrls.length + 1}`;
+      resolvedUrls.push(url);
+      synthPending.shift()?.resolve(url);
     },
     /** 让最早一条在途合成失败。 */
     rejectSynth(error: unknown): void {
@@ -124,6 +130,11 @@ function createHarness() {
     failPlayback(error: unknown): void {
       const url = playedUrls.at(-1);
       if (url !== undefined) handles.get(url)?.fail(error);
+    },
+    /** 当前播放被朗读抢占。 */
+    preemptPlayback(): void {
+      const url = playedUrls.at(-1);
+      if (url !== undefined) handles.get(url)?.preempt();
     },
   };
 }
@@ -227,7 +238,6 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     h.endPlayback();
     await tick();
     expect(h.synthCalls).toEqual(['第一条', '第二条']); // ended 后取下一条
-    expect(h.revokedUrls).toEqual(h.createdUrls.slice(0, 1)); // 上一条已 revoke
 
     h.resolveSynth();
     await tick();
@@ -235,7 +245,8 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     await tick();
     expect(voiceMode.phase).toBe('idle'); // 队列空回 idle
     expect(voiceMode.speakingStage).toBeNull();
-    expect(h.revokedUrls).toEqual(h.createdUrls); // 全部回收
+    // objectURL 归 speech-audio 缓存管（修订 v2 V2-3）：播完不 revoke，可回放。
+    expect(h.playedUrls).toEqual(h.resolvedUrls);
   });
 
   it('recording / transcribing 期间入队暂播，回 idle 按序播', async () => {
@@ -267,7 +278,6 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     await tick();
     expect(voiceMode.phase).toBe('idle');
     expect(h.stoppedUrls).toEqual(h.playedUrls); // 当前音频被停
-    expect(h.revokedUrls).toEqual(h.createdUrls); // objectURL 回收
     expect(h.synthCalls).toEqual(['一']); // b 被作废（只留文字），永不合成
 
     // 打断后随即可以开始录音（speaking → idle → recording）。
@@ -275,19 +285,35 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(voiceMode.phase).toBe('recording');
   });
 
-  it('插话作废也掐掉合成中的条目：在途合成落地后不建 URL、不播放', async () => {
+  it('插话作废也掐掉合成中的条目：在途合成落地后不再播放', async () => {
     voiceMode.enter();
     voiceMode.announce({ id: 'a', text: '一', truncated: false });
     await tick();
     expect(voiceMode.speakingStage).toBe('synthesizing');
 
     voiceMode.interruptSpeech();
-    h.resolveSynth(); // 在途合成此刻才落地
+    h.resolveSynth(); // 在途合成此刻才落地（URL 已入缓存，但不再播放）
     await tick();
-    expect(h.createdUrls).toEqual([]); // 无泄漏
-    expect(h.playedUrls).toEqual([]);
+    expect(h.playedUrls).toEqual([]); // 无声泄漏
     expect(h.failures).toEqual([]); // 作废不算失败
     expect(voiceMode.phase).toBe('idle');
+  });
+
+  it('朗读抢占播放中的播报（onPreempted）：清队 + 回 idle，不再播下一条', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick(); // a 播放中，b 在队
+
+    h.preemptPlayback(); // 手动朗读键点开了别的消息：speech-audio 仲裁抢占
+    await tick();
+    expect(voiceMode.phase).toBe('idle'); // 播报让位朗读，相位回 idle
+    expect(voiceMode.speakingStage).toBeNull();
+    expect(h.stoppedUrls).toEqual([]); // 扬声器已交接，无需再 stop
+    expect(h.synthCalls).toEqual(['一']); // b 不再合成（队列被作废）
+    expect(h.failures).toEqual([]); // 抢占不是失败
   });
 
   it('合成失败：第一条即停队 + 提示一次；不自动重试，新消息到来重新开始', async () => {
@@ -324,10 +350,9 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(h.failures).toHaveLength(1);
     expect(voiceMode.phase).toBe('idle');
     expect(h.synthCalls).toEqual(['一']); // b 停队
-    expect(h.revokedUrls).toEqual(h.createdUrls);
   });
 
-  it('退出（exit）：停当前 + 清队 + revoke 全部；未开启时入队被拒', async () => {
+  it('退出（exit）：停当前 + 清队；未开启时入队被拒', async () => {
     voiceMode.enter();
     voiceMode.announce({ id: 'a', text: '一', truncated: false });
     voiceMode.announce({ id: 'b', text: '二', truncated: false });
@@ -340,18 +365,16 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(voiceMode.active).toBe(false);
     expect(voiceMode.phase).toBe('idle');
     expect(h.stoppedUrls).toEqual(h.playedUrls);
-    expect(h.revokedUrls).toEqual(h.createdUrls);
     expect(voiceMode.announce({ id: 'b', text: '二', truncated: false })).toBe(false);
   });
 
-  it('退出时在途合成落地不建 URL（revoke 无泄漏）', async () => {
+  it('退出时在途合成落地不再播放', async () => {
     voiceMode.enter();
     voiceMode.announce({ id: 'a', text: '一', truncated: false });
     await tick();
     voiceMode.exit();
     h.resolveSynth();
     await tick();
-    expect(h.createdUrls).toEqual([]);
     expect(h.playedUrls).toEqual([]);
   });
 

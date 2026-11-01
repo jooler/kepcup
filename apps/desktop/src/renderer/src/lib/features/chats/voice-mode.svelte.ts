@@ -4,8 +4,9 @@
  * 会话内即时态：进入即开启、关闭即退出，不持久化、不跨会话（切换会话 /
  * 组件卸载由 Composer 的 effect 调 exit()）。本模块只持 UI 状态、纯转移表
  * 与播报队列（单测锚点）；录音传感器链路 / 转写 / 发送编排在 Composer（26 号
- * 「语音消息语义」），播报的合成 / objectURL / Audio 播放依赖由 Composer 注入
- * （attachAnnouncer）——本文件不 import core / DOM，保持可纯逻辑单测。
+ * 「语音消息语义」），播报的音频依赖（speech-audio 缓存 + 播放仲裁，修订 v2
+ * V2-3）由 Composer 注入（attachAnnouncer）——本文件不 import core / DOM，
+ * 保持可纯逻辑单测。
  */
 
 import type { Approval, Message } from '@kepcup/shared';
@@ -124,14 +125,20 @@ export interface PlaybackHandle {
   stop(): void;
 }
 
-/** 播报队列的可注入依赖（core 合成 / objectURL / Audio 播放；测试用假实现）。 */
+/** 播报队列的可注入依赖（音频经 speech-audio 缓存与仲裁；测试用假实现）。 */
 export interface AnnounceDeps {
-  /** `media.synthesizeSpeech`（format mp3，voice/speed 缺省）：text → 音频 Blob。 */
-  synthesize(text: string): Promise<{ blob: Blob }>;
-  createObjectUrl(blob: Blob): string;
-  revokeObjectUrl(url: string): void;
-  /** objectURL → 播放；自然结束 resolve、出错 reject、stop() 立停。 */
-  play(url: string): PlaybackHandle;
+  /**
+   * messageId + 朗读文本 → objectURL（speech-audio 缓存未命中才合成，53 号
+   * 修订 v2 V2-3；缓存与手动朗读共享）。失败 reject → 第一条失败停队路径。
+   */
+  resolveAudio(messageId: string, text: string): Promise<string>;
+  /**
+   * objectURL → 播放（仲裁在 speech-audio：播报与手动朗读互斥）。自然播完
+   * resolve、出错 reject、stop() 立停；被新播放抢占时 onPreempted **先**触发
+   * （队列据此作废剩余队列）再 resolve ended。objectURL 归缓存管，播完不
+   * revoke（修订 v2 V2-3：播报音频可回放）。
+   */
+  play(input: { messageId: string; audio: string; onPreempted: () => void }): PlaybackHandle;
   /** 第一条播报失败（合成或播放）：停队提示（toast +「打开设置」深链在接线方）。 */
   onFirstFailure(error: unknown): void;
 }
@@ -154,15 +161,17 @@ export interface AnnounceController {
   pump(): void;
   /** 插话作废：停当前 + 清未播队列（拿到流才调，53 号半双工）。 */
   interrupt(): void;
-  /** 退出 / 切会话清理：停当前 + 清队 + revoke（含在途合成落地后的资源）。 */
+  /** 退出 / 切会话清理：停当前 + 清队（objectURL 归缓存管，不 revoke）。 */
   reset(): void;
 }
 
 /**
- * 顺序播报队列（53 号）：一次一条——合成中 → objectURL → 播放 → ended 后
- * revoke 取下一条；宿主不在 idle（recording / transcribing）时入队暂播、回
- * idle 按序播；第一条失败即停队（不自动重试，新消息到来重新开始）；interrupt
- * / reset 用 epoch 作废在途迭代（合成落地后不再建 URL，无泄漏）。
+ * 顺序播报队列（53 号）：一次一条——经 speech-audio 取音频（缓存未命中才
+ * 合成）→ 播放 → ended 取下一条；objectURL 归缓存管，播完不 revoke（修订 v2
+ * V2-3）。宿主不在 idle（recording / transcribing）时入队暂播、回 idle 按序
+ * 播；第一条失败即停队（不自动重试，新消息到来重新开始）；interrupt / reset
+ * 用 epoch 作废在途迭代（合成落地后不再播放）；被手动朗读抢占（onPreempted）
+ * 走同一条作废路径清队回 idle。
  */
 export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): AnnounceController {
   let queue: AnnounceEntry[] = [];
@@ -175,20 +184,16 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
   const seenIds = new Set<string>();
   /** 失败停队标志：下一条消息 enqueue 时清除（「下条消息到来重新开始」）。 */
   let stopped = false;
-  /** 作废计数：interrupt / reset / 失败时 +1，在途迭代的每个 await 后核对。 */
+  /** 作废计数：interrupt / reset / 失败 / 被抢占时 +1，在途迭代的每个 await 后核对。 */
   let epoch = 0;
   let pumping = false;
   let pumpAgain = false;
   let currentHandle: PlaybackHandle | null = null;
-  let currentUrl: string | null = null;
 
+  /** 停当前播放（音频归 speech-audio 仲裁；缓存条目保留）。 */
   const stopCurrent = (): void => {
     currentHandle?.stop();
     currentHandle = null;
-    if (currentUrl !== null) {
-      deps.revokeObjectUrl(currentUrl);
-      currentUrl = null;
-    }
   };
 
   /** 第一条失败：停当前 + 清队 + 回 idle + 提示（只此一次，不连环刷）。 */
@@ -201,22 +206,34 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
     deps.onFirstFailure(error);
   };
 
-  /** 消费一条：合成 → objectURL → 播放 → ended → revoke；任何一步出错走 fail。 */
+  /** 消费一条：取音频（缓存→合成）→ 播放 → ended；任何一步出错走 fail。 */
   const runOne = async (entry: AnnounceEntry): Promise<void> => {
     host.enterSpeaking();
     const myEpoch = epoch;
-    let blob: Blob;
+    let url: string;
     try {
-      blob = (await deps.synthesize(entry.text)).blob;
+      url = await deps.resolveAudio(entry.id, entry.text);
     } catch (error) {
       if (epoch === myEpoch) fail(error);
       return;
     }
-    if (epoch !== myEpoch) return; // interrupt / reset 已清理，静默放弃
+    if (epoch !== myEpoch) return; // interrupt / reset 已清理，静默放弃（URL 归缓存）
+    let preempted = false;
     try {
-      currentUrl = deps.createObjectUrl(blob);
       host.setSpeakingStage('playing');
-      const handle = deps.play(currentUrl);
+      const handle = deps.play({
+        messageId: entry.id,
+        audio: url,
+        onPreempted: () => {
+          // 手动朗读抢占了本条播报：与插话打断同路径——作废迭代 + 清队（缓
+          // 存里的音频保留，扬声器让给朗读侧）。
+          preempted = true;
+          if (epoch === myEpoch) {
+            epoch += 1;
+            queue = [];
+          }
+        },
+      });
       currentHandle = handle;
       try {
         await handle.ended;
@@ -225,18 +242,17 @@ export function createAnnounceQueue(host: AnnounceHost, deps: AnnounceDeps): Ann
       }
     } catch (error) {
       if (epoch === myEpoch) {
-        fail(error); // fail 内 stopCurrent 会 revoke currentUrl
+        fail(error);
         return;
       }
     }
-    // 自然播完（epoch 没变；被打断时 interrupt 已 stop + revoke，这里不重复）。
-    if (epoch === myEpoch) {
-      if (currentUrl !== null) {
-        deps.revokeObjectUrl(currentUrl);
-        currentUrl = null;
-      }
-      if (host.phase === 'speaking') host.exitSpeaking();
+    // 自然播完（epoch 未变）回 idle 续取下一条；被朗读抢占（epoch 已作废）只回
+    // idle——插话打断 / 退出的收尾由 interrupt / reset 自己派发，不在这里重复。
+    if (epoch !== myEpoch) {
+      if (preempted && host.phase === 'speaking') host.exitSpeaking();
+      return;
     }
+    if (host.phase === 'speaking') host.exitSpeaking();
   };
 
   const pump = (): void => {

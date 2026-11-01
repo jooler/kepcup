@@ -13,6 +13,7 @@
   import { t } from '$lib/i18n';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
   import { mediaViewer } from './media-viewer.svelte';
+  import AudioPlayer from './AudioPlayer.svelte';
 
   /**
    * 消息附件行（docs/design/20-conversation-media.md）：按 mime 大类内联
@@ -148,12 +149,16 @@
       {/if}
     {:else if kind === 'audio'}
       {#if state.url !== null}
+        <!-- 统一 H5 播放器（53 号修订 v2 V2-2）：替代裸 <audio controls>。 -->
         <div
-          class="flex w-72 flex-col gap-1 rounded-xl border bg-background/60 px-3 py-2"
+          class="flex w-72 flex-col rounded-xl border bg-background/60 px-3 py-2"
           data-testid="attachment-audio"
         >
-          <span class="truncate text-[11px] text-muted-foreground">{attachment.fileName}</span>
-          <audio src={state.url} controls class="h-8 w-full"></audio>
+          <AudioPlayer
+            src={state.url}
+            name={attachment.fileName}
+            testId="attachment-audio-player"
+          />
         </div>
       {:else if state.failed}
         {@render fileChip({
