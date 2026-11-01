@@ -156,6 +156,8 @@ export const zhCN = {
   'voiceMode.speaking': '播报中…',
   'voiceMode.synthesizing': '合成中…',
   'voiceMode.interruptAndRecord': '打断播报并说话',
+  // 停止播放键（53 号修订 v2 V2-5：播报中只停播清队，不开始录音）
+  'voiceMode.stopPlayback': '停止播放',
   'voiceMode.truncated': '内容过长，已播报前 {limit} 字',
   'voiceMode.speakFailed': '语音播报失败',
   'voiceMode.openSettings': '打开设置',

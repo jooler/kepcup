@@ -419,4 +419,40 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(voiceMode.speakingStage).toBeNull();
     expect(h.stoppedUrls).toEqual(h.playedUrls); // 旧实例的音频被停
   });
+
+  // --- 停止播放键（修订 v2 V2-5）---------------------------------------------
+  // 停止键接线 = Composer 的 stopVoiceModePlayback：interruptSpeech（+
+  // speechAudio.stop 兜底）后**不调 acquireRecording**——store 层语义就是
+  // 「speaking 相位停止 → idle + 队列清空」，record-started 只能由 Composer
+  // 在拿到麦克风流后派发，这里断言相位落在 idle（录音链路未被牵动）。
+
+  it('停止播放键（V2-5）：播放中停当前 + 清队回 idle，不进 recording', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick(); // a 播放中，b 在队
+
+    voiceMode.interruptSpeech(); // 停止键
+    await tick();
+    expect(voiceMode.phase).toBe('idle'); // 回 idle 而非 recording（不触发录音）
+    expect(voiceMode.speakingStage).toBeNull();
+    expect(h.stoppedUrls).toEqual(h.playedUrls); // 当前音频被停
+    expect(h.synthCalls).toEqual(['一']); // 未播的 b 一并取消（只留文字）
+  });
+
+  it('停止播放键在合成中同样生效：在途合成落地不再播放（连未播队列一起取消）', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    await tick();
+    expect(voiceMode.speakingStage).toBe('synthesizing');
+
+    voiceMode.interruptSpeech(); // 停止键（合成中显示，点击 = 连还没播的队列一起取消）
+    h.resolveSynth(); // 在途合成此刻才落地
+    await tick();
+    expect(voiceMode.phase).toBe('idle');
+    expect(h.playedUrls).toEqual([]); // 无声泄漏
+    expect(h.failures).toEqual([]); // 停播不算失败
+  });
 });

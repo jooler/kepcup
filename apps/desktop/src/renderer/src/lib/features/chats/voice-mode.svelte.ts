@@ -477,20 +477,41 @@ class VoiceModeState implements AnnounceHost {
   hasSpoken = $state(false);
   /** 待发送子态：绿键（Send）与 2s 自动发送倒计时由它驱动；非 recording 恒 false。 */
   sendReady = $state(false);
+  /**
+   * 归属会话（修订 v2 V2-5 审查 P2）：主聊天与卡片对话两个 Composer 可同时
+   * 挂载（项目会话的 ProjectView 只 CSS 隐藏聊天体，卡片对话再挂一个），而
+   * 本 store 是模块单例——不记归属时隐藏实例也会渲染语音条、武装 barge-in
+   * 监听，并可能抢先把录音写进自己的会话。enter 记录、exit 清空；语音条
+   * 渲染 / 播报入队 / 武装与全部收尾路径都用 owns() 门禁。
+   */
+  ownerConversationId = $state<string | null>(null);
   #announcer: AnnounceController | null = null;
   /** 端点状态机簿记（段追踪；非响应式——界面从 hasSpoken / sendReady 派生）。 */
   #endpoint: VoiceEndpointState = initialEndpointState();
 
-  enter(): void {
+  enter(conversationId: string | null = null): void {
     this.active = true;
+    this.ownerConversationId = conversationId;
     this.#reset();
   }
 
   /** 幂等：未开启时同样复位（组件卸载 cleanup 直接调用）。 */
   exit(): void {
     this.active = false;
+    this.ownerConversationId = null;
     this.#announcer?.reset();
     this.#reset();
+  }
+
+  /**
+   * 判断某会话是否接管语音模式：近路给接线方（Composer 的 voiceModeOwned）
+   * 统一门禁。owner 未记录（无参 enter 的测试 / 旧路径）视作全局，生产路径
+   * 必传会话 id。
+   */
+  owns(conversationId: string | null): boolean {
+    if (!this.active) return false;
+    if (this.ownerConversationId === null) return true;
+    return conversationId === this.ownerConversationId;
   }
 
   /** 按纯转移表推进；进 recording 时起表（电平 / 计时清零）。 */
