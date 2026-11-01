@@ -2703,7 +2703,7 @@ export const zhCN = {
   'agents.suggestEnable': 'Bot 建议启用它',
   'contacts.mainModelOrAgent': '主模型 / 任务智能体（留空用默认模型）',
   'contacts.agentTaskEngineHint':
-    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，结果原文转发。',
+    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，完成后在对话里提示打开任务卡查看执行报告。',
   'contacts.engineGroupModels': '模型',
   'contacts.engineGroupAgents': '智能体',
   'contacts.agentNeedsAuthTag': '需要登录',

@@ -2821,7 +2821,7 @@ export const enUS = {
   'agents.suggestEnable': 'A Bot suggests enabling it',
   'contacts.mainModelOrAgent': 'Main model / task agent (leave blank to use the default model)',
   'contacts.agentTaskEngineHint':
-    'When an agent is selected, it runs tasks dispatched by this Bot (the conversation itself still uses the built-in model); without a built-in model, the conversation is degraded: new messages go straight to the running task or become a new task, and results are forwarded verbatim.',
+    'When an agent is selected, it runs tasks dispatched by this Bot (the conversation itself still uses the built-in model); without a built-in model, the conversation is degraded: new messages go straight to the running task or become a new task, and the chat points at the execution report on the task card.',
   'contacts.engineGroupModels': 'Models',
   'contacts.engineGroupAgents': 'Agents',
   'contacts.agentNeedsAuthTag': 'Sign-in required',
