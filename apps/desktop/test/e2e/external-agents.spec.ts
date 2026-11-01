@@ -20,6 +20,9 @@ import { createBotAndOpenChat } from './helpers/create-bot';
  * （KEPCUP_MOCK_LLM_URL=''）——只有智能体的新用户。覆盖：设置页目录启用 +
  * 后台任务、Bot 切换到智能体与能力包、`agent_tool` 审批卡、对话内 Agent 设置
  * 卡、onboarding「我有订阅」分支。
+ *
+ * 无内置模型走 DEV-011 第 2 级降级：消息派成任务，聊天里是「点击任务卡查看
+ * 执行报告」，智能体原文在任务详情的执行报告里（不再原文转发进对话）。
  */
 
 interface Session {
@@ -181,6 +184,17 @@ async function send(page: Page, text: string): Promise<void> {
 const botBubble = (page: Page, text: string) =>
   page.locator('[data-testid="bot-bubble"]').filter({ hasText: text }).first();
 
+/**
+ * 降级路径的可见结果：对话气泡是短提示，智能体原文在任务详情的执行报告里。
+ */
+async function expectAgentReport(page: Page, agentText: string): Promise<void> {
+  await expect(botBubble(page, '点击任务卡查看执行报告')).toBeVisible({ timeout: 60_000 });
+  await page.locator('[data-testid="task-open-run"]').first().click();
+  await expect(page.locator('[data-testid="task-run-report"]')).toContainText(agentText, {
+    timeout: 15_000,
+  });
+}
+
 test('settings catalog: enable the agent, background tasks; bot switches to it with capability packs', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-agents-', {
@@ -207,9 +221,9 @@ test('settings catalog: enable the agent, background tasks; bot switches to it w
     await expect(imageGen).toHaveAttribute('aria-checked', 'false');
     await page.waitForTimeout(1_500);
 
-    // 对话由智能体驱动：回复来自假 Agent；宿主桥上看不到被取消的包。
+    // 没有内置模型：消息派成任务，假 Agent 的原文在执行报告里；宿主桥上看不到被取消的包。
     await send(page, '在吗');
-    await expect(botBubble(page, '你好，我是外援。')).toBeVisible({ timeout: 60_000 });
+    await expectAgentReport(page, '你好，我是外援。');
     await expect
       .poll(() => session.record().mcp.find((entry) => entry.method === 'tools/list') !== undefined)
       .toBe(true);
@@ -248,7 +262,7 @@ test('agent_tool approval card: an out-of-workspace write asks the user; approva
       'note.txt',
     );
     await card.locator('[data-testid="approval-approve"]').click();
-    await expect(botBubble(page, '写好了。')).toBeVisible({ timeout: 60_000 });
+    await expectAgentReport(page, '写好了。');
     await expect.poll(() => JSON.stringify(session.record().permissions)).toContain('allow');
   } finally {
     await session.close();
@@ -291,7 +305,7 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
     const composer = page.locator('[data-testid="composer-input"]');
     await expect(composer).toHaveText('在吗');
     await composer.press('Enter');
-    await expect(botBubble(page, '设置好了，我来了。')).toBeVisible({ timeout: 60_000 });
+    await expectAgentReport(page, '设置好了，我来了。');
   } finally {
     await session.close();
   }
@@ -338,9 +352,9 @@ test('onboarding subscription branch: enable an agent, the butler runs on it', a
     await expect(wizard).toBeHidden({ timeout: 15_000 });
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
 
-    // 管家由智能体驱动（未进入内置引擎的组队访谈）：对话得到假 Agent 的回复。
+    // 管家由智能体驱动（未进入内置引擎的组队访谈）：假 Agent 的回复在执行报告里。
     await send(page, '你好');
-    await expect(botBubble(page, '管家在，有什么可以帮你？')).toBeVisible({ timeout: 60_000 });
+    await expectAgentReport(page, '管家在，有什么可以帮你？');
     expect(session.record().prompts.some((prompt) => prompt.text.includes('你好'))).toBe(true);
   } finally {
     await session.close();
