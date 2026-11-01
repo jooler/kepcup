@@ -292,14 +292,6 @@ export function resolveAccentColor(
   return parsePresetAvatar(avatar)?.color ?? DEFAULT_ACCENT_COLOR;
 }
 
-/** 与 `resolveAccentColor` 同源的内嵌色 id（写预置头像时用它填颜色段，兼容旧客户端）。 */
-export function resolveAccentColorId(
-  accentColor: string | null | undefined,
-  avatar: string | null | undefined,
-): BotAccentColor {
-  return resolveAccentColor(accentColor, avatar).id;
-}
-
 /** Reset 语义：预置第一个形状（颜色段沿用当前强调色，不改强调色）。 */
 export const DEFAULT_AVATAR = formatPresetAvatar(AVATAR_SHAPES[0]!.id, DEFAULT_ACCENT_COLOR.id);
 

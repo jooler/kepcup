@@ -12,7 +12,6 @@ import {
   parsePresetAvatar,
   presetForName,
   resolveAccentColor,
-  resolveAccentColorId,
   uploadedAvatarShapeClass,
 } from './presets';
 
@@ -112,7 +111,6 @@ describe('resolveAccentColor', () => {
   it('prefers the explicit accent colour over the preset avatar colour', () => {
     // 老数据：只有预置串里的颜色；新数据：显式列优先。两者不一致时以列为准。
     expect(resolveAccentColor('blue', 'preset:orb:red').id).toBe('blue');
-    expect(resolveAccentColorId('blue', 'preset:orb:red')).toBe('blue');
   });
 
   it('falls back to the preset avatar colour for old rows without accent_color', () => {
