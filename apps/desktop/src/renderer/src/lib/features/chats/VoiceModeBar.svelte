@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Loader2, Mic, Settings, X } from '@lucide/svelte';
+  import { Loader2, Mic, Send, Settings, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
+  import { cn } from '$lib/utils.js';
   import { shell } from '$lib/stores/shell.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { getChatSession } from './chat-session-context';
@@ -14,6 +15,8 @@
    * 重叠）。布局：Bot 头像 ｜ 波形/状态区（弹性）｜ 设置键 · 麦克风键 · 关闭键。
    * 只做展示与转发（mic / close 回调交给 Composer 编排）；录音 / 转写 / 发送
    * 编排在 Composer，speaking 态由 voice-mode 播报队列驱动（合成中 / 播放中）。
+   * 待发送子态（修订 v2 V2-4）：静音 3s 后麦克风键变绿色发送键（点击 = 立即
+   * 停止转写发送，2s 无操作自动发送），状态区追加提示。
    */
   let {
     onMicClick,
@@ -28,6 +31,8 @@
   const chatSession = getChatSession();
   const phase = $derived(voiceMode.phase);
   const micIntent = $derived(micIntentFor(phase));
+  /** 待发送子态（V2-4）：store 已保证 sendReady 只在 recording 相位为真，这里再与相位求交防御。 */
+  const sendReady = $derived(phase === 'recording' && voiceMode.sendReady);
   const bot = $derived(chatSession.view?.conversation.bot ?? null);
   const botName = $derived(bot?.name || chatSession.view?.conversation.directBotId || '');
   /** idle 态的提示文案：run 进行中显示「正在思考…」（53 号交互状态机）。 */
@@ -51,11 +56,13 @@
   );
 
   const micLabel = $derived(
-    phase === 'recording'
-      ? t('voiceMode.stopAndSend')
-      : phase === 'speaking'
-        ? t('voiceMode.interruptAndRecord')
-        : t('voiceMode.startRecording'),
+    sendReady
+      ? t('voiceMode.sendNow')
+      : phase === 'recording'
+        ? t('voiceMode.stopAndSend')
+        : phase === 'speaking'
+          ? t('voiceMode.interruptAndRecord')
+          : t('voiceMode.startRecording'),
   );
 </script>
 
@@ -66,6 +73,7 @@
   data-testid="voice-mode-bar"
   data-phase={phase}
   data-speaking-stage={voiceMode.speakingStage ?? undefined}
+  data-send-ready={sendReady ? 'true' : undefined}
 >
   <BotAvatar
     botId={chatSession.view?.conversation.directBotId ?? ''}
@@ -88,6 +96,12 @@
       <span class="text-sm text-foreground tabular-nums" data-testid="voice-mode-elapsed">
         {formatRecordingDuration(voiceMode.elapsedMs)}
       </span>
+      {#if sendReady}
+        <!-- 待发送（V2-4）：波形与计时照常，追加静音自动发送提示。 -->
+        <span class="truncate text-sm text-emerald-600" data-testid="voice-mode-send-ready-hint">
+          {t('voiceMode.sendReadyHint')}
+        </span>
+      {/if}
     {:else if phase === 'transcribing'}
       <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
       <!-- 识别与发送共用 transcribing 相位：转写落定后（onSending）切「发送中…」。 -->
@@ -141,7 +155,13 @@
   <Button
     variant="ghost"
     size="icon"
-    class="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+    class={cn(
+      'size-8 shrink-0 rounded-full',
+      sendReady
+        ? // 待发送（V2-4）：绿色发送键，点击 = 立即停止转写发送。
+          'bg-emerald-600 text-white hover:bg-emerald-600 hover:text-white'
+        : 'text-muted-foreground hover:text-foreground',
+    )}
     onclick={() => {
       if (micIntent !== 'disabled') onMicClick();
     }}
@@ -150,8 +170,12 @@
     aria-label={micLabel}
     data-testid="voice-mode-mic"
     data-intent={micIntent}
+    data-send-ready={sendReady ? 'true' : undefined}
   >
-    {#if phase === 'recording'}
+    {#if sendReady}
+      <!-- 绿色发送键（V2-4）：点击立即发送，2s 无操作自动发送。 -->
+      <Send class="size-4" aria-hidden="true" />
+    {:else if phase === 'recording'}
       <!-- 实心 ■：点击 = 停止并转写发送（与文字录音胶囊同款视觉）。 -->
       <span class="size-2.5 rounded-[3px] bg-foreground" aria-hidden="true"></span>
     {:else}
