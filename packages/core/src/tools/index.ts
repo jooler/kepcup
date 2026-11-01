@@ -93,6 +93,11 @@ export interface ResponseToolDeps {
   /** Called for every message the bot sends (output_message_ids + events). */
   onBotMessage: (message: Message) => void;
   /**
+   * 53 号修订 v3：本 run 是语音对话模式下的对话轮。`send_message` 的可见消息
+   * 记 origin:'voice'（UI 渲染语音气泡、客户端自动播报）；任务轮永远不带。
+   */
+  voiceMode?: boolean | undefined;
+  /**
    * D80: the schedule a scheduled turn runs for — its send_message messages
    * carry the 「⏰ 标题」 tag like the final reply. Absent otherwise.
    */
@@ -488,6 +493,11 @@ export function buildResponseTools(input: {
         runId: identity.runId,
         // D75 §6.1: a task's messages are progress, attributed to the task.
         ...(isTask ? { taskOrigin: { taskId: identity.runId } } : {}),
+        // 53 号修订 v3：语音对话轮的主动消息同样记 origin:'voice'（语音气泡 +
+        // 自动播报）；任务轮不标（taskOrigin 优先且不外播）。
+        ...(!isTask && deps.voiceMode === true && params.text.trim().length > 0
+          ? { voiceMode: true }
+          : {}),
         ...(!isTask && deps.scheduleSource !== undefined
           ? { scheduleSource: deps.scheduleSource }
           : {}),

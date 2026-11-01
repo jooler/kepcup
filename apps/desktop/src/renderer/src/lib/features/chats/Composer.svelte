@@ -58,7 +58,7 @@
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import VoiceModeBar from './VoiceModeBar.svelte';
   import {
-    announceEntryFor,
+    collectAnnounceEntries,
     createAutoSendCountdown,
     escapeActionForVoiceMode,
     micIntentFor,
@@ -976,12 +976,39 @@
     activeRecording?.cancel();
     activeRecording = null;
     // 语音模式随组件卸载退出（状态复位即可，录音资源上面已释放）；非归属
-    // 实例卸载不得关掉别人的语音模式。
-    if (voiceModeOwned) voiceMode.exit();
+    // 实例卸载不得关掉别人的语音模式。core 的即时态一并清（卸载后不会再有人
+    // 发退出同步）。
+    //
+    // 归属判定不能用 view 派生：CardChat / chat.close / leaveCurrent 会在组件
+    // 卸载前先 session.clear()（view=null），此时 voiceModeOwned 已是 false，
+    // 会漏掉退出与 core 同步（审查 P2）。用进入时登记的会话 id + 当前 owner
+    // 双重核对：别的实例后来抢了归属（owner 不同）就不动它。
+    const ownedConversationId =
+      enteredVoiceModeConversationId !== null &&
+      voiceMode.active &&
+      voiceMode.ownerConversationId === enteredVoiceModeConversationId
+        ? enteredVoiceModeConversationId
+        : null;
+    if (ownedConversationId !== null) {
+      voiceMode.exit();
+      speechAudio.stop(); // 在播 / 在途取源一并收场（不随组件销毁后突然出声）
+      syncCoreVoiceMode(ownedConversationId, false);
+    }
   });
   // 切换会话 = 退出语音模式（会话内即时态，不跨会话，53 号 D106）：停录音、
   // 释放流；文字草稿按会话缓存原样保留。
   let voiceModeConversationId: string | null = null;
+  /**
+   * 本实例进入语音模式时登记的会话（53 号修订 v3 审查 P2）：卸载清理不能
+   * 依赖 view 派生（session.clear 会先置空 view），用这个值 + 当前 owner 核对。
+   */
+  let enteredVoiceModeConversationId: string | null = null;
+  /**
+   * 自动播报的列表水位（53 号修订 v3）：进入语音模式时记下当前最大 seq，之后
+   * 只播消息列表里新增的可见 bot 文本——不补播历史，也不依赖 message.created
+   * 事件是否及时到达（审查：自动播放失败时以列表为源的兜底）。
+   */
+  let voiceAnnounceSinceSeq = 0;
   $effect(() => {
     const conversationId = chatSession.view?.conversation.id ?? null;
     const previous = voiceModeConversationId;
@@ -1203,6 +1230,17 @@
   const voiceModeOwned = $derived(voiceMode.owns(chatSession.view?.conversation.id ?? null));
 
   /**
+   * 语音模式即时态同步给 core（53 号修订 v3）：core 据此给对话轮注入
+   * `<voice_conversation>` 回复规则、把 Bot 回复标记 origin:'voice'。失败只留
+   * 痕（下一条语音消息发送时 core 会再次置真；模式本身不受影响）。
+   */
+  function syncCoreVoiceMode(conversationId: string, active: boolean): void {
+    void core.call('conversations.setVoiceMode', { conversationId, active }).catch((error) => {
+      console.warn('[kepcup] voice mode sync failed', { conversationId, active, error });
+    });
+  }
+
+  /**
    * 入口键：预检 asr 与 tts（缺哪个置哪张能力卡、不进入；快照未加载时放行，
    * 由 core 错误码兜底）。都 ready 才进入——语音模式内部不再处理缺能力。
    */
@@ -1222,7 +1260,18 @@
     // permission === 'granted' 时武装（不在播报中弹 TCC），hub 启动时不查权限，
     // 不刷新会让本轮播报静默失去语音打断。
     void sensors.refresh('microphone');
+    // 同一时刻只有一个语音模式会话（声音单例）：从别的会话进入时先释放旧
+    // 归属，否则 core / 语音条会残留上一个会话（审查 P2）。
+    const previousOwner = voiceMode.active ? voiceMode.ownerConversationId : null;
+    if (previousOwner !== null && previousOwner !== conversationId) {
+      syncCoreVoiceMode(previousOwner, false);
+    }
+    // 播报水位 = 进入时的最后一条：只自动播进入之后的新消息（不补播历史）。
+    const messages = chatSession.view?.messages ?? [];
+    voiceAnnounceSinceSeq = messages.reduce((max, message) => Math.max(max, message.seq), 0);
     voiceMode.enter(conversationId);
+    enteredVoiceModeConversationId = conversationId;
+    syncCoreVoiceMode(conversationId, true);
   }
 
   /**
@@ -1238,14 +1287,21 @@
     autoSendCountdown.disarm();
   }
 
-  /** 退出语音模式：使在途 start 失效、停录音释放流，回文字输入（草稿保留）。 */
+  /**
+   * 退出语音模式：使在途 start 失效、停录音释放流，停掉在播 / 在途取源的音频，
+   * 回文字输入（草稿保留），并同步 core（后续任务结果回合不再按语音模式回复）。
+   */
   function exitVoiceMode(): void {
     if (!voiceMode.active) return;
+    const conversationId = voiceMode.ownerConversationId;
     recordingSession += 1;
     clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
+    speechAudio.stop(); // 退出即静音：在途 TTS / 附件拉取一并作废
     voiceMode.exit();
+    enteredVoiceModeConversationId = null;
+    if (conversationId !== null) syncCoreVoiceMode(conversationId, false);
   }
 
   /** 语音条麦克风键（idle = 开始录音 / recording = 停止并转写发送 / speaking = 打断并录音）。 */
@@ -1260,9 +1316,10 @@
    * 语音条录音：与文字语音输入同一条传感器链路（acquireRecording）。speaking
    * 态点麦克风也走这里——**拿到流之后**才打断播报（53 号风险 #1：TCC 授权弹框
    * 等待期播报继续，不在用户还没开口时白打断）。拿到流后的收尾分两层：
-   * acquireRecording 里 speechAudio.stop() 停掉在响的音频（播报 / 手动朗读
-   * 通吃，idle 态播报只能靠它）；这里的 interruptSpeech 再清播报队列（epoch
-   * 作废、phase 复位——queue 语义，裸停音频不覆盖；idle 态 no-op）。
+   * acquireRecording 里 speechAudio.stop() 停掉在响的音频（播报 / 语音气泡点击
+   * 通吃，并作废在途取源；idle 态的手动播放只能靠它）；这里的 interruptSpeech
+   * 再清播报队列（epoch 作废、phase 复位——queue 语义，裸停音频不覆盖；idle
+   * 态 no-op）。
    */
   async function startVoiceModeRecording(): Promise<void> {
     if (!voiceModeOwned) return;
@@ -1447,9 +1504,9 @@
           },
         );
       },
-      // 手动朗读开播即打断播报（含合成中的条目）；语音模式之外 no-op（interruptSpeech
-      // 只在 speaking 态生效），朗读因此在退出语音模式后依然可用。
-      onManualPlayStart: () => voiceMode.interruptSpeech(),
+      // 用户手动点了语音气泡（53 号修订 v3）：停当前 + 清空未播队列，并让本轮
+      // 后续新音频只留在列表里由用户自己点（下一段用户语音开始时恢复自动播报）。
+      onManualPlayStart: () => voiceMode.takeManualControl(),
     };
   }
 
@@ -1483,25 +1540,28 @@
     voiceMode.attachAnnouncer(announceDeps());
   });
 
-  // 入队（53 号）：语音模式开启期间经 chat-session 订阅口收 message.created，
-  // 入队条件与朗读文本提取在 announceEntryFor（可见性口径 = 消息列表）；截断
-  // toast 每条消息一次（enqueue 去重后 announce 返回 false 的不提示）。
+  // 入队（53 号修订 v3）：以**消息列表**为源扫描进入语音模式之后的新消息，
+  // 入队条件与朗读文本提取复用 announceEntryFor（可见性口径 = 消息列表）。
+  // 不再依赖 message.created 订阅口：列表更新一定会触发本效果，事件漏投 /
+  // 订阅晚挂载都不会漏播；水位保证不补播历史。任务消息（origin:'task'）由
+  // announceEntryFor 排除，仍不自动播报。
   $effect(() => {
-    if (!voiceModeOwned) return;
-    const conversationId = chatSession.view?.conversation.id ?? null;
-    return chatSession.onIncomingMessage((_conversationId, message) => {
-      const entry = announceEntryFor(message, {
-        conversationId,
-        active: voiceMode.active,
-        approvals: permissions.approvals,
-      });
-      if (entry === null) return;
+    if (!voiceModeOwned || !voiceMode.active) return;
+    const view = chatSession.view;
+    if (view === null) return;
+    const { entries, lastSeq } = collectAnnounceEntries(view.messages, voiceAnnounceSinceSeq, {
+      conversationId: view.conversation.id,
+      active: true,
+      approvals: permissions.approvals,
+    });
+    voiceAnnounceSinceSeq = lastSeq;
+    for (const entry of entries) {
       const enqueued = voiceMode.announce(entry);
       if (enqueued && entry.truncated) {
         // {limit} 占位符：locales.test.ts 的占位符一致性校验兜住 zh/en 同步。
         toast.info(t('voiceMode.truncated', { limit: SPEECH_TEXT_LIMIT }));
       }
-    });
+    }
   });
 
   // --- 停止播放键 + 播报中语音打断（barge-in，docs/design/53 修订 v2 V2-5）----
@@ -1588,32 +1648,37 @@
   });
 
   /**
-   * barge-in 触发（监听判定用户开口，监听已在状态机内自拆）：先停播清队——
-   * TCC 等待期不回播（打断时机绑定「触发即停播、录音拿到流才开始」，53 号
-   * 风险 #1 同语义）；再走与点麦克风同一条 startVoiceModeRecording 链路
-   * （acquireRecording 内含隐私总闸 / TCC 门 / sensors.open 全部守卫）。
+   * barge-in 触发（监听判定用户开口，监听已在状态机内自拆）：先停播——TCC
+   * 等待期不回播（打断时机绑定「触发即停播、录音拿到流才开始」，53 号风险 #1
+   * 同语义）；再走与点麦克风同一条 startVoiceModeRecording 链路（acquireRecording
+   * 内含隐私总闸 / TCC 门 / sensors.open 全部守卫）。manual 播放（点击语音气泡
+   * 重播）同样可被打断：相位 idle 时清队是 no-op，停播由 speechAudio.stop 完成。
    */
   function onBargeInTriggered(): void {
     // 两个 Composer（主聊天 + 卡片对话）并存时各挂一份监听，同拍触发会走两次
-    // 本回调：先到者 interruptSpeech 已把相位翻出 speaking，后到者在此放弃——
-    // 只起一条录音链路。
-    if (!voiceModeOwned || voiceMode.phase !== 'speaking') return;
+    // 本回调：先到者已把相位翻出 speaking / 停掉音频，后到者在此放弃——只起
+    // 一条录音链路。
+    if (!voiceModeOwned) return;
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
     voiceMode.interruptSpeech();
     speechAudio.stop();
     void startVoiceModeRecording();
   }
 
   /**
-   * 武装窗口（仅播报队列 playing 阶段；合成中无声音不监听，手动朗读开播即打断
-   * 播报、相位已不在 speaking）。active / phase / speakingStage / 麦克风总闸任一
-   * 变化都会重跑：条件不再成立（播完 / 打断 / 清队 / 退出模式 / 切会话 / 组件
+   * 武装窗口（语音模式下任何音频在播：播报队列 playing、手动点语音气泡重播、
+   * 用户语音消息回放）。合成中无声音不监听。active / 播放态 / 麦克风总闸任一
+   * 变化都会重跑：条件不再成立（播完 / 打断 / 停止 / 退出模式 / 切会话 / 组件
    * 卸载）即走 cleanup 拆除（含取消未到点的武装定时器与在途 open）。主聊天与
-   * 卡片对话两个 Composer 并存时会各挂一份监听——触发后 interruptSpeech 只在
-   * speaking 相位生效一次、effects cleanup 同拍拆除另一份，不会双重起录音。
+   * 卡片对话两个 Composer 并存时会各挂一份监听——触发后先到者停播，effects
+   * cleanup 同拍拆除另一份，不会双重起录音。
    */
   $effect(() => {
     if (!voiceModeOwned) return;
-    if (voiceMode.phase !== 'speaking' || voiceMode.speakingStage !== 'playing') return;
+    if (!voiceMode.active || !speechAudio.isPlaying) return;
+    // 只在 idle / speaking 监听：recording / transcribing 时麦克风已被占用，
+    // 触发回调也不会起录音；此时再开一路监听纯属浪费（且会白拆一次）。
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
     if (!sensors.state.microphone.enabled) return; // 隐私总闸：不开监听
     // 权限门：只对已授权设备开监听流——未授权 / 未查询时空 `sensors.open` 会在
     // 播报中弹 TCC 授权框（用户只是在听回复），违背「监听失败静默降级」。用户

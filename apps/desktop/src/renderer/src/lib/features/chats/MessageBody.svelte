@@ -8,6 +8,8 @@
   import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
+  import VoiceMessageBubble from './VoiceMessageBubble.svelte';
+  import { isVoiceMessage, voiceAttachmentOf } from './voice-message';
   import {
     buildLocalPathMentionTargets,
     buildMentionTargets,
@@ -79,12 +81,25 @@
   // 生成的确定性投递）只有附件行，空气泡会在 UI 里留下空元素。
   const botText = $derived('text' in message.content ? message.content.text : '');
   const hasBotText = $derived(botText.trim().length > 0);
+  /**
+   * 语音气泡（53 号修订 v3）：origin='voice' 的消息按语音消息形态渲染——用户
+   * 消息还必须有原始录音附件（转写失败但附件在也照常可播）；Bot 消息不需要
+   * 附件（音频按需合成）。其余消息走原来的文本气泡。
+   */
+  const voiceBubble = $derived(
+    isVoiceMessage(message) &&
+      (message.senderType === 'bot' || voiceAttachmentOf(message) !== null),
+  );
 </script>
 
 {#if message.status === 'recalled'}
   <span class="mt-0.5 text-xs text-muted-foreground italic" data-testid="recalled-text">
     {t('chats.recalled')}
   </span>
+{:else if voiceBubble}
+  <!-- 语音消息（53 号修订 v3）：药丸 + 波形进度 + 下方 caption；用户原始录音
+       与 Bot 合成音频共用一条音频声道。 -->
+  <VoiceMessageBubble {message} />
 {:else if message.senderType === 'user'}
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->

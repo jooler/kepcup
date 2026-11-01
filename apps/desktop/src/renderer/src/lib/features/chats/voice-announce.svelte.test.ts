@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Message } from '@kepcup/shared';
 import {
   announceEntryFor,
+  collectAnnounceEntries,
   voiceMode,
   type AnnounceDeps,
   type PlaybackHandle,
@@ -207,6 +208,36 @@ describe('announceEntryFor（入队条件的排列，53 号）', () => {
     const entry = announceEntryFor(botTextMessage({ content: { text: '长'.repeat(2001) } }), base);
     expect(entry?.truncated).toBe(true);
     expect(Array.from(entry?.text ?? '')).toHaveLength(2000);
+  });
+
+  it('collectAnnounceEntries：只取水位之后的新消息并推进 lastSeq（不补播历史、排除任务消息）', () => {
+    const history = botTextMessage({
+      id: 'm0',
+      seq: 1,
+      content: { text: '历史', origin: 'voice' },
+    });
+    const user = botTextMessage({
+      id: 'm1',
+      seq: 2,
+      senderType: 'user',
+      content: { text: '用户语音', origin: 'voice' },
+    });
+    const task = botTextMessage({
+      id: 'm2',
+      seq: 3,
+      content: { text: '任务结果', origin: 'task' },
+    });
+    const reply = botTextMessage({
+      id: 'm3',
+      seq: 4,
+      content: { text: '**回复**', origin: 'voice' },
+    });
+
+    const scan = collectAnnounceEntries([history, user, task, reply], 1, base);
+    expect(scan.entries).toEqual([{ id: 'm3', text: '回复', truncated: false }]);
+    expect(scan.lastSeq).toBe(4);
+    // 水位不倒退：没有新消息时原样返回。
+    expect(collectAnnounceEntries([history], 4, base)).toEqual({ entries: [], lastSeq: 4 });
   });
 });
 
@@ -454,5 +485,42 @@ describe('播报队列（注入假依赖驱动真实 voiceMode store）', () => 
     expect(voiceMode.phase).toBe('idle');
     expect(h.playedUrls).toEqual([]); // 无声泄漏
     expect(h.failures).toEqual([]); // 停播不算失败
+  });
+
+  // --- 手动接管（修订 v3：点气泡后本轮自动播报让位给用户）---------------------
+
+  it('手动点气泡：停当前 + 清队 + 回 idle，本轮后续新音频不再自动播（下一段用户语音恢复）', async () => {
+    voiceMode.enter();
+    voiceMode.announce({ id: 'a', text: '一', truncated: false });
+    voiceMode.announce({ id: 'b', text: '二', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick(); // a 播放中，b 在队
+
+    voiceMode.takeManualControl(); // speech-audio 的 onManualPlayStart
+    await tick();
+    expect(voiceMode.phase).toBe('idle');
+    expect(voiceMode.manualPlaybackOverride).toBe(true);
+    expect(h.stoppedUrls).toEqual(h.playedUrls); // 当前音频被停
+    expect(h.synthCalls).toEqual(['一']); // 未播的 b 被清队，永不合成
+
+    // 手动接管期间新到的音频不自动播（只留在列表里由用户点）。
+    expect(voiceMode.announce({ id: 'c', text: '三', truncated: false })).toBe(false);
+    await tick();
+    expect(h.synthCalls).toEqual(['一']);
+
+    // 用户开始下一段语音：恢复自动播报。
+    voiceMode.dispatch('record-started');
+    expect(voiceMode.manualPlaybackOverride).toBe(false);
+    voiceMode.dispatch('settled');
+    expect(voiceMode.announce({ id: 'd', text: '四', truncated: false })).toBe(true);
+    await tick();
+    expect(h.synthCalls).toEqual(['一', '四']);
+  });
+
+  it('语音模式之外点气泡不接管（不改变播报器状态）', () => {
+    voiceMode.exit();
+    expect(() => voiceMode.takeManualControl()).not.toThrow();
+    expect(voiceMode.manualPlaybackOverride).toBe(false);
   });
 });

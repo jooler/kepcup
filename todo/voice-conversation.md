@@ -1,7 +1,7 @@
 # 语音对话模式（D106）— 执行方案
 
-> 状态：**v1 已合并 v0.5.4；修订 v2 开发收口（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a，自动化全绿），真机复验待用户执行**。设计见 [docs/design/53-voice-conversation.md](../docs/design/53-voice-conversation.md)（D106，修订 v2 见文末一节，先读再开工），发送链路按 [docs/design/26-voice-input.md](../docs/design/26-voice-input.md)「语音消息语义」一节。
-> 现状锚点：录音管道 / 传感器层 / asr+tts 能力卡 / 附件管道全部现成，core 零改动（仅 loopType 加值）；`Composer.svelte:1078-1079` 有「语音对话模式暂缓」旧注释，实现时删除并指向本方案。
+> 状态：**v1 已合并 v0.5.4；修订 v2 开发收口（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a）；修订 v3 开发收口（2026-11-01，WP9–WP12），真机复验待用户执行**。设计见 [docs/design/53-voice-conversation.md](../docs/design/53-voice-conversation.md)（D106，修订 v2 / v3 见文末，先读再开工），发送链路按 [docs/design/26-voice-input.md](../docs/design/26-voice-input.md)「语音消息语义」一节。
+> 现状锚点：录音管道 / 传感器层 / asr+tts 能力卡 / 附件管道全部现成；v1/v2 的发送与播报编排基本在渲染层（v3 的语音模式提示词与 Bot 回复标记需要 core，见修订 v3）。
 > 约定：迭代中只跑定向测试（AGENTS.md：`node scripts/run-tests.mjs run <文件>`）；涉及 shared 契约先 `pnpm --filter @kepcup/shared build`；改设置相关代码跑 settings 四件套（语音功能本身无 settings 改动；收口期顺带修复 9defc083 遗留的 deep-link 白名单漏登，四件套 + deep-link 定向 96/96 已跑绿）；i18n 改动跑 `locales.test.ts`；收口跑一次全量 `pnpm test`。
 
 ## 0 工作包总览与依赖
@@ -75,7 +75,7 @@ WP2 不依赖 WP1（发送侧只用既有 `voice_input` 转写）；WP3 依赖 W
 2. **长回复合成延迟**：TTS 是整段非流式，2000 字可能合成 10s+——speaking 态必须有「合成中 Loader」，避免像卡死；P3 再评估按段落切分流水线合成。
 3. **播报可见性口径必须复用 `isVisibleInTranscript`**：否则会播出列表里看不到的内容（setupAnswer、task interim 等），破坏「播的 = 列表记的」一致性。
 4. **objectURL 泄漏**：每条播完即 revoke；清队 / 退出统一 revoke；异常路径（组件卸载）由 `$effect` cleanup 兜底。
-5. **不要动 core / orchestrator**：播报纯渲染层编排；若实现中发现需要 core 支持（如「回复语音化」落附件），回到 53 号设计先修订，不就地加。
+5. **v1/v2 播报纯渲染层编排；v3 明确需要 core 的部分只有两处**：会话级语音模式即时态（`conversations.setVoiceMode` 内存 Set）与对话轮系统提示词 / Bot 回复 `origin:'voice'` 标记。除此之外不要再往 core 塞播报逻辑；新增状态先回 53 号设计修订。
 6. **语音条不要走 fixed / Portal**：输入坞原位替换不在窗口拖拽带内；若实测发现遮挡冲突，先回看 53 号 §D106 的定位决策再改。
 7. **CSP / 资源**：无新增音频资源文件（复用 `voice-capture-worklet`）；播放走 blob objectURL，`script-src 'self'` 不影响 `media-src`（`<audio>` blob 播放已被 MessageAttachments 验证过）。
 8. **settings 快照未加载时预检放行**（26 号惯例）：由 core 错误码兜底置卡，不在渲染层阻塞。
@@ -125,3 +125,64 @@ WP2 不依赖 WP1（发送侧只用既有 `voice_input` 转写）；WP3 依赖 W
 
 - [x] 全量 `pnpm test` 一次；PROGRESS 记录；53 号 / todo 勾结
 - [ ] 真机验收：WP5–WP8 各验收项 + 原 WP4 清单回归（9 项）
+
+## 修订 v3（2026-11-01，第二轮真机验收反馈）WP9–WP12
+
+> 反馈：全局朗读键跑偏、语音模式 Bot 消息仍是文本气泡、模式不持续、系统提示词无语音声明、Bot 语音消息无持久标记。设计与决策见 53 号「修订 v3」一节（V3-1…V3-5），先读再开工。直接在 `v0.5.4` 续修。
+
+### WP9 删除全局朗读键（V3-1）
+
+文件：`ChatMessageRow.svelte`（删朗读键与相关派生）、i18n（删 `voiceMode.readAloud*`）、`speech-audio.svelte.ts`（职责改为语音气泡 / 播报 / 录音回放共用声道）。
+
+- [x] 删除 Bot 气泡朗读键（`message-read-aloud`）与 TTS 预检逻辑；普通对话不再有任何逐条 TTS 入口
+- [x] i18n 清理（zh / en 同步）+ `locales.test.ts`
+- [x] 定向测试：speech-audio 既有用例全绿
+
+### WP10 双方语音消息气泡（V3-2）
+
+文件：`VoiceMessageBubble.svelte`（新）、`voice-message.ts`（新，纯函数）、`MessageBody.svelte`（语音分支）、`ChatMessageRow.svelte`（过滤语音音频附件）、`speech-audio.svelte.ts`（进度 + `toggleSource`）、i18n。
+
+- [x] 语音气泡：药丸 + 左侧麦克风 + 波形 + 点击播放/暂停 + 波形进度 + caption 在下方；用户 / Bot 同形态
+- [x] `voice-message.ts`：`isVoiceMessage` / `voiceAttachmentOf` / `voiceCaptionOf` / 稳定波形（单测）
+- [x] `speech-audio`：`currentTime` / `duration` / `progress`（timeupdate）；`toggleSource` 支持任意播放源（用户 WAV）；暂停保留进度、停止 / 播完 / 抢占归零
+- [x] 非语音消息 / 任务消息 / 卡片维持原渲染；语音附件不在附件行重复渲染
+- [x] 定向测试：voice-message 纯函数 + speech-audio 进度 / 通用取源 / 仲裁回归
+
+### WP11 语音模式持续开启（V3-3）
+
+文件：`packages/shared/src/rpc/methods.ts`（`conversations.setVoiceMode`）、`packages/core/src/rpc/bindings.ts`、`packages/core/src/dispatch/orchestrator.ts`（内存 Set + send 兜底）、`Composer.svelte`（进入 / 退出 / 卸载同步）。
+
+- [x] shared：RPC 输入 / 输出 schema + 方法表 / 方法清单；先 `pnpm --filter @kepcup/shared build`
+- [x] core：`setVoiceMode` / `voiceModeActive`；`messages.send(voiceMode:true)` 兜底置真；会话删除清除
+- [x] 渲染层：进入 / 退出 / 卸载同步 core（归属门禁）；发送 / 播报收尾不退出
+- [x] 定向测试：voice-mode store（发送与播报收尾后 active 保持、可连续再录）+ core 集成
+
+### WP12 系统提示词 + Bot 回复标记（V3-4 / V3-5）
+
+文件：`packages/core/src/agent/context/system-prompt.ts`（`voiceMode` 输入 + `<voice_conversation>`）、`packages/core/src/dispatch/orchestrator.ts`（`voiceTurn` → 提示词 + 最终回复 `origin:'voice'`）、`packages/core/src/tools/index.ts`（`send_message` 标记）。
+
+- [x] 系统提示词段（仅对话轮）：立刻反馈（先 send_message 再 start_task）、只给结论、口语化、不调 generate_speech；英文同义文案
+- [x] Bot 最终回复与 `send_message` 记 `origin:'voice'`（无正文不标）；任务消息保持 `origin:'task'`、不播报
+- [x] barge-in 武装条件放宽为「语音模式 active + 任意音频在播」，触发允许 idle（手动重播也能被打断）
+- [x] 定向测试：system-prompt-voice（注入 / 不注入 / 任务轮 / 英文）+ core 集成（提示词与回复标记、退出后恢复）
+
+### 收口（v3）
+
+- [x] 定向测试 + `pnpm --filter @kepcup/core typecheck` + `pnpm --filter @kepcup/desktop typecheck`
+- [x] 53 号 / todo 勾结 + PROGRESS 记录
+- [ ] 真机验收：语音模式双方消息形态 / 连续发送 / 即时反馈与结论式回复 / 任务结果不播报 / 打断与停止播放
+
+### 审查修正（v3，独立子代理）
+
+- [x] P1 退出后不让在途语音发送把 core 会话态重新置真：去掉 `#prepareUserMessage` 的推断写入，改为 run 起点「显式状态 ∪ 批内语音消息」判定；补集成用例（仅 voiceMode 发送 → 语音轮，随后文字轮恢复）
+- [x] P1 `speechAudio.stop()` / `play()` 作废在途手动取源；语音气泡在 recording / transcribing 禁用；补单测（stop 后在途落地不外放、播报 play 抢占在途取源）
+- [x] P2 core 单会话语义（set true 清其它）+ 进入新会话释放旧 owner；卸载清理改用进入时登记的会话 id（不依赖 view）
+- [x] P2 `routeWithoutModel` 的可见说明标 `origin:'voice'`
+- [x] P3 `messages.edit` 保留 origin 等语义字段（补集成用例）；`conversations.setVoiceMode` 拒绝项目组；提示词补「长报告不整段转发」；撤回语音消息的录音附件不再在附件行露出
+
+### WP13 自动播报列表源 + 手动接管（2026-11-02 第二轮反馈）
+
+- [x] 播报入队改为消息列表扫描（seq 水位，不补播历史），事件漏投/订阅晚挂载不再漏播
+- [x] 手动点气泡 → 停当前 + 清队 + 本轮关闭自动播报；下一段用户语音恢复
+- [x] 单测：collectAnnounceEntries 水位/任务排除、takeManualControl 清队与 override 恢复
+- [x] 连续听评估写入设计「非目标」：不做常开麦克风 + VAD 切片，维持点击式录音

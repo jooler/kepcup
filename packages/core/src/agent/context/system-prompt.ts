@@ -139,6 +139,11 @@ export interface SystemPromptInput {
   workbenchUpdate?: boolean | undefined;
   /** Top-k relevant memories (with ids) for <relevant_memories> (P07). */
   relevantMemories?: string | undefined;
+  /**
+   * 53 号修订 v3：该会话正处于语音对话模式（渲染层经 conversations.setVoiceMode
+   * 同步的即时态）。只在对话轮注入 `<voice_conversation>` 回复规则；任务轮忽略。
+   */
+  voiceMode?: boolean | undefined;
   /** Wiki topic index (index.md titles) for <wiki_topics> (P09). */
   wikiTopics?: string | undefined;
   /**
@@ -682,6 +687,28 @@ function currentTimeLine(now: Date, timeZone: string): string {
   return `当前时间：${now.toISOString().replace('T', ' ').slice(0, 19)}（${timeZone}）`;
 }
 
+/**
+ * 语音对话模式规则（53 号修订 v3）：只在对话轮且该会话处于语音模式时注入。
+ * 回复会被客户端自动转成语音播放，所以规则围绕「像打电话」：立刻反馈、
+ * 结论式回复、口语化、不调语音合成工具。任务轮不注入（任务结果由对话轮转述）。
+ */
+const VOICE_CONVERSATION_RULES = [
+  '当前处于语音对话模式：用户用语音发消息，你的回复也会由客户端自动转成语音播放，双方像打电话一样交流。',
+  '立刻给反馈：如果需要拉起独立任务（start_task）或做任何要等一阵的操作，先调用 send_message 发一句简短反馈（例如「我需要拉起独立任务处理，请稍后」），再调用工具，不要让用户干等；这是语音模式下 send_message 的正当用法（优先于「不用 send_message 发进度」的常规限制），本轮最终回复保持一两句。',
+  '只给结论：任务结束或查询完成后，直接说结果（例如「没有待提交文件」「有 3 个文件尚未提交」），不要罗列文件明细、工作区状态、执行过程或技术细节；任务结果的长报告不要整段转发或复述，用户追问时再展开（可以提示切到文字查看）。',
+  '口语化、简短：一般 1~3 句，像日常对话；不要用 Markdown（标题、列表、代码块、表格、链接都不会被朗读），不要念文件路径、id 或长串数字。',
+  '不要调用 generate_speech 或任何语音合成工具：客户端会自动合成并播放你的回复。',
+].join('\n');
+
+/** English copy of VOICE_CONVERSATION_RULES (same rules, same order). */
+const VOICE_CONVERSATION_RULES_EN = [
+  'You are in voice conversation mode: the user speaks, and your reply is automatically turned into speech and played by the client — the two of you are talking like on a phone call.',
+  'Acknowledge immediately: if you need to start a background task (start_task) or do anything that takes a while, first call send_message with one short acknowledgement (for example "I need to start a background task, one moment"), then call the tool. Do not leave the user waiting; this is the intended use of send_message in voice mode (it overrides the usual "do not send progress with send_message" rule). Keep this turn\'s final reply to one or two sentences.',
+  'State the conclusion only: when a task finishes or a lookup completes, answer with the result directly (for example "No uncommitted files" / "3 files are uncommitted"). Do not list file details, workspace status, execution steps or technical details unless the user asks; do not forward or repeat a long task report, and offer to switch to text if the user wants details.',
+  'Speak naturally and briefly: usually 1–3 sentences, like a daily conversation. Do not use Markdown (headings, lists, code blocks, tables and links are not spoken), and do not read out file paths, ids or long numbers.',
+  'Do not call generate_speech or any speech-synthesis tool: the client synthesizes and plays your reply automatically.',
+].join('\n');
+
 function grantsLine(grants: Grant[]): string {
   return grants.length > 0
     ? '当前有效授权：\n' +
@@ -823,6 +850,15 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : '使用用户最近一条消息的语言回复（包括问题、确认语、进度说明、总结与最终回复）。没有用户消息时（例如定时任务或系统触发的一轮），使用简体中文。',
     ),
     section('platform_rules', platformRules.join('\n')),
+    // 语音对话模式（53 号修订 v3）：只影响对话轮的回复形态，任务轮不注入。
+    section(
+      'voice_conversation',
+      isTurn && input.voiceMode === true
+        ? english
+          ? VOICE_CONVERSATION_RULES_EN
+          : VOICE_CONVERSATION_RULES
+        : '',
+    ),
     // 编程 / 开发 Bot：任务版强调规划拆解 + SubAgent 只读调研；对话轮强调
     // 复杂请求必须派任务，并把同样的执行方式写进 instruction。访谈期间不注入
     // （此时画像还在填写，且访谈轮没有 delegate_task），由 <setup_interview> 引导。
@@ -1106,7 +1142,10 @@ const HOST_POLICY_LINES: ReadonlyArray<{
     tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],
     text: (names) => `查阅、收录与清理知识库用 ${names}。`,
   },
-  { tools: ['create_skill'], text: (names) => `创建技能用 ${names}（获取技能改走 plugin_search / plugin_request_install）。` },
+  {
+    tools: ['create_skill'],
+    text: (names) => `创建技能用 ${names}（获取技能改走 plugin_search / plugin_request_install）。`,
+  },
   {
     tools: ['call_inkcop_agent'],
     text: (names) =>

@@ -179,9 +179,10 @@ export const enUS = {
   'voiceMode.openSettings': 'Open settings',
   'voiceMode.settings': 'Voice capability settings',
   'voiceMode.close': 'Exit voice conversation',
-  // Bot bubble "read aloud" button (53 revision v2 V2-2)
-  'voiceMode.readAloud': 'Read aloud',
-  'voiceMode.readAloudStop': 'Stop reading',
+  // Voice message bubble (53 revision v3: tap to play / pause / resume)
+  'voiceMode.playVoice': 'Play voice message',
+  'voiceMode.pauseVoice': 'Pause playback',
+  'voiceMode.resumeVoice': 'Resume playback',
   // Unified audio player (53 revision v2 V2-2: attachment audio / audio artifacts)
   'audioPlayer.play': 'Play',
   'audioPlayer.pause': 'Pause',

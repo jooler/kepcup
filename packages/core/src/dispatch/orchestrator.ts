@@ -161,11 +161,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import {
-  decideMailSetupRequest,
-  mailBoundFor,
-  type MailSetupFacade,
-} from '../tools/mail-tools.js';
+import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import type { PluginToolFacade } from '../tools/plugin-tools.js';
@@ -467,7 +463,12 @@ export interface OrchestratorDeps {
   computer?:
     | {
         host: ComputerHostRpc;
-        requestApproval: (identity: RunIdentity, kind: 'computer_control', payload: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<ApprovalOutcome>;
+        requestApproval: (
+          identity: RunIdentity,
+          kind: 'computer_control',
+          payload: Record<string, unknown>,
+          options?: { signal?: AbortSignal },
+        ) => Promise<ApprovalOutcome>;
       }
     | undefined;
   /**
@@ -694,6 +695,17 @@ interface ActiveRunEntry {
   cutoffSeq: number;
 }
 
+/** 触发批里是否含用户语音消息（53 号修订 v3：显式 RPC 丢失时的本轮兜底）。 */
+function batchHasVoiceMessage(messages: readonly Message[]): boolean {
+  return messages.some(
+    (message) =>
+      message.senderType === 'user' &&
+      message.kind === 'text' &&
+      'origin' in message.content &&
+      message.content.origin === 'voice',
+  );
+}
+
 /**
  * How one execution of the shared run skeleton (`#executeRun`) is used:
  * - `turn` (D75 design 30 §2.1): the mailbox-driven supervisor turn —
@@ -765,6 +777,12 @@ export class Orchestrator {
    * (full context + D56 replay instead of a guessed delta).
    */
   readonly #agentSessionSeen = new Map<string, AgentSeen>();
+  /**
+   * 语音对话模式（53 号修订 v3）：渲染层经 conversations.setVoiceMode 同步的
+   * 会话级即时态。只用于对话轮提示词（`<voice_conversation>`）与 Bot 回复的
+   * `origin:'voice'` 标记；不落库，重启即清（渲染层的模式也不跨重启）。
+   */
+  readonly #voiceModeConversations = new Set<string>();
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
@@ -1086,6 +1104,28 @@ export class Orchestrator {
           ...(deps.judgementTimeoutMs !== undefined ? { timeoutMs: deps.judgementTimeoutMs } : {}),
         }),
     });
+  }
+
+  // --- voice conversation mode (53 号修订 v3) --------------------------------
+
+  /**
+   * 同步会话的语音对话模式开关（渲染层经 `conversations.setVoiceMode` 调）。
+   * 即时态：只影响后续对话轮的提示词与 Bot 回复标记；不触发任何消息 / 广播。
+   * 渲染层是单例（同一时刻只有一个会话在语音模式），core 同口径：置真时清掉
+   * 其它会话，避免远程客户端 / 漏发的退出在 core 里残留多个「语音会话」。
+   */
+  setVoiceMode(conversationId: string, active: boolean): void {
+    if (!active) {
+      this.#voiceModeConversations.delete(conversationId);
+      return;
+    }
+    this.#voiceModeConversations.clear();
+    this.#voiceModeConversations.add(conversationId);
+  }
+
+  /** 该会话当前是否处于语音对话模式（提示词 / 回复标记 / 测试断言）。 */
+  voiceModeActive(conversationId: string): boolean {
+    return this.#voiceModeConversations.has(conversationId);
   }
 
   // --- direct send ----------------------------------------------------------
@@ -3690,6 +3730,14 @@ export class Orchestrator {
     let { batch } = exec;
     const isTask = exec.kind === 'task';
     const loopType = isTask ? ('task' as const) : ('turn' as const);
+    /**
+     * 本 run 是语音对话模式下的对话轮（53 号修订 v3）：只影响对话轮的提示词
+     * 与 Bot 可见回复的 origin 标记；任务轮永不为真（任务消息不外播）。
+     */
+    const voiceTurn =
+      !isTask &&
+      (this.#voiceModeConversations.has(batch.conversationId) ||
+        batchHasVoiceMessage(batch.messages));
     const { runs, messages } = this.#deps;
     const settle = (
       status: Run['status'],
@@ -4335,8 +4383,7 @@ export class Orchestrator {
       // W7 <watches>: this bot's live web-page watches here.
       const watchesSection =
         this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
-      const mailSection =
-        this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
+      const mailSection = this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
       // D90 <workbench>: the butler's turn only (counts + the items that need attention).
       const workbenchSection =
         !isTask && bot.systemRole === 'butler'
@@ -4371,8 +4418,7 @@ export class Orchestrator {
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
       // P2 注入模型：插件贡献的公共技能按有效启用集过滤（Bot 私有技能不受影响）。
-      const skillsSection =
-        this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
+      const skillsSection = this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection =
         this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
@@ -4434,6 +4480,8 @@ export class Orchestrator {
         identity,
         deps: {
           ...toolDeps,
+          // 53 号修订 v3：语音对话轮的主动 send_message 也记 origin:'voice'。
+          ...(voiceTurn ? { voiceMode: true } : {}),
           environment: this.#environmentFacade(),
           // D92 T1a 必答回合：触发批里只要有一个必答部分（routed /
           // lead_fallback），这一轮的工具面就没有 skip_reply。
@@ -4771,6 +4819,8 @@ export class Orchestrator {
           const cardPrompt = this.#cardPrompt(conv, projectWikiTopicsSection);
           return buildSystemPrompt({
             loop: isTask ? 'task' : 'turn',
+            // 语音对话模式（53 号修订 v3）：对话轮注入 <voice_conversation>。
+            ...(voiceTurn ? { voiceMode: true } : {}),
             language: this.#deps.settings.get().appLanguage,
             bot,
             conversation: conv,
@@ -4946,6 +4996,10 @@ export class Orchestrator {
           kind: 'text',
           text: outcome.finalText,
           runId,
+          // 53 号修订 v3：语音对话轮的可见回复记 origin:'voice'——UI 据此持久
+          // 渲染语音气泡（退出模式后历史消息仍是语音形态）。无正文（纯附件）
+          // 不标：没有可朗读 / 可作 caption 的内容。
+          ...(voiceTurn && outcome.finalText.trim().length > 0 ? { voiceMode: true } : {}),
           ...(scheduleSource !== null ? { scheduleSource } : {}),
           ...(todoSource !== null ? { todoSource } : {}),
           ...(pendingArtifacts.length > 0 ? { artifacts: pendingArtifacts } : {}),
@@ -5102,6 +5156,12 @@ export class Orchestrator {
       conversationId: batch.conversationId,
       loopType: 'turn',
     };
+    // 53 号修订 v3：无模型降级路径发出的可见说明也是语音轮的 Bot 回复——
+    // 标 origin:'voice'，UI 渲染语音气泡、播报队列自动朗读（任务结果转发仍
+    // 走 origin:'task'，不播报）。
+    const voiceTurn =
+      this.#voiceModeConversations.has(batch.conversationId) ||
+      batchHasVoiceMessage(batch.messages);
     const notice = (text: string): void => {
       const message = this.#deps.messages.append({
         conversationId: batch.conversationId,
@@ -5110,6 +5170,7 @@ export class Orchestrator {
         kind: 'text',
         text,
         runId,
+        ...(voiceTurn && text.trim().length > 0 ? { voiceMode: true } : {}),
       });
       this.#recordBotMessage(runId, message);
     };

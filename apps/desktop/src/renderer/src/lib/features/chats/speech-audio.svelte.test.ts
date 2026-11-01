@@ -45,13 +45,17 @@ interface FakeElement extends SpeechAudioElement {
   pauseCalls: number;
   /** 置非空时 play() reject（模拟解码失败 / 自动播放被拒）。 */
   playError: unknown;
-  emit(type: 'ended' | 'error'): void;
+  emit(type: 'ended' | 'error' | 'timeupdate' | 'loadedmetadata'): void;
+  /** 模拟播放进度推进（timeupdate 读 currentTime / duration）。 */
+  setProgress(currentTime: number, duration: number): void;
 }
 
 function createFakeElement(): FakeElement {
   const handlers = new Map<string, Set<() => void>>();
   const element: FakeElement = {
     src: '',
+    currentTime: 0,
+    duration: 0,
     playCalls: 0,
     loadCalls: 0,
     pauseCalls: 0,
@@ -73,6 +77,11 @@ function createFakeElement(): FakeElement {
     },
     emit: (type) => {
       for (const handler of handlers.get(type) ?? []) handler();
+    },
+    setProgress: (currentTime, duration) => {
+      element.currentTime = currentTime;
+      element.duration = duration;
+      element.emit('timeupdate');
     },
   };
   return element;
@@ -278,6 +287,115 @@ describe('toggle（手动朗读开关）', () => {
   });
 });
 
+describe('播放进度（语音气泡波形）与通用取源（用户录音附件）', () => {
+  let h: ReturnType<typeof createHarness>;
+
+  beforeEach(() => {
+    speechAudio.__resetForTest();
+    h = createHarness();
+    speechAudio.configure(h.deps);
+  });
+
+  it('timeupdate 驱动 currentTime / duration / progress；播完与停止归零', async () => {
+    await toggleAndPlay(botTextMessage(), h);
+    const element = h.elements[0]!;
+
+    expect(speechAudio.progress).toBe(0);
+    element.setProgress(1.5, 3);
+    expect(speechAudio.currentTime).toBe(1.5);
+    expect(speechAudio.duration).toBe(3);
+    expect(speechAudio.progress).toBeCloseTo(0.5);
+
+    // 暂停保留进度（气泡停在半格）。
+    speechAudio.toggle(botTextMessage());
+    expect(speechAudio.isPlaying).toBe(false);
+    expect(speechAudio.progress).toBeCloseTo(0.5);
+
+    element.emit('ended');
+    expect(speechAudio.progress).toBe(0);
+    expect(speechAudio.duration).toBe(0);
+
+    await toggleAndPlay(botTextMessage(), h);
+    element.setProgress(2, 4);
+    speechAudio.stop();
+    expect(speechAudio.currentTime).toBe(0);
+    expect(speechAudio.progress).toBe(0);
+  });
+
+  it('toggleSource：任意取源（用户录音）播放、暂停 / 续播、切换消息时旧取源作废', async () => {
+    const loadUser = async (): Promise<string> => 'blob:wav1';
+    await speechAudio.toggleSource('u1', loadUser);
+    expect(speechAudio.currentId).toBe('u1');
+    expect(speechAudio.isPlaying).toBe(true);
+    expect(h.elements[0]!.src).toBe('blob:wav1');
+    expect(h.manualPlayStarts).toBe(1);
+
+    speechAudio.toggleSource('u1', loadUser);
+    expect(speechAudio.isPlaying).toBe(false); // 暂停
+    expect(h.elements[0]!.pauseCalls).toBe(1);
+    speechAudio.toggleSource('u1', loadUser);
+    await tick();
+    expect(speechAudio.isPlaying).toBe(true); // 续播不重新取源
+    expect(h.manualPlayStarts).toBe(1);
+
+    // 取源在途时改选另一条：旧请求落地后不得抢占。
+    let resolveLate!: (url: string) => void;
+    const late = speechAudio.toggleSource(
+      'u2',
+      () => new Promise<string>((resolve) => (resolveLate = resolve)),
+    );
+    await speechAudio.toggleSource('u3', async () => 'blob:wav3');
+    resolveLate('blob:wav2');
+    await late;
+    expect(speechAudio.currentId).toBe('u3');
+    expect(h.elements[0]!.src).toBe('blob:wav3');
+  });
+
+  it('toggleSource 取源失败 → 同款失败提示，不占扬声器', async () => {
+    await speechAudio.toggleSource('u1', () => Promise.reject(new Error('attachment gone')));
+    expect(h.toggleFailures).toEqual([new Error('attachment gone')]);
+    expect(speechAudio.currentId).toBeNull();
+    expect(speechAudio.isPlaying).toBe(false);
+  });
+
+  it('stop() 作废在途取源：录音开始后合成 / 附件落地不再外放（审查 P1）', async () => {
+    let resolveLoad!: (url: string) => void;
+    const pending = speechAudio.toggleSource(
+      'u1',
+      () => new Promise<string>((resolve) => (resolveLoad = resolve)),
+    );
+    speechAudio.stop(); // acquireRecording 拿到流后的统一停播
+    resolveLoad('blob:late');
+    await pending;
+    expect(speechAudio.currentId).toBeNull();
+    expect(speechAudio.isPlaying).toBe(false);
+    expect(h.elements).toHaveLength(0); // 从没开始播放（连元素都没建）
+  });
+
+  it('播报的 play 作废在途手动取源：旧请求落地不抢扬声器（审查 P1）', async () => {
+    let resolveLoad!: (url: string) => void;
+    const pending = speechAudio.toggleSource(
+      'u1',
+      () => new Promise<string>((resolve) => (resolveLoad = resolve)),
+    );
+    speechAudio.play({ messageId: 'm2', audio: 'blob:tts' }); // 队列先开播
+    resolveLoad('blob:late');
+    await pending;
+    expect(speechAudio.currentId).toBe('m2');
+    expect(h.elements[0]!.src).toBe('blob:tts');
+    expect(h.elements[0]!.playCalls).toBe(1);
+  });
+
+  it('toggle(message) 返回 promise：合成在途时可作加载态（resolve 后已开播）', async () => {
+    const pending = speechAudio.toggle(botTextMessage({ id: 'm1', content: { text: '你好' } }));
+    await tick();
+    expect(h.synthCalls).toEqual(['你好']);
+    h.resolveSynth();
+    await pending;
+    expect(speechAudio.isPlaying).toBe(true);
+  });
+});
+
 describe('缓存（LRU，逐出即 revoke）', () => {
   let h: ReturnType<typeof createHarness>;
 
@@ -337,6 +455,25 @@ describe('播放仲裁（手动朗读 ↔ 播报队列双向互斥）', () => {
       play: (input) => speechAudio.play(input),
       onFirstFailure: (error) => announceFailures.push(error),
     });
+  });
+
+  it('播报播放中手动点另一条：接管后点击的消息照常播放（停播不把自己的取源作废）', async () => {
+    // 真实接线：onManualPlayStart = voiceMode.takeManualControl（会经播报队列
+    // stopCurrent 调 speechAudio.stop，递增手动取源世代）。
+    h.deps.onManualPlayStart = () => voiceMode.takeManualControl();
+    voiceMode.enter();
+    voiceMode.announce({ id: 'm1', text: '第一条', truncated: false });
+    await tick();
+    h.resolveSynth();
+    await tick();
+    expect(speechAudio.currentId).toBe('m1');
+
+    await toggleAndPlay(botTextMessage({ id: 'm9', content: { text: '手动点击' } }), h);
+    expect(voiceMode.phase).toBe('idle'); // 播报被接管
+    expect(voiceMode.manualPlaybackOverride).toBe(true);
+    expect(speechAudio.currentId).toBe('m9'); // 点击的消息真的播起来
+    expect(speechAudio.isPlaying).toBe(true);
+    expect(h.synthCalls).toEqual(['第一条', '手动点击']);
   });
 
   it('播报播放中点朗读：播报被抢占，队列作废，朗读接管扬声器', async () => {

@@ -65,8 +65,10 @@ export interface AppendMessageInput {
   /** text messages only: setup-interview answer (hidden bubble in the UI). */
   setupAnswer?: boolean | undefined;
   /**
-   * text messages only (53 号修订 v2 V2-1): sent from voice-conversation mode —
-   * content records `origin: 'voice'`（正文即语音转写，音频附件仅为原始录音存档）.
+   * text messages only (53 号修订 v2 V2-1 / v3): produced in voice-conversation
+   * mode — content records `origin: 'voice'`. 用户消息 = 正文即语音转写、音频附件
+   * 仅为原始录音存档；Bot 消息 = 语音对话轮的可朗读回复（UI 渲染语音气泡、客户端
+   * 自动播报）。任务消息用 taskOrigin，不会走这里。
    */
   voiceMode?: boolean | undefined;
   /**
@@ -1002,11 +1004,14 @@ export class MessagesService {
       throw new AppError('MESSAGE_NOT_RECALLABLE', 'A recalled message cannot be edited');
     }
     const now = this.clock.now();
+    // 保留 content 里的语义标记（origin:'voice' / delegation / widget / workbench /
+    // shareIntakeId 等）：只替换正文，否则编辑一条语音消息会把它变成普通文本。
+    const content = { ...(message.content as Record<string, unknown>), text };
     this.db
       .prepare(
         "update messages set content_json = ?, status = 'edited', edited_at = ? where id = ?",
       )
-      .run(JSON.stringify({ text }), now, id);
+      .run(JSON.stringify(content), now, id);
     this.db.prepare('delete from messages_fts where message_id = ?').run(id);
     this.db
       .prepare(

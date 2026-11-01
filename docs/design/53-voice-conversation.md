@@ -4,7 +4,7 @@
 
 与 Grok 全屏语音模式的关键差异：Grok 进入语音模式后聊天列表被盖住，需要「切文字」键展开记录；KepCup 的语音条**只接管输入坞，消息列表始终可见可滚动**——「全部转为文字记录到消息列表」是一等需求，天然满足，因此不设「切文字」键，关闭即回文字输入。
 
-**状态：已实施（2026-11-01，开发收口）；首轮真机验收后修订 v2 已实施（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a，自动化全绿，真机复验待用户执行）——见文末[「修订 v2」](#修订-v22026-1101首轮真机验收反馈)。** 决策 **D106**；执行方案与实施记录见 [todo/voice-conversation.md](../../todo/voice-conversation.md)。实现与本文的偏差已就地加「实现修订」注。
+**状态：已实施（2026-11-01，开发收口）；首轮真机验收后修订 v2 已实施（2026-11-01，WP5–WP8 提交 9ebb59ec / 0d4ffa1b / f3d8a86d / b67a420a）；第二轮真机验收后修订 v3 已实施（2026-11-01，WP9–WP12）——见文末[「修订 v2」](#修订-v22026-1101首轮真机验收反馈)与[「修订 v3」](#修订-v32026-1101第二轮真机验收反馈)。** 决策 **D106**；执行方案与实施记录见 [todo/voice-conversation.md](../../todo/voice-conversation.md)。实现与本文的偏差已就地加「实现修订」注。
 
 ## 决策
 
@@ -77,11 +77,12 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
 ## 非目标（本期）
 
 - 流式 ASR——点击式收发音沿用 26 号 D69；静音自动断句已随修订 v2 纳入（V2-4，基于录音电平的端点检测，非流式 ASR）。
-- 播报音频落附件——文字已在列表、音频按需合成即可；Bot 气泡「朗读」键已随修订 v2 落地（V2-2/V2-3）。
+- 播报音频落附件——文字已在列表、音频按需合成即可；双方语音消息的播放形态已随修订 v3 统一为语音气泡（V3-2）。
 - 全屏语音接管（Grok 的整屏模糊背景形态）。
 - 群聊（项目组）语音对话、多 Bot 多音色。
 - 音色 / 语速设置项；播放侧真实电平波形（AnalyserNode）。
 - 「自动连续对话」（回复播完自动开始下一轮录音）——保持点击式主动权在用户。
+- **连续听 + 流式 VAD 切片**（2026-11-02 评估后不做）：麦克风常开、按 3s 静音切段、段间静音裁剪需要改造录音管道为按样点切片、并发 ASR/发送编排、全双工 AEC 与常开麦克风的隐私模型；风险高（回声污染用户消息 / 段序错乱），本期维持点击式录音。后续单独立项。
 
 ## 分期
 
@@ -135,3 +136,81 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
 - 端点检测：Pipecat 默认 `min_endpointing_delay` 500ms（blog.pipecat.ai/using-a-transformer-to-improve-end-of-turn-detection）；LiveKit 对 800ms 静音延迟的讨论（livekit.com/blog/turn-detection-voice-agents-vad-endpointing-model-based-detection）。
 - barge-in 惯例：AEC（`getUserMedia` echoCancellation）消扬声器回声 + 播放期提高触发阈值 / 延迟武装 + hangover，否则把自己播的 TTS 当用户插话（github.com/elizaOS/eliza/issues/27245）。
 - 管线形态：ChatGPT 初代语音模式即 Whisper → GPT → TTS 级联、历史以文字记录（reddit.com/r/ChatGPT/comments/1day7c1）；微信 / Telegram 语音消息持久化原始音频 + 点击播放，与我们用户侧附件语义一致。
+
+## 修订 v3（2026-11-01，第二轮真机验收反馈）
+
+第二轮真机验收的四类问题：① 全局朗读键跑偏——每条 Bot 消息都多了 TTS 按钮，而需求只是「语音对话模式下自动播报」；② 语音模式下的 Bot 回复仍是文本气泡，消息列表不像通话记录；③ 语音模式在录音 / 发送后没有保持，无法连续以语音沟通；④ 系统提示词没有语音模式声明，Bot 长篇汇报、派任务前没有即时反馈；⑤ Bot 语音消息没有持久语义标记，列表无法识别与回放。目标：**语音模式下双方消息都是语音消息形态（药丸 + 麦克风 + 波形进度 + caption），Bot 回复自动播报；其它会话维持原文互形态，不再有朗读键**。
+
+### V3-1 删除全局朗读键
+
+- 撤销 V2-2 在 Bot 文本气泡上加的朗读键（`ChatMessageRow` 的 `message-read-aloud` 与相关 i18n）：TTS 只由语音模式自动触发，普通对话不提供逐条朗读入口。
+- `speech-audio` 保留，但职责改为：语音气泡点击播放、播报队列、用户录音附件回放共用唯一音频声道（仲裁不变）。
+
+### V3-2 双方语音消息气泡
+
+- 新组件 `VoiceMessageBubble.svelte`（features/chats）：药丸外形（用户气泡底色跟随当前对话 Bot 的**强调色**——与用户文本气泡同一 `resolveAccentColor` 取色口径，无 Bot 时回退主色；Bot `bg-muted`）、左侧麦克风、主体波形、点击整个药丸播放 / 暂停、波形按播放进度着色（已播柱不透明、未播 28%）、右侧时长（元数据到达后显示）；正文以 caption 放在气泡下方（`whitespace-pre-wrap`，可选中）。
+- 判定与波形在 `voice-message.ts`（纯函数）：`origin === 'voice'` 的 text 消息 = 语音消息；用户消息必须带音频附件（转写失败但附件在也照常可播），Bot 消息不需要附件（音频按需合成）。波形由消息 id 的 FNV-1a / xorshift 生成 22 根固定轮廓（0.3–1），同一条消息重渲染不变。
+- 渲染：`MessageBody` 在撤回分支之后优先渲染语音气泡；`ChatMessageRow` 把用户语音消息的音频附件从 `MessageAttachments` 过滤掉（不重复渲染播放器卡），其它附件照常。
+- 播放源：用户 = `attachmentUrl` 拉原始 WAV；Bot = `speech-audio.ensureUrl`（TTS 缓存 / 合成）。`speech-audio` 新增 `toggleSource(messageId, loadAudio)` 与 `currentTime` / `duration` / `progress`（timeupdate 驱动）；暂停保留进度，停止 / 播完 / 抢占归零。
+- **实现修订（非语音消息零变化）**：`origin` 不是 `voice` 的消息、任务消息（`origin:'task'`）、卡片消息全部走原有渲染，不出现语音气泡。
+
+### V3-3 语音模式持续开启（会话级即时态）
+
+- 语音模式进入后保持 active：录音 → 发送 → Bot 播报 → 回到 idle，只是相位回 idle，模式不退出；用户可连续点麦克风发送下一句。退出仍只由用户主动关闭 / Esc / 切会话 / readOnly / 组件卸载触发。
+- core 新增会话级即时态（不落库、重启即清）：RPC `conversations.setVoiceMode { conversationId, active }` → `Orchestrator.setVoiceMode`（内存 Set）；进入 / 退出 / 卸载由 Composer 同步。`messages.send(voiceMode: true)` 也会把该会话置为语音模式（RPC 丢失时的兜底）；退出只走显式 RPC（分享 / 组件消息不推断退出）；会话删除时清掉。
+- **实现修订（状态归属）**：沿用 V2-5 的 `ownerConversationId` 门禁——只有归属 Composer 同步 core，隐藏实例不得改写别人的语音模式。
+
+### V3-4 系统提示词 `<voice_conversation>`
+
+- `SystemPromptInput.voiceMode` + `buildSystemPrompt` 新段（只对 `loop: 'turn'` 且会话处于语音模式时注入，任务轮永不注入）：
+  1. **立刻给反馈**：需要 `start_task` 或任何要等一阵的操作时，先 `send_message` 发一句简短确认（「我需要拉起独立任务处理，请稍后」），再调用工具；这是语音模式下 `send_message` 的正当用法（优先于「不用 send_message 发进度」的常规限制），本轮最终回复保持一两句。
+  2. **只给结论**：任务结束 / 查询完成后直接说结果（「没有待提交文件」「有 3 个文件尚未提交」），不罗列文件明细、工作区状态、执行过程或技术细节；用户追问再展开。
+  3. **口语化、简短**：1–3 句，不用 Markdown（标题 / 列表 / 代码块 / 表格 / 链接不会被朗读），不念文件路径、id、长串数字。
+  4. **不要调用 `generate_speech` / 语音合成工具**：客户端会自动合成并播放。
+- 英文界面用同义英文文案（同一组规则、同一顺序）。
+- **实现修订（与触发段 hint 的分工）**：`voiceWakeHint`（V2-1）继续在触发批里说明「正文即转写、音频附件是存档、不要 transcribe_audio」——那是本批消息的事实；回复形态规则上移到系统提示词，任务结果触发的回合也持续生效。
+
+### V3-5 Bot 回复记 `origin:'voice'`
+
+- 语音对话轮的 Bot 可见回复（最终回复，及 `send_message` 的主动消息）在 content 记 `origin:'voice'`：UI 据此**持久**渲染语音气泡（退出模式后历史消息仍是语音形态），播报队列据此自动播放。无正文（纯附件）不标。
+- 任务轮消息保持 `origin:'task'`（`forward_task_result` / 任务内 `send_message` / `send_media`）：不渲染语音气泡、不播报（V2-1 的排除不变）。
+- **实现修订（提示词与标记同源）**：`voiceTurn = !isTask && 会话处于语音模式` 在 run 起点采一次，同时用于系统提示词与回复标记；中途退出语音模式不会让这一轮已生成的回复失去语音形态（autoplay 仍按当时的 active 判断）。
+- **实现修订（自动播放口径）**：播报队列仍只在 `voiceMode.active` 时消费；语音模式下 `speechAudio.isPlaying` 的任何来源（队列 / 气泡点击 / 用户录音回放）都武装 barge-in，用户开口即停播并进入录音（V2-5 的武装条件从「speaking + playing」放宽为「active + isPlaying」；触发回调允许 idle 相位，`interruptSpeech` 在 idle 是 no-op）。
+
+### V3-6 独立审查修正
+
+- **P1 退出后不被在途语音发送复活**：不再把 `messages.send(voiceMode:true)` 写进会话级即时态。
+  本轮语音语义改为「显式 `conversations.setVoiceMode` **或** 触发批里含用户语音消息」在 run 起点
+  采一次（`batchHasVoiceMessage`）——RPC 丢失时本轮仍是语音轮，但退出后完成的在途发送不会把
+  会话永久置真，后续文字轮不会被错误注入 `<voice_conversation>` / 标成语音。
+- **P1 在途取源与录音互斥**：`speechAudio.stop()`（录音开始 / 停止播放 / 退出 / 卸载统一入口）
+  与任何 `play()` 都递增手动取源世代——在途的 TTS 合成 / 附件拉取落地后不再自动外放；
+  `VoiceMessageBubble` 在 recording / transcribing 相位禁用（与 v2 朗读键同一门禁）。
+- **P2 生命周期一致性**：`setVoiceMode(true)` 清掉其它会话（core 与渲染层都只有一个语音会话）；
+  从别的会话进入时先释放旧归属；卸载清理用「进入时登记的会话 id + 当前 owner」核对，不再依赖
+  view 派生（`session.clear()` 会先置空 view，CardChat / close / leaveCurrent 曾漏掉退出）；
+  `exitVoiceMode` 同时停音频并作废在途取源。
+- **P2 降级路径**：`routeWithoutModel` 的可见说明（任务失败 / 中断）是语音轮的 Bot 文本，标
+  `origin:'voice'`（自动播报 + 可回放），任务结果转发仍保持 `origin:'task'`。
+- **P3 防护**：`messages.edit` 保留 content 里的语义字段（否则编辑语音消息会变成普通文本）；
+  `conversations.setVoiceMode` 拒绝项目组（语音模式只存在于私聊 / 卡片对话）；语音规则补充
+  「任务结果的长报告不要整段转发 / 复述」以消解与平台规则「转发长结果」的张力。
+
+### V3-7 自动播报的列表源与手动接管（2026-11-02 第二轮反馈）
+
+- **自动播报改为以消息列表为源**：不再依赖 `message.created` 订阅口，Composer 在语音模式
+  期间扫描 `chatSession.view.messages` 中 **seq 水位之后**的新消息（`collectAnnounceEntries`），
+  逐条经 `announceEntryFor` 入队。进入模式时把水位设为当前最大 seq（不补播历史）；列表更新
+  一定会触发效果，事件漏投 / 订阅晚挂载都不会漏播。任务侧消息（`origin:'task'`）仍排除。
+- **手动接管**：用户点击任意语音气泡时，`onManualPlayStart` → `voiceMode.takeManualControl()`：
+  停当前 + 清空未播队列、本轮后续新音频不再自动播（`manualPlaybackOverride`）；下一段用户语音
+  `record-started` 时恢复自动播报。手动点击的目标消息由 `speech-audio` 直接播放，天然抢占当前声道。
+- **队列语义**：自动播报期间新音频入队顺序播放；手动点击时当前内容切换为用户点击的消息、队列
+  清空，此后由用户手动操作。
+- 连续听评估结论见「非目标」：不做常开麦克风 + VAD 切片，维持点击式录音（风险：切片正确性、
+  并发转写/发送、TTS 回声、隐私与常开流）。
+
+- **实现修订（审查 P1）**：`toggleSource` 必须在 `onManualPlayStart()` / 抢占**之后**再取
+  世代号——接管会经播报队列的 `stopCurrent` 调 `speechAudio.stop()` 递增世代，先取号会让
+  用户点的那条被自己的停播作废（取源落地后直接返回，永远不播）。补单测覆盖「播报中手动点
+  另一条：接管后点击的消息照常播放」。
