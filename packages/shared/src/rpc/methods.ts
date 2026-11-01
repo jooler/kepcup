@@ -133,6 +133,7 @@ import {
   botSchema,
   botAvatarMaskSchema,
   botAvatarPaddingSchema,
+  botAccentColorSchema,
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
@@ -986,6 +987,15 @@ export const botsAvatarPaddingInputSchema = z.object({
   padding: botAvatarPaddingSchema,
 });
 /**
+ * 设置 Bot 的强调色（应用腔调色）。与遮罩 / 内边距同一模式：不是 Profile 字段
+ * （`bots.update` 是整份 Profile 的三方合并），单独写 `bots.accent_color` 列、
+ * 单独发布 bot.updated；与上传头像完全解耦（上传 / 裁切 / 遮罩 / 内边距都不改它）。
+ */
+export const botsAccentColorInputSchema = z.object({
+  id: z.string().min(1),
+  color: botAccentColorSchema,
+});
+/**
  * Upload the user's own avatar (Profile settings). Core writes the file under
  * `user/avatar/`, keeps only the latest upload, points
  * `settings.userProfileAvatar` at it (`upload:{fileName}`) and publishes
@@ -1068,6 +1078,16 @@ export const conversationsMarkReadInputSchema = z.object({
   conversationId: z.string().min(1),
   seq: z.number().int(),
 });
+/**
+ * 语音对话模式开关（53 号修订 v3）：渲染层进入 / 退出模式时同步给 core。
+ * 会话级即时态（重启即失效）——core 用它给对话轮注入语音回复规则、把 Bot
+ * 回复标记为 `origin:'voice'`；不落库、不改变对话本身。
+ */
+export const conversationsSetVoiceModeInputSchema = z.object({
+  conversationId: z.string().min(1),
+  active: z.boolean(),
+});
+export const conversationsSetVoiceModeOutputSchema = okOutputSchema;
 export const conversationGetInputSchema = z.object({ id: z.string().min(1) });
 export const conversationGetOutputSchema = z.object({
   conversation: conversationSchema.nullable(),
@@ -2469,6 +2489,7 @@ export const rpcMethodSchemas = {
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.avatar.mask': { input: botsAvatarMaskInputSchema, output: botGetOutputSchema },
   'bots.avatar.padding': { input: botsAvatarPaddingInputSchema, output: botGetOutputSchema },
+  'bots.accent.color': { input: botsAccentColorInputSchema, output: botGetOutputSchema },
   'user.avatar.upload': {
     input: userAvatarUploadInputSchema,
     output: userAvatarUploadOutputSchema,
@@ -2532,6 +2553,10 @@ export const rpcMethodSchemas = {
     output: conversationsArchiveOutputSchema,
   },
   'conversations.markRead': { input: conversationsMarkReadInputSchema, output: okOutput },
+  'conversations.setVoiceMode': {
+    input: conversationsSetVoiceModeInputSchema,
+    output: conversationsSetVoiceModeOutputSchema,
+  },
   'conversations.members': {
     input: conversationsMembersInputSchema,
     output: conversationsMembersOutputSchema,
@@ -3127,6 +3152,8 @@ const APP_METHODS = [
   'bots.avatar.upload',
   'bots.avatar.data',
   'bots.avatar.mask',
+  'bots.avatar.padding',
+  'bots.accent.color',
   'bots.delete',
   'bots.deletionPreview',
   'bots.templatePreview',
@@ -3146,6 +3173,7 @@ const APP_METHODS = [
   'conversations.archive',
   'conversations.unarchive',
   'conversations.markRead',
+  'conversations.setVoiceMode',
   'conversations.members',
   'projects.create',
   'projects.setLead',
