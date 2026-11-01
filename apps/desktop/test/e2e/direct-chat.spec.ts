@@ -337,3 +337,112 @@ test('removing the conversation archives it (restorable from the contacts); dele
     await closeSession(session);
   }
 });
+
+test('a Markdown table fullscreen covers the app and keeps its toolbar clickable', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-table-fullscreen-');
+  const { page, llm, app } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '表格乙');
+
+    // 右栏开着时，它的顶栏按钮过去会浮在表格全屏之上；全屏期间整栏隐藏。
+    await page.locator('[data-testid="right-panel-toggle"]').click();
+    const rightPanel = page.locator('[data-testid="right-panel"]');
+    await expect(rightPanel).toBeVisible({ timeout: 15_000 });
+
+    llm.script('mock-main', [
+      step().replyText('| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 3 |\n| 香蕉 | 5 |'),
+    ]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('列个表');
+    await composer.press('Enter');
+
+    const tableWrapper = page.locator('[data-streamdown="table-wrapper"]');
+    await expect(tableWrapper).toBeVisible({ timeout: 60_000 });
+    // 表格没有下载必要：工具条只保留复制与全屏。
+    await expect(tableWrapper.locator('button[title="Download table"]')).toHaveCount(0);
+    const copyButton = tableWrapper.locator('button[title="Copy table"]');
+    await expect(copyButton).toBeVisible();
+
+    // 复制菜单 portal 到 body：补 z-index 前会被消息列表压住，选项点不到。
+    await copyButton.click();
+    const copyMenu = page.locator('#table-download-popover');
+    await expect(copyMenu).toBeVisible();
+    expect(await copyMenu.evaluate((el) => getComputedStyle(el).zIndex)).toBe('50');
+    expect(await copyMenu.evaluate((el) => getComputedStyle(el).paddingTop)).toBe('4px');
+    // 每个选项的文字行盒必须完整落在自己的 hover 背景（按钮盒子）内。
+    expect(
+      await copyMenu.evaluate((el) =>
+        Array.from(el.querySelectorAll('button')).every((button) => {
+          const box = button.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          const text = range.getBoundingClientRect();
+          return (
+            text.top >= box.top &&
+            text.bottom <= box.bottom &&
+            text.left >= box.left &&
+            text.right <= box.right
+          );
+        }),
+      ),
+    ).toBe(true);
+    const menuBox = await copyMenu.boundingBox();
+    expect(menuBox).not.toBeNull();
+    expect(
+      await page.evaluate(
+        ({ x, y }) => document.elementFromPoint(x, y)?.closest('#table-download-popover') !== null,
+        { x: menuBox!.x + menuBox!.width / 2, y: menuBox!.y + menuBox!.height / 2 },
+      ),
+    ).toBe(true);
+    await copyMenu.locator('button[title="Copy table as Markdown"]').click();
+    await expect(copyMenu).toBeHidden();
+    await expect
+      .poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain('苹果');
+
+    await tableWrapper.locator('button[title="View fullscreen"]').click();
+
+    const fullscreen = page.locator('[data-streamdown="table-fullscreen"]');
+    await expect(fullscreen).toBeVisible();
+    await expect(fullscreen.locator('button[title="Download table"]')).toHaveCount(0);
+    const dragBand = page.locator('[data-testid="window-drag-band"]');
+    await expect(dragBand).toHaveAttribute('data-active', 'true');
+    await expect(rightPanel).toBeHidden();
+
+    // 消息层原本是 z-10 的层叠上下文，会把浮层压在聊天头部 / 输入坞 / 右栏
+    //（z-30）之下；全屏期间必须抬到 z-50。
+    expect(
+      await page.locator('[data-message-layer]').evaluate((el) => getComputedStyle(el).zIndex),
+    ).toBe('50');
+    // 聊天头部（h-16，顶部）与输入坞（底部）也必须真正被浮层盖住，而不只是
+    // 右栏被 display:none 隐藏。
+    expect(
+      await page.evaluate(() => {
+        const hitAt = (x: number, y: number): boolean =>
+          document.elementFromPoint(x, y)?.closest('[data-streamdown="table-fullscreen"]') !== null;
+        return (
+          hitAt(window.innerWidth / 2, 50) && hitAt(window.innerWidth / 2, window.innerHeight - 20)
+        );
+      }),
+    ).toBe(true);
+    // 顶栏让出全局拖拽带的 40px，按钮才不在 drag 矩形里（否则真实点击被吞成拖窗口）。
+    expect(await fullscreen.evaluate((el) => getComputedStyle(el).paddingTop)).toBe('40px');
+
+    // 全屏工具条里的复制菜单同样要浮在抬到 z-50 的消息层之上。
+    await fullscreen.locator('button[title="Copy table"]').click();
+    await expect(copyMenu).toBeVisible();
+    expect(await copyMenu.evaluate((el) => getComputedStyle(el).zIndex)).toBe('50');
+    await copyMenu.locator('button[title="Copy table as CSV"]').click();
+    await expect(copyMenu).toBeHidden();
+
+    // 真点击退出：按钮被 drag 矩形盖住时这一步会卡住失败。
+    await fullscreen.locator('button[title="Exit fullscreen"]').click();
+    await expect(fullscreen).toBeHidden();
+    await expect(rightPanel).toBeVisible();
+    await expect(dragBand).toHaveAttribute('data-active', 'false');
+  } finally {
+    await closeSession(session);
+  }
+});

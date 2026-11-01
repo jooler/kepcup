@@ -145,7 +145,7 @@
 </script>
 
 <!-- 全高滚动：顶部浮层（单聊药丸 / 项目组顶栏）与底部输入坞都浮在本层之上，padding 让出其空间 -->
-<div class="absolute inset-0 z-10">
+<div class="absolute inset-0 z-10" data-message-layer>
   <div
     bind:this={scrollContainer}
     onscroll={onScroll}
