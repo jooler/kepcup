@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,16 +11,26 @@ import {
   windowsPowerShellRuntimeArgs
 } from './windows-powershell-execution-policy'
 
-/** Exercise real PowerShell framing and flushing; fake-child unit tests cannot verify them. */
-const describeOnWindows = process.platform === 'win32' ? describe : describe.skip
-
+/**
+ * 真 PowerShell 的组帧与刷新。P0 只 vendored macOS helper；Windows `runtime.ps1`
+ * 留到 P1（docs/design/52-computer-use.md §8，todo/computer-use.md「desktop-script
+ * 休眠」）。脚本不在树上时 `resolveDesktopScriptProviderPath('windows')` 为 null，
+ * sidecar 报 unsupported_capability，不会对一个不存在的 -File 起 PowerShell。
+ * 这组用例要等脚本入库才跑。
+ */
 // __dirname 在 vitest 的 ESM 源码直跑下未定义，用 import.meta.url 解析同一路径。
 const SCRIPT_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../native/computer-use-windows/runtime.ps1'
 )
+const runtimeVendored = existsSync(SCRIPT_PATH)
+const describeServe = process.platform === 'win32' && runtimeVendored ? describe : describe.skip
 
-describeOnWindows('runtime.ps1 serve mode', () => {
+describeServe(
+  runtimeVendored
+    ? 'runtime.ps1 serve mode'
+    : 'runtime.ps1 serve mode — skipped until P1 vendors native/computer-use-windows/runtime.ps1 (Windows computer use stays unavailable)',
+  () => {
   let host: DesktopScriptRuntimeHost | null = null
   let spawns = 0
 
