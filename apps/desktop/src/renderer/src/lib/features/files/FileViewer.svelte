@@ -16,6 +16,8 @@
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import Markdown from '$lib/features/chats/Markdown.svelte';
   import { fileViewer } from './file-viewer.svelte';
+  import CodeViewer from './CodeViewer.svelte';
+  import { codeLanguageOf } from './code-language';
   import {
     artifactKindLabelKey,
     artifactKindOf,
@@ -39,7 +41,8 @@
    * full WebApp (directory preview protocol, scripts and network enabled,
    * isolated by the sandboxed iframe on its own kepcup-file origin, external
    * links handed to the system browser),
-   * Markdown, DOCX, XLSX and plain text. PDF and other formats without a
+   * Markdown, DOCX, XLSX, code files (syntax highlighted by extension) and
+   * plain text. PDF and other formats without a
    * suitable in-app renderer show an actions panel (open with the system app /
    * download) instead of a blank frame.
    */
@@ -476,6 +479,12 @@
           <div class="h-full overflow-auto p-6">
             <pre class="text-xs whitespace-pre-wrap">{text}</pre>
           </div>
+        {:else if kind === 'code'}
+          <CodeViewer
+            code={text}
+            language={codeLanguageOf(artifact.path)}
+            fileName={artifact.name}
+          />
         {:else if kind === 'text'}
           <div class="h-full overflow-auto">
             <pre

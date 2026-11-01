@@ -401,7 +401,7 @@ describe('D75 task layer (TaskHost)', () => {
     expect(refused).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
   });
 
-  it('forward_task_result posts the result verbatim once, with task attribution', async () => {
+  it('a settled task exposes its report on the task view, never as a chat message', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
@@ -418,24 +418,25 @@ describe('D75 task layer (TaskHost)', () => {
       writes: false,
     });
     await waitRun(stack, started.taskId, ['completed'], 'task completed');
+    // §6.1 2026-11 修订：the report is read on the task page (tasks.get), not
+    // forwarded verbatim into the conversation.
+    const view = (await core.rpc.call('tasks.get', { taskId: started.taskId })) as {
+      task: { result: { text: string; status: string } | null } | null;
+    };
+    expect(view.task?.result).toEqual({
+      text: 'REPORT-F 第一行\n第二行',
+      status: 'completed',
+    });
+    const visible = domain(stack).messages.listVisible(conv.id, { limit: 100 });
+    expect(
+      visible.some((m) => 'text' in m.content && m.content.text.includes('REPORT-F')),
+    ).toBe(false);
+    // The turn's toolset no longer has a verbatim-forward tool.
     const tools = buildTaskTools({
       identity: turnIdentity(bot.id, conv.id, 'run_turn_2'),
       tasks: tasksOf(stack),
     });
-    const forwarded = await call(tool(tools, 'forward_task_result'), { task_id: started.taskId });
-    expect(forwarded.ok).toBe(true);
-    const visible = domain(stack).messages.listVisible(conv.id, { limit: 100 });
-    const message = visible.find(
-      (m) => 'text' in m.content && m.content.text.startsWith('REPORT-F'),
-    );
-    expect(message?.content).toMatchObject({
-      text: 'REPORT-F 第一行\n第二行',
-      origin: 'task',
-      taskId: started.taskId,
-    });
-    expect(message?.senderBotId).toBe(bot.id);
-    const twice = await call(tool(tools, 'forward_task_result'), { task_id: started.taskId });
-    expect(twice).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
+    expect(tools.map((entry) => entry.name)).not.toContain('forward_task_result');
     const listed = await call(tool(tools, 'list_tasks'), {});
     expect(listed.content).toContain(`[${started.taskId}] 报告  completed`);
   }, 30_000);

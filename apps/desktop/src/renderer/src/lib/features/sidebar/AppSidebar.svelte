@@ -53,6 +53,7 @@
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
   import { sidebarSections } from './sidebar-sections.svelte';
   import { workbenchIconDarkUrl, workbenchIconLightUrl } from './sidebar-icons';
+  import { SIDEBAR_ICON_ACTIVE_CLASS, SIDEBAR_ROW_ACTIVE_CLASS } from './sidebar-active-class';
   import {
     asIconComponent,
     visibleSettingsSections,
@@ -806,6 +807,7 @@
       botId={conversation.directBotId ?? conversation.id}
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
+      accentColor={conversation.bot?.accentColor ?? null}
       mask={conversation.bot?.avatarMask ?? null}
       padding={conversation.bot?.avatarPadding ?? null}
       class="size-11"
@@ -823,8 +825,7 @@
     <Tooltip.Root>
       <Tooltip.Trigger
         class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-          transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-          dark:data-active:bg-[oklch(0.16_0_0)]"
+          transition-colors hover:bg-sidebar-accent {SIDEBAR_ICON_ACTIVE_CLASS}"
         data-active={active ? 'true' : undefined}
         aria-label={entry.label}
         onclick={() => selectSettingsSection(entry.id)}
@@ -917,12 +918,10 @@
       <!-- [&_svg]:size-auto 解开 MenuButton 基础样式 [&_svg]:size-4 的钉死：
            否则预置头像 svg 被压成 16px，盖过自身的 size-full。
            激活态背景本地覆盖：--sidebar-accent 与 hover 共用、对比不够。
-           亮色相对侧栏（0.985）压到 0.93。暗色侧栏在 macOS 上是半透明
-           毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
-           比侧栏底色 0.205 再暗一档。 -->
+           底色 token 集中在 sidebar-active-class.ts，工作台入口与本条目共用一套
+           （SIDEBAR_ROW_ACTIVE_CLASS），别再在这里内联字面量。 -->
       <Sidebar.MenuButton
-        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg p-1 data-active:bg-[oklch(0.925_0_0)]
-          dark:data-active:bg-[oklch(0.25_0_0)] [&_svg]:size-auto"
+        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg p-1 {SIDEBAR_ROW_ACTIVE_CLASS} [&_svg]:size-auto"
         isActive={activeConversationId === conversation.id}
         onclick={() => void selectConversation(conversation.id)}
         data-testid={`conversation-item-${conversation.id}`}
@@ -1069,8 +1068,7 @@
                   <Tooltip.Root>
                     <Tooltip.Trigger
                       class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.16_0_0)]"
+                      transition-colors hover:bg-sidebar-accent {SIDEBAR_ICON_ACTIVE_CLASS}"
                       data-active={workbenchActive ? 'true' : undefined}
                       aria-label={t('sidebar.workbench')}
                       onclick={() => shell.openWorkbench()}
@@ -1086,8 +1084,8 @@
               <Sidebar.Menu>
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
-                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
-                    dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
+                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 {SIDEBAR_ROW_ACTIVE_CLASS}
+                    [&_svg]:size-auto"
                     isActive={workbenchActive}
                     onclick={() => shell.openWorkbench()}
                     data-testid="workbench-nav"
@@ -1130,8 +1128,7 @@
                     <Tooltip.Root>
                       <Tooltip.Trigger
                         class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
-                        transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                        dark:data-active:bg-[oklch(0.16_0_0)]"
+                        transition-colors hover:bg-sidebar-accent {SIDEBAR_ICON_ACTIVE_CLASS}"
                         data-active={activeConversationId === conversation.id ? 'true' : undefined}
                         onclick={() => void selectConversation(conversation.id)}
                         oncontextmenu={(event) => openContextMenu(event, conversation.id)}
@@ -1474,6 +1471,7 @@
             botId={bot.id}
             name={bot.name}
             avatar={bot.avatar}
+            accentColor={bot.accentColor}
             mask={bot.avatarMask}
             padding={bot.avatarPadding}
             class="size-7"

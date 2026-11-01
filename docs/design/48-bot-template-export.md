@@ -10,6 +10,7 @@
 
 - **模板是单个 JSON 文件**，带 `format: 'kepcup-bot-template'` 与 `version: 1`；未知版本导入直接拒绝（明确报错，不猜语义）。契约在 `packages/shared/src/domain/bot-template.ts`（`botTemplateSchema`），导入在边界处 zod 全量校验（仓库惯例：磁盘上的配置在边界校验）。
 - **包含**：清洗后的完整 Profile（identity / persona / role / boundaries / behavior / runtime 子集）、自写技能（authored，文件全量内嵌 base64，status 照搬）、头像（`upload:` 内嵌字节，`preset:` 标识直接保留）、已导入技能清单（仅 name + sourceUrl）。
+- **Bot 强调色**：`accentColor` 只在与默认 `mono` 不同时写入（与是否内嵌头像无关——强调色不依赖头像）；旧模板缺这一项照样能读（回退到预置头像内嵌色 / `mono`），不升版本号。导入时建完 Bot 后写 `bots.accent_color`（`bots.accent.color` 同源）。
 - **头像遮罩**：`avatarMask` 只在上传头像且遮罩为 `rounded` 时写入（缺省 = `circle`，旧模板无这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_mask`。
 - **头像内边距**：`avatarPadding` 只在上传头像且边距 > 0 时写入（缺省 = 0，旧模板缺这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_padding`。
 - **不包含**（与 D37 移交的「永不移交」清单同源）：对话（conversations / messages / attachments…）、记忆（`bots/{id}/memory.db`）、知识库（`bots/{id}/wiki/`）、任务（runs / todos / schedules / watches / delegations / jobs）、组件（widgets 四表）、密钥（secrets 表永不出现在导出路径上）、路径与应用写授权、审批与审计记录、浏览器登录态、workspace 目录。
@@ -31,6 +32,7 @@
   "avatar": { "mime": "image/png", "base64": "…" },   // 可选：upload 头像字节
   "avatarMask": "rounded",                          // 可选：上传头像遮罩，缺省 / 缺项 = "circle"
   "avatarPadding": 4,                               // 可选：上传头像内边距（像素 0-16），缺省 / 缺项 = 0
+  "accentColor": "blue",                            // 可选：Bot 强调色，缺省 / 缺项 = mono
   "skills": {
     "authored": [                    // 自写技能，文件 base64 内嵌
       { "name": "weekly-report", "status": "active", "files": [{ "path": "SKILL.md", "base64": "…" }] }

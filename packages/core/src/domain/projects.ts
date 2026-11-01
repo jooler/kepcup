@@ -5,7 +5,9 @@ import {
   newId,
   normalizeBotAvatarMask,
   normalizeBotAvatarPadding,
+  normalizeBotAccentColor,
   type Bot,
+  type BotAccentColor,
   type BotAvatarMask,
   type Conversation,
 } from '@kepcup/shared';
@@ -191,7 +193,7 @@ export class ProjectsService {
     const workdirLabel = this.deps.workdirLabelOf(conversationId);
     for (const botId of joined) {
       const bot = this.deps.bots.get(botId);
-      const name = bot ? (bot.profile.identity.name || bot.name) : botId;
+      const name = bot ? bot.profile.identity.name || bot.name : botId;
       const text =
         workdirLabel === null
           ? `${name} 已加入项目组`
@@ -246,10 +248,12 @@ export class ProjectsService {
     avatar: string | null;
     avatarMask: BotAvatarMask;
     avatarPadding: number;
+    /** 成员 Bot 的强调色；未显式设置时不带该字段（渲染端回退预置头像色）。 */
+    accentColor?: BotAccentColor;
   }> {
     const rows = this.deps.db
       .prepare(
-        'select b.id as id, b.name as name, b.avatar as avatar, b.avatar_mask as avatarMask, b.avatar_padding as avatarPadding from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
+        'select b.id as id, b.name as name, b.avatar as avatar, b.avatar_mask as avatarMask, b.avatar_padding as avatarPadding, b.accent_color as accentColor from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
       )
       .all(conversationId, limit) as Array<{
       id: string;
@@ -257,12 +261,17 @@ export class ProjectsService {
       avatar: string | null;
       avatarMask: string | null;
       avatarPadding: number | null;
+      accentColor: string | null;
     }>;
-    return rows.map((row) => ({
-      ...row,
-      avatarMask: normalizeBotAvatarMask(row.avatarMask),
-      avatarPadding: normalizeBotAvatarPadding(row.avatarPadding),
-    }));
+    return rows.map(({ accentColor, ...row }) => {
+      const normalizedAccent = normalizeBotAccentColor(accentColor);
+      return {
+        ...row,
+        avatarMask: normalizeBotAvatarMask(row.avatarMask),
+        avatarPadding: normalizeBotAvatarPadding(row.avatarPadding),
+        ...(normalizedAccent !== null ? { accentColor: normalizedAccent } : {}),
+      };
+    });
   }
 
   /**

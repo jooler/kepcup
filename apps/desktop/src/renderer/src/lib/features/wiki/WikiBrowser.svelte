@@ -3,7 +3,7 @@
   import { BookOpen, ArrowLeft, History, Trash2, Folder, ChevronLeft } from '@lucide/svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
-  import { lazyMarkdown } from '$lib/features/chats/markdown-lazy.svelte';
+  import { lazyMarkdown, MARKDOWN_CONTROLS } from '$lib/features/chats/markdown-lazy.svelte';
   import { wikiCrumbs, wikiStore, type WikiCrumb } from '$lib/stores/wiki.svelte';
   import { listWikiDir } from './wiki-browse';
   import WikiSourcesPanel from './WikiSourcesPanel.svelte';
@@ -606,7 +606,7 @@
               <p class="text-muted-foreground">…</p>
             {:else if lazyMarkdown.component}
               {@const Markdown = lazyMarkdown.component}
-              <Markdown content={historyPage?.content ?? ''} />
+              <Markdown content={historyPage?.content ?? ''} controls={MARKDOWN_CONTROLS} />
             {:else}
               <div class="whitespace-pre-wrap">{historyPage?.content ?? ''}</div>
             {/if}
@@ -693,7 +693,7 @@
           <p class="text-muted-foreground">…</p>
         {:else if lazyMarkdown.component}
           {@const Markdown = lazyMarkdown.component}
-          <Markdown content={page?.content ?? ''} />
+          <Markdown content={page?.content ?? ''} controls={MARKDOWN_CONTROLS} />
         {:else}
           <div class="whitespace-pre-wrap">{page?.content ?? ''}</div>
         {/if}

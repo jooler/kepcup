@@ -735,7 +735,7 @@ export const TASK_EVENT_CONTEXT_MAX_CHARS = 600;
 /**
  * Hard cap of a task result rendered in full into the trigger segment of the
  * waking turn (§2.4.4, §12 item 6); beyond it the turn gets the head plus a
- * hint to use forward_task_result.
+ * hint that the full report is on the task card.
  */
 export const TASK_TRIGGER_RESULT_MAX_CHARS = 12_000;
 /**

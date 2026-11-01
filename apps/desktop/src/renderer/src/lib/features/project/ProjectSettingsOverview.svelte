@@ -147,6 +147,7 @@
           botId={leadMember.bot.id}
           name={leadMember.bot.name}
           avatar={leadMember.bot.avatar}
+          accentColor={leadMember.bot.accentColor ?? null}
           mask={leadMember.bot.avatarMask}
           padding={leadMember.bot.avatarPadding}
           class="size-8"

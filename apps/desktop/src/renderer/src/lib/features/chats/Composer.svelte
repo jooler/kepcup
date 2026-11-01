@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, AudioLines, Loader2, Paperclip, Plus, Reply, X } from '@lucide/svelte';
+  import { ArrowUp, AudioLines, Loader2, Paperclip, Plus, Reply, Speech, X } from '@lucide/svelte';
   import { Editor } from '@tiptap/core';
   import type { JSONContent } from '@tiptap/core';
   import { Markdown } from '@tiptap/markdown';
@@ -24,7 +24,7 @@
     localPathName,
     type MentionTarget,
   } from './composer-text';
-  import { createSendGuard, performComposerSend } from './composer-send';
+  import { createSendGuard, performComposerSend, type AttachmentIssue } from './composer-send';
   import {
     collectMentionTokens,
     composerMention,
@@ -32,7 +32,7 @@
     mergeMentionTokens,
   } from './composer-editor';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import QuotedMedia from './QuotedMedia.svelte';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
@@ -46,6 +46,7 @@
     MAX_RECORDING_MS,
     MIN_RECORDING_MS,
     formatRecordingDuration,
+    levelToHeight,
     startVoiceRecording,
     type ActiveRecording,
     type VoiceRecording,
@@ -53,7 +54,21 @@
   import { sensors } from '$lib/sensors/sensors.svelte';
   import { SensorDisabledError } from '$lib/sensors/types';
   import { shell } from '$lib/stores/shell.svelte';
+  import { permissions } from '$lib/stores/permissions.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
+  import VoiceModeBar from './VoiceModeBar.svelte';
+  import {
+    collectAnnounceEntries,
+    createAutoSendCountdown,
+    escapeActionForVoiceMode,
+    micIntentFor,
+    voiceMode,
+    type AnnounceDeps,
+  } from './voice-mode.svelte';
+  import { speechAudio, type SpeechAudioDeps } from './speech-audio.svelte';
+  import { isCapabilityError, sendVoiceRecording, type VoiceSendDeps } from './voice-send';
+  import { SPEECH_TEXT_LIMIT } from './extractSpeechText';
+  import { createBargeInMonitor, type BargeInSession } from './voice-barge-in';
 
   let {
     readOnly = false,
@@ -106,7 +121,9 @@
   // 点击式录音（非长按）：输入框为空时右侧是语音键（点击开始录音），录音中
   // 原位变成「停止 + 计时 + 点点」胶囊（点击停止并转写填入输入框）。未配置
   // ASR 时点击置起对话内设置卡（isCapabilityReady 预检，core 错误码兜底）。
-  // 语音对话模式（按住发音频消息）暂缓实现，入口隐藏。
+  // 语音对话模式（docs/design/53-voice-conversation.md，D106）：左下工具行的
+  // Speech 键进入，输入坞原位切语音条（VoiceModeBar），说话停止后按 26 号
+  // 「语音消息语义」转文字 + 音频附件发送；编排见下方语音对话分段。
   /** null = 未在录音。 */
   let recording = $state<{ level: number; startedAt: number } | null>(null);
   let recordingElapsed = $state(0);
@@ -117,6 +134,16 @@
   // 普通变量（刻意非响应式）：录音句柄，没有界面从它派生。
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 待发送 2s 自动发送倒计时（修订 v2 V2-4）：send-ready 信号武装（电平静音
+   * 3s 判定后），重新开口 / 全部收尾路径撤销；到期与用户点击绿键同走
+   * stopVoiceModeRecording（有 spoken 的录音必然 >500ms，下限检查不受影响）。
+   */
+  const autoSendCountdown = createAutoSendCountdown({
+    schedule: (handler, delayMs) => setTimeout(handler, delayMs),
+    cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    fire: () => void stopVoiceModeRecording(),
+  });
 
   const chatSession = getChatSession();
   const isProject = $derived(chatSession.view?.conversation.type === 'project');
@@ -140,7 +167,9 @@
    * 条草稿发出。数据源在 composerDrafts（按会话缓存），组件只持视图——
    * 切换会话/重启应用后按会话重载，不再切换即丢弃。
    */
-  const pendingUploads = $derived(composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''));
+  const pendingUploads = $derived(
+    composerDrafts.uploadsOf(chatSession.view?.conversation.id ?? ''),
+  );
 
   const composerEmpty = $derived(isComposerDocEmpty(docJson));
   const hasContent = $derived(!composerEmpty || pendingUploads.length > 0);
@@ -181,23 +210,29 @@
   const pickFileTarget = $derived(createPickFileTarget(t('composer.mentionPickFile')));
 
   /**
-   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；项目组无单一 Bot、上传
-   * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
-   * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
+   * 当前会话 Bot 的强调色（单聊取 direct Bot；项目组无单一 Bot 时为 null）。
+   * 它是 Bot 的「腔调色」，与头像形状、是否上传头像无关；@ 文字色、发送键、
+   * 语音键与用户气泡同源（MessageBody）。hex 可能是 var()（黑白随主题），
+   * 必须经 style 下发。
    */
-  const botAvatarColor = $derived(
-    parsePresetAvatar(chatSession.view?.conversation.bot?.avatar ?? null)?.color ?? null,
+  const botAccent = $derived(
+    chatSession.view?.conversation.bot
+      ? resolveAccentColor(
+          chatSession.view.conversation.bot.accentColor,
+          chatSession.view.conversation.bot.avatar,
+        )
+      : null,
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
    * 图标色与用户气泡文字同一规则（avatarOnFillForeground）：黑白随主题取反，
-   * 其余预置色一律白。
+   * 其余强调色一律白。
    */
-  const botAvatarButtonPaint = $derived(
-    botAvatarColor
+  const botAccentPaint = $derived(
+    botAccent
       ? {
-          background: botAvatarColor.hex,
-          color: avatarOnFillForeground(botAvatarColor),
+          background: botAccent.hex,
+          color: avatarOnFillForeground(botAccent),
         }
       : null,
   );
@@ -451,9 +486,10 @@
         const name = document.createElement('span');
         name.className = 'min-w-0 flex-1 truncate pr-8';
         name.textContent = target.name;
-        // Bot 名称与它的预置头像同色；上传头像/占位没有单一主色，保持默认前景。
-        const avatarColor = target.kind === 'bot' ? parsePresetAvatar(target.avatar)?.color : null;
-        if (avatarColor !== undefined && avatarColor !== null) name.style.color = avatarColor.hex;
+        // Bot 名称用它的强调色（与头像形状 / 是否上传无关）；项目组等无强调色时保持默认前景。
+        if (target.kind === 'bot') {
+          name.style.color = resolveAccentColor(target.accentColor, target.avatar).hex;
+        }
         button.append(name);
         // 最右侧固定显示类型；Bot 简介不再展示（弹层保持紧凑固定宽度）。
         const kindLabel =
@@ -692,8 +728,10 @@
               return true;
             },
           },
-          // content 先留空：会话草稿由水合 effect 写入。
-          content: '',
+          // 初次挂载 docJson 还是空文档（会话草稿由水合 effect 写入）；语音模式
+          // 切换会卸载/重建编辑器，用当前 docJson 重建 = 文字草稿原样保留（53 号）。
+          // 整个构造在 untrack 内，这里不会把 docJson 变成 effect 依赖。
+          content: docJson,
         }),
     );
     ed.on('update', () => syncFromEditor(ed));
@@ -795,6 +833,33 @@
   const sendGuard = createSendGuard();
 
   /**
+   * 附件失效提示（INVALID_INPUT 判因后）：摘 chip + 按因给说法。文字直发与语音
+   * 消息发送（performComposerSend 的 onAttachmentIssue）共用，不复制两份。
+   */
+  function attachmentIssueReporter(conversationId: string): (issue: AttachmentIssue) => void {
+    return (issue) => {
+      const nameOf = (id: string): string =>
+        composerDrafts.uploadsOf(conversationId).find((upload) => upload.attachmentId === id)
+          ?.fileName ?? id;
+      composerDrafts.discardAttachments(conversationId, issue);
+      if (issue.sent.length > 0) {
+        toast.error(
+          t('composer.attachmentIssueSent', {
+            names: issue.sent.map(nameOf).join(listSeparator()),
+          }),
+        );
+      }
+      if (issue.missing.length > 0) {
+        toast.error(
+          t('composer.attachmentIssueMissing', {
+            names: issue.missing.map(nameOf).join(listSeparator()),
+          }),
+        );
+      }
+    };
+  }
+
+  /**
    * 直发当前内容（docs/design/01-conversation.md 输入与发送）。markdown/提及/
    * 引用在进 await 前捕获，编辑器同步清空——对齐原 textarea 的键入语义：
    * 清空放在异步发送之后会把用户接着键入的新内容抹掉。缺设置门禁拦下时不清空、
@@ -833,26 +898,7 @@
         restore: () => restoreComposerContent(ed, docSnapshot, conversationId),
         inspectAttachments: (attachmentIds) =>
           composerDrafts.inspectAttachments(conversationId, attachmentIds),
-        onAttachmentIssue: (issue) => {
-          const nameOf = (id: string): string =>
-            composerDrafts.uploadsOf(conversationId).find((upload) => upload.attachmentId === id)
-              ?.fileName ?? id;
-          composerDrafts.discardAttachments(conversationId, issue);
-          if (issue.sent.length > 0) {
-            toast.error(
-              t('composer.attachmentIssueSent', {
-                names: issue.sent.map(nameOf).join(listSeparator()),
-              }),
-            );
-          }
-          if (issue.missing.length > 0) {
-            toast.error(
-              t('composer.attachmentIssueMissing', {
-                names: issue.missing.map(nameOf).join(listSeparator()),
-              }),
-            );
-          }
-        },
+        onAttachmentIssue: attachmentIssueReporter(conversationId),
         reportFailure: (code) => chat.reportSendFailure(code),
       });
     });
@@ -909,35 +955,104 @@
       onEscape: () => void finishRecording(false),
     });
   });
+  // 语音模式 Esc 分档（53 号）：recording 中 = 取消录音丢弃，其余态 = 退出语音
+  // 模式。同样走 inline 档——覆盖层开着时 Esc 先关那层（两态互斥，不会同时注册）。
+  $effect(() => {
+    if (!voiceModeOwned) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.inline,
+      onEscape: () => {
+        if (escapeActionForVoiceMode(voiceMode.phase) === 'cancel-recording') {
+          cancelVoiceModeRecording();
+        } else {
+          exitVoiceMode();
+        }
+      },
+    });
+  });
   $effect(() => () => {
     recordingSession += 1;
-    if (maxRecordingTimer !== null) clearTimeout(maxRecordingTimer);
+    clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
+    // 语音模式随组件卸载退出（状态复位即可，录音资源上面已释放）；非归属
+    // 实例卸载不得关掉别人的语音模式。core 的即时态一并清（卸载后不会再有人
+    // 发退出同步）。
+    //
+    // 归属判定不能用 view 派生：CardChat / chat.close / leaveCurrent 会在组件
+    // 卸载前先 session.clear()（view=null），此时 voiceModeOwned 已是 false，
+    // 会漏掉退出与 core 同步（审查 P2）。用进入时登记的会话 id + 当前 owner
+    // 双重核对：别的实例后来抢了归属（owner 不同）就不动它。
+    const ownedConversationId =
+      enteredVoiceModeConversationId !== null &&
+      voiceMode.active &&
+      voiceMode.ownerConversationId === enteredVoiceModeConversationId
+        ? enteredVoiceModeConversationId
+        : null;
+    if (ownedConversationId !== null) {
+      voiceMode.exit();
+      speechAudio.stop(); // 在播 / 在途取源一并收场（不随组件销毁后突然出声）
+      syncCoreVoiceMode(ownedConversationId, false);
+    }
+  });
+  // 切换会话 = 退出语音模式（会话内即时态，不跨会话，53 号 D106）：停录音、
+  // 释放流；文字草稿按会话缓存原样保留。
+  let voiceModeConversationId: string | null = null;
+  /**
+   * 本实例进入语音模式时登记的会话（53 号修订 v3 审查 P2）：卸载清理不能
+   * 依赖 view 派生（session.clear 会先置空 view），用这个值 + 当前 owner 核对。
+   */
+  let enteredVoiceModeConversationId: string | null = null;
+  /**
+   * 自动播报的列表水位（53 号修订 v3）：进入语音模式时记下当前最大 seq，之后
+   * 只播消息列表里新增的可见 bot 文本——不补播历史，也不依赖 message.created
+   * 事件是否及时到达（审查：自动播放失败时以列表为源的兜底）。
+   */
+  let voiceAnnounceSinceSeq = 0;
+  $effect(() => {
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    const previous = voiceModeConversationId;
+    voiceModeConversationId = conversationId;
+    // 归属门禁：只有本实例曾是本次语音模式的归属会话才退出——否则隐藏的
+    // 项目会话 Composer 一切会话就会把卡片对话的语音模式关掉（P2 同源）。
+    const ownedBefore = voiceMode.active && voiceMode.ownerConversationId === previous;
+    if (ownedBefore && previous !== null && conversationId !== previous) exitVoiceMode();
+  });
+  // readOnly 动态翻转（卡片会话可在打开中被置 readOnly/blocked，ChatView /
+  // CardChat 直接下传 prop）：{#if readOnly} 分支会顶掉语音条——没有关闭键可
+  // 点，状态机却仍 active。在这里主动退出（含停录音释放流），与切换会话同语义。
+  $effect(() => {
+    if (readOnly && voiceModeOwned) exitVoiceMode();
   });
 
   // 录音中麦克风被停用（设置页取消勾选）：立即取消，hub 同时已切断轨道（D76-5）。
   $effect(() => {
-    if (!sensors.state.microphone.enabled && recording !== null) void finishRecording(false);
+    if (sensors.state.microphone.enabled) return;
+    if (recording !== null) void finishRecording(false);
+    if (voiceModeOwned && voiceMode.phase === 'recording') cancelVoiceModeRecording();
   });
 
   function openHardwareSettings(): void {
     shell.openSettings('hardware');
   }
 
-  async function startRecording(): Promise<void> {
-    if (readOnly || recording !== null || voiceBusy) return;
-    if (!settingsStore.isCapabilityReady('asr')) {
-      chatSession.requestCapabilitySetup('asr');
-      return;
-    }
-    const session = ++recordingSession;
+  /**
+   * 传感器链路（26 号 §录音管道 / 31 号传感器层；文字语音输入与语音对话模式
+   * 共用的同一条链路，勿复制粘贴）：隐私总闸 → TCC 授权门 → sensors.open
+   * ('microphone') → startVoiceRecording。失败 toast、设备回退提示、会话号
+   * 失效检查都在这里；拿到录音写入模块级 activeRecording（组件卸载 cleanup
+   * 统一释放）。返回 false = 没开始录音（原因已提示，或已被后续会话作废）。
+   */
+  async function acquireRecording(
+    session: number,
+    onLevel: (level: number) => void,
+  ): Promise<boolean> {
     // 启用开关是隐私总闸（D76-5）：停用时不采集，提示去「设置 → 硬件」启用。
     if (!sensors.state.microphone.enabled) {
       toast.error(t('composer.micDisabled'), {
         action: { label: t('composer.micOpenHardware'), onClick: openHardwareSettings },
       });
-      return;
+      return false;
     }
     // TCC 授权门：not-determined 时在这里拉起系统授权弹框；被拒后系统永远
     // 不会再弹，只能 toast + 深链系统设置（docs/design/26-voice-input.md）。
@@ -946,7 +1061,7 @@
       access = await sensors.ensureAccess('microphone');
     } catch {
       toast.error(t('composer.voiceMicUnavailable'));
-      return;
+      return false;
     }
     if (access !== 'granted') {
       if (access === 'denied') {
@@ -959,16 +1074,24 @@
       } else {
         toast.error(t('composer.voiceMicUnavailable'));
       }
-      return;
+      return false;
     }
     let fellBack: boolean;
+    let acquired: ActiveRecording;
     try {
       // 每次按录取当前设备偏好（设置页「硬件」分区可换设备；空 = 系统默认）。
       const opened = await sensors.open('microphone');
+      // 拿到流即统一停播（修订 v2 V2-3 P2-1）：播报队列与手动朗读共用
+      // speech-audio 唯一声道，录音开采时扬声器必须让位（否则麦克风采到的
+      // 是自己 TTS 的回声）——idle 态的播报正卡在「playing 但 phase=idle」
+      //（手动朗读），interruptSpeech 对它 no-op，只能在这里停。stop() 把在播
+      // 请求以「被抢占」收场（ended resolve 不挂起、不误报失败，onPreempted
+      // 的 epoch 守卫保证与 interruptSpeech 双触发只作废一次）；语音模式
+      // speaking 的清队收尾仍由 startVoiceModeRecording 的 interruptSpeech
+      // 负责（队列语义与裸停音频正交）。TCC 等待期（open 之前）不打断。
+      speechAudio.stop();
       try {
-        activeRecording = await startVoiceRecording(opened.stream, (level) => {
-          if (recording !== null) recording.level = level;
-        });
+        acquired = await startVoiceRecording(opened.stream, onLevel);
       } catch (error) {
         for (const track of opened.stream.getTracks()) track.stop();
         throw error;
@@ -979,7 +1102,7 @@
         toast.error(t('composer.micDisabled'), {
           action: { label: t('composer.micOpenHardware'), onClick: openHardwareSettings },
         });
-        return;
+        return false;
       }
       // 失败原因透传（getUserMedia / addModule 的底层异常），定位设备问题用。
       toast.error(
@@ -987,16 +1110,31 @@
           reason: error instanceof Error ? error.message : String(error),
         }),
       );
-      return;
+      return false;
     }
     if (session !== recordingSession) {
-      // 授权弹框期间组件已卸载（finish 已跑）：立即释放刚拿到的麦克风。
-      activeRecording.cancel();
-      activeRecording = null;
-      return;
+      // 授权弹框期间已有后续会话（finish / 退出语音模式 / 再次按录）：立即释放
+      // 刚拿到的麦克风。
+      acquired.cancel();
+      return false;
     }
+    activeRecording = acquired;
     // 所选设备不可用已回退系统默认：显式告知，不静默（D76）。
     if (fellBack) toast.warning(t('composer.micFellBack'));
+    return true;
+  }
+
+  async function startRecording(): Promise<void> {
+    if (readOnly || recording !== null || voiceBusy) return;
+    if (!settingsStore.isCapabilityReady('asr')) {
+      chatSession.requestCapabilitySetup('asr');
+      return;
+    }
+    const session = ++recordingSession;
+    const started = await acquireRecording(session, (level) => {
+      if (recording !== null) recording.level = level;
+    });
+    if (!started) return;
     recording = { level: 0, startedAt: Date.now() };
     recordingElapsed = 0;
     // 60s 上限从真正开始采集起算（授权弹框期间不占时长）。
@@ -1039,11 +1177,6 @@
     }
   }
 
-  function isCapabilityError(error: unknown): boolean {
-    const code = (error as { code?: string } | undefined)?.code;
-    return code === 'CAPABILITY_NOT_CONFIGURED' || code === 'PROVIDER_AUTH_FAILED';
-  }
-
   /** mic 键路径：转写结果填入输入框（已有文本则追加）。 */
   async function transcribeIntoComposer(rec: VoiceRecording): Promise<void> {
     try {
@@ -1075,8 +1208,485 @@
     }
   }
 
-  // 语音对话模式（按住发音频消息）暂缓实现：入口已隐藏，逻辑待后续恢复
-  //（sendVoiceMessage / 语音条 UI 的设计见 docs/design/26-voice-input.md）。
+  // --- 语音对话模式（docs/design/53-voice-conversation.md，D106）------------
+  // 输入坞原位切语音条（VoiceModeBar），说话停止后按 26 号「语音消息语义」
+  // 发送：转写文本作消息正文 + WAV 音频附件。UI 状态在 voice-mode.svelte.ts
+  //（四态状态机），录音传感器链路复用 acquireRecording，发送编排在
+  // voice-send.ts（复用 performComposerSend / sendGuard）；Bot 播报（speaking
+  // 态）见下方「Bot 播报」分段（队列在 voice-mode，依赖在此注入）。
+  // 静音自动发送（修订 v2 V2-4）：端点检测状态机在 voice-mode（feedLevel 纯
+  // 函数），本文件只接信号——待发送武装 2s 自动发送倒计时、5s 未说话自动取消。
+
+  /** 入口可见性：仅私聊（direct / card）且非项目组；readOnly 分支整体不出输入坞。 */
+  const voiceModeEntryVisible = $derived(!isProject);
+  /** 录音中禁用入口（文字语音输入进行时不得切入语音模式）。 */
+  const voiceModeEntryDisabled = $derived(recording !== null || voiceBusy);
+  /**
+   * 本实例是否接管语音模式（修订 v2 V2-5 审查 P2）：voiceMode 是模块单例，而
+   * 主聊天与卡片对话两个 Composer 可同时挂载（项目会话的 ProjectView 只 CSS
+   * 隐藏聊天体）——语音条渲染、播报入队、barge-in 武装与全部收尾路径都只归
+   * 归属会话那个实例，否则隐藏实例会抢先把录音写进自己的会话。
+   */
+  const voiceModeOwned = $derived(voiceMode.owns(chatSession.view?.conversation.id ?? null));
+
+  /**
+   * 语音模式即时态同步给 core（53 号修订 v3）：core 据此给对话轮注入
+   * `<voice_conversation>` 回复规则、把 Bot 回复标记 origin:'voice'。失败只留
+   * 痕（下一条语音消息发送时 core 会再次置真；模式本身不受影响）。
+   */
+  function syncCoreVoiceMode(conversationId: string, active: boolean): void {
+    void core.call('conversations.setVoiceMode', { conversationId, active }).catch((error) => {
+      console.warn('[kepcup] voice mode sync failed', { conversationId, active, error });
+    });
+  }
+
+  /**
+   * 入口键：预检 asr 与 tts（缺哪个置哪张能力卡、不进入；快照未加载时放行，
+   * 由 core 错误码兜底）。都 ready 才进入——语音模式内部不再处理缺能力。
+   */
+  function enterVoiceMode(): void {
+    if (recording !== null || voiceBusy) return;
+    const conversationId = chatSession.view?.conversation.id ?? null;
+    if (conversationId === null) return; // 视图未载入：无归属会话，不进入
+    if (!settingsStore.isCapabilityReady('asr')) {
+      chatSession.requestCapabilitySetup('asr');
+      return;
+    }
+    if (!settingsStore.isCapabilityReady('tts')) {
+      chatSession.requestCapabilitySetup('tts');
+      return;
+    }
+    // 刷新麦克风权限快照（修订 v2 V2-5 审查 P3）：barge-in 监听只在
+    // permission === 'granted' 时武装（不在播报中弹 TCC），hub 启动时不查权限，
+    // 不刷新会让本轮播报静默失去语音打断。
+    void sensors.refresh('microphone');
+    // 同一时刻只有一个语音模式会话（声音单例）：从别的会话进入时先释放旧
+    // 归属，否则 core / 语音条会残留上一个会话（审查 P2）。
+    const previousOwner = voiceMode.active ? voiceMode.ownerConversationId : null;
+    if (previousOwner !== null && previousOwner !== conversationId) {
+      syncCoreVoiceMode(previousOwner, false);
+    }
+    // 播报水位 = 进入时的最后一条：只自动播进入之后的新消息（不补播历史）。
+    const messages = chatSession.view?.messages ?? [];
+    voiceAnnounceSinceSeq = messages.reduce((max, message) => Math.max(max, message.seq), 0);
+    voiceMode.enter(conversationId);
+    enteredVoiceModeConversationId = conversationId;
+    syncCoreVoiceMode(conversationId, true);
+  }
+
+  /**
+   * 语音模式的录音一次性计时器统一清撤：60s 上限 + 待发送 2s 自动发送
+   * （修订 v2 V2-4）。stop / cancel / exit / 卸载四类收尾路径都必须经过这里
+   * ——待发送倒计时漏撤会在退出后误发一条语音消息。
+   */
+  function clearVoiceModeRecordingTimers(): void {
+    if (maxRecordingTimer !== null) {
+      clearTimeout(maxRecordingTimer);
+      maxRecordingTimer = null;
+    }
+    autoSendCountdown.disarm();
+  }
+
+  /**
+   * 退出语音模式：使在途 start 失效、停录音释放流，停掉在播 / 在途取源的音频，
+   * 回文字输入（草稿保留），并同步 core（后续任务结果回合不再按语音模式回复）。
+   */
+  function exitVoiceMode(): void {
+    if (!voiceMode.active) return;
+    const conversationId = voiceMode.ownerConversationId;
+    recordingSession += 1;
+    clearVoiceModeRecordingTimers();
+    activeRecording?.cancel();
+    activeRecording = null;
+    speechAudio.stop(); // 退出即静音：在途 TTS / 附件拉取一并作废
+    voiceMode.exit();
+    enteredVoiceModeConversationId = null;
+    if (conversationId !== null) syncCoreVoiceMode(conversationId, false);
+  }
+
+  /** 语音条麦克风键（idle = 开始录音 / recording = 停止并转写发送 / speaking = 打断并录音）。 */
+  function onVoiceModeMicClick(): void {
+    const intent = micIntentFor(voiceMode.phase);
+    if (intent === 'start' || intent === 'interrupt') void startVoiceModeRecording();
+    else if (intent === 'stop-send') void stopVoiceModeRecording();
+    // transcribing 禁用（识别在途）。
+  }
+
+  /**
+   * 语音条录音：与文字语音输入同一条传感器链路（acquireRecording）。speaking
+   * 态点麦克风也走这里——**拿到流之后**才打断播报（53 号风险 #1：TCC 授权弹框
+   * 等待期播报继续，不在用户还没开口时白打断）。拿到流后的收尾分两层：
+   * acquireRecording 里 speechAudio.stop() 停掉在响的音频（播报 / 语音气泡点击
+   * 通吃，并作废在途取源；idle 态的手动播放只能靠它）；这里的 interruptSpeech
+   * 再清播报队列（epoch 作废、phase 复位——queue 语义，裸停音频不覆盖；idle
+   * 态 no-op）。
+   */
+  async function startVoiceModeRecording(): Promise<void> {
+    if (!voiceModeOwned) return;
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
+    const session = ++recordingSession;
+    const started = await acquireRecording(session, (level) => {
+      voiceMode.level = level;
+      onVoiceModeLevel(level);
+    });
+    if (!started) return;
+    // 拿到流才打断：停当前音频 + 清空未播队列（插话作废），随即进 recording。
+    voiceMode.interruptSpeech();
+    voiceMode.dispatch('record-started');
+    // 60s 到点自动停止并转写发送；上限从真正开始采集起算（与文字语音输入一致）。
+    maxRecordingTimer = setTimeout(() => void stopVoiceModeRecording(), MAX_RECORDING_MS);
+  }
+
+  /**
+   * 录音电平 → 端点检测接线（修订 v2 V2-4）：映射电平喂状态机（feedLevel 内部
+   * 只在 recording 相位生效），按一次性信号接自动收尾——待发送武装 2s 自动发送
+   * 倒计时、重新开口撤销、5s 未说话自动取消（不干等 60s 上限）。
+   */
+  function onVoiceModeLevel(level: number): void {
+    const signal = voiceMode.feedLevel(level, Date.now());
+    if (signal === 'send-ready') autoSendCountdown.arm();
+    else if (signal === 'speech-resumed') autoSendCountdown.disarm();
+    else if (signal === 'no-speech') autoCancelNoSpeechRecording();
+  }
+
+  /** 全程未说话满 5s（修订 v2 V2-4）：自动取消录音并提示（复用「未识别到语音」）。 */
+  function autoCancelNoSpeechRecording(): void {
+    if (voiceMode.phase !== 'recording' || voiceMode.hasSpoken) return;
+    cancelVoiceModeRecording();
+    toast.error(t('composer.voiceNoSpeech'));
+  }
+
+  /** 取消录音（丢弃）：Esc（recording 档）、麦克风被停用、退出语音模式。 */
+  function cancelVoiceModeRecording(): void {
+    if (voiceMode.phase !== 'recording') return;
+    recordingSession += 1;
+    clearVoiceModeRecordingTimers();
+    activeRecording?.cancel();
+    activeRecording = null;
+    voiceMode.dispatch('settled');
+  }
+
+  /**
+   * 停止录音并转写发送（麦克风键 / 60s 到点 / 待发送绿键与 2s 到点）：停止采集
+   * → 转写 → 附件管道发送，收尾回 idle——发送不等 Bot 回复，立即可再录
+   * （53 号半双工）。所有触发都汇入这里，相位守卫保证不会双重收尾。
+   */
+  async function stopVoiceModeRecording(): Promise<void> {
+    if (voiceMode.phase !== 'recording') return;
+    recordingSession += 1;
+    clearVoiceModeRecordingTimers();
+    const active = activeRecording;
+    activeRecording = null;
+    voiceMode.dispatch('stop-requested');
+    if (active === null) {
+      voiceMode.dispatch('settled');
+      return;
+    }
+    // 显式只发往发起录音时的会话（转写/上传期间用户可能已切走；切走会退出
+    // 语音模式，但这条已说出口的消息仍应落到原会话）。
+    const conversationId = chatSession.view?.conversation.id;
+    try {
+      const result = await active.stop();
+      if (result.durationMs < MIN_RECORDING_MS) {
+        toast.error(t('composer.voiceTooShort'));
+        return;
+      }
+      if (conversationId !== undefined) {
+        await sendVoiceRecording(result, conversationId, voiceSendDeps(conversationId));
+      }
+    } catch (error) {
+      toast.error(
+        t('composer.voiceRecordFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      voiceMode.dispatch('settled');
+    }
+  }
+
+  /**
+   * 语音消息发送（26 号「语音消息语义」）的接线：分支编排在 voice-send.ts
+   * （空识别不发送 / 缺设置置卡 / 非缺设置空文本 + 附件照发 / guard 忙时排队
+   * 串行——不静默丢转写文本），这里只注入转写 RPC、toast、置卡与附件管道。
+   */
+  function voiceSendDeps(conversationId: string): VoiceSendDeps {
+    return {
+      transcribe: async (audioBase64) => {
+        const result = (await core.call('media.transcribeSpeech', {
+          audioBase64,
+          audioMime: 'audio/wav',
+        })) as { text: string };
+        // trim 与空判在 voice-send 编排侧（「没说话」语义集中在被测模块）。
+        return result.text;
+      },
+      onNoSpeech: () => toast.error(t('composer.voiceNoSpeech')),
+      onCapabilityMissing: () => chatSession.requestCapabilitySetup('asr'),
+      onTranscribeFailed: (error) =>
+        toast.error(
+          errorText(
+            (error as { code?: string } | undefined)?.code,
+            t('composer.voiceTranscribeFailed'),
+          ),
+        ),
+      uploadVoiceRecording: (file) => composerDrafts.uploadFiles(conversationId, [file]),
+      // 与文字直发共用同一 sendGuard（按会话分闸）：语音侧在 guard 忙时等待
+      // 前一条完成后再发（voice-send.ts 头注释，P2-1）。
+      guard: sendGuard,
+      // 转写落定、进入上传/排队/发送：语音条文案「识别中…」→「发送中…」。
+      onSending: () => {
+        voiceMode.sending = true;
+      },
+      composerSend: {
+        settle: () => composerDrafts.settle(conversationId),
+        // 显式只发往发起录音时的会话：转写/上传/排队期间用户可能已切走。
+        // voiceMode 由 voice-send 编排传入（53 号修订 v2 V2-1）：core 记
+        // origin:'voice'，Bot 收到纯文本语义；文字直发不带。
+        send: (body, attachmentIds, opts) =>
+          chatSession.send(conversationId, body, {
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+            ...(opts?.voiceMode === true ? { voiceMode: true } : {}),
+          }),
+        commit: (attachmentIds) => composerDrafts.commitSent(conversationId, attachmentIds),
+        // 语音内容不进输入框，无草稿可回填：发送失败时附件 chip 原样留在
+        // composerDrafts，退回文字模式可见可删（53 号「无静默孤儿」）。
+        restore: () => undefined,
+        inspectAttachments: (attachmentIds) =>
+          composerDrafts.inspectAttachments(conversationId, attachmentIds),
+        onAttachmentIssue: attachmentIssueReporter(conversationId),
+        reportFailure: (code) => chat.reportSendFailure(code),
+      },
+    };
+  }
+
+  // --- Bot 播报（docs/design/53-voice-conversation.md「Bot 语音播报链路」，WP3）
+  // 队列与状态机在 voice-mode.svelte.ts（可注入纯逻辑，单测在那边）；音频统一
+  // 走 speech-audio.svelte.ts（缓存 + 播放仲裁，修订 v2 V2-3）——这里注入真实
+  // 依赖（合成 RPC / objectURL / Audio 元素 / 失败 toast）并订阅消息事件。
+  // 播报音频不落附件——文字已在列表，落附件会拖慢落库且污染上下文附件行（53 号）。
+
+  /** atob 手动解码（CSP 同 attachments.svelte.ts：connect-src 不含 data:）。 */
+  function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  /**
+   * speech-audio 依赖（53 号修订 v2 V2-3）：Bot 语音音频缓存 + 播放仲裁的真实
+   * 接线——合成 RPC / objectURL / 唯一 Audio 元素 / 失败 toast（手动朗读失败
+   * 与播报失败同款提示）。播报队列与朗读键共用。
+   */
+  function speechAudioDeps(): SpeechAudioDeps {
+    return {
+      synthesize: async (text) => {
+        const result = (await core.call('media.synthesizeSpeech', {
+          text,
+          format: 'mp3',
+        })) as { audioBase64: string; mimeType: string };
+        return {
+          blob: new Blob([base64ToBytes(result.audioBase64)], { type: result.mimeType }),
+          mimeType: result.mimeType,
+        };
+      },
+      createObjectUrl: (blob) => URL.createObjectURL(blob),
+      revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+      createElement: () => new Audio(),
+      onToggleFailure: (error) => {
+        toast.error(
+          errorText((error as { code?: string } | undefined)?.code, t('voiceMode.speakFailed')),
+          {
+            action: {
+              label: t('voiceMode.openSettings'),
+              onClick: () => shell.openSettings('models'),
+            },
+          },
+        );
+      },
+      // 用户手动点了语音气泡（53 号修订 v3）：停当前 + 清空未播队列，并让本轮
+      // 后续新音频只留在列表里由用户自己点（下一段用户语音开始时恢复自动播报）。
+      onManualPlayStart: () => voiceMode.takeManualControl(),
+    };
+  }
+
+  /** 播报队列依赖：音频经 speech-audio（缓存 + 仲裁）；第一条失败停队 + toast。 */
+  function announceDeps(): AnnounceDeps {
+    return {
+      resolveAudio: (messageId, text) => speechAudio.ensureUrl(messageId, text),
+      play: (input) => speechAudio.play(input),
+      onFirstFailure: (error) => {
+        toast.error(
+          errorText((error as { code?: string } | undefined)?.code, t('voiceMode.speakFailed')),
+          {
+            action: {
+              label: t('voiceMode.openSettings'),
+              onClick: () => shell.openSettings('models'),
+            },
+          },
+        );
+      },
+    };
+  }
+
+  // 挂载即注入（无响应式依赖，只跑一次）；重复挂载（主聊天 + 卡片对话）时后者
+  // 替换前者（attachAnnouncer 先清理旧实例；speech-audio 缓存不清——全局会话级）。
+  // 卸载清理走既有的 voiceMode.exit()。
+  $effect(() => {
+    speechAudio.configure(speechAudioDeps());
+    // 播报器归属（P2 同源）：两个 Composer 都挂载时只有归属实例注入队列依赖，
+    // 否则后挂载的隐藏实例会顶掉 owner 的 toast / 合成接线。
+    if (!voiceModeOwned) return;
+    voiceMode.attachAnnouncer(announceDeps());
+  });
+
+  // 入队（53 号修订 v3）：以**消息列表**为源扫描进入语音模式之后的新消息，
+  // 入队条件与朗读文本提取复用 announceEntryFor（可见性口径 = 消息列表）。
+  // 不再依赖 message.created 订阅口：列表更新一定会触发本效果，事件漏投 /
+  // 订阅晚挂载都不会漏播；水位保证不补播历史。任务消息（origin:'task'）由
+  // announceEntryFor 排除，仍不自动播报。
+  $effect(() => {
+    if (!voiceModeOwned || !voiceMode.active) return;
+    const view = chatSession.view;
+    if (view === null) return;
+    const { entries, lastSeq } = collectAnnounceEntries(view.messages, voiceAnnounceSinceSeq, {
+      conversationId: view.conversation.id,
+      active: true,
+      approvals: permissions.approvals,
+    });
+    voiceAnnounceSinceSeq = lastSeq;
+    for (const entry of entries) {
+      const enqueued = voiceMode.announce(entry);
+      if (enqueued && entry.truncated) {
+        // {limit} 占位符：locales.test.ts 的占位符一致性校验兜住 zh/en 同步。
+        toast.info(t('voiceMode.truncated', { limit: SPEECH_TEXT_LIMIT }));
+      }
+    }
+  });
+
+  // --- 停止播放键 + 播报中语音打断（barge-in，docs/design/53 修订 v2 V2-5）----
+  // 停止播放键（■，VoiceModeBar）：只停播清队回 idle，不开始录音——走既有语义
+  // 组合（interruptSpeech 清队 + speechAudio.stop 兜底静音），不新造停止语义。
+  // 语音触发打断：纯逻辑状态机在 voice-barge-in.ts（武装 / 拆除 / 一次性触发，
+  // 零 DOM import），本文件持有依赖注入（传感器层开流 + AnalyserNode 电平 /
+  // clock / 计时器）并挂武装窗口；监听电平只喂 barge-in 判定，不进 feedLevel
+  // （端点检测仅 recording 相位生效，互不干扰）。
+
+  /**
+   * 停止播放键（修订 v2 V2-5）：speaking 相位停当前音频 + 清播报队列（含合成
+   * 中的条目，epoch 作废），相位回 idle，**不开始录音**。interruptSpeech 的
+   * 当前播放 stop 经 speech-audio 句柄落为仲裁抢占；speechAudio.stop() 兜底
+   * 静音唯一声道（缓存条目保留，可回放）。
+   */
+  function stopVoiceModePlayback(): void {
+    if (!voiceModeOwned || voiceMode.phase !== 'speaking') return;
+    voiceMode.interruptSpeech();
+    speechAudio.stop();
+  }
+
+  /**
+   * barge-in 监听会话（DOM 实现，注入给 createBargeInMonitor）：复用传感器层
+   * 开一路麦克风流（隐私总闸关闭时 hub 会统一停流；不弹 TCC——监听失败静默
+   * 降级，点麦克风打断始终可用）→ AudioContext + AnalyserNode 读 RMS →
+   * levelToHeight 映射（与 SPEECH_LEVEL_THRESHOLD / 录音电平同一口径）。
+   */
+  async function openBargeInSession(): Promise<BargeInSession> {
+    const opened = await sensors.open('microphone');
+    let context: AudioContext | null = null;
+    try {
+      context = new AudioContext();
+      void context.resume().catch(() => {}); // 挂起态防御（sticky 激活下通常已在运行）
+      const source = context.createMediaStreamSource(opened.stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      // 零增益落地（voice-recorder 同款）：不接目的地不会被 graph 拉动。
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      analyser.connect(mute);
+      mute.connect(context.destination);
+      const buffer = new Float32Array(analyser.fftSize);
+      return {
+        readLevel: () => {
+          analyser.getFloatTimeDomainData(buffer);
+          let sum = 0;
+          for (let i = 0; i < buffer.length; i += 1) {
+            const sample = buffer[i] ?? 0;
+            sum += sample * sample;
+          }
+          return levelToHeight(Math.sqrt(sum / buffer.length));
+        },
+        close: () => {
+          source.disconnect();
+          analyser.disconnect();
+          mute.disconnect();
+          for (const track of opened.stream.getTracks()) track.stop();
+          void context?.close().catch(() => {});
+        },
+      };
+    } catch (error) {
+      for (const track of opened.stream.getTracks()) track.stop();
+      void context?.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  const bargeInMonitor = createBargeInMonitor({
+    timers: {
+      timeout: (delayMs, handler) => {
+        const handle = setTimeout(handler, delayMs);
+        return () => clearTimeout(handle);
+      },
+      interval: (intervalMs, handler) => {
+        const handle = setInterval(handler, intervalMs);
+        return () => clearInterval(handle);
+      },
+    },
+    now: () => Date.now(),
+    open: () => openBargeInSession(),
+    onTrigger: () => void onBargeInTriggered(),
+  });
+
+  /**
+   * barge-in 触发（监听判定用户开口，监听已在状态机内自拆）：先停播——TCC
+   * 等待期不回播（打断时机绑定「触发即停播、录音拿到流才开始」，53 号风险 #1
+   * 同语义）；再走与点麦克风同一条 startVoiceModeRecording 链路（acquireRecording
+   * 内含隐私总闸 / TCC 门 / sensors.open 全部守卫）。manual 播放（点击语音气泡
+   * 重播）同样可被打断：相位 idle 时清队是 no-op，停播由 speechAudio.stop 完成。
+   */
+  function onBargeInTriggered(): void {
+    // 两个 Composer（主聊天 + 卡片对话）并存时各挂一份监听，同拍触发会走两次
+    // 本回调：先到者已把相位翻出 speaking / 停掉音频，后到者在此放弃——只起
+    // 一条录音链路。
+    if (!voiceModeOwned) return;
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
+    voiceMode.interruptSpeech();
+    speechAudio.stop();
+    void startVoiceModeRecording();
+  }
+
+  /**
+   * 武装窗口（语音模式下任何音频在播：播报队列 playing、手动点语音气泡重播、
+   * 用户语音消息回放）。合成中无声音不监听。active / 播放态 / 麦克风总闸任一
+   * 变化都会重跑：条件不再成立（播完 / 打断 / 停止 / 退出模式 / 切会话 / 组件
+   * 卸载）即走 cleanup 拆除（含取消未到点的武装定时器与在途 open）。主聊天与
+   * 卡片对话两个 Composer 并存时会各挂一份监听——触发后先到者停播，effects
+   * cleanup 同拍拆除另一份，不会双重起录音。
+   */
+  $effect(() => {
+    if (!voiceModeOwned) return;
+    if (!voiceMode.active || !speechAudio.isPlaying) return;
+    // 只在 idle / speaking 监听：recording / transcribing 时麦克风已被占用，
+    // 触发回调也不会起录音；此时再开一路监听纯属浪费（且会白拆一次）。
+    if (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking') return;
+    if (!sensors.state.microphone.enabled) return; // 隐私总闸：不开监听
+    // 权限门：只对已授权设备开监听流——未授权 / 未查询时空 `sensors.open` 会在
+    // 播报中弹 TCC 授权框（用户只是在听回复），违背「监听失败静默降级」。用户
+    // 经由本模式录过一次音即授权，之后监听自然可用。
+    if (sensors.state.microphone.permission !== 'granted') return;
+    bargeInMonitor.arm();
+    return () => bargeInMonitor.disarm();
+  });
 
   // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
   // 上传管道在 composerDrafts（按会话缓存）；这里只负责收集文件与视图操作。
@@ -1158,245 +1768,284 @@
   {:else}
     <div class="mx-auto w-full max-w-3xl">
       <div class="relative flex flex-col">
-        <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里；
+        {#if voiceModeOwned}
+          <!-- 语音对话条（53 号 D106）：语音模式占输入坞原位（同层替换，不走
+               fixed/Portal，不接 data-window-overlay），消息列表始终可见可滚动；
+               待发送附件 chips / 引用条不在此渲染（草稿仍共用 composerDrafts）。 -->
+          <VoiceModeBar
+            onMicClick={onVoiceModeMicClick}
+            onStopClick={stopVoiceModePlayback}
+            onClose={exitVoiceMode}
+          />
+        {:else}
+          <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里；
              输入区垫底；单行＝输入与按钮同行，多行＝输入占满整宽、按钮沉底。
              背景用 surface-raised（比背景亮一级）；粘贴/拖拽文件即上传附件 -->
-        <div
-          class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5 transition-colors focus-within:border-ring/40 {dragOver
-            ? 'border-ring/60'
-            : ''}"
-          bind:this={composerPillEl}
-          data-testid="composer-pill"
-          data-multiline={stacked ? 'true' : 'false'}
-          role="group"
-          onpaste={onPaste}
-          ondragover={(event) => {
-            event.preventDefault();
-            dragOver = true;
-          }}
-          ondragleave={() => (dragOver = false)}
-          ondrop={onDrop}
-        >
-          <input
-            type="file"
-            multiple
-            class="hidden"
-            bind:this={fileInputEl}
-            onchange={onPickedFiles}
-            data-testid="composer-file-input"
-          />
-          {#if pendingUploads.length > 0}
-            <div
-              class="flex flex-wrap items-center gap-1.5 px-1 pt-2"
-              data-testid="composer-pending-attachments"
-            >
-              {#each pendingUploads as upload (upload.key)}
-                {#if upload.mime.startsWith('image/')}
-                  <!-- 图片：缩略图形态（点击灯箱预览，不等上传完成），悬浮露出移除键。
+          <div
+            class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5 transition-colors focus-within:border-ring/40 {dragOver
+              ? 'border-ring/60'
+              : ''}"
+            bind:this={composerPillEl}
+            data-testid="composer-pill"
+            data-multiline={stacked ? 'true' : 'false'}
+            role="group"
+            onpaste={onPaste}
+            ondragover={(event) => {
+              event.preventDefault();
+              dragOver = true;
+            }}
+            ondragleave={() => (dragOver = false)}
+            ondrop={onDrop}
+          >
+            <input
+              type="file"
+              multiple
+              class="hidden"
+              bind:this={fileInputEl}
+              onchange={onPickedFiles}
+              data-testid="composer-file-input"
+            />
+            {#if pendingUploads.length > 0}
+              <div
+                class="flex flex-wrap items-center gap-1.5 px-1 pt-2"
+                data-testid="composer-pending-attachments"
+              >
+                {#each pendingUploads as upload (upload.key)}
+                  {#if upload.mime.startsWith('image/')}
+                    <!-- 图片：缩略图形态（点击灯箱预览，不等上传完成），悬浮露出移除键。
                        重启水合的条目预览字节异步重建，就绪前显示加载态 -->
-                  <div class="group relative" data-testid={`pending-attachment-${upload.state}`}>
-                    <button
-                      type="button"
-                      class="block size-18 overflow-hidden rounded-xl border border-border/50 {upload.state ===
-                      'error'
-                        ? 'border-destructive'
-                        : ''}"
-                      onclick={() => openPendingPreview(upload)}
-                      aria-label={t('attachments.openPreview', { name: upload.fileName })}
-                      data-testid="pending-attachment-image"
-                    >
-                      {#if upload.previewUrl !== null}
-                        <img
-                          src={upload.previewUrl}
-                          alt={upload.fileName}
-                          class="size-full object-cover"
-                          draggable="false"
-                        />
-                      {:else}
-                        <Loader2
-                          class="mx-auto size-4 animate-spin text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      {/if}
-                    </button>
-                    {#if upload.state === 'uploading'}
-                      <div
-                        class="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40"
+                    <div class="group relative" data-testid={`pending-attachment-${upload.state}`}>
+                      <button
+                        type="button"
+                        class="block size-18 overflow-hidden rounded-xl border border-border/50 {upload.state ===
+                        'error'
+                          ? 'border-destructive'
+                          : ''}"
+                        onclick={() => openPendingPreview(upload)}
+                        aria-label={t('attachments.openPreview', { name: upload.fileName })}
+                        data-testid="pending-attachment-image"
                       >
-                        <Loader2 class="size-4 animate-spin text-white" aria-hidden="true" />
-                      </div>
-                    {/if}
-                    <button
-                      type="button"
-                      class="absolute -top-1.5 -right-1.5 rounded-full bg-foreground/70 p-0.5 text-background opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                      onclick={() => removePendingUpload(upload.key)}
-                      aria-label={t('composer.attachmentRemove')}
-                      data-testid="pending-attachment-image-remove"
-                    >
-                      <X class="size-3" />
-                    </button>
-                  </div>
-                {:else}
-                  <span
-                    class="flex items-center gap-1 rounded-full border bg-background/80 py-1 pr-1 pl-2.5 text-xs text-muted-foreground
+                        {#if upload.previewUrl !== null}
+                          <img
+                            src={upload.previewUrl}
+                            alt={upload.fileName}
+                            class="size-full object-cover"
+                            draggable="false"
+                          />
+                        {:else}
+                          <Loader2
+                            class="mx-auto size-4 animate-spin text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        {/if}
+                      </button>
+                      {#if upload.state === 'uploading'}
+                        <div
+                          class="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40"
+                        >
+                          <Loader2 class="size-4 animate-spin text-white" aria-hidden="true" />
+                        </div>
+                      {/if}
+                      <button
+                        type="button"
+                        class="absolute -top-1.5 -right-1.5 rounded-full bg-foreground/70 p-0.5 text-background opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        onclick={() => removePendingUpload(upload.key)}
+                        aria-label={t('composer.attachmentRemove')}
+                        data-testid="pending-attachment-image-remove"
+                      >
+                        <X class="size-3" />
+                      </button>
+                    </div>
+                  {:else}
+                    <span
+                      class="flex items-center gap-1 rounded-full border bg-background/80 py-1 pr-1 pl-2.5 text-xs text-muted-foreground
                       {upload.state === 'error' ? 'border-destructive/50 text-destructive' : ''}"
-                    data-testid={`pending-attachment-${upload.state}`}
-                  >
-                    {#if upload.state === 'uploading'}
-                      <Loader2 class="size-3 animate-spin" aria-hidden="true" />
-                    {:else}
-                      <Paperclip class="size-3" aria-hidden="true" />
-                    {/if}
-                    <span class="max-w-40 truncate">{upload.fileName}</span>
-                    <button
-                      type="button"
-                      class="shrink-0 rounded-full p-0.5 hover:bg-accent"
-                      onclick={() => removePendingUpload(upload.key)}
-                      aria-label={t('composer.attachmentRemove')}
+                      data-testid={`pending-attachment-${upload.state}`}
                     >
-                      <X class="size-3" />
-                    </button>
-                  </span>
+                      {#if upload.state === 'uploading'}
+                        <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+                      {:else}
+                        <Paperclip class="size-3" aria-hidden="true" />
+                      {/if}
+                      <span class="max-w-40 truncate">{upload.fileName}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-full p-0.5 hover:bg-accent"
+                        onclick={() => removePendingUpload(upload.key)}
+                        aria-label={t('composer.attachmentRemove')}
+                      >
+                        <X class="size-3" />
+                      </button>
+                    </span>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+            {#if replyTo}
+              <div
+                class="mt-2 flex items-center gap-2 rounded-full border bg-background/80 py-1.5 pr-1 pl-2.5 text-xs text-muted-foreground"
+                data-testid="reply-preview"
+              >
+                <Reply class="size-3.5 shrink-0" aria-hidden="true" />
+                <span class="min-w-0 flex-1 truncate">
+                  {t('composer.replying', { name: replyToName, text: replyToText })}
+                </span>
+                {#if (replyTo.attachments ?? []).length > 0}
+                  <!-- 被引用的图片等附件（图片消息没有正文文字，空文本块靠它可辨） -->
+                  <QuotedMedia attachments={replyTo.attachments ?? []} />
                 {/if}
-              {/each}
-            </div>
-          {/if}
-          {#if replyTo}
-            <div
-              class="mt-2 flex items-center gap-2 rounded-full border bg-background/80 py-1.5 pr-1 pl-2.5 text-xs text-muted-foreground"
-              data-testid="reply-preview"
-            >
-              <Reply class="size-3.5 shrink-0" aria-hidden="true" />
-              <span class="min-w-0 flex-1 truncate">
-                {t('composer.replying', { name: replyToName, text: replyToText })}
-              </span>
-              {#if (replyTo.attachments ?? []).length > 0}
-                <!-- 被引用的图片等附件（图片消息没有正文文字，空文本块靠它可辨） -->
-                <QuotedMedia attachments={replyTo.attachments ?? []} />
+                <button
+                  type="button"
+                  class="shrink-0 rounded-full p-1 hover:bg-accent"
+                  onclick={() => (chatSession.replyTo = null)}
+                  data-testid="reply-cancel"
+                  aria-label={t('composer.replyCancel')}
+                >
+                  <X class="size-3" />
+                </button>
+              </div>
+            {/if}
+            {#snippet attachButton()}
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles
+                  ? ''
+                  : 'opacity-50'}"
+                onclick={pickFiles}
+                disabled={readOnly}
+                aria-disabled={readOnly ? undefined : !canAttachFiles}
+                title={canAttachFiles ? t('composer.attach') : t('settings.desktopOnly')}
+                aria-label={t('composer.attach')}
+                data-testid="composer-attach"
+              >
+                <Plus class="size-4" />
+              </Button>
+            {/snippet}
+            {#snippet voiceModeEntry()}
+              {#if voiceModeEntryVisible}
+                <!-- 语音对话入口（53 号 D106）：发送键左侧；录音中禁用，点击预检
+                   asr + tts（缺哪个置哪张能力卡，不进入）。 -->
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground"
+                  onclick={enterVoiceMode}
+                  disabled={voiceModeEntryDisabled}
+                  title={t('voiceMode.entry')}
+                  aria-label={t('voiceMode.entry')}
+                  data-testid="composer-voice-mode-entry"
+                >
+                  <Speech class="size-4" />
+                </Button>
               {/if}
+            {/snippet}
+            {#snippet sendButton()}
+              <!-- 原生 button 才能吃 style:（Button 组件不转发该指令）。
+                 取到预置色时内联盖住 primary；悬停改透明度，避免 hover 主色盖回来。 -->
               <button
                 type="button"
-                class="shrink-0 rounded-full p-1 hover:bg-accent"
-                onclick={() => (chatSession.replyTo = null)}
-                data-testid="reply-cancel"
-                aria-label={t('composer.replyCancel')}
+                class={cn(
+                  buttonVariants({ size: 'icon' }),
+                  'shrink-0 rounded-full',
+                  botAccentPaint ? 'hover:opacity-90' : '',
+                )}
+                style:background={botAccentPaint?.background}
+                style:color={botAccentPaint?.color}
+                onclick={onSendClick}
+                disabled={readOnly}
+                data-testid="composer-send"
+                aria-label={t('composer.send')}
               >
-                <X class="size-3" />
+                <ArrowUp class="size-4" />
               </button>
-            </div>
-          {/if}
-          {#snippet attachButton()}
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground {canAttachFiles
-                ? ''
-                : 'opacity-50'}"
-              onclick={pickFiles}
-              disabled={readOnly}
-              aria-disabled={readOnly ? undefined : !canAttachFiles}
-              title={canAttachFiles ? t('composer.attach') : t('settings.desktopOnly')}
-              aria-label={t('composer.attach')}
-              data-testid="composer-attach"
-            >
-              <Plus class="size-4" />
-            </Button>
-          {/snippet}
-          {#snippet sendButton()}
-            <!-- 原生 button 才能吃 style:（Button 组件不转发该指令）。
-                 取到预置色时内联盖住 primary；悬停改透明度，避免 hover 主色盖回来。 -->
-            <button
-              type="button"
-              class={cn(
-                buttonVariants({ size: 'icon' }),
-                'shrink-0 rounded-full',
-                botAvatarButtonPaint ? 'hover:opacity-90' : '',
-              )}
-              style:background={botAvatarButtonPaint?.background}
-              style:color={botAvatarButtonPaint?.color}
-              onclick={onSendClick}
-              disabled={readOnly}
-              data-testid="composer-send"
-              aria-label={t('composer.send')}
-            >
-              <ArrowUp class="size-4" />
-            </button>
-          {/snippet}
-          <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
-               占满整行，附件键/发送键落到底部两角。@ 文字色与发送/语音键
-               取当前 Bot 头像色；mention 经 --mention-color 下发。 -->
-          <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
-            {#if !stacked}
-              {@render attachButton()}
-            {/if}
-            <div
-              class={stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}
-              style:--mention-color={botAvatarColor?.hex ?? ''}
-            >
-              <div bind:this={editorHostEl}></div>
-            </div>
-            <div
-              class="flex items-center {stacked ? 'w-full justify-between pt-0.5 pb-1' : 'pr-0.5'}"
-            >
-              {#if stacked}
-                {@render attachButton()}
+            {/snippet}
+            <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜语音对话键 + 发送键；
+               沉底＝输入占满整行，附件键落左下，语音对话键/发送键落右下。@ 文字色
+               与发送/语音键取当前 Bot 的强调色；mention 经 --mention-color 下发。 -->
+            <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
+              {#if !stacked}
+                <!-- 左下工具行：附件键。语音对话键（53 号 D106）在右侧发送键左边。 -->
+                <div class="flex shrink-0 items-center gap-1">
+                  {@render attachButton()}
+                </div>
               {/if}
-              <div class="flex items-center gap-1">
-                {#if recording !== null || voiceBusy}
-                  <!-- 录音胶囊（点击式录音，参考 Grok）：点击停止并转写填入输入框；
+              <div
+                class={stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}
+                style:--mention-color={botAccent?.hex ?? ''}
+              >
+                <div bind:this={editorHostEl}></div>
+              </div>
+              <div
+                class="flex items-center {stacked
+                  ? 'w-full justify-between pt-0.5 pb-1'
+                  : 'pr-0.5'}"
+              >
+                {#if stacked}
+                  <div class="flex items-center gap-1">
+                    {@render attachButton()}
+                  </div>
+                {/if}
+                <div class="flex items-center gap-1">
+                  <!-- 语音对话入口：蓝色发送键（空输入时是同色的语音键）左侧。 -->
+                  {@render voiceModeEntry()}
+                  {#if recording !== null || voiceBusy}
+                    <!-- 录音胶囊（点击式录音，参考 Grok）：点击停止并转写填入输入框；
                        Esc 取消。识别中（voiceBusy）原位显示加载态。 -->
-                  <button
-                    type="button"
-                    class="flex h-8 shrink-0 {voiceBusy
-                      ? 'cursor-default'
-                      : 'cursor-pointer'} items-center gap-2 rounded-full bg-foreground/10 pr-3 pl-2.5"
-                    onclick={() => void finishRecording(true)}
-                    disabled={voiceBusy}
-                    aria-label={t('composer.recordingStop')}
-                    data-testid="composer-recording"
-                  >
-                    {#if voiceBusy}
-                      <Loader2 class="size-3.5 animate-spin text-foreground" aria-hidden="true" />
-                    {:else}
-                      <span class="size-2.5 rounded-[3px] bg-foreground" aria-hidden="true"></span>
-                    {/if}
-                    <span class="text-xs text-foreground tabular-nums">
-                      {formatRecordingDuration(recordingElapsed)}
-                    </span>
-                    <span class="flex items-center gap-0.5" aria-hidden="true">
-                      {#each [0, 1, 2, 3] as dot (dot)}
-                        <span
-                          class="voice-dot size-1 rounded-full bg-foreground/70"
-                          style="animation-delay: {dot * 0.18}s"
+                    <button
+                      type="button"
+                      class="flex h-8 shrink-0 {voiceBusy
+                        ? 'cursor-default'
+                        : 'cursor-pointer'} items-center gap-2 rounded-full bg-foreground/10 pr-3 pl-2.5"
+                      onclick={() => void finishRecording(true)}
+                      disabled={voiceBusy}
+                      aria-label={t('composer.recordingStop')}
+                      data-testid="composer-recording"
+                    >
+                      {#if voiceBusy}
+                        <Loader2 class="size-3.5 animate-spin text-foreground" aria-hidden="true" />
+                      {:else}
+                        <span class="size-2.5 rounded-[3px] bg-foreground" aria-hidden="true"
                         ></span>
-                      {/each}
-                    </span>
-                  </button>
-                {:else if !hasContent}
-                  <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容时
-                       此位让给发送键。语音对话模式暂缓，入口隐藏。 -->
-                  <button
-                    type="button"
-                    class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAvatarButtonPaint
-                      ? ''
-                      : 'bg-foreground text-background'}"
-                    style:background={botAvatarButtonPaint?.background}
-                    style:color={botAvatarButtonPaint?.color}
-                    onclick={() => void startRecording()}
-                    disabled={readOnly}
-                    aria-label={t('composer.voiceStart')}
-                    data-testid="composer-voice-start"
-                  >
-                    <AudioLines class="size-4" />
-                  </button>
-                {/if}
-                {#if hasContent}
-                  {@render sendButton()}
-                {/if}
+                      {/if}
+                      <span class="text-xs text-foreground tabular-nums">
+                        {formatRecordingDuration(recordingElapsed)}
+                      </span>
+                      <span class="flex items-center gap-0.5" aria-hidden="true">
+                        {#each [0, 1, 2, 3] as dot (dot)}
+                          <span
+                            class="voice-dot size-1 rounded-full bg-foreground/70"
+                            style="animation-delay: {dot * 0.18}s"
+                          ></span>
+                        {/each}
+                      </span>
+                    </button>
+                  {:else if !hasContent}
+                    <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容时
+                       此位让给发送键。语音对话模式的入口在右侧发送键左边（Speech 键）。 -->
+                    <button
+                      type="button"
+                      class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAccentPaint
+                        ? ''
+                        : 'bg-foreground text-background'}"
+                      style:background={botAccentPaint?.background}
+                      style:color={botAccentPaint?.color}
+                      onclick={() => void startRecording()}
+                      disabled={readOnly}
+                      aria-label={t('composer.voiceStart')}
+                      data-testid="composer-voice-start"
+                    >
+                      <AudioLines class="size-4" />
+                    </button>
+                  {/if}
+                  {#if hasContent}
+                    {@render sendButton()}
+                  {/if}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        {/if}
       </div>
     </div>
   {/if}

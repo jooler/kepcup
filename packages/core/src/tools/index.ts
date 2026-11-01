@@ -93,6 +93,11 @@ export interface ResponseToolDeps {
   /** Called for every message the bot sends (output_message_ids + events). */
   onBotMessage: (message: Message) => void;
   /**
+   * 53 号修订 v3：本 run 是语音对话模式下的对话轮。`send_message` 的可见消息
+   * 记 origin:'voice'（UI 渲染语音气泡、客户端自动播报）；任务轮永远不带。
+   */
+  voiceMode?: boolean | undefined;
+  /**
    * D80: the schedule a scheduled turn runs for — its send_message messages
    * carry the 「⏰ 标题」 tag like the final reply. Absent otherwise.
    */
@@ -253,7 +258,8 @@ export interface ResponseToolDeps {
   delegation?: DelegationToolFacade | undefined;
   /**
    * 任务层（D75）：present 时对话轮注册 start_task / inject_task / cancel_task /
-   * list_tasks / forward_task_result（任务内不注册：深度 1）。
+   * list_tasks（任务内不注册：深度 1）；任务报告在任务卡里由用户自行查看，
+   * 对话轮不转发原文（§6.1 2026-11 修订）。
    */
   tasks?: TaskToolFacade | undefined;
   /**
@@ -356,7 +362,7 @@ function guessMime(fileName: string): string {
  * type (D75 design 30 §2.1 / §2.2):
  * - `turn` (supervisor turn, read-only): conversation core, read-only queries
  *   (message / attachment / run lookups, read / ls / find / grep), task
- *   management + forward_task_result, async hosted actions (delegate_to_bot,
+ *   management, async hosted actions (delegate_to_bot,
  *   schedules, watches (W7), wiki ingest, memory candidates, skill authoring, butler
  *   proposals, app settings — settings_* cards / host-decided changes), web_search / web_fetch and read-only MCP tools (W5: risk
  *   `read` with effective approval `auto`, capped). No writes, commands,
@@ -488,6 +494,11 @@ export function buildResponseTools(input: {
         runId: identity.runId,
         // D75 §6.1: a task's messages are progress, attributed to the task.
         ...(isTask ? { taskOrigin: { taskId: identity.runId } } : {}),
+        // 53 号修订 v3：语音对话轮的主动消息同样记 origin:'voice'（语音气泡 +
+        // 自动播报）；任务轮不标（taskOrigin 优先且不外播）。
+        ...(!isTask && deps.voiceMode === true && params.text.trim().length > 0
+          ? { voiceMode: true }
+          : {}),
         ...(!isTask && deps.scheduleSource !== undefined
           ? { scheduleSource: deps.scheduleSource }
           : {}),

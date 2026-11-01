@@ -27,6 +27,7 @@
   import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
   import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
+  import { voiceRecordingOf } from './voice-message';
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
@@ -52,7 +53,7 @@
   );
   /**
    * D75 §6.1：任务发出的可见消息（origin = 'task'）——任务执行中的进度
-   * （run_id = 任务）或对话轮原文转发的任务结果（forward_task_result）——
+   * （run_id = 任务）或旧版本 forward_task_result 留下的原文转发行——
    * 标出所属任务，与 Bot 的直接回复区分。
    */
   const taskOrigin = $derived(
@@ -155,6 +156,17 @@
   const canPin = $derived(canAct && hasText);
   /** 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息除外）。 */
   const canRecall = $derived(canAct && isLast && isUser && delegatedBy === null);
+  /**
+   * 语音消息的原始录音附件由语音气泡自己播放（53 号修订 v3）：附件行不再重复
+   * 渲染它（撤回的语音消息同样过滤——不再露出可播放的录音）；其它附件（异常
+   * 数据）照常显示。Bot 语音消息没有附件。
+   */
+  const voiceAttachment = $derived(voiceRecordingOf(message));
+  const shownAttachments = $derived(
+    voiceAttachment === null
+      ? message.attachments
+      : message.attachments.filter((attachment) => attachment.id !== voiceAttachment.id),
+  );
 
   /** 撤回最后一条用户消息：正文交回输入框，改写后可重发；失败 toast 不回填。 */
   async function recallMessage(): Promise<void> {
@@ -209,7 +221,7 @@
 {/snippet}
 
 <div
-  class="group flex w-full gap-2 rounded-md pb-1 {isUser
+  class="group flex w-full gap-2 rounded-md py-2 {isUser
     ? 'flex-row-reverse'
     : 'flex-row'} {session.highlightMessageId === message.id
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
@@ -226,6 +238,7 @@
       botId={message.senderBotId ?? ''}
       {name}
       avatar={senderBot?.avatar ?? null}
+      accentColor={senderBot?.accentColor ?? null}
       mask={senderBot?.avatarMask ?? null}
       padding={senderBot?.avatarPadding ?? null}
       class="mt-0.5 size-7 shrink-0"
@@ -277,8 +290,8 @@
       </div>
     {/if}
 
-    {#if message.attachments.length > 0}
-      <MessageAttachments attachments={message.attachments} />
+    {#if shownAttachments.length > 0}
+      <MessageAttachments attachments={shownAttachments} />
     {/if}
 
     <MessageBody {message} {merge} />
@@ -296,12 +309,12 @@
     {#if scheduleTitle !== null}
       <button
         type="button"
-        class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+        class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
         title={t('schedules.sourceHint')}
         onclick={() => shell.openSchedules()}
         data-testid="schedule-source"
       >
-        <AlarmClock class="size-3" aria-hidden="true" />{scheduleTitle}
+        <AlarmClock class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{scheduleTitle}
       </button>
     {/if}
 
@@ -309,20 +322,20 @@
       <!-- 窄屏暂无工作台入口（P1）：标签只读。 -->
       {#if narrowLayout.narrow}
         <span
-          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+          class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground"
           data-testid="todo-source"
         >
-          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
         </span>
       {:else}
         <button
           type="button"
-          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
           title={t('workbench.todoSource.hint')}
           onclick={() => workbench.focusTodo(todoSource.id)}
           data-testid="todo-source"
         >
-          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
         </button>
       {/if}
     {/if}

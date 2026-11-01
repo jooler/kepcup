@@ -101,6 +101,54 @@ describe('messages.send 携附件', () => {
   });
 });
 
+describe('messages.send voiceMode（53 号修订 v2 V2-1）', () => {
+  it('voiceMode: true → content.origin 记 voice（Bot 收到纯文本语义）', async () => {
+    const sent = (await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '明天有什么安排',
+      voiceMode: true,
+    })) as { message: { content: { text?: string; origin?: string } } };
+    expect(sent.message.content).toMatchObject({ text: '明天有什么安排', origin: 'voice' });
+
+    const messages = await listMessages(stack.core, conv.id);
+    const voice = messages.find((m) => m.content.origin === 'voice');
+    expect(voice).toBeDefined();
+  });
+
+  it('不带 voiceMode → content.origin 不记 voice（文字直发不变）', async () => {
+    const sent = (await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '普通文字',
+    })) as { message: { content: { text?: string; origin?: string } } };
+    expect(sent.message.content).toMatchObject({ text: '普通文字' });
+    expect(sent.message.content.origin).toBeUndefined();
+  });
+
+  it('voiceMode: true + 空文本（转写失败兜底）+ 附件 → origin 仍记 voice', async () => {
+    // 空文本需带附件（空文本 + 无附件是 INVALID_INPUT）：渲染层转写失败分支
+    // 正是「空文本 + 附件照发」。origin 照记（事实），只有 core 上下文标注按
+    // 正文非空条件生效（见 conversation.ts），Bot 侧 transcribe_audio 兜底不受阻。
+    const att = await upload('voice-fail.wav', 'audio/wav');
+    const sent = (await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '',
+      voiceMode: true,
+      attachmentIds: [att.id],
+    })) as { message: { content: { text?: string; origin?: string } } };
+    expect(sent.message.content).toMatchObject({ text: '', origin: 'voice' });
+  });
+
+  it('显式 voiceMode: false → content.origin 不记 voice（仅 === true 才记）', async () => {
+    const sent = (await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '显式关闭',
+      voiceMode: false,
+    })) as { message: { content: { text?: string; origin?: string } } };
+    expect(sent.message.content).toMatchObject({ text: '显式关闭' });
+    expect(sent.message.content.origin).toBeUndefined();
+  });
+});
+
 describe('attachments.detach（仅未发送的上传可移除）', () => {
   it('detach：上传后未发送可移除；重复移除 NOT_FOUND', async () => {
     const att = await upload('temp.txt', 'text/plain');

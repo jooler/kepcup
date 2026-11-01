@@ -122,16 +122,18 @@ export interface RenderMessageOptions {
  * Legacy task interim chat bubble (D54). New path stores a single status on
  * `runs.last_progress` (status line / task card); leftover interim rows stay
  * out of every model-facing conversation path.
- * `forward_task_result` keeps `origin:'task'` without `interim` (and uses the
- * turn's run id). Rows written before the `interim` flag still match when
- * `runId === taskId` (the task's own run emitted them).
+ * Rows written before the `interim` flag still match when `runId === taskId`
+ * (the task's own run emitted them). Legacy verbatim result rows written by the
+ * removed `forward_task_result` (`origin:'task'` under the turn's run id) never
+ * reach bot reads — the storage layer excludes them
+ * (`forwardedResultExcludeFilter` in domain/messages.ts, D75 §6.1).
  */
 export function isTaskInterimProgress(message: Message): boolean {
   if (message.kind !== 'text' || message.senderType !== 'bot') return false;
   const content = message.content as { origin?: unknown; taskId?: unknown; interim?: unknown };
   if (content.origin !== 'task' || typeof content.taskId !== 'string') return false;
   if (content.interim === true) return true;
-  // Legacy / task-emitted under the task run (not a turn's forward_task_result).
+  // Legacy / task-emitted under the task run (not a turn-forwarded result).
   return message.runId === content.taskId;
 }
 
@@ -143,8 +145,8 @@ export function isTaskInterimProgress(message: Message): boolean {
  * - 'context': recent window, deltas, triage — TASK_EVENT_CONTEXT_MAX_CHARS,
  *   full text via get_messages_around;
  * - 'trigger': the entry that woke the turn — in full up to
- *   TASK_TRIGGER_RESULT_MAX_CHARS (a longer result points to
- *   forward_task_result);
+ *   TASK_TRIGGER_RESULT_MAX_CHARS (a longer result points to the task card,
+ *   where the user reads the full report);
  * - 'full': message tools (search_messages / get_messages_around).
  */
 export type TaskLineMode = 'context' | 'trigger' | 'full';
@@ -203,7 +205,7 @@ function clipTaskBody(
   if (body.length <= max) return body;
   const hint =
     mode === 'trigger' && phase === 'result'
-      ? `（结果过长，以上是前 ${max} 字，共 ${body.length} 字；要把原文发给用户请用 forward_task_result）`
+      ? `（结果过长，以上是前 ${max} 字，共 ${body.length} 字；执行报告全文在任务卡里，用户点开即可查看）`
       : `（已截断，共 ${body.length} 字；全文用 get_messages_around 查看 ${message.id}）`;
   return `${body.slice(0, max)}…${hint}`;
 }
@@ -314,6 +316,13 @@ function renderAttachmentEntry(
     1,
     Math.round(attachment.size / 1024),
   )}KB`;
+  // 53 号修订 v2 V2-1：语音消息的音频附件是原始录音存档，正文已是其转写——
+  // 就地标注，模型不再把它当待转写的语音派 transcribe_audio 任务。仅限正文非空
+  // 的语音消息：转写失败的兜底链路发的是空文本语音消息（正文并非转写），保持
+  // 素条目，模型按系统提示词附件阶梯用 transcribe_audio 兜底。
+  if (isVoiceMessageWithTranscript(message) && attachment.mime.startsWith('audio/')) {
+    return `${base}（语音原始录音，正文即其转写）`;
+  }
   if (!isShareIntakeMessage(message)) return base;
   if (options.shareAttachmentPath === undefined) return `${base} path=unavailable`;
   const resolved = options.shareAttachmentPath(attachment, options.selfBotId);
@@ -324,6 +333,23 @@ function renderAttachmentEntry(
 export function isShareIntakeMessage(message: Message): boolean {
   const content = message.content as { shareIntakeId?: unknown } | undefined;
   return typeof content?.shareIntakeId === 'string' && content.shareIntakeId.length > 0;
+}
+
+/** 这条消息是否来自语音对话模式（53 号修订 v2 V2-1：content.origin === 'voice'）。 */
+export function isVoiceMessage(message: Message): boolean {
+  const content = message.content as { origin?: unknown } | undefined;
+  return content?.origin === 'voice';
+}
+
+/**
+ * 带非空转写正文的语音消息：53 号修订 v2 V2-1 的两处语义标注（附件条目
+ * 「正文即其转写」、`voiceWakeHint`）只对它成立。转写失败的兜底链路发的是
+ * **空文本**语音消息（origin:'voice' 属实，但正文并非转写）——这类消息不做
+ * 语义标注、不带语音宿主说明，Bot 按附件阶梯用 transcribe_audio 兜底转写。
+ */
+function isVoiceMessageWithTranscript(message: Message): boolean {
+  const text = message.content && 'text' in message.content ? message.content.text : '';
+  return isVoiceMessage(message) && text.trim().length > 0;
 }
 
 /** 引用标注里被引用文字的截断上限（引用块只是指引，全文走 get_messages_around）。 */
@@ -596,9 +622,8 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
     .join('');
   // A triggering task result goes in full (up to the hard cap): the turn
   // relays it and must not work from a truncated copy (D75 §2.4.4).
-  const lines = input.messages
-    .filter((m) => m.status !== 'recalled')
-    .map((m) => renderMessageLine(m, input.options, 'trigger'));
+  const visible = input.messages.filter((m) => m.status !== 'recalled');
+  const lines = visible.map((m) => renderMessageLine(m, input.options, 'trigger'));
   // W6: a delegated turn is told what the delegating bot expects back.
   if (input.reason === 'delegation') {
     lines.push(delegationWakeHint(input.extraAttributes?.['intent']));
@@ -607,6 +632,11 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
   const wakeHint = projectWakeHint(input.reason);
   if (wakeHint !== null) {
     lines.push(wakeHint);
+  }
+  // 53 号修订 v2 V2-1：语音对话模式批次带宿主说明（正文即转写、回复自动播报）。
+  const voiceHint = voiceWakeHint(visible);
+  if (voiceHint !== null) {
+    lines.push(voiceHint);
   }
   return `<trigger reason="${input.reason}"${attrs}>\n${lines.join('\n')}\n</trigger>`;
 }
@@ -643,4 +673,16 @@ export function projectWakeHint(reason: TriggerBatch['reason']): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * 语音对话模式的宿主说明（53 号修订 v2 V2-1）：批内任一消息是带非空转写正文
+ * 的语音消息时，告知正文即语音转写、音频附件仅为存档（不必转写 / 读取），回复
+ * 由客户端自动转语音播报（不要调 generate_speech，回复要口语化、适合朗读）。
+ * 其余批次——含正文为空的语音消息（转写失败兜底，Bot 应回退 transcribe_audio）
+ * ——返回 null（非语音消息的触发段逐字节不变）。
+ */
+export function voiceWakeHint(messages: Message[]): string | null {
+  if (!messages.some(isVoiceMessageWithTranscript)) return null;
+  return '（宿主说明：本批消息来自语音对话模式：正文即用户语音的转写文本，音频附件仅为原始录音存档，无需再用 transcribe_audio 转写或读取；你的回复将由客户端自动转为语音播报——不要调用 generate_speech，回复请口语化、简短、适合朗读（代码块/表格不会被播报）。）';
 }

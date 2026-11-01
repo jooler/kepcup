@@ -465,7 +465,8 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('start_task');
     expect(prompt).toContain('inject_task');
     expect(prompt).toContain('cancel_task');
-    expect(prompt).toContain('forward_task_result');
+    expect(prompt).toContain('执行报告全文只保存在任务卡里');
+    expect(prompt).not.toContain('forward_task_result');
     // 对话轮也有画像摘要 → get_user_profile 全文查询的引导。
     expect(prompt).toContain('用户画像：注入的 <user_profile> 只是约 400 token 的摘要');
     expect(prompt).toContain('get_user_profile 按分类查询完整条目');

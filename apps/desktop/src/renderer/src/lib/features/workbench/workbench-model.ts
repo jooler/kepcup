@@ -62,9 +62,7 @@ export function projectLaneId(projectId: string): string {
 export function laneIdOfTodo(todo: Pick<TodoEntry, 'assignee'>): string {
   const assignee = todo.assignee;
   if (assignee === null) return UNASSIGNED_LANE_ID;
-  return assignee.kind === 'bot'
-    ? botLaneId(assignee.botId)
-    : projectLaneId(assignee.projectId);
+  return assignee.kind === 'bot' ? botLaneId(assignee.botId) : projectLaneId(assignee.projectId);
 }
 
 /** 成员（Bot / 项目组）的最小信息：道名、管家标记。 */
@@ -96,6 +94,11 @@ export interface LaneInput {
   /** 名称兜底：事项 `assigneeName` 缺失（执行者已删）时查这里。 */
   bots: readonly MemberInfo[];
   projects: readonly MemberInfo[];
+  /**
+   * true = 自定义排序（手动拖拽顺序 `position`）；false / 缺省 = 按开始时间排序
+   * （产品默认，见 `workbenchTodoCustomOrder`）。两种排序都**不写 `position`**。
+   */
+  customOrder?: boolean;
 }
 
 /**
@@ -110,11 +113,38 @@ export function effectiveStatus(todo: Pick<TodoEntry, 'status' | 'lastRun'>): To
 }
 
 /**
- * 道内顺序 = 手动拖拽顺序（`position` 升序，迁移已按状态顺序回填，新事项插到道顶）。
+ * 道内顺序（自定义排序）= 手动拖拽顺序（`position` 升序，迁移已按状态顺序回填，新事项插到道顶）。
  * 状态仍显示在卡片的徽标上，只是不再自动重排。
  */
 function compareLaneTodos(a: TodoEntry, b: TodoEntry): number {
   return a.position - b.position || b.updatedAt - a.updatedAt || b.id.localeCompare(a.id);
+}
+
+/**
+ * 事项的开始时间：单次事项取 `runAt`，周期事项取下次触发 `nextFireAt`；没有排期为 null。
+ * 草案的 `pendingWhen` 已由 core 投影进 `schedule`（`id = pending_<todoId>`），不再另读。
+ */
+export function todoStartAt(todo: Pick<TodoEntry, 'schedule'>): number | null {
+  const schedule = todo.schedule;
+  if (schedule === null) return null;
+  return schedule.runAt ?? schedule.nextFireAt ?? null;
+}
+
+/**
+ * 道内顺序（默认，按开始时间）：越早要执行的在前；没有开始时间的全部排最后，
+ * 它们之间按创建时间升序（越早创建越前面）；时间相同也按创建时间升序；id 兜底保证稳定。
+ */
+export function compareTodosByStart(a: TodoEntry, b: TodoEntry): number {
+  const at = todoStartAt(a);
+  const bt = todoStartAt(b);
+  if (at !== null && bt !== null) {
+    if (at !== bt) return at - bt;
+  } else if (at !== null) {
+    return -1;
+  } else if (bt !== null) {
+    return 1;
+  }
+  return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
 }
 
 /**
@@ -180,9 +210,7 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
               id,
               'project',
               assignee.projectId,
-              todo.assigneeName ??
-                projectNames.get(assignee.projectId) ??
-                assignee.projectId,
+              todo.assigneeName ?? projectNames.get(assignee.projectId) ?? assignee.projectId,
             );
     lanes.set(id, created);
     return created;
@@ -204,8 +232,9 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
     );
   }
 
+  const byStartOrder = input.customOrder !== true;
   for (const lane of lanes.values()) {
-    lane.todos.sort(compareLaneTodos);
+    lane.todos.sort(byStartOrder ? compareTodosByStart : compareLaneTodos);
     for (const todo of lane.todos) {
       const status = effectiveStatus(todo);
       if (status === 'draft') lane.counts.draft += 1;
@@ -397,6 +426,36 @@ export function memoSections(input: {
     }
   }
   return sections;
+}
+
+/**
+ * 未分组区要不要显示。
+ *
+ * 没内容时整块隐藏（界面用 `display: none`，不是 `{#if}` 移除）：没有备忘就没什么可展示的，
+ * 连 header 和空提示都不该占位。唯一例外是拖拽中（`memoDragging`）——卡片得能把「未分组」
+ * 当落点拖回来，所以那时即使为空也要显示。
+ */
+export function shouldShowUngrouped(
+  section: Pick<MemoSection, 'groupId' | 'memos'> | null,
+  memoDragging = false,
+): boolean {
+  if (section === null || section.groupId !== null) return false;
+  return section.memos.length > 0 || memoDragging;
+}
+
+/**
+ * 备忘是否「已转事项」（D90 §2.4）：存在关联它、且**没有被取消**的事项。
+ *
+ * 只看 `status !== 'cancelled'`：取消表示这次转化作废，备忘回到普通状态（标签、半透明都撤掉）；
+ * `done` 仍是正当的转化结果，保留标签当历史标记，所以不能复用 `isOpenTodo`（它连 done 一起排除）。
+ * 事项被重新打开（cancelled → draft）后自然又算已转事项。
+ * 注意 `todos.list` 会带回最近关闭的事项（`TODO_CLOSED_VISIBLE_MS` 窗口内），判定必须看状态。
+ */
+export function memoConverted(
+  todos: ReadonlyArray<Pick<TodoEntry, 'memoId' | 'status'>>,
+  memoId: string,
+): boolean {
+  return todos.some((todo) => todo.memoId === memoId && todo.status !== 'cancelled');
 }
 
 /**

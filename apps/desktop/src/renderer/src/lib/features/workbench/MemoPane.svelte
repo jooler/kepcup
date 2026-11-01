@@ -19,7 +19,7 @@
   } from '$lib/features/board/board-dnd';
   import MemoGroupSection from './MemoGroupSection.svelte';
   import { ageText } from './age-text';
-  import { memoSections, type MemoSection } from './workbench-model';
+  import { memoSections, shouldShowUngrouped, type MemoSection } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
@@ -48,6 +48,14 @@
   const showHeaders = $derived(workbench.memoGroups.length > 0);
   const flipDurationMs = $derived(boardFlipDurationMs(reducedMotion));
   const ungroupedSection = $derived(sections.find((section) => section.groupId === null) ?? null);
+  /**
+   * 未分组区空着时用 display:none 隐藏（不占位，也不出 header / 空提示）；
+   * 拖拽中仍显示，否则卡片没有「未分组」这个落点可拖回去。新备忘默认进未分组，
+   * memos 一变这个 derived 就跟着变，存完立刻重新出现。
+   */
+  const showUngroupedSection = $derived(
+    shouldShowUngrouped(ungroupedSection, workbench.memoDragging),
+  );
   /** 分组拖拽区的 items 需要 `id` 字段（dnd-action 的标识），即 groupId。 */
   const namedSections = $derived(
     sections
@@ -285,7 +293,14 @@
         </p>
       {/if}
       {#if ungroupedSection}
-        <MemoGroupSection section={ungroupedSection} showHeader={showHeaders} {flipDurationMs} />
+        <!-- 空的时候只是 display:none：分组拖拽区与备忘拖拽区的注册都保留（拖拽中会重新显示）。 -->
+        <div
+          class:hidden={!showUngroupedSection}
+          data-testid="memo-ungrouped-slot"
+          data-empty={ungroupedSection.memos.length === 0 ? 'true' : 'false'}
+        >
+          <MemoGroupSection section={ungroupedSection} showHeader={showHeaders} {flipDurationMs} />
+        </div>
       {/if}
       {#if namedSections.length > 0}
         <div

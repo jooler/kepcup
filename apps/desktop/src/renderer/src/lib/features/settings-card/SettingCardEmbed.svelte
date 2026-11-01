@@ -113,6 +113,10 @@
   });
 
   const workdir = $derived(workdirId === null ? null : workdirs.boundOf(conversationId, workdirId));
+  // 不在最近列表窗口的绑定按 id 回源（同右栏工作目录行）。
+  $effect(() => {
+    workdirs.ensure(workdirId);
+  });
 
   $effect(() => {
     if (item.card !== 'agent') return;

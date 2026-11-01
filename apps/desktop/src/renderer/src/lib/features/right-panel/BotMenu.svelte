@@ -178,6 +178,11 @@
   const workdir = $derived(
     conversationId === undefined ? null : workdirs.boundOf(conversationId, workdirId),
   );
+  // 绑定早于最近列表窗口（或事件在面板打开前就过去了）：按 id 回源一次。
+  $effect(() => {
+    if (conversationId === undefined) return;
+    workdirs.ensure(workdirId);
+  });
   const workdirMissing = $derived(workdir !== null && workdir.status === 'missing');
   // 与 WorkdirSelector 一致：Bot 执行中不允许切换工作目录（只读对话是常态禁用，不提示）。
   const workdirRunning = $derived((chat.current?.activeRuns.length ?? 0) > 0);

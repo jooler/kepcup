@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
-import {
-  COMPUTER_INVOKE_METHODS,
-  computerProviderCapabilitiesSchema,
-} from '../domain/computer.js';
+import { COMPUTER_INVOKE_METHODS, computerProviderCapabilitiesSchema } from '../domain/computer.js';
 import { PROJECT_TITLE_MAX } from '../domain/project-title.js';
 import {
   widgetPreviewRunInputSchema,
@@ -136,6 +133,7 @@ import {
   botSchema,
   botAvatarMaskSchema,
   botAvatarPaddingSchema,
+  botAccentColorSchema,
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
@@ -400,6 +398,8 @@ export const settingsUpdateInputSchema = z.object({
   workbenchEnabled: z.boolean().optional(),
   /** 工作台引导已永久关闭。 */
   workbenchNudgeDismissed: z.boolean().optional(),
+  /** 事项按自定义顺序（手动拖拽）排序；false = 按开始时间排序（D90 §5.2）。 */
+  workbenchTodoCustomOrder: z.boolean().optional(),
   /** D93 任务 Loop：空转检测与软预算。 */
   taskLoop: taskLoopSettingsInputSchema.optional(),
   /** InkCop 同机协作（v0.3）：部分 patch；systemBotId 仅兼容旧配置。 */
@@ -987,6 +987,15 @@ export const botsAvatarPaddingInputSchema = z.object({
   padding: botAvatarPaddingSchema,
 });
 /**
+ * 设置 Bot 的强调色（应用腔调色）。与遮罩 / 内边距同一模式：不是 Profile 字段
+ * （`bots.update` 是整份 Profile 的三方合并），单独写 `bots.accent_color` 列、
+ * 单独发布 bot.updated；与上传头像完全解耦（上传 / 裁切 / 遮罩 / 内边距都不改它）。
+ */
+export const botsAccentColorInputSchema = z.object({
+  id: z.string().min(1),
+  color: botAccentColorSchema,
+});
+/**
  * Upload the user's own avatar (Profile settings). Core writes the file under
  * `user/avatar/`, keeps only the latest upload, points
  * `settings.userProfileAvatar` at it (`upload:{fileName}`) and publishes
@@ -1069,6 +1078,16 @@ export const conversationsMarkReadInputSchema = z.object({
   conversationId: z.string().min(1),
   seq: z.number().int(),
 });
+/**
+ * 语音对话模式开关（53 号修订 v3）：渲染层进入 / 退出模式时同步给 core。
+ * 会话级即时态（重启即失效）——core 用它给对话轮注入语音回复规则、把 Bot
+ * 回复标记为 `origin:'voice'`；不落库、不改变对话本身。
+ */
+export const conversationsSetVoiceModeInputSchema = z.object({
+  conversationId: z.string().min(1),
+  active: z.boolean(),
+});
+export const conversationsSetVoiceModeOutputSchema = okOutputSchema;
 export const conversationGetInputSchema = z.object({ id: z.string().min(1) });
 export const conversationGetOutputSchema = z.object({
   conversation: conversationSchema.nullable(),
@@ -1168,6 +1187,12 @@ export const messagesSendInputSchema = z.object({
   replyTo: z.string().min(1).nullable().optional(),
   /** 随消息发送的附件（attachments.upload 先行上传）：core 校验归属后挂到本消息。 */
   attachmentIds: z.array(z.string().min(1)).optional(),
+  /**
+   * 语音对话模式（53 号修订 v2 V2-1）：本消息来自语音模式发送。正文即用户语音的
+   * 转写文本，随附音频附件仅为原始录音存档；core 据此在 content 记 origin: 'voice'，
+   * 上下文据此标注（不派 transcribe_audio，回复将由客户端自动转语音播报）。
+   */
+  voiceMode: z.boolean().optional(),
 });
 export const messagesSendOutputSchema = z.object({
   message: messageSchema,
@@ -2464,6 +2489,7 @@ export const rpcMethodSchemas = {
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.avatar.mask': { input: botsAvatarMaskInputSchema, output: botGetOutputSchema },
   'bots.avatar.padding': { input: botsAvatarPaddingInputSchema, output: botGetOutputSchema },
+  'bots.accent.color': { input: botsAccentColorInputSchema, output: botGetOutputSchema },
   'user.avatar.upload': {
     input: userAvatarUploadInputSchema,
     output: userAvatarUploadOutputSchema,
@@ -2527,6 +2553,10 @@ export const rpcMethodSchemas = {
     output: conversationsArchiveOutputSchema,
   },
   'conversations.markRead': { input: conversationsMarkReadInputSchema, output: okOutput },
+  'conversations.setVoiceMode': {
+    input: conversationsSetVoiceModeInputSchema,
+    output: conversationsSetVoiceModeOutputSchema,
+  },
   'conversations.members': {
     input: conversationsMembersInputSchema,
     output: conversationsMembersOutputSchema,
@@ -3122,6 +3152,8 @@ const APP_METHODS = [
   'bots.avatar.upload',
   'bots.avatar.data',
   'bots.avatar.mask',
+  'bots.avatar.padding',
+  'bots.accent.color',
   'bots.delete',
   'bots.deletionPreview',
   'bots.templatePreview',
@@ -3141,6 +3173,7 @@ const APP_METHODS = [
   'conversations.archive',
   'conversations.unarchive',
   'conversations.markRead',
+  'conversations.setVoiceMode',
   'conversations.members',
   'projects.create',
   'projects.setLead',

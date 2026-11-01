@@ -93,9 +93,9 @@
     motionReady && !resizing ? 'transition-[flex-grow] duration-200 ease-out' : '',
   );
 
-  // 离开本主区（切工作台 / 窄屏换 tab / 宽窄切换重挂载）即退出任务执行过程页；
-  // 会话切换由 chat.select / leaveCurrent / close 收起。
-  onDestroy(() => tasks.closeDetail());
+  // 离开本主区（切工作台 / 窄屏换 tab / 宽窄切换重挂载）即退出任务执行过程页，
+  // 但按会话保留记忆：重新进入该会话时恢复（切会话由 chat.select 处理）。
+  onDestroy(() => tasks.enterConversation(null));
 </script>
 
 <!-- 任务执行过程页（docs/design/42-task-run-view.md）：原对话组件保留在 DOM

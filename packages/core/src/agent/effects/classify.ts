@@ -119,7 +119,6 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   inject_task: 'local',
   cancel_task: 'local',
   list_tasks: 'none',
-  forward_task_result: 'local',
   /** 宿主 SubAgent（D66）：子 run 自己的外部调用按子 run 入账。 */
   delegate_task: 'local',
   collect_delegate_results: 'none',

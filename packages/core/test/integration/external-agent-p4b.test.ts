@@ -119,12 +119,6 @@ const wakeWith = (fragment: string) => (req: MockChatRequest) =>
   triggerOf(req).startsWith('<trigger reason="task"') &&
   triggerOf(req).includes(fragment);
 
-/** The task id of the result entry in a waking turn's trigger. */
-function resultTaskId(req: MockChatRequest): string {
-  const match = /任务 (\S+)→你（结果）/.exec(triggerOf(req));
-  if (match === null) throw new Error('no task result in the trigger');
-  return match[1]!;
-}
 
 /**
  * D75（design 30 §8.1）：外部 Agent 只是 Bot 的任务引擎——对话轮固定内置引擎，
@@ -163,13 +157,7 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
         .replyText('ACK 我问问外援'),
       step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-1 外援还没设置好'),
       step().inTurn().expect(wakeWith('（失败）')).replyText('FAIL-2 外援还没启用'),
-      step()
-        .inTurn()
-        .expect(wakeWith('（结果）'))
-        .replyToolCall('forward_task_result', (req: MockChatRequest) => ({
-          task_id: resultTaskId(req),
-        })),
-      step().inTurn().expect(wakeWith('（结果）')).replyText('RELAY 以上是外援的回复'),
+      step().inTurn().expect(wakeWith('（结果）')).replyText('RELAY 外援说：你好，我是外援。'),
     ]);
 
     await sendBatch(stack.core, conv.id, ['在吗']);
@@ -207,10 +195,15 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
     expect(done.engine).toBe('agent:fake');
     expect(done.triggerMessageIds).toEqual(off.triggerMessageIds);
     expect(off.triggerMessageIds).toHaveLength(1);
-    const forwarded = await waitForMessage(stack.core, conv.id, isTaskOrigin);
-    expect(textOf(forwarded)).toBe('你好，我是外援。');
-    expect(forwarded.senderBotId).toBe(bot.id);
-    expect(forwarded.content).toMatchObject({ taskId: done.id });
+    // §6.1 2026-11 修订：the report stays on the card; the turn's reply is the
+    // summary, and no verbatim task-origin message appears in the chat.
+    const summary = await waitForMessage(
+      stack.core,
+      conv.id,
+      (m) => m.senderBotId === bot.id && textOf(m).includes('你好，我是外援。'),
+    );
+    expect((summary.content as { origin?: string }).origin).toBeUndefined();
+    expect((await listMessages(stack.core, conv.id)).filter(isTaskOrigin)).toEqual([]);
     // The agent got the original message once the setup was done.
     expect(stack.record().prompts.map((p) => p.text.includes('在吗'))).toEqual([true]);
   }, 30_000);
@@ -272,13 +265,14 @@ describe('external agent in-chat setup (P4-B, D58)', () => {
     await retry(stack, blocked.id);
     const done = await nextSettledTask(stack, conv.id, [failed.id, blocked.id]);
     expect(done.status).toBe('completed');
-    // The result is forwarded verbatim by the downgraded turn.
-    const forwarded = await waitForMessage(stack.core, conv.id, isTaskOrigin);
-    expect(textOf(forwarded)).toBe('登录好了，继续。');
-    const replies = (await listMessages(stack.core, conv.id)).filter(
-      (m) => m.senderBotId === bot.id && isTaskOrigin(m),
+    // No built-in model to summarize: the downgraded turn points at the card.
+    const notice = await waitForMessage(
+      stack.core,
+      conv.id,
+      (m) => m.senderBotId === bot.id && textOf(m).includes('点击任务卡查看执行报告'),
     );
-    expect(replies.map(textOf)).toEqual(['登录好了，继续。']);
+    expect(textOf(notice)).toContain('已完成');
+    expect((await listMessages(stack.core, conv.id)).filter(isTaskOrigin)).toEqual([]);
   }, 45_000);
 });
 

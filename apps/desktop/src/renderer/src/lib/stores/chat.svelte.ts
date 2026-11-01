@@ -169,12 +169,16 @@ class ChatState {
       this.#archivedIds.delete(data.id);
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
       this.pruneSidebarSections();
+      tasks.forgetConversation(data.id);
       if (this.currentId === data.id) this.close();
     });
     core.onEvent('bot.deleted', (payload) => {
       const data = payload as { id: string };
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
       // 删除效果）；项目组历史里它经 botName 回退为其 id。
+      for (const conversation of this.conversations) {
+        if (conversation.directBotId === data.id) tasks.forgetConversation(conversation.id);
+      }
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
       this.pruneSidebarSections();
       if (this.main.conversation?.directBotId === data.id) this.close();
@@ -295,7 +299,9 @@ class ChatState {
         shell.projectView = 'chat';
         shell.projectSettingsSection = 'overview';
         board.closeCard();
-        tasks.closeDetail();
+        // 任务执行过程页按会话记忆：这里只切到（或退出）目标会话的任务页，
+        // 别的会话留下的页面不丢，切回来原地恢复。
+        tasks.enterConversation(conversation.id);
         // 宽屏设置页（整页视图）开着时选会话即退出设置：通知 / 通讯录 / 搜索深链的
         // 落点要可见，不能被盖在设置页后面。
         shell.closeSettings();
@@ -510,8 +516,11 @@ class ChatState {
   }
 
   close(): void {
+    const conversationId = this.main.conversationId;
     this.main.clear();
-    tasks.closeDetail();
+    // 会话消失：它的任务页记忆一并丢弃（切会话不丢，见 tasks.enterConversation）。
+    if (conversationId !== null) tasks.forgetConversation(conversationId);
+    tasks.enterConversation(null);
     // 会话消失（删除会话/删除 Bot/放弃建项目组）才走到这里：记忆一并清除，
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
@@ -521,10 +530,11 @@ class ChatState {
    * 窄屏「返回列表」（33-narrow-layout）：只退出当前会话视图回到列表层；会话
    * 本身还在，与 close()（会话消失时的清理，一并放弃启动恢复记忆）不同，
    * 这里保留记忆——下次启动 / 拉回宽屏仍回到该会话。
+   * 任务执行过程页同样只退出可见层、保留记忆，重新进入该会话时恢复。
    */
   leaveCurrent(): void {
     this.main.clear();
-    tasks.closeDetail();
+    tasks.enterConversation(null);
     // 项目组视图同样收口（WP6 §4.11）：回到列表层后重新进入任何会话都从沟通开始。
     shell.projectView = 'chat';
     shell.projectSettingsSection = 'overview';
@@ -659,6 +669,7 @@ class ChatState {
       await core.call('conversations.delete', { id });
       this.conversations = this.conversations.filter((c) => c.id !== id);
       this.pruneSidebarSections();
+      tasks.forgetConversation(id);
       if (this.currentId === id) this.close();
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));

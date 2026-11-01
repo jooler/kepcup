@@ -185,7 +185,7 @@ describe('截断（§2.4.4）', () => {
     ).toBe(`[m_22 | ${TIME} | 任务 run_t7→你（结果）] ${longResult}`);
   });
 
-  it('触发段：结果全文进入；超过硬顶给开头 + forward_task_result 提示', () => {
+  it('触发段：结果全文进入；超过硬顶给开头 + 任务卡提示', () => {
     const trigger = buildTriggerSegment({
       reason: 'mention',
       messages: [entry('m_23', { phase: 'result', text: longResult })],
@@ -201,7 +201,7 @@ describe('截断（§2.4.4）', () => {
       options,
     });
     expect(capped).toContain(
-      `${'h'.repeat(TASK_TRIGGER_RESULT_MAX_CHARS)}…（结果过长，以上是前 ${TASK_TRIGGER_RESULT_MAX_CHARS} 字，共 ${huge.length} 字；要把原文发给用户请用 forward_task_result）`,
+      `${'h'.repeat(TASK_TRIGGER_RESULT_MAX_CHARS)}…（结果过长，以上是前 ${TASK_TRIGGER_RESULT_MAX_CHARS} 字，共 ${huge.length} 字；执行报告全文在任务卡里，用户点开即可查看）`,
     );
     expect(capped).not.toContain('h'.repeat(TASK_TRIGGER_RESULT_MAX_CHARS + 1));
   });

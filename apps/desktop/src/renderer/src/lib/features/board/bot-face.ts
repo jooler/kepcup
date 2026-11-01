@@ -4,7 +4,7 @@ import {
   type Bot,
   type BotAvatarMask,
 } from '@kepcup/shared';
-import { parsePresetAvatar } from '$lib/avatars/presets';
+import { resolveAccentColor } from '$lib/avatars/presets';
 import { chat } from '$lib/stores/chat.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 
@@ -36,9 +36,21 @@ export function botPaddingOf(botId: string): number {
 }
 
 /**
- * Bot 名称跟随自己预置头像的填充色（与头像同色）。上传头像 / 首字母占位
- * 没有可用的颜色，返回 undefined，名称用默认前景色。
+ * 与 `botAvatarOf` 同源的强调色 id（`bots.accent_color`）：显式值 → 预置头像内嵌色 →
+ * 默认。Bot 不存在时返回 undefined（头像退回首字母占位，不需着色）。
  */
-export function botNameColor(avatar: string | null): string | undefined {
-  return parsePresetAvatar(avatar)?.color.hex;
+export function botAccentColorOf(botId: string): string | undefined {
+  const bot = findBot(botId);
+  if (bot === null) return undefined;
+  return resolveAccentColor(bot.accentColor, bot.avatar).id;
+}
+
+/**
+ * Bot 名称 / 看板脸跟随的强调色（hex）：与头像形状、是否上传无关。
+ * 查不到 Bot 时返回 undefined，名称用默认前景色。
+ */
+export function botNameColor(botId: string): string | undefined {
+  const bot = findBot(botId);
+  if (bot === null) return undefined;
+  return resolveAccentColor(bot.accentColor, bot.avatar).hex;
 }

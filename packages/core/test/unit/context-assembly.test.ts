@@ -483,6 +483,142 @@ describe('trigger segment', () => {
   });
 });
 
+describe('voice 消息标注（53 号修订 v2 V2-1）', () => {
+  const audioAttachment = {
+    id: 'att_v',
+    conversationId: 'conv_1',
+    messageId: 'msg_1',
+    fileName: 'voice-1.wav',
+    mime: 'audio/wav',
+    size: 275_000,
+    sha256: 'x',
+    relPath: 'att_v_voice-1.wav',
+    createdAt: 0,
+  };
+  const voiceLine = (overrides: Parameters<typeof makeMessage>[0]) =>
+    renderMessageLine(makeMessage({ id: 'msg_1', seq: 1, ...overrides }), renderOptions);
+
+  it('voice 消息的音频附件条目追加「语音原始录音，正文即其转写」', () => {
+    const line = voiceLine({
+      content: { text: '明天有安排吗', origin: 'voice' },
+      attachments: [audioAttachment],
+    });
+    expect(line).toContain('att_v voice-1.wav [audio/wav] 269KB（语音原始录音，正文即其转写）');
+  });
+
+  it('voice 消息的非音频附件不标注；普通消息的音频附件也不标注（原格式不变）', () => {
+    const image = { ...audioAttachment, id: 'att_i', fileName: 'pic.png', mime: 'image/png' };
+    expect(
+      voiceLine({ content: { text: 'x', origin: 'voice' }, attachments: [image] }),
+    ).toContain('att_i pic.png [image/png] 269KB');
+    const plainAudio = voiceLine({
+      content: { text: '普通附件' },
+      attachments: [audioAttachment],
+    });
+    expect(plainAudio).toContain('att_v voice-1.wav [audio/wav] 269KB');
+    expect(plainAudio).not.toContain('语音原始录音');
+  });
+
+  it('触发段：批内任一 voice 消息带语音宿主说明（不转写 / 不合成 / 口语化）', () => {
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [makeMessage({ id: 'msg_v', seq: 1, content: { text: '在吗', origin: 'voice' } })],
+      options: renderOptions,
+    });
+    expect(segment).toContain('宿主说明：本批消息来自语音对话模式');
+    expect(segment).toContain('无需再用 transcribe_audio 转写或读取');
+    expect(segment).toContain('不要调用 generate_speech');
+    expect(segment).toContain('回复请口语化、简短、适合朗读');
+  });
+
+  it('触发段：非 voice 批不带语音宿主说明（其余唤醒提示不受影响）', () => {
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [makeMessage({ id: 'msg_p', seq: 1, content: { text: '在吗' } })],
+      options: renderOptions,
+    });
+    expect(segment).not.toContain('语音对话模式');
+    // 既有提示不受影响：delegation reason 仍有委派说明。
+    const delegation = buildTriggerSegment({
+      reason: 'delegation',
+      messages: [makeMessage({ id: 'msg_d', seq: 1, content: { text: '帮忙' } })],
+      options: renderOptions,
+    });
+    expect(delegation).toContain('宿主说明：这是另一个 Bot 代用户转交给你的请求');
+    expect(delegation).not.toContain('语音对话模式');
+  });
+
+  it('voice 消息正文为空（转写失败兜底）：音频附件不标注、触发段无语音宿主说明', () => {
+    const line = voiceLine({
+      content: { text: '', origin: 'voice' },
+      attachments: [audioAttachment],
+    });
+    expect(line).toContain('att_v voice-1.wav [audio/wav] 269KB');
+    expect(line).not.toContain('语音原始录音');
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [makeMessage({ id: 'msg_v', seq: 1, content: { text: '', origin: 'voice' } })],
+      options: renderOptions,
+    });
+    expect(segment).not.toContain('语音对话模式');
+  });
+
+  it('voice 消息正文只有空白：按空正文处理（不标注、无语音宿主说明）', () => {
+    const line = voiceLine({
+      content: { text: '  \n\t ', origin: 'voice' },
+      attachments: [audioAttachment],
+    });
+    expect(line).not.toContain('语音原始录音');
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [
+        makeMessage({ id: 'msg_v', seq: 1, content: { text: '  \n\t ', origin: 'voice' } }),
+      ],
+      options: renderOptions,
+    });
+    expect(segment).not.toContain('语音对话模式');
+  });
+
+  it('触发段：混合批次（voice + 普通消息）仍带语音宿主说明，普通行原样', () => {
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [
+        makeMessage({ id: 'msg_p', seq: 1, content: { text: '普通消息' } }),
+        makeMessage({ id: 'msg_v', seq: 2, content: { text: '在吗', origin: 'voice' } }),
+      ],
+      options: renderOptions,
+    });
+    expect(segment).toContain('宿主说明：本批消息来自语音对话模式');
+    expect(segment).toContain('普通消息');
+  });
+
+  it('触发段：已撤回的 voice 消息不触发语音宿主说明（visible 过滤）', () => {
+    const segment = buildTriggerSegment({
+      reason: 'direct',
+      messages: [
+        makeMessage({
+          id: 'msg_v',
+          seq: 1,
+          status: 'recalled',
+          content: { text: '在吗', origin: 'voice' },
+        }),
+      ],
+      options: renderOptions,
+    });
+    expect(segment).not.toContain('语音对话模式');
+  });
+
+  it('非 voice 消息的行渲染逐字节保持原格式', () => {
+    const line = voiceLine({
+      content: { text: '第一条' },
+      attachments: [audioAttachment],
+    });
+    expect(line).toMatch(
+      /^\[msg_1 \| .+ \| 用户\] 第一条（附件：att_v voice-1\.wav \[audio\/wav\] 269KB）$/,
+    );
+  });
+});
+
 describe('hard constraints section (D-memory)', () => {
   const base = {
     bot: makeBot('bot_self', '我自己'),

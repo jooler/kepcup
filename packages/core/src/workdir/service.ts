@@ -362,8 +362,16 @@ export class WorkdirRuntime {
     this.#runLeases.delete(runId);
   }
 
-  // --- binding (RPC) -----------------------------------------------------------
+  // --- binding -----------------------------------------------------------------
 
+  /**
+   * Binds the conversation to `dir` (RPC `workdirs.select` and the interview
+   * directory card both land here). This is the one place that broadcasts the
+   * binding: the renderer's `workdirs.recent` feeds every workdir row
+   * (`workdirs.boundOf`), so a binding that only publishes
+   * `conversation.updated` leaves the right-panel Bot detail showing
+   * 「未设置」 until a full refresh re-lists the workdirs.
+   */
   select(conversationId: string, dir: string): Workdir {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     this.#assertNoActiveRuns(conversationId);
@@ -383,6 +391,10 @@ export class WorkdirRuntime {
     }
     this.#deps.logger.info({ conversationId, workdirId: workdir.id }, 'workdir bound');
     this.#deps.onBindingChanged?.(conversationId, true);
+    this.#deps.publish('workdir.updated', { workdir });
+    this.#deps.publish('conversation.updated', {
+      conversation: this.#deps.conversations.getOrThrow(conversationId),
+    });
     return workdir;
   }
 
@@ -395,6 +407,10 @@ export class WorkdirRuntime {
     this.#systemMessage(conversationId, `已取消工作目录绑定（${workdir?.name ?? conv.workdirId}）`);
     // Open pages lose loopback access immediately (P11 setNetworkContext).
     this.#deps.onBindingChanged?.(conversationId, false);
+    // Same broadcast contract as select() — see the note there.
+    this.#deps.publish('conversation.updated', {
+      conversation: this.#deps.conversations.getOrThrow(conversationId),
+    });
   }
 
   update(workdirId: string, patch: Parameters<WorkdirsService['update']>[1]): Workdir {

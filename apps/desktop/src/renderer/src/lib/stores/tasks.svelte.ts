@@ -12,6 +12,14 @@ class TasksState {
   byId = $state<Record<string, TaskView>>({});
   /** The task whose execution view replaces the conversation (design 42). */
   openTaskId = $state<string | null>(null);
+  /**
+   * 每个会话离开时停在哪个任务页。切会话只换可见页、不丢记忆，切回来
+   * 原地恢复；只有显式返回（返回键 / Esc）或会话消失才忘掉。
+   * 普通 Map（刻意非响应式）：台账，界面只从 `openTaskId` 派生。
+   */
+  readonly #openByConversation = new Map<string, string>();
+  /** 可见任务页归属的会话（显式关闭时按它忘掉记忆）。 */
+  #openConversationId: string | null = null;
   #started = false;
   #loading = new Set<string>();
   /** Counter of `task.updated` pushes, and the last one per task (newer-wins, 审查 L2). */
@@ -58,19 +66,51 @@ class TasksState {
   }
 
   /** Opens the task execution view (task card click / its keyboard entry). */
-  openDetail(taskId: string, trigger: HTMLElement | null = null): void {
+  openDetail(
+    taskId: string,
+    trigger: HTMLElement | null = null,
+    conversationId: string | null = null,
+  ): void {
     if (taskId.length === 0) return;
     this.#focusReturn = trigger ?? currentFocusElement();
     this.openTaskId = taskId;
+    this.#openConversationId = conversationId;
+    if (conversationId !== null) this.#openByConversation.set(conversationId, taskId);
     void this.ensure(taskId);
   }
 
   /**
-   * Returns from the task execution view to the conversation. `restoreFocus`
-   * is only for explicit returns (back / Esc): session switches close the view
-   * without stealing focus back to a card that may be going away.
+   * The main area switched to `conversationId` (null when leaving it): show
+   * the task page that conversation was left on. Switching bots does not
+   * discard the other conversation's page, so coming back restores it.
+   */
+  enterConversation(conversationId: string | null): void {
+    const next =
+      conversationId === null ? null : (this.#openByConversation.get(conversationId) ?? null);
+    if (next !== this.openTaskId) this.#focusReturn = null;
+    this.#openConversationId = conversationId;
+    this.openTaskId = next;
+    if (next !== null) void this.ensure(next);
+  }
+
+  /** The conversation is gone (deleted conversation / removed bot): forget its task page. */
+  forgetConversation(conversationId: string): void {
+    this.#openByConversation.delete(conversationId);
+    if (this.#openConversationId !== conversationId) return;
+    this.#openConversationId = null;
+    this.openTaskId = null;
+  }
+
+  /**
+   * Returns from the task execution view to the conversation. The explicit
+   * close also forgets the page, so a later switch back does not reopen it.
+   * `restoreFocus` is only for explicit returns (back / Esc).
    */
   closeDetail(options: { restoreFocus?: boolean } = {}): void {
+    if (this.#openConversationId !== null) {
+      this.#openByConversation.delete(this.#openConversationId);
+      this.#openConversationId = null;
+    }
     if (this.openTaskId === null) return;
     this.openTaskId = null;
     const target = options.restoreFocus === true ? this.#focusReturn : null;
