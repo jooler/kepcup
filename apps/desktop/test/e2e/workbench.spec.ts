@@ -616,6 +616,118 @@ test('memo ungrouped: hidden while empty, appears as soon as a memo is saved', a
   }
 });
 
+test('todo order: 默认按开始时间排序且禁止拖拽，打开自定义排序后可拖、切回不改 position', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-todo-order-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    const bot = await createBotAndOpenChat(page, '阿时');
+    await openWorkbench(page);
+
+    const lane = page.locator(`[data-lane-id="bot:${bot.botId}"]`);
+    const cards = lane.locator('[data-testid="todo-lane-cards"]');
+    const titles = (): Promise<string[]> =>
+      lane
+        .locator('[data-testid="todo-card-title"]')
+        .allTextContents()
+        .then((list) => list.map((title) => title.trim()));
+    const START_ORDER = ['A-较早', 'B-较晚', 'C-无时间先建', 'D-无时间后建'];
+    // 新事项插道顶：自定义（position）顺序 = 反创建顺序，与开始时间顺序明显不同。
+    const CUSTOM_ORDER = ['D-无时间后建', 'C-无时间先建', 'A-较早', 'B-较晚'];
+
+    const hour = 60 * 60_000;
+    const assignee = { kind: 'bot', botId: bot.botId };
+    // 先建「较晚」再建「较早」：开始时间顺序与创建顺序刻意相反。
+    await rpc(page, 'todos.create', {
+      title: 'B-较晚',
+      assignee,
+      when: new Date(Date.now() + 2 * hour).toISOString(),
+    });
+    await rpc(page, 'todos.create', {
+      title: 'A-较早',
+      assignee,
+      when: new Date(Date.now() + hour).toISOString(),
+    });
+    await rpc(page, 'todos.create', { title: 'C-无时间先建', assignee });
+    await rpc(page, 'todos.create', { title: 'D-无时间后建', assignee });
+
+    // 默认「按开始时间」：有时间的按时间升序在前；没有时间的排最后，按创建时间升序。
+    await expect(lane).toBeVisible({ timeout: 15_000 });
+    await expect.poll(titles, { timeout: 15_000 }).toEqual(START_ORDER);
+
+    // 默认禁止拖拽：dnd 区标成不可拖，卡片上也没有库写上的 grab 光标。
+    await expect(cards).toHaveAttribute('data-draggable', 'false');
+    const firstCard = lane.locator('[data-testid="todo-card"]').first();
+    await expect(firstCard).not.toHaveCSS('cursor', 'grab');
+
+    // 真拖一次：没挂拖拽语义，顺序不变（要改执行只能进详情）。
+    const from = await firstCard.boundingBox();
+    const to = await lane.locator('[data-testid="todo-card"]').nth(2).boundingBox();
+    if (from === null || to === null) throw new Error('todo card has no box');
+    await page.mouse.move(from.x + from.width / 2, from.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, from.y + 40, { steps: 6 });
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+    await page.mouse.up();
+    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0);
+    await expect.poll(titles).toEqual(START_ORDER);
+    // 拖拽退化成点击时抽屉会开着：Esc 关掉再继续。
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0, { timeout: 5_000 });
+
+    // ⋯ → 「自定义排序」：默认关闭（= 按开始时间），点开后道内可拖且设置落库。
+    await page.locator('[data-testid="todo-more-menu"]').click();
+    const toggle = page.locator('[data-testid="todo-custom-order-toggle"]');
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect(cards).toHaveAttribute('data-draggable', 'true');
+    await expect
+      .poll(
+        async () =>
+          ((await rpc(page, 'settings.get')) as { workbenchTodoCustomOrder: boolean })
+            .workbenchTodoCustomOrder,
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    // 自定义排序 = position（新事项在道顶）：顺序变了，条目一个不少。
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(CUSTOM_ORDER);
+    await shot(page, '13-todo-custom-order');
+
+    // 自定义排序下真拖一次：把最后一张拖到最前，顺序按手动 position 落库。
+    // 先 Esc 关掉菜单：portal 弹层还在时 pointerdown 先被它吃掉，拖拽起不来。
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveCount(0, { timeout: 5_000 });
+    const cardsOfLane = lane.locator('[data-testid="todo-card"]');
+    const lastFrom = await cardsOfLane.last().boundingBox();
+    const topTo = await cardsOfLane.first().boundingBox();
+    if (lastFrom === null || topTo === null) throw new Error('todo card has no box');
+    const DRAGGED_ORDER = ['B-较晚', 'D-无时间后建', 'C-无时间先建', 'A-较早'];
+    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(80);
+    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2 - 12, {
+      steps: 6,
+    });
+    await page.mouse.move(topTo.x + topTo.width / 2, topTo.y + 8, { steps: 20 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
+
+    // 切回按开始时间：回到时间顺序（拖拽只写了 position，没影响按时间排序）。
+    await page.locator('[data-testid="todo-more-menu"]').click();
+    await toggle.click();
+    await expect(cards).toHaveAttribute('data-draggable', 'false');
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(START_ORDER);
+    // 再开自定义排序：手动顺序还在（拖拽结果持久化）。
+    await toggle.click();
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('memo → todo → assign a bot → start now → dispatch card → delivered → complete', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-wb-flow-');

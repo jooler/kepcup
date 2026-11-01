@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, MoreHorizontal } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { Input } from '$lib/components/ui/input';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import TodoCard from './TodoCard.svelte';
   import TodoLane from './TodoLane.svelte';
   import {
@@ -45,10 +47,58 @@
   );
   const runningSig = $derived([...runningBotSet(chat.conversations)].sort().join(','));
   const running = $derived(new Set(runningSig === '' ? [] : runningSig.split(',')));
+
+  /**
+   * 排序方式（设置 `workbenchTodoCustomOrder`）：false = 按开始时间（默认，禁拖拽）；
+   * true = 自定义排序（手动拖拽顺序）。点击后的乐观值，store 跟上后清掉。
+   * 声明放在 `lanes` 之前：派生值在渲染时才求值，但不要依赖声明顺序。
+   */
+  let customOrderOverride = $state<boolean | null>(null);
+  const customOrder = $derived(
+    customOrderOverride !== null
+      ? customOrderOverride
+      : settingsStore.settings?.workbenchTodoCustomOrder === true,
+  );
+  let orderBusy = $state(false);
   const lanes = $derived(
-    buildLanes({ todos: workbench.todos, schedules: workbench.schedules, bots, projects }),
+    buildLanes({
+      todos: workbench.todos,
+      schedules: workbench.schedules,
+      bots,
+      projects,
+      customOrder,
+    }),
   );
   const closed = $derived(closedTodos(workbench.todos));
+
+  $effect(() => {
+    const settings = settingsStore.settings;
+    if (settings !== null && customOrderOverride !== null) {
+      if (settings.workbenchTodoCustomOrder === customOrderOverride) customOrderOverride = null;
+    }
+  });
+
+  /**
+   * 切换排序方式。只写设置，**不碰 `position`**：切回自定义排序要回到原来的手动顺序。
+   * 写入失败（或 core 未落库）时回滚乐观值并提示。
+   */
+  async function setCustomOrder(next: boolean): Promise<void> {
+    if (orderBusy || next === customOrder) return;
+    orderBusy = true;
+    customOrderOverride = next;
+    try {
+      const saved = await settingsStore.update({ workbenchTodoCustomOrder: next });
+      if (saved.workbenchTodoCustomOrder !== next) {
+        customOrderOverride = null;
+        toast.error(t('workbench.todos.customOrderFailed'));
+      }
+    } catch (error) {
+      customOrderOverride = null;
+      toast.error(rpcErrorText(error, t('workbench.todos.customOrderFailed')));
+    } finally {
+      orderBusy = false;
+    }
+  }
 
   let saving = $state(false);
   let input = $state<HTMLInputElement | null>(null);
@@ -79,6 +129,33 @@
 </script>
 
 <div class="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3" data-testid="todo-pane">
+  <!-- 栏头：标题 + 「更多」菜单（宽屏双栏与窄屏 tab 共用这一份，不重复渲染）。 -->
+  <div class="flex shrink-0 items-center gap-2 border-b border-border pb-2">
+    <h2 class="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">
+      {t('workbench.todos.title')}
+    </h2>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+        aria-label={t('workbench.todos.more')}
+        title={t('workbench.todos.more')}
+        data-testid="todo-more-menu"
+      >
+        <MoreHorizontal class="size-4" aria-hidden="true" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end" class="w-56">
+        <DropdownMenu.CheckboxItem
+          checked={customOrder}
+          disabled={orderBusy}
+          onCheckedChange={(value) => void setCustomOrder(value === true)}
+          data-testid="todo-custom-order-toggle"
+        >
+          {t('workbench.todos.customOrder')}
+        </DropdownMenu.CheckboxItem>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  </div>
+
   <Input
     bind:ref={input}
     bind:value={workbench.todoDraft}
@@ -103,7 +180,11 @@
     {/if}
 
     {#each lanes as lane (lane.id)}
-      <TodoLane {lane} running={lane.kind === 'bot' && running.has(lane.memberId ?? '')} />
+      <TodoLane
+        {lane}
+        draggable={customOrder}
+        running={lane.kind === 'bot' && running.has(lane.memberId ?? '')}
+      />
     {/each}
 
     {#if closed.length > 0}
