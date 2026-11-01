@@ -231,6 +231,84 @@ describe('ChatSession', () => {
     expect(session.conversationId).toBeNull();
   });
 
+  it('onIncomingMessage 透传 message.created（滤 interim），取消订阅后停收（53 号播报订阅口）', async () => {
+    const session = new ChatSession();
+    await session.open('c1');
+    const received: Array<[string, string]> = [];
+    const unsubscribe = session.onIncomingMessage((conversationId, message) => {
+      received.push([conversationId, message.id]);
+    });
+    emit('message.created', {
+      conversationId: 'c1',
+      message: textMessage({ id: 'normal', conversationId: 'c1', seq: 1 }),
+    });
+    // interim（task 状态遮罩）在 #ingestMessage 前排就被滤掉，不透传。
+    emit('message.created', {
+      conversationId: 'c1',
+      message: textMessage({
+        id: 'interim',
+        conversationId: 'c1',
+        seq: 2,
+        content: { text: '处理中', interim: true },
+      }),
+    });
+    // 其它会话的消息照常透传（订阅方按 conversationId 自筛）。
+    emit('message.created', {
+      conversationId: 'c2',
+      message: textMessage({ id: 'other', conversationId: 'c2', seq: 1 }),
+    });
+    expect(received).toEqual([
+      ['c1', 'normal'],
+      ['c2', 'other'],
+    ]);
+
+    unsubscribe();
+    emit('message.created', {
+      conversationId: 'c1',
+      message: textMessage({ id: 'after', conversationId: 'c1', seq: 3 }),
+    });
+    expect(received).toEqual([
+      ['c1', 'normal'],
+      ['c2', 'other'],
+    ]);
+    session.dispose();
+  });
+
+  it('订阅方抛错不影响其他订阅方与 ingest 主流程（异常隔离，warn 留痕）', async () => {
+    const session = new ChatSession();
+    await session.open('c1');
+    session.onIncomingMessage(() => {
+      throw new Error('listener boom');
+    });
+    const received: string[] = [];
+    session.onIncomingMessage((_conversationId, message) => {
+      received.push(message.id);
+    });
+    // svelte-client 环境里 vi.spyOn(console) 拦不到模块侧调用，用 stubGlobal 换
+    // console 来捕获 warn（错误不静默的留痕断言）。
+    const warns: unknown[][] = [];
+    vi.stubGlobal('console', { ...console, warn: (...args: unknown[]) => warns.push(args) });
+    try {
+      emit('message.created', {
+        conversationId: 'c1',
+        message: textMessage({ id: 'm1', conversationId: 'c1', seq: 1 }),
+      });
+    } finally {
+      // emit 抛错也不能让打补丁的 console 泄漏到后续用例（vitest 未开 unstubGlobals）。
+      vi.unstubAllGlobals();
+    }
+    // 抛错的订阅方之后：另一个订阅方照收，消息照常进视图（主流程不断）。
+    expect(received).toEqual(['m1']);
+    expect(session.view?.messages.some((message) => message.id === 'm1')).toBe(true);
+    expect(warns).toEqual([
+      [
+        '[kepcup] incoming-message listener failed',
+        { conversationId: 'c1', messageId: 'm1', error: new Error('listener boom') },
+      ],
+    ]);
+    session.dispose();
+  });
+
   it('open switches the view and clears replyTo', async () => {
     const session = new ChatSession();
     state.messages = [textMessage({ id: 'm1', conversationId: 'c1', seq: 1 })];
@@ -305,7 +383,12 @@ describe('ChatSession', () => {
         ? { ...conversation, unreadCount: 4, lastSeq: 5, lastReadSeq: 1 }
         : conversation,
     );
-    current!.conversation = { ...current!.conversation, unreadCount: 4, lastSeq: 5, lastReadSeq: 1 };
+    current!.conversation = {
+      ...current!.conversation,
+      unreadCount: 4,
+      lastSeq: 5,
+      lastReadSeq: 1,
+    };
     const bot = current!.conversation.bot;
     emit('conversation.updated', {
       conversation: {
@@ -330,7 +413,9 @@ describe('ChatSession', () => {
     expect(chat.current?.conversation.title).toBe('renamed');
     expect(chat.current?.conversation.unreadCount).toBe(4);
     expect(chat.current?.conversation.bot?.id).toBe('bot_c1');
-    expect(chat.conversations.find((conversation) => conversation.id === 'c1')?.unreadCount).toBe(4);
+    expect(chat.conversations.find((conversation) => conversation.id === 'c1')?.unreadCount).toBe(
+      4,
+    );
   });
 
   it('a second session does not take the main grants list, task page, or settled tasks', async () => {
