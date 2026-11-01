@@ -444,6 +444,21 @@ export function shouldShowUngrouped(
 }
 
 /**
+ * 备忘是否「已转事项」（D90 §2.4）：存在关联它、且**没有被取消**的事项。
+ *
+ * 只看 `status !== 'cancelled'`：取消表示这次转化作废，备忘回到普通状态（标签、半透明都撤掉）；
+ * `done` 仍是正当的转化结果，保留标签当历史标记，所以不能复用 `isOpenTodo`（它连 done 一起排除）。
+ * 事项被重新打开（cancelled → draft）后自然又算已转事项。
+ * 注意 `todos.list` 会带回最近关闭的事项（`TODO_CLOSED_VISIBLE_MS` 窗口内），判定必须看状态。
+ */
+export function memoConverted(
+  todos: ReadonlyArray<Pick<TodoEntry, 'memoId' | 'status'>>,
+  memoId: string,
+): boolean {
+  return todos.some((todo) => todo.memoId === memoId && todo.status !== 'cancelled');
+}
+
+/**
  * 备忘 → 事项预填：首个非空行作标题（超长截断），全文作说明（超长截断）。
  * 标题已是全文时说明为空，避免重复。
  */
