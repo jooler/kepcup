@@ -1185,6 +1185,7 @@ export const enUS = {
   'usage.loop.task': 'Task',
   'usage.loop.memory': 'Memory embedding/rerank',
   'usage.loop.voice_input': 'Voice input',
+  'usage.loop.voice_reply': 'Voice reply',
   'settings.embeddingSection': 'Embedding source',
   'settings.embeddingNote':
     'Embedding method for memory retrieval; falls back to full-text search when not ready. The "Local model" (jina-embeddings-v2-base-zh, 768 dimensions, Chinese-English bilingual) and the ONNX runtime (about 276MB combined) are installed to the app\'s private directory and shared by all Bots; if the model is not ready, you can download it below or install it automatically via an environment request. GPU acceleration is selected automatically by platform (macOS CoreML / Windows DirectML, falling back to CPU when unavailable). "Vendor API" uses the configuration in the "Embedding model" section above; changing the source rebuilds the vector index for all Bots.',

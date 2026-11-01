@@ -20,6 +20,7 @@
     task: 'usage.loop.task',
     memory: 'usage.loop.memory',
     voice_input: 'usage.loop.voice_input',
+    voice_reply: 'usage.loop.voice_reply',
   };
 
   let entries = $state<UsageSummaryEntry[]>([]);
