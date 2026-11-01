@@ -318,6 +318,42 @@ describe('Bot 模板导入', () => {
     expect(target.bots.getOrThrow(result.botId).avatarPadding).toBe(4);
   });
 
+  it('强调色（accentColor）随模板导出/导入；默认 mono 与旧模板缺项都不写', async () => {
+    const source = makeRig();
+    const png = Buffer.from([9, 8, 7, 6]);
+    const colored = source.bots.create({ identity: { name: '有强调色', bio: '' } });
+    source.avatars.upload(colored.id, 'image/png', png);
+    source.bots.setAccentColor(colored.id, 'blue');
+
+    const plain = source.bots.create({ identity: { name: '默认色', bio: '' } });
+    source.avatars.upload(plain.id, 'image/png', png);
+
+    expect(source.templates.buildTemplate(colored.id).accentColor).toBe('blue');
+    expect(source.templates.buildTemplate(plain.id).accentColor).toBeUndefined();
+
+    const file = path.join(dir, `accent-${Math.random().toString(36).slice(2, 8)}.json`);
+    source.templates.exportTo(colored.id, file);
+
+    const target = makeRig();
+    const { sha256 } = target.templates.inspect(file);
+    const result = await target.templates.importFrom(file, sha256);
+    // 上传头像的 Bot：强调色只能来自模板，不能靠预置串推导。
+    expect(target.bots.getOrThrow(result.botId).accentColor).toBe('blue');
+
+    // 旧模板（没有 accentColor 字段）照常导入，强调色留空由渲染端回退。
+    const legacy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete legacy.accentColor;
+    const legacyFile = path.join(
+      dir,
+      `accent-legacy-${Math.random().toString(36).slice(2, 8)}.json`,
+    );
+    writeFileSync(legacyFile, JSON.stringify(legacy));
+    const legacyTarget = makeRig();
+    const legacyInspect = legacyTarget.templates.inspect(legacyFile);
+    const legacyResult = await legacyTarget.templates.importFrom(legacyFile, legacyInspect.sha256);
+    expect(legacyTarget.bots.getOrThrow(legacyResult.botId).accentColor).toBeUndefined();
+  });
+
   it('upload 头像随模板恢复；agent 引擎在本机不可用回退内置', async () => {
     const source = makeRig();
     const bot = source.bots.create({
