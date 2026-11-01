@@ -41,7 +41,7 @@ Bot 在任务里写完文件后，用户不必去 Finder 找：回答下方直�
 - 主题：与 streamdown 代码块同一对主题（`github-light` / `github-dark`），跟随 `mode-watcher` 的当前明暗模式切换。
 - 渲染：`CodeViewer.svelte` 左侧行号 gutter（sticky，横向滚动时固定）+ 不折行横向滚动 + 头部语言名与行数；高亮未就绪时先渲染纯文本再替换。
 - 安全：不用 `{@html}`，走 `codeToTokensBase` 拿 token 后由 Svelte 文本插值渲染（自动转义），文件里写 `<script>` 也不会执行。
-- 大文件保护：超过 5000 行或 40 万字符（`MAX_HIGHLIGHT_LINES` / `MAX_HIGHLIGHT_CHARS`）不做高亮，退化为纯文本并在头部提示。
+- 大文件保护：只按行数判断，超过 20000 行（`MAX_HIGHLIGHT_LINES`）不做高亮，退化为纯文本并在头部提示（不再按字符数限制）。
 
 ## 读取与安全
 
