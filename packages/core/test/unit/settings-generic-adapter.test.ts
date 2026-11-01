@@ -46,25 +46,35 @@ describe('genericSettingsAdapter', () => {
 
     expect(adapter.read(item, target)).toMatchObject({
       status: 'configured',
-      values: { enabled: false },
-      summary: '已关闭',
+      values: { enabled: false, customOrder: false },
+      // 两个开关都带上字段标签，不然「已关闭；已关闭」看不出是哪一项。
+      summary: '显示工作台已关闭；事项按自定义顺序排序已关闭',
     });
     const normalized = adapter.normalize!(item, { enabled: true }, target);
     expect(normalized).toEqual({ ok: true, values: { enabled: true } });
     adapter.write!(item, { next: { enabled: true }, secrets: {} }, target);
     expect(read().workbenchEnabled).toBe(true);
-    expect(adapter.read(item, target).summary).toBe('已开启');
+    expect(adapter.read(item, target).summary).toBe('显示工作台已开启；事项按自定义顺序排序已关闭');
+    // 排序开关：非布尔值被拒（不静默强转）；写它不动工作台入口。
+    expect(adapter.normalize!(item, { customOrder: 'yes' }, target)).toMatchObject({ ok: false });
+    adapter.write!(item, { next: { customOrder: true }, secrets: {} }, target);
+    expect(read().workbenchTodoCustomOrder).toBe(true);
+    expect(read().workbenchEnabled).toBe(true);
   });
 
   it('only writes the submitted fields, leaving sibling settings untouched', () => {
     const item = getSettingItem('general.workbench')!;
     const { deps, read } = harness({ launchAtLogin: true });
     const adapter = genericSettingsAdapter(deps, item);
-    adapter.write!(item, { next: { enabled: true }, secrets: {} }, {
-      botId: null,
-      conversationId: null,
-      workdirId: null,
-    });
+    adapter.write!(
+      item,
+      { next: { enabled: true }, secrets: {} },
+      {
+        botId: null,
+        conversationId: null,
+        workdirId: null,
+      },
+    );
     expect(read().workbenchEnabled).toBe(true);
     expect(read().launchAtLogin).toBe(true);
   });
@@ -82,7 +92,14 @@ describe('genericSettingsAdapter', () => {
       ...workbench,
       id: 'general.demo',
       fields: [
-        { ...workbench.fields[0]!, name: 'volume', type: 'number' as const, min: 1, max: 5, label: '音量' },
+        {
+          ...workbench.fields[0]!,
+          name: 'volume',
+          type: 'number' as const,
+          min: 1,
+          max: 5,
+          label: '音量',
+        },
       ],
     };
     const adapter = genericSettingsAdapter(harness().deps, item);

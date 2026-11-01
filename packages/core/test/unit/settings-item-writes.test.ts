@@ -413,7 +413,9 @@ describe('project and workdir setting reads', () => {
   it('renaming a project only changes the title', () => {
     const rigged = rig();
     const adapter = rigged.adapters(item('project.title'));
-    expect(adapter.read(item('project.title'), rigged.target).values).toEqual({ title: '旧项目名' });
+    expect(adapter.read(item('project.title'), rigged.target).values).toEqual({
+      title: '旧项目名',
+    });
     adapter.write!(
       item('project.title'),
       { next: { title: '  新项目名  ' }, secrets: {} },
@@ -1167,24 +1169,24 @@ describe('validation and widening fixes (D89 review)', () => {
     expect(
       adapter.normalize!(entry, { idleStopAfter: 9, idleWindowCalls: 8 }, rig.target),
     ).toMatchObject({ ok: false });
-    expect(
-      adapter.normalize!(entry, { idleWarnAfter: 1 }, rig.target),
-    ).toMatchObject({ ok: false });
-    expect(
-      adapter.normalize!(entry, { stallTimeoutMinutes: 121 }, rig.target),
-    ).toMatchObject({ ok: false });
-    expect(
-      adapter.normalize!(entry, { stallTimeoutMinutes: 5 }, rig.target),
-    ).toMatchObject({ ok: false });
+    expect(adapter.normalize!(entry, { idleWarnAfter: 1 }, rig.target)).toMatchObject({
+      ok: false,
+    });
+    expect(adapter.normalize!(entry, { stallTimeoutMinutes: 121 }, rig.target)).toMatchObject({
+      ok: false,
+    });
+    expect(adapter.normalize!(entry, { stallTimeoutMinutes: 5 }, rig.target)).toMatchObject({
+      ok: false,
+    });
     expect(adapter.normalize!(entry, { stallTimeoutMinutes: 0 }, rig.target)).toMatchObject({
       ok: true,
     });
     expect(adapter.normalize!(entry, { maxWallMinutes: 0 }, rig.target)).toMatchObject({
       ok: true,
     });
-    expect(
-      adapter.normalize!(entry, { maxWallMinutes: 1_441 }, rig.target),
-    ).toMatchObject({ ok: false });
+    expect(adapter.normalize!(entry, { maxWallMinutes: 1_441 }, rig.target)).toMatchObject({
+      ok: false,
+    });
 
     const checked = adapter.normalize!(
       entry,
@@ -1219,10 +1221,25 @@ describe('validation and widening fixes (D89 review)', () => {
     const rig = harness({ workbenchEnabled: false });
     const entry = item('general.workbench');
     const adapter = rig.adapters(entry);
-    expect(adapter.read(entry, rig.target, {}).values).toEqual({ enabled: false });
+    expect(adapter.read(entry, rig.target, {}).values).toEqual({
+      enabled: false,
+      customOrder: false,
+    });
     adapter.write!(entry, { next: { enabled: true }, secrets: {} }, rig.target);
     expect(rig.settings().workbenchEnabled).toBe(true);
     adapter.write!(entry, { next: { enabled: false }, secrets: {} }, rig.target);
     expect(rig.settings().workbenchEnabled).toBe(false);
+  });
+
+  it('general.workbench customOrder writes workbenchTodoCustomOrder, other keys untouched', () => {
+    const rig = harness({ workbenchEnabled: true, workbenchTodoCustomOrder: false });
+    const entry = item('general.workbench');
+    const adapter = rig.adapters(entry);
+    adapter.write!(entry, { next: { customOrder: true }, secrets: {} }, rig.target);
+    expect(rig.settings().workbenchTodoCustomOrder).toBe(true);
+    // 写 customOrder 不改工作台入口开关（两个字段同为通用标量适配器的同一份 patch）。
+    expect(rig.settings().workbenchEnabled).toBe(true);
+    adapter.write!(entry, { next: { customOrder: false }, secrets: {} }, rig.target);
+    expect(rig.settings().workbenchTodoCustomOrder).toBe(false);
   });
 });

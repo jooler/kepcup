@@ -47,7 +47,9 @@ describe('settings adapter coverage', () => {
   });
 
   it('a forgotten adapter is called out by name', () => {
-    const withoutWorkbench = settingAdapterContributionIds().filter((id) => id !== 'general.task-loop');
+    const withoutWorkbench = settingAdapterContributionIds().filter(
+      (id) => id !== 'general.task-loop',
+    );
     expect(
       settingsAdapterCoverageProblems({
         adapterIds: withoutWorkbench,
@@ -62,8 +64,16 @@ describe('settings adapter coverage', () => {
 describe('buildItemAdapters assembly', () => {
   it('unregistered core items read as unknown, never configured', () => {
     const adapterOf = buildItemAdapters(deps);
-    const ghost = { ...getSettingItem('general.workbench')!, id: 'general.ghost', store: { kind: 'settings', paths: ['x'] } };
-    const snapshot = adapterOf(ghost).read(ghost, { botId: null, conversationId: null, workdirId: null });
+    const ghost = {
+      ...getSettingItem('general.workbench')!,
+      id: 'general.ghost',
+      store: { kind: 'settings', paths: ['x'] },
+    };
+    const snapshot = adapterOf(ghost).read(ghost, {
+      botId: null,
+      conversationId: null,
+      workdirId: null,
+    });
     expect(snapshot.status).toBe('unknown');
     expect(snapshot.values).toBeNull();
     expect(snapshot.summary).toContain('未接入');
@@ -71,7 +81,12 @@ describe('buildItemAdapters assembly', () => {
 
   it('duplicate registrations across contributions throw', () => {
     const duplicate: readonly SettingAdapterContribution[] = [
-      { name: 'a', adapters: { 'general.task-loop': (d) => buildItemAdapters(d)(getSettingItem('general.task-loop')!) } },
+      {
+        name: 'a',
+        adapters: {
+          'general.task-loop': (d) => buildItemAdapters(d)(getSettingItem('general.task-loop')!),
+        },
+      },
       SETTING_ADAPTER_CONTRIBUTIONS.find((c) => c.name === 'general')!,
     ];
     expect(() => assembleAdapters(duplicate, deps)).toThrow('重复的设置适配器：general.task-loop');
@@ -80,9 +95,13 @@ describe('buildItemAdapters assembly', () => {
   it('generic settings items are served by the generic adapter without a contribution', () => {
     const adapterOf = buildItemAdapters(deps);
     const workbench = getSettingItem('general.workbench')!;
-    const snapshot = adapterOf(workbench).read(workbench, { botId: null, conversationId: null, workdirId: null });
+    const snapshot = adapterOf(workbench).read(workbench, {
+      botId: null,
+      conversationId: null,
+      workdirId: null,
+    });
     expect(snapshot.status).toBe('configured');
-    expect(snapshot.values).toEqual({ enabled: false });
-    expect(snapshot.summary).toBe('已关闭');
+    expect(snapshot.values).toEqual({ enabled: false, customOrder: false });
+    expect(snapshot.summary).toBe('显示工作台已关闭；事项按自定义顺序排序已关闭');
   });
 });

@@ -908,6 +908,12 @@ export const settingsSchema = z.object({
    */
   workbenchNudgeDismissed: z.boolean().default(false),
   /**
+   * 事项排序方式（D90 §5.2）：false = 按开始时间（默认；越早要执行的在前，无时间的排最后，
+   * 此时禁止拖拽），true = 自定义排序（手动拖拽顺序 `position`，可自由拖拽）。
+   * 只决定列表怎么排，**不改写 `position`**：切回自定义排序要回到原来的手动顺序。
+   */
+  workbenchTodoCustomOrder: z.boolean().default(false),
+  /**
    * InkCop 同机协作（v0.3）：扩展中心启停 + apiKey + 可选 baseUrl。
    */
   inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
