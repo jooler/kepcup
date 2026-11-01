@@ -447,6 +447,7 @@
               botId={bot.id}
               name={bot.name}
               avatar={bot.avatar}
+              accentColor={bot.accentColor ?? null}
               mask={bot.avatarMask}
               padding={bot.avatarPadding}
               class="size-24"

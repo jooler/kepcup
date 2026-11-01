@@ -74,23 +74,29 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
       page.locator('[data-testid="right-panel"] [data-testid="bot-name-edit"]'),
     ).toHaveText('小启');
 
-    // 预置页签：默认「第一个形状 + 第一种颜色」带选中标记。
+    // 预置页签：默认「第一个形状」带选中标记；色板已挪到「强调色」页签。
     await page.locator('[data-testid="bot-avatar-button"]').click();
     const picker = page.locator('[data-testid="avatar-picker"]');
     await expect(picker).toBeVisible();
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
-    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
+    await expect(page.locator('[data-testid="avatar-color-grid"]')).toBeHidden();
 
-    // 换形状 + 换颜色即时生效（SVG 预置头像出现在右栏、顶部药丸、左栏）。
+    // 换形状即时生效（SVG 预置头像出现在右栏、顶部药丸、左栏）。
     await page.locator('[data-testid="avatar-shape-spark"]').click();
-    await page.locator('[data-testid="avatar-color-blue"]').click();
     await expect(page.locator('[data-testid="bot-avatar"] svg')).toBeVisible();
     await expect(page.locator('[data-testid="conversation-avatar"] svg')).toBeVisible();
 
-    // Reset 回默认（第一个形状 + 第一种颜色）。
+    // 强调色页签：默认「黑白」带选中标记，换色即时生效。
+    await page.locator('[data-testid="avatar-tab-accent"]').click();
+    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
+    await page.locator('[data-testid="avatar-color-blue"]').click();
+    await expect(page.locator('[data-testid="avatar-color-blue"]')).toHaveClass(/ring-2/);
+
+    // Reset 只重置头像形状：回到第一个形状，强调色仍是刚选的蓝。
     await page.locator('[data-testid="avatar-reset"]').click();
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
-    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
+    await page.locator('[data-testid="avatar-tab-accent"]').click();
+    await expect(page.locator('[data-testid="avatar-color-blue"]')).toHaveClass(/ring-2/);
 
     // 上传页签：选图 → AvatarCropper 确认 → core 落盘（bots/{id}/avatar/），右栏出现 <img>。
     await page.locator('[data-testid="avatar-tab-upload"]').click();
@@ -101,6 +107,15 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     });
     await page.locator('[data-testid="avatar-cropper-confirm"]').click();
     await expect(page.locator('[data-testid="bot-avatar"] img')).toBeVisible({ timeout: 15_000 });
+    await expect(picker).toBeHidden();
+
+    // 上传头像不改变强调色：重开选择器，蓝仍是选中色（旧 bug 会回退成第一个自动色）。
+    await page.locator('[data-testid="bot-avatar-button"]').click();
+    await page.locator('[data-testid="avatar-tab-accent"]').click();
+    await expect(page.locator('[data-testid="avatar-color-blue"]')).toHaveClass(/ring-2/);
+    await page.locator('[data-testid="avatar-accent-reset"]').click();
+    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
+    await page.keyboard.press('Escape');
     await expect(picker).toBeHidden();
 
     // 名称 / 简介点按直编：Enter 保存并全界面同步。

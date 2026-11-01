@@ -204,6 +204,7 @@
           botId={current.conversation.directBotId ?? ''}
           name={headerTitle}
           avatar={current.conversation.bot?.avatar ?? null}
+          accentColor={current.conversation.bot?.accentColor ?? null}
           mask={current.conversation.bot?.avatarMask ?? null}
           padding={current.conversation.bot?.avatarPadding ?? null}
           class="size-7"

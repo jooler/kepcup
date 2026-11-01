@@ -1,8 +1,10 @@
 import {
   PROJECT_MEMBER_PREVIEW_MAX,
+  normalizeBotAccentColor,
   normalizeBotAvatarMask,
   normalizeBotAvatarPadding,
   type Bot,
+  type BotAccentColor,
   type BotAvatarMask,
 } from '@kepcup/shared';
 
@@ -11,7 +13,8 @@ import {
  *
  * core 的 `ProjectsService.memberPreviews` 与桌面端本地重建（`reloadMembers` /
  * `syncMemberPreviews` / `bot.updated`）必须产出同一形状：漏一个展示字段，同一个
- * 头像就会在侧栏和详情里不一致（例如遮罩退回圆形），直到下一次整份会话重新拉取。
+ * 头像就会在侧栏和详情里不一致（例如遮罩退回圆形、强调色退回默认），直到下一次
+ * 整份会话重新拉取。
  */
 export interface MemberPreview {
   id: string;
@@ -19,22 +22,27 @@ export interface MemberPreview {
   avatar: string | null;
   avatarMask: BotAvatarMask;
   avatarPadding: number;
+  /** Bot 强调色；缺省 = 未显式设置（渲染端回退到预置头像内嵌色）。 */
+  accentColor?: BotAccentColor;
 }
 
 /** 预览需要的 Bot 字段子集：core 下发的 `Bot` 直接可用，测试可用最小对象。 */
 export type PreviewBot = Pick<Bot, 'id' | 'name' | 'avatar'> & {
   avatarMask?: BotAvatarMask | null;
   avatarPadding?: number | null;
+  accentColor?: BotAccentColor | null;
 };
 
 /** 单个 Bot → 预览（遮罩 / 边距按读侧规则归一：缺省 = circle / 0）。 */
 export function memberPreviewOf(bot: PreviewBot): MemberPreview {
+  const accentColor = normalizeBotAccentColor(bot.accentColor);
   return {
     id: bot.id,
     name: bot.name,
     avatar: bot.avatar ?? null,
     avatarMask: normalizeBotAvatarMask(bot.avatarMask),
     avatarPadding: normalizeBotAvatarPadding(bot.avatarPadding),
+    ...(accentColor !== null ? { accentColor } : {}),
   };
 }
 

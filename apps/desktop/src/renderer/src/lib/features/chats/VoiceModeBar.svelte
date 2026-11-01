@@ -83,6 +83,7 @@
     botId={chatSession.view?.conversation.directBotId ?? ''}
     name={botName}
     avatar={bot?.avatar ?? null}
+    accentColor={bot?.accentColor ?? null}
     mask={bot?.avatarMask ?? null}
     padding={bot?.avatarPadding ?? null}
     class="mx-1.5 size-9"

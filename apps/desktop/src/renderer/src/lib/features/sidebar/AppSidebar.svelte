@@ -807,6 +807,7 @@
       botId={conversation.directBotId ?? conversation.id}
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
+      accentColor={conversation.bot?.accentColor ?? null}
       mask={conversation.bot?.avatarMask ?? null}
       padding={conversation.bot?.avatarPadding ?? null}
       class="size-11"
@@ -1470,6 +1471,7 @@
             botId={bot.id}
             name={bot.name}
             avatar={bot.avatar}
+            accentColor={bot.accentColor}
             mask={bot.avatarMask}
             padding={bot.avatarPadding}
             class="size-7"

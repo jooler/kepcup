@@ -62,6 +62,7 @@
       botId={member.bot.id}
       name={member.bot.name}
       avatar={member.bot.avatar}
+      accentColor={member.bot.accentColor ?? null}
       mask={member.bot.avatarMask}
       padding={member.bot.avatarPadding}
       class="size-8"

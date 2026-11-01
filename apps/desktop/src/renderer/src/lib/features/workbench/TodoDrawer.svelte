@@ -8,7 +8,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import { parsePresetAvatar } from '$lib/avatars/presets';
+  import { resolveAccentColor } from '$lib/avatars/presets';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
@@ -186,10 +186,10 @@
     return member === undefined ? id : memberLabel(member);
   });
 
-  /** Bot 预置头像色（上传 / 占位无色时返回 undefined，名称用默认色）。 */
+  /** Bot 名称跟随它的强调色（与头像形状 / 是否上传无关）；查不到 Bot 时用默认色。 */
   function botNameColor(botId: string): string | undefined {
     const bot = contacts.bots.find((item) => item.id === botId);
-    return parsePresetAvatar(bot?.avatar ?? null)?.color.hex;
+    return bot === undefined ? undefined : resolveAccentColor(bot.accentColor, bot.avatar).hex;
   }
 
   function sectionLabel(sectionId: string): string {

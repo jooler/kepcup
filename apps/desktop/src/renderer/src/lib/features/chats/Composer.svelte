@@ -32,7 +32,7 @@
     mergeMentionTokens,
   } from './composer-editor';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import QuotedMedia from './QuotedMedia.svelte';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
@@ -210,23 +210,29 @@
   const pickFileTarget = $derived(createPickFileTarget(t('composer.mentionPickFile')));
 
   /**
-   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；项目组无单一 Bot、上传
-   * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
-   * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
+   * 当前会话 Bot 的强调色（单聊取 direct Bot；项目组无单一 Bot 时为 null）。
+   * 它是 Bot 的「腔调色」，与头像形状、是否上传头像无关；@ 文字色、发送键、
+   * 语音键与用户气泡同源（MessageBody）。hex 可能是 var()（黑白随主题），
+   * 必须经 style 下发。
    */
-  const botAvatarColor = $derived(
-    parsePresetAvatar(chatSession.view?.conversation.bot?.avatar ?? null)?.color ?? null,
+  const botAccent = $derived(
+    chatSession.view?.conversation.bot
+      ? resolveAccentColor(
+          chatSession.view.conversation.bot.accentColor,
+          chatSession.view.conversation.bot.avatar,
+        )
+      : null,
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
    * 图标色与用户气泡文字同一规则（avatarOnFillForeground）：黑白随主题取反，
-   * 其余预置色一律白。
+   * 其余强调色一律白。
    */
-  const botAvatarButtonPaint = $derived(
-    botAvatarColor
+  const botAccentPaint = $derived(
+    botAccent
       ? {
-          background: botAvatarColor.hex,
-          color: avatarOnFillForeground(botAvatarColor),
+          background: botAccent.hex,
+          color: avatarOnFillForeground(botAccent),
         }
       : null,
   );
@@ -480,9 +486,10 @@
         const name = document.createElement('span');
         name.className = 'min-w-0 flex-1 truncate pr-8';
         name.textContent = target.name;
-        // Bot 名称与它的预置头像同色；上传头像/占位没有单一主色，保持默认前景。
-        const avatarColor = target.kind === 'bot' ? parsePresetAvatar(target.avatar)?.color : null;
-        if (avatarColor !== undefined && avatarColor !== null) name.style.color = avatarColor.hex;
+        // Bot 名称用它的强调色（与头像形状 / 是否上传无关）；项目组等无强调色时保持默认前景。
+        if (target.kind === 'bot') {
+          name.style.color = resolveAccentColor(target.accentColor, target.avatar).hex;
+        }
         button.append(name);
         // 最右侧固定显示类型；Bot 简介不再展示（弹层保持紧凑固定宽度）。
         const kindLabel =
@@ -1876,10 +1883,10 @@
                 class={cn(
                   buttonVariants({ size: 'icon' }),
                   'shrink-0 rounded-full',
-                  botAvatarButtonPaint ? 'hover:opacity-90' : '',
+                  botAccentPaint ? 'hover:opacity-90' : '',
                 )}
-                style:background={botAvatarButtonPaint?.background}
-                style:color={botAvatarButtonPaint?.color}
+                style:background={botAccentPaint?.background}
+                style:color={botAccentPaint?.color}
                 onclick={onSendClick}
                 disabled={readOnly}
                 data-testid="composer-send"
@@ -1890,7 +1897,7 @@
             {/snippet}
             <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
                占满整行，附件键/发送键落到底部两角。@ 文字色与发送/语音键
-               取当前 Bot 头像色；mention 经 --mention-color 下发。 -->
+               取当前 Bot 的强调色；mention 经 --mention-color 下发。 -->
             <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
               {#if !stacked}
                 <!-- 左下工具行：附件键 + 语音对话键（53 号 D106）。 -->
@@ -1901,7 +1908,7 @@
               {/if}
               <div
                 class={stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}
-                style:--mention-color={botAvatarColor?.hex ?? ''}
+                style:--mention-color={botAccent?.hex ?? ''}
               >
                 <div bind:this={editorHostEl}></div>
               </div>
@@ -1953,11 +1960,11 @@
                        此位让给发送键。语音对话模式的入口在左下工具行（Speech 键）。 -->
                     <button
                       type="button"
-                      class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAvatarButtonPaint
+                      class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAccentPaint
                         ? ''
                         : 'bg-foreground text-background'}"
-                      style:background={botAvatarButtonPaint?.background}
-                      style:color={botAvatarButtonPaint?.color}
+                      style:background={botAccentPaint?.background}
+                      style:color={botAccentPaint?.color}
                       onclick={() => void startRecording()}
                       disabled={readOnly}
                       aria-label={t('composer.voiceStart')}
