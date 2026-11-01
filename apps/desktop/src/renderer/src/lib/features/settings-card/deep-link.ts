@@ -21,6 +21,7 @@ const SETTINGS_SECTIONS: ReadonlySet<string> = new Set<SettingsSectionId>([
   'search',
   'mcp',
   'browser',
+  'computer-use',
   'agents',
   'plugins',
   'profile',
