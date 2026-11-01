@@ -92,8 +92,10 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     await page.locator('[data-testid="avatar-color-blue"]').click();
     await expect(page.locator('[data-testid="avatar-color-blue"]')).toHaveClass(/ring-2/);
 
-    // Reset 只重置头像形状：回到第一个形状，强调色仍是刚选的蓝。
+    // Reset 只重置头像形状：回到第一个形状。形状网格只在预置页签里，
+    // 强调色仍是刚选的蓝。
     await page.locator('[data-testid="avatar-reset"]').click();
+    await page.locator('[data-testid="avatar-tab-preset"]').click();
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
     await page.locator('[data-testid="avatar-tab-accent"]').click();
     await expect(page.locator('[data-testid="avatar-color-blue"]')).toHaveClass(/ring-2/);
