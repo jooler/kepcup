@@ -149,7 +149,13 @@ export const zhCN = {
   'voiceMode.idleHint': '点击麦克风说话',
   'voiceMode.thinking': '正在思考…',
   'voiceMode.transcribing': '识别中…',
+  'voiceMode.sending': '发送中…',
   'voiceMode.speaking': '播报中…',
+  'voiceMode.synthesizing': '合成中…',
+  'voiceMode.interruptAndRecord': '打断播报并说话',
+  'voiceMode.truncated': '内容过长，已播报前 {limit} 字',
+  'voiceMode.speakFailed': '语音播报失败',
+  'voiceMode.openSettings': '打开设置',
   'voiceMode.settings': '语音能力设置',
   'voiceMode.close': '退出语音对话',
   // 设置页「硬件」分区与传感器（docs/design/31-sensors.md，D76）

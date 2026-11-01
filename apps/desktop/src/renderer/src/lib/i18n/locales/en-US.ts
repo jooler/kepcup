@@ -165,7 +165,13 @@ export const enUS = {
   'voiceMode.idleHint': 'Tap the mic to speak',
   'voiceMode.thinking': 'Thinking…',
   'voiceMode.transcribing': 'Transcribing…',
+  'voiceMode.sending': 'Sending…',
   'voiceMode.speaking': 'Speaking…',
+  'voiceMode.synthesizing': 'Synthesizing…',
+  'voiceMode.interruptAndRecord': 'Interrupt and speak',
+  'voiceMode.truncated': 'Too long; reading the first {limit} characters',
+  'voiceMode.speakFailed': 'Voice playback failed',
+  'voiceMode.openSettings': 'Open settings',
   'voiceMode.settings': 'Voice capability settings',
   'voiceMode.close': 'Exit voice conversation',
   'settings.navHardware': 'Hardware',
@@ -3036,8 +3042,7 @@ export const enUS = {
   'workbench.todos.title': 'Items',
   'workbench.todos.quickAddPlaceholder': '+ Add an item… (Enter saves as draft)',
   'workbench.todos.quickAddFailed': "Couldn't save item",
-  'workbench.todos.reassignBlocked':
-    "This item is already running — its executor can't be changed",
+  'workbench.todos.reassignBlocked': "This item is already running — its executor can't be changed",
   'workbench.todos.moveFailed': "Couldn't move the item",
   'workbench.todos.empty':
     'No items yet. Add something to do above, or convert a memo into an item.',
