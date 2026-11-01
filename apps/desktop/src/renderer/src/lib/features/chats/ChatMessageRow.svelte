@@ -296,12 +296,12 @@
     {#if scheduleTitle !== null}
       <button
         type="button"
-        class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+        class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
         title={t('schedules.sourceHint')}
         onclick={() => shell.openSchedules()}
         data-testid="schedule-source"
       >
-        <AlarmClock class="size-3" aria-hidden="true" />{scheduleTitle}
+        <AlarmClock class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{scheduleTitle}
       </button>
     {/if}
 
@@ -309,20 +309,20 @@
       <!-- 窄屏暂无工作台入口（P1）：标签只读。 -->
       {#if narrowLayout.narrow}
         <span
-          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+          class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground"
           data-testid="todo-source"
         >
-          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
         </span>
       {:else}
         <button
           type="button"
-          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          class="mt-0.5 inline-flex max-w-full items-start gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground"
           title={t('workbench.todoSource.hint')}
           onclick={() => workbench.focusTodo(todoSource.id)}
           data-testid="todo-source"
         >
-          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+          <ClipboardList class="mt-0.5 size-3 shrink-0" aria-hidden="true" />{todoSource.title}
         </button>
       {/if}
     {/if}
