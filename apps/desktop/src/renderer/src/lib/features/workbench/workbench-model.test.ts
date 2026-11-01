@@ -11,6 +11,7 @@ import {
   effectiveStatus,
   filterMemos,
   laneIdOfTodo,
+  memoConverted,
   memoSections,
   projectMembers,
   memoToTodoDraft,
@@ -378,6 +379,40 @@ describe('备忘', () => {
     const long = memoToTodoDraft('字'.repeat(300));
     expect(Array.from(long.title).length).toBe(120);
     expect(Array.from(long.notes).length).toBe(300);
+  });
+});
+
+describe('memoConverted（备忘「已转事项」判定）', () => {
+  const linked = (id: string, status: TodoEntry['status'], memoId = 'm1'): TodoEntry =>
+    todo(id, { memoId, status });
+
+  it('草案 / 待执行 / 进行中 / 待验收都算已转事项', () => {
+    for (const status of ['draft', 'scheduled', 'in_progress', 'delivered'] as const) {
+      expect(memoConverted([linked('t1', status)], 'm1')).toBe(true);
+    }
+  });
+
+  it('关联事项取消后不再算已转事项（恢复普通备忘）', () => {
+    expect(memoConverted([linked('t1', 'cancelled')], 'm1')).toBe(false);
+  });
+
+  it('done 仍算已转事项（保留历史标记，不跟着取消一起排除）', () => {
+    expect(memoConverted([linked('t1', 'done')], 'm1')).toBe(true);
+  });
+
+  it('同一备忘有多个事项：只要有一个没取消就算已转，全取消才恢复', () => {
+    expect(memoConverted([linked('t1', 'cancelled'), linked('t2', 'draft')], 'm1')).toBe(true);
+    expect(memoConverted([linked('t1', 'cancelled'), linked('t2', 'cancelled')], 'm1')).toBe(false);
+  });
+
+  it('没有关联事项、或只有别的备忘的事项，都不算已转', () => {
+    expect(memoConverted([], 'm1')).toBe(false);
+    expect(memoConverted([todo('t1', { status: 'draft' })], 'm1')).toBe(false);
+    expect(memoConverted([linked('t1', 'draft', 'm2')], 'm1')).toBe(false);
+    // 别的备忘的已取消事项也不能把本备忘的标签弄没。
+    expect(
+      memoConverted([linked('t1', 'cancelled', 'm2'), linked('t2', 'draft', 'm1')], 'm1'),
+    ).toBe(true);
   });
 });
 

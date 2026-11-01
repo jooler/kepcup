@@ -30,6 +30,9 @@ describe('备忘卡模板接线（MemoCard.svelte）', () => {
     );
     expect(root).toContain('class={memoCardClass(converted)}');
     expect(SOURCE).toContain('const converted = $derived(');
+    // 判定走 workbench-model 的纯函数（看过 status），不能退回只看 memoId 的写法。
+    expect(SOURCE).toContain('$derived(memoConverted(workbench.todos, memo.id))');
+    expect(SOURCE).not.toContain('todos.some((todo) => todo.memoId === memo.id)');
   });
 
   test('拖拽把手是 footer 里的覆盖层，正文仍是 contenteditable', () => {

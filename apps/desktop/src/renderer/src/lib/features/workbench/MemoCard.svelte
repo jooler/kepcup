@@ -10,7 +10,7 @@
   import { Button } from '$lib/components/ui/button';
   import { ageText } from './age-text';
   import { memoCardClass } from './memo-card-class';
-  import { memoToTodoDraft } from './workbench-model';
+  import { memoConverted, memoToTodoDraft } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
@@ -34,7 +34,8 @@
   /** 当前编辑区绑定的备忘 id；换卡时重灌正文。 */
   let seededId = $state<string | null>(null);
 
-  const converted = $derived(workbench.todos.some((todo) => todo.memoId === memo.id));
+  // 关联事项被取消后就不再算「已转事项」（恢复普通备忘的标签与样式），重新打开再回来。
+  const converted = $derived(memoConverted(workbench.todos, memo.id));
   const age = $derived(ageText(memo.updatedAt));
 
   function clearTimer(): void {

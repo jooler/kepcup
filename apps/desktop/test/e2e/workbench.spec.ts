@@ -616,6 +616,66 @@ test('memo ungrouped: hidden while empty, appears as soon as a memo is saved', a
   }
 });
 
+test('memo → todo cancelled: the memo goes back to a plain memo, and reopening brings the tag back', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-wb-memo-cancel-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    await openWorkbench(page);
+    const input = page.locator('[data-testid="memo-input"]');
+    await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
+    await input.fill('会被取消的备忘');
+    await input.press('Enter');
+    const memoCard = page.locator('[data-testid="memo-card"]');
+    await expect(memoCard).toHaveCount(1, { timeout: 15_000 });
+    const convertedTag = page.locator('[data-testid="memo-converted"]');
+    await expect(convertedTag).toHaveCount(0);
+
+    // 转为事项（不指派、不定时 = 存成未指派的草案）。
+    await memoCard.locator('[data-testid="memo-to-todo"]').click();
+    const drawer = page.locator('[data-testid="todo-drawer"]');
+    await expect(drawer).toBeVisible();
+    await expect(page.locator('[data-testid="todo-drawer-memo"]')).toBeVisible();
+    await page.locator('[data-testid="todo-save"]').click();
+    await expect(drawer).toHaveCount(0, { timeout: 15_000 });
+
+    // 已转事项：标签出现、整卡半透明（focus-within 也会恢复，断言前先清焦点）。
+    await expect(convertedTag).toBeVisible();
+    await expect(memoCard).toHaveClass(/opacity-50/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(memoCard).toHaveCSS('opacity', '0.5');
+
+    // 取消该事项（走 UI 两步确认，不直接改 store）。
+    const openTodo = page
+      .locator('[data-testid="todo-card"]')
+      .filter({ hasText: '会被取消的备忘' });
+    await openTodo.click();
+    await expect(drawer).toBeVisible();
+    await page.locator('[data-testid="todo-drawer-cancel"]').click();
+    await page.locator('[data-testid="todo-drawer-cancel-confirm"]').click();
+    await expect(drawer).toHaveCount(0, { timeout: 15_000 });
+
+    // 事项取消后备忘立刻恢复普通状态：标签消失、不再半透明（cancelled 事项还在列表里，所以是真判定而不是等它过期）。
+    await expect(convertedTag).toHaveCount(0, { timeout: 15_000 });
+    await expect(memoCard).not.toHaveClass(/opacity-50/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(memoCard).toHaveCSS('opacity', '1');
+
+    // 重新打开（cancelled → draft）：标签回来。
+    await page.locator('[data-testid="todo-closed-toggle"]').click({ timeout: 15_000 });
+    const cancelledTodo = page
+      .locator('[data-testid="todo-closed"] [data-testid="todo-card"]')
+      .filter({ hasText: '会被取消的备忘' });
+    await expect(cancelledTodo).toHaveAttribute('data-status', 'cancelled');
+    await cancelledTodo.locator('[data-testid="todo-card-reopen"]').click();
+    await expect(convertedTag).toBeVisible({ timeout: 15_000 });
+    await expect(memoCard).toHaveClass(/opacity-50/);
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('todo order: 默认按开始时间排序且禁止拖拽，打开自定义排序后可拖、切回不改 position', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-todo-order-');
