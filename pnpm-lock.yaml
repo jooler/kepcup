@@ -122,6 +122,9 @@ importers:
       mode-watcher:
         specifier: 1.1.0
         version: 1.1.0(svelte@5.57.1(@typescript-eslint/types@8.71.0))
+      shiki:
+        specifier: 3.23.0
+        version: 3.23.0
       streamdown-svelte:
         specifier: 3.0.6
         version: 3.0.6(@types/mdast@4.0.4)(micromark-util-types@2.0.3)(micromark@4.0.3(supports-color@10.2.2))(supports-color@10.2.2)(svelte@5.57.1(@typescript-eslint/types@8.71.0))
@@ -8044,22 +8047,22 @@ snapshots:
   '@pierre/diffs@1.5.1(@shikijs/themes@3.23.0)':
     dependencies:
       '@pierre/theme': 2.0.0
-      '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@3.23.0)(shiki@3.23.0)
+      '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@3.23.0)(shiki@4.5.0)
       '@shikijs/transformers': 4.4.3
       diff: 9.0.0
       hast-util-to-html: 9.0.5
       lru_map: 0.4.1
-      shiki: 3.23.0
+      shiki: 4.5.0
     transitivePeerDependencies:
       - '@shikijs/themes'
 
   '@pierre/theme@2.0.0': {}
 
-  '@pierre/theming@1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@3.23.0)(shiki@3.23.0)':
+  '@pierre/theming@1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@3.23.0)(shiki@4.5.0)':
     optionalDependencies:
       '@pierre/theme': 2.0.0
       '@shikijs/themes': 3.23.0
-      shiki: 3.23.0
+      shiki: 4.5.0
 
   '@pinojs/redact@0.4.0': {}
 
