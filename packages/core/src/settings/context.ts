@@ -70,7 +70,6 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'start_task',
   'inject_task',
   'cancel_task',
-  'forward_task_result',
   'delegate_to_bot',
   'cancel_delegation',
   'list_bots',

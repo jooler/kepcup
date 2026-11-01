@@ -98,7 +98,7 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
 
 - 用户语音消息发送时经 `messages.send` 新输入 `voiceMode: true` → 消息 content 记 `origin: 'voice'`（`textContentSchema.origin` 枚举加值，沿用 `workbench` / `delegation` / `widget` 先例；content 是 JSON 列，零迁移）。
 - core 上下文两处标注（`agent/context/conversation.ts`）：① `renderMessageLine` 对 voice 消息的音频附件条目追加「语音原始录音，正文即其转写」；② `buildTriggerSegment` 新增 `voiceWakeHint`（与 `delegationWakeHint` / `projectWakeHint` 同模式）：本批消息来自语音对话模式——正文即用户语音的转写文本，音频附件仅为原始录音存档，无需再用 `transcribe_audio` 转写或读取；回复将由客户端自动转为语音播报——不要调用 `generate_speech`，回复请口语化、简短、适合朗读（代码块 / 表格不会被播报）。
-- 播报排除：`announceEntryFor` 增加 `content.origin !== 'task'`——任务侧消息（`forward_task_result` 转发结果与任务 run 内 `send_message` / `send_media` 的可见说明，D75）只供阅读、不播报。
+- 播报排除：`announceEntryFor` 增加 `content.origin !== 'task'`——任务侧消息（任务 run 内 `send_message` / `send_media` 的可见说明与旧版本 `forward_task_result` 留言，D75）只供阅读、不播报。
 - **实现修订（转写失败降级）**：标注与 `voiceWakeHint` 只对**正文非空**的 voice 消息生效（`isVoiceMessageWithTranscript`）。转写失败分支发的是「空文本 + 附件」，此时若仍声称「正文即其转写」会堵死 Bot 的 `transcribe_audio` 兜底、丢掉用户话语；空正文的 voice 消息退回普通音频附件语义（`origin: 'voice'` 照常落库，仅上下文标注条件化）。
 - **实现修订（标注时机）**：core 的服务端 schema parse 会剥离未声明键——`messages.send` 输入必须加 `voiceMode` 字段，否则渲染层传了也会被静默丢掉（`rpc/server.ts` 的 `parseOrThrow`）。
 
@@ -173,7 +173,7 @@ sensors.open('microphone') → startVoiceRecording(stream, onLevel)   // 传感�
 ### V3-5 Bot 回复记 `origin:'voice'`
 
 - 语音对话轮的 Bot 可见回复（最终回复，及 `send_message` 的主动消息）在 content 记 `origin:'voice'`：UI 据此**持久**渲染语音气泡（退出模式后历史消息仍是语音形态），播报队列据此自动播放。无正文（纯附件）不标。
-- 任务轮消息保持 `origin:'task'`（`forward_task_result` / 任务内 `send_message` / `send_media`）：不渲染语音气泡、不播报（V2-1 的排除不变）。
+- 任务轮消息保持 `origin:'task'`（任务内 `send_message` / `send_media`，以及旧版本 `forward_task_result` 留言）：不渲染语音气泡、不播报（V2-1 的排除不变）。
 - **实现修订（提示词与标记同源）**：`voiceTurn = !isTask && 会话处于语音模式` 在 run 起点采一次，同时用于系统提示词与回复标记；中途退出语音模式不会让这一轮已生成的回复失去语音形态（autoplay 仍按当时的 active 判断）。
 - **实现修订（自动播放口径）**：播报队列仍只在 `voiceMode.active` 时消费；语音模式下 `speechAudio.isPlaying` 的任何来源（队列 / 气泡点击 / 用户录音回放）都武装 barge-in，用户开口即停播并进入录音（V2-5 的武装条件从「speaking + playing」放宽为「active + isPlaying」；触发回调允许 idle 相位，`interruptSpeech` 在 idle 是 no-op）。
 

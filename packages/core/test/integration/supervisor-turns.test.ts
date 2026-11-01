@@ -25,7 +25,7 @@ import { resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 /**
  * D75 W2 对话轮（docs/design/30-supervisor-and-tasks.md §2.1、§3.2–§3.3、§4、
  * §6.2、§7.1）端到端：对话轮派任务并立即回复、结算后马上能处理新消息、任务
- * 结果唤醒新一轮并 forward_task_result、同时结算的任务合并为一轮、对话轮内写
+ * 结果唤醒新一轮并高度总结、同时结算的任务合并为一轮、对话轮内写
  * 工具被拒、对话轮运行中到达的消息进下一轮、inject_task / cancel_task、群聊
  * 顺序响应不等任务。脚本用模拟模型服务的 turn / task 两条泳道（inTurn / inTask）。
  */
@@ -146,7 +146,7 @@ function onlyTaskId(stack: TestStack, conversationId: string): string {
 }
 
 describe('D75 supervisor turns (W2)', () => {
-  it('turn starts a task and replies, settles at once, takes the next message, then relays the result via forward_task_result', async () => {
+  it('turn starts a task and replies, settles at once, takes the next message, then summarizes the result on wake', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
@@ -173,11 +173,8 @@ describe('D75 supervisor turns (W2)', () => {
       taskWrite,
       taskFinal,
       step().inTurn().expect(turnWith('今天星期几')).replyText('REPLY-2 今天星期四；报告还在写'),
-      step()
-        .inTurn()
-        .expect(isWake)
-        .replyToolCall('forward_task_result', () => ({ task_id: onlyTaskId(stack, conv.id) })),
-      step().inTurn().replyText('BRIDGE 详情如上，要我再改吗？'),
+      // §6.1 2026-11 修订：the report stays on the card; the wake turn summarizes it.
+      step().inTurn().expect(isWake).replyText('SUMMARY 报告已写入 report.md，共三节'),
     ]);
 
     await sendBatch(core, conv.id, ['帮我写一份报告']);
@@ -203,7 +200,6 @@ describe('D75 supervisor turns (W2)', () => {
         'inject_task',
         'cancel_task',
         'list_tasks',
-        'forward_task_result',
       ]),
     );
     for (const name of ['write', 'edit', 'bash', 'request_access', 'acquire_workdir_write']) {
@@ -244,10 +240,8 @@ describe('D75 supervisor turns (W2)', () => {
     expect(existsSync(file) ? readFileSync(file, 'utf8') : null).toBe('REPORT-BODY');
     // The result is private (no visible final message of the task) …
     expect(entries(stack, taskId).map((e) => e.phase)).toEqual(['brief', 'result']);
-    // … it woke a turn that forwarded the original and bridged.
-    const forwarded = await waitVisible(stack, conv.id, 'RESULT-FULL');
-    expect(forwarded.content).toMatchObject({ origin: 'task', taskId });
-    await waitVisible(stack, conv.id, 'BRIDGE');
+    // … it woke a turn that summarized it; the report itself is never a chat message.
+    await waitVisible(stack, conv.id, 'SUMMARY');
     const turns = await waitTurns(stack, conv.id, 3, 'wake turn settled');
     expect(turns[2]).toMatchObject({ triggerReason: 'task', status: 'completed' });
     const wakeRequest = llm.requestsFor('mock-main').find(isWake)!;
@@ -259,7 +253,9 @@ describe('D75 supervisor turns (W2)', () => {
       { label: 'result consumed' },
     );
     const visible = (await listMessages(core, conv.id)).map(textOf);
-    expect(visible.filter((t) => t.includes('RESULT-FULL'))).toHaveLength(1);
+    expect(visible.filter((t) => t.includes('RESULT-FULL'))).toHaveLength(0);
+    // The turn's toolset has no verbatim-forward tool any more.
+    expect(turnTools).not.toContain('forward_task_result');
   }, 60_000);
 
   it('two tasks settling while a turn runs merge into one waking turn', async () => {
@@ -564,7 +560,7 @@ describe('D75 supervisor turns (W2)', () => {
     taskHold.release();
   }, 30_000);
 
-  it('§8.4 downgrade: an agent-only bot without a built-in model routes messages to a task and forwards its result', async () => {
+  it('§8.4 downgrade: an agent-only bot without a built-in model routes messages to a task and points at its report', async () => {
     const started: FakeAcpAgentHandle[] = [];
     const stack = await createTestStack({
       env: { KEPCUP_MOCK_LLM_URL: '' },
@@ -607,9 +603,11 @@ describe('D75 supervisor turns (W2)', () => {
 
     const done = await waitRun(stack, task.id, ['completed'], 'agent task completed');
     expect(done.engine).toBe('agent:fake');
-    const forwarded = await waitVisible(stack, conv.id, 'RESULT-AGENT');
-    expect(forwarded.content).toMatchObject({ origin: 'task', taskId: task.id });
-    expect(forwarded.senderBotId).toBe(bot.id);
+    // No model to summarize: the notice points at the task card, and the report
+    // itself is not a chat message (§6.1 2026-11 修订).
+    const notice = await waitVisible(stack, conv.id, '点击任务卡查看执行报告');
+    expect(notice.senderBotId).toBe(bot.id);
+    expect((notice.content as { origin?: string }).origin).toBeUndefined();
     await waitFor(
       () => (domain(stack).runs.getOrThrow(task.id).resultConsumedAt !== null ? true : null),
       { label: 'result consumed' },

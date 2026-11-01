@@ -890,17 +890,6 @@ export class Orchestrator {
         runIds.flatMap((runId) => deps.approvals.cancelPendingForRun(runId)),
       // W4 复查 S4: a task over the wall clock on a「上次结果未知」repeat card.
       pendingUncertainRepeat: (runIds) => deps.approvals.hasPendingUncertainRepeat(runIds),
-      recordVisibleMessage: (runId, message) => {
-        // forward_task_result: the source task's agent session produced this
-        // text — a continuation reusing that session must not get it again
-        // in its conversation delta.
-        this.#markForwardedSeen(message);
-        if (deps.runs.get(runId) !== null) {
-          this.#recordBotMessage(runId, message);
-          return;
-        }
-        this.#publishMessageCreated(message);
-      },
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
       // W6: a consumed failed / interrupted task may be the last thing a
@@ -4974,8 +4963,8 @@ export class Orchestrator {
       // tasks wrote as cards under the bubble (or stands alone when the bot
       // only did file work and returned no prose).
       const artifacts = isTask ? [] : this.#collectRunArtifacts(runId, batch);
-      // forward_task_result may already have carried some files on an earlier
-      // message of this run: merge by path instead of dropping the whole set.
+      // An earlier message of this run (send_message) may already have carried
+      // some files: merge by path instead of dropping the whole set.
       const shownPaths = new Set<string>();
       for (const id of runs.get(runId)?.outputMessageIds ?? []) {
         const output = messages.getById(id);
@@ -5141,8 +5130,9 @@ export class Orchestrator {
    * Design 30 §8.4, level 2 (the explicit downgrade for a bot whose only
    * engine is an external agent — no built-in model to run its turns): the
    * turn makes no model call and routes deterministically, i.e. "always one
-   * task" as before D75. Task results in the trigger are forwarded verbatim
-   * (a failure as a short notice); the other messages go to the bot's
+   * task" as before D75. A settled task in the trigger gets a short notice
+   * pointing at its card (the report is read there — §6.1 2026-11 修订: no
+   * verbatim result in the conversation); the other messages go to the bot's
    * in-flight task (inject_task), or start a new task when there is none or
    * the task could not take them — also when that turns out only later (an
    * asynchronous steering refusal, 审查 M5). Each part is labelled for what
@@ -5157,8 +5147,8 @@ export class Orchestrator {
       loopType: 'turn',
     };
     // 53 号修订 v3：无模型降级路径发出的可见说明也是语音轮的 Bot 回复——
-    // 标 origin:'voice'，UI 渲染语音气泡、播报队列自动朗读（任务结果转发仍
-    // 走 origin:'task'，不播报）。
+    // 标 origin:'voice'，UI 渲染语音气泡、播报队列自动朗读（任务终态说明
+    // 同样播报，但报告本体只在任务卡里看）。
     const voiceTurn =
       this.#voiceModeConversations.has(batch.conversationId) ||
       batchHasVoiceMessage(batch.messages);
@@ -5177,18 +5167,12 @@ export class Orchestrator {
     for (const entry of batch.messages) {
       if (entry.kind !== 'task_event' || entry.taskId === null) continue;
       const content = entry.content as TaskEventContent;
-      if (content.phase === 'result' && content.text.trim().length > 0) {
-        try {
-          this.#taskHost.forwardResult(identity, entry.taskId);
-        } catch (error) {
-          // Already forwarded (a re-delivery): nothing to add.
-          this.#deps.logger.info(
-            { taskId: entry.taskId, error: error instanceof Error ? error.message : String(error) },
-            'downgraded turn: result not forwarded',
-          );
-        }
+      const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
+      if (content.phase === 'result') {
+        // No model, so nothing can summarize the report: point the user at
+        // the card, where the full report is rendered (§6.1 2026-11 修订).
+        notice(`任务「${title}」已完成，点击任务卡查看执行报告`);
       } else if (content.phase === 'failure') {
-        const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
         const label = content.status === 'interrupted' ? '中断了' : '失败了';
         notice(`任务「${title}」${label}${content.error ? `：${content.error}` : ''}`);
       }
@@ -5401,27 +5385,6 @@ export class Orchestrator {
       conversation.directBotId === botId ||
       this.#deps.conversations.memberBotIds(conversation.id).includes(botId)
     );
-  }
-
-  /**
-   * A task result forwarded verbatim (`origin: 'task'` + taskId) is the
-   * source task's own answer: every agent session of that task records it as
-   * seen (P5 审查 #3 contract — a `continues_task_id` delta skips it).
-   */
-  #markForwardedSeen(message: Message): void {
-    const content = message.content as { origin?: unknown; taskId?: unknown };
-    if (content.origin !== 'task' || typeof content.taskId !== 'string') return;
-    try {
-      for (const row of this.#agentSessions.listByConversation(message.conversationId)) {
-        if (row.taskId !== content.taskId) continue;
-        this.#agentSessionSeen.get(row.id)?.ids.set(message.id, message.seq);
-      }
-    } catch (error) {
-      this.#deps.logger.warn(
-        { error: error instanceof Error ? error.message : String(error) },
-        'marking a forwarded result seen failed',
-      );
-    }
   }
 
   #agentSessionRowExists(rowId: string): boolean {

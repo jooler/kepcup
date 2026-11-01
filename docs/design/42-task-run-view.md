@@ -1,18 +1,18 @@
-# 42 任务执行过程页
+# 42 任务详情页（执行报告 + 执行过程）
 
-对话中的任务卡可以打开独立的执行过程页，按 Agent 消息列表的形式展示该任务的执行记录（`run_steps`）。
+对话中的任务卡可以打开独立的任务详情页：顶部是折叠的「执行过程」（按 Agent 消息列表的形式展示 `run_steps`），下方直接展示该任务的**执行报告**（终态条目原文）。2026-11 修订：执行报告只在这里阅读，对话里不再转发原文（[30 §6.1](30-supervisor-and-tasks.md)），已完成的任务卡入口文案改为「任务已完成，点击查看执行报告」。
 
 ## 入口与层级
 
-- 任务卡卡面（按钮、链接、输入控件以外）点击打开任务执行过程页；卡底的「查看执行过程 ›」按钮是同一入口，也是键盘入口（Enter / Space）。拖选卡片文字不会触发打开。
+- 任务卡卡面（按钮、链接、输入控件以外）点击打开任务详情页；卡底入口是同一入口，也是键盘入口（Enter / Space）：已完成的任务显示「任务已完成，点击查看执行报告」，其余状态显示「查看执行过程 ›」。拖选卡片文字不会触发打开。
 - 打开后主区的当前对话组件保留在 DOM 中，以 `display: none` 隐藏；任务执行过程页占用同一主区。右栏随对话组件一起隐藏。
-- 顶部返回按钮或 Esc 返回对话，焦点回到触发入口（「查看执行过程」按钮）。执行过程页**按会话记忆**：切换会话（`chat.select`）只切到目标会话自己的页面（它没有打开任务页时显示消息列表），离开的会话保留原页面，切回来原地恢复、不再回到消息列表。显式返回（返回按钮 / Esc）才丢弃该会话的记忆；关闭会话（`chat.close`，含删除会话 / 删除 Bot）一并丢弃。窄屏返回列表（`chat.leaveCurrent`）与主区卸载（切工作台、窄屏换 tab、宽窄切换）只退出可见层、不丢弃记忆，重新进入该会话时恢复。除显式返回外都不回焦。
+- 顶部返回按钮或 Esc 返回对话，焦点回到触发入口（卡底按钮）。任务详情页**按会话记忆**：切换会话（`chat.select`）只切到目标会话自己的页面（它没有打开任务页时显示消息列表），离开的会话保留原页面，切回来原地恢复、不再回到消息列表。显式返回（返回按钮 / Esc）才丢弃该会话的记忆；关闭会话（`chat.close`，含删除会话 / 删除 Bot）一并丢弃。窄屏返回列表（`chat.leaveCurrent`）与主区卸载（切工作台、窄屏换 tab、宽窄切换）只退出可见层、不丢弃记忆，重新进入该会话时恢复。除显式返回外都不回焦。
 
 实现位置：
 
 - `apps/desktop/src/renderer/src/lib/stores/tasks.svelte.ts`：`openTaskId` / `openDetail(taskId, trigger, conversationId)` / `enterConversation(conversationId)` / `forgetConversation(conversationId)` / `closeDetail({ restoreFocus })`（按会话记忆的执行过程页）。
 - `apps/desktop/src/renderer/src/lib/features/chats/ChatsArea.svelte`：对话子树 `display: none` 与 `TaskRunView` 的条件渲染。
-- `apps/desktop/src/renderer/src/lib/features/tasks/TaskCard.svelte`：卡片点击与「查看执行过程」按钮入口。
+- `apps/desktop/src/renderer/src/lib/features/tasks/TaskCard.svelte`：卡片点击与卡底入口按钮（已完成任务的文案见上）。
 
 ## 顶部信息
 
@@ -60,9 +60,20 @@ metadata 行按可用字段展示：
 - 卡片复用对话里的 `TaskQuestionCard`，点选 / 多选 / 表单回答直接注入任务（`tasks.answer`），答完卡带上 `answer`，提问条随之收起；没有未答提问或任务已终态（提问作废，时间线里有终态说明）时不渲染。
 - core 保证一个任务同时最多一个未答问题（上一个没答时 `ask_user` 直接拒绝），提问条至多一张卡。
 
-## 消息列表
+## 执行报告
 
-数据源是 `runs.steps` RPC（`RunStep[]`），按 `seq` 升序渲染。步骤到列表条目的映射：
+数据源是 `TaskView.result`（`tasks.get` / `task.updated` 下发，取自该任务的私有终态条目）：`{ text, status }`，未结算为 null。渲染在正文下部、执行过程折叠区之下：
+
+- 有非空文本时显示「执行报告」区块，正文按 Markdown 渲染（`Markdown.svelte`）。
+- 运行中 / 未结算没有报告，不渲染该区块。
+- 报告正文不进 Bot 上下文；对话轮只依据触发段里的私有结果条目写高度总结。
+
+## 执行过程
+
+执行过程整体折叠在「执行过程」标题行下（`task-run-process`）：
+
+- 运行中的任务默认展开——实时进度就是主内容；已结算的任务默认折叠，页面一打开先看到执行报告。展开状态在首次读到任务视图时定格，之后不随终态翻转（正在看运行中任务的人不会在结算时被打断），用户可随时点标题行展开 / 收起。
+- 数据源是 `runs.steps` RPC（`RunStep[]`），按 `seq` 升序渲染。步骤到列表条目的映射：
 
 | `RunStep.type` | 展示 |
 |---|---|

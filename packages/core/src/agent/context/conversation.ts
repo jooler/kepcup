@@ -122,19 +122,18 @@ export interface RenderMessageOptions {
  * Legacy task interim chat bubble (D54). New path stores a single status on
  * `runs.last_progress` (status line / task card); leftover interim rows stay
  * out of every model-facing conversation path.
- * `forward_task_result` keeps `origin:'task'` without `interim` (and uses the
- * turn's run id). Rows written before the `interim` flag still match when
- * `runId === taskId` (the task's own run emitted them).
- * Forwarded rows themselves never reach bot reads — the storage layer
- * excludes them (`forwardedResultExcludeFilter` in domain/messages.ts, D75
- * §6.1), so bot-facing lists only ever need this helper to skip interim rows.
+ * Rows written before the `interim` flag still match when `runId === taskId`
+ * (the task's own run emitted them). Legacy verbatim result rows written by the
+ * removed `forward_task_result` (`origin:'task'` under the turn's run id) never
+ * reach bot reads — the storage layer excludes them
+ * (`forwardedResultExcludeFilter` in domain/messages.ts, D75 §6.1).
  */
 export function isTaskInterimProgress(message: Message): boolean {
   if (message.kind !== 'text' || message.senderType !== 'bot') return false;
   const content = message.content as { origin?: unknown; taskId?: unknown; interim?: unknown };
   if (content.origin !== 'task' || typeof content.taskId !== 'string') return false;
   if (content.interim === true) return true;
-  // Legacy / task-emitted under the task run (not a turn's forward_task_result).
+  // Legacy / task-emitted under the task run (not a turn-forwarded result).
   return message.runId === content.taskId;
 }
 
@@ -146,8 +145,8 @@ export function isTaskInterimProgress(message: Message): boolean {
  * - 'context': recent window, deltas, triage — TASK_EVENT_CONTEXT_MAX_CHARS,
  *   full text via get_messages_around;
  * - 'trigger': the entry that woke the turn — in full up to
- *   TASK_TRIGGER_RESULT_MAX_CHARS (a longer result points to
- *   forward_task_result);
+ *   TASK_TRIGGER_RESULT_MAX_CHARS (a longer result points to the task card,
+ *   where the user reads the full report);
  * - 'full': message tools (search_messages / get_messages_around).
  */
 export type TaskLineMode = 'context' | 'trigger' | 'full';
@@ -206,7 +205,7 @@ function clipTaskBody(
   if (body.length <= max) return body;
   const hint =
     mode === 'trigger' && phase === 'result'
-      ? `（结果过长，以上是前 ${max} 字，共 ${body.length} 字；要把原文发给用户请用 forward_task_result）`
+      ? `（结果过长，以上是前 ${max} 字，共 ${body.length} 字；执行报告全文在任务卡里，用户点开即可查看）`
       : `（已截断，共 ${body.length} 字；全文用 get_messages_around 查看 ${message.id}）`;
   return `${body.slice(0, max)}…${hint}`;
 }

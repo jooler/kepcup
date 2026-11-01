@@ -1880,3 +1880,32 @@ Bot 回复仍是文本气泡，消息列表不像通话；③ 语音模式在录
 - **用户语音气泡强调色（2026-11-02）**：用户语音气泡的底色/前景改为与用户文本气泡同源——
   `resolveAccentColor(bot.accentColor, bot.avatar)` + `avatarOnFillForeground`，无对话 Bot 时回退
   主色；波形与麦克风圆底用 `currentColor` 跟随前景，保证任意强调色下可读。
+
+## 任务执行报告移入任务详情页（移除 forward_task_result，2026-11-01）
+
+按用户定向（实际测试反馈：转发的报告原文过长，打断对话阅读）：
+
+- **移除 `forward_task_result`**：工具定义与 `TaskToolFacade.forwardResult`、`TaskHost.forwardResult`、
+  工具目录（`settings/context.ts` / `effects/classify`）一并删掉；`TaskHostDeps.recordVisibleMessage`
+  与 orchestrator 的 `#markForwardedSeen`（只服务转发行）同时删除。旧版本留下的转发行继续由
+  `forwardedResultExcludeFilter` 挡在 Bot 读路径之外（无迁移）。
+- **报告进任务详情页**：shared `taskViewSchema` 增 `result: { text, status } | null`（可选，向后兼容），
+  core `TaskHost.view()` 从终态条目填充，经 `tasks.get` / `task.updated` 下发。`TaskRunView.svelte`
+  改版：正文顶部是折叠的「执行过程」（运行中默认展开、已结算默认折叠，首次读到任务视图时定格），
+  下方直接展示「执行报告」（Markdown）；窄屏 / 宽屏布局不变。
+- **卡片入口**：已完成任务卡底按钮文案改「任务已完成，点击查看执行报告」（`task.run.openCompleted`），
+  其余状态仍「查看执行过程」。
+- **提示词**（`system-prompt.ts` 对话轮规则）：报告全文只在任务卡里、由用户自行查看；回复必须高度
+  总结关键结论、产出与注意事项（风险 / 未完成 / 待用户决定），既不整段复述也不只写「详情见任务卡」。
+  触发段超长结果的截断提示同步改为指向任务卡。
+- **降级路径**（DEV-011，无内置模型）：不再原文转发，改成一条「任务已完成，点击任务卡查看执行报告」
+  的短提示；已在 DEV-011 追加 2026-11 修订注记。
+- **文档**：design/30 §决策 7 / §2.1 / §4.1 / §6.1 / §6.3 / §8.4 / §12、design/02（交互链、工具表、
+  触发层、无内置模型）、design/42（改名「任务详情页」，新增执行报告 / 执行过程折叠两节）、
+  design/28、design/53、design/README D75、dev/02-architecture、dev/03-data-model、dev/04-agent-runtime。
+- **验证**：core 定向（tasks / supervisor-turns / supervisor-review-fixes / external-agent-p4b /
+  external-agent / tasks-interrupt / task-cards / workbench-update / runs-tasks / supervisor-turn /
+  task-timeline-render / settings-catalog-host）176 例全绿；全量 `pnpm test` 705 文件 / 7461 例通过、
+  42 跳过、0 失败；shared build、core 与 desktop typecheck 0 error；改动文件 eslint 干净。
+  顺带修复既有失败：`public-skills-migration` 回放用例未摘除 0064 加的 `bots.accent_color`
+  （9ef81f38 引入，与本改动无关），补一行 `drop column` 后转绿。
