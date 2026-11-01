@@ -1816,3 +1816,17 @@ Bot 上下文里只有一行附件条目，系统提示词的附件阶梯与 `tr
   收口全量 `pnpm test`：**700 文件 / 7418 用例全绿**（3 文件 42 例 skip 为既有跳过）。真机复验
   （barge-in 的 AEC 消回声、阈值/持续时长标定、静音 3s+2s 手感、双实例场景）待用户执行，常量均注释
   「真机可调」。
+
+## 任务执行过程页按会话记忆（D75/42 修订，2026-11-01）
+
+真机反馈：Bot A 对话里打开「任务详情」（`TaskRunView`），切到 Bot B 再切回 A，主区回到消息列表。
+根因是 `tasks.openTaskId` 是全局单值，`chat.select` 每次打开会话都 `tasks.closeDetail()` 清空。
+
+- `tasks` 新增会话级记忆 `#openByConversation`：`openDetail` 由 `ChatSession.openTask` 按当前会话 id
+  登记；`chat.select` 改为 `tasks.enterConversation(conversation.id)`——切到目标会话自己的页面（没有
+  则消息列表），离开的会话记忆保留；`chat.close` / 删除会话 / 删除 Bot 用 `forgetConversation` 丢弃。
+  显式返回（返回键 / Esc）仍是 `closeDetail`（丢弃该会话记忆），窄屏 `leaveCurrent` 与主区卸载只
+  `enterConversation(null)` 退出可见层、保留记忆。
+- 设计 42 的「入口与层级」与实现位置、审批条会话归属说明同步更新；`ChatsArea` 卸载注释同步。
+- 验证：`tasks.svelte.test` 7 例、`chat-session.svelte.test` 15 例、相关 chats/shell/board 4 文件
+  42 例全绿；desktop typecheck 0 error（1 条既有 ApprovalCard 警告）。

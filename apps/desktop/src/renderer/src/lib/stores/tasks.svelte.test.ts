@@ -107,4 +107,34 @@ describe('tasks.openDetail / closeDetail', () => {
     tasks.closeDetail();
     expect(tasks.openTaskId).toBeNull();
   });
+
+  it('remembers the task page per conversation and restores it on return', () => {
+    tasks.openDetail('task_a', null, 'conv_a');
+    tasks.enterConversation('conv_b');
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation('conv_a');
+    expect(tasks.openTaskId).toBe('task_a');
+    // Leaving the conversation (list / workbench) hides the page but keeps the memory.
+    tasks.enterConversation(null);
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation('conv_a');
+    expect(tasks.openTaskId).toBe('task_a');
+    // An explicit return forgets it: switching back lands on the message list.
+    tasks.closeDetail();
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation('conv_b');
+    tasks.enterConversation('conv_a');
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation(null);
+  });
+
+  it('forgets the page when its conversation is gone', () => {
+    tasks.openDetail('task_gone', null, 'conv_gone');
+    tasks.forgetConversation('conv_gone');
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation('conv_other');
+    tasks.enterConversation('conv_gone');
+    expect(tasks.openTaskId).toBeNull();
+    tasks.enterConversation(null);
+  });
 });
