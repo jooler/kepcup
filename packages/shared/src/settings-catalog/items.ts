@@ -881,14 +881,21 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     group: 'general',
     title: '工作台',
     summary: '在侧栏显示工作台入口，统筹事项与备忘',
-    keywords: ['工作台', '事项', '备忘', '待办'],
+    keywords: ['工作台', '事项', '备忘', '待办', '排序', '拖拽'],
     scope: 'global',
-    fields: [field('enabled', '显示工作台', 'toggle', { path: 'workbenchEnabled' })],
+    fields: [
+      field('enabled', '显示工作台', 'toggle', { path: 'workbenchEnabled' }),
+      field('customOrder', '事项按自定义顺序排序', 'toggle', { path: 'workbenchTodoCustomOrder' }),
+    ],
     write: write('confirm'),
     card: 'field-editor',
     deepLink: { surface: 'settings', section: 'general', anchor: 'general-workbench' },
     // 简单顶层布尔：走通用标量适配器（generic-adapter.ts），不写自定义适配器。
-    store: { kind: 'settings', paths: ['workbenchEnabled'], generic: true },
+    store: {
+      kind: 'settings',
+      paths: ['workbenchEnabled', 'workbenchTodoCustomOrder'],
+      generic: true,
+    },
   }),
 
   item({

@@ -603,7 +603,11 @@ describe('general.workbench catalog + update schema (D90)', () => {
     expect(settingsSchema.parse({}).workbenchEnabled).toBe(false);
     expect(settingsSchema.parse({}).workbenchNudgeDismissed).toBe(false);
     const item = getSettingItem('general.workbench');
-    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'], generic: true });
+    expect(item?.store).toEqual({
+      kind: 'settings',
+      paths: ['workbenchEnabled', 'workbenchTodoCustomOrder'],
+      generic: true,
+    });
     expect(itemIdsForSettingsPaths(['workbenchEnabled'])).toContain('general.workbench');
     const parsed = settingsUpdateInputSchema.parse({ workbenchEnabled: true });
     expect(parsed.workbenchEnabled).toBe(true);
@@ -611,5 +615,21 @@ describe('general.workbench catalog + update schema (D90)', () => {
       settingsSchema.parse({ ...settingsSchema.parse({}), workbenchEnabled: true })
         .workbenchEnabled,
     ).toBe(true);
+  });
+
+  it('事项排序默认按开始时间（workbenchTodoCustomOrder 默认 false）', () => {
+    expect(settingsSchema.parse({}).workbenchTodoCustomOrder).toBe(false);
+    expect(settingsSchema.parse({ workbenchTodoCustomOrder: true }).workbenchTodoCustomOrder).toBe(
+      true,
+    );
+    const item = getSettingItem('general.workbench');
+    expect(item?.fields.map((field) => field.path ?? field.name)).toContain(
+      'workbenchTodoCustomOrder',
+    );
+    expect(itemIdsForSettingsPaths(['workbenchTodoCustomOrder'])).toContain('general.workbench');
+    expect(
+      settingsUpdateInputSchema.parse({ workbenchTodoCustomOrder: true }).workbenchTodoCustomOrder,
+    ).toBe(true);
+    expect(() => settingsUpdateInputSchema.parse({ workbenchTodoCustomOrder: 'yes' })).toThrow();
   });
 });
