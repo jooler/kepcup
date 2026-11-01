@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { lazyMarkdown } from './markdown-lazy.svelte';
+  import { lazyMarkdown, MARKDOWN_CONTROLS } from './markdown-lazy.svelte';
 
   /**
    * AI 消息的 Markdown 渲染入口（独立组件）：内部走懒加载的
@@ -11,7 +11,7 @@
 
 {#if lazyMarkdown.component}
   {@const Markdown = lazyMarkdown.component}
-  <Markdown {content} />
+  <Markdown {content} controls={MARKDOWN_CONTROLS} />
 {:else}
   <div class="whitespace-pre-wrap">{content}</div>
 {/if}

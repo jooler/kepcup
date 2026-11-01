@@ -6,7 +6,8 @@
  * 的 drag 区全部压平——浮层一开，窗口就拖不动。
  *
  * 这里在 body 末尾常驻一条隐藏的顶部拖拽带：存在 `[data-window-overlay]`
- * （全屏浮层的统一标记）时激活为窗口顶部 40px 的 drag 矩形。app-region
+ * （全屏浮层的统一标记）或依赖包就地渲染、改不了标记的表格全屏浮层时，激活
+ * 为窗口顶部 40px 的 drag 矩形。app-region
  * 矩形按 DOM 顺序后者胜出，所以带必须始终是 body 的最后一个子节点——用
  * MutationObserver 在 portal 插入后重新沉底，并同步激活态。
  *
@@ -19,11 +20,18 @@
  * 有意为之的代价：浮层打开期间顶部 40px 只能拖窗口、不能点击，浮层自己的
  * 交互内容须避开这一条（bits-ui 弹框垂直居中天然满足；灯箱顶栏因此下移）。
  * 新增全屏浮层时给根元素加 data-window-overlay 即接入，不要逐组件往遮罩里
- * 塞拖拽条；局部 popover（「+」面板、右键菜单）不算——它们的顶部正是
- * 可交互内容，接进来反而被带挡住。
+ * 塞拖拽条；依赖包自己渲染的浮层（streamdown 表格全屏）只能像
+ * OVERLAY_SELECTOR 那样按它的 data 属性登记，并在 app.css 里把顶栏下移 40px。
+ * 局部 popover（「+」面板、右键菜单）不算——它们的顶部正是可交互内容，
+ * 接进来反而被带挡住。
  */
 
-const OVERLAY_SELECTOR = '[data-window-overlay]';
+/**
+ * `[data-streamdown="table-fullscreen"]` 是 streamdown-svelte 在消息内就地渲染的
+ * 表格全屏浮层（依赖包 DOM，加不了 data-window-overlay），同样要接入拖拽带，
+ * 否则浮层开着时窗口无法拖动。
+ */
+const OVERLAY_SELECTOR = '[data-window-overlay], [data-streamdown="table-fullscreen"]';
 const ACTIVE_CLASS = 'window-drag-band-active';
 
 /** OverlayTracker 用到的节点最小面（单测用替身）。 */
