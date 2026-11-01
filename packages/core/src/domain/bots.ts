@@ -7,11 +7,15 @@ import {
   normalizeBotAvatarMask,
   botAvatarPaddingSchema,
   normalizeBotAvatarPadding,
+  botAccentColorSchema,
+  normalizeBotAccentColor,
+  presetAvatarColorId,
   normalizeBotKind,
   parseBotKind,
   newId,
   type Bot,
   type BotAvatarMask,
+  type BotAccentColor,
   type BotProfile,
   type AgentPermissionTier,
   type BotSystemRole,
@@ -36,6 +40,11 @@ interface BotRow {
    * （旧编号排序问题），`select *` 出来的行没有这一列（读侧按 0 兜底）。
    */
   avatar_padding?: number | null;
+  /**
+   * 0064 新增列。可选：开发期库的 user_version 可能已越过某次迁移（旧编号排序
+   * 问题），`select *` 出来的行没有这一列（读侧按未设置兜底）。
+   */
+  accent_color?: string | null;
   bio: string | null;
   profile_json: string;
   status: 'active' | 'deleted';
@@ -87,6 +96,17 @@ function stripLegacyInkcopTransport(profile: BotProfile): BotProfile {
   };
 }
 
+/**
+ * 预置头像串的颜色段改写（`preset:{shapeId}:{colorId}`）：强调色变更时同步写一段，
+ * 让只认内嵌色的旧版本客户端也跟着变。非预置值（上传头像 / 首字母占位 / 空）原样返回。
+ */
+function rewritePresetAvatarColor(avatar: string | null, color: BotAccentColor): string | null {
+  if (avatar === null || !avatar.startsWith('preset:')) return avatar;
+  const [, shapeId] = avatar.split(':');
+  if (!shapeId) return avatar;
+  return `preset:${shapeId}:${color}`;
+}
+
 function rowToBot(row: BotRow): Bot {
   const parsed = botProfileSchema.safeParse(JSON.parse(row.profile_json));
   const profile = stripLegacyInkcopTransport(parsed.success ? parsed.data : emptyProfile());
@@ -97,6 +117,8 @@ function rowToBot(row: BotRow): Bot {
     avatar: row.avatar,
     avatarMask: normalizeBotAvatarMask(row.avatar_mask),
     avatarPadding: normalizeBotAvatarPadding(row.avatar_padding),
+    // 未显式设置的旧行返回 undefined：渲染端回退到预置头像内嵌色、再回退 mono。
+    accentColor: normalizeBotAccentColor(row.accent_color) ?? undefined,
     bio: row.bio ?? '',
     profile,
     status: row.status,
@@ -335,6 +357,11 @@ export class BotsService {
        * 模型 / Agent 时，新 Bot 要与来源一样跟随设置默认，而不是被换成外部 Agent）。
        */
       skipDefaultAgent?: boolean;
+      /**
+       * 显式指定的强调色（模板导入 / 调用方已知）。缺省时从预置头像的内嵌色推导：
+       * 新建即落成独立列，之后上传头像 / 换图不再改色。
+       */
+      accentColor?: BotAccentColor;
     } = {},
   ): Bot {
     const profile = stripLegacyInkcopTransport(botProfileSchema.parse(profileInput));
@@ -365,14 +392,18 @@ export class BotsService {
       throw new AppError('ALREADY_EXISTS', '管家已存在，不能再创建第二个');
     }
     try {
+      // 强调色在创建时就落成独立列：旧逻辑把颜色编码在 `preset:shape:color` 里，
+      // 一旦换成上传头像就丢色（用户报的「上传后变回第一个自动色」）。
+      const accentColor = options.accentColor ?? presetAvatarColorId(profile.identity.avatar);
       this.db
         .prepare(
-          'insert into bots (id, name, avatar, bio, profile_json, status, setup_state, system_role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'insert into bots (id, name, avatar, accent_color, bio, profile_json, status, setup_state, system_role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           id,
           profile.identity.name.length > 0 ? profile.identity.name : BOT_SETUP_PLACEHOLDER_NAME,
           profile.identity.avatar ?? null,
+          accentColor,
           profile.identity.bio,
           JSON.stringify(profile),
           'active',
@@ -605,6 +636,29 @@ export class BotsService {
   }
 
   /**
+   * 强调色写入（只动 `accent_color`，与 `setAvatarMask` 同级）：应用腔调色，
+   * 与头像形状 / 上传完全解耦。预置头像的 `preset:shape:color` 串里仍有一份颜色
+   * 段（旧版本客户端读它），这里同步改写颜色段——旧客户端也能跟着变；上传头像
+   * 串不动，上传 / 裁切 / 遮罩 / 内边距都不会反过来改强调色。
+   */
+  setAccentColor(id: string, color: BotAccentColor): Bot {
+    const existing = this.getOrThrow(id);
+    if (existing.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
+    }
+    // RPC 边界已校验；这里兜住领域层直接调用，免得裸 ZodError 变成 INTERNAL。
+    const parsed = botAccentColorSchema.safeParse(color);
+    if (!parsed.success) {
+      throw new AppError('INVALID_INPUT', parsed.error.issues[0]?.message ?? '强调色不合法');
+    }
+    const avatar = rewritePresetAvatarColor(existing.avatar, parsed.data);
+    this.db
+      .prepare('update bots set accent_color = ?, avatar = ?, updated_at = ? where id = ?')
+      .run(parsed.data, avatar, this.clock.now(), id);
+    return this.getOrThrow(id);
+  }
+
+  /**
    * Turns the row into a placeholder: identity fields are cleared so the id
    * stays reserved for history rendering, but no profile survives.
    */
@@ -627,7 +681,7 @@ export class BotsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update bots set name = '', avatar = NULL, avatar_mask = NULL, avatar_padding = NULL, bio = '', profile_json = '{}', kind = NULL, status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
+        "update bots set name = '', avatar = NULL, avatar_mask = NULL, avatar_padding = NULL, accent_color = NULL, bio = '', profile_json = '{}', kind = NULL, status = 'deleted', setup_state = NULL, updated_at = ?, deleted_at = ? where id = ?",
       )
       .run(now, now, id);
   }

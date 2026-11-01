@@ -45,6 +45,7 @@ import {
   botsAvatarDataOutputSchema,
   botsAvatarMaskInputSchema,
   botsAvatarPaddingInputSchema,
+  botsAccentColorInputSchema,
   userAvatarUploadInputSchema,
   userAvatarUploadOutputSchema,
   userAvatarDataInputSchema,
@@ -90,6 +91,8 @@ import {
   conversationsArchiveOutputSchema,
   conversationsMarkReadInputSchema,
   conversationsMarkReadOutputSchema,
+  conversationsSetVoiceModeInputSchema,
+  conversationsSetVoiceModeOutputSchema,
   conversationIdInputSchema,
   conversationsMembersOutputSchema,
   projectsCreateInputSchema,
@@ -946,8 +949,19 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { bot };
     }),
     // 内边距同遮罩：只写 `bots.avatar_padding`（不是 Profile 字段），单独发布 bot.updated。
-    'bots.avatar.padding': method(botsAvatarPaddingInputSchema, botGetOutputSchema, async (input) => {
-      const bot = domain.bots.setAvatarPadding(input.id, input.padding);
+    'bots.avatar.padding': method(
+      botsAvatarPaddingInputSchema,
+      botGetOutputSchema,
+      async (input) => {
+        const bot = domain.bots.setAvatarPadding(input.id, input.padding);
+        publish('bot.updated', { bot });
+        return { bot };
+      },
+    ),
+    // 强调色同遮罩：只写 `bots.accent_color`（不是 Profile 字段），单独发布
+    // bot.updated。与上传头像解耦——上传 / 裁切 / 遮罩 / 内边距都不改它。
+    'bots.accent.color': method(botsAccentColorInputSchema, botGetOutputSchema, async (input) => {
+      const bot = domain.bots.setAccentColor(input.id, input.color);
       publish('bot.updated', { bot });
       return { bot };
     }),
@@ -1072,6 +1086,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversationsDeleteOutputSchema,
       async (input) => {
         await domain.lifecycle.deleteConversation(input.id);
+        // 会话不存在了，语音模式即时态一并忘掉（渲染层可能来不及发关闭）。
+        orchestrator.setVoiceMode(input.id, false);
         publish('conversation.deleted', { id: input.id });
         return { ok: true as const };
       },
@@ -1103,6 +1119,25 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         domain.conversations.markRead(input.conversationId, input.seq);
         const conversation = domain.conversations.get(input.conversationId);
         if (conversation) publish('conversation.updated', { conversation });
+        return { ok: true as const };
+      },
+    ),
+    /**
+     * 语音对话模式开关（53 号修订 v3）：只在 core 内存里记「该会话正处于语音
+     * 模式」，供对话轮提示词与 Bot 回复标记使用；不落库、不推 conversation.updated
+     *（对话本身没有变化，列表 / 视图无需重绘）。
+     */
+    'conversations.setVoiceMode': method(
+      conversationsSetVoiceModeInputSchema,
+      conversationsSetVoiceModeOutputSchema,
+      async (input) => {
+        const conversation = domain.conversations.getOrThrow(input.conversationId);
+        // 语音模式只存在于私聊 / 卡片对话（入口本身也只在非项目组会话显示）：
+        // 项目组会让每个成员都拿到语音规则并回语音气泡，直接拒绝。
+        if (conversation.type === 'project') {
+          throw new AppError('INVALID_INPUT', '语音对话模式仅用于私聊或卡片对话');
+        }
+        orchestrator.setVoiceMode(input.conversationId, input.active);
         return { ok: true as const };
       },
     ),
@@ -1150,14 +1185,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
     /** P2 注入模型：整体替换项目组的叠加授权插件集（事件由领域层广播：conversation.updated + plugins.changed）。 */
-    'projects.plugins.set': method(
-      projectsPluginsSetInputSchema,
-      okOutputSchema,
-      async (input) => {
-        domain.projects.setPlugins(input.conversationId, input.pluginIds);
-        return { ok: true as const };
-      },
-    ),
+    'projects.plugins.set': method(projectsPluginsSetInputSchema, okOutputSchema, async (input) => {
+      domain.projects.setPlugins(input.conversationId, input.pluginIds);
+      return { ok: true as const };
+    }),
     'episodes.get': method(episodesGetInputSchema, episodesGetOutputSchema, async (input) => {
       const episode = orchestrator.episodes.get(input.id);
       if (episode === null) throw new AppError('NOT_FOUND', `协作回合 ${input.id} 不存在`);
@@ -1186,9 +1217,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'messages.edit': method(messagesEditInputSchema, messagesListOutputSchema, async (input) => ({
       messages: [orchestrator.editMessage(input.id, input.text)],
     })),
-    'messages.recall': method(messagesRecallInputSchema, messagesListOutputSchema, async (input) => ({
-      messages: [orchestrator.recallMessage(input.id)],
-    })),
+    'messages.recall': method(
+      messagesRecallInputSchema,
+      messagesListOutputSchema,
+      async (input) => ({
+        messages: [orchestrator.recallMessage(input.id)],
+      }),
+    ),
 
     'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) =>
       orchestrator.sendMessage(input.conversationId, {
@@ -2049,15 +2084,27 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'memos.restore': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).restore(input.id),
     })),
-    'memos.groups.create': method(memosGroupsCreateInputSchema, memosGroupOutputSchema, async (input) => ({
-      group: requireMemos(services).createGroup(input.title),
-    })),
-    'memos.groups.rename': method(memosGroupsRenameInputSchema, memosGroupOutputSchema, async (input) => ({
-      group: requireMemos(services).renameGroup(input.id, input.title),
-    })),
-    'memos.groups.move': method(memosGroupsMoveInputSchema, memosGroupOutputSchema, async (input) => ({
-      group: requireMemos(services).moveGroup(input.id, input.beforeId),
-    })),
+    'memos.groups.create': method(
+      memosGroupsCreateInputSchema,
+      memosGroupOutputSchema,
+      async (input) => ({
+        group: requireMemos(services).createGroup(input.title),
+      }),
+    ),
+    'memos.groups.rename': method(
+      memosGroupsRenameInputSchema,
+      memosGroupOutputSchema,
+      async (input) => ({
+        group: requireMemos(services).renameGroup(input.id, input.title),
+      }),
+    ),
+    'memos.groups.move': method(
+      memosGroupsMoveInputSchema,
+      memosGroupOutputSchema,
+      async (input) => ({
+        group: requireMemos(services).moveGroup(input.id, input.beforeId),
+      }),
+    ),
     'memos.groups.delete': method(memosGroupsDeleteInputSchema, okOutputSchema, async (input) => {
       requireMemos(services).deleteGroup(input.id);
       return { ok: true as const };

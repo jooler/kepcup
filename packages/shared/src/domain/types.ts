@@ -207,6 +207,55 @@ export const MAX_BOT_AVATAR_PADDING = 16;
 export const botAvatarPaddingSchema = z.number().int().min(0).max(MAX_BOT_AVATAR_PADDING);
 export type BotAvatarPadding = z.infer<typeof botAvatarPaddingSchema>;
 
+/**
+ * Bot 强调色的色板 id（`bots.accent_color` 列）。语义是「这个 Bot 在应用里的腔调色」：
+ * 预置头像填充、Bot 名字 / @ 提及、输入框发送键、看板脸、工作台执行者色、用户气泡
+ * 着色全部跟随它，与头像形状、是否上传头像无关。具体色值（hex / 对比前景）在渲染端
+ * 色板定义（apps/desktop/src/renderer/src/lib/avatars/presets.ts 的 ACCENT_COLORS），
+ * 这里只固化取值集合——core 侧需要校验与归一化。
+ */
+export const BOT_ACCENT_COLOR_IDS = [
+  'mono',
+  'brown',
+  'red',
+  'orange',
+  'amber',
+  'green',
+  'teal',
+  'blue',
+  'purple',
+  'pink',
+  'gray',
+] as const;
+export const botAccentColorSchema = z.enum(BOT_ACCENT_COLOR_IDS);
+export type BotAccentColor = z.infer<typeof botAccentColorSchema>;
+
+/** 默认强调色（「黑白」，随主题取反）；也是旧数据的兜底值。 */
+export const DEFAULT_BOT_ACCENT_COLOR: BotAccentColor = 'mono';
+
+/**
+ * 列值 → 契约值：NULL / 未知一律 null（不猜默认值）。读侧回退链见渲染端
+ * `resolveAccentColor`：显式强调色 → `preset:{shape}:{color}` 的内嵌色 → mono。
+ * 返回 null 而非默认值，是为了让旧的「只有预置头像色」的 Bot 仍按原色渲染。
+ */
+export function normalizeBotAccentColor(value: string | null | undefined): BotAccentColor | null {
+  const parsed = botAccentColorSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * 旧数据的强调色来源：`preset:{shapeId}:{colorId}` 里的颜色段。非预置值（上传
+ * 头像 / 首字母占位 / 空）返回 null——这些 Bot 没有可继承的强调色。
+ *
+ * core 只在两个地方用它：新建 Bot 时把内嵌色落成显式列（之后上传头像不再改色）、
+ * 设置强调色时同步改写预置串的颜色段（让旧版本客户端也跟着变）。
+ */
+export function presetAvatarColorId(value: string | null | undefined): BotAccentColor | null {
+  if (!value?.startsWith('preset:')) return null;
+  const [, , colorId] = value.split(':');
+  return normalizeBotAccentColor(colorId);
+}
+
 /** 列值 → 契约值：NULL / 缺列 / 越界一律按 0（读侧容忍的写侧对偶）。 */
 export function normalizeBotAvatarPadding(value: number | null | undefined): number {
   if (
@@ -234,6 +283,11 @@ export const botSchema = z.object({
    * 可选而非默认值，同 avatarMask：不改变已有 schema 生产方的严格性。
    */
   avatarPadding: botAvatarPaddingSchema.optional(),
+  /**
+   * Bot 的强调色（应用腔调色）：与头像形状 / 上传无关，独立设置。缺省 / 缺失 = 未显式
+   * 设置，读侧回退到预置头像内嵌色、再回退 mono（旧行保持原外观，不回填）。
+   */
+  accentColor: botAccentColorSchema.optional(),
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
@@ -1064,6 +1118,8 @@ export const conversationSchema = z.object({
         avatarMask: botAvatarMaskSchema.optional(),
         /** 上传头像的内边距（像素，0-16）；缺省 = 0。 */
         avatarPadding: botAvatarPaddingSchema.optional(),
+        /** 成员 Bot 的强调色；缺省 = 未显式设置（堆叠里回退预置头像色）。 */
+        accentColor: botAccentColorSchema.optional(),
       }),
     )
     .optional(),
