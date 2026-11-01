@@ -62,8 +62,8 @@
     micIntentFor,
     voiceMode,
     type AnnounceDeps,
-    type PlaybackHandle,
   } from './voice-mode.svelte';
+  import { speechAudio, type SpeechAudioDeps } from './speech-audio.svelte';
   import { isCapabilityError, sendVoiceRecording, type VoiceSendDeps } from './voice-send';
   import { SPEECH_TEXT_LIMIT } from './extractSpeechText';
 
@@ -1030,6 +1030,15 @@
     try {
       // 每次按录取当前设备偏好（设置页「硬件」分区可换设备；空 = 系统默认）。
       const opened = await sensors.open('microphone');
+      // 拿到流即统一停播（修订 v2 V2-3 P2-1）：播报队列与手动朗读共用
+      // speech-audio 唯一声道，录音开采时扬声器必须让位（否则麦克风采到的
+      // 是自己 TTS 的回声）——idle 态的播报正卡在「playing 但 phase=idle」
+      //（手动朗读），interruptSpeech 对它 no-op，只能在这里停。stop() 把在播
+      // 请求以「被抢占」收场（ended resolve 不挂起、不误报失败，onPreempted
+      // 的 epoch 守卫保证与 interruptSpeech 双触发只作废一次）；语音模式
+      // speaking 的清队收尾仍由 startVoiceModeRecording 的 interruptSpeech
+      // 负责（队列语义与裸停音频正交）。TCC 等待期（open 之前）不打断。
+      speechAudio.stop();
       try {
         acquired = await startVoiceRecording(opened.stream, onLevel);
       } catch (error) {
@@ -1200,9 +1209,11 @@
 
   /**
    * 语音条录音：与文字语音输入同一条传感器链路（acquireRecording）。speaking
-   * 态点麦克风也走这里——**拿到流之后**才打断播报（voiceMode.interruptSpeech，
-   * 53 号风险 #1：TCC 授权弹框等待期播报继续，不在用户还没开口时白打断）；
-   * idle 态 interruptSpeech 是 no-op，两条路径共用同一实现。
+   * 态点麦克风也走这里——**拿到流之后**才打断播报（53 号风险 #1：TCC 授权弹框
+   * 等待期播报继续，不在用户还没开口时白打断）。拿到流后的收尾分两层：
+   * acquireRecording 里 speechAudio.stop() 停掉在响的音频（播报 / 手动朗读
+   * 通吃，idle 态播报只能靠它）；这里的 interruptSpeech 再清播报队列（epoch
+   * 作废、phase 复位——queue 语义，裸停音频不覆盖；idle 态 no-op）。
    */
   async function startVoiceModeRecording(): Promise<void> {
     if (!voiceMode.active || (voiceMode.phase !== 'idle' && voiceMode.phase !== 'speaking')) return;
@@ -1327,8 +1338,9 @@
   }
 
   // --- Bot 播报（docs/design/53-voice-conversation.md「Bot 语音播报链路」，WP3）
-  // 队列与状态机在 voice-mode.svelte.ts（可注入纯逻辑，单测在那边）；这里只注
-  // 入真实依赖（合成 RPC / objectURL / Audio 播放 / 失败 toast）并订阅消息事件。
+  // 队列与状态机在 voice-mode.svelte.ts（可注入纯逻辑，单测在那边）；音频统一
+  // 走 speech-audio.svelte.ts（缓存 + 播放仲裁，修订 v2 V2-3）——这里注入真实
+  // 依赖（合成 RPC / objectURL / Audio 元素 / 失败 toast）并订阅消息事件。
   // 播报音频不落附件——文字已在列表，落附件会拖慢落库且污染上下文附件行（53 号）。
 
   /** atob 手动解码（CSP 同 attachments.svelte.ts：connect-src 不含 data:）。 */
@@ -1340,56 +1352,47 @@
   }
 
   /**
-   * blob objectURL → HTMLAudioElement 播放（MessageAttachments 已验证 CSP 放行）：
-   * 自然播完 resolve、stop() 立停并 resolve、error 事件 / play() 拒绝 reject
-   * （交给队列的失败停队路径）。
+   * speech-audio 依赖（53 号修订 v2 V2-3）：Bot 语音音频缓存 + 播放仲裁的真实
+   * 接线——合成 RPC / objectURL / 唯一 Audio 元素 / 失败 toast（手动朗读失败
+   * 与播报失败同款提示）。播报队列与朗读键共用。
    */
-  function playSpeechAudio(url: string): PlaybackHandle {
-    const audio = new Audio(url);
-    let settle: ((mode: 'resolve' | 'reject', error?: unknown) => void) | null = null;
-    const ended = new Promise<void>((resolve, reject) => {
-      let done = false;
-      const finish = (rejectWith?: unknown): void => {
-        if (done) return;
-        done = true;
-        audio.removeEventListener('ended', onEnded);
-        audio.removeEventListener('error', onError);
-        if (rejectWith === undefined) resolve();
-        else reject(rejectWith);
-      };
-      const onEnded = (): void => finish();
-      const onError = (): void => finish(audio.error ?? new Error('audio playback failed'));
-      settle = (mode, error) => (mode === 'reject' ? finish(error) : finish());
-      audio.addEventListener('ended', onEnded);
-      audio.addEventListener('error', onError);
-    });
-    audio
-      .play()
-      .catch((error: unknown) =>
-        settle?.('reject', error instanceof Error ? error : new Error(String(error))),
-      );
-    return {
-      ended,
-      stop() {
-        audio.pause();
-        settle?.('resolve');
-      },
-    };
-  }
-
-  /** 播报队列依赖：第一条失败停队 + toast（带「打开设置」深链到 models 分区，53 号）。 */
-  function announceDeps(): AnnounceDeps {
+  function speechAudioDeps(): SpeechAudioDeps {
     return {
       synthesize: async (text) => {
         const result = (await core.call('media.synthesizeSpeech', {
           text,
           format: 'mp3',
         })) as { audioBase64: string; mimeType: string };
-        return { blob: new Blob([base64ToBytes(result.audioBase64)], { type: result.mimeType }) };
+        return {
+          blob: new Blob([base64ToBytes(result.audioBase64)], { type: result.mimeType }),
+          mimeType: result.mimeType,
+        };
       },
       createObjectUrl: (blob) => URL.createObjectURL(blob),
       revokeObjectUrl: (url) => URL.revokeObjectURL(url),
-      play: (url) => playSpeechAudio(url),
+      createElement: () => new Audio(),
+      onToggleFailure: (error) => {
+        toast.error(
+          errorText((error as { code?: string } | undefined)?.code, t('voiceMode.speakFailed')),
+          {
+            action: {
+              label: t('voiceMode.openSettings'),
+              onClick: () => shell.openSettings('models'),
+            },
+          },
+        );
+      },
+      // 手动朗读开播即打断播报（含合成中的条目）；语音模式之外 no-op（interruptSpeech
+      // 只在 speaking 态生效），朗读因此在退出语音模式后依然可用。
+      onManualPlayStart: () => voiceMode.interruptSpeech(),
+    };
+  }
+
+  /** 播报队列依赖：音频经 speech-audio（缓存 + 仲裁）；第一条失败停队 + toast。 */
+  function announceDeps(): AnnounceDeps {
+    return {
+      resolveAudio: (messageId, text) => speechAudio.ensureUrl(messageId, text),
+      play: (input) => speechAudio.play(input),
       onFirstFailure: (error) => {
         toast.error(
           errorText((error as { code?: string } | undefined)?.code, t('voiceMode.speakFailed')),
@@ -1405,8 +1408,10 @@
   }
 
   // 挂载即注入（无响应式依赖，只跑一次）；重复挂载（主聊天 + 卡片对话）时后者
-  // 替换前者（attachAnnouncer 先清理旧实例）。卸载清理走既有的 voiceMode.exit()。
+  // 替换前者（attachAnnouncer 先清理旧实例；speech-audio 缓存不清——全局会话级）。
+  // 卸载清理走既有的 voiceMode.exit()。
   $effect(() => {
+    speechAudio.configure(speechAudioDeps());
     voiceMode.attachAnnouncer(announceDeps());
   });
 

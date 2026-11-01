@@ -158,6 +158,13 @@ export const zhCN = {
   'voiceMode.openSettings': '打开设置',
   'voiceMode.settings': '语音能力设置',
   'voiceMode.close': '退出语音对话',
+  // Bot 气泡「朗读」键（53 号修订 v2 V2-2）
+  'voiceMode.readAloud': '朗读',
+  'voiceMode.readAloudStop': '停止朗读',
+  // 统一音频播放器（53 号修订 v2 V2-2：附件音频 / 音频产物共用）
+  'audioPlayer.play': '播放',
+  'audioPlayer.pause': '暂停',
+  'audioPlayer.seek': '调整播放进度',
   // 设置页「硬件」分区与传感器（docs/design/31-sensors.md，D76）
   'settings.navHardware': '硬件',
   'settings.hardwareSection': '硬件',
