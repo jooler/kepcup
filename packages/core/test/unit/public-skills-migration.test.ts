@@ -75,6 +75,9 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table bots drop column avatar_mask;');
     // 0061（上传头像内边距）同为增量列，一并摘除。
     db.exec('alter table bots drop column avatar_padding;');
+    // 0064（Bot 强调色）同样是在既有表上的增量列，回拨后要摘除，回放时才会重新
+    // ADD COLUMN。
+    db.exec('alter table bots drop column accent_color;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
     // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。
