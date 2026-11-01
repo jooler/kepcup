@@ -209,7 +209,7 @@
 {/snippet}
 
 <div
-  class="group flex w-full gap-2 rounded-md pb-1 {isUser
+  class="group flex w-full gap-2 rounded-md py-2 {isUser
     ? 'flex-row-reverse'
     : 'flex-row'} {session.highlightMessageId === message.id
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
