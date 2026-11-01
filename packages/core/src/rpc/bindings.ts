@@ -1196,6 +1196,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
         ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
+        ...(input.voiceMode !== undefined ? { voiceMode: input.voiceMode } : {}),
       }),
     ),
 

@@ -32,12 +32,14 @@ function harness(
 ) {
   const events: string[] = [];
   const sent: Array<{ text: string; ids: string[] }> = [];
+  const sendOpts: Array<{ voiceMode?: boolean } | undefined> = [];
   const uploads: File[] = [];
   const transcribeInputs: string[] = [];
   let settledIds: string[] = ['att_voice'];
-  const recordSend = async (text: string, ids: string[]) => {
+  const recordSend = async (text: string, ids: string[], opts?: { voiceMode?: boolean }) => {
     events.push('send');
     sent.push({ text, ids });
+    sendOpts.push(opts);
     return { ok: true } as const;
   };
   const deps: VoiceSendDeps = {
@@ -73,6 +75,7 @@ function harness(
     deps,
     events,
     sent,
+    sendOpts,
     uploads,
     transcribeInputs,
     setSettledIds: (ids: string[]) => {
@@ -195,6 +198,17 @@ describe('sendVoiceRecording（53 号发送链路编排）', () => {
     });
     await sendVoiceRecording(recording, CONV, missing.deps);
     expect(missing.events).toEqual(['capability-missing']);
+  });
+
+  it('voiceMode: true 随 send 透传（53 号修订 v2 V2-1：core 记 origin=voice）；未发出的分支不透传', async () => {
+    const ok = harness();
+    await sendVoiceRecording(recording, CONV, ok.deps);
+    expect(ok.sendOpts).toEqual([{ voiceMode: true }]);
+
+    // 空识别不发送：send 根本不被调（无透传可言）。
+    const noSpeech = harness({ deps: { transcribe: async () => ' ' } });
+    await sendVoiceRecording(recording, CONV, noSpeech.deps);
+    expect(noSpeech.sendOpts).toEqual([]);
   });
 });
 

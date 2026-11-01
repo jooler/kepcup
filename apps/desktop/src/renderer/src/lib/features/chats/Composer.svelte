@@ -1307,8 +1307,13 @@
       composerSend: {
         settle: () => composerDrafts.settle(conversationId),
         // 显式只发往发起录音时的会话：转写/上传/排队期间用户可能已切走。
-        send: (body, attachmentIds) =>
-          chatSession.send(conversationId, body, attachmentIds.length > 0 ? { attachmentIds } : {}),
+        // voiceMode 由 voice-send 编排传入（53 号修订 v2 V2-1）：core 记
+        // origin:'voice'，Bot 收到纯文本语义；文字直发不带。
+        send: (body, attachmentIds, opts) =>
+          chatSession.send(conversationId, body, {
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+            ...(opts?.voiceMode === true ? { voiceMode: true } : {}),
+          }),
         commit: (attachmentIds) => composerDrafts.commitSent(conversationId, attachmentIds),
         // 语音内容不进输入框，无草稿可回填：发送失败时附件 chip 原样留在
         // composerDrafts，退回文字模式可见可删（53 号「无静默孤儿」）。

@@ -176,6 +176,13 @@ describe('announceEntryFor（入队条件的排列，53 号）', () => {
     ).toBeNull();
   });
 
+  it("origin:'task' 的可见 bot 文本（forward_task_result 转发注入）→ 不播；普通 bot 文本仍播（53 号修订 v2 V2-1）", () => {
+    expect(
+      announceEntryFor(botTextMessage({ content: { text: '任务结果转发', origin: 'task' } }), base),
+    ).toBeNull();
+    expect(announceEntryFor(botTextMessage(), base)).not.toBeNull();
+  });
+
   it('提取后无文字（纯图片 / 纯代码块消息）→ 不播', () => {
     expect(
       announceEntryFor(botTextMessage({ content: { text: '![图](x.png)' } }), base),

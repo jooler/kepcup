@@ -1106,6 +1106,8 @@ export class Orchestrator {
       widgetOrigin?: { widgetId: string; version: number };
       /** D94：来自系统分享的消息（分享批次 id）。 */
       shareIntakeId?: string;
+      /** 53 号修订 v2 V2-1：来自语音对话模式的发送，content 记 origin: 'voice'。 */
+      voiceMode?: boolean;
     },
   ): { message: Message; runId: string | null } {
     const prepared = this.#prepareUserMessage(conversationId, input);
@@ -1155,6 +1157,7 @@ export class Orchestrator {
       attachmentIds?: string[];
       widgetOrigin?: { widgetId: string; version: number };
       shareIntakeId?: string;
+      voiceMode?: boolean;
     },
   ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
@@ -1177,6 +1180,7 @@ export class Orchestrator {
         batchId,
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
+        ...(input.voiceMode === true ? { voiceMode: true } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);

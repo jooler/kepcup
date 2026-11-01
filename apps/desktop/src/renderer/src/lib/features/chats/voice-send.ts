@@ -6,7 +6,10 @@
  * - 转写 → 空识别 toast 不发送；缺设置（CAPABILITY_NOT_CONFIGURED /
  *   PROVIDER_AUTH_FAILED）置卡不发送（此时尚未上传，无附件可撤）；非缺设置的
  *   转写失败**空文本 + 附件照发**，Bot 收到附件行后可用 transcribe_audio 自行
- *   转写兜底；
+ *   转写兜底（此时仍传 voiceMode: true：origin:'voice' 是事实；core 侧的
+ *   「正文即其转写」附件标注与语音宿主说明只对正文非空的语音消息生效，空文本
+ *   语音消息两者皆无，transcribe_audio 兜底阶梯完整——见 core
+ *   agent/context/conversation.ts）；
  * - WAV 包 File 走 composerDrafts 上传管道（语音条不渲染 chips，与文字草稿共用
  *   会话实例——异常残留退回文字模式后可见可删，53 号「无静默孤儿」）；
  * - settle → send → commit 复用 performComposerSend；restore 语义由接线方决定
@@ -119,6 +122,9 @@ export async function sendVoiceRecording(
   deps.onSending?.();
   deps.uploadVoiceRecording(new File([rec.blob], `voice-${Date.now()}.wav`, { type: 'audio/wav' }));
   return runWhenGuardIdle(deps.guard, conversationId, () =>
-    performComposerSend(text, deps.composerSend),
+    // voiceMode: true（53 号修订 v2 V2-1）：core 记 content.origin='voice'——Bot
+    // 收到纯文本语义（正文即语音转写，音频附件只是存档），回复由客户端自动转
+    // 语音播报。文字直发（Composer.sendCurrent）不带该选项。
+    performComposerSend(text, deps.composerSend, { voiceMode: true }),
   );
 }
