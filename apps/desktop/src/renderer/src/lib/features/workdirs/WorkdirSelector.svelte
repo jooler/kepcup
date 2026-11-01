@@ -27,6 +27,10 @@
   let pendingPath = $state<string | null>(null);
 
   const current = $derived(workdirs.boundOf(conversationId, workdirId));
+  // 不在最近列表窗口的绑定按 id 回源（同 BotMenu 的工作目录行）。
+  $effect(() => {
+    workdirs.ensure(workdirId);
+  });
   const missing = $derived(current !== null && current.status === 'missing');
   // 有 Bot 正在执行时禁用（docs/design/08-workdir.md "选择与切换"）。
   const running = $derived((chat.current?.activeRuns.length ?? 0) > 0);

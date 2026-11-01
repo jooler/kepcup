@@ -10,17 +10,41 @@ import { toast } from 'svelte-sonner';
  */
 class WorkdirsState {
   recent = $state<Workdir[]>([]);
+  /**
+   * 不在 `recent`（只有最近 10 条）里的已绑定工作目录，按 id 回源补齐。
+   * 终态为 null（目录已不存在 / 已被移除）也记一笔，避免 effect 反复请求。
+   */
+  #resolved = $state<Record<string, Workdir | null>>({});
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  #resolving = new Set<string>();
   /** runId -> lease waiting info (holder names the blocking bot). */
   leaseWaiting = $state<
     Record<string, { path: string; holderBotId: string | null; holderConversationId: string | null }>
   >({});
   #started = false;
 
-  /** The bound workdir of a conversation, resolved against the recent list. */
+  /**
+   * The bound workdir of a conversation. `workdirs.list` only carries the ten
+   * most recently used records, so a conversation bound to an older workdir
+   * is looked up by id (`ensure`) instead of rendering 「未设置」.
+   */
   boundOf(conversationId: string | null | undefined, workdirId: string | null | undefined): Workdir | null {
     void conversationId;
     if (!workdirId) return null;
-    return this.recent.find((p) => p.id === workdirId) ?? null;
+    return this.recent.find((p) => p.id === workdirId) ?? this.#resolved[workdirId] ?? null;
+  }
+
+  /**
+   * Resolves a bound workdir that isn't in `recent` yet (idempotent, safe to
+   * call from an effect). Covers bindings older than the recent list and any
+   * `workdir.updated` missed before the panel opened.
+   */
+  ensure(workdirId: string | null | undefined): void {
+    if (!workdirId) return;
+    if (this.recent.some((p) => p.id === workdirId)) return;
+    if (workdirId in this.#resolved || this.#resolving.has(workdirId)) return;
+    this.#resolving.add(workdirId);
+    void this.#lookup(workdirId);
   }
 
   start(): void {
@@ -114,6 +138,21 @@ class WorkdirsState {
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
       return false;
+    }
+  }
+
+  async #lookup(workdirId: string): Promise<void> {
+    try {
+      const result = (await core.call('workdirs.get', { id: workdirId })) as {
+        workdir: Workdir | null;
+      };
+      if (result.workdir !== null) this.#upsert(result.workdir);
+      this.#resolved = { ...this.#resolved, [workdirId]: result.workdir };
+    } catch (error) {
+      console.warn('[kepcup] workdir lookup failed', { workdirId, error });
+      this.#resolved = { ...this.#resolved, [workdirId]: null };
+    } finally {
+      this.#resolving.delete(workdirId);
     }
   }
 
