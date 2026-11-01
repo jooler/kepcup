@@ -162,6 +162,9 @@ export const enUS = {
   'voiceMode.entry': 'Voice conversation',
   'voiceMode.startRecording': 'Start recording',
   'voiceMode.stopAndSend': 'Stop recording and send',
+  // Send-ready sub-state (53 revision v2 V2-4: silence auto-send)
+  'voiceMode.sendNow': 'Send now',
+  'voiceMode.sendReadyHint': 'Tap to send now, or it sends automatically',
   'voiceMode.idleHint': 'Tap the mic to speak',
   'voiceMode.thinking': 'Thinking…',
   'voiceMode.transcribing': 'Transcribing…',

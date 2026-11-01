@@ -146,6 +146,9 @@ export const zhCN = {
   'voiceMode.entry': '语音对话',
   'voiceMode.startRecording': '开始录音',
   'voiceMode.stopAndSend': '停止录音并发送',
+  // 待发送子态（53 号修订 v2 V2-4：静音自动发送）
+  'voiceMode.sendNow': '立即发送',
+  'voiceMode.sendReadyHint': '点击立即发送，稍后自动发送',
   'voiceMode.idleHint': '点击麦克风说话',
   'voiceMode.thinking': '正在思考…',
   'voiceMode.transcribing': '识别中…',

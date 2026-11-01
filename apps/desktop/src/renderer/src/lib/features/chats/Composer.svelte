@@ -58,6 +58,7 @@
   import VoiceModeBar from './VoiceModeBar.svelte';
   import {
     announceEntryFor,
+    createAutoSendCountdown,
     escapeActionForVoiceMode,
     micIntentFor,
     voiceMode,
@@ -131,6 +132,16 @@
   // 普通变量（刻意非响应式）：录音句柄，没有界面从它派生。
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 待发送 2s 自动发送倒计时（修订 v2 V2-4）：send-ready 信号武装（电平静音
+   * 3s 判定后），重新开口 / 全部收尾路径撤销；到期与用户点击绿键同走
+   * stopVoiceModeRecording（有 spoken 的录音必然 >500ms，下限检查不受影响）。
+   */
+  const autoSendCountdown = createAutoSendCountdown({
+    schedule: (handler, delayMs) => setTimeout(handler, delayMs),
+    cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    fire: () => void stopVoiceModeRecording(),
+  });
 
   const chatSession = getChatSession();
   const isProject = $derived(chatSession.view?.conversation.type === 'project');
@@ -952,7 +963,7 @@
   });
   $effect(() => () => {
     recordingSession += 1;
-    if (maxRecordingTimer !== null) clearTimeout(maxRecordingTimer);
+    clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
     // 语音模式随组件卸载退出（状态复位即可，录音资源上面已释放）。
@@ -1163,6 +1174,8 @@
   //（四态状态机），录音传感器链路复用 acquireRecording，发送编排在
   // voice-send.ts（复用 performComposerSend / sendGuard）；Bot 播报（speaking
   // 态）见下方「Bot 播报」分段（队列在 voice-mode，依赖在此注入）。
+  // 静音自动发送（修订 v2 V2-4）：端点检测状态机在 voice-mode（feedLevel 纯
+  // 函数），本文件只接信号——待发送武装 2s 自动发送倒计时、5s 未说话自动取消。
 
   /** 入口可见性：仅私聊（direct / card）且非项目组；readOnly 分支整体不出输入坞。 */
   const voiceModeEntryVisible = $derived(!isProject);
@@ -1186,14 +1199,24 @@
     voiceMode.enter();
   }
 
-  /** 退出语音模式：使在途 start 失效、停录音释放流，回文字输入（草稿保留）。 */
-  function exitVoiceMode(): void {
-    if (!voiceMode.active) return;
-    recordingSession += 1;
+  /**
+   * 语音模式的录音一次性计时器统一清撤：60s 上限 + 待发送 2s 自动发送
+   * （修订 v2 V2-4）。stop / cancel / exit / 卸载四类收尾路径都必须经过这里
+   * ——待发送倒计时漏撤会在退出后误发一条语音消息。
+   */
+  function clearVoiceModeRecordingTimers(): void {
     if (maxRecordingTimer !== null) {
       clearTimeout(maxRecordingTimer);
       maxRecordingTimer = null;
     }
+    autoSendCountdown.disarm();
+  }
+
+  /** 退出语音模式：使在途 start 失效、停录音释放流，回文字输入（草稿保留）。 */
+  function exitVoiceMode(): void {
+    if (!voiceMode.active) return;
+    recordingSession += 1;
+    clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
     voiceMode.exit();
@@ -1220,6 +1243,7 @@
     const session = ++recordingSession;
     const started = await acquireRecording(session, (level) => {
       voiceMode.level = level;
+      onVoiceModeLevel(level);
     });
     if (!started) return;
     // 拿到流才打断：停当前音频 + 清空未播队列（插话作废），随即进 recording。
@@ -1229,30 +1253,44 @@
     maxRecordingTimer = setTimeout(() => void stopVoiceModeRecording(), MAX_RECORDING_MS);
   }
 
+  /**
+   * 录音电平 → 端点检测接线（修订 v2 V2-4）：映射电平喂状态机（feedLevel 内部
+   * 只在 recording 相位生效），按一次性信号接自动收尾——待发送武装 2s 自动发送
+   * 倒计时、重新开口撤销、5s 未说话自动取消（不干等 60s 上限）。
+   */
+  function onVoiceModeLevel(level: number): void {
+    const signal = voiceMode.feedLevel(level, Date.now());
+    if (signal === 'send-ready') autoSendCountdown.arm();
+    else if (signal === 'speech-resumed') autoSendCountdown.disarm();
+    else if (signal === 'no-speech') autoCancelNoSpeechRecording();
+  }
+
+  /** 全程未说话满 5s（修订 v2 V2-4）：自动取消录音并提示（复用「未识别到语音」）。 */
+  function autoCancelNoSpeechRecording(): void {
+    if (voiceMode.phase !== 'recording' || voiceMode.hasSpoken) return;
+    cancelVoiceModeRecording();
+    toast.error(t('composer.voiceNoSpeech'));
+  }
+
   /** 取消录音（丢弃）：Esc（recording 档）、麦克风被停用、退出语音模式。 */
   function cancelVoiceModeRecording(): void {
     if (voiceMode.phase !== 'recording') return;
     recordingSession += 1;
-    if (maxRecordingTimer !== null) {
-      clearTimeout(maxRecordingTimer);
-      maxRecordingTimer = null;
-    }
+    clearVoiceModeRecordingTimers();
     activeRecording?.cancel();
     activeRecording = null;
     voiceMode.dispatch('settled');
   }
 
   /**
-   * 停止录音并转写发送（麦克风键 / 60s 到点）：停止采集 → 转写 → 附件管道
-   * 发送，收尾回 idle——发送不等 Bot 回复，立即可再录（53 号半双工）。
+   * 停止录音并转写发送（麦克风键 / 60s 到点 / 待发送绿键与 2s 到点）：停止采集
+   * → 转写 → 附件管道发送，收尾回 idle——发送不等 Bot 回复，立即可再录
+   * （53 号半双工）。所有触发都汇入这里，相位守卫保证不会双重收尾。
    */
   async function stopVoiceModeRecording(): Promise<void> {
     if (voiceMode.phase !== 'recording') return;
     recordingSession += 1;
-    if (maxRecordingTimer !== null) {
-      clearTimeout(maxRecordingTimer);
-      maxRecordingTimer = null;
-    }
+    clearVoiceModeRecordingTimers();
     const active = activeRecording;
     activeRecording = null;
     voiceMode.dispatch('stop-requested');

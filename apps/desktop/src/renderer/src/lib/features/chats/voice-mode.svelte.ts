@@ -2,8 +2,9 @@
  * 语音对话模式的 UI 状态机与 Bot 播报队列（docs/design/53-voice-conversation.md，D106）。
  *
  * 会话内即时态：进入即开启、关闭即退出，不持久化、不跨会话（切换会话 /
- * 组件卸载由 Composer 的 effect 调 exit()）。本模块只持 UI 状态、纯转移表
- * 与播报队列（单测锚点）；录音传感器链路 / 转写 / 发送编排在 Composer（26 号
+ * 组件卸载由 Composer 的 effect 调 exit()）。本模块只持 UI 状态、纯转移表、
+ * 端点检测状态机（修订 v2 V2-4：静音自动发送）与播报队列（单测锚点）；录音
+ * 传感器链路 / 转写 / 发送编排 / 自动收尾计时器在 Composer（26 号
  * 「语音消息语义」），播报的音频依赖（speech-audio 缓存 + 播放仲裁，修订 v2
  * V2-3）由 Composer 注入（attachAnnouncer）——本文件不 import core / DOM，
  * 保持可纯逻辑单测。
@@ -68,6 +69,151 @@ export function micIntentFor(
     case 'speaking':
       return 'interrupt';
   }
+}
+
+// --- 端点检测（docs/design/53-voice-conversation.md 修订 v2 V2-4：静音自动发送）
+
+/**
+ * 电平阈值（0..1，已经 voice-recorder 的 levelToHeight 映射）：正常说话电平
+ * 明显高于静音底噪；真机可调。
+ */
+export const SPEECH_LEVEL_THRESHOLD = 0.2;
+/** 电平 ≥ 阈值持续此时长才记「已说话」：单帧噪声尖峰不算（连续段被尖峰打断即重计）。 */
+export const SPEECH_SUSTAIN_MS = 250;
+/**
+ * 已说话后静音持续此时长 → 待发送子态（53 号 V2-4：业界端点 500–800ms，
+ * 此处取长换「可见的发送确认」，常量可调）。
+ */
+export const SILENCE_TO_SEND_MS = 3000;
+/**
+ * 待发送态无操作此时长后自动发送：用户停止说话后 5s 内内容必然发出
+ * （3s 静音判定 + 2s 倒计时）。
+ */
+export const AUTO_SEND_DELAY_MS = 2000;
+/** 从未检测到语音持续此时长 → 自动取消录音（不干等 60s 上限）。 */
+export const NO_SPEECH_CANCEL_MS = 5000;
+
+/** 端点状态机的一次性信号（VoiceModeState.feedLevel 返回，Composer 据此接计时器与自动收尾）。 */
+export type VoiceEndpointSignal =
+  /** 电平首次持续 ≥ 阈值（hasSpoken false→true，只发一次）。 */
+  | 'speech-detected'
+  /** 已说话后静音持续 3s → 进入待发送（sendReady false→true）。 */
+  | 'send-ready'
+  /** 待发送中重新开口 → 退回普通录音（sendReady true→false，撤倒计时）。 */
+  | 'speech-resumed'
+  /** 从未说话且录音已满 5s → 自动取消（只发一次）。 */
+  | 'no-speech';
+
+/**
+ * 端点状态机的簿记（连续段追踪）：hasSpoken / sendReady 在 store 上有响应式
+ * 镜像供 UI 派生，段起点等中间量不进界面，保持普通对象（纯函数进出）。
+ */
+export interface VoiceEndpointState {
+  /** 本次录音已检测到有效语音（≥ 阈值连续 250ms）。 */
+  hasSpoken: boolean;
+  /** 待发送子态（hasSpoken 后静音 ≥ 3s）；只在 recording 相位有意义。 */
+  sendReady: boolean;
+  /** 当前连续段（同在阈值一侧）的起点时刻；null = 还没有样本。 */
+  segmentStartedAt: number | null;
+  /** 当前段是否在阈值之上。 */
+  segmentAbove: boolean;
+  /** no-speech 信号已发过（只发一次的台账）。 */
+  noSpeechSignaled: boolean;
+}
+
+export function initialEndpointState(): VoiceEndpointState {
+  return {
+    hasSpoken: false,
+    sendReady: false,
+    segmentStartedAt: null,
+    segmentAbove: false,
+    noSpeechSignaled: false,
+  };
+}
+
+/**
+ * 纯端点状态机（修订 v2 V2-4）：逐帧喂入映射电平与当前时刻（onLevel 已有
+ * ~50ms 节流；worklet 静音帧照发，静音段计时可靠）。按「连续段」判定——
+ * 电平跨阈值即重置段起点，天然排除单帧尖峰：
+ *
+ * - 阈值之上连续 250ms → hasSpoken（'speech-detected'，只发一次）；
+ * - hasSpoken 后阈值之下连续 3s → sendReady（'send-ready'）；
+ * - sendReady 中任一帧重新 ≥ 阈值 → 退回普通录音（'speech-resumed'）。此处
+ *   刻意不做 250ms 持续确认：倒计时只有 2s，等持续确认的话用户在倒计时尾部
+ *   开口会被自动发送截断；误退回的代价只是再等 3s 静音，取安全侧；
+ * - 全程未说话且录音时长 ≥ 5s → 'no-speech'（只发一次；自动取消由接线方执行）。
+ */
+export function feedEndpointLevel(
+  prev: VoiceEndpointState,
+  level: number,
+  nowMs: number,
+  recordingStartedMs: number,
+): { state: VoiceEndpointState; signal: VoiceEndpointSignal | null } {
+  const above = level >= SPEECH_LEVEL_THRESHOLD;
+  let state = prev;
+  // 跨阈值（或首个样本）：连续段重新起算。
+  const prevSegmentStart = state.segmentStartedAt;
+  const switched = prevSegmentStart === null || state.segmentAbove !== above;
+  const segmentStartedAt = switched ? nowMs : prevSegmentStart;
+  if (switched) state = { ...state, segmentStartedAt: nowMs, segmentAbove: above };
+  const segmentMs = nowMs - segmentStartedAt;
+  let signal: VoiceEndpointSignal | null = null;
+
+  if (!state.hasSpoken && above && segmentMs >= SPEECH_SUSTAIN_MS) {
+    state = { ...state, hasSpoken: true };
+    signal = 'speech-detected';
+  }
+  if (state.sendReady && above) {
+    state = { ...state, sendReady: false };
+    signal ??= 'speech-resumed';
+  }
+  if (state.hasSpoken && !state.sendReady && !above && segmentMs >= SILENCE_TO_SEND_MS) {
+    state = { ...state, sendReady: true };
+    signal ??= 'send-ready';
+  }
+  if (
+    !state.hasSpoken &&
+    !state.noSpeechSignaled &&
+    nowMs - recordingStartedMs >= NO_SPEECH_CANCEL_MS
+  ) {
+    state = { ...state, noSpeechSignaled: true };
+    signal ??= 'no-speech';
+  }
+  return { state, signal };
+}
+
+/**
+ * 待发送倒计时簿记（修订 v2 V2-4）：2s 自动发送这一个一次性计时器的武装 /
+ * 撤销集中为纯逻辑（schedule / cancel 注入，Composer 传 setTimeout /
+ * clearTimeout，测试传假实现）。arm 先撤旧（重复信号不叠加计时器），到期回调
+ * 触发后句柄自清（之后再 disarm 是无害 no-op）。Composer 在 stop / cancel /
+ * exit / 卸载全部收尾路径上调 disarm——「无残留计时器」由调用点的齐备性保证
+ * （与 maxRecordingTimer 同一套路径）。
+ */
+export function createAutoSendCountdown(deps: {
+  schedule(handler: () => void, delayMs: number): unknown;
+  cancel(handle: unknown): void;
+  fire(): void;
+}) {
+  let handle: unknown = null;
+  return {
+    /** 是否有在途倒计时（测试与断言用）。 */
+    armed(): boolean {
+      return handle !== null;
+    },
+    arm(): void {
+      this.disarm();
+      handle = deps.schedule(() => {
+        handle = null;
+        deps.fire();
+      }, AUTO_SEND_DELAY_MS);
+    },
+    disarm(): void {
+      if (handle === null) return;
+      deps.cancel(handle);
+      handle = null;
+    },
+  };
 }
 
 // --- Bot 播报（53 号「Bot 语音播报链路」，WP3）-------------------------------
@@ -323,7 +469,17 @@ class VoiceModeState implements AnnounceHost {
   elapsedMs = $state(0);
   /** 本次录音起点（Date.now()），elapsedMs 的基准。 */
   recordingStartedAt = $state(0);
+  /**
+   * 端点检测（修订 v2 V2-4）：本次录音已检测到有效语音。hasSpoken / sendReady
+   * 是 #endpoint 的响应式镜像，与 level / elapsedMs 同生命周期——只在 recording
+   * 相位有意义，任何相位转移与 enter / exit 都清零。
+   */
+  hasSpoken = $state(false);
+  /** 待发送子态：绿键（Send）与 2s 自动发送倒计时由它驱动；非 recording 恒 false。 */
+  sendReady = $state(false);
   #announcer: AnnounceController | null = null;
+  /** 端点状态机簿记（段追踪；非响应式——界面从 hasSpoken / sendReady 派生）。 */
+  #endpoint: VoiceEndpointState = initialEndpointState();
 
   enter(): void {
     this.active = true;
@@ -346,6 +502,10 @@ class VoiceModeState implements AnnounceHost {
       this.elapsedMs = 0;
       this.recordingStartedAt = Date.now();
     }
+    // 端点子态只在 recording 相位有意义（修订 v2 V2-4）：进 recording = 全新
+    // 开始，离开 recording（含防御路径）= 待发送 / 已说话标记不残留。recording
+    // 期间没有 dispatch（电平喂入走 feedLevel），在转移边界清一次即全覆盖。
+    this.#clearEndpoint();
     if (event === 'speech-started') this.speakingStage = 'synthesizing';
     // settled 从 speaking 收尾是防御路径（接线里 speaking 不会被 settled 触达），
     // 万一发生同样要把播报停掉，不留僵尸播放。
@@ -385,6 +545,32 @@ class VoiceModeState implements AnnounceHost {
     this.dispatch('speech-ended');
   }
 
+  /**
+   * 录音电平喂入端点检测（修订 v2 V2-4）：Composer 的 onLevel 回调逐帧调
+   * （电平已经 levelToHeight 映射）。仅 recording 相位有效——拿到流与
+   * record-started 之间的少量早期帧、以及 stop 之后的尾巴帧都在这里被丢弃。
+   * 返回一次性信号（无转移为 null）供 Composer 接自动收尾计时器。
+   */
+  feedLevel(level: number, nowMs: number): VoiceEndpointSignal | null {
+    if (this.phase !== 'recording') return null;
+    const { state, signal } = feedEndpointLevel(
+      this.#endpoint,
+      level,
+      nowMs,
+      this.recordingStartedAt,
+    );
+    this.#endpoint = state;
+    this.hasSpoken = state.hasSpoken;
+    this.sendReady = state.sendReady;
+    return signal;
+  }
+
+  #clearEndpoint(): void {
+    this.#endpoint = initialEndpointState();
+    this.hasSpoken = false;
+    this.sendReady = false;
+  }
+
   // --- AnnounceHost ---------------------------------------------------------
 
   enterSpeaking(): void {
@@ -406,6 +592,7 @@ class VoiceModeState implements AnnounceHost {
     this.level = 0;
     this.elapsedMs = 0;
     this.recordingStartedAt = 0;
+    this.#clearEndpoint();
   }
 }
 
