@@ -4,6 +4,7 @@ import {
   messageContentSchema,
   messageKindSchema,
   messageSchema,
+  messagesSendInputSchema,
   runSchema,
   taskEventContentSchema,
   textContentSchema,
@@ -82,11 +83,40 @@ describe('messageContentSchema（D75 task_event 不串型）', () => {
     expect(messageContentSchema.parse(card)).toEqual(card);
   });
 
+  it("语音消息（origin:'voice'，53 号修订 v2 V2-1）走 text 分支且保留 origin", () => {
+    const voice = { text: '帮我看下明天的安排', origin: 'voice' };
+    expect(messageContentSchema.parse(voice)).toEqual(voice);
+    expect(textContentSchema.safeParse(voice).success).toBe(true);
+    expect(taskEventContentSchema.safeParse(voice).success).toBe(false);
+  });
+
   it('非法 phase 不会被当成 task_event', () => {
     const parsed = messageContentSchema.parse({ taskId: 'run_t1', phase: 'nope', text: 'x' });
     // Falls through to the text branch (phase stripped) — never a task_event.
     expect(parsed).toEqual({ text: 'x', taskId: 'run_t1' });
     expect(parsed).not.toHaveProperty('phase');
+  });
+});
+
+describe('messages.send 输入（53 号修订 v2 V2-1 voiceMode）', () => {
+  it('voiceMode: true 可选透传；缺省与显式 false 都合法', () => {
+    const base = { conversationId: 'conv_1', text: '你好' };
+    expect(messagesSendInputSchema.parse(base)).toEqual(base);
+    expect(messagesSendInputSchema.parse({ ...base, voiceMode: true })).toEqual({
+      ...base,
+      voiceMode: true,
+    });
+    expect(messagesSendInputSchema.parse({ ...base, voiceMode: false })).toEqual({
+      ...base,
+      voiceMode: false,
+    });
+  });
+
+  it('voiceMode 非布尔被拒绝', () => {
+    expect(
+      messagesSendInputSchema.safeParse({ conversationId: 'conv_1', text: 'x', voiceMode: 'yes' })
+        .success,
+    ).toBe(false);
   });
 });
 

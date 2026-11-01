@@ -119,8 +119,15 @@ async function giveMockProviderAKey(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="key-state-custom:mock"]')).toBeVisible({
     timeout: 15_000,
   });
-  await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
+  // 保存先刷新厂商卡片，弹层可能还在收起：bits-ui 会吃掉这一下 Esc。
+  // 等弹层真正消失后再退出设置页（输入控件里第一次 Esc 只失焦，所以重试）。
+  await expect(page.locator('[data-testid="provider-add-dialog"]')).toBeHidden();
+  await expect(async () => {
+    if (await page.locator('[data-testid="settings-page"]').isVisible()) {
+      await page.keyboard.press('Escape');
+    }
+    await expect(page.locator('[data-testid="settings-page"]')).toBeHidden({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
 }
 
 function settingCard(page: Page, itemId: string) {

@@ -3,6 +3,8 @@
   import type { RunStep } from '@kepcup/shared';
   import {
     ArrowLeft,
+    ChevronDown,
+    ChevronRight,
     CircleCheck,
     CircleSlash,
     CircleX,
@@ -36,10 +38,13 @@
   import { isActiveTask } from './task-view';
 
   /**
-   * 任务执行过程页（docs/design/42-task-run-view.md）：对话里的任务卡打开它，
+   * 任务详情页（docs/design/42-task-run-view.md）：对话里的任务卡打开它，
    * 原对话（含右栏）以 display:none 留在 DOM 里，本页占满主区。顶部是返回、
-   * 任务名、状态与 metadata；正文把该任务的 run_steps 渲染成 Agent 消息
-   * 时间线——助手说明、工具调用 + 结果、进度与追加指令。
+   * 任务名、状态与 metadata；正文是**执行报告**（终态条目原文，用户在这里读
+   * 报告——对话里不再转发原文，design 30 §6.1 2026-11 修订）与折叠的
+   * **执行过程**（run_steps 渲染成 Agent 消息时间线：助手说明、工具调用 +
+   * 结果、进度与追加指令）。运行中的任务默认展开执行过程（实时进度就是主
+   * 内容），已结算的任务默认折叠——页面一打开先看到报告。
    *
    * 运行中经 `run.progress` / `run.status` / `task.updated` 事件触发增量重读
    * `runs.steps`，另以 1.2s 轮询兜底；任务终态后停止轮询。
@@ -74,8 +79,12 @@
   let scrollContainer = $state<HTMLElement>();
   let backButton = $state<HTMLElement | null>(null);
   let follow = $state(true);
+  /** 执行过程是否展开：首次看到任务时按状态定格（运行中展开、已结算折叠）。 */
+  let processOpen = $state(true);
+  let processInitialized = false;
 
   const task = $derived(tasks.byId[taskId] ?? null);
+  const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
   const plan = $derived(latestPlan(steps));
   const active = $derived(task !== null && isActiveTask(task));
@@ -120,6 +129,15 @@
     // 会丢，只靠事件会让审批条漏卡。只并入审批记录，不动右栏数据。
     const id = approvalConversationId;
     if (id !== null) void permissions.reloadApprovals(id);
+  });
+
+  $effect(() => {
+    // 首次拿到任务视图时定格执行过程的展开状态，之后不随终态翻转——正在看
+    // 运行中任务的人不会被结算打断。
+    const current = task;
+    if (processInitialized || current === null) return;
+    processInitialized = true;
+    processOpen = isActiveTask(current);
   });
 
   $effect(() => {
@@ -210,7 +228,9 @@
 
   $effect(() => {
     void steps;
-    if (!follow) return;
+    // 只有运行中的任务跟随新步骤滚到底部：已结算任务的正文是执行报告，打开的
+    // 落点应当是报告开头，滚到末尾会让人只看到最后一屏。
+    if (!follow || !active) return;
     queueMicrotask(() => {
       const element = scrollContainer;
       if (element !== undefined) element.scrollTop = element.scrollHeight;
@@ -377,57 +397,105 @@
         <p class="py-10 text-center text-sm text-muted-foreground" data-testid="task-run-missing">
           {t('task.run.missing')}
         </p>
-      {:else if entries.length === 0}
-        <p class="py-10 text-center text-sm text-muted-foreground" data-testid="task-run-empty">
-          {t('task.run.empty')}
-        </p>
       {:else}
-        {#each entries as entry (entry.id)}
-          {#if entry.kind === 'assistant'}
-            <div class="text-sm" data-testid="task-run-assistant">
-              {#if entry.text.length > 0}
-                <Markdown content={entry.text} />
-              {/if}
-              {#if entry.error !== null}
-                <p class="mt-1 text-xs text-destructive">{entry.error}</p>
-              {/if}
-            </div>
-          {:else if isTool(entry)}
-            <TaskRunToolCard {entry} {active} />
-          {:else if entry.kind === 'steer'}
-            <div class="flex justify-end" data-testid="task-run-steer">
-              <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">
-                <p
-                  class="mb-0.5 flex items-center justify-end gap-1 text-[11px] text-muted-foreground"
-                >
-                  <CornerDownRight class="size-3" aria-hidden="true" />
-                  {t('task.run.steer')}
-                </p>
-                <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">{entry.text}</p>
-              </div>
-            </div>
-          {:else if entry.kind === 'progress'}
-            <div
-              class="flex items-start gap-1.5 px-1 text-xs text-muted-foreground"
-              data-testid="task-run-progress"
-            >
-              <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-current opacity-50"></span>
-              <span class="min-w-0 whitespace-pre-wrap">{entry.text}</span>
-            </div>
-          {:else}
-            <p class="px-1 text-xs text-muted-foreground" data-testid="task-run-system">
-              {entry.text}
-            </p>
-          {/if}
-        {/each}
-        {#if active}
-          <div
-            class="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground"
-            data-testid="task-run-live"
+        <!--
+          执行过程（折叠）：运行中的任务默认展开——实时进度就是主内容；已结算
+          的任务默认折叠，页面一打开先看到下方的执行报告。用户点标题栏可随时
+          展开 / 收起。
+        -->
+        <section data-testid="task-run-process" data-open={processOpen ? 'true' : 'false'}>
+          <button
+            type="button"
+            class="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            aria-expanded={processOpen}
+            onclick={() => (processOpen = !processOpen)}
+            data-testid="task-run-process-toggle"
           >
-            <Loader2 class="size-3 animate-spin" aria-hidden="true" />
-            {t('task.run.live')}
-          </div>
+            {#if processOpen}
+              <ChevronDown class="size-3.5" aria-hidden="true" />
+            {:else}
+              <ChevronRight class="size-3.5" aria-hidden="true" />
+            {/if}
+            {t('task.run.process')}
+          </button>
+          {#if processOpen}
+            <div class="mt-1 flex flex-col gap-3" data-testid="task-run-process-body">
+              {#if entries.length === 0}
+                <p
+                  class="py-6 text-center text-sm text-muted-foreground"
+                  data-testid="task-run-empty"
+                >
+                  {t('task.run.empty')}
+                </p>
+              {/if}
+              {#each entries as entry (entry.id)}
+                {#if entry.kind === 'assistant'}
+                  <div class="text-sm" data-testid="task-run-assistant">
+                    {#if entry.text.length > 0}
+                      <Markdown content={entry.text} />
+                    {/if}
+                    {#if entry.error !== null}
+                      <p class="mt-1 text-xs text-destructive">{entry.error}</p>
+                    {/if}
+                  </div>
+                {:else if isTool(entry)}
+                  <TaskRunToolCard {entry} {active} />
+                {:else if entry.kind === 'steer'}
+                  <div class="flex justify-end" data-testid="task-run-steer">
+                    <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">
+                      <p
+                        class="mb-0.5 flex items-center justify-end gap-1 text-[11px] text-muted-foreground"
+                      >
+                        <CornerDownRight class="size-3" aria-hidden="true" />
+                        {t('task.run.steer')}
+                      </p>
+                      <p class="whitespace-pre-wrap" data-testid="task-run-steer-text">
+                        {entry.text}
+                      </p>
+                    </div>
+                  </div>
+                {:else if entry.kind === 'progress'}
+                  <div
+                    class="flex items-start gap-1.5 px-1 text-xs text-muted-foreground"
+                    data-testid="task-run-progress"
+                  >
+                    <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-current opacity-50"
+                    ></span>
+                    <span class="min-w-0 whitespace-pre-wrap">{entry.text}</span>
+                  </div>
+                {:else}
+                  <p class="px-1 text-xs text-muted-foreground" data-testid="task-run-system">
+                    {entry.text}
+                  </p>
+                {/if}
+              {/each}
+              {#if active}
+                <div
+                  class="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground"
+                  data-testid="task-run-live"
+                >
+                  <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+                  {t('task.run.live')}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </section>
+
+        {#if reportText.length > 0}
+          <!-- 执行报告：终态条目原文，用户在这里读；对话里不再出现原文。 -->
+          <section
+            class="rounded-lg border bg-muted/20 px-4 py-3"
+            data-testid="task-run-report"
+            data-report-status={task?.result?.status ?? ''}
+          >
+            <h3 class="mb-2 text-xs font-medium text-muted-foreground">
+              {t('task.run.reportTitle')}
+            </h3>
+            <div class="text-sm">
+              <Markdown content={reportText} />
+            </div>
+          </section>
         {/if}
       {/if}
     </div>

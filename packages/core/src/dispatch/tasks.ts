@@ -51,7 +51,6 @@ import type { SqliteDatabase } from '../infra/db.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type {
   CancelTaskResult,
-  ForwardTaskResultOutput,
   InjectTaskInput,
   InjectTaskResult,
   StartTaskInput,
@@ -228,7 +227,7 @@ export interface TaskHostLimits {
 }
 
 export interface TaskHostDeps {
-  /** main.db (the forward_task_result "already forwarded" lookup). */
+  /** main.db (terminal task entries, the question / task files lookups). */
   db: SqliteDatabase;
   runs: RunsService;
   /** W2 外部副作用台账：失败摘要据此标「结果未知」；缺省（单测）不查。 */
@@ -261,8 +260,6 @@ export interface TaskHostDeps {
   onSettled(run: Run, executorActive: boolean): void;
   /** Releases an execution's write lease / per-run state (an evicted stuck executor). */
   releaseExecution(runId: string): void;
-  /** A visible message sent on behalf of a run (forward_task_result): output + push. */
-  recordVisibleMessage(runId: string, message: Message): void;
   /**
    * The engine slot a task occupies beyond the task caps (design 30 §8.5:
    * task concurrency = min(TASK_CONCURRENCY_*, `agent:{id}` concurrency)):
@@ -914,41 +911,6 @@ export class TaskHost implements TaskToolFacade {
       .map((task) => this.#summary(task));
   }
 
-  forwardResult(identity: RunIdentity, taskId: string): ForwardTaskResultOutput {
-    const { botId, conversationId } = this.#scope(identity);
-    const task = this.#ownTask(botId, conversationId, taskId);
-    if (task.status !== 'completed') {
-      throw new AppError('INVALID_INPUT', `任务 ${task.id} 不是已完成状态（${task.status}）`);
-    }
-    const entry = this.#deps.messages.terminalTaskEvent(task.id);
-    const content = entry !== null ? taskEventOf(entry) : null;
-    if (content === null || content.phase !== 'result' || content.text.trim().length === 0) {
-      throw new AppError('INVALID_INPUT', `任务 ${task.id} 没有可转发的结果`);
-    }
-    const already = this.#deps.db
-      .prepare(
-        "select id from messages where conversation_id = ? and kind = 'text' and json_extract(content_json, '$.origin') = 'task' and json_extract(content_json, '$.taskId') = ? and coalesce(run_id, '') != ? limit 1",
-      )
-      .get(conversationId, task.id, task.id) as { id: string } | undefined;
-    if (already !== undefined) {
-      throw new AppError('INVALID_INPUT', `任务 ${task.id} 的结果已经转发过（消息 ${already.id}）`);
-    }
-    const message = this.#deps.messages.append({
-      conversationId,
-      senderType: 'bot',
-      senderBotId: botId,
-      kind: 'text',
-      text: content.text,
-      runId: identity.runId,
-      taskOrigin: { taskId: task.id },
-      ...(content.artifacts !== undefined && content.artifacts.length > 0
-        ? { artifacts: content.artifacts }
-        : {}),
-    });
-    this.#deps.recordVisibleMessage(identity.runId, message);
-    return { messageId: message.id };
-  }
-
   /**
    * The task needs the user's input (§2.4.6): a private `question` entry bound
    * to the visible question card; the task stays running with awaiting_input.
@@ -1224,6 +1186,16 @@ export class TaskHost implements TaskToolFacade {
         questionMessageId = content.questionMessageId ?? questionMessageId;
       }
     }
+    // The terminal entry's text is the execution report, shown on the task
+    // detail page (§6.1 2026-11 修订: reports are read there, not in the chat).
+    let result: TaskView['result'] = null;
+    if (terminal) {
+      const entry = this.#deps.messages.terminalTaskEvent(task.id);
+      const content = entry !== null ? taskEventOf(entry) : null;
+      if (content !== null && (content.phase === 'result' || content.phase === 'failure')) {
+        result = { text: content.text, status: content.status ?? task.status };
+      }
+    }
     let cwd: { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } | null = null;
     try {
       // The change summary is shown on terminal write tasks only (审查 L5:
@@ -1268,6 +1240,7 @@ export class TaskHost implements TaskToolFacade {
       ...(task.taskCapabilities !== null ? { capabilities: task.taskCapabilities } : {}),
       errorReason: task.errorReason ?? null,
       reviewRequired: this.#needsReview(task),
+      result,
     };
   }
 

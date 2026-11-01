@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMemoryKeystore, type CoreHarness } from '@kepcup/core';
-import { createTestCore, makeBot } from '@kepcup/testkit';
+import { createTestCore, makeBot, waitForEvent } from '@kepcup/testkit';
 import type { Bot } from '@kepcup/shared';
 
 const cores: CoreHarness[] = [];
@@ -264,6 +264,120 @@ describe('bot avatars (upload / read / validation)', () => {
     expect(() => core.services.domain!.bots.setAvatarPadding(bot.id, 99)).toThrowError(
       expect.objectContaining({ code: 'INVALID_INPUT' }),
     );
+  });
+
+  it('accent color is independent of the avatar: upload never resets it, preset writes keep it', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
+    const core = await createTestCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { KEPCUP_MOCK_LLM_URL: 'http://mock.invalid' },
+    });
+    cores.push(core);
+    homes.push(home);
+    const bot = await makeBot(core, '小启');
+    // 旧数据形状（没设置过强调色）：读回不带该字段，渲染端回退到预置头像色 / mono。
+    expect(bot.accentColor).toBeUndefined();
+
+    // 新建即带预置头像的 Bot 会把内嵌色落成显式列（旧逻辑里颜色只活在串里，
+    // 一换上传头像就丢——用户报的那个 bug）。
+    const presetBot = (await core.rpc.call('bots.create', {
+      profile: {
+        ...bot.profile,
+        identity: { ...bot.profile.identity, avatar: 'preset:heart:red' },
+      },
+    })) as { bot: Bot };
+    expect(presetBot.bot.accentColor).toBe('red');
+
+    // 写入 + 广播：bots.accent.color 单独成列，不发整份 Profile。
+    const updated = waitForEvent<{ bot: Bot }>(core, 'bot.updated', (payload) =>
+      Boolean(payload?.bot && payload.bot.id === bot.id),
+    );
+    const written = (await core.rpc.call('bots.accent.color', {
+      id: bot.id,
+      color: 'blue',
+    })) as { bot: Bot };
+    expect(written.bot.accentColor).toBe('blue');
+    expect((await updated).bot.accentColor).toBe('blue');
+
+    // 上传 / 换图 / 改遮罩 / 改内边距都不许碰强调色。
+    const uploaded = (await core.rpc.call('bots.avatar.upload', {
+      id: bot.id,
+      mime: 'image/png',
+      bytesBase64: PNG_1PX.toString('base64'),
+    })) as { bot: Bot };
+    expect(uploaded.bot.accentColor).toBe('blue');
+    const masked = (await core.rpc.call('bots.avatar.mask', {
+      id: bot.id,
+      mask: 'rounded',
+    })) as { bot: Bot };
+    expect(masked.bot.accentColor).toBe('blue');
+    const padded = (await core.rpc.call('bots.avatar.padding', {
+      id: bot.id,
+      padding: 3,
+    })) as { bot: Bot };
+    expect(padded.bot.accentColor).toBe('blue');
+
+    // 预置头像的 bots.update 也不动强调色。
+    const preset = (await core.rpc.call('bots.update', {
+      id: bot.id,
+      profile: {
+        ...bot.profile,
+        identity: { ...bot.profile.identity, avatar: 'preset:orb:orange' },
+      },
+    })) as { bot: Bot };
+    expect(preset.bot.accentColor).toBe('blue');
+
+    // 改强调色时同步改写预置串的颜色段：只认内嵌色的旧客户端也跟着变。
+    const rewritten = (await core.rpc.call('bots.accent.color', {
+      id: bot.id,
+      color: 'teal',
+    })) as { bot: Bot };
+    expect(rewritten.bot.accentColor).toBe('teal');
+    expect(rewritten.bot.avatar).toBe('preset:orb:teal');
+
+    // 上传头像串没有颜色段，改强调色不动它。
+    const uploadedAgain = (await core.rpc.call('bots.avatar.upload', {
+      id: bot.id,
+      mime: 'image/png',
+      bytesBase64: PNG_1PX.toString('base64'),
+    })) as { bot: Bot };
+    const recolored = (await core.rpc.call('bots.accent.color', {
+      id: bot.id,
+      color: 'purple',
+    })) as { bot: Bot };
+    expect(recolored.bot.accentColor).toBe('purple');
+    expect(recolored.bot.avatar).toBe(uploadedAgain.bot.avatar);
+
+    // 枚举之外的取值在 RPC 边界就被拦下；不存在的 Bot 不能写。
+    await expect(
+      core.rpc.call('bots.accent.color', { id: bot.id, color: 'chartreuse' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      core.rpc.call('bots.accent.color', { id: 'bot_missing', color: 'red' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // 领域层直接调用（不经 RPC 校验）也归一为 INVALID_INPUT，而不是裸 ZodError。
+    expect(() =>
+      core.services.domain!.bots.setAccentColor(bot.id, 'chartreuse' as never),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_INPUT' }));
+  });
+
+  it('deleting a bot clears its accent color with the rest of the avatar state', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-avatar-'));
+    const core = await createTestCore({
+      home,
+      keystore: createMemoryKeystore(),
+      env: { KEPCUP_MOCK_LLM_URL: 'http://mock.invalid' },
+    });
+    cores.push(core);
+    homes.push(home);
+    const bot = await makeBot(core, '小启');
+    await core.rpc.call('bots.accent.color', { id: bot.id, color: 'amber' });
+    await core.rpc.call('bots.delete', { id: bot.id });
+    const placeholder = core.services.domain!.bots.get(bot.id);
+    expect(placeholder?.status).toBe('deleted');
+    expect(placeholder?.accentColor).toBeUndefined();
+    expect(placeholder?.avatar).toBeNull();
   });
 
   it('preset avatar strings round-trip through bots.update without touching the disk', async () => {

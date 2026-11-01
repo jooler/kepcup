@@ -45,6 +45,7 @@
 | 连接器目录通道下线（D104 商店化收尾） | 已完成 | 2026-10-28 | — | 按 B 方案（用户确认，无真实用户、不留向后兼容）：`DirectorySync` / `directory-merge` / 发行门禁（`filterReleasedConnectors` / `connectorReleaseGates` / `connector-release-gates.json` / `hidden` 标记）/ `apps.directory.*` RPC / `settings.apps.directorySync` / `sign-connector-index.mjs` / `sign-directory.sh` / `builtin-connectors.mjs` / `verify.mjs` 全部删除；`directory-index.ts` 解散（签名原语并入 `plugin-index.ts`，`ConnectorIndexPublicKey` → `IndexPublicKey`），`compareConnectorVersions` 迁入 `apps/connector-utils.ts`；`ConnectorCatalog` 只剩插件贡献 + 本机连接两来源（origin 收缩为 `plugin | local`）；9 个连接器 server.json 去 `releaseGate` / `hidden` 后第三次发布（线上索引 19:46Z 验签 OK）。线上 `dl.kepcup.com/connectors/v1/` 已 404。用户报告的两个问题定位：连接页 6 条目来自目录通道（非本地旧数据，随通道下线消失）；市场空为 engines >=0.5.0 对 dev 0.4.0 全判不兼容（已改 >=0.4.0 重新发布，18/18 兼容验证）。验证：core 全量 4575 通过 / 0 失败、shared 474 通过、desktop typecheck 0 error、e2e 五规格 15 例全绿。 |
 | 插件实体化 UI + 图标 + 商店补全（D104/D105 收尾） | 已完成 | 2026-10-29 | — | Bot 详情「插件」区块改为插件实体语义：只列已添加给该 Bot 的插件卡片（`+` 打开添加弹框：全宽搜索、已安装插件卡片网格、`添加到 Bot` / 绿色 `已添加给该 Bot`、卡片右下角 `移除`）；无邮件插件且无存量系统账号时不再渲染独立邮箱段。插件清单新增 `icon`（`.svg` / `.png`，≤256 KiB），`PluginSummary.iconDataUri` 由 core 读取并内联，渲染端统一 `PluginIcon`（缺省回落拼图默认图标）。`kepcup-app`：清单 schema / 校验器 `plugin.icon`（缺省 warn、声明后缺失/坏格式/超限 error）、`init` 骨架自带 `icon.svg`。官方 `plugins/` 22 个插件全部补图标 + `engines`（邮件补 README），validate 零 error / 零 warning，版本 1.0.1；重签名并部署线上市场：R2 22 包 + `dl.kepcup.com/plugins/v1/` 索引（18→22 条，4 个邮件插件正式上架），线上验签与 22 个包 sha256 / 大小逐一复核通过。验证：core / desktop typecheck 0 error；定向 73 例 + 图标 31 例 + core 插件集成 14 例全绿；e2e `bot-plugins` 2 例全绿（含添加/移除门控 `<skills>` 注入）；`write-a-plugin.md` §2.4 与检查项表同步。 |
 | 市场卡片显示插件图标（D104 收尾补全） | 已完成 | 2026-10-29 | — | 市场卡片不再显示名称首字：签名脚本从包内读取 `icon` 并内联到索引条目 `summary.icon`（`data:image/…;base64`，原始图标 ≤64 KiB），`MarketplaceSync` → `PluginMarketEntry.iconDataUri` 透出，卡片统一 `PluginIcon`，缺失 / 不可用时回落拼图默认图标；全程不发起远程图片请求。校验器把「未声明图标」从 warn 改为 **error**（市场监管局发布必须带图标），超过 64 KiB 的图标给市场化 warning；core / shared 共用 `pluginIconDataUriFromBytes` 与 `isPluginIconDataUri`（含 magic-byte / 体积 / data URI 校验）。文档同步 `write-a-plugin.md` §2.4 / §2.7 / 检查项表、`plugins/README.md`、设计 51 §3 / §6.1、DEV-053 修订。验证：22 个官方插件 validate 全部 0 error / 0 warning；本地打包 + dev key 签名 22 条索引全部带图标（索引 36 KiB）且验签通过；shared / core / app-validator / desktop typecheck 0 error；定向 57 例 + marketplace 集成 10 例全绿。**已按发布流程重新签名并部署线上索引**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致（R2 内容寻址对象全部已在位，无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`（严格大于旧索引）、36,313 字节、22/22 条目带 `summary.icon`，生产密钥 `kepcup-plugins-2026-1` 签名；`wrangler deploy` 首次遇到 Cloudflare API 500，重试成功（Worker version `a7280fdc-4268-4118-ab75-b3083c3ac47e`）；部署后从 `dl.kepcup.com/plugins/v1/` 拉回索引与签名，`--verify` 通过、22/22 图标在位。 |
+| 语音对话模式（D106） | 待验收 | 2026-11-01 | — | 26 号暂缓的语音对话模式开发完成（WP1–WP3 提交 b806479f / 25133a07 / f69007b7，WP4 收口）。WP1 记账：`loopType` 加 `voice_reply`、`media.synthesizeSpeech` 绑定打标、用量页「语音播报」归类。WP2 发送侧：入口键（仅私聊非 readOnly、asr+tts 双预检缺哪个置哪个卡）、`VoiceModeBar` 语音条（idle/recording/transcribing/speaking 四态、Esc 分档、输入坞原位替换不走 Portal）、录音→`transcribeSpeech`→WAV 附件+转写文本经 `performComposerSend`/sendGuard 发送（guard 忙时 `waitForIdle` 排队串行、不丢转写文本；转写先于上传，缺设置无附件可撤只置卡；不走 `gateForSend`，由 core 结构化 setup 失败出卡 + `continueAfterSetup` 续跑）。WP3 播报侧：chat-session `onIncomingMessage` 订阅口 + `extractSpeechText` 剥 Markdown（围栏代码块整体跳过、>2000 字截断 toast 每条一次）+ 顺序播报队列（`isVisibleInTranscript` 可见性口径、插话作废清队绑定「拿到流」而非点击、首条失败停队 +「打开设置」深链、objectURL 播完即 revoke / 退出清队无泄漏）。新增 / 增补单测：`extractSpeechText` / `voice-announce` / `voice-mode` / `voice-send` / `composer-send`（waitForIdle 排队）/ `chat-session`（订阅口）+ `locales` 全绿。收口全量 `pnpm test`：**7277 通过 / 3 失败 / 42 跳过**——`deep-link.test.ts` 为真实失败（9defc083 新增 computer-use 设置分区时漏登 `deep-link.ts` 深链白名单，`computer.control` 设置卡「在设置中打开」回落「通用」；本阶段补一行修复，定向 6/6 绿，settings 四件套 90/90 一并复核绿），`permission-bridge` / `workdirs` 单跑 29/29、18/18 全绿（全量负载下偶发，不超出既有负载敏感基线）；desktop typecheck 0 error。**待真机验收**（麦克风 + asr/tts 真实能力，清单见 [todo/voice-conversation.md](../../todo/voice-conversation.md) WP4）；实现与设计偏差已在 [design/53](../design/53-voice-conversation.md) 就地加「实现修订」注。 |
 
 
 ## 验收记录
@@ -1755,3 +1756,156 @@ DEV-075（P4）/ DEV-076（P5 init 骨架 JSON 注释不可表达 → 真实示�
   后要等它清掉再做指针操作（`waitDialogScrollLockCleared`）；分组拖拽的落点取目标分区上部。
   验证（按约定只跑改动文件）：shared / core（service+stores）/ renderer workbench 定向 258 例、
   e2e `workbench.spec` 全文件、desktop typecheck 0 error、本阶段文件 eslint 干净。
+
+## 任务结果转发行只供用户阅读（D75 §6.1 修订，2026-11-01）
+
+按用户定向：`forward_task_result` 的原文行继续对用户可见，但不再进任何 Bot 读路径（此前 Bot 在最近
+窗口里把同一份结果读三遍：私有结果条目 + 转发原文 + 自己的总结，长报告严重膨胀上下文）：
+
+- **存储层过滤**（`packages/core/src/domain/messages.ts`）：新增 `forwardedResultExcludeFilter`
+  （判别式 `origin='task'` 且 `run_id` 非空且 `run_id != taskId`——与转发去重 SQL、渲染端
+  ChatMessageRow 归属徽标同一判别，`run_id` 为空视为任务自己发的行），组合进 `listForBot` /
+  `listShared` / `around` / `search`（带 `m.` 别名）/ `unsummarized` 五个 Bot 读路径；SQL 层过滤保住
+  分页取满语义（同 `listVisible` 的理由）。`list()`（宿主内部 / 测试）与 `listVisible()`（用户 UI）
+  不变，旧转发行无需迁移即被覆盖。受影响的调用方无需改动：上下文与外部增量都走 orchestrator
+  `#contextMessages` 单口，路由判断（light-judgement）走 `listForBot`；delegation `#finalReply` 顺带
+  修掉一个边角（B 的对话轮若转发过结果，原 `runId` 匹配可能取到转发行而非最终回复）。
+- **提示词**：`system-prompt.ts` 对话轮规则与 `forward_task_result` 工具描述改为「转发的原文只有
+  用户能看、你之后读不到；回复仍必须写出关键结果与结论，作为这份结果的长久记录；不要整段复述，
+  也不要只写衔接语」——转发行退出 Bot 读路径后，总结消息成为结果唯一被 Bot 长期读到的记录。
+- **文档**：[design/30](../design/30-supervisor-and-tasks.md) §2.4.3 Bot 视角行与 §6.1「原文转发」段
+  （2026-11 修订注记）、[design/02](../design/02-execution.md) `forward_task_result` 工具行。
+- **验证**：`messages-viewer` 新增 4 例（五个读路径排除转发行、`list`/`listVisible` 仍含、私有条目
+  仍可搜到全文、around 不占名额、unsummarized 不含）；messages-visible / messages-task-events /
+  task-timeline-render / context-assembly / supervisor-turn / agent-sessions-per-task /
+  delegation-host / runs-tasks 定向 136 例全绿（过滤谓词对空 `origin` 键用 `coalesce` 收口，规避
+  SQLite 三值逻辑把普通行误滤掉）；core typecheck 0 error；改动文件 eslint 干净。
+
+## 语音对话模式修订 v2（D106，2026-11-01 首轮真机验收反馈）
+
+首轮真机验收暴露：客户端 ASR 其实已生效（气泡正文就是转写），但按 26 号语义随消息发出的原始 WAV 在
+Bot 上下文里只有一行附件条目，系统提示词的附件阶梯与 `transcribe_audio` 工具描述要求「用户发来语音
+必须用本工具获取内容」——Bot 于是派任务自行转写；用户要求语音回复时它又调 `generate_speech` 发音频
+文件产物（只有下载没有播放）。观感成了「上传附件 → Bot 干活」。本轮按「对用户是一场通话、对模型仍是
+文本问答」重做交互闭环（设计与决策见 [design/53](../design/53-voice-conversation.md)「修订 v2」）：
+
+- **WP5 Bot 收到纯文本（9ebb59ec）**：`messages.send` 加 `voiceMode` → 消息 content 记 `origin:'voice'`
+  （content 是 JSON 列，零迁移）；core 上下文对**正文非空**的语音消息给音频附件加「语音原始录音，正文
+  即其转写」并在 `<trigger>` 注入 `voiceWakeHint`（勿 `transcribe_audio` / 勿 `generate_speech`、回复口语化
+  适合朗读）。空正文（转写失败分支）不标注不 hint——保留 Bot 的转写兜底，用户话语不丢（审查 P2-1）。
+  播报队列同时排除 `origin:'task'` 的任务侧消息（转发结果 + 任务 run 内 send_message/send_media）。
+- **WP6 统一音频播放器（0d4ffa1b）**：新 `AudioPlayer`（播放/暂停 + 进度 + 时长）替换附件音频的裸
+  `<audio controls>`，音频文件产物按扩展名走同一播放器；bot 文本气泡加「朗读」键（按需 TTS）。新
+  `speech-audio`：messageId → objectURL 的 LRU(20) 缓存 + 单流仲裁（播报与手动朗读互斥抢占），播完不
+  revoke → 播过的回复可点击重播。修正审查 P2-1：录音开始（拿到流）统一 `speechAudio.stop()`（语音模式
+  与文字语音输入两路共点），`stop()` 以抢占语义收尾等待中的播放，避免「朗读出声时开口说话」把 TTS 回声
+  录进转写。
+- **WP7 静音自动发送（f3d8a86d）**：录音电平接纯端点状态机——≥ 阈值持续 250ms 记已说话（单帧尖峰
+  拒绝），之后静音 3s → 停止键变绿色发送键（点击即发），2s 无操作自动发（用户停话后 5s 内必发出）；
+  绿色态重新开口退回录音；全程未说话 5s 自动取消 + toast，不再干等 60s。2s 倒计时与 60s 上限汇入同一个
+  `stopVoiceModeRecording`，相位守卫防双停；`clearVoiceModeRecordingTimers()` 单点覆盖 stop/cancel/
+  exit/卸载四类收尾。
+- **WP8 barge-in + 停止播放键（b67a420a）**：播报 playing 期延迟 500ms 武装麦克风监听（规避 AEC 收敛
+  期），AnalyserNode RMS 映射电平 ≥ 阈值持续 200ms → 停播清队 → 走与点麦克风同一条录音链路；失败/未
+  授权静默降级；语音条新增停止播放键（■，只停播不录音）。修正审查 P2：`voiceMode` 记录
+  `ownerConversationId`，语音条渲染 / 播报入队 / 播报器注入 / barge-in 武装与全部收尾走归属门禁——主
+  聊天与卡片对话双 Composer 并存时隐藏实例不再抢录音或串扰播报（同源修掉既有缺陷）；监听额外要求
+  麦克风权限已授权（不在播报中弹 TCC），进入语音模式刷新权限快照。
+- **验证**：WP5 shared 契约 + core 上下文/集成 + 渲染层 30 文件 318 例；WP6 定向 289 例；WP7 定向 287
+  例；WP8 定向 30 文件 308 例；各阶段 desktop / core typecheck 0 error、改动文件 eslint/prettier 干净；
+  收口全量 `pnpm test`：**700 文件 / 7418 用例全绿**（3 文件 42 例 skip 为既有跳过）。真机复验
+  （barge-in 的 AEC 消回声、阈值/持续时长标定、静音 3s+2s 手感、双实例场景）待用户执行，常量均注释
+  「真机可调」。
+
+## 语音对话模式修订 v3（D106，2026-11-01 第二轮真机验收反馈）
+
+第二轮真机验收反馈：① 朗读键被加到了所有 Bot 消息上（需求只是语音模式下自动播报）；② 语音模式下
+Bot 回复仍是文本气泡，消息列表不像通话；③ 语音模式在录音 / 发送后没有保持，无法连续语音沟通；④
+系统提示词未声明语音模式，Bot 长篇汇报、派任务前没有即时反馈；⑤ Bot 语音消息没有持久语义标记，
+列表无法识别与回放。按「语音模式下双方消息都是语音气泡、Bot 回复自动播报；其它消息维持原样」修订
+（设计与决策见 [design/53](../design/53-voice-conversation.md)「修订 v3」）：
+
+- **WP9 删除全局朗读键**：撤销 V2-2 的 `message-read-aloud` 与 TTS 预检；`speech-audio` 保留为语音
+  气泡 / 播报队列 / 用户录音回放共用的唯一音频声道。
+- **WP10 双方语音气泡**：新 `VoiceMessageBubble`（药丸 + 左侧麦克风 + 波形 + 点击播放/暂停 + 波形
+  进度 + caption 在下方）与纯函数 `voice-message`（`origin:'voice'` 判定、用户音频附件、稳定波形）；
+  `speech-audio` 增加 `currentTime`/`duration`/`progress`（timeupdate）与 `toggleSource`（用户 WAV）；
+  非语音消息、任务消息、卡片保持原渲染，语音附件不再重复出现在附件行。
+- **WP11 语音模式持续**：core 新增会话级即时态 `conversations.setVoiceMode`（内存 Set，不落库）与
+  `messages.send(voiceMode:true)` 兜底置真；进入 / 退出 / 卸载由归属 Composer 同步，发送与播报收尾不
+  退出，会话删除清除。
+- **WP12 系统提示词 + 回复标记**：`SystemPromptInput.voiceMode` → 对话轮 `<voice_conversation>`（立刻
+  反馈：先 `send_message` 再 `start_task`；只给结论；口语化；不调 `generate_speech`；英文同义）；语音
+  轮 Bot 最终回复与 `send_message` 记 `origin:'voice'`（任务消息保持 `origin:'task'`、不播报）。barge-in
+  武装放宽为「active + 任意音频在播」，手动重播也能被开口打断。
+- **验证**：shared 契约（`conversations.setVoiceMode`）、core typecheck、desktop typecheck 0 error；
+  chats 定向 30 文件 317 例、core 提示词 4 例 + 集成 2 例、shared 42 文件 512 例、i18n 三文件全绿。
+  真机复验（双方气泡形态 / 连续发送 / 即时反馈与结论式回复 / 任务结果不播报 / 打断与停止播放）待用户
+  执行。
+- **审查修正（独立子代理）**：① 去掉「语音发送即写会话态」的推断（改为 run 起点按触发批识别），
+  退出后完成的在途语音发送不会把后续文字轮变成语音轮；② `speechAudio.stop()` / 任意 `play()` 作废
+  在途手动取源，语音气泡在录音 / 识别中禁用，消除「录音开始后 TTS 才落地外放」；③ core 单会话语义
+  （置真清其它）+ 进入新会话释放旧归属 + 卸载清理改用进入时登记的会话 id（不再依赖已被
+  `session.clear()` 置空的 view）；④ 无模型降级路径的可见说明也标 `origin:'voice'`；⑤
+  `messages.edit` 保留 origin（编辑语音消息不再降级成文本气泡）、RPC 拒绝项目组、提示词补「长报告
+  不整段转发」。补对应单测 / 集成用例（speech-audio 25 例、voice-mode 集成 3 例、edit 4 例）。
+
+## 任务执行过程页按会话记忆（D75/42 修订，2026-11-01）
+
+真机反馈：Bot A 对话里打开「任务详情」（`TaskRunView`），切到 Bot B 再切回 A，主区回到消息列表。
+根因是 `tasks.openTaskId` 是全局单值，`chat.select` 每次打开会话都 `tasks.closeDetail()` 清空。
+
+- `tasks` 新增会话级记忆 `#openByConversation`：`openDetail` 由 `ChatSession.openTask` 按当前会话 id
+  登记；`chat.select` 改为 `tasks.enterConversation(conversation.id)`——切到目标会话自己的页面（没有
+  则消息列表），离开的会话记忆保留；`chat.close` / 删除会话 / 删除 Bot 用 `forgetConversation` 丢弃。
+  显式返回（返回键 / Esc）仍是 `closeDetail`（丢弃该会话记忆），窄屏 `leaveCurrent` 与主区卸载只
+  `enterConversation(null)` 退出可见层、保留记忆。
+- 设计 42 的「入口与层级」与实现位置、审批条会话归属说明同步更新；`ChatsArea` 卸载注释同步。
+- 验证：`tasks.svelte.test` 7 例、`chat-session.svelte.test` 15 例、相关 chats/shell/board 4 文件
+  42 例全绿；desktop typecheck 0 error（1 条既有 ApprovalCard 警告）。
+
+### 第二轮反馈补充（2026-11-02）
+
+- **自动播报漏播修复**：播报入队从 `message.created` 订阅改为**消息列表扫描**（按进入模式时的
+  seq 水位，`collectAnnounceEntries`）——列表更新即触发，事件漏投/订阅晚挂载不再导致 Bot 语音
+  不自动播放；水位保证不补播历史。
+- **手动接管**：点任意语音气泡 → `takeManualControl()` 停当前 + 清队 + 本轮关闭后续自动播报，
+  下一段用户语音恢复自动播报；自动播放期间新音频顺序排队。
+- **连续听评估**：常开麦克风 + 按静音切段 + 段间裁剪需要重做录音管道（按样点切片）、并发 ASR/
+  发送编排与全双工 AEC，回声会直接污染用户消息；按用户授权维持点击式录音，评估结论写入设计
+  53 号「非目标」与 V3-7。
+- **实现修订（P1）**：`speechAudio.toggleSource` 的世代号改到 `onManualPlayStart`/抢占之后
+  获取——手动接管触发的停播会递增世代，先取号会让用户点击的消息被自己的停播作废；补
+  「播报中手动点另一条仍能播放」单测。
+- **用户语音气泡强调色（2026-11-02）**：用户语音气泡的底色/前景改为与用户文本气泡同源——
+  `resolveAccentColor(bot.accentColor, bot.avatar)` + `avatarOnFillForeground`，无对话 Bot 时回退
+  主色；波形与麦克风圆底用 `currentColor` 跟随前景，保证任意强调色下可读。
+
+## 任务执行报告移入任务详情页（移除 forward_task_result，2026-11-01）
+
+按用户定向（实际测试反馈：转发的报告原文过长，打断对话阅读）：
+
+- **移除 `forward_task_result`**：工具定义与 `TaskToolFacade.forwardResult`、`TaskHost.forwardResult`、
+  工具目录（`settings/context.ts` / `effects/classify`）一并删掉；`TaskHostDeps.recordVisibleMessage`
+  与 orchestrator 的 `#markForwardedSeen`（只服务转发行）同时删除。旧版本留下的转发行继续由
+  `forwardedResultExcludeFilter` 挡在 Bot 读路径之外（无迁移）。
+- **报告进任务详情页**：shared `taskViewSchema` 增 `result: { text, status } | null`（可选，向后兼容），
+  core `TaskHost.view()` 从终态条目填充，经 `tasks.get` / `task.updated` 下发。`TaskRunView.svelte`
+  改版：正文顶部是折叠的「执行过程」（运行中默认展开、已结算默认折叠，首次读到任务视图时定格），
+  下方直接展示「执行报告」（Markdown）；窄屏 / 宽屏布局不变。
+- **卡片入口**：已完成任务卡底按钮文案改「任务已完成，点击查看执行报告」（`task.run.openCompleted`），
+  其余状态仍「查看执行过程」。
+- **提示词**（`system-prompt.ts` 对话轮规则）：报告全文只在任务卡里、由用户自行查看；回复必须高度
+  总结关键结论、产出与注意事项（风险 / 未完成 / 待用户决定），既不整段复述也不只写「详情见任务卡」。
+  触发段超长结果的截断提示同步改为指向任务卡。
+- **降级路径**（DEV-011，无内置模型）：不再原文转发，改成一条「任务已完成，点击任务卡查看执行报告」
+  的短提示；已在 DEV-011 追加 2026-11 修订注记。
+- **文档**：design/30 §决策 7 / §2.1 / §4.1 / §6.1 / §6.3 / §8.4 / §12、design/02（交互链、工具表、
+  触发层、无内置模型）、design/42（改名「任务详情页」，新增执行报告 / 执行过程折叠两节）、
+  design/28、design/53、design/README D75、dev/02-architecture、dev/03-data-model、dev/04-agent-runtime。
+- **验证**：core 定向（tasks / supervisor-turns / supervisor-review-fixes / external-agent-p4b /
+  external-agent / tasks-interrupt / task-cards / workbench-update / runs-tasks / supervisor-turn /
+  task-timeline-render / settings-catalog-host）176 例全绿；全量 `pnpm test` 705 文件 / 7461 例通过、
+  42 跳过、0 失败；shared build、core 与 desktop typecheck 0 error；改动文件 eslint 干净。
+  顺带修复既有失败：`public-skills-migration` 回放用例未摘除 0064 加的 `bots.accent_color`
+  （9ef81f38 引入，与本改动无关），补一行 `drop column` 后转绿。

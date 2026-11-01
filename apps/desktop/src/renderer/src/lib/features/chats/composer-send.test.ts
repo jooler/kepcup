@@ -11,12 +11,14 @@ import {
 function harness(overrides: Partial<ComposerSendDeps> = {}) {
   const calls: string[] = [];
   const sent: Array<{ text: string; ids: string[] }> = [];
+  const sendOpts: Array<{ voiceMode?: boolean } | undefined> = [];
   const issues: AttachmentIssue[] = [];
   const deps: ComposerSendDeps = {
     settle: async () => [],
-    send: async (text, ids) => {
+    send: async (text, ids, opts) => {
       calls.push('send');
       sent.push({ text, ids });
+      sendOpts.push(opts);
       return { ok: true };
     },
     commit: (ids) => calls.push(`commit:${ids.join(',')}`),
@@ -29,7 +31,7 @@ function harness(overrides: Partial<ComposerSendDeps> = {}) {
     reportFailure: (code) => calls.push(`report:${code ?? 'none'}`),
     ...overrides,
   };
-  return { deps, calls, sent, issues };
+  return { deps, calls, sent, sendOpts, issues };
 }
 
 describe('performComposerSend', () => {
@@ -51,6 +53,16 @@ describe('performComposerSend', () => {
     const { deps, sent } = harness({ settle: async () => ['att_9'] });
     expect(await performComposerSend('', deps)).toBe('sent');
     expect(sent).toEqual([{ text: '', ids: ['att_9'] }]);
+  });
+
+  it('opts 原样透传给 send；缺省时 send 收到空对象（53 号修订 v2 V2-1 voiceMode 通道）', async () => {
+    const withOpts = harness({ settle: async () => ['att_1'] });
+    await performComposerSend('语音', withOpts.deps, { voiceMode: true });
+    expect(withOpts.sendOpts).toEqual([{ voiceMode: true }]);
+
+    const withoutOpts = harness({ settle: async () => ['att_1'] });
+    await performComposerSend('文字', withoutOpts.deps);
+    expect(withoutOpts.sendOpts).toEqual([{}]);
   });
 
   it('发送失败：回填内容，附件 chip 不摘（可直接重试）', async () => {
@@ -192,6 +204,48 @@ describe('createSendGuard', () => {
     expect(await guard.run('conv_b', async () => 'sent-b')).toBe('sent-b');
     release();
     await pendingA;
+    expect(guard.isBusy('conv_a')).toBe(false);
+  });
+
+  it('waitForIdle：空闲立即返回；busy→idle 时唤醒等待方且唤醒后可再 run（语音连发排队）', async () => {
+    const guard = createSendGuard();
+    await guard.waitForIdle('conv_a'); // 已空闲：不挂起
+    let release: () => void = () => {};
+    const first = guard.run('conv_a', async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return 'a';
+    });
+    let idle = false;
+    const waiter = guard.waitForIdle('conv_a').then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false); // 在途期间不误醒
+    release();
+    expect(await first).toBe('a');
+    await waiter;
+    expect(idle).toBe(true);
+    expect(guard.isBusy('conv_a')).toBe(false);
+    expect(await guard.run('conv_a', async () => 'next')).toBe('next');
+  });
+
+  it('waitForIdle：任务抛错也唤醒（finally 收尾）；多个等待方全部唤醒', async () => {
+    const guard = createSendGuard();
+    let release: () => void = () => {};
+    const first = guard.run(
+      'conv_a',
+      () =>
+        new Promise<never>((_, reject) => {
+          release = () => reject(new Error('boom'));
+        }),
+    );
+    const w1 = guard.waitForIdle('conv_a');
+    const w2 = guard.waitForIdle('conv_a');
+    release();
+    await expect(first).rejects.toThrow('boom');
+    await Promise.all([w1, w2]);
     expect(guard.isBusy('conv_a')).toBe(false);
   });
 });

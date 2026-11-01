@@ -123,6 +123,9 @@ export class ChatSession {
 
   #host: ChatSessionHost;
   #unsubscribers: Array<() => void> = [];
+  // 普通 Set（刻意非响应式）：事件转发台账，没有界面从它派生。
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  #incomingListeners = new Set<(conversationId: string, message: Message) => void>();
   #disposed = false;
   /**
    * Foreground sessions update the right-panel grants list and may open the
@@ -142,7 +145,9 @@ export class ChatSession {
    * dialog can replace this so the card does not take over the main view.
    */
   openTask = (taskId: string, trigger: HTMLElement | null = null): void => {
-    tasks.openDetail(taskId, trigger);
+    // Keyed by this session's conversation so switching bots keeps the page:
+    // `chat.select` calls `tasks.enterConversation` for the new one.
+    tasks.openDetail(taskId, trigger, this.conversationId);
   };
 
   constructor(
@@ -277,13 +282,33 @@ export class ChatSession {
     this.#disposed = true;
     for (const unsubscribe of this.#unsubscribers) unsubscribe();
     this.#unsubscribers = [];
+    this.#incomingListeners.clear();
     this.clear();
+  }
+
+  /**
+   * message.created 的轻量订阅口（docs/design/53-voice-conversation.md Bot 播报
+   * 链路）：`#ingestMessage` 滤掉 interim / 临时审批卡之后透传（会话无关，订阅
+   * 方自行按 conversationId 与自身口径过滤——语音播报还要过 isVisibleInTranscript）。
+   * 返回取消函数。
+   */
+  onIncomingMessage(listener: (conversationId: string, message: Message) => void): () => void {
+    this.#incomingListeners.add(listener);
+    return () => {
+      this.#incomingListeners.delete(listener);
+    };
   }
 
   async send(
     conversationId: string,
     text: string,
-    options: { mentions?: string[]; replyTo?: string | null; attachmentIds?: string[] } = {},
+    options: {
+      mentions?: string[];
+      replyTo?: string | null;
+      attachmentIds?: string[];
+      /** 语音对话模式发送（53 号修订 v2 V2-1）：core 记 content.origin='voice'。 */
+      voiceMode?: boolean;
+    } = {},
   ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
     try {
       await core.call('messages.send', {
@@ -296,6 +321,7 @@ export class ChatSession {
         ...(options.attachmentIds !== undefined && options.attachmentIds.length > 0
           ? { attachmentIds: options.attachmentIds }
           : {}),
+        ...(options.voiceMode === true ? { voiceMode: true } : {}),
       });
       if (this.view?.conversation.id === conversationId) this.replyTo = null;
       return { ok: true };
@@ -486,6 +512,21 @@ export class ChatSession {
     if (this.#disposed) return;
     if (isInterimMessage(message) || isEphemeralApprovalCard(message)) return;
     this.#host.noteIncoming(conversationId, message);
+    // 播报订阅口（53 号）：在 interim / 临时审批卡过滤之后、视图判重之前透传；
+    // 只读会话（view 为空或别的会话）也照发——订阅方按需自筛。单个订阅方抛错
+    // 只 warn 留痕（对齐 logFailedRun 的「错误不静默」惯例），不影响其他订阅方
+    // 与 ingest 主流程（消息照常入列表）。
+    for (const listener of this.#incomingListeners) {
+      try {
+        listener(conversationId, message);
+      } catch (error) {
+        console.warn('[kepcup] incoming-message listener failed', {
+          conversationId,
+          messageId: message.id,
+          error,
+        });
+      }
+    }
     const view = this.view;
     if (!view || view.conversation.id !== conversationId) return;
     if (!view.messages.some((item) => item.id === message.id)) {

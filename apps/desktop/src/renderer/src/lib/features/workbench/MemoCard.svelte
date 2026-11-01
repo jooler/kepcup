@@ -3,17 +3,22 @@
   import type { Memo } from '@kepcup/shared';
   import { MEMO_BODY_MAX_CHARS } from '@kepcup/shared';
   import { GripVertical, ListPlus, Pin, PinOff, Sparkles, Trash2 } from '@lucide/svelte';
+  import { dragHandle } from 'svelte-dnd-action';
   import { toast } from 'svelte-sonner';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { Button } from '$lib/components/ui/button';
   import { ageText } from './age-text';
-  import { memoToTodoDraft } from './workbench-model';
+  import { memoCardClass } from './memo-card-class';
+  import { memoConverted, memoToTodoDraft } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
    * 备忘卡（D90 §5.4）：正文可点即改（contenteditable），防抖保存；相对时间与管家来源徽标；
    * 操作——置顶、转为事项、删除（进最近删除，toast 里可撤销）。Esc 放弃未保存改动。
+   *
+   * 拖拽：卡片由 footer 的覆盖层把手（`use:dragHandle`）拖起，正文与 footer 上的文字 / 按钮
+   * 都浮在把手之上，所以只有 footer 的空白处能拖，正文始终可编辑。已转事项的卡片整卡半透明。
    */
   let { memo }: { memo: Memo } = $props();
 
@@ -29,7 +34,8 @@
   /** 当前编辑区绑定的备忘 id；换卡时重灌正文。 */
   let seededId = $state<string | null>(null);
 
-  const converted = $derived(workbench.todos.some((todo) => todo.memoId === memo.id));
+  // 关联事项被取消后就不再算「已转事项」（恢复普通备忘的标签与样式），重新打开再回来。
+  const converted = $derived(memoConverted(workbench.todos, memo.id));
   const age = $derived(ageText(memo.updatedAt));
 
   function clearTimer(): void {
@@ -203,7 +209,7 @@
 </script>
 
 <div
-  class="group/memo flex min-w-0 flex-col rounded-lg border bg-card p-3 text-sm"
+  class={memoCardClass(converted)}
   data-testid="memo-card"
   data-memo-id={memo.id}
   data-pinned={memo.pinned ? 'true' : 'false'}
@@ -224,33 +230,46 @@
     onblur={onBlur}
     onkeydown={onKeydown}
   ></div>
-  <div class="mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
-    <!-- 拖拽提示：整卡可拖（正文 contenteditable 除外，dnd-action 自动跳过可编辑目标）。 -->
+  <div
+    class="relative mt-auto flex items-center gap-1.5 pt-2 text-xs text-muted-foreground"
+    data-testid="memo-footer"
+  >
+    <!-- 拖拽把手：footer 上的覆盖层，只有它能把卡片拖起来（列表用 dragHandleZone）。
+         同层文字 / 按钮写 relative 浮在把手之上——点击、选词都不会触发拖拽，
+         两者之间的空白（flex-1 占位）落回把手，即 footer 剩余位置均可拖。 -->
+    <div
+      class="absolute inset-0 cursor-grab"
+      aria-label={t('workbench.memo.cardHandle')}
+      data-testid="memo-drag-handle"
+      use:dragHandle
+    ></div>
+    <!-- grip 只是提示：非 hover 时 display:none，不占宽度（不是 opacity 占位）。 -->
     <GripVertical
-      class="size-3 shrink-0 opacity-0 transition-opacity group-focus-within/memo:opacity-60 group-hover/memo:opacity-60"
+      class="relative hidden size-3 shrink-0 group-hover/memo:block"
       aria-hidden="true"
       data-testid="memo-drag-grip"
     />
     {#if memo.pinned}
-      <Pin class="size-3 shrink-0 text-amber-600" aria-hidden="true" />
+      <Pin class="relative size-3 shrink-0 text-amber-600" aria-hidden="true" />
     {/if}
-    <span data-testid="memo-age">{age}</span>
+    <span class="relative" data-testid="memo-age">{age}</span>
     {#if memo.source === 'butler'}
       <span
-        class="inline-flex items-center gap-0.5 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-400"
+        class="relative inline-flex items-center gap-0.5 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-400"
         data-testid="memo-butler"
       >
         <Sparkles class="size-3" aria-hidden="true" />{t('workbench.memo.byButler')}
       </span>
     {/if}
     {#if converted}
-      <span class="rounded-md bg-muted px-1.5 py-0.5" data-testid="memo-converted">
+      <span class="relative rounded-md bg-muted px-1.5 py-0.5" data-testid="memo-converted">
         {t('workbench.memo.converted')}
       </span>
     {/if}
-    <span class="flex-1"></span>
+    <!-- 空白占位：不定位，让 mousedown 落到下面的把手层。 -->
+    <span class="flex-1" data-testid="memo-footer-blank"></span>
     <div
-      class="flex items-center gap-0.5 opacity-60 transition-opacity group-focus-within/memo:opacity-100 group-hover/memo:opacity-100"
+      class="relative flex items-center gap-0.5 opacity-60 transition-opacity group-focus-within/memo:opacity-100 group-hover/memo:opacity-100"
     >
       <Button
         size="icon-xs"

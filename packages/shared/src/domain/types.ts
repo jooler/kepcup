@@ -207,6 +207,55 @@ export const MAX_BOT_AVATAR_PADDING = 16;
 export const botAvatarPaddingSchema = z.number().int().min(0).max(MAX_BOT_AVATAR_PADDING);
 export type BotAvatarPadding = z.infer<typeof botAvatarPaddingSchema>;
 
+/**
+ * Bot 强调色的色板 id（`bots.accent_color` 列）。语义是「这个 Bot 在应用里的腔调色」：
+ * 预置头像填充、Bot 名字 / @ 提及、输入框发送键、看板脸、工作台执行者色、用户气泡
+ * 着色全部跟随它，与头像形状、是否上传头像无关。具体色值（hex / 对比前景）在渲染端
+ * 色板定义（apps/desktop/src/renderer/src/lib/avatars/presets.ts 的 ACCENT_COLORS），
+ * 这里只固化取值集合——core 侧需要校验与归一化。
+ */
+export const BOT_ACCENT_COLOR_IDS = [
+  'mono',
+  'brown',
+  'red',
+  'orange',
+  'amber',
+  'green',
+  'teal',
+  'blue',
+  'purple',
+  'pink',
+  'gray',
+] as const;
+export const botAccentColorSchema = z.enum(BOT_ACCENT_COLOR_IDS);
+export type BotAccentColor = z.infer<typeof botAccentColorSchema>;
+
+/** 默认强调色（「黑白」，随主题取反）；也是旧数据的兜底值。 */
+export const DEFAULT_BOT_ACCENT_COLOR: BotAccentColor = 'mono';
+
+/**
+ * 列值 → 契约值：NULL / 未知一律 null（不猜默认值）。读侧回退链见渲染端
+ * `resolveAccentColor`：显式强调色 → `preset:{shape}:{color}` 的内嵌色 → mono。
+ * 返回 null 而非默认值，是为了让旧的「只有预置头像色」的 Bot 仍按原色渲染。
+ */
+export function normalizeBotAccentColor(value: string | null | undefined): BotAccentColor | null {
+  const parsed = botAccentColorSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * 旧数据的强调色来源：`preset:{shapeId}:{colorId}` 里的颜色段。非预置值（上传
+ * 头像 / 首字母占位 / 空）返回 null——这些 Bot 没有可继承的强调色。
+ *
+ * core 只在两个地方用它：新建 Bot 时把内嵌色落成显式列（之后上传头像不再改色）、
+ * 设置强调色时同步改写预置串的颜色段（让旧版本客户端也跟着变）。
+ */
+export function presetAvatarColorId(value: string | null | undefined): BotAccentColor | null {
+  if (!value?.startsWith('preset:')) return null;
+  const [, , colorId] = value.split(':');
+  return normalizeBotAccentColor(colorId);
+}
+
 /** 列值 → 契约值：NULL / 缺列 / 越界一律按 0（读侧容忍的写侧对偶）。 */
 export function normalizeBotAvatarPadding(value: number | null | undefined): number {
   if (
@@ -234,6 +283,11 @@ export const botSchema = z.object({
    * 可选而非默认值，同 avatarMask：不改变已有 schema 生产方的严格性。
    */
   avatarPadding: botAvatarPaddingSchema.optional(),
+  /**
+   * Bot 的强调色（应用腔调色）：与头像形状 / 上传无关，独立设置。缺省 / 缺失 = 未显式
+   * 设置，读侧回退到预置头像内嵌色、再回退 mono（旧行保持原外观，不回填）。
+   */
+  accentColor: botAccentColorSchema.optional(),
   bio: z.string(),
   profile: botProfileSchema,
   status: botStatusSchema,
@@ -908,6 +962,12 @@ export const settingsSchema = z.object({
    */
   workbenchNudgeDismissed: z.boolean().default(false),
   /**
+   * 事项排序方式（D90 §5.2）：false = 按开始时间（默认；越早要执行的在前，无时间的排最后，
+   * 此时禁止拖拽），true = 自定义排序（手动拖拽顺序 `position`，可自由拖拽）。
+   * 只决定列表怎么排，**不改写 `position`**：切回自定义排序要回到原来的手动顺序。
+   */
+  workbenchTodoCustomOrder: z.boolean().default(false),
+  /**
    * InkCop 同机协作（v0.3）：扩展中心启停 + apiKey + 可选 baseUrl。
    */
   inkcopLocalCollab: inkcopLocalCollabSettingsSchema.prefault({}),
@@ -1058,6 +1118,8 @@ export const conversationSchema = z.object({
         avatarMask: botAvatarMaskSchema.optional(),
         /** 上传头像的内边距（像素，0-16）；缺省 = 0。 */
         avatarPadding: botAvatarPaddingSchema.optional(),
+        /** 成员 Bot 的强调色；缺省 = 未显式设置（堆叠里回退预置头像色）。 */
+        accentColor: botAccentColorSchema.optional(),
       }),
     )
     .optional(),
@@ -1123,7 +1185,11 @@ export const textContentSchema = z.object({
    * `task`（D75 §2.4.2）：任务发出的可见中间说明（进度），渲染为「你（任务
    * t_x）」；`taskId` 指向任务 run。
    */
-  origin: z.enum(['delegation', 'task', 'widget', 'workbench']).optional(),
+  /**
+   * `voice`（53 号修订 v2 V2-1）：语音对话模式的用户消息——正文即语音转写文本，
+   * 随附音频附件仅为原始录音存档；Bot 回复由客户端自动转语音播报。
+   */
+  origin: z.enum(['delegation', 'task', 'widget', 'workbench', 'voice']).optional(),
   /**
    * origin = 'workbench'（D90）时：工作台代用户派发事项的可见消息，对应的事项与
    * 执行记录。界面渲染成派发卡；记忆反思不把 source='butler' 的派发当用户原话。
@@ -1157,7 +1223,7 @@ export const textContentSchema = z.object({
   /**
    * origin = 'task' 且为任务自动投送的中间说明（D54 / D75 §6.1）：界面可见，
    * 不进 Bot / 任务的模型上下文（滚动摘要、最近窗口、消息工具、`<tasks>`）。
-   * `forward_task_result` 与任务主动 `send_message` 不带此标记。
+   * 任务主动 `send_message` 不带此标记。
    */
   interim: z.boolean().optional(),
   /**
@@ -1583,6 +1649,8 @@ export const loopTypeSchema = z.enum([
   'memory',
   /** 语音输入转写（用户前台行为）。 */
   'voice_input',
+  /** 语音对话模式播报（53），渲染层前台行为。 */
+  'voice_reply',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 
@@ -3263,6 +3331,17 @@ export const taskInjectViewSchema = z.object({
   at: z.number(),
 });
 
+/**
+ * A settled task's execution report (the private terminal entry's text). Shown
+ * on the task detail page — the report is read there, never forwarded into the
+ * conversation (§6.1 2026-11 修订). `status` is the terminal status of the entry.
+ */
+export const taskResultViewSchema = z.object({
+  text: z.string(),
+  status: runStatusSchema,
+});
+export type TaskResultView = z.infer<typeof taskResultViewSchema>;
+
 /** Projection of a task run for its card and the status line (`task.updated`, `tasks.get`). */
 export const taskViewSchema = z.object({
   taskId: z.string(),
@@ -3307,5 +3386,10 @@ export const taskViewSchema = z.object({
    * 须先在「检查后重试」面板核实（runs.retry reviewed:true）。与 core 的重试闸门同一判定。
    */
   reviewRequired: z.boolean().optional(),
+  /**
+   * 终态任务的执行报告（私有终态条目原文）；运行中 / 未结算为 null。任务详情
+   * 页据此直接展示报告，对话里不再出现原文（§6.1 2026-11 修订）。
+   */
+  result: taskResultViewSchema.nullable().optional(),
 });
 export type TaskView = z.infer<typeof taskViewSchema>;

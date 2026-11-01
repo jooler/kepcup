@@ -98,13 +98,7 @@
           class="flex min-h-0 min-w-0 flex-[2] flex-col gap-3"
           aria-label={t('workbench.todos.title')}
         >
-          {#if !tabbed}
-            <h2
-              class="mx-auto w-full max-w-4xl shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
-            >
-              {t('workbench.todos.title')}
-            </h2>
-          {/if}
+          <!-- 标题与「更多」菜单在 TodoPane 的栏头里：宽屏双栏与窄屏 tab 共用一份，不重复渲染。 -->
           <TodoPane />
         </section>
       {/if}

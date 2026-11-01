@@ -128,7 +128,7 @@ export const zhCN = {
     '附件已不存在（未发送的附件超过 7 天会被清理），已从输入框移除：{names}。请重新添加后再发送',
   'composer.attachmentIssueSent':
     '附件已随先前的消息发出（可能上次发送已成功、只是没收到确认），已从输入框移除：{names}。请先查看会话，必要时再重新发送',
-  // 语音输入（docs/design/26-voice-input.md）：点击式录音（语音对话模式暂缓）
+  // 语音输入（docs/design/26-voice-input.md）：点击式录音；语音对话模式见 53 号
   'composer.voiceStart': '开始语音输入',
   'composer.recordingStop': '停止录音并转为文字',
   'composer.voiceTooShort': '录音时间太短',
@@ -142,6 +142,35 @@ export const zhCN = {
   'composer.micDisabled': '麦克风已在设置中停用，请先在「设置 → 硬件」启用',
   'composer.micOpenHardware': '打开硬件设置',
   'composer.micFellBack': '所选麦克风不可用，已改用系统默认设备',
+  // 语音对话模式（docs/design/53-voice-conversation.md，D106）：输入坞原位切语音条
+  'voiceMode.entry': '语音对话',
+  'voiceMode.startRecording': '开始录音',
+  'voiceMode.stopAndSend': '停止录音并发送',
+  // 待发送子态（53 号修订 v2 V2-4：静音自动发送）
+  'voiceMode.sendNow': '立即发送',
+  'voiceMode.sendReadyHint': '点击立即发送，稍后自动发送',
+  'voiceMode.idleHint': '点击麦克风说话',
+  'voiceMode.thinking': '正在思考…',
+  'voiceMode.transcribing': '识别中…',
+  'voiceMode.sending': '发送中…',
+  'voiceMode.speaking': '播报中…',
+  'voiceMode.synthesizing': '合成中…',
+  'voiceMode.interruptAndRecord': '打断播报并说话',
+  // 停止播放键（53 号修订 v2 V2-5：播报中只停播清队，不开始录音）
+  'voiceMode.stopPlayback': '停止播放',
+  'voiceMode.truncated': '内容过长，已播报前 {limit} 字',
+  'voiceMode.speakFailed': '语音播报失败',
+  'voiceMode.openSettings': '打开设置',
+  'voiceMode.settings': '语音能力设置',
+  'voiceMode.close': '退出语音对话',
+  // 语音消息气泡（53 号修订 v3：点击气泡播放 / 暂停 / 续播）
+  'voiceMode.playVoice': '播放语音',
+  'voiceMode.pauseVoice': '暂停播放',
+  'voiceMode.resumeVoice': '继续播放',
+  // 统一音频播放器（53 号修订 v2 V2-2：附件音频 / 音频产物共用）
+  'audioPlayer.play': '播放',
+  'audioPlayer.pause': '暂停',
+  'audioPlayer.seek': '调整播放进度',
   // 设置页「硬件」分区与传感器（docs/design/31-sensors.md，D76）
   'settings.navHardware': '硬件',
   'settings.hardwareSection': '硬件',
@@ -211,7 +240,11 @@ export const zhCN = {
   'files.kind.spreadsheet': '表格',
   'files.kind.presentation': '演示文稿',
   'files.kind.text': '文本',
+  'files.kind.code': '代码',
   'files.kind.other': '文件',
+  'files.code.lines': '{count} 行',
+  'files.code.noHighlight': '未识别语言，按纯文本显示',
+  'files.code.tooLarge': '文件较大，已关闭高亮',
   'contacts.networkPolicy': '网络策略（沙箱内命令）',
   'contacts.networkPolicyOpen': '开放（拦截内网与元数据地址）',
   'contacts.networkPolicyAllowlist': '白名单',
@@ -580,8 +613,14 @@ export const zhCN = {
   'rightPanel.avatarEditTitle': '编辑头像',
   'rightPanel.avatarTabPreset': '预置',
   'rightPanel.avatarTabUpload': '上传',
+  'rightPanel.avatarTabAccent': '强调色',
   'rightPanel.avatarReset': '重置',
-  'rightPanel.avatarResetHint': '恢复为默认头像',
+  'rightPanel.avatarResetHint': '恢复为默认头像形状（不改强调色）',
+  'rightPanel.avatarAccentHint':
+    '强调色是这个 Bot 在应用各处的色调（预置头像底色、名字与 @ 提及、输入框按键、看板与工作台里的名字等），与是否上传头像无关。',
+  'rightPanel.avatarAccentCurrent': '当前：{color}',
+  'rightPanel.avatarAccentReset': '恢复默认色',
+  'rightPanel.avatarAccentResetHint': '恢复为默认的黑白强调色',
   'rightPanel.avatarUploadHint': '点击选择图片（PNG / JPG / WebP / SVG）',
   'rightPanel.avatarUploadCropHint': '选图后可裁剪，头像会裁成正方形',
   'rightPanel.avatarUploadFailed': '头像上传失败：{reason}',
@@ -1145,6 +1184,7 @@ export const zhCN = {
   'usage.loop.task': '任务',
   'usage.loop.memory': '记忆向量/重排',
   'usage.loop.voice_input': '语音输入',
+  'usage.loop.voice_reply': '语音播报',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
@@ -1378,8 +1418,11 @@ export const zhCN = {
   'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
-  // 任务执行过程页（docs/design/42-task-run-view.md）
+  // 任务详情页（docs/design/42-task-run-view.md）：执行报告 + 折叠的执行过程
   'task.run.open': '查看执行过程',
+  'task.run.openCompleted': '任务已完成，点击查看执行报告',
+  'task.run.process': '执行过程',
+  'task.run.reportTitle': '执行报告',
   'task.run.back': '返回对话',
   'task.run.loading': '执行记录加载中…',
   'task.run.loadFailed': '执行记录读取失败',
@@ -2660,7 +2703,7 @@ export const zhCN = {
   'agents.suggestEnable': 'Bot 建议启用它',
   'contacts.mainModelOrAgent': '主模型 / 任务智能体（留空用默认模型）',
   'contacts.agentTaskEngineHint':
-    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，结果原文转发。',
+    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，完成后在对话里提示打开任务卡查看执行报告。',
   'contacts.engineGroupModels': '模型',
   'contacts.engineGroupAgents': '智能体',
   'contacts.agentNeedsAuthTag': '需要登录',
@@ -2894,6 +2937,9 @@ export const zhCN = {
   'workbench.todos.reassignBlocked': '事项已在执行，不能改派执行者',
   'workbench.todos.moveFailed': '没能移动事项',
   'workbench.todos.empty': '还没有事项。在上面记下要做的事，或把备忘转成事项。',
+  'workbench.todos.more': '更多',
+  'workbench.todos.customOrder': '自定义排序',
+  'workbench.todos.customOrderFailed': '没能保存排序方式',
   'workbench.lane.unassigned': '未指派',
   'workbench.lane.delivered': '待验收 {n}',
   'workbench.lane.inProgress': '进行中 {n}',
@@ -3035,6 +3081,7 @@ export const zhCN = {
   'workbench.memo.deleteGroup': '删除分组',
   'workbench.memo.toggleGroup': '展开 / 折叠「{name}」',
   'workbench.memo.groupHandle': '拖动调整分组顺序',
+  'workbench.memo.cardHandle': '拖动调整备忘顺序',
   'workbench.memo.groupDeleteTitle': '删除「{title}」？',
   'workbench.memo.groupDeleteBody': '分组里的 {count} 条备忘会回到未分组，不会被删除。',
   'workbench.memo.groupDeleteCancel': '取消',

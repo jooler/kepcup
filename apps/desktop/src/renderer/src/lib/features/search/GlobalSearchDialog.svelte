@@ -460,6 +460,7 @@
           botId={row.bot.id}
           name={row.bot.name}
           avatar={row.bot.avatar}
+          accentColor={row.bot.accentColor ?? null}
           mask={row.bot.avatarMask}
           padding={row.bot.avatarPadding}
           class="size-10"
@@ -483,6 +484,7 @@
             botId={row.conversation.directBotId ?? row.conversation.id}
             name={row.conversation.bot?.name ?? row.conversation.directBotId ?? '?'}
             avatar={row.conversation.bot?.avatar ?? null}
+            accentColor={row.conversation.bot?.accentColor ?? null}
             mask={row.conversation.bot?.avatarMask ?? null}
             padding={row.conversation.bot?.avatarPadding ?? null}
             class="size-10"

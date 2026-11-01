@@ -195,6 +195,10 @@ export class BotTemplateService {
     const avatarPadding =
       avatar !== undefined && (bot.avatarPadding ?? 0) > 0 ? bot.avatarPadding : undefined;
 
+    // 强调色：应用腔调色，与头像无关；默认（mono）不写，旧模板缺项照样读。
+    const accentColor =
+      bot.accentColor !== undefined && bot.accentColor !== 'mono' ? bot.accentColor : undefined;
+
     // 防御纵深：文件名已过滤，这里 safeParse 兜底任何残余的 schema 违规，
     // 不让裸 ZodError 变成 INTERNAL 吐给用户。
     const parsed = botTemplateSchema.safeParse({
@@ -205,6 +209,7 @@ export class BotTemplateService {
       ...(avatar !== undefined ? { avatar } : {}),
       ...(avatarMask !== undefined ? { avatarMask } : {}),
       ...(avatarPadding !== undefined ? { avatarPadding } : {}),
+      ...(accentColor !== undefined ? { accentColor } : {}),
       skills: { authored, imported },
     });
     if (!parsed.success) {
@@ -467,6 +472,11 @@ export class BotTemplateService {
 
     const profile = profileForImport(template, (id) => this.#agentSelectable(id));
     const bot = this.deps.bots.create(profile, { skipDefaultAgent: true });
+
+    // 强调色独立于头像：先写列（模板里没带就用预置头像内嵌色 / 默认）。
+    if (template.accentColor !== undefined) {
+      this.deps.bots.setAccentColor(bot.id, template.accentColor);
+    }
 
     if (template.avatar !== undefined) {
       try {

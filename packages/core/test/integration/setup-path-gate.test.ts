@@ -7,6 +7,7 @@ import {
   createTestStack,
   listRuns,
   step,
+  waitForEvent,
   waitForMessage,
   waitForRun,
   type TestStack,
@@ -129,6 +130,39 @@ describe('setup path gate (D59)', () => {
           m.content.text.includes('工作目录已绑定为'),
       ),
     ).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
+  }, 20_000);
+
+  /**
+   * 右栏 Bot 详情的工作目录行由 `workdirs.boundOf(conversationId, workdirId)` 解析，
+   * 而它查的是渲染端 `workdirs.recent`（由 `workdir.updated` 增量维护）。访谈目录卡
+   * 直接调运行时 select，不经过 `workdirs.select` RPC，所以必须由运行时自己广播——
+   * 否则新建 Bot 绑目录后右栏一直是空态，刷新（workdirs.list）才正确。
+   */
+  it('publishes workdir.updated when the interview directory card binds', async () => {
+    const { core, llm } = await start();
+    const conversationId = await createInterviewConversation(core);
+    const dir = tmpDir();
+
+    llm.script('mock-main', [step().replyText('好的，目录我记下了。')]);
+    await answerInterview(core, conversationId, '帮我维护这个仓库');
+
+    const bound = waitForEvent<{ workdir: { id: string; path: string } }>(
+      core,
+      'workdir.updated',
+      (payload) => payload.workdir.path === dir,
+    );
+    const conversationBound = waitForEvent<{ conversation: Conversation }>(
+      core,
+      'conversation.updated',
+      (payload) => payload.conversation.id === conversationId && payload.conversation.workdirId !== null,
+    );
+    await core.rpc.call('bots.interview.answerPath', { conversationId, path: dir });
+
+    const { workdir } = await bound;
+    const updated = await conversationBound;
+    expect(updated.conversation.workdirId).toBe(workdir.id);
 
     rmSync(dir, { recursive: true, force: true });
   }, 20_000);

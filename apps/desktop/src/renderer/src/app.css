@@ -43,6 +43,8 @@
      同步反转保证可见。 */
   --avatar-mono: oklch(0.35 0 0);
   --avatar-mono-contrast: oklch(0.945 0 0);
+  /* 全局弹层拖拽带高度（window-drag-band.ts）：全屏浮层内容按它下移。 */
+  --window-drag-band-height: 40px;
 }
 
 .dark {
@@ -273,9 +275,68 @@ html.wco .wco-inset-end {
   display: block;
   position: fixed;
   inset: 0 0 auto 0;
-  height: 40px;
+  height: var(--window-drag-band-height);
   z-index: 60;
   -webkit-app-region: drag;
+}
+
+/*
+ * streamdown 表格全屏（消息表格工具条的「放大」）：浮层由依赖包就地渲染在
+ * 消息列表里，改不了它的 DOM 标记，只能在全局按 data-streamdown 补齐：
+ *
+ * 1. 消息列表外层是 z-10 的层叠上下文，浮层自己的 fixed/z-50 出不去——聊天
+ *    头部、输入坞、右栏（z-30）都会压在浮层上。全屏期间把整个消息层抬到
+ *    z-50，浮层才真正盖住整窗（关掉即恢复）。
+ * 2. 浮层要整体 no-drag：ChatView 头部 h-16 的 drag 矩形会盖住顶栏按钮，真实
+ *    点击被吞成窗口拖拽（app-region 不看 z-index，只看 DOM 顺序）。
+ * 3. 右栏的 app-drag 头部在 DOM 里排在浮层之后，矩形会继续压住浮层顶栏；全屏
+ *    期间整栏不参与交互，直接隐藏。`OverlayTracker` 已识别该浮层，顶部 40px
+ *    仍是全局拖拽带，浮层内容整体下移同样高度避开它。
+ */
+[data-message-layer]:has([data-streamdown='table-fullscreen']) {
+  z-index: 50;
+}
+body:has([data-streamdown='table-fullscreen']) [data-testid='right-panel'] {
+  display: none;
+}
+[data-streamdown='table-fullscreen'] {
+  -webkit-app-region: no-drag;
+  /* 让出 window-drag-band（顶部 40px，DOM 最后，压过这里的 no-drag）。 */
+  padding-top: var(--window-drag-band-height);
+}
+/* Windows 原生 caption 三键：与其它顶栏的 .wco-inset-end 一致，浮层顶栏让位。 */
+html.wco [data-streamdown='table-fullscreen'] {
+  padding-inline-end: var(--wco-inset-end, 0px);
+}
+
+/*
+ * streamdown 表格的复制菜单（TableDownload 弹出层）：包内 theme 用 Tailwind 任意值
+ * `z-[1000]` 定层级，但 dist 位于 node_modules，Tailwind 扫描不到、不会生成该类，
+ * 实际 z-index 是 auto。菜单又 portal 到 body 末尾，于是被会话内容（消息层 z-10、
+ * 头部 / 右栏 z-30）压在下面——看起来"弹在消息列表下方"且选项点不到，自然也没
+ * 复制成功。这里按库输出的固定 id 补层级；no-drag 让选项不被顶部 drag 矩形吞掉。
+ *
+ * 选项按钮还带着 theme 的 `h-6`（24px）和内联 `padding: 1rem`（16px），
+ * border-box 下内容高被压成 0，文字行盒溢出高亮背景的下沿（截图里文字悬在
+ * 高亮块外面）。统一改成 auto 高度 + 紧凑内边距，并把外层 p-4 收到 4px。
+ */
+#table-download-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  z-index: 50;
+  -webkit-app-region: no-drag;
+}
+#table-download-popover > button {
+  width: 100% !important;
+  height: auto;
+  min-height: 0;
+  margin: 0 !important;
+  padding: 6px 8px !important;
+  justify-content: flex-start !important;
+  line-height: 1.25;
+  text-align: left !important;
 }
 
 /*

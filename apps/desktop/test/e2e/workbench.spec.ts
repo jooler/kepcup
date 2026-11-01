@@ -450,11 +450,18 @@ test('memo groups: create via + button, ungrouped header, rename, drag across gr
     await expect(section.locator('[data-testid="memo-group-title"]')).toHaveText('上班');
 
     // 跨组拖拽：把「要拖进分组的备忘」拖到空分组的提示行上。
-    // 起点用卡片 footer 的拖拽把手——正文是 contenteditable，dnd-action 会跳过它。
-    const dragged = page
+    // 起点是卡片 footer 的把手覆盖层（footer 的空白处）——正文是 contenteditable、footer 上的
+    // 文字 / 按钮浮在把手之上，都不会启动拖拽；grip 只是 hover 才出现的提示，平时 display:none。
+    const dragCard = page
       .locator('[data-testid="memo-card"]')
-      .filter({ hasText: '要拖进分组的备忘' })
-      .locator('[data-testid="memo-drag-grip"]');
+      .filter({ hasText: '要拖进分组的备忘' });
+    const grip = dragCard.locator('[data-testid="memo-drag-grip"]');
+    await expect(grip).toBeHidden();
+    await dragCard.hover();
+    await expect(grip).toBeVisible();
+    const handle = dragCard.locator('[data-testid="memo-drag-handle"]');
+    await expect(handle).toHaveAttribute('role', 'button');
+    const dragged = dragCard.locator('[data-testid="memo-footer-blank"]');
     const dropTarget = section.locator('[data-testid="memo-group-empty"]');
     const from = await dragged.boundingBox();
     const to = await dropTarget.boundingBox();
@@ -570,6 +577,217 @@ test('memo groups: create via + button, ungrouped header, rename, drag across gr
   }
 });
 
+test('memo ungrouped: hidden while empty, appears as soon as a memo is saved', async () => {
+  test.setTimeout(120_000);
+  const session = await startSession('kepcup-e2e-wb-memo-ungrouped-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    await openWorkbench(page);
+    await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
+
+    // 建一个命名分组：还没有任何备忘，未分组区只是 display:none，不占位、不出 header。
+    await page.locator('[data-testid="memo-add-group"]').click();
+    await page.locator('[data-testid="memo-group-name"]').fill('工作');
+    await page.locator('[data-testid="memo-group-create"]').click();
+    await expect(page.locator('[data-testid="memo-group-dialog"]')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+    await waitDialogScrollLockCleared(page);
+    const ungroupedSlot = page.locator('[data-testid="memo-ungrouped-slot"]');
+    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'true');
+    await expect(ungroupedSlot).not.toBeVisible();
+    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).not.toBeVisible();
+
+    // 新备忘默认进未分组：存完立刻重新出现，不用刷新或切视图。
+    const input = page.locator('[data-testid="memo-input"]');
+    await input.fill('马上出现的备忘');
+    await input.press('Enter');
+    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'false', { timeout: 15_000 });
+    await expect(ungroupedSlot).toBeVisible();
+    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).toBeVisible();
+    await expect(
+      page.locator(
+        '[data-testid="memo-section"][data-section-group-id="ungrouped"] [data-testid="memo-card"]',
+      ),
+    ).toHaveCount(1);
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('memo → todo cancelled: the memo goes back to a plain memo, and reopening brings the tag back', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-wb-memo-cancel-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    await openWorkbench(page);
+    const input = page.locator('[data-testid="memo-input"]');
+    await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
+    await input.fill('会被取消的备忘');
+    await input.press('Enter');
+    const memoCard = page.locator('[data-testid="memo-card"]');
+    await expect(memoCard).toHaveCount(1, { timeout: 15_000 });
+    const convertedTag = page.locator('[data-testid="memo-converted"]');
+    await expect(convertedTag).toHaveCount(0);
+
+    // 转为事项（不指派、不定时 = 存成未指派的草案）。
+    await memoCard.locator('[data-testid="memo-to-todo"]').click();
+    const drawer = page.locator('[data-testid="todo-drawer"]');
+    await expect(drawer).toBeVisible();
+    await expect(page.locator('[data-testid="todo-drawer-memo"]')).toBeVisible();
+    await page.locator('[data-testid="todo-save"]').click();
+    await expect(drawer).toHaveCount(0, { timeout: 15_000 });
+
+    // 已转事项：标签出现、整卡半透明（focus-within 也会恢复，断言前先清焦点）。
+    await expect(convertedTag).toBeVisible();
+    await expect(memoCard).toHaveClass(/opacity-50/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(memoCard).toHaveCSS('opacity', '0.5');
+
+    // 取消该事项（走 UI 两步确认，不直接改 store）。
+    const openTodo = page
+      .locator('[data-testid="todo-card"]')
+      .filter({ hasText: '会被取消的备忘' });
+    await openTodo.click();
+    await expect(drawer).toBeVisible();
+    await page.locator('[data-testid="todo-drawer-cancel"]').click();
+    await page.locator('[data-testid="todo-drawer-cancel-confirm"]').click();
+    await expect(drawer).toHaveCount(0, { timeout: 15_000 });
+
+    // 事项取消后备忘立刻恢复普通状态：标签消失、不再半透明（cancelled 事项还在列表里，所以是真判定而不是等它过期）。
+    await expect(convertedTag).toHaveCount(0, { timeout: 15_000 });
+    await expect(memoCard).not.toHaveClass(/opacity-50/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(memoCard).toHaveCSS('opacity', '1');
+
+    // 重新打开（cancelled → draft）：标签回来。
+    await page.locator('[data-testid="todo-closed-toggle"]').click({ timeout: 15_000 });
+    const cancelledTodo = page
+      .locator('[data-testid="todo-closed"] [data-testid="todo-card"]')
+      .filter({ hasText: '会被取消的备忘' });
+    await expect(cancelledTodo).toHaveAttribute('data-status', 'cancelled');
+    await cancelledTodo.locator('[data-testid="todo-card-reopen"]').click();
+    await expect(convertedTag).toBeVisible({ timeout: 15_000 });
+    await expect(memoCard).toHaveClass(/opacity-50/);
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('todo order: 默认按开始时间排序且禁止拖拽，打开自定义排序后可拖、切回不改 position', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-todo-order-');
+  const { page } = session;
+  try {
+    await waitReady(page);
+    const bot = await createBotAndOpenChat(page, '阿时');
+    await openWorkbench(page);
+
+    const lane = page.locator(`[data-lane-id="bot:${bot.botId}"]`);
+    const cards = lane.locator('[data-testid="todo-lane-cards"]');
+    const titles = (): Promise<string[]> =>
+      lane
+        .locator('[data-testid="todo-card-title"]')
+        .allTextContents()
+        .then((list) => list.map((title) => title.trim()));
+    const START_ORDER = ['A-较早', 'B-较晚', 'C-无时间先建', 'D-无时间后建'];
+    // 新事项插道顶：自定义（position）顺序 = 反创建顺序，与开始时间顺序明显不同。
+    const CUSTOM_ORDER = ['D-无时间后建', 'C-无时间先建', 'A-较早', 'B-较晚'];
+
+    const hour = 60 * 60_000;
+    const assignee = { kind: 'bot', botId: bot.botId };
+    // 先建「较晚」再建「较早」：开始时间顺序与创建顺序刻意相反。
+    await rpc(page, 'todos.create', {
+      title: 'B-较晚',
+      assignee,
+      when: new Date(Date.now() + 2 * hour).toISOString(),
+    });
+    await rpc(page, 'todos.create', {
+      title: 'A-较早',
+      assignee,
+      when: new Date(Date.now() + hour).toISOString(),
+    });
+    await rpc(page, 'todos.create', { title: 'C-无时间先建', assignee });
+    await rpc(page, 'todos.create', { title: 'D-无时间后建', assignee });
+
+    // 默认「按开始时间」：有时间的按时间升序在前；没有时间的排最后，按创建时间升序。
+    await expect(lane).toBeVisible({ timeout: 15_000 });
+    await expect.poll(titles, { timeout: 15_000 }).toEqual(START_ORDER);
+
+    // 默认禁止拖拽：dnd 区标成不可拖，卡片上也没有库写上的 grab 光标。
+    await expect(cards).toHaveAttribute('data-draggable', 'false');
+    const firstCard = lane.locator('[data-testid="todo-card"]').first();
+    await expect(firstCard).not.toHaveCSS('cursor', 'grab');
+
+    // 真拖一次：没挂拖拽语义，顺序不变（要改执行只能进详情）。
+    const from = await firstCard.boundingBox();
+    const to = await lane.locator('[data-testid="todo-card"]').nth(2).boundingBox();
+    if (from === null || to === null) throw new Error('todo card has no box');
+    await page.mouse.move(from.x + from.width / 2, from.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, from.y + 40, { steps: 6 });
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+    await page.mouse.up();
+    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0);
+    await expect.poll(titles).toEqual(START_ORDER);
+    // 拖拽退化成点击时抽屉会开着：Esc 关掉再继续。
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0, { timeout: 5_000 });
+
+    // ⋯ → 「自定义排序」：默认关闭（= 按开始时间），点开后道内可拖且设置落库。
+    await page.locator('[data-testid="todo-more-menu"]').click();
+    const toggle = page.locator('[data-testid="todo-custom-order-toggle"]');
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect(cards).toHaveAttribute('data-draggable', 'true');
+    await expect
+      .poll(
+        async () =>
+          ((await rpc(page, 'settings.get')) as { workbenchTodoCustomOrder: boolean })
+            .workbenchTodoCustomOrder,
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    // 自定义排序 = position（新事项在道顶）：顺序变了，条目一个不少。
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(CUSTOM_ORDER);
+    await shot(page, '13-todo-custom-order');
+
+    // 自定义排序下真拖一次：把最后一张拖到最前，顺序按手动 position 落库。
+    // 先 Esc 关掉菜单：portal 弹层还在时 pointerdown 先被它吃掉，拖拽起不来。
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveCount(0, { timeout: 5_000 });
+    const cardsOfLane = lane.locator('[data-testid="todo-card"]');
+    const lastFrom = await cardsOfLane.last().boundingBox();
+    const topTo = await cardsOfLane.first().boundingBox();
+    if (lastFrom === null || topTo === null) throw new Error('todo card has no box');
+    const DRAGGED_ORDER = ['B-较晚', 'D-无时间后建', 'C-无时间先建', 'A-较早'];
+    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(80);
+    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2 - 12, {
+      steps: 6,
+    });
+    await page.mouse.move(topTo.x + topTo.width / 2, topTo.y + 8, { steps: 20 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
+
+    // 切回按开始时间：回到时间顺序（拖拽只写了 position，没影响按时间排序）。
+    await page.locator('[data-testid="todo-more-menu"]').click();
+    await toggle.click();
+    await expect(cards).toHaveAttribute('data-draggable', 'false');
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(START_ORDER);
+    // 再开自定义排序：手动顺序还在（拖拽结果持久化）。
+    await toggle.click();
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('memo → todo → assign a bot → start now → dispatch card → delivered → complete', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-wb-flow-');
@@ -594,8 +812,8 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
     await input.pressSequentially('带上去年的报价单');
     await input.press('Enter');
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(1, { timeout: 15_000 });
-
-    // 转为事项：抽屉预填，首行作标题，全文作说明。
+    // 还没转事项：卡片不降透明度。
+    await expect(page.locator('[data-testid="memo-card"]')).not.toHaveClass(/opacity-50/);
     await page.locator('[data-testid="memo-to-todo"]').click();
     const drawer = page.locator('[data-testid="todo-drawer"]');
     await expect(drawer).toBeVisible();
@@ -617,6 +835,15 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
 
     // 备忘显示「已转事项」。
     await expect(page.locator('[data-testid="memo-converted"]')).toBeVisible();
+
+    // 已转事项：整卡半透明，hover 恢复不透明（focus-within 也会恢复，所以先清焦点再断言）。
+    const convertedCard = page.locator('[data-testid="memo-card"]');
+    await expect(convertedCard).toHaveClass(/opacity-50/);
+    await expect(convertedCard).toHaveClass(/hover:opacity-100/);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect(convertedCard).toHaveCSS('opacity', '0.5');
+    await convertedCard.hover();
+    await expect(convertedCard).toHaveCSS('opacity', '1');
 
     // 阿勤执行后交付 → 事项进入待验收（在阿勤的分道里）。
     const card = todoCard(page, '下周和甲公司谈价');
@@ -1047,8 +1274,16 @@ test('drawer: view from chat, dirty-close guard, repeat preset; deleting the exe
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
 
+    // bits-ui 关掉弹框后 body 的滚动锁（pointer-events:none）还要再等一拍才清。
+    await waitDialogScrollLockCleared(page);
+
     // 改了没存就关：先问「放弃并继续 / 继续编辑」。
-    await todoCard(page, '核对账目').click();
+    // 点标题，不点卡片中心。待验收卡右侧是「查看结果 / 完成」（stopPropagation，
+    // 不打开抽屉）。macOS runner 把窗口钳在约 1024×677，事项栏只有约 240px，
+    // 卡片中心正好落在「查看结果」上，随后跳进对话，说明框不再出现。
+    await todoCard(page, '核对账目').locator('[data-testid="todo-card-title"]').click();
+    await expect(drawer).toBeVisible();
+    await expect(page.locator('[data-testid="todo-notes"]')).toBeVisible();
     await page.locator('[data-testid="todo-notes"]').fill('补充说明');
     await page.locator('[data-testid="todo-drawer-close"]').click();
     await expect(page.locator('[data-testid="todo-discard"]')).toBeVisible();

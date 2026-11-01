@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { botAvatarMaskSchema, botAvatarPaddingSchema, botProfileSchema } from './types.js';
+import {
+  botAccentColorSchema,
+  botAvatarMaskSchema,
+  botAvatarPaddingSchema,
+  botProfileSchema,
+} from './types.js';
 
 /**
  * Bot 模板（docs/design/48-bot-template-export.md）：把一个 Bot 导出为单个 JSON
@@ -113,6 +118,11 @@ export const botTemplateSchema = z
      * 旧模板缺这一项照样能读——不破坏模板格式版本。
      */
     avatarPadding: botAvatarPaddingSchema.optional(),
+    /**
+     * Bot 的强调色（应用腔调色）。只在与默认色（mono）不同时写入；旧模板缺这一项照样
+     * 能读（回退到预置头像内嵌色 / mono），不升模板版本号。
+     */
+    accentColor: botAccentColorSchema.optional(),
     skills: z
       .object({
         authored: z.array(botTemplateAuthoredSkillSchema).max(BOT_TEMPLATE_LIMITS.authoredSkills),

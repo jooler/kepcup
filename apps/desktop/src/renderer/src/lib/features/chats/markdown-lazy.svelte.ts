@@ -1,4 +1,13 @@
 import type { Component } from 'svelte';
+import type { StreamdownControlsConfig } from 'streamdown-svelte';
+
+/** Markdown 渲染的统一控件配置：表格内容不需要导出下载，工具条只留复制 / 全屏。 */
+export const MARKDOWN_CONTROLS: StreamdownControlsConfig = { table: { download: false } };
+
+export interface MarkdownComponentProps {
+  content: string;
+  controls?: StreamdownControlsConfig;
+}
 
 /**
  * Lazily loads the markdown pipeline (streamdown-svelte + shiki + katex,
@@ -10,7 +19,7 @@ import type { Component } from 'svelte';
  * every message bubble re-renders when it arrives.
  */
 class LazyMarkdown {
-  component = $state<Component<{ content: string }> | null>(null);
+  component = $state<Component<MarkdownComponentProps> | null>(null);
   #started = false;
 
   /** Idempotent; safe to call from every bot bubble's effect. */
@@ -18,7 +27,7 @@ class LazyMarkdown {
     if (this.#started) return;
     this.#started = true;
     void import('streamdown-svelte').then((m) => {
-      this.component = m.Streamdown as Component<{ content: string }>;
+      this.component = m.Streamdown as Component<MarkdownComponentProps>;
     });
   }
 }

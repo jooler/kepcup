@@ -161,11 +161,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import {
-  decideMailSetupRequest,
-  mailBoundFor,
-  type MailSetupFacade,
-} from '../tools/mail-tools.js';
+import { decideMailSetupRequest, mailBoundFor, type MailSetupFacade } from '../tools/mail-tools.js';
 import { visibleMailAccounts } from '../mail/service.js';
 import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import type { PluginToolFacade } from '../tools/plugin-tools.js';
@@ -467,7 +463,12 @@ export interface OrchestratorDeps {
   computer?:
     | {
         host: ComputerHostRpc;
-        requestApproval: (identity: RunIdentity, kind: 'computer_control', payload: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<ApprovalOutcome>;
+        requestApproval: (
+          identity: RunIdentity,
+          kind: 'computer_control',
+          payload: Record<string, unknown>,
+          options?: { signal?: AbortSignal },
+        ) => Promise<ApprovalOutcome>;
       }
     | undefined;
   /**
@@ -694,6 +695,17 @@ interface ActiveRunEntry {
   cutoffSeq: number;
 }
 
+/** 触发批里是否含用户语音消息（53 号修订 v3：显式 RPC 丢失时的本轮兜底）。 */
+function batchHasVoiceMessage(messages: readonly Message[]): boolean {
+  return messages.some(
+    (message) =>
+      message.senderType === 'user' &&
+      message.kind === 'text' &&
+      'origin' in message.content &&
+      message.content.origin === 'voice',
+  );
+}
+
 /**
  * How one execution of the shared run skeleton (`#executeRun`) is used:
  * - `turn` (D75 design 30 §2.1): the mailbox-driven supervisor turn —
@@ -765,6 +777,12 @@ export class Orchestrator {
    * (full context + D56 replay instead of a guessed delta).
    */
   readonly #agentSessionSeen = new Map<string, AgentSeen>();
+  /**
+   * 语音对话模式（53 号修订 v3）：渲染层经 conversations.setVoiceMode 同步的
+   * 会话级即时态。只用于对话轮提示词（`<voice_conversation>`）与 Bot 回复的
+   * `origin:'voice'` 标记；不落库，重启即清（渲染层的模式也不跨重启）。
+   */
+  readonly #voiceModeConversations = new Set<string>();
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
@@ -872,17 +890,6 @@ export class Orchestrator {
         runIds.flatMap((runId) => deps.approvals.cancelPendingForRun(runId)),
       // W4 复查 S4: a task over the wall clock on a「上次结果未知」repeat card.
       pendingUncertainRepeat: (runIds) => deps.approvals.hasPendingUncertainRepeat(runIds),
-      recordVisibleMessage: (runId, message) => {
-        // forward_task_result: the source task's agent session produced this
-        // text — a continuation reusing that session must not get it again
-        // in its conversation delta.
-        this.#markForwardedSeen(message);
-        if (deps.runs.get(runId) !== null) {
-          this.#recordBotMessage(runId, message);
-          return;
-        }
-        this.#publishMessageCreated(message);
-      },
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
       // W6: a consumed failed / interrupted task may be the last thing a
@@ -1088,6 +1095,28 @@ export class Orchestrator {
     });
   }
 
+  // --- voice conversation mode (53 号修订 v3) --------------------------------
+
+  /**
+   * 同步会话的语音对话模式开关（渲染层经 `conversations.setVoiceMode` 调）。
+   * 即时态：只影响后续对话轮的提示词与 Bot 回复标记；不触发任何消息 / 广播。
+   * 渲染层是单例（同一时刻只有一个会话在语音模式），core 同口径：置真时清掉
+   * 其它会话，避免远程客户端 / 漏发的退出在 core 里残留多个「语音会话」。
+   */
+  setVoiceMode(conversationId: string, active: boolean): void {
+    if (!active) {
+      this.#voiceModeConversations.delete(conversationId);
+      return;
+    }
+    this.#voiceModeConversations.clear();
+    this.#voiceModeConversations.add(conversationId);
+  }
+
+  /** 该会话当前是否处于语音对话模式（提示词 / 回复标记 / 测试断言）。 */
+  voiceModeActive(conversationId: string): boolean {
+    return this.#voiceModeConversations.has(conversationId);
+  }
+
   // --- direct send ----------------------------------------------------------
 
   /**
@@ -1106,6 +1135,8 @@ export class Orchestrator {
       widgetOrigin?: { widgetId: string; version: number };
       /** D94：来自系统分享的消息（分享批次 id）。 */
       shareIntakeId?: string;
+      /** 53 号修订 v2 V2-1：来自语音对话模式的发送，content 记 origin: 'voice'。 */
+      voiceMode?: boolean;
     },
   ): { message: Message; runId: string | null } {
     const prepared = this.#prepareUserMessage(conversationId, input);
@@ -1155,6 +1186,7 @@ export class Orchestrator {
       attachmentIds?: string[];
       widgetOrigin?: { widgetId: string; version: number };
       shareIntakeId?: string;
+      voiceMode?: boolean;
     },
   ): { conversation: Conversation; message: Message; batchId: string } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
@@ -1177,6 +1209,7 @@ export class Orchestrator {
         batchId,
         ...(input.widgetOrigin !== undefined ? { widgetOrigin: input.widgetOrigin } : {}),
         ...(input.shareIntakeId !== undefined ? { shareIntakeId: input.shareIntakeId } : {}),
+        ...(input.voiceMode === true ? { voiceMode: true } : {}),
       });
       if ((input.attachmentIds?.length ?? 0) > 0) {
         this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
@@ -3686,6 +3719,14 @@ export class Orchestrator {
     let { batch } = exec;
     const isTask = exec.kind === 'task';
     const loopType = isTask ? ('task' as const) : ('turn' as const);
+    /**
+     * 本 run 是语音对话模式下的对话轮（53 号修订 v3）：只影响对话轮的提示词
+     * 与 Bot 可见回复的 origin 标记；任务轮永不为真（任务消息不外播）。
+     */
+    const voiceTurn =
+      !isTask &&
+      (this.#voiceModeConversations.has(batch.conversationId) ||
+        batchHasVoiceMessage(batch.messages));
     const { runs, messages } = this.#deps;
     const settle = (
       status: Run['status'],
@@ -4331,8 +4372,7 @@ export class Orchestrator {
       // W7 <watches>: this bot's live web-page watches here.
       const watchesSection =
         this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
-      const mailSection =
-        this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
+      const mailSection = this.#deps.mail?.contextSection(batch.botId, extraPluginIds) ?? '';
       // D90 <workbench>: the butler's turn only (counts + the items that need attention).
       const workbenchSection =
         !isTask && bot.systemRole === 'butler'
@@ -4367,8 +4407,7 @@ export class Orchestrator {
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
       // P2 注入模型：插件贡献的公共技能按有效启用集过滤（Bot 私有技能不受影响）。
-      const skillsSection =
-        this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
+      const skillsSection = this.#deps.skills?.promptSection(batch.botId, extraPluginIds) ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection =
         this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
@@ -4430,6 +4469,8 @@ export class Orchestrator {
         identity,
         deps: {
           ...toolDeps,
+          // 53 号修订 v3：语音对话轮的主动 send_message 也记 origin:'voice'。
+          ...(voiceTurn ? { voiceMode: true } : {}),
           environment: this.#environmentFacade(),
           // D92 T1a 必答回合：触发批里只要有一个必答部分（routed /
           // lead_fallback），这一轮的工具面就没有 skip_reply。
@@ -4767,6 +4808,8 @@ export class Orchestrator {
           const cardPrompt = this.#cardPrompt(conv, projectWikiTopicsSection);
           return buildSystemPrompt({
             loop: isTask ? 'task' : 'turn',
+            // 语音对话模式（53 号修订 v3）：对话轮注入 <voice_conversation>。
+            ...(voiceTurn ? { voiceMode: true } : {}),
             language: this.#deps.settings.get().appLanguage,
             bot,
             conversation: conv,
@@ -4920,8 +4963,8 @@ export class Orchestrator {
       // tasks wrote as cards under the bubble (or stands alone when the bot
       // only did file work and returned no prose).
       const artifacts = isTask ? [] : this.#collectRunArtifacts(runId, batch);
-      // forward_task_result may already have carried some files on an earlier
-      // message of this run: merge by path instead of dropping the whole set.
+      // An earlier message of this run (send_message) may already have carried
+      // some files: merge by path instead of dropping the whole set.
       const shownPaths = new Set<string>();
       for (const id of runs.get(runId)?.outputMessageIds ?? []) {
         const output = messages.getById(id);
@@ -4942,6 +4985,10 @@ export class Orchestrator {
           kind: 'text',
           text: outcome.finalText,
           runId,
+          // 53 号修订 v3：语音对话轮的可见回复记 origin:'voice'——UI 据此持久
+          // 渲染语音气泡（退出模式后历史消息仍是语音形态）。无正文（纯附件）
+          // 不标：没有可朗读 / 可作 caption 的内容。
+          ...(voiceTurn && outcome.finalText.trim().length > 0 ? { voiceMode: true } : {}),
           ...(scheduleSource !== null ? { scheduleSource } : {}),
           ...(todoSource !== null ? { todoSource } : {}),
           ...(pendingArtifacts.length > 0 ? { artifacts: pendingArtifacts } : {}),
@@ -5083,8 +5130,9 @@ export class Orchestrator {
    * Design 30 §8.4, level 2 (the explicit downgrade for a bot whose only
    * engine is an external agent — no built-in model to run its turns): the
    * turn makes no model call and routes deterministically, i.e. "always one
-   * task" as before D75. Task results in the trigger are forwarded verbatim
-   * (a failure as a short notice); the other messages go to the bot's
+   * task" as before D75. A settled task in the trigger gets a short notice
+   * pointing at its card (the report is read there — §6.1 2026-11 修订: no
+   * verbatim result in the conversation); the other messages go to the bot's
    * in-flight task (inject_task), or start a new task when there is none or
    * the task could not take them — also when that turns out only later (an
    * asynchronous steering refusal, 审查 M5). Each part is labelled for what
@@ -5098,6 +5146,12 @@ export class Orchestrator {
       conversationId: batch.conversationId,
       loopType: 'turn',
     };
+    // 53 号修订 v3：无模型降级路径发出的可见说明也是语音轮的 Bot 回复——
+    // 标 origin:'voice'，UI 渲染语音气泡、播报队列自动朗读（任务终态说明
+    // 同样播报，但报告本体只在任务卡里看）。
+    const voiceTurn =
+      this.#voiceModeConversations.has(batch.conversationId) ||
+      batchHasVoiceMessage(batch.messages);
     const notice = (text: string): void => {
       const message = this.#deps.messages.append({
         conversationId: batch.conversationId,
@@ -5106,24 +5160,19 @@ export class Orchestrator {
         kind: 'text',
         text,
         runId,
+        ...(voiceTurn && text.trim().length > 0 ? { voiceMode: true } : {}),
       });
       this.#recordBotMessage(runId, message);
     };
     for (const entry of batch.messages) {
       if (entry.kind !== 'task_event' || entry.taskId === null) continue;
       const content = entry.content as TaskEventContent;
-      if (content.phase === 'result' && content.text.trim().length > 0) {
-        try {
-          this.#taskHost.forwardResult(identity, entry.taskId);
-        } catch (error) {
-          // Already forwarded (a re-delivery): nothing to add.
-          this.#deps.logger.info(
-            { taskId: entry.taskId, error: error instanceof Error ? error.message : String(error) },
-            'downgraded turn: result not forwarded',
-          );
-        }
+      const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
+      if (content.phase === 'result') {
+        // No model, so nothing can summarize the report: point the user at
+        // the card, where the full report is rendered (§6.1 2026-11 修订).
+        notice(`任务「${title}」已完成，点击任务卡查看执行报告`);
       } else if (content.phase === 'failure') {
-        const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
         const label = content.status === 'interrupted' ? '中断了' : '失败了';
         notice(`任务「${title}」${label}${content.error ? `：${content.error}` : ''}`);
       }
@@ -5336,27 +5385,6 @@ export class Orchestrator {
       conversation.directBotId === botId ||
       this.#deps.conversations.memberBotIds(conversation.id).includes(botId)
     );
-  }
-
-  /**
-   * A task result forwarded verbatim (`origin: 'task'` + taskId) is the
-   * source task's own answer: every agent session of that task records it as
-   * seen (P5 审查 #3 contract — a `continues_task_id` delta skips it).
-   */
-  #markForwardedSeen(message: Message): void {
-    const content = message.content as { origin?: unknown; taskId?: unknown };
-    if (content.origin !== 'task' || typeof content.taskId !== 'string') return;
-    try {
-      for (const row of this.#agentSessions.listByConversation(message.conversationId)) {
-        if (row.taskId !== content.taskId) continue;
-        this.#agentSessionSeen.get(row.id)?.ids.set(message.id, message.seq);
-      }
-    } catch (error) {
-      this.#deps.logger.warn(
-        { error: error instanceof Error ? error.message : String(error) },
-        'marking a forwarded result seen failed',
-      );
-    }
   }
 
   #agentSessionRowExists(rowId: string): boolean {

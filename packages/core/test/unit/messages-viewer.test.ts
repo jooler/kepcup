@@ -252,3 +252,87 @@ describe('摘要、预览、未读', () => {
     });
   });
 });
+
+describe('转发的任务结果只供用户阅读（D75 §6.1，2026-11 修订）', () => {
+  /**
+   * 标准种子之上补一轮转发（seq 9-11）：X 的对话轮（run_turn1）把任务
+   * run_tx 的结果原文发了出来，随后给出总结；另有一条任务自己发的行
+   * （run_id = 任务 id）作对照。
+   */
+  function seedForward(rig: Rig): void {
+    seed(rig);
+    const { messages, conversationId } = rig;
+    messages.append({
+      conversationId,
+      senderType: 'bot',
+      senderBotId: 'bot_x',
+      kind: 'text',
+      text: '斑马报告全文很长',
+      runId: 'run_turn1',
+      taskOrigin: { taskId: 'run_tx' },
+    });
+    messages.append({
+      conversationId,
+      senderType: 'bot',
+      senderBotId: 'bot_x',
+      kind: 'text',
+      text: '关键结论：斑马在三号区',
+      runId: 'run_turn1',
+    });
+    messages.append({
+      conversationId,
+      senderType: 'bot',
+      senderBotId: 'bot_x',
+      kind: 'text',
+      text: '斑马任务补充说明',
+      runId: 'run_tx',
+      taskOrigin: { taskId: 'run_tx' },
+    });
+  }
+
+  it('listForBot / listShared 排除转发原文；任务自己的行与总结照常可见；list / listVisible 不受影响', () => {
+    withRig((rig) => {
+      seedForward(rig);
+      expect(seqs(rig.messages.listForBot(rig.conversationId, 'bot_x'))).toEqual([
+        1, 2, 4, 5, 7, 8, 10, 11,
+      ]);
+      expect(seqs(rig.messages.listForBot(rig.conversationId, 'bot_y'))).toEqual([
+        1, 3, 4, 6, 7, 8, 10, 11,
+      ]);
+      expect(seqs(rig.messages.listShared(rig.conversationId))).toEqual([1, 4, 7, 8, 10, 11]);
+      // 原始读（宿主内部 / 测试）与用户可见列表都仍含转发行。
+      expect(rig.messages.list(rig.conversationId)).toHaveLength(11);
+      expect(seqs(rig.messages.listVisible(rig.conversationId))).toEqual([1, 4, 8, 9, 10, 11]);
+    });
+  });
+
+  it('search 命中不到转发原文；同一份内容经私有结果条目仍可搜到', () => {
+    withRig((rig) => {
+      seedForward(rig);
+      expect(
+        seqs(rig.messages.search(rig.conversationId, '斑马', { viewerBotId: 'bot_x' })),
+      ).toEqual([1, 2, 4, 5, 8, 10, 11]);
+      expect(
+        seqs(rig.messages.search(rig.conversationId, '斑马', { viewerBotId: null })),
+      ).toEqual([1, 4, 8, 10, 11]);
+    });
+  });
+
+  it('around 跳过转发原文，被排除的行不占名额', () => {
+    withRig((rig) => {
+      seedForward(rig);
+      expect(seqs(rig.messages.around(rig.conversationId, 8, 1, 'bot_x'))).toEqual([7, 8, 10]);
+      // 锚点是转发原文（对该视角不可见）：只给前后各 N 条可见行。
+      expect(seqs(rig.messages.around(rig.conversationId, 9, 1, 'bot_x'))).toEqual([8, 10]);
+    });
+  });
+
+  it('unsummarized 不含转发原文（总结消息是结果的长久记录）', () => {
+    withRig((rig) => {
+      seedForward(rig);
+      expect(seqs(rig.messages.unsummarized(rig.conversationId, 11))).toEqual([
+        1, 4, 7, 8, 10, 11,
+      ]);
+    });
+  });
+});

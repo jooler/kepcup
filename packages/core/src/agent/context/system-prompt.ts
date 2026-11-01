@@ -139,6 +139,11 @@ export interface SystemPromptInput {
   workbenchUpdate?: boolean | undefined;
   /** Top-k relevant memories (with ids) for <relevant_memories> (P07). */
   relevantMemories?: string | undefined;
+  /**
+   * 53 号修订 v3：该会话正处于语音对话模式（渲染层经 conversations.setVoiceMode
+   * 同步的即时态）。只在对话轮注入 `<voice_conversation>` 回复规则；任务轮忽略。
+   */
+  voiceMode?: boolean | undefined;
   /** Wiki topic index (index.md titles) for <wiki_topics> (P09). */
   wikiTopics?: string | undefined;
   /**
@@ -502,8 +507,8 @@ export const WORKBENCH_UPDATE_RULE =
 
 /**
  * `<platform_rules>` of the supervisor turn (D75 design 30 §2.1 / §4 / §6.1):
- * when to answer directly, when to start a task, inject / cancel, relaying vs
- * forward_task_result, routing must be told to the user. Shared rules (persona,
+ * when to answer directly, when to start a task, inject / cancel, summarizing a
+ * task report (read on its card), routing must be told to the user. Shared rules (persona,
  * chat style, send_message, project skip_reply, mentions, untrusted data,
  * memory) keep the task rules' wording.
  */
@@ -517,7 +522,7 @@ const TURN_PLATFORM_RULES = [
   '你无法直接处理的媒体内容同理，派任务调用应用的理解能力，不要只回复「我看不了 / 听不了」：看不了图片（当前模型不支持视觉、或图在 workspace 里）时用任务里的 understand_image 识别；听不了音频 / 语音附件时用任务里的 transcribe_audio 转写；缺对应模型配置时系统同样会引导用户完成设置。',
   '<tasks> 段列出你在本对话中进行中与排队中的任务。新消息与其中某个任务有关（补充要求、改了主意、回答了任务的问题）时用 inject_task 转给它；与它冲突或用户不再需要时用 cancel_task；要换个做法重做时先 cancel_task，再 start_task 并填 continues_task_id；与进行中的任务无关就另起 start_task 或直接回答。',
   '派出、转交或取消任务后，一定要在回复里告诉用户你把这条消息交给了哪条任务（或另起了一条、停掉了哪条）：不要无声地路由。',
-  '任务执行中的过程进度只在界面任务卡上更新，不会进入你的对话上下文，你不必转述过程。任务结束后它的结果或失败以「任务 t_…→你（结果|失败）」交回给你（<trigger reason="task">），用户看不到这条：由你结合对话决定怎么告诉用户——简短的结果直接转述；长报告、代码、表格等用 forward_task_result 把原文发给用户，你的回复只写衔接的话，不要复述。任务失败或中断时如实告诉用户，并给出下一步建议（重派、换做法或需要用户提供什么）。已经告诉过用户的结果不要重复。',
+  '任务执行中的过程进度只在界面任务卡上更新，不会进入你的对话上下文，你不必转述过程。任务结束后它的结果或失败以「任务 t_…→你（结果|失败）」交回给你（<trigger reason="task">）：执行报告全文只保存在任务卡里，用户点开任务卡自行查看，不进入对话。你的回复要高度总结执行结果——关键结论、产出（文件 / 数据 / 结论）、以及注意事项（失败的风险、未完成的部分、需要用户决定或跟进的事）——让人不点开报告也能知道结果；不要整段复述报告，也不要只写「详情见任务卡」这类衔接语：这份总结是结果在对话里唯一的记录，你以后靠它回顾。任务失败或中断时如实告诉用户，并给出下一步建议（重派、换做法或需要用户提供什么）。已经告诉过用户的结果不要重复。',
   '中间进展不要用 send_message 发；send_message 只用于 @ 其他成员、发附件或主动分多条消息。',
   '要把手头已有的数据展示成表格、图表、指标卡、步骤、时间线或方案对比时，可以直接用 present 发展示卡（只给数据，不写代码）；用户要能操作的小工具（计算器、追踪表、小游戏）才派任务去做组件。',
   '项目组中如果这条消息与你无关，或者已经有人回答了，调用 skip_reply。',
@@ -682,6 +687,28 @@ function currentTimeLine(now: Date, timeZone: string): string {
   return `当前时间：${now.toISOString().replace('T', ' ').slice(0, 19)}（${timeZone}）`;
 }
 
+/**
+ * 语音对话模式规则（53 号修订 v3）：只在对话轮且该会话处于语音模式时注入。
+ * 回复会被客户端自动转成语音播放，所以规则围绕「像打电话」：立刻反馈、
+ * 结论式回复、口语化、不调语音合成工具。任务轮不注入（任务结果由对话轮转述）。
+ */
+const VOICE_CONVERSATION_RULES = [
+  '当前处于语音对话模式：用户用语音发消息，你的回复也会由客户端自动转成语音播放，双方像打电话一样交流。',
+  '立刻给反馈：如果需要拉起独立任务（start_task）或做任何要等一阵的操作，先调用 send_message 发一句简短反馈（例如「我需要拉起独立任务处理，请稍后」），再调用工具，不要让用户干等；这是语音模式下 send_message 的正当用法（优先于「不用 send_message 发进度」的常规限制），本轮最终回复保持一两句。',
+  '只给结论：任务结束或查询完成后，直接说结果（例如「没有待提交文件」「有 3 个文件尚未提交」），不要罗列文件明细、工作区状态、执行过程或技术细节；任务结果的长报告不要整段转发或复述，用户追问时再展开（可以提示切到文字查看）。',
+  '口语化、简短：一般 1~3 句，像日常对话；不要用 Markdown（标题、列表、代码块、表格、链接都不会被朗读），不要念文件路径、id 或长串数字。',
+  '不要调用 generate_speech 或任何语音合成工具：客户端会自动合成并播放你的回复。',
+].join('\n');
+
+/** English copy of VOICE_CONVERSATION_RULES (same rules, same order). */
+const VOICE_CONVERSATION_RULES_EN = [
+  'You are in voice conversation mode: the user speaks, and your reply is automatically turned into speech and played by the client — the two of you are talking like on a phone call.',
+  'Acknowledge immediately: if you need to start a background task (start_task) or do anything that takes a while, first call send_message with one short acknowledgement (for example "I need to start a background task, one moment"), then call the tool. Do not leave the user waiting; this is the intended use of send_message in voice mode (it overrides the usual "do not send progress with send_message" rule). Keep this turn\'s final reply to one or two sentences.',
+  'State the conclusion only: when a task finishes or a lookup completes, answer with the result directly (for example "No uncommitted files" / "3 files are uncommitted"). Do not list file details, workspace status, execution steps or technical details unless the user asks; do not forward or repeat a long task report, and offer to switch to text if the user wants details.',
+  'Speak naturally and briefly: usually 1–3 sentences, like a daily conversation. Do not use Markdown (headings, lists, code blocks, tables and links are not spoken), and do not read out file paths, ids or long numbers.',
+  'Do not call generate_speech or any speech-synthesis tool: the client synthesizes and plays your reply automatically.',
+].join('\n');
+
 function grantsLine(grants: Grant[]): string {
   return grants.length > 0
     ? '当前有效授权：\n' +
@@ -823,6 +850,15 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : '使用用户最近一条消息的语言回复（包括问题、确认语、进度说明、总结与最终回复）。没有用户消息时（例如定时任务或系统触发的一轮），使用简体中文。',
     ),
     section('platform_rules', platformRules.join('\n')),
+    // 语音对话模式（53 号修订 v3）：只影响对话轮的回复形态，任务轮不注入。
+    section(
+      'voice_conversation',
+      isTurn && input.voiceMode === true
+        ? english
+          ? VOICE_CONVERSATION_RULES_EN
+          : VOICE_CONVERSATION_RULES
+        : '',
+    ),
     // 编程 / 开发 Bot：任务版强调规划拆解 + SubAgent 只读调研；对话轮强调
     // 复杂请求必须派任务，并把同样的执行方式写进 instruction。访谈期间不注入
     // （此时画像还在填写，且访谈轮没有 delegate_task），由 <setup_interview> 引导。
@@ -1106,7 +1142,10 @@ const HOST_POLICY_LINES: ReadonlyArray<{
     tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],
     text: (names) => `查阅、收录与清理知识库用 ${names}。`,
   },
-  { tools: ['create_skill'], text: (names) => `创建技能用 ${names}（获取技能改走 plugin_search / plugin_request_install）。` },
+  {
+    tools: ['create_skill'],
+    text: (names) => `创建技能用 ${names}（获取技能改走 plugin_search / plugin_request_install）。`,
+  },
   {
     tools: ['call_inkcop_agent'],
     text: (names) =>

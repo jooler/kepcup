@@ -5,9 +5,11 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { getChatSession } from './chat-session-context';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
+  import VoiceMessageBubble from './VoiceMessageBubble.svelte';
+  import { isVoiceMessage, voiceAttachmentOf } from './voice-message';
   import {
     buildLocalPathMentionTargets,
     buildMentionTargets,
@@ -42,13 +44,19 @@
     if (isRenderableText) lazyMarkdown.start();
   });
   /**
-   * 用户气泡跟随对话 Bot 的预置头像色（单聊取 direct bot，项目组没有单一
-   * Bot，维持默认主色）。第一种「黑白」是 var() 主题变量，亮/暗风格下
-   * 黑白互换，文字用其对比色；其余固定色一律白字。
+   * 用户气泡跟随对话 Bot 的强调色（单聊取 direct bot；项目组没有单一 Bot，
+   * 维持默认主色）。这是「Bot 的腔调色」而非头像色：换预置形状、上传头像都
+   * 不影响它。第一种「黑白」是 var() 主题变量，亮/暗风格下黑白互换，文字用
+   * 其对比色；其余固定色一律白字。
    */
   const session = getChatSession();
-  const userBubbleColor = $derived(
-    parsePresetAvatar(session.view?.conversation.bot?.avatar ?? null)?.color ?? null,
+  const userBubbleAccent = $derived(
+    session.view?.conversation.bot
+      ? resolveAccentColor(
+          session.view.conversation.bot.accentColor,
+          session.view.conversation.bot.avatar,
+        )
+      : null,
   );
   /**
    * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一
@@ -73,26 +81,39 @@
   // 生成的确定性投递）只有附件行，空气泡会在 UI 里留下空元素。
   const botText = $derived('text' in message.content ? message.content.text : '');
   const hasBotText = $derived(botText.trim().length > 0);
+  /**
+   * 语音气泡（53 号修订 v3）：origin='voice' 的消息按语音消息形态渲染——用户
+   * 消息还必须有原始录音附件（转写失败但附件在也照常可播）；Bot 消息不需要
+   * 附件（音频按需合成）。其余消息走原来的文本气泡。
+   */
+  const voiceBubble = $derived(
+    isVoiceMessage(message) &&
+      (message.senderType === 'bot' || voiceAttachmentOf(message) !== null),
+  );
 </script>
 
 {#if message.status === 'recalled'}
   <span class="mt-0.5 text-xs text-muted-foreground italic" data-testid="recalled-text">
     {t('chats.recalled')}
   </span>
+{:else if voiceBubble}
+  <!-- 语音消息（53 号修订 v3）：药丸 + 波形进度 + 下方 caption；用户原始录音
+       与 Bot 合成音频共用一条音频声道。 -->
+  <VoiceMessageBubble {message} />
 {:else if message.senderType === 'user'}
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
       class="my-2 rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
-        {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
-      style:background={userBubbleColor?.hex}
-      style:color={userBubbleColor ? avatarOnFillForeground(userBubbleColor) : undefined}
+        {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      style:background={userBubbleAccent?.hex}
+      style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}
       data-testid="user-bubble"
     >
       {#each userSegments as segment, index (index)}
         {#if segment.kind === 'mention'}
-          <!-- 边框取 currentColor（= 气泡文字色，跟随任意预置头像色/主色），
+          <!-- 边框取 currentColor（= 气泡文字色，跟随任意强调色/主色），
                不再用背景色。本地文件/文件夹用 icon + 名称，左右各留 4px。 -->
           <span
             class="mx-1 inline-flex items-center gap-1 rounded-sm border border-current/30 px-1 align-baseline"

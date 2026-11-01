@@ -31,6 +31,8 @@ export interface MentionTarget {
   butler?: boolean;
   /** Bot 头像值（preset:/upload:）；弹层用它与名称着色。 */
   avatar?: string;
+  /** Bot 的强调色（`bots.accent_color`）；写名字颜色时优先于头像内嵌色。 */
+  accentColor?: string;
   /** 本地文件/文件夹的绝对路径（kind 为 file/folder 时有值）。 */
   path?: string;
 }
@@ -92,6 +94,7 @@ export function buildMentionTargets(input: {
     bio?: string,
     butler = false,
     avatar?: string | null,
+    accentColor?: string | null,
   ): void => {
     const trimmed = (rawName ?? '').trim();
     if (trimmed.length === 0 || seenNames.has(trimmed) || seenTokens.has(token)) return;
@@ -104,16 +107,33 @@ export function buildMentionTargets(input: {
       bio,
       butler,
       ...(avatar === null || avatar === undefined ? {} : { avatar }),
+      ...(accentColor === null || accentColor === undefined ? {} : { accentColor }),
     });
   };
   for (const bot of input.memberBots) {
     if (!excluded.has(bot.id)) {
-      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler', bot.avatar);
+      push(
+        bot.id,
+        bot.name,
+        'bot',
+        bot.bio,
+        bot.systemRole === 'butler',
+        bot.avatar,
+        bot.accentColor,
+      );
     }
   }
   for (const bot of input.allBots) {
     if (!excluded.has(bot.id)) {
-      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler', bot.avatar);
+      push(
+        bot.id,
+        bot.name,
+        'bot',
+        bot.bio,
+        bot.systemRole === 'butler',
+        bot.avatar,
+        bot.accentColor,
+      );
     }
   }
   for (const project of input.projects) {

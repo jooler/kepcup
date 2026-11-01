@@ -4,24 +4,25 @@
    * app.css 全局定义——{@html} 注入的节点拿不到 Svelte 的 scoped class。
    */
   import {
-    AVATAR_COLORS,
     AVATAR_SHAPES,
     avatarOnFillForeground,
     parsePresetAvatar,
+    resolveAccentColor,
   } from './presets';
 
   let {
     value,
+    /** Bot 的强调色（`bots.accent_color`）；缺省时回退到预置串内嵌色、再回退默认。 */
+    accentColor = null,
     class: klass = '',
     animated = true,
-  }: { value: string; class?: string; animated?: boolean } = $props();
+  }: { value: string; accentColor?: string | null; class?: string; animated?: boolean } = $props();
 
-  const parsed = $derived(
-    parsePresetAvatar(value) ?? {
-      shape: AVATAR_SHAPES[0]!,
-      color: AVATAR_COLORS[0]!,
-    },
-  );
+  const parsed = $derived({
+    shape: parsePresetAvatar(value)?.shape ?? AVATAR_SHAPES[0]!,
+    // 填充色以强调色为准：换头像形状、上传图片都不改变 Bot 的色调。
+    color: resolveAccentColor(accentColor, value),
+  });
 </script>
 
 <svg

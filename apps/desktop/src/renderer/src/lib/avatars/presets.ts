@@ -2,8 +2,14 @@
  * 预置 Bot 头像（参考 Grok Bot 的「形状 × 单色 + 白色眼睛」风格；
  * 第一种「黑白」眼睛随主题取反，其余预置色眼睛一律白，见 avatarOnFillForeground）。
  *
+ * 颜色不再是「头像的一部分」：它是 Bot 的**强调色**（`bots.accent_color` 列，
+ * 契约见 shared `BotAccentColor`），在应用各处承载这个 Bot 的色调——预置头像填充、
+ * 名字 / @ 提及、输入框发送键、看板脸、工作台执行者色、用户气泡。上传头像不会
+ * 改强调色。
+ *
  * `bots.avatar` 的取值约定（identity.avatar / bots 列，core 原样存储）：
- * - `preset:{shapeId}:{colorId}` —— 纯渲染端 SVG，不落盘；
+ * - `preset:{shapeId}:{colorId}` —— 纯渲染端 SVG，不落盘；颜色段仅为兼容旧版本
+ *   客户端而保留（写侧始终写当前强调色），渲染一律以 `accentColor` 为准；
  * - `upload:{fileName}` —— 上传图片，文件在 core 侧 `bots/{id}/avatar/`；
  * - null / 其它 —— 退回首字母占位。
  *
@@ -11,7 +17,13 @@
  * 100×100 viewBox 的静态 SVG 片段，由 BotPresetAvatar 着色并叠加眼睛。
  */
 
-import { normalizeBotAvatarMask, type BotAvatarMask } from '@kepcup/shared';
+import {
+  DEFAULT_BOT_ACCENT_COLOR,
+  normalizeBotAccentColor,
+  normalizeBotAvatarMask,
+  type BotAccentColor,
+  type BotAvatarMask,
+} from '@kepcup/shared';
 
 type Pt = readonly [number, number];
 
@@ -216,8 +228,9 @@ export const AVATAR_SHAPES: AvatarPresetShape[] = [
   },
 ];
 
-export interface AvatarPresetColor {
-  id: string;
+export interface AccentColor {
+  /** 与 shared `BotAccentColor` 同一取值集（bots.accent_color 列）。 */
+  id: BotAccentColor;
   label: string;
   /**
    * 填充色（任意 CSS color，可为 var() 主题变量引用）。第一种「黑白」引用
@@ -233,11 +246,10 @@ export interface AvatarPresetColor {
 }
 
 /**
- * 取色对齐截图 2 的两行色板。第一种「黑白」即曾被去掉的黑色——改为随主题
- * 动态取色（亮色黑 / 暗色白）后，暗色下不再不可见，恢复为第一位；
- * Reset 回第一种（黑白）。
+ * Bot 强调色色板。第一种「黑白」即曾被去掉的黑色——改为随主题动态取色（亮色黑 /
+ * 暗色白）后，暗色下不再不可见，恢复为第一位；也是未设置时的默认色。
  */
-export const AVATAR_COLORS: AvatarPresetColor[] = [
+export const ACCENT_COLORS: AccentColor[] = [
   {
     id: 'mono',
     label: '黑白',
@@ -257,38 +269,57 @@ export const AVATAR_COLORS: AvatarPresetColor[] = [
 ];
 
 const shapeById = new Map(AVATAR_SHAPES.map((shape) => [shape.id, shape]));
-const colorById = new Map(AVATAR_COLORS.map((color) => [color.id, color]));
+const accentById = new Map(ACCENT_COLORS.map((color) => [color.id, color]));
 
 export function formatPresetAvatar(shapeId: string, colorId: string): string {
   return `preset:${shapeId}:${colorId}`;
 }
 
-/** Reset 语义：预置第一个形状 + 第一种颜色。 */
-export const DEFAULT_AVATAR = formatPresetAvatar(AVATAR_SHAPES[0]!.id, AVATAR_COLORS[0]!.id);
+/** 未设置强调色时的默认色（与 shared DEFAULT_BOT_ACCENT_COLOR 同值）。 */
+export const DEFAULT_ACCENT_COLOR: AccentColor =
+  accentById.get(DEFAULT_BOT_ACCENT_COLOR) ?? ACCENT_COLORS[0]!;
+
+/**
+ * 强调色回退链：显式 `accentColor` → 预置头像内嵌色（旧数据唯一来源）→ 默认「黑白」。
+ * 上传头像 / 首字母占位没有内嵌色，退到默认——两者视觉上都等同于主题前景色。
+ */
+export function resolveAccentColor(
+  accentColor: string | null | undefined,
+  avatar: string | null | undefined,
+): AccentColor {
+  const explicit = normalizeBotAccentColor(accentColor);
+  if (explicit !== null) return accentById.get(explicit) ?? DEFAULT_ACCENT_COLOR;
+  return parsePresetAvatar(avatar)?.color ?? DEFAULT_ACCENT_COLOR;
+}
+
+/** Reset 语义：预置第一个形状（颜色段沿用当前强调色，不改强调色）。 */
+export const DEFAULT_AVATAR = formatPresetAvatar(AVATAR_SHAPES[0]!.id, DEFAULT_ACCENT_COLOR.id);
 
 /**
  * 名字哈希到一个预置头像（形状 × 颜色）：同一名字结果稳定，一批新建 Bot 在群头像
- * 堆叠里彼此分得开。
+ * 堆叠里彼此分得开。颜色段只是初始强调色——core 建 Bot 时会把它落成 `accent_color` 列。
  */
 export function presetForName(name: string): string {
   let hash = 0;
   for (const char of name) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
   const shape = AVATAR_SHAPES[hash % AVATAR_SHAPES.length];
-  const color = AVATAR_COLORS[(hash >>> 8) % AVATAR_COLORS.length];
+  const color = ACCENT_COLORS[(hash >>> 8) % ACCENT_COLORS.length];
   if (shape === undefined || color === undefined) return DEFAULT_AVATAR;
   return formatPresetAvatar(shape.id, color.id);
 }
 
 export interface ParsedPresetAvatar {
   shape: AvatarPresetShape;
-  color: AvatarPresetColor;
+  /** 内嵌色（旧数据 / 兼容旧客户端的颜色段）；渲染请用 `resolveAccentColor`。 */
+  color: AccentColor;
 }
 
 export function parsePresetAvatar(value: string | null | undefined): ParsedPresetAvatar | null {
   if (!value?.startsWith('preset:')) return null;
   const [, shapeId, colorId] = value.split(':');
   const shape = shapeById.get(shapeId ?? '');
-  const color = colorById.get(colorId ?? '');
+  const normalizedColor = normalizeBotAccentColor(colorId);
+  const color = normalizedColor === null ? undefined : accentById.get(normalizedColor);
   if (!shape || !color) return null;
   return { shape, color };
 }
@@ -297,11 +328,11 @@ export function parsePresetAvatar(value: string | null | undefined): ParsedPrese
 export const AVATAR_FOREGROUND_LIGHT = '#ffffff';
 
 /**
- * 铺在头像填充色上的前景：预置头像眼睛、用户气泡文字、输入框右侧发送 / 语音键图标。
+ * 铺在强调色填充上的前景：预置头像眼睛、用户气泡文字、输入框右侧发送 / 语音键图标。
  * 第一种「黑白」用对比变量，亮色黑底白前景、暗色白底黑前景；其余预置色无论
  * 应用明暗，一律白色。
  */
-export function avatarOnFillForeground(color: AvatarPresetColor): string {
+export function avatarOnFillForeground(color: AccentColor): string {
   return color.contrast ?? AVATAR_FOREGROUND_LIGHT;
 }
 

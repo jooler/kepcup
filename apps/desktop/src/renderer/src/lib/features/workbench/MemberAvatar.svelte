@@ -29,6 +29,7 @@
     botId={id}
     {name}
     avatar={bot?.avatar ?? null}
+    accentColor={bot?.accentColor ?? null}
     mask={bot?.avatarMask ?? null}
     padding={bot?.avatarPadding ?? null}
     class={klass}

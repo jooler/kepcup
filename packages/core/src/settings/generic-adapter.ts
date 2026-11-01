@@ -98,7 +98,9 @@ export function genericSettingsAdapter(deps: AdapterDeps, item: SettingItem): It
       for (const field of fields) {
         const value = fieldValue(deps, field);
         if (field.type === 'toggle' && typeof value === 'boolean') {
-          parts.push(value ? '已开启' : '已关闭');
+          const state = value ? '已开启' : '已关闭';
+          // 多个字段时带上字段标签：否则「已关闭；已关闭」读不出是哪一项。
+          parts.push(fields.length > 1 ? `${field.label}${state}` : state);
         }
         const state = fieldStatus(field, value);
         if (state !== null) states.push(state);
