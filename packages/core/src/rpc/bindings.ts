@@ -1546,20 +1546,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'workdirs.select': method(
       workdirsSelectInputSchema,
       workdirsSelectOutputSchema,
-      async (input) => {
-        const workdir = services.workdirRuntime!.select(input.conversationId, input.path);
-        publish('conversation.updated', {
-          conversation: domain.conversations.getOrThrow(input.conversationId),
-        });
-        publish('workdir.updated', { workdir });
-        return { workdir };
-      },
+      async (input) => ({
+        // 绑定事件的广播在 WorkdirRuntime.select 里（访谈目录卡也走同一条路）。
+        workdir: services.workdirRuntime!.select(input.conversationId, input.path),
+      }),
     ),
     'workdirs.unbind': method(workdirsUnbindInputSchema, okOutputSchema, async (input) => {
       services.workdirRuntime!.unbind(input.conversationId);
-      publish('conversation.updated', {
-        conversation: domain.conversations.getOrThrow(input.conversationId),
-      });
       return { ok: true as const };
     }),
     'workdirs.update': method(
