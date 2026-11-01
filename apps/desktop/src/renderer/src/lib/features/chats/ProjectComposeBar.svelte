@@ -191,6 +191,7 @@
           botId={lead.id}
           name={lead.name}
           avatar={lead.avatar}
+          accentColor={lead.accentColor ?? null}
           mask={lead.avatarMask}
           padding={lead.avatarPadding}
           class="size-5"
@@ -233,6 +234,7 @@
             botId={bot.id}
             name={bot.name}
             avatar={bot.avatar}
+            accentColor={bot.accentColor ?? null}
             mask={bot.avatarMask}
             padding={bot.avatarPadding}
             class="size-5"
@@ -310,6 +312,7 @@
               botId={bot.id}
               name={bot.name}
               avatar={bot.avatar}
+              accentColor={bot.accentColor ?? null}
               mask={bot.avatarMask}
               padding={bot.avatarPadding}
               class="size-7"

@@ -25,6 +25,8 @@
       avatarMask?: BotAvatarMask | null;
       /** 上传头像的内边距（像素）；缺省 / 越界 = 0。 */
       avatarPadding?: number | null;
+      /** 成员 Bot 的强调色（`bots.accent_color`）；缺省 = 回退预置头像内嵌色。 */
+      accentColor?: string | null;
     }>;
     class?: string;
     /** 项目组始终含当前用户；个别场景可关掉。 */
@@ -35,7 +37,11 @@
     projectAvatarFaces(
       members,
       includeUser
-        ? { id: PROJECT_AVATAR_USER_ID, name: settingsStore.userDisplayName, avatar: null as string | null }
+        ? {
+            id: PROJECT_AVATAR_USER_ID,
+            name: settingsStore.userDisplayName,
+            avatar: null as string | null,
+          }
         : null,
     ),
   );
@@ -75,6 +81,7 @@
               botId={member.id}
               name={member.name}
               avatar={member.avatar ?? null}
+              accentColor={member.accentColor ?? null}
               mask={member.avatarMask ?? null}
               padding={member.avatarPadding ?? null}
               class="size-full"

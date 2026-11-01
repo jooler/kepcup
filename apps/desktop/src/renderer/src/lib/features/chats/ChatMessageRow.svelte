@@ -254,6 +254,7 @@
       botId={message.senderBotId ?? ''}
       {name}
       avatar={senderBot?.avatar ?? null}
+      accentColor={senderBot?.accentColor ?? null}
       mask={senderBot?.avatarMask ?? null}
       padding={senderBot?.avatarPadding ?? null}
       class="mt-0.5 size-7 shrink-0"

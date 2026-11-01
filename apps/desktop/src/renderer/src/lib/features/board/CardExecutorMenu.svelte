@@ -6,7 +6,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { board, type BoardCardView } from './board.svelte';
   import { isCardLocked } from './board-model';
-  import { botAvatarOf, botMaskOf, botNameColor, botPaddingOf } from './bot-face';
+  import { botAccentColorOf, botAvatarOf, botMaskOf, botNameColor, botPaddingOf } from './bot-face';
 
   /**
    * Assignee menu. Lists the project's active bots, excluding the butler.
@@ -36,7 +36,7 @@
   const assigneeAvatar = $derived(assigneeId === null ? null : botAvatarOf(assigneeId));
   const assigneeMask = $derived(assigneeId === null ? null : botMaskOf(assigneeId));
   const assigneePadding = $derived(assigneeId === null ? null : botPaddingOf(assigneeId));
-  const assigneeColor = $derived(botNameColor(assigneeAvatar));
+  const assigneeColor = $derived(assigneeId === null ? undefined : botNameColor(assigneeId));
   const closed = $derived(card.todo.status === 'done' || card.todo.status === 'cancelled');
   const locked = $derived(isCardLocked(card));
   const lockHint = $derived(
@@ -71,6 +71,7 @@
         botId={card.todo.assignee.botId}
         name={card.todo.assignee.name}
         avatar={assigneeAvatar}
+        accentColor={assigneeId === null ? null : botAccentColorOf(assigneeId)}
         mask={assigneeMask}
         padding={assigneePadding}
         class="size-6"
@@ -99,6 +100,7 @@
           botId={member.bot.id}
           name={member.bot.name}
           avatar={member.bot.avatar ?? null}
+          accentColor={member.bot.accentColor ?? null}
           mask={member.bot.avatarMask}
           padding={member.bot.avatarPadding}
           class="size-5 shrink-0"

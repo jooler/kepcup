@@ -5,7 +5,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { board, type BoardCardView } from './board.svelte';
-  import { botAvatarOf, botMaskOf, botPaddingOf } from './bot-face';
+  import { botAccentColorOf, botAvatarOf, botMaskOf, botPaddingOf } from './bot-face';
   import {
     cardAriaLabel,
     cardFooter,
@@ -192,6 +192,7 @@
           botId={footer.assignee.botId}
           name={footer.assignee.name}
           avatar={botAvatarOf(footer.assignee.botId)}
+          accentColor={botAccentColorOf(footer.assignee.botId) ?? null}
           mask={botMaskOf(footer.assignee.botId)}
           padding={botPaddingOf(footer.assignee.botId)}
           class="size-5"

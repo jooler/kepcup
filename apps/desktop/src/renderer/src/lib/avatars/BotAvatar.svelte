@@ -5,7 +5,11 @@
    * （组件内部元素均为 size-full）。
    */
   import * as Avatar from '$lib/components/ui/avatar';
-  import { normalizeBotAvatarMask, normalizeBotAvatarPadding, type BotAvatarMask } from '@kepcup/shared';
+  import {
+    normalizeBotAvatarMask,
+    normalizeBotAvatarPadding,
+    type BotAvatarMask,
+  } from '@kepcup/shared';
   import { avatarImages } from './avatar-images.svelte';
   import BotPresetAvatar from './BotPresetAvatar.svelte';
   import { avatarMaskClass, parsePresetAvatar, parseUploadedAvatar } from './presets';
@@ -14,6 +18,8 @@
     botId,
     name = '',
     avatar = null,
+    /** Bot 的强调色（`bots.accent_color`）：预置头像的填充 / 眼睛色。 */
+    accentColor = null,
     mask = null,
     padding = null,
     class: klass = 'size-8',
@@ -25,6 +31,11 @@
     botId: string;
     name?: string;
     avatar?: string | null;
+    /**
+     * Bot 的强调色（`bots.accent_color` 列）。只影响预置头像的填充 / 眼睛色；
+     * 上传图片与首字母占位不用它。缺省时回退预置串内嵌色（旧数据外观不变）。
+     */
+    accentColor?: string | null;
     /**
      * 上传头像的遮罩形状：'circle'（缺省）/ 'rounded' 圆角正方形。只作用于上传
      * 图片——预置头像自带轮廓、首字母占位保持圆形。
@@ -72,7 +83,12 @@
     style={shadowVars}
     data-testid={testId}
   >
-    <BotPresetAvatar value={avatar ?? ''} class="size-full {glyphShadowClass}" {animated} />
+    <BotPresetAvatar
+      value={avatar ?? ''}
+      {accentColor}
+      class="size-full {glyphShadowClass}"
+      {animated}
+    />
   </span>
 {:else if uploadFile !== null && uploadedUrl !== null}
   <!-- 遮罩圆角打在 img 上而不是容器上：border-radius 百分比按图片自身盒子解析，
