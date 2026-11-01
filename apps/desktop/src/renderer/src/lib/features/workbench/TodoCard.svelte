@@ -118,40 +118,6 @@
     </span>
   </div>
 
-  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-    {#if showAssignee}
-      <span class="inline-flex items-center gap-1" data-testid="todo-card-assignee">
-        {#if todo.assignee !== null}
-          <MemberAvatar
-            kind={todo.assignee.kind}
-            id={todo.assignee.kind === 'bot' ? todo.assignee.botId : todo.assignee.projectId}
-            name={todo.assigneeName ?? ''}
-            class="size-4"
-          />
-          {todo.assigneeName ?? ''}
-          {#if todo.assignee.kind === 'project' && todo.leadBotName !== null}
-            · {t('workbench.card.leadBot', { name: todo.leadBotName })}
-          {/if}
-        {:else}
-          {t('workbench.card.unassigned')}
-        {/if}
-      </span>
-    {:else if todo.assignee?.kind === 'project' && todo.leadBotName !== null}
-      <span data-testid="todo-card-assignee">
-        {t('workbench.card.leadBot', { name: todo.leadBotName })}
-      </span>
-    {/if}
-    {#if whenText !== null}
-      <span class="inline-flex items-center gap-1" data-testid="todo-card-when">
-        <Clock class="size-3" aria-hidden="true" />
-        {whenText}{#if nextText !== null}
-          · {t('schedules.nextFire', { time: nextText })}{/if}
-      </span>
-    {:else if todo.status === 'draft' && todo.assignee !== null}
-      <span data-testid="todo-card-when">{t('workbench.card.noTime')}</span>
-    {/if}
-  </div>
-
   {#if periodicRun !== null}
     <p
       class="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs {periodicRun === 'delivered'
@@ -187,82 +153,122 @@
     <p class="mt-1.5 text-xs text-amber-700 dark:text-amber-400">{lastRunNote}</p>
   {/if}
 
-  <!-- 主操作：stopPropagation，不触发卡片本体的「打开抽屉」 -->
-  <div
-    class="mt-2 flex flex-wrap justify-end gap-1"
-    role="presentation"
-    onclick={(event) => event.stopPropagation()}
-    onkeydown={(event) => event.stopPropagation()}
-  >
-    {#if todo.status === 'draft'}
-      {#if todo.assignee === null}
-        <Button size="xs" variant="outline" onclick={open} data-testid="todo-card-assign">
-          {t('workbench.action.assign')}
+  <!-- 底栏：执行者 → 执行时间（有则显示）→ 空隙 → 主操作（含已结束的「恢复」）。 -->
+  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+    {#if showAssignee}
+      <span class="inline-flex min-w-0 items-center gap-1" data-testid="todo-card-assignee">
+        {#if todo.assignee !== null}
+          <MemberAvatar
+            kind={todo.assignee.kind}
+            id={todo.assignee.kind === 'bot' ? todo.assignee.botId : todo.assignee.projectId}
+            name={todo.assigneeName ?? ''}
+            class="size-4"
+          />
+          <span class="truncate">{todo.assigneeName ?? ''}</span>
+          {#if todo.assignee.kind === 'project' && todo.leadBotName !== null}
+            <span class="truncate">· {t('workbench.card.leadBot', { name: todo.leadBotName })}</span
+            >
+          {/if}
+        {:else}
+          {t('workbench.card.unassigned')}
+        {/if}
+      </span>
+    {:else if todo.assignee?.kind === 'project' && todo.leadBotName !== null}
+      <span class="min-w-0 truncate" data-testid="todo-card-assignee">
+        {t('workbench.card.leadBot', { name: todo.leadBotName })}
+      </span>
+    {/if}
+    {#if whenText !== null}
+      <span class="inline-flex min-w-0 items-center gap-1" data-testid="todo-card-when">
+        <Clock class="size-3 shrink-0" aria-hidden="true" />
+        <span class="truncate"
+          >{whenText}{#if nextText !== null}
+            · {t('schedules.nextFire', { time: nextText })}{/if}</span
+        >
+      </span>
+    {:else if todo.status === 'draft' && todo.assignee !== null}
+      <span data-testid="todo-card-when">{t('workbench.card.noTime')}</span>
+    {/if}
+
+    <!-- 主操作：stopPropagation，不触发卡片本体的「打开抽屉」 -->
+    <div
+      class="ml-auto flex flex-wrap items-center justify-end gap-1 text-foreground"
+      role="presentation"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => event.stopPropagation()}
+    >
+      {#if todo.status === 'draft'}
+        {#if todo.assignee === null}
+          <Button size="xs" variant="outline" onclick={open} data-testid="todo-card-assign">
+            {t('workbench.action.assign')}
+          </Button>
+        {:else}
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy}
+            onclick={() => void act(() => transitionTodo('start', todo.id))}
+            data-testid="todo-card-start"
+          >
+            {t('workbench.action.start')}
+          </Button>
+        {/if}
+      {:else if todo.status === 'scheduled'}
+        {#if periodicRun !== null}
+          <Button
+            size="xs"
+            variant="outline"
+            onclick={() =>
+              void (periodicRun === 'delivered'
+                ? openTodoResult(todo)
+                : openTodoConversation(todo))}
+            data-testid="todo-card-run-open"
+          >
+            {periodicRun === 'delivered'
+              ? t('workbench.action.viewResult')
+              : t('workbench.action.openChat')}
+          </Button>
+        {/if}
+        <Button size="xs" variant="outline" onclick={open} data-testid="todo-card-reschedule">
+          {t('workbench.action.reschedule')}
+        </Button>
+      {:else if todo.status === 'in_progress'}
+        <Button
+          size="xs"
+          variant="outline"
+          onclick={() => void openTodoConversation(todo)}
+          data-testid="todo-card-open-chat"
+        >
+          {t('workbench.action.openChat')}
+        </Button>
+      {:else if todo.status === 'delivered'}
+        <Button
+          size="xs"
+          variant="outline"
+          onclick={() => void openTodoResult(todo)}
+          data-testid="todo-card-view-result"
+        >
+          {t('workbench.action.viewResult')}
+        </Button>
+        <Button
+          size="xs"
+          disabled={busy}
+          onclick={() => void act(() => transitionTodo('complete', todo.id))}
+          data-testid="todo-card-complete"
+        >
+          {t('workbench.action.complete')}
         </Button>
       {:else}
         <Button
           size="xs"
           variant="outline"
           disabled={busy}
-          onclick={() => void act(() => transitionTodo('start', todo.id))}
-          data-testid="todo-card-start"
+          onclick={() => void act(() => transitionTodo('reopen', todo.id))}
+          data-testid="todo-card-reopen"
         >
-          {t('workbench.action.start')}
+          {t('workbench.action.reopen')}
         </Button>
       {/if}
-    {:else if todo.status === 'scheduled'}
-      {#if periodicRun !== null}
-        <Button
-          size="xs"
-          variant="outline"
-          onclick={() =>
-            void (periodicRun === 'delivered' ? openTodoResult(todo) : openTodoConversation(todo))}
-          data-testid="todo-card-run-open"
-        >
-          {periodicRun === 'delivered'
-            ? t('workbench.action.viewResult')
-            : t('workbench.action.openChat')}
-        </Button>
-      {/if}
-      <Button size="xs" variant="outline" onclick={open} data-testid="todo-card-reschedule">
-        {t('workbench.action.reschedule')}
-      </Button>
-    {:else if todo.status === 'in_progress'}
-      <Button
-        size="xs"
-        variant="outline"
-        onclick={() => void openTodoConversation(todo)}
-        data-testid="todo-card-open-chat"
-      >
-        {t('workbench.action.openChat')}
-      </Button>
-    {:else if todo.status === 'delivered'}
-      <Button
-        size="xs"
-        variant="outline"
-        onclick={() => void openTodoResult(todo)}
-        data-testid="todo-card-view-result"
-      >
-        {t('workbench.action.viewResult')}
-      </Button>
-      <Button
-        size="xs"
-        disabled={busy}
-        onclick={() => void act(() => transitionTodo('complete', todo.id))}
-        data-testid="todo-card-complete"
-      >
-        {t('workbench.action.complete')}
-      </Button>
-    {:else}
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={busy}
-        onclick={() => void act(() => transitionTodo('reopen', todo.id))}
-        data-testid="todo-card-reopen"
-      >
-        {t('workbench.action.reopen')}
-      </Button>
-    {/if}
+    </div>
   </div>
 </div>

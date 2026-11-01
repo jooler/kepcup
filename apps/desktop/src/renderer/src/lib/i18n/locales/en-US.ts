@@ -3025,11 +3025,13 @@ export const enUS = {
   'workbench.todos.title': 'Items',
   'workbench.todos.quickAddPlaceholder': '+ Add an item… (Enter saves as draft)',
   'workbench.todos.quickAddFailed': "Couldn't save item",
-  'workbench.todos.reassignBlocked':
-    "This item is already running — its executor can't be changed",
+  'workbench.todos.reassignBlocked': "This item is already running — its executor can't be changed",
   'workbench.todos.moveFailed': "Couldn't move the item",
   'workbench.todos.empty':
     'No items yet. Add something to do above, or convert a memo into an item.',
+  'workbench.todos.more': 'More',
+  'workbench.todos.customOrder': 'Custom order',
+  'workbench.todos.customOrderFailed': "Couldn't save the sort order",
   'workbench.lane.unassigned': 'Unassigned',
   'workbench.lane.delivered': 'To review {n}',
   'workbench.lane.inProgress': 'In progress {n}',

@@ -23,9 +23,15 @@
    * 正在执行的圆点、下次时间）；道内先事项卡、后自排卡。点道头折叠。
    * 事项卡列表是 dnd 区（type 'todo'）：道内拖拽排序，跨道 = 改派执行者（已在执行的
    * 事项会被 store / core 拒绝并提示）；自排卡不是事项，不进区。
+   * `draggable = false`（按开始时间排序，产品默认）时用库的 `dragDisabled` 关掉整个区的
+   * 拖拽：卡片仍可点开详情、仍可聚焦，也不留 grab 光标与 `user-select: none`。
    * `running`：该 Bot 此刻有 loop 在跑（侧栏 runningBotIds 同源）；项目组道没有。
    */
-  let { lane, running = false }: { lane: WorkbenchLane; running?: boolean } = $props();
+  let {
+    lane,
+    running = false,
+    draggable = true,
+  }: { lane: WorkbenchLane; running?: boolean; draggable?: boolean } = $props();
 
   let collapsed = $state(false);
   let items = $state.raw<TodoEntry[]>([]);
@@ -110,7 +116,12 @@
     const next = stripShadow(event.detail.items);
     const prevIds = lane.todos.map((todo) => todo.id);
     items = next;
-    if (!isNoopMove(prevIds, next.map((todo) => todo.id))) {
+    if (
+      !isNoopMove(
+        prevIds,
+        next.map((todo) => todo.id),
+      )
+    ) {
       void workbench.moveTodo(info.id, lane.id, decision.beforeId);
     }
     if (info.source !== 'keyboard') workbench.setTodoDragging(false);
@@ -194,9 +205,11 @@
       <div
         class="flex min-h-9 flex-col gap-2"
         data-testid="todo-lane-cards"
+        data-draggable={draggable ? 'true' : 'false'}
         use:dndzone={{
           items,
           type: 'todo',
+          dragDisabled: !draggable,
           flipDurationMs,
           delayTouchStart: true,
           morphDisabled: true,
