@@ -266,7 +266,7 @@ describe('computer-use tools in a task run (D105)', () => {
     );
     const beforeClick = (await latestTask(core, conv.id))?.createdAt ?? 0;
     await sendBatch(core, conv.id, ['点一下']);
-    let approval: Approval | null = null;
+    let approval: Approval;
     try {
       approval = await waitFor(async () => pendingComputerApproval(core, conv.id), {
         label: 'computer_control card',
