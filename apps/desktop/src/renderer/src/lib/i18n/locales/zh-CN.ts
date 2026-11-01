@@ -1145,6 +1145,7 @@ export const zhCN = {
   'usage.loop.task': '任务',
   'usage.loop.memory': '记忆向量/重排',
   'usage.loop.voice_input': '语音输入',
+  'usage.loop.voice_reply': '语音播报',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':

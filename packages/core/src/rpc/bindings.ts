@@ -661,7 +661,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'media.synthesizeSpeech': method(
       mediaSynthesizeSpeechInputSchema,
       mediaSynthesizeSpeechOutputSchema,
-      async (input) => services.media!.synthesizeSpeech(input),
+      async (input) =>
+        // 语音对话模式播报（53）：渲染层前台行为，不属于任何 Bot / 对话
+        // （Bot 的 generate_speech 走工具层自己的 usage 上下文）。
+        services.media!.synthesizeSpeech(input, { loopType: 'voice_reply' }),
     ),
     'media.transcribeSpeech': method(
       mediaTranscribeSpeechInputSchema,

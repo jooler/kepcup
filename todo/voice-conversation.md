@@ -16,14 +16,14 @@ WP2 不依赖 WP1（发送侧只用既有 `voice_input` 转写）；WP3 依赖 W
 
 ## WP1 shared 契约与用量记账（M1，可与 WP2 并行）
 
-文件：`packages/shared/src/domain/types.ts`（`loopTypeSchema`，`voice_input` 旁 :1585）、`packages/core/src/rpc/bindings.ts`（`media.synthesizeSpeech` 绑定 :660-664）、`apps/desktop/src/renderer/src/lib/features/settings/UsageSection.svelte`（loopType → i18n 标签映射 :22 附近 + 「今日后台用量」过滤处——`voice_input` 被排除在前台口径外，`voice_reply` 同为用户前台行为应同样排除）、`apps/desktop/src/renderer/src/lib/i18n/locales/zh-CN.ts` / `en-US.ts`（`usage.loop.voice_input` 旁 :1147 / :1187）。
+文件：`packages/shared/src/domain/types.ts`（`loopTypeSchema`，`voice_input` 旁 :1585）、`packages/core/src/rpc/bindings.ts`（`media.synthesizeSpeech` 绑定 :660-664）、`apps/desktop/src/renderer/src/lib/features/settings/UsageSection.svelte`（loopType → i18n 标签映射 :22 附近）、`apps/desktop/src/renderer/src/lib/i18n/locales/zh-CN.ts` / `en-US.ts`（`usage.loop.voice_input` 旁 :1147 / :1187）。原方案的「今日后台用量」过滤已随 ea816292（2026-10-19 移除后台用量上限）删除，后台用量口径不复存在，该项自然失效，无需处理。
 
-- [ ] `loopTypeSchema` 加 `'voice_reply'`（注释：语音对话模式播报（53），渲染层前台行为）。
-- [ ] `media.synthesizeSpeech` 绑定传入 `{ loopType: 'voice_reply' }`（对齐 `transcribeSpeech` 的 `voice_input` 写法）。
-- [ ] `UsageSection.svelte` 标签映射加 `voice_reply: 'usage.loop.voice_reply'`；「今日后台用量」过滤同步排除。
-- [ ] i18n：`usage.loop.voice_reply`（zh「语音播报」/ en "Voice reply"）。
-- [ ] 定向：`pnpm --filter @kepcup/shared build` + shared 契约相关单测 + `locales.test.ts`。
-- 验收：语音模式播报一次后，用量页出现「语音播报」归类、不计入后台用量。
+- [x] `loopTypeSchema` 加 `'voice_reply'`（注释：语音对话模式播报（53），渲染层前台行为）。
+- [x] `media.synthesizeSpeech` 绑定传入 `{ loopType: 'voice_reply' }`（对齐 `transcribeSpeech` 的 `voice_input` 写法）。
+- [x] `UsageSection.svelte` 标签映射加 `voice_reply: 'usage.loop.voice_reply'`。
+- [x] i18n：`usage.loop.voice_reply`（zh「语音播报」/ en "Voice reply"）。
+- [x] 定向：`pnpm --filter @kepcup/shared build` + shared 契约相关单测 + `locales.test.ts`。
+- 验收：语音模式播报一次后，用量页出现「语音播报」归类（「不计入后台用量」随口径删除自动成立）。
 
 ## WP2 渲染层发送侧（M1）
 

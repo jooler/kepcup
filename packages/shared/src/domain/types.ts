@@ -1583,6 +1583,8 @@ export const loopTypeSchema = z.enum([
   'memory',
   /** 语音输入转写（用户前台行为）。 */
   'voice_input',
+  /** 语音对话模式播报（53），渲染层前台行为。 */
+  'voice_reply',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 
