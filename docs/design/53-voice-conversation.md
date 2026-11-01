@@ -9,7 +9,7 @@
 ## 决策
 
 - **D106 语音对话模式**：
-  - **入口**：输入坞左下工具行（附件键旁）加「语音对话」键（lucide `Speech`，title「语音对话」）；仅**私聊**会话且非 readOnly 显示，录音中禁用。点击预检 `isCapabilityReady('asr')` 与 `isCapabilityReady('tts')`，缺哪个 `chatSession.requestCapabilitySetup(哪个)` 置卡（`SetupRequiredCard` 位置不变，语音模式不进入），配好后重新点击——语音模式内部不再处理缺能力。
+  - **入口**：输入坞右侧、蓝色发送键（空输入时是同色的语音键）左边加「语音对话」键（lucide `Speech`，title「语音对话」）；仅**私聊**会话且非 readOnly 显示，录音中禁用。点击预检 `isCapabilityReady('asr')` 与 `isCapabilityReady('tts')`，缺哪个 `chatSession.requestCapabilitySetup(哪个)` 置卡（`SetupRequiredCard` 位置不变，语音模式不进入），配好后重新点击——语音模式内部不再处理缺能力。
   - **语音条**：占据输入坞原位（同层 `absolute z-30` 替换，不走 Portal——不与窗口拖拽带重叠），布局 `Bot 头像 ｜ 波形/状态区（弹性）｜ 设置键 · 麦克风键 · 关闭键(红 X)`。头像复用 `BotAvatar`；录音波形复用 `recording.level` + `levelToHeight`；播报态用 CSS 动画波形（真实电平 P3，可参考 `MicrophoneTest` 的 AnalyserNode 方案）。
   - **半双工**：开始录音即打断播报——停当前音频 + **清空未播队列**（插话作废：被作废的回复只留文字在列表，不再补播，与语音助手惯例一致）；录音 / 识别期间新到的 Bot 消息照常入队但暂不播，回到空闲后按序播。发送后可立即再录，不必等回复。
   - **Bot 播报走渲染层编排**（voice-mode store 订阅消息事件 → `media.synthesizeSpeech` → `Audio` 播放），core 零改动（仅 loopType 枚举加值，见下）；播报音频**不落附件**——文字已在列表，落附件会让每次回复都多一个音频文件、拖慢落库且污染上下文附件行。

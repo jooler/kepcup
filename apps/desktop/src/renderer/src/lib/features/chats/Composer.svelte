@@ -1924,7 +1924,7 @@
             {/snippet}
             {#snippet voiceModeEntry()}
               {#if voiceModeEntryVisible}
-                <!-- 语音对话入口（53 号 D106）：附件键旁；录音中禁用，点击预检
+                <!-- 语音对话入口（53 号 D106）：发送键左侧；录音中禁用，点击预检
                    asr + tts（缺哪个置哪张能力卡，不进入）。 -->
                 <Button
                   variant="ghost"
@@ -1960,15 +1960,14 @@
                 <ArrowUp class="size-4" />
               </button>
             {/snippet}
-            <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
-               占满整行，附件键/发送键落到底部两角。@ 文字色与发送/语音键
-               取当前 Bot 的强调色；mention 经 --mention-color 下发。 -->
+            <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜语音对话键 + 发送键；
+               沉底＝输入占满整行，附件键落左下，语音对话键/发送键落右下。@ 文字色
+               与发送/语音键取当前 Bot 的强调色；mention 经 --mention-color 下发。 -->
             <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
               {#if !stacked}
-                <!-- 左下工具行：附件键 + 语音对话键（53 号 D106）。 -->
+                <!-- 左下工具行：附件键。语音对话键（53 号 D106）在右侧发送键左边。 -->
                 <div class="flex shrink-0 items-center gap-1">
                   {@render attachButton()}
-                  {@render voiceModeEntry()}
                 </div>
               {/if}
               <div
@@ -1985,10 +1984,11 @@
                 {#if stacked}
                   <div class="flex items-center gap-1">
                     {@render attachButton()}
-                    {@render voiceModeEntry()}
                   </div>
                 {/if}
                 <div class="flex items-center gap-1">
+                  <!-- 语音对话入口：蓝色发送键（空输入时是同色的语音键）左侧。 -->
+                  {@render voiceModeEntry()}
                   {#if recording !== null || voiceBusy}
                     <!-- 录音胶囊（点击式录音，参考 Grok）：点击停止并转写填入输入框；
                        Esc 取消。识别中（voiceBusy）原位显示加载态。 -->
@@ -2022,7 +2022,7 @@
                     </button>
                   {:else if !hasContent}
                     <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容时
-                       此位让给发送键。语音对话模式的入口在左下工具行（Speech 键）。 -->
+                       此位让给发送键。语音对话模式的入口在右侧发送键左边（Speech 键）。 -->
                     <button
                       type="button"
                       class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAccentPaint
