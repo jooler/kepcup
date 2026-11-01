@@ -42,6 +42,8 @@ runtime:     { model, light_model, network_policy, budget,
                agent: { id, model, effort, permission, capabilities } }   # 模型配置见 14-models-and-browser.md；agent.id 为空=内置引擎，否则为外部智能体，见 28-external-agents-acp.md
 ```
 
+- **强调色不在 Profile 里**：Bot 的腔调色是独立列 `bots.accent_color`（0064，取值见 shared `BOT_ACCENT_COLOR_IDS`），写入口 `bots.accent.color`，与头像形状 / 是否上传头像无关。读侧回退链：显式列 → 预置头像串 `preset:{shape}:{color}` 的内嵌色 → `mono`。它统一驱动预置头像填充、名字 / @ 提及、输入框发送键、看板脸、工作台执行者色与用户气泡着色；`bots.update`（整份 Profile 三方合并）不碰它。
+
 - Profile 由用户掌控，Bot 不能修改自己的核心人格，防止人格漂移。
 - Bot 对自己的新认识写入自己记忆中的“自我笔记”。
 - Bot 可以提出 Profile 修改建议（`propose_profile_change` 提交审批卡，非阻塞；字段限白名单 `PROFILE_CHANGE_FIELDS`，用户批准后自动写入生效）。

@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { BOT_ACCENT_COLOR_IDS, DEFAULT_BOT_ACCENT_COLOR } from '@kepcup/shared';
 import {
-  AVATAR_COLORS,
+  ACCENT_COLORS,
+  DEFAULT_ACCENT_COLOR,
   AVATAR_FOREGROUND_LIGHT,
   AVATAR_MASKS,
   AVATAR_SHAPES,
@@ -9,6 +11,8 @@ import {
   avatarOnFillForeground,
   parsePresetAvatar,
   presetForName,
+  resolveAccentColor,
+  resolveAccentColorId,
   uploadedAvatarShapeClass,
 } from './presets';
 
@@ -17,8 +21,8 @@ import {
  * 变量，其余预置色一律白（产品取舍）。
  */
 
-const fixedColors = AVATAR_COLORS.filter((color) => color.contrast === undefined);
-const themedColors = AVATAR_COLORS.filter((color) => color.contrast !== undefined);
+const fixedColors = ACCENT_COLORS.filter((color) => color.contrast === undefined);
+const themedColors = ACCENT_COLORS.filter((color) => color.contrast !== undefined);
 
 describe('avatarOnFillForeground', () => {
   it('inverts the themed mono colour and keeps every other preset white', () => {
@@ -59,7 +63,7 @@ describe('presetForName', () => {
       const parsed = parsePresetAvatar(avatar);
       expect(parsed).not.toBeNull();
       expect(AVATAR_SHAPES).toContain(parsed!.shape);
-      expect(AVATAR_COLORS).toContain(parsed!.color);
+      expect(ACCENT_COLORS).toContain(parsed!.color);
     }
   });
 
@@ -94,5 +98,34 @@ describe('uploadedAvatarShapeClass', () => {
     expect(uploadedAvatarShapeClass('preset:orb:orange', 'rounded')).toBe('rounded-full');
     expect(uploadedAvatarShapeClass(null, 'rounded')).toBe('rounded-full');
     expect(uploadedAvatarShapeClass(undefined, undefined)).toBe('rounded-full');
+  });
+});
+
+describe('accent colour palette', () => {
+  it('covers exactly the shared BotAccentColor ids, first entry is the default', () => {
+    expect(ACCENT_COLORS.map((color) => color.id)).toEqual([...BOT_ACCENT_COLOR_IDS]);
+    expect(DEFAULT_ACCENT_COLOR.id).toBe(DEFAULT_BOT_ACCENT_COLOR);
+  });
+});
+
+describe('resolveAccentColor', () => {
+  it('prefers the explicit accent colour over the preset avatar colour', () => {
+    // 老数据：只有预置串里的颜色；新数据：显式列优先。两者不一致时以列为准。
+    expect(resolveAccentColor('blue', 'preset:orb:red').id).toBe('blue');
+    expect(resolveAccentColorId('blue', 'preset:orb:red')).toBe('blue');
+  });
+
+  it('falls back to the preset avatar colour for old rows without accent_color', () => {
+    expect(resolveAccentColor(null, 'preset:heart:orange').id).toBe('orange');
+    expect(resolveAccentColor(undefined, 'preset:heart:orange').id).toBe('orange');
+  });
+
+  it('falls back to mono for uploaded avatars, placeholders and junk values', () => {
+    // 上传头像没有可继承的颜色：旧 bug 就是这里回退到「第一个自动色」，现在是显式列。
+    expect(resolveAccentColor(null, 'upload:avatar-1.png').id).toBe('mono');
+    expect(resolveAccentColor(undefined, null).id).toBe('mono');
+    expect(resolveAccentColor('chartreuse', 'preset:orb:teal').id).toBe('teal');
+    expect(resolveAccentColor('chartreuse', 'upload:avatar-1.png').id).toBe('mono');
+    expect(resolveAccentColor('', '').id).toBe('mono');
   });
 });

@@ -125,7 +125,8 @@ CREATE TABLE bots (
 - 后续列（增量迁移）：`setup_state TEXT`（0012，对话式新建访谈中 = `'interviewing'`）；`system_role TEXT`（0016，D70）——系统角色，目前只有 `'butler'`（管家），`bots_one_active_butler` partial unique index 保证至多一个 active 管家。**与 Profile 内 `role.{expertise,responsibilities}` 无关。** 管家不可删除（`lifecycle.deleteBot` 在任何级联前拒绝，`BOT_UNDELETABLE`）；`kind TEXT`（0059）——Bot 分类，初始化访谈中由 LLM 根据对话通过 `save_profile` 的 `kind` 参数设置（内置 id 见 shared `domain/bot-kind.ts`，也允许自定义短分类）；NULL = 未分类（旧行、管家提议、模板导入等非访谈路径，读取方回退画像关键词）。
 - 头像遮罩 `avatar_mask TEXT`（0060）：只影响 `upload:` 头像的外形——`'circle'` 圆形（默认）/ `'rounded'` 圆角正方形；NULL = circle（旧行不回填，读侧 `normalizeBotAvatarMask` 兜底）。预置头像与首字母占位恒为圆形。写入口是 `bots.avatar.mask`（单独一列，不进 Profile 的三方合并）；删除 Bot 时一并清空。
 - 头像内边距 `avatar_padding INTEGER`（0061）：只影响 `upload:` 头像的视觉大小——容器尺寸不变，图片内缩 N 像素后填充剩余空间，用来把自带留白不一的图片调到视觉大小一致；整数 0–16，NULL = 0（旧行不回填，读侧 `normalizeBotAvatarPadding` 兜底，越界同样归 0）。写入口是 `bots.avatar.padding`（同遮罩：单独一列、不进 Profile 三方合并）；删除 Bot 时一并清空。遮罩圆角类打在图片自身（BotAvatar），任意边距下形状比例不丢。
-- 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`profile_json`（写入 `{}`）、`kind`，`status = 'deleted'`。界面对已删除 Bot 显示其 id。
+- Bot 强调色 `accent_color TEXT`（0064）：该 Bot 在应用各处的「腔调色」，取值是渲染端色板 id（shared `BOT_ACCENT_COLOR_IDS`：mono / brown / red / orange / amber / green / teal / blue / purple / pink / gray）；NULL = 未显式设置（旧行不回填）。与头像形状、是否上传头像完全解耦：预置头像填充、Bot 名字 / @ 提及、输入框发送键、看板脸、工作台执行者色、用户气泡着色都读它。写入口是 `bots.accent.color`（同遮罩：单独一列、不进 Profile 三方合并），写入时同步改写预置头像串 `preset:{shape}:{color}` 的颜色段（只认内嵌色的旧版本客户端也跟着变）；新建 Bot 时若 avatar 是预置串，把内嵌色落成显式列——这是「上传头像后颜色回退成第一个自动色」的根因修复。读侧回退链：显式列 → 预置串内嵌色 → mono（`normalizeBotAccentColor` 返回 null 表示未设置，渲染端 `resolveAccentColor` 兜底）。删除 Bot 时一并清空。
+- 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`avatar_mask`、`avatar_padding`、`accent_color`、`profile_json`（写入 `{}`）、`kind`，`status = 'deleted'`。界面对已删除 Bot 显示其 id。
 
 ### conversations（P01）
 
