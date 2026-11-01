@@ -103,13 +103,36 @@ export async function performComposerSend(
 
 /**
  * 防重入闸（按 key 分闸，key = 会话 id）：同 key 的 `run` 期间再次触发直接返回
- * undefined；不同 key 互不影响。
+ * undefined（文字直发要的「忽略」语义——上传未完成时连按两次 Enter，第二次丢弃）；
+ * 不同 key 互不影响。需要**排队**而不是忽略的调用方（语音连发，53 号「发送后
+ * 可立即再录」）先 `waitForIdle` 等 busy→idle 通知再 `run`——解锁与抢闸之间
+ * 被并发发送占先（run 返回 undefined）就再等一轮。
  */
 export function createSendGuard() {
   const busy = new Set<string>();
+  /** 等 key 空闲的等待方（busy→idle 时全部唤醒后清空）。 */
+  const waiters = new Map<string, Set<() => void>>();
+  const notifyIdle = (key: string): void => {
+    const set = waiters.get(key);
+    if (set === undefined) return;
+    waiters.delete(key);
+    for (const resolve of set) resolve();
+  };
   return {
     isBusy(key: string): boolean {
       return busy.has(key);
+    },
+    /** 等 key 空闲（已在闲则立即返回）；任务结束（含抛错）时唤醒。 */
+    async waitForIdle(key: string): Promise<void> {
+      if (!busy.has(key)) return;
+      await new Promise<void>((resolve) => {
+        let set = waiters.get(key);
+        if (set === undefined) {
+          set = new Set();
+          waiters.set(key, set);
+        }
+        set.add(resolve);
+      });
     },
     async run<T>(key: string, task: () => Promise<T>): Promise<T | undefined> {
       if (busy.has(key)) return undefined;
@@ -118,6 +141,7 @@ export function createSendGuard() {
         return await task();
       } finally {
         busy.delete(key);
+        notifyIdle(key);
       }
     },
   };
