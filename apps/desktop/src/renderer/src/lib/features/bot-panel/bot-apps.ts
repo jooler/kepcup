@@ -131,6 +131,19 @@ export function selectAppConnection(
 }
 
 /**
+ * Profile 里引用、但连接列表已不存在的 id（授权流程收尾删行、别处断开后的悬挂引用）。
+ * 它们不属于任何分组（{@link appChoiceGroups} 按连接建组），界面必须单独列出并允许移除：
+ * core 的 Profile 校验会拒绝整份带悬挂 id 的写入，不清理会让这个 Bot 的所有修改都保存失败。
+ */
+export function danglingConnectionIds(
+  selectedIds: readonly string[],
+  connections: readonly AppConnection[],
+): string[] {
+  const known = new Set(connections.map((connection) => connection.id));
+  return selectedIds.filter((id) => !known.has(id));
+}
+
+/**
  * 对话卡「连接后授权给当前 Bot」的渲染端兜底（§5.8 项目组：core 只认第一个
  * `apps.connect` 的 `grantBotId`，后加入同一流程的卡片完成后自己补写 Profile）：
  * 已包含则返回 null（无需写），否则返回加入（并替换同应用旧账号）后的 Profile。

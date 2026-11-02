@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronRight } from '@lucide/svelte';
+  import { ChevronRight, Plus } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import ConnectAppPanel from './ConnectAppPanel.svelte';
   import {
     BADGE_TONE_CLASSES,
     appIconSrc,
@@ -39,6 +40,15 @@
     ),
   );
   const botCounts = $derived(authorizedBotCounts(contacts.bots));
+
+  /**
+   * 圈定单个应用（`connectorId`）时可以在管理页直接再加一个账号：同一个应用支持多账号
+   * （目录卡片的「再连一个账号」同一语义），Bot 侧仍按应用只选一个。
+   */
+  let addingAccount = $state(false);
+  const addingEntry = $derived(
+    connectorId === undefined ? null : appsStore.entryFor(connectorId),
+  );
 
   // 「最近使用」的相对时间每分钟刷新一次。
   let now = $state(Date.now());
@@ -98,16 +108,45 @@
             </div>
           {/if}
           <span class="text-sm font-medium">{group.title}</span>
-          {#if group.needsAttention}
-            <Badge
-              variant="outline"
-              class={`ml-auto text-[10px] ${BADGE_TONE_CLASSES.warn}`}
-              data-testid="apps-connected-attention"
-            >
-              {t('apps.connected.attention')}
-            </Badge>
-          {/if}
+          <div class="ml-auto flex items-center gap-2">
+            {#if group.needsAttention}
+              <Badge
+                variant="outline"
+                class={`text-[10px] ${BADGE_TONE_CLASSES.warn}`}
+                data-testid="apps-connected-attention"
+              >
+                {t('apps.connected.attention')}
+              </Badge>
+            {/if}
+            {#if connectorId !== undefined && group.connectorId === connectorId}
+              <Button
+                size="sm"
+                variant="ghost"
+                class="h-7 gap-1 px-2 text-xs"
+                onclick={() => (addingAccount = !addingAccount)}
+                data-testid="apps-connected-add-account"
+              >
+                <Plus class="size-3.5" aria-hidden="true" />
+                {addingAccount ? t('apps.catalog.close') : t('apps.detail.connectAnother')}
+              </Button>
+            {/if}
+          </div>
         </div>
+        {#if addingAccount && connectorId !== undefined && group.connectorId === connectorId}
+          <div class="border-b px-4 py-2.5">
+            {#if addingEntry !== null}
+              <ConnectAppPanel
+                target={{ kind: 'catalog', connectorId }}
+                name={addingEntry.title}
+                allowDisconnect={false}
+                onDone={() => (addingAccount = false)}
+                testid="apps-connected-add-panel"
+              />
+            {:else}
+              <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>
+            {/if}
+          </div>
+        {/if}
         <ul class="divide-y">
           {#each group.connections as connection (connection.id)}
             {@const badge = statusBadge(connection.status)}

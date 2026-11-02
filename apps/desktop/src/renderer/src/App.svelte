@@ -243,7 +243,9 @@
 
 {#snippet kepCupApp()}
   <ModeWatcher />
-  <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
+  <!-- 顶层高度收敛到视口并裁剪溢出：各页面自己有滚动区，内容再宽/再高也不能把
+       document 撑出全局滚动条（含横向）。 -->
+  <div class="flex h-screen min-h-0 flex-col overflow-hidden" data-testid="app-shell">
     <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
       {#if core.connection === 'failed'}
         <CoreErrorPage />
@@ -298,10 +300,10 @@
     <!-- Bot 文件卡片的放大查看层（占满中部 + 右栏，左栏保持可交互）。 -->
     <FileViewer />
 
-  <!-- 组件海报点击后的运行覆盖层（几何同 FileViewer）：真正运行组件的地方。 -->
-  <WidgetViewer />
+    <!-- 组件海报点击后的运行覆盖层（几何同 FileViewer）：真正运行组件的地方。 -->
+    <WidgetViewer />
 
-  <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
+    <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
        Bot 详情覆盖层（z-40）→ 窄屏设置页（z-50）→ 全局搜索（z-50）；侧栏触发的模态对话框；
        技能目录缺失提示（原挂在 AppSidebar，窄屏会话详情里侧栏不在，订阅与弹框都不存在）。 -->
     {#if coreReady}

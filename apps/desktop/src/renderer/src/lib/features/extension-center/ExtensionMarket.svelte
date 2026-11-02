@@ -16,7 +16,12 @@
    * 市场未启用（本版本没有内置公钥 / 自建市场缺公钥）时只显示状态横幅，不发任何请求；
    * 卡片图标来自签名索引内联的 `summary.icon`（不发起远程图片请求），索引 / 包里没有
    * 可用图标时回落宿主默认图标；详情页 README 仍不拉取（设计 51 §6.1）。
+   *
+   * `bleed`：宽屏设置页里滚动区铺满整行（滚动条贴应用右缘），留白由滚动容器的
+   * 内边距提供；窄屏由外层容器给留白，默认 false。
    */
+
+  let { bleed = false }: { bleed?: boolean } = $props();
 
   const CATEGORY_FILTERS = ['all', 'skill', 'connector', 'mcp', 'mail'] as const;
   type CategoryFilter = (typeof CATEGORY_FILTERS)[number];
@@ -108,7 +113,12 @@
   }
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-market">
+<div
+  class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-3 {bleed
+    ? 'px-6 pb-4 sm:px-16 sm:pb-6'
+    : 'pr-0.5'}"
+  data-testid="extension-market"
+>
   <div class="mb-3 flex items-start justify-between gap-2 px-0.5">
     <div class="min-w-0">
       <h2 class="text-sm font-medium">{t('plugins.market.title')}</h2>
