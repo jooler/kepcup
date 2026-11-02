@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { botKindSchema } from './bot-kind.js';
 import {
   botAccentColorSchema,
   botAvatarMaskSchema,
@@ -106,6 +107,11 @@ export const botTemplateSchema = z
     exportedAt: z.number().int().positive(),
     /** 清洗后的完整 Profile（本机引用字段已清空；导入侧会再强制清洗一次）。 */
     profile: botProfileSchema,
+    /**
+     * Bot 分类（`bot.kind`，domain/bot-kind.ts）。`kind` 是顶层字段、不在 Profile 里；
+     * 未分类（NULL）时不写，旧模板缺这一项照样能读，不升模板版本号。
+     */
+    kind: botKindSchema.optional(),
     /** `upload:` 头像内嵌字节；`preset:` 标识直接留在 profile.identity.avatar。 */
     avatar: botTemplateAvatarSchema.optional(),
     /**

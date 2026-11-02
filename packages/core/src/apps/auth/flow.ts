@@ -111,7 +111,7 @@ export interface CatalogFlowHost {
   /** 校验目录条目（发行门禁、远程端点、注册方式）并建临时行；不合法抛 AppError。 */
   begin(input: { connectorId: string; reconnectTo?: string | undefined }): CatalogFlowBegin;
   /** 令牌落盘之前流程就失败 / 取消：删除临时行。 */
-  abandon(connectionId: string): void;
+  abandon(connectionId: string): void | Promise<void>;
   /**
    * 令牌已写入临时行：识别账号（`hint`，否则目录 `whoami`）→ 与既有行合并 / 命名 → 拉工具清单
    * 并登记工具锁定 → 计算待复核清单。
@@ -965,7 +965,7 @@ export class ConnectFlowManager {
         }
       }
       if (catalog.stage === 'pre') {
-        host.abandon(flow.connectionId);
+        await host.abandon(flow.connectionId);
       } else if (catalog.rowIsNew) {
         await host.reject({ connectionId: flow.connectionId });
       }

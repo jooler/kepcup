@@ -50,7 +50,12 @@
    *   扩展中心只做管理与展示，不入侵插件自身逻辑。
    * - 页头的本地安装入口仅在桌面端点渲染；内置插件只读，不出操作菜单；
    *   被吊销的插件在页顶统一警告；「由插件管理」的锁定语义在 core 层（PLUGIN_MANAGED）。
+   *
+   * `bleed`：宽屏设置页里滚动区铺满整行（滚动条贴应用右缘），留白由滚动容器的
+   * 内边距提供；窄屏「扩展」tab 页由外层容器给留白，保持默认 false。
    */
+
+  let { bleed = false }: { bleed?: boolean } = $props();
 
   $effect(() => {
     plugins.start();
@@ -134,10 +139,7 @@
     const counts = new Map<ExtensionCenterFilter, number>([['all', plugins.plugins.length]]);
     for (const kind of Object.keys(FILTER_COUNT_KEYS) as ExtensionCenterKindFilter[]) {
       const countKey = FILTER_COUNT_KEYS[kind];
-      counts.set(
-        kind,
-        plugins.plugins.filter((plugin) => matchesKind(plugin, countKey)).length,
-      );
+      counts.set(kind, plugins.plugins.filter((plugin) => matchesKind(plugin, countKey)).length);
     }
     return counts;
   });
@@ -619,7 +621,12 @@
             storedSensitiveKeys={configStoredKeys}
           />
           <div class="flex items-center justify-end gap-2">
-            <Button size="sm" variant="ghost" onclick={closeConfig} data-testid={`plugins-config-${plugin.id}-cancel`}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onclick={closeConfig}
+              data-testid={`plugins-config-${plugin.id}-cancel`}
+            >
               {t('plugins.cancel')}
             </Button>
             <Button
@@ -637,7 +644,12 @@
   </div>
 {/snippet}
 
-<div class="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5" data-testid="extension-installed">
+<div
+  class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-3 {bleed
+    ? 'px-6 pb-4 sm:px-16 sm:pb-6'
+    : 'pr-0.5'}"
+  data-testid="extension-installed"
+>
   <div class="mb-3 flex items-start justify-between gap-2 px-0.5">
     <div class="min-w-0">
       <h2 class="text-sm font-medium">{t('plugins.title')}</h2>

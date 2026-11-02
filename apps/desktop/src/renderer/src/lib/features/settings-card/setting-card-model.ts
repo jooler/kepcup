@@ -59,6 +59,9 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
  * - 连接的逐工具策略：`apps.connections.setToolPolicy` 只改这一条工具（同步写一行），策略变严时
  *   中断正在使用该连接的任务。
  * - 共享浏览器资料的新建：`browserProfiles.create` 在服务里读当前列表再追加一条。
+ * - 邮件插件 / 已配置邮箱：插件 config 与启停（`plugins.*`）、邮箱绑定与暂停
+ *   （`mail.accounts.*`）都是异步 RPC（插件 config 还要写 secrets，邮箱更新要测连），
+ *   不能放进设置写锁；组件保存成功后由 `completeCard` 核对。
  * 工具链的重新检测和失败项重装、沙箱的重新检测、命令白名单的添加和启停也会 `onSaved`，但空白卡
  * 仍保留「我已设置好」，所以不放进这个集合。
  */
@@ -67,6 +70,8 @@ export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'workdir-settings',
   'tool-policy',
   'browser-profiles',
+  'mail-plugin',
+  'mail-mailbox',
 ]);
 
 /**

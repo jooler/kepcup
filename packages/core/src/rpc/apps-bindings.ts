@@ -125,10 +125,10 @@ export function bindAppsMethods(services: CoreServices): Record<string, RpcMetho
       appsConnectionsListInputSchema,
       appsConnectionsListOutputSchema,
       async (input) => ({
-        // 临时行（授权进行中、还没成为账号）不算连接，见 isUnsettledScratch。
+        // 临时行（授权进行中 / 待复核，还没成为账号）不算连接，见 isUnsettledScratch。
         connections: apps()
           .store.list({ includeCustom: input.includeCustom === true })
-          .filter((row) => !isUnsettledScratch(row, apps().vault.getTokens(row.id) !== null)),
+          .filter((row) => !isUnsettledScratch(row)),
       }),
     ),
   };

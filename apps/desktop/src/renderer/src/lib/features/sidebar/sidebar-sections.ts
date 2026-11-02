@@ -1,36 +1,31 @@
 /**
  * 左栏对话分组的纯逻辑（rune store 在 sidebar-sections.svelte.ts，本文件可在
- * node 环境单测）：分组目录、归属、排序、折叠，以及 localStorage 编解码。
+ * node 环境单测）：分组目录、归属、排序、折叠，以及旧版 localStorage 数据的读取
+ * （改用 `sidebar.*` RPC 存 main.db 后只用于一次性导入）。
  *
- * 渲染层本机偏好（与侧栏宽度同层）：不进 core 用户数据。缺省所有对话都在
- * 「未指定」；只有这一组时界面不画组名。建了自定义分组后，「未指定」也作为
- * 可折叠、可拖拽排序的一组留在列表里。
+ * 真正的持久化在 main.db（sidebar_sections / conversation_sidebar），投影形状
+ * 与这里的 `SidebarSectionsState` 一致。缺省所有对话都在「未指定」；只有这一组时
+ * 界面不画组名。建了自定义分组后，「未指定」也作为可折叠、可拖拽排序的一组留在
+ * 列表里。
  */
 
+import {
+  SIDEBAR_SECTION_NAME_MAX_CHARS,
+  SIDEBAR_UNASSIGNED_ID,
+  type SidebarLayout,
+  type SidebarSection,
+} from '@kepcup/shared';
+
+/** 旧版渲染层分组数据（只读一次，导入 main.db 后删掉这个键）。 */
 export const SIDEBAR_SECTIONS_STORAGE_KEY = 'kepcup.sidebar.sections.v1';
 
 /** 默认分组。不进 sections 目录，归属表里缺省即它。 */
-export const UNASSIGNED_SECTION_ID = 'unassigned';
+export const UNASSIGNED_SECTION_ID = SIDEBAR_UNASSIGNED_ID;
 
-export const SECTION_NAME_MAX = 40;
+export const SECTION_NAME_MAX = SIDEBAR_SECTION_NAME_MAX_CHARS;
 
-export interface SidebarSection {
-  id: string;
-  name: string;
-}
-
-export interface SidebarSectionsState {
-  /** 自定义分组。显示顺序看 order，不看这个数组。 */
-  sections: SidebarSection[];
-  /** 显示顺序，始终包含 UNASSIGNED_SECTION_ID。 */
-  order: string[];
-  /** conversationId → 自定义分组 id。缺省 = 未指定。 */
-  assignments: Record<string, string>;
-  /** 值为 true 的分组处于折叠。缺省 = 展开。 */
-  collapsed: Record<string, boolean>;
-  /** 置顶的 conversationId（值为 true）。缺省 = 未置顶。 */
-  pinned: Record<string, boolean>;
-}
+/** 分组投影（与 `sidebar.get` 的返回值同形）。 */
+export type SidebarSectionsState = SidebarLayout;
 
 export interface SectionGroup<T> {
   id: string;
@@ -51,7 +46,7 @@ export interface DragRow {
   bottom: number;
 }
 
-export type SectionStorage = Pick<Storage, 'getItem' | 'setItem'>;
+export type SectionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export function emptySidebarSections(): SidebarSectionsState {
   return {
@@ -67,7 +62,7 @@ function newSectionId(): string {
   const uuid =
     globalThis.crypto?.randomUUID?.() ??
     `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  return `sec_${uuid}`;
+  return `ssc_${uuid}`;
 }
 
 function cleanName(name: string): string {
@@ -149,6 +144,10 @@ export function normalizeSidebarSections(input: unknown): SidebarSectionsState {
   return { sections, order, assignments, collapsed, pinned };
 }
 
+/**
+ * 读旧版 localStorage 分组（`kepcup.sidebar.sections.v1`）。只用于升级时的一次性
+ * 导入：store 启动时把它交给 `sidebar.import`，成功后删键。
+ */
 export function loadSidebarSections(storage: SectionStorage | null): SidebarSectionsState {
   if (storage === null) return emptySidebarSections();
   try {
@@ -160,16 +159,24 @@ export function loadSidebarSections(storage: SectionStorage | null): SidebarSect
   }
 }
 
-export function saveSidebarSections(
-  storage: SectionStorage | null,
-  state: SidebarSectionsState,
-): void {
+/** 导入成功（或没有可导入的数据）后删掉旧键，避免下次启动重复导入。 */
+export function clearLegacySidebarSections(storage: SectionStorage | null): void {
   if (storage === null) return;
   try {
-    storage.setItem(SIDEBAR_SECTIONS_STORAGE_KEY, JSON.stringify(normalizeSidebarSections(state)));
+    storage.removeItem(SIDEBAR_SECTIONS_STORAGE_KEY);
   } catch {
-    // 配额满或存储不可用：这次排序下次启动会回到缺省，不阻塞操作。
+    // 存储不可用：旧数据留着不影响 main.db 里的新状态（导入只会在库为空时生效）。
   }
+}
+
+/** 是否有值得导入的分组状态（全空时不必调 `sidebar.import`）。 */
+export function hasSidebarState(state: SidebarSectionsState): boolean {
+  return (
+    state.sections.length > 0 ||
+    Object.keys(state.assignments).length > 0 ||
+    Object.keys(state.collapsed).length > 0 ||
+    Object.keys(state.pinned).length > 0
+  );
 }
 
 export function sectionIdOf(state: SidebarSectionsState, conversationId: string): string {
@@ -345,26 +352,6 @@ export function togglePinned(
   if (pinned[conversationId] === true) delete pinned[conversationId];
   else pinned[conversationId] = true;
   return { ...normalized, pinned };
-}
-
-/**
- * 丢掉指向已不存在对话的归属与置顶（对话被删、Bot 被删后直聊不再列出）。
- * existingConversationIds 必须是完整列表：调用方只在列表刷新完成后调用。
- */
-export function pruneSidebarSections(
-  state: SidebarSectionsState,
-  existingConversationIds: Iterable<string>,
-): SidebarSectionsState {
-  const normalized = normalizeSidebarSections(state);
-  const existing = new Set(existingConversationIds);
-  const stale = Object.keys(normalized.assignments).filter((id) => !existing.has(id));
-  const stalePinned = Object.keys(normalized.pinned).filter((id) => !existing.has(id));
-  if (stale.length === 0 && stalePinned.length === 0) return normalized;
-  const assignments = { ...normalized.assignments };
-  for (const id of stale) delete assignments[id];
-  const pinned = { ...normalized.pinned };
-  for (const id of stalePinned) delete pinned[id];
-  return { ...normalized, assignments, pinned };
 }
 
 export function renameSection(

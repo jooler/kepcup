@@ -16,7 +16,7 @@
 | 平台 | 事实 | 后果 |
 |---|---|---|
 | Windows | app 退出后句柄释放有延迟；`rm`/`rename` 打在仍被句柄持有的文件/目录上必失败 | teardown 一律 `rmHomeTolerant`；删除类断言分平台 |
-| Windows | Electron 44 无 `session.destroy()`（`closeAllConnections` 只断网络） | Chromium 分区目录**当场删不掉**；sqlite/leveldb 句柄随进程存活 |
+| Windows | Electron 44/45 无 `session.destroy()`（`closeAllConnections` 只断网络） | Chromium 分区目录**当场删不掉**；sqlite/leveldb 句柄随进程存活 |
 | Windows | 重 RPC 链（bots.remove、资料删除）含目录级联 + fs 重试，可拖过 30s | UI 收敛断言给 ≥90s |
 | Linux (runner) | srt 后端 = bwrap network namespace，127.0.0.1 是全新回环；`allowLocalBinding` 只是 macOS profile 概念 | 沙箱内 curl 连不上宿主端口（curl exit 7, 0ms） |
 | Linux (runner) | Xvfb 无 GPU：rAF 帧率可低到个位数，音频/动效链路整体变慢 | 动效类断言（电平表、动画）窗口 ≥30s |

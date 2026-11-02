@@ -18,7 +18,13 @@
    *
    * 「设置」页签：原设置「插件」分区（插件供应链与更新设置）并入扩展中心后的落点，
    * 渲染与设置分区同一份 PluginsSection。
+   *
+   * `bleed`：宽屏设置页用——外层不再给横向留白，扩展中心自己把滚动区铺满整行
+   * （滚动条贴到应用右缘），留白改由各分组滚动容器内边距提供；窄屏「扩展」tab
+   * 页由外层容器给留白，保持默认 false。
    */
+
+  let { bleed = false }: { bleed?: boolean } = $props();
 
   const TAB_LABEL_KEYS = {
     market: 'extensionCenter.tabs.market',
@@ -57,7 +63,9 @@
      overflow-x-auto 会把另一轴的 visible 计算成 auto，那 1px 就变成常驻的纵向
      滚动条。overflow-y-hidden 必须保留（裁掉的正是下划线外溢的那 1px）。 -->
 <div
-  class="flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-b"
+  class="flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-b {bleed
+    ? 'px-6 pt-4 sm:px-16 sm:pt-6'
+    : ''}"
   role="tablist"
   bind:this={tablist}
   data-testid="extension-center-tabs"
@@ -93,17 +101,20 @@
   class="@container flex min-h-0 flex-1 flex-col"
 >
   {#if tab === 'market'}
-    <ExtensionMarket />
+    <ExtensionMarket {bleed} />
   {:else if tab === 'settings'}
-    <!-- 与市场 / 已安装同构：内容自己滚动。高度不受限时（宽屏设置页由外层
-         内容区滚动）自然撑开，窄屏「扩展」tab 页里 flex-1 收敛出内层滚动。 -->
+    <!-- 与市场 / 已安装同构：内容自己滚动。宽屏设置页里扩展中心撑满剩余高度后
+         在此收敛出内层滚动；高度不受限的嵌入场景（如窄屏设置详情页）自然撑开，
+         由外层容器滚动。 -->
     <div
-      class="min-h-0 w-full flex-1 overflow-y-auto pt-3 pr-0.5 pb-4"
+      class="min-h-0 w-full flex-1 overflow-x-hidden overflow-y-auto pt-3 {bleed
+        ? 'px-6 pb-4 sm:px-16 sm:pb-6'
+        : 'pr-0.5 pb-4'}"
       data-testid="extension-center-settings"
     >
       <PluginsSection />
     </div>
   {:else}
-    <ExtensionInstalled />
+    <ExtensionInstalled {bleed} />
   {/if}
 </div>
