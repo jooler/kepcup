@@ -85,6 +85,7 @@ import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
 import { StickiesService } from './domain/stickies.js';
+import { SidebarService } from './domain/sidebar.js';
 import { AttachmentsService } from './domain/attachments.js';
 import { JobsService } from './domain/jobs.js';
 import { RunsService } from './domain/runs.js';
@@ -536,6 +537,8 @@ export interface CoreDomainServices {
   messages: MessagesService;
   /** 辅助阅读便签（main.db stickies）。 */
   stickies: StickiesService;
+  /** 左栏对话分组（main.db sidebar_sections / conversation_sidebar）。 */
+  sidebar: SidebarService;
   attachments: AttachmentsService;
   jobs: JobsService;
   runs: RunsService;
@@ -1238,6 +1241,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
+    const sidebar = new SidebarService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
     const jobs = new JobsService(mainDb, clock);
@@ -3288,6 +3292,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       conversations,
       messages,
       stickies,
+      sidebar,
       attachments,
       jobs,
       runs,

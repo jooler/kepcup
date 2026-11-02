@@ -17,6 +17,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
+  import { sidebarSections } from '$lib/features/sidebar/sidebar-sections.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
@@ -178,9 +179,10 @@
       permissions.refreshSandbox(),
       workdirs.refresh(),
       stickies.load(),
+      // 左栏分组（main.db sidebar_sections / conversation_sidebar）；升级时把旧
+      // localStorage 分组一次性导入。
+      sidebarSections.start(),
     ]);
-    // 左栏分组归属清理：等对话列表与通讯录名册都到位再算（已归档的会话要保留归属）。
-    chat.pruneSidebarSections();
     // 工作台入口关掉时退回对话，并修正记忆，避免下次再冒出来。
     const workbenchUsable =
       lastView === 'workbench' && settingsStore.settings?.workbenchEnabled === true;

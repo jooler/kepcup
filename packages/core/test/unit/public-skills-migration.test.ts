@@ -78,6 +78,10 @@ describe('0013 public_skills 迁移', () => {
     // 0064（Bot 强调色）同样是在既有表上的增量列，回拨后要摘除，回放时才会重新
     // ADD COLUMN。
     db.exec('alter table bots drop column accent_color;');
+    // 0065（左栏对话分组）的新表同样摘除（conversation_sidebar 指向 conversations，
+    // 先删子表；回放时 0065 会重建并补上内置「未指定」行）。
+    db.exec('drop table conversation_sidebar;');
+    db.exec('drop table sidebar_sections;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
     // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。

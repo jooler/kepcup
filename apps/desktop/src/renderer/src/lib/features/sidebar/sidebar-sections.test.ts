@@ -4,18 +4,18 @@ import {
   SIDEBAR_SECTIONS_STORAGE_KEY,
   UNASSIGNED_SECTION_ID,
   assignConversation,
+  clearLegacySidebarSections,
   createSection,
   deleteSection,
   dropBeforeId,
   emptySidebarSections,
+  hasSidebarState,
   isSectionMoveNoop,
   layoutSidebarSections,
   loadSidebarSections,
   moveSectionBefore,
   normalizeSidebarSections,
-  pruneSidebarSections,
   renameSection,
-  saveSidebarSections,
   isConversationPinned,
   sectionIdOf,
   sectionStepTarget,
@@ -33,6 +33,7 @@ function fakeStorage(initial: Record<string, string> = {}): SectionStorage & {
     store,
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => void store.set(key, value),
+    removeItem: (key) => void store.delete(key),
   };
 }
 
@@ -155,16 +156,6 @@ describe('清理与键盘排序', () => {
     return state;
   }
 
-  test('pruneSidebarSections 丢掉已不存在对话的归属，其余不动', () => {
-    const state = twoSections();
-    const pruned = pruneSidebarSections(state, ['a', 'other']);
-    expect(pruned.assignments).toEqual({ a: 'sec_a' });
-    expect(pruned.sections).toEqual(state.sections);
-    expect(pruned.order).toEqual(state.order);
-    expect(pruneSidebarSections(state, new Set(['a', 'b'])).assignments).toEqual(state.assignments);
-    expect(pruneSidebarSections(state, []).assignments).toEqual({});
-  });
-
   test('unassignConversation 移回未指定但不展开它', () => {
     let state = twoSections();
     state = toggleSectionCollapsed(state, UNASSIGNED_SECTION_ID);
@@ -281,12 +272,13 @@ describe('活动排序与置顶', () => {
     ).toEqual(['a', 'b', 'c']);
   });
 
-  test('togglePinned 忽略空 id；prune 清掉已删除对话的置顶', () => {
+  test('togglePinned 忽略空 id', () => {
     const state = togglePinned(emptySidebarSections(), '');
     expect(state.pinned).toEqual({});
-    const pinned = togglePinned(togglePinned(emptySidebarSections(), 'a'), 'b');
-    const pruned = pruneSidebarSections(pinned, ['b']);
-    expect(pruned.pinned).toEqual({ b: true });
+    expect(togglePinned(togglePinned(emptySidebarSections(), 'a'), 'b').pinned).toEqual({
+      a: true,
+      b: true,
+    });
   });
 
   test('normalize 只保留值为 true 的置顶', () => {
@@ -364,12 +356,12 @@ describe('dropBeforeId', () => {
   });
 });
 
-describe('localStorage', () => {
-  test('往返后丢掉指向已删分组的归属，并补上缺失的未指定', () => {
+describe('旧版 localStorage 导入', () => {
+  test('读入时丢掉指向已删分组的归属，并补上缺失的未指定', () => {
     const storage = fakeStorage();
     const created = createSection(emptySidebarSections(), '项目', 'sec_projects')!;
     const assigned = assignConversation(created.state, 'a', 'sec_projects');
-    saveSidebarSections(storage, assigned);
+    storage.setItem(SIDEBAR_SECTIONS_STORAGE_KEY, JSON.stringify(assigned));
     const raw = JSON.parse(storage.store.get(SIDEBAR_SECTIONS_STORAGE_KEY) ?? '{}') as {
       assignments: Record<string, string>;
       order: string[];
@@ -399,9 +391,21 @@ describe('localStorage', () => {
       setItem: () => {
         throw new Error('quota');
       },
+      removeItem: () => {
+        throw new Error('denied');
+      },
     };
     expect(loadSidebarSections(throwing).sections).toEqual([]);
-    expect(() => saveSidebarSections(throwing, emptySidebarSections())).not.toThrow();
-    expect(() => saveSidebarSections(null, emptySidebarSections())).not.toThrow();
+    expect(() => clearLegacySidebarSections(throwing)).not.toThrow();
+    expect(() => clearLegacySidebarSections(null)).not.toThrow();
+  });
+
+  test('导入成功后删键；全空状态不触发导入', () => {
+    const storage = fakeStorage({ [SIDEBAR_SECTIONS_STORAGE_KEY]: '{"sections":[]}' });
+    expect(hasSidebarState(emptySidebarSections())).toBe(false);
+    expect(hasSidebarState(createSection(emptySidebarSections(), '甲', 'sec_a')!.state)).toBe(true);
+    expect(hasSidebarState(togglePinned(emptySidebarSections(), 'a'))).toBe(true);
+    clearLegacySidebarSections(storage);
+    expect(storage.store.has(SIDEBAR_SECTIONS_STORAGE_KEY)).toBe(false);
   });
 });

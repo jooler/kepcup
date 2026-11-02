@@ -143,6 +143,7 @@ kepcup/
 | 工作台事项的一次派发（D90） | `tdr_` | |
 | 工作台备忘（D90） | `memo_` | 与记忆条目 `mem_` 无关 |
 | 看板分栏（D103） | `bcol_` | 卡片 id 复用事项 id（`todo_`），没有单独前缀 |
+| 左栏对话分组（0065） | `ssc_` | 旧版 localStorage 分组的 `sec_…` id 在导入时原样保留（与新 id 不冲突：只存于 `sidebar_sections`） |
 
 ## 可调参数
 
