@@ -1,0 +1,42 @@
+{
+  "format_version": 1,
+  "id": "app.kepcup/im-wechat",
+  "name": "微信",
+  "icon": "icon.svg",
+  "version": "1.0.0",
+  "description": "把你的微信连接到 KepCup：在微信上给 Bot 发指令，Bot 的回复自动同步到你的微信。扫码即可添加，凭据只保存在本机。",
+  "author": {
+    "name": "KepCup",
+    "url": "https://kepcup.com"
+  },
+  "homepage": "https://kepcup.com",
+  "engines": {
+    "kepcup": ">=0.5.5"
+  },
+  "instances": [
+    "im"
+  ],
+  "contributions": {
+    "im": [
+      {
+        "id": "wechat",
+        "label": "微信",
+        "transport": "ilink",
+        "apiBase": "https://ilinkai.weixin.qq.com",
+        "setup": "qrcode",
+        "features": {
+          "inbound": true,
+          "outbound": true,
+          "media": [
+            "text",
+            "image",
+            "voice",
+            "file",
+            "video"
+          ]
+        },
+        "instanceFields": []
+      }
+    ]
+  }
+}

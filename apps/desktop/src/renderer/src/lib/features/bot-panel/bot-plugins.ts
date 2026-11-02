@@ -66,6 +66,7 @@ export const PLUGIN_KIND_LABEL_KEYS: Readonly<Record<PluginContributionKind, Mes
   connector: 'plugins.kind.connector',
   mcp: 'plugins.kind.mcp',
   mail: 'plugins.kind.mail',
+  im: 'plugins.kind.im',
 };
 
 /**
@@ -89,11 +90,11 @@ export function pluginKindBadges(
  */
 export function pluginProvides(
   plugin: Pick<PluginSummary, 'counts' | 'providesInstances'>,
-  kind: 'connector' | 'mail',
+  kind: 'connector' | 'mail' | 'im',
 ): boolean {
   return kind === 'connector'
     ? plugin.counts.connectors > 0
-    : plugin.counts.mail > 0 || plugin.providesInstances.includes('mail');
+    : plugin.counts[kind] > 0 || plugin.providesInstances.includes(kind);
 }
 
 /**

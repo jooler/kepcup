@@ -196,14 +196,16 @@ describe('response loop', () => {
     expect(failed.error ?? '').toContain('未配置模型');
 
     // 用户在设置卡片里完成配置（添加供应商 + 设默认主模型）→ 原消息自动重试。
-    const settings = (await core.rpc.call('settings.get')) as { customProviders: unknown[] };
+    const settings = (await core.rpc.call('settings.get')) as { modelProviders: unknown[] };
     await core.rpc.call('settings.update', {
-      customProviders: [
-        ...settings.customProviders,
+      modelProviders: [
+        ...settings.modelProviders,
         {
-          id: 'mock',
+          id: 'custom:mock',
+          vendor: null,
           name: 'Mock LLM',
           baseUrl: llm.url,
+          enabled: true,
           models: [{ id: 'mock-main', name: 'Mock Main' }],
         },
       ],
@@ -250,12 +252,25 @@ describe('response loop', () => {
     // 设置卡片完成图像模型配置后重试：工具不再报 SETUP_REQUIRED，对话继续。
     const settings = (await core.rpc.call('settings.get')) as {
       capabilityModels: Record<string, unknown>;
+      modelProviders: unknown[];
     };
     await core.rpc.call('settings.update', {
       capabilityModels: {
         ...settings.capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
       },
+      // 能力引用必须指向已存在的实例（读路径会把悬空引用置空）。
+      modelProviders: [
+        ...settings.modelProviders,
+        {
+          id: 'dashscope',
+          vendor: 'dashscope',
+          name: '阿里云百炼',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          enabled: true,
+          models: [{ id: 'qwen-image', contextWindow: 128_000, capabilities: ['image'] }],
+        },
+      ],
     });
     llm.script('mock-main', [
       step().inTask().replyText('图像能力已就绪'),
@@ -314,11 +329,27 @@ describe('response loop', () => {
   // 会让「已生成」的报告无图可看。
   it('generate_image delivers the image as a message attachment without send_message', async () => {
     const { core, llm } = await start();
-    // 能力配置 + 厂商 key（#resolveVendor 读密钥表，缺 key 会在厂商请求前失败）。
+    // 能力配置 + 厂商 key（#resolveProvider 读密钥表，缺 key 会在厂商请求前失败）。
+    // 能力引用指向已存在的厂商实例；媒体调用按实例 baseUrl + 原生适配器路由。
+    // modelProviders 是整体覆盖 patch：读最新设置、map/filter 后回写（保留 mock 实例）。
+    const before = (await core.rpc.call('settings.get')) as {
+      modelProviders: Array<{ id: string }>;
+    };
     await core.rpc.call('settings.update', {
       capabilityModels: {
-        image: { vendor: 'volcengine', model: 'doubao-seedream-4-0-250828' },
+        image: { provider: 'volcengine', model: 'doubao-seedream-4-0-250828' },
       },
+      modelProviders: [
+        ...before.modelProviders.filter((p) => p.id !== 'volcengine'),
+        {
+          id: 'volcengine',
+          vendor: 'volcengine',
+          name: '火山方舟',
+          baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+          enabled: true,
+          models: [],
+        },
+      ],
     });
     await core.rpc.call('providers.setKey', { provider: 'volcengine', key: 'sk-test' });
     // 1x1 PNG：厂商端点返回 b64，其余请求（mock LLM 等）透传真实 fetch。

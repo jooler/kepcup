@@ -193,18 +193,18 @@ export class MemoryService {
     if (this.#deps.embedderOverride !== undefined) return this.#deps.embedderOverride;
     const config = this.#deps.settings.get().embedding;
     if (config.source === 'provider') {
-      // 厂商来源使用「向量模型」section 的配置（capabilityModels.embedding），
-      // 经媒体网关按厂商适配器路由——百炼多模态/早期向量模型的原生端点不挂
-      // 在 OpenAI 兼容根上。
+      // 厂商来源使用「模型配置」里的向量槽位（capabilityModels.embedding），
+      // 经媒体网关按供应商实例路由——内置厂商的原生端点不挂在 OpenAI 兼容
+      // 根上，自定义实例走通用兼容适配器。
       const media = this.#deps.media;
       const target = this.#deps.settings.get().capabilityModels.embedding;
       if (media === undefined || target === null) return null;
       return new GatewayEmbedder({
-        provider: target.vendor,
+        provider: target.provider,
         model: target.model,
         getPersistedDim: () => this.#deps.settings.get().embedding.dim,
         ready: () => media.embeddingReady(),
-        embed: (texts) => media.embedTexts(target.vendor, target.model, texts, MEMORY_MEDIA_USAGE),
+        embed: (texts) => media.embedTexts(target.provider, target.model, texts, MEMORY_MEDIA_USAGE),
       });
     }
     if (config.source === 'local') {
@@ -273,7 +273,7 @@ export class MemoryService {
         ? { source: config.source, provider: 'local', model: EMBEDDING_MODEL_ID }
         : {
             source: config.source,
-            provider: target?.vendor ?? '',
+            provider: target?.provider ?? '',
             model: target?.model ?? '',
           };
     if (embedder === null) {

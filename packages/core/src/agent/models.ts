@@ -2,8 +2,9 @@ import {
   AppError,
   isVendorId,
   VENDOR_DESCRIPTORS,
-  vendorProviderBaseUrl,
+  type ModelCapability,
   type ProviderInfo,
+  type ProviderInstance,
   type Settings,
 } from '@kepcup/shared';
 import {
@@ -14,41 +15,59 @@ import {
   type CredentialStore,
   type Model,
   type Models,
+  type ProviderStreams,
 } from '@earendil-works/pi-ai';
 
 /** Any registered model, regardless of its wire API. */
 export type AnyModel = Model<Api>;
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { isModelRouteChangedError } from './model-retry.js';
+
+/** 实例线协议 → pi 的 API 实现（ZCode 模板携带 anthropic / responses 端点）。 */
+function apiImpl(api: Settings['modelProviders'][number]['api']): ProviderStreams {
+  switch (api) {
+    case 'anthropic-messages':
+      return anthropicMessagesApi();
+    case 'openai-responses':
+      return openAIResponsesApi();
+    default:
+      return openAICompletionsApi();
+  }
+}
 
 /** Secret name holding a provider's API key. */
 export function providerSecretName(providerId: string): string {
   return `provider:${providerId}`;
 }
 
-/** Custom providers are namespaced to avoid clashing with built-in ids. */
-export function customProviderId(id: string): string {
-  return `custom:${id}`;
+/**
+ * 供应商实例查找（settings.modelProviders）。实例 id 即运行时注册表 id：
+ * 内置厂商实例沿用厂商 id（首个）或 `dashscope-2` 之类的派生 id，自定义
+ * 实例带 `custom:` 前缀。
+ */
+export function findProviderInstance(
+  settings: Settings,
+  providerId: string,
+): ProviderInstance | undefined {
+  return settings.modelProviders.find((p) => p.id === providerId);
 }
 
 /**
- * A provider's effective OpenAI-compatible root: vendor entries use their
- * (possibly overridden) descriptor baseUrl, custom entries their stored one.
- * Null for built-in pi providers (their baseUrl lives inside pi's catalog).
+ * A provider's effective OpenAI-compatible root: 供应商实例用实例上的
+ * baseUrl（内置厂商实例含覆盖值与描述符默认根的合并结果）；vendor id 兜底
+ * 描述符默认根（覆盖迁移前遗留的裸厂商引用）；内置 pi 供应商为 null（它
+ * 们的 baseUrl 在 pi 的目录里）。
  */
 export function providerCompatBaseUrl(settings: Settings, providerId: string): string | null {
-  if (isVendorId(providerId)) {
-    const entry = settings.vendorProviders.find((v) => v.id === providerId);
-    return entry ? vendorProviderBaseUrl(entry) : VENDOR_DESCRIPTORS[providerId].baseUrl;
-  }
-  const entryId = providerId.startsWith('custom:')
-    ? providerId.slice('custom:'.length)
-    : providerId;
-  const entry = settings.customProviders.find((c) => c.id === entryId);
-  return entry?.baseUrl ?? null;
+  const instance = findProviderInstance(settings, providerId);
+  if (instance) return instance.baseUrl ?? null;
+  if (isVendorId(providerId)) return VENDOR_DESCRIPTORS[providerId].baseUrl;
+  return null;
 }
 
 export class ModelResolutionError extends AppError {}
@@ -56,8 +75,9 @@ export class ModelResolutionError extends AppError {}
 /**
  * Builds a pi-ai Models collection from the app settings and the encrypted
  * secrets table. Built-in providers resolve keys through a credential store
- * that decrypts on every request; custom providers get an OpenAI-compatible
- * endpoint with the same behavior.
+ * that decrypts on every request; 供应商实例里声明了 `chat` 能力的模型注册为
+ * OpenAI 兼容端点（专有模型——向量/重排/…——不进对话注册表，由 media 网关
+ * 按 capabilityModels 路由）。
  */
 export function buildModelRegistry(deps: {
   settings: Settings;
@@ -88,27 +108,32 @@ export function buildModelRegistry(deps: {
   for (const provider of builtinProviders()) {
     models.setProvider(provider);
   }
-  for (const custom of deps.settings.customProviders) {
-    const id = customProviderId(custom.id);
+  for (const instance of deps.settings.modelProviders) {
+    // pi 内置目录实例：注册表已有同名 provider（builtinProviders），不覆盖，
+    // 模型清单直接用 pi 目录。
+    if (instance.builtinCatalog) continue;
+    if (!instance.enabled) continue;
+    const chatModels = instance.models.filter((m) => m.capabilities.includes('chat'));
+    if (chatModels.length === 0) continue;
     models.setProvider(
       createProvider({
-        id,
-        name: custom.name,
-        baseUrl: custom.baseUrl,
+        id: instance.id,
+        name: instance.name,
+        baseUrl: instance.baseUrl ?? '',
         auth: {
           apiKey: {
-            name: custom.name,
+            name: instance.name,
             resolve: async () => ({
-              auth: { apiKey: deps.secrets.getValue(providerSecretName(id)) ?? 'unused' },
+              auth: { apiKey: deps.secrets.getValue(providerSecretName(instance.id)) ?? 'unused' },
             }),
           },
         },
-        models: custom.models.map((m): Model<'openai-completions'> => ({
+        models: chatModels.map((m): Model<'openai-completions'> => ({
           id: m.id,
-          name: m.name,
+          name: m.name ?? m.id,
           api: 'openai-completions',
-          provider: id,
-          baseUrl: custom.baseUrl,
+          provider: instance.id,
+          baseUrl: instance.baseUrl ?? '',
           reasoning: false,
           // P11: models declaring "image" receive browser screenshots.
           input: m.input ?? ['text'],
@@ -117,46 +142,7 @@ export function buildModelRegistry(deps: {
           maxTokens: Math.min(32_000, Math.max(1_024, Math.floor(m.contextWindow / 4))),
           compat: { supportsDeveloperRole: false },
         })),
-        api: openAICompletionsApi(),
-      }),
-    );
-  }
-  // 国内厂商：对话走各家 OpenAI 兼容根；其余能力（向量/重排/多模态/语音/
-  // 图片/视频）不进对话注册表，由 media 网关按 capabilityModels 路由。
-  for (const vendor of deps.settings.vendorProviders) {
-    const descriptor = VENDOR_DESCRIPTORS[vendor.id];
-    if (vendor.models.length === 0) continue;
-    const baseUrl = vendorProviderBaseUrl(vendor);
-    models.setProvider(
-      createProvider({
-        id: vendor.id,
-        name: descriptor.name,
-        baseUrl,
-        auth: {
-          apiKey: {
-            name: descriptor.name,
-            resolve: async () => ({
-              auth: { apiKey: deps.secrets.getValue(providerSecretName(vendor.id)) ?? 'unused' },
-            }),
-          },
-        },
-        models: vendor.models.map((m): Model<'openai-completions'> => ({
-          id: m.id,
-          name: m.name ?? m.id,
-          api: 'openai-completions',
-          provider: vendor.id,
-          baseUrl,
-          reasoning: false,
-          input: m.input ?? ['text'],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: m.contextWindow ?? 131_072,
-          maxTokens: Math.min(
-            32_000,
-            Math.max(1_024, Math.floor((m.contextWindow ?? 131_072) / 4)),
-          ),
-          compat: { supportsDeveloperRole: false },
-        })),
-        api: openAICompletionsApi(),
+        api: apiImpl(instance.api),
       }),
     );
   }
@@ -190,47 +176,73 @@ export function providerInfoList(
   secrets: SecretsService,
 ): ProviderInfo[] {
   const infos: ProviderInfo[] = [];
+  const instanceIds = new Set(settings.modelProviders.map((p) => p.id));
   for (const provider of models.getProviders()) {
-    // 厂商条目统一在循环外按 settings 合成（含非对话能力的模型）。
-    if (isVendorId(provider.id)) continue;
-    const isCustom = provider.id.startsWith('custom:');
+    // 供应商实例在下方按 settings 合成（含专有能力模型）；pi 内置目录里
+    // 撞了实例 id 的行跳过（不应发生，防御目录变更）。
+    if (instanceIds.has(provider.id)) continue;
     // pi 1.x 起内置目录含非对话 provider（如 typesafe 分类器，0 个对话模型）：
     // 空模型列表的行对设置页没有意义，跳过。
     const chatModels = provider.getModels().map((m) => ({
       id: m.id,
       name: m.name,
       contextWindow: Number(m.contextWindow ?? 0),
+      capabilities: ['chat'] as ModelCapability[],
     }));
     if (chatModels.length === 0) continue;
     infos.push({
       id: provider.id,
       name: provider.name,
-      kind: isCustom ? 'custom' : 'builtin',
-      baseUrl: isCustom
-        ? settings.customProviders.find((c) => customProviderId(c.id) === provider.id)?.baseUrl
-        : undefined,
-      models: chatModels,
+      kind: 'builtin',
+      enabled: true,
+      models: [...chatModels],
       hasKey: secrets.hasValue(providerSecretName(provider.id)),
     });
   }
-  // 国内厂商始终列出（无论是否已配置条目）：能力模型 section 需要显示
-  // 各厂商的 key 状态；模型行只含对话模型（其余能力在 capabilityModels）。
-  for (const vendor of settings.vendorProviders) {
-    const descriptor = VENDOR_DESCRIPTORS[vendor.id];
+  // 供应商实例：全部模型（含专有能力模型）带能力声明列出，供设置页渲染
+  // 模型行与能力槽位候选；停用实例照列（UI 显示状态）。pi 内置目录实例
+  // （builtinCatalog）的模型清单取自注册表里的同名 pi provider。
+  for (const instance of settings.modelProviders) {
+    if (instance.builtinCatalog) {
+      const provider = models.getProvider(instance.id);
+      const chatModels = provider
+        ? provider.getModels().map((m) => ({
+            id: m.id,
+            name: m.name,
+            contextWindow: Number(m.contextWindow ?? 0),
+            capabilities: ['chat'] as ModelCapability[],
+          }))
+        : [];
+      if (chatModels.length === 0) continue;
+      infos.push({
+        id: instance.id,
+        name: instance.name,
+        kind: 'builtin',
+        baseUrl: instance.baseUrl,
+        enabled: instance.enabled,
+        models: chatModels,
+        hasKey: secrets.hasValue(providerSecretName(instance.id)),
+      });
+      continue;
+    }
     infos.push({
-      id: vendor.id,
-      name: descriptor.name,
-      kind: 'vendor',
-      vendor: vendor.id,
-      baseUrl: vendorProviderBaseUrl(vendor),
-      models: vendor.models.map((m) => ({
+      id: instance.id,
+      name: instance.name,
+      kind: instance.vendor === null ? 'custom' : 'vendor',
+      ...(instance.vendor !== null ? { vendor: instance.vendor } : {}),
+      baseUrl: instance.baseUrl,
+      enabled: instance.enabled,
+      models: instance.models.map((m) => ({
         id: m.id,
         name: m.name ?? m.id,
-        contextWindow: m.contextWindow ?? 131_072,
+        contextWindow: m.contextWindow,
+        capabilities: [...m.capabilities],
       })),
-      hasKey: secrets.hasValue(providerSecretName(vendor.id)),
+      hasKey: secrets.hasValue(providerSecretName(instance.id)),
     });
   }
+  // 尚未建实例的内置厂商始终列出（模型为空）：能力槽位与对话内设置卡需要
+  // 能选到它们（配 Key / 配能力模型时由设置页或适配器补建实例）。
   for (const vendor of Object.values(VENDOR_DESCRIPTORS)) {
     if (infos.some((info) => info.id === vendor.id)) continue;
     infos.push({
@@ -239,6 +251,7 @@ export function providerInfoList(
       kind: 'vendor',
       vendor: vendor.id,
       baseUrl: vendor.baseUrl,
+      enabled: true,
       models: [],
       hasKey: secrets.hasValue(providerSecretName(vendor.id)),
     });

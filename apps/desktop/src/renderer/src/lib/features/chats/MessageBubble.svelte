@@ -14,6 +14,7 @@
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
   import MailCard from '$lib/features/mail/MailCard.svelte';
+  import ImCard from '$lib/features/extension-center/ImCard.svelte';
   import McpAppCard from '$lib/features/apps-ui/McpAppCard.svelte';
   import BotWidgetCard from '$lib/features/widgets/BotWidgetCard.svelte';
   import PresentCard from '$lib/features/present/PresentCard.svelte';
@@ -79,6 +80,16 @@
           summary: message.content.mailSummary,
           from: message.content.mailFrom,
           subject: message.content.mailSubject,
+        }
+      : null,
+  );
+  // D109（54 号文档）：IM 入站卡（微信消息；摘要不自动展开全文）。
+  const imCard = $derived(
+    isCard && 'cardType' in message.content && message.content.cardType === 'im'
+      ? {
+          accountId: String(message.content.imAccountId ?? ''),
+          summary: message.content.imSummary,
+          channel: message.content.imChannel,
         }
       : null,
   );
@@ -240,6 +251,16 @@
       summary={mailCard.summary}
       from={mailCard.from}
       subject={mailCard.subject}
+    />
+  </div>
+{:else if imCard !== null}
+  <!-- D109 IM 入站：按正常用户消息形态渲染（ImCard 内右对齐气泡 + 「来自微信」caption）；
+       testid 用 message-<id>，证据跳转 / 高亮定位对 IM 消息同样生效。 -->
+  <div class="flex w-full justify-end py-1" data-testid={`message-${message.id}`}>
+    <ImCard
+      accountId={imCard.accountId}
+      summary={imCard.summary}
+      channel={imCard.channel}
     />
   </div>
 {:else if taskCardId !== null}

@@ -68,11 +68,11 @@
     if (modelReady) void refresh();
   });
 
-  /** 「向量模型」section 的配置是否齐备（厂商 + 模型 + key）。 */
+  /** 「向量模型」槽位的配置是否齐备（供应商实例 + 模型 + key）。 */
   const embeddingConfigured = $derived(settingsStore.settings?.capabilityModels.embedding ?? null);
   const embeddingVendorHasKey = $derived(
     embeddingConfigured !== null &&
-      (settingsStore.providers.find((p) => p.id === embeddingConfigured.vendor)?.hasKey ?? false),
+      (settingsStore.providers.find((p) => p.id === embeddingConfigured.provider)?.hasKey ?? false),
   );
 
   async function refresh(): Promise<void> {

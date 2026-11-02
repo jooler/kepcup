@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { settingsSchema, type Settings, type VendorProvider } from '@kepcup/shared';
+import { settingsSchema, type ProviderInstance, type Settings } from '@kepcup/shared';
 import {
   buildModelRegistry,
   providerCompatBaseUrl,
@@ -13,10 +13,6 @@ import type { SecretsService } from '../../src/domain/secrets.js';
 const LOGGER = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
 
 const KEYS = { 'provider:volcengine': 'sk-ark' };
-
-function makeSettings(overrides: Partial<Settings> = {}): Settings {
-  return settingsSchema.parse(overrides);
-}
 
 function fakeSecrets(keys: Record<string, string>): SecretsService {
   return {
@@ -34,11 +30,34 @@ function fakeSettingsStore(settings: Settings): SettingsService {
   return { get: () => settings } as unknown as SettingsService;
 }
 
-/** 厂商条目只登记对话模型（16-capability-models.md：媒体能力在 capabilityModels）。 */
-const VOLCENGINE_ENTRY: VendorProvider = {
-  id: 'volcengine',
-  models: [{ id: 'doubao-seed-2-1-pro-260915' }],
+/**
+ * 内置厂商实例：对话模型登记在实例上（16-capability-models.md：专有能力在
+ * capabilityModels，provider 指向实例 id）。默认给两家具商实例，测试用例
+ * 覆盖 modelProviders 即可换掉。
+ */
+const DASHSCOPE_INSTANCE: ProviderInstance = {
+  id: 'dashscope',
+  vendor: 'dashscope',
+  name: '阿里云百炼',
+  baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  enabled: true,
+  models: [],
 };
+const VOLCENGINE_INSTANCE: ProviderInstance = {
+  id: 'volcengine',
+  vendor: 'volcengine',
+  name: '火山方舟',
+  baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+  enabled: true,
+  models: [{ id: 'doubao-seed-2-1-pro-260915', capabilities: ['chat'] }],
+};
+
+function makeSettings(overrides: Partial<Settings> = {}): Settings {
+  return settingsSchema.parse({
+    modelProviders: [structuredClone(DASHSCOPE_INSTANCE), structuredClone(VOLCENGINE_INSTANCE)],
+    ...overrides,
+  });
+}
 
 function mediaService(
   settings: Settings,
@@ -55,7 +74,7 @@ function mediaService(
 
 describe('厂商注册表（buildModelRegistry / providerInfoList）', () => {
   it('厂商条目的对话模型注册进对话注册表（模型 id 完整保留）', () => {
-    const settings = makeSettings({ vendorProviders: [VOLCENGINE_ENTRY] });
+    const settings = makeSettings({});
     const models = buildModelRegistry({ settings, secrets: fakeSecrets({}), logger: LOGGER });
     const provider = models.getProvider('volcengine');
     expect(provider).toBeDefined();
@@ -65,8 +84,8 @@ describe('厂商注册表（buildModelRegistry / providerInfoList）', () => {
     expect(models.getModel('volcengine', 'doubao-seed-2-1-pro-260915')).toBeDefined();
   });
 
-  it('未配置条目的国内厂商也列出 ProviderInfo（能力 section 需要 key 状态），但模型为空', () => {
-    const settings = makeSettings({});
+  it('未建实例的内置厂商也列出 ProviderInfo（能力槽位需要 key 状态），但模型为空', () => {
+    const settings = makeSettings({ modelProviders: [] });
     const models = buildModelRegistry({ settings, secrets: fakeSecrets({}), logger: LOGGER });
     expect(models.getProvider('dashscope')).toBeUndefined();
     const infos = providerInfoList(models, settings, fakeSecrets({}));
@@ -77,7 +96,9 @@ describe('厂商注册表（buildModelRegistry / providerInfoList）', () => {
 
   it('providerInfoList：厂商条目带 baseUrl 与对话模型；hasKey 跟随 secrets', () => {
     const settings = makeSettings({
-      vendorProviders: [{ ...VOLCENGINE_ENTRY, baseUrl: 'https://ark.alt.example/api/v3' }],
+      modelProviders: [
+        { ...structuredClone(VOLCENGINE_INSTANCE), baseUrl: 'https://ark.alt.example/api/v3' },
+      ],
     });
     const models = buildModelRegistry({ settings, secrets: fakeSecrets({}), logger: LOGGER });
     const infos = providerInfoList(
@@ -92,43 +113,46 @@ describe('厂商注册表（buildModelRegistry / providerInfoList）', () => {
       {
         id: 'doubao-seed-2-1-pro-260915',
         name: 'doubao-seed-2-1-pro-260915',
-        contextWindow: 131_072,
+        contextWindow: 128_000,
+        capabilities: ['chat'],
       },
     ]);
   });
 
-  it('providerCompatBaseUrl：厂商覆盖/默认、custom 两种 id 写法、builtin 为 null', () => {
+  it('providerCompatBaseUrl：实例 baseUrl、custom: 前缀、builtin 为 null', () => {
     const settings = makeSettings({
-      customProviders: [
+      modelProviders: [
+        structuredClone(VOLCENGINE_INSTANCE),
         {
-          id: 'mine',
+          id: 'custom:mine',
+          vendor: null,
           name: 'Mine',
           baseUrl: 'https://mine.example/v1',
-          models: [{ id: 'm1', name: 'M1', contextWindow: 8192 }],
+          enabled: true,
+          models: [{ id: 'm1', name: 'M1', contextWindow: 8192, capabilities: ['chat'] }],
         },
       ],
-      vendorProviders: [VOLCENGINE_ENTRY],
     });
     expect(providerCompatBaseUrl(settings, 'volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/v3',
     );
     expect(providerCompatBaseUrl(settings, 'custom:mine')).toBe('https://mine.example/v1');
-    expect(providerCompatBaseUrl(settings, 'mine')).toBe('https://mine.example/v1');
+    // 裸自定义 id（无 custom: 前缀）不再命中实例。
+    expect(providerCompatBaseUrl(settings, 'mine')).toBeNull();
     expect(providerCompatBaseUrl(settings, 'openai')).toBeNull();
   });
 });
 
 describe('MediaService 路由（capabilityModels）', () => {
   const SETTINGS = makeSettings({
-    vendorProviders: [VOLCENGINE_ENTRY],
     capabilityModels: {
       embedding: null,
       rerank: null,
       multimodal: null,
       asr: null,
       tts: null,
-      image: { vendor: 'volcengine', model: 'doubao-seedream-4-0-250828' },
-      video: { vendor: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' },
+      image: { provider: 'volcengine', model: 'doubao-seedream-4-0-250828' },
+      video: { provider: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' },
     },
   });
 
@@ -192,7 +216,7 @@ describe('MediaService 路由（capabilityModels）', () => {
     const arkSettings = makeSettings({
       capabilityModels: {
         ...SETTINGS.capabilityModels,
-        tts: { vendor: 'volcengine', model: 'anything' },
+        tts: { provider: 'volcengine', model: 'anything' },
       },
     });
     const service = mediaService(arkSettings, { 'provider:volcengine': 'sk-ark' });
@@ -260,7 +284,7 @@ describe('MediaService 路由（capabilityModels）', () => {
         ...SETTINGS.capabilityModels,
         image: null,
         video: null,
-        rerank: { vendor: 'dashscope', model: 'gte-rerank-v2' },
+        rerank: { provider: 'dashscope', model: 'gte-rerank-v2' },
       },
     });
     const result = await mediaService(settings, { 'provider:dashscope': 'k' }, fetchImpl).rerank({
@@ -293,7 +317,7 @@ describe('MediaService 路由（capabilityModels）', () => {
         ...SETTINGS.capabilityModels,
         image: null,
         video: null,
-        multimodal: { vendor: 'dashscope', model: 'qwen3-vl-plus' },
+        multimodal: { provider: 'dashscope', model: 'qwen3-vl-plus' },
       },
     });
     const result = await mediaService(settings, { 'provider:dashscope': 'k' }, fetchImpl).understandImage(
@@ -309,7 +333,7 @@ describe('MediaService 路由（capabilityModels）', () => {
     const ready = makeSettings({
       capabilityModels: {
         ...SETTINGS.capabilityModels,
-        embedding: { vendor: 'volcengine', model: 'doubao-embedding-vision-251215' },
+        embedding: { provider: 'volcengine', model: 'doubao-embedding-vision-251215' },
       },
     });
     expect(mediaService(ready, KEYS).embeddingReady()).toBe(true);
@@ -326,7 +350,7 @@ describe('按能力连通性测试（testCapability）', () => {
       return new Response(JSON.stringify({ data: { embedding: [0.1, 0.2] } }));
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), KEYS, fetchImpl).testCapability('embedding', {
-      vendor: 'volcengine',
+      provider: 'volcengine',
       model: 'doubao-embedding-vision-251215',
     });
     expect(seen).toEqual(['https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal']);
@@ -342,14 +366,14 @@ describe('按能力连通性测试（testCapability）', () => {
     // 密钥表为空也能测：入参 key 生效（providers.test 的未保存先测）。
     await service.testCapability(
       'embedding',
-      { vendor: 'volcengine', model: 'doubao-embedding-vision-251215' },
+      { provider: 'volcengine', model: 'doubao-embedding-vision-251215' },
       { keyOverride: 'probe-key' },
     );
     expect(seen[0]).toContain('probe-key');
     // 无入参且密钥表为空：照旧 PROVIDER_AUTH_FAILED。
     await expect(
       service.testCapability('embedding', {
-        vendor: 'volcengine',
+        provider: 'volcengine',
         model: 'doubao-embedding-vision-251215',
       }),
     ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
@@ -365,7 +389,7 @@ describe('按能力连通性测试（testCapability）', () => {
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl).testCapability(
       'rerank',
-      { vendor: 'dashscope', model: 'gte-rerank-v2' },
+      { provider: 'dashscope', model: 'gte-rerank-v2' },
     );
   });
 
@@ -380,17 +404,45 @@ describe('按能力连通性测试（testCapability）', () => {
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl).testCapability(
       'multimodal',
-      { vendor: 'dashscope', model: 'qwen3-vl-plus' },
+      { provider: 'dashscope', model: 'qwen3-vl-plus' },
     );
   });
 
-  it('非厂商 id、厂商能力矩阵未开放的能力各自报错', async () => {
-    const service = mediaService(makeSettings({}), { 'provider:custom:mine': 'k' });
+  it('自定义实例：embedding 走 OpenAI 兼容 /embeddings；未实现的能力报错', async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1] }] }));
+    }) as unknown as typeof fetch;
+    const settings = makeSettings({
+      modelProviders: [
+        {
+          id: 'custom:mine',
+          vendor: null,
+          name: 'Mine',
+          baseUrl: 'https://mine.example/v1',
+          enabled: true,
+          models: [{ id: 'm1', capabilities: ['embedding'] }],
+        },
+      ],
+    });
+    await mediaService(settings, { 'provider:custom:mine': 'k' }, fetchImpl).testCapability(
+      'embedding',
+      { provider: 'custom:mine', model: 'm1' },
+    );
+    expect(seen).toEqual(['https://mine.example/v1/embeddings']);
+    // 自定义适配器没实现的照旧 NOT_IMPLEMENTED；方舟能力矩阵未开放的也是。
     await expect(
-      service.testCapability('embedding', { vendor: 'custom:mine', model: 'm1' }),
+      mediaService(settings, { 'provider:custom:mine': 'k' }).testCapability('tts', {
+        provider: 'custom:mine',
+        model: 'm1',
+      }),
     ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
     await expect(
-      service.testCapability('tts', { vendor: 'volcengine', model: 'x' }),
+      mediaService(makeSettings({}), { 'provider:volcengine': 'k' }).testCapability('tts', {
+        provider: 'volcengine',
+        model: 'x',
+      }),
     ).rejects.toMatchObject({ code: 'NOT_IMPLEMENTED' });
   });
 
@@ -406,7 +458,7 @@ describe('按能力连通性测试（testCapability）', () => {
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl).testCapability(
       'video',
-      { vendor: 'dashscope', model: 'wan2.7-t2v' },
+      { provider: 'dashscope', model: 'wan2.7-t2v' },
     );
     expect(urls).toEqual([
       'POST https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis',
@@ -424,7 +476,7 @@ describe('按能力连通性测试（testCapability）', () => {
       return new Response(JSON.stringify({ status: 'cancelled' }));
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), KEYS, fetchImpl).testCapability('video', {
-      vendor: 'volcengine',
+      provider: 'volcengine',
       model: 'doubao-seedance-1-0-pro-250528',
     });
     expect(urls).toEqual([
@@ -446,8 +498,8 @@ describe('按能力连通性测试（testCapability）', () => {
       return new Response(JSON.stringify({ choices: [{ message: { content: '转写' } }] }));
     }) as unknown as typeof fetch;
     const service = mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl);
-    await service.testCapability('tts', { vendor: 'dashscope', model: 'qwen3-tts-flash' });
-    await service.testCapability('asr', { vendor: 'dashscope', model: 'qwen3-asr-flash' });
+    await service.testCapability('tts', { provider: 'dashscope', model: 'qwen3-tts-flash' });
+    await service.testCapability('asr', { provider: 'dashscope', model: 'qwen3-asr-flash' });
     expect(requests.map((r) => r.url)).toEqual([
       'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
@@ -493,7 +545,7 @@ describe('ProvidersService.test 厂商缺省路由', () => {
         multimodal: null,
         asr: null,
         tts: null,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
         video: null,
       },
     });
@@ -512,14 +564,17 @@ describe('ProvidersService.test 厂商缺省路由', () => {
     await expect(service.test('dashscope', 'qwen-image')).resolves.toBeUndefined();
   });
 
-  it('缺省 capability 且条目登记了对话模型 → 仍走对话注册表（连接错误而非 Unknown provider）', async () => {
+  it('缺省 capability 且实例登记了对话模型 → 仍走对话注册表（连接错误而非 Unknown provider）', async () => {
     const settings = makeSettings({
-      vendorProviders: [
+      modelProviders: [
         {
           id: 'dashscope',
+          vendor: 'dashscope',
+          name: '阿里云百炼',
           // 指向必拒端口，证明走的是注册表的对话探测路径。
           baseUrl: 'http://127.0.0.1:9',
-          models: [{ id: 'qwen-plus' }],
+          enabled: true,
+          models: [{ id: 'qwen-plus', capabilities: ['chat'] }],
         },
       ],
     });
@@ -531,7 +586,7 @@ describe('ProvidersService.test 厂商缺省路由', () => {
     });
   });
 
-  it('条目无对话模型且无能力配置、条目不存在 → 各自给出明确文案', async () => {
+  it('实例无对话模型且无能力配置、未登记对话模型 → 各自给出明确文案', async () => {
     const service = providersService(makeSettings({}), { 'provider:dashscope': 'k' });
     await expect(service.test('dashscope')).rejects.toThrow('尚未配置对话或能力模型');
     await expect(service.test('dashscope', undefined, 'chat')).rejects.toThrow(
@@ -539,7 +594,7 @@ describe('ProvidersService.test 厂商缺省路由', () => {
     );
   });
 
-  it('显式 capability：路由到能力探测（不再要求厂商条目存在）', async () => {
+  it('显式 capability：路由到实例的能力探测', async () => {
     const fetchImpl = (async (url: RequestInfo | URL) => {
       expect(String(url)).toBe(
         'https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal',
@@ -588,7 +643,7 @@ describe('厂商向量（网关 → 适配器）', () => {
     }) as unknown as typeof fetch;
     await mediaService(makeSettings({}), { 'provider:dashscope': 'k' }, fetchImpl).testCapability(
       'embedding',
-      { vendor: 'dashscope', model: 'tongyi-embedding-vision-plus-2026-03-06' },
+      { provider: 'dashscope', model: 'tongyi-embedding-vision-plus-2026-03-06' },
     );
     expect(requests).toHaveLength(1);
     expect(requests[0]!.url).toBe(

@@ -10,8 +10,9 @@ import type { VendorId } from '@kepcup/shared';
  */
 
 export interface VendorCallContext {
-  vendor: VendorId;
-  /** OpenAI 兼容根（settings 覆盖值或厂商默认，无尾斜杠）。 */
+  /** 适配器路由键：内置厂商 id，或自定义供应商实例的 'custom'。 */
+  vendor: VendorId | 'custom';
+  /** OpenAI 兼容根（实例 baseUrl 或厂商默认，无尾斜杠）。 */
   baseUrl: string;
   apiKey: string;
   logger: CoreLogger;
@@ -127,7 +128,7 @@ export interface VendorAdapter {
     params: UnderstandImageParams,
   ): Promise<{ text: string }>;
   /** 文生图 / 图片编辑（编辑 = 带 images 参考图的同一端点）。 */
-  generateImage(
+  generateImage?(
     ctx: VendorCallContext,
     model: string,
     params: ImageGenerationParams,
@@ -145,12 +146,12 @@ export interface VendorAdapter {
     params: TranscriptionParams,
   ): Promise<TranscriptionResult>;
   /** 视频生成为异步任务：提交返回 taskId，状态用 videoStatus 轮询。 */
-  submitVideo(
+  submitVideo?(
     ctx: VendorCallContext,
     model: string,
     params: VideoGenerationParams,
   ): Promise<VideoGenerationHandle>;
-  videoStatus(ctx: VendorCallContext, taskId: string): Promise<VideoTaskStatus>;
+  videoStatus?(ctx: VendorCallContext, taskId: string): Promise<VideoTaskStatus>;
   /** 尽力取消任务（连通性测试提交后立即取消，避免无谓计费）。 */
   cancelVideo?(ctx: VendorCallContext, taskId: string): Promise<void>;
 }

@@ -78,19 +78,27 @@ describe('settings and provider key persistence', () => {
 
     // baseUrl 指向必拒端口：探测拿到连接错误，错误码即可证明路由正确。
     const next = (await core.rpc.call('settings.update', {
-      vendorProviders: [
+      modelProviders: [
         {
           id: 'dashscope',
+          vendor: 'dashscope',
+          name: '阿里云百炼',
           baseUrl: 'http://127.0.0.1:9',
+          enabled: true,
           models: [{ id: 'qwen-plus' }],
         },
       ],
-    })) as { vendorProviders?: Array<{ id: string }> };
-    expect(next.vendorProviders).toEqual([
+    })) as { modelProviders?: Array<Record<string, unknown>> };
+    expect(next.modelProviders).toEqual([
       {
         id: 'dashscope',
+        vendor: 'dashscope',
+        name: '阿里云百炼',
         baseUrl: 'http://127.0.0.1:9',
-        models: [{ id: 'qwen-plus' }],
+        enabled: true,
+        api: 'openai-completions',
+        builtinCatalog: false,
+        models: [{ id: 'qwen-plus', contextWindow: 128_000, capabilities: ['chat'] }],
       },
     ]);
     await core.rpc.call('providers.setKey', { provider: 'dashscope', key: 'sk-dash' });
@@ -99,14 +107,15 @@ describe('settings and provider key persistence', () => {
       providers: Array<{
         id: string;
         kind: string;
+        enabled: boolean;
         hasKey: boolean;
-        models: Array<{ id: string }>;
+        models: Array<{ id: string; name: string; contextWindow: number; capabilities: string[] }>;
       }>;
     };
     const dashscope = list.providers.find((p) => p.id === 'dashscope');
-    expect(dashscope).toMatchObject({ kind: 'vendor', hasKey: true });
+    expect(dashscope).toMatchObject({ kind: 'vendor', hasKey: true, enabled: true });
     expect(dashscope?.models).toEqual([
-      { id: 'qwen-plus', name: 'qwen-plus', contextWindow: 131_072 },
+      { id: 'qwen-plus', name: 'qwen-plus', contextWindow: 128_000, capabilities: ['chat'] },
     ]);
 
     // 显式 capability=chat → 注册表对话探测：连接被拒（PROVIDER_UNAVAILABLE），
@@ -131,17 +140,26 @@ describe('settings and provider key persistence', () => {
 
     // 厂商兼容根指向 mock LLM（其 /v1/embeddings 返回确定性向量）：
     // embedding 能力探测打到 mock 端点，返回 ok 即证明按能力路由。
+    // modelProviders 是整体覆盖 patch：读最新设置、map/filter 后回写。
+    const dashscopeInstance = {
+      id: 'dashscope',
+      vendor: 'dashscope' as const,
+      name: '阿里云百炼',
+      baseUrl: llm.url,
+      enabled: true,
+      models: [],
+    };
     await core.rpc.call('providers.setKey', { provider: 'dashscope', key: 'sk-ds' });
+    const before = (await core.rpc.call('settings.get')) as {
+      modelProviders: Array<{ id: string }>;
+    };
     await core.rpc.call('settings.update', {
-      vendorProviders: [
-        {
-          id: 'dashscope',
-          baseUrl: llm.url,
-          models: [],
-        },
+      modelProviders: [
+        ...before.modelProviders.filter((p) => p.id !== 'dashscope'),
+        dashscopeInstance,
       ],
       capabilityModels: {
-        embedding: { vendor: 'dashscope', model: 'text-embedding-v4' },
+        embedding: { provider: 'dashscope', model: 'text-embedding-v4' },
         rerank: null,
         multimodal: null,
         asr: null,
@@ -151,24 +169,27 @@ describe('settings and provider key persistence', () => {
       },
     });
 
-    // 缺省 capability 且条目无对话模型 → 按 embedding 能力探测。
+    // 缺省 capability 且实例无对话模型 → 按 embedding 能力探测。
     await expect(core.rpc.call('providers.test', { provider: 'dashscope' })).resolves.toEqual({
       ok: true,
     });
 
-    // 能力配置独立于厂商条目：清空条目后能力配置与 key 仍生效。
+    // 能力配置独立于对话模型登记：重写实例（仍不登记对话模型）后能力配置与 key 仍生效。
     await core.rpc.call('settings.update', {
-      vendorProviders: [{ id: 'dashscope', baseUrl: llm.url, models: [] }],
+      modelProviders: [
+        ...before.modelProviders.filter((p) => p.id !== 'dashscope'),
+        dashscopeInstance,
+      ],
     });
     const settings = (await core.rpc.call('settings.get')) as {
-      capabilityModels: { embedding: { vendor: string; model: string } | null };
-      vendorProviders: Array<{ models: Array<{ id: string }> }>;
+      capabilityModels: { embedding: { provider: string; model: string } | null };
+      modelProviders: Array<{ id: string; models: Array<{ id: string }> }>;
     };
     expect(settings.capabilityModels.embedding).toEqual({
-      vendor: 'dashscope',
+      provider: 'dashscope',
       model: 'text-embedding-v4',
     });
-    expect(settings.vendorProviders[0]!.models).toEqual([]);
+    expect(settings.modelProviders.find((p) => p.id === 'dashscope')!.models).toEqual([]);
   });
 
   it('联网检索：provider 经 settings.update 持久化，key 经 websearch.setKey 落 secrets 不回流；清除置 null', async () => {

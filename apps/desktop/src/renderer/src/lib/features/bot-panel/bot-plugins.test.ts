@@ -32,13 +32,13 @@ const summary = (overrides: Partial<PluginSummary>): PluginSummary => ({
   marketplace: null,
   installedAt: 1,
   updatedAt: 1,
-  counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
+  counts: { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 },
   items: [],
   updateAvailable: null,
   revoked: null,
   configFields: [],
   instanceFields: [],
-  instanceCounts: { mail: 0, mcp: 0 },
+  instanceCounts: { mail: 0, mcp: 0, im: 0 },
   providesInstances: [],
   ...overrides,
 });
@@ -92,10 +92,10 @@ describe('addedPlugins / matchesPluginQuery（添加弹框）', () => {
 describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
   it('按贡献计数推导，顺序固定 技能 → 连接 → 工具 → 邮件', () => {
     expect(
-      pluginKindBadges(summary({ counts: { skills: 2, connectors: 1, mcp: 3, mail: 1 } })),
+      pluginKindBadges(summary({ counts: { skills: 2, connectors: 1, mcp: 3, mail: 1, im: 0 } })),
     ).toEqual(['skill', 'connector', 'mcp', 'mail']);
     expect(
-      pluginKindBadges(summary({ counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 } })),
+      pluginKindBadges(summary({ counts: { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 } })),
     ).toEqual([]);
   });
 
@@ -112,7 +112,7 @@ describe('pluginKindBadges / pluginProvides（类别徽标）', () => {
   it('pluginProvides：连接只看贡献计数；邮件看贡献或实例声明', () => {
     expect(
       pluginProvides(
-        summary({ counts: { connectors: 1, mcp: 0, mail: 0, skills: 0 } }),
+        summary({ counts: { connectors: 1, mcp: 0, mail: 0, skills: 0, im: 0 } }),
         'connector',
       ),
     ).toBe(true);

@@ -8,14 +8,32 @@ import type { UsageRecordInput, UsageService } from '../../src/domain/usage.js';
 const LOGGER = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
 
 const SETTINGS: Settings = settingsSchema.parse({
+  modelProviders: [
+    {
+      id: 'dashscope',
+      vendor: 'dashscope',
+      name: '阿里云百炼',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      enabled: true,
+      models: [],
+    },
+    {
+      id: 'volcengine',
+      vendor: 'volcengine',
+      name: '火山方舟',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      enabled: true,
+      models: [],
+    },
+  ],
   capabilityModels: {
     embedding: null,
-    rerank: { vendor: 'dashscope', model: 'gte-rerank-v2' },
+    rerank: { provider: 'dashscope', model: 'gte-rerank-v2' },
     multimodal: null,
     asr: null,
     tts: null,
-    image: { vendor: 'volcengine', model: 'doubao-seedream-4-0-250828' },
-    video: { vendor: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' },
+    image: { provider: 'volcengine', model: 'doubao-seedream-4-0-250828' },
+    video: { provider: 'volcengine', model: 'doubao-seedance-1-0-pro-250528' },
   },
 });
 const KEYS: Record<string, string> = { 'provider:volcengine': 'sk-ark', 'provider:dashscope': 'k' };

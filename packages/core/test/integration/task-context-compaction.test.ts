@@ -28,8 +28,8 @@ async function start(): Promise<TestStack> {
 function shrinkMockContext(core: TestStack['core']): void {
   const settings = core.services.domain!.settings.get();
   core.services.domain!.settings.update({
-    customProviders: settings.customProviders.map((provider) =>
-      provider.id === 'mock'
+    modelProviders: settings.modelProviders.map((provider) =>
+      provider.id === 'custom:mock'
         ? {
             ...provider,
             models: provider.models.map((model) =>

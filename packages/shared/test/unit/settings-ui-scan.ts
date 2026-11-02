@@ -66,21 +66,24 @@ export function scanSettingsUi(featuresDir: string = FEATURES_DIR): SettingsUiSc
     }
   }
 
-  // 分区与「锚点 → 分区」：SettingsSectionView 里锚点在最近的 data-settings-section 之下。
-  const view = stripComments(
-    readFileSync(join(featuresDir, 'settings', 'SettingsSectionView.svelte'), 'utf8'),
-  );
+  // 分区与「锚点 → 分区」：锚点属于同文件里最近的 data-settings-section——
+  // 分区本体在 SettingsSectionView，分区拆出的子组件（如模型分区的
+  // ModelConfigDetail）在自己根节点上声明同一分区属性。
   const settingsSections: string[] = [];
   const anchorSections: Record<string, string> = {};
-  let current: string | null = null;
-  for (const line of view.split('\n')) {
-    for (const match of line.matchAll(SECTION_ATTR)) {
-      current = match[1] ?? match[2]!;
-      if (!settingsSections.includes(current)) settingsSections.push(current);
-    }
-    for (const match of line.matchAll(ANCHOR_ATTR)) {
-      const value = anchorValue(match);
-      if (value !== null && current !== null) anchorSections[value] = current;
+  for (const file of walk(featuresDir)) {
+    if (!file.endsWith('.svelte')) continue;
+    const source = stripComments(readFileSync(file, 'utf8'));
+    let current: string | null = null;
+    for (const line of source.split('\n')) {
+      for (const match of line.matchAll(SECTION_ATTR)) {
+        current = match[1] ?? match[2]!;
+        if (!settingsSections.includes(current)) settingsSections.push(current);
+      }
+      for (const match of line.matchAll(ANCHOR_ATTR)) {
+        const value = anchorValue(match);
+        if (value !== null && current !== null) anchorSections[value] = current;
+      }
     }
   }
 

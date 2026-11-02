@@ -11,6 +11,7 @@
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
   import ExtensionMail from './ExtensionMail.svelte';
+  import ExtensionIm from './ExtensionIm.svelte';
   import ExtensionLocalCollab from './ExtensionLocalCollab.svelte';
   import LocalConnectorsSection from './LocalConnectorsSection.svelte';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
@@ -70,7 +71,7 @@
   let updatingAll = $state(false);
   let uninstallTarget = $state<string | null>(null);
   /** 插件卡片「管理」进入的内容管理视图；null = 插件网格。 */
-  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail'; pluginId: string } | null>(null);
+  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; pluginId: string } | null>(null);
   /** 卡片「设置」就地展开的插件 config 表单（声明了 config.fields 的插件）；null = 收起。 */
   let configPanelId = $state<string | null>(null);
   let configValues = $state<Record<string, unknown>>({});
@@ -181,24 +182,25 @@
 
   /** 卡片的「管理」入口类别（按连接 → MCP → 邮件排序；纯技能插件没有管理面）。 */
   const MANAGE_KINDS: ReadonlyArray<{
-    kind: 'connector' | 'mcp' | 'mail';
-    countKey: 'connectors' | 'mcp' | 'mail';
+    kind: 'connector' | 'mcp' | 'mail' | 'im';
+    countKey: 'connectors' | 'mcp' | 'mail' | 'im';
     labelKey: Parameters<typeof t>[0];
   }> = [
     { kind: 'connector', countKey: 'connectors', labelKey: 'plugins.kind.connector' },
     { kind: 'mcp', countKey: 'mcp', labelKey: 'plugins.kind.mcp' },
     { kind: 'mail', countKey: 'mail', labelKey: 'plugins.kind.mail' },
+    { kind: 'im', countKey: 'im', labelKey: 'plugins.kind.im' },
   ];
 
   function manageKinds(
     plugin: PluginSummary,
-  ): Array<{ kind: 'connector' | 'mcp' | 'mail'; labelKey: Parameters<typeof t>[0] }> {
+  ): Array<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; labelKey: Parameters<typeof t>[0] }> {
     return MANAGE_KINDS.filter(({ countKey }) => plugin.counts[countKey] > 0).map(
       ({ kind, labelKey }) => ({ kind, labelKey }),
     );
   }
 
-  function openManage(plugin: PluginSummary, kind: 'connector' | 'mcp' | 'mail'): void {
+  function openManage(plugin: PluginSummary, kind: 'connector' | 'mcp' | 'mail' | 'im'): void {
     if (kind === 'connector') {
       // 单连接插件直达账号管理流（账本 ref = 连接 slug = 目录 connectorId），
       // 不再经过应用卡网格；多连接插件回落到按插件圈定的目录网格。
@@ -848,6 +850,20 @@
         {t('plugins.backToList')}
       </Button>
       <ExtensionMcp embedded pluginId={contentView.pluginId} />
+    </div>
+  {:else if contentView.kind === 'im'}
+    <div class="space-y-2" data-testid="plugins-content-im">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="-ml-2 gap-1"
+        onclick={() => (contentView = null)}
+        data-testid="plugins-content-back"
+      >
+        <ArrowLeft class="size-3.5" aria-hidden="true" />
+        {t('plugins.backToList')}
+      </Button>
+      <ExtensionIm embedded />
     </div>
   {:else}
     <div class="space-y-2" data-testid="plugins-content-mail">

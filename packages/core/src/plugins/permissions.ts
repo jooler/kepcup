@@ -1,5 +1,6 @@
 import type {
   PluginConsentConnector,
+  PluginConsentIm,
   PluginConsentMail,
   PluginConsentMcp,
   PluginConsentSkill,
@@ -19,6 +20,7 @@ export interface ConsentItems {
   connectors: PluginConsentConnector[];
   mcp: PluginConsentMcp[];
   mail: PluginConsentMail[];
+  im: PluginConsentIm[];
 }
 
 /** Canonical permission tokens of one consent view (one kind per prefix, prefix + colon). */
@@ -41,6 +43,10 @@ export function permissionTokens(items: ConsentItems): Set<string> {
     }
   }
   for (const template of items.mail) tokens.add(`mail:${template.id}`);
+  for (const contribution of items.im) {
+    tokens.add(`im:${contribution.id}`);
+    tokens.add(`host:${contribution.apiHost.toLowerCase()}`);
+  }
   return tokens;
 }
 

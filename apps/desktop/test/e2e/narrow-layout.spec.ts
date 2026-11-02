@@ -292,7 +292,10 @@ test('narrow layout: single column, bottom tabs, detail layers, fullscreen overl
     await page.locator('[data-testid^="global-search-item-settings-"]').first().click();
     await expect(settingsPage).toBeVisible();
     const modelsContent = page.locator('[data-testid="narrow-settings-content"]');
-    await expect(modelsContent.locator('[data-settings-section="models"]')).toBeVisible();
+    // 分区根（SettingsSectionView）和模型配置详情（ModelConfigDetail）都带
+    // data-settings-section="models"：后者给设置目录扫描器把该文件里的锚点
+    // 归到 models。深链只断言分区根，避免 strict mode 命中两个节点。
+    await expect(modelsContent.locator('> [data-settings-section="models"]')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(settingsPage).toHaveCount(0);
     // 再走一次，用返回按钮：同样一次回到来源页。

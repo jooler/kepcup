@@ -342,6 +342,11 @@ export const mailAccountUpdatedPayloadSchema = z.object({
   account: mailAccountSchema.nullable(),
 });
 
+/** D107：IM 账号状态变化（连接状态 / 绑定 / 删除）；渲染层刷新账号列表。 */
+export const imAccountUpdatedPayloadSchema = z.object({
+  accountId: z.string(),
+});
+
 /**
  * 应用状态提示（不落库、不进对话上下文）：邮件连接丢失、监看被暂停之类
  * 「当前状态有变化，请留意」的信息。渲染层弹一条轻量提示；提示消失后用户下次
@@ -447,6 +452,7 @@ export const rpcEventSchemas = {
   'tasks.interrupted': tasksInterruptedPayloadSchema,
   'watch.updated': watchUpdatedPayloadSchema,
   'mail.account_updated': mailAccountUpdatedPayloadSchema,
+  'im.account_updated': imAccountUpdatedPayloadSchema,
   'handover.updated': handoverUpdatedPayloadSchema,
   /** 设置目录条目被写入（§4.1）。 */
   'settings.changed': settingsChangedPayloadSchema,

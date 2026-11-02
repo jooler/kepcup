@@ -17,6 +17,17 @@ import {
   mailBotSetAccountsInputSchema,
 } from '../domain/mail.js';
 import {
+  imAccountGetOutputSchema,
+  imAccountsListOutputSchema,
+  imAccountIdInputSchema,
+  imAccountSetBotsInputSchema,
+  imBindingSetForwardInputSchema,
+  imQrcodeCreateInputSchema,
+  imQrcodeCreateOutputSchema,
+  imQrcodePollInputSchema,
+  imQrcodePollOutputSchema,
+} from '../domain/im.js';
+import {
   appsSkillsInstallInputSchema,
   appsSkillsInstallOutputSchema,
   appsSkillsOffersInputSchema,
@@ -140,7 +151,7 @@ import {
   toolEffectSchema,
   effectStatusSchema,
   conversationSchema,
-  customProviderSchema,
+  providerInstanceSchema,
   capabilityModelsSchema,
   embeddingStatusSchema,
   envInstallSchema,
@@ -227,7 +238,7 @@ import {
   remoteDeviceIdSchema,
   type PairingOffer,
 } from '../domain/remote.js';
-import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
+import { modelCapabilitySchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
@@ -386,8 +397,8 @@ export const settingsGetOutputSchema = settingsSchema;
 // custom providers / model defaults.
 export const settingsUpdateInputSchema = z.object({
   appLanguage: appLanguageSchema.optional(),
-  customProviders: z.array(customProviderSchema).optional(),
-  vendorProviders: z.array(vendorProviderSchema).optional(),
+  /** 供应商实例统一列表（整体覆盖 patch；legacy customProviders/vendorProviders 已由读路径迁移）。 */
+  modelProviders: z.array(providerInstanceSchema).optional(),
   defaultMainModel: z.string().optional(),
   defaultLightModel: z.string().optional(),
   /** D87 P3c 组件审查模型；'' = 跟随 Bot 主模型。 */
@@ -2934,6 +2945,24 @@ export const rpcMethodSchemas = {
     output: mailAccountGetOutputSchema,
   },
 
+  // D107（54 号文档）：IM 通道。扫码建号两步走（create → poll confirmed 后由
+  // core 落账号行 + token 入 secrets）；setBots 是绑定（绑定即入站），
+  // bindings.setForward 是「同步消息到此微信」开关（D111）。
+  'im.accounts.list': { input: voidInput, output: imAccountsListOutputSchema },
+  'im.accounts.create': {
+    input: z.object({ pluginId: z.string().min(1), sessionKey: z.string().min(1) }),
+    output: imAccountGetOutputSchema,
+  },
+  'im.accounts.reauthorize': {
+    input: z.object({ id: z.string().min(1), sessionKey: z.string().min(1) }),
+    output: okOutput,
+  },
+  'im.accounts.delete': { input: imAccountIdInputSchema, output: okOutput },
+  'im.accounts.setBots': { input: imAccountSetBotsInputSchema, output: okOutput },
+  'im.bindings.setForward': { input: imBindingSetForwardInputSchema, output: okOutput },
+  'im.login.qrcode.create': { input: imQrcodeCreateInputSchema, output: imQrcodeCreateOutputSchema },
+  'im.login.qrcode.poll': { input: imQrcodePollInputSchema, output: imQrcodePollOutputSchema },
+
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
   'browser.ensurePage': {
@@ -3406,6 +3435,14 @@ const APP_METHODS = [
   'mail.accounts.pause',
   'mail.accounts.resume',
   'mail.bindings.resume',
+  'im.accounts.list',
+  'im.accounts.create',
+  'im.accounts.reauthorize',
+  'im.accounts.delete',
+  'im.accounts.setBots',
+  'im.bindings.setForward',
+  'im.login.qrcode.create',
+  'im.login.qrcode.poll',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',
