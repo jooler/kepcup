@@ -8,6 +8,7 @@ import {
   newId,
   recentImAlerts,
   recentImForwards,
+  IM_ALERT_EVENT,
   IM_CARD_TYPE,
   type AppNoticePayload,
   type ImAccount,
@@ -640,12 +641,15 @@ export class ImService {
 
   #wakeExists(conversationId: string, accountId: string, msgId: string): boolean {
     const prefix = `im_alert ${accountId} ${msgId}`;
-    const row = this.#deps.db
-      .prepare(
-        "select 1 from messages where conversation_id = ? and kind = 'system_event' and event = 'im_alert' and substr(text, 1, ?) = ? limit 1",
-      )
-      .get(conversationId, prefix.length, prefix);
-    return row !== undefined;
+    return (
+      this.#deps.db
+        .prepare(
+          `select 1 from messages where conversation_id = ? and kind = 'system_event'
+           and json_extract(content_json, '$.event') = ?
+           and substr(json_extract(content_json, '$.text'), 1, ?) = ? limit 1`,
+        )
+        .get(conversationId, IM_ALERT_EVENT, prefix.length, prefix) !== undefined
+    );
   }
 
   // --- 出站：自动转发（54 §6，D110） -------------------------------------------------

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { IM_FORWARD_TRUNCATED_SUFFIX, type ImAccount } from '@kepcup/shared';
+import { IM_ALERT_EVENT, IM_FORWARD_TRUNCATED_SUFFIX, type ImAccount } from '@kepcup/shared';
 
 import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
@@ -316,6 +316,29 @@ describe('ILinkClient long-poll timeouts', () => {
 const enqueued: Array<{ type: string; payload: Record<string, unknown>; dedupeKey?: string; botId?: string }> = [];
 const notices: Array<{ key: string; text: string }> = [];
 const systemEvents: string[] = [];
+const alerts: Array<{ botId: string; conversationId: string; text: string }> = [];
+// messages.append / deliverAlert 都往真实 messages 表落行：runAlertJob 的幂等
+// 查询（#cardExists / #wakeExists 走 json_extract SQL）要在真实 schema 上编译
+// 执行——回归：wakeExists 曾引用不存在的 event 列，作业在线上 prepare 即崩。
+let fakeSeq = 1;
+const insertFakeMessage = (conversationId: string, content: Record<string, unknown>): string => {
+  const id = `msg_${fakeSeq++}`;
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.prepare(
+      "insert into messages (id, conversation_id, seq, sender_type, kind, content_json, created_at) values (?, ?, ?, 'system', ?, ?, 1000)",
+    ).run(
+      id,
+      conversationId,
+      fakeSeq - 1,
+      content.event === undefined ? 'card' : 'system_event',
+      JSON.stringify(content),
+    );
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+  return id;
+};
 const forwardToggles: Array<{ botId: string; enabled: boolean }> = [];
 const forwardState = { enabled: options.boundBots === undefined ? false : false };
 void forwardState;
@@ -348,9 +371,14 @@ const service = new ImService({
     }),
   } as never,
   messages: {
-    append: (input: { kind: string; event?: string }) => {
+    append: (input: { conversationId: string; kind: string; event?: string; text?: string; cardIm?: Record<string, unknown> }) => {
+      const id = insertFakeMessage(input.conversationId, {
+        ...(input.event !== undefined ? { event: input.event } : {}),
+        ...(input.text !== undefined ? { text: input.text } : {}),
+        ...(input.cardIm ?? {}),
+      });
       systemEvents.push(input.event ?? input.kind);
-      return { id: 'msg_sys', content: {} } as never;
+      return { id, content: {} } as never;
     },
   } as never,
   jobs: {
@@ -358,7 +386,11 @@ const service = new ImService({
       enqueued.push(input),
   } as never,
   taint: { mark: () => undefined },
-  deliverAlert: () => undefined,
+  deliverAlert: (input: { botId: string; conversationId: string; text: string }) => {
+    alerts.push(input);
+    // 模拟 orchestrator.deliverEventToBot：唤醒系统事件落 messages 表（$.event/$.text）。
+    insertFakeMessage(input.conversationId, { event: IM_ALERT_EVENT, text: input.text });
+  },
   publishAccount: () => undefined,
   publishMessage: () => undefined,
   notice: (notice: { key: string; text: string }) => notices.push(notice),
@@ -379,7 +411,7 @@ const service = new ImService({
       sendText: async () => ({ ok: true, code: 0, errmsg: '' }),
     }) as never,
 });
-return { store, service, enqueued, notices, systemEvents, forwardToggles, db };
+return { store, service, enqueued, notices, systemEvents, forwardToggles, alerts, db };
   }
 
 describe('ImService ingest', () => {
@@ -434,6 +466,36 @@ describe('ImService ingest', () => {
     rig.service.ingest('ima_test', [basicMessage('m1')]);
     expect(rig.enqueued.length).toBe(0);
     expect(rig.store.bindings('ima_test')[0]!.forwardEnabled).toBe(false);
+  });
+});
+
+describe('ImService runAlertJob', () => {
+  it('贴卡并唤醒一次；重跑幂等（幂等 SQL 在真实 messages 表 schema 上执行）', () => {
+    const rig = serviceRig({ boundBots: ['bot_a'] });
+    const job = {
+      id: 'job_im1',
+      type: 'im_alert',
+      bot_id: 'bot_a',
+      conversation_id: 'conv_bot_a',
+      payload_json: JSON.stringify({
+        accountId: 'ima_test',
+        botId: 'bot_a',
+        msgId: 'm1',
+        key: 'im:ima_test:m1:bot_a',
+        channel: '微信',
+        summary: '今天天气怎么样',
+      }),
+    } as never;
+    rig.service.runAlertJob(job);
+    // 贴卡 + 唤醒各一次（回归：wakeExists 引用不存在的列时 prepare 即抛 SQLITE_ERROR）。
+    expect(rig.systemEvents).toContain('card');
+    expect(rig.alerts).toEqual([
+      { botId: 'bot_a', conversationId: 'conv_bot_a', text: expect.stringContaining('im_alert ima_test m1') },
+    ]);
+    // 重跑：卡与唤醒都已存在 → 不再贴卡、不再唤醒。
+    rig.service.runAlertJob(job);
+    expect(rig.systemEvents.filter((event) => event === 'card').length).toBe(1);
+    expect(rig.alerts.length).toBe(1);
   });
 });
 
