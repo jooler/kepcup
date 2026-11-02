@@ -15,7 +15,6 @@ class WorkdirsState {
    * 终态为 null（目录已不存在 / 已被移除）也记一笔，避免 effect 反复请求。
    */
   #resolved = $state<Record<string, Workdir | null>>({});
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   #resolving = new Set<string>();
   /** runId -> lease waiting info (holder names the blocking bot). */
   leaseWaiting = $state<

@@ -8,7 +8,6 @@ import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations, migrationTargetVersion } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
-import { mainVersionsAfter } from '../support/migration-versions.js';
 import { ImStore, type ImAccountRecord } from '../../src/im/store.js';
 import { ImSessionHub } from '../../src/im/session.js';
 import { renderForwardText, ImForwarder } from '../../src/im/forwarder.js';

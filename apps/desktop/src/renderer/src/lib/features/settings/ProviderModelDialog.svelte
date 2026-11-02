@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ModelCapability, ProviderInstance, ProviderModel } from '@kepcup/shared';
+  import type { ModelCapability, ProviderModel } from '@kepcup/shared';
   import { VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';

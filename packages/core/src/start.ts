@@ -2039,9 +2039,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // wake turns through its mailboxes); the tool facade delegates lazily.
     let watchService: WatchService | null = null;
     let mailService: MailService | null = null;
-    // D107（54 号文档）：IM 通道同样晚绑定（入站唤醒经 orchestrator；出站转发
-    // 订阅 message.created，core 内生效——窗口关闭 / headless 也要转发）。
-    let imService: ImService | null = null;
     // D88: the handover host is constructed after mail / schedules (its adapters use
     // them); the butler's tools reach it through this lazy facade.
     let handoverHost: HandoverHost | null = null;
@@ -2801,7 +2798,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     im.start();
-    imService = im;
     const imForwarder = new ImForwarder({ im, conversations, logger });
     events.on('message.created', (payload) => {
       imForwarder.handleMessage(payload.message);
