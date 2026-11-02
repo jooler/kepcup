@@ -300,6 +300,19 @@ describe('ILinkClient long-poll timeouts', () => {
     const batch = await client.getUpdates('token', 'c0');
     expect(batch).toBeNull();
   }, 10_000);
+
+  it('sendText 每个请求都带 X-WECHAT-UIN（缺它 sendmessage 被 ret -2 invalid arguments 打回）', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const fetchImpl = ((_url: unknown, init?: { headers?: Record<string, string> }) => {
+      seen.push(init?.headers ?? {});
+      return Promise.resolve(new Response(JSON.stringify({ ret: 0 }), { status: 200 }));
+    }) as unknown as typeof fetch;
+    const client = new ILinkClient({ apiBase: 'https://x.example.com', logger, fetchImpl });
+    const result = await client.sendText({ token: 't', toUserId: 'u', text: 'hi' });
+    expect(result.ok).toBe(true);
+    expect(seen.length).toBe(1);
+    expect(seen[0]!['X-WECHAT-UIN']).toBeTruthy();
+  });
 });
 
 // --- service ingest ------------------------------------------------------------
