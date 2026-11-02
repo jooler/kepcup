@@ -158,6 +158,8 @@ import { BoardStore } from './board/board-store.js';
 import { buildWorkbenchSection, describeTime } from './workbench/context.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
+import { ImService } from './im/service.js';
+import { ImForwarder } from './im/forwarder.js';
 import { HandoverHost } from './dispatch/handover.js';
 import { SettingsCatalogHost } from './settings/host.js';
 import { applyBotProfileUpdate, createPermissionEffects } from './settings/bot-profile-update.js';
@@ -202,6 +204,7 @@ import { effectivePluginIds } from './plugins/effective.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
 import { PluginInstanceService, PluginInstanceStore, pluginInstanceSecretName } from './plugins/instances.js';
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
+import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -630,6 +633,8 @@ export interface CoreServices {
   watches: WatchService | null;
   /** D84 邮件通道 (null while locked / errored). */
   mail: MailService | null;
+  /** D107 IM 通道（54 号文档）(null while locked / errored). */
+  im: ImService | null;
   /** D88 Bot 资产移交 (null while locked / errored). */
   handover: HandoverHost | null;
   /**
@@ -925,6 +930,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     memos: null,
     watches: null,
     mail: null,
+    im: null,
     handover: null,
     settingsCatalog: null,
     scheduler: null,
@@ -986,6 +992,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       try {
         services.mail?.stop();
+      } catch {
+        // Session already gone.
+      }
+      try {
+        services.im?.stop();
       } catch {
         // Session already gone.
       }
@@ -2028,6 +2039,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // wake turns through its mailboxes); the tool facade delegates lazily.
     let watchService: WatchService | null = null;
     let mailService: MailService | null = null;
+    // D107（54 号文档）：IM 通道同样晚绑定（入站唤醒经 orchestrator；出站转发
+    // 订阅 message.created，core 内生效——窗口关闭 / headless 也要转发）。
+    let imService: ImService | null = null;
     // D88: the handover host is constructed after mail / schedules (its adapters use
     // them); the butler's tools reach it through this lazy facade.
     let handoverHost: HandoverHost | null = null;
@@ -2750,6 +2764,51 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 持有 mail 引用）；DEV-065 的启动对账：实例行存在而账号缺失时清掉孤儿实例行。
     pluginInstances.registerMaterializer('mail', createMailMaterializer(mail));
     reconcileMailInstanceRows(pluginInstances, mail, logger);
+    // D107（54 号文档）：IM 通道（实例 = IM 账号；首发 ilink = 个人微信）。
+    // 转发器订阅 message.created：只做「入队 im_forward」，core 内订阅，无窗口依赖。
+    const im = new ImService({
+      db: mainDb,
+      clock,
+      logger,
+      secrets,
+      bots,
+      conversations,
+      messages,
+      jobs,
+      taint,
+      deliverAlert: (input) => orchestrator.deliverImAlertToBot(input),
+      publishAccount: (accountId) => events.emit('im.account_updated', { accountId }),
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+      notice: publishAppNotice,
+      recordEgress: (detail) => audit.recordSystem('im_forward', detail),
+      instanceOwner: {
+        ownerOf: (instanceId) => {
+          const owner = pluginInstances.ownerOf(instanceId);
+          return owner === null || owner.kind !== 'im' ? null : { pluginId: owner.pluginId };
+        },
+        pluginName: (pluginId) => plugins.displayNameOf(pluginId),
+        botTokenSecretName: (pluginId, instanceId) =>
+          pluginInstanceSecretName(pluginId, instanceId, 'bot_token'),
+      },
+      instances: {
+        create: (pluginId, values, kind) => pluginInstances.create(pluginId, values, kind),
+        update: (id, values) => pluginInstances.update(id, values),
+      },
+      pluginEnabledForBot: (botId, pluginId) => {
+        const bot = bots.get(botId);
+        return bot?.profile.runtime.plugin_ids?.includes(pluginId) ?? false;
+      },
+    });
+    im.start();
+    imService = im;
+    const imForwarder = new ImForwarder({ im, conversations, logger });
+    events.on('message.created', (payload) => {
+      imForwarder.handleMessage(payload.message);
+    });
+    // IM materializer 落地（实例 = IM 账号）+ 启动对账（同 mail 的 DEV-065 纪律）。
+    pluginInstances.registerMaterializer('im', createImMaterializer(im));
+    reconcileImInstanceRows(pluginInstances, im, logger);
     // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
     const handoverBotWriter: HandoverBotWriter = {
       get: (botId) => bots.get(botId),
@@ -3032,6 +3091,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mail: {
         prepareBotDeletion: (botId) => mail.prepareBotDeletion(botId),
       },
+      // D107：删除 Bot 时清它的 IM 绑定（账号保留，同 mail）。
+      im: {
+        prepareBotDeletion: (botId) => im.prepareBotDeletion(botId),
+      },
       // D81: a deleted bot's widgets (conversation deletion cascades through the FK).
       widgets: {
         prepareBotDeletion: (botId) => widgetService.deleteForBot(botId),
@@ -3079,6 +3142,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules,
       watches,
       mail,
+      im,
       handover,
       gateway,
       attachments,
@@ -3408,6 +3472,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.memos = memos;
     services.watches = watches;
     services.mail = mail;
+    services.im = im;
     services.handover = handover;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
@@ -3948,6 +4013,7 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         // (non-blocking: the pass runs in the background).
         services.watches?.wake();
         services.mail?.wake();
+        services.im?.wake();
         return { ok: true as const };
       },
     },

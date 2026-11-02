@@ -243,15 +243,15 @@ export class PluginInstanceStore {
   }
 
   /** Live instance count per instantiable kind (drives `PluginSummary.instanceCounts`). */
-  countsOf(pluginId: string): { mail: number; mcp: number } {
+  countsOf(pluginId: string): { mail: number; mcp: number; im: number } {
     const rows = this.#db
       .prepare(
-        "select kind, count(*) as n from plugin_instances where plugin_id = ? and kind in ('mail','mcp') group by kind",
+        "select kind, count(*) as n from plugin_instances where plugin_id = ? and kind in ('mail','mcp','im') group by kind",
       )
       .all(pluginId) as Array<{ kind: string; n: number }>;
-    const counts = { mail: 0, mcp: 0 };
+    const counts = { mail: 0, mcp: 0, im: 0 };
     for (const row of rows) {
-      if (row.kind === 'mail' || row.kind === 'mcp') counts[row.kind] = row.n;
+      if (row.kind === 'mail' || row.kind === 'mcp' || row.kind === 'im') counts[row.kind] = row.n;
     }
     return counts;
   }

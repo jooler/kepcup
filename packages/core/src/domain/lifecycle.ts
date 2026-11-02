@@ -160,6 +160,12 @@ export interface LifecycleDeps {
         prepareBotDeletion(botId: string): number;
       }
     | undefined;
+  /** D107（54 号文档）：删除 Bot 时去掉它的 IM 绑定，账号保留。 */
+  im?:
+    | {
+        prepareBotDeletion(botId: string): number;
+      }
+    | undefined;
   /**
    * D81 bot-widget cascades: conversation deletion cascades through the foreign
    * key (`widgets.conversation_id`); a deleted bot's rows go here — the bots
@@ -476,6 +482,14 @@ export class LifecycleService {
       this.deps.logger.warn(
         { botId, error: error instanceof Error ? error.message : String(error) },
         'mail bot cleanup failed',
+      );
+    }
+    try {
+      this.deps.im?.prepareBotDeletion(botId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { botId, error: error instanceof Error ? error.message : String(error) },
+        'im bot cleanup failed',
       );
     }
     // D81: the bot's widgets (versions / docs cascade with the widgets rows;

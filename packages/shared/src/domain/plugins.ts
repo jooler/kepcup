@@ -7,6 +7,7 @@ import {
   pluginInstanceKindSchema,
   pluginVersionSchema,
 } from './plugin-manifest.js';
+import { imTransportSchema } from './im.js';
 
 export { pluginFieldSchema, pluginFieldValueSchema } from './plugin-manifest.js';
 
@@ -38,6 +39,7 @@ export const pluginItemKindSchema = z.enum([
   'connector',
   'mcp',
   'mail',
+  'im',
   'disabled_connection',
 ]);
 export type PluginItemKind = z.infer<typeof pluginItemKindSchema>;
@@ -89,6 +91,7 @@ export const pluginSummarySchema = z.object({
     connectors: z.number().int(),
     mcp: z.number().int(),
     mail: z.number().int(),
+    im: z.number().int(),
   }),
   items: z.array(pluginItemRefSchema),
   /** P0a is always null; P1 fills it from the marketplace index. */
@@ -107,7 +110,7 @@ export const pluginSummarySchema = z.object({
    * `mail_accounts` 的活跃账号统计（软删 / 无主不计）；mcp 仍按实例行数
    * （P4-M2 custom-mcp 落地时对齐「活跃」口径）。
    */
-  instanceCounts: z.object({ mail: z.number().int(), mcp: z.number().int() }),
+  instanceCounts: z.object({ mail: z.number().int(), mcp: z.number().int(), im: z.number().int() }),
   /** D105 P1: instantiable capability kinds the manifest declares. */
   providesInstances: z.array(pluginInstanceKindSchema),
 });
@@ -168,6 +171,17 @@ export const pluginConsentMailSchema = z.object({
 });
 export type PluginConsentMail = z.infer<typeof pluginConsentMailSchema>;
 
+/** D107：im 贡献的同意视图——transport、端点主机与收发能力面。 */
+export const pluginConsentImSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  transport: imTransportSchema,
+  apiHost: z.string(),
+  inbound: z.boolean(),
+  outbound: z.boolean(),
+});
+export type PluginConsentIm = z.infer<typeof pluginConsentImSchema>;
+
 export const pluginConflictSchema = z.object({
   kind: z.enum(['plugin', 'skill', 'connector', 'mcpb', 'mail']),
   /** The conflicting item (skill name / slug / name@version / template id / plugin id). */
@@ -192,6 +206,7 @@ export const pluginInspectOutputSchema = z.object({
   connectors: z.array(pluginConsentConnectorSchema),
   mcp: z.array(pluginConsentMcpSchema),
   mail: z.array(pluginConsentMailSchema),
+  im: z.array(pluginConsentImSchema),
   conflicts: z.array(pluginConflictSchema),
   /** Same id already installed (a local source goes through the update flow). */
   existing: z.object({ version: z.string() }).nullable(),
