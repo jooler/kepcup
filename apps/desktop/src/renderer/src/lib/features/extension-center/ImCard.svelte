@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { MessageCircle } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import { Button } from '$lib/components/ui/button';
+  import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
+  import { getChatSession } from '$lib/features/chats/chat-session-context';
 
   /**
-   * 私聊里的 IM 入站卡（D109，54 号文档 §8）：微信消息到了。摘要默认收起——
-   * 微信文本是外部内容（联系人名、表情、引用都可能藏指令），点开只展开卡片上
-   * 的短摘要，不是全文；连接状态走 `app.notice`，不进对话。
+   * 私聊里的 IM 入站消息（D109，54 号文档 §8）：微信消息到了。按正常用户消息
+   * 的形态渲染——右对齐、跟随对话 Bot 强调色的药丸气泡（同 MessageBody 用户
+   * 气泡），容器下方 caption「来自微信」标明来源。正文是宿主截取的入站摘要
+   * （imSnippet，500 字符内，Svelte 自动转义不渲染格式）。
    */
   let {
     accountId,
@@ -18,31 +19,30 @@
     channel?: string;
   } = $props();
 
-  let open = $state(false);
+  const session = getChatSession();
+  const userBubbleAccent = $derived(
+    session.view?.conversation.bot
+      ? resolveAccentColor(
+          session.view.conversation.bot.accentColor,
+          session.view.conversation.bot.avatar,
+        )
+      : null,
+  );
 </script>
 
-<div
-  class="w-full max-w-[85%] rounded-lg border p-3 text-sm"
-  data-testid={`im-card-arrived-${accountId}`}
->
-  <div class="flex items-start gap-2">
-    <MessageCircle class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-    <div class="min-w-0 flex-1">
-      <p class="font-medium">{t('im.card.arrived')}</p>
-      <p class="truncate text-xs text-muted-foreground">{channel || t('im.card.channel')}</p>
-      {#if summary && open}
-        <p class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{summary}</p>
-      {/if}
-      {#if summary.length > 0}
-        <Button
-          variant="ghost"
-          size="sm"
-          class="mt-1 h-auto px-0 py-0 text-xs"
-          onclick={() => (open = !open)}
-        >
-          {open ? t('mail.card.collapse') : t('mail.card.expand')}
-        </Button>
-      {/if}
+<div class="flex w-full flex-col items-end" data-testid={`im-card-arrived-${accountId}`}>
+  {#if summary.length > 0}
+    <div
+      class="my-2 max-w-[85%] rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+        {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
+      style:background={userBubbleAccent?.hex}
+      style:color={userBubbleAccent ? avatarOnFillForeground(userBubbleAccent) : undefined}
+      data-testid="im-card-bubble"
+    >
+      {summary}
     </div>
-  </div>
+  {/if}
+  <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="im-card-caption">
+    {channel.length > 0 ? t('im.card.from', { channel }) : t('im.card.fromIm')}
+  </span>
 </div>
