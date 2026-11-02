@@ -13,8 +13,10 @@ import {
   type AgentCatalogEntry,
   type AgentOptions,
   type CapabilityModelKey,
+  type MailAccount,
   type McpServer,
   type McpToolPolicy,
+  type PluginSummary,
   type ProviderInfo,
   type Settings,
   type SettingFieldSpec,
@@ -240,6 +242,20 @@ export interface AdapterDeps {
   /** 一个 Bot 未停止的网页监看条数（只读）。不把地址放进快照。缺省时回 unknown。 */
   watches?: {
     countForBot(botId: string): number;
+  };
+  /**
+   * 已安装插件概要（只读）：邮件插件条目用它列候选、判断插件是否启用。
+   * 缺省时 `mail.plugin` 回 unknown（不误判成「没装邮件插件」）。
+   */
+  plugins?: {
+    list(): readonly PluginSummary[];
+  };
+  /**
+   * 邮箱账号概要（只读）：已配置邮箱的绑定 / 暂停状态。
+   * 缺省时 `mail.mailbox` 回 unknown。
+   */
+  mail?: {
+    list(): readonly MailAccount[];
   };
   /**
    * D96 远程遥控设备概要（只读）：只数个数与在线状态，不把 deviceId /

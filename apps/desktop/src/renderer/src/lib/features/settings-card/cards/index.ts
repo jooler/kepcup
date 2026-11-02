@@ -36,6 +36,18 @@ export const SETTING_CARD_CONTRIBUTIONS: readonly SettingCardContribution[] = [
     componentName: 'MailAccountAddForm',
     embeddable: (_item, ctx) => ctx.botId !== null,
   },
+  {
+    key: 'mail-plugin',
+    componentName: 'MailPluginCard',
+    // 要知道把插件交给哪个 Bot。
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
+  {
+    key: 'mail-mailbox',
+    componentName: 'MailMailboxCard',
+    // 要知道缺省交给哪个 Bot（卡片仍可改选其他 Bot）。
+    embeddable: (_item, ctx) => ctx.botId !== null,
+  },
   { key: 'tool-policy', componentName: 'AppConnectionDetail', embeddable: always },
   { key: 'mcp-servers', componentName: 'McpSection', embeddable: always },
 

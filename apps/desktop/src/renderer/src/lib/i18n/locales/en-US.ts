@@ -3040,6 +3040,18 @@ export const enUS = {
   'mail.ownerOf': 'From plugin: {plugin}',
   'mail.instanceFormNote':
     'A mailbox of "{plugin}". Fields are declared by the plugin; the connection test runs when you save.',
+  'mailCard.save': 'Save',
+  'mailCard.plugin.saved': 'Mail plugin settings saved',
+  'mailCard.plugin.enabledGlobally': 'Enabled plugin "{plugin}"',
+  'mailCard.plugin.globalDisabled':
+    'Plugin "{plugin}" is disabled; enable it before mail can be sent or received.',
+  'mailCard.plugin.enableGlobal': 'Enable plugin',
+  'mailCard.plugin.forBot': 'Give the mailbox to this Bot',
+  'mailCard.plugin.configHeading': 'Plugin settings',
+  'mailCard.mailbox.saved': 'Mailbox assignments saved',
+  'mailCard.mailbox.empty':
+    'No configured mailbox yet. Add one with the "Email account" card first.',
+  'mailCard.mailbox.pick': 'Pick a mailbox',
   'approvals.mailSendTitle': 'Send email',
   'sidebar.workbench': 'Workbench',
   'workbench.title': 'Workbench',
@@ -3330,6 +3342,17 @@ export const enUS = {
   'settingsItem.mail.account.field.provider': 'Email provider',
   'settingsItem.mail.account.field.address': 'Email account',
   'settingsItem.mail.account.field.password': 'App password / password',
+  'settingsItem.mail.plugin.title': 'Mail plugin',
+  'settingsItem.mail.plugin.summary':
+    'Let the user pick a mail plugin, change its settings, and give it to this Bot',
+  'settingsItem.mail.plugin.field.plugin': 'Mail plugin',
+  'settingsItem.mail.plugin.field.enabled': 'Give to this Bot',
+  'settingsItem.mail.mailbox.title': 'Configured mailboxes',
+  'settingsItem.mail.mailbox.summary':
+    'Let the user pick a configured mailbox and choose which Bots receive it, or pause delivery',
+  'settingsItem.mail.mailbox.field.account': 'Mailbox',
+  'settingsItem.mail.mailbox.field.bots': 'Assign to Bots',
+  'settingsItem.mail.mailbox.field.paused': 'Pause delivery',
   'settingsItem.agents.external.title': 'External agents',
   'settingsItem.agents.external.summary':
     'Enable and sign in to external agents like Claude Code and Codex so they can run Bot tasks',
