@@ -126,44 +126,686 @@ export function getVendorDescriptor(id: string): VendorDescriptor | undefined {
   return isVendorId(id) ? VENDOR_DESCRIPTORS[id] : undefined;
 }
 
-/** 已适配某能力的厂商（能力 section 的厂商下拉）。 */
+/** 已适配某能力的厂商（能力槽位的候选过滤）。 */
 export function vendorsForCapability(capability: ModelCapability): VendorDescriptor[] {
   return Object.values(VENDOR_DESCRIPTORS).filter((vendor) =>
     vendor.capabilities.includes(capability),
   );
 }
 
-/**
- * 一个已配置国内厂商的设置条目（settings.vendorProviders）。每家厂商
- * 至多一条；厂商条目只登记**对话**模型（进 pi 注册表），其余能力在
- * settings.capabilityModels 按能力各自配置厂商与模型。
- */
-export const vendorModelSchema = z.object({
-  /** 厂商侧模型 id。 */
-  id: z.string().min(1).max(200),
-  /** 展示名；缺省用 id。 */
-  name: z.string().min(1).max(200).optional(),
-  /** 上下文窗口。 */
-  contextWindow: z.number().int().positive().max(10_000_000).optional(),
-  /** 输入模态（含 image 的模型可接收浏览器截图）。 */
-  input: z
-    .array(z.enum(['text', 'image']))
-    .min(1)
-    .optional(),
-});
-export type VendorModel = z.infer<typeof vendorModelSchema>;
+// ---------------------------------------------------------------------------
+// 「添加供应商」模板目录（v0.5.6）：完整搬运 ZCode 内置供应商目录的 34 张
+// 模板卡（同供应商不同端点是独立卡片，参数为 ZCode 核验数据），再合并
+// pi-ai 内置供应商目录（`builtinCatalog: true` 的模板创建「目录实例」——
+// 模型清单直接用 pi 内置目录，注册表不覆盖 pi 的同名 provider）。去重后
+// 共 46 张卡：ZCode 34 + 我们的 dashscope / volcengine 媒体厂商卡 + pi 12
+// 家（ZCode 未覆盖的）。
+//
+// 对话注册表的线协议（`api`）：openai-completions / anthropic-messages /
+// openai-responses，pi 对三种都有实现。媒体能力仍只覆盖
+// dashscope / volcengine（vendor 映射到原生适配器的实例）。
+// ---------------------------------------------------------------------------
 
-export const vendorProviderSchema = z.object({
-  id: vendorIdSchema,
-  /** 覆盖默认 OpenAI 兼容根（如切换地域）；空/缺省用厂商默认。 */
-  baseUrl: z.string().url().optional(),
-  /** 对话模型（可空：条目仅承载 baseUrl 覆盖与 Key 时，模型全在能力配置里）。 */
-  models: z.array(vendorModelSchema).default([]),
-});
-export type VendorProvider = z.infer<typeof vendorProviderSchema>;
+/** 供应商实例 / 模板可用的对话线协议（pi-ai 实现）。 */
+export const providerApiSchema = z.enum([
+  'openai-completions',
+  'anthropic-messages',
+  'openai-responses',
+]);
+export type ProviderApi = z.infer<typeof providerApiSchema>;
 
-/** 厂商条目生效的 OpenAI 兼容根（覆盖值优先）。 */
-export function vendorProviderBaseUrl(entry: VendorProvider): string {
-  const override = entry.baseUrl?.trim();
-  return override && override.length > 0 ? override : VENDOR_DESCRIPTORS[entry.id].baseUrl;
+export interface ProviderTemplate {
+  /** 模板 id，也是首个实例的默认 id。 */
+  id: string;
+  /** 展示名（zh-CN；en-US 用 nameEn）。 */
+  name: string;
+  nameEn?: string;
+  /** 对话线协议。 */
+  api: ProviderApi;
+  /** OpenAI 兼容 / 厂商协议根；builtinCatalog 实例不需要（pi 目录自带）。 */
+  baseUrl?: string;
+  /** 预置对话模型 id（可自由输入其他 id）。 */
+  presets: readonly string[];
+  /** 获取 API Key 的控制台地址（详情区提示用）。 */
+  consoleUrl?: string;
+  /** 供应商图标资产文件名（assets/provider-icons/ 下）。 */
+  logo?: string;
+  /** 媒体能力厂商（仅 dashscope / volcengine；其余实例走通用兼容适配器）。 */
+  vendor?: VendorId;
+  /** pi 内置目录实例：模型清单来自 pi 的同名 provider，注册表不覆盖。 */
+  builtinCatalog?: boolean;
+}
+
+export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
+  // --- 我们自己的媒体厂商卡（OpenAI 兼容根 + 原生媒体适配器） ----------------
+  {
+    id: 'dashscope',
+    name: '阿里云百炼',
+    nameEn: 'Alibaba Cloud Model Studio',
+    api: 'openai-completions',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    presets: ['qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.7-flash'],
+    consoleUrl: 'https://bailian.console.aliyun.com/',
+    logo: 'model-provider-alibaba-cloud.png',
+    vendor: 'dashscope',
+  },
+  {
+    id: 'volcengine',
+    name: '火山方舟',
+    nameEn: 'Volcano Ark',
+    api: 'openai-completions',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    presets: [
+      'doubao-seed-evolving',
+      'doubao-seed-2-1-pro-260915',
+      'doubao-seed-2-1-lite-260915',
+      'doubao-seed-2-1-turbo-260628',
+    ],
+    consoleUrl: 'https://ark.volcengine.com/region:cn-beijing/apikey',
+    logo: 'model-provider-volcengine.png',
+    vendor: 'volcengine',
+  },
+  // --- ZCode 内置目录（完整搬运；同供应商不同端点为独立卡片） ----------------
+  {
+    id: 'zai-api',
+    name: 'Z.ai Coding Plan',
+    nameEn: 'Z.ai Coding Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.z.ai/api/anthropic',
+    presets: ['GLM-5.3', 'GLM-5.3-Flash'],
+    consoleUrl: 'https://z.ai/manage-apikey/apikey-list',
+    logo: 'model-provider-zai-app.png',
+  },
+  {
+    id: 'zai-standard-api',
+    name: 'Z.ai API',
+    nameEn: 'Z.ai API',
+    api: 'openai-completions',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    presets: [
+      'GLM-5.3',
+      'GLM-5.3-Flash',
+      'glm-5.3-flashx',
+      'GLM-5V-Turbo',
+      'GLM-5.1',
+      'GLM-5.1-Highspeed',
+      'GLM-5',
+      'GLM-5-Turbo',
+      'GLM-4.7',
+      'GLM-4.7-FlashX',
+    ],
+    consoleUrl: 'https://z.ai/manage-apikey/apikey-list',
+    logo: 'model-provider-zai.png',
+  },
+  {
+    id: 'bigmodel-api',
+    name: 'BigModel Coding Plan',
+    nameEn: 'BigModel Coding Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+    presets: ['GLM-5.3', 'GLM-5.3-Flash'],
+    consoleUrl: 'https://bigmodel.cn/coding-plan/personal/overview',
+    logo: 'logo-bigmodel.svg',
+  },
+  {
+    id: 'bigmodel-standard-api',
+    name: 'BigModel API',
+    nameEn: 'BigModel API',
+    api: 'openai-completions',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    presets: [
+      'GLM-5.3',
+      'GLM-5.3-Flash',
+      'GLM-5V-Turbo',
+      'GLM-5.1',
+      'GLM-5.1-Highspeed',
+      'GLM-5',
+      'GLM-5-Turbo',
+      'GLM-4.7',
+      'GLM-4.7-FlashX',
+      'GLM-4.7-Flash',
+    ],
+    consoleUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+    logo: 'logo-bigmodel.svg',
+  },
+  {
+    id: 'moonshot-kimi',
+    name: 'Kimi',
+    nameEn: 'Kimi',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.moonshot.cn/anthropic',
+    presets: [
+      'kimi-k3.1-pro',
+      'kimi-k3.1-pro-highspeed',
+      'kimi-k3',
+      'kimi-k2.7-code',
+      'kimi-k2.6',
+      'kimi-k2.7-code-highspeed',
+      'k3',
+      'k3-256k',
+    ],
+    consoleUrl: 'https://platform.kimi.com/console/api-keys',
+    logo: 'model-provider-moonshot-kimi.png',
+  },
+  {
+    id: 'kimi-code-cn',
+    name: 'Kimi Code（国内）',
+    nameEn: 'Kimi Code (China)',
+    api: 'openai-completions',
+    baseUrl: 'https://api.kimi.com/coding/v1',
+    presets: [
+      'k3.1-pro',
+      'k3.1-pro-highspeed',
+      'k3',
+      'k3-256k',
+      'kimi-for-coding',
+      'kimi-for-coding-highspeed',
+    ],
+    consoleUrl: 'https://www.kimi.com/code/console',
+    logo: 'model-provider-moonshot-kimi.png',
+  },
+  {
+    id: 'kimi-code-intl',
+    name: 'Kimi Code（国际）',
+    nameEn: 'Kimi Code (International)',
+    api: 'openai-completions',
+    baseUrl: 'https://api.kimi.ai/coding/v1',
+    presets: [
+      'k3.1-pro',
+      'k3.1-pro-highspeed',
+      'k3',
+      'k3-256k',
+      'kimi-for-coding',
+      'kimi-for-coding-highspeed',
+    ],
+    consoleUrl: 'https://www.kimi.com/code/console',
+    logo: 'model-provider-moonshot-kimi.png',
+  },
+  {
+    id: 'minimax',
+    name: 'MiniMax',
+    nameEn: 'MiniMax',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.minimaxi.com/anthropic',
+    presets: [
+      'MiniMax-M3.1-Flash',
+      'MiniMax-M3',
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+    ],
+    consoleUrl: 'https://platform.minimaxi.com/console/access?tab=api-keys',
+    logo: 'model-provider-minimax.png',
+  },
+  {
+    id: 'minimax-m-plan-cn',
+    name: 'MiniMax M Plan（中国）',
+    nameEn: 'MiniMax M Plan (China)',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.minimax.cn/anthropic',
+    presets: ['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'],
+    consoleUrl: 'https://platform.minimax.cn/console/plan',
+    logo: 'model-provider-minimax.png',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    nameEn: 'DeepSeek',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.deepseek.com/anthropic',
+    presets: ['deepseek-flash', 'deepseek-v4-pro'],
+    consoleUrl: 'https://platform.deepseek.com/api_keys',
+    logo: 'model-provider-deepseek.png',
+  },
+  {
+    id: 'qwen-alibaba-model-studio-intl',
+    name: '阿里云百炼（国际）',
+    nameEn: 'Alibaba Cloud (Global)',
+    api: 'openai-completions',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    presets: [
+      'qwen3.8-max',
+      'qwen3.8-flash',
+      'qwen3.8-omni-flash',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'qwen3.7-flash',
+      'qwen3.6-plus',
+      'qwen3.6-flash',
+      'qwen3.5-plus',
+      'qwen3.5-flash',
+    ],
+    consoleUrl: 'https://modelstudio.console.aliyun.com/ap-southeast-1?tab=dashboard',
+    logo: 'model-provider-alibaba-cloud.png',
+  },
+  {
+    id: 'qwen-coding-plan-cn',
+    name: '阿里云百炼 Coding Plan（中国）',
+    nameEn: 'Alibaba Coding Plan (China)',
+    api: 'openai-completions',
+    baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+    presets: ['qwen3.7-plus'],
+    consoleUrl: 'https://bailian.console.aliyun.com/cn-beijing/?tab=coding-plan',
+    logo: 'model-provider-alibaba-cloud.png',
+  },
+  {
+    id: 'qwen-token-plan-team-cn',
+    name: '阿里云百炼 Token Plan 团队版（中国）',
+    nameEn: 'Alibaba Token Plan Team (China)',
+    api: 'openai-completions',
+    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    presets: ['qwen3.8-max', 'qwen3.8-flash'],
+    consoleUrl: 'https://bailian.console.aliyun.com/',
+    logo: 'model-provider-alibaba-cloud.png',
+  },
+  {
+    id: 'xiaomi-mimo',
+    name: 'Xiaomi MiMo API',
+    nameEn: 'Xiaomi MiMo API',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    presets: ['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.5-pro', 'mimo-v2.5'],
+    consoleUrl: 'https://platform.xiaomimimo.com/',
+    logo: 'model-provider-xiaomi-mimo.png',
+  },
+  {
+    id: 'xiaomi-mimo-token-plan',
+    name: 'Xiaomi MiMo Token Plan',
+    nameEn: 'Xiaomi MiMo Token Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+    presets: ['mimo-v2.6-pro', 'mimo-v2.6-flash'],
+    consoleUrl: 'https://platform.xiaomimimo.com/',
+    logo: 'model-provider-xiaomi-mimo.png',
+  },
+  {
+    id: 'tencent-tokenhub-cn',
+    name: '腾讯 TokenHub 广州 API（中国站）',
+    nameEn: 'Tencent TokenHub Guangzhou API (China account)',
+    api: 'openai-completions',
+    baseUrl: 'https://tokenhub.tencentmaas.com/v1',
+    presets: ['hy3', 'hy4-preview'],
+    consoleUrl: 'https://console.cloud.tencent.com/tokenhub',
+    logo: 'model-provider-tencent-cloud.png',
+  },
+  {
+    id: 'tencent-tokenhub-intl',
+    name: '腾讯 TokenHub 新加坡 API（中国站）',
+    nameEn: 'Tencent TokenHub Singapore API (China account)',
+    api: 'openai-completions',
+    baseUrl: 'https://tokenhub-intl.tencentmaas.com/v1',
+    presets: ['hy3', 'hy4-preview'],
+    consoleUrl: 'https://console.cloud.tencent.com/tokenhub',
+    logo: 'model-provider-tencent-cloud.png',
+  },
+  {
+    id: 'volcengine-coding-plan',
+    name: '火山方舟 Coding Plan',
+    nameEn: 'Volcano Ark Coding Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
+    presets: ['doubao-seed-2.1-pro', 'doubao-seed-2.1-lite'],
+    consoleUrl: 'https://ark.volcengine.com/region:cn-beijing',
+    logo: 'model-provider-volcengine.png',
+  },
+  {
+    id: 'volcengine-agent-plan',
+    name: '火山方舟 Agent Plan',
+    nameEn: 'Volcano Ark Agent Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/plan',
+    presets: ['doubao-seed-2.1-pro', 'doubao-seed-2.1-lite'],
+    consoleUrl: 'https://ark.volcengine.com/region:cn-beijing',
+    logo: 'model-provider-volcengine.png',
+  },
+  {
+    id: 'stepfun',
+    name: '阶跃星辰 API',
+    nameEn: 'StepFun API',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.stepfun.com',
+    presets: ['step-5-preview', 'step-3.7-flash'],
+    consoleUrl: 'https://platform.stepfun.com/interface-key',
+    logo: 'model-provider-stepfun.png',
+  },
+  {
+    id: 'stepfun-step-plan',
+    name: '阶跃星辰 Step Plan',
+    nameEn: 'StepFun Step Plan',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.stepfun.com/step_plan',
+    presets: ['step-5-preview', 'step-3.7-flash'],
+    consoleUrl: 'https://platform.stepfun.com/interface-key',
+    logo: 'model-provider-stepfun.png',
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    nameEn: 'OpenAI',
+    api: 'openai-responses',
+    baseUrl: 'https://api.openai.com/v1',
+    presets: [
+      'gpt-6-astra',
+      'gpt-5.6-terra',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-luna',
+      'gpt-5.6',
+      'gpt-5.4',
+      'gpt-5.4-pro',
+      'gpt-5.4-mini',
+    ],
+    consoleUrl: 'https://platform.openai.com/api-keys',
+    logo: 'model-provider-openai.png',
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    nameEn: 'Anthropic',
+    api: 'anthropic-messages',
+    baseUrl: 'https://api.anthropic.com/v1',
+    presets: [
+      'claude-fable-5-1',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001',
+    ],
+    consoleUrl: 'https://console.anthropic.com/settings/keys',
+    logo: 'model-provider-anthropic.png',
+  },
+  {
+    id: 'xai',
+    name: 'xAI',
+    nameEn: 'xAI',
+    api: 'openai-responses',
+    baseUrl: 'https://api.x.ai/v1',
+    presets: ['grok-build-0.1', 'grok-4.7', 'grok-4.6', 'grok-4.3'],
+    consoleUrl: 'https://console.x.ai',
+    logo: 'model-provider-xai.png',
+  },
+  {
+    id: 'siliconflow-cn',
+    name: '硅基流动 API（中国）',
+    nameEn: 'SiliconFlow API (China)',
+    api: 'openai-completions',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    presets: ['zai-org/GLM-5.3', 'deepseek-ai/DeepSeek-V4-Flash', 'moonshotai/Kimi-K2.7-Code'],
+    consoleUrl: 'https://cloud.siliconflow.cn/account/ak',
+    logo: 'model-provider-siliconflow.png',
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    nameEn: 'OpenRouter',
+    api: 'anthropic-messages',
+    baseUrl: 'https://openrouter.ai/api',
+    presets: [
+      'minimax/minimax-m3.1-flash',
+      'moonshotai/kimi-k3.1-pro',
+      'anthropic/claude-fable-5.1',
+      'openai/gpt-6-astra',
+      'deepseek/deepseek-v4-pro',
+      'moonshotai/kimi-k3',
+      'z-ai/glm-5.3',
+      'qwen/qwen3.8-max',
+      'minimax/minimax-m3',
+      'openai/gpt-6.1-sol',
+    ],
+    consoleUrl: 'https://openrouter.ai/keys',
+    logo: 'model-provider-openrouter-light.svg',
+  },
+  {
+    id: 'opencode-go-responses',
+    name: 'OpenCode Go (Responses)',
+    nameEn: 'OpenCode Go (Responses)',
+    api: 'openai-responses',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    presets: ['gpt-6-luna', 'grok-4.7', 'gpt-5.6-luna', 'grok-4.6'],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  {
+    id: 'opencode-go-messages',
+    name: 'OpenCode Go (Anthropic)',
+    nameEn: 'OpenCode Go (Anthropic)',
+    api: 'anthropic-messages',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    presets: [
+      'minimax-m3',
+      'qwen3.8-max',
+      'qwen3.8-flash',
+      'claude-haiku-5-5',
+      'minimax-m2.7',
+      'minimax-m2.5',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'qwen3.6-plus',
+    ],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  {
+    id: 'opencode-go-chat',
+    name: 'OpenCode Go (Chat)',
+    nameEn: 'OpenCode Go (Chat)',
+    api: 'openai-completions',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    presets: [
+      'minimax-m3.1-flash',
+      'kimi-k3.1-pro',
+      'glm-5.3-flash',
+      'glm-5.3',
+      'kimi-k3',
+      'kimi-k2.7-code',
+      'deepseek-v4.1-flash',
+      'deepseek-v4-pro',
+      'mimo-v2.6-pro',
+      'mimo-v2.6-flash',
+    ],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  {
+    id: 'opencode-zen-responses',
+    name: 'OpenCode Zen (Responses)',
+    nameEn: 'OpenCode Zen (Responses)',
+    api: 'openai-responses',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    presets: [
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'grok-4.7',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+      'gpt-5.5-pro',
+      'gpt-5.4',
+    ],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  {
+    id: 'opencode-zen-messages',
+    name: 'OpenCode Zen (Anthropic)',
+    nameEn: 'OpenCode Zen (Anthropic)',
+    api: 'anthropic-messages',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    presets: [
+      'claude-fable-5-1',
+      'qwen3.7-max',
+      'qwen3.6-plus',
+      'qwen3.5-plus',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+    ],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  {
+    id: 'opencode-zen-chat',
+    name: 'OpenCode Zen (Chat)',
+    nameEn: 'OpenCode Zen (Chat)',
+    api: 'openai-completions',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    presets: [
+      'kimi-k3',
+      'minimax-m3',
+      'deepseek-v4-pro',
+      'glm-5.2',
+      'big-pickle',
+      'mimo-v2.5-free',
+      'hy3-free',
+      'ling-3.0-flash-fin-free',
+      'nemotron-3-ultra-free',
+      'muse-spark-1.2-contributor-free',
+    ],
+    consoleUrl: 'https://opencode.ai/auth',
+    logo: 'model-provider-opencode-light.svg',
+  },
+  // --- pi-ai 内置目录（ZCode 未覆盖的供应商；模型清单来自 pi 目录） ----------
+  {
+    id: 'google',
+    name: 'Google Gemini',
+    nameEn: 'Google Gemini',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://aistudio.google.com/apikey',
+    logo: 'model-provider-google-gemini.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral',
+    nameEn: 'Mistral',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://console.mistral.ai/api-keys',
+    logo: 'model-provider-mistral.webp',
+    builtinCatalog: true,
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    nameEn: 'Groq',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://console.groq.com/keys',
+    logo: 'model-provider-groq.webp',
+    builtinCatalog: true,
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks',
+    nameEn: 'Fireworks',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://fireworks.ai/account/api-keys',
+    logo: 'model-provider-fireworks.webp',
+    builtinCatalog: true,
+  },
+  {
+    id: 'together',
+    name: 'Together',
+    nameEn: 'Together',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://api.together.ai/settings/api-keys',
+    logo: 'model-provider-together.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'nvidia',
+    name: 'NVIDIA',
+    nameEn: 'NVIDIA',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://build.nvidia.com/settings/api-keys',
+    logo: 'model-provider-nvidia.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'cerebras',
+    name: 'Cerebras',
+    nameEn: 'Cerebras',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://cloud.cerebras.ai',
+    logo: 'model-provider-cerebras.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'baseten',
+    name: 'Baseten',
+    nameEn: 'Baseten',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://app.baseten.co',
+    logo: 'model-provider-baseten.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'huggingface',
+    name: 'Hugging Face',
+    nameEn: 'Hugging Face',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://huggingface.co/settings/tokens',
+    logo: 'model-provider-huggingface.webp',
+    builtinCatalog: true,
+  },
+  {
+    id: 'vercel-ai-gateway',
+    name: 'Vercel AI Gateway',
+    nameEn: 'Vercel AI Gateway',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://vercel.com/d?to=https://vercel.com/ai-gateway',
+    logo: 'model-provider-vercel.webp',
+    builtinCatalog: true,
+  },
+  {
+    id: 'moonshotai',
+    name: 'Kimi（国际 OpenAI 端点）',
+    nameEn: 'Kimi (Moonshot OpenAI)',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://platform.moonshot.ai/console/api-keys',
+    logo: 'model-provider-moonshot-kimi.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'moonshotai-cn',
+    name: 'Kimi（国内 OpenAI 端点）',
+    nameEn: 'Kimi CN (OpenAI)',
+    api: 'openai-completions',
+    presets: [],
+    consoleUrl: 'https://platform.moonshot.cn/console/api-keys',
+    logo: 'model-provider-moonshot-kimi.png',
+    builtinCatalog: true,
+  },
+  {
+    id: 'ant-ling',
+    name: 'Ant Ling',
+    nameEn: 'Ant Ling',
+    api: 'openai-completions',
+    presets: [],
+    logo: 'model-provider-ant-ling.webp',
+    builtinCatalog: true,
+  },
+];
+
+export function getProviderTemplate(id: string): ProviderTemplate | undefined {
+  return PROVIDER_TEMPLATES.find((template) => template.id === id);
 }

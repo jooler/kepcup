@@ -752,16 +752,24 @@ describe('P07 记忆与画像（集成）', () => {
       const conv = await openDirect(stack.core, bot.id);
       // 与设置页完全相同的路径：「向量模型」section 配置厂商 + 模型，
       // 「向量来源」切到厂商接口；厂商兼容根指向 mock LLM 的 /v1/embeddings。
+      // modelProviders 是整体覆盖 patch：读最新设置、map/filter 后回写。
+      const before = (await stack.core.rpc.call('settings.get')) as {
+        modelProviders: Array<{ id: string }>;
+      };
       await stack.core.rpc.call('settings.update', {
-        vendorProviders: [
+        modelProviders: [
+          ...before.modelProviders.filter((p) => p.id !== 'dashscope'),
           {
             id: 'dashscope',
+            vendor: 'dashscope',
+            name: '阿里云百炼',
             baseUrl: stack.llm.url,
+            enabled: true,
             models: [{ id: 'qwen-plus' }],
           },
         ],
         capabilityModels: {
-          embedding: { vendor: 'dashscope', model: 'text-embedding-v4' },
+          embedding: { provider: 'dashscope', model: 'text-embedding-v4' },
           rerank: null,
           multimodal: null,
           asr: null,
@@ -852,13 +860,20 @@ describe('P07 记忆与画像（集成）', () => {
   it('国内厂商能力测试：providers.test 按能力经网关探测；条目只承载对话模型', async () => {
     const stack = await createTestStack({ env: TEST_ENV });
     try {
-      // dashscope 条目的兼容根指向 mock LLM：适配器的兼容向量分支
+      // dashscope 实例的兼容根指向 mock LLM：适配器的兼容向量分支
       // （text-embedding-v4 → {baseUrl}/embeddings）即打到 mock 端点上。
+      const before = (await stack.core.rpc.call('settings.get')) as {
+        modelProviders: Array<{ id: string }>;
+      };
       await stack.core.rpc.call('settings.update', {
-        vendorProviders: [
+        modelProviders: [
+          ...before.modelProviders.filter((p) => p.id !== 'dashscope'),
           {
             id: 'dashscope',
+            vendor: 'dashscope',
+            name: '阿里云百炼',
             baseUrl: stack.llm.url,
+            enabled: true,
             models: [{ id: 'qwen-plus' }],
           },
         ],
@@ -868,7 +883,7 @@ describe('P07 记忆与画像（集成）', () => {
         key: 'sk-dash-embed',
       });
 
-      // 能力测试不要求厂商条目登记对应模型：显式 capability 经网关路由到适配器。
+      // 能力测试不要求实例登记对应模型：显式 capability 经网关路由到适配器。
       await expect(
         stack.core.rpc.call('providers.test', {
           provider: 'dashscope',
@@ -880,7 +895,7 @@ describe('P07 记忆与画像（集成）', () => {
       // 「向量模型」section 配置 + 「向量来源」切厂商接口后，status 就绪。
       await stack.core.rpc.call('settings.update', {
         capabilityModels: {
-          embedding: { vendor: 'dashscope', model: 'text-embedding-v4' },
+          embedding: { provider: 'dashscope', model: 'text-embedding-v4' },
           rerank: null,
           multimodal: null,
           asr: null,

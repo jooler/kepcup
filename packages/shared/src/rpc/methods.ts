@@ -151,7 +151,7 @@ import {
   toolEffectSchema,
   effectStatusSchema,
   conversationSchema,
-  customProviderSchema,
+  providerInstanceSchema,
   capabilityModelsSchema,
   embeddingStatusSchema,
   envInstallSchema,
@@ -238,7 +238,7 @@ import {
   remoteDeviceIdSchema,
   type PairingOffer,
 } from '../domain/remote.js';
-import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
+import { modelCapabilitySchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
@@ -397,8 +397,8 @@ export const settingsGetOutputSchema = settingsSchema;
 // custom providers / model defaults.
 export const settingsUpdateInputSchema = z.object({
   appLanguage: appLanguageSchema.optional(),
-  customProviders: z.array(customProviderSchema).optional(),
-  vendorProviders: z.array(vendorProviderSchema).optional(),
+  /** 供应商实例统一列表（整体覆盖 patch；legacy customProviders/vendorProviders 已由读路径迁移）。 */
+  modelProviders: z.array(providerInstanceSchema).optional(),
   defaultMainModel: z.string().optional(),
   defaultLightModel: z.string().optional(),
   /** D87 P3c 组件审查模型；'' = 跟随 Bot 主模型。 */

@@ -38,7 +38,7 @@ import {
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
-  type CustomModel,
+  type ProviderModel,
   type ShareConsumeInput,
   type ShareConsumeOutput,
   type ShareTargets,
@@ -3716,29 +3716,43 @@ function seedMockLlm(settings: SettingsService, env: NodeJS.ProcessEnv, logger: 
   const url = env.KEPCUP_MOCK_LLM_URL;
   if (url === undefined || url.length === 0) return;
   const current = settings.get();
-  const mockModels: CustomModel[] = [
+  const mockModels: ProviderModel[] = [
     // P11: the mock main model declares image input so browser_screenshot
     // payloads reach the recorded request bodies (e2e can verify them).
-    { id: 'mock-main', name: 'Mock Main', contextWindow: 128_000, input: ['text', 'image'] },
-    { id: 'mock-light', name: 'Mock Light', contextWindow: 32_000 },
+    {
+      id: 'mock-main',
+      name: 'Mock Main',
+      contextWindow: 128_000,
+      input: ['text', 'image'],
+      capabilities: ['chat'],
+    },
+    { id: 'mock-light', name: 'Mock Light', contextWindow: 32_000, capabilities: ['chat'] },
   ];
-  const existing = current.customProviders.find((c) => c.id === 'mock');
+  const existing = current.modelProviders.find((p) => p.id === 'custom:mock');
   const unchanged =
     existing !== undefined &&
     existing.baseUrl === url &&
     current.defaultMainModel === 'custom:mock/mock-main' &&
     current.defaultLightModel === 'custom:mock/mock-light';
   if (unchanged) return;
-  const next = settings.update({
-    customProviders: [
-      ...current.customProviders.filter((c) => c.id !== 'mock'),
-      { id: 'mock', name: 'Mock LLM', baseUrl: url, models: mockModels },
+  settings.update({
+    modelProviders: [
+      ...current.modelProviders.filter((p) => p.id !== 'custom:mock'),
+      {
+        id: 'custom:mock',
+        vendor: null,
+        name: 'Mock LLM',
+        baseUrl: url,
+        enabled: true,
+        api: 'openai-completions',
+        builtinCatalog: false,
+        models: mockModels,
+      },
     ],
     defaultMainModel: 'custom:mock/mock-main',
     defaultLightModel: 'custom:mock/mock-light',
   });
   logger.info({ url }, 'mock LLM provider seeded');
-  void next;
 }
 
 function failLocked(

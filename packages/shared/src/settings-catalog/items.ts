@@ -206,7 +206,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     write: write('form'),
     card: 'provider-setup',
     deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
-    store: { kind: 'settings', paths: ['customProviders', 'vendorProviders'] },
+    store: { kind: 'settings', paths: ['modelProviders'] },
   }),
   ...CAPABILITY_ITEMS,
   item({

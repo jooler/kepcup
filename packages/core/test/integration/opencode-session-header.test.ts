@@ -247,16 +247,25 @@ describe('model session id on the wire (PiEngine)', () => {
       const openRouterUrl = `${origin}/openrouter.ai/api/v1`;
       const openAiProxyUrl = `${origin}/api.openai.com/v1`;
       const settings = (await stack.core.rpc.call('settings.get')) as {
-        customProviders: unknown[];
+        modelProviders: unknown[];
       };
       await stack.core.rpc.call('settings.update', {
-        customProviders: [
-          ...settings.customProviders,
-          { id: 'or', name: 'OR', baseUrl: openRouterUrl, models: [{ id: 'or-main', name: 'OR' }] },
+        modelProviders: [
+          ...settings.modelProviders,
           {
-            id: 'oaiproxy',
+            id: 'custom:or',
+            vendor: null,
+            name: 'OR',
+            baseUrl: openRouterUrl,
+            enabled: true,
+            models: [{ id: 'or-main', name: 'OR' }],
+          },
+          {
+            id: 'custom:oaiproxy',
+            vendor: null,
             name: 'Proxy',
             baseUrl: openAiProxyUrl,
+            enabled: true,
             models: [{ id: 'proxy-main', name: 'Proxy' }],
           },
         ],

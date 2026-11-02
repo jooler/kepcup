@@ -28,15 +28,15 @@
 
 ## 设置页结构（设置 - 模型）
 
-自上而下：
+v0.5.6 起为两栏布局（对齐 ZCode 的模型设置）：左栏顶部「**模型配置**」条目收纳全部非供应商配置，其下是**供应商实例**列表（分组渲染管线保留、分组编辑暂不开放），右栏为选中条目的详情；同一厂商可重复添加（各自 baseUrl / Key / 模型），模型在实例内声明能力。
 
-| Section | 内容 |
+| 位置 | 内容 |
 |---|---|
-| 默认模型 | 主模型、轻量模型（对话引用，pi 方案不变） |
-| 并发 | `providerConcurrency.default` |
-| 厂商 | 内置 / 自定义 / 国内厂商卡片；国内厂商条目只登记**对话**模型 |
-| 能力模型 | 向量 → 重排 → 多模态 → 语音识别 → 语音生成 → 图片生成 → 视频生成，每个 section 同构：厂商下拉、模型输入（预置候选）、Key、测试、保存 |
-| 向量来源 | 本地模型 / 使用上方向量模型配置；展示就绪状态与维度 |
+| 模型配置 | 默认模型（主/轻量 + 组件审查模型）、并发上限、**能力槽位**（向量 → 重排 → 多模态 → 语音识别 → 语音生成 → 图片生成 → 视频生成，每个槽位一条「供应商实例 + 模型」默认选择，候选 = 实例里声明了该能力的模型 + 厂商预置 id）、向量来源（本地模型 / 上方向量槽位） |
+| 供应商实例详情 | 连接区（baseUrl / Key / 测试连接 / 启停 / 删除）+ 模型列表（模型 ID、上下文、能力 badge、编辑弹框：能力多选 + 图片输入 + 上下文窗口） |
+| 添加供应商 | **替换右栏容器**（非弹框）：扁平模板网格（不分组），完整搬运 ZCode 内置目录的 34 张模板卡（同供应商不同端点是独立卡片，OpenAI 兼容根 / Anthropic 端点 / 预置模型 / 图标取自 ZCode 核验数据），合并 pi-ai 内置供应商目录 12 家（`builtinCatalog` 实例——模型清单直接来自 pi，注册表不覆盖同名 provider），共 46 张 + 创建自定义供应商卡。对话线协议按实例 `api` 字段路由（openai-completions / anthropic-messages / openai-responses，pi 三种都有实现）。 |
+
+模板与媒体能力的边界：dashscope / volcengine 模板带 `vendor`（向量/重排/图像等走原生适配器）；anthropic-messages 端点实例与 pi 目录实例不提供媒体能力（无 OpenAI 兼容媒体接口，能力槽位候选排除）；其余模板与自定义实例仅对话 + 向量（OpenAI 兼容 `/embeddings`）。
 
 ### 向量来源的本地实现（DEV-007 已落实）
 
@@ -55,26 +55,44 @@
 
 ## 数据模型
 
-```ts
-// shared/domain/vendors.ts
-modelCapabilitySchema = z.enum(['chat', 'embedding', 'rerank', 'multimodal', 'image', 'tts', 'asr', 'video']);
+**v0.5.6 供应商实例化**（本节为现行模型；文末记迁移）：
 
+```ts
 // shared/domain/types.ts
-capabilityModelSchema = z.object({
-  vendor: vendorIdSchema,        // 仅接受已登记的国内厂商
-  model: z.string().min(1),      // 厂商侧模型 id
+providerModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200).optional(),
+  contextWindow: z.number().int().positive().max(10_000_000).default(128_000),
+  input: z.array(z.enum(['text', 'image'])).min(1).optional(),
+  capabilities: z.array(modelCapabilitySchema).min(1).default(['chat']), // 能力声明
 });
 
-settingsSchema.capabilityModels = {
-  embedding: capabilityModelSchema.nullable().default(null),
-  rerank:    …, multimodal: …, asr: …, tts: …, image: …, video: …,
-};
+providerInstanceSchema = z.object({
+  id: /^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/, // 注册表 id & 密钥名段
+  vendor: vendorIdSchema.nullable().default(null), // null = 自定义 OpenAI 兼容端点
+  name: z.string().min(1).max(100),
+  baseUrl: z.string().url(),
+  enabled: z.boolean().default(true),
+  group: z.string().max(50).optional(),          // 预留分组（UI 暂不开放）
+  models: z.array(providerModelSchema).default([]),
+});
+
+settingsSchema.modelProviders = z.array(providerInstanceSchema).default([]);
+
+capabilityModelSchema = z.object({
+  provider: z.string().min(1).max(80),           // 供应商实例 id
+  model: z.string().min(1).max(200),
+});
+settingsSchema.capabilityModels = { embedding: …nullable, rerank: …, … }; // 值改 {provider, model}
 ```
 
-- `embedding.source`（`'' | 'local' | 'provider'`）与 `embedding.dim` 保留；`source='provider'` 即「使用向量模型 section 的配置」，不再单独存 provider/model。
-- 各能力的默认引用字段（`defaultEmbeddingModel`、`defaultMultimodalModel`、`defaultSpeechRecognitionModel`、`defaultAudioGenerationModel`、`defaultImageGenerationModel`、`defaultVideoGenerationModel`）**废除**——能力 section 的配置本身就是默认值。
-- 旧 `vendorProviders` 条目只承载对话模型（`models: [{id, name?, contextWindow?, input?}]`，不再带 `capability`）；`capabilityModels` 中引用的厂商**无需**存在厂商条目，Key 与 baseUrl 直接按厂商解析。
-- baseUrl：`providerCompatBaseUrl` 先取厂商条目的覆盖值（用户在厂商 section 改过兼容根），否则用描述符默认根。能力配置没有独立 baseUrl——同厂商一个根。
+- **兼容不变式**：内置厂商首个实例沿用厂商 id（`dashscope`），重复添加追加 `-2`/`-3`；自定义实例带 `custom:` 前缀。存量模型 ref（`defaultMainModel` 等 `provider/modelId`）与密钥名（`provider:{实例id}`）在迁移后全部原样有效。
+- 同一厂商可建多个实例（各自 baseUrl / Key），用于为不同能力的模型接不同端点；能力槽位与对话注册表都按实例 id 路由。
+- 对话注册表只收录实例里声明了 `chat` 能力的模型；其余能力由 media 网关按 `capabilityModels.{cap}.provider` 找实例路由适配器（内置厂商 → 原生适配器；`vendor=null` → OpenAI 兼容通用适配器，仅 `embed` 有跨厂商事实标准）。
+- 内置厂商能力矩阵（`VENDOR_DESCRIPTORS`）继续约束实例可声明的能力；自定义实例仅对话 + 向量。pi 内置厂商（openai 等）不进此列表，仍在模型下拉中按 Key 出现。
+- **迁移**（`migrateLegacyModelProviders`，core 读路径执行并写回）：旧 `customProviders` / `vendorProviders` / `capabilityModels.{vendor,…}` 一次性搬进实例列表；能力引用改写为 `{provider, model}`，引用厂商无条目时补建空实例（对齐旧行为：能力模型可单独配置）。schema 不再包含 legacy 字段。
+
+`embedding.source`（`'' | 'local' | 'provider'`）与 `embedding.dim` 保留；`source='provider'` 即「使用向量槽位的配置」。
 
 ## 适配层契约
 
@@ -90,7 +108,7 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 | `generateImage(ctx, model, params)` | image | 文生图 / 图片编辑（带参考图即编辑） |
 | `submitVideo / videoStatus / cancelVideo?` | video | 异步任务提交 / 轮询 / 尽力取消 |
 
-未挂方法的组合在 UI（能力矩阵）与运行时（`NOT_IMPLEMENTED`）都不开放。网关新增公开方法：`rerank`、`understandImage`、`embedTexts(vendor, model, texts)`、`embeddingReady()`、`testCapability(capability, {vendor, model})`；RPC `media.generateImage / synthesizeSpeech / transcribeSpeech / generateVideo / videoStatus / rerank / understandImage`。`media.*` 入参的 `model` 是**裸模型 id**（省略时用能力配置），不再携带厂商前缀。
+未挂方法的组合在 UI（能力矩阵）与运行时（`NOT_IMPLEMENTED`）都不开放。网关新增公开方法：`rerank`、`understandImage`、`embedTexts(provider, model, texts)`、`embeddingReady()`、`testCapability(capability, {provider, model})`（`provider` = 供应商实例 id）；RPC `media.generateImage / synthesizeSpeech / transcribeSpeech / generateVideo / videoStatus / rerank / understandImage`。`media.*` 入参的 `model` 是**裸模型 id**（省略时用能力配置），不再携带厂商前缀。
 
 ## 逐能力 API 参考
 

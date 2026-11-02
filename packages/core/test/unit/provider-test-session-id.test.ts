@@ -44,12 +44,14 @@ describe('ProvidersService.test without a session key', () => {
   // An OpenRouter-detected URL: pi-ai sends `x-session-id` whenever it has a session id.
   const BASE = 'http://127.0.0.1:9/openrouter.ai/v1';
   const settings = settingsSchema.parse({
-    customProviders: [
+    modelProviders: [
       {
-        id: 'or',
+        id: 'custom:or',
+        vendor: null,
         name: 'OR',
         baseUrl: BASE,
-        models: [{ id: 'm', name: 'M', contextWindow: 8_000 }],
+        enabled: true,
+        models: [{ id: 'm', name: 'M', contextWindow: 8_000, capabilities: ['chat'] }],
       },
     ],
   });

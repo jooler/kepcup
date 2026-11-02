@@ -139,18 +139,28 @@ function makeRig(
   insertProjectConversation(db, { id: groupId, title: '项目群', leadBotId: 'bot_a' });
   const settings = new SettingsService(db, clock);
   settings.update({
-    customProviders: [
+    modelProviders: [
       {
-        id: 'mock',
+        id: 'custom:mock',
+        vendor: null,
         name: 'Mock',
         baseUrl: 'http://127.0.0.1:1/v1',
+        enabled: true,
         models: [
-          { id: 'mock-main', name: 'Mock Main', contextWindow: 1000 },
-          { id: 'mock-alt', name: 'Mock Alt', contextWindow: 1000 },
-          { id: 'mock-x', name: 'Mock X', contextWindow: 1000 },
+          { id: 'mock-main', name: 'Mock Main', contextWindow: 1000, capabilities: ['chat'] },
+          { id: 'mock-alt', name: 'Mock Alt', contextWindow: 1000, capabilities: ['chat'] },
+          { id: 'mock-x', name: 'Mock X', contextWindow: 1000, capabilities: ['chat'] },
         ],
       },
-    ] as never,
+      {
+        id: 'dashscope',
+        vendor: 'dashscope',
+        name: '阿里云百炼',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        enabled: true,
+        models: [{ id: 'qwen-image', contextWindow: 128000, capabilities: ['image'] }],
+      },
+    ],
     defaultMainModel: 'custom:mock/mock-main',
     defaultLightModel: 'custom:mock/mock-alt',
   });
@@ -160,18 +170,31 @@ function makeRig(
       id: 'custom:mock',
       name: 'Mock',
       kind: 'custom',
+      enabled: true,
       models: [
-        { id: 'mock-main', name: 'Mock Main', contextWindow: 1000 },
-        { id: 'mock-alt', name: 'Mock Alt', contextWindow: 1000 },
-        { id: 'mock-x', name: 'Mock X', contextWindow: 1000 },
+        { id: 'mock-main', name: 'Mock Main', contextWindow: 1000, capabilities: ['chat'] },
+        { id: 'mock-alt', name: 'Mock Alt', contextWindow: 1000, capabilities: ['chat'] },
+        { id: 'mock-x', name: 'Mock X', contextWindow: 1000, capabilities: ['chat'] },
       ],
       hasKey: secrets.has('provider:custom:mock'),
+    },
+    {
+      id: 'dashscope',
+      name: '阿里云百炼',
+      kind: 'vendor',
+      vendor: 'dashscope',
+      enabled: true,
+      models: [
+        { id: 'qwen-image', name: 'qwen-image', contextWindow: 128000, capabilities: ['image'] },
+      ],
+      hasKey: secrets.has('provider:dashscope'),
     },
     {
       id: 'openai',
       name: 'OpenAI',
       kind: 'builtin',
-      models: [{ id: 'gpt-x', name: 'GPT X', contextWindow: 1000 }],
+      enabled: true,
+      models: [{ id: 'gpt-x', name: 'GPT X', contextWindow: 1000, capabilities: ['chat'] }],
       hasKey: secrets.has('provider:openai'),
     },
   ];
@@ -487,7 +510,7 @@ describe('settings catalog host: reads', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
       },
     });
     rig.secrets.set('provider:dashscope', SECRET);
@@ -594,7 +617,7 @@ describe('settings catalog host: settings_change and cards', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
       },
     });
     const facade = rig.host.forRun(runCtx(rig));
@@ -611,7 +634,7 @@ describe('settings catalog host: settings_change and cards', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        tts: { vendor: 'dashscope', model: 'cosyvoice-v2' },
+        tts: { provider: 'dashscope', model: 'cosyvoice-v2' },
       },
     });
     const applied = await rig.host.applyItem({
@@ -622,8 +645,8 @@ describe('settings catalog host: settings_change and cards', () => {
     });
     expect(applied.status).toBe('applied');
     const models = rig.settings.get().capabilityModels;
-    expect(models.image).toEqual({ vendor: 'dashscope', model: 'qwen-image-plus' });
-    expect(models.tts).toEqual({ vendor: 'dashscope', model: 'cosyvoice-v2' });
+    expect(models.image).toEqual({ provider: 'dashscope', model: 'qwen-image-plus' });
+    expect(models.tts).toEqual({ provider: 'dashscope', model: 'cosyvoice-v2' });
     expect(cardOf(rig, cardId).state).toBe('applied');
     expect(rig.wakes).toHaveLength(1);
     expect(rig.wakes[0]!.text).toContain('用户已应用「图像生成模型」');
@@ -637,7 +660,7 @@ describe('settings catalog host: settings_change and cards', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image-edit' },
+        image: { provider: 'dashscope', model: 'qwen-image-edit' },
       },
     });
     const conflict = await rig.host.applyItem({
@@ -1301,7 +1324,7 @@ describe('settings catalog host: settings_change and cards', () => {
     rig.settings.update({
       capabilityModels: {
         ...rig.settings.get().capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
       },
     });
     expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });

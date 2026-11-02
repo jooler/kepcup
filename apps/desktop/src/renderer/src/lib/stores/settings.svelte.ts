@@ -74,7 +74,7 @@ class SettingsState {
   }
 
   /**
-   * 能力是否已配置（厂商 + 模型 + Key），输入组件语音按钮等入口的预检
+   * 能力是否已配置（供应商实例 + 模型 + Key），输入组件语音按钮等入口的预检
    * （docs/design/26-voice-input.md）。settings 快照未加载时放行——core 侧
    * 的 CAPABILITY_NOT_CONFIGURED 错误兜底出设置卡。
    */
@@ -83,7 +83,7 @@ class SettingsState {
     if (!settings) return true;
     const config = settings.capabilityModels[capability];
     if (!config) return false;
-    return this.providers.find((provider) => provider.id === config.vendor)?.hasKey ?? false;
+    return this.providers.find((provider) => provider.id === config.provider)?.hasKey ?? false;
   }
 
   /**
@@ -115,7 +115,7 @@ class SettingsState {
    * 持有更早的草稿，应传入它自己出发时的快照。
    */
   async update(patch: Partial<Settings>, base: Settings | null = this.settings): Promise<Settings> {
-    // 调用方常直接引用 settings $state 里的嵌套对象（如 customProviders），
+    // 调用方常直接引用 settings $state 里的嵌套对象（如 modelProviders），
     // Svelte 代理无法过 MessagePort 的结构化克隆——统一在此快照成纯对象。
     const plain = $state.snapshot(patch) as Record<string, unknown>;
     const from = base === null ? null : ($state.snapshot(base) as Record<string, unknown>);
