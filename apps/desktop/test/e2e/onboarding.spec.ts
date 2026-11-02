@@ -147,13 +147,12 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
     // 卡片式厂商区：custom:mock 无 key 也作为自定义卡片显示，经卡片
     // 「设置 Key」弹框落盘（保存后卡片即时出现已配置标记）。
-    await page.locator('[data-testid="key-dialog-custom:mock"]').click();
-    await expect(page.locator('[data-testid="provider-add-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="key-input-custom:mock"]').fill('sk-onboarding-e2e');
-    await page.locator('[data-testid="provider-add-save"]').click();
-    await expect(page.locator('[data-testid="key-state-custom:mock"]')).toBeVisible({
-      timeout: 15_000,
-    });
+    // 两栏模型设置：左栏选中 custom:mock 实例，详情连接区补 Key（回车提交）。
+    await page.locator('[data-testid="models-nav-provider-custom:mock"]').click();
+    const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
+    await mockKeyInput.fill('sk-onboarding-e2e');
+    await mockKeyInput.press('Enter');
+    await expect(mockKeyInput).toHaveAttribute('placeholder', /已配置/, { timeout: 15_000 });
 
     // key 配好后横幅消失；关闭设置弹框回到对话发送消息。
     await expect(banner).toBeHidden({ timeout: 15_000 });
@@ -268,13 +267,12 @@ test('completion persists in settings: a relaunch of the same data home does not
     // 配置 key 后横幅消失（横幅对 key 状态响应式）。
     await banner.locator('[data-testid="no-model-go-settings"]').click();
     await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-    await page.locator('[data-testid="key-dialog-custom:mock"]').click();
-    await expect(page.locator('[data-testid="provider-add-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="key-input-custom:mock"]').fill('sk-onboarding-e2e');
-    await page.locator('[data-testid="provider-add-save"]').click();
-    await expect(page.locator('[data-testid="key-state-custom:mock"]')).toBeVisible({
-      timeout: 15_000,
-    });
+    // 两栏模型设置：左栏选中 custom:mock 实例，详情连接区补 Key（回车提交）。
+    await page.locator('[data-testid="models-nav-provider-custom:mock"]').click();
+    const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
+    await mockKeyInput.fill('sk-onboarding-e2e');
+    await mockKeyInput.press('Enter');
+    await expect(mockKeyInput).toHaveAttribute('placeholder', /已配置/, { timeout: 15_000 });
     await expect(banner).toBeHidden({ timeout: 15_000 });
   } finally {
     // 只关应用：mock LLM 留给重启后的第二个会话（最后统一清理）。

@@ -110,8 +110,7 @@ export function changedSettingsPaths(
  * `settings.update` / `bots.update` 按前后差异在各自 handler 里算，不在这里。
  */
 const KEY_ITEMS = itemIdsForSettingsPaths([
-  'customProviders',
-  'vendorProviders',
+  'modelProviders',
   'defaultMainModel',
   'defaultLightModel',
 ]);

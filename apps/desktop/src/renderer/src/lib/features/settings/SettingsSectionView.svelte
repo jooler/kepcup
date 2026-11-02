@@ -13,7 +13,6 @@
   import ProfileSection from './ProfileSection.svelte';
   import RemoteSection from './RemoteSection.svelte';
   import UsageSection from './UsageSection.svelte';
-  import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import ComputerUseSection from './ComputerUseSection.svelte';
@@ -56,12 +55,7 @@
   </div>
 {:else if section === 'models'}
   <div data-settings-section="models" class="space-y-6">
-    <div data-settings-anchor="default-models">
-      <ModelsSection />
-    </div>
-    <div data-settings-anchor="embedding">
-      <EmbeddingSection />
-    </div>
+    <ModelsSection />
   </div>
 {:else if section === 'search'}
   <div data-settings-section="search" class="space-y-6">

@@ -8,7 +8,7 @@ import {
   chatModelOptions,
   isVendorId,
   sanitizeDisplayText,
-  vendorsForCapability,
+  createInstanceFromTemplate,
   webSearchProviderSchema,
   type AgentCatalogEntry,
   type AgentOptions,
@@ -374,6 +374,11 @@ function normalizeChatModel(
   if (!('model' in values)) return { ok: true, values };
   const ref = str(values.model);
   if (ref === undefined) return { ok: false, message: 'model 应为「厂商/模型」形式的字符串' };
+  // 只在声明了 chat 能力的模型里匹配——专有模型（向量/重排/…）不进对话注册表。
+  const chatProviders = providers.map((provider) => ({
+    ...provider,
+    models: provider.models.filter((model) => model.capabilities.includes('chat')),
+  }));
   if (ref.length === 0) {
     return allowEmpty
       ? { ok: true, values: { ...values, model: '' } }
@@ -381,7 +386,7 @@ function normalizeChatModel(
   }
   // 只给了模型 id：在已登记的模型里找唯一匹配。
   if (!ref.includes('/')) {
-    const matches = providers.flatMap((provider) =>
+    const matches = chatProviders.flatMap((provider) =>
       provider.models
         .filter((model) => model.id === ref)
         .map((model) => `${provider.id}/${model.id}`),
@@ -393,7 +398,7 @@ function normalizeChatModel(
     };
   }
   const slash = ref.indexOf('/');
-  const provider = providers.find((entry) => entry.id === ref.slice(0, slash));
+  const provider = chatProviders.find((entry) => entry.id === ref.slice(0, slash));
   if (provider === undefined) {
     return {
       ok: false,
@@ -403,7 +408,7 @@ function normalizeChatModel(
   if (!provider.models.some((model) => model.id === ref.slice(slash + 1))) {
     return {
       ok: false,
-      message: `厂商「${clean(provider.name)}」下没有模型「${clean(ref.slice(slash + 1))}」：请用 settings_read 给出的可选值`,
+      message: `厂商「${clean(provider.name)}」下没有对话模型「${clean(ref.slice(slash + 1))}」：请用 settings_read 给出的可选值`,
     };
   }
   return { ok: true, values: { ...values, model: ref } };
@@ -487,8 +492,32 @@ function capabilityOf(item: SettingItem): CapabilityModelKey | null {
 }
 
 export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
-  const keyed = (vendor: string): boolean =>
-    vendor.length > 0 && deps.secrets.hasValue(providerSecretName(vendor));
+  const keyed = (provider: string): boolean =>
+    provider.length > 0 && deps.secrets.hasValue(providerSecretName(provider));
+  const providerName = (id: string): string =>
+    deps.providers.list().find((p) => p.id === id)?.name ?? id;
+
+  /** 支持该能力的供应商实例：内置厂商按描述符能力矩阵，自定义实例仅向量
+   *  （OpenAI 兼容端点只有向量有事实标准）；停用的实例不进候选。 */
+  const capableProviders = (capability: CapabilityModelKey): ProviderInfo[] => {
+    // Anthropic 协议端点没有 OpenAI 兼容的 /embeddings，向量化候选要排除。
+    const apiById = new Map(
+      deps.settings.get().modelProviders.map((p) => [p.id, p.api] as const),
+    );
+    return deps.providers
+      .list()
+      .filter((provider) => {
+        if (provider.kind === 'builtin' || !provider.enabled) return false;
+        if (provider.vendor !== undefined) {
+          return VENDOR_DESCRIPTORS[provider.vendor].capabilities.includes(capability);
+        }
+        return (
+          capability === 'embedding' && apiById.get(provider.id) !== 'anthropic-messages'
+        );
+      })
+      .sort((a, b) => Number(keyed(b.id)) - Number(keyed(a.id)));
+  };
+
   return {
     read: (item) => {
       const capability = capabilityOf(item)!;
@@ -496,33 +525,41 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
       if (config === null) {
         return snapshot('unconfigured', { provider: '', model: '' }, '未配置', { apiKey: false });
       }
-      const hasKey = keyed(config.vendor);
-      const label = `${VENDOR_DESCRIPTORS[config.vendor].name} · ${config.model}`;
+      const hasKey = keyed(config.provider);
+      const label = `${providerName(config.provider)} · ${config.model}`;
       return snapshot(
         hasKey ? 'configured' : 'partial',
-        { provider: config.vendor, model: `${config.vendor}/${config.model}` },
+        { provider: config.provider, model: `${config.provider}/${config.model}` },
         hasKey ? label : `${label}（缺 API Key）`,
         { apiKey: hasKey },
       );
     },
     options: (field, item) => {
       const capability = capabilityOf(item)!;
-      const vendors = vendorsForCapability(capability);
+      const candidates = capableProviders(capability);
       if (field.name === 'provider') {
-        return vendors.map((vendor) => ({
-          value: vendor.id,
-          label: `${vendor.name}${keyed(vendor.id) ? '' : '（未配 Key）'}`,
+        return candidates.map((provider) => ({
+          value: provider.id,
+          label: `${provider.name}${keyed(provider.id) ? '' : '（未配 Key）'}`,
         }));
       }
       if (field.name === 'model') {
-        // 已有 Key 的厂商排前面。
-        const ordered = [...vendors].sort((a, b) => Number(keyed(b.id)) - Number(keyed(a.id)));
-        return ordered.flatMap((vendor) =>
-          vendor.presets[capability].map((model) => ({
-            value: `${vendor.id}/${model}`,
-            label: `${vendor.name} · ${model}`,
-          })),
-        );
+        // 模型候选 = 实例里声明该能力的登记模型 + 内置厂商的预置 id（实例
+        // 未登记也能直接选）；已有 Key 的实例排前面。
+        return candidates.flatMap((provider) => {
+          const declared = provider.models
+            .filter((m) => m.capabilities.includes(capability))
+            .map((m) => ({ value: `${provider.id}/${m.id}`, label: `${provider.name} · ${m.name}` }));
+          const declaredIds = new Set(declared.map((option) => option.value));
+          const presets = (
+            provider.vendor !== undefined
+              ? VENDOR_DESCRIPTORS[provider.vendor].presets[capability]
+              : []
+          )
+            .filter((model) => !declaredIds.has(`${provider.id}/${model}`))
+            .map((model) => ({ value: `${provider.id}/${model}`, label: `${provider.name} · ${model}` }));
+          return [...declared, ...presets];
+        });
       }
       return [];
     },
@@ -534,50 +571,86 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
       if (model !== undefined && model.includes('/')) {
         const prefix = model.slice(0, model.indexOf('/'));
         if (provider !== undefined && provider.length > 0 && provider !== prefix) {
-          return { ok: false, message: 'provider 与 model 的厂商前缀不一致' };
+          return { ok: false, message: 'provider 与 model 的供应商前缀不一致' };
         }
         provider = prefix;
         model = model.slice(model.indexOf('/') + 1);
       }
       if (provider === undefined && model === undefined) return { ok: true, values };
-      provider ??= current?.vendor ?? '';
-      if (
-        !isVendorId(provider) ||
-        !VENDOR_DESCRIPTORS[provider].capabilities.includes(capability)
-      ) {
+      provider ??= current?.provider ?? '';
+      const candidate = capableProviders(capability).find((p) => p.id === provider);
+      if (candidate === undefined) {
         return {
           ok: false,
-          message: `厂商「${clean(provider)}」不支持这项能力：可选 ${vendorsForCapability(
+          message: `供应商「${clean(provider)}」不支持这项能力：可选 ${capableProviders(
             capability,
           )
-            .map((vendor) => vendor.id)
+            .map((p) => p.id)
             .join(' / ')}`,
         };
       }
       model ??=
-        current?.vendor === provider
+        current?.provider === provider
           ? current.model
-          : (VENDOR_DESCRIPTORS[provider].presets[capability][0] ?? '');
-      if (model.length === 0) return { ok: false, message: 'model 不能为空' };
+          : (candidate.models.find((m) => m.capabilities.includes(capability))?.id ??
+            (candidate.vendor !== undefined
+              ? VENDOR_DESCRIPTORS[candidate.vendor].presets[capability][0]
+              : undefined) ??
+            '');
+      if (model === undefined || model.length === 0) {
+        return { ok: false, message: 'model 不能为空' };
+      }
       return { ok: true, values: { ...values, provider, model: `${provider}/${model}` } };
     },
     write: (item, { next, secrets }) => {
       const capability = capabilityOf(item)!;
-      const vendor = str(next.provider) ?? '';
+      const provider = str(next.provider) ?? '';
       const ref = str(next.model) ?? '';
       const model = ref.includes('/') ? ref.slice(ref.indexOf('/') + 1) : ref;
-      if (!isVendorId(vendor) || model.length === 0) {
-        throw new AppError('INVALID_INPUT', '需要选择厂商与模型');
+      if (provider.length === 0 || model.length === 0) {
+        throw new AppError('INVALID_INPUT', '需要选择供应商与模型');
       }
       const apiKey = str(secrets.apiKey);
-      if (apiKey !== undefined && apiKey.length > 0) deps.providers.setKey(vendor, apiKey);
+      if (apiKey !== undefined && apiKey.length > 0) deps.providers.setKey(provider, apiKey);
+      // 内置厂商实例可能尚不存在（providers.list 里的占位条目也可被选中）：
+      // 先落地实例（预填预置对话模型）并把该模型补登记为声明能力，避免写出
+      // 读路径会被置空的悬空引用（normalizeModelProviders 会清掉指向不存在
+      // 实例的能力配置）。
+      const settings = deps.settings.get();
+      if (isVendorId(provider)) {
+        let instance = settings.modelProviders.find((p) => p.id === provider);
+        let modelProviders = settings.modelProviders;
+        if (instance === undefined) {
+          instance = createInstanceFromTemplate(
+            modelProviders.map((p) => p.id),
+            provider,
+          );
+          modelProviders = [...modelProviders, instance];
+        }
+        if (!instance.models.some((m) => m.id === model)) {
+          modelProviders = modelProviders.map((p) =>
+            p.id === instance.id
+              ? {
+                  ...p,
+                  models: [
+                    ...p.models,
+                    { id: model, contextWindow: 128_000, capabilities: [capability] },
+                  ],
+                }
+              : p,
+          );
+        }
+        deps.settings.update({ modelProviders });
+      }
       // 只改这一项能力：在最新设置上合并（兄弟能力的并发修改不被覆盖）。
       const latest = deps.settings.get().capabilityModels;
-      deps.settings.update({ capabilityModels: { ...latest, [capability]: { vendor, model } } });
+      deps.settings.update({
+        capabilityModels: { ...latest, [capability]: { provider, model } },
+      });
     },
     needsSensitiveInput: (item, proposed, current) => {
-      const vendor = str(proposed.provider) ?? str(current.values?.provider) ?? '';
-      return vendor.length === 0 || !keyed(vendor);
+      const provider = str(proposed.provider) ?? str(current.values?.provider) ?? '';
+      return provider.length === 0 || !keyed(provider);
     },
   };
 }
@@ -647,32 +720,25 @@ export function providerKeyAdapter(deps: AdapterDeps): ItemAdapter {
     },
     options: (field) =>
       field.name === 'provider'
-        ? [
-            ...Object.values(VENDOR_DESCRIPTORS).map((vendor) => ({
-              value: vendor.id,
-              label: vendor.name,
-            })),
-            ...deps.providers
-              .list()
-              .filter((provider) => !isVendorId(provider.id))
-              .map((provider) => ({ value: provider.id, label: clean(provider.name) })),
-          ].filter(
-            (option, index, all) =>
-              all.findIndex((other) => other.value === option.value) === index,
-          )
+        ? deps.providers.list().map((provider) => ({ value: provider.id, label: provider.name }))
         : [],
     write: (_item, { next, secrets }) => {
       const provider = str(next.provider) ?? '';
       const apiKey = str(secrets.apiKey) ?? '';
       if (provider.length === 0 || apiKey.length === 0) {
-        throw new AppError('INVALID_INPUT', '需要选择厂商并填写 API Key');
+        throw new AppError('INVALID_INPUT', '需要选择供应商并填写 API Key');
       }
       deps.providers.setKey(provider, apiKey);
-      // 国内厂商：确保有一条厂商配置（对话模型由设置页 / 卡片另行登记）。
+      // 内置厂商：确保有实例（预填预置对话模型），之后设置页里登记/调整模型。
       if (isVendorId(provider)) {
-        const latest = deps.settings.get().vendorProviders;
-        if (!latest.some((entry) => entry.id === provider)) {
-          deps.settings.update({ vendorProviders: [...latest, { id: provider, models: [] }] });
+        const latest = deps.settings.get().modelProviders;
+        if (!latest.some((p) => p.id === provider)) {
+          deps.settings.update({
+            modelProviders: [
+              ...latest,
+              createInstanceFromTemplate(latest.map((p) => p.id), provider),
+            ],
+          });
         }
       }
     },
