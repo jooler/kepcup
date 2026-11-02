@@ -151,7 +151,7 @@ describe('plugins integration (P0a-2)', () => {
       id: PLUGIN_ID,
       state: 'installed',
       enabled: true,
-      counts: { skills: 2, connectors: 1, mcp: 2, mail: 0 },
+      counts: { skills: 2, connectors: 1, mcp: 2, mail: 0, im: 0 },
     });
     expect(summary.iconDataUri).toMatch(/^data:image\/svg\+xml;base64,/);
 
@@ -442,7 +442,7 @@ describe('plugins integration (P0a-2)', () => {
       ((await core.rpc.call('plugins.list', undefined)) as { plugins: PluginSummary[] }).plugins[0],
     ).toMatchObject({
       enabled: false,
-      counts: { skills: 2, connectors: 1, mcp: 2, mail: 0 },
+      counts: { skills: 2, connectors: 1, mcp: 2, mail: 0, im: 0 },
     });
 
     await core.rpc.call('plugins.setEnabled', { id, enabled: true });
@@ -650,7 +650,7 @@ describe('plugins integration (P0a-2)', () => {
       enabled: true,
       dirPath: null,
       installedAt: null,
-      counts: { connectors: 1, skills: 0, mcp: 0, mail: 0 },
+      counts: { connectors: 1, skills: 0, mcp: 0, mail: 0, im: 0 },
     });
     // 内置连接器条目进目录（内置来源条目在商店化后归入 plugin origin 语义）。
     const catalog = (await core.rpc.call('apps.catalog.list', undefined)) as {
@@ -745,7 +745,7 @@ describe('plugins integration (P0a-2)', () => {
         { key: 'username', required: false },
         { key: 'password', required: true, sensitive: true },
       ]);
-      expect(plugin.instanceCounts).toEqual({ mail: 0, mcp: 0 });
+      expect(plugin.instanceCounts).toEqual({ mail: 0, mcp: 0, im: 0 });
 
       // 厂商贡献锁定端点：实例值里根本不收端点字段（未声明即拒绝）；30 秒意图无从
       // 传入，轮询取贡献缺省 120（贡献下限 90 / 全局 60 秒夹取）。
@@ -793,7 +793,7 @@ describe('plugins integration (P0a-2)', () => {
       };
       expect(
         afterCreate.plugins.find((row) => row.id === 'io.github.tester/mailplug')!.instanceCounts,
-      ).toEqual({ mail: 1, mcp: 0 });
+      ).toEqual({ mail: 1, mcp: 0, im: 0 });
 
       // 实例账号不能从全局视图直删（防悬空实例行），只能走实例路径级联。
       const accountId = (accounts.accounts[0] as { id: string }).id;

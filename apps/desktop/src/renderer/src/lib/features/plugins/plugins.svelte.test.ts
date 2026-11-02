@@ -85,7 +85,7 @@ const summary = (id: string, name: string) => ({
   marketplace: null,
   installedAt: 1,
   updatedAt: 1,
-  counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
+  counts: { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 },
   items: [],
   updateAvailable: null,
 });
