@@ -1156,13 +1156,14 @@ export const messageKindSchema = z.enum(['text', 'system_event', 'card', 'task_e
 export type MessageKind = z.infer<typeof messageKindSchema>;
 
 /**
- * A local file the bot created or modified in one run. Paths are absolute and
- * stay on disk; the conversation only carries the list for the UI file cards.
+ * A local file the bot created, modified or deleted in one run. Paths are
+ * absolute and stay on disk; the conversation only carries the list for the
+ * UI file cards.
  */
 export const messageArtifactSchema = z.object({
   path: z.string().min(1),
   name: z.string().min(1),
-  change: z.enum(['created', 'modified']),
+  change: z.enum(['created', 'modified', 'deleted']),
   /** Bytes on disk when the file was recorded (absent when unknown). */
   size: z.number().int().nonnegative().optional(),
 });
