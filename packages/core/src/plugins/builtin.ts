@@ -290,13 +290,14 @@ export class BuiltinPlugins {
           connectors: manifest.contributions.connectors.length,
           mcp: manifest.contributions.mcp.length,
           mail: manifest.contributions.mail.length,
+          im: manifest.contributions.im.length,
         },
         items: [],
         updateAvailable: null,
         revoked: null,
         configFields: [],
         instanceFields: [],
-        instanceCounts: { mail: 0, mcp: 0 },
+        instanceCounts: { mail: 0, mcp: 0, im: 0 },
         providesInstances: [],
       };
     });

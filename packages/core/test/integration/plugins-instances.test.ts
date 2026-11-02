@@ -138,7 +138,7 @@ describe('plugin config & instances (D105 P1)', () => {
     };
     const summary = list.plugins.find((entry) => entry.id === PLUGIN_ID)!;
     expect(summary.providesInstances).toEqual(['mcp']);
-    expect(summary.instanceCounts).toEqual({ mail: 0, mcp: 0 });
+    expect(summary.instanceCounts).toEqual({ mail: 0, mcp: 0, im: 0 });
     expect(summary.configFields).toHaveLength(2);
 
     // P1：mcp 实例 P4-M2 才接入 —— create 在适配器层停下（预期 PLUGIN_INVALID）。

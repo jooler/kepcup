@@ -147,7 +147,7 @@ describe('conversational app settings', () => {
     expect(applied.status).toBe('applied');
     expect(JSON.stringify(applied)).not.toContain('sk-image');
     expect((await settingsOf(core)).capabilityModels.image).toEqual({
-      vendor: 'dashscope',
+      provider: 'dashscope',
       model: 'qwen-image',
     });
 
@@ -248,6 +248,21 @@ describe('conversational app settings', () => {
 
   it('the pre-existing save paths broadcast settings.changed with the affected catalog items', async () => {
     const { core } = await start();
+    // 能力引用必须指向已存在的实例（读路径会把悬空引用置空）：先建厂商实例。
+    const before = await settingsOf(core);
+    await core.rpc.call('settings.update', {
+      modelProviders: [
+        ...before.modelProviders,
+        {
+          id: 'dashscope',
+          vendor: 'dashscope',
+          name: '阿里云百炼',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          enabled: true,
+          models: [],
+        },
+      ],
+    });
     const settings = await settingsOf(core);
     const capability = waitForEvent<{ itemIds: string[] }>(core, 'settings.changed', (payload) =>
       payload.itemIds.includes('capability.image'),
@@ -255,7 +270,7 @@ describe('conversational app settings', () => {
     await core.rpc.call('settings.update', {
       capabilityModels: {
         ...settings.capabilityModels,
-        image: { vendor: 'dashscope', model: 'qwen-image' },
+        image: { provider: 'dashscope', model: 'qwen-image' },
       },
     });
     // Only the capability that really changed (field-level diff of the whole-object save).

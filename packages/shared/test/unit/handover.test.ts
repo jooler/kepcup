@@ -270,15 +270,34 @@ describe('models', () => {
         id: 'openai',
         name: 'OpenAI',
         kind: 'builtin',
-        models: [{ id: 'gpt', name: 'GPT', contextWindow: 1 }],
+        enabled: true,
+        models: [{ id: 'gpt', name: 'GPT', contextWindow: 1, capabilities: ['chat'] }],
         hasKey: true,
       },
       {
         id: 'anthropic',
         name: 'Anthropic',
         kind: 'builtin',
-        models: [{ id: 'claude', name: 'Claude', contextWindow: 1 }],
+        enabled: true,
+        models: [{ id: 'claude', name: 'Claude', contextWindow: 1, capabilities: ['chat'] }],
         hasKey: false,
+      },
+      // 专有模型（声明了非 chat 能力）不产生对话选项。
+      {
+        id: 'dashscope',
+        name: '阿里云百炼',
+        kind: 'vendor',
+        vendor: 'dashscope',
+        enabled: true,
+        models: [
+          {
+            id: 'text-embedding-v4',
+            name: 'text-embedding-v4',
+            contextWindow: 8192,
+            capabilities: ['embedding'],
+          },
+        ],
+        hasKey: true,
       },
     ];
     expect(chatModelOptions(providers)).toEqual([{ ref: 'openai/gpt', label: 'OpenAI · GPT' }]);

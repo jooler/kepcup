@@ -9,7 +9,7 @@ import type { PluginItemKind } from '@kepcup/shared';
  * item, and every `unproject` is idempotent so rollback / recovery can replay it.
  */
 
-export type ProjectedKind = 'skill' | 'connector' | 'mcp' | 'mail';
+export type ProjectedKind = 'skill' | 'connector' | 'mcp' | 'mail' | 'im';
 
 export interface PluginIdentity {
   id: string;
@@ -105,7 +105,7 @@ export const PLUGIN_PROJECTOR_ORDER: readonly ProjectedKind[] = CAPABILITY_KINDS
 
 /** The install-time context's `owned` (nothing projected yet). */
 export function emptyOwned(): Readonly<Record<ProjectedKind, ReadonlySet<string>>> {
-  return { skill: new Set(), connector: new Set(), mcp: new Set(), mail: new Set() };
+  return { skill: new Set(), connector: new Set(), mcp: new Set(), mail: new Set(), im: new Set() };
 }
 
 // --- barrel -------------------------------------------------------------------
@@ -126,6 +126,8 @@ export interface PluginProjectorsDeps {
   skills: SkillsProjectorDeps;
   mcp: PluginMcpDeps;
   connectors: ConnectorsProjectorDeps;
+  /** D107：im projector 只记账与同意视图，无运行时依赖（materializer 另行装配）。 */
+  im?: Record<string, never> | undefined;
 }
 
 /**

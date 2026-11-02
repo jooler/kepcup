@@ -1,6 +1,7 @@
 import type {
   PluginContributionKind,
   PluginConsentConnector,
+  PluginConsentIm,
   PluginConsentMail,
   PluginConsentMcp,
   PluginConsentSkill,
@@ -9,6 +10,7 @@ import type {
 } from '@kepcup/shared';
 import {
   pluginConnectorContributionSchema,
+  pluginImContributionSchema,
   pluginMailContributionSchema,
   pluginMcpContributionSchema,
   pluginSkillContributionSchema,
@@ -20,6 +22,7 @@ import type {
   ProjectedKind,
 } from './projectors/index.js';
 import { ConnectorsProjector } from './projectors/connectors.js';
+import { ImProjector } from './projectors/im.js';
 import { MailProjector } from './projectors/mail.js';
 import { McpProjector } from './projectors/mcp.js';
 import { SkillsProjector } from './projectors/skills.js';
@@ -43,10 +46,11 @@ export type ConsentItem =
   | PluginConsentSkill
   | PluginConsentConnector
   | PluginConsentMcp
-  | PluginConsentMail;
+  | PluginConsentMail
+  | PluginConsentIm;
 
 /** Where this kind's items live in `ConsentItems` / `PluginSummary['counts']` (plural keys of the fixed shared contracts). */
-export type CapabilityConsentKey = 'skills' | 'connectors' | 'mcp' | 'mail';
+export type CapabilityConsentKey = 'skills' | 'connectors' | 'mcp' | 'mail' | 'im';
 
 export interface CapabilityKindAdapter {
   readonly kind: ProjectedKind;
@@ -122,6 +126,16 @@ export const CAPABILITY_KINDS: readonly CapabilityKindAdapter[] = [
     hasContribution: (manifest) => manifest.contributions.mail.length > 0,
     consentItems: (inspection) => inspection.items as ConsentItem[],
     createProjector: () => new MailProjector(),
+  }),
+  defineCapabilityKind({
+    kind: 'im',
+    contributionSchema: pluginImContributionSchema,
+    consentKey: 'im',
+    hasInstances: true,
+    instanceFields: imInstanceFields,
+    hasContribution: (manifest) => manifest.contributions.im.length > 0,
+    consentItems: (inspection) => inspection.items as ConsentItem[],
+    createProjector: () => new ImProjector(),
   }),
 ] satisfies readonly CapabilityKindAdapter[];
 
@@ -227,6 +241,31 @@ function mailInstanceFields(manifest: PluginManifest): PluginField[] {
   return fields;
 }
 
+/**
+ * IM instance form fields (D107, 54 号文档 §2)：`qrcode` 建号（首发）没有表单——
+ * token 走扫码确认（core 内存 pending → secrets），内置字段为空；`secret` 建号
+ * （wecom-app 等后置插件）由清单声明 sensitive 字段作为密钥，内置 `bot_token`
+ * 只为 secret 插件保留兜底。manifest 的 `instanceFields` 追加在后（schema 已查重
+ * 并拒绝与内置键冲突）。
+ */
+function imInstanceFields(manifest: PluginManifest): PluginField[] {
+  const contribution = manifest.contributions.im[0];
+  const fields: PluginField[] = [];
+  if (contribution !== undefined && contribution.setup === 'secret') {
+    fields.push({
+      key: 'bot_token',
+      type: 'string',
+      title: 'Bot 凭据',
+      description: '由 IM 服务商颁发的 Bot 访问凭据',
+      required: true,
+      sensitive: true,
+      multiple: false,
+    });
+  }
+  fields.push(...(contribution?.instanceFields ?? []));
+  return fields;
+}
+
 export function capabilityKindOf(kind: PluginContributionKind): CapabilityKindAdapter {
   const adapter = CAPABILITY_KINDS.find((candidate) => candidate.kind === kind);
   if (adapter === undefined) {
@@ -253,6 +292,9 @@ export function mergeConsentItems(
       break;
     case 'mail':
       items.mail.push(...(values as PluginConsentMail[]));
+      break;
+    case 'im':
+      items.im.push(...(values as PluginConsentIm[]));
       break;
   }
 }

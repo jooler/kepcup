@@ -76,6 +76,7 @@ const INFO = pluginInspectOutputSchema.parse({
       smtpHost: 'smtp.fastmail.com',
     },
   ],
+  im: [],
   conflicts: [],
   existing: null,
   update: null,

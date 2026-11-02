@@ -38,7 +38,7 @@ import {
   type AppNoticePayload,
   type Bot,
   type CoreStatus,
-  type CustomModel,
+  type ProviderModel,
   type ShareConsumeInput,
   type ShareConsumeOutput,
   type ShareTargets,
@@ -158,6 +158,8 @@ import { BoardStore } from './board/board-store.js';
 import { buildWorkbenchSection, describeTime } from './workbench/context.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
+import { ImService } from './im/service.js';
+import { ImForwarder } from './im/forwarder.js';
 import { HandoverHost } from './dispatch/handover.js';
 import { SettingsCatalogHost } from './settings/host.js';
 import { applyBotProfileUpdate, createPermissionEffects } from './settings/bot-profile-update.js';
@@ -202,6 +204,7 @@ import { effectivePluginIds } from './plugins/effective.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
 import { PluginInstanceService, PluginInstanceStore, pluginInstanceSecretName } from './plugins/instances.js';
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
+import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
 import { AppToolGrants } from './apps/grants.js';
 import { GitRemoteGrants } from './permissions/git-remote-grants.js';
@@ -630,6 +633,8 @@ export interface CoreServices {
   watches: WatchService | null;
   /** D84 邮件通道 (null while locked / errored). */
   mail: MailService | null;
+  /** D107 IM 通道（54 号文档）(null while locked / errored). */
+  im: ImService | null;
   /** D88 Bot 资产移交 (null while locked / errored). */
   handover: HandoverHost | null;
   /**
@@ -925,6 +930,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     memos: null,
     watches: null,
     mail: null,
+    im: null,
     handover: null,
     settingsCatalog: null,
     scheduler: null,
@@ -986,6 +992,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
       try {
         services.mail?.stop();
+      } catch {
+        // Session already gone.
+      }
+      try {
+        services.im?.stop();
       } catch {
         // Session already gone.
       }
@@ -2750,6 +2761,50 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 持有 mail 引用）；DEV-065 的启动对账：实例行存在而账号缺失时清掉孤儿实例行。
     pluginInstances.registerMaterializer('mail', createMailMaterializer(mail));
     reconcileMailInstanceRows(pluginInstances, mail, logger);
+    // D107（54 号文档）：IM 通道（实例 = IM 账号；首发 ilink = 个人微信）。
+    // 转发器订阅 message.created：只做「入队 im_forward」，core 内订阅，无窗口依赖。
+    const im = new ImService({
+      db: mainDb,
+      clock,
+      logger,
+      secrets,
+      bots,
+      conversations,
+      messages,
+      jobs,
+      taint,
+      deliverAlert: (input) => orchestrator.deliverImAlertToBot(input),
+      publishAccount: (accountId) => events.emit('im.account_updated', { accountId }),
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+      notice: publishAppNotice,
+      recordEgress: (detail) => audit.recordSystem('im_forward', detail),
+      instanceOwner: {
+        ownerOf: (instanceId) => {
+          const owner = pluginInstances.ownerOf(instanceId);
+          return owner === null || owner.kind !== 'im' ? null : { pluginId: owner.pluginId };
+        },
+        pluginName: (pluginId) => plugins.displayNameOf(pluginId),
+        botTokenSecretName: (pluginId, instanceId) =>
+          pluginInstanceSecretName(pluginId, instanceId, 'bot_token'),
+      },
+      instances: {
+        create: (pluginId, values, kind) => pluginInstances.create(pluginId, values, kind),
+        update: (id, values) => pluginInstances.update(id, values),
+      },
+      pluginEnabledForBot: (botId, pluginId) => {
+        const bot = bots.get(botId);
+        return bot?.profile.runtime.plugin_ids?.includes(pluginId) ?? false;
+      },
+    });
+    im.start();
+    const imForwarder = new ImForwarder({ im, conversations, logger });
+    events.on('message.created', (payload) => {
+      imForwarder.handleMessage(payload.message);
+    });
+    // IM materializer 落地（实例 = IM 账号）+ 启动对账（同 mail 的 DEV-065 纪律）。
+    pluginInstances.registerMaterializer('im', createImMaterializer(im));
+    reconcileImInstanceRows(pluginInstances, im, logger);
     // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
     const handoverBotWriter: HandoverBotWriter = {
       get: (botId) => bots.get(botId),
@@ -3032,6 +3087,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mail: {
         prepareBotDeletion: (botId) => mail.prepareBotDeletion(botId),
       },
+      // D107：删除 Bot 时清它的 IM 绑定（账号保留，同 mail）。
+      im: {
+        prepareBotDeletion: (botId) => im.prepareBotDeletion(botId),
+      },
       // D81: a deleted bot's widgets (conversation deletion cascades through the FK).
       widgets: {
         prepareBotDeletion: (botId) => widgetService.deleteForBot(botId),
@@ -3079,6 +3138,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules,
       watches,
       mail,
+      im,
       handover,
       gateway,
       attachments,
@@ -3408,6 +3468,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.memos = memos;
     services.watches = watches;
     services.mail = mail;
+    services.im = im;
     services.handover = handover;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
@@ -3651,29 +3712,43 @@ function seedMockLlm(settings: SettingsService, env: NodeJS.ProcessEnv, logger: 
   const url = env.KEPCUP_MOCK_LLM_URL;
   if (url === undefined || url.length === 0) return;
   const current = settings.get();
-  const mockModels: CustomModel[] = [
+  const mockModels: ProviderModel[] = [
     // P11: the mock main model declares image input so browser_screenshot
     // payloads reach the recorded request bodies (e2e can verify them).
-    { id: 'mock-main', name: 'Mock Main', contextWindow: 128_000, input: ['text', 'image'] },
-    { id: 'mock-light', name: 'Mock Light', contextWindow: 32_000 },
+    {
+      id: 'mock-main',
+      name: 'Mock Main',
+      contextWindow: 128_000,
+      input: ['text', 'image'],
+      capabilities: ['chat'],
+    },
+    { id: 'mock-light', name: 'Mock Light', contextWindow: 32_000, capabilities: ['chat'] },
   ];
-  const existing = current.customProviders.find((c) => c.id === 'mock');
+  const existing = current.modelProviders.find((p) => p.id === 'custom:mock');
   const unchanged =
     existing !== undefined &&
     existing.baseUrl === url &&
     current.defaultMainModel === 'custom:mock/mock-main' &&
     current.defaultLightModel === 'custom:mock/mock-light';
   if (unchanged) return;
-  const next = settings.update({
-    customProviders: [
-      ...current.customProviders.filter((c) => c.id !== 'mock'),
-      { id: 'mock', name: 'Mock LLM', baseUrl: url, models: mockModels },
+  settings.update({
+    modelProviders: [
+      ...current.modelProviders.filter((p) => p.id !== 'custom:mock'),
+      {
+        id: 'custom:mock',
+        vendor: null,
+        name: 'Mock LLM',
+        baseUrl: url,
+        enabled: true,
+        api: 'openai-completions',
+        builtinCatalog: false,
+        models: mockModels,
+      },
     ],
     defaultMainModel: 'custom:mock/mock-main',
     defaultLightModel: 'custom:mock/mock-light',
   });
   logger.info({ url }, 'mock LLM provider seeded');
-  void next;
 }
 
 function failLocked(
@@ -3948,6 +4023,7 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         // (non-blocking: the pass runs in the background).
         services.watches?.wake();
         services.mail?.wake();
+        services.im?.wake();
         return { ok: true as const };
       },
     },

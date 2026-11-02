@@ -75,6 +75,8 @@ export interface JobsRunnerDeps {
   watches?: WatchService | undefined;
   /** D84 mail domain (mail_alert consumer). */
   mail?: MailService | undefined;
+  /** D107 IM domain (im_alert / im_forward consumer). */
+  im?: { runAlertJob(job: JobRow): void; runForwardJob(job: JobRow): Promise<void> } | undefined;
   /** D88 P2 handover host (handover_copy consumer: the background wiki / widget copy). */
   handover?: { runCopyJob(job: JobRow): Promise<void> } | undefined;
   /** Sandbox backend for the skill generation loop (P08). */
@@ -364,6 +366,20 @@ export class JobsRunner {
         }
         this.#deps.mail.runAlertJob(job);
         return;
+      case 'im_alert':
+        // D109：IM 入站唤醒。卡片 + 对话轮由作业投递（幂等：dedupeKey + 卡片/唤醒查重）。
+        if (this.#deps.im === undefined) {
+          throw new Error('im domain not wired; cannot run im_alert');
+        }
+        this.#deps.im.runAlertJob(job);
+        return;
+      case 'im_forward':
+        // D110：Bot 最终回复向开启同步的 IM 账号转发（幂等：dedupeKey im_forward:{messageId}:{accountId}）。
+        if (this.#deps.im === undefined) {
+          throw new Error('im domain not wired; cannot run im_forward');
+        }
+        await this.#deps.im.runForwardJob(job);
+        return;
       case 'handover_copy':
         // D88 P2: the background stage of a confirmed handover (wiki pages, widgets). The
         // host marks its items and settles the handover; a throw retries the job.
@@ -481,6 +497,9 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'delegation_delivery',
   'watch_alert',
   'mail_alert',
+  // D109：IM 入站唤醒是响应触发（调度优先级 1）；im_forward 只发消息不调模型，
+  // 走后台优先级，不在此列。
+  'im_alert',
 ]);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */

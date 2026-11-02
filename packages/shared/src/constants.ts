@@ -307,6 +307,8 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   'watch_alert',
   // D84：新邮件唤醒 Bot 的触发消息（用户看到的是邮件卡）。
   'mail_alert',
+  // D109（54 号文档）：IM 入站唤醒 Bot 的触发消息（用户看到的是 IM 卡）。
+  'im_alert',
   // D92 T1a：用户停止了协作回合（episode_stopped）——只进 Bot 的上下文，
   // 用户看到的是自己点过的停止按钮，不再需要一条消息。
   'episode_stopped',

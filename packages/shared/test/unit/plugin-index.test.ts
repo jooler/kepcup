@@ -270,12 +270,12 @@ describe('source and summary additions', () => {
       marketplace: null,
       installedAt: 1,
       updatedAt: 1,
-      counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
+      counts: { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 },
       items: [],
       updateAvailable: null,
       configFields: [],
       instanceFields: [],
-      instanceCounts: { mail: 0, mcp: 0 },
+      instanceCounts: { mail: 0, mcp: 0, im: 0 },
       providesInstances: [],
     };
     expect(pluginSummarySchema.parse(summary).revoked).toBeNull();

@@ -1,26 +1,30 @@
 <script lang="ts">
-import type { CapabilityModelKey, SettingValues, VendorId } from '@kepcup/shared';
-import { AppError, VENDOR_DESCRIPTORS, vendorsForCapability } from '@kepcup/shared';
-import { untrack } from 'svelte';
-import { capabilityPrefill } from '$lib/features/settings-card/setting-card-model';
-import { t, vendorName } from '$lib/i18n';
-import { toast } from 'svelte-sonner';
-import { settingsStore } from '$lib/stores/settings.svelte';
-import { Button } from '$lib/components/ui/button';
-import { Input } from '$lib/components/ui/input';
-import { Label } from '$lib/components/ui/label';
-import { Badge } from '$lib/components/ui/badge';
+  import type { CapabilityModelKey, SettingValues } from '@kepcup/shared';
+  import { AppError, VENDOR_DESCRIPTORS } from '@kepcup/shared';
+  import { untrack } from 'svelte';
+  import { capabilityPrefill } from '$lib/features/settings-card/setting-card-model';
+  import { t } from '$lib/i18n';
+  import { toast } from 'svelte-sonner';
+  import { settingsStore } from '$lib/stores/settings.svelte';
+  import {
+    capabilityModelChoices,
+    capabilityProviderCandidates,
+  } from '$lib/features/settings/provider-instances';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Badge } from '$lib/components/ui/badge';
 
   /**
-   * 「能力模型」section（docs/design/16-capability-models.md）：一种模型
-   * 能力一条配置——厂商（仅已适配该能力的国内厂商）+ 模型 id + API Key
-   * （按厂商共享）。设置页是「改完即存」：厂商 / 模型输入停顿后自动落盘，
-   * Key 在失焦 / 回车时提交（敏感值不逐字存储）；「测试」仍用当前填写的
-   * 参数发一次最小真实请求，不落库。embedded=true 时隐藏标题与说明（对话内
-   * 设置卡片自带），保留「保存」按钮并在测试成功后换成「保存并关闭」，保存
-   * 成功后回调 onSaved（inline setup 的继续对话钩子，卡片随之关闭）。prefill：
-   * 对话内设置卡里 Bot 给的非敏感预填（`provider` / `model`；Key 永远由用户
-   * 自己填），挂载时套用一次。
+   * 「能力模型」section（docs/design/16-capability-models.md）：一种模型能力
+   * 一条配置——供应商实例（候选 = 声明了该能力的实例：内置厂商走描述符能力
+   * 矩阵，自定义实例仅向量）+ 模型 id + API Key（按实例共享）。设置页是
+   * 「改完即存」：供应商 / 模型输入停顿后自动落盘，Key 在失焦 / 回车时提交
+   * （敏感值不逐字存储）；「测试」仍用当前填写的参数发一次最小真实请求，
+   * 不落库。embedded=true 时隐藏标题与说明（对话内设置卡片自带），保留
+   * 「保存」按钮并在测试成功后换成「保存并关闭」，保存成功后回调 onSaved。
+   * prefill：对话内设置卡里 Bot 给的非敏感预填（`provider` / `model`；Key
+   * 永远由用户自己填），挂载时套用一次。
    */
   let {
     capability,
@@ -39,7 +43,8 @@ import { Badge } from '$lib/components/ui/badge';
     onSaved?: () => void;
   } = $props();
 
-  let vendor = $state<VendorId | ''>('');
+  /** 选中的供应商实例 id（'' = 未选）。 */
+  let provider = $state('');
   let model = $state('');
   let key = $state('');
   let busy = $state(false);
@@ -49,22 +54,37 @@ import { Badge } from '$lib/components/ui/badge';
   /** IME 组合中：暂停模型 id 的自动落盘，避免把未上屏的拼音串存进去。 */
   let composing = $state(false);
 
-  const vendors = $derived(vendorsForCapability(capability));
-  const stored = $derived(settingsStore.settings?.capabilityModels[capability] ?? null);
-  const presets = $derived(vendor !== '' ? VENDOR_DESCRIPTORS[vendor].presets[capability] : []);
-  const vendorHasKey = $derived(
-    vendor !== '' &&
-      (settingsStore.providers.find((p) => p.id === vendor)?.hasKey ?? false),
+  const hasKeyById = $derived(
+    new Map(settingsStore.providers.map((p) => [p.id, p.hasKey] as const)),
   );
-  /** 有未保存的修改（厂商/模型/key 任一变化）；未选厂商时视为未编辑。 */
+  const candidates = $derived(
+    capabilityProviderCandidates(
+      settingsStore.settings?.modelProviders ?? [],
+      capability,
+      hasKeyById,
+    ),
+  );
+  const providerNameById = $derived(
+    new Map(settingsStore.providers.map((p) => [p.id, p.name] as const)),
+  );
+  const stored = $derived(settingsStore.settings?.capabilityModels[capability] ?? null);
+  const choices = $derived.by(() => {
+    const instance = candidates.find((entry) => entry.id === provider);
+    return instance === undefined ? [] : capabilityModelChoices(instance, capability);
+  });
+  const providerHasKey = $derived(hasKeyById.get(provider) ?? false);
+  /** 有未保存的修改（供应商/模型/key 任一变化）；未选实例时视为未编辑。 */
   const dirty = $derived(
-    vendor !== '' &&
-      (stored === null || stored.vendor !== vendor || stored.model !== model.trim() || key.length > 0),
+    provider !== '' &&
+      (stored === null ||
+        stored.provider !== provider ||
+        stored.model !== model.trim() ||
+        key.length > 0),
   );
 
   // 表单任何字段一变，「测试通过」即失效（测的是改之前的参数）。
   $effect(() => {
-    void vendor;
+    void provider;
     void model;
     void key;
     testOk = false;
@@ -74,7 +94,7 @@ import { Badge } from '$lib/components/ui/badge';
   $effect(() => {
     const current = settingsStore.settings?.capabilityModels[capability] ?? null;
     if (dirty) return;
-    vendor = current?.vendor ?? '';
+    provider = current?.provider ?? '';
     model = current?.model ?? '';
     key = '';
   });
@@ -86,11 +106,11 @@ import { Badge } from '$lib/components/ui/badge';
     prefillApplied = true;
     const next = capabilityPrefill(
       prefill,
-      vendors.map((entry) => entry.id),
+      candidates.map((entry) => entry.id),
     );
     if (next === null) return;
     untrack(() => {
-      vendor = next.vendor as VendorId;
+      provider = next.vendor;
       if (next.model !== null) model = next.model;
     });
   });
@@ -99,17 +119,17 @@ import { Badge } from '$lib/components/ui/badge';
   async function persist(): Promise<void> {
     const settings = settingsStore.settings;
     if (settings === null) throw new Error('settings unavailable');
-    if (vendor === '' || model.trim().length === 0) {
+    if (provider === '' || model.trim().length === 0) {
       throw new Error(t('settings.capabilityMissingFields'));
     }
     await settingsStore.update({
       capabilityModels: {
         ...settings.capabilityModels,
-        [capability]: { vendor, model: model.trim() },
+        [capability]: { provider, model: model.trim() },
       },
     });
     if (key.length > 0) {
-      await settingsStore.setKey(vendor, key);
+      await settingsStore.setKey(provider, key);
       key = '';
     } else {
       await settingsStore.refresh();
@@ -130,36 +150,36 @@ import { Badge } from '$lib/components/ui/badge';
   }
 
   /**
-   * 设置页：厂商 / 模型即改即存（800ms 防抖）。Key 不参与自动保存——敏感值
+   * 设置页：供应商 / 模型即改即存（800ms 防抖）。Key 不参与自动保存——敏感值
    * 只在失焦或回车时提交一次。embedded 仍等用户点「保存」。
    */
   $effect(() => {
     if (embedded || composing) return;
     const current = settingsStore.settings?.capabilityModels[capability] ?? null;
-    const wanted = vendor;
+    const wanted = provider;
     const wantedModel = model.trim();
     if (wanted === '' || wantedModel === '') return;
-    if (current !== null && current.vendor === wanted && current.model === wantedModel) return;
+    if (current !== null && current.provider === wanted && current.model === wantedModel) return;
     const timer = setTimeout(() => void save(true), 800);
     return () => clearTimeout(timer);
   });
 
-  /** 切换厂商后旧模型 id 多半不适用：换成该厂商的首个预设（没有预设就清空），
-   * 避免把上一个厂商的模型 id 存到新厂商名下。 */
-  function onVendorChange(value: string): void {
+  /** 切换供应商后旧模型 id 多半不适用：换成该实例的首个候选（没有就清空），
+   * 避免把上一个实例的模型 id 存到新实例名下。 */
+  function onProviderChange(value: string): void {
     if (embedded) return;
     testOk = false;
-    vendor = value as VendorId | '';
-    const known = vendors.find((entry) => entry.id === value);
-    model = known === undefined ? '' : (VENDOR_DESCRIPTORS[known.id].presets[capability]?.[0] ?? '');
+    provider = value;
+    const instance = candidates.find((entry) => entry.id === value);
+    model = instance === undefined ? '' : (capabilityModelChoices(instance, capability)[0] ?? '');
   }
 
-  /** Key 提交（失焦 / 回车）：先确保厂商可用，不逐字落盘。 */
+  /** Key 提交（失焦 / 回车）：先确保供应商可用，不逐字落盘。 */
   async function commitKey(): Promise<void> {
-    if (embedded || vendor === '' || key.length === 0 || busy) return;
+    if (embedded || provider === '' || key.length === 0 || busy) return;
     busy = true;
     try {
-      await settingsStore.setKey(vendor, key);
+      await settingsStore.setKey(provider, key);
       key = '';
       await settingsStore.refresh();
     } catch (error) {
@@ -178,13 +198,18 @@ import { Badge } from '$lib/components/ui/badge';
   }
 
   /**
-   * 未保存先测：直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，
+   * 未保存先测：直接用当前填写的供应商 / 模型 / Key 发一次最小真实请求，
    * 不因测试而落库（key 留空 = 测已存 key）；落库由即存或 embedded 的「保存」负责。
    */
   async function test(): Promise<void> {
     testing = true;
     try {
-      await settingsStore.test(vendor, model.trim(), capability, key.length > 0 ? key : undefined);
+      await settingsStore.test(
+        provider,
+        model.trim(),
+        capability,
+        key.length > 0 ? key : undefined,
+      );
       testOk = true;
       toast.success(t('settings.testOk'));
     } catch (error) {
@@ -218,6 +243,13 @@ import { Badge } from '$lib/components/ui/badge';
       busy = false;
     }
   }
+
+  const providerConsoleUrl = $derived.by(() => {
+    const instance = candidates.find((entry) => entry.id === provider);
+    return instance?.vendor !== undefined && instance.vendor !== null
+      ? VENDOR_DESCRIPTORS[instance.vendor].consoleUrl
+      : null;
+  });
 </script>
 
 <section class="space-y-3" data-testid={`${testid}-section`}>
@@ -231,7 +263,7 @@ import { Badge } from '$lib/components/ui/badge';
       {#if stored === null}
         <Badge variant="outline">{t('settings.capabilityNotConfigured')}</Badge>
       {:else}
-        <Badge>{vendorName(stored.vendor, VENDOR_DESCRIPTORS[stored.vendor].name)}</Badge>
+        <Badge>{providerNameById.get(stored.provider) ?? stored.provider}</Badge>
         <span class="text-xs text-muted-foreground" data-testid={`${testid}-current`}>
           {stored.model}
         </span>
@@ -244,13 +276,15 @@ import { Badge } from '$lib/components/ui/badge';
         <select
           id={`${testid}-vendor`}
           class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-          bind:value={vendor}
-          onchange={(event) => onVendorChange(event.currentTarget.value)}
+          bind:value={provider}
+          onchange={(event) => onProviderChange(event.currentTarget.value)}
           data-testid={`${testid}-vendor`}
         >
           <option value="">—</option>
-          {#each vendors as vendorDescriptor (vendorDescriptor.id)}
-            <option value={vendorDescriptor.id}>{vendorDescriptor.name}</option>
+          {#each candidates as instance (instance.id)}
+            <option value={instance.id}>
+              {providerNameById.get(instance.id) ?? instance.id}
+            </option>
           {/each}
         </select>
       </div>
@@ -259,25 +293,25 @@ import { Badge } from '$lib/components/ui/badge';
         <Input
           id={`${testid}-model`}
           class="h-9"
-          placeholder={presets[0] ?? 'model-id'}
+          placeholder={choices[0] ?? 'model-id'}
           bind:value={model}
           list={`${testid}-presets`}
-          disabled={vendor === ''}
+          disabled={provider === ''}
           oncompositionstart={() => (composing = true)}
           oncompositionend={() => (composing = false)}
           data-testid={`${testid}-model`}
         />
-        {#if presets.length > 0}
+        {#if choices.length > 0}
           <datalist id={`${testid}-presets`}>
-            {#each presets as preset (preset)}
-              <option value={preset}></option>
+            {#each choices as choice (choice)}
+              <option value={choice}></option>
             {/each}
           </datalist>
         {/if}
       </div>
     </div>
 
-    {#if vendor !== ''}
+    {#if provider !== ''}
       <div class="grid gap-1.5">
         <Label for={`${testid}-key`}>{t('settings.providerKey')}</Label>
         <Input
@@ -285,9 +319,7 @@ import { Badge } from '$lib/components/ui/badge';
           class="h-9"
           type="password"
           placeholder={
-            vendorHasKey
-              ? t('settings.providerKeySet')
-              : t('settings.providerKeyPlaceholder')
+            providerHasKey ? t('settings.providerKeySet') : t('settings.providerKeyPlaceholder')
           }
           bind:value={key}
           onblur={() => void commitKey()}
@@ -295,7 +327,9 @@ import { Badge } from '$lib/components/ui/badge';
           data-testid={`${testid}-key`}
         />
         <p class="text-xs text-muted-foreground">
-          {t('settings.vendorKeyHint', { url: VENDOR_DESCRIPTORS[vendor].consoleUrl })}
+          {providerConsoleUrl !== null
+            ? t('settings.vendorKeyHint', { url: providerConsoleUrl })
+            : t('settings.customKeyHint')}
         </p>
       </div>
     {/if}
@@ -326,7 +360,7 @@ import { Badge } from '$lib/components/ui/badge';
       <Button
         size="sm"
         variant="secondary"
-        disabled={busy || testing || vendor === '' || model.trim().length === 0}
+        disabled={busy || testing || provider === '' || model.trim().length === 0}
         onclick={() => void test()}
         data-testid={`${testid}-test`}
       >

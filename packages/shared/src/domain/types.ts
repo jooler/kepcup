@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import { botKindSchema } from './bot-kind.js';
-import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.js';
+import {
+  getProviderTemplate,
+  isVendorId,
+  modelCapabilitySchema,
+  providerApiSchema,
+  vendorIdSchema,
+  VENDOR_DESCRIPTORS,
+  type ModelCapability,
+  type VendorId,
+} from './vendors.js';
+import { AppError } from '../errors.js';
 import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
 import { agentSetupReasonSchema } from './agent-status.js';
 import { appUiCardSchema } from './apps-ui.js';
@@ -328,42 +338,129 @@ export interface BotCard {
 export const modelRefSchema = z.string().min(1);
 export type ModelRef = z.infer<typeof modelRefSchema>;
 
-export const customModelSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
+// ---------------------------------------------------------------------------
+// 模型供应商实例（v0.5.6 起统一承载对话与专有能力模型；legacy
+// customProviders / vendorProviders 已删除，存量库由读路径迁移）
+// ---------------------------------------------------------------------------
+
+/** 自定义实例 id 的前缀（与 core 运行时 `customProviderId` 对应）。 */
+export const CUSTOM_INSTANCE_PREFIX = 'custom:';
+/** 自定义实例裸 id（去 `custom:` 前缀）的字符集，与 legacy customProviderSchema 一致。 */
+export const customInstanceIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** 供应商实例 id：自定义带 `custom:` 前缀，其余为厂商实例（`dashscope`、`dashscope-2`…）。 */
+export const providerInstanceIdSchema = z
+  .string()
+  .regex(/^(custom:)?[a-z0-9][a-z0-9_-]{0,63}$/);
+
+/** 供应商实例上单个模型的登记：对话模型标 `chat`，专有模型标各自能力。 */
+export const providerModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  /** 展示名；缺省用 id。 */
+  name: z.string().min(1).max(200).optional(),
+  /** 上下文窗口。 */
   contextWindow: z.number().int().positive().max(10_000_000).default(128_000),
   /**
-   * Input modalities (P11): models that declare "image" receive browser
-   * screenshots as image blocks; absent = text-only (the historical default).
+   * Input modalities (P11)：含 `image` 的模型可接收浏览器截图；缺省 = 纯文本。
    */
   input: z
     .array(z.enum(['text', 'image']))
     .min(1)
     .optional(),
+  /** 能力声明（docs/design/16-capability-models.md）；每项能力运行时按此路由。 */
+  capabilities: z.array(modelCapabilitySchema).min(1).default(['chat']),
 });
-export type CustomModel = z.infer<typeof customModelSchema>;
+export type ProviderModel = z.infer<typeof providerModelSchema>;
 
-export const customProviderSchema = z.object({
-  id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
+/**
+ * 供应商实例：内置厂商模板（`vendor` 指向厂商描述符）、ZCode 式模板
+ * （`api` 决定对话线协议：openai-completions / anthropic-messages /
+ * openai-responses）、pi 内置目录实例（`builtinCatalog`，模型清单直接用
+ * pi 的同名 provider）或自定义 OpenAI 兼容端点（`vendor` = null）。同一
+ * 模板可重复添加（各自 baseUrl / Key），以便为不同能力的模型接不同的端点；
+ * 运行时注册表 id 与密钥名都取实例 `id` —— 内置厂商首个实例沿用厂商 id
+ * （存量 ref `dashscope/qwen-plus` 与密钥 `provider:dashscope` 不变），重复
+ * 添加追加 `-2` / `-3`；自定义实例带 `custom:` 前缀。
+ */
+export const providerInstanceSchema = z.object({
+  id: providerInstanceIdSchema,
+  vendor: vendorIdSchema.nullable().default(null),
   name: z.string().min(1).max(100),
-  baseUrl: z.string().url(),
-  models: z.array(customModelSchema).min(1),
+  baseUrl: z.string().url().optional(),
+  enabled: z.boolean().default(true),
+  /** 预留分组（未来自有供应商的左栏分组展示）；当前 UI 不开放编辑。 */
+  group: z.string().max(50).optional(),
+  /** 对话线协议（缺省 openai-completions）。 */
+  api: providerApiSchema.default('openai-completions'),
+  /** pi 内置目录实例：模型清单来自 pi 注册表，注册表不覆盖同名 provider。 */
+  builtinCatalog: z.boolean().default(false),
+  /** 供应商图标资产文件名（assets/provider-icons/ 下；模板携带）。 */
+  logo: z.string().max(100).optional(),
+  models: z.array(providerModelSchema).default([]),
 });
-export type CustomProvider = z.infer<typeof customProviderSchema>;
+export type ProviderInstance = z.infer<typeof providerInstanceSchema>;
+
+export function isCustomInstanceId(id: string): boolean {
+  return id.startsWith(CUSTOM_INSTANCE_PREFIX);
+}
+
+/** 生成一个未占用的供应商实例 id：base 已占用时追加 `-2` / `-3`…。 */
+export function nextProviderInstanceId(base: string, taken: readonly string[]): string {
+  if (!taken.includes(base)) return base;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!taken.includes(candidate)) return candidate;
+  }
+}
+
+/**
+ * 从「添加供应商」模板创建实例（providers.ts 的 `PROVIDER_TEMPLATES`）：
+ * id 自动避让（`dashscope`、`dashscope-2`…），同模板第 N 个实例的名字带
+ * 序号（阿里云百炼 2），预填模板的预置对话模型与线协议 / 图标；
+ * dashscope / volcengine 模板带 `vendor`（媒体走原生适配器）；
+ * builtinCatalog 模板创建 pi 目录实例（模型清单来自 pi，不落 models）。
+ */
+export function createInstanceFromTemplate(
+  taken: readonly string[],
+  templateId: string,
+): ProviderInstance {
+  const template = getProviderTemplate(templateId);
+  if (template === undefined) {
+    throw new AppError('INVALID_INPUT', `未知的供应商模板「${templateId}」`);
+  }
+  const sameTemplate = taken.filter((id) => id.startsWith(template.id)).length;
+  return {
+    id: nextProviderInstanceId(template.id, taken),
+    ...(template.vendor !== undefined ? { vendor: template.vendor } : { vendor: null }),
+    name: sameTemplate === 0 ? template.name : `${template.name} ${sameTemplate + 1}`,
+    ...(template.baseUrl !== undefined ? { baseUrl: template.baseUrl } : {}),
+    enabled: true,
+    api: template.api,
+    builtinCatalog: template.builtinCatalog === true,
+    ...(template.logo !== undefined ? { logo: template.logo } : {}),
+    models: template.builtinCatalog === true ? [] : template.presets.map((id) => ({
+      id,
+      contextWindow: 128_000,
+      capabilities: ['chat'],
+    })),
+  };
+}
 
 export interface ProviderInfo {
   id: string;
   name: string;
-  /** Built-in pi provider, custom OpenAI-compatible endpoint, or 国内厂商. */
+  /** Built-in pi provider, custom OpenAI-compatible endpoint, or 国内厂商实例. */
   kind: 'builtin' | 'custom' | 'vendor';
-  /** Vendor providers: which built-in domestic vendor this entry configures. */
+  /** Vendor instances: which built-in domestic vendor this instance derives from. */
   vendor?: VendorId | undefined;
   baseUrl?: string | undefined;
-  /** All registered models are chat models（媒体能力在 capabilityModels 配置）. */
+  /** 停用的实例不进运行时注册表；UI 据此显示状态。 */
+  enabled: boolean;
   models: Array<{
     id: string;
     name: string;
     contextWindow: number;
+    /** 能力声明；对话下拉只取含 `chat` 的模型，其余能力按槽位路由。 */
+    capabilities: ModelCapability[];
   }>;
   /** Whether an API key is stored. Never the key itself. */
   hasKey: boolean;
@@ -376,14 +473,18 @@ export interface ChatModelOption {
 }
 
 /**
- * 对话模型的可选项（仅已配置 key 的厂商；无 key 的模型永远不会应答）：Bot 详情的模型
- * 下拉与 D88 移交的可用模型列表同源，都从 `providers.list` 的结果按此推出。
+ * 对话模型的可选项（仅已配置 key 的供应商实例；无 key 的模型永远不会应答）：
+ * Bot 详情的模型下拉与 D88 移交的可用模型列表同源，都从 `providers.list`
+ * 的结果按此推出。只有声明了 `chat` 能力的模型会出现在这里——专有模型
+ * （向量/重排/…）走能力槽位配置，不产生对话选项。
  */
 export function chatModelOptions(providers: readonly ProviderInfo[]): ChatModelOption[] {
   const options: ChatModelOption[] = [];
   for (const provider of providers) {
     if (!provider.hasKey) continue;
     for (const model of provider.models) {
+      // capabilities 缺省视为纯对话模型（跨版本快照的防御）。
+      if (!(model.capabilities ?? ['chat']).includes('chat')) continue;
       options.push({
         ref: `${provider.id}/${model.id}`,
         label: `${provider.name} · ${model.name}`,
@@ -412,12 +513,14 @@ export const embeddingConfigSchema = z.object({
 export type EmbeddingConfig = z.infer<typeof embeddingConfigSchema>;
 
 /**
- * 按能力配置的非对话模型（docs/design/16-capability-models.md）：厂商从
- * 已适配该能力的厂商中选择，端点差异由厂商适配器承担；每种能力至多一条
- * 生效配置（null = 未配置）。API key 按厂商共享（provider:{vendorId}）。
+ * 按能力配置的专有模型（docs/design/16-capability-models.md）：从
+ * `settings.modelProviders` 实例中选一个已声明该能力的模型作为默认；
+ * 每种能力至多一条生效配置（null = 未配置）。API key 按实例共享
+ * （`provider:{实例id}`）；端点差异由实例 baseUrl + core 适配层承担。
  */
 export const capabilityModelSchema = z.object({
-  vendor: vendorIdSchema,
+  /** 供应商实例 id（settings.modelProviders）。 */
+  provider: z.string().min(1).max(80),
   model: z.string().min(1).max(200),
 });
 export type CapabilityModel = z.infer<typeof capabilityModelSchema>;
@@ -435,6 +538,146 @@ export const capabilityModelsSchema = z.object({
 export type CapabilityModels = z.infer<typeof capabilityModelsSchema>;
 /** 能力模型配置的 key（不含 chat）。 */
 export type CapabilityModelKey = keyof CapabilityModels;
+
+/**
+ * 存量设置一次性迁移（core 读路径调用）：把 legacy `customProviders` /
+ * `vendorProviders` / `capabilityModels.{vendor,…}` 搬进统一的
+ * `modelProviders` 实例列表，能力引用改写为 `{provider, model}`。
+ *
+ * 兼容不变式：
+ * - 厂商首个实例沿用厂商 id、自定义实例沿用 `custom:{id}` —— 存量模型 ref
+ *   （`defaultMainModel` 等）与密钥名（`provider:{id}`）全部原样有效；
+ * - 能力配置引用的厂商若无条目，补建一个空模型实例（对齐旧行为：能力模型
+ *   可以只用厂商默认端点 + Key，不登记对话模型）；
+ * - 能力模型补进实例的模型列表（同 id 合并能力），引用改写后语义不变；
+ * - 幂等：已迁移（`modelProviders` 非空）或没有 legacy 数据时原样返回。
+ *
+ * 迁移产物里 legacy 字段被删除，由调用方决定是否写回。
+ */
+export function migrateLegacyModelProviders(raw: Record<string, unknown>): {
+  data: Record<string, unknown>;
+  changed: boolean;
+} {
+  const existing = raw.modelProviders;
+  if (Array.isArray(existing) && existing.length > 0) {
+    return { data: raw, changed: false };
+  }
+  const legacyCustom = Array.isArray(raw.customProviders)
+    ? (raw.customProviders as Array<Record<string, unknown>>)
+    : [];
+  const legacyVendor = Array.isArray(raw.vendorProviders)
+    ? (raw.vendorProviders as Array<Record<string, unknown>>)
+    : [];
+  const legacyCapability =
+    typeof raw.capabilityModels === 'object' && raw.capabilityModels !== null
+      ? (raw.capabilityModels as Record<string, unknown>)
+      : {};
+  const hasLegacyCapability = Object.values(legacyCapability).some(
+    (entry) => entry !== null && entry !== undefined,
+  );
+  if (legacyCustom.length === 0 && legacyVendor.length === 0 && !hasLegacyCapability) {
+    return { data: raw, changed: false };
+  }
+
+  const instances: Record<string, unknown>[] = [];
+  const instanceByVendor = new Map<string, Record<string, unknown>>();
+
+  // 1. 厂商条目 → 实例（对话模型原样搬入，标 `chat`）。
+  for (const entry of legacyVendor) {
+    const vendor = entry.id;
+    if (typeof vendor !== 'string' || !isVendorId(vendor)) continue;
+    const baseUrl =
+      typeof entry.baseUrl === 'string' && entry.baseUrl.length > 0
+        ? entry.baseUrl
+        : VENDOR_DESCRIPTORS[vendor].baseUrl;
+    const models = Array.isArray(entry.models)
+      ? (entry.models as Array<Record<string, unknown>>).map((m) => ({
+          id: m.id,
+          ...(typeof m.name === 'string' ? { name: m.name } : {}),
+          ...(typeof m.contextWindow === 'number' ? { contextWindow: m.contextWindow } : {}),
+          ...(Array.isArray(m.input) ? { input: m.input } : {}),
+          capabilities: ['chat'],
+        }))
+      : [];
+    const instance: Record<string, unknown> = {
+      id: vendor,
+      vendor,
+      name: VENDOR_DESCRIPTORS[vendor].name,
+      baseUrl,
+      enabled: true,
+      models,
+    };
+    instanceByVendor.set(vendor, instance);
+    instances.push(instance);
+  }
+
+  // 2. 能力配置 → 引用改写为实例 id；厂商缺实例则补建，模型补登记（同 id 合并能力）。
+  const capabilityModels: Record<string, unknown> = { ...legacyCapability };
+  for (const [capability, entry] of Object.entries(legacyCapability)) {
+    const vendor = (entry as { vendor?: unknown } | null)?.vendor;
+    const model = (entry as { model?: unknown } | null)?.model;
+    capabilityModels[capability] = null;
+    if (typeof vendor !== 'string' || !isVendorId(vendor)) continue;
+    if (typeof model !== 'string' || model.length === 0) continue;
+    let instance = instanceByVendor.get(vendor);
+    if (instance === undefined) {
+      instance = {
+        id: vendor,
+        vendor,
+        name: VENDOR_DESCRIPTORS[vendor].name,
+        baseUrl: VENDOR_DESCRIPTORS[vendor].baseUrl,
+        enabled: true,
+        models: [],
+      };
+      instanceByVendor.set(vendor, instance);
+      instances.push(instance);
+    }
+    const models = instance.models as Array<Record<string, unknown>>;
+    const existingModel = models.find((m) => m.id === model);
+    if (existingModel === undefined) {
+      models.push({ id: model, capabilities: [capability] });
+    } else {
+      const capabilities = new Set([
+        ...(Array.isArray(existingModel.capabilities) ? existingModel.capabilities : []),
+        capability,
+      ]);
+      existingModel.capabilities = [...capabilities];
+    }
+    capabilityModels[capability] = { provider: vendor, model };
+  }
+
+  // 3. 自定义条目 → 实例（沿用 `custom:{id}`，ref / 密钥名不变）。
+  for (const entry of legacyCustom) {
+    const id = entry.id;
+    const name = entry.name;
+    const baseUrl = entry.baseUrl;
+    if (typeof id !== 'string' || !customInstanceIdPattern.test(id)) continue;
+    if (typeof name !== 'string' || name.length === 0) continue;
+    if (typeof baseUrl !== 'string' || baseUrl.length === 0) continue;
+    const models = Array.isArray(entry.models)
+      ? (entry.models as Array<Record<string, unknown>>).map((m) => ({
+          id: m.id,
+          ...(typeof m.name === 'string' ? { name: m.name } : {}),
+          ...(typeof m.contextWindow === 'number' ? { contextWindow: m.contextWindow } : {}),
+          ...(Array.isArray(m.input) ? { input: m.input } : {}),
+          capabilities: ['chat'],
+        }))
+      : [];
+    instances.push({
+      id: `${CUSTOM_INSTANCE_PREFIX}${id}`,
+      vendor: null,
+      name,
+      baseUrl,
+      enabled: true,
+      models,
+    });
+  }
+
+  const data: Record<string, unknown> = { ...raw, modelProviders: instances, capabilityModels };
+  delete data.customProviders;
+  delete data.vendorProviders;
+  return { data, changed: true };
+}
 
 /**
  * 联网检索供应商（docs/design/21-web-search.md，D62）：key 不进 Settings，
@@ -909,9 +1152,12 @@ export const pluginMarketplacePublicKeySchema = z.union([
 export const settingsSchema = z.object({
   /** Renderer UI language; core reads it for prompts and onboarding copy. */
   appLanguage: appLanguageSchema.default('zh-CN'),
-  customProviders: z.array(customProviderSchema).default([]),
-  /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
-  vendorProviders: z.array(vendorProviderSchema).default([]),
+  /**
+   * 供应商实例统一列表（对话 + 专有能力模型）。legacy `customProviders` /
+   * `vendorProviders` 不在 schema 里：core 读路径先经
+   * `migrateLegacyModelProviders` 把存量搬进来再解析（v0.5.6）。
+   */
+  modelProviders: z.array(providerInstanceSchema).default([]),
   /** "provider/modelId" or empty (= not configured yet). */
   defaultMainModel: z.string().default(''),
   defaultLightModel: z.string().default(''),
@@ -921,7 +1167,7 @@ export const settingsSchema = z.object({
    */
   widgetReviewModel: z.string().default(''),
   /**
-   * 非对话模型按能力各配一条（厂商 + 模型），见 16-capability-models.md。
+   * 专有模型按能力各配一条（供应商实例 + 模型），见 16-capability-models.md。
    * 向量来源 source='provider' 时使用 capabilityModels.embedding。
    */
   capabilityModels: capabilityModelsSchema.prefault({}),
@@ -1425,6 +1671,12 @@ export const cardContentSchema = z.object({
   mailSubject: z.string().optional(),
   mailDate: z.string().optional(),
   mailSummary: z.string().optional(),
+  /** IM cards only (D109, cardType `im`, 54 号文档 §5). */
+  imAccountId: z.string().optional(),
+  imEvent: z.enum(['arrived']).optional(),
+  imKey: z.string().optional(),
+  imChannel: z.string().optional(),
+  imSummary: z.string().optional(),
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
   appUi: appUiCardSchema.optional(),
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */
@@ -1622,6 +1874,8 @@ export const triggerReasonSchema = z.enum([
   'watch',
   /** 邮件通道（D84）：新信唤醒，触发批是内部事件 mail_alert。 */
   'mail',
+  /** 即时通讯通道（D109，54 号文档）：微信入站唤醒，触发批是内部事件 im_alert。 */
+  'im',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -1986,6 +2240,12 @@ export const jobTypeSchema = z.enum([
   'watch_alert',
   // D84：新信唤醒（去重键 mail:{accountId}:{uid}:{botId}）。卡片和对话轮由作业投递。
   'mail_alert',
+  // D109（54 号文档）：IM 入站唤醒（去重键 im:{accountId}:{msgId}:{botId}）。
+  // 卡片和对话轮由作业投递；崩溃后按 dedupeKey 恢复，不丢不重。
+  'im_alert',
+  // D110（54 号文档）：Bot 最终回复向开启了同步的 IM 账号转发
+  // （去重键 im_forward:{messageId}:{accountId}）。持久作业：崩溃可恢复、幂等。
+  'im_forward',
   // D88 P2：Bot 资产移交的后台阶段（Wiki 页、组件复制；去重键 handover_copy:{handoverId}）。
   'handover_copy',
   // D92 T1b WP10：删除项目 wiki 来源（异步托管动作；去重键

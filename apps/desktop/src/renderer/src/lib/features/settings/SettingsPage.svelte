@@ -35,7 +35,8 @@
   );
   /**
    * 内容列的宽度策略：表单型设置分区限宽居中（拉满窗口后字段行过长难读）；
-   * 扩展中心不限宽（市场 / 已安装的卡片网格吃满可用宽度）。
+   * 模型分区两栏（左导航 + 右详情）放宽到 max-w-5xl；扩展中心不限宽（市场 /
+   * 已安装的卡片网格吃满可用宽度）。
    *
    * 扩展中心同时接管纵向与横向留白：外层内容区不滚动、不给内边距，整块撑满
    * 剩余高度与整行宽度，滚动交给各分组自己的滚动区（市场 / 已安装 / 设置），
@@ -43,7 +44,11 @@
    * 视觉留白；否则插件详情页会把整个设置页（含页签）当成一个长文档滚动。
    */
   const contentClass = $derived(
-    activeSection === 'extension-center' ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-3xl',
+    activeSection === 'extension-center'
+      ? 'flex min-h-0 flex-1 flex-col'
+      : activeSection === 'models'
+        ? 'mx-auto max-w-5xl'
+        : 'mx-auto max-w-3xl',
   );
   /** 扩展中心自己管滚动与留白；其它分区仍由内容区滚动。 */
   const contentScrollerClass = $derived(

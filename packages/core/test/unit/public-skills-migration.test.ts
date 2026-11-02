@@ -121,8 +121,12 @@ describe('0013 public_skills 迁移', () => {
     // main 0053（D104 插件系统）的两表同样摘除：plugin_items 外键指向 plugins，先摘账本。
     // main 0056（D105）的实例表同样摘除（config_json 列随 plugins 整表回退）。
     // mail_accounts.instance_id 外键指向 plugin_instances（0058），先摘 mail 侧再摘实例表。
+    // main 0066（D107）的 im 账号表同样摘除（im_account_bots → im_accounts → plugin_instances，
+    // 0066 重放时重建）。
     db.exec('drop table mail_account_bots;');
     db.exec('drop table mail_accounts;');
+    db.exec('drop table im_account_bots;');
+    db.exec('drop table im_accounts;');
     db.exec('drop table plugin_instances;');
     // main 0057（D105 P2）的项目叠加授权表同样摘除。
     db.exec('drop table project_plugins;');
