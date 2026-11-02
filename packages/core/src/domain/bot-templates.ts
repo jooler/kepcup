@@ -199,6 +199,9 @@ export class BotTemplateService {
     const accentColor =
       bot.accentColor !== undefined && bot.accentColor !== 'mono' ? bot.accentColor : undefined;
 
+    // 分类是顶层字段、不在 Profile 里：未分类（NULL）不写，旧模板缺项照样读。
+    const kind = bot.kind ?? undefined;
+
     // 防御纵深：文件名已过滤，这里 safeParse 兜底任何残余的 schema 违规，
     // 不让裸 ZodError 变成 INTERNAL 吐给用户。
     const parsed = botTemplateSchema.safeParse({
@@ -206,6 +209,7 @@ export class BotTemplateService {
       version: BOT_TEMPLATE_VERSION,
       exportedAt: this.deps.clock.now(),
       profile,
+      ...(kind !== undefined ? { kind } : {}),
       ...(avatar !== undefined ? { avatar } : {}),
       ...(avatarMask !== undefined ? { avatarMask } : {}),
       ...(avatarPadding !== undefined ? { avatarPadding } : {}),
@@ -471,7 +475,12 @@ export class BotTemplateService {
     }
 
     const profile = profileForImport(template, (id) => this.#agentSelectable(id));
-    const bot = this.deps.bots.create(profile, { skipDefaultAgent: true });
+    // 分类随模板走（顶层字段，不进 Profile）；旧模板没有这一项 → 未分类，
+    // 由消费方回退画像关键词判断。
+    const bot = this.deps.bots.create(profile, {
+      skipDefaultAgent: true,
+      ...(template.kind !== undefined ? { kind: template.kind } : {}),
+    });
 
     // 强调色独立于头像：先写列（模板里没带就用预置头像内嵌色 / 默认）。
     if (template.accentColor !== undefined) {

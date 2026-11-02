@@ -9,7 +9,7 @@
 ## 决策
 
 - **模板是单个 JSON 文件**，带 `format: 'kepcup-bot-template'` 与 `version: 1`；未知版本导入直接拒绝（明确报错，不猜语义）。契约在 `packages/shared/src/domain/bot-template.ts`（`botTemplateSchema`），导入在边界处 zod 全量校验（仓库惯例：磁盘上的配置在边界校验）。
-- **包含**：清洗后的完整 Profile（identity / persona / role / boundaries / behavior / runtime 子集）、自写技能（authored，文件全量内嵌 base64，status 照搬）、头像（`upload:` 内嵌字节，`preset:` 标识直接保留）、已导入技能清单（仅 name + sourceUrl）。
+- **包含**：清洗后的完整 Profile（identity / persona / role / boundaries / behavior / runtime 子集）、Bot 分类 `kind`（顶层字段，未分类时不写）、自写技能（authored，文件全量内嵌 base64，status 照搬）、头像（`upload:` 内嵌字节，`preset:` 标识直接保留）、已导入技能清单（仅 name + sourceUrl）。
 - **Bot 强调色**：`accentColor` 只在与默认 `mono` 不同时写入（与是否内嵌头像无关——强调色不依赖头像）；旧模板缺这一项照样能读（回退到预置头像内嵌色 / `mono`），不升版本号。导入时建完 Bot 后写 `bots.accent_color`（`bots.accent.color` 同源）。
 - **头像遮罩**：`avatarMask` 只在上传头像且遮罩为 `rounded` 时写入（缺省 = `circle`，旧模板无这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_mask`。
 - **头像内边距**：`avatarPadding` 只在上传头像且边距 > 0 时写入（缺省 = 0，旧模板缺这一项照样能读，不升版本号）；导入时建完 Bot 再写 `bots.avatar_padding`。
@@ -29,6 +29,7 @@
   "version": 1,
   "exportedAt": 1760000000000,      // epoch ms
   "profile": { /* 完整 botProfileSchema，runtime 本机引用已清空 */ },
+  "kind": "coding",                                 // 可选：Bot 分类；未分类 / 缺项 = NULL
   "avatar": { "mime": "image/png", "base64": "…" },   // 可选：upload 头像字节
   "avatarMask": "rounded",                          // 可选：上传头像遮罩，缺省 / 缺项 = "circle"
   "avatarPadding": 4,                               // 可选：上传头像内边距（像素 0-16），缺省 / 缺项 = 0

@@ -68,7 +68,7 @@ runtime:     { model, light_model, network_policy, budget,
 
 - 顶层字段（0059），与 Profile、`system_role` 都不是同一层：初始化访谈中由 LLM 根据用户回答通过 `save_profile` 的 `kind` 参数设置。
 - 内置分类是稳定 id（`shared/domain/bot-kind.ts`）：`coding`（编程与开发）、`writing`、`data`、`marketing`、`research`、`design`、`operations`、`life`、`general`；内置都不合适时允许一个自定义短分类（如「法务」「招聘」）。
-- `NULL` = 未分类（旧数据、管家提议、模板导入等非访谈路径）。消费方优先看 `kind`，未分类时回退画像关键词（例如 `<coding_rules>` 的注入判断）。
+- `NULL` = 未分类（旧数据、管家提议等非访谈路径；模板导入保留模板带来的 `kind`，旧模板缺项仍为 `NULL`）。消费方优先看 `kind`，未分类时回退画像关键词（例如 `<coding_rules>` 的注入判断）。
 - 访谈结束后模型不再改 `kind`；删除 Bot 时清空。
 
 ### 删除 Bot 时的数据处理
