@@ -254,7 +254,9 @@
     />
   </div>
 {:else if imCard !== null}
-  <div class="flex py-1" data-testid="card-message">
+  <!-- D109 IM 入站：按正常用户消息形态渲染（ImCard 内右对齐气泡 + 「来自微信」caption）；
+       testid 用 message-<id>，证据跳转 / 高亮定位对 IM 消息同样生效。 -->
+  <div class="flex w-full justify-end py-1" data-testid={`message-${message.id}`}>
     <ImCard
       accountId={imCard.accountId}
       summary={imCard.summary}
