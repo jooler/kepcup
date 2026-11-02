@@ -1556,6 +1556,7 @@ export class PluginRegistry {
       connector: new Set(),
       mcp: new Set(),
       mail: new Set(),
+      im: new Set(),
     };
     for (const item of this.#deps.store.items(pluginId)) {
       if (item.kind === 'disabled_connection') continue;
@@ -1586,7 +1587,7 @@ export class PluginRegistry {
     conflicts: PluginInspectOutput['conflicts'];
     blockers: string[];
   }> {
-    const items: ConsentItems = { skills: [], connectors: [], mcp: [], mail: [] };
+    const items: ConsentItems = { skills: [], connectors: [], mcp: [], mail: [], im: [] };
     const conflicts: PluginInspectOutput['conflicts'] = [];
     const blockers: string[] = [];
     for (const projector of this.#projectors) {
@@ -1736,6 +1737,7 @@ export class PluginRegistry {
       connectors: inspection.items.connectors,
       mcp: inspection.items.mcp,
       mail: inspection.items.mail,
+      im: inspection.items.im,
       conflicts: inspection.conflicts,
       existing: existingRow === null ? null : { version: existingRow.version },
       update,
@@ -1749,7 +1751,7 @@ export class PluginRegistry {
   #summaryOf(row: PluginRow): PluginSummary {
     const identity = this.#identityOf(row);
     const items: PluginItemRef[] = [];
-    const counts = { skills: 0, connectors: 0, mcp: 0, mail: 0 };
+    const counts = { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 };
     // Connector yields come from the connectors projector (which owns the catalog view).
     const yielded = this.#yieldedSlugs();
     for (const adapter of CAPABILITY_KINDS) {
@@ -1782,13 +1784,15 @@ export class PluginRegistry {
         : (manifest.instances ?? []).flatMap((kind) =>
             capabilityKindOf(kind).instanceFields(manifest).map(pluginFieldSummaryOf),
           );
-    const instanceRowCounts = this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0 };
+    const instanceRowCounts = this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0, im: 0 };
     return {
       configFields: (manifest?.config?.fields ?? []).map(pluginFieldSummaryOf),
       instanceFields,
       instanceCounts: {
         mail: this.#deps.mailInstanceCount?.(row.id) ?? instanceRowCounts.mail,
         mcp: instanceRowCounts.mcp,
+        // D107：im 账号全部挂实例，行数即活跃账号数（无遗留账号口径要处理）。
+        im: instanceRowCounts.im,
       },
       providesInstances: manifest?.instances ?? [],
       id: row.id,

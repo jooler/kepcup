@@ -338,6 +338,7 @@ import { oauthBindingChanged } from '../apps/disconnect.js';
 import { isCatalogConnectionId } from '../apps/connection-store.js';
 import { bindAppsMethods } from './apps-bindings.js';
 import { bindMailMethods } from './mail-bindings.js';
+import { bindImMethods } from './im-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindPluginsMethods } from './plugins-bindings.js';
@@ -1624,6 +1625,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // D73: interactive OAuth flows (apps.connect*, apps.connections.list).
     ...bindAppsMethods(services),
     ...bindMailMethods(services),
+    // D107（54 号文档）：IM 账号管理与扫码登录。
+    ...bindImMethods(services),
     // D73: apps.disconnect (revocation) and mcp.removeServer (settings + secrets + tokens).
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.

@@ -20,6 +20,7 @@
   import { plugins } from '$lib/features/plugins/plugins.svelte';
   import PluginIcon from '$lib/features/plugins/PluginIcon.svelte';
   import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
+  import BotImBindings from '$lib/features/extension-center/BotImBindings.svelte';
   import { appIconSrc, appInitial } from '$lib/features/apps/app-catalog';
   import { CONNECTION_STATUS_LABEL_KEYS } from '$lib/features/apps/connect-flow';
   import { appUnattendedNotice, countRiskyTools, mcpUnattendedNotice } from '../approvals/mcp-risk';
@@ -439,7 +440,10 @@
     <div class="space-y-1.5">
       {#each added as plugin (plugin.id)}
         {@const kinds = pluginKindBadges(plugin)}
-        {@const expandable = groupsOf(plugin).length > 0 || pluginProvides(plugin, 'mail')}
+        {@const expandable =
+                          groupsOf(plugin).length > 0 ||
+                          pluginProvides(plugin, 'mail') ||
+                          pluginProvides(plugin, 'im')}
         <div
           class="rounded-lg border px-2.5 py-2"
           data-testid={`bot-plugins-${plugin.id}`}
@@ -619,6 +623,9 @@
               {/if}
               {#if pluginProvides(plugin, 'mail')}
                 <BotMailBindings {botId} />
+              {/if}
+              {#if pluginProvides(plugin, 'im')}
+                <BotImBindings {botId} />
               {/if}
               {#if plugin.counts.mcp > 0}
                 <p

@@ -202,6 +202,17 @@ export interface AppendMessageInput {
         mailSummary?: string | undefined;
       }
     | undefined;
+  /** IM cards only (D109, cardType `im`, 54 号文档 §5). */
+  cardIm?:
+    | {
+        imEvent: 'arrived';
+        imAccountId: string;
+        imKey: string;
+        imChannel?: string | undefined;
+        imFrom?: string | undefined;
+        imSummary?: string | undefined;
+      }
+    | undefined;
   replyTo?: string | null;
   mentions?: string[];
   batchId?: string | null;
@@ -532,6 +543,22 @@ export class MessagesService {
                         : {}),
                       ...(input.cardMail.mailSummary !== undefined
                         ? { mailSummary: input.cardMail.mailSummary }
+                        : {}),
+                    }
+                  : {}),
+                ...(input.cardIm !== undefined
+                  ? {
+                      imAccountId: input.cardIm.imAccountId,
+                      imEvent: input.cardIm.imEvent,
+                      imKey: input.cardIm.imKey,
+                      ...(input.cardIm.imChannel !== undefined
+                        ? { imChannel: input.cardIm.imChannel }
+                        : {}),
+                      ...(input.cardIm.imFrom !== undefined
+                        ? { imFrom: input.cardIm.imFrom }
+                        : {}),
+                      ...(input.cardIm.imSummary !== undefined
+                        ? { imSummary: input.cardIm.imSummary }
                         : {}),
                     }
                   : {}),

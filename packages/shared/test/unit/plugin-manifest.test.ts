@@ -588,7 +588,13 @@ describe('capability summary (D105)', () => {
       version: '1.0.0',
       instances: ['mcp'],
     });
-    expect(pure.contributions).toEqual({ skills: [], connectors: [], mcp: [], mail: [] });
+    expect(pure.contributions).toEqual({
+      skills: [],
+      connectors: [],
+      mcp: [],
+      mail: [],
+      im: [],
+    });
   });
 
   it('sanitizes untrusted skill names', () => {
@@ -610,15 +616,231 @@ describe('capability summary (D105)', () => {
         connectors: 0,
         mcp: 0,
         mail: 0,
+        im: 0,
         instances: ['mcp'],
         skillNames: [],
       }),
     ).toBe('可添加自定义工具');
+    expect(
+      pluginCapabilitySummary({
+        skills: 0,
+        connectors: 0,
+        mcp: 0,
+        mail: 0,
+        im: 0,
+        instances: ['im'],
+        skillNames: [],
+      }),
+    ).toBe('可添加 IM 账号（如微信），收发消息');
   });
 
   it('derives the coarse market fallback from categories alone (P4)', () => {
     expect(pluginCapabilitySummaryFromCategories(['skill', 'mcp'])).toBe('提供技能、工具能力');
     expect(pluginCapabilitySummaryFromCategories(['mail'])).toBe('提供邮件能力');
     expect(pluginCapabilitySummaryFromCategories([])).toBe('提供扩展能力');
+  });
+});
+
+describe('im contribution (D107, 54 号文档 §2)', () => {
+  const imWechat = {
+    id: 'wechat',
+    label: '微信',
+    transport: 'ilink',
+    apiBase: 'https://ilinkai.weixin.qq.com',
+    setup: 'qrcode',
+    features: { inbound: true, outbound: true, media: ['text'] },
+  };
+
+  it('applies the schema defaults and pairs with instances: [im]', () => {
+    const manifest = parse({
+      ...minimalManifest,
+      instances: ['im'],
+      contributions: { skills: [], connectors: [], mcp: [], mail: [], im: [imWechat] },
+    });
+    const contribution = manifest.contributions.im[0]!;
+    expect(contribution.features.media).toEqual(['text']);
+    // 与 mail 的 instanceFields 同姿态：省略即 undefined（create 时空表单语义相同）。
+    expect(contribution.instanceFields).toBeUndefined();
+    // transport / setup enums are additive road-maps (54 §2.4); ilink is the shipped one.
+    expect(contribution.transport).toBe('ilink');
+    expect(contribution.setup).toBe('qrcode');
+  });
+
+  it('requires the bidirectional instances pairing and at most one contribution', () => {
+    // 贡献没有 instances: ['im'] → 拒。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        contributions: { skills: [], connectors: [], mcp: [], mail: [], im: [imWechat] },
+      }),
+    ).toThrow();
+    // instances: ['im'] 没有贡献 → 拒。
+    expect(() => parse({ ...minimalManifest, instances: ['im'] })).toThrow();
+    // 至多一份。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [imWechat, { ...imWechat, id: 'other' }],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('enforces transport / apiBase / setup rules', () => {
+    // 未知 transport 拒。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, transport: 'sms' }],
+        },
+      }),
+    ).toThrow();
+    // 非 https / 空白端点拒。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, apiBase: 'http://ilinkai.weixin.qq.com' }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, apiBase: ' https://ilinkai.weixin.qq.com' }],
+        },
+      }),
+    ).toThrow();
+    // 未知 setup 拒。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, setup: 'oauth' }],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('qrcode setup forbids sensitive instance fields; secret setup requires one', () => {
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [
+            {
+              ...imWechat,
+              instanceFields: [
+                {
+                  key: 'corp_secret',
+                  type: 'string',
+                  title: '应用密钥',
+                  description: '',
+                  required: true,
+                  sensitive: true,
+                  multiple: false,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+    // secret 建号：至少一个 sensitive 字段。
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, setup: 'secret' }],
+        },
+      }),
+    ).toThrow();
+    const secret = parse({
+      ...minimalManifest,
+      instances: ['im'],
+      contributions: {
+        skills: [],
+        connectors: [],
+        mcp: [],
+        mail: [],
+        im: [
+          {
+            ...imWechat,
+            transport: 'wecom-app',
+            setup: 'secret',
+            instanceFields: [
+              {
+                key: 'corp_secret',
+                type: 'string',
+                title: '应用密钥',
+                description: '',
+                required: true,
+                sensitive: true,
+                multiple: false,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(secret.contributions.im[0]!.setup).toBe('secret');
+  });
+
+  it('webhook transport cannot declare inbound', () => {
+    expect(() =>
+      parse({
+        ...minimalManifest,
+        instances: ['im'],
+        contributions: {
+          skills: [],
+          connectors: [],
+          mcp: [],
+          mail: [],
+          im: [{ ...imWechat, transport: 'webhook', features: { inbound: true, outbound: true, media: ['text'] } }],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('counts im in capability facts / market fallback', () => {
+    expect(pluginCapabilitySummaryFromCategories(['im'])).toBe('提供即时通讯能力');
   });
 });

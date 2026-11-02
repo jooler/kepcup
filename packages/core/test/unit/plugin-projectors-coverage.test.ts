@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   pluginContributionKindSchema,
   pluginConnectorContributionSchema,
+  pluginImContributionSchema,
   pluginMailContributionSchema,
   pluginManifestSchema,
   pluginMcpContributionSchema,
@@ -51,6 +52,7 @@ const CONTRIBUTION_SCHEMAS = {
   mcp: pluginMcpContributionSchema,
   connector: pluginConnectorContributionSchema,
   mail: pluginMailContributionSchema,
+  im: pluginImContributionSchema,
 } as const;
 
 const emptyMailManifest = pluginManifestSchema.parse({
@@ -126,6 +128,21 @@ describe('capability kind registry (D105)', () => {
           ],
         },
       }),
+      im: parse({
+        instances: ['im'],
+        contributions: {
+          im: [
+            {
+              id: 'wechat',
+              label: '微信',
+              transport: 'ilink',
+              apiBase: 'https://ilinkai.weixin.qq.com',
+              setup: 'qrcode',
+              features: { inbound: true, outbound: true, media: ['text'] },
+            },
+          ],
+        },
+      }),
     } as const;
     for (const adapter of CAPABILITY_KINDS) {
       expect(adapter.hasContribution(byKind[adapter.kind])).toBe(true);
@@ -142,9 +159,9 @@ describe('capability kind registry (D105)', () => {
     }
   });
 
-  it('only mail declares instances today (materializers land P3 / P4-M2)', () => {
+  it('instance kinds are exactly mail + im (both materializers landed)', () => {
     for (const adapter of CAPABILITY_KINDS) {
-      expect(adapter.hasInstances).toBe(adapter.kind === 'mail');
+      expect(adapter.hasInstances).toBe(adapter.kind === 'mail' || adapter.kind === 'im');
     }
   });
 });

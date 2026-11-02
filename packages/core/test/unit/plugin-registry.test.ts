@@ -335,7 +335,7 @@ function makeRigWithBuiltin(): Rig & { builtinIds: string[] } {
     marketplace: null,
     installedAt: null,
     updatedAt: null,
-    counts: { skills: 0, connectors: 0, mcp: 0, mail: 0 },
+    counts: { skills: 0, connectors: 0, mcp: 0, mail: 0, im: 0 },
     items: [],
     updateAvailable: null,
   }));
@@ -420,7 +420,7 @@ describe('PluginRegistry', () => {
       tier: 'developer',
       state: 'installed',
       enabled: true,
-      counts: { skills: 2, connectors: 0, mcp: 0, mail: 1 },
+      counts: { skills: 2, connectors: 0, mcp: 0, mail: 1, im: 0 },
     });
     expect(summary.dirPath).toBe(
       path.join(rig.pluginsDir, `io.github.tester/reg@${fixture.manifest.version}`.toLowerCase()),

@@ -53,6 +53,10 @@ export const ID_PREFIXES = {
   wcf: 'wcf_',
   /** 邮件账号（D84，main.db mail_accounts）。 */
   mal: 'mal_',
+  /** IM 账号（D107，main.db im_accounts）。 */
+  ima: 'ima_',
+  /** IM 扫码登录会话（core 内存，不落库）。 */
+  imq: 'imq_',
   /** Bot 资产移交（D88，main.db bot_handovers）。 */
   hnd: 'hnd_',
   /** 工作台事项（D90，main.db todos）。 */
