@@ -13,7 +13,7 @@ import { ImStore, type ImAccountRecord } from '../../src/im/store.js';
 import { ImSessionHub } from '../../src/im/session.js';
 import { renderForwardText, ImForwarder } from '../../src/im/forwarder.js';
 import { ImService } from '../../src/im/service.js';
-import { ILinkSessionExpiredError } from '../../src/im/ilink.js';
+import { ILinkClient, ILinkSessionExpiredError } from '../../src/im/ilink.js';
 import type { ILinkMessage } from '../../src/im/ilink.js';
 import type { CoreLogger } from '../../src/infra/logger.js';
 import type { Message } from '@kepcup/shared';
@@ -275,6 +275,31 @@ describe('ImForwarder', () => {
     user.forwarder.handleMessage(message({ senderType: 'user', senderBotId: null }));
     expect(user.enqueued).toEqual([]);
   });
+});
+
+
+describe('ILinkClient long-poll timeouts', () => {
+  /** 永不响应的 fetch：只在客户端 abort 时以 AbortError 拒绝（模拟服务器挂住）。 */
+  function hangingFetch(): typeof fetch {
+    return ((_url: unknown, init?: { signal?: AbortSignal }) =>
+      new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('This operation was aborted', 'AbortError')),
+        );
+      })) as unknown as typeof fetch;
+  }
+
+  it('qrcode status poll maps the long-poll abort to wait', async () => {
+    const client = new ILinkClient({ apiBase: 'https://x.example.com', logger, fetchImpl: hangingFetch(), qrPollTimeoutMs: 30 });
+    const status = await client.pollQrcodeStatus('qr');
+    expect(status.status).toBe('wait');
+  }, 10_000);
+
+  it('getUpdates maps the long-poll abort to no data (null)', async () => {
+    const client = new ILinkClient({ apiBase: 'https://x.example.com', logger, fetchImpl: hangingFetch(), pollTimeoutMs: 30 });
+    const batch = await client.getUpdates('token', 'c0');
+    expect(batch).toBeNull();
+  }, 10_000);
 });
 
 // --- service ingest ------------------------------------------------------------
