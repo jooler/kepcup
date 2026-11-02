@@ -147,7 +147,7 @@ export class AppConnectionsService {
       const meta = connectorMetaOf(entry);
       const connections = store
         .listByConnector(meta.slug)
-        .filter((row) => !isUnsettledScratch(row, this.#deps.vault.getTokens(row.id) !== null));
+        .filter((row) => !isUnsettledScratch(row));
       const unavailable = this.#unavailableReason(entry);
       const svg = catalog.iconSvg(meta.slug);
       const pluginId = catalog.pluginIdOf(meta.slug);
@@ -305,9 +305,11 @@ export class AppConnectionsService {
   }
 
   /** 令牌落盘之前流程就结束：临时行没有任何令牌，直接删除。 */
-  #abandon(connectionId: string): void {
+  async #abandon(connectionId: string): Promise<void> {
     const { store, vault } = this.#deps;
     if (store.get(connectionId) === null) return;
+    // 临时行不该被 Bot 选中（`isUnsettledScratch`），这里仍清一遍悬挂引用（旧数据 / 手工写入）。
+    await this.#deps.botGrants.revokeConnection(connectionId);
     vault.clearConnection(connectionId, { deleteRow: true });
     this.#deps.events.emit('apps.connection_status', {
       connectionId,
@@ -384,6 +386,21 @@ export class AppConnectionsService {
         ...(finalRow.status !== 'disabled' ? { status: 'connected' as const } : {}),
       });
       // 临时行：丢弃缓存的连接 / 提供者，清令牌（不吊销——令牌已搬到旧行上继续使用）并删行。
+      // 删行不走 disconnector：同一账号的其他流程 id（旧版本可能被 Bot 选中）要在这里收尾——
+      // 把授权转到最终行（账号还是这个），再清掉临时行 id，否则会留下删不掉的悬挂引用、
+      // 让 Bot 的其它修改全部保存失败。
+      const holders = this.#deps.botGrants.botsUsing(scratch.id);
+      await this.#deps.botGrants.revokeConnection(scratch.id);
+      for (const botId of holders) {
+        try {
+          await this.#deps.botGrants.grant(botId, finalRow.id);
+        } catch (error) {
+          logger.warn(
+            { connectionId: finalRow.id, botId, err: String(error) },
+            'moved the merged connection grant to its final row failed',
+          );
+        }
+      }
       await registry.invalidate(scratch.id);
       vault.clearConnection(scratch.id, { deleteRow: true });
       registry.forget(scratch.id);
@@ -666,11 +683,15 @@ export class AppConnectionsService {
 
   /** 目录连接（不含自定义 MCP），供设置目录的连接选项。 */
   catalogConnectionOptions(): Array<{ id: string; label: string; connectorId: string }> {
-    return this.#deps.store.list().map((row) => ({
-      id: row.id,
-      label: row.label,
-      connectorId: row.connectorId,
-    }));
+    // 授权流程还没走完的临时行不是账号：设置卡 / Bot 工具的候选项里也不应出现。
+    return this.#deps.store
+      .list()
+      .filter((row) => !isUnsettledScratch(row))
+      .map((row) => ({
+        id: row.id,
+        label: row.label,
+        connectorId: row.connectorId,
+      }));
   }
 
   /**

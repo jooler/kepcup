@@ -23,6 +23,7 @@ import {
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
 import { handoverViewSchema } from '../domain/handover.js';
+import { SIDEBAR_SECTION_NAME_MAX_CHARS, sidebarLayoutSchema } from '../domain/sidebar.js';
 import {
   settingCardStateSchema,
   settingTargetSchema,
@@ -181,6 +182,8 @@ import {
   pluginMarketplacePublicKeySchema,
   pluginMarketplaceUrlSchema,
   unattendedStateSchema,
+  usageStatsInputSchema,
+  usageStatsOutputSchema,
   usageSummaryOutputSchema,
   wikiHistoryEntrySchema,
   wikiPageSchema,
@@ -1983,6 +1986,53 @@ export const stickiesUpdateOutputSchema = z.object({ stickie: stickieSchema });
 export const stickiesDeleteInputSchema = z.object({ id: z.string().min(1) });
 export const stickiesDeleteOutputSchema = okOutputSchema;
 
+// --- sidebar（左栏对话分组，main.db sidebar_sections / conversation_sidebar） --------
+/** 左栏分组的完整投影；每次写入后原样返回，渲染层不猜服务端结果。 */
+export const sidebarGetInputSchema = z.object({});
+export const sidebarLayoutOutputSchema = z.object({ layout: sidebarLayoutSchema });
+export const sidebarSectionsCreateInputSchema = z.object({
+  /** 渲染层乐观上屏时已生成的 id（ssc_；旧数据导入的 sec_ id 也接受）；缺省由 core 生成。 */
+  id: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(SIDEBAR_SECTION_NAME_MAX_CHARS),
+  /** 同时把这条会话移进新分组（右键「新建分组」就地归类）。 */
+  conversationId: z.string().min(1).optional(),
+});
+export const sidebarSectionsCreateOutputSchema = z.object({
+  layout: sidebarLayoutSchema,
+  sectionId: z.string(),
+});
+export const sidebarSectionsRenameInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(SIDEBAR_SECTION_NAME_MAX_CHARS),
+});
+export const sidebarSectionsDeleteInputSchema = z.object({ id: z.string().min(1) });
+/** 拖拽 / 键盘重排：beforeId 为 null = 末尾；内置「未指定」同样可参与排序。 */
+export const sidebarSectionsMoveInputSchema = z.object({
+  id: z.string().min(1),
+  beforeId: z.string().min(1).nullable(),
+});
+export const sidebarSectionsCollapseInputSchema = z.object({
+  id: z.string().min(1),
+  collapsed: z.boolean(),
+});
+/** 会话归属：sectionId 为 null = 移回「未指定」（用户操作，会展开目标）。 */
+export const sidebarAssignInputSchema = z.object({
+  conversationId: z.string().min(1),
+  sectionId: z.string().min(1).nullable(),
+});
+/** 后台清理：移回「未指定」但不展开它（不是用户的移动操作）。 */
+export const sidebarUnassignInputSchema = z.object({ conversationId: z.string().min(1) });
+export const sidebarPinInputSchema = z.object({
+  conversationId: z.string().min(1),
+  pinned: z.boolean(),
+});
+/** 旧版 localStorage 数据的一次性导入（仅当库里还没有任何分组状态时生效）。 */
+export const sidebarImportInputSchema = z.object({ layout: sidebarLayoutSchema });
+export const sidebarImportOutputSchema = z.object({
+  layout: sidebarLayoutSchema,
+  imported: z.boolean(),
+});
+
 // --- share（D94，macOS Share Extension 分享接收） ------------------------------
 // 平台方法（port B，主进程调 core）：share.targets / share.consume。
 // App 方法（port A，渲染层调 core）：share.failed.list / retry / discard。
@@ -2698,6 +2748,7 @@ export const rpcMethodSchemas = {
   'profile.card': { input: voidInput, output: profileCardOutputSchema },
 
   'usage.summary': { input: usageSummaryInputSchema, output: usageSummaryOutputSchema },
+  'usage.stats': { input: usageStatsInputSchema, output: usageStatsOutputSchema },
 
   'embedding.status': { input: voidInput, output: embeddingStatusOutputSchema },
   'embedding.configure': {
@@ -2812,6 +2863,32 @@ export const rpcMethodSchemas = {
   'stickies.create': { input: stickiesCreateInputSchema, output: stickiesCreateOutputSchema },
   'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
   'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
+  // 左栏对话分组（design/12「对话分组」）：读 + 语义化写入，写入后回全量投影。
+  'sidebar.get': { input: sidebarGetInputSchema, output: sidebarLayoutOutputSchema },
+  'sidebar.sections.create': {
+    input: sidebarSectionsCreateInputSchema,
+    output: sidebarSectionsCreateOutputSchema,
+  },
+  'sidebar.sections.rename': {
+    input: sidebarSectionsRenameInputSchema,
+    output: sidebarLayoutOutputSchema,
+  },
+  'sidebar.sections.delete': {
+    input: sidebarSectionsDeleteInputSchema,
+    output: sidebarLayoutOutputSchema,
+  },
+  'sidebar.sections.move': {
+    input: sidebarSectionsMoveInputSchema,
+    output: sidebarLayoutOutputSchema,
+  },
+  'sidebar.sections.collapse': {
+    input: sidebarSectionsCollapseInputSchema,
+    output: sidebarLayoutOutputSchema,
+  },
+  'sidebar.assign': { input: sidebarAssignInputSchema, output: sidebarLayoutOutputSchema },
+  'sidebar.unassign': { input: sidebarUnassignInputSchema, output: sidebarLayoutOutputSchema },
+  'sidebar.pin': { input: sidebarPinInputSchema, output: sidebarLayoutOutputSchema },
+  'sidebar.import': { input: sidebarImportInputSchema, output: sidebarImportOutputSchema },
   // D94: share.targets / share.consume are platform methods (port B, main → core);
   // share.failed.* are app methods (port A, renderer → core).
   'share.targets': { input: voidInput, output: shareTargetsOutputSchema },
@@ -3252,6 +3329,7 @@ const APP_METHODS = [
   'profile.retract',
   'profile.card',
   'usage.summary',
+  'usage.stats',
   'embedding.status',
   'embedding.configure',
   'embedding.download',

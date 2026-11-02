@@ -85,6 +85,7 @@ import { BotTemplateService } from './domain/bot-templates.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
 import { StickiesService } from './domain/stickies.js';
+import { SidebarService } from './domain/sidebar.js';
 import { AttachmentsService } from './domain/attachments.js';
 import { JobsService } from './domain/jobs.js';
 import { RunsService } from './domain/runs.js';
@@ -536,6 +537,8 @@ export interface CoreDomainServices {
   messages: MessagesService;
   /** 辅助阅读便签（main.db stickies）。 */
   stickies: StickiesService;
+  /** 左栏对话分组（main.db sidebar_sections / conversation_sidebar）。 */
+  sidebar: SidebarService;
   attachments: AttachmentsService;
   jobs: JobsService;
   runs: RunsService;
@@ -1238,6 +1241,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
+    const sidebar = new SidebarService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
     const jobs = new JobsService(mainDb, clock);
@@ -1362,7 +1366,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     connectedAppsRef.current = connectedApps;
     // D73: Bot profiles may only authorize existing catalog connections (one per connector).
-    bots.attachAppConnections(apps.store);
+    // 授权流程尚未结算的行（`connecting`，含工具复核阶段）不是账号：写进 Profile 后流程一收尾
+    // 就会留下删不掉的悬挂 id（`bots.update` 的校验会连带拒绝该 Bot 的其它修改）。
+    bots.attachAppConnections({
+      get: (connectionId) => {
+        const row = apps.store.get(connectionId);
+        return row !== null && row.status !== 'connecting' ? row : null;
+      },
+    });
     try {
       toolLock.runBaseline();
     } catch (error) {
@@ -2138,6 +2149,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules: (_botId: string): number => 0,
       watches: (_botId: string): number => 0,
     };
+    // 插件注册表在设置宿主之后才构造（它依赖 MCP 撤销效果）；`mail.plugin` 适配器经这个
+    // 晚绑定引用读已安装插件，构造完立即赋值（同 remoteHub 的做法）。
+    let pluginRegistryForSettings: PluginRegistry | null = null;
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -2148,6 +2162,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       providers,
       bots,
+      plugins: { list: () => pluginRegistryForSettings?.list() ?? [] },
+      mail: { list: () => mailService?.list() ?? [] },
       botProfiles: {
         apply: (botId, profile) =>
           applyBotProfileUpdate(
@@ -2399,6 +2415,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       events,
       audit,
     });
+    pluginRegistryForSettings = plugins;
     // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
     marketplace.onAdopted(() => {
       void plugins.applyRevocations().catch((error: unknown) => {
@@ -3288,6 +3305,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       conversations,
       messages,
       stickies,
+      sidebar,
       attachments,
       jobs,
       runs,

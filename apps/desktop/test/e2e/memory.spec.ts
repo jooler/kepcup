@@ -438,6 +438,15 @@ test('usage page: per bot/loop/day tokens', async () => {
     await page.locator('[data-testid="settings-nav-usage"]').click();
     const section = page.locator('[data-testid="settings-usage"]');
     await expect(section).toBeVisible();
+    // 首帧可能是空态（账本还没落）；顶部「统计 / 逐日明细」始终可切换。
+    await expect(
+      section.locator('[data-testid="usage-kpis"], [data-testid="usage-empty"]').first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(section.locator('[data-testid="usage-view-stats"]')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await section.locator('[data-testid="usage-view-details"]').click();
     const botRow = section.locator('[data-testid^="usage-bot-"]').first();
 
     // Usage grouped per bot / loop type / day (reflection finishes right after
@@ -451,12 +460,27 @@ test('usage page: per bot/loop/day tokens', async () => {
       await expect(pollRows.filter({ hasText: '对话轮' })).toHaveCount(1);
       await expect(pollRows.filter({ hasText: '反思' })).toHaveCount(1);
     }).toPass({ timeout: 60_000, intervals: [500, 1000] });
+    // 逐日明细视图不再渲染图表区。
+    await expect(section.locator('[data-testid="usage-kpis"]')).toHaveCount(0);
     await expect(botRow.locator('[data-testid="usage-bot-name"]')).toContainText('阿量');
     const rows = botRow.locator('[data-testid="usage-entry-row"]');
     await expect(rows.first()).toHaveAttribute('data-date', /\d{4}-\d{2}-\d{2}/);
     await expect(
       rows.filter({ hasText: '对话轮' }).locator('[data-testid="usage-entry-tokens"]'),
     ).toHaveText('400 / 100');
+
+    // 切回统计：图表（热力图 / 趋势 / 模型占比）渲染，范围切换重新取数。
+    await section.locator('[data-testid="usage-view-stats"]').click();
+    await expect(section.locator('[data-testid="usage-heatmap"]')).toBeVisible();
+    await expect(section.locator('[data-testid="usage-trend-chart"]')).toBeVisible();
+    await expect(section.locator('[data-testid="usage-models"]')).toBeVisible();
+    const dailyDots = await section.locator('[data-testid="usage-trend-chart"] circle').count();
+    await section.locator('[data-testid="usage-range-30"]').click();
+    await expect
+      .poll(async () => section.locator('[data-testid="usage-trend-chart"] circle').count(), {
+        timeout: 10_000,
+      })
+      .toBeGreaterThan(dailyDots);
   } finally {
     await closeSession(session);
   }

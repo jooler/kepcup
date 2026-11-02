@@ -56,6 +56,8 @@ describe('settings catalog integrity', () => {
       'connections.connect',
       'connections.tool-policy',
       'mail.account',
+      'mail.plugin',
+      'mail.mailbox',
       'agents.external',
       'bot.model',
       'bot.light-model',
@@ -251,6 +253,10 @@ describe('catalog queries', () => {
     expect(searchSettingItems('生成图片')[0]?.id).toBe('capability.image');
     expect(searchSettingItems('我想让你帮我生成图片')[0]?.id).toBe('capability.image');
     expect(searchSettingItems('读我的邮件')[0]?.id).toBe('mail.account');
+    // 三类邮件设置各自可检索：新增邮箱 / 邮件插件配置 / 已有邮箱的绑定。
+    expect(searchSettingItems('添加邮箱')[0]?.id).toBe('mail.account');
+    expect(searchSettingItems('邮件插件配置')[0]?.id).toBe('mail.plugin');
+    expect(searchSettingItems('把邮箱交给 Bot')[0]?.id).toBe('mail.mailbox');
     expect(searchSettingItems('Notion')[0]?.id).toBe('connections.connect');
     expect(searchSettingItems('换个默认模型').map((entry) => entry.id)).toEqual(
       expect.arrayContaining(['models.default-main', 'models.default-light']),

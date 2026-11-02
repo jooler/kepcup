@@ -4,6 +4,7 @@ import {
   accountHintKey,
   appChoiceGroups,
   appToolEstimate,
+  danglingConnectionIds,
   exposedTools,
   isCatalogConnection,
   profileWithAppConnection,
@@ -151,6 +152,19 @@ describe('selectAppConnection', () => {
       'conn_gone',
       'conn_gh_1',
     ]);
+  });
+});
+
+describe('danglingConnectionIds', () => {
+  const rows = [connection('conn_gh_1'), connection('conn_notion', { connectorId: 'notion' })];
+
+  it('lists selected ids whose connection row is gone, in profile order', () => {
+    expect(danglingConnectionIds(['conn_gone', 'conn_notion', 'conn_also_gone'], rows)).toEqual([
+      'conn_gone',
+      'conn_also_gone',
+    ]);
+    expect(danglingConnectionIds([], rows)).toEqual([]);
+    expect(danglingConnectionIds(['conn_gh_1'], rows)).toEqual([]);
   });
 });
 

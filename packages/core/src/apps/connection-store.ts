@@ -40,16 +40,14 @@ function originOf(url: string | null | undefined): string | null {
 }
 
 /**
- * 「还没成为账号」的临时行：目录连接在授权开始时就建了一行（`connecting`，没有令牌、没有账号标识），
- * 流程成功才会成为账号，取消 / 失败则被删除。这种行不算已连接账号——既不进 `apps.connections.list`，
- * 也不计入目录卡片的 `connectedAccounts`（否则取消授权后卡片仍显示「已连接 1 个账号」）。
- * 自定义 server 的行（`custom:`）不在此列。令牌已落盘（结算阶段）的行算账号。
+ * 「还没成为账号」的临时行：目录连接在授权开始时就建了一行（`connecting`），流程走完
+ * （含工具复核确认）才会成为账号，取消 / 失败则被删除。这种行始终不算已连接账号——既不进
+ * `apps.connections.list`，也不计入目录卡片的 `connectedAccounts`，更不能被 Bot 选中：复核
+ * 阶段的临时行已经有令牌，若把它当既有账号勾给 Bot，流程超时收尾删行后 Bot 里会留下删不掉
+ * 的悬挂授权。自定义 server 的行（`custom:`）不在此列。
  */
-export function isUnsettledScratch(
-  row: Pick<AppConnection, 'id' | 'status'>,
-  hasTokens: boolean,
-): boolean {
-  return row.status === 'connecting' && !hasTokens && !isCustomConnectionId(row.id);
+export function isUnsettledScratch(row: Pick<AppConnection, 'id' | 'status'>): boolean {
+  return row.status === 'connecting' && !isCustomConnectionId(row.id);
 }
 
 export function isCustomConnectionId(connectionId: string): boolean {

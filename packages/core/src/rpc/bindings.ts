@@ -188,6 +188,8 @@ import {
   profileUpdateInputSchema,
   profileRetractInputSchema,
   profileCardOutputSchema,
+  usageStatsInputSchema,
+  usageStatsOutputSchema,
   usageSummaryInputSchema,
   usageSummaryOutputSchema,
   embeddingStatusOutputSchema,
@@ -287,6 +289,19 @@ import {
   stickiesUpdateOutputSchema,
   stickiesDeleteInputSchema,
   stickiesDeleteOutputSchema,
+  sidebarGetInputSchema,
+  sidebarLayoutOutputSchema,
+  sidebarSectionsCreateInputSchema,
+  sidebarSectionsCreateOutputSchema,
+  sidebarSectionsRenameInputSchema,
+  sidebarSectionsDeleteInputSchema,
+  sidebarSectionsMoveInputSchema,
+  sidebarSectionsCollapseInputSchema,
+  sidebarAssignInputSchema,
+  sidebarUnassignInputSchema,
+  sidebarPinInputSchema,
+  sidebarImportInputSchema,
+  sidebarImportOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
@@ -316,6 +331,7 @@ import type { BoardService } from '../board/board-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
+import { buildUsageStats } from '../domain/usage-stats.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
 import { bindAgentMethods } from './agents-bindings.js';
 import { oauthBindingChanged } from '../apps/disconnect.js';
@@ -1704,6 +1720,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { entries: [...buckets.values()] };
     }),
 
+    'usage.stats': method(usageStatsInputSchema, usageStatsOutputSchema, async (input) =>
+      buildUsageStats({
+        usage: services.domain!.usage,
+        now: services.clock.now(),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        days: input.days ?? 7,
+        heatmapDays: input.heatmapDays ?? 365,
+      }),
+    ),
+
     'embedding.status': method(voidInput, embeddingStatusOutputSchema, async () =>
       services.memory!.embeddingStatus(),
     ),
@@ -2133,6 +2159,54 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         domain.stickies.remove(input.id);
         return { ok: true as const };
       },
+    ),
+
+    // --- 左栏对话分组（main.db sidebar_sections / conversation_sidebar） ---
+    'sidebar.get': method(sidebarGetInputSchema, sidebarLayoutOutputSchema, async () => ({
+      layout: domain.sidebar.layout(),
+    })),
+    'sidebar.sections.create': method(
+      sidebarSectionsCreateInputSchema,
+      sidebarSectionsCreateOutputSchema,
+      async (input) => domain.sidebar.create(input),
+    ),
+    'sidebar.sections.rename': method(
+      sidebarSectionsRenameInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({ layout: domain.sidebar.rename(input.id, input.name) }),
+    ),
+    'sidebar.sections.delete': method(
+      sidebarSectionsDeleteInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({ layout: domain.sidebar.remove(input.id) }),
+    ),
+    'sidebar.sections.move': method(
+      sidebarSectionsMoveInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({ layout: domain.sidebar.move(input.id, input.beforeId) }),
+    ),
+    'sidebar.sections.collapse': method(
+      sidebarSectionsCollapseInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({ layout: domain.sidebar.setCollapsed(input.id, input.collapsed) }),
+    ),
+    'sidebar.assign': method(
+      sidebarAssignInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({
+        layout: domain.sidebar.assign(input.conversationId, input.sectionId),
+      }),
+    ),
+    'sidebar.unassign': method(
+      sidebarUnassignInputSchema,
+      sidebarLayoutOutputSchema,
+      async (input) => ({ layout: domain.sidebar.unassign(input.conversationId) }),
+    ),
+    'sidebar.pin': method(sidebarPinInputSchema, sidebarLayoutOutputSchema, async (input) => ({
+      layout: domain.sidebar.setPinned(input.conversationId, input.pinned),
+    })),
+    'sidebar.import': method(sidebarImportInputSchema, sidebarImportOutputSchema, async (input) =>
+      domain.sidebar.importLayout(input.layout),
     ),
 
     // --- watches (W7) ---------------------------------------------------------

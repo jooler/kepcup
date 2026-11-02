@@ -11,6 +11,8 @@
   import AgentCard from '$lib/features/settings/AgentCard.svelte';
   import SensorCard from '$lib/features/settings/SensorCard.svelte';
   import MailAccountAddForm from '$lib/features/mail/MailAccountAddForm.svelte';
+  import MailPluginCard from './MailPluginCard.svelte';
+  import MailMailboxCard from './MailMailboxCard.svelte';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import McpSection from '$lib/features/settings/McpSection.svelte';
@@ -318,6 +320,20 @@
       </div>
     {/if}
   {/if}
+{:else if item.card === 'mail-plugin' && botId !== null}
+  <MailPluginCard
+    {botId}
+    {prefill}
+    testid={`${testidPrefix}-mail-plugin`}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'mail-mailbox' && botId !== null}
+  <MailMailboxCard
+    {botId}
+    {prefill}
+    testid={`${testidPrefix}-mail-mailbox`}
+    onSaved={() => onSaved()}
+  />
 {:else if item.card === 'connect-app' && connectorId !== null}
   <ConnectAppPanel
     target={{ kind: 'catalog', connectorId }}

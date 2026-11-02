@@ -42,7 +42,7 @@
 | 联网 | `search.provider` | confirm（缺 Key → form） | `web-search` |
 | 连接 | `connections.connect`（via `app_request_connection`） | — | `connect-app` |
 | 连接 | `connections.tool-policy`（放宽 → user-only） / `connections.taint-guard`（user-only） | confirm / user-only | `tool-policy` / `taint-guard` |
-| MCP / 邮件 | `mcp.servers`（启用 = 放宽 → user-only）；`mail.account`（via `mail_request_setup`） | confirm / — | `mcp-servers` / `mail-account` |
+| MCP / 邮件 | `mcp.servers`（启用 = 放宽 → user-only）；`mail.account`（via `mail_request_setup`）；`mail.plugin`（选邮件插件 / 改插件配置 / 交给这个 Bot）；`mail.mailbox`（已配置邮箱的绑定 / 暂停） | confirm / — / form / form | `mcp-servers` / `mail-account` / `mail-plugin` / `mail-mailbox` |
 | 智能体 | `agents.external`（登录由用户做） / `agents.default` | form / confirm | `agent` / `field-editor` |
 | Bot | `bot.model` / `bot.light-model` | direct | `bot-model` |
 | Bot | `bot.browser-profile` / `bot.mcp-servers` / `bot.apps` / `bot.skills` | confirm（widens） | `bot-config` / `bot-skills` |

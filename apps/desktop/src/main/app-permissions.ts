@@ -8,9 +8,8 @@
  *
  * 白名单依据（审计结论，见 todo/sensors.md P4）：
  * - `media`：麦克风 / 摄像头（传感器层 getUserMedia + enumerateDevices 标签检查）。
- *   只放行 audio / video；标准屏幕共享（getDisplayMedia → display-capture）是独立权限，拒绝。
- *   已知局限：旧式 `chromeMediaSource: 'desktop'` 的 getUserMedia 同样以 video 上报，
- *   此处无法区分——该路径需要渲染层已有代码执行（CSP script-src 'self'），风险低。
+ *   只放行 audio / video；屏幕共享（getDisplayMedia 与旧式 chromeMediaSource）在
+ *   Electron 45 起统一以独立的 `display-capture` 上报，不在白名单内，一律拒绝。
  * - `clipboard-sanitized-write`：界面里的复制按钮（navigator.clipboard.writeText）。
  * - `fullscreen`：消息里 <video controls> 的全屏键。
  */

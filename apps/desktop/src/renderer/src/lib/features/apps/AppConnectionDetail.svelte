@@ -261,8 +261,9 @@
     }
   }
 
-  // --- 重新连接 / 断开 ---------------------------------------------------------
+  // --- 重新连接 / 连接另一个账号 / 断开 ---------------------------------------
   let reconnectOpen = $state(false);
+  let addOpen = $state(false);
   let confirmOpen = $state(false);
   let disconnecting = $state(false);
 
@@ -316,7 +317,10 @@
               class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
               data-testid={`apps-detail-tool-${tool.toolName}`}
             >
-              <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
+              <code
+                class="max-w-full rounded bg-muted px-1.5 py-0.5 break-all"
+                title={tool.description}
+              >
                 {tool.toolName}
               </code>
               {#if tool.title !== undefined && tool.title !== tool.toolName}
@@ -446,14 +450,18 @@
       <ConnectedSkillsPrompt {connectionId} testid="apps-detail-skills" />
 
       <!-- 权限 -->
-      <section class="space-y-1.5" data-testid="apps-detail-scopes">
+      <section class="min-w-0 space-y-1.5" data-testid="apps-detail-scopes">
         <h4 class="text-xs font-medium">{t('apps.detail.scopes')}</h4>
         {#if connection.scopes.length === 0}
           <p class="text-xs text-muted-foreground">{t('apps.detail.scopesEmpty')}</p>
         {:else}
-          <div class="flex flex-wrap gap-1">
+          <!-- 授权串可能是很长的 OAuth scope / URL：必须允许任意断行，否则会撑宽整个
+               详情（进而顶出页面级滚动条）。 -->
+          <div class="flex min-w-0 flex-wrap gap-1">
             {#each connection.scopes as scope (scope)}
-              <code class="rounded bg-muted px-1.5 py-0.5 text-[11px]">{scope}</code>
+              <code class="max-w-full rounded bg-muted px-1.5 py-0.5 text-[11px] break-all"
+                >{scope}</code
+              >
             {/each}
           </div>
         {/if}
@@ -485,7 +493,10 @@
                       (selected = { ...selected, [tool.toolName]: checked === true })}
                     data-testid={`apps-detail-pending-select-${tool.toolName}`}
                   />
-                  <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
+                  <code
+                    class="max-w-full rounded bg-muted px-1.5 py-0.5 break-all"
+                    title={tool.description}
+                  >
                     {tool.toolName}
                   </code>
                   {#if tool.title !== undefined && tool.title !== tool.toolName}
@@ -565,7 +576,10 @@
                 data-testid={`apps-detail-tool-${tool.toolName}`}
                 data-exposed={tool.exposed}
               >
-                <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
+                <code
+                  class="max-w-full rounded bg-muted px-1.5 py-0.5 break-all"
+                  title={tool.description}
+                >
                   {tool.toolName}
                 </code>
                 {#if tool.title !== undefined && tool.title !== tool.toolName}
@@ -630,7 +644,9 @@
                 data-testid={`apps-detail-grant-${grant.id}`}
               >
                 <span class="font-medium">{grantBotName(grant)}</span>
-                <code class="rounded bg-muted px-1.5 py-0.5">{grant.toolName}</code>
+                <code class="max-w-full rounded bg-muted px-1.5 py-0.5 break-all"
+                  >{grant.toolName}</code
+                >
                 <Badge variant="outline" class="text-[10px]">
                   {grant.conversationId === null
                     ? t('apps.detail.grantBotLevel')
@@ -652,16 +668,30 @@
         {/if}
       </section>
 
-      <!-- 重新连接 / 断开 -->
+      <!-- 重新连接 / 连接另一个账号 / 断开 -->
       <section class="space-y-2 border-t pt-3" data-testid="apps-detail-actions">
         <div class="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="secondary"
-            onclick={() => (reconnectOpen = !reconnectOpen)}
+            onclick={() => {
+              addOpen = false;
+              reconnectOpen = !reconnectOpen;
+            }}
             data-testid="apps-detail-reconnect"
           >
             {reconnectOpen ? t('apps.catalog.close') : t('apps.detail.reconnect')}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onclick={() => {
+              reconnectOpen = false;
+              addOpen = !addOpen;
+            }}
+            data-testid="apps-detail-add-account"
+          >
+            {addOpen ? t('apps.catalog.close') : t('apps.detail.connectAnother')}
           </Button>
           <Button
             size="sm"
@@ -688,6 +718,21 @@
                 void appDetailStore.load(connectionId).catch(() => undefined);
               }}
               testid="apps-detail-reconnect-panel"
+            />
+          </div>
+        {/if}
+        {#if addOpen}
+          <!-- 同一个应用可以有多个账号：这里新建账号，不动当前账号的授权（Bot 只按需选其中一个）。 -->
+          <div class="space-y-2 rounded-lg border px-3 py-2.5">
+            <p class="text-xs text-muted-foreground">{t('apps.detail.connectAnotherHint')}</p>
+            <ConnectAppPanel
+              target={{ kind: 'catalog', connectorId: connection.connectorId }}
+              name={title}
+              allowDisconnect={false}
+              onDone={() => {
+                addOpen = false;
+              }}
+              testid="apps-detail-add-panel"
             />
           </div>
         {/if}

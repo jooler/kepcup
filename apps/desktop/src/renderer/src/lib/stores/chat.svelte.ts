@@ -39,7 +39,6 @@ import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approva
 import { isSilentOnArrival, mergeUnreadCount } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { isInterimMessage } from '../features/chats/run-status-mute';
-import { sidebarSections } from '../features/sidebar/sidebar-sections.svelte';
 import { shell } from '$lib/stores/shell.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -78,8 +77,6 @@ class ChatState {
         this.#applyBotToList(bot);
       },
       applyConversation: (conversation) => {
-        if (isArchivedConversation(conversation)) this.#archivedIds.add(conversation.id);
-        else this.#archivedIds.delete(conversation.id);
         return this.#upsertConversation(this.#withDirectBot(conversation));
       },
     },
@@ -108,13 +105,6 @@ class ChatState {
   lastMessageText = $state<Record<string, string>>({});
   #lastSeqByConversation: Record<string, number> = {};
   #started = false;
-  /** conversations.list 至少成功过一次（之前 conversations 为空不代表真的没有会话）。 */
-  #listLoaded = false;
-  /**
-   * 已归档（已从对话列表移除）的会话 id：它们不在左栏，但左栏分组归属与置顶
-   * 要留着，恢复后回到原位。
-   */
-  #archivedIds = new Set<string>();
 
   /** Stable until the next open/clear. Property updates do not replace it. */
   get current() {
@@ -166,9 +156,7 @@ class ChatState {
     this.main.start();
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
-      this.#archivedIds.delete(data.id);
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
-      this.pruneSidebarSections();
       tasks.forgetConversation(data.id);
       if (this.currentId === data.id) this.close();
     });
@@ -180,7 +168,6 @@ class ChatState {
         if (conversation.directBotId === data.id) tasks.forgetConversation(conversation.id);
       }
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
-      this.pruneSidebarSections();
       if (this.main.conversation?.directBotId === data.id) this.close();
       // It is part of an in-flight project compose: a picked lead goes back to
       // round 1 (chosen members kept), members are dropped — never build the
@@ -234,8 +221,6 @@ class ChatState {
       }
     }
     this.lastMessageText = lastMessageText;
-    this.#listLoaded = true;
-    this.pruneSidebarSections();
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
@@ -668,7 +653,6 @@ class ChatState {
     try {
       await core.call('conversations.delete', { id });
       this.conversations = this.conversations.filter((c) => c.id !== id);
-      this.pruneSidebarSections();
       tasks.forgetConversation(id);
       if (this.currentId === id) this.close();
     } catch (error) {
@@ -705,22 +689,6 @@ class ChatState {
   }
 
   // --- internals -----------------------------------------------------------------
-
-  /**
-   * 左栏分组归属跟随会话列表：不在列表里的会话不再占着归属。首次 refresh
-   * 之前列表还是空的，此时清理会抹掉全部归属，所以要等列表加载过；名册
-   * （通讯录）没加载前同理——否则会把已归档会话的归属误删。
-   * 已归档（已从对话列表移除）的会话也算「还在」——恢复后要回到原分组。
-   */
-  pruneSidebarSections(): void {
-    if (!this.#listLoaded || !contacts.rosterLoaded) return;
-    const ids: string[] = this.conversations.map((c) => c.id);
-    for (const id of this.#archivedIds) ids.push(id);
-    for (const conversation of contacts.conversations) {
-      if (isArchivedConversation(conversation)) ids.push(conversation.id);
-    }
-    sidebarSections.prune(ids);
-  }
 
   /**
    * Records the sidebar's single-line「最后一条消息」preview. Text messages keep

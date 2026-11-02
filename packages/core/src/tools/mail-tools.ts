@@ -273,7 +273,7 @@ export function buildMailTools(input: {
     const requestSetup: ToolDefinition<{ reason?: string }> = {
       name: MAIL_REQUEST_SETUP_TOOL,
       description:
-        '请用户在对话里添加邮箱并交给你。用户一说「帮我接管邮箱 / 代管邮箱 / 添加（更多）邮箱 / 把邮箱交给你」时，**立刻**调用本工具——不要先指路扩展中心、不要先口头确认；你已有绑定邮箱时也一样，会新增一个，原有的保持不变。reason 简述原因（给用户看）。调用后本次执行暂停，用户在卡片上选一个已安装的邮件插件、填好账号并测试保存后自动继续并绑定给你。不要索要授权码贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover。',
+        '请用户在对话里添加邮箱并交给你。用户一说「帮我接管邮箱 / 代管邮箱 / 添加（更多）邮箱 / 把邮箱交给你」时，**立刻**调用本工具——不要先指路扩展中心、不要先口头确认；你已有绑定邮箱时也一样，会新增一个，原有的保持不变。只用于**新增**邮箱：调整已有邮箱交给哪些 Bot / 暂停，或邮件插件本身的配置与启用，改用 settings_search 查「已配置的邮箱」或「邮件插件」的设置项并出设置卡。reason 简述原因（给用户看）。调用后本次执行暂停，用户在卡片上选一个已安装的邮件插件、填好账号并测试保存后自动继续并绑定给你。不要索要授权码贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover。',
       parameters: Type.Object({
         reason: Type.Optional(Type.String({ description: '为什么需要这个邮箱（给用户看）' })),
       }),

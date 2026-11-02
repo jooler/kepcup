@@ -176,7 +176,7 @@
 </script>
 
 <div
-  class={embedded ? 'pt-3' : 'min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5'}
+  class={embedded ? 'min-w-0 pt-3' : 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-3 pr-0.5'}
   data-testid="extension-mail"
 >
   {#if view === 'list'}
@@ -223,7 +223,10 @@
       <div class="space-y-4">
         {#each groups as [pluginKey, groupAccounts] (pluginKey ?? '__legacy__')}
           <section>
-            <p class="mb-1.5 text-xs font-medium text-muted-foreground" data-testid={`mail-group-${pluginKey ?? 'legacy'}`}>
+            <p
+              class="mb-1.5 text-xs font-medium text-muted-foreground"
+              data-testid={`mail-group-${pluginKey ?? 'legacy'}`}
+            >
               {groupName(pluginKey)}
             </p>
             <ul class="space-y-2">

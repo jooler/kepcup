@@ -289,7 +289,7 @@ jobs:
     steps:
       # checkout 依赖 git，node-gyp / rpmbuild / cargo 的构建依赖也在这里装。
       # Node 用 actions/setup-node 下载官方产物（glibc 2.28+，两个发行版都能跑）。
-      # 后半段是 Electron 44 的运行时库（与 electron-builder.yml 的 rpm.depends 在
+      # 后半段是 Electron 45 的运行时库（与 electron-builder.yml 的 rpm.depends 在
       # AlmaLinux 9 上的包名一致，富依赖取第一项）。afterPack 会用打包后的二进制
       # 以 ELECTRON_RUN_AS_NODE 跑组件查询冒烟；只把这些写进 rpm Requires 不够，
       # 最小镜像里没有 libnspr4.so 等，动态链接器会在冒烟脚本启动前失败。

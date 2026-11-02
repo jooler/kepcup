@@ -397,6 +397,79 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     },
     store: { kind: 'none' },
   }),
+  item({
+    id: 'mail.plugin',
+    group: 'mail',
+    title: '邮件插件',
+    summary: '让用户选一个邮件插件，改它的配置并交给这个 Bot 使用',
+    enables: ['配置邮件插件', '给这个 Bot 启用邮件插件'],
+    keywords: ['邮件插件', '邮箱插件', '插件配置', 'IMAP', 'SMTP', '启用', '停用', 'mail'],
+    scope: 'bot',
+    fields: [
+      field('plugin', '邮件插件', 'select', { options: 'mail-plugins' }),
+      field('enabled', '交给这个 Bot', 'toggle'),
+    ],
+    // 插件配置含敏感字段（动态表单由卡片构建），且启用插件 = 给 Bot 增加能力 → 放宽。
+    write: write('form', { widensPermission: true }),
+    card: 'mail-plugin',
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mail',
+    },
+    store: {
+      kind: 'service',
+      methods: [
+        'plugins.setEnabled',
+        'plugins.setBotPlugins',
+        'plugins.enableForBots',
+        'plugins.config.set',
+      ],
+    },
+  }),
+  item({
+    id: 'mail.mailbox',
+    group: 'mail',
+    title: '已配置的邮箱',
+    summary: '让用户选一个已经配置好的邮箱，设置它交给哪些 Bot、是否暂停收信',
+    enables: ['把已有邮箱交给某个 Bot', '管理邮箱的绑定与暂停'],
+    keywords: [
+      '邮箱',
+      '邮件',
+      '绑定',
+      '交给',
+      '交给 Bot',
+      '把邮箱交给',
+      '邮箱归属',
+      '分配',
+      '暂停',
+      '已有邮箱',
+      'mail account',
+    ],
+    scope: 'bot',
+    fields: [
+      field('account', '邮箱', 'select', { options: 'mail-accounts' }),
+      field('bots', '交给这些 Bot', 'select', { options: 'bots', multiple: true }),
+      field('paused', '暂停收信', 'toggle'),
+    ],
+    // 改绑定 = 把邮箱能力交给别的 Bot → 放宽；用户亲手在卡上决定。
+    write: write('form', { widensPermission: true }),
+    card: 'mail-mailbox',
+    deepLink: {
+      surface: 'extension-center',
+      section: 'installed',
+      anchor: 'plugins-filter-mail',
+    },
+    store: {
+      kind: 'service',
+      methods: [
+        'mail.accounts.setBots',
+        'mail.accounts.pause',
+        'mail.accounts.resume',
+        'mail.accounts.update',
+      ],
+    },
+  }),
 
   // --- 外部智能体 ---------------------------------------------------------
   item({
