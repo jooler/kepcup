@@ -185,8 +185,8 @@ rpm:
   synopsis: 本地优先的 AI Bot 运行时
   # RHEL 9/10 的包名；备选名用 rpm 富依赖（gnome 之外其他发行版也能解析）。
   # 这些是 Electron 在 Linux 上的运行时依赖，缺一个会出现空白窗口或崩溃。
-  # libXScrnSaver 是 Electron 官方文档里的老依赖，Electron 44 已不再链接
-  # libXss，而且 RHEL 10 仓库里没有这个包——不要加回来。
+  # libXScrnSaver 是 Electron 官方文档里的老依赖，Electron 44 起已不再链接
+  # libXss（45 仍未链接），而且 RHEL 10 仓库里没有这个包——不要加回来。
   depends:
     - gtk3
     - libnotify
@@ -200,7 +200,7 @@ rpm:
     - (libxkbcommon or libxkbcommon0)
     - alsa-lib
     - cups-libs
-    # Electron 44 的 ELF NEEDED 里有 libdbus-1 / libudev；不要依赖
+    # Electron 45 的 ELF NEEDED 里有 libdbus-1 / libudev；不要依赖
     # gtk3 的传递依赖（rpm 的 AutoReq 被 fpm 关闭了）。
     - dbus-libs
     - systemd-libs
@@ -239,9 +239,9 @@ flatpak:
 # --- Linux Snap（base core24，Ubuntu 22.04+） --------------------------------
 # electron-builder 生成 snapcraft.yaml 并调用 snapcraft（CI 的 linux-snap job 在
 # Ubuntu 24.04 runner 上以 --destructive-mode 构建，不需要 LXD/Multipass）。
-# core24 的 glibc 2.39 同时覆盖 Ubuntu 22.04 / 24.04 / 最新版；Electron 44 的
-# 原生模块在 core24 里可加载。CI 把 snapcraft 钉在 8.x/stable：9.1+ 找不到
-# 生成器写到 snap/gui/ 的桌面文件（canonical/snapcraft#6519）。
+# core24 的 glibc 2.39 同时覆盖 Ubuntu 22.04 / 24.04 / 最新版；Electron 45 的
+# 二进制实测只要求到 glibc 2.25，原生模块在 core24 里可加载。CI 把 snapcraft 钉在
+# 8.x/stable：9.1+ 找不到生成器写到 snap/gui/ 的桌面文件（canonical/snapcraft#6519）。
 snapcraft:
   base: core24
   artifactName: kepcup_${version}_${arch}.${ext}

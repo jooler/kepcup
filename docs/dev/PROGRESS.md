@@ -1909,3 +1909,19 @@ Bot 回复仍是文本气泡，消息列表不像通话；③ 语音模式在录
   42 跳过、0 失败；shared build、core 与 desktop typecheck 0 error；改动文件 eslint 干净。
   顺带修复既有失败：`public-skills-migration` 回放用例未摘除 0064 加的 `bots.accent_color`
   （9ef81f38 引入，与本改动无关），补一行 `drop column` 后转绿。
+
+## Electron 升级到 45.2.1（2026-11-02）
+
+- **依赖**：`electron` 44.4.5 → 45.2.1（内置 Chromium 156.0.8078.75 / Node 24.22.1 / V8 15.6），
+  lockfile 同步（顺带收敛 MCP 系 `supports-color` 重复快照）。二进制经 npmmirror 镜像下载（npm /
+  GitHub 直连超时）。
+- **破坏性变更核对**：preload 只 `import { contextBridge, ipcRenderer }`，不受沙箱 preload 移除
+  `Buffer` / `setImmediate` / `require('events|timers|url')` 影响；`safeStorage` 同步 API、
+  `contentTracing`、ASAR 裸 fd、`window.open` 子窗口均未使用。
+- **权限**：Electron 45 把屏幕 / 窗口捕获（含旧式 `chromeMediaSource`）统一以 `display-capture`
+  上报；`app-permissions.ts` 白名单本就不含它，行为保持拒绝，注释同步。
+- **Linux 依赖**：实测 45.2.1 的 ELF NEEDED 仍含 libdbus-1 / libudev、不再含 libXss，最高只要求
+  GLIBC_2.25；RPM 依赖与 core24 基线不变。`Session.destroy()` 仍不存在。
+- **验证**：desktop typecheck 0 error（1 条既有 ApprovalCard 警告）、`electron-vite build` 通过；
+  e2e `skeleton` 2/2、`lifecycle` + `sensors` 4/4；`app-permissions.test` 5/5。
+
