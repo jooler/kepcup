@@ -23,7 +23,9 @@ export type TriggerReason =
   /** W7：网页监看条件边沿触发（内部事件 watch_alert）。 */
   | 'watch'
   /** D84：新邮件唤醒（内部事件 mail_alert）。 */
-  | 'mail';
+  | 'mail'
+  /** D109（54 号文档）：IM 入站唤醒（内部事件 im_alert）。 */
+  | 'im';
 
 /** One source batch of a merged trigger (its own `<trigger>` segment). */
 export interface TriggerPart {

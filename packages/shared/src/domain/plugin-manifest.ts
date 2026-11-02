@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { connectorNameSchema } from './connector-catalog.js';
+import { imMediaKindSchema, imSetupSchema, imTransportSchema } from './im.js';
 import { mailModeSchema, mailSecureSchema } from './mail.js';
 import { sanitizeDisplayText } from './text-sanitize.js';
 
@@ -25,9 +26,10 @@ export const PLUGIN_MAX_SKILLS = 50;
 export const PLUGIN_MAX_CONNECTORS = 20;
 export const PLUGIN_MAX_MCP = 10;
 export const PLUGIN_MAX_MAIL = 10;
+export const PLUGIN_MAX_IM = 10;
 
 /** Contribution kinds (defined here so plugin-manifest.ts stays dependency-free; plugins.ts re-exports). */
-export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail']);
+export const pluginContributionKindSchema = z.enum(['skill', 'connector', 'mcp', 'mail', 'im']);
 export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
 
 // --- declarative fields / instances (D105, todo/plugin-platform README §2.2–2.3) ---------
@@ -39,7 +41,7 @@ export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema
 export const PLUGIN_FIELD_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Instantiable capability kinds a pure-instance manifest may declare. */
-export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp'] as const;
+export const PLUGIN_INSTANCE_KINDS = ['mail', 'mcp', 'im'] as const;
 export const pluginInstanceKindSchema = z.enum(PLUGIN_INSTANCE_KINDS);
 export type PluginInstanceKind = z.infer<typeof pluginInstanceKindSchema>;
 export const PLUGIN_MAX_INSTANCES = 4;
@@ -271,6 +273,7 @@ export interface PluginCapabilityFacts {
   connectors: number;
   mcp: number;
   mail: number;
+  im: number;
   instances: readonly PluginInstanceKind[];
   /** Up to two skill display names from the manifest (shown in parentheses). */
   skillNames: readonly string[];
@@ -282,6 +285,7 @@ export function capabilityFactsOf(manifest: PluginManifest): PluginCapabilityFac
     connectors: manifest.contributions.connectors.length,
     mcp: manifest.contributions.mcp.length,
     mail: manifest.contributions.mail.length,
+    im: manifest.contributions.im.length,
     instances: manifest.instances ?? [],
     skillNames: manifest.contributions.skills
       .map((skill) => skill.displayName ?? skill.dir.split('/').pop() ?? skill.dir)
@@ -307,10 +311,11 @@ export function pluginCapabilitySummary(facts: PluginCapabilityFacts): string {
   if (facts.connectors > 0) parts.push(`${facts.connectors} 个连接`);
   if (facts.mcp > 0) parts.push(`${facts.mcp} 个工具`);
   // P3: a mail contribution is the instance provisioning spec, not a capability unit —
-  // the instances tail below is the user-facing line for it.
+  // the instances tail below is the user-facing line for it. D107: im is the same shape.
   const tail: string[] = [];
   if (facts.instances.includes('mail')) tail.push('可添加多个邮箱账号');
   if (facts.instances.includes('mcp')) tail.push('可添加自定义工具');
+  if (facts.instances.includes('im')) tail.push('可添加 IM 账号（如微信），收发消息');
   const head =
     parts.length > 0
       ? `提供 ${parts.slice(0, -1).join('、')}${parts.length > 1 ? ' 与 ' : ''}${parts[parts.length - 1]!}`
@@ -333,6 +338,7 @@ export function pluginCapabilitySummaryFromCategories(
   if (categories.includes('connector')) labels.push('连接');
   if (categories.includes('mcp')) labels.push('工具');
   if (categories.includes('mail')) labels.push('邮件');
+  if (categories.includes('im')) labels.push('即时通讯');
   return sanitizeDisplayText(
     labels.length === 0 ? '提供扩展能力' : `提供${labels.join('、')}能力`,
     200,
@@ -483,6 +489,91 @@ export const PLUGIN_MAIL_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = [
   'smtpSecure',
 ] as const;
 
+/**
+ * IM 贡献（D107，docs/design/54-im-channel.md §2）：一个 `im` 实例 kind 的供给规范——
+ * transport 决定宿主会话实现与建号 UI（首发 `ilink` = 个人微信 iLink Bot API，D108），
+ * `apiBase` 在 transport 要求端点时必填且锁定（https 公网），`features` 是声明面
+ * （宿主按 transport 实际实现裁剪）。与 mail 同规则：至多一份、必须与
+ * `instances: ['im']` 双向配对（enforced in `pluginManifestSchema`）。
+ * 建号交叉规则：`qrcode` 扫码流程没有表单，不得声明 sensitive 实例字段；
+ * `secret` 表单建号至少声明一个 sensitive 字段作为密钥。
+ */
+export const pluginImContributionSchema = z
+  .strictObject({
+    id: pluginMcpIdSchema,
+    label: z.string().min(1).max(60),
+    transport: imTransportSchema,
+    // Trim 纪律同 mail host：空白填充的端点不能当锁定值通过（否则 core 到建号时才报错）。
+    // 注意 z.string().url() 走 WHATWG 解析会先吞首尾空白，trim 校验必须在其之前对原始值做。
+    apiBase: z
+      .string()
+      .max(500)
+      .refine((value) => value.trim() === value, {
+        message: 'apiBase must not have leading/trailing whitespace',
+      })
+      .refine((value) => value.startsWith('https://'), { message: 'must be an https URL' })
+      .refine((value) => {
+        try {
+          new URL(value);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    setup: imSetupSchema,
+    features: z.strictObject({
+      inbound: z.boolean(),
+      outbound: z.boolean(),
+      media: z.array(imMediaKindSchema).max(8).default([]),
+    }),
+    /** Vendor-extra form fields, appended after the kind's built-ins (≤16). */
+    instanceFields: z.array(pluginFieldSchema).max(16).optional(),
+  })
+  .superRefine((contribution, ctx) => {
+    const declared = contribution.instanceFields ?? [];
+    const seen = new Set<string>();
+    declared.forEach((field, index) => {
+      if (seen.has(field.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'key'],
+          message: `实例字段重复：${field.key}`,
+        });
+      }
+      seen.add(field.key);
+      // 扫码流程没有表单：sensitive 字段没有收集入口，声明了就永远建不成号。
+      if (contribution.setup === 'qrcode' && field.sensitive) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instanceFields', index, 'sensitive'],
+          message: 'qrcode 建号不得声明敏感实例字段（扫码流程没有表单）',
+        });
+      }
+    });
+    if (contribution.setup === 'secret' && !declared.some((field) => field.sensitive)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instanceFields'],
+        message: 'secret 建号至少声明一个敏感实例字段作为密钥',
+      });
+    }
+    // webhook 单向推送没有入站面；声明 inbound 是清单笔误（54 §2.4 路标）。
+    if (contribution.transport === 'webhook' && contribution.features.inbound) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['features', 'inbound'],
+        message: 'webhook 传输不支持入站',
+      });
+    }
+  });
+export type PluginImContribution = z.infer<typeof pluginImContributionSchema>;
+
+/**
+ * Instance form keys the im kind adapter generates itself — never manifest-declarable
+ * (`instanceFields` entries with these keys are rejected by the schema above).
+ */
+export const PLUGIN_IM_BUILTIN_INSTANCE_FIELD_KEYS: readonly string[] = ['bot_token'] as const;
+
 // --- manifest ----------------------------------------------------------------
 
 export const pluginManifestSchema = z
@@ -515,6 +606,7 @@ export const pluginManifestSchema = z
           .default([]),
         mcp: z.array(pluginMcpContributionSchema).max(PLUGIN_MAX_MCP).default([]),
         mail: z.array(pluginMailContributionSchema).max(PLUGIN_MAX_MAIL).default([]),
+        im: z.array(pluginImContributionSchema).max(PLUGIN_MAX_IM).default([]),
       })
       // D105：纯实例插件（只声明 `instances`）可以整个省略 contributions；解析输出恒为完整对象。
       .prefault({}),
@@ -526,8 +618,16 @@ export const pluginManifestSchema = z
     instances: z.array(pluginInstanceKindSchema).max(PLUGIN_MAX_INSTANCES).optional(),
   })
   .superRefine((manifest, ctx) => {
-    const { skills, connectors, mcp, mail } = manifest.contributions;
-    if (skills.length + connectors.length + mcp.length + mail.length + (manifest.instances?.length ?? 0) < 1) {
+    const { skills, connectors, mcp, mail, im } = manifest.contributions;
+    if (
+      skills.length +
+        connectors.length +
+        mcp.length +
+        mail.length +
+        im.length +
+        (manifest.instances?.length ?? 0) <
+      1
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['contributions'],
@@ -604,6 +704,28 @@ export const pluginManifestSchema = z
         code: 'custom',
         path: ['instances'],
         message: '声明 instances: [\'mail\'] 时必须同时声明一份邮件贡献',
+      });
+    }
+    // D107：im 贡献 = im 实例供给规范，与 mail 同规则（双向配对、至多一份）。
+    if (im.length > 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'im'],
+        message: 'IM 实例能力只能声明一个配置',
+      });
+    }
+    if (im.length > 0 && !manifest.instances?.includes('im')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contributions', 'im'],
+        message: '声明 IM 贡献时必须同时声明 instances: [\'im\']',
+      });
+    }
+    if (im.length === 0 && manifest.instances?.includes('im')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances'],
+        message: '声明 instances: [\'im\'] 时必须同时声明一份 IM 贡献',
       });
     }
     // Declarative fields / instances (D105): duplicate config keys and duplicate

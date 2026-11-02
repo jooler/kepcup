@@ -384,6 +384,7 @@ interface PermissionFacts {
   scopes: Set<string>;
   mcpb: Array<{ id: string; userConfig: string[] }>;
   mail: string[];
+  im: string[];
 }
 
 /**
@@ -805,6 +806,9 @@ function checkDeclarativeFields(manifest: PluginManifest, checks: Check[]): void
   for (const template of manifest.contributions.mail) {
     fieldSets.push({ subject: `mail:${template.id}`, fields: template.instanceFields ?? [] });
   }
+  for (const contribution of manifest.contributions.im) {
+    fieldSets.push({ subject: `im:${contribution.id}`, fields: contribution.instanceFields ?? [] });
+  }
   for (const { subject, fields } of fieldSets) {
     fields.forEach((field, index) => {
       const where = `${subject}[${index}] ${field.key}`;
@@ -875,6 +879,43 @@ function checkMail(
     );
   }
   permissions.mail.push(id);
+}
+
+/**
+ * D107（54 号文档 §10）：im 贡献的离线校验。schema 已保证 transport 白名单 /
+ * apiBase https / setup 交叉规则，这里核对 manifest 无法自证的公网端点，并把
+ * transport 报告进 consent 权限面。
+ */
+function checkIm(
+  id: string,
+  contribution: PluginManifest['contributions']['im'][number],
+  permissions: PermissionFacts,
+  checks: Check[],
+): void {
+  let host: string | null = null;
+  try {
+    host = new URL(contribution.apiBase).host;
+  } catch {
+    // The manifest schema rejects invalid URLs already.
+  }
+  if (host === null || !isPublicMailHost(host)) {
+    checks.push(
+      makeCheck('plugin.im-api-base', 'error', `apiBase must be a public https URL: ${contribution.apiBase}`, {
+        subject: `${id} [apiBase]`,
+      }),
+    );
+  } else {
+    permissions.hosts.add(host);
+  }
+  checks.push(
+    makeCheck(
+      'plugin.im-transport',
+      'info',
+      `IM contribution "${id}" declares transport "${contribution.transport}" (setup: ${contribution.setup}); the host ships the protocol client.`,
+      { subject: id },
+    ),
+  );
+  permissions.im.push(id);
 }
 
 /** Plugin-mode report (offline; no remote, no authorization). */
@@ -969,6 +1010,7 @@ export async function validatePlugin(
       scopes: new Set<string>(),
       mcpb: [],
       mail: [],
+      im: [],
     };
     const { contributions } = manifest;
     for (const skill of contributions.skills) {
@@ -1038,6 +1080,9 @@ export async function validatePlugin(
     for (const template of contributions.mail) {
       checkMail(template.id, template, permissions, checks);
     }
+    for (const contribution of contributions.im) {
+      checkIm(contribution.id, contribution, permissions, checks);
+    }
 
     const hosts = [...permissions.hosts].sort();
     const scopes = [...permissions.scopes].sort();
@@ -1046,13 +1091,15 @@ export async function validatePlugin(
         'plugin.permissions',
         'info',
         `The consent card will show ${hosts.length} host(s), ${scopes.length} OAuth scope(s), ` +
-          `${permissions.mcpb.length} embedded MCPB bundle(s) and ${permissions.mail.length} mail template(s).`,
+          `${permissions.mcpb.length} embedded MCPB bundle(s), ${permissions.mail.length} mail template(s) ` +
+          `and ${permissions.im.length} IM contribution(s).`,
         {
           details: {
             hosts,
             oauthScopes: scopes,
             mcpb: permissions.mcpb,
             mail: permissions.mail,
+            im: permissions.im,
           },
         },
       ),
