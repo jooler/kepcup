@@ -94,7 +94,7 @@ export function pluginProvides(
 ): boolean {
   return kind === 'connector'
     ? plugin.counts.connectors > 0
-    : plugin.counts.mail > 0 || plugin.providesInstances.includes('mail');
+    : plugin.counts[kind] > 0 || plugin.providesInstances.includes(kind);
 }
 
 /**
