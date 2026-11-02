@@ -270,7 +270,7 @@ describe('BuiltinPlugins.summaries', () => {
       marketplace: null,
       installedAt: null,
       updatedAt: null,
-      counts: { skills: 1, connectors: 0, mcp: 0, mail: 0 },
+      counts: { skills: 1, connectors: 0, mcp: 0, mail: 0, im: 0 },
       items: [],
       updateAvailable: null,
     });
