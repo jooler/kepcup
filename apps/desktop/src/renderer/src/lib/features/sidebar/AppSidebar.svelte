@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick, type Component } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import {
     ArrowDown,
     ArrowUp,
@@ -410,12 +411,17 @@
   );
 
   // 管家不能留在分组里。之前若被移入过，这里把归属清掉（不展开「未指定」：
-  // 这不是用户的移动操作）。
+  // 这不是用户的移动操作）。写入失败会从库里重读、归属恢复，记录已尝试的会话
+  // 避免 effect 立刻重试形成循环（下次启动仍会再清一次）。
+  const butlerUnassignAttempted = new SvelteSet<string>();
   $effect(() => {
     const assigned = butlerConversations.filter(
-      (conversation) => sidebarSections.state.assignments[conversation.id] !== undefined,
+      (conversation) =>
+        sidebarSections.state.assignments[conversation.id] !== undefined &&
+        !butlerUnassignAttempted.has(conversation.id),
     );
     for (const conversation of assigned) {
+      butlerUnassignAttempted.add(conversation.id);
       sidebarSections.unassign(conversation.id);
     }
   });

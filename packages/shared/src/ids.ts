@@ -63,6 +63,8 @@ export const ID_PREFIXES = {
   memo: 'memo_',
   /** 工作台备忘分组（D90，main.db memo_groups）。 */
   mmg: 'mmg_',
+  /** 左栏对话分组（main.db sidebar_sections）；旧版 localStorage 的 `sec_` id 导入时原样保留。 */
+  ssc: 'ssc_',
   /** 看板分栏（D103，main.db board_columns）。卡片 id 复用事项 id，没有单独前缀。 */
   bcol: 'bcol_',
   /** 插件实例（D105，main.db plugin_instances）。 */

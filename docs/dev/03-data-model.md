@@ -59,6 +59,7 @@
 | main | `0054_plugin_skill_source.sql` | D104 P0b：`skill_library.source_url` 的 `preset://{id}` 一次性改写为 `plugin://com.kepcup/starter-skills/{id}`（纯 UPDATE；预置技能改为内置插件 `com.kepcup/starter-skills` 的技能贡献，`SkillPresetsService` 按新前缀认领） |
 | main | `0055_plugin_update_journal.sql` | D104 P1-2：`plugins` 增 `update_to` / `update_snapshot` 两列（更新日志；`update_to` 非 NULL = 更新进行中，崩溃恢复按快照回滚） |
 | main | `0063_memo_groups.sql` | D90 增强：新表 `memo_groups`（备忘分组）；`memos` 增 `group_id`（FK ON DELETE SET NULL）与 `position`、`todos` 增 `position`（均按改动前显示顺序回填，手动拖拽排序键）；`memos_live` 索引改按 `position`、增 `memos_group` |
+| main | `0065_sidebar_sections.sql` | 左栏对话分组从渲染层 localStorage（`kepcup.sidebar.sections.v1`）改存 main.db：新表 `sidebar_sections`（含内置「未指定」行）、`conversation_sidebar`（会话归属 + 置顶的稀疏偏好行，FK 级联 / `ON DELETE SET DEFAULT`） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -180,6 +181,41 @@ CREATE TABLE conversation_members (
 ```
 
 单聊也写入一行成员记录，统一成员查询逻辑。
+
+### sidebar_sections / conversation_sidebar（0065）
+
+```sql
+CREATE TABLE sidebar_sections (
+  id         TEXT PRIMARY KEY,             -- ssc_...；内置「未指定」固定 id = 'unassigned'
+  name       TEXT CHECK (                   -- NULL 只允许内置组（显示名由界面本地化）
+               name IS NULL OR (length(name) BETWEEN 1 AND 40 AND instr(name, char(0)) = 0)
+             ),
+  position   REAL NOT NULL,                -- 显示顺序（升序，分数排序键）
+  collapsed  INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK ((id = 'unassigned') = (name IS NULL))
+);
+CREATE INDEX sidebar_sections_order ON sidebar_sections(position);
+
+CREATE TABLE conversation_sidebar (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  section_id      TEXT NOT NULL DEFAULT 'unassigned'
+                    REFERENCES sidebar_sections(id) ON DELETE SET DEFAULT,
+  pinned          INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX conversation_sidebar_section ON conversation_sidebar(section_id);
+```
+
+左栏对话分组（[design/12](../design/12-ui-layout.md#对话分组)）：`sidebar_sections` 是分组目录 + 顺序 + 折叠状态，`conversation_sidebar` 是会话归属与置顶。设计要点：
+
+- **「未指定」是真实行**（`id = 'unassigned'`、`name IS NULL`）：它和自定义分组一样参与拖拽排序与折叠，但不能重命名 / 删除（服务端拒绝）。迁移插入这一行，后续启动不再补。
+- **偏好是稀疏的**：没有归属也没有置顶的会话没有行；缺行 = 未指定、未置顶。移回「未指定」且未置顶时服务删行。
+- **删分组**：`conversation_sidebar.section_id` 的 `ON DELETE SET DEFAULT` 把组内会话落回「未指定」，与界面「组内对话回到未指定」一致。
+- **删会话**：物理删除会话时偏好行随 `ON DELETE CASCADE` 清掉；归档（`archived_at` 非空）的会话保留偏好，恢复后回到原分组。
+- **旧数据**：渲染层 localStorage 键 `kepcup.sidebar.sections.v1` 只在库为空时经 `sidebar.import` 迁入一次（未知会话 / 分组丢弃），成功后渲染层删键。
 
 ### messages（P01；D75 迁移 0018 重建：增 task_event、owner_bot_id、task_id）
 

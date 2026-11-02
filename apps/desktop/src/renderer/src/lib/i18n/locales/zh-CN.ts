@@ -2093,6 +2093,7 @@ export const zhCN = {
   'sidebar.sectionMoveUp': '上移',
   'sidebar.sectionMoveDown': '下移',
   'sidebar.sectionDeleted': '已删除分组，其中的对话回到了「未指定」',
+  'sidebar.sectionSaveFailed': '分组保存失败，已从数据目录重新读取',
   'chatHeader.expandPanel': '展开 Bot 面板',
   'chatHeader.collapsePanel': '收起 Bot 面板',
   'settings.navGeneral': '通用',

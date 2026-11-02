@@ -2163,6 +2163,7 @@ export const enUS = {
   'sidebar.sectionMoveUp': 'Move up',
   'sidebar.sectionMoveDown': 'Move down',
   'sidebar.sectionDeleted': 'Group deleted; its conversations moved back to Unassigned',
+  'sidebar.sectionSaveFailed': 'Could not save the group; reloaded from the data directory',
   'chatHeader.expandPanel': 'Expand Bot panel',
   'chatHeader.collapsePanel': 'Collapse Bot panel',
   'settings.navGeneral': 'General',

@@ -37,6 +37,7 @@ export * from './domain/plugins.js';
 export * from './domain/plugin-index.js';
 export * from './domain/handover.js';
 export * from './domain/stickies.js';
+export * from './domain/sidebar.js';
 export * from './domain/agent-status.js';
 export * from './domain/share.js';
 export * from './domain/remote.js';
