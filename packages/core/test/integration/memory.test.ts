@@ -635,6 +635,34 @@ describe('P07 记忆与画像（集成）', () => {
       expect(
         again.entries.find((e) => e.botId === bot.id && e.loopType === 'turn')?.calls,
       ).toBeGreaterThanOrEqual(1);
+
+      // usage.stats: 累计 KPI + 一年热力图 + 所选范围的模型 / loop / Bot 构成。
+      const stats = (await stack.core.rpc.call('usage.stats', { days: 3 })) as {
+        totals: { tokens: number; calls: number; activeDays: number; firstDate: string | null };
+        peakDay: { tokens: number } | null;
+        streak: { current: number; longest: number };
+        heatmap: { points: Array<{ date: string }> };
+        range: {
+          daily: Array<{ date: string }>;
+          byModel: Array<{ model: string; tokens: number }>;
+          byLoop: Array<{ loopType: string; calls: number; tokens: number }>;
+          byBot: Array<{ botId: string | null; tokens: number }>;
+        };
+      };
+      expect(stats.totals.calls).toBeGreaterThanOrEqual(3);
+      expect(stats.totals.tokens).toBeGreaterThanOrEqual(1000);
+      expect(stats.totals.activeDays).toBeGreaterThanOrEqual(1);
+      expect(stats.totals.firstDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(stats.peakDay?.tokens ?? 0).toBeGreaterThan(0);
+      expect(stats.peakDay!.tokens).toBeLessThanOrEqual(stats.totals.tokens);
+      expect(stats.streak.longest).toBeGreaterThanOrEqual(1);
+      expect(stats.heatmap.points).toHaveLength(365);
+      expect(stats.range.daily).toHaveLength(3);
+      expect(stats.range.byModel.some((row) => row.tokens > 0)).toBe(true);
+      expect(stats.range.byLoop.find((row) => row.loopType === 'memory')?.calls).toBe(2);
+      expect(stats.range.byBot.find((row) => row.botId === bot.id)?.tokens).toBeGreaterThanOrEqual(
+        1000,
+      );
     } finally {
       await stack.cleanup();
     }

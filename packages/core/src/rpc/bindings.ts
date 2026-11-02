@@ -188,6 +188,8 @@ import {
   profileUpdateInputSchema,
   profileRetractInputSchema,
   profileCardOutputSchema,
+  usageStatsInputSchema,
+  usageStatsOutputSchema,
   usageSummaryInputSchema,
   usageSummaryOutputSchema,
   embeddingStatusOutputSchema,
@@ -329,6 +331,7 @@ import type { BoardService } from '../board/board-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
+import { buildUsageStats } from '../domain/usage-stats.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
 import { bindAgentMethods } from './agents-bindings.js';
 import { oauthBindingChanged } from '../apps/disconnect.js';
@@ -1716,6 +1719,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       return { entries: [...buckets.values()] };
     }),
+
+    'usage.stats': method(usageStatsInputSchema, usageStatsOutputSchema, async (input) =>
+      buildUsageStats({
+        usage: services.domain!.usage,
+        now: services.clock.now(),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        days: input.days ?? 7,
+        heatmapDays: input.heatmapDays ?? 365,
+      }),
+    ),
 
     'embedding.status': method(voidInput, embeddingStatusOutputSchema, async () =>
       services.memory!.embeddingStatus(),

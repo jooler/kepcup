@@ -3272,6 +3272,120 @@ export const usageSummaryOutputSchema = z.object({
 });
 export type UsageSummaryOutput = z.infer<typeof usageSummaryOutputSchema>;
 
+// --- usage dashboard (usage.stats RPC) -------------------------------------
+
+/** One local-day bucket of the usage dashboard (zero days included). */
+export const usageDailyPointSchema = z.object({
+  date: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  /** input + output（与用量明细一致，缓存读写单列）。 */
+  tokens: z.number(),
+  calls: z.number().int(),
+});
+export type UsageDailyPoint = z.infer<typeof usageDailyPointSchema>;
+
+/** Per-model totals inside the selected range. */
+export const usageModelTotalSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  tokens: z.number(),
+  calls: z.number().int(),
+  costUsd: z.number().nullable(),
+});
+export type UsageModelTotal = z.infer<typeof usageModelTotalSchema>;
+
+/** Per-model daily series (trend chart). */
+export const usageDailyModelPointSchema = z.object({
+  date: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  tokens: z.number(),
+});
+export type UsageDailyModelPoint = z.infer<typeof usageDailyModelPointSchema>;
+
+/** Per loop type totals inside the selected range. */
+export const usageLoopTotalSchema = z.object({
+  loopType: loopTypeSchema,
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  tokens: z.number(),
+  calls: z.number().int(),
+});
+export type UsageLoopTotal = z.infer<typeof usageLoopTotalSchema>;
+
+/** Per bot totals inside the selected range (`botId: null` = global jobs). */
+export const usageBotTotalSchema = z.object({
+  botId: z.string().nullable(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  tokens: z.number(),
+  calls: z.number().int(),
+});
+export type UsageBotTotal = z.infer<typeof usageBotTotalSchema>;
+
+/** Longest continuous chat session (messages ≤ 30 min apart). */
+export const usageChatSessionSchema = z.object({
+  conversationId: z.string(),
+  botId: z.string().nullable(),
+  minutes: z.number().int(),
+  startedAt: z.number(),
+  endedAt: z.number(),
+});
+export type UsageChatSession = z.infer<typeof usageChatSessionSchema>;
+
+export const usageStatsInputSchema = z.object({
+  /** Trend / model / composition window ending today; default 7. */
+  days: z.number().int().min(1).max(90).optional(),
+  /** Token-activity window ending today; default 365. */
+  heatmapDays: z.number().int().min(28).max(400).optional(),
+});
+
+export const usageStatsOutputSchema = z.object({
+  /** All-time totals (the KPI strip). */
+  totals: z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    tokens: z.number(),
+    cacheReadTokens: z.number(),
+    cacheWriteTokens: z.number(),
+    calls: z.number().int(),
+    costUsd: z.number().nullable(),
+    activeDays: z.number().int(),
+    firstDate: z.string().nullable(),
+    lastDate: z.string().nullable(),
+  }),
+  /** Highest-token local day across the whole ledger. */
+  peakDay: usageDailyPointSchema.nullable(),
+  /** Consecutive active days (today may be empty; then count from yesterday). */
+  streak: z.object({
+    current: z.number().int(),
+    longest: z.number().int(),
+  }),
+  heatmap: z.object({
+    startDate: z.string(),
+    endDate: z.string(),
+    /** Ascending local dates, zero days included. */
+    points: z.array(usageDailyPointSchema),
+  }),
+  range: z.object({
+    days: z.number().int(),
+    startDate: z.string(),
+    endDate: z.string(),
+    daily: z.array(usageDailyPointSchema),
+    dailyByModel: z.array(usageDailyModelPointSchema),
+    byModel: z.array(usageModelTotalSchema),
+    byLoop: z.array(usageLoopTotalSchema),
+    byBot: z.array(usageBotTotalSchema),
+  }),
+  longestChat: usageChatSessionSchema.nullable(),
+});
+export type UsageStatsOutput = z.infer<typeof usageStatsOutputSchema>;
+
 /** Embedding status for the settings page (embedding.status RPC). */
 export const embeddingStatusSchema = z.object({
   source: z.enum(['', 'local', 'provider']),

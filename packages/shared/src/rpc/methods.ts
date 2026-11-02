@@ -182,6 +182,8 @@ import {
   pluginMarketplacePublicKeySchema,
   pluginMarketplaceUrlSchema,
   unattendedStateSchema,
+  usageStatsInputSchema,
+  usageStatsOutputSchema,
   usageSummaryOutputSchema,
   wikiHistoryEntrySchema,
   wikiPageSchema,
@@ -2746,6 +2748,7 @@ export const rpcMethodSchemas = {
   'profile.card': { input: voidInput, output: profileCardOutputSchema },
 
   'usage.summary': { input: usageSummaryInputSchema, output: usageSummaryOutputSchema },
+  'usage.stats': { input: usageStatsInputSchema, output: usageStatsOutputSchema },
 
   'embedding.status': { input: voidInput, output: embeddingStatusOutputSchema },
   'embedding.configure': {
@@ -3326,6 +3329,7 @@ const APP_METHODS = [
   'profile.retract',
   'profile.card',
   'usage.summary',
+  'usage.stats',
   'embedding.status',
   'embedding.configure',
   'embedding.download',

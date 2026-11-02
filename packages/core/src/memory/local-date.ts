@@ -56,6 +56,20 @@ export function localDayStart(now: number, timeZone: string): number {
   return start;
 }
 
+/**
+ * Start (UTC ms) of the local day named by `dateKey` (YYYY-MM-DD). Used by the
+ * usage dashboard to turn a calendar range into a ledger `created_at` bound.
+ */
+export function localDateStart(dateKey: string, timeZone: string): number {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const guess = Date.UTC(y!, (m ?? 1) - 1, d ?? 1);
+  const offset = tzOffsetMs(new Date(guess), timeZone);
+  let start = guess - offset;
+  const secondOffset = tzOffsetMs(new Date(start), timeZone);
+  if (secondOffset !== offset) start = guess - secondOffset;
+  return start;
+}
+
 /** UTC ms of the next local midnight after `now` (schedule guard retry target). */
 export function nextLocalMidnight(now: number, timeZone: string): number {
   const todayStart = localDayStart(now, timeZone);
