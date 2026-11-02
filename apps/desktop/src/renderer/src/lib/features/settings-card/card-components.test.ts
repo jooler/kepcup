@@ -93,6 +93,8 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('bot.model'), context())).toBe(true);
     expect(cardEmbeddable(item('bot.model'), context({ botId: null }))).toBe(false);
     expect(cardEmbeddable(item('mail.account'), context({ botId: null }))).toBe(false);
+    expect(cardEmbeddable(item('mail.plugin'), context({ botId: null }))).toBe(false);
+    expect(cardEmbeddable(item('mail.mailbox'), context({ botId: null }))).toBe(false);
   });
 
   it('逐工具策略和 MCP 启停不靠预填也能嵌（user-only 会清空预填，定位在 before）', () => {

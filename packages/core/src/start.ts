@@ -2142,6 +2142,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules: (_botId: string): number => 0,
       watches: (_botId: string): number => 0,
     };
+    // 插件注册表在设置宿主之后才构造（它依赖 MCP 撤销效果）；`mail.plugin` 适配器经这个
+    // 晚绑定引用读已安装插件，构造完立即赋值（同 remoteHub 的做法）。
+    let pluginRegistryForSettings: PluginRegistry | null = null;
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -2152,6 +2155,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       providers,
       bots,
+      plugins: { list: () => pluginRegistryForSettings?.list() ?? [] },
+      mail: { list: () => mailService?.list() ?? [] },
       botProfiles: {
         apply: (botId, profile) =>
           applyBotProfileUpdate(
@@ -2403,6 +2408,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       events,
       audit,
     });
+    pluginRegistryForSettings = plugins;
     // 每次采纳新索引后强制执行撤销名单（disable 自动停用）；失败只记日志。
     marketplace.onAdopted(() => {
       void plugins.applyRevocations().catch((error: unknown) => {

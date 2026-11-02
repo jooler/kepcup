@@ -282,6 +282,9 @@ describe('卡片形态的分发', () => {
     expect(COMPONENT_SAVE_CARD_KEYS.has('environment-sandbox')).toBe(false);
     expect(hostApplies(item('environment.allowlist'), 'user-only', null)).toBe(false);
     expect(COMPONENT_SAVE_CARD_KEYS.has('environment-allowlist')).toBe(false);
+    // 邮件插件 / 已配置邮箱：插件 config 与邮箱绑定都走原异步 RPC，组件自己保存、宿主核对。
+    expect(COMPONENT_SAVE_CARD_KEYS.has('mail-plugin')).toBe(true);
+    expect(COMPONENT_SAVE_CARD_KEYS.has('mail-mailbox')).toBe(true);
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {

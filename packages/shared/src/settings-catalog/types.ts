@@ -92,6 +92,8 @@ export const settingOptionSourceSchema = z.enum([
   'app-catalog',
   'connections',
   'mcp-servers',
+  'mail-plugins',
+  'mail-accounts',
   'agents',
   'agent-models',
   'skills',
@@ -177,6 +179,10 @@ export const CARD_KEYS = [
   'connect-app',
   /** `MailAccountAddForm`。 */
   'mail-account',
+  /** `MailPluginCard`（选邮件插件 / 插件配置 / 交给这个 Bot）。 */
+  'mail-plugin',
+  /** `MailMailboxCard`（已配置邮箱的绑定 / 暂停）。 */
+  'mail-mailbox',
   /** `AgentCard`。 */
   'agent',
   /** Bot 模型片段卡（自带 `bots.update`）。 */

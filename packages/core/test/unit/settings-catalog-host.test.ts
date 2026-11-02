@@ -10,6 +10,7 @@ import {
   SETTING_RECEIPT_UNDO_WINDOW_MS,
   type AgentCatalogEntry,
   type Bot,
+  type MailAccount,
   type Message,
   type ProviderInfo,
   type SettingCardContent,
@@ -112,6 +113,8 @@ function makeRig(
     fileGrants?: AdapterDeps['fileGrants'];
     schedules?: AdapterDeps['schedules'];
     watches?: AdapterDeps['watches'];
+    plugins?: AdapterDeps['plugins'];
+    mail?: AdapterDeps['mail'];
   } = {},
 ): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
@@ -125,9 +128,11 @@ function makeRig(
   const clock = { now: () => now, advance: (ms: number) => void (now += ms) };
   const conversationId = `conv_${rigCount}`;
   const groupId = `group_${rigCount}`;
-  db.prepare(
-    'insert into conversations (id, type, last_seq, created_at) values (?, ?, 0, ?)',
-  ).run(conversationId, 'direct', now);
+  db.prepare('insert into conversations (id, type, last_seq, created_at) values (?, ?, 0, ?)').run(
+    conversationId,
+    'direct',
+    now,
+  );
   db.prepare(
     "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_a', 'A', '{}', 'active', 0, 0)",
   ).run();
@@ -298,6 +303,8 @@ function makeRig(
     ...(extras.fileGrants !== undefined ? { fileGrants: extras.fileGrants } : {}),
     ...(extras.schedules !== undefined ? { schedules: extras.schedules } : {}),
     ...(extras.watches !== undefined ? { watches: extras.watches } : {}),
+    ...(extras.plugins !== undefined ? { plugins: extras.plugins } : {}),
+    ...(extras.mail !== undefined ? { mail: extras.mail } : {}),
   });
   return {
     db,
@@ -680,6 +687,53 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(via.ok).toBe(false);
     expect(via.content).toContain('mail_request_setup');
     expect(cards(rig)).toHaveLength(0);
+  });
+
+  it('mail plugin / configured mailbox each get their own form card', async () => {
+    const mailbox = {
+      id: 'mal_1',
+      address: 'work@example.com',
+      label: '工作',
+      provider: 'custom',
+      imapHost: 'imap.example.com',
+      imapPort: 993,
+      imapSecure: 'ssl',
+      smtpHost: 'smtp.example.com',
+      smtpPort: 465,
+      smtpSecure: 'ssl',
+      username: 'work@example.com',
+      mode: 'auto',
+      pollIntervalSec: 300,
+      status: 'idle',
+      listen: 'idle',
+      lastError: null,
+      lastOkAt: null,
+      unseenCount: null,
+      botIds: ['bot_b'],
+      alertPausedBotIds: [],
+      instanceId: 'pli_1',
+      pluginId: 'app.kepcup/mail-qq',
+      pluginName: 'QQ 邮箱',
+      createdAt: 1,
+      updatedAt: 1,
+    } as MailAccount;
+    const rig = makeRig({ mail: { list: () => [mailbox] } });
+    const facade = rig.host.forRun(runCtx(rig, { runId: 'run_mail_cards' }));
+    const plugin = await facade.change({ id: 'mail.plugin', reason: '配置邮件插件' });
+    const mailboxResult = await facade.change({
+      id: 'mail.mailbox',
+      values: { account: 'mal_1', bots: ['bot_a'] },
+      reason: '把这个邮箱交给这个 Bot',
+    });
+    expect(plugin.ok).toBe(true);
+    expect(mailboxResult.ok).toBe(true);
+    const pluginCard = cardOf(rig, messageIdIn(plugin.content));
+    const mailboxCard = cardOf(rig, messageIdIn(mailboxResult.content));
+    expect(pluginCard.itemId).toBe('mail.plugin');
+    expect(pluginCard.mode).toBe('form');
+    expect(mailboxCard.itemId).toBe('mail.mailbox');
+    expect(mailboxCard.mode).toBe('form');
+    expect(mailboxCard.proposed).toEqual({ account: 'mal_1', bots: ['bot_a'] });
   });
 
   it('tightens to a confirm card: other-bot mention, mail wake, untrusted reads, taint, group chat', async () => {

@@ -198,6 +198,8 @@ CREATE TABLE mail_bot_cursors (
 
 > **D91 修订（注册条件，2026-10-16 后续修订后的现行版本）**：`mail_request_setup` 有 mail 就**始终注册**（有无绑定都一样）；其余五个工具不再一律注册——run 开头按 `mail.accountsForBot(botId)` 判定一次：**0 个绑定**只有 `mail_request_setup`；**≥1 个绑定**另外注册 `mail_accounts` / `mail_list` / `mail_read` / `mail_search` / `mail_send` 五个。（最初的 D91 方案是「有绑定就不再注册 `mail_request_setup`」，已被取代：它让已有邮箱的 Bot 无法在对话里再加账号。）`decideMailSetupRequest` 已有绑定时不再拒绝，消息里列出现有邮箱并说明会新增一个，要转移另一个 Bot 的邮箱提示 `propose_handover`；提示词里的 `mailRequestSetupRule` 随 `mail_request_setup` 出现（`hasMail` 改为 `hasMailSetup`，有 mail 即为真），措辞改为「用户要你接管 / 添加（更多）邮箱时调用」，保留「不要索要授权码」与 `propose_handover` 指引，`<mail_accounts>` 段不变。添加卡保存走 `mail.accounts.create({ botIds: [当前 Bot] })`，是**追加**绑定，不覆盖该 Bot 已有的绑定；同一地址已绑给该 Bot 时报 `INVALID_INPUT`。绑定完成后的 `runs.retry` 重新构建工具，自然拿到五个工具。外部智能体 `mail` 包按登记的 6 个工具注入。见 [40](40-capability-mounting.md) §6。
 
+> **对话内邮件设置卡（2026-11-02，设置目录三项）**：`mail.account`（经 `mail_request_setup`）只负责**新增**邮箱；已有邮箱的归属 / 暂停走设置目录的 `mail.mailbox`（`MailMailboxCard`：选邮箱、勾选交给哪些 Bot、暂停收信），邮件插件本身的配置与「交给这个 Bot」走 `mail.plugin`（`MailPluginCard`：选插件、插件 config 字段、启用插件 / 合并启用集）。两张卡都由 Bot 经 `settings_search` → `settings_change` 出 form 卡（`widensPermission`，不会 direct），保存沿用扩展中心同一批 RPC（`plugins.config.set` / `plugins.setEnabled` / `plugins.enableForBots` / `plugins.setBotPlugins` / `mail.accounts.setBots` / `pause` / `resume`），完成后由 `settings.cards.complete` 核对并唤醒 Bot。`mail_request_setup` 的提示词与工具描述明确「只用于新增」，避免把已有邮箱的调整误出成添加卡。
+
 - 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）。P1 若加 `mail_set_flag` / `mail_move` 按写处理。
 - 账号范围：工具参数 `account_id` 必须属于当前 Bot 绑定，否则 `MAIL_NOT_BOUND`。
 - 对话轮只读：`mail_send` 在对话轮执行期 `RUN_READ_ONLY`。
