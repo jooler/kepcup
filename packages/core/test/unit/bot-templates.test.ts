@@ -354,6 +354,37 @@ describe('Bot 模板导入', () => {
     expect(legacyTarget.bots.getOrThrow(legacyResult.botId).accentColor).toBeUndefined();
   });
 
+  it('分类（kind）随模板导出/导入；未分类与旧模板缺项都不写', async () => {
+    const source = makeRig();
+    const coding = source.bots.create(
+      { identity: { name: '编程搭档', bio: '' } },
+      { interview: true },
+    );
+    source.bots.setKindDuringSetup(coding.id, 'Coding'); // 内置 id 归一为 coding
+    const plain = source.bots.create({ identity: { name: '未分类', bio: '' } });
+
+    expect(source.templates.buildTemplate(coding.id).kind).toBe('coding');
+    expect(source.templates.buildTemplate(plain.id).kind).toBeUndefined();
+
+    const file = path.join(dir, `kind-${Math.random().toString(36).slice(2, 8)}.json`);
+    source.templates.exportTo(coding.id, file);
+
+    const target = makeRig();
+    const { sha256 } = target.templates.inspect(file);
+    const result = await target.templates.importFrom(file, sha256);
+    expect(target.bots.getOrThrow(result.botId).kind).toBe('coding');
+
+    // 旧模板（没有 kind 字段）照常导入：保持未分类，由消费方回退画像关键词。
+    const legacy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete legacy.kind;
+    const legacyFile = path.join(dir, `kind-legacy-${Math.random().toString(36).slice(2, 8)}.json`);
+    writeFileSync(legacyFile, JSON.stringify(legacy));
+    const legacyTarget = makeRig();
+    const legacyInspect = legacyTarget.templates.inspect(legacyFile);
+    const legacyResult = await legacyTarget.templates.importFrom(legacyFile, legacyInspect.sha256);
+    expect(legacyTarget.bots.getOrThrow(legacyResult.botId).kind).toBeNull();
+  });
+
   it('upload 头像随模板恢复；agent 引擎在本机不可用回退内置', async () => {
     const source = makeRig();
     const bot = source.bots.create({

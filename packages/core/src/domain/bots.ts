@@ -362,6 +362,12 @@ export class BotsService {
        * 新建即落成独立列，之后上传头像 / 换图不再改色。
        */
       accentColor?: BotAccentColor;
+      /**
+       * 显式指定的分类（模板导入）：`kind` 不在 Profile 里，正常只在初始化访谈中由
+       * `setKindDuringSetup` 写入；模板已带着导出时的分类，新建时就落库，避免丢定位。
+       * 与读侧同源归一，非法值按未分类（NULL）处理。
+       */
+      kind?: string;
     } = {},
   ): Bot {
     const profile = stripLegacyInkcopTransport(botProfileSchema.parse(profileInput));
@@ -395,9 +401,15 @@ export class BotsService {
       // 强调色在创建时就落成独立列：旧逻辑把颜色编码在 `preset:shape:color` 里，
       // 一旦换成上传头像就丢色（用户报的「上传后变回第一个自动色」）。
       const accentColor = options.accentColor ?? presetAvatarColorId(profile.identity.avatar);
+      // kind 只在调用方显式给出时写入：迁移 0059 排在已上线的 0060 之前，开发期
+      // user_version 已到 60 的库会跳过 0059、没有这一列（读侧已容忍缺列），
+      // 其余建 Bot 路径不应因它失败。
+      const kind = options.kind === undefined ? undefined : parseBotKind(options.kind);
+      const kindColumns = kind === undefined ? '' : ', kind';
+      const kindPlaceholders = kind === undefined ? '' : ', ?';
       this.db
         .prepare(
-          'insert into bots (id, name, avatar, accent_color, bio, profile_json, status, setup_state, system_role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          `insert into bots (id, name, avatar, accent_color, bio, profile_json, status, setup_state, system_role, created_at, updated_at${kindColumns}) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${kindPlaceholders})`,
         )
         .run(
           id,
@@ -411,6 +423,7 @@ export class BotsService {
           systemRole,
           now,
           now,
+          ...(kind === undefined ? [] : [kind]),
         );
     } catch (error) {
       // bots_one_active_butler (0016) is the race backstop of the check above.
