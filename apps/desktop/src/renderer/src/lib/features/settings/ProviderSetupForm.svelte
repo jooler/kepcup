@@ -148,13 +148,25 @@
     }
   }
 
+  // 设置快照是否已加载。布尔结果在「已加载」之后保持 true，后续每次
+  // settings 替换都不会让下面的 effect 重跑。
+  const settingsReady = $derived(settingsStore.settings !== null);
+
   // props 目标变化（弹框重开 / 卡片换目标）时同步选择并重置表单草稿。
-  // 只依赖 props（target/mode），不读 selectedTarget——用户在表单内切换目标
-  // 不能触发本 effect（否则会被回写为 props 值）。
+  // 只依赖 initialTarget 与 settingsReady，不读 selectedTarget——用户在表单内
+  // 切换目标不能触发本 effect（否则会被回写为 props 值）。
+  // resetDraftsFor 会读 settings 给厂商分支填草稿，但那次读取必须 untrack：
+  // 测试连接 / 保存自己就会写 settings。若 effect 把这次读取登记成依赖，
+  // 写回会立刻重跑，把用户选的「自定义接口」和已填 Key 清回 props 目标——
+  // 自定义字段消失，且落盘时 Key 已被清空所以不会 setKey，第二段选默认模型
+  // 永远等不到已配置的对话模型。
   $effect(() => {
     const next = initialTarget;
-    selectedTarget = next;
-    resetDraftsFor(next);
+    void settingsReady;
+    untrack(() => {
+      selectedTarget = next;
+      resetDraftsFor(next);
+    });
   });
 
   function parseModels(text: string): ProviderModel[] {
@@ -181,6 +193,9 @@
    * 只存 key；key 填了才落钥。
    */
   async function persistAdd(): Promise<string> {
+    // 在第一次 await 之前记下 Key。settings.update 会替换 settings 快照并
+    // 刷新 effect；若此时再读 addKey，可能已经是被重置掉的空串。
+    const pendingKey = addKey;
     if (mode === 'add' && selectedTarget === 'custom') {
       const models = parseModels(customModelsText);
       if (models.length === 0) throw new Error(t('settings.customModels'));
@@ -208,9 +223,9 @@
           instance,
         ],
       });
-      if (addKey.length > 0) {
+      if (pendingKey.length > 0) {
         // setKey 内部会 refresh；无 key 时这里也要刷一次让新卡片出现。
-        await settingsStore.setKey(instance.id, addKey);
+        await settingsStore.setKey(instance.id, pendingKey);
       } else {
         await settingsStore.refresh();
       }
@@ -222,7 +237,7 @@
         .filter((id) => id.length > 0)
         .map((id): ProviderModel => ({ id, contextWindow: 128_000, capabilities: ['chat'] }));
       if (chatModels.length === 0) throw new Error(t('settings.vendorNoModels'));
-      if (mode === 'add' && addKey.length === 0) {
+      if (mode === 'add' && pendingKey.length === 0) {
         throw new Error(t('settings.providerKeyPlaceholder'));
       }
       const current = settingsStore.settings;
@@ -258,15 +273,15 @@
       await settingsStore.update({
         modelProviders: current.modelProviders.map((p) => (p.id === instance.id ? updated : p)),
       });
-      if (addKey.length > 0) {
-        await settingsStore.setKey(updated.id, addKey);
+      if (pendingKey.length > 0) {
+        await settingsStore.setKey(updated.id, pendingKey);
       } else {
         await settingsStore.refresh();
       }
       return updated.id;
     }
-    if (addKey.length === 0) throw new Error(t('settings.providerKeyPlaceholder'));
-    await settingsStore.setKey(selectedTarget, addKey);
+    if (pendingKey.length === 0) throw new Error(t('settings.providerKeyPlaceholder'));
+    await settingsStore.setKey(selectedTarget, pendingKey);
     return selectedTarget;
   }
 
