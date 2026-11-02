@@ -50,7 +50,6 @@ import {
   WATCH_ALERT_EVENT,
   MAIL_CARD_TYPE,
   MAIL_ALERT_EVENT,
-  IM_CARD_TYPE,
   IM_ALERT_EVENT,
   type Run,
   type ToolEffect,
