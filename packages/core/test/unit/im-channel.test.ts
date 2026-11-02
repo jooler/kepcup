@@ -317,15 +317,25 @@ describe('ILinkClient long-poll timeouts', () => {
 
 // --- service ingest ------------------------------------------------------------
 
-  function serviceRig(options: { pluginEnabled?: boolean; boundBots?: string[] } = {}) {
+  function serviceRig(
+    options: {
+      pluginEnabled?: boolean;
+      boundBots?: string[];
+      /** 覆盖账号 config_json（回归 legacy camelCase 形态用）。 */
+      configJson?: string;
+      /** 注入 sendmessage 响应；默认成功。 */
+      sendResult?: { ok: boolean; code: number; errmsg: string };
+    } = {},
+  ) {
     const db = makeDb();
     seedInstance(db);
     const store = new ImStore(db);
     store.insert(
       accountRow({
-        configJson: JSON.stringify({ ilink_user_id: 'user_a', cursor: '' }),
+        configJson: options.configJson ?? JSON.stringify({ ilink_user_id: 'user_a', cursor: '' }),
       }),
     );
+const sent: Array<{ toUserId: string; text: string; contextToken?: string }> = [];
 const enqueued: Array<{ type: string; payload: Record<string, unknown>; dedupeKey?: string; botId?: string }> = [];
 const notices: Array<{ key: string; text: string }> = [];
 const systemEvents: string[] = [];
@@ -421,10 +431,13 @@ const service = new ImService({
     ({
       notify: async () => undefined,
       getUpdates: async () => null,
-      sendText: async () => ({ ok: true, code: 0, errmsg: '' }),
+      sendText: async (input: { toUserId: string; text: string; contextToken?: string }) => {
+        sent.push(input);
+        return options.sendResult ?? { ok: true, code: 0, errmsg: '' };
+      },
     }) as never,
 });
-return { store, service, enqueued, notices, systemEvents, forwardToggles, alerts, db };
+return { store, service, enqueued, notices, systemEvents, forwardToggles, alerts, db, sent };
   }
 
 describe('ImService ingest', () => {
@@ -480,6 +493,18 @@ describe('ImService ingest', () => {
     expect(rig.enqueued.length).toBe(0);
     expect(rig.store.bindings('ima_test')[0]!.forwardEnabled).toBe(false);
   });
+
+  it('config 缺 ilink_user_id 时用首条入站锁定授权用户，之后陌生来源被拒（自愈）', () => {
+    const rig = serviceRig({ boundBots: ['bot_a'], configJson: JSON.stringify({ cursor: 'c0' }) });
+    rig.service.ingest('ima_test', [basicMessage('m1')]);
+    const row = rig.db.prepare('select config_json from im_accounts where id = ?').get('ima_test') as {
+      config_json: string;
+    };
+    expect((JSON.parse(row.config_json) as Record<string, unknown>).ilink_user_id).toBe('user_a');
+    expect(rig.enqueued.length).toBe(1);
+    rig.service.ingest('ima_test', [{ ...basicMessage('m2'), from_user_id: 'stranger' }]);
+    expect(rig.enqueued.length).toBe(1);
+  });
 });
 
 describe('ImService runAlertJob', () => {
@@ -509,6 +534,82 @@ describe('ImService runAlertJob', () => {
     rig.service.runAlertJob(job);
     expect(rig.systemEvents.filter((event) => event === 'card').length).toBe(1);
     expect(rig.alerts.length).toBe(1);
+  });
+});
+
+// --- config_json 存储契约（回归 2026-11-03 线上转发失败） ----------------------------
+
+describe('ImService config_json 写入契约', () => {
+  function accountConfig(rig: ReturnType<typeof serviceRig>): Record<string, unknown> {
+    const row = rig.db.prepare('select config_json from im_accounts where id = ?').get('ima_test') as {
+      config_json: string;
+    };
+    return JSON.parse(row.config_json) as Record<string, unknown>;
+  }
+
+  it('入站写 context_token / cursor 时保留登录元数据（回归：写回解析视图把 ilink_user_id 冲掉）', () => {
+    const rig = serviceRig({ boundBots: ['bot_a'] });
+    rig.service.ingest('ima_test', [basicMessage('m1')]);
+    const config = accountConfig(rig);
+    expect(config.ilink_user_id).toBe('user_a');
+    expect(config.context_token).toBe('ctx_1');
+    // 不再残留 camelCase 解析视图。
+    expect(config.ilinkUserId).toBeUndefined();
+    expect(config.forwardTimes).toBeUndefined();
+  });
+
+  it('legacy camelCase 配置自愈：转发用 ilinkUserId 恢复出的 to_user_id，写回后归一为 snake_case', async () => {
+    const rig = serviceRig({
+      boundBots: ['bot_a'],
+      configJson: JSON.stringify({ ilinkUserId: 'user_legacy', ilinkBotId: 'bot_x', cursor: '' }),
+    });
+    rig.store.setForward('ima_test', 'bot_a', true, 0);
+    await rig.service.runForwardJob({
+      id: 'job_f1',
+      type: 'im_forward',
+      bot_id: 'bot_a',
+      conversation_id: 'conv_bot_a',
+      payload_json: JSON.stringify({
+        accountId: 'ima_test',
+        botId: 'bot_a',
+        conversationId: 'conv_bot_a',
+        messageId: 'msg_bot_1',
+        text: '回复文本',
+      }),
+    } as never);
+    expect(rig.sent).toEqual([{ token: 'token', toUserId: 'user_legacy', text: '回复文本' }]);
+    const config = accountConfig(rig);
+    expect(config.ilink_user_id).toBe('user_legacy');
+    expect(config.forward_times).toEqual([1000]);
+    expect(config.ilinkUserId).toBeUndefined();
+  });
+
+  it('转发失败写回 forward_failures 时同样保留 ilink_user_id', async () => {
+    const rig = serviceRig({
+      boundBots: ['bot_a'],
+      configJson: JSON.stringify({ ilink_user_id: 'user_a', ilink_bot_id: 'bot_x' }),
+      sendResult: { ok: false, code: -2, errmsg: 'invalid arguments' },
+    });
+    rig.store.setForward('ima_test', 'bot_a', true, 0);
+    await expect(
+      rig.service.runForwardJob({
+        id: 'job_f2',
+        type: 'im_forward',
+        bot_id: 'bot_a',
+        conversation_id: 'conv_bot_a',
+        payload_json: JSON.stringify({
+          accountId: 'ima_test',
+          botId: 'bot_a',
+          conversationId: 'conv_bot_a',
+          messageId: 'msg_bot_2',
+          text: '回复文本',
+        }),
+      } as never),
+    ).rejects.toThrow(/im_forward failed/);
+    const config = accountConfig(rig);
+    expect(config.ilink_user_id).toBe('user_a');
+    expect(config.ilink_bot_id).toBe('bot_x');
+    expect(config.forward_failures).toBe(1);
   });
 });
 

@@ -81,6 +81,28 @@ function forwardFailNoticeKey(accountId: string): string {
   return `im-forward:${accountId}`;
 }
 
+/**
+ * config_json 的存储契约是 snake_case。旧实现在 #saveCursor / #saveContextToken /
+ * #saveForwardState 把 imConfig() 的 camelCase 解析视图整体写回，第一次
+ * getupdates 之后 ilink_user_id / ilink_bot_id / context_token 就被冲掉——线上
+ * 2026-11-03 实测：转发 to_user_id 为空，被服务器 ret -2 "invalid arguments" 打回。
+ * 读取时把 legacy camelCase 键归一成 snake_case（既有安装自愈），写入一律基于
+ * 原始记录合并（#patchConfig）。
+ */
+function normalizeImConfig(raw: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...raw };
+  const alias = (snake: string, camel: string): void => {
+    if (next[snake] === undefined && next[camel] !== undefined) next[snake] = next[camel];
+    delete next[camel];
+  };
+  alias('ilink_bot_id', 'ilinkBotId');
+  alias('ilink_user_id', 'ilinkUserId');
+  alias('logged_in_at', 'loggedInAt');
+  alias('forward_times', 'forwardTimes');
+  alias('forward_failures', 'forwardFailures');
+  return next;
+}
+
 export function imConfig(account: ImAccountRecord): {
   ilinkBotId: string;
   ilinkUserId: string;
@@ -90,7 +112,7 @@ export function imConfig(account: ImAccountRecord): {
   forwardFailures: number;
 } {
   try {
-    const raw = JSON.parse(account.configJson) as Record<string, unknown>;
+    const raw = normalizeImConfig(JSON.parse(account.configJson) as Record<string, unknown>);
     return {
       ilinkBotId: typeof raw.ilink_bot_id === 'string' ? raw.ilink_bot_id : '',
       ilinkUserId: typeof raw.ilink_user_id === 'string' ? raw.ilink_user_id : '',
@@ -487,17 +509,27 @@ export class ImService {
   ingest(accountId: string, messages: readonly ILinkMessage[]): void {
     const account = this.store.get(accountId);
     if (account === null) return;
-    const config = imConfig(account);
+    let authorizedUserId = imConfig(account).ilinkUserId;
     const notices: AppNoticePayload[] = [];
     for (const message of messages) {
       // 只处理与授权用户本人的会话：非用户消息、群聊、陌生来源一律丢弃计数（54 §1/§5）。
       if (message.message_type !== 1) continue;
       if (message.group_id !== undefined && message.group_id !== '') continue;
       const authorized =
-        config.ilinkUserId === '' || message.from_user_id === config.ilinkUserId;
+        authorizedUserId === '' || message.from_user_id === authorizedUserId;
       if (!authorized) {
         this.#deps.logger.info({ accountId, from: 'redacted' }, 'im inbound from unauthorized source dropped');
         continue;
+      }
+      // 历史版本建号时可能丢失 ilink_user_id（54 §4 #1 实机事故）：授权用户未知时
+      // 用第一条入站锁定，后续来源即按此过滤（比「未知则全放行」更严）。
+      if (
+        authorizedUserId === '' &&
+        typeof message.from_user_id === 'string' &&
+        message.from_user_id !== ''
+      ) {
+        authorizedUserId = message.from_user_id;
+        this.#patchConfig(accountId, { ilink_user_id: authorizedUserId });
       }
       if (message.context_token !== undefined && message.context_token !== '') {
         this.#saveContextToken(accountId, message.context_token);
@@ -794,10 +826,7 @@ export class ImService {
       ? config.forwardTimes
       : [...recentImForwards(config.forwardTimes, now), now];
     const failures = opts.failure ? config.forwardFailures + 1 : 0;
-    this.store.patch(accountId, {
-      configJson: JSON.stringify({ ...config, forward_times: times, forward_failures: failures }),
-      updatedAt: now,
-    });
+    this.#patchConfig(accountId, { forward_times: times, forward_failures: failures });
   }
 
   #forwardNoticeOnce(account: ImAccountRecord, text: string): void {
@@ -871,25 +900,38 @@ export class ImService {
   }
 
   #saveCursor(accountId: string, cursor: string): void {
-    const account = this.store.get(accountId);
-    if (account === null) return;
-    const config = imConfig(account);
-    this.store.patch(accountId, {
-      configJson: JSON.stringify({ ...config, cursor }),
-      updatedAt: this.#deps.clock.now(),
-    });
+    this.#patchConfig(accountId, { cursor });
   }
 
   #saveContextToken(accountId: string, token: string): void {
-    const account = this.store.get(accountId);
-    if (account === null) return;
-    const config = imConfig(account);
-    const next = { ...config, context_token: token, context_token_at: this.#deps.clock.now() };
-    this.store.patch(accountId, {
-      configJson: JSON.stringify(next),
-      updatedAt: this.#deps.clock.now(),
+    this.#patchConfig(accountId, {
+      context_token: token,
+      context_token_at: this.#deps.clock.now(),
     });
     this.#contextTokens.set(accountId, token);
+  }
+
+  /**
+   * config_json 的唯一写入口：以原始记录（snake_case）为底合并补丁。绝不能
+   * 用 imConfig() 的解析视图回写——那样会丢掉未建模的键（含 ilink_user_id），
+   * 转发因此拿到空 to_user_id（线上 2026-11-03）。
+   */
+  #patchConfig(accountId: string, patch: Record<string, unknown>): void {
+    const account = this.store.get(accountId);
+    if (account === null) return;
+    let raw: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(account.configJson);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        raw = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // 损坏的配置从空开始，后续写入重建。
+    }
+    this.store.patch(accountId, {
+      configJson: JSON.stringify({ ...normalizeImConfig(raw), ...patch }),
+      updatedAt: this.#deps.clock.now(),
+    });
   }
 
   #recentContextToken(accountId: string): string | null {
@@ -928,7 +970,7 @@ export class ImService {
       lastOutboundAt: account.lastOutboundAt,
       config: (() => {
         try {
-          const raw = JSON.parse(account.configJson) as Record<string, unknown>;
+          const raw = normalizeImConfig(JSON.parse(account.configJson) as Record<string, unknown>);
           const { cursor: _cursor, forward_times: _f, forward_failures: _ff, context_token: _ct, context_token_at: _cta, ...safe } = raw;
           return safe;
         } catch {
