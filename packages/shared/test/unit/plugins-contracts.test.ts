@@ -50,7 +50,7 @@ const summary = {
   marketplace: null,
   installedAt: 1,
   updatedAt: 1,
-  counts: { skills: 2, connectors: 1, mcp: 1, mail: 0 },
+  counts: { skills: 2, connectors: 1, mcp: 1, mail: 0, im: 0 },
   items: [
     { kind: 'skill', ref: 'docx' },
     { kind: 'mcp', ref: 'plg_abc123456789', missing: true },
@@ -62,7 +62,7 @@ const summary = {
     { key: 'defaultRepo', title: '默认仓库', type: 'string', required: false },
   ],
   instanceFields: [],
-  instanceCounts: { mail: 0, mcp: 0 },
+  instanceCounts: { mail: 0, mcp: 0, im: 0 },
   providesInstances: [],
 };
 
@@ -227,6 +227,16 @@ describe('payload round-trips', () => {
           label: 'Fastmail',
           imapHost: 'imap.fastmail.com',
           smtpHost: 'smtp.fastmail.com',
+        },
+      ],
+      im: [
+        {
+          id: 'wechat',
+          label: '微信',
+          transport: 'ilink',
+          apiHost: 'ilinkai.weixin.qq.com',
+          inbound: true,
+          outbound: true,
         },
       ],
       conflicts: [{ kind: 'skill', ref: 'docx', withWhat: '公共技能 docx（预置）' }],

@@ -84,6 +84,11 @@ export function cardPreviewText(content: Record<string, unknown>): string {
     return line('✉️', '新邮件', detail);
   }
 
+  // D109（54 号文档）：IM 入站卡（微信消息）——渠道名 + 摘要。
+  if (cardType === 'im') {
+    return line('💬', '微信消息', textOf(content.imSummary));
+  }
+
   if (cardType === 'watch') {
     return textOf(content.watchEvent) === 'alert'
       ? line('👁️', '网页监看提醒', textOf(content.watchSummary))

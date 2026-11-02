@@ -64,6 +64,7 @@ const info: PluginInspectOutput = {
     },
   ],
   mail: [],
+  im: [],
   conflicts: [],
   existing: null,
   update: null,

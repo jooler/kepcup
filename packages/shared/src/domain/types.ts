@@ -1425,6 +1425,12 @@ export const cardContentSchema = z.object({
   mailSubject: z.string().optional(),
   mailDate: z.string().optional(),
   mailSummary: z.string().optional(),
+  /** IM cards only (D109, cardType `im`, 54 号文档 §5). */
+  imAccountId: z.string().optional(),
+  imEvent: z.enum(['arrived']).optional(),
+  imKey: z.string().optional(),
+  imChannel: z.string().optional(),
+  imSummary: z.string().optional(),
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
   appUi: appUiCardSchema.optional(),
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */
@@ -1622,6 +1628,8 @@ export const triggerReasonSchema = z.enum([
   'watch',
   /** 邮件通道（D84）：新信唤醒，触发批是内部事件 mail_alert。 */
   'mail',
+  /** 即时通讯通道（D109，54 号文档）：微信入站唤醒，触发批是内部事件 im_alert。 */
+  'im',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -1986,6 +1994,12 @@ export const jobTypeSchema = z.enum([
   'watch_alert',
   // D84：新信唤醒（去重键 mail:{accountId}:{uid}:{botId}）。卡片和对话轮由作业投递。
   'mail_alert',
+  // D109（54 号文档）：IM 入站唤醒（去重键 im:{accountId}:{msgId}:{botId}）。
+  // 卡片和对话轮由作业投递；崩溃后按 dedupeKey 恢复，不丢不重。
+  'im_alert',
+  // D110（54 号文档）：Bot 最终回复向开启了同步的 IM 账号转发
+  // （去重键 im_forward:{messageId}:{accountId}）。持久作业：崩溃可恢复、幂等。
+  'im_forward',
   // D88 P2：Bot 资产移交的后台阶段（Wiki 页、组件复制；去重键 handover_copy:{handoverId}）。
   'handover_copy',
   // D92 T1b WP10：删除项目 wiki 来源（异步托管动作；去重键

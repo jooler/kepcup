@@ -73,6 +73,7 @@ describe('permissionTokens', () => {
         },
       ],
       mail: [{ id: 'corporate', label: 'Corporate', imapHost: 'imap.x', smtpHost: 'smtp.x' }],
+      im: [],
     });
     expect([...tokens].sort()).toEqual([
       'config:db:token',
@@ -96,6 +97,7 @@ describe('permissionTokens', () => {
       connectors: [],
       mcp: [mcpbItem({ runtime: null, userConfigFields: [] })],
       mail: [],
+      im: [],
     });
     expect([...tokens]).toEqual(['mcpb:db']);
   });
@@ -110,6 +112,7 @@ describe('diffPermissions', () => {
       connectors: [],
       mcp: [],
       mail: [{ id: 'x', label: '', imapHost: '', smtpHost: '' }],
+      im: [],
     });
     // Same size but a different skill: still an expansion (the set is what counts).
     const grown = permissionTokens({
@@ -120,6 +123,7 @@ describe('diffPermissions', () => {
       connectors: [],
       mcp: [],
       mail: [{ id: 'x', label: '', imapHost: '', smtpHost: '' }],
+      im: [],
     });
     expect(diffPermissions(old, grown)).toEqual({ expanded: true, added: ['skill:b'] });
     // 只删不增: not an expansion.
