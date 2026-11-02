@@ -90,7 +90,7 @@
 ## 3 数据模型与凭据
 
 - **迁移 0059**（`plugin_instances.kind` CHECK 加 `'im'` 重建表）+ 新表：
-  - `im_accounts`：`id` / `plugin_id` / `instance_id`（FK `plugin_instances`，卸载级联）/ `transport` / `label`（显示名，微信取 Bot 昵称或「微信」）/ `api_base` / `status`（`connecting | ready | paused | auth_failed | error`）/ `last_error` / `last_inbound_at` / `last_outbound_at` / `config_json`（非敏感会话元数据：`ilink_bot_id`、登录时间等）。
+  - `im_accounts`：`id` / `plugin_id` / `instance_id`（FK `plugin_instances`，卸载级联）/ `transport` / `label`（显示名，微信取 Bot 昵称或「微信」）/ `api_base` / `status`（`connecting | ready | paused | auth_failed | error`）/ `last_error` / `last_inbound_at` / `last_outbound_at` / `config_json`（非敏感会话元数据：`ilink_bot_id`、`ilink_user_id`、登录时间等；**存储契约为 snake_case，写入一律经 `#patchConfig` 基于原始记录合并**——曾因回写 camelCase 解析视图冲掉 `ilink_user_id` 导致转发空 `to_user_id`，2026-11-03 实机回归）。
   - `im_account_bots`：`account_id` / `bot_id` / `forward_enabled`（默认 0）/ `forward_updated_at` / `created_at`，唯一 `(account_id, bot_id)`。**绑定与开关都是账号级、可多对多**；多 Bot 绑同一账号时各自独立开关，转发互不影响（同一账号的入站消息仍可唤醒多个 Bot，幂等键含 botId）。
 - secrets：`plugin:{pluginId}:instance:{instanceId}:bot_token`（sensitive；命名转义同 `instances.ts:33`）。token 只在 core 发请求那一刻取用，**永不进模型上下文与对话内容**。
 - 无 settings 目录条目：入口在扩展中心插件卡与 Bot 详情（per-binding 状态，非全局标量），与邮件同一立场。
@@ -110,7 +110,7 @@
 **协议待实测清单（P0 PoC）**——**实测结果（2026-11-03 回填；脚本 /tmp/im-poc/poc.mjs，观察日志 poc-observations.log，授权 bot_id 9ce8ca851f68@im.bot）**：
 
 1. **主动发送**：**被拒绝**——不带 `context_token` 直接 `sendmessage` 返回 `ret:-2 "prepare failed"`（空 `context_token` 字段同样被拒）。**D110 按预案降级**：出站转发必须有可用的会话上下文，实现为「无 context 发送失败 → 自动用该账号最近一次入站的 `context_token` 重试」（§6 转发器内建降级路径）。开关「默认关」的体验语义不变。
-   - **实机首测补充（2026-11-03，用户实测）**：带最近入站 `context_token` 的回复仍被拒 `ret:-2 "invalid arguments"`——根因是宿主客户端此前只在长轮询请求带 `X-WECHAT-UIN`，`sendmessage` 缺该头会被**更早的参数校验层**打回（与 #5「参数缺失 → invalid arguments」归类吻合，早于 context 校验的 `prepare failed`）。修复：所有请求都带 `X-WECHAT-UIN`（`im/ilink.ts`；weixinbot 参考实现同为每请求携带）。带 context_token 的回复链路本身待复测确认（首次真实触达）。
+   - **实机首测补充（2026-11-03，用户实测）**：带最近入站 `context_token` 的回复仍被拒 `ret:-2 "invalid arguments"`。最终定位：**宿主发出的 `to_user_id` 是空串**——`config_json` 的写回契约有 bug：`#saveCursor` / `#saveContextToken` / `#saveForwardState` 曾把 `imConfig()` 的 camelCase 解析视图整体写回，`getupdates` 第一次轮询后 `ilink_user_id` / `ilink_bot_id` / `context_token` 就可能被冲掉（参数缺失 → `ret:-2 invalid arguments`，与 #5 归类吻合）。修复：`config_json` 唯一写入口 `#patchConfig`（以原始 snake_case 记录为底合并，`im/service.ts`）；读取时把 legacy camelCase 键归一；历史账号若 id 确已为空，则用首条入站的 `from_user_id` 锁定授权用户（比「未知则放行」更严，无需重扫）。同批对齐参考实现：所有请求携带 `X-WECHAT-UIN`（weixinbot 同为每请求携带；本身不是本次根因）。带 context_token 的回复链路待复测确认（首次真实触达）。
 2. `bot_token` 有效期：登录后 >1 小时 `msg/notifystart` 探活 `ret:0`；多天观察与 `-14` 暂停行为由 PoC 日志继续跟踪；失效重扫已实现（`im.accounts.reauthorize` → materializer update 消费扫码 pending）。
 3. 会话范围：**待实测**（需第二个微信号给 Bot 发消息对照；宿主已按「只处理与授权用户本人的会话」实现过滤，见 §5）。
 4. 消息长度 / 频率上限：**待实测**（主动发送被拒，须随 #3 一批带 context_token 测）；截断阈值暂按 2000 字符实现（`IM_FORWARD_MAX_CHARS` + 尾注「完整内容见 KepCup」）。
@@ -197,7 +197,7 @@ ImSessionHub（每账号 1 条长轮询，指数退避重连；auth 失败停试
 
 ## 11 开放问题
 
-1. **PoC §4 的 5 项协议事实——已执行（2026-11-03，结果回填 §4 清单）**。**主动发送被拒（`ret:-2 prepare failed`）→ D110 降级生效**：转发走「无 context 发送失败 → 最近入站 `context_token` 重试」的保守模式（`im/service.ts#runForwardJob`）。**实机首测又定位一处协议事实：`sendmessage` 每个请求都必须带 `X-WECHAT-UIN`，缺失即 `ret:-2 invalid arguments`（详见 §4 #1 补充）**。context_token 的复用窗口（单次 vs 多次、多久过期）随 #3/#4 实测定案；token 存活期多天观察继续（PoC 日志）。
+1. **PoC §4 的 5 项协议事实——已执行（2026-11-03，结果回填 §4 清单）**。**主动发送被拒（`ret:-2 prepare failed`）→ D110 降级生效**：转发走「无 context 发送失败 → 最近入站 `context_token` 重试」的保守模式（`im/service.ts#runForwardJob`）。**实机首测暴露的首个转发故障是宿主自身数据缺陷**：`config_json` 回写解析视图冲掉 `ilink_user_id`，`sendmessage` 带空 `to_user_id` 被 `ret:-2 invalid arguments` 打回（详见 §4 #1 补充；已改为 raw 合并写入 + legacy 键自愈）。同批把 `X-WECHAT-UIN` 提为每请求必带（对齐参考实现）。context_token 的复用窗口（单次 vs 多次、多久过期）随 #3/#4 实测定案；token 存活期多天观察继续（PoC 日志）。
 2. 转发是否需要 per-bot 自定义前缀（如「【{botName}】」）以区分多个 Bot 共用同一微信——待多账号实机体验后定。
 3. `wecom-app` transport 的入站形态（企业微信回调需要公网 URL，桌面端不成立；可能走轮询或经 headless 服务端，D102）——独立插件立项时另行设计。
 4. 媒体双向转发（Bot 生成图片 → 微信）在 P3 评估，取决于 iLink CDN 上传流程的稳定性。
