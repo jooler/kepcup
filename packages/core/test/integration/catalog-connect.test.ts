@@ -354,6 +354,24 @@ describe('catalog connect: first-connect tool review', () => {
     expect(env.core.services.apps!.store.get(connectionId)!.status).toBe('connecting');
     expect(toolLock!.isExposed(connectionId, 'echo')).toBe(false);
     expect(toolLock!.list(connectionId).every((row) => row.state === 'new')).toBe(true);
+    // 临时行这时候已有令牌，但还不是账号：不能出现在连接列表 / 目录账号数里，也不能授权给 Bot。
+    // 否则用户会在复核期间把它当既有账号勾给 Bot，流程超时收尾删行后 Bot 里留下删不掉的悬挂授权。
+    const pendingBot = await env.makeBot('reviewer');
+    let grantError: unknown;
+    try {
+      env.core.services.domain!.bots.grantConnection(pendingBot.id, connectionId);
+    } catch (error) {
+      grantError = error;
+    }
+    expect(grantError).toMatchObject({ code: 'INVALID_INPUT' });
+    const { connections: listed } = (await env.core.rpc.call('apps.connections.list', {})) as {
+      connections: Array<{ id: string }>;
+    };
+    expect(listed).toEqual([]);
+    const { entries } = (await env.core.rpc.call('apps.catalog.list', undefined)) as {
+      entries: Array<{ connectorId: string; connectedAccounts: number }>;
+    };
+    expect(entries.find((entry) => entry.connectorId === 'fake')!.connectedAccounts).toBe(0);
     const view = (await env.core.rpc.call('apps.connections.tools', { connectionId })) as {
       tools: Array<{ toolName: string; exposed: boolean; state: string }>;
     };

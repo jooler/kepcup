@@ -35,10 +35,21 @@
   );
   /**
    * 内容列的宽度策略：表单型设置分区限宽居中（拉满窗口后字段行过长难读）；
-   * 扩展中心不限宽（市场 / 已安装的卡片网格吃满可用宽度），只加大左右留白。
+   * 扩展中心不限宽（市场 / 已安装的卡片网格吃满可用宽度）。
+   *
+   * 扩展中心同时接管纵向与横向留白：外层内容区不滚动、不给内边距，整块撑满
+   * 剩余高度与整行宽度，滚动交给各分组自己的滚动区（市场 / 已安装 / 设置），
+   * 留白由滚动容器的内边距提供（`bleed`）——这样滚动条贴应用右缘，内容仍有
+   * 视觉留白；否则插件详情页会把整个设置页（含页签）当成一个长文档滚动。
    */
   const contentClass = $derived(
-    activeSection === 'extension-center' ? 'px-2 sm:px-10' : 'mx-auto max-w-3xl',
+    activeSection === 'extension-center' ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-3xl',
+  );
+  /** 扩展中心自己管滚动与留白；其它分区仍由内容区滚动。 */
+  const contentScrollerClass = $derived(
+    activeSection === 'extension-center'
+      ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
+      : 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6',
   );
 
   let contentEl: HTMLElement | undefined = $state();
@@ -76,14 +87,13 @@
   >
     <h2 class="text-sm font-medium">{activeLabel}</h2>
   </header>
-  <div
-    class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
-    data-testid="settings-page-content"
-    bind:this={contentEl}
-  >
+  <!-- overflow-y-auto 会把另一轴的 visible 计算成 auto：显式 overflow-x-hidden，
+       否则分区里个别超宽元素会让这一列出现横向滚动条。扩展中心分组自带滚动区，
+       外层就不滚（否则滚动条会贴住窗口边缘）。 -->
+  <div class={contentScrollerClass} data-testid="settings-page-content" bind:this={contentEl}>
     {#key activeSection}
       <div in:fade={{ duration: motionMs(MOTION.content) }} class={contentClass}>
-        <SettingsSectionView section={activeSection} />
+        <SettingsSectionView section={activeSection} bleed={activeSection === 'extension-center'} />
       </div>
     {/key}
   </div>

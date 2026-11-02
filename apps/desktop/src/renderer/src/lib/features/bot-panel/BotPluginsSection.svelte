@@ -40,6 +40,7 @@
     accountHintKey,
     appChoiceGroups,
     appToolEstimate,
+    danglingConnectionIds,
     selectAppConnection,
   } from './bot-apps';
   import {
@@ -239,14 +240,42 @@
     selectApp(connectorId, null);
   }
 
+  /**
+   * 已选、但连接行已不存在的 id（流程收尾删行 / 别处断开）。不属于任何分组，单独列出并可移除；
+   * 留着会让 core 拒绝这个 Bot 的所有 Profile 写入。连接列表还没读到时不要误报。
+   */
+  const danglingIds = $derived(
+    appsStore.loaded
+      ? danglingConnectionIds(profile.runtime.app_connection_ids, appsStore.connections).filter(
+          // `custom:` 占位连接走 `mcp_server_ids`，连接列表默认不含，不是悬挂引用。
+          (id) => !id.startsWith('custom:'),
+        )
+      : [],
+  );
+
+  function removeDangling(connectionId: string): void {
+    profile.runtime.app_connection_ids = profile.runtime.app_connection_ids.filter(
+      (id) => id !== connectionId,
+    );
+  }
+
   /** 账号选择器（从旧 apps 区块搬入）：只列有已连接账号的应用，多账号展开挑。 */
   let pickerTitle = $state('');
   let pickerOpen = $state(false);
   let pickerGroups = $state<AppChoiceGroup[]>([]);
   let expandedPickerApps = $state<string[]>([]);
 
-  function openAppsPicker(plugin: PluginSummary): void {
-    pickerGroups = groupsOf(plugin).filter((group) => group.accounts.length > 0);
+  /**
+   * 账号选择器：只列**已结算**且已有账号的应用（未连接 / 授权流程尚未走完的不进列表），
+   * 多账号展开挑。选中即写回 Profile，**不重跑授权**。给 `connectorId` 时只看该应用
+   * （行上的「选择账号 / 更换账号」）。
+   */
+  function openAppsPicker(plugin: PluginSummary, connectorId?: string): void {
+    pickerGroups = groupsOf(plugin).filter(
+      (group) =>
+        group.accounts.length > 0 &&
+        (connectorId === undefined || group.connectorId === connectorId),
+    );
     expandedPickerApps = [];
     pickerTitle = plugin.name;
     pickerOpen = true;
@@ -478,64 +507,69 @@
               data-testid={`bot-plugins-detail-${plugin.id}`}
             >
               {#if groupsOf(plugin).length > 0}
-                <div class="flex items-center gap-2">
-                  <Label class="text-xs">{t('botPanel.plugins.connections')}</Label>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    class="ml-auto h-7 gap-1 px-2 text-xs"
-                    onclick={() => openAppsPicker(plugin)}
-                    data-testid={`bot-plugins-add-${plugin.id}`}
-                  >
-                    <Plus class="size-3.5" aria-hidden="true" />
-                    {t('rightPanel.appsAdd')}
-                  </Button>
-                </div>
+                <Label class="text-xs">{t('botPanel.plugins.connections')}</Label>
                 <div class="space-y-2" data-testid={`bot-plugins-connections-${plugin.id}`}>
                   {#each groupsOf(plugin) as group (group.connectorId)}
-                    {@const showGroup =
-                      group.selectedConnectionId !== null || group.accounts.length > 0}
-                    {#if showGroup}
-                      {@const icon = appIconSrc(group.iconDataUri)}
-                      {@const account =
-                        group.accounts.find(
-                          (entry) => entry.connection.id === group.selectedConnectionId,
-                        ) ?? null}
-                      <div
-                        class="rounded-lg border px-2.5 py-2"
-                        data-testid={`bot-apps-${group.connectorId}`}
-                        data-selected={group.selectedConnectionId ?? ''}
-                      >
-                        <div class="flex items-center gap-2">
-                          {#if icon !== null}
-                            <img
-                              src={icon}
-                              alt=""
-                              class="size-5 shrink-0 rounded"
-                              aria-hidden="true"
-                            />
-                          {:else}
-                            <span
-                              class="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground"
-                              aria-hidden="true">{appInitial(group.title)}</span
+                    {@const icon = appIconSrc(group.iconDataUri)}
+                    {@const account =
+                      group.accounts.find(
+                        (entry) => entry.connection.id === group.selectedConnectionId,
+                      ) ?? null}
+                    <div
+                      class="rounded-lg border px-2.5 py-2"
+                      data-testid={`bot-apps-${group.connectorId}`}
+                      data-selected={group.selectedConnectionId ?? ''}
+                    >
+                      <div class="flex items-center gap-2">
+                        {#if icon !== null}
+                          <img
+                            src={icon}
+                            alt=""
+                            class="size-5 shrink-0 rounded"
+                            aria-hidden="true"
+                          />
+                        {:else}
+                          <span
+                            class="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground"
+                            aria-hidden="true">{appInitial(group.title)}</span
+                          >
+                        {/if}
+                        <span class="min-w-0 flex-1">
+                          <!-- 已选账号：只以账号名为主行（连接器名不同时作副行）；未选：应用名 + 提示。 -->
+                          <span class="block truncate text-sm font-medium"
+                            >{account !== null ? account.label : group.title}</span
+                          >
+                          {#if account !== null && account.label !== group.title}
+                            <span class="block truncate text-xs text-muted-foreground"
+                              >{group.title}</span
+                            >
+                          {:else if account === null && group.accounts.length > 0}
+                            <span class="block truncate text-xs text-muted-foreground"
+                              >{t('contacts.appsNotConnected')}</span
                             >
                           {/if}
-                          <span class="min-w-0 flex-1">
-                            <span class="block truncate text-sm font-medium">{group.title}</span>
-                            {#if account !== null}
-                              <span class="block truncate text-xs text-muted-foreground"
-                                >{account.label}</span
-                              >
-                            {/if}
-                          </span>
-                          {#if account !== null && account.connection.status !== 'connected'}
-                            <span
-                              class={account.needsReconnect || account.connection.status === 'error'
-                                ? 'rounded border border-amber-500/60 px-1 text-[10px] text-amber-700 dark:text-amber-400'
-                                : 'rounded border px-1 text-[10px] text-muted-foreground'}
-                              data-status={account.connection.status}
-                              >{t(CONNECTION_STATUS_LABEL_KEYS[account.connection.status])}</span
+                        </span>
+                        {#if account !== null && account.connection.status !== 'connected'}
+                          <span
+                            class={account.needsReconnect || account.connection.status === 'error'
+                              ? 'rounded border border-amber-500/60 px-1 text-[10px] text-amber-700 dark:text-amber-400'
+                              : 'rounded border px-1 text-[10px] text-muted-foreground'}
+                            data-status={account.connection.status}
+                            >{t(CONNECTION_STATUS_LABEL_KEYS[account.connection.status])}</span
+                          >
+                        {/if}
+                        {#if account !== null}
+                          {#if group.accounts.length > 1}
+                            <!-- 同一应用还有别的账号：允许只改绑定，不重跑授权。 -->
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              class="h-7 shrink-0 px-2 text-xs"
+                              onclick={() => openAppsPicker(plugin, group.connectorId)}
+                              data-testid={`bot-apps-${group.connectorId}-change`}
                             >
+                              {t('botPanel.plugins.changeAccount')}
+                            </Button>
                           {/if}
                           <Button
                             variant="ghost"
@@ -547,17 +581,38 @@
                           >
                             <X class="size-3.5" aria-hidden="true" />
                           </Button>
-                        </div>
-                        {#if account !== null && accountHintKey(account.connection.status) !== null}
-                          <p
-                            class="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                            data-testid={`bot-apps-${group.connectorId}-hint`}
+                        {:else if group.accounts.length > 0}
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            class="h-7 shrink-0 px-2 text-xs"
+                            onclick={() => openAppsPicker(plugin, group.connectorId)}
+                            data-testid={`bot-apps-${group.connectorId}-select`}
                           >
-                            {t(accountHintKey(account.connection.status)!)}
-                          </p>
+                            {t('botPanel.plugins.selectAccount')}
+                          </Button>
+                        {:else}
+                          <!-- 还没有已连接账号：去扩展中心连接，Bot 侧不发起授权。 -->
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            class="h-7 shrink-0 px-2 text-xs"
+                            onclick={openCatalog}
+                            data-testid={`bot-apps-${group.connectorId}-connect`}
+                          >
+                            {t('contacts.appsConnect')}
+                          </Button>
                         {/if}
                       </div>
-                    {/if}
+                      {#if account !== null && accountHintKey(account.connection.status) !== null}
+                        <p
+                          class="mt-1 text-xs text-amber-700 dark:text-amber-400"
+                          data-testid={`bot-apps-${group.connectorId}-hint`}
+                        >
+                          {t(accountHintKey(account.connection.status)!)}
+                        </p>
+                      {/if}
+                    </div>
                   {/each}
                 </div>
                 <p class="text-xs text-muted-foreground">{t('contacts.appsHint')}</p>
@@ -648,6 +703,30 @@
             title={t('rightPanel.appsRemove')}
             onclick={() => removeApp(group.connectorId)}
             data-testid={`bot-apps-${group.connectorId}-remove`}
+          >
+            <X class="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if danglingIds.length > 0}
+    <!-- 已选、但连接行已不存在（授权流程收尾删行 / 别处断开）：单独列出便于清理，
+         否则 core 会拒绝这个 Bot 的整份 Profile 写入。 -->
+    <div class="space-y-1.5" data-testid="bot-plugins-dangling">
+      <Label class="text-xs">{t('botPanel.plugins.staleAccounts')}</Label>
+      <p class="text-xs text-muted-foreground">{t('botPanel.plugins.staleAccountsHint')}</p>
+      {#each danglingIds as id (id)}
+        <div class="flex items-center gap-2 text-sm" data-testid={`bot-apps-stale-${id}`}>
+          <code class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{id}</code>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+            title={t('rightPanel.appsRemove')}
+            onclick={() => removeDangling(id)}
+            data-testid={`bot-apps-stale-${id}-remove`}
           >
             <X class="size-3.5" aria-hidden="true" />
           </Button>

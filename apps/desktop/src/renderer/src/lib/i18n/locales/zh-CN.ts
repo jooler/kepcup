@@ -601,6 +601,11 @@ export const zhCN = {
   'botPanel.plugins.manualServersHint':
     '勾选后该 Bot 可使用对应服务的工具：只读工具默认直接执行，写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。',
   'botPanel.plugins.otherAccounts': '已选账号（来源插件已卸载）',
+  'botPanel.plugins.selectAccount': '选择账号',
+  'botPanel.plugins.changeAccount': '更换账号',
+  'botPanel.plugins.staleAccounts': '失效的账号授权',
+  'botPanel.plugins.staleAccountsHint':
+    '这些连接已不存在（可能在扩展中心断开，或授权流程没有走完）。移除后才能保存对这个 Bot 的其它修改。',
   'rightPanel.exportTemplate': '导出为模板',
   // --- 其余 tab 的二级菜单行（详情里是原有内容） --------------------------------
   'rightPanel.menuSectionKnowledge': '知识与能力',
@@ -2492,6 +2497,9 @@ export const zhCN = {
   'apps.detail.revoke': '撤销',
   'apps.detail.reconnect': '重新连接',
   'apps.detail.reconnectHint': '授权过期或需要追加权限时重新走一次浏览器授权，令牌换到这个账号上。',
+  'apps.detail.connectAnother': '连接另一个账号',
+  'apps.detail.connectAnotherHint':
+    '同一个应用可以连接多个账号；这里新增的账号不影响当前账号，Bot 仍按应用只选用其中一个。',
   'apps.detail.disconnect': '断开连接',
   'apps.detail.disconnectTitle': '断开 {name}？',
   'apps.detail.disconnectBody': '将吊销授权并清除本机保存的令牌；工具策略与复核记录一并清理。',

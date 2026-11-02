@@ -32,8 +32,11 @@
    * 'extension-center' 是宽屏设置页的伪分区：渲染扩展中心主体（市场 / 已安装 /
    * 设置页签），不带 data-settings-section——它不是设置分区，深链走
    * extension-center surface（shared 覆盖测试按扩展中心页签校验）。
+   *
+   * `bleed`：扩展中心自己铺满整行并给滚动容器内边距（宽屏设置页为 true），
+   * 让滚动条贴应用右缘；其它调用方由外层容器给留白。
    */
-  let { section }: { section: SettingsPageSection } = $props();
+  let { section, bleed = false }: { section: SettingsPageSection; bleed?: boolean } = $props();
 </script>
 
 {#if section === 'general'}
@@ -124,7 +127,7 @@
     </div>
   </div>
 {:else if section === 'extension-center'}
-  <ExtensionCenterBody />
+  <ExtensionCenterBody {bleed} />
 {:else if section === 'usage'}
   <div data-settings-section="usage">
     <UsageSection />

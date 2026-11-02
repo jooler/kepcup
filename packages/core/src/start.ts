@@ -1366,7 +1366,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     connectedAppsRef.current = connectedApps;
     // D73: Bot profiles may only authorize existing catalog connections (one per connector).
-    bots.attachAppConnections(apps.store);
+    // 授权流程尚未结算的行（`connecting`，含工具复核阶段）不是账号：写进 Profile 后流程一收尾
+    // 就会留下删不掉的悬挂 id（`bots.update` 的校验会连带拒绝该 Bot 的其它修改）。
+    bots.attachAppConnections({
+      get: (connectionId) => {
+        const row = apps.store.get(connectionId);
+        return row !== null && row.status !== 'connecting' ? row : null;
+      },
+    });
     try {
       toolLock.runBaseline();
     } catch (error) {

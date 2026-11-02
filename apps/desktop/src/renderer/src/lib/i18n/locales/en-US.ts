@@ -633,6 +633,11 @@ export const enUS = {
   'botPanel.plugins.manualServersHint':
     'When checked, this bot can use tools from the corresponding services: read-only tools run directly, while write/destructive tools require approval for each call (unless auto-approve or per-tool settings are enabled).',
   'botPanel.plugins.otherAccounts': 'Selected accounts (source plugin uninstalled)',
+  'botPanel.plugins.selectAccount': 'Choose account',
+  'botPanel.plugins.changeAccount': 'Change account',
+  'botPanel.plugins.staleAccounts': 'Invalid account grants',
+  'botPanel.plugins.staleAccountsHint':
+    'These connections no longer exist (disconnected in the extension center, or the authorization flow did not finish). Remove them to save any other change to this bot.',
   'rightPanel.exportTemplate': 'Export as template',
   // --- Secondary menu rows of the other tabs (details hold the original content) -
   'rightPanel.menuSectionKnowledge': 'Knowledge & capabilities',
@@ -2587,6 +2592,9 @@ export const enUS = {
   'apps.detail.reconnect': 'Reconnect',
   'apps.detail.reconnectHint':
     'Reauthorize in the browser when authorization expires or extra permissions are needed; the token is moved to this account.',
+  'apps.detail.connectAnother': 'Connect another account',
+  'apps.detail.connectAnotherHint':
+    'An app can have several accounts. Adding one here leaves the current account untouched; a Bot still uses only one account per app.',
   'apps.detail.disconnect': 'Disconnect',
   'apps.detail.disconnectTitle': 'Disconnect {name}?',
   'apps.detail.disconnectBody':
