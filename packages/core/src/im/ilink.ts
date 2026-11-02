@@ -141,15 +141,18 @@ export class ILinkClient {
     return this.#apiBase;
   }
 
-  #headers(token: string | null, longPoll: boolean): Record<string, string> {
+  #headers(token: string | null): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       AuthorizationType: 'ilink_bot_token',
+      // 每个请求都要带（PoC/参考实现均如此）：sendmessage 缺它会被服务器以
+      // ret -2 "invalid arguments" 打回（比缺 context_token 的 "prepare failed"
+      // 更早的校验层）——线上实测 2026-11-03。
+      'X-WECHAT-UIN': Buffer.from(String(randomUint32()), 'utf8').toString('base64'),
       'iLink-App-Id': 'bot',
       'iLink-App-ClientVersion': '256',
     };
     if (token !== null) headers.Authorization = `Bearer ${token}`;
-    if (longPoll) headers['X-WECHAT-UIN'] = Buffer.from(String(randomUint32()), 'utf8').toString('base64');
     return headers;
   }
 
@@ -159,7 +162,7 @@ export class ILinkClient {
     try {
       const response = await this.#fetch(`${this.#apiBase}/${endpoint}`, {
         method: 'POST',
-        headers: this.#headers(token, timeoutMs > ILINK_REQUEST_TIMEOUT_MS),
+        headers: this.#headers(token),
         body: JSON.stringify(withBaseInfo(body)),
         signal: controller.signal,
       });
@@ -178,7 +181,7 @@ export class ILinkClient {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.#fetch(`${this.#apiBase}/${endpoint}`, {
-        headers: this.#headers(null, false),
+        headers: this.#headers(null),
         signal: controller.signal,
       });
       const text = await response.text();
