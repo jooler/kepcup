@@ -88,7 +88,7 @@
 
 ## 7 发布
 
-宿主支持后：`node packages/app-validator/dist/cli.js validate plugins/im-wechat` → `pack` → 按 [plugins/README.md](../README.md) 流程签名 + R2 + 索引（tier 建议 `verified`；icon 内联 ≤64 KiB）。`engines.kepcup` 在宿主合并 `im` kind 的版本处对齐（当前草案 `>=0.5.6`，以实际发布版本为准）。
+宿主支持后：`node packages/app-validator/dist/cli.js validate plugins/im-wechat` → `pack` → 按 [plugins/README.md](../README.md) 流程签名 + R2 + 索引（tier 建议 `verified`；icon 内联 ≤64 KiB）。`engines.kepcup` 对齐首个内置 `im` kind 的实际构建号（当前 `>=0.5.5`；发布版本若跳号到 0.5.6，上架前再改回并对齐）。
 
 ## 8 风险与回退
 
