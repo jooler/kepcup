@@ -20,6 +20,9 @@ export const ILINK_DEFAULT_API_BASE = 'https://ilinkai.weixin.qq.com';
 export const ILINK_POLL_TIMEOUT_MS = 40_000;
 /** 普通请求超时。 */
 export const ILINK_REQUEST_TIMEOUT_MS = 15_000;
+/** 扫码状态轮询超时：get_qrcode_status 是长轮询（服务器挂住到状态变化或 ~30s），
+ * 挂住到点空手返回按 wait 处理，调用方继续轮询。 */
+const QR_POLL_RESULT_TIMEOUT_MS = 50_000;
 
 /** iLink 原始消息（仅取宿主用到的字段；完整面见 openclaw-weixin src/api/types.ts）。 */
 export interface ILinkMessage {
@@ -90,6 +93,7 @@ export interface ILinkClientOptions {
   fetchImpl?: typeof fetch | undefined;
   requestTimeoutMs?: number | undefined;
   pollTimeoutMs?: number | undefined;
+  qrPollTimeoutMs?: number | undefined;
   channelVersion?: string | undefined;
 }
 
@@ -122,6 +126,7 @@ export class ILinkClient {
   readonly #fetch: typeof fetch;
   readonly #requestTimeoutMs: number;
   readonly #pollTimeoutMs: number;
+  readonly #qrPollTimeoutMs: number;
 
   constructor(options: ILinkClientOptions) {
     this.#apiBase = options.apiBase.replace(/\/$/, '');
@@ -129,6 +134,7 @@ export class ILinkClient {
     this.#fetch = options.fetchImpl ?? fetch;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? ILINK_REQUEST_TIMEOUT_MS;
     this.#pollTimeoutMs = options.pollTimeoutMs ?? ILINK_POLL_TIMEOUT_MS;
+    this.#qrPollTimeoutMs = options.qrPollTimeoutMs ?? QR_POLL_RESULT_TIMEOUT_MS;
   }
 
   get apiBase(): string {
@@ -199,10 +205,17 @@ export class ILinkClient {
   }
 
   async pollQrcodeStatus(qrcode: string): Promise<ILinkQrcodeStatusResponse> {
-    return await this.#get<ILinkQrcodeStatusResponse>(
-      `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
-      this.#requestTimeoutMs,
-    );
+    try {
+      return await this.#get<ILinkQrcodeStatusResponse>(
+        `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
+        this.#qrPollTimeoutMs,
+      );
+    } catch (error) {
+      // 服务器把状态轮询当长轮询挂住，到点才空手返回——按「仍在等待」处理，
+      // 调用方的轮询循环继续（PoC 实测：挂住 ~30s 属常态）。
+      if (isAbort(error)) return { status: 'wait' };
+      throw error;
+    }
   }
 
   // --- Bot API（token 阶段） ------------------------------------------------------
@@ -219,6 +232,8 @@ export class ILinkClient {
       );
     } catch (error) {
       if (error instanceof ILinkApiError && isSessionExpiredCode(error.code)) throw new ILinkSessionExpiredError(error.code, error.errmsg);
+      // 客户端长轮询到点（无消息）：回到外层循环再拉，不算失败。
+      if (isAbort(error)) return null;
       throw error;
     }
     const code = response.ret ?? response.errcode ?? 0;
@@ -290,6 +305,11 @@ function withBaseInfo(body: Record<string, unknown>): Record<string, unknown> {
 /** -14：iLink 的会话失效码（一小时暂停；D108 / PoC §4-5）。 */
 export function isSessionExpiredCode(code: number | undefined): boolean {
   return code === -14;
+}
+
+/** fetch 超时中断（AbortController）：长轮询到点的正常形态，不是故障。 */
+function isAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function randomUint32(): number {
