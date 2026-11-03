@@ -17,6 +17,7 @@ import {
   appConnectionStatusSchema,
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
+import { microAppStreamEventSchema } from '../domain/micro-app.js';
 import { appConnectReviewToolSchema } from '../domain/app-connections.js';
 import { appSkillsOfferEventSchema } from '../domain/app-skills.js';
 import { connectorTierSchema } from '../domain/connector-catalog.js';
@@ -426,6 +427,8 @@ export const rpcEventSchemas = {
   'run.status': runStatusPayloadSchema,
   'episode.updated': episodeUpdatedPayloadSchema,
   'run.progress': runProgressPayloadSchema,
+  // D112 微应用：模型流式增量（core → 渲染端桥宿主 → iframe 的桥 v2 event 帧）。
+  'micro-app.stream': microAppStreamEventSchema,
   'bot.updated': botUpdatedPayloadSchema,
   'bot.deleted': botDeletedPayloadSchema,
   'approval.created': approvalCreatedPayloadSchema,

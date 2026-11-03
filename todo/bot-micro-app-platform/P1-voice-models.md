@@ -31,6 +31,52 @@
 - [ ] renderer：VAD 分段状态机单测、播放队列打断单测、chrome 组件级（i18n / testid）。
 - [ ] 收口：定向测试 + 全量一次；子代理审查两轮（安全与语音关键路径）。
 
-## 实施记录
+## 实施记录（2026-11-04）
 
-（阶段收口时填写。）
+### 交付内容
+
+**shared**
+- spec：`MICRO_APP_RUNTIME_PHASE` 前移 P1；`MICRO_APP_IMPLEMENTED_CAPABILITIES` += `ai.chat` / `media.listen` / `media.speak`；API 索引 += `media.listen.start` / `media.listen.stop`；预算常量（微应用每日 200k / Bot 每日 1M）；`MICRO_APP_ERROR_HINTS` += `MICRO_APP_BRIDGE_CLOSED`（errors.ts 同步注册 + i18n）。
+- 垫片（generate.ts）：`kepcup.ai.chat / ai.session(...)`（流式 = call + stream → AsyncIterable 原语）；`kepcup.media.listen(...) → Listener{start/stop/on}`（channelId 动态事件通道）；`speak` / `stopSpeaking`；流通道 `error` 事件 → 迭代器 reject（fail(code)）。
+- 契约：`microApps.ai.chat / sessionCreate / sessionSend / sessionHistory / sessionReset / cancel / dispose`、`microApps.media.transcribe / synthesize`、`micro-app.stream` 事件、`microAppInstanceRefSchema`（resourceId + `mai_` 实例键）；`loopTypeSchema` += `micro_app`；设置 `microAppModel`（schema + patch + 目录条目 `models.micro-app` + core 适配器 + 设置页下拉 + FieldEditor 通用卡可用 + i18n 两语言）。
+
+**core**
+- 迁移 `0068_micro_app_usage.sql`（widget_id + day 主键；ai_calls / ai_tokens / asr_ms / tts_chars）。
+- `micro-apps/ai-gateway.ts`（`MicroAppAiGateway`）：
+  - **隔离**：不写 conversation_messages、不进主对话（测试钉住）；`ai.chat` 无工具面。
+  - **路由**：`routeFor(deps,'micro_app',botId)`（llm-router 增 purpose，`light_for_bot` 规则 + `settings.microAppModel` 优先；外部 Agent 路由明确拒绝）。
+  - **系统提示**：角色设定包 `<untrusted source="micro-app-prompt" meta="widget=…,version=…">` + 宿主固定边界句（不自称人 / 不引导线下 / 儿童找家长）；注入模式命中只记审计（§8.4）。
+  - **预算**：会话（清单 maxTokensPerSession 夹取 ≤50k，实例计数）/ 微应用每日 200k / Bot 每日 1M（跨微应用聚合）；并发 1 / 实例（`MICRO_APP_AI_BUSY`）。
+  - **流式**：ack 立即带 streamId，后台跑流；delta / done / error 经 `micro-app.stream` 事件；`ai.cancel` / `ai.dispose` 收口。
+  - **记账**：`usage_ledger`（runId 合成 `mai_use_*`、loopType `micro_app`、botId = `widgets.bot_id`）+ `micro_app_usage` 累计；会话轮数上限；实例 LRU（64）有界。
+- `WidgetService.microAppContextOf(resourceId)`：resourceId → 生效版本清单（权限 / 预算 / 归属 Bot）。
+- `microApps.media.transcribe / synthesize`：经 MediaService（usage {botId, loopType micro_app}）+ `micro_app_usage` 记 asr_ms（WAV 时长估算）/ tts_chars。
+- 预检探针 P1：`ai.chat` → 模型路由可解析；`media.listen` / `media.speak` → ASR / TTS capability 配置（缺配置给 reason + 设置深链）。
+- start.ts：`services.microAppAi` 装配 + 关闭时 dispose。
+
+**renderer**
+- `micro-app-audio.ts`：`MicroAppAudioSession`（宿主代理采集：sensors.open + 16k worklet + 能量 VAD——语音持续 220ms 起段、静音 silenceMs（默认 700）收段、段长 1.5–15s、过短丢弃；转写经 `microApps.media.transcribe` → `final` 事件；错误 → `error` 事件）与 `MicroAppSpeakQueue`（≤3 段顺序播放、`stopSpeaking` 清队列且未播段以 `MICRO_APP_BRIDGE_CLOSED` 收口、播放期电平只做插话检测——阈值更高防 TTS 回灌、插话即停播 + speech-start）。
+- 桥宿主：`ai.*` 转发（方法名 → RPC 映射）、`media.listen` 授权门（会话授权非 granted → `MICRO_APP_CAPABILITY_DENIED`）+ 通道生命周期 + 事件推送、`media.speak/stopSpeaking`、`app.requestDisplayMode`（经外壳 + display-mode 事件）、`app.close`（通知）、`revokeCapability`（停采集 + capability.revoked）、`forwardStreamEvent`（实例过滤）；ready 的 `grants.mic` 改为读取器（跟随授权态）。
+- `WidgetRuntime`：微应用路径注入音频面与 ai 转发；`micro-app.stream` 订阅 → 桥事件；麦克风撤销 effect → revokeCapability；`stopAudio()` 导出给外壳停止键；`pinVersion` 续期（P0 二轮）不变。
+- `WidgetViewer` header = MicroAppChrome（微应用卡）：**常驻网络徽标**（可联网/不联网，点击展开访问范围）、**麦克风指示 / 会话授权开关**（红 = 使用中；关即撤销）、全屏键（inline 420px ⇄ immersive 铺满，requestDisplayMode 同一落点）、停止键（停采集 + 停播放）、重载 / 关闭不变；每次打开重置麦克风授权（不跨打开保留）。
+- i18n：`botWidget.microApp.*` chrome 10 键 + `usage.loop.micro_app` 两语言。
+
+### 与任务书的偏差
+
+1. **ai.session 会话为内存态**（实例生命周期；LRU 64 实例 / 每实例 8 会话）：设计 §8.1「微应用历史归微应用所有，存 storage」——持久化由微应用自己负责（模板 P3 示范 `session:` 前缀快照）。host 侧持久化会引入跨实例一致的复杂度，P1 不做。
+2. `media.listen` 的 `partial` 事件 P1 未实现（ASR 适配器是整段转写；设计 §7.2 标注可选）。垫片的 on('partial') 契约在，宿主不派发。
+3. 插话检测用「播放期间更高电平阈值」而非独立回声消除（53 号同思路）；全双工仍是 §16 不做。
+4. `microApps.media.*` 没有独立 `microApps.media.speak` 的 host 端播放 RPC——播放完全在渲染端（桥宿主 → MicroAppSpeakQueue），core 只做合成 + 记账（与设计 §7.2「TTS 在宿主侧合成与播放」一致，「宿主」= renderer）。
+
+### 测试证据
+
+- core 集成：`packages/core/test/integration/micro-app-ai.test.ts` 7/7（mock-llm：chat 记账归属 / 上下文隔离 / session 多轮 + history + reset / 流式 delta+done 事件拼回全文 / 并发 1 / 微应用每日预算 / dispose 释放并发位 / 未声明能力拒绝）。
+- 渲染端：`micro-app-bridge-host.test.ts` 17/17（新增：listen 授权门 + 通道生命周期 + 事件、ai 转发、requestDisplayMode + display-mode 事件、forwardStreamEvent 实例过滤、revokeCapability）；`micro-app-audio.svelte.test.ts` 5/5（顺序播放 / 队列上限（在播+排队）/ 插话停播清队列 / stopSpeaking 未播段收口 / 非播放期不误触）。
+- shared：sdk 守卫更新到 P1 白名单（23/23）；垫片执行测试含 close 收口新码。
+- 设置链路：settings-catalog / item-writes / adapters-coverage / card-components 全绿（94 用例）。
+- 定向回归 74 文件 931 通过 / 1 跳过；`desktop` typecheck 0 错误。
+
+### 遗留
+
+- VAD 收段状态机与采集链路依赖真实 AudioWorklet，无 node 级单测（与 53 号 voice-recorder 同口径：真实麦克风不在单测内）；行为由 S2 预览（P3）与手动验收覆盖。
+- 会话恢复（app.pause 时微应用写 storage）是 SDK 约定，模板示范在 P3。

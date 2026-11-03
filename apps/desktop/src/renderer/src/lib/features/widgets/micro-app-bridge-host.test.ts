@@ -40,6 +40,10 @@ interface HostFrame {
 function harness(options?: {
   permissions?: readonly string[];
   storage?(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput>;
+  micGrant?: () => 'granted' | 'denied' | 'unavailable';
+  aiCall?(method: string, params: Record<string, unknown>): Promise<unknown>;
+  listenEvents?: string[];
+  onRequestDisplayMode?(mode: 'inline' | 'immersive'): Promise<{ mode: 'inline' | 'immersive' }>;
 }) {
   const frames: HostFrame[] = [];
   const frameWindow = {
@@ -86,6 +90,27 @@ function harness(options?: {
     onTitle: (title) => {
       titles.push(title);
     },
+    ...(options?.micGrant !== undefined ? { micGrant: options.micGrant } : {}),
+    ...(options?.aiCall !== undefined ? { aiCall: options.aiCall } : {}),
+    ...(options?.onRequestDisplayMode !== undefined
+      ? { onRequestDisplayMode: options.onRequestDisplayMode }
+      : {}),
+    ...(options?.listenEvents !== undefined
+      ? {
+          createListenSession: (
+            _config: { lang?: string; mode: 'push-to-talk' | 'vad'; silenceMs: number },
+            sink: (name: string, data: unknown) => void,
+          ) => ({
+            start: async () => {
+              for (const name of options.listenEvents ?? []) sink(name, name === 'final' ? { text: 'hi' } : 0.1);
+            },
+            stop: async () => {
+              sink('end', null);
+            },
+            dispose: () => undefined,
+          }),
+        }
+      : {}),
     userActivation: () => true,
     listenerTarget: target,
   };
@@ -116,6 +141,10 @@ describe('micro-app bridge guard（帧形状与白名单）', () => {
     });
     expect(
       parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'call', id: 1, method: 'media.listen', params: {} }).ok,
+    ).toBe(true);
+    // P2 起的能力还不进白名单。
+    expect(
+      parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'call', id: 1, method: 'context.update', params: {} }).ok,
     ).toBe(false);
     expect(parseMicroAppBridgeFrame({ v: 2, source: 'kepcup-widget', k: 'call', id: 1, method: 'storage.get', params: {} }).ok).toBe(false);
     expect(parseMicroAppBridgeFrame('junk').ok).toBe(false);
@@ -253,5 +282,95 @@ describe('micro-app bridge host（v2 协议行为）', () => {
     const error = h.frames.find((frame) => frame.k === 'error' && frame.id === 9);
     expect(error?.code).toBe('MICRO_APP_CAPABILITY_NOT_DECLARED');
     expect(error?.hint).toBeTruthy();
+  });
+
+  test('P1：media.listen 未授权 → CAPABILITY_DENIED；授权后建通道并转发生命周期', async () => {
+    const h = harness({ permissions: ['media.listen', 'media.speak'] });
+    h.emit(h.appFrame({ method: 'media.listen', params: { mode: 'vad' } }));
+    await h.settled();
+    const denied = h.frames.find((frame) => frame.k === 'error');
+    expect(denied?.code).toBe('MICRO_APP_CAPABILITY_DENIED');
+
+    // 授权后：listen → start → 事件 → stop。
+    const h2 = harness({
+      permissions: ['media.listen'],
+      micGrant: () => 'granted',
+      listenEvents: ['level', 'final'],
+    });
+    h2.emit(h2.appFrame({ method: 'media.listen', params: { mode: 'vad', silenceMs: 700 } }));
+    await h2.settled();
+    const ack = h2.frames.find((frame) => frame.k === 'ack');
+    const channelId = (ack?.result as { channelId?: string } | undefined)?.channelId;
+    expect(typeof channelId).toBe('string');
+    h2.emit(h2.appFrame({ method: 'media.listen.start', params: { channelId } }));
+    await h2.settled();
+    const events = h2.frames.filter((frame) => frame.k === 'event' && frame.subId === channelId);
+    expect(events.map((frame) => frame.name)).toEqual(['level', 'final']);
+    h2.emit(h2.appFrame({ method: 'media.listen.stop', params: { channelId } }));
+    await h2.settled();
+    const endEvent = h2.frames.find((frame) => frame.k === 'event' && frame.name === 'end');
+    expect(endEvent).toBeDefined();
+  });
+
+  test('P1：ai.* 方法转发给宿主实现；ai 未接线得 NOT_IMPLEMENTED', async () => {
+    const h = harness({ permissions: ['ai.chat'] });
+    h.emit(h.appFrame({ method: 'ai.chat', params: { messages: [], stream: false } }));
+    await h.settled();
+    const error = h.frames.find((frame) => frame.k === 'error');
+    expect(error?.code).toBe('NOT_IMPLEMENTED');
+
+    const h2 = harness({ permissions: ['ai.chat'], aiCall: async (method, params) => ({ echoed: method, params }) });
+    h2.emit(h2.appFrame({ method: 'ai.session.send', params: { sessionId: 's1', text: 'hi', stream: false } }));
+    await h2.settled();
+    const ack = h2.frames.find((frame) => frame.k === 'ack');
+    expect(ack?.result).toMatchObject({ echoed: 'ai.session.send' });
+  });
+
+  test('P1：requestDisplayMode 经外壳回调并推 display-mode 事件', async () => {
+    const h = harness({
+      onRequestDisplayMode: async (mode) => ({ mode: mode === 'inline' ? 'inline' : 'immersive' }),
+    });
+    h.emit(h.appFrame({ method: 'app.requestDisplayMode', params: { mode: 'inline' } }));
+    await h.settled();
+    const ack = h.frames.find((frame) => frame.k === 'ack');
+    expect(ack?.result).toEqual({ mode: 'inline' });
+    const event = h.frames.find((frame) => frame.k === 'event' && frame.name === 'display-mode');
+    expect(event?.data).toEqual({ mode: 'inline' });
+    // 之后的 ready 也反映新模式。
+    h.emit(h.appFrame({ method: 'app.ready', params: {} }));
+    await h.settled();
+    const ready = h.frames.filter((frame) => frame.k === 'ack').at(-1);
+    expect((ready?.result as { displayMode?: string } | undefined)?.displayMode).toBe('inline');
+  });
+
+  test('P1：forwardStreamEvent 只转发本实例的流（delta / done）', async () => {
+    const h = harness();
+    h.host.forwardStreamEvent({ instanceId: 'other', streamId: 's1', kind: 'delta', delta: 'x' });
+    expect(h.frames.filter((frame) => frame.k === 'event')).toHaveLength(0);
+    h.host.forwardStreamEvent({ instanceId: h.host.instanceId, streamId: 's1', kind: 'delta', delta: 'He' });
+    h.host.forwardStreamEvent({ instanceId: h.host.instanceId, streamId: 's1', kind: 'delta', delta: 'y' });
+    h.host.forwardStreamEvent({ instanceId: h.host.instanceId, streamId: 's1', kind: 'done' });
+    const events = h.frames.filter((frame) => frame.k === 'event' && frame.subId === 's1');
+    expect(events.map((frame) => [frame.name, (frame.data as { delta?: string } | null)?.delta ?? null])).toEqual([
+      ['delta', 'He'],
+      ['delta', 'y'],
+      ['done', null],
+    ]);
+  });
+
+  test('P1：revokeCapability(media.listen) 停会话并推 capability.revoked', async () => {
+    const h = harness({ permissions: ['media.listen'], micGrant: () => 'granted', listenEvents: [] });
+    h.emit(h.appFrame({ method: 'media.listen', params: { mode: 'vad' } }));
+    await h.settled();
+    const ack = h.frames.find((frame) => frame.k === 'ack');
+    const channelId = (ack?.result as { channelId?: string } | undefined)?.channelId as string;
+    h.host.revokeCapability('media.listen');
+    const revoked = h.frames.find((frame) => frame.k === 'event' && frame.name === 'capability.revoked');
+    expect(revoked?.data).toEqual({ capability: 'media.listen' });
+    // 会话已释放：再 start 得 NOT_FOUND。
+    h.emit(h.appFrame({ method: 'media.listen.start', params: { channelId } }));
+    await h.settled();
+    const error = h.frames.filter((frame) => frame.k === 'error').at(-1);
+    expect(error?.code).toBe('NOT_FOUND');
   });
 });

@@ -52,6 +52,8 @@ export type LlmPurpose =
   | 'widget_authoring'
   /** D87 P3c 组件制作 loop 的独立审查（设置「组件审查模型」，缺省跟随 Bot 主模型）。 */
   | 'widget_review'
+  /** D112 微应用的 ai.chat / ai.session（设置「微应用模型」，缺省跟随 Bot 轻量模型）。 */
+  | 'micro_app'
   | 'subagent_compaction'
   /** D93 内置 pi 任务的自动上下文压缩（轻量模型摘要旧消息）。 */
   | 'task_compaction';
@@ -90,6 +92,8 @@ const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
   // 组件制作（D87）：与发起任务同一个 Bot 主模型。
   widget_authoring: 'main_for_bot',
   widget_review: 'main_for_bot',
+  // 微应用（D112 §8.2）：Bot 轻量 → 全局轻量 → Bot 主 → 全局主（设置可单独指定）。
+  micro_app: 'light_for_bot',
   // 摘要 / 反思 / 整理：全局轻量 → 全局主；画像整理：全局主模型。
   summary: 'app_light',
   reflection: 'app_light',
@@ -306,6 +310,12 @@ export function builtinModelRef(
   const reviewModel = settings.widgetReviewModel ?? '';
   if (purpose === 'widget_review' && reviewModel.length > 0 && !(runtime?.model ?? '')) {
     return reviewModel;
+  }
+  // 微应用模型（D112 §8.2）：宿主策略锚点；未指定 = light_for_bot 链。微应用自己不能
+  // 指定厂商 / 模型 id——这条设置是用户手里唯一的策略入口。
+  const microAppSetting = settings.microAppModel ?? '';
+  if (purpose === 'micro_app' && microAppSetting.length > 0) {
+    return microAppSetting;
   }
   switch (BUILTIN_RULES[purpose]) {
     case 'light_for_bot':

@@ -1376,6 +1376,7 @@ export const enUS = {
   'usage.loop.memory': 'Memory embedding/rerank',
   'usage.loop.voice_input': 'Voice input',
   'usage.loop.voice_reply': 'Voice reply',
+  'usage.loop.micro_app': 'Micro-app',
   'settings.embeddingSection': 'Embedding source',
   'settings.embeddingNote':
     'Embedding method for memory retrieval; falls back to full-text search when not ready. The "Local model" (jina-embeddings-v2-base-zh, 768 dimensions, Chinese-English bilingual) and the ONNX runtime (about 276MB combined) are installed to the app\'s private directory and shared by all Bots; if the model is not ready, you can download it below or install it automatically via an environment request. GPU acceleration is selected automatically by platform (macOS CoreML / Windows DirectML, falling back to CPU when unavailable). "Vendor API" uses the configuration in the "Embedding model" section above; changing the source rebuilds the vector index for all Bots.',
@@ -3137,11 +3138,25 @@ export const enUS = {
   'botWidget.microApp.preflightFailed': 'Checking run requirements failed.',
   'botWidget.microApp.preflightRetry': 'Retry',
   'botWidget.microApp.confirmAndOpen': 'Confirm and open',
+  'botWidget.microApp.netBadge': 'Network access',
+  'botWidget.microApp.netBadgeOnline': 'Online',
+  'botWidget.microApp.netInfoOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netInfoNone': 'No internet access',
+  'botWidget.microApp.netInfoAllowlist': 'Can access the internet (only {domains})',
+  'botWidget.microApp.micOn': 'Microphone in use (click to revoke)',
+  'botWidget.microApp.micOff': 'Enable microphone',
+  'botWidget.microApp.displayMode': 'Toggle fullscreen / inline',
+  'botWidget.microApp.stop': 'Stop voice (capture and playback)',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
   'settings.widgetReviewModelHint':
     'When a Bot builds an interactive widget, this model independently reviews the code. Choosing a model different from the main model can catch more issues. If the Bot has pinned its own model, that model is still used.',
   'settings.widgetReviewModelUnavailable': "(Unavailable; the Bot's main model will be used)",
+  'settings.microAppModel': 'Micro-app model',
+  'settings.microAppModelFollow': "Use Bot's light model",
+  'settings.microAppModelHint':
+    'Which model micro-apps use for ai.chat. Usage is billed to the Bot that wrote the micro-app; micro-apps cannot pick a model themselves.',
+  'settings.microAppModelUnavailable': "(Unavailable; the Bot's light model will be used)",
   'botWidget.capabilities':
     'Runs in a sandbox · Network access enabled · Data stays on this device (per widget) · Queries limited to reviewed read-only templates',
   'botWidget.openLinkTitle': 'This widget wants to open a link in your browser',

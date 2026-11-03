@@ -1196,6 +1196,11 @@ export const settingsSchema = z.object({
    */
   widgetReviewModel: z.string().default(''),
   /**
+   * D112「微应用模型」：微应用 `ai.chat` / `ai.session` 的宿主策略锚点（"provider/modelId"）；
+   * '' = 跟随 Bot 轻量模型（再退 Bot 主模型）。微应用不能指定厂商 / 模型 id（55 §8.2）。
+   */
+  microAppModel: z.string().default(''),
+  /**
    * 专有模型按能力各配一条（供应商实例 + 模型），见 16-capability-models.md。
    * 向量来源 source='provider' 时使用 capabilityModels.embedding。
    */
@@ -1951,6 +1956,8 @@ export const loopTypeSchema = z.enum([
   'voice_input',
   /** 语音对话模式播报（53），渲染层前台行为。 */
   'voice_reply',
+  /** 微应用（D112）的模型 / ASR / TTS 调用：归属 = 编写该微应用的 Bot（widgets.bot_id）。 */
+  'micro_app',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 

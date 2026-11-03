@@ -655,6 +655,30 @@ export class WidgetService {
   }
 
   /**
+   * 能力面的运行期上下文（微应用 AI / 媒体网关用，D112 P1）：resourceId 反查在途资源
+   * → 生效版本的清单。资源过期 / 组件删除 → 抛 `WIDGET_RESOURCE_EXPIRED`；存量组件
+   * （无清单）→ null（调用方按能力未声明拒绝）。
+   */
+  microAppContextOf(resourceId: string): {
+    widgetId: string;
+    botId: string | null;
+    version: number;
+    permissions: readonly string[];
+    maxTokensPerSession: number;
+  } | null {
+    const entry = this.#requireLiveEntry(resourceId);
+    const microApp = this.#manifestOfVersion(entry.widgetId, entry.version);
+    if (microApp === null) return null;
+    return {
+      widgetId: entry.widgetId,
+      botId: entry.botId,
+      version: entry.version,
+      permissions: microApp.manifest.permissions,
+      maxTokensPerSession: microApp.manifest.ai.maxTokensPerSession,
+    };
+  }
+
+  /**
    * 海报截图（对话卡片静态展示用，懒加载）：取生效版本的自检截图（微应用随双指针走，
    * 用户看到的截图对应将要运行的版本）。只读展示——不做摘要强校验（截图损坏不至于
    * 挂不上，回退占位即可；生效版本解析失败时退回卡片钉住版本）。

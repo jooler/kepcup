@@ -219,6 +219,7 @@ import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
+import { MicroAppAiGateway } from './micro-apps/ai-gateway.js';
 import { WidgetQueryRunner } from './widgets/query-runner.js';
 import { WidgetCraftService } from './widgets/craft/service.js';
 import {
@@ -690,6 +691,8 @@ export interface CoreServices {
   widgets: WidgetService | null;
   /** D87 组件制作 loop（widget_craft 的执行体；基准评测直接调用）；null with `widgets`. */
   widgetCraft: WidgetCraftService | null;
+  /** D112 微应用模型网关（ai.chat / ai.session：隔离 / 流式 / 预算 / 记账）；null with `widgets`. */
+  microAppAi: MicroAppAiGateway | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -963,6 +966,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appUi: null,
     widgets: null,
     widgetCraft: null,
+    microAppAi: null,
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
@@ -1045,6 +1049,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       await services.agents?.bridge.stop().catch(() => undefined);
       // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
       services.widgets?.dispose();
+      services.microAppAi?.dispose();
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
       services.mainDb = null;
@@ -2187,6 +2192,21 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     } catch (error) {
       logger.warn({ error: String(error) }, 'widget draft sweep failed');
     }
+
+    // D112 微应用模型网关：ai.chat / ai.session 的 core 侧（上下文隔离 / 流式 / 三级
+    // 预算 / 记账归 widgets.bot_id）。流式增量经 `micro-app.stream` 事件回渲染端桥宿主。
+    const microAppAi = new MicroAppAiGateway({
+      db: mainDb,
+      resolveContext: (resourceId) => widgetService.microAppContextOf(resourceId),
+      settings,
+      secrets,
+      engine,
+      bots,
+      usage,
+      emitStream: (event) => events.emit('micro-app.stream', event),
+      clock,
+      logger,
+    });
 
     // 对话内应用设置（todo/conversational-app-setup.md）：目录适配器 + 三个工具 + 设置卡的宿主。
     // 设置卡落定后经 orchestrator 唤醒出卡 Bot（晚绑定：orchestrator 在下面构造）。
@@ -3676,6 +3696,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.appUi = appUi;
     services.widgets = widgetService;
     services.widgetCraft = widgetCraft;
+    services.microAppAi = microAppAi;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;

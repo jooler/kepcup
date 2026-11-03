@@ -1324,6 +1324,7 @@ export const zhCN = {
   'usage.loop.memory': '记忆向量/重排',
   'usage.loop.voice_input': '语音输入',
   'usage.loop.voice_reply': '语音播报',
+  'usage.loop.micro_app': '微应用',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
@@ -3003,11 +3004,25 @@ export const zhCN = {
   'botWidget.microApp.preflightFailed': '检查运行条件失败。',
   'botWidget.microApp.preflightRetry': '重试',
   'botWidget.microApp.confirmAndOpen': '确认并打开',
+  'botWidget.microApp.netBadge': '网络访问',
+  'botWidget.microApp.netBadgeOnline': '可联网',
+  'botWidget.microApp.netInfoOpen': '可联网（未限制域名）· 平台不逐域限制',
+  'botWidget.microApp.netInfoNone': '不联网',
+  'botWidget.microApp.netInfoAllowlist': '可联网（仅 {domains}）',
+  'botWidget.microApp.micOn': '麦克风使用中（点击撤销）',
+  'botWidget.microApp.micOff': '开启麦克风',
+  'botWidget.microApp.displayMode': '切换全屏 / 内联',
+  'botWidget.microApp.stop': '停止语音（停采集与播放）',
   'settings.widgetReviewModel': '组件审查模型',
   'settings.widgetReviewModelFollow': '跟随 Bot 主模型',
   'settings.widgetReviewModelHint':
     'Bot 做交互组件时由这个模型独立审查代码，换一个与主模型不同的模型能发现更多问题。Bot 固定了自己的模型时仍用 Bot 的模型。',
   'settings.widgetReviewModelUnavailable': '（不可用，将改用 Bot 主模型）',
+  'settings.microAppModel': '微应用模型',
+  'settings.microAppModelFollow': '跟随 Bot 轻量模型',
+  'settings.microAppModelHint':
+    '微应用里调用模型（ai.chat）时用哪个模型。用量计入编写该微应用的 Bot 的模型额度；微应用自己不能指定模型。',
+  'settings.microAppModelUnavailable': '（不可用，将改用 Bot 轻量模型）',
   'botWidget.capabilities':
     '沙箱内运行 · 可访问网络 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
   'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',

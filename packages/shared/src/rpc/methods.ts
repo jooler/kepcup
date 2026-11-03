@@ -90,6 +90,21 @@ import {
   widgetsUiStorageOutputSchema,
 } from '../domain/widgets-ui.js';
 import {
+  microAppsAiCancelInputSchema,
+  microAppsAiChatInputSchema,
+  microAppsAiDisposeInputSchema,
+  microAppsAiChatOutputSchema,
+  microAppsAiSessionCreateInputSchema,
+  microAppsAiSessionCreateOutputSchema,
+  microAppsAiSessionHistoryInputSchema,
+  microAppsAiSessionHistoryOutputSchema,
+  microAppsAiSessionResetInputSchema,
+  microAppsAiSessionSendInputSchema,
+  microAppsAiSessionSendOutputSchema,
+  microAppsMediaSynthesizeInputSchema,
+  microAppsMediaSynthesizeOutputSchema,
+  microAppsMediaTranscribeInputSchema,
+  microAppsMediaTranscribeOutputSchema,
   microAppsPreflightInputSchema,
   microAppsPreflightOutputSchema,
 } from '../domain/micro-app.js';
@@ -409,6 +424,8 @@ export const settingsUpdateInputSchema = z.object({
   defaultLightModel: z.string().optional(),
   /** D87 P3c 组件审查模型；'' = 跟随 Bot 主模型。 */
   widgetReviewModel: z.string().optional(),
+  /** D112 微应用模型；'' = 跟随 Bot 轻量模型。 */
+  microAppModel: z.string().optional(),
   /** 能力模型配置（整体覆盖 patch；UI 传完整 capabilityModels）。 */
   capabilityModels: capabilityModelsSchema.optional(),
   providerConcurrency: providerConcurrencySchema.optional(),
@@ -2526,6 +2543,30 @@ export const rpcMethodSchemas = {
   'widgets.publish': { input: widgetsPublishInputSchema, output: widgetsPublishOutputSchema },
   // D112 微应用（docs/design/55-bot-micro-app-runtime.md）：能力面专属入口（预检 / 诊断 / 管理）。
   'microApps.preflight': { input: microAppsPreflightInputSchema, output: microAppsPreflightOutputSchema },
+  'microApps.ai.chat': { input: microAppsAiChatInputSchema, output: microAppsAiChatOutputSchema },
+  'microApps.ai.sessionCreate': {
+    input: microAppsAiSessionCreateInputSchema,
+    output: microAppsAiSessionCreateOutputSchema,
+  },
+  'microApps.ai.sessionSend': {
+    input: microAppsAiSessionSendInputSchema,
+    output: microAppsAiSessionSendOutputSchema,
+  },
+  'microApps.ai.sessionHistory': {
+    input: microAppsAiSessionHistoryInputSchema,
+    output: microAppsAiSessionHistoryOutputSchema,
+  },
+  'microApps.ai.sessionReset': { input: microAppsAiSessionResetInputSchema, output: okOutput },
+  'microApps.ai.cancel': { input: microAppsAiCancelInputSchema, output: okOutput },
+  'microApps.ai.dispose': { input: microAppsAiDisposeInputSchema, output: okOutput },
+  'microApps.media.transcribe': {
+    input: microAppsMediaTranscribeInputSchema,
+    output: microAppsMediaTranscribeOutputSchema,
+  },
+  'microApps.media.synthesize': {
+    input: microAppsMediaSynthesizeInputSchema,
+    output: microAppsMediaSynthesizeOutputSchema,
+  },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -3279,6 +3320,15 @@ const APP_METHODS = [
   'widgets.delete',
   'widgets.publish',
   'microApps.preflight',
+  'microApps.ai.chat',
+  'microApps.ai.sessionCreate',
+  'microApps.ai.sessionSend',
+  'microApps.ai.sessionHistory',
+  'microApps.ai.sessionReset',
+  'microApps.ai.cancel',
+  'microApps.ai.dispose',
+  'microApps.media.transcribe',
+  'microApps.media.synthesize',
   'mcp.rawTools',
   'mcp.refreshTools',
   'websearch.test',

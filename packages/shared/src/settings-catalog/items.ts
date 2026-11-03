@@ -248,6 +248,22 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'settings', paths: ['widgetReviewModel'] },
   }),
   item({
+    id: 'models.micro-app',
+    group: 'models',
+    title: '微应用模型',
+    summary: '微应用调用模型（ai.chat）用哪个模型；留空跟随 Bot 轻量模型',
+    enables: ['微应用内的模型对话'],
+    keywords: ['微应用', '模型', 'micro-app'],
+    scope: 'global',
+    fields: [
+      field('model', '微应用模型', 'model', { options: 'chat-models', path: 'microAppModel' }),
+    ],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'models', anchor: 'default-models' },
+    store: { kind: 'settings', paths: ['microAppModel'] },
+  }),
+  item({
     id: 'models.concurrency',
     group: 'models',
     title: '模型并发上限',
