@@ -19,7 +19,8 @@
    * 只负责主体：顶部当前分类标题 + 分区内容。点击左栏条目只渲染对应分区（条件
    * 渲染，非滚动定位），滚动条归当前分区内容自己；打开时按 shell.settingsSection
    * 直接落在目标分类，带 anchor 时再滚到分区内的 [data-settings-anchor]（如
-   * 「模型 → 默认模型」）。扩展中心是伪分区（'extension-center'），主体渲染
+   * 「模型 → 默认模型」；「模型」分区外层不滚，锚点由 ModelsSection 滚到右栏
+   * 详情内部）。扩展中心是伪分区（'extension-center'），主体渲染
    * ExtensionCenterBody（市场 / 已安装 / 设置页签）。内容列按分类限宽：表单分区
    * max-w-3xl 居中，扩展中心不限宽、只加大左右留白（见 contentClass）。
    *
@@ -42,28 +43,37 @@
    * 剩余高度与整行宽度，滚动交给各分组自己的滚动区（市场 / 已安装 / 设置），
    * 留白由滚动容器的内边距提供（`bleed`）——这样滚动条贴应用右缘，内容仍有
    * 视觉留白；否则插件详情页会把整个设置页（含页签）当成一个长文档滚动。
+   *
+   * 「模型」分区同理接管纵向空间：外层内容区只留内边距、不滚动，两栏卡以
+   * 窗口剩余高度为最大高度撑满（`min-h-0` + `flex-1`），滚动归右栏详情自己
+   * （ModelsSection 把右栏设为 overflow-y-auto）——否则供应商 / 详情内容一多，
+   * 整个设置页（含顶部标题行）会变成一个长文档滚动。
    */
   const contentClass = $derived(
     activeSection === 'extension-center'
       ? 'flex min-h-0 flex-1 flex-col'
       : activeSection === 'models'
-        ? 'mx-auto max-w-5xl'
+        ? 'mx-auto flex w-full max-w-5xl min-h-0 flex-1 flex-col'
         : 'mx-auto max-w-3xl',
   );
-  /** 扩展中心自己管滚动与留白；其它分区仍由内容区滚动。 */
+  /** 扩展中心与「模型」分区自己管滚动（扩展中心留白归 bleed）；其余分区仍由内容区滚动。 */
   const contentScrollerClass = $derived(
     activeSection === 'extension-center'
       ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-      : 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6',
+      : activeSection === 'models'
+        ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6'
+        : 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6',
   );
 
   let contentEl: HTMLElement | undefined = $state();
 
   // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位（anchor-scroll.ts，
-  // 与窄屏设置页共用）。
+  // 与窄屏设置页共用）。「模型」分区外层不可滚（overflow-hidden），锚点交给
+  // ModelsSection 在右栏详情内部滚，这里不抢。
   $effect(() => {
     const anchor = shell.settingsAnchor;
     if (!shell.settingsOpen || anchor === null) return;
+    if (activeSection === 'models') return;
     void revealSettingsAnchor({
       anchor,
       container: () => contentEl,
