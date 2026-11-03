@@ -60,7 +60,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
 export class MicroAppAudioSession {
   readonly #sink: MicroAppListenSink;
   readonly #config: MicroAppListenConfig;
-  readonly #resourceId: string;
+  readonly #resourceId: () => string;
   #stream: MediaStream | null = null;
   #context: AudioContext | null = null;
   #worklet: AudioWorkletNode | null = null;
@@ -77,7 +77,7 @@ export class MicroAppAudioSession {
   readonly #speakQueue: MicroAppSpeakQueue;
 
   constructor(input: {
-    resourceId: string;
+    resourceId: () => string;
     instanceId: string;
     config: MicroAppListenConfig;
     sink: MicroAppListenSink;
@@ -233,7 +233,7 @@ export class MicroAppAudioSession {
           const base64 = await blobToBase64(encodeWav(merged, SAMPLE_RATE));
           const out = microAppsMediaTranscribeOutputSchema.parse(
             await core.call('microApps.media.transcribe', {
-              resourceId: this.#resourceId,
+              resourceId: this.#resourceId(),
               instanceId: this.#instanceId,
               audioBase64: base64,
               audioMime: 'audio/wav',
@@ -255,7 +255,7 @@ export class MicroAppAudioSession {
 
 /** TTS 播放队列（实例级）：合成经 `microApps.media.synthesize`，播放可打断。 */
 export class MicroAppSpeakQueue {
-  readonly #resourceId: string;
+  readonly #resourceId: () => string;
   #instanceId = '';
   #audio: HTMLAudioElement | null = null;
   #queue: Array<{ run: () => Promise<void>; reject: () => void }> = [];
@@ -271,7 +271,7 @@ export class MicroAppSpeakQueue {
   readonly #playAudio: (audioBase64: string, mimeType: string) => Promise<void>;
 
   constructor(
-    resourceId: string,
+    resourceId: string | (() => string),
     seams?: {
       synthesize?: (input: { text: string; voice?: string; rate?: number }) => Promise<{
         audioBase64: string;
@@ -280,13 +280,13 @@ export class MicroAppSpeakQueue {
       playAudio?: (audioBase64: string, mimeType: string) => Promise<void>;
     },
   ) {
-    this.#resourceId = resourceId;
+    this.#resourceId = typeof resourceId === 'function' ? resourceId : () => resourceId;
     this.#synthesize =
       seams?.synthesize ??
       (async (input) =>
         microAppsMediaSynthesizeOutputSchema.parse(
           await core.call('microApps.media.synthesize', {
-            resourceId,
+            resourceId: this.#resourceId(),
             instanceId: this.#instanceId,
             text: input.text,
             ...(input.voice !== undefined ? { voice: input.voice } : {}),
@@ -318,7 +318,10 @@ export class MicroAppSpeakQueue {
     }
     await new Promise<void>((resolve, reject) => {
       const run = async (): Promise<void> => {
+        const epoch = this.#epoch;
         const out = await this.#synthesize(input);
+        // 合成期间被打断 / 停止：这一段不再播放（二轮 F3——停止键和插话不能漏出一段）。
+        if (epoch !== this.#epoch) return;
         await this.#playAudio(out.audioBase64, out.mimeType);
       };
       this.#queue.push({
@@ -379,6 +382,11 @@ export class MicroAppSpeakQueue {
   #play(audioBase64: string, mimeType: string): Promise<void> {
     const epoch = this.#epoch;
     return new Promise((resolve) => {
+      // 播放前再核一次 epoch：合成后到起播前被打断的段直接吞掉（二轮 F3）。
+      if (epoch !== this.#epoch) {
+        resolve();
+        return;
+      }
       const audio = new Audio(`data:${mimeType};base64,${audioBase64}`);
       this.#audio = audio;
       audio.onended = () => {

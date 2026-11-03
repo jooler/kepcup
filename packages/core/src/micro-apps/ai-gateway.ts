@@ -104,9 +104,11 @@ export class MicroAppAiGateway {
   readonly #inFlight = new Map<string, InFlight>();
   readonly #instances = new Map<string, number>();
   /**
-   * 实例归属绑定（审查修复 F3）：instanceId 首次使用时绑定当时的 resourceId，此后每个
-   * `ai.*` 方法核对该对——instanceId 由渲染端宿主铸造，但 RPC 面是公开的，不能靠「猜
-   * 不出」当防线（跨实例 cancel / dispose / 预算分身）。
+   * 实例归属绑定（审查修复 F3 + 二轮 F1）：instanceId 首次使用时绑定当时的 **widgetId**，
+   * 之后每个 `ai.*` 方法核对新资源解析出的 widgetId 一致才放行——绑 widget 而不是
+   * resourceId，资源续期（换 resourceId、同微应用）不会把在跑实例的归属打断。instanceId
+   * 由渲染端宿主铸造，但 RPC 面是公开的，不能靠「猜不出」当防线（跨实例 cancel /
+   * dispose / 预算分身）。
    */
   readonly #bindings = new Map<string, string>();
 
@@ -114,9 +116,16 @@ export class MicroAppAiGateway {
     this.#deps = deps;
   }
 
-  /** 实例结束（卡片关闭 / 桥断开）：取消在途、释放会话与预算计数。 */
+  /** 实例结束（卡片关闭 / 桥断开）：取消在途、释放会话与预算计数。归属不符抛错
+   * （静默 no-op 会让跨实例拆除在测试里不可见——二轮 F2）。 */
   disposeInstance(instanceId: string, resourceId?: string): void {
-    if (resourceId !== undefined && !this.#requireBinding(instanceId, resourceId)) return;
+    if (
+      resourceId !== undefined &&
+      this.#bindings.has(instanceId) &&
+      !this.#bindingMatches(instanceId, resourceId)
+    ) {
+      throw new AppError('MICRO_APP_CAPABILITY_DENIED', '实例与资源不匹配，拒绝执行');
+    }
     const flight = this.#inFlight.get(instanceId);
     flight?.controller.abort();
     this.#inFlight.delete(instanceId);
@@ -131,14 +140,24 @@ export class MicroAppAiGateway {
     for (const instanceId of [...this.#instances.keys()]) this.disposeInstance(instanceId);
   }
 
-  /** 归属绑定：首次使用登记 instanceId → resourceId；之后必须成对出现。 */
+  /** 归属匹配（不落绑定）：资源解析出的 widgetId 与已绑定的一致。 */
+  #bindingMatches(instanceId: string, resourceId: string): boolean {
+    const bound = this.#bindings.get(instanceId);
+    if (bound === undefined) return true;
+    const ctx = this.#deps.resolveContext(resourceId);
+    return ctx !== null && ctx.widgetId === bound;
+  }
+
+  /** 归属绑定：首次使用登记 instanceId → widgetId；续期换 resourceId 不影响。 */
   #requireBinding(instanceId: string, resourceId: string): boolean {
     const bound = this.#bindings.get(instanceId);
     if (bound === undefined) {
-      this.#bindings.set(instanceId, resourceId);
+      const ctx = this.#deps.resolveContext(resourceId);
+      if (ctx === null) return false;
+      this.#bindings.set(instanceId, ctx.widgetId);
       return true;
     }
-    return bound === resourceId;
+    return this.#bindingMatches(instanceId, resourceId);
   }
 
   /** 归属校验（带能力检查的入口统一走这里）。 */
@@ -506,11 +525,12 @@ export class MicroAppAiGateway {
       }
     } catch (error) {
       if (flight.controller.signal.aborted) {
-        // 取消：流以 error 收口（微应用侧的 iterator 已 break）。
+        // 取消：流以 error 收口（微应用侧的 iterator 已 break）。用户主动取消不是
+        // 「忙」——用桥关闭码，作者侧 hint 也更贴切（二轮 F5）。
         if (streamId !== null) {
-          this.#deps.emitStream({ instanceId, streamId, kind: 'error', code: 'MICRO_APP_AI_BUSY' });
+          this.#deps.emitStream({ instanceId, streamId, kind: 'error', code: 'MICRO_APP_BRIDGE_CLOSED' });
         }
-        throw new AppError('MICRO_APP_AI_BUSY', '调用已取消');
+        throw new AppError('MICRO_APP_BRIDGE_CLOSED', '调用已取消');
       }
       if (streamId !== null) {
         this.#deps.emitStream({ instanceId, streamId, kind: 'error', code: errorCodeOf(error) });

@@ -187,7 +187,8 @@
       // Listen first, then load: the shim's first calls must find the bridge ready.
       // 微应用挂桥 v2（能力路由 / 事件 / 预算 / 音频面），存量组件挂 v1（行为零变化）。
       if (out.microApp !== undefined) {
-        speakQueue = new MicroAppSpeakQueue(out.resourceId);
+        // resourceId 用读取器（二轮 F1）：租期续命换 id 后，speak / transcribe 跟着新 id 走。
+        speakQueue = new MicroAppSpeakQueue(() => currentResourceId ?? '');
         bridge = MicroAppBridgeHost.connect({
           frameWindow,
           resourceId: out.resourceId,
@@ -236,7 +237,7 @@
           },
           createListenSession: (config, sink, instanceId) =>
             new MicroAppAudioSession({
-              resourceId: currentResourceId ?? '',
+              resourceId: () => currentResourceId ?? '',
               instanceId,
               config,
               sink,

@@ -339,6 +339,22 @@ export const MICRO_APP_API_METHODS: readonly MicroAppApiMethodSpec[] = [
     since: 'P1',
   },
   {
+    method: 'ai.cancel',
+    capability: 'ai.chat',
+    signature: 'ai.cancel(target): Promise<void>',
+    params: 'target: 在途流 id（垫片迭代器 return() 自动发出）',
+    returns: 'void（取消在途调用 / 流）',
+    since: 'P1',
+  },
+  {
+    method: 'ai.dispose',
+    capability: 'ai.chat',
+    signature: 'ai.dispose(): Promise<void>',
+    params: '无',
+    returns: 'void（实例收口：取消在途、释放会话）',
+    since: 'P1',
+  },
+  {
     method: 'media.listen',
     capability: 'media.listen',
     signature: "kepcup.media.listen(input?): Promise<Listener>",

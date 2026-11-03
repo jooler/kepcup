@@ -169,7 +169,7 @@ export function bindMicroAppsMethods(services: CoreServices): {
         return { ok: true as const };
       }),
       'microApps.ai.dispose': method(microAppsAiDisposeInputSchema, okOutputSchema, async (input) => {
-        ai().disposeInstance(input.instanceId);
+        ai().disposeInstance(input.instanceId, input.resourceId);
         return { ok: true as const };
       }),
       'microApps.media.transcribe': method(
