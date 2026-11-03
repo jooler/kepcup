@@ -146,15 +146,22 @@ describe('PROVIDER_TEMPLATES / createInstanceFromTemplate', () => {
     for (const id of ['google', 'groq', 'mistral']) {
       expect(getProviderTemplate(id)?.builtinCatalog).toBe(true);
       expect(getProviderTemplate(id)?.baseUrl).toBeUndefined();
+      expect(getProviderTemplate(id)?.websiteUrl).toBeDefined();
     }
     // 线协议随 ZCode 模板（anthropic 端点变体原样保留）。
     expect(getProviderTemplate('zai-api')?.api).toBe('anthropic-messages');
     expect(getProviderTemplate('zai-standard-api')?.api).toBe('openai-completions');
     expect(getProviderTemplate('openai')?.api).toBe('openai-responses');
-    // 模板图标 / baseUrl 参数合法。
+    // 模板图标 / baseUrl / websiteUrl 参数合法；目录卡必须带展示用站点地址。
     for (const template of PROVIDER_TEMPLATES) {
       if (template.baseUrl !== undefined) {
         expect(() => new URL(template.baseUrl), template.id).not.toThrow();
+      }
+      if (template.builtinCatalog === true) {
+        expect(template.websiteUrl, template.id).toBeDefined();
+      }
+      if (template.websiteUrl !== undefined) {
+        expect(() => new URL(template.websiteUrl!), template.id).not.toThrow();
       }
       if (template.logo !== undefined) {
         expect(template.logo.length, template.id).toBeGreaterThan(0);

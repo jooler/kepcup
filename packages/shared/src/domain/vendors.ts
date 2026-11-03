@@ -164,6 +164,8 @@ export interface ProviderTemplate {
   api: ProviderApi;
   /** OpenAI 兼容 / 厂商协议根；builtinCatalog 实例不需要（pi 目录自带）。 */
   baseUrl?: string;
+  /** 官网 / API 站点地址；builtinCatalog 模板无 baseUrl 时，卡片副标题用它代替目录提示。 */
+  websiteUrl?: string;
   /** 预置对话模型 id（可自由输入其他 id）。 */
   presets: readonly string[];
   /** 获取 API Key 的控制台地址（详情区提示用）。 */
@@ -680,6 +682,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Google Gemini',
     nameEn: 'Google Gemini',
     api: 'openai-completions',
+    websiteUrl: 'https://generativelanguage.googleapis.com/v1beta',
     presets: [],
     consoleUrl: 'https://aistudio.google.com/apikey',
     logo: 'model-provider-google-gemini.png',
@@ -690,6 +693,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Mistral',
     nameEn: 'Mistral',
     api: 'openai-completions',
+    websiteUrl: 'https://api.mistral.ai',
     presets: [],
     consoleUrl: 'https://console.mistral.ai/api-keys',
     logo: 'model-provider-mistral.webp',
@@ -700,6 +704,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Groq',
     nameEn: 'Groq',
     api: 'openai-completions',
+    websiteUrl: 'https://api.groq.com/openai/v1',
     presets: [],
     consoleUrl: 'https://console.groq.com/keys',
     logo: 'model-provider-groq.webp',
@@ -710,6 +715,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Fireworks',
     nameEn: 'Fireworks',
     api: 'openai-completions',
+    websiteUrl: 'https://api.fireworks.ai/inference',
     presets: [],
     consoleUrl: 'https://fireworks.ai/account/api-keys',
     logo: 'model-provider-fireworks.webp',
@@ -720,6 +726,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Together',
     nameEn: 'Together',
     api: 'openai-completions',
+    websiteUrl: 'https://api.together.ai/v1',
     presets: [],
     consoleUrl: 'https://api.together.ai/settings/api-keys',
     logo: 'model-provider-together.png',
@@ -730,6 +737,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'NVIDIA',
     nameEn: 'NVIDIA',
     api: 'openai-completions',
+    websiteUrl: 'https://integrate.api.nvidia.com/v1',
     presets: [],
     consoleUrl: 'https://build.nvidia.com/settings/api-keys',
     logo: 'model-provider-nvidia.png',
@@ -740,6 +748,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Cerebras',
     nameEn: 'Cerebras',
     api: 'openai-completions',
+    websiteUrl: 'https://api.cerebras.ai/v1',
     presets: [],
     consoleUrl: 'https://cloud.cerebras.ai',
     logo: 'model-provider-cerebras.png',
@@ -750,6 +759,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Baseten',
     nameEn: 'Baseten',
     api: 'openai-completions',
+    websiteUrl: 'https://inference.baseten.co/v1',
     presets: [],
     consoleUrl: 'https://app.baseten.co',
     logo: 'model-provider-baseten.png',
@@ -760,6 +770,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Hugging Face',
     nameEn: 'Hugging Face',
     api: 'openai-completions',
+    websiteUrl: 'https://router.huggingface.co/v1',
     presets: [],
     consoleUrl: 'https://huggingface.co/settings/tokens',
     logo: 'model-provider-huggingface.webp',
@@ -770,6 +781,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Vercel AI Gateway',
     nameEn: 'Vercel AI Gateway',
     api: 'openai-completions',
+    websiteUrl: 'https://ai-gateway.vercel.sh',
     presets: [],
     consoleUrl: 'https://vercel.com/d?to=https://vercel.com/ai-gateway',
     logo: 'model-provider-vercel.webp',
@@ -780,6 +792,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Kimi（国际 OpenAI 端点）',
     nameEn: 'Kimi (Moonshot OpenAI)',
     api: 'openai-completions',
+    websiteUrl: 'https://api.moonshot.ai/v1',
     presets: [],
     consoleUrl: 'https://platform.moonshot.ai/console/api-keys',
     logo: 'model-provider-moonshot-kimi.png',
@@ -790,6 +803,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Kimi（国内 OpenAI 端点）',
     nameEn: 'Kimi CN (OpenAI)',
     api: 'openai-completions',
+    websiteUrl: 'https://api.moonshot.cn/v1',
     presets: [],
     consoleUrl: 'https://platform.moonshot.cn/console/api-keys',
     logo: 'model-provider-moonshot-kimi.png',
@@ -800,6 +814,7 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     name: 'Ant Ling',
     nameEn: 'Ant Ling',
     api: 'openai-completions',
+    websiteUrl: 'https://api.ant-ling.com/v1',
     presets: [],
     logo: 'model-provider-ant-ling.webp',
     builtinCatalog: true,
