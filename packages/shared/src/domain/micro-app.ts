@@ -38,6 +38,7 @@ export const microAppNetSchema = z
     /** allowlist 档必须非空；每项是规范化的 https 主机名（core 校验），确认卡逐项可见。 */
     allowlist: z.array(z.string().min(1).max(253)).max(32).default([]),
   })
+  .strict()
   .default({ mode: 'open', allowlist: [] });
 export type MicroAppNet = z.infer<typeof microAppNetSchema>;
 
@@ -61,6 +62,7 @@ export const microAppManifestSchema = z.object({
       minWidth: z.number().int().min(200).max(2000).default(360),
       minHeight: z.number().int().min(200).max(4000).default(520),
     })
+    .strict()
     .default({ mode: 'immersive', minWidth: 360, minHeight: 520 }),
   /**
    * 能力闭合枚举（spec.ts）；未知项 → 拒绝交付。声明了当前运行时未实现的能力 →
@@ -74,6 +76,7 @@ export const microAppManifestSchema = z.object({
       profile: z.string().max(60).default('micro-app.light'),
       maxTokensPerSession: z.number().int().min(1000).max(MICRO_APP_TOKENS_PER_SESSION_MAX).default(20_000),
     })
+    .strict()
     .default({ profile: 'micro-app.light', maxTokensPerSession: 20_000 }),
   net: microAppNetSchema,
   /** 只读查询模板清单（沿用组件的预审管线）。 */
@@ -177,6 +180,11 @@ export const microAppsPreflightOutputSchema = z.object({
   capabilityFingerprint: z.string(),
   /** 生效版本的 bundle 摘要（「代码已更新，权限未扩大」徽标的判定）。 */
   bundleSha256: z.string(),
+  /**
+   * 生效版本的清单摘要：确认卡展示的能力清单 / 网络行 / 成本必须来自**将要运行的
+   * 版本**（卡片自带的摘要钉在发卡时，双指针前移后会过期）。
+   */
+  microApp: microAppCardSummarySchema,
   items: z.array(microAppsPreflightItemSchema),
 });
 export type MicroAppsPreflightOutput = z.infer<typeof microAppsPreflightOutputSchema>;

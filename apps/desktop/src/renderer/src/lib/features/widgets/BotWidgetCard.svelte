@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Blocks, Code2, Globe, Mic, Play, RefreshCw, Settings2, ShieldCheck } from '@lucide/svelte';
+  import { Blocks, Code2, Globe, Play, RefreshCw, Settings2, ShieldCheck, WifiOff } from '@lucide/svelte';
   import {
     MICRO_APP_CAPABILITIES,
     microAppsPreflightOutputSchema,
@@ -14,6 +14,7 @@
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { widgetViewer } from './widget-viewer.svelte';
   import { rememberWidgetConsent, widgetConsented } from './consent.svelte';
@@ -56,16 +57,19 @@
   // --- 微应用（D112）：预检 + 指纹确认 ------------------------------------------
   /** 带 `microApp` 清单才有；预检挂载时懒加载（与海报并行）。 */
   const isMicroApp = $derived(card.microApp !== undefined);
+  /** 计费 Bot 的名字（成本行展示用；通讯录未加载 / 已删除时回退 botId）。 */
+  const botName = $derived(
+    card.botId === null ? null : (contacts.bots.find((bot) => bot.id === card.botId)?.name ?? null),
+  );
   let preflight = $state<MicroAppsPreflightOutput | null>(null);
-  /** 生效指纹：预检回来前用卡片自带的（可能过期）——门控以预检为准，未回来前按未确认处理。 */
-  const effectiveFingerprint = $derived(preflight?.capabilityFingerprint ?? card.capabilityFingerprint ?? '');
+  let preflightFailed = $state(false);
+  /** 生效摘要 / 指纹 / bundle：以预检（= 将要运行的版本）为准；预检失败即门控（不能拿
+   * 卡片上可能过期的能力面放行——那是能力扩大时唯一会漏的口子）。 */
+  const effective = $derived(preflight?.microApp ?? card.microApp);
+  const effectiveFingerprint = $derived(preflight?.capabilityFingerprint ?? '');
   const consentState = $derived(
     isMicroApp && effectiveFingerprint !== ''
-      ? microAppCardConsented(
-          card,
-          effectiveFingerprint,
-          preflight?.bundleSha256 ?? card.bundleSha256,
-        )
+      ? microAppCardConsented(card, effectiveFingerprint, preflight?.bundleSha256)
       : { ok: false as const },
   );
   /** 同指纹但代码更新（bundle 变）：沿用确认，卡上标「代码已更新，权限未扩大」。 */
@@ -76,7 +80,7 @@
     preflight !== null ? preflight.items.filter((item) => !item.available) : [],
   );
   const capabilityLines = $derived(
-    (card.microApp?.permissions ?? [])
+    (effective?.permissions ?? [])
       .map((id) => MICRO_APP_CAPABILITIES.find((cap) => cap.id === id))
       .filter((cap) => cap !== undefined),
   );
@@ -84,10 +88,22 @@
   /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「确认并打开」。 */
   const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
   const needsConsent = $derived(
-    isMicroApp ? !consentState.ok || effectiveFingerprint === '' : !widgetConsented(card),
+    isMicroApp ? preflightFailed || !consentState.ok : !widgetConsented(card),
   );
   /** 审查态未完成（未确认或查询未预审）：海报不可点，确认入口在下方审查块。 */
   const reviewFirst = $derived(needsReview || needsConsent);
+
+  async function loadPreflight(): Promise<void> {
+    preflightFailed = false;
+    try {
+      preflight = microAppsPreflightOutputSchema.parse(
+        await core.call('microApps.preflight', { messageId }),
+      );
+    } catch {
+      preflight = null;
+      preflightFailed = true;
+    }
+  }
 
   onMount(() => {
     void (async () => {
@@ -102,17 +118,7 @@
         posterLoading = false;
       }
     })();
-    if (isMicroApp) {
-      void (async () => {
-        try {
-          preflight = microAppsPreflightOutputSchema.parse(
-            await core.call('microApps.preflight', { messageId }),
-          );
-        } catch {
-          preflight = null;
-        }
-      })();
-    }
+    if (isMicroApp) void loadPreflight();
   });
 
   function openRuntime(): void {
@@ -124,11 +130,11 @@
     openRuntime();
   }
 
-  /** 审查块的「确认并打开」：记忆确认（组件按版本 / 微应用按能力面指纹）后立即运行。 */
+  /** 审查块的「确认并打开」：记忆确认（组件按版本 / 微应用按能力面指纹 + 生效 bundle）后立即运行。 */
   function confirmAndOpen(): void {
     if (isMicroApp) {
-      if (effectiveFingerprint === '') return;
-      rememberMicroAppConsent(card, effectiveFingerprint, card.bundleSha256 ?? '');
+      if (effectiveFingerprint === '' || preflight === null) return;
+      rememberMicroAppConsent(card, effectiveFingerprint, preflight.bundleSha256);
     } else {
       rememberWidgetConsent(card);
     }
@@ -215,19 +221,20 @@
   {#if reviewFirst}
     <div class="border-t px-3 py-2" data-testid="bot-widget-review">
       {#if isMicroApp}
-        <!-- 微应用确认卡（D112 §5.2）：网络行单独一行、排在能力清单之前、不折叠。 -->
+        <!-- 微应用确认卡（D112 §5.2）：网络行单独一行、排在能力清单之前、不折叠。
+             能力 / 网络 / 成本一律展示**生效版本**（预检摘要），不是发卡时的旧摘要。 -->
         <div class="mb-2 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1.5" data-testid="bot-widget-microapp">
           <p class="flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
-            {#if card.microApp!.netMode === 'none'}
-              <Mic class="size-3.5 shrink-0" aria-hidden="true" />
+            {#if effective!.netMode === 'none'}
+              <WifiOff class="size-3.5 shrink-0" aria-hidden="true" />
               {t('botWidget.microApp.netNone')}
             {:else}
               <Globe class="size-3.5 shrink-0" aria-hidden="true" />
-              {#if card.microApp!.netMode === 'open'}
+              {#if effective!.netMode === 'open'}
                 {t('botWidget.microApp.netOpen')}
               {:else}
                 {t('botWidget.microApp.netAllowlist', {
-                  domains: card.microApp!.netAllowlist.join('、'),
+                  domains: effective!.netAllowlist.join('、'),
                 })}
               {/if}
             {/if}
@@ -249,16 +256,13 @@
               <li>{cap.userLine}</li>
             {/each}
           </ul>
-          {#if card.microApp!.maxTokensPerSession !== undefined}
+          {#if effective!.maxTokensPerSession !== undefined}
             <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-cost">
               {t('botWidget.microApp.cost', {
-                n: card.microApp!.maxTokensPerSession,
-                bot: card.botId ?? '',
+                n: effective!.maxTokensPerSession,
+                bot: botName ?? card.botId ?? '',
               })}
             </p>
-          {/if}
-          {#if preflight !== null && preflight.items.length !== capabilityLines.length}
-            <!-- 预检覆盖了清单外的能力面（异常态）：不展示，避免误导；正常时逐项对应。 -->
           {/if}
           {#each unavailableItems as item (item.capability)}
             <p class="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400" data-testid="bot-widget-microapp-unavailable">
@@ -283,7 +287,18 @@
               {/if}
             </p>
           {/each}
-          {#if preflight === null}
+          {#if preflightFailed}
+            <p class="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400" data-testid="bot-widget-microapp-preflight-failed">
+              {t('botWidget.microApp.preflightFailed')}
+              <button
+                type="button"
+                class="underline underline-offset-2"
+                onclick={() => void loadPreflight()}
+              >
+                {t('botWidget.microApp.preflightRetry')}
+              </button>
+            </p>
+          {:else if preflight === null}
             <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-preflight-loading">
               {t('botWidget.microApp.preflightLoading')}
             </p>

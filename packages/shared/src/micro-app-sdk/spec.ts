@@ -474,6 +474,10 @@ export const MICRO_APP_ERROR_HINTS: readonly MicroAppErrorHintSpec[] = [
     code: 'MICRO_APP_AI_UNAVAILABLE',
     hint: '模型暂时不可用（厂商错误 / 未配置）：显示可读错误并保留进度（先写 storage 再提示），不要白屏。',
   },
+  {
+    code: 'MICRO_APP_BRIDGE_CLOSED',
+    hint: '宿主断开了能力桥（背压超窗 / 卡片卸载 / 桥重置）：在 app.on(\'bridge-reset\') 里重读 app.ready() 状态并恢复界面，不要自动重试在途调用。',
+  },
 ];
 
 export function microAppErrorHintOf(code: string): string | undefined {

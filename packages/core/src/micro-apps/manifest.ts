@@ -90,6 +90,11 @@ export function validateMicroAppManifest(raw: unknown, html: string): ValidatedM
   if (html.trim() === '') {
     throw fail('入口 HTML 不能为空');
   }
+  // 入口 HTML 不能自带旧版组件垫片（审查修复）：宿主会注入微应用垫片，页面里残留的
+  // v1 垫片会在其后执行并覆盖 window.kepcup，把桥 v2 客户端换成 v1——运行时错乱。
+  if (html.includes('kepcup-widget-sdk-v1') || html.includes('kepcup-widget-sdk-v2')) {
+    throw fail('入口 HTML 内嵌了组件 SDK 垫片（kepcup-widget-sdk-*）：删掉它，宿主会为微应用注入正确的 SDK');
+  }
   return {
     manifest,
     fingerprint: microAppFingerprintOfManifest(manifest),

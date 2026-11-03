@@ -647,30 +647,45 @@ export class WidgetService {
   }
 
   /**
-   * 海报截图（对话卡片静态展示用，懒加载）：取卡片钉住版本的自检截图。只读展示——
-   * 不做 `#pinnedVersion` 的摘要强校验（截图损坏不至于挂不上组件，回退占位即可）。
+   * 海报截图（对话卡片静态展示用，懒加载）：取生效版本的自检截图（微应用随双指针走，
+   * 用户看到的截图对应将要运行的版本）。只读展示——不做摘要强校验（截图损坏不至于
+   * 挂不上，回退占位即可；生效版本解析失败时退回卡片钉住版本）。
    */
   poster(messageId: string): WidgetsUiPosterOutput {
     const { card } = this.cardOf(messageId);
+    let version = card.version;
+    if (card.microApp !== undefined) {
+      try {
+        version = this.#resolveEffectiveVersion(card).version.version;
+      } catch {
+        version = card.version;
+      }
+    }
     const row = this.#deps.db
       .prepare('select poster_png from widget_versions where widget_id = ? and version = ?')
-      .get(card.widgetId, card.version) as { poster_png: string | null } | undefined;
+      .get(card.widgetId, version) as { poster_png: string | null } | undefined;
     return { posterPng: row?.poster_png ?? null };
   }
 
   // --- 挂载与协议服务 ------------------------------------------------------------
 
   /** 卡片挂载：登记内存资源，返回渲染端挂 iframe 所需的信息。 */
-  open(input: { messageId: string; theme?: WidgetTheme | undefined }): WidgetsUiOpenOutput {
+  open(input: {
+    messageId: string;
+    theme?: WidgetTheme | undefined;
+    pinVersion?: number | undefined;
+  }): WidgetsUiOpenOutput {
     const { message, card } = this.cardOf(input.messageId);
-    // 生效版本（存量 = 卡片钉住版本 + 完整性校验；微应用 = next_version 双指针）。
-    const { version, microApp } = this.#resolveEffectiveVersion(card);
+    // 生效版本（存量 = 卡片钉住版本 + 完整性校验；微应用 = 续期钉住 / next_version 双指针）。
+    const { version, microApp } = this.#resolveEffectiveVersion(card, input.pinVersion);
     // 预审强制化：带查询模板的版本，用户没在审查态展开过 SQL 全文就不许加载——
     // 渲染端按钮也会门控，这里是不依赖 UI 的那一侧。
     if (version.queries_sha256 !== '' && version.queries_reviewed_at === null) {
       throw new AppError(
         'WIDGET_REVIEW_REQUIRED',
-        '这个版本带数据库查询模板，加载前需要先在「查看源码」里展开审查查询 SQL',
+        microApp !== null
+          ? '这个微应用版本带数据库查询模板，加载前需要先在「查看源码」里展开审查查询 SQL'
+          : '这个组件版本带数据库查询模板，加载前需要先在「查看源码」里展开审查查询 SQL',
       );
     }
     const entry = this.store.put({
@@ -818,7 +833,7 @@ export class WidgetService {
     // 只取描述符要的列：发卡用不着把最多 2MB 的 html 读出来。
     const version = (this.#deps.db
       .prepare(
-        'select version, sha256, queries_sha256, size_bytes, created_at, check_status, check_summary_json from widget_versions where widget_id = ? and version = ?',
+        'select version, sha256, queries_sha256, size_bytes, created_at, check_status, check_summary_json, manifest_json, bundle_sha256, permissions_json from widget_versions where widget_id = ? and version = ?',
       )
       .get(widget.id, widget.latest_version) ?? null) as Pick<
       WidgetVersionRow,
@@ -829,6 +844,9 @@ export class WidgetService {
       | 'created_at'
       | 'check_status'
       | 'check_summary_json'
+      | 'manifest_json'
+      | 'bundle_sha256'
+      | 'permissions_json'
     > | null;
     if (version === null) {
       return { ok: false, message: '组件的最新版本已不存在', code: 'NOT_FOUND' };
@@ -840,7 +858,9 @@ export class WidgetService {
     ).n;
     const run = this.#acquireRunSlot(input.runId ?? '');
     if (!run.ok) return run;
-    // widget_publish 发出的卡沿用该版本的自检状态（设计 32 §11.12）。
+    // 发卡的微应用字段同样不能丢（审查修复 F1）：丢字段会把微应用降级回组件运行时
+    // （v1 垫片 / 未收紧 CSP / 逐版本确认），违背「不做双运行时」。
+    const publishedMicroApp = manifestOfRow(version.manifest_json);
     const card = this.#emitCard({
       checkStatus: version.check_status,
       knownIssues: knownIssuesOf(version.check_summary_json),
@@ -857,6 +877,7 @@ export class WidgetService {
       createdAt: version.created_at,
       conversationId: input.conversationId,
       runId: input.runId ?? '',
+      ...microAppCardFields(publishedMicroApp, version.bundle_sha256),
     });
     return {
       ok: true,
@@ -1006,9 +1027,19 @@ export class WidgetService {
       const now = this.#deps.clock.now();
       this.#deps.db
         .prepare(
-          "insert into widgets (id, bot_id, conversation_id, scope, title, description, latest_version, created_at, updated_at) values (?, ?, null, 'bot', ?, ?, ?, ?, ?)",
+          "insert into widgets (id, bot_id, conversation_id, scope, title, description, latest_version, created_at, updated_at, next_version) values (?, ?, null, 'bot', ?, ?, ?, ?, ?, ?)",
         )
-        .run(newWidgetId, toBotId, source.title, source.description, source.latest_version, now, now);
+        .run(
+          newWidgetId,
+          toBotId,
+          source.title,
+          source.description,
+          source.latest_version,
+          now,
+          now,
+          // 版本指针随行复制（审查修复）：副本的旧卡重开时同样落在被指向的版本上。
+          source.next_version,
+        );
       versions = Number(
         this.#deps.db
           .prepare(
@@ -1431,15 +1462,19 @@ export class WidgetService {
   /**
    * 生效版本解析（D112，设计 55 §9.1 版本双指针）：
    * - 存量组件（卡片无 `microApp`）：卡片钉住版本 + 既有完整性校验（`#pinnedVersion`），行为零变化；
-   * - 微应用：`widgets.next_version ?? 卡片钉住版本`——升级落新版本后重新打开生效，
-   *   不热替换运行中的实例。行被修剪 → 既有「这个版本已不存在」口径。
+   * - 微应用：`pinVersion`（运行中实例的续期）→ `widgets.next_version` → 卡片钉住版本——
+   *   升级落新版本后**重新打开**生效，不热替换运行中的实例（续期钉住当前版本）。
+   *   行被修剪 → 既有「这个版本已不存在」口径。
    */
-  #resolveEffectiveVersion(card: WidgetCard): { version: WidgetVersionRow; microApp: ValidatedMicroApp | null } {
+  #resolveEffectiveVersion(
+    card: WidgetCard,
+    pinVersion?: number,
+  ): { version: WidgetVersionRow; microApp: ValidatedMicroApp | null } {
     if (card.microApp === undefined) {
       return { version: this.#pinnedVersion(card), microApp: null };
     }
     const widget = this.#widgetOf(card.widgetId);
-    const effective = widget?.next_version ?? card.version;
+    const effective = pinVersion ?? widget?.next_version ?? card.version;
     const version = this.#versionOf(card.widgetId, effective);
     if (version === null) {
       throw new AppError(
@@ -1568,15 +1603,17 @@ function cardCheckFields(
   return { checkStatus: check.status, knownIssues: check.summary.knownIssues };
 }
 
-/** 卡片描述符里的微应用字段（D112）：存量组件路径返回空对象，卡片形状不变。 */
+/** 卡片描述符里的微应用字段（D112）：存量组件路径返回空对象，卡片形状不变。
+ * `bundleSha256` 以版本行落库的摘要为准（`manifestOfRow` 恢复的记录不带内容摘要）。 */
 function microAppCardFields(
   microApp: ValidatedMicroApp | null,
+  rowBundleSha256 = '',
 ): Pick<WidgetCard, 'microApp' | 'capabilityFingerprint' | 'bundleSha256'> {
   if (microApp === null) return {};
   return {
     microApp: microAppCardSummaryOf(microApp.manifest),
     capabilityFingerprint: microApp.fingerprint,
-    bundleSha256: microApp.bundleSha256,
+    bundleSha256: rowBundleSha256 !== '' ? rowBundleSha256 : microApp.bundleSha256,
   };
 }
 

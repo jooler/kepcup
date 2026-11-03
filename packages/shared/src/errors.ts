@@ -241,6 +241,8 @@ export const ERROR_CODES = [
   'MICRO_APP_AI_BUSY',
   /** 模型暂时不可用（厂商错误 / 未配置）；微应用应显示可读错误并保留进度。 */
   'MICRO_APP_AI_UNAVAILABLE',
+  /** 宿主断开能力桥（背压超窗 / 卡片卸载 / 桥重置）；在途调用以此收口，不要自动重试。 */
+  'MICRO_APP_BRIDGE_CLOSED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

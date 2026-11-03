@@ -105,3 +105,17 @@
 - `app.*` 事件通道的动态订阅上限（32）在协议常量与 host 结构上就位，媒体订阅 P1 接线。
 - `microApps.preflight` 的 P0 探针全为恒可用；P1 注册 ai/media 探针后才有「当前不可用」分支的真实数据。
 
+## 第一轮审查与修复（2026-11-04）
+
+独立子代理审查（输入 = P0 diff + 55 §3–§6/§9.1/§11/§13.2/§14 P0 + 验收清单）结论 SHIP，产出 5 条 P1、7 条 P2、11 条 P3。全部 P1/P2 与可低成本修复的 P3 已修复并补测试：
+
+1. **publish 丢微应用字段（P1）**：发卡改带 `microAppCardFields`（bundle 以版本行为准），补回归测试（降级双运行时 = 设计红线）。
+2. **垫片 `app.on('theme')` 不派发（P1）**：theme 分支补 `dispatchLocal`；新增 vm 真实执行测试（垫片 ↔ host 帧互演：ready/ack/error+hint/theme/订阅上限/close/setTitle/reply 无手势）。
+3. **确认卡展示发卡时摘要而非生效摘要（P1）**：`microApps.preflight` 输出增 `microApp` 生效摘要，卡片能力 / 网络 / 成本一律以预检为准。
+4. **续期可能换掉在跑实例（P1）**：`widgets.ui.open` 增 `pinVersion`（微应用续期钉住运行中版本；存量忽略），WidgetRuntime 续期传入。
+5. **门控测试缺口（P1）**：抽 `micro-app-gate.ts` 纯判定（pre-open fail-closed + open 后生效指纹复核）+ 测试。
+6. confirmAndOpen 存生效 bundle（P2/F6）；检查器 hint 从 spec 枚举派生（F7）；订阅上限在垫片强制（F8）；预检失败显式重试态且门控不放行（F9）；移交复制带 `next_version`（F10）；close 帧改 `MICRO_APP_BRIDGE_CLOSED`（新码 + hint + i18n，F11）；成本行显示 Bot 名（通讯录回退 botId，F12）；预审报错文案按形态分文案恢复存量原句（F13）；sdk.md 按字节校验（F14）；清单嵌套对象 strict（F15）；`netNone` 用 WifiOff 图标（F19）；`event-ack seq=0` 接受（F18）；poster 随生效版本（F21）；交付拒绝内嵌 v1 垫片的入口 HTML（F17）。
+7. 未修（记录在案）：settingDeepLink.section 的类型收敛（P1 探针产出常量时一并做）；版本偏移下旧渲染器开新卡（Electron 原子更新语义内可接受）。
+
+修复后定向回归 71 文件 912 通过 / 1 跳过；`shared`/`core` build 与 `desktop` typecheck 全过。
+

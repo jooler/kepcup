@@ -386,6 +386,59 @@ describe('运行面：垫片与 CSP', () => {
     expect(opened.capabilityFingerprint).toBe(cardOfLast().capabilityFingerprint);
     expect(opened.bundleSha256).toBe(cardOfLast().bundleSha256);
   });
+
+  it('publish 发卡不丢微应用字段（审查修复 F1：降级回组件运行时 = 双运行时）', () => {
+    const { widgetId } = createMicroApp();
+    // 升到 bot 级（publish 只接受 bot 级）。
+    db.prepare("update widgets set scope = 'bot', conversation_id = null where id = ?").run(widgetId);
+    const published = service.publish({ botId: 'bot_a', widgetId, conversationId: 'conv_1', runId: null });
+    expect(published.ok).toBe(true);
+    const card = cardOfLast();
+    expect(card.microApp?.slug).toBe('english-corner');
+    expect(card.capabilityFingerprint).toMatch(/storage\.kv/);
+    // 发出的卡按微应用路径打开（v2 垫片 + 指纹）。
+    const opened = service.open({ messageId: cards[cards.length - 1]!.id });
+    expect(opened.microApp).toBeDefined();
+    const resource = service.resource({ resourceId: opened.resourceId, host: widgetUiHostFor(opened.widgetId) });
+    expect(resource.html).toContain('kepcup-micro-app-sdk-v1');
+  });
+
+  it('续期钉住运行中的版本（审查修复 F4：升级不热替换在跑实例）', () => {
+    const { widgetId, messageId } = createMicroApp();
+    expect(service.open({ messageId }).version).toBe(1);
+    service.update({
+      botId: 'bot_a',
+      widgetId,
+      html: `${HTML}<!-- v2 -->`,
+      changeNote: '',
+      runId: 'r2',
+      manifest: MANIFEST,
+    });
+    // 续期（pinVersion=1）：仍是 v1，即便 next_version 已指向 v2。
+    expect(service.open({ messageId, pinVersion: 1 }).version).toBe(1);
+    // 全新打开：v2（双指针生效）。
+    expect(service.open({ messageId }).version).toBe(2);
+    // 存量组件忽略 pinVersion（本来就钉卡片版本）。
+    const legacy = service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: 'legacy',
+      description: '',
+      html: HTML,
+      scope: 'conversation',
+      runId: 'r3',
+    });
+    expect(legacy.ok).toBe(true);
+    service.update({
+      botId: 'bot_a',
+      widgetId: legacy.ok ? legacy.widgetId : '',
+      html: `${HTML}<!-- v2 -->`,
+      changeNote: '',
+      runId: 'r4',
+    });
+    const legacyCardId = cards[cards.length - 1]!.id;
+    expect(service.open({ messageId: legacyCardId, pinVersion: 99 }).version).toBe(2);
+  });
 });
 
 describe('能力可用性预检（microApps.preflight 的服务面）', () => {

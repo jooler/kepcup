@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import {
   AppError,
+  microAppCardSummaryOf,
   microAppsPreflightInputSchema,
   microAppsPreflightOutputSchema,
 } from '@kepcup/shared';
@@ -48,6 +49,7 @@ export function bindMicroAppsMethods(services: CoreServices): {
             version: effective.version,
             capabilityFingerprint: effective.microApp.fingerprint,
             bundleSha256: effective.bundleSha256,
+            microApp: microAppCardSummaryOf(effective.microApp.manifest),
             items: runMicroAppPreflight(
               effective.microApp.manifest.permissions,
               microAppPreflightProbes(services),
