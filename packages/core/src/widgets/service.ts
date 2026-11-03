@@ -630,11 +630,17 @@ export class WidgetService {
 
   /**
    * 微应用的生效清单（`microApps.preflight` 用，D112 §5.2）：卡片 → 生效版本 → 清单。
-   * 返回 null = 这张卡是存量组件（无预检面）。
+   * 返回 null = 这张卡是存量组件（无预检面）。`queriesNeedReview` 跟着生效版本——
+   * 卡片上冻结的 queriesCount 在双指针前移后会过期。
    */
-  effectiveMicroAppOf(
-    messageId: string,
-  ): { widgetId: string; version: number; microApp: ValidatedMicroApp; bundleSha256: string } | null {
+  effectiveMicroAppOf(messageId: string): {
+    widgetId: string;
+    version: number;
+    microApp: ValidatedMicroApp;
+    bundleSha256: string;
+    queriesNeedReview: boolean;
+    queriesCount: number;
+  } | null {
     const { card } = this.cardOf(messageId);
     const { version, microApp } = this.#resolveEffectiveVersion(card);
     if (microApp === null) return null;
@@ -643,6 +649,8 @@ export class WidgetService {
       version: version.version,
       microApp,
       bundleSha256: version.bundle_sha256,
+      queriesNeedReview: version.queries_sha256 !== '' && version.queries_reviewed_at === null,
+      queriesCount: this.#queriesOf(card.widgetId, version.version).length,
     };
   }
 
@@ -1009,6 +1017,8 @@ export class WidgetService {
   copyForHandover(widgetId: string, toBotId: string, toName: string): { widgetId: string; versions: number } {
     const newWidgetId = newId('wgt');
     let versions = 0;
+    // 注：微应用的确认按 widgetId + 能力面指纹记忆在本机，副本是新 id——用户需重新确认
+    // 一次（安全侧；行内的 queries_reviewed_at / 清单 / bundle 照搬，能力面没变时指纹相同）。
     this.#deps.db.transaction(() => {
       // Both bots must still be live inside the transaction (a deletion clears widgets and
       // only later tombstones the row: never insert rows for a bot being deleted).

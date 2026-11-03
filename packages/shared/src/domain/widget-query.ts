@@ -18,6 +18,8 @@ export const BOT_WIDGET_QUERY_SQL_MAX_BYTES = 64 * 1024;
  * SQL 在交付时被用户人工预审（审查态「查看源码」可见全文），运行时只能按名字调用，
  * 输入只有参数、没有 SQL——这是 query 免审批的唯一理由（运行时 raw SQL 透传永久不做）。
  */
+// 注意：查询定义**不是** strict——`widget-check-run.test.ts` 锁住了「多余键静默剥离」的
+// 规范化语义（canonical {name, sql}）。与微应用清单（strict）有意不同。
 export const widgetQueryDefSchema = z.object({
   /** 组件内 `kepcup.query(name, params)` 的名字。 */
   name: z
