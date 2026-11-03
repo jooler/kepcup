@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, tick, type Component } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
+import { onDestroy, tick, type Component } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
+import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import {
     ArrowDown,
     ArrowUp,
@@ -60,17 +61,25 @@
     visibleSettingsSections,
   } from '$lib/features/settings/settings-sections-list';
   import type { SettingsPageSection } from '$lib/features/settings/sections';
-  import {
-    UNASSIGNED_SECTION_ID,
-    SECTION_NAME_MAX,
-    conversationActivityOf,
-    dropBeforeId,
-    isConversationPinned,
-    isSectionMoveNoop,
-    layoutSidebarSections,
-    sectionIdOf,
-    sectionStepTarget,
-  } from './sidebar-sections';
+import {
+  UNASSIGNED_SECTION_ID,
+  SECTION_NAME_MAX,
+  conversationActivityOf,
+  isConversationPinned,
+  layoutSidebarSections,
+  sectionIdOf,
+  sectionStepTarget,
+  type SectionGroup,
+} from './sidebar-sections';
+import {
+  anchorFromFinalize,
+  boardFlipDurationMs,
+  createClickGuard,
+  draggedElementHeight,
+  isNoopMove,
+  isShadow,
+  stripShadow,
+} from '$lib/features/board/board-dnd';
   import {
     SIDEBAR_SORT_DEBOUNCE_MS,
     SIDEBAR_SORT_MAX_WAIT_MS,
@@ -201,10 +210,18 @@
   let renameDraft = $state('');
   let renameInput = $state<HTMLInputElement | null>(null);
   let renameCancelled = false;
-  /** 分组标题拖拽。beforeId 为 null 表示落到末尾。 */
-  let sectionDrag = $state<{ id: string; beforeId: string | null } | null>(null);
-  let sectionDragMoved = false;
-  let sectionDragSeq = 0;
+  /**
+   * 分组标题拖拽（svelte-dnd-action，同工作台备忘分组区）：组名 header 是把手，
+   * 整个分组块（header + 对话行）作为 zone item 被克隆跟随光标，原位由高度钉住
+   * 的 shadow 占位。type 用独立名——左栏与工作台同时挂载，不能与备忘分组区
+   * （type 'group'）互通。beforeId 由 anchorFromFinalize 给出，null 表示落到末尾。
+   */
+  let sectionItems = $state.raw<SectionGroup<ConversationView>[]>([]);
+  let sectionDragging = $state(false);
+  let sectionShadowHeight = $state<number | null>(null);
+  let reducedMotion = $state(false);
+  const sectionClickGuard = createClickGuard();
+  const sectionFlipDurationMs = $derived(boardFlipDurationMs(reducedMotion));
   const contextConversation = $derived(
     contextMenu === null
       ? null
@@ -645,69 +662,81 @@
     toast.success(t('sidebar.sectionDeleted'));
   }
 
-  function dropIsNoop(beforeId: string | null, draggingId: string): boolean {
-    return isSectionMoveNoop(sidebarSections.state.order, draggingId, beforeId);
+  /** 拖拽区 items 与 sectionLayout 的同步：拖拽中外部重排（活动快照去抖提交、归属
+   *  变化）不覆盖本地 items，否则 shadow 占位会被冲掉；结束后下一次同步自然对齐。 */
+  $effect(() => {
+    const next = sectionLayout.groups;
+    if (sectionDragging) return;
+    sectionItems = next;
+  });
+
+  // 拖拽动画跟随系统「减少动态效果」设置（同工作台备忘/看板）。
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reducedMotion = media.matches;
+    const onChange = (): void => {
+      reducedMotion = media.matches;
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  });
+
+  /** 库不带 auto-scroll：拖拽期间靠近内容区上下边缘时继续滚动（沿用旧实现的手感）。 */
+  function onSectionDragAutoScroll(event: MouseEvent): void {
+    const scroller = document.querySelector<HTMLElement>('[data-slot="sidebar-content"]');
+    if (scroller === null) return;
+    const bounds = scroller.getBoundingClientRect();
+    if (event.clientY < bounds.top + 28) scroller.scrollTop -= 10;
+    else if (event.clientY > bounds.bottom - 28) scroller.scrollTop += 10;
   }
 
-  function onSectionPointerDown(event: PointerEvent, sectionId: string): void {
-    if (event.button !== 0 || event.ctrlKey || renamingSectionId !== null) return;
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLElement)) return;
-    const startY = event.clientY;
-    const pointerId = event.pointerId;
-    sectionDragMoved = false;
-    try {
-      target.setPointerCapture(pointerId);
-    } catch {
-      // 指针已松开时捕获会失败，退回普通点击。
-    }
+  function setSectionDragging(value: boolean): void {
+    sectionDragging = value;
+    if (value) window.addEventListener('mousemove', onSectionDragAutoScroll);
+    else window.removeEventListener('mousemove', onSectionDragAutoScroll);
+  }
 
-    const finish = (ev: PointerEvent): void => {
-      if (ev.pointerId !== pointerId) return;
-      target.removeEventListener('pointermove', move);
-      target.removeEventListener('pointerup', finish);
-      target.removeEventListener('pointercancel', finish);
-      if (sectionDragMoved && sectionDrag !== null) {
-        sidebarSections.move(sectionDrag.id, sectionDrag.beforeId);
-      }
-      sectionDrag = null;
-      // click 紧跟 pointerup。拖过之后吞掉这一下；若浏览器没派发 click，稍后放行下一次点击。
-      if (sectionDragMoved) {
-        const seq = (sectionDragSeq += 1);
-        setTimeout(() => {
-          if (sectionDragSeq === seq) sectionDragMoved = false;
-        }, 50);
-      }
-    };
-    const move = (ev: PointerEvent): void => {
-      if (ev.pointerId !== pointerId) return;
-      if (!sectionDragMoved && Math.abs(ev.clientY - startY) < 4) return;
-      sectionDragMoved = true;
-      const scroller = target.closest('[data-slot="sidebar-content"]');
-      if (scroller instanceof HTMLElement) {
-        const bounds = scroller.getBoundingClientRect();
-        if (ev.clientY < bounds.top + 28) scroller.scrollTop -= 10;
-        else if (ev.clientY > bounds.bottom - 28) scroller.scrollTop += 10;
-      }
-      const rows = [...document.querySelectorAll<HTMLElement>('[data-section-header]')].map(
-        (header) => {
-          const rect = header.getBoundingClientRect();
-          return { id: header.dataset.sectionId ?? '', top: rect.top, bottom: rect.bottom };
-        },
-      );
-      sectionDrag = { id: sectionId, beforeId: dropBeforeId(rows, ev.clientY, sectionId) };
-    };
-    target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', finish);
-    target.addEventListener('pointercancel', finish);
+  onDestroy(() => setSectionDragging(false));
+
+  function onSectionConsider(event: CustomEvent<DndEvent<SectionGroup<ConversationView>>>): void {
+    const info = event.detail.info;
+    if (info.trigger === 'dragStopped') {
+      sectionShadowHeight = null;
+      setSectionDragging(false);
+      return;
+    }
+    if (info.trigger === 'dragStarted') sectionShadowHeight = draggedElementHeight();
+    sectionItems = event.detail.items;
+    setSectionDragging(true);
+  }
+
+  function onSectionFinalize(event: CustomEvent<DndEvent<SectionGroup<ConversationView>>>): void {
+    const info = event.detail.info;
+    sectionShadowHeight = null;
+    // 拖完浏览器会合成 click；先武装守卫，别让它触发折叠切换。
+    if (info.source === 'pointer') sectionClickGuard.arm();
+    const decision = anchorFromFinalize({
+      items: event.detail.items,
+      droppedId: info.id,
+      info,
+    });
+    if (decision.kind === 'ignore') {
+      if (info.trigger === 'droppedIntoAnother') sectionItems = stripShadow(event.detail.items);
+      if (info.source !== 'keyboard') setSectionDragging(false);
+      return;
+    }
+    const next = stripShadow(event.detail.items);
+    const prevIds = sectionLayout.groups.map((group) => group.id);
+    sectionItems = next;
+    if (!isNoopMove(prevIds, next.map((group) => group.id))) {
+      sidebarSections.move(info.id, decision.beforeId);
+    }
+    if (info.source !== 'keyboard') setSectionDragging(false);
   }
 
   function onSectionClick(sectionId: string): void {
-    if (sectionDragMoved) {
-      sectionDragMoved = false;
-      sectionDragSeq += 1;
-      return;
-    }
+    if (sectionClickGuard.ignores()) return;
     sidebarSections.toggle(sectionId);
   }
 
@@ -1190,75 +1219,91 @@
                 {/each}
               </Sidebar.Menu>
             {/if}
-            {#each sectionLayout.groups as group, groupIndex (group.id)}
-              {@const rows = conversationsInGroup(group.id, group.conversations)}
-              <div class="relative {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}">
-                {#if sectionLayout.showHeaders}
-                  {#if sectionDrag !== null && sectionDrag.beforeId === group.id && !dropIsNoop(sectionDrag.beforeId, sectionDrag.id)}
-                    <div
-                      class="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-foreground/70"
-                      data-testid="section-drop-line"
-                    ></div>
-                  {/if}
-                  {#if renamingSectionId === group.id}
-                    <form
-                      onsubmit={(event) => {
-                        event.preventDefault();
-                        commitRename(group.id);
-                      }}
-                    >
-                      <Input
-                        bind:value={renameDraft}
-                        bind:ref={renameInput}
-                        maxlength={SECTION_NAME_MAX}
-                        class="h-8 text-sm"
-                        data-testid={`section-rename-input-${group.id}`}
-                        onkeydown={cancelRename}
-                        onblur={() => commitRename(group.id)}
-                      />
-                    </form>
-                  {:else}
-                    <button
-                      type="button"
-                      class="flex w-full touch-none items-center gap-2 px-1.5 rounded-md text-left text-xs text-muted-foreground select-none
-                      {sectionDrag?.id === group.id
-                        ? 'cursor-grabbing opacity-50'
-                        : 'cursor-pointer'}"
-                      aria-expanded={!group.collapsed}
-                      data-section-header
-                      data-section-id={group.id}
-                      data-testid={`section-header-${group.id}`}
-                      onclick={() => onSectionClick(group.id)}
-                      onpointerdown={(event) => onSectionPointerDown(event, group.id)}
-                      oncontextmenu={(event) => openSectionMenu(event, group.id)}
-                    >
-                      <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
-                      {#if group.collapsed}
-                        <span
-                          class="shrink-0 tabular-nums"
-                          data-testid={`section-count-${group.id}`}
-                        >
-                          {group.count}
-                        </span>
-                      {/if}
-                    </button>
-                  {/if}
-                {/if}
-                {#if !group.collapsed && rows.length > 0}
-                  <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
-                    {#each rows as conversation (conversation.id)}
-                      {@render conversationRow(conversation)}
-                    {/each}
-                  </Sidebar.Menu>
-                {/if}
-                {#if sectionLayout.showHeaders && groupIndex === sectionLayout.groups.length - 1 && sectionDrag !== null && sectionDrag.beforeId === null && !dropIsNoop(null, sectionDrag.id)}
+            <!-- 分组拖拽区（type 'sidebar-section'，独立于工作台的 'group'，两个视图
+                 同时挂载不能互通）。delayTouchStart 换掉了旧把手上的 touch-none：
+                 触摸等一拍再拖，期间照常滚动列表。 -->
+            <div
+              use:dragHandleZone={{
+                items: sectionItems,
+                type: 'sidebar-section',
+                flipDurationMs: sectionFlipDurationMs,
+                delayTouchStart: true,
+                morphDisabled: true,
+                dropTargetStyle: {},
+              }}
+              onconsider={onSectionConsider}
+              onfinalize={onSectionFinalize}
+            >
+              {#each sectionItems as group, groupIndex (group.id)}
+                {#if isShadow(group)}
+                  <!-- 原位占位插槽：高度钉住拖拽浮动副本的实测高度（同备忘分组区）。 -->
                   <div
-                    class="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-foreground/70"
-                    data-testid="section-drop-line"
+                    class="min-h-10 rounded-lg"
+                    style:height={sectionShadowHeight === null ? undefined : `${sectionShadowHeight}px`}
+                    aria-hidden="true"
                   ></div>
+                {:else}
+                  {@const rows = conversationsInGroup(group.id, group.conversations)}
+                  <!-- data-sidebar-section 随克隆带到 body 上的浮动副本，用于克隆样式定界。 -->
+                  <div
+                    data-sidebar-section
+                    class="relative rounded-md {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}"
+                  >
+                    {#if sectionLayout.showHeaders}
+                      {#if renamingSectionId === group.id}
+                        <form
+                          onsubmit={(event) => {
+                            event.preventDefault();
+                            commitRename(group.id);
+                          }}
+                        >
+                          <Input
+                            bind:value={renameDraft}
+                            bind:ref={renameInput}
+                            maxlength={SECTION_NAME_MAX}
+                            class="h-8 text-sm"
+                            data-testid={`section-rename-input-${group.id}`}
+                            onkeydown={cancelRename}
+                            onblur={() => commitRename(group.id)}
+                          />
+                        </form>
+                      {:else}
+                        <!-- 同一按钮既是折叠开关又是拖拽把手：未过拖拽阈值时 click
+                             正常触发；真实拖拽后的合成 click 由 sectionClickGuard 吞掉。 -->
+                        <button
+                          type="button"
+                          class="flex w-full cursor-grab items-center gap-2 px-2 pb-1 rounded-md text-left text-xs text-muted-foreground select-none"
+                          aria-expanded={!group.collapsed}
+                          data-section-header
+                          data-section-id={group.id}
+                          data-testid={`section-header-${group.id}`}
+                          use:dragHandle
+                          onclick={() => onSectionClick(group.id)}
+                          oncontextmenu={(event) => openSectionMenu(event, group.id)}
+                        >
+                          <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
+                          {#if group.collapsed}
+                            <span
+                              class="shrink-0 tabular-nums"
+                              data-testid={`section-count-${group.id}`}
+                            >
+                              {group.count}
+                            </span>
+                          {/if}
+                        </button>
+                      {/if}
+                    {/if}
+                    {#if !group.collapsed && rows.length > 0}
+                      <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
+                        {#each rows as conversation (conversation.id)}
+                          {@render conversationRow(conversation)}
+                        {/each}
+                      </Sidebar.Menu>
+                    {/if}
+                  </div>
                 {/if}
-              </div>
-            {/each}
+              {/each}
+            </div>
           {/if}
         {/if}
       </Sidebar.GroupContent>
@@ -1750,3 +1795,26 @@
 {/if}
 
 <BotTemplateImportDialog bind:open={templateImportOpen} />
+
+<style>
+  /* 分组拖拽的浮动副本挂在 body 下，组件作用域样式够不到；克隆携带 item 的
+     data-sidebar-section 属性，据此刻定只作用于左栏分组（不影响备忘 / 看板的克隆）。
+     副本与侧栏同底色、去掉边框与焦点环，否则行内容透在下层列表上难以辨认；
+     阴影只用来标出副本范围。 */
+  :global(#dnd-action-dragged-el[data-sidebar-section]) {
+    /* mac vibrancy / win 亚克力下 --sidebar 自带 alpha（65% / 85%），直接当底色
+       克隆仍是半透明的。把它经背景图叠在不透明的 --background 上，合成出与侧栏
+       同色但不透明的底；非材质平台 --sidebar 本就不透明，合成结果不变。
+       两处都要 !important：库会把原元素的计算样式（背景等）内联到克隆上。 */
+    background-color: var(--background) !important;
+    background-image: linear-gradient(var(--sidebar), var(--sidebar)) !important;
+    opacity: 1 !important;
+    border: none !important;
+    outline: none !important;
+    border-radius: 0.75rem;
+    box-shadow:
+      0 4px 6px -1px rgb(0 0 0 / 0.1),
+      0 2px 4px -2px rgb(0 0 0 / 0.1);
+    overflow: hidden;
+  }
+</style>

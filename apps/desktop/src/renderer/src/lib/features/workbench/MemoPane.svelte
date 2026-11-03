@@ -13,6 +13,7 @@
   import {
     anchorFromFinalize,
     boardFlipDurationMs,
+    draggedElementHeight,
     isNoopMove,
     isShadow,
     stripShadow,
@@ -106,12 +107,6 @@
     if (info.trigger === 'dragStarted') groupShadowHeight = draggedElementHeight();
     groupItems = event.detail.items;
     workbench.setGroupDragging(true);
-  }
-
-  function draggedElementHeight(): number | null {
-    if (typeof document === 'undefined') return null;
-    const el = document.getElementById('dnd-action-dragged-el');
-    return el === null ? null : el.getBoundingClientRect().height;
   }
 
   function onGroupFinalize(event: CustomEvent<DndEvent<MemoSection & { id: string }>>): void {

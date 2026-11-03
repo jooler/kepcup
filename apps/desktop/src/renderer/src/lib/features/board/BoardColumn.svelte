@@ -9,6 +9,7 @@
   import {
     anchorFromFinalize,
     cardClickGuard,
+    draggedElementHeight,
     isNoopMove,
     isShadow,
     stripShadow,
@@ -102,12 +103,6 @@
    * the card's text, so pin it to the copy's measured height; otherwise the
    * copy loses its footer and jumps when it changes position.
    */
-  function draggedElementHeight(): number | null {
-    if (typeof document === 'undefined') return null;
-    const el = document.getElementById('dnd-action-dragged-el');
-    return el === null ? null : el.getBoundingClientRect().height;
-  }
-
   function onFinalize(event: CustomEvent<DndEvent<BoardCardView>>): void {
     const info = event.detail.info;
     shadowHeight = null;
