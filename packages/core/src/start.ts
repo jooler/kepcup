@@ -220,6 +220,7 @@ import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
 import { MicroAppAiGateway } from './micro-apps/ai-gateway.js';
+import { MicroAppStore } from './micro-apps/store.js';
 import { WidgetQueryRunner } from './widgets/query-runner.js';
 import { WidgetCraftService } from './widgets/craft/service.js';
 import {
@@ -693,6 +694,8 @@ export interface CoreServices {
   widgetCraft: WidgetCraftService | null;
   /** D112 微应用模型网关（ai.chat / ai.session：隔离 / 流式 / 预算 / 记账）；null with `widgets`. */
   microAppAi: MicroAppAiGateway | null;
+  /** D112 P2 微应用数据面（collections / context 摘要 / 诊断 / 审计）；null with `widgets`. */
+  microAppStore: MicroAppStore | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -967,6 +970,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     widgets: null,
     widgetCraft: null,
     microAppAi: null,
+    microAppStore: null,
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
@@ -2193,6 +2197,27 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger.warn({ error: String(error) }, 'widget draft sweep failed');
     }
 
+    // D112 P2 微应用数据面：collections / context.update 摘要 / 运行时诊断 / 审计。
+    const microAppStore = new MicroAppStore({
+      db: mainDb,
+      clock,
+      logger,
+      appendMessage: (input) =>
+        messages.append({
+          conversationId: input.conversationId,
+          senderType: input.senderType,
+          kind: input.kind,
+          text: input.text,
+        }),
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+    });
+    try {
+      microAppStore.pruneDiagnostics();
+    } catch {
+      // 启动修剪失败不阻塞（下次记录时还会顺带做）。
+    }
+
     // D112 微应用模型网关：ai.chat / ai.session 的 core 侧（上下文隔离 / 流式 / 三级
     // 预算 / 记账归 widgets.bot_id）。流式增量经 `micro-app.stream` 事件回渲染端桥宿主。
     const microAppAi = new MicroAppAiGateway({
@@ -2535,6 +2560,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
       externalEngine,
       llmRouter,
+      // D112 P2：微应用进度摘要注入下一轮（55 §8.5）。
+      microAppSummariesFor: (conversationId) => {
+        const titleByWidget = new Map(
+          mainDb
+            .prepare('select id, title from widgets')
+            .all()
+            .map((row) => row as { id: string; title: string })
+            .map((row) => [row.id, row.title] as const),
+        );
+        return microAppStore.contextForConversation(conversationId).map((entry) => ({
+          widgetId: entry.widgetId,
+          title: titleByWidget.get(entry.widgetId) ?? entry.widgetId,
+          headline: entry.headline,
+          dataJson: entry.dataJson,
+          version: entry.version,
+        }));
+      },
       agentCatalog: () => agentCatalog,
       agents: agentsService,
       scheduler,
@@ -2579,6 +2621,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         craft: (input) => widgetCraft.craft(input),
         publish: (input) => widgetService.publish(input),
         readState: (input) => widgetService.readState(input),
+        readDiagnostics: (input) => {
+          // 归属校验（只能读自己 Bot 的微应用）+ 24h 聚合（§9.4 的按需读）。
+          const owned = widgetService
+            .listForBot(input.botId)
+            .some((item) => item.widgetId === input.widgetId);
+          if (!owned) {
+            return { ok: false, message: '找不到这个微应用（或它不是你创建的）', code: 'FORBIDDEN' as const };
+          }
+          const result = microAppStore.diagnosticsRead(input.widgetId);
+          const entries =
+            result.entries.length === 0
+              ? '（最近 24 小时没有运行问题记录）'
+              : result.entries
+                  .map(
+                    (entry) =>
+                      `v${entry.version} ${entry.phase} ${entry.code} ×${entry.count}${entry.detail !== '' ? ` @ ${entry.detail}` : ''}`,
+                  )
+                  .join('\n');
+          return { ok: true, entries, truncated: result.truncated };
+        },
       },
       widgetCraft,
       skills: {
@@ -3697,6 +3759,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.widgets = widgetService;
     services.widgetCraft = widgetCraft;
     services.microAppAi = microAppAi;
+    services.microAppStore = microAppStore;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;

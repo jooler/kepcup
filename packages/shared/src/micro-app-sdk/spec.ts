@@ -163,11 +163,13 @@ export function microAppCapabilityOf(id: string): MicroAppCapabilitySpec | undef
  */
 export const MICRO_APP_IMPLEMENTED_CAPABILITIES: readonly string[] = [
   'storage.kv',
+  'storage.collection',
   'host.reply',
   'host.openLink',
   'ai.chat',
   'media.listen',
   'media.speak',
+  'context.update',
 ];
 
 /**
@@ -175,7 +177,7 @@ export const MICRO_APP_IMPLEMENTED_CAPABILITIES: readonly string[] = [
  * 前移一格，并同步扩充 {@link MICRO_APP_IMPLEMENTED_CAPABILITIES}——两个常量是
  * 「本阶段已实现」的唯一开关，守卫测试锁它们的一致性。
  */
-export const MICRO_APP_RUNTIME_PHASE: MicroAppCapabilityPhase = 'P1';
+export const MICRO_APP_RUNTIME_PHASE: MicroAppCapabilityPhase = 'P2';
 
 // --- API 方法索引（垫片 / d.ts / sdk.md / 检查器 / inspect 共用）-------------------
 
@@ -233,6 +235,14 @@ export const MICRO_APP_API_METHODS: readonly MicroAppApiMethodSpec[] = [
     params: '无',
     returns: '无（请求宿主关闭本实例）',
     since: 'P1',
+  },
+  {
+    method: 'app.reportError',
+    capability: 'platform',
+    signature: 'app.reportError(code, detail): void',
+    params: 'code: 错误类型名；detail: 栈顶帧（文件:行:列）',
+    returns: '无（通知；进运行时诊断，55 §9.4）',
+    since: 'P2',
   },
   {
     method: 'storage.get',
@@ -408,6 +418,46 @@ export const MICRO_APP_API_METHODS: readonly MicroAppApiMethodSpec[] = [
     signature: 'kepcup.context.clear(): Promise<void>',
     params: '无',
     returns: 'void（清除当前摘要）',
+    since: 'P2',
+  },
+  {
+    method: 'collections.put',
+    capability: 'storage.collection',
+    signature: 'kepcup.collections.put(name, doc): Promise<void>',
+    params: 'name: 集合名；doc: { id, ... }',
+    returns: 'void',
+    since: 'P2',
+  },
+  {
+    method: 'collections.get',
+    capability: 'storage.collection',
+    signature: 'kepcup.collections.get(name, id): Promise<unknown>',
+    params: 'name; id',
+    returns: '文档（不存在为 undefined）',
+    since: 'P2',
+  },
+  {
+    method: 'collections.delete',
+    capability: 'storage.collection',
+    signature: 'kepcup.collections.delete(name, id): Promise<void>',
+    params: 'name; id',
+    returns: 'void',
+    since: 'P2',
+  },
+  {
+    method: 'collections.list',
+    capability: 'storage.collection',
+    signature: 'kepcup.collections.list(name): Promise<unknown[]>',
+    params: 'name',
+    returns: '集合内全部文档',
+    since: 'P2',
+  },
+  {
+    method: 'collections.query',
+    capability: 'storage.collection',
+    signature: 'kepcup.collections.query(name, filter): Promise<unknown[]>',
+    params: "name; filter: { where?: { field, op, value }[]; limit? }",
+    returns: '匹配的文档',
     since: 'P2',
   },
   {

@@ -243,6 +243,8 @@ export const ERROR_CODES = [
   'MICRO_APP_AI_UNAVAILABLE',
   /** 宿主断开能力桥（背压超窗 / 卡片卸载 / 桥重置）；在途调用以此收口，不要自动重试。 */
   'MICRO_APP_BRIDGE_CLOSED',
+  /** 微应用无响应（心跳超时，55 §9.1）；不自动重试，由用户重新打开。 */
+  'MICRO_APP_UNRESPONSIVE',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

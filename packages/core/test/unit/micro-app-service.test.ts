@@ -144,10 +144,10 @@ describe('清单校验（交付裁决）', () => {
       html: HTML,
       scope: 'conversation',
       runId: 'r',
-      manifest: { ...MANIFEST, permissions: ['storage.kv', 'storage.collection'] },
+      manifest: { ...MANIFEST, permissions: ['storage.kv', 'files.pick'] },
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.message).toContain('storage.collection');
+    if (!result.ok) expect(result.message).toContain('files.pick');
   });
 
   it('未知 spec 版本 → 如实拒绝（不静默降级）', () => {

@@ -193,6 +193,22 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     }
     dispatchLocal(frame.name, frame.data);
   }
+  function reportError(kind, error) {
+    var code = 'Exception';
+    var detail = '';
+    try {
+      if (error && typeof error.name === 'string' && error.name) code = error.name;
+      if (error && typeof error.stack === 'string' && error.stack) {
+        var lines = error.stack.split('\n');
+        for (var i = 0; i < lines.length; i += 1) {
+          if (lines[i].indexOf('kepcup') === -1 && /:\d+:\d+/.test(lines[i])) { detail = lines[i].trim().slice(0, 200); break; }
+        }
+      }
+    } catch (err) { }
+    try { post({ k: 'call', id: 0, method: 'app.reportError', params: { kind: kind, code: code, detail: detail }, stream: false }); } catch (err2) { }
+  }
+  window.addEventListener('error', function (event) { reportError('error', event.error || { name: 'Error', stack: '' }); });
+  window.addEventListener('unhandledrejection', function (event) { reportError('rejection', event.reason); });
   window.addEventListener('message', function (event) {
     if (event.source !== window.parent) return;
     var data = event.data;
@@ -315,6 +331,17 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
         return call('media.speak', { text: input.text, voice: input.voice, rate: input.rate });
       },
       stopSpeaking: function () { return call('media.stopSpeaking', {}); }
+    },
+    collections: {
+      put: function (name, doc) { return call('collections.put', { name: name, doc: doc }); },
+      get: function (name, id) { return call('collections.get', { name: name, id: id }).then(function (out) { return out && typeof out === 'object' && 'doc' in out ? out.doc : out; }); },
+      delete: function (name, id) { return call('collections.delete', { name: name, id: id }); },
+      list: function (name) { return call('collections.list', { name: name }).then(function (out) { return out && typeof out === 'object' && Array.isArray(out.docs) ? out.docs : []; }); },
+      query: function (name, filter) { return call('collections.query', { name: name, where: filter && filter.where ? filter.where : [], limit: filter && filter.limit ? filter.limit : 50 }).then(function (out) { return out && typeof out === 'object' && Array.isArray(out.docs) ? out.docs : []; }); }
+    },
+    context: {
+      update: function (summary) { return call('context.update', { summary: summary, reason: 'gesture' }); },
+      clear: function () { return call('context.clear', {}); }
     },
     ui: {
       theme: function () { return Promise.resolve(currentTheme); }

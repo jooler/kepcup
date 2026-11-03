@@ -58,6 +58,13 @@ import {
   validateMicroAppManifest,
   type ValidatedMicroApp,
 } from '../micro-apps/manifest.js';
+import {
+  MICRO_APP_BUNDLE_MAX_BYTES,
+  MICRO_APP_BUNDLE_FILES_MAX,
+  MICRO_APP_FILE_MAX_BYTES,
+  isSafeMicroAppPath,
+  type MicroAppFileDef,
+} from '@kepcup/shared';
 
 /**
  * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）。
@@ -209,6 +216,8 @@ export interface WidgetCreateInput {
    * （清单是唯一来源）。缺省 = 存量组件路径（行为零变化）。
    */
   manifest?: unknown;
+  /** 微应用包内文件（P2 多文件包；存量组件路径忽略）。 */
+  files?: MicroAppFileDef[];
 }
 
 export interface WidgetUpdateInput {
@@ -229,6 +238,8 @@ export interface WidgetUpdateInput {
   posterPng?: string | undefined;
   /** 同 create：微应用清单（原始 JSON）。 */
   manifest?: unknown;
+  /** 同 create：微应用包内文件（P2，多文件包）。 */
+  files?: MicroAppFileDef[];
 }
 
 export type WidgetWriteResult =
@@ -298,6 +309,7 @@ export class WidgetService {
       // 微应用清单（D112）：manifest 是能力 / 查询 / 网络档的唯一来源；存在即走微应用路径。
       const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
       const queries = microApp !== null ? this.#cleanQueries(microApp.manifest.queries) : this.#cleanQueries(input.queries);
+      const files = microApp !== null ? this.#cleanFiles(input.files) : [];
       const now = this.#deps.clock.now();
       const widgetId = newId('wgt');
       const sha256 = createHash('sha256').update(html).digest('hex');
@@ -348,6 +360,7 @@ export class WidgetService {
           input.check,
           posterPngOf(input.posterPng),
           microApp,
+          files,
         );
       });
       tx();
@@ -402,6 +415,7 @@ export class WidgetService {
       // 微应用更新（D112）：清单与代码一起构成新版本；**组件 → 微应用 / 微应用 → 组件的
       // 形态切换在这里拒绝**（两张确认卡之间无法比较能力面，用户无从确认差异）。
       const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
+      const files = microApp !== null ? this.#cleanFiles(input.files) : [];
       const priorMicroApp = this.#manifestOfVersion(widgetId, widget.latest_version) !== null;
       if ((microApp !== null) !== priorMicroApp) {
         return {
@@ -463,6 +477,7 @@ export class WidgetService {
           input.check,
           posterPngOf(input.posterPng),
           microApp,
+          files,
         );
         // 版本双指针（55 §9.1）：微应用更新把 next_version 指向新版本——正在运行的实例
         // 继续用旧版本（不热替换），下次打开生效；存量组件不写该列（NULL = 卡片钉住版本）。
@@ -478,6 +493,9 @@ export class WidgetService {
             .run(widgetId, pruneThrough);
           this.#deps.db
             .prepare('delete from widget_queries where widget_id = ? and version <= ?')
+            .run(widgetId, pruneThrough);
+          this.#deps.db
+            .prepare('delete from micro_app_files where widget_id = ? and version <= ?')
             .run(widgetId, pruneThrough);
         }
       });
@@ -662,6 +680,7 @@ export class WidgetService {
   microAppContextOf(resourceId: string): {
     widgetId: string;
     botId: string | null;
+    conversationId: string | null;
     version: number;
     permissions: readonly string[];
     maxTokensPerSession: number;
@@ -672,6 +691,7 @@ export class WidgetService {
     return {
       widgetId: entry.widgetId,
       botId: entry.botId,
+      conversationId: entry.conversationId,
       version: entry.version,
       permissions: microApp.manifest.permissions,
       maxTokensPerSession: microApp.manifest.ai.maxTokensPerSession,
@@ -1105,7 +1125,12 @@ export class WidgetService {
    * 平台方法 `widgets.ui.resource`：id 存在、未过期、host 与登记一致（并复核 host
    * 确由 widgetId 派生——同 apps.ui.resource 的纵深校验），且钉住的版本仍在库里。
    */
-  resource(input: { resourceId: string; host: string }): { html: string; csp: string } {
+  resource(input: { resourceId: string; host: string; path?: string | undefined }): {
+    html: string;
+    csp: string;
+    contentBase64?: string;
+    mimeType?: string;
+  } {
     const entry = this.#liveEntry(input.resourceId);
     if (
       entry === null ||
@@ -1113,6 +1138,23 @@ export class WidgetService {
       entry.host !== widgetUiHostFor(entry.widgetId)
     ) {
       throw new AppError('NOT_FOUND', '组件界面资源不存在或已过期');
+    }
+    // D112 P2：包内相对路径子资源（`/{resourceId}/{path}`）——按登记版本取文件，
+    // 路径安全在交付与 URL 解析两侧各守一次。
+    if (input.path !== undefined && input.path !== '') {
+      if (!isSafeMicroAppPath(input.path)) {
+        throw new AppError('NOT_FOUND', '包内路径不合法');
+      }
+      const row = this.#deps.db
+        .prepare('select mime, content from micro_app_files where widget_id = ? and version = ? and path = ?')
+        .get(entry.widgetId, entry.version, input.path) as { mime: string; content: Buffer } | undefined;
+      if (row === undefined) throw new AppError('NOT_FOUND', '包内文件不存在');
+      return {
+        html: '',
+        csp: entry.csp,
+        contentBase64: row.content.toString('base64'),
+        mimeType: row.mime,
+      };
     }
     return { html: entry.html, csp: entry.csp };
   }
@@ -1312,8 +1354,12 @@ export class WidgetService {
         throw new AppError('WIDGET_QUERY_FAILED', `查询「${input.name}」被拒绝执行：${denied}`);
       }
       const params = sanitizeQueryParams(input.name, input.params);
+      // D112 P2 分页（55 §10）：带 cursor / maxBytes 时按页取（内部放宽行数，再按字节切片）；
+      // 不带 = 存量行为零变化。
+      const paginated = input.cursor !== undefined || input.maxBytes !== undefined;
+      const offset = paginated ? parseQueryCursor(input.cursor) : 0;
       try {
-        return await this.#deps.queryRunner.run({
+        const result = await this.#deps.queryRunner.run({
           // 公平性 / 熔断按组件计（同一组件的多个资源共用额度，设计 32 §6.1）。
           owner: entry.widgetId,
           sql: row.sql,
@@ -1321,9 +1367,11 @@ export class WidgetService {
           views: widgetQueryViewsFor({ widgetId: entry.widgetId, conversationId: entry.conversationId }),
           tables: WIDGET_QUERY_PHYSICAL_TABLES,
           explainArgs: explainBindings(row.sql),
-          rowsMax: BOT_WIDGET_QUERY_ROWS_MAX,
-          bytesMax: BOT_WIDGET_QUERY_RESULT_MAX_BYTES,
+          rowsMax: paginated ? 1000 : BOT_WIDGET_QUERY_ROWS_MAX,
+          bytesMax: paginated ? 4 * BOT_WIDGET_QUERY_RESULT_MAX_BYTES : BOT_WIDGET_QUERY_RESULT_MAX_BYTES,
         });
+        if (!paginated) return result;
+        return paginateQueryRows(result.rows, offset, input.maxBytes ?? 256 * 1024);
       } catch (error) {
         if (error instanceof AppError) {
           throw new AppError(error.code, `查询「${input.name}」${error.message}`);
@@ -1456,6 +1504,7 @@ export class WidgetService {
     check: WidgetDeliveryCheck | undefined,
     posterPng: string | undefined,
     microApp: ValidatedMicroApp | null = null,
+    files: MicroAppFileDef[] = [],
   ): void {
     this.#deps.db
       .prepare(
@@ -1483,6 +1532,50 @@ export class WidgetService {
     for (const def of queries) {
       insert.run(widgetId, version, def.name, def.sql);
     }
+    const insertFile = this.#deps.db.prepare(
+      'insert into micro_app_files (widget_id, version, path, mime, bytes, content) values (?, ?, ?, ?, ?, ?)',
+    );
+    for (const file of files) {
+      insertFile.run(
+        widgetId,
+        version,
+        file.path,
+        file.mime,
+        Buffer.byteLength(file.contentBase64, 'base64'),
+        Buffer.from(file.contentBase64, 'base64'),
+      );
+    }
+  }
+
+  /** 微应用包内文件的交付校验（P2）：路径安全、单文件与包总量、文件数、与入口不冲突。 */
+  #cleanFiles(raw: MicroAppFileDef[] | undefined): MicroAppFileDef[] {
+    const files = raw ?? [];
+    if (files.length > MICRO_APP_BUNDLE_FILES_MAX) {
+      throw new AppError('INVALID_INPUT', `包内文件数超上限（${MICRO_APP_BUNDLE_FILES_MAX}）`);
+    }
+    const seen = new Set<string>();
+    let total = 0;
+    for (const file of files) {
+      if (!isSafeMicroAppPath(file.path)) {
+        throw new AppError('INVALID_INPUT', `包内路径不合法：${file.path}`);
+      }
+      if (file.path === 'index.html') {
+        throw new AppError('INVALID_INPUT', 'index.html 是入口 HTML，用 html 参数交付');
+      }
+      if (seen.has(file.path)) {
+        throw new AppError('INVALID_INPUT', `包内路径重复：${file.path}`);
+      }
+      seen.add(file.path);
+      const bytes = Buffer.byteLength(file.contentBase64, 'base64');
+      if (bytes > MICRO_APP_FILE_MAX_BYTES) {
+        throw new AppError('INVALID_INPUT', `包内文件超上限（${file.path}，≤1MB）`);
+      }
+      total += bytes;
+    }
+    if (total > MICRO_APP_BUNDLE_MAX_BYTES) {
+      throw new AppError('INVALID_INPUT', `包总量超上限（8MB）`);
+    }
+    return files;
   }
 
   /** 某个版本行里的微应用清单（行为空 = 存量组件，返回 null）。 */
@@ -1662,6 +1755,48 @@ function knownIssuesOf(summaryJson: string): string[] {
   }
   const parsed = widgetCheckSummarySchema.safeParse(raw);
   return parsed.success ? parsed.data.knownIssues : [];
+}
+
+/** 分页游标：`off:{n}`（不透明；非法值按 0 处理——分页是性能特性，不是安全边界）。 */
+function parseQueryCursor(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  const match = /^off:(\d{1,6})$/.exec(cursor);
+  const value = match === null ? 0 : Number(match[1]);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/** 按字节上限切页：返回本页行 + 还有剩余时的 nextCursor。 */
+function paginateQueryRows(
+  rows: Array<Record<string, unknown>>,
+  offset: number,
+  maxBytes: number,
+): WidgetsUiQueryOutput {
+  const page: Array<Record<string, unknown>> = [];
+  let bytes = 2; // []
+  let index = offset;
+  let nextCursor: string | undefined;
+  for (; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const rowBytes = Buffer.byteLength(JSON.stringify(row));
+    if (page.length > 0 && bytes + rowBytes > maxBytes) {
+      nextCursor = `off:${index}`;
+      break;
+    }
+    if (page.length === 0 && rowBytes > maxBytes) {
+      // 单行超限：本页给这一行并标记（与存量截断语义一致——不让整页读不到）。
+      page.push(row);
+      if (index + 1 < rows.length) nextCursor = `off:${index + 1}`;
+      break;
+    }
+    page.push(row);
+    bytes += rowBytes + 1;
+  }
+  if (nextCursor === undefined && index < rows.length) nextCursor = `off:${index}`;
+  return {
+    rows: page,
+    truncated: index < rows.length,
+    ...(nextCursor !== undefined && index < rows.length ? { nextCursor } : {}),
+  };
 }
 
 /** 查询模板清单的规范摘要：按名字排序后 JSON 序列化取 sha256；空清单 = 空串。 */

@@ -57,6 +57,20 @@ export function installAppsUiProtocol(targetSession: Session, host: AppsUiHost):
     if (ref === null) return new Response('not found', { status: 404 });
     try {
       const page = appsUiResourceOutputSchema.parse(await host.fetchResource(ref));
+      // D112 微应用包内二进制子资源：内容 base64 + MIME；入口 HTML 仍走字符串分支。
+      if (page.contentBase64 !== undefined && page.mimeType !== undefined) {
+        const bytes = Buffer.from(page.contentBase64, 'base64');
+        return new Response(new Uint8Array(bytes), {
+          status: 200,
+          headers: {
+            'content-type': page.mimeType,
+            'content-security-policy': page.csp,
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'no-store',
+            'referrer-policy': 'no-referrer',
+          },
+        });
+      }
       return new Response(page.html, { status: 200, headers: appUiResponseHeaders(page.csp) });
     } catch (error) {
       host.log?.('apps-ui resource unavailable', error);

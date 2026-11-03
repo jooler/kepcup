@@ -86,6 +86,10 @@ export interface MicroAppBridgeHostOptions {
   onRequestDisplayMode?(mode: 'inline' | 'immersive'): Promise<{ mode: 'inline' | 'immersive' }>;
   /** P1：微应用请求关闭（通知，无回执）。 */
   onClose?(): void;
+  /** P2（55 §9.4）：诊断回调（未捕获异常 / 能力被拒等；渲染端转 microApps.diagnostics.record）。 */
+  onDiagnostic?(input: { phase: 'prepare' | 'run' | 'stream'; code: string; detail: string }): void;
+  /** P2（§7.3 / §9.1）：心跳无响应回调（宿主已判定；runtime 转「微应用无响应」态）。 */
+  onUnresponsive?(): void;
   /** 回传前核验用户手势（测试注入）。 */
   userActivation?: (() => boolean) | undefined;
   /** 监听目标；缺省全局 window（测试注入假体）。 */
@@ -136,8 +140,33 @@ export class MicroAppBridgeHost {
   static connect(options: MicroAppBridgeHostOptions): MicroAppBridgeHost {
     const host = new MicroAppBridgeHost(options);
     host.#target.addEventListener('message', host.#listener);
+    host.#startHeartbeat();
     return host;
   }
+
+  /** 心跳（§9.1）：每 10s ping 一次（垫片对所有 seq 事件自动 ack）；连续 3s 无 ack 判无响应。 */
+  #startHeartbeat(): void {
+    if (typeof setInterval !== 'function') return;
+    const timer = setInterval(() => {
+      if (this.#destroyed) {
+        clearInterval(timer);
+        return;
+      }
+      if (this.#heartbeatWaiting) {
+        // 上一拍还没 ack：判无响应（§9.1；不自动循环重试，由用户重新打开）。
+        this.#heartbeatWaiting = false;
+        this.#options.onUnresponsive?.();
+        this.#options.onDiagnostic?.({ phase: 'run', code: 'MICRO_APP_UNRESPONSIVE', detail: 'heartbeat' });
+        return;
+      }
+      this.#heartbeatWaiting = true;
+      this.#pushEvent('app', 'ping', null);
+    }, 10_000);
+    this.#heartbeatTimer = timer;
+  }
+
+  #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  #heartbeatWaiting = false;
 
   /** 实例 id（`mai_…`；RPC 记账与流式事件过滤的键）。 */
   get instanceId(): string {
@@ -148,6 +177,8 @@ export class MicroAppBridgeHost {
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
+    this.#heartbeatTimer = null;
     for (const session of this.#listenSessions.values()) session.dispose();
     this.#listenSessions.clear();
     this.#post(microAppCloseFrame('bridge closed'));
@@ -220,6 +251,7 @@ export class MicroAppBridgeHost {
     }
     const frame = parsed.frame;
     if (frame.k === 'event-ack') {
+      this.#heartbeatWaiting = false;
       this.#acked.set(frame.subId, Math.max(this.#acked.get(frame.subId) ?? 0, frame.seq));
       return;
     }
@@ -257,8 +289,16 @@ export class MicroAppBridgeHost {
       this.#options.onClose?.();
       return;
     }
+    if (frame.method === 'app.reportError') {
+      // 诊断回流（§9.4）：code = 异常类型名，detail = 栈顶帧；不收 message（内容不落库）。
+      const code = typeof frame.params['code'] === 'string' && frame.params['code'] !== '' ? frame.params['code'] : 'Exception';
+      const detail = typeof frame.params['detail'] === 'string' ? frame.params['detail'].slice(0, 200) : '';
+      this.#options.onDiagnostic?.({ phase: 'run', code, detail });
+      return;
+    }
     const capability = microAppApiMethodOf(frame.method)?.capability;
     if (capability !== undefined && capability !== 'platform' && !this.#options.permissions.includes(capability)) {
+      this.#options.onDiagnostic?.({ phase: 'run', code: 'MICRO_APP_CAPABILITY_NOT_DECLARED', detail: frame.method });
       this.#post(
         microAppErrorFrame(
           frame.id,
@@ -285,6 +325,9 @@ export class MicroAppBridgeHost {
         return;
       }
       const code = (error as { code?: unknown }).code;
+      if (typeof code === 'string' && code.startsWith('MICRO_APP_')) {
+        this.#options.onDiagnostic?.({ phase: 'run', code, detail: frame.method });
+      }
       this.#post(
         microAppErrorFrame(
           frame.id,
@@ -370,9 +413,27 @@ export class MicroAppBridgeHost {
       case 'ai.session.history':
       case 'ai.session.reset':
       case 'ai.cancel':
-      case 'ai.dispose': {
+      case 'ai.dispose':
+      case 'collections.put':
+      case 'collections.get':
+      case 'collections.delete':
+      case 'collections.list':
+      case 'collections.query':
+      case 'context.update': {
         if (this.#options.aiCall === undefined) {
-          throw Object.assign(new Error('微应用模型模块未就绪'), { code: 'NOT_IMPLEMENTED' });
+          throw Object.assign(new Error('微应用模块未就绪'), { code: 'NOT_IMPLEMENTED' });
+        }
+        // §8.5：gesture 时机必须有用户激活（pause / close 由宿主自己发起，不在这里）。
+        if (payload['reason'] === 'gesture' && !(this.#options.userActivation ?? hostUserActivation)()) {
+          throw Object.assign(new Error('同步进度需要在用户操作里进行（防循环刷写）'), {
+            code: 'MICRO_APP_CAPABILITY_DENIED',
+          });
+        }
+        return await this.#options.aiCall(method, payload);
+      }
+      case 'context.clear': {
+        if (this.#options.aiCall === undefined) {
+          throw Object.assign(new Error('微应用模块未就绪'), { code: 'NOT_IMPLEMENTED' });
         }
         return await this.#options.aiCall(method, payload);
       }

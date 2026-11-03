@@ -3147,6 +3147,19 @@ export const enUS = {
   'botWidget.microApp.micOff': 'Enable microphone',
   'botWidget.microApp.displayMode': 'Toggle fullscreen / inline',
   'botWidget.microApp.stop': 'Stop voice (capture and playback)',
+  'botWidget.microApp.manageTitle': 'Micro-app management',
+  'botWidget.microApp.manageNet': 'Network',
+  'botWidget.microApp.manageUsage':
+    'Today: model {calls} calls / {tokens} tokens · ASR {asr}s · TTS {tts} chars',
+  'botWidget.microApp.manageIssues': 'Runtime issues (24h)',
+  'botWidget.microApp.manageContext': 'Synced progress',
+  'botWidget.microApp.clearContext': 'Clear',
+  'botWidget.microApp.contextCleared': 'Synced progress summary cleared',
+  'botWidget.microApp.rollback': 'Roll back to v{version}',
+  'botWidget.microApp.rollbackConfirm':
+    'Confirm rollback to v{version}? (running instances unaffected; reopen to apply)',
+  'botWidget.microApp.rolledBack': 'Rolled back to v{version} (reopen to apply)',
+  'botWidget.microApp.contextLine': 'Synced progress: {headline}',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
   'settings.widgetReviewModelHint':
@@ -3218,6 +3231,7 @@ export const enUS = {
   'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
   'chats.errorCode.MICRO_APP_BRIDGE_CLOSED':
     'The host closed the micro-app capability bridge; please reopen it',
+  'chats.errorCode.MICRO_APP_UNRESPONSIVE': 'The micro-app is unresponsive; please reopen it',
   'chats.errorCode.MAIL_NOT_BOUND': "This mailbox isn't assigned to the current Bot",
   'chats.errorCode.MAIL_AUTH_FAILED':
     'Mailbox sign-in failed. Use an authorization code or app password, not your login password.',

@@ -324,8 +324,14 @@ export const appsUiResourceInputSchema = z.object({
   resourceId: z.string().min(1),
   /** 请求 URL 里的 host；必须与登记时一致。 */
   host: z.string().min(1),
+  /** D112 微应用多文件包：包内相对路径（`/{resourceId}/{path}` 的 path 段；入口请求缺省）。 */
+  path: z.string().max(120).optional(),
 });
 export const appsUiResourceOutputSchema = z.object({
-  html: z.string(),
+  /** 入口 HTML；二进制子资源（D112 微应用包文件）为空串、内容走 contentBase64。 */
+  html: z.string().default(''),
   csp: z.string(),
+  /** 二进制子资源（base64）与它的 MIME；入口 HTML 请求时缺省。 */
+  contentBase64: z.string().optional(),
+  mimeType: z.string().optional(),
 });

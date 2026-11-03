@@ -296,6 +296,9 @@ export const widgetsUiQueryInputSchema = z.object({
   resourceId: z.string().min(1),
   name: z.string().min(1).max(BOT_WIDGET_QUERY_NAME_MAX_CHARS),
   params: z.record(z.string(), z.unknown()).default({}),
+  /** D112 P2 分页（55 §10）：不传 = 存量行为零变化；传 cursor / maxBytes 走分页。 */
+  cursor: z.string().min(1).max(32).optional(),
+  maxBytes: z.number().int().min(1024).max(256 * 1024).optional(),
 });
 export type WidgetsUiQueryInput = z.infer<typeof widgetsUiQueryInputSchema>;
 
@@ -303,6 +306,8 @@ export const widgetsUiQueryOutputSchema = z.object({
   /** 行是「列名 → 值」的对象；值已归一为 JSON 安全类型（BLOB → base64 字符串）。 */
   rows: z.array(z.record(z.string(), z.unknown())),
   truncated: z.boolean(),
+  /** 分页游标（还有下一页时给；`kepcup.query(name, params, {cursor})` 传入）。 */
+  nextCursor: z.string().optional(),
 });
 export type WidgetsUiQueryOutput = z.infer<typeof widgetsUiQueryOutputSchema>;
 
