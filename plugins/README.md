@@ -90,3 +90,12 @@ cd infra/cloudflare/directory && npx wrangler deploy
   默认图标。**已重新签名并部署**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致
   （R2 内容寻址对象无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`、
   22/22 带图标，线上拉回验签通过。
+
+- **2026-11-03 微信插件上架（im-wechat 1.0.0）**：v0.5.6 的宿主发布不带市场条目，
+  本次补上（见 `im-wechat/README.md` §9 的发布门槛：`engines.kepcup >=0.5.5`）。
+  `catalog.json` 新增 `im-wechat.kepcup`（tier `verified`，categories 由签名脚本从
+  `contributions.im` 推导，`sign-plugin-index.mjs` 的 `categoriesOf` 同步补上 `im` 分支；
+  全部 23 包重新打包，既有 22 包 sha256 与线上 1.0.1 逐字节一致、R2 无需重传，im-wechat
+  上传为 `6b1a3ed4…kepcup`）。新索引 `generatedAt=2026-11-03T06:13:20.869Z`（严格递增）、
+  23 条，生产密钥 `kepcup-plugins-2026-1` 签名；R2 上传后 `wrangler deploy` 上线，线上
+  索引拉回验签通过、微信包从 `pkg.kepcup.com` 下载回本地 sha256 复核一致。
