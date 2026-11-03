@@ -1483,6 +1483,7 @@ export const zhCN = {
   'delegation.viewDetail': '查看详情',
   'delegation.cancelShort': '取消',
   'delegation.closeDetail': '关闭详情',
+  'delegation.backToChat': '返回对话',
   'delegation.detailUnavailable': '这条委托的往来对话不存在或已被删除',
   'delegation.detailLoading': '委托对话加载中…',
   'delegation.detailEmpty': '这条委托还没有往来消息',

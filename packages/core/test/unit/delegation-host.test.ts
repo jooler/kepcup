@@ -29,7 +29,8 @@ import { insertProjectConversation } from '../support/projects.js';
  * DelegationHost（D71 v2 / D113）的拒绝清单 / 单跳 / 群降级 / 截断：真实 main.db +
  * 真实 domain 服务，mailbox 与 run 层以桩替代（投递返回固定 run id）。
  * v2：A 的任务消息以 A 的 bot 消息落每次委托新建的 `bot_direct` 交换会话；
- * B 的用户私聊只落接收药丸卡；执行产物（任务 / 审批卡）按归属映射在 B 私聊。
+ * B 的用户私聊只落接收药丸卡。v2.3：执行产物（任务卡 / task_event 往返）全
+ * 部留在交换会话，需用户操作的卡（审批 / ask_user 提问）归发起方 A 的私聊。
  */
 
 const dir = mkdtempSync(path.join(tmpdir(), 'delegation-host-'));
@@ -62,6 +63,9 @@ function makeRig() {
   }> = [];
   const injected: Array<{ taskId: string; text: string; note?: string }> = [];
   const notified: Array<{ botId: string; conversationId: string; text: string }> = [];
+  // 委派轮被送达的会话（v2 交换会话；v1 存量路径 = B 私聊）：addTask 据此推导
+  // 任务归属——生产里任务的 conversationId 就是所在 run 的会话。
+  let lastDeliveredConversationId: string | null = null;
   const cancelledTasks: Array<{ taskId: string; reason: string }> = [];
   const abortedRuns: string[] = [];
   // W6: B's task rows (runs.db stand-in) — what DelegationHost reads of them.
@@ -100,6 +104,7 @@ function makeRig() {
         messages: input.messages,
         extraAttributes: input.extraAttributes,
       });
+      lastDeliveredConversationId = input.conversationId;
       runCounter += 1;
       const runId = `run_b${runCounter}`;
       turnRuns.set(runId, {
@@ -143,7 +148,11 @@ function makeRig() {
     conversationId,
     loopType: 'turn',
   });
-  /** A task of B in B's direct conversation (execution home), started by run `originRunId`. */
+  /**
+   * A task of B started by run `originRunId` (v2.3: it lives in the
+   * conversation that run was delivered into — the exchange conversation, or
+   * B's chat for v1 legacy deliveries).
+   */
   const addTask = (input: {
     id: string;
     originRunId: string;
@@ -151,10 +160,12 @@ function makeRig() {
     status?: RunStatus;
     continuedFrom?: string;
   }): Run => {
+    const delegation = delegations.anyByRun(input.originRunId);
     const task = {
       id: input.id,
       botId: b.id,
-      conversationId: bConv,
+      conversationId:
+        delegation?.exchangeConversationId ?? lastDeliveredConversationId ?? bConv,
       loopType: 'task',
       status: input.status ?? 'running',
       error: null,
@@ -199,11 +210,11 @@ function makeRig() {
     if (status === 'cancelled') task.resultConsumedAt = 1;
     host.onTaskSettled(task);
   };
-  /** B's turn consumed a task's terminal entry; its mailbox released. */
+  /** B's turn consumed a task's terminal entry (production: onConsumed → re-check). */
   const consume = (taskId: string): void => {
     const task = tasks.find((candidate) => candidate.id === taskId)!;
     task.resultConsumedAt = 2;
-    host.onMailboxIdle(b.id, task.conversationId!);
+    host.onTaskSettled(task);
   };
   /** B's delegated turn ended (`#settleRun`). */
   const endTurn = (runId: string, status: RunStatus = 'completed'): void => {
@@ -752,6 +763,25 @@ describe('DelegationHost W6: intent + 跟随任务', () => {
     expect(done).toMatchObject({ status: 'completed', resultExcerpt: '数据：42' });
   });
 
+  it('v2.3：跟随任务只认交换会话里的——B 私聊同源任务不进跟随（执行不出用户对话）', () => {
+    const rig = makeRig();
+    const row = delegateTo(rig);
+    // 生产里委派任务住交换会话（addTask 已按投递会话推导）；这里把同源任务
+    // 手工钉回 B 私聊，验证任务检索只认交换会话。
+    const task = rig.addTask({ id: 'run_t1', originRunId: 'run_b1', title: '钉在 B 私聊' });
+    task.conversationId = rig.bConv;
+    replyInTurn(rig, row.exchangeConversationId!, '我去做，稍等');
+    rig.endTurn('run_b1');
+    // B 私聊里的同源任务不构成跟随对象：委派以该轮回复直接结算。
+    expect(rig.delegations.getOrThrow(row.id)).toMatchObject({
+      status: 'completed',
+      resultExcerpt: '我去做，稍等',
+      taskIds: [],
+    });
+    rig.settleTask('run_t1', 'completed', '迟到结果');
+    expect(rig.delegations.getOrThrow(row.id).status).toBe('completed');
+  });
+
   it('request：B 的委派轮没派任务 → 取交换会话里该轮的最终回复', () => {
     const rig = makeRig();
     const row = delegateTo(rig, 'request');
@@ -764,11 +794,28 @@ describe('DelegationHost W6: intent + 跟随任务', () => {
     });
   });
 
-  it('question：取 B 该轮在交换会话里的回复，即使这一轮派了任务也不跟随', () => {
+  it('question（v2.3a）：B 派了任务也跟随——「已派出」不作答复，任务结果汇入转述', () => {
     const rig = makeRig();
     const row = delegateTo(rig, 'question');
     expect(rig.delivered[0]!.extraAttributes).toMatchObject({ intent: 'question' });
-    rig.addTask({ id: 'run_t1', originRunId: 'run_b1' });
+    rig.addTask({ id: 'run_t1', originRunId: 'run_b1', title: '查明天日程' });
+    replyInTurn(rig, row.exchangeConversationId!, '已派出任务去查');
+    rig.endTurn('run_b1');
+    // 旧语义在这里就以轮回复「已派出」结算，真实结果永远回不来；现在等任务。
+    expect(rig.delegations.getOrThrow(row.id)).toMatchObject({
+      status: 'awaiting_tasks',
+      taskIds: ['run_t1'],
+    });
+    rig.settleTask('run_t1', 'completed', '明天可以');
+    const done = rig.delegations.getOrThrow(row.id);
+    expect(done.status).toBe('completed');
+    expect(done.resultExcerpt).toBe('明天可以');
+    expect(rig.host.renderContextLine('delegation_sent', row.id)).toContain('提问');
+  });
+
+  it('question：B 没派任务时仍取该轮在交换会话里的回复', () => {
+    const rig = makeRig();
+    const row = delegateTo(rig, 'question');
     replyInTurn(rig, row.exchangeConversationId!, '答复：明天可以');
     rig.endTurn('run_b1');
     const done = rig.delegations.getOrThrow(row.id);

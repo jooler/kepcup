@@ -32,9 +32,12 @@
   let {
     message,
     merge = { above: false, below: false },
+    userStyle = false,
   }: {
     message: Message;
     merge?: { above: boolean; below: boolean };
+    /** v2.3 交换会话：发起方 A 的消息按用户气泡渲染（ChatMessageRow 传入）。 */
+    userStyle?: boolean;
   } = $props();
 
   const isRenderableText = $derived(
@@ -43,20 +46,28 @@
   $effect(() => {
     if (isRenderableText) lazyMarkdown.start();
   });
+  const session = getChatSession();
   /**
    * 用户气泡跟随对话 Bot 的强调色（单聊取 direct bot；项目组没有单一 Bot，
    * 维持默认主色）。这是「Bot 的腔调色」而非头像色：换预置形状、上传头像都
    * 不影响它。第一种「黑白」是 var() 主题变量，亮/暗风格下黑白互换，文字用
-   * 其对比色；其余固定色一律白字。
+   * 其对比色；其余固定色一律白字。v2.3 交换会话里发起方 A 扮演用户侧——
+   * 直聊 bot 缺失时回落 A 自己的强调色，与用户在 A 私聊里看到的气泡一致。
    */
-  const session = getChatSession();
+  const exchangeIssuerBot = $derived(
+    session.view?.conversation.type === 'bot_direct'
+      ? (contacts.bots.find((b) => b.id === (session.view?.conversation.fromBotId ?? '')) ?? null)
+      : null,
+  );
   const userBubbleAccent = $derived(
     session.view?.conversation.bot
       ? resolveAccentColor(
           session.view.conversation.bot.accentColor,
           session.view.conversation.bot.avatar,
         )
-      : null,
+      : exchangeIssuerBot !== null
+        ? resolveAccentColor(exchangeIssuerBot.accentColor, exchangeIssuerBot.avatar)
+        : null,
   );
   /**
    * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 项目组）与输入框共用同一
@@ -75,7 +86,7 @@
   ]);
   const userText = $derived('text' in message.content ? message.content.text : '');
   const userSegments = $derived(
-    message.senderType === 'user' ? segmentComposerText(userText, mentionTargets) : [],
+    message.senderType === 'user' || userStyle ? segmentComposerText(userText, mentionTargets) : [],
   );
   // Bot 气泡的正文；空（含纯空白）时不渲染气泡容器——纯附件消息（如媒体
   // 生成的确定性投递）只有附件行，空气泡会在 UI 里留下空元素。
@@ -100,7 +111,7 @@
   <!-- 语音消息（53 号修订 v3）：药丸 + 波形进度 + 下方 caption；用户原始录音
        与 Bot 合成音频共用一条音频声道。 -->
   <VoiceMessageBubble {message} />
-{:else if message.senderType === 'user'}
+{:else if message.senderType === 'user' || userStyle}
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div

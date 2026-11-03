@@ -474,7 +474,7 @@ describe('cross-bot delegation A→B (D71 v2)', () => {
 describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
   const isTaskWake = (req: MockChatRequest) => req.lastUserText().includes('<trigger reason="task"');
 
-  it('request：B 的委派轮派任务 → 任务落 B 的私聊（执行归属），结果经 follow-up 由 A 转述', async () => {
+  it('request：B 的委派轮派任务 → 任务落交换会话（执行隔离），结果经 follow-up 由 A 转述', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { b, aConv } = await pair(stack);
@@ -505,10 +505,10 @@ describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
     const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
     expect(awaiting.taskIds).toHaveLength(1);
     await waitFor(() => (taskStep.consumed ? true : null), { label: 'task running' });
-    // 执行归属映射：B 派出的任务落在 B 的用户私聊，不在交换会话里。
+    // v2.3 执行隔离：B 派出的任务落在交换会话里，B 的用户私聊不出现执行产物。
     const task = core.services.domain!.runs.get(awaiting.taskIds[0]!)!;
-    expect(task.conversationId).toBe(awaiting.toConversationId);
-    expect(task.conversationId).not.toBe(awaiting.exchangeConversationId);
+    expect(task.conversationId).toBe(awaiting.exchangeConversationId);
+    expect(task.conversationId).not.toBe(awaiting.toConversationId);
     expect(cards(await listAllMessages(core, aConv), 'delegation_result')).toHaveLength(0);
     taskStep.release();
     const done = await waitDelegation(stack, (d) => d.status === 'completed');
@@ -546,7 +546,7 @@ describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
     expect(JSON.stringify(aFirst.body.tools)).toContain('不会发给 B');
   }, 60_000);
 
-  it('审批归属映射（真实接线）：working 委派轮身份插入的审批行与卡片落 B 的私聊', async () => {
+  it('审批归属映射（真实接线）：working 委派轮身份插入的审批行与卡片落发起方 A 的私聊', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { b, aConv } = await pair(stack);
@@ -577,23 +577,23 @@ describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
     const row = await waitDelegation(stack, (d) => d.status === 'working' && d.runId !== null);
     await waitFor(() => (turnHold.consumed ? true : null), { label: 'turn held mid-flight' });
     // 委派轮跑在交换会话里——若 orchestrator 没把 resolver 注册进 approvals，
-    // 审批行会落交换会话；真实接线下必须落到 B 的用户私聊（执行归属 §3.7）。
+    // 审批行会落交换会话；真实接线下必须落到发起方 A 的用户私聊（v2.3 §3.7：
+    // 谁发出委派，用户就在谁的对话里操作）。
     const exchange = row.exchangeConversationId!;
-    const bConv = bConversation(stack, b);
     const approval = core.services.domain!.approvals.submitNonBlocking(
       { runId: row.runId!, botId: b.id, conversationId: exchange, loopType: 'turn' },
       'access',
       { path: '/tmp/demo', access: 'read' },
       () => {},
     );
-    expect(approval.conversationId).toBe(bConv);
+    expect(approval.conversationId).toBe(aConv);
     expect(approval.conversationId).not.toBe(exchange);
-    // approvals.list（界面同一条 RPC）按会话取卡：B 私聊有、交换会话没有。
+    // approvals.list（界面同一条 RPC）按会话取卡：A 私聊有、交换会话没有。
     // （测试环境 unattended 自动裁决时卡是 ephemeral 不落消息表，行归属是判别点。）
-    const inB = (await core.rpc.call('approvals.list', { conversationId: bConv })) as {
+    const inA = (await core.rpc.call('approvals.list', { conversationId: aConv })) as {
       approvals: Array<{ id: string }>;
     };
-    expect(inB.approvals.some((a) => a.id === approval.id)).toBe(true);
+    expect(inA.approvals.some((a) => a.id === approval.id)).toBe(true);
     const inExchange = (await core.rpc.call('approvals.list', { conversationId: exchange })) as {
       approvals: Array<{ id: string }>;
     };
@@ -601,6 +601,70 @@ describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
     turnHold.release();
     taskStep.release();
     await waitDelegation(stack, (d) => d.id === row.id && d.status === 'completed');
+  }, 60_000);
+
+  it('v2.3：委派任务的 ask_user 提问卡落发起方 A 的私聊，用户在 A 的对话里作答', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { b, aConv } = await pair(stack);
+    const resumed = step()
+      .inTask()
+      .expect((req) => body(req).includes('用户的回答：A 方案'))
+      .replyText('RESULT 按 A 方案完成');
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('让小乙查 X'))
+        .replyToolCall('delegate_to_bot', { bot_id: b.id, task: '查 X 并整理' }),
+      step().inTurn().expect(isAfterDelegateCall).replyText('已经转交给小乙。'),
+      step()
+        .inTurn()
+        .expect(isDelegatedTrigger)
+        .replyToolCall('start_task', {
+          title: '查 X',
+          instruction: '查 X 并整理',
+          source_message_ids: [],
+          writes: false,
+        }),
+      step().inTurn().expect(isDelegatedTrigger).replyText('好的，我去做'),
+      step()
+        .inTask()
+        .replyToolCall('ask_user', { question: '用哪个方案？', options: ['A 方案', 'B 方案'] }),
+      resumed,
+      step().inTurn().expect(isTaskWake).replyText('X 查好了。'),
+      step().inTurn().expect(isFollowUp).replyText('小乙查好了。'),
+    ]);
+    await sendBatch(core, aConv, ['让小乙查 X']);
+    const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
+    // 提问卡出现在发起方 A 的私聊（谁发出委派，用户就在谁的对话里操作）。
+    const question = await waitFor(
+      async () =>
+        (await listMessages(core, aConv)).find(
+          (m) =>
+            m.kind === 'system_event' &&
+            'event' in m.content &&
+            m.content.event === 'task_question',
+        ) ?? null,
+      { label: 'question card in A chat' },
+    );
+    expect(question!.content).toMatchObject({ text: '用哪个方案？', options: ['A 方案', 'B 方案'] });
+    // 交换会话与执行方 B 的私聊都没有提问卡。
+    const exchangeMessages = await listMessages(core, awaiting.exchangeConversationId!);
+    expect(
+      exchangeMessages.some(
+        (m) => m.kind === 'system_event' && 'event' in m.content && m.content.event === 'task_question',
+      ),
+    ).toBe(false);
+    const bConv = bConversation(stack, b);
+    expect(
+      (await listMessages(core, bConv)).some(
+        (m) => m.kind === 'system_event' && 'event' in m.content && m.content.event === 'task_question',
+      ),
+    ).toBe(false);
+    // 用户在 A 的对话里作答 → 任务继续，委派以任务结果结算。
+    await core.rpc.call('tasks.answer', { messageId: question!.id, answer: 'A 方案' });
+    await waitFor(() => (resumed.consumed ? true : null), { label: 'task resumed by the answer' });
+    await waitDelegation(stack, (d) => d.id === awaiting.id && d.status === 'completed');
   }, 60_000);
 
   it('request：B 派出的任务失败 → B 消费失败结果后委派 failed，follow-up 标注任务状态', async () => {    const stack = await start();
@@ -760,7 +824,7 @@ describe('委派的追加与检索（D114）', () => {
     const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
     await waitFor(() => (taskStep.consumed ? true : null), { label: 'task running' });
     const task = core.services.domain!.runs.get(awaiting.taskIds[0]!)!;
-    expect(task.conversationId).toBe(awaiting.toConversationId);
+    expect(task.conversationId).toBe(awaiting.exchangeConversationId);
     llm.script('mock-main', [
       step()
         .inTurn()
@@ -795,10 +859,10 @@ describe('委派的追加与检索（D114）', () => {
         (m) => m.senderBotId === a.id && (m.content as { text?: string }).text === '已经把补充告诉小乙了。',
       ),
     );
-    // 注入条目落在 B 私聊的任务往返里（发起方标注 + untrusted 包裹的补充原文）。
-    const bConv = awaiting.toConversationId!;
+    // 注入条目落在交换会话的任务往返里（发起方标注 + untrusted 包裹的补充原文），
+    // 不进执行方 B 的用户私聊（v2.3 执行隔离）。
     const injectEntry = await waitFor(async () => {
-      const entries = await listAllMessages(core, bConv);
+      const entries = await listAllMessages(core, awaiting.exchangeConversationId!);
       return (
         entries.find(
           (m) =>
@@ -812,6 +876,11 @@ describe('委派的追加与检索（D114）', () => {
     const injectText = (injectEntry.content as { text: string }).text;
     expect(injectText).toContain('发起方');
     expect(injectText).toContain('<untrusted>');
+    expect(
+      (await listAllMessages(core, awaiting.toConversationId!)).some(
+        (m) => m.kind === 'task_event' && 'phase' in m.content && m.content.phase === 'inject',
+      ),
+    ).toBe(false);
     // 补充原文也存档在交换会话里（delegationUpdate 标记）。
     const exchangeMessages = await listMessages(core, awaiting.exchangeConversationId!);
     expect(

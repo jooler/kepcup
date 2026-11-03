@@ -116,6 +116,19 @@ describe('通讯录名册', () => {
     expect(contacts.conversations.map((conversation) => conversation.id)).not.toContain('conv_card');
   });
 
+  it('ignores a bot_direct exchange conversation update（v2.3）', () => {
+    contacts.start();
+    handlers.get('conversation.updated')?.({
+      conversation: {
+        ...directConversation('conv_ex', 'bot_a'),
+        type: 'bot_direct',
+        fromBotId: 'bot_a',
+        toBotId: 'bot_b',
+      },
+    });
+    expect(contacts.conversations.map((conversation) => conversation.id)).not.toContain('conv_ex');
+  });
+
   it('归档事件即时更新名册', async () => {
     contacts.start();
     handlers.get('conversation.updated')?.({

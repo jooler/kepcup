@@ -1410,12 +1410,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const taint = new TaintService({ db: mainDb, clock, settings });
     taint.sweepExpired();
     // Taint travels with a cross-bot handoff (design 29 §8.3, 不可被「转交」洗掉): A's task text
-    // reaching B's DM taints (B, that DM); B's result card landing in A's conversation taints
-    // (A, that conversation). Group chats are covered by the conversation-level check.
+    // reaching the execution home taints (B, that conversation) — v2.3: the exchange
+    // conversation where B actually works (v1 rows: B's DM); B's result reaching A's
+    // conversation taints (A, that conversation). Group chats are covered by the
+    // conversation-level check.
     delegations.onMoved((delegation) => {
       if (delegation.toConversationId === null) return;
       const fromA = { botId: delegation.fromBotId, conversationId: delegation.fromConversationId };
-      const toB = { botId: delegation.toBotId, conversationId: delegation.toConversationId };
+      const toB = {
+        botId: delegation.toBotId,
+        conversationId: delegation.exchangeConversationId ?? delegation.toConversationId,
+      };
       if (delegation.status === 'working') taint.inherit(fromA, toB);
       else if (delegation.status === 'completed' && delegation.intent !== 'fyi') {
         taint.inherit(toB, fromA);

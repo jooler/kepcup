@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import { X } from '@lucide/svelte';
+import { onDestroy } from 'svelte';
+import { ArrowLeft } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { ChatSession } from '$lib/stores/chat-session.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { delegations } from '$lib/stores/delegations.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
-  import { setChatSession } from '$lib/features/chats/chat-session-context';
-  import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+import { setChatSession } from '$lib/features/chats/chat-session-context';
+import { contacts } from '$lib/stores/contacts.svelte';
+import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageList from '$lib/features/chats/MessageList.svelte';
   import { Button } from '$lib/components/ui/button';
   import { detailViewState } from './delegation-detail-view';
@@ -38,6 +39,14 @@
   );
   const toName = $derived(
     delegation !== null ? (chat.botName(delegation.toBotId) || delegation.toBotId) : '',
+  );
+  // BotAvatar 的头像（预置 / 上传）取自 bot 记录的 avatar 字段，只传 botId 会
+  // 落到首字母占位——这里从通讯录解析出两个 Bot 对象，把头像字段一并传入。
+  const fromBot = $derived(
+    delegation !== null ? (contacts.bots.find((b) => b.id === delegation.fromBotId) ?? null) : null,
+  );
+  const toBot = $derived(
+    delegation !== null ? (contacts.bots.find((b) => b.id === delegation.toBotId) ?? null) : null,
   );
   const statusText = $derived(
     delegation === null
@@ -82,32 +91,61 @@
 
 <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col" data-testid="delegation-detail-view">
   <header
-    class="app-drag flex h-14 shrink-0 items-center gap-2 border-b px-4 {narrow && isMac
+    class="app-drag flex h-14 shrink-0 items-center gap-2 border-b px-3 {narrow && isMac
       ? 'pl-20'
       : ''}"
     data-testid="delegation-detail-header"
   >
-    <BotAvatar botId={delegation?.fromBotId ?? ''} name={fromName} class="app-no-drag size-7" />
-    <span class="max-w-40 truncate text-sm font-medium">{fromName}</span>
-    <span class="text-xs text-muted-foreground">⇄</span>
-    <BotAvatar botId={delegation?.toBotId ?? ''} name={toName} class="app-no-drag size-7" />
-    <span class="max-w-40 truncate text-sm font-medium">{toName}</span>
-    <span
-      class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-      data-testid="delegation-detail-status">{statusText}</span
-    >
-    <span class="min-w-0 flex-1"></span>
+    <!-- 左侧圆形返回（样式同任务详情页左上角的返回按钮）：关掉详情回到原对话。 -->
     <Button
       variant="ghost"
       size="icon"
-      class="app-no-drag size-8 rounded-full text-muted-foreground hover:text-foreground"
+      class="app-no-drag size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
       onclick={() => delegations.closeDetail()}
-      aria-label={t('delegation.closeDetail')}
-      title={t('delegation.closeDetail')}
-      data-testid="delegation-detail-close"
+      aria-label={t('delegation.backToChat')}
+      title={t('delegation.backToChat')}
+      data-testid="delegation-detail-back"
     >
-      <X class="size-4" aria-hidden="true" />
+      <ArrowLeft class="size-4" aria-hidden="true" />
     </Button>
+    <span class="min-w-0 flex-1"></span>
+    <!-- 标题药丸：与 Bot 消息顶部的药丸按钮同一外形（rounded-full + 描边 +
+         阴影 + 毛玻璃），双 Bot 头像 + 名称；两侧 flex-1 让它严格居中。 -->
+    <div
+      class="app-no-drag flex h-10 min-w-0 items-center gap-1.5 rounded-full border border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
+      data-testid="delegation-detail-title"
+    >
+      <BotAvatar
+        botId={delegation?.fromBotId ?? ''}
+        name={fromName}
+        avatar={fromBot?.avatar ?? null}
+        accentColor={fromBot?.accentColor ?? null}
+        mask={fromBot?.avatarMask ?? null}
+        padding={fromBot?.avatarPadding ?? null}
+        class="size-7"
+        fallbackClass="text-[10px]"
+      />
+      <span class="max-w-36 truncate">{fromName}</span>
+      <span class="text-xs text-muted-foreground">⇄</span>
+      <BotAvatar
+        botId={delegation?.toBotId ?? ''}
+        name={toName}
+        avatar={toBot?.avatar ?? null}
+        accentColor={toBot?.accentColor ?? null}
+        mask={toBot?.avatarMask ?? null}
+        padding={toBot?.avatarPadding ?? null}
+        class="size-7"
+        fallbackClass="text-[10px]"
+      />
+      <span class="max-w-36 truncate">{toName}</span>
+      <span
+        class="ml-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+        data-testid="delegation-detail-status">{statusText}</span
+      >
+    </div>
+    <span class="min-w-0 flex-1"></span>
+    <!-- 与左侧返回按钮对称的占位：标题药丸居中不被长名称挤偏。 -->
+    <span class="size-8 shrink-0" aria-hidden="true"></span>
   </header>
   <div class="relative min-h-0 flex-1">
     {#if detailView === 'unavailable'}

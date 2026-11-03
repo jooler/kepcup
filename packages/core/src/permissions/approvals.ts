@@ -188,9 +188,9 @@ export class ApprovalsService {
   /** Grants already credited to a run (audit dedupe). */
   readonly #grantUsedLogged = new Set<string>();
   /**
-   * D113 (D71 v2) 执行归属映射：委派 run 跑在交换会话里，但审批卡（含中途
-   * 权限弹窗）必须落在执行方与用户的私聊。orchestrator 在构建委派宿主后
-   * 注册；未注册时保持 run 自己的会话（所有既有调用方不受影响）。
+   * v2.3 (D71 v2) §3.7 执行归属映射：委派执行中的审批卡（含中途权限弹窗）落
+   * 在发起方 A 与用户的私聊——谁发出委派，用户就在谁的对话里操作。orchestrator
+   * 在构建委派宿主后注册；未注册时保持 run 自己的会话（所有既有调用方不受影响）。
    */
   #userConversationResolver: ((identity: RunIdentity) => string | null) | null = null;
 
@@ -1424,8 +1424,8 @@ export class ApprovalsService {
     opts: { status: ApprovalStatus; autoApproved?: boolean; decision?: ApprovalDecision | null },
   ): Approval {
     const id = newId('apr');
-    // D113: a delegated turn's cards live in the executor's chat (execution
-    // home), not in the exchange conversation the run occupies.
+    // v2.3 §3.7: a delegated execution's cards go to the issuer's chat, not
+    // the exchange conversation the run occupies.
     const conversationId =
       this.#userConversationResolver !== null
         ? this.#userConversationResolver(identity)

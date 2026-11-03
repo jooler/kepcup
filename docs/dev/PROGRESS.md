@@ -2028,3 +2028,115 @@ Bot↔Bot 持久对话——会破坏每委派独占会话与 run 的归属不�
   与 delegations store 测试（desktop-svelte）；shared 重建（EXCHANGE_READ_ONLY）；
   core/desktop typecheck 0 error；收口全量 `pnpm test` 722 文件 / 7640 例通过、42 跳过、
   0 失败；三包 typecheck 0 error、eslint 干净。
+
+## 委派 v2.3：执行完全隔离（2026-11-04）
+
+用户实测发现两点：① B 执行委派时任务卡、task_event 往返、提问卡、结果等出现在 B 与用户的
+对话里（§3.7「谁执行产物落谁私聊」的映射所致）；② 交换会话条目出现在左栏（core 列表已排除
+`bot_direct`，漏在渲染端事件路径）。语义改为：**委托执行与双方的用户对话完全隔离**——执行
+过程全部留在交换会话（药丸详情查看），需用户操作的审批卡 / 提问卡落**发起方 A** 的私聊
+（谁发出委派，用户就在谁的对话里操作）。
+
+- **归属映射改向**（`orchestrator.ts` `executionUserHomeOf`）：resolver 改按
+  `byExchange(run 所在会话) ?? workingByRun(runId)` 查委派行、返回 `from_conversation_id`
+  ——委派轮与委派任务都住交换会话，一次覆盖两者，v1 存量轮由 workingByRun 兜底；
+  approvals（审批卡 / 权限弹窗）与 `TaskHost.ask`（提问卡，dep 改名 `userHomeOf`）共用。
+- **任务搬进交换会话**：`TaskHost.#scope` 去掉执行归属 remap——任务行 / 任务卡 / task_event
+  / 任务工作区全部留在交换会话；`#tasksOfB` / `#rootTasks` / `#linkedTasks` 改按
+  `exchange_conversation_id` 检索（v1 存量回落 `to_conversation_id`）；任务终态 wake 发往
+  (B, 交换会话)（成员判定通过），失败任务的消费链不变。
+- **taint 继承目标**（start.ts）：`working` 方向改 (B, 交换会话)——A 的任务文本实际落点与
+  B 的工作现场都在那里；完成方向 (A, A 的对话) 不变。
+- **左栏隐藏**：`chat` / `contacts` 两个 store 的 `conversation.updated` upsert 路径过滤
+  `bot_direct`（与既有 `card` 过滤同范式）；全局搜索 / 侧栏标签随之干净。
+- **域服务**：`DelegationsService.byExchange(conversationId)` 新增（交换会话 → 委派行）。
+- **文档**：27 号 v2.3 修订记录 + §3.7 全节重写 + §3.1 契约表 / §3.6 取消段 / §3.8 更新轮
+  句 / 验收锚点同步；dev/04 delegate 工具行归属描述更新；todo v2.3。
+- **验证**：delegation-host 单测 48 例（+1：跟随任务只认交换会话，B 私聊同源任务不进跟随）、
+  delegation-execution-home 重写为 A 私聊归属（+1 委派任务身份 / +1 v1 存量兜底）、
+  delegation 集成 15 例（任务与注入条目落交换会话、审批卡翻转 A 私聊、新增委派任务
+  ask_user 提问卡落 A 私聊并可作答）、connected-apps-p2-egress 的 taint 委派用例随新语义
+  更新（污染落交换会话、egress 卡落 A 的对话）；渲染端新增 `chat.svelte.test.ts`
+  （事件路径 bot_direct 不进左栏）、contacts 补 bot_direct 用例；shared 契约零改动；
+  core/desktop typecheck 0 error（desktop 仅 ApprovalCard 既有 warning）、eslint 干净；
+  收口全量 `pnpm test` 720 文件 / 7604 例通过、42 跳过、0 失败。
+
+## 委派 v2.3 二轮：交换会话消息面样式 + 上报链路观测（2026-11-04）
+
+用户实测二轮反馈：① B 执行完毕且在交换会话里有总结回复，但 A 未在与用户的对话里报告结果；
+② 交换会话样式三处调整。排查结论：**当前 worktree 的上报链路是通的**——委派集成测试
+15/15 逐字覆盖同一场景（B 委派轮 + W6 任务跟随 + follow-up + A 的可见回复断言）全绿，
+核心日志亦无委派失败 / 免打扰停靠记录；而 D113 于当日 03:11 才提交、core dist 与桌面
+构建 04:12 才产出，实测时运行中的 core 进程极可能未载入最新构建（v2.2 审查修正前的委派
+链确有「补充静默滞留」等已修复的停摆点）。为让复现可秒级定位，补齐观测并落实样式：
+
+- **上报链路观测**（core）：`#complete` / `#fail` 结算、`#notifyA` follow-up 派发各留
+  一条 info（`delegation settled` / `delegation follow-up dispatched`）；
+  `deliverEventToBot` 三个拒投分支（会话缺失 / 只读、Bot 缺失 / 非活跃、非成员）从静默
+  return 改为 warn——「结算了但 A 没上报」的断链从此可从日志直接定位断点在哪一段。
+- **交换会话消息形态**（新增 `features/chats/exchange-message.ts` 纯函数 +
+  `exchange-message.test.ts`）：`bot_direct` 会话里发起方 A 相当于对话里的「用户」——
+  A 的消息居右、用户样式气泡（`ChatMessageRow` 行方向 / 对齐 / 操作钮位随
+  `userSide` 翻转；`MessageBody` 新增 `userStyle` 渲染用户气泡，强调色回落 A 自己的
+  accent）；B 居左 Bot 气泡；双侧 Bot 头像，同一 Bot 连续消息只有第一条带头像
+  （`merge.above` 时留同尺寸占位对齐）。撤回钮 / 代发标签仍按 senderType 判定，
+  不随形态翻转。
+- **详情视图头部**（`DelegationDetailView`）：右侧关闭按钮移除，改为左侧圆形返回按钮
+  （样式同任务详情页左上角，`delegation.backToChat`）；标题改药丸形（外形与 Bot 消息
+  顶部的药丸按钮一致：rounded-full + 描边 + 阴影 + 毛玻璃），内含双 Bot 头像 + 名称 +
+  状态徽标，两侧 flex-1 使其严格居中。
+- **引用按钮隐藏**：交换会话没有输入组件接收引用内容——消息 hover 操作与右键菜单的
+  「引用」都按 `bot_direct` 会话隐藏（复制 / 固定保留）。
+- **文档**：27 号 §3.2 药丸详情行补消息形态语义 + v2.3 修订记录补 ⑤⑥；todo v2.3 补
+  二轮记录。
+- **验证**：exchange-message 3 例、delegation core 定向 65 例（host 48 + execution-home
+  4 + 集成 15）全绿；core/desktop typecheck 0 error、eslint 干净；收口全量 `pnpm test`
+  724 文件（721 通过 + 3 既有跳过）/ 7647 例通过、42 跳过、0 失败。
+
+## 委派 v2.3a：question 跟随任务 + 转述纪律 + 药丸头像（2026-11-04）
+
+用户实测二轮（截图）：① 发起方 A 的对话出现任务卡、A 转述了大量与 B 的沟通过程——
+经核实任务卡是 **A 自己派的核验任务**（A 的正常任务行为，B 的执行产物已隔离在交换
+会话），而过程叙述的根因是 **A 用了 `question` intent**：B 被「提问」时也派任务自查，
+旧语义按「B 该轮回复」结算，B 的「已派出核查任务」被当成最终答复转述，真实结果永远
+回不来，A 只好自己另派任务核验并大篇幅叙述过程；② 交换会话顶部药丸里头像显示为名称
+首字符——`BotAvatar` 的头像（预置 / 上传）取自 bot 记录的 `avatar` 字段，此前只传
+botId + name 落到首字母占位。
+
+- **question 跟随任务**（`dispatch/delegation.ts` `#settle`）：taskIds 分支从
+  `request` 扩到 `request | question`（fyi 不变）——B 派了任务时委派转 `awaiting_tasks`
+  等齐任务、结果拼接转述；没派任务仍取该轮回复。B 侧 question 唤醒提示同步（直接给
+  完整答复，不要只说「我去查」「已派出」；确需动手的派任务，结果自动汇入答复）。
+- **A 侧纪律**（`tools/delegation-tools.ts` 工具说明）：要动手 / 跑命令 / 查数据的
+  结果一律 `request`（哪怕表述成问题）；委派后简短确认、不复述委派全文、不预告计划、
+  不自行另派任务做同样的事；收到结果只转述最终结论与关键信息——不叙述委派往来、
+  中间轮次、对方派了什么任务，不出现 delegation_id / run id。三处 follow-up notice
+  （`#complete` 轮回复路径 / `#evaluateTasks` 任务拼接路径 / `#fail`）同步收紧。
+- **药丸头像**（`DelegationDetailView`）：从 `contacts.bots` 解析两个 Bot 对象，
+  `BotAvatar` 补传 `avatar` / `accentColor` / `mask` / `padding`。
+- **文档**：27 号新增 v2.3a 修订记录 + §3.6 重写（intent 表 / 跟随任务范围 / A 侧
+  intent 纪律）+ §3.2 注入行补转述纪律；dev/04 delegate 工具行同步；todo 补 v2.3a。
+- **测试**：delegation-host 的 question 用例改写（派任务 → `awaiting_tasks` → 任务
+  结果汇入转述；新增「没派任务仍取轮回复」对照例）。
+- **验证**：委派定向 71 例全绿；core/desktop typecheck 0 error（desktop 仅
+  ApprovalCard 既有 warning）、eslint 干净；收口全量 `pnpm test`
+  724 文件（721 通过 + 3 既有跳过）/ 7648 例通过、42 跳过、0 失败。
+
+## 委派 v2.3b：唤醒提示明说「对话轮只读 vs 任务完整工具面 + 权限」（2026-11-04）
+
+用户实测三轮：链路正确了，但被委托方 B 没意识到可以拉起任务执行——任务有更多权限、
+更多可用工具，B 在只读轮里跑不了命令就止步于「已派出」。
+
+- **`delegationWakeHint`（request / question / update）**：明说对比——本轮是只读对话轮
+  （只有 read / ls / find / grep，没有 bash、写文件等执行工具）；`start_task` 拉起的
+  任务是完整工具面（bash、写文件、浏览器等都有），执行中可按需申请权限（审批卡送到
+  发起方的对话由用户处理），任务结果自动汇入委托交给对方转述；不要只回「收到」「已
+  派出」，也不要说自己做不了——派任务就能做。
+- **`start_task` 工具描述**（所有 Bot 通用）：补同一对比（对话轮只读；任务完整工具面
+  + 按需申请权限，本轮做不了的就派任务）。
+- **文档**：27 号 §3.6 intent 表 / §3.2 触发段说明段同步。
+- **验证**：context-assembly / trigger-hints / delegation 集成 / delegation-host 定向
+  111 例全绿（集成断言的提示子串保持兼容）；core typecheck 0 error、eslint 干净。
+  纯提示文案改动，未跑全量（无跨包公共面改动）。
+
+
