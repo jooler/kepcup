@@ -134,6 +134,8 @@ describe('micro-app bridge guard（帧形状与白名单）', () => {
       ok: true,
       frame: { k: 'event-ack', subId: 'app', seq: 2 },
     });
+    // seq=0 合法（非负整数；宿主 seq 从 1 起，但协议本身不排除 0）。
+    expect(parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'event-ack', subId: 'app', seq: 0 }).ok).toBe(true);
     expect(parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'event-ack', subId: 'app', seq: -1 }).ok).toBe(false);
   });
 });

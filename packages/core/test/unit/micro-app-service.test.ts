@@ -171,6 +171,21 @@ describe('清单校验（交付裁决）', () => {
     expect(service.create({ ...base, manifest: { ...MANIFEST, net: { mode: 'allowlist', allowlist: ['https://a.com/x'] } } }).ok).toBe(false);
     expect(service.create({ ...base, manifest: { ...MANIFEST, entry: 'main.html' } }).ok).toBe(false);
   });
+
+  it('入口 HTML 内嵌旧版组件垫片 → 拒绝（防 v1 垫片覆盖桥 v2 客户端）', () => {
+    const result = service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: 't',
+      description: '',
+      html: `<!DOCTYPE html><html><body><script>/* kepcup-widget-sdk-v2 */ window.kepcup = {};</script></body></html>`,
+      scope: 'conversation',
+      runId: 'r',
+      manifest: MANIFEST,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('垫片');
+  });
 });
 
 describe('落库与卡片描述符', () => {

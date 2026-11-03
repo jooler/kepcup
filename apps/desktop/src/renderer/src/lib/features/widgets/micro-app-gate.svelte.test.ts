@@ -40,10 +40,15 @@ describe('microAppOpenAllowed（挂载前门控）', () => {
     expect(microAppOpenAllowed({ ...base, capabilityFingerprint: '' })).toBe(false);
   });
 
-  test('未确认的指纹 → 拒绝；确认过 → 放行', () => {
+  test('未确认 → 拒绝；有确认记录（不论哪个指纹）→ 放行到 open（执法在生效指纹复核）', () => {
     expect(microAppOpenAllowed(base)).toBe(false);
     microAppConsents.remember('wgt_gate_1', 'v1|perm:storage.kv|net:open', 'b1', 1);
     expect(microAppOpenAllowed(base)).toBe(true);
+    // 扩权更新后的旧卡（卡片冻结指纹 ≠ 确认记录里的生效指纹）同样能走到 open——
+    // 生效能力面由 microAppEffectiveConsentOk 在 open 之后兜底，不会静默运行。
+    expect(
+      microAppOpenAllowed({ ...base, capabilityFingerprint: 'v1|perm:storage.kv|net:none' }),
+    ).toBe(true);
   });
 });
 

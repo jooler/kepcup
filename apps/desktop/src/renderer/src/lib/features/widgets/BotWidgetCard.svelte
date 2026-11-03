@@ -85,8 +85,17 @@
       .filter((cap) => cap !== undefined),
   );
 
-  /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「确认并打开」。 */
-  const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
+  /** 生效版本的查询模板数（微应用随预检，存量组件随卡片冻结值）。 */
+  const effectiveQueriesCount = $derived(
+    isMicroApp ? (preflight?.queriesCount ?? 0) : card.queriesCount,
+  );
+  /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「确认并打开」。
+   * 微应用跟**生效版本**的预检结果走（卡片冻结的 queriesCount 会随双指针过期）。 */
+  const needsReview = $derived(
+    isMicroApp
+      ? (preflight?.queriesNeedReview ?? false) && sourceHtml === null
+      : card.queriesCount > 0 && sourceHtml === null,
+  );
   const needsConsent = $derived(
     isMicroApp ? preflightFailed || !consentState.ok : !widgetConsented(card),
   );
@@ -345,12 +354,13 @@
       {/if}
       <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <ShieldCheck class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <!-- 声明了查询的版本换专门文案：笼统的「读不到你的其他数据」会与下方查询提示自相矛盾。 -->
-        {t(card.queriesCount > 0 ? 'botWidget.reviewNoteQueries' : 'botWidget.reviewNote')}
+        <!-- 声明了查询的版本换专门文案：笼统的「读不到你的其他数据」会与下方查询提示自相矛盾。
+             微应用按生效版本的查询数（预检），存量组件按卡片冻结值。 -->
+        {t(effectiveQueriesCount > 0 ? 'botWidget.reviewNoteQueries' : 'botWidget.reviewNote')}
       </p>
-      {#if card.queriesCount > 0}
+      {#if effectiveQueriesCount > 0}
         <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="bot-widget-queries-note">
-          {t('botWidget.queriesNote', { n: card.queriesCount })}
+          {t('botWidget.queriesNote', { n: effectiveQueriesCount })}
         </p>
       {/if}
       <div class="mt-2 flex gap-1">

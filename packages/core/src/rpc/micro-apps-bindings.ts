@@ -50,6 +50,8 @@ export function bindMicroAppsMethods(services: CoreServices): {
             capabilityFingerprint: effective.microApp.fingerprint,
             bundleSha256: effective.bundleSha256,
             microApp: microAppCardSummaryOf(effective.microApp.manifest),
+            queriesNeedReview: effective.queriesNeedReview,
+            queriesCount: effective.queriesCount,
             items: runMicroAppPreflight(
               effective.microApp.manifest.permissions,
               microAppPreflightProbes(services),

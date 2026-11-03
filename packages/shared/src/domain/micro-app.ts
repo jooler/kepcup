@@ -185,6 +185,10 @@ export const microAppsPreflightOutputSchema = z.object({
    * 版本**（卡片自带的摘要钉在发卡时，双指针前移后会过期）。
    */
   microApp: microAppCardSummarySchema,
+  /** 生效版本带查询模板且未展开审查 SQL（卡片「先查看源码」门控跟着生效版本走）。 */
+  queriesNeedReview: z.boolean().default(false),
+  /** 生效版本登记的查询模板数（审查态提示文案用）。 */
+  queriesCount: z.number().int().min(0).default(0),
   items: z.array(microAppsPreflightItemSchema),
 });
 export type MicroAppsPreflightOutput = z.infer<typeof microAppsPreflightOutputSchema>;

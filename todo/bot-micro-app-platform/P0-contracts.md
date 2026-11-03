@@ -119,3 +119,15 @@
 
 修复后定向回归 71 文件 912 通过 / 1 跳过；`shared`/`core` build 与 `desktop` typecheck 全过。
 
+## 第二轮复审与修复（2026-11-04）
+
+复审结论 FIX FIRST，1 条 P1 + 1 条 P2 + 5 条 P3，全部处置：
+
+1. **（P1）pre-open 门控比对卡片冻结指纹与「确认记生效指纹」矛盾 → 扩权更新后旧卡死胡同**：`microAppOpenAllowed` 改为「存在该微应用的确认记录即放行到 open」（`recordOf`），能力面执法保留在 open 后的 `microAppEffectiveConsentOk`（生效指纹复核不变）——扩权旧卡：卡片确认 → 记新指纹 → open → 复核通过；未确认面 → open 后拒绝回确认流程，自愈闭环。测试更新锁新语义。
+2. **（P2）查询预审门控跟卡片冻结的 queriesCount，与 open 按生效版本强制预审不一致 → 加查询的更新后旧卡死锁**：`microApps.preflight` 输出增 `queriesNeedReview` / `queriesCount`（生效版本），卡片 `needsReview` / 查询提示全部改用预检值。
+3. （P3）F17 内嵌垫片拒绝补测试；`event-ack seq=0` 用例；移交复制注释补微应用确认语义（副本新 id 需重新确认，安全侧）。
+4. （P3，不修）`widgetQueryDefSchema` 保持**非 strict**：`widget-check-run.test.ts` 锁住了「多余键静默剥离」的规范化语义（canonical {name, sql}），与清单 strict 有意不同——在 `widget-query.ts` 注释说明。
+5. （P3，记录）微应用卡门控硬依赖 `microApps.preflight` RPC：新渲染器 + 旧 core 会锁死微应用卡；Electron 原子更新语义内不可达，与「版本偏移」备忘同口径。
+
+修复后定向回归 71 文件 913 通过 / 1 跳过；全量 `pnpm test` 已在收口跑过一次（7613 通过 + 1 个与本阶段无关的 `permission-bridge` 超时抖动，单跑 29/29 通过复核）。**P0 收口。**
+
