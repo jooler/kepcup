@@ -282,7 +282,9 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
       "import { getChatSession } from '$lib/features/chats/chat-session-context';",
     );
     expect(source).toContain("import TaskQuestionCard from './TaskQuestionCard.svelte';");
-    expect(source).toContain('pendingTaskQuestionOf(chatSession.messages, taskId)');
+    // D113：委派任务住在 B 的私聊——上下文会话不是任务归属会话时回退到后台
+    // homeSession（questionSession），不再直接读 chatSession.messages。
+    expect(source).toContain('pendingTaskQuestionOf(questionSession?.messages ?? [], taskId)');
     expect(source).toContain('{#if active && pendingQuestion !== null}');
     expect(source).toContain('data-testid="task-run-question"');
     expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');

@@ -193,3 +193,87 @@ describe('0021 delegation_intent 迁移（W6）', () => {
     closeDatabase(db);
   });
 });
+
+describe('0067 bot_direct_exchange 迁移（D113）', () => {
+  it('旧库升级：conversations 重建保留全部行（bot_direct 列为 NULL），delegations 增 exchange_conversation_id', () => {
+    const db = openMainDb();
+    runMigrations(db, migrationsUpTo(66));
+    insertBot(db, 'bot_a', null);
+    insertBot(db, 'bot_b', null);
+    // 0066 及之前的会话：direct 一条、card 一条（带 0051 列）。
+    db.prepare(
+      "insert into conversations (id, type, direct_bot_id, created_at) values ('conv_direct', 'direct', 'bot_a', 1)",
+    ).run();
+    db.prepare(
+      "insert into conversations (id, type, direct_bot_id, parent_project_id, card_todo_id, created_at) values ('conv_card', 'card', 'bot_a', 'conv_direct', 'todo_1', 1)",
+    ).run();
+    // 0066 的 CHECK 拒绝新类型（说明重建确有必要）。
+    expect(() =>
+      db
+        .prepare(
+          "insert into conversations (id, type, created_at) values ('conv_too_early', 'bot_direct', 1)",
+        )
+        .run(),
+    ).toThrow(/CHECK/);
+
+    const applied = runMigrations(db, migrationsUrl('main'));
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(66));
+
+    const direct = db.prepare("select * from conversations where id = 'conv_direct'").get() as Record<
+      string,
+      unknown
+    >;
+    expect(direct).toMatchObject({ type: 'direct', from_bot_id: null, to_bot_id: null });
+    const card = db.prepare("select * from conversations where id = 'conv_card'").get() as Record<
+      string,
+      unknown
+    >;
+    expect(card).toMatchObject({
+      type: 'card',
+      parent_project_id: 'conv_direct',
+      card_todo_id: 'todo_1',
+      from_bot_id: null,
+    });
+
+    // 新类型可写：成员两列必填、等式 CHECK 生效；旧类型的两列必须为空。
+    db.prepare(
+      "insert into conversations (id, type, from_bot_id, to_bot_id, created_at) values ('conv_exchange', 'bot_direct', 'bot_a', 'bot_b', 1)",
+    ).run();
+    expect(() =>
+      db
+        .prepare(
+          "insert into conversations (id, type, from_bot_id, created_at) values ('conv_x1', 'bot_direct', 'bot_a', 1)",
+        )
+        .run(),
+    ).toThrow(/CHECK/);
+    expect(() =>
+      db
+        .prepare(
+          "insert into conversations (id, type, from_bot_id, to_bot_id, created_at) values ('conv_x2', 'direct', 'bot_a', 'bot_b', 1)",
+        )
+        .run(),
+    ).toThrow(/CHECK/);
+    // 索引随重建恢复；delegations 增列默认 NULL。
+    const indexes = (
+      db
+        .prepare("select name from sqlite_master where type = 'index' and tbl_name = 'conversations'")
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        'conversations_one_direct_per_bot',
+        'conversations_one_open_per_card',
+        'conversations_archived',
+      ]),
+    );
+    db.prepare(
+      "insert into delegations (id, from_bot_id, to_bot_id, from_conversation_id, task_text, status, created_at, updated_at) values ('dlg_new', 'bot_a', 'bot_b', 'conv_direct', 't', 'submitted', 1, 1)",
+    ).run();
+    const delegation = db.prepare("select * from delegations where id = 'dlg_new'").get() as Record<
+      string,
+      unknown
+    >;
+    expect(delegation.exchange_conversation_id).toBeNull();
+    closeDatabase(db);
+  });
+});

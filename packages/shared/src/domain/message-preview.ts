@@ -97,6 +97,7 @@ export function cardPreviewText(content: Record<string, unknown>): string {
 
   if (cardType === 'task') return line('📋', '任务');
   if (cardType === 'delegation_sent') return line('🤝', '已转交任务');
+  if (cardType === 'delegation_received') return line('🤝', '已接收委托');
   if (cardType === 'delegation_result') return line('🤝', '转交结果');
   if (cardType === 'run_changes') return '';
 

@@ -72,6 +72,9 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'cancel_task',
   'delegate_to_bot',
   'cancel_delegation',
+  // D114：追加补充只回执（补充内容进对方任务 loop，随委派结果按不可信回来）；
+  // list_delegations 读用户自己的委派台账，同 list_* 归不可信。
+  'update_delegation',
   'list_bots',
   // 工作台（D90）：写入是宿主侧的事项 / 备忘变更，只回执（list_* 读用户写的内容，在 UNTRUSTED_TOOLS）
   'create_todo',
@@ -131,6 +134,8 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'get_run',
   'get_run_steps',
   'list_tasks',
+  // D114：委派台账带对方 Bot 的任务 / 结果摘要（外部内容）
+  'list_delegations',
   'list_todos',
   'list_memos',
   'recall_memory',

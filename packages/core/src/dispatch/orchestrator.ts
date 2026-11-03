@@ -251,7 +251,12 @@ import {
   type TaskOutcome,
   type TaskRunControl,
 } from './tasks.js';
-import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
+import {
+  DELEGATION_RECEIVED_CARD,
+  DELEGATION_RESULT_CARD,
+  DELEGATION_SENT_CARD,
+  DelegationHost,
+} from './delegation.js';
 import { EpisodesService } from './episodes.js';
 import { ensureShareAttachmentCopy } from '../share/materialize.js';
 import { ProjectTurnCoordinator, type ProjectRoundEnd } from './project-turn.js';
@@ -861,6 +866,9 @@ export class Orchestrator {
         }
         return workdir.path;
       },
+      // D113 §3.7: a delegated turn's tasks land in the executor's chat (the
+      // closure is safe — #delegationHost exists by the time a run starts).
+      executionHomeOf: (identity) => executionHomeOf(identity),
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
@@ -1009,8 +1017,24 @@ export class Orchestrator {
       timeZone: deps.timeZone,
       logger: deps.logger,
       publish: (event, payload) => deps.publish(event as never, payload as never),
-      isMailboxIdle: (botId, conversationId) => this.isMailboxIdle(botId, conversationId),
       deliverToBot: (input) => this.#deliverDelegationMessage(input),
+      // D114: supplement deliveries only go out on an idle mailbox (a buffered
+      // batch would be flushed by the release AND retried by the idle hook).
+      isMailboxIdle: (botId, conversationId) => this.isMailboxIdle(botId, conversationId),
+      injectTask: (task, text, note) => {
+        // D114: host-caller injection into a live task loop — the same path
+        // `inject_task` uses, with the task row's own identity. `note` replaces
+        // the「对话中的你」tail for delegation supplements.
+        this.#taskHost.inject(
+          {
+            runId: task.id,
+            botId: task.botId,
+            conversationId: task.conversationId,
+            loopType: 'task',
+          },
+          { taskId: task.id, text, ...(note !== undefined ? { note } : {}) },
+        );
+      },
       cancelRun: (runId) => {
         this.cancelRun(runId);
       },
@@ -1020,6 +1044,14 @@ export class Orchestrator {
       deliverEvent: (botId, conversationId, event, text, options) =>
         this.deliverEventToBot(botId, conversationId, event, text, options),
     });
+    // D113 §3.7 执行归属映射：委派 run 跑在交换会话里，但它的用户可见产物
+    // （审批卡 / 中途权限弹窗、B 派出的任务）归属执行方 B 与用户的私聊。
+    const executionHomeOf = (identity: RunIdentity): string | null => {
+      if (identity.conversationId === null) return null;
+      const delegation = deps.delegations.workingByRun(identity.runId);
+      return delegation?.toConversationId ?? identity.conversationId;
+    };
+    deps.approvals.setUserConversationResolver(executionHomeOf);
     this.#episodes = new EpisodesService({
       db: deps.db,
       clock: deps.clock,
@@ -1195,6 +1227,10 @@ export class Orchestrator {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
+    }
+    if (conv.type === 'bot_direct') {
+      // D113：委派交换会话只在两个 Bot 之间（宿主写入），用户不可发言。
+      throw new AppError('EXCHANGE_READ_ONLY', '这是 Bot 之间的委托对话，不能在这里发言');
     }
     if (input.text.trim().length === 0 && (input.attachmentIds?.length ?? 0) === 0) {
       throw new AppError('INVALID_INPUT', '消息内容与附件不能同时为空');
@@ -2472,14 +2508,14 @@ export class Orchestrator {
   }
 
   /**
-   * Hands a delegation's proxied user message to B's mailbox (reason
-   * 'delegation'). The host only calls this when B's mailbox is idle, so the
-   * batch starts a fresh run whose id is returned.
+   * Hands a delegation's trigger message (v2: A's task message in the
+   * exchange conversation) to B's mailbox (reason 'delegation'). The batch
+   * starts a fresh run whose id is returned.
    */
   #deliverDelegationMessage(input: {
     botId: string;
     conversationId: string;
-    message: Message;
+    messages: Message[];
     extraAttributes: Record<string, string | number>;
   }): string | null {
     const conversation = this.#deps.conversations.get(input.conversationId);
@@ -2488,7 +2524,7 @@ export class Orchestrator {
     return this.#mailboxes.for(input.botId, conversation.id).deliver({
       conversationId: conversation.id,
       botId: input.botId,
-      messages: [input.message],
+      messages: input.messages,
       reason: 'delegation',
       extraAttributes: input.extraAttributes,
     });
@@ -2779,7 +2815,9 @@ export class Orchestrator {
         const content = message.content;
         if (
           'cardType' in content &&
-          (content.cardType === DELEGATION_SENT_CARD || content.cardType === DELEGATION_RESULT_CARD)
+          (content.cardType === DELEGATION_SENT_CARD ||
+            content.cardType === DELEGATION_RECEIVED_CARD ||
+            content.cardType === DELEGATION_RESULT_CARD)
         ) {
           return this.#delegationHost.renderContextLine(
             content.cardType,

@@ -72,10 +72,12 @@ export interface AppendMessageInput {
    */
   voiceMode?: boolean | undefined;
   /**
-   * text messages only (D71): a user message proxied by another bot (A) on
-   * the user's behalf — `origin: 'delegation'` + the delegation row + A's id.
+   * text messages only (D71 v2 / D113): A's message in a `bot_direct` exchange
+   * conversation — `origin: 'delegation'` + the delegation row + A's id.
+   * `update: true` (D114) marks a follow-up supplement to an in-flight
+   * delegation (the delegation host delivers pending ones to B).
    */
-  delegation?: { delegationId: string; delegatedBy: string } | undefined;
+  delegation?: { delegationId: string; delegatedBy: string; update?: boolean } | undefined;
   /**
    * text messages only (D75): a visible message attributed to a task —
    * `origin: 'task'` + the task's run id (rendered as 「你（任务 t_x）」).
@@ -453,6 +455,7 @@ export class MessagesService {
                     origin: 'delegation',
                     delegationId: input.delegation.delegationId,
                     delegatedBy: input.delegation.delegatedBy,
+                    ...(input.delegation.update === true ? { delegationUpdate: true } : {}),
                   }
                 : {}),
               ...(input.taskOrigin !== undefined

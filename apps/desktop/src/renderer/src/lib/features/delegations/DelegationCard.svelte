@@ -9,26 +9,28 @@
   import Markdown from '../chats/Markdown.svelte';
 
   /**
-   * 跨 Bot 委派卡（D71，docs/design/27 §3.2）：A 的对话里的两种卡——
-   * 发出卡（delegation_sent：交给了谁、任务摘要、实时状态、可取消）与结果卡
-   * （delegation_result：B 的回复截断（markdown 渲染，与 Bot 气泡同管线）+
-   * 「查看原文」跳到 B 的对话，或失败 / 取消原因）。用户留在 A 的对话，**不**自动切换到 B。
-   * W6：发出卡显示 intent（请求 / 提问 / 告知）；B 派了后台任务时显示
-   * 「等待 B 的任务…」并可取消（一并停止那些任务）；告知送达即结束、没有结果卡。
+   * 跨 Bot 委派卡（D71 v2 / D113，docs/design/27-butler-and-delegation.md §3.2）：
+   * 用户对话里只有**药丸**——A 侧发出药丸（delegation_sent：已委托 {B} 处理 ·
+   * 状态 · 查看详情，活动期可取消），B 侧接收药丸（delegation_received：已开始
+   * 处理来自 {A} 的委托 · 查看详情）。点击「查看详情」打开 A ⇄ B 的交换会话
+   * 详情视图（ChatsArea 整区替换，无输入框）；任务与授权卡按执行归属映射落在
+   * B 的私聊。用户留在自己的对话，**不**自动切换。
+   * 存量（v1）：delegation_result 结果卡分支原样保留，只服务升级前的历史行。
    */
   let { cardType, delegationId }: { cardType: string; delegationId: string } = $props();
 
   $effect(() => {
     void delegations.ensure(delegationId);
   });
-  // 结果卡的正文是 B 的回复原文（markdown 源文本），与 Bot 气泡共用同一条
-  // streamdown 懒加载管线；结果卡可能先于任何 Bot 气泡出现，这里自己触发加载。
+  // 结果卡（存量）的正文是 B 的回复原文（markdown 源文本），与 Bot 气泡共用
+  // 同一条 streamdown 懒加载管线；结果卡可能先于任何 Bot 气泡出现，这里自己触发加载。
   $effect(() => {
-    lazyMarkdown.start();
+    if (cardType === 'delegation_result') lazyMarkdown.start();
   });
 
   const delegation = $derived(delegations.byId[delegationId] ?? null);
   const toName = $derived(delegation !== null ? chat.botName(delegation.toBotId) : '');
+  const fromName = $derived(delegation !== null ? chat.botName(delegation.fromBotId) : '');
   const active = $derived(
     delegation !== null &&
       (delegation.status === 'submitted' ||
@@ -63,6 +65,10 @@
   let cancelling = $state(false);
   let expanded = $state(false);
 
+  function openDetail(): void {
+    delegations.openDetail(delegationId);
+  }
+
   async function cancel(): Promise<void> {
     cancelling = true;
     try {
@@ -89,55 +95,8 @@
   <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground"
     >{t('delegation.loading')}</span
   >
-{:else if cardType === 'delegation_sent'}
-  <div
-    class="w-full max-w-[85%] rounded-lg border bg-background/80 p-3 text-sm"
-    data-testid={`delegation-sent-${delegationId}`}
-    data-delegation-status={delegation.status}
-    data-delegation-intent={delegation.intent}
-  >
-    <div class="flex items-center gap-2 font-medium">
-      <Send class="size-4 text-sky-600" aria-hidden="true" />
-      <span>{sentTitle}</span>
-      <span
-        class="rounded bg-muted px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
-        data-testid="delegation-intent">{t(`delegation.intent.${delegation.intent}`)}</span
-      >
-      <span class="ml-auto flex items-center gap-1 text-xs font-normal text-muted-foreground">
-        {#if delegation.status === 'working' || delegation.status === 'awaiting_tasks'}
-          <Loader2 class="size-3 animate-spin" aria-hidden="true" />
-        {:else if delegation.status === 'submitted'}
-          <Clock class="size-3" aria-hidden="true" />
-        {/if}
-        {statusText}
-      </span>
-    </div>
-    <p class="mt-1.5 line-clamp-3 text-xs whitespace-pre-wrap text-muted-foreground">
-      {delegation.taskText}
-    </p>
-    {#if delegation.status === 'submitted'}
-      <p class="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
-        {delegation.intent === 'fyi' ? t('delegation.fyiQueuedHint') : t('delegation.queuedHint')}
-      </p>
-    {:else if delegation.status === 'awaiting_tasks'}
-      <p class="mt-1.5 text-xs text-muted-foreground" data-testid="delegation-awaiting-tasks">
-        {t('delegation.awaitingTasksHint', { name: toName, count: delegation.taskIds.length })}
-      </p>
-    {/if}
-    {#if active}
-      <div class="mt-2 flex justify-end">
-        <Button
-          size="sm"
-          variant="outline"
-          class="h-7"
-          disabled={cancelling}
-          onclick={() => void cancel()}
-          data-testid="delegation-cancel">{t('delegation.cancel')}</Button
-        >
-      </div>
-    {/if}
-  </div>
-{:else}
+{:else if cardType === 'delegation_result'}
+  <!-- 存量（v1）结果卡：升级前的历史行仍以卡片形态展示原文与「查看原文」跳转。 -->
   <div
     class="w-full max-w-[85%] rounded-lg border p-3 text-sm {delegation.status === 'completed'
       ? 'bg-background/80'
@@ -196,4 +155,69 @@
       {/if}
     </div>
   </div>
+{:else if cardType === 'delegation_received'}
+  <!-- B 侧接收药丸：已开始处理来自 A 的委托 · 查看详情。 -->
+  <button
+    type="button"
+    class="flex max-w-full cursor-pointer items-center gap-1.5 rounded-full border border-border/40 bg-background/80 px-3 py-1 text-xs shadow-sm transition-colors hover:bg-accent/40"
+    onclick={openDetail}
+    data-testid={`delegation-received-${delegationId}`}
+    data-delegation-status={delegation.status}
+  >
+    <Send class="size-3.5 shrink-0 text-sky-600" aria-hidden="true" />
+    <span class="min-w-0 truncate font-medium">{t('delegation.receivedTitle', { name: fromName })}</span>
+    <span class="shrink-0 text-muted-foreground">·</span>
+    <span class="shrink-0 text-muted-foreground">{t('delegation.viewDetail')}</span>
+    <ArrowUpRight class="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+  </button>
+{:else}
+  <!-- A 侧发出药丸：已委托 {B} 处理 · 状态 · 查看详情（活动期可取消）。 -->
+  <span
+    class="flex max-w-full items-center gap-1.5 rounded-full border border-border/40 bg-background/80 py-1 pr-1.5 pl-3 text-xs shadow-sm"
+    data-testid={`delegation-sent-${delegationId}`}
+    data-delegation-status={delegation.status}
+    data-delegation-intent={delegation.intent}
+    title={delegation.status === 'submitted'
+      ? (delegation.intent === 'fyi' ? t('delegation.fyiQueuedHint') : t('delegation.queuedHint'))
+      : delegation.taskText}
+  >
+    {#if delegation.status === 'working' || delegation.status === 'awaiting_tasks'}
+      <Loader2 class="size-3.5 shrink-0 animate-spin text-sky-600" aria-hidden="true" />
+    {:else if delegation.status === 'submitted'}
+      <Clock class="size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+    {:else if delegation.status === 'completed'}
+      <CircleCheck class="size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
+    {:else}
+      <CircleX
+        class="size-3.5 shrink-0 text-destructive"
+        aria-hidden="true"
+      />
+    {/if}
+    <span class="min-w-0 truncate font-medium">{sentTitle}</span>
+    <span class="shrink-0 text-muted-foreground">·</span>
+    <span
+      class="shrink-0 text-muted-foreground"
+      data-testid="delegation-status-text">{statusText}</span
+    >
+    <button
+      type="button"
+      class="ml-0.5 flex cursor-pointer items-center gap-0.5 rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+      onclick={openDetail}
+      data-testid="delegation-open-detail"
+    >
+      {t('delegation.viewDetail')}
+      <ArrowUpRight class="size-3" aria-hidden="true" />
+    </button>
+    {#if active}
+      <button
+        type="button"
+        class="cursor-pointer rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:cursor-default disabled:opacity-50"
+        disabled={cancelling}
+        onclick={() => void cancel()}
+        data-testid="delegation-cancel"
+      >
+        {t('delegation.cancelShort')}
+      </button>
+    {/if}
+  </span>
 {/if}

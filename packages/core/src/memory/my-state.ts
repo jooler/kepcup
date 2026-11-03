@@ -50,7 +50,9 @@ export function buildMyState(input: MyStateInput): string[] {
         ? (conversation.title ?? '项目组')
         : conversation.type === 'card'
           ? '项目组卡片对话'
-          : '与用户的单聊';
+          : conversation.type === 'bot_direct'
+            ? '与其他 Bot 的委托对话'
+            : '与用户的单聊';
     const trigger: { content: unknown } | null | undefined = run.triggerMessageIds
       .map((id) => input.getMessage(id))
       .find((m) => m !== null);
