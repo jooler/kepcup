@@ -68,6 +68,11 @@ export interface InjectTaskInput {
   taskId: string;
   text: string;
   sourceMessageIds?: string[] | undefined;
+  /**
+   * Replaces the inject tail's「对话中的你追加了新的指令」framing (D114: a
+   * delegation supplement comes from another Bot, not the task owner).
+   */
+  note?: string | undefined;
 }
 
 export interface InjectTaskResult {

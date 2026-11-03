@@ -2,14 +2,20 @@
 
 用户面对多个领域 Bot 时，需要一个**固定入口**来组队、分诊与代办；领域 Bot 之间也需要在**不离开当前对话**的前提下把任务交给另一个联系人执行。本文规定：**Butler（管家）** 与 **跨 Bot 委派（A→B）** 两套产品能力。二者**已实现**；委派的 intent 与跟随任务结果见 §3.6。
 
-决策：D70（Butler）、D71（A→B 委派）。执行方案见 [todo/butler-and-delegation.md](../../todo/butler-and-delegation.md)。
+> **修订记录（2026-11-03，D71 v2，决策 D113）**：委派消息面重构——A、B 改在**专属的 Bot↔Bot 直连交换会话**（新会话类型 `bot_direct`，单轮）里直接沟通，不再向 B 的用户私聊借用用户消息；双方与用户的对话里各展示一枚**药丸卡**（A 侧 `delegation_sent`「已委托 B 处理」、B 侧 `delegation_received`「已开始处理 A 的委托」），点击打开交换会话的只读详情视图；A 侧**不再贴结果卡**，由 A 在执行完毕后向用户发出结果反馈消息；执行期的审批卡 / 提问卡 / B 的任务一律归属**执行方（B）与用户的私聊**（执行归属映射，§3.7）。原「用户代发消息 + 结果卡」设计仅作存量数据保留。§3 各节已按新设计改写。
+>
+> **修订记录（2026-11-04，v2.1，决策 D114）**：新增委派的**追加与检索**（§3.8）——`update_delegation`（修改在途委托：存活任务直接注入任务 loop、无任务走 pending + 结算扣住与重绑）与 `list_delegations`（检索发出 / 收到的委派，支撑追问历史后发起新委托）。保持单轮交换会话，不引入 Bot↔Bot 持久对话。
+
+> **修订记录（2026-11-04，v2.2，D114 审查修正）**：`awaiting_tasks` 态一等公民化——① 补充投递前统一经 `#routePendingUpdates`（有存活任务注入、否则更新轮），idle 钩子与 `recover()` 对 `awaiting_tasks` 行同样补投（此前只有 `working` 行会被补投，补充可静默滞留）；② **更新轮投递时 `awaiting_tasks` 行重入 `working`**：更新轮是新的工作阶段，执行归属映射（§3.7）照常生效（更新轮派的任务 / 审批卡落 B 私聊），结算时若派了新任务则并入此前阶段的任务等齐、未派则以更新轮回复为最终结果（原 `#adoptUpdateTurnTasks` 并入分支移除）；③ 注入折入**全部**待送达补充并推进锚点（滞留的旧补充不再被更新轮重复投递），注入全部失败回落为更新轮投递；④ 注入尾注改「这条补充来自另一个 Bot」（不再与「对话中的你」矛盾）；⑤ `deliverPending` 投递成功 / 失败继续队列（v2 专属邮箱下 FIFO 不再靠 release 链式捞起）；⑥ 取消按 run 实际状态中止重绑后的在途更新轮；⑦ B 侧接收药丸先落卡再回填 `run_id`（补齐药丸丢失窗口）；⑧ 恢复时清理无委派指向的孤儿 `bot_direct` 会话；⑨ `list_delegations` 过滤下推 SQL、摘要 `<untrusted>` 包裹；`submitted` 状态文案改免打扰口径；`bot_direct` 拒言用专用错误码 `EXCHANGE_READ_ONLY`。§3.6/§3.7 节序修正（3.6 在前）。
+
+决策：D70（Butler）、D71（A→B 委派；v2 消息面见 D113）。执行方案见 [todo/butler-and-delegation.md](../../todo/butler-and-delegation.md)。
 
 相关：D4（Bot 间 `@` 触发 / 协作回合，[02-execution.md](02-execution.md)）、D48/D54（消息可见性）、D58（对话内设置 / 审批卡范式，[18-inline-setup.md](18-inline-setup.md)）、D59/D60（访谈与群创建，[19-work-path-and-group-setup.md](19-work-path-and-group-setup.md)）、D66（同 Bot `delegate_task`，[23-mcp-and-subagent.md](23-mcp-and-subagent.md)）、D67（durable journal，[24-durable-execution.md](24-durable-execution.md)）、[01-conversation.md](01-conversation.md)、[03-bot.md](03-bot.md)。
 
 ## 决策
 
 - **D70 Butler（管家）**：每个用户空间有且仅有一个 `bots.system_role='butler'` 的管家 Bot——**唯一、侧栏置顶、不可删除**。入职路径：onboarding / 访谈 → `propose_bots` 审批卡（建议 3–5 个领域 Bot）→ 用户确认 → 宿主**确定性** `bots.create` 批量落盘（不经模型再编造）。管家专属工具：`propose_bot`、`propose_project`、`propose_bots`、`suggest_route`；只读 `list_bots` 与 `delegate_to_bot` 管家与普通 Bot 共用。路由策略：未知意图 → 管家；单领域 → 直聊对应 Bot；多角色协作 → 建项目组（`propose_project`，管家自己不加入）；「结果留在本对话」→ 走 D71 委派。早期产品：先出路由卡；用户说「你安排」再委派执行。
-- **D71 A→B 跨 Bot 委派**：主 Bot A 调用 `delegate_to_bot`（可 `cancel_delegation`）把任务交给联系人 B（**异步**：工具立即返回，A 本轮照常收尾，B 的结果稍后以 follow-up 唤醒 A）。落 `delegations` 表，状态机对齐常见 A2A 语义（`submitted` / `working` / `completed` / `failed` / `cancelled`）。A 侧：发出卡 + 结果卡；B 侧：收到**用户代发**消息，带 `origin=delegation` 标签「由 A 代你发出」；**UI 停留在 A 的对话**。B 的最终回复截断（约 2000 字符）贴回 A 为结果卡（原文 + 链到 B 对话）；同时用 follow-up 注入告诉 A 转述实质结果、不要整段复述。结果卡的有用/需重做反馈（feedback）**首期不做**。防环：**首期一律单跳**（被委派 run 不能再委派）、禁止 A→B→A、禁止委派给管家。若 A 与 B **同在一个群**且场景适合群协作 → **降级为 D4 `@`**，不另开委派。`delegate_to_bot` 带 `intent`（`request` / `question` / `fyi`）：`request` 的委派在 B 为此派出任务时跟随这些任务、结果取各任务结果拼接（状态 `awaiting_tasks`），`question` 取 B 的回复，`fyi` 不回贴，见 §3.6。
+- **D71 A→B 跨 Bot 委派**（v2，2026-11-03）：主 Bot A 调用 `delegate_to_bot`（可 `cancel_delegation`）把任务交给联系人 B（**异步**：工具立即返回，A 本轮照常收尾，B 的结果稍后以 follow-up 唤醒 A）。落 `delegations` 表，状态机对齐常见 A2A 语义（`submitted` / `working` / `completed` / `failed` / `cancelled`）。**A、B 在专属的直连交换会话里沟通**：每次委托新建一个 `bot_direct` 类型会话（单轮，不复用），A 的任务文本以 A 的 bot 消息（带 `origin=delegation`）落入，B 的回复留在其中；B 的委派 run 跑在这个会话里。**用户对话只出现药丸**：A 侧「已委托 B 处理，点击查看详情」发出药丸；B 侧「已开始处理 A 的委托，点击查看详情」接收药丸；点击打开交换会话的只读详情视图（消息 UI 与普通对话一致，无输入框）。执行期 B 的审批卡 / 提问卡 / 任务归属 **B 与用户的私聊**（§3.7 执行归属映射）。B 的最终回复截断（约 2000 字符）后经 follow-up 交给 A 的模型，**A 向用户发出结果反馈消息**（不贴结果卡）；用户也可点药丸查看完整往来。防环：**首期一律单跳**（被委派 run 不能再委派）、禁止 A→B→A、禁止委派给管家。若 A 与 B **同在一个群**且场景适合群协作 → **降级为 D4 `@`**，不另开委派。`delegate_to_bot` 带 `intent`（`request` / `question` / `fyi`）：`request` 的委派在 B 为此派出任务时跟随这些任务、结果取各任务结果拼接（状态 `awaiting_tasks`），`question` 取 B 的回复，`fyi` 不回贴，见 §3.6。
 
 ## 1 现状与边界（结论）
 
@@ -73,7 +79,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 
 ### 2.3 管家工具面
 
-> **D75 说明（非修订）**：`propose_bot` / `propose_bots` / `propose_project` / `suggest_route` / `list_bots` / `delegate_to_bot` / `cancel_delegation` 全部属于**对话轮**的工具面——它们正是「立即返回、宿主干活」的那一类，与 D75 的 `start_task` 并列。D71 的异步契约、状态机与结果卡范式被 D75 的任务层直接照搬，§3.5 投递闸门中「B 邮箱空闲」的判定对象是 B 的**对话轮**。**实现期发现**（见 DEV-012）：贴回 A 的结果是 B 那一个**对话轮**的最终回复；需要动手的委派 B 只能派任务并先回复「我去做」，这句话就成了结果，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」（能用只读查询答复的在本轮给完整结果；需要动手的派任务并说明结果稍后在这里给出），「委派跟随任务结算」作为后续独立修订。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。**已修订**（2026-10-09）：`request` 的委派跟随 B 派出的任务，结果取各任务结果拼接，见 §3.6。
+> **D75 说明（非修订）**：`propose_bot` / `propose_bots` / `propose_project` / `suggest_route` / `list_bots` / `delegate_to_bot` / `cancel_delegation` 全部属于**对话轮**的工具面——它们正是「立即返回、宿主干活」的那一类，与 D75 的 `start_task` 并列。D71 的异步契约、状态机与结果卡范式被 D75 的任务层直接照搬（v2 起 §3.5 无「B 邮箱空闲」闸门，委派投递不等 B 的对话轮）。**实现期发现**（见 DEV-012）：贴回 A 的结果是 B 那一个**对话轮**的最终回复；需要动手的委派 B 只能派任务并先回复「我去做」，这句话就成了结果，真正的结果之后出现在交换会话详情里、不回到 A。本期按「现状 + 提示词约束」（能用只读查询答复的在本轮给完整结果；需要动手的派任务并说明结果稍后在这里给出），「委派跟随任务结算」作为后续独立修订。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。**已修订**（2026-10-09）：`request` 的委派跟随 B 派出的任务，结果取各任务结果拼接，见 §3.6。
 
 | 工具 | 作用 |
 |---|---|
@@ -106,25 +112,28 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | 项 | 规定 |
 |---|---|
 | 触发 | A 的响应 loop 调用 `delegate_to_bot({ bot_id, task, intent? })`（`intent` 见 §3.6）；**异步**，工具返回「已委托」后 A 照常收尾，不在 loop 内等 B |
-| 取消 | `cancel_delegation({ delegation_id })` 或用户在 A 侧委派卡（发出卡）上取消；`awaiting_tasks` 时一并取消 B 为此派出的任务（§3.6） |
-| 持久化 | `delegations` 表（main DB）：id、from_bot_id、to_bot_id、from_conversation_id、to_conversation_id、task、status、to_message_id（B 侧代发消息，「查看原文」链）、run_id（B 侧响应 run，投递时回填——settle 钩子与取消都靠它）、result_message_id、depth、created_at / updated_at、`intent`、`task_ids_json`（跟随中的任务，main 0021）… |
-| 状态 | `submitted`（行已写，**尚未向 B 投递**，等 §3.5 闸门）→ `working`（代发消息已落 B 私聊——与状态翻转同事务，`run_id` 投递后回填；`working` 且无 run 即「投递前崩溃」，重启复用既有消息重投）→ `completed` \| `failed` \| `cancelled`；另有 `awaiting_tasks`（`request` 的委派轮派出了任务，等这些任务结算，§3.6）。B 的 run `failed` / `interrupted` → `failed`；B 的 run 被 `cancelled`（用户在 B 侧点停止、更新闸门等）→ `cancelled`；但 `request` 的委派轮已派出任务的，无论该轮完成、失败、中断还是被 B 侧取消，都转 `awaiting_tasks` 跟随任务（§3.6），只有没派任务的被取消轮才落 `cancelled`。启动恢复：`working` 且 run 已 `interrupted` 的委派按该 run 结算——派了任务的 `request` → `awaiting_tasks`，否则 → `failed`（对齐 D49 ephemeral 语义，不自动续跑）；`awaiting_tasks` 的委派在任务修复之后按修复后的任务状态重新检查（`dispatch/delegation.ts` `recover()` / `#settle`） |
-| UI | **停留在 A 的对话**；不自动切换到 B |
-| 生命周期 | 对话 / Bot 删除不改委派行的存在，只终态化：A 或 B 被删 / B 私聊被删 → 活跃委派落 `cancelled`（并 abort B 的活动 run；B 侧删除一并停掉 B 为此派出的任务，A 侧删除不停这些任务，§3.6）；卡片上的「查看原文」链在 B 对话不存在时降级为「对话已删除」 |
+| 取消 | `cancel_delegation({ delegation_id })` 或用户在 A 侧委派药丸上取消；`awaiting_tasks` 时一并取消 B 为此派出的任务（§3.6） |
+| 持久化 | `delegations` 表（main DB）：id、from_bot_id、to_bot_id、from_conversation_id（A 的用户私聊）、to_conversation_id（**B 的用户私聊** = 执行期任务与审批卡的归属地，投递时 `openDirect(B)` 解析）、exchange_conversation_id（**Bot↔Bot 直连交换会话**，main 0067，委托时创建）、task、status、to_message_id（交换会话里的任务触发消息）、run_id（B 侧响应 run，投递时回填——settle 钩子与取消都靠它）、result_message_id、depth、created_at / updated_at、`intent`、`task_ids_json`（跟随中的任务，main 0021）… |
+| 交换会话 | 每次委托**新建**一个 `conversations.type='bot_direct'` 会话（单轮，成员 A+B，main 0067），复制 B 用户私聊的 workdir 绑定；不出现在侧栏（与 `card` 同被 `listVisible` 排除），用户不可发言（`messages.send` 拒绝）；**不跨委托复用**——委派是一次性事务、A 无带内追问通道、跨轮连续性由 B 的记忆承担，单轮使药丸↔详情 1:1 关联无歧义。会话持久保留（药丸详情的数据源），委派结束后不删除 |
+| 状态 | `submitted`（行已写，**尚未向 B 投递**，只发生在 quiet hours parked 时）→ `working`（A 的任务消息已落交换会话——与状态翻转同事务，`run_id` 投递后回填；`working` 且无 run 即「投递前崩溃」，重启复用既有消息重投）→ `completed` \| `failed` \| `cancelled`；另有 `awaiting_tasks`（`request` 的委派轮派出了任务，等这些任务结算，§3.6）。B 的 run `failed` / `interrupted` → `failed`；B 的 run 被 `cancelled`（用户在 B 侧点停止、更新闸门等）→ `cancelled`；但 `request` 的委派轮已派出任务的，无论该轮完成、失败、中断还是被 B 侧取消，都转 `awaiting_tasks` 跟随任务（§3.6），只有没派任务的被取消轮才落 `cancelled`。启动恢复：`working` 且 run 已 `interrupted` 的委派按该 run 结算——派了任务的 `request` → `awaiting_tasks`，否则 → `failed`（对齐 D49 ephemeral 语义，不自动续跑）；`awaiting_tasks` 的委派在任务修复之后按修复后的任务状态重新检查（`dispatch/delegation.ts` `recover()` / `#settle`） |
+| UI | **停留在 A 的对话**；不自动切换到 B。药丸点击打开的详情视图整体替换对话区（同任务执行过程页范式），关闭后返回 |
+| 生命周期 | 对话 / Bot 删除不改委派行的存在，只终态化：A 或 B 被删 / A 或 B 的用户私聊被删 → 活跃委派落 `cancelled`（并 abort B 的活动 run；B 侧删除一并停掉 B 为此派出的任务，A 侧删除不停这些任务，§3.6）；存量结果卡上的「查看原文」链在 B 对话不存在时降级为「对话已删除」 |
 
-### 3.2 A 侧与 B 侧消息
+### 3.2 A 侧与 B 侧消息（v2：交换会话 + 药丸）
 
 | 侧 | 表现 |
 |---|---|
-| A | 「已委托给 B」发出卡（可含 task 摘要；`submitted` 时提示「B 正忙 / 免打扰，稍后发送」）；完成后结果卡，标题按 intent 区分「B 的回复」/「B 的答复」/「B 的任务结果」（`DelegationCard`；`fyi` 不贴结果卡）。发出卡随 `delegations.status` 重绘，需要 `delegation.updated` 事件推送 |
-| B | 在 B 与用户的**私聊**中插入一条 **user 消息**（用户代发），消息持久化带 `origin=delegation`——`textContentSchema` 增可选 `origin` / `delegationId`（参照 `setupAnswer` 前例落 content_json，免加列；注意 `messages.append` 是手工拼 content_json 的，要同步加字段，不只是改 zod）。UI 标签「由 {A.name} 代你发出」；`TriggerBatch.extraAttributes`（`from_bot` / `delegation_id`）是运行时附带、不落库，仅用于把来源带进 B 的模型上下文。以 `triggerReason='delegation'` 触发 B 的正常响应 loop |
-| 回贴 | 将 B 的最终回复**截断约 2000 字符**贴入 A 为结果卡；附「查看原文」链到 B 对话中的消息；`request` 派了任务时贴各任务结果拼接，`fyi` 不回贴（§3.6） |
-| 注入 | 回贴同时用 follow-up（复用 `deliverEventToBot`，`internal`）通知 A：转述实质结果，不要只说已完成，也不要整段复述（`dispatch/delegation.ts`：轮回复为「请用一两句把实质内容（结论、关键数据或下一步）转述给用户，不要只说「B 已完成」，也不要把上面的内容整段复述。」；任务结果为「请把实质结果（结论、关键数据或下一步）转述给用户，不要只说「B 已完成」；也不要逐字复述整段原文。」）。（这是 follow-up 注入，不是工具） |
-| 上下文渲染 | A 的消息流里有 `kind='card'` 的委派卡；`renderOptions.renderCard` 目前对「非 run_changes 的卡」一律按 `approvalId` 查审批——不扩展会把委派卡渲染成「（审批记录已清理）」。需要为委派卡补一行上下文渲染（状态 + 摘要，不含全文） |
+| 交换会话 | `bot_direct` 会话（成员 A+B）里：A 的任务文本以 **A 的 bot 消息**落库（`senderType='bot'`、`senderBotId=A`，content 带 `origin=delegation` + `delegationId`/`delegatedBy`，复用 `textContentSchema` 既有字段；注意 `messages.append` 是手工拼 content_json 的）；B 的回复是普通 bot 消息，留在该会话。**用户的任何对话都不出现这些消息** |
+| A 用户对话 | 一枚发出药丸卡（`delegation_sent`）：「已委托 {B} 处理 · 状态 · 查看详情」，随 `delegations.status` 重绘（`delegation.updated`），活动期可取消；**不再贴结果卡**——结果由 A 自己的消息反馈（下行「注入」行）。存量行（v1）的结果卡渲染分支保留 |
+| B 用户对话 | 一枚接收药丸卡（`delegation_received`，投递成功时落 B 私聊）：「已开始处理来自 {A} 的委托 · 查看详情」。B 私聊**没有**任何代发用户消息（v1 的借用用户消息已废除） |
+| 药丸详情 | 点击药丸打开**交换会话详情视图**：消息 UI 与普通对话一致（复用 `MessageList` / `ChatSession` 后台会话模式），底部**无输入框**；整体替换对话区（任务执行过程页范式），按 delegationId → `exchange_conversation_id` 关联（1:1） |
+| 回贴 | B 的最终回复**截断约 2000 字符**后不再贴卡；经 follow-up 交给 A 的模型，由 A 的下一轮向用户发出结果反馈消息；`request` 派了任务时取各任务结果拼接，`fyi` 不回贴（§3.6） |
+| 注入 | 结算时用 follow-up（复用 `deliverEventToBot`，`internal`，落在 A 的用户对话、用户不可见）通知 A：转述实质结果给用户，不要只说已完成，也不要整段复述；可提示用户点「已委托」药丸查看完整往来（这是 follow-up 注入，不是工具） |
+| 上下文渲染 | 交换会话里 A 的消息按 bot 消息渲染（发送者 = A 的名字，触发段说明「代用户转交」语义）；双方用户对话里的委派药丸卡各渲染一行上下文（状态 + 摘要，不含全文）——`renderOptions.renderCard` 按 `delegationId` 走 `renderContextLine`，避免被当成审批卡 |
 
-**B 的模型怎么知道这是委派**：触发段 `<trigger reason="delegation">` 带来源与 `intent` 属性，段末追加按 intent 的宿主说明（`agent/context/conversation.ts` `delegationWakeHint`，§3.6）——`request`：能只读完成的在本轮最终回复里给完整结果；需要动手的用 `start_task` 派任务，任务结果会自动贴回给 A，本轮只需简短说明去做了什么，不要只回「收到」；`question`：本轮直接给出完整答复，不要只说「我去查」；`fyi`：无需回复对方，只在需要让用户知道或决定时回复，否则 `skip_reply`。信息不足需要追问时直接向用户提问（终回复即追问，结果卡照常贴出并让用户去 B 对话作答）。
+**B 的模型怎么知道这是委派**：触发段 `<trigger reason="delegation">` 带来源与 `intent` 属性，段末追加按 intent 的宿主说明（`agent/context/conversation.ts` `delegationWakeHint`，§3.6）——`request`：能只读完成的在本轮最终回复里给完整结果；需要动手的用 `start_task` 派任务，任务结果会自动交给 A 转述给用户，本轮只需简短说明去做了什么，不要只回「收到」；`question`：本轮直接给出完整答复，不要只说「我去查」；`fyi`：无需回复对方，只在需要让用户知道或决定时回复，否则 `skip_reply`。信息不足需要追问时直接向用户提问（终回复即追问，结果经 A 转述给用户）。触发消息在交换会话里以 bot 消息呈现（发送者 = A），用户代发标签（`userSenderLabel` 的 `origin=delegation` 分支）仅服务 v1 存量行。
 
-**记忆证据**：代发消息的 `senderType` 是 `user`，而 P07 反思把用户消息当作「关于用户的事实」的证据。代发文本是 A 写的，不是用户的话——B 的反思 / 画像整理需把 `origin=delegation` 的消息排除出用户证据（或降级渲染为「A 转述」），否则 A 的措辞会被 B 记成用户偏好。
+**记忆证据**：v1 的代发消息 `senderType` 是 `user`，P07 反思会把 `origin=delegation` 的用户消息排除出「用户本人的话」证据——该防护为存量数据保留。v2 里 A 的话是 bot 消息，天然不进用户证据，无需额外排除。
 
 ### 3.3 防环与降级
 
@@ -139,25 +148,23 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | | D66 SubAgent | D71 A→B |
 |---|---|---|
 | 执行者 | 同 Bot 减配子 run | 另一个联系人 Bot 的完整响应 loop |
-| 消息 | 不写用户消息 | B 私聊出现代发用户消息 |
+| 消息 | 不写用户消息 | A、B 在专属交换会话里直接对话；用户对话只有药丸卡 |
 | 工具 | 只读研究集 | B 的正常工具面（受自身授权） |
-| 回传 | 压缩结论进主 loop | 截断的终回复或任务结果拼接贴 A 为卡 + follow-up |
+| 回传 | 压缩结论进主 loop | 截断的终回复或任务结果拼接经 follow-up 给 A，由 A 向用户转述 |
 | 项目组 | 不充当项目组成员 | 同一项目组则降级 `@` |
 
-### 3.5 投递闸门（B 忙 / 免打扰时的排队）
+### 3.5 投递（免打扰排队）
 
-委派行写入后**不一定立刻投递**。向 B 投递前必须同时满足：
+委派行写入后**不一定立刻投递**。投递前检查：
 
-1. **B 邮箱空闲**（B 与该私聊的 mailbox 当前没有在跑的 loop）；
-2. **B 不在 `behavior.quiet_hours` 内**（开放决策 6）。
+1. **B 不在 `behavior.quiet_hours` 内**（开放决策 6）。
 
-原因：mailbox 的语义是「在跑的 loop 被 steer，否则开新 run」。如果 B 正在回应用户时委派到达，代发消息会被 steer 进那个**已有**的 run——它的 `triggerReason` 不是 `delegation`、`deliver` 返回的 run_id 是别人的任务的 run、终回复是对用户那件事的回答，结果卡会贴错内容，单跳也摘不掉。排队保证每个委派对应**自己起的 run**：`triggerMessageIds = [to_message_id]`、`triggerReason='delegation'`、`run_id` 精确。
+mailbox 忙碌不再排队（v1 的「B 邮箱空闲」闸门移除）：每个委派拥有**专属的交换会话与 mailbox**（单轮新建），委派批次不可能被 steer 进别的 run——B 正在回应用户时委派到达，也会在自己交换会话里起独立 run（`triggerMessageIds = [to_message_id]`、`triggerReason='delegation'`、`run_id` 精确）。同一 B 的多个委派各自交换会话并行执行，互不可见。
 
-- 闸门不通过 → 委派保持 `submitted`，A 的发出卡提示「将在 B 空闲 / 免打扰结束后发送」；**代发消息此时不落 B 私聊**（避免 B 私聊里出现一条没人回应的用户消息），投递瞬间才落库并转 `working`。**崩溃一致性**：「落代发消息 + 转 `working`」在同一个 main.db 事务里提交，`to_message_id` 随事务写入、`run_id` 在投递成功后单独回填——窗口期崩溃重启后，`submitted`（无消息）重走闸门，`working` 且无 run（stalled，消息已在）**复用既有消息重投**，不重发。
-- 补投时机：B 邮箱 release 时扫描以该 B 为目标的 `submitted` 与 stalled 委派（按创建序 FIFO，每次只投一条，下一条等这个 run 释放）；quiet hours 用新 job 类型（参照 `event_delivery` 的 parking，到点重检）。
+- quiet hours 命中 → 委派保持 `submitted`，登记 `delegation_delivery` job（参照 `event_delivery` 的 parking，到点重检）；A 的发出药丸提示「将在免打扰结束后发送」；**交换消息与 B 侧接收药丸此时都不落库**，投递瞬间才写并转 `working`。**崩溃一致性**：「落交换消息 + 转 `working`」在同一个 main.db 事务里提交，`to_message_id` 随事务写入、`run_id` 在投递成功后单独回填——窗口期崩溃重启后，`submitted`（无消息）重走闸门，`working` 且无 run（stalled，消息已在）**复用既有消息重投**，不重发。
+- 补投时机：quiet hours job 到点、以及 B 私聊 release 时兜底扫描（按创建序 FIFO）。v2 每委派独占交换邮箱，**投递成功 / 失败都继续处理队列中的下一条**，只有 parked（免打扰对整个 Bot 生效，后续必然同样 parked）才停下——FIFO 不再依赖 v1 的「release 链式捞起」。`onMailboxIdle` 同时承担 W6 的 `reevaluateAwaiting` 与 D114 的补充补投（§3.8）。
 - `submitted` 阶段可被 `cancel_delegation` 直接 `cancelled`（无 run 可 abort）。`delegations.cancel` 对未知 id 报 `NOT_FOUND`（UI toast），不静默。
-- 一个 B 同时存在多条 `submitted` 时按创建顺序依次投递；A 侧每条各有一张发出卡。
-- 即便闸门通过，B 的 run 起来之后用户仍可能在 B 私聊里 steer 它（结果混杂风险，见 §4 与 todo 风险节），首期接受。
+- **存量兼容**：v1 的活动行（exchange 为 null、代发消息已在旧 B 私聊）的 stalled 重投沿用旧路径——按 `to_conversation_id` + 确定性投递键（`origin=delegation` 且 `delegationId` 相同）复用旧消息，不新建交换会话、不重发；`submitted` 的存量行则照常创建交换会话走新路径。
 
 ### 3.6 intent 与跟随任务
 
@@ -169,7 +176,7 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 |---|---|---|
 | `request`（请它办事） | 能只读完成的本轮给完整结果；需要动手的派任务，结果会自动贴回、不要只回「收到」 | 委派轮没派任务 → 取该轮最终回复；派了任务 → 跟随任务（下文） |
 | `question`（提问） | 本轮给出完整答复 | 取 B 那一轮的最终回复，即使该轮派了任务也不跟随 |
-| `fyi`（告知） | 无需回复，可 `skip_reply`；只在用户需要知道时回复 | 投递成功即 `completed`，不贴结果卡、不通知 A；B 的回复只留在 B 私聊 |
+| `fyi`（告知） | 无需回复，可 `skip_reply`；只在用户需要知道时回复 | 投递成功即 `completed`，不通知 A；B 的回复只留在交换会话里（点药丸可看） |
 
 - B 的触发段 `<trigger reason="delegation">` 带 `intent` 属性，并在段末追加按 intent 的宿主说明。A 的工具说明与平台规则写明：在回复里写「我已经告诉 B 了」不会发给 B，要发必须调用 `delegate_to_bot`。
 - `fyi` 不参与「对 B 已有未结束的委派」检查（排队中的告知不挡之后的请求 / 提问）；限流：同一发起方给同一 Bot 内容相同的告知仍在排队时拒绝，A 的同一轮给同一 Bot 至多 `DELEGATION_FYI_MAX_PER_RUN`（3）条。
@@ -177,29 +184,57 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 
 **跟随任务**（`request`）：
 
-- B 的委派轮结束时（completed / failed / interrupted；被 B 侧取消——B 的用户叫停、更新闸门——且已派过任务的也算），查该轮派出的任务（`origin_run_id` = 委派轮，只取链根）：有 → 委派转 `awaiting_tasks`、记下 `task_ids_json`，该轮的「我去做」不作为结果（仍显示在 B 的私聊里）；没有 → 按该轮结算（§3.1 状态）。
+- B 的委派轮结束时（completed / failed / interrupted；被 B 侧取消——B 的用户叫停、更新闸门——且已派过任务的也算），查该轮派出的任务（`origin_run_id` = 委派轮，只取链根）：有 → 委派转 `awaiting_tasks`、记下 `task_ids_json`，该轮的「我去做」不作为结果（仍显示在交换会话详情里）；没有 → 按该轮结算（§3.1 状态）。**v2.2**：更新轮（§3.8）结算时若派了新任务，此前阶段已在跟随的任务并入同一清单一起等齐；未派新任务则以更新轮的回复为最终结果——补充走轮级投递的前提就是旧任务已全部终态，更新轮的回复即消化结果。
 - 每次检查沿 `continued_from_run_ids` 把每个任务跟到最新一环（B 消费失败结果那一轮里的重试、`continues_task_id` 接续），变了就回写 `task_ids_json` 并推 `delegation.updated`。全部终态才结算；**失败 / 中断的任务要等 B 消费过它的结果**（B 那一轮可能接续或重试），取消的任务不进入委派跟随、不等（D93：用户从任务卡取消会单独唤醒 B 一轮告知取消，但委派不因此等待）。委派结算之后才发生的重试（如用户之后在任务卡上「检查后重试」、设置卡完成后的自动重试）不再跟随。
-- 结果 = 各任务结果按派出顺序拼接，每个按份额截断，总长 ≤ `DELEGATION_RESULT_MAX_CHARS`（标题按任务数封顶，≤40 字、合计不超过预算一半）；只有一个且已完成时就是原文；未完成的标「（失败）/（已取消）/（已中断）」+ 错误。至少一个完成 → `completed`；否则 `failed`（全部取消 → `cancelled`）。之后照旧贴结果卡 + internal follow-up，A 的 follow-up 要求转述实质结果、不要只说「B 已完成」、也不要整段复述。B 写的任务标题、结果与错误一律包在 `<untrusted>` 里交给 A；A 上下文中的结果 / 失败卡只渲染 300 字预览。
-- **数据边界**：跟随任务时，B 的任务原始结果不经 B 的对话轮整理就直接到 A（以 `<untrusted>` 交给 A 的模型，结果卡给用户看）。
-- 触发点：TaskHost 每条终态路径既有的 `onSettled` 回调、任务结果被消费时的 `onConsumed`、B 邮箱释放、任务清扫与启动恢复都会让 DelegationHost 重新检查等待中的委派；结算的「状态迁移 + 结果卡」在同一个 main.db 事务里，状态守卫保证多路触发只结算一次。
-- 没有单独的超时：靠任务的 `taskLoop.maxWallMinutes` / 无活动看门狗兜底；但排队中的任务、以及 B 被停用后它的任务不受墙钟约束，委派可能一直等——A（`cancel_delegation`）或用户（卡片取消）随时可以取消。
+- 结果 = 各任务结果按派出顺序拼接，每个按份额截断，总长 ≤ `DELEGATION_RESULT_MAX_CHARS`（标题按任务数封顶，≤40 字、合计不超过预算一半）；只有一个且已完成时就是原文；未完成的标「（失败）/（已取消）/（已中断）」+ 错误。至少一个完成 → `completed`；否则 `failed`（全部取消 → `cancelled`）。之后经 internal follow-up 交给 A 的模型，A 的 follow-up 要求把实质结果转述给用户、不要只说「B 已完成」、也不要整段复述。B 写的任务标题、结果与错误一律包在 `<untrusted>` 里交给 A；A 上下文中的委派药丸卡只渲染 300 字预览。
+- **数据边界**：跟随任务时，B 的任务原始结果不经 B 的对话轮整理就直接到 A（以 `<untrusted>` 交给 A 的模型，A 向用户转述）。
+- 触发点：TaskHost 每条终态路径既有的 `onSettled` 回调、任务结果被消费时的 `onConsumed`、B 邮箱释放、任务清扫与启动恢复都会让 DelegationHost 重新检查等待中的委派；结算的状态迁移在状态守卫下保证多路触发只结算一次（v2 起不再有结果卡事务，迁移本身即结算）。
+- 没有单独的超时：靠任务的 `taskLoop.maxWallMinutes` / 无活动看门狗兜底；但排队中的任务、以及 B 被停用后它的任务不受墙钟约束，委派可能一直等——A（`cancel_delegation`）或用户（药丸上的取消按钮）随时可以取消。
 
-**取消**：`cancel_delegation`、A 侧发出卡的取消按钮、B 侧删除（B 被删 / B 私聊被删）→ 委派 `cancelled` 并经 `TaskHost.cancelById` 停掉关联任务（`task_ids_json` ∪ 委派轮派出的任务，取各链未终态的最新一环）；委派轮仍在跑时照 D71 中止它。A 侧删除（A 的对话、A 这个 Bot）只把委派落 `cancelled`（不贴卡、不通知），**不停** B 的任务——它们照常在 B 的私聊里交付。
+**取消**：`cancel_delegation`、A 侧发出药丸的取消按钮、B 侧删除（B 被删 / B 私聊被删）→ 委派 `cancelled` 并经 `TaskHost.cancelById` 停掉关联任务（`task_ids_json` ∪ 委派轮 / 更新轮派出的任务，取各链未终态的最新一环）；**中止按 run 的实际状态判定**（v2.2：重绑到更新轮的行可能是 `awaiting_tasks`，但更新轮仍在跑——照样 abort，更新轮已派出的任务经 `#linkedTasks` 一并取消）。A 侧删除（A 的对话、A 这个 Bot）只把委派落 `cancelled`（不通知），**不停** B 的任务——它们照常在 B 的私聊里交付。
 
-**投递**：崩溃一致性沿用 §3.5；另加确定性投递键——投递前按 `origin=delegation` 且 `delegationId` 相同查 B 私聊，已有就复用，不落第二条。
+**投递**：崩溃一致性沿用 §3.5；v2 的交换消息落在每委派新建的交换会话里，无需跨会话去重键；存量 v1 行按 §3.5 兼容段处理。
 
-**界面**：发出卡显示 intent 标签（请求 / 提问 / 告知 · 无需回复）；`awaiting_tasks` 显示「正在等待 {B} 的 {N} 个任务，完成后结果会贴在这里。」并保留取消按钮；`fyi` 送达后显示「已送达」；结果卡标题区分「的回复 / 的答复 / 的任务结果」。
+**界面**：发出药丸显示实时状态（intent 不再单独出标签，语义由标题措辞区分：「已委托 {B} 处理 / 已向 {B} 提问 / 已告知 {B}」）；状态文案静态（`awaiting_tasks` 显示「等待任务完成」，不内插 {B}/{N}）；活动期保留取消按钮；`fyi` 送达后状态「已送达」；点击「查看详情」打开交换会话详情。接收药丸（B 侧）标题固定「已开始处理来自 {A} 的委托」，点击打开同一详情。
+
+### 3.7 执行归属映射（v2）
+
+B 的委派 run 跑在交换会话里，但**用户可见的产物必须留在 B 与用户的私聊**（谁执行，卡就弹在谁与用户的对话里）。orchestrator 向 approvals 与 TaskHost 注入同一个 resolver：按 `runId` 查 `workingByRun`，命中委派 → 返回 `to_conversation_id`（B 的用户私聊，投递时 `openDirect(B)` 解析），否则原样返回 run 自己的会话。v2.2 起更新轮投递时行重入 `working`（§3.8），更新轮的产物同样被本映射覆盖：
+
+- **审批卡 / 中途权限弹窗 / 审批通知**：`approvals.#insert` 的 `conversation_id` 经 resolver 路由 → 卡片、`ApprovalDock`、`approval.created` 事件、平台通知、`cancelPendingForConversation` 全部落在 B 的私聊；
+- **B 派出的任务**：`TaskHost.#scope` 经 resolver 路由 → 任务卡、`ask_user` 提问卡、`task_event` 私有往返、任务工作区都归属 B 的私聊（与 v1 行为一致）；`#tasksOfB` / `#rootTasks` / `#linkedTasks`（委派跟随与取消）按 `to_conversation_id` 检索，无需改动；
+- **workdir**：交换会话创建时复制 B 用户私聊的 `workdir_id` 绑定——B 的委派轮 `resolveCwd` 语义与 v1 相同；委派轮自己 run 的 workspace 目录按交换会话隔离（每委派一份，与 card 会话同范式）；
+- **capabilitiesOf**：非项目会话本就回落 Bot 自身插件集，无需改动。
+
+### 3.8 委派的追加与检索（v2.1，D114，2026-11-04；v2.2 审查修正）
+
+单轮交换会话下，用户仍会**修改在途委托**、或**追问历史委托并提出新需求**。解法是给发起方两个工具，而不是把 Bot↔Bot 对话持久化（持久对话会破坏「每委派独占会话与 run」的归属不变式、破坏药丸↔详情 1:1 关联、并把全部历史塞进 B 的每次委派上下文；且委派状态机不可省略——追问历史的本质仍是新委派）。
+
+**`update_delegation({ delegation_id, message })`——修改在途委托**。仅发起方可调用；补充消息一律先落交换会话存档（bot 消息、`delegationUpdate: true`），随后**全部待送达的补充**（新的一条与此前滞留的一起，`#pendingUpdates` 纯查询态：`delegationUpdate=true` 且 `seq > to_message_id.seq`，无新列）统一走 `#routePendingUpdates` 按当时状态路由：
+
+| 状态 | 有存活任务（`#linkedTasks` 非空） | 无存活任务 |
+|---|---|---|
+| `working` | **直接注入每个存活任务的 loop**（复用 `TaskHost.inject`：运行中任务经 `handle.steer()` 即时进引擎，与用户补充在途任务同一机制）；注入成功即**推进锚点**（`to_message_id` = 末条补充）——已送达的补充不会被更新轮重复投递 | 邮箱空闲 → 作为**更新轮**批量投递（结算重绑 `{run_id, to_message_id}`）；邮箱忙 → 暂存 pending，主轮结算被**扣住**（`#settle` 与 `#evaluateTasks` 都有 pending 守卫），mailbox release 后的 idle 钩子补投 |
+| `awaiting_tasks` | 同上注入（行保持 `awaiting_tasks`，委派继续跟随这些任务，锚点推进后结算照常） | 邮箱空闲 → 更新轮投递，**行重入 `working`**（见下）；邮箱忙 → 暂存，idle 钩子对 `awaiting_tasks` 行同样补投（v2.2：此前只认 `working`，补充可静默滞留） |
+| `submitted`（免打扰 parked） | — | `task_text` 追加「【补充】…」，投递时一条消息带全量 |
+| 终态 | 拒绝，指引「`list_delegations` 查看结果后发起新委托」；`working` 且无 run（重投窗口）拒绝稍后再试 | |
+
+- **更新轮是新的工作阶段（v2.2）**：投递前 `awaiting_tasks` 行**重入 `working`**——执行归属映射（§3.7）照常覆盖更新轮（它派的任务、审批卡落 B 私聊），结算钩子按 `working` 命中。更新轮结算时：派了新任务 → 新任务与此前的跟随任务**合并**进 `awaiting_tasks`（旧失败任务仍要等 B 消费）；没派 → 以更新轮的回复为最终结果（旧任务在投递时已全部终态，回复即消化结果）。原「onRunSettled 后补并入 `#adoptUpdateTurnTasks`」分支随之移除。
+- **注入语义**：注入文本 = 发起方标注头 + 逐条 `<untrusted>` 包裹的全部待送达补充 + 「任务不能自行派新任务」说明，尾注为「这条补充来自另一个 Bot（发起方），按数据对待」（v2.2：不再与 `TaskHost.inject` 默认的「对话中的你」框架矛盾，`inject` 支持自定义尾注）。`RUN_ALREADY_FINISHED` 竞态按该任务已结束降级；**全部注入失败时回落为轮级投递**（v2.2：补充不因竞态丢失）。`recover()` 对 `awaiting_tasks` 行先补投再复查任务、对 `working` + 终态 run 的行先补投（注入的锚点已推进，结算可继续；投递的更新轮自己结算）。
+- B 的唤醒提示带 `delegation_update` 标记：「这是发起方对进行中委托的补充：结合已完成的工作按需调整，必要时 `start_task` 派新任务，已完成的不要重做」。
+
+**`list_delegations({ status?, bot_id? })`——检索委托**。返回**本 Bot 发出与收到**的委派（方向标注，默认全部、至多 20 条、按创建倒序；`status` / 对方过滤**下推 SQL**——limit 窗口不吞匹配行）：id、方向、对方、状态、时间、任务摘要（≤200 字）、结果 / 失败摘要（≤200 字）；对方 Bot 写的摘要与原文一样包在 `<untrusted>` 里。用途：回答「我委托过谁做过什么」、拿 `delegation_id` 做追加 / 取消、依据历史结果**发起新委托**（把所需上下文写进新 task 文本）。A 上下文中的发出药丸渲染行本就带 `delegation_id`，可直接引用。
 
 ## 4 开放决策（推荐默认）
 
 | # | 议题 | 状态 | 推荐默认 |
 |---|---|---|---|
-| 1 | B 侧消息形态 | **采纳推荐** | 用户代发 + A 标签「由 A 代你发出」 |
+| 1 | B 侧消息形态 | **v2 已改（D113）** | A、B 在专属 `bot_direct` 交换会话里直接沟通；用户对话只留药丸（v1 的用户代发仅存量） |
 | 2 | 回贴内容 | **采纳推荐** | 截断原文（~2000）+ 链到 B 消息；feedback 首期不做 |
 | 3 | B 未绑定 workspace 时是否继承 A 对话的工作目录 | **开放** | 首期建议：不自动继承；B 用自己私聊已绑的工作目录，未绑则走 D59「暂不设置」语义；跨对话读写仍走 D36 授权 |
 | 4 | Butler 创建 Bot/群的方式 | **采纳推荐** | 仅审批卡确认后确定性创建 |
 | 5 | B 执行中途的过程消息是否同步到 A | **采纳推荐** | 不同步；仅最终回复（+ 失败/取消） |
-| 6 | 委派是否遵守 B 的 quiet hours | **开放** | 首期建议：遵守 `behavior.quiet_hours`，并入 §3.5 投递闸门（与「B 忙」同一排队机制）；A 卡提示「将在免打扰结束后发送」。注意 user 代发路径当前没有 quiet hours 闸门，需在委派投递点新建；`deliverEventToBot` 的 parking（`event_delivery` job + `deliverParkedEvent` 重检）是现成模板 |
+| 6 | 委派是否遵守 B 的 quiet hours | **v2 已改（D113）** | 遵守 `behavior.quiet_hours`：命中即 parked 为 `submitted` 并登记 `delegation_delivery` job（`deliverEventToBot` 的 parking 模板），到点重检（§3.5）。v2 移除了「B 忙」排队——委派投递不再等 B 的对话轮，quiet hours 是投递闸门里仅存的一环 |
 | 7 | 委派中崩溃恢复：ephemeral vs D67 durable | **开放** | 首期建议：委派行本身持久；B 的 run 仍按 D49/D67 分级。A 侧卡根据 `delegations.status` 重绘；不把整段委派默认升 durable |
 | 8 | Butler 是否加入项目组 | **已收口（D92）** | **不加入**：管家既不当负责人也不当成员——候选列表、`addMembers`、`propose_project` 都拒绝管家 |
 | 9 | 管家是否裁剪通用工具（文件 / 命令 / 浏览器等） | **开放** | 首期不裁剪（管家也是联系人，用户可能直接让它干活），仅靠 `<butler_rules>` 约束路由职责；如需收紧，在 P4 以 Profile / 设置开关处理，不改本设计契约 |
@@ -221,13 +256,13 @@ B 被委派触发的是只读、秒级的对话轮（D75），需要动手时只
 
 1. **P1 地基**：`system_role`（含 partial unique index）、管家唯一/置顶/不可删、存量用户 `ensureButler`、`delegations` 表与状态枚举、approvals `kind` CHECK 重建（含 `butler_proposal`）、常量、边界测试（与 D4/D66 对照）。
 2. **P2 管家入职与组队**：管家访谈变体、`butler_proposal` 审批卡（非阻塞、无人值守排除、`decide.selection`）、确定性批量创建、`list_bots`（全体 Bot 可用）/ `propose_*`（仅管家）。
-3. **P3 A→B 委派主路径**：`delegate_to_bot` / `cancel_delegation`、投递闸门（B 忙 / quiet hours）、B 代发消息 + 标签、A 发出/结果卡（含上下文渲染）、截断回贴、follow-up 注入、防环与单跳（执行时校验）、同项目组降级 `@`、记忆证据排除、生命周期级联。
+3. **P3 A→B 委派主路径**（v2/D113 已交付：交换会话 + 药丸）：`delegate_to_bot` / `cancel_delegation`、投递闸门（quiet hours）、交换会话投递 + 双侧药丸（含上下文渲染）、截断回贴、follow-up 注入、防环与单跳（执行时校验）、同项目组降级 `@`、执行归属映射、生命周期级联、崩溃恢复与存量兼容。
 4. **P4 路由与收尾**：`suggest_route` + 路由卡、「你安排」再委派、剩余开放决策默认值落地（workspace 不继承等按上表）、回归与 e2e。
 
 ## 7 验收锚点（设计级）
 
 1. 新装用户完成引导后通讯录有且仅有一个管家，置顶，删除入口不可用或明确拒绝；存量用户升级后同样有管家。
 2. 管家 `propose_bots` → 用户确认 → 3–5 个 Bot 落库；用户去掉某项则只建剩余项；未确认不落库（含无人值守模式）。
-3. A 委派 B：UI 留在 A；B 私聊出现带标签的用户代发消息；B 回复后 A 出现截断结果卡 + 链接；A 收到 internal follow-up 且不复述全文。
-4. B 正忙时委派排队（`submitted`），B 空闲后才投递且结果对应委派任务而非 B 的其他对话；被委派 run 的 `delegate_to_bot` 调用被拒绝（含 steer 进来的情形）；A→B→A、委派给管家被拒绝；同一项目组 A/B 走 `@` 不写委派行。
+3. A 委派 B：UI 留在 A；A、B 的用户对话各只有一枚药丸（点开是 `bot_direct` 交换会话详情，A 的任务消息 + B 的回复，无输入框）；B 私聊没有任何代发用户消息、A 私聊没有结果卡；A 收到 internal follow-up 并以自己的消息向用户转述结果。
+4. 免打扰时段委派排队（`submitted`），到点投递且结果对应委派任务；同一 B 的多个委派各在自己的交换会话里并行执行；被委派 run 的 `delegate_to_bot` 调用被拒绝（含 steer 进来的情形）；A→B→A、委派给管家被拒绝；同一项目组 A/B 走 `@` 不写委派行；B 执行期的审批卡 / 任务落在 B 的私聊（执行归属映射）。
 5. `delegate_task`（D66）行为回归不变；项目组路由与协作回合回归不变。

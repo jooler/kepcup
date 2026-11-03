@@ -16,7 +16,7 @@ export type TriggerReason =
   | 'lead_fallback'
   | 'scheduled'
   | 'event'
-  /** 'delegation'（D71）：A 代用户转交给 B 的任务（B 私聊里的代发消息）。 */
+  /** 'delegation'（D71 v2）：A 代用户转交给 B 的任务（交换会话里的任务消息）。 */
   | 'delegation'
   /** D75 §3.2：任务结算条目（result / failure）唤醒 Bot。 */
   | 'task'
@@ -89,7 +89,7 @@ export function triggerParts(batch: TriggerBatch): TriggerPart[] {
   );
 }
 
-/** A D71 delegation batch (a proxied user message from another bot). */
+/** A D71 delegation batch (the exchange conversation's task message from A). */
 function isDelegationBatch(batch: TriggerBatch): boolean {
   return triggerParts(batch).some((part) => part.reason === 'delegation');
 }

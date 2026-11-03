@@ -332,7 +332,7 @@ describe('M1: an absorbed @-mention batch keeps its episode binding', () => {
 });
 
 describe('M2: a delegation has a turn of its own', () => {
-  it('a user message arriving while the delegated turn waits for a slot is not folded into it', async () => {
+  it('a user message arriving while the delegated turn waits for a slot is not folded into it (v2: the delegated turn queues in the exchange conversation)', async () => {
     const stack = await start();
     const { core, llm } = stack;
     await oneSlot(stack);
@@ -366,11 +366,23 @@ describe('M2: a delegation has a turn of its own', () => {
     ]);
 
     await sendBatch(core, aConv, ['帮我问问小乙']);
-    // A's turn holds the only slot; B's delegated turn is created and waits.
+    // A's turn holds the only slot; the delegated turn (v2: in the exchange
+    // conversation) is already created and waits.
     await waitFor(() => (afterDelegate.consumed ? true : null), { label: 'A holds the slot' });
-    const delegatedTurn = await waitFor(() => runsOf(stack, bConv, 'turn')[0] ?? null, {
-      label: 'delegated turn queued',
-    });
+    const delegationRow = await waitFor(
+      () => {
+        const row = stack.core.services.mainDb!.prepare('select id from delegations').get() as
+          { id: string } | undefined;
+        const found: Delegation | null =
+          row !== undefined ? domain(stack).delegations.getOrThrow(row.id) : null;
+        return found !== null && found.status === 'working' ? found : null;
+      },
+      { label: 'delegation working' },
+    );
+    const delegatedTurn = await waitFor(
+      () => runsOf(stack, delegationRow.exchangeConversationId!, 'turn')[0] ?? null,
+      { label: 'delegated turn queued in the exchange' },
+    );
     expect(delegatedTurn.status).toBe('queued');
     const [extra] = await sendBatch(core, bConv, ['USER-EXTRA 顺便问一句']);
     afterDelegate.release();
@@ -378,21 +390,19 @@ describe('M2: a delegation has a turn of its own', () => {
     await waitVisible(stack, bConv, 'EXTRA-REPLY');
     const delegation = await waitFor(
       () => {
-        const row = stack.core.services.mainDb!.prepare('select id from delegations').get() as
-          { id: string } | undefined;
-        const found: Delegation | null =
-          row !== undefined ? domain(stack).delegations.getOrThrow(row.id) : null;
-        return found !== null && found.status === 'completed' ? found : null;
+        const found = domain(stack).delegations.getOrThrow(delegationRow.id);
+        return found.status === 'completed' ? found : null;
       },
       { label: 'delegation completed', timeoutMs: 20_000 },
     );
     expect(delegation.resultExcerpt).toContain('DELEGATED-REPLY');
     expect(delegation.resultExcerpt).not.toContain('EXTRA-REPLY');
-    const turns = runsOf(stack, bConv, 'turn');
-    expect(turns).toHaveLength(2);
-    expect(turns[0]!.triggerReason).toBe('delegation');
-    expect(turns[0]!.triggerMessageIds).not.toContain(extra!.id);
-    expect(turns[1]!.triggerMessageIds).toEqual([extra!.id]);
+    // 委派轮只在交换会话里（B 的私聊轮是用户自己的那句）。
+    expect(delegatedTurn.triggerReason).toBe('delegation');
+    expect(delegatedTurn.triggerMessageIds).not.toContain(extra!.id);
+    const userTurns = runsOf(stack, bConv, 'turn');
+    expect(userTurns).toHaveLength(1);
+    expect(userTurns[0]!.triggerMessageIds).toEqual([extra!.id]);
   }, 60_000);
 });
 

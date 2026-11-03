@@ -60,6 +60,7 @@
 | main | `0055_plugin_update_journal.sql` | D104 P1-2：`plugins` 增 `update_to` / `update_snapshot` 两列（更新日志；`update_to` 非 NULL = 更新进行中，崩溃恢复按快照回滚） |
 | main | `0063_memo_groups.sql` | D90 增强：新表 `memo_groups`（备忘分组）；`memos` 增 `group_id`（FK ON DELETE SET NULL）与 `position`、`todos` 增 `position`（均按改动前显示顺序回填，手动拖拽排序键）；`memos_live` 索引改按 `position`、增 `memos_group` |
 | main | `0065_sidebar_sections.sql` | 左栏对话分组从渲染层 localStorage（`kepcup.sidebar.sections.v1`）改存 main.db：新表 `sidebar_sections`（含内置「未指定」行）、`conversation_sidebar`（会话归属 + 置顶的稀疏偏好行，FK 级联 / `ON DELETE SET DEFAULT`） |
+| main | `0067_bot_direct_exchange.sql` | D113（D71 v2）：重建 `conversations`（`type` 增 `bot_direct`，增 `from_bot_id` / `to_bot_id` 及等式 CHECK）；`delegations` 增 `exchange_conversation_id` |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）；迁移运行器支持首行 `-- kepcup:foreign-keys=off` 指令（D92 T1a WP1：重建被大量引用的枢纽表时先关 FK）。
 
@@ -134,7 +135,7 @@ CREATE TABLE bots (
 ```sql
 CREATE TABLE conversations (
   id               TEXT PRIMARY KEY,      -- conv_...
-  type             TEXT NOT NULL CHECK (type IN ('direct', 'project', 'card')),
+  type             TEXT NOT NULL CHECK (type IN ('direct', 'project', 'card', 'bot_direct')),
   title            TEXT,                  -- 项目组名称；单聊为空（显示 Bot 名称）；card 为卡片派生标题
   goal             TEXT,                  -- 项目目标（0040，原 description）；direct / card 恒 NULL，非空才注入 <conversation_info>
   direct_bot_id    TEXT REFERENCES bots(id),  -- direct：对方 Bot；card：执行成员；project 恒 NULL
@@ -150,9 +151,13 @@ CREATE TABLE conversations (
   archived_at      INTEGER,               -- 0045：非空 = 已从对话列表移除（归档）；数据全留，通讯录里可恢复
   parent_project_id TEXT REFERENCES conversations(id) ON DELETE CASCADE, -- 0051：card 的所属项目；其余 NULL
   card_todo_id     TEXT,                  -- 0051：卡片（事项）id，无 FK
+  from_bot_id      TEXT REFERENCES bots(id), -- 0067：bot_direct 的发起方（委派 A）；其余类型 NULL
+  to_bot_id        TEXT REFERENCES bots(id), -- 0067：bot_direct 的执行方（委派 B）；其余类型 NULL
   CHECK ((type = 'project') = (lead_bot_id IS NOT NULL)),
   CHECK ((type = 'card') = (parent_project_id IS NOT NULL AND card_todo_id IS NOT NULL AND direct_bot_id IS NOT NULL)),
-  CHECK ((type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL))
+  CHECK ((type = 'card') OR (parent_project_id IS NULL AND card_todo_id IS NULL)),
+  CHECK ((type = 'bot_direct') = (from_bot_id IS NOT NULL AND to_bot_id IS NOT NULL)),
+  CHECK ((type = 'bot_direct') OR (from_bot_id IS NULL AND to_bot_id IS NULL))
 );
 CREATE UNIQUE INDEX conversations_one_direct_per_bot
   ON conversations(direct_bot_id) WHERE type = 'direct' AND read_only = 0;
@@ -164,6 +169,7 @@ CREATE UNIQUE INDEX conversations_one_open_per_card
 
 - 0040 重建（`conversations` 是多张子表的父表，迁移运行器以 `-- kepcup:foreign-keys=off` 首行指令在 FK 关闭下重建，见「迁移」一节）：`description` 改名 `goal`、删 `setup_state`（D60 对话内创建流程已删除，见 [design/19](../design/19-work-path-and-group-setup.md)）；旧群转 `project` 并按入群顺序取最早的非管家成员为负责人，无合格成员的连子表删除；项目会话里的管家成员行删除（D92 K9：管家不是项目参与者）。
 - **卡片会话（0051）**：`type = 'card'` 是看板卡片与执行成员之间的隐藏对话。`parent_project_id` 指向所属项目会话，`card_todo_id` 是卡片（事项）id，`direct_bot_id` 是执行成员。三列对 card 必填，对 direct / project 必空（后一条比等式 CHECK 更严：等式单独允许 `direct_bot_id` 为空的 project 行写下两列）。每张卡片至多一条 `read_only = 0` 的卡片会话。`ConversationsService.ensureCardConversation` 在指派时创建或复用；`list` / `listVisible` / `conversations.all` 排除 `card`。删除不靠 FK：`BoardService` 先取消排期，再对每一条卡片会话调用 `lifecycle.deleteConversation`（清 `runs.db` / FTS / 附件），最后 `todos.purge`。`board.summary` 的未读与待审批只加总这条打开的会话，不算只读历史。`schedules.list` 在入参是项目会话时，并入 `parent_project_id` 等于该项目的卡片会话排期。
+- **委派交换会话（0067，D113）**：`type = 'bot_direct'` 是跨 Bot 委派的 Bot↔Bot 直连对话（单轮，每次委托新建）。`from_bot_id` / `to_bot_id` 是发起方与执行方，对 bot_direct 必填、对其余类型必空。会话不在侧栏（`list` / `listVisible` 与 `card` 一并排除）、用户不可发言（`messages.send` 拒绝）；创建时复制执行方用户私聊的 `workdir_id` 绑定。`delegations.exchange_conversation_id`（0067，可空）指向它；委派 run 跑在该会话里，A 的任务文本与 B 的回复都以 bot 消息落库。设计见 [design/27 §3.1 / §3.7](../design/27-butler-and-delegation.md)。
 - 负责人必须是成员、active、非管家：`CHECK` 管不了成员关系，由 `ProjectsService`（`domain/projects.ts`）在创建（`projects.create`）、更换（`projects.setLead`）、移出（`projects.removeMember`，负责人被拒「请先更换负责人」）时校验；删除领导项目组的 Bot 在 `lifecycle.deleteBot` 任何级联前被拒（`PROJECT_LEAD_REQUIRED`）。
 - **归档（0045）**：`archived_at` 非空 = 该会话已从对话列表移除。软删：消息、执行记录、附件、workspace、项目 wiki 目录全部保留；会话仍在通讯录里（`conversations.all` 名册），可随时恢复（`conversations.archive` / `conversations.unarchive`）。对话列表（`conversations.list`）不含归档会话。恢复归档的直聊 = 继续原对话（同 id，历史延续）：`ConversationsService.openDirect` 命中已归档的直聊时先恢复它，不新开对话实例。
 
@@ -846,7 +852,7 @@ CREATE TABLE widget_docs (
 - D88 移交复制（P2，`WidgetService.copyForHandover`，无迁移）：只有 `scope='bot'` 的组件可复制（会话级随所在对话，不移交）。一个事务里给接手方插入新 `widgets` 行（新 id、仍为 Bot 级、`conversation_id` NULL、`latest_version` 照搬），`widget_versions` 全部行按原样复制（`html` / `sha256` / `queries_sha256` / `size_bytes` / `created_by_run` / `created_at` / `queries_reviewed_at` / `check_status` / `check_summary_json`），`widget_queries`、`widget_docs` 全部复制；不发卡。接手方已有同名组件、组件数或字节配额超限时不复制。渲染端的加载确认按「HTML sha256 + 查询摘要」记在本机（不分组件 / Bot），副本摘要不变，所以原版已确认的版本在接手方那里同样免确认。幂等判据：接手方名下同名、版本序列（版本号 + 两项摘要）完全相同的 Bot 级组件。
 - `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
 
-### delegations（D71，main 0016；0021 重建）
+### delegations（D71，main 0016；0021 重建；0067 增列）
 
 ```sql
 CREATE TABLE delegations (
@@ -854,24 +860,25 @@ CREATE TABLE delegations (
   from_bot_id           TEXT NOT NULL,
   to_bot_id             TEXT NOT NULL,
   from_conversation_id  TEXT NOT NULL,
-  to_conversation_id    TEXT,                   -- B 私聊；投递时解析
+  to_conversation_id    TEXT,                   -- B 的用户私聊（执行期任务与审批卡归属）；投递时解析
   task_text             TEXT NOT NULL,
   status                TEXT NOT NULL CHECK (status IN (
                           'submitted', 'working', 'awaiting_tasks',
                           'completed', 'failed', 'cancelled')),
   depth                 INTEGER NOT NULL DEFAULT 1,
   from_run_id           TEXT,                   -- A 发起委派的 run
-  sent_message_id       TEXT,                   -- A 侧发出卡
-  to_message_id         TEXT,                   -- B 侧代发用户消息
+  sent_message_id       TEXT,                   -- A 侧发出药丸卡
+  to_message_id         TEXT,                   -- 交换会话里的任务触发消息（v1 存量 = 代发用户消息）
   run_id                TEXT,                   -- B 侧响应 run（投递时回填）
   result_excerpt        TEXT,
-  result_message_id     TEXT,                   -- B 的终回复消息
-  result_card_id        TEXT,                   -- A 侧结果卡
+  result_message_id     TEXT,                   -- B 的终回复消息（在交换会话里）
+  result_card_id        TEXT,                   -- v1 存量：A 侧结果卡（v2 不再写入）
   error_text            TEXT,
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL,
   intent                TEXT NOT NULL DEFAULT 'request',  -- request | question | fyi（zod 校验，无 CHECK）
-  task_ids_json         TEXT NOT NULL DEFAULT '[]'        -- 跟随中的任务 id（续接链最新一环）
+  task_ids_json         TEXT NOT NULL DEFAULT '[]',       -- 跟随中的任务 id（续接链最新一环）
+  exchange_conversation_id TEXT             -- 0067：bot_direct 交换会话（单轮，每次委托新建）
 );
 CREATE INDEX delegations_to_bot_status ON delegations(to_bot_id, status);
 CREATE INDEX delegations_run ON delegations(run_id);
@@ -880,8 +887,9 @@ CREATE INDEX delegations_status ON delegations(status);
 ```
 
 - 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
-- `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
+- `submitted` = 行已写、尚未向 B 投递（只发生在免打扰 parked 时）；`working` = A 的任务消息已落交换会话、`run_id` 已回填。
 - `awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
+- `exchange_conversation_id`（0067）= 本委派专属的 `bot_direct` 交换会话；药丸详情按它关联（1:1）。v2 起结果不再贴卡（`result_card_id` 只由 v1 存量行持有）。
 
 ### app_connections（D73 P0，迁移 0025）
 

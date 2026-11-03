@@ -10,9 +10,11 @@ import type { Clock } from '../infra/clock.js';
 
 /**
  * 跨 Bot 委派行（D71，docs/design/27-butler-and-delegation.md §3）。状态流转
- * 的唯一入口：`submitted`（未投递）→ `working`（代发消息已落 B 私聊、B 的
- * run 已起）→ [`awaiting_tasks`（W6：B 的委派轮派了任务，等任务结算）] →
- * `completed` | `failed` | `cancelled`。终态不可再改。
+ * 的唯一入口：`submitted`（未投递，只发生在免打扰 parked）→ `working`（A 的
+ * 任务消息已落交换会话、B 的 run 已起）→ [`awaiting_tasks`（W6：B 的委派轮派
+ * 了任务，等任务结算）] → `completed` | `failed` | `cancelled`。终态不可再改。
+ * v2（D113）：`exchange_conversation_id` 指向每次委托新建的 `bot_direct` 交换
+ * 会话；`to_conversation_id` 是 B 的用户私聊（任务 / 审批卡归属地）。
  */
 
 interface DelegationRow {
@@ -21,6 +23,7 @@ interface DelegationRow {
   to_bot_id: string;
   from_conversation_id: string;
   to_conversation_id: string | null;
+  exchange_conversation_id: string | null;
   task_text: string;
   status: DelegationStatus;
   depth: number;
@@ -58,6 +61,7 @@ function rowToDelegation(row: DelegationRow): Delegation {
     toBotId: row.to_bot_id,
     fromConversationId: row.from_conversation_id,
     toConversationId: row.to_conversation_id,
+    exchangeConversationId: row.exchange_conversation_id,
     taskText: row.task_text,
     status: row.status,
     depth: row.depth,
@@ -85,6 +89,7 @@ export function isTerminalDelegation(status: DelegationStatus): boolean {
 /** Columns a transition / patch may set (camelCase → column). */
 const PATCH_COLUMNS = {
   toConversationId: 'to_conversation_id',
+  exchangeConversationId: 'exchange_conversation_id',
   sentMessageId: 'sent_message_id',
   toMessageId: 'to_message_id',
   runId: 'run_id',
@@ -92,6 +97,7 @@ const PATCH_COLUMNS = {
   resultMessageId: 'result_message_id',
   resultCardId: 'result_card_id',
   errorText: 'error_text',
+  taskText: 'task_text',
 } as const;
 
 export type DelegationPatch = Partial<Record<keyof typeof PATCH_COLUMNS, string | null>> & {
@@ -230,14 +236,41 @@ export class DelegationsService {
     ).map(rowToDelegation);
   }
 
+  /**
+   * D114: the newest delegations where the bot is the sender or the receiver
+   * (the `list_delegations` tool's data source), newest first. `status` and
+   * `peerBotId` filter in SQL so the limit window never hides matching rows.
+   */
+  listByBot(
+    botId: string,
+    options: { status?: 'active' | 'done' | 'all'; peerBotId?: string; limit?: number } = {},
+  ): Delegation[] {
+    const clauses = ['(from_bot_id = ? or to_bot_id = ?)'];
+    const params: unknown[] = [botId, botId];
+    if (options.peerBotId !== undefined) {
+      clauses.push('(from_bot_id = ? or to_bot_id = ?)');
+      params.push(options.peerBotId, options.peerBotId);
+    }
+    if (options.status === 'active') clauses.push(`status in ${ACTIVE_SQL}`);
+    else if (options.status === 'done') clauses.push(`status not in ${ACTIVE_SQL}`);
+    params.push(options.limit ?? 20);
+    return (
+      this.db
+        .prepare(
+          `select * from delegations where ${clauses.join(' and ')} order by created_at desc, id desc limit ?`,
+        )
+        .all(...params) as DelegationRow[]
+    ).map(rowToDelegation);
+  }
+
   /** Non-terminal delegations touching a conversation on either side (lifecycle). */
   listActiveForConversation(conversationId: string): Delegation[] {
     return (
       this.db
         .prepare(
-          `select * from delegations where status in ${ACTIVE_SQL} and (from_conversation_id = ? or to_conversation_id = ?)`,
+          `select * from delegations where status in ${ACTIVE_SQL} and (from_conversation_id = ? or to_conversation_id = ? or exchange_conversation_id = ?)`,
         )
-        .all(conversationId, conversationId) as DelegationRow[]
+        .all(conversationId, conversationId, conversationId) as DelegationRow[]
     ).map(rowToDelegation);
   }
 

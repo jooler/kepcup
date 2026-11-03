@@ -46,6 +46,7 @@ describe('cardPreviewText（左栏卡片预览）', () => {
     );
     expect(cardPreviewText({ cardType: 'task' })).toBe('📋 任务');
     expect(cardPreviewText({ cardType: 'delegation_sent' })).toBe('🤝 已转交任务');
+    expect(cardPreviewText({ cardType: 'delegation_received' })).toBe('🤝 已接收委托');
     expect(cardPreviewText({ cardType: 'delegation_result' })).toBe('🤝 转交结果');
     expect(
       cardPreviewText({ cardType: 'present', present: { kind: 'line', title: '增长趋势' } }),

@@ -187,10 +187,21 @@ export class ApprovalsService {
   readonly #decisionCallbacks = new Map<string, (outcome: ApprovalOutcome) => void>();
   /** Grants already credited to a run (audit dedupe). */
   readonly #grantUsedLogged = new Set<string>();
+  /**
+   * D113 (D71 v2) 执行归属映射：委派 run 跑在交换会话里，但审批卡（含中途
+   * 权限弹窗）必须落在执行方与用户的私聊。orchestrator 在构建委派宿主后
+   * 注册；未注册时保持 run 自己的会话（所有既有调用方不受影响）。
+   */
+  #userConversationResolver: ((identity: RunIdentity) => string | null) | null = null;
 
   constructor(deps: ApprovalsDeps) {
     this.#deps = deps;
     this.#timers = deps.timers ?? realTimerScheduler;
+  }
+
+  /** Registers the execution-home resolver (see the field comment). */
+  setUserConversationResolver(resolver: (identity: RunIdentity) => string | null): void {
+    this.#userConversationResolver = resolver;
   }
 
   get #db(): SqliteDatabase {
@@ -1413,6 +1424,12 @@ export class ApprovalsService {
     opts: { status: ApprovalStatus; autoApproved?: boolean; decision?: ApprovalDecision | null },
   ): Approval {
     const id = newId('apr');
+    // D113: a delegated turn's cards live in the executor's chat (execution
+    // home), not in the exchange conversation the run occupies.
+    const conversationId =
+      this.#userConversationResolver !== null
+        ? this.#userConversationResolver(identity)
+        : identity.conversationId;
     this.#db
       .prepare(
         'insert into approvals (id, kind, bot_id, conversation_id, run_id, payload_json, status, decision_json, auto_approved, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1421,7 +1438,7 @@ export class ApprovalsService {
         id,
         kind,
         identity.botId,
-        identity.conversationId,
+        conversationId,
         identity.runId,
         JSON.stringify(payload),
         opts.status,

@@ -125,6 +125,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   /** 跨 Bot 委派（D71）：另一个 Bot 会据此执行（可能有它自己的外部动作）。 */
   delegate_to_bot: 'external',
   cancel_delegation: 'local',
+  /** D114：追加补充（可能被注入对方在跑的任务 loop，随任务执行）。 */
+  update_delegation: 'external',
+  list_delegations: 'none',
 
   // --- 记忆、画像、Wiki、定时 ---
   remember: 'local',

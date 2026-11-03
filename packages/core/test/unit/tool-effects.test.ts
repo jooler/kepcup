@@ -217,6 +217,9 @@ describe('effect classifier', () => {
       ['request_unsandboxed', { command: 'x' }, {}, 'external'],
       ['git_remote', { operation: 'push' }, {}, 'external'],
       ['delegate_to_bot', {}, {}, 'external'],
+      // D114: a supplement may ride a live task loop (external); the ledger is read-only.
+      ['update_delegation', {}, {}, 'external'],
+      ['list_delegations', {}, {}, 'none'],
       ['send_message', { text: 'hi' }, {}, 'local'],
       ['send_message', { text: 'hi', mention_bot_ids: [] }, {}, 'local'],
       ['send_message', { text: 'hi', mention_bot_ids: ['bot_b'] }, {}, 'external'],

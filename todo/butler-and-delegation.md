@@ -5,6 +5,12 @@
 > **硬约束**：只改本地工作树；**不要** `git commit` / `push` / 开 PR（除非用户另行明确要求）。
 >
 > **修订记录**：本文经一轮对照代码的审查修订（approvals 表 CHECK、访谈机制耦合、mailbox steer 与 run 绑定、卡片上下文渲染、记忆证据等），修订点均已并入各阶段清单；设计侧同步改了 27。
+>
+> **v2 修订（2026-11-03，D113）**：委派消息面重构已实施——A、B 改在每次委托新建的 `bot_direct` 交换会话里直接沟通（单轮，main 0067），不再向 B 私聊借用用户消息；双方用户对话各一枚药丸卡（`delegation_sent` / `delegation_received`），点击打开交换会话只读详情视图；A 侧不再贴结果卡，由 A 向用户发出结果反馈消息；执行归属映射把 B 的审批卡 / 提问卡 / 任务路由回 B 的用户私聊；mailbox 忙不再排队（quiet hours 闸门保留）。原「用户代发消息 + 结果卡」实现仅作存量数据保留（旧结果卡渲染分支、`isProxiedUserText` 记忆防护、stalled 旧消息重投路径）。本文以下 §5 / §7 / §8 描述的是 v1 实现，以 27 号 §3（v2）为准。
+>
+> **v2.1 修订（2026-11-04，D114）**：新增委派的追加与检索（27 §3.8）——`update_delegation`（修改在途委托：存活任务直接注入任务 loop、无任务走 pending + 结算扣住与重绑、`awaiting_tasks` 下新派任务并入跟随）与 `list_delegations`（发出 / 收到的委派清单）。保持单轮交换会话，不引入 Bot↔Bot 持久对话。
+>
+> **v2.2 修订（2026-11-04，D114 审查修正）**：独立审查发现 `awaiting_tasks` 态的补充会静默滞留 / 更新轮执行归属断裂，修正为——待送达补充统一 `#routePendingUpdates`（注入折入全部 pending + 锚点推进；全部注入失败回落投递），idle 钩子与 `recover()` 对 awaiting 行同样补投；更新轮投递时行**重入 `working`**（归属映射照常、结算合并此前阶段的任务、未派则以更新轮回复为结果，`#adoptUpdateTurnTasks` 移除）；`deliverPending` FIFO 修复、取消按 run 实际状态中止更新轮、接收药丸先落卡再回填 run_id、孤儿交换会话清理、`list_delegations` 过滤下推 SQL + 摘要 `<untrusted>`、渲染端详情常驻 + 空态 / 加载 / 失败兜底、`TaskRunView` 提问条按任务归属会话取数、`EXCHANGE_READ_ONLY` 专用错误码。详见 27 号 v2.2 修订记录与 PROGRESS.md。
 
 ## 0. 先读什么（按顺序）
 

@@ -253,6 +253,12 @@ export interface TaskHostDeps {
   /** Resolves the task's cwd root (bound workdir or the workspace). */
   resolveCwd(botId: string, conversationId: string, requested?: 'workspace' | 'workdir'): string;
   /**
+   * D113 (D71 v2) 执行归属映射：委派 run 跑在交换会话里，但 B 为它派出的任务
+   * （任务卡 / ask_user / task_event 往返）归属 B 与用户的私聊。返回该 run
+   * 的归属会话 id；缺省 = run 自己的会话。
+   */
+  executionHomeOf?(identity: RunIdentity): string | null;
+  /**
    * Terminal cleanup of the run (once-grants, pending approvals, run.status).
    * `executorActive`: the execution is still unwinding — it releases its own
    * write lease when it ends; otherwise the cleanup releases it.
@@ -498,6 +504,7 @@ export function buildTaskInjection(
   text: string,
   sourceMessages: Message[],
   options: RenderMessageOptions,
+  note?: string,
 ): string {
   const sources = sourceLines(sourceMessages, options);
   return [
@@ -505,7 +512,7 @@ export function buildTaskInjection(
     text,
     ...(sources.length > 0 ? ['<source_messages>', ...sources, '</source_messages>'] : []),
     '</task_inject>',
-    '对话中的你追加了新的指令：据此调整当前的工作。',
+    note ?? '对话中的你追加了新的指令：据此调整当前的工作。',
   ].join('\n');
 }
 
@@ -804,7 +811,7 @@ export class TaskHost implements TaskToolFacade {
     }
     const launched = this.#launched.get(task.id);
     const steerText = (): string =>
-      buildTaskInjection(text, sources, this.#deps.renderOptions(botId));
+      buildTaskInjection(text, sources, this.#deps.renderOptions(botId), input.note);
     let delivery: 'delivered' | 'queued' = 'delivered';
     let buffer = false;
     let steered: string | null = null;
@@ -1992,7 +1999,10 @@ export class TaskHost implements TaskToolFacade {
     if (identity.botId === null || identity.conversationId === null) {
       throw new AppError('INVALID_INPUT', '任务需要 Bot 与对话上下文');
     }
-    return { botId: identity.botId, conversationId: identity.conversationId };
+    // D113: a delegated turn's tasks belong in the executor's chat (execution
+    // home), not in the exchange conversation the run occupies.
+    const home = this.#deps.executionHomeOf?.(identity) ?? identity.conversationId;
+    return { botId: identity.botId, conversationId: home };
   }
 
   #ownTask(botId: string, conversationId: string, taskId: string): Run {

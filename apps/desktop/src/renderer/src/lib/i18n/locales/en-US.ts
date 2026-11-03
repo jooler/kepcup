@@ -53,6 +53,8 @@ export const enUS = {
   'chats.setupPathGateHint':
     'Answer the working directory question above to continue the conversation',
   'chats.errorCode.CONVERSATION_READ_ONLY': 'This conversation is read-only',
+  'chats.errorCode.EXCHANGE_READ_ONLY':
+    'This is a Bot-to-Bot delegation conversation; you cannot post here',
   'chats.errorCode.MESSAGE_NOT_RECALLABLE': "This message can't be recalled or edited",
   'chats.errorCode.NOT_FOUND': "The item doesn't exist or has been deleted",
   'chats.errorCode.INVALID_INPUT': 'Invalid input',
@@ -1514,20 +1516,21 @@ export const enUS = {
   'delegation.status.failed': 'Failed',
   'delegation.status.cancelled': 'Cancelled',
   'delegation.queuedHint':
-    'They are busy or in do-not-disturb hours. The message will be sent automatically when they are free.',
+    'They are in do-not-disturb hours. The message will be sent automatically when their quiet hours end.',
   'delegation.sentTitleQuestion': 'Asked {name}',
   'delegation.sentTitleFyi': 'Informed {name}',
-  'delegation.intent.request': 'Request',
-  'delegation.intent.question': 'Question',
-  'delegation.intent.fyi': 'FYI · no reply needed',
   'delegation.fyiDelivered': 'Delivered',
   'delegation.fyiQueuedHint':
-    'They are busy or in do-not-disturb hours. It will be delivered automatically when they are free; no reply will be posted here.',
-  'delegation.awaitingTasksHint':
-    'Waiting for {count} tasks from {name}. Results will be posted here when complete.',
+    'They are in do-not-disturb hours. It will be delivered automatically when their quiet hours end; no reply will be posted here.',
   'delegation.answerTitle': "{name}'s answer",
   'delegation.taskResultTitle': "{name}'s task results",
-  'delegation.cancel': 'Cancel delegation',
+  'delegation.receivedTitle': "Started handling {name}'s delegation",
+  'delegation.viewDetail': 'View details',
+  'delegation.cancelShort': 'Cancel',
+  'delegation.closeDetail': 'Close details',
+  'delegation.detailUnavailable': 'The conversation for this delegation no longer exists',
+  'delegation.detailLoading': 'Loading the delegation conversation…',
+  'delegation.detailEmpty': 'No messages in this delegation yet',
   'delegation.expand': 'Expand',
   'delegation.collapse': 'Collapse',
   'delegation.openOriginal': 'View in chat with {name}',

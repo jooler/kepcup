@@ -22,6 +22,7 @@ import { board } from '$lib/features/board/board.svelte';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
+import { delegations } from '$lib/stores/delegations.svelte';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
   composeAddMember,
@@ -260,6 +261,8 @@ class ChatState {
 
   async select(conversationId: string, options: SelectOptions = {}): Promise<void> {
     const workbenchIntent = shell.workbenchIntent;
+    // 委派详情视图是打开时的临时层：显式切换会话即退出（无按会话记忆）。
+    delegations.closeDetail();
     // Filled when `conversations.get` (inside `open`) returns a card row.
     // Card rows are not in `this.conversations`, so the type check has to
     // happen on that fetched object. A thrown get does not fall through.

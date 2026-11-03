@@ -5,7 +5,9 @@
   import ChatView from './ChatView.svelte';
   import RightPanel from '$lib/features/right-panel/RightPanel.svelte';
   import TaskRunView from '$lib/features/tasks/TaskRunView.svelte';
+  import DelegationDetailView from '$lib/features/delegations/DelegationDetailView.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
+  import { delegations } from '$lib/stores/delegations.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -93,16 +95,22 @@
     motionReady && !resizing ? 'transition-[flex-grow] duration-200 ease-out' : '',
   );
 
-  // 离开本主区（切工作台 / 窄屏换 tab / 宽窄切换重挂载）即退出任务执行过程页，
-  // 但按会话保留记忆：重新进入该会话时恢复（切会话由 chat.select 处理）。
-  onDestroy(() => tasks.enterConversation(null));
+  // 离开本主区（切工作台 / 窄屏换 tab / 宽窄切换重挂载）即退出任务执行过程页与
+  // 委派详情视图，但按会话保留任务记忆：重新进入该会话时恢复（切会话由 chat.select
+  // 处理关详情）。
+  onDestroy(() => {
+    tasks.enterConversation(null);
+    delegations.closeDetail();
+  });
 </script>
 
-<!-- 任务执行过程页（docs/design/42-task-run-view.md）：原对话组件保留在 DOM
-     里（display:none），避免卸载导致草稿、滚动位置与右栏状态丢失。 -->
+<!-- 任务执行过程页 / 委派详情视图（docs/design/42-task-run-view.md、27 §3.2）：
+     原对话组件保留在 DOM 里（display:none），避免卸载导致草稿、滚动位置与右栏
+     状态丢失。详情视图同样常驻：详情里的任务卡点击进入任务页时详情只是隐藏
+     （不卸载，返回后滚动位置与会话状态都在），离开聊天区或切会话才关闭。 -->
 <div
   class="relative flex min-h-0 flex-1"
-  style:display={tasks.openTaskId !== null ? 'none' : 'flex'}
+  style:display={tasks.openTaskId !== null || delegations.openDetailId !== null ? 'none' : 'flex'}
 >
   {#if narrow}
     <ChatView />
@@ -136,6 +144,17 @@
   {/if}
 </div>
 
+{#if delegations.openDetailId !== null}
+  <!-- 委派详情视图常驻挂载；任务页压上时隐藏（保留滚动与后台会话订阅）。 -->
+  <div
+    class="relative flex min-h-0 flex-1"
+    style:display={tasks.openTaskId !== null ? 'none' : 'flex'}
+  >
+    {#key delegations.openDetailId}
+      <DelegationDetailView delegationId={delegations.openDetailId} />
+    {/key}
+  </div>
+{/if}
 {#if tasks.openTaskId !== null}
   {#key tasks.openTaskId}
     <TaskRunView taskId={tasks.openTaskId} />
