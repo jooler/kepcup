@@ -12,6 +12,7 @@ import { ToolGateway } from '../../src/gateway/index.js';
 import { AuditService } from '../../src/domain/audit.js';
 import type { SandboxBackend, SandboxExecResult } from '../../src/sandbox/types.js';
 import type { RunIdentity } from '../../src/agent/types.js';
+import { SANDBOX_CURL_REACHED, sandboxCurlReachToken } from './curl-reach.js';
 
 /**
  * Sandbox escape and network cases from docs/dev/05-testing.md "安全用例集"
@@ -259,22 +260,26 @@ d('sandbox escape cases (P02 安全用例集)', () => {
       workspace();
       // Any HTTP status (incl. 5xx) proves the request left the sandbox;
       // requiring 2xx/3xx flakes when example.com returns 503 (macOS CI).
-      const reached = /^\d{3}$/;
+      // `--insecure` skips the runner trust store: macOS CI also flakes with
+      // curl exit 60 after the handshake (peer certificate). That exit, and
+      // the other peer-certificate statuses, still count as reach — a blocked
+      // mode fails at CONNECT and never presents a peer cert.
+      const probe = `curl -sS --insecure -m 15 -o /dev/null -w '%{http_code}' https://example.com`;
       const fetchCode = async (mode: 'none' | 'allowlist' | 'open', domains: string[]) => {
         const expectSuccess = mode === 'open' || (mode === 'allowlist' && domains.includes('example.com'));
         let last = '';
         for (let attempt = 0; attempt < (expectSuccess ? 3 : 1); attempt++) {
-          const result = await bash(`curl -sS -m 15 -o /dev/null -w '%{http_code}' https://example.com`, 40_000, mode, domains);
-          last = result.exitCode === 0 ? result.stdout.trim() : `exit:${result.exitCode}`;
-          if (reached.test(last)) return last;
+          const result = await bash(probe, 40_000, mode, domains);
+          last = sandboxCurlReachToken(result);
+          if (SANDBOX_CURL_REACHED.test(last)) return last;
         }
         return last;
       };
 
-      expect(await fetchCode('open', [])).toMatch(reached);
-      expect(await fetchCode('none', [])).not.toMatch(reached);
-      expect(await fetchCode('allowlist', ['github.com'])).not.toMatch(reached);
-      expect(await fetchCode('allowlist', ['example.com'])).toMatch(reached);
+      expect(await fetchCode('open', [])).toMatch(SANDBOX_CURL_REACHED);
+      expect(await fetchCode('none', [])).not.toMatch(SANDBOX_CURL_REACHED);
+      expect(await fetchCode('allowlist', ['github.com'])).not.toMatch(SANDBOX_CURL_REACHED);
+      expect(await fetchCode('allowlist', ['example.com'])).toMatch(SANDBOX_CURL_REACHED);
     });
   });
 });
