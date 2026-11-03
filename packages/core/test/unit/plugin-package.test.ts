@@ -159,6 +159,7 @@ describe('staging a .kepcup file', () => {
         id: 'io.github.tester/fixture',
         name: 'Fixture',
         version: '1.0.0',
+        usage: '启用即可使用。',
         description: 'x'.repeat(70 * 1024),
         contributions: { skills: [{ dir: 'skills/a' }] },
       }),

@@ -1,16 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rm,
-  stat,
-} from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   AppError,
@@ -157,7 +147,9 @@ export class PluginPackager {
         if (manifestEntry.size > PLUGIN_MANIFEST_MAX_BYTES) {
           throw invalid(`${PLUGIN_MANIFEST_FILE} 过大`);
         }
-        const manifest = parsePluginManifestText((await zip.read(manifestEntry)).toString('utf8'));
+        const manifest = parsePluginManifestText((await zip.read(manifestEntry)).toString('utf8'), {
+          requireUsage: true,
+        });
         checkPluginCompatibility(manifest, {
           appVersion: this.#deps.appVersion,
           platform: this.#platform,
@@ -255,6 +247,7 @@ export class PluginPackager {
 
       const manifest = parsePluginManifestText(
         await readFile(path.join(stagingDir, PLUGIN_MANIFEST_FILE), 'utf8'),
+        { requireUsage: true },
       );
       checkPluginCompatibility(manifest, {
         appVersion: this.#deps.appVersion,

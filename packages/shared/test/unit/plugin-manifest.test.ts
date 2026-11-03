@@ -37,6 +37,7 @@ const minimalManifest = {
   id: 'io.github.alice/doc-tools',
   name: '文档工具集',
   version: '1.2.0',
+  usage: '启用即可使用，无需再绑定任何账号。',
   contributions: { skills: [{ dir: 'skills/docx' }] },
 } satisfies Record<string, unknown>;
 
@@ -56,6 +57,13 @@ describe('plugin manifest schema', () => {
     expect(() => parse({ ...minimalManifest, tier: 'verified' })).toThrow();
     expect(() => parse({ ...minimalManifest, categories: ['productivity'] })).toThrow();
     expect(() => parse({ ...minimalManifest, permissions: ['fs'] })).toThrow();
+  });
+
+  it('usage defaults to empty for legacy manifests and is capped at 500 chars', () => {
+    // 2026-11-03（51 §15.8）：新包必填由安装管线 / validate / 签名脚本强制；
+    // schema 对存量已装清单回落空串，保证旧版本可读、可更新。
+    expect(parse({ ...minimalManifest, usage: undefined }).usage).toBe('');
+    expect(() => parse({ ...minimalManifest, usage: 'x'.repeat(501) })).toThrow();
   });
 
   it('rejects format_version 2 (schema is the last line of defense)', () => {
@@ -432,11 +440,10 @@ describe('declarative fields & instances (D105)', () => {
       id: 'app.kepcup.example/tools-x',
       name: '示例工具',
       version: '1.0.0',
+      usage: '启用即可使用。',
       instances: ['mcp'],
       config: {
-        fields: [
-          { key: 'pollSec', type: 'number', title: '轮询间隔（秒）', min: 60, max: 3600 },
-        ],
+        fields: [{ key: 'pollSec', type: 'number', title: '轮询间隔（秒）', min: 60, max: 3600 }],
       },
     });
     expect(manifest.instances).toEqual(['mcp']);
@@ -559,11 +566,9 @@ describe('capability summary (D105)', () => {
       id: 'io.github.alice/doc-tools',
       name: '文档工具集',
       version: '1.2.0',
+      usage: '启用后连接 Notion 账号并勾选绑定；技能启用即可使用。',
       contributions: {
-        skills: [
-          { dir: 'skills/docx', displayName: 'Word 工具' },
-          { dir: 'skills/pptx' },
-        ],
+        skills: [{ dir: 'skills/docx', displayName: 'Word 工具' }, { dir: 'skills/pptx' }],
         connectors: [{ file: 'connectors/notion.json' }],
         mcp: [],
         mail: [
@@ -586,6 +591,7 @@ describe('capability summary (D105)', () => {
       id: 'app.kepcup.example/tools-only',
       name: '纯工具',
       version: '1.0.0',
+      usage: '启用即可使用。',
       instances: ['mcp'],
     });
     expect(pure.contributions).toEqual({
@@ -834,7 +840,13 @@ describe('im contribution (D107, 54 号文档 §2)', () => {
           connectors: [],
           mcp: [],
           mail: [],
-          im: [{ ...imWechat, transport: 'webhook', features: { inbound: true, outbound: true, media: ['text'] } }],
+          im: [
+            {
+              ...imWechat,
+              transport: 'webhook',
+              features: { inbound: true, outbound: true, media: ['text'] },
+            },
+          ],
         },
       }),
     ).toThrow();

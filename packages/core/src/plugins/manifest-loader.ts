@@ -22,7 +22,16 @@ function invalid(message: string): AppError {
 }
 
 /** Parses and validates `plugin.json`; throws `PLUGIN_INVALID` / `PLUGIN_INCOMPATIBLE`. */
-export function parsePluginManifestText(text: string): PluginManifest {
+export function parsePluginManifestText(
+  text: string,
+  options: {
+    /**
+     * 新安装 / 更新包要求 `usage`（启用说明）非空（2026-11-03 起，51 §15.8）。
+     * 已装清单的读取不传：旧版本缺该字段仍可显示与更新。
+     */
+    requireUsage?: boolean;
+  } = {},
+): PluginManifest {
   if (Buffer.byteLength(text, 'utf8') > PLUGIN_MANIFEST_MAX_BYTES) {
     throw invalid(`plugin.json 超过 ${PLUGIN_MANIFEST_MAX_BYTES} 字节上限`);
   }
@@ -74,6 +83,11 @@ export function parsePluginManifestText(text: string): PluginManifest {
       return `${where}：${issue.message}`;
     });
     throw invalid(`plugin.json 不符合插件规范：${lines.join('；')}`);
+  }
+  if (options.requireUsage === true && parsed.data.usage.trim() === '') {
+    throw invalid(
+      'plugin.json 缺少必填的启用说明 usage（写清楚启用后还要做什么：启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定）',
+    );
   }
   return parsed.data;
 }

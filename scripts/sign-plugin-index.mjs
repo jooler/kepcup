@@ -23,6 +23,8 @@
 // printed. The production public key list is compiled into @kepcup/shared
 // (PLUGIN_INDEX_PUBLIC_KEYS — empty = the marketplace is closed until the key is registered).
 // The marketplace key is INDEPENDENT of the connector-directory key (do not reuse KEPCUP_CONNECTOR_SIGNING_KEY).
+// Every published manifest must carry activation instructions (`usage`); the signer refuses a
+// blank value. Plugins using manifest fields older hosts do not know must raise `engines.kepcup`.
 import {
   createHash,
   createPrivateKey,
@@ -262,6 +264,13 @@ export async function collectPluginEntries({
       );
     }
     const manifest = parsed.data;
+    // 2026-11-03（51 §15.8）：启用说明是市场发布必填项——Bot 靠它判断用户是否漏了
+    // 连接账号 / 添加账号再勾选绑定。schema 为存量兼容回落空串，签名侧拒绝空值。
+    if (typeof manifest.usage !== 'string' || manifest.usage.trim() === '') {
+      throw new SignError(
+        `${name}: manifest is missing the required "usage" (activation instructions, see docs/guides/write-a-plugin.md section 2.5)`,
+      );
+    }
     let iconDataUri = null;
     if (manifest.icon !== undefined) {
       iconDataUri = shared.pluginIconDataUriFromBytes(manifest.icon, iconBytes, {

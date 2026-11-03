@@ -220,6 +220,7 @@ applies. Anchors below match each finding's `doc` field.
 - <a id="plugin-manifest-read"></a>`plugin.manifest-read` (error): `plugin.json` is missing, larger than 64 KB or not valid JSON.
 - <a id="plugin-manifest-format"></a>`plugin.manifest-format` (error): `format_version` is newer than the supported 1.
 - <a id="plugin-manifest-schema"></a>`plugin.manifest-schema` (error): the manifest does not match the plugin schema (the first three issues are shown).
+- <a id="plugin-usage"></a>`plugin.usage` (error): the required `usage` (activation instructions) is missing or blank — state what the user must do after enabling the plugin (ready to use / connect an account / add an account and bind it to the bot). Legacy installed manifests may omit it; new packages and marketplace publishing must not.
 - <a id="plugin-manifest-namespace"></a>`plugin.manifest-namespace` (error): the id uses the builtin-only `com.kepcup` or `local.kepcup` namespace.
 - <a id="plugin-manifest-metadata"></a>`plugin.manifest-metadata` (warn): `description`, `author`, `homepage` or `engines` is missing.
 - <a id="plugin-readme"></a>`plugin.readme` (warn): the plugin has no `README.md`.

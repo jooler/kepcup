@@ -15,6 +15,7 @@ import {
   SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
   findAgentEntry,
+  connectorMetaOf,
   systemInfoOutputSchema,
   systemPingOutputSchema,
   systemShutdownOutputSchema,
@@ -202,7 +203,12 @@ import { PluginPackager } from './plugins/package.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { effectivePluginIds } from './plugins/effective.js';
 import { PluginInstallRequests } from './plugins/install-requests.js';
-import { PluginInstanceService, PluginInstanceStore, pluginInstanceSecretName } from './plugins/instances.js';
+import {
+  PluginInstanceService,
+  PluginInstanceStore,
+  pluginInstanceSecretName,
+} from './plugins/instances.js';
+import { PluginBotNotice, type PluginActivationEntry } from './plugins/bot-notice.js';
 import { createMailMaterializer, reconcileMailInstanceRows } from './plugins/materializers/mail.js';
 import { createImMaterializer, reconcileImInstanceRows } from './plugins/materializers/im.js';
 import { PluginStore } from './plugins/store.js';
@@ -665,6 +671,8 @@ export interface CoreServices {
   plugins: PluginRegistry | null;
   /** D105 插件实例服务（配置 / 实例 RPC 与卸载级联）；未装配时为 null。 */
   pluginInstances: PluginInstanceService | null;
+  /** 2026-11-03（51 号文档 §15.8）：插件激活变化的 30 秒合并通报器；未装配时为 null。 */
+  pluginBotNotice: PluginBotNotice | null;
   /** D104 P1-1 插件市场端点解析与同步；close() 停定时器，RPC 绑定取用。 */
   marketplace: MarketplaceService | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
@@ -944,6 +952,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     mcpb: null,
     plugins: null,
     pluginInstances: null,
+    pluginBotNotice: null,
     marketplace: null,
     toolLock: null,
     appToolGrants: null,
@@ -979,6 +988,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       await services.remote?.close();
       services.jobsRunner?.stop();
       services.marketplace?.stop();
+      services.pluginBotNotice?.close();
       services.appSkills?.stop();
       try {
         services.schedules?.stop();
@@ -2328,7 +2338,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     bots.attachPluginDirectory({ installed: pluginInstalled });
     projects.attachPluginDirectory({ installed: pluginInstalled });
     // 连接器 slug 的属主插件查询（forBot 的可见性过滤用；账本即事实来源）。
-    connectedApps.attachPluginOwnerOf((connectorSlug) => plugins.ownerOf('connector', connectorSlug));
+    connectedApps.attachPluginOwnerOf((connectorSlug) =>
+      plugins.ownerOf('connector', connectorSlug),
+    );
     skills.attachPublicUninstallGuard((name) => {
       if (plugins.ownerOf('skill', name) !== null) {
         throw new AppError(
@@ -2518,10 +2530,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       widgetCraft,
       skills: {
         // P2 注入模型：orchestrator 传入本次 run 的有效启用集，透传给技能装配。
-        promptSection: (botId, extraPluginIds) =>
-          skills.promptSection(botId, extraPluginIds),
-        readableDirs: (botId, extraPluginIds) =>
-          skills.readableDirs(botId, extraPluginIds),
+        promptSection: (botId, extraPluginIds) => skills.promptSection(botId, extraPluginIds),
+        readableDirs: (botId, extraPluginIds) => skills.readableDirs(botId, extraPluginIds),
         // D72 P4 审查 #3 / P6：技能生成 loop 需要内置模型，或在设置「后台任务」
         // 里允许外部 Agent 生成技能（默认关）；都没有时登记前直接告诉 Bot，而不是
         // 回「已登记」后静默不做。
@@ -2805,6 +2815,143 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // IM materializer 落地（实例 = IM 账号）+ 启动对账（同 mail 的 DEV-065 纪律）。
     pluginInstances.registerMaterializer('im', createImMaterializer(im));
     reconcileImInstanceRows(pluginInstances, im, logger);
+    // 2026-11-03（51 号文档 §15.8）：插件启用说明 + 激活变化通报。用户停手 30 秒后把
+    // 「启用集 + 每个插件的 usage + 就绪状态」合并成一条内部事件发给 Bot：全部就绪时
+    // Bot 静默，有遗漏（没连账号 / 添加了账号没勾选绑定）时 Bot 主动提醒用户。
+    const pluginBotNotice = new PluginBotNotice({
+      timers: options.timers ?? realTimerScheduler,
+      logger,
+      enabledPluginIds: (botId) => bots.get(botId)?.profile.runtime.plugin_ids ?? [],
+      snapshot: (botId, pluginIds) => {
+        const summaries = new Map(plugins.list().map((plugin) => [plugin.id, plugin]));
+        const bot = bots.get(botId);
+        const boundSlugs = new Set<string>();
+        let unavailableConnections = 0;
+        for (const connectionId of bot?.profile.runtime.app_connection_ids ?? []) {
+          const connection = apps.store.get(connectionId);
+          if (connection === null) continue;
+          if (isExposableStatus(connection.status)) boundSlugs.add(connection.connectorId);
+          else unavailableConnections += 1;
+        }
+        // 连接器 slug 的属主（账本之外再读目录：内置插件不进账本）。
+        const connectorOwners = new Map<string, string>();
+        for (const entry of connectorCatalog.list()) {
+          const slug = connectorMetaOf(entry).slug;
+          const owner = connectorCatalog.pluginIdOf(slug);
+          if (owner !== null) connectorOwners.set(slug, owner);
+        }
+        const mailAccounts = mailService?.list() ?? [];
+        const imAccounts = im.listAccounts();
+        const enabled: PluginActivationEntry[] = [];
+        for (const id of pluginIds) {
+          const plugin = summaries.get(id);
+          if (plugin === undefined) continue;
+          const reasons: string[] = [];
+          if (!plugin.enabled) {
+            reasons.push('插件已在扩展中心停用，启用后才能使用');
+          } else if (plugin.state !== 'installed') {
+            reasons.push('插件尚未完成安装或正在卸载，当前不可用');
+          }
+          const ownedSlugs = new Set(
+            plugin.items
+              .filter(
+                (item) =>
+                  item.kind === 'connector' && item.missing !== true && item.yielded !== true,
+              )
+              .map((item) => item.ref),
+          );
+          // yielded（与其他应用 slug / 名称冲突而让位）的连接器：用户无法连接，单独说明。
+          const yieldedSlugs = new Set(
+            plugin.items
+              .filter((item) => item.kind === 'connector' && item.yielded === true)
+              .map((item) => item.ref),
+          );
+          for (const [slug, owner] of connectorOwners) {
+            if (owner === id && !yieldedSlugs.has(slug)) ownedSlugs.add(slug);
+          }
+          if (ownedSlugs.size > 0) {
+            const slots = [...ownedSlugs];
+            const bound = slots.filter((slug) => boundSlugs.has(slug));
+            if (bound.length === 0) {
+              if (unavailableConnections > 0) {
+                reasons.push('已绑定的账号当前不可用，需要重新连接');
+              } else if (yieldedSlugs.size > 0) {
+                reasons.push('连接器与其他应用冲突而让位，当前无法连接');
+              } else {
+                reasons.push('尚未连接账号或未在 Bot 详情勾选绑定任何账号');
+              }
+            } else if (bound.length < slots.length) {
+              reasons.push(`还有 ${slots.length - bound.length} 个连接器尚未绑定账号`);
+            }
+          } else if (yieldedSlugs.size > 0) {
+            reasons.push('连接器与其他应用冲突而让位，当前无法连接');
+          }
+          if (plugin.counts.mail > 0 || plugin.providesInstances.includes('mail')) {
+            const accounts = mailAccounts.filter((account) => account.pluginId === id);
+            if (accounts.length === 0) reasons.push('尚未添加任何邮箱账号');
+            else if (!accounts.some((account) => account.botIds.includes(botId))) {
+              reasons.push('已添加邮箱账号，但未勾选绑定到本 Bot');
+            }
+          }
+          if (plugin.counts.im > 0 || plugin.providesInstances.includes('im')) {
+            const accounts = imAccounts.filter((account) => account.pluginId === id);
+            if (accounts.length === 0) reasons.push('尚未添加任何即时通讯账号（如微信）');
+            else if (!accounts.some((account) => account.botIds.includes(botId))) {
+              reasons.push('已添加账号，但未在插件卡片里勾选绑定到本 Bot');
+            }
+          }
+          enabled.push({
+            id,
+            name: plugin.name,
+            usage: plugin.usage,
+            enabled: plugin.enabled,
+            status: reasons.join('；'),
+          });
+        }
+        return { enabled };
+      },
+      displayNameOf: (pluginId) => plugins.displayNameOf(pluginId) ?? pluginId,
+      conversationFor: (botId) => {
+        try {
+          // 没有直聊时创建一个（与 wiki 入库同口径）：提醒必须有落点，否则用户
+          // 修好绑定之前永远不会知道 Bot 需要什么。
+          return conversations.openDirect(botId).conversation.id;
+        } catch {
+          return null;
+        }
+      },
+      deliver: ({ botId, conversationId, event, text }) => {
+        if (servicesClosed.closed) return;
+        orchestrator.deliverEventToBot(botId, conversationId, event, text, { internal: true });
+      },
+    });
+    // 重启基线：已启用的插件不算这一轮新增，只有真实变化才通报。
+    for (const bot of bots.listActive()) {
+      pluginBotNotice.hydrate(bot.id, bot.profile.runtime.plugin_ids ?? []);
+    }
+    services.pluginBotNotice = pluginBotNotice;
+    // 统一触发（长期收益）：Bot runtime（plugin_ids / app_connection_ids）的任何
+    // 写入都经 `bot.updated` 进来，不再依赖每个 RPC 各自记得调用 note()；
+    // 是否有真实变化由 PluginBotNotice 的整份状态签名判定。
+    const noticeRuntime = new Map<string, string>();
+    const noticeRuntimeKey = (bot: Bot): string =>
+      JSON.stringify([
+        bot.profile.runtime.plugin_ids ?? [],
+        bot.profile.runtime.app_connection_ids,
+      ]);
+    for (const bot of bots.listActive()) noticeRuntime.set(bot.id, noticeRuntimeKey(bot));
+    events.on('bot.updated', ({ bot }) => {
+      const next = noticeRuntimeKey(bot);
+      const previous = noticeRuntime.get(bot.id);
+      noticeRuntime.set(bot.id, next);
+      if (previous === undefined) {
+        // 启动后新建的 Bot：以创建时的启用集作基线，避免第一次只改绑定时把已有插件
+        // 误报成「本批新增」。
+        pluginBotNotice.hydrate(bot.id, bot.profile.runtime.plugin_ids ?? []);
+        return;
+      }
+      if (previous !== next) pluginBotNotice.note(bot.id);
+    });
     // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
     const handoverBotWriter: HandoverBotWriter = {
       get: (botId) => bots.get(botId),
@@ -3202,6 +3349,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         'plugin registry start failed',
       );
     }
+    // 插件安装 / 更新 / 启停 / 撤销都会广播 `plugins.changed`：用到该插件的 Bot
+    // 一律重算状态（更新带来的 usage 变化也在此覆盖）。放在 plugins.start() 之后，
+    // 避免启动恢复 / 对账产生的广播误唤醒。
+    events.on('plugins.changed', ({ ids }) => {
+      const affected = new Set(ids);
+      for (const bot of bots.listActive()) {
+        if ((bot.profile.runtime.plugin_ids ?? []).some((id) => affected.has(id))) {
+          pluginBotNotice.note(bot.id);
+        }
+      }
+    });
     // 安装通报是 Bot 内部事务（事件自带 internal 标记）：照常触发 Bot 续任务，
     // 但不进用户可见对话。
     environment.setNotifier((botId, conversationId, event, text, opts) => {

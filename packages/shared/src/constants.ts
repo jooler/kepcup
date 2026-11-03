@@ -286,6 +286,12 @@ export const SETUP_QUESTION_EVENT = 'bot_setup_question';
  */
 export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';
 /**
+ * 插件激活变化内部事件名（发送侧与测试共用的单一常量）。用户在 Bot 详情 / 账号绑定 /
+ * 扩展中心操作插件后，core 合并 30 秒再发给 Bot（51 号文档 §15.8）。
+ */
+export const PLUGIN_ACTIVATION_EVENT = 'plugin_activation_changed';
+
+/**
  * Bot 内部事务事件名集合（docs/design/01-conversation.md 消息原则）：这些事件
  * 只服务 Bot 自己的执行与知识/环境管理，不是对话内容——消息写入侧带
  * `internal` 标记，读取侧按标记或本集合（历史存量行没有标记）一起过滤。
@@ -312,7 +318,12 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   // D92 T1a：用户停止了协作回合（episode_stopped）——只进 Bot 的上下文，
   // 用户看到的是自己点过的停止按钮，不再需要一条消息。
   'episode_stopped',
+  // 插件激活变化（51 号文档 §15.8）：用户在 Bot 详情 / 账号绑定 / 扩展中心操作插件，
+  // 30 秒合并后把「启用集 + 各插件启用说明 + 就绪状态」发给 Bot；全部就绪时 Bot
+  // 应 skip_reply 静默，存在遗漏时才主动提醒。
+  PLUGIN_ACTIVATION_EVENT,
 ]);
+
 /** Hard cap of questions one setup interview may ask (soft target: 3~5). */
 export const SETUP_MAX_QUESTIONS = 5;
 /** Min/max candidate answers a setup question offers; the UI always adds a free-text custom answer on top. */

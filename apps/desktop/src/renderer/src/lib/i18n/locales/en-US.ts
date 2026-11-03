@@ -338,7 +338,8 @@ export const enUS = {
   'settings.modelsNavConfig': 'Model Config',
   'settings.modelsOverviewHint':
     'Manage model providers and defaults; a provider can be added multiple times (different baseUrls for different model capabilities).',
-  'settings.templateHintVendor': 'Built-in vendor template: chat presets prefilled, addable repeatedly',
+  'settings.templateHintVendor':
+    'Built-in vendor template: chat presets prefilled, addable repeatedly',
   'settings.templateHintCustom': 'Any OpenAI-compatible endpoint; chat + embeddings',
   'settings.providerStatus.ready': 'Ready',
   'settings.providerStatus.incomplete': 'Incomplete',
@@ -683,6 +684,7 @@ export const enUS = {
   'botPanel.plugins.summaryEnabled': '{count} added',
   'botPanel.plugins.summaryNone': 'None added',
   'botPanel.plugins.connections': 'Connected accounts',
+  'botPanel.plugins.usage': 'Activation',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
   'botPanel.plugins.localAccounts': 'Local connections',
@@ -1836,6 +1838,12 @@ export const enUS = {
   'plugins.consent.connectorHosts': 'Service: {hosts}',
   'plugins.consent.connectorScopes': 'Scopes: {scopes}',
   'plugins.consent.mail': 'Mail templates',
+  'plugins.consent.im':
+    'Instant messaging accounts (add an account after installing and bind it to the bot)',
+  'plugins.consent.imEndpoint': 'Endpoint: {host}',
+  'plugins.consent.imFeatures': 'Receive: {inbound} · Send: {outbound}',
+  'plugins.consent.imYes': 'Yes',
+  'plugins.consent.imNo': 'No',
   'plugins.consent.blockers': 'Cannot install',
   'plugins.consent.conflicts': 'Conflicts',
   'plugins.consent.conflictItem': '{ref}: {withWhat}',
@@ -1853,6 +1861,7 @@ export const enUS = {
   'plugins.market.category.mcp': 'Tools',
   'plugins.market.category.mail': 'Mail',
   'plugins.market.category.im': 'Instant messaging',
+  'plugins.filter.im': 'Instant messaging',
   'plugins.market.refresh': 'Refresh',
   'plugins.market.refreshing': 'Syncing…',
   'plugins.market.empty': 'No plugins are available in the marketplace yet.',
@@ -3142,9 +3151,11 @@ export const enUS = {
   'mail.card.arrived': 'New mail',
   'mail.card.expand': 'View summary',
   'plugins.kind.im': 'IM accounts',
-  'im.intro': 'IM accounts come from IM plugins: scan to add (e.g. WeChat) on the plugin card, then bind a Bot to chat from WeChat.',
+  'im.intro':
+    'IM accounts come from IM plugins: scan to add (e.g. WeChat) on the plugin card, then bind a Bot to chat from WeChat.',
   'im.add': 'Add account',
-  'im.noPlugin': 'No IM-capable plugin installed yet. Install one (e.g. WeChat) from the market, then come back to add an account.',
+  'im.noPlugin':
+    'No IM-capable plugin installed yet. Install one (e.g. WeChat) from the market, then come back to add an account.',
   'im.openMarket': 'Open plugin market',
   'im.empty': 'No IM accounts yet',
   'im.back': 'Back',
@@ -3170,19 +3181,24 @@ export const enUS = {
   'im.lastInbound': 'Last inbound',
   'im.lastOutbound': 'Last forward',
   'im.bots': 'Bound bots',
-  'im.botsHint': 'Bindings and the "sync replies" toggle live in Bot details → Plugins. Binding enables inbound; the toggle forwards replies.',
+  'im.botsHint':
+    'Bindings and the "sync replies" toggle live in Bot details → Plugins. Binding enables inbound; the toggle forwards replies.',
   'im.bindingOn': 'Bound',
   'im.bindingForward': 'Bound (sync on)',
   'im.bindingOff': 'Not bound',
   'im.rescan': 'Scan again',
   'im.delete': 'Delete account',
   'im.botSection': 'IM accounts (WeChat)',
-  'im.botSectionHint': 'Bind to chat from WeChat; the inline toggle syncs Bot replies back to WeChat.',
+  'im.botSectionHint':
+    'Bind to chat from WeChat; the inline toggle syncs Bot replies back to WeChat.',
   'im.botSectionAfterCreate': 'IM accounts can be bound after the bot is created.',
-  'im.botSectionEmpty': 'No IM accounts yet — add one from the plugin card in the extension center.',
-  'im.botSectionBound': '{count} account(s) bound; binding always allows inbound messages from WeChat.',
+  'im.botSectionEmpty':
+    'No IM accounts yet — add one from the plugin card in the extension center.',
+  'im.botSectionBound':
+    '{count} account(s) bound; binding always allows inbound messages from WeChat.',
   'im.forwardToggle': 'Sync replies to this WeChat',
-  'im.forwardHint': 'When on, Bot replies are mirrored to this WeChat account; sending from WeChat turns it back on',
+  'im.forwardHint':
+    'When on, Bot replies are mirrored to this WeChat account; sending from WeChat turns it back on',
   'im.card.from': 'From {channel}',
   'im.card.fromIm': 'From IM',
   'mail.card.collapse': 'Hide',

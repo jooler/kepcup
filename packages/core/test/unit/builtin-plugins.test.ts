@@ -62,6 +62,7 @@ describe('BuiltinPlugins.list', () => {
         id: 'com.kepcup/other',
         name: 'Mismatch',
         version: '1.0.0',
+        usage: '启用即可使用。',
         contributions: { skills: [{ dir: 'skills/x' }] },
       }),
     );
@@ -74,6 +75,7 @@ describe('BuiltinPlugins.list', () => {
         id: 'com.kepcup/missing-files',
         name: 'Missing',
         version: '1.0.0',
+        usage: '启用即可使用。',
         contributions: {
           skills: [
             {

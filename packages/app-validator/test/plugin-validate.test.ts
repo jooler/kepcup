@@ -97,6 +97,19 @@ describe('validatePlugin: a complete legal plugin', () => {
     expect(ids(report, 'info')).toContain('plugin.icon');
   });
 
+  it('requires the activation instructions (usage) for new plugins', async () => {
+    const dir = await tmp();
+    await buildPluginDir({
+      ...legalOptions(dir),
+      manifest: { ...legalOptions(dir).manifest, usage: null },
+    });
+    await writeFile(path.join(dir, 'README.md'), '# Demo plugin\n');
+    await writeFile(path.join(dir, 'icon.svg'), ICON_SVG);
+    const report = await validatePlugin(dir);
+    expect(ids(report, 'error')).toContain('plugin.usage');
+    expect(report.exitCode).not.toBe(0);
+  });
+
   it('requires an icon and rejects an unusable one', async () => {
     const dir = await tmp();
     await buildPluginDir({
@@ -107,9 +120,10 @@ describe('validatePlugin: a complete legal plugin', () => {
     const missing = await validatePlugin(dir);
     expect(missing.checks.find((check) => check.id === 'plugin.icon')?.severity).toBe('error');
 
-    const manifest = JSON.parse(
-      await readFile(path.join(dir, 'plugin.json'), 'utf8'),
-    ) as Record<string, unknown>;
+    const manifest = JSON.parse(await readFile(path.join(dir, 'plugin.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
     await writeFile(
       path.join(dir, 'plugin.json'),
       JSON.stringify({ ...manifest, icon: 'icon.svg' }),
@@ -117,9 +131,7 @@ describe('validatePlugin: a complete legal plugin', () => {
     await writeFile(path.join(dir, 'icon.svg'), 'not an svg');
     const broken = await validatePlugin(dir);
     expect(
-      broken.checks.some(
-        (check) => check.id === 'plugin.icon' && check.severity === 'error',
-      ),
+      broken.checks.some((check) => check.id === 'plugin.icon' && check.severity === 'error'),
     ).toBe(true);
   });
 
@@ -451,9 +463,9 @@ describe('validatePlugin: declarative config / instance fields (D105 P5)', () =>
       instanceKinds: ['mail'],
       configFields: 0,
     });
-    expect(String((capabilities?.details as { capabilitySummary: string }).capabilitySummary)).toContain(
-      '1 个技能',
-    );
+    expect(
+      String((capabilities?.details as { capabilitySummary: string }).capabilitySummary),
+    ).toContain('1 个技能');
   });
 
   it('warns when a default disagrees with the declared type / bounds, and on sensitive defaults', async () => {
@@ -469,7 +481,13 @@ describe('validatePlugin: declarative config / instance fields (D105 P5)', () =>
             { key: 'okText', type: 'string', title: '正常' },
             { key: 'badNumber', type: 'number', title: '类型错', default: 'nope' },
             { key: 'outOfRange', type: 'number', title: '越界', min: 5, default: 1 },
-            { key: 'secretDefault', type: 'string', title: '敏感默认', sensitive: true, default: 'x' },
+            {
+              key: 'secretDefault',
+              type: 'string',
+              title: '敏感默认',
+              sensitive: true,
+              default: 'x',
+            },
             { key: 'badMultiple', type: 'string', title: '多值错', multiple: true, default: 'x' },
           ],
         },

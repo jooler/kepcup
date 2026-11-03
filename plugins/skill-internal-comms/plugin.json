@@ -3,15 +3,16 @@
   "id": "app.kepcup/skill-internal-comms",
   "name": "对内沟通稿",
   "icon": "icon.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "撰写对内沟通文稿：公告、全员信、变更通知、制度说明、活动动员。按场景选择体例（正式公告/部门通知/轻松动员），控制在合适的正式程度。用户说\"发个通知\"、\"写个全员信\"、\"公告一下\"、\"变更说明\" 时使用。",
+  "usage": "启用即可使用：添加到 Bot 后，Bot 会在匹配的对内沟通写作任务里自动加载该技能，无需再连接账号或勾选其他选项。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "skills": [

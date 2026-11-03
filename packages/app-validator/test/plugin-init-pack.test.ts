@@ -38,6 +38,7 @@ async function minimalPlugin(dir: string): Promise<string> {
       name: 'Demo',
       version: '1.0.0',
       description: 'A demo plugin',
+      usage: '启用即可使用。',
       author: { name: 'Tester' },
       homepage: 'https://example.com',
       icon: 'icon.svg',

@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-gdrive",
   "name": "Google Drive 连接",
   "icon": "connectors/gdrive/gdrive.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "搜索、读取与创建 Google Drive 文件（仅限授权给 KepCup 的文件）",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Google Drive 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能读取和创建文件。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://drive.google.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [
