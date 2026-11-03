@@ -793,9 +793,9 @@ CREATE INDEX board_cards_project ON board_cards(project_id);
 - 删分栏：`column_id` 不级联。服务先挪走或删除卡片，再删分栏。
 - 删项目会话：`board_columns` / `board_cards` 随会话外键级联；事项没有指向会话的外键，由 `lifecycle.deleteConversation` 在删行之前调用 `board.onProjectDeleting` 逐张 `todos.purge`（见删除级联表）。
 
-### widgets（Bot 自制交互组件，D81，main 0028）
+### widgets（Bot 自制交互组件 / 微应用，D81 + D112，main 0028）
 
-Bot 在任务里用 `widget_craft`（D87 制作 loop，凭检查回执经 `WidgetService.create` / `update` 落库）交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
+Bot 在任务里用 `widget_craft`（D87 制作 loop，凭检查回执经 `WidgetService.create` / `update` 落库）交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）；D112（[design/55](../design/55-bot-micro-app-runtime.md)，P0 起）：同一套表承载**微应用**——`manifest_json` 非空的版本即微应用（清单声明能力、按能力面指纹确认、版本双指针），空 = 存量组件（行为零变化）。卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改。
 
 ```sql
 CREATE TABLE widgets (
@@ -807,7 +807,8 @@ CREATE TABLE widgets (
   description     TEXT NOT NULL DEFAULT '',
   latest_version  INTEGER NOT NULL DEFAULT 1,
   created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
+  updated_at      INTEGER NOT NULL,
+  next_version    INTEGER                  -- 0067（D112）：版本双指针；NULL = 跟随卡片钉住版本（存量语义）
 );
 CREATE INDEX widgets_bot ON widgets(bot_id);
 CREATE INDEX widgets_conversation ON widgets(conversation_id);
@@ -824,6 +825,9 @@ CREATE TABLE widget_versions (
   check_summary_json TEXT NOT NULL DEFAULT '',   -- 0035：检查摘要（轮数、已知问题 ≤5、craftId；不含源码）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
+  manifest_json  TEXT NOT NULL DEFAULT '', -- 0067（D112）：微应用清单 micro-app.json（空 = 存量组件）
+  bundle_sha256  TEXT NOT NULL DEFAULT '', -- 0067：bundle 规范化摘要（清单 + 全部内容；「代码已更新」标注）
+  permissions_json TEXT NOT NULL DEFAULT '[]', -- 0067：清单 permissions（冗余列，审计 / 巡查免解析清单）
   PRIMARY KEY (widget_id, version)
 );
 
@@ -851,6 +855,7 @@ CREATE TABLE widget_docs (
 - 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
 - D88 移交复制（P2，`WidgetService.copyForHandover`，无迁移）：只有 `scope='bot'` 的组件可复制（会话级随所在对话，不移交）。一个事务里给接手方插入新 `widgets` 行（新 id、仍为 Bot 级、`conversation_id` NULL、`latest_version` 照搬），`widget_versions` 全部行按原样复制（`html` / `sha256` / `queries_sha256` / `size_bytes` / `created_by_run` / `created_at` / `queries_reviewed_at` / `check_status` / `check_summary_json`），`widget_queries`、`widget_docs` 全部复制；不发卡。接手方已有同名组件、组件数或字节配额超限时不复制。渲染端的加载确认按「HTML sha256 + 查询摘要」记在本机（不分组件 / Bot），副本摘要不变，所以原版已确认的版本在接手方那里同样免确认。幂等判据：接手方名下同名、版本序列（版本号 + 两项摘要）完全相同的 Bot 级组件。
 - `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
+- **微应用（D112，0067）**：`manifest_json` 非空的版本是微应用——确认按**能力面指纹**（permissions + net 档位，渲染端 `kepcup.microApp.consents.v1` 按 widgetId 记忆；存量组件仍按 `(sha256|queriesSha256)` 逐版本确认）；`widgets.next_version` 是版本双指针（微应用更新置新版本、重开生效，不热替换运行实例；存量组件不写该列）。生效版本解析与清单校验在 `core/src/micro-apps/manifest.ts` 与 `WidgetService`（`#resolveEffectiveVersion`）。后续 `micro_app_*` 表（files / usage / diagnostics）见 55 §4.3，随 P2 落地登记。
 
 ### delegations（D71，main 0016；0021 重建；0067 增列）
 

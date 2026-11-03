@@ -198,12 +198,21 @@ export function buildAppCspHeader(
  * 与 iframe 属性同旗标的 `sandbox`（别的宿主误嵌时仍是沙箱文档；旗标必须与 iframe 属性
  * 一致，否则 CSP 侧会把 origin 打回 opaque，localStorage 等不可用）与 `frame-ancestors`
  * （只许应用自己的窗口嵌入）。MCP Apps 的严格档见 {@link buildAppCspHeader}，两者不共用。
+ *
+ * `connectDomains`（D112，设计 55 §3.3）：微应用按清单 net 档位收紧 `connect-src`——
+ * 缺省不限制（存量组件语义零变化）；`'none'` 全禁；域名数组只放行声明的 https 域。
  */
-export function buildWidgetRuntimeCspHeader(): string {
-  return [
+export function buildWidgetRuntimeCspHeader(
+  options: { connectDomains?: string[] | 'none' } = {},
+): string {
+  const parts = [
     'sandbox allow-scripts allow-same-origin allow-forms allow-modals',
     'frame-ancestors file: http://localhost:*',
-  ].join('; ');
+  ];
+  const connect = options.connectDomains;
+  if (connect === 'none') parts.push("connect-src 'none'");
+  else if (connect !== undefined && connect.length > 0) parts.push(`connect-src ${connect.join(' ')}`);
+  return parts.join('; ');
 }
 
 // --- 工具元数据（`_meta.ui`） -----------------------------------------------

@@ -347,6 +347,7 @@ import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindPluginsMethods } from './plugins-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindWidgetsUiMethods } from './widgets-ui-bindings.js';
+import { bindMicroAppsMethods } from './micro-apps-bindings.js';
 import { bindFilesPreviewMethods } from './files-preview-bindings.js';
 import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
 import type { ShareIntakeService } from '../share/service.js';
@@ -1656,6 +1657,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // D73 P3 §7.5: apps.ui.open / close / callTool / openLink (MCP Apps rendering).
     ...bindAppsUiMethods(services).app,
     ...bindWidgetsUiMethods(services).app,
+    // D112 微应用：microApps.preflight（能力可用性预检）。
+    ...bindMicroAppsMethods(services).app,
     // kepcup-file 目录预览（docs/design/47）：为 HTML 文件卡开 files.previewSession。
     ...bindFilesPreviewMethods(services).app,
     // D73 P1: catalog list, connection update / tools / review / policy, grants, approveAfterTest.

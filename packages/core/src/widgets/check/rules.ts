@@ -426,6 +426,53 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
       '或在代码里容错（加载失败时显示空状态与重试），验收点不要依赖真实网络。',
     userText: '',
   },
+  // --- 微应用（D112，设计 55 §11 / §3.3）------------------------------------------
+  // P0 注册规则与提示词（与 spec 的错误 hint 同源）；草稿带 micro-app.json 时由 P3 的
+  // 多文件制作流程触发扫描。P0 的制作 loop 仍是单文件组件，这些规则暂不命中。
+  {
+    id: 'app.manifest-invalid',
+    level: 'error',
+    stage: 'S0',
+    blocking: true,
+    title: 'micro-app.json 清单不合法',
+    hint:
+      '按报错点名的字段修清单：spec 必须是 kepcup-micro-app/1；permissions 只能用闭合枚举里的能力 id' +
+      '（storage.kv / storage.collection / ai.chat / media.listen / media.speak / host.reply / host.openLink / ' +
+      'context.update / files.pick / notify），未知项会被拒绝；net.mode=allowlist 必须给域名数组。' +
+      '清单变化（权限 / 网络档位）= 新版本，用户需要重新确认。',
+    userText: '微应用清单不合法',
+  },
+  {
+    id: 'app.net-open-default',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '保留默认联网但未写联网用途',
+    hint:
+      '默认 net.mode=open（可联网）。保留 open 就要在 spec.md 写清楚联网用途（如「调用公开词典 API」）' +
+      '与失败降级（断网时界面仍可用）；不需要联网就主动收紧为 none 或 allowlist——确认卡会如实展示网络范围。',
+    userText: '',
+  },
+  {
+    id: 'app.permission-undeclared',
+    level: 'error',
+    stage: 'S1',
+    blocking: true,
+    title: '代码调用了清单未声明的能力',
+    hint:
+      '把用到的能力补进 micro-app.json 的 permissions（能力面扩大会触发用户重新确认），或改掉这处调用；' +
+      '调用前先 await kepcup.app.ready() 看 capabilities，按返回值降级，不要靠错误码试探。',
+    userText: '微应用调用了未声明的能力',
+  },
+  {
+    id: 'app.sdk-deprecated',
+    level: 'warning',
+    stage: 'S1',
+    blocking: false,
+    title: '使用了 SDK 里已标记废弃的方法',
+    hint: '按报告点名的位置换成替代方法（deprecated 方法的替代写法见 references/errors.md）。',
+    userText: '',
+  },
 ];
 
 const RULES_BY_ID = new Map(WIDGET_CHECK_RULES.map((rule) => [rule.id, rule]));

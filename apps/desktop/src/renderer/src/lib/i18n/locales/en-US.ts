@@ -3120,6 +3120,21 @@ export const enUS = {
   'botWidget.check.hideIssues': 'Hide',
   'botWidget.check.note':
     "A passing self-check only means it runs; it doesn't mean it's safe. You still need to review before loading.",
+  // Micro-app consent card (D112, design 55 §5.2: the network line is its own line, ahead of the capability list, never collapsed)
+  'botWidget.microApp.kind': 'Micro-app',
+  'botWidget.microApp.netOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netNone': 'No internet access',
+  'botWidget.microApp.netAllowlist': 'Can access the internet (only {domains})',
+  'botWidget.microApp.newerVersion': 'Version v{version} available; reopen to apply',
+  'botWidget.microApp.codeUpdated': 'Code updated, permissions unchanged (your previous consent carries over)',
+  'botWidget.microApp.canDo': 'What it can do:',
+  'botWidget.microApp.cost':
+    'Up to {n} tokens per session, billed to the Bot that wrote it ({bot})',
+  'botWidget.microApp.unavailable': 'Currently unavailable: {capability} ({reason})',
+  'botWidget.microApp.openSettings': 'Open settings',
+  'botWidget.microApp.preflightLoading':
+    'Checking whether this machine can run everything it needs…',
+  'botWidget.microApp.confirmAndOpen': 'Confirm and open',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
   'settings.widgetReviewModelHint':
@@ -3172,6 +3187,18 @@ export const enUS = {
   'chats.errorCode.WIDGET_CRAFT_FAILED':
     "The widget couldn't be built (self-check failed, timed out, or was cancelled); the draft was kept",
   'chats.errorCode.WIDGET_CRAFT_UNAVAILABLE': 'No model is available to build widgets',
+  'chats.errorCode.MICRO_APP_MANIFEST_INVALID': "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
+  'chats.errorCode.MICRO_APP_UNSUPPORTED_SPEC':
+    "This KepCup doesn't recognize the micro-app manifest version; please upgrade the app",
+  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_DECLARED':
+    'The micro-app called a capability not declared in its manifest',
+  'chats.errorCode.MICRO_APP_CAPABILITY_DENIED':
+    'You declined or revoked this capability; the micro-app should fall back gracefully',
+  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED':
+    'The host lacks configuration this capability needs (e.g. model / voice); configure it in settings first',
+  'chats.errorCode.MICRO_APP_AI_QUOTA': "The micro-app's model usage is over budget",
+  'chats.errorCode.MICRO_APP_AI_BUSY': 'The micro-app already has a model call in flight; try again shortly',
+  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
   'chats.errorCode.MAIL_NOT_BOUND': "This mailbox isn't assigned to the current Bot",
   'chats.errorCode.MAIL_AUTH_FAILED':
     'Mailbox sign-in failed. Use an authorization code or app password, not your login password.',
