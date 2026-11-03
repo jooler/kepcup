@@ -38,6 +38,8 @@ public enum BackgroundInputTransport {
 
     /// Down/up pacing; WindowServer can drop a mouseUp that follows its mouseDown too closely.
     static let pressPauseMicroseconds: UInt32 = 28_000
+    /// Pointer preamble of a wheel event: let the target window take the point before the wheel lands.
+    static let movePauseMicroseconds: UInt32 = 20_000
     static let windowIDField = CGEventField(rawValue: 51)!
 
     public static var missingSymbols: [String] {
@@ -84,8 +86,27 @@ public enum BackgroundInputTransport {
     }
 
     public static func scroll(_ target: Target, at point: CGPoint, wheel1: Int32, wheel2: Int32, units: CGScrollEventUnit = .line) throws {
+        let events = try scrollEvents(target, at: point, wheel1: wheel1, wheel2: wheel2, units: units)
+        events.move.postToPid(target.pid)
+        usleep(movePauseMicroseconds)
+        events.wheel.postToPid(target.pid)
+    }
+
+    /// Pointer preamble + wheel, both stamped for the target window.
+    ///
+    /// Why: a pid-posted wheel is routed by the window that owns the point, not by field 51 alone —
+    /// without the mouseMoved preamble the target window never sees the wheel (the foreground path
+    /// always posted one: `SyntheticMouseClickDelivery.deliverScroll`).
+    public static func scrollEvents(
+        _ target: Target,
+        at point: CGPoint,
+        wheel1: Int32,
+        wheel2: Int32,
+        units: CGScrollEventUnit
+    ) throws -> (move: CGEvent, wheel: CGEvent) {
         let symbols = try PrivateSymbols.shared.require()
-        guard let event = CGEvent(
+        let move = try mouseEvent(.mouseMoved, target: target, at: point, button: .left, clickState: 0, flags: [], symbols: symbols)
+        guard let wheel = CGEvent(
             scrollWheelEvent2Source: nil,
             units: units,
             wheelCount: 2,
@@ -95,8 +116,8 @@ public enum BackgroundInputTransport {
         ) else {
             throw Failure.eventCreationFailed
         }
-        stamp(event, target: target, at: point, symbols: symbols)
-        event.postToPid(target.pid)
+        stamp(wheel, target: target, at: point, symbols: symbols)
+        return (move, wheel)
     }
 
     /// Runs inside the key-window scope: NSTextView only tracks a drag selection in a key window.

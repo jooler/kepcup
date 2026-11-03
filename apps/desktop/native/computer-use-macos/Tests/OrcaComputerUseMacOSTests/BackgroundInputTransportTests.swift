@@ -49,6 +49,31 @@ final class BackgroundInputTransportTests: XCTestCase {
         return unsafeBitCast(symbol, to: GetWindowLocation.self)(event)
     }
 
+    func testScrollCarriesAPointerPreambleStampedForTheTargetWindow() throws {
+        try XCTSkipUnless(BackgroundInputTransport.isAvailable, "private symbols missing: \(BackgroundInputTransport.missingSymbols)")
+        let point = CGPoint(x: 366, y: 312)
+        let events = try BackgroundInputTransport.scrollEvents(
+            target,
+            at: point,
+            wheel1: -36,
+            wheel2: 0,
+            units: .line
+        )
+
+        // Why: a pid-posted wheel is routed by the window that owns the point; without this move
+        // the target window never sees the wheel (the foreground path always posted one).
+        XCTAssertEqual(events.move.type, .mouseMoved)
+        XCTAssertEqual(events.wheel.type, .scrollWheel)
+        for event in [events.move, events.wheel] {
+            XCTAssertEqual(event.getIntegerValueField(CGEventField(rawValue: 51)!), 9001)
+            XCTAssertEqual(event.location, point)
+            XCTAssertEqual(try windowLocation(of: event), CGPoint(x: 66, y: 112))
+        }
+        // Sign survives the unit conversion; the magnitude is unit dependent (line vs pixel).
+        XCTAssertLessThan(events.wheel.getIntegerValueField(.scrollWheelEventDeltaAxis1), 0)
+        XCTAssertEqual(events.wheel.getIntegerValueField(.scrollWheelEventDeltaAxis2), 0)
+    }
+
     private func unicodeString(_ event: CGEvent) -> String {
         var length = 0
         var buffer = [UniChar](repeating: 0, count: 8)
