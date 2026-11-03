@@ -4,6 +4,7 @@
 > 已拍板（2026-11-02）：**默认允许联网**；**模型等用量计入编写该微应用的 Bot**；**不做发音评分**；**统一命名为「微应用」**（宿主仍称「主应用」，代码前缀 `MicroApp*`）。
 > 关系：[32-bot-widgets.md](32-bot-widgets.md) 定义「组件」这一形态与制作流程；本文把同一套运行时**升级为微应用平台**，取代 32 号 §5（渲染管线）/§6（能力桥）/§8（安全清单）中关于「组件能力面」的结论。32 号作为组件形态、版本化确认与制作流程的历史设计继续有效。
 > 执行方案待本稿确认后另立 `todo/bot-micro-app-platform.md`。
+> **2026-11-03 修订**：对照 DeepSeek Harness「创造模式」（§17）与 ChatGPT Apps / Claude（§18）补充。**默认联网保持不变**（Q10），改由提示面补偿（§3.3 / §5.2 / §7.3 / §11）。采纳：运行时诊断回流（§9.4）、教学式错误（§6.2 / §11）、SDK 按需自省与写作知识分层（§6.1）、版本双指针（§9.1）、能力可用性预检与运行期能力协商（§5.2 / §6.2）、上下文摘要（§8.5）、查询分页（§10）、确认粒度改为能力面指纹（§5.2，待 Q8）。不采纳项见 §17 / §18。
 
 ---
 
@@ -159,7 +160,15 @@
 | `net: allowlist` | 清单声明的 https 域 | 作者主动收紧，或儿童/敏感场景模板推荐 |
 | `net: none` | `'none'` | 完全离线的微应用；所有数据经 `kepcup.*` |
 
-默认允许联网（2026-11-02 决策）：微应用可用 `fetch` / `WebSocket` / 外链资源，与现有组件运行时档位一致；确认卡必须明示「可联网」。三档都写进清单（缺省 `open`），确认指纹包含网络档位与域名清单；从宽松档改到收紧档同样产生新版本。
+默认允许联网（2026-11-02 决策，2026-11-03 复核保持）：微应用可用 `fetch` / `WebSocket` / 外链资源，与现有组件运行时档位一致。三档都写进清单（缺省 `open`），`bundle_sha256` 与能力面指纹都包含网络档位与域名清单；从宽松档改到收紧档同样产生新版本。
+
+**这与 MCP Apps / ChatGPT Apps 的缺省值相反**（它们 CSP 缺省 `connect-src 'none'`，声明才放行，§18）。选 `open` 是为了与存量组件档位和 Web 微应用心智一致；代价是**不能靠默认值兜底，必须由提示面补偿**。三个运行期提示面缺一不可，外加管理页可查：
+
+1. **确认卡单独一行**写网络范围，不能并进能力列表：`可联网（未限制域名）` / `可联网（仅 a.com、b.com）` / `不联网`。未收紧时该行放在能力清单之前并加强调——用户先看到「它能上网」，再看「它能做什么」。
+2. **微应用外壳（§7.3）常驻网络徽标**（`可联网` / `不联网`），与麦克风指示同级，点击展开「它能访问什么」；微应用无法隐藏或伪造。
+3. **制作流程（§11）SPEC 阶段必须回答「是否需要联网」**：保留 `open` 要在 `spec.md` 写用途（如「调用公开词典 API」）与失败降级；没写理由 → GATE 给 `app.net-open-default` warning，不阻断交付。
+
+管理页在每个微应用下显示网络档位与声明域名（`open` 档显示「未限制」）。`open` 语义就是浏览器直连，**平台不做逐请求拦截**；要逐域控制就选 `allowlist`。把实际出站域名记成可查列表需要 Electron `webRequest` 钩子，列为 P2 可选，不作为 `open` 的安全承诺。儿童向模板仍建议收紧，但提示按「默认联网」的事实写，不写「建议收紧」这种容易被作者跳过的措辞。
 
 ---
 
@@ -238,11 +247,26 @@ CREATE TABLE micro_app_usage (
   tts_chars   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (widget_id, day)
 );
+
+-- 运行时诊断（§9.4）：只记 code / 位置 / 次数，不记 message 与任何内容
+CREATE TABLE micro_app_diagnostics (
+  widget_id  TEXT NOT NULL,
+  version    INTEGER NOT NULL,
+  day        TEXT NOT NULL,           -- YYYY-MM-DD（本地时区）
+  phase      TEXT NOT NULL,           -- prepare | run | stream
+  code       TEXT NOT NULL,           -- MICRO_APP_* / 异常类型名
+  detail     TEXT NOT NULL DEFAULT '', -- 栈顶帧（文件:行:列）或方法名，≤200 字
+  count      INTEGER NOT NULL DEFAULT 0,
+  first_at   INTEGER NOT NULL,        -- 毫秒时间戳
+  last_at    INTEGER NOT NULL,
+  PRIMARY KEY (widget_id, version, day, phase, code)
+);
 ```
 
-- `bundle_sha256` = 清单 + 入口 + 全部文件按路径排序后的规范化摘要，是确认指纹的一部分。
+- `bundle_sha256` = 清单 + 入口 + 全部文件按路径排序后的规范化摘要，是确认记录的一部分。
 - 现有 `sha256` 保留为入口 HTML 摘要，兼容旧卡。
 - `micro_app_files` 随版本修剪一起删（沿用 `BOT_WIDGET_VERSIONS_KEPT`）。
+- `micro_app_diagnostics` 按天修剪（默认保留 30 天）；随版本修剪一起删，避免旧版本诊断长期留存。
 - 存量 `widget_*` 表暂不改名：契约稳定后再做一次纯改名迁移（§13.2）；新增表用 `micro_app_*` 前缀。
 
 ---
@@ -260,7 +284,8 @@ CREATE TABLE micro_app_usage (
 | `media.speak` | `kepcup.media.speak` | 免审（仅播放宿主合成音频） | 队列 ≤3 段 | 可打断 |
 | `host.reply` | `kepcup.reply` | 每次确认 | ≤2000 字 / 5s | 已有 |
 | `host.openLink` | `kepcup.openLink` | 每次确认 | https-only | 已有 |
-| `net.fetch` | 浏览器原生 fetch | **默认开放**（作者可收紧为 `allowlist` / `none`） | 按清单档位 | 不写入 `permissions`，由 `net.mode` 控制；确认卡明示「可联网」 |
+| `context.update` | `kepcup.context.update` | 打开时确认（含说明） | 结构化摘要 ≤1KB，last-wins | P2：把进度写进主对话的模型上下文，不产生消息（§8.5） |
+| `net.fetch` | 浏览器原生 fetch | **默认开放**（作者可收紧为 `allowlist` / `none`） | 按清单档位 | 不写入 `permissions`，由 `net.mode` 控制；确认卡与外壳必须常驻显示（§3.3） |
 | `files.pick` | `kepcup.files.pick` | 用户手势 + 系统选择器 | 单文件 20MB | P3，只读副本 |
 | `notify` | `kepcup.notify` | 免审 | 每 10 分钟 1 条 | P3，系统通知，需用户开总闸 |
 
@@ -273,21 +298,29 @@ CREATE TABLE micro_app_usage (
 三层：
 
 1. **清单声明**（作者意图）——只写进版本，不生效。
-2. **用户确认**（按版本）——确认卡列出能力的人话描述与预算；指纹 = `bundle_sha256`（含权限集与网络域）。权限只增不减也算新代码。
+2. **用户确认**（按版本）——确认卡列出能力的人话描述与预算；确认记录绑定 `bundle_sha256`（入口 + 全部文件 + 权限集 + 网络档），执行期按版本强制。
+   - **重新出卡只由「能力面指纹」决定（建议，待 Q8 拍板）**：指纹 = `permissions` 集合 + `net.mode` + `net.allowlist`。指纹不变时代码更新在卡上标「代码已更新，权限未扩大」，沿用上次确认；指纹变化（新增能力、放宽网络、扩大域名）强制重新确认。
+   - 理由：一个迭代十次的练习类微应用不该出十张确认卡；但代码变化本身仍要可见、可查、可撤销——「查看代码」始终指向当前版本。这不是 DSH 的「整包批准未来版本」（§17）：信任的仍然是**能力面**，不是作者或插件身份。
 3. **执行期授权**（按会话）——麦克风、外链、回传这类敏感能力，每次运行会话重新授权；关闭微应用即释放麦克风。
 
 确认卡示例（不是最终文案）：
 
 ```
 小小英语角 · 第 3 版（由 Bot「Emma 老师」编写）
-它可以：
+网络：可联网（未限制域名）· 平台不逐域限制
+它能做什么：
   · 保存练习进度（本机，仅此微应用）
   · 调用模型生成对话（预计每次练习 ≤2 万 token，计入 Bot「Emma 老师」的模型额度）
   · 使用麦克风听你说话（录音只用于转写，不保存）
   · 播放语音
-可联网。
 [查看代码]  [打开]
 ```
+
+网络行不是「能力」之一，而是**范围声明**：必须排在最前、单独一行、按实际档位措辞（§3.3），不能折叠进「查看详情」。
+
+出卡前做一次**能力可用性预检**：清单声明的能力在当前宿主是否具备（缺 ASR / TTS 配置、缺模型、传感器总闸关闭）。不可用项在卡上标「当前不可用」并给出修复入口（设置页深链，缺什么指向哪一条设置项），不要等用户点开微应用才在运行期拿到 `CAPABILITY_NOT_CONFIGURED`。预检结果不改变指纹、不写版本——它描述的是「这台机器现在能不能跑」，不是「这个微应用要什么」。
+
+预检与 §4.2 的清单在交付时也要过一遍：清单声明的 `spec` 或能力在当前版本不支持时，交付回执如实写明，而不是发一张永远打不开的卡。
 
 ### 5.3 执行期强制
 
@@ -326,13 +359,49 @@ packages/shared/src/micro-app-sdk/
 
 这条与仓库既有的「设置目录是唯一事实来源」同构，避免「文档说能做、运行时没实现」。
 
+**写作知识分层（不塞进一份文档）**
+
+制作 loop 的上下文很贵（32 §11.7 的阶段提示已经不短），所以 `sdk.md` 只做**入口**：
+
+| 层 | 内容 | 上限 / 约束 | 何时读 |
+|---|---|---|---|
+| 入口 `sdk.md` | 能力清单、每条 API 一行签名、最常见的 3 个错误、信任边界声明 | ≤4KB，且必须落在制作 loop 提示的修剪阈值内（超出会被截头去尾） | 每次制作 |
+| `references/` | 每个能力的完整契约、错误码、限额、可复制示例 | 每篇 1–3KB | 用到时由 `read` 工具按需读 |
+| `templates/` | 可直接复制的包骨架（语音陪练 / 表单 / 看板） | 能被清单校验器与 S2 预览跑通 | BUILD 阶段 |
+| `kepcup-micro-app.d.ts` | 生成类型（含每条 API 的 JSDoc） | 与 `spec.ts` 同步 | 写 TS / 需要精确签名时 |
+
+- 入口第一段固定写**信任边界**：哪些是平台保证（沙箱隔离、能力按版本校验、原始音频不出宿主），哪些只是产品策略（儿童场景建议、费用提示、降级路径要求）。作者 Bot 得知道边界在哪，才不会写出「靠平台兜底」的代码。
+- 生成物之间做**守卫测试**（仓库既有风格，不靠人记得）：入口大小在阈值内；`sdk.md` 引用的每个文件存在；每个模板能被清单校验器解析并跑通 S2；`.d.ts` 重新生成后无 diff；检查器规则引用的 API 名都在 `spec.ts` 里。
+- 入口不复制 references 的内容。允许出现「见 `references/media.md`」——这与 DSH 把配方移出 SKILL.md 的做法同构（§17）。
+
+**按需自省：`micro_app_sdk_inspect`**
+
+给制作 loop 一个只读工具，按名字精确取一条契约（签名、参数、限额、错误码、所属能力、是否 deprecated），而不是把全量 API 塞进提示：
+
+- 数据从 `spec.ts` 的同一份结构生成，与 `sdk.md`、`.d.ts`、检查规则、预览 mock 同源；生成物新鲜度测试（重新生成后有 diff 即失败）。
+- 单次返回有上限（≤2KB）；查询结果追加到制作 loop 的历史，不进入主对话。
+- 未知方法名返回**可用的方法名列表**而不是「未找到」——这是 §6.2 教学式错误的一个应用：错误要能直接推进下一步。
+- 检查器说「你调了未声明的能力」时，引用的是同一条 spec 项与同一份能力文案，不另写一份解释。
+
 ### 6.2 API 形状
 
 ```ts
 window.kepcup = {
   app: {
-    ready(): Promise<void>;
-    on(event: 'pause' | 'resume' | 'capability.revoked' | 'theme', cb: (v?: unknown) => void): () => void;
+    // 运行期能力协商：调用任何能力前先看这里，不要靠错误码探测
+    ready(): Promise<{
+      capabilities: string[];                 // 宿主当前可用的能力，可能是清单声明的子集
+      grants: {
+        mic: 'granted' | 'denied' | 'unavailable';
+        net: { mode: 'open' | 'allowlist' | 'none'; domains: string[] };
+      };
+      theme: 'light' | 'dark';
+      displayMode: 'inline' | 'immersive';
+      viewport: { width: number; height: number };
+      instanceId: string;
+    }>;
+    requestDisplayMode(mode: 'inline' | 'immersive'): Promise<{ mode: 'inline' | 'immersive' }>;
+    on(event: 'pause' | 'resume' | 'capability.revoked' | 'theme' | 'display-mode', cb: (v?: unknown) => void): () => void;
     close(): void;
     setTitle(title: string): void;
   },
@@ -342,6 +411,19 @@ window.kepcup = {
     set(key: string, value: unknown): Promise<void>;
     delete(key: string): Promise<void>;
     list(): Promise<string[]>;
+  },
+
+  // 只读宿主数据：命名查询模板；分页语义见 §10
+  query(name: string, params?: Record<string, unknown>, opts?: { cursor?: string; maxBytes?: number }): Promise<{
+    rows: Record<string, unknown>[];
+    truncated: boolean;
+    nextCursor?: string;
+  }>;
+
+  // 把结构化进展写进主对话的模型上下文；不产生消息、不改对话历史（§8.5）
+  context: {
+    update(summary: { headline: string; data?: Record<string, unknown> }): Promise<void>;
+    clear(): Promise<void>;
   },
 
   // 微应用私有的多轮模型会话；上下文不进入主对话
@@ -392,9 +474,13 @@ window.kepcup = {
 设计约束：
 
 - **全部异步能力返回 Promise，错误带 `code`**；垫片不抛裸字符串。
+- **错误同时是给作者看的（教学式错误）**：`code` 给微应用做分支，`hint` 给写这段代码的 Bot 做修复，必须点名「哪次调用、期望什么、下一步改什么」。运行期桥只能给方法名与参数形状（看不到源码）；预览与检查器的错误能带行号——垫片单行注入正是为了不破坏作者原文的行号。`hint` 不进用户界面，用户看到的是 §5.3 的人话。
+- **错误分两层投递**：用户侧一条人话；作者侧进 §9.4 的诊断回流（去重、限流、不记内容）。
 - **流式用 `AsyncIterable` 或事件**，不轮询；桥侧 `stream` 帧带 `streamId`、`seq`、`done`。
 - **取消**：`AbortSignal` 映射为 `cancel` 帧；关闭微应用即取消全部在途调用。
-- **不暴露 resourceId、不暴露宿主路径、不暴露模型 id**。
+- **能力协商优于错误探测**：`ready()` 返回的 `capabilities` / `grants` 是唯一依据。清单声明的能力可能被宿主收紧（缺 ASR、用户拒绝麦克风、策略下调网络档位），应用必须按返回值降级，不能靠反复调用试探。
+- **数据面默认 app-only**：`storage` / `query` / `ai` 历史默认不进入主对话；唯一过界的通道是 `context.update`（结构化摘要，§8.5）与 `reply`（用户可见、需确认）。
+- **不暴露 resourceId、不暴露宿主路径、不暴露模型 id**。`hint` 里同样不出现这些。
 
 ### 6.3 桥协议 v2
 
@@ -404,7 +490,7 @@ type BridgeOut =
   | { k: 'stream';  id: number; streamId: string }
   | { k: 'cancel';  id: number; target: number | string }
   | { k: 'ack';     id: number; result: unknown }
-  | { k: 'error';   id: number; code: string; message: string }
+  | { k: 'error';   id: number; code: string; message: string; hint?: string }
   | { k: 'event';   subId: string; name: string; data: unknown }
   | { k: 'event-ack'; subId: string; seq: number }
   | { k: 'close' };
@@ -414,6 +500,8 @@ type BridgeOut =
 - 二进制（音频、图片）用结构化克隆的 `ArrayBuffer`，不走 base64，减少 33% 膨胀。
 - 每条请求恰好一条终态回执（`ack` / `error`），流式另有 `event`；心跳用于回收挂死的 promise。
 - 事件订阅有上限（每微应用 32 个）与背压（seq 丢失即断开并通知微应用重连）。
+- `error.hint` 面向作者：同一 `code` 的 `hint` 来自 §6.1 的同一份 spec（不是桥里另写一份文案），便于诊断回流与检查器共用。
+- **方法名与 MCP Apps 的 `ui/*` 保持可机械映射**（不依赖该协议，只为将来导出或接入省一次翻译）：`openLink` ↔ `ui/open-link`、`reply` ↔ `ui/message`、`requestDisplayMode` ↔ `ui/request-display-mode`、`context.update` ↔ `ui/update-model-context`、`setHeight` ↔ `ui/notifications/size-changed`。映射表随 `spec.ts` 生成，不手工维护。
 
 ---
 
@@ -450,10 +538,12 @@ type BridgeOut =
 覆盖层顶部加一条宿主渲染的微应用外壳：
 
 ```
-← | 小小英语角            [麦克风使用中]  [⏹]  [×]
+← | 小小英语角      [可联网]  [麦克风使用中]  [⛶]  [⏹]  [×]
 ```
 
+- **网络徽标常驻**：`可联网` / `不联网`，点击展开「它能访问什么」（`open` 档显示「未限制域名」）。与麦克风指示同级绘制，微应用不能隐藏或伪造（§3.3）。
 - 麦克风指示由宿主绘制，微应用无法伪造或隐藏。
+- 全屏键 = 内联 / 沉浸切换，对应 `requestDisplayMode`；微应用请求时同样经过这一层，不直接改窗口。
 - 停止键 = 立即关闭采集与播放。
 - 能力徽标点击展开「它在用什么」。
 - 这层不占微应用 iframe 的 DOM，微应用无法覆盖。
@@ -464,7 +554,7 @@ type BridgeOut =
 
 ### 8.1 上下文隔离
 
-微应用自己的对话历史**不进入主对话上下文**，主对话只看到卡片与（经确认的）`reply`。理由：
+微应用自己的对话历史**不进入主对话上下文**，主对话只看到卡片、（经确认的）`reply` 与 `context.update` 的结构化摘要（§8.5）。理由：
 
 - 英语陪练一分钟可能十几轮，进主上下文会挤爆窗口、污染人设。
 - 微应用历史归微应用所有，存 `storage` / `collections`，可清空。
@@ -494,6 +584,20 @@ type BridgeOut =
 - 用户语音 → ASR 文本 → 微应用 → 模型：转写文本是用户内容，进入微应用上下文没问题；但微应用可能把它拼进系统提示，宿主无法阻止。因此宿主在 `ai.chat` 前做一次轻量检查：如果 `system` 里出现明显的「忽略以上指令」类模式，标记为 warning（不阻断，记审计）。
 - 模型输出 → 微应用 → 用户：微应用负责渲染；平台只保证回传通道有确认。
 
+### 8.5 上下文摘要（`context.update`）
+
+MCP Apps 有 `ui/update-model-context`：UI 可以把上下文写给模型的下一轮，而不必发一条用户消息（§18）。微应用需要同样的能力——练习结束告诉主对话「完成了第 3 课、错 2 个」，但不应把十几轮对话塞回主上下文。
+
+**边界（比 MCP Apps 更严）：**
+
+- 只接受**结构化摘要**：`headline`（≤80 字）+ 可选 `data`（JSON，≤1KB）。不接受自由文本数组、不接受 `messages`。
+- **last-wins**：同一实例多次调用只保留最后一次；新实例不继承旧实例的摘要。
+- 摘要以 `<untrusted source="micro-app-context" meta="widget=…,version=…">` 包住注入模型上下文，明确标注不是平台或用户指令——它与 `reply` 一样是**作者内容**，只是不走消息列表。
+- **不进消息列表**：不写 `conversation_messages`，用户看不到气泡；但在卡片与微应用管理页显示「已同步：<headline>」，可一键清除。
+- 只在**用户手势**里或 `app.pause` / 关闭时接受，防止微应用循环刷写。
+- 打开时确认卡列一行「它可以把学习进度同步给对话」；撤销该能力即清空当前摘要。
+- 与 `reply` 的分工：`reply` 是用户可见的一条消息、要确认；`context.update` 是静默摘要——不产生气泡、只在下一轮生效，卡片上可看到摘要并可清除。
+
 ---
 
 ## 9. 生命周期与状态
@@ -509,7 +613,8 @@ type BridgeOut =
 
 - **suspended**：微应用视图仍打开但窗口不可见（最小化、切到别的 tab、系统休眠）。宿主推 `app.pause`，微应用保存快照；恢复推 `app.resume`。
 - **closed**：销毁 iframe。再次打开 = 新实例，从 `storage` 恢复。
-- **崩溃**：iframe `error` / 无响应 3s → 显示「微应用无响应」+ 重新打开；不自动循环重试。
+- **版本双指针**：每个微应用同时有 `currentVersion`（正在运行的实例所用）与 `nextVersion`（下次打开所用）。升级 = 写入新版本并把 `nextVersion` 指过去，**不热替换运行中的实例**——卡片标「有新版本，重新打开生效」；`nextVersion` 指回旧版本即回退（被修剪的版本不可回退，回执要写明）。
+- **崩溃**：iframe `error` / 无响应 3s → 显示「微应用无响应」+ 重新打开；不自动循环重试；同时按 §9.4 记一条诊断给作者。
 - **不做后台常驻 / 定时唤醒**：AI 写的定时代码是电量与安全的双重风险；需要提醒就用 Bot 的定时任务（`schedules`），由 Bot 发消息，不靠微应用自己活着。
 
 ### 9.2 会话恢复
@@ -522,6 +627,34 @@ type BridgeOut =
 
 - 同一微应用可在不同对话各开一个实例，数据共享（按微应用隔离），会话状态按实例分开。
 - 管理页可「在新对话打开」；不做同一对话多窗口。
+- 版本指针是**微应用级**的：升级后新开的实例用 `nextVersion`，已在跑的实例继续用 `currentVersion` 直到关闭。所以同一时刻可能有两个版本在跑——诊断（§9.4）与用量都按版本记，不混算。
+
+### 9.4 运行时诊断回流（给作者 Bot）
+
+微应用上线后崩了、桥调用持续被拒、S2 没覆盖到的分支报错——今天这些都只停在用户屏幕上（`knownIssues` 只在交付时写进卡片，`widget_read_state` 只读 KV 数据）。作者 Bot 永远不知道自己写坏了，craft loop 也就成了一次性的构建闭环。这一节把它接成跨时间的维护闭环。
+
+**采集（宿主侧，不进微应用）：**
+
+| 事件 | 来源 | 记录 |
+|---|---|---|
+| 崩溃 / 无响应 | iframe `error`、心跳超时 | `code` + 阶段（prepare / run / stream） |
+| 桥调用被拒 | `MICRO_APP_*` 错误 | `code` + 方法名 + 次数（不记参数） |
+| 未捕获异常 | 垫片 `window.onerror` / `unhandledrejection` | 错误类型名 + 栈顶帧 `文件:行:列`（单行注入保证行号即作者原文行号） |
+| 能力缺失 | `CAPABILITY_NOT_CONFIGURED` | 能力 id |
+
+**不存 message**：异常 message 可能含用户输入、ASR 文本或模型输出。诊断只留 `code`、阶段、位置、次数——足够定位，且不构成内容留存。作者若需要上下文，让微应用自己把必要信息写进它自己的 `storage`（数据按微应用隔离）。
+
+**存储**：`micro_app_diagnostics`，主键 `(widget_id, version, day, phase, code)`，字段见 §4.3；按天修剪。
+
+**投递（三条规则，防打扰 + 防上下文膨胀）：**
+
+1. **默认只落一条系统消息**：同一 `(version, code)` 首次出现时，在**该微应用的来源会话**（`widgets.conversation_id`，即编写它的那个对话；Bot 级微应用该列为 NULL）落一条系统消息（≤300 字：哪个微应用、哪个版本、code、位置、次数；提示可调用 `micro_app_diagnostics_read` 看详情）。同一 code 每天至多一条；来源会话为 NULL 或已删除时只保留按需读。系统消息沿用既有语义（Bot 可见、用户也可见），不新增 UI 概念。
+2. **按需读**：`micro_app_diagnostics_read(widget_id)` 返回最近 24h 的聚合（code、次数、首次 / 末次、栈顶帧），有上限、有截断标记。它是 Bot 任务面的只读工具，与 `widget_read_state` 同级，不进对话轮的工具面。
+3. **不进运行对话**：诊断不写微应用**被运行的那个对话**的消息列表，不污染那次练习的上下文；用户侧在管理页「它用过什么」旁加一栏「运行问题」（P2），只显示次数与「已通知作者」，不显示技术细节。
+
+**版本归属**：诊断按 `version` 记录。Bot 修一版后，旧版本的诊断不再推送（仍可读，直到版本修剪）。这与「只在最新版本上重复打扰」的直觉一致，也避免修好之后还被旧崩溃刷屏。
+
+**与制作流程的连接**：修改已有微应用时，SPEC 阶段读最近 24h 诊断，把「用户那边崩在哪」作为需求输入（§11）。
 
 ---
 
@@ -535,6 +668,9 @@ type BridgeOut =
 | 包内只读资源 | `micro_app_files`，经协议源同路径取 | 8MB / 64 文件 |
 | 用户选择的文件（P3） | `files.pick` 返回只读副本句柄 | 单文件 20MB |
 
+- `query` 增 `cursor` / `maxBytes`（P2）：返回 `{ rows, truncated, nextCursor? }`，单次 ≤256KB；大表按页取。数据只进微应用、不进模型上下文（app-only，对应 §18 的「分块数据」模式）。
+- `context.update` 的摘要不落这张表：它存在对话 / 卡片状态里，last-wins（§8.5）。
+
 不支持：任意 SQL、跨微应用查询、写宿主表、直接读用户工作目录。
 
 ---
@@ -545,17 +681,19 @@ type BridgeOut =
 
 | 阶段 | 组件（今天） | 微应用（目标） |
 |---|---|---|
-| SPEC | `spec.md` + 验收点 | 增「能力清单与理由」「降级路径」「每轮对话成本估算」 |
+| SPEC | `spec.md` + 验收点 | 增「能力清单与理由」「联网用途与失败降级」「降级路径」「每轮对话成本估算」 |
 | BUILD | 单 `index.html` + 模板 | `micro-app.json` + 多文件 + 从模板起步（语音陪练模板、表单模板、看板模板） |
 | GATE S0/S1 | HTML/JS 静态检查 | 增清单校验、权限最小性、SDK 一致性（只调用声明能力）、资源路径与体积 |
 | GATE S2 | 离线真实预览 + 冒烟 | 宿主能力 mock：`ai.chat` 返回脚本化回复、`media.listen` 注入 fixture 转写、`media.speak` 记录不发声；跑通「一轮完整对话」 |
 | REVIEW | 结构化 P0–P2 | 增：儿童内容安全、隐私（录音/外传）、成本、无麦克风时的降级 |
-| DELIVER | 写版本 + 发卡 | 写清单 + 包 + 用量预算，卡片展示能力清单 |
+| DELIVER | 写版本 + 发卡 | 写清单 + 包 + 用量预算，卡片展示网络范围与能力清单 |
 | 基准 | 10 条需求 | 增 3 条语音/对话类需求；门槛「无阻断交付 ≥8/10」不变 |
 
 - 预览仍**离线**：mock 的 `ai.chat` 不联网，`net.fetch` 直接失败并归 `preview.offline-network`。
-- 检查器新增规则（示例）：`app.manifest-invalid`、`app.permission-undeclared`、`app.permission-overbroad`（声明了 `media.listen` 但代码从未调用 → warning）、`app.cost-estimate-missing`、`app.fallback-missing`（声明了 `media.listen` 但没有文字输入回退 → warning）。
-- 制作提示由 `sdk.md` 生成，禁止手写第二份 API 清单。
+- 检查器新增规则（示例）：`app.manifest-invalid`、`app.permission-undeclared`、`app.permission-overbroad`（声明了 `media.listen` 但代码从未调用 → warning）、`app.cost-estimate-missing`、`app.fallback-missing`（声明了**任何宿主能力**但没有文本 / 卡片回退 → warning；渐进增强是通用验收，不只语音）、`app.capability-unavailable`（宿主缺该能力 → warning + 设置深链）、`app.sdk-deprecated`（用了 spec 里标 deprecated 的 API）、`app.net-open-default`（保留 `open` 但 `spec.md` 未写联网用途 → warning）。
+- **每条 finding 都要给可执行的下一步**：改哪一行、换成哪个 API、补哪个清单字段。规则 id 只用于检索与统计，不把「违反了 app.fallback-missing」当成给模型的说明。非一线模型本来就弱在「知道错了但不知道怎么改」，检查报告是它们唯一的反馈面。
+- 制作提示由 `sdk.md` 入口 + 按需 `references/` 组装，禁止手写第二份 API 清单（§6.1）。
+- **修改已有微应用时，SPEC 先读运行时诊断**（§9.4 最近 24h）：把「用户那边崩在哪、哪个能力反复被拒」写进需求，避免每一轮都从零猜。这让 REVIEW / FIX 不只在交付前发生。
 
 ---
 
@@ -598,6 +736,8 @@ type BridgeOut =
 - 31 号：麦克风仍由传感器层负责；本文只新增「传感器 → 微应用桥」的代理路径，不改传感器抽象。
 - 53 号：语音对话模式是**宿主自己的**语音交互；本文的 `media.listen/speak` 是**微应用侧**的同一套底层能力，两者共用 `media.*` 与播放队列，但状态机分开（宿主语音条 vs 微应用实例）。
 - 16 / 40 号：模型与能力挂载语义不变；`ai.chat` 是新的调用入口，不走工具面。
+- 51 号（插件系统）：**微应用不是插件**。51 号 §1 的结论是「包格式 + 安装管线 + 市场，不新增执行模型」（D104/D105），微应用正好落在这个模型内——iframe 里的静态 Web 资产，不是进程内代码。两者可以在「包 / 版本 / 市场」上共享设施，但执行与授权模型不同；不要因为 DSH 的「一切皆插件」把微应用并进插件（§17）。
+- MCP Apps / ChatGPT Apps：同一运行模型的公开标准（SEP-1865，2026-01-26 Stable）。微应用的桥方法名按可机械映射设计（§6.3），但**不依赖**该协议、不引入 `ui://`；预览、专属源与能力桥仍是本地实现。将来若要导出微应用或接入其它宿主，映射表是唯一需要维护的接缝。
 - 37 号（资产移交）：微应用作为 Bot 资产复制时，连同清单、全部版本、`micro_app_files`、KV 一起复制；用量不复制。
 
 ### 13.2 命名与迁移
@@ -612,33 +752,38 @@ type BridgeOut =
 
 ## 14. 分期与验收
 
-### P0：契约与骨架（不改变用户可见行为）
+### P0：契约与骨架（存量行为不变）
 
-- `micro-app.json` 清单、能力枚举、`bundle_sha256`、确认卡能力清单、桥协议 v2（call/stream/event/cancel）。
-- SDK spec 单一事实来源 + 生成垫片 / d.ts / sdk.md / 检查规则 / mock 的骨架。
+- `micro-app.json` 清单、能力枚举、`bundle_sha256`、能力面指纹、确认卡能力清单 + 能力可用性预检 + 网络行、运行期能力协商（`app.ready()` 返回 `capabilities` / `grants`）、桥协议 v2（call/stream/event/cancel）、版本双指针（`currentVersion` / `nextVersion`）。
+- SDK spec 单一事实来源 + 生成垫片 / d.ts / sdk.md 入口 / 检查规则 / mock 的骨架，以及生成物守卫测试（大小、引用存在、模板可解析）。
+- 错误契约：`code` + `hint` 同源于 spec；检查报告每条带可执行的下一步；`app.net-open-default` 规则（§3.3）。
 - 存量组件按「无清单」继续工作。
-- 验收：带 `storage.kv` 的清单微应用能打开；未声明能力调用被拒；确认卡显示能力；旧卡行为零变化。
+- 验收：带 `storage.kv` 的清单微应用能打开；未声明能力调用被拒；确认卡显示能力与当前可用性；只改代码、不扩大能力面时不出新卡（仅对带清单的微应用生效）；旧卡行为零变化。
 
 ### P1：语音与模型（本次需求的核心）
 
 - `ai.chat` / `ai.session`（流式、隔离、限额、记账）。
 - `media.listen`（宿主采集 + VAD + ASR）、`media.speak`（TTS + 打断）。
-- MicroAppChrome、麦克风指示、能力撤销、降级路径。
+- MicroAppChrome（网络徽标 + 麦克风指示 + 全屏键）、能力撤销、降级路径。
 - 验收：英语口语陪练示例可完成「角色问候 → 用户说话 → 转写 → 模型回复 → 播报 → 插话打断」整轮；关掉麦克风权限后回退文字输入；用量在管理页可见且计入所属 Bot；缺 ASR 配置时给设置引导。
 
 ### P2：包、数据与生命周期
 
 - 多文件包与 `micro_app_files`、相对路径、资源配额。
 - `collections`、会话恢复、前后台事件、崩溃恢复。
-- 微应用管理页（列表 / 能力 / 用量 / 删除 / 发到当前对话）。
-- 验收：多文件微应用可正常加载（相对资源、子目录、资产）；关闭再打开恢复进度；崩溃不拖垮宿主。
+- `context.update` 摘要（§8.5）与 `query` 分页 `cursor` / `maxBytes`（§10）。
+- 运行时诊断（§9.4）：采集、`micro_app_diagnostics`、`micro_app_diagnostics_read`、首次推送与管理页「运行问题」。
+- 微应用管理页（列表 / 能力 / 网络档位 / 用量 / 运行问题 / 摘要 / 删除 / 发到当前对话）。
+- 验收：多文件微应用可正常加载（相对资源、子目录、资产）；关闭再打开恢复进度；崩溃不拖垮宿主；崩溃后作者 Bot 收到一条 ≤300 字诊断，同一 code 当天不重复打扰；`context.update` 摘要可见可清除、自由文本被拒；`query` 游标能取下一页。
 
 ### P3：制作流程与微应用生态前身
 
 - 制作 loop 支持多文件项目、清单检查、能力最小性、能力 mock 预览、儿童安全审查项。
+- 写作知识分层落地（§6.1）：`sdk.md` 入口 + `references/` + `templates/` + `.d.ts`，守卫测试进 CI。
+- `micro_app_sdk_inspect`（按需取契约）；SPEC 阶段读运行时诊断（§9.4）。
 - 模板：语音陪练、表单收集、数据看板。
 - 基准：13 条需求（含 3 条语音/对话），门槛不变。
-- 验收：非一线模型经制作流程交付的语音微应用无阻断、可通过 S2 全流程。
+- 验收：非一线模型经制作流程交付的语音微应用无阻断、可通过 S2 全流程；修改已有微应用时能引用最近诊断。
 
 ### P4：分发与共享
 
@@ -655,7 +800,7 @@ type BridgeOut =
 
 1. Bot 经 `widget_craft` 交付，任务上下文只收回执，不见代码。
 2. 卡片显示：微应用名、版本、能力清单（存储 / 模型 / 麦克风 / 播报）、网络范围（默认「可联网」或声明的收紧档）、预计成本与计费 Bot。
-3. 首次打开需确认；代码或权限变化需重新确认。
+3. 首次打开需确认；**权限面扩大需重新确认**；只改代码、不扩大权限时卡片标「代码已更新，权限未扩大」，沿用上次确认（待 Q8 拍板）。
 4. 打开后：虚拟角色用英语问候（TTS 播报），字幕同步。
 5. 点麦克风（或自动 VAD）说话 → 转写文本出现在对话流 → 模型用英语回复 → 播报。
 6. 用户插话 → 立即停止播报，进入下一轮。
@@ -665,6 +810,11 @@ type BridgeOut =
 10. 断网 / 模型失败 → 可读错误 + 进度保留，不白屏。
 11. 预览（S2）离线跑通一整轮（mock ASR / 模型 / 播报），不依赖真实网络。
 12. 检查器无阻断项；自检状态如实上卡，不暗示「安全」。
+13. 运行期崩溃（或同一 bridge 错误反复被拒）后，作者 Bot 收到一条 ≤300 字诊断，同一 `(version, code)` 当天不再重复推送；管理页「运行问题」可见次数。
+14. 诊断表里没有任何用户输入、ASR 文本或模型输出；只有 code、阶段、位置与次数。
+15. 宿主缺 ASR / TTS / 模型配置时，卡片在打开**之前**就标出「当前不可用」并给设置深链；打开后不会先白屏再报错。
+16. 确认卡把网络范围放在能力清单之前，外壳常驻网络徽标；默认 `open` 时写明「未限制域名、平台不逐域限制」，不折叠进详情。
+17. `context.update` 之后，主对话下一轮能看到结构化摘要；不产生消息气泡，卡片可清除；自由文本与循环刷写被拒。
 
 ---
 
@@ -680,14 +830,15 @@ type BridgeOut =
 - 微应用间互相调用、共享数据、读取彼此存储。
 - 微应用市场（P4 只评估）。
 
-### 已拍板（2026-11-02）
+### 已拍板（2026-11-02；Q10 于 2026-11-03 复核）
 
 | # | 问题 | 决策 |
 |---|---|---|
-| Q1 | 默认是否允许联网 | **允许**：`net.mode` 缺省 `open`，作者可收紧为 `allowlist` / `none`；确认卡明示 |
+| Q1 | 默认是否允许联网 | **允许**：`net.mode` 缺省 `open`，作者可收紧为 `allowlist` / `none`；确认卡网络行 + 外壳徽标常驻（§3.3） |
 | Q2 | 模型费用归属 | **计入编写该微应用的 Bot**（`widgets.bot_id`）；每微应用每日 200k token、每 Bot 每日合计 1M token 起步，管理页可调 |
 | Q3 | 是否给原始音频做发音评分 | **不做**；只给转写文本与电平 |
 | Q4 | 用户可见命名 | **微应用**；宿主仍叫「主应用」，代码前缀 `MicroApp*` |
+| Q10 | 默认联网是否随行业标准改为 `none`（2026-11-03 复核） | **不改，保持 `open`**；由提示面补偿（§3.3 / §5.2 / §7.3 / §11）。与 MCP Apps 的缺省 `none` 是有意分歧：与存量组件档位、Web 微应用心智一致；风险由确认卡网络行、外壳常驻徽标与制作流程提示承接 |
 
 ### 仍待决策
 
@@ -696,6 +847,108 @@ type BridgeOut =
 | Q5 | 多文件 vs 单文件 | 多文件（清单 + 资源），单文件作为退化形态保留 |
 | Q6 | 微应用能否被其他 Bot 使用 | 先只做同 Bot 内 + 移交复制；跨 Bot 共享后议 |
 | Q7 | 是否允许微应用发系统通知 | P3，默认关，用户总闸 |
+| Q8 | 重复确认的粒度：按 `bundle_sha256` 还是按能力面指纹 | **按能力面指纹**（`permissions` + `net.mode` + `net.allowlist`）：代码更新沿用上次确认，卡片标「权限未扩大」；能力扩大强制重确认。理由与反例见 §5.2 |
+| Q9 | 运行时诊断是否默认推给作者 Bot | 默认**首次**落一条系统消息到来源会话（同 `version + code` 每天至多一条），设置页可关；运行对话里不出现技术细节（§9.4） |
+
+---
+
+## 17. 参考实现对照：DeepSeek Harness Creator Mode（2026-11-03）
+
+DSH 的「创造模式」是同一产品叙事的另一种工程答案：agent 在对话里写插件、装进 profile、装好即用，改的时候继续在对话里说。读它的价值不在抄，而在**确认两边的边界各自成立**，并把能跨模型的部分拿过来。
+
+| 维度 | DSH Creator Mode | 本文 |
+|---|---|---|
+| 执行单元 | 进程内 cordis 插件（DSH 的依赖注入插件框架；可带 React client 半），TS/JS 模块 | iframe 里的 HTML/JS 包（§3.2） |
+| 信任模型 | **与 bash 等价**：装进 profile 即宿主权限；文档明写「沙箱 isolate 全局变量，但不是安全边界」 | 生成代码按敌意内容处理：无 Node / FS / IPC，能力闭合枚举 |
+| 授权 | `plugin_manager` 整个工具要求 `danger-full-access` 或单次批准；可勾「批准该插件未来的版本」 | 按版本 + 按能力 + 按会话三层（§5.2） |
+| 确认时能看到什么 | 运行请求只带元数据，**服务清单要等批准后从插件里读出来** | 确认卡逐项列能力、网络范围、预算（§5.2） |
+| 持久化 | profile 安装，跨会话、重启仍在；HMR 热更新 | 版本表 + 卡片；不热替换运行中的实例（§9.1） |
+| 安装期风险 | 走 pnpm，依赖构建脚本需再单独批准 | 纯静态资源，无安装期代码执行（§4.1） |
+| 制作知识 | skill 入口 ≈3.9KB + `references/` + `templates/`，允许读包源码 | `sdk.md` 入口 + 同构分层（§6.1） |
+| 失败回流 | 渲染崩溃经 entry-error seam 回给模型，每包只留最新一条 | §9.4（本轮补） |
+| 验证 | 明确贬低 mock 预览（「mock 预览不能证明应用内结果」） | S2 离线真实浏览器 + 能力 mock + 冒烟（§11） |
+
+**采纳（已落到对应小节）：**
+
+- 运行时诊断回流（§9.4 / §4.3 / §11 / §14 P2）。
+- 教学式错误：`code` 给程序、`hint` 给作者，检查报告每条带可执行的下一步（§6.2 / §6.3 / §11）。
+- 按需 SDK 自省 `micro_app_sdk_inspect`（§6.1）。
+- 写作知识分层与守卫测试（§6.1 / §14 P3）。
+- 版本双指针 `currentVersion` / `nextVersion`（§9.1 / §9.3）。
+- 能力可用性预检（§5.2 / §14 P0 / §15）。
+- 确认粒度只看能力面（§5.2 / Q8）——注意这是**能力级**的复用，不是 DSH 的**整包**信任。
+
+**不采纳（以及为什么不能抄）：**
+
+- **进程内执行生成代码**：与本文 §3.2 / §12 的威胁模型、51 号 §1「不新增执行模型」（D104/D105）正面冲突。DSH 敢这么做，是因为它把生成插件与 shell 视为等价能力，用户批准的是「这个插件」；本文把生成代码与网页视为等价风险，能力边界就是安全边界。两边都自洽，但混用会同时得到两种坏处。
+- **整包审批 / 批准未来版本**：粒度比本文粗，且授权时看不到服务清单；本文既然已经能逐项列能力，就不该退回整包。
+- **把 `fs` / 子进程 / 工具面交给微应用**：微应用的全部论证建立在「没有这些」上（§16 永久不做）。
+- **pnpm 与依赖构建**：引入安装期代码执行与供应链面；微应用是静态资源，不需要。
+- **贬低离线 mock 预览**：DSH 的立场有它的道理（mock 证明不了页面上真能看），但本文的 S2 是真实浏览器 + 宿主能力 mock + 冒烟，不是静态截图，保留。
+- **社区市场形态**：DSH 的市场只是一个索引 + 静态包托管；51 号已经有签名索引（Ed25519 + 防回滚 + 撤销名单），比它严。微应用市场继续按 P4「只评估」，不因为 DSH 有生态就提前做。
+
+**从对照里新增的两条不变量（实现时守）：**
+
+1. 确认卡上的「它会用什么」必须来自**版本记录**，不能来自运行时自述——DSH 的审批事件不带服务清单，正是反面教材。
+2. 诊断回流只记 `code` / 位置 / 次数，不记内容；作者需要的上下文由微应用自己写进它自己的存储（§9.4）。
+
+另见 §18：ChatGPT Apps / Claude（MCP Apps）的对照——同一运行模型的公开标准，与本文的两处有意分歧（默认网络、app 自带模型）。
+
+---
+
+## 18. 参考实现对照：ChatGPT Apps / Claude / MCP Apps（2026-11-03）
+
+两家都上线了同类能力，而且已经收敛到同一个标准：**MCP Apps = SEP-1865，2026-01-26 Stable**。它综合了 MCP-UI 与 OpenAI Apps SDK（2025-11 上线），支持方包括 Claude、ChatGPT、VS Code、Goose、Postman。这条线不是「AI 写应用」的运行时，而是「**server 声明 UI + 宿主沙箱渲染 + 声明能力**」。
+
+### 18.1 三条产品线，不要混为一谈
+
+| 形态 | Claude | OpenAI | 运行位置 | 谁写 | 能力面 |
+|---|---|---|---|---|---|
+| 生成式 UI 工件 | Artifacts | Canvas（偏文档 / 代码，不是应用容器） | 沙箱 iframe，侧栏 / 内联 | 模型即时写 | 近似为零：展示 + 本地交互 |
+| 连接器应用 | MCP Apps | ChatGPT Apps（已兼容 MCP Apps） | 沙箱 iframe，**内联在对话里** | 开发者 / server | 声明的工具 + 声明的 CSP / 权限，宿主代理 |
+| 进程内插件 | Claude Code plugins | —（DSH 属于这类） | **宿主进程** | 开发者 | 用户级权限 |
+
+KepCup 的分层（§1.3）与这三条正好对应：L3 组件 ≈ Artifacts（无 / 少能力），L4 微应用 ≈ 连接器应用（声明能力 + 宿主代理），51 号插件 ≈ 进程内插件（但 D104/D105 明确不执行代码）。
+
+### 18.2 它们的设计逻辑
+
+1. **UI 是工具的视图，不是独立应用**：工具声明 `_meta.ui.resourceUri`（OpenAI 叫 `openai/outputTemplate`），模型决定调用，宿主把 `tool-input` / `tool-result` 推给 UI；UI 的动作走 `tools/call`。View 侧**没有 `ai/chat`**——应用不能自己调模型。
+2. **能力声明化、宿主强制**：CSP 拆成 `connectDomains` / `resourceDomains` / `frameDomains` / `baseUriDomains`；权限拆成 `camera` / `microphone` / `geolocation` / `clipboardWrite`；宿主「MUST NOT allow undeclared domains」，且可以比声明更严。
+3. **安全默认是关的**：未声明 CSP 时 `connect-src 'none'`、`frame-src 'none'`、`base-uri 'self'`、`object-src 'none'`。
+4. **渐进增强**：host 不支持就退化成文本；带 UI 的工具必须同时返回有意义的文本。
+5. **专用源**：Claude 给每个 server 分配 `<sha256 前 32 位>.claudemcpcontent.com`，与 `kepcup-app://widget-{hash}` 同构。
+6. **状态不在协议里**：ChatGPT 有 `window.openai.setWidgetState`（宿主随消息保存）；MCP Apps 把持久化列为未来扩展；Artifacts 不持久。
+7. **分发靠目录 / 审核**（ChatGPT、Claude connector）；进程内插件靠 marketplace + 安装授权。
+
+### 18.3 与本文的差异（有意，不是缺口）
+
+| 维度 | 两家 | 本文 | 理由 |
+|---|---|---|---|
+| UI 调模型 | 不支持 | `ai.chat` / `ai.session` | 英语陪练需要 app 内多轮、低延迟、上下文隔离；代价是预算与内容安全自己兜（§8） |
+| 麦克风 | 可声明，宿主 MAY 授予 | 宿主代理，iframe 永不给 | 原始音频不出宿主；儿童场景优先（§7.1） |
+| 默认网络 | `none` | `open` | 与存量组件档位一致；用提示面补偿（§3.3 / Q10） |
+| 分发 | 目录 + 审核 | Bot 生成 + 卡 | 没有第三方发布者；市场归 51 号 |
+| 状态 | 宿主 widgetState / 不持久 | `storage` + 快照 | 跨会话记进度是核心需求 |
+
+### 18.4 采纳（已落到对应小节）
+
+- **运行期能力协商**：`app.ready()` 返回 `capabilities` / `grants` / `theme` / `displayMode` / `viewport`（§6.2）。
+- **app-only 数据面作为不变量**：`storage` / `query` / `ai` 默认不过界，只有 `context.update` 摘要与 `reply` 例外（§6.2 / §8.5）。
+- **上下文摘要**：`kepcup.context.update`，结构化、last-wins、不进消息列表、可在卡片清除（§5.1 / §8.5）。
+- **查询分页**：`cursor` / `maxBytes`，大表按页取、不占模型上下文（§10）。
+- **渐进增强通用化**：`app.fallback-missing` 从语音扩到所有宿主能力（§11）。
+- **展示模式请求**：`requestDisplayMode` 与外壳全屏键（§6.2 / §7.3）。
+- **桥方法可机械映射**到 `ui/*`（§6.3 / §13.1）。
+
+### 18.5 不采纳
+
+- 目录审核 / 应用商店：没有第三方发布者；插件市场归 51 号（且已有签名索引）。
+- OAuth 与 server 侧：微应用没有服务器；需要 OAuth 的能力走 51 号连接器。
+- `pip` / 多宿主兼容：只有一个宿主。
+- 让 iframe 直接 `getUserMedia`：MCP Apps 允许声明，本文选择更严的宿主代理（§7.1）。
+- 默认 `none`：见 Q10，保持 `open` + 提示面。
+
+> 一句话：两家把「生成代码」关进「UI + 声明能力」的笼子，把「任意代码」留给开发者工具；54 + 51 的分工与之一致。两处有意分歧（默认网络、app 自带模型）都由 KepCup 的产品场景决定，代价已由 §3.3 与 §8 承接。
 
 ---
 
@@ -785,4 +1038,10 @@ document.querySelector('#keyboard').onclick = () => {
 | 无播报 | 53 号语音模式仅宿主 UI | `media.speak` + 打断 |
 | 单文件 | `0028_widgets.sql` `html TEXT` | `micro_app_files` + 清单 + 资源 |
 | 无生命周期 | `WidgetViewer.svelte` 关闭即卸载 | pause/resume/恢复/崩溃处理 |
+| 无运行时反馈 | `knownIssues` 只在交付时写卡（`craft/service.ts:1155`）；`widget_read_state` 只读 KV | `micro_app_diagnostics` + §9.4 回流 |
+| 无法按需查 SDK | `craft/prompts.ts` 手工 API 清单（≈21KB） | `micro_app_sdk_inspect` + `sdk.md` 入口分层（§6.1） |
+| 确认粒度只有整包 | 无（每次代码变化都出卡） | 能力面指纹（§5.2 / Q8） |
+| 无能力协商 | 垫片没有宿主上下文，只能靠错误码试探 | `app.ready()` 返回 capabilities / grants（§6.2） |
+| 大表一次拉满 | `query` 固定行数上限，没有游标 | `cursor` / `maxBytes`（§10） |
+| 进度无法同步 | 只有 `reply`（用户可见、要确认） | `context.update` 结构化摘要（§8.5） |
 | SDK 多处漂移 | `sdk-injection.ts` / `craft/prompts.ts` / `check/rules.ts` / `widget-templates.ts` | `micro-app-sdk/spec.ts` 单一事实来源 |
