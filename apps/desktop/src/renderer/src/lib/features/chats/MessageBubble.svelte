@@ -44,11 +44,12 @@
   const isChangesCard = $derived(
     isCard && 'cardType' in message.content && message.content.cardType === 'run_changes',
   );
-  // 跨 Bot 委派卡（D71）：发出卡 / 结果卡，按委派行实时重绘。
+  // 跨 Bot 委派卡（D71 v2）：发出药丸 / 接收药丸 / 存量结果卡，按委派行实时重绘。
   const delegationCard = $derived(
     isCard &&
       'cardType' in message.content &&
       (message.content.cardType === 'delegation_sent' ||
+        message.content.cardType === 'delegation_received' ||
         message.content.cardType === 'delegation_result')
       ? {
           cardType: message.content.cardType,
@@ -214,8 +215,12 @@
 {#if isChangesCard}
   <!-- Retired: change summary / diff / revert card is no longer shown. -->
 {:else if delegationCard !== null}
-  <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
-  <div class="flex py-1" data-testid="card-message">
+  <!-- 跨 Bot 委派卡（D71 v2）：药丸居中；点击「查看详情」打开交换会话详情。
+       存量结果卡（v1）是宽卡，保持与其他信息卡一致的左对齐。 -->
+  <div
+    class="flex py-1 {delegationCard.cardType === 'delegation_result' ? '' : 'w-full justify-center'}"
+    data-testid="card-message"
+  >
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
   </div>
 {:else if appUiCard !== null}

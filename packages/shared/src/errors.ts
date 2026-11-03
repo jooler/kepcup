@@ -37,6 +37,8 @@ export const ERROR_CODES = [
   'REVIEW_REQUIRED',
   // conversations / messages
   'CONVERSATION_READ_ONLY',
+  /** D113：`bot_direct` 交换会话只读——用户不能在 Bot 之间的委托对话里发言。 */
+  'EXCHANGE_READ_ONLY',
   'MESSAGE_NOT_RECALLABLE',
   // gateway / permissions
   'APPROVAL_DENIED',

@@ -119,6 +119,7 @@ function makeContent(entries: Array<{ slug: string; body: Record<string, unknown
     id: 'io.github.tester/conns',
     name: 'Conns',
     version: '1.0.0',
+    usage: '启用后连接账号并勾选绑定。',
     contributions: {
       connectors: entries.map((item) => ({ file: `connectors/${item.slug}/server.json` })),
     },

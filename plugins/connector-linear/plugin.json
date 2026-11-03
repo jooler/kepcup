@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-linear",
   "name": "Linear 连接",
   "icon": "connectors/linear/linear.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "查找、创建与更新 Linear 的 issue、项目与评论",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Linear 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能读写 issue 与项目。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://linear.app",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

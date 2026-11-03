@@ -1299,7 +1299,7 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'project', 'card']);
+export const conversationTypeSchema = z.enum(['direct', 'project', 'card', 'bot_direct']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
@@ -1329,6 +1329,16 @@ export const conversationSchema = z.object({
    * `project`. No foreign key: card deletion is service-driven.
    */
   cardTodoId: z.string().nullable().default(null),
+  /**
+   * D113 (D71 v2): the delegating bot (A) of a `bot_direct` exchange
+   * conversation. Null for every other type.
+   */
+  fromBotId: z.string().nullable().default(null),
+  /**
+   * D113 (D71 v2): the executing bot (B) of a `bot_direct` exchange
+   * conversation. Null for every other type.
+   */
+  toBotId: z.string().nullable().default(null),
   /** Currently bound workdir (P04); null = none. */
   workdirId: z.string().nullable(),
   readOnly: z.boolean(),
@@ -1424,8 +1434,9 @@ export const textContentSchema = z.object({
    */
   setupAnswer: z.boolean().optional(),
   /**
-   * 跨 Bot 委派（D71）：A 代用户转交给 B 的「用户代发」消息。照常是一条
-   * user 消息（进上下文、触发 B 的响应 run），UI 打「由 A 代你发出」标签；
+   * 跨 Bot 委派。v2（D113）：A 的任务消息落在 `bot_direct` 交换会话里，
+   * 是一条 A 的 bot 消息（进上下文、触发 B 的响应 run），发送者按 A 渲染；
+   * v1 存量：B 私聊里的「用户代发」消息（UI 打「由 A 代你发出」标签），
    * 记忆反思不把它当作用户本人的话。
    */
   /**
@@ -1465,6 +1476,11 @@ export const textContentSchema = z.object({
   delegationId: z.string().optional(),
   /** origin = 'delegation' 时代为转交的 Bot（A）的 id：UI 标签与上下文渲染用。 */
   delegatedBy: z.string().optional(),
+  /**
+   * origin = 'delegation' 且为 true（D114）：发起方对进行中委托的追加消息
+   * （交换会话里 A 的后续 bot 消息；委派宿主据此把 pending 补充投给 B）。
+   */
+  delegationUpdate: z.boolean().optional(),
   /** origin = 'task' 时发出该消息的任务（run id）。 */
   taskId: z.string().optional(),
   /**
@@ -2776,8 +2792,8 @@ export type Approval = z.infer<typeof approvalSchema>;
 
 /**
  * A2A-style lifecycle: `submitted` (row written, not yet delivered to B —
- * waiting for B's mailbox to be idle / quiet hours to end) → `working`
- * (the proxied user message landed in B's chat — appended in the same main.db
+ * parked for B's quiet hours) → `working` (A's task message landed in the
+ * `bot_direct` exchange conversation — appended in the same main.db
  * transaction that flips the status; the run id is backfilled right after
  * delivery, so a `working` row without one means "crashed mid-delivery:
  * recovery re-delivers the existing message") → terminal.
@@ -2810,24 +2826,33 @@ export const delegationSchema = z.object({
   fromBotId: z.string(),
   toBotId: z.string(),
   fromConversationId: z.string(),
-  /** B's direct conversation; resolved at delivery time. */
+  /**
+   * B's user-facing direct conversation — the home of B's tasks and approval
+   * cards while the delegation runs (resolved at delivery time).
+   */
   toConversationId: z.string().nullable(),
+  /**
+   * D113 (D71 v2): the per-delegation `bot_direct` exchange conversation where
+   * A's task message and B's replies live (created at delegate time; single
+   * turn, never reused). The pill detail view opens this conversation.
+   */
+  exchangeConversationId: z.string().nullable(),
   taskText: z.string(),
   status: delegationStatusSchema,
   depth: z.number(),
   /** A's run that called delegate_to_bot. */
   fromRunId: z.string().nullable(),
-  /** A-side "已委托" card message. */
+  /** A-side "已委托" pill card message. */
   sentMessageId: z.string().nullable(),
-  /** B-side proxied user message ("查看原文" anchor of the task). */
+  /** The exchange-conversation trigger message (v1 rows: the proxied user message in B's chat). */
   toMessageId: z.string().nullable(),
   /** B's response run (set at delivery). */
   runId: z.string().nullable(),
   /** B's final reply, truncated to DELEGATION_RESULT_MAX_CHARS. */
   resultExcerpt: z.string().nullable(),
-  /** B's final reply message ("查看原文" link target). */
+  /** B's final reply message (legacy "查看原文" link target; lives in the exchange conversation since v2). */
   resultMessageId: z.string().nullable(),
-  /** A-side result card message. */
+  /** A-side result card message (v1 only; v2 posts no result card). */
   resultCardId: z.string().nullable(),
   errorText: z.string().nullable(),
   /** W6: what A expects back (rows before 0021: 'request'). */

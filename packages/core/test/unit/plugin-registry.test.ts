@@ -283,6 +283,7 @@ function seedDir(pluginsDir: string, id: string, version: string, skillName = 'a
       id,
       name: 'Seeded',
       version,
+      usage: '启用即可使用。',
       contributions: { skills: [{ dir: `skills/${skillName}` }] },
     }),
   );

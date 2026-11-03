@@ -40,12 +40,6 @@ export interface SectionLayout<T> {
   groups: SectionGroup<T>[];
 }
 
-export interface DragRow {
-  id: string;
-  top: number;
-  bottom: number;
-}
-
 export type SectionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export function emptySidebarSections(): SidebarSectionsState {
@@ -460,18 +454,4 @@ export function sectionStepTarget(
   if (direction === 'up') return index === 0 ? undefined : order[index - 1];
   if (index === order.length - 1) return undefined;
   return order[index + 2] ?? null;
-}
-
-/** 指针落在哪条分组标题的上半区，就插到它前面；都过了中线则落到末尾。跳过正在拖的那条。 */
-export function dropBeforeId(
-  rows: readonly DragRow[],
-  clientY: number,
-  draggingId: string,
-): string | null {
-  for (const row of rows) {
-    if (row.id === draggingId) continue;
-    const mid = (row.top + row.bottom) / 2;
-    if (clientY < mid) return row.id;
-  }
-  return null;
 }

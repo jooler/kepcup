@@ -30,6 +30,8 @@ function directConversation(): Conversation {
     directBotId: 'bot_writer',
     parentProjectId: null,
     cardTodoId: null,
+    fromBotId: null,
+    toBotId: null,
     workdirId: null,
     readOnly: false,
     summary: null,

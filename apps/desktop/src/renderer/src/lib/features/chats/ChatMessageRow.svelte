@@ -22,6 +22,7 @@
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
+  import { exchangeMessageShape } from './exchange-message';
   import MessageAttachments from './MessageAttachments.svelte';
   import QuotedMedia from './QuotedMedia.svelte';
   import FileArtifacts from '$lib/features/files/FileArtifacts.svelte';
@@ -47,7 +48,9 @@
   const isUser = $derived(message.senderType === 'user');
   /** D71：另一个 Bot 代用户转交的消息（B 的私聊）——标注来源，不可撤回。 */
   const delegatedBy = $derived(
-    isUser && 'origin' in message.content && message.content.origin === 'delegation'
+    message.senderType === 'user' &&
+      'origin' in message.content &&
+      message.content.origin === 'delegation'
       ? (message.content.delegatedBy ?? '')
       : null,
   );
@@ -96,10 +99,20 @@
       ? { id: message.content.todoId, title: message.content.todoTitle }
       : null,
   );
-  // 头像只在项目组出现：单聊双方都是纯气泡（UI 改版）；项目组里头像即发送者身份
-  // （不再渲染名字/时间行）。
+  // 头像：项目组里非用户消息带头像（头像即发送者身份，不渲染名字/时间行）；
+  // v2.3 交换会话双侧都是 Bot——两边都带头像，同一 Bot 连续消息只有第一条
+  // 带（merge.above 为真时留同尺寸占位，保持对齐不塌）。
   const session = getChatSession();
   const isProjectChat = $derived(session.view?.conversation.type === 'project');
+  /**
+   * v2.3 交换会话形态：发起方 A 相当于这条对话里的「用户」——消息居右、
+   * 用户样式气泡（userStyle 传给 MessageBody）；B 居左 Bot 样式。普通对话
+   * shape 为 null，isUser 保持按 senderType。
+   */
+  const exchangeShape = $derived(exchangeMessageShape(session.view?.conversation, message));
+  const exchangeChat = $derived(session.view?.conversation.type === 'bot_direct');
+  /** 布局用的「用户侧」（行方向 / 对齐 / 操作钮位置）：交换会话的发起方也算。 */
+  const userSide = $derived(exchangeShape?.side === 'issuer' || isUser);
   /** Sender's stored avatar (preset / upload), falling back to initials. */
   const senderBot = $derived(
     message.senderBotId === null
@@ -110,6 +123,10 @@
   );
   const name = $derived(
     isUser || message.senderBotId === null ? '' : chat.botName(message.senderBotId),
+  );
+  /** 交换会话气泡两侧的头像名（A 的行 isUser 已翻转，不能用 name）。 */
+  const avatarName = $derived(
+    message.senderBotId === null ? '' : chat.botName(message.senderBotId),
   );
   /** Quoted message preview (引用回复): resolved from the loaded window. */
   const quoted = $derived(
@@ -155,7 +172,9 @@
   /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
   const canPin = $derived(canAct && hasText);
   /** 撤回（design/02 §撤回与编辑）：只挂在本会话记录最后一条用户消息上（转交消息除外）。 */
-  const canRecall = $derived(canAct && isLast && isUser && delegatedBy === null);
+  const canRecall = $derived(
+    canAct && isLast && message.senderType === 'user' && delegatedBy === null,
+  );
   /**
    * 语音消息的原始录音附件由语音气泡自己播放（53 号修订 v3）：附件行不再重复
    * 渲染它（撤回的语音消息同样过滤——不再露出可播放的录音）；其它附件（异常
@@ -221,19 +240,36 @@
 {/snippet}
 
 <div
-  class="group flex w-full gap-2 rounded-md py-2 {isUser
+  class="group flex w-full gap-2 rounded-md py-0.5 {userSide
     ? 'flex-row-reverse'
     : 'flex-row'} {session.highlightMessageId === message.id
     ? 'bg-accent/60 ring-1 ring-accent transition-colors'
     : ''}"
   role="group"
-  aria-label={isUser ? settingsStore.userDisplayName : name}
+  aria-label={exchangeShape !== null ? avatarName : isUser ? settingsStore.userDisplayName : name}
   data-testid={`message-${message.id}`}
   data-message-status={message.status}
   data-highlighted={session.highlightMessageId === message.id ? 'true' : 'false'}
   oncontextmenu={openMenu}
 >
-  {#if !isUser && isProjectChat}
+  {#if exchangeChat}
+    <!-- v2.3 交换会话：双侧 Bot 头像（连排时只有第一条带，其余留占位对齐）。 -->
+    {#if merge.above}
+      <div class="mt-0.5 size-7 shrink-0" aria-hidden="true"></div>
+    {:else}
+      <BotAvatar
+        botId={message.senderBotId ?? ''}
+        name={avatarName}
+        avatar={senderBot?.avatar ?? null}
+        accentColor={senderBot?.accentColor ?? null}
+        mask={senderBot?.avatarMask ?? null}
+        padding={senderBot?.avatarPadding ?? null}
+        class="mt-0.5 size-7 shrink-0"
+        animated={false}
+        testId="bot-avatar"
+      />
+    {/if}
+  {:else if !isUser && isProjectChat}
     <BotAvatar
       botId={message.senderBotId ?? ''}
       {name}
@@ -251,7 +287,7 @@
   <div
     class="flex min-w-0 flex-col {narrowLayout.narrow
       ? 'max-w-[calc(100%-32px)]'
-      : 'max-w-[78%]'} {isUser ? 'items-end' : 'items-start'}"
+      : 'max-w-[78%]'} {userSide ? 'items-end' : 'items-start'}"
   >
     {#if delegatedBy !== null}
       <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
@@ -294,7 +330,7 @@
       <MessageAttachments attachments={shownAttachments} />
     {/if}
 
-    <MessageBody {message} {merge} />
+    <MessageBody {message} {merge} userStyle={exchangeShape?.side === 'issuer'} />
 
     {#if artifacts.length > 0}
       <FileArtifacts {artifacts} conversationId={message.conversationId} />
@@ -348,22 +384,26 @@
          死循环，渲染层被 relayout 打满（P17 观察到的冻结）。
          窄屏（33-narrow-layout）整组不渲染——按钮组占掉大量宽度，操作只留右键菜单。 -->
     <div
-      class="invisible flex shrink-0 items-center gap-0.5 self-center {isUser
+      class="invisible flex shrink-0 items-center gap-0.5 self-center {userSide
         ? 'mr-1'
         : 'ml-1'} group-focus-within:visible group-hover:visible"
       data-testid="message-actions"
     >
-      <Tooltip.Root>
-        <Tooltip.Trigger
-          class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onclick={quote}
-          aria-label={t('messages.quote')}
-          data-testid="message-quote"
-        >
-          <Reply class="size-3.5" aria-hidden="true" />
-        </Tooltip.Trigger>
-        <Tooltip.Content>{t('messages.quote')}</Tooltip.Content>
-      </Tooltip.Root>
+      {#if !exchangeChat}
+        <!-- 交换会话没有输入组件（宿主写入、用户不可发言），引用内容无处
+             落点——引用按钮隐藏（右键菜单同步）。 -->
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={quote}
+            aria-label={t('messages.quote')}
+            data-testid="message-quote"
+          >
+            <Reply class="size-3.5" aria-hidden="true" />
+          </Tooltip.Trigger>
+          <Tooltip.Content>{t('messages.quote')}</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
       {#if canCopy}
         <Tooltip.Root>
           <Tooltip.Trigger
@@ -424,15 +464,17 @@
     style="left: {menuPos.x}px; top: {menuPos.y}px;"
     data-testid="message-context-menu"
   >
-    {@render menuRow(
-      Reply,
-      t('messages.quote'),
-      () => {
-        menuPos = null;
-        quote();
-      },
-      'context-message-quote',
-    )}
+    {#if !exchangeChat}
+      {@render menuRow(
+        Reply,
+        t('messages.quote'),
+        () => {
+          menuPos = null;
+          quote();
+        },
+        'context-message-quote',
+      )}
+    {/if}
     {#if canCopy}
       {@render menuRow(
         Copy,

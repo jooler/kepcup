@@ -25,25 +25,40 @@
   let addPluginId = $state<string | null>(null);
   let selectedId = $state<string | null>(null);
 
+  /**
+   * `pluginId`：从某个插件的「管理」入口进来时只管理该插件的 IM 账号
+   * （多个 im 插件并存时避免串台）；缺省 = 全局 IM 账号视图。
+   */
+  let { embedded = false, pluginId }: { embedded?: boolean; pluginId?: string | undefined } =
+    $props();
+
   // --- 扫码添加状态（54 §2.3 qrcode 建号） -----------------------------------------
   let qrSvg = $state<string | null>(null);
   let qrSessionKey = $state<string | null>(null);
-  let qrStatus = $state<'loading' | 'waiting' | 'scaned' | 'confirmed' | 'expired' | 'failed'>('loading');
+  let qrStatus = $state<'loading' | 'waiting' | 'scaned' | 'confirmed' | 'expired' | 'failed'>(
+    'loading',
+  );
   let qrBusy = $state(false);
   let qrError = $state('');
 
   const selected = $derived(accounts.find((account) => account.id === selectedId) ?? null);
 
-  /** 提供 im 实例能力的已启用插件（添加入口的候选）。 */
+  /** 提供 im 实例能力的已启用插件（添加入口的候选；按插件卡进入时只看该插件）。 */
   const imPlugins = $derived(
-    plugins.plugins.filter((plugin) => plugin.enabled && plugin.providesInstances.includes('im')),
+    plugins.plugins.filter(
+      (plugin) =>
+        plugin.enabled &&
+        plugin.providesInstances.includes('im') &&
+        (pluginId === undefined || plugin.id === pluginId),
+    ),
   );
 
-  /** 按归属插件分组的账号。 */
+  /** 按归属插件分组的账号（按插件卡进入时只列该插件）。 */
   const groups = $derived.by(() => {
     // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const map = new Map<string, ImAccount[]>();
     for (const account of accounts) {
+      if (pluginId !== undefined && account.pluginId !== pluginId) continue;
       const list = map.get(account.pluginId) ?? [];
       list.push(account);
       map.set(account.pluginId, list);
@@ -228,8 +243,6 @@
   }
 
   /** embedded：嵌进「已安装」的 im 筛选视图，去掉自带的滚动容器。 */
-  let { embedded = false }: { embedded?: boolean } = $props();
-
   function timeText(at: number | null): string {
     if (at === null) return '—';
     return new Date(at).toLocaleString();
@@ -405,7 +418,6 @@
             <Button size="sm" disabled={qrBusy} onclick={() => void startQrcode()}>
               {t('im.qrcodeRetry')}
             </Button>
-
           {/if}
         </div>
       {/if}
@@ -451,7 +463,11 @@
       </div>
       <div class="flex gap-2">
         {#if selected.status === 'auth_failed'}
-          <Button variant="secondary" onclick={() => void startReauthorize(selected)} data-testid="im-rescan">
+          <Button
+            variant="secondary"
+            onclick={() => void startReauthorize(selected)}
+            data-testid="im-rescan"
+          >
             {t('im.rescan')}
           </Button>
         {/if}

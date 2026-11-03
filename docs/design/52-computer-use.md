@@ -88,6 +88,7 @@ macOS 原生层的关键机制（全部继承，不改语义）：无障碍树�
 | `computer_stop` | （stop 会话） | `reason?` |
 
 - **结果语义**：树文本进 `content`（超长走 `TOOL_OUTPUT_MAX_CHARS` 截断）；截屏进 `ToolResult.images`（模型不支持图像时按 `SCREENSHOT_OMITTED_NOTE` 惯例降级）；动作的 `ComputerActionVerification` 映射 `outcome`（未下发 → 正常；可能已下发 → `uncertain`，工具结果明示「先观察再决定重试」）。
+- **scroll 没有可断言属性**：`computer_scroll` 没有 `focusedText` / `selection` / `value` 这类可读回的目标值，helper 投递后在 150–400ms 内重取一次快照（不带截图），用元素签名（role/title/label，**不含 frame**）配取整的窗口内 y 做指纹，比较滚动前后的布局：移动了也不报 `verified`（仍按 `synthetic_input` / `accessibility_action_unasserted`），位移写进 `actualPreview`；「读回明确说没动」才换像素单位（480pt/页）重试一次，仍没动 → `suspected_noop`；树重排导致可比样本不足 → `readback_unsupported`；AX `AXScroll*ByPage` 被接受但没动时回落到指针路径（`fallbackReason: accessibilityActionNoop`）。后台投递滚轮前必须先发一个带窗口戳的 `mouseMoved`（前台路径一直这么做），否则 pid 投递的滚轮不进目标窗口（`BackgroundInputTransport.scrollEvents`）。
 - **注册与门控**：`buildResponseTools` 按条件装配——任务 loop、平台支持（B 口 capabilities）、`computerUse.enabled` 为真；否则整组不出现。工具描述承载用法规则（无障碍优先、观察-动作-再观察、索引寻址、坐标只取当前帧栅格、权限被拒不换技术、验证后才算完成），浓缩自 orca `skills/computer-use`。
 - **错误**：`RuntimeClientError` 的 code 原样透传（`PERMISSION_DENIED` / `APP_NOT_FOUND` / `CONTROLLER_BUSY` / `STALE_STATE` …），工具层补人话与引导（如权限被拒 → 指设置页 anchor）。
 

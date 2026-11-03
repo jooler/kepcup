@@ -231,7 +231,18 @@ export function bindPluginsMethods(services: CoreServices): Record<string, RpcMe
       pluginsInstancesDeleteInputSchema,
       okOutputSchema,
       async (input) => {
+        // 删实例 = 删账号（绑定随之消失）：先记下绑定过该实例的 Bot，删除后补一条激活通报。
+        const affected = new Set<string>();
+        for (const account of services.im?.listAccounts() ?? []) {
+          if (account.instanceId !== input.id) continue;
+          for (const botId of account.botIds) affected.add(botId);
+        }
+        for (const account of services.mail?.list() ?? []) {
+          if (account.instanceId !== input.id) continue;
+          for (const botId of account.botIds) affected.add(botId);
+        }
         await instances().delete(input.id);
+        for (const botId of affected) services.pluginBotNotice?.note(botId);
         return { ok: true as const };
       },
     ),

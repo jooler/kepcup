@@ -98,6 +98,7 @@ function skillManifest(id: string, version: string, dirs: string[]): PluginManif
     id,
     name: 'Skills',
     version,
+    usage: '启用即可使用。',
     contributions: { skills: dirs.map((dir) => ({ dir: `skills/${dir}` })) },
   });
 }
@@ -403,6 +404,7 @@ function connRig() {
       id: CONN_ID,
       name: 'Conns',
       version: options.version ?? '1.0.0',
+      usage: '启用后连接账号并勾选绑定。',
       contributions: {
         connectors: (options.slugs ?? []).map((slug) => ({
           file: `connectors/${slug}/server.json`,
@@ -534,6 +536,7 @@ function mailManifest(version: string, ids: string[]): PluginManifest {
     id: 'io.github.tester/mail',
     name: 'Mail',
     version,
+    usage: '启用后添加邮箱账号并勾选绑定到 Bot。',
     // P3：邮件贡献必须伴随 instances: ['mail']；schema 已限定至多一个，单 id 语义不变。
     instances: ['mail'],
     contributions: {

@@ -585,6 +585,18 @@ export const pluginManifestSchema = z
     icon: pluginIconPathSchema.optional(),
     version: pluginVersionSchema,
     description: z.string().max(1000).default(''),
+    /**
+     * 启用说明（2026-11-03，docs/design/51-plugin-system.md §15.8）：插件自己的
+     * 「启用之后要做什么」——「启用即用」还是「需要连接 / 添加账号再勾选绑定」。
+     * 用户在 Bot 详情操作插件 30 秒后，core 把操作状态连同此说明一起发给 Bot，
+     * 由它判断是否提醒用户完成遗漏的步骤。清单作者文案不可信：进提示词前经
+     * `sanitizeDisplayText` 清洗。
+     *
+     * 新安装 / 市场发布**必填**（安装管线 `requireUsage`、`kepcup-app validate` 与
+     * 签名脚本拒绝空值）；schema 对存量已装清单回落空串，保证 2026-11-03 之前装的
+     * 旧版本仍可读取与更新。
+     */
+    usage: z.string().max(500).default(''),
     author: z
       .strictObject({
         name: z.string().min(1).max(200),
@@ -696,14 +708,14 @@ export const pluginManifestSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['contributions', 'mail'],
-        message: '声明邮件贡献时必须同时声明 instances: [\'mail\']',
+        message: "声明邮件贡献时必须同时声明 instances: ['mail']",
       });
     }
     if (mail.length === 0 && manifest.instances?.includes('mail')) {
       ctx.addIssue({
         code: 'custom',
         path: ['instances'],
-        message: '声明 instances: [\'mail\'] 时必须同时声明一份邮件贡献',
+        message: "声明 instances: ['mail'] 时必须同时声明一份邮件贡献",
       });
     }
     // D107：im 贡献 = im 实例供给规范，与 mail 同规则（双向配对、至多一份）。
@@ -718,14 +730,14 @@ export const pluginManifestSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['contributions', 'im'],
-        message: '声明 IM 贡献时必须同时声明 instances: [\'im\']',
+        message: "声明 IM 贡献时必须同时声明 instances: ['im']",
       });
     }
     if (im.length === 0 && manifest.instances?.includes('im')) {
       ctx.addIssue({
         code: 'custom',
         path: ['instances'],
-        message: '声明 instances: [\'im\'] 时必须同时声明一份 IM 贡献',
+        message: "声明 instances: ['im'] 时必须同时声明一份 IM 贡献",
       });
     }
     // Declarative fields / instances (D105): duplicate config keys and duplicate

@@ -19,7 +19,7 @@
 | 文件 | 说明 |
 |---|---|
 | `plugin.json` | 贡献声明（transport `ilink`、`setup: qrcode`）；宿主已支持 `im` 贡献类型，`node packages/app-validator/dist/cli.js validate plugins/im-wechat` **PASS（0 error）** |
-| `icon.svg` | 占位图标（微信绿双气泡）；进市场前按 §8 复核 ≤64 KiB 与观感 |
+| `icon.svg` | 图标（微信绿双气泡，457 B）；已内联进已发布的市场索引条目 `summary.icon` |
 | `README.md` | 本文档 |
 
 ## 3 iLink Bot API 协议卡（已核实，2026-11-03）
@@ -88,7 +88,7 @@
 
 ## 7 发布
 
-宿主支持后：`node packages/app-validator/dist/cli.js validate plugins/im-wechat` → `pack` → 按 [plugins/README.md](../README.md) 流程签名 + R2 + 索引（tier 建议 `verified`；icon 内联 ≤64 KiB）。`engines.kepcup` 定为 `>=0.5.5`（首个含内置 `im` kind 的构建；用户确认的发布门槛，不随宿主版本号上跳）。
+宿主支持后：`node packages/app-validator/dist/cli.js validate plugins/im-wechat` → `pack` → 按 [plugins/README.md](../README.md) 流程签名 + R2 + 索引（tier 建议 `verified`；icon 内联 ≤64 KiB）。`engines.kepcup` 当前为 `>=0.5.7`：首个内置 `im` kind（0.5.5）再叠加必填 `usage` 清单字段的构建（依赖新清单字段的插件必须抬高 `engines`，旧宿主才会在安装前看到「需要更新版本」而不是解析失败）。
 
 ## 8 风险与回退
 

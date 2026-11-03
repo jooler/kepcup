@@ -121,6 +121,25 @@ function actionPrefix(label: string, result: ComputerActionResult): string {
   const channel = action?.path === 'accessibility' ? '无障碍动作' : action?.path === 'clipboard' ? '剪贴板粘贴' : '合成输入';
   const verification = action?.verification;
   if (verification?.state === 'unverified') {
+    const readback =
+      typeof verification.actualPreview === 'string' && verification.actualPreview.length > 0
+        ? `读回：${verification.actualPreview}。`
+        : '';
+    if (verification.reason === 'suspected_noop') {
+      return (
+        `${label}已通过${channel}发出，但**读回没有可观测变化**（suspected_noop）。` +
+        readback +
+        '先观察下方界面状态确认目标位置确实可滚（必要时换 element_index 或 x,y、或在窗口前台重试），确认未生效才重做；不要盲目重放该动作。'
+      );
+    }
+    if (readback) {
+      // Why: 读回看到变化时不能再写「可能未生效」——滚动这类动作没有可断言属性，
+      // 但仍应把看到的布局位移交给模型判断，避免它把已生效的动作再重放一次。
+      return (
+        `${label}已通过${channel}发出（${verification.reason}）。${readback}` +
+        '动作本身按未逐项断言处理：先观察下方界面状态核对实际效果，确认未生效才重做；不要盲目重放该动作。'
+      );
+    }
     return (
       `${label}已通过${channel}发出，但**可能未生效或效果未确认**（${verification.reason}）。` +
       '动作可能已执行：先观察下方界面状态（或再 computer_get_app_state）确认实际效果，确认未生效才重做；不要盲目重放该动作。'

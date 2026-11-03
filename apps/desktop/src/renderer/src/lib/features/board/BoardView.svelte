@@ -5,6 +5,7 @@
   import {
     anchorFromFinalize,
     boardFlipDurationMs,
+    draggedElementHeight,
     isNoopMove,
     isShadow,
     stripShadow,
@@ -96,12 +97,6 @@
    * measured height; otherwise the library sizes the copy to the slot and the
    * copy resizes (and jumps) whenever it changes position.
    */
-  function draggedElementHeight(): number | null {
-    if (typeof document === 'undefined') return null;
-    const el = document.getElementById('dnd-action-dragged-el');
-    return el === null ? null : el.getBoundingClientRect().height;
-  }
-
   function onFinalize(event: CustomEvent<DndEvent<BoardColumnView>>): void {
     const info = event.detail.info;
     shadowHeight = null;

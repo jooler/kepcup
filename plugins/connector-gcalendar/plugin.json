@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-gcalendar",
   "name": "Google Calendar 连接",
   "icon": "connectors/gcalendar/gcalendar.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "查看、搜索与安排 Google 日历日程",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Google Calendar 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能查看和安排日程。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://calendar.google.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

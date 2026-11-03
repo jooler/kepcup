@@ -3,15 +3,16 @@
   "id": "app.kepcup/im-wechat",
   "name": "微信",
   "icon": "icon.svg",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "把你的微信连接到 KepCup：在微信上给 Bot 发指令，Bot 的回复自动同步到你的微信。扫码即可添加，凭据只保存在本机。",
+  "usage": "启用后还需要扫码添加微信账号（扩展中心 → 已安装 → 微信 →「管理」），并在 Bot 详情展开微信插件卡片勾选绑定；绑定后微信消息才能唤醒 Bot，勾选「同步消息到此微信」后 Bot 的回复才会转发回微信。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
   "engines": {
-    "kepcup": ">=0.5.5"
+    "kepcup": ">=0.5.7"
   },
   "instances": [
     "im"

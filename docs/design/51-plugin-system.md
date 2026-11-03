@@ -496,7 +496,60 @@ custom-mcp 实例化（`instances: ['mcp']` 的 materializer、手动 MCP 收编
 `mcpServerSourceSchema` 加 `instance` 分支、启动惰性迁移——P4 §4 全节为路标）；M2 邮件 OAuth
 子 schema；custom-connector 实例化；短信 / 电话 / 传感器能力类型（按 §15.1 菜谱）；
 插件依赖与合集；多市场并列；developer-portal 提交审核；`capabilitySummary` 多语言重建。
-迁移号 0056–0058 已用，新迁移从 0059 起。
+迁移号已用到 0066（`0066_plugin_im.sql`），新迁移从 0067 起。
+
+### 15.8 启用说明与插件激活通报（2026-11-03）
+
+问题：插件启用集（`profile.runtime.plugin_ids`）只是能力装配的第一步。连接器要 OAuth 连接
+并勾选账号、邮件 / IM 要在插件卡片里先添加账号再勾选绑定；用户在 Bot 详情点「添加插件」却
+没展开卡片完成后续步骤时，能力没有真正生效，但用户以为已经好了，Bot 也毫不知情。
+
+**清单契约**：`plugin.json` 新增**必填**字段 `usage`（启用说明，1–500 字符；schema 校验长度
+上限）。它由插件作者写明「启用之后还要做什么」：启用即用 / 需要连接账号 / 需要先添加账号再
+勾选绑定。`format_version` 仍为 1；官方市场 23 个插件全部补上 `usage` 并升版到 `1.1.0`，
+`kepcup-app init plugin` 骨架与 `validate` 同步要求该字段。**依赖新清单字段的插件必须抬高
+`engines.kepcup`**：`usage` 是 strict schema 上的新增字段，旧宿主（<0.5.7）读到会按「来自
+更新版本的清单」拒绝——不抬高 `engines` 会让旧客户端看到可更新、下载后才失败；本次 23 个
+插件统一 `>=0.5.7`。为了不让 2026-11-03 之前安装的旧版本卡在「清单不可读 → 无法更新」，
+schema 对缺失值回落空串（保守读取），**必填由边界强制**：安装管线
+（`parsePluginManifestText({ requireUsage: true })`）、`kepcup-app validate`
+（`plugin.usage` error）与签名脚本都拒绝空值。`PluginSummary.usage` 把清洗后的文案带到
+渲染层（Bot 详情插件卡、添加弹框展示「启用说明」）。插件文案是不可信数据：进提示词前经
+`sanitizeDisplayText` 清洗并放进 `<untrusted>` 边界（`neutralizeUntrusted` 防闭合）。
+
+**激活通报**（`packages/core/src/plugins/bot-notice.ts`）：
+
+- 触发点：`bot.updated`（`profile.runtime.plugin_ids` 或 `app_connection_ids` 变化）、
+  `plugins.changed`（安装 / 更新 / 全局启停 / 卸载 / 撤销名单）、`mail.accounts.setBots` /
+  `mail.bots.setAccounts` / `im.accounts.setBots`、`plugins.instances.delete` /
+  `im.accounts.delete`。触发点集中在事件与账号绑定写入，不在每个 RPC 重复判定。
+- 语义：**按 Bot 合并的 30 秒去抖**（`PLUGIN_ACTIVATION_NOTICE_DEBOUNCE_MS = 30_000`，
+  可注入 timers）。窗口内连续操作只发一条，携带窗口结束时的最终状态；比较的是**整份状态
+  签名**（启用集 + 每个插件的启停 / `usage` / 就绪状态 + 移除项），所以只绑定账号、全局
+  停用、删账号这类不动 `plugin_ids` 的变化也会通报，而「加了又删回」不会唤醒。启动时把
+  每个 Bot 的现有启用集作为基线，重启不会误报「新增」。
+- 内容：当前启用集里每个插件的展示名、`usage`、core 计算的现状——连接器「尚未连接账号 /
+  已绑定账号不可用 / 仍有连接器未绑定 / 与其他应用冲突而让位」；邮件 / IM「尚未添加账号」
+  或「已添加账号，但未勾选绑定」；插件全局停用或非 `installed` 状态；技能 / 工具类无需
+  额外步骤（只有 usage 文案本身）。本批被移除的插件列在启用列表之后（最多 10 条，卸载后
+  仍按最近一次已知名称显示）。
+- 投递：`orchestrator.deliverEventToBot(botId, conversationId, PLUGIN_ACTIVATION_EVENT,
+  text, { internal: true })`——落一条 `internal` 系统消息并唤醒一轮，但不展示在用户对话
+  里（用户看到的只是 Bot 主动发出的提醒）。事件名登记进 `INTERNAL_SYSTEM_EVENTS`（常量与
+  集合同源）。落点 = 该 Bot 的开放的直聊（没有则用 `conversations.openDirect` 创建，保证
+  提醒有落点）；创建失败只记日志，不推进基线，下一次操作重试。
+- Bot 侧规则（写进通报正文）：启用说明要求的前置步骤若还没完成 → 主动发一条简短消息提醒
+  用户具体做什么、在哪里操作；全部就绪或此前已提醒过 → `skip_reply` 静默。同一遗漏不会
+  因为用户没再操作而反复唤醒（只在真实状态变化时发）。
+- 边界：项目组的 `project_plugins` 叠加不触发本通报（没有单一 Bot 落点，项目会话按有效
+  启用集装配即可）；插件 `plugins.update` 带来的 `usage` 变化经 `plugins.changed` 覆盖。
+
+**扩展中心分类**：微信上架后，市场与「已安装」筛选都新增 `im`（即时通讯）分类
+（`ExtensionMarket.svelte` 的 `CATEGORY_FILTERS`、`tabs.ts` 的 `ExtensionCenterFilter` /
+`FILTER_COUNT_KEYS`、`ExtensionInstalled.svelte` 的筛选条与 `instanceCounts.im` 口径；
+筛选条文案用 `plugins.filter.im`，类别徽标沿用 `plugins.kind.im`）。本次是纯清单 / 宿主
+行为变更，**无数据库迁移、无 catalog 结构变更**。
+
 
 
 

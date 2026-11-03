@@ -16,19 +16,22 @@ export type ExtensionCenterTab = 'market' | 'installed' | 'settings';
 // settings-ui-scan.ts parses the array below with a regex; keep it a single-line literal.
 export const EXTENSION_CENTER_TABS: readonly ExtensionCenterTab[] = ['market', 'installed', 'settings'];
 
-/** 「已安装」列表的内容筛选：全部 + 插件贡献的四类内容。 */
-export type ExtensionCenterFilter = 'all' | 'skill' | 'connector' | 'mcp' | 'mail';
+/** 「已安装」列表的内容筛选：全部 + 插件贡献的五类内容（含即时通讯）。 */
+export const EXTENSION_CENTER_KIND_FILTERS = ['skill', 'connector', 'mcp', 'mail', 'im'] as const;
 
-export type ExtensionCenterKindFilter = Exclude<ExtensionCenterFilter, 'all'>;
+export type ExtensionCenterKindFilter = (typeof EXTENSION_CENTER_KIND_FILTERS)[number];
+
+export type ExtensionCenterFilter = 'all' | ExtensionCenterKindFilter;
 
 /** 筛选 id → `PluginSummary.counts` 的键（安装后由贡献自动推导）。 */
 export const FILTER_COUNT_KEYS: Readonly<
-  Record<ExtensionCenterKindFilter, 'skills' | 'connectors' | 'mcp' | 'mail'>
+  Record<ExtensionCenterKindFilter, 'skills' | 'connectors' | 'mcp' | 'mail' | 'im'>
 > = {
   skill: 'skills',
   connector: 'connectors',
   mcp: 'mcp',
   mail: 'mail',
+  im: 'im',
 } as const;
 
 /**
@@ -37,7 +40,13 @@ export const FILTER_COUNT_KEYS: Readonly<
  */
 export const LEGACY_TAB_FILTERS: Readonly<
   Record<'skills' | 'connections' | 'mcp' | 'mail' | 'localCollab', ExtensionCenterFilter>
-> = { skills: 'skill', connections: 'connector', mcp: 'mcp', mail: 'mail', localCollab: 'all' } as const;
+> = {
+  skills: 'skill',
+  connections: 'connector',
+  mcp: 'mcp',
+  mail: 'mail',
+  localCollab: 'all',
+} as const;
 
 /** `openExtensionCenter` 接受的完整入参：现行页签 + 旧分组深链别名。 */
 export type ExtensionCenterTarget = ExtensionCenterTab | keyof typeof LEGACY_TAB_FILTERS;

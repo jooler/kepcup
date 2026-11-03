@@ -3,15 +3,16 @@
   "id": "app.kepcup/skill-doc-coauthoring",
   "name": "协作改稿",
   "icon": "icon.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "多轮协作打磨一份文档（方案、提案、规格说明、长文）。通过\"对齐提纲 → 分节成稿 → 批注修订 → 读者视角验收\"的流程与用户共同完成，而不是一次性甩一篇成品。用户说\"帮我打磨这篇文档\"、\"一起写个方案\"、\"这段再改改\"、\"按评审意见改\" 时使用。",
+  "usage": "启用即可使用：添加到 Bot 后，Bot 会在匹配的改稿任务里自动加载该技能，无需再连接账号或勾选其他选项。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "skills": [

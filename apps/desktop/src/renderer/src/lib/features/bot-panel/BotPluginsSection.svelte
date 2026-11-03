@@ -441,9 +441,11 @@
       {#each added as plugin (plugin.id)}
         {@const kinds = pluginKindBadges(plugin)}
         {@const expandable =
-                          groupsOf(plugin).length > 0 ||
-                          pluginProvides(plugin, 'mail') ||
-                          pluginProvides(plugin, 'im')}
+          // `?? ''`：旧 core 进程（usage 字段引入前的构建）返回的清单没有该字段，别让它崩区块。
+          (plugin.usage ?? '').length > 0 ||
+          groupsOf(plugin).length > 0 ||
+          pluginProvides(plugin, 'mail') ||
+          pluginProvides(plugin, 'im')}
         <div
           class="rounded-lg border px-2.5 py-2"
           data-testid={`bot-plugins-${plugin.id}`}
@@ -455,10 +457,7 @@
               <div class="flex flex-wrap items-center gap-1.5">
                 <span class="min-w-0 truncate text-sm font-medium">{plugin.name}</span>
                 {#each kinds as kind (kind)}
-                  <Badge
-                    variant="secondary"
-                    data-testid={`bot-plugins-kind-${kind}-${plugin.id}`}
-                  >
+                  <Badge variant="secondary" data-testid={`bot-plugins-kind-${kind}-${plugin.id}`}>
                     {t(PLUGIN_KIND_LABEL_KEYS[kind])}
                   </Badge>
                 {/each}
@@ -510,6 +509,15 @@
               class="mt-2 space-y-2 border-t pt-2"
               data-testid={`bot-plugins-detail-${plugin.id}`}
             >
+              {#if (plugin.usage ?? '').length > 0}
+                <!-- 启用说明（2026-11-03 起清单必填）：展开即可看到「启用后还要做什么」。 -->
+                <div data-testid={`bot-plugins-usage-${plugin.id}`}>
+                  <p class="text-xs font-medium">{t('botPanel.plugins.usage')}</p>
+                  <p class="mt-0.5 text-xs break-words whitespace-pre-line text-muted-foreground">
+                    {plugin.usage}
+                  </p>
+                </div>
+              {/if}
               {#if groupsOf(plugin).length > 0}
                 <Label class="text-xs">{t('botPanel.plugins.connections')}</Label>
                 <div class="space-y-2" data-testid={`bot-plugins-connections-${plugin.id}`}>
@@ -674,11 +682,16 @@
       <div class="space-y-2">
         {#each localGroups as group (group.connectorId)}
           {#if group.selectedConnectionId !== null || group.accounts.length > 0}
-            <div class="flex items-center gap-2 text-sm" data-testid={`bot-apps-${group.connectorId}`}>
+            <div
+              class="flex items-center gap-2 text-sm"
+              data-testid={`bot-apps-${group.connectorId}`}
+            >
               <span class="min-w-0 flex-1 truncate">{group.title}</span>
               {#if group.selectedConnectionId !== null}
                 <span class="text-xs text-muted-foreground">
-                  · {group.accounts.find((entry) => entry.connection.id === group.selectedConnectionId)?.label ?? ''}
+                  · {group.accounts.find(
+                    (entry) => entry.connection.id === group.selectedConnectionId,
+                  )?.label ?? ''}
                 </span>
               {/if}
             </div>
@@ -881,6 +894,15 @@
               {#if plugin.description.length > 0}
                 <p class="line-clamp-2 text-xs break-words text-muted-foreground">
                   {plugin.description}
+                </p>
+              {/if}
+              {#if (plugin.usage ?? '').length > 0}
+                <p
+                  class="line-clamp-3 text-xs break-words text-muted-foreground"
+                  title={plugin.usage}
+                  data-testid={`bot-plugins-add-usage-${plugin.id}`}
+                >
+                  {t('botPanel.plugins.usage')}: {plugin.usage}
                 </p>
               {/if}
               {#if !plugin.enabled}
