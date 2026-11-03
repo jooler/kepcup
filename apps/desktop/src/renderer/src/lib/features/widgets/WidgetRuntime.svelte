@@ -21,8 +21,10 @@
   import { core } from '$lib/rpc/client.svelte';
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
+  import { MicroAppBridgeHost } from './micro-app-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
   import { widgetConsented } from './consent.svelte';
+  import { microAppConsents } from './micro-app-consent.svelte';
 
   /**
    * 组件运行时（覆盖层里的那个 iframe）：海报卡确认后由 WidgetViewer 挂载，start →
@@ -49,7 +51,7 @@
   let pendingReply = $state<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   let replyBlockedUntil = 0;
 
-  let bridge: WidgetBridgeHost | null = null;
+  let bridge: WidgetBridgeHost | MicroAppBridgeHost | null = null;
   let generation = 0;
   /** 当前挂载的资源租约（过期自动重开并重放调用，见 resource-lease.ts）。 */
   let lease: WidgetResourceLease | null = null;
@@ -59,6 +61,7 @@
   }
 
   // D87 P3b：应用切换明暗时推给已挂载的组件（垫片更新 data-theme 并派发 kepcup:theme）。
+  // 微应用走桥 v2 的 event 帧（同一语义，协议换了）。
   $effect(() => {
     const theme = currentTheme();
     bridge?.setTheme(theme);
@@ -69,7 +72,13 @@
     phase = 'loading';
     errorCode = undefined;
     // 防御：运行时只应在确认后挂载；未确认（记忆被清等）回到海报卡的审查态流程。
-    if (!widgetConsented(card)) {
+    // 微应用（D112）的确认按能力面指纹——卡片门控之外，open 后还要对生效版本再核一次。
+    if (
+      card.microApp === undefined
+        ? !widgetConsented(card)
+        : card.capabilityFingerprint === undefined ||
+          !microAppConsents.consented(card.widgetId, card.capabilityFingerprint).ok
+    ) {
       errorCode = 'WIDGET_REVIEW_REQUIRED';
       phase = 'error';
       return;
@@ -83,6 +92,16 @@
       if (gen !== generation) {
         void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
         return;
+      }
+      // 微应用：生效版本的指纹必须被当前确认覆盖（卡片门控可能基于过期指纹）——
+      // 能力面已扩大时这里兜底拒绝，不静默运行未确认的能力。
+      if (out.microApp !== undefined && out.capabilityFingerprint !== undefined) {
+        if (!microAppConsents.consented(out.widgetId, out.capabilityFingerprint).ok) {
+          void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
+          errorCode = 'WIDGET_REVIEW_REQUIRED';
+          phase = 'error';
+          return;
+        }
       }
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
@@ -102,32 +121,67 @@
       const frameWindow = frame?.contentWindow;
       if (frame === undefined || !frameWindow) throw new Error('frame unavailable');
       // Listen first, then load: the shim's first calls must find the bridge ready.
-      bridge = WidgetBridgeHost.connect({
-        frameWindow,
-        resourceId: out.resourceId,
-        theme: openedTheme,
-        storage: (input) => callStorage(input),
-        query: (input) => callQuery(input),
-        openLink: (url) =>
-          new Promise<boolean>((resolve) => {
-            // One confirmation at a time; a second request while one is open is refused.
-            if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
-              resolve(false);
-              return;
-            }
-            pendingLink = { url, resolve };
-          }),
-        reply: (text) =>
-          new Promise<boolean>((resolve) => {
-            if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
-              resolve(false);
-              return;
-            }
-            pendingReply = { text, resolve };
-          }),
-        // 覆盖层形态 iframe 铺满：组件的高度上报不参与布局。
-        onHeight: () => {},
-      });
+      // 微应用挂桥 v2（能力路由 / 事件 / 预算），存量组件挂 v1（行为零变化）。
+      if (out.microApp !== undefined) {
+        bridge = MicroAppBridgeHost.connect({
+          frameWindow,
+          resourceId: out.resourceId,
+          permissions: out.microApp.permissions,
+          net: { mode: out.microApp.netMode, domains: out.microApp.netAllowlist },
+          theme: openedTheme,
+          displayMode: out.microApp.displayMode,
+          viewport: {
+            width: frame.clientWidth || 360,
+            height: frame.clientHeight || 520,
+          },
+          storage: (input) => callStorage(input),
+          query: (input) => callQuery(input),
+          openLink: (url) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingLink = { url, resolve };
+            }),
+          reply: (text) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingReply = { text, resolve };
+            }),
+          onTitle: () => {},
+        });
+      } else {
+        bridge = WidgetBridgeHost.connect({
+          frameWindow,
+          resourceId: out.resourceId,
+          theme: openedTheme,
+          storage: (input) => callStorage(input),
+          query: (input) => callQuery(input),
+          openLink: (url) =>
+            new Promise<boolean>((resolve) => {
+              // One confirmation at a time; a second request while one is open is refused.
+              if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingLink = { url, resolve };
+            }),
+          reply: (text) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingReply = { text, resolve };
+            }),
+          // 覆盖层形态 iframe 铺满：组件的高度上报不参与布局。
+          onHeight: () => {},
+        });
+      }
       if (gen !== generation) {
         bridge.destroy();
         bridge = null;

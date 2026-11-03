@@ -57,6 +57,51 @@
 - [ ] 收口：`pnpm --filter @kepcup/shared build` → 定向测试全绿 → 全量 `pnpm test` 一次。
 - [ ] 子代理审查（general-purpose，输入 = P0 diff + 55 §3–§6/§9.1/§14 P0 + 本验收清单）→ 修完全部问题 → 第二轮复审。
 
-## 实施记录
+## 实施记录（2026-11-04）
 
-（阶段收口时填写：做了什么、偏差、测试证据。）
+### 交付内容
+
+**shared**
+- `micro-app-sdk/spec.ts`（单一事实来源）：`MICRO_APP_SPEC_VERSION`、能力闭合枚举（10 项，`net.fetch` 不进枚举）、API 方法索引（30 条）、错误码 → 作者向 hint（8 条，code 注册进 `ERROR_CODES`）、MCP Apps 映射表、限额常量、`MICRO_APP_RUNTIME_PHASE` / `MICRO_APP_IMPLEMENTED_CAPABILITIES`（阶段开关）。
+- `micro-app-sdk/generate.ts`：`buildMicroAppShim()`（桥 v2 客户端垫片：call/stream/cancel/event-ack、AsyncIterable 流原语、seq 缺口检测、单行、无 `//`）、`buildMicroAppSdkMd()`（≤4KB 入口，信任边界第一段）、`buildMicroAppDts()`、`microAppPreviewMockSpec()`、`microAppImplementedApiMethods()`（白名单派生）。**运行时按需生成，不落盘**——生成物与 spec 的漂移在构造上不可能（比「重新生成无 diff」守卫更强），守卫测试锁约束（见下）。
+- `domain/micro-app.ts`：`microAppManifestSchema`（strict、闭合枚举、net 缺省 open）、`microAppCapabilityFingerprint()`、卡片摘要 schema、确认记录类型、`microApps.preflight` RPC 契约。
+- `widgets-ui.ts`：卡片 + open 输出增可选 `microApp` / `capabilityFingerprint` / `bundleSha256`（zod default 兼容旧卡）；查询模板 schema 抽到 `widget-query.ts`（打断 `widgets-ui ↔ micro-app` 导入环，原符号再导出，存量导入不动）。
+- `apps-ui.ts`：`buildWidgetRuntimeCspHeader({connectDomains})` 可选参数（缺省不变；`none` / 域名数组收紧 connect-src）。
+- `errors.ts` + `rpc/methods.ts`：8 个 `MICRO_APP_*` 错误码 + `microApps.preflight`（rpcMethodSchemas + APP_METHODS 双登记）。
+
+**core**
+- 迁移 `0067_micro_app_manifest.sql`：`widget_versions` += `manifest_json` / `bundle_sha256` / `permissions_json`；`widgets` += `next_version`。
+- `micro-apps/manifest.ts`：宿主独占校验（spec 版本、已实现能力裁决、allowlist 域名形状、entry=index.html）、bundle canonical 摘要、`microAppCspFor()`。
+- `micro-apps/preflight.ts` + `rpc/micro-apps-bindings.ts`：探针注册表 + `microApps.preflight`（P0 能力恒可用，P1 接模型 / ASR / TTS 探针）。
+- `WidgetService`：create/update 接受 `manifest`（清单是能力与查询的唯一来源）；微应用更新置 `next_version`；**形态切换（存量 ↔ 微应用）拒绝**；`#resolveEffectiveVersion`（存量 = 卡片钉住 + 原完整性校验；微应用 = 双指针，查询防偷换校验保留）；open/source 按生效版本；微应用注入桥 v2 垫片 + 按 net 档位 CSP；craftSource 带回清单；`effectiveMicroAppOf()`；移交复制带三新列。
+- `sdk-injection.ts`：`injectMicroAppSdk()`（共用主题 / 滚动条 / kit，垫片换 `buildMicroAppShim`；注入逻辑抽 `buildInjection` / `injectAfterHead`，存量路径输出逐字节不变）。
+- 检查器：注册 `app.manifest-invalid` / `app.net-open-default` / `app.permission-undeclared` / `app.sdk-deprecated`（P0 注册 + 提示词同源；草稿带 `micro-app.json` 的扫描随 P3 多文件制作接线）。
+
+**renderer**
+- `micro-app-bridge-guard.ts` + `micro-app-bridge-host.ts`：桥 v2（来源校验、方法白名单、**能力路由**——未声明 → `MICRO_APP_CAPABILITY_NOT_DECLARED` + spec 同源 hint、`app.ready` 协商、事件 seq/ack、背压超窗断开、cancel、恰好一条终态回执）。
+- `micro-app-consent.svelte.ts`：按 widgetId 记 `{fingerprint, bundleSha256, at}`；同指纹 bundle 变 → `codeUpdated`。
+- `BotWidgetCard.svelte`：微应用确认卡（网络行单独一行最前、能力清单（spec 人话）、成本行、预检不可用项 + 设置深链、「有新版本」/「代码已更新」徽标）；存量组件卡路径零变化。
+- `WidgetRuntime.svelte`：open 输出带清单 → 挂 `MicroAppBridgeHost`，否则原 `WidgetBridgeHost`；open 后对**生效版本指纹**再核一次（卡片门控可能过期，能力扩大兜底拒绝）。
+- i18n：`botWidget.microApp.*` 13 键 + `chats.errorCode.MICRO_APP_*` 8 条，两语言键序一致（locales.test 通过）。
+
+### 与任务书的偏差（均为「按长期收益最大化」的拍板）
+
+1. **生成物不落盘**：设计 §6.1 的「`.d.ts` 重新生成后无 diff」守卫以运行时生成替代；`references/` 以索引（`MICRO_APP_SDK_REFERENCES`）登记、P0 只生成 P0 篇目引用，P3 写文件内容并接 craft `read`。
+2. **`latestVersion` 不进卡片描述符**：卡片「有新版本」徽标改用 preflight 返回的生效版本（卡片字段会过期，preflight 是活的）。
+3. **清单 queries 内联**：设计 §4.2 的 `"queries": "queries.json"` 文件引用在 P0 以内联数组承载（多文件包 P2 落地时可平滑接受两种形状）。
+4. **形态切换拒绝**：任务书未写，实施中补（两张确认卡之间无法比较能力面）。
+5. 检查器四规则 P0 注册 + 提示同源，扫描引擎随 P3 接线（P0 制作 loop 仍是单文件，规则不命中）。
+
+### 测试证据
+
+- shared：`packages/shared/test/unit/micro-app-sdk.test.ts` 15/15（sdk.md ≤4KB、引用存在、垫片单行无 `//` 无 resourceId、白名单随阶段、枚举 / 映射 / hint 同源、指纹不变式、strict 清单）。
+- core：`packages/core/test/unit/micro-app-service.test.ts` 13/13（清单裁决、卡片字段、双指针 / 回退 / 修剪、垫片与 CSP 分档、open 输出、预检、形态切换、存量零变化）。
+- renderer：`micro-app-bridge-host.test.ts` 12/12 + `micro-app-consent.svelte.test.ts` 5/5。
+- **存量零变化**：widget 相关全量定向（shared/test + core widget 全家 + 渲染端 widgets + locales）69 文件 899 通过 / 1 跳过（既有跳过项）。
+- `pnpm --filter @kepcup/{shared,core} build`、`@kepcup/desktop typecheck` 全过（svelte-check 仅余 1 条与本次无关的既有警告）。
+
+### 遗留
+
+- `app.*` 事件通道的动态订阅上限（32）在协议常量与 host 结构上就位，媒体订阅 P1 接线。
+- `microApps.preflight` 的 P0 探针全为恒可用；P1 注册 ai/media 探针后才有「当前不可用」分支的真实数据。
+

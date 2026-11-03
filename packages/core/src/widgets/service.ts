@@ -19,10 +19,12 @@ import {
   WIDGET_REPLY_MAX_CHARS,
   MCP_APP_SCHEME,
   buildWidgetRuntimeCspHeader,
+  microAppCardSummaryOf,
   newId,
   widgetCardSchema,
   widgetCheckSummarySchema,
   type Message,
+  type MicroAppManifest,
   type WidgetCard,
   type WidgetCheckStatus,
   type WidgetCheckSummary,
@@ -49,7 +51,13 @@ import {
 import type { WidgetQueryExecutor } from './query-runner.js';
 import { WidgetResourceStore, widgetUiHostFor, type WidgetResource } from './resource-store.js';
 import { cleanWidgetQueries } from './query-validate.js';
-import { injectWidgetSdk } from './sdk-injection.js';
+import { injectMicroAppSdk, injectWidgetSdk } from './sdk-injection.js';
+import {
+  manifestOfRow,
+  microAppCspFor,
+  validateMicroAppManifest,
+  type ValidatedMicroApp,
+} from '../micro-apps/manifest.js';
 
 /**
  * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）。
@@ -90,6 +98,8 @@ interface WidgetRow {
   latest_version: number;
   created_at: number;
   updated_at: number;
+  /** 版本双指针（0067；NULL = 跟随卡片钉住版本 = 存量语义）。 */
+  next_version: number | null;
 }
 
 interface WidgetVersionRow {
@@ -108,6 +118,12 @@ interface WidgetVersionRow {
   check_summary_json: string;
   created_by_run: string;
   created_at: number;
+  /** 微应用清单（0067；空串 = 存量组件，按「无清单」处理，行为零变化）。 */
+  manifest_json: string;
+  /** bundle 规范化摘要（0067；存量为空串）。 */
+  bundle_sha256: string;
+  /** 清单 permissions 的 JSON 数组（0067；存量为 '[]'）。 */
+  permissions_json: string;
 }
 
 /**
@@ -187,6 +203,12 @@ export interface WidgetCreateInput {
   check?: WidgetDeliveryCheck;
   /** 自检 S2 预览的首视口截图（base64 PNG）；对话卡片海报用，缺省 = 无海报。 */
   posterPng?: string | undefined;
+  /**
+   * 微应用清单（D112，设计 55 §4.2）：原始 JSON（`micro-app.json` 的内容），由
+   * `validateMicroAppManifest` 在这里裁决——声明了查询模板时忽略 `queries` 入参
+   * （清单是唯一来源）。缺省 = 存量组件路径（行为零变化）。
+   */
+  manifest?: unknown;
 }
 
 export interface WidgetUpdateInput {
@@ -205,6 +227,8 @@ export interface WidgetUpdateInput {
   check?: WidgetDeliveryCheck;
   /** 同 create。 */
   posterPng?: string | undefined;
+  /** 同 create：微应用清单（原始 JSON）。 */
+  manifest?: unknown;
 }
 
 export type WidgetWriteResult =
@@ -271,7 +295,9 @@ export class WidgetService {
       const title = this.#cleanText(input.title, BOT_WIDGET_TITLE_MAX_CHARS, '标题');
       const description = this.#redactText(input.description, '说明');
       const html = this.#cleanHtml(input.html);
-      const queries = this.#cleanQueries(input.queries);
+      // 微应用清单（D112）：manifest 是能力 / 查询 / 网络档的唯一来源；存在即走微应用路径。
+      const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
+      const queries = microApp !== null ? this.#cleanQueries(microApp.manifest.queries) : this.#cleanQueries(input.queries);
       const now = this.#deps.clock.now();
       const widgetId = newId('wgt');
       const sha256 = createHash('sha256').update(html).digest('hex');
@@ -321,6 +347,7 @@ export class WidgetService {
           now,
           input.check,
           posterPngOf(input.posterPng),
+          microApp,
         );
       });
       tx();
@@ -339,13 +366,17 @@ export class WidgetService {
         createdAt: now,
         conversationId: input.conversationId,
         runId: input.runId,
+        ...microAppCardFields(microApp),
       });
       return {
         ok: true,
         widgetId,
         title,
         version: 1,
-        message: `组件「${title}」（v1）已作为卡片发进对话，等用户确认加载。不要用文字复述代码；之后要修改时用 widget_craft 并传 widget_id。`,
+        message:
+          microApp !== null
+            ? `微应用「${microApp.manifest.name}」（v1）已作为卡片发进对话，等用户确认打开。不要用文字复述代码；之后要修改时用 widget_craft 并传 widget_id。`
+            : `组件「${title}」（v1）已作为卡片发进对话，等用户确认加载。不要用文字复述代码；之后要修改时用 widget_craft 并传 widget_id。`,
         cardMessageId: card?.id ?? null,
       };
     } catch (error) {
@@ -368,7 +399,21 @@ export class WidgetService {
       }
       const html = this.#cleanHtml(input.html);
       const changeNote = this.#redactText(input.changeNote, '改动说明');
-      const queries = this.#cleanQueries(input.queries);
+      // 微应用更新（D112）：清单与代码一起构成新版本；**组件 → 微应用 / 微应用 → 组件的
+      // 形态切换在这里拒绝**（两张确认卡之间无法比较能力面，用户无从确认差异）。
+      const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
+      const priorMicroApp = this.#manifestOfVersion(widgetId, widget.latest_version) !== null;
+      if ((microApp !== null) !== priorMicroApp) {
+        return {
+          ok: false,
+          message:
+            microApp !== null
+              ? '这个存量组件不能升级为微应用：请用 widget_craft 新建一个微应用（形态不同的交付物不能共用版本链）'
+              : '这个微应用不能降级为存量组件：新版本必须继续携带 micro-app.json 清单',
+          code: 'INVALID_INPUT',
+        };
+      }
+      const queries = microApp !== null ? this.#cleanQueries(microApp.manifest.queries) : this.#cleanQueries(input.queries);
       const now = this.#deps.clock.now();
       const version = widget.latest_version + 1;
       const sha256 = createHash('sha256').update(html).digest('hex');
@@ -417,10 +462,15 @@ export class WidgetService {
           now,
           input.check,
           posterPngOf(input.posterPng),
+          microApp,
         );
+        // 版本双指针（55 §9.1）：微应用更新把 next_version 指向新版本——正在运行的实例
+        // 继续用旧版本（不热替换），下次打开生效；存量组件不写该列（NULL = 卡片钉住版本）。
         this.#deps.db
-          .prepare('update widgets set latest_version = ?, updated_at = ? where id = ?')
-          .run(version, now, widgetId);
+          .prepare(
+            'update widgets set latest_version = ?, updated_at = ?, next_version = ? where id = ?',
+          )
+          .run(version, now, microApp !== null ? version : widget.next_version, widgetId);
         if (pruneThrough >= 1) {
           // widget_queries 没有指向版本行的外键，两表一起修剪。
           this.#deps.db
@@ -451,13 +501,17 @@ export class WidgetService {
         createdAt: now,
         conversationId,
         runId: input.runId,
+        ...microAppCardFields(microApp),
       });
       return {
         ok: true,
         widgetId,
         title: widget.title,
         version,
-        message: `组件「${widget.title}」已更新到 v${version}，新版本以新卡片发进对话（旧卡仍是旧版本）；把改动告诉用户并请其加载新卡。`,
+        message:
+          microApp !== null
+            ? `微应用「${widget.title}」已更新到 v${version}（已打开的实例不热替换，重新打开生效）；把改动告诉用户。只改代码、不扩大能力面时用户无需重新确认。`
+            : `组件「${widget.title}」已更新到 v${version}，新版本以新卡片发进对话（旧卡仍是旧版本）；把改动告诉用户并请其加载新卡。`,
         cardMessageId: card?.id ?? null,
       };
     } catch (error) {
@@ -481,6 +535,8 @@ export class WidgetService {
         version: number;
         html: string;
         queries: WidgetQueryDef[];
+        /** 微应用才有：清单原文（制作 loop 修改后原样带回交付，D112）。 */
+        manifest?: MicroAppManifest;
       }
     | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' } {
     const widget = this.#widgetOf(widgetId.trim());
@@ -494,6 +550,7 @@ export class WidgetService {
     if (version === null) {
       return { ok: false, message: '组件的最新版本已不存在', code: 'NOT_FOUND' };
     }
+    const microApp = manifestOfRow(version.manifest_json);
     return {
       ok: true,
       title: widget.title,
@@ -502,6 +559,7 @@ export class WidgetService {
       version: version.version,
       html: version.html,
       queries: this.#queriesOf(widget.id, version.version),
+      ...(microApp !== null ? { manifest: microApp.manifest } : {}),
     };
   }
 
@@ -545,27 +603,46 @@ export class WidgetService {
   }
 
   /**
-   * 查看源码（审查态）：HTML 原文与查询模板全文，不登记资源；与 open 同样校验卡片钉住的摘要。
+   * 查看源码（审查态）：HTML 原文与查询模板全文，不登记资源；与 open 同样解析生效版本
+   * （微应用 = 双指针指向的版本，用户看到的代码就是将要运行的代码）。
    * 含查询模板的版本在这里记下「已展开审查」（`queries_reviewed_at`）——open 据此强制预审。
    */
   source(messageId: string): WidgetsUiSourceOutput {
     const { card } = this.cardOf(messageId);
-    const version = this.#pinnedVersion(card);
-    const queries = this.#queriesOf(card.widgetId, card.version);
+    const { version } = this.#resolveEffectiveVersion(card);
+    const queries = this.#queriesOf(card.widgetId, version.version);
     if (queries.length > 0 && version.queries_reviewed_at === null) {
       this.#deps.db
         .prepare(
           'update widget_versions set queries_reviewed_at = ? where widget_id = ? and version = ? and queries_reviewed_at is null',
         )
-        .run(this.#deps.clock.now(), card.widgetId, card.version);
+        .run(this.#deps.clock.now(), card.widgetId, version.version);
     }
     return {
       widgetId: card.widgetId,
-      version: card.version,
+      version: version.version,
       title: card.title,
       sha256: version.sha256,
       html: version.html,
       queries,
+    };
+  }
+
+  /**
+   * 微应用的生效清单（`microApps.preflight` 用，D112 §5.2）：卡片 → 生效版本 → 清单。
+   * 返回 null = 这张卡是存量组件（无预检面）。
+   */
+  effectiveMicroAppOf(
+    messageId: string,
+  ): { widgetId: string; version: number; microApp: ValidatedMicroApp; bundleSha256: string } | null {
+    const { card } = this.cardOf(messageId);
+    const { version, microApp } = this.#resolveEffectiveVersion(card);
+    if (microApp === null) return null;
+    return {
+      widgetId: card.widgetId,
+      version: version.version,
+      microApp,
+      bundleSha256: version.bundle_sha256,
     };
   }
 
@@ -586,37 +663,47 @@ export class WidgetService {
   /** 卡片挂载：登记内存资源，返回渲染端挂 iframe 所需的信息。 */
   open(input: { messageId: string; theme?: WidgetTheme | undefined }): WidgetsUiOpenOutput {
     const { message, card } = this.cardOf(input.messageId);
-    // 卡片「钉住」某个版本的完整性校验（含查询模板摘要）。
-    const version = this.#pinnedVersion(card);
+    // 生效版本（存量 = 卡片钉住版本 + 完整性校验；微应用 = next_version 双指针）。
+    const { version, microApp } = this.#resolveEffectiveVersion(card);
     // 预审强制化：带查询模板的版本，用户没在审查态展开过 SQL 全文就不许加载——
     // 渲染端按钮也会门控，这里是不依赖 UI 的那一侧。
     if (version.queries_sha256 !== '' && version.queries_reviewed_at === null) {
       throw new AppError(
         'WIDGET_REVIEW_REQUIRED',
-        '这个组件版本带数据库查询模板，加载前需要先在「查看源码」里展开审查查询 SQL',
+        '这个版本带数据库查询模板，加载前需要先在「查看源码」里展开审查查询 SQL',
       );
     }
     const entry = this.store.put({
       widgetId: card.widgetId,
-      version: card.version,
+      version: version.version,
       messageId: message.id,
       conversationId: message.conversationId,
       botId: card.botId,
       // 登记的是「垫片版」HTML（仅内存资源；widget_versions 里的原文不动，
-      // 审查态 source 看到的仍是 Bot 写的原文）。
-      // 主题按卡片打开时的明暗设好（D87 P3b）；之后的切换由卡片推送主题事件。
-      html: injectWidgetSdk(version.html, input.theme !== undefined ? { theme: input.theme } : {}),
-      csp: WIDGET_CSP,
+      // 审查态 source 看到的仍是 Bot 写的原文）。微应用换桥 v2 垫片（能力协商 /
+      // 事件订阅），CSP 按清单 net 档位收紧；存量组件走原路径，行为零变化。
+      html:
+        microApp !== null
+          ? injectMicroAppSdk(version.html, input.theme !== undefined ? { theme: input.theme } : {})
+          : injectWidgetSdk(version.html, input.theme !== undefined ? { theme: input.theme } : {}),
+      csp: microApp !== null ? microAppCspFor(microApp.manifest.net) : WIDGET_CSP,
     });
     return {
       resourceId: entry.id,
       url: `${MCP_APP_SCHEME}://${entry.host}/${entry.id}`,
       widgetId: card.widgetId,
-      version: card.version,
+      version: version.version,
       title: card.title,
       description: card.description,
       scope: card.scope,
-      sha256: card.sha256,
+      sha256: version.sha256,
+      ...(microApp !== null
+        ? {
+            microApp: microAppCardSummaryOf(microApp.manifest),
+            capabilityFingerprint: microApp.fingerprint,
+            bundleSha256: version.bundle_sha256,
+          }
+        : {}),
     };
   }
 
@@ -926,9 +1013,11 @@ export class WidgetService {
         this.#deps.db
           .prepare(
             `insert into widget_versions (widget_id, version, html, sha256, created_by_run, created_at,
-               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png)
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png,
+               manifest_json, bundle_sha256, permissions_json)
              select ?, version, html, sha256, created_by_run, created_at,
-               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json, poster_png,
+               manifest_json, bundle_sha256, permissions_json
              from widget_versions where widget_id = ?`,
           )
           .run(newWidgetId, widgetId).changes,
@@ -1301,10 +1390,11 @@ export class WidgetService {
     now: number,
     check: WidgetDeliveryCheck | undefined,
     posterPng: string | undefined,
+    microApp: ValidatedMicroApp | null = null,
   ): void {
     this.#deps.db
       .prepare(
-        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at, check_status, check_summary_json, poster_png) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at, check_status, check_summary_json, poster_png, manifest_json, bundle_sha256, permissions_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         widgetId,
@@ -1318,6 +1408,9 @@ export class WidgetService {
         check?.status ?? 'legacy',
         check !== undefined ? JSON.stringify(check.summary) : '',
         posterPng ?? null,
+        microApp !== null ? JSON.stringify(microApp.manifest) : '',
+        microApp?.bundleSha256 ?? '',
+        microApp !== null ? JSON.stringify(microApp.manifest.permissions) : '[]',
       );
     const insert = this.#deps.db.prepare(
       'insert into widget_queries (widget_id, version, name, sql) values (?, ?, ?, ?)',
@@ -1325,6 +1418,44 @@ export class WidgetService {
     for (const def of queries) {
       insert.run(widgetId, version, def.name, def.sql);
     }
+  }
+
+  /** 某个版本行里的微应用清单（行为空 = 存量组件，返回 null）。 */
+  #manifestOfVersion(widgetId: string, version: number): ValidatedMicroApp | null {
+    const row = this.#deps.db
+      .prepare('select manifest_json from widget_versions where widget_id = ? and version = ?')
+      .get(widgetId, version) as { manifest_json: string } | undefined;
+    return manifestOfRow(row?.manifest_json ?? '');
+  }
+
+  /**
+   * 生效版本解析（D112，设计 55 §9.1 版本双指针）：
+   * - 存量组件（卡片无 `microApp`）：卡片钉住版本 + 既有完整性校验（`#pinnedVersion`），行为零变化；
+   * - 微应用：`widgets.next_version ?? 卡片钉住版本`——升级落新版本后重新打开生效，
+   *   不热替换运行中的实例。行被修剪 → 既有「这个版本已不存在」口径。
+   */
+  #resolveEffectiveVersion(card: WidgetCard): { version: WidgetVersionRow; microApp: ValidatedMicroApp | null } {
+    if (card.microApp === undefined) {
+      return { version: this.#pinnedVersion(card), microApp: null };
+    }
+    const widget = this.#widgetOf(card.widgetId);
+    const effective = widget?.next_version ?? card.version;
+    const version = this.#versionOf(card.widgetId, effective);
+    if (version === null) {
+      throw new AppError(
+        'WIDGET_INVALID',
+        '这个版本的微应用已不存在（可能已被回退到被修剪的版本）',
+      );
+    }
+    const microApp = manifestOfRow(version.manifest_json);
+    if (microApp === null) {
+      throw new AppError('WIDGET_INVALID', '这个微应用版本的清单已损坏，拒绝加载');
+    }
+    // 查询模板防「审查对象被偷换」：行内摘要要能由库里的模板复算出来（同存量侧）。
+    if (queriesSha256Of(this.#queriesOf(card.widgetId, effective)) !== version.queries_sha256) {
+      throw new AppError('WIDGET_INVALID', '微应用版本与其查询模板记录不一致，拒绝加载');
+    }
+    return { version, microApp };
   }
 
   #widgetOf(widgetId: string): WidgetRow | null {
@@ -1435,6 +1566,18 @@ function cardCheckFields(
 ): Pick<WidgetCard, 'checkStatus' | 'knownIssues'> {
   if (check === undefined) return { checkStatus: 'legacy', knownIssues: [] };
   return { checkStatus: check.status, knownIssues: check.summary.knownIssues };
+}
+
+/** 卡片描述符里的微应用字段（D112）：存量组件路径返回空对象，卡片形状不变。 */
+function microAppCardFields(
+  microApp: ValidatedMicroApp | null,
+): Pick<WidgetCard, 'microApp' | 'capabilityFingerprint' | 'bundleSha256'> {
+  if (microApp === null) return {};
+  return {
+    microApp: microAppCardSummaryOf(microApp.manifest),
+    capabilityFingerprint: microApp.fingerprint,
+    bundleSha256: microApp.bundleSha256,
+  };
 }
 
 /** 版本行的检查摘要里的已知问题（存量空串 / 损坏 → 空）。 */

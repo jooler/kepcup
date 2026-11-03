@@ -1,9 +1,11 @@
 import {
   BOT_WIDGET_HEIGHT_MAX,
   BOT_WIDGET_HEIGHT_MIN,
+  MICRO_APP_SDK_MARKER,
   WIDGET_BRIDGE_HOST_SOURCE,
   WIDGET_BRIDGE_WIDGET_SOURCE,
   WIDGET_HOST_THEME_EVENT,
+  buildMicroAppShim,
   htmlDefinesScrollbarStyle,
   IFRAME_SCROLLBAR_CSS,
   IFRAME_SCROLLBAR_STYLE_MARKER,
@@ -382,15 +384,32 @@ export const WIDGET_KIT_SCRIPT = oneLine(KIT_SOURCE);
  */
 export function injectWidgetSdk(html: string, options: { theme?: WidgetTheme } = {}): string {
   if (html.includes(WIDGET_SDK_MARKER) || html.includes(LEGACY_SDK_MARKER)) return html;
-  const injection = [
+  return injectAfterHead(html, buildInjection(html, widgetSdkShim(options.theme ?? 'light')));
+}
+
+/**
+ * 微应用垫片注入（D112，设计 55 §6）：与组件垫片共用主题变量 / 滚动条 / kit，脚本本体
+ * 换成 `micro-app-sdk` 生成的桥 v2 垫片（`kepcup.app` / 能力协商 / 事件订阅）。幂等标记
+ * `kepcup-micro-app-sdk-v1`。存量组件路径不经这里（行为零变化的分界点之一）。
+ */
+export function injectMicroAppSdk(html: string, options: { theme?: WidgetTheme } = {}): string {
+  if (html.includes(MICRO_APP_SDK_MARKER)) return html;
+  return injectAfterHead(html, buildInjection(html, buildMicroAppShim(options.theme ?? 'light')));
+}
+
+function buildInjection(html: string, shim: string): string {
+  return [
     // 默认滚动条（应用同款）：页面自己定义了滚动条样式就不注入（见 iframe-defaults.ts）。
     ...(htmlDefinesScrollbarStyle(html)
       ? []
       : [`<style ${IFRAME_SCROLLBAR_STYLE_MARKER}>${IFRAME_SCROLLBAR_CSS}</style>`]),
     WIDGET_THEME_STYLE,
-    widgetSdkShim(options.theme ?? 'light'),
+    shim,
     ...(wantsKepcupKit(html) ? [WIDGET_KIT_STYLE, WIDGET_KIT_SCRIPT] : []),
   ].join('');
+}
+
+function injectAfterHead(html: string, injection: string): string {
   const head = /<head\b[^>]*>/i.exec(html);
   if (head !== null) {
     const at = head.index + head[0].length;

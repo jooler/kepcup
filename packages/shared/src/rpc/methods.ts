@@ -90,6 +90,10 @@ import {
   widgetsUiStorageOutputSchema,
 } from '../domain/widgets-ui.js';
 import {
+  microAppsPreflightInputSchema,
+  microAppsPreflightOutputSchema,
+} from '../domain/micro-app.js';
+import {
   mcpbInspectInputSchema,
   mcpbInspectOutputSchema,
   mcpbInstallInputSchema,
@@ -2520,6 +2524,8 @@ export const rpcMethodSchemas = {
   'widgets.list': { input: widgetsListInputSchema, output: widgetsListOutputSchema },
   'widgets.delete': { input: widgetsDeleteInputSchema, output: widgetsDeleteOutputSchema },
   'widgets.publish': { input: widgetsPublishInputSchema, output: widgetsPublishOutputSchema },
+  // D112 微应用（docs/design/55-bot-micro-app-runtime.md）：能力面专属入口（预检 / 诊断 / 管理）。
+  'microApps.preflight': { input: microAppsPreflightInputSchema, output: microAppsPreflightOutputSchema },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -3272,6 +3278,7 @@ const APP_METHODS = [
   'widgets.list',
   'widgets.delete',
   'widgets.publish',
+  'microApps.preflight',
   'mcp.rawTools',
   'mcp.refreshTools',
   'websearch.test',

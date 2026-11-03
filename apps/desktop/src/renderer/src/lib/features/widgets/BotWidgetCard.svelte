@@ -1,18 +1,26 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Blocks, Code2, Play, ShieldCheck } from '@lucide/svelte';
+  import { Blocks, Code2, Globe, Mic, Play, RefreshCw, Settings2, ShieldCheck } from '@lucide/svelte';
   import {
+    MICRO_APP_CAPABILITIES,
+    microAppsPreflightOutputSchema,
     widgetsUiPosterOutputSchema,
     widgetsUiSourceOutputSchema,
+    type MicroAppsPreflightOutput,
     type WidgetCard,
     type WidgetQueryDef,
   } from '@kepcup/shared';
   import { Button } from '$lib/components/ui/button';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { widgetViewer } from './widget-viewer.svelte';
   import { rememberWidgetConsent, widgetConsented } from './consent.svelte';
+  import {
+    microAppCardConsented,
+    rememberMicroAppConsent,
+  } from './micro-app-consent.svelte';
   import { checkBadge } from './check-status';
 
   /**
@@ -23,6 +31,11 @@
    * 真正运行）；未确认 / 带查询未审查时海报不可点，走下方审查态（查看源码含查询 SQL 全文
    * → 「确认并打开」，按「HTML sha256 + 查询摘要」记忆确认，同版本只确认一次）。
    * 运行期的一切（桥 / 资源租约 / 外链与回传确认）都在 WidgetRuntime。
+   *
+   * 微应用（D112，设计 55 §5.2）：`card.microApp` 存在时审查态换成微应用确认卡——
+   * **网络行单独一行排在最前**（按档位措辞，不折叠）、能力清单（spec 人话）、预计成本
+   * 与计费 Bot、能力可用性预检（不可用项标「当前不可用」+ 设置深链，打开前可见）；
+   * 确认按**能力面指纹**记忆（同指纹代码更新沿用确认，标「代码已更新，权限未扩大」）。
    */
   let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
   const session = getChatSession();
@@ -40,9 +53,39 @@
   /** 查看源码的展示上限：本地库损坏时 html 可能远超 2MB 上限，整段渲染会卡死界面。 */
   const SOURCE_DISPLAY_MAX_CHARS = 20_000;
 
+  // --- 微应用（D112）：预检 + 指纹确认 ------------------------------------------
+  /** 带 `microApp` 清单才有；预检挂载时懒加载（与海报并行）。 */
+  const isMicroApp = $derived(card.microApp !== undefined);
+  let preflight = $state<MicroAppsPreflightOutput | null>(null);
+  /** 生效指纹：预检回来前用卡片自带的（可能过期）——门控以预检为准，未回来前按未确认处理。 */
+  const effectiveFingerprint = $derived(preflight?.capabilityFingerprint ?? card.capabilityFingerprint ?? '');
+  const consentState = $derived(
+    isMicroApp && effectiveFingerprint !== ''
+      ? microAppCardConsented(
+          card,
+          effectiveFingerprint,
+          preflight?.bundleSha256 ?? card.bundleSha256,
+        )
+      : { ok: false as const },
+  );
+  /** 同指纹但代码更新（bundle 变）：沿用确认，卡上标「代码已更新，权限未扩大」。 */
+  const codeUpdated = $derived(consentState.ok && consentState.codeUpdated);
+  /** 有新版本（双指针指向更高版本）：重新打开生效。 */
+  const hasNewerVersion = $derived(preflight !== null && preflight.version > card.version);
+  const unavailableItems = $derived(
+    preflight !== null ? preflight.items.filter((item) => !item.available) : [],
+  );
+  const capabilityLines = $derived(
+    (card.microApp?.permissions ?? [])
+      .map((id) => MICRO_APP_CAPABILITIES.find((cap) => cap.id === id))
+      .filter((cap) => cap !== undefined),
+  );
+
   /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「确认并打开」。 */
   const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
-  const needsConsent = $derived(!widgetConsented(card));
+  const needsConsent = $derived(
+    isMicroApp ? !consentState.ok || effectiveFingerprint === '' : !widgetConsented(card),
+  );
   /** 审查态未完成（未确认或查询未预审）：海报不可点，确认入口在下方审查块。 */
   const reviewFirst = $derived(needsReview || needsConsent);
 
@@ -59,6 +102,17 @@
         posterLoading = false;
       }
     })();
+    if (isMicroApp) {
+      void (async () => {
+        try {
+          preflight = microAppsPreflightOutputSchema.parse(
+            await core.call('microApps.preflight', { messageId }),
+          );
+        } catch {
+          preflight = null;
+        }
+      })();
+    }
   });
 
   function openRuntime(): void {
@@ -70,9 +124,14 @@
     openRuntime();
   }
 
-  /** 审查块的「确认并打开」：记忆确认（按版本）后立即在覆盖层运行。 */
+  /** 审查块的「确认并打开」：记忆确认（组件按版本 / 微应用按能力面指纹）后立即运行。 */
   function confirmAndOpen(): void {
-    rememberWidgetConsent(card);
+    if (isMicroApp) {
+      if (effectiveFingerprint === '') return;
+      rememberMicroAppConsent(card, effectiveFingerprint, card.bundleSha256 ?? '');
+    } else {
+      rememberWidgetConsent(card);
+    }
     openRuntime();
   }
 
@@ -105,6 +164,9 @@
     <div class="min-w-0 flex-1">
       <p class="truncate font-medium" data-testid="bot-widget-title">{card.title}</p>
       <p class="truncate text-xs text-muted-foreground">
+        {#if isMicroApp}
+          {t('botWidget.microApp.kind')} ·
+        {/if}
         {#if card.description !== ''}
           {card.description} ·
         {/if}
@@ -152,6 +214,82 @@
 
   {#if reviewFirst}
     <div class="border-t px-3 py-2" data-testid="bot-widget-review">
+      {#if isMicroApp}
+        <!-- 微应用确认卡（D112 §5.2）：网络行单独一行、排在能力清单之前、不折叠。 -->
+        <div class="mb-2 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1.5" data-testid="bot-widget-microapp">
+          <p class="flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+            {#if card.microApp!.netMode === 'none'}
+              <Mic class="size-3.5 shrink-0" aria-hidden="true" />
+              {t('botWidget.microApp.netNone')}
+            {:else}
+              <Globe class="size-3.5 shrink-0" aria-hidden="true" />
+              {#if card.microApp!.netMode === 'open'}
+                {t('botWidget.microApp.netOpen')}
+              {:else}
+                {t('botWidget.microApp.netAllowlist', {
+                  domains: card.microApp!.netAllowlist.join('、'),
+                })}
+              {/if}
+            {/if}
+          </p>
+          {#if hasNewerVersion}
+            <p class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-newer">
+              <RefreshCw class="size-3 shrink-0" aria-hidden="true" />
+              {t('botWidget.microApp.newerVersion', { version: preflight?.version ?? card.version })}
+            </p>
+          {/if}
+          {#if codeUpdated}
+            <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-code-updated">
+              {t('botWidget.microApp.codeUpdated')}
+            </p>
+          {/if}
+          <p class="mt-1.5 text-[11px] font-medium">{t('botWidget.microApp.canDo')}</p>
+          <ul class="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
+            {#each capabilityLines as cap (cap.id)}
+              <li>{cap.userLine}</li>
+            {/each}
+          </ul>
+          {#if card.microApp!.maxTokensPerSession !== undefined}
+            <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-cost">
+              {t('botWidget.microApp.cost', {
+                n: card.microApp!.maxTokensPerSession,
+                bot: card.botId ?? '',
+              })}
+            </p>
+          {/if}
+          {#if preflight !== null && preflight.items.length !== capabilityLines.length}
+            <!-- 预检覆盖了清单外的能力面（异常态）：不展示，避免误导；正常时逐项对应。 -->
+          {/if}
+          {#each unavailableItems as item (item.capability)}
+            <p class="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400" data-testid="bot-widget-microapp-unavailable">
+              <Settings2 class="size-3 shrink-0" aria-hidden="true" />
+              {t('botWidget.microApp.unavailable', {
+                capability: item.capability,
+                reason: item.reason ?? '',
+              })}
+              {#if item.settingDeepLink !== undefined}
+                <button
+                  type="button"
+                  class="underline underline-offset-2"
+                  data-testid="bot-widget-microapp-settings-link"
+                  onclick={() =>
+                    shell.openSettings(
+                      item.settingDeepLink!.section as Parameters<typeof shell.openSettings>[0],
+                      item.settingDeepLink!.anchor,
+                    )}
+                >
+                  {t('botWidget.microApp.openSettings')}
+                </button>
+              {/if}
+            </p>
+          {/each}
+          {#if preflight === null}
+            <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-preflight-loading">
+              {t('botWidget.microApp.preflightLoading')}
+            </p>
+          {/if}
+        </div>
+      {/if}
       {#if badge !== null}
         <!-- D87 P3c 自检徽标：只说明它能运行、不代表安全；按版本确认照旧（设计 32 §11.12）。 -->
         <div class="mb-1.5" data-testid="bot-widget-check">
@@ -215,10 +353,10 @@
           size="sm"
           class="h-6 px-2 text-xs"
           onclick={confirmAndOpen}
-          disabled={needsReview}
+          disabled={needsReview || (isMicroApp && effectiveFingerprint === '')}
           data-testid="bot-widget-load"
         >
-          {t('botWidget.confirmAndOpen')}
+          {t(isMicroApp ? 'botWidget.microApp.confirmAndOpen' : 'botWidget.confirmAndOpen')}
         </Button>
       </div>
       {#if needsReview}
