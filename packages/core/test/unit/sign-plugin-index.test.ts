@@ -47,8 +47,10 @@ async function signFixture(
     engines?: Record<string, string>;
     platforms?: string[];
     icon?: string;
+    usage?: string | null;
+    expectExit?: number;
   } = {},
-): Promise<{ artifact: Artifact; sha256: string; id: string; version: string }> {
+): Promise<{ artifact: Artifact; sha256: string; id: string; version: string; errors: string[] }> {
   const outDir = path.join(root, `out-${Math.random().toString(36).slice(2, 8)}`);
   const keyDir = path.join(root, `key-${Math.random().toString(36).slice(2, 8)}`);
   const keyId = 'sign-plugin-test';
@@ -64,6 +66,7 @@ async function signFixture(
       ...(options.engines !== undefined ? { engines: options.engines } : {}),
       ...(options.platforms !== undefined ? { platforms: options.platforms } : {}),
       ...(options.icon !== undefined ? { icon: 'icon.svg' } : {}),
+      ...(options.usage !== undefined ? { usage: options.usage } : {}),
     },
     ...(options.icon !== undefined
       ? { extraEntries: [{ name: 'icon.svg', data: options.icon }] }
@@ -82,6 +85,7 @@ async function signFixture(
       },
     ]),
   );
+  const errors: string[] = [];
   const exit = await script.run(
     [
       '--out',
@@ -100,14 +104,20 @@ async function signFixture(
       keysFile,
     ],
     { KEPCUP_PLUGIN_SIGNING_KEY: pem },
-    { out: () => {}, err: () => {} },
+    {
+      out: () => {},
+      err: (message) => {
+        errors.push(message);
+      },
+    },
   );
-  expect(exit).toBe(0);
+  expect(exit).toBe(options.expectExit ?? 0);
   return {
     artifact: { outDir, keysFile, pem },
     sha256: fixture.sha256,
     id: manifestShape.id,
     version: manifestShape.version,
+    errors,
   };
 }
 
@@ -146,6 +156,10 @@ describe('sign-plugin-index.mjs', () => {
     const copy = path.join(artifact.outDir, 'packages', `${sha256}.kepcup`);
     expect(existsSync(copy)).toBe(true);
     expect(createHash('sha256').update(readFileSync(copy)).digest('hex')).toBe(sha256);
+  });
+
+  it('refuses to sign a package whose manifest has no usage (activation instructions)', async () => {
+    await expect(signFixture({ usage: null })).rejects.toThrow(/usage/);
   });
 
   it('embeds the declared package icon into the signed index', async () => {

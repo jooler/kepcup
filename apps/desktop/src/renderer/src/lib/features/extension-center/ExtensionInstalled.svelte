@@ -71,7 +71,9 @@
   let updatingAll = $state(false);
   let uninstallTarget = $state<string | null>(null);
   /** 插件卡片「管理」进入的内容管理视图；null = 插件网格。 */
-  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; pluginId: string } | null>(null);
+  let contentView = $state<{ kind: 'connector' | 'mcp' | 'mail' | 'im'; pluginId: string } | null>(
+    null,
+  );
   /** 卡片「设置」就地展开的插件 config 表单（声明了 config.fields 的插件）；null = 收起。 */
   let configPanelId = $state<string | null>(null);
   let configValues = $state<Record<string, unknown>>({});
@@ -131,6 +133,7 @@
     { id: 'connector', labelKey: 'plugins.kind.connector' },
     { id: 'mcp', labelKey: 'plugins.kind.mcp' },
     { id: 'mail', labelKey: 'plugins.kind.mail' },
+    { id: 'im', labelKey: 'plugins.filter.im' },
   ];
 
   /** 各筛选下的插件数量（含「全部」）；为 0 的筛选也显示，点了给空态。 */
@@ -151,11 +154,12 @@
    */
   function matchesKind(
     plugin: PluginSummary,
-    countKey: 'skills' | 'connectors' | 'mcp' | 'mail',
+    countKey: 'skills' | 'connectors' | 'mcp' | 'mail' | 'im',
   ): boolean {
     if (plugin.counts[countKey] > 0) return true;
     if (countKey === 'mail') return plugin.instanceCounts.mail > 0;
     if (countKey === 'mcp') return plugin.instanceCounts.mcp > 0;
+    if (countKey === 'im') return plugin.instanceCounts.im > 0;
     return false;
   }
 
@@ -178,6 +182,7 @@
     ['connectors', 'plugins.kind.connector'],
     ['mcp', 'plugins.kind.mcp'],
     ['mail', 'plugins.kind.mail'],
+    ['im', 'plugins.kind.im'],
   ] as const;
 
   /** 卡片的「管理」入口类别（按连接 → MCP → 邮件排序；纯技能插件没有管理面）。 */
@@ -863,7 +868,7 @@
         <ArrowLeft class="size-3.5" aria-hidden="true" />
         {t('plugins.backToList')}
       </Button>
-      <ExtensionIm embedded />
+      <ExtensionIm embedded pluginId={contentView.pluginId} />
     </div>
   {:else}
     <div class="space-y-2" data-testid="plugins-content-mail">

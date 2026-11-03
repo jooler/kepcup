@@ -46,6 +46,7 @@ function manifestOf(mailId: string): PluginManifest {
     id: identity.id,
     name: 'Mail',
     version: '1.0.0',
+    usage: '启用后添加邮箱账号并勾选绑定到 Bot。',
     instances: ['mail'],
     contributions: {
       mail: [

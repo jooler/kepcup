@@ -147,6 +147,7 @@ function defaultManifest(options: PluginFixtureOptions): Record<string, unknown>
     name: 'Fixture',
     version: '1.0.0',
     description: 'KepCup plugin fixture',
+    usage: 'Fixture plugin: nothing to activate.',
     contributions,
   };
 }

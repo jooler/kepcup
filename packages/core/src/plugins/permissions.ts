@@ -103,6 +103,8 @@ export function describePermission(token: string): string {
     }
     case 'mail':
       return `新增邮件模板 ${rest}`;
+    case 'im':
+      return `新增即时通讯通道 ${rest}`;
     default:
       return token;
   }

@@ -67,15 +67,28 @@ export function bindMailMethods(services: CoreServices): Record<string, RpcMetho
     'mail.accounts.setBots': method(
       mailAccountSetBotsInputSchema,
       mailAccountGetOutputSchema,
-      async (input) => ({
-        account: mail().setBots(input.id, input.botIds),
-      }),
+      async (input) => {
+        const before = mail().get(input.id);
+        const account = mail().setBots(input.id, input.botIds);
+        // 绑定变化影响插件激活是否完整：30 秒合并后通报相关 Bot（51 号文档 §15.8）。
+        for (const botId of new Set([...before.botIds, ...input.botIds])) {
+          services.pluginBotNotice?.note(botId);
+        }
+        return { account };
+      },
     ),
     'mail.bots.setAccounts': method(
       mailBotSetAccountsInputSchema,
       okOutputSchema,
       async (input) => {
+        const before = mail()
+          .list()
+          .filter((account) => account.botIds.includes(input.botId))
+          .map((account) => account.id);
         mail().setAccountsForBot(input.botId, input.accountIds);
+        if (JSON.stringify([...before].sort()) !== JSON.stringify([...input.accountIds].sort())) {
+          services.pluginBotNotice?.note(input.botId);
+        }
         return { ok: true as const };
       },
     ),

@@ -150,6 +150,7 @@ describe('describePermission', () => {
     expect(describePermission('mcp-http:docs')).toBe('新增远端 MCP 服务器 docs');
     expect(describePermission('connector:x')).toBe('新增连接应用 x');
     expect(describePermission('mail:x')).toBe('新增邮件模板 x');
+    expect(describePermission('im:wechat')).toBe('新增即时通讯通道 wechat');
   });
 
   it('returns unknown tokens verbatim', () => {

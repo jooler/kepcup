@@ -9,6 +9,7 @@ import {
   pluginCapabilitySummaryFromCategories,
   pluginFieldSummaryOf,
   isPluginIconDataUri,
+  sanitizeDisplayText,
   type McpbUserConfigValue,
   type PluginFieldValue,
   type PluginItemKind,
@@ -43,11 +44,7 @@ import {
 } from './ids.js';
 import { parsePluginManifestText } from './manifest-loader.js';
 import { pluginIconDataUri } from './icon.js';
-import {
-  CAPABILITY_KINDS,
-  capabilityKindOf,
-  mergeConsentItems,
-} from './kinds.js';
+import { CAPABILITY_KINDS, capabilityKindOf, mergeConsentItems } from './kinds.js';
 import {
   pluginConfigSecretName,
   validatePluginFieldValues,
@@ -385,12 +382,16 @@ export class PluginRegistry {
       // auto-built form round-trip an unknown key and setConfig (full replace, unknown
       // keys rejected) would refuse every save with no way to clear it from the UI. The
       // stale key leaves config_json on the next save (form submits declared keys only).
-      const declared = new Set(fields.filter((field) => !field.sensitive).map((field) => field.key));
+      const declared = new Set(
+        fields.filter((field) => !field.sensitive).map((field) => field.key),
+      );
       const values = Object.fromEntries(
         Object.entries(stored).filter(([key]) => declared.has(key)),
       );
       const storedSensitiveKeys = fields
-        .filter((field) => this.#deps.secrets?.hasValue(pluginConfigSecretName(id, field.key)) === true)
+        .filter(
+          (field) => this.#deps.secrets?.hasValue(pluginConfigSecretName(id, field.key)) === true,
+        )
         .map((field) => field.key);
       return { values, storedSensitiveKeys };
     });
@@ -572,8 +573,7 @@ export class PluginRegistry {
         // D105 P4: index-carried line; entries signed before the field existed fall
         // back to the coarser kinds-derived summary.
         capabilitySummary:
-          chosen.capabilitySummary ??
-          pluginCapabilitySummaryFromCategories(chosen.categories),
+          chosen.capabilitySummary ?? pluginCapabilitySummaryFromCategories(chosen.categories),
         // Signed-index input is untrusted relative to the renderer: only a well-formed
         // image data URI reaches the card; anything else falls back to the default icon.
         iconDataUri: isPluginIconDataUri(chosen.summary.icon) ? chosen.summary.icon : null,
@@ -1784,7 +1784,11 @@ export class PluginRegistry {
         : (manifest.instances ?? []).flatMap((kind) =>
             capabilityKindOf(kind).instanceFields(manifest).map(pluginFieldSummaryOf),
           );
-    const instanceRowCounts = this.#deps.instanceStore?.countsOf(row.id) ?? { mail: 0, mcp: 0, im: 0 };
+    const instanceRowCounts = this.#deps.instanceStore?.countsOf(row.id) ?? {
+      mail: 0,
+      mcp: 0,
+      im: 0,
+    };
     return {
       configFields: (manifest?.config?.fields ?? []).map(pluginFieldSummaryOf),
       instanceFields,
@@ -1800,6 +1804,7 @@ export class PluginRegistry {
       iconDataUri: pluginIconDataUri(dirPath, manifest),
       version: row.version,
       description: manifest?.description ?? '',
+      usage: sanitizeDisplayText(manifest?.usage ?? '', 500),
       author: manifest?.author?.name ?? null,
       origin: row.origin,
       tier: row.tier,

@@ -82,6 +82,7 @@ export function pluginKindBadges(
   if (plugin.counts.connectors > 0) kinds.push('connector');
   if (plugin.counts.mcp > 0 || plugin.providesInstances.includes('mcp')) kinds.push('mcp');
   if (plugin.counts.mail > 0 || plugin.providesInstances.includes('mail')) kinds.push('mail');
+  if (plugin.counts.im > 0 || plugin.providesInstances.includes('im')) kinds.push('im');
   return kinds;
 }
 

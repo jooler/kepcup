@@ -41,6 +41,7 @@ function mailPlugin(overrides: Partial<PluginSummary> = {}): PluginSummary {
     iconDataUri: null,
     version: '1.0.0',
     description: '',
+    usage: '启用后添加邮箱账号并勾选绑定到 Bot。',
     author: null,
     origin: 'marketplace',
     tier: 'verified',

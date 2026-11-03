@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-sentry",
   "name": "Sentry 连接",
   "icon": "connectors/sentry/sentry.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "查看 Sentry 的问题、错误与 Seer 分析",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Sentry 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能查看问题与错误。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://sentry.io",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

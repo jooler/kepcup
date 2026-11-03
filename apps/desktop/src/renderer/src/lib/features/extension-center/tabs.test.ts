@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { EXTENSION_CENTER_TABS, extensionTabForKey, resolveExtensionCenterTarget } from './tabs';
+import {
+  EXTENSION_CENTER_TABS,
+  FILTER_COUNT_KEYS,
+  extensionTabForKey,
+  resolveExtensionCenterTarget,
+} from './tabs';
 
 describe('extensionTabForKey', () => {
   it('lists the groups in display order', () => {
@@ -63,11 +68,21 @@ describe('resolveExtensionCenterTarget', () => {
       filter: 'mail',
       systemCard: false,
     });
+    // 2026-11-03：微信上架后新增「即时通讯」分类（市场 + 已安装筛选）。
+    expect(resolveExtensionCenterTarget('installed', 'plugins-filter-im')).toEqual({
+      tab: 'installed',
+      filter: 'im',
+      systemCard: false,
+    });
     expect(resolveExtensionCenterTarget('market', 'plugins-filter-all')).toEqual({
       tab: 'installed',
       filter: 'all',
       systemCard: false,
     });
+  });
+
+  it('counts the instant-messaging filter from the im contribution count', () => {
+    expect(FILTER_COUNT_KEYS.im).toBe('im');
   });
 
   it('keeps the real tabs and resets the filter to all', () => {

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_RPC_METHODS,
   ERROR_CODES,
+  INTERNAL_SYSTEM_EVENTS,
+  PLUGIN_ACTIVATION_EVENT,
   RPC_EVENT_NAMES,
   connectorOriginSchema,
   mcpServerSchema,
@@ -41,6 +43,7 @@ const summary = {
   iconDataUri: null,
   version: '1.2.0',
   description: '',
+  usage: '启用即可使用。',
   author: null,
   origin: 'local',
   tier: 'developer',
@@ -58,15 +61,16 @@ const summary = {
   ],
   updateAvailable: null,
   revoked: null,
-  configFields: [
-    { key: 'defaultRepo', title: '默认仓库', type: 'string', required: false },
-  ],
+  configFields: [{ key: 'defaultRepo', title: '默认仓库', type: 'string', required: false }],
   instanceFields: [],
   instanceCounts: { mail: 0, mcp: 0, im: 0 },
   providesInstances: [],
 };
 
 describe('plugins RPC / event / error-code contracts', () => {
+  it('registers the plugin activation event as an internal system event', () => {
+    expect(INTERNAL_SYSTEM_EVENTS.has(PLUGIN_ACTIVATION_EVENT)).toBe(true);
+  });
   it('registers all five plugins.* methods in APP_RPC_METHODS', () => {
     for (const method of PLUGIN_METHODS) {
       expect(APP_RPC_METHODS).toContain(method);

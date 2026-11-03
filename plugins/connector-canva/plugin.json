@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-canva",
   "name": "Canva 连接",
   "icon": "connectors/canva/canva.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "生成、编辑、检索与导出 Canva 设计",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Canva 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能使用 Canva 工具。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://www.canva.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

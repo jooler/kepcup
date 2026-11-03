@@ -120,6 +120,7 @@ function manifestOf(dirs: string[]): PluginManifest {
     id: 'io.github.tester/skills',
     name: 'Skills',
     version: '1.0.0',
+    usage: '启用即可使用。',
     contributions: { skills: dirs.map((dir) => ({ dir: `skills/${dir}` })) },
   });
 }

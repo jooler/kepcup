@@ -12,6 +12,7 @@ plugins/
   skill-<id>/          技能插件：skills/<id>/SKILL.md（+ requirements.txt）
   connector-<slug>/    连接器插件：connectors/<slug>/server.json（+ 图标）
   mail-<id>/           邮件插件（D105 P3）：instances: ['mail'] + 一份 mail 贡献
+  im-<id>/             即时通讯插件（D107）：instances: ['im'] + 一份 im 贡献
   README.md
 ```
 
@@ -32,6 +33,15 @@ plugins/
   （实例供给规范）。厂商插件锁定端点（imap/smtp host 非空，两侧成对声明），
   账号表单只有 地址 / 用户名 / 授权码（+ 插件 `instanceFields`）；通用插件
   （host 留空）的 IMAP/SMTP 端点变成必填实例字段，用户自填。
+- **IM 插件**：清单声明 `instances: ['im']` 且恰好一份 `contributions.im`
+  （transport / apiBase / setup / features，见设计 54）；账号由用户扫码或填表添加，
+  再在 Bot 详情勾选绑定后才参与入站唤醒 / 出站转发。
+- **启用说明 `usage`（2026-11-03 起必填）**：一句话说明「启用之后还要做什么」
+  （启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定）。用户操作插件 30 秒后，
+  宿主会把状态连同这句话发给 Bot，由它决定是否提醒用户补做遗漏步骤；详见
+  [docs/guides/write-a-plugin.md](../docs/guides/write-a-plugin.md) §2.5 与设计 51 §15.8。
+  依赖 `usage` 等新清单字段的插件必须把 `engines.kepcup` 抬到支持它的最低版本
+  （当前 `>=0.5.7`），否则旧客户端会先看到可更新、下载后才解析失败。
 
 ## 开发流程（D104，docs/guides/write-a-plugin.md）
 
@@ -46,7 +56,7 @@ node packages/app-validator/dist/cli.js pack plugins/skill-docx --out /tmp/dist/
 ## 发布首批 / 增量发布
 
 ```bash
-# 1. 打包全部插件到发布目录
+# 1. 打包全部插件到发布目录（清单必须带 usage；依赖新字段的插件 engines.kepcup 要抬高）
 mkdir -p /tmp/market/packages && for d in plugins/*/; do
   n=$(basename "$d"); [ "$n" = "README.md" ] && continue
   node packages/app-validator/dist/cli.js pack "$d" --out "/tmp/market/packages/$n.kepcup"
@@ -99,3 +109,19 @@ cd infra/cloudflare/directory && npx wrangler deploy
   上传为 `6b1a3ed4…kepcup`）。新索引 `generatedAt=2026-11-03T06:13:20.869Z`（严格递增）、
   23 条，生产密钥 `kepcup-plugins-2026-1` 签名；R2 上传后 `wrangler deploy` 上线，线上
   索引拉回验签通过、微信包从 `pkg.kepcup.com` 下载回本地 sha256 复核一致。
+
+- **2026-11-03 启用说明 + 全部升版 1.1.0**：`plugin.json` 新增必填字段 `usage`
+  （启用说明，设计 51 §15.8）。23 个官方插件逐个补齐并统一升版 `1.1.0`：技能 / 连接 /
+  邮件 / 微信各自写明「启用即用」或「需要连接 / 添加账号再勾选绑定」的完整步骤。
+  23 个包重新打包 → 生产密钥 `kepcup-plugins-2026-1` 签名（新索引
+  `generatedAt=2026-11-03T06:57:19.231Z`，严格递增、23 条）→ 全部包上传 R2（内容寻址，
+  新增 23 个 sha256 对象）→ `wrangler deploy` 上线（Worker version
+  `707bb25b-a8d2-49bc-a425-b402d502b381`）。线上索引与 23 个包拉回 `--verify` 通过。
+
+- **2026-11-03 修正发布（engines 抬到 >=0.5.7）**：独立审查发现 `usage` 是 strict schema
+  的新字段，旧宿主（<0.5.7）会拒绝解析；若 `engines` 仍写 `>=0.4.0`，旧客户端会先看到
+  「可更新」再下载失败。23 个插件统一把 `engines.kepcup` 抬到 `>=0.5.7`（微信 / 邮件 / 技能
+  同一门槛），按同一流程重新打包 + 签名 + 上传 + 部署：新索引
+  `generatedAt=2026-11-03T09:28:38.920Z`（严格递增、23 条、全部 `1.1.0`），Worker version
+  `1482ed01-0ec3-4990-8889-7f8145c20d43`；线上索引与 23 个包拉回 `--verify` 通过。旧客户端
+  现在会在索引层过滤掉 1.1.0，升级宿主后再更新。
