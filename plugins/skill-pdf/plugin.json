@@ -3,15 +3,16 @@
   "id": "app.kepcup/skill-pdf",
   "name": "PDF 处理",
   "icon": "icon.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "PDF 处理与生成。提取文字/表格、合并拆分、加密解密、生成 PDF（从文本/HTML/图片），PDF 转图片或文本。用户提到 PDF、\"提取这一页\"、\"合并成一个 PDF\"、\"转成 PDF\"、\"填一下这个表\" 时使用。",
+  "usage": "启用即可使用：添加到 Bot 后，Bot 会在匹配的 PDF 处理任务里自动加载该技能，无需再连接账号或勾选其他选项。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "skills": [

@@ -722,6 +722,7 @@ describe('McpProjector.unproject / setEnabled', () => {
         id: 'io.github.tester/mcp',
         name: 'MCP',
         version: '1.0.0',
+        usage: '启用即可使用。',
         contributions: { mcp: [{ kind: 'mcpb', id: 'dbtools', file: 'mcp/dbtools.mcpb' }] },
       }),
     );

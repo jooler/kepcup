@@ -60,6 +60,7 @@ const emptyMailManifest = pluginManifestSchema.parse({
   id: 'io.a/b',
   name: 'x',
   version: '1.0.0',
+  usage: '启用即可使用。',
   // P3：纯实例形态只剩 mcp（mail 声明必须伴随供给规范贡献）。
   instances: ['mcp'],
 });
@@ -102,6 +103,7 @@ describe('capability kind registry (D105)', () => {
         id: 'io.a/b',
         name: 'x',
         version: '1.0.0',
+        usage: '启用即可使用。',
         ...extra,
       });
     // A contribution-less manifest is legal via `instances`; every kind reports false.

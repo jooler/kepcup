@@ -20,6 +20,8 @@ interface ConversationRow {
   created_at: number;
   parent_project_id: string | null;
   card_todo_id: string | null;
+  from_bot_id: string | null;
+  to_bot_id: string | null;
 }
 
 export function conversationRowToConversation(row: ConversationRow): Conversation {
@@ -32,6 +34,8 @@ export function conversationRowToConversation(row: ConversationRow): Conversatio
     leadBotId: row.lead_bot_id,
     parentProjectId: row.parent_project_id,
     cardTodoId: row.card_todo_id,
+    fromBotId: row.from_bot_id,
+    toBotId: row.to_bot_id,
     workdirId: row.workdir_id,
     readOnly: row.read_only === 1,
     archivedAt: row.archived_at ?? null,
@@ -101,7 +105,9 @@ export class ConversationsService {
   list(): Conversation[] {
     const rows = this.db
       .prepare(
-        "select * from conversations where type != 'card' order by coalesce(last_message_at, created_at) desc",
+        // D113: `bot_direct` (per-delegation exchange conversations) stays off
+        // the roster, same as `card` — the pill detail view reads it by id.
+        "select * from conversations where type not in ('card', 'bot_direct') order by coalesce(last_message_at, created_at) desc",
       )
       .all() as ConversationRow[];
     return rows.map(conversationRowToConversation);
@@ -114,7 +120,7 @@ export class ConversationsService {
   listVisible(): Conversation[] {
     const rows = this.db
       .prepare(
-        "select * from conversations where archived_at is null and type != 'card' order by coalesce(last_message_at, created_at) desc",
+        "select * from conversations where archived_at is null and type not in ('card', 'bot_direct') order by coalesce(last_message_at, created_at) desc",
       )
       .all() as ConversationRow[];
     return rows.map(conversationRowToConversation);
@@ -179,6 +185,42 @@ export class ConversationsService {
     });
     run.immediate();
     return { conversation: this.getOrThrow(id), created: true };
+  }
+
+  /**
+   * D113 (D71 v2): a fresh single-turn `bot_direct` exchange conversation for
+   * one delegation — A's task message and B's replies live here, never in the
+   * users' chats. Every call creates a NEW conversation (one delegation : one
+   * exchange, so the pill's detail link is unambiguous); it is not listed in
+   * the roster and the user cannot speak into it. The executor's workdir
+   * binding (if its user chat has one) is copied so the delegated turn's
+   * `resolveCwd` matches v1 semantics. Members: both bots.
+   */
+  openExchange(fromBotId: string, toBotId: string): Conversation {
+    const bound = this.db
+      .prepare(
+        "select workdir_id from conversations where type = 'direct' and direct_bot_id = ? and read_only = 0",
+      )
+      .get(toBotId) as { workdir_id: string | null } | undefined;
+    const workdirId = bound?.workdir_id ?? null;
+    const id = newId('conv');
+    const now = this.clock.now();
+    const run = this.db.transaction(() => {
+      this.db
+        .prepare(
+          'insert into conversations (id, type, workdir_id, from_bot_id, to_bot_id, created_at) values (?, ?, ?, ?, ?, ?)',
+        )
+        .run(id, 'bot_direct', workdirId, fromBotId, toBotId, now);
+      for (const botId of [fromBotId, toBotId]) {
+        this.db
+          .prepare(
+            'insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, ?)',
+          )
+          .run(id, botId, now);
+      }
+    });
+    run.immediate();
+    return this.getOrThrow(id);
   }
 
   markRead(conversationId: string, seq: number): void {

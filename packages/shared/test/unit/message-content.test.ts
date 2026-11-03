@@ -40,6 +40,8 @@ describe('messageContentSchema（D75 task_event 不串型）', () => {
       delegatedBy: 'bot_a',
     };
     expect(messageContentSchema.parse(delegated)).toEqual(delegated);
+    const supplement = { ...delegated, delegationUpdate: true };
+    expect(messageContentSchema.parse(supplement)).toEqual(supplement);
     expect(messageContentSchema.parse({ text: 'plain' })).toEqual({ text: 'plain' });
   });
 

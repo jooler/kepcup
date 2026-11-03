@@ -32,8 +32,10 @@ class ContactsState {
     });
     core.onEvent('conversation.updated', (payload) => {
       const data = payload as { conversation: Conversation };
-      // Card chats stay out of the address book. The dialog session listens on its own.
-      if (data.conversation.type === 'card') return;
+      // Card chats stay out of the address book; bot_direct exchange
+      // conversations too (v2.3 — pill detail only). The dialog session
+      // listens on its own.
+      if (data.conversation.type === 'card' || data.conversation.type === 'bot_direct') return;
       this.#upsertConversation(data.conversation);
     });
     core.onEvent('conversation.deleted', (payload) => {

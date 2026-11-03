@@ -7,6 +7,7 @@
     anchorFromFinalize,
     boardFlipDurationMs,
     cardClickGuard,
+    draggedElementHeight,
     isNoopMove,
     isShadow,
     stripShadow,
@@ -91,12 +92,6 @@
     }
     items = event.detail.items;
     workbench.setTodoDragging(true);
-  }
-
-  function draggedElementHeight(): number | null {
-    if (typeof document === 'undefined') return null;
-    const el = document.getElementById('dnd-action-dragged-el');
-    return el === null ? null : el.getBoundingClientRect().height;
   }
 
   function onFinalize(event: CustomEvent<DndEvent<TodoEntry>>): void {

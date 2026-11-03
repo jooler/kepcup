@@ -545,7 +545,7 @@ describe('§6.2 污点外发控制', () => {
     ).toBe(true);
   }, 300_000);
 
-  it("taint travels with a delegation: A (tainted) hands a task to B → B's web_fetch is carded in B's DM; B's own taint comes back with the result", async () => {
+  it("taint travels with a delegation: A (tainted) hands a task to B → B's execution home (the exchange conversation) is tainted and its web_fetch is carded, the card going to A's chat (v2.3)", async () => {
     const env = await start();
     const { core, llm } = env;
     const services = core.services;
@@ -605,11 +605,12 @@ describe('§6.2 污点外发控制', () => {
           .find((d) => d.fromBotId === a.id && d.toConversationId !== null) ?? null,
       { label: 'delegation delivered', timeoutMs: 30_000 },
     );
-    const bConv = delegation.toConversationId!;
-    // B never read app data, yet its DM inherited A's taint at delivery ...
-    expect(services.taint!.isTainted(b.id, bConv)).toBe(true);
-    // ... so its web_fetch is carded.
-    const card = await pendingEgress(env, bConv, 'web_fetch');
+    const exchange = delegation.exchangeConversationId!;
+    // B never read app data, yet its execution home — the exchange conversation
+    // where the delegated turn and its task run (v2.3) — inherited A's taint ...
+    expect(services.taint!.isTainted(b.id, exchange)).toBe(true);
+    // ... so its web_fetch is carded, the card landing in the issuer's chat.
+    const card = await pendingEgress(env, aConv, 'web_fetch');
     expect(card.payload['target']).toBe(LEAK_URL);
     await env.call('approvals.decide', { id: card.id, approve: false });
   }, 300_000);

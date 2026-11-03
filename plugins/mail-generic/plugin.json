@@ -3,15 +3,16 @@
   "id": "app.kepcup/mail-generic",
   "name": "通用邮箱",
   "icon": "icon.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "添加任意支持 IMAP/SMTP 的邮箱：自己填写收发服务器（如自建邮箱、企业邮箱、Fastmail 等），一个插件可以添加多个账号。",
+  "usage": "启用后还需要添加账号：在扩展中心 → 已安装 → 邮箱插件卡「管理」里添加邮箱账号（地址、密码或授权码，以及收发服务器），再在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能收发邮件。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://kepcup.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "instances": [
     "mail"

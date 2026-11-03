@@ -968,6 +968,10 @@ final class Provider {
         let snapshot = try currentSnapshot(params: params)
         let direction = try scrollDirection(try requiredString(params, "direction"))
         let pages = try positiveNumber(params["pages"]?.number, defaultValue: 1, name: "pages")
+        // Why: 滚轮没有可断言的属性（没有 focusedText/selection/value），只能比滚动前后的布局；
+        // 快照本来就在手边，首帧指纹是免费的。
+        let before = scrollLayoutFingerprint(snapshot)
+        let observing = snapshotObserver(params: params)
         if let elementIndex = try optionalInteger(params, "elementIndex") {
             let record = try element(snapshot, elementIndex)
             let action = "AXScroll\(direction.capitalized)ByPage"
@@ -976,17 +980,76 @@ final class Provider {
                 for _ in 0..<max(1, pageCount) {
                     _ = try performAction(record.element, action)
                 }
-                return actionMetadata(path: "accessibility", actionName: action)
+                let movement = scrollMovement(before: before, observing: observing)
+                // Why: 有的容器挂着 AXScroll*ByPage 却不处理滚动（Chromium 的滚动区常见），
+                // 动作被接受不等于内容动了；没动就回落指针路径，别把空转报成已执行。
+                if !ScrollReadback.isMoved(movement),
+                   let point = center(record.localFrame, in: snapshot.windowBounds) {
+                    let outcome = try scrollPointer(
+                        at: point,
+                        direction: direction,
+                        pages: pages,
+                        snapshot: snapshot,
+                        before: before,
+                        params: params,
+                        observing: observing
+                    )
+                    return actionMetadata(
+                        path: "synthetic",
+                        fallbackReason: scrollFallbackReason("accessibilityActionNoop", outcome),
+                        verification: outcome.verification
+                    )
+                }
+                return actionMetadata(
+                    path: "accessibility",
+                    actionName: action,
+                    verification: scrollVerification(movement, channel: .accessibility)
+                )
             }
             guard let point = center(record.localFrame, in: snapshot.windowBounds) else {
                 throw ProviderError.coded("element_not_found", "element \(record.index) has no scrollable frame")
             }
-            try scrollPointer(at: point, direction: direction, pages: pages, snapshot: snapshot, params: params)
-            return actionMetadata(path: "synthetic", fallbackReason: "actionUnsupported")
+            let outcome = try scrollPointer(
+                at: point,
+                direction: direction,
+                pages: pages,
+                snapshot: snapshot,
+                before: before,
+                params: params,
+                observing: observing
+            )
+            return actionMetadata(
+                path: "synthetic",
+                fallbackReason: scrollFallbackReason("actionUnsupported", outcome),
+                verification: outcome.verification
+            )
         }
         let point = try coordinatePoint(params: params, xKey: "x", yKey: "y", snapshot: snapshot)
-        try scrollPointer(at: point, direction: direction, pages: pages, snapshot: snapshot, params: params)
-        return actionMetadata(path: "synthetic")
+        let outcome = try scrollPointer(
+            at: point,
+            direction: direction,
+            pages: pages,
+            snapshot: snapshot,
+            before: before,
+            params: params,
+            observing: observing
+        )
+        return actionMetadata(
+            path: "synthetic",
+            fallbackReason: outcome.fallbackReason,
+            verification: outcome.verification
+        )
+    }
+
+    private func scrollFallbackReason(_ primary: String, _ outcome: ScrollPointerOutcome) -> String {
+        guard let inner = outcome.fallbackReason else { return primary }
+        return "\(primary),\(inner)"
+    }
+
+    /// 读回用的重观察：不带截图（与动作快照一致），复用缓存的元素索引链。
+    private func snapshotObserver(params: [String: JSONValue]) -> () throws -> Snapshot {
+        let merged = params.merging(["noScreenshot": .bool(true)]) { _, replacement in replacement }
+        return { [self] in try observe(params: merged) }
     }
 
     private func drag(params: [String: JSONValue]) throws -> [String: Any] {
@@ -1507,20 +1570,110 @@ private func requireBackgroundClickAllowed(_ hit: BackgroundInputTransport.Point
     }
 }
 
-private func scrollPointer(at point: CGPoint, direction: String, pages: Double, snapshot: Snapshot, params: [String: JSONValue]) throws {
-    guard let delta = boundedInteger(max(1, (12 * pages).rounded()), as: Int32.self) else {
+private struct ScrollPointerOutcome {
+    let verification: [String: Any]
+    /// 指针路径内部降级的原因（线单位空转后改像素单位），写进 action.fallbackReason 好定位。
+    let fallbackReason: String?
+}
+
+private func scrollPointer(
+    at point: CGPoint,
+    direction: String,
+    pages: Double,
+    snapshot: Snapshot,
+    before: ScrollLayoutFingerprint,
+    params: [String: JSONValue],
+    observing: () throws -> Snapshot
+) throws -> ScrollPointerOutcome {
+    guard let lines = ScrollWheelPlanner.lines(pages: pages, direction: direction) else {
         throw ProviderError.coded("invalid_argument", "pages is out of range")
     }
-    let wheel1: Int32 = direction == "up" ? delta : direction == "down" ? -delta : 0
-    let wheel2: Int32 = direction == "left" ? delta : direction == "right" ? -delta : 0
+    try deliverScroll(at: point, delta: lines, units: .line, snapshot: snapshot, params: params)
+    let first = scrollMovement(before: before, observing: observing)
+    // 只有「读回明确说没动」才换单位重试；树不可比时重复投递可能变成滚两次。
+    guard first == .unchanged else {
+        return ScrollPointerOutcome(verification: scrollVerification(first, channel: .synthetic), fallbackReason: nil)
+    }
+    // 策略内重试：线单位在部分 Chromium 宿主里会被折成 0 像素，换像素单位再投一次（pages 语义不变）。
+    guard let pixels = ScrollWheelPlanner.pixels(pages: pages, direction: direction) else {
+        return ScrollPointerOutcome(verification: scrollVerification(first, channel: .synthetic), fallbackReason: nil)
+    }
+    try deliverScroll(at: point, delta: pixels, units: .pixel, snapshot: snapshot, params: params)
+    return ScrollPointerOutcome(
+        verification: scrollVerification(scrollMovement(before: before, observing: observing), channel: .synthetic),
+        fallbackReason: "lineUnitsNoop"
+    )
+}
+
+private func deliverScroll(
+    at point: CGPoint,
+    delta: ScrollWheelDelta,
+    units: CGScrollEventUnit,
+    snapshot: Snapshot,
+    params: [String: JSONValue]
+) throws {
     if isForegroundRequest(params) {
         try requireTargetWindowFocused(snapshot, restoreWindowRequested: true)
-        try Input.scroll(at: point, wheel1: wheel1, wheel2: wheel2, targetWindow: snapshot)
+        try Input.scroll(at: point, wheel1: delta.wheel1, wheel2: delta.wheel2, units: units, targetWindow: snapshot)
         return
     }
     try withTransportErrors {
-        try BackgroundInputTransport.scroll(backgroundTarget(snapshot), at: point, wheel1: wheel1, wheel2: wheel2)
+        try BackgroundInputTransport.scroll(
+            backgroundTarget(snapshot),
+            at: point,
+            wheel1: delta.wheel1,
+            wheel2: delta.wheel2,
+            units: units
+        )
     }
+}
+
+private enum ScrollChannel {
+    case accessibility
+    case synthetic
+}
+
+/// 滚动读回结论 → verification。滚动没有可断言属性，永远不报 verified：
+/// 移动了 = 「已投递且布局动了」，没动 = suspected_noop，样本不可比 = readback_unsupported。
+private func scrollVerification(_ movement: ScrollMovement, channel: ScrollChannel) -> [String: Any] {
+    let reason: String
+    switch movement {
+    case .moved:
+        reason = channel == .accessibility ? "accessibility_action_unasserted" : "synthetic_input"
+    case .unchanged:
+        reason = "suspected_noop"
+    case .notComparable:
+        reason = "readback_unsupported"
+    }
+    return unverifiedAction(reason: reason, actualPreview: ScrollReadback.preview(movement))
+}
+
+private func scrollLayoutFingerprint(_ snapshot: Snapshot) -> ScrollLayoutFingerprint {
+    ScrollReadback.fingerprint(
+        snapshot.elementOrder.compactMap { index in
+            guard let record = snapshot.elements[index] else { return nil }
+            return (index: index, identity: record.signature, y: record.localFrame?.minY)
+        }
+    )
+}
+
+/// 滚动后的布局读回：轮询到 ~400ms，第一次观测到变化就返回（Chromium 的滚动是异步合成的）。
+private func scrollMovement(
+    before: ScrollLayoutFingerprint,
+    observing observe: () throws -> Snapshot
+) -> ScrollMovement {
+    var latest: ScrollMovement = .notComparable(matched: 0, total: before.count)
+    for attempt in 0..<3 {
+        usleep(attempt == 0 ? 150_000 : 120_000)
+        guard let after = try? observe() else {
+            return latest
+        }
+        latest = ScrollReadback.movement(before: before, after: scrollLayoutFingerprint(after))
+        if latest != .unchanged {
+            return latest
+        }
+    }
+    return latest
 }
 
 private func deliverKeys(_ events: [CGEvent], snapshot: Snapshot, params: [String: JSONValue]) throws {
@@ -2851,9 +3004,9 @@ private enum Input {
         }
     }
 
-    static func scroll(at point: CGPoint, wheel1: Int32, wheel2: Int32, targetWindow: Snapshot) throws {
+    static func scroll(at point: CGPoint, wheel1: Int32, wheel2: Int32, units: CGScrollEventUnit = .line, targetWindow: Snapshot) throws {
         let move = try mouseEvent(.mouseMoved, at: point)
-        guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: wheel1, wheel2: wheel2, wheel3: 0) else {
+        guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2, wheel1: wheel1, wheel2: wheel2, wheel3: 0) else {
             throw ProviderError.coded("accessibility_error", "failed to create scroll event")
         }
         wheel.location = point

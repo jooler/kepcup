@@ -15,6 +15,7 @@
   import { t, listSeparator } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { ChatSession } from '$lib/stores/chat-session.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -91,7 +92,24 @@
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
   // session）：提问卡从它取，message.created / updated 事件保持同源实时。
   const chatSession = getChatSession();
-  const pendingQuestion = $derived(pendingTaskQuestionOf(chatSession.messages, taskId));
+  // D113 执行归属映射：委派产生的任务住在 B 的私聊——详情页从别处打开（如委派
+  // 详情视图）时上下文会话不是任务的归属会话，为任务自己的会话开一个后台
+  // session 供提问卡（ask_user）取数（审批条走 task.conversationId 不受影响）。
+  let homeSession = $state<ChatSession | null>(null);
+  $effect(() => {
+    const convId = task?.conversationId;
+    if (convId === null || convId === undefined || chatSession.conversation?.id === convId) return;
+    const bg = new ChatSession(undefined, { foreground: false });
+    homeSession = bg;
+    void bg.open(convId);
+    return () => bg.dispose();
+  });
+  const questionSession = $derived(
+    chatSession.conversation?.id !== undefined && chatSession.conversation?.id === task?.conversationId
+      ? chatSession
+      : homeSession,
+  );
+  const pendingQuestion = $derived(pendingTaskQuestionOf(questionSession?.messages ?? [], taskId));
   const title = $derived(
     task?.title ?? (taskChecked ? t('task.run.taskId', { id: taskId }) : t('task.run.loading')),
   );

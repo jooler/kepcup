@@ -46,6 +46,7 @@
 | 插件实体化 UI + 图标 + 商店补全（D104/D105 收尾） | 已完成 | 2026-10-29 | — | Bot 详情「插件」区块改为插件实体语义：只列已添加给该 Bot 的插件卡片（`+` 打开添加弹框：全宽搜索、已安装插件卡片网格、`添加到 Bot` / 绿色 `已添加给该 Bot`、卡片右下角 `移除`）；无邮件插件且无存量系统账号时不再渲染独立邮箱段。插件清单新增 `icon`（`.svg` / `.png`，≤256 KiB），`PluginSummary.iconDataUri` 由 core 读取并内联，渲染端统一 `PluginIcon`（缺省回落拼图默认图标）。`kepcup-app`：清单 schema / 校验器 `plugin.icon`（缺省 warn、声明后缺失/坏格式/超限 error）、`init` 骨架自带 `icon.svg`。官方 `plugins/` 22 个插件全部补图标 + `engines`（邮件补 README），validate 零 error / 零 warning，版本 1.0.1；重签名并部署线上市场：R2 22 包 + `dl.kepcup.com/plugins/v1/` 索引（18→22 条，4 个邮件插件正式上架），线上验签与 22 个包 sha256 / 大小逐一复核通过。验证：core / desktop typecheck 0 error；定向 73 例 + 图标 31 例 + core 插件集成 14 例全绿；e2e `bot-plugins` 2 例全绿（含添加/移除门控 `<skills>` 注入）；`write-a-plugin.md` §2.4 与检查项表同步。 |
 | 市场卡片显示插件图标（D104 收尾补全） | 已完成 | 2026-10-29 | — | 市场卡片不再显示名称首字：签名脚本从包内读取 `icon` 并内联到索引条目 `summary.icon`（`data:image/…;base64`，原始图标 ≤64 KiB），`MarketplaceSync` → `PluginMarketEntry.iconDataUri` 透出，卡片统一 `PluginIcon`，缺失 / 不可用时回落拼图默认图标；全程不发起远程图片请求。校验器把「未声明图标」从 warn 改为 **error**（市场监管局发布必须带图标），超过 64 KiB 的图标给市场化 warning；core / shared 共用 `pluginIconDataUriFromBytes` 与 `isPluginIconDataUri`（含 magic-byte / 体积 / data URI 校验）。文档同步 `write-a-plugin.md` §2.4 / §2.7 / 检查项表、`plugins/README.md`、设计 51 §3 / §6.1、DEV-053 修订。验证：22 个官方插件 validate 全部 0 error / 0 warning；本地打包 + dev key 签名 22 条索引全部带图标（索引 36 KiB）且验签通过；shared / core / app-validator / desktop typecheck 0 error；定向 57 例 + marketplace 集成 10 例全绿。**已按发布流程重新签名并部署线上索引**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致（R2 内容寻址对象全部已在位，无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`（严格大于旧索引）、36,313 字节、22/22 条目带 `summary.icon`，生产密钥 `kepcup-plugins-2026-1` 签名；`wrangler deploy` 首次遇到 Cloudflare API 500，重试成功（Worker version `a7280fdc-4268-4118-ab75-b3083c3ac47e`）；部署后从 `dl.kepcup.com/plugins/v1/` 拉回索引与签名，`--verify` 通过、22/22 图标在位。 |
 | 语音对话模式（D106） | 待验收 | 2026-11-01 | — | 26 号暂缓的语音对话模式开发完成（WP1–WP3 提交 b806479f / 25133a07 / f69007b7，WP4 收口）。WP1 记账：`loopType` 加 `voice_reply`、`media.synthesizeSpeech` 绑定打标、用量页「语音播报」归类。WP2 发送侧：入口键（仅私聊非 readOnly、asr+tts 双预检缺哪个置哪个卡）、`VoiceModeBar` 语音条（idle/recording/transcribing/speaking 四态、Esc 分档、输入坞原位替换不走 Portal）、录音→`transcribeSpeech`→WAV 附件+转写文本经 `performComposerSend`/sendGuard 发送（guard 忙时 `waitForIdle` 排队串行、不丢转写文本；转写先于上传，缺设置无附件可撤只置卡；不走 `gateForSend`，由 core 结构化 setup 失败出卡 + `continueAfterSetup` 续跑）。WP3 播报侧：chat-session `onIncomingMessage` 订阅口 + `extractSpeechText` 剥 Markdown（围栏代码块整体跳过、>2000 字截断 toast 每条一次）+ 顺序播报队列（`isVisibleInTranscript` 可见性口径、插话作废清队绑定「拿到流」而非点击、首条失败停队 +「打开设置」深链、objectURL 播完即 revoke / 退出清队无泄漏）。新增 / 增补单测：`extractSpeechText` / `voice-announce` / `voice-mode` / `voice-send` / `composer-send`（waitForIdle 排队）/ `chat-session`（订阅口）+ `locales` 全绿。收口全量 `pnpm test`：**7277 通过 / 3 失败 / 42 跳过**——`deep-link.test.ts` 为真实失败（9defc083 新增 computer-use 设置分区时漏登 `deep-link.ts` 深链白名单，`computer.control` 设置卡「在设置中打开」回落「通用」；本阶段补一行修复，定向 6/6 绿，settings 四件套 90/90 一并复核绿），`permission-bridge` / `workdirs` 单跑 29/29、18/18 全绿（全量负载下偶发，不超出既有负载敏感基线）；desktop typecheck 0 error。**待真机验收**（麦克风 + asr/tts 真实能力，清单见 [todo/voice-conversation.md](../../todo/voice-conversation.md) WP4）；实现与设计偏差已在 [design/53](../design/53-voice-conversation.md) 就地加「实现修订」注。 |
+| 插件启用说明 + 激活通报 + IM 分类（D104/D107 补全） | 已完成 | 2026-11-03 | — | 插件清单新增**必填** `usage`（启用说明：启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定），`PluginSummary.usage`（清洗后）透出到 Bot 详情卡片与添加弹框；23 个官方插件全部补齐并升版 `1.1.0`，`engines.kepcup` 统一抬到 `>=0.5.7`（`usage` 是 strict schema 新字段，旧宿主必须被索引过滤而不是下载后解析失败），`kepcup-app init/validate` 与签名脚本同步强制。core 新增 `PluginBotNotice`：`bot.updated` 的 `plugin_ids` / `app_connection_ids` 变化、`plugins.changed`（安装 / 更新 / 全局启停 / 卸载 / 撤销）、`mail.accounts.setBots` / `mail.bots.setAccounts` / `im.accounts.setBots`、`plugins.instances.delete` / `im.accounts.delete` 都进入**按 Bot 合并的 30 秒**通报；比较整份状态签名（启用集 + 启停 + usage + 就绪状态），绑定 / 全局停用 / 删账号也能触发，净变化为空不唤醒；无直聊时 `openDirect` 创建落点；插件文案经 `sanitizeDisplayText` + `untrustedBlock` 防闭合。Bot 侧规则：全部就绪 `skip_reply` 静默，有遗漏主动提醒补步骤。扩展中心市场 / 已安装筛选与同意卡新增「即时通讯」分类（`im`），已安装卡片 IM 标签 / 管理入口按插件圈定。独立审查 P1/P2 全部修正（状态签名、injection、engines、同意卡 IM、纯技能 usage 展开、账号删除 / 全局停用触发、IM 权限文案、测试补强）。验证：shared / core / app-validator / desktop typecheck 0 error；23 个插件 validate 全绿；定向 449 例全绿。**已发布**：23 个包重新打包 → `kepcup-plugins-2026-1` 签名（`generatedAt=2026-11-03T09:28:38.920Z`，严格递增）→ R2 上传 → `wrangler deploy`（Worker version `1482ed01-0ec3-4990-8889-7f8145c20d43`）；线上索引 + 23 个包拉回 `--verify` 通过（sha256 / 大小逐一核对），索引 `engines.kepcup` 为 `>=0.5.7`。 |
 
 
 ## 验收记录
@@ -1924,4 +1925,218 @@ Bot 回复仍是文本气泡，消息列表不像通话；③ 语音模式在录
   GLIBC_2.25；RPM 依赖与 core24 基线不变。`Session.destroy()` 仍不存在。
 - **验证**：desktop typecheck 0 error（1 条既有 ApprovalCard 警告）、`electron-vite build` 通过；
   e2e `skeleton` 2/2、`lifecycle` + `sensors` 4/4；`app-permissions.test` 5/5。
+
+
+## 委派交换会话（D71 v2 / D113，2026-11-03）
+
+跨 Bot 委派的消息面重构：A、B 改在每次委托新建的 `bot_direct` **交换会话**里直接沟通，
+不再向 B 私聊借用用户消息、不再贴结果卡；双方用户对话各一枚**药丸卡**（`delegation_sent`
+「已委托 B 处理」/ `delegation_received`「已开始处理 A 的委托」，点击打开交换会话只读详情
+视图），结果由 A 经 internal follow-up 后向用户转述。
+
+- **契约**（shared）：`conversationTypeSchema` 增 `bot_direct`、`conversationSchema` 增
+  `fromBotId` / `toBotId`、`delegationSchema` 增 `exchangeConversationId`；预览增
+  `delegation_received`。
+- **迁移**：`0067_bot_direct_exchange.sql` —— 重建 `conversations`（type 增 `bot_direct`，
+  增两列 + 等式 CHECK）；`delegations` 增 `exchange_conversation_id`（ADD COLUMN，不重建）。
+- **core**：`conversations.openExchange`（单轮新建、成员 A+B、复制 B 私聊 workdir 绑定；
+  `list` / `listVisible` 与 `card` 一并排除）；`delegations.listActiveForConversation` 扩展
+  匹配交换会话；`delegation.ts` 投递改写（A 的 bot 消息 `origin=delegation` 落交换会话、
+  移除 mailbox 忙排队、B 私聊落接收药丸、`#finalReply` 读交换会话、结算去结果卡）、v1 存量
+  行（stalled 无交换会话）沿用旧消息重投路径；`orchestrator` 加**执行归属映射**
+  （`workingByRun(runId) → to_conversation_id`）注册进 approvals（`setUserConversationResolver`）
+  与 TaskHost（`executionHomeOf`）——B 的审批卡 / 任务 / ask_user 一律落 B 的用户私聊；
+  `messages.send` 拒绝 `bot_direct`（用户不可向交换会话发言）；工具描述、`delegationWakeHint`、
+  `renderContextLine`（增接收药丸分支）文案同步。
+- **renderer**：`DelegationCard` 改药丸（发出 / 接收；存量结果卡分支保留）；新
+  `DelegationDetailView`（CardChat 式后台 ChatSession + MessageList，无输入框，任务卡转全局
+  任务详情页）；`ChatsArea` 按任务详情页范式整区替换；`delegations` store 增
+  `openDetailId` / `openDetail` / `closeDetail`（`chat.select` 切会话即关）；i18n 中英同步。
+- **文档**：design/27 §3 各节按 v2 重写 + 修订记录、design/README（27 条目、D71、新增 D113）、
+  todo/butler-and-delegation.md、dev/03-data-model（表 + 迁移）、dev/04-agent-runtime。
+- **验证**：core 定向（delegation-host 32 例、delegation 集成 12 例、delegation-execution-home、
+  butler-delegation-migration +0067、butler 系列 36 例、tasks-review-fixes-e（M2 按交换会话
+  重写）、context-assembly / trigger-hints、conversation 域 18 例）全绿；shared 定向
+  （project-contract / message-content / message-preview）全绿；desktop 定向（chats 203 例、
+  approvals 35 例）全绿；shared build、core 与 desktop typecheck 0 error；收口全量
+  `pnpm test` 717 文件 / 7574 例通过、42 跳过、0 失败。
+
+## 委派的追加与检索（D71 v2.1 / D114，2026-11-04）
+
+单轮交换会话基础上补齐「修改在途委托」与「检索历史委托」两个能力（保持单轮，不引入
+Bot↔Bot 持久对话——会破坏每委派独占会话与 run 的归属不变式、药丸↔详情 1:1 关联，并把
+全部历史塞进 B 的每次委派上下文）：
+
+- **`update_delegation`**（仅发起方）：按状态与存活任务路由——有存活任务（`#linkedTasks`）
+  直接经 `TaskHost.inject` 注入任务 loop（运行中 `handle.steer()` 即时进引擎，与用户补充
+  在途任务同一机制；发起方标注 + `<untrusted>` 包裹）；无任务则消息落交换会话暂存
+  **pending**（纯查询态：`delegationUpdate=true` 且 `seq > to_message_id.seq`），主轮结算
+  **扣住**（`#settle` 入口守卫）、mailbox release 后投递更新轮并把结算**重绑**到它
+  （patch `runId`/`toMessageId`）；`awaiting_tasks` 下更新轮新派任务经 `onRunSettled` 新
+  分支（`#adoptUpdateTurnTasks`）并入 `taskIds` 跟随；`submitted` 追加 `task_text`（域
+  patch 增 taskText 列）；终态拒绝。补投只在邮箱空闲时尝试（恢复 `isMailboxIdle` dep）——
+  运行中投递会被缓冲、release 冲刷 + idle 钩子补投会重复；`recover()` 对 working + 终态
+  run 先投 pending 再结算。
+- **`list_delegations`**（`status`: active/done/all、`bot_id` 过滤，至多 20 条倒序）：域
+  服务新增 `listByBot`；输出 id、方向、状态、时间、任务/结果摘要（≤200 字）。
+- **接线**：`deliverToBot` dep 改多消息签名；新增 `injectTask` dep（以任务行自身 identity
+  走 `TaskHost.inject`）；`delegationWakeHint` 支持 `delegation_update` 标记；
+  `messages.append` 的 delegation 载荷增 `update`（content 写 `delegationUpdate`）；shared
+  `textContentSchema` 增 `delegationUpdate`；effect 分类补两工具（update=external，
+  list=none）。
+- **文档**：design/27 新增 §3.8 + 修订记录、design/README 新增 D114 + D71/27 条目更新、
+  dev/04-agent-runtime（平台规则 12/13 + 工具表两行）、todo/butler-and-delegation.md v2.1。
+- **验证**：delegation-host 单测 39 例（新增 D114 七例：注入 / pending 扣住重绑 / awaiting
+  注入与 awaiting 并入各一例 / submitted 追加与拒绝清单 / list / recover）、delegation 集成 13 例（新增
+  在跑任务注入 + list_delegations 端到端）、trigger-hints、shared message-content、
+  tool-effects 完备性清单补两工具；顺带修复 delegation 集成「B 正忙」用例的负载竞态
+  （改等 runId 回填而非 working 状态窗口）；core/shared/desktop typecheck 0 error；
+  收口全量 `pnpm test` 720 文件 / 7590 例通过、42 跳过、0 失败。
+
+## 委派 v2.2：D114 审查修正（2026-11-04）
+
+独立子智能体四路审查（核心状态机 / 接线注册表 / 渲染端契约 / 测试文档）后修正全部发现。
+核心结论：D113 主链路扎实，D114 的 `awaiting_tasks` 态是系统性盲区（三路独立收敛）——
+
+- **`awaiting_tasks` 一等公民化**：pending 补充统一走 `#routePendingUpdates`（有存活任务注入、
+  否则更新轮投递、邮箱忙暂存）；idle 钩子与 `recover()` 对 awaiting 行同样补投（此前只认
+  `working`，三条可达路径会让补充静默滞留）；`#settle` / `#evaluateTasks` 均有 pending 守卫。
+- **更新轮重入 `working`**：投递前 awaiting 行转回 working——执行归属映射（§3.7）覆盖更新轮
+  （审查发现 R2 派的任务会落交换会话、且 `#tasksOfB` 看不到 → 不并入跟随、委派错落 failed）；
+  结算时派了新任务则与此前的跟随任务合并等齐、没派则以更新轮回复为最终结果；
+  `#adoptUpdateTurnTasks` 移除（rig 硬编码任务归属曾掩盖该缺陷，rig 的 `runs.get` 现在认识轮次 run）。
+- **注入**：折入全部待送达补充并推进锚点（滞留旧补充不再被重复投递）；全部失败回落轮级投递；
+  尾注改「这条补充来自另一个 Bot」（`TaskHost.inject` 支持自定义尾注）。
+- **投递与生命周期**：`deliverPending` 投递成功/失败继续队列（v2 专属邮箱下 FIFO 不再靠 release
+  链式捞起）；取消按 run 实际状态中止重绑后的在途更新轮；接收药丸先落卡再回填 `run_id`；
+  恢复时清理无委派指向的孤儿 `bot_direct` 会话。
+- **杂项**：`list_delegations` 过滤下推 SQL（limit 窗口不吞匹配行）、摘要 `<untrusted>` 包裹；
+  `submitted` 状态文案免打扰口径；`bot_direct` 拒言专用错误码 `EXCHANGE_READ_ONLY`（shared 枚举
+  + 双语 i18n）。
+- **渲染端**：详情视图常驻（任务页压上不卸载，离开聊天区 / 切会话才关）；正文状态机抽出纯函数
+  `detailViewState`（不可用 / 加载 / 空态 / 列表，会话被清理不再永久空白）；头部 `app-drag` +
+  窄屏 macOS 让位；`TaskRunView` 提问条为委派任务开后台会话（归属会话消息取数）；
+  存量 v1 结果卡恢复左对齐；药丸标题窄窗截断；死键清理（`delegation.intent.*`）、
+  en-US 弯引号统一。
+- **文档**：27 号 §3.8 重写 + §3.6/§3.7 节序修正 + §3.5/§6/开放决策 6/D75 说明残留清理 +
+  v2.2 修订记录；dev/04 触发表补 `delegation_update`、`update_delegation` 工具行更新；
+  todo/butler-and-delegation.md v2.2。
+- **验证**：delegation-host 单测 47 例（D114 describe 重写 + 新增 8 例：锚点推进 / 注入失败回落 /
+  滞留折入 / awaiting 补投 / awaiting 更新轮无任务结算 / cancel 中止更新轮 / FIFO 一次投完 /
+  孤儿清理）、delegation 集成 14 例（新增「审批归属映射真实接线」：working 委派轮身份插入的
+  审批行落 B 私聊）、tool-effects 抽样断言补两工具、渲染端新增 delegation-detail-view 纯函数
+  与 delegations store 测试（desktop-svelte）；shared 重建（EXCHANGE_READ_ONLY）；
+  core/desktop typecheck 0 error；收口全量 `pnpm test` 722 文件 / 7640 例通过、42 跳过、
+  0 失败；三包 typecheck 0 error、eslint 干净。
+
+## 委派 v2.3：执行完全隔离（2026-11-04）
+
+用户实测发现两点：① B 执行委派时任务卡、task_event 往返、提问卡、结果等出现在 B 与用户的
+对话里（§3.7「谁执行产物落谁私聊」的映射所致）；② 交换会话条目出现在左栏（core 列表已排除
+`bot_direct`，漏在渲染端事件路径）。语义改为：**委托执行与双方的用户对话完全隔离**——执行
+过程全部留在交换会话（药丸详情查看），需用户操作的审批卡 / 提问卡落**发起方 A** 的私聊
+（谁发出委派，用户就在谁的对话里操作）。
+
+- **归属映射改向**（`orchestrator.ts` `executionUserHomeOf`）：resolver 改按
+  `byExchange(run 所在会话) ?? workingByRun(runId)` 查委派行、返回 `from_conversation_id`
+  ——委派轮与委派任务都住交换会话，一次覆盖两者，v1 存量轮由 workingByRun 兜底；
+  approvals（审批卡 / 权限弹窗）与 `TaskHost.ask`（提问卡，dep 改名 `userHomeOf`）共用。
+- **任务搬进交换会话**：`TaskHost.#scope` 去掉执行归属 remap——任务行 / 任务卡 / task_event
+  / 任务工作区全部留在交换会话；`#tasksOfB` / `#rootTasks` / `#linkedTasks` 改按
+  `exchange_conversation_id` 检索（v1 存量回落 `to_conversation_id`）；任务终态 wake 发往
+  (B, 交换会话)（成员判定通过），失败任务的消费链不变。
+- **taint 继承目标**（start.ts）：`working` 方向改 (B, 交换会话)——A 的任务文本实际落点与
+  B 的工作现场都在那里；完成方向 (A, A 的对话) 不变。
+- **左栏隐藏**：`chat` / `contacts` 两个 store 的 `conversation.updated` upsert 路径过滤
+  `bot_direct`（与既有 `card` 过滤同范式）；全局搜索 / 侧栏标签随之干净。
+- **域服务**：`DelegationsService.byExchange(conversationId)` 新增（交换会话 → 委派行）。
+- **文档**：27 号 v2.3 修订记录 + §3.7 全节重写 + §3.1 契约表 / §3.6 取消段 / §3.8 更新轮
+  句 / 验收锚点同步；dev/04 delegate 工具行归属描述更新；todo v2.3。
+- **验证**：delegation-host 单测 48 例（+1：跟随任务只认交换会话，B 私聊同源任务不进跟随）、
+  delegation-execution-home 重写为 A 私聊归属（+1 委派任务身份 / +1 v1 存量兜底）、
+  delegation 集成 15 例（任务与注入条目落交换会话、审批卡翻转 A 私聊、新增委派任务
+  ask_user 提问卡落 A 私聊并可作答）、connected-apps-p2-egress 的 taint 委派用例随新语义
+  更新（污染落交换会话、egress 卡落 A 的对话）；渲染端新增 `chat.svelte.test.ts`
+  （事件路径 bot_direct 不进左栏）、contacts 补 bot_direct 用例；shared 契约零改动；
+  core/desktop typecheck 0 error（desktop 仅 ApprovalCard 既有 warning）、eslint 干净；
+  收口全量 `pnpm test` 720 文件 / 7604 例通过、42 跳过、0 失败。
+
+## 委派 v2.3 二轮：交换会话消息面样式 + 上报链路观测（2026-11-04）
+
+用户实测二轮反馈：① B 执行完毕且在交换会话里有总结回复，但 A 未在与用户的对话里报告结果；
+② 交换会话样式三处调整。排查结论：**当前 worktree 的上报链路是通的**——委派集成测试
+15/15 逐字覆盖同一场景（B 委派轮 + W6 任务跟随 + follow-up + A 的可见回复断言）全绿，
+核心日志亦无委派失败 / 免打扰停靠记录；而 D113 于当日 03:11 才提交、core dist 与桌面
+构建 04:12 才产出，实测时运行中的 core 进程极可能未载入最新构建（v2.2 审查修正前的委派
+链确有「补充静默滞留」等已修复的停摆点）。为让复现可秒级定位，补齐观测并落实样式：
+
+- **上报链路观测**（core）：`#complete` / `#fail` 结算、`#notifyA` follow-up 派发各留
+  一条 info（`delegation settled` / `delegation follow-up dispatched`）；
+  `deliverEventToBot` 三个拒投分支（会话缺失 / 只读、Bot 缺失 / 非活跃、非成员）从静默
+  return 改为 warn——「结算了但 A 没上报」的断链从此可从日志直接定位断点在哪一段。
+- **交换会话消息形态**（新增 `features/chats/exchange-message.ts` 纯函数 +
+  `exchange-message.test.ts`）：`bot_direct` 会话里发起方 A 相当于对话里的「用户」——
+  A 的消息居右、用户样式气泡（`ChatMessageRow` 行方向 / 对齐 / 操作钮位随
+  `userSide` 翻转；`MessageBody` 新增 `userStyle` 渲染用户气泡，强调色回落 A 自己的
+  accent）；B 居左 Bot 气泡；双侧 Bot 头像，同一 Bot 连续消息只有第一条带头像
+  （`merge.above` 时留同尺寸占位对齐）。撤回钮 / 代发标签仍按 senderType 判定，
+  不随形态翻转。
+- **详情视图头部**（`DelegationDetailView`）：右侧关闭按钮移除，改为左侧圆形返回按钮
+  （样式同任务详情页左上角，`delegation.backToChat`）；标题改药丸形（外形与 Bot 消息
+  顶部的药丸按钮一致：rounded-full + 描边 + 阴影 + 毛玻璃），内含双 Bot 头像 + 名称 +
+  状态徽标，两侧 flex-1 使其严格居中。
+- **引用按钮隐藏**：交换会话没有输入组件接收引用内容——消息 hover 操作与右键菜单的
+  「引用」都按 `bot_direct` 会话隐藏（复制 / 固定保留）。
+- **文档**：27 号 §3.2 药丸详情行补消息形态语义 + v2.3 修订记录补 ⑤⑥；todo v2.3 补
+  二轮记录。
+- **验证**：exchange-message 3 例、delegation core 定向 65 例（host 48 + execution-home
+  4 + 集成 15）全绿；core/desktop typecheck 0 error、eslint 干净；收口全量 `pnpm test`
+  724 文件（721 通过 + 3 既有跳过）/ 7647 例通过、42 跳过、0 失败。
+
+## 委派 v2.3a：question 跟随任务 + 转述纪律 + 药丸头像（2026-11-04）
+
+用户实测二轮（截图）：① 发起方 A 的对话出现任务卡、A 转述了大量与 B 的沟通过程——
+经核实任务卡是 **A 自己派的核验任务**（A 的正常任务行为，B 的执行产物已隔离在交换
+会话），而过程叙述的根因是 **A 用了 `question` intent**：B 被「提问」时也派任务自查，
+旧语义按「B 该轮回复」结算，B 的「已派出核查任务」被当成最终答复转述，真实结果永远
+回不来，A 只好自己另派任务核验并大篇幅叙述过程；② 交换会话顶部药丸里头像显示为名称
+首字符——`BotAvatar` 的头像（预置 / 上传）取自 bot 记录的 `avatar` 字段，此前只传
+botId + name 落到首字母占位。
+
+- **question 跟随任务**（`dispatch/delegation.ts` `#settle`）：taskIds 分支从
+  `request` 扩到 `request | question`（fyi 不变）——B 派了任务时委派转 `awaiting_tasks`
+  等齐任务、结果拼接转述；没派任务仍取该轮回复。B 侧 question 唤醒提示同步（直接给
+  完整答复，不要只说「我去查」「已派出」；确需动手的派任务，结果自动汇入答复）。
+- **A 侧纪律**（`tools/delegation-tools.ts` 工具说明）：要动手 / 跑命令 / 查数据的
+  结果一律 `request`（哪怕表述成问题）；委派后简短确认、不复述委派全文、不预告计划、
+  不自行另派任务做同样的事；收到结果只转述最终结论与关键信息——不叙述委派往来、
+  中间轮次、对方派了什么任务，不出现 delegation_id / run id。三处 follow-up notice
+  （`#complete` 轮回复路径 / `#evaluateTasks` 任务拼接路径 / `#fail`）同步收紧。
+- **药丸头像**（`DelegationDetailView`）：从 `contacts.bots` 解析两个 Bot 对象，
+  `BotAvatar` 补传 `avatar` / `accentColor` / `mask` / `padding`。
+- **文档**：27 号新增 v2.3a 修订记录 + §3.6 重写（intent 表 / 跟随任务范围 / A 侧
+  intent 纪律）+ §3.2 注入行补转述纪律；dev/04 delegate 工具行同步；todo 补 v2.3a。
+- **测试**：delegation-host 的 question 用例改写（派任务 → `awaiting_tasks` → 任务
+  结果汇入转述；新增「没派任务仍取轮回复」对照例）。
+- **验证**：委派定向 71 例全绿；core/desktop typecheck 0 error（desktop 仅
+  ApprovalCard 既有 warning）、eslint 干净；收口全量 `pnpm test`
+  724 文件（721 通过 + 3 既有跳过）/ 7648 例通过、42 跳过、0 失败。
+
+## 委派 v2.3b：唤醒提示明说「对话轮只读 vs 任务完整工具面 + 权限」（2026-11-04）
+
+用户实测三轮：链路正确了，但被委托方 B 没意识到可以拉起任务执行——任务有更多权限、
+更多可用工具，B 在只读轮里跑不了命令就止步于「已派出」。
+
+- **`delegationWakeHint`（request / question / update）**：明说对比——本轮是只读对话轮
+  （只有 read / ls / find / grep，没有 bash、写文件等执行工具）；`start_task` 拉起的
+  任务是完整工具面（bash、写文件、浏览器等都有），执行中可按需申请权限（审批卡送到
+  发起方的对话由用户处理），任务结果自动汇入委托交给对方转述；不要只回「收到」「已
+  派出」，也不要说自己做不了——派任务就能做。
+- **`start_task` 工具描述**（所有 Bot 通用）：补同一对比（对话轮只读；任务完整工具面
+  + 按需申请权限，本轮做不了的就派任务）。
+- **文档**：27 号 §3.6 intent 表 / §3.2 触发段说明段同步。
+- **验证**：context-assembly / trigger-hints / delegation 集成 / delegation-host 定向
+  111 例全绿（集成断言的提示子串保持兼容）；core typecheck 0 error、eslint 干净。
+  纯提示文案改动，未跑全量（无跨包公共面改动）。
+
 

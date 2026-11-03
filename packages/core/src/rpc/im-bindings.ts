@@ -48,33 +48,57 @@ export function bindImMethods(services: CoreServices): Record<string, RpcMethodS
     'im.accounts.delete': method(imAccountIdInputSchema, okOutputSchema, async (input) => {
       const account = im().store.get(input.id);
       if (account === null) throw new AppError('NOT_FOUND', '账号不存在');
-      if (services.pluginInstances === null) throw new AppError('NOT_IMPLEMENTED', '插件实例模块未就绪');
+      if (services.pluginInstances === null)
+        throw new AppError('NOT_IMPLEMENTED', '插件实例模块未就绪');
+      // 删账号会解除它和所有 Bot 的绑定：先记下受影响 Bot，再走实例级联删除。
+      const before = im()
+        .listAccounts()
+        .find((candidate) => candidate.id === input.id);
       await services.pluginInstances.delete(account.instanceId);
+      for (const botId of before?.botIds ?? []) services.pluginBotNotice?.note(botId);
       return { ok: true as const };
     }),
     'im.accounts.setBots': method(imAccountSetBotsInputSchema, okOutputSchema, async (input) => {
+      const before = im()
+        .listAccounts()
+        .find((account) => account.id === input.id);
       im().setBots(input.id, input.botIds);
+      // 微信等 IM 账号「勾选绑定」直接影响插件能否真正工作：30 秒合并后通报相关 Bot。
+      const affected = new Set([...(before?.botIds ?? []), ...input.botIds]);
+      for (const botId of affected) services.pluginBotNotice?.note(botId);
       return { ok: true as const };
     }),
-    'im.bindings.setForward': method(imBindingSetForwardInputSchema, okOutputSchema, async (input) => {
-      im().setForward(input.accountId, input.botId, input.forwardEnabled);
-      return { ok: true as const };
-    }),
-    'im.login.qrcode.create': method(qrcodeCreateInput, imQrcodeCreateOutputSchema, async (input) => {
-      const account = input.accountId === undefined ? null : im().store.get(input.accountId);
-      if (input.accountId !== undefined && account === null) {
-        throw new AppError('NOT_FOUND', '账号不存在');
-      }
-      const result = await im().beginQrcodeLogin(
-        input.pluginId,
-        input.accountId === undefined ? null : account!.instanceId,
-      );
-      return { sessionKey: result.sessionKey, qrcodeContent: result.qrcodeContent };
-    }),
-    'im.login.qrcode.poll': method(imQrcodePollInputSchema, imQrcodePollOutputSchema, async (input) => {
-      const result = await im().pollQrcodeLogin(input.sessionKey);
-      return { status: result.status, instanceId: null, label: result.label };
-    }),
+    'im.bindings.setForward': method(
+      imBindingSetForwardInputSchema,
+      okOutputSchema,
+      async (input) => {
+        im().setForward(input.accountId, input.botId, input.forwardEnabled);
+        return { ok: true as const };
+      },
+    ),
+    'im.login.qrcode.create': method(
+      qrcodeCreateInput,
+      imQrcodeCreateOutputSchema,
+      async (input) => {
+        const account = input.accountId === undefined ? null : im().store.get(input.accountId);
+        if (input.accountId !== undefined && account === null) {
+          throw new AppError('NOT_FOUND', '账号不存在');
+        }
+        const result = await im().beginQrcodeLogin(
+          input.pluginId,
+          input.accountId === undefined ? null : account!.instanceId,
+        );
+        return { sessionKey: result.sessionKey, qrcodeContent: result.qrcodeContent };
+      },
+    ),
+    'im.login.qrcode.poll': method(
+      imQrcodePollInputSchema,
+      imQrcodePollOutputSchema,
+      async (input) => {
+        const result = await im().pollQrcodeLogin(input.sessionKey);
+        return { status: result.status, instanceId: null, label: result.label };
+      },
+    ),
     'im.accounts.create': method(
       z.object({ pluginId: z.string().min(1), sessionKey: z.string().min(1) }),
       imAccountGetOutputSchema,

@@ -55,6 +55,21 @@ describe('conversationSchema (D92 T1a)', () => {
     expect(legacy.cardTodoId).toBeNull();
   });
 
+  it('parses a bot_direct exchange conversation (D113) and defaults its columns on other types', () => {
+    const exchange = conversationSchema.parse({
+      ...baseConversation,
+      type: 'bot_direct',
+      fromBotId: 'bot_a',
+      toBotId: 'bot_b',
+    });
+    expect(exchange.type).toBe('bot_direct');
+    expect(exchange.fromBotId).toBe('bot_a');
+    expect(exchange.toBotId).toBe('bot_b');
+    const legacy = conversationSchema.parse(baseConversation);
+    expect(legacy.fromBotId).toBeNull();
+    expect(legacy.toBotId).toBeNull();
+  });
+
   it('rejects the legacy group type and the removed setupState field', () => {
     expect(() => conversationSchema.parse({ ...baseConversation, type: 'group' })).toThrow();
     // Unknown keys are stripped, but the field is gone from the contract: the

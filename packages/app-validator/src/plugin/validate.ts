@@ -318,6 +318,21 @@ async function readManifest(root: string, checks: Check[]): Promise<ReadManifest
     );
     return null;
   }
+  // 2026-11-03（51 §15.8）：启用说明是新包必填项。schema 对存量已装清单回落空串，
+  // 发布 / 打包 / 本地安装前的校验在这里拦截。
+  if (parsed.data.usage.trim() === '') {
+    checks.push(
+      makeCheck(
+        'plugin.usage',
+        'error',
+        'plugin.json is missing the required `usage` (activation instructions).',
+        {
+          hint: 'Write what the user must do after enabling the plugin: ready to use, connect an account, or add an account and bind it to the bot.',
+          subject: PLUGIN_MANIFEST_FILE,
+        },
+      ),
+    );
+  }
   return { manifest: parsed.data, raw };
 }
 
@@ -900,9 +915,14 @@ function checkIm(
   }
   if (host === null || !isPublicMailHost(host)) {
     checks.push(
-      makeCheck('plugin.im-api-base', 'error', `apiBase must be a public https URL: ${contribution.apiBase}`, {
-        subject: `${id} [apiBase]`,
-      }),
+      makeCheck(
+        'plugin.im-api-base',
+        'error',
+        `apiBase must be a public https URL: ${contribution.apiBase}`,
+        {
+          subject: `${id} [apiBase]`,
+        },
+      ),
     );
   } else {
     permissions.hosts.add(host);

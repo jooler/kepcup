@@ -32,6 +32,7 @@ const manifestText = JSON.stringify({
   id: 'io.github.alice/doc-tools',
   name: '文档工具集',
   version: '1.2.0',
+  usage: '启用即可使用。',
   contributions: { skills: [{ dir: 'skills/docx' }] },
 });
 
@@ -62,6 +63,21 @@ describe('parsePluginManifestText', () => {
     const manifest = parsePluginManifestText(manifestText);
     expect(manifest.id).toBe('io.github.alice/doc-tools');
     expect(manifest.contributions.skills).toEqual([{ dir: 'skills/docx' }]);
+  });
+
+  it('requires usage for new installs but still reads legacy manifests', () => {
+    const legacy = JSON.stringify({
+      ...JSON.parse(manifestText),
+      usage: undefined,
+    });
+    // 新安装 / 更新包：缺失启用说明直接拒绝（51 §15.8）。
+    expectCodeSync(
+      () => parsePluginManifestText(legacy, { requireUsage: true }),
+      'PLUGIN_INVALID',
+      /启用说明/,
+    );
+    // 已装旧版本：回落空串，保证清单可读、可更新。
+    expect(parsePluginManifestText(legacy).usage).toBe('');
   });
 
   it('rejects an oversized manifest before parsing', () => {
@@ -191,6 +207,7 @@ describe('verifyContributionFiles', () => {
       id: 'io.github.alice/doc-tools',
       name: 'x',
       version: '1.0.0',
+      usage: '启用即可使用。',
       contributions: {
         skills: [{ dir: 'skills/docx' }],
         connectors: [{ file: 'connectors/notion/server.json' }],

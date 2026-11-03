@@ -53,6 +53,8 @@ export const enUS = {
   'chats.setupPathGateHint':
     'Answer the working directory question above to continue the conversation',
   'chats.errorCode.CONVERSATION_READ_ONLY': 'This conversation is read-only',
+  'chats.errorCode.EXCHANGE_READ_ONLY':
+    'This is a Bot-to-Bot delegation conversation; you cannot post here',
   'chats.errorCode.MESSAGE_NOT_RECALLABLE': "This message can't be recalled or edited",
   'chats.errorCode.NOT_FOUND': "The item doesn't exist or has been deleted",
   'chats.errorCode.INVALID_INPUT': 'Invalid input',
@@ -338,7 +340,8 @@ export const enUS = {
   'settings.modelsNavConfig': 'Model Config',
   'settings.modelsOverviewHint':
     'Manage model providers and defaults; a provider can be added multiple times (different baseUrls for different model capabilities).',
-  'settings.templateHintVendor': 'Built-in vendor template: chat presets prefilled, addable repeatedly',
+  'settings.templateHintVendor':
+    'Built-in vendor template: chat presets prefilled, addable repeatedly',
   'settings.templateHintCustom': 'Any OpenAI-compatible endpoint; chat + embeddings',
   'settings.providerStatus.ready': 'Ready',
   'settings.providerStatus.incomplete': 'Incomplete',
@@ -683,6 +686,7 @@ export const enUS = {
   'botPanel.plugins.summaryEnabled': '{count} added',
   'botPanel.plugins.summaryNone': 'None added',
   'botPanel.plugins.connections': 'Connected accounts',
+  'botPanel.plugins.usage': 'Activation',
   'botPanel.plugins.serversAuto':
     "This plugin's tool services come with the plugin — no per-server checkbox needed.",
   'botPanel.plugins.localAccounts': 'Local connections',
@@ -1512,20 +1516,22 @@ export const enUS = {
   'delegation.status.failed': 'Failed',
   'delegation.status.cancelled': 'Cancelled',
   'delegation.queuedHint':
-    'They are busy or in do-not-disturb hours. The message will be sent automatically when they are free.',
+    'They are in do-not-disturb hours. The message will be sent automatically when their quiet hours end.',
   'delegation.sentTitleQuestion': 'Asked {name}',
   'delegation.sentTitleFyi': 'Informed {name}',
-  'delegation.intent.request': 'Request',
-  'delegation.intent.question': 'Question',
-  'delegation.intent.fyi': 'FYI · no reply needed',
   'delegation.fyiDelivered': 'Delivered',
   'delegation.fyiQueuedHint':
-    'They are busy or in do-not-disturb hours. It will be delivered automatically when they are free; no reply will be posted here.',
-  'delegation.awaitingTasksHint':
-    'Waiting for {count} tasks from {name}. Results will be posted here when complete.',
+    'They are in do-not-disturb hours. It will be delivered automatically when their quiet hours end; no reply will be posted here.',
   'delegation.answerTitle': "{name}'s answer",
   'delegation.taskResultTitle': "{name}'s task results",
-  'delegation.cancel': 'Cancel delegation',
+  'delegation.receivedTitle': "Started handling {name}'s delegation",
+  'delegation.viewDetail': 'View details',
+  'delegation.cancelShort': 'Cancel',
+  'delegation.closeDetail': 'Close details',
+  'delegation.backToChat': 'Back to chat',
+  'delegation.detailUnavailable': 'The conversation for this delegation no longer exists',
+  'delegation.detailLoading': 'Loading the delegation conversation…',
+  'delegation.detailEmpty': 'No messages in this delegation yet',
   'delegation.expand': 'Expand',
   'delegation.collapse': 'Collapse',
   'delegation.openOriginal': 'View in chat with {name}',
@@ -1836,6 +1842,12 @@ export const enUS = {
   'plugins.consent.connectorHosts': 'Service: {hosts}',
   'plugins.consent.connectorScopes': 'Scopes: {scopes}',
   'plugins.consent.mail': 'Mail templates',
+  'plugins.consent.im':
+    'Instant messaging accounts (add an account after installing and bind it to the bot)',
+  'plugins.consent.imEndpoint': 'Endpoint: {host}',
+  'plugins.consent.imFeatures': 'Receive: {inbound} · Send: {outbound}',
+  'plugins.consent.imYes': 'Yes',
+  'plugins.consent.imNo': 'No',
   'plugins.consent.blockers': 'Cannot install',
   'plugins.consent.conflicts': 'Conflicts',
   'plugins.consent.conflictItem': '{ref}: {withWhat}',
@@ -1853,6 +1865,7 @@ export const enUS = {
   'plugins.market.category.mcp': 'Tools',
   'plugins.market.category.mail': 'Mail',
   'plugins.market.category.im': 'Instant messaging',
+  'plugins.filter.im': 'Instant messaging',
   'plugins.market.refresh': 'Refresh',
   'plugins.market.refreshing': 'Syncing…',
   'plugins.market.empty': 'No plugins are available in the marketplace yet.',
@@ -3142,9 +3155,11 @@ export const enUS = {
   'mail.card.arrived': 'New mail',
   'mail.card.expand': 'View summary',
   'plugins.kind.im': 'IM accounts',
-  'im.intro': 'IM accounts come from IM plugins: scan to add (e.g. WeChat) on the plugin card, then bind a Bot to chat from WeChat.',
+  'im.intro':
+    'IM accounts come from IM plugins: scan to add (e.g. WeChat) on the plugin card, then bind a Bot to chat from WeChat.',
   'im.add': 'Add account',
-  'im.noPlugin': 'No IM-capable plugin installed yet. Install one (e.g. WeChat) from the market, then come back to add an account.',
+  'im.noPlugin':
+    'No IM-capable plugin installed yet. Install one (e.g. WeChat) from the market, then come back to add an account.',
   'im.openMarket': 'Open plugin market',
   'im.empty': 'No IM accounts yet',
   'im.back': 'Back',
@@ -3170,19 +3185,24 @@ export const enUS = {
   'im.lastInbound': 'Last inbound',
   'im.lastOutbound': 'Last forward',
   'im.bots': 'Bound bots',
-  'im.botsHint': 'Bindings and the "sync replies" toggle live in Bot details → Plugins. Binding enables inbound; the toggle forwards replies.',
+  'im.botsHint':
+    'Bindings and the "sync replies" toggle live in Bot details → Plugins. Binding enables inbound; the toggle forwards replies.',
   'im.bindingOn': 'Bound',
   'im.bindingForward': 'Bound (sync on)',
   'im.bindingOff': 'Not bound',
   'im.rescan': 'Scan again',
   'im.delete': 'Delete account',
   'im.botSection': 'IM accounts (WeChat)',
-  'im.botSectionHint': 'Bind to chat from WeChat; the inline toggle syncs Bot replies back to WeChat.',
+  'im.botSectionHint':
+    'Bind to chat from WeChat; the inline toggle syncs Bot replies back to WeChat.',
   'im.botSectionAfterCreate': 'IM accounts can be bound after the bot is created.',
-  'im.botSectionEmpty': 'No IM accounts yet — add one from the plugin card in the extension center.',
-  'im.botSectionBound': '{count} account(s) bound; binding always allows inbound messages from WeChat.',
+  'im.botSectionEmpty':
+    'No IM accounts yet — add one from the plugin card in the extension center.',
+  'im.botSectionBound':
+    '{count} account(s) bound; binding always allows inbound messages from WeChat.',
   'im.forwardToggle': 'Sync replies to this WeChat',
-  'im.forwardHint': 'When on, Bot replies are mirrored to this WeChat account; sending from WeChat turns it back on',
+  'im.forwardHint':
+    'When on, Bot replies are mirrored to this WeChat account; sending from WeChat turns it back on',
   'im.card.from': 'From {channel}',
   'im.card.fromIm': 'From IM',
   'mail.card.collapse': 'Hide',

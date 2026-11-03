@@ -29,7 +29,8 @@
 ## 1. 日常发布（新插件 / 版本更新）
 
 ```bash
-# 1. 在 plugins/ 里开发：validate → pack（见仓库 plugins/README.md）
+# 1. 在 plugins/ 里开发：validate → pack（见仓库 plugins/README.md）。清单必须带
+#    启用说明 usage；用到新清单字段的插件记得抬高 engines.kepcup（旧宿主才会被过滤）
 # 2. 打包全部插件 + 更新策展文件 catalog.json（tier 只能来自策展，绝不来自包内清单）
 # 3. 签名（私钥只从 .env 读；generatedAt 默认现在，必须严格递增）
 infra/cloudflare/sign-plugins.sh --out /tmp/market/dist --key-id kepcup-plugins-2026-1 \

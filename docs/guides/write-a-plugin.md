@@ -20,7 +20,7 @@
 
 ### 1.1 能力类型
 
-一个插件可同时携带四类贡献（每类数量有上限，见 §2）：
+一个插件可同时携带五类贡献（每类数量有上限，见 §2）：
 
 | 能力类型 | kind id | 用户界面叫它 | 落地方式 |
 |---|---|---|---|
@@ -28,6 +28,7 @@
 | 连接 | `connector` | 连接 | 进连接目录；用户逐账号连接（OAuth） |
 | 工具 | `mcp` | 工具 | 内嵌 MCPB 解包运行，或登记远端 http server |
 | 邮件 | `mail` | 邮件 | 实例供给规范：用户在插件卡上添加邮箱账号 |
+| 即时通讯 | `im` | 即时通讯 / IM 账号 | 实例供给规范：用户扫码 / 填表添加 IM 账号（D107，设计 54） |
 
 能力类型本身可扩展（注册表机制，§9 菜谱）；`format_version` 不因此变化。
 
@@ -43,7 +44,7 @@
   `instanceFields`，字段 schema 见 §2.3）——宿主生成 UI，开发者不写界面。
 - 敏感值（`sensitive: true`）只进 secrets，永不出现在任何列表 / 快照 / 审计里；编辑表单
   显示「已设置」占位，留空提交 = 保留已存值。
-- 实例的典型形态是邮箱账号：一个「邮件插件」可添加多个账号，账号跟人走而不跟 Bot 走，
+- 实例的典型形态是邮箱 / IM 账号：一个插件可添加多个账号，账号跟人走而不跟 Bot 走，
   绑定到哪些 Bot 由用户决定。`instances: ['mcp']`（自定义工具实例）在后续版本开放，
   当前版本声明了也不会有可用的创建路径。
 - **卸载插件 = 级联删除其全部实例**（先拆领域数据——如邮箱账号——再删行），卸载确认会明示。
@@ -83,9 +84,10 @@
   "icon": "icon.svg",
   "version": "1.2.0",
   "description": "处理 Markdown / DOCX 的技能与工具",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Acme 授权，并在 Bot 详情展开插件卡片勾选绑定该账号；邮件能力还需要在插件卡「管理」里添加邮箱账号并绑定，Bot 才能使用。",
   "author": { "name": "Alice", "url": "https://alice.example" },
   "homepage": "https://github.com/alice/doc-tools",
-  "engines": { "kepcup": ">=0.4.0" },
+  "engines": { "kepcup": ">=0.5.7" },
   "platforms": ["darwin", "win32", "linux"],   // 缺省 = 全平台
   "config": {
     "fields": [
@@ -126,13 +128,14 @@
 | `icon` | string | ✔（市场发布） | 包内相对路径，必须是 `.svg` 或 `.png`（≤256 KiB；进入市场索引的图标需 ≤64 KiB）。插件列表、Bot 详情、扩展中心与**市场卡片**都显示它；缺省时宿主显示**默认图标**，`validate` 报 error，市场发布不允许缺图标（见 §2.4） |
 | `version` | string | ✔ | semver（`1.2.0`、可带 `-beta.1` / `+build`）；≤64 字符 |
 | `description` | string | 建议 | ≤1000 字符；用户在同意卡与市场卡看到的第一句话 |
+| `usage` | string | ✔ | 1–500 字符，**启用说明**：启用之后还需要做什么才能用（「启用即可使用」/「需要连接账号」/「需要先添加账号再勾选绑定」）。用户在 Bot 详情操作插件 30 秒后，宿主会把操作状态连同这句话发给 Bot，由它决定是否提醒用户补做遗漏步骤；见 §2.5。新安装 / 发布必填（`validate` 与签名脚本拒绝空值）；2026-11-03 之前安装的旧版本清单允许缺省（回落空串）以便更新 |
 | `author` | `{ name, url? }` | 建议 | `url` 必须是 https；帮助用户判断来源 |
 | `homepage` | string | 建议 | https URL，≤500 字符 |
-| `engines` | `{ kepcup }` | 建议 | semver 范围（如 `">=0.4.0"`，当前应用版本 0.4.0）；开发版宿主（`0.0.0`）跳过该检查 |
+| `engines` | `{ kepcup }` | 依赖新字段时必填 | semver 范围（如 `">=0.5.7"`；当前应用版本以 `apps/desktop/package.json` 为准）；开发版宿主（`0.0.0`）跳过该检查。**清单用到旧宿主不认识的新字段（如 `usage`）时必须抬高下限**，否则旧客户端会先看到「可更新」再在解析阶段失败 |
 | `platforms` | `['darwin'\|'win32'\|'linux']` | | 缺省 = 全平台；不匹配则拒绝安装（`PLUGIN_INCOMPATIBLE`） |
 | `config` | `{ fields: PluginField[] }` | | ≤32 个字段，key 查重；见 §2.3 |
-| `instances` | `['mail'\|'mcp']` | | ≤4 个、去重；声明哪些**纯实例能力**（§1.2） |
-| `contributions` | object | 见下 | 四类贡献数组；可整体省略（纯实例插件） |
+| `instances` | `['mail'\|'mcp'\|'im']` | | ≤4 个、去重；声明哪些**纯实例能力**（§1.2） |
+| `contributions` | object | 见下 | 五类贡献数组；可整体省略（纯实例插件） |
 
 - **「至少有一类贡献」已放宽为「贡献或 `instances` 至少其一」**；纯实例插件（只有
   `instances`，如未来 `app.kepcup/custom-mcp`）合法。
@@ -152,26 +155,6 @@
 - 包根 `README.md`：建议提供，插件详情页展示。`icon` 声明的文件在包内任意安全相对路径
   （推荐放包根 `icon.svg` / `icon.png`）；连接器插件可以直接指向已有的
   `connectors/<slug>/<slug>.svg`，不必再复制一份。
-
-### 2.4 插件图标（市场插件必须有自己的图标）
-
-插件是用户看到的一个**实体**，市场卡片、已安装列表、添加弹框与 Bot 详情都只以插件为
-单位展示，因此每个提交到市场的插件都必须有能代表自己的图标：
-
-- 在 `plugin.json` 里写 `"icon": "icon.svg"`（或 `.png`），文件放进包里；建议 64×64 或
-  更大、正方形、透明或纯色背景，避免小尺寸下糊成一团。
-- 支持 `.svg` / `.png`，单文件 ≤256 KiB；宿主按扩展名与文件头校验，读不到 / 格式不对 /
-  超限都回落到**默认图标**（拼图），不会阻断安装，但 `validate` 会报 error。
-- **没有 `icon` 的插件不能提交到市场**：`validate` 的 `plugin.icon` 直接报 error。运行期
-  仍保留默认图标兜底——历史索引或手工构建的索引里确实没有图标时，市场卡片显示拼图默认
-  图标，不会退回名称首字。
-- **市场卡片图标内联在签名索引里**：签名脚本读取包内图标并写入 `summary.icon`
-  （`data:image/…;base64`，原始文件 ≤64 KiB）。图标超过 64 KiB 或格式不可用时，签名直接
-  失败 / `validate` 给 warning，避免市场卡片静默回落。市场索引导出图标不发起任何远程图片
-  请求；安装后 `PluginSummary.iconDataUri` 仍从插件目录读取同一文件。
-- 超过 64 KiB 的图标本地安装仍可用（上限 256 KiB），但不会进入市场索引；发布前请压缩到
-  64 KiB 以内。
-- `kepcup-app init plugin` 生成的骨架自带一个占位 `icon.svg`，替换成自己的图标即可。
 
 ### 2.3 字段 schema（`PluginField`）——config、实例、MCPB 共用
 
@@ -217,6 +200,51 @@
 | `directory` / `file` | 本机路径选择器 | 宿主**只当字符串存储，不做存在性 / 安全校验**——消费该值的适配器 / materializer 负责路径校验（存在性、可读性、沙箱白名单） |
 | `multiple: true` | 多行文本（每行一个值） | 每个值按 `type` 校验 |
 | `sensitive: true` | 密码框；已保存显示占位 | 留空提交 = 保留已存 secret；必填敏感字段无已存值则拒绝 |
+
+### 2.4 插件图标（市场插件必须有自己的图标）
+
+插件是用户看到的一个**实体**，市场卡片、已安装列表、添加弹框与 Bot 详情都只以插件为
+单位展示，因此每个提交到市场的插件都必须有能代表自己的图标：
+
+- 在 `plugin.json` 里写 `"icon": "icon.svg"`（或 `.png`），文件放进包里；建议 64×64 或
+  更大、正方形、透明或纯色背景，避免小尺寸下糊成一团。
+- 支持 `.svg` / `.png`，单文件 ≤256 KiB；宿主按扩展名与文件头校验，读不到 / 格式不对 /
+  超限都回落到**默认图标**（拼图），不会阻断安装，但 `validate` 会报 error。
+- **没有 `icon` 的插件不能提交到市场**：`validate` 的 `plugin.icon` 直接报 error。运行期
+  仍保留默认图标兜底——历史索引或手工构建的索引里确实没有图标时，市场卡片显示拼图默认
+  图标，不会退回名称首字。
+- **市场卡片图标内联在签名索引里**：签名脚本读取包内图标并写入 `summary.icon`
+  （`data:image/…;base64`，原始文件 ≤64 KiB）。图标超过 64 KiB 或格式不可用时，签名直接
+  失败 / `validate` 给 warning，避免市场卡片静默回落。市场索引导出图标不发起任何远程图片
+  请求；安装后 `PluginSummary.iconDataUri` 仍从插件目录读取同一文件。
+- 超过 64 KiB 的图标本地安装仍可用（上限 256 KiB），但不会进入市场索引；发布前请压缩到
+  64 KiB 以内。
+- `kepcup-app init plugin` 生成的骨架自带一个占位 `icon.svg`，替换成自己的图标即可。
+
+### 2.5 启用说明（`usage`，必填）
+
+`usage` 是**插件写给用户 / Bot 的激活指引**，回答「启用这个插件之后，还要做什么它才真正
+可用」。用户把插件添加到 Bot 时，能力装配立即按启用集生效，但很多插件还需要额外步骤
+（连接 OAuth 账号、在插件卡片里添加邮箱 / 微信账号、再勾选绑定到 Bot）。这些步骤漏掉时，
+用户会以为已经生效、Bot 却调不到能力。
+
+- 宿主在用户**最后一次操作插件 30 秒后**，把最终状态（启用了哪些插件、各自是「就绪」还是
+  「尚未连接账号 / 已添加账号但未勾选绑定」）连同 `usage` 一起作为一条内部事件发给 Bot。
+- Bot 看到全部就绪 → 保持静默（`skip_reply`）；发现遗漏 → 主动发一条简短消息提醒用户
+  在哪里补哪一步（例如「展开微信插件卡片，勾选绑定」）。
+- 因此 `usage` 要写**可执行的动作**，不要写营销文案：说明是「启用即用」，还是「需要先
+  连接 / 添加账号再勾选绑定」，以及用户应该在哪里操作（扩展中心 / 插件卡片「管理」/
+  Bot 详情插件区块）。
+- 1–500 字符；**新安装 / 市场发布必填**（`kepcup-app validate` 报 `plugin.usage` error、签名
+  脚本拒绝空值）；2026-11-03 之前安装的旧版本清单缺该字段仍可读取与走市场更新（回落空串），
+  但本地目录 / 文件重装同样要补上 `usage`（安装管线 `requireUsage`）。
+- 宿主会把它按不可信文案清洗（控制字符、双向控制符、长度），放进 `<untrusted>` 块，
+  不会当作指令执行。
+- 示例：
+  - 技能 / 内置工具插件：`"启用即可使用：添加到 Bot 后，Bot 会在匹配的任务里自动加载该技能，无需再连接账号或勾选其他选项。"`
+  - 连接器插件：`"启用后还需要连接账号：在扩展中心完成 Notion 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能读写页面与数据库。"`
+  - 邮件插件：`"启用后还需要添加账号：在扩展中心 → 已安装 → 邮箱插件卡「管理」里添加邮箱账号，再在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能收发邮件。"`
+  - IM 插件（微信）：`"启用后还需要扫码添加微信账号（扩展中心 → 已安装 → 微信 →「管理」），并在 Bot 详情展开微信插件卡片勾选绑定；绑定后微信消息才能唤醒 Bot，勾选「同步消息到此微信」后 Bot 的回复才会转发回微信。"`
 
 ---
 
@@ -352,6 +380,24 @@ schema 写全**（`kepcup-app validate` 用同一 schema 检查，缺字段报 `
   账号对该 Bot 不可见**（工具注册、`<mail_accounts>` 段与工具内清单三处同源过滤）。
 - **用户看到**：同意卡显示 `label` 与端点主机；插件卡「管理」= 账号列表 + 添加 / 编辑 / 删除
   表单（宿主按 §2.3 字段自动构建）；删除插件 = 级联删除全部账号、绑定与授权码。
+
+### 3.5 即时通讯（im）
+
+IM 贡献同样是**实例供给规范**（D107，完整契约见 [54-im-channel.md](../design/54-im-channel.md)）：
+声明 `instances: ['im']` + 恰一份 `contributions.im`，账号由用户扫码（`setup: 'qrcode'`）或
+填表（`setup: 'secret'`）添加；绑定到 Bot 的账号才参与入站唤醒与出站转发。
+
+| 声明 | 说明 |
+|---|---|
+| `transport` | 宿主会话实现（首发 `ilink` = 个人微信 iLink） |
+| `apiBase` | `transport` 需要的固定端点（https 公网，schema 校验锁定） |
+| `features` | `inbound` / `outbound` / `media`（声明面，宿主按 transport 实际实现裁剪） |
+| `instanceFields` | 追加在 kind 内置字段之后的表单字段（≤16；`qrcode` 建号不得声明 sensitive） |
+
+- **用户看到**：安装同意卡显示通道名称 / 端点 / 收发能力；插件卡「管理」= IM 账号列表 +
+  扫码添加；Bot 详情插件区 = 账号勾选绑定与「同步消息到此微信」开关。
+- `usage` 必须写清「扫码 → 勾选绑定 → 按需开启转发」三步，否则用户只添加了插件、没有绑定
+  账号时能力不会生效（宿主会在 30 秒后提醒 Bot，由 Bot 告诉用户补哪一步）。
 
 ---
 
@@ -496,6 +542,8 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 - [ ] `validate --json` 零 error（warning 逐条看：`manifest-metadata` 缺描述/作者/主页/engines、
       `readme` 缺 README、`icon` 图标超过 64 KiB 市场化上限、`field-default` default 用法
       问题——都应修掉而不是忽略）。
+- [ ] `usage` 写清「启用之后还要做什么」（启用即用 / 连接账号 / 添加账号再勾选绑定），并
+      写明在哪个入口操作；用到新字段的清单 `engines.kepcup` 已抬到支持它的最低版本。
 - [ ] 清单只含 §2.2 表里的字段；id 不用保留命名空间；每类贡献数量与路径约束满足。
 - [ ] `description` 写了「装了能干什么」的一句话（用户在同意卡读它）；含 config / 实例的
       插件，每个字段的 `title` / `description` 用用户能懂的话（不含协议词汇）。
@@ -513,6 +561,7 @@ node packages/app-validator/dist/cli.js pack /tmp/my-plugin --out /tmp/my-plugin
 |---|---|
 | `plugin.manifest-read` | 包根没有 `plugin.json`、超过 64KB、JSON 语法错误 |
 | `plugin.manifest-schema` | 字段拼错 / 多写（strict）、缺必填、重复 id、config 字段 key 重复、邮件贡献与 `instances: ['mail']` 不配对——消息里带路径，对照 §2 修 |
+| `plugin.usage` | 缺少启用说明 `usage`（新包必填）：写清启用后还要做什么、在哪里操作（§2.5） |
 | `PLUGIN_UPGRADE_REQUIRED` | 清单含当前宿主不认识的新字段 / 新能力类型：升级 KepCup，或去掉新字段 |
 | `plugin.manifest-namespace` | 用了 `com.kepcup/*` 或 `local.kepcup/*` |
 | `plugin.files-path` | `dir` / `file` 指向不存在的路径、类型不对、符号链接、路径逃逸 |
@@ -563,6 +612,7 @@ materializer 落地（领域行通过外键 `ON DELETE SET NULL` / 级联与实�
 | `plugin.manifest-read` | 包根没有 `plugin.json`、超过 64KB、JSON 语法错误 |
 | `plugin.manifest-format` | `format_version` 高于支持的 `1` |
 | `plugin.manifest-schema` | 清单不符合 §2 的 schema（消息带路径，一次最多显示 3 条 issue） |
+| `plugin.usage` | 缺少必填的 `usage`（启用说明）：写清启用后还要做什么（启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定） |
 | `plugin.manifest-namespace` | `id` 用了保留命名空间 |
 | `plugin.files-path` | 贡献路径缺失 / 类型不对 / 符号链接 / 逃逸插件目录 |
 | `plugin.files-limits` | 超过条目 / 单文件 / 解包体积上限 |

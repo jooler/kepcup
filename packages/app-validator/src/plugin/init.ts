@@ -127,6 +127,8 @@ export async function initPluginDirectory(options: {
     icon: 'icon.svg',
     version: '0.1.0',
     description: 'TODO',
+    // 2026-11-03 起必填：启用之后要做什么（「启用即用」还是「需要连接 / 添加账号再勾选」）。
+    usage: '启用即可使用。',
     engines: { kepcup: '>=0.4.0' },
     // D105 P5: one example plugin config field — the host builds the card's 「设置」
     // form from `config.fields` automatically. Edit or delete it.

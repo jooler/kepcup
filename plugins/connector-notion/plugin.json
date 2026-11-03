@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-notion",
   "name": "Notion 连接",
   "icon": "connectors/notion/notion.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "搜索、阅读与编辑 Notion 页面和数据库",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Notion 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能读写页面与数据库。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://www.notion.so",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

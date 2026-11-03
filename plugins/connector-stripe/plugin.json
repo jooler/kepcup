@@ -3,15 +3,16 @@
   "id": "app.kepcup/connector-stripe",
   "name": "Stripe 连接",
   "icon": "connectors/stripe/stripe.svg",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "查询与管理 Stripe 的客户、商品与支付",
+  "usage": "启用后还需要连接账号：在扩展中心完成 Stripe 授权，并在 Bot 详情展开插件卡片勾选绑定该账号，Bot 才能查询和管理 Stripe 数据。",
   "author": {
     "name": "KepCup",
     "url": "https://kepcup.com"
   },
   "homepage": "https://stripe.com",
   "engines": {
-    "kepcup": ">=0.4.0"
+    "kepcup": ">=0.5.7"
   },
   "contributions": {
     "connectors": [

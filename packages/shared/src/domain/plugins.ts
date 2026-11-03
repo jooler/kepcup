@@ -76,6 +76,8 @@ export const pluginSummarySchema = z.object({
   iconDataUri: z.string().nullable(),
   version: pluginVersionSchema,
   description: z.string(),
+  /** D105 §15.8: manifest `usage`（启用说明，2026-11-03 起新包必填）——插件卡 / 加号弹框展示。 */
+  usage: z.string().default(''),
   author: z.string().nullable(),
   origin: pluginOriginSchema,
   tier: pluginTierSchema,

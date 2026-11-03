@@ -268,6 +268,26 @@
     </div>
   {/if}
 
+  {#if info.im.length > 0}
+    <div class="space-y-1.5" data-testid={`${testid}-im`}>
+      <Label class="text-xs">{t('plugins.consent.im')}</Label>
+      {#each info.im as channel (channel.id)}
+        <div class="grid gap-0.5">
+          <span class="text-sm">{channel.label}</span>
+          <span class="text-xs break-all text-muted-foreground">
+            {t('plugins.consent.imEndpoint', { host: channel.apiHost })}
+          </span>
+          <span class="text-xs text-muted-foreground">
+            {t('plugins.consent.imFeatures', {
+              inbound: channel.inbound ? t('plugins.consent.imYes') : t('plugins.consent.imNo'),
+              outbound: channel.outbound ? t('plugins.consent.imYes') : t('plugins.consent.imNo'),
+            })}
+          </span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if missing.length > 0}
     <p class="text-xs text-muted-foreground" data-testid={`${testid}-missing`}>
       {t('plugins.consent.requiredMissing', { fields: missing.join(listSeparator()) })}

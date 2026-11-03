@@ -8,6 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
+  import { EXTENSION_CENTER_KIND_FILTERS } from './tabs';
 
   /**
    * 扩展中心 →「市场」分组（D104 P1-3）：浏览官方市场索引、按类别与关键字筛选，
@@ -23,7 +24,7 @@
 
   let { bleed = false }: { bleed?: boolean } = $props();
 
-  const CATEGORY_FILTERS = ['all', 'skill', 'connector', 'mcp', 'mail'] as const;
+  const CATEGORY_FILTERS = ['all', ...EXTENSION_CENTER_KIND_FILTERS] as const;
   type CategoryFilter = (typeof CATEGORY_FILTERS)[number];
 
   $effect(() => {

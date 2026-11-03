@@ -62,6 +62,16 @@ export function createClickGuard(
 
 export const cardClickGuard = createClickGuard();
 
+/**
+ * 拖拽浮动副本（`#dnd-action-dragged-el`）的实测高度：shadow 占位用它钉住高度，
+ * 否则副本与占位形态不一致时会缩放跳动。
+ */
+export function draggedElementHeight(): number | null {
+  if (typeof document === 'undefined') return null;
+  const el = document.getElementById('dnd-action-dragged-el');
+  return el === null ? null : el.getBoundingClientRect().height;
+}
+
 export const BOARD_FLIP_MS = 150;
 
 export function boardFlipDurationMs(reducedMotion: boolean): number {

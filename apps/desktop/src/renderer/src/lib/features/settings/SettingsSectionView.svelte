@@ -54,7 +54,10 @@
     </div>
   </div>
 {:else if section === 'models'}
-  <div data-settings-section="models" class="space-y-6">
+  <!-- 宽屏设置页对「模型」分区不滚动（SettingsPage）：容器传递剩余高度，
+       ModelsSection 让右栏详情自己在栏内滚动；窄屏调用方是普通滚动容器，
+       这里的 flex-1 / min-h-0 不生效，照旧整页滚。 -->
+  <div data-settings-section="models" class="flex min-h-0 flex-1 flex-col">
     <ModelsSection />
   </div>
 {:else if section === 'search'}

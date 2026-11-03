@@ -260,6 +260,7 @@ describe('source and summary additions', () => {
       name: '文档工具集',
       version: '1.2.0',
       description: '',
+      usage: '启用即可使用。',
       author: null,
       iconDataUri: null,
       origin: 'local',

@@ -71,6 +71,15 @@ describe('projectWakeHint / buildTriggerSegment (D92 T1a 触发段宿主说明)'
     // delegation keeps its own W6 hint, not the routing one.
     expect(segmentOf('delegation')).toContain('代用户转交');
     expect(segmentOf('delegation')).not.toContain('延续你们的对话');
+    // D114: a delegation supplement carries the update hint instead.
+    const updateSegment = buildTriggerSegment({
+      reason: 'delegation',
+      messages: [userMessage('补充一点')],
+      options: OPTIONS,
+      extraAttributes: { delegation_update: 'true', intent: 'request' },
+    });
+    expect(updateSegment).toContain('进行中委托的补充');
+    expect(updateSegment).not.toContain('代用户转交');
     expect(projectWakeHint('routing_gate' as never)).toBeNull();
   });
 
