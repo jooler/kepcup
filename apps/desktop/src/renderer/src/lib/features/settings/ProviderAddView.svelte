@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ProviderInstance } from '@kepcup/shared';
+  import type { ProviderInstance, ProviderTemplate } from '@kepcup/shared';
   import { createInstanceFromTemplate, PROVIDER_TEMPLATES } from '@kepcup/shared';
   import { customInstanceIdPattern } from '@kepcup/shared';
-  import { ArrowLeft, Plus } from '@lucide/svelte';
+  import { ArrowLeft, ChevronRight, Plus } from '@lucide/svelte';
   import { i18n, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -42,6 +42,12 @@
     customId = '';
     customBaseUrl = '';
     customKey = '';
+  }
+
+  /** 卡片副标题：接口根 / 官网 host（builtinCatalog 模板没有 baseUrl，用 websiteUrl）。 */
+  function templateHost(template: ProviderTemplate): string {
+    const url = template.baseUrl ?? template.websiteUrl;
+    return url === undefined ? t('settings.templateBuiltinCatalog') : new URL(url).host;
   }
 
   /** 展示名：zh 用模板名，en 用 nameEn（i18n `settings.vendor.{id}` 键不再需要）。 */
@@ -151,6 +157,7 @@
             {t('settings.templateHintCustom')}
           </span>
         </span>
+        <ChevronRight class="ml-auto size-4 shrink-0 text-muted-foreground" />
       </button>
       {#each PROVIDER_TEMPLATES as template (template.id)}
         <button
@@ -179,9 +186,10 @@
           <span class="min-w-0">
             <span class="block truncate text-sm font-medium">{templateName(template.id)}</span>
             <span class="block truncate text-xs text-muted-foreground">
-              {template.baseUrl !== undefined ? new URL(template.baseUrl).host : t('settings.templateBuiltinCatalog')}
+              {templateHost(template)}
             </span>
           </span>
+          <ChevronRight class="ml-auto size-4 shrink-0 text-muted-foreground" />
         </button>
       {/each}
     </div>
