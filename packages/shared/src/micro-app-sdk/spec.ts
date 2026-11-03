@@ -161,14 +161,21 @@ export function microAppCapabilityOf(id: string): MicroAppCapabilitySpec | undef
  * 当前运行时**已实现**的能力集合（清单声明据此裁决：声明了未实现的能力 → 交付拒绝，
  * 回执如实写明，而不是发一张永远打不开的卡）。随 P1 / P2 / P3 落地逐阶段扩大。
  */
-export const MICRO_APP_IMPLEMENTED_CAPABILITIES: readonly string[] = ['storage.kv', 'host.reply', 'host.openLink'];
+export const MICRO_APP_IMPLEMENTED_CAPABILITIES: readonly string[] = [
+  'storage.kv',
+  'host.reply',
+  'host.openLink',
+  'ai.chat',
+  'media.listen',
+  'media.speak',
+];
 
 /**
  * 当前运行时所处的阶段（平台面方法按它裁决是否已在白名单里）。落地一个阶段时把它
  * 前移一格，并同步扩充 {@link MICRO_APP_IMPLEMENTED_CAPABILITIES}——两个常量是
  * 「本阶段已实现」的唯一开关，守卫测试锁它们的一致性。
  */
-export const MICRO_APP_RUNTIME_PHASE: MicroAppCapabilityPhase = 'P0';
+export const MICRO_APP_RUNTIME_PHASE: MicroAppCapabilityPhase = 'P1';
 
 // --- API 方法索引（垫片 / d.ts / sdk.md / 检查器 / inspect 共用）-------------------
 
@@ -340,6 +347,22 @@ export const MICRO_APP_API_METHODS: readonly MicroAppApiMethodSpec[] = [
     since: 'P1',
   },
   {
+    method: 'media.listen.start',
+    capability: 'media.listen',
+    signature: 'listener.start(): Promise<void>',
+    params: '无（开始宿主代理采集 + VAD 分段）',
+    returns: 'void',
+    since: 'P1',
+  },
+  {
+    method: 'media.listen.stop',
+    capability: 'media.listen',
+    signature: 'listener.stop(): Promise<void>',
+    params: '无（停止采集；宿主随后推 end 事件）',
+    returns: 'void',
+    since: 'P1',
+  },
+  {
     method: 'media.speak',
     capability: 'media.speak',
     signature: 'kepcup.media.speak(input): Promise<void>',
@@ -505,6 +528,10 @@ export const MICRO_APP_EVENT_WINDOW_MAX = 64;
 export const MICRO_APP_BRIDGE_MESSAGE_MAX_CHARS = 1024 * 1024;
 /** 清单 `ai.maxTokensPerSession` 的宿主夹取上限（55 §8.3）。 */
 export const MICRO_APP_TOKENS_PER_SESSION_MAX = 50_000;
+/** 每微应用每日 token 预算（宿主默认；管理页可调，55 §8.3）。 */
+export const MICRO_APP_TOKENS_PER_APP_PER_DAY = 200_000;
+/** 每 Bot 每日合计 token 预算（跨该 Bot 全部微应用；超出后统一 MICRO_APP_AI_QUOTA）。 */
+export const MICRO_APP_TOKENS_PER_BOT_PER_DAY = 1_000_000;
 /** 微应用展示模式的枚举。 */
 export const MICRO_APP_DISPLAY_MODES = ['inline', 'immersive'] as const;
 export type MicroAppDisplayMode = (typeof MICRO_APP_DISPLAY_MODES)[number];

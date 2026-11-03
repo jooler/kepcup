@@ -192,3 +192,95 @@ export const microAppsPreflightOutputSchema = z.object({
   items: z.array(microAppsPreflightItemSchema),
 });
 export type MicroAppsPreflightOutput = z.infer<typeof microAppsPreflightOutputSchema>;
+
+// --- 模型平面（P1，55 §6.2 / §8）----------------------------------------------------
+
+/** `kepcup.ai.chat` 的消息（system / user / assistant；无工具面）。 */
+export const microAppAiMessageSchema = z.object({
+  role: z.enum(['system', 'user', 'assistant']),
+  content: z.string().min(1).max(32_000),
+});
+export type MicroAppAiMessage = z.infer<typeof microAppAiMessageSchema>;
+
+/** 实例键：渲染端桥宿主铸造（`mai_…`），预算 / 并发 / 会话按它记账（续期不变）。 */
+export const microAppInstanceRefSchema = z.object({
+  resourceId: z.string().min(1),
+  instanceId: z.string().regex(/^mai_[a-z0-9_]+$/i),
+});
+
+export const microAppsAiChatInputSchema = microAppInstanceRefSchema.extend({
+  messages: z.array(microAppAiMessageSchema).min(1).max(64),
+  /** 流式：回执带 streamId，增量经 `micro-app.stream` 事件投递（渲染端转桥 v2 event 帧）。 */
+  stream: z.boolean().default(false),
+});
+export const microAppsAiChatOutputSchema = z.union([
+  z.object({ stream: z.literal(false), text: z.string() }),
+  z.object({ stream: z.literal(true), streamId: z.string() }),
+]);
+export type MicroAppsAiChatInput = z.infer<typeof microAppsAiChatInputSchema>;
+export type MicroAppsAiChatOutput = z.infer<typeof microAppsAiChatOutputSchema>;
+
+export const microAppsAiSessionCreateInputSchema = microAppInstanceRefSchema.extend({
+  id: z.string().min(1).max(64).optional(),
+  /** 微应用声明的角色设定——宿主包 `<untrusted source="micro-app-prompt">` 边界（55 §8.2）。 */
+  system: z.string().max(8_000).optional(),
+  maxTurns: z.number().int().min(1).max(500).optional(),
+});
+export const microAppsAiSessionCreateOutputSchema = z.object({ sessionId: z.string() });
+
+export const microAppsAiSessionSendInputSchema = microAppInstanceRefSchema.extend({
+  sessionId: z.string().min(1),
+  text: z.string().min(1).max(16_000),
+  stream: z.boolean().default(false),
+});
+export const microAppsAiSessionSendOutputSchema = microAppsAiChatOutputSchema;
+
+export const microAppsAiSessionHistoryInputSchema = microAppInstanceRefSchema.extend({
+  sessionId: z.string().min(1),
+});
+export const microAppsAiSessionHistoryOutputSchema = z.object({
+  messages: z.array(microAppAiMessageSchema),
+});
+
+export const microAppsAiSessionResetInputSchema = microAppInstanceRefSchema.extend({
+  sessionId: z.string().min(1),
+});
+
+/** 取消在途调用 / 流（`cancel` 帧映射；关闭实例即全部取消）。 */
+export const microAppsAiCancelInputSchema = microAppInstanceRefSchema.extend({
+  target: z.string().min(1),
+});
+
+/** 实例收口（卡片关闭 / 桥断开）：取消在途、释放会话与预算计数。 */
+export const microAppsAiDisposeInputSchema = microAppInstanceRefSchema;
+
+/** `micro-app.stream` 事件（core → 渲染端 → 桥 v2 event 帧）：delta / done / error。 */
+export const microAppStreamEventSchema = z.object({
+  instanceId: z.string(),
+  streamId: z.string(),
+  kind: z.enum(['delta', 'done', 'error']),
+  delta: z.string().optional(),
+  code: z.string().optional(),
+});
+export type MicroAppStreamEvent = z.infer<typeof microAppStreamEventSchema>;
+
+// --- 音频平面（P1，55 §7）-----------------------------------------------------------
+
+/** `microApps.media.transcribe`：宿主代理采集的分段 → ASR（记账归微应用 / Bot）。 */
+export const microAppsMediaTranscribeInputSchema = microAppInstanceRefSchema.extend({
+  audioBase64: z.string().min(1),
+  audioMime: z.string().min(1),
+  language: z.string().max(16).optional(),
+});
+export const microAppsMediaTranscribeOutputSchema = z.object({ text: z.string() });
+
+/** `microApps.media.synthesize`：TTS 合成（播放队列在渲染端；打断在渲染端）。 */
+export const microAppsMediaSynthesizeInputSchema = microAppInstanceRefSchema.extend({
+  text: z.string().min(1).max(2_000),
+  voice: z.string().max(64).optional(),
+  rate: z.number().min(0.5).max(2).optional(),
+});
+export const microAppsMediaSynthesizeOutputSchema = z.object({
+  audioBase64: z.string(),
+  mimeType: z.string(),
+});

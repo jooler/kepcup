@@ -14,6 +14,8 @@ export const modelsContribution: SettingAdapterContribution = {
     'models.default-light': (deps) => settingsModelAdapter(deps, 'defaultLightModel', null),
     'models.widget-review': (deps) =>
       settingsModelAdapter(deps, 'widgetReviewModel', '跟随 Bot 主模型'),
+    'models.micro-app': (deps) =>
+      settingsModelAdapter(deps, 'microAppModel', '跟随 Bot 轻量模型'),
     'models.provider': providerKeyAdapter,
     'models.embedding-local': embeddingLocalAdapter,
     'models.concurrency': concurrencyAdapter,

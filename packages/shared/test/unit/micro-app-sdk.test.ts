@@ -109,22 +109,27 @@ describe('micro-app-sdk 生成物', () => {
   });
 
   it('d.ts 覆盖当前阶段实现的方法并带 JSDoc', () => {
-    const dts = buildMicroAppDts('P0');
-    for (const method of microAppImplementedApiMethods('P0')) {
+    const dts = buildMicroAppDts();
+    for (const method of microAppImplementedApiMethods()) {
       expect(dts).toContain(method);
     }
     expect(dts).toContain('AppReadyInfo');
-    expect(dts).not.toContain('media.listen'); // P1 起。
+    expect(dts).toContain('media.listen'); // P1 起进入。
+    expect(dts).not.toContain('context.update'); // P2 起。
+    expect(dts).not.toContain('collections.put'); // P2 起。
   });
 
-  it('实现白名单：只含已实现能力与当前阶段平台方法（media/ai 等 P1 起才进）', () => {
+  it('实现白名单：只含已实现能力与当前阶段平台方法（collections/context P2 起才进）', () => {
     const impl = microAppImplementedApiMethods();
     expect([...impl]).toContain('app.ready');
     expect([...impl]).toContain('storage.get');
     expect([...impl]).toContain('reply');
-    expect([...impl]).not.toContain('media.listen');
-    expect([...impl]).not.toContain('ai.chat');
-    expect([...impl]).not.toContain('app.requestDisplayMode');
+    expect([...impl]).toContain('media.listen');
+    expect([...impl]).toContain('ai.chat');
+    expect([...impl]).toContain('app.requestDisplayMode');
+    expect([...impl]).not.toContain('collections.put');
+    expect([...impl]).not.toContain('context.update');
+    expect([...impl]).not.toContain('files.pick');
   });
 
   it('预览 mock 清单只引用索引里的方法', () => {
@@ -175,9 +180,9 @@ describe('micro-app 清单 schema 与能力面指纹', () => {
   });
 
   it('未实现能力的声明会被点名（交付裁决）', () => {
-    expect(microAppUnimplementedCapabilities(['storage.kv', 'host.reply'])).toEqual([]);
-    const missing = microAppUnimplementedCapabilities(['storage.kv', 'ai.chat']);
-    expect(missing).toEqual(['ai.chat']);
-    expect(microAppCapabilityOf('ai.chat')?.phase).toBe('P1');
+    expect(microAppUnimplementedCapabilities(['storage.kv', 'host.reply', 'ai.chat', 'media.listen'])).toEqual([]);
+    const missing = microAppUnimplementedCapabilities(['storage.kv', 'storage.collection']);
+    expect(missing).toEqual(['storage.collection']);
+    expect(microAppCapabilityOf('storage.collection')?.phase).toBe('P2');
   });
 });

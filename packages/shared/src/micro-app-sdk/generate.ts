@@ -63,6 +63,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
   var pending = new Map();
   var streams = new Map();
   var listeners = new Map();
+  var channels = new Map();
   var lastSeq = new Map();
   var subscriptionCount = 0;
   var SUBSCRIPTIONS_MAX = ${MICRO_APP_EVENT_SUBSCRIPTIONS_MAX};
@@ -90,6 +91,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     var queue = [];
     var waiters = [];
     var finished = false;
+    var failure = null;
     function wake() {
       while (waiters.length > 0 && (queue.length > 0 || finished)) {
         var resolve = waiters.shift();
@@ -100,6 +102,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     var iterator = {
       next: function () {
         if (queue.length > 0) return Promise.resolve({ value: queue.shift(), done: false });
+        if (finished && failure !== null) return Promise.reject(new Error(failure));
         if (finished) return Promise.resolve({ value: undefined, done: true });
         return new Promise(function (resolve) { waiters.push(resolve); });
       },
@@ -115,7 +118,15 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       iterable: iterator,
       push: function (delta) { if (!finished) { queue.push({ delta: delta }); wake(); } },
       finish: function () { finished = true; wake(); },
-      cancel: function () { finished = true; wake(); }
+      cancel: function () { finished = true; wake(); },
+      fail: function (code) {
+        if (finished) return;
+        finished = true;
+        var waiters2 = waiters.splice(0);
+        waiters2.forEach(function (resolve) { resolve({ value: undefined, done: true }); });
+        failure = typeof code === 'string' && code ? code : 'MICRO_APP_AI_UNAVAILABLE';
+        wake();
+      }
     };
   }
   function call(method, params, options) {
@@ -142,9 +153,17 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       post({ k: 'event-ack', subId: subId, seq: frameSeq });
     }
     var channel = streams.get(subId);
-    if (channel !== undefined && (frame.name === 'delta' || frame.name === 'done')) {
+    if (channel !== undefined && (frame.name === 'delta' || frame.name === 'done' || frame.name === 'error')) {
       if (frame.name === 'delta' && frame.data && typeof frame.data.delta === 'string') channel.push(frame.data.delta);
       if (frame.name === 'done') { streams.delete(subId); channel.finish(); }
+      if (frame.name === 'error') { streams.delete(subId); channel.fail(frame.data && frame.data.code); }
+      return;
+    }
+    var mediaCbs = channels.get(subId);
+    if (mediaCbs !== undefined) {
+      var cbs = mediaCbs[frame.name];
+      if (cbs) cbs.slice().forEach(function (cb) { try { cb(frame.data); } catch (err) { } });
+      if (frame.name === 'end') channels.delete(subId);
       return;
     }
     if (subId === 'app') {
@@ -169,6 +188,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       pending.clear();
       streams.forEach(function (channel) { channel.cancel(); });
       streams.clear();
+      channels.clear();
       dispatchLocal('bridge-reset', { reason: data.reason });
       return;
     }
@@ -227,6 +247,57 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       if (activation && !activation.isActive) return Promise.resolve(false);
       if (typeof text !== 'string' || text.trim().length === 0) return Promise.reject(new Error('kepcup.reply 需要一段非空文字'));
       return call('reply', { text: text });
+    },
+    ai: {
+      chat: function (input) {
+        var stream = !!(input && input.stream);
+        /* call(..., {stream:true}) 的 Promise 解析为 AsyncIterable<{delta}>（bindStream）。 */
+        return call('ai.chat', { messages: input ? input.messages : [], stream: stream }, { stream: stream });
+      },
+      session: function (input) {
+        return call('ai.session.create', { id: input ? input.id : undefined, system: input ? input.system : undefined, maxTurns: input ? input.maxTurns : undefined }).then(function (out) {
+          var sessionId = out && typeof out.sessionId === 'string' ? out.sessionId : '';
+          function send(text, opts) {
+            var stream = !!(opts && opts.stream);
+            return call('ai.session.send', { sessionId: sessionId, text: text, stream: stream }, { stream: stream });
+          }
+          return {
+            send: send,
+            history: function () { return call('ai.session.history', { sessionId: sessionId }); },
+            reset: function () { return call('ai.session.reset', { sessionId: sessionId }); }
+          };
+        });
+      }
+    },
+    media: {
+      listen: function (input) {
+        return call('media.listen', { lang: input ? input.lang : undefined, mode: input ? input.mode : undefined, silenceMs: input ? input.silenceMs : undefined }).then(function (out) {
+          var channelId = out && typeof out.channelId === 'string' ? out.channelId : '';
+          var cbs = {};
+          channels.set(channelId, cbs);
+          return {
+            start: function () { return call('media.listen.start', { channelId: channelId }); },
+            stop: function () {
+              channels.delete(channelId);
+              return call('media.listen.stop', { channelId: channelId });
+            },
+            on: function (name, cb) {
+              if (typeof name !== 'string' || typeof cb !== 'function') throw new Error('listen().on 需要 (事件名, 回调)');
+              var list = cbs[name] || (cbs[name] = []);
+              list.push(cb);
+              return function () {
+                var rest = (cbs[name] || []).filter(function (item) { return item !== cb; });
+                if (rest.length === 0) delete cbs[name]; else cbs[name] = rest;
+              };
+            }
+          };
+        });
+      },
+      speak: function (input) {
+        if (!input || typeof input.text !== 'string' || input.text.length === 0) return Promise.reject(new Error('kepcup.media.speak 需要一段非空文字'));
+        return call('media.speak', { text: input.text, voice: input.voice, rate: input.rate });
+      },
+      stopSpeaking: function () { return call('media.stopSpeaking', {}); }
     },
     ui: {
       theme: function () { return Promise.resolve(currentTheme); }

@@ -19,12 +19,17 @@
   import { Button } from '$lib/components/ui/button';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { sensors } from '$lib/sensors/sensors.svelte';
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
   import { MicroAppBridgeHost } from './micro-app-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
   import { widgetConsented } from './consent.svelte';
   import { microAppEffectiveConsentOk, microAppOpenAllowed } from './micro-app-gate';
+  import {
+    MicroAppAudioSession,
+    MicroAppSpeakQueue,
+  } from './micro-app-audio';
 
   /**
    * 组件运行时（覆盖层里的那个 iframe）：海报卡确认后由 WidgetViewer 挂载，start →
@@ -39,7 +44,19 @@
    * `widgets.ui.open` 换 resourceId 并重放调用（iframe 不重载）；重开也失败才转错误态。
    * 关闭覆盖层 = 组件停止（资源关闭，组件内状态不保留，与关掉一个网页一致）。
    */
-  let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
+  let {
+    messageId,
+    card,
+    /** P1：会话级麦克风授权（外壳 MicroAppChrome 的开关；撤销即 revokeCapability）。 */
+    micGranted = false,
+    /** P1：展示模式（外壳全屏键 / 微应用 requestDisplayMode 的落点）。 */
+    onDisplayMode,
+  }: {
+    messageId: string;
+    card: WidgetCard;
+    micGranted?: boolean;
+    onDisplayMode?: (mode: 'inline' | 'immersive') => void;
+  } = $props();
 
   type RuntimeState = 'loading' | 'ready' | 'error';
   let phase = $state<RuntimeState>('loading');
@@ -52,11 +69,43 @@
   let replyBlockedUntil = 0;
 
   let bridge: WidgetBridgeHost | MicroAppBridgeHost | null = null;
+  let microBridge: MicroAppBridgeHost | null = null;
   let generation = 0;
   /** 当前挂载的资源租约（过期自动重开并重放调用，见 resource-lease.ts）。 */
   let lease: WidgetResourceLease | null = null;
   /** 运行中的版本（微应用续期钉住它——升级不热替换运行中的实例，55 §9.1）。 */
   let runningVersion: number | null = null;
+  /** P1：音频面（实例级 TTS 队列；麦克风由各 listen 会话开关）。 */
+  let speakQueue: MicroAppSpeakQueue | null = null;
+  let offStream: (() => void) | null = null;
+
+  // 麦克风撤销：桥已建时立即停采集并通知微应用 capability.revoked（55 §5.3）。
+  $effect(() => {
+    if (micGranted) return;
+    if (microBridge !== null) microBridge.revokeCapability('media.listen');
+  });
+
+  // core 的模型流式增量 → 桥 v2 event 帧（按实例过滤）。
+  $effect(() => {
+    if (card.microApp === undefined) return;
+    void card.widgetId;
+    offStream?.();
+    offStream = core.onEvent('micro-app.stream', (payload) => {
+      microBridge?.forwardStreamEvent(
+        payload as {
+          instanceId: string;
+          streamId: string;
+          kind: string;
+          delta?: string;
+          code?: string;
+        },
+      );
+    });
+    return () => {
+      offStream?.();
+      offStream = null;
+    };
+  });
 
   function currentTheme(): 'light' | 'dark' {
     return mode.current === 'dark' ? 'dark' : 'light';
@@ -127,8 +176,9 @@
       const frameWindow = frame?.contentWindow;
       if (frame === undefined || !frameWindow) throw new Error('frame unavailable');
       // Listen first, then load: the shim's first calls must find the bridge ready.
-      // 微应用挂桥 v2（能力路由 / 事件 / 预算），存量组件挂 v1（行为零变化）。
+      // 微应用挂桥 v2（能力路由 / 事件 / 预算 / 音频面），存量组件挂 v1（行为零变化）。
       if (out.microApp !== undefined) {
+        speakQueue = new MicroAppSpeakQueue(out.resourceId);
         bridge = MicroAppBridgeHost.connect({
           frameWindow,
           resourceId: out.resourceId,
@@ -159,7 +209,33 @@
               pendingReply = { text, resolve };
             }),
           onTitle: () => {},
+          micGrant: () => {
+            if (!micGranted) return 'denied';
+            if (!sensors.state.microphone.enabled) return 'unavailable';
+            return 'granted';
+          },
+          aiCall: (method, params) =>
+            core.call(aiRpcNameOf(method), { ...params, resourceId: out.resourceId }),
+          createListenSession: (config, sink, instanceId) =>
+            new MicroAppAudioSession({
+              resourceId: out.resourceId,
+              instanceId,
+              config,
+              sink,
+              speakQueue: speakQueue!,
+              openMicrophone: async () => (await sensors.open('microphone')).stream,
+            }),
+          speak: (input) => speakQueue!.speak(input),
+          stopSpeaking: () => speakQueue?.stopSpeaking(),
+          onRequestDisplayMode: async (mode) => {
+            onDisplayMode?.(mode);
+            return { mode };
+          },
+          onClose: () => {
+            /* 关闭由用户掌握（外壳 X / Esc）；微应用请求只作为提示，P1 不代关。 */
+          },
         });
+        microBridge = bridge;
       } else {
         bridge = WidgetBridgeHost.connect({
           frameWindow,
@@ -249,12 +325,22 @@
     pendingReply = null;
     const connected = bridge;
     bridge = null;
+    microBridge = null;
     connected?.destroy();
+    // 音频面收口：停播放（监听会话已随桥 destroy 释放麦克风）。
+    speakQueue?.dispose();
+    speakQueue = null;
     const resource = lease?.close() ?? null;
     lease = null;
     if (resource !== null) {
       await core.call('widgets.ui.close', { resourceId: resource }).catch(() => undefined);
     }
+  }
+
+  /** 外壳「停止」键：立即停采集与播放（55 §7.3）。 */
+  export function stopAudio(): void {
+    speakQueue?.stopSpeaking();
+    microBridge?.revokeCapability('media.listen');
   }
 
   /** 覆盖层 header 的重载按钮；错误态的重试也走这里。 */
@@ -315,6 +401,26 @@
       void stop();
     };
   });
+</script>
+
+<script lang="ts" module>
+  /** 桥方法名 → microApps.* RPC 名（ai 面）。 */
+  export function aiRpcNameOf(method: string): string {
+    switch (method) {
+      case 'ai.chat':
+        return 'microApps.ai.chat';
+      case 'ai.session.create':
+        return 'microApps.ai.sessionCreate';
+      case 'ai.session.send':
+        return 'microApps.ai.sessionSend';
+      case 'ai.session.history':
+        return 'microApps.ai.sessionHistory';
+      case 'ai.session.reset':
+        return 'microApps.ai.sessionReset';
+      default:
+        return `microApps.${method}`;
+    }
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col" data-testid="widget-runtime" data-state={phase}>

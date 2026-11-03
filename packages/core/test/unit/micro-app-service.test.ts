@@ -144,10 +144,10 @@ describe('清单校验（交付裁决）', () => {
       html: HTML,
       scope: 'conversation',
       runId: 'r',
-      manifest: { ...MANIFEST, permissions: ['storage.kv', 'ai.chat'] },
+      manifest: { ...MANIFEST, permissions: ['storage.kv', 'storage.collection'] },
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.message).toContain('ai.chat');
+    if (!result.ok) expect(result.message).toContain('storage.collection');
   });
 
   it('未知 spec 版本 → 如实拒绝（不静默降级）', () => {
