@@ -180,6 +180,52 @@ describe('computer tools (tool layer on a fake host)', () => {
     expect(recorder.requested).toBe(1);
   });
 
+  test('a scroll readback that saw the layout move is not reported as "maybe nothing happened"', async () => {
+    const host = fakeHost({
+      ...snapshot,
+      action: {
+        path: 'synthetic',
+        delivery: 'background',
+        verification: {
+          state: 'unverified',
+          reason: 'synthetic_input',
+          actualPreview: '滚动后内容上移 312pt（41 个元素位置变化）',
+        },
+      },
+    });
+    const result = await execute(findTool(tools(host, approvalRecorder(approvedOutcome())), 'computer_scroll'), {
+      app: 'Notes',
+      direction: 'down',
+      element_index: 2,
+    });
+    expect(result.outcome).toBe('uncertain');
+    expect(result.content).toContain('读回：滚动后内容上移 312pt（41 个元素位置变化）');
+    expect(result.content).not.toContain('可能未生效');
+  });
+
+  test('a suspected no-op scroll says the readback saw no movement', async () => {
+    const host = fakeHost({
+      ...snapshot,
+      action: {
+        path: 'synthetic',
+        delivery: 'background',
+        verification: {
+          state: 'unverified',
+          reason: 'suspected_noop',
+          actualPreview: '滚动前后 AX 布局指纹完全一致，内容没有移动',
+        },
+      },
+    });
+    const result = await execute(findTool(tools(host, approvalRecorder(approvedOutcome())), 'computer_scroll'), {
+      app: 'Notes',
+      direction: 'down',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('读回没有可观测变化');
+    expect(result.content).toContain('滚动前后 AX 布局指纹完全一致');
+    expect(result.content).toContain('不要盲目重放');
+  });
+
   test('verified action verification → completed', async () => {
     const host = fakeHost(actionResult({ state: 'verified', property: 'value' }));
     const result = await execute(findTool(tools(host, approvalRecorder(approvedOutcome())), 'computer_set_value'), {
