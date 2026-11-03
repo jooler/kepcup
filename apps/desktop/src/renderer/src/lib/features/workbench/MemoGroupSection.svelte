@@ -8,6 +8,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import {
     anchorFromFinalize,
+    draggedElementHeight,
     isNoopMove,
     isShadow,
     stripShadow,
@@ -115,12 +116,6 @@
     }
     items = event.detail.items;
     workbench.setMemoDragging(true);
-  }
-
-  function draggedElementHeight(): number | null {
-    if (typeof document === 'undefined') return null;
-    const el = document.getElementById('dnd-action-dragged-el');
-    return el === null ? null : el.getBoundingClientRect().height;
   }
 
   function onFinalize(event: CustomEvent<DndEvent<(typeof section.memos)[number]>>): void {

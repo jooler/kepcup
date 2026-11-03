@@ -7,7 +7,6 @@ import {
   clearLegacySidebarSections,
   createSection,
   deleteSection,
-  dropBeforeId,
   emptySidebarSections,
   hasSidebarState,
   isSectionMoveNoop,
@@ -335,24 +334,6 @@ describe('normalizeSidebarSections', () => {
     expect(state.assignments).toEqual({ a: 'sec_a' });
     expect(state.collapsed).toEqual({ sec_a: true, [UNASSIGNED_SECTION_ID]: true });
     expect(normalizeSidebarSections({ assignments: [], collapsed: null }).assignments).toEqual({});
-  });
-});
-
-describe('dropBeforeId', () => {
-  const rows = [
-    { id: 'a', top: 0, bottom: 20 },
-    { id: 'b', top: 20, bottom: 40 },
-    { id: 'c', top: 40, bottom: 60 },
-  ];
-
-  test('落在标题上半区则插到它前面，过了中线落到更下面，末尾为 null', () => {
-    expect(dropBeforeId(rows, 5, 'x')).toBe('a');
-    expect(dropBeforeId(rows, 15, 'x')).toBe('b');
-    expect(dropBeforeId(rows, 50, 'x')).toBe(null);
-  });
-
-  test('跳过正在拖的标题', () => {
-    expect(dropBeforeId(rows, 5, 'a')).toBe('b');
   });
 });
 
