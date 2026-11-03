@@ -78,6 +78,10 @@
   /** P1：音频面（实例级 TTS 队列；麦克风由各 listen 会话开关）。 */
   let speakQueue: MicroAppSpeakQueue | null = null;
   let offStream: (() => void) | null = null;
+  /** 宿主铸造的实例键（ai / 媒体 RPC 的记账与归属；续期不变）。 */
+  let microInstanceId: string | null = null;
+  /** 当前资源 id（续期后更新；ai / 媒体面调用时读取，避免打到过期资源）。 */
+  let currentResourceId: string | null = null;
 
   // 麦克风撤销：桥已建时立即停采集并通知微应用 capability.revoked（55 §5.3）。
   $effect(() => {
@@ -150,10 +154,11 @@
         }
       }
       runningVersion = out.version;
+      currentResourceId = out.resourceId;
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
-        reopen: async () =>
-          widgetsUiOpenOutputSchema.parse(
+        reopen: async () => {
+          const renewed = widgetsUiOpenOutputSchema.parse(
             await core.call('widgets.ui.open', {
               messageId,
               theme: currentTheme(),
@@ -161,7 +166,11 @@
               // 在跑的实例换掉（升级 = 重新打开生效，不热替换）。
               ...(runningVersion !== null ? { pinVersion: runningVersion } : {}),
             }),
-          ).resourceId,
+          );
+          // 续期换 resourceId 后，ai / 媒体面要跟着用新的（审查修复 F8）。
+          currentResourceId = renewed.resourceId;
+          return renewed.resourceId;
+        },
         discard: (resourceId) => {
           void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
         },
@@ -214,11 +223,20 @@
             if (!sensors.state.microphone.enabled) return 'unavailable';
             return 'granted';
           },
-          aiCall: (method, params) =>
-            core.call(aiRpcNameOf(method), { ...params, resourceId: out.resourceId }),
+          // 审查修复 F1/F3：instanceId 一律由宿主加盖（盖掉 iframe 传来的任何值），
+          // resourceId 用续期后的当前值——预算 / 并发 / 归属才不被伪造实例键绕过。
+          aiCall: (method, params) => {
+            const { instanceId: _ignored, ...rest } = params;
+            void _ignored;
+            return core.call(aiRpcNameOf(method), {
+              ...rest,
+              resourceId: currentResourceId ?? '',
+              instanceId: microInstanceId ?? '',
+            });
+          },
           createListenSession: (config, sink, instanceId) =>
             new MicroAppAudioSession({
-              resourceId: out.resourceId,
+              resourceId: currentResourceId ?? '',
               instanceId,
               config,
               sink,
@@ -236,6 +254,8 @@
           },
         });
         microBridge = bridge;
+        microInstanceId = microBridge.instanceId;
+        speakQueue.setInstance(microInstanceId);
       } else {
         bridge = WidgetBridgeHost.connect({
           frameWindow,
@@ -332,6 +352,15 @@
     speakQueue = null;
     const resource = lease?.close() ?? null;
     lease = null;
+    // 实例收口（审查修复 F4）：关闭即取消全部在途模型调用、释放会话与并发位
+    // （「关闭微应用即取消全部在途调用」，55 §6.2 / §9.1）。
+    if (microInstanceId !== null && resource !== null) {
+      await core
+        .call('microApps.ai.dispose', { resourceId: resource, instanceId: microInstanceId })
+        .catch(() => undefined);
+    }
+    microInstanceId = null;
+    currentResourceId = null;
     if (resource !== null) {
       await core.call('widgets.ui.close', { resourceId: resource }).catch(() => undefined);
     }

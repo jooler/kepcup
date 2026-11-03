@@ -5,6 +5,7 @@ import {
   MICRO_APP_BRIDGE_HOST_SOURCE,
   MICRO_APP_EVENT_SUBSCRIPTIONS_MAX,
   buildMicroAppShim,
+  microAppsAiChatInputSchema,
 } from '../../src/index.js';
 
 /**
@@ -245,5 +246,60 @@ describe('微应用垫片（真实执行）', () => {
     const shim = buildMicroAppShim();
     expect(shim).not.toContain('\n');
     expect(shim).toContain('window.kepcup');
+  });
+
+  test('P1 接缝：ai.chat 的垫片出参 + 宿主加盖键 能过 microApps.ai.chat 的 RPC schema', async () => {
+    const shim = loadShim();
+    const reply = shim.kepcup.ai.chat({ messages: [{ role: 'user', content: 'hi' }] });
+    // 宿主盖章（WidgetRuntime 的 aiCall）：resourceId + 宿主铸造的 instanceId。
+    const callFrame = shim.sent.find((frame) => frame.k === 'call' && frame.method === 'ai.chat');
+    expect(callFrame).toBeDefined();
+    const stamped = {
+      ...(callFrame as { params: Record<string, unknown> }).params,
+      resourceId: 'res_1',
+      instanceId: 'mai_seam_1',
+    };
+    expect(microAppsAiChatInputSchema.safeParse(stamped).success).toBe(true);
+    // iframe 自带 instanceId 会被宿主盖掉——盖掉的值不能是 iframe 的。
+    expect(stamped['instanceId']).toBe('mai_seam_1');
+    shim.deliver(hostFrame({ k: 'ack', id: 1, result: { text: 'Hello!' } }));
+    await expect(reply).resolves.toEqual({ text: 'Hello!' });
+  });
+
+  test('P1 接缝：流式 ai.chat —— ack 带 streamId，delta/done 事件喂进迭代器', async () => {
+    const shim = loadShim();
+    const pending = shim.kepcup.ai.chat({ messages: [{ role: 'user', content: 'count' }], stream: true });
+    shim.deliver(hostFrame({ k: 'ack', id: 1, result: { streamId: 's_1' } }));
+    const iterable = (await pending) as AsyncIterable<{ delta: string }>;
+    shim.deliver(hostFrame({ k: 'event', subId: 's_1', name: 'delta', data: { delta: 'One ' }, seq: 1 }));
+    shim.deliver(hostFrame({ k: 'event', subId: 's_1', name: 'delta', data: { delta: 'two' }, seq: 2 }));
+    shim.deliver(hostFrame({ k: 'event', subId: 's_1', name: 'done', data: null, seq: 3 }));
+    const parts: string[] = [];
+    for await (const part of iterable) parts.push(part.delta);
+    expect(parts.join('')).toBe('One two');
+    // 迭代中途的 error 事件：后续 next() 以带 code 的 Error 拒绝（审查修复 F13）。
+    const second = shim.kepcup.ai.chat({ messages: [{ role: 'user', content: 'x' }], stream: true });
+    shim.deliver(hostFrame({ k: 'ack', id: 2, result: { streamId: 's_2' } }));
+    const iter2 = (await second) as AsyncIterable<{ delta: string }>;
+    shim.deliver(hostFrame({ k: 'event', subId: 's_2', name: 'delta', data: { delta: 'a' }, seq: 1 }));
+    shim.deliver(
+      hostFrame({ k: 'event', subId: 's_2', name: 'error', data: { code: 'MICRO_APP_AI_QUOTA' }, seq: 2 }),
+    );
+    const iterator2 = iter2[Symbol.asyncIterator]();
+    await expect(iterator2.next()).resolves.toEqual({ value: { delta: 'a' }, done: false });
+    await expect(iterator2.next()).rejects.toMatchObject({ code: 'MICRO_APP_AI_QUOTA' });
+  });
+
+  test('P1：media.listen —— ack 带 channelId，通道事件派发到 on()，end 清通道', async () => {
+    const shim = loadShim();
+    const listenerPromise = shim.kepcup.media.listen({ mode: 'vad', silenceMs: 700 });
+    shim.deliver(hostFrame({ k: 'ack', id: 1, result: { channelId: 'ch_1' } }));
+    const listener = await listenerPromise;
+    const seen: unknown[] = [];
+    listener.on('final', (value) => seen.push(value));
+    listener.on('end', () => seen.push('end'));
+    shim.deliver(hostFrame({ k: 'event', subId: 'ch_1', name: 'final', data: { text: 'hello' }, seq: 1 }));
+    shim.deliver(hostFrame({ k: 'event', subId: 'ch_1', name: 'end', data: null, seq: 2 }));
+    expect(seen).toEqual([{ text: 'hello' }, 'end']);
   });
 });

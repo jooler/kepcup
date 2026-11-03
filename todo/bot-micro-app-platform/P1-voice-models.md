@@ -80,3 +80,25 @@
 
 - VAD 收段状态机与采集链路依赖真实 AudioWorklet，无 node 级单测（与 53 号 voice-recorder 同口径：真实麦克风不在单测内）；行为由 S2 预览（P3）与手动验收覆盖。
 - 会话恢复（app.pause 时微应用写 storage）是 SDK 约定，模板示范在 P3。
+
+## 第一轮审查与修复（2026-11-04）
+
+独立子代理审查结论 **FIX FIRST**（3 条 P0、9 条 P1、5 条 P2、7 条 P3）。全部 P0/P1 与可低成本修复的 P2/P3 已修复：
+
+1. **（P0-1/F1）ai 面端到端断裂**：宿主 `aiCall` 现在一律加盖自己铸造的 `instanceId`（盖掉 iframe 传值）——之前垫片出参缺 instanceId，所有 `kepcup.ai.*` 都会被 schema 拒。
+2. **（P0-2/F2）`media.speak` 不可用**：`speakQueue.setInstance` 在桥建立后接通。
+3. **（P0-3/F3）实例键可伪造（并发 / 会话预算分身、跨实例 DoS）**：core 侧 `#bindings`（instanceId → resourceId 首用绑定，之后逐方法核对该对）+ `cancel / dispose / sessionHistory / sessionReset` 全部过 `#contextFor`（能力 + 归属）；集成测试锁「同 instanceId 换 resourceId 拒绝」。
+4. **（P1-4/F4）dispose 接错生命周期**：`MicroAppAudioSession.stop` 不再 dispose 实例；实例收口移到 `WidgetRuntime.stop`（关闭即取消在途、释放会话与并发位）。
+5. **（P1-5/F5）流前失败悬挂迭代器**：`#startStream` 的 catch 兜底发 `kind:'error'` 事件（预算 / 路由 / 模型解析失败也有终态）；集成测试锁「预算超限的流式调用收到 error 事件且无 delta」。
+6. **（P1-6/F6）流取消到不了 core**：桥宿主收到字符串 target 的 `cancel` 帧转发 `microApps.ai.cancel`；垫片 `wireAbort`（AbortSignal → 迭代器 return → cancel 帧）。
+7. **（P1-7/F7）监听通道 id 撞车 + 无上限**：单调计数 `#channelSeq`；并发通道上限 4（`WIDGET_RATE_LIMITED`）。
+8. **（P1-8/F8）续期后 stale resourceId**：`currentResourceId` 在续期回调更新，ai / 媒体面调用时读取。
+9. **（P1-9/F9）bot_id 空的 Bot 级预算**：显式跳过 + 审计告警（口径上 widgets.bot_id NOT NULL）。
+10. **（P1-10/F10）麦克风启动失败泄漏**：start 的装配段 try/catch → `#teardown()` 再抛。
+11. **（P1-11/F11）ASR 在途丢段**：收段排队（`#pendingSegments`）逐段排空，不再丢弃。
+12. **（P2-13/F13）流错误丢 code**：垫片迭代器以带 `.code` 的 Error 拒绝（含在途 waiter）。
+13. **（P2-16/F16）取消调用无终态回执**：桥宿主对被取消的 call 回 `MICRO_APP_BRIDGE_CLOSED` 错误帧（§6.3 恰好一条终态）。
+14. （P2-14/F14）垫片 `ai.chat` 接受 `signal`（AbortSignal → return() → cancel）；（P2-15）会话方法归属校验并入 F3；（P3）实例驱逐注释改 FIFO、`micro_app_usage` 回放夹具（public-skills-migration 摘表）修复全量。
+15. 未修（记录）：ASR/TTS 无限额（P1 设计只要求 token 预算；P2 管理页可视化后一并考虑）；`dispatchLocal` 对未知 subId 的兜底双投递（无害）。
+
+新增测试：垫片↔RPC 接缝（ai.chat 出参过 schema + 宿主盖章；流式 ack→delta→done→error 全链；listen 通道事件派发）、实例归属绑定、流前失败收口。回归 75 文件 933→936 通过 / 1 跳过；typecheck 0 错误。
