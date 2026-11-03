@@ -361,6 +361,7 @@ export function buildTaskTools(input: {
     name: 'start_task',
     description:
       '把一件需要动手或耗时的事派成一个后台任务（文件、命令、浏览器、生成图片 / 语音 / 视频、长时间研究都在任务里做），立即返回 task_id，不等它完成。' +
+      '对话轮只有只读查询工具（无 bash / 写入）；任务拥有完整工具面（bash、写文件、浏览器等），执行中会按需申请权限——本轮做不了的，就用 start_task 派任务去做。' +
       '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
       'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +

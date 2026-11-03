@@ -744,7 +744,10 @@ class ChatState {
    */
   #upsertConversation(conversation: ConversationView): boolean {
     // Card chats are hidden. A dialog session still hears the event itself.
-    if (conversation.type === 'card') return false;
+    // v2.3: bot_direct exchange conversations too — they only surface through
+    // the delegation pill's detail view (its own dialog session); the startup
+    // list is already filtered core-side, this keeps the event path out.
+    if (conversation.type === 'card' || conversation.type === 'bot_direct') return false;
     const index = this.conversations.findIndex((c) => c.id === conversation.id);
     const unread = mergeUnreadCount(conversation, this.conversations[index]);
     // A conversation first seen through an event without a count (D75: seq

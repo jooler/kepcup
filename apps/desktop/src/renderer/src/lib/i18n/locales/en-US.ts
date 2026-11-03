@@ -1528,6 +1528,7 @@ export const enUS = {
   'delegation.viewDetail': 'View details',
   'delegation.cancelShort': 'Cancel',
   'delegation.closeDetail': 'Close details',
+  'delegation.backToChat': 'Back to chat',
   'delegation.detailUnavailable': 'The conversation for this delegation no longer exists',
   'delegation.detailLoading': 'Loading the delegation conversation…',
   'delegation.detailEmpty': 'No messages in this delegation yet',

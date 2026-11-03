@@ -165,6 +165,20 @@ export class DelegationsService {
     return delegation;
   }
 
+  /**
+   * v2.3: the delegation owning a `bot_direct` exchange conversation (runs and
+   * tasks of a delegated execution live there). Resolves the issuer's chat for
+   * user-facing cards; newest wins defensively (one delegation per exchange).
+   */
+  byExchange(conversationId: string): Delegation | null {
+    const row = this.db
+      .prepare(
+        'select * from delegations where exchange_conversation_id = ? order by created_at desc, id desc limit 1',
+      )
+      .get(conversationId) as DelegationRow | undefined;
+    return row ? rowToDelegation(row) : null;
+  }
+
   /** The `working` delegation B's run `runId` is executing (single-hop guard + settle hook). */
   workingByRun(runId: string): Delegation | null {
     const row = this.db

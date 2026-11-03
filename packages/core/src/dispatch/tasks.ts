@@ -253,11 +253,12 @@ export interface TaskHostDeps {
   /** Resolves the task's cwd root (bound workdir or the workspace). */
   resolveCwd(botId: string, conversationId: string, requested?: 'workspace' | 'workdir'): string;
   /**
-   * D113 (D71 v2) 执行归属映射：委派 run 跑在交换会话里，但 B 为它派出的任务
-   * （任务卡 / ask_user / task_event 往返）归属 B 与用户的私聊。返回该 run
-   * 的归属会话 id；缺省 = run 自己的会话。
+   * v2.3 (D71 v2) §3.7 执行归属映射：委派执行中需要用户操作的产物（ask_user
+   * 提问卡）落在发起方 A 与用户的私聊——谁发出委派，用户就在谁的对话里操作。
+   * 任务本身（任务卡 / task_event 往返）住在 run 自己的会话（交换会话），
+   * 不经本映射。返回该 run 的用户归属会话 id；缺省 = run 自己的会话。
    */
-  executionHomeOf?(identity: RunIdentity): string | null;
+  userHomeOf?(identity: RunIdentity): string | null;
   /**
    * Terminal cleanup of the run (once-grants, pending approvals, run.status).
    * `executorActive`: the execution is still unwinding — it releases its own
@@ -964,6 +965,10 @@ export class TaskHost implements TaskToolFacade {
       throw new AppError('RUN_ALREADY_FINISHED', '任务已结束');
     }
     const { conversationId } = this.#scope(identity);
+    // v2.3 §3.7: a delegated task's question card goes to the issuer's chat —
+    // whoever delegated, the user answers in their own conversation with that
+    // bot. Everything else (record / void / answer) works by card id.
+    const cardConversationId = this.#deps.userHomeOf?.(identity) ?? conversationId;
     if (this.#questions.has(task.id)) {
       throw new AppError('INVALID_INPUT', '上一个问题还没有回答');
     }
@@ -974,7 +979,7 @@ export class TaskHost implements TaskToolFacade {
     // is a line in every bot's context, 审查 H1).
     const options = input.options.map((option) => clip(option.trim(), ASK_USER_OPTION_MAX_CHARS));
     const card = this.#deps.messages.append({
-      conversationId,
+      conversationId: cardConversationId,
       senderType: 'system',
       kind: 'system_event',
       event: TASK_QUESTION_EVENT,
@@ -1999,10 +2004,10 @@ export class TaskHost implements TaskToolFacade {
     if (identity.botId === null || identity.conversationId === null) {
       throw new AppError('INVALID_INPUT', '任务需要 Bot 与对话上下文');
     }
-    // D113: a delegated turn's tasks belong in the executor's chat (execution
-    // home), not in the exchange conversation the run occupies.
-    const home = this.#deps.executionHomeOf?.(identity) ?? identity.conversationId;
-    return { botId: identity.botId, conversationId: home };
+    // v2.3: tasks of a delegated execution live where the run lives (the
+    // exchange conversation) — task card, task_event roundtrips and the task
+    // workspace stay inside it, away from both bots' user chats.
+    return { botId: identity.botId, conversationId: identity.conversationId };
   }
 
   #ownTask(botId: string, conversationId: string, taskId: string): Run {

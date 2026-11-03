@@ -866,9 +866,9 @@ export class Orchestrator {
         }
         return workdir.path;
       },
-      // D113 §3.7: a delegated turn's tasks land in the executor's chat (the
-      // closure is safe — #delegationHost exists by the time a run starts).
-      executionHomeOf: (identity) => executionHomeOf(identity),
+      // v2.3 §3.7: a delegated task's ask_user card goes to the issuer's chat
+      // (the closure is safe — #delegationHost exists by the time a run starts).
+      userHomeOf: (identity) => executionUserHomeOf(identity),
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
@@ -1044,14 +1044,19 @@ export class Orchestrator {
       deliverEvent: (botId, conversationId, event, text, options) =>
         this.deliverEventToBot(botId, conversationId, event, text, options),
     });
-    // D113 §3.7 执行归属映射：委派 run 跑在交换会话里，但它的用户可见产物
-    // （审批卡 / 中途权限弹窗、B 派出的任务）归属执行方 B 与用户的私聊。
-    const executionHomeOf = (identity: RunIdentity): string | null => {
+    // v2.3 §3.7 执行归属映射：委派执行的**用户可见产物**（审批卡 / 中途权限
+    // 弹窗 / ask_user 提问卡）落在发起方 A 与用户的私聊——谁发出委派，用户
+    // 就在谁的对话里操作；执行过程本身（任务卡、task_event 往返、B 的回复）
+    // 全部留在交换会话，不进入任何一方的用户对话。委派轮与委派任务都住交换
+    // 会话（v2.3），按会话查行即可覆盖两者；v1 存量轮由 workingByRun 兜底。
+    const executionUserHomeOf = (identity: RunIdentity): string | null => {
       if (identity.conversationId === null) return null;
-      const delegation = deps.delegations.workingByRun(identity.runId);
-      return delegation?.toConversationId ?? identity.conversationId;
+      const delegation =
+        deps.delegations.byExchange(identity.conversationId) ??
+        deps.delegations.workingByRun(identity.runId);
+      return delegation?.fromConversationId ?? identity.conversationId;
     };
-    deps.approvals.setUserConversationResolver(executionHomeOf);
+    deps.approvals.setUserConversationResolver(executionUserHomeOf);
     this.#episodes = new EpisodesService({
       db: deps.db,
       clock: deps.clock,
@@ -1946,9 +1951,29 @@ export class Orchestrator {
   ): void {
     const conversation = this.#deps.conversations.get(conversationId);
     const bot = this.#deps.bots.get(botId);
-    if (!conversation || conversation.readOnly) return;
-    if (!bot || bot.status !== 'active') return;
-    if (!this.#deps.conversations.memberBotIds(conversationId).includes(botId)) return;
+    // 拒投不留痕会让「结算了但用户永远看不到」这类断链无从排查（委派结果
+    // follow-up 走的就是这条管道），所以每个拒投分支都留 warn。
+    if (!conversation || conversation.readOnly) {
+      this.#deps.logger.warn(
+        { botId, conversationId, event, readOnly: conversation?.readOnly ?? null },
+        'event delivery refused: conversation missing or read-only',
+      );
+      return;
+    }
+    if (!bot || bot.status !== 'active') {
+      this.#deps.logger.warn(
+        { botId, conversationId, event, botStatus: bot?.status ?? null },
+        'event delivery refused: bot missing or inactive',
+      );
+      return;
+    }
+    if (!this.#deps.conversations.memberBotIds(conversationId).includes(botId)) {
+      this.#deps.logger.warn(
+        { botId, conversationId, event },
+        'event delivery refused: bot is not a member',
+      );
+      return;
+    }
     const message = this.#appendSystemMessage(conversationId, event, text, {
       ...(options.internal ? { internal: true } : {}),
       ...(options.settingResolved !== undefined
