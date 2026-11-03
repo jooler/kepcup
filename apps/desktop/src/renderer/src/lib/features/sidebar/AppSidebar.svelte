@@ -1220,7 +1220,7 @@
                   {:else}
                     <button
                       type="button"
-                      class="flex w-full touch-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground select-none hover:bg-sidebar-accent hover:text-foreground
+                      class="flex w-full touch-none items-center gap-2 px-1.5 rounded-md text-left text-xs text-muted-foreground select-none
                       {sectionDrag?.id === group.id
                         ? 'cursor-grabbing opacity-50'
                         : 'cursor-pointer'}"
