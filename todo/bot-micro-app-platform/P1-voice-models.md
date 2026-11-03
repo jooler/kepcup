@@ -102,3 +102,15 @@
 15. 未修（记录）：ASR/TTS 无限额（P1 设计只要求 token 预算；P2 管理页可视化后一并考虑）；`dispatchLocal` 对未知 subId 的兜底双投递（无害）。
 
 新增测试：垫片↔RPC 接缝（ai.chat 出参过 schema + 宿主盖章；流式 ack→delta→done→error 全链；listen 通道事件派发）、实例归属绑定、流前失败收口。回归 75 文件 933→936 通过 / 1 跳过；typecheck 0 错误。
+
+## 第二轮复审与修复（2026-11-04）
+
+复审结论 FIX FIRST（1 条 P1、2 条 P2、6 条 P3），全部处置：
+
+1. **（P1-1）续期永久毒化归属 + speak/transcribe 打过期资源**：归属改为**按 widgetId 绑定**（`#bindings: instanceId → widgetId`；续期换 resourceId、同微应用不打断，集成测试锁「同卡重开新资源后 chat 照常」）；`MicroAppSpeakQueue` / `MicroAppAudioSession` 的 resourceId 改为**读取器**（调用时取当前值）。
+2. **（P2-2）dispose 丢弃 resourceId（归属校验死码）**：绑定层透传 + 归属不符**抛错**（不再静默 no-op）；测试锁「换资源 dispose 拒绝、正确归属成功」。
+3. **（P2-3）合成期间打断仍播一整段**：`run()` 合成后核 epoch、`#play` 起播前再核——停止键 / 插话不再漏段。
+4. （P3-4）`ai.cancel` / `ai.dispose` 补进 API 索引（capability ai.chat，能力门生效）；（P3-5）用户取消的流错误码改 `MICRO_APP_BRIDGE_CLOSED`（原 BUSY 的 hint 误导）；（P3-7）F16 测试更新为「恰好一条 `MICRO_APP_BRIDGE_CLOSED` 终态回执」。
+5. 未修（记录）：单槽插话监听 vs 4 通道（单通道应用不受影响，P3）；麦克风启动失败的错误码细分（P3）；跨微应用「猜 instanceId 抢绑定」经评估不可达（iframe 只能经宿主桥，宿主盖章；渲染层已攻破则整体失守）。
+
+修复后定向回归 74 文件 921 通过 / 1 跳过；全量 `pnpm test` 7650 通过 0 失败（migration 回放夹具修复后）。**P1 收口。**

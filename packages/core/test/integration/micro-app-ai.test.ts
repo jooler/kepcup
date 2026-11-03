@@ -286,6 +286,34 @@ describe('microApps.ai（模型平面）', () => {
         sessionId: 'whatever',
       }),
     ).rejects.toMatchObject({ code: 'MICRO_APP_CAPABILITY_DENIED' });
+    // dispose 换资源也拒绝（二轮 F2）：实例不被跨实例拆除。
+    await expect(
+      core.rpc.call('microApps.ai.dispose', { resourceId: resourceB, instanceId: 'mai_t_own' }),
+    ).rejects.toMatchObject({ code: 'MICRO_APP_CAPABILITY_DENIED' });
+    // 正确归属的 dispose 成功。
+    await core.rpc.call('microApps.ai.dispose', { resourceId: resourceA, instanceId: 'mai_t_own' });
+  });
+
+  it('归属按 widget 绑定：资源续期（同微应用换 resourceId）不打断在跑实例（二轮 F1）', async () => {
+    stack.llm.script('mock-light', [step().replyText('one'), step().replyText('two')]);
+    const app = await createMicroApp(['ai.chat']);
+    const firstResource = await openResource(app.messageId);
+    const first = (await core.rpc.call('microApps.ai.chat', {
+      resourceId: firstResource,
+      instanceId: 'mai_t_renew',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: false,
+    })) as { text: string };
+    expect(first.text).toBe('one');
+    // 模拟租期续期：同一张卡重新 open 出新 resourceId。
+    const renewedResource = await openResource(app.messageId);
+    const second = (await core.rpc.call('microApps.ai.chat', {
+      resourceId: renewedResource,
+      instanceId: 'mai_t_renew',
+      messages: [{ role: 'user', content: 'again' }],
+      stream: false,
+    })) as { text: string };
+    expect(second.text).toBe('two');
   });
 
   it('流前失败（预算）也让迭代器收口：error 事件先于任何 delta（审查修复 F5）', async () => {

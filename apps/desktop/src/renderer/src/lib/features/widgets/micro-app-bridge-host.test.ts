@@ -260,7 +260,7 @@ describe('micro-app bridge host（v2 协议行为）', () => {
     expect(error?.message).toBe('调用过于频繁');
   });
 
-  test('cancel：在途调用被取消后不再回执', async () => {
+  test('cancel：在途调用被取消后以 MICRO_APP_BRIDGE_CLOSED 收口（恰好一条终态回执）', async () => {
     let release: ((value: WidgetsUiStorageOutput) => void) | undefined;
     const h = harness({
       storage: () =>
@@ -272,7 +272,10 @@ describe('micro-app bridge host（v2 协议行为）', () => {
     h.emit({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'cancel', target: 7 });
     release?.({ op: 'get', found: false });
     await h.settled();
-    expect(h.frames.filter((frame) => frame.k === 'ack' && frame.id === 7)).toHaveLength(0);
+    const terminal = h.frames.filter((frame) => (frame.k === 'ack' || frame.k === 'error') && frame.id === 7);
+    expect(terminal).toEqual([
+      { v: 2, source: MICRO_APP_BRIDGE_HOST_SOURCE, k: 'error', id: 7, code: 'MICRO_APP_BRIDGE_CLOSED', message: '调用已取消' },
+    ]);
   });
 
   test('stream 绑定在 P0 得到可行动错误（不挂起）', async () => {
