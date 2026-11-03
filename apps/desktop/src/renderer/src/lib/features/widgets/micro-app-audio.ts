@@ -97,19 +97,31 @@ export class MicroAppAudioSession {
 
   async start(): Promise<void> {
     if (!this.#stopped) return;
-    this.#stream = await this.#openMicrophone();
-    this.#context = new AudioContext({ sampleRate: SAMPLE_RATE });
-    await this.#context.audioWorklet.addModule(workletModuleUrl);
-    const worklet = new AudioWorkletNode(this.#context, 'kepcup-voice-capture');
-    const mute = this.#context.createGain();
-    mute.gain.value = 0;
-    this.#context.createMediaStreamSource(this.#stream).connect(worklet);
-    worklet.connect(mute);
-    mute.connect(this.#context.destination);
-    worklet.port.onmessage = (event: MessageEvent<{ pcm: Float32Array; level: number }>) => {
-      this.#onFrame(event.data.pcm, event.data.level);
-    };
-    this.#worklet = worklet;
+    // 审查修复 F10：装配中途失败（AudioContext / worklet / 节点）也要释放麦克风——
+    // #stopped 保持 true 会让 stop()/dispose() 早退，设备就一直开着。
+    let stream: MediaStream;
+    try {
+      stream = await this.#openMicrophone();
+      this.#stream = stream;
+      this.#context = new AudioContext({ sampleRate: SAMPLE_RATE });
+      await this.#context.audioWorklet.addModule(workletModuleUrl);
+      const worklet = new AudioWorkletNode(this.#context, 'kepcup-voice-capture');
+      const mute = this.#context.createGain();
+      mute.gain.value = 0;
+      this.#context.createMediaStreamSource(stream).connect(worklet);
+      worklet.connect(mute);
+      mute.connect(this.#context.destination);
+      worklet.port.onmessage = (event: MessageEvent<{ pcm: Float32Array; level: number }>) => {
+        this.#onFrame(event.data.pcm, event.data.level);
+      };
+      this.#worklet = worklet;
+    } catch (error) {
+      this.#teardown();
+      throw Object.assign(
+        new Error(`麦克风启动失败：${error instanceof Error ? error.message : String(error)}`),
+        { code: 'MICRO_APP_CAPABILITY_NOT_CONFIGURED' },
+      );
+    }
     this.#stopped = false;
     // 播报时暂停分段、只监测插话（防回声）：speech-start 即停播 + 清队列（55 §7.2）。
     this.#speakQueue.setBargeInListener(() => this.#sink('speech-start', null), BARGE_IN_LEVEL_THRESHOLD);
@@ -121,10 +133,8 @@ export class MicroAppAudioSession {
     this.#speakQueue.setBargeInListener(null, BARGE_IN_LEVEL_THRESHOLD);
     this.#teardown();
     this.#sink('end', null);
-    void core.call('microApps.ai.dispose', {
-      resourceId: this.#resourceId,
-      instanceId: this.#instanceId,
-    }).catch(() => undefined);
+    // 注意：这里**不**调 microApps.ai.dispose——停一条监听通道不等于结束实例
+    // （审查修复 F4）；实例收口由卡片关闭（WidgetRuntime.stop）统一做。
   }
 
   dispose(): void {
@@ -144,6 +154,7 @@ export class MicroAppAudioSession {
     this.#context = null;
     this.#segment = [];
     this.#segmentSamples = 0;
+    this.#pendingSegments.length = 0;
     this.#inSpeech = false;
   }
 
@@ -199,34 +210,46 @@ export class MicroAppAudioSession {
     this.#inSpeech = false;
     this.#silenceSince = 0;
     if (chunks.length === 0 || durationMs < MIN_SEGMENT_MS) return; // 过短丢弃（55 §7.2）
-    void (async () => {
-      if (this.#transcribing) return;
-      this.#transcribing = true;
-      try {
-        const merged = new Float32Array(samples);
-        let offset = 0;
-        for (const chunk of chunks) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
+    // 审查修复 F11：ASR 在途时新分段排队（不丢弃——主教学环里用户的话不能消失）。
+    this.#pendingSegments.push({ chunks, samples });
+    void this.#drainSegments();
+  }
+
+  readonly #pendingSegments: Array<{ chunks: Float32Array[]; samples: number }> = [];
+
+  async #drainSegments(): Promise<void> {
+    if (this.#transcribing) return;
+    this.#transcribing = true;
+    try {
+      while (this.#pendingSegments.length > 0) {
+        const segment = this.#pendingSegments.shift()!;
+        try {
+          const merged = new Float32Array(segment.samples);
+          let offset = 0;
+          for (const chunk of segment.chunks) {
+            merged.set(chunk, offset);
+            offset += chunk.length;
+          }
+          const base64 = await blobToBase64(encodeWav(merged, SAMPLE_RATE));
+          const out = microAppsMediaTranscribeOutputSchema.parse(
+            await core.call('microApps.media.transcribe', {
+              resourceId: this.#resourceId,
+              instanceId: this.#instanceId,
+              audioBase64: base64,
+              audioMime: 'audio/wav',
+              ...(this.#config.lang !== undefined ? { language: this.#config.lang } : {}),
+            }),
+          );
+          this.#sink('final', { text: out.text });
+        } catch (error) {
+          const code = (error as { code?: string }).code ?? 'MICRO_APP_CAPABILITY_NOT_CONFIGURED';
+          this.#sink('error', { code, message: error instanceof Error ? error.message : String(error) });
+          return; // 该段失败：停排（错误已给应用；后续分段由下一次收段触发重试排空）。
         }
-        const base64 = await blobToBase64(encodeWav(merged, SAMPLE_RATE));
-        const out = microAppsMediaTranscribeOutputSchema.parse(
-          await core.call('microApps.media.transcribe', {
-            resourceId: this.#resourceId,
-            instanceId: this.#instanceId,
-            audioBase64: base64,
-            audioMime: 'audio/wav',
-            ...(this.#config.lang !== undefined ? { language: this.#config.lang } : {}),
-          }),
-        );
-        this.#sink('final', { text: out.text });
-      } catch (error) {
-        const code = (error as { code?: string }).code ?? 'MICRO_APP_CAPABILITY_NOT_CONFIGURED';
-        this.#sink('error', { code, message: error instanceof Error ? error.message : String(error) });
-      } finally {
-        this.#transcribing = false;
       }
-    })();
+    } finally {
+      this.#transcribing = false;
+    }
   }
 }
 

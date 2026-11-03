@@ -92,19 +92,25 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     var waiters = [];
     var finished = false;
     var failure = null;
+    function streamError(code) {
+      var error = new Error('模型流式调用失败');
+      error.code = typeof code === 'string' && code ? code : 'MICRO_APP_AI_UNAVAILABLE';
+      return error;
+    }
     function wake() {
       while (waiters.length > 0 && (queue.length > 0 || finished)) {
-        var resolve = waiters.shift();
-        if (queue.length > 0) resolve({ value: queue.shift(), done: false });
-        else resolve({ value: undefined, done: true });
+        var waiter = waiters.shift();
+        if (queue.length > 0) waiter.resolve({ value: queue.shift(), done: false });
+        else if (failure !== null) waiter.reject(failure);
+        else waiter.resolve({ value: undefined, done: true });
       }
     }
     var iterator = {
       next: function () {
         if (queue.length > 0) return Promise.resolve({ value: queue.shift(), done: false });
-        if (finished && failure !== null) return Promise.reject(new Error(failure));
+        if (finished && failure !== null) return Promise.reject(failure);
         if (finished) return Promise.resolve({ value: undefined, done: true });
-        return new Promise(function (resolve) { waiters.push(resolve); });
+        return new Promise(function (resolve, reject) { waiters.push({ resolve: resolve, reject: reject }); });
       },
       return: function () {
         finished = true;
@@ -121,10 +127,8 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       cancel: function () { finished = true; wake(); },
       fail: function (code) {
         if (finished) return;
+        failure = streamError(code);
         finished = true;
-        var waiters2 = waiters.splice(0);
-        waiters2.forEach(function (resolve) { resolve({ value: undefined, done: true }); });
-        failure = typeof code === 'string' && code ? code : 'MICRO_APP_AI_UNAVAILABLE';
         wake();
       }
     };
@@ -135,6 +139,17 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       var entry = { resolve: resolve, reject: reject, stream: !!(options && options.stream) };
       pending.set(id, entry);
       post({ k: 'call', id: id, method: method, params: params === undefined ? {} : params, stream: entry.stream });
+    });
+  }
+  /* AbortSignal → 迭代器 return()（发出 cancel 帧并终止消费；§6.2 的取消面）。 */
+  function wireAbort(promise, input, stream) {
+    if (!stream || !input || !input.signal || typeof input.signal.aborted !== 'boolean') return promise;
+    return promise.then(function (iterable) {
+      var signal = input.signal;
+      var stop = function () { try { if (iterable && typeof iterable.return === 'function') iterable.return(); } catch (err) { } };
+      if (signal.aborted) stop();
+      else if (typeof signal.addEventListener === 'function') signal.addEventListener('abort', stop);
+      return iterable;
     });
   }
   function bindStream(subId, entry) {
@@ -252,14 +267,16 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       chat: function (input) {
         var stream = !!(input && input.stream);
         /* call(..., {stream:true}) 的 Promise 解析为 AsyncIterable<{delta}>（bindStream）。 */
-        return call('ai.chat', { messages: input ? input.messages : [], stream: stream }, { stream: stream });
+        var promise = call('ai.chat', { messages: input ? input.messages : [], stream: stream }, { stream: stream });
+        return wireAbort(promise, input, stream);
       },
       session: function (input) {
         return call('ai.session.create', { id: input ? input.id : undefined, system: input ? input.system : undefined, maxTurns: input ? input.maxTurns : undefined }).then(function (out) {
           var sessionId = out && typeof out.sessionId === 'string' ? out.sessionId : '';
           function send(text, opts) {
             var stream = !!(opts && opts.stream);
-            return call('ai.session.send', { sessionId: sessionId, text: text, stream: stream }, { stream: stream });
+            var promise = call('ai.session.send', { sessionId: sessionId, text: text, stream: stream }, { stream: stream });
+            return wireAbort(promise, opts, stream);
           }
           return {
             send: send,

@@ -256,4 +256,61 @@ describe('microApps.ai（模型平面）', () => {
     })) as { text: string };
     expect(reply.text).toBe('ok');
   });
+
+  it('实例归属绑定（审查修复 F3）：instanceId 换 resourceId 即拒绝，不能跨实例打扰', async () => {
+    stack.llm.script('mock-light', [step().replyText('a'), step().replyText('b')]);
+    const appA = await createMicroApp(['ai.chat']);
+    const appB = await createMicroApp(['ai.chat']);
+    const resourceA = await openResource(appA.messageId);
+    const resourceB = await openResource(appB.messageId);
+    // 正常绑定：instanceId 在 resourceA 下首次使用。
+    await core.rpc.call('microApps.ai.chat', {
+      resourceId: resourceA,
+      instanceId: 'mai_t_own',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: false,
+    });
+    // 同一 instanceId 配另一个资源 → 拒绝（防跨实例 cancel / 预算分身）。
+    await expect(
+      core.rpc.call('microApps.ai.cancel', {
+        resourceId: resourceB,
+        instanceId: 'mai_t_own',
+        target: '*',
+      }),
+    ).rejects.toMatchObject({ code: 'MICRO_APP_CAPABILITY_DENIED' });
+    // 会话读 / 重置同样过归属校验。
+    await expect(
+      core.rpc.call('microApps.ai.sessionHistory', {
+        resourceId: resourceB,
+        instanceId: 'mai_t_own',
+        sessionId: 'whatever',
+      }),
+    ).rejects.toMatchObject({ code: 'MICRO_APP_CAPABILITY_DENIED' });
+  });
+
+  it('流前失败（预算）也让迭代器收口：error 事件先于任何 delta（审查修复 F5）', async () => {
+    const app = await createMicroApp(['ai.chat']);
+    const resourceId = await openResource(app.messageId);
+    const day = new Date();
+    const dayKey = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    core.services
+      .mainDb!.prepare('insert or replace into micro_app_usage (widget_id, day, ai_calls, ai_tokens) values (?, ?, 0, 999999)')
+      .run(app.widgetId, dayKey);
+    const events: Array<{ kind: string; code?: string }> = [];
+    const off = core.onEvent('micro-app.stream', (payload) => {
+      const event = payload as { instanceId: string; kind: string; code?: string };
+      if (event.instanceId === 'mai_t_prefail') events.push(event);
+    });
+    const started = (await core.rpc.call('microApps.ai.chat', {
+      resourceId,
+      instanceId: 'mai_t_prefail',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+    })) as { streamId: string };
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    off();
+    core.services.mainDb!.prepare('delete from micro_app_usage where widget_id = ?').run(app.widgetId);
+    expect(started.streamId).toMatch(/^s_/);
+    expect(events).toEqual([{ instanceId: 'mai_t_prefail', streamId: started.streamId, kind: 'error', code: 'MICRO_APP_AI_QUOTA' }]);
+  });
 });

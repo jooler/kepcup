@@ -96,31 +96,57 @@ interface InFlight {
 
 export class MicroAppAiGateway {
   readonly #deps: MicroAppAiGatewayDeps;
-  /** 实例 → 会话表。有界（LRU 语义：超限丢最旧实例的全部会话）。 */
+  /** 实例 → 会话表。有界（FIFO 驱逐：超限丢最旧实例的全部会话）。 */
   readonly #sessions = new Map<string, Map<string, SessionState>>();
   /** 实例 → 本实例累计 token（会话预算的计数面）。 */
   readonly #sessionTokens = new Map<string, number>();
   /** 实例 → 在途调用（并发 1：call 或流）。 */
   readonly #inFlight = new Map<string, InFlight>();
   readonly #instances = new Map<string, number>();
+  /**
+   * 实例归属绑定（审查修复 F3）：instanceId 首次使用时绑定当时的 resourceId，此后每个
+   * `ai.*` 方法核对该对——instanceId 由渲染端宿主铸造，但 RPC 面是公开的，不能靠「猜
+   * 不出」当防线（跨实例 cancel / dispose / 预算分身）。
+   */
+  readonly #bindings = new Map<string, string>();
 
   constructor(deps: MicroAppAiGatewayDeps) {
     this.#deps = deps;
   }
 
   /** 实例结束（卡片关闭 / 桥断开）：取消在途、释放会话与预算计数。 */
-  disposeInstance(instanceId: string): void {
+  disposeInstance(instanceId: string, resourceId?: string): void {
+    if (resourceId !== undefined && !this.#requireBinding(instanceId, resourceId)) return;
     const flight = this.#inFlight.get(instanceId);
     flight?.controller.abort();
     this.#inFlight.delete(instanceId);
     this.#sessions.delete(instanceId);
     this.#sessionTokens.delete(instanceId);
     this.#instances.delete(instanceId);
+    this.#bindings.delete(instanceId);
   }
 
   /** core 关闭：全部实例收口。 */
   dispose(): void {
     for (const instanceId of [...this.#instances.keys()]) this.disposeInstance(instanceId);
+  }
+
+  /** 归属绑定：首次使用登记 instanceId → resourceId；之后必须成对出现。 */
+  #requireBinding(instanceId: string, resourceId: string): boolean {
+    const bound = this.#bindings.get(instanceId);
+    if (bound === undefined) {
+      this.#bindings.set(instanceId, resourceId);
+      return true;
+    }
+    return bound === resourceId;
+  }
+
+  /** 归属校验（带能力检查的入口统一走这里）。 */
+  #contextFor(instanceId: string, resourceId: string, capability: string): MicroAppAiContext {
+    if (!this.#requireBinding(instanceId, resourceId)) {
+      throw new AppError('MICRO_APP_CAPABILITY_DENIED', '实例与资源不匹配，拒绝执行');
+    }
+    return this.#context(resourceId, capability);
   }
 
   // --- ai.chat ----------------------------------------------------------------------
@@ -131,7 +157,7 @@ export class MicroAppAiGateway {
     messages: MicroAppAiMessage[];
     stream: boolean;
   }): Promise<{ stream: false; text: string } | { stream: true; streamId: string }> {
-    const ctx = this.#context(input.resourceId, 'ai.chat');
+    const ctx = this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     const { system, messages } = splitSystem(input.messages);
     // 流式：回执（ack）立即带 streamId 返回，增量经事件投递——垫片的迭代器靠事件喂数据，
     // 不能等整条流跑完才 ack（否则先到的 delta 无处落）。
@@ -157,7 +183,7 @@ export class MicroAppAiGateway {
     system?: string;
     maxTurns?: number;
   }): { sessionId: string } {
-    this.#context(input.resourceId, 'ai.chat');
+    this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     this.#touchInstance(input.instanceId);
     const sessionId = input.id?.trim() !== '' && input.id !== undefined ? input.id : `sess_${newId('use')}`;
     let sessions = this.#sessions.get(input.instanceId);
@@ -184,7 +210,7 @@ export class MicroAppAiGateway {
     text: string;
     stream: boolean;
   }): Promise<{ stream: false; text: string } | { stream: true; streamId: string }> {
-    const ctx = this.#context(input.resourceId, 'ai.chat');
+    const ctx = this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     const session = this.#requireSession(input.instanceId, input.sessionId);
     if (session.history.length >= session.maxTurns * 2) {
       throw new AppError(
@@ -214,15 +240,18 @@ export class MicroAppAiGateway {
     }
   }
 
-  sessionHistory(input: { instanceId: string; sessionId: string }): MicroAppAiMessage[] {
+  sessionHistory(input: { resourceId: string; instanceId: string; sessionId: string }): MicroAppAiMessage[] {
+    this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     return [...this.#requireSession(input.instanceId, input.sessionId).history];
   }
 
-  sessionReset(input: { instanceId: string; sessionId: string }): void {
+  sessionReset(input: { resourceId: string; instanceId: string; sessionId: string }): void {
+    this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     this.#requireSession(input.instanceId, input.sessionId).history = [];
   }
 
-  cancel(input: { instanceId: string; target: string }): void {
+  cancel(input: { resourceId: string; instanceId: string; target: string }): void {
+    this.#contextFor(input.instanceId, input.resourceId, 'ai.chat');
     const flight = this.#inFlight.get(input.instanceId);
     if (flight !== undefined && (flight.streamId === input.target || input.target === '*')) {
       flight.controller.abort();
@@ -275,8 +304,15 @@ export class MicroAppAiGateway {
             { role: 'assistant', content: reply },
           );
         }
-      } catch {
-        // 错误已经以事件（kind:'error'）发给渲染端；这里不再抛（后台任务）。
+      } catch (error) {
+        // 兜底终态（审查修复 F5）：预算 / 路由 / 模型解析等流前失败也要让迭代器收口，
+        // 不能让 for-await 悬挂（#run 内部已发过的错误事件在垫片侧幂等）。
+        this.#deps.emitStream({
+          instanceId,
+          streamId,
+          kind: 'error',
+          code: errorCodeOf(error),
+        });
       } finally {
         this.#end(instanceId);
       }
@@ -346,12 +382,17 @@ export class MicroAppAiGateway {
     if (Number(appRow?.ai_tokens ?? 0) >= MICRO_APP_TOKENS_PER_APP_PER_DAY) {
       throw quotaError(`这个微应用今日模型用量已达上限（${MICRO_APP_TOKENS_PER_APP_PER_DAY} token）`);
     }
-    const botRow = this.#deps.db
-      .prepare(
-        'select coalesce(sum(u.ai_tokens), 0) as tokens from micro_app_usage u join widgets w on w.id = u.widget_id where w.bot_id = ? and u.day = ?',
-      )
-      .get(ctx.botId, day) as { tokens: number | bigint } | undefined;
-    if (Number(botRow?.tokens ?? 0) >= MICRO_APP_TOKENS_PER_BOT_PER_DAY) {
+    const botRow =
+      ctx.botId === null
+        ? // bot_id 为空的行理论上不存在（widgets.bot_id NOT NULL）；防口径漂移：跳过
+          // Bot 级聚合但记审计（审查修复 F9）。
+          (this.#deps.logger.warn({ widgetId: ctx.widgetId }, 'micro-app usage without bot owner'), null)
+        : ((this.#deps.db
+            .prepare(
+              'select coalesce(sum(u.ai_tokens), 0) as tokens from micro_app_usage u join widgets w on w.id = u.widget_id where w.bot_id = ? and u.day = ?',
+            )
+            .get(ctx.botId, day) as { tokens: number | bigint } | undefined));
+    if (botRow != null && Number(botRow.tokens ?? 0) >= MICRO_APP_TOKENS_PER_BOT_PER_DAY) {
       throw quotaError('编写这个微应用的 Bot 今日微应用模型用量已达上限（跨其全部微应用合计）');
     }
   }

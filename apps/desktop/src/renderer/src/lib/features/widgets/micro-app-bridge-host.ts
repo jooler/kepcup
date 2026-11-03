@@ -118,6 +118,8 @@ export class MicroAppBridgeHost {
   readonly #cancelled = new Set<number>();
   /** P1：media.listen 的会话表（channelId → 会话；destroy 即释放麦克风）。 */
   readonly #listenSessions = new Map<string, { start(): Promise<void>; stop(): Promise<void>; dispose(): void }>();
+  /** P1：通道 id 单调计数（size+1 会在「停 A 再建 C」时撞 B 的 id——审查修复 F7）。 */
+  #channelSeq = 0;
 
   private constructor(options: MicroAppBridgeHostOptions) {
     this.#frameWindow = options.frameWindow;
@@ -222,7 +224,15 @@ export class MicroAppBridgeHost {
       return;
     }
     if (frame.k === 'cancel') {
-      if (typeof frame.target === 'number') this.#cancelled.add(frame.target);
+      if (typeof frame.target === 'number') {
+        this.#cancelled.add(frame.target);
+      } else {
+        // 字符串 target = 流 id（垫片迭代器 return() / AbortSignal）：转发 core 取消
+        // （审查修复 F6——否则模型调用会跑完、并发位与 token 照耗）。
+        void this.#options
+          .aiCall?.('ai.cancel', { target: frame.target })
+          .catch(() => undefined);
+      }
       return;
     }
     if (frame.k === 'stream') {
@@ -261,12 +271,19 @@ export class MicroAppBridgeHost {
     }
     try {
       const result = await this.#dispatch(frame.method, frame.params);
-      if (this.#destroyed || this.#cancelled.has(frame.id)) return;
-      this.#cancelled.delete(frame.id);
+      if (this.#destroyed) return;
+      if (this.#cancelled.delete(frame.id)) {
+        // 取消的调用也给终态回执（§6.3「每条请求恰好一条终态回执」；审查修复 F16）。
+        this.#post(microAppErrorFrame(frame.id, 'MICRO_APP_BRIDGE_CLOSED', '调用已取消'));
+        return;
+      }
       this.#post(microAppAckFrame(frame.id, result));
     } catch (error) {
-      if (this.#destroyed || this.#cancelled.has(frame.id)) return;
-      this.#cancelled.delete(frame.id);
+      if (this.#destroyed) return;
+      if (this.#cancelled.delete(frame.id)) {
+        this.#post(microAppErrorFrame(frame.id, 'MICRO_APP_BRIDGE_CLOSED', '调用已取消'));
+        return;
+      }
       const code = (error as { code?: unknown }).code;
       this.#post(
         microAppErrorFrame(
@@ -382,7 +399,14 @@ export class MicroAppBridgeHost {
           ? Math.round(payload['silenceMs'])
           : 700;
         const lang = typeof payload['lang'] === 'string' ? payload['lang'] : undefined;
-        const channelId = `ch_${this.#instanceId}_${this.#listenSessions.size + 1}`;
+        // 并发监听通道有上限（每实例 4）：每条通道各开一路麦克风 / AudioContext。
+        if (this.#listenSessions.size >= 4) {
+          throw Object.assign(new Error('并发监听通道已达上限（4）：先 stop 不再使用的通道'), {
+            code: 'WIDGET_RATE_LIMITED',
+          });
+        }
+        this.#channelSeq += 1;
+        const channelId = `ch_${this.#instanceId}_${this.#channelSeq}`;
         const session = this.#options.createListenSession(
           { lang, mode, silenceMs },
           (name, data) => {
