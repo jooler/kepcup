@@ -19,7 +19,7 @@
 | 文件 | 说明 |
 |---|---|
 | `plugin.json` | 贡献声明（transport `ilink`、`setup: qrcode`）；宿主已支持 `im` 贡献类型，`node packages/app-validator/dist/cli.js validate plugins/im-wechat` **PASS（0 error）** |
-| `icon.svg` | 占位图标（微信绿双气泡）；进市场前按 §8 复核 ≤64 KiB 与观感 |
+| `icon.svg` | 图标（微信绿双气泡，457 B）；已内联进已发布的市场索引条目 `summary.icon` |
 | `README.md` | 本文档 |
 
 ## 3 iLink Bot API 协议卡（已核实，2026-11-03）

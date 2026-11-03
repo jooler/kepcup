@@ -149,6 +149,7 @@ export function categoriesOf(manifest) {
   if ((contributions.connectors ?? []).length > 0) categories.push('connector');
   if ((contributions.mcp ?? []).length > 0) categories.push('mcp');
   if ((contributions.mail ?? []).length > 0) categories.push('mail');
+  if ((contributions.im ?? []).length > 0) categories.push('im');
   return categories;
 }
 
