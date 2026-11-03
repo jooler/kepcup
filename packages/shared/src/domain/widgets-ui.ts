@@ -182,6 +182,12 @@ export const widgetsUiOpenInputSchema = z.object({
    * （缺省 light）；之后的切换由卡片推送 `{source:'kepcup-host', event:'theme'}`。
    */
   theme: widgetThemeSchema.optional(),
+  /**
+   * D112：钉住运行中的版本（微应用资源续期用）——「升级不热替换运行中的实例」，续期
+   * 不能因 `next_version` 前移而把实例换到新版本（新版本未过预审时还会直接失败）。
+   * 只对微应用生效；存量组件忽略（本来就钉卡片版本）。
+   */
+  pinVersion: z.number().int().min(1).optional(),
 });
 export const widgetsUiOpenOutputSchema = z.object({
   /** 一次性不透明资源 id（iframe 路径与后续调用的凭据）。 */

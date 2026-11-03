@@ -18,6 +18,7 @@ import {
   MICRO_APP_BRIDGE_APP_SOURCE,
   MICRO_APP_BRIDGE_HOST_SOURCE,
   MICRO_APP_CAPABILITIES,
+  MICRO_APP_EVENT_SUBSCRIPTIONS_MAX,
   MICRO_APP_IMPLEMENTED_CAPABILITIES,
   MICRO_APP_RUNTIME_PHASE,
   MICRO_APP_SDK_MARKER,
@@ -63,6 +64,8 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
   var streams = new Map();
   var listeners = new Map();
   var lastSeq = new Map();
+  var subscriptionCount = 0;
+  var SUBSCRIPTIONS_MAX = ${MICRO_APP_EVENT_SUBSCRIPTIONS_MAX};
   var currentTheme = __KC_THEME__;
   function applyTheme(theme) {
     currentTheme = theme;
@@ -148,6 +151,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       if (frame.name === 'theme' && (frame.data === 'light' || frame.data === 'dark')) {
         applyTheme(frame.data);
         try { window.dispatchEvent(new CustomEvent('kepcup:theme', { detail: { theme: frame.data } })); } catch (err) { /* 无 DOM */ }
+        dispatchLocal('theme', frame.data);
         return;
       }
       dispatchLocal(frame.name, frame.data);
@@ -161,7 +165,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     if (data === null || typeof data !== 'object' || data.source !== '${MICRO_APP_BRIDGE_HOST_SOURCE}') return;
     if (data.k === 'event') { handleEvent(data); return; }
     if (data.k === 'close') {
-      pending.forEach(function (entry) { failEntry(entry, 'MICRO_APP_CAPABILITY_DENIED', typeof data.reason === 'string' ? data.reason : '宿主已断开能力桥'); });
+      pending.forEach(function (entry) { failEntry(entry, 'MICRO_APP_BRIDGE_CLOSED', typeof data.reason === 'string' ? data.reason : '宿主已断开能力桥'); });
       pending.clear();
       streams.forEach(function (channel) { channel.cancel(); });
       streams.clear();
@@ -188,17 +192,20 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       ready: function () { return call('app.ready', {}); },
       on: function (name, cb) {
         if (typeof name !== 'string' || typeof cb !== 'function') throw new Error('app.on 需要 (事件名, 回调)');
+        if (subscriptionCount >= SUBSCRIPTIONS_MAX) throw new Error('事件订阅超过上限（' + SUBSCRIPTIONS_MAX + '）：先取消不再使用的订阅');
         var cbs = listeners.get(name) || [];
         cbs.push(cb);
+        subscriptionCount += 1;
         listeners.set(name, cbs);
         return function () {
           var rest = (listeners.get(name) || []).filter(function (item) { return item !== cb; });
           if (rest.length === 0) listeners.delete(name); else listeners.set(name, rest);
+          subscriptionCount = Math.max(0, subscriptionCount - 1);
         };
       },
       setTitle: function (title) {
         if (typeof title !== 'string' || title.length === 0) return;
-        post({ k: 'call', id: 0, method: 'app.setTitle', params: { title: title.slice(0, 120) } });
+        post({ k: 'call', id: 0, method: 'app.setTitle', params: { title: title.slice(0, 120) }, stream: false });
       }
     },
     storage: {
@@ -263,6 +270,8 @@ export const MICRO_APP_SDK_REFERENCES: readonly MicroAppSdkReference[] = [
 ];
 
 const SDK_MD_MAX_BYTES = 4 * 1024;
+/** 字节数（不是字符数）：CJK 内容按 UTF-8 计，与提示修剪阈值同口径。 */
+const textEncoder = /* @__PURE__ */ new TextEncoder();
 
 /** 入口 sdk.md：能力清单 + 每条 API 一行签名 + 最常见 3 个错误 + references 指针。 */
 export function buildMicroAppSdkMd(phase: MicroAppCapabilityPhase = MICRO_APP_RUNTIME_PHASE): string {
@@ -302,8 +311,9 @@ export function buildMicroAppSdkMd(phase: MicroAppCapabilityPhase = MICRO_APP_RU
     lines.push(`- \`${ref.file}\`：${ref.topic}`);
   }
   const text = lines.join('\n');
-  if (text.length > SDK_MD_MAX_BYTES) {
-    throw new Error(`sdk.md entry exceeds ${SDK_MD_MAX_BYTES} chars (was ${text.length})`);
+  const bytes = textEncoder.encode(text).length;
+  if (bytes > SDK_MD_MAX_BYTES) {
+    throw new Error(`sdk.md entry exceeds ${SDK_MD_MAX_BYTES} bytes (was ${bytes})`);
   }
   return text;
 }

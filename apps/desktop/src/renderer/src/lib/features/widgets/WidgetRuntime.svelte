@@ -24,7 +24,7 @@
   import { MicroAppBridgeHost } from './micro-app-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
   import { widgetConsented } from './consent.svelte';
-  import { microAppConsents } from './micro-app-consent.svelte';
+  import { microAppEffectiveConsentOk, microAppOpenAllowed } from './micro-app-gate';
 
   /**
    * 组件运行时（覆盖层里的那个 iframe）：海报卡确认后由 WidgetViewer 挂载，start →
@@ -55,6 +55,8 @@
   let generation = 0;
   /** 当前挂载的资源租约（过期自动重开并重放调用，见 resource-lease.ts）。 */
   let lease: WidgetResourceLease | null = null;
+  /** 运行中的版本（微应用续期钉住它——升级不热替换运行中的实例，55 §9.1）。 */
+  let runningVersion: number | null = null;
 
   function currentTheme(): 'light' | 'dark' {
     return mode.current === 'dark' ? 'dark' : 'light';
@@ -73,12 +75,7 @@
     errorCode = undefined;
     // 防御：运行时只应在确认后挂载；未确认（记忆被清等）回到海报卡的审查态流程。
     // 微应用（D112）的确认按能力面指纹——卡片门控之外，open 后还要对生效版本再核一次。
-    if (
-      card.microApp === undefined
-        ? !widgetConsented(card)
-        : card.capabilityFingerprint === undefined ||
-          !microAppConsents.consented(card.widgetId, card.capabilityFingerprint).ok
-    ) {
+    if (card.microApp === undefined ? !widgetConsented(card) : !microAppOpenAllowed(card)) {
       errorCode = 'WIDGET_REVIEW_REQUIRED';
       phase = 'error';
       return;
@@ -96,17 +93,26 @@
       // 微应用：生效版本的指纹必须被当前确认覆盖（卡片门控可能基于过期指纹）——
       // 能力面已扩大时这里兜底拒绝，不静默运行未确认的能力。
       if (out.microApp !== undefined && out.capabilityFingerprint !== undefined) {
-        if (!microAppConsents.consented(out.widgetId, out.capabilityFingerprint).ok) {
+        if (!microAppEffectiveConsentOk(out.widgetId, out.capabilityFingerprint)) {
           void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
           errorCode = 'WIDGET_REVIEW_REQUIRED';
           phase = 'error';
           return;
         }
       }
+      runningVersion = out.version;
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
         reopen: async () =>
-          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId, theme: currentTheme() })).resourceId,
+          widgetsUiOpenOutputSchema.parse(
+            await core.call('widgets.ui.open', {
+              messageId,
+              theme: currentTheme(),
+              // 续期钉住运行中的版本：next_version 前移 / 新版本未过预审都不能把
+              // 在跑的实例换掉（升级 = 重新打开生效，不热替换）。
+              ...(runningVersion !== null ? { pinVersion: runningVersion } : {}),
+            }),
+          ).resourceId,
         discard: (resourceId) => {
           void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
         },
@@ -236,6 +242,7 @@
 
   async function stop(): Promise<void> {
     generation += 1;
+    runningVersion = null;
     pendingLink?.resolve(false);
     pendingLink = null;
     pendingReply?.resolve(false);

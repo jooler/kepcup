@@ -1,4 +1,4 @@
-import { BOT_WIDGET_HTML_MAX_BYTES, type WidgetCheckIssue } from '@kepcup/shared';
+import { BOT_WIDGET_HTML_MAX_BYTES, MICRO_APP_CAPABILITY_IDS, type WidgetCheckIssue } from '@kepcup/shared';
 
 /**
  * 组件检查器的规则注册表（设计 32 §11.8；UX 改版修订：运行时为「完整 WebApp 档」）。
@@ -32,6 +32,9 @@ export interface WidgetCheckRule {
 }
 
 const HTML_MAX_MB = Math.round((BOT_WIDGET_HTML_MAX_BYTES / 1024 / 1024) * 10) / 10;
+
+/** 闭合能力枚举的人话清单（spec 单一事实来源派生，不手抄第二份）。 */
+const CAPABILITY_LIST = MICRO_APP_CAPABILITY_IDS.join(' / ');
 
 /**
  * S2 预览宿主离线导致的联网失败问题条目（{@link previewOfflineNetworkMessage} 命中的
@@ -437,8 +440,7 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     title: 'micro-app.json 清单不合法',
     hint:
       '按报错点名的字段修清单：spec 必须是 kepcup-micro-app/1；permissions 只能用闭合枚举里的能力 id' +
-      '（storage.kv / storage.collection / ai.chat / media.listen / media.speak / host.reply / host.openLink / ' +
-      'context.update / files.pick / notify），未知项会被拒绝；net.mode=allowlist 必须给域名数组。' +
+      `（${CAPABILITY_LIST}），未知项会被拒绝；net.mode=allowlist 必须给域名数组。` +
       '清单变化（权限 / 网络档位）= 新版本，用户需要重新确认。',
     userText: '微应用清单不合法',
   },

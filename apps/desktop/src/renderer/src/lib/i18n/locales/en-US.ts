@@ -3134,6 +3134,8 @@ export const enUS = {
   'botWidget.microApp.openSettings': 'Open settings',
   'botWidget.microApp.preflightLoading':
     'Checking whether this machine can run everything it needs…',
+  'botWidget.microApp.preflightFailed': 'Checking run requirements failed.',
+  'botWidget.microApp.preflightRetry': 'Retry',
   'botWidget.microApp.confirmAndOpen': 'Confirm and open',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
@@ -3199,6 +3201,8 @@ export const enUS = {
   'chats.errorCode.MICRO_APP_AI_QUOTA': "The micro-app's model usage is over budget",
   'chats.errorCode.MICRO_APP_AI_BUSY': 'The micro-app already has a model call in flight; try again shortly',
   'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
+  'chats.errorCode.MICRO_APP_BRIDGE_CLOSED':
+    'The host closed the micro-app capability bridge; please reopen it',
   'chats.errorCode.MAIL_NOT_BOUND': "This mailbox isn't assigned to the current Bot",
   'chats.errorCode.MAIL_AUTH_FAILED':
     'Mailbox sign-in failed. Use an authorization code or app password, not your login password.',

@@ -73,7 +73,7 @@ export function parseMicroAppBridgeFrame(message: unknown): MicroAppBridgeParseR
     const subId = record['subId'];
     const seq = record['seq'];
     if (typeof subId !== 'string' || subId.length === 0 || subId.length > 64) return { ok: false };
-    if (!intId(seq)) return { ok: false };
+    if (intId(seq) === null) return { ok: false };
     return { ok: true, frame: { k: 'event-ack', subId, seq: seq as number } };
   }
   return { ok: false };
