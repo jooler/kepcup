@@ -441,7 +441,8 @@
       {#each added as plugin (plugin.id)}
         {@const kinds = pluginKindBadges(plugin)}
         {@const expandable =
-          plugin.usage.length > 0 ||
+          // `?? ''`：旧 core 进程（usage 字段引入前的构建）返回的清单没有该字段，别让它崩区块。
+          (plugin.usage ?? '').length > 0 ||
           groupsOf(plugin).length > 0 ||
           pluginProvides(plugin, 'mail') ||
           pluginProvides(plugin, 'im')}
@@ -508,7 +509,7 @@
               class="mt-2 space-y-2 border-t pt-2"
               data-testid={`bot-plugins-detail-${plugin.id}`}
             >
-              {#if plugin.usage.length > 0}
+              {#if (plugin.usage ?? '').length > 0}
                 <!-- 启用说明（2026-11-03 起清单必填）：展开即可看到「启用后还要做什么」。 -->
                 <div data-testid={`bot-plugins-usage-${plugin.id}`}>
                   <p class="text-xs font-medium">{t('botPanel.plugins.usage')}</p>
@@ -895,7 +896,7 @@
                   {plugin.description}
                 </p>
               {/if}
-              {#if plugin.usage.length > 0}
+              {#if (plugin.usage ?? '').length > 0}
                 <p
                   class="line-clamp-3 text-xs break-words text-muted-foreground"
                   title={plugin.usage}
