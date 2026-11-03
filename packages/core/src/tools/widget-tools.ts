@@ -17,6 +17,7 @@ import type { WidgetWriteResult } from '../widgets/service.js';
 export const WIDGET_CRAFT_TOOL = 'widget_craft';
 export const WIDGET_PUBLISH_TOOL = 'widget_publish';
 export const WIDGET_READ_STATE_TOOL = 'widget_read_state';
+export const MICRO_APP_DIAGNOSTICS_READ_TOOL = 'micro_app_diagnostics_read';
 
 /** The slice of the widget services the tools need. */
 export interface WidgetToolFacade {
@@ -41,6 +42,13 @@ export interface WidgetToolFacade {
         count: number;
         skipped: Array<{ key: string; bytes: number; preview: string }>;
       }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' };
+  /** D112 P2（55 §9.4）：读自己微应用最近 24h 的运行诊断（只读，任务面）。 */
+  readDiagnostics(input: {
+    botId: string;
+    widgetId: string;
+  }):
+    | { ok: true; entries: string; truncated: boolean }
     | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' };
 }
 
@@ -184,5 +192,38 @@ export function buildWidgetTools(input: {
     },
   };
 
-  return [craft, publish, readState] as ToolDefinition[];
+  // D112 P2（55 §9.4）：运行时诊断的按需读——作者 Bot 在收到诊断系统消息后用它看详情。
+  const readDiagnostics: ToolDefinition<{ widget_id?: string }> = {
+    name: MICRO_APP_DIAGNOSTICS_READ_TOOL,
+    description:
+      '读取你创建的某个微应用最近 24 小时的运行诊断（哪里崩了、哪个能力调用被拒、各发生多少次）。修改微应用前先用它了解「用户那边出了什么问题」。只读，且只能读你自己的微应用。',
+    parameters: Type.Object({
+      widget_id: Type.String({ description: '微应用 ID（交付回执里的 widgetId）' }),
+    }),
+    execute: (params) => {
+      const botId = identity.botId;
+      if (botId === null) {
+        return Promise.resolve({
+          ok: false,
+          content: '当前没有 Bot 身份，不能读微应用诊断',
+          errorCode: 'INVALID_INPUT',
+        });
+      }
+      const widgetId = params.widget_id?.trim() ?? '';
+      if (widgetId === '') {
+        return Promise.resolve({ ok: false, content: '需要提供 widget_id', errorCode: 'INVALID_INPUT' });
+      }
+      const result = widgets.readDiagnostics({ botId, widgetId });
+      if (!result.ok) {
+        return Promise.resolve({ ok: false, content: result.message, errorCode: result.code });
+      }
+      const note = result.truncated ? '（条目较多，已截断）' : '';
+      return Promise.resolve({
+        ok: true,
+        content: `微应用 ${widgetId} 最近 24 小时的运行诊断${note}：\n${result.entries}`,
+      });
+    },
+  };
+
+  return [craft, publish, readState, readDiagnostics] as ToolDefinition[];
 }

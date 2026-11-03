@@ -4,8 +4,8 @@
    * 删除。完整管理（刷新 / 全列表）仍在「组件」tab；这里只做单组件的快捷查看，
    * RPC 契约与原「组件」tab 一致（widgets.publish / widgets.delete）。
    */
-  import { Blocks, ChevronLeft, Send } from '@lucide/svelte';
-  import type { WidgetsListItem } from '@kepcup/shared';
+  import { Blocks, ChevronLeft, History, Send, Trash2 } from '@lucide/svelte';
+  import type { MicroAppsListItem, WidgetsListItem } from '@kepcup/shared';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
@@ -90,6 +90,54 @@
   function whenText(): string {
     return new Date(widget.updatedAt).toLocaleString();
   }
+
+  // --- 微应用管理段（D112 P2，55 §14）：用量 / 网络 / 运行问题 / 摘要 / 回退 -----------
+  let microInfo = $state<MicroAppsListItem | null>(null);
+
+  $effect(() => {
+    void widget.widgetId;
+    microInfo = null;
+    void (async () => {
+      try {
+        const result = (await core.call('microApps.list', { botId })) as { items: MicroAppsListItem[] };
+        microInfo = result.items.find((item) => item.widgetId === widget.widgetId) ?? null;
+      } catch {
+        microInfo = null;
+      }
+    })();
+  });
+
+  let rollbackArmed = $state(false);
+
+  async function rollback(version: number): Promise<void> {
+    try {
+      const result = (await core.call('microApps.rollback', { botId, widgetId: widget.widgetId, version })) as {
+        ok: boolean;
+        message?: string;
+      };
+      if (!result.ok) toast.error(result.message ?? t('widgetsTab.actionFailed'));
+      else toast.success(t('botWidget.microApp.rolledBack', { version }));
+      onChanged();
+    } catch (error) {
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('widgetsTab.actionFailed')),
+      );
+    } finally {
+      rollbackArmed = false;
+    }
+  }
+
+  async function clearContext(): Promise<void> {
+    try {
+      await core.call('microApps.clearContext', { botId, widgetId: widget.widgetId });
+      toast.success(t('botWidget.microApp.contextCleared'));
+      onChanged();
+    } catch (error) {
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('widgetsTab.actionFailed')),
+      );
+    }
+  }
 </script>
 
 <div class="space-y-3" data-testid="bot-widget-detail">
@@ -136,6 +184,74 @@
         >{/if}
     </p>
   </div>
+
+  {#if microInfo !== null}
+    <!-- 微应用管理（P2）：网络档位 / 今日用量 / 运行问题 / 进度摘要 / 版本回退。 -->
+    <div class="rounded-xl border p-3 text-sm" data-testid="bot-widget-micro-manage">
+      <p class="text-xs font-medium">{t('botWidget.microApp.manageTitle')}</p>
+      <p class="mt-1 text-xs text-muted-foreground">
+        {t('botWidget.microApp.manageNet')}：
+        {#if microInfo.netMode === 'open'}{t('botWidget.microApp.netOpen')}
+        {:else if microInfo.netMode === 'none'}{t('botWidget.microApp.netNone')}
+        {:else}{t('botWidget.microApp.netAllowlist', { domains: microInfo.netAllowlist.join('、') })}{/if}
+      </p>
+      <p class="mt-1 text-xs text-muted-foreground" data-testid="bot-widget-micro-usage">
+        {t('botWidget.microApp.manageUsage', {
+          calls: microInfo.usage.aiCalls,
+          tokens: microInfo.usage.aiTokens,
+          asr: Math.round(microInfo.usage.asrMs / 1000),
+          tts: microInfo.usage.ttsChars,
+        })}
+      </p>
+      {#if microInfo.diagnostics24h.length > 0}
+        <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="bot-widget-micro-diag">
+          {t('botWidget.microApp.manageIssues')}：{microInfo.diagnostics24h
+            .map((item) => `${item.code} ×${item.count}`)
+            .join('、')}
+        </p>
+      {/if}
+      {#if microInfo.contextHeadline !== null}
+        <p class="mt-1 flex items-center gap-1 text-xs text-muted-foreground" data-testid="bot-widget-micro-context">
+          {t('botWidget.microApp.manageContext')}：{microInfo.contextHeadline}
+          <button
+            type="button"
+            class="underline underline-offset-2"
+            onclick={() => void clearContext()}
+            data-testid="bot-widget-micro-context-clear"
+          >
+            {t('botWidget.microApp.clearContext')}
+          </button>
+        </p>
+      {/if}
+      {#if microInfo.latestVersion > 1 && microInfo.version > 1}
+        <div class="mt-1.5 flex items-center gap-1 text-xs">
+          {#if rollbackArmed}
+            <button
+              type="button"
+              class="text-destructive underline underline-offset-2"
+              onclick={() => void rollback((microInfo?.version ?? 2) - 1)}
+              data-testid="bot-widget-micro-rollback-confirm"
+            >
+              {t('botWidget.microApp.rollbackConfirm', { version: (microInfo?.version ?? 2) - 1 })}
+            </button>
+            <button type="button" class="text-muted-foreground underline underline-offset-2" onclick={() => (rollbackArmed = false)}>
+              {t('common.cancel')}
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="flex items-center gap-1 text-muted-foreground underline underline-offset-2"
+              onclick={() => (rollbackArmed = true)}
+              data-testid="bot-widget-micro-rollback"
+            >
+              <History class="size-3" aria-hidden="true" />
+              {t('botWidget.microApp.rollback', { version: (microInfo?.version ?? 2) - 1 })}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="flex justify-end gap-1.5">
     {#if deleteArmed}

@@ -156,8 +156,13 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table widget_docs;');
     db.exec('drop table widget_versions;');
     db.exec('drop table widgets;');
-    // main 0068（D112 微应用用量）的新表同样摘除（回放时重建）。
+    // main 0068（D112 微应用用量）与 0069（P2 四表 + 审计）的新表同样摘除（回放时重建）。
     db.exec('drop table micro_app_usage;');
+    db.exec('drop table micro_app_files;');
+    db.exec('drop table micro_app_collections;');
+    db.exec('drop table micro_app_context;');
+    db.exec('drop table micro_app_diagnostics;');
+    db.exec('drop table micro_app_audit;');
     // main 0031（D84 邮件）的新表同样摘除，回放时才能重建（0058 的 instance_id 列
     // 已随整表摘除，回放 0058 时重建）。
     // main 0036（D88 资产移交）的两张表同样摘除（先子后父）。

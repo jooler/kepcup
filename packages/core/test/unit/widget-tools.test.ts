@@ -19,6 +19,7 @@ import type { WidgetQueryExecutor } from '../../src/widgets/query-runner.js';
 import type { WidgetCraftParams } from '../../src/widgets/craft/service.js';
 import {
   buildWidgetTools,
+  MICRO_APP_DIAGNOSTICS_READ_TOOL,
   WIDGET_CRAFT_TOOL,
   WIDGET_PUBLISH_TOOL,
   WIDGET_READ_STATE_TOOL,
@@ -93,9 +94,14 @@ function ctx(progress: string[] = []): ToolContext {
 }
 
 describe('widget tools', () => {
-  it('任务面只有 widget_craft / widget_publish / widget_read_state（不能绕过制作流程直接塞 HTML）', () => {
+  it('任务面只有 widget_craft / widget_publish / widget_read_state / micro_app_diagnostics_read（不能绕过制作流程直接塞 HTML）', () => {
     const names = buildWidgetTools({ identity, widgets: fakeFacade() }).map((tool) => tool.name);
-    expect(names).toEqual([WIDGET_CRAFT_TOOL, WIDGET_PUBLISH_TOOL, WIDGET_READ_STATE_TOOL]);
+    expect(names).toEqual([
+      WIDGET_CRAFT_TOOL,
+      WIDGET_PUBLISH_TOOL,
+      WIDGET_READ_STATE_TOOL,
+      MICRO_APP_DIAGNOSTICS_READ_TOOL,
+    ]);
     expect(names).not.toContain('widget_create');
     expect(names).not.toContain('widget_update');
   });

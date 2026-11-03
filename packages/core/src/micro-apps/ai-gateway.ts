@@ -64,6 +64,7 @@ interface SessionState {
 export interface MicroAppAiContext {
   widgetId: string;
   botId: string | null;
+  conversationId: string | null;
   version: number;
   permissions: readonly string[];
   maxTokensPerSession: number;

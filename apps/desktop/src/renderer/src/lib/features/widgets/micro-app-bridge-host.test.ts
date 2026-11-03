@@ -142,9 +142,13 @@ describe('micro-app bridge guard（帧形状与白名单）', () => {
     expect(
       parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'call', id: 1, method: 'media.listen', params: {} }).ok,
     ).toBe(true);
-    // P2 起的能力还不进白名单。
+    // P2 能力已进白名单（collections / context）。
     expect(
       parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'call', id: 1, method: 'context.update', params: {} }).ok,
+    ).toBe(true);
+    // P3 起的能力还不进白名单。
+    expect(
+      parseMicroAppBridgeFrame({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'call', id: 1, method: 'files.pick', params: {} }).ok,
     ).toBe(false);
     expect(parseMicroAppBridgeFrame({ v: 2, source: 'kepcup-widget', k: 'call', id: 1, method: 'storage.get', params: {} }).ok).toBe(false);
     expect(parseMicroAppBridgeFrame('junk').ok).toBe(false);

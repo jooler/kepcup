@@ -7,6 +7,22 @@ import {
   microAppsAiChatInputSchema,
   microAppsAiChatOutputSchema,
   microAppsAiDisposeInputSchema,
+  microAppsClearContextInputSchema,
+  microAppsClearContextOutputSchema,
+  microAppsCollectionsDeleteInputSchema,
+  microAppsCollectionsGetInputSchema,
+  microAppsCollectionsListInputSchema,
+  microAppsCollectionsPutInputSchema,
+  microAppsCollectionsQueryInputSchema,
+  microAppsDocOutputSchema,
+  microAppsDocsOutputSchema,
+  microAppsContextClearInputSchema,
+  microAppsContextUpdateInputSchema,
+  microAppsDiagnosticsRecordInputSchema,
+  microAppsListInputSchema,
+  microAppsListOutputSchema,
+  microAppsRollbackInputSchema,
+  microAppsRollbackOutputSchema,
   microAppsAiSessionCreateInputSchema,
   microAppsAiSessionCreateOutputSchema,
   microAppsAiSessionHistoryInputSchema,
@@ -28,6 +44,8 @@ import {
   type MicroAppPreflightProbe,
   type MicroAppPreflightProbeResult,
 } from '../micro-apps/preflight.js';
+import { manifestOfRow } from '../micro-apps/manifest.js';
+import type { MicroAppStore } from '../micro-apps/store.js';
 
 function method<I extends z.ZodType, O extends z.ZodType>(
   input: I,
@@ -96,9 +114,12 @@ function wavDurationMsOf(audioBase64: string): number {
  * 三级预算 / 记账归 Bot）、`media.transcribe / synthesize`（ASR / TTS 经宿主代理，
  * 记账归微应用与 Bot）。能力桥的存储 / 查询运行期调用仍走 `widgets.ui.*`。
  */
+let servicesRef: CoreServices;
+
 export function bindMicroAppsMethods(services: CoreServices): {
   app: Record<string, RpcMethodSpec>;
 } {
+  servicesRef = services;
   const ai = () => {
     if (services.microAppAi === null) throw new AppError('NOT_IMPLEMENTED', '微应用模型模块未就绪');
     return services.microAppAi;
@@ -135,6 +156,7 @@ export function bindMicroAppsMethods(services: CoreServices): {
             microApp: microAppCardSummaryOf(effective.microApp.manifest),
             queriesNeedReview: effective.queriesNeedReview,
             queriesCount: effective.queriesCount,
+            contextHeadline: store().contextOf(effective.widgetId)?.headline ?? null,
             items: runMicroAppPreflight(
               effective.microApp.manifest.permissions,
               microAppPreflightProbes(services),
@@ -195,6 +217,102 @@ export function bindMicroAppsMethods(services: CoreServices): {
           return { text: result.text };
         },
       ),
+      // --- P2：collections / context / diagnostics / 管理 ---------------------------------
+      'microApps.collections.put': method(microAppsCollectionsPutInputSchema, okOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'storage.collection');
+        store().collectionPut(ctx.widgetId, input.name, input.doc as Record<string, unknown>);
+        return { ok: true as const };
+      }),
+      'microApps.collections.get': method(microAppsCollectionsGetInputSchema, microAppsDocOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'storage.collection');
+        return store().collectionGet(ctx.widgetId, input.name, input.id);
+      }),
+      'microApps.collections.delete': method(microAppsCollectionsDeleteInputSchema, okOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'storage.collection');
+        store().collectionDelete(ctx.widgetId, input.name, input.id);
+        return { ok: true as const };
+      }),
+      'microApps.collections.list': method(microAppsCollectionsListInputSchema, microAppsDocsOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'storage.collection');
+        return store().collectionList(ctx.widgetId, input.name);
+      }),
+      'microApps.collections.query': method(microAppsCollectionsQueryInputSchema, microAppsDocsOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'storage.collection');
+        return store().collectionQuery(ctx.widgetId, input.name, input.where, input.limit);
+      }),
+      'microApps.context.update': method(microAppsContextUpdateInputSchema, okOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'context.update');
+        if (ctx.conversationId === null) {
+          throw new AppError('INVALID_INPUT', '这个微应用没有来源会话，无法同步摘要');
+        }
+        store().contextUpdate({
+          widgetId: ctx.widgetId,
+          conversationId: ctx.conversationId,
+          version: ctx.version,
+          summary: input.summary,
+          reason: input.reason,
+        });
+        store().audit({
+          widgetId: ctx.widgetId,
+          version: ctx.version,
+          instanceId: input.instanceId,
+          capability: 'context.update',
+          outcome: 'ok',
+        });
+        return { ok: true as const };
+      }),
+      'microApps.context.clear': method(microAppsContextClearInputSchema, okOutputSchema, async (input) => {
+        const ctx = mediaUsage(input.resourceId);
+        requireCapability(ctx, 'context.update');
+        store().contextClear(ctx.widgetId);
+        return { ok: true as const };
+      }),
+      'microApps.diagnostics.record': method(microAppsDiagnosticsRecordInputSchema, okOutputSchema, async (input) => {
+        // 诊断尽力而为：资源过期 / 组件删除时静默丢弃（诊断本身不该抛错打扰运行）。
+        try {
+          const ctx = servicesRef.widgets?.microAppContextOf(input.resourceId) ?? null;
+          if (ctx === null) return { ok: true as const };
+          const outcome = store().diagnosticsRecord({
+            widgetId: ctx.widgetId,
+            version: ctx.version,
+            phase: input.phase,
+            code: input.code,
+            detail: input.detail,
+          });
+          if (outcome.pushed) {
+            store().pushDiagnosticMessage({
+              widgetId: ctx.widgetId,
+              title: '',
+              version: ctx.version,
+              code: input.code,
+              detail: input.detail,
+            });
+          }
+          return { ok: true as const };
+        } catch {
+          return { ok: true as const };
+        }
+      }),
+      'microApps.list': method(microAppsListInputSchema, microAppsListOutputSchema, async (input) => {
+        return { items: listMicroApps(input.botId) };
+      }),
+      'microApps.rollback': method(microAppsRollbackInputSchema, microAppsRollbackOutputSchema, async (input) => {
+        const result = rollbackMicroApp(input.botId, input.widgetId, input.version);
+        return result;
+      }),
+      'microApps.clearContext': method(microAppsClearContextInputSchema, microAppsClearContextOutputSchema, async (input) => {
+        const widget = widgets();
+        const owned = widget.listForBot(input.botId).some((item) => item.widgetId === input.widgetId);
+        if (!owned) throw new AppError('FORBIDDEN', '这个微应用不属于该 Bot');
+        store().contextClear(input.widgetId);
+        return { ok: true as const };
+      }),
       'microApps.media.synthesize': method(
         microAppsMediaSynthesizeInputSchema,
         microAppsMediaSynthesizeOutputSchema,
@@ -218,4 +336,99 @@ export function bindMicroAppsMethods(services: CoreServices): {
       ),
     },
   };
+}
+
+function store(): MicroAppStore {
+  if (servicesRef.microAppStore === null) throw new AppError('NOT_IMPLEMENTED', '微应用数据模块未就绪');
+  return servicesRef.microAppStore;
+}
+
+function requireCapability(ctx: { permissions: readonly string[] }, capability: string): void {
+  if (!ctx.permissions.includes(capability)) {
+    throw new AppError(
+      'MICRO_APP_CAPABILITY_NOT_DECLARED',
+      `这个微应用没有声明能力 ${capability}`,
+    );
+  }
+}
+
+function listMicroApps(botId: string) {
+  const db = servicesRef.mainDb!;
+  const day = dayKeyOf(Date.now());
+  const rows = db
+    .prepare(
+      `select w.id, w.title, w.description, w.scope, w.conversation_id, w.latest_version, w.updated_at,
+              w.next_version, v.manifest_json
+       from widgets w join widget_versions v on v.widget_id = w.id and v.version = w.latest_version
+       where w.bot_id = ? order by w.updated_at desc`,
+    )
+    .all(botId) as Array<{
+    id: string;
+    title: string;
+    description: string;
+    scope: 'conversation' | 'bot';
+    conversation_id: string | null;
+    latest_version: number;
+    updated_at: number;
+    next_version: number | null;
+    manifest_json: string;
+  }>;
+  return rows.flatMap((row) => {
+    const manifest = manifestOfRow(row.manifest_json);
+    if (manifest === null) return [];
+    const usage = db
+      .prepare('select ai_calls, ai_tokens, asr_ms, tts_chars from micro_app_usage where widget_id = ? and day = ?')
+      .get(row.id, day) as
+      | { ai_calls: number; ai_tokens: number; asr_ms: number; tts_chars: number }
+      | undefined;
+    return [
+      {
+        widgetId: row.id,
+        title: row.title,
+        description: row.description,
+        scope: row.scope,
+        conversationId: row.conversation_id,
+        version: row.next_version ?? row.latest_version,
+        nextVersion: row.next_version,
+        latestVersion: row.latest_version,
+        permissions: [...manifest.manifest.permissions],
+        netMode: manifest.manifest.net.mode,
+        netAllowlist: [...manifest.manifest.net.allowlist],
+        usage: {
+          aiCalls: Number(usage?.ai_calls ?? 0),
+          aiTokens: Number(usage?.ai_tokens ?? 0),
+          asrMs: Number(usage?.asr_ms ?? 0),
+          ttsChars: Number(usage?.tts_chars ?? 0),
+        },
+        diagnostics24h: store().diagnosticsCounts24h(row.id),
+        contextHeadline: store().contextOf(row.id)?.headline ?? null,
+        updatedAt: row.updated_at,
+      },
+    ];
+  });
+}
+
+function rollbackMicroApp(botId: string, widgetId: string, version: number): { ok: boolean; message?: string } {
+  const widget = servicesRef.widgets!;
+  const owned = widget.listForBot(botId).some((item) => item.widgetId === widgetId);
+  if (!owned) return { ok: false, message: '这个微应用不属于该 Bot' };
+  const db = servicesRef.mainDb!;
+  const row = db
+    .prepare('select version from widget_versions where widget_id = ? and version = ?')
+    .get(widgetId, version) as { version: number } | undefined;
+  if (row === undefined) {
+    return { ok: false, message: '目标版本已不存在（被修剪的版本不可回退）' };
+  }
+  db.prepare('update widgets set next_version = ?, updated_at = ? where id = ?').run(
+    version,
+    Date.now(),
+    widgetId,
+  );
+  return { ok: true };
+}
+
+function dayKeyOf(now: number): string {
+  const date = new Date(now);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

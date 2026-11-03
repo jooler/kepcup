@@ -140,7 +140,7 @@ export function microAppCardSummaryOf(manifest: MicroAppManifest): MicroAppCardS
   };
 }
 
-// --- 微应用确认记忆（渲染端 localStorage，按 widgetId 记指纹）------------------------
+
 
 export const MICRO_APP_CONSENT_STORAGE_KEY = 'kepcup.microApp.consents.v1';
 export const MICRO_APP_CONSENTS_MAX = 200;
@@ -189,6 +189,8 @@ export const microAppsPreflightOutputSchema = z.object({
   queriesNeedReview: z.boolean().default(false),
   /** 生效版本登记的查询模板数（审查态提示文案用）。 */
   queriesCount: z.number().int().min(0).default(0),
+  /** 当前的 context.update 进度摘要（卡片上可见可清除；null = 无）。 */
+  contextHeadline: z.string().nullable().default(null),
   items: z.array(microAppsPreflightItemSchema),
 });
 export type MicroAppsPreflightOutput = z.infer<typeof microAppsPreflightOutputSchema>;
@@ -284,3 +286,170 @@ export const microAppsMediaSynthesizeOutputSchema = z.object({
   audioBase64: z.string(),
   mimeType: z.string(),
 });
+
+// --- 多文件包（P2，55 §4.1）----------------------------------------------------------
+
+/** 包内单文件上限与包总量。 */
+export const MICRO_APP_FILE_MAX_BYTES = 1024 * 1024;
+export const MICRO_APP_BUNDLE_FILE_NAME_MAX_CHARS = 120;
+
+/** 包内文件定义（交付时 base64；`..`、绝对路径、反斜杠一律拒绝）。 */
+export const microAppFileDefSchema = z
+  .object({
+    path: z
+      .string()
+      .min(1)
+      .max(MICRO_APP_BUNDLE_FILE_NAME_MAX_CHARS)
+      .regex(/^[a-z0-9][a-z0-9/._-]*$/i, '路径只能含字母、数字、/、.、_、-，且不能以 / 开头'),
+    mime: z.string().min(3).max(100),
+    contentBase64: z.string().min(1),
+  })
+  .strict();
+export type MicroAppFileDef = z.infer<typeof microAppFileDefSchema>;
+
+/** 路径规范化守卫：拒绝 `..` 段、绝对路径、反斜杠与嵌入空字节（防穿越）。 */
+export function isSafeMicroAppPath(path: string): boolean {
+  if (path === '' || path.length > MICRO_APP_BUNDLE_FILE_NAME_MAX_CHARS) return false;
+  if (path.includes('\\') || path.includes('\0')) return false;
+  if (path.startsWith('/') || path.includes('://')) return false;
+  const segments = path.split('/');
+  return segments.every(
+    (segment) => segment !== '' && segment !== '.' && segment !== '..' && !segment.includes(':'),
+  );
+}
+
+// --- collections（P2，55 §10）---------------------------------------------------------
+
+export const MICRO_APP_COLLECTION_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+export const MICRO_APP_COLLECTIONS_MAX = 10;
+export const MICRO_APP_COLLECTION_DOC_ID_MAX_CHARS = 120;
+export const MICRO_APP_COLLECTION_QUOTA_BYTES = 5 * 1024 * 1024;
+
+export const microAppsCollectionsPutInputSchema = microAppInstanceRefSchema.extend({
+  name: z.string().regex(MICRO_APP_COLLECTION_NAME_PATTERN),
+  doc: z.object({ id: z.string().min(1).max(MICRO_APP_COLLECTION_DOC_ID_MAX_CHARS) }).passthrough(),
+});
+export const microAppsCollectionsGetInputSchema = microAppInstanceRefSchema.extend({
+  name: z.string().regex(MICRO_APP_COLLECTION_NAME_PATTERN),
+  id: z.string().min(1).max(MICRO_APP_COLLECTION_DOC_ID_MAX_CHARS),
+});
+export const microAppsCollectionsListInputSchema = microAppInstanceRefSchema.extend({
+  name: z.string().regex(MICRO_APP_COLLECTION_NAME_PATTERN),
+});
+export const microAppsCollectionsQueryInputSchema = microAppInstanceRefSchema.extend({
+  name: z.string().regex(MICRO_APP_COLLECTION_NAME_PATTERN),
+  where: z
+    .array(
+      z.object({
+        field: z.string().min(1).max(60),
+        op: z.enum(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'exists']),
+        value: z.unknown(),
+      }),
+    )
+    .max(8)
+    .default([]),
+  limit: z.number().int().min(1).max(200).default(50),
+});
+export const microAppsCollectionsDeleteInputSchema = microAppsCollectionsGetInputSchema;
+
+/** collections 文档回执（get → doc；list / query → docs）。 */
+export const microAppsDocOutputSchema = z.object({ doc: z.unknown() });
+export const microAppsDocsOutputSchema = z.object({ docs: z.array(z.unknown()) });
+
+/** `kepcup.context.update` 的结构化摘要（55 §8.5）。 */
+export const MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS = 80;
+export const MICRO_APP_CONTEXT_DATA_MAX_BYTES = 1024;
+export const microAppContextSummarySchema = z
+  .object({
+    headline: z.string().min(1).max(MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS),
+    data: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+export type MicroAppContextSummary = z.infer<typeof microAppContextSummarySchema>;
+
+export const microAppsContextUpdateInputSchema = microAppInstanceRefSchema.extend({
+  summary: microAppContextSummarySchema,
+  /** 接受时机（55 §8.5：仅用户手势或 pause / close）。 */
+  reason: z.enum(['gesture', 'pause', 'close']),
+});
+export const microAppsContextClearInputSchema = microAppInstanceRefSchema;
+
+// --- 诊断回流（P2，55 §9.4）-----------------------------------------------------------
+
+export const MICRO_APP_DIAGNOSTIC_DETAIL_MAX_CHARS = 200;
+export const microAppsDiagnosticsRecordInputSchema = microAppInstanceRefSchema.extend({
+  phase: z.enum(['prepare', 'run', 'stream']),
+  code: z.string().min(1).max(80),
+  detail: z.string().max(MICRO_APP_DIAGNOSTIC_DETAIL_MAX_CHARS).default(''),
+});
+/** Bot 任务面只读工具 `micro_app_diagnostics_read` 的入参（widget_id）。 */
+export const microAppDiagnosticsReadInputSchema = z.object({ widgetId: z.string().min(1) });
+export const microAppDiagnosticsReadOutputSchema = z.object({
+  widgetId: z.string(),
+  /** 最近 24h 聚合（code、次数、首次 / 末次、栈顶帧）。 */
+  entries: z
+    .array(
+      z.object({
+        version: z.number().int(),
+        phase: z.string(),
+        code: z.string(),
+        detail: z.string(),
+        count: z.number().int(),
+        firstAt: z.number(),
+        lastAt: z.number(),
+      }),
+    )
+    .max(50),
+  truncated: z.boolean(),
+});
+
+// --- 管理入口（P2，55 §14：微应用管理页）----------------------------------------------
+
+export const microAppsListItemSchema = z.object({
+  widgetId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  scope: z.enum(['conversation', 'bot']),
+  conversationId: z.string().nullable(),
+  version: z.number().int(),
+  /** 版本指针（`next_version ?? latest`；回退用）。 */
+  nextVersion: z.number().int().nullable(),
+  latestVersion: z.number().int(),
+  permissions: z.array(z.string()).default([]),
+  netMode: microAppNetModeSchema,
+  netAllowlist: z.array(z.string()).default([]),
+  /** 今日用量（ai_calls / ai_tokens / asr_ms / tts_chars）。 */
+  usage: z.object({
+    aiCalls: z.number().int(),
+    aiTokens: z.number().int(),
+    asrMs: z.number().int(),
+    ttsChars: z.number().int(),
+  }),
+  /** 最近 24h 诊断聚合（管理页「运行问题」只显示次数）。 */
+  diagnostics24h: z.array(z.object({ code: z.string(), count: z.number().int(), version: z.number().int() })),
+  /** 当前 context.update 摘要（可清除；null = 无）。 */
+  contextHeadline: z.string().nullable(),
+  updatedAt: z.number(),
+});
+export const microAppsListInputSchema = z.object({ botId: z.string().min(1) });
+export const microAppsListOutputSchema = z.object({ items: z.array(microAppsListItemSchema) });
+
+/** 版本回退：把 next_version 指回旧版本（不热替换在跑实例；被修剪的版本拒绝）。 */
+export const microAppsRollbackInputSchema = z.object({
+  botId: z.string().min(1),
+  widgetId: z.string().min(1),
+  version: z.number().int().min(1),
+});
+export const microAppsRollbackOutputSchema = z.object({
+  ok: z.boolean(),
+  message: z.string().optional(),
+});
+
+/** 清除某微应用的 context.update 摘要。 */
+export const microAppsClearContextInputSchema = z.object({
+  botId: z.string().min(1),
+  widgetId: z.string().min(1),
+});
+export const microAppsClearContextOutputSchema = z.object({ ok: z.boolean() });
+
+export type MicroAppsListItem = z.infer<typeof microAppsListItemSchema>;

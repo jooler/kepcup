@@ -115,11 +115,12 @@ describe('micro-app-sdk 生成物', () => {
     }
     expect(dts).toContain('AppReadyInfo');
     expect(dts).toContain('media.listen'); // P1 起进入。
-    expect(dts).not.toContain('context.update'); // P2 起。
-    expect(dts).not.toContain('collections.put'); // P2 起。
+    expect(dts).toContain('context.update'); // P2 起进入。
+    expect(dts).toContain('collections.put');
+    expect(dts).not.toContain('files.pick'); // P3 起。
   });
 
-  it('实现白名单：只含已实现能力与当前阶段平台方法（collections/context P2 起才进）', () => {
+  it('实现白名单：只含已实现能力与当前阶段平台方法（files.pick / notify P3 起才进）', () => {
     const impl = microAppImplementedApiMethods();
     expect([...impl]).toContain('app.ready');
     expect([...impl]).toContain('storage.get');
@@ -127,9 +128,10 @@ describe('micro-app-sdk 生成物', () => {
     expect([...impl]).toContain('media.listen');
     expect([...impl]).toContain('ai.chat');
     expect([...impl]).toContain('app.requestDisplayMode');
-    expect([...impl]).not.toContain('collections.put');
-    expect([...impl]).not.toContain('context.update');
+    expect([...impl]).toContain('collections.put');
+    expect([...impl]).toContain('context.update');
     expect([...impl]).not.toContain('files.pick');
+    expect([...impl]).not.toContain('notify');
   });
 
   it('预览 mock 清单只引用索引里的方法', () => {
@@ -180,9 +182,11 @@ describe('micro-app 清单 schema 与能力面指纹', () => {
   });
 
   it('未实现能力的声明会被点名（交付裁决）', () => {
-    expect(microAppUnimplementedCapabilities(['storage.kv', 'host.reply', 'ai.chat', 'media.listen'])).toEqual([]);
-    const missing = microAppUnimplementedCapabilities(['storage.kv', 'storage.collection']);
-    expect(missing).toEqual(['storage.collection']);
-    expect(microAppCapabilityOf('storage.collection')?.phase).toBe('P2');
+    expect(
+      microAppUnimplementedCapabilities(['storage.kv', 'host.reply', 'ai.chat', 'media.listen', 'storage.collection', 'context.update']),
+    ).toEqual([]);
+    const missing = microAppUnimplementedCapabilities(['storage.kv', 'files.pick']);
+    expect(missing).toEqual(['files.pick']);
+    expect(microAppCapabilityOf('files.pick')?.phase).toBe('P3');
   });
 });

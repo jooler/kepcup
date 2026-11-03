@@ -296,6 +296,23 @@
               {/if}
             </p>
           {/each}
+          {#if preflight?.contextHeadline != null}
+            <p class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="bot-widget-microapp-context">
+              {t('botWidget.microApp.contextLine', { headline: preflight.contextHeadline })}
+              <button
+                type="button"
+                class="underline underline-offset-2"
+                data-testid="bot-widget-microapp-context-clear"
+                onclick={() => {
+                  void core.call('microApps.clearContext', { botId: card.botId ?? '', widgetId: card.widgetId }).then(
+                    () => void loadPreflight(),
+                  );
+                }}
+              >
+                {t('botWidget.microApp.clearContext')}
+              </button>
+            </p>
+          {/if}
           {#if preflightFailed}
             <p class="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400" data-testid="bot-widget-microapp-preflight-failed">
               {t('botWidget.microApp.preflightFailed')}

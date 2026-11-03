@@ -80,6 +80,8 @@
   let offStream: (() => void) | null = null;
   /** 宿主铸造的实例键（ai / 媒体 RPC 的记账与归属；续期不变）。 */
   let microInstanceId: string | null = null;
+  /** 诊断限流（code:detail → 上次发送时间）。 */
+  const diagnosticSentAt = new Map<string, number>();
   /** 当前资源 id（续期后更新；ai / 媒体面调用时读取，避免打到过期资源）。 */
   let currentResourceId: string | null = null;
 
@@ -87,6 +89,18 @@
   $effect(() => {
     if (micGranted) return;
     if (microBridge !== null) microBridge.revokeCapability('media.listen');
+  });
+
+  // P2（§9.1）：窗口不可见 → pause；恢复可见 → resume（微应用写 session: 快照）。
+  $effect(() => {
+    if (card.microApp === undefined) return;
+    void card.widgetId;
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') microBridge?.pushAppEvent('pause', null);
+      else microBridge?.pushAppEvent('resume', null);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   });
 
   // core 的模型流式增量 → 桥 v2 event 帧（按实例过滤）。
@@ -252,6 +266,28 @@
           },
           onClose: () => {
             /* 关闭由用户掌握（外壳 X / Esc）；微应用请求只作为提示，P1 不代关。 */
+          },
+          // P2（55 §9.4）：诊断回流（限流：同 code 一分钟至多一条，内容不落库）。
+          onDiagnostic: (event) => {
+            const key = `${event.code}:${event.detail}`;
+            const now = Date.now();
+            if ((diagnosticSentAt.get(key) ?? 0) > now - 60_000) return;
+            diagnosticSentAt.set(key, now);
+            if (diagnosticSentAt.size > 128) diagnosticSentAt.clear();
+            void core
+              .call('microApps.diagnostics.record', {
+                resourceId: currentResourceId ?? '',
+                instanceId: microInstanceId ?? '',
+                phase: event.phase,
+                code: event.code,
+                detail: event.detail,
+              })
+              .catch(() => undefined);
+          },
+          onUnresponsive: () => {
+            // §9.1：无响应 → 「微应用无响应」+ 重新打开（不自动循环重试）。
+            errorCode = 'MICRO_APP_UNRESPONSIVE';
+            phase = 'error';
           },
         });
         microBridge = bridge;
@@ -447,6 +483,20 @@
         return 'microApps.ai.sessionHistory';
       case 'ai.session.reset':
         return 'microApps.ai.sessionReset';
+      case 'collections.put':
+        return 'microApps.collections.put';
+      case 'collections.get':
+        return 'microApps.collections.get';
+      case 'collections.delete':
+        return 'microApps.collections.delete';
+      case 'collections.list':
+        return 'microApps.collections.list';
+      case 'collections.query':
+        return 'microApps.collections.query';
+      case 'context.update':
+        return 'microApps.context.update';
+      case 'context.clear':
+        return 'microApps.context.clear';
       default:
         return `microApps.${method}`;
     }
