@@ -217,10 +217,7 @@
 {:else if delegationCard !== null}
   <!-- 跨 Bot 委派卡（D71 v2）：药丸居中；点击「查看详情」打开交换会话详情。
        存量结果卡（v1）是宽卡，保持与其他信息卡一致的左对齐。 -->
-  <div
-    class="flex py-1 {delegationCard.cardType === 'delegation_result' ? '' : 'w-full justify-center'}"
-    data-testid="card-message"
-  >
+  <div class="flex py-1" data-testid="card-message">
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
   </div>
 {:else if appUiCard !== null}
@@ -239,7 +236,7 @@
     <PresentCard card={presentCard} />
   </div>
 {:else if watchCard !== null}
-  <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要 -->
+  <!-- W7 监看卡：信息卡；提醒卡带变化摘要 -->
   <div class="flex py-1" data-testid="card-message">
     <WatchCard
       watchId={watchCard.watchId}
