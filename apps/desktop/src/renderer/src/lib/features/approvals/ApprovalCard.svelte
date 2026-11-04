@@ -43,6 +43,7 @@
   import { Input } from '$lib/components/ui/input';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
+  import { untrack } from 'svelte';
   import { allowlistSuggestionRefusal, suggestAllowlistPrefix } from './suggest-allowlist-prefix';
   import { allowlistPatternRefusal } from '@kepcup/shared';
   import McpRiskBadge from './McpRiskBadge.svelte';
@@ -84,8 +85,9 @@
 
   let cardEl: HTMLDivElement | undefined = $state();
   // D105：computer_control 默认勾选「本对话内」（G0 决策：首次出卡，会话内不再逐动作询问）。
+  // 只取出卡那一刻的 kind 定默认值（用户随后可改），不随 approval 更新翻转：untrack。
   let duration = $state<ApprovalDuration>(
-    approval.kind === 'computer_control' ? 'conversation' : 'once',
+    untrack(() => (approval.kind === 'computer_control' ? 'conversation' : 'once')),
   );
 
   /** kind===command only: expand「加入白名单」editor before add+approve. */

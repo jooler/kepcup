@@ -1235,7 +1235,7 @@ import {
               onconsider={onSectionConsider}
               onfinalize={onSectionFinalize}
             >
-              {#each sectionItems as group, groupIndex (group.id)}
+              {#each sectionItems as group, _groupIndex (group.id)}
                 {#if isShadow(group)}
                   <!-- 原位占位插槽：高度钉住拖拽浮动副本的实测高度（同备忘分组区）。 -->
                   <div
