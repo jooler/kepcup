@@ -22,10 +22,11 @@ export interface MarkdownComponentProps {
 class LazyMarkdown {
   component = $state<Component<MarkdownComponentProps> | null>(null);
   /**
-   * 图表插件在锁定 chunk 之后才创建（包本体按需加载的前提不变）。
-   * Mermaid 代码块（```mermaid）默认只会退化成普通代码块，必须显式挂上
-   * plugins.mermaid 才走 Mermaid 组件渲染；mermaid 库本身仍由该组件在
-   * 首次出现图表时才动态 import，不随消息列表一起加载。
+   * 公式与图表插件在锁定 chunk 之后才创建（包本体按需加载的前提不变）。
+   * Streamdown 的 KaTeX / Mermaid 都是 opt-in：不挂 plugins.math 时 `$...$`
+   * 按纯文本输出，不挂 plugins.mermaid 时 ```mermaid 退化成普通代码块；
+   * mermaid 库本身仍由 Mermaid 组件在首次出现图表时才动态 import，不随
+   * 消息列表一起加载。
    */
   plugins = $state<PluginConfig | undefined>(undefined);
   #started = false;
@@ -35,7 +36,7 @@ class LazyMarkdown {
     if (this.#started) return;
     this.#started = true;
     void import('streamdown-svelte').then((m) => {
-      this.plugins = { mermaid: m.createMermaidPlugin() };
+      this.plugins = { math: m.createMathPlugin(), mermaid: m.createMermaidPlugin() };
       this.component = m.Streamdown as Component<MarkdownComponentProps>;
     });
   }
