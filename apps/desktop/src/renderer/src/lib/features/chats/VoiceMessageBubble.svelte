@@ -82,7 +82,7 @@
 <div class="flex max-w-full min-w-0 flex-col {isUser ? 'items-end' : 'items-start'}">
   <button
     type="button"
-    class="flex h-11 w-64 max-w-full items-center gap-2.5 rounded-full px-3 text-left transition-opacity hover:opacity-90 {isUser
+    class="flex h-11 w-64 max-w-full items-center gap-2.5 rounded-full px-2.5 text-left transition-opacity hover:opacity-90 cursor-pointer {isUser
       ? userAccent
         ? ''
         : 'bg-primary text-primary-foreground'
