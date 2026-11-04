@@ -69,7 +69,7 @@
 - **移交而非并存**：开窗口即关覆盖层。理由：`widgets.ui.open` 按 messageId 登记资源、微应用 ai/媒体记账按实例隔离——同卡双实例会产生双份用量与双麦克风会话，且用户心智是「同一个组件换个地方跑」。窗口关闭后卡片还在对话里，可随时重开。
 - **麦克风授权不跨形态保留**：新窗口按「每次打开重置为关」（55 §5.1 既有语义）；用户在窗口内自行开启。
 - **窗口模式不进会话守卫**：无 `getChatSession`；切换会话不影响已开的组件窗口（组件运行是资源租约语义，与对话展示无关——与「关掉一个网页」一致，窗口就是它的网页）。
-- **卡片数据通路**：主进程内存转交 `{ messageId, card }`（UI 描述符，不含 HTML/密钥）；渲染端拿到后再 `widgets.ui.open` 由 core 按 messageId 登记真实资源——不可信数据不经过这条通路。
+- **卡片数据通路**：主进程内存转交 `{ messageId, card }`（UI 描述符，不含 HTML/密钥）；渲染端拿到后再 `widgets.ui.open` 由 core 按 messageId 登记真实资源——不可信数据不经过这条通路。**载荷必须 `$state.snapshot` 拍成纯对象再过 IPC**：`widgetViewer.current` 是 `$state` 深代理，Electron IPC 的结构化克隆克隆不了 Proxy（`DataCloneError`），直传会在 `invoke` 边界即炸（实测表现：按钮一按就弹「未能打开组件窗口」，窗口不创建）；封装在 `widgetWindowHandoffPayload`，回归测试 `widget-viewer.svelte.test.ts` 用 `structuredClone`（同款 V8 序列化器）守住。
 - **legacy 组件同样可用**：WidgetRuntime 本就双路径（v1 桥 / v2 桥），窗口模式对存量组件零差异。
 
 ## 6. 执行清单（2026-11-05 全部完成）
@@ -80,6 +80,7 @@
 - [x] renderer：`widget-window-mode.ts` + main.ts 挂载点分流（比原 App.svelte 分支更彻底：主壳模块图整段不加载）+ `WidgetWindowApp` + `MicroAppControls` 抽取（WidgetViewer 改用）+ Viewer「在新窗口打开」按钮（移交成功才关覆盖层）+ i18n（zh/en）
 - [x] 测试：定向 92 条绿；core 包全量 4962 绿；typecheck（core/desktop）与 eslint（改动文件）全绿
 - [x] 收口：全量 `pnpm test` **739 文件 / 7862 用例全绿**（中途两轮各 1 例负载超时抖动，单跑复核通过，末两轮连续干净）
+- [x] 修复实测 bug（2026-11-05）：覆盖层按钮点击即弹「未能打开组件窗口」——`$state` 深代理过不了 IPC 结构化克隆；载荷改走 `widgetWindowHandoffPayload`（`$state.snapshot`）+ 回归测试 1 条绿
 
 ## 7. 测试计划
 

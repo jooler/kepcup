@@ -7,7 +7,7 @@
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
-  import { widgetViewer } from './widget-viewer.svelte';
+  import { widgetViewer, widgetWindowHandoffPayload } from './widget-viewer.svelte';
   import WidgetRuntime from './WidgetRuntime.svelte';
   import MicroAppControls from './MicroAppControls.svelte';
 
@@ -85,10 +85,7 @@
   async function openInWindow(): Promise<void> {
     if (current === null || card === null) return;
     try {
-      const result = await window.kepcup.openWidgetWindow({
-        messageId: current.messageId,
-        card,
-      });
+      const result = await window.kepcup.openWidgetWindow(widgetWindowHandoffPayload(current));
       if (result.opened) widgetViewer.close();
       else toast.error(t('botWidget.openInWindowFailed'));
     } catch {
