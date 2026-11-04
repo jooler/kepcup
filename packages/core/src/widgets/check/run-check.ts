@@ -16,6 +16,7 @@ import {
 } from '@kepcup/shared';
 import { queriesSha256Of } from '../service.js';
 import { jsCheck } from './js-check.js';
+import { microAppDraftIssues, readMicroAppDraftBundle } from './micro-app-check.js';
 import { buildCheckReport } from './report.js';
 import { ruleIssue } from './rules.js';
 import { staticCheck } from './static-check.js';
@@ -35,6 +36,8 @@ export interface WidgetPreviewRunner {
     acceptance: WidgetAcceptance | null;
     fixtures: WidgetFixtures;
     signal?: AbortSignal;
+    /** D112 P3：微应用草稿（S2 用宿主能力 mock 跑，55 §11）。 */
+    microApp?: { permissions: readonly string[] };
   }): Promise<WidgetPreviewOutcome | { skipped: string }>;
 }
 
@@ -113,6 +116,8 @@ export async function runWidgetCheck(input: {
   preview?: WidgetPreviewRunner | null;
   now: number;
   signal?: AbortSignal;
+  /** D112 P3：宿主能力可用性探针（app.capability-unavailable；缺省不检查）。 */
+  capabilityAvailability?: (capability: string) => { available: boolean; reason?: string } | undefined;
 }): Promise<WidgetCheckReport> {
   const { draftDir } = input;
   const issues: WidgetCheckIssue[] = [];
@@ -186,7 +191,7 @@ export async function runWidgetCheck(input: {
   }
 
   // --- fixtures.json（缺省 = 空数据）
-  let fixtures: WidgetFixtures = { storage: {}, queries: {} };
+  let fixtures: WidgetFixtures = { storage: {}, queries: {}, ai: [], transcripts: [] };
   const fixturesJson = await readJsonFile(draftDir, 'fixtures.json');
   if (fixturesJson.kind === 'error') {
     issues.push(
@@ -202,6 +207,36 @@ export async function runWidgetCheck(input: {
           message: `模拟数据格式不合格：${zodSummary(parsed.error)}`,
         }),
       );
+    }
+  }
+
+  // --- spec.md（app.net-open-default / app.cost-estimate-missing 要看联网用途与成本估算）
+  const specRead = await readDraftFile(draftDir, 'spec.md');
+  const spec = specRead.kind === 'text' ? specRead.text : null;
+
+  // --- 微应用草稿（带 micro-app.json）：清单 / 包 / 能力面扫描（55 §11；存量草稿零变化）
+  let microAppPermissions: readonly string[] | undefined;
+  let bundlePaths: string[] = [];
+  const bundle = readMicroAppDraftBundle(draftDir);
+  if (bundle !== null) {
+    issues.push(
+      ...microAppDraftIssues({
+        bundle,
+        html,
+        spec,
+        ...(input.capabilityAvailability !== undefined
+          ? { capabilityAvailability: input.capabilityAvailability }
+          : {}),
+      }),
+    );
+    bundlePaths = bundle.files.map((file) => file.path);
+    try {
+      const parsed = JSON.parse(bundle.manifestJson) as { permissions?: unknown };
+      if (Array.isArray(parsed.permissions)) {
+        microAppPermissions = parsed.permissions.filter((item): item is string => typeof item === 'string');
+      }
+    } catch {
+      // 清单不合法已由 app.manifest-invalid 报告。
     }
   }
 
@@ -237,6 +272,7 @@ export async function runWidgetCheck(input: {
         queries,
         acceptance,
         fixtures,
+        ...(microAppPermissions !== undefined ? { microApp: { permissions: microAppPermissions } } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       if ('skipped' in outcome) {

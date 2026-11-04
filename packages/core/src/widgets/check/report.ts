@@ -22,6 +22,8 @@ const FILE_ORDER: Record<WidgetCheckIssue['file'], number> = {
   'queries.json': 1,
   'acceptance.json': 2,
   'fixtures.json': 3,
+  'spec.md': 4,
+  'micro-app.json': 5,
 };
 
 function severityRank(issue: WidgetCheckIssue): number {

@@ -88,6 +88,8 @@ export const widgetDraftFileSchema = z.enum([
   'queries.json',
   'acceptance.json',
   'fixtures.json',
+  'spec.md',
+  'micro-app.json',
 ]);
 export type WidgetDraftFile = z.infer<typeof widgetDraftFileSchema>;
 
@@ -242,6 +244,8 @@ export const widgetCraftReceiptSchema = z.object({
   round: z.number().int().min(1),
   htmlSha256: z.string(),
   queriesSha256: z.string(),
+  /** 微应用包摘要（D112 P3；存量组件草稿缺省）。 */
+  bundleSha256: z.string().optional(),
   verdict: widgetCheckVerdictSchema,
   score: z.number().int().min(0),
   /** S2 是否运行（未运行时交付状态最多是 `unverified`）。 */
@@ -266,6 +270,8 @@ export const widgetCraftManifestSchema = z.object({
   scope: z.enum(['conversation', 'bot']),
   brief: z.string(),
   acceptanceHints: z.array(z.string()).default([]),
+  /** D112 P3：微应用制作（多文件 + 清单 + 能力面）——发起时由 Bot 指定，续做沿用。 */
+  microApp: z.boolean().default(false),
   phase: widgetCraftPhaseSchema,
   rounds: z.object({
     gate: z.number().int().min(0),
@@ -286,10 +292,14 @@ export const widgetCraftManifestSchema = z.object({
 });
 export type WidgetCraftManifest = z.infer<typeof widgetCraftManifestSchema>;
 
-/** 草稿 fixtures.json：预览用的模拟数据（S2，P3b）。 */
+/** 草稿 fixtures.json：预览用的模拟数据（S2，P3b；D112 P3 增微应用能力 mock）。 */
 export const widgetFixturesSchema = z.object({
   storage: z.record(z.string(), z.unknown()).default({}),
   queries: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).default({}),
+  /** 微应用 S2 mock：`ai.chat` / `ai.session.send` 的脚本化回复（按序循环取用）。 */
+  ai: z.array(z.string().max(500)).max(20).default([]),
+  /** 微应用 S2 mock：`media.listen` 的 fixture 转写——`start()` 后按序发 final 事件。 */
+  transcripts: z.array(z.string().max(500)).max(20).default([]),
 });
 export type WidgetFixtures = z.infer<typeof widgetFixturesSchema>;
 

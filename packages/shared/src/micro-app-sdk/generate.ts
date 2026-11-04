@@ -18,14 +18,21 @@ import {
   MICRO_APP_BRIDGE_APP_SOURCE,
   MICRO_APP_BRIDGE_HOST_SOURCE,
   MICRO_APP_CAPABILITIES,
+  MICRO_APP_ERROR_HINTS,
   MICRO_APP_EVENT_SUBSCRIPTIONS_MAX,
   MICRO_APP_IMPLEMENTED_CAPABILITIES,
   MICRO_APP_RUNTIME_PHASE,
   MICRO_APP_SDK_MARKER,
   MICRO_APP_SPEC_VERSION,
   microAppApiMethodOf,
+  microAppCapabilityOf,
   type MicroAppCapabilityPhase,
 } from './spec.js';
+import {
+  BOT_WIDGET_STORAGE_KEYS_MAX,
+  BOT_WIDGET_STORAGE_QUOTA_BYTES,
+  BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
+} from '../domain/widgets-ui.js';
 
 const PHASE_ORDER: Record<MicroAppCapabilityPhase, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -134,6 +141,22 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     };
   }
   function call(method, params, options) {
+    var mock = window.__kepcupMockBridge;
+    if (mock && typeof mock.call === 'function') {
+      /* S2 预览缝（55 §11）：流式调用仍走本垫片的迭代器管线——注册通道、把 mock 的事件帧经 handleEvent 喂进来（mock 用 options.subId 定向发帧）；非流式直接转发。 */
+      if (options && options.stream) {
+        return new Promise(function (resolve) {
+          var subId = 'mock_stream_' + ++seq;
+          var channel = streamIterable(function () { });
+          streams.set(subId, channel);
+          resolve(channel.iterable);
+          Promise.resolve().then(function () {
+            mock.call(method, params === undefined ? {} : params, { stream: true, subId: subId });
+          });
+        });
+      }
+      return mock.call(method, params === undefined ? {} : params, { stream: false });
+    }
     return new Promise(function (resolve, reject) {
       var id = ++seq;
       var entry = { resolve: resolve, reject: reject, stream: !!(options && options.stream) };
@@ -376,12 +399,12 @@ export interface MicroAppSdkReference {
 }
 
 export const MICRO_APP_SDK_REFERENCES: readonly MicroAppSdkReference[] = [
-  { file: 'references/manifest.md', topic: 'micro-app.json 清单：字段、闭合能力枚举、net 档位与校验规则', since: 'P0' },
-  { file: 'references/storage.md', topic: 'storage.kv 与查询模板：配额、限流、错误码', since: 'P0' },
-  { file: 'references/errors.md', topic: '错误码总表：code 分支与作者向修复步骤', since: 'P0' },
-  { file: 'references/ai.md', topic: 'ai.chat / ai.session：上下文隔离、流式、预算', since: 'P1' },
-  { file: 'references/media.md', topic: 'media.listen / media.speak：半双工对话环、打断、降级', since: 'P1' },
-  { file: 'references/lifecycle.md', topic: '生命周期：pause/resume、会话恢复、版本指针', since: 'P2' },
+  { file: 'references/manifest.md', topic: '清单字段 / 能力枚举 / net 档位', since: 'P0' },
+  { file: 'references/storage.md', topic: 'storage / query / collections 配额与限流', since: 'P0' },
+  { file: 'references/errors.md', topic: '错误码总表与修复步骤', since: 'P0' },
+  { file: 'references/ai.md', topic: 'ai.chat / ai.session：隔离 / 流式 / 预算', since: 'P1' },
+  { file: 'references/media.md', topic: '语音：半双工 / 打断 / 降级', since: 'P1' },
+  { file: 'references/lifecycle.md', topic: '生命周期 / 会话恢复 / context.update', since: 'P2' },
 ];
 
 const SDK_MD_MAX_BYTES = 4 * 1024;
@@ -394,15 +417,15 @@ export function buildMicroAppSdkMd(phase: MicroAppCapabilityPhase = MICRO_APP_RU
   lines.push('# KepCup 微应用 SDK（入口）');
   lines.push('');
   lines.push(
-    `**信任边界**：平台保证——代码跑在沙箱 iframe（无 Node / 文件系统 / 宿主 API），能力按版本校验、按会话授权，录音原始音频不出宿主。以下是产品策略而非平台保证——预算超限会拒付、缺配置的能力会不可用、降级路径要你自己写。不要写「靠平台兜底」的代码。`,
+    '**信任边界**：平台保证——沙箱 iframe（无 Node / 文件 / 宿主 API）、能力按版本校验、原始音频不出宿主。产品策略（非平台保证）：预算超限拒付、缺配置不可用、降级要自己写。别写「靠平台兜底」的代码。',
   );
   lines.push('');
-  lines.push(`清单 \`micro-app.json\` 的 \`spec\` 当前取 \`${MICRO_APP_SPEC_VERSION}\`；能力是闭合枚举，未声明的能力调用会被拒（\`MICRO_APP_CAPABILITY_NOT_DECLARED\`）。调用任何能力前先 \`await kepcup.app.ready()\` 看 \`capabilities\` / \`grants\`，按返回值降级，不要靠错误码试探。`);
+  lines.push(`\`micro-app.json\` 的 spec 取 \`${MICRO_APP_SPEC_VERSION}\`；能力是闭合枚举，未声明的调用被拒（\`MICRO_APP_CAPABILITY_NOT_DECLARED\`）。调用任何能力前先 \`await kepcup.app.ready()\` 看 capabilities / grants，按返回值降级，别靠错误码试探。`);
   lines.push('');
   lines.push('## 能力与 API（一行签名）');
   for (const cap of MICRO_APP_CAPABILITIES) {
     if (!MICRO_APP_IMPLEMENTED_CAPABILITIES.includes(cap.id) && PHASE_ORDER[cap.phase] > PHASE_ORDER[phase]) continue;
-    lines.push(`- \`${cap.id}\`（${cap.title}，${cap.limits}）`);
+    lines.push(`- \`${cap.id}\`（${cap.title}）`);
     for (const method of MICRO_APP_API_METHODS) {
       if (method.capability !== cap.id) continue;
       if (PHASE_ORDER[method.since] > PHASE_ORDER[phase]) continue;
@@ -415,12 +438,12 @@ export function buildMicroAppSdkMd(phase: MicroAppCapabilityPhase = MICRO_APP_RU
     lines.push(`  - \`${method.signature}\``);
   }
   lines.push('');
-  lines.push('## 最常见的 3 个错误');
-  lines.push('- `MICRO_APP_CAPABILITY_NOT_DECLARED`：能力没写进 permissions——补清单（用户需重新确认）或换能力。');
-  lines.push('- `MICRO_APP_CAPABILITY_NOT_CONFIGURED`：宿主缺配置（模型 / ASR / TTS）——引导设置并降级。');
-  lines.push('- 没等待 Promise：`kepcup.*` 全部异步，忘记 `await` 会拿到 Promise 而不是值。');
+  lines.push('## 常见错误');
+  lines.push('- `MICRO_APP_CAPABILITY_NOT_DECLARED`：能力没进 permissions——补清单或换能力。');
+  lines.push('- `MICRO_APP_CAPABILITY_NOT_CONFIGURED`：宿主缺配置——引导设置并降级。');
+  lines.push('- 忘 `await`：`kepcup.*` 全部异步。');
   lines.push('');
-  lines.push('## 深入阅读（按需 `read`）');
+  lines.push('## 深入阅读（按需 `read`；签名详情可查 micro_app_sdk_inspect）');
   for (const ref of MICRO_APP_SDK_REFERENCES) {
     if (PHASE_ORDER[ref.since] > PHASE_ORDER[phase]) continue;
     lines.push(`- \`${ref.file}\`：${ref.topic}`);
@@ -520,3 +543,302 @@ export function microAppPreviewMockSpec(): readonly MicroAppPreviewMockSpec[] {
 /** spec 便捷引用（守卫测试用）。 */
 export const MICRO_APP_SDK_SPEC_METHOD_COUNT = /* @__PURE__ */ MICRO_APP_API_METHODS.length;
 export const MICRO_APP_SDK_METHOD_OF = microAppApiMethodOf;
+
+// --- S2 预览 mock（55 §11：宿主能力 mock——ai 脚本 / listen 转写 / speak 记录）---------
+
+export interface MicroAppPreviewMockInput {
+  theme: 'light' | 'dark';
+  /** 清单声明的能力（app.ready 的 capabilities = 其中已实现的子集）。 */
+  permissions: readonly string[];
+  fixtures: {
+    storage?: Record<string, unknown>;
+    queries?: Record<string, Array<Record<string, unknown>>>;
+    ai?: readonly string[];
+    transcripts?: readonly string[];
+  };
+}
+
+const MOCK_HOST_SOURCE = MICRO_APP_BRIDGE_HOST_SOURCE;
+
+/**
+ * S2 预览的微应用 mock 桥（单行 `<script>`，注入在垫片之前）：垫片的 `call` 缝检测到
+ * `window.__kepcupMockBridge` 就改走这里——API 语义仍由同一份垫片实现，mock 只实现
+ * 「宿主侧」的路由（fixtures 驱动）。流式调用以宿主帧的形式派发（MessageEvent、
+ * source 指向 window.parent，与真实桥同一管线）。预览离线：这里没有网络面，
+ * `net.fetch` 失败由外壳的离线归类承接。
+ */
+export function buildMicroAppPreviewMock(input: MicroAppPreviewMockInput): string {
+  const caps = input.permissions.filter((id) => microAppCapabilityOf(id) !== undefined);
+  const payload = {
+    theme: input.theme,
+    capabilities: caps,
+    grants: {
+      mic: caps.includes('media.listen') ? 'granted' : 'unavailable',
+      net: { mode: 'none', domains: [] },
+    },
+    storage: input.fixtures.storage ?? {},
+    queries: input.fixtures.queries ?? {},
+    ai: input.fixtures.ai ?? [],
+    transcripts: input.fixtures.transcripts ?? [],
+  };
+  const literal = JSON.stringify(payload);
+  const hostSource = JSON.stringify(MOCK_HOST_SOURCE);
+  const script = `<script>(function () {
+  var cfg = ${literal};
+  var kv = {};
+  for (var k in cfg.storage) { if (Object.prototype.hasOwnProperty.call(cfg.storage, k)) kv[k] = cfg.storage[k]; }
+  var docs = {};
+  var sessions = {};
+  var spoken = [];
+  var seq = 0;
+  var aiIndex = 0;
+  function nextReply() {
+    if (cfg.ai.length === 0) return '（预览 mock：没有写 fixtures.ai 脚本回复）';
+    var text = cfg.ai[aiIndex % cfg.ai.length];
+    aiIndex += 1;
+    return text;
+  }
+  function emit(subId, name, data) {
+    seq += 1;
+    try {
+      window.dispatchEvent(new MessageEvent('message', { source: window.parent, data: { v: 2, source: ${hostSource}, k: 'event', subId: subId, name: name, data: data, seq: seq } }));
+    } catch (err) { }
+  }
+  function streamOut(subId, text) {
+    var step = 24;
+    var i = 0;
+    var timer = setInterval(function () {
+      if (i >= text.length) {
+        clearInterval(timer);
+        emit(subId, 'done', null);
+        return;
+      }
+      emit(subId, 'delta', { delta: text.slice(i, Math.min(text.length, i + step)) });
+      i += step;
+    }, 4);
+  }
+  function reject(code, message) {
+    var e = new Error(message);
+    e.code = code;
+    return Promise.reject(e);
+  }
+  var channels = 0;
+  window.__kepcupSpoken = spoken;
+  window.__kepcupMockBridge = {
+    call: function (method, params, options) {
+      switch (method) {
+        case 'app.ready':
+          return Promise.resolve({ capabilities: cfg.capabilities, grants: cfg.grants, theme: cfg.theme, displayMode: 'inline', viewport: { width: 800, height: 600 }, instanceId: 'mai_preview_1' });
+        case 'storage.get':
+          return Promise.resolve(Object.prototype.hasOwnProperty.call(kv, params.key) ? kv[params.key] : undefined);
+        case 'storage.set':
+          kv[params.key] = params.value;
+          return Promise.resolve(undefined);
+        case 'storage.delete':
+          delete kv[params.key];
+          return Promise.resolve(undefined);
+        case 'storage.list':
+          return Promise.resolve(Object.keys(kv));
+        case 'query': {
+          var rows = cfg.queries[params.name];
+          if (rows === undefined) return reject('WIDGET_QUERY_UNKNOWN', '查询「' + params.name + '」没有在 fixtures.queries 里给数据');
+          return Promise.resolve({ rows: rows, truncated: false });
+        }
+        case 'openLink':
+        case 'reply':
+          return Promise.resolve(true);
+        case 'ai.chat': {
+          var text = nextReply();
+          if (options && options.stream) {
+            var streamId = options.subId || 'mock_s' + (++seq);
+            setTimeout(function () { streamOut(streamId, text); }, 0);
+            return Promise.resolve({ streamId: streamId });
+          }
+          return Promise.resolve({ text: text });
+        }
+        case 'ai.session.create': {
+          var id = 'mock_sess_' + (++seq);
+          sessions[id] = [];
+          return Promise.resolve({ sessionId: id });
+        }
+        case 'ai.session.send': {
+          var text2 = nextReply();
+          var list = sessions[params.sessionId];
+          if (list) { list.push({ role: 'user', content: params.text }); list.push({ role: 'assistant', content: text2 }); }
+          if (options && options.stream) {
+            var sid = options.subId || 'mock_s' + (++seq);
+            setTimeout(function () { streamOut(sid, text2); }, 0);
+            return Promise.resolve({ streamId: sid });
+          }
+          return Promise.resolve({ text: text2 });
+        }
+        case 'ai.session.history':
+          return Promise.resolve({ messages: sessions[params.sessionId] || [] });
+        case 'ai.session.reset':
+          if (sessions[params.sessionId]) sessions[params.sessionId] = [];
+          return Promise.resolve({ ok: true });
+        case 'ai.cancel':
+        case 'ai.dispose':
+          return Promise.resolve({ ok: true });
+        case 'media.listen': {
+          channels += 1;
+          var channelId = 'mock_ch_' + channels;
+          return Promise.resolve({ channelId: channelId });
+        }
+        case 'media.listen.start': {
+          var ch = params.channelId;
+          setTimeout(function () {
+            emit(ch, 'level', 0.6);
+            emit(ch, 'speech-start', null);
+            for (var i = 0; i < cfg.transcripts.length; i += 1) {
+              emit(ch, 'partial', { text: cfg.transcripts[i] });
+              emit(ch, 'final', { text: cfg.transcripts[i] });
+            }
+            emit(ch, 'end', null);
+          }, 0);
+          return Promise.resolve(undefined);
+        }
+        case 'media.listen.stop':
+          return Promise.resolve(undefined);
+        case 'media.speak':
+          spoken.push(String(params.text || ''));
+          return Promise.resolve(undefined);
+        case 'media.stopSpeaking':
+          return Promise.resolve(undefined);
+        case 'collections.put': {
+          var bucket = docs[params.name] || (docs[params.name] = {});
+          bucket[params.doc && params.doc.id] = params.doc;
+          return Promise.resolve({ ok: true });
+        }
+        case 'collections.get': {
+          var doc = (docs[params.name] || {})[params.id];
+          return doc === undefined ? reject('NOT_FOUND', '文档不存在') : Promise.resolve({ doc: doc });
+        }
+        case 'collections.delete': {
+          if (docs[params.name]) delete docs[params.name][params.id];
+          return Promise.resolve({ ok: true });
+        }
+        case 'collections.list':
+          return Promise.resolve({ docs: Object.values(docs[params.name] || {}) });
+        case 'collections.query': {
+          var all = Object.values(docs[params.name] || {});
+          var where = Array.isArray(params.where) ? params.where : [];
+          var hit = all.filter(function (doc) {
+            return where.every(function (c) { return doc[c.field] === c.value; });
+          });
+          return Promise.resolve({ docs: hit.slice(0, params.limit || 50) });
+        }
+        case 'context.update':
+          window.__kepcupContext = params.summary;
+          return Promise.resolve({ ok: true });
+        case 'context.clear':
+          window.__kepcupContext = undefined;
+          return Promise.resolve({ ok: true });
+        case 'app.setTitle':
+        case 'app.reportError':
+          return Promise.resolve(undefined);
+        default:
+          return reject('MICRO_APP_CAPABILITY_NOT_DECLARED', '预览 mock 没有实现这个方法：' + method);
+      }
+    }
+  };
+})();
+</script>`;
+  if (script.includes('//')) throw new Error('micro-app preview mock must not contain // comments');
+  return script.replace(/\n\s*/g, ' ').trim();
+}
+
+// --- micro_app_sdk_inspect（55 §6.1 按需自省；制作 loop 工具的数据源）----------------
+
+const INSPECT_MAX_BYTES = 2 * 1024;
+
+/** 单条 API 契约（inspect 工具回执；≤2KB，未知名返回可用方法列表）。 */
+export function buildMicroAppApiInspect(method: string): string {
+  if (method.trim() === '') {
+    return microAppImplementedApiMethods().size === 0
+      ? '没有已实现的 API 方法。'
+      : [...microAppImplementedApiMethods()].join('\n');
+  }
+  const entry = microAppApiMethodOf(method.trim());
+  if (entry === undefined) {
+    return [
+      `没有 API「${method.trim()}」。可用的方法：`,
+      [...microAppImplementedApiMethods()].join('\n'),
+    ].join('\n');
+  }
+  const cap = entry.capability === 'platform' ? '（平台面，无需声明）' : `（能力 ${entry.capability}）`;
+  const lines = [entry.signature, cap];
+  if (entry.params !== '') lines.push(`参数：${entry.params}`);
+  if (entry.returns !== '') lines.push(`返回：${entry.returns}`);
+  if (entry.deprecated === true) lines.push('状态：已废弃（看报告里的替代写法）');
+  const text = lines.join('\n');
+  return text.length <= INSPECT_MAX_BYTES ? text : `${text.slice(0, INSPECT_MAX_BYTES - 1)}…`;
+}
+
+// --- references/ 分层（55 §6.1：每篇 1–3KB，制作 loop 的 read 工具按需读）--------------
+
+/** 每篇 references 的正文（与 spec 同源组装：限额常量、错误 hint 直接引用）。 */
+export function buildMicroAppSdkReferenceBodies(): Readonly<Record<string, string>> {
+  const caps = MICRO_APP_CAPABILITIES.map((cap) => `- \`${cap.id}\`（${cap.title}）：${cap.limits}`).join('\n');
+  const bodies: Record<string, string> = {
+    'references/manifest.md': [
+      '# micro-app.json 清单',
+      '',
+      `- \`spec\`：固定 \`${MICRO_APP_SPEC_VERSION}\`；`,
+      '- `slug` / `name` / `description`：包标识与展示名；',
+      '- `entry`：入口 HTML，当前只接受 `index.html`；',
+      '- `permissions`：能力闭合枚举的子集（未声明的能力调用会被拒）：',
+      caps,
+      '- `net`：`{ mode: open | allowlist | none, allowlist?: [] }`，缺省 open。保留 open 要在 spec.md 写联网用途与失败降级；',
+      '- `displayMode`：inline（卡片内）或 immersive（覆盖层全屏）。',
+      '',
+      '清单变化（permissions / net / displayMode）= 能力面变化 = 新版本 + 用户重新确认；只改代码沿用上次确认。',
+    ].join('\n'),
+    'references/storage.md': [
+      '# storage.kv 与查询模板',
+      '',
+      `- \`kepcup.storage.get/set/delete/list\`：每微应用独立命名空间，单值 ≤${kbOf(BOT_WIDGET_STORAGE_VALUE_MAX_BYTES)}，总量 ≤${kbOf(BOT_WIDGET_STORAGE_QUOTA_BYTES)} / ${BOT_WIDGET_STORAGE_KEYS_MAX} 键；超限得 \`WIDGET_STORAGE_QUOTA\`。`,
+      '- `kepcup.query(name, params, opts?)`：只读命名查询模板（queries.json 里声明，随版本审查）；返回 `{ rows, truncated, nextCursor? }`。',
+      '- 分页：`opts.maxBytes`（1024B–256KB）按字节切页，`opts.cursor` 接上一页返回的 `nextCursor`（形如 `off:N`），翻到底 `nextCursor` 缺省。',
+      '- `kepcup.collections.put/get/list/delete/query`（能力 storage.collection）：JSON 文档集合，`put` 的文档必须有字符串 `id`；总量 5MB、至多 10 个集合。',
+      '- 调用与存储共享限流：突发 20 / 每秒 5 / 在途 20——保存要防抖，别高频轮询。',
+    ].join('\n'),
+    'references/errors.md': [
+      '# 错误码与修复步骤',
+      '',
+      ...MICRO_APP_ERROR_HINTS.map((hint) => `- \`${hint.code}\`：${hint.hint}`),
+      '',
+      '每个 await 都要 try/catch：`error.code` 程序化分支，`error.message` 可直接展示。',
+    ].join('\n'),
+    'references/ai.md': [
+      '# ai.chat / ai.session（能力 ai.chat）',
+      '',
+      '- `kepcup.ai.chat({ messages, stream?, signal? })`：一次性对话；返回 `{ text }`，`stream: true` 返回 AsyncIterable<{delta}>。',
+      '- `kepcup.ai.session({ id?, system?, maxTurns? })`：多轮会话 → `{ send, history, reset }`；上下文不进主对话。',
+      '- 并发 1：同一实例已有调用在途得 `MICRO_APP_AI_BUSY`；预算（会话 / 每微应用每日 / 每 Bot 每日）超限得 `MICRO_APP_AI_QUOTA`。',
+      '- 你不能指定模型厂商或型号；用量计入编写本微应用的 Bot。失败时显示可读错误并保留进度（`MICRO_APP_AI_UNAVAILABLE`）。',
+    ].join('\n'),
+    'references/media.md': [
+      '# media.listen / media.speak（语音）',
+      '',
+      '- `kepcup.media.listen({ lang?, mode?, silenceMs? })` → `{ start, stop, on }`：宿主代理采集（原始音频不出宿主），事件 `level / speech-start / partial / final / error / end`。',
+      '- 麦克风是**会话授权**：外壳的麦克风开关决定可用性；拒绝或撤销得 `MICRO_APP_CAPABILITY_DENIED`，必须提供键盘输入降级（app.fallback-missing 检查器会查）。',
+      '- `kepcup.media.speak({ text, voice?, rate? })` 播报；`kepcup.media.stopSpeaking()` 停止。用户插话时宿主会自动打断——`speak` 的 Promise 仍会 settle。',
+      '- 半双工：播报时采集自动让路；不要在 speak 未返回前立刻 listen。',
+    ].join('\n'),
+    'references/lifecycle.md': [
+      '# 生命周期',
+      '',
+      '- `kepcup.app.on(\'pause\' | \'resume\' | \'capability.revoked\' | \'theme\' | \'display-mode\' | \'bridge-reset\', cb)`：窗口隐藏 / 恢复 / 能力撤销。',
+      '- 会话恢复：pause 时把进度写到 `kepcup.storage`（键名建议 `session:` 前缀），重开时读回——宿主不代存 DOM。',
+      '- 升级不热替换：运行中的实例钉住当前版本，`next_version` 下次打开生效。',
+      '- 心跳无响应（`MICRO_APP_UNRESPONSIVE`）由宿主判定：不要写死循环阻塞主线程。',
+      '- `kepcup.context.update({ headline, data? })`（能力 context.update）：把结构化进度同步进主对话的模型上下文（headline ≤80 字、data ≤1KB、自由文本字段会被拒）。',
+    ].join('\n'),
+  };
+  return bodies;
+}
+
+function kbOf(bytes: number): string {
+  return `${Math.round(bytes / 1024)}KB`;
+}

@@ -475,6 +475,63 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
     hint: '按报告点名的位置换成替代方法（deprecated 方法的替代写法见 references/errors.md）。',
     userText: '',
   },
+  // --- P3（55 §11）：多文件制作流程触发的扫描 ----------------------------------------
+  {
+    id: 'app.bundle-invalid',
+    level: 'error',
+    stage: 'S0',
+    blocking: true,
+    title: '微应用包内文件不合法',
+    hint:
+      '按报错点名的文件修：路径必须是安全的相对路径（不以 / 开头、不含 .. 与反斜杠）；' +
+      '单文件 ≤1MB、包总量 ≤8MB（含入口 HTML）、至多 64 个文件。图片压缩 / 删未引用资产，' +
+      'index.html 永远是入口本体，不要重复放进包文件。',
+    userText: '微应用包不合法',
+  },
+  {
+    id: 'app.permission-overbroad',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '声明了从未调用的能力',
+    hint:
+      '能力面越小用户确认越快：从 micro-app.json 的 permissions 删掉没用到的能力（storage.kv 除外' +
+      '——预置数据合理），或在代码里补上调用。权限扩大要用户重新确认，别把「可能用到」也声明进去。',
+    userText: '',
+  },
+  {
+    id: 'app.fallback-missing',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '声明了宿主能力但没有键盘回退',
+    hint:
+      '环境可能没有你声明的能力（麦克风被拒 / 缺模型配置 / 旧版本宿主）：页面上要有 <input> 或 ' +
+      '<textarea> 的键盘路径，能力调用失败的 catch 里切过去。渐进增强是通用验收，不只语音。',
+    userText: '',
+  },
+  {
+    id: 'app.cost-estimate-missing',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: 'spec.md 没有写每轮对话成本估算',
+    hint:
+      '用了 ai.chat 就要在 spec.md 写一行「每轮约 N token」的量级估算（回复长度 × 轮数）：' +
+      '用量计入编写本微应用的 Bot，用户在确认卡与管理页都能看到；写了才好让人判断值不值。',
+    userText: '',
+  },
+  {
+    id: 'app.capability-unavailable',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '宿主当前缺某项能力的配置',
+    hint:
+      '按报错点名的能力去设置页补配置（模型 / ASR / TTS 各有深链）；代码里按 kepcup.app.ready() ' +
+      '返回的 capabilities 降级（这条不阻断交付，但用户打开就会遇到不可用）。',
+    userText: '',
+  },
 ];
 
 const RULES_BY_ID = new Map(WIDGET_CHECK_RULES.map((rule) => [rule.id, rule]));

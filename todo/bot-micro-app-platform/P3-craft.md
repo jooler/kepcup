@@ -31,3 +31,31 @@
 ## 实施记录
 
 （阶段收口时填写。）
+
+## 实施记录（2026-11-05）
+
+### 交付内容
+
+- **craft loop 多文件 + 清单**（55 §11）：`widget_craft` 增 `micro_app` 参数（manifest 持久化 `microApp` 旗标，续做沿用）；草稿目录支持包文件（BUILD/FIX 可写 `micro-app.json` 与安全相对路径文件，单文件 ≤1MB / 包 ≤8MB / 宿主记录与 `references/` 只读）；快照 / 回滚覆盖包全集；`DraftDigest` 增 `bundleSha256`（microAppBundleSha256，回执带包摘要——改资产不改 HTML 也要重过 GATE）；修改已有微应用时 `craftSource` 带回清单原文与包文件原样种草稿；交付走 P2 的 create/update（manifest + files）。
+- **SPEC 阶段必答**（55 §11）：微应用草稿的 SPEC 提示增「能力清单与理由 / 联网用途与失败降级 / 降级路径 / 每轮成本估算」；**修改已有微应用先读最近 24h 运行时诊断**（`readDiagnostics` 装配接线，outline 注入「最近 24 小时运行时诊断」段）。
+- **GATE 检查器**（55 §11 全部规则）：新文件 `check/micro-app-check.ts`——清单校验（`app.manifest-invalid`）、包路径与体积（`app.bundle-invalid`）、只调声明能力（`app.permission-undeclared`）、权限最小性（`app.permission-overbroad`，storage.kv 例外）、键盘回退（`app.fallback-missing`，声明任何环境能力但页面无 `<input>/<textarea>`）、成本估算（`app.cost-estimate-missing`）、联网用途（`app.net-open-default`，net=open 且 spec 未写用途）、宿主可用性（`app.capability-unavailable`，warning + 原因，探针从装配层注入）；`app.sdk-deprecated` P0 注册 P3 生效。存量组件草稿（无清单）整条路径跳过。
+- **S2 能力 mock**（55 §11）：垫片 `call()` 增 `window.__kepcupMockBridge` 缝（正式打开路径永不触发）；`buildMicroAppPreviewMock(fixtures)` 生成单行 mock 桥（fixtures.storage / queries 初值、`ai` 脚本化回复（流式走垫片自己的迭代器管线，mock 用 `options.subId` 定向发帧）、`transcripts` listen fixture、speak 记录到 `window.__kepcupSpoken`、context 记录、未实现方法按 NOT_DECLARED 拒）；`injectMicroAppSdk` 增 `mockScript` 参数；`createWidgetPreviewRunner` 对微应用草稿走 mock 注入（桌面预览外壳**零改动**），相对路径资源加载失败归 `preview.offline-network`（正式运行时包内相对资源可加载）。fixtures schema 增 `ai` / `transcripts`（缺省空，存量零变化）。
+- **写作知识分层**（55 §6.1）：`buildMicroAppSdkReferenceBodies()` 生成 6 篇 references（manifest/storage/errors/ai/media/lifecycle，与 spec 同源组装——限额常量、错误 hint 直接引用），宿主在草稿创建时物化到 `references/`（模型只读）；入口 `sdk.md` 由 craft 系统提示直接携带（微应用草稿分支），**发现并修复入口超 4KB**（P2 能力扩容后 4459 字节——压缩到 3650，守卫测试锁住）；`micro_app_sdk_inspect` 工具（SPEC/BUILD/FIX 都可用）：按名取契约 ≤2KB、未知名返回可用方法列表。
+- **模板**（55 §11）：`templates/micro-app.ts` 三个包骨架——`micro-voice-tutor`（语音陪练：storage.kv/ai.chat/media.listen/media.speak/context.update，net=none 儿童向收紧，键盘回退，session: 进度恢复）、`micro-form-intake`（表单收集 + reply）、`micro-data-board`（命名查询看板）；每个都带 micro-app.json（+ fixtures / queries），单测锁「能被清单校验器解析且 GATE 全绿」。
+- **基准**（55 §14 P3）：briefs.json 10 → **13 条**（+voice-tutor / voice-word-card / voice-story 三条语音对话需求）；基准汇总 JSON 增 `threshold: { minDelivered: 8, total: 13, met }`（无阻断交付 ≥8/10）。
+
+### 测试证据
+
+- `packages/shared/test/unit/micro-app-sdk.test.ts`：references 篇目 / 大小 / 内容引用能力与错误码守卫、inspect 已知/未知名、mock 脚本单行无 `//`（+3）。
+- `packages/shared/test/unit/micro-app-shim.test.ts`：**vm 真执行** mock 缝——app.ready 声明能力、ai.chat 脚本化流式（迭代器逐段）、listen transcript final、speak 记录、context.update、未知方法拒绝（+3）。
+- `packages/core/test/unit/micro-app-check.test.ts`（8）：存量草稿 null、合法清单零问题、manifest-invalid 短路、undeclared + bundle-invalid（反斜杠路径）、overbroad、fallback-missing（有/无 input）、cost/net（spec 文案触发边界）、capability-unavailable。
+- `packages/core/test/integration/micro-app-craft.test.ts`（2）：**微应用整轮 e2e**（SPEC 四要素 → BUILD 包模板 → GATE 警告触发一轮 FIX → REVIEW → 交付：版本行 manifest_json / bundle_sha256 落库、BUILD 工具面带 inspect、knownIssues 无 app.* 错误、任务上下文无 HTML）；inspect 按名/未知名。
+- 定向回归：shared+core 11 文件 **144/144**；桌面端 widgets + locales **72/72**；typecheck（shared/core）0 错误。
+
+### 偏差与决策记录
+
+1. **入口超限的发现**：`buildMicroAppSdkMd` 在 P2 能力扩容后已超 4KB，但 P0/P2 无消费方未暴露——P3 首次在 craft 提示真实使用时被字节守卫拦下。压缩了信任边界段与能力行（limits 移入 references），「每条 API 一行签名」保留。属「运行时按需计算」策略的预期收益：漂移在构造上不可能。
+2. **S2 mock 的流式实现**：mock 不自建迭代器，复用垫片的 streamIterable 管线（`options.subId` 定向发帧）——API 语义单一来源仍是垫片，mock 只实现宿主侧路由。
+3. **S2 的相对资源**：预览只给入口 HTML；包内相对资源加载失败归 offline-network（warning，非缺陷）。css/js 内联未做（模板不需要；记 P4 若做市场评估再考虑）。
+4. **审查 findings 的 digest 键**未带包摘要（report 只认 html/queries）：纯资产改动不重触发审查——审查看语义，GATE 才管字节；记为已知取舍。
+5. 基准 13 条是**真实模型评测脚本**（默认跳过，KEPCUP_BENCH_* 环境变量触发）；门槛「≥8/10」记录在汇总 JSON 的 `threshold.met`，不在 CI 断言（与 D87 基准同做法）。
