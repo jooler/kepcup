@@ -89,6 +89,12 @@ export function buildWidgetTools(input: {
       resume_craft_id: Type.Optional(
         Type.String({ description: '继续一次未交付的制作（之前回执里的 craftId）' }),
       ),
+      micro_app: Type.Optional(
+        Type.Boolean({
+          description:
+            '做「微应用」（D112）：多文件 + micro-app.json 清单，可以用宿主能力（storage / collections / 模型对话 / 麦克风语音 / 播报 / 上下文同步）——语音陪练、互动故事这类需要说话或模型对话的用微应用；普通单文件交互组件不要传',
+        }),
+      ),
     }),
     execute: (params, ctx) =>
       widgets.craft({

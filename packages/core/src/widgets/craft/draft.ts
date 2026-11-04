@@ -15,11 +15,13 @@ import {
   WIDGET_CRAFT_DRAFT_TTL_DAYS,
   widgetCraftManifestSchema,
   widgetQueryDefSchema,
+  type MicroAppManifest,
   type WidgetCheckReport,
   type WidgetCraftManifest,
   type WidgetQueryDef,
 } from '@kepcup/shared';
 import { botWidgetDraftDir, botWidgetDraftsDir, type AppPaths } from '../../infra/paths.js';
+import { microAppBundleSha256 } from '../../micro-apps/manifest.js';
 import { queriesSha256Of } from '../service.js';
 
 /**
@@ -38,14 +40,28 @@ export const DRAFT_QUERIES = 'queries.json';
 export const DRAFT_SPEC = 'spec.md';
 export const DRAFT_ACCEPTANCE = 'acceptance.json';
 export const DRAFT_FIXTURES = 'fixtures.json';
+/** 微应用清单（D112 P3）：存在即微应用草稿（多文件 + 能力面）。 */
+export const DRAFT_APP_MANIFEST = 'micro-app.json';
+/** 写作知识分层（55 §6.1）：宿主在草稿创建时物化，模型只读（不在可写集合）。 */
+export const DRAFT_REFERENCES_DIR = 'references';
 
-/** 快照覆盖的文件（交付物本身）。 */
-const SNAPSHOT_FILES = [DRAFT_HTML, DRAFT_QUERIES] as const;
+/** 宿主 / 阶段约定文件与目录：不属于交付包，快照与摘要都不碰。 */
+const NON_BUNDLE_FILES = new Set([
+  DRAFT_MANIFEST,
+  DRAFT_HTML,
+  DRAFT_SPEC,
+  DRAFT_ACCEPTANCE,
+  DRAFT_FIXTURES,
+  DRAFT_APP_MANIFEST,
+]);
+const NON_BUNDLE_DIRS = new Set(['reports', 'snapshots', 'references']);
 
-/** 交付物的摘要（回执关卡的比对对象）。 */
+/** 交付物的摘要（回执关卡的比对对象）；微应用草稿带包摘要。 */
 export interface DraftDigest {
   htmlSha256: string;
   queriesSha256: string;
+  /** 微应用包摘要（microAppBundleSha256；存量组件草稿为空串）。 */
+  bundleSha256: string;
 }
 
 export class WidgetDraft {
@@ -141,34 +157,104 @@ export class WidgetDraft {
     rmSync(this.path(name), { force: true });
   }
 
+  /** 草稿是不是微应用（有 micro-app.json）。 */
+  hasAppManifest(): boolean {
+    return this.exists(DRAFT_APP_MANIFEST);
+  }
+
+  /** micro-app.json 原文（不存在为 null）。 */
+  appManifestJson(): string | null {
+    return this.read(DRAFT_APP_MANIFEST);
+  }
+
   /**
    * 当前交付物的摘要：HTML 是原文的 sha256（与 WidgetService 落库同口径），查询是
    * `queries.json` 里合法条目的规范摘要（缺省 / 无法解析 = 按无查询计；这种草稿的 GATE
-   * 会因 `query.invalid` 判定阻断，不会留下可交付的回执）。
+   * 会因 `query.invalid` 判定阻断，不会留下可交付的回执）。微应用草稿另带包摘要
+   * （清单 + 入口 HTML 的 canonical sha256，P2 落库同算法）。
    */
   digest(): DraftDigest {
     const html = this.read(DRAFT_HTML) ?? '';
+    const bundleSha256 = this.#bundleSha256(html);
     return {
       htmlSha256: createHash('sha256').update(html).digest('hex'),
       queriesSha256: queriesSha256Of(this.queries() ?? []),
+      bundleSha256,
     };
+  }
+
+  #bundleSha256(html: string): string {
+    const raw = this.appManifestJson();
+    if (raw === null) return '';
+    try {
+      return microAppBundleSha256(JSON.parse(raw) as MicroAppManifest, html);
+    } catch {
+      return '';
+    }
   }
 
   /**
    * 交付物：只读一次，摘要就按读到的这份字节算（同 {@link digest} 口径）；`queries` 为 null =
-   * queries.json 不合法（这种草稿不会有可交付回执）。
+   * queries.json 不合法（这种草稿不会有可交付回执）。微应用草稿带清单原文与包文件。
    */
-  deliverable(): { html: string; queries: WidgetQueryDef[] | null; digest: DraftDigest } {
+  deliverable(): {
+    html: string;
+    queries: WidgetQueryDef[] | null;
+    digest: DraftDigest;
+    appManifestJson: string | null;
+    files: Array<{ path: string; mime: string; contentBase64: string }>;
+  } {
     const html = this.read(DRAFT_HTML) ?? '';
     const queries = parseQueries(this.read(DRAFT_QUERIES));
+    const appManifestJson = this.appManifestJson();
+    const files = appManifestJson !== null ? this.bundleFiles() : [];
     return {
       html,
       queries,
       digest: {
         htmlSha256: createHash('sha256').update(html).digest('hex'),
         queriesSha256: queriesSha256Of(queries ?? []),
+        bundleSha256: this.#bundleSha256(html),
       },
+      appManifestJson,
+      files,
     };
+  }
+
+  /** 包内文件（约定的宿主 / 阶段文件与目录除外；mime 按扩展名粗判，交付侧再校验）。 */
+  bundleFiles(): Array<{ path: string; mime: string; contentBase64: string }> {
+    const out: Array<{ path: string; mime: string; contentBase64: string }> = [];
+    const walk = (dir: string, prefix: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (prefix === '' && NON_BUNDLE_DIRS.has(entry.name)) continue;
+          walk(path.join(dir, entry.name), rel);
+          continue;
+        }
+        if (prefix === '' && NON_BUNDLE_FILES.has(entry.name)) continue;
+        out.push({
+          path: rel,
+          mime: mimeOfPath(rel),
+          contentBase64: readFileSync(path.join(dir, entry.name)).toString('base64'),
+        });
+      }
+    };
+    walk(this.dir, '');
+    return out;
+  }
+
+  /** 宿主物化写作知识分层（references/*.md，模型只读）。 */
+  writeSdkReferences(bodies: Readonly<Record<string, string>>): void {
+    for (const [file, body] of Object.entries(bodies)) {
+      this.write(file, `${body}\n`);
+    }
   }
 
   /** `queries.json` 的条目（缺省为 []；JSON / 形状不合法为 null）。 */
@@ -176,13 +262,25 @@ export class WidgetDraft {
     return parseQueries(this.read(DRAFT_QUERIES));
   }
 
-  /** GATE 时的快照（index.html + queries.json；缺省的文件记为缺省）。 */
+  /** 快照覆盖的交付物：入口 + 查询 + 微应用清单与包文件（相对路径原样保留）。 */
+  #snapshotTargets(): string[] {
+    const targets = [DRAFT_HTML, DRAFT_QUERIES];
+    if (this.hasAppManifest()) targets.push(DRAFT_APP_MANIFEST);
+    for (const file of this.bundleFiles()) targets.push(file.path);
+    return targets;
+  }
+
+  /** GATE 时的快照（交付物全集；缺省的文件记为缺省）。 */
   snapshot(round: number): void {
     const dir = this.path(path.join('snapshots', `round-${round}`));
     rmSync(dir, { recursive: true, force: true });
     this.#ensureSubdir(dir);
-    for (const name of SNAPSHOT_FILES) {
-      if (this.exists(name)) copyFileSync(this.path(name), path.join(dir, name));
+    for (const name of this.#snapshotTargets()) {
+      const source = this.path(name);
+      if (!existsSync(source)) continue;
+      const target = path.join(dir, name);
+      mkdirSync(path.dirname(target), { recursive: true });
+      copyFileSync(source, target);
     }
   }
 
@@ -190,10 +288,14 @@ export class WidgetDraft {
   restore(round: number): void {
     const dir = this.path(path.join('snapshots', `round-${round}`));
     if (!existsSync(dir)) throw new Error(`widget draft snapshot round-${round} is missing`);
-    for (const name of SNAPSHOT_FILES) {
+    for (const name of this.#snapshotTargets()) {
       const source = path.join(dir, name);
-      if (existsSync(source)) copyFileSync(source, this.path(name));
-      else this.remove(name);
+      if (existsSync(source)) {
+        mkdirSync(path.dirname(this.path(name)), { recursive: true });
+        copyFileSync(source, this.path(name));
+      } else {
+        this.remove(name);
+      }
     }
   }
 
@@ -266,6 +368,35 @@ function listDirs(dir: string): string[] {
       .map((entry) => entry.name);
   } catch {
     return [];
+  }
+}
+
+/** 包内文件的 MIME 粗判（按扩展名；真正的一致性由交付侧与 CSP 承担）。 */
+function mimeOfPath(rel: string): string {
+  const ext = rel.slice(rel.lastIndexOf('.') + 1).toLowerCase();
+  switch (ext) {
+    case 'css':
+      return 'text/css';
+    case 'js':
+    case 'mjs':
+      return 'text/javascript';
+    case 'json':
+      return 'application/json';
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'webp':
+      return 'image/webp';
+    case 'woff2':
+      return 'font/woff2';
+    case 'txt':
+      return 'text/plain';
+    default:
+      return 'application/octet-stream';
   }
 }
 

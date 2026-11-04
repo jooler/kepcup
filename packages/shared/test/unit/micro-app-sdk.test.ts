@@ -13,8 +13,11 @@ import {
 } from '../../src/micro-app-sdk/spec.js';
 import {
   MICRO_APP_SDK_REFERENCES,
+  buildMicroAppApiInspect,
   buildMicroAppDts,
+  buildMicroAppPreviewMock,
   buildMicroAppSdkMd,
+  buildMicroAppSdkReferenceBodies,
   buildMicroAppShim,
   microAppImplementedApiMethods,
   microAppPreviewMockSpec,
@@ -188,5 +191,45 @@ describe('micro-app 清单 schema 与能力面指纹', () => {
     const missing = microAppUnimplementedCapabilities(['storage.kv', 'files.pick']);
     expect(missing).toEqual(['files.pick']);
     expect(microAppCapabilityOf('files.pick')?.phase).toBe('P3');
+  });
+});
+
+describe('P3：references / inspect / S2 mock（55 §6.1）', () => {
+  it('references 篇目与索引一致，每篇 0.5–4KB，正文引用能力枚举与错误码', () => {
+    const bodies = buildMicroAppSdkReferenceBodies();
+    for (const ref of MICRO_APP_SDK_REFERENCES) {
+      const body = bodies[ref.file];
+      expect(body, ref.file).toBeTruthy();
+      const bytes = new TextEncoder().encode(body).length;
+      expect(bytes).toBeGreaterThanOrEqual(500);
+      expect(bytes).toBeLessThanOrEqual(4 * 1024);
+    }
+    for (const cap of MICRO_APP_CAPABILITIES) {
+      expect(bodies['references/manifest.md']).toContain(cap.id);
+    }
+    for (const hint of MICRO_APP_ERROR_HINTS) {
+      expect(bodies['references/errors.md']).toContain(hint.code);
+    }
+  });
+
+  it('micro_app_sdk_inspect：已知方法给契约（≤2KB），未知名给可用方法列表', () => {
+    const known = buildMicroAppApiInspect('ai.chat');
+    expect(known).toContain('ai.chat');
+    expect(new TextEncoder().encode(known).length).toBeLessThanOrEqual(2 * 1024);
+    const unknown = buildMicroAppApiInspect('nope.nope');
+    expect(unknown).toContain('nope.nope');
+    expect(unknown).toContain('ai.chat');
+    expect(new TextEncoder().encode(buildMicroAppApiInspect('')).length).toBeLessThanOrEqual(2 * 1024);
+  });
+
+  it('S2 mock：单行脚本、无 // 注释、装 __kepcupMockBridge', () => {
+    const mock = buildMicroAppPreviewMock({
+      theme: 'light',
+      permissions: ['ai.chat', 'media.listen', 'media.speak'],
+      fixtures: { ai: ['mock reply one'], transcripts: ['hello world'] },
+    });
+    expect(mock.includes('//')).toBe(false);
+    expect(mock.includes('\n')).toBe(false);
+    expect(mock).toContain('__kepcupMockBridge');
   });
 });

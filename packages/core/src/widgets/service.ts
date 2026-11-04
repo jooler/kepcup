@@ -573,6 +573,19 @@ export class WidgetService {
       return { ok: false, message: '组件的最新版本已不存在', code: 'NOT_FOUND' };
     }
     const microApp = manifestOfRow(version.manifest_json);
+    // 微应用修改模式：包文件原样带回（制作 loop 种进草稿；改动基于它们做）。
+    const files =
+      microApp !== null
+        ? (
+            this.#deps.db
+              .prepare('select path, mime, content from micro_app_files where widget_id = ? and version = ?')
+              .all(widget.id, version.version) as Array<{ path: string; mime: string; content: Buffer }>
+          ).map((row) => ({
+            path: row.path,
+            mime: row.mime,
+            contentBase64: row.content.toString('base64'),
+          }))
+        : [];
     return {
       ok: true,
       title: widget.title,
@@ -582,6 +595,7 @@ export class WidgetService {
       html: version.html,
       queries: this.#queriesOf(widget.id, version.version),
       ...(microApp !== null ? { manifest: microApp.manifest } : {}),
+      ...(files.length > 0 ? { files } : {}),
     };
   }
 

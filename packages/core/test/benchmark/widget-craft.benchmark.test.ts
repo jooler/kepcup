@@ -12,7 +12,8 @@ import {
 } from '@kepcup/testkit';
 
 /**
- * D87 P3c 效果基准（todo/bot-widgets-authoring.md §5.4）：用一个真实模型把 10 条需求各跑两组——
+ * D87 P3c 效果基准（todo/bot-widgets-authoring.md §5.4；D112 P3 扩到 13 条，含 3 条语音/对话）：
+ * 用一个真实模型把每条需求各跑两组——
  * 基线 = 只 SPEC + BUILD 后直接 GATE 计分（0 修复 / 0 审查）；完整流程 = widget_craft。记录最终
  * 状态、是否交付（= 无阻断项）、轮数、token、耗时，写成 JSON。
  *
@@ -127,6 +128,8 @@ describe.skipIf(MODEL === '' || API_KEY === '')('widget craft benchmark (real mo
           at: new Date().toISOString(),
           baseline: summary('baseline'),
           full: summary('full'),
+          // D112 P3 门槛：无阻断交付 ≥ 8/10（按 full 模式的交付率计；13 条里含 3 条语音/对话）。
+          threshold: { minDelivered: 8, total: briefs.length, met: summary('full').delivered >= 8 },
           rows,
         },
         null,

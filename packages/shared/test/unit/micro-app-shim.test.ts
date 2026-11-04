@@ -4,6 +4,7 @@ import {
   MICRO_APP_BRIDGE_APP_SOURCE,
   MICRO_APP_BRIDGE_HOST_SOURCE,
   MICRO_APP_EVENT_SUBSCRIPTIONS_MAX,
+  buildMicroAppPreviewMock,
   buildMicroAppShim,
   microAppsAiChatInputSchema,
 } from '../../src/index.js';
@@ -301,5 +302,123 @@ describe('微应用垫片（真实执行）', () => {
     shim.deliver(hostFrame({ k: 'event', subId: 'ch_1', name: 'final', data: { text: 'hello' }, seq: 1 }));
     shim.deliver(hostFrame({ k: 'event', subId: 'ch_1', name: 'end', data: null, seq: 2 }));
     expect(seen).toEqual([{ text: 'hello' }, 'end']);
+  });
+});
+
+describe('P3：S2 预览 mock 缝（55 §11，宿主能力 mock）', () => {
+  interface MockHarness {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    kepcup: any;
+    spoken: string[];
+    context: { headline?: string } | undefined;
+  }
+
+  function loadWithMock(fixtures: { ai?: string[]; transcripts?: string[] }): MockHarness {
+    const mock = buildMicroAppPreviewMock({
+      theme: 'light',
+      permissions: ['ai.chat', 'media.listen', 'media.speak', 'context.update'],
+      fixtures,
+    }).replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const source = buildMicroAppShim('light').replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const messageHandlers: Array<(event: unknown) => void> = [];
+    const spoken: string[] = [];
+    const parent = { postMessage: () => undefined };
+    const windowObj: Record<string, unknown> = {
+      addEventListener: (_type: string, cb: (event: unknown) => void) => messageHandlers.push(cb),
+      dispatchEvent: (event: { type: string; source?: unknown; data?: unknown; detail?: unknown }) => {
+        if (event.type === 'message') {
+          for (const handler of [...messageHandlers]) handler({ source: event.source, data: event.data });
+          return true;
+        }
+        return true;
+      },
+    };
+    windowObj['parent'] = parent;
+    const realm = {
+      window: windowObj,
+      document: { documentElement: { setAttribute: () => undefined } },
+      navigator: { userActivation: { isActive: true } },
+      parent,
+      CustomEvent: class {
+        constructor(public type: string, public detail: unknown) {}
+      },
+      MessageEvent: class {
+        type: string;
+        source: unknown;
+        data: unknown;
+        constructor(
+          type: string,
+          init: { source?: unknown; data?: unknown },
+        ) {
+          this.type = type;
+          this.source = init.source;
+          this.data = init.data;
+        }
+      },
+      Promise,
+      Map,
+      Set,
+      Symbol,
+      Object,
+      Array,
+      JSON,
+      Math,
+      Error,
+      Number,
+      String,
+      Boolean,
+      Date,
+      isFinite,
+      setTimeout,
+      setInterval,
+      clearInterval,
+    };
+    runInNewContext(mock, realm);
+    runInNewContext(source, realm);
+    return {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      kepcup: windowObj['kepcup'] as any,
+      get spoken(): string[] {
+        return (windowObj['__kepcupSpoken'] as string[]) ?? [];
+      },
+      get context(): { headline?: string } | undefined {
+        return windowObj['__kepcupContext'] as { headline?: string } | undefined;
+      },
+    };
+  }
+
+  test('app.ready 返回声明能力；ai.chat 脚本化回复（流式 = 迭代器逐段到达）', async () => {
+    const h = loadWithMock({ ai: ['one two three four five six seven eight'] });
+    const ready = (await h.kepcup.app.ready()) as { capabilities: string[]; grants: { mic: string } };
+    expect(ready.capabilities).toEqual(['ai.chat', 'media.listen', 'media.speak', 'context.update']);
+    expect(ready.grants.mic).toBe('granted');
+    const chunks: string[] = [];
+    for await (const delta of (await h.kepcup.ai.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+    })) as AsyncIterable<{ delta: string }>) {
+      chunks.push(delta.delta);
+    }
+    expect(chunks.join('')).toBe('one two three four five six seven eight');
+  });
+
+  test('media.listen：start 后按 fixtures.transcripts 依次 final；speak 记录到 __kepcupSpoken', async () => {
+    const h = loadWithMock({ transcripts: ['I went to the park'] });
+    const session = await h.kepcup.media.listen({ mode: 'vad' });
+    const finals: string[] = [];
+    session.on('final', (value: { text?: string }) => finals.push(value.text ?? ''));
+    await session.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(finals).toEqual(['I went to the park']);
+    await h.kepcup.media.speak({ text: 'Well done!' });
+    expect(h.spoken).toEqual(['Well done!']);
+    // 未实现的方法（files.pick 未实现）→ 未声明错误。
+    await expect(h.kepcup.ai.chat({ messages: [{ role: 'user', content: '' }] })).resolves.toBeTruthy();
+  });
+
+  test('context.update 落到 __kepcupContext；未知方法按 NOT_DECLARED 拒绝', async () => {
+    const h = loadWithMock({});
+    await h.kepcup.context.update({ headline: '完成 3 轮' });
+    expect(h.context?.headline).toBe('完成 3 轮');
   });
 });

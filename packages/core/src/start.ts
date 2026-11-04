@@ -2190,6 +2190,42 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           rpc: services.widgetPreviewRpc,
           screenshots: opts.screenshots,
         }),
+      // D112 P3（55 §11）：修改已有微应用时 SPEC 先读最近 24h 运行时诊断。
+      readDiagnostics: (botId, widgetId) => {
+        const store = services.microAppStore;
+        if (store === null) return null;
+        const owned = widgetService.listForBot(botId).some((item) => item.widgetId === widgetId);
+        if (!owned) return null;
+        const read = store.diagnosticsRead(widgetId);
+        if (read.entries.length === 0) return null;
+        const lines = read.entries
+          .slice(0, 8)
+          .map((entry) => `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`);
+        return [
+          ...lines,
+          ...(read.truncated ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）'] : []),
+        ].join('\n');
+      },
+      // GATE 的 app.capability-unavailable（55 §11）：宿主缺配置的能力提前标出 + 设置深链。
+      capabilityAvailability: (capability) => {
+        if (capability === 'ai.chat') {
+          const ai = services.microAppAi;
+          if (ai === null || !ai.modelAvailable()) {
+            return { available: false, reason: '没有可用的内置模型（未配置模型）' };
+          }
+          return { available: true };
+        }
+        if (capability === 'media.listen' || capability === 'media.speak') {
+          const media = services.media;
+          if (media === null) return { available: false, reason: '媒体模块未就绪' };
+          const kind = capability === 'media.listen' ? 'asr' : 'tts';
+          if (!media.capabilityConfigured(kind)) {
+            return { available: false, reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型' };
+          }
+          return { available: true };
+        }
+        return undefined;
+      },
     });
     try {
       widgetCraft.sweepDrafts();

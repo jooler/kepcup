@@ -391,10 +391,18 @@ export function injectWidgetSdk(html: string, options: { theme?: WidgetTheme } =
  * 微应用垫片注入（D112，设计 55 §6）：与组件垫片共用主题变量 / 滚动条 / kit，脚本本体
  * 换成 `micro-app-sdk` 生成的桥 v2 垫片（`kepcup.app` / 能力协商 / 事件订阅）。幂等标记
  * `kepcup-micro-app-sdk-v1`。存量组件路径不经这里（行为零变化的分界点之一）。
+ * `mockScript`（S2 预览专用）注入在垫片之前：垫片的 call 缝检测到
+ * `window.__kepcupMockBridge` 就改走 in-page mock——正式打开路径永远不传。
  */
-export function injectMicroAppSdk(html: string, options: { theme?: WidgetTheme } = {}): string {
+export function injectMicroAppSdk(
+  html: string,
+  options: { theme?: WidgetTheme; mockScript?: string } = {},
+): string {
   if (html.includes(MICRO_APP_SDK_MARKER)) return html;
-  return injectAfterHead(html, buildInjection(html, buildMicroAppShim(options.theme ?? 'light')));
+  return injectAfterHead(
+    html,
+    `${options.mockScript ?? ''}${buildInjection(html, buildMicroAppShim(options.theme ?? 'light'))}`,
+  );
 }
 
 function buildInjection(html: string, shim: string): string {
