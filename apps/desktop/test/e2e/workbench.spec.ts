@@ -759,19 +759,29 @@ test('todo order: 默认按开始时间排序且禁止拖拽，打开自定义�
     await page.keyboard.press('Escape');
     await expect(toggle).toHaveCount(0, { timeout: 5_000 });
     const cardsOfLane = lane.locator('[data-testid="todo-card"]');
-    const lastFrom = await cardsOfLane.last().boundingBox();
-    const topTo = await cardsOfLane.first().boundingBox();
-    if (lastFrom === null || topTo === null) throw new Error('todo card has no box');
+    const lastCard = cardsOfLane.last();
+    await lastCard.scrollIntoViewIfNeeded();
+    const lastFrom = await lastCard.boundingBox();
+    const zone = await cards.boundingBox();
+    if (lastFrom === null || zone === null) throw new Error('todo card has no box');
     const DRAGGED_ORDER = ['B-较晚', 'D-无时间后建', 'C-无时间先建', 'A-较早'];
-    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2);
+    // svelte-dnd-action 的落点观察循环是 200ms。合成拖拽若在下一拍之前松手，
+    // Linux xvfb 上会把落点当成原地（顺序不变）。先越过 3px 阈值等副本出现，
+    // 再停在卡片区上缘超过一个观察周期，然后补一次 window mouseup。
+    const startX = lastFrom.x + lastFrom.width / 2;
+    const startY = lastFrom.y + lastFrom.height / 2;
+    await page.mouse.move(startX, startY);
     await page.mouse.down();
-    await page.waitForTimeout(80);
-    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2 - 12, {
-      steps: 6,
-    });
-    await page.mouse.move(topTo.x + topTo.width / 2, topTo.y + 8, { steps: 20 });
-    await page.waitForTimeout(120);
+    await page.mouse.move(startX + 12, startY - 12, { steps: 6 });
+    await expect(page.locator('#dnd-action-dragged-el')).toBeVisible({ timeout: 5_000 });
+    await page.mouse.move(zone.x + zone.width / 2, zone.y + 8, { steps: 24 });
+    await page.waitForTimeout(400);
     await page.mouse.up();
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }),
+      );
+    });
     await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
     await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
 
