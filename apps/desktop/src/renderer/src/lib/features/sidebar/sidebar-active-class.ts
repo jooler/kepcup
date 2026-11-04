@@ -12,7 +12,7 @@
 
 /** 展开态条目（工作台入口、对话行）的选中底色。 */
 export const SIDEBAR_ROW_ACTIVE_CLASS =
-  'data-active:bg-[oklch(0.925_0_0)] dark:data-active:bg-[oklch(0.25_0_0)]';
+  'data-active:bg-[oklch(0.985_0_0)] dark:data-active:bg-[oklch(0.15_0_0)]';
 
 /** 图标（折叠）态条目的选中底色。 */
 export const SIDEBAR_ICON_ACTIVE_CLASS =
