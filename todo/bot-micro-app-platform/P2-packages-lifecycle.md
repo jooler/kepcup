@@ -43,7 +43,7 @@
 
 ### 交付内容
 
-- **迁移 `0069_micro_app_p2.sql`**：`micro_app_files` / `micro_app_collections` / `micro_app_context` / `micro_app_diagnostics` / `micro_app_audit`（全部 FK 级联 + 前缀；诊断按天 + 版本；public-skills 回放夹具同步摘表）。
+- **迁移 `0070_micro_app_p2.sql`**：`micro_app_files` / `micro_app_collections` / `micro_app_context` / `micro_app_diagnostics` / `micro_app_audit`（全部 FK 级联 + 前缀；诊断按天 + 版本；public-skills 回放夹具同步摘表）。
 - **多文件包**：`WidgetService.create/update` 增 `files`（路径安全 / 单文件 1MB / 包 8MB / 64 文件 / 与入口不冲突）；`micro_app_files` 随版本修剪；`widgets.ui.resource` 按 `path` 取包内文件（二进制 contentBase64 + MIME）；主进程协议解析扩 `/{resourceId}/{path}`（段白名单 + `..` 拒绝）与二进制响应分支；`appsUiResourceInputSchema` += path、output += contentBase64/mimeType（html default ''，MCP 应用路径零变化）。
 - **collections**（55 §10）：`MicroAppStore`（widget_id 命名空间、5MB / 10 集合配额、where 过滤 eq/ne/gt/gte/lt/lte/exists、limit ≤200）；桥方法 `collections.*` → RPC `microApps.collections.*`；垫片 `kepcup.collections` 面。
 - **context.update**（55 §8.5）：结构化摘要（headline ≤80 / data ≤1KB，strict schema 拒自由文本字段）；last-wins 存 `micro_app_context`；`buildConversationContext` 注入 `<untrusted source="micro-app-context">`（标注作者内容非指令）；**gesture 时机在桥宿主核用户激活**（防循环刷写；pause/close 由宿主发起）；卡片（preflight.contextHeadline）与管理页可见可清除；`microApps.clearContext`。
@@ -70,11 +70,11 @@
 - **P0-1 SDK 分页死路（修）**：垫片/契约都暴露了 `opts:{cursor,maxBytes}`，桥宿主 `case 'query'` 却丢弃只转发 `{name,params}`——微应用经 SDK 永远拿第一页且无报错。修：宿主校验并透传 cursor/maxBytes（`micro-app-bridge-host.ts`），`callQuery` 本就整体透传；补宿主透传 + 形状拒绝测试。
 - **P1-1 诊断推送 ≤300 字失效（修）**：`.slice(0,300)` 因优先级只作用于最后一个字面量。修：拼接后整串 slice；测试断言 80+200 字入参 → 文本 ≤300。
 - **P1-2 collections 配额字符/字节混算（修）**：存量行用 SQLite `length()`（字符数），新增用 `Buffer.byteLength`——CJK 下 5MB 可实存 ~3 倍。修：`length(cast(doc_json as blob))`；新增测试（1.56M 字符 CJK 种子 ≈4.68MB 字节 + 0.7MB ASCII → 拒绝；旧按字符数逻辑会放行）+ 10 集合上限 / 覆写不占名额测试。
-- **P1-3 推送去重仅内存（修）**：core 重启 / 标记溢出清空后同 (version,code) 当天重推。修：迁移 **0070** 增 `micro_app_diag_pushes`（FK 级联）持久化去重 + 支撑每日上限；`pruneDiagnostics` 顺带修剪；夹具同步摘表。
+- **P1-3 推送去重仅内存（修）**：core 重启 / 标记溢出清空后同 (version,code) 当天重推。修：迁移 **0071** 增 `micro_app_diag_pushes`（FK 级联）持久化去重 + 支撑每日上限；`pruneDiagnostics` 顺带修剪；夹具同步摘表。
 - **P1-4 旧版本诊断不随修剪删（修）**：版本修剪只删了 files/queries。修：同一事务补 `delete from micro_app_diagnostics where version <= ?`（§9.4 明文）。
 - **P1-5 分页吞 runner 截断标记（修，连带发现双重偏移）**：runner 行数顶到 1000 且字节切片没切到时无 nextCursor——1000 行之外静默不可见。修：runner job 增 `rowsOffset`（子进程迭代跳行，游标真正落到窗口后），service 在 runner 截断且无字节续点时补 `off:{offset+rows.length}`；切片 offset 归 0（runner 已跳行，否则第二页恒空——集成测试先抓到）。新增 >1050 行翻页 e2e（独立 Bot 会话）：两页取满 1050 行、truncated=false 收口。
 - **P2-1 轮换 code 刷屏（修）**：去重键含 code，换 code 即可绕过渲染端限流刷系统消息。修：`MICRO_APP_DIAG_PUSH_MAX_PER_DAY = 5`（shared 常量）按微应用每日推送上限，用 pushes 表计数；测试断言第 6 个 code 不推。
-- **P2-2 `micro_app_audit` 无 FK（修）**：与迁移头注「级联删除」不符、孤儿行无限增长。修：0070 重建表补 `REFERENCES widgets ON DELETE CASCADE` 并迁移存量行。
+- **P2-2 `micro_app_audit` 无 FK（修）**：与迁移头注「级联删除」不符、孤儿行无限增长。修：0071 重建表补 `REFERENCES widgets ON DELETE CASCADE` 并迁移存量行。
 - **P2-3 回退后 list 展示错版本能力面（修）**：manifest join `latest_version` 而展示 `next_version`——回退后管理页显示的是新版本权限。修：join `coalesce(next_version, latest_version)`；测试断言回退后 permissions = v1。
 - **P2-4 pause/close 时机与台账不符 + 瞬态激活误拒（修）**：台账删「pause/close 由宿主发起」的实现性表述（会话恢复 = SDK 约定，见下）；gesture 判定加 **5s 采样宽限窗**（1s 采样宿主激活态，`USER_ACTIVATION_GRACE_MS`，测试注入闸优先），「练习结束 await 后同步」不再被误拒；拍板记 **Q11**。宿主行为补测试（心跳无响应 + ack 恢复、pause/resume 事件、context.update 激活闸 + 宽限窗）。
 - **P2-5 桥宿主 P2 行为零测试（修）**：见上，新增 4 个宿主协议测试。

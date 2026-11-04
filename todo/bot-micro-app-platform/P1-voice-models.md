@@ -41,7 +41,7 @@
 - 契约：`microApps.ai.chat / sessionCreate / sessionSend / sessionHistory / sessionReset / cancel / dispose`、`microApps.media.transcribe / synthesize`、`micro-app.stream` 事件、`microAppInstanceRefSchema`（resourceId + `mai_` 实例键）；`loopTypeSchema` += `micro_app`；设置 `microAppModel`（schema + patch + 目录条目 `models.micro-app` + core 适配器 + 设置页下拉 + FieldEditor 通用卡可用 + i18n 两语言）。
 
 **core**
-- 迁移 `0068_micro_app_usage.sql`（widget_id + day 主键；ai_calls / ai_tokens / asr_ms / tts_chars）。
+- 迁移 `0069_micro_app_usage.sql`（widget_id + day 主键；ai_calls / ai_tokens / asr_ms / tts_chars）。
 - `micro-apps/ai-gateway.ts`（`MicroAppAiGateway`）：
   - **隔离**：不写 conversation_messages、不进主对话（测试钉住）；`ai.chat` 无工具面。
   - **路由**：`routeFor(deps,'micro_app',botId)`（llm-router 增 purpose，`light_for_bot` 规则 + `settings.microAppModel` 优先；外部 Agent 路由明确拒绝）。

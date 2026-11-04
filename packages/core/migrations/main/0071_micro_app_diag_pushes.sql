@@ -10,7 +10,7 @@ CREATE TABLE micro_app_diag_pushes (
   pushed_at INTEGER NOT NULL,
   PRIMARY KEY (widget_id, version, code, day)
 );
--- 2) micro_app_audit 补外键级联（审查 P2-2）：与 0069 头注「随 widgets 行级联删除」
+-- 2) micro_app_audit 补外键级联（审查 P2-2）：与 0070 头注「随 widgets 行级联删除」
 --    对齐。SQLite 不能对既有表补约束，重建并迁移存量行。
 CREATE TABLE micro_app_audit_new (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

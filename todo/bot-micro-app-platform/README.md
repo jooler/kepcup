@@ -19,7 +19,7 @@
 
 - 命名：用户可见「微应用」；代码 `MicroApp*` 前缀；RPC `microApps.*`；清单 `micro-app.json`；SDK 路径 `packages/shared/src/micro-app-sdk/`；SDK 命名空间 `kepcup.app`（实例）与 `kepcup.*`（能力）。
 - 数据库：新增表 `micro_app_*` 前缀（`micro_app_files` / `micro_app_usage` / `micro_app_diagnostics` / `micro_app_audit`）；存量 `widget_*` 不改名（`widgets.bot_id` 仍是计费归属锚点）；迁移在 `packages/core/migrations/main/` 递增编号。
-  - ⚠️ 开工时 worktree 最新迁移为 `0066_plugin_im.sql`；主工作区有一份**未提交**的 `0067_bot_direct_exchange.sql`（bot 直聊相关工作）。本任务书从 `0067` 起用；若两边最终都要合入，合并时一方顺延重编号（已在交接报告登记）。
+  - ⚠️ 编号冲突已按约定处置（2026-11-05 合并时）：主工作区 `0067_bot_direct_exchange.sql`（bot 直聊）已先提交，微应用侧四份迁移顺延为 `0068_micro_app_manifest` / `0069_micro_app_usage` / `0070_micro_app_p2` / `0071_micro_app_diag_pushes`。
 - 红线（55 §16 永久不做，任何决策不得突破）：生成代码进宿主进程 / `nodeIntegration` / core 执行生成 JS；任意 SQL / 文件系统 / 子进程 / 读 `secrets`；发音评分；后台常驻 / 定时唤醒；全双工实时语音；微应用互访；微应用市场（P4 只评估）。
 - 沙箱：iframe `sandbox="allow-scripts allow-same-origin allow-forms allow-modals"` + `allow=""` 不变；能力只经宿主桥；原始音频不出宿主。
 - 默认联网 `open`（Q10 已拍板），四个提示面缺一不可：确认卡网络行（最前、单独一行）、外壳常驻徽标（P1）、SPEC 必答联网用途（P3）、`app.net-open-default` 检查规则（P0）。
