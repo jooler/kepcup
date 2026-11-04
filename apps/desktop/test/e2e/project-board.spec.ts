@@ -641,11 +641,12 @@ test('project board: assign, dialog chat, badge, deep link, cascade', async () =
     llm.script(
       'mock-main',
       viaTask({
-        title: '读外部文件',
-        writes: false,
+        title: '写外部文件',
+        // 普通读取已默认放行（design 13）；越界写入才弹授权卡。
+        writes: true,
         ack: '好的，我去读',
         taskSteps: [
-          step().replyToolCall('read', { path: externalPath }),
+          step().replyToolCall('write', { path: externalPath, content: 'e2e-external-content' }),
           step().replyText('文件内容已读到'),
         ],
         relay: '外部文件读完了',
