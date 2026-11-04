@@ -808,7 +808,7 @@ CREATE TABLE widgets (
   latest_version  INTEGER NOT NULL DEFAULT 1,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
-  next_version    INTEGER                  -- 0067（D112）：版本双指针；NULL = 跟随卡片钉住版本（存量语义）
+  next_version    INTEGER                  -- 0068（D112）：版本双指针；NULL = 跟随卡片钉住版本（存量语义）
 );
 CREATE INDEX widgets_bot ON widgets(bot_id);
 CREATE INDEX widgets_conversation ON widgets(conversation_id);
@@ -825,9 +825,9 @@ CREATE TABLE widget_versions (
   check_summary_json TEXT NOT NULL DEFAULT '',   -- 0035：检查摘要（轮数、已知问题 ≤5、craftId；不含源码）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
-  manifest_json  TEXT NOT NULL DEFAULT '', -- 0067（D112）：微应用清单 micro-app.json（空 = 存量组件）
-  bundle_sha256  TEXT NOT NULL DEFAULT '', -- 0067：bundle 规范化摘要（清单 + 全部内容；「代码已更新」标注）
-  permissions_json TEXT NOT NULL DEFAULT '[]', -- 0067：清单 permissions（冗余列，审计 / 巡查免解析清单）
+  manifest_json  TEXT NOT NULL DEFAULT '', -- 0068（D112）：微应用清单 micro-app.json（空 = 存量组件）
+  bundle_sha256  TEXT NOT NULL DEFAULT '', -- 0068：bundle 规范化摘要（清单 + 全部内容；「代码已更新」标注）
+  permissions_json TEXT NOT NULL DEFAULT '[]', -- 0068：清单 permissions（冗余列，审计 / 巡查免解析清单）
   PRIMARY KEY (widget_id, version)
 );
 
@@ -855,10 +855,10 @@ CREATE TABLE widget_docs (
 - 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
 - D88 移交复制（P2，`WidgetService.copyForHandover`，无迁移）：只有 `scope='bot'` 的组件可复制（会话级随所在对话，不移交）。一个事务里给接手方插入新 `widgets` 行（新 id、仍为 Bot 级、`conversation_id` NULL、`latest_version` 照搬），`widget_versions` 全部行按原样复制（`html` / `sha256` / `queries_sha256` / `size_bytes` / `created_by_run` / `created_at` / `queries_reviewed_at` / `check_status` / `check_summary_json`），`widget_queries`、`widget_docs` 全部复制；不发卡。接手方已有同名组件、组件数或字节配额超限时不复制。渲染端的加载确认按「HTML sha256 + 查询摘要」记在本机（不分组件 / Bot），副本摘要不变，所以原版已确认的版本在接手方那里同样免确认。幂等判据：接手方名下同名、版本序列（版本号 + 两项摘要）完全相同的 Bot 级组件。
 - `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
-- **微应用（D112，0067）**：`manifest_json` 非空的版本是微应用——确认按**能力面指纹**（permissions + net 档位，渲染端 `kepcup.microApp.consents.v1` 按 widgetId 记忆；存量组件仍按 `(sha256|queriesSha256)` 逐版本确认）；`widgets.next_version` 是版本双指针（微应用更新置新版本、重开生效，不热替换运行实例；存量组件不写该列）。生效版本解析与清单校验在 `core/src/micro-apps/manifest.ts` 与 `WidgetService`（`#resolveEffectiveVersion`）。后续 `micro_app_*` 表（files / diagnostics）见 55 §4.3，随 P2 落地登记。
-- **`micro_app_usage`（D112 P1，0068）**：微应用用量记账（主键 widget_id + day，本地时区；ai_calls / ai_tokens / asr_ms / tts_chars，只记数量不记内容）。归属 Bot 由 `widgets.bot_id` 决定（跨该 Bot 全部微应用聚合出「每 Bot 每日」预算，55 §8.3）；`usage_ledger` 同步落一行（loop_type='micro_app'，runId 为合成 `mai_use_*`）。
-- **`micro_app_files` / `micro_app_collections` / `micro_app_context` / `micro_app_diagnostics` / `micro_app_audit`（D112 P2，0069）**：多文件包（widget+version+path 主键，content BLOB）、结构化集合（widget+name+id，5MB / 10 集合配额）、context.update 摘要（widget 主键 last-wins，注入模型上下文）、运行时诊断（widget+version+day+phase+code，只记 code / 阶段 / 位置 / 次数，30 天修剪）、能力审计（55 §12.3）。除 context 外全部随版本修剪；表随 widgets 行级联删除。
-- **`micro_app_diag_pushes`（D112 P2 审查修复，0070）**：诊断系统消息推送去重的持久化登记（widget+version+code+day 主键；同 (version, code) 当天至多一条系统消息、每微应用每日至多 5 条——审查 P1-3 / P2-1）；0070 同时给 `micro_app_audit` 补外键级联（重建表迁移存量行）。
+- **微应用（D112，0068）**：`manifest_json` 非空的版本是微应用——确认按**能力面指纹**（permissions + net 档位，渲染端 `kepcup.microApp.consents.v1` 按 widgetId 记忆；存量组件仍按 `(sha256|queriesSha256)` 逐版本确认）；`widgets.next_version` 是版本双指针（微应用更新置新版本、重开生效，不热替换运行实例；存量组件不写该列）。生效版本解析与清单校验在 `core/src/micro-apps/manifest.ts` 与 `WidgetService`（`#resolveEffectiveVersion`）。后续 `micro_app_*` 表（files / diagnostics）见 55 §4.3，随 P2 落地登记。
+- **`micro_app_usage`（D112 P1，0069）**：微应用用量记账（主键 widget_id + day，本地时区；ai_calls / ai_tokens / asr_ms / tts_chars，只记数量不记内容）。归属 Bot 由 `widgets.bot_id` 决定（跨该 Bot 全部微应用聚合出「每 Bot 每日」预算，55 §8.3）；`usage_ledger` 同步落一行（loop_type='micro_app'，runId 为合成 `mai_use_*`）。
+- **`micro_app_files` / `micro_app_collections` / `micro_app_context` / `micro_app_diagnostics` / `micro_app_audit`（D112 P2，0070）**：多文件包（widget+version+path 主键，content BLOB）、结构化集合（widget+name+id，5MB / 10 集合配额）、context.update 摘要（widget 主键 last-wins，注入模型上下文）、运行时诊断（widget+version+day+phase+code，只记 code / 阶段 / 位置 / 次数，30 天修剪）、能力审计（55 §12.3）。除 context 外全部随版本修剪；表随 widgets 行级联删除。
+- **`micro_app_diag_pushes`（D112 P2 审查修复，0071）**：诊断系统消息推送去重的持久化登记（widget+version+code+day 主键；同 (version, code) 当天至多一条系统消息、每微应用每日至多 5 条——审查 P1-3 / P2-1）；0071 同时给 `micro_app_audit` 补外键级联（重建表迁移存量行）。
 
 ### delegations（D71，main 0016；0021 重建；0067 增列）
 

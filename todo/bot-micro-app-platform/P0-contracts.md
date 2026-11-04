@@ -29,7 +29,7 @@
 
 ### 3. core：清单校验、bundle 摘要与版本双指针（55 §4.3 / §9.1）
 
-- [ ] 迁移 `0067_micro_app_manifest.sql`：`widget_versions` += `manifest_json TEXT NOT NULL DEFAULT ''`、`bundle_sha256 TEXT NOT NULL DEFAULT ''`、`permissions_json TEXT NOT NULL DEFAULT '[]'`；`widgets` += `next_version INTEGER`（NULL = 跟随卡片钉住版本）。
+- [ ] 迁移 `0068_micro_app_manifest.sql`：`widget_versions` += `manifest_json TEXT NOT NULL DEFAULT ''`、`bundle_sha256 TEXT NOT NULL DEFAULT ''`、`permissions_json TEXT NOT NULL DEFAULT '[]'`；`widgets` += `next_version INTEGER`（NULL = 跟随卡片钉住版本）。
 - [ ] `packages/core/src/micro-apps/manifest.ts`：校验（zod + 闭合枚举 + 当前运行时已实现能力集（P0：`storage.kv` / `host.reply` / `host.openLink`）之外的声明 → `MICRO_APP_MANIFEST_INVALID` 带定位）；bundle 规范化摘要（清单 canonical JSON + entry + 文件按路径排序）sha256 在 core 计算。
 - [ ] `WidgetService.create/update` 增可选 `manifest` 入参（制作 loop 交付路径；P0 测试直接调服务）：落三列 + 卡片字段；**微应用**更新时置 `widgets.next_version = 新版本`；存量路径（无 manifest）不写这些列、不动 next_version（零变化）。
 - [ ] `open`：微应用卡按 `next_version ?? 卡片钉住版本` 解析生效版本（版本行被修剪 → 既有「版本不存在」路径）；回传 manifest 摘要与指纹；`#pinnedVersion` 完整性检查对微应用改为「生效版本行的 html sha256 与该行记录一致 + manifest 来自同一行」。
@@ -70,7 +70,7 @@
 - `errors.ts` + `rpc/methods.ts`：8 个 `MICRO_APP_*` 错误码 + `microApps.preflight`（rpcMethodSchemas + APP_METHODS 双登记）。
 
 **core**
-- 迁移 `0067_micro_app_manifest.sql`：`widget_versions` += `manifest_json` / `bundle_sha256` / `permissions_json`；`widgets` += `next_version`。
+- 迁移 `0068_micro_app_manifest.sql`：`widget_versions` += `manifest_json` / `bundle_sha256` / `permissions_json`；`widgets` += `next_version`。
 - `micro-apps/manifest.ts`：宿主独占校验（spec 版本、已实现能力裁决、allowlist 域名形状、entry=index.html）、bundle canonical 摘要、`microAppCspFor()`。
 - `micro-apps/preflight.ts` + `rpc/micro-apps-bindings.ts`：探针注册表 + `microApps.preflight`（P0 能力恒可用，P1 接模型 / ASR / TTS 探针）。
 - `WidgetService`：create/update 接受 `manifest`（清单是能力与查询的唯一来源）；微应用更新置 `next_version`；**形态切换（存量 ↔ 微应用）拒绝**；`#resolveEffectiveVersion`（存量 = 卡片钉住 + 原完整性校验；微应用 = 双指针，查询防偷换校验保留）；open/source 按生效版本；微应用注入桥 v2 垫片 + 按 net 档位 CSP；craftSource 带回清单；`effectiveMicroAppOf()`；移交复制带三新列。
