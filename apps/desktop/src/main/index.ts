@@ -694,6 +694,9 @@ function bootstrap(): void {
     rendererIndexPath: join(__dirname, '../renderer/index.html'),
     devRendererUrl: !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined,
     createWindow: createWidgetWindow,
+    // did-finish-load 先补端口 A（渲染端只被动收 core-port，窗口加载必须主动发），
+    // 再由 host 推载荷——缺这步组件窗口永远停在「正在加载组件...」。
+    onWindowDidLoad: (win) => sendAppPort(win as BrowserWindow),
   });
   ipcMain.handle('window:openWidget', (_event, input: unknown) =>
     widgetWindows?.open(input) ?? { opened: false },
