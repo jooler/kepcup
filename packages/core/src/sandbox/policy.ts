@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import path from 'node:path';
 
 import { canonicalPath, type AppPaths } from '../infra/paths.js';
 import { sensitivePaths, readOnlyRoots } from './sensitive-paths.js';
@@ -63,12 +64,31 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   // data home on macOS (tests) and re-allowing it un-does the home deny in
   // the sandbox profile. srt redirects TMPDIR to a sandbox-private location
   // and allows writes there by default.
-  const cacheDirs = [paths.cacheNpmDir, paths.cachePipDir, paths.cacheXdgDir, paths.cacheCargoDir];
+  // uv and pycache are app caches too: UV_CACHE_DIR / PYTHONPYCACHEPREFIX
+  // already point here. Leaving them out of readWrite made macOS system
+  // Python fail `file-write-create` on `{pycache}/opt/...` and exit before
+  // it could listen (workdir localhost probes then saw curl `000`).
+  const cacheDirs = [
+    paths.cacheNpmDir,
+    paths.cachePipDir,
+    paths.cacheXdgDir,
+    paths.cacheCargoDir,
+    paths.cacheUvDir,
+    paths.cachePycacheDir,
+  ];
   const readOnlyRun = input.readOnlyRun === true;
   const readWrite = readOnlyRun ? [...cacheDirs] : [workspacePath, ...cacheDirs];
   const readOnly = readOnlyRoots(platform);
   if (readOnlyRun) readOnly.push(workspacePath);
-  let denyRead: string[] = [canonicalPath(homedir()), paths.home, ...sensitivePaths(platform)];
+  const userHome = canonicalPath(homedir());
+  let denyRead: string[] = [userHome, paths.home, ...sensitivePaths(platform)];
+  if (platform === 'darwin') {
+    // CoreFoundation and the macOS python3 stub read this one-byte encoding
+    // file at startup (`0:0` style). It sits in the denied home; re-allow
+    // that file only — Apple's bsd.sb does the same. Not a credential, and
+    // it does not open the rest of the home or localhost.
+    readOnly.push(path.join(userHome, '.CFUserTextEncoding'));
+  }
 
   // Installed toolchains (P06) are visible read-only inside the sandbox and
   // their bin dirs lead PATH (docs/dev/phases/P06-environment.md 任务 5).

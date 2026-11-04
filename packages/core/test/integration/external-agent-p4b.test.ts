@@ -344,7 +344,12 @@ describe('onboarding default agent (P4-B)', () => {
     // 已有默认主模型 → 新 Bot 照旧用内置模型。
     await stack.core.rpc.call('settings.update', { defaultMainModel: 'custom:mock/mock-main' });
     expect((await makeBot(stack.core, '内置')).profile.runtime.agent.id).toBe('');
-  }, 20_000);
+    // No agent process and no wait loop: locally and on Ubuntu this is well
+    // under a second (previous Windows release: 398ms). The explicit 20s cap
+    // sits under the core project's win32 budget (30s) and tripped while this
+    // file ran beside other stacks on windows-latest. Same headroom as the
+    // auth sibling above, which does spawn the agent.
+  }, 45_000);
 });
 
 describe('background loops without a built-in model (P4-B minimal fallback)', () => {
