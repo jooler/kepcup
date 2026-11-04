@@ -255,7 +255,7 @@
   {#if exchangeChat}
     <!-- v2.3 交换会话：双侧 Bot 头像（连排时只有第一条带，其余留占位对齐）。 -->
     {#if merge.above}
-      <div class="mt-0.5 size-7 shrink-0" aria-hidden="true"></div>
+      <div class="mt-0.5 size-10 shrink-0" aria-hidden="true"></div>
     {:else}
       <BotAvatar
         botId={message.senderBotId ?? ''}
@@ -264,7 +264,8 @@
         accentColor={senderBot?.accentColor ?? null}
         mask={senderBot?.avatarMask ?? null}
         padding={senderBot?.avatarPadding ?? null}
-        class="mt-0.5 size-7 shrink-0"
+        class="mt-0.5 size-10 shrink-0"
+        fallbackClass="text-[20px]"
         animated={false}
         testId="bot-avatar"
       />
