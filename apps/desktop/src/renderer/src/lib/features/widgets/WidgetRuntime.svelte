@@ -503,7 +503,7 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col" data-testid="widget-runtime" data-state={phase}>
+<div class="flex min-h-0 flex-1 flex-col h-full" data-testid="widget-runtime" data-state={phase}>
   {#if phase === 'error'}
     <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
       <p class="text-sm text-amber-700 dark:text-amber-400">
