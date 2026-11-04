@@ -81,6 +81,7 @@
 - [x] 测试：定向 92 条绿；core 包全量 4962 绿；typecheck（core/desktop）与 eslint（改动文件）全绿
 - [x] 收口：全量 `pnpm test` **739 文件 / 7862 用例全绿**（中途两轮各 1 例负载超时抖动，单跑复核通过，末两轮连续干净）
 - [x] 修复实测 bug（2026-11-05）：覆盖层按钮点击即弹「未能打开组件窗口」——`$state` 深代理过不了 IPC 结构化克隆；载荷改走 `widgetWindowHandoffPayload`（`$state.snapshot`）+ 回归测试 1 条绿
+- [x] 修复实测 bug（2026-11-05）：窗口一直「正在加载组件...」——组件窗口 did-finish-load 只推了 payload、**没发端口 A**（`sendAppPort` 只挂在主窗口 load 与 core 重启 'up' 上）；host 增 `onWindowDidLoad` 钩子，index.ts 在此补 `sendAppPort(win)` + 回归测试（widget-window.test.ts 共 11 条绿）
 
 ## 7. 测试计划
 

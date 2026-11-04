@@ -237,6 +237,25 @@ describe('WidgetWindowHost', () => {
     expect(windows.map((w) => w.closed)).toEqual([1, 1]);
   });
 
+  test('did-finish-load 先走宿主钩子（端口 A 握手）再推载荷', () => {
+    const hooked: Array<number> = [];
+    let win: (WidgetWindowLike & FakeWindowExtras) | null = null;
+    const host = hostWith(
+      (input) => {
+        win = fakeWindow();
+        input.onDidLoad(win);
+        return win;
+      },
+      { onWindowDidLoad: (loaded) => hooked.push(loaded.id) },
+    );
+    expect(host.open({ messageId: 'm-1', card })).toEqual({ opened: true });
+    expect(hooked).toEqual([win!.id]);
+    // 载荷照推：钩子（index.ts 的 sendAppPort）与载荷是 did-finish-load 的两件事。
+    expect(win!.sends).toEqual([
+      { channel: WIDGET_WINDOW_PAYLOAD_CHANNEL, payload: { messageId: 'm-1', card } },
+    ]);
+  });
+
   test('入参不合法：不开窗、记 warn', () => {
     const log = vi.fn();
     let created = 0;

@@ -89,6 +89,12 @@ export interface WidgetWindowHostOptions {
   devRendererUrl?: string;
   /** 组装窗口（Electron 壳注入；测试用桩记录调用）。 */
   createWindow: (input: WidgetWindowCreateInput) => WidgetWindowLike;
+  /**
+   * 窗口加载完成（did-finish-load）的宿主侧回调：**端口 A 握手**在 index.ts 走这里
+   * （`sendAppPort(win)`——渲染端只被动收 `core-port`，窗口加载必须主动补发），
+   * 与载荷推送同拍；缺了它组件窗口永远停在「正在加载组件...」（实测 2026-11-05）。
+   */
+  onWindowDidLoad?: (win: WidgetWindowLike) => void;
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -134,6 +140,7 @@ export class WidgetWindowHost {
       minHeight: WIDGET_WINDOW_MIN_HEIGHT,
     preloadPath: this.#options.preloadPath,
     onDidLoad: (loaded) => {
+      this.#options.onWindowDidLoad?.(loaded);
       loaded.webContents.send(WIDGET_WINDOW_PAYLOAD_CHANNEL, {
         messageId: parsed.messageId,
         card: parsed.card,
