@@ -50,9 +50,10 @@ async function createMicroApp(permissions: string[], files?: Array<{ path: strin
     ...(files !== undefined ? { files } : {}),
   });
   if (!created.ok) throw new Error(created.message);
-  const listed = (await core.rpc.call('messages.list', { conversationId, limit: 5 })) as {
+  const listed = (await core.rpc.call('messages.list', { conversationId, limit: 30 })) as {
     messages: Array<{ id: string; kind: string }>;
   };
+  // list 升序返回：reverse 后取最新的卡（会话累积多张卡时窗口加大保证命中）。
   const card = [...listed.messages].reverse().find((message) => message.kind === 'card');
   if (card === undefined) throw new Error('card message not found');
   return { widgetId: created.widgetId, messageId: card.id };
@@ -181,7 +182,8 @@ describe('P2 context.update（55 §8.5）', () => {
         version: entry.version,
       })),
     });
-    expect(segment).toContain('<untrusted source="micro-app-context">');
+    expect(segment).toContain('<untrusted source="micro-app-context" meta="');
+    expect(segment).toContain(`widget=${app.widgetId},version=`);
     expect(segment).toContain('完成了第 4 课');
     // 撤销能力（清除入口在管理页）。
     await core.rpc.call('microApps.clearContext', { botId, widgetId: app.widgetId });
@@ -206,10 +208,7 @@ describe('P2 诊断回流（55 §9.4）', () => {
       });
     }
     // 计数聚合为 3；系统消息只推 1 条（同 code 当天）。
-    const read = (await core.rpc.call('microApps.diagnosticsRead' as never, { widgetId: app.widgetId } as never).catch(
-      () => null,
-    )) as null;
-    void read; // 工具面不走 RPC；直接读 store。
+    // 工具面不走 RPC；直接读 store。
     const result = core.services.microAppStore!.diagnosticsRead(app.widgetId);
     expect(result.entries[0]?.code).toBe('TypeError');
     expect(result.entries[0]?.count).toBe(3);
@@ -230,6 +229,12 @@ describe('P2 诊断回流（55 §9.4）', () => {
       .prepare('pragma table_info(micro_app_diagnostics)')
       .all() as Array<{ name: string }>;
     expect(cols.map((col) => col.name)).not.toContain('message');
+    // 推送去重登记持久化（审查 P1-3）：同 (widget, version, code) 当天一条登记，
+    // core 重启 / 标记溢出后仍不重推。
+    const pushes = core.services.mainDb!
+      .prepare('select code from micro_app_diag_pushes where widget_id = ?')
+      .all(app.widgetId) as Array<{ code: string }>;
+    expect(pushes.map((row) => row.code).sort()).toEqual(['MICRO_APP_AI_QUOTA', 'TypeError']);
   });
 });
 
@@ -257,17 +262,18 @@ describe('P2 管理入口', () => {
         name: '小小英语角',
         description: '',
         entry: 'index.html',
-        permissions: ['ai.chat'],
+        permissions: ['ai.chat', 'storage.kv'],
       },
     });
     const list = (await core.rpc.call('microApps.list', { botId })) as {
-      items: Array<{ widgetId: string; version: number; nextVersion: number | null; usage: { aiTokens: number }; netMode: string }>;
+      items: Array<{ widgetId: string; version: number; nextVersion: number | null; usage: { aiTokens: number }; netMode: string; permissions: string[] }>;
     };
     const mine = list.items.find((item) => item.widgetId === app.widgetId);
     expect(mine?.version).toBe(2);
     expect(mine?.nextVersion).toBe(2);
     expect(mine?.usage.aiTokens).toBeGreaterThan(0);
     expect(mine?.netMode).toBe('open');
+    expect(mine?.permissions).toEqual(['ai.chat', 'storage.kv']);
     // 回退到 v1：next_version=1；被修剪的版本拒绝。
     const rollback = (await core.rpc.call('microApps.rollback', { botId, widgetId: app.widgetId, version: 1 })) as {
       ok: boolean;
@@ -279,6 +285,13 @@ describe('P2 管理入口', () => {
     };
     expect(pruned.ok).toBe(false);
     expect(pruned.message).toContain('不存在');
+    // 回退后 list 按**展示版本**取清单（审查 P2-3）：显示 v1 的权限面，而不是新版。
+    const afterRollback = (await core.rpc.call('microApps.list', { botId })) as {
+      items: Array<{ widgetId: string; version: number; permissions: string[] }>;
+    };
+    const rolled = afterRollback.items.find((item) => item.widgetId === app.widgetId);
+    expect(rolled?.version).toBe(1);
+    expect(rolled?.permissions).toEqual(['ai.chat']);
   });
 });
 
@@ -320,5 +333,147 @@ describe('P2 query 分页', () => {
     // 不带分页参数：无 nextCursor（存量零变化）。
     const plain = (await core.rpc.call('widgets.ui.query', base)) as { nextCursor?: string };
     expect(plain.nextCursor).toBeUndefined();
+  });
+});
+
+
+describe('P2 collections 配额（审查 P1-2：按 UTF-8 字节）', () => {
+  it('10 集合上限：第 11 个新名字被拒，既有名字可覆写', async () => {
+    const app = await createMicroApp(['storage.kv', 'storage.collection']);
+    const resourceId = await openResource(app.messageId);
+    const ref = { resourceId, instanceId: 'mai_p2_quota' };
+    for (let i = 0; i < 10; i += 1) {
+      await core.rpc.call('microApps.collections.put', { ...ref, name: `col_${i}`, doc: { id: 'a' } });
+    }
+    await expect(
+      core.rpc.call('microApps.collections.put', { ...ref, name: 'col_new', doc: { id: 'a' } }),
+    ).rejects.toMatchObject({ code: 'WIDGET_STORAGE_QUOTA' });
+    // 覆写既有集合不占新名额。
+    await core.rpc.call('microApps.collections.put', { ...ref, name: 'col_0', doc: { id: 'a', v: 2 } });
+  });
+
+  it('总量按字节计：CJK 文档字符数远小于字节数，超出 5MB 拒绝', async () => {
+    const app = await createMicroApp(['storage.kv', 'storage.collection']);
+    const resourceId = await openResource(app.messageId);
+    const ref = { resourceId, instanceId: 'mai_p2_bytes' };
+    // 直接种一个「字符数 < 5M、字节数 ≈ 4.7MB」的 CJK 大文档（旧实现按字符数会漏判）。
+    const big = '中'.repeat(1_560_000); // ≈ 4.68MB UTF-8 / 1.56M 字符
+    core.services.mainDb!
+      .prepare('insert into micro_app_collections (widget_id, name, id, doc_json, updated_at) values (?, ?, ?, ?, ?)')
+      .run(app.widgetId, 'huge', 'seed', JSON.stringify({ id: 'seed', v: big }), 1);
+    const extra = 'x'.repeat(700_000); // 0.7MB ASCII（叠加上后总字节 > 5MB）
+    await expect(
+      core.rpc.call('microApps.collections.put', { ...ref, name: 'more', doc: { id: 'e', v: extra } }),
+    ).rejects.toMatchObject({ code: 'WIDGET_STORAGE_QUOTA' });
+    // 覆写既有大文档为小文档：扣减旧行字节后总量有余量 → 放行。
+    await core.rpc.call('microApps.collections.put', { ...ref, name: 'huge', doc: { id: 'seed', v: 'ok' } });
+  });
+});
+
+describe('P2 诊断推送闸（审查 P1-1 / P2-1）', () => {
+  it('推送文本 ≤300 字；换 code 刷不了屏（每日上限）', async () => {
+    const app = await createMicroApp(['ai.chat']);
+    const resourceId = await openResource(app.messageId);
+    const ref = { resourceId, instanceId: 'mai_p2_cap' };
+    const countSystem = (): number =>
+      Number(
+        (
+          core.services.mainDb!
+            .prepare("select count(*) as n from messages where conversation_id = ? and sender_type = 'system'")
+            .get(conversationId) as { n: number | bigint }
+        ).n,
+      );
+    // code 80 + detail 200 + 前缀 ≈ 370 字 → 截到 ≤300（审查 P1-1：slice 对整串生效）。
+    const before = countSystem();
+    await core.rpc.call('microApps.diagnostics.record', {
+      ...ref,
+      phase: 'run',
+      code: 'E'.repeat(80),
+      detail: 'd'.repeat(200),
+    });
+    const row = core.services.mainDb!
+      .prepare(
+        "select content_json from messages where conversation_id = ? and sender_type = 'system' order by seq desc limit 1",
+      )
+      .get(conversationId) as { content_json: string };
+    const text = (JSON.parse(row.content_json) as { text: string }).text;
+    expect(text.length).toBeLessThanOrEqual(300);
+    expect(text).toContain('E'.repeat(20));
+    expect(countSystem()).toBe(before + 1);
+    // 每日上限（每微应用 5 条）：换 4 个新 code 各推一条，第 6 个不再推。
+    for (let i = 1; i <= 4; i += 1) {
+      await core.rpc.call('microApps.diagnostics.record', {
+        ...ref,
+        phase: 'run',
+        code: `CODE_${i}`,
+        detail: '',
+      });
+    }
+    expect(countSystem()).toBe(before + 5);
+    await core.rpc.call('microApps.diagnostics.record', { ...ref, phase: 'run', code: 'CODE_6', detail: '' });
+    expect(countSystem()).toBe(before + 5);
+    const pushes = Number(
+      (
+        core.services.mainDb!
+          .prepare('select count(*) as n from micro_app_diag_pushes where widget_id = ?')
+          .get(app.widgetId) as { n: number | bigint }
+      ).n,
+    );
+    expect(pushes).toBe(5);
+  });
+});
+
+describe('P2 query 分页（审查 P1-5：runner 级截断续页）', () => {
+  it('>1000 行时翻页能取到窗口之后的数据，翻完 truncated=false 收口', async () => {
+    // 独立 Bot → 独立会话（openDirect 按 (user, bot) 幂等；老 Bot 会复用带旧消息的会话）。
+    const pagerBot = await makeBot(core, '分页机器人');
+    const conversation = await openDirect(core, pagerBot.id);
+    const created = core.services.widgets!.create({
+      botId,
+      conversationId: conversation.id,
+      title: '分页器',
+      description: '',
+      html: HTML,
+      scope: 'conversation',
+      runId: '',
+      manifest: { spec: 'kepcup-micro-app/1', slug: 'pager', name: '分页器', description: '', entry: 'index.html', permissions: ['storage.kv'] },
+    });
+    if (!created.ok) throw new Error(created.message);
+    const listed = (await core.rpc.call('messages.list', { conversationId: conversation.id, limit: 30 })) as {
+      messages: Array<{ id: string; kind: string }>;
+    };
+    const card = [...listed.messages].reverse().find((message) => message.kind === 'card');
+    if (card === undefined) throw new Error('card message not found');
+    const opened = (await core.rpc.call('widgets.ui.open', { messageId: card.id })) as { resourceId: string };
+    core.services.mainDb!
+      .prepare('insert into widget_queries (widget_id, version, name, sql) values (?, ?, ?, ?)')
+      .run(created.widgetId, 1, 'big', 'select id, text from conversation_messages order by seq');
+    // 1050 行小消息：runner 内部上限 1000 → 必须靠续页游标取完。
+    const insert = core.services.mainDb!.prepare(
+      "insert into messages (id, conversation_id, seq, sender_type, kind, content_json, status, created_at) values (?, ?, ?, 'user', 'text', ?, 'normal', ?)",
+    );
+    for (let i = 0; i < 1050; i += 1) {
+      insert.run(`msg_big_${i}`, conversation.id, 10000 + i, JSON.stringify({ text: `r${i}` }), 1);
+    }
+    const base = { resourceId: opened.resourceId, name: 'big', params: {} };
+    const page1 = (await core.rpc.call('widgets.ui.query', { ...base, maxBytes: 256 * 1024 })) as {
+      rows: Array<{ id: string }>;
+      truncated: boolean;
+      nextCursor?: string;
+    };
+    expect(page1.rows).toHaveLength(1000);
+    expect(page1.truncated).toBe(true);
+    expect(page1.nextCursor).toBe('off:1000');
+    expect(page1.rows.at(-1)?.id).toBe('msg_big_999');
+    const page2 = (await core.rpc.call('widgets.ui.query', { ...base, maxBytes: 256 * 1024, cursor: page1.nextCursor })) as {
+      rows: Array<{ id: string }>;
+      truncated: boolean;
+      nextCursor?: string;
+    };
+    expect(page2.rows).toHaveLength(50);
+    expect(page2.truncated).toBe(false);
+    expect(page2.nextCursor).toBeUndefined();
+    expect(page2.rows.at(0)?.id).toBe('msg_big_1000');
+    expect(page2.rows.at(-1)?.id).toBe('msg_big_1049');
   });
 });

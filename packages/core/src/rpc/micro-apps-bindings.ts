@@ -288,7 +288,6 @@ export function bindMicroAppsMethods(services: CoreServices): {
           if (outcome.pushed) {
             store().pushDiagnosticMessage({
               widgetId: ctx.widgetId,
-              title: '',
               version: ctx.version,
               code: input.code,
               detail: input.detail,
@@ -359,7 +358,8 @@ function listMicroApps(botId: string) {
     .prepare(
       `select w.id, w.title, w.description, w.scope, w.conversation_id, w.latest_version, w.updated_at,
               w.next_version, v.manifest_json
-       from widgets w join widget_versions v on v.widget_id = w.id and v.version = w.latest_version
+       from widgets w join widget_versions v
+         on v.widget_id = w.id and v.version = coalesce(w.next_version, w.latest_version)
        where w.bot_id = ? order by w.updated_at desc`,
     )
     .all(botId) as Array<{

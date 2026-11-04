@@ -4,7 +4,7 @@ import {
   MICRO_APP_COLLECTION_QUOTA_BYTES,
   MICRO_APP_CONTEXT_DATA_MAX_BYTES,
   MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS,
-  newId,
+  MICRO_APP_DIAG_PUSH_MAX_PER_DAY,
   type MicroAppContextSummary,
 } from '@kepcup/shared';
 import type { Message } from '@kepcup/shared';
@@ -15,7 +15,7 @@ import type { CoreLogger } from '../infra/logger.js';
 /**
  * 微应用 P2 数据面（D112，设计 55 §8.5 / §9.4 / §10 / §12.3）：collections、
  * context.update 摘要、运行时诊断与能力审计。全部按微应用隔离（widget_id 命名空间），
- * 表随 widgets 行级联删除。
+ * 表随 widgets 行级联删除（0070 起审计表也带外键）。
  */
 
 export interface MicroAppStoreDeps {
@@ -31,9 +31,6 @@ export interface MicroAppStoreDeps {
   }): Message;
   publishMessage(message: Message): void;
 }
-
-/** 诊断推送的去重闸：同 (widget, version, day, code) 每天至多一条系统消息（§9.4）。 */
-const DIAGNOSTIC_PUSH_MARKER_PREFIX = 'micro-app-diag-pushed:';
 
 export class MicroAppStore {
   readonly #deps: MicroAppStoreDeps;
@@ -61,13 +58,13 @@ export class MicroAppStore {
     const json = JSON.stringify(doc);
     const bytes = Buffer.byteLength(json);
     const existing = this.#deps.db
-      .prepare('select length(doc_json) as bytes from micro_app_collections where widget_id = ? and name = ? and id = ?')
+      .prepare('select length(cast(doc_json as blob)) as bytes from micro_app_collections where widget_id = ? and name = ? and id = ?')
       .get(widgetId, name, id) as { bytes: number | null } | undefined;
     const total =
       Number(
         (
           this.#deps.db
-            .prepare('select coalesce(sum(length(doc_json)), 0) as bytes from micro_app_collections where widget_id = ?')
+            .prepare('select coalesce(sum(length(cast(doc_json as blob))), 0) as bytes from micro_app_collections where widget_id = ?')
             .get(widgetId) as { bytes: number | bigint }
         ).bytes,
       ) - Number(existing?.bytes ?? 0) + bytes;
@@ -242,21 +239,29 @@ export class MicroAppStore {
            last_at = excluded.last_at`,
       )
       .run(input.widgetId, input.version, day, input.phase, input.code, input.detail, now, now);
-    // 投递闸：同 (widget, version, code) 当天已推送过 → 不再打扰。
-    const marker = `${DIAGNOSTIC_PUSH_MARKER_PREFIX}${input.widgetId}:${input.version}:${input.code}:${day}`;
-    if (this.#pushMarkers.has(marker)) return { pushed: false };
-    this.#pushMarkers.add(marker);
-    // 有界：超过 512 个标记整体清空（重推一次安全侧无害）。
-    if (this.#pushMarkers.size > 512) this.#pushMarkers.clear();
+    // 投递闸（持久化，审查 P1-3）：同 (widget, version, code) 当天已推送过 → 不再打扰；
+    // 再加每微应用每日推送上限（审查 P2-1：换 code 轮换也刷不动来源会话）。
+    const already = this.#deps.db
+      .prepare('select 1 from micro_app_diag_pushes where widget_id = ? and version = ? and code = ? and day = ?')
+      .get(input.widgetId, input.version, input.code, day);
+    if (already !== undefined) return { pushed: false };
+    const pushedToday = Number(
+      (
+        this.#deps.db
+          .prepare('select count(*) as n from micro_app_diag_pushes where widget_id = ? and day = ?')
+          .get(input.widgetId, day) as { n: number | bigint }
+      ).n,
+    );
+    if (pushedToday >= MICRO_APP_DIAG_PUSH_MAX_PER_DAY) return { pushed: false };
+    this.#deps.db
+      .prepare('insert into micro_app_diag_pushes (widget_id, version, code, day, pushed_at) values (?, ?, ?, ?, ?)')
+      .run(input.widgetId, input.version, input.code, day, now);
     return { pushed: true };
   }
-
-  readonly #pushMarkers = new Set<string>();
 
   /** 诊断系统消息（≤300 字，来源会话；来源会话为 NULL / 已删时由调用方跳过）。 */
   pushDiagnosticMessage(input: {
     widgetId: string;
-    title: string;
     version: number;
     code: string;
     detail: string;
@@ -265,10 +270,11 @@ export class MicroAppStore {
       .prepare('select conversation_id, title from widgets where id = ?')
       .get(input.widgetId) as { conversation_id: string | null; title: string } | undefined;
     if (widget === undefined || widget.conversation_id === null) return null;
-    const text =
+    const text = (
       `微应用「${widget.title}」v${input.version} 运行出现问题：${input.code}` +
       (input.detail !== '' ? `（${input.detail}）` : '') +
-      `。可调用 micro_app_diagnostics_read 查看详情。`.slice(0, 300);
+      '。可调用 micro_app_diagnostics_read 查看详情。'
+    ).slice(0, 300);
     const message = this.#deps.appendMessage({
       conversationId: widget.conversation_id,
       senderType: 'system',
@@ -359,6 +365,7 @@ export class MicroAppStore {
   pruneDiagnostics(retainDays = 30): void {
     const cutoffDay = dayOf(this.#deps.clock.now() - retainDays * 24 * 60 * 60 * 1000);
     this.#deps.db.prepare('delete from micro_app_diagnostics where day < ?').run(cutoffDay);
+    this.#deps.db.prepare('delete from micro_app_diag_pushes where day < ?').run(cutoffDay);
   }
 }
 
@@ -375,6 +382,3 @@ function dayOf(now: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export function microAppAuditId(): string {
-  return newId('aud');
-}

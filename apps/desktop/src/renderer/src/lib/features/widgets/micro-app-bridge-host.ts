@@ -31,6 +31,13 @@ function hostUserActivation(): boolean {
   return activation === undefined ? true : activation.isActive;
 }
 
+/**
+ * 手势宽限（§8.5，P2 审查修复）：`userActivation.isActive` 是瞬态窗口，「练习结束
+ * `await` 完再同步」常见于窗口刚过的瞬间。宿主按 1s 采样记录最近一次激活时刻，
+ * 宽限窗内有过激活也视为有效手势（注入的测试闸优先，行为不变）。
+ */
+const USER_ACTIVATION_GRACE_MS = 5000;
+
 /** `app.ready()` 的回执（55 §6.2）：能力协商是唯一依据，不靠错误码试探。 */
 export interface MicroAppReadyInfo {
   capabilities: string[];
@@ -141,6 +148,7 @@ export class MicroAppBridgeHost {
     const host = new MicroAppBridgeHost(options);
     host.#target.addEventListener('message', host.#listener);
     host.#startHeartbeat();
+    host.#startActivationSampling();
     return host;
   }
 
@@ -167,6 +175,29 @@ export class MicroAppBridgeHost {
 
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   #heartbeatWaiting = false;
+  /** 最近一次采样到用户激活的时刻（0 = 从未；宽限窗判定用）。 */
+  #lastActivationAt = 0;
+  #activationTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** 1s 采样宿主激活态（见 USER_ACTIVATION_GRACE_MS；destroy 即停）。 */
+  #startActivationSampling(): void {
+    if (typeof setInterval !== 'function') return;
+    const timer = setInterval(() => {
+      if (this.#destroyed) {
+        clearInterval(timer);
+        return;
+      }
+      if (hostUserActivation()) this.#lastActivationAt = Date.now();
+    }, 1000);
+    this.#activationTimer = timer;
+  }
+
+  /** 手势判定（context.update 的 gesture 时机）：注入闸优先；瞬时激活，或宽限窗内有过激活。 */
+  #gestureOk(): boolean {
+    if (this.#options.userActivation !== undefined) return this.#options.userActivation();
+    if (hostUserActivation()) return true;
+    return Date.now() - this.#lastActivationAt < USER_ACTIVATION_GRACE_MS;
+  }
 
   /** 实例 id（`mai_…`；RPC 记账与流式事件过滤的键）。 */
   get instanceId(): string {
@@ -179,6 +210,8 @@ export class MicroAppBridgeHost {
     this.#destroyed = true;
     if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
     this.#heartbeatTimer = null;
+    if (this.#activationTimer !== null) clearInterval(this.#activationTimer);
+    this.#activationTimer = null;
     for (const session of this.#listenSessions.values()) session.dispose();
     this.#listenSessions.clear();
     this.#post(microAppCloseFrame('bridge closed'));
@@ -385,7 +418,22 @@ export class MicroAppBridgeHost {
         if (opts !== undefined && (opts === null || typeof opts !== 'object' || Array.isArray(opts))) {
           throw Object.assign(new Error('query 的 opts 必须是一个对象'), { code: 'INVALID_INPUT' });
         }
-        return await this.#options.query({ name, params: rawParams as Record<string, unknown> });
+        // 分页参数（P2 审查修复 P0-1）：此前被丢弃——微应用经 SDK 永远拿第一页且无报错。
+        const optsRecord = (opts ?? {}) as Record<string, unknown>;
+        const cursor = optsRecord['cursor'];
+        if (cursor !== undefined && typeof cursor !== 'string') {
+          throw Object.assign(new Error('query 的 opts.cursor 必须是字符串'), { code: 'INVALID_INPUT' });
+        }
+        const rawMaxBytes = optsRecord['maxBytes'];
+        if (rawMaxBytes !== undefined && (typeof rawMaxBytes !== 'number' || !Number.isFinite(rawMaxBytes))) {
+          throw Object.assign(new Error('query 的 opts.maxBytes 必须是数字'), { code: 'INVALID_INPUT' });
+        }
+        return await this.#options.query({
+          name,
+          params: rawParams as Record<string, unknown>,
+          ...(typeof cursor === 'string' ? { cursor } : {}),
+          ...(typeof rawMaxBytes === 'number' ? { maxBytes: rawMaxBytes } : {}),
+        });
       }
       case 'openLink': {
         const url = normalizeAppLink(payload['url']);
@@ -423,8 +471,8 @@ export class MicroAppBridgeHost {
         if (this.#options.aiCall === undefined) {
           throw Object.assign(new Error('微应用模块未就绪'), { code: 'NOT_IMPLEMENTED' });
         }
-        // §8.5：gesture 时机必须有用户激活（pause / close 由宿主自己发起，不在这里）。
-        if (payload['reason'] === 'gesture' && !(this.#options.userActivation ?? hostUserActivation)()) {
+        // §8.5：gesture 时机必须有用户激活（宽限窗见 #gestureOk；pause / close 由宿主自己发起）。
+        if (payload['reason'] === 'gesture' && !this.#gestureOk()) {
           throw Object.assign(new Error('同步进度需要在用户操作里进行（防循环刷写）'), {
             code: 'MICRO_APP_CAPABILITY_DENIED',
           });

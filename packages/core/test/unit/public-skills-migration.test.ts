@@ -158,6 +158,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table widgets;');
     // main 0068（D112 微应用用量）与 0069（P2 四表 + 审计）的新表同样摘除（回放时重建）。
     db.exec('drop table micro_app_usage;');
+    // 0070（审查修复：推送去重持久化 + 审计补外键）同样摘除，回放时重建。
+    db.exec('drop table micro_app_diag_pushes;');
     db.exec('drop table micro_app_files;');
     db.exec('drop table micro_app_collections;');
     db.exec('drop table micro_app_context;');

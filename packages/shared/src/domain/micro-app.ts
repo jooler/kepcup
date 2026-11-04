@@ -377,6 +377,8 @@ export const microAppsContextClearInputSchema = microAppInstanceRefSchema;
 // --- 诊断回流（P2，55 §9.4）-----------------------------------------------------------
 
 export const MICRO_APP_DIAGNOSTIC_DETAIL_MAX_CHARS = 200;
+/** 诊断系统消息推送的每日上限（每微应用；审查 P2-1：换 code 轮换不能刷屏来源会话）。 */
+export const MICRO_APP_DIAG_PUSH_MAX_PER_DAY = 5;
 export const microAppsDiagnosticsRecordInputSchema = microAppInstanceRefSchema.extend({
   phase: z.enum(['prepare', 'run', 'stream']),
   code: z.string().min(1).max(80),
