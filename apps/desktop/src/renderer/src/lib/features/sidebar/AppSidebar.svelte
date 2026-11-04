@@ -1119,7 +1119,7 @@ import {
               <Sidebar.Menu>
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
-                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 {SIDEBAR_ROW_ACTIVE_CLASS}
+                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-1 px-2 {SIDEBAR_ROW_ACTIVE_CLASS}
                     [&_svg]:size-auto"
                     isActive={workbenchActive}
                     onclick={() => shell.openWorkbench()}
@@ -1137,7 +1137,7 @@ import {
                data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
             <div
               role="separator"
-              class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+              class="mx-1 my-2 h-px shrink-0 bg-foreground/10"
               data-testid="workbench-nav-separator"
             ></div>
           {/if}
@@ -1213,7 +1213,7 @@ import {
           {:else}
             {#if sectionLayout.showHeaders && butlerConversations.length > 0}
               <!-- 管家不归属任何分组，固定在分组标题之上。 -->
-              <Sidebar.Menu class="mb-4">
+              <Sidebar.Menu>
                 {#each butlerConversations as conversation (conversation.id)}
                   {@render conversationRow(conversation)}
                 {/each}
@@ -1247,7 +1247,7 @@ import {
                   <!-- data-sidebar-section 随克隆带到 body 上的浮动副本，用于克隆样式定界。 -->
                   <div
                     data-sidebar-section
-                    class="relative rounded-md {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}"
+                    class="relative rounded-md mt-2"
                   >
                     {#if sectionLayout.showHeaders}
                       {#if renamingSectionId === group.id}

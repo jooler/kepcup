@@ -115,7 +115,7 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="my-2 rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+      class="my-2 rounded-[18px] px-4 py-2 text-sm whitespace-pre-wrap
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
         {userBubbleAccent ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleAccent?.hex}
@@ -155,8 +155,8 @@
   {/if}
 {:else if hasBotText}
   <div
-    class="max-w-full min-w-0 rounded-[16px] bg-muted px-3 py-2 text-sm
-      {merge.above ? 'rounded-tl-[5px]' : ''} {merge.below ? 'rounded-bl-[5px]' : ''}"
+    class="max-w-full min-w-0 rounded-[1.625rem] bg-muted p-4 text-sm
+      {merge.above ? 'rounded-tl-[0.5rem]' : ''} {merge.below ? 'rounded-bl-[0.5rem]' : ''}"
     data-testid="bot-bubble"
   >
     <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">
