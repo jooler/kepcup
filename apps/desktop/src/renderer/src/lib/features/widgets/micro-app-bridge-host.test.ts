@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   MICRO_APP_BRIDGE_APP_SOURCE,
@@ -44,6 +44,11 @@ function harness(options?: {
   aiCall?(method: string, params: Record<string, unknown>): Promise<unknown>;
   listenEvents?: string[];
   onRequestDisplayMode?(mode: 'inline' | 'immersive'): Promise<{ mode: 'inline' | 'immersive' }>;
+  onQuery?(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput>;
+  /** 不注入 userActivation 闸（测宿主自身的激活宽限路径）。 */
+  noActivationDep?: boolean;
+  onUnresponsive?(): void;
+  onDiagnostic?(input: { phase: 'prepare' | 'run' | 'stream'; code: string; detail: string }): void;
 }) {
   const frames: HostFrame[] = [];
   const frameWindow = {
@@ -81,10 +86,12 @@ function harness(options?: {
         if (input.op === 'list') return { op: 'list', keys: ['a'] };
         return { op: input.op };
       }),
-    query: (async (_input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput> => ({
-      rows: [{ total: 1 }],
-      truncated: false,
-    })) as MicroAppBridgeHostOptions['query'],
+    query:
+      options?.onQuery ??
+      (async (_input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput> => ({
+        rows: [{ total: 1 }],
+        truncated: false,
+      })),
     openLink: async () => true,
     reply: async () => true,
     onTitle: (title) => {
@@ -111,7 +118,9 @@ function harness(options?: {
           }),
         }
       : {}),
-    userActivation: () => true,
+    ...(options?.noActivationDep === true ? {} : { userActivation: () => true }),
+    ...(options?.onUnresponsive !== undefined ? { onUnresponsive: options.onUnresponsive } : {}),
+    ...(options?.onDiagnostic !== undefined ? { onDiagnostic: options.onDiagnostic } : {}),
     listenerTarget: target,
   };
   const host = MicroAppBridgeHost.connect(hostOptions);
@@ -363,6 +372,91 @@ describe('micro-app bridge host（v2 协议行为）', () => {
       ['delta', 'y'],
       ['done', null],
     ]);
+  });
+
+  test('P2：query 的 opts（cursor / maxBytes）透传给 widgets.ui.query；形状不对拒绝', async () => {
+    const queries: WidgetsUiQueryCall[] = [];
+    const h = harness({
+      permissions: ['storage.kv'],
+      onQuery: async (input) => {
+        queries.push(input);
+        return { rows: [], truncated: false };
+      },
+    });
+    h.emit(
+      h.appFrame({ method: 'query', params: { name: 'q', params: {}, opts: { cursor: 'off:50', maxBytes: 4096 } } }),
+    );
+    await h.settled();
+    expect(queries[0]).toEqual({ name: 'q', params: {}, cursor: 'off:50', maxBytes: 4096 });
+    h.emit(h.appFrame({ id: 2, method: 'query', params: { name: 'q', params: {}, opts: { cursor: 5 } } }));
+    await h.settled();
+    expect(h.frames.find((frame) => frame.id === 2)?.code).toBe('INVALID_INPUT');
+    h.emit(h.appFrame({ id: 3, method: 'query', params: { name: 'q', params: {}, opts: { maxBytes: 'big' } } }));
+    await h.settled();
+    expect(h.frames.find((frame) => frame.id === 3)?.code).toBe('INVALID_INPUT');
+    h.host.destroy();
+  });
+
+  test('P2：宿主推 pause / resume 事件（visibilitychange 语义，subId=app seq 递增）', () => {
+    const h = harness();
+    h.host.pushAppEvent('pause', null);
+    h.host.pushAppEvent('resume', null);
+    const events = h.frames.filter((frame) => frame.k === 'event' && frame.subId === 'app');
+    expect(events.map((frame) => [frame.name, frame.data, frame.seq])).toEqual([
+      ['pause', null, 1],
+      ['resume', null, 2],
+    ]);
+    h.host.destroy();
+  });
+
+  test('P2：心跳——上一拍未 ack 判无响应并回调；ack 后恢复', async () => {
+    vi.useFakeTimers();
+    const onUnresponsive = vi.fn();
+    const diagnostics: string[] = [];
+    const h = harness({
+      permissions: ['storage.kv'],
+      onUnresponsive,
+      onDiagnostic: (input) => {
+        diagnostics.push(input.code);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10_000); // 第一拍：推 ping（置等待位）
+    expect(h.frames.some((frame) => frame.k === 'event' && frame.name === 'ping')).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000); // 第二拍：仍无 ack → 无响应
+    expect(onUnresponsive).toHaveBeenCalledTimes(1);
+    expect(diagnostics).toContain('MICRO_APP_UNRESPONSIVE');
+    h.emit({ v: 2, source: MICRO_APP_BRIDGE_APP_SOURCE, k: 'event-ack', subId: 'app', seq: 1 });
+    await vi.advanceTimersByTimeAsync(10_000); // ack 后恢复：不再误报
+    expect(onUnresponsive).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    h.host.destroy();
+  });
+
+  test('P2：context.update 的 gesture 时机——瞬时激活过期后宽限窗内仍放行，超窗拒绝', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('navigator', { userActivation: { isActive: true } });
+    const calls: string[] = [];
+    const h = harness({
+      permissions: ['context.update'],
+      noActivationDep: true,
+      aiCall: async (method) => {
+        calls.push(method);
+        return {};
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1000); // 采样到激活
+    vi.stubGlobal('navigator', { userActivation: { isActive: false } }); // 瞬态窗口刚过
+    h.emit(h.appFrame({ method: 'context.update', params: { summary: { headline: 'x' }, reason: 'gesture' } }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toEqual(['context.update']); // 宽限窗内放行（「练习结束 await 后同步」）
+    await vi.advanceTimersByTimeAsync(6000); // 远超宽限窗
+    h.emit(h.appFrame({ id: 2, method: 'context.update', params: { summary: { headline: 'y' }, reason: 'gesture' } }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.frames.find((frame) => frame.id === 2)?.code).toBe('MICRO_APP_CAPABILITY_DENIED');
+    expect(calls).toEqual(['context.update']);
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    h.host.destroy();
   });
 
   test('P1：revokeCapability(media.listen) 停会话并推 capability.revoked', async () => {

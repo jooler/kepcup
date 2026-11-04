@@ -52,6 +52,8 @@ export interface WidgetQueryJob {
   explainArgs: unknown[];
   rowsMax: number;
   bytesMax: number;
+  /** 起始跳过的行数（分页游标；缺省 0。子进程迭代跳过，不计入 rowsMax——审查 P1-5）。 */
+  rowsOffset?: number;
 }
 
 export interface WidgetQueryExecutor {
@@ -610,7 +612,10 @@ function run(job) {
   const rows = [];
   let bytes = 0;
   let truncated = false;
+  let skipped = 0;
   for (const raw of statement.iterate(job.params)) {
+    // 分页游标：跳过前 rowsOffset 行（不计入 rowsMax——每页都从游标处取满配额）。
+    if (skipped < (job.rowsOffset || 0)) { skipped += 1; continue; }
     // 多取一行判断截断：恰好 rowsMax 行不算截断。
     if (rows.length >= job.rowsMax) { truncated = true; break; }
     const row = safeRow(raw);

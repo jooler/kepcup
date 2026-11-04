@@ -309,7 +309,7 @@ export class WidgetService {
       // 微应用清单（D112）：manifest 是能力 / 查询 / 网络档的唯一来源；存在即走微应用路径。
       const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
       const queries = microApp !== null ? this.#cleanQueries(microApp.manifest.queries) : this.#cleanQueries(input.queries);
-      const files = microApp !== null ? this.#cleanFiles(input.files) : [];
+      const files = microApp !== null ? this.#cleanFiles(input.files, Buffer.byteLength(input.html)) : [];
       const now = this.#deps.clock.now();
       const widgetId = newId('wgt');
       const sha256 = createHash('sha256').update(html).digest('hex');
@@ -415,7 +415,7 @@ export class WidgetService {
       // 微应用更新（D112）：清单与代码一起构成新版本；**组件 → 微应用 / 微应用 → 组件的
       // 形态切换在这里拒绝**（两张确认卡之间无法比较能力面，用户无从确认差异）。
       const microApp = input.manifest !== undefined ? validateMicroAppManifest(input.manifest, html) : null;
-      const files = microApp !== null ? this.#cleanFiles(input.files) : [];
+      const files = microApp !== null ? this.#cleanFiles(input.files, Buffer.byteLength(input.html)) : [];
       const priorMicroApp = this.#manifestOfVersion(widgetId, widget.latest_version) !== null;
       if ((microApp !== null) !== priorMicroApp) {
         return {
@@ -496,6 +496,10 @@ export class WidgetService {
             .run(widgetId, pruneThrough);
           this.#deps.db
             .prepare('delete from micro_app_files where widget_id = ? and version <= ?')
+            .run(widgetId, pruneThrough);
+          // 诊断随版本修剪一起删（55 §9.4）：已不存在的版本不留诊断行。
+          this.#deps.db
+            .prepare('delete from micro_app_diagnostics where widget_id = ? and version <= ?')
             .run(widgetId, pruneThrough);
         }
       });
@@ -1369,9 +1373,23 @@ export class WidgetService {
           explainArgs: explainBindings(row.sql),
           rowsMax: paginated ? 1000 : BOT_WIDGET_QUERY_ROWS_MAX,
           bytesMax: paginated ? 4 * BOT_WIDGET_QUERY_RESULT_MAX_BYTES : BOT_WIDGET_QUERY_RESULT_MAX_BYTES,
+          // 分页游标落在 runner 里跳行：>1000 行的数据才能翻页取到（审查 P1-5）。
+          ...(paginated && offset > 0 ? { rowsOffset: offset } : {}),
         });
         if (!paginated) return result;
-        return paginateQueryRows(result.rows, offset, input.maxBytes ?? 256 * 1024);
+        // runner 已按游标 rowsOffset 跳行（返回的是本窗口行），字节切片从 0 起——
+        // 不能再按同一 offset 切（会二次偏移，第二页永远为空）。
+        const page = paginateQueryRows(result.rows, 0, input.maxBytes ?? 256 * 1024);
+        // runner 级截断（行数顶到内部上限 1000 / runner 字节上限）且字节切片没给出续点：
+        // 说明本页窗口之后还有数据，续上游标——否则后续行静默不可见（审查 P1-5）。
+        if (result.truncated && page.nextCursor === undefined) {
+          return {
+            rows: page.rows,
+            truncated: true,
+            nextCursor: `off:${offset + page.rows.length}`,
+          };
+        }
+        return page;
       } catch (error) {
         if (error instanceof AppError) {
           throw new AppError(error.code, `查询「${input.name}」${error.message}`);
@@ -1547,8 +1565,8 @@ export class WidgetService {
     }
   }
 
-  /** 微应用包内文件的交付校验（P2）：路径安全、单文件与包总量、文件数、与入口不冲突。 */
-  #cleanFiles(raw: MicroAppFileDef[] | undefined): MicroAppFileDef[] {
+  /** 微应用包内文件的交付校验（P2）：路径安全、单文件与包总量（含入口 HTML，55 §4.1）、文件数、与入口不冲突。 */
+  #cleanFiles(raw: MicroAppFileDef[] | undefined, entryHtmlBytes: number): MicroAppFileDef[] {
     const files = raw ?? [];
     if (files.length > MICRO_APP_BUNDLE_FILES_MAX) {
       throw new AppError('INVALID_INPUT', `包内文件数超上限（${MICRO_APP_BUNDLE_FILES_MAX}）`);
@@ -1572,8 +1590,8 @@ export class WidgetService {
       }
       total += bytes;
     }
-    if (total > MICRO_APP_BUNDLE_MAX_BYTES) {
-      throw new AppError('INVALID_INPUT', `包总量超上限（8MB）`);
+    if (total + entryHtmlBytes > MICRO_APP_BUNDLE_MAX_BYTES) {
+      throw new AppError('INVALID_INPUT', `包总量超上限（8MB，含入口 HTML）`);
     }
     return files;
   }
