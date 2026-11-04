@@ -4,14 +4,16 @@
  *
  * 策略：
  *  - 带 hash 的构建资产（/assets/*）天然不可变：cache-first；
- *  - 同源静态资源（manifest / 图标）：stale-while-revalidate（先用缓存，后台刷新）；
+ *  - 静态壳白名单（manifest / 图标）：stale-while-revalidate（先用缓存，后台刷新）；
  *  - 页面导航（SPA 入口 index.html，无 hash、部署即变）：network-first，超时或
  *    离线回落缓存——避免旧 index.html 引用已被新部署清掉的 hash 资产；
- *  - 其余（/ws/*、/healthz、跨域、非 GET）一律直连网络。
+ *  - 其余（/api/*、/rpc、/ws/*、/healthz、跨域、非 GET）一律直连网络。
  */
 
-const CACHE = 'kepcup-shell-v1';
+const CACHE = 'kepcup-shell-v2';
 const PRECACHE = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-256.png', '/icon-512.png'];
+/** 允许 stale-while-revalidate 的静态壳文件（白名单；/ 之外均为可枚举的 public 资产）。 */
+const SHELL_FILES = new Set(PRECACHE.filter((path) => path !== '/'));
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -37,8 +39,6 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
-  // 中转流量（WebSocket 握手与 /healthz）永不拦截。
-  if (url.pathname.startsWith('/ws/') || url.pathname === '/healthz') return;
 
   if (request.mode === 'navigate') {
     event.respondWith(networkFirstNavigation(request));
@@ -48,7 +48,14 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(request));
     return;
   }
-  event.respondWith(staleWhileRevalidate(request));
+  if (SHELL_FILES.has(url.pathname)) {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+  // 其余一律直连网络（/api/*、/rpc、/ws/*、/healthz 与未来新增的动态端点）：
+  // v1 的兜底 stale-while-revalidate 曾把登录期缓存的 whoami 200 永久供出——
+  // 会话失效后真实 401 不是 ok、刷新不了缓存，客户端探测永远拿到假「已登录」，
+  // 卡死在「正在连接桌面…」回不到登录页。缓存名 v2 顺带清掉已写入的脏数据。
 });
 
 async function cacheFirst(request) {
