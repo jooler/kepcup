@@ -7,12 +7,16 @@ import {
   type RpcMethodSpec,
 } from '@kepcup/shared';
 import { createCoreServices, type CoreServicesOptions } from './start.js';
-import { createRpcServer, type RpcServerHandle } from './rpc/server.js';
+import { createRpcServer } from './rpc/server.js';
+import { AppPortRegistry } from './app-port-registry.js';
 
 /** Structural subset of Electron's MessagePortMain (core does not import Electron). */
 export interface ElectronPortLike {
   postMessage(data: unknown): void;
-  on(event: 'message', listener: (event: { data: unknown }) => void): unknown;
+  on(
+    event: 'message' | 'close',
+    listener: (event: { data: unknown }) => void,
+  ): unknown;
   start(): void;
   close(): void;
 }
@@ -48,7 +52,9 @@ export interface StartCoreProcessOptions extends CoreServicesOptions {
  * Entry point for the Electron utilityProcess. Boots the core services, then
  * binds RPC servers to the two ports the main process hands over:
  * `app-port` (renderer traffic, port A) and `platform-port` (main process, port B).
- * A fresh `app-port` (renderer reload) replaces the previous binding.
+ * 端口 A 是多客户端（组件「在新窗口打开」，todo/bot-micro-app-platform/widget-window.md
+ * §4.1）：主窗口 + 组件窗口各持一个 app-port；旧端口在渲染窗口销毁 / reload 时自然
+ * `close`，由 close 回调出清——与旧「fresh replaces previous」等效（reload 的旧端口必关）。
  */
 export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
   const parentPort = (process as { parentPort?: ParentPortLike }).parentPort;
@@ -63,7 +69,7 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
     dev: options.dev ?? process.env.NODE_ENV !== 'production',
   });
 
-  let appServer: RpcServerHandle | null = null;
+  let appPorts: AppPortRegistry | null = null;
   let platformServer: RpcChannel | null = null;
   let eventsWired = false;
 
@@ -73,7 +79,9 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
     eventsWired = true;
     for (const name of RPC_EVENT_NAMES) {
       services.events.on(name, (payload) => {
-        appServer?.pushEvent(name, payload);
+        appPorts?.pushEvent(name, payload, (error) => {
+          services.logger.warn({ event: name, error: String(error) }, 'app-port event push failed');
+        });
       });
     }
     // Platform events (notifications, tray state) ride the bus to port B.
@@ -94,20 +102,28 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
     void servicesPromise.then((services) => {
       wireEventBridge(services);
       if (type === 'app-port') {
-        appServer?.close();
-        appServer = createRpcServer({
-          transport,
-          methods: services.appMethods,
-          // The renderer only sees the envelope (and often maps the code to a
-          // generic i18n string): log every failed call here so the full
-          // message / details land in logs/kepcup.log.
-          onError: (method, error) => {
-            const record = { method, code: error.code, error: error.message, details: error.details };
-            if (error.code === 'INTERNAL') services.logger.error(record, 'rpc method failed');
-            else services.logger.warn(record, 'rpc method rejected');
-          },
+        appPorts ??= new AppPortRegistry();
+        const server = appPorts.bind({
+          createServer: () =>
+            createRpcServer({
+              transport,
+              methods: services.appMethods,
+              // The renderer only sees the envelope (and often maps the code to a
+              // generic i18n string): log every failed call here so the full
+              // message / details land in logs/kepcup.log.
+              onError: (method, error) => {
+                const record = { method, code: error.code, error: error.message, details: error.details };
+                if (error.code === 'INTERNAL') services.logger.error(record, 'rpc method failed');
+                else services.logger.warn(record, 'rpc method rejected');
+              },
+            }),
+          onBound: (bound) => services.pushStatusTo(bound),
         });
-        services.pushStatusTo(appServer);
+        // 渲染窗口销毁 / reload 后旧端口自然关闭：出清对应 server（不再主动 close 旧绑定）。
+        port.on('close', () => {
+          appPorts?.remove(server);
+          services.logger.info('app port unbound');
+        });
         services.logger.info('app port bound');
       } else if (type === 'platform-port') {
         platformServer?.close();

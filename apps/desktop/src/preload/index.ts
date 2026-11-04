@@ -107,6 +107,26 @@ const api = {
     title: string,
     labels?: { agent: string; user: string; handback: string },
   ): Promise<void> => ipcRenderer.invoke('browser:show', botId, conversationId, title, labels),
+  /**
+   * 组件「在新窗口打开」（widget-window.md）：把 { messageId, card } 交给主进程起独立
+   * 窗口。主进程按 widgetCardSchema 重验后再开窗；打开方负责随后关闭覆盖层（移交语义）。
+   */
+  openWidgetWindow: (input: { messageId: string; card: unknown }): Promise<{ opened: boolean }> =>
+    ipcRenderer.invoke('window:openWidget', input),
+  /**
+   * 组件窗口的启动载荷（主进程在 did-finish-load 后推送一次；窗口模式渲染层据此挂
+   * WidgetRuntime）。只在该窗口模式页面上监听。
+   */
+  onWidgetWindowPayload: (
+    callback: (payload: { messageId: string; card: unknown }) => void,
+  ): (() => void) => {
+    const listener = (_event: unknown, payload: { messageId: string; card: unknown }) =>
+      callback(payload);
+    ipcRenderer.on('widget-window:payload', listener);
+    return () => {
+      ipcRenderer.removeListener('widget-window:payload', listener);
+    };
+  },
   /** 强制释放该 (Bot, 对话) 的浏览器页面（接管中也直接关；会话数据保留）。 */
   closeBotBrowser: (botId: string, conversationId: string): Promise<void> =>
     ipcRenderer.invoke('browser:close', botId, conversationId),

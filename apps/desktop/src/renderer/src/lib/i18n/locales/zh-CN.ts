@@ -2963,6 +2963,8 @@ export const zhCN = {
   'botWidget.confirmAndOpen': '确认并打开',
   'botWidget.open': '打开组件',
   'botWidget.close': '关闭',
+  'botWidget.openInWindow': '在新窗口打开',
+  'botWidget.openInWindowFailed': '未能打开组件窗口',
   'botWidget.posterLoading': '正在读取海报…',
   'botWidget.posterFallback': '组件截图尚未生成',
   'botWidget.reviewFirstHint': '请先在下方确认，再运行组件',

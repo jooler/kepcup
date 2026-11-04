@@ -46,6 +46,10 @@ export function installWebShim(version: string): void {
     },
     setNativeThemeSource: noop,
     showBotBrowser: noop,
+    // 组件「在新窗口打开」（widget-window.md）：桌面 Electron 能力，web 端点 no-op
+    // ——viewer 按钮按 opened=false 提示失败，不出第二个「窗口」。
+    openWidgetWindow: () => Promise.resolve({ opened: false }),
+    onWidgetWindowPayload: () => unbind,
     closeBotBrowser: noop,
     getBotBrowserPages: () => Promise.resolve([]),
     onBotBrowserPagesChanged: () => unbind,

@@ -53,6 +53,12 @@ declare global {
         title: string,
         labels?: { agent: string; user: string; handback: string },
       ): Promise<void>;
+      /** 组件「在新窗口打开」（widget-window.md）：把 { messageId, card } 交给主进程开窗。 */
+      openWidgetWindow(input: { messageId: string; card: unknown }): Promise<{ opened: boolean }>;
+      /** 组件窗口模式：主进程在 did-finish-load 后推送的启动载荷。 */
+      onWidgetWindowPayload(
+        callback: (payload: { messageId: string; card: unknown }) => void,
+      ): () => void;
       /** 强制释放该 (Bot, 对话) 的浏览器页面（接管中也直接关；会话数据保留）。 */
       closeBotBrowser(botId: string, conversationId: string): Promise<void>;
       getBotBrowserPages(): Promise<Array<{ botId: string; conversationId: string }>>;

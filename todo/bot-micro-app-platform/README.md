@@ -10,6 +10,7 @@
 | P1 | [P1-voice-models.md](P1-voice-models.md) | `ai.chat` / `ai.session`（隔离 / 流式 / 三级预算 / 记账归 Bot）、`media.listen`（宿主代理 + VAD + ASR）、`media.speak`（TTS 队列 + 打断）、MicroAppChrome、能力撤销与降级 | P0 |
 | P2 | [P2-packages-lifecycle.md](P2-packages-lifecycle.md) | 多文件包 `micro_app_files`、`collections`、会话恢复 / 前后台 / 崩溃恢复、`context.update`、`query` 分页、运行时诊断回流、微应用管理页 | P1 |
 | P3 | [P3-craft.md](P3-craft.md) | craft loop 多文件 + 清单检查 + 能力最小性、S2 能力 mock、写作知识分层（`sdk.md` / `references/` / `templates/` + 守卫）、`micro_app_sdk_inspect`、SPEC 读诊断、§11 全部检查器规则、基准 13 条 | P2 |
+| 收口后增量 | [widget-window.md](widget-window.md) | 组件「在新窗口打开」：覆盖层移交独立 Electron 窗口（core app-port 多客户端 + 组件窗口注册表 + main.ts 挂载点分流 + MicroAppControls 共用外壳控件） | P1（WidgetRuntime / 端口 A） |
 
 ## 0. 一句话目标
 

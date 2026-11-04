@@ -344,6 +344,9 @@
      快捷键两种形态（web 门 / App UI）都需要它在场。 -->
 <svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
 
+<!-- 组件窗口模式不进 App：main.ts 在挂载点按 ?kcWindow=widget 直接分流到
+     WidgetWindowApp（widget-window.md §4.4），主壳模块图整段不加载。 -->
+
 {#if ENDPOINT_KIND === 'remote'}
   <!-- D96 web 构建（手机 PWA）：App UI 整体作为 children 交给门，配对完成后才
        渲染；未配对 / 桌面离线等状态由 WebShellGate 的状态页接管（§3.2 纯遥控器）。 -->
