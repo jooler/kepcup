@@ -176,6 +176,7 @@ describe('ChatSession', () => {
       'tasks.active',
       'approvals.list',
       'grants.list',
+      'permissions.mode.get',
     ]);
     expect(session.conversationId).toBe('c1');
     session.dispose();

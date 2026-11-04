@@ -149,6 +149,7 @@ describe('chat.select load sequence', () => {
       'tasks.active',
       'approvals.list',
       'grants.list',
+      'permissions.mode.get',
     ]);
     expect(state.calls[0]?.params).toEqual({ id: 'c1' });
     expect(state.calls[1]?.params).toEqual({ conversationId: 'c1', limit: 60 });

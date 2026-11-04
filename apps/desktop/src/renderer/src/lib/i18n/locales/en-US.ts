@@ -82,6 +82,8 @@ export const enUS = {
   'chats.errorCode.INTERNAL': 'Internal error',
   'chats.errorCode.RUN_READ_ONLY':
     'This run is read-only: writing files, running commands that write, generating media, and installing skills or environments must happen in a write task',
+  'chats.errorCode.CATASTROPHIC_COMMAND':
+    'This command would destroy the system, your home directory or the app data directory and was blocked by the safety policy',
   'chats.errorCode.TASK_LIMIT_REACHED':
     'The task limit has been reached. Wait for running tasks to finish and try again.',
   'chats.errorCode.RUN_ALREADY_FINISHED': 'This run has already finished',
@@ -830,6 +832,29 @@ export const enUS = {
   'unattended.banner':
     'Unattended mode is on: all actions that need approval are approved automatically.',
   'unattended.bannerOff': 'Turn off',
+  'permissionMode.aria': 'Permission level: {mode}',
+  'permissionMode.manual': 'Manual (default)',
+  'permissionMode.manualDesc': 'Out-of-workspace writes, unsandboxed commands and the like ask for approval',
+  'permissionMode.auto': 'Auto approve',
+  'permissionMode.autoDesc':
+    'Approves file access, environment installs and skill imports; commands still follow sandbox rules',
+  'permissionMode.bypass': 'Full control',
+  'permissionMode.bypassDesc':
+    'Skips every permission prompt and leaves the sandbox when policy allows (catastrophic commands are still refused)',
+  'permissionMode.unattendedNote':
+    'Unattended mode is on: every conversation runs at full control.',
+  'permissionMode.enableAutoTitle': 'Turn on auto approve',
+  'permissionMode.enableAutoBody':
+    'File access in this chat (including writes outside the workspace), environment installs and skill imports are approved automatically. Commands still follow the sandbox rules; unsandboxed execution, git remote operations, MCP writes and external agents still ask. Applies to this chat only (a project chat applies it to every bot in it, and delegated chats inherit the level of the chat that delegated). A restart returns to the default level.',
+  'permissionMode.enableBypassTitle': 'Turn on full control',
+  'permissionMode.enableBypassBody':
+    "Every permission prompt in this chat is skipped, and commands leave the sandbox while the bot's network policy is Open. Catastrophic commands (such as rm -rf /, writing raw disks, formatting drives, shutting down) are still refused outright, and the app data directory stays inaccessible. Applies to this chat only (a project chat applies it to every bot in it, and delegated chats inherit the level of the chat that delegated). A restart returns to the default level.",
+  'permissionMode.acknowledgeAuto': 'I understand auto approve skips these prompts and accept the risk',
+  'permissionMode.acknowledgeBypass':
+    'I understand full control skips every permission prompt and accept the risk',
+  'permissionMode.confirm': 'Turn on',
+  'permissionMode.untilManual': 'Until I turn it off',
+  'permissionMode.hoursOff': 'Turns off automatically after {hours} hours',
   'unattended.settingsSection': 'Unattended mode',
   'settings.taintGuard': 'Taint egress protection (advanced)',
   'settings.taintGuardHint':
@@ -847,7 +872,7 @@ export const enUS = {
   'unattended.enable': 'Turn on unattended mode',
   'unattended.enableTitle': 'Turn on unattended mode',
   'unattended.enableBody':
-    'When on, all actions that need your approval are approved automatically (access grants, unsandboxed execution, commands in confirm-each-command mode, environment installs, and skill installs—including external skill repositories the bot finds and asks to import). The app data directory always stays inaccessible. Every automatic approval is logged for audit and summarized after the mode is turned off.',
+    'When on, every conversation runs at the full-control level: all actions that need your approval are approved automatically (access grants, unsandboxed execution, commands in confirm-each-command mode, environment installs, and skill installs—including external skill repositories the bot finds and asks to import). Catastrophic commands are still refused outright, and the app data directory always stays inaccessible. Every automatic approval is logged for audit and summarized after the mode is turned off.',
   'unattended.acknowledge': "I understand these risks while it's on",
   'unattended.manualOff': 'Turn off manually',
   'unattended.hoursOff': 'Turns off automatically after {hours} hours',
@@ -3696,7 +3721,7 @@ export const enUS = {
   'settingsItem.background.tasks.field.agent': 'Agent',
   'settingsItem.unattended.enable.title': 'Turn on unattended mode',
   'settingsItem.unattended.enable.summary':
-    'Automatically approve low-risk actions during a set period (you must confirm the risk yourself)',
+    'Put every conversation at the full-control level during a set period (you must confirm the risk yourself)',
   'settingsItem.unattended.enable.field.until': 'Until',
   'settingsItem.unattended.disable.title': 'Turn off unattended mode',
   'settingsItem.unattended.disable.summary':
