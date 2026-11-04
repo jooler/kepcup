@@ -1,6 +1,6 @@
 # Bot 微应用运行时（Micro-App Platform）实施编排 · 总览
 
-> 状态：**进行中（2026-11-04 开工）**。设计依据：[docs/design/55-bot-micro-app-runtime.md](../../docs/design/55-bot-micro-app-runtime.md)（决策 **D112**，已登记 README 决策表）；上游 [32-bot-widgets.md](../../docs/design/32-bot-widgets.md)（55 号接管其 §5–§8 运行时结论）。
+> 状态：**P0–P3 全部完成（2026-11-05）**——各阶段实现 + 独立子代理审查 + 全部问题修复（P0/P1 双轮）；最终全量测试与 §15 十七条核对见 P3 文件收口段。P4（分发与共享）本期不做，市场只评估。设计依据：[docs/design/55-bot-micro-app-runtime.md](../../docs/design/55-bot-micro-app-runtime.md)（决策 **D112**，已登记 README 决策表）；上游 [32-bot-widgets.md](../../docs/design/32-bot-widgets.md)（55 号接管其 §5–§8 运行时结论）。
 > 分支：`feat/micro-app-platform`（worktree `../kepcup-micro-app-platform`，自 `v0.5.7` 拉出）。**不推远端、不开 PR**；历史分支 `feat/micro-app-runtime` 不再使用。
 > 执行代理纪律：P0 → P1 → P2 → P3 连续推进，阶段之间不停顿；每阶段完成后拉独立子代理审查（P0/P1 双轮），修完全部问题才进下一阶段；P4（分发与共享）本期不做，市场只评估不实施。
 

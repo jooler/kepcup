@@ -176,6 +176,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   widget_publish: 'local',
   widget_read_state: 'none',
   widget_check: 'none',
+  // D112：微应用诊断只读工具（任务面）与 SDK 契约自省（制作 loop，只读）。
+  micro_app_diagnostics_read: 'none',
+  micro_app_sdk_inspect: 'none',
   widget_template: 'local',
   stage_done: 'none',
   submit_review: 'none',

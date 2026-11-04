@@ -448,7 +448,7 @@ describe('widgetPreview.run method spec', () => {
       screenshots: false,
     });
     expect(spec.output.parse(await spec.handle(input))).toEqual({ viewports: [] });
-    expect(seen[0]!.fixtures).toEqual({ storage: {}, queries: {} });
+    expect(seen[0]!.fixtures).toEqual({ storage: {}, queries: {}, ai: [], transcripts: [] });
     expect(() =>
       spec.input.parse({
         viewports: [],

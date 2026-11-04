@@ -153,7 +153,7 @@ describe('runWidgetCheck', () => {
     expect(rules).toEqual(['acceptance.invalid', 'fixtures.invalid']);
     expect(report.issues.every((issue) => issue.level === 'warning' && !issue.blocking)).toBe(true);
     expect(calls[0]?.acceptance).toBeNull();
-    expect(calls[0]?.fixtures).toEqual({ storage: {}, queries: {} });
+    expect(calls[0]?.fixtures).toEqual({ storage: {}, queries: {}, ai: [], transcripts: [] });
     expect(report.stages.S2).toEqual({ status: 'skipped', reason: '测试：不运行' });
   });
 
