@@ -1,6 +1,8 @@
 import { mount } from 'svelte';
 import './app.css';
 import App from './App.svelte';
+import WidgetWindowApp from '$lib/features/widgets/WidgetWindowApp.svelte';
+import { isWidgetWindowLocation } from '$lib/features/widgets/widget-window-mode';
 import { core } from '$lib/rpc/client.svelte';
 import { setupWindowControlsOverlay } from '$lib/features/shell/window-controls-overlay';
 
@@ -30,7 +32,10 @@ if (__KEPCUP_TEST_HOOKS__) {
   ).__kepcupRpc = (method, input) => core.call(method, input);
 }
 
-const app = mount(App, {
+// 组件「在新窗口打开」（widget-window.md §4.4）：`?kcWindow=widget` 的页面在挂载点
+// 直接分流到 WidgetWindowApp——主壳的模块图（chat / shell / settings 等 store 与
+// 全局浮层）整段不加载，组件窗口只有 MicroAppChrome + WidgetRuntime。
+const app = mount(isWidgetWindowLocation() ? WidgetWindowApp : App, {
   target: document.getElementById('app')!,
 });
 

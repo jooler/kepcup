@@ -3094,6 +3094,8 @@ export const enUS = {
   'botWidget.confirmAndOpen': 'Confirm and open',
   'botWidget.open': 'Open widget',
   'botWidget.close': 'Close',
+  'botWidget.openInWindow': 'Open in new window',
+  'botWidget.openInWindowFailed': 'Could not open the widget window',
   'botWidget.posterLoading': 'Loading poster…',
   'botWidget.posterFallback': 'No preview screenshot yet',
   'botWidget.reviewFirstHint': 'Confirm below before running this widget',

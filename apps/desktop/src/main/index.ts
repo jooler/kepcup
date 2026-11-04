@@ -38,6 +38,8 @@ import { isOpenablePreviewLinkUrl } from './apps-ui-policy';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { installProductionAppMenu } from './devtools';
+import { WidgetWindowHost } from './widget-window';
+import { createWidgetWindow } from './widget-window-electron';
 import { createTray } from './tray';
 import { applyLoginItem } from './login-item';
 import { createRemoteKeepAwake } from './remote-keep-awake';
@@ -59,6 +61,8 @@ let coreHost: CoreHost | null = null;
 let browserHost: BrowserHost | null = null;
 /** D87 P3b: hidden S2 preview window for widget drafts (never the app's main window). */
 let widgetPreviewHost: WidgetPreviewHost | null = null;
+/** 组件「在新窗口打开」（widget-window.md）：独立 Electron 窗口注册表。 */
+let widgetWindows: WidgetWindowHost | null = null;
 /** D105: computer-use orchestration host (helper / sidecar lifecycle in main). */
 let computerHost: ComputerHost | null = null;
 let tray: ReturnType<typeof createTray> | null = null;
@@ -111,6 +115,8 @@ function beginQuit(): void {
   // freshly created hidden host window (that window would keep the app alive).
   browserHost?.closeAll();
   widgetPreviewHost?.dispose();
+  // 组件窗口（widget-window.md §4.2）：退出即全部关闭（Runtime 卸载即停，无后台遗留）。
+  widgetWindows?.closeAll();
   // D105：计算机操控 helper 的 terminate / provider 回收（编排层的 shutdown 语义，
   // 沿 orca 的 beforeExit 处理）；host-shutdown-state 先立标志，权限引导等在途
   // 流程不再拉起新 helper。
@@ -180,6 +186,10 @@ function ensureWindow(): BrowserWindow {
   });
 
   coreHost?.onState((state) => {
+    // 组件窗口同样要看到 core 进程状态（重连横幅 / 错误页）与重启后的新端口 A。
+    widgetWindows?.eachWindow((win) => {
+      if (!win.isDestroyed()) win.webContents.send('core-process-state', state);
+    });
     if (!window) return;
     window.webContents.send('core-process-state', state);
     if (state === 'up') sendAppPort();
@@ -192,13 +202,26 @@ function ensureWindow(): BrowserWindow {
  * Creates a fresh app-port pair (A) each time: one end for the core service
  * (which rebinds its RPC server), the other for the renderer. Called when the
  * renderer loads and whenever the core process comes back up.
+ *
+ * 组件「在新窗口打开」（widget-window.md §4.2）：不带 target 时遍历主窗口 + 全部
+ * 组件窗口——core 重启后每个渲染端都要拿到新端口（core 侧多客户端注册表接住）。
  */
-function sendAppPort(): void {
+function sendAppPort(target?: BrowserWindow): void {
   const proc = coreHost?.process();
-  if (!proc || !window) return;
-  const { port1, port2 } = new MessageChannelMain();
-  proc.postMessage({ type: 'app-port' }, [port1]);
-  window.webContents.postMessage('core-port', null, [port2]);
+  if (!proc) return;
+  const targets: BrowserWindow[] = target !== undefined ? [target] : [];
+  if (target === undefined) {
+    if (window) targets.push(window);
+    widgetWindows?.eachWindow((win) => {
+      // 注册表拿到的是结构子集；这里的窗口都是真实 BrowserWindow。
+      if (!win.isDestroyed()) targets.push(win as BrowserWindow);
+    });
+  }
+  for (const entry of targets) {
+    const { port1, port2 } = new MessageChannelMain();
+    proc.postMessage({ type: 'app-port' }, [port1]);
+    entry.webContents.postMessage('core-port', null, [port2]);
+  }
 }
 
 async function quitApp(): Promise<void> {
@@ -663,6 +686,18 @@ function bootstrap(): void {
   });
 
   widgetPreviewHost = new WidgetPreviewHost();
+  // 组件「在新窗口打开」（widget-window.md §4.2）：与主窗口同款装配（preload /
+  // sandbox），渲染入口带 `?kcWindow=widget`。入参校验与同 messageId 去重在 host 内。
+  widgetWindows = new WidgetWindowHost({
+    isPackaged: app.isPackaged,
+    preloadPath: join(__dirname, '../preload/index.cjs'),
+    rendererIndexPath: join(__dirname, '../renderer/index.html'),
+    devRendererUrl: !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined,
+    createWindow: createWidgetWindow,
+  });
+  ipcMain.handle('window:openWidget', (_event, input: unknown) =>
+    widgetWindows?.open(input) ?? { opened: false },
+  );
   // D94: 分享协调器。App Group 不可用（非 macOS / 未配置）时 groupDir = null，
   // 协调器只做无害的跳过。
   shareCoordinator = new ShareIntakeCoordinator({
