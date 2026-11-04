@@ -852,7 +852,8 @@ import {
   {/if}
 {/snippet}
 
-<!-- 设置页分类条目（展开/图标两模式共用；激活态同对话行的本地覆盖底色）。 -->
+<!-- 设置页分类条目（展开/图标两模式共用）：hover 与激活底色同对话条目取同一套
+     token（展开态 SIDEBAR_ROW_ACTIVE_CLASS，图标态 SIDEBAR_ICON_ACTIVE_CLASS）。 -->
 {#snippet settingsNavEntry(entry: SettingsNavEntry, iconMode: boolean)}
   {@const Icon = asIconComponent(entry.icon)}
   {@const active = shell.settingsSection === entry.id}
@@ -873,10 +874,10 @@ import {
   {:else}
     <button
       type="button"
-      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors
-        {active
-        ? 'bg-accent text-accent-foreground'
-        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors text-muted-foreground
+        hover:bg-sidebar-accent hover:text-sidebar-accent-foreground
+        data-active:text-sidebar-accent-foreground data-active:font-medium {SIDEBAR_ROW_ACTIVE_CLASS}"
+      data-active={active ? 'true' : undefined}
       onclick={() => selectSettingsSection(entry.id)}
       data-testid={`settings-nav-${entry.id}`}
     >
@@ -912,7 +913,7 @@ import {
       <button
         type="button"
         class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-muted-foreground
-          transition-colors hover:bg-accent/50 hover:text-foreground"
+          transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         onclick={() => shell.closeSettings()}
         data-testid="settings-nav-back"
       >
