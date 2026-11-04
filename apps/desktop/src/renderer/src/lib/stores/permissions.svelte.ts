@@ -6,6 +6,8 @@ import type {
   Run,
   SandboxStatusOutput,
   UnattendedState,
+  PermissionMode,
+  PermissionModeState,
 } from '@kepcup/shared';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
@@ -42,6 +44,8 @@ class PermissionsState {
    */
   grants = $state<Grant[]>([]);
   unattended = $state<UnattendedState>({ enabled: false, until: null, enabledAt: null });
+  /** 对话级权限级别；只含已加载 / 已切换过的会话。 */
+  #modesByConversation = $state<Record<string, PermissionModeState>>({});
   sandbox = $state<SandboxStatusOutput | null>(null);
   /** Auto-approval summary of the last unattended period (dialog content). */
   summaryOpen = $state(false);
@@ -84,6 +88,13 @@ class PermissionsState {
       const data = payload as { state: UnattendedState };
       this.unattended = data.state;
     });
+    core.onEvent('permissions.mode.changed', (payload) => {
+      const data = payload as { state: PermissionModeState };
+      this.#modesByConversation = {
+        ...this.#modesByConversation,
+        [data.state.conversationId]: data.state,
+      };
+    });
     // W3（D78）: a revocation (grants list, MCP settings, a bot's MCP selection)
     // interrupted running tasks — said right where the user just revoked.
     core.onEvent('tasks.interrupted', (payload) => {
@@ -108,10 +119,15 @@ class PermissionsState {
   ): Promise<void> {
     const foreground = options.foreground !== false;
     if (foreground) this.#foregroundConversationId = conversationId;
-    const [approvalsResult, grantsResult] = await Promise.all([
+    const [approvalsResult, grantsResult, modeResult] = await Promise.all([
       core.call('approvals.list', { conversationId }) as Promise<{ approvals: Approval[] }>,
       core.call('grants.list', { conversationId }) as Promise<{ grants: Grant[] }>,
+      core.call('permissions.mode.get', { conversationId }) as Promise<PermissionModeState>,
     ]);
+    this.#modesByConversation = {
+      ...this.#modesByConversation,
+      [conversationId]: modeResult,
+    };
     const next: Record<string, Approval> = { ...this.approvals };
     for (const approval of approvalsResult.approvals) next[approval.id] = approval;
     this.approvals = next;
@@ -204,6 +220,64 @@ class PermissionsState {
       this.grants = this.grants.filter((g) => g.id !== grantId);
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
+    }
+  }
+
+  /** 当前权限级别的生效状态；无人值守开启时统一显示为完全控制。 */
+  modeOf(conversationId: string | null | undefined): PermissionModeState {
+    const cached = conversationId ? this.#modesByConversation[conversationId] : undefined;
+    const base: PermissionModeState = cached ?? {
+      conversationId: conversationId ?? '',
+      mode: 'manual',
+      source: 'conversation',
+      inheritedFrom: null,
+      enabledAt: null,
+      until: null,
+    };
+    if (!this.unattended.enabled) return base;
+    return { ...base, mode: 'bypass', source: 'unattended' };
+  }
+
+  /** Loads one conversation's mode (conversation switch / banner mount). */
+  async loadMode(conversationId: string): Promise<void> {
+    try {
+      const state = (await core.call('permissions.mode.get', {
+        conversationId,
+      })) as PermissionModeState;
+      this.#modesByConversation = {
+        ...this.#modesByConversation,
+        [conversationId]: state,
+      };
+    } catch {
+      // Leave the last known state; the next event / switch refreshes.
+    }
+  }
+
+  /**
+   * Switches the conversation's permission level. `auto` / `bypass` need the
+   * explicit acknowledgement from the enable dialog (core refuses without it)。
+   * 提升档位的入口只有 PermissionModeMenu 的确认弹框——勾选风险是弹框交互的
+   * 一部分，本方法不单独校验：renderer 侧本来就运行在用户自己的进程里。
+   */
+  async setMode(
+    conversationId: string,
+    mode: PermissionMode,
+    hours: number | null = null,
+  ): Promise<boolean> {
+    try {
+      const state = (await core.call('permissions.mode.set', {
+        conversationId,
+        mode,
+        ...(mode === 'manual' ? {} : { hours, acknowledgeRisk: true as const }),
+      })) as PermissionModeState;
+      this.#modesByConversation = {
+        ...this.#modesByConversation,
+        [conversationId]: state,
+      };
+      return true;
+    } catch (error) {
+      toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 

@@ -76,6 +76,8 @@ export const zhCN = {
   // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
   'chats.errorCode.RUN_READ_ONLY':
     '这次执行是只读的：写文件、运行会写入的命令、生成媒体、安装技能或环境都要在写任务里进行',
+  'chats.errorCode.CATASTROPHIC_COMMAND':
+    '该命令会破坏系统、用户目录或应用数据目录，已被安全策略直接拒绝',
   'chats.errorCode.TASK_LIMIT_REACHED': '任务数已达上限，请等进行中的任务结束后再试',
   'chats.errorCode.RUN_ALREADY_FINISHED': '这次执行已经结束',
   'chats.errorCode.RUN_NOT_FOUND': '执行记录不存在或已被清理',
@@ -788,6 +790,25 @@ export const zhCN = {
   'rightPanel.revoke': '撤销',
   'unattended.banner': '无人值守模式开启中：所有需要确认的操作将自动批准。',
   'unattended.bannerOff': '关闭',
+  'permissionMode.aria': '权限级别：{mode}',
+  'permissionMode.manual': '手动确认（默认）',
+  'permissionMode.manualDesc': '越界写入、沙箱外执行等按授权处理',
+  'permissionMode.auto': '自动授权',
+  'permissionMode.autoDesc': '自动批准文件访问、环境安装与技能导入；命令仍按沙箱规则执行',
+  'permissionMode.bypass': '完全控制',
+  'permissionMode.bypassDesc': '跳过所有权限确认并在策略允许时脱离沙箱（灾难性命令仍会被拒绝）',
+  'permissionMode.unattendedNote': '无人值守模式已开启：所有对话统一为完全控制。',
+  'permissionMode.enableAutoTitle': '开启自动授权',
+  'permissionMode.enableAutoBody':
+    '自动批准当前对话里的文件访问（含 workspace 以外的写入）、环境安装与技能导入。命令仍在沙箱内按规则执行；沙箱外执行、git 远程操作、MCP 写入与外部智能体仍会请求授权。仅对当前对话生效（项目对话对其中的所有 Bot 生效，委派对话继承发起对话的级别），重启应用后回到默认档。',
+  'permissionMode.enableBypassTitle': '开启完全控制',
+  'permissionMode.enableBypassBody':
+    '跳过当前对话里的所有权限确认，命令在 Bot 网络策略为「开放」时脱离沙箱执行。灾难性命令（如 rm -rf /、写裸设备、格式化磁盘、关机）仍会被直接拒绝，应用数据目录也始终不可访问。仅对当前对话生效（项目对话对其中的所有 Bot 生效，委派对话继承发起对话的级别），重启应用后回到默认档。',
+  'permissionMode.acknowledgeAuto': '我了解自动授权会跳过这些确认，并自行承担风险',
+  'permissionMode.acknowledgeBypass': '我了解完全控制会跳过所有权限确认，并自行承担风险',
+  'permissionMode.confirm': '开启',
+  'permissionMode.untilManual': '直到手动关闭',
+  'permissionMode.hoursOff': '{hours} 小时后自动关闭',
   'unattended.settingsSection': '无人值守模式',
   'settings.taintGuard': '污点外发保护（高级）',
   'settings.taintGuardHint':
@@ -804,7 +825,7 @@ export const zhCN = {
   'unattended.enable': '开启无人值守模式',
   'unattended.enableTitle': '开启无人值守模式',
   'unattended.enableBody':
-    '开启后，所有需要用户确认的操作都会被自动批准（访问授权、沙箱外执行、逐条确认模式下的命令、环境安装，以及技能安装——包括 Bot 自行检索并请求导入的外部技能仓库）。应用数据目录始终不可访问。每一条自动批准都会记入审计，并在模式关闭后汇总展示。',
+    '开启后，所有对话统一按「完全控制」级权限执行：所有需要用户确认的操作都会被自动批准（访问授权、沙箱外执行、逐条确认模式下的命令、环境安装，以及技能安装——包括 Bot 自行检索并请求导入的外部技能仓库）。灾难性命令仍会被直接拒绝，应用数据目录始终不可访问。每一条自动批准都会记入审计，并在模式关闭后汇总展示。',
   'unattended.acknowledge': '我了解开启期间的上述风险',
   'unattended.manualOff': '手动关闭',
   'unattended.hoursOff': '{hours} 小时后自动关闭',
@@ -3519,7 +3540,7 @@ export const zhCN = {
   'settingsItem.background.tasks.field.agentEnabled': '改用外部智能体',
   'settingsItem.background.tasks.field.agent': '智能体',
   'settingsItem.unattended.enable.title': '开启无人值守',
-  'settingsItem.unattended.enable.summary': '在设定时段内自动批准低风险操作（需你亲手确认风险）',
+  'settingsItem.unattended.enable.summary': '在设定时段内把全部对话置于完全控制级权限（需你亲手确认风险）',
   'settingsItem.unattended.enable.field.until': '持续到',
   'settingsItem.unattended.disable.title': '关闭无人值守',
   'settingsItem.unattended.disable.summary': '结束无人值守，之后的操作恢复逐项确认',
