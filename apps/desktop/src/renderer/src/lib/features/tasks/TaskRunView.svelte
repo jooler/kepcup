@@ -24,17 +24,17 @@
   import Markdown from '$lib/features/chats/Markdown.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
-  import TaskRunToolCard from './TaskRunToolCard.svelte';
+  import TaskRunToolGroup from './TaskRunToolGroup.svelte';
   import TaskPlanPanel from './TaskPlanPanel.svelte';
   import TaskQuestionCard from './TaskQuestionCard.svelte';
   import {
     approvalConversationIdOf,
     buildTaskRunTimeline,
     formatElapsed,
+    groupTaskRunEntries,
     latestPlan,
     pendingTaskQuestionOf,
     taskElapsedMs,
-    type TaskRunEntry,
   } from './task-run-view';
   import { isActiveTask } from './task-view';
 
@@ -87,6 +87,7 @@
   const task = $derived(tasks.byId[taskId] ?? null);
   const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
+  const renderEntries = $derived(groupTaskRunEntries(entries));
   const plan = $derived(latestPlan(steps));
   const active = $derived(task !== null && isActiveTask(task));
   // 会话消息随打开详情页的对话而来（主页对话回退 chat.main，卡片弹层是自己的
@@ -105,7 +106,8 @@
     return () => bg.dispose();
   });
   const questionSession = $derived(
-    chatSession.conversation?.id !== undefined && chatSession.conversation?.id === task?.conversationId
+    chatSession.conversation?.id !== undefined &&
+      chatSession.conversation?.id === task?.conversationId
       ? chatSession
       : homeSession,
   );
@@ -266,10 +268,6 @@
       hour: '2-digit',
       minute: '2-digit',
     });
-  }
-
-  function isTool(entry: TaskRunEntry): entry is Extract<TaskRunEntry, { kind: 'tool' }> {
-    return entry.kind === 'tool';
   }
 </script>
 
@@ -446,9 +444,31 @@
                   {t('task.run.empty')}
                 </p>
               {/if}
-              {#each entries as entry (entry.id)}
+              {#each renderEntries as entry (entry.id)}
                 {#if entry.kind === 'assistant'}
                   <div class="text-sm" data-testid="task-run-assistant">
+                    {#if entry.thinking.length > 0}
+                      <!--
+                        思考内容：与正文分层——折叠成一行「思考」，点开看原始推理；
+                        只有思考的模型轮次也能在时间线上看见。
+                      -->
+                      <details class="group/thinking mb-1.5" data-testid="task-run-thinking">
+                        <summary
+                          class="flex w-fit cursor-pointer items-center gap-1 rounded text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+                        >
+                          <ChevronRight
+                            class="size-3 transition-transform group-open/thinking:rotate-90"
+                            aria-hidden="true"
+                          />
+                          {t('task.run.thinking')}
+                        </summary>
+                        <div
+                          class="mt-1 border-l-2 border-border pl-2.5 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground"
+                        >
+                          {entry.thinking}
+                        </div>
+                      </details>
+                    {/if}
                     {#if entry.text.length > 0}
                       <Markdown content={entry.text} />
                     {/if}
@@ -456,8 +476,8 @@
                       <p class="mt-1 text-xs text-destructive">{entry.error}</p>
                     {/if}
                   </div>
-                {:else if isTool(entry)}
-                  <TaskRunToolCard {entry} {active} />
+                {:else if entry.kind === 'toolGroup'}
+                  <TaskRunToolGroup tools={entry.tools} {active} />
                 {:else if entry.kind === 'steer'}
                   <div class="flex justify-end" data-testid="task-run-steer">
                     <div class="max-w-[85%] rounded-2xl bg-muted px-3 py-2 text-sm">

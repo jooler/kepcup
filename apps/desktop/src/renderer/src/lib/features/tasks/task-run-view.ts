@@ -1,9 +1,13 @@
 import {
   TASK_PLAN_MAX_STEPS,
   TASK_PLAN_STEP_MAX_CHARS,
+  countLines,
+  diffStatsOfEdits,
+  type DiffStats,
   type Message,
   type RunStep,
 } from '@kepcup/shared';
+import type { MessageKey } from '$lib/i18n';
 
 /**
  * 任务执行过程页（docs/design/42-task-run-view.md）的纯展示逻辑：
@@ -15,10 +19,12 @@ export interface TaskRunToolResult {
   ok: boolean;
   content: string;
   errorCode?: string;
+  /** File change line counts (external agents' ACP diff content). */
+  diffStats?: DiffStats;
 }
 
 export type TaskRunEntry =
-  | { kind: 'assistant'; id: string; text: string; error: string | null }
+  | { kind: 'assistant'; id: string; text: string; thinking: string; error: string | null }
   | {
       kind: 'tool';
       id: string;
@@ -32,6 +38,15 @@ export type TaskRunEntry =
   | { kind: 'steer'; id: string; text: string }
   | { kind: 'system'; id: string; text: string };
 
+/** 时间线上的渲染分组：连续的 tool 条目收进一张工具卡（与编程 Agent 的对话一致）。 */
+export type TaskRunRenderEntry =
+  | Exclude<TaskRunEntry, { kind: 'tool' }>
+  | {
+      kind: 'toolGroup';
+      id: string;
+      tools: Array<Extract<TaskRunEntry, { kind: 'tool' }>>;
+    };
+
 interface PayloadRecord {
   [key: string]: unknown;
 }
@@ -44,6 +59,15 @@ function recordOf(value: unknown): PayloadRecord {
 
 function textOf(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function diffStatsOfPayload(value: unknown): DiffStats | null {
+  const record = recordOf(value);
+  const added = record['added'];
+  const removed = record['removed'];
+  if (typeof added !== 'number' || typeof removed !== 'number') return null;
+  if (!Number.isFinite(added) || !Number.isFinite(removed)) return null;
+  return { added: Math.max(0, Math.trunc(added)), removed: Math.max(0, Math.trunc(removed)) };
 }
 
 /**
@@ -61,12 +85,15 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
     switch (step.type) {
       case 'assistant': {
         const text = textOf(payload.text).trim();
+        // 思考内容与正文分开保存；只有思考的轮次也要出现在时间线上。
+        const thinking = textOf(payload.thinking).trim();
         const error = textOf(payload.errorMessage).trim();
-        if (text.length === 0 && error.length === 0) break;
+        if (text.length === 0 && thinking.length === 0 && error.length === 0) break;
         entries.push({
           kind: 'assistant',
           id: step.id,
           text,
+          thinking,
           error: error.length > 0 ? error : null,
         });
         break;
@@ -89,10 +116,12 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
       }
       case 'tool_result': {
         const toolCallId = textOf(payload.toolCallId);
+        const diffStats = diffStatsOfPayload(payload.diffStats);
         const result: TaskRunToolResult = {
           ok: payload.ok === true,
           content: textOf(payload.content),
           ...(textOf(payload.errorCode).length > 0 ? { errorCode: textOf(payload.errorCode) } : {}),
+          ...(diffStats !== null ? { diffStats } : {}),
         };
         const target = tools.get(toolCallId);
         if (target !== undefined) {
@@ -113,7 +142,11 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
       }
       case 'progress': {
         const text = textOf(payload.text).trim();
-        if (text.length > 0) entries.push({ kind: 'progress', id: step.id, text });
+        // 工具执行状态（「正在执行命令 …」）是自动提示，只该出现在状态行；
+        // 新 run 不再落步骤，这里再兜住旧数据，避免它打断工具分组。
+        if (text.length > 0 && !isToolProgressText(text)) {
+          entries.push({ kind: 'progress', id: step.id, text });
+        }
         break;
       }
       case 'steer': {
@@ -131,6 +164,34 @@ export function buildTaskRunTimeline(steps: readonly RunStep[]): TaskRunEntry[] 
     }
   }
   return entries;
+}
+
+/**
+ * 工具执行时的自动状态提示（ToolContext.progress，如「正在执行命令 …」/
+ * 「正在编辑 …」）。它们只服务状态行，不是模型消息；旧 run 曾把它们写成
+ * progress 步骤，时间线读取时隐藏。计划（「计划 x/y：…」）、压缩、子任务
+ * 等有意义的进度不以「正在」开头，照常显示。
+ */
+export function isToolProgressText(text: string): boolean {
+  return text.startsWith('正在');
+}
+
+/**
+ * 连续的工具调用合并成一组：助手说明、追加指令、进度等会打断分组，组内条目
+ * 保持调用顺序。组 id 取首个步骤的 id，刷新时保持稳定（不会整组重建）。
+ */
+export function groupTaskRunEntries(entries: readonly TaskRunEntry[]): TaskRunRenderEntry[] {
+  const grouped: TaskRunRenderEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== 'tool') {
+      grouped.push(entry);
+      continue;
+    }
+    const last = grouped[grouped.length - 1];
+    if (last !== undefined && last.kind === 'toolGroup') last.tools.push(entry);
+    else grouped.push({ kind: 'toolGroup', id: `group-${entry.id}`, tools: [entry] });
+  }
+  return grouped;
 }
 
 export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
@@ -232,6 +293,159 @@ export function toolCallSummary(
   return clip(summary);
 }
 
+/** One tool row in the task timeline: verb (dim), target (bright), diff line counts. */
+export interface TaskRunToolRow {
+  /** i18n key for the verb; null = render `verb` verbatim (external agent title). */
+  actionKey: MessageKey | null;
+  verb: string;
+  target: string;
+  /** Shell commands keep monospace; files / titles stay sans. */
+  mono: boolean;
+  added: number | null;
+  removed: number | null;
+}
+
+const BROWSER_ACTIONS: Record<string, MessageKey> = {
+  open: 'task.run.action.open',
+  navigate: 'task.run.action.open',
+  click: 'task.run.action.click',
+  type: 'task.run.action.type',
+  press_key: 'task.run.action.press',
+  key: 'task.run.action.press',
+  scroll: 'task.run.action.scroll',
+  screenshot: 'task.run.action.screenshot',
+  back: 'task.run.action.back',
+  close: 'task.run.action.close',
+  read_page: 'task.run.action.readPage',
+  snapshot: 'task.run.action.readPage',
+};
+
+function argText(args: PayloadRecord, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return '';
+}
+
+/**
+ * External agents send a human-readable title ("Edited types.ts", "Read a.ts");
+ * the first word is the action, the rest the target. Titles without a space
+ * stay whole.
+ */
+function splitAgentTitle(title: string): { verb: string; target: string } {
+  const trimmed = title.trim();
+  const space = trimmed.indexOf(' ');
+  if (space <= 0) return { verb: trimmed, target: '' };
+  return { verb: trimmed.slice(0, space), target: trimmed.slice(space + 1).trim() };
+}
+
+/** `path` + the read window (`offset` is 1-indexed), as in "Read a.ts (50-99)". */
+function readTarget(path: string, args: PayloadRecord): string {
+  const offset =
+    typeof args['offset'] === 'number' && args['offset'] > 0 ? Math.trunc(args['offset']) : null;
+  const limit =
+    typeof args['limit'] === 'number' && args['limit'] > 0 ? Math.trunc(args['limit']) : null;
+  if (offset === null && limit === null) return path;
+  const start = offset ?? 1;
+  return limit === null ? `${path} (from ${start})` : `${path} (${start}-${start + limit - 1})`;
+}
+
+/**
+ * 任务详情页一行工具调用的展示模型：动词 + 操作目标（文件名 / 命令）+
+ * 新增 / 删除行数。外部智能体用自带的 title；内置 pi 工具按参数归一化，
+ * edit / write 的行数在这里从参数直接算。
+ */
+export function toolRowDisplay(entry: Extract<TaskRunEntry, { kind: 'tool' }>): TaskRunToolRow {
+  const args = recordOf(entry.args);
+  // A failed call did not change anything: no diff stats on the row.
+  const mayShowStats = entry.result === null || entry.result.ok;
+  const resultStats = mayShowStats ? (entry.result?.diffStats ?? null) : null;
+
+  if (entry.title !== null && entry.title.trim().length > 0) {
+    const { verb, target } = splitAgentTitle(entry.title);
+    return {
+      actionKey: null,
+      verb,
+      target,
+      mono: false,
+      added: resultStats?.added ?? null,
+      removed: resultStats?.removed ?? null,
+    };
+  }
+
+  const name = entry.name.toLowerCase();
+  const path = argText(args, 'path', 'file_path', 'filePath');
+  const row = (
+    actionKey: MessageKey,
+    target: string,
+    mono = false,
+    stats: DiffStats | null = null,
+  ): TaskRunToolRow => ({
+    actionKey,
+    verb: '',
+    target,
+    mono,
+    added: resultStats?.added ?? stats?.added ?? null,
+    removed: resultStats?.removed ?? stats?.removed ?? null,
+  });
+
+  switch (name) {
+    case 'read':
+      return row('task.run.action.read', readTarget(path, args));
+    case 'write': {
+      const content = args['content'];
+      const stats =
+        mayShowStats && typeof content === 'string'
+          ? { added: countLines(content), removed: 0 }
+          : null;
+      return row('task.run.action.write', path, false, stats);
+    }
+    case 'edit':
+      return row(
+        'task.run.action.edit',
+        path,
+        false,
+        mayShowStats ? diffStatsOfEdits(args['edits']) : null,
+      );
+    case 'ls':
+      return row('task.run.action.ls', path.length > 0 ? path : '.');
+    case 'find':
+      return row('task.run.action.find', argText(args, 'pattern', 'query') || path);
+    case 'grep':
+      return row('task.run.action.grep', argText(args, 'pattern', 'query') || path);
+    case 'bash':
+    case 'powershell':
+      return row('task.run.action.run', argText(args, 'command', 'cmd'), true);
+    case 'ask_user':
+    case 'ask_question':
+      return row('task.run.action.ask', argText(args, 'question', 'text'));
+    case 'send_message':
+      return row('task.run.action.send', argText(args, 'text', 'message'));
+    case 'update_plan':
+      return row('task.run.action.plan', argText(args, 'explanation'));
+    case 'capability_call':
+      return row('task.run.action.call', argText(args, 'name', 'tool', 'toolName'));
+    default:
+      break;
+  }
+
+  if (name.startsWith('browser_')) {
+    const actionKey = BROWSER_ACTIONS[name.slice('browser_'.length)] ?? 'task.run.action.open';
+    return row(actionKey, toolCallSummary(entry));
+  }
+
+  return {
+    actionKey: null,
+    verb: entry.name,
+    target: toolCallSummary(entry) || entry.name,
+    mono: false,
+    added: resultStats?.added ?? null,
+    removed: resultStats?.removed ?? null,
+  };
+}
+
 /** Pretty JSON for the expanded call args; strings are shown as-is. */
 export function formatToolArgs(args: unknown): string {
   if (args === null || args === undefined) return '';
@@ -241,6 +455,21 @@ export function formatToolArgs(args: unknown): string {
   } catch {
     return String(args);
   }
+}
+
+/**
+ * 展开工具卡时要展示的「原始命令」：shell 工具取完整 command，其余工具回退为
+ * 格式化后的参数。不截断——折叠行已经给了摘要。
+ */
+export function toolCommandText(
+  entry: Pick<Extract<TaskRunEntry, { kind: 'tool' }>, 'name' | 'args'>,
+): string {
+  const args = recordOf(entry.args);
+  if (entry.name === 'bash' || entry.name === 'powershell') {
+    const command = args['command'] ?? args['cmd'];
+    if (typeof command === 'string' && command.trim().length > 0) return command.trim();
+  }
+  return formatToolArgs(entry.args);
 }
 
 /** First line of a tool result, for a collapsed row; '' when there is no output. */

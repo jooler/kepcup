@@ -1,119 +1,110 @@
 <script lang="ts">
-  import {
-    ChevronDown,
-    ChevronRight,
-    CircleCheck,
-    CircleSlash,
-    CircleX,
-    Loader2,
-    Wrench,
-  } from '@lucide/svelte';
+  import { Check, CircleCheck, CircleSlash, CircleX, Copy, Loader2 } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import {
-    formatToolArgs,
-    resultPreview,
-    toolCallSummary,
-    type TaskRunEntry,
-  } from './task-run-view';
+  import { toolCommandText, type TaskRunEntry } from './task-run-view';
 
   /**
-   * One tool call of the task execution timeline (docs/design/42-task-run-view.md):
-   * a compact row with the call summary and its outcome; expanding shows the
-   * full arguments and result. Failed results start expanded.
+   * One tool call expanded inside a tool group (docs/design/42-task-run-view.md):
+   * the raw invocation with a hover copy button, and its output underneath.
+   * The collapsed one-line row lives in TaskRunToolGroup.
    */
   let { entry, active }: { entry: Extract<TaskRunEntry, { kind: 'tool' }>; active: boolean } =
     $props();
 
-  let manual = $state<boolean | null>(null);
-  const summary = $derived(toolCallSummary(entry));
-  const preview = $derived(entry.result !== null ? resultPreview(entry.result.content) : '');
-  const expanded = $derived(manual ?? (entry.result !== null && !entry.result.ok));
-  const args = $derived(formatToolArgs(entry.args));
+  let copied = $state(false);
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
+  const command = $derived(toolCommandText(entry));
+  const isShell = $derived(entry.name === 'bash' || entry.name === 'powershell');
+
+  async function copyCommand(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(command);
+      copied = true;
+      if (copyTimer !== null) clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => (copied = false), 1500);
+    } catch {
+      // Clipboard unavailable (permissions / non-secure context): leave the label.
+    }
+  }
+
+  $effect(() => () => {
+    if (copyTimer !== null) clearTimeout(copyTimer);
+  });
 </script>
 
-<div class="overflow-hidden rounded-xl border bg-background/70" data-testid="task-run-tool">
+<div
+  class="group/tool relative overflow-hidden rounded-lg border bg-muted/20"
+  data-testid="task-run-tool-detail"
+>
   <button
     type="button"
-    class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent/40"
-    aria-expanded={expanded}
-    onclick={() => (manual = !expanded)}
-    data-testid="task-run-tool-toggle"
+    class="absolute top-1.5 right-1.5 z-10 flex items-center gap-1 rounded-md border bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover/tool:opacity-100 hover:text-foreground focus-visible:opacity-100"
+    onclick={() => void copyCommand()}
+    aria-label={t('task.run.copy')}
+    title={copied ? t('task.run.copied') : t('task.run.copy')}
+    data-testid="task-run-tool-copy"
   >
-    {#if expanded}
-      <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    {#if copied}
+      <Check class="size-3 text-emerald-600" aria-hidden="true" />
+      {t('task.run.copied')}
     {:else}
-      <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <Copy class="size-3" aria-hidden="true" />
+      {t('task.run.copy')}
     {/if}
-    <Wrench class="size-3.5 shrink-0 text-sky-600" aria-hidden="true" />
-    <span class="shrink-0 font-mono text-[11px] text-muted-foreground">{entry.name}</span>
-    {#if summary.length > 0}
-      <span class="min-w-0 flex-1 truncate font-mono text-foreground/80" title={summary}
-        >{summary}</span
-      >
-    {:else}
-      <span class="min-w-0 flex-1"></span>
-    {/if}
+  </button>
+
+  <div class="flex items-center gap-2 border-b px-2.5 py-1.5 pr-20">
+    <span class="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+      {entry.name}
+    </span>
     {#if entry.result === null}
       {#if active}
-        <span
-          class="flex shrink-0 items-center gap-1 text-muted-foreground"
-          data-testid="task-run-tool-running"
-        >
-          <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+        <span class="flex items-center gap-1 text-[10px] text-muted-foreground">
+          <Loader2 class="size-3 animate-spin" aria-hidden="true" />
           {t('task.run.runningTool')}
         </span>
       {:else}
-        <CircleSlash class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <CircleSlash class="size-3 text-muted-foreground" aria-hidden="true" />
       {/if}
     {:else if entry.result.ok}
-      <span
-        class="flex shrink-0 items-center gap-1 text-emerald-600"
-        data-testid="task-run-tool-ok"
-      >
-        <CircleCheck class="size-3.5" aria-hidden="true" />
+      <span class="flex items-center gap-1 text-[10px] text-emerald-600">
+        <CircleCheck class="size-3" aria-hidden="true" />
         {t('task.run.toolOk')}
       </span>
     {:else}
-      <span
-        class="flex shrink-0 items-center gap-1 text-destructive"
-        data-testid="task-run-tool-failed"
-      >
-        <CircleX class="size-3.5" aria-hidden="true" />
+      <span class="flex items-center gap-1 text-[10px] text-destructive">
+        <CircleX class="size-3" aria-hidden="true" />
         {t('task.run.toolFailed')}
       </span>
     {/if}
-  </button>
-  {#if !expanded && preview.length > 0}
-    <p class="truncate border-t px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
-      {preview}
-    </p>
-  {/if}
-  {#if expanded}
-    <div class="space-y-2 border-t px-3 py-2 text-xs" data-testid="task-run-tool-detail">
-      {#if args.length > 0}
-        <div>
-          <p class="mb-1 text-[11px] text-muted-foreground">{t('task.run.args')}</p>
-          <pre
-            class="max-h-60 overflow-auto rounded-lg bg-muted/60 p-2 font-mono text-[11px] whitespace-pre-wrap">{args}</pre>
-        </div>
-      {/if}
-      <div>
-        <p class="mb-1 text-[11px] text-muted-foreground">{t('task.run.result')}</p>
-        {#if entry.result === null}
-          <p class="text-muted-foreground">
-            {active ? t('task.run.runningTool') : t('task.run.noResult')}
-          </p>
-        {:else if entry.result.content.length > 0}
-          <pre
-            class="max-h-80 overflow-auto rounded-lg bg-muted/60 p-2 font-mono text-[11px] whitespace-pre-wrap">{entry
-              .result.content}</pre>
-        {:else}
-          <p class="text-muted-foreground">{t('task.run.noOutput')}</p>
-        {/if}
-        {#if entry.result?.errorCode !== undefined}
-          <p class="mt-1 font-mono text-[11px] text-destructive">{entry.result.errorCode}</p>
-        {/if}
-      </div>
+  </div>
+
+  {#if command.length > 0}
+    <div>
+      <pre
+        class="max-h-60 overflow-auto px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">{isShell
+          ? `$ ${command}`
+          : command}</pre>
     </div>
+  {:else}
+    <p class="px-2.5 py-2 text-[11px] text-muted-foreground">{t('task.run.noArgs')}</p>
   {/if}
+
+  <div class="border-t px-2.5 py-2" data-testid="task-run-tool-result">
+    <p class="mb-1 text-[10px] text-muted-foreground">{t('task.run.result')}</p>
+    {#if entry.result === null}
+      <p class="text-[11px] text-muted-foreground">
+        {active ? t('task.run.runningTool') : t('task.run.noResult')}
+      </p>
+    {:else if entry.result.content.length > 0}
+      <pre
+        class="max-h-80 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80">{entry
+          .result.content}</pre>
+    {:else}
+      <p class="text-[11px] text-muted-foreground">{t('task.run.noOutput')}</p>
+    {/if}
+    {#if entry.result?.errorCode !== undefined}
+      <p class="mt-1 font-mono text-[11px] text-destructive">{entry.result.errorCode}</p>
+    {/if}
+  </div>
 </div>

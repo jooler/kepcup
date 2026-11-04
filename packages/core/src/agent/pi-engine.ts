@@ -146,7 +146,7 @@ export class PiEngine implements AgentEngine {
           toolCallId: String(toolCallId),
           signal,
           terminate: (reason) => handle.markTerminated(reason),
-          progress: (text) => handle.emit({ type: 'progress', payload: { text } }),
+          progress: (text) => handle.emit({ type: 'progress', payload: { text, transient: true } }),
         };
         void onUpdate;
 
@@ -478,6 +478,7 @@ class RunHandleImpl implements RunHandle {
           type: 'assistant',
           payload: {
             text: textOf(message.content),
+            thinking: thinkingOf(message.content),
             stopReason: message.stopReason,
             errorMessage: message.errorMessage,
           },
@@ -677,6 +678,19 @@ function textOf(content: unknown): string {
     const candidate = block as { type?: string; text?: string };
     if (candidate.type === 'text' && typeof candidate.text === 'string') {
       result += candidate.text;
+    }
+  }
+  return result;
+}
+
+/** Reasoning text of one assistant message (dropped when only an opaque/redacted signature exists). */
+function thinkingOf(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  let result = '';
+  for (const block of content) {
+    const candidate = block as { type?: string; thinking?: string; redacted?: boolean };
+    if (candidate.type === 'thinking' && candidate.redacted !== true) {
+      if (typeof candidate.thinking === 'string') result += candidate.thinking;
     }
   }
   return result;

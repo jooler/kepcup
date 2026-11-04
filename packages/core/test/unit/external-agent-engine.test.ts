@@ -1,9 +1,22 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AGENT_CATALOG, agentModelRef, HOST_CAPABILITIES, type AgentCatalogEntry } from '@kepcup/shared';
+import {
+  AGENT_CATALOG,
+  agentModelRef,
+  HOST_CAPABILITIES,
+  type AgentCatalogEntry,
+} from '@kepcup/shared';
 import {
   agentTurn,
   fakeAgentSpawner,
@@ -46,7 +59,7 @@ const FAKE = AGENT_CATALOG.find((entry) => entry.id === 'fake')!;
 
 /** PiEngine payload keys (pi-engine.ts RunHandleImpl / tool wrapper). */
 const PI_KEYS = {
-  assistant: ['errorMessage', 'stopReason', 'text'],
+  assistant: ['errorMessage', 'stopReason', 'text', 'thinking'],
   tool_call: ['args', 'toolCallId', 'toolName'],
   tool_result: ['content', 'ok', 'toolCallId', 'toolName'],
 };
@@ -69,7 +82,10 @@ describe('AcpEventMapper', () => {
     const { events, finalText } = mapper.finish('end_turn');
     expect(finalText).toBe('你好');
     expect(events).toEqual([
-      { type: 'assistant', payload: { text: '你好', stopReason: 'stop', errorMessage: undefined } },
+      {
+        type: 'assistant',
+        payload: { text: '你好', thinking: '想想', stopReason: 'stop', errorMessage: undefined },
+      },
     ]);
     expectPiShape(events);
   });
@@ -77,9 +93,16 @@ describe('AcpEventMapper', () => {
   it('splits interim prose at tool boundaries (D54) and pairs tool calls', () => {
     const mapper = new AcpEventMapper();
     const events: EngineEvent[] = [];
-    const push = (update: Parameters<AcpEventMapper['map']>[0]) => events.push(...mapper.map(update));
+    const push = (update: Parameters<AcpEventMapper['map']>[0]) =>
+      events.push(...mapper.map(update));
     push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '先查两个文件' } });
-    push({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'Read a', kind: 'read', rawInput: { p: 'a' } });
+    push({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'a',
+      title: 'Read a',
+      kind: 'read',
+      rawInput: { p: 'a' },
+    });
     push({ sessionUpdate: 'tool_call', toolCallId: 'b', title: 'Read b', kind: 'read' });
     push({ sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'in_progress' });
     push({
@@ -88,9 +111,20 @@ describe('AcpEventMapper', () => {
       status: 'completed',
       content: [{ type: 'content', content: { type: 'text', text: 'A' } }],
     });
-    push({ sessionUpdate: 'tool_call_update', toolCallId: 'b', status: 'failed', rawOutput: { error: 'nope' } });
+    push({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'b',
+      status: 'failed',
+      rawOutput: { error: 'nope' },
+    });
     // A tool-only model turn after the results: still one (empty) assistant.
-    push({ sessionUpdate: 'tool_call', toolCallId: 'c', title: 'Edit', kind: 'edit', status: 'completed' });
+    push({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'c',
+      title: 'Edit',
+      kind: 'edit',
+      status: 'completed',
+    });
     push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '都好了' } });
     const finish = mapper.finish('end_turn');
     events.push(...finish.events);
@@ -109,11 +143,35 @@ describe('AcpEventMapper', () => {
     expect(events[0]!.payload).toMatchObject({ text: '先查两个文件', stopReason: 'toolUse' });
     expect(events[1]!.payload).toEqual({ toolCallId: 'a', toolName: 'Read a', args: { p: 'a' } });
     expect(events[3]!.payload).toMatchObject({ toolCallId: 'a', ok: true, content: 'A' });
-    expect(events[4]!.payload).toMatchObject({ toolCallId: 'b', ok: false, content: '{"error":"nope"}' });
+    expect(events[4]!.payload).toMatchObject({
+      toolCallId: 'b',
+      ok: false,
+      content: '{"error":"nope"}',
+    });
     expect(events[5]!.payload).toMatchObject({ text: '', stopReason: 'toolUse' });
     expect(events[8]!.payload).toMatchObject({ text: '都好了', stopReason: 'stop' });
     expect(finish.finalText).toBe('都好了');
     expectPiShape(events);
+  });
+
+  it('persists line stats from a tool call diff content', () => {
+    const mapper = new AcpEventMapper();
+    mapper.map({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'e1',
+      title: 'Edited a.ts',
+      kind: 'edit',
+    });
+    const events = mapper.map({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'e1',
+      status: 'completed',
+      content: [{ type: 'diff', path: '/a.ts', oldText: 'a\nb', newText: 'a\nc\nd' }],
+    });
+    expect(events[0]).toMatchObject({
+      type: 'tool_result',
+      payload: { toolCallId: 'e1', ok: true, diffStats: { added: 2, removed: 1 } },
+    });
   });
 
   it('prefers the tool name over its title and maps plans to progress', () => {
@@ -134,10 +192,16 @@ describe('AcpEventMapper', () => {
 
   it('cancel / refusal / dangling calls end without a final text', () => {
     const cancelled = new AcpEventMapper();
-    cancelled.map({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '半句' } });
+    cancelled.map({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: '半句' },
+    });
     expect(cancelled.finish('cancelled')).toEqual({
       events: [
-        { type: 'assistant', payload: { text: '半句', stopReason: 'aborted', errorMessage: undefined } },
+        {
+          type: 'assistant',
+          payload: { text: '半句', thinking: '', stopReason: 'aborted', errorMessage: undefined },
+        },
       ],
       finalText: '',
     });
@@ -145,6 +209,7 @@ describe('AcpEventMapper', () => {
     const refused = new AcpEventMapper();
     expect(refused.finish('refusal').events[0]!.payload).toEqual({
       text: '',
+      thinking: '',
       stopReason: 'error',
       errorMessage: 'refusal',
     });
@@ -197,7 +262,7 @@ describe('ACP client helpers', () => {
     });
   });
 
-  it('only allows this session\'s bridge server and the run\'s tools (no impersonation)', () => {
+  it("only allows this session's bridge server and the run's tools (no impersonation)", () => {
     // A user / workdir MCP server literally named "kepcup".
     expect(
       decidePermission(request('x', 'mcp__kepcup__send_message'), genericAcpProvider, bridged)
@@ -230,7 +295,9 @@ describe('ACP client helpers', () => {
     ).toBe('cancelled');
     expect(
       decidePermission(
-        request('Write file', undefined, [{ optionId: 'always', name: 'Always', kind: 'allow_always' }]),
+        request('Write file', undefined, [
+          { optionId: 'always', name: 'Always', kind: 'allow_always' },
+        ]),
         genericAcpProvider,
         inRun,
       ).response,
@@ -238,11 +305,15 @@ describe('ACP client helpers', () => {
   });
 
   it('classifies errors: ACP auth_required by default, provider overrides per phase', () => {
-    expect(defaultClassifyError(agentErrorInfo({ code: -32000, message: 'x' }))).toBe('auth_required');
+    expect(defaultClassifyError(agentErrorInfo({ code: -32000, message: 'x' }))).toBe(
+      'auth_required',
+    );
     expect(defaultClassifyError(agentErrorInfo(new Error('boom')))).toBe('other');
     const err = Object.assign(new Error('no API key for provider route'), { code: -32603 });
     const classify = (info: AgentErrorInfo, phase: string) =>
-      phase === 'prompt' && /no API key/.test(info.message) ? ('auth_required' as const) : ('other' as const);
+      phase === 'prompt' && /no API key/.test(info.message)
+        ? ('auth_required' as const)
+        : ('other' as const);
     expect(toAgentError(err, 'dsh', classify, 'prompt').code).toBe('AGENT_AUTH_REQUIRED');
     expect(toAgentError(err, 'dsh', classify, 'session_new').code).toBe('AGENT_FAILED');
     expect(toAgentError(err, 'x', () => 'not_installed').code).toBe('AGENT_UNAVAILABLE');
@@ -250,11 +321,7 @@ describe('ACP client helpers', () => {
   });
 
   it('finds system CLIs on Windows by PATHEXT only, never the extension-less sh shim', () => {
-    const files = new Set([
-      'C:\\npm\\codex',
-      'C:\\npm\\codex.cmd',
-      'C:\\bin\\agent.EXE',
-    ]);
+    const files = new Set(['C:\\npm\\codex', 'C:\\npm\\codex.cmd', 'C:\\bin\\agent.EXE']);
     const options = {
       platform: 'win32' as const,
       env: { PATH: 'C:\\npm;C:\\bin', PATHEXT: '.COM;.EXE;.BAT;.CMD' },
@@ -276,37 +343,43 @@ describe('ACP client helpers', () => {
     ).toBe('/opt/npm/codex');
   });
 
-  it.skipIf(process.platform === 'win32')('withUserPath appends ~/.local/bin and Homebrew after existing PATH', () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
-    const localBin = path.join(home, '.local', 'bin');
-    mkdirSync(localBin, { recursive: true });
-    const dirs = userPathDirs({ home, platform: 'darwin' });
-    expect(dirs).toContain(localBin);
-    const env = withUserPath({ PATH: '/usr/bin:/bin' }, { home, platform: 'darwin' });
-    const parts = env.PATH?.split(':') ?? [];
-    expect(parts.slice(0, 2)).toEqual(['/usr/bin', '/bin']);
-    expect(parts).toContain(localBin);
-    // idempotent
-    expect(withUserPath(env, { home, platform: 'darwin' }).PATH).toBe(env.PATH);
-    rmSync(home, { recursive: true, force: true });
-  });
+  it.skipIf(process.platform === 'win32')(
+    'withUserPath appends ~/.local/bin and Homebrew after existing PATH',
+    () => {
+      const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
+      const localBin = path.join(home, '.local', 'bin');
+      mkdirSync(localBin, { recursive: true });
+      const dirs = userPathDirs({ home, platform: 'darwin' });
+      expect(dirs).toContain(localBin);
+      const env = withUserPath({ PATH: '/usr/bin:/bin' }, { home, platform: 'darwin' });
+      const parts = env.PATH?.split(':') ?? [];
+      expect(parts.slice(0, 2)).toEqual(['/usr/bin', '/bin']);
+      expect(parts).toContain(localBin);
+      // idempotent
+      expect(withUserPath(env, { home, platform: 'darwin' }).PATH).toBe(env.PATH);
+      rmSync(home, { recursive: true, force: true });
+    },
+  );
 
-  it.skipIf(process.platform === 'win32')('withUserPath keeps existing PATH priority: a bundled-bin prepend stays first, no duplicates', () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
-    const localBin = path.join(home, '.local', 'bin');
-    const homeBin = path.join(home, 'bin');
-    mkdirSync(localBin, { recursive: true });
-    mkdirSync(homeBin, { recursive: true });
-    const bundled = '/opt/KepCup/resources/bin';
-    // ~/bin is already on PATH (after the system dirs): it must not move up.
-    const current = `${bundled}:/usr/bin:/bin:${homeBin}`;
-    const parts = withUserPath({ PATH: current }, { home, platform: 'linux' }).PATH!.split(':');
-    expect(parts.slice(0, 4)).toEqual([bundled, '/usr/bin', '/bin', homeBin]);
-    expect(parts[0]).toBe(bundled);
-    expect(parts.indexOf(localBin)).toBeGreaterThan(3);
-    expect(parts.filter((dir) => dir === homeBin)).toHaveLength(1);
-    rmSync(home, { recursive: true, force: true });
-  });
+  it.skipIf(process.platform === 'win32')(
+    'withUserPath keeps existing PATH priority: a bundled-bin prepend stays first, no duplicates',
+    () => {
+      const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
+      const localBin = path.join(home, '.local', 'bin');
+      const homeBin = path.join(home, 'bin');
+      mkdirSync(localBin, { recursive: true });
+      mkdirSync(homeBin, { recursive: true });
+      const bundled = '/opt/KepCup/resources/bin';
+      // ~/bin is already on PATH (after the system dirs): it must not move up.
+      const current = `${bundled}:/usr/bin:/bin:${homeBin}`;
+      const parts = withUserPath({ PATH: current }, { home, platform: 'linux' }).PATH!.split(':');
+      expect(parts.slice(0, 4)).toEqual([bundled, '/usr/bin', '/bin', homeBin]);
+      expect(parts[0]).toBe(bundled);
+      expect(parts.indexOf(localBin)).toBeGreaterThan(3);
+      expect(parts.filter((dir) => dir === homeBin)).toHaveLength(1);
+      rmSync(home, { recursive: true, force: true });
+    },
+  );
 
   it('userPathDirs / withUserPath are no-ops on win32', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
@@ -330,14 +403,20 @@ describe('ACP client helpers', () => {
   });
 
   it('runs Windows .cmd shims through cmd.exe with escaped arguments', () => {
-    expect(
-      prepareSpawn({ command: '/usr/bin/agent', args: ['acp'], env: {} }, 'linux'),
-    ).toEqual({ command: '/usr/bin/agent', args: ['acp'], windowsVerbatimArguments: false });
+    expect(prepareSpawn({ command: '/usr/bin/agent', args: ['acp'], env: {} }, 'linux')).toEqual({
+      command: '/usr/bin/agent',
+      args: ['acp'],
+      windowsVerbatimArguments: false,
+    });
     expect(
       prepareSpawn({ command: 'C:\\a\\agent.exe', args: ['acp'], env: {} }, 'win32'),
     ).toMatchObject({ command: 'C:\\a\\agent.exe', windowsVerbatimArguments: false });
     const cmd = prepareSpawn(
-      { command: 'C:\\npm\\codex.cmd', args: ['acp', 'a b&c', 'say "hi"'], env: { ComSpec: 'C:\\Windows\\cmd.exe' } },
+      {
+        command: 'C:\\npm\\codex.cmd',
+        args: ['acp', 'a b&c', 'say "hi"'],
+        env: { ComSpec: 'C:\\Windows\\cmd.exe' },
+      },
       'win32',
     );
     expect(cmd.command).toBe('C:\\Windows\\cmd.exe');
@@ -435,7 +514,10 @@ describe('host capability registry vs real tools', () => {
             : capability.id === 'apps'
               ? [appToolName('github', 'list_repos'), APP_REQUEST_CONNECTION_TOOL]
               : [...names];
-        expect(candidates.some((name) => name.startsWith(prefix)), prefix).toBe(true);
+        expect(
+          candidates.some((name) => name.startsWith(prefix)),
+          prefix,
+        ).toBe(true);
       }
     }
   });
@@ -644,7 +726,13 @@ describe('ExternalAgentEngine', () => {
   it('reports a missing executable as AGENT_UNAVAILABLE', async () => {
     const { engine, spec } = setup(
       { turns: [] },
-      { realSpawn: { command: path.join(tmpdir(), 'kepcup-no-such-agent-binary'), args: [], env: {} } },
+      {
+        realSpawn: {
+          command: path.join(tmpdir(), 'kepcup-no-such-agent-binary'),
+          args: [],
+          env: {},
+        },
+      },
     );
     const outcome = await engine.startRun(spec()).done;
     expect(outcome).toMatchObject({ status: 'failed', error: { code: 'AGENT_UNAVAILABLE' } });
@@ -676,7 +764,10 @@ describe('ExternalAgentEngine', () => {
       options: [{ value, name: value }],
     });
     const { engine, started, spec } = setup({
-      configOptions: [select('model', 'model', 'm-default'), select('effort', 'thought_level', 'low')],
+      configOptions: [
+        select('model', 'model', 'm-default'),
+        select('effort', 'thought_level', 'low'),
+      ],
       turns: [agentTurn().text('ok')],
     });
     let sessionId = '';
@@ -705,9 +796,14 @@ describe('ExternalAgentEngine', () => {
 
   it('builds one prompt from the system prompt and messages; images follow promptCapabilities', async () => {
     const image = { mimeType: 'image/png', base64: 'AAAA' };
-    const withImages = setup({ promptCapabilities: { image: true }, turns: [agentTurn().text('a')] });
+    const withImages = setup({
+      promptCapabilities: { image: true },
+      turns: [agentTurn().text('a')],
+    });
     await withImages.engine.startRun(
-      withImages.spec({ messages: [{ role: 'user', content: 'HELLO', timestamp: 0, images: [image] }] }),
+      withImages.spec({
+        messages: [{ role: 'user', content: 'HELLO', timestamp: 0, images: [image] }],
+      }),
     ).done;
     const blocks = withImages.started[0]!.observed.prompts[0]!.blocks;
     expect(blocks[0]).toEqual({ type: 'text', text: 'SYSTEM\n\nHELLO' });
@@ -715,7 +811,9 @@ describe('ExternalAgentEngine', () => {
 
     const textOnly = setup({ turns: [agentTurn().text('b')] });
     await textOnly.engine.startRun(
-      textOnly.spec({ messages: [{ role: 'user', content: 'HELLO', timestamp: 0, images: [image] }] }),
+      textOnly.spec({
+        messages: [{ role: 'user', content: 'HELLO', timestamp: 0, images: [image] }],
+      }),
     ).done;
     const only = textOnly.started[0]!.observed.prompts[0]!.blocks;
     expect(only).toHaveLength(1);
@@ -725,9 +823,8 @@ describe('ExternalAgentEngine', () => {
 
   it('honours promptParts when the caller provides them', async () => {
     const { engine, started, spec } = setup({ turns: [agentTurn().text('ok')] });
-    await engine.startRun(
-      spec({ promptParts: { session: 'S', run: 'R', conversation: 'C' } }),
-    ).done;
+    await engine.startRun(spec({ promptParts: { session: 'S', run: 'R', conversation: 'C' } }))
+      .done;
     expect(started[0]!.observed.prompts[0]!.text).toBe('S\n\nR\n\nC');
   });
 
@@ -745,7 +842,9 @@ describe('ExternalAgentEngine', () => {
   it('fails unknown agents, never steers, reports no tokens; complete() too', async () => {
     const { engine, spec } = setup({ turns: [] });
     const handle = engine.startRun(
-      spec({ external: { agentId: 'nope', permission: 'read_only', capabilities: [], sessionKey: 'k' } }),
+      spec({
+        external: { agentId: 'nope', permission: 'read_only', capabilities: [], sessionKey: 'k' },
+      }),
     );
     expect(handle.steer('追加')).toBe(false);
     expect(handle.tokensSoFar()).toBe(0);
