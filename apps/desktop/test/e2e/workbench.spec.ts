@@ -92,9 +92,33 @@ async function startSession(prefix: string): Promise<Session> {
 }
 
 async function closeSession(session: Session): Promise<void> {
-  await session.app.close();
-  await session.llm.stop();
-  await rmHomeTolerant(session.home);
+  // Windows CI：用例先撞上 test timeout 后，Electron 偶尔对 app.close() 无响应；
+  // 再拖过 Playwright 的 worker teardown（90s）会变成「error was not a part of
+  // any test」整档失败——即便该用例重试已过。给 close 设硬截止，超时 SIGKILL。
+  const pid = session.app.process().pid;
+  try {
+    await Promise.race([
+      session.app.close(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('app.close exceeded 20s')), 20_000);
+      }),
+    ]);
+  } catch {
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  try {
+    await session.llm.stop();
+  } catch {
+    // mock LLM 停不掉也不要挡住清理
+  }
+  // 给 worker teardown 留余量（Windows EBUSY 重试上限压到 15s）。
+  await rmHomeTolerant(session.home, 15_000);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -149,8 +173,8 @@ function localInput(at: number): string {
 
 /** 抽屉里选执行者（Bot / 群，按显示名）。 */
 async function pickAssignee(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="todo-assignee"]').click();
-  await page.getByRole('option', { name, exact: true }).click();
+  await page.locator('[data-testid="todo-assignee"]').click({ timeout: 15_000 });
+  await page.getByRole('option', { name, exact: true }).click({ timeout: 15_000 });
 }
 
 async function quickAdd(page: Page, title: string): Promise<void> {
