@@ -363,6 +363,30 @@ test('a Mermaid code fence renders as a diagram, not a plain code block', async 
   }
 });
 
+test('KaTeX math renders instead of staying as plain dollar signs', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-math-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '公式丁');
+
+    // Streamdown 的 math 插件同样是 opt-in：不挂 plugins.math 时 `$$...$$`
+    // 只会按纯文本输出。挂上后应渲染 KaTeX 结构。
+    llm.script('mock-main', [step().replyText('$$E = mc^2$$')]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('写个公式');
+    await composer.press('Enter');
+
+    const blockMath = page.locator('[data-streamdown-block-math]').first();
+    await expect(blockMath).toBeVisible({ timeout: 60_000 });
+    await expect(blockMath.locator('.katex')).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="bot-bubble"]')).not.toContainText('$$');
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('a Markdown table fullscreen covers the app and keeps its toolbar clickable', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-table-fullscreen-');
