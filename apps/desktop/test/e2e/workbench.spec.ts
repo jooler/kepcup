@@ -92,9 +92,33 @@ async function startSession(prefix: string): Promise<Session> {
 }
 
 async function closeSession(session: Session): Promise<void> {
-  await session.app.close();
-  await session.llm.stop();
-  await rmHomeTolerant(session.home);
+  // Windows CI：用例先撞上 test timeout 后，Electron 偶尔对 app.close() 无响应；
+  // 再拖过 Playwright 的 worker teardown（90s）会变成「error was not a part of
+  // any test」整档失败——即便该用例重试已过。给 close 设硬截止，超时 SIGKILL。
+  const pid = session.app.process().pid;
+  try {
+    await Promise.race([
+      session.app.close(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('app.close exceeded 20s')), 20_000);
+      }),
+    ]);
+  } catch {
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  try {
+    await session.llm.stop();
+  } catch {
+    // mock LLM 停不掉也不要挡住清理
+  }
+  // 给 worker teardown 留余量（Windows EBUSY 重试上限压到 15s）。
+  await rmHomeTolerant(session.home, 15_000);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -149,8 +173,8 @@ function localInput(at: number): string {
 
 /** 抽屉里选执行者（Bot / 群，按显示名）。 */
 async function pickAssignee(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="todo-assignee"]').click();
-  await page.getByRole('option', { name, exact: true }).click();
+  await page.locator('[data-testid="todo-assignee"]').click({ timeout: 15_000 });
+  await page.getByRole('option', { name, exact: true }).click({ timeout: 15_000 });
 }
 
 async function quickAdd(page: Page, title: string): Promise<void> {
@@ -759,19 +783,29 @@ test('todo order: 默认按开始时间排序且禁止拖拽，打开自定义�
     await page.keyboard.press('Escape');
     await expect(toggle).toHaveCount(0, { timeout: 5_000 });
     const cardsOfLane = lane.locator('[data-testid="todo-card"]');
-    const lastFrom = await cardsOfLane.last().boundingBox();
-    const topTo = await cardsOfLane.first().boundingBox();
-    if (lastFrom === null || topTo === null) throw new Error('todo card has no box');
+    const lastCard = cardsOfLane.last();
+    await lastCard.scrollIntoViewIfNeeded();
+    const lastFrom = await lastCard.boundingBox();
+    const zone = await cards.boundingBox();
+    if (lastFrom === null || zone === null) throw new Error('todo card has no box');
     const DRAGGED_ORDER = ['B-较晚', 'D-无时间后建', 'C-无时间先建', 'A-较早'];
-    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2);
+    // svelte-dnd-action 的落点观察循环是 200ms。合成拖拽若在下一拍之前松手，
+    // Linux xvfb 上会把落点当成原地（顺序不变）。先越过 3px 阈值等副本出现，
+    // 再停在卡片区上缘超过一个观察周期，然后补一次 window mouseup。
+    const startX = lastFrom.x + lastFrom.width / 2;
+    const startY = lastFrom.y + lastFrom.height / 2;
+    await page.mouse.move(startX, startY);
     await page.mouse.down();
-    await page.waitForTimeout(80);
-    await page.mouse.move(lastFrom.x + lastFrom.width / 2, lastFrom.y + lastFrom.height / 2 - 12, {
-      steps: 6,
-    });
-    await page.mouse.move(topTo.x + topTo.width / 2, topTo.y + 8, { steps: 20 });
-    await page.waitForTimeout(120);
+    await page.mouse.move(startX + 12, startY - 12, { steps: 6 });
+    await expect(page.locator('#dnd-action-dragged-el')).toBeVisible({ timeout: 5_000 });
+    await page.mouse.move(zone.x + zone.width / 2, zone.y + 8, { steps: 24 });
+    await page.waitForTimeout(400);
     await page.mouse.up();
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }),
+      );
+    });
     await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
     await expect.poll(titles, { timeout: 10_000 }).toEqual(DRAGGED_ORDER);
 

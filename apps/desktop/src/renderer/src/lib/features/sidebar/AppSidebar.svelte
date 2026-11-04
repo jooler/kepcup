@@ -852,7 +852,8 @@ import {
   {/if}
 {/snippet}
 
-<!-- 设置页分类条目（展开/图标两模式共用；激活态同对话行的本地覆盖底色）。 -->
+<!-- 设置页分类条目（展开/图标两模式共用）：hover 与激活底色同对话条目取同一套
+     token（展开态 SIDEBAR_ROW_ACTIVE_CLASS，图标态 SIDEBAR_ICON_ACTIVE_CLASS）。 -->
 {#snippet settingsNavEntry(entry: SettingsNavEntry, iconMode: boolean)}
   {@const Icon = asIconComponent(entry.icon)}
   {@const active = shell.settingsSection === entry.id}
@@ -873,10 +874,10 @@ import {
   {:else}
     <button
       type="button"
-      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors
-        {active
-        ? 'bg-accent text-accent-foreground'
-        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+      class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors text-muted-foreground
+        hover:bg-sidebar-accent hover:text-sidebar-accent-foreground
+        data-active:text-sidebar-accent-foreground data-active:font-medium {SIDEBAR_ROW_ACTIVE_CLASS}"
+      data-active={active ? 'true' : undefined}
       onclick={() => selectSettingsSection(entry.id)}
       data-testid={`settings-nav-${entry.id}`}
     >
@@ -912,7 +913,7 @@ import {
       <button
         type="button"
         class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-muted-foreground
-          transition-colors hover:bg-accent/50 hover:text-foreground"
+          transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         onclick={() => shell.closeSettings()}
         data-testid="settings-nav-back"
       >
@@ -1119,7 +1120,7 @@ import {
               <Sidebar.Menu>
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
-                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 {SIDEBAR_ROW_ACTIVE_CLASS}
+                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-1 px-2 {SIDEBAR_ROW_ACTIVE_CLASS}
                     [&_svg]:size-auto"
                     isActive={workbenchActive}
                     onclick={() => shell.openWorkbench()}
@@ -1137,7 +1138,7 @@ import {
                data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
             <div
               role="separator"
-              class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
+              class="mx-1 my-2 h-px shrink-0 bg-foreground/10"
               data-testid="workbench-nav-separator"
             ></div>
           {/if}
@@ -1213,7 +1214,7 @@ import {
           {:else}
             {#if sectionLayout.showHeaders && butlerConversations.length > 0}
               <!-- 管家不归属任何分组，固定在分组标题之上。 -->
-              <Sidebar.Menu class="mb-4">
+              <Sidebar.Menu>
                 {#each butlerConversations as conversation (conversation.id)}
                   {@render conversationRow(conversation)}
                 {/each}
@@ -1234,7 +1235,7 @@ import {
               onconsider={onSectionConsider}
               onfinalize={onSectionFinalize}
             >
-              {#each sectionItems as group, groupIndex (group.id)}
+              {#each sectionItems as group, _groupIndex (group.id)}
                 {#if isShadow(group)}
                   <!-- 原位占位插槽：高度钉住拖拽浮动副本的实测高度（同备忘分组区）。 -->
                   <div
@@ -1247,7 +1248,7 @@ import {
                   <!-- data-sidebar-section 随克隆带到 body 上的浮动副本，用于克隆样式定界。 -->
                   <div
                     data-sidebar-section
-                    class="relative rounded-md {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}"
+                    class="relative rounded-md mt-2"
                   >
                     {#if sectionLayout.showHeaders}
                       {#if renamingSectionId === group.id}
@@ -1445,19 +1446,53 @@ import {
   {/if}
 
   <!-- 右缘调宽手柄：整条侧栏高度可抓；DOM 上位于头部（app-drag）之后，
-       重叠处 no-drag 胜出，红绿灯旁也能拖。只承担交互，不加视觉反馈。
+       重叠处 no-drag 胜出，红绿灯旁也能拖。hover / 拖拽时在分隔线上亮出居中
+       的胶囊指示并弹出「拖拽 / 双击复位」提示气泡（参考桌面应用分隔线）。
+       注意 Sidebar.Root 自带 class="group"，这里的 group-hover 必须用具名
+       group/resize 限定到本手柄，否则指针在侧栏任何位置都会触发。
        窄屏下列表全宽（宽度跟窗口），无手柄。 -->
   {#if !narrow}
     <div
-      class="app-no-drag absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
+      class="app-no-drag group/resize absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
       role="separator"
       aria-orientation="vertical"
       aria-label={t('sidebar.resizeHandle')}
-      title={t('sidebar.resizeHandle')}
       onpointerdown={(event) => sidebarLayout.startResize(event)}
       ondblclick={() => sidebarLayout.resetWidth()}
       data-testid="sidebar-resize-handle"
-    ></div>
+    >
+      <!-- 高亮分隔线条：1px 宽、整条侧栏高，right-0 恰好压在容器 border-r
+          那 1px 上（位置由结构保证，不按像素挪）。默认透明；hover 片刻以
+          不透明 --divider-hover 淡入——实色把底下的边线完全盖住，整条线
+          与胶囊（它的 flex 子元素）同色同层，看起来是一个整体。拖拽中经
+          内联样式常亮（pointer capture 下 :hover 是否保留因平台而异）。 -->
+      <div
+        class="pointer-events-none absolute inset-y-0 right-0 flex w-px items-center justify-center
+          overflow-visible bg-(--divider-hover) opacity-0 transition-opacity duration-200
+          group-hover/resize:opacity-100 group-hover/resize:delay-150"
+        style:opacity={sidebarLayout.dragging ? '1' : undefined}
+        aria-hidden="true"
+      >
+        <!-- 指示胶囊：在 1px 条内纵横居中（flex），宽度大于条、对称溢出；
+            shrink-0 防止 flex 把它压扁回 1px。 -->
+        <div
+          class="h-12 w-1 shrink-0 rounded-full bg-(--divider-hover)"
+          data-testid="sidebar-resize-indicator"
+        ></div>
+      </div>
+      <!-- 提示气泡：胶囊下方、朝聊天区一侧弹出（hover 即出，拖拽中隐藏）。
+           pointer-events-none，不挡聊天区的点击。 -->
+      <div
+        class="pointer-events-none absolute top-[calc(50%_+_2.5rem)] left-full z-10 ml-3 flex flex-col
+          gap-0.5 rounded-xl border bg-popover px-3 py-2 whitespace-nowrap shadow-md opacity-0
+          transition-opacity duration-200 group-hover/resize:opacity-100 group-hover/resize:delay-500"
+        style:visibility={sidebarLayout.dragging ? 'hidden' : undefined}
+        aria-hidden="true"
+      >
+        <span class="text-sm">{t('sidebar.resizeHandleDrag')}</span>
+        <span class="text-sm text-muted-foreground">{t('sidebar.resizeHandleReset')}</span>
+      </div>
+    </div>
   {/if}
 </Sidebar.Root>
 

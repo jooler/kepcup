@@ -14,6 +14,7 @@ import {
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
 import { buildSandboxPolicy } from '../sandbox/policy.js';
 import { executeUnsandboxed, exemptCommandEnv } from '../sandbox/confirm-executor.js';
+import { catastrophicCommandVerdict } from '../permissions/command-guard.js';
 import { childEnvFor } from '../sandbox/backend-srt.js';
 import { gitExemptionRisk } from '../permissions/git-config-risk.js';
 import type { SandboxBackend, SandboxExecResult, SandboxNetworkPolicy } from '../sandbox/types.js';
@@ -64,6 +65,8 @@ export interface GatewayDeps {
   grants: GrantsService;
   allowlist: AllowlistService;
   unattended: UnattendedService;
+  /** 对话级权限级别（docs/design/13-permissions.md）。缺省 = 始终 manual。 */
+  permissionMode?: { isBypass(conversationId: string | null): boolean };
   /** Workdir runtime (P04): binding lookups, write leases, policy input. */
   workdirs: WorkdirRuntime;
   /**
@@ -502,7 +505,11 @@ export class ToolGateway {
       }
     }
 
-    // 7. Everything else: outside the default range, grantable.
+    // 7. Everything else: outside the default range. Reads are allowed — a
+    //    coding agent needs to inspect the machine (other checkouts, home
+    //    files, mounted drives); sensitive locations above and the app data
+    //    directory still stand in the way. Writes remain grantable.
+    if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
     return {
       kind: 'needs_grant',
       resolvedPath: resolved,
@@ -780,6 +787,36 @@ export class ToolGateway {
     if (toolchainPrefix !== null) {
       policyEnv.PATH = `${toolchainPrefix}${this.#platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`;
       this.#deps.environment?.noteToolchainUse();
+    }
+    // 完全控制（docs/design/13-permissions.md「权限级别」）：跳过审批并脱离沙箱。
+    // 两条不变量不受影响：只读 run 仍只读；Bot 的网络策略不是 open 时保留沙箱
+    // （否则 allowlist / none 会失效）。灾难命令与数据目录由下面的执行入口硬拒。
+    if (
+      this.#deps.permissionMode?.isBypass(identity.conversationId) === true &&
+      readOnlyReason === null &&
+      (!availability.available || req.network.mode === 'open')
+    ) {
+      // 污点期间的沙箱外执行不走 per-command `egress` 卡（完全控制不弹卡），
+      // 这里补一条 `egress_tainted` 审计，Bot 详情的污点外发汇总才不失明（D73 P2）。
+      if (this.taintOf(identity) !== null) {
+        const redacted = this.#deps.secrets.redact(req.command);
+        this.audit(identity, 'egress_tainted', {
+          channel: 'bash',
+          target:
+            redacted.length > EGRESS_TARGET_MAX_CHARS
+              ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
+              : redacted,
+          approved: true,
+          via: 'bypass',
+        });
+      }
+      return this.#executeUnsandboxedApproved(
+        identity,
+        req,
+        cwd,
+        'bypass',
+        Object.keys(policyEnv).length > 0 ? policyEnv : undefined,
+      );
     }
     if (availability.available) {
       // D73 P2 (design 29 §8.3): while tainted, a sandboxed command with the network
@@ -1131,6 +1168,26 @@ export class ToolGateway {
     via: string,
     envOverlay?: Record<string, string>,
   ): Promise<GatewayExecResult> {
+    // Hard floor for every unsandboxed path (confirm mode, request_unsandboxed,
+    // bypass level): disastrous commands and the app data directory are refused
+    // regardless of who approved them.
+    const guard = catastrophicCommandVerdict(req.command, {
+      cwd: workspace,
+      homeDir: this.homeDir(),
+      dataHome: this.#deps.paths.home,
+      // The run's workspace lives inside the data home and stays usable.
+      exemptDirs: [this.workspacePath(identity) ?? workspace],
+      platform: this.#platform,
+    });
+    if (guard.blocked) {
+      this.audit(identity, 'exec_blocked', {
+        command: req.command,
+        cwd: workspace,
+        via,
+        reason: guard.reason ?? 'catastrophic command',
+      });
+      throw new AppError('CATASTROPHIC_COMMAND', guard.reason ?? '该命令已被安全策略拒绝');
+    }
     // W2: an approved command leaves the sandbox — the calling tool (bash in
     // confirm mode) now has an external effect; the ledger records it from here.
     activeEffectHooks()?.escalate('unsandboxed', identity.runId);

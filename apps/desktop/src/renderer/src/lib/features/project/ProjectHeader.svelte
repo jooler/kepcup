@@ -13,6 +13,7 @@
   import { boardTabBadge } from './project-board-badge';
   import ProjectMembersMenu from './ProjectMembersMenu.svelte';
   import ProjectTabs from './ProjectTabs.svelte';
+  import PermissionModeMenu from '$lib/features/approvals/PermissionModeMenu.svelte';
 
   /**
    * 项目组单行实心顶栏（WP6 §4 步骤 4）：左侧（窄屏返回 + 模块 tab），右侧
@@ -99,6 +100,9 @@
   <!-- tab 行：min-w-0 收缩，窄屏时如需横向滚动在 ProjectTabs 根上。 -->
   <ProjectTabs {badge} {boardBadge} />
   <div class="app-no-drag flex shrink-0 items-center gap-2">
+    {#if current}
+      <PermissionModeMenu conversationId={current.conversation.id} />
+    {/if}
     <ProjectMembersMenu />
     <Button
       variant="ghost"

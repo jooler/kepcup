@@ -5,7 +5,7 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.985 0 0);
+  --background: oklch(0.975 0 0);
   /* 输入坞等「浮在内容之上」的表面：比背景亮一级。浅色下背景已是纯白，
      提亮到顶即保持白色（靠边框/阴影分层）；深色下取介于 card 与 muted
      之间的明度，与参考（Grok）输入药丸的抬升观感一致。 */
@@ -19,7 +19,7 @@
   --primary-foreground: oklch(0.945 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
+  --muted: oklch(1 0 0);
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
@@ -28,6 +28,10 @@
      1 = 原样、0.5 = 透明度减半。手动试边框深浅只调这一个值。 */
   --border-alpha: 0.6;
   --border: oklch(0.922 0 0 / calc(100% * var(--border-alpha)));
+  /* 拖拽分隔线 hover 高亮色（左栏手柄与右栏 paneforge 手柄共用，见各自组件）：
+     foreground 30% 叠在不透明 background 上合成的实色。实色是关键——胶囊
+     （不透明）盖在高亮线上，两者同色又不会透出底下边线形成叠色。 */
+  --divider-hover: color-mix(in srgb, var(--foreground) 30%, var(--background));
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --sidebar: oklch(0.945 0 0);
@@ -48,7 +52,7 @@
 }
 
 .dark {
-  --background: oklch(0.18 0 0);
+  --background: oklch(0.15 0 0);
   --foreground: oklch(0.945 0 0);
   --surface-raised: oklch(0.26 0 0);
   --card: oklch(0.205 0 0);
@@ -59,7 +63,7 @@
   --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.945 0 0);
-  --muted: oklch(0.239 0 0);
+  --muted: oklch(0.275 0 0);
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.945 0 0);
@@ -68,11 +72,11 @@
   --border: oklch(1 0 0 / calc(12% * var(--border-alpha)));
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.556 0 0);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.15 0 0);
   --sidebar-foreground: oklch(0.945 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.945 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent: oklch(0.15 0 0);
   --sidebar-accent-foreground: oklch(0.945 0 0);
   --sidebar-border: oklch(1 0 0 / calc(12% * var(--border-alpha)));
   --sidebar-ring: oklch(0.556 0 0);
@@ -95,10 +99,10 @@ html.platform-mac body {
   background: transparent;
 }
 html.platform-mac {
-  --sidebar: oklch(1 0 0 / 65%);
+  --sidebar: oklch(1 0 0 / 25%);
 }
 html.platform-mac.dark {
-  --sidebar: oklch(0.1 0 0 / 75%);
+  --sidebar: oklch(0.25 0 0 / 50%);
 }
 html.platform-mac main {
   background-color: var(--background);

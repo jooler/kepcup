@@ -9,6 +9,7 @@ import {
 /** In-memory runs double: appendStep + replaceStepPayload over a step list. */
 function harness() {
   const steps: Array<{ id: string; type: string; payload: unknown }> = [];
+  const progress: Array<{ toolName?: string; text?: string }> = [];
   let listener: ((event: EngineEvent) => void) | null = null;
   const handle = {
     onEvent: (fn: (event: EngineEvent) => void) => {
@@ -31,9 +32,28 @@ function harness() {
     secrets: { redact: (text: string) => text } as never,
     runId: 'run_r',
     handle,
+    onProgress: (update) => progress.push(update),
   });
-  return { steps, emit: (event: EngineEvent) => listener!(event) };
+  return { steps, progress, emit: (event: EngineEvent) => listener!(event) };
 }
+
+describe('step persistence: tool progress stays on the status line', () => {
+  it('transient tool progress is forwarded but not written as a run step', () => {
+    const { steps, progress, emit } = harness();
+    emit({ type: 'progress', payload: { text: '正在执行命令 pnpm test', transient: true } });
+    expect(steps).toHaveLength(0);
+    expect(progress).toEqual([{ text: '正在执行命令 pnpm test' }]);
+  });
+
+  it('meaningful progress (plan / compaction / subagent) is still a step', () => {
+    const { steps, emit } = harness();
+    emit({ type: 'progress', payload: { text: '计划 1/2：运行测试' } });
+    expect(steps[0]).toMatchObject({
+      type: 'progress',
+      payload: { text: '计划 1/2：运行测试' },
+    });
+  });
+});
 
 describe('step persistence: per-tool param redaction (W1 sensitive input)', () => {
   it('browser_type with sensitive=true: tool_call args show «redacted:N chars», params object untouched', () => {

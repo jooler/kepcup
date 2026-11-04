@@ -298,7 +298,11 @@ export function persistEngineSteps(input: {
       case 'progress': {
         // Progress text can quote agent titles / tool output: redacted (审查 #8).
         const text = redactText(String(event.payload.text));
-        runs.appendStep({ runId, type: 'progress', payload: { ...event.payload, text } });
+        // 工具执行进度（「正在执行命令 …」）只服务状态行：落库会把每次调用再
+        // 复述一遍，任务时间线 / 续接记录里都是噪声。
+        if (event.payload.transient !== true) {
+          runs.appendStep({ runId, type: 'progress', payload: { ...event.payload, text } });
+        }
         if (onProgress !== undefined && text.length > 0) onProgress({ text });
         return;
       }

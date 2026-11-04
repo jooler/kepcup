@@ -128,10 +128,11 @@ describe('ToolGateway.checkPath', () => {
     }
   });
 
-  it('marks paths outside the workspace as needing a grant (P03)', () => {
+  it('allows reads outside the workspace; writes stay grantable (P03)', () => {
     mkdirSync(workspaceOf(), { recursive: true });
-    const decision = gateway.checkPath(identity, path.join(tmpdir(), 'elsewhere'), 'read');
-    expect(decision.kind).toBe('needs_grant');
+    const outside = path.join(tmpdir(), 'elsewhere');
+    expect(gateway.checkPath(identity, outside, 'read').kind).toBe('allowed');
+    expect(gateway.checkPath(identity, outside, 'write').kind).toBe('needs_grant');
   });
 
   it('resolves .. without leaving the workspace semantics', () => {
@@ -264,7 +265,7 @@ describe('ToolGateway.checkPath', () => {
       requests.push({ kind, payload });
       return { approval: { decision: { duration: 'once' } }, decision: 'denied' };
     });
-    await expect(gw.ensurePathAccess(identity, requested, 'read', '测试')).rejects.toMatchObject({
+    await expect(gw.ensurePathAccess(identity, requested, 'write', '测试')).rejects.toMatchObject({
       code: 'APPROVAL_DENIED',
     });
     expect(requests[0]!.kind).toBe('access');
@@ -280,7 +281,7 @@ describe('ToolGateway.checkPath', () => {
       payloads.push(payload);
       return { approval: { decision: { duration: 'once' } }, decision: 'denied' };
     });
-    await expect(gw.ensurePathAccess(identity, requested, 'read', '测试')).rejects.toMatchObject({
+    await expect(gw.ensurePathAccess(identity, requested, 'write', '测试')).rejects.toMatchObject({
       code: 'APPROVAL_DENIED',
     });
     expect(payloads[0]!['sensitive']).toBe(false);

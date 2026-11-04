@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { canonicalPath, resolvePaths } from '../../src/infra/paths.js';
 import { buildSandboxPolicy, alwaysDeniedAddresses, alwaysDeniedDomainEntries } from '../../src/sandbox/policy.js';
-import { childEnvFor, srtNetworkConfigFor } from '../../src/sandbox/backend-srt.js';
+import { allowMacosStartupSysctls, childEnvFor, srtNetworkConfigFor } from '../../src/sandbox/backend-srt.js';
 import type { SandboxNetworkPolicy } from '../../src/sandbox/types.js';
 const paths = resolvePaths('/tmp/kepcup-policy-test');
 
@@ -33,6 +33,8 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readWrite).toContain(paths.cachePipDir);
     expect(policy.readWrite).toContain(paths.cacheXdgDir);
     expect(policy.readWrite).toContain(paths.cacheCargoDir);
+    expect(policy.readWrite).toContain(paths.cacheUvDir);
+    expect(policy.readWrite).toContain(paths.cachePycacheDir);
   });
 
   it('denies the user home, the data home and system locations from reading', () => {
@@ -111,6 +113,8 @@ describe('buildSandboxPolicy', () => {
     // stay writable (package-manager caches, not user files).
     expect(policy.denyRead).not.toContain(workspace());
     expect(policy.readWrite).toContain(paths.cacheNpmDir);
+    expect(policy.readWrite).toContain(paths.cachePycacheDir);
+    expect(policy.readWrite).toContain(paths.cacheUvDir);
   });
 
   it('removes a granted path from denyRead (policy level)', () => {
@@ -202,6 +206,39 @@ describe('buildSandboxPolicy', () => {
     expect(child['npm_config_cache']).toBe(paths.cacheNpmDir);
     expect(Object.keys(child)).not.toContain('SECRET_TOKEN');
     expect(Object.keys(child)).not.toContain('APP_SUPER_SECRET');
+  });
+
+  it('re-allows only ~/.CFUserTextEncoding on darwin and keeps the home denied', () => {
+    const encoding = path.join(canonicalPath(os.homedir()), '.CFUserTextEncoding');
+    const darwin = buildSandboxPolicy({
+      platform: 'darwin',
+      paths,
+      workspacePath: workspace(),
+      network: { mode: 'none', allowDomains: [] },
+    });
+    expect(darwin.readOnly).toContain(encoding);
+    expect(darwin.readWrite).not.toContain(encoding);
+    expect(darwin.denyRead).toContain(canonicalPath(os.homedir()));
+    const linux = buildSandboxPolicy({
+      platform: 'linux',
+      paths,
+      workspacePath: workspace(),
+      network: { mode: 'none', allowDomains: [] },
+    });
+    expect(linux.readOnly.some((entry) => entry.endsWith('.CFUserTextEncoding'))).toBe(false);
+  });
+});
+
+describe('macOS startup sysctls', () => {
+  it('inserts kern.iosupportversion into a seatbelt sysctl allow list once', () => {
+    const profile = `(allow sysctl-read\n  (sysctl-name "kern.osproductversion")\n)`;
+    const wrapped = `sandbox-exec -p '${profile}' /bin/bash -c true`;
+    const once = allowMacosStartupSysctls(wrapped);
+    expect(once).toContain('(sysctl-name "kern.iosupportversion")');
+    expect(once.split('kern.iosupportversion').length - 1).toBe(1);
+    expect(once.indexOf('kern.iosupportversion')).toBeGreaterThan(once.indexOf('kern.osproductversion'));
+    expect(allowMacosStartupSysctls(once)).toBe(once);
+    expect(allowMacosStartupSysctls('bwrap --ro-bind / / true')).toBe('bwrap --ro-bind / / true');
   });
 });
 

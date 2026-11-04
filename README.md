@@ -125,7 +125,7 @@ flowchart TB
 2. **Planning and collaboration** — take in inbound information, whether from user input or automation triggers such as a new email: who executes it, and who needs to pick it up next
 3. **Shared knowledge and delivery** — shared wiki / knowledge
 
-The shared message board and project wiki are ready; board / OKR / schedule planning are still on the roadmap. The product cares about **orchestrating multiple Bots to collaborate at high quality**, not Bot small talk. See [docs/design/41-project-team.md](docs/design/41-project-team.md).
+The shared message board, project wiki, and the first version of the board are ready; OKR / schedule planning are still on the roadmap. The product cares about **orchestrating multiple Bots to collaborate at high quality**, not Bot small talk. See [docs/design/41-project-team.md](docs/design/41-project-team.md).
 
 ## Development roadmap
 
@@ -154,14 +154,14 @@ The shared message board and project wiki are ready; board / OKR / schedule plan
 - [x] Workbench — Items (tasks assigned to Bots) & Memos (fleeting thoughts)
 - [x] Project teams — basics & communication
 - [x] Project teams — wiki
+- [x] Project teams — board (first version)
+- [x] Bot message protocol (Bot-to-Bot delegation)
+- [x] Plugin system (signed marketplace index, plugin package install, per-Bot / per-project enablement)
 
 ### Todo
 
-- [ ] Project teams — board
 - [ ] Project teams — OKR
 - [ ] Project teams — schedule & planning
-- [ ] Plugin system
-- [ ] Bot message protocol
 
 ## We are looking for your OpenMind
 

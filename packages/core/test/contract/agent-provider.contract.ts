@@ -320,6 +320,8 @@ export function runAgentProviderContract(target: ContractTarget): void {
       ]);
       expect(events[1]!.payload).toEqual({
         text: '我先看一下。',
+        // PiEngine always sends thinking ('' when the turn had no thought).
+        thinking: '',
         stopReason: 'toolUse',
         errorMessage: undefined,
       });
@@ -336,7 +338,11 @@ export function runAgentProviderContract(target: ContractTarget): void {
         ok: true,
         content: '# readme',
       });
-      expect(events[4]!.payload).toMatchObject({ text: '看完了，结论是 42。', stopReason: 'stop' });
+      expect(events[4]!.payload).toMatchObject({
+        text: '看完了，结论是 42。',
+        thinking: '',
+        stopReason: 'stop',
+      });
     });
 
     it('cancels through session/cancel and settles cancelled', async () => {

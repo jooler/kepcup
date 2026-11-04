@@ -16,6 +16,7 @@ import {
   AGENT_TURN_BUDGET_TOKENS,
   AppError,
   findAgentEntry,
+  lineDiffCounts,
   parseAgentModelRef,
   TOOL_OUTPUT_MAX_CHARS,
   type AgentCatalogEntry,
@@ -367,6 +368,21 @@ export function toolContentText(update: ToolCallLike): string {
   return truncateToBudget(parts.join('\n'), TOOL_OUTPUT_MAX_CHARS).text;
 }
 
+/** Added / removed lines from an ACP tool call's diff content (null when there is none). */
+function diffStatsOf(update: ToolCallLike): { added: number; removed: number } | null {
+  let added = 0;
+  let removed = 0;
+  let found = false;
+  for (const item of update.content ?? []) {
+    if (item.type !== 'diff') continue;
+    const stats = lineDiffCounts(item.oldText ?? '', item.newText);
+    added += stats.added;
+    removed += stats.removed;
+    found = true;
+  }
+  return found ? { added, removed } : null;
+}
+
 function planProgressText(
   entries: ReadonlyArray<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>,
 ): string {
@@ -386,13 +402,16 @@ function planProgressText(
  *   （一个「模型轮」只发一次：同一轮的多个工具调用共用一条 assistant）；
  * - `tool_call` → `tool_call`，`tool_call_update`（completed / failed）→
  *   `tool_result`，以 `toolCallId` 配对；未回报结果的调用在结束时补失败结果；
- * - `agent_thought_chunk` 不落库；`plan` → `progress`；
+ * - `agent_thought_chunk` 累积到该轮的 assistant 事件（`thinking` 字段），与
+ *   文本一起落库；`plan` → `progress`；
  * - 子代理（带 `parentToolUseId`）的调用与文本不切分、不落为步骤：调用只
  *   转成状态行 `progress`（P5）；
  * - 结束时按 stopReason 发最后一条 `assistant`，`finalText` 取自它。
  */
 export class AcpEventMapper {
   #text = '';
+  /** Reasoning text of the open model turn (agent_thought_chunk), sent with its assistant event. */
+  #thought = '';
   /** A model turn is open: the next tool_call closes it with an assistant event. */
   #turnOpen = true;
   /** Model rounds (assistant events) since the last `takeRounds()` (usage, P5). */
@@ -429,6 +448,13 @@ export class AcpEventMapper {
         if (update.content.type === 'text') {
           this.#turnOpen = true;
           this.#text += update.content.text;
+        }
+        return [];
+      case 'agent_thought_chunk':
+        if (parentToolUseIdOf(update) !== null) return [];
+        if (update.content.type === 'text' && update.content.text.length > 0) {
+          this.#turnOpen = true;
+          this.#thought += update.content.text;
         }
         return [];
       case 'tool_call':
@@ -504,12 +530,13 @@ export class AcpEventMapper {
   finishInterim(): EngineEvent[] {
     const events = this.abandon();
     const text = this.#text;
+    const thinking = this.#takeThought();
     this.#text = '';
     this.#turnOpen = true;
-    if (text.trim().length > 0) {
+    if (text.trim().length > 0 || thinking.trim().length > 0) {
       events.push({
         type: 'assistant',
-        payload: { text, stopReason: 'toolUse', errorMessage: undefined },
+        payload: { text, thinking, stopReason: 'toolUse', errorMessage: undefined },
       });
     }
     return events;
@@ -526,13 +553,14 @@ export class AcpEventMapper {
     const events = this.abandon();
     const piStop = piStopReasonOf(stopReason);
     const text = this.#text;
+    const thinking = this.#takeThought();
     this.#text = '';
     this.#turnOpen = false;
     if (options.terminated === true) {
-      if (text.length > 0) {
+      if (text.length > 0 || thinking.trim().length > 0) {
         events.push({
           type: 'assistant',
-          payload: { text, stopReason: piStop, errorMessage: undefined },
+          payload: { text, thinking, stopReason: piStop, errorMessage: undefined },
         });
       }
       return { events, finalText: '' };
@@ -541,6 +569,7 @@ export class AcpEventMapper {
       type: 'assistant',
       payload: {
         text,
+        thinking,
         stopReason: piStop,
         errorMessage: stopReason === 'refusal' ? 'refusal' : undefined,
       },
@@ -553,12 +582,24 @@ export class AcpEventMapper {
     if (!this.#turnOpen) return [];
     const event: EngineEvent = {
       type: 'assistant',
-      payload: { text: this.#text, stopReason: 'toolUse', errorMessage: undefined },
+      payload: {
+        text: this.#text,
+        thinking: this.#takeThought(),
+        stopReason: 'toolUse',
+        errorMessage: undefined,
+      },
     };
     this.#text = '';
     this.#turnOpen = false;
     this.#rounds += 1;
     return [event];
+  }
+
+  /** Reasoning accumulated so far for the open turn; clears it. */
+  #takeThought(): string {
+    const thought = this.#thought;
+    this.#thought = '';
+    return thought;
   }
 
   #onToolCall(update: ToolCallLike): EngineEvent[] {
@@ -616,6 +657,7 @@ export class AcpEventMapper {
     const toolName = this.#pending.get(id);
     if (toolName !== undefined && (update.status === 'completed' || update.status === 'failed')) {
       this.#pending.delete(id);
+      const diffStats = diffStatsOf(update);
       events.push({
         type: 'tool_result',
         payload: {
@@ -623,6 +665,7 @@ export class AcpEventMapper {
           toolName,
           ok: update.status === 'completed',
           content: toolContentText(update),
+          ...(diffStats !== null ? { diffStats } : {}),
         },
       });
       // All results are back: whatever comes next is a new model turn.

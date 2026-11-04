@@ -6,11 +6,14 @@ import {
   buildTaskRunTimeline,
   formatElapsed,
   formatToolArgs,
+  groupTaskRunEntries,
   latestPlan,
   pendingTaskQuestionOf,
   resultPreview,
   taskElapsedMs,
   toolCallSummary,
+  toolCommandText,
+  toolRowDisplay,
 } from './task-run-view';
 
 /** 任务执行过程页的 run_steps 展示逻辑（docs/design/42-task-run-view.md）。 */
@@ -59,6 +62,43 @@ describe('buildTaskRunTimeline', () => {
     expect(entries[0]).toMatchObject({ kind: 'assistant', text: '我先看一下目录。' });
   });
 
+  it('keeps thinking-only turns and the reasoning text of each assistant turn', () => {
+    const entries = buildTaskRunTimeline([
+      step(0, 'assistant', { text: '', thinking: '先确认目录结构', stopReason: 'toolUse' }),
+      step(1, 'assistant', { text: '看完了。', thinking: '可以总结了', stopReason: 'stop' }),
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: 'assistant',
+      text: '',
+      thinking: '先确认目录结构',
+    });
+    expect(entries[1]).toMatchObject({ text: '看完了。', thinking: '可以总结了' });
+  });
+
+  it('groups consecutive tool calls and splits groups at other entries', () => {
+    const entries = buildTaskRunTimeline([
+      step(0, 'assistant', { text: '开始', stopReason: 'toolUse' }),
+      step(1, 'tool_call', { toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } }),
+      step(2, 'tool_call', { toolCallId: 'c2', toolName: 'read', args: { path: 'a.ts' } }),
+      step(3, 'steer', { text: '先看 README' }),
+      step(4, 'tool_call', { toolCallId: 'c3', toolName: 'bash', args: { command: 'cat README' } }),
+    ]);
+    const grouped = groupTaskRunEntries(entries);
+    expect(grouped.map((entry) => entry.kind)).toEqual([
+      'assistant',
+      'toolGroup',
+      'steer',
+      'toolGroup',
+    ]);
+    const first = grouped[1]!;
+    expect(first.kind).toBe('toolGroup');
+    if (first.kind === 'toolGroup') {
+      expect(first.tools.map((tool) => tool.toolCallId)).toEqual(['c1', 'c2']);
+      expect(first.id).toBe('group-s1');
+    }
+  });
+
   it('pairs a tool_result with its tool_call and keeps the call order', () => {
     const entries = buildTaskRunTimeline([
       step(0, 'assistant', { text: '开始', stopReason: 'toolUse' }),
@@ -97,11 +137,27 @@ describe('buildTaskRunTimeline', () => {
 
   it('keeps progress, steer and system entries in sequence order', () => {
     const entries = buildTaskRunTimeline([
-      step(2, 'progress', { text: '正在执行 pnpm test' }),
+      step(2, 'progress', { text: '计划 1/2：运行测试' }),
       step(0, 'steer', { text: '先看 README' }),
       step(1, 'system', { text: '模型重连' }),
     ]);
     expect(entries.map((entry) => entry.kind)).toEqual(['steer', 'system', 'progress']);
+  });
+
+  it('drops auto tool progress so consecutive tool calls share one group', () => {
+    const entries = buildTaskRunTimeline([
+      step(0, 'tool_call', { toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } }),
+      step(1, 'progress', { text: '正在执行命令 ls' }),
+      step(2, 'tool_call', { toolCallId: 'c2', toolName: 'bash', args: { command: 'cat a' } }),
+      step(3, 'progress', { text: '正在编辑 /tmp/a' }),
+      step(4, 'progress', { text: '计划 2/3：收尾' }),
+      step(5, 'tool_call', { toolCallId: 'c3', toolName: 'bash', args: { command: 'rm a' } }),
+    ]);
+    expect(entries.map((entry) => entry.kind)).toEqual(['tool', 'tool', 'progress', 'tool']);
+    const grouped = groupTaskRunEntries(entries);
+    expect(grouped.map((entry) => entry.kind)).toEqual(['toolGroup', 'progress', 'toolGroup']);
+    const first = grouped[0]!;
+    if (first.kind === 'toolGroup') expect(first.tools).toHaveLength(2);
   });
 
   it('keeps an orphan tool_result visible', () => {
@@ -110,6 +166,14 @@ describe('buildTaskRunTimeline', () => {
     ]);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ kind: 'tool', name: 'bash', result: { ok: true } });
+  });
+
+  it('详情页按分组渲染工具卡并展示思考（源码契约锁接线）', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain("import TaskRunToolGroup from './TaskRunToolGroup.svelte';");
+    expect(source).toContain('const renderEntries = $derived(groupTaskRunEntries(entries));');
+    expect(source).toContain('data-testid="task-run-thinking"');
+    expect(source).toContain('<TaskRunToolGroup tools={entry.tools} {active} />');
   });
 });
 
@@ -217,6 +281,111 @@ describe('formatting helpers', () => {
     expect(resultPreview('\n\nfirst line\nsecond line')).toBe('first line');
     expect(resultPreview('')).toBe('');
   });
+
+  it('shows the raw shell command, and falls back to formatted args', () => {
+    expect(toolCommandText({ name: 'bash', args: { command: ' pnpm test ' } })).toBe('pnpm test');
+    expect(toolCommandText({ name: 'powershell', args: { cmd: 'dir' } })).toBe('dir');
+    expect(toolCommandText({ name: 'read', args: { path: 'a.ts' } })).toContain('"path": "a.ts"');
+  });
+});
+
+describe('toolRowDisplay', () => {
+  const tool = (
+    name: string,
+    args: unknown,
+    extra: {
+      title?: string;
+      result?: { ok: boolean; content: string; diffStats?: { added: number; removed: number } };
+    } = {},
+  ) => ({
+    kind: 'tool' as const,
+    id: 's1',
+    toolCallId: 'c1',
+    name,
+    title: extra.title ?? null,
+    args,
+    result: extra.result ?? null,
+  });
+
+  it('maps built-in tools to a verb + target', () => {
+    expect(toolRowDisplay(tool('bash', { command: 'pnpm test' }))).toMatchObject({
+      actionKey: 'task.run.action.run',
+      target: 'pnpm test',
+      mono: true,
+      added: null,
+      removed: null,
+    });
+    expect(toolRowDisplay(tool('read', { path: 'src/a.ts' }))).toMatchObject({
+      actionKey: 'task.run.action.read',
+      target: 'src/a.ts',
+      mono: false,
+    });
+    expect(toolRowDisplay(tool('read', { path: 'src/a.ts', offset: 50, limit: 50 }))).toMatchObject(
+      {
+        target: 'src/a.ts (50-99)',
+      },
+    );
+    expect(toolRowDisplay(tool('ls', {}))).toMatchObject({
+      actionKey: 'task.run.action.ls',
+      target: '.',
+    });
+    expect(
+      toolRowDisplay(tool('grep', { pattern: 'PROJECT_MODULES', path: 'apps' })),
+    ).toMatchObject({ actionKey: 'task.run.action.grep', target: 'PROJECT_MODULES' });
+  });
+
+  it('computes added / removed lines for edit and write arguments', () => {
+    expect(
+      toolRowDisplay(
+        tool('edit', {
+          path: 'README.md',
+          edits: [{ oldText: 'a\nb', newText: 'a\nc' }],
+        }),
+      ),
+    ).toMatchObject({
+      actionKey: 'task.run.action.edit',
+      target: 'README.md',
+      added: 1,
+      removed: 1,
+    });
+    expect(
+      toolRowDisplay(tool('write', { path: 'a.ts', content: 'one\ntwo\nthree\n' })),
+    ).toMatchObject({
+      actionKey: 'task.run.action.write',
+      target: 'a.ts',
+      added: 3,
+      removed: 0,
+    });
+    expect(
+      toolRowDisplay(
+        tool(
+          'edit',
+          { path: 'a.ts', edits: [{ oldText: 'a', newText: 'b' }] },
+          { result: { ok: false, content: 'oldText not found' } },
+        ),
+      ),
+    ).toMatchObject({ actionKey: 'task.run.action.edit', added: null, removed: null });
+  });
+
+  it("splits an external agent's title into action + target and keeps its diff stats", () => {
+    const row = toolRowDisplay(
+      tool(
+        'Edit',
+        { file_path: 'types.ts' },
+        {
+          title: 'Edited types.ts',
+          result: { ok: true, content: '', diffStats: { added: 9, removed: 1 } },
+        },
+      ),
+    );
+    expect(row).toMatchObject({
+      actionKey: null,
+      verb: 'Edited',
+      target: 'types.ts',
+      added: 9,
+      removed: 1,
+    });
+  });
 });
 
 describe('approvalConversationIdOf（详情页审批条的会话）', () => {
@@ -248,7 +417,10 @@ describe('approvalConversationIdOf（详情页审批条的会话）', () => {
 
 describe('pendingTaskQuestionOf（详情页提问条）', () => {
   const questionCard = (taskId: string, extra: Record<string, unknown> = {}): Message =>
-    systemEvent({ event: 'task_question', text: '用哪个方案？', options: ['A', 'B'], ...extra }, taskId);
+    systemEvent(
+      { event: 'task_question', text: '用哪个方案？', options: ['A', 'B'], ...extra },
+      taskId,
+    );
 
   it('取该任务绑定的最新一条未答提问卡', () => {
     const older = questionCard('task_1');
@@ -267,7 +439,10 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
   });
 
   it('非 task_question 的系统事件与别的绑定行不干扰', () => {
-    const unrelated = systemEvent({ event: 'bot_setup_question', text: '', options: ['x'] }, 'task_1');
+    const unrelated = systemEvent(
+      { event: 'bot_setup_question', text: '', options: ['x'] },
+      'task_1',
+    );
     const taskEvent = systemEvent({ event: 'run_interrupted', text: '中断' }, 'task_1');
     expect(pendingTaskQuestionOf([unrelated, taskEvent], 'task_1')).toBeNull();
   });

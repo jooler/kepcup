@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
-  import { Loader2, Mic } from '@lucide/svelte';
+  import { Loader2, Pause, Play } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { avatarOnFillForeground, resolveAccentColor } from '$lib/avatars/presets';
   import { formatAudioDuration } from './audio-player.svelte';
@@ -12,7 +12,7 @@
 
   /**
    * 语音消息气泡（docs/design/53-voice-conversation.md 修订 v3）：语音对话模式
-   * 下双方消息的形态——药丸外形、左侧麦克风、主体波形（已播部分着色，即进度）、
+   * 下双方消息的形态——药丸外形、左侧播放/暂停状态图标、主体波形（已播部分着色，即进度）、
    * 点击整个容器播放 / 暂停，正文以 caption 放在气泡下方。用户消息的音频来自
    * 原始录音附件，Bot 消息由 speech-audio 按需合成；两者共用唯一音频声道，
    * 因此点击任一条都会停掉正在播的另一条（含播报队列）。用户气泡的底色跟随
@@ -82,7 +82,7 @@
 <div class="flex max-w-full min-w-0 flex-col {isUser ? 'items-end' : 'items-start'}">
   <button
     type="button"
-    class="flex h-11 w-64 max-w-full items-center gap-2.5 rounded-full px-3 text-left transition-opacity hover:opacity-90 {isUser
+    class="flex h-11 w-64 max-w-full items-center gap-2.5 rounded-full px-2.5 text-left transition-opacity hover:opacity-90 cursor-pointer {isUser
       ? userAccent
         ? ''
         : 'bg-primary text-primary-foreground'
@@ -106,8 +106,10 @@
     >
       {#if loading}
         <Loader2 class="size-3.5 animate-spin" />
+      {:else if playing}
+        <Pause class="size-3.5" />
       {:else}
-        <Mic class="size-3.5" />
+        <Play class="size-3.5" />
       {/if}
     </span>
     <span class="flex h-6 min-w-0 flex-1 items-center gap-[3px]" aria-hidden="true">

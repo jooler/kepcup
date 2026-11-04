@@ -27,7 +27,11 @@ async function start(env: NodeJS.ProcessEnv = {}): Promise<TestStack> {
   return stack;
 }
 
-function workspaceOf(stack: { core: TestStack['core'] }, botId: string, conversationId: string): string {
+function workspaceOf(
+  stack: { core: TestStack['core'] },
+  botId: string,
+  conversationId: string,
+): string {
   return workspacePathFor(resolvePaths(stack.core.services.paths.home), botId, conversationId);
 }
 
@@ -51,52 +55,56 @@ async function stepsOf(core: TestStack['core'], runId: string) {
 }
 
 describe('workspace and coding tools', () => {
-  it.skipIf(process.platform === 'win32')('writes a script, executes it in the sandbox and reads the output', async () => {
-    const { core, llm } = await start();
-    llm.script(
-      'mock-main',
-      inWriteTask(
-        [
-          step().replyToolCall('write', {
-            path: 'hello.sh',
-            content: '#!/bin/sh\necho "hello-from-workspace"\n',
-          }),
-          step().replyToolCall('edit', {
-            path: 'hello.sh',
-            edits: [{ oldText: 'hello-from-workspace', newText: 'edited-from-workspace' }],
-          }),
-          step().replyToolCall('bash', { command: 'sh hello.sh' }),
-          step().replyText('脚本执行完成'),
-        ],
-        '脚本跑完了',
-      ),
-    );
-    const bot = await makeBot(core, '小码');
-    const conv = await openDirect(core, bot.id);
+  it.skipIf(process.platform === 'win32')(
+    'writes a script, executes it in the sandbox and reads the output',
+    async () => {
+      const { core, llm } = await start();
+      llm.script(
+        'mock-main',
+        inWriteTask(
+          [
+            step().replyToolCall('write', {
+              path: 'hello.sh',
+              content: '#!/bin/sh\necho "hello-from-workspace"\n',
+            }),
+            step().replyToolCall('edit', {
+              path: 'hello.sh',
+              edits: [{ oldText: 'hello-from-workspace', newText: 'edited-from-workspace' }],
+            }),
+            step().replyToolCall('bash', { command: 'sh hello.sh' }),
+            step().replyText('脚本执行完成'),
+          ],
+          '脚本跑完了',
+        ),
+      );
+      const bot = await makeBot(core, '小码');
+      const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['写个脚本跑一下']);
-    const run = await waitForTask(core, conv.id);
+      await sendBatch(core, conv.id, ['写个脚本跑一下']);
+      const run = await waitForTask(core, conv.id);
 
-    const workspace = workspaceOf({ core }, bot.id, conv.id);
-    expect(existsSync(path.join(workspace, 'hello.sh'))).toBe(true);
+      const workspace = workspaceOf({ core }, bot.id, conv.id);
+      expect(existsSync(path.join(workspace, 'hello.sh'))).toBe(true);
 
-    const steps = await stepsOf(core, run.id);
-    const bashResult = steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'bash',
-    );
-    expect(bashResult).toBeDefined();
-    expect(String(bashResult!.payload['content'])).toContain('edited-from-workspace');
+      const steps = await stepsOf(core, run.id);
+      const bashResult = steps.find(
+        (s) => s.type === 'tool_result' && s.payload['toolName'] === 'bash',
+      );
+      expect(bashResult).toBeDefined();
+      expect(String(bashResult!.payload['content'])).toContain('edited-from-workspace');
 
-    // The command description reached the status line as a progress step.
-    const progress = steps.find(
-      (s) => s.type === 'progress' && String(s.payload['text']).startsWith('正在执行命令'),
-    );
-    expect(progress).toBeDefined();
-    expect(String(progress!.payload['text'])).toContain('sh hello.sh');
+      // The command description reached the status line only — tool progress is
+      // transient and must not add noise steps to the run log (§42).
+      const toolProgress = steps.find(
+        (s) => s.type === 'progress' && String(s.payload['text']).startsWith('正在执行命令'),
+      );
+      expect(toolProgress).toBeUndefined();
 
-    // The <workspace> section reached the model.
-    expect(llm.requestBodiesContain('<workspace>')).toBe(true);
-  }, 180_000);
+      // The <workspace> section reached the model.
+      expect(llm.requestBodiesContain('<workspace>')).toBe(true);
+    },
+    180_000,
+  );
 
   it('redacts stored secret values from coding tool output before it reaches the model', async () => {
     const { core, llm } = await start();
@@ -127,7 +135,8 @@ describe('workspace and coding tools', () => {
     expect(String(readResult!.payload['content'])).not.toContain(secretValue);
   }, 180_000);
 
-  it('denies file-tool access to another conversation workspace', async () => {    const { core, llm } = await start();
+  it('denies file-tool access to another conversation workspace', async () => {
+    const { core, llm } = await start();
     const botA = await makeBot(core, '甲');
     const botB = await makeBot(core, '乙');
     const convA = await openDirect(core, botA.id);
@@ -147,7 +156,11 @@ describe('workspace and coding tools', () => {
     await waitForRun(core, convA.id, 'completed', { timeoutMs: 60_000 });
 
     // P07：runs.list 里还有后台反思 run，取最新的响应 run。
-    const runsA = (await core.rpc.call('runs.list', { conversationId: convA.id, limit: 5 }) as { runs: Array<{ id: string; loopType: string }> }).runs;
+    const runsA = (
+      (await core.rpc.call('runs.list', { conversationId: convA.id, limit: 5 })) as {
+        runs: Array<{ id: string; loopType: string }>;
+      }
+    ).runs;
     const steps = await stepsOf(core, runsA.find((r) => r.loopType === 'turn')!.id);
     const readResult = steps.find(
       (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
@@ -164,7 +177,10 @@ describe('workspace and coding tools', () => {
     llm.script(
       'mock-main',
       inWriteTask(
-        [step().replyToolCall('bash', { command: 'touch sandbox-off-marker' }), step().replyText('好的')],
+        [
+          step().replyToolCall('bash', { command: 'touch sandbox-off-marker' }),
+          step().replyText('好的'),
+        ],
         '命令没执行',
       ),
     );
@@ -176,7 +192,12 @@ describe('workspace and coding tools', () => {
     const approval = await waitFor(
       async () => {
         const result = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-          approvals: Array<{ id: string; kind: string; status: string; payload: Record<string, unknown> }>;
+          approvals: Array<{
+            id: string;
+            kind: string;
+            status: string;
+            payload: Record<string, unknown>;
+          }>;
         };
         return result.approvals.find((a) => a.kind === 'command' && a.status === 'pending') ?? null;
       },
@@ -202,29 +223,35 @@ describe('workspace and coding tools', () => {
     expect(existsSync(path.join(workspace, 'sandbox-off-marker'))).toBe(false);
   }, 90_000);
 
-  it.skipIf(process.platform === 'win32')('records exec and fs_write entries in audit_log', async () => {
-    const { core, llm } = await start();
-    llm.script(
-      'mock-main',
-      inWriteTask(
-        [
-          step().replyToolCall('write', { path: 'a.txt', content: 'x' }),
-          step().replyToolCall('bash', { command: 'true' }),
-          step().replyText('完成'),
-        ],
-        '审计完成',
-      ),
-    );
-    const bot = await makeBot(core, '小记');
-    const conv = await openDirect(core, bot.id);
-    await sendBatch(core, conv.id, ['记录审计']);
-    await waitForTask(core, conv.id);
+  it.skipIf(process.platform === 'win32')(
+    'records exec and fs_write entries in audit_log',
+    async () => {
+      const { core, llm } = await start();
+      llm.script(
+        'mock-main',
+        inWriteTask(
+          [
+            step().replyToolCall('write', { path: 'a.txt', content: 'x' }),
+            step().replyToolCall('bash', { command: 'true' }),
+            step().replyText('完成'),
+          ],
+          '审计完成',
+        ),
+      );
+      const bot = await makeBot(core, '小记');
+      const conv = await openDirect(core, bot.id);
+      await sendBatch(core, conv.id, ['记录审计']);
+      await waitForTask(core, conv.id);
 
-    const rows = core.services.domain!.audit.listByConversation(conv.id, 50);
-    expect(rows.some((r) => r.action === 'fs_write' && String(r.detail['path']).endsWith('a.txt'))).toBe(true);
-    expect(rows.some((r) => r.action === 'exec' && r.detail['command'] === 'true')).toBe(true);
-    expect(rows.every((r) => r.botId === bot.id)).toBe(true);
-  }, 180_000);
+      const rows = core.services.domain!.audit.listByConversation(conv.id, 50);
+      expect(
+        rows.some((r) => r.action === 'fs_write' && String(r.detail['path']).endsWith('a.txt')),
+      ).toBe(true);
+      expect(rows.some((r) => r.action === 'exec' && r.detail['command'] === 'true')).toBe(true);
+      expect(rows.every((r) => r.botId === bot.id)).toBe(true);
+    },
+    180_000,
+  );
 
   it('sends workspace files as attachments and copies non-textual attachments into the workspace', async () => {
     const { core, llm } = await start();
@@ -247,7 +274,11 @@ describe('workspace and coding tools', () => {
     );
     await sendBatch(core, conv.id, ['把报告发我']);
     await waitForTask(core, conv.id);
-    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-REPORT');
+    await waitForMessage(
+      core,
+      conv.id,
+      (m) => 'text' in m.content && m.content.text === 'RELAY-REPORT',
+    );
 
     const messages = await listMessages(core, conv.id);
     const botMessage = messages.find(
@@ -282,10 +313,17 @@ describe('workspace and coding tools', () => {
       step().replyToolCall('get_attachment', { attachment_id: uploaded.attachment.id }),
       step().replyText('图片已拿到'),
     ]);
-    const flushed = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '给我那张图' })) as { message: Message; runId: string | null };
+    const flushed = (await core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '给我那张图',
+    })) as { message: Message; runId: string | null };
     await waitFor(
       async () => {
-        const run = ((await core.rpc.call('runs.list', { conversationId: conv.id, limit: 10 })) as { runs: Run[] }).runs.find((r) => r.id === flushed.runId);
+        const run = (
+          (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 10 })) as {
+            runs: Run[];
+          }
+        ).runs.find((r) => r.id === flushed.runId);
         return run && (run.status === 'completed' || run.status === 'failed') ? run : null;
       },
       { timeoutMs: 120_000, label: 'attachment run settles' },
@@ -294,43 +332,57 @@ describe('workspace and coding tools', () => {
     const copyResult = steps.find(
       (s) => s.type === 'tool_result' && s.payload['toolName'] === 'get_attachment',
     );
-    expect(copyResult, JSON.stringify(steps.map((s) => ({ t: s.type, name: s.payload['toolName'], ok: s.payload['ok'] })))).toBeDefined();
+    expect(
+      copyResult,
+      JSON.stringify(
+        steps.map((s) => ({ t: s.type, name: s.payload['toolName'], ok: s.payload['ok'] })),
+      ),
+    ).toBeDefined();
     expect(String(copyResult!.payload['content'])).toContain('已复制到 workspace');
 
     const workspace = workspaceOf({ core }, bot.id, conv.id);
     const copied = readdirOne(path.join(workspace, '.attachments'));
     expect(copied).toContain('diag.png');
-    expect(readFileSync(path.join(workspace, '.attachments', copied)).subarray(0, 4)).toEqual(png.subarray(0, 4));
+    expect(readFileSync(path.join(workspace, '.attachments', copied)).subarray(0, 4)).toEqual(
+      png.subarray(0, 4),
+    );
   }, 240_000);
 
-  it.skipIf(process.platform === 'win32')('surfaces sandbox violations inside the bash tool result step', async () => {
-    const { core, llm } = await start();
-    const bot = await makeBot(core, '小违');
-    const conv = await openDirect(core, bot.id);
-    const dbPath = core.services.paths.mainDbPath;
-    llm.script(
-      'mock-main',
-      inWriteTask(
-        [step().replyToolCall('bash', { command: `cat "${dbPath}"` }), step().replyText('读不了')],
-        '读不了数据库',
-      ),
-    );
-    await sendBatch(core, conv.id, ['读读数据库']);
-    const run = await waitForTask(core, conv.id);
+  it.skipIf(process.platform === 'win32')(
+    'surfaces sandbox violations inside the bash tool result step',
+    async () => {
+      const { core, llm } = await start();
+      const bot = await makeBot(core, '小违');
+      const conv = await openDirect(core, bot.id);
+      const dbPath = core.services.paths.mainDbPath;
+      llm.script(
+        'mock-main',
+        inWriteTask(
+          [
+            step().replyToolCall('bash', { command: `cat "${dbPath}"` }),
+            step().replyText('读不了'),
+          ],
+          '读不了数据库',
+        ),
+      );
+      await sendBatch(core, conv.id, ['读读数据库']);
+      const run = await waitForTask(core, conv.id);
 
-    const steps = await stepsOf(core, run.id);
-    const bashResult = steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'bash',
-    );
-    expect(bashResult).toBeDefined();
-    const content = String(bashResult!.payload['content']);
-    // The violation summary reaches the model through the tool result. Linux
-    // (bubblewrap) hides the denied path instead: there is no violation, just ENOENT.
-    expect(content).toContain(
-      process.platform === 'linux' ? 'No such file or directory' : '被沙箱拦截',
-    );
-    expect(bashResult!.payload['ok']).toBe(false);
-  }, 180_000);
+      const steps = await stepsOf(core, run.id);
+      const bashResult = steps.find(
+        (s) => s.type === 'tool_result' && s.payload['toolName'] === 'bash',
+      );
+      expect(bashResult).toBeDefined();
+      const content = String(bashResult!.payload['content']);
+      // The violation summary reaches the model through the tool result. Linux
+      // (bubblewrap) hides the denied path instead: there is no violation, just ENOENT.
+      expect(content).toContain(
+        process.platform === 'linux' ? 'No such file or directory' : '被沙箱拦截',
+      );
+      expect(bashResult!.payload['ok']).toBe(false);
+    },
+    180_000,
+  );
 
   it('removes every workspace of a conversation on delete and all workspaces of a bot on bot delete', async () => {
     const { core, llm } = await start();

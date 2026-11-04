@@ -117,7 +117,12 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     // 降级回不透明（app.css「acrylic」块）。已知边界：拖拽最大化/还原路径上
     // 材质偶发丢失、圆角不一致（electron#46753），上游 bug，回退不致命。
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, vibrancy: 'sidebar' as const }
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          // hiddenInset 默认红绿灯位置是 { x: 12, y: 12 }，整体右移、下移各 4px。
+          trafficLightPosition: { x: 16, y: 16 } as const,
+          vibrancy: 'sidebar' as const,
+        }
       : {
           titleBarStyle: 'hidden' as const,
           titleBarOverlay:

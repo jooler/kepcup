@@ -18,6 +18,7 @@
   import MediaLightbox from './MediaLightbox.svelte';
   import StickiesLayer from './StickiesLayer.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
+  import PermissionModeMenu from '$lib/features/approvals/PermissionModeMenu.svelte';
 
   /**
    * 聊天区（参考 Grok Bot）：消息列表占满整个高度并在顶部浮层与底部输入坞
@@ -226,6 +227,7 @@
           </span>
         {/if}
       </Button>
+      <PermissionModeMenu conversationId={current.conversation.id} />
     </header>
 
     {@render chatBody(56, 'top-14')}
