@@ -5,8 +5,9 @@ import {
   BOARD_MAX_CARDS,
   BOARD_MAX_COLUMNS,
   BOARD_POSITION_MIN_GAP,
+  BOARD_POSITION_STEP,
   deriveCardTitle,
-  type BoardCard,
+  newId,
   type BoardChangedPayload,
 } from '@kepcup/shared';
 import { createTestStack, makeBot, makeProject, type TestStack } from '@kepcup/testkit';
@@ -49,6 +50,34 @@ function cardIds(projectId: string): string[] {
   return board()
     .get(projectId, undefined, 'user')
     .cards.map((card) => card.id);
+}
+
+/**
+ * Inserts `count` card rows in one commit, spaced by {@link BOARD_POSITION_STEP}
+ * so a later head insert does not renumber the column. Mirrors the columns
+ * TodoStore / BoardStore write (draft, source user, no assignee).
+ */
+function seedBoardCards(projectId: string, columnId: string, count: number): void {
+  const db = stack.core.services.mainDb!;
+  const now = Date.now();
+  const insertTodo = db.prepare(
+    `insert into todos
+       (id, title, notes, assignee_bot_id, assignee_project_id, status, source,
+        memo_id, blocked_reason, pending_when, created_at, updated_at, closed_at, position)
+     values (?, ?, ?, NULL, NULL, 'draft', 'user', NULL, NULL, NULL, ?, ?, NULL, 0)`,
+  );
+  const insertCard = db.prepare(
+    `insert into board_cards (todo_id, project_id, column_id, position, created_at)
+     values (?, ?, ?, ?, ?)`,
+  );
+  db.transaction(() => {
+    for (let i = 0; i < count; i += 1) {
+      const id = newId('todo');
+      const text = `seed ${i}`;
+      insertTodo.run(id, text, text, now, now);
+      insertCard.run(id, projectId, columnId, BOARD_POSITION_STEP * (i + 1), now);
+    }
+  })();
 }
 
 describe('BoardService', () => {
@@ -215,15 +244,20 @@ describe('BoardService', () => {
 
     const cardsProject = await freshProject('cards');
     const columnId = board().get(cardsProject, ['Todo'], 'user').columns[0]!.id;
-    let last: BoardCard | null = null;
-    for (let i = 0; i < BOARD_MAX_CARDS; i += 1) {
-      last = board().createCard(cardsProject, columnId, `card ${i}`, undefined, 'user');
-    }
-    expect(last).not.toBeNull();
+    // Fill to one under the cap in a single transaction. createCard at the
+    // head halves the position until the column is renumbered, and every
+    // call is its own commit. BOARD_MAX_CARDS (500) of those commits is an
+    // fsync storm: ubuntu finishes in ~1s, but a contended windows-latest
+    // runner spent 92s here and hit the 60s cap (the previous release did
+    // the same loop in ~2s). The limit itself is what this case asserts.
+    seedBoardCards(cardsProject, columnId, BOARD_MAX_CARDS - 1);
+    const last = board().createCard(cardsProject, columnId, 'last', undefined, 'user');
+    expect(last.text).toBe('last');
+    expect(board().get(cardsProject, undefined, 'user').cards).toHaveLength(BOARD_MAX_CARDS);
     expect(
       codeOf(() => board().createCard(cardsProject, columnId, 'one more', undefined, 'user')),
     ).toBe('BOARD_LIMIT_CARDS');
-  }, 60_000);
+  });
 
   it('a no-op move does not publish, and a real move does', async () => {
     const projectId = await freshProject('events');

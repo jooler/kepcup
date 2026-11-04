@@ -780,7 +780,21 @@ describe('workdirs (P04)', () => {
     const port = 20000 + Math.floor(Math.random() * 20000);
     // `kill` reports failure when the server already exited; keep the probe's exit
     // status about reachability so a denial does not mask the curl result.
-    const probe = `python3 -m http.server ${port} --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/; kill %1 2>/dev/null; true`;
+    // curl -4 forces AF_INET: seatbelt's `(remote ip "localhost:*")` matches
+    // 127.0.0.1 and ::1, not the IPv4-mapped form ::ffff:127.0.0.1. Retry past
+    // a slow python start; a blocked port stays `000`.
+    const probe = [
+      `python3 -m http.server ${port} --bind 127.0.0.1 >/dev/null 2>&1 &`,
+      'code=000',
+      'for _ in 1 2 3 4 5 6 7 8 9 10; do',
+      `  code=$(curl -4 -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${port}/ || true)`,
+      '  [ "$code" = 200 ] && break',
+      '  sleep 0.4',
+      'done',
+      'printf %s "$code"',
+      'kill %1 2>/dev/null || true',
+      'true',
+    ].join('\n');
 
     llm.script(
       'mock-main',
