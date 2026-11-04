@@ -269,10 +269,10 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
-          .permission('r1', 'Read data', { kind: 'read', locations: [target] })
+          .permission('r1', 'Write data', { kind: 'edit', locations: [target] })
           .text('一'),
         agentTurn()
-          .permission('r2', 'Read data', { kind: 'read', locations: [target] })
+          .permission('r2', 'Write data', { kind: 'edit', locations: [target] })
           .text('二'),
       ],
     });
@@ -282,7 +282,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       ...turnStartsTask(stack, conv.id, { writes: true }),
       ...turnStartsTask(stack, conv.id, { writes: true }),
     ]);
-    await sendBatch(stack.core, conv.id, ['读数据']);
+    await sendBatch(stack.core, conv.id, ['写数据']);
     const card = await pendingAgentTool(stack, conv.id);
     await stack.core.rpc.call('approvals.decide', {
       id: card.id,
@@ -291,7 +291,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     await waitTask(stack, conv.id, 'completed');
     // Another task (another agent session) of the same bot and conversation.
-    await sendBatch(stack.core, conv.id, ['再读一次']);
+    await sendBatch(stack.core, conv.id, ['再写一次']);
     const [first, second] = await waitTasksIn(stack, conv.id, 'completed', 2, 'second task');
     expect(second!.agentSessionId).not.toBe(first!.agentSessionId);
     expect(outcomes(stack.record())).toEqual({ r1: 'allow_once', r2: 'allow_once' });
@@ -324,7 +324,8 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
             kind: 'execute',
             rawInput: { command: 'rm main.db', cwd: '__HOME__' },
           })
-          // Review M1: unattended never approves an unrecognized request.
+          // Review M1: unattended never approves an unrecognized request
+          //（完全控制档同一规则：数据目录底线只按展示的 locations 判断）。
           .permission('other', 'mystery tool')
           .text('结束'),
       ],
@@ -345,7 +346,8 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     await waitTask(stack, conv.id, 'completed');
 
     // main.db: rejected without a card; cp from the data dir: auto-denied by
-    // the unattended floor; touching the run's own workspace: auto-approved.
+    // the data-directory floor; touching the run's own workspace: auto-approved;
+    // the unrecognized request: auto-denied by the fail-closed floor (M1).
     expect(outcomes(stack.record())).toEqual({
       db: 'reject_once',
       cmd: 'reject_once',

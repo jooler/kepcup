@@ -102,6 +102,7 @@ import { BrowserProfilesService } from './browser/profiles.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
+import { PermissionModeService } from './permissions/mode.js';
 import { CheckpointService } from './workdir/checkpoints.js';
 import { WorkdirRuntime } from './workdir/service.js';
 import { WorkdirsService } from './domain/workdirs.js';
@@ -561,6 +562,8 @@ export interface CoreDomainServices {
   approvals: ApprovalsService;
   allowlist: AllowlistService;
   unattended: UnattendedService;
+  /** 对话级权限级别（manual / auto / bypass）；仅内存态。 */
+  permissionMode: PermissionModeService;
   workdirs: WorkdirsService;
 }
 
@@ -1478,6 +1481,30 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         events.emit('platform.unattended', { active: state.enabled, until: state.until });
       },
     });
+    const permissionMode = new PermissionModeService({
+      clock,
+      logger,
+      unattended,
+      // Delegated work and board-card chats inherit the level of the
+      // conversation they started from (docs/design/13-permissions.md).
+      resolveScope: (conversationId) => {
+        let current = conversationId;
+        for (let depth = 0; depth < 8; depth += 1) {
+          const conversation = conversations.get(current);
+          if (conversation === null) return current;
+          const parent =
+            conversation.type === 'bot_direct'
+              ? (delegations.byExchange(current)?.fromConversationId ?? null)
+              : conversation.type === 'card'
+                ? conversation.parentProjectId
+                : null;
+          if (parent === null || parent === current) return current;
+          current = parent;
+        }
+        return current;
+      },
+      publish: (state) => events.emit('permissions.mode.changed', { state }),
+    });
     const approvals = new ApprovalsService({
       db: mainDb,
       clock,
@@ -1490,7 +1517,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bots,
       runs,
       secrets,
-      unattended,
+      permissionMode,
       publish: (event, payload) => events.emit(event as never, payload as never),
       notify: (approval, description) => {
         events.emit('platform.notify', {
@@ -1762,6 +1789,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       grants,
       allowlist,
       unattended,
+      permissionMode,
       workdirs: workdirRuntime,
       environment: {
         toolchainPathPrefix: (platform) => environment.toolchainPathPrefix(platform),
@@ -3542,6 +3570,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       allowlist,
       unattended,
+      permissionMode,
       workdirs: workdirsService,
       effects,
       revocations,

@@ -702,7 +702,7 @@ export function buildResponseTools(input: {
   }> = {
     name: 'request_access',
     description:
-      '申请访问 workspace 以外的文件或目录（读或写）。文件工具越界时也会自动发起授权；需要在批量操作前一次性申请时使用本工具。用户批准后授权立即生效；拒绝时你会收到拒绝结果，请调整做法。',
+      '申请读取敏感位置（如 ~/.ssh、~/.aws），或写入 workspace 以外的文件 / 目录。普通读取无需申请；越界写入时文件工具也会自动发起授权，需要在批量操作前一次性申请时使用本工具。用户批准后授权立即生效；拒绝时你会收到拒绝结果，请调整做法。',
     parameters: Type.Object({
       path: Type.String({ description: '要访问的文件或目录（绝对路径或相对 workspace 的路径）' }),
       access: Type.Union([Type.Literal('read'), Type.Literal('write')], {

@@ -385,7 +385,7 @@ describe('project conversations', () => {
     llm.script('mock-main', [step().replyText('收到历史消息')]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
 
-    // B runs once: reads an out-of-workspace path -> approval -> approved for
+    // B runs once: edits an out-of-workspace file -> approval -> approved for
     // the conversation (grant), then finishes. D75 审查 M4: access approvals
     // are a task's (a turn fails fast), so B's turn starts a task for it.
     const outsideDir = mkdtempSync(path.join(tmpdir(), 'group-outside-'));
@@ -396,15 +396,27 @@ describe('project conversations', () => {
       'mock-main',
       viaTask({
         taskSteps: [
-          step().expect(isB).replyToolCall('read', { path: outsideFile }),
-          step().expect(isB).replyText('读到了'),
+          step()
+            .expect(isB)
+            .replyToolCall('edit', {
+              path: outsideFile,
+              edits: [{ oldText: '机密内容', newText: '修改内容' }],
+            }),
+          step().expect(isB).replyText('改到了'),
         ],
-        writes: false,
+        writes: true,
         relay: 'B-RELAY 读到了',
       }).map((s) => s.expect(isB)),
     );
-    await sendDrafts(core, conv.id, [{ text: '读一下那个文件', mentions: [b.id] }]);
-    await waitForEvent(core, 'approval.created', (p) => p.approval.botId === b.id);
+    // Subscribe before sending: the approval can be raised before the send
+    // promise resolves, and the event bus does not replay it.
+    const firstApprovalEvent = waitForEvent(
+      core,
+      'approval.created',
+      (p) => p.approval.botId === b.id,
+    );
+    await sendDrafts(core, conv.id, [{ text: '改一下那个文件', mentions: [b.id] }]);
+    await firstApprovalEvent;
     const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Array<{ id: string; status: string }>;
     };
@@ -435,20 +447,26 @@ describe('project conversations', () => {
       'mock-main',
       viaTask({
         taskSteps: [
-          step().expect(isB).replyToolCall('read', { path: outsideFile2 }),
+          step()
+            .expect(isB)
+            .replyToolCall('edit', {
+              path: outsideFile2,
+              edits: [{ oldText: '其他内容', newText: '再次修改' }],
+            }),
           step().expect(isB).replyText('不会走到这里'),
         ],
-        writes: false,
+        writes: true,
       }).map((s) => s.expect(isB)),
     );
-    await sendDrafts(core, conv.id, [{ text: '再读一个文件', mentions: [b.id] }]);
-    await waitForEvent(
+    const secondApprovalEvent = waitForEvent(
       core,
       'approval.created',
       (p) =>
         p.approval.botId === b.id &&
         (p.approval.payload as { path?: string } | undefined)?.path === realpathSync(outsideFile2),
     );
+    await sendDrafts(core, conv.id, [{ text: '再改一个文件', mentions: [b.id] }]);
+    await secondApprovalEvent;
 
     await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
 

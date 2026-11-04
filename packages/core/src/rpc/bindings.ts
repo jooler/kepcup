@@ -163,6 +163,9 @@ import {
   unattendedEnableInputSchema,
   unattendedSummaryInputSchema,
   unattendedSummaryOutputSchema,
+  permissionModeGetInputSchema,
+  permissionModeSetInputSchema,
+  permissionModeOutputSchema,
   workdirsListOutputSchema,
   workdirsGetInputSchema,
   workdirsGetOutputSchema,
@@ -1551,6 +1554,23 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       unattendedSummaryInputSchema,
       unattendedSummaryOutputSchema,
       async (input) => ({ items: domain.approvals.summary(input.since) }),
+    ),
+
+    'permissions.mode.get': method(
+      permissionModeGetInputSchema,
+      permissionModeOutputSchema,
+      async (input) => domain.permissionMode.get(input.conversationId),
+    ),
+    'permissions.mode.set': method(
+      permissionModeSetInputSchema,
+      permissionModeOutputSchema,
+      async (input) =>
+        domain.permissionMode.set({
+          conversationId: input.conversationId,
+          mode: input.mode,
+          hours: input.hours ?? null,
+          ...(input.acknowledgeRisk === true ? { acknowledgeRisk: true } : {}),
+        }),
     ),
 
     'workdirs.list': method(voidInput, workdirsListOutputSchema, async () => ({

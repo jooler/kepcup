@@ -48,8 +48,11 @@ describe('approval timeout (never leave a task blocked)', () => {
     llm.script(
       'mock-main',
       viaTask({
-        writes: false,
-        taskSteps: [step().replyToolCall('read', { path: file }), step().replyText('读取没有完成')],
+        writes: true,
+        taskSteps: [
+          step().replyToolCall('write', { path: file, content: 'pending' }),
+          step().replyText('写入没有完成'),
+        ],
         relay: 'RELAY-AFTER-TIMEOUT',
       }),
     );
@@ -90,7 +93,7 @@ describe('approval timeout (never leave a task blocked)', () => {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
     const readResult = steps.steps.find(
-      (entry) => entry.type === 'tool_result' && entry.payload['toolName'] === 'read',
+      (entry) => entry.type === 'tool_result' && entry.payload['toolName'] === 'write',
     );
     expect(readResult).toBeDefined();
     expect(String(readResult!.payload['content'])).toContain('等待用户授权超时');
@@ -115,8 +118,11 @@ describe('approval timeout (never leave a task blocked)', () => {
     llm.script(
       'mock-main',
       viaTask({
-        writes: false,
-        taskSteps: [step().replyToolCall('read', { path: file }), step().replyText('读完了')],
+        writes: true,
+        taskSteps: [
+          step().replyToolCall('write', { path: file, content: 'approved' }),
+          step().replyText('写完了'),
+        ],
         relay: 'RELAY-AFTER-APPROVAL',
       }),
     );
