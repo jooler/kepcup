@@ -447,7 +447,14 @@ function resolveTarget(
   }
   // `C:` after stripping `C:\` is a drive, not a relative name.
   if (ctx.p === path.win32 && /^[A-Za-z]:$/.test(text)) text = `${text}\\`;
-  const value = ctx.p.normalize(ctx.p.isAbsolute(text) ? text : ctx.p.resolve(ctx.cwd, text));
+  // `\Users\…` and `/Users/…` are absolute on win32 but have no drive letter.
+  // normalize() leaves them drive-less, so they never match `C:\Users\…`.
+  // Resolve them against the command cwd's drive. UNC (`\\server\share`) stays.
+  const winRootRelative =
+    ctx.p === path.win32 && /^[\\/]/.test(text) && !/^[\\/]{2}/.test(text);
+  const value = ctx.p.normalize(
+    winRootRelative || !ctx.p.isAbsolute(text) ? ctx.p.resolve(ctx.cwd, text) : text,
+  );
   return { value, wildcard };
 }
 
