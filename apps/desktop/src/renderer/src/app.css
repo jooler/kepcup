@@ -28,6 +28,10 @@
      1 = 原样、0.5 = 透明度减半。手动试边框深浅只调这一个值。 */
   --border-alpha: 0.6;
   --border: oklch(0.922 0 0 / calc(100% * var(--border-alpha)));
+  /* 拖拽分隔线 hover 高亮色（左栏手柄与右栏 paneforge 手柄共用，见各自组件）：
+     foreground 30% 叠在不透明 background 上合成的实色。实色是关键——胶囊
+     （不透明）盖在高亮线上，两者同色又不会透出底下边线形成叠色。 */
+  --divider-hover: color-mix(in srgb, var(--foreground) 30%, var(--background));
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --sidebar: oklch(0.945 0 0);

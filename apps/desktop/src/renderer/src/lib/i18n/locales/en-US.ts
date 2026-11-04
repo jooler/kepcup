@@ -11,6 +11,8 @@ export const enUS = {
   'sidebar.chatsEmpty': 'No conversations yet. Click + in the top right to start.',
   'sidebar.runningSuffix': 'Running',
   'sidebar.resizeHandle': 'Drag to resize, double-click to reset',
+  'sidebar.resizeHandleDrag': 'Drag to resize',
+  'sidebar.resizeHandleReset': 'Double-click to reset',
   'sidebar.userFallback': 'U',
   'sidebar.userName': 'Local user',
   'sidebar.userEmail': 'Local account',
@@ -27,6 +29,7 @@ export const enUS = {
   'chats.loadEarlier': 'Load earlier messages',
   'chats.recalled': 'Message recalled',
   'chats.recall': 'Recall',
+  'chats.resizeHandleDrag': 'Drag to resize',
   'chats.deleteConversation': 'Delete conversation',
   'chats.deleteConversationTitle': 'Delete conversation with {name}',
   'chats.deleteConversationBody':

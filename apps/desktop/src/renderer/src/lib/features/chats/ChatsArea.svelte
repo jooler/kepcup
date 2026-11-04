@@ -13,6 +13,7 @@
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { motionMs, MOTION } from '$lib/motion';
+  import { t } from '$lib/i18n';
 
   /**
    * 右栏（Bot 详情）按抽屉方式开合：pane 常驻、宽度在 0 与 41% 之间过渡
@@ -120,9 +121,13 @@
         <ChatView />
       </Resizable.Pane>
       {#if !rightCollapsed}
-        <!-- 分割线即 1px border（w-px bg-border），不再渲染拖拽手柄；拖拽热区由
-             paneforge 的 after 扩展区保证。拖拽中关掉 flex-grow 过渡才能跟手。 -->
-        <Resizable.Handle onDraggingChange={(dragging) => (resizing = dragging)} />
+        <!-- 分割线即右栏 border-l（1px）；hover / 拖拽时 Handle 组件内的高亮
+             分隔线条会盖住它并亮出指示胶囊与提示气泡。拖拽中关掉 flex-grow
+             过渡才能跟手。 -->
+        <Resizable.Handle
+          label={t('chats.resizeHandleDrag')}
+          onDraggingChange={(dragging) => (resizing = dragging)}
+        />
       {/if}
       <!-- 收起态 defaultSize 0：挂载即闭合，展开时 resize 到 41% 才有动画。 -->
       <Resizable.Pane
