@@ -1445,19 +1445,53 @@ import {
   {/if}
 
   <!-- 右缘调宽手柄：整条侧栏高度可抓；DOM 上位于头部（app-drag）之后，
-       重叠处 no-drag 胜出，红绿灯旁也能拖。只承担交互，不加视觉反馈。
+       重叠处 no-drag 胜出，红绿灯旁也能拖。hover / 拖拽时在分隔线上亮出居中
+       的胶囊指示并弹出「拖拽 / 双击复位」提示气泡（参考桌面应用分隔线）。
+       注意 Sidebar.Root 自带 class="group"，这里的 group-hover 必须用具名
+       group/resize 限定到本手柄，否则指针在侧栏任何位置都会触发。
        窄屏下列表全宽（宽度跟窗口），无手柄。 -->
   {#if !narrow}
     <div
-      class="app-no-drag absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
+      class="app-no-drag group/resize absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
       role="separator"
       aria-orientation="vertical"
       aria-label={t('sidebar.resizeHandle')}
-      title={t('sidebar.resizeHandle')}
       onpointerdown={(event) => sidebarLayout.startResize(event)}
       ondblclick={() => sidebarLayout.resetWidth()}
       data-testid="sidebar-resize-handle"
-    ></div>
+    >
+      <!-- 高亮分隔线条：1px 宽、整条侧栏高，right-0 恰好压在容器 border-r
+          那 1px 上（位置由结构保证，不按像素挪）。默认透明；hover 片刻以
+          不透明 --divider-hover 淡入——实色把底下的边线完全盖住，整条线
+          与胶囊（它的 flex 子元素）同色同层，看起来是一个整体。拖拽中经
+          内联样式常亮（pointer capture 下 :hover 是否保留因平台而异）。 -->
+      <div
+        class="pointer-events-none absolute inset-y-0 right-0 flex w-px items-center justify-center
+          overflow-visible bg-(--divider-hover) opacity-0 transition-opacity duration-200
+          group-hover/resize:opacity-100 group-hover/resize:delay-150"
+        style:opacity={sidebarLayout.dragging ? '1' : undefined}
+        aria-hidden="true"
+      >
+        <!-- 指示胶囊：在 1px 条内纵横居中（flex），宽度大于条、对称溢出；
+            shrink-0 防止 flex 把它压扁回 1px。 -->
+        <div
+          class="h-12 w-1 shrink-0 rounded-full bg-(--divider-hover)"
+          data-testid="sidebar-resize-indicator"
+        ></div>
+      </div>
+      <!-- 提示气泡：胶囊下方、朝聊天区一侧弹出（hover 即出，拖拽中隐藏）。
+           pointer-events-none，不挡聊天区的点击。 -->
+      <div
+        class="pointer-events-none absolute top-[calc(50%_+_2.5rem)] left-full z-10 ml-3 flex flex-col
+          gap-0.5 rounded-xl border bg-popover px-3 py-2 whitespace-nowrap shadow-md opacity-0
+          transition-opacity duration-200 group-hover/resize:opacity-100 group-hover/resize:delay-500"
+        style:visibility={sidebarLayout.dragging ? 'hidden' : undefined}
+        aria-hidden="true"
+      >
+        <span class="text-sm">{t('sidebar.resizeHandleDrag')}</span>
+        <span class="text-sm text-muted-foreground">{t('sidebar.resizeHandleReset')}</span>
+      </div>
+    </div>
   {/if}
 </Sidebar.Root>
 
