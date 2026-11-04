@@ -77,20 +77,29 @@ metadata 行按可用字段展示：
 
 | `RunStep.type` | 展示 |
 |---|---|
-| `assistant` | 助手说明，Markdown 渲染；空文本跳过；`errorMessage` 以错误行附在文本后 |
+| `assistant` | 助手说明，Markdown 渲染；`thinking` 非空时在正文上方折叠成一行「思考」；空文本但有思考的轮次也保留；`errorMessage` 以错误行附在文本后 |
 | `tool_call` | 工具调用行；与相同 `toolCallId` 的 `tool_result` 合并为一项 |
 | `tool_result` | 合并到对应调用；没有匹配调用的结果单独成一项 |
-| `progress` | 灰色单行进度，带圆点 |
+| `progress` | 有意义的进度（计划 / 上下文压缩 / 子任务），灰色单行；工具执行状态（「正在执行命令 …」）只走状态行，不展示 |
 | `steer` | 右对齐的「追加指令」气泡 |
 | `system` | 灰色系统行 |
 | `request` | 不展示（模型请求载荷） |
 
-工具调用行：
+思考内容：
 
-- 折叠态显示工具名、一行摘要、结果首行预览与状态（执行中 / 完成 / 失败）。摘要优先用外部智能体的 `title`；否则按工具取参数：`bash` / `powershell` 用 `command`，`read` / `write` / `edit` 用 `path`，`ls` / `find` / `grep` 用 `path` / `pattern`，`browser_*` 用 `url` / `selector` / `ref` / `text` / `key`，`ask_user` 用 `question`，`send_message` 用 `text`，`capability_call` 用 `name` / `tool`；都不命中时取第一个字符串参数。
-- 展开态显示格式化的参数 JSON 与完整结果文本（结果区最高 320px，内部滚动）；无输出、无返回、错误码分别标注。
-- 失败的调用默认展开；用户手动折叠后保持手动状态。
-- 同一次调用在运行中没有结果时显示「执行中」；任务已结束仍没有结果时显示为无结果。
+- 内置 pi 的思考块与外部智能体的 `agent_thought_chunk` 都写入该轮 `assistant` 步骤的 `thinking` 字段（与文本一起落库；子代理的思考不落库）。
+- 折叠态只显示一行「思考」，点开显示原始推理文本（灰字、保留换行）；默认折叠，避免长推理淹没对话。
+
+工具调用卡：
+
+- **连续**的工具调用合并成一张卡（助手说明、追加指令、有意义的进度、系统行会打断分组）；组标题显示调用数量与失败数量，运行中带 spinner。
+- 工具执行期间的自动提示（`ToolContext.progress`，如「正在执行命令 …」「正在编辑 …」）只更新状态行（`run.progress` / `lastProgress`），不写入 `run_steps`；旧 run 里残留的这类 `progress` 步骤在读取时间线时按「正在」前缀隐藏，因此不会打断工具分组。
+- 组内每行是「动词 + 操作目标」（`toolRowDisplay`）：
+  - 外部智能体优先用自带的 `title`（如 `Edited types.ts`、`Read a.ts (50-99)`），按第一个空格拆成动词（降低亮度）与目标（正常亮度）；
+  - 内置 pi 工具归一化：`read` → 读取 + `path`；`write` → 写入 + `path`（+新增行数）；`edit` → 编辑 + `path`（+新增 / 删除行数）；`ls` / `find` / `grep` → 列出 / 查找 / 搜索 + 路径或 pattern；`bash` / `powershell` → 执行 + 完整命令（等宽）；`browser_*` 按动作映射打开 / 点击 / 输入等；`ask_user` / `send_message` / `update_plan` / `capability_call` 各有固定动词；其余工具用工具名 + 摘要。
+  - 文件编辑的 `+新增 / −删除` 行数：内置 `edit` 从 `args.edits[].oldText/newText` 按行做 LCS 计算，`write` 按内容行数计新增；外部智能体从 ACP `tool_call_update` 的 diff 内容计算并随 `tool_result.diffStats` 落库。目标文字保持高亮度，动词减半，增删行数用绿 / 红小字。
+- 点行展开该次调用的独立卡片：上方是原始命令（shell 工具取完整 `command`，其余工具回退为格式化参数；hover 时右上角出现复制按钮），下方直接展示完整结果（最高 320px，内部滚动）；无输出、无返回、错误码分别标注。
+- 失败的调用默认展开；用户手动折叠后保持手动状态。分组整体可折叠，默认展开。
 
 其他状态：
 
@@ -116,8 +125,9 @@ metadata 行按可用字段展示：
 |---|---|
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunView.svelte` | 执行过程页外壳、顶部 metadata、步骤读取与实时刷新、时间线渲染、提问卡条、审批卡条 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/TaskPlanPanel.svelte` | D93 计划入口：右上角绿色「任务清单」按钮 + 浮层（`update_plan` 的最新计划；完成计数、只读清单） |
-| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 工具调用行（摘要、状态、参数 / 结果展开） |
-| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、工具摘要、参数格式化、用时格式化、审批条会话回退、待答提问卡筛选 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolGroup.svelte` | 连续工具调用的分组卡：标题计数、单行命令条目、逐条展开 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/TaskRunToolCard.svelte` | 展开后的单次调用卡：原始命令 + hover 复制按钮 + 结果 |
+| `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.ts` | 纯展示逻辑：步骤合并、连续工具分组、思考 / 工具摘要、参数格式化、用时格式化、审批条会话回退、待答提问卡筛选 |
 | `apps/desktop/src/renderer/src/lib/features/tasks/task-run-view.test.ts` | 上述逻辑的单测 |
 
 i18n 文案在 `apps/desktop/src/renderer/src/lib/i18n/locales/zh-CN.ts` 的 `task.run.*`。
