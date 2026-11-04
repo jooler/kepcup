@@ -207,6 +207,13 @@ describe('P3：references / inspect / S2 mock（55 §6.1）', () => {
     for (const cap of MICRO_APP_CAPABILITIES) {
       expect(bodies['references/manifest.md']).toContain(cap.id);
     }
+    // 清单字段名与 schema 一致（P3 审查修复 P2-7）：字段条目是 display（警示句里才提 displayMode）。
+    expect(bodies['references/manifest.md']).toContain('- `display`：');
+    expect(
+      bodies['references/manifest.md']
+        .split('\n')
+        .filter((line) => line.startsWith('- `displayMode')),
+    ).toEqual([]);
     for (const hint of MICRO_APP_ERROR_HINTS) {
       expect(bodies['references/errors.md']).toContain(hint.code);
     }
@@ -222,14 +229,27 @@ describe('P3：references / inspect / S2 mock（55 §6.1）', () => {
     expect(new TextEncoder().encode(buildMicroAppApiInspect('')).length).toBeLessThanOrEqual(2 * 1024);
   });
 
-  it('S2 mock：单行脚本、无 // 注释、装 __kepcupMockBridge', () => {
+  it('S2 mock：单行脚本、无 // 注释、装 __kepcupMockBridge；fixtures 含 </script> 不逃逸（P3 审查修复）', () => {
     const mock = buildMicroAppPreviewMock({
       theme: 'light',
       permissions: ['ai.chat', 'media.listen', 'media.speak'],
-      fixtures: { ai: ['mock reply one'], transcripts: ['hello world'] },
+      fixtures: {
+        ai: ['mock reply one', '</script><script>alert(1)</script>'],
+        transcripts: ['hello world'],
+        storage: { evil: '</script>' },
+      },
     });
     expect(mock.includes('//')).toBe(false);
     expect(mock.includes('\n')).toBe(false);
     expect(mock).toContain('__kepcupMockBridge');
+    // `<` 全部转义为 \u003c：嵌入 <script> 的字面量不会提前闭合标签。
+    expect(mock.includes('</script><script>alert')).toBe(false);
+  });
+
+  it('生产垫片没有 mock 缝；预览垫片保留（P3 审查修复）', () => {
+    const production = buildMicroAppShim('light');
+    expect(production.includes('__kepcupMockBridge')).toBe(false);
+    const preview = buildMicroAppShim('light', { preview: true });
+    expect(preview.includes('__kepcupMockBridge')).toBe(true);
   });
 });

@@ -399,10 +399,11 @@ export function injectMicroAppSdk(
   options: { theme?: WidgetTheme; mockScript?: string } = {},
 ): string {
   if (html.includes(MICRO_APP_SDK_MARKER)) return html;
-  return injectAfterHead(
-    html,
-    `${options.mockScript ?? ''}${buildInjection(html, buildMicroAppShim(options.theme ?? 'light'))}`,
-  );
+  // 带 mockScript = S2 预览：用带缝垫片（__kepcupMockBridge 可用）；生产垫片无缝（审查修复）。
+  const shim = buildMicroAppShim(options.theme ?? 'light', {
+    ...(options.mockScript !== undefined ? { preview: true } : {}),
+  });
+  return injectAfterHead(html, `${options.mockScript ?? ''}${buildInjection(html, shim)}`);
 }
 
 function buildInjection(html: string, shim: string): string {

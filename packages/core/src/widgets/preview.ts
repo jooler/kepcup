@@ -121,6 +121,7 @@ export function createWidgetPreviewRunner(input: {
   return {
     screenshots: () => images,
     run: async ({ html, acceptance, fixtures, signal, microApp }) => {
+      const bundlePaths = microApp?.bundlePaths ?? [];
       images = [];
       if (!input.rpc.available()) return { skipped: WIDGET_PREVIEW_UNAVAILABLE_REASON };
       const request: WidgetPreviewRunInput = {
@@ -166,11 +167,12 @@ export function createWidgetPreviewRunner(input: {
           const offline =
             previewOfflineNetworkMessage(finding.message) ||
             (finding.rule === 'console.error' && previewOfflineResourceLoadMessage(finding.message)) ||
-            // 微应用包的相对路径子资源正式运行时可加载（kepcup-app 协议服务包文件）——
-            // 预览只给入口 HTML，加载失败不算缺陷，与联网失败同一归类。
+            // 微应用包内**存在**的相对路径资源，预览只给入口 HTML 加载不到——归 offline
+            // （正式运行时 kepcup-app 协议服务包文件）；包里没有的路径是真缺陷，不豁免。
             (microApp !== undefined &&
               finding.rule === 'console.error' &&
-              finding.message.includes('net::ERR'));
+              finding.message.includes('net::ERR') &&
+              bundlePaths.some((bundlePath) => finding.message.includes(bundlePath)));
           if (
             (finding.rule === 'runtime.error' ||
               finding.rule === 'runtime.rejection' ||

@@ -33,6 +33,12 @@ import {
   BOT_WIDGET_STORAGE_QUOTA_BYTES,
   BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
 } from '../domain/widgets-ui.js';
+import {
+  MICRO_APP_COLLECTION_QUOTA_BYTES,
+  MICRO_APP_COLLECTIONS_MAX,
+  MICRO_APP_CONTEXT_DATA_MAX_BYTES,
+  MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS,
+} from '../domain/micro-app.js';
 
 const PHASE_ORDER: Record<MicroAppCapabilityPhase, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -141,6 +147,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
     };
   }
   function call(method, params, options) {
+    /*KC-MOCK-SEAM*/
     var mock = window.__kepcupMockBridge;
     if (mock && typeof mock.call === 'function') {
       /* S2 预览缝（55 §11）：流式调用仍走本垫片的迭代器管线——注册通道、把 mock 的事件帧经 handleEvent 喂进来（mock 用 options.subId 定向发帧）；非流式直接转发。 */
@@ -157,6 +164,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       }
       return mock.call(method, params === undefined ? {} : params, { stream: false });
     }
+    /*KC-MOCK-SEAM-END*/
     return new Promise(function (resolve, reject) {
       var id = ++seq;
       var entry = { resolve: resolve, reject: reject, stream: !!(options && options.stream) };
@@ -377,13 +385,21 @@ function oneLine(text: string): string {
   return text.replace(/\n\s*/g, ' ').trim();
 }
 
-/** 某主题的单行微应用垫片（主题是经校验的枚举字面量替换，无拼注入面）。 */
-export function buildMicroAppShim(theme: 'light' | 'dark' = 'light'): string {
+/**
+ * 某主题的单行微应用垫片（主题是经校验的枚举字面量替换，无拼注入面）。
+ * `preview: true` 保留 `__kepcupMockBridge` 缝（S2 预览专用，55 §11）；生产版剥掉——
+ * 组件运行期不能改道桥调用（P3 审查修复：正式打开路径永不触发 mock）。
+ */
+export function buildMicroAppShim(theme: 'light' | 'dark' = 'light', options: { preview?: boolean } = {}): string {
   const literal = theme === 'dark' ? "'dark'" : "'light'";
   if (SHIM_TEMPLATE.includes('//')) {
     throw new Error('micro-app shim source must not contain // comments');
   }
-  return oneLine(SHIM_TEMPLATE).replace('__KC_THEME__', literal);
+  let source = SHIM_TEMPLATE;
+  if (options.preview !== true) {
+    source = source.replace(/\/\*KC-MOCK-SEAM\*\/[\s\S]*?\/\*KC-MOCK-SEAM-END\*\//g, '');
+  }
+  return oneLine(source).replace('__KC_THEME__', literal);
 }
 
 /** 缺省（亮色）垫片——测试在 node 里执行协议路径用。 */
@@ -568,6 +584,11 @@ const MOCK_HOST_SOURCE = MICRO_APP_BRIDGE_HOST_SOURCE;
  * `net.fetch` 失败由外壳的离线归类承接。
  */
 export function buildMicroAppPreviewMock(input: MicroAppPreviewMockInput): string {
+  // 桥方法 → 能力（平台面为 null）：mock 与正式宿主同闸「只伺候声明过的能力」。
+  const capOfMethod: Record<string, string | null> = {};
+  for (const method of MICRO_APP_API_METHODS) {
+    capOfMethod[method.method] = method.capability === 'platform' ? null : method.capability;
+  }
   const caps = input.permissions.filter((id) => microAppCapabilityOf(id) !== undefined);
   const payload = {
     theme: input.theme,
@@ -581,7 +602,9 @@ export function buildMicroAppPreviewMock(input: MicroAppPreviewMockInput): strin
     ai: input.fixtures.ai ?? [],
     transcripts: input.fixtures.transcripts ?? [],
   };
-  const literal = JSON.stringify(payload);
+  // 审查修复 P1-3：嵌入 <script> 的 JSON 必须转义 `<`（fixtures 里的 `</script>` 会截断
+  // mock 桥并注入标签）；U+2028/2029 同理（JS 字符串字面量外的行终止符）。
+  const literal = JSON.stringify(payload).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const hostSource = JSON.stringify(MOCK_HOST_SOURCE);
   const script = `<script>(function () {
   var cfg = ${literal};
@@ -622,18 +645,29 @@ export function buildMicroAppPreviewMock(input: MicroAppPreviewMockInput): strin
     e.code = code;
     return Promise.reject(e);
   }
+  var CAP_OF = ${JSON.stringify(capOfMethod)};
   var channels = 0;
   window.__kepcupSpoken = spoken;
   window.__kepcupMockBridge = {
     call: function (method, params, options) {
+      var capOf = CAP_OF[method];
+      if (capOf !== undefined && capOf !== null && cfg.capabilities.indexOf(capOf) === -1) {
+        return reject('MICRO_APP_CAPABILITY_NOT_DECLARED', '这个微应用没有声明能力 ' + capOf + '（预览与正式宿主同闸）');
+      }
       switch (method) {
         case 'app.ready':
           return Promise.resolve({ capabilities: cfg.capabilities, grants: cfg.grants, theme: cfg.theme, displayMode: 'inline', viewport: { width: 800, height: 600 }, instanceId: 'mai_preview_1' });
         case 'storage.get':
           return Promise.resolve(Object.prototype.hasOwnProperty.call(kv, params.key) ? kv[params.key] : undefined);
-        case 'storage.set':
+        case 'storage.set': {
+          var size = JSON.stringify(params.value === undefined ? null : params.value).length;
+          var keys = Object.prototype.hasOwnProperty.call(kv, params.key) ? Object.keys(kv).length : Object.keys(kv).length + 1;
+          if (size > ${BOT_WIDGET_STORAGE_VALUE_MAX_BYTES} || keys > ${BOT_WIDGET_STORAGE_KEYS_MAX}) {
+            return reject('WIDGET_STORAGE_QUOTA', '存储超出上限（预览与正式宿主同闸）');
+          }
           kv[params.key] = params.value;
           return Promise.resolve(undefined);
+        }
         case 'storage.delete':
           delete kv[params.key];
           return Promise.resolve(undefined);
@@ -728,9 +762,17 @@ export function buildMicroAppPreviewMock(input: MicroAppPreviewMockInput): strin
           });
           return Promise.resolve({ docs: hit.slice(0, params.limit || 50) });
         }
-        case 'context.update':
-          window.__kepcupContext = params.summary;
+        case 'context.update': {
+          var summary = params.summary;
+          if (summary === null || typeof summary !== 'object' || typeof summary.headline !== 'string' || summary.headline.length === 0 || summary.headline.length > ${MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS}) {
+            return reject('INVALID_INPUT', '摘要必须有 1–' + ${MICRO_APP_CONTEXT_HEADLINE_MAX_CHARS} + ' 字的 headline（预览与正式宿主同闸）');
+          }
+          if (summary.data !== undefined && JSON.stringify(summary.data).length > ${MICRO_APP_CONTEXT_DATA_MAX_BYTES}) {
+            return reject('INVALID_INPUT', '摘要 data 超出上限（预览与正式宿主同闸）');
+          }
+          window.__kepcupContext = summary;
           return Promise.resolve({ ok: true });
+        }
         case 'context.clear':
           window.__kepcupContext = undefined;
           return Promise.resolve({ ok: true });
@@ -790,9 +832,9 @@ export function buildMicroAppSdkReferenceBodies(): Readonly<Record<string, strin
       '- `permissions`：能力闭合枚举的子集（未声明的能力调用会被拒）：',
       caps,
       '- `net`：`{ mode: open | allowlist | none, allowlist?: [] }`，缺省 open。保留 open 要在 spec.md 写联网用途与失败降级；',
-      '- `displayMode`：inline（卡片内）或 immersive（覆盖层全屏）。',
+      '- `display`：`{ mode: inline | immersive }`（inline 卡片内 / immersive 覆盖层全屏）——字段名是 display.mode，不是 displayMode（schema strict，写错整个清单被拒）。',
       '',
-      '清单变化（permissions / net / displayMode）= 能力面变化 = 新版本 + 用户重新确认；只改代码沿用上次确认。',
+      '清单变化（permissions / net / display）= 能力面变化 = 新版本 + 用户重新确认；只改代码沿用上次确认。',
     ].join('\n'),
     'references/storage.md': [
       '# storage.kv 与查询模板',
@@ -800,7 +842,7 @@ export function buildMicroAppSdkReferenceBodies(): Readonly<Record<string, strin
       `- \`kepcup.storage.get/set/delete/list\`：每微应用独立命名空间，单值 ≤${kbOf(BOT_WIDGET_STORAGE_VALUE_MAX_BYTES)}，总量 ≤${kbOf(BOT_WIDGET_STORAGE_QUOTA_BYTES)} / ${BOT_WIDGET_STORAGE_KEYS_MAX} 键；超限得 \`WIDGET_STORAGE_QUOTA\`。`,
       '- `kepcup.query(name, params, opts?)`：只读命名查询模板（queries.json 里声明，随版本审查）；返回 `{ rows, truncated, nextCursor? }`。',
       '- 分页：`opts.maxBytes`（1024B–256KB）按字节切页，`opts.cursor` 接上一页返回的 `nextCursor`（形如 `off:N`），翻到底 `nextCursor` 缺省。',
-      '- `kepcup.collections.put/get/list/delete/query`（能力 storage.collection）：JSON 文档集合，`put` 的文档必须有字符串 `id`；总量 5MB、至多 10 个集合。',
+      '- `kepcup.collections.put/get/list/delete/query`（能力 storage.collection）：JSON 文档集合，`put` 的文档必须有字符串 `id`；总量 ≤${(MICRO_APP_COLLECTION_QUOTA_BYTES / 1024 / 1024).toFixed(0)}MB、至多 ${MICRO_APP_COLLECTIONS_MAX} 个集合。',
       '- 调用与存储共享限流：突发 20 / 每秒 5 / 在途 20——保存要防抖，别高频轮询。',
     ].join('\n'),
     'references/errors.md': [

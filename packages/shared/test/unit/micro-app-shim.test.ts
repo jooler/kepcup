@@ -319,7 +319,7 @@ describe('P3：S2 预览 mock 缝（55 §11，宿主能力 mock）', () => {
       permissions: ['ai.chat', 'media.listen', 'media.speak', 'context.update'],
       fixtures,
     }).replace(/^<script>/, '').replace(/<\/script>$/, '');
-    const source = buildMicroAppShim('light').replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const source = buildMicroAppShim('light', { preview: true }).replace(/^<script>/, '').replace(/<\/script>$/, '');
     const messageHandlers: Array<(event: unknown) => void> = [];
     const spoken: string[] = [];
     const parent = { postMessage: () => undefined };

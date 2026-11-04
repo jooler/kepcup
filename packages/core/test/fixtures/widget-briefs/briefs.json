@@ -89,7 +89,8 @@
     "acceptance": [
       "拒绝麦克风后文字输入仍可用",
       "模型失败时显示可读错误且已完成的对话还在"
-    ]
+    ],
+    "microApp": true
   },
   {
     "id": "voice-word-card",
@@ -98,7 +99,8 @@
     "acceptance": [
       "转写失败不白屏，显示错误并可继续",
       "重开后停在上次学的单词"
-    ]
+    ],
+    "microApp": true
   },
   {
     "id": "voice-story",
@@ -107,6 +109,7 @@
     "acceptance": [
       "停止播报后界面不卡死",
       "断网或模型失败时提示错误并保留进度"
-    ]
+    ],
+    "microApp": true
   }
 ]

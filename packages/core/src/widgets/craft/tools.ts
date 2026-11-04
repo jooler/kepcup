@@ -180,7 +180,13 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
         const resolved = inside(dir);
         if (resolved === drafts) return; // 根目录本身（pi 写文件前会 mkdir）
         const rel = path.relative(drafts, resolved);
-        if (microApp && (deps.stage === 'build' || deps.stage === 'fix') && isSafeMicroAppPath(`${rel}/x`)) {
+        const firstSegment = rel.split('/')[0] ?? '';
+        if (
+          microApp &&
+          (deps.stage === 'build' || deps.stage === 'fix') &&
+          !HOST_ONLY_DIRS.has(firstSegment) &&
+          isSafeMicroAppPath(`${rel}/x`)
+        ) {
           return; // 微应用包的子目录（assets/ 等）
         }
         throw new Error('WRITE_DENIED: 草稿目录里不需要这个子目录');
