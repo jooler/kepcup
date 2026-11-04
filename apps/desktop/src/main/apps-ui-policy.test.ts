@@ -23,9 +23,14 @@ describe('kepcup-app:// URL parsing', () => {
   });
 
   test('rejects every other shape', () => {
+    // D112 P2：`/{resourceId}/{path}` 是合法形状（包内子资源）。
+    expect(parseAppUiUrl(`kepcup-app://app-x/${id}/extra`)).toEqual({
+      host: 'app-x',
+      resourceId: id,
+      path: 'extra',
+    });
     for (const bad of [
       'https://app-0123/AbCdEfGhIjKlMnOpQrStUv',
-      `kepcup-app://app-x/${id}/extra`,
       `kepcup-app://app-x/${id}?q=1`,
       `kepcup-app://app-x/${id}#frag`,
       `kepcup-app://user:pw@app-x/${id}`,

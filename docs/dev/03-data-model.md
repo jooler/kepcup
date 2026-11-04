@@ -857,6 +857,8 @@ CREATE TABLE widget_docs (
 - `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
 - **微应用（D112，0067）**：`manifest_json` 非空的版本是微应用——确认按**能力面指纹**（permissions + net 档位，渲染端 `kepcup.microApp.consents.v1` 按 widgetId 记忆；存量组件仍按 `(sha256|queriesSha256)` 逐版本确认）；`widgets.next_version` 是版本双指针（微应用更新置新版本、重开生效，不热替换运行实例；存量组件不写该列）。生效版本解析与清单校验在 `core/src/micro-apps/manifest.ts` 与 `WidgetService`（`#resolveEffectiveVersion`）。后续 `micro_app_*` 表（files / diagnostics）见 55 §4.3，随 P2 落地登记。
 - **`micro_app_usage`（D112 P1，0068）**：微应用用量记账（主键 widget_id + day，本地时区；ai_calls / ai_tokens / asr_ms / tts_chars，只记数量不记内容）。归属 Bot 由 `widgets.bot_id` 决定（跨该 Bot 全部微应用聚合出「每 Bot 每日」预算，55 §8.3）；`usage_ledger` 同步落一行（loop_type='micro_app'，runId 为合成 `mai_use_*`）。
+- **`micro_app_files` / `micro_app_collections` / `micro_app_context` / `micro_app_diagnostics` / `micro_app_audit`（D112 P2，0069）**：多文件包（widget+version+path 主键，content BLOB）、结构化集合（widget+name+id，5MB / 10 集合配额）、context.update 摘要（widget 主键 last-wins，注入模型上下文）、运行时诊断（widget+version+day+phase+code，只记 code / 阶段 / 位置 / 次数，30 天修剪）、能力审计（55 §12.3）。除 context 外全部随版本修剪；表随 widgets 行级联删除。
+- **`micro_app_diag_pushes`（D112 P2 审查修复，0070）**：诊断系统消息推送去重的持久化登记（widget+version+code+day 主键；同 (version, code) 当天至多一条系统消息、每微应用每日至多 5 条——审查 P1-3 / P2-1）；0070 同时给 `micro_app_audit` 补外键级联（重建表迁移存量行）。
 
 ### delegations（D71，main 0016；0021 重建；0067 增列）
 

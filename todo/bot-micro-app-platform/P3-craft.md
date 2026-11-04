@@ -79,3 +79,26 @@
 - **P3 记录不修**（备忘）：提示词矛盾（legacy「相对路径不存在」与微应用「用相对路径」并存——P0-1 修复后已按草稿类型分流语义，提示分流留待提示瘦身时做）；restore 不复活快照里有而当前被删的文件（模型无删除能力，不可达）；mock collections.get 错误码 NOT_FOUND 与真实桥命名差异；mock listen 重放同一转写序列（脚本化语义，验收多条轮需备足 fixtures）。
 
 **测试证据**：审查者跑过的 12 文件口径 + 新模板测试 = **167/167 通过**（shared sdk 19 / shim 14 / templates 3 / check 8 / craft e2e 2 / legacy craft 2 / widgets-service 51 / widget-tools 10 / micro-app-service 16 / ai 10 / p2 11 / 桥宿主 21）；shared/core typecheck 0 错误。
+
+## 收口：§15 十七条验收核对（2026-11-05）
+
+| # | 验收 | 证据 |
+|---|---|---|
+| 1 | 任务上下文只收回执不见代码 | `micro-app-craft.test.ts`（任务步骤无 `<!DOCTYPE\|<script`）+ `widget-craft.test.ts`（回执 ≤1500 字） |
+| 2 | 卡片：名/版本/能力清单/网络范围/预计成本/计费 Bot | `BotWidgetCard.svelte` 网络行最前 + `botWidget.microApp.cost`（计费 Bot 名）+ 能力清单（预检生效版本口径）；`micro-app-consent.svelte.test.ts` |
+| 3 | 首次确认；扩权重确认；只改代码标「代码已更新」 | 能力面指纹门控（`micro-app-gate.ts` + `micro-appEffectiveConsentOk` 双闸）+ `micro-app-consent.svelte.test.ts` / `micro-app-gate.svelte.test.ts` |
+| 4 | 打开即英语问候（TTS） | `micro-app-shim.test.ts`（speak 协议）+ 语音陪练模板（init 即 ask→speak）；实机手动步骤：打开模板微应用 |
+| 5 | 说话→转写→回复→播报整轮 | `micro-app-audio.svelte.test.ts`（采集→分段→pending 队列）+ `micro-app-ai.test.ts`（网关）+ mock vm 整轮（`micro-app-shim.test.ts` P3 组） |
+| 6 | 插话立即停止播报 | `micro-app-audio.svelte.test.ts`（epoch 打断，合成期不漏段）+ `MicroAppSpeakQueue.stopSpeaking` |
+| 7 | 关闭再打开继续进度 | `session:` 约定（references/lifecycle.md + 语音陪练模板 init 读回）；storage 持久化（P0 起即有） |
+| 8 | 拒麦克风切键盘 | `app.fallback-missing` 检查（`micro-app-check.test.ts`）+ 模板 input 回退 + 桥宿主 CAPABILITY_DENIED（`micro-app-bridge-host.test.ts`） |
+| 9 | 用量展示 + 计费 Bot 累计 | `micro_app_usage`（0068）+ 管理页用量段（`microApps.list` usage）+ `micro-app-p2.test.ts` 管理入口 |
+| 10 | 断网/模型失败可读错误 + 进度保留 | `MICRO_APP_AI_UNAVAILABLE` / `BRIDGE_CLOSED`（errors.ts + `MICRO_APP_ERROR_HINTS`，shim 测试 code+hint） |
+| 11 | S2 离线跑通一整轮（mock ASR/模型/播报） | mock 缝 vm 真执行（sdk/shim 测试）+ 预览 mock 注入（`preview.ts` 微应用分支）+ craft e2e |
+| 12 | 检查器无阻断项；自检状态如实上卡 | `micro-app-templates.test.ts`（三模板 GATE 全绿）+ unverified/passed 交付口径（`widget-craft.test.ts`） |
+| 13 | ≤300 字诊断 + 当天不重复 + 管理页次数 | `micro-app-p2.test.ts` 诊断组 + P2 审查修复（0070 持久去重 + 每日 5 条上限） |
+| 14 | 诊断表无内容列 | `micro-app-p2.test.ts` pragma 断言（无 message 列） |
+| 15 | 缺配置打开前标「当前不可用」+ 深链 | preflight 探针（ai.chat / media.*，`micro-apps-bindings.ts`）+ 卡片预检失败重试 |
+| 16 | 网络范围最前 + 常驻徽标 + open 明示 | `BotWidgetCard.svelte` 网络行 + `WidgetViewer.svelte` MicroAppChrome 徽标 + netOpen 文案「未限制域名」 |
+| 17 | context.update 下一轮可见/无气泡/可清除/自由文本拒 | `micro-app-p2.test.ts` context 组 + meta 属性注入（conversation.ts）+ clearContext |
+
