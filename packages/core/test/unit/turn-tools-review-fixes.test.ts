@@ -153,25 +153,32 @@ beforeEach(() => {
 });
 
 describe('send_message attachments need an allowed path (审查 pre-existing HIGH)', () => {
-  it('turn: a grantable path is refused without reading or uploading', async () => {
+  it('turn: ordinary files upload without a request; a sensitive path is refused', async () => {
     const { tools, uploads, appended } = responseTools(turn);
     const send = tools.get('send_message')!;
-    for (const file of [path.join(outside, 'data.txt'), path.join(sensitive, 'id_rsa')]) {
-      const result = await executeToolSafely(
-        send,
-        { text: '给你文件', attachment_paths: [file] },
-        ctxFor(turn),
-      );
-      expect(result.ok).toBe(false);
-      expect(result.errorCode).toBe('PATH_OUT_OF_SCOPE');
-      expect(result.content).toContain('授权范围');
-    }
-    expect(uploads).toEqual([]);
-    expect(appended).toEqual([]);
+    // Cross-directory reads are allowed: the ordinary file goes out.
+    const ordinary = await executeToolSafely(
+      send,
+      { text: '给你文件', attachment_paths: [path.join(outside, 'data.txt')] },
+      ctxFor(turn),
+    );
+    expect(ordinary.ok).toBe(true);
+    expect(uploads).toEqual(['data.txt']);
+    // Sensitive locations still need a grant; a turn fails fast instead of waiting.
+    const secret = await executeToolSafely(
+      send,
+      { text: '给你密钥', attachment_paths: [path.join(sensitive, 'id_rsa')] },
+      ctxFor(turn),
+    );
+    expect(secret.ok).toBe(false);
+    expect(secret.errorCode).toBe('PATH_OUT_OF_SCOPE');
+    expect(secret.content).toContain('start_task');
+    expect(uploads).toEqual(['data.txt']);
+    expect(appended).toEqual([{ text: '给你文件', mentions: [] }]);
     expect(approvalRequests).toEqual([]);
   });
 
-  it('task: asks for access first, then uploads only after approval', async () => {
+  it('task: asks for a sensitive path first, then uploads it', async () => {
     const { tools, uploads, appended } = responseTools(task);
     const send = tools.get('send_message')!;
     const result = await executeToolSafely(
@@ -183,7 +190,8 @@ describe('send_message attachments need an allowed path (审查 pre-existing HIG
       ctxFor(task),
     );
     expect(result.ok).toBe(true);
-    expect(approvalRequests.map((request) => request.kind)).toEqual(['access', 'access']);
+    // Only the sensitive path needs a card now.
+    expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
     expect(uploads).toEqual(['data.txt', 'id_rsa']);
     expect(appended).toEqual([{ text: '给你文件', mentions: [] }]);
     // A workspace file still goes out without a new request.
@@ -194,7 +202,7 @@ describe('send_message attachments need an allowed path (审查 pre-existing HIG
     );
     expect(ok.ok).toBe(true);
     expect(uploads).toEqual(['data.txt', 'id_rsa', 'report.md']);
-    expect(approvalRequests).toHaveLength(2);
+    expect(approvalRequests).toHaveLength(1);
   });
 });
 
@@ -255,37 +263,50 @@ describe('a turn never waits for an access approval (审查 M4)', () => {
     return new Map(tools.map((tool) => [tool.name, tool]));
   }
 
-  it('read / ls outside the authorized range fail fast in a turn; a task still asks', async () => {
+  it('ordinary reads are allowed everywhere; sensitive reads fail fast in a turn and ask in a task', async () => {
     const turnTools = codingTools(turn);
-    for (const [name, args] of [
-      ['read', { path: path.join(outside, 'data.txt') }],
-      ['ls', { path: outside }],
-      ['read', { path: path.join(sensitive, 'id_rsa') }],
-    ] as const) {
-      const result = await executeToolSafely(turnTools.get(name)!, args, ctxFor(turn));
-      expect(result.ok).toBe(false);
-      expect(result.content).toContain('start_task');
-    }
+    // Cross-directory reads no longer need a grant.
+    const outsideRead = await executeToolSafely(
+      turnTools.get('read')!,
+      { path: path.join(outside, 'data.txt') },
+      ctxFor(turn),
+    );
+    expect(outsideRead.ok).toBe(true);
+    expect(outsideRead.content).toContain('outside-data');
+    const outsideLs = await executeToolSafely(
+      turnTools.get('ls')!,
+      { path: outside },
+      ctxFor(turn),
+    );
+    expect(outsideLs.ok).toBe(true);
+    expect(outsideLs.content).toContain('data.txt');
+    // Sensitive locations still need a grant; a turn fails fast instead of waiting.
+    const sensitiveRead = await executeToolSafely(
+      turnTools.get('read')!,
+      { path: path.join(sensitive, 'id_rsa') },
+      ctxFor(turn),
+    );
+    expect(sensitiveRead.ok).toBe(false);
+    expect(sensitiveRead.content).toContain('start_task');
     expect(approvalRequests).toEqual([]);
 
     const taskTools = codingTools(task);
-    const read = await executeToolSafely(
+    const taskOutside = await executeToolSafely(
       taskTools.get('read')!,
       { path: path.join(outside, 'data.txt') },
       ctxFor(task),
     );
-    expect(read.ok).toBe(true);
-    expect(read.content).toContain('outside-data');
-    expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
+    expect(taskOutside.ok).toBe(true);
+    expect(taskOutside.content).toContain('outside-data');
+    expect(approvalRequests).toEqual([]);
 
-    // ls probes existence before stat/readdir: the probe used to answer
-    // "missing" for a grantable path in a task, so the tool silently reported
-    // an empty directory and never raised a card.
-    approvalRequests = [];
-    const ls = await executeToolSafely(taskTools.get('ls')!, { path: outside }, ctxFor(task));
-    expect(ls.ok).toBe(true);
-    expect(ls.content).toContain('data.txt');
+    const taskSensitive = await executeToolSafely(
+      taskTools.get('read')!,
+      { path: path.join(sensitive, 'id_rsa') },
+      ctxFor(task),
+    );
+    expect(taskSensitive.ok).toBe(true);
     expect(approvalRequests.map((request) => request.kind)).toEqual(['access']);
-    expect(approvalRequests[0]!.payload['path']).toBe(outside);
+    expect(approvalRequests[0]!.payload['path']).toBe(canonicalPath(path.join(sensitive, 'id_rsa')));
   });
 });

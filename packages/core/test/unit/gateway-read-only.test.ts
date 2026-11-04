@@ -319,18 +319,18 @@ describe('「仅这一次」= 单次工具调用 (D75 §7.3)', () => {
     const gateway = makeGateway();
     const target = path.join(outside, 'data.txt');
     await runInToolCall(async () => {
-      await gateway.ensurePathAccess(ids.response, target, 'read', '读');
+      await gateway.ensurePathAccess(ids.response, target, 'write', '写');
       // Same tool call (e.g. edit's access → readFile → writeFile): no new card.
-      await gateway.ensurePathAccess(ids.response, target, 'read', '读');
+      await gateway.ensurePathAccess(ids.response, target, 'write', '写');
     });
     expect(approvalRequests).toHaveLength(1);
     // The call returned: the grant is consumed.
     expect(grants.listEffective(ids.response)).toEqual([]);
-    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'read', '读'));
+    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'write', '写'));
     expect(approvalRequests).toHaveLength(2);
   });
 
-  it('the read tool asks once per call (two calls → two approvals)', async () => {
+  it('the read tool reads outside the workspace without an approval', async () => {
     const gateway = makeGateway();
     const tools = codingTools(gateway, ids.response);
     const target = path.join(outside, 'data.txt');
@@ -338,21 +338,21 @@ describe('「仅这一次」= 单次工具调用 (D75 §7.3)', () => {
     expect(first.ok).toBe(true);
     const second = await executeToolSafely(tools.get('read')!, { path: target }, ctxFor(ids.response));
     expect(second.ok).toBe(true);
-    expect(approvalRequests).toHaveLength(2);
+    expect(approvalRequests).toEqual([]);
   });
 
   it('a pre-authorized once grant (request_access) is consumed by the next call that uses it', async () => {
     const gateway = makeGateway();
     const target = path.join(outside, 'data.txt');
     await runInToolCall(() =>
-      gateway.ensurePathAccess(ids.response, outside, 'read', '批量前申请', { preauthorize: true }),
+      gateway.ensurePathAccess(ids.response, outside, 'write', '批量前申请', { preauthorize: true }),
     );
     expect(grants.listEffective(ids.response)).toHaveLength(1);
     // First use: passes without a card, and is consumed when that call ends.
-    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'read', '读'));
+    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'write', '写'));
     expect(approvalRequests).toHaveLength(1);
     expect(grants.listEffective(ids.response)).toEqual([]);
-    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'read', '读'));
+    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'write', '写'));
     expect(approvalRequests).toHaveLength(2);
   });
 
@@ -371,10 +371,10 @@ describe('「仅这一次」= 单次工具调用 (D75 §7.3)', () => {
 
   it('conversation grants are never consumed', async () => {
     const gateway = makeGateway();
-    grants.create({ botId: BOT, conversationId: CONV, path: outside, access: 'read', duration: 'conversation' });
+    grants.create({ botId: BOT, conversationId: CONV, path: outside, access: 'write', duration: 'conversation' });
     const target = path.join(outside, 'data.txt');
     for (let i = 0; i < 3; i++) {
-      await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'read', '读'));
+      await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'write', '写'));
     }
     expect(approvalRequests).toEqual([]);
   });
@@ -525,18 +525,18 @@ describe('once grants are owned by one tool call (D75 review M5 / LOW-6)', () =>
     const gateway = makeGateway();
     const target = path.join(outside, 'data.txt');
     await runInToolCall(() =>
-      gateway.ensurePathAccess(ids.response, outside, 'read', '批量前申请', { preauthorize: true }),
+      gateway.ensurePathAccess(ids.response, outside, 'write', '批量前申请', { preauthorize: true }),
     );
     const hold = deferred();
     const claimed = deferred();
     const callA = runInToolCall(async () => {
-      expect(gateway.checkPath(ids.response, target, 'read')).toMatchObject({ kind: 'allowed' });
+      expect(gateway.checkPath(ids.response, target, 'write')).toMatchObject({ kind: 'allowed' });
       claimed.resolve();
       await hold.promise;
     });
     await claimed.promise;
     await runInToolCall(async () => {
-      expect(gateway.checkPath(ids.response, target, 'read')).toMatchObject({ kind: 'needs_grant' });
+      expect(gateway.checkPath(ids.response, target, 'write')).toMatchObject({ kind: 'needs_grant' });
     });
     hold.resolve();
     await callA;
@@ -549,13 +549,13 @@ describe('once grants are owned by one tool call (D75 review M5 / LOW-6)', () =>
     const changed = () => events.filter((e) => e.event === 'grant.changed');
 
     // Consumed when its tool call returns.
-    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'read', '读'));
+    await runInToolCall(() => gateway.ensurePathAccess(ids.response, target, 'write', '写'));
     await Promise.resolve();
     expect(changed().at(-1)?.payload).toEqual({ conversationId: CONV, grants: [] });
 
     // TTL: an unused pre-authorization expires (lazily, on the next listing).
     await runInToolCall(() =>
-      gateway.ensurePathAccess(ids.response, outside, 'read', '申请', { preauthorize: true }),
+      gateway.ensurePathAccess(ids.response, outside, 'write', '申请', { preauthorize: true }),
     );
     expect(changed().at(-1)?.payload.grants).toHaveLength(1);
     const before = changed().length;
@@ -567,7 +567,7 @@ describe('once grants are owned by one tool call (D75 review M5 / LOW-6)', () =>
 
     // Run end.
     await runInToolCall(() =>
-      gateway.ensurePathAccess(ids.response, outside, 'read', '申请', { preauthorize: true }),
+      gateway.ensurePathAccess(ids.response, outside, 'write', '申请', { preauthorize: true }),
     );
     const beforeEnd = changed().length;
     expect(grants.expireForRun(ids.response.runId)).toBe(1);

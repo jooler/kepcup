@@ -193,6 +193,8 @@ import {
   pluginMarketplacePublicKeySchema,
   pluginMarketplaceUrlSchema,
   unattendedStateSchema,
+  permissionModeSchema,
+  permissionModeStateSchema,
   usageStatsInputSchema,
   usageStatsOutputSchema,
   usageSummaryOutputSchema,
@@ -1504,6 +1506,21 @@ export const unattendedSummaryOutputSchema = z.object({
   items: z.array(unattendedSummaryItemSchema),
 });
 
+// --- per-conversation permission level ---------------------------------------
+
+export const permissionModeGetInputSchema = z.object({
+  conversationId: z.string().min(1),
+});
+export const permissionModeSetInputSchema = z.object({
+  conversationId: z.string().min(1),
+  mode: permissionModeSchema,
+  /** Only for `auto` / `bypass`: hours until auto-off; null / omitted = manual off. */
+  hours: z.number().int().min(1).max(168).nullable().optional(),
+  /** `auto` / `bypass` require the explicit risk check in the enable dialog. */
+  acknowledgeRisk: z.literal(true).optional(),
+});
+export const permissionModeOutputSchema = permissionModeStateSchema;
+
 // --- workdirs (P04) ---------------------------------------------------------
 
 export const workdirsListOutputSchema = z.object({ workdirs: z.array(workdirSchema) });
@@ -2710,6 +2727,15 @@ export const rpcMethodSchemas = {
     output: unattendedSummaryOutputSchema,
   },
 
+  'permissions.mode.get': {
+    input: permissionModeGetInputSchema,
+    output: permissionModeOutputSchema,
+  },
+  'permissions.mode.set': {
+    input: permissionModeSetInputSchema,
+    output: permissionModeOutputSchema,
+  },
+
   'workdirs.list': { input: voidInput, output: workdirsListOutputSchema },
   'workdirs.get': { input: workdirsGetInputSchema, output: workdirsGetOutputSchema },
   'workdirs.select': { input: workdirsSelectInputSchema, output: workdirsSelectOutputSchema },
@@ -3326,6 +3352,8 @@ const APP_METHODS = [
   'unattended.enable',
   'unattended.disable',
   'unattended.summary',
+  'permissions.mode.get',
+  'permissions.mode.set',
   'workdirs.list',
   'workdirs.get',
   'workdirs.select',

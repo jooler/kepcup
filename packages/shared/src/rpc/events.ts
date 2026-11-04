@@ -13,6 +13,7 @@ import {
   runSchema,
   taskViewSchema,
   unattendedStateSchema,
+  permissionModeStateSchema,
   appConnectionStatusSchema,
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
@@ -97,6 +98,11 @@ export const grantChangedPayloadSchema = z.object({
 
 export const unattendedChangedPayloadSchema = z.object({
   state: unattendedStateSchema,
+});
+
+/** 对话级权限级别切换（manual / auto / bypass）。 */
+export const permissionModeChangedPayloadSchema = z.object({
+  state: permissionModeStateSchema,
 });
 
 // --- P04 events (docs/dev/phases/P04-project.md) -----------------------------
@@ -426,6 +432,7 @@ export const rpcEventSchemas = {
   'approval.resolved': approvalResolvedPayloadSchema,
   'grant.changed': grantChangedPayloadSchema,
   'unattended.changed': unattendedChangedPayloadSchema,
+  'permissions.mode.changed': permissionModeChangedPayloadSchema,
   'workdir.updated': workdirUpdatedPayloadSchema,
   'workdir.removed': workdirRemovedPayloadSchema,
   'lease.waiting': leaseWaitingPayloadSchema,

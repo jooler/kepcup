@@ -44,6 +44,11 @@ export const ERROR_CODES = [
   'APPROVAL_DENIED',
   'APPROVAL_NOT_FOUND',
   /**
+   * 完全控制档下仍然硬拒绝的灾难性命令（`rm -rf /`、写裸设备、格式化磁盘等）。
+   * 不弹卡、不可批准——见 docs/design/13-permissions.md「权限级别」。
+   */
+  'CATASTROPHIC_COMMAND',
+  /**
    * W4（D78）：`approvals.decide` 带的 payloadHash 与服务端审批内容不符（界面
    * 显示的是过期的卡片），决定不生效。
    */
