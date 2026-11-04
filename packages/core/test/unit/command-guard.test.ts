@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import { catastrophicCommandVerdict } from '../../src/permissions/command-guard.js';
 
+// This suite pins platform: 'darwin'. Fixtures must stay POSIX: `path.join` on
+// a Windows runner rewrites `/Users/tester` to `\Users\tester`, which the
+// POSIX resolver does not treat as the home or data directory.
 const HOME = '/Users/tester';
-const DATA_HOME = path.join(HOME, '.kepcup');
-const WORKSPACE = path.join(DATA_HOME, 'bots', 'bot_1', 'workspaces', 'conv_1');
-const CWD = path.join(HOME, 'project');
+const DATA_HOME = path.posix.join(HOME, '.kepcup');
+const WORKSPACE = path.posix.join(DATA_HOME, 'bots', 'bot_1', 'workspaces', 'conv_1');
+const CWD = path.posix.join(HOME, 'project');
 
 function verdict(command: string) {
   return catastrophicCommandVerdict(command, {
@@ -41,15 +44,15 @@ describe('catastrophicCommandVerdict', () => {
     'rm -rf ~/.ssh',
     "rm -rf ~/.ssh/*",
     `rm -rf ${HOME}`,
-    `rm -rf ${path.join(HOME, 'Downloads')}`,
+    `rm -rf ${path.posix.join(HOME, 'Downloads')}`,
     `rm -rf ${HOME}/Library`,
     'rm -rf /Users',
     'rm -rf /etc',
     'rm -rf /usr/local',
     'rm -rf /System/Library',
     `rm -rf ${DATA_HOME}/main.db`,
-    `rm -rf ${path.join(DATA_HOME, 'bots')}/../config.json`,
-    `rm -rf ${path.join(WORKSPACE, '..')}`,
+    `rm -rf ${path.posix.join(DATA_HOME, 'bots')}/../config.json`,
+    `rm -rf ${path.posix.join(WORKSPACE, '..')}`,
     'mkfs.ext4 /dev/sda1',
     'wipefs -a /dev/disk2',
     'dd if=/dev/zero of=/dev/sda bs=1M',
@@ -79,7 +82,7 @@ describe('catastrophicCommandVerdict', () => {
     'rm -rf /tmp/build',
     'rm -rf ~/Downloads/old.zip',
     `rm -rf ${WORKSPACE}`,
-    `rm -rf ${path.join(WORKSPACE, 'dist')}`,
+    `rm -rf ${path.posix.join(WORKSPACE, 'dist')}`,
     'chmod -R 755 ./scripts',
     'dd if=/dev/zero of=/tmp/zero bs=1 count=1',
     'git status',
@@ -121,14 +124,44 @@ describe('catastrophicCommandVerdict (Windows)', () => {
     'Remove-Item -Recurse -Force C:\\Users',
     'format C:',
     'diskpart',
+    // Current-drive root-relative paths (cwd is C:\work): same targets as C:\…
+    'rm -rf \\Users\\tester\\.kepcup',
+    'rm -rf \\Users\\tester\\.kepcup\\main.db',
+    'rm -rf \\Users\\tester\\.kepcup/main.db',
+    'rm -rf \\Users\\tester\\.kepcup\\bots\\..\\config.json',
+    'rm -rf \\Users\\tester\\.kepcup\\bots/../config.json',
+    'rm -rf \\Users\\tester\\.kepcup\\bots\\bot_1\\workspaces',
+    'rm -rf \\Users\\tester\\Downloads',
+    'rm -rf /Users/tester/Downloads',
+    'rm -rf \\Windows',
+    'cat \\Users\\tester\\.kepcup\\main.db',
+    'cat \\Users\\tester\\.kepcup/main.db',
+    'grep -r secret \\Users\\tester\\.kepcup',
   ])('blocks %s', (command) => {
     expect(run(command).blocked, command).toBe(true);
   });
 
-  it.each(['rm -rf C:\\work\\dist', 'Remove-Item -Force C:\\work\\a.txt', 'dir'])(
-    'allows %s',
-    (command) => {
-      expect(run(command).blocked, command).toBe(false);
-    },
-  );
+  it.each([
+    'rm -rf C:\\work\\dist',
+    'rm -rf \\work\\dist',
+    'Remove-Item -Force C:\\work\\a.txt',
+    'dir',
+  ])('allows %s', (command) => {
+    expect(run(command).blocked, command).toBe(false);
+  });
+
+  it('allows an exempt workspace addressed with a root-relative path', () => {
+    const workspace = 'C:\\Users\\tester\\.kepcup\\bots\\bot_1\\workspaces\\conv_1';
+    const verdict = catastrophicCommandVerdict(
+      'rm -rf \\Users\\tester\\.kepcup\\bots\\bot_1\\workspaces\\conv_1\\dist',
+      {
+        cwd: winCwd,
+        homeDir: winHome,
+        dataHome: winData,
+        exemptDirs: [workspace],
+        platform: 'win32',
+      },
+    );
+    expect(verdict.blocked).toBe(false);
+  });
 });
