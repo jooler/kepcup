@@ -35,7 +35,7 @@ let approvals: Array<{ kind: string; payload: Record<string, unknown> }>;
 let tainted: boolean;
 let allowlist: AllowlistService;
 
-function makeGateway(): ToolGateway {
+function makeGateway(options: { sensitive?: string[] } = {}): ToolGateway {
   const grantsDb = new Database(':memory:');
   grantsDb.exec(`
     create table grants (
@@ -74,7 +74,7 @@ function makeGateway(): ToolGateway {
     },
     platform: 'linux',
     readOnlyRootsOverride: [],
-    sensitiveOverride: [],
+    sensitiveOverride: options.sensitive ?? [],
   };
   return new ToolGateway(deps);
 }
@@ -228,7 +228,8 @@ describe.skipIf(!hasGit)('allowlisted git obeys no program-running repository co
     spawnSync('git', ['commit', '-q', '-m', 'secret'], { cwd: privateRepo });
     // The Bot plants a gitdir pointer (written here directly: the file tools would ask).
     writeFileSync(path.join(workspace(), '.git'), `gitdir: ${path.join(privateRepo, '.git')}\n`);
-    const gateway = makeGateway();
+    // A repository under a sensitive location stays outside the readable range.
+    const gateway = makeGateway({ sensitive: [privateRepo] });
     for (const command of ['git show HEAD:secrets.env', 'git log -p', 'git status']) {
       await expect(gateway.exec(writeTask, { command, network: none }), command).rejects.toMatchObject({
         code: 'APPROVAL_DENIED',
@@ -246,7 +247,7 @@ describe.skipIf(!hasGit)('allowlisted git obeys no program-running repository co
       path.join(workspace(), '.git', 'objects', 'info', 'alternates'),
       `${path.join(privateRepo, '.git', 'objects')}\n`,
     );
-    const gateway = makeGateway();
+    const gateway = makeGateway({ sensitive: [privateRepo] });
     await expect(
       gateway.exec(writeTask, { command: 'git log --oneline', network: none }),
     ).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });

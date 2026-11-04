@@ -8,23 +8,27 @@ import { createBotAndOpenChat } from './helpers/create-bot';
 import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
- * D75: conversation turns never wait on the user — an out-of-scope read fails
- * fast there and access approvals happen in tasks (修复批 D M4). The turn
- * starts a read-only task, the task's read raises the approval, its result
- * wakes a turn that relays it (`relay`, the visible reply).
+ * D75: conversation turns never wait on the user — an out-of-scope write fails
+ * fast there and access approvals happen in tasks (修复批 D M4). Design 13:
+ * ordinary reads outside the workspace are allowed; a write still raises the
+ * card. The turn starts a write task, the task's write raises the approval,
+ * its result wakes a turn that relays it (`relay`, the visible reply).
  */
-function readInTask(target: string, relay: string) {
+function writeOutsideInTask(target: string, relay: string) {
   return viaTask({
-    title: '读外部文件',
-    writes: false,
+    title: '写外部文件',
+    writes: true,
     // The ack must not contain `relay`: the tests wait for the relay bubble.
-    ack: '好的，我去读',
-    taskSteps: [step().replyToolCall('read', { path: target }), step().replyText('文件内容已读到')],
+    ack: '好的，我去写',
+    taskSteps: [
+      step().replyToolCall('write', { path: target, content: 'e2e-external-content' }),
+      step().replyText('文件已写好'),
+    ],
     relay,
   });
 }
 
-/** A real readable file outside every workspace (read tools must reach the gateway). */
+/** A real file outside every workspace (write tools must reach the gateway). */
 function externalFile(prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   const file = path.join(dir, 'note.txt');
@@ -109,7 +113,7 @@ test('access approval card appears above the composer and leaves the transcript'
     await createBotAndOpenChat(page, '小授');
 
     const target = externalFile('kepcup-e2e-external-');
-    llm.script('mock-main', readInTask(target, '读完了'));
+    llm.script('mock-main', writeOutsideInTask(target, '读完了'));
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读一下外部文件');
@@ -158,7 +162,7 @@ test('left sidebar shows the pending marker while an approval waits; Esc denies'
     await createBotAndOpenChat(page, '小待');
 
     const target = externalFile('kepcup-e2e-pending-');
-    llm.script('mock-main', readInTask(target, '被拒了就算了'));
+    llm.script('mock-main', writeOutsideInTask(target, '被拒了就算了'));
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读外部');
@@ -212,12 +216,12 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
       timeout: 15_000,
     });
 
-    // 开启期间审批自动批准：让 Bot 的任务发起一次访问授权。
+    // 开启期间审批自动批准：让 Bot 的任务发起一次越界写入授权。
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-page"]')).toBeHidden();
     await createBotAndOpenChat(page, '小无');
     const target = externalFile('kepcup-e2e-unattended-');
-    llm.script('mock-main', readInTask(target, '自动批准了'));
+    llm.script('mock-main', writeOutsideInTask(target, '自动批准了'));
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读外部文件');
     await composer.press('ControlOrMeta+Enter');

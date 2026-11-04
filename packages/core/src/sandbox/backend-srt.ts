@@ -102,6 +102,23 @@ const CHILD_ENV_ALLOWLIST = [
   'TMPDIR',
 ] as const;
 
+/**
+ * srt 0.0.78's seatbelt profile allows a fixed `sysctl-read` list and has no
+ * hook to extend it. macOS 26 libsystem reads `kern.iosupportversion` during
+ * process start (bash, sleep, python); the denial is the same class as the
+ * `kern.osproductversion` entry already on that list — a read-only OS
+ * compatibility string, not a secret. Insert it into the generated profile.
+ * Linux bwrap commands do not contain the anchor and are returned unchanged.
+ * A future srt that already lists the name is left alone.
+ */
+export function allowMacosStartupSysctls(wrapped: string): string {
+  const extra = '(sysctl-name "kern.iosupportversion")';
+  if (wrapped.includes(extra)) return wrapped;
+  const anchor = '(sysctl-name "kern.osproductversion")';
+  if (!wrapped.includes(anchor)) return wrapped;
+  return wrapped.replace(anchor, `${anchor}\n  ${extra}`);
+}
+
 /** Builds the child process environment from the allowlist plus `policy` env. */
 export function childEnvFor(base: NodeJS.ProcessEnv, policyEnv: Record<string, string>): NodeJS.ProcessEnv {
   const child: NodeJS.ProcessEnv = {};
@@ -190,10 +207,12 @@ export class SrtSandboxBackend implements SandboxBackend {
         network: srtNetworkConfigFor(policy),
         filesystem: this.#toSrtFilesystem(policy),
       }));
-      const wrapped = await SandboxManager.wrapWithSandbox('true', undefined, undefined, undefined, {
-        commandId: 'kepcup-probe',
-        commandText: 'true',
-      });
+      const wrapped = allowMacosStartupSysctls(
+        await SandboxManager.wrapWithSandbox('true', undefined, undefined, undefined, {
+          commandId: 'kepcup-probe',
+          commandText: 'true',
+        }),
+      );
       const trial = await this.#spawnWrapped(wrapped, os.tmpdir(), {}, 30_000, undefined, undefined);
       if (trial.exitCode !== 0) {
         return {
@@ -236,12 +255,14 @@ export class SrtSandboxBackend implements SandboxBackend {
       try {
         // Filesystem rules are compiled per command; network rules live in the
         // global proxy config maintained by #runWithNetworkPolicy.
-        wrapped = await SandboxManager.wrapWithSandbox(
-          req.command,
-          undefined,
-          { filesystem: this.#toSrtFilesystem(policy) },
-          req.signal ?? undefined,
-          { commandId, commandText: req.command },
+        wrapped = allowMacosStartupSysctls(
+          await SandboxManager.wrapWithSandbox(
+            req.command,
+            undefined,
+            { filesystem: this.#toSrtFilesystem(policy) },
+            req.signal ?? undefined,
+            { commandId, commandText: req.command },
+          ),
         );
       } catch (error) {
         throw new Error(

@@ -911,6 +911,35 @@ export const unattendedStateSchema = z.object({
 export type UnattendedState = z.infer<typeof unattendedStateSchema>;
 
 /**
+ * 对话级权限级别（docs/design/13-permissions.md「权限级别」）：
+ * - `manual`：默认档，越界写入、沙箱外执行等按授权处理；
+ * - `auto`：自动授权档，自动批准文件访问与常规安装 / 技能导入；
+ * - `bypass`：完全控制档，跳过审批并在网络策略允许时脱离沙箱，只保留灾难命令与
+ *   应用数据目录的硬底线。
+ */
+export const permissionModeSchema = z.enum(['manual', 'auto', 'bypass']);
+export type PermissionMode = z.infer<typeof permissionModeSchema>;
+
+/** 生效来源：对话自己的设置，或被全局无人值守强制为完全控制。 */
+export const permissionModeSourceSchema = z.enum(['conversation', 'unattended']);
+export type PermissionModeSource = z.infer<typeof permissionModeSourceSchema>;
+
+export const permissionModeStateSchema = z.object({
+  /** 请求时传入的对话（可能是继承方，如委派交换会话）。 */
+  conversationId: z.string(),
+  mode: permissionModeSchema.default('manual'),
+  /** 生效来源；`unattended` 时所有对话统一为 `bypass`。 */
+  source: permissionModeSourceSchema.default('conversation'),
+  /** 真正持有设置的对话；没有继承时为 null。 */
+  inheritedFrom: z.string().nullable().default(null),
+  /** 开启时刻；manual 时为 null。 */
+  enabledAt: z.number().nullable().default(null),
+  /** 自动关闭时刻；null = 手动关闭或应用重启时关闭。 */
+  until: z.number().nullable().default(null),
+});
+export type PermissionModeState = z.infer<typeof permissionModeStateSchema>;
+
+/**
  * P13 任务 4: per-step completion flags of the first-run wizard. Steps stay
  * navigable in both directions; only these facts persist.
  */
@@ -2756,6 +2785,11 @@ export const approvalDecisionSchema = z.object({
    * picked on the card, overriding `payload.leadBotId` (always a payload member).
    */
   leadBotId: z.string().optional(),
+  /**
+   * 自动决定由哪种模式做出（`unattended` 无人值守 / `auto` 自动授权 /
+   * `bypass` 完全控制）。用户亲手决定时缺失。
+   */
+  via: z.enum(['unattended', 'auto', 'bypass']).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });

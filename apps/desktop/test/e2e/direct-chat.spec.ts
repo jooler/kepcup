@@ -338,6 +338,55 @@ test('removing the conversation archives it (restorable from the contacts); dele
   }
 });
 
+test('a Mermaid code fence renders as a diagram, not a plain code block', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-mermaid-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '图表丙');
+
+    llm.script('mock-main', [step().replyText('```mermaid\ngraph TD\n  A[开始] --> B[结束]\n```')]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('画个流程图');
+    await composer.press('Enter');
+
+    // streamdown 的 Mermaid 插件是 opt-in：没有 plugins.mermaid 时这里只会是
+    // 普通 code-block。挂上插件后应出现 SVG，且不能落到错误分支。
+    const diagram = page.locator('[data-streamdown-mermaid]').first();
+    await expect(diagram).toBeVisible({ timeout: 60_000 });
+    await expect(diagram.locator('[data-mermaid-svg] svg')).toBeVisible({ timeout: 60_000 });
+    await expect(diagram.locator('[data-streamdown-mermaid-error]')).toHaveCount(0);
+    await expect(diagram).toContainText('开始');
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('KaTeX math renders instead of staying as plain dollar signs', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-math-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '公式丁');
+
+    // Streamdown 的 math 插件同样是 opt-in：不挂 plugins.math 时 `$$...$$`
+    // 只会按纯文本输出。挂上后应渲染 KaTeX 结构。
+    llm.script('mock-main', [step().replyText('$$E = mc^2$$')]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('写个公式');
+    await composer.press('Enter');
+
+    const blockMath = page.locator('[data-streamdown-block-math]').first();
+    await expect(blockMath).toBeVisible({ timeout: 60_000 });
+    await expect(blockMath.locator('.katex')).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="bot-bubble"]')).not.toContainText('$$');
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('a Markdown table fullscreen covers the app and keeps its toolbar clickable', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-table-fullscreen-');

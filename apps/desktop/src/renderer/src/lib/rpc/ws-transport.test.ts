@@ -912,9 +912,13 @@ describe('WsTransport: connected-phase frames', () => {
     await settle();
     expect(transport.linkState).toBe('offline');
 
+    // #onKick 要等 WebCrypto decrypt 结束才把 pairing 打成 kicked 并清凭证。
+    // 单次 settle（约 1ms）在 Linux CI 线程池挤占时会早于回调，读到仍是 connected。
     const [kick] = endpoint.seal('kick', { reason: 'revoked' }, { did: deviceId });
     registry.last.receive(kick);
-    await settle();
+    await waitUntil(
+      () => transport.pairing.kind === 'kicked' && storage.getItem(CREDENTIALS_KEY) === null,
+    );
     expect(transport.pairing).toEqual({ kind: 'kicked', reason: 'revoked' });
     expect(storage.getItem(CREDENTIALS_KEY)).toBeNull();
     expect(transport.hasCredentials()).toBe(false);

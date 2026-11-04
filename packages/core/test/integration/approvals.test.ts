@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -93,29 +93,29 @@ async function stepsOf(core: TestStack, runId: string) {
 }
 
 describe('access approvals for file tools (P03)', () => {
-  it('runs an access approval for an out-of-workspace read; a once-grant covers a single tool call (D75)', async () => {
+  it('runs an access approval for an out-of-workspace write; a once-grant covers a single tool call (D75)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小授');
     const conv = await openDirect(core, bot.id);
     const dir = fsMkdtemp();
     writeFileSync(path.join(dir, 'secret.txt'), 'outside-content');
 
-    // Run 1: read triggers the approval; approving 仅这一次 lets it through.
-    // D75 (D37 tightened): 仅这一次 = one tool call — the second read in the
+    // Run 1: write triggers the approval; approving 仅这一次 lets it through.
+    // D75 (D37 tightened): 仅这一次 = one tool call — the second write in the
     // same run needs a second approval (it used to ride on the run-long grant).
     // D75 审查 M4: access approvals are a task's (a turn fails fast instead).
     llm.script(
       'mock-main',
       inTask(
         [
-          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
-          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
-          step().replyText('读完两次'),
+          step().replyToolCall('write', { path: `${dir}/secret.txt`, content: 'w1' }),
+          step().replyToolCall('write', { path: `${dir}/secret.txt`, content: 'w2' }),
+          step().replyText('写完两次'),
         ],
-        'RELAY-READ-1',
+        'RELAY-WRITE-1',
       ),
     );
-    await sendBatch(core, conv.id, ['读一下外部文件']);
+    await sendBatch(core, conv.id, ['写一下外部文件']);
 
     await waitFor(
       async () => {
@@ -134,7 +134,7 @@ describe('access approvals for file tools (P03)', () => {
     expect(again.id).not.toBe(approval.id);
     expect(again.kind).toBe('access');
     await core.rpc.call('approvals.decide', { id: again.id, approve: true, duration: 'once' });
-    await waitForRelay(core, conv.id, 'RELAY-READ-1');
+    await waitForRelay(core, conv.id, 'RELAY-WRITE-1');
 
     // The card notifications are in-memory only (no persisted row, no bot
     // context): nothing outlives the calls in the message stream. (The task's
@@ -164,17 +164,17 @@ describe('access approvals for file tools (P03)', () => {
       'mock-main',
       inTask(
         [
-          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
+          step().replyToolCall('write', { path: `${dir}/secret.txt`, content: 'w3' }),
           step().replyText('第二次需要重新申请'),
         ],
-        'RELAY-READ-2',
+        'RELAY-WRITE-2',
       ),
     );
-    await sendBatch(core, conv.id, ['再读一次']);
+    await sendBatch(core, conv.id, ['再写一次']);
     const second = await pendingApproval(core, conv.id);
     expect(second.id).not.toBe(approval.id);
     await core.rpc.call('approvals.decide', { id: second.id, approve: false });
-    await waitForRelay(core, conv.id, 'RELAY-READ-2');
+    await waitForRelay(core, conv.id, 'RELAY-WRITE-2');
     const steps = await stepsOf(core, (await latestTask(core, conv.id)).id);
     const denied = steps.filter((s) => s.type === 'tool_result' && s.payload['ok'] === false);
     expect(denied.length).toBe(1);
@@ -192,29 +192,29 @@ describe('access approvals for file tools (P03)', () => {
       'mock-main',
       inTask(
         [
-          step().replyToolCall('request_access', { path: dir, access: 'read', reason: '先申请' }),
-          step().replyToolCall('read', { path: `${dir}/data.txt` }),
-          step().replyToolCall('read', { path: `${dir}/data.txt` }),
+          step().replyToolCall('request_access', { path: dir, access: 'write', reason: '先申请' }),
+          step().replyToolCall('write', { path: `${dir}/data.txt`, content: 'written-once' }),
+          step().replyToolCall('write', { path: `${dir}/data.txt`, content: 'written-twice' }),
           step().replyText('完成'),
         ],
         'RELAY-PRE',
       ),
     );
-    await sendBatch(core, conv.id, ['读目录']);
+    await sendBatch(core, conv.id, ['写目录']);
     const first = await pendingApproval(core, conv.id);
     expect(first.kind).toBe('access');
     await core.rpc.call('approvals.decide', { id: first.id, approve: true, duration: 'once' });
-    // The first read consumed the pre-authorization; the second asks again.
+    // The first write consumed the pre-authorization; the second asks again.
     const second = await pendingApproval(core, conv.id);
     expect(second.id).not.toBe(first.id);
     await core.rpc.call('approvals.decide', { id: second.id, approve: false });
     await waitForRelay(core, conv.id, 'RELAY-PRE');
     const run = await latestTask(core, conv.id);
     const results = (await stepsOf(core, run.id)).filter(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'write',
     );
     expect(results.map((s) => s.payload['ok'])).toEqual([true, false]);
-    expect(String(results[0]!.payload['content'])).toContain('pre-authorized');
+    expect(readFileSync(path.join(dir, 'data.txt'), 'utf8')).toBe('written-once');
   }, 120_000);
 
   it('keeps conversation grants until revoked, scoped to bot + conversation', async () => {
@@ -230,7 +230,7 @@ describe('access approvals for file tools (P03)', () => {
       'mock-main',
       inTask(
         [
-          step().replyToolCall('request_access', { path: dir, access: 'read', reason: '批量读取前申请' }),
+          step().replyToolCall('request_access', { path: dir, access: 'write', reason: '批量写入前申请' }),
           step().replyText('申请好了'),
         ],
         'RELAY-GRANT',
@@ -253,27 +253,25 @@ describe('access approvals for file tools (P03)', () => {
     expect(grants.grants[0]!.botId).toBe(bot.id);
     expect(grants.grants[0]!.path).toBe(canonicalPath(dir));
 
-    // A later run of the SAME bot reads the file without a new approval —
-    // a turn too (no approval needed, so no fail-fast either).
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: `${dir}/note.txt` }),
-      step().replyText('读到了'),
-    ]);
-    const second = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '再读一次' })) as { message: Message; runId: string | null };
-    const covered = await waitFor(
-      async () => {
-        const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
-          runs: Run[];
-        };
-        const run = runs.runs.find((r) => r.id === second.runId);
-        return run && run.status === 'completed' ? run : null;
-      },
-      { label: 'grant-covered run completes', timeoutMs: 60_000 },
+    // A later run of the SAME bot writes the file without a new approval.
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('write', { path: `${dir}/note.txt`, content: 'grant-me-2' }),
+          step().replyText('写到了'),
+        ],
+        'RELAY-WRITE',
+      ),
     );
-    const coveredRead = (await stepsOf(core, covered.id)).find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
+    await sendBatch(core, conv.id, ['再写一次']);
+    await waitForRelay(core, conv.id, 'RELAY-WRITE');
+    const covered = await latestTask(core, conv.id);
+    const coveredWrite = (await stepsOf(core, covered.id)).find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'write',
     );
-    expect(String(coveredRead!.payload['content'])).toContain('grant-me');
+    expect(coveredWrite!.payload['ok']).toBe(true);
+    expect(readFileSync(path.join(dir, 'note.txt'), 'utf8')).toBe('grant-me-2');
     const approvalsAfter = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Approval[];
     };
@@ -285,13 +283,13 @@ describe('access approvals for file tools (P03)', () => {
       'mock-main',
       inTask(
         [
-          step().replyToolCall('read', { path: `${dir}/note.txt` }),
-          step().replyText('另一个对话读不到'),
+          step().replyToolCall('write', { path: `${dir}/note.txt`, content: 'other-bot' }),
+          step().replyText('另一个对话写不到'),
         ],
         'RELAY-OTHER',
       ),
     );
-    await sendBatch(core, otherConv.id, ['读外部文件']);
+    await sendBatch(core, otherConv.id, ['写外部文件']);
     const otherApproval = await pendingApproval(core, otherConv.id);
     expect(otherApproval).toBeDefined();
     await core.rpc.call('approvals.decide', { id: otherApproval.id, approve: false });
@@ -302,11 +300,11 @@ describe('access approvals for file tools (P03)', () => {
     llm.script(
       'mock-main',
       inTask([
-        step().replyToolCall('read', { path: `${dir}/note.txt` }),
-        step().replyText('撤销后读不到了'),
+        step().replyToolCall('write', { path: `${dir}/note.txt`, content: 'after-revoke' }),
+        step().replyText('撤销后写不到了'),
       ]),
     );
-    await sendBatch(core, conv.id, ['撤销后再读']);
+    await sendBatch(core, conv.id, ['撤销后再写']);
     const finalApproval = await pendingApproval(core, conv.id);
     expect(finalApproval).toBeDefined();
   }, 180_000);
@@ -318,8 +316,8 @@ describe('access approvals for file tools (P03)', () => {
     const bot = await makeBot(core, '小取');
     const conv = await openDirect(core, bot.id);
     const dir = fsMkdtemp();
-    llm.script('mock-main', inTask([step().replyToolCall('read', { path: dir }), step().replyText('不该到达')]));
-    await sendBatch(core, conv.id, ['读外部']);
+    llm.script('mock-main', inTask([step().replyToolCall('write', { path: `${dir}/x.txt`, content: 'x' }), step().replyText('不该到达')]));
+    await sendBatch(core, conv.id, ['写外部']);
     const approval = await pendingApproval(core, conv.id);
     const runId = (await latestTask(core, conv.id)).id;
 
@@ -344,7 +342,7 @@ describe('access approvals for file tools (P03)', () => {
     const bot2 = await makeBot(core, '小启');
     const conv2 = await openDirect(core, bot2.id);
     const dir2 = fsMkdtemp();
-    llm.script('mock-main', inTask([step().replyToolCall('read', { path: dir2 }), step().replyText('x')]));
+    llm.script('mock-main', inTask([step().replyToolCall('write', { path: `${dir2}/x.txt`, content: 'x' }), step().replyText('x')]));
     await sendBatch(core, conv2.id, ['再来一次']);
     await pendingApproval(core, conv2.id);
 
@@ -399,7 +397,7 @@ describe('access approvals for file tools (P03)', () => {
     expect(String(readResult!.payload['content'])).toContain('PATH_OUT_OF_SCOPE');
   }, 120_000);
 
-  it('denies data-dir commands in confirm mode under unattended mode (BR-P03-001)', async () => {
+  it('refuses data-dir commands in confirm mode under unattended mode (BR-P03-001)', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
     const bot = await makeBot(core, '小漏');
     const conv = await openDirect(core, bot.id);
@@ -407,8 +405,7 @@ describe('access approvals for file tools (P03)', () => {
 
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
 
-    // The command targets the data directory; the unattended floor must refuse
-    // the auto-approval instead of executing it unsandboxed.
+    // 无人值守 = 完全控制：命令不再走确认卡，由沙箱外执行前的守卫直接拒绝。
     llm.script(
       'mock-main',
       inTask([
@@ -419,25 +416,21 @@ describe('access approvals for file tools (P03)', () => {
     await sendBatch(core, conv.id, ['统计数据库大小']);
     await waitForTask(core, conv.id, 'completed');
 
-    const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-      approvals: Array<{ kind: string; status: string; autoApproved: boolean; payload: Record<string, unknown> }>;
-    };
-    const commandApproval = approvals.approvals.find((a) => a.kind === 'command');
-    expect(commandApproval).toBeDefined();
-    expect(commandApproval!.status).toBe('denied');
-    expect(commandApproval!.autoApproved).toBe(true);
-
-    // The audit records the refused auto-decision.
     const audit = core.services.domain!.audit.listByConversation(conv.id, 100);
-    const auto = audit.find((a) => a.action === 'approval_auto');
-    expect(auto).toBeDefined();
-    expect(auto!.detail['refused']).toBe(true);
+    const blocked = audit.find((a) => a.action === 'exec_blocked');
+    expect(blocked).toBeDefined();
+    expect(String(blocked!.detail['command'])).toContain('main.db');
+    expect(blocked!.detail['via']).toBe('bypass');
 
-    // Nothing leaked: no exec_unsandboxed for this run.
-    expect(audit.some((a) => a.action === 'exec_unsandboxed')).toBe(false);
+    // Nothing leaked: the command never ran unsandboxed.
+    expect(
+      audit.some(
+        (a) => a.action === 'exec_unsandboxed' && String(a.detail['command']).includes('main.db'),
+      ),
+    ).toBe(false);
   }, 120_000);
 
-  it('auto-approves all three kinds in unattended mode with audit + expiry', async () => {
+  it('auto-approves access and unsandboxed kinds in unattended mode with audit + expiry', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
     const bot = await makeBot(core, '小无');
     const conv = await openDirect(core, bot.id);
@@ -447,13 +440,13 @@ describe('access approvals for file tools (P03)', () => {
     await core.rpc.call('unattended.enable', { hours: null, acknowledgeRisk: true });
     expect(((await core.rpc.call('unattended.get')) as { enabled: boolean }).enabled).toBe(true);
 
-    // access + unsandboxed + command (confirm mode) all auto-approve.
+    // 无人值守按完全控制执行：确认模式的命令直接沙箱外执行、不建卡；
+    // request_access / request_unsandboxed 的审批自动批准。
     llm.script(
       'mock-main',
       inTask([
-        step().replyToolCall('request_access', { path: outside, access: 'read', reason: 'r' }),
+        step().replyToolCall('request_access', { path: outside, access: 'write', reason: 'w' }),
         step().replyToolCall('request_unsandboxed', { command: 'echo unattended-ok', reason: '需要沙箱外' }),
-        // Not a built-in allowlist entry (echo is, since f2b9627): a real command card.
         step().replyToolCall('bash', { command: 'touch confirm-ok.txt' }),
         step().replyText('都批准了'),
       ]),
@@ -465,7 +458,7 @@ describe('access approvals for file tools (P03)', () => {
       approvals: Approval[];
     };
     const auto = approvals.approvals.filter((a) => a.autoApproved);
-    expect(new Set(auto.map((a) => a.kind))).toEqual(new Set(['access', 'unsandboxed', 'command']));
+    expect(new Set(auto.map((a) => a.kind))).toEqual(new Set(['access', 'unsandboxed']));
     // Auto-decided cards never reach the dock; their record lines are in-memory
     // session hints — no card row is persisted (the audit trail below records
     // each auto-approval instead).
@@ -478,7 +471,7 @@ describe('access approvals for file tools (P03)', () => {
 
     // Audit trail for every auto-approval.
     const audit = core.services.domain!.audit.listByConversation(conv.id, 100);
-    expect(audit.filter((a) => a.action === 'approval_auto').length).toBeGreaterThanOrEqual(3);
+    expect(audit.filter((a) => a.action === 'approval_auto').length).toBeGreaterThanOrEqual(2);
     expect(audit.some((a) => a.action === 'exec_unsandboxed')).toBe(true);
 
     // Auto-approved access grants are once-only: gone after the run.
@@ -639,7 +632,7 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
     expect(existsSync(path.join(workspace, 'confirm-marker'))).toBe(true);
   }, 120_000);
 
-  it.skipIf(process.platform === 'win32')('runs allowlisted read-only commands without confirmation but re-confirms out-of-scope paths', async () => {
+  it.skipIf(process.platform === 'win32')('runs allowlisted read-only commands without confirmation but confirms non-allowlisted commands', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
     const bot = await makeBot(core, '小白');
     const conv = await openDirect(core, bot.id);
@@ -660,16 +653,16 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
     };
     expect(approvals1.approvals.length).toBe(0);
 
-    // Allowlisted command but path outside scope -> needs approval.
+    // Not allowlisted (touch writes) -> needs approval, even outside the workspace.
     const outsideDir = fsMkdtemp();
     llm.script(
       'mock-main',
       inTask([
-        step().replyToolCall('bash', { command: `cat ${outsideDir}/out.txt` }),
+        step().replyToolCall('bash', { command: `touch ${outsideDir}/out.txt` }),
         step().replyText('需要确认'),
       ]),
     );
-    await sendBatch(core, conv.id, ['读外面的']);
+    await sendBatch(core, conv.id, ['写外面的']);
     const approval = await pendingApproval(core, conv.id);
     expect(approval.kind).toBe('command');
     await core.rpc.call('approvals.decide', { id: approval.id, approve: false });

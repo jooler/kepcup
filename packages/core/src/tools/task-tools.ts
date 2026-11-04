@@ -366,7 +366,7 @@ export function buildTaskTools(input: {
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
       'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +
       '任务要用 <capabilities> 里的外部能力（连接应用 / 自定义 MCP）时，在 capabilities 里列出它们的 id（如 ["app:github"]）：任务只会挂上你列出的能力，其余能力任务里也能用，但要先查一步，更慢。' +
-      '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后简短告诉用户你去做了什么。',
+      '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后不必再复述「已派出」——任务卡会即时出现在对话里；有排队、能力不可用等用户需要知道的情况时才补一句。',
     parameters: Type.Object(
       {
         title: Type.String({

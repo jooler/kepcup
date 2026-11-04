@@ -21,6 +21,8 @@ import {
   type ApprovalStatus,
   type ApprovalEffect,
   type ApprovalPriorEffect,
+  type PermissionMode,
+  type PermissionModeSource,
   type Run,
   type ToolEffect,
   APPROVAL_TTL_MS,
@@ -40,9 +42,10 @@ import type { BotsService } from '../domain/bots.js';
 import type { RunsService } from '../domain/runs.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { RunIdentity } from '../agent/types.js';
-import type { UnattendedService } from './unattended.js';
 import { activeEffectHooks, type EffectApprovalGate } from './tool-call-scope.js';
 import { sha256Hex, stableJson } from '../agent/effects/key.js';
+import { commandReachesDataHome } from './command-guard.js';
+import { tierAutoDecides } from './tiers.js';
 
 interface ApprovalRow {
   id: string;
@@ -113,7 +116,14 @@ export interface ApprovalsDeps {
   bots: BotsService;
   runs: RunsService;
   secrets: SecretsService;
-  unattended: UnattendedService;
+  /**
+   * 对话级权限级别（manual / auto / bypass）。`bypass` 自动决定无人值守决定
+   * 的全部类别；`auto` 只决定常规类别；`unattended` 来源时按无人值守措辞。
+   * In-memory.
+   */
+  permissionMode?: {
+    effective(conversationId: string | null): { mode: PermissionMode; source: PermissionModeSource };
+  };
   /** Core event bus (approval.created / approval.resolved / run.status ...). */
   publish: (event: string, payload: unknown) => void;
   /** Port-B notification request; the main process filters by window focus. */
@@ -154,6 +164,14 @@ const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
   // D105: 键鼠操控永不无人值守自动批准（硬约束）。
   'computer_control',
 ]);
+
+/** Which level produced an automatic decision (audit / folded-record wording). */
+type AutoVia = 'unattended' | 'auto' | 'bypass';
+
+function viaOf(tier: { mode: PermissionMode; source: PermissionModeSource }): AutoVia {
+  if (tier.source === 'unattended') return 'unattended';
+  return tier.mode === 'bypass' ? 'bypass' : 'auto';
+}
 
 /**
  * Non-blocking kinds whose card must outlive the requesting run: the tool
@@ -208,6 +226,20 @@ export class ApprovalsService {
     return this.#deps.db;
   }
 
+  /**
+   * The level this run's conversation runs at. A delegation exchange or a
+   * board-card chat resolves to the conversation that holds the setting, so
+   * delegated work never widens (or narrows) its origin's level.
+   */
+  #tier(identity: RunIdentity): { mode: PermissionMode; source: PermissionModeSource } {
+    return (
+      this.#deps.permissionMode?.effective(identity.conversationId) ?? {
+        mode: 'manual',
+        source: 'conversation',
+      }
+    );
+  }
+
   // --- requesting -----------------------------------------------------------
 
   /**
@@ -254,18 +286,18 @@ export class ApprovalsService {
       return this.#dedupedOutcome(identity, kind, payload, gate);
     }
     const flagged = gate !== null ? { ...payload, priorEffect: priorEffectOf(gate) } : payload;
-    const unattended = this.#deps.unattended.effective();
+    const tier = this.#tier(identity);
     // A flagged repeat (uncertain earlier attempt, or a non-MCP operation
     // that already completed) is never decided automatically (§5 护栏 7
     // 「任何结果未知都不得自动重放」; a completed duplicate is never auto-approved
-    // again): unattended mode waits for the user too.
+    // again): unattended / bypass mode waits for the user too.
     if (
-      unattended.enabled &&
+      tierAutoDecides(tier.mode, kind) &&
       !NEVER_AUTO_DECIDED.has(kind) &&
       gate === null &&
       options.requireHuman !== true
     ) {
-      return this.#autoDecide(identity, kind, payload);
+      return this.#autoDecide(identity, kind, payload, viaOf(tier));
     }
     // W4 `intended`: the ledger row waits on the user (nothing ran yet) and
     // goes back to `executing` once approved.
@@ -394,8 +426,9 @@ export class ApprovalsService {
     payload: Record<string, unknown>,
     onDecided: (outcome: ApprovalOutcome) => void,
   ): Approval {
-    if (this.#deps.unattended.effective().enabled && !NEVER_AUTO_DECIDED.has(kind)) {
-      const outcome = this.#autoDecideSync(identity, kind, payload);
+    const tier = this.#tier(identity);
+    if (tierAutoDecides(tier.mode, kind) && !NEVER_AUTO_DECIDED.has(kind)) {
+      const outcome = this.#autoDecideSync(identity, kind, payload, viaOf(tier));
       onDecided(outcome);
       return outcome.approval;
     }
@@ -412,36 +445,45 @@ export class ApprovalsService {
     return withCard;
   }
 
-  /** Unattended mode: approve everything at once — except the data dir. */
+  /** Unattended / auto / bypass mode: decide without a card (data dir floor aside). */
   #autoDecide(
     identity: RunIdentity,
     kind: ApprovalKind,
     payload: Record<string, unknown>,
+    via: AutoVia,
   ): Promise<ApprovalOutcome> {
-    return Promise.resolve(this.#autoDecideSync(identity, kind, payload));
+    return Promise.resolve(this.#autoDecideSync(identity, kind, payload, via));
   }
 
   #autoDecideSync(
     identity: RunIdentity,
     kind: ApprovalKind,
     payload: Record<string, unknown>,
+    via: AutoVia,
   ): ApprovalOutcome {
     // Security review round 2: unsandboxed / confirm-mode commands are only
     // auto-approved when a static analysis can vouch for them (literal words,
-    // no context switch, no path into the data directory) — fail closed.
+    // `auto` never reaches command kinds（tiers.ts 的集合里没有它们）；无人值守
+    // 与完全控制只保留应用数据目录底线，由执行入口的灾难命令守卫再加一层。
     const workspace =
       identity.botId !== null && identity.conversationId !== null
         ? workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId)
         : null;
+    const command = String(payload['command'] ?? '');
+    const commandCwd =
+      typeof payload['cwd'] === 'string' && payload['cwd'].length > 0
+        ? payload['cwd']
+        : (workspace ?? this.#deps.homeDir);
+    // The app-data-directory floor, judged by the same token analysis the
+    // execution guard uses（cwd 相对路径、`~` / `$HOME` / `%USERPROFILE%` 展开）。
     const touchesDataDir =
       (kind === 'command' || kind === 'unsandboxed') &&
-      !unattendedCommandVerdict(String(payload['command'] ?? ''), {
-        dataHome: this.#deps.paths.home,
+      commandReachesDataHome(command, {
+        cwd: commandCwd,
         homeDir: this.#deps.homeDir,
-        cwd:
-          typeof payload['cwd'] === 'string' && payload['cwd'].length > 0 ? payload['cwd'] : null,
+        dataHome: this.#deps.paths.home,
         exemptDirs: workspace !== null ? [workspace] : [],
-      }).safe;
+      });
     // git_remote (P04): the command text and the cwd (the workdir path) both
     // go through the same floor — a data-directory reference in a remote URL
     // or argument must not auto-approve either.
@@ -463,10 +505,12 @@ export class ApprovalsService {
     // the content lands in the app-owned library (deny the data-dir floor is
     // meaningless here — the target IS the data dir), and the scan result is
     // recorded on the card. Nothing escapes the data directory.
-    // agent_tool (D72): the external agent's own tools run outside the
-    // KepCup sandbox — the same data-directory floor as unsandboxed commands
-    // (command text + resolved locations), except the run's workspace and
-    // skill directories (`exemptDirs`, filled by the permission bridge).
+    // agent_tool (D72)：外部智能体自己的工具在 KepCup 沙箱之外运行，与沙箱外命令
+    // 同一数据目录底线（命令文本 + 解析后的 locations，run 的 workspace 与技能目录
+    // 豁免，`exemptDirs` 由权限桥填）。底线只能按**展示的** locations 判断，因此
+    // 无法判断的请求（未识别的 kind、无 locations 的写入、真实目标可能与展示路径
+    // 不同的 targetUncertain——如 Codex 的 move）在无人值守 / 完全控制下仍然自动
+    // 拒绝，不自动批准（安全复核 M1，fail-closed）。
     const agentToolTouches =
       kind === 'agent_tool' &&
       (agentToolUnattendedRefusal(payload) ||
@@ -494,9 +538,15 @@ export class ApprovalsService {
       status,
       autoApproved: true,
       // Auto-approved access is「仅这一次」(design 13): no grant outlives the mode.
+      // `via` records a level-driven decision (`auto` / `bypass`); unattended
+      // keeps a null decision (its folded-record wording is the default), so
+      // existing receipts are unchanged.
       decision:
-        status === 'approved' && (kind === 'access' || kind === 'agent_tool')
-          ? { duration: 'once' }
+        status === 'approved' && (kind === 'access' || kind === 'agent_tool' || via !== 'unattended')
+          ? {
+              ...(kind === 'access' || kind === 'agent_tool' ? { duration: 'once' as const } : {}),
+              ...(via !== 'unattended' ? { via } : {}),
+            }
           : null,
     });
     const card = this.#insertCard(approval);
@@ -506,6 +556,7 @@ export class ApprovalsService {
     this.#deps.audit(identity, 'approval_auto', {
       approvalId: approval.id,
       kind,
+      via,
       approved: status === 'approved',
       refused: touches,
       ...(mcpToolUnattended
@@ -526,12 +577,12 @@ export class ApprovalsService {
         channel: egressChannelOf(kind, payload),
         target: egressTargetOf(kind, payload).slice(0, EGRESS_AUDIT_TARGET_MAX_CHARS),
         approved: status === 'approved',
-        via: 'unattended',
+        via,
       });
     }
     this.#deps.logger.info(
-      { approvalId: approval.id, kind, approved: status === 'approved' },
-      'unattended auto decision',
+      { approvalId: approval.id, kind, via, approved: status === 'approved' },
+      'automatic approval decision',
     );
     this.#publishConversation(approval.conversationId);
     if (status === 'denied') {
@@ -1078,7 +1129,7 @@ export class ApprovalsService {
           const duration = approval.decision?.duration;
           const suffix =
             approval.autoApproved === true
-              ? '（无人值守模式自动批准，仅这一次）'
+              ? `（${autoModeWord(approval)}自动批准，仅这一次）`
               : duration === 'conversation'
                 ? '（本对话内一直允许）'
                 : '（仅这一次）';
@@ -1104,7 +1155,7 @@ export class ApprovalsService {
           return `[系统] 等待用户确认：${botName} 申请${label}`;
         case 'approved':
           return approval.autoApproved
-            ? `[系统] 用户批准${label}（无人值守模式自动批准）`
+            ? `[系统] 用户批准${label}（${autoModeWord(approval)}自动批准）`
             : `[系统] 用户批准${label}`;
         case 'denied':
           return `[系统] 用户拒绝${label}`;
@@ -1125,7 +1176,7 @@ export class ApprovalsService {
           return `[系统] 等待用户确认：${botName} 建议${label}`;
         case 'approved':
           return approval.autoApproved
-            ? `[系统] 用户批准${label}（无人值守模式自动批准）`
+            ? `[系统] 用户批准${label}（${autoModeWord(approval)}自动批准）`
             : `[系统] 用户批准${label}`;
         case 'denied':
           return `[系统] 用户拒绝${label}`;
@@ -1144,7 +1195,7 @@ export class ApprovalsService {
           return `[系统] 等待用户确认：${label}`;
         case 'approved':
           return approval.autoApproved
-            ? `[系统] 用户批准${label}（无人值守模式自动批准）`
+            ? `[系统] 用户批准${label}（${autoModeWord(approval)}自动批准）`
             : `[系统] 用户批准${label}，技能已入技能库并启用`;
         case 'denied':
           return `[系统] 用户拒绝${label}`;
@@ -1198,7 +1249,7 @@ export class ApprovalsService {
         case 'approved': {
           const suffix =
             approval.autoApproved === true
-              ? '（无人值守自动批准）'
+              ? `（${autoShortWord(approval)}自动批准）`
               : approval.decision?.duration === 'conversation'
                 ? '（本对话内一直允许）'
                 : approval.decision?.duration === 'command'
@@ -1223,7 +1274,7 @@ export class ApprovalsService {
         case 'approved': {
           const suffix =
             approval.autoApproved === true
-              ? '（无人值守模式自动批准，仅这一次）'
+              ? `（${autoModeWord(approval)}自动批准，仅这一次）`
               : approval.decision?.duration === 'conversation'
                 ? '（本对话内一直允许）'
                 : '（仅这一次）';
@@ -1231,7 +1282,7 @@ export class ApprovalsService {
         }
         case 'denied':
           return approval.autoApproved === true
-            ? `[系统] 已拒绝${actor}${label}（无人值守模式：触及应用数据目录）`
+            ? `[系统] 已拒绝${actor}${label}（${autoModeWord(approval)}：触及应用数据目录）`
             : `[系统] 用户拒绝${actor}${label}`;
         case 'cancelled':
           return `[系统] 已取消：${actor}${label}`;
@@ -1264,7 +1315,7 @@ export class ApprovalsService {
           return `[系统] 等待用户确认：${actor}${label}${riskNote !== null ? `（${riskNote}）` : ''}`;
         case 'approved':
           return approval.autoApproved === true
-            ? `[系统] 无人值守自动批准${riskNote !== null ? `（${riskNote}）` : ''}：${actor}${label}`
+            ? `[系统] ${autoShortWord(approval)}自动批准${riskNote !== null ? `（${riskNote}）` : ''}：${actor}${label}`
             : `[系统] 用户允许${actor}${label}${riskNote !== null ? `（${riskNote}${durationNote}）` : durationNote.length > 0 ? `（${durationNote.slice(1)}）` : ''}`;
         case 'denied':
           return `[系统] 用户拒绝${actor}${label}`;
@@ -1285,7 +1336,7 @@ export class ApprovalsService {
           return `[系统] 等待用户确认：${label}`;
         case 'approved':
           return approval.autoApproved
-            ? `[系统] 用户批准${label}（无人值守模式自动批准）`
+            ? `[系统] 用户批准${label}（${autoModeWord(approval)}自动批准）`
             : `[系统] 用户批准${label}，技能已安装并启用`;
         case 'denied':
           return `[系统] 用户拒绝${label}`;
@@ -2030,6 +2081,30 @@ function mcpRiskOf(payload: Record<string, unknown>): McpToolRisk | null {
 function failureSuffix(approval: Approval): string {
   const error = approval.decision?.error;
   return error !== undefined && error.length > 0 ? `（${error}）` : '';
+}
+
+/** Folded-record label of whichever level auto-decided. */
+function autoModeWord(approval: Approval): string {
+  switch (approval.decision?.via) {
+    case 'bypass':
+      return '完全控制模式';
+    case 'auto':
+      return '自动授权模式';
+    default:
+      return '无人值守模式';
+  }
+}
+
+/** Short form used by the egress / MCP lines ("无人值守自动批准"). */
+function autoShortWord(approval: Approval): string {
+  switch (approval.decision?.via) {
+    case 'bypass':
+      return '完全控制';
+    case 'auto':
+      return '自动授权';
+    default:
+      return '无人值守';
+  }
 }
 
 /**

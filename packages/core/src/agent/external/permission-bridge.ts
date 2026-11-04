@@ -888,7 +888,9 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     if (outcome.decision === 'cancelled') {
       return { response: { outcome: { outcome: 'cancelled' } }, decision: 'cancelled' };
     }
-    const via = outcome.approval.autoApproved ? 'unattended' : 'approval';
+    const via =
+      outcome.approval.decision?.via ??
+      (outcome.approval.autoApproved ? 'unattended' : 'approval');
     const extra = { approvalId: outcome.approval.id, egress: card.channel };
     return outcome.decision === 'approved'
       ? allow(via, '污点期间的网络类请求已确认', extra)
@@ -968,7 +970,9 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         category: classified.category,
         tier: ctx.tier,
         decision: verdict.decision,
-        via: outcome.approval.autoApproved ? 'unattended' : 'approval',
+        via:
+          outcome.approval.decision?.via ??
+          (outcome.approval.autoApproved ? 'unattended' : 'approval'),
         approvalId: outcome.approval.id,
         reason: card.reason,
         locations: card.locations,

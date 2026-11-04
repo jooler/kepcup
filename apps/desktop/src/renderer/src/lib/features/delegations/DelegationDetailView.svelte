@@ -10,6 +10,7 @@ import { ArrowLeft } from '@lucide/svelte';
 import { setChatSession } from '$lib/features/chats/chat-session-context';
 import { contacts } from '$lib/stores/contacts.svelte';
 import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+import { resolveAccentColor } from '$lib/avatars/presets';
   import MessageList from '$lib/features/chats/MessageList.svelte';
   import { Button } from '$lib/components/ui/button';
   import { detailViewState } from './delegation-detail-view';
@@ -47,6 +48,14 @@ import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   );
   const toBot = $derived(
     delegation !== null ? (contacts.bots.find((b) => b.id === delegation.toBotId) ?? null) : null,
+  );
+  // 标题药丸里的名称文字取 Bot 自己的强调色，与 @提及（--mention-color）同一
+  // 回退链：显式 accent_color → 预置头像内嵌色 → 默认黑白（随主题翻转）。
+  const fromAccentHex = $derived(
+    resolveAccentColor(fromBot?.accentColor ?? null, fromBot?.avatar ?? null).hex,
+  );
+  const toAccentHex = $derived(
+    resolveAccentColor(toBot?.accentColor ?? null, toBot?.avatar ?? null).hex,
   );
   const statusText = $derived(
     delegation === null
@@ -125,7 +134,7 @@ import BotAvatar from '$lib/avatars/BotAvatar.svelte';
         class="size-7"
         fallbackClass="text-[10px]"
       />
-      <span class="max-w-36 truncate">{fromName}</span>
+      <span class="max-w-36 truncate" style:color={fromAccentHex}>{fromName}</span>
       <span class="text-xs text-muted-foreground">⇄</span>
       <BotAvatar
         botId={delegation?.toBotId ?? ''}
@@ -137,7 +146,7 @@ import BotAvatar from '$lib/avatars/BotAvatar.svelte';
         class="size-7"
         fallbackClass="text-[10px]"
       />
-      <span class="max-w-36 truncate">{toName}</span>
+      <span class="max-w-36 truncate" style:color={toAccentHex}>{toName}</span>
       <span
         class="ml-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
         data-testid="delegation-detail-status">{statusText}</span

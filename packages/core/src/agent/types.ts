@@ -85,9 +85,22 @@ export type EngineEvent =
         outcome?: ToolOutcome;
         /** W1: params found sensitive at execution time (see ToolResult.sensitiveParams). */
         sensitiveParams?: string[];
+        /**
+         * 文件改动的行数（外部智能体的 ACP diff 内容）：任务详情页工具行
+         * 展示「Edited x.ts +9 −1」；内置 pi 的同口径统计在渲染层从工具参数算。
+         */
+        diffStats?: { added: number; removed: number };
       };
     }
-  | { type: 'progress'; payload: { text: string } }
+  | {
+      type: 'progress';
+      /**
+       * `transient` = 只更新状态行（run.progress / lastProgress），不写入
+       * run_steps：工具执行期间的高频状态提示（「正在执行命令 …」）属于这种，
+       * 它们不是模型消息，也不该占任务时间线。
+       */
+      payload: { text: string; transient?: boolean };
+    }
   | { type: 'steer'; payload: { text: string } };
 
 export interface EngineMessage {
