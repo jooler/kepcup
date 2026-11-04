@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
   isSafeMicroAppPath,
+  MICRO_APP_API_METHODS,
   MICRO_APP_BUNDLE_FILES_MAX,
   MICRO_APP_BUNDLE_MAX_BYTES,
   MICRO_APP_FILE_MAX_BYTES,
@@ -168,6 +169,19 @@ export function microAppDraftIssues(input: MicroAppDraftScanInput): WidgetCheckI
     }
   }
 
+  // 废弃 API：spec 标记 deprecated 的方法在代码里出现 → warning（app.sdk-deprecated 落地，P3 审查修复）。
+  for (const method of MICRO_APP_API_METHODS) {
+    if (method.deprecated !== true) continue;
+    const prefix = method.signature.slice(0, Math.max(0, method.signature.indexOf('(')));
+    if (prefix !== '' && input.html.includes(prefix)) {
+      issues.push(
+        ruleIssue('app.sdk-deprecated', {
+          message: `使用了已废弃的 ${prefix}：按 references/errors.md 的替代写法换掉（废弃方法会在将来的 spec 版本移除）`,
+        }),
+      );
+    }
+  }
+
   // 权限最小性：声明了但代码从未调用（storage.kv 例外——预置数据 / 后台同步也算合理声明）。
   for (const capability of permissions) {
     if (capability === 'storage.kv') continue;
@@ -194,29 +208,31 @@ export function microAppDraftIssues(input: MicroAppDraftScanInput): WidgetCheckI
     );
   }
 
-  // 成本估算：用了宿主模型就要在 spec.md 里写每轮对话的成本量级（55 §11 SPEC 必答）。
-  if (permissions.includes('ai.chat') && input.spec !== null) {
-    if (!/成本|token|预算/.test(input.spec)) {
-      issues.push(
-        ruleIssue('app.cost-estimate-missing', {
-          file: 'spec.md',
-          message: 'spec.md 没有写每轮对话的成本估算：加一行「每轮约 N token（模型回复长度 × 轮数）」——用量计入编写本微应用的 Bot，用户在确认卡与管理页看得到',
-        }),
-      );
-    }
+  // 成本估算：用了宿主模型就要在 spec.md 里写每轮对话的成本量级（55 §11 SPEC 必答）；
+  // spec.md 缺失同样发 warning——四要素不能「没有文件就免检」（P3 审查修复）。
+  if (permissions.includes('ai.chat') && (input.spec === null || !/成本|token|预算/.test(input.spec))) {
+    issues.push(
+      ruleIssue('app.cost-estimate-missing', {
+        file: 'spec.md',
+        message:
+          input.spec === null
+            ? '没有 spec.md：微应用的四要素（能力理由 / 联网用途 / 降级路径 / 成本估算）必须写在 spec.md 里，SPEC 阶段补上'
+            : 'spec.md 没有写每轮对话的成本估算：加一行「每轮约 N token（模型回复长度 × 轮数）」——用量计入编写本微应用的 Bot，用户在确认卡与管理页看得到',
+      }),
+    );
   }
 
   // 联网用途：保留默认 open 就要在 spec.md 写用途与失败降级（55 §3.3，P0 注册的规则）。
-  if (manifest.manifest.net.mode === 'open' && input.spec !== null) {
-    if (!/联网|网络|net\.fetch|https?/.test(input.spec)) {
-      issues.push(
-        ruleIssue('app.net-open-default', {
-          file: 'spec.md',
-          message:
-            '保留默认联网（net.mode=open）但 spec.md 没写联网用途：补一行「用网络做什么 + 断网时怎么降级」；不需要联网就在清单里收紧为 none 或 allowlist',
-        }),
-      );
-    }
+  if (manifest.manifest.net.mode === 'open' && (input.spec === null || !/联网|网络|net\.fetch|https?/.test(input.spec))) {
+    issues.push(
+      ruleIssue('app.net-open-default', {
+        file: 'spec.md',
+        message:
+          input.spec === null
+            ? '没有 spec.md：net.mode=open 的联网用途与失败降级没有地方可写——SPEC 阶段补上 spec.md，或在清单里收紧网络档位'
+            : '保留默认联网（net.mode=open）但 spec.md 没写联网用途：补一行「用网络做什么 + 断网时怎么降级」；不需要联网就在清单里收紧为 none 或 allowlist',
+      }),
+    );
   }
 
   // 宿主可用性：缺配置的能力提前标出（55 §11：GATE 就告诉模型，别等用户打开才失败）。

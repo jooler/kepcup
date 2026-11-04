@@ -246,6 +246,8 @@ export const widgetCraftReceiptSchema = z.object({
   queriesSha256: z.string(),
   /** 微应用包摘要（D112 P3；存量组件草稿缺省）。 */
   bundleSha256: z.string().optional(),
+  /** 包文件清单摘要（P3 审查修复：资产字节也进回执比对）。 */
+  filesSha256: z.string().optional(),
   verdict: widgetCheckVerdictSchema,
   score: z.number().int().min(0),
   /** S2 是否运行（未运行时交付状态最多是 `unverified`）。 */

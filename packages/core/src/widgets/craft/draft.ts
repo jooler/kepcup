@@ -56,12 +56,14 @@ const NON_BUNDLE_FILES = new Set([
 ]);
 const NON_BUNDLE_DIRS = new Set(['reports', 'snapshots', 'references']);
 
-/** 交付物的摘要（回执关卡的比对对象）；微应用草稿带包摘要。 */
+/** 交付物的摘要（回执关卡的比对对象）；微应用草稿带包摘要与文件清单摘要。 */
 export interface DraftDigest {
   htmlSha256: string;
   queriesSha256: string;
-  /** 微应用包摘要（microAppBundleSha256；存量组件草稿为空串）。 */
+  /** 微应用包摘要（manifest + 入口 HTML 的 canonical sha256；存量组件草稿为空串）。 */
   bundleSha256: string;
+  /** 包文件清单摘要（排序 path:sha256；P3 审查修复——改资产不改 HTML 也要重过 GATE）。 */
+  filesSha256: string;
 }
 
 export class WidgetDraft {
@@ -144,6 +146,12 @@ export class WidgetDraft {
     writeFileSync(this.path(name), content, 'utf8');
   }
 
+  /** 按原字节写（微应用包文件的二进制资产——base64 往返不走 utf8 字符串）。 */
+  writeBytes(name: string, content: Buffer): void {
+    this.#ensureSubdir(path.dirname(this.path(name)));
+    writeFileSync(this.path(name), content);
+  }
+
   /**
    * 建草稿目录下的子目录，但不重建草稿目录本身：Bot 删除时 `bots/{id}` 整个被删，进行中的
    * 制作不能把它写回来（之后的写入直接失败，制作按出错收尾）。
@@ -175,11 +183,11 @@ export class WidgetDraft {
    */
   digest(): DraftDigest {
     const html = this.read(DRAFT_HTML) ?? '';
-    const bundleSha256 = this.#bundleSha256(html);
     return {
       htmlSha256: createHash('sha256').update(html).digest('hex'),
       queriesSha256: queriesSha256Of(this.queries() ?? []),
-      bundleSha256,
+      bundleSha256: this.#bundleSha256(html),
+      filesSha256: this.#filesSha256(),
     };
   }
 
@@ -191,6 +199,15 @@ export class WidgetDraft {
     } catch {
       return '';
     }
+  }
+
+  /** 包文件清单摘要：排序 (path:sha256(content)) 后整体 sha256（无包 = 空串）。 */
+  #filesSha256(): string {
+    if (!this.hasAppManifest()) return '';
+    const entries = this.bundleFiles()
+      .map((file) => `${file.path}:${createHash('sha256').update(Buffer.from(file.contentBase64, 'base64')).digest('hex')}`)
+      .sort();
+    return createHash('sha256').update(entries.join('\n')).digest('hex');
   }
 
   /**
@@ -215,6 +232,7 @@ export class WidgetDraft {
         htmlSha256: createHash('sha256').update(html).digest('hex'),
         queriesSha256: queriesSha256Of(queries ?? []),
         bundleSha256: this.#bundleSha256(html),
+        filesSha256: this.#filesSha256(),
       },
       appManifestJson,
       files,

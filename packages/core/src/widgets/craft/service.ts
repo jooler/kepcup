@@ -485,6 +485,14 @@ export class WidgetCraftService {
     if (widgetId !== '') {
       const found = this.#deps.widgets.craftSource(botId, widgetId);
       if (!found.ok) return { error: invalid(found.message, found.code) };
+      // micro_app 只对微应用草稿有意义（P3 审查修复）：普通组件修改不给包写面。
+      if (params.micro_app === true && found.manifest === undefined) {
+        return {
+          error: invalid(
+            '这个组件不是微应用（没有清单），不能按微应用流程修改；去掉 micro_app 参数，或新建一个微应用',
+          ),
+        };
+      }
       title = found.title;
       scope = found.scope;
       baseVersion = found.version;
@@ -535,7 +543,7 @@ export class WidgetCraftService {
         draft.write(DRAFT_APP_MANIFEST, `${JSON.stringify(source.manifest, null, 2)}\n`);
       }
       for (const file of source.files ?? []) {
-        draft.write(file.path, Buffer.from(file.contentBase64, 'base64').toString('utf8'));
+        draft.writeBytes(file.path, Buffer.from(file.contentBase64, 'base64'));
       }
     }
     // 写作知识分层（55 §6.1）：references/ 由宿主物化，模型只读（生成物与 spec 同源）。
@@ -796,6 +804,7 @@ export class WidgetCraftService {
       htmlSha256: report.htmlSha256,
       queriesSha256: report.queriesSha256,
       ...(digest.bundleSha256 !== '' ? { bundleSha256: digest.bundleSha256 } : {}),
+      ...(digest.filesSha256 !== '' ? { filesSha256: digest.filesSha256 } : {}),
       verdict: report.verdict,
       score: report.score,
       previewed: report.stages.S2.status === 'ran',
@@ -1195,7 +1204,8 @@ export class WidgetCraftService {
         (r) =>
           r.htmlSha256 === digest.htmlSha256 &&
           r.queriesSha256 === digest.queriesSha256 &&
-          (digest.bundleSha256 === '' ? r.bundleSha256 === undefined : r.bundleSha256 === digest.bundleSha256),
+          (digest.bundleSha256 === '' ? r.bundleSha256 === undefined : r.bundleSha256 === digest.bundleSha256) &&
+          (digest.filesSha256 === '' ? r.filesSha256 === undefined : r.filesSha256 === digest.filesSha256),
       )
       .at(-1);
     if (receipt === undefined || receipt.verdict === 'blocked' || queries === null) {

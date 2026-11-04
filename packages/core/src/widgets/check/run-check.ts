@@ -37,7 +37,7 @@ export interface WidgetPreviewRunner {
     fixtures: WidgetFixtures;
     signal?: AbortSignal;
     /** D112 P3：微应用草稿（S2 用宿主能力 mock 跑，55 §11）。 */
-    microApp?: { permissions: readonly string[] };
+    microApp?: { permissions: readonly string[]; bundlePaths?: readonly string[] };
   }): Promise<WidgetPreviewOutcome | { skipped: string }>;
 }
 
@@ -243,7 +243,13 @@ export async function runWidgetCheck(input: {
   // --- S0 / S1
   if (htmlPresent) {
     try {
-      issues.push(...staticCheck({ html, queryNames }));
+      issues.push(
+      ...staticCheck({
+        html,
+        queryNames,
+        ...(bundlePaths.length > 0 ? { bundlePaths } : {}),
+      }),
+    );
     } catch (error) {
       stages.S0 = {
         status: 'skipped',
@@ -272,7 +278,9 @@ export async function runWidgetCheck(input: {
         queries,
         acceptance,
         fixtures,
-        ...(microAppPermissions !== undefined ? { microApp: { permissions: microAppPermissions } } : {}),
+        ...(microAppPermissions !== undefined
+          ? { microApp: { permissions: microAppPermissions, bundlePaths } }
+          : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       if ('skipped' in outcome) {
