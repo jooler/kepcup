@@ -11,7 +11,7 @@
 
 {#if lazyMarkdown.component}
   {@const Markdown = lazyMarkdown.component}
-  <Markdown {content} controls={MARKDOWN_CONTROLS} />
+  <Markdown {content} controls={MARKDOWN_CONTROLS} plugins={lazyMarkdown.plugins} />
 {:else}
   <div class="whitespace-pre-wrap">{content}</div>
 {/if}

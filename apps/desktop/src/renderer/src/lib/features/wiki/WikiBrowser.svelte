@@ -606,7 +606,11 @@
               <p class="text-muted-foreground">…</p>
             {:else if lazyMarkdown.component}
               {@const Markdown = lazyMarkdown.component}
-              <Markdown content={historyPage?.content ?? ''} controls={MARKDOWN_CONTROLS} />
+              <Markdown
+                content={historyPage?.content ?? ''}
+                controls={MARKDOWN_CONTROLS}
+                plugins={lazyMarkdown.plugins}
+              />
             {:else}
               <div class="whitespace-pre-wrap">{historyPage?.content ?? ''}</div>
             {/if}
@@ -693,7 +697,11 @@
           <p class="text-muted-foreground">…</p>
         {:else if lazyMarkdown.component}
           {@const Markdown = lazyMarkdown.component}
-          <Markdown content={page?.content ?? ''} controls={MARKDOWN_CONTROLS} />
+          <Markdown
+            content={page?.content ?? ''}
+            controls={MARKDOWN_CONTROLS}
+            plugins={lazyMarkdown.plugins}
+          />
         {:else}
           <div class="whitespace-pre-wrap">{page?.content ?? ''}</div>
         {/if}
