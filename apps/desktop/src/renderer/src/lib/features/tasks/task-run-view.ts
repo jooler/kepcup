@@ -494,6 +494,70 @@ export function formatElapsed(ms: number): string {
     : `${mm}:${String(seconds).padStart(2, '0')}`;
 }
 
+/**
+ * 任务详情页 metadata 行的「上下文用量」（`tasks.usage`）：大数压成 12.3K / 1.2M。
+ * 不依赖 Svelte，便于单测。
+ */
+export function formatCompactTokens(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return '0';
+  const value = Math.round(tokens);
+  if (value < 1_000) return String(value);
+  const scaledThousands = value / 1_000;
+  if (value < 999_950) {
+    return scaledThousands < 100
+      ? `${trimTrailingZero(scaledThousands.toFixed(1))}K`
+      : `${Math.round(scaledThousands)}K`;
+  }
+  const scaledMillions = value / 1_000_000;
+  return scaledMillions < 100
+    ? `${trimTrailingZero(scaledMillions.toFixed(1))}M`
+    : `${Math.round(scaledMillions)}M`;
+}
+
+function trimTrailingZero(text: string): string {
+  return text.endsWith('.0') ? text.slice(0, -2) : text;
+}
+
+export interface TaskRunUsageParts {
+  /** 当前上下文占用的紧凑 token 数（12.3K）。 */
+  tokens: string;
+  /** 模型上下文窗口的紧凑数（200K）；未知为 null。 */
+  window: string | null;
+  /** 上下文占比整数百分比；窗口未知为 null。 */
+  percent: number | null;
+  /** 加权缓存命中的整数百分比；缺数据为 null。 */
+  cacheHitPercent: number | null;
+}
+
+/**
+ * 任务详情页「上下文用量」的展示数据：没有上下文 token 时整块隐藏（null）。
+ * 窗口未知只显示 token 数，没有命中率就不显示命中率——不猜默认窗口。
+ */
+export function taskRunUsageParts(
+  usage:
+    | { contextTokens: number | null; contextWindow: number | null; cacheHitRate: number | null }
+    | null
+    | undefined,
+): TaskRunUsageParts | null {
+  if (usage === null || usage === undefined) return null;
+  if (usage.contextTokens === null || usage.contextTokens === undefined) return null;
+  const contextTokens = usage.contextTokens;
+  const window =
+    usage.contextWindow !== null && usage.contextWindow !== undefined && usage.contextWindow > 0
+      ? usage.contextWindow
+      : null;
+  const rate =
+    usage.cacheHitRate !== null && usage.cacheHitRate !== undefined && usage.cacheHitRate >= 0
+      ? usage.cacheHitRate
+      : null;
+  return {
+    tokens: formatCompactTokens(contextTokens),
+    window: window !== null ? formatCompactTokens(window) : null,
+    percent: window !== null ? Math.max(0, Math.round((contextTokens / window) * 100)) : null,
+    cacheHitPercent: rate !== null ? Math.max(0, Math.round(rate * 100)) : null,
+  };
+}
+
 /** Elapsed task time: ended − started (created before it starts). */
 export function taskElapsedMs(
   task: { createdAt: number; startedAt: number | null; endedAt: number | null },

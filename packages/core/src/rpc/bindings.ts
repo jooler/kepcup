@@ -75,6 +75,7 @@ import {
   tasksActiveInputSchema,
   tasksActiveOutputSchema,
   tasksAnswerInputSchema,
+  tasksUsageOutputSchema,
   interviewAnswerInputSchema,
   interviewAnswerOutputSchema,
   interviewAnswerPathInputSchema,
@@ -1497,6 +1498,20 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
+    // 任务详情页的上下文用量：账本按 run_id（= task.id）聚合。上下文窗口按最近
+    // 一次主循环的 provider/model 从模型目录查（内置目录 + 供应商实例都覆盖）；
+    // 查不到留空——前端只显示 token 数，不套默认窗口。
+    'tasks.usage': method(taskIdInputSchema, tasksUsageOutputSchema, async (input) => ({
+      usage: services.domain!.usage.usageForRun(input.taskId, (provider, model) => {
+        try {
+          const info = services.domain!.providers.list().find((entry) => entry.id === provider);
+          const found = info?.models.find((entry) => entry.id === model);
+          return found !== undefined ? found.contextWindow : null;
+        } catch {
+          return null;
+        }
+      }),
+    })),
     // W2 外部副作用台账（W3 检查后重试面板）：任务沿续接链的 tool_effects 行。
     'effects.list': method(taskIdInputSchema, effectsListOutputSchema, async (input) => ({
       effects: domain.effects.listForTask(input.taskId),
