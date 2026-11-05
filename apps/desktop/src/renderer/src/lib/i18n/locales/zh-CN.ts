@@ -2781,6 +2781,20 @@ export const zhCN = {
     '不要使用 Google 个人账号登录：Google 条款禁止第三方软件经个人账号访问 Antigravity，违者可能被封号（含 Gemini CLI）。KepCup 目前只提供 Gemini API key 登录（Vertex AI 需要的项目配置入口尚未提供）。',
   'agents.terms.inkcop':
     'InkCop 须先启动并登录，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；任务经本机 inkcop-acp 附着其主对话。LLM 密钥只在 InkCop 应用内，KepCup 不注入、不保存。写作任务走 ACP；独立知识库管理请直连 LoomVec，不要经本智能体代管。',
+  'agents.terms.cline':
+    'Cline 使用你的 Cline 账号或你配置的各家 API key，经 Cline 官方程序登录；用量计入对应厂商。',
+  'agents.terms.copilot':
+    'GitHub Copilot 使用你的 Copilot 订阅，经 GitHub 官方程序登录；用量计入 Copilot 套餐额度。',
+  'agents.terms.goose':
+    'goose 为 Block 的开源智能体；密钥与 provider 在 goose 自己的配置里管理，KepCup 不注入、不保存。',
+  'agents.terms.qwen-code':
+    'Qwen Code 使用你的 Qwen 账号（免费额度）或各家 API key，经 Qwen 官方程序登录。',
+  'agents.terms.kimi':
+    'Kimi CLI 使用你的 Kimi 会员或 Moonshot API key，经 Moonshot 官方程序登录；官方未提供 Intel Mac（darwin-x86_64）构建。',
+  'agents.terms.grok-build':
+    'Grok Build 使用你的 grok.com 账号或 xAI API key，经 xAI 官方程序登录；用量计入 xAI 套餐额度。',
+  'agents.terms.devin':
+    'Devin 使用你的 Cognition 账号，经 Devin 官方程序登录；用量计入 Cognition 套餐额度。',
   'agents.enable': '启用',
   'agents.update': '更新',
   'agents.retry': '重试',

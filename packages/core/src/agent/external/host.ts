@@ -16,6 +16,7 @@ import {
   AGENT_INIT_TIMEOUT_MS,
   AGENT_KILL_GRACE_MS,
   AGENT_STDERR_TAIL_MAX_CHARS,
+  AGENT_STDOUT_LINE_MAX_BYTES,
   AppError,
   type AgentCatalogEntry,
 } from '@kepcup/shared';
@@ -33,6 +34,7 @@ import {
   type PermissionVerdict,
   type SessionBridge,
 } from './acp/client.js';
+import { limitChannelLines } from './acp/line-limit.js';
 import { classifierFor, toAgentError } from './errors.js';
 import { PROVIDERS, providerFor } from './providers/index.js';
 import type {
@@ -845,7 +847,18 @@ export class AgentHost {
     };
     // shim 型 Provider（无 ACP 的 Agent，如 ZCode）：进程讲私有协议，垫片在
     // 进程内把它翻译为 ACP，宿主照常经 ACP 连接驱动。
+    // A process channel's stdout gets the line-length cap (D118): the SDK's
+    // ndJsonStream buffers whole lines without a bound. Shim channels are
+    // in-process memory pipes — no cap needed.
     let channel = proc.channel;
+    if (entry.transport !== 'shim') {
+      channel = limitChannelLines(proc.channel, AGENT_STDOUT_LINE_MAX_BYTES, () => {
+        logger.error(
+          { agentId: entry.id, maxBytes: AGENT_STDOUT_LINE_MAX_BYTES },
+          'agent stdout line exceeded the limit; closing the connection',
+        );
+      });
+    }
     if (entry.transport === 'shim' && provider.connect !== undefined) {
       const shim = createShimChannel((client) => provider.connect!(proc, client));
       channel = shim.channel;
@@ -870,7 +883,9 @@ export class AgentHost {
       rejectGone = reject;
     });
     gone.catch(() => undefined);
-    const initTimeoutMs = this.#deps.initTimeoutMs ?? AGENT_INIT_TIMEOUT_MS;
+    // Per-entry override first (D118): heavy agents (dsh cold npx) start
+    // slower than the shared default.
+    const initTimeoutMs = entry.initTimeoutMs ?? this.#deps.initTimeoutMs ?? AGENT_INIT_TIMEOUT_MS;
     let initTimer: NodeJS.Timeout | null = null;
     const timeout = new Promise<never>((_, reject) => {
       initTimer = setTimeout(

@@ -2893,6 +2893,20 @@ export const enUS = {
     "Don't sign in with a personal Google account: Google's terms prohibit third-party software from accessing Antigravity through personal accounts, and violations may result in account suspension (including Gemini CLI). KepCup currently only offers Gemini API key sign-in (the project configuration needed for Vertex AI isn't available yet).",
   'agents.terms.inkcop':
     "InkCop must be running and signed in, with the bridge enabled in InkCop under Settings → Services → ACP Agents; tasks attach to its main conversation through the local inkcop-acp. LLM keys stay inside the InkCop app; KepCup doesn't inject or store them. Writing tasks go through ACP; for standalone knowledge base management, connect directly to LoomVec instead of going through this agent.",
+  'agents.terms.cline':
+    'Cline uses your Cline account or the provider API keys you configure, signing in through the official Cline program; usage counts against the respective vendor.',
+  'agents.terms.copilot':
+    'GitHub Copilot uses your Copilot subscription and signs in through the official GitHub program; usage counts against your Copilot plan quota.',
+  'agents.terms.goose':
+    "goose is Block's open-source agent; keys and providers are managed in goose's own config, which KepCup neither injects nor stores.",
+  'agents.terms.qwen-code':
+    'Qwen Code uses your Qwen account (free quota) or provider API keys, signing in through the official Qwen program.',
+  'agents.terms.kimi':
+    "Kimi CLI uses your Kimi membership or Moonshot API key, signing in through Moonshot's official program; no official Intel Mac (darwin-x86_64) build is available.",
+  'agents.terms.grok-build':
+    'Grok Build uses your grok.com account or xAI API key, signing in through the official xAI program; usage counts against your xAI plan quota.',
+  'agents.terms.devin':
+    'Devin uses your Cognition account and signs in through the official Devin program; usage counts against your Cognition plan quota.',
   'agents.enable': 'Enable',
   'agents.update': 'Update',
   'agents.retry': 'Retry',
