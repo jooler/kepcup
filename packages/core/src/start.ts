@@ -219,6 +219,8 @@ import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
+import { MicroAppAiGateway } from './micro-apps/ai-gateway.js';
+import { MicroAppStore } from './micro-apps/store.js';
 import { WidgetQueryRunner } from './widgets/query-runner.js';
 import { WidgetCraftService } from './widgets/craft/service.js';
 import {
@@ -690,6 +692,10 @@ export interface CoreServices {
   widgets: WidgetService | null;
   /** D87 组件制作 loop（widget_craft 的执行体；基准评测直接调用）；null with `widgets`. */
   widgetCraft: WidgetCraftService | null;
+  /** D112 微应用模型网关（ai.chat / ai.session：隔离 / 流式 / 预算 / 记账）；null with `widgets`. */
+  microAppAi: MicroAppAiGateway | null;
+  /** D112 P2 微应用数据面（collections / context 摘要 / 诊断 / 审计）；null with `widgets`. */
+  microAppStore: MicroAppStore | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -963,6 +969,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appUi: null,
     widgets: null,
     widgetCraft: null,
+    microAppAi: null,
+    microAppStore: null,
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
@@ -1045,6 +1053,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       await services.agents?.bridge.stop().catch(() => undefined);
       // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
       services.widgets?.dispose();
+      services.microAppAi?.dispose();
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
       services.mainDb = null;
@@ -2181,12 +2190,84 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           rpc: services.widgetPreviewRpc,
           screenshots: opts.screenshots,
         }),
+      // D112 P3（55 §11）：修改已有微应用时 SPEC 先读最近 24h 运行时诊断。
+      readDiagnostics: (botId, widgetId) => {
+        const store = services.microAppStore;
+        if (store === null) return null;
+        const owned = widgetService.listForBot(botId).some((item) => item.widgetId === widgetId);
+        if (!owned) return null;
+        const read = store.diagnosticsRead(widgetId);
+        if (read.entries.length === 0) return null;
+        const lines = read.entries
+          .slice(0, 8)
+          .map((entry) => `- [v${entry.version}] ${entry.code} ×${entry.count}（${entry.phase}）${entry.detail}`);
+        return [
+          ...lines,
+          ...(read.truncated ? ['-（更多条目省略；可用 micro_app_diagnostics_read 工具看全量）'] : []),
+        ].join('\n');
+      },
+      // GATE 的 app.capability-unavailable（55 §11）：宿主缺配置的能力提前标出 + 设置深链。
+      capabilityAvailability: (capability) => {
+        if (capability === 'ai.chat') {
+          const ai = services.microAppAi;
+          if (ai === null || !ai.modelAvailable()) {
+            return { available: false, reason: '没有可用的内置模型（未配置模型）' };
+          }
+          return { available: true };
+        }
+        if (capability === 'media.listen' || capability === 'media.speak') {
+          const media = services.media;
+          if (media === null) return { available: false, reason: '媒体模块未就绪' };
+          const kind = capability === 'media.listen' ? 'asr' : 'tts';
+          if (!media.capabilityConfigured(kind)) {
+            return { available: false, reason: kind === 'asr' ? '未配置语音识别（ASR）模型' : '未配置语音合成（TTS）模型' };
+          }
+          return { available: true };
+        }
+        return undefined;
+      },
     });
     try {
       widgetCraft.sweepDrafts();
     } catch (error) {
       logger.warn({ error: String(error) }, 'widget draft sweep failed');
     }
+
+    // D112 P2 微应用数据面：collections / context.update 摘要 / 运行时诊断 / 审计。
+    const microAppStore = new MicroAppStore({
+      db: mainDb,
+      clock,
+      logger,
+      appendMessage: (input) =>
+        messages.append({
+          conversationId: input.conversationId,
+          senderType: input.senderType,
+          kind: input.kind,
+          text: input.text,
+        }),
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+    });
+    try {
+      microAppStore.pruneDiagnostics();
+    } catch {
+      // 启动修剪失败不阻塞（下次记录时还会顺带做）。
+    }
+
+    // D112 微应用模型网关：ai.chat / ai.session 的 core 侧（上下文隔离 / 流式 / 三级
+    // 预算 / 记账归 widgets.bot_id）。流式增量经 `micro-app.stream` 事件回渲染端桥宿主。
+    const microAppAi = new MicroAppAiGateway({
+      db: mainDb,
+      resolveContext: (resourceId) => widgetService.microAppContextOf(resourceId),
+      settings,
+      secrets,
+      engine,
+      bots,
+      usage,
+      emitStream: (event) => events.emit('micro-app.stream', event),
+      clock,
+      logger,
+    });
 
     // 对话内应用设置（todo/conversational-app-setup.md）：目录适配器 + 三个工具 + 设置卡的宿主。
     // 设置卡落定后经 orchestrator 唤醒出卡 Bot（晚绑定：orchestrator 在下面构造）。
@@ -2515,6 +2596,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       effects,
       externalEngine,
       llmRouter,
+      // D112 P2：微应用进度摘要注入下一轮（55 §8.5）。
+      microAppSummariesFor: (conversationId) => {
+        const titleByWidget = new Map(
+          mainDb
+            .prepare('select id, title from widgets')
+            .all()
+            .map((row) => row as { id: string; title: string })
+            .map((row) => [row.id, row.title] as const),
+        );
+        return microAppStore.contextForConversation(conversationId).map((entry) => ({
+          widgetId: entry.widgetId,
+          title: titleByWidget.get(entry.widgetId) ?? entry.widgetId,
+          headline: entry.headline,
+          dataJson: entry.dataJson,
+          version: entry.version,
+        }));
+      },
       agentCatalog: () => agentCatalog,
       agents: agentsService,
       scheduler,
@@ -2559,6 +2657,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         craft: (input) => widgetCraft.craft(input),
         publish: (input) => widgetService.publish(input),
         readState: (input) => widgetService.readState(input),
+        readDiagnostics: (input) => {
+          // 归属校验（只能读自己 Bot 的微应用）+ 24h 聚合（§9.4 的按需读）。
+          const owned = widgetService
+            .listForBot(input.botId)
+            .some((item) => item.widgetId === input.widgetId);
+          if (!owned) {
+            return { ok: false, message: '找不到这个微应用（或它不是你创建的）', code: 'FORBIDDEN' as const };
+          }
+          const result = microAppStore.diagnosticsRead(input.widgetId);
+          const entries =
+            result.entries.length === 0
+              ? '（最近 24 小时没有运行问题记录）'
+              : result.entries
+                  .map(
+                    (entry) =>
+                      `v${entry.version} ${entry.phase} ${entry.code} ×${entry.count}${entry.detail !== '' ? ` @ ${entry.detail}` : ''}`,
+                  )
+                  .join('\n');
+          return { ok: true, entries, truncated: result.truncated };
+        },
       },
       widgetCraft,
       skills: {
@@ -3676,6 +3794,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.appUi = appUi;
     services.widgets = widgetService;
     services.widgetCraft = widgetCraft;
+    services.microAppAi = microAppAi;
+    services.microAppStore = microAppStore;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;

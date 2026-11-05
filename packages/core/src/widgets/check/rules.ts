@@ -1,4 +1,4 @@
-import { BOT_WIDGET_HTML_MAX_BYTES, type WidgetCheckIssue } from '@kepcup/shared';
+import { BOT_WIDGET_HTML_MAX_BYTES, MICRO_APP_CAPABILITY_IDS, type WidgetCheckIssue } from '@kepcup/shared';
 
 /**
  * 组件检查器的规则注册表（设计 32 §11.8；UX 改版修订：运行时为「完整 WebApp 档」）。
@@ -32,6 +32,9 @@ export interface WidgetCheckRule {
 }
 
 const HTML_MAX_MB = Math.round((BOT_WIDGET_HTML_MAX_BYTES / 1024 / 1024) * 10) / 10;
+
+/** 闭合能力枚举的人话清单（spec 单一事实来源派生，不手抄第二份）。 */
+const CAPABILITY_LIST = MICRO_APP_CAPABILITY_IDS.join(' / ');
 
 /**
  * S2 预览宿主离线导致的联网失败问题条目（{@link previewOfflineNetworkMessage} 命中的
@@ -424,6 +427,109 @@ export const WIDGET_CHECK_RULES: readonly WidgetCheckRule[] = [
       'S2 预览宿主不联网（在用户确认前运行草稿代码，不能给出网通道）：Failed to fetch / net::ERR_* 这类失败是预期的，' +
       '正式运行时可正常联网。依赖外部数据的功能请改用 fixtures（kepcup.storage 初始数据 / kepcup.query 查询模板）' +
       '或在代码里容错（加载失败时显示空状态与重试），验收点不要依赖真实网络。',
+    userText: '',
+  },
+  // --- 微应用（D112，设计 55 §11 / §3.3）------------------------------------------
+  // P0 注册规则与提示词（与 spec 的错误 hint 同源）；草稿带 micro-app.json 时由 P3 的
+  // 多文件制作流程触发扫描。P0 的制作 loop 仍是单文件组件，这些规则暂不命中。
+  {
+    id: 'app.manifest-invalid',
+    level: 'error',
+    stage: 'S0',
+    blocking: true,
+    title: 'micro-app.json 清单不合法',
+    hint:
+      '按报错点名的字段修清单：spec 必须是 kepcup-micro-app/1；permissions 只能用闭合枚举里的能力 id' +
+      `（${CAPABILITY_LIST}），未知项会被拒绝；net.mode=allowlist 必须给域名数组。` +
+      '清单变化（权限 / 网络档位）= 新版本，用户需要重新确认。',
+    userText: '微应用清单不合法',
+  },
+  {
+    id: 'app.net-open-default',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '保留默认联网但未写联网用途',
+    hint:
+      '默认 net.mode=open（可联网）。保留 open 就要在 spec.md 写清楚联网用途（如「调用公开词典 API」）' +
+      '与失败降级（断网时界面仍可用）；不需要联网就主动收紧为 none 或 allowlist——确认卡会如实展示网络范围。',
+    userText: '',
+  },
+  {
+    id: 'app.permission-undeclared',
+    level: 'error',
+    stage: 'S1',
+    blocking: true,
+    title: '代码调用了清单未声明的能力',
+    hint:
+      '把用到的能力补进 micro-app.json 的 permissions（能力面扩大会触发用户重新确认），或改掉这处调用；' +
+      '调用前先 await kepcup.app.ready() 看 capabilities，按返回值降级，不要靠错误码试探。',
+    userText: '微应用调用了未声明的能力',
+  },
+  {
+    id: 'app.sdk-deprecated',
+    level: 'warning',
+    stage: 'S1',
+    blocking: false,
+    title: '使用了 SDK 里已标记废弃的方法',
+    hint: '按报告点名的位置换成替代方法（deprecated 方法的替代写法见 references/errors.md）。',
+    userText: '',
+  },
+  // --- P3（55 §11）：多文件制作流程触发的扫描 ----------------------------------------
+  {
+    id: 'app.bundle-invalid',
+    level: 'error',
+    stage: 'S0',
+    blocking: true,
+    title: '微应用包内文件不合法',
+    hint:
+      '按报错点名的文件修：路径必须是安全的相对路径（不以 / 开头、不含 .. 与反斜杠）；' +
+      '单文件 ≤1MB、包总量 ≤8MB（含入口 HTML）、至多 64 个文件。图片压缩 / 删未引用资产，' +
+      'index.html 永远是入口本体，不要重复放进包文件。',
+    userText: '微应用包不合法',
+  },
+  {
+    id: 'app.permission-overbroad',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '声明了从未调用的能力',
+    hint:
+      '能力面越小用户确认越快：从 micro-app.json 的 permissions 删掉没用到的能力（storage.kv 除外' +
+      '——预置数据合理），或在代码里补上调用。权限扩大要用户重新确认，别把「可能用到」也声明进去。',
+    userText: '',
+  },
+  {
+    id: 'app.fallback-missing',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '声明了宿主能力但没有键盘回退',
+    hint:
+      '环境可能没有你声明的能力（麦克风被拒 / 缺模型配置 / 旧版本宿主）：页面上要有 <input> 或 ' +
+      '<textarea> 的键盘路径，能力调用失败的 catch 里切过去。渐进增强是通用验收，不只语音。',
+    userText: '',
+  },
+  {
+    id: 'app.cost-estimate-missing',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: 'spec.md 没有写每轮对话成本估算',
+    hint:
+      '用了 ai.chat 就要在 spec.md 写一行「每轮约 N token」的量级估算（回复长度 × 轮数）：' +
+      '用量计入编写本微应用的 Bot，用户在确认卡与管理页都能看到；写了才好让人判断值不值。',
+    userText: '',
+  },
+  {
+    id: 'app.capability-unavailable',
+    level: 'warning',
+    stage: 'S0',
+    blocking: false,
+    title: '宿主当前缺某项能力的配置',
+    hint:
+      '按报错点名的能力去设置页补配置（模型 / ASR / TTS 各有深链）；代码里按 kepcup.app.ready() ' +
+      '返回的 capabilities 降级（这条不阻断交付，但用户打开就会遇到不可用）。',
     userText: '',
   },
 ];

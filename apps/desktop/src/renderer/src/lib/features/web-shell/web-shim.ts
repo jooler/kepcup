@@ -29,7 +29,12 @@ export function installWebShim(version: string): void {
     onboardingVisible: true,
   };
   window.kepcup = {
-    portNonce: crypto.randomUUID(),
+    // 非安全上下文（局域网 http://IP 直连 headless）没有 crypto.randomUUID——
+    // 在这里裸调会让整个 web 启动炸掉。portNonce 在 web 里只是垫值（port 握手
+    // 不会发生），时间+随机兜底足够（与 sidebar-sections 的 newSectionId 同型）。
+    portNonce:
+      globalThis.crypto?.randomUUID?.() ??
+      `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
     isWeb: true,
     windowMaterial: 'opaque',
     platform: {
@@ -41,6 +46,10 @@ export function installWebShim(version: string): void {
     },
     setNativeThemeSource: noop,
     showBotBrowser: noop,
+    // 组件「在新窗口打开」（widget-window.md）：桌面 Electron 能力，web 端点 no-op
+    // ——viewer 按钮按 opened=false 提示失败，不出第二个「窗口」。
+    openWidgetWindow: () => Promise.resolve({ opened: false }),
+    onWidgetWindowPayload: () => unbind,
     closeBotBrowser: noop,
     getBotBrowserPages: () => Promise.resolve([]),
     onBotBrowserPagesChanged: () => unbind,

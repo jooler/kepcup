@@ -10,6 +10,7 @@
 import { DASHBOARD_QUERIES_EXAMPLE, DASHBOARD_TEMPLATE } from './dashboard.js';
 import { FORM_CALCULATOR_TEMPLATE } from './form-calculator.js';
 import { LIST_TRACKER_TEMPLATE } from './list-tracker.js';
+import { MICRO_APP_TEMPLATES } from './micro-app.js';
 
 export interface WidgetTemplate {
   name: string;
@@ -18,6 +19,17 @@ export interface WidgetTemplate {
   html: string;
   /** 配套的查询模板示例（写入草稿 queries.json，草稿里还没有时）。 */
   queries?: ReadonlyArray<{ name: string; sql: string }>;
+  /** 微应用包模板（D112 P3）：micro-app.json 原文（与 html 一起写入草稿）。 */
+  manifestJson?: string;
+  /** 微应用包文件（相对路径）。 */
+  files?: ReadonlyArray<{ path: string; content: string }>;
+  /** 预览 fixtures（S2 能力 mock 的脚本数据）。 */
+  fixtures?: {
+    storage?: Record<string, unknown>;
+    queries?: Record<string, Array<Record<string, unknown>>>;
+    ai?: string[];
+    transcripts?: string[];
+  };
 }
 
 const BLANK = `<!DOCTYPE html>
@@ -82,6 +94,7 @@ const BLANK = `<!DOCTYPE html>
 `;
 
 export const WIDGET_TEMPLATES: readonly WidgetTemplate[] = [
+  ...MICRO_APP_TEMPLATES,
   {
     name: 'blank',
     summary: '空白骨架：状态 + render() + 带错误处理的 kepcup.storage 读写，适合任何组件的起点',

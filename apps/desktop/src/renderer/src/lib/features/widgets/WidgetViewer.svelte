@@ -1,26 +1,43 @@
 <script lang="ts">
-  import { X, RefreshCw } from '@lucide/svelte';
+  import { ExternalLink, RefreshCw, X } from '@lucide/svelte';
   import { Portal } from 'bits-ui';
+  import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
-  import { widgetViewer } from './widget-viewer.svelte';
+  import { widgetViewer, widgetWindowHandoffPayload } from './widget-viewer.svelte';
   import WidgetRuntime from './WidgetRuntime.svelte';
+  import MicroAppControls from './MicroAppControls.svelte';
 
   /**
    * 组件覆盖层（海报卡点击后真正运行的地方）：占满中部 + 右栏（左栏保持可见），几何与
    * FileViewer 一致。每次打开挂一个新 WidgetRuntime（资源随打开登记、随关闭释放——与
    * 关掉一个网页一致，组件内状态不跨打开保留）；重载按钮整体重开。切会话时组件卡属于
    * 旧对话：直接关闭（同 FileViewer 的归属守卫）。
+   *
+   * 微应用（D112 §7.3）header 即 MicroAppChrome：常驻网络徽标（点击展开「它能访问
+   * 什么」）、麦克风指示 / 会话授权开关、全屏键（inline ⇄ immersive ⇄ requestDisplayMode）、
+   * 停止键（立即关采集与播放）——控件实现在 MicroAppControls（与独立窗口共用，55 §3.3
+   * 提示面不允许两处漂移）。这层不占微应用 iframe 的 DOM，微应用无法覆盖或伪造。
+   *
+   * 「在新窗口打开」（widget-window.md）：把当前卡移交独立 Electron 窗口；成功后本
+   * 覆盖层关闭（同一张卡不双实例运行——widgets.ui.open 与微应用用量都按打开计）。
    */
   const session = getChatSession();
   const current = $derived(widgetViewer.current);
   const card = $derived(current?.card ?? null);
+  const isMicroApp = $derived(card?.microApp !== undefined && card.microApp !== null);
 
   let closeButton = $state<HTMLButtonElement | null>(null);
-  let runtime: { reload(): Promise<void> } | null = $state(null);
+  let runtime: { reload(): Promise<void>; stopAudio?(): void } | null = $state(null);
+  /** P1：会话级麦克风授权（每次打开重置为关；用户在外壳开启 = 本次运行会话授权）。 */
+  let micGranted = $state(false);
+  let displayMode = $state<'inline' | 'immersive'>('immersive');
+  $effect(() => {
+    if (card?.microApp !== undefined) displayMode = card.microApp.displayMode;
+  });
 
   const left = $derived(narrowLayout.narrow ? '0px' : `${sidebarLayout.effectiveWidth}px`);
   // 窄屏时本浮层盖住整窗，mac 红绿灯叠在 header 左上角，关闭按钮要右移让位。
@@ -32,6 +49,12 @@
     if (widgetViewer.current !== null && widgetViewer.current.conversationId !== conversationId) {
       widgetViewer.close();
     }
+  });
+
+  // 每次打开重置微应用的会话态（麦克风授权不跨打开保留，55 §5.1）。
+  $effect(() => {
+    void current?.messageId;
+    micGranted = false;
   });
 
   // 非模态覆盖层：打开时把焦点移到关闭按钮，关闭时还给原来的元素。
@@ -56,6 +79,18 @@
   function close(event?: MouseEvent): void {
     event?.stopPropagation();
     widgetViewer.close();
+  }
+
+  /** 移交到独立窗口：主进程校验并起窗，成功后本覆盖层关闭（移交，不双实例）。 */
+  async function openInWindow(): Promise<void> {
+    if (current === null || card === null) return;
+    try {
+      const result = await window.kepcup.openWidgetWindow(widgetWindowHandoffPayload(current));
+      if (result.opened) widgetViewer.close();
+      else toast.error(t('botWidget.openInWindowFailed'));
+    } catch {
+      toast.error(t('botWidget.openInWindowFailed'));
+    }
   }
 </script>
 
@@ -96,6 +131,28 @@
           </div>
         </div>
         <div class="app-no-drag absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
+          {#if isMicroApp && card.microApp}
+            <MicroAppControls
+              microApp={card.microApp}
+              {micGranted}
+              {displayMode}
+              testidPrefix="widget-viewer"
+              resetKey={current.messageId}
+              onToggleMic={() => (micGranted = !micGranted)}
+              onToggleDisplayMode={() => (displayMode = displayMode === 'immersive' ? 'inline' : 'immersive')}
+              onStopAudio={() => runtime?.stopAudio?.()}
+            />
+          {/if}
+          <button
+            type="button"
+            class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={() => void openInWindow()}
+            aria-label={t('botWidget.openInWindow')}
+            title={t('botWidget.openInWindow')}
+            data-testid="widget-viewer-open-window"
+          >
+            <ExternalLink class="size-4" aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -111,7 +168,21 @@
 
       <div class="relative min-h-0 flex-1 overflow-hidden">
         {#key current.messageId}
-          <WidgetRuntime bind:this={runtime} messageId={current.messageId} card={card} />
+          <div
+            class="flex h-full {isMicroApp && displayMode === 'inline'
+              ? 'items-center justify-center'
+              : ''}"
+          >
+            <div class="h-full {isMicroApp && displayMode === 'inline' ? 'w-[420px] max-w-full' : 'w-full'}">
+              <WidgetRuntime
+                bind:this={runtime}
+                messageId={current.messageId}
+                {card}
+                {micGranted}
+                onDisplayMode={(mode) => (displayMode = mode)}
+              />
+            </div>
+          </div>
         {/key}
       </div>
     </div>

@@ -1,6 +1,19 @@
 import { z } from 'zod';
 import { MCP_APP_SCHEME, appsUiResourceInputSchema, appsUiResourceOutputSchema } from './apps-ui.js';
 import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema, widgetThemeSchema } from './widget-craft.js';
+import { microAppCardSummarySchema } from './micro-app.js';
+import {
+  BOT_WIDGET_QUERY_NAME_MAX_CHARS,
+  widgetQueryDefSchema,
+} from './widget-query.js';
+
+export {
+  BOT_WIDGET_QUERIES_MAX,
+  BOT_WIDGET_QUERY_NAME_MAX_CHARS,
+  BOT_WIDGET_QUERY_SQL_MAX_BYTES,
+  widgetQueryDefSchema,
+  type WidgetQueryDef,
+} from './widget-query.js';
 
 /**
  * Bot 自制交互组件（Bot Widgets，D81，设计 32）：Bot 在任务里用 `widget_create` /
@@ -72,12 +85,9 @@ export const BOT_WIDGET_BOT_BYTES_QUOTA = 64 * 1024 * 1024;
 
 // --- 命名只读查询模板（P2，设计 32 §6）----------------------------------------
 
-/** 每个版本最多登记的查询模板数。 */
-export const BOT_WIDGET_QUERIES_MAX = 20;
-/** 查询模板名的长度上限（字符集约束见 `widgetQueryDefSchema`）。 */
-export const BOT_WIDGET_QUERY_NAME_MAX_CHARS = 64;
-/** 单条查询模板 SQL 的体积上限（字节；zod 侧按 UTF-16 粗检，字节精检在 core）。 */
-export const BOT_WIDGET_QUERY_SQL_MAX_BYTES = 64 * 1024;
+// `BOT_WIDGET_QUERIES_MAX` / `BOT_WIDGET_QUERY_NAME_MAX_CHARS` / `BOT_WIDGET_QUERY_SQL_MAX_BYTES`
+// / `widgetQueryDefSchema` 移至 `widget-query.ts`（微应用清单也引用），在本文件头部再导出。
+
 /** 查询运行时单次返回的行数上限（超出即停止迭代并标记 truncated）。 */
 export const BOT_WIDGET_QUERY_ROWS_MAX = 200;
 /**
@@ -96,24 +106,6 @@ export const BOT_WIDGET_QUERY_TIMEOUT_MS = 3_000;
 export const BOT_WIDGET_QUERY_MEMORY_MAX_BYTES = 512 * 1024 * 1024;
 /** 全部组件排队等待执行的查询上限（子进程串行执行）；满了得 `WIDGET_RATE_LIMITED`。 */
 export const BOT_WIDGET_QUERY_QUEUE_MAX = 64;
-
-/**
- * 命名只读查询模板定义（`widget_create` / `widget_update` 的 `queries` 条目）。
- * 模板随版本登记（版本 = HTML + 查询的完整快照，只增不改）：SQL 在交付时被用户
- * 人工预审（审查态「查看源码」可见全文），运行时组件只能按名字调用，输入只有
- * 参数、没有 SQL——这是 query 免审批的唯一理由（运行时 raw SQL 透传永久不做）。
- */
-export const widgetQueryDefSchema = z.object({
-  /** 组件内 `kepcup.query(name, params)` 的名字。 */
-  name: z
-    .string()
-    .min(1)
-    .max(BOT_WIDGET_QUERY_NAME_MAX_CHARS)
-    .regex(/^[A-Za-z0-9_-]+$/, '查询名只能含字母、数字、- 和 _'),
-  /** 单条只读 SQL（SELECT / WITH…SELECT），`:name` 占位参数；多语句与非只读在 core 拒绝。 */
-  sql: z.string().min(1).max(BOT_WIDGET_QUERY_SQL_MAX_BYTES),
-});
-export type WidgetQueryDef = z.infer<typeof widgetQueryDefSchema>;
 
 // --- 卡片描述符（落库在对话消息里，不含 HTML） --------------------------------
 
@@ -148,6 +140,13 @@ export const widgetCardSchema = z.object({
   checkStatus: widgetCheckStatusSchema.default('legacy'),
   /** 面向用户的已知问题（`issues` 时列出，≤ WIDGET_KNOWN_ISSUES_MAX 条）。 */
   knownIssues: z.array(z.string()).max(WIDGET_KNOWN_ISSUES_MAX).default([]),
+  // --- 微应用增量（D112，设计 55 §4.3 / §5.2；存量组件这些字段缺省，行为零变化）---
+  /** 带清单的微应用才有；存在即卡片按微应用路径渲染（能力清单 / 网络行 / 指纹确认）。 */
+  microApp: microAppCardSummarySchema.optional(),
+  /** 能力面指纹（permissions + net；确认记忆的键，见 `microAppCapabilityFingerprint`）。 */
+  capabilityFingerprint: z.string().optional(),
+  /** bundle 规范化摘要（清单 + 全部文件按路径排序；同指纹不同代码时用于「已更新」标注）。 */
+  bundleSha256: z.string().optional(),
 });
 export type WidgetCard = z.infer<typeof widgetCardSchema>;
 
@@ -183,6 +182,12 @@ export const widgetsUiOpenInputSchema = z.object({
    * （缺省 light）；之后的切换由卡片推送 `{source:'kepcup-host', event:'theme'}`。
    */
   theme: widgetThemeSchema.optional(),
+  /**
+   * D112：钉住运行中的版本（微应用资源续期用）——「升级不热替换运行中的实例」，续期
+   * 不能因 `next_version` 前移而把实例换到新版本（新版本未过预审时还会直接失败）。
+   * 只对微应用生效；存量组件忽略（本来就钉卡片版本）。
+   */
+  pinVersion: z.number().int().min(1).optional(),
 });
 export const widgetsUiOpenOutputSchema = z.object({
   /** 一次性不透明资源 id（iframe 路径与后续调用的凭据）。 */
@@ -190,11 +195,20 @@ export const widgetsUiOpenOutputSchema = z.object({
   /** 完整的 iframe 地址 `kepcup-app://widget-{hash}/{resourceId}`。 */
   url: z.string(),
   widgetId: z.string(),
+  /**
+   * 生效版本：存量组件 = 卡片钉住版本；微应用 = `widgets.next_version ?? 卡片钉住版本`
+   * （设计 55 §9.1 版本双指针：升级不热替换运行中的实例，重新打开生效）。
+   */
   version: z.number().int(),
   title: z.string(),
   description: z.string(),
   scope: widgetScopeSchema,
   sha256: z.string(),
+  // --- 微应用增量（存量组件缺省）---
+  /** 生效版本的清单摘要；存在即运行时走微应用桥 v2 与垫片。 */
+  microApp: microAppCardSummarySchema.optional(),
+  capabilityFingerprint: z.string().optional(),
+  bundleSha256: z.string().optional(),
 });
 export type WidgetsUiOpenOutput = z.infer<typeof widgetsUiOpenOutputSchema>;
 
@@ -282,6 +296,9 @@ export const widgetsUiQueryInputSchema = z.object({
   resourceId: z.string().min(1),
   name: z.string().min(1).max(BOT_WIDGET_QUERY_NAME_MAX_CHARS),
   params: z.record(z.string(), z.unknown()).default({}),
+  /** D112 P2 分页（55 §10）：不传 = 存量行为零变化；传 cursor / maxBytes 走分页。 */
+  cursor: z.string().min(1).max(32).optional(),
+  maxBytes: z.number().int().min(1024).max(256 * 1024).optional(),
 });
 export type WidgetsUiQueryInput = z.infer<typeof widgetsUiQueryInputSchema>;
 
@@ -289,6 +306,8 @@ export const widgetsUiQueryOutputSchema = z.object({
   /** 行是「列名 → 值」的对象；值已归一为 JSON 安全类型（BLOB → base64 字符串）。 */
   rows: z.array(z.record(z.string(), z.unknown())),
   truncated: z.boolean(),
+  /** 分页游标（还有下一页时给；`kepcup.query(name, params, {cursor})` 传入）。 */
+  nextCursor: z.string().optional(),
 });
 export type WidgetsUiQueryOutput = z.infer<typeof widgetsUiQueryOutputSchema>;
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { mode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
   import {
@@ -19,10 +20,17 @@
   import { Button } from '$lib/components/ui/button';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { sensors } from '$lib/sensors/sensors.svelte';
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
+  import { MicroAppBridgeHost } from './micro-app-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
   import { widgetConsented } from './consent.svelte';
+  import { microAppEffectiveConsentOk, microAppOpenAllowed } from './micro-app-gate';
+  import {
+    MicroAppAudioSession,
+    MicroAppSpeakQueue,
+  } from './micro-app-audio';
 
   /**
    * 组件运行时（覆盖层里的那个 iframe）：海报卡确认后由 WidgetViewer 挂载，start →
@@ -37,7 +45,19 @@
    * `widgets.ui.open` 换 resourceId 并重放调用（iframe 不重载）；重开也失败才转错误态。
    * 关闭覆盖层 = 组件停止（资源关闭，组件内状态不保留，与关掉一个网页一致）。
    */
-  let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
+  let {
+    messageId,
+    card,
+    /** P1：会话级麦克风授权（外壳 MicroAppChrome 的开关；撤销即 revokeCapability）。 */
+    micGranted = false,
+    /** P1：展示模式（外壳全屏键 / 微应用 requestDisplayMode 的落点）。 */
+    onDisplayMode,
+  }: {
+    messageId: string;
+    card: WidgetCard;
+    micGranted?: boolean;
+    onDisplayMode?: (mode: 'inline' | 'immersive') => void;
+  } = $props();
 
   type RuntimeState = 'loading' | 'ready' | 'error';
   let phase = $state<RuntimeState>('loading');
@@ -49,16 +69,69 @@
   let pendingReply = $state<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   let replyBlockedUntil = 0;
 
-  let bridge: WidgetBridgeHost | null = null;
+  let bridge: WidgetBridgeHost | MicroAppBridgeHost | null = null;
+  let microBridge: MicroAppBridgeHost | null = null;
   let generation = 0;
   /** 当前挂载的资源租约（过期自动重开并重放调用，见 resource-lease.ts）。 */
   let lease: WidgetResourceLease | null = null;
+  /** 运行中的版本（微应用续期钉住它——升级不热替换运行中的实例，55 §9.1）。 */
+  let runningVersion: number | null = null;
+  /** P1：音频面（实例级 TTS 队列；麦克风由各 listen 会话开关）。 */
+  let speakQueue: MicroAppSpeakQueue | null = null;
+  let offStream: (() => void) | null = null;
+  /** 宿主铸造的实例键（ai / 媒体 RPC 的记账与归属；续期不变）。 */
+  let microInstanceId: string | null = null;
+  /** 诊断限流（code:detail → 上次发送时间）。 */
+  const diagnosticSentAt = new SvelteMap<string, number>();
+  /** 当前资源 id（续期后更新；ai / 媒体面调用时读取，避免打到过期资源）。 */
+  let currentResourceId: string | null = null;
+
+  // 麦克风撤销：桥已建时立即停采集并通知微应用 capability.revoked（55 §5.3）。
+  $effect(() => {
+    if (micGranted) return;
+    if (microBridge !== null) microBridge.revokeCapability('media.listen');
+  });
+
+  // P2（§9.1）：窗口不可见 → pause；恢复可见 → resume（微应用写 session: 快照）。
+  $effect(() => {
+    if (card.microApp === undefined) return;
+    void card.widgetId;
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') microBridge?.pushAppEvent('pause', null);
+      else microBridge?.pushAppEvent('resume', null);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  });
+
+  // core 的模型流式增量 → 桥 v2 event 帧（按实例过滤）。
+  $effect(() => {
+    if (card.microApp === undefined) return;
+    void card.widgetId;
+    offStream?.();
+    offStream = core.onEvent('micro-app.stream', (payload) => {
+      microBridge?.forwardStreamEvent(
+        payload as {
+          instanceId: string;
+          streamId: string;
+          kind: string;
+          delta?: string;
+          code?: string;
+        },
+      );
+    });
+    return () => {
+      offStream?.();
+      offStream = null;
+    };
+  });
 
   function currentTheme(): 'light' | 'dark' {
     return mode.current === 'dark' ? 'dark' : 'light';
   }
 
   // D87 P3b：应用切换明暗时推给已挂载的组件（垫片更新 data-theme 并派发 kepcup:theme）。
+  // 微应用走桥 v2 的 event 帧（同一语义，协议换了）。
   $effect(() => {
     const theme = currentTheme();
     bridge?.setTheme(theme);
@@ -69,7 +142,8 @@
     phase = 'loading';
     errorCode = undefined;
     // 防御：运行时只应在确认后挂载；未确认（记忆被清等）回到海报卡的审查态流程。
-    if (!widgetConsented(card)) {
+    // 微应用（D112）的确认按能力面指纹——卡片门控之外，open 后还要对生效版本再核一次。
+    if (card.microApp === undefined ? !widgetConsented(card) : !microAppOpenAllowed(card)) {
       errorCode = 'WIDGET_REVIEW_REQUIRED';
       phase = 'error';
       return;
@@ -84,10 +158,34 @@
         void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
         return;
       }
+      // 微应用：生效版本的指纹必须被当前确认覆盖（卡片门控可能基于过期指纹）——
+      // 能力面已扩大时这里兜底拒绝，不静默运行未确认的能力。
+      if (out.microApp !== undefined && out.capabilityFingerprint !== undefined) {
+        if (!microAppEffectiveConsentOk(out.widgetId, out.capabilityFingerprint)) {
+          void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
+          errorCode = 'WIDGET_REVIEW_REQUIRED';
+          phase = 'error';
+          return;
+        }
+      }
+      runningVersion = out.version;
+      currentResourceId = out.resourceId;
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
-        reopen: async () =>
-          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId, theme: currentTheme() })).resourceId,
+        reopen: async () => {
+          const renewed = widgetsUiOpenOutputSchema.parse(
+            await core.call('widgets.ui.open', {
+              messageId,
+              theme: currentTheme(),
+              // 续期钉住运行中的版本：next_version 前移 / 新版本未过预审都不能把
+              // 在跑的实例换掉（升级 = 重新打开生效，不热替换）。
+              ...(runningVersion !== null ? { pinVersion: runningVersion } : {}),
+            }),
+          );
+          // 续期换 resourceId 后，ai / 媒体面要跟着用新的（审查修复 F8）。
+          currentResourceId = renewed.resourceId;
+          return renewed.resourceId;
+        },
         discard: (resourceId) => {
           void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
         },
@@ -102,32 +200,128 @@
       const frameWindow = frame?.contentWindow;
       if (frame === undefined || !frameWindow) throw new Error('frame unavailable');
       // Listen first, then load: the shim's first calls must find the bridge ready.
-      bridge = WidgetBridgeHost.connect({
-        frameWindow,
-        resourceId: out.resourceId,
-        theme: openedTheme,
-        storage: (input) => callStorage(input),
-        query: (input) => callQuery(input),
-        openLink: (url) =>
-          new Promise<boolean>((resolve) => {
-            // One confirmation at a time; a second request while one is open is refused.
-            if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
-              resolve(false);
-              return;
-            }
-            pendingLink = { url, resolve };
-          }),
-        reply: (text) =>
-          new Promise<boolean>((resolve) => {
-            if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
-              resolve(false);
-              return;
-            }
-            pendingReply = { text, resolve };
-          }),
-        // 覆盖层形态 iframe 铺满：组件的高度上报不参与布局。
-        onHeight: () => {},
-      });
+      // 微应用挂桥 v2（能力路由 / 事件 / 预算 / 音频面），存量组件挂 v1（行为零变化）。
+      if (out.microApp !== undefined) {
+        // resourceId 用读取器（二轮 F1）：租期续命换 id 后，speak / transcribe 跟着新 id 走。
+        speakQueue = new MicroAppSpeakQueue(() => currentResourceId ?? '');
+        bridge = MicroAppBridgeHost.connect({
+          frameWindow,
+          resourceId: out.resourceId,
+          permissions: out.microApp.permissions,
+          net: { mode: out.microApp.netMode, domains: out.microApp.netAllowlist },
+          theme: openedTheme,
+          displayMode: out.microApp.displayMode,
+          viewport: {
+            width: frame.clientWidth || 360,
+            height: frame.clientHeight || 520,
+          },
+          storage: (input) => callStorage(input),
+          query: (input) => callQuery(input),
+          openLink: (url) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingLink = { url, resolve };
+            }),
+          reply: (text) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingReply = { text, resolve };
+            }),
+          onTitle: () => {},
+          micGrant: () => {
+            if (!micGranted) return 'denied';
+            if (!sensors.state.microphone.enabled) return 'unavailable';
+            return 'granted';
+          },
+          // 审查修复 F1/F3：instanceId 一律由宿主加盖（盖掉 iframe 传来的任何值），
+          // resourceId 用续期后的当前值——预算 / 并发 / 归属才不被伪造实例键绕过。
+          aiCall: (method, params) => {
+            const { instanceId: _ignored, ...rest } = params;
+            void _ignored;
+            return core.call(aiRpcNameOf(method), {
+              ...rest,
+              resourceId: currentResourceId ?? '',
+              instanceId: microInstanceId ?? '',
+            });
+          },
+          createListenSession: (config, sink, instanceId) =>
+            new MicroAppAudioSession({
+              resourceId: () => currentResourceId ?? '',
+              instanceId,
+              config,
+              sink,
+              speakQueue: speakQueue!,
+              openMicrophone: async () => (await sensors.open('microphone')).stream,
+            }),
+          speak: (input) => speakQueue!.speak(input),
+          stopSpeaking: () => speakQueue?.stopSpeaking(),
+          onRequestDisplayMode: async (mode) => {
+            onDisplayMode?.(mode);
+            return { mode };
+          },
+          onClose: () => {
+            /* 关闭由用户掌握（外壳 X / Esc）；微应用请求只作为提示，P1 不代关。 */
+          },
+          // P2（55 §9.4）：诊断回流（限流：同 code 一分钟至多一条，内容不落库）。
+          onDiagnostic: (event) => {
+            const key = `${event.code}:${event.detail}`;
+            const now = Date.now();
+            if ((diagnosticSentAt.get(key) ?? 0) > now - 60_000) return;
+            diagnosticSentAt.set(key, now);
+            if (diagnosticSentAt.size > 128) diagnosticSentAt.clear();
+            void core
+              .call('microApps.diagnostics.record', {
+                resourceId: currentResourceId ?? '',
+                instanceId: microInstanceId ?? '',
+                phase: event.phase,
+                code: event.code,
+                detail: event.detail,
+              })
+              .catch(() => undefined);
+          },
+          onUnresponsive: () => {
+            // §9.1：无响应 → 「微应用无响应」+ 重新打开（不自动循环重试）。
+            errorCode = 'MICRO_APP_UNRESPONSIVE';
+            phase = 'error';
+          },
+        });
+        microBridge = bridge;
+        microInstanceId = microBridge.instanceId;
+        speakQueue.setInstance(microInstanceId);
+      } else {
+        bridge = WidgetBridgeHost.connect({
+          frameWindow,
+          resourceId: out.resourceId,
+          theme: openedTheme,
+          storage: (input) => callStorage(input),
+          query: (input) => callQuery(input),
+          openLink: (url) =>
+            new Promise<boolean>((resolve) => {
+              // One confirmation at a time; a second request while one is open is refused.
+              if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingLink = { url, resolve };
+            }),
+          reply: (text) =>
+            new Promise<boolean>((resolve) => {
+              if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+                resolve(false);
+                return;
+              }
+              pendingReply = { text, resolve };
+            }),
+          // 覆盖层形态 iframe 铺满：组件的高度上报不参与布局。
+          onHeight: () => {},
+        });
+      }
       if (gen !== generation) {
         bridge.destroy();
         bridge = null;
@@ -182,18 +376,38 @@
 
   async function stop(): Promise<void> {
     generation += 1;
+    runningVersion = null;
     pendingLink?.resolve(false);
     pendingLink = null;
     pendingReply?.resolve(false);
     pendingReply = null;
     const connected = bridge;
     bridge = null;
+    microBridge = null;
     connected?.destroy();
+    // 音频面收口：停播放（监听会话已随桥 destroy 释放麦克风）。
+    speakQueue?.dispose();
+    speakQueue = null;
     const resource = lease?.close() ?? null;
     lease = null;
+    // 实例收口（审查修复 F4）：关闭即取消全部在途模型调用、释放会话与并发位
+    // （「关闭微应用即取消全部在途调用」，55 §6.2 / §9.1）。
+    if (microInstanceId !== null && resource !== null) {
+      await core
+        .call('microApps.ai.dispose', { resourceId: resource, instanceId: microInstanceId })
+        .catch(() => undefined);
+    }
+    microInstanceId = null;
+    currentResourceId = null;
     if (resource !== null) {
       await core.call('widgets.ui.close', { resourceId: resource }).catch(() => undefined);
     }
+  }
+
+  /** 外壳「停止」键：立即停采集与播放（55 §7.3）。 */
+  export function stopAudio(): void {
+    speakQueue?.stopSpeaking();
+    microBridge?.revokeCapability('media.listen');
   }
 
   /** 覆盖层 header 的重载按钮；错误态的重试也走这里。 */
@@ -256,7 +470,41 @@
   });
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col" data-testid="widget-runtime" data-state={phase}>
+<script lang="ts" module>
+  /** 桥方法名 → microApps.* RPC 名（ai 面）。 */
+  export function aiRpcNameOf(method: string): string {
+    switch (method) {
+      case 'ai.chat':
+        return 'microApps.ai.chat';
+      case 'ai.session.create':
+        return 'microApps.ai.sessionCreate';
+      case 'ai.session.send':
+        return 'microApps.ai.sessionSend';
+      case 'ai.session.history':
+        return 'microApps.ai.sessionHistory';
+      case 'ai.session.reset':
+        return 'microApps.ai.sessionReset';
+      case 'collections.put':
+        return 'microApps.collections.put';
+      case 'collections.get':
+        return 'microApps.collections.get';
+      case 'collections.delete':
+        return 'microApps.collections.delete';
+      case 'collections.list':
+        return 'microApps.collections.list';
+      case 'collections.query':
+        return 'microApps.collections.query';
+      case 'context.update':
+        return 'microApps.context.update';
+      case 'context.clear':
+        return 'microApps.context.clear';
+      default:
+        return `microApps.${method}`;
+    }
+  }
+</script>
+
+<div class="flex min-h-0 flex-1 flex-col h-full" data-testid="widget-runtime" data-state={phase}>
   {#if phase === 'error'}
     <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
       <p class="text-sm text-amber-700 dark:text-amber-400">
