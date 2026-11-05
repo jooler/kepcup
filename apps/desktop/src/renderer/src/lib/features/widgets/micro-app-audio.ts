@@ -145,7 +145,7 @@ export class MicroAppAudioSession {
   }
 
   #teardown(): void {
-    this.#worklet !== null && (this.#worklet.port.onmessage = null);
+    if (this.#worklet !== null) this.#worklet.port.onmessage = null;
     this.#worklet?.disconnect();
     this.#worklet = null;
     for (const track of this.#stream?.getTracks() ?? []) track.stop();

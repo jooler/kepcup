@@ -4,7 +4,7 @@
    * 删除。完整管理（刷新 / 全列表）仍在「组件」tab；这里只做单组件的快捷查看，
    * RPC 契约与原「组件」tab 一致（widgets.publish / widgets.delete）。
    */
-  import { Blocks, ChevronLeft, History, Send, Trash2 } from '@lucide/svelte';
+  import { Blocks, ChevronLeft, History, Send } from '@lucide/svelte';
   import type { MicroAppsListItem, WidgetsListItem } from '@kepcup/shared';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
