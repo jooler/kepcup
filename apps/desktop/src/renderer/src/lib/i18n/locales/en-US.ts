@@ -580,6 +580,7 @@ export const enUS = {
   'contacts.boundaries': 'What not to do (one per line)',
   'contacts.mainModel': 'Main model (leave blank to use the default)',
   'contacts.lightModel': 'Lightweight model (leave blank to use the default)',
+  'contacts.modelDefault': 'Default',
   'contacts.mcpServers': 'MCP tool servers',
   'contacts.mcpAutoApproveTag': 'Auto-approve',
   'contacts.browserProfile': 'Browser profile',

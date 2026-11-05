@@ -549,6 +549,7 @@ export const zhCN = {
   'contacts.boundaries': '不做的事（每行一条）',
   'contacts.mainModel': '主模型（留空用默认）',
   'contacts.lightModel': '轻量模型（留空用默认）',
+  'contacts.modelDefault': '默认',
   'contacts.mcpServers': 'MCP 工具服务器',
   'contacts.mcpAutoApproveTag': '免审批',
   // W8 共享浏览器资料
