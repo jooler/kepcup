@@ -424,7 +424,7 @@ function chatModelOptionsOf(deps: AdapterDeps): SettingOption[] {
 /** settings 里一个对话模型字段（defaultMainModel / defaultLightModel / widgetReviewModel）。 */
 export function settingsModelAdapter(
   deps: AdapterDeps,
-  key: 'defaultMainModel' | 'defaultLightModel' | 'widgetReviewModel',
+  key: 'defaultMainModel' | 'defaultLightModel' | 'widgetReviewModel' | 'microAppModel',
   emptyMeaning: string | null,
 ): ItemAdapter {
   return {

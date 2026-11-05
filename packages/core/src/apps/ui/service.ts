@@ -345,7 +345,12 @@ export class McpAppUiService {
   // --- 协议处理器取页面（平台方法 apps.ui.resource） -----------------------------
 
   /** 主进程协议处理器取已登记的页面：id 存在、未过期、host 匹配、所属应用仍在线。 */
-  resource(input: { resourceId: string; host: string }): { html: string; csp: string } {
+  resource(input: { resourceId: string; host: string; path?: string | undefined }): { html: string; csp: string } {
+    // D112 P2 审查修复：`/{resourceId}/{path}` 只对微应用包生效；MCP 应用页没有包子
+    // 资源面，带 path 的 URL 维持原来「不接受」的行为（不静默回入口 HTML）。
+    if (input.path !== undefined && input.path !== '') {
+      throw new AppError('NOT_FOUND', '应用界面资源不支持包内路径');
+    }
     const entry = this.store.get(input.resourceId);
     if (
       entry === undefined ||

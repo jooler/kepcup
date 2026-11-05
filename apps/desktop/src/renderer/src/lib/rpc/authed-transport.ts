@@ -19,6 +19,19 @@ export interface AuthProbe {
 
 let probeCache: Promise<AuthProbe | null> | null = null;
 
+let probeSeq = 0;
+/**
+ * whoami 探测带一次性 query：SW（v1）对同源 GET 的 stale-while-revalidate 一旦
+ * 缓存过登录期的 200，无参请求永远命中缓存假象——会话失效后真实 401 探不到，
+ * UI 卡死在「正在连接桌面…」回不到登录页。query 每次变化使 caches.match 必失配，
+ * 探测穿透到真实网络（sw.js v2 起不再拦截 /api/*，这是对仍驻留的旧 SW 的兜底；
+ * 服务端按 pathname 路由，query 无副作用）。
+ */
+function whoamiProbeUrl(): string {
+  probeSeq += 1;
+  return `/api/auth/whoami?probe=${Date.now().toString(36)}-${probeSeq.toString(36)}`;
+}
+
 /**
  * 探测服务器认证模型（成功结果记忆化，CoreConnection 与 Gate 共享同一次请求）：
  * `/api/auth/whoami` 404 = 配对模式（无此路由）；401/200 = 密码模式。
@@ -28,7 +41,7 @@ let probeCache: Promise<AuthProbe | null> | null = null;
  */
 export function probeServerAuth(): Promise<AuthProbe | null> {
   if (probeCache !== null) return probeCache;
-  const pending = fetch('/api/auth/whoami', { cache: 'no-store' })
+  const pending = fetch(whoamiProbeUrl(), { cache: 'no-store' })
     .then((response): AuthProbe | null => {
       if (response.status === 404) {
         return { mode: 'pairing', authenticated: false };
@@ -172,7 +185,7 @@ export class AuthedWsTransport implements RpcTransport {
     if (this.#closed) return;
     this.#setLinkState('reconnecting');
     try {
-      const probe = await fetch('/api/auth/whoami', { cache: 'no-store' });
+      const probe = await fetch(whoamiProbeUrl(), { cache: 'no-store' });
       if (probe.status === 401) {
         // 会话过期 / 服务端改过密码：回登录页，停止自动重连。
         this.#setLinkState('unauthenticated');

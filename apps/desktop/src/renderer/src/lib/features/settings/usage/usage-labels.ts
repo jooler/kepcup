@@ -17,6 +17,7 @@ export const LOOP_KEYS: Record<LoopType, MessageKey> = {
   memory: 'usage.loop.memory',
   voice_input: 'usage.loop.voice_input',
   voice_reply: 'usage.loop.voice_reply',
+  micro_app: 'usage.loop.micro_app',
 };
 
 export function loopLabel(loopType: LoopType): string {

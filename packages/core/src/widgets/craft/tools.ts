@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import {
@@ -9,14 +9,17 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {
   BOT_WIDGET_HTML_MAX_BYTES,
+  isSafeMicroAppPath,
+  MICRO_APP_FILE_MAX_BYTES,
   WIDGET_CRAFT_AUX_FILE_MAX_BYTES,
+  buildMicroAppApiInspect,
   widgetReviewResultSchema,
   type WidgetReviewResult,
 } from '@kepcup/shared';
 import { canonicalPath } from '../../infra/paths.js';
 import { isInsidePath } from '../../sandbox/sensitive-paths.js';
 import type { ToolDefinition, ToolResult } from '../../agent/types.js';
-import { WIDGET_TEMPLATES, widgetTemplate } from '../templates/index.js';
+import { WIDGET_TEMPLATES, widgetTemplate, type WidgetTemplate } from '../templates/index.js';
 import {
   DRAFT_ACCEPTANCE,
   DRAFT_FIXTURES,
@@ -24,6 +27,7 @@ import {
   DRAFT_MANIFEST,
   DRAFT_QUERIES,
   DRAFT_SPEC,
+  DRAFT_APP_MANIFEST,
 } from './draft.js';
 import type { CraftStage } from './prompts.js';
 
@@ -44,6 +48,8 @@ export interface CraftToolDeps {
   stage: CraftStage;
   /** 提供 widget_template（BUILD 且新建组件时；修改已有组件不给——它会整份覆盖现有源码）。 */
   templates: boolean;
+  /** 微应用草稿（D112 P3）：BUILD/FIX 可写 micro-app.json 与包内文件（assets/ 等）。 */
+  microApp?: boolean;
   /** 自查：跑同一个检查器、返回同一格式的报告（不算交付）。 */
   selfCheck: (signal: AbortSignal) => Promise<ToolResult>;
   /** stage_done 被调用（附一句说明）。 */
@@ -60,6 +66,9 @@ const WRITABLE: Readonly<Record<CraftStage, ReadonlySet<string>>> = {
   review: new Set(),
 };
 
+/** 宿主 / 阶段专属路径：微应用的包可写也不许碰（宿主记录与知识分层只读）。 */
+const HOST_ONLY_DIRS = new Set(['reports', 'snapshots', 'references']);
+
 const STAGE_LABEL: Readonly<Record<CraftStage, string>> = {
   spec: 'SPEC',
   build: 'BUILD',
@@ -71,12 +80,28 @@ export const STAGE_DONE_TOOL = 'stage_done';
 export const WIDGET_CHECK_TOOL = 'widget_check';
 export const WIDGET_TEMPLATE_TOOL = 'widget_template';
 export const SUBMIT_REVIEW_TOOL = 'submit_review';
+export const MICRO_APP_SDK_INSPECT_TOOL = 'micro_app_sdk_inspect';
 
 export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
   // 草稿目录由制作服务建好；这里不重建（Bot 删除后不能被写回来）。
   if (!existsSync(deps.draftDir)) throw new Error('widget draft directory is gone');
   const drafts = canonicalPath(deps.draftDir);
-  const writable = WRITABLE[deps.stage];
+  const microApp = deps.microApp === true;
+  const writable =
+    microApp && (deps.stage === 'build' || deps.stage === 'fix')
+      ? new Set([...WRITABLE[deps.stage], DRAFT_APP_MANIFEST])
+      : WRITABLE[deps.stage];
+
+  /** 微应用的包内文件（BUILD / FIX 专用）：安全的相对路径，宿主记录与知识分层除外。 */
+  const bundleWritable = (rel: string): boolean =>
+    microApp &&
+    (deps.stage === 'build' || deps.stage === 'fix') &&
+    rel !== DRAFT_SPEC &&
+    rel !== DRAFT_ACCEPTANCE &&
+    rel !== DRAFT_MANIFEST &&
+    !HOST_ONLY_DIRS.has(rel.split('/')[0] ?? '') &&
+    rel !== DRAFT_APP_MANIFEST &&
+    isSafeMicroAppPath(rel);
 
   /** 解析在草稿目录内，否则拒绝。 */
   const inside = (target: string): string => {
@@ -100,10 +125,10 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
     if (rel === DRAFT_MANIFEST) {
       throw new Error('WRITE_DENIED: manifest.json 由宿主维护，只读');
     }
-    if (!writable.has(rel)) {
+    if (!writable.has(rel) && !bundleWritable(rel)) {
       const allowed = [...writable].join(' / ');
       throw new Error(
-        `WRITE_DENIED: ${STAGE_LABEL[deps.stage]} 阶段只能写 ${allowed}，拒绝写 ${rel}`,
+        `WRITE_DENIED: ${STAGE_LABEL[deps.stage]} 阶段只能写 ${allowed}${microApp ? '（微应用包文件也可以，安全相对路径）' : ''}，拒绝写 ${rel}`,
       );
     }
     if (deps.stage === 'fix' && mode === 'write' && existsSync(resolved)) {
@@ -112,7 +137,12 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
       );
     }
     if (content !== null) {
-      const max = rel === DRAFT_HTML ? BOT_WIDGET_HTML_MAX_BYTES : WIDGET_CRAFT_AUX_FILE_MAX_BYTES;
+      const max =
+        rel === DRAFT_HTML
+          ? BOT_WIDGET_HTML_MAX_BYTES
+          : bundleWritable(rel) && rel !== DRAFT_APP_MANIFEST
+            ? MICRO_APP_FILE_MAX_BYTES
+            : WIDGET_CRAFT_AUX_FILE_MAX_BYTES;
       if (Buffer.byteLength(content) > max) {
         throw new Error(`WRITE_DENIED: ${rel} 过大（上限 ${max} 字节）`);
       }
@@ -147,8 +177,19 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
         writeFileSync(writableTarget(p, content, 'write'), content, 'utf-8');
       },
       mkdir: async (dir) => {
-        // 约定文件都在草稿根目录：只允许「创建」根目录本身（pi 写文件前会 mkdir 父目录）。
-        if (inside(dir) !== drafts) throw new Error('WRITE_DENIED: 草稿目录里不需要子目录');
+        const resolved = inside(dir);
+        if (resolved === drafts) return; // 根目录本身（pi 写文件前会 mkdir）
+        const rel = path.relative(drafts, resolved);
+        const firstSegment = rel.split('/')[0] ?? '';
+        if (
+          microApp &&
+          (deps.stage === 'build' || deps.stage === 'fix') &&
+          !HOST_ONLY_DIRS.has(firstSegment) &&
+          isSafeMicroAppPath(`${rel}/x`)
+        ) {
+          return; // 微应用包的子目录（assets/ 等）
+        }
+        throw new Error('WRITE_DENIED: 草稿目录里不需要这个子目录');
       },
     },
   });
@@ -183,6 +224,20 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
     return tools;
   }
   tools.push(wrap(write));
+  if (microApp) {
+    tools.push({
+      name: MICRO_APP_SDK_INSPECT_TOOL,
+      description:
+        '查微应用 SDK 契约：传方法名（如 ai.chat / media.listen / context.update）拿签名、参数、限额与错误码（≤2KB）；不传或名字未知则列出全部可用方法。写代码前拿不准签名就查它。',
+      parameters: Type.Object({
+        method: Type.Optional(Type.String({ description: '桥方法名或能力名；省略则列出全部' })),
+      }),
+      execute: async (params) => ({
+        ok: true,
+        content: buildMicroAppApiInspect(String(params.method ?? '')),
+      }),
+    } satisfies ToolDefinition<{ method?: string }>);
+  }
   if (deps.stage !== 'spec') {
     tools.push(wrap(edit));
     tools.push({
@@ -260,6 +315,19 @@ function buildSubmitReviewTool(onSubmit: (result: WidgetReviewResult) => void): 
   return tool as ToolDefinition;
 }
 
+/** 模板的包部分（清单 / 包文件 / fixtures；存量单文件模板为空）。 */
+function templatePackageOf(
+  template: WidgetTemplate,
+): Array<{ path: string; content: string }> {
+  const parts: Array<{ path: string; content: string }> = [];
+  if (template.manifestJson !== undefined) parts.push({ path: 'micro-app.json', content: template.manifestJson });
+  for (const file of template.files ?? []) parts.push(file);
+  if (template.fixtures !== undefined) {
+    parts.push({ path: DRAFT_FIXTURES, content: `${JSON.stringify(template.fixtures, null, 2)}\n` });
+  }
+  return parts;
+}
+
 function buildTemplateTool(drafts: string): ToolDefinition {
   const tool: ToolDefinition<{ name?: string }> = {
     name: WIDGET_TEMPLATE_TOOL,
@@ -285,14 +353,21 @@ function buildTemplateTool(drafts: string): ToolDefinition {
         };
       }
       writeFileSync(path.join(drafts, DRAFT_HTML), template.html, 'utf-8');
+      const seeded: string[] = [];
       const queriesPath = path.join(drafts, DRAFT_QUERIES);
-      const seedQueries = template.queries !== undefined && !existsSync(queriesPath);
-      if (seedQueries) {
+      if (template.queries !== undefined && !existsSync(queriesPath)) {
         writeFileSync(queriesPath, `${JSON.stringify(template.queries, null, 2)}\n`, 'utf-8');
+        seeded.push('queries.json');
+      }
+      for (const part of templatePackageOf(template)) {
+        const target = path.join(drafts, part.path);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, part.content, 'utf-8');
+        seeded.push(part.path);
       }
       return {
         ok: true,
-        content: `已把模板「${template.name}」写入 index.html（${template.html.split('\n').length} 行）${seedQueries ? '，并写了示例 queries.json（按需求改 SQL 与查询名）' : ''}。先 read 它，再用 edit 填业务。`,
+        content: `已把模板「${template.name}」写入 index.html（${template.html.split('\n').length} 行）${seeded.length > 0 ? `，并写入了 ${seeded.join('、')}（按需求改）` : ''}。先 read 它，再用 edit 填业务。`,
       };
     },
   };

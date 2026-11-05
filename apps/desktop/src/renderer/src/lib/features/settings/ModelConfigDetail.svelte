@@ -130,6 +130,21 @@
     }
   }
 
+  // D112 微应用模型（ai.chat 的宿主策略锚点）：选中即保存；失败回滚。
+  const microAppModelValue = $derived(settingsStore.settings?.microAppModel ?? '');
+  let microAppModelSaving = $state(false);
+  async function saveMicroAppModel(select: HTMLSelectElement): Promise<void> {
+    microAppModelSaving = true;
+    try {
+      await settingsStore.update({ microAppModel: select.value });
+    } catch (error) {
+      select.value = microAppModelValue;
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      microAppModelSaving = false;
+    }
+  }
+
   // --- 能力槽位（每种专有能力一条默认选择） ---------------------------------
 
   const hasKeyById = $derived(
@@ -253,6 +268,30 @@
             {/each}
             {#if reviewModel !== '' && !settingsStore.availableModelOptions.some((option) => option.ref === reviewModel)}
               <option value={reviewModel}>{reviewModel}{t('settings.widgetReviewModelUnavailable')}</option>
+            {/if}
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center justify-between gap-4 py-3.5">
+        <div class="min-w-0">
+          <span class="text-sm" id="micro-app-model-label">{t('settings.microAppModel')}</span>
+          <p class="text-xs text-muted-foreground">{t('settings.microAppModelHint')}</p>
+        </div>
+        <div class="w-64 max-w-[60%] shrink-0">
+          <select
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            aria-labelledby="micro-app-model-label"
+            value={microAppModelValue}
+            disabled={microAppModelSaving}
+            onchange={(event) => void saveMicroAppModel(event.currentTarget)}
+            data-testid="micro-app-model-select"
+          >
+            <option value="">{t('settings.microAppModelFollow')}</option>
+            {#each settingsStore.availableModelOptions as option (option.ref)}
+              <option value={option.ref}>{option.label}</option>
+            {/each}
+            {#if microAppModelValue !== '' && !settingsStore.availableModelOptions.some((option) => option.ref === microAppModelValue)}
+              <option value={microAppModelValue}>{microAppModelValue}{t('settings.microAppModelUnavailable')}</option>
             {/if}
           </select>
         </div>

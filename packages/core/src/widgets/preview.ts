@@ -18,8 +18,9 @@ import {
   type WidgetPreviewOutcome,
   type WidgetPreviewRunner,
 } from './check/index.js';
+import { buildMicroAppPreviewMock } from '@kepcup/shared';
 import { injectPreviewProbe } from './preview-probe.js';
-import { injectWidgetSdk } from './sdk-injection.js';
+import { injectMicroAppSdk, injectWidgetSdk } from './sdk-injection.js';
 
 /**
  * S2 预览的 core 侧（D87 P3b，设计 32 §11.8.3 / §11.9）：
@@ -119,14 +120,28 @@ export function createWidgetPreviewRunner(input: {
   let images: WidgetPreviewImage[] = [];
   return {
     screenshots: () => images,
-    run: async ({ html, acceptance, fixtures, signal }) => {
+    run: async ({ html, acceptance, fixtures, signal, microApp }) => {
+      const bundlePaths = microApp?.bundlePaths ?? [];
       images = [];
       if (!input.rpc.available()) return { skipped: WIDGET_PREVIEW_UNAVAILABLE_REASON };
       const request: WidgetPreviewRunInput = {
         viewports: WIDGET_PREVIEW_VIEWPORTS.map((viewport) => ({
           width: viewport.width,
           theme: viewport.theme,
-          html: injectPreviewProbe(injectWidgetSdk(html, { theme: viewport.theme })),
+          html: injectPreviewProbe(
+            microApp !== undefined
+              ? // D112 P3（55 §11）：微应用草稿用宿主能力 mock 跑——垫片的 call 缝改走
+                // in-page mock（ai 脚本 / listen 转写 / speak 记录），桌面外壳零改动。
+                injectMicroAppSdk(html, {
+                  theme: viewport.theme,
+                  mockScript: buildMicroAppPreviewMock({
+                    theme: viewport.theme,
+                    permissions: microApp.permissions,
+                    fixtures,
+                  }),
+                })
+              : injectWidgetSdk(html, { theme: viewport.theme }),
+          ),
         })),
         acceptance,
         fixtures,
@@ -151,7 +166,13 @@ export function createWidgetPreviewRunner(input: {
           // 外链算离线产物——相对路径的失败是真实缺陷（S0 已有阻断项），照常上报。
           const offline =
             previewOfflineNetworkMessage(finding.message) ||
-            (finding.rule === 'console.error' && previewOfflineResourceLoadMessage(finding.message));
+            (finding.rule === 'console.error' && previewOfflineResourceLoadMessage(finding.message)) ||
+            // 微应用包内**存在**的相对路径资源，预览只给入口 HTML 加载不到——归 offline
+            // （正式运行时 kepcup-app 协议服务包文件）；包里没有的路径是真缺陷，不豁免。
+            (microApp !== undefined &&
+              finding.rule === 'console.error' &&
+              finding.message.includes('net::ERR') &&
+              bundlePaths.some((bundlePath) => finding.message.includes(bundlePath)));
           if (
             (finding.rule === 'runtime.error' ||
               finding.rule === 'runtime.rejection' ||

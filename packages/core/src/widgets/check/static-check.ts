@@ -38,6 +38,8 @@ export function staticCheck(input: {
   html: string;
   /** queries.json 里声明的名字；queries.json 不合格时为 null（此时不报 query.unknown-name）。缺省文件 = []。 */
   queryNames: readonly string[] | null;
+  /** D112 P3：微应用包内已有的文件路径（相对引用命中即放行——正式运行时 kepcup-app 协议服务包文件）。 */
+  bundlePaths?: readonly string[];
 }): WidgetCheckIssue[] {
   const { html } = input;
   const issues: WidgetCheckIssue[] = [];
@@ -73,6 +75,7 @@ export function staticCheck(input: {
     userMembers: new Set(),
     queryNames: input.queryNames === null ? null : new Set(input.queryNames),
     hasSubmitHandler: false,
+    bundlePaths: input.bundlePaths !== undefined ? new Set(input.bundlePaths) : null,
   };
   const units: JsUnit[] = [...model.scripts, ...model.handlers];
   for (const unit of units) {
@@ -94,7 +97,7 @@ export function staticCheck(input: {
     if (unit.program !== null) scanUnitAst(unit, ctx);
     else scanUnitTokens(unit, ctx);
   }
-  for (const css of model.styles) checkCss(css, push);
+  for (const css of model.styles) checkCss(css, push, ctx.bundlePaths);
   // submit 按钮：只有在没有任何 submit 处理函数时才单独提示（有处理函数时 form-submit 已经报了）。
   if (!ctx.hasSubmitHandler) {
     for (const element of model.elements) checkSubmitButton(element, push);
@@ -113,6 +116,8 @@ interface ScanContext {
   userMembers: Set<string>;
   queryNames: Set<string> | null;
   hasSubmitHandler: boolean;
+  /** 微应用包内路径（null = 存量单文件组件——一切相对引用都加载不到）。 */
+  bundlePaths: ReadonlySet<string> | null;
 }
 
 // --- html.truncated -----------------------------------------------------------
@@ -250,9 +255,24 @@ function isBrokenUrl(raw: string): boolean {
   return true;
 }
 
-function describeUrl(url: string): string {
+function describeUrl(url: string, bundlePaths: ReadonlySet<string> | null): string {
   const trimmed = url.trim();
+  if (bundlePaths !== null) {
+    return `「${trimmed}」（包里没有这个文件：把文件写进草稿的这个路径，或改内联）`;
+  }
   return `「${trimmed}」（组件按单文件分发，这个相对路径不存在——改内联或改用 https:// 外链）`;
+}
+
+/** 相对引用是否命中包内文件（`./a.css`、`a.css?x` 归一后比对）。 */
+function inBundle(url: string, bundlePaths: ReadonlySet<string> | null): boolean {
+  if (bundlePaths === null) return false;
+  const clean = url.trim().replace(/^\.\//, '').split(/[?#]/)[0] ?? '';
+  return bundlePaths.has(clean);
+}
+
+/** 微应用：相对引用命中包内文件 = 正常写法；否则与存量组件同样加载不到。 */
+function brokenResourceUrl(url: string, bundlePaths: ReadonlySet<string> | null): boolean {
+  return isBrokenUrl(url) && !inBundle(url, bundlePaths);
 }
 
 function srcsetUrls(value: string): string[] {
@@ -280,12 +300,12 @@ function checkElement(element: ElementInfo, ctx: ScanContext): void {
     const value = element.attrs.get(attr);
     if (value === undefined) continue;
     const urls = attr === 'srcset' ? srcsetUrls(value) : [value];
-    const broken = urls.find(isBrokenUrl);
+    const broken = urls.find((url) => brokenResourceUrl(url, ctx.bundlePaths));
     if (broken !== undefined) {
       push(
         'sandbox.external-resource',
         element.attrValue(attr).offset,
-        `<${element.tagName} ${attr}> 引用了${describeUrl(broken)}`,
+        `<${element.tagName} ${attr}> 引用了${describeUrl(broken, ctx.bundlePaths)}`,
       );
     }
   }
@@ -293,11 +313,11 @@ function checkElement(element: ElementInfo, ctx: ScanContext): void {
     const href = element.attrs.get('href');
     const rels = (element.attrs.get('rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
     const loads = rels.length === 0 || rels.some((rel) => !NON_LOADING_LINK_RELS.has(rel));
-    if (href !== undefined && loads && isBrokenUrl(href)) {
+    if (href !== undefined && loads && brokenResourceUrl(href, ctx.bundlePaths)) {
       push(
         'sandbox.external-resource',
         element.attrValue('href').offset,
-        `<link rel="${rels.join(' ')}"> 引用了${describeUrl(href)}`,
+        `<link rel="${rels.join(' ')}"> 引用了${describeUrl(href, ctx.bundlePaths)}`,
       );
     }
   }
@@ -391,14 +411,14 @@ function checkSubmitButton(element: ElementInfo, push: Push): void {
 
 // --- CSS ------------------------------------------------------------------------
 
-function checkCss(css: CssUnit, push: Push): void {
+function checkCss(css: CssUnit, push: Push, bundlePaths: ReadonlySet<string> | null): void {
   const code = blankCssComments(css.code);
   const at = (index: number): number => (css.exact ? css.offset + index : css.offset);
   const importRe = /@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1/gi;
   for (const match of code.matchAll(importRe)) {
     const url = match[2] ?? '';
-    if (isBrokenUrl(url)) {
-      push('sandbox.external-resource', at(match.index), `CSS @import 引用了${describeUrl(url)}`);
+    if (brokenResourceUrl(url, bundlePaths)) {
+      push('sandbox.external-resource', at(match.index), `CSS @import 引用了${describeUrl(url, bundlePaths)}`);
     }
   }
   const urlRe = /url\(\s*(["']?)([^"')]*)\1\s*\)/gi;
@@ -406,11 +426,11 @@ function checkCss(css: CssUnit, push: Push): void {
     const url = match[2] ?? '';
     // @import url(...) 已经报过一次。
     if (/@import\s+$/i.test(code.slice(Math.max(0, match.index - 12), match.index))) continue;
-    if (isBrokenUrl(url)) {
+    if (brokenResourceUrl(url, bundlePaths)) {
       push(
         'sandbox.external-resource',
         at(match.index),
-        `CSS url() 引用了${describeUrl(url)}——被拦时没有任何报错，只是显示不出来`,
+        `CSS url() 引用了${describeUrl(url, bundlePaths)}——被拦时没有任何报错，只是显示不出来`,
       );
     }
   }
@@ -571,8 +591,8 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
           push('sandbox.download', at(node), '设置了链接的 download 属性：沙箱里下载静默无效');
         } else if (prop === 'target' && value?.trim().toLowerCase() === '_blank') {
           push('sandbox.popup', at(node), '把链接的 target 设成 _blank：沙箱里点了没反应');
-        } else if (prop === 'src' && value !== null && isBrokenUrl(value)) {
-          push('sandbox.external-resource', at(node), `脚本把 src 设成了${describeUrl(value)}`);
+        } else if (prop === 'src' && value !== null && brokenResourceUrl(value, ctx.bundlePaths)) {
+          push('sandbox.external-resource', at(node), `脚本把 src 设成了${describeUrl(value, ctx.bundlePaths)}`);
         }
         break;
       }
@@ -626,11 +646,11 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
             push('sandbox.download', at(node), "setAttribute('download', …)：沙箱里下载静默无效");
           } else if (attr === 'target' && attrValue?.trim().toLowerCase() === '_blank') {
             push('sandbox.popup', at(node), "setAttribute('target', '_blank')：沙箱里点了没反应");
-          } else if (attr === 'src' && attrValue !== null && isBrokenUrl(attrValue)) {
+          } else if (attr === 'src' && attrValue !== null && brokenResourceUrl(attrValue, ctx.bundlePaths)) {
             push(
               'sandbox.external-resource',
               at(node),
-              `setAttribute('src', …) 引用了${describeUrl(attrValue)}`,
+              `setAttribute('src', …) 引用了${describeUrl(attrValue, ctx.bundlePaths)}`,
             );
           }
         }
@@ -639,11 +659,11 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
       case 'ImportDeclaration':
       case 'ImportExpression': {
         const spec = stringValue(node.source);
-        if (spec === null || isBrokenUrl(spec)) {
+        if (spec === null || brokenResourceUrl(spec, ctx.bundlePaths)) {
           push(
             'sandbox.external-resource',
             at(node),
-            spec === null ? '动态 import() 加载不到任何模块' : `import 引用了${describeUrl(spec)}`,
+            spec === null ? '动态 import() 加载不到任何模块' : `import 引用了${describeUrl(spec, ctx.bundlePaths)}`,
           );
         }
         break;
@@ -651,11 +671,14 @@ function scanUnitAst(unit: JsUnit, ctx: ScanContext): void {
       case 'ExportNamedDeclaration':
       case 'ExportAllDeclaration':
         if (node.source !== null && node.source !== undefined) {
-          push(
-            'sandbox.external-resource',
-            at(node),
-            `export … from 引用了${describeUrl(String(node.source.value))}`,
-          );
+          const spec = String(node.source.value);
+          if (brokenResourceUrl(spec, ctx.bundlePaths)) {
+            push(
+              'sandbox.external-resource',
+              at(node),
+              `export … from 引用了${describeUrl(spec, ctx.bundlePaths)}`,
+            );
+          }
         }
         break;
       case 'Literal':

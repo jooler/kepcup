@@ -224,6 +224,27 @@ export const ERROR_CODES = [
   'PLUGIN_MANAGED',
   /** 清单含当前版本不认识的字段 / 能力类型（D105：提示升级 KepCup，不静默忽略）。 */
   'PLUGIN_UPGRADE_REQUIRED',
+  // 微应用运行时（D112，设计 55）
+  /** 微应用清单 micro-app.json 校验失败（字段 / 闭合枚举外的能力 / 未实现的能力）。 */
+  'MICRO_APP_MANIFEST_INVALID',
+  /** 清单 spec 版本当前 KepCup 不认识（提示升级，不静默降级）。 */
+  'MICRO_APP_UNSUPPORTED_SPEC',
+  /** 桥调用声明之外的能力（微应用未在 permissions 里声明；55 §5.3）。 */
+  'MICRO_APP_CAPABILITY_NOT_DECLARED',
+  /** 用户在本运行会话拒绝或已撤销该能力（文案区分「未声明」与「你已拒绝」）。 */
+  'MICRO_APP_CAPABILITY_DENIED',
+  /** 宿主缺少该能力的配置（模型 / ASR / TTS 等；确认卡预检与运行期同码）。 */
+  'MICRO_APP_CAPABILITY_NOT_CONFIGURED',
+  /** 微应用模型用量超出三级预算（会话 / 每微应用每日 / 每 Bot 每日）。 */
+  'MICRO_APP_AI_QUOTA',
+  /** 本实例已有模型调用在途（并发 1）。 */
+  'MICRO_APP_AI_BUSY',
+  /** 模型暂时不可用（厂商错误 / 未配置）；微应用应显示可读错误并保留进度。 */
+  'MICRO_APP_AI_UNAVAILABLE',
+  /** 宿主断开能力桥（背压超窗 / 卡片卸载 / 桥重置）；在途调用以此收口，不要自动重试。 */
+  'MICRO_APP_BRIDGE_CLOSED',
+  /** 微应用无响应（心跳超时，55 §9.1）；不自动重试，由用户重新打开。 */
+  'MICRO_APP_UNRESPONSIVE',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

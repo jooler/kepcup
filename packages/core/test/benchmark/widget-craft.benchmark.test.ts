@@ -12,7 +12,8 @@ import {
 } from '@kepcup/testkit';
 
 /**
- * D87 P3c 效果基准（todo/bot-widgets-authoring.md §5.4）：用一个真实模型把 10 条需求各跑两组——
+ * D87 P3c 效果基准（todo/bot-widgets-authoring.md §5.4；D112 P3 扩到 13 条，含 3 条语音/对话）：
+ * 用一个真实模型把每条需求各跑两组——
  * 基线 = 只 SPEC + BUILD 后直接 GATE 计分（0 修复 / 0 审查）；完整流程 = widget_craft。记录最终
  * 状态、是否交付（= 无阻断项）、轮数、token、耗时，写成 JSON。
  *
@@ -45,6 +46,8 @@ interface Brief {
   title: string;
   brief: string;
   acceptance: string[];
+  /** D112 P3：语音 / 对话类需求走微应用路径（micro-app.json + 能力面）。 */
+  microApp?: boolean;
 }
 
 const briefs = (
@@ -127,6 +130,14 @@ describe.skipIf(MODEL === '' || API_KEY === '')('widget craft benchmark (real mo
           at: new Date().toISOString(),
           baseline: summary('baseline'),
           full: summary('full'),
+          // D112 P3 门槛：无阻断交付率 ≥ 80%（55 §14「无阻断交付 ≥8/10」按比率计）；
+          // 语音 / 对话条目单列——它们必须走微应用路径，混在总数里会被稀释。
+          threshold: {
+            ratio: 0.8,
+            met: summary('full').delivered / Math.max(1, summary('full').runs) >= 0.8,
+            voiceDelivered: rows.filter((row) => row.mode === 'full' && row.brief.startsWith('voice')).filter((row) => row.delivered).length,
+            voiceTotal: briefs.filter((brief) => brief.microApp === true).length,
+          },
           rows,
         },
         null,
@@ -148,7 +159,12 @@ describe.skipIf(MODEL === '' || API_KEY === '')('widget craft benchmark (real mo
         const started = Date.now();
         const result = await core.services.widgetCraft!.craft({
           identity: { runId, botId: bot.id, conversationId: conv.id, loopType: 'task' },
-          params: { brief: brief.brief, title: brief.title, acceptance: brief.acceptance },
+          params: {
+            brief: brief.brief,
+            title: brief.title,
+            acceptance: brief.acceptance,
+            ...(brief.microApp === true ? { micro_app: true } : {}),
+          },
           signal: new AbortController().signal,
           progress: () => undefined,
           ...(mode === 'baseline' ? { limits: { fixRounds: 0, reviewRounds: 0 } } : {}),

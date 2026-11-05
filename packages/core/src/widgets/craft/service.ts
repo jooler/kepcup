@@ -62,6 +62,7 @@ import {
 import type { WidgetDeliveryCheck, WidgetWriteResult } from '../service.js';
 import {
   DRAFT_ACCEPTANCE,
+  DRAFT_APP_MANIFEST,
   DRAFT_HTML,
   DRAFT_QUERIES,
   DRAFT_SPEC,
@@ -79,6 +80,8 @@ import {
   type CraftStageContext,
 } from './prompts.js';
 import { buildCraftTools } from './tools.js';
+import { buildMicroAppSdkReferenceBodies } from '@kepcup/shared';
+import type { MicroAppFileDef, MicroAppManifest } from '@kepcup/shared';
 
 /**
  * Bot 组件制作 loop（D87，设计 32 §11）：`widget_craft` 的宿主状态机。
@@ -103,6 +106,8 @@ export interface WidgetCraftParams {
   scope?: WidgetScope;
   acceptance?: string[];
   resume_craft_id?: string;
+  /** D112 P3：微应用制作（多文件 + 清单 + 能力面）。 */
+  micro_app?: boolean;
 }
 
 /** The slice of WidgetService the craft loop delivers through. */
@@ -118,6 +123,9 @@ export interface WidgetCraftTarget {
     runId: string;
     check?: WidgetDeliveryCheck;
     posterPng?: string | undefined;
+    /** D112 P3：微应用清单与包文件（有清单 = 微应用交付）。 */
+    manifest?: MicroAppManifest;
+    files?: MicroAppFileDef[];
   }): WidgetWriteResult;
   update(input: {
     botId: string;
@@ -129,6 +137,8 @@ export interface WidgetCraftTarget {
     runId: string;
     check?: WidgetDeliveryCheck;
     posterPng?: string | undefined;
+    manifest?: MicroAppManifest;
+    files?: MicroAppFileDef[];
   }): WidgetWriteResult;
   validateQueries(defs: WidgetQueryDef[]): string | null;
   craftSource(
@@ -143,6 +153,9 @@ export interface WidgetCraftTarget {
         version: number;
         html: string;
         queries: WidgetQueryDef[];
+        /** 微应用才有：清单原文与包文件（修改模式种进草稿，D112 P3）。 */
+        manifest?: MicroAppManifest;
+        files?: MicroAppFileDef[];
       }
     | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' };
 }
@@ -182,6 +195,13 @@ export interface WidgetCraftDeps {
   timeoutMs?: number;
   /** 单次检查的兜底时限（缺省 WIDGET_CHECK_TIMEOUT_MS + 余量）。 */
   checkTimeoutMs?: number;
+  /**
+   * 修改已有微应用时 SPEC 先读最近 24h 诊断（55 §11 / §9.4）：把「用户那边崩在哪」写进需求。
+   * 缺省不读。文本已由装配层格式化（≤N 行），宿主原样拼进 outline。
+   */
+  readDiagnostics?: (botId: string, widgetId: string) => string | null;
+  /** 宿主能力可用性探针（GATE 的 app.capability-unavailable；55 §11）。缺省不检查。 */
+  capabilityAvailability?: (capability: string) => { available: boolean; reason?: string } | undefined;
 }
 
 type StopReason = 'cancelled' | 'timeout' | 'stage_failed';
@@ -456,14 +476,32 @@ export class WidgetCraftService {
     let title = (params.title ?? '').trim();
     let scope: WidgetScope = params.scope === 'bot' ? 'bot' : 'conversation';
     let baseVersion: number | null = null;
-    let source: { html: string; queries: WidgetQueryDef[] } | null = null;
+    let source: {
+      html: string;
+      queries: WidgetQueryDef[];
+      manifest?: MicroAppManifest;
+      files?: MicroAppFileDef[];
+    } | null = null;
     if (widgetId !== '') {
       const found = this.#deps.widgets.craftSource(botId, widgetId);
       if (!found.ok) return { error: invalid(found.message, found.code) };
+      // micro_app 只对微应用草稿有意义（P3 审查修复）：普通组件修改不给包写面。
+      if (params.micro_app === true && found.manifest === undefined) {
+        return {
+          error: invalid(
+            '这个组件不是微应用（没有清单），不能按微应用流程修改；去掉 micro_app 参数，或新建一个微应用',
+          ),
+        };
+      }
       title = found.title;
       scope = found.scope;
       baseVersion = found.version;
-      source = { html: found.html, queries: found.queries };
+      source = {
+        html: found.html,
+        queries: found.queries,
+        ...(found.manifest !== undefined ? { manifest: found.manifest } : {}),
+        ...(found.files !== undefined ? { files: found.files } : {}),
+      };
     } else {
       if (title === '')
         return { error: invalid('新建组件需要 title（简短的组件名，如「费用分摊计算器」）') };
@@ -482,6 +520,7 @@ export class WidgetCraftService {
       scope,
       brief: input.brief,
       acceptanceHints: input.hints,
+      microApp: input.params.micro_app === true || (source !== null && source.manifest !== undefined),
       phase: 'spec',
       rounds: { gate: 0, fix: 0, review: 0 },
       best: null,
@@ -499,6 +538,19 @@ export class WidgetCraftService {
       if (source.queries.length > 0) {
         draft.write(DRAFT_QUERIES, `${JSON.stringify(source.queries, null, 2)}\n`);
       }
+      // 微应用修改模式：清单原文与包文件原样种进草稿（改动基于它们做）。
+      if (source.manifest !== undefined) {
+        draft.write(DRAFT_APP_MANIFEST, `${JSON.stringify(source.manifest, null, 2)}\n`);
+      }
+      for (const file of source.files ?? []) {
+        draft.writeBytes(file.path, Buffer.from(file.contentBase64, 'base64'));
+      }
+    }
+    // 写作知识分层（55 §6.1）：references/ 由宿主物化，模型只读（生成物与 spec 同源）。
+    try {
+      draft.writeSdkReferences(buildMicroAppSdkReferenceBodies());
+    } catch {
+      // 非微应用草稿写了也无妨（只读目录）；目录不可写时制作照常。
     }
     return { draft, resumeNote: null };
   }
@@ -511,6 +563,7 @@ export class WidgetCraftService {
       title: manifest.title,
       acceptanceHints: manifest.acceptanceHints,
       modifying: manifest.widgetId !== null,
+      microApp: manifest.microApp === true || session.draft.hasAppManifest(),
       resumeNote: session.resumeNote,
       spec: session.draft.read(DRAFT_SPEC),
       acceptance: session.draft.read(DRAFT_ACCEPTANCE),
@@ -745,10 +798,13 @@ export class WidgetCraftService {
     draft.snapshot(round);
     const report = blockOnCheckerFailure(await this.#check(session));
     draft.writeReport('check', round, report);
+    const digest = session.draft.digest();
     const receipt: WidgetCraftReceipt = {
       round,
       htmlSha256: report.htmlSha256,
       queriesSha256: report.queriesSha256,
+      ...(digest.bundleSha256 !== '' ? { bundleSha256: digest.bundleSha256 } : {}),
+      ...(digest.filesSha256 !== '' ? { filesSha256: digest.filesSha256 } : {}),
       verdict: report.verdict,
       score: report.score,
       previewed: report.stages.S2.status === 'ran',
@@ -780,6 +836,9 @@ export class WidgetCraftService {
       draftDir: session.draft.dir,
       validateQueries: (defs: WidgetQueryDef[]) => this.#deps.widgets.validateQueries(defs),
       now: this.#deps.clock.now(),
+      ...(this.#deps.capabilityAvailability !== undefined
+        ? { capabilityAvailability: this.#deps.capabilityAvailability }
+        : {}),
     };
     const preview = this.#deps.preview?.({ screenshots: false }) ?? null;
     if (preview === null || session.controller.signal.aborted) {
@@ -843,6 +902,9 @@ export class WidgetCraftService {
           validateQueries: (defs) => this.#deps.widgets.validateQueries(defs),
           preview,
           now: this.#deps.clock.now(),
+          ...(this.#deps.capabilityAvailability !== undefined
+            ? { capabilityAvailability: this.#deps.capabilityAvailability }
+            : {}),
           signal: controller.signal,
         }),
         controller.signal,
@@ -975,14 +1037,19 @@ export class WidgetCraftService {
         identity: subIdentity,
         model: route.modelRef,
         isRouteCurrent: () => routeStillCurrent(deps, purpose, identity.botId, route.modelRef),
-        buildSystemPrompt: async () =>
-          stage === 'review' ? reviewSystemPrompt() : craftSystemPrompt(),
+        buildSystemPrompt: async () => {
+          const microAppStage = draft.readManifest().microApp === true || draft.hasAppManifest();
+          return stage === 'review'
+            ? reviewSystemPrompt({ microApp: microAppStage })
+            : craftSystemPrompt({ microApp: microAppStage });
+        },
         messages: [{ role: 'user', content: userMessage, timestamp: deps.clock.now() }],
         tools: buildCraftTools({
           draftDir: draft.dir,
           stage,
           // 修改已有组件时不给模板工具：它会整份覆盖现有源码。
           templates: draft.readManifest().widgetId === null,
+          ...(draft.readManifest().microApp === true || draft.hasAppManifest() ? { microApp: true } : {}),
           selfCheck: (signal) => this.#selfCheck(session, signal),
           onStageDone: callbacks.onStageDone,
           ...(callbacks.onSubmitReview !== undefined
@@ -1056,10 +1123,22 @@ export class WidgetCraftService {
       ...new Set([...html.matchAll(/\bid\s*=\s*["']([^"']{1,64})["']/g)].map((m) => m[1]!)),
     ];
     const queries = session.draft.queries() ?? [];
+    const microApp = session.draft.hasAppManifest()
+      ? [`微应用清单：${session.draft.appManifestJson()?.split('\n').length ?? 0} 行（修改能力面会触发用户重新确认）`]
+      : [];
+    // 修改已有微应用：先读最近 24h 运行时诊断（55 §11——「用户那边崩在哪」进需求）。
+    const diagnostics =
+      session.draft.hasAppManifest() && this.#deps.readDiagnostics !== undefined
+        ? this.#deps.readDiagnostics(session.identity.botId, manifest.widgetId)
+        : null;
     return [
       `现有版本 v${manifest.baseVersion ?? '?'}：index.html ${html.split('\n').length} 行`,
       ids.length > 0 ? `元素 id：${ids.slice(0, 60).join(', ')}` : '没有带 id 的元素',
       queries.length > 0 ? `查询模板：${queries.map((q) => q.name).join(', ')}` : '没有查询模板',
+      ...microApp,
+      ...(diagnostics !== null
+        ? ['最近 24 小时运行时诊断（真实用户环境）：', diagnostics]
+        : []),
     ].join('\n');
   }
 
@@ -1117,10 +1196,17 @@ export class WidgetCraftService {
     this.#setPhase(session, 'deliver');
     const manifest = draft.readManifest();
     // 只读一次：交付的就是算摘要的这份字节（不留「算完摘要再读一遍」的窗口）。
-    const { html, queries, digest } = draft.deliverable();
-    // 同一份字节检查过多次时以最后一次为准（预览偶发失败的那次不能被更早的合格回执盖住）。
+    const { html, queries, digest, appManifestJson, files } = draft.deliverable();
+    // 同一份字节检查过多次时以最后一次为准（预览偶发失败的那次不能被更早的合格回执盖住）；
+    // 微应用回执还比对包摘要（改资产不改 HTML 也要重新过 GATE）。
     const receipt = manifest.receipts
-      .filter((r) => r.htmlSha256 === digest.htmlSha256 && r.queriesSha256 === digest.queriesSha256)
+      .filter(
+        (r) =>
+          r.htmlSha256 === digest.htmlSha256 &&
+          r.queriesSha256 === digest.queriesSha256 &&
+          (digest.bundleSha256 === '' ? r.bundleSha256 === undefined : r.bundleSha256 === digest.bundleSha256) &&
+          (digest.filesSha256 === '' ? r.filesSha256 === undefined : r.filesSha256 === digest.filesSha256),
+      )
       .at(-1);
     if (receipt === undefined || receipt.verdict === 'blocked' || queries === null) {
       // 文件与任何一次合格检查都对不上（检查之后被改动过）：宿主拒绝交付。
@@ -1178,6 +1264,12 @@ export class WidgetCraftService {
       session.poster.queriesSha256 === digest.queriesSha256
         ? session.poster.base64
         : undefined;
+    const microAppDelivery = appManifestJson !== null ? microAppDeliveryOf(appManifestJson, files) : null;
+    if (appManifestJson !== null && microAppDelivery === null) {
+      const reasons = ['交付被拒：micro-app.json 不是合法 JSON（检查之后被改动过）'];
+      this.#settleManifest(session, 'failed', reasons);
+      return this.#failure(session, reasons);
+    }
     const result =
       manifest.widgetId !== null
         ? this.#deps.widgets.update({
@@ -1190,6 +1282,7 @@ export class WidgetCraftService {
             runId: manifest.parentRunId,
             check,
             posterPng: poster,
+            ...(microAppDelivery !== null ? microAppDelivery : {}),
           })
         : this.#deps.widgets.create({
             botId: identity.botId,
@@ -1202,6 +1295,7 @@ export class WidgetCraftService {
             runId: manifest.parentRunId,
             check,
             posterPng: poster,
+            ...(microAppDelivery !== null ? microAppDelivery : {}),
           });
     if (!result.ok) {
       const reasons = [`交付失败：${result.message}`];
@@ -1269,6 +1363,22 @@ export class WidgetCraftService {
 // --- helpers ------------------------------------------------------------------------
 
 const CIRCLED = ['①', '②', '③', '④', '⑤'];
+
+/**
+ * 微应用交付参数：清单原文解析 + 包文件（失败返回 null → 交付拒绝）。
+ * 检查器（GATE）已经验过同一份清单；这里只做「读到什么交什么」的字节级搬运。
+ */
+function microAppDeliveryOf(
+  manifestJson: string,
+  files: Array<{ path: string; mime: string; contentBase64: string }>,
+): { manifest: MicroAppManifest; files: MicroAppFileDef[] } | null {
+  try {
+    const manifest = JSON.parse(manifestJson) as MicroAppManifest;
+    return { manifest, files };
+  } catch {
+    return null;
+  }
+}
 
 /** 审查意见 → FIX 的问题清单文本（按严重度，带场景与改法）。 */
 function formatReviewFindings(findings: WidgetReviewFinding[]): string {

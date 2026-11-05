@@ -152,6 +152,9 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'widget_template',
   'stage_done',
   'submit_review',
+  // D112：微应用诊断只读工具（任务面）与 SDK 契约自省（制作 loop）——只读，输出当数据。
+  'micro_app_diagnostics_read',
+  'micro_app_sdk_inspect',
   'inspect_bot_assets',
   'capability_search',
   'capability_call',

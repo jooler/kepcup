@@ -12,8 +12,11 @@ import { WIDGET_TEMPLATES } from '../../src/widgets/templates/index.js';
  */
 
 describe('widget templates', () => {
-  it('四个模板齐全', () => {
+  it('模板齐全（4 存量 + 3 微应用包模板，D112 P3）', () => {
     expect(WIDGET_TEMPLATES.map((t) => t.name)).toEqual([
+      'micro-voice-tutor',
+      'micro-form-intake',
+      'micro-data-board',
       'blank',
       'form-calculator',
       'list-tracker',

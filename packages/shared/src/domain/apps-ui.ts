@@ -198,12 +198,21 @@ export function buildAppCspHeader(
  * 与 iframe 属性同旗标的 `sandbox`（别的宿主误嵌时仍是沙箱文档；旗标必须与 iframe 属性
  * 一致，否则 CSP 侧会把 origin 打回 opaque，localStorage 等不可用）与 `frame-ancestors`
  * （只许应用自己的窗口嵌入）。MCP Apps 的严格档见 {@link buildAppCspHeader}，两者不共用。
+ *
+ * `connectDomains`（D112，设计 55 §3.3）：微应用按清单 net 档位收紧 `connect-src`——
+ * 缺省不限制（存量组件语义零变化）；`'none'` 全禁；域名数组只放行声明的 https 域。
  */
-export function buildWidgetRuntimeCspHeader(): string {
-  return [
+export function buildWidgetRuntimeCspHeader(
+  options: { connectDomains?: string[] | 'none' } = {},
+): string {
+  const parts = [
     'sandbox allow-scripts allow-same-origin allow-forms allow-modals',
     'frame-ancestors file: http://localhost:*',
-  ].join('; ');
+  ];
+  const connect = options.connectDomains;
+  if (connect === 'none') parts.push("connect-src 'none'");
+  else if (connect !== undefined && connect.length > 0) parts.push(`connect-src ${connect.join(' ')}`);
+  return parts.join('; ');
 }
 
 // --- 工具元数据（`_meta.ui`） -----------------------------------------------
@@ -315,8 +324,14 @@ export const appsUiResourceInputSchema = z.object({
   resourceId: z.string().min(1),
   /** 请求 URL 里的 host；必须与登记时一致。 */
   host: z.string().min(1),
+  /** D112 微应用多文件包：包内相对路径（`/{resourceId}/{path}` 的 path 段；入口请求缺省）。 */
+  path: z.string().max(120).optional(),
 });
 export const appsUiResourceOutputSchema = z.object({
-  html: z.string(),
+  /** 入口 HTML；二进制子资源（D112 微应用包文件）为空串、内容走 contentBase64。 */
+  html: z.string().default(''),
   csp: z.string(),
+  /** 二进制子资源（base64）与它的 MIME；入口 HTML 请求时缺省。 */
+  contentBase64: z.string().optional(),
+  mimeType: z.string().optional(),
 });

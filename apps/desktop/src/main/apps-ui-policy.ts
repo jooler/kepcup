@@ -9,9 +9,11 @@ import { FILE_APP_SCHEME, MCP_APP_SCHEME, buildWidgetRuntimeCspHeader } from '@k
 export interface AppUiRef {
   host: string;
   resourceId: string;
+  /** D112 微应用多文件包：`/{resourceId}/{path}` 的包内相对路径；入口请求为 undefined。 */
+  path?: string | undefined;
 }
 
-/** `kepcup-app://{host}/{resourceId}` → 引用；任何其它形状（多余路径 / 查询 / 凭据 / 端口）→ null。 */
+/** `kepcup-app://{host}/{resourceId}[/path]` → 引用；任何其它形状（查询 / 凭据 / 端口 / `..`）→ null。 */
 export function parseAppUiUrl(raw: string): AppUiRef | null {
   let url: URL;
   try {
@@ -22,9 +24,16 @@ export function parseAppUiUrl(raw: string): AppUiRef | null {
   if (url.protocol !== `${MCP_APP_SCHEME}:`) return null;
   if (url.username !== '' || url.password !== '' || url.port !== '') return null;
   if (url.search !== '' || url.hash !== '') return null;
-  const match = /^\/([A-Za-z0-9_-]{16,64})$/.exec(url.pathname);
+  const match = /^\/([A-Za-z0-9_-]{16,64})(?:\/([A-Za-z0-9][A-Za-z0-9/._-]{0,119}))?$/.exec(
+    url.pathname,
+  );
   if (match === null || !/^[a-z0-9-]{1,63}$/.test(url.hostname)) return null;
-  return { host: url.hostname, resourceId: match[1]! };
+  const path = match[2];
+  // 纵深防御：段以字母数字开头已排除 `..`，这里再显式核对一次（`a/..b` 这类不含点段）。
+  if (path !== undefined && path.split('/').some((segment) => segment === '..' || segment === '.')) {
+    return null;
+  }
+  return { host: url.hostname, resourceId: match[1]!, ...(path !== undefined ? { path } : {}) };
 }
 
 /** 页面响应头：CSP 来自 core（清洗后的 `_meta.ui.csp`），其余固定。 */

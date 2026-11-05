@@ -336,6 +336,14 @@ interface TodoRef {
 }
 
 export interface OrchestratorDeps {
+  /** D112 P2（55 §8.5）：会话的微应用进度摘要（context.update 注入下一轮）；缺省无。 */
+  microAppSummariesFor?(conversationId: string): Array<{
+    widgetId: string;
+    title: string;
+    headline: string;
+    dataJson: string;
+    version: number;
+  }>;
   engine: AgentEngine;
   /**
    * W2 外部副作用台账（runs.db tool_effects）：启动恢复把 executing 行改为
@@ -3949,6 +3957,8 @@ export class Orchestrator {
         summary: conv.summary,
         recent: recentFiltered,
         options: renderOptions,
+        // D112 P2（55 §8.5）：微应用进度摘要注入下一轮（last-wins、不进消息列表）。
+        microAppSummaries: this.#deps.microAppSummariesFor?.(batch.conversationId) ?? [],
       });
       // A turn's trigger: one <trigger> per source batch (batches buffered
       // during the previous turn arrive merged, each keeping its reason); a

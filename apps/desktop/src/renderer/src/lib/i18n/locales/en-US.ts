@@ -1376,6 +1376,7 @@ export const enUS = {
   'usage.loop.memory': 'Memory embedding/rerank',
   'usage.loop.voice_input': 'Voice input',
   'usage.loop.voice_reply': 'Voice reply',
+  'usage.loop.micro_app': 'Micro-app',
   'settings.embeddingSection': 'Embedding source',
   'settings.embeddingNote':
     'Embedding method for memory retrieval; falls back to full-text search when not ready. The "Local model" (jina-embeddings-v2-base-zh, 768 dimensions, Chinese-English bilingual) and the ONNX runtime (about 276MB combined) are installed to the app\'s private directory and shared by all Bots; if the model is not ready, you can download it below or install it automatically via an environment request. GPU acceleration is selected automatically by platform (macOS CoreML / Windows DirectML, falling back to CPU when unavailable). "Vendor API" uses the configuration in the "Embedding model" section above; changing the source rebuilds the vector index for all Bots.',
@@ -3093,6 +3094,8 @@ export const enUS = {
   'botWidget.confirmAndOpen': 'Confirm and open',
   'botWidget.open': 'Open widget',
   'botWidget.close': 'Close',
+  'botWidget.openInWindow': 'Open in new window',
+  'botWidget.openInWindowFailed': 'Could not open the widget window',
   'botWidget.posterLoading': 'Loading poster…',
   'botWidget.posterFallback': 'No preview screenshot yet',
   'botWidget.reviewFirstHint': 'Confirm below before running this widget',
@@ -3120,11 +3123,55 @@ export const enUS = {
   'botWidget.check.hideIssues': 'Hide',
   'botWidget.check.note':
     "A passing self-check only means it runs; it doesn't mean it's safe. You still need to review before loading.",
+  // Micro-app consent card (D112, design 55 §5.2: the network line is its own line, ahead of the capability list, never collapsed)
+  'botWidget.microApp.kind': 'Micro-app',
+  'botWidget.microApp.netOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netNone': 'No internet access',
+  'botWidget.microApp.netAllowlist': 'Can access the internet (only {domains})',
+  'botWidget.microApp.newerVersion': 'Version v{version} available; reopen to apply',
+  'botWidget.microApp.codeUpdated': 'Code updated, permissions unchanged (your previous consent carries over)',
+  'botWidget.microApp.canDo': 'What it can do:',
+  'botWidget.microApp.cost':
+    'Up to {n} tokens per session, billed to the Bot that wrote it ({bot})',
+  'botWidget.microApp.unavailable': 'Currently unavailable: {capability} ({reason})',
+  'botWidget.microApp.openSettings': 'Open settings',
+  'botWidget.microApp.preflightLoading':
+    'Checking whether this machine can run everything it needs…',
+  'botWidget.microApp.preflightFailed': 'Checking run requirements failed.',
+  'botWidget.microApp.preflightRetry': 'Retry',
+  'botWidget.microApp.confirmAndOpen': 'Confirm and open',
+  'botWidget.microApp.netBadge': 'Network access',
+  'botWidget.microApp.netBadgeOnline': 'Online',
+  'botWidget.microApp.netInfoOpen': 'Can access the internet (no domain restrictions) · not filtered per domain',
+  'botWidget.microApp.netInfoNone': 'No internet access',
+  'botWidget.microApp.netInfoAllowlist': 'Can access the internet (only {domains})',
+  'botWidget.microApp.micOn': 'Microphone in use (click to revoke)',
+  'botWidget.microApp.micOff': 'Enable microphone',
+  'botWidget.microApp.displayMode': 'Toggle fullscreen / inline',
+  'botWidget.microApp.stop': 'Stop voice (capture and playback)',
+  'botWidget.microApp.manageTitle': 'Micro-app management',
+  'botWidget.microApp.manageNet': 'Network',
+  'botWidget.microApp.manageUsage':
+    'Today: model {calls} calls / {tokens} tokens · ASR {asr}s · TTS {tts} chars',
+  'botWidget.microApp.manageIssues': 'Runtime issues (24h)',
+  'botWidget.microApp.manageContext': 'Synced progress',
+  'botWidget.microApp.clearContext': 'Clear',
+  'botWidget.microApp.contextCleared': 'Synced progress summary cleared',
+  'botWidget.microApp.rollback': 'Roll back to v{version}',
+  'botWidget.microApp.rollbackConfirm':
+    'Confirm rollback to v{version}? (running instances unaffected; reopen to apply)',
+  'botWidget.microApp.rolledBack': 'Rolled back to v{version} (reopen to apply)',
+  'botWidget.microApp.contextLine': 'Synced progress: {headline}',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
   'settings.widgetReviewModelHint':
     'When a Bot builds an interactive widget, this model independently reviews the code. Choosing a model different from the main model can catch more issues. If the Bot has pinned its own model, that model is still used.',
   'settings.widgetReviewModelUnavailable': "(Unavailable; the Bot's main model will be used)",
+  'settings.microAppModel': 'Micro-app model',
+  'settings.microAppModelFollow': "Use Bot's light model",
+  'settings.microAppModelHint':
+    'Which model micro-apps use for ai.chat. Usage is billed to the Bot that wrote the micro-app; micro-apps cannot pick a model themselves.',
+  'settings.microAppModelUnavailable': "(Unavailable; the Bot's light model will be used)",
   'botWidget.capabilities':
     'Runs in a sandbox · Network access enabled · Data stays on this device (per widget) · Queries limited to reviewed read-only templates',
   'botWidget.openLinkTitle': 'This widget wants to open a link in your browser',
@@ -3172,6 +3219,21 @@ export const enUS = {
   'chats.errorCode.WIDGET_CRAFT_FAILED':
     "The widget couldn't be built (self-check failed, timed out, or was cancelled); the draft was kept",
   'chats.errorCode.WIDGET_CRAFT_UNAVAILABLE': 'No model is available to build widgets',
+  'chats.errorCode.MICRO_APP_MANIFEST_INVALID': "The micro-app's manifest (micro-app.json) is invalid and can't be delivered",
+  'chats.errorCode.MICRO_APP_UNSUPPORTED_SPEC':
+    "This KepCup doesn't recognize the micro-app manifest version; please upgrade the app",
+  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_DECLARED':
+    'The micro-app called a capability not declared in its manifest',
+  'chats.errorCode.MICRO_APP_CAPABILITY_DENIED':
+    'You declined or revoked this capability; the micro-app should fall back gracefully',
+  'chats.errorCode.MICRO_APP_CAPABILITY_NOT_CONFIGURED':
+    'The host lacks configuration this capability needs (e.g. model / voice); configure it in settings first',
+  'chats.errorCode.MICRO_APP_AI_QUOTA': "The micro-app's model usage is over budget",
+  'chats.errorCode.MICRO_APP_AI_BUSY': 'The micro-app already has a model call in flight; try again shortly',
+  'chats.errorCode.MICRO_APP_AI_UNAVAILABLE': 'The model is temporarily unavailable; your progress is saved',
+  'chats.errorCode.MICRO_APP_BRIDGE_CLOSED':
+    'The host closed the micro-app capability bridge; please reopen it',
+  'chats.errorCode.MICRO_APP_UNRESPONSIVE': 'The micro-app is unresponsive; please reopen it',
   'chats.errorCode.MAIL_NOT_BOUND': "This mailbox isn't assigned to the current Bot",
   'chats.errorCode.MAIL_AUTH_FAILED':
     'Mailbox sign-in failed. Use an authorization code or app password, not your login password.',
