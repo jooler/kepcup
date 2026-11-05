@@ -791,7 +791,7 @@ describe('workdirs (P04)', () => {
       '  [ "$code" = 200 ] && break',
       '  sleep 0.4',
       'done',
-      'printf %s "$code"',
+      'printf HTTP_CODE=%s "$code"',
       'kill %1 2>/dev/null || true',
       'true',
     ].join('\n');
@@ -807,7 +807,9 @@ describe('workdirs (P04)', () => {
     await sendBatch(core, convA.id, ['起个开发服务器试试']);
     await waitRelay(core, convA.id, 'RELAY-PORT-A');
     const boundTask = (await taskRuns(core, convA.id))[0]!;
-    expect(toolResult(await stepsOf(core, boundTask.id), 'bash')?.content).toContain('200');
+    // 断言带前缀：沙箱拒绝日志里会附 PID / 端口（曾出现 curl(6200) 里含 "200"），
+    // 直接 toContain('200') 会把 6200 当成成功码。
+    expect(toolResult(await stepsOf(core, boundTask.id), 'bash')?.content).toContain('HTTP_CODE=200');
 
     llm.script(
       'mock-main',
@@ -823,7 +825,7 @@ describe('workdirs (P04)', () => {
     // Linux (bubblewrap) isolates the network namespace: server and client both run
     // inside it, so loopback works either way and "blocked otherwise" is macOS-only.
     if (process.platform !== 'linux') {
-      expect(toolResult(await stepsOf(core, unboundTask.id), 'bash')?.content).not.toContain('200');
+      expect(toolResult(await stepsOf(core, unboundTask.id), 'bash')?.content).not.toContain('HTTP_CODE=200');
     }
   }, 400_000);
 
