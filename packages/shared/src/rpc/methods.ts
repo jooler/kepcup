@@ -183,6 +183,7 @@ import {
   botAccentColorSchema,
   delegationSchema,
   taskViewSchema,
+  taskRunUsageSchema,
   toolEffectSchema,
   effectStatusSchema,
   conversationSchema,
@@ -1484,6 +1485,8 @@ export const taskGetOutputSchema = z.object({ task: taskViewSchema.nullable() })
 export const effectsListOutputSchema = z.object({ effects: z.array(toolEffectSchema) });
 /** Non-terminal tasks of a conversation (status line seed on conversation open). */
 export const tasksActiveInputSchema = z.object({ conversationId: z.string().min(1) });
+/** 任务详情页的上下文用量（usage_ledger 按 run_id 聚合，见 taskRunUsageSchema）。 */
+export const tasksUsageOutputSchema = z.object({ usage: taskRunUsageSchema.nullable() });
 export const tasksActiveOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
 /** The user picked an option on a task question card: injected straight into the task. */
 export const tasksAnswerInputSchema = z.object({
@@ -2782,6 +2785,7 @@ export const rpcMethodSchemas = {
   'handovers.get': { input: handoversGetInputSchema, output: handoversGetOutputSchema },
   'delegations.cancel': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
   'tasks.get': { input: taskIdInputSchema, output: taskGetOutputSchema },
+  'tasks.usage': { input: taskIdInputSchema, output: tasksUsageOutputSchema },
   'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
   'tasks.answer': { input: tasksAnswerInputSchema, output: okOutput },
   'effects.list': { input: taskIdInputSchema, output: effectsListOutputSchema },

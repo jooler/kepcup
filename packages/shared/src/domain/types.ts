@@ -3834,3 +3834,30 @@ export const taskViewSchema = z.object({
   result: taskResultViewSchema.nullable().optional(),
 });
 export type TaskView = z.infer<typeof taskViewSchema>;
+
+/**
+ * 任务用量（`tasks.usage`，任务详情页「上下文用量」）：来自 usage_ledger 的
+ * 该任务（run_id = task.id）聚合。全部数值可空——没有账本行、查不到模型上下文
+ * 窗口、没有 prompt token 时分母都可能是未知，前端按字段分别降级。
+ */
+export const taskRunUsageSchema = z.object({
+  /** 账本行数（模型调用次数）。 */
+  calls: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  /**
+   * 当前上下文占用的近似值：最近一次主循环调用的 prompt 总量
+   * （input + cacheRead + cacheWrite）。没有账本行时为 null。
+   */
+  contextTokens: z.number().int().nonnegative().nullable(),
+  /** 最近一次主循环所用模型的上下文窗口；查不到时为 null（不猜默认值）。 */
+  contextWindow: z.number().int().positive().nullable(),
+  /**
+   * 加权缓存命中率 = ΣcacheRead / (ΣcacheRead + Σinput)，取值 0..1。
+   * 分母为 0（没有 prompt token）时为 null。
+   */
+  cacheHitRate: z.number().min(0).max(1).nullable(),
+});
+export type TaskRunUsage = z.infer<typeof taskRunUsageSchema>;

@@ -180,6 +180,46 @@ describe('D75 task layer (TaskHost)', () => {
     });
   }, 30_000);
 
+  it('执行任务的模型用量按 run_id = task.id 记账，任务详情页的用量聚合能读到', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const source = userMessage(stack, conv.id, '跑一下 USAGE-ONE');
+
+    llm.script('mock-main', [
+      step()
+        .expect(isTaskRequest('USAGE-ONE'))
+        .replyText('USAGE-ONE-DONE', { prompt_tokens: 4_000, completion_tokens: 120 }),
+      step().expect(isWakeRequest).replyText('好'),
+    ]);
+
+    const tools = buildTaskTools({
+      identity: turnIdentity(bot.id, conv.id),
+      tasks: tasksOf(stack),
+    });
+    const started = await call(tool(tools, 'start_task'), {
+      title: '用量核对',
+      instruction: 'USAGE-ONE 只回复一句话',
+      source_message_ids: [source.id],
+      writes: false,
+    });
+    expect(started.ok).toBe(true);
+    const taskId = /"task_id":"(run_[^"]+)"/.exec(started.content)?.[1];
+    await waitRun(stack, taskId!, ['completed'], 'task completed');
+
+    // tasks.usage 按 run_id 查账本：能读到这次调用的聚合，说明任务的账本行
+    // 就记在 task.id 下（TaskHost 建 run 与 agent 记账同一条 run）。
+    const usage = domain(stack).usage.usageForRun(taskId!);
+    expect(usage).not.toBeNull();
+    expect(usage?.calls).toBeGreaterThanOrEqual(1);
+    expect(usage?.contextTokens).toBe(4_000);
+    expect(usage?.inputTokens).toBe(4_000);
+    // mock 不报缓存字段 → cache_read 为 0：加权命中率是 0%（prompt token 全部
+    // 没命中缓存），不是 null（分母 input 有值）。
+    expect(usage?.cacheHitRate).toBe(0);
+  }, 30_000);
+
   it('quota overflow returns submitted with a reason and starts automatically when a slot frees; per-turn cap rejects', async () => {
     const stack = await start();
     const { core, llm } = stack;

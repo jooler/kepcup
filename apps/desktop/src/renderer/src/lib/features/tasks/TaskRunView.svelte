@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { RunStep } from '@kepcup/shared';
+  import type { RunStep, TaskRunUsage } from '@kepcup/shared';
   import {
     ArrowLeft,
     ChevronDown,
@@ -35,6 +35,7 @@
     latestPlan,
     pendingTaskQuestionOf,
     taskElapsedMs,
+    taskRunUsageParts,
   } from './task-run-view';
   import { isActiveTask } from './task-view';
 
@@ -73,6 +74,8 @@
   } = $props();
 
   let steps = $state<RunStep[]>([]);
+  /** 任务用量（tasks.usage）：上下文 token / 窗口 / 平均缓存命中率，缺数据整块隐藏。 */
+  let usage = $state<TaskRunUsage | null>(null);
   let loading = $state(true);
   let loadFailed = $state(false);
   let taskChecked = $state(false);
@@ -85,6 +88,7 @@
   let processInitialized = false;
 
   const task = $derived(tasks.byId[taskId] ?? null);
+  const usageParts = $derived(taskRunUsageParts(usage));
   const reportText = $derived((task?.result?.text ?? '').trim());
   const entries = $derived(buildTaskRunTimeline(steps));
   const renderEntries = $derived(groupTaskRunEntries(entries));
@@ -170,9 +174,26 @@
     loading = true;
     loadFailed = false;
     steps = [];
+    usage = null;
+
+    // 用量是附加信息：读取失败静默（保留上一次读数），不让详情页报错刷屏。
+    let latestUsage = 0;
+    const refreshUsage = async (): Promise<void> => {
+      const seq = (latestUsage += 1);
+      try {
+        const result = (await core.call('tasks.usage', { taskId: id })) as {
+          usage: TaskRunUsage | null;
+        };
+        if (cancelled || id !== taskId || seq !== latestUsage) return;
+        usage = result.usage;
+      } catch {
+        // 静默：没有任务用量（旧库 / 未结算）就不显示这块。
+      }
+    };
 
     const refresh = async (silent: boolean): Promise<void> => {
       const seq = (latest += 1);
+      void refreshUsage();
       try {
         const result = (await core.call('runs.steps', { runId: id })) as { steps: RunStep[] };
         if (cancelled || id !== taskId || seq !== latest) return;
@@ -344,6 +365,26 @@
           {/if}
           <span aria-hidden="true">·</span>
           <span>{task.writes ? t('task.run.writes') : t('task.run.readOnly')}</span>
+          {#if usageParts !== null}
+            <span aria-hidden="true">·</span>
+            <span class="font-mono" data-testid="task-run-context-usage">
+              {#if usageParts.window !== null && usageParts.percent !== null}
+                {t('task.run.contextUsage', {
+                  used: usageParts.tokens,
+                  window: usageParts.window,
+                  percent: usageParts.percent,
+                })}
+              {:else}
+                {t('task.run.contextUsageTokens', { used: usageParts.tokens })}
+              {/if}
+            </span>
+            {#if usageParts.cacheHitPercent !== null}
+              <span aria-hidden="true">·</span>
+              <span data-testid="task-run-cache-hit"
+                >{t('task.run.cacheHit', { percent: usageParts.cacheHitPercent })}</span
+              >
+            {/if}
+          {/if}
           <span aria-hidden="true">·</span>
           <span class="font-mono">{t('task.run.taskId', { id: task.taskId })}</span>
           {#if (task.capabilities ?? []).length > 0}
