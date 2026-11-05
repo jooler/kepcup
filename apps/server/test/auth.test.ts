@@ -28,7 +28,8 @@ function makeStore(): AuthStore {
 }
 
 describe('AuthStore', () => {
-  it('首启建号 → 登录成功 → 校验密码错误不泄露差异', async () => {
+  // scrypt N=2^17 单次校验在 CI 慢机上就要 1–2s，本用例三次计算会破 5s 默认超时（同组其余用例同此）。
+  it('首启建号 → 登录成功 → 校验密码错误不泄露差异', { timeout: 30_000 }, async () => {
     const auth = makeStore();
     expect(auth.isConfigured()).toBe(false);
     await auth.setupAdmin('alice', 'correct horse battery');
