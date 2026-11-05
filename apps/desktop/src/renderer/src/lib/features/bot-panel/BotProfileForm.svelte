@@ -635,7 +635,7 @@
           onchange={(event) => onEngineChange(event.currentTarget.value)}
           data-testid="bot-model-select"
         >
-          <option value="">—</option>
+          <option value="">{t('contacts.modelDefault')}</option>
           {#if agentOptions.length > 0}
             <optgroup label={t('contacts.engineGroupModels')}>
               {#each modelOptions as option (option.ref)}
@@ -668,7 +668,7 @@
             class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
             bind:value={profile.runtime.light_model}
           >
-            <option value="">—</option>
+            <option value="">{t('contacts.modelDefault')}</option>
             {#each modelOptions as option (option.ref)}
               <option value={option.ref}>{option.label}</option>
             {/each}
