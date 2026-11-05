@@ -3855,8 +3855,8 @@ export const taskRunUsageSchema = z.object({
   /** 最近一次主循环所用模型的上下文窗口；查不到时为 null（不猜默认值）。 */
   contextWindow: z.number().int().positive().nullable(),
   /**
-   * 加权缓存命中率 = ΣcacheRead / (ΣcacheRead + Σinput)，取值 0..1。
-   * 分母为 0（没有 prompt token）时为 null。
+   * 加权缓存命中率 = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)，取值 0..1。
+   * 分母是全部 prompt token（与 contextTokens 同口径）；为 0 时为 null。
    */
   cacheHitRate: z.number().min(0).max(1).nullable(),
 });

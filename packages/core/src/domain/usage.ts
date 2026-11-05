@@ -89,7 +89,7 @@ export interface RunUsageTotals {
   contextTokens: number | null;
   /** 最近一次主循环所用模型的上下文窗口，由调用方解析；查不到为 null。 */
   contextWindow: number | null;
-  /** 加权命中率 = ΣcacheRead / (ΣcacheRead + Σinput)；分母为 0 时为 null。 */
+  /** 加权命中率 = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)；分母为 0 时为 null。 */
   cacheHitRate: number | null;
 }
 
@@ -140,7 +140,8 @@ export class UsageService {
    *   也记在 'task' 下、无法区分，取最新一行已是最接近的口径）；没有 'task' 行
    *   时退回该 run 的最新一行（如轻判定 / 子能力直接挂在 run 上记账）。
    * - `cacheHitRate` 用**加权**口径：prompt token 中命中缓存的比例
-   *   = ΣcacheRead / (ΣcacheRead + Σinput)，不是各次命中率求平均；分母为 0 时 null。
+   *   = ΣcacheRead / (Σinput + ΣcacheRead + ΣcacheWrite)，与 `contextTokens`
+   *   的 prompt 总量口径一致，不是各次命中率求平均；分母为 0 时 null。
    * - `contextWindow` 由调用方按该行的 provider+model 解析（UsageService 不依赖
    *   模型注册表）；查不到留 null，不猜默认窗口。
    */
@@ -181,7 +182,9 @@ export class UsageService {
     const contextTokens =
       latest.input_tokens + latest.cache_read_tokens + latest.cache_write_tokens;
     const resolvedWindow = resolveContextWindow?.(latest.provider, latest.model) ?? null;
-    const promptTokens = totals.cr + totals.i;
+    // prompt 总量口径与 contextTokens 一致：input + cacheRead + cacheWrite。
+    // 漏掉 cacheWrite 会把「写了缓存但还没读」的轮次当成全额命中，命中率虚高。
+    const promptTokens = totals.i + totals.cr + totals.cw;
     return {
       inputTokens: totals.i,
       outputTokens: totals.o,

@@ -99,11 +99,28 @@ describe('UsageService.usageForRun', () => {
         cacheWriteTokens: 500,
         // 最新一行（created_at 20）的 prompt 总量：2000 + 6000 + 500。
         contextTokens: 8_500,
-        // 加权命中率：6000 / (6000 + 3000)。
-        cacheHitRate: 6_000 / 9_000,
+        // 加权命中率：6000 / (3000 + 6000 + 500)，分母是全部 prompt token
+        // （input + cacheRead + cacheWrite），与 contextTokens 同口径。
+        cacheHitRate: 6_000 / 9_500,
       });
       // 没有传解析器 → 窗口未知，不猜默认值。
       expect(usage?.contextWindow).toBeNull();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('counts cache writes in the denominator: a written-but-unread prefix is not a hit', () => {
+    const db = openMainDb();
+    try {
+      // 首轮只写缓存（cache_write 很大、cache_read 为 0）：命中率必须是 0%，
+      // 不能因为漏掉 cache_write 而被算成 100%。
+      insertRow(db, { runId: 'task_1', input: 1_000, cacheRead: 0, cacheWrite: 9_000, createdAt: 10 });
+      const usage = service(db).usageForRun('task_1');
+      expect(usage?.cacheHitRate).toBe(0);
+      // 第二轮命中 9_000：9000 / (2000 + 9000 + 9000)。
+      insertRow(db, { runId: 'task_1', input: 1_000, cacheRead: 9_000, createdAt: 20 });
+      expect(service(db).usageForRun('task_1')?.cacheHitRate).toBe(9_000 / 20_000);
     } finally {
       closeDatabase(db);
     }
