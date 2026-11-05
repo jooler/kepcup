@@ -657,6 +657,7 @@ export const enUS = {
   'rightPanel.configRowNetwork': 'Network access',
   'rightPanel.configRowBrowser': 'Browser profile',
   'rightPanel.configNotSet': 'Not set',
+  'rightPanel.configFollowDefault': 'Uses default settings',
   'rightPanel.configNetworkOpen': 'Open',
   'rightPanel.configBrowserPrivate': 'Private',
   'rightPanel.appsAdd': 'Add apps',

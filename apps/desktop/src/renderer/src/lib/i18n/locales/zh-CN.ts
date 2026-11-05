@@ -624,6 +624,7 @@ export const zhCN = {
   'rightPanel.configRowNetwork': '网络访问',
   'rightPanel.configRowBrowser': '浏览器资料',
   'rightPanel.configNotSet': '未设置',
+  'rightPanel.configFollowDefault': '使用默认设置',
   'rightPanel.configNetworkOpen': '开放',
   'rightPanel.configBrowserPrivate': '私有',
   'rightPanel.appsAdd': '添加应用',
