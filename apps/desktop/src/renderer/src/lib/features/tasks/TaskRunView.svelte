@@ -23,6 +23,7 @@
   import { Button } from '$lib/components/ui/button';
   import Markdown from '$lib/features/chats/Markdown.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
+  import TaskInjectDock from './TaskInjectDock.svelte';
   import { getChatSession } from '$lib/features/chats/chat-session-context';
   import TaskRunToolGroup from './TaskRunToolGroup.svelte';
   import TaskPlanPanel from './TaskPlanPanel.svelte';
@@ -41,7 +42,8 @@
 
   /**
    * 任务详情页（docs/design/42-task-run-view.md）：对话里的任务卡打开它，
-   * 原对话（含右栏）以 display:none 留在 DOM 里，本页占满主区。顶部是返回、
+   * 原对话以 display:none 留在 DOM 里，本页只占中间对话区（D116 修订：右栏
+   * Bot 详情保持可见）。顶部是返回、
    * 任务名、状态与 metadata；正文是**执行报告**（终态条目原文，用户在这里读
    * 报告——对话里不再转发原文，design 30 §6.1 2026-11 修订）与折叠的
    * **执行过程**（run_steps 渲染成 Agent 消息时间线：助手说明、工具调用 +
@@ -609,5 +611,15 @@
     <div class="shrink-0 border-t" data-testid="task-run-approvals">
       <ApprovalDock conversationId={approvalConversationId} />
     </div>
+  {/if}
+
+  {#if task !== null && active}
+    <!--
+      D115 注入坞（docs/design/56 §1）：非终态任务的最底部自由文本入口，经
+      tasks.inject 直达 TaskHost（复用 inject_task 语义：等问即回答 / 运行中
+      steer / 未启动入简报 / 外部 Agent queued）。在提问卡与审批条之后、页面
+      最后一位。
+    -->
+    <TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />
   {/if}
 </div>

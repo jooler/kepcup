@@ -54,7 +54,17 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
     id: 'memory',
     reason: '记忆条目是 Bot 的数据，不是设置；改写走 remember / forget',
   },
-  { kind: 'bot-panel-tab', id: 'widget', reason: 'Bot 自制组件是产出物，不是设置' },
+  {
+    kind: 'bot-panel-tab',
+    id: 'detail',
+    reason: 'D116 详情 tab 是二级菜单容器；其设置位置由 profile 各 section 的锚点覆盖',
+  },
+  { kind: 'bot-panel-tab', id: 'widgets', reason: 'Bot 自制组件是产出物，不是设置' },
+  {
+    kind: 'bot-panel-tab',
+    id: 'tasks',
+    reason: 'D116 任务 tab 是执行记录（任务列表），不是设置',
+  },
   {
     kind: 'bot-panel-tab',
     id: 'wiki',

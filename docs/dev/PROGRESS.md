@@ -47,6 +47,7 @@
 | 市场卡片显示插件图标（D104 收尾补全） | 已完成 | 2026-10-29 | — | 市场卡片不再显示名称首字：签名脚本从包内读取 `icon` 并内联到索引条目 `summary.icon`（`data:image/…;base64`，原始图标 ≤64 KiB），`MarketplaceSync` → `PluginMarketEntry.iconDataUri` 透出，卡片统一 `PluginIcon`，缺失 / 不可用时回落拼图默认图标；全程不发起远程图片请求。校验器把「未声明图标」从 warn 改为 **error**（市场监管局发布必须带图标），超过 64 KiB 的图标给市场化 warning；core / shared 共用 `pluginIconDataUriFromBytes` 与 `isPluginIconDataUri`（含 magic-byte / 体积 / data URI 校验）。文档同步 `write-a-plugin.md` §2.4 / §2.7 / 检查项表、`plugins/README.md`、设计 51 §3 / §6.1、DEV-053 修订。验证：22 个官方插件 validate 全部 0 error / 0 warning；本地打包 + dev key 签名 22 条索引全部带图标（索引 36 KiB）且验签通过；shared / core / app-validator / desktop typecheck 0 error；定向 57 例 + marketplace 集成 10 例全绿。**已按发布流程重新签名并部署线上索引**：22 个包重新打包后 sha256 / 大小与线上 1.0.1 完全一致（R2 内容寻址对象全部已在位，无需重传），新索引 `generatedAt=2026-10-29T09:15:19.816Z`（严格大于旧索引）、36,313 字节、22/22 条目带 `summary.icon`，生产密钥 `kepcup-plugins-2026-1` 签名；`wrangler deploy` 首次遇到 Cloudflare API 500，重试成功（Worker version `a7280fdc-4268-4118-ab75-b3083c3ac47e`）；部署后从 `dl.kepcup.com/plugins/v1/` 拉回索引与签名，`--verify` 通过、22/22 图标在位。 |
 | 语音对话模式（D106） | 待验收 | 2026-11-01 | — | 26 号暂缓的语音对话模式开发完成（WP1–WP3 提交 b806479f / 25133a07 / f69007b7，WP4 收口）。WP1 记账：`loopType` 加 `voice_reply`、`media.synthesizeSpeech` 绑定打标、用量页「语音播报」归类。WP2 发送侧：入口键（仅私聊非 readOnly、asr+tts 双预检缺哪个置哪个卡）、`VoiceModeBar` 语音条（idle/recording/transcribing/speaking 四态、Esc 分档、输入坞原位替换不走 Portal）、录音→`transcribeSpeech`→WAV 附件+转写文本经 `performComposerSend`/sendGuard 发送（guard 忙时 `waitForIdle` 排队串行、不丢转写文本；转写先于上传，缺设置无附件可撤只置卡；不走 `gateForSend`，由 core 结构化 setup 失败出卡 + `continueAfterSetup` 续跑）。WP3 播报侧：chat-session `onIncomingMessage` 订阅口 + `extractSpeechText` 剥 Markdown（围栏代码块整体跳过、>2000 字截断 toast 每条一次）+ 顺序播报队列（`isVisibleInTranscript` 可见性口径、插话作废清队绑定「拿到流」而非点击、首条失败停队 +「打开设置」深链、objectURL 播完即 revoke / 退出清队无泄漏）。新增 / 增补单测：`extractSpeechText` / `voice-announce` / `voice-mode` / `voice-send` / `composer-send`（waitForIdle 排队）/ `chat-session`（订阅口）+ `locales` 全绿。收口全量 `pnpm test`：**7277 通过 / 3 失败 / 42 跳过**——`deep-link.test.ts` 为真实失败（9defc083 新增 computer-use 设置分区时漏登 `deep-link.ts` 深链白名单，`computer.control` 设置卡「在设置中打开」回落「通用」；本阶段补一行修复，定向 6/6 绿，settings 四件套 90/90 一并复核绿），`permission-bridge` / `workdirs` 单跑 29/29、18/18 全绿（全量负载下偶发，不超出既有负载敏感基线）；desktop typecheck 0 error。**待真机验收**（麦克风 + asr/tts 真实能力，清单见 [todo/voice-conversation.md](../../todo/voice-conversation.md) WP4）；实现与设计偏差已在 [design/53](../design/53-voice-conversation.md) 就地加「实现修订」注。 |
 | 插件启用说明 + 激活通报 + IM 分类（D104/D107 补全） | 已完成 | 2026-11-03 | — | 插件清单新增**必填** `usage`（启用说明：启用即用 / 需要连接账号 / 需要先添加账号再勾选绑定），`PluginSummary.usage`（清洗后）透出到 Bot 详情卡片与添加弹框；23 个官方插件全部补齐并升版 `1.1.0`，`engines.kepcup` 统一抬到 `>=0.5.7`（`usage` 是 strict schema 新字段，旧宿主必须被索引过滤而不是下载后解析失败），`kepcup-app init/validate` 与签名脚本同步强制。core 新增 `PluginBotNotice`：`bot.updated` 的 `plugin_ids` / `app_connection_ids` 变化、`plugins.changed`（安装 / 更新 / 全局启停 / 卸载 / 撤销）、`mail.accounts.setBots` / `mail.bots.setAccounts` / `im.accounts.setBots`、`plugins.instances.delete` / `im.accounts.delete` 都进入**按 Bot 合并的 30 秒**通报；比较整份状态签名（启用集 + 启停 + usage + 就绪状态），绑定 / 全局停用 / 删账号也能触发，净变化为空不唤醒；无直聊时 `openDirect` 创建落点；插件文案经 `sanitizeDisplayText` + `untrustedBlock` 防闭合。Bot 侧规则：全部就绪 `skip_reply` 静默，有遗漏主动提醒补步骤。扩展中心市场 / 已安装筛选与同意卡新增「即时通讯」分类（`im`），已安装卡片 IM 标签 / 管理入口按插件圈定。独立审查 P1/P2 全部修正（状态签名、injection、engines、同意卡 IM、纯技能 usage 展开、账号删除 / 全局停用触发、IM 权限文案、测试补强）。验证：shared / core / app-validator / desktop typecheck 0 error；23 个插件 validate 全绿；定向 449 例全绿。**已发布**：23 个包重新打包 → `kepcup-plugins-2026-1` 签名（`generatedAt=2026-11-03T09:28:38.920Z`，严格递增）→ R2 上传 → `wrangler deploy`（Worker version `1482ed01-0ec3-4990-8889-7f8145c20d43`）；线上索引 + 23 个包拉回 `--verify` 通过（sha256 / 大小逐一核对），索引 `engines.kepcup` 为 `>=0.5.7`。 |
+| 任务直注 + Bot 详情三栏（D115–D117） | 待验收 | 2026-11-06 | — | 补齐用户对任务的掌控感（设计 [56](../design/56-task-steering-and-bot-detail-tabs.md)，实施记录见 [todo/task-steering-and-bot-tabs.md](../../todo/task-steering-and-bot-tabs.md)）。**D115 任务直注**：任务详情页最底部注入坞（非终态渲染，Enter 发送 / awaiting 提示），`tasks.inject` RPC → `TaskHost.injectById`（从 run 行组装 identity 复用 `inject()`，等问即回答 / steer / 入简报 / queued 语义零改动，条目照写 Bot 私有时间线）。**D116 Bot 详情三栏**：右栏头部资料卡下手写三 tab（详情〔默认，原二级菜单〕/ 组件 / 任务）；`tasks.listByBot`（跨对话全集倒序 ≤200）+ 共享 `botTasks` store（`task.updated` 按 botId 原位续期）驱动任务 tab（进行中 / 已完成分组、行点击开详情页）与 tab 触发器进行中徽标（30 §6.3 两项未实现界面的任务部分落实）；深链归位详情 tab。**D117 组件直接运行**：组件 tab 卡片化（底部说明 section + 「…」下拉：发卡 / 详情与管理 / 删除对话框），点卡 `widgets.runCard`（publish 同款列投影、不落消息行）+ core 虚拟卡片登记表（合成 id，`cardOf()` 虚拟分支），`open / source / poster / storage / query / reply` 与新窗口打开沿虚拟 id 全链路可用，iframe 运行时零改动。手动创建任务本期不做。测试：core 定向（tasks 18 / widgets-service 53 / task-cards / external-agent / supervisor-turns / runs-tasks）全绿；desktop 定向（task-run-view 源码契约锁 / tasks store / botTasks store）+ i18n 全绿；e2e tasks 4 例 + schedules / bot-profile-autosave / narrow-layout 6 例全绿；settings-catalog 覆盖扫描随三 tab 扩展（`PANEL_TABS` 并入扫描 + detail/widgets/tasks 排除登记）；收口全量 `pnpm test` **7891 通过 / 0 失败 / 48 跳过**；shared / core / desktop typecheck 0 error、eslint 干净。**待真机验收**（真组件直运行含查询模板审查流、双 Bot 任务列表、真外部 Agent 任务的 queued 未送达提示）。 |
 
 
 ## 验收记录
@@ -2140,3 +2141,49 @@ botId + name 落到首字母占位。
   纯提示文案改动，未跑全量（无跨包公共面改动）。
 
 
+
+## 任务直注与 Bot 详情三栏（2026-11-06）
+
+产品判断先行：任务详情页输入框是补委托模式的纠错闭环（接近必要），Bot 任务列表是透明度补齐，用户手动创建 session 缓做——用户拍板按此落地，并追加决策「组件 tab 点击直接运行组件本体」。
+
+- **契约（W0）**：`tasks.inject`（`{taskId, text ≤ TASK_INSTRUCTION_MAX_CHARS}` → `{delivery}`）、`tasks.listByBot`（`{botId, limit≤200 默认 100}` → `TaskView[]`）、`widgets.runCard`（`{botId, widgetId, conversationId?}` → `{messageId, card}`）；契约 map + `APP_METHODS` 登记。
+- **core（W1/W2）**：`TaskHost.injectById`（身份从 run 行取，仿 `cancelById`，复用 `inject()` 全部分支）与 `listByBotViews`；`runs.listTasksByBotRecent`（desc 查询）；`WidgetService.runCard` + `#virtualCards` 虚拟卡片登记表——`cardOf()` 改为返回 `{messageId, conversationId, card}` 并先查虚拟表（`open()` 的消息锚点由此而来），scope='bot' anchor 当前对话、scope='conversation' anchor 自己的会话；审查门 / 双指针 / reply / storage 语义零改动。
+- **渲染层（W3–W6）**：`TaskInjectDock`（Enter 发送、IME 保护、awaiting 提示、delivered/queued toast）挂 TaskRunView 最后一位；`tasks.inject` store action；RightPanel 三 tab（手写 pill，`PanelDetail` 去 widget、组件详情下钻移入组件 tab、深链归位详情 tab、换 Bot 重置）；`BotMenu` 瘦身；`BotWidgetsTab`（卡片直运行 + 说明 section + 「…」下拉：发卡 / 详情与管理 / 删除对话框确认）；`BotTasksPanel` + 共享 `botTasks` store（`task.updated` 按 botId 原位续期）；tab 触发器进行中徽标；i18n zh/en 同步。
+- **文档**：设计 [56](../design/56-task-steering-and-bot-detail-tabs.md)（D115–D117）+ design README 索引与决策表；30 §4.1（D115 修订块）与 §6.3（两项未实现标注落实情况）、42（注入坞小节 + 代码位置）、32（组件 tab D117 修订）、12（右栏三 tab 修订）就地修订；todo/task-steering-and-bot-tabs.md 执行文档。
+- **测试**：core——tasks.test.ts 新增 3 例（直注 delivered + 私有条目 + 无对话消息；终态拒绝；跨对话倒序 + limit + 跨 Bot 隔离），widgets-service.test.ts 新增 2 例（虚拟卡 open/source/幂等；anchor 语义与越权拒绝）；desktop——task-run-view 源码契约锁注入坞、tasks store inject、botTasks store 三态续期；e2e——tasks.spec.ts 新增注入坞直注 → steer 气泡 → 三 tab 冒烟 1 例（共 4 例全绿），schedules / bot-profile-autosave / narrow-layout 6 例回归绿；settings-catalog 覆盖扫描扩展（`scanSettingsUi` 把 RightPanel 的 `PANEL_TABS` 并入 `botPanelTabs`，排除表登记 detail / widgets / tasks，替换原 widget 条目）。
+- **验证**：收口全量 `pnpm test`（shared 契约变更，跑一次）：**746 文件，7891 例通过 / 48 跳过 / 0 失败**；shared / core / desktop typecheck 0 error；eslint 干净。
+- **踩坑记录**：e2e 首跑注入报「内部错误」——electron 主进程经 `externalizeDepsPlugin` 外置加载 `@kepcup/core` 的 dist 产物，dist 未重建导致新 RPC 不存在（core 定向测试直接引源码，掩盖了这一点）；`pnpm --filter @kepcup/core build` 后恢复。另 `llm.script()` 为整体替换语义，held 步骤未消费时重挂脚本会把后续步骤顶掉，单脚本序列更稳。
+- **待真机验收**：真实 bot 组件直运行（含带查询模板版本的审查流与「新窗口打开」）、双 Bot 多对话的任务列表与徽标、真实外部 Agent（不支持 steering）任务的 queued「未送达」提示。
+
+## 三栏精简与中间区收拢（2026-11-06，用户实测一轮修正）
+
+用户实测三处体验问题，按拍板精简：
+
+- **组件 tab 精简**：原「详情与管理」落点（BotWidgetDetail）只比卡片多一段 metadata——
+  metadata（v 版本 · 版本数 · 体积 · 更新时间 · 查询模板数〔>0〕· 自检状态）移到卡片
+  上，「…」下拉只留**删除**（对话框确认）；BotWidgetDetail 组件与其独有 i18n 键删除
+  （微应用管理段〔用量 / 回退 / 上下文清除〕随之无入口——BotWidgetCard 卡内的上下文
+  清除与 MicroAppControls 运行时控件不受影响；发卡仍由 Bot 经 `widget_publish` 工具
+  发起，`widgets.publish` RPC 保留）。孤立键 zh/en 同步清理（widgetsTab.hint /
+  conversationSection / publish 三件 / manage；botWidget.microApp.manage* / rollback* /
+  contextCleared）。
+- **任务详情页只占中间对话区**：ChatsArea 重构为「中间区三视图」snippet（对话 / 委派
+  详情 / 任务详情互斥 display:none 共存），宽屏下任务页与委派详情都收进中间 pane，
+  **右栏 Bot 详情保持可见**；窄屏仍是单栏全屏层。42 号（入口与层级 / 布局）、27 §3.1 /
+  §3.2（委派详情「整体替换对话区」→「替换中间对话区」）、56 §2 同步修订。
+- **tab 条居中 + 图标**：详情 = Info、组件 = Blocks、任务 = ListTodo，容器
+  `justify-center`。
+- **验证**：desktop svelte-check 0 error、eslint 干净；定向单测 45 例全绿；e2e tasks
+  4 例（steer 用例补「任务页打开期间右栏保持可见」断言）+ narrow-layout 2 例 +
+  bot-profile-autosave 1 例全绿。本轮无 shared 契约改动（settings-catalog 扫描不受
+  影响），未再跑全量。
+
+## 独立审查轮：两 P1 + 五 P2 全部修复（2026-11-06）
+
+两个独立子代理（core/契约、渲染层）并行审查 D115–D117 全部改动，结论一致：**无 P0，需修复后合入**。修复清单：
+
+- **core P1-1 虚拟卡片登记表生命周期脱钩**：`delete()` / `deleteForBot()` 不清 `#virtualCards`，组件删除后 `cardOf` 仍命中已删组件（不崩溃、不越权，但报错口径失真且条目留到重启）→ 新增 `#purgeVirtualCards(widgetId)` 挂进两条删除路径。
+- **渲染层 P1-1 覆盖层形态任务 tab 行点击无反馈**：窄屏 / 宽屏放不下并排右栏时右栏是全屏 `BotDetailOverlay`，任务详情页在它背后——`BotTasksPanel.open()` 现在先 `narrowLayout.closeBotDetail()` 再 `openDetail`（与右栏关闭按钮同款写法）。
+- **渲染层 P1-2 botTasks 换 Bot 错配**：拉取失败会把上一个 Bot 的任务列表与徽标算到新 Bot 头上 → `load()` 换 Bot 先清空 items（items 只可能为空或属于当前 botId），失败也保持空。
+- **P2 五条**：① runCard 校验 anchor 会话存在（悬空会话原来要到回传一步才暴露）+ 会话级组件缺归属会话的报错口径修正；② 回归测试补齐——runCard 后删除再 open（锁 P1-1）、审查门沿虚拟 id 生效（未审查 open 抛 WIDGET_REVIEW_REQUIRED、source 后重试成功）、runCard 三处负例断言到错误文案、injectById 终态断言错误码 + NOT_FOUND 分支；③ botTasks 响应与在途推送 upsert 合并（快照不覆盖期间到达的行，仿 tasks store 口径）；④ queued toast 中性文案（两种成因——外部 Agent 拒绝 steer / 任务收尾——`task_event` 只存二值无法区分，「任务结束后生效」对两者都成立；56 §1.2 同步）；⑤ 任务 tab 点击时重拉（设计「tab 激活时重拉」落实）+ RightPanel 过时注释修正 + bindings shorthand 还原。
+- **验证**：core 定向（widgets-service 55 / tasks 集成 18）+ desktop 定向（45）全绿；desktop typecheck 0 error、eslint 干净；e2e 10 例（tasks 4 + narrow-layout 2 + bot-profile-autosave 1 + schedules 3）全绿。

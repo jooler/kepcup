@@ -6,9 +6,10 @@ import type { TaskView } from '@kepcup/shared';
  * taskId 并确保任务视图已加载，关闭时清空；空 id 不改变当前页面。
  */
 
-const { calls, getResult } = vi.hoisted(() => ({
+const { calls, getResult, injectResult } = vi.hoisted(() => ({
   calls: [] as Array<{ method: string; payload: Record<string, unknown> }>,
   getResult: { task: null as TaskView | null },
+  injectResult: { delivery: 'delivered' as 'delivered' | 'queued' },
 }));
 
 vi.mock('$lib/rpc/client.svelte', () => ({
@@ -19,6 +20,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
       calls.push({ method, payload });
       if (method === 'tasks.get') return getResult;
       if (method === 'tasks.active') return { tasks: [] };
+      if (method === 'tasks.inject') return { delivery: injectResult.delivery };
       return {};
     },
   },
@@ -136,5 +138,22 @@ describe('tasks.openDetail / closeDetail', () => {
     tasks.enterConversation('conv_gone');
     expect(tasks.openTaskId).toBeNull();
     tasks.enterConversation(null);
+  });
+});
+
+describe('tasks.inject（D115 任务直注，docs/design/56 §1）', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    injectResult.delivery = 'delivered';
+  });
+
+  it('sends tasks.inject and returns the delivery verdict', async () => {
+    injectResult.delivery = 'queued';
+    const delivery = await tasks.inject('task_1', '先看 README');
+    expect(delivery).toBe('queued');
+    expect(calls).toContainEqual({
+      method: 'tasks.inject',
+      payload: { taskId: 'task_1', text: '先看 README' },
+    });
   });
 });
