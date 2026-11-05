@@ -64,8 +64,6 @@ async function openResource(messageId: string): Promise<string> {
   return opened.resourceId;
 }
 
-const INSTANCE = { resourceId: '', instanceId: 'mai_p2_1' };
-
 describe('P2 多文件包', () => {
   it('包内文件按版本落库，子资源经 widgets.ui.resource 的 path 取回（字节一致）', async () => {
     const css = Buffer.from('body{color:red}').toString('base64');

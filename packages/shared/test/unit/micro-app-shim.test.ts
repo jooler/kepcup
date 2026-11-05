@@ -321,7 +321,6 @@ describe('P3：S2 预览 mock 缝（55 §11，宿主能力 mock）', () => {
     }).replace(/^<script>/, '').replace(/<\/script>$/, '');
     const source = buildMicroAppShim('light', { preview: true }).replace(/^<script>/, '').replace(/<\/script>$/, '');
     const messageHandlers: Array<(event: unknown) => void> = [];
-    const spoken: string[] = [];
     const parent = { postMessage: () => undefined };
     const windowObj: Record<string, unknown> = {
       addEventListener: (_type: string, cb: (event: unknown) => void) => messageHandlers.push(cb),
