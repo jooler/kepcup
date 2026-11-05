@@ -69,7 +69,22 @@ describe('micro-app 草稿扫描', () => {
     expect(issues[0]).toMatchObject({ rule: 'app.manifest-invalid', level: 'error', blocking: true });
   });
 
-  test('调用未声明能力 → app.permission-undeclared；包路径含反斜杠 → app.bundle-invalid', () => {
+  test('调用未声明能力 → app.permission-undeclared', () => {
+    const dir = makeDraft({
+      'index.html': HTML,
+      'micro-app.json': JSON.stringify(BASE_MANIFEST),
+    });
+    const issues = microAppDraftIssues({
+      bundle: readMicroAppDraftBundle(dir)!,
+      html: `${HTML}<script>kepcup.ai.chat({messages: []});</script>`,
+      spec: '> demo',
+    });
+    expect(issues.map((issue) => issue.rule)).toContain('app.permission-undeclared');
+  });
+
+  // 反斜杠是 POSIX 专属文件名成分：Windows 上 writeFileSync 会把它当分隔符，
+  // 根本造不出 isSafeMicroAppPath 拒绝的包路径，所以这条只能在 POSIX 上验。
+  test.skipIf(process.platform === 'win32')('包路径含反斜杠 → app.bundle-invalid', () => {
     const dir = makeDraft({
       'index.html': HTML,
       'micro-app.json': JSON.stringify(BASE_MANIFEST),
