@@ -31,7 +31,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-let now = 1_000;
+const now = 1_000;
 const clock = { now: () => now };
 const DB_KEY = deriveKey(Buffer.alloc(32, 7), KEY_INFO.mainDb);
 

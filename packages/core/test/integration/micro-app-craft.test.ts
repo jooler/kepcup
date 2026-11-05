@@ -10,7 +10,6 @@ import {
   type TestStack,
 } from '@kepcup/testkit';
 import type { RunIdentity } from '../../src/agent/types.js';
-import { WIDGET_TEMPLATES } from '../../src/widgets/templates/index.js';
 
 /**
  * D112 P3 制作端到端（真实 core + 脚本化模型）：`widget_craft` 带 `micro_app:true` →
@@ -27,8 +26,6 @@ afterEach(async () => {
     await stack.cleanup();
   }
 });
-
-const TUTOR = WIDGET_TEMPLATES.find((template) => template.name === 'micro-voice-tutor')!;
 
 const SPEC = [
   '> 英语口语陪练',
