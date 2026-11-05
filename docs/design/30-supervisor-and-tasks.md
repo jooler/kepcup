@@ -123,7 +123,7 @@
 | 上限          | `taskLoop.maxWallMinutes`（默认 240 分钟，0 = 不限制；等用户回答问题卡的时间不计入，§2.4.6）；用量默认不设上限，D93 起可选软预算与无活动看门狗（见 [43](43-task-loop-harness.md)）                                                          |
 | 深度          | 1：任务内不得 `start_task`（执行期按 `loop_type` 校验）                                                                            |
 
-**任务 Loop Harness（D93）**：内置 pi 任务在上表工具面之外，另有 `update_plan`（结构化计划）、自动上下文压缩、任务软预算、空转检测与无活动看门狗；4 小时墙钟改为可配置 `maxWallMinutes`。`<current_plan>` 每轮注入，计划与压缩进度落 `run_steps`；异常停止 / 用户取消 / 强制停止都写 failure 条目并唤醒 Bot。外部智能体任务沿用其原生压缩 / todo，不注入 `update_plan`，也不叠加宿主无活动看门狗。阈值在「设置 → 通用 → 任务 Loop」可配。详见 [43-task-loop-harness.md](43-task-loop-harness.md)。
+**任务 Loop Harness（D93）**：内置 pi 任务在上表工具面之外，另有 `update_plan`（结构化计划）、自动上下文压缩、任务软预算、空转检测与无活动看门狗；4 小时墙钟改为可配置 `maxWallMinutes`。`<current_plan>` 在计划变化后随请求尾部（user 消息）注入，不写系统提示词（保 prompt cache 前缀稳定），计划与压缩进度落 `run_steps`；异常停止 / 用户取消 / 强制停止都写 failure 条目并唤醒 Bot。外部智能体任务沿用其原生压缩 / todo，不注入 `update_plan`，也不叠加宿主无活动看门狗。阈值在「设置 → 通用 → 任务 Loop」可配。详见 [43-task-loop-harness.md](43-task-loop-harness.md)。
 
 
 

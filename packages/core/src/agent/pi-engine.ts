@@ -275,7 +275,7 @@ export class PiEngine implements AgentEngine {
 
     const agent = new Agent({
       initialState: {
-        systemPrompt: '', // refreshed by prepareRequest before every request
+        systemPrompt: '', // set by prepareRequest on the first request (frozen per run)
         model,
         tools: piTools as unknown as AgentTool[],
         messages: spec.messages.map((m) => ({
@@ -314,20 +314,54 @@ export class PiEngine implements AgentEngine {
       steeringMode: 'all',
     });
 
-    // The transcript's leading system message is the prompt; refresh it right
-    // before every request so stateful sections stay current.
+    // One run = one conversation, and prompt caching is prefix-based: pi puts a
+    // cache breakpoint on the last tool, on the system block and on the last
+    // message (pi-ai anthropic-messages.ts buildParams). Anything that changes
+    // before a breakpoint invalidates everything after it, so the system prompt
+    // is built exactly once per run — the first request — and reused
+    // byte-for-byte. A fresh run (new turn / task continuation) rebuilds it, so
+    // "每次新对话重建" still holds; run-scoped state that does change mid-run
+    // rides along as a trailing message instead of rewriting the prompt.
+    let frozenSystemPrompt: string | null = null;
+    // D93: the plan lives in run memory. It is delivered as a trailing user
+    // message, and only when it actually changed — appending never moves the
+    // prefix, so the cache survives; the compaction summary also carries it.
+    let injectedPlan = '';
     agent.prepareRequest = async ({ context }) => {
-      const basePrompt = await spec.buildSystemPrompt();
-      // D93: the plan is model-owned execution state, re-injected every turn
-      // (and never part of the compaction summary).
-      const plan = currentPlanPrompt(planState);
-      const systemPrompt = plan.length > 0 ? `${basePrompt}\n\n${plan}` : basePrompt;
+      if (frozenSystemPrompt === null) {
+        try {
+          frozenSystemPrompt = await spec.buildSystemPrompt();
+        } catch (error) {
+          // Never cache a failed build: the run cannot send a request now, and
+          // the next attempt should rebuild rather than reuse the failure.
+          this.#deps.logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'run system prompt build failed',
+          );
+          throw error;
+        }
+      }
       const messages = [...context.messages];
       const first = messages[0] as { role: string } | undefined;
       if (first?.role === 'system') {
-        messages[0] = { ...(first as object), content: systemPrompt } as (typeof messages)[number];
+        messages[0] = {
+          ...(first as object),
+          content: frozenSystemPrompt,
+        } as (typeof messages)[number];
       } else {
-        messages.unshift({ role: 'system', content: systemPrompt } as (typeof messages)[number]);
+        messages.unshift({
+          role: 'system',
+          content: frozenSystemPrompt,
+        } as (typeof messages)[number]);
+      }
+      const plan = currentPlanPrompt(planState);
+      if (plan.length > 0 && plan !== injectedPlan) {
+        messages.push({
+          role: 'user',
+          content: plan,
+          timestamp: Date.now(),
+        } as (typeof messages)[number]);
+        injectedPlan = plan;
       }
       return { context: { ...context, messages } };
     };

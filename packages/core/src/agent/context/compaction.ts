@@ -23,9 +23,11 @@ import { estimateTokens, truncateToBudget } from '../tokens.js';
  * A. 旧工具输出确定性裁剪（零模型调用）；
  * B. 仍超阈值时用轻量模型摘要旧消息，失败退化为确定性摘录。
  *
- * 恒定保留：system prompt（由 prepareRequest 每轮刷新）、首条任务简报、
- * `<current_plan>`（同样在 system prompt 里）与最近一截消息。裁剪点只落在
- * 完整消息边界（role 不是 toolResult），因此不会留下孤立 tool_result。
+ * 恒定保留：system prompt（每个 run 只在首次请求时构建一次，之后逐字节复用）、
+ * 首条任务简报、最近一截消息。当前 `<current_plan>` 以尾部 user 消息随请求下发
+ * （计划更新时追加一条新的快照），压缩时随最近消息保留，同时摘要提示里也会带上
+ * 它的全文。裁剪点只落在完整消息边界（role 不是 toolResult），因此不会留下孤立
+ * tool_result。
  */
 
 export interface CompactionUsage {
