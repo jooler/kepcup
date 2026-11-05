@@ -647,6 +647,13 @@ export const enUS = {
   'rightPanel.tabSkills': 'Skills',
   'rightPanel.tabWidgets': 'Widgets',
   'rightPanel.tabWiki': 'Wiki',
+  // --- D116 three tabs (docs/design/56 §2): detail / widgets / tasks ------------
+  'rightPanel.tabDetail': 'Details',
+  'rightPanel.tabTasks': 'Tasks',
+  'rightPanel.tasksHint': 'All tasks this bot has started (across conversations).',
+  'rightPanel.tasksEmpty': 'This bot has not started any task yet.',
+  'rightPanel.tasksActiveGroup': 'In progress ({count})',
+  'rightPanel.tasksDoneGroup': 'Finished ({count})',
   // --- Config tab secondary menu (grouped entries + drill-down details) ---------
   'rightPanel.configSectionWidgets': 'Widgets',
   'rightPanel.configSectionPersona': 'Persona & engine',
@@ -1669,6 +1676,13 @@ export const enUS = {
   'task.run.action.call': 'Called',
   'task.run.action.plan': 'Updated plan',
   'task.run.steer': 'Add instruction',
+  // D115 inject dock (docs/design/56 §1): user steering entry at the bottom of the task page.
+  'task.run.injectPlaceholder': 'Add an instruction, Enter to send…',
+  'task.run.injectSend': 'Send',
+  'task.run.injectHintAwaiting': 'The task is waiting for your answer: what you send is the answer',
+  'task.run.injectSent': 'Added to the task',
+  'task.run.injectQueued': 'Not delivered: it takes effect once the task ends',
+  'task.run.injectFailed': 'Failed to add',
   'task.run.system': 'System',
   'task.run.live': 'Live',
   'task.run.noOutput': 'No output',
@@ -3154,18 +3168,7 @@ export const enUS = {
   'botWidget.microApp.micOff': 'Enable microphone',
   'botWidget.microApp.displayMode': 'Toggle fullscreen / inline',
   'botWidget.microApp.stop': 'Stop voice (capture and playback)',
-  'botWidget.microApp.manageTitle': 'Micro-app management',
-  'botWidget.microApp.manageNet': 'Network',
-  'botWidget.microApp.manageUsage':
-    'Today: model {calls} calls / {tokens} tokens · ASR {asr}s · TTS {tts} chars',
-  'botWidget.microApp.manageIssues': 'Runtime issues (24h)',
-  'botWidget.microApp.manageContext': 'Synced progress',
   'botWidget.microApp.clearContext': 'Clear',
-  'botWidget.microApp.contextCleared': 'Synced progress summary cleared',
-  'botWidget.microApp.rollback': 'Roll back to v{version}',
-  'botWidget.microApp.rollbackConfirm':
-    'Confirm rollback to v{version}? (running instances unaffected; reopen to apply)',
-  'botWidget.microApp.rolledBack': 'Rolled back to v{version} (reopen to apply)',
   'botWidget.microApp.contextLine': 'Synced progress: {headline}',
   'settings.widgetReviewModel': 'Widget review model',
   'settings.widgetReviewModelFollow': "Use Bot's main model",
@@ -3188,24 +3191,23 @@ export const enUS = {
   'botWidget.replyCancel': 'Cancel',
   'botWidget.replyFailed': 'Failed to send',
   'botWidget.queriesTitle': 'Database query templates (reviewed by you per version)',
-  'widgetsTab.hint':
-    "Interactive widgets made by this Bot. Cross-conversation assets aren't deleted with a conversation and can be sent to any conversation; deleting one removes all versions and data, and past cards will no longer open.",
   'widgetsTab.empty':
     'No widgets yet. Ask a Bot to build one for you (try "make a small expense tracker"); it will appear here when ready.',
   'widgetsTab.assetBadge': 'Cross-conversation asset',
   'widgetsTab.conversationScopedBadge': 'This conversation only',
-  'widgetsTab.conversationSection': 'Conversation widgets (deleted with their conversation)',
   'widgetsTab.versionCount': '{n} versions',
   'widgetsTab.queriesCount': '{n} query templates',
-  'widgetsTab.publish': 'Send to current conversation',
-  'widgetsTab.published':
-    'Card sent to the current conversation; waiting for you to confirm loading',
-  'widgetsTab.publishCardFailed':
-    'The widget was referenced, but the card failed to send, so no new card appeared in the conversation. Try again later.',
   'widgetsTab.delete': 'Delete',
   'widgetsTab.deleteConfirm': 'Confirm delete',
   'widgetsTab.deleted': 'Widget deleted',
   'widgetsTab.actionFailed': 'Widget action failed',
+  // --- D117 widgets tab cards (docs/design/56 §3): run on click + “…” menu ------
+  'widgetsTab.runHint': 'Click to run this widget directly',
+  'widgetsTab.runNoConversation': 'No conversation to anchor the widget run',
+  'widgetsTab.moreMenu': 'More actions',
+  'widgetsTab.deleteTitle': 'Delete widget “{title}”?',
+  'widgetsTab.deleteBody':
+    'Deleting removes every version and its data; historical cards will no longer open.',
   'chats.errorCode.WIDGET_INVALID':
     "The widget card doesn't match its version record or is corrupted, so it can't be loaded",
   'chats.errorCode.WIDGET_RESOURCE_EXPIRED': 'The widget UI has expired. Reload this card.',

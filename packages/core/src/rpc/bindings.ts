@@ -75,6 +75,10 @@ import {
   tasksActiveInputSchema,
   tasksActiveOutputSchema,
   tasksAnswerInputSchema,
+  tasksInjectInputSchema,
+  tasksInjectOutputSchema,
+  tasksListByBotInputSchema,
+  tasksListByBotOutputSchema,
   tasksUsageOutputSchema,
   interviewAnswerInputSchema,
   interviewAnswerOutputSchema,
@@ -1498,6 +1502,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
+    // D115 任务直注（任务详情页注入坞，docs/design/56 §1）：用户自由文本直达
+    // TaskHost.injectById，复用 inject_task 全部语义。
+    'tasks.inject': method(tasksInjectInputSchema, tasksInjectOutputSchema, async (input) =>
+      orchestrator.tasks.injectById(input.taskId, input.text),
+    ),
+    // D116 Bot 详情「任务」tab：该 Bot 拉起的任务全集（跨对话），最新在前。
+    'tasks.listByBot': method(tasksListByBotInputSchema, tasksListByBotOutputSchema, async (input) => ({
+      tasks: orchestrator.tasks.listByBotViews(input.botId, input.limit),
+    })),
     // 任务详情页的上下文用量：账本按 run_id（= task.id）聚合。上下文窗口按最近
     // 一次主循环的 provider/model 从模型目录查（内置目录 + 供应商实例都覆盖）；
     // 查不到留空——前端只显示 token 数，不套默认窗口。

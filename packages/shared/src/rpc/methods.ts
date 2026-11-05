@@ -71,6 +71,8 @@ import {
   widgetsListOutputSchema,
   widgetsPublishInputSchema,
   widgetsPublishOutputSchema,
+  widgetsRunCardInputSchema,
+  widgetsRunCardOutputSchema,
   widgetsUiCloseInputSchema,
   widgetsUiOpenInputSchema,
   widgetsUiOpenLinkInputSchema,
@@ -284,6 +286,7 @@ import {
   MEMO_BODY_MAX_CHARS,
   MEMO_GROUP_TITLE_MAX_CHARS,
   PROJECT_GOAL_MAX_CHARS,
+  TASK_INSTRUCTION_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
   WATCH_SELECTOR_MAX_CHARS,
@@ -1496,6 +1499,27 @@ export const tasksAnswerInputSchema = z.object({
   /** D87 P4 L2：多选 = 选中的候选列表；表单 = 字段名 → 文本。单选不带。 */
   values: askUserValuesSchema.optional(),
 });
+/**
+ * D115 任务直注：用户在任务详情页注入坞对非终态任务自由文本追加指令。语义与
+ * 对话轮的 `inject_task` 完全一致（等问即回答 / 运行中 steer / 未启动入简报 /
+ * 外部 Agent `queued`），见 docs/design/56 §1。
+ */
+export const tasksInjectInputSchema = z.object({
+  taskId: z.string().min(1),
+  text: z.string().min(1).max(TASK_INSTRUCTION_MAX_CHARS),
+});
+export const tasksInjectOutputSchema = z.object({
+  delivery: z.enum(['delivered', 'queued']),
+});
+/**
+ * D116 每 Bot 任务列表（Bot 详情「任务」tab）：该 Bot 拉起的全部任务（跨对话
+ * 全集），created_at 倒序。见 docs/design/56 §2。
+ */
+export const tasksListByBotInputSchema = z.object({
+  botId: z.string().min(1),
+  limit: z.number().int().min(1).max(200).default(100),
+});
+export const tasksListByBotOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
 
 // --- grants (P03) -----------------------------------------------------------
 
@@ -2560,6 +2584,8 @@ export const rpcMethodSchemas = {
   'widgets.list': { input: widgetsListInputSchema, output: widgetsListOutputSchema },
   'widgets.delete': { input: widgetsDeleteInputSchema, output: widgetsDeleteOutputSchema },
   'widgets.publish': { input: widgetsPublishInputSchema, output: widgetsPublishOutputSchema },
+  // D117 组件直接运行（Bot 详情「组件」tab 卡片点击，docs/design/56 §3）。
+  'widgets.runCard': { input: widgetsRunCardInputSchema, output: widgetsRunCardOutputSchema },
   // D112 微应用（docs/design/55-bot-micro-app-runtime.md）：能力面专属入口（预检 / 诊断 / 管理）。
   'microApps.preflight': { input: microAppsPreflightInputSchema, output: microAppsPreflightOutputSchema },
   'microApps.ai.chat': { input: microAppsAiChatInputSchema, output: microAppsAiChatOutputSchema },
@@ -2788,6 +2814,9 @@ export const rpcMethodSchemas = {
   'tasks.usage': { input: taskIdInputSchema, output: tasksUsageOutputSchema },
   'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
   'tasks.answer': { input: tasksAnswerInputSchema, output: okOutput },
+  // D115 任务直注（Bot 详情「任务」tab 与任务详情页注入坞，docs/design/56 §1）。
+  'tasks.inject': { input: tasksInjectInputSchema, output: tasksInjectOutputSchema },
+  'tasks.listByBot': { input: tasksListByBotInputSchema, output: tasksListByBotOutputSchema },
   'effects.list': { input: taskIdInputSchema, output: effectsListOutputSchema },
   'grants.list': { input: grantsListInputSchema, output: grantsListOutputSchema },
   'grants.revoke': { input: grantIdInputSchema, output: okOutput },
@@ -3350,6 +3379,7 @@ const APP_METHODS = [
   'widgets.list',
   'widgets.delete',
   'widgets.publish',
+  'widgets.runCard',
   'microApps.preflight',
   'microApps.ai.chat',
   'microApps.ai.sessionCreate',
@@ -3440,6 +3470,8 @@ const APP_METHODS = [
   'tasks.get',
   'tasks.active',
   'tasks.answer',
+  'tasks.inject',
+  'tasks.listByBot',
   'effects.list',
   'grants.list',
   'grants.revoke',

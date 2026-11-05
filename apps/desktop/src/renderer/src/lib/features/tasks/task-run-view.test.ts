@@ -499,3 +499,21 @@ describe('pendingTaskQuestionOf（详情页提问条）', () => {
     expect(source).toContain('<TaskQuestionCard message={pendingQuestion} />');
   });
 });
+
+describe('TaskInjectDock（D115 注入坞，docs/design/56 §1）', () => {
+  it('非终态任务在页面最后一位渲染注入坞，经 tasks.inject 直注（源码契约锁接线）', () => {
+    const source = readFileSync(new URL('./TaskRunView.svelte', import.meta.url), 'utf8');
+    expect(source).toContain("import TaskInjectDock from './TaskInjectDock.svelte';");
+    expect(source).toContain('{#if task !== null && active}');
+    expect(source).toContain('<TaskInjectDock {taskId} awaitingInput={task.awaitingInput} />');
+    const dock = readFileSync(new URL('./TaskInjectDock.svelte', import.meta.url), 'utf8');
+    expect(dock).toContain('tasks.inject(taskId, instruction)');
+    expect(dock).toContain('TASK_INSTRUCTION_MAX_CHARS');
+    expect(dock).toContain("event.key === 'Enter' && !event.shiftKey && !event.isComposing");
+    expect(dock).toContain('data-testid="task-run-inject-input"');
+    expect(dock).toContain('data-testid="task-run-inject-send"');
+    // queued（外部 Agent 不支持中途插入）如实警示，与任务卡「未送达」同口径。
+    expect(dock).toContain('task.run.injectQueued');
+    expect(dock).toContain('task.run.injectHintAwaiting');
+  });
+});

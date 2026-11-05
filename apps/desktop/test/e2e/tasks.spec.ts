@@ -334,3 +334,92 @@ test('a task question card: picking an option goes straight into the task', asyn
     await closeSession(session);
   }
 });
+
+// D115/D116/D117（docs/design/56）：任务详情页注入坞直注 → steer 气泡；Bot 详情
+// 三 tab（详情 / 组件 / 任务）——任务 tab 列出该 Bot 的任务、行点击进详情页。
+test('inject dock steers a running task; bot detail tabs list its tasks', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-tasks-steer-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '小控');
+
+    const held = step().inTask().hold().replyToolCall('read', { path: 'notes/a.md' });
+    const final = step()
+      .inTask()
+      .expect((req) => JSON.stringify(req.body).includes('加个日期'))
+      .replyText('RESULT 直注完成');
+    // 单脚本：held 之后的 final / wake 一直留在队列里（再次 script() 会整体替换，
+    // 会把未消费的 final 顶掉）。
+    llm.script('mock-main', [
+      startTask('直注任务', false),
+      step().inTurn().replyText('好的，直注任务开始'),
+      held,
+      final,
+      step().inTurn().expect(isWake).replyText('直注任务做完了'),
+    ]);
+    await send(page, '直注任务');
+    const card = taskCard(page, '直注任务');
+    await expect(card).toHaveAttribute('data-task-state', 'running', { timeout: 60_000 });
+    await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
+
+    // D116 修订：任务详情页只占中间对话区——右栏打开着进任务页，应保持可见。
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    }
+    await expect(page.locator('[data-testid="right-panel"]')).toBeVisible();
+
+    // Open the task detail page: the inject dock sits at the very bottom.
+    await card.click();
+    await expect(page.locator('[data-testid="task-run-view"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="right-panel"]')).toBeVisible();
+    const injectInput = page.locator('[data-testid="task-run-inject-input"]');
+    await expect(injectInput).toBeVisible();
+    await injectInput.fill('加个日期');
+    await page.locator('[data-testid="task-run-inject-send"]').click();
+    // Delivered: the steer bubble appears in the timeline.
+    await expect(page.locator('[data-testid="task-run-steer-text"]')).toContainText('加个日期', {
+      timeout: 30_000,
+    });
+
+    // The task finishes; the dock hides on the terminal state, the report shows.
+    held.release();
+    await expect(page.locator('[data-testid="task-run-report"]')).toContainText('RESULT 直注完成', {
+      timeout: 60_000,
+    });
+    await expect(page.locator('[data-testid="task-run-inject"]')).toHaveCount(0);
+
+    // Back to the chat, open the bot detail: default tab is 详情.
+    await page.locator('[data-testid="task-run-back"]').click();
+    if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    }
+    await expect(page.locator('[data-testid="right-panel-tabs"]')).toBeVisible();
+    await expect(page.locator('[data-testid="right-panel-tab-detail"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.locator('[data-testid="right-panel-tab-tasks-badge"]')).toHaveCount(0);
+
+    // 任务 tab: the finished task is listed; clicking the row reopens its page.
+    await page.locator('[data-testid="right-panel-tab-tasks"]').click();
+    const row = page.locator('[data-testid^="bot-task-item-"]').first();
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row).toContainText('直注任务');
+    await row.click();
+    await expect(page.locator('[data-testid="task-run-view"]')).toBeVisible({ timeout: 15_000 });
+    await page.locator('[data-testid="task-run-back"]').click();
+
+    // 组件 tab: no widgets yet → the empty state.
+    await page.locator('[data-testid="right-panel-tab-widgets"]').click();
+    await expect(page.locator('[data-testid="bot-widgets-tab-empty"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="right-panel-tab-detail"]').click();
+    await expect(page.locator('[data-testid="bot-menu"]')).toBeVisible();
+  } finally {
+    llm.releaseAll();
+    await closeSession(session);
+  }
+});

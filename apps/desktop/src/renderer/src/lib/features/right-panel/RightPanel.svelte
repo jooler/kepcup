@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { X, Monitor, Pencil } from '@lucide/svelte';
-  import type { BotProfile, WidgetsListItem } from '@kepcup/shared';
+  import { X, Monitor, Pencil, Info, Blocks, ListTodo } from '@lucide/svelte';
+  import type { BotProfile } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
   import { motionMs, MOTION } from '$lib/motion';
   import { toast } from 'svelte-sonner';
@@ -30,8 +30,11 @@
     type BotConfigSection,
   } from '$lib/features/bot-panel/bot-config-sections';
   import BotMenu from './BotMenu.svelte';
-  import BotWidgetDetail from './BotWidgetDetail.svelte';
+  import BotWidgetsTab from './BotWidgetsTab.svelte';
+  import BotTasksPanel from './BotTasksPanel.svelte';
   import DetailHeader from './DetailHeader.svelte';
+  import { botTasks } from './bot-tasks.svelte';
+  import { isActiveTask } from '$lib/features/tasks/task-view';
   import WorkdirSelector from '$lib/features/workdirs/WorkdirSelector.svelte';
   import MemoryTab from './MemoryTab.svelte';
   import SkillsTab from './SkillsTab.svelte';
@@ -72,16 +75,34 @@
   const narrow = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
 
+  // D116：任务 tab 的列表与「任务」tab 触发器的进行中徽标共用 botTasks；Bot
+  // 变化即重载（面板的手动刷新与 store 的 task.updated 订阅维持新鲜）。
+  const activeTaskCount = $derived(
+    bot !== null && botTasks.botId === bot.id
+      ? botTasks.items.filter((entry) => isActiveTask(entry)).length
+      : 0,
+  );
+  $effect(() => {
+    const current = bot;
+    if (current !== null && current.status === 'active') void botTasks.load(current.id);
+  });
+
   let draft = $state<BotProfile | null>(null);
   /**
-   * Bot 详情的统一下钻状态（tabs 已移除，所有内容收进一张二级菜单列表）：null =
-   * 菜单首页；否则为下钻的详情——配置条目（BotProfileForm section 模式）、组件
-   * 查看（BotWidgetDetail）或原各 tab 的内容。深链锚点按
-   * BOT_CONFIG_ANCHOR_SECTIONS 直达对应配置条目。
+   * D116 三 tab（docs/design/56 §2）：头部资料卡下切换 详情（默认，原二级菜
+   * 单）/ 组件（卡片直运行）/ 任务（每 Bot 任务列表）。tab 条手写（不用
+   * components/ui/tabs——bits-ui 输出 data-state 而样式变体在 data-active 上）。
+   */
+  type PanelTab = 'detail' | 'widgets' | 'tasks';
+  let tab = $state<PanelTab>('detail');
+  /**
+   * 详情 tab 的统一下钻状态：null = 菜单首页；否则为下钻的详情——配置条目
+   * （BotProfileForm section 模式）或原各 tab 的内容。深链锚点按
+   * BOT_CONFIG_ANCHOR_SECTIONS 直达对应配置条目。组件 tab 无下钻（2026-11-06
+   * 精简：metadata 上卡、菜单只留删除）。
    */
   type PanelDetail =
     | { kind: 'profile'; section: BotConfigSection }
-    | { kind: 'widget'; widget: WidgetsListItem }
     | { kind: 'memory' }
     | { kind: 'skills' }
     | { kind: 'wiki' }
@@ -89,14 +110,16 @@
     | { kind: 'schedules' }
     | { kind: 'watches' };
   let detail = $state<PanelDetail | null>(null);
-  let configMenu = $state<BotMenu | null>(null);
   let workdirSelector = $state<WorkdirSelector | null>(null);
+  /** tab 条的固定顺序（D116：详情 / 组件 / 任务）与图标。 */
+  const PANEL_TABS: Array<{ id: PanelTab; icon: typeof Info }> = [
+    { id: 'detail', icon: Info },
+    { id: 'widgets', icon: Blocks },
+    { id: 'tasks', icon: ListTodo },
+  ];
 
   /** 详情标题的文案键（返回头 + 深链共用）。 */
-  const DETAIL_TITLE_KEYS: Record<
-    Exclude<PanelDetail['kind'], 'profile' | 'widget'>,
-    MessageKey
-  > = {
+  const DETAIL_TITLE_KEYS: Record<Exclude<PanelDetail['kind'], 'profile'>, MessageKey> = {
     memory: 'rightPanel.tabMemory',
     skills: 'rightPanel.tabSkills',
     wiki: 'rightPanel.tabWiki',
@@ -105,11 +128,20 @@
     watches: 'watches.title',
   };
 
-  // D80（回执卡 / 提议卡的「全部定时任务」）与设置卡深链（'profile' / 'skills'）。
+  /** 详情 tab 的三个文案键（tab 条）。 */
+  const TAB_LABEL_KEYS: Record<PanelTab, MessageKey> = {
+    detail: 'rightPanel.tabDetail',
+    widgets: 'rightPanel.tabWidgets',
+    tasks: 'rightPanel.tabTasks',
+  };
+
+  // D80（回执卡 / 提议卡的「全部定时任务」）与设置卡深链（'profile' / 'skills'）：
+  // 一律归位详情 tab 再下钻。
   $effect(() => {
     const requested = shell.rightPanelTabRequest;
     if (requested === null) return;
     shell.rightPanelTabRequest = null;
+    tab = 'detail';
     detail =
       requested === 'skills'
         ? { kind: 'skills' }
@@ -153,6 +185,7 @@
     const anchor = shell.botPanelAnchor;
     if (anchor === null) return;
     const section = BOT_CONFIG_ANCHOR_SECTIONS[anchor];
+    tab = 'detail';
     detail = section !== undefined ? { kind: 'profile', section } : null;
     void revealSettingsAnchor({
       anchor,
@@ -205,9 +238,10 @@
         serverProfile,
       });
       if (result.action === 'replace') {
-        // 换 Bot 时下钻详情一并回到菜单首页。
+        // 换 Bot 时下钻详情与 tab 一并回到首页（详情 tab）。
         if (draftBotId !== bot.id) {
           detail = null;
+          tab = 'detail';
         }
         draft = structuredClone(result.draft);
         savedProfile = bot.profile;
@@ -218,6 +252,7 @@
       savedProfile = null;
       draftBotId = null;
       detail = null;
+      tab = 'detail';
     }
   });
 
@@ -530,8 +565,59 @@
         <AvatarPicker bind:open={pickerOpen} {bot} />
       </div>
 
-      <!-- 统一二级菜单 / 下钻详情（tabs 已移除）：默认菜单列表，点行进入详情。 -->
-      <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
+      <!-- D116 三 tab：详情（默认）/ 组件 / 任务。横向居中 + 图标；手写 pill 条
+           （components/ui/tabs 的 bits-ui data-state 与样式变体不匹配，见
+           ProjectTabs 注释）。 -->
+      <div
+        class="flex shrink-0 items-center justify-center gap-0.5 px-4 pb-2"
+        role="tablist"
+        data-testid="right-panel-tabs"
+      >
+        {#each PANEL_TABS as entry (entry.id)}
+          {@const tabActive = tab === entry.id}
+          {@const TabIcon = entry.icon}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tabActive}
+            data-active={tabActive ? 'true' : undefined}
+            data-testid={`right-panel-tab-${entry.id}`}
+            class="inline-flex cursor-pointer items-center justify-center gap-1 rounded-full px-2.5 py-0.5 text-[13px] transition-colors {tabActive
+              ? 'bg-muted font-medium text-foreground'
+              : 'text-foreground/50 hover:bg-accent/60 hover:text-foreground/80'}"
+            onclick={() => {
+              tab = entry.id;
+              // 任务 tab 激活时重拉（幂等，seq 防竞态）：面板挂载很久后点开也拿最新。
+              if (entry.id === 'tasks' && bot?.status === 'active') void botTasks.load(bot.id);
+            }}
+          >
+            <TabIcon class="size-3.5 shrink-0" aria-hidden="true" />
+            {t(TAB_LABEL_KEYS[entry.id])}
+            {#if entry.id === 'tasks' && activeTaskCount > 0}
+              <span
+                class="text-[11px] tabular-nums text-foreground/60"
+                data-testid="right-panel-tab-tasks-badge"
+              >
+                {activeTaskCount}
+              </span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      {#if tab === 'tasks'}
+        <!-- 任务 tab（D116）：该 Bot 拉起的全部任务，行点击进主区任务详情页。 -->
+        <div class="flex min-h-0 flex-1 flex-col p-4">
+          <BotTasksPanel botId={bot.id} />
+        </div>
+      {:else if tab === 'widgets'}
+        <!-- 组件 tab（D117）：卡片直运行 + 「…」菜单 + 详情下钻。 -->
+        <div class="flex min-h-0 flex-1 flex-col p-4">
+          <BotWidgetsTab botId={bot.id} conversationId={conversation?.id} />
+        </div>
+      {:else}
+        <!-- 详情 tab：统一二级菜单 / 下钻详情（默认）。 -->
+        <div class="min-h-0 flex-1 overflow-y-auto p-4" data-testid="bot-panel-content">
         <!-- 工作目录（P04）：目录设置弹框挂在这里，菜单的工作目录行经 openWorkdir 打开。 -->
         {#if conversation}
           <WorkdirSelector
@@ -548,7 +634,6 @@
             <EgressSummary botId={bot.id} />
             <!-- D48 导出为模板已上移到顶栏（关闭按钮左侧）。 -->
             <BotMenu
-              bind:this={configMenu}
               profile={draft}
               botId={bot.id}
               conversationId={conversation?.id}
@@ -556,7 +641,6 @@
               workdirDisabled={conversation?.readOnly}
               deletable={bot.systemRole !== 'butler'}
               onOpenSection={(section) => (detail = { kind: 'profile', section })}
-              onOpenWidget={(widget) => (detail = { kind: 'widget', widget })}
               onOpenWorkdir={() => workdirSelector?.openWorkdir()}
               onOpenMemory={() => (detail = { kind: 'memory' })}
               onOpenSkills={() => (detail = { kind: 'skills' })}
@@ -565,17 +649,6 @@
               onOpenSchedules={() => (detail = { kind: 'schedules' })}
               onOpenWatches={() => (detail = { kind: 'watches' })}
               onRemoveBot={() => void askRemove()}
-            />
-          </div>
-        {:else if detail.kind === 'widget'}
-          <!-- 组件直查详情：菜单置顶组件行的落点（发卡 / 删除在此）。 -->
-          <div in:fade={{ duration: motionMs(MOTION.content) }}>
-            <BotWidgetDetail
-              botId={bot.id}
-              conversationId={conversation?.id}
-              widget={detail.widget}
-              onChanged={() => void configMenu?.refresh()}
-              onBack={() => (detail = null)}
             />
           </div>
         {:else if detail.kind === 'profile'}
@@ -687,7 +760,8 @@
             {/if}
           </div>
         {/if}
-      </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </aside>

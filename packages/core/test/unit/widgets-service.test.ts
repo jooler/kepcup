@@ -292,6 +292,131 @@ describe('WidgetService create/update', () => {
 });
 
 describe('WidgetService 审查与资源', () => {
+  it('runCard（D117 直接运行）：不落消息行，登记虚拟卡；cardOf / open 沿合成 id 全链路可用', () => {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '直运行',
+      description: '说明文字',
+      html: HTML,
+      scope: 'bot',
+      runId: 'run_r1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    const cardsBefore = h.cards.length;
+    const result = h.service.runCard({ botId: 'bot_a', widgetId: created.widgetId, conversationId: 'conv_2' });
+    // 不落消息行：卡片只登记进虚拟表。
+    expect(h.cards.length).toBe(cardsBefore);
+    expect(result.messageId).toBe(`bot-widget:${created.widgetId}:conv_2`);
+    expect(result.card).toMatchObject({
+      widgetId: created.widgetId,
+      title: '直运行',
+      description: '说明文字',
+      scope: 'bot',
+      version: 1,
+      botId: 'bot_a',
+    });
+    // cardOf 走虚拟分支：anchor = 指定会话，open / source / 复开沿合成 id 可用。
+    const resolved = h.service.cardOf(result.messageId);
+    expect(resolved.conversationId).toBe('conv_2');
+    expect(resolved.card.widgetId).toBe(created.widgetId);
+    expect(h.service.source(result.messageId).html).toBe(HTML);
+    const opened = h.service.open({ messageId: result.messageId });
+    expect(opened.widgetId).toBe(created.widgetId);
+    expect(opened.scope).toBe('bot');
+    // 幂等：同 (widget, anchor) 键重跑覆盖，不产生第二个虚拟卡。
+    const again = h.service.runCard({ botId: 'bot_a', widgetId: created.widgetId, conversationId: 'conv_2' });
+    expect(again.messageId).toBe(result.messageId);
+    advance(RATE_TICK_MS);
+  });
+
+  it('runCard：scope=conversation 组件 anchor 自己的会话；越权 / 缺会话 / 不存在的组件拒绝', () => {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '会话级',
+      description: '',
+      html: HTML,
+      scope: 'conversation',
+      runId: 'run_r2',
+    });
+    if (!created.ok) throw new Error('create failed');
+    const result = h.service.runCard({ botId: 'bot_a', widgetId: created.widgetId });
+    expect(result.messageId).toBe(`bot-widget:${created.widgetId}:conv_1`);
+    expect(h.service.cardOf(result.messageId).conversationId).toBe('conv_1');
+
+    // bot 级组件缺 conversationId → INVALID_INPUT（回复与回传没有落点）。
+    const botScoped = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: 'b',
+      description: '',
+      html: HTML,
+      scope: 'bot',
+      runId: 'run_r3',
+    });
+    if (!botScoped.ok) throw new Error('create failed');
+    expect(() => h.service.runCard({ botId: 'bot_a', widgetId: botScoped.widgetId })).toThrow(
+      /需要提供会话/,
+    );
+    // anchor 会话不存在 → INVALID_INPUT（悬空会话不能等到回传一步才暴露）。
+    expect(() =>
+      h.service.runCard({ botId: 'bot_a', widgetId: botScoped.widgetId, conversationId: 'conv_x' }),
+    ).toThrow(/不存在，无法作为组件运行的落点/);
+    // 不是这个 Bot 的组件 → FORBIDDEN；不存在的 widgetId → NOT_FOUND（断言到错误码口径）。
+    expect(() =>
+      h.service.runCard({ botId: 'bot_b', widgetId: botScoped.widgetId, conversationId: 'conv_1' }),
+    ).toThrow(/不是这个 Bot 的/);
+    expect(() =>
+      h.service.runCard({ botId: 'bot_a', widgetId: 'w_missing', conversationId: 'conv_1' }),
+    ).toThrow(/widgetId 不存在/);
+    advance(RATE_TICK_MS);
+  });
+
+  it('runCard：审查门沿虚拟 id 生效——未审查查询模板 open 拒绝，source 审查后重试成功', () => {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '带模板',
+      description: '',
+      html: HTML,
+      queries: [
+        { name: 'all', sql: "select json_extract(value_json, '$.n') as n from widget_kv order by n" },
+      ],
+      scope: 'bot',
+      runId: 'run_r4',
+    });
+    if (!created.ok) throw new Error('create failed');
+    const result = h.service.runCard({ botId: 'bot_a', widgetId: created.widgetId, conversationId: 'conv_2' });
+    // 虚拟路径不绕过审查门：open 抛 WIDGET_REVIEW_REQUIRED。
+    expect(() => h.service.open({ messageId: result.messageId })).toThrow(/WIDGET_REVIEW_REQUIRED|先在「查看源码」/);
+    // 沿同一虚拟 id 走 source（审查态）后重试成功。
+    h.service.source(result.messageId);
+    const opened = h.service.open({ messageId: result.messageId });
+    expect(opened.widgetId).toBe(created.widgetId);
+    advance(RATE_TICK_MS);
+  });
+
+  it('runCard：删除组件同步摘除虚拟卡登记，cardOf 不再命中已删组件', () => {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '将删',
+      description: '',
+      html: HTML,
+      scope: 'bot',
+      runId: 'run_r5',
+    });
+    if (!created.ok) throw new Error('create failed');
+    const result = h.service.runCard({ botId: 'bot_a', widgetId: created.widgetId, conversationId: 'conv_1' });
+    expect(h.service.cardOf(result.messageId).card.widgetId).toBe(created.widgetId);
+    expect(h.service.delete('bot_a', created.widgetId)).toBe(true);
+    // 虚拟卡已摘除：cardOf 走消息卡路径 → NOT_FOUND（报错口径不再失真）。
+    expect(() => h.service.cardOf(result.messageId)).toThrow(/找不到这张组件卡片/);
+    expect(() => h.service.open({ messageId: result.messageId })).toThrow();
+    advance(RATE_TICK_MS);
+  });
+
   it('source / open / resource：审查取原文、登记资源、host 校验、完整 WebApp 档 CSP', () => {
     const created = h.service.create({
       botId: 'bot_a',
