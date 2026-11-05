@@ -142,7 +142,8 @@
 
   const modelSummary = $derived.by(() => {
     const value = engineValue(profile.runtime);
-    if (value.length === 0) return t('rightPanel.configNotSet');
+    // 模型 / 智能体留空 = 跟随设置里的默认主模型，不是「没设置」。
+    if (value.length === 0) return t('rightPanel.configFollowDefault');
     if (value.startsWith(AGENT_OPTION_PREFIX)) {
       return agentsStore.get(value.slice(AGENT_OPTION_PREFIX.length))?.name ?? value;
     }
