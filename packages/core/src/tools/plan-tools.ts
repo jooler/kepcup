@@ -9,9 +9,10 @@ import type { ToolDefinition, ToolResult } from '../agent/types.js';
 /**
  * `update_plan`（D93，docs/design/43-task-loop-harness.md §4）。
  *
- * 只注册给内置 pi 任务：模型用它维护一份结构化执行计划，宿主把当前计划
- * 追加到下一轮系统提示词的 `<current_plan>` 里，并把进度写进 run_steps。
- * 外部智能体有各自的原生 todo / plan 工具，不注入本工具。
+ * 只注册给内置 pi 任务：模型用它维护一份结构化执行计划，宿主在计划变化后把
+ * 当前计划以尾部 `<current_plan>` user 消息随下一次请求下发（不改系统提示词，
+ * 保持 prompt cache 前缀稳定），并把进度写进 run_steps。外部智能体有各自的
+ * 原生 todo / plan 工具，不注入本工具。
  */
 
 export const PLAN_STATUSES = ['pending', 'in_progress', 'completed'] as const;
@@ -105,7 +106,7 @@ export function planProgressText(state: PlanState): string {
   return `计划 ${completed}/${total}：${lastCompleted?.step ?? state.plan[0]?.step ?? ''}`;
 }
 
-/** 系统提示词里的计划块（不含外层分隔，由 PiEngine 决定排布）。 */
+/** 计划块的渲染（不含外层分隔，由 PiEngine 决定排布）。 */
 export function currentPlanPrompt(state: PlanState | null): string {
   if (state === null || state.plan.length === 0) return '';
   const lines = state.plan.map(

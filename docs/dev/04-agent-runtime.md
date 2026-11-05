@@ -9,7 +9,7 @@
 | AgentEngine 能力 | pi 机制 |
 |---|---|
 | 创建执行 | 每次执行创建一个 `Agent`（`@earendil-works/pi-agent-core`） |
-| 每次请求前刷新系统提示词 | `prepareRequest` / `transformContext` 中调用 `buildSystemPrompt()` |
+| 系统提示词（run 内冻结） | `prepareRequest` 在首个请求调用一次 `buildSystemPrompt()`，之后逐字节复用同一字符串；`transformContext` 只做压缩 |
 | `steer(text)` | `agent.steer({ role: 'user', content, timestamp })`，`steeringMode = 'all'`（同一步内的多次注入合并送达） |
 | `abort(reason)` | `agent.abort()`；`AbortSignal` 传入每个工具 |
 | 工具网关 | 工具的 `execute` 内部调用网关；`beforeToolCall` 只做最后一道校验（工具是否属于本 loop 的工具集） |
@@ -152,7 +152,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 实现位于 `core/src/agent/context/` 与 `dispatch/tasks.ts`。对话轮与任务共用执行骨架（orchestrator `#executeRun`），输入由三部分组成：
 
-1. **系统提示词**：每次向模型发请求前重新生成（「我的状态」、授权等可能在执行中变化）；对话轮与任务各有一版 `<platform_rules>`（见下）。
+1. **系统提示词**：每个 run 只构建一次（首个请求），run 内逐字节不变——prompt cache 按前缀匹配，`tools` / `system` / 最后一条消息都是断点，system 一变后面全部失效。动态状态（计划、steer、工具结果）只能以消息形式追加在尾部；对话轮与任务各有一版 `<platform_rules>`（见下）。
 2. **一条用户消息**，按顺序包含：对话上下文段、续接段（只有任务、只在 `continues_task_id` 时）、`<tasks>` 段（只有对话轮、有进行中任务时）、触发段（对话轮）或任务简报段（任务）。
 3. 执行中的注入（steer）作为后续的用户消息——**只有任务会被注入**（`inject_task`），对话轮运行中到达的消息缓冲到下一轮。
 
@@ -171,9 +171,9 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 内置 pi 任务（以及子代理）在 `PiEngine` 里启用自动上下文压缩，对话轮不启用（上下文有界）。设计见 [design/43](../design/43-task-loop-harness.md)，实施见 [todo/task-loop-harness.md](../../todo/task-loop-harness.md)。
 
 - **压缩点**：pi-agent-core 的 `transformContext`（每次模型请求前）。先做旧工具输出确定性裁剪，仍超阈值再用轻量模型摘要；摘要失败 / 超时 / 无模型时退化为确定性裁剪，不阻断任务。
-- **保留**：system prompt、首条任务简报、`<current_plan>`、最近约 30% 窗口；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
+- **保留**：system prompt、首条任务简报、最近约 30% 窗口（含最近一次 `<current_plan>` 快照）；裁剪点必须落在完整 turn 边界，不得留下孤立 `tool_result`。摘要以 `<compacted_history>` user 消息放回，标注为数据不是指令。
 - **模型**：`LlmPurpose='task_compaction'`（Bot 轻量 → 全局轻量 → Bot 主）；用量记当前任务 run。
-- **计划**：内置任务注册 `update_plan`；run 内存状态在每次请求时以 `<current_plan>` 追加到系统提示词；每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
+- **计划**：内置任务注册 `update_plan`；run 内存状态在计划变化后以尾部 `<current_plan>` user 消息随下一次请求下发（**不写 system**，否则断点前的前缀每轮都变）；同一份计划不重复追加，压缩摘要另带当前计划全文。每次更新发 `progress`（`计划 x/y：…`）落 `run_steps`，任务卡最近进度与 `continues_task_id` 的 digest 都能看到。外部智能体任务不注入该工具，使用原生 todo。
 - **护栏**：`TASK_TOKEN_SOFT_BUDGET`（0 = 关闭）按 `tokensSoFar()` 在 80% / 100% 注入收敛提示；空转检测按「同工具 + 同参数 + 同结果」在最近 `idleWindowCalls` 次调用里计数，达到阈值先提示、再阻止、仍重复则任务 failed（`LOOP_DETECTED`）。
 - **无活动看门狗 / 墙钟**：`TaskHost` 用引擎事件（assistant / tool_call / tool_result / progress / steer）维护 `lastActivityAt`；内置任务在 `running` 且无 `questionSince` 时，超过 `taskLoop.stallTimeoutMinutes`（默认 20，0 = 关闭）没有活动 → failed（`stalled`）。总墙钟改读 `taskLoop.maxWallMinutes`（默认 240，0 = 不限制），不再固定 4 小时。审批 / 租约 / 用户回答等待不计入无活动看门狗；外部智能体保留自身 `AGENT_RUN_TIMEOUT_MS`（1 小时）。
 - **结果反馈**：模型 `length` → failed `OUTPUT_TRUNCATED`；`aborted` / `deferred` 等非正常停止 → failed；用户从任务卡取消（`runs.cancel`）→ failure 条目 + `user_cancelled` + 唤醒 Bot；Bot 自己的 `cancel_task` 不唤醒。
@@ -504,7 +504,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 
 ## 附件处理阶梯（P19）
 
-系统提示 `<file_handling>` 段注入四级升级路径：已安装技能 → `<recommended_skills>` 匹配预置技能（`install_skill(preset_id)`，轻授权）→ `web_search` 检索技能仓库（`install_skill(source_url)`，扫描审批）→ 如实告知不支持。`<recommended_skills>` 段由 `SkillPresetsService.promptSection()` 生成（仅未安装条目），随 `prepareRequest` 每次请求刷新——安装成功当次 run 即可用。
+系统提示 `<file_handling>` 段注入四级升级路径：已安装技能 → `<recommended_skills>` 匹配预置技能（`install_skill(preset_id)`，轻授权）→ `web_search` 检索技能仓库（`install_skill(source_url)`，扫描审批）→ 如实告知不支持。`<recommended_skills>` 段由 `SkillPresetsService.promptSection()` 生成（仅未安装条目），随系统提示词在 run 的首个请求快照（run 内冻结，保 prompt cache）；安装成功后从下一次 run 起生效。
 
 ## 分享附件的 workspace 副本路径（D94）
 
