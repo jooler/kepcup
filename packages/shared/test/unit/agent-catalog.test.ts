@@ -140,7 +140,7 @@ describe('capability resolution (P2)', () => {
 });
 
 describe('agent catalog', () => {
-  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, and InkCop', () => {
+  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, InkCop and the D118 targets', () => {
     for (const entry of AGENT_CATALOG) {
       expect(agentCatalogEntrySchema.safeParse(entry).success).toBe(true);
     }
@@ -153,6 +153,15 @@ describe('agent catalog', () => {
       'cursor',
       'antigravity-acp',
       'inkcop',
+      // D118 新目标（todo/acp-hardening-and-new-targets.md §3）：preview 档、
+      // releaseGate 未放行，真机 spike 前不出现在发行构建。
+      'cline',
+      'github-copilot-cli',
+      'goose',
+      'qwen-code',
+      'kimi',
+      'grok-build',
+      'devin',
     ]);
     expect(AGENT_CATALOG[0]).toMatchObject({ provider: 'generic-acp', releaseGate: 'testkit' });
     expect(AGENT_CATALOG[1]).toMatchObject({

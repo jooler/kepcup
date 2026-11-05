@@ -647,6 +647,19 @@ export const AGENT_KILL_GRACE_MS = 5_000;
 /** Cap of a partial (newline-less) agent stderr line kept between chunks. */
 export const AGENT_STDERR_TAIL_MAX_CHARS = 4_096;
 /**
+ * Upper bound of one agent stdout line (D118): the ACP SDK's `ndJsonStream`
+ * buffers a whole line to parse it and imposes no cap — a runaway agent (or a
+ * corrupted stream) could otherwise grow the host's memory without bound. The
+ * connection is closed (the run fails) when the limit is exceeded.
+ */
+export const AGENT_STDOUT_LINE_MAX_BYTES = 256 * 1024 * 1024;
+/**
+ * A prompt in flight with no `session/update` for this long is stalled (D118):
+ * cancelled and failed instead of burning the run's whole time limit. A pending
+ * permission request (waiting for the user) pauses the watchdog.
+ */
+export const AGENT_TURN_STALL_MS = 5 * 60_000;
+/**
  * Upper bound of one background `complete()` on an external agent (P6: one-shot
  * minimal session — cold start of the agent process included). The callers'
  * own deadlines (triage, compaction …) still apply on top.

@@ -88,9 +88,10 @@ interface AgentCatalogEntry {
   transport: 'acp' | 'shim';       // shim = 进程内协议垫片
   tier: 'supported' | 'preview';   // 预览档默认权限更严、UI 标注
   nativeCapabilities: Partial<Record<CapabilityId, string[]>>;  // 自带能力 → 原生工具名（用于默认值与 §4.2 原生优先提示）
-  auth: { kinds: Array<'subscription' | 'api-key' | 'gateway'>; note: string };
+  auth: { kinds: Array<'subscription' | 'api-key' | 'gateway' | 'anonymous'>; note: string };
   terms?: { noticeKey: string };   // 条款提示文案 key（可随版本下线某个 Agent）
   releaseGate?: string;            // 发行门禁：未放行时发行构建不收录该条目（开发构建照常可用）
+  initTimeoutMs?: number;          // 启动 + initialize 的超时上限覆盖（KepCup 扩展，D118；缺省 AGENT_INIT_TIMEOUT_MS=60s，dsh 设 120s）
 }
 ```
 
@@ -244,6 +245,8 @@ interface AgentCatalogEntry {
 - **事件映射**：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（带 `parentToolUseId` 的子代理内部调用与文本不切分、不落步骤，只进状态行；状态行文案取 `tool_call.title`）；原生 `tool_call` / `tool_call_update` → `tool_call` / `tool_result`（`tool_call_update` 的 diff 内容另算 `diffStats`：新增 / 删除行数，任务详情页工具行展示）；`agent_thought_chunk` 累积到该轮 `assistant` 的 `thinking` 字段（任务详情页展示，子代理的思考不落库）；`plan` → `progress`；`stopReason`：`end_turn`→completed、`cancelled`→cancelled（`skip_reply` 例外）、`refusal`/`max_tokens`/`max_turn_requests`→failed。
 - **steering**：prompt 进行中且 Provider 声明支持时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），应答 `injected` 才算送达；被拒、出错或 Agent 无视 `promptRequired` 自开新 turn（codex-acp 2.1.1，宿主立即取消该 turn）都经 `onSteerRejected` 交还 pending steer，在 run 结束后续投；不支持时直接回落。prompt 发出前 / 后台工具 follow-up 之前到达的消息并入下一个 prompt。每会话同一时刻只允许一个 prompt 的 Agent（如 DeepSeek Harness）只能回落。
 - **长耗时宿主工具**：桥调用超过 `AGENT_BRIDGE_TOOL_DETACH_MS`（45 s，低于 Codex 不可调的约 60 s MCP 超时）先应答「已转入后台」并继续执行；prompt 结束后 run 等待其完成，再以 follow-up prompt 把结果送回同一会话、同一 run（等待用户审批的工具因此不会被超时取消）。等待与 follow-up 都受 run 自身的时间上限约束（自 run 开始算；follow-up 只得到剩余时间，有下限）：到期中止仍在后台的调用，只发一次报告超时的 follow-up 即结算。
+- **turn 停滞看门狗**（D118）：prompt 在途期间超过 `AGENT_TURN_STALL_MS`（5 分钟）没有任何 `session/update`、且没有等待用户 / 权限桥的请求时，判为停滞：`session/cancel`（尽力而为）后 run 以超时失败——僵死的 Agent 不烧满 run 的 60 分钟上限；跨 prompt 的间隙（等待后台工具的 follow-up）不看门狗，仍由 run deadline 兜底。
+- **无输出崩溃 / 会话丢失的一次透明重试**（D118）：Agent 进程在 run 中途消失、或 prompt 以「会话不存在」失败（协议 `-32002`，或 Provider 的 `sessionNotFound` hook 命中其私有错误形态），且 run 里**还没有产生任何 agent 输出**（消息 / 思考 / 工具事件）时，整个 run 尝试流程透明地重跑一次（每个 run 至多一次）：重新 acquire（新进程）→ `#openSession` 自然走到 resume / load（Agent 侧会话若还在则恢复，否则新建）→ 重发 prompt，`external.onSession` 以新会话 id 再回调。已产生输出后的崩溃**不**重试（透明重试会重复已流式给用户的内容），维持失败（`AGENT_PROCESS_EXITED`）。
 - **跨会话并发**（2026-10-08）：同一 Agent 的所有会话共用一个进程，同一时刻有几个会话在跑 prompt 由 `features.parallelSessions` 决定——声明 true（经锁定版本源码核对：会话表、逐会话的取消 / 轮次状态、没有进程级「当前 prompt」，§9.2）的 Agent 按 `agent:{id}` 并发上限（缺省 `AGENT_DEFAULT_CONCURRENCY`）并行；false 的 Agent 并发恒为 1，用户在设置里调高也被钳到 1（fail-safe，设置页显示生效值）。调度器、后台路由与设置视图共用 `providers/index.ts` 的 `agentConcurrency()`。
 - **执行记录**：`runs.engine`（`builtin` | `agent:{id}`）、`runs.agent_session_id`。
 - **中断 / 删除**：进程退出或崩溃 → 活跃 run 失败（应用退出时按 D49 标中断）；该会话不再留在（已不存在的）进程里、桥 token 吊销，但会话行保留，下次 run 经 `session/resume` / `session/load` 恢复（Provider / Agent 不支持则新建）——崩溃本身不算「中毒」；只有 run 在崩溃前已因自身原因中毒（超时、取消后不应答、会话设置调用不应答、模式纠偏失败）才删行；对话 / Bot 删除或移出项目组时 `session/delete`（Agent 支持且会话仍开在活进程里时，尽力而为）并删行；删除发生在会话建立 / 恢复期间（级联时会话尚不存在）时，会话建好后 orchestrator 拒绝记录并丢弃它——不发 prompt、释放时 `session/delete`；复核期间的进程崩溃同样不算中毒；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
@@ -314,22 +317,41 @@ interface AgentCatalogEntry {
 
 目录条目带条款提示，可随应用更新调整或下线某个 Agent，不影响内置引擎。
 
+### 9.2.1 候选接入清单（D118，2026-11-06 OpenBot 对比调研）
+
+对同类应用 OpenBot 0.62.0 的预置 ACP 目标做过对比，Registry（`cdn.agentclientprotocol.com/registry/v1/latest/registry.json`）已收录、本设计尚缺的目标（全部 `preview` 档 + `releaseGate`，真机 spike + 合规确认后才放行发行；接入步骤照 §10 手册）：
+
+| 目标 | Registry 条目 | 启动 | 认证 | Provider |
+| --- | --- | --- | --- | --- |
+| Cline | `cline` 3.0.74（npx） | `--acp` | Cline 账号（authenticate `cline`）或设备码；各家 API key | generic-acp（暂无差异） |
+| GitHub Copilot | `github-copilot-cli` 1.0.105（npx `@github/copilot`） | `--acp` | Copilot 订阅（`copilot login`）；登出走 ACP `logout` 方法 | generic-acp |
+| goose | `goose` 1.57.0（binary，Registry 带 sha256） | `acp` | goose 配置内各家 provider key | generic-acp |
+| Qwen Code | `qwen-code` 0.26.7（npx） | `--acp --experimental-skills` | Qwen OAuth 免费档或各家 API key | generic-acp |
+| Kimi CLI | `kimi` 1.52.0（binary，Registry 带 sha256；无 darwin-x86_64 归档） | `acp` | Kimi 会员 / API key（`kimi login`） | `kimi`（sessionNotFound 形态待 spike 复核） |
+| Grok Build | `grok-build` 1.0.77（npx `@xai-official/grok`） | `--no-auto-update agent stdio` | grok.com 登录或 xAI API key | generic-acp |
+| Devin | `devin` 3000.11.234（binary，Registry 无 sha256 → 导入脚本 `--hash` 计算） | `acp` | Devin 账号（authenticate `devin-browser`） | `devin`（sessionNotFound 形态待 spike 复核） |
+
+暂缓 / 不做：hermes（官方 install.sh 安装，无 Registry 条目）、omp / Oh My Pi；Gemini CLI（与已接入的 Antigravity 同厂，条款同源另评）；用户自定义 ACP agent 入口（OpenBot CustomAcpAgentDialog 的 command/args/env 形态）——未经实测的 Agent 无法进入本设计的权限 / 沙箱模型，策展目录路线不变。锁定版本已落后 Registry 的既有条目（claude-acp 0.86.0→0.100.0、codex-acp 2.1.1→2.5.0、cursor、antigravity-acp、opencode）升版前须重新过离线源码核对。
+
 ## 10 可扩展性：Provider 架构
 
 ```text
 shared/src/domain/agent-catalog.ts      目录条目（数据，含 ACP Registry 同构字段 + 扩展字段）
 shared/src/domain/host-capabilities.ts  能力包登记表
 core/src/agent/external/
-  ├─ engine.ts            ExternalAgentEngine（AgentEngine 实现，协议无关的 run 编排、事件映射、steer/abort）
-  ├─ host.ts              进程管理（每个 Agent 一个进程，多会话，空闲退出）
-  ├─ acp/client.ts        ACP 连接（ClientSideConnection + 宿主 Client 实现：permission / fs 拒绝 / terminal 拒绝）
+  ├─ engine.ts            ExternalAgentEngine（AgentEngine 实现，协议无关的 run 编排、事件映射、steer/abort、
+  │                       turn 停滞看门狗、无输出崩溃 / 会话丢失的一次透明重试——D118）
+  ├─ host.ts              进程管理（每个 Agent 一个进程，多会话，空闲退出；stdout 行长上限包装）
+  ├─ acp/client.ts        ACP 连接（ClientSideConnection + 宿主 Client 实现：permission / fs 拒绝 / terminal 拒绝；
+  │                       isSessionNotFound + Provider 的 sessionNotFound hook——D118）
+  ├─ acp/line-limit.ts    stdout 单行字节上限（透传计数，超限 error 掉流——SDK ndJsonStream 无限制，D118）
   ├─ mcp-bridge.ts        宿主 MCP 桥
   ├─ permission-bridge.ts 权限分级
   ├─ installer.ts         npx / binary / system 三种分发的安装与校验
   └─ providers/
        ├─ index.ts        PROVIDERS 登记表
        ├─ generic-acp.ts  通用实现（只用 ACP 标准 + 已核对扩展）
-       └─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts
+       └─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts  kimi.ts  devin.ts
           （shim 型 Provider 以 `connect(proc, client)` 返回进程内 ACP Agent；ZCode 已放弃，见 §9.2）
 ```
 
@@ -346,6 +368,7 @@ interface AgentProvider {
   agentSideConfigFiles: string[];                                  // 无法关闭、需确认的 workdir 内配置文件
   forbiddenModes?: string[]; safeModes?: string[];                 // 叠加 / 豁免全局禁止模式表（Antigravity 禁 auto_edit；Cursor 的 agent 与 Codex 同名不同义）
   authMethods?(advertised: AuthMethod[]): AuthMethod[];            // 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）
+  sessionNotFound?(err: unknown): boolean;                         // 该 Agent「会话不存在」的私有错误形态（协议 -32002 之外的各家变体，D118）
   classifyError?(err: unknown, phase: 'initialize' | 'session' | 'prompt'): 'auth_required' | 'not_installed' | 'incompatible' | 'other'; // 各家未登录的错误形态不同（todo 附录 A.4）
   extRequests?: Record<string, (params, ctx) => Promise<unknown>>; // 厂商扩展请求（如 cursor/ask_question、cursor/create_plan）
   connect?(proc, client): AcpAgentLike;                            // 仅 shim 型 Provider 提供（client = 垫片发 session/update / 权限请求的一侧）

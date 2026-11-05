@@ -134,6 +134,12 @@ export const agentCatalogEntrySchema = z.object({
    * 条目，未声明视为未放行（fail-closed）；开发构建与测试不受影响。
    */
   releaseGate: z.string().optional(),
+  /**
+   * 启动 + ACP `initialize` 的超时上限覆盖（D118）：个别 Agent 启动很重
+   * （DeepSeek Harness 的 npx 冷启动约 77 s，超过缺省的 60 s）。缺省
+   * `AGENT_INIT_TIMEOUT_MS`。
+   */
+  initTimeoutMs: z.number().int().min(1000).optional(),
 });
 export type AgentCatalogEntry = z.infer<typeof agentCatalogEntrySchema>;
 
@@ -377,6 +383,8 @@ const DSH_AGENT_ENTRY: AgentCatalogEntry = {
   sizeBytes: 800_000_000,
   terms: { noticeKey: 'agents.terms.dsh' },
   releaseGate: 'dsh',
+  // npx 冷启动约 77 s（离线 spike，todo 附录 A.4）：超过缺省的 60 s（D118）。
+  initTimeoutMs: 120_000,
 };
 
 /**
@@ -566,11 +574,344 @@ const INKCOP_AGENT_ENTRY: AgentCatalogEntry = {
   releaseGate: 'inkcop',
 };
 
+
+
+/**
+ * Cline（D118 新目标，Registry `cline` 3.0.74）：`cline --acp`，npx 分发、精确
+ * 锁版本。认证：Cline 账号（ACP authenticate method `cline`，Agent 自行开浏览器
+ * ——OpenBot 实跑）或设备码；也接受各家 API key。差异（权限 optionId、原生
+ * 工具、错误形态）待真机 spike 后再决定是否需要专属 Provider。
+ */
+const CLINE_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'cline',
+  name: 'Cline',
+  version: '3.0.74',
+  description: 'Autonomous coding agent CLI - capable of creating/editing files, running commands, using the browser, and more',
+  repository: 'https://github.com/cline/cline',
+  website: 'https://cline.bot/cli',
+  authors: ['Cline Bot Inc.'],
+  license: 'Apache-2.0',
+  icon: 'cline.svg',
+  distribution: { npx: { package: 'cline@3.0.74', args: ['--acp'] } },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription', 'api-key'],
+    note: 'Cline 账号（官方登录）或各家 API key；用量计入 Cline / 对应厂商',
+  },
+  terms: { noticeKey: 'agents.terms.cline' },
+  releaseGate: 'cline',
+};
+
+/**
+ * GitHub Copilot（D118 新目标，Registry `github-copilot-cli` 1.0.105）：
+ * `copilot --acp`，npx 分发（`@github/copilot`）。认证：Copilot 订阅（`copilot
+ * login`，浏览器或设备码）；登出走 ACP `logout` 方法（OpenBot 实跑）。差异待
+ * 真机 spike。
+ */
+const COPILOT_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'github-copilot-cli',
+  name: 'GitHub Copilot',
+  version: '1.0.105',
+  description: "GitHub's AI pair programmer",
+  repository: 'https://github.com/github/copilot-cli',
+  website: 'https://github.com/features/copilot/cli/',
+  authors: ['GitHub'],
+  license: 'proprietary',
+  icon: 'github-copilot-cli.svg',
+  distribution: { npx: { package: '@github/copilot@1.0.105', args: ['--acp'] } },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription', 'api-key'],
+    note: 'GitHub Copilot 订阅（官方登录，计入 Copilot 套餐额度）',
+  },
+  terms: { noticeKey: 'agents.terms.copilot' },
+  releaseGate: 'github-copilot-cli',
+};
+
+/**
+ * goose（D118 新目标，Registry `goose` 1.57.0，Block 开源）：`goose acp`，binary
+ * 分发（Registry 自带 sha256；无 windows-aarch64 归档）。认证：goose 配置内的
+ * 各家 provider key（goose 自管，不经 KepCup 注入）。差异待真机 spike。
+ */
+const GOOSE_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'goose',
+  name: 'goose',
+  version: '1.57.0',
+  description: 'A local, extensible, open source AI agent that automates engineering tasks',
+  repository: 'https://github.com/block/goose',
+  website: 'https://block.github.io/goose/',
+  authors: ['Block'],
+  license: 'Apache-2.0',
+  icon: 'goose.svg',
+  distribution: {
+    binary: {
+      'darwin-aarch64': {
+        archive:
+          'https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-apple-darwin.tar.bz2',
+        cmd: './goose',
+        args: ['acp'],
+        sha256: '2fbafa227ab28654c47065f1c9ebcd12f527f017e30c08e618bc6fcf363d7935',
+      },
+      'darwin-x86_64': {
+        archive:
+          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-apple-darwin.tar.bz2',
+        cmd: './goose',
+        args: ['acp'],
+        sha256: 'e48fe024891a4c272a89c74b9ae843d76a73229643c917b785b0680fef9c647a',
+      },
+      'linux-aarch64': {
+        archive:
+          'https://github.com/block/goose/releases/download/v1.57.0/goose-aarch64-unknown-linux-gnu.tar.bz2',
+        cmd: './goose',
+        args: ['acp'],
+        sha256: '17c6b090db6acc5605da904bbe19cc2765bc7a6786019d85a6d0a361de06dbf7',
+      },
+      'linux-x86_64': {
+        archive:
+          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-unknown-linux-gnu.tar.bz2',
+        cmd: './goose',
+        args: ['acp'],
+        sha256: 'e54036f3b7f95d3b0d7854c09465af5ef52a28c7fa03d2497d0ea68a6382282d',
+      },
+      'windows-x86_64': {
+        archive:
+          'https://github.com/block/goose/releases/download/v1.57.0/goose-x86_64-pc-windows-msvc.zip',
+        cmd: './goose-package\\goose.exe',
+        args: ['acp'],
+        sha256: '1ab2117ceec37f95be4d3ad0cdb921d3e97fd8b0fa244046631ecf4b7619d502',
+      },
+    },
+  },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['api-key'],
+    note: 'goose 配置内的各家 provider key（在 goose 自己的配置里登录，不经 KepCup）',
+  },
+  terms: { noticeKey: 'agents.terms.goose' },
+  releaseGate: 'goose',
+};
+
+/**
+ * Qwen Code（D118 新目标，Registry `qwen-code` 0.26.7，Alibaba）：`qwen --acp
+ * --experimental-skills`，npx 分发。认证：Qwen OAuth（免费档）或各家 API key。
+ * 差异待真机 spike。
+ */
+const QWEN_CODE_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'qwen-code',
+  name: 'Qwen Code',
+  version: '0.26.7',
+  description: "Alibaba's Qwen coding assistant",
+  repository: 'https://github.com/QwenLM/qwen-code',
+  website: 'https://qwenlm.github.io/qwen-code-docs/en/users/overview',
+  authors: ['Alibaba Qwen Team'],
+  license: 'Apache-2.0',
+  icon: 'qwen-code.svg',
+  distribution: {
+    npx: {
+      package: '@qwen-code/qwen-code@0.26.7',
+      args: ['--acp', '--experimental-skills'],
+    },
+  },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription', 'api-key'],
+    note: 'Qwen OAuth（免费额度）或各家 API key（qwen 官方登录）',
+  },
+  terms: { noticeKey: 'agents.terms.qwen-code' },
+  releaseGate: 'qwen-code',
+};
+
+/**
+ * Kimi CLI（D118 新目标，Registry `kimi` 1.52.0，Moonshot AI）：`kimi acp`，
+ * binary 分发（Registry 自带 sha256；**无 darwin-x86_64 归档**——Intel Mac 不可
+ * 用，设置卡文案披露）。认证：Kimi 会员 / API key（`kimi login`）。专属
+ * Provider 只带 `sessionNotFound`（OpenBot 观察到的 `-32602 + data.session_id`，
+ * 未真机复核）；其余差异待 spike。
+ */
+const KIMI_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'kimi',
+  name: 'Kimi CLI',
+  version: '1.52.0',
+  description: "Moonshot AI's coding assistant",
+  repository: 'https://github.com/MoonshotAI/kimi-cli',
+  website: 'https://moonshotai.github.io/kimi-cli/',
+  authors: ['Moonshot AI'],
+  license: 'MIT',
+  icon: 'kimi.svg',
+  distribution: {
+    binary: {
+      'darwin-aarch64': {
+        archive:
+          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-apple-darwin.tar.gz',
+        cmd: './kimi',
+        args: ['acp'],
+        sha256: '43fe091f70bbf8860974200f9021a05689a020857cc9926d56f1505f0d0d5cb8',
+      },
+      'linux-aarch64': {
+        archive:
+          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-unknown-linux-gnu.tar.gz',
+        cmd: './kimi',
+        args: ['acp'],
+        sha256: '9e06eea96273600aed485b1f0bedda95b7084db4f22cf28614fe20138933507a',
+      },
+      'linux-x86_64': {
+        archive:
+          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-x86_64-unknown-linux-gnu.tar.gz',
+        cmd: './kimi',
+        args: ['acp'],
+        sha256: 'a676204f7804ed5dae87652a9d66f578e0718d5026c9cb1bfa32b9a5eace4208',
+      },
+      'windows-aarch64': {
+        archive:
+          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-pc-windows-msvc.zip',
+        cmd: './kimi.exe',
+        args: ['acp'],
+        sha256: '7c77cd413e7a3a59416c171a45ee4ff50534869b331469138aad84b9e3acb6c0',
+      },
+      'windows-x86_64': {
+        archive:
+          'https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-x86_64-pc-windows-msvc.zip',
+        cmd: './kimi.exe',
+        args: ['acp'],
+        sha256: '2c269e15e152b9f28ac1556795280f90a2c9860ff44c60c628c3fce4dd4c58a7',
+      },
+    },
+  },
+  provider: 'kimi',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription', 'api-key'],
+    note: 'Kimi 会员或 Moonshot API key（`kimi login` 官方登录）；Intel Mac 暂不提供官方构建',
+  },
+  terms: { noticeKey: 'agents.terms.kimi' },
+  releaseGate: 'kimi',
+};
+
+/**
+ * Grok Build（D118 新目标，Registry `grok-build` 1.0.77，xAI）：
+ * `grok --no-auto-update agent stdio`，npx 分发（`@xai-official/grok`）。
+ * `--no-auto-update` 取自 OpenBot 的实跑参数（宿主不允许 Agent 自我升级），
+ * spike 复核。认证：grok.com 登录（OAuth / 设备码）或 xAI API key。
+ */
+const GROK_BUILD_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'grok-build',
+  name: 'Grok Build',
+  version: '1.0.77',
+  description: "xAI's coding agent and CLI",
+  website: 'https://x.ai/cli',
+  authors: ['xAI'],
+  license: 'proprietary',
+  icon: 'grok-build.svg',
+  distribution: {
+    npx: {
+      package: '@xai-official/grok@1.0.77',
+      args: ['--no-auto-update', 'agent', 'stdio'],
+    },
+  },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription', 'api-key'],
+    note: 'grok.com 账号（官方登录，计入 xAI 套餐额度）或 xAI API key',
+  },
+  terms: { noticeKey: 'agents.terms.grok-build' },
+  releaseGate: 'grok-build',
+};
+
+/**
+ * Devin（D118 新目标，Registry `devin` 3000.11.234，Cognition）：`devin acp`，
+ * binary 分发（Registry 无 sha256 → 导入脚本 `--hash` 下载计算并锁定）。
+ * 认证：Devin 账号（ACP authenticate method `devin-browser`）。专属 Provider
+ * 只带 `sessionNotFound`（OpenBot 观察到的 `-32016 + cognition.ai/errorKind:
+ * session_not_found`，未真机复核）；其余差异待 spike。
+ */
+const DEVIN_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'devin',
+  name: 'Devin',
+  version: '3000.11.234',
+  description: 'Devin CLI coding agent by Cognition',
+  website: 'https://docs.devin.ai/cli',
+  repository: 'https://github.com/CognitionAI/devin-cli',
+  authors: ['Cognition'],
+  license: 'proprietary',
+  icon: 'devin.svg',
+  distribution: {
+    binary: {
+      'darwin-aarch64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-apple-darwin.tar.gz',
+        cmd: './bin/devin',
+        args: ['acp'],
+        sha256: '35f17a21e53a49435e42fb9627731726aa8ef7fa63e5c3d9d43d0cc5ca43edaf',
+      },
+      'darwin-x86_64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-apple-darwin.tar.gz',
+        cmd: './bin/devin',
+        args: ['acp'],
+        sha256: '55ef4f2d2b2c82b5258b7516eb1126549e6f10d6b418035676237bcc18e93e46',
+      },
+      'linux-aarch64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-unknown-linux.tar.gz',
+        cmd: './bin/devin',
+        args: ['acp'],
+        sha256: '438ca7f8280b3ef0747afc406e827d9e182156000277a1660358ac4fbd04156e',
+      },
+      'linux-x86_64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-unknown-linux.tar.gz',
+        cmd: './bin/devin',
+        args: ['acp'],
+        sha256: '201370cddd2924294e3ca6b46fd8ece49b5763953b644a1dd823fce5490cb41a',
+      },
+      'windows-aarch64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-pc-windows.zip',
+        cmd: './bin\\devin.exe',
+        args: ['acp'],
+        sha256: '1fc2fcedfe0649a9ed370b122064d66f406c9a2e4a7622b4c6712cc098c01b22',
+      },
+      'windows-x86_64': {
+        archive: 'https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-pc-windows.zip',
+        cmd: './bin\\devin.exe',
+        args: ['acp'],
+        sha256: 'de01a37364c3c09389e20b699e993962296e5b8e1bea60aa48c95cc57dd228e3',
+      },
+    },
+  },
+  provider: 'devin',
+  transport: 'acp',
+  tier: 'preview',
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['subscription'],
+    note: 'Devin 账号（官方登录，计入 Cognition 套餐额度）',
+  },
+  terms: { noticeKey: 'agents.terms.devin' },
+  releaseGate: 'devin',
+};
+
 /**
  * 策展目录：只在实验开关 `settings.experimental.externalAgents` 打开时可选。
  * P2 收录 Claude Agent 与 Codex（安装器在 P4：此前只能经测试缝启动）；
  * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity；
  * InkCop 以 system 分发挂入（本机 `inkcop-acp`）。
+ * D118 收录 ACP Registry 已有的 7 个新目标（Cline、GitHub Copilot、goose、
+ * Qwen Code、Kimi CLI、Grok Build、Devin；来源：OpenBot 0.62.0 预置目标对比
+ * 调研，todo/acp-hardening-and-new-targets.md §3）——全部 `preview` 档，
+ * `releaseGate` 未进发行放行清单：真机 spike + 合规确认后才随发行版发布。
  */
 export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
   FAKE_AGENT_ENTRY,
@@ -581,6 +922,13 @@ export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
   CURSOR_AGENT_ENTRY,
   ANTIGRAVITY_AGENT_ENTRY,
   INKCOP_AGENT_ENTRY,
+  CLINE_AGENT_ENTRY,
+  COPILOT_AGENT_ENTRY,
+  GOOSE_AGENT_ENTRY,
+  QWEN_CODE_AGENT_ENTRY,
+  KIMI_AGENT_ENTRY,
+  GROK_BUILD_AGENT_ENTRY,
+  DEVIN_AGENT_ENTRY,
 ];
 
 export function findAgentEntry(

@@ -2178,6 +2178,17 @@ botId + name 落到首字母占位。
   bot-profile-autosave 1 例全绿。本轮无 shared 契约改动（settings-catalog 扫描不受
   影响），未再跑全量。
 
+## 外部智能体：连接加固与 7 个新目标（2026-11-06，D118）
+
+对 OpenBot 0.62.0 的 ACP 实现做对比调研后加固 + 扩目录（执行文档 [todo/acp-hardening-and-new-targets.md](../../todo/acp-hardening-and-new-targets.md)，设计 28 §7 / §9.2.1 / §10 已同步）：
+
+- **连接加固（core `agent/external/`）**：stdout 单行 256 MiB 上限（新 `acp/line-limit.ts`，SDK `ndJsonStream` 无限制）；turn 停滞看门狗（prompt 在途 5 分钟无 update 且无等待中的权限 → cancel + `TIMEOUT` 失败，权限等待暂停、答复后重新武装）；无输出崩溃 / prompt 报「会话不存在」的一次透明重试（`start()` 主体提取为 `#attempt()`，`#resetForRetry` 强制新会话 + 还原已消费 steer；`onClosed` 对 prompting/before 延迟结算让失败流进 catch；宿主崩溃报告 `#hostClosedError` 优先于模糊的 prompt 拒绝）；`isSessionNotFound`（协议 -32002）+ Provider `sessionNotFound` hook。
+- **小事项**：SDK `@agentclientprotocol/sdk` 1.7.0 → 1.9.0（零适配；npm latest 已 2.4.0 属 v2 草案，按 design 28 §12 不追）；目录条目新增可选 `initTimeoutMs`（dsh 120s，离线 spike 记录冷启动 77s > 缺省 60s）。
+- **新目标**（Registry 已收录，全部 preview + releaseGate 未放行）：cline 3.0.74、github-copilot-cli 1.0.105、goose 1.57.0、qwen-code 0.26.7、kimi 1.52.0、grok-build 1.0.77（`--no-auto-update agent stdio`）、devin 3000.11.234；专属 Provider 只带 sessionNotFound 形态（kimi `-32602+session_id`、devin `-32016+errorKind`，取自 OpenBot flavor 表、未真机复核）；图标 7 枚入 `resources/agents/`；i18n 条款键 zh/en；npx 锁文件重生成（4 个新包）；parallel-sessions EXPECTED 表补 kimi/devin false。
+- **测试**：新增 `agent-hardening-d118`（12：限长、看门狗含权限等待、重试 5 例、dsh 超时）与 `agent-targets-d118`（7：条目结构 / 门禁 fail-closed / provider 登记 / grok args / sessionNotFound 形态）；外部智能体全套 293 例全绿。
+- **踩坑记录**：把 `#release()` 从 `#attempt` 的 finally 挪到 `start()` 会让它晚一个微任务——`done` 的续延先于释放执行，6 个 P5 时序测试立刻失败；结算与释放必须在同一微任务，重试路径用局部标记跳过。
+- **待真机**（todo §3.3）：7 个新目标逐个 spike（安装 / 登录 / modes / 权限 optionId / 原生工具 / sessionNotFound 形态复核）；合规确认后才把 releaseGate 加进 `agent-release-gates.json`；kimi Intel Mac 无官方构建（条款已披露）；dsh 真机首启验证 `initTimeoutMs: 120s`。全量收口 748 文件 7910 过 / 2 失败（集成 #9 用例的崩溃脚本与重试新语义冲突，已修，单文件复核 11/11 绿）。
+
 ## 独立审查轮：两 P1 + 五 P2 全部修复（2026-11-06）
 
 两个独立子代理（core/契约、渲染层）并行审查 D115–D117 全部改动，结论一致：**无 P0，需修复后合入**。修复清单：
@@ -2187,3 +2198,15 @@ botId + name 落到首字母占位。
 - **渲染层 P1-2 botTasks 换 Bot 错配**：拉取失败会把上一个 Bot 的任务列表与徽标算到新 Bot 头上 → `load()` 换 Bot 先清空 items（items 只可能为空或属于当前 botId），失败也保持空。
 - **P2 五条**：① runCard 校验 anchor 会话存在（悬空会话原来要到回传一步才暴露）+ 会话级组件缺归属会话的报错口径修正；② 回归测试补齐——runCard 后删除再 open（锁 P1-1）、审查门沿虚拟 id 生效（未审查 open 抛 WIDGET_REVIEW_REQUIRED、source 后重试成功）、runCard 三处负例断言到错误文案、injectById 终态断言错误码 + NOT_FOUND 分支；③ botTasks 响应与在途推送 upsert 合并（快照不覆盖期间到达的行，仿 tasks store 口径）；④ queued toast 中性文案（两种成因——外部 Agent 拒绝 steer / 任务收尾——`task_event` 只存二值无法区分，「任务结束后生效」对两者都成立；56 §1.2 同步）；⑤ 任务 tab 点击时重拉（设计「tab 激活时重拉」落实）+ RightPanel 过时注释修正 + bindings shorthand 还原。
 - **验证**：core 定向（widgets-service 55 / tasks 集成 18）+ desktop 定向（45）全绿；desktop typecheck 0 error、eslint 干净；e2e 10 例（tasks 4 + narrow-layout 2 + bot-profile-autosave 1 + schedules 3）全绿。
+
+## 外部智能体 D118 独立审查轮：两 P1 等七项修复（2026-11-06）
+
+三路独立只读子代理审查 D118（连接加固核心 / 测试质量 / 新目标+文档同步）：目标接入与文档仅 7 条 P3；核心实现 2 P1 + 5 P2；测试 2 P1 覆盖缺口。核实后全部属实，七项修复（清单见 [todo/acp-hardening-and-new-targets.md](../../todo/acp-hardening-and-new-targets.md) §4.3）：
+
+- **P1 `#resetForRetry` 漏清 `#graceTimer`**：停滞取消的 10s 宽限计时器跨重试边界触发——停滞后进程死亡走进重试，残留计时器到期以空文案 settle 并释放重试的租约（透明重试被上一轮看门狗杀死）。修复：reset 清计时器 + 文案按值捕获进 grace 闭包。
+- **P1 256 MiB 行长上限实际不可达**：SDK 1.9.0 `ndJsonStream` 自带 32 MiB 默认行上限且在前 → 自定义限长层与 onLimit 日志永不触发。修复：`ndJsonStream` 传 `maxMessageBytes = 256 MiB + 1 MiB`，`limitAgentLines` 保持唯一权威。
+- **P2 三条**：`isSessionNotFound` 的 Provider hook 包 try/catch（hook 抛错原会从 `#attempt` 的 catch 逃逸 → run 永不结算）；重试前对旧 mapper `abandon()`（已发 tool_call 补失败结果，run_steps 保持配对）；`onClosed` 延迟结算从 `prompting || before` 收窄到 `prompting`（`before` 的延迟对重试无意义，且 `buildSystemPrompt` / `applyPermissionTier` 不因连接关闭 reject → 崩溃可挂死）。
+- **测试**：权限等待看门狗用例改判别形（decide 独占超 stallMs 后放行 → completed；删守卫必 TIMEOUT）+ silent-agent 恢复拆独立用例；新增读真实 `agent-release-gates.json` 的 fail-closed 用例（原手抄列表测不出有人把新 gate 加进文件）；注释/幽灵导出清理。
+- **文档**：design 28 §9.2.1 交叉引用 §11→§10、§10 providers 清单补 kimi/devin、§2.1 auth.kinds 补 'anonymous'；testkit SDK 1.7.0 → 1.9.0 与 core 对齐（消除双版本并存）。
+- **记录在案不修**：重试后新会话的 reusable 静默降级（release close/forget，下次走 resume/load）、已注入未应答 steer 重试丢失、initTimeoutMs 行为链缺 testkit `initDelayMs` 旋钮、新 binary 条目缺 sizeBytes、copilot api-key 待 spike 确认、parallel-sessions 预存在的 `catalogEntry('antigravity')` 空转断言（实际 id `antigravity-acp`）。
+- **验证**：hardening 13 + targets 8 + engine 36 = 57 单测全绿；P5 集成 + parallel-sessions 19/19；core typecheck 0 错；testkit / core dist 重建。未跑全量（AGENTS.md：本轮只动了 core 外部智能体内部与测试，无跨包公共契约变更）。
