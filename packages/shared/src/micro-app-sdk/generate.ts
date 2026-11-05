@@ -232,7 +232,7 @@ const SHIM_TEMPLATE = `<script>/* ${MICRO_APP_SDK_MARKER} */
       if (error && typeof error.stack === 'string' && error.stack) {
         var lines = error.stack.split('\n');
         for (var i = 0; i < lines.length; i += 1) {
-          if (lines[i].indexOf('kepcup') === -1 && /:\d+:\d+/.test(lines[i])) { detail = lines[i].trim().slice(0, 200); break; }
+          if (lines[i].indexOf('kepcup') === -1 && /:\\d+:\\d+/.test(lines[i])) { detail = lines[i].trim().slice(0, 200); break; }
         }
       }
     } catch (err) { }
@@ -842,7 +842,7 @@ export function buildMicroAppSdkReferenceBodies(): Readonly<Record<string, strin
       `- \`kepcup.storage.get/set/delete/list\`：每微应用独立命名空间，单值 ≤${kbOf(BOT_WIDGET_STORAGE_VALUE_MAX_BYTES)}，总量 ≤${kbOf(BOT_WIDGET_STORAGE_QUOTA_BYTES)} / ${BOT_WIDGET_STORAGE_KEYS_MAX} 键；超限得 \`WIDGET_STORAGE_QUOTA\`。`,
       '- `kepcup.query(name, params, opts?)`：只读命名查询模板（queries.json 里声明，随版本审查）；返回 `{ rows, truncated, nextCursor? }`。',
       '- 分页：`opts.maxBytes`（1024B–256KB）按字节切页，`opts.cursor` 接上一页返回的 `nextCursor`（形如 `off:N`），翻到底 `nextCursor` 缺省。',
-      '- `kepcup.collections.put/get/list/delete/query`（能力 storage.collection）：JSON 文档集合，`put` 的文档必须有字符串 `id`；总量 ≤${(MICRO_APP_COLLECTION_QUOTA_BYTES / 1024 / 1024).toFixed(0)}MB、至多 ${MICRO_APP_COLLECTIONS_MAX} 个集合。',
+      `- \`kepcup.collections.put/get/list/delete/query\`（能力 storage.collection）：JSON 文档集合，\`put\` 的文档必须有字符串 \`id\`；总量 ≤${(MICRO_APP_COLLECTION_QUOTA_BYTES / 1024 / 1024).toFixed(0)}MB、至多 ${MICRO_APP_COLLECTIONS_MAX} 个集合。`,
       '- 调用与存储共享限流：突发 20 / 每秒 5 / 在途 20——保存要防抖，别高频轮询。',
     ].join('\n'),
     'references/errors.md': [
