@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { mode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
   import {
@@ -81,7 +82,7 @@
   /** 宿主铸造的实例键（ai / 媒体 RPC 的记账与归属；续期不变）。 */
   let microInstanceId: string | null = null;
   /** 诊断限流（code:detail → 上次发送时间）。 */
-  const diagnosticSentAt = new Map<string, number>();
+  const diagnosticSentAt = new SvelteMap<string, number>();
   /** 当前资源 id（续期后更新；ai / 媒体面调用时读取，避免打到过期资源）。 */
   let currentResourceId: string | null = null;
 
