@@ -1,6 +1,7 @@
 import {
   AppError,
   isVendorId,
+  maskApiKey,
   VENDOR_DESCRIPTORS,
   type ModelCapability,
   type ProviderInfo,
@@ -46,6 +47,108 @@ export function providerSecretName(providerId: string): string {
 }
 
 /**
+ * 同一供应商的追加 Key 槽位：首个 Key 沿用 `provider:<id>`（历史布局），
+ * 其余写 `provider:<id>:key:<4 位序号>`。删除后重新编号，保持有序。
+ */
+const PROVIDER_KEY_SLOT = ':key:';
+
+function providerKeySlotName(providerId: string, slot: number): string {
+  return `${providerSecretName(providerId)}${PROVIDER_KEY_SLOT}${String(slot).padStart(4, '0')}`;
+}
+
+/** 已存 Key 的 secret 名，按存储顺序（首个在前）。 */
+export function providerKeySecretNames(secrets: SecretsService, providerId: string): string[] {
+  const base = providerSecretName(providerId);
+  const prefix = `${base}${PROVIDER_KEY_SLOT}`;
+  const extras = secrets
+    .names()
+    .filter((name) => name.startsWith(prefix))
+    .sort((a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length)));
+  return secrets.hasValue(base) ? [base, ...extras] : extras;
+}
+
+/** 按存储顺序读出全部 Key；损坏的条目跳过，不让设置页整体失败。 */
+export function readProviderKeys(secrets: SecretsService, providerId: string): string[] {
+  const keys: string[] = [];
+  for (const name of providerKeySecretNames(secrets, providerId)) {
+    try {
+      const value = secrets.getValue(name);
+      if (value !== null && value.length > 0) keys.push(value);
+    } catch {
+      // 单条解密失败（密钥轮换 / 数据损坏）时其余 Key 仍可用。
+    }
+  }
+  return keys;
+}
+
+function removeProviderKeys(secrets: SecretsService, providerId: string): void {
+  for (const name of providerKeySecretNames(secrets, providerId)) secrets.removeValue(name);
+}
+
+/** 整体替换 Key 列表（providers.setKey 的语义：单 Key 覆盖）。 */
+export function replaceProviderKeys(
+  secrets: SecretsService,
+  providerId: string,
+  keys: readonly string[],
+): void {
+  removeProviderKeys(secrets, providerId);
+  keys.forEach((key, index) => {
+    secrets.setValue(
+      index === 0 ? providerSecretName(providerId) : providerKeySlotName(providerId, index),
+      key,
+    );
+  });
+}
+
+/** 追加一个 Key；已存在相同值时不重复写入。 */
+export function addProviderKey(secrets: SecretsService, providerId: string, key: string): void {
+  if (readProviderKeys(secrets, providerId).includes(key)) return;
+  const names = providerKeySecretNames(secrets, providerId);
+  if (names.length === 0) {
+    secrets.setValue(providerSecretName(providerId), key);
+    return;
+  }
+  const prefix = `${providerSecretName(providerId)}${PROVIDER_KEY_SLOT}`;
+  const used = new Set(
+    names
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => Number(name.slice(prefix.length))),
+  );
+  let slot = 1;
+  while (used.has(slot)) slot++;
+  secrets.setValue(providerKeySlotName(providerId, slot), key);
+}
+
+/** 按下标删除一个 Key 并重新编号；下标非法时报 INVALID_INPUT。 */
+export function removeProviderKeyAt(
+  secrets: SecretsService,
+  providerId: string,
+  index: number,
+): void {
+  const keys = readProviderKeys(secrets, providerId);
+  if (index < 0 || index >= keys.length) {
+    throw new AppError('INVALID_INPUT', `API Key #${index} 不存在`);
+  }
+  keys.splice(index, 1);
+  replaceProviderKeys(secrets, providerId, keys);
+}
+
+/** 进程内轮询游标：每个供应商独立，逐个请求轮换 Key。 */
+const providerKeyCursor = new Map<string, number>();
+
+/** 取下一次调用应使用的 Key；没有配置时返回 null。 */
+export function nextProviderApiKey(
+  secrets: SecretsService,
+  providerId: string,
+): string | null {
+  const keys = readProviderKeys(secrets, providerId);
+  if (keys.length === 0) return null;
+  const cursor = providerKeyCursor.get(providerId) ?? 0;
+  providerKeyCursor.set(providerId, (cursor + 1) % keys.length);
+  return keys[cursor % keys.length] ?? null;
+}
+
+/**
  * 供应商实例查找（settings.modelProviders）。实例 id 即运行时注册表 id：
  * 内置厂商实例沿用厂商 id（首个）或 `dashscope-2` 之类的派生 id，自定义
  * 实例带 `custom:` 前缀。
@@ -86,7 +189,7 @@ export function buildModelRegistry(deps: {
 }): Models {
   const credentialStore: CredentialStore = {
     async read(providerId: string): Promise<Credential | undefined> {
-      const value = deps.secrets.getValue(providerSecretName(providerId));
+      const value = nextProviderApiKey(deps.secrets, providerId);
       if (value === null) return undefined;
       return { type: 'api_key', key: value };
     },
@@ -123,9 +226,15 @@ export function buildModelRegistry(deps: {
         auth: {
           apiKey: {
             name: instance.name,
-            resolve: async () => ({
-              auth: { apiKey: deps.secrets.getValue(providerSecretName(instance.id)) ?? 'unused' },
-            }),
+            resolve: async ({ credential }) => {
+              // credentialStore 已按请求轮换出本次 Key；这里直接沿用，
+              // 不再前进游标（否则每个请求会消耗两次轮换）。
+              const key =
+                credential?.type === 'api_key'
+                  ? credential.key
+                  : nextProviderApiKey(deps.secrets, instance.id);
+              return { auth: { apiKey: key ?? 'unused' } };
+            },
           },
         },
         models: chatModels.map((m): Model<'openai-completions'> => ({
@@ -176,6 +285,10 @@ export function providerInfoList(
   secrets: SecretsService,
 ): ProviderInfo[] {
   const infos: ProviderInfo[] = [];
+  const keyInfo = (providerId: string): Pick<ProviderInfo, 'hasKey' | 'keyPreviews'> => {
+    const keys = readProviderKeys(secrets, providerId);
+    return { hasKey: keys.length > 0, keyPreviews: keys.map(maskApiKey) };
+  };
   const instanceIds = new Set(settings.modelProviders.map((p) => p.id));
   for (const provider of models.getProviders()) {
     // 供应商实例在下方按 settings 合成（含专有能力模型）；pi 内置目录里
@@ -196,7 +309,7 @@ export function providerInfoList(
       kind: 'builtin',
       enabled: true,
       models: [...chatModels],
-      hasKey: secrets.hasValue(providerSecretName(provider.id)),
+      ...keyInfo(provider.id),
     });
   }
   // 供应商实例：全部模型（含专有能力模型）带能力声明列出，供设置页渲染
@@ -221,7 +334,7 @@ export function providerInfoList(
         baseUrl: instance.baseUrl,
         enabled: instance.enabled,
         models: chatModels,
-        hasKey: secrets.hasValue(providerSecretName(instance.id)),
+        ...keyInfo(instance.id),
       });
       continue;
     }
@@ -238,7 +351,7 @@ export function providerInfoList(
         contextWindow: m.contextWindow,
         capabilities: [...m.capabilities],
       })),
-      hasKey: secrets.hasValue(providerSecretName(instance.id)),
+      ...keyInfo(instance.id),
     });
   }
   // 尚未建实例的内置厂商始终列出（模型为空）：能力槽位与对话内设置卡需要
@@ -253,7 +366,7 @@ export function providerInfoList(
       baseUrl: vendor.baseUrl,
       enabled: true,
       models: [],
-      hasKey: secrets.hasValue(providerSecretName(vendor.id)),
+      ...keyInfo(vendor.id),
     });
   }
   return infos;

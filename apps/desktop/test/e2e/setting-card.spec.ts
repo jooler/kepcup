@@ -117,7 +117,10 @@ async function giveMockProviderAKey(page: Page): Promise<void> {
   const mockKeyInput = page.locator('[data-testid="provider-key-custom:mock"]');
   await mockKeyInput.fill('sk-setting-card-e2e');
   await mockKeyInput.press('Enter');
-  await expect(mockKeyInput).toHaveAttribute('placeholder', /已配置/, { timeout: 15_000 });
+  // 保存后输入框清空，已存 Key 以掩码列表回显（明文永不出 core）。
+  await expect(
+    page.locator('[data-testid="provider-key-item-custom:mock-0"]'),
+  ).toContainText('sk-.......2e2e', { timeout: 15_000 });
   // 保存先刷新厂商卡片，弹层可能还在收起：bits-ui 会吃掉这一下 Esc。
   // 等弹层真正消失后再退出设置页（输入控件里第一次 Esc 只失焦，所以重试）。
   await expect(page.locator('[data-testid="provider-add-dialog"]')).toBeHidden();

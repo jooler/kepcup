@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { maskApiKey } from '@kepcup/shared';
 import { createMemoryKeystore } from '@kepcup/core';
 import { createTestStack, makeBot, openDirect, type TestStack } from '@kepcup/testkit';
 import { startMockLlm, step } from '@kepcup/testkit';
@@ -53,6 +54,37 @@ describe('settings and provider key persistence', () => {
       await llm.stop();
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it('一个供应商可保存多个 Key：列表只回掩码预览，可按下标删除', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core } = stack;
+
+    const first = 'sk-first-1234';
+    const second = 'sk-proj-second-9876';
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: first });
+    await core.rpc.call('providers.addKey', { provider: 'custom:mock', key: second });
+
+    const list = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; hasKey: boolean; keyPreviews: string[] }>;
+    };
+    const info = list.providers.find((p) => p.id === 'custom:mock');
+    expect(info).toMatchObject({
+      hasKey: true,
+      keyPreviews: [maskApiKey(first), maskApiKey(second)],
+    });
+    const serialized = JSON.stringify(list);
+    expect(serialized.includes(first)).toBe(false);
+    expect(serialized.includes(second)).toBe(false);
+
+    await core.rpc.call('providers.removeKeyAt', { provider: 'custom:mock', index: 0 });
+    const after = (await core.rpc.call('providers.list')) as {
+      providers: Array<{ id: string; keyPreviews: string[] }>;
+    };
+    expect(after.providers.find((p) => p.id === 'custom:mock')?.keyPreviews).toEqual([
+      maskApiKey(second),
+    ]);
   });
 
   it('providers.test succeeds against the mock and reports PROVIDER_AUTH_FAILED on 401', async () => {

@@ -7,10 +7,12 @@ import {
   type ProviderInfo,
 } from '@kepcup/shared';
 import {
+  addProviderKey,
   buildModelRegistry,
   findProviderInstance,
   providerInfoList,
-  providerSecretName,
+  removeProviderKeyAt,
+  replaceProviderKeys,
   resolveModel,
   testProvider,
 } from '../agent/models.js';
@@ -62,12 +64,23 @@ export class ProvidersService {
 
   setKey(provider: string, key: string): void {
     this.#assertProviderExists(provider);
-    this.#secrets.setValue(providerSecretName(provider), key);
+    replaceProviderKeys(this.#secrets, provider, [key]);
+  }
+
+  /** 追加一个 Key（同一供应商多 Key 轮询）；setKey 仍是整体替换。 */
+  addKey(provider: string, key: string): void {
+    this.#assertProviderExists(provider);
+    addProviderKey(this.#secrets, provider, key);
+  }
+
+  removeKeyAt(provider: string, index: number): void {
+    this.#assertProviderExists(provider);
+    removeProviderKeyAt(this.#secrets, provider, index);
   }
 
   removeKey(provider: string): void {
     this.#assertProviderExists(provider);
-    this.#secrets.removeValue(providerSecretName(provider));
+    replaceProviderKeys(this.#secrets, provider, []);
   }
 
   /**

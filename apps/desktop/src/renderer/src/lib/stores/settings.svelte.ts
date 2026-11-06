@@ -152,6 +152,17 @@ class SettingsState {
     await this.refresh();
   }
 
+  /** 追加一个 Key（多 Key 轮询）；刷新后 providers.list 带上新的掩码预览。 */
+  async addKey(provider: string, key: string): Promise<void> {
+    await core.call('providers.addKey', { provider, key });
+    await this.refresh();
+  }
+
+  async removeKeyAt(provider: string, index: number): Promise<void> {
+    await core.call('providers.removeKeyAt', { provider, index });
+    await this.refresh();
+  }
+
   async removeKey(provider: string): Promise<void> {
     await core.call('providers.removeKey', { provider });
     await this.refresh();

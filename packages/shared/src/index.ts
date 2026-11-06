@@ -2,6 +2,7 @@ export * from './ids.js';
 export * from './errors.js';
 export * from './constants.js';
 export * from './domain/types.js';
+export * from './domain/api-key.js';
 export * from './domain/computer.js';
 export * from './domain/bot-kind.js';
 export * from './domain/conversation-archive.js';

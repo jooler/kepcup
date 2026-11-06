@@ -339,6 +339,9 @@ export const enUS = {
   'settings.providerKey': 'API Key',
   'settings.providerKeyPlaceholder': 'Enter API key (hidden after saving)',
   'settings.providerKeySet': 'Configured (not shown)',
+  'settings.providerKeyAddPlaceholder': 'Paste a new API key and press Enter',
+  'settings.providerKeyCount': 'Keys configured: {count} (used in rotation)',
+  'settings.providerKeyRemove': 'Remove this key',
   'settings.save': 'Save',
   'settings.remove': 'Remove',
   // --- Models section two-pane rework (v0.5.6: "Model config" + provider instances)
