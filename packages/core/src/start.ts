@@ -114,6 +114,8 @@ import {
 import { WslSandboxBackend } from './sandbox/backend-wsl.js';
 import type { MountRegistration } from './sandbox/wsl/mounts.js';
 import { WslSetup, createWslRunner, type WslRunner } from './sandbox/wsl/setup.js';
+import { LimaSetup } from './sandbox/lima/setup.js';
+import { createLimaRunner } from './sandbox/lima/runner.js';
 import { createWslFixtureRunner, wslFixtureScenarioFromEnv } from './sandbox/wsl/fixture-runner.js';
 import { WSL_DISTRO_NAME } from './sandbox/wsl/constants.js';
 import { type DistroToolchainInstaller } from './env/distro.js';
@@ -585,6 +587,11 @@ export interface CoreServices {
    * to prepare: non-Windows hosts without the e2e fixture seam.
    */
   wslSetup: WslSetup | null;
+  /**
+   * macOS 增强沙箱（Lima）准备状态机：沙箱准备向导里创建 / 启动 / 初始化
+   * 虚拟机。非 macOS 为 null（sandbox.lima* 返回 applicable:false）。
+   */
+  limaSetup: LimaSetup | null;
   mainDb: SqliteDatabase | null;
   runsDb: SqliteDatabase | null;
   /**
@@ -829,6 +836,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     wslFixtureScenario !== null || (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
       : null;
+  // macOS 增强沙箱（Lima）：向导内创建 / 启动 / 初始化虚拟机。仅 darwin
+  // 构造；其他平台 sandbox.lima* 返回 applicable:false。
+  const limaSetup =
+    process.platform === 'darwin'
+      ? new LimaSetup({ paths, runner: createLimaRunner(), env })
+      : null;
   const sandbox = createSandboxBackend({
     paths,
     logger,
@@ -922,6 +935,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     sandbox,
     sandboxEnhanced,
     wslSetup,
+    limaSetup,
     mainDb: null,
     runsDb: null,
     keystoreKind: 'unavailable',
@@ -4205,6 +4219,9 @@ function createSystemMethods(
                 ? enhancedAvailability.backend
                 : null,
             enhancedAvailable: enhancedAvailability?.available ?? null,
+            ...(enhancedAvailability?.state !== undefined
+              ? { enhancedState: enhancedAvailability.state }
+              : {}),
           },
           toolchain,
         };

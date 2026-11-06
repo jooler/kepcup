@@ -2175,6 +2175,7 @@ export const enUS = {
   'settings.sandboxEnhancedLabel': 'Enhanced ({backend})',
   'settings.sandboxEnhancedAvailable': 'Available',
   'settings.sandboxEnhancedMissing': 'Not installed',
+  'settings.sandboxEnhancedNotReady': 'Not ready',
   'settings.sandboxSharedVmNote':
     'Known limitation: all WSL2 distros on the same machine share one virtual machine.',
   'settings.sandboxWizardOpen': 'Sandbox setup wizard…',
@@ -2206,6 +2207,18 @@ export const enUS = {
   'wizard.skip': 'Skip and keep per-command confirmation',
   'wizard.enhancedIntro':
     'Skills that declare "requires enhanced sandbox" need this backend level; when it isn\'t installed, those skills are marked incompatible.',
+  'wizard.limaCreate': 'Create and prepare VM',
+  'wizard.limaStart': 'Start VM',
+  'wizard.limaProvision': 'Initialize sandbox tools',
+  'wizard.limaRetry': 'Retry',
+  'wizard.limaActionNone': 'No action needed',
+  'wizard.limaPhaseNotCreated': 'Not created',
+  'wizard.limaPhaseStopped': 'Not running',
+  'wizard.limaPhaseUnprovisioned': 'Not initialized',
+  'wizard.limaPhaseWorking': 'Preparing',
+  'wizard.limaPhaseFailed': 'Preparation failed',
+  'wizard.limaFirstRunNote':
+    'First-time setup downloads the Debian 12 image and installs the sandbox tools (about 1GB, several minutes).',
   'prompt.title': 'Finish sandbox setup',
   'prompt.body':
     'After a one-time admin approval and restart, the Bot can run commands without per-command confirmation. You can set it up now or skip (keeping per-command confirmation mode).',

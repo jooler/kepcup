@@ -137,14 +137,14 @@ test('settings page shows the current backend and the enhanced (Lima) state; wiz
     await expect(state).toBeVisible();
     expect(['可用', '不可用']).toContain((await state.textContent())?.trim());
 
-    // 增强级子状态（本机未装 Lima → 未安装 + 原因；装了则可用）。
+    // 增强级子状态（本机未装 Lima → 未安装；装了但 VM 未创建/未启动 → 未就绪；跑起来则可用）。
     const enhanced = page.locator('[data-testid="sandbox-enhanced"]');
     if (process.platform !== 'win32') {
       await expect(enhanced).toBeVisible({ timeout: 60_000 });
       const enhancedState = await enhanced
         .locator('[data-testid="sandbox-enhanced-state"]')
         .textContent();
-      expect(['可用', '未安装']).toContain(enhancedState?.trim());
+      expect(['可用', '未安装', '未就绪']).toContain(enhancedState?.trim());
       await expect(enhanced.locator('[data-testid="sandbox-enhanced-backend"]')).toContainText(
         /Lima|Podman/,
       );

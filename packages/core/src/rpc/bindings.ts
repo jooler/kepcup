@@ -154,6 +154,7 @@ import {
   sandboxStatusOutputSchema,
   sandboxWslStatusOutputSchema,
   sandboxWslSkipOutputSchema,
+  sandboxLimaStatusOutputSchema,
   approvalsListInputSchema,
   approvalsListOutputSchema,
   approvalsDecideInputSchema,
@@ -338,6 +339,7 @@ import type { TodoService } from '../workbench/todo-service.js';
 import type { BoardService } from '../board/board-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
+import type { LimaStatusReport } from '../sandbox/lima/setup.js';
 import { localDateKey } from '../memory/local-date.js';
 import { buildUsageStats } from '../domain/usage-stats.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
@@ -389,6 +391,28 @@ const WSL_NOT_APPLICABLE = {
   install: 'not_installed',
   distro: 'absent',
 } as const;
+
+/** macOS 增强沙箱向导在非 darwin 上的输出（向导显示只读增强级状态）。 */
+const LIMA_NOT_APPLICABLE = {
+  applicable: false,
+  phase: 'idle',
+  instance: 'missing',
+  action: 'none',
+} as const;
+
+function limaStatusOutput(
+  report: LimaStatusReport,
+): z.infer<typeof sandboxLimaStatusOutputSchema> {
+  return {
+    applicable: true,
+    phase: report.phase,
+    instance: report.instance,
+    action: report.action,
+    ...(report.reason !== undefined ? { reason: report.reason } : {}),
+    ...(report.fixHint !== undefined ? { fixHint: report.fixHint } : {}),
+    ...(report.progress !== undefined ? { progress: report.progress } : {}),
+  };
+}
 
 /** Maps the state-machine report to the wizard RPC output shape. */
 function wslStatusOutput(
@@ -1379,6 +1403,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
               available: enhanced.available,
               ...(enhanced.reason !== undefined ? { reason: enhanced.reason } : {}),
               ...(enhanced.fixHint !== undefined ? { fixHint: enhanced.fixHint } : {}),
+              ...(enhanced.state !== undefined ? { state: enhanced.state } : {}),
             }
           : null;
       return {
@@ -1433,6 +1458,20 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (setup === null) return { skipped: false };
       setup.markSkipped();
       return { skipped: true };
+    }),
+
+    // --- macOS 增强沙箱准备（Lima：创建 → 启动 → 初始化） ---------------------
+    // 与 wsl* 一样是 void-input；prepare 立即返回、向导轮询进度。
+    'sandbox.limaStatus': method(voidInput, sandboxLimaStatusOutputSchema, async () => {
+      const setup = services.limaSetup;
+      if (setup === null) return LIMA_NOT_APPLICABLE;
+      return limaStatusOutput(await setup.status());
+    }),
+
+    'sandbox.limaPrepare': method(voidInput, sandboxLimaStatusOutputSchema, async () => {
+      const setup = services.limaSetup;
+      if (setup === null) return LIMA_NOT_APPLICABLE;
+      return limaStatusOutput(await setup.prepare());
     }),
 
     'approvals.list': method(

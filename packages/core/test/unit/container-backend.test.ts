@@ -3,10 +3,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  LimaSandboxBackend,
   PodmanSandboxBackend,
   cwdCoverageRejections,
   type CliRunner,
 } from '../../src/sandbox/backend-container.js';
+import { LIMA_SHIM_BIN, LIMA_VM_NAME } from '../../src/sandbox/lima/constants.js';
 import { encodeExecResponse } from '../../src/sandbox/wsl/protocol.js';
 import type { SandboxExecRequest, SandboxPolicy } from '../../src/sandbox/types.js';
 
@@ -105,6 +107,138 @@ describe('cwdCoverageRejections（BR-P12-007：标准路径原语）', () => {
     expect(cwdCoverageRejections('c:/code/proj/sub', winMounts, 'win32')).toEqual([]);
     expect(cwdCoverageRejections('C:\\CODE\\proj', winMounts, 'win32')).toEqual([]);
     expect(cwdCoverageRejections('C:\\Code\\other', winMounts, 'win32')).toHaveLength(1);
+  });
+});
+
+describe('LimaSandboxBackend exec argv（Lima 2.x：shell，不是 exec）', () => {
+  it('使用 limactl shell + workdir，且不指定不存在的 --user', async () => {
+    const capture: Captured = { argv: [], inputs: [] };
+    const runner: CliRunner = {
+      async run(argv, options = {}) {
+        if (argv[0] === 'limactl' && argv[1] === '--version') {
+          return { exitCode: 0, stdout: Buffer.from('limactl version 2.2.1'), stderr: Buffer.alloc(0) };
+        }
+        if (argv[0] === 'limactl' && argv[1] === 'list') {
+          return {
+            exitCode: 0,
+            stdout: Buffer.from(`${JSON.stringify({ name: LIMA_VM_NAME, status: 'Running' })}\n`),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        if (argv[0] === 'limactl' && argv[1] === 'shell' && argv.includes('test')) {
+          return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        }
+        capture.argv.push(argv);
+        const input = options.input ?? '';
+        capture.inputs.push(input);
+        const request = JSON.parse(input) as { nonce?: string };
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(
+            `${encodeExecResponse({ exitCode: 0, timedOut: false, violations: [], ...(request.nonce !== undefined ? { nonce: request.nonce } : {}) })}\n`,
+            'utf8',
+          ),
+          stderr: Buffer.alloc(0),
+        };
+      },
+    };
+    const backend = new LimaSandboxBackend({
+      logger,
+      platform: 'darwin',
+      registration: { registeredWindowsPaths: () => [WORKDIR] },
+      dataHome: path.join(homedir(), 'kepcup-container-test', '.kepcup'),
+      runner,
+    });
+    await backend.exec(execRequest());
+    const argv = capture.argv[0]!;
+    expect(argv.slice(0, 5)).toEqual(['limactl', 'shell', '--tty=false', '--workdir', WORKDIR]);
+    expect(argv).toContain(LIMA_VM_NAME);
+    expect(argv).not.toContain('--user');
+    expect(argv[argv.length - 1]).toBe(LIMA_SHIM_BIN);
+  });
+});
+
+describe('LimaSandboxBackend 检测状态（设置页区分「未安装」与「未就绪」）', () => {
+  function limaBackend(options: {
+    cli: boolean;
+    list?: { exitCode: number; stdout: string };
+    shimReady?: boolean;
+  }) {
+    const runner: CliRunner = {
+      async run(argv) {
+        if (argv[0] === 'limactl' && argv[1] === '--version') {
+          return options.cli
+            ? { exitCode: 0, stdout: Buffer.from('limactl version 2.2.1'), stderr: Buffer.alloc(0) }
+            : { exitCode: 127, stdout: Buffer.alloc(0), stderr: Buffer.from('not found') };
+        }
+        if (argv[0] === 'limactl' && argv[1] === 'list') {
+          const list = options.list ?? { exitCode: 0, stdout: '' };
+          return {
+            exitCode: list.exitCode,
+            stdout: Buffer.from(list.stdout),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        if (argv[0] === 'limactl' && argv[1] === 'shell') {
+          // 运行中的 VM 还会检查 shim 是否已初始化（test -x）。
+          return options.shimReady === false
+            ? { exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
+            : { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        }
+        return { exitCode: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      },
+    };
+    return new LimaSandboxBackend({
+      logger,
+      platform: 'darwin',
+      registration: { registeredWindowsPaths: () => [WORKDIR] },
+      dataHome: path.join(homedir(), 'kepcup-container-test', '.kepcup'),
+      runner,
+    });
+  }
+
+  it('limactl 缺失 → cli_missing（未安装）', async () => {
+    const status = await limaBackend({ cli: false }).probe();
+    expect(status).toMatchObject({ backend: 'lima', available: false, state: 'cli_missing' });
+    expect(status.reason).toContain('未安装 Lima');
+  });
+
+  it('没有虚拟机实例（list 退出码 0、输出为空）→ instance_missing，而不是「未在运行」', async () => {
+    const status = await limaBackend({ cli: true, list: { exitCode: 0, stdout: '' } }).probe();
+    expect(status).toMatchObject({ backend: 'lima', available: false, state: 'instance_missing' });
+    expect(status.reason).toContain('尚未创建');
+  });
+
+  it('虚拟机已创建但未运行 → instance_stopped', async () => {
+    const status = await limaBackend({
+      cli: true,
+      list: { exitCode: 0, stdout: `${JSON.stringify({ name: 'kepcup', status: 'Stopped' })}\n` },
+    }).probe();
+    expect(status).toMatchObject({ backend: 'lima', available: false, state: 'instance_stopped' });
+    expect(status.reason).toContain('未在运行');
+  });
+
+  it('虚拟机运行中 → available（不再出现未安装/未就绪）', async () => {
+    const status = await limaBackend({
+      cli: true,
+      list: { exitCode: 0, stdout: `${JSON.stringify({ name: 'kepcup', status: 'Running' })}\n` },
+    }).probe();
+    expect(status).toMatchObject({ backend: 'lima', available: true });
+    expect(status.state).toBeUndefined();
+  });
+
+  it('虚拟机运行但 shim 未初始化 → instance_unprovisioned', async () => {
+    const status = await limaBackend({
+      cli: true,
+      shimReady: false,
+      list: { exitCode: 0, stdout: `${JSON.stringify({ name: 'kepcup', status: 'Running' })}\n` },
+    }).probe();
+    expect(status).toMatchObject({
+      backend: 'lima',
+      available: false,
+      state: 'instance_unprovisioned',
+    });
+    expect(status.reason).toContain('尚未初始化');
   });
 });
 
