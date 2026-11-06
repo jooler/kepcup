@@ -6,7 +6,8 @@
   import { i18n, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
-  import { providerLogo } from './provider-logos';
+  import ProviderLogo from './ProviderLogo.svelte';
+  import { providerIcon } from './provider-logos';
   import { templateAvatarStyle } from './provider-instances';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -170,10 +171,9 @@
             : undefined}
           data-testid={`provider-template-${template.id}`}
         >
-          {#if providerLogo(template.logo) !== undefined}
-            <img
-              src={providerLogo(template.logo)}
-              alt=""
+          {#if providerIcon(template.logo) !== undefined}
+            <ProviderLogo
+              logo={template.logo}
               class="size-8 shrink-0 rounded-lg object-contain p-0.5"
             />
           {:else}

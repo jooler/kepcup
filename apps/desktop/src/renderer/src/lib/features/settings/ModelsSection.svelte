@@ -5,7 +5,8 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { buildProviderNavGroups } from './provider-instances';
-  import { providerLogo } from './provider-logos';
+  import ProviderLogo from './ProviderLogo.svelte';
+  import { providerIcon } from './provider-logos';
   import { revealSettingsAnchor } from './anchor-scroll';
   import ModelConfigDetail from './ModelConfigDetail.svelte';
   import ProviderDetail from './ProviderDetail.svelte';
@@ -122,10 +123,9 @@
               onclick={() => (selected = item.instance.id)}
               data-testid={`models-nav-provider-${item.instance.id}`}
             >
-              {#if providerLogo(item.instance.logo) !== undefined}
-                <img
-                  src={providerLogo(item.instance.logo)}
-                  alt=""
+              {#if providerIcon(item.instance.logo) !== undefined}
+                <ProviderLogo
+                  logo={item.instance.logo}
                   class="size-4 shrink-0 rounded object-contain"
                 />
                 <span class="truncate">{item.instance.name}</span>
