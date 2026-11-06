@@ -114,6 +114,10 @@ mac:
     # Resources/share-extension/group.json 就落空，回落无前缀组 id、快照写错容器）。
     - from: resources/share-extension/group.json
       to: share-extension/group.json
+    # P12 增强沙箱（Lima）：向导在 guest 内初始化时把 shim 内容写进 VM。
+    # core-host 经 KEPCUP_SANDBOX_SHIM 指向该文件（打包后 Resources/sandbox/…）。
+    - from: scripts/build-wsl-rootfs/kepcup-sandbox.cjs
+      to: sandbox/kepcup-sandbox.cjs
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
 # 文件名不能有空格：latest.yml 记录的是连字符形式，gh 上传带空格的文件会被 GitHub 改成点号，

@@ -5,6 +5,17 @@
 
 export type SandboxBackendKind = 'srt' | 'wsl' | 'lima' | 'podman' | 'none';
 
+/**
+ * Why an enhanced backend (Lima/Podman) is unavailable. The settings page
+ * must not call a missing VM "未安装": the distinction between the CLI being
+ * absent and the backend being installed but not ready is user-visible.
+ */
+export type SandboxUnavailableState =
+  | 'cli_missing'
+  | 'instance_missing'
+  | 'instance_stopped'
+  | 'instance_unprovisioned';
+
 export interface SandboxAvailability {
   backend: SandboxBackendKind;
   available: boolean;
@@ -12,6 +23,8 @@ export interface SandboxAvailability {
   reason?: string;
   /** Localized repair hint, e.g. a sudo command to run. */
   fixHint?: string;
+  /** Structured unavailable state (enhanced backends only). */
+  state?: SandboxUnavailableState;
 }
 
 export type NetworkMode = 'none' | 'allowlist' | 'open';

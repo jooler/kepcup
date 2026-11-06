@@ -6,12 +6,24 @@ import type { WslRunner, WslSetup } from './wsl/setup.js';
 import { LimaSandboxBackend, PodmanSandboxBackend, type ContainerBackendOptions } from './backend-container.js';
 import { UnavailableSandboxBackend, type SandboxBackend } from './types.js';
 
-export type { SandboxAvailability, SandboxBackend, SandboxPolicy } from './types.js';
+export type {
+  SandboxAvailability,
+  SandboxBackend,
+  SandboxPolicy,
+  SandboxUnavailableState,
+} from './types.js';
 export type { MountRegistration } from './wsl/mounts.js';
 export { UnavailableSandboxBackend } from './types.js';
 export { buildSandboxPolicy, alwaysDeniedAddresses } from './policy.js';
 export { readOnlyRoots, sensitivePaths, isInsidePath } from './sensitive-paths.js';
 export { WslSetup, createWslRunner, type WslRunner } from './wsl/setup.js';
+export { LimaSetup } from './lima/setup.js';
+export type {
+  LimaSetupAction,
+  LimaSetupPhase,
+  LimaStatusReport,
+} from './lima/setup.js';
+export { LIMA_VM_NAME } from './lima/constants.js';
 
 /** Test/ops hook: `KEPCUP_SANDBOX=off` disables command execution entirely. */
 function sandboxDisabled(env: NodeJS.ProcessEnv): boolean {

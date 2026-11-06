@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { SandboxStatusOutput, SandboxWslStatusOutput } from '@kepcup/shared';
+  import type {
+    SandboxLimaStatusOutput,
+    SandboxStatusOutput,
+    SandboxWslStatusOutput,
+  } from '@kepcup/shared';
   import { sandboxReasonText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -38,6 +42,9 @@
   } as const;
 
   let status = $state<SandboxWslStatusOutput | null>(null);
+  let limaStatus = $state<SandboxLimaStatusOutput | null>(null);
+  let limaBusy = $state(false);
+  let limaWasReady = $state(false);
   let busy = $state(false);
   let skipping = $state(false);
   /** 「重启后自动继续导入」只在每次打开向导时执行一次（guard against poll）。 */
@@ -86,8 +93,11 @@
       const next = (await core.call('sandbox.wslStatus')) as SandboxWslStatusOutput;
       status = next;
       // 非 Windows 平台的增强沙箱入口消费 sandbox.status 的 enhanced 子状态。
-      if (!next.applicable && settingsStore.sandboxStatus === null) {
-        await settingsStore.refreshSandbox(false);
+      if (!next.applicable) {
+        await refreshLima();
+        if (settingsStore.sandboxStatus === null) {
+          await settingsStore.refreshSandbox(false);
+        }
       }
       // 重启后自动继续（任务 2）：授权后的 awaiting_reboot 在检测到组件已
       // 启用时，无需再次点击，直接继续导入。
@@ -119,6 +129,70 @@
     }
   }
 
+  /** 非 Windows：拉取 macOS Lima 准备状态（其他平台返回 applicable:false）。 */
+  async function refreshLima(): Promise<void> {
+    try {
+      limaStatus = (await core.call('sandbox.limaStatus')) as SandboxLimaStatusOutput;
+    } catch {
+      return;
+    }
+    if (!limaStatus.applicable) return;
+    if (limaStatus.phase === 'ready' && limaStatus.action === 'none') {
+      if (!limaWasReady) {
+        limaWasReady = true;
+        // VM 就绪后刷新默认后端状态与技能兼容性（force probe）。
+        await Promise.all([settingsStore.refreshSandbox(true), permissions.refreshSandbox(true)]);
+      }
+    } else {
+      limaWasReady = false;
+    }
+  }
+
+  /** 创建 / 启动 / 初始化虚拟机；立即返回，后续由轮询推进。 */
+  async function prepareLima(): Promise<void> {
+    if (limaBusy) return;
+    limaBusy = true;
+    try {
+      limaStatus = (await core.call('sandbox.limaPrepare')) as SandboxLimaStatusOutput;
+    } catch {
+      // 失败详情由下一次轮询呈现（phase=failed + reason）。
+    } finally {
+      limaBusy = false;
+    }
+  }
+
+  /** 向导主操作文案（core 的 action 已按状态推导）。 */
+  function limaActionLabel(action: SandboxLimaStatusOutput['action']): string {
+    switch (action) {
+      case 'create':
+        return t('wizard.limaCreate');
+      case 'start':
+        return t('wizard.limaStart');
+      case 'provision':
+        return t('wizard.limaProvision');
+      case 'retry':
+        return t('wizard.limaRetry');
+      default:
+        return t('wizard.limaActionNone');
+    }
+  }
+
+  function limaPhaseLabel(value: SandboxLimaStatusOutput): string {
+    if (value.phase === 'ready') return t('settings.sandboxEnhancedAvailable');
+    if (value.phase === 'failed') return t('wizard.limaPhaseFailed');
+    if (value.phase !== 'idle') return t('wizard.limaPhaseWorking');
+    switch (value.action) {
+      case 'create':
+        return t('wizard.limaPhaseNotCreated');
+      case 'start':
+        return t('wizard.limaPhaseStopped');
+      case 'provision':
+        return t('wizard.limaPhaseUnprovisioned');
+      default:
+        return t('settings.sandboxEnhancedMissing');
+    }
+  }
+
   async function skip(): Promise<void> {
     skipping = true;
     try {
@@ -133,6 +207,15 @@
     if (backend === 'lima') return 'Lima';
     if (backend === 'podman') return 'Podman';
     return 'WSL2';
+  }
+
+  /** 「未安装」只在 CLI 缺失时成立；已装但 VM/镜像未就绪显示「未就绪」。 */
+  function enhancedStatusLabel(value: NonNullable<SandboxStatusOutput['enhanced']>): string {
+    if (value.available) return t('settings.sandboxEnhancedAvailable');
+    if (value.state === undefined || value.state === 'cli_missing') {
+      return t('settings.sandboxEnhancedMissing');
+    }
+    return t('settings.sandboxEnhancedNotReady');
   }
 </script>
 
@@ -237,7 +320,7 @@
         {#if enhanced !== null && enhanced !== undefined}
           <div class="flex items-center gap-2" data-testid="wizard-enhanced-state">
             <Badge variant={enhanced.available ? 'default' : 'destructive'} data-testid="wizard-enhanced-badge">
-              {enhanced.available ? t('settings.sandboxEnhancedAvailable') : t('settings.sandboxEnhancedMissing')}
+              {enhancedStatusLabel(enhanced)}
             </Badge>
             <span class="text-sm">{enhancedName(enhanced.backend)}</span>
           </div>
@@ -249,6 +332,57 @@
           {#if !enhanced.available && enhanced.fixHint !== undefined}
             <p class="text-xs text-muted-foreground" data-testid="wizard-enhanced-hint">{enhanced.fixHint}</p>
           {/if}
+        {/if}
+        {#if limaStatus !== null && limaStatus.applicable}
+          <!-- macOS：创建 / 启动 / 初始化 Lima 虚拟机（首次联网约 1GB）。 -->
+          <div
+            class="space-y-2 rounded-md border px-3 py-2"
+            data-testid="wizard-lima"
+            data-phase={limaStatus.phase}
+            data-action={limaStatus.action}
+          >
+            <div class="flex items-center gap-2">
+              <Badge
+                variant={limaStatus.phase === 'ready'
+                  ? 'default'
+                  : limaStatus.phase === 'failed'
+                    ? 'destructive'
+                    : 'secondary'}
+                data-testid="wizard-lima-state">{limaPhaseLabel(limaStatus)}</Badge
+              >
+              <span class="text-sm">Lima</span>
+            </div>
+            {#if limaStatus.progress !== undefined}
+              <p class="text-xs text-muted-foreground" data-testid="wizard-lima-progress">
+                {limaStatus.progress}
+              </p>
+            {/if}
+            {#if limaStatus.reason !== undefined && limaStatus.phase !== 'ready'}
+              <p class="text-xs text-muted-foreground" data-testid="wizard-lima-reason">
+                {sandboxReasonText(limaStatus.reason)}
+              </p>
+            {/if}
+            {#if limaStatus.fixHint !== undefined && limaStatus.phase === 'idle'}
+              <p class="text-xs text-muted-foreground" data-testid="wizard-lima-hint">
+                {limaStatus.fixHint}
+              </p>
+            {/if}
+            {#if limaStatus.action === 'create' || limaStatus.action === 'retry'}
+              <p class="text-xs text-muted-foreground" data-testid="wizard-lima-first-run">
+                {t('wizard.limaFirstRunNote')}
+              </p>
+            {/if}
+            {#if limaStatus.action !== 'none' && limaStatus.action !== 'wait'}
+              <Button
+                size="sm"
+                disabled={limaBusy}
+                onclick={() => void prepareLima()}
+                data-testid="wizard-lima-prepare"
+              >
+                {limaActionLabel(limaStatus.action)}
+              </Button>
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}

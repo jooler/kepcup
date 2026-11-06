@@ -392,6 +392,10 @@ export const diagnosticsOutputSchema = z.object({
     reason: z.string().optional(),
     enhancedBackend: z.string().nullable(),
     enhancedAvailable: z.boolean().nullable(),
+    /** Same structured state as sandbox.status (lets diagnostics stop saying 未安装 for a missing VM). */
+    enhancedState: z
+      .enum(['cli_missing', 'instance_missing', 'instance_stopped', 'instance_unprovisioned'])
+      .optional(),
   }),
   toolchain: z.array(diagnosticsToolRowSchema),
 });
@@ -1388,6 +1392,15 @@ export const sandboxStatusOutputSchema = z.object({
       available: z.boolean(),
       reason: z.string().optional(),
       fixHint: z.string().optional(),
+      /**
+       * Structured unavailable state: 'cli_missing' = the CLI is not
+       * installed; the others mean the backend is installed but its VM /
+       * image is not ready. Lets the settings page stop labeling a missing
+       * VM as "未安装".
+       */
+      state: z
+        .enum(['cli_missing', 'instance_missing', 'instance_stopped', 'instance_unprovisioned'])
+        .optional(),
     })
     .nullable()
     .optional(),
@@ -1424,6 +1437,23 @@ export const sandboxWslStatusOutputSchema = z.object({
 export type SandboxWslStatusOutput = z.infer<typeof sandboxWslStatusOutputSchema>;
 export const sandboxWslSkipOutputSchema = z.object({ skipped: z.boolean() });
 export type SandboxWslSkipOutput = z.infer<typeof sandboxWslSkipOutputSchema>;
+
+/**
+ * macOS 增强沙箱（Lima）准备向导：创建 / 启动 / 初始化虚拟机。非 macOS 返回
+ * `applicable:false`，向导继续渲染只读的增强级状态。
+ */
+export const sandboxLimaStatusOutputSchema = z.object({
+  applicable: z.boolean(),
+  phase: z.enum(['idle', 'creating', 'starting', 'provisioning', 'ready', 'failed']),
+  instance: z.enum(['missing', 'stopped', 'running']),
+  /** 向导应展示的主操作（core 侧统一推导，UI 不嗅探 reason 文本）。 */
+  action: z.enum(['create', 'start', 'provision', 'retry', 'wait', 'none']),
+  reason: z.string().optional(),
+  fixHint: z.string().optional(),
+  /** 当前步骤的进度文本（创建/启动/初始化期间）。 */
+  progress: z.string().optional(),
+});
+export type SandboxLimaStatusOutput = z.infer<typeof sandboxLimaStatusOutputSchema>;
 
 // --- approvals (P03) --------------------------------------------------------
 
@@ -2806,6 +2836,8 @@ export const rpcMethodSchemas = {
   'sandbox.wslStatus': { input: voidInput, output: sandboxWslStatusOutputSchema },
   'sandbox.wslPrepare': { input: voidInput, output: sandboxWslStatusOutputSchema },
   'sandbox.wslSkip': { input: voidInput, output: sandboxWslSkipOutputSchema },
+  'sandbox.limaStatus': { input: voidInput, output: sandboxLimaStatusOutputSchema },
+  'sandbox.limaPrepare': { input: voidInput, output: sandboxLimaStatusOutputSchema },
 
   'approvals.list': { input: approvalsListInputSchema, output: approvalsListOutputSchema },
   'approvals.decide': { input: approvalsDecideInputSchema, output: approvalsDecideOutputSchema },
@@ -3465,6 +3497,8 @@ const APP_METHODS = [
   'sandbox.wslStatus',
   'sandbox.wslPrepare',
   'sandbox.wslSkip',
+  'sandbox.limaStatus',
+  'sandbox.limaPrepare',
   'approvals.list',
   'approvals.decide',
   'delegations.get',
