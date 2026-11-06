@@ -262,7 +262,6 @@ describe('markRead, loadEarlier, gateForSend, and replyTo', () => {
 
     settingsStore.settings = {
       defaultMainModel: '',
-      experimental: { externalAgents: true },
       agents: {},
     } as Settings;
     expect(chat.gateForSend()).toBe(true);
@@ -275,9 +274,9 @@ describe('markRead, loadEarlier, gateForSend, and replyTo', () => {
 
     state.model = '';
     state.agentId = 'codex';
+    agentsStore.agents = [{ id: 'codex', enabled: false, status: 'available' } as never];
     settingsStore.settings = {
       defaultMainModel: 'provider/model',
-      experimental: { externalAgents: false },
       agents: {},
     } as Settings;
     await chat.select('c1');
@@ -285,7 +284,7 @@ describe('markRead, loadEarlier, gateForSend, and replyTo', () => {
     expect(chat.setupRequirement).toEqual({
       kind: 'agent',
       agentId: 'codex',
-      reason: 'experimental_off',
+      reason: 'not_enabled',
     });
   });
 

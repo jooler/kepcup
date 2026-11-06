@@ -204,9 +204,9 @@
   const selectedAgent = $derived(
     selectedAgentId.length > 0 ? agentsStore.get(selectedAgentId) : null,
   );
-  /** 智能体组：实验开关打开时列已启用的 Agent；当前值不在其中时仍保留一项以便显示。 */
+  /** 智能体组：列已启用的 Agent；当前值不在其中时仍保留一项以便显示。 */
   const agentOptions = $derived.by(() => {
-    const list = agentsStore.experimental ? agentsStore.selectable : [];
+    const list = agentsStore.selectable;
     const options = list.map((agent) => ({
       id: agent.id,
       label:

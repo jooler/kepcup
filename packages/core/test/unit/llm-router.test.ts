@@ -64,7 +64,6 @@ function router(
   } = {},
 ) {
   const settings = settingsSchema.parse({
-    experimental: { externalAgents: true },
     agents: { alpha: { enabled: true }, beta: { enabled: true } },
     ...patch,
   });
@@ -167,17 +166,13 @@ describe('LlmRouter', () => {
     });
     expect(router(CHOSEN).resolveDefault('summary')?.agentId).toBe('alpha');
     expect(router(CHOSEN, { ready: ['beta'] }).resolveDefault('summary')).toBeNull();
-    // Nothing usable / no external engine / experimental off → skip (P4 fallback).
+    // Nothing usable / no external engine → skip (P4 fallback).
     expect(router(CHOSEN, { ready: [] }).resolveDefault('summary')).toBeNull();
     expect(router(CHOSEN, { withExternal: false }).resolveDefault('summary')).toBeNull();
-    expect(
-      router({ ...CHOSEN, experimental: { externalAgents: false } }).resolveDefault('summary'),
-    ).toBeNull();
   });
 
   it('background eligibility: no native tools, no personal config, concurrency ≥ 2 (审查 S1 / C1)', () => {
-    const settings = (patch: Partial<Settings> = {}) =>
-      settingsSchema.parse({ experimental: { externalAgents: true }, ...patch });
+      const settings = (patch: Partial<Settings> = {}) => settingsSchema.parse({ ...patch });
     const claude = fakeAgentEntry('claude-x', { provider: 'claude', releaseGate: 'claude' });
     const opencode = fakeAgentEntry('oc-x', { provider: 'opencode', releaseGate: 'opencode' });
     const codex = fakeAgentEntry('codex-x', { provider: 'codex', releaseGate: 'codex' });
@@ -340,7 +335,6 @@ describe('judgeContinuation through the router (P6 / D92 T1a routing)', () => {
       settings: {
         get: () =>
           settingsSchema.parse({
-            experimental: { externalAgents: true },
             agents: { alpha: { enabled: true } },
             ...TRIAGE_ON,
           }),

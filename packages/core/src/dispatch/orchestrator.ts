@@ -3645,9 +3645,7 @@ export class Orchestrator {
     this.#deps.agents?.noteRunError(agentId, code);
     const view = this.#agentView();
     const stateReason =
-      code === 'AGENT_UNAVAILABLE' && view !== undefined
-        ? agentSetupReasonOf(view(agentId), true)
-        : null;
+      code === 'AGENT_UNAVAILABLE' && view !== undefined ? agentSetupReasonOf(view(agentId)) : null;
     const reason = agentSetupReasonForError(code, stateReason);
     if (reason === null) return null;
     // Which file / key to fix (第三轮审查 #6): the error message lists them.

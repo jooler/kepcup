@@ -95,7 +95,7 @@ export const agentCatalogEntrySchema = z.object({
   website: z.string().optional(),
   authors: z.array(z.string()),
   license: z.string(),
-  /** 图标随应用打包（`apps/desktop/resources/agents/`），不在运行时拉 CDN。 */
+  /** 图标随应用打包（渲染层把文件名映射到内置品牌图标），不在运行时拉 CDN。 */
   icon: z.string(),
   distribution: agentDistributionSchema,
   // —— KepCup 扩展 ——
@@ -904,7 +904,7 @@ const DEVIN_AGENT_ENTRY: AgentCatalogEntry = {
 };
 
 /**
- * 策展目录：只在实验开关 `settings.experimental.externalAgents` 打开时可选。
+ * 策展目录（设置页「智能体」列出全部条目，含未启用的）。
  * P2 收录 Claude Agent 与 Codex（安装器在 P4：此前只能经测试缝启动）；
  * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity；
  * InkCop 以 system 分发挂入（本机 `inkcop-acp`）。

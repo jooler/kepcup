@@ -58,6 +58,7 @@
   "devDependencies": {
     "@internationalized/date": "3.12.0",
     "@kepcup/testkit": "workspace:*",
+    "@lobehub/icons-static-svg": "1.102.0",
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@playwright/test": "1.63.0",

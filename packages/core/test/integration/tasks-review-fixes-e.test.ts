@@ -643,7 +643,6 @@ describe('L4: the downgraded inject line holds only what the user can see', () =
       ) as never,
     });
     await stack.core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { 'fake-l4': { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });

@@ -1004,15 +1004,6 @@ export const agentSettingInputSchema = z
   })
   .strict();
 
-/** 实验开关（D72 以「实验」开关发布）。 */
-export const experimentalSettingsSchema = z
-  .object({
-    /** 外部智能体引擎：关时 RPC 拒绝把 Bot 设为外部 Agent，目录不可见。 */
-    externalAgents: z.boolean().default(false).catch(false),
-  })
-  .catch({ externalAgents: false });
-export type ExperimentalSettings = z.infer<typeof experimentalSettingsSchema>;
-
 /**
  * 后台任务（D72 P6，design 28 §8）：只配了外部 Agent、没有内置模型时，后台
  * loop 是否改用外部 Agent 以及降配项。有内置模型时这些开关不起作用。
@@ -1275,7 +1266,6 @@ export const settingsSchema = z.object({
   // 预留字段的存储形态宽松（条目 schema 由读取方按 agentCatalogEntrySchema
   // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
   customAgents: z.array(z.unknown()).default([]).catch([]),
-  experimental: experimentalSettingsSchema.prefault({}),
   /**
    * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
    * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、项目组

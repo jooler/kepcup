@@ -478,8 +478,6 @@ export const settingsUpdateInputSchema = z.object({
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 计算机操控（D105）：安全开关（平铺布尔，受 user-only 档位约束）。 */
   computerUseEnabled: z.boolean().optional(),
-  /** 实验开关（D72）：部分 patch，与已存值合并。 */
-  experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
   /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
   apps: z
     .object({

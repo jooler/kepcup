@@ -156,6 +156,9 @@ importers:
       '@kepcup/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
+      '@lobehub/icons-static-svg':
+        specifier: 1.102.0
+        version: 1.102.0
       '@modelcontextprotocol/ext-apps':
         specifier: 1.7.5
         version: 1.7.5(@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.6.5))(zod@4.6.5)
@@ -1504,6 +1507,9 @@ packages:
 
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
+
+  '@lobehub/icons-static-svg@1.102.0':
+    resolution: {integrity: sha512-3Na6S2kdslmsfnBjuL0PQWQClrmuWe/pWThRN/3J2VzPg5MhVghy8knVu7kd1/lqA9ydZBvwmnKLzuBo0Wm6Qw==}
 
   '@lucide/svelte@1.48.0':
     resolution: {integrity: sha512-bLimVDjehxu3fpu9XEUpqEkBk2sJAHAT2sVcLHhlM70EdNsXuj9ZnYENWv5xgw3+05h4i5TirAxTiTgnZZf8gw==}
@@ -7868,6 +7874,8 @@ snapshots:
       keyv: 5.6.0
 
   '@keyv/serialize@1.1.1': {}
+
+  '@lobehub/icons-static-svg@1.102.0': {}
 
   '@lucide/svelte@1.48.0(svelte@5.57.1(@typescript-eslint/types@8.71.0))':
     dependencies:

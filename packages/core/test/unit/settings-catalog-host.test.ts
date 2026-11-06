@@ -108,7 +108,6 @@ function makeRig(
     workdirs?: AdapterDeps['workdirs'];
     /** Bot 条目写入走真实的 `applyBotProfileUpdate`（校验 + 锁外中断 / 收回授权）。 */
     realBotProfiles?: boolean;
-    experimentalAgents?: boolean;
     oauthClients?: AdapterDeps['oauthClients'];
     fileGrants?: AdapterDeps['fileGrants'];
     schedules?: AdapterDeps['schedules'];
@@ -209,9 +208,6 @@ function makeRig(
   const mcpRevoked: string[][] = [];
   const revocations: PermissionRevokedEvent[] = [];
   const profileSwitches: string[] = [];
-  if (extras.experimentalAgents === true) {
-    settings.update({ experimental: { externalAgents: true } } as never);
-  }
   const catalog = [
     { id: 'agent-a', name: 'Agent A' },
     { id: 'agent-b', name: 'Agent B' },
@@ -1697,25 +1693,24 @@ describe('settings catalog host: D89 review round 2', () => {
     expect(rig.profileSwitches).toEqual(['bot_a']);
   });
 
-  it('bot.agent: switching to an external agent honors the experimental switch like bots.update', async () => {
+  it('bot.agent: switching to a catalog agent works; unknown ids are rejected like bots.update', async () => {
     const rig = makeRig({ realBotProfiles: true });
     await expect(
       rig.host.applyItem({
         itemId: 'bot.agent',
-        values: { agent: 'agent-a', permission: 'ask' },
+        values: { agent: 'not-in-catalog', permission: 'ask' },
         expected: null,
         target: { botId: 'bot_a' },
       }),
-    ).rejects.toThrow(/实验功能/);
+    ).rejects.toThrow(/不在目录中/);
     expect(rig.bots.get('bot_a')!.profile.runtime.agent.id).toBe('');
-    const enabled = makeRig({ realBotProfiles: true, experimentalAgents: true });
-    await enabled.host.applyItem({
+    await rig.host.applyItem({
       itemId: 'bot.agent',
       values: { agent: 'agent-a', permission: 'ask' },
       expected: null,
       target: { botId: 'bot_a' },
     });
-    expect(enabled.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
+    expect(rig.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
       id: 'agent-a',
       permission: 'ask',
     });
@@ -1922,7 +1917,6 @@ describe('settings catalog host: D89 review round 3', () => {
                 { id: 'srv', name: 'S', transport: 'stdio', command: 'x', enabled: true },
               ],
               browserProfiles: [{ id: 'bpf', name: 'B', createdAt: 1 }],
-              experimental: { externalAgents: false },
             }) as never,
         },
         agentCatalog: () => [],

@@ -288,7 +288,6 @@ describe('new target「与来源相同」with an empty source runtime (审查 #3
     stacks.push(stack);
     const { core } = stack;
     await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { 'fake-sub': { enabled: true } },
       defaultAgentId: 'fake-sub',
     });

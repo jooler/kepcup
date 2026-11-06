@@ -22,13 +22,11 @@ function bot(
 function settings(
   overrides: {
     defaultMainModel?: string;
-    experimental?: boolean;
     enabled?: Record<string, boolean>;
   } = {},
 ) {
   return {
     defaultMainModel: overrides.defaultMainModel ?? '',
-    experimental: { externalAgents: overrides.experimental ?? true },
     agents: Object.fromEntries(
       Object.entries(overrides.enabled ?? {}).map(([id, enabled]) => [
         id,
@@ -89,11 +87,6 @@ describe('sendGateRequirement', () => {
         agents: agents(views, loaded),
       });
     expect(gate({ 'codex-acp': { enabled: true, status: 'ready' } })).toBeNull();
-    expect(gate({}, settings({ experimental: false }))).toEqual({
-      kind: 'agent',
-      agentId: 'codex-acp',
-      reason: 'experimental_off',
-    });
     expect(gate({ 'codex-acp': { enabled: false, status: 'available' } })).toMatchObject({
       reason: 'not_enabled',
     });
@@ -103,7 +96,7 @@ describe('sendGateRequirement', () => {
     expect(gate({ 'codex-acp': { enabled: true, status: 'installing' } })).toMatchObject({
       reason: 'not_installed',
     });
-    // Views not loaded yet: only the settings switch is known.
+    // Views not loaded yet: only the settings enable switch is known.
     expect(gate({}, settings({ enabled: { 'codex-acp': false } }), false)).toMatchObject({
       reason: 'not_enabled',
     });

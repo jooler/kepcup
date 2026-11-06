@@ -343,6 +343,7 @@ export const enUS = {
   'settings.remove': 'Remove',
   // --- Models section two-pane rework (v0.5.6: "Model config" + provider instances)
   'settings.modelsNavConfig': 'Model Config',
+  'settings.agentsNavConfig': 'Global settings',
   'settings.modelsOverviewHint':
     'Manage model providers and defaults; a provider can be added multiple times (different baseUrls for different model capabilities).',
   'settings.templateHintVendor':
@@ -2273,9 +2274,6 @@ export const enUS = {
   'onboarding.subscriptionOpen': 'I have a subscription (Claude / ChatGPT / Copilot / GLM…)',
   'onboarding.subscriptionBody':
     "Use your existing subscription to power Bots: choose an agent as the Bot's task engine, enable (install) it, and sign in following the provider's official process. KepCup doesn't access or store your subscription credentials.",
-  'onboarding.subscriptionEnable': 'Turn on external agents (experimental) and continue',
-  'onboarding.subscriptionExperimental':
-    "This is an experimental feature: continuing turns on External agents (experimental) (switching back to an API key turns it off). External agents' file and command tools run in their own sandbox; KepCup's sandbox, working directory protections, and network policies don't apply to them.",
   'onboarding.subscriptionEmpty': 'This version has no agents that support subscription sign-in.',
   'onboarding.subscriptionChoose': 'Let {name} run tasks for the butler and new Bots',
   'onboarding.subscriptionEnableFirst':
@@ -2485,8 +2483,6 @@ export const enUS = {
   'setupCard.dismiss': 'Not now',
   'setupCard.agentTitle':
     "{name} isn't usable yet; the conversation will continue automatically once it's set up",
-  'setupCard.agentReason.experimental_off':
-    "This Bot's tasks are run by an external agent, but External agents (experimental) isn't turned on.",
   'setupCard.agentReason.not_enabled':
     "This agent isn't enabled yet: enabling it will install it first (you'll need to confirm).",
   'setupCard.agentReason.not_installed':
@@ -2505,7 +2501,6 @@ export const enUS = {
     'On Linux, install the sandbox dependencies first: sudo apt install bubblewrap socat (Debian / Ubuntu) or sudo dnf install bubblewrap socat (Fedora). Once installed, click Test connection, then Finish setup and continue.',
   'setupCard.agentSandboxAsk':
     'Switching to the "ask" (confirm each step) permission level doesn\'t bypass this step: every level requires the sandbox to be active (confirming commands one by one still means running them inside the sandbox). If you can\'t install it right now, you can switch this Bot to another agent or the built-in model in the Bot configuration.',
-  'setupCard.agentEnableExperimental': 'Enable external agents (experimental)',
   'setupCard.agentMissing':
     "This agent isn't in the catalog: reselect a model or agent in the Bot configuration.",
   'setupCard.agentLoading': 'Reading agent status…',
@@ -2828,6 +2823,7 @@ export const enUS = {
   'settings.navAgents': 'Agents',
   'approvals.environmentLicense': 'License',
   'agents.title': 'External agents',
+  'agents.available': 'Available',
   'agents.defaultAgent': 'Agent used by default for new Bots',
   'agents.defaultAgentNone': 'None (use built-in model)',
   'agents.defaultAgentHint':
@@ -2859,9 +2855,6 @@ export const enUS = {
     'In project groups, respond only when @mentioned or replied to',
   'agents.background.projectMentionOnlyHint':
     "On by default. When off, the agent decides whether to join in: one session per batch of project group messages (at most once every 2 minutes per project group); if the decision times out, it's treated as no response.",
-  'agents.experimental': 'External agents (experimental)',
-  'agents.experimentalHint':
-    "Experimental feature. An external agent's file and command tools run in its own sandbox; KepCup's sandbox, working directory protections, and network policy don't apply to them.",
   'agents.empty': 'No agents are available in this version',
   'agents.tier.supported': 'Supported',
   'agents.tier.preview': 'Preview',

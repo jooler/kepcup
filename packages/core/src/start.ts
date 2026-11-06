@@ -1199,15 +1199,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Test/e2e-only seam: absent from the packaged artifact (P13 产物剔除).
     if (__KEPCUP_TEST_HOOKS__) seedMockLlm(settings, env, logger);
 
-    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型、
-    // 实验开关打开且该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
+    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型且
+    // 该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
     const bots = new BotsService(mainDb, clock, () => {
       const current = settings.get();
       const agentId = current.defaultAgentId;
       if (agentId.length === 0 || current.defaultMainModel.length > 0) return null;
-      if (!current.experimental.externalAgents || current.agents[agentId]?.enabled !== true) {
-        return null;
-      }
+      if (current.agents[agentId]?.enabled !== true) return null;
       const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
       if (entry === null) return null;
       return {
@@ -3119,11 +3117,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
     };
     const handoverModelOptions = () => chatModelOptions(providers.list());
-    // 换外部智能体时的规则与 bots.update / 新建 Bot 同源（实验开关、目录、默认权限档）。
+    // 换外部智能体时的规则与 bots.update / 新建 Bot 同源（目录、默认权限档）。
     const handoverAgents: HandoverAgentPolicy = {
       selectable: (agentId) => {
         try {
-          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          assertAgentSelectable(agentCatalog, agentId);
           return null;
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
@@ -3657,7 +3655,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills,
       agentSelectable: (agentId) => {
         try {
-          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          assertAgentSelectable(agentCatalog, agentId);
           return true;
         } catch {
           return false;
