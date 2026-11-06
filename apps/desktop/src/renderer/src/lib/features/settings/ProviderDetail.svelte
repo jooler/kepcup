@@ -11,7 +11,8 @@
     providerNavStatus,
     settingsWithoutInstance,
   } from './provider-instances';
-  import { providerLogo } from './provider-logos';
+  import ProviderLogo from './ProviderLogo.svelte';
+  import { providerIcon } from './provider-logos';
   import ProviderModelDialog from './ProviderModelDialog.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -222,10 +223,9 @@
   <div class="min-w-0 space-y-5" data-testid={`provider-detail-${instance.id}`}>
     <!-- 头部：名称 / 类型 / 状态 / 启停 / 删除 -->
     <div class="flex flex-wrap items-center gap-2">
-      {#if providerLogo(instance.logo) !== undefined}
-        <img
-          src={providerLogo(instance.logo)}
-          alt=""
+      {#if providerIcon(instance.logo) !== undefined}
+        <ProviderLogo
+          logo={instance.logo}
           class="size-6 shrink-0 rounded object-contain"
         />
       {/if}
