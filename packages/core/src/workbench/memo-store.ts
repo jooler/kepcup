@@ -58,6 +58,11 @@ export interface InsertMemoInput {
   body: string;
   source: TodoSource;
   pinned?: boolean | undefined;
+  /**
+   * Target group; absent = 未分组伪分组（group_id 为 null）。存在性校验在 MemoService，
+   * 这里只负责落位：新备忘插到所属组的顶部（取组内最小 position 之前）。
+   */
+  groupId?: string | undefined;
 }
 
 export interface UpdateMemoPatch {
@@ -92,15 +97,28 @@ export class MemoStore {
     const id = newId('memo');
     const now = this.clock.now();
     const min = this.db
-      .prepare('select min(position) as m from memos where deleted_at is null and group_id is null')
-      .get() as { m: number | null };
+      .prepare(
+        `select min(position) as m from memos
+         where deleted_at is null and group_id ${input.groupId === undefined ? 'is null' : '= ?'}`,
+      )
+      .get(...(input.groupId === undefined ? [] : [input.groupId])) as { m: number | null };
     const position = min.m === null ? POSITION_OPTS.step : min.m - POSITION_OPTS.step;
     this.db
       .prepare(
         `insert into memos (id, body, pinned, source, created_at, updated_at, sort_at, deleted_at, group_id, position)
-         values (?, ?, ?, ?, ?, ?, ?, null, null, ?)`,
+         values (?, ?, ?, ?, ?, ?, ?, null, ?, ?)`,
       )
-      .run(id, input.body, input.pinned === true ? 1 : 0, input.source, now, now, now, position);
+      .run(
+        id,
+        input.body,
+        input.pinned === true ? 1 : 0,
+        input.source,
+        now,
+        now,
+        now,
+        input.groupId ?? null,
+        position,
+      );
     const memo = this.get(id);
     if (memo === null) throw new Error(`memo ${id} disappeared after insert`);
     return memo;
