@@ -45,6 +45,12 @@ export interface EngineUsage {
   cacheRead: number;
   cacheWrite: number;
   costUsd: number | null;
+  /**
+   * 实际产生这条用量的供应商 / 模型。run 内换过模型（`currentModelRef`
+   * 路由变更）时与 run 启动时的 modelRef 不同，记账按这两个字段走。
+   */
+  provider?: string;
+  model?: string;
 }
 
 export interface RunOutcome {
@@ -101,6 +107,8 @@ export type EngineEvent =
        */
       payload: { text: string; transient?: boolean };
     }
+  /** 路由变更后本 run 已换到新的内置模型（run 行的 provider/model 跟着更新）。 */
+  | { type: 'route_switched'; payload: { provider: string; model: string } }
   | { type: 'steer'; payload: { text: string } };
 
 export interface EngineMessage {
@@ -149,10 +157,18 @@ export interface RunSpec {
   limits: { maxTurns: number };
   /**
    * Whether `model` is still what this run's Bot would use. PiEngine stops
-   * retrying the old provider once it flips to false (the run then fails with
-   * a "model settings changed" error). Omitted = never stale.
+   * retrying the old provider once it flips to false. Omitted = never stale.
    */
   isRouteCurrent?: () => boolean;
+  /**
+   * The model ref this run should use now (`''` / `null` = none). When given,
+   * PiEngine compares it with the model the request was sent to instead of
+   * using {@link isRouteCurrent}; a change that stops a retry is not a failure:
+   * the loop switches to the new model and continues the same transcript
+   * (nothing was streamed by the aborted attempt). This is what makes "改 Bot
+   * 模型" during a 429 countdown take effect at once rather than after the wait.
+   */
+  currentModelRef?: () => string | null;
   // Cancellation goes through RunHandle.abort() (pi's agent.abort); a spec
   // signal would be dead wiring — the engine never polls it.
   //

@@ -313,6 +313,73 @@ describe('subagent facade', () => {
     expect(row.run_id).toBe(run!.id);
   });
 
+  it('a sub run starts on the parent model as it is now and follows later changes', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(
+      deps,
+      makeInput(engine, {
+        // Facade created when the parent ran on `stale`; it has since switched.
+        modelRef: 'mock/stale',
+        currentModelRef: () => 'mock/current',
+        isRouteCurrent: () => false,
+      }),
+    );
+    await facade.delegate({ task: '任务' }, makeCtx().ctx);
+    const spec = engine.specs[0]!;
+    expect(spec.model).toBe('mock/current');
+    // The sub run also follows later switches instead of being pinned stale.
+    expect(spec.currentModelRef?.()).toBe('mock/current');
+    expect(spec.isRouteCurrent).toBeUndefined();
+  });
+
+  it('keeps a built-in sub run off an external-agent ref the parent switched to', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(
+      deps,
+      makeInput(engine, {
+        modelRef: 'mock/stale',
+        // The parent's Bot was switched to an external agent mid-run; a pi
+        // sub run cannot use that pseudo ref.
+        currentModelRef: () => 'agent:codex-acp/default',
+      }),
+    );
+    await facade.delegate({ task: '任务' }, makeCtx().ctx);
+    expect(engine.specs[0]!.model).toBe('mock/stale');
+  });
+
+  it('attributes sub run usage to the model that actually produced it', async () => {
+    const engine = new FakeEngine();
+    const runs = new RunsService(openRunsDb(), new TestClock(1_000));
+    const mainDb = openMainDb();
+    const usage = new UsageService(mainDb, new TestClock(1_000));
+    const facade = createSubagentFacade({ ...makeDeps(engine), runs, usage }, makeInput(engine));
+    engine.completed.push({
+      outcome: {
+        status: 'completed',
+        finalText: '结论',
+        skipReply: false,
+        usage: [
+          {
+            input: 10,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            costUsd: null,
+            provider: 'mock2',
+            model: 'other',
+          },
+        ],
+      },
+    });
+    await facade.delegate({ task: '任务' }, makeCtx().ctx);
+    const [row] = mainDb
+      .prepare('select provider, model, input_tokens from usage_ledger')
+      .all() as Array<{ provider: string; model: string; input_tokens: number }>;
+    expect(row).toEqual({ provider: 'mock2', model: 'other', input_tokens: 10 });
+  });
+
   it('a failed external agent compaction is charged as a zero-token row; built-in failures are not', async () => {
     const rowsFor = async (lightModelRef: string) => {
       const engine = new FakeEngine();

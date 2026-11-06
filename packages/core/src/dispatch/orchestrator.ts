@@ -3056,7 +3056,12 @@ export class Orchestrator {
    * from (other Bots' changes do not matter).
    */
   #conversationRouteCurrent(isTask: boolean, botId: string, modelRef: string): boolean {
-    return (isTask ? this.#modelRefForBot(botId) : this.#turnModelRef(botId)) === modelRef;
+    return this.#conversationModelRef(isTask, botId) === modelRef;
+  }
+
+  /** The model ref a bot's turn / task would use right now ('' = none). */
+  #conversationModelRef(isTask: boolean, botId: string): string {
+    return isTask ? this.#modelRefForBot(botId) : this.#turnModelRef(botId);
   }
 
   /**
@@ -4391,6 +4396,9 @@ export class Orchestrator {
               parent: identity,
               modelRef,
               isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+              // Sub runs start on what this Bot uses now, not the provider the
+              // parent run started on (it may have switched mid-run).
+              currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
               ...this.#compactionRoute(batch.botId),
               buildTools: (subIdentity) =>
                 buildSubagentResearchTools({
@@ -4824,6 +4832,9 @@ export class Orchestrator {
         // Stop retrying a provider the user has since switched this Bot away
         // from (other Bots' changes do not matter).
         isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
+        // Follow a live model change by continuing this run on the new model
+        // instead of waiting out the retry countdown.
+        currentModelRef: () => this.#conversationModelRef(isTask, batch.botId),
         // D93: only built-in pi tasks get host-side compaction / idle guard /
         // soft budget; external agents keep their own native harness, and
         // conversation turns are bounded.
@@ -5011,6 +5022,18 @@ export class Orchestrator {
         // 不会被消化；mailbox 释放前 done promise 均会兑现，无泄漏窗口。
         setTimeout(() => handle.abort('setup required'), 0);
       });
+      // A route restart moved the run onto another model: keep the run row
+      // (status line / run detail / retry info) in step with what is being
+      // used. The scheduler's concurrency slot stays on the start-time
+      // provider — only the tail of this run changed.
+      const unsubscribeRouteSwitch = handle.onEvent((event) => {
+        if (event.type !== 'route_switched') return;
+        const updated = this.#deps.runs.update(runId, {
+          provider: event.payload.provider,
+          model: event.payload.model,
+        });
+        this.#deps.publish('run.status', { run: updated });
+      });
       const unsubscribeInterim = this.#deliverInterimTexts(
         runId,
         batch,
@@ -5026,6 +5049,7 @@ export class Orchestrator {
         unsubscribeSetup();
         unsubscribeUntrusted();
         unsubscribeInterim();
+        unsubscribeRouteSwitch();
         unsubscribeSteerConfirm();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
@@ -5083,14 +5107,18 @@ export class Orchestrator {
         this.#recordBotMessage(runId, message);
       }
 
+      // A route restart can put part of this run on another provider/model:
+      // EngineUsage carries the one that actually produced each entry.
+      const runProvider = this.#providerForRef(modelRef);
+      const runModel = modelRef.slice(runProvider.length + 1);
       for (const usage of outcome.usage) {
         this.#deps.usage.record({
           runId,
           botId: batch.botId,
           conversationId: batch.conversationId,
           loopType,
-          provider: this.#providerForRef(modelRef),
-          model: modelRef.slice(this.#providerForRef(modelRef).length + 1),
+          provider: usage.provider ?? runProvider,
+          model: usage.model ?? runModel,
           inputTokens: usage.input,
           outputTokens: usage.output,
           cacheReadTokens: usage.cacheRead,
