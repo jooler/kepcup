@@ -317,6 +317,9 @@ export const zhCN = {
   'settings.providerKey': 'API Key',
   'settings.providerKeyPlaceholder': '输入 API Key（保存后不再显示）',
   'settings.providerKeySet': '已配置（不显示明文）',
+  'settings.providerKeyAddPlaceholder': '粘贴新的 API Key，回车添加',
+  'settings.providerKeyCount': '已配置 {count} 个 Key，调用时轮流使用',
+  'settings.providerKeyRemove': '删除该 Key',
   'settings.save': '保存',
   'settings.remove': '移除',
   // --- 模型分区两栏重构（v0.5.6：左栏「模型配置」+ 供应商实例）--------------

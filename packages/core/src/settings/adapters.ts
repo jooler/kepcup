@@ -27,7 +27,6 @@ import {
   type UnattendedState,
 } from '@kepcup/shared';
 import { homedir } from 'node:os';
-import { providerSecretName } from '../agent/models.js';
 import type { Bot } from '@kepcup/shared';
 
 /**
@@ -492,8 +491,10 @@ function capabilityOf(item: SettingItem): CapabilityModelKey | null {
 }
 
 export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
+  // 是否已配 Key 以 providers.list 为准（同一供应商可有多个 Key）。
   const keyed = (provider: string): boolean =>
-    provider.length > 0 && deps.secrets.hasValue(providerSecretName(provider));
+    provider.length > 0 &&
+    (deps.providers.list().find((entry) => entry.id === provider)?.hasKey ?? false);
   const providerName = (id: string): string =>
     deps.providers.list().find((p) => p.id === id)?.name ?? id;
 
@@ -504,8 +505,9 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
     const apiById = new Map(
       deps.settings.get().modelProviders.map((p) => [p.id, p.api] as const),
     );
-    return deps.providers
-      .list()
+    const providers = deps.providers.list();
+    const keyedIds = new Set(providers.filter((provider) => provider.hasKey).map((p) => p.id));
+    return providers
       .filter((provider) => {
         if (provider.kind === 'builtin' || !provider.enabled) return false;
         if (provider.vendor !== undefined) {
@@ -515,7 +517,7 @@ export function capabilityAdapter(deps: AdapterDeps): ItemAdapter {
           capability === 'embedding' && apiById.get(provider.id) !== 'anthropic-messages'
         );
       })
-      .sort((a, b) => Number(keyed(b.id)) - Number(keyed(a.id)));
+      .sort((a, b) => Number(keyedIds.has(b.id)) - Number(keyedIds.has(a.id)));
   };
 
   return {

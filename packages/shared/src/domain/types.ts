@@ -464,6 +464,8 @@ export interface ProviderInfo {
   }>;
   /** Whether an API key is stored. Never the key itself. */
   hasKey: boolean;
+  /** 已存 Key 的掩码预览（与存储顺序一致）；明文永不出 core。 */
+  keyPreviews: string[];
 }
 
 /** One choice of the bot model dropdown: `{provider}/{model}` ref + display label. */

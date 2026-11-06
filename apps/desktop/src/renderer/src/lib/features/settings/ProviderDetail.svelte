@@ -40,6 +40,7 @@
     settingsStore.settings?.modelProviders.find((p) => p.id === instanceId) ?? null,
   );
   const info = $derived(settingsStore.providers.find((p) => p.id === instanceId) ?? null);
+  const keyPreviews = $derived(info?.keyPreviews ?? []);
   const descriptor = $derived(
     instance?.vendor !== undefined && instance.vendor !== null
       ? VENDOR_DESCRIPTORS[instance.vendor]
@@ -56,6 +57,7 @@
   let key = $state('');
   let busy = $state(false);
   let testing = $state(false);
+  let removingKeyIndex = $state<number | null>(null);
 
   $effect(() => {
     const current = instance;
@@ -125,17 +127,30 @@
     }
   }
 
-  /** Key 提交（失焦 / 回车）：值落 secrets 表，永不进 settings。 */
+  /** Key 提交（失焦 / 回车）：追加一个 Key（多 Key 轮流使用），值落 secrets 表。 */
   async function commitKey(): Promise<void> {
-    if (instance === null || key.length === 0 || busy) return;
+    const value = key.trim();
+    if (instance === null || value.length === 0 || busy) return;
     busy = true;
     try {
-      await settingsStore.setKey(instance.id, key);
+      await settingsStore.addKey(instance.id, value);
       key = '';
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
     } finally {
       busy = false;
+    }
+  }
+
+  async function removeKeyAt(index: number): Promise<void> {
+    if (instance === null || removingKeyIndex !== null) return;
+    removingKeyIndex = index;
+    try {
+      await settingsStore.removeKeyAt(instance.id, index);
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    } finally {
+      removingKeyIndex = null;
     }
   }
 
@@ -299,14 +314,38 @@
         <Input
           id={`provider-key-${instance.id}`}
           type="password"
-          placeholder={
-            info?.hasKey ? t('settings.providerKeySet') : t('settings.providerKeyPlaceholder')
-          }
+          placeholder={t('settings.providerKeyAddPlaceholder')}
           bind:value={key}
           onblur={() => void commitKey()}
           onkeydown={onKeyKeydown}
           data-testid={`provider-key-${instance.id}`}
         />
+        {#if keyPreviews.length > 0}
+          <p class="text-xs text-muted-foreground">
+            {t('settings.providerKeyCount', { count: keyPreviews.length })}
+          </p>
+          <ul class="space-y-1">
+            {#each keyPreviews as preview, index (index)}
+              <li
+                class="flex items-center justify-between gap-2 rounded-md border px-2 py-1"
+                data-testid={`provider-key-item-${instance.id}-${index}`}
+              >
+                <code class="truncate text-xs">{preview}</code>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  class="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+                  disabled={removingKeyIndex !== null}
+                  aria-label={t('settings.providerKeyRemove')}
+                  onclick={() => void removeKeyAt(index)}
+                  data-testid={`provider-key-remove-${instance.id}-${index}`}
+                >
+                  <Trash2 class="size-3.5" />
+                </Button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
         {#if descriptor !== null}
           <p class="text-xs text-muted-foreground">
             {t('settings.vendorKeyHint', { url: descriptor.consoleUrl })}

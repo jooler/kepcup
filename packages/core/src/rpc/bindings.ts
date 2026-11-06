@@ -15,6 +15,8 @@ import {
   settingsUpdateInputSchema,
   inkcopHealthOutputSchema,
   inkcopListAgentsOutputSchema,
+  providersAddKeyInputSchema,
+  providersRemoveKeyAtInputSchema,
   providersSetKeyInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
@@ -687,6 +689,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       domain.providers.setKey(input.provider, input.key);
       return { ok: true as const };
     }),
+    'providers.addKey': method(providersAddKeyInputSchema, okOutputSchema, async (input) => {
+      domain.providers.addKey(input.provider, input.key);
+      return { ok: true as const };
+    }),
+    'providers.removeKeyAt': method(
+      providersRemoveKeyAtInputSchema,
+      okOutputSchema,
+      async (input) => {
+        domain.providers.removeKeyAt(input.provider, input.index);
+        return { ok: true as const };
+      },
+    ),
     'providers.removeKey': method(providerNameInputSchema, okOutputSchema, async (input) => {
       domain.providers.removeKey(input.provider);
       return { ok: true as const };

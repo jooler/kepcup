@@ -822,6 +822,11 @@ export const providerNameInputSchema = z.object({ provider: z.string().min(1) })
 export const providersSetKeyInputSchema = providerNameInputSchema.extend({
   key: z.string().min(1).max(4096),
 });
+/** 追加一个 Key（同一供应商的多个 Key 轮流使用）；setKey 仍是整体替换。 */
+export const providersAddKeyInputSchema = providersSetKeyInputSchema;
+export const providersRemoveKeyAtInputSchema = providerNameInputSchema.extend({
+  index: z.number().int().min(0),
+});
 export const providersTestInputSchema = providerNameInputSchema.extend({
   /** Optional model id override; defaults to the provider's first model. */
   model: z.string().min(1).optional(),
@@ -2499,6 +2504,8 @@ export const rpcMethodSchemas = {
 
   'providers.list': { input: voidInput, output: providersListOutputSchema },
   'providers.setKey': { input: providersSetKeyInputSchema, output: okOutput },
+  'providers.addKey': { input: providersAddKeyInputSchema, output: okOutput },
+  'providers.removeKeyAt': { input: providersRemoveKeyAtInputSchema, output: okOutput },
   'providers.removeKey': { input: providerNameInputSchema, output: okOutput },
   'providers.test': { input: providersTestInputSchema, output: okOutput },
   /** MCP（D65）：设置页连接测试——连接 server 并列出工具名（不落缓存）。 */
@@ -3355,6 +3362,8 @@ const APP_METHODS = [
   'settings.cards.undo',
   'providers.list',
   'providers.setKey',
+  'providers.addKey',
+  'providers.removeKeyAt',
   'providers.removeKey',
   'providers.test',
   'media.generateImage',

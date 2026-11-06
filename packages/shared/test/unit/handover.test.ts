@@ -273,6 +273,7 @@ describe('models', () => {
         enabled: true,
         models: [{ id: 'gpt', name: 'GPT', contextWindow: 1, capabilities: ['chat'] }],
         hasKey: true,
+        keyPreviews: ['sk-.......1234'],
       },
       {
         id: 'anthropic',
@@ -281,6 +282,7 @@ describe('models', () => {
         enabled: true,
         models: [{ id: 'claude', name: 'Claude', contextWindow: 1, capabilities: ['chat'] }],
         hasKey: false,
+        keyPreviews: [],
       },
       // 专有模型（声明了非 chat 能力）不产生对话选项。
       {
@@ -298,6 +300,7 @@ describe('models', () => {
           },
         ],
         hasKey: true,
+        keyPreviews: ['sk-.......5678'],
       },
     ];
     expect(chatModelOptions(providers)).toEqual([{ ref: 'openai/gpt', label: 'OpenAI · GPT' }]);
