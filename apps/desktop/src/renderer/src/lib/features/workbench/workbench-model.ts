@@ -382,65 +382,59 @@ export function filterMemos(memos: readonly Memo[], query: string): Memo[] {
   return memos.filter((memo) => memo.body.toLowerCase().includes(needle));
 }
 
-/** 备忘列表的一个分区：命名分组（header 常显）或「未分组」伪分组。 */
-export interface MemoSection {
-  /** 分组 id；null = 未分组伪分组（`memo_groups` 里没有这一行）。 */
-  groupId: string | null;
-  /** 命名分组的标题；未分组伪分组为空串（文案由界面按 locale 给出）。 */
-  title: string;
-  memos: Memo[];
+/**
+ * 一个分组（含伪分组）的备忘：过滤 + 显示排序。伪分组传 `groupId: null`。
+ * 网格保持挂载（非当前 tab 只是 display:none），数据在这里归组。
+ */
+export function memosInGroup(memos: readonly Memo[], groupId: string | null): Memo[] {
+  return sortMemos(memos.filter((memo) => memo.groupId === groupId));
 }
 
 /**
- * 备忘列表分区（D90 §5.4）：未分组伪分组在最前，其后按分组的创建顺序。
- * 没有命名分组时返回单个无 header 的未分组区（保持旧的扁平列表）；有命名分组时
- * 未分组也显示 header。搜索中隐藏没有命中的分区（空命名分组随之消失）。
+ * 「未分组」tab 要不要显示（伪分组特性保持不变）：
+ * 没有未分组条目时隐藏——空 tab 没什么可展示的；唯一例外是拖拽中（`memoDragging`），
+ * 卡片得能把「未分组」当落点拖回来，那时即使为空也要显示。
  */
-export function memoSections(input: {
-  memos: readonly Memo[];
-  groups: readonly MemoGroup[];
-  query: string;
-}): MemoSection[] {
-  const filtered = sortMemos(filterMemos(input.memos, input.query));
-  const hasQuery = input.query.trim() !== '';
-  // 没有命名分组 = 旧的扁平列表：全部备忘进同一个无 header 区（忽略陈旧的 groupId）。
-  if (input.groups.length === 0) {
-    if (filtered.length === 0 && hasQuery) return [];
-    return [{ groupId: null, title: '', memos: filtered }];
-  }
-  const byGroup = new Map<string | null, Memo[]>();
-  for (const memo of filtered) {
-    const list = byGroup.get(memo.groupId);
-    if (list === undefined) byGroup.set(memo.groupId, [memo]);
-    else list.push(memo);
-  }
-  const sections: MemoSection[] = [];
-  const ungrouped = byGroup.get(null) ?? [];
-  if (ungrouped.length > 0 || !hasQuery) {
-    sections.push({ groupId: null, title: '', memos: ungrouped });
-  }
-  for (const group of input.groups) {
-    const memos = byGroup.get(group.id) ?? [];
-    if (memos.length > 0 || !hasQuery) {
-      sections.push({ groupId: group.id, title: group.title, memos });
-    }
-  }
-  return sections;
+export function showUngroupedTab(memos: readonly Memo[], memoDragging = false): boolean {
+  return memos.some((memo) => memo.groupId === null) || memoDragging;
 }
 
+/** 生效 tab 的取值：命名分组 id / 'ungrouped'（伪分组）/ null（没有任何 tab）。 */
+export type MemoTabId = string | 'ungrouped';
+
 /**
- * 未分组区要不要显示。
- *
- * 没内容时整块隐藏（界面用 `display: none`，不是 `{#if}` 移除）：没有备忘就没什么可展示的，
- * 连 header 和空提示都不该占位。唯一例外是拖拽中（`memoDragging`）——卡片得能把「未分组」
- * 当落点拖回来，所以那时即使为空也要显示。
+ * 生效 tab：记住的 tab 还有效就用它；失效了（组被删 / 伪分组隐藏）按 tab 序回落——
+ * 伪分组恒在第一位，其后是第一个命名分组；连伪分组都没有（无未分组条目）且没有命名
+ * 分组时为 null（列表还是空的，界面显示全局空态）。
  */
-export function shouldShowUngrouped(
-  section: Pick<MemoSection, 'groupId' | 'memos'> | null,
-  memoDragging = false,
-): boolean {
-  if (section === null || section.groupId !== null) return false;
-  return section.memos.length > 0 || memoDragging;
+export function effectiveMemoTab(
+  activeId: MemoTabId | null,
+  groups: readonly Pick<MemoGroup, 'id'>[],
+  ungroupedShown: boolean,
+): MemoTabId | null {
+  if (activeId === 'ungrouped') return ungroupedShown ? activeId : fallback(groups, ungroupedShown);
+  if (activeId !== null && groups.some((group) => group.id === activeId)) return activeId;
+  return fallback(groups, ungroupedShown);
+}
+
+function fallback(groups: readonly Pick<MemoGroup, 'id'>[], ungroupedShown: boolean): MemoTabId | null {
+  if (ungroupedShown) return 'ungrouped';
+  return groups.length > 0 ? groups[0]!.id : null;
+}
+
+/** 卡片「…」菜单的「移动到」下直接列出的分组数；更多的收进末尾「更多」二级菜单。 */
+export const MEMO_MOVE_INLINE_LIMIT = 5;
+
+/**
+ * 「移动到」的目标分两段：前 `limit` 个直接列在菜单里，其余放进「更多」二级菜单（不超过
+ * `limit` 个就没有「更多」）。目标顺序同 tab 序——「未分组」在最前，它也算一个分组；
+ * 当前所在的分组照常占位（界面打勾、不可选），菜单不会因卡片所在分组不同而错位。
+ */
+export function splitMoveTargets<T>(
+  targets: readonly T[],
+  limit = MEMO_MOVE_INLINE_LIMIT,
+): { inline: T[]; more: T[] } {
+  return { inline: targets.slice(0, limit), more: targets.slice(limit) };
 }
 
 /**

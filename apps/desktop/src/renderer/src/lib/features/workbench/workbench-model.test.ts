@@ -8,18 +8,21 @@ import {
   canReassignTodo,
   closedTodos,
   cutUtf16,
+  effectiveMemoTab,
   effectiveStatus,
   filterMemos,
   laneIdOfTodo,
+  MEMO_MOVE_INLINE_LIMIT,
   memoConverted,
-  memoSections,
+  memosInGroup,
   projectMembers,
   memoToTodoDraft,
   parseDispatchText,
   runningBotSet,
   selfScheduleSource,
-  shouldShowUngrouped,
+  showUngroupedTab,
   sortMemos,
+  splitMoveTargets,
   todoStartAt,
   type MemberInfo,
 } from './workbench-model';
@@ -416,76 +419,67 @@ describe('memoConverted（备忘「已转事项」判定）', () => {
   });
 });
 
-describe('memoSections（D90 §5.4 备忘分区）', () => {
-  it('没有命名分组：单个无 header 的未分组区（保持旧的扁平列表）', () => {
-    const sections = memoSections({
-      memos: [memo('a'), memo('b', { groupId: 'g1' })],
-      groups: [],
-      query: '',
-    });
-    expect(sections.map((s) => [s.groupId, s.title])).toEqual([[null, '']]);
-    expect(sections[0]!.memos.map((m) => m.id)).toEqual(['b', 'a']);
+describe('备忘 tab（D90 §5.4 分组用 tab 组织）', () => {
+  it('memosInGroup：只取该分组的备忘（null = 未分组），按显示顺序（置顶在前、position 升序）', () => {
+    const memos = [
+      memo('a'),
+      memo('b', { groupId: 'g2', position: 1 }),
+      memo('c', { groupId: 'g1', position: 3 }),
+      memo('d', { groupId: 'g1', position: 2 }),
+      memo('e', { groupId: 'g1', position: 9, pinned: true }),
+    ];
+    expect(memosInGroup(memos, null).map((m) => m.id)).toEqual(['a']);
+    expect(memosInGroup(memos, 'g1').map((m) => m.id)).toEqual(['e', 'd', 'c']);
+    expect(memosInGroup(memos, 'g2').map((m) => m.id)).toEqual(['b']);
+    expect(memosInGroup(memos, 'g_missing')).toEqual([]);
   });
 
-  it('有命名分组：未分组伪分组在最前，其后按分组顺序；各区只装自己的备忘', () => {
-    const sections = memoSections({
-      memos: [
-        memo('a'),
-        memo('b', { groupId: 'g2', position: 1 }),
-        memo('c', { groupId: 'g1', pinned: true }),
-        memo('d', { groupId: 'g1', position: 2 }),
-      ],
-      groups: [group('g1', '工作', 1024), group('g2', '生活', 2048)],
-      query: '',
-    });
-    expect(sections.map((s) => s.groupId)).toEqual([null, 'g1', 'g2']);
-    expect(sections.map((s) => s.title)).toEqual(['', '工作', '生活']);
-    expect(sections[0]!.memos.map((m) => m.id)).toEqual(['a']);
-    expect(sections[1]!.memos.map((m) => m.id)).toEqual(['c', 'd']);
-    expect(sections[2]!.memos.map((m) => m.id)).toEqual(['b']);
+  it('showUngroupedTab：有未分组条目才显示；空着时只在拖拽中显示（可拖回未分组）', () => {
+    expect(showUngroupedTab([memo('a', { groupId: 'g1' })])).toBe(false);
+    expect(showUngroupedTab([memo('a', { groupId: 'g1' })], true)).toBe(true);
+    expect(showUngroupedTab([memo('a', { groupId: 'g1' }), memo('b')])).toBe(true);
+    expect(showUngroupedTab([])).toBe(false);
+    expect(showUngroupedTab([], true)).toBe(true);
   });
 
-  it('搜索中隐藏没有命中的分区；全部未命中时返回空（界面显示 noMatch）', () => {
-    const memos = [memo('a', { body: '咖啡豆' }), memo('b', { groupId: 'g1', body: '周报' })];
-    const groups = [group('g1', '工作', 1024)];
-    expect(memoSections({ memos, groups, query: '周报' }).map((s) => s.groupId)).toEqual(['g1']);
-    expect(memoSections({ memos, groups, query: '不存在' })).toEqual([]);
+  it('effectiveMemoTab：记住的 tab 有效就用它', () => {
+    const groups = [group('g1', '工作', 1024), group('g2', '生活', 2048)];
+    expect(effectiveMemoTab('g2', groups, true)).toBe('g2');
+    expect(effectiveMemoTab('g2', groups, false)).toBe('g2');
+    expect(effectiveMemoTab('ungrouped', groups, true)).toBe('ungrouped');
   });
 
-  it('搜索为空时，空的命名分区仍然显示（可拖入）', () => {
-    const sections = memoSections({
-      memos: [memo('a')],
-      groups: [group('g1', '工作', 1024)],
-      query: '  ',
-    });
-    expect(sections.map((s) => s.groupId)).toEqual([null, 'g1']);
-    expect(sections[1]!.memos).toEqual([]);
+  it('effectiveMemoTab：失效（组被删 / 伪分组隐藏 / 从未选过）按 tab 序回落——未分组在先，再第一个命名分组', () => {
+    const groups = [group('g1', '工作', 1024), group('g2', '生活', 2048)];
+    // 组被删：伪分组显示时回落到它（恒在第一位），否则第一个命名分组。
+    expect(effectiveMemoTab('g_gone', groups, true)).toBe('ungrouped');
+    expect(effectiveMemoTab('g_gone', groups, false)).toBe('g1');
+    // 记住的是伪分组，但它已隐藏（未分组条目没了）。
+    expect(effectiveMemoTab('ungrouped', groups, false)).toBe('g1');
+    // 从未选过。
+    expect(effectiveMemoTab(null, groups, true)).toBe('ungrouped');
+    expect(effectiveMemoTab(null, groups, false)).toBe('g1');
   });
 
-  it('未分组区空着时界面隐藏（display:none），有备忘就显示', () => {
-    const sections = memoSections({
-      memos: [memo('a', { groupId: 'g1' })],
-      groups: [group('g1', '工作', 1024)],
-      query: '',
-    });
-    const ungrouped = sections.find((s) => s.groupId === null) ?? null;
-    // memoSections 照旧返回空未分组区（拖拽落点与顺序靠它），显隐由 shouldShowUngrouped 决定。
-    expect(ungrouped).not.toBeNull();
-    expect(shouldShowUngrouped(ungrouped)).toBe(false);
-    expect(shouldShowUngrouped(ungrouped, true)).toBe(true);
-
-    const withMemo = memoSections({
-      memos: [memo('a', { groupId: 'g1' }), memo('b')],
-      groups: [group('g1', '工作', 1024)],
-      query: '',
-    });
-    expect(shouldShowUngrouped(withMemo.find((s) => s.groupId === null) ?? null)).toBe(true);
+  it('effectiveMemoTab：没有任何 tab（无未分组条目、无命名分组）为 null', () => {
+    expect(effectiveMemoTab(null, [], false)).toBeNull();
+    expect(effectiveMemoTab('ungrouped', [], false)).toBeNull();
+    expect(effectiveMemoTab('g_gone', [], false)).toBeNull();
+    // 只有未分组条目：就一个伪分组 tab。
+    expect(effectiveMemoTab(null, [], true)).toBe('ungrouped');
   });
 
-  it('未分组为空且没在拖拽 → 隐藏；没有未分组区 / 传错区也返回 false', () => {
-    expect(shouldShowUngrouped(null)).toBe(false);
-    expect(shouldShowUngrouped({ groupId: null, memos: [] })).toBe(false);
-    expect(shouldShowUngrouped({ groupId: 'g1', memos: [] }, true)).toBe(false);
+  it('splitMoveTargets：前 5 个直接列出（「未分组」也算一个），超过 5 个才有「更多」', () => {
+    const targets = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`);
+    expect(MEMO_MOVE_INLINE_LIMIT).toBe(5);
+    expect(splitMoveTargets(targets(1))).toEqual({ inline: ['t0'], more: [] });
+    // 恰好 5 个：全部直列，没有「更多」。
+    expect(splitMoveTargets(targets(5))).toEqual({ inline: targets(5), more: [] });
+    // 6 个起：第 6 个开始进「更多」，顺序不变。
+    expect(splitMoveTargets(targets(6))).toEqual({ inline: targets(5), more: ['t5'] });
+    expect(splitMoveTargets(targets(8)).more).toEqual(['t5', 't6', 't7']);
+    expect(splitMoveTargets([])).toEqual({ inline: [], more: [] });
+    expect(splitMoveTargets(targets(3), 2)).toEqual({ inline: ['t0', 't1'], more: ['t2'] });
   });
 });
 

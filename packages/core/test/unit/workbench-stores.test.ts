@@ -406,6 +406,23 @@ describe('MemoStore', () => {
     expect(store.get('memo_missing')).toBeNull();
   });
 
+  it('insert with groupId lands on top of that group; without it stays 未分组 (tab 新建落当前分组)', () => {
+    const g = store.insertGroup('工作');
+    const a = store.insert({ body: '未分组', source: 'user' });
+    const b = store.insert({ body: '进工作', source: 'user', groupId: g.id });
+    expect(b.groupId).toBe(g.id);
+    // 插到所属组顶（该组只有自己 → 组内 position 与插到空未分组同款起步）。
+    expect(b.position).toBe(WORKBENCH_POSITION_STEP);
+    expect(store.listInGroup(g.id).map((m) => m.id)).toEqual([b.id]);
+    expect(store.listInGroup(null).map((m) => m.id)).toEqual([a.id]);
+    now = 2_000;
+    const c = store.insert({ body: '再进工作', source: 'user', groupId: g.id });
+    // 组内插顶：比组内最小 position 更小，不影响未分组的 a。
+    expect(c.position).toBeLessThan(b.position);
+    expect(store.listInGroup(g.id).map((m) => m.id)).toEqual([c.id, b.id]);
+    expect(store.listInGroup(null).map((m) => m.id)).toEqual([a.id]);
+  });
+
   it('lists live memos pinned first then by manual position; editing the body keeps the place', () => {
     const a = store.insert({ body: 'alpha', source: 'user' });
     now = 2_000;

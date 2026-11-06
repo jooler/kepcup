@@ -2130,7 +2130,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       groups: input.trashed === true ? [] : requireMemos(services).listGroups(),
     })),
     'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
-      memo: requireMemos(services).create({ body: input.body, source: 'user' }),
+      memo: requireMemos(services).create({
+        body: input.body,
+        source: 'user',
+        ...(input.groupId !== undefined ? { groupId: input.groupId } : {}),
+      }),
     })),
     'memos.update': method(memosUpdateInputSchema, memosMemoOutputSchema, async (input) => ({
       memo: requireMemos(services).update(input.id, {

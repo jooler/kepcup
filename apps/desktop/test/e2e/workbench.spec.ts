@@ -405,8 +405,10 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
     await search.fill('');
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(3);
 
-    // 删除 → 进最近删除 → 恢复。
-    await card('预约牙医').locator('[data-testid="memo-delete"]').click();
+    // 删除（卡片「…」菜单最后一项）→ 进最近删除 → 恢复。
+    await card('预约牙医').hover();
+    await card('预约牙医').locator('[data-testid="memo-more"]').click();
+    await page.locator('[data-testid="memo-delete"]').click();
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(2);
     await page.locator('[data-testid="memo-trash"]').click();
     const trashItem = page.locator('[data-testid="memo-trash-item"]');
@@ -423,27 +425,52 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
   }
 });
 
-test('memo groups: create via + button, ungrouped header, rename, drag across groups, delete', async () => {
+test('memo tabs: + creates and switches, new memos follow the current tab, rename, move via menu, drag onto a tab, reorder, delete', async () => {
   test.setTimeout(240_000);
-  const session = await startSession('kepcup-e2e-wb-memo-group-');
+  const session = await startSession('kepcup-e2e-wb-memo-tabs-');
   const { page } = session;
   try {
     await waitReady(page);
     await openWorkbench(page);
     const input = page.locator('[data-testid="memo-input"]');
+    const tabs = page.locator('[data-testid="memo-tab"]');
+    const tabNamed = (name: string) => tabs.filter({ hasText: name });
+    const ungroupedTab = page.locator('[data-testid="memo-tab"][data-tab-id="ungrouped"]');
+    const section = (id: string) =>
+      page.locator(`[data-testid="memo-section"][data-section-group-id="${id}"]`);
+    // 非当前 tab 的网格常驻挂载（只是 display:none），按分组限定卡片。
+    const cardsIn = (id: string) => section(id).locator('[data-testid="memo-card"]');
+    const visibleTabTitles = () =>
+      page.locator('[data-testid="memo-tab"]:visible [data-testid="memo-tab-title"]');
+    const save = async (text: string): Promise<void> => {
+      await input.fill(text);
+      await input.press('Enter');
+      // 等这次保存完成（输入框清空）：否则返回时 `memoDraft = ''` 会抹掉下一份草稿。
+      await expect(input).toHaveValue('', { timeout: 15_000 });
+    };
+    const releaseDrag = async (): Promise<void> => {
+      await page.mouse.up();
+      await page.evaluate(() => {
+        window.dispatchEvent(
+          new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }),
+        );
+      });
+      await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
+    };
+
     await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
-    await input.fill('没进分组的备忘');
-    await input.press('Enter');
-    // 等第一次保存完成（输入框清空）：否则保存返回时 `memoDraft = ''` 会抹掉刚填的第二份草稿。
-    await expect(input).toHaveValue('', { timeout: 15_000 });
-    await input.fill('要拖进分组的备忘');
-    await input.press('Enter');
-    await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(2, { timeout: 15_000 });
+    await expect(ungroupedTab).toBeHidden();
 
-    // 无分组时保持旧的扁平列表：没有 header。
-    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).toHaveCount(0);
+    // 还没有命名分组：新备忘没有分组，落进「未分组」——它的 tab 随之出现并成为当前 tab。
+    await save('没进分组的备忘');
+    await expect(ungroupedTab).toBeVisible();
+    await expect(ungroupedTab).toHaveAttribute('data-active', 'true');
+    await expect(cardsIn('ungrouped')).toHaveCount(1);
+    // 伪分组 tab 不能拖拽排序 / 改名 / 删除（没有把手，也没有「…」菜单）。
+    await expect(ungroupedTab.locator('[data-testid="memo-group-handle"]')).toHaveCount(0);
+    await expect(ungroupedTab.locator('[data-testid="memo-group-more"]')).toHaveCount(0);
 
-    // 顶部 + 按钮 → 弹框输入名称 → 创建；未分组 header 随之出现。
+    // + 建组：弹框输入名称 → 创建后切到新 tab（空组给提示）；未分组 tab 仍在第一位。
     await page.locator('[data-testid="memo-add-group"]').click();
     const dialog = page.locator('[data-testid="memo-group-dialog"]');
     await expect(dialog).toBeVisible();
@@ -451,190 +478,235 @@ test('memo groups: create via + button, ungrouped header, rename, drag across gr
     await page.locator('[data-testid="memo-group-create"]').click();
     await expect(dialog).toHaveCount(0);
     await waitDialogScrollLockCleared(page);
-    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).toBeVisible();
-    await expect(page.locator('[data-testid="memo-section"]')).toHaveCount(2); // 未分组 + 工作
-    await expect(
-      page.locator('[data-testid="memo-section"][data-section-group-id="ungrouped"] [data-testid="memo-card"]'),
-    ).toHaveCount(2);
-    await expect(
-      page.locator('[data-testid="memo-section"]:not([data-section-group-id="ungrouped"]) [data-testid="memo-group-empty"]'),
-    ).toBeVisible();
-    await shot(page, '04-workbench-memo-groups');
+    const workTab = tabNamed('工作');
+    await expect(workTab).toHaveAttribute('data-active', 'true');
+    const workId = (await workTab.getAttribute('data-tab-id')) ?? '';
+    expect(workId).toMatch(/^mmg_/);
+    await expect(section(workId).locator('[data-testid="memo-group-empty"]')).toBeVisible();
+    await expect(section('ungrouped')).toBeHidden();
+    await expect(visibleTabTitles()).toHaveText(['未分组', '工作']);
+    await shot(page, '04-workbench-memo-tabs');
 
-    // 重命名分组：hover 出铅笔 → 输入框 → Enter 提交。
-    const section = page.locator(
-      '[data-testid="memo-section"]:not([data-section-group-id="ungrouped"])',
-    );
-    await section.locator('[data-testid="memo-group-rename"]').click();
-    const renameInput = section.locator('[data-testid="memo-group-rename-input"]');
+    // 顶部输入框回车：落到当前 tab（工作），不再进未分组。
+    await save('进工作的备忘');
+    await expect(cardsIn(workId)).toHaveCount(1);
+    await expect(cardsIn('ungrouped')).toHaveCount(1);
+    await expect(workTab.locator('[data-testid="memo-tab-count"]')).toHaveText('1');
+
+    // 改名：当前 tab 的「…」菜单 → 重命名 → 行内输入框（菜单关闭后拿到焦点）→ Enter 提交。
+    await workTab.locator('[data-testid="memo-group-more"]').click();
+    await expect(page.locator('[data-testid="memo-group-menu"]')).toBeVisible();
+    await shot(page, '07-workbench-memo-tab-menu');
+    await page.locator('[data-testid="memo-group-rename"]').click();
+    const renameInput = page.locator('[data-testid="memo-group-rename-input"]');
     await expect(renameInput).toBeFocused();
     await renameInput.fill('上班');
     await renameInput.press('Enter');
     await expect(renameInput).toHaveCount(0);
-    await expect(section.locator('[data-testid="memo-group-title"]')).toHaveText('上班');
+    const shangbanTab = tabNamed('上班');
+    await expect(shangbanTab).toHaveAttribute('data-tab-id', workId);
 
-    // 跨组拖拽：把「要拖进分组的备忘」拖到空分组的提示行上。
+    // 切回未分组 tab：新备忘不带分组，自然落进未分组。
+    await ungroupedTab.click();
+    await expect(ungroupedTab).toHaveAttribute('data-active', 'true');
+    await save('还在未分组');
+    await expect(cardsIn('ungrouped')).toHaveCount(2);
+
+    // 卡片「…」菜单：「移动到」小标题下直接列出分组（含未分组），当前所在的不可选；
+    // 分组不超过 5 个时没有「更多」。
+    const menuCard = cardsIn('ungrouped').filter({ hasText: '还在未分组' });
+    await menuCard.hover();
+    await menuCard.locator('[data-testid="memo-more"]').click();
+    await expect(page.locator('[data-testid="memo-move-to"]')).toBeVisible();
+    const targets = page.locator('[data-testid="memo-move-target"]');
+    await expect(targets).toHaveText(['未分组', '上班']);
+    await expect(targets.filter({ hasText: '未分组' })).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.locator('[data-testid="memo-move-more"]')).toHaveCount(0);
+    await shot(page, '05-workbench-memo-move-menu');
+    await targets.filter({ hasText: '上班' }).click();
+    await expect(cardsIn('ungrouped')).toHaveCount(1, { timeout: 15_000 });
+    await expect(cardsIn(workId)).toHaveCount(2);
+    // 菜单移动不切 tab。
+    await expect(ungroupedTab).toHaveAttribute('data-active', 'true');
+
+    // 拖卡片到 tab 上：悬停片刻切到目标分组，再把卡片放进显示出来的网格。
     // 起点是卡片 footer 的把手覆盖层（footer 的空白处）——正文是 contenteditable、footer 上的
     // 文字 / 按钮浮在把手之上，都不会启动拖拽；grip 只是 hover 才出现的提示，平时 display:none。
-    const dragCard = page
-      .locator('[data-testid="memo-card"]')
-      .filter({ hasText: '要拖进分组的备忘' });
+    const dragCard = cardsIn('ungrouped').filter({ hasText: '没进分组的备忘' });
     const grip = dragCard.locator('[data-testid="memo-drag-grip"]');
     await expect(grip).toBeHidden();
     await dragCard.hover();
     await expect(grip).toBeVisible();
-    const handle = dragCard.locator('[data-testid="memo-drag-handle"]');
-    await expect(handle).toHaveAttribute('role', 'button');
-    const dragged = dragCard.locator('[data-testid="memo-footer-blank"]');
-    const dropTarget = section.locator('[data-testid="memo-group-empty"]');
-    const from = await dragged.boundingBox();
-    const to = await dropTarget.boundingBox();
-    if (from === null || to === null) throw new Error('drag source/target has no box');
+    await expect(dragCard.locator('[data-testid="memo-drag-handle"]')).toHaveAttribute(
+      'role',
+      'button',
+    );
+    const from = await dragCard.locator('[data-testid="memo-footer-blank"]').boundingBox();
+    const tabBox = await shangbanTab.boundingBox();
+    if (from === null || tabBox === null) throw new Error('drag source/tab has no box');
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 12, {
       steps: 4,
     });
-    // 给 dnd-action 的 rAF 观察循环留一拍：合成拖拽太快时，mouseup 会抢在
-    // 「已进入目标区」被登记之前落地，落点会被当成区外/原地而回弹。
+    // 给 dnd-action 的观察循环留一拍：合成拖拽太快时，进入落区来不及登记。
     await page.waitForTimeout(300);
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 24 });
-    await page.waitForTimeout(300);
-    await page.mouse.up();
-    await page.evaluate(() => {
-      window.dispatchEvent(
-        new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }),
-      );
+    await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2, {
+      steps: 24,
     });
-    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
-    await expect(
-      section.locator('[data-testid="memo-card"]').filter({ hasText: '要拖进分组的备忘' }),
-    ).toHaveCount(1, { timeout: 15_000 });
-    await expect(
-      page
-        .locator('[data-testid="memo-section"][data-section-group-id="ungrouped"]')
-        .locator('[data-testid="memo-card"]'),
-    ).toHaveCount(1);
-    // 落库：重拉后分组归属仍在（事件刷新校正）。
-    await expect(
-      section.locator('[data-testid="memo-card"]').filter({ hasText: '要拖进分组的备忘' }),
-    ).toHaveCount(1, { timeout: 15_000 });
+    await expect(shangbanTab).toHaveAttribute('data-active', 'true', { timeout: 5_000 });
+    const grid = section(workId).locator('[data-testid="memo-section-list"]');
+    await expect(grid).toBeVisible();
+    const gridBox = await grid.boundingBox();
+    if (gridBox === null) throw new Error('target grid has no box');
+    await page.mouse.move(gridBox.x + gridBox.width / 2, gridBox.y + Math.min(gridBox.height / 2, 40), {
+      steps: 24,
+    });
+    await page.waitForTimeout(300);
+    await releaseDrag();
+    await expect(cardsIn(workId).filter({ hasText: '没进分组的备忘' })).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await expect(cardsIn(workId)).toHaveCount(3);
+    // 未分组空了：它的 tab 隐藏，当前 tab 停在上班。
+    await expect(ungroupedTab).toBeHidden();
+    await expect(shangbanTab).toHaveAttribute('data-active', 'true');
 
-    // 点击分组名折叠 / 展开：组内卡片隐藏（空提示随之消失），再点恢复。
-    const sectionTitle = section.locator('[data-testid="memo-group-title"]');
-    await sectionTitle.click();
-    await expect(section.locator('[data-testid="memo-section-list"]')).toHaveCount(0);
-    await expect(sectionTitle).toHaveAttribute('aria-expanded', 'false');
-    await sectionTitle.click();
-    await expect(section.locator('[data-testid="memo-section-list"]')).toHaveCount(1);
-    await expect(
-      section.locator('[data-testid="memo-card"]').filter({ hasText: '要拖进分组的备忘' }),
-    ).toHaveCount(1);
-
-    // 再建一个分组，拖拽排序：把「生活」拖到「上班」前面（拖分区 header 的把手层）。
+    // 再建一个分组，拖 tab 排序：把「生活」拖到「上班」前面。
     await page.locator('[data-testid="memo-add-group"]').click();
     await page.locator('[data-testid="memo-group-name"]').fill('生活');
     await page.locator('[data-testid="memo-group-create"]').click();
-    await expect(page.locator('[data-testid="memo-section"]')).toHaveCount(3, {
-      timeout: 15_000,
-    }); // 未分组 + 上班 + 生活
     await expect(page.locator('[data-testid="memo-group-dialog"]')).toHaveCount(0, {
       timeout: 15_000,
     });
     await waitDialogScrollLockCleared(page);
-    const groupHandle = (name: string) =>
-      page
-        .locator('[data-testid="memo-section"]')
-        .filter({ hasText: name })
-        .locator('[data-testid="memo-group-handle"]');
-    const dragFrom = await groupHandle('生活').boundingBox();
-    // 落点取「上班」分区（header + 卡片）的上部：影子要插在它之前。
-    const dragTo = await page
-      .locator('[data-testid="memo-section"]')
-      .filter({ hasText: '上班' })
-      .boundingBox();
-    if (dragFrom === null || dragTo === null) throw new Error('group drag source/target has no box');
-    await page.mouse.move(dragFrom.x + dragFrom.width / 2, dragFrom.y + dragFrom.height / 2);
+    const lifeTab = tabNamed('生活');
+    await expect(lifeTab).toHaveAttribute('data-active', 'true');
+    await expect(visibleTabTitles()).toHaveText(['上班', '生活']);
+    // 先切回上班：被拖的「生活」不是当前 tab（不带操作按钮），从正中抓起时拖拽副本的中心
+    // 就是光标（分组区按副本中心判定落点）。
+    await shangbanTab.locator('[data-testid="memo-group-handle"]').click();
+    await expect(shangbanTab).toHaveAttribute('data-active', 'true');
+    const lifeBox = await lifeTab.boundingBox();
+    const shangbanBox = await shangbanTab.boundingBox();
+    if (lifeBox === null || shangbanBox === null) throw new Error('tab drag boxes missing');
+    await page.mouse.move(lifeBox.x + lifeBox.width / 2, lifeBox.y + lifeBox.height / 2);
     await page.mouse.down();
-    await page.mouse.move(dragFrom.x + dragFrom.width / 2 + 12, dragFrom.y + dragFrom.height / 2, {
+    await page.mouse.move(lifeBox.x + lifeBox.width / 2 - 12, lifeBox.y + lifeBox.height / 2, {
       steps: 4,
     });
     await page.waitForTimeout(300);
-    // 落点取「上班」header 上缘之上（两分组之间的间隙）：影子要插在「上班」之前，
-    // 落到 header 中心会让 clone 的中心越过目标、anchor 掉到末尾（= 原地，无变化）。
-    await page.mouse.move(dragTo.x + dragTo.width / 2, dragTo.y + 24, { steps: 24 });
+    await page.mouse.move(shangbanBox.x + 8, shangbanBox.y + shangbanBox.height / 2, {
+      steps: 24,
+    });
     await page.waitForTimeout(300);
-    await page.mouse.up();
-    await page.evaluate(() => {
-      window.dispatchEvent(
-        new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }),
-      );
-    });
-    await expect(page.locator('#dnd-action-dragged-el')).toHaveCount(0, { timeout: 5_000 });
-    // 未分组伪分组恒在最前；命名分组按拖拽结果排序。
-    await expect(page.locator('[data-testid="memo-group-title"]')).toHaveText(
-      ['生活', '上班'],
-      { timeout: 15_000 },
-    );
-    // 落库：重拉后顺序不变。
-    await expect(page.locator('[data-testid="memo-group-title"]')).toHaveText(['生活', '上班'], {
-      timeout: 15_000,
-    });
+    await releaseDrag();
+    await expect(visibleTabTitles()).toHaveText(['生活', '上班'], { timeout: 15_000 });
+    // 拖完松手补发的 click 不切 tab。
+    await expect(shangbanTab).toHaveAttribute('data-active', 'true');
 
-    // 删除分组：确认后组内备忘回到未分组（共 2 条），该分组 header 消失、未分组 header 保留。
-    const shangbanSection = page
-      .locator('[data-testid="memo-section"]')
-      .filter({ hasText: '上班' });
-    await shangbanSection.locator('[data-testid="memo-group-delete"]').click();
+    // 删除分组（tab「…」菜单分隔线下）：确认后组内 3 条备忘回到未分组；未分组 tab 回到第一位
+    // 并成为当前 tab。
+    await shangbanTab.locator('[data-testid="memo-group-more"]').click();
+    await page.locator('[data-testid="memo-group-delete"]').click();
     const deleteDialog = page.locator('[data-testid="memo-group-delete-dialog"]');
     await expect(deleteDialog).toBeVisible();
+    await expect(deleteDialog).toContainText('3');
     await page.locator('[data-testid="memo-group-delete-confirm"]').click();
     await expect(deleteDialog).toHaveCount(0);
     await waitDialogScrollLockCleared(page);
-    // 剩 未分组 + 生活；上班里那条备忘回到未分组。
-    await expect(page.locator('[data-testid="memo-section"]')).toHaveCount(2);
-    await expect(
-      page.locator('[data-testid="memo-section"][data-section-group-id="ungrouped"] [data-testid="memo-card"]'),
-    ).toHaveCount(2);
+    await expect(visibleTabTitles()).toHaveText(['未分组', '生活'], { timeout: 15_000 });
+    await expect(ungroupedTab).toHaveAttribute('data-active', 'true');
+    await expect(cardsIn('ungrouped')).toHaveCount(3);
+
+    // 直接在 tab 上松手：卡片移到该分组顶部，并切到该 tab。
+    const lifeId = (await lifeTab.getAttribute('data-tab-id')) ?? '';
+    const dropCard = cardsIn('ungrouped').filter({ hasText: '进工作的备忘' });
+    await dropCard.hover();
+    const dropFrom = await dropCard.locator('[data-testid="memo-footer-blank"]').boundingBox();
+    const lifeTabBox = await lifeTab.boundingBox();
+    if (dropFrom === null || lifeTabBox === null) throw new Error('drop-on-tab boxes missing');
+    await page.mouse.move(dropFrom.x + dropFrom.width / 2, dropFrom.y + dropFrom.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dropFrom.x + dropFrom.width / 2 + 12, dropFrom.y + dropFrom.height / 2 + 12, {
+      steps: 4,
+    });
+    await page.waitForTimeout(300);
+    await page.mouse.move(lifeTabBox.x + lifeTabBox.width / 2, lifeTabBox.y + lifeTabBox.height / 2, {
+      steps: 24,
+    });
+    await page.waitForTimeout(300);
+    await releaseDrag();
+    await expect(lifeTab).toHaveAttribute('data-active', 'true', { timeout: 5_000 });
+    await expect(cardsIn(lifeId)).toHaveCount(1, { timeout: 15_000 });
+    await expect(cardsIn(lifeId).first()).toContainText('进工作的备忘');
+    await expect(cardsIn('ungrouped')).toHaveCount(2);
   } finally {
     await closeSession(session);
   }
 });
 
-test('memo ungrouped: hidden while empty, appears as soon as a memo is saved', async () => {
-  test.setTimeout(120_000);
-  const session = await startSession('kepcup-e2e-wb-memo-ungrouped-');
+test('memo card menu: move-to lists the first five groups inline, the rest under 更多', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-wb-memo-move-more-');
   const { page } = session;
   try {
     await waitReady(page);
     await openWorkbench(page);
     await expect(page.locator('[data-testid="memo-empty"]')).toBeVisible({ timeout: 15_000 });
+    const tabNamed = (name: string) =>
+      page.locator('[data-testid="memo-tab"]').filter({ hasText: name });
+    const createGroup = async (name: string): Promise<void> => {
+      await page.locator('[data-testid="memo-add-group"]').click();
+      const dialog = page.locator('[data-testid="memo-group-dialog"]');
+      await expect(dialog).toBeVisible();
+      await page.locator('[data-testid="memo-group-name"]').fill(name);
+      await page.locator('[data-testid="memo-group-create"]').click();
+      await expect(dialog).toHaveCount(0);
+      await waitDialogScrollLockCleared(page);
+    };
+    // 6 个命名分组 + 未分组 = 7 个目标：前 5 个直接列出，其余 2 个进「更多」。
+    for (const name of ['组一', '组二', '组三', '组四', '组五', '组六']) await createGroup(name);
+    // 建组后切到新 tab：回车新建的备忘落进「组六」。
+    const lastTab = tabNamed('组六');
+    await expect(lastTab).toHaveAttribute('data-active', 'true');
+    const input = page.locator('[data-testid="memo-input"]');
+    await input.fill('要移走的备忘');
+    await input.press('Enter');
+    await expect(input).toHaveValue('', { timeout: 15_000 });
+    const lastId = (await lastTab.getAttribute('data-tab-id')) ?? '';
+    const card = page.locator(
+      `[data-testid="memo-section"][data-section-group-id="${lastId}"] [data-testid="memo-card"]`,
+    );
+    await expect(card).toHaveCount(1);
 
-    // 建一个命名分组：还没有任何备忘，未分组区只是 display:none，不占位、不出 header。
-    await page.locator('[data-testid="memo-add-group"]').click();
-    await page.locator('[data-testid="memo-group-name"]').fill('工作');
-    await page.locator('[data-testid="memo-group-create"]').click();
-    await expect(page.locator('[data-testid="memo-group-dialog"]')).toHaveCount(0, {
+    await card.hover();
+    await card.locator('[data-testid="memo-more"]').click();
+    // 主菜单：「未分组」也算一个分组，按 tab 序取前 5 个；第 6 个起收进「更多」。
+    const menu = page.locator('[data-testid="memo-more-menu"]');
+    await expect(menu.locator('[data-testid="memo-move-target"]')).toHaveText([
+      '未分组',
+      '组一',
+      '组二',
+      '组三',
+      '组四',
+    ]);
+    const more = menu.locator('[data-testid="memo-move-more"]');
+    await expect(more).toBeVisible();
+    await more.click();
+    const moreTargets = page.locator(
+      '[data-testid="memo-move-more-targets"] [data-testid="memo-move-target"]',
+    );
+    await expect(moreTargets).toHaveText(['组五', '组六']);
+    // 当前所在的「组六」打勾、不可选。
+    await expect(moreTargets.filter({ hasText: '组六' })).toHaveAttribute('aria-disabled', 'true');
+    await shot(page, '06-workbench-memo-move-more');
+    await moreTargets.filter({ hasText: '组五' }).click();
+
+    await expect(tabNamed('组五').locator('[data-testid="memo-tab-count"]')).toHaveText('1', {
       timeout: 15_000,
     });
-    await waitDialogScrollLockCleared(page);
-    const ungroupedSlot = page.locator('[data-testid="memo-ungrouped-slot"]');
-    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'true');
-    await expect(ungroupedSlot).not.toBeVisible();
-    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).not.toBeVisible();
-
-    // 新备忘默认进未分组：存完立刻重新出现，不用刷新或切视图。
-    const input = page.locator('[data-testid="memo-input"]');
-    await input.fill('马上出现的备忘');
-    await input.press('Enter');
-    await expect(ungroupedSlot).toHaveAttribute('data-empty', 'false', { timeout: 15_000 });
-    await expect(ungroupedSlot).toBeVisible();
-    await expect(page.locator('[data-testid="memo-ungrouped-title"]')).toBeVisible();
-    await expect(
-      page.locator(
-        '[data-testid="memo-section"][data-section-group-id="ungrouped"] [data-testid="memo-card"]',
-      ),
-    ).toHaveCount(1);
+    await expect(lastTab.locator('[data-testid="memo-tab-count"]')).toHaveText('0');
   } finally {
     await closeSession(session);
   }
@@ -1637,6 +1709,8 @@ test('toast: hovering a toast expands it without turning it into a viewport-size
     await input.fill('会被删掉的备忘');
     await input.press('Enter');
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(1, { timeout: 15_000 });
+    await page.locator('[data-testid="memo-card"]').hover();
+    await page.locator('[data-testid="memo-more"]').click();
     await page.locator('[data-testid="memo-delete"]').click();
     const toast = page.locator('[data-sonner-toast]').first();
     await expect(toast).toBeVisible();

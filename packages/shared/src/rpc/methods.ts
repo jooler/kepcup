@@ -2012,6 +2012,11 @@ export const memosListOutputSchema = z.object({
 export const memosIdInputSchema = z.object({ id: z.string().min(1) });
 export const memosCreateInputSchema = z.object({
   body: z.string().min(1).max(MEMO_BODY_MAX_CHARS),
+  /**
+   * Target group (工作台备忘当前 tab 的分组); absent = 未分组伪分组（group_id 为 null）。
+   * The group must exist, otherwise the create is rejected (NOT_FOUND).
+   */
+  groupId: z.string().min(1).optional(),
 });
 export const memosUpdateInputSchema = z.object({
   id: z.string().min(1),
