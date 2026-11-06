@@ -361,7 +361,6 @@ describe('ChatSession', () => {
 
     settingsStore.settings = {
       defaultMainModel: '',
-      experimental: { externalAgents: true },
       agents: {},
     } as Settings;
     expect(session.gateForSend()).toBe(true);

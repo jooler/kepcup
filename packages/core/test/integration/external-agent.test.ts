@@ -67,7 +67,6 @@ async function startWithFakeAgent(script: FakeAgentScript) {
 
 async function enableAgents(stack: TestStack, ids: string[]): Promise<void> {
   await stack.core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: Object.fromEntries(ids.map((id) => [id, { enabled: true }])),
   });
 }
@@ -164,23 +163,24 @@ function turnStartsTask(
 }
 
 describe('external agent engine (P1, fake agent)', () => {
-  it('rejects selecting an external agent while the experimental switch is off', async () => {
+  it('rejects selecting an external agent that is not in the catalog', async () => {
     const stack = await startWithFakeAgent({ turns: [] });
     await expect(
       stack.core.rpc.call('bots.create', {
-        profile: botProfile({ name: '外援', runtime: { agent: { id: 'fake' } } as never }),
+        profile: botProfile({
+          name: '外援',
+          runtime: { agent: { id: 'not-in-catalog' } } as never,
+        }),
       }),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     const bot = await makeBot(stack.core, '外援');
-    await expect(useAgent(stack, bot, 'fake')).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     await expect(useAgent(stack, bot, 'not-in-catalog')).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });
-    // Editing other fields of an agent bot stays possible after switching it off.
+    // 目录中的 Agent 可以直接选用（不再有实验开关门禁）。
     const agentBot = await useAgent(stack, bot, 'fake');
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: false } });
+    expect(agentBot.profile.runtime.agent.id).toBe('fake');
+    // Editing other fields of an agent bot stays possible.
     await stack.core.rpc.call('bots.update', {
       id: agentBot.id,
       profile: { ...agentBot.profile, identity: { ...agentBot.profile.identity, bio: '改简介' } },
@@ -322,7 +322,6 @@ describe('external agent engine (P1, fake agent)', () => {
 
   it('fails the task with a readable reason (and the agent setup) when the agent is not enabled', async () => {
     const stack = await startWithFakeAgent({ turns: [] });
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const conv = await openDirect(stack.core, bot.id);
     stack.llm.script(
@@ -468,7 +467,6 @@ describe('external agent engine (P1, fake agent)', () => {
 
   it('refuses the conversational setup interview for an external-agent bot', async () => {
     const stack = await startWithFakeAgent({ turns: [] });
-    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
     await expect(
       stack.core.rpc.call('bots.create', {
         profile: botProfile({ name: '外援', runtime: { agent: { id: 'fake' } } as never }),

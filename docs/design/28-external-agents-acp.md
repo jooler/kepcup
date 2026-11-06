@@ -2,7 +2,7 @@
 
 许多用户已经订阅了 Claude Pro/Max、ChatGPT Plus/Pro、GitHub Copilot、GLM Coding Plan 等，却拿不到通用的 `base_url` / `api_key`，无法使用基于 pi 的内置 loop。本文规定：**用户可在设置中像 ACP Registry 那样启用外部编码智能体（Agent），并为某个 Bot 指定由哪个 Agent 驱动其执行 loop**；外部 Agent 主要通过 [ACP（Agent Client Protocol）](https://agentclientprotocol.com) 驱动，内置 pi loop 保持默认与不变。
 
-决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-10-08）**：P1–P6 已实现（实验开关下）；待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。
+决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-11-06）**：P1–P6 已实现；原「外部智能体（实验）」开关已移除——目录恒可见，「智能体」设置页为左右两栏（全局配置 + 全部智能体）。待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。
 
 相关：D2（执行中注入）、D4（@ 连锁预算）、D21（pi 封装在 `AgentEngine` 之后）、D35/D36（访问范围）、D27（沙箱）、D29/D30（写入租约 / 检查点）、D41（无人值守）、D45（模型配置）、D48/D54（Bot 发消息 / 中间说明）、D56（Loop 续接）、D58（对话内设置引导）、D62/D68（检索与能力补位工具）、D65（MCP）、D66（SubAgent）、D67（durable）、D71（跨 Bot 委派）。
 
@@ -14,7 +14,7 @@
   3. **能力注入可选**：KepCup 的宿主能力（记忆、Wiki、定时、浏览器、检索、图像 / 语音 / 视频生成、图片理解、语音转写、委派、技能、宿主操作、用户 MCP 等）按**能力包**组织，经**宿主 MCP 桥**注入外部 Agent。Bot 使用外部 Agent 时，用户逐包勾选注入哪些能力；默认值 = 「该 Agent 不具备的能力全部注入」（由 Agent 描述符声明其原生能力，未知按不具备处理）。对话核心能力（`send_message` / `skip_reply` / 消息与执行记录查询）必选。能力包分两类：**宿主语义类**（对话、记忆、Wiki、定时、协作、技能、宿主操作）以 KepCup 工具为准，Agent 不得用自带的近似手段替代；**补位类**（检索、浏览器、图像 / 语音 / 视频生成、图片理解、语音转写、用户 MCP）**原生优先**——注入的补位工具在工具描述与平台规则中都明确标为「仅当你没有等价的内置能力，或内置能力不可用 / 失败时才使用」（§4.2）。
   4. **可扩展的 Agent 供应商**：每个 Agent 是一个 **Provider**（目录条目 + 可选的行为覆盖模块），通用 ACP Provider 覆盖协议标准部分，各家只写差异（启动参数、指令注入方式、权限模式映射、原生能力、条款提示）；不支持 ACP 的 Agent 以**进程内协议垫片**（把其私有协议翻译为 ACP 语义）接入同一管道。新增 Agent = 加一个目录条目 + 一个 Provider 模块 + 在登记表里加一行，并通过统一的 Provider 契约测试。
   5. **本期 Agent**：Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Google Antigravity（ACP 均已具备，ACP Registry 均已收录）；Antigravity 因其条款禁止第三方软件使用 Google 个人账号登录，**只开放 API key / Vertex / Enterprise 登录方式**（个人订阅登录在 Provider 层过滤）；ZCode 无 ACP，原计划以进程内垫片接入；P0 只读评估曾认为可完整覆盖，P5 实现前复核推翻（订阅鉴权须由宿主读取 / 中转凭据）→ 按「不能完整覆盖即放弃」**已放弃**（`docs/dev/DEVIATIONS.md` DEV-008，§9.2）。
-  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、项目组沟通、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能以「实验」开关发布。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
+  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、项目组沟通、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能已正式发布（原「实验」开关已于 2026-11-06 移除）。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
 
 
 

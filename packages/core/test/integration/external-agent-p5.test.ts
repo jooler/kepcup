@@ -64,7 +64,6 @@ async function start(
   });
   stacks.push(stack);
   await stack.core.rpc.call('settings.update', {
-    experimental: { externalAgents: true },
     agents: Object.fromEntries(Object.keys(scripts).map((id) => [id, { enabled: true }])),
     // The agent's rounds serve the tasks only (no background agent sessions).
     backgroundTasks: { agentEnabled: false },

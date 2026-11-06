@@ -72,11 +72,7 @@
 
   function usable(agentId: string): boolean {
     const view = agentsStore.get(agentId);
-    return (
-      view !== null &&
-      agentSetupReasonOf(view, agentsStore.experimental) === null &&
-      view.backgroundBlocker === null
-    );
+    return view !== null && agentSetupReasonOf(view) === null && view.backgroundBlocker === null;
   }
 
   async function save(patch: Partial<Settings>): Promise<boolean> {

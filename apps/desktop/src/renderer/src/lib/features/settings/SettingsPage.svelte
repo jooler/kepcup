@@ -36,31 +36,32 @@
   );
   /**
    * 内容列的宽度策略：表单型设置分区限宽居中（拉满窗口后字段行过长难读）；
-   * 模型分区两栏（左导航 + 右详情）放宽到 max-w-5xl；扩展中心不限宽（市场 /
-   * 已安装的卡片网格吃满可用宽度）。
+   * 模型 / 智能体分区两栏（左导航 + 右详情）放宽到 max-w-5xl；扩展中心不限宽
+   * （市场 / 已安装的卡片网格吃满可用宽度）。
    *
    * 扩展中心同时接管纵向与横向留白：外层内容区不滚动、不给内边距，整块撑满
    * 剩余高度与整行宽度，滚动交给各分组自己的滚动区（市场 / 已安装 / 设置），
    * 留白由滚动容器的内边距提供（`bleed`）——这样滚动条贴应用右缘，内容仍有
    * 视觉留白；否则插件详情页会把整个设置页（含页签）当成一个长文档滚动。
    *
-   * 「模型」分区同理接管纵向空间：外层内容区只留内边距、不滚动，两栏卡以
-   * 窗口剩余高度为最大高度撑满（`min-h-0` + `flex-1`），滚动归右栏详情自己
-   * （ModelsSection 把右栏设为 overflow-y-auto）——否则供应商 / 详情内容一多，
-   * 整个设置页（含顶部标题行）会变成一个长文档滚动。
+   * 「模型」「智能体」分区同理接管纵向空间：外层内容区只留内边距、不滚动，
+   * 两栏卡以窗口剩余高度为最大高度撑满（`min-h-0` + `flex-1`），滚动归右栏
+   * 详情自己（ModelsSection / AgentsSection 把右栏设为 overflow-y-auto）——
+   * 否则供应商 / 智能体详情内容一多，整个设置页（含顶部标题行）会变成一个
+   * 长文档滚动。
    */
   const contentClass = $derived(
     activeSection === 'extension-center'
       ? 'flex min-h-0 flex-1 flex-col'
-      : activeSection === 'models'
+      : activeSection === 'models' || activeSection === 'agents'
         ? 'mx-auto flex w-full max-w-5xl min-h-0 flex-1 flex-col'
         : 'mx-auto max-w-3xl',
   );
-  /** 扩展中心与「模型」分区自己管滚动（扩展中心留白归 bleed）；其余分区仍由内容区滚动。 */
+  /** 扩展中心与「模型」「智能体」分区自己管滚动（扩展中心留白归 bleed）；其余分区仍由内容区滚动。 */
   const contentScrollerClass = $derived(
     activeSection === 'extension-center'
       ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-      : activeSection === 'models'
+      : activeSection === 'models' || activeSection === 'agents'
         ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6'
         : 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6',
   );

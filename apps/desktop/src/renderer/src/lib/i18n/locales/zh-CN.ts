@@ -321,6 +321,7 @@ export const zhCN = {
   'settings.remove': '移除',
   // --- 模型分区两栏重构（v0.5.6：左栏「模型配置」+ 供应商实例）--------------
   'settings.modelsNavConfig': '模型配置',
+  'settings.agentsNavConfig': '全局配置',
   'settings.modelsOverviewHint':
     '管理模型供应商与默认模型；同一供应商可重复添加（不同 baseUrl 承载不同能力的模型），配置后可在对话时选择使用。',
   'settings.templateHintVendor': '内置厂商模板：预填常用对话模型，可重复添加',
@@ -2194,9 +2195,6 @@ export const zhCN = {
   'onboarding.subscriptionOpen': '我有订阅（Claude / ChatGPT / Copilot / GLM…）',
   'onboarding.subscriptionBody':
     '用你已有的订阅给 Bot 干活：选一个智能体作为 Bot 的任务引擎，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
-  'onboarding.subscriptionEnable': '开启外部智能体（实验）并继续',
-  'onboarding.subscriptionExperimental':
-    '这是实验功能：继续会开启「外部智能体（实验）」（改用 API key 时会关回）。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',
   'onboarding.subscriptionEmpty': '当前版本没有支持订阅登录的智能体。',
   'onboarding.subscriptionChoose': '由 {name} 执行管家和新建 Bot 的任务',
   'onboarding.subscriptionEnableFirst': '先在上方卡片中启用并登录这个智能体，再继续。',
@@ -2401,8 +2399,6 @@ export const zhCN = {
   'setupCard.confirm': '完成设置，继续对话',
   'setupCard.dismiss': '暂不设置',
   'setupCard.agentTitle': '{name} 还不能用，设置好后对话会自动继续',
-  'setupCard.agentReason.experimental_off':
-    '这个 Bot 的任务由外部智能体执行，而「外部智能体（实验）」尚未开启。',
   'setupCard.agentReason.not_enabled': '这个智能体还没有启用：启用会先安装它（需要你确认）。',
   'setupCard.agentReason.not_installed': '这个智能体尚未安装完成：请启用或重新安装。',
   'setupCard.agentReason.auth_required':
@@ -2417,7 +2413,6 @@ export const zhCN = {
     'Linux 上请先安装沙箱依赖：sudo apt install bubblewrap socat（Debian / Ubuntu）或 sudo dnf install bubblewrap socat（Fedora），装好后可先点「测试连接」，再点「完成设置，继续对话」。',
   'setupCard.agentSandboxAsk':
     '改用「逐条确认（ask）」权限档也绕不过这一步：所有档位都要求沙箱生效（命令逐条确认的前提仍是在沙箱内执行）。暂时无法安装时，可在 Bot 配置中把这个 Bot 改用其他智能体或内置模型。',
-  'setupCard.agentEnableExperimental': '开启外部智能体（实验）',
   'setupCard.agentMissing': '目录中找不到这个智能体：请在 Bot 配置中重新选择模型或智能体。',
   'setupCard.agentLoading': '正在读取智能体状态…',
 
@@ -2722,6 +2717,7 @@ export const zhCN = {
   'settings.navAgents': '智能体',
   'approvals.environmentLicense': '许可',
   'agents.title': '外部智能体',
+  'agents.available': '可用',
   'agents.defaultAgent': '新建 Bot 默认使用的智能体',
   'agents.defaultAgentNone': '不设（使用内置模型）',
   'agents.defaultAgentHint':
@@ -2750,9 +2746,6 @@ export const zhCN = {
   'agents.background.projectMentionOnly': '项目组里只在被 @ 或回复时响应',
   'agents.background.projectMentionOnlyHint':
     '默认开启。关闭后由智能体判断是否接话：每条项目组消息批次一次会话（同一项目组每 2 分钟至多一次）；判断超时按不响应处理。',
-  'agents.experimental': '外部智能体（实验）',
-  'agents.experimentalHint':
-    '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、工作目录保护规则与网络策略对它们不生效。',
   'agents.empty': '当前版本没有可用的智能体',
   'agents.tier.supported': '已适配',
   'agents.tier.preview': '预览',

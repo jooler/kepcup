@@ -38,7 +38,6 @@ async function startStack(
     }) as never,
   });
   stacks.push(stack);
-  await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
   return { stack, started, launches };
 }
 

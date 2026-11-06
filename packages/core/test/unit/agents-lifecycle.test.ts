@@ -80,7 +80,7 @@ function harness(
   const workDir = mkdtempSync(path.join(tmpdir(), 'kepcup-agents-life-'));
   dirs.push(workDir);
   const settings = {
-    current: settingsSchema.parse({ experimental: { externalAgents: true } }),
+    current: settingsSchema.parse({}),
   };
   const secrets = new Map<string, string>();
   const installs: Harness['installs'] = [];

@@ -55,7 +55,7 @@ const EXPECTED: Readonly<Record<string, boolean>> = {
 };
 
 function settings(patch: Partial<Settings> = {}): Settings {
-  return settingsSchema.parse({ experimental: { externalAgents: true }, ...patch });
+  return settingsSchema.parse(patch);
 }
 
 function catalogEntry(id: string): AgentCatalogEntry {

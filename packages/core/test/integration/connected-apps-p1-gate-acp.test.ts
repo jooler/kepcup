@@ -140,7 +140,6 @@ async function start(agentScript?: FakeAgentScript): Promise<Env> {
   fake.configure({ idTokenClaims: { ...ACCOUNT } });
   if (agentScript !== undefined) {
     await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
     });
   }

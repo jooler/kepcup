@@ -573,7 +573,6 @@ describe('D75 supervisor turns (W2)', () => {
     stacks.push(stack);
     const { core } = stack;
     await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });
@@ -624,7 +623,6 @@ describe('D75 supervisor turns (W2)', () => {
     stacks.push(stack);
     const { core, llm } = stack;
     await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
       backgroundTasks: { agentEnabled: false },
     });

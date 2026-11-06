@@ -504,7 +504,6 @@ describe('W3 revoke → interrupt running tasks', () => {
     const { runs } = domain(core);
 
     // Unrelated settings / an unchanged server list: nothing is revoked.
-    await core.rpc.call('settings.update', { experimental: { externalAgents: false } });
     await core.rpc.call('settings.update', { mcpServers: [server] });
     expect(runs.getOrThrow(first.id).status).toBe('running');
 
@@ -540,7 +539,6 @@ describe('W3 review fixes (复查后修正)', () => {
     });
     const { core } = stack;
     await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
     });
     const made = await makeBot(core, '外援');

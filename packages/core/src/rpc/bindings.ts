@@ -557,7 +557,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           const current = domain.settings.get();
           const {
             onboarding: onboardingPatch,
-            experimental: experimentalPatch,
             apps: appsPatch,
             agents: agentsPatch,
             backgroundTasks: backgroundTasksPatch,
@@ -591,14 +590,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                         agentSettingSchema.parse({ ...(current.agents[id] ?? {}), ...value }),
                       ]),
                     ),
-                  },
-                }
-              : {}),
-            ...(experimentalPatch !== undefined
-              ? {
-                  experimental: {
-                    externalAgents:
-                      experimentalPatch.externalAgents ?? current.experimental.externalAgents,
                   },
                 }
               : {}),
@@ -853,11 +844,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       bot: domain.bots.get(input.id),
     })),
     'bots.create': method(botsCreateInputSchema, botGetOutputSchema, async (input) => {
-      assertAgentSelectable(
-        domain.settings.get(),
-        services.agents?.catalog() ?? [],
-        input.profile.runtime.agent.id,
-      );
+      assertAgentSelectable(services.agents?.catalog() ?? [], input.profile.runtime.agent.id);
       // The setup interview drives save_profile / finish_setup host tools that
       // an external agent never receives (P1/P2) — it would stay interviewing.
       if (input.interview && input.profile.runtime.agent.id.length > 0) {

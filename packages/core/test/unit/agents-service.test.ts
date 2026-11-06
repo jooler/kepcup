@@ -245,10 +245,7 @@ describe('agents RPC contract', () => {
       expect(rpcMethodSchemas[name as keyof typeof rpcMethodSchemas]).toBeDefined();
     }
     expect(rpcEventSchemas['agent.status']).toBe(agentStatusPayloadSchema);
-    expect(agentsListOutputSchema.parse({ experimental: false, agents: [] })).toEqual({
-      experimental: false,
-      agents: [],
-    });
+    expect(agentsListOutputSchema.parse({ agents: [] })).toEqual({ agents: [] });
     // Login input: key and terminal input are bounded; ids are catalog ids.
     const login = rpcMethodSchemas['agents.login'].input;
     expect(login.safeParse({ id: 'Bad Id' }).success).toBe(false);

@@ -323,15 +323,6 @@ export class AgentsService {
     return entry;
   }
 
-  #requireExperimental(): void {
-    if (!this.#deps.settings.get().experimental.externalAgents) {
-      throw new AppError(
-        'INVALID_INPUT',
-        '外部智能体是实验功能：请先在设置中开启「外部智能体（实验）」',
-      );
-    }
-  }
-
   #setting(agentId: string): AgentSetting | null {
     return this.#deps.settings.get().agents[agentId] ?? null;
   }
@@ -527,12 +518,10 @@ export class AgentsService {
     });
   }
 
-  async list(): Promise<{ experimental: boolean; agents: AgentView[] }> {
-    const experimental = this.#deps.settings.get().experimental.externalAgents;
-    if (!experimental) return { experimental, agents: [] };
+  async list(): Promise<{ agents: AgentView[] }> {
     const entries = this.#deps.catalog();
     await Promise.all(entries.map((entry) => this.#refreshSystemCli(entry, false)));
-    return { experimental, agents: entries.map((entry) => this.view(entry.id)) };
+    return { agents: entries.map((entry) => this.view(entry.id)) };
   }
 
   async #refreshSystemCli(
@@ -793,7 +782,6 @@ export class AgentsService {
   // --- enable / disable / uninstall --------------------------------------------------
 
   async enable(agentId: string, source?: 'managed' | 'system'): Promise<AgentView> {
-    this.#requireExperimental();
     const entry = this.#entry(agentId);
     // Concurrent enables share the one install in flight.
     if (this.#installJobs.has(agentId)) return this.view(agentId);
@@ -979,7 +967,6 @@ export class AgentsService {
     concurrency?: number | undefined;
     model?: string | undefined;
   }): AgentView {
-    this.#requireExperimental();
     const entry = this.#entry(input.id);
     if (input.loadUserConfig !== undefined) {
       this.#saveSetting(entry.id, { loadUserConfig: input.loadUserConfig });
@@ -1008,7 +995,6 @@ export class AgentsService {
     apiKey?: string | undefined;
     input?: string | undefined;
   }): Promise<AgentView> {
-    this.#requireExperimental();
     const entry = this.#entry(input.id);
     const running = this.#logins.get(entry.id);
 
@@ -1221,7 +1207,6 @@ export class AgentsService {
    * 管理，KepCup 不碰凭据文件）。
    */
   async logout(agentId: string): Promise<AgentView> {
-    this.#requireExperimental();
     const entry = this.#entry(agentId);
     this.#cancelLogin(agentId);
     if (this.#deps.secrets.hasValue(agentApiKeySecretName(agentId))) {
@@ -1255,7 +1240,6 @@ export class AgentsService {
 
   /** 测试连接：经 AgentHost 建会话、以只读档发一句 ping，回传回复。 */
   async test(agentId: string): Promise<{ agent: AgentView; result: AgentTestResult }> {
-    this.#requireExperimental();
     const entry = this.#entry(agentId);
     const provider = providerFor(entry, this.#providers);
     const classify = classifierFor(provider);
@@ -1387,7 +1371,6 @@ export class AgentsService {
    * `thought_level`，没有返回 = 该模型不支持推理强度。
    */
   async efforts(agentId: string, model = '', refresh = false): Promise<AgentOptionChoice[]> {
-    this.#requireExperimental();
     const entry = this.#entry(agentId);
     const wanted = model.trim();
     const key = this.#effortsKey(entry.id, wanted);
@@ -1446,7 +1429,6 @@ export class AgentsService {
 
   /** 模型 / 推理强度选项（缓存；`refresh` 或未读取过时经探测会话读取）。 */
   async options(agentId: string, refresh = false): Promise<AgentOptions> {
-    this.#requireExperimental();
     const entry = this.#entry(agentId);
     const cached = this.#options.get(agentId);
     if (!refresh && cached !== undefined && cached.fetchedAt !== null) return cached;

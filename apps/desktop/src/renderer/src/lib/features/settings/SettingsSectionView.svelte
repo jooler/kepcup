@@ -1,6 +1,5 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { agentsStore } from '$lib/stores/agents.svelte';
   import AppearanceSection from './AppearanceSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
   import HardwareSection from './HardwareSection.svelte';
@@ -17,7 +16,6 @@
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import ComputerUseSection from './ComputerUseSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
-  import BackgroundTasksSection from './BackgroundTasksSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
   import ExtensionCenterBody from '$lib/features/extension-center/ExtensionCenterBody.svelte';
@@ -79,15 +77,13 @@
     </div>
   </div>
 {:else if section === 'agents'}
-  <div data-settings-section="agents" class="space-y-6">
-    <div data-settings-anchor="agents">
-      <AgentsSection />
-    </div>
-    {#if agentsStore.experimental}
-      <div data-settings-anchor="background-tasks">
-        <BackgroundTasksSection />
-      </div>
-    {/if}
+  <!-- 与「模型」分区同样接管纵向空间：两栏卡撑满剩余高度，滚动归右栏详情自己。 -->
+  <div
+    data-settings-section="agents"
+    data-settings-anchor="agents"
+    class="flex min-h-0 flex-1 flex-col"
+  >
+    <AgentsSection />
   </div>
 {:else if section === 'contacts'}
   <div data-settings-section="contacts">
