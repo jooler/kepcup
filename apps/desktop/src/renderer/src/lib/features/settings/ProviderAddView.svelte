@@ -161,6 +161,7 @@
         <ChevronRight class="ml-auto size-4 shrink-0 text-muted-foreground" />
       </button>
       {#each PROVIDER_TEMPLATES as template (template.id)}
+        {@const icon = providerIcon(template.logo)}
         <button
           type="button"
           class="flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors hover:bg-accent/40"
@@ -171,9 +172,9 @@
             : undefined}
           data-testid={`provider-template-${template.id}`}
         >
-          {#if providerIcon(template.logo) !== undefined}
+          {#if icon !== undefined}
             <ProviderLogo
-              logo={template.logo}
+              icon={icon}
               class="size-8 shrink-0 rounded-lg object-contain p-0.5"
             />
           {:else}

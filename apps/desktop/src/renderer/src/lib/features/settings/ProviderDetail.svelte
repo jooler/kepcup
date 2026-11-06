@@ -12,7 +12,7 @@
     settingsWithoutInstance,
   } from './provider-instances';
   import ProviderLogo from './ProviderLogo.svelte';
-  import { providerIcon } from './provider-logos';
+  import { providerIconForInstance } from './provider-logos';
   import ProviderModelDialog from './ProviderModelDialog.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -220,14 +220,12 @@
 </script>
 
 {#if instance !== null}
+  {@const icon = providerIconForInstance(instance)}
   <div class="min-w-0 space-y-5" data-testid={`provider-detail-${instance.id}`}>
     <!-- 头部：名称 / 类型 / 状态 / 启停 / 删除 -->
     <div class="flex flex-wrap items-center gap-2">
-      {#if providerIcon(instance.logo) !== undefined}
-        <ProviderLogo
-          logo={instance.logo}
-          class="size-6 shrink-0 rounded object-contain"
-        />
+      {#if icon !== undefined}
+        <ProviderLogo icon={icon} class="size-6 shrink-0 rounded object-contain" />
       {/if}
       <h3 class="text-sm font-semibold">{instance.name}</h3>
       <Badge variant="outline">

@@ -6,7 +6,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { buildProviderNavGroups } from './provider-instances';
   import ProviderLogo from './ProviderLogo.svelte';
-  import { providerIcon } from './provider-logos';
+  import { providerIconForInstance } from './provider-logos';
   import { revealSettingsAnchor } from './anchor-scroll';
   import ModelConfigDetail from './ModelConfigDetail.svelte';
   import ProviderDetail from './ProviderDetail.svelte';
@@ -115,6 +115,7 @@
             </h3>
           {/if}
           {#each group.items as item (item.instance.id)}
+            {@const icon = providerIconForInstance(item.instance)}
             <button
               type="button"
               class="flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors {selected === item.instance.id
@@ -123,11 +124,8 @@
               onclick={() => (selected = item.instance.id)}
               data-testid={`models-nav-provider-${item.instance.id}`}
             >
-              {#if providerIcon(item.instance.logo) !== undefined}
-                <ProviderLogo
-                  logo={item.instance.logo}
-                  class="size-4 shrink-0 rounded object-contain"
-                />
+              {#if icon !== undefined}
+                <ProviderLogo icon={icon} class="size-4 shrink-0 rounded object-contain" />
                 <span class="truncate">{item.instance.name}</span>
                 <span
                   class="ml-auto size-2 shrink-0 rounded-full {item.status === 'ready'

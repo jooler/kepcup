@@ -26,6 +26,7 @@ import huggingfaceColor from '@lobehub/icons-static-svg/icons/huggingface-color.
 import vercelMono from '@lobehub/icons-static-svg/icons/vercel.svg?url';
 import lingColor from '@lobehub/icons-static-svg/icons/ling-color.svg?url';
 import startPlan from '../../assets/provider-icons/model-provider-start-plan.png?url';
+import { PROVIDER_TEMPLATES } from '@kepcup/shared';
 
 /**
  * 供应商图标。
@@ -37,8 +38,8 @@ import startPlan from '../../assets/provider-icons/model-provider-start-plan.png
  * 有品牌色的用 `*-color`，走 `<img>`；只有单色标记的用 mono（`currentColor`
  * 在 `<img>` 里会退化成黑色，暗色主题下不可见），由 `ProviderLogo` 以 CSS
  * mask 按前景色渲染，跟随明暗主题。`@lobehub` 没有对应品牌的（目前只有
- * start-plan）继续用 `lib/assets/provider-icons/` 下的位图；都没有的供应商
- * （自定义实例）由 UI 回退到首字母占位。
+ * start-plan）继续用 `lib/assets/provider-icons/` 下的位图；连模板都认不出的
+ * 供应商（自定义实例、目录里没有模板的 pi provider）由 UI 回退到首字母占位。
  */
 export interface ProviderIconAsset {
   url: string;
@@ -87,4 +88,47 @@ const ICONS: Readonly<Record<string, ProviderIconAsset>> = {
 export function providerIcon(key: string | undefined): ProviderIconAsset | undefined {
   if (key === undefined || key.length === 0) return undefined;
   return ICONS[key];
+}
+
+/** 接口根比对口径：忽略尾部斜杠（模板目录与用户手填的写法常差一个 `/`）。 */
+function normalizedBaseUrl(url: string | undefined): string | undefined {
+  if (url === undefined || url.length === 0) return undefined;
+  return url.replace(/\/+$/, '');
+}
+
+/**
+ * 实例 → 模板图标：id 精确命中优先（实例 id 就是模板 id，同模板第 N 个实例
+ * 带 `-2` / `-3`…；精确优先避免 `zai-standard-api` 被前缀匹配到 `zai-api`），
+ * 认不出 id 再用接口根认领（旧实例的 id 可能是 `custom:…`，但地址仍是模板
+ * 那一套）。
+ */
+function templateIconFor(instance: {
+  readonly id: string;
+  readonly baseUrl?: string | undefined;
+}): ProviderIconAsset | undefined {
+  const byId =
+    PROVIDER_TEMPLATES.find((template) => template.id === instance.id) ??
+    PROVIDER_TEMPLATES.find((template) => template.id === /^(.+)-(\d+)$/.exec(instance.id)?.[1]);
+  const byIdIcon = providerIcon(byId?.logo);
+  if (byIdIcon !== undefined) return byIdIcon;
+  const baseUrl = normalizedBaseUrl(instance.baseUrl);
+  if (baseUrl === undefined) return undefined;
+  return providerIcon(
+    PROVIDER_TEMPLATES.find((template) => normalizedBaseUrl(template.baseUrl) === baseUrl)?.logo,
+  );
+}
+
+/**
+ * 实例图标：实例自带的 `logo` 优先；`logo` 是 v0.5.6 实例化才加上的字段，
+ * 更早创建的实例（含从 legacy `vendorProviders` / `customProviders` 迁来的）
+ * 没有它，存的是已下线资产名时也解析不到——这两种情况按实例 id / 接口根回落
+ * 到模板图标，列表里不会退化成「绿点 + 名字」。仍是未知来源（自定义实例、
+ * 目录里没有模板的 pi provider）时返回 undefined，由 UI 回退首字母。
+ */
+export function providerIconForInstance(instance: {
+  readonly id: string;
+  readonly logo?: string | undefined;
+  readonly baseUrl?: string | undefined;
+}): ProviderIconAsset | undefined {
+  return providerIcon(instance.logo) ?? templateIconFor(instance);
 }
