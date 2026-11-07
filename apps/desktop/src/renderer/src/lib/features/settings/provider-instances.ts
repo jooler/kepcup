@@ -1,7 +1,10 @@
 import type {
   CapabilityModelKey,
+  FetchedProviderModel,
   ModelCapability,
+  ProviderApi,
   ProviderInstance,
+  ProviderModel,
   Settings,
 } from '@kepcup/shared';
 import { VENDOR_DESCRIPTORS } from '@kepcup/shared';
@@ -14,6 +17,13 @@ import { VENDOR_DESCRIPTORS } from '@kepcup/shared';
 
 /** 左栏供应商条目的状态点：绿 = 可用，黄 = 配置不完整，灰 = 已停用。 */
 export type ProviderNavStatus = 'ready' | 'incomplete' | 'disabled';
+
+/** 自定义供应商可选的数据风格（预置模板的线协议由模板固定）；展示文案 i18n `settings.providerApi.{api}`。 */
+export const PROVIDER_API_OPTIONS: readonly ProviderApi[] = [
+  'openai-completions',
+  'openai-responses',
+  'anthropic-messages',
+];
 
 /** 状态点判定：停用 = 灰；有 Key 且登记了模型 = 绿；其余 = 黄（不完整）。 */
 export function providerNavStatus(
@@ -136,6 +146,31 @@ export function settingsWithoutInstance(settings: Settings, id: string): Partial
     modelProviders: settings.modelProviders.filter((p) => p.id !== id),
     capabilityModels,
   };
+}
+
+/** 拉取条目 → 模型登记：contextWindow 用远端提示缺省 128k；能力恒为 chat（向量等在模型行里再编辑）。 */
+export function fetchedToProviderModel(m: FetchedProviderModel): ProviderModel {
+  return {
+    id: m.id,
+    ...(m.name !== undefined ? { name: m.name } : {}),
+    contextWindow: m.contextWindow ?? 128_000,
+    capabilities: ['chat'],
+  };
+}
+
+/**
+ * 「获取模型」的合并：只新增不覆盖——已登记的同 id 条目保持手工编辑过的
+ * 展示名 / 上下文 / 能力不变（重新拉取不会冲掉用户的修改）。
+ */
+export function mergeFetchedProviderModels(
+  instance: ProviderInstance,
+  fetched: readonly FetchedProviderModel[],
+): ProviderModel[] {
+  const existing = new Set(instance.models.map((m) => m.id));
+  return [
+    ...instance.models,
+    ...fetched.filter((m) => !existing.has(m.id)).map(fetchedToProviderModel),
+  ];
 }
 
 /** 模板卡的首字母头像配色（按 id 稳定取色）。 */

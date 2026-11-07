@@ -126,26 +126,19 @@
             >
               {#if icon !== undefined}
                 <ProviderLogo icon={icon} class="size-4 shrink-0 rounded object-contain" />
-                <span class="truncate">{item.instance.name}</span>
-                <span
-                  class="ml-auto size-2 shrink-0 rounded-full {item.status === 'ready'
-                    ? 'bg-emerald-500'
-                    : item.status === 'incomplete'
-                      ? 'bg-amber-500'
-                      : 'bg-muted-foreground/40'}"
-                  title={t(`settings.providerStatus.${item.status}`)}
-                ></span>
               {:else}
-                <span
-                  class="size-2 shrink-0 rounded-full {item.status === 'ready'
-                    ? 'bg-emerald-500'
-                    : item.status === 'incomplete'
-                      ? 'bg-amber-500'
-                      : 'bg-muted-foreground/40'}"
-                  title={t(`settings.providerStatus.${item.status}`)}
-                ></span>
-                <span class="truncate">{item.instance.name}</span>
+                <!-- 无图标用同宽占位：各行名称对齐；状态点统一在右侧。 -->
+                <span class="size-4 shrink-0" aria-hidden="true"></span>
               {/if}
+              <span class="truncate">{item.instance.name}</span>
+              <span
+                class="ml-auto size-2 shrink-0 rounded-full {item.status === 'ready'
+                  ? 'bg-emerald-500'
+                  : item.status === 'incomplete'
+                    ? 'bg-amber-500'
+                    : 'bg-muted-foreground/40'}"
+                title={t(`settings.providerStatus.${item.status}`)}
+              ></span>
             </button>
           {/each}
         {/each}
@@ -166,7 +159,10 @@
           onCreated={(id) => (selected = id)}
         />
       {:else if selectedExists}
-        <ProviderDetail instanceId={selected} onDeleted={() => (selected = 'config')} />
+        <!-- key 重挂载：切换实例时清掉详情内所有编辑态（拉取弹框 / 模型编辑 / Key 草稿），不跨实例残留。 -->
+        {#key selected}
+          <ProviderDetail instanceId={selected} onDeleted={() => (selected = 'config')} />
+        {/key}
       {/if}
     </div>
   </div>
