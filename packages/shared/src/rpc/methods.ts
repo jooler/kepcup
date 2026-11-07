@@ -240,6 +240,7 @@ import {
   wikiPageSchema,
   wikiSearchHitSchema,
   type ProviderInfo,
+  fetchedProviderModelSchema,
 } from '../domain/types.js';
 import { wikiOwnerSchema } from '../domain/wiki.js';
 import { boardCardSchema, boardColumnSchema, boardSummarySchema } from '../domain/board.js';
@@ -278,7 +279,7 @@ import {
   remoteDeviceIdSchema,
   type PairingOffer,
 } from '../domain/remote.js';
-import { modelCapabilitySchema } from '../domain/vendors.js';
+import { modelCapabilitySchema, providerApiSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
@@ -847,6 +848,22 @@ export const providersTestInputSchema = providerNameInputSchema.extend({
    * 不落库；缺省用已存 key。只对能力探测生效（对话探测仍用已存配置）。
    */
   keyOverride: z.string().min(1).max(4096).optional(),
+});
+/**
+ * 拉取供应商可用模型列表（设置页「获取模型」）：按线协议适配列表端点与认证头
+ * （OpenAI 风格 GET {base}/models + Bearer；Anthropic 风格 GET {base}/v1/models
+ * + x-api-key）。`provider` 用于详情页从 secrets 解析已存 Key；新增表单传
+ * `keyOverride` 用未保存的 Key（与 providers.test 同一取向），两者都缺省时
+ * 无认证探测（本地服务）。
+ */
+export const providersFetchModelsInputSchema = z.object({
+  provider: z.string().min(1).optional(),
+  baseUrl: z.string().url(),
+  api: providerApiSchema,
+  keyOverride: z.string().min(1).max(4096).optional(),
+});
+export const providersFetchModelsOutputSchema = z.object({
+  models: z.array(fetchedProviderModelSchema),
 });
 
 // --- media（统一媒体调用：按厂商自动路由） ------------------------------------
@@ -2515,6 +2532,11 @@ export const rpcMethodSchemas = {
   'providers.setKeyMeta': { input: providersSetKeyMetaInputSchema, output: okOutput },
   'providers.removeKey': { input: providerNameInputSchema, output: okOutput },
   'providers.test': { input: providersTestInputSchema, output: okOutput },
+  /** 拉取供应商可用模型列表（设置页「获取模型」，按线协议适配端点与认证头）。 */
+  'providers.fetchModels': {
+    input: providersFetchModelsInputSchema,
+    output: providersFetchModelsOutputSchema,
+  },
   /** MCP（D65）：设置页连接测试——连接 server 并列出工具名（不落缓存）。 */
   'mcp.test': { input: mcpTestInputSchema, output: mcpTestOutputSchema },
   'mcp.setSecret': { input: mcpSetSecretInputSchema, output: okOutput },

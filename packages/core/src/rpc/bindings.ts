@@ -21,6 +21,8 @@ import {
   providersSetKeyMetaInputSchema,
   providerNameInputSchema,
   providersTestInputSchema,
+  providersFetchModelsInputSchema,
+  providersFetchModelsOutputSchema,
   providersListOutputSchema,
   okOutputSchema,
   shareFailedListInputSchema,
@@ -721,6 +723,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       await domain.providers.test(input.provider, input.model, input.capability, input.keyOverride);
       return { ok: true as const };
     }),
+    'providers.fetchModels': method(
+      providersFetchModelsInputSchema,
+      providersFetchModelsOutputSchema,
+      async (input) => ({ models: await domain.providers.fetchModels(input) }),
+    ),
 
     // --- 统一媒体调用：网关按模型引用的厂商自动路由 -------------------------
     'media.generateImage': method(

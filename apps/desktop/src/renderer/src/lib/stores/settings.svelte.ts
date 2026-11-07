@@ -1,10 +1,12 @@
 import type {
   AppAuthReason,
   AppFlowLogEntry,
+  FetchedProviderModel,
   OAuthClientView,
   McpToolRisksOutput,
   ModelCapability,
   OnboardingStatePatch,
+  ProviderApi,
   ProviderInfo,
   SandboxStatusOutput,
   Settings,
@@ -201,6 +203,25 @@ class SettingsState {
       ...(capability !== undefined ? { capability } : {}),
       ...(key !== undefined && key.length > 0 ? { keyOverride: key } : {}),
     });
+  }
+
+  /**
+   * 拉取供应商可用模型列表（设置页「获取模型」）：详情页传 provider（core 从
+   * secrets 解析已存 Key），新增表单传 keyOverride（未保存的 Key 直接探测，
+   * 与 test 同一取向）；keyOverride 为空串时省略（本地服务匿名拉取）。
+   */
+  async fetchModels(input: {
+    provider?: string;
+    baseUrl: string;
+    api: ProviderApi;
+    keyOverride?: string;
+  }): Promise<FetchedProviderModel[]> {
+    const { keyOverride, ...rest } = input;
+    const out = (await core.call('providers.fetchModels', {
+      ...rest,
+      ...(keyOverride !== undefined && keyOverride.length > 0 ? { keyOverride } : {}),
+    })) as { models: FetchedProviderModel[] };
+    return out.models;
   }
 
   // --- 联网检索（docs/design/21-web-search.md） ------------------------------

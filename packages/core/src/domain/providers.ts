@@ -3,7 +3,9 @@ import {
   isVendorId,
   VENDOR_DESCRIPTORS,
   type CapabilityModelKey,
+  type FetchedProviderModel,
   type ModelCapability,
+  type ProviderApi,
   type ProviderInfo,
 } from '@kepcup/shared';
 import {
@@ -11,12 +13,14 @@ import {
   buildModelRegistry,
   findProviderInstance,
   providerInfoList,
+  readProviderEntries,
   removeProviderKeyAt,
   replaceProviderKeys,
   resolveModel,
   testProvider,
   updateProviderKeyMeta,
 } from '../agent/models.js';
+import { fetchProviderModels } from './provider-model-fetch.js';
 import { providerTestSessionId } from '../agent/model-session-id.js';
 import type { MediaService } from '../media/service.js';
 import type { SettingsService } from './settings.js';
@@ -166,6 +170,27 @@ export class ProvidersService {
       model,
       sessionId: providerTestSessionId(() => this.#secrets.modelSessionKey(), provider),
     });
+  }
+
+  /**
+   * 拉取供应商可用模型列表（设置页「获取模型」）：keyOverride = 新增表单用
+   * 未保存的 Key（与 providers.test 同一取向）；provider = 详情页从 secrets
+   * 解析已存 Key；两者都缺省时匿名探测（本地服务）。
+   */
+  async fetchModels(input: {
+    provider?: string;
+    baseUrl: string;
+    api: ProviderApi;
+    keyOverride?: string;
+  }): Promise<FetchedProviderModel[]> {
+    const key =
+      input.keyOverride !== undefined && input.keyOverride.length > 0
+        ? input.keyOverride
+        : input.provider !== undefined
+          ? (readProviderEntries(this.#secrets, input.provider).find((e) => e.enabled)?.key ??
+            null)
+          : null;
+    return fetchProviderModels({ baseUrl: input.baseUrl, api: input.api, key });
   }
 
   #assertProviderExists(provider: string): void {

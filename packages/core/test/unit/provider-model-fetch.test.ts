@@ -26,6 +26,9 @@ function fakeSecrets(initial: Record<string, string> = {}) {
     removeValue: (name: string): void => {
       store.delete(name);
     },
+    // readProviderEntries 读出条目时会补登记脱敏（漏掉会在 try 里抛错、被
+    // 单条失败的 catch 静默吞掉，Key 解析表现为空）。
+    registerRedactValue: (): void => {},
   } as unknown as SecretsService;
 }
 
