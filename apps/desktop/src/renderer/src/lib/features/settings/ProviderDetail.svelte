@@ -19,13 +19,16 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Switch } from '$lib/components/ui/switch';
   import { Plus, Trash2, Pencil } from '@lucide/svelte';
 
   /**
    * 左栏选中某个供应商实例后的详情（ZCode 的 provider card + 模型列表）：
    * 头部（名称、类型、状态点、启停、删除）→ 连接区（baseUrl / API Key /
    * 测试连接）→ 模型列表（模型 ID + 上下文 badge + 能力 badge + 编辑/删除，
-   * 「添加模型」出弹框）。baseUrl / 名称 / 启停即改即存；Key 失焦或回车提交。
+   * 「添加模型」出弹框）。baseUrl / 名称 / 启停即改即存；Key 失焦或回车提交，
+   * 已存 Key 行可标注别名（列表态以文字 + 笔图标展示，点击进入编辑，失焦 / 回车
+   * 提交、Esc 放弃）与启停（toggle，停用的 Key 调用时跳过）。
    */
   let {
     instanceId,
@@ -58,6 +61,12 @@
   let busy = $state(false);
   let testing = $state(false);
   let removingKeyIndex = $state<number | null>(null);
+  /** 别名输入草稿（键 = `${instanceId}:${index}`）：编辑中不被刷新回写覆盖，失焦 / 回车提交。 */
+  let aliasDrafts = $state<Record<string, string>>({});
+  /** 正在编辑别名的行下标；null = 列表态（别名以文字 + 笔图标展示）。 */
+  let editingAliasIndex = $state<number | null>(null);
+  /** 编辑中的别名输入框：提交失败后重新聚焦（blur 已发生，autofocus 不会二次生效）。 */
+  let aliasInput: HTMLInputElement | null = $state(null);
 
   $effect(() => {
     const current = instance;
@@ -147,10 +156,83 @@
     removingKeyIndex = index;
     try {
       await settingsStore.removeKeyAt(instance.id, index);
+      clearAliasDrafts();
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
     } finally {
       removingKeyIndex = null;
+    }
+  }
+
+  function aliasDraftKey(index: number): string {
+    return `${instance?.id ?? ''}:${index}`;
+  }
+
+  /** 增删 Key 后下标会移位，丢弃本实例的别名草稿与编辑态（已提交的值在刷新里回显）。 */
+  function clearAliasDrafts(): void {
+    const prefix = `${instance?.id ?? ''}:`;
+    for (const draftKey of Object.keys(aliasDrafts)) {
+      if (draftKey.startsWith(prefix)) delete aliasDrafts[draftKey];
+    }
+    editingAliasIndex = null;
+  }
+
+  /** 进入别名编辑：草稿预填当前别名。删除进行中不进入（下标即将移位）。 */
+  function startEditAlias(index: number): void {
+    if (removingKeyIndex !== null) return;
+    const preview = keyPreviews[index];
+    if (preview === undefined) return;
+    aliasDrafts[aliasDraftKey(index)] = preview.alias ?? '';
+    editingAliasIndex = index;
+  }
+
+  /** 退出别名编辑且不保存（Esc）。 */
+  function cancelAliasEdit(): void {
+    if (editingAliasIndex === null) return;
+    delete aliasDrafts[aliasDraftKey(editingAliasIndex)];
+    editingAliasIndex = null;
+  }
+
+  /** 别名提交（失焦 / 回车）：空串清除别名，其余 trim 后落库；未改动时仅退出编辑。 */
+  async function commitAlias(index: number): Promise<void> {
+    const current = instance;
+    const preview = keyPreviews[index];
+    const draftKey = aliasDraftKey(index);
+    const draft = aliasDrafts[draftKey];
+    const exitEdit = () => {
+      if (editingAliasIndex === index) editingAliasIndex = null;
+    };
+    if (current === null || preview === undefined || draft === undefined) {
+      exitEdit();
+      return;
+    }
+    const value = draft.trim();
+    if (value === (preview.alias ?? '')) {
+      delete aliasDrafts[draftKey];
+      exitEdit();
+      return;
+    }
+    try {
+      await settingsStore.setKeyMeta(current.id, index, { alias: value });
+      delete aliasDrafts[draftKey];
+      exitEdit();
+    } catch (error) {
+      // 提交失败保持编辑态，草稿留在输入框里可改后重试；blur 已发生，重新聚焦。
+      toast.error(String((error as Error).message ?? error));
+      aliasInput?.focus();
+    }
+  }
+
+  /** 启停单个 Key：停用的 Key 调用时跳过（全部停用 = 无可用 Key）。失败时用权威状态回写开关。 */
+  async function toggleKeyAt(index: number, checked: boolean): Promise<void> {
+    const current = instance;
+    if (current === null) return;
+    try {
+      await settingsStore.setKeyMeta(current.id, index, { enabled: checked });
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+      // Switch 点击即本地翻转；失败时强制刷新，让开关回到 core 的实际状态。
+      await settingsStore.refresh().catch(() => undefined);
     }
   }
 
@@ -159,6 +241,18 @@
     if (event.key === 'Enter') {
       event.preventDefault();
       event.currentTarget.blur();
+    }
+  }
+
+  /** 别名输入：回车 = 提交（blur 触发 commitAlias），Esc = 放弃编辑。 */
+  function onAliasKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelAliasEdit();
     }
   }
 
@@ -324,13 +418,80 @@
           <p class="text-xs text-muted-foreground">
             {t('settings.providerKeyCount', { count: keyPreviews.length })}
           </p>
+          {#if keyPreviews.some((preview) => !preview.enabled)}
+            <p class="text-xs text-muted-foreground">
+              {t('settings.providerKeyDisabledCount', {
+                count: keyPreviews.filter((preview) => !preview.enabled).length,
+              })}
+            </p>
+          {/if}
           <ul class="space-y-1">
             {#each keyPreviews as preview, index (index)}
               <li
-                class="flex items-center justify-between gap-2 rounded-md border px-2 py-1"
+                class="flex flex-wrap items-center gap-2 rounded-md border px-2 py-1 {preview.enabled
+                  ? ''
+                  : 'opacity-55'}"
                 data-testid={`provider-key-item-${instance.id}-${index}`}
               >
-                <code class="truncate text-xs">{preview}</code>
+                {#if editingAliasIndex === index}
+                  <Input
+                    bind:ref={aliasInput}
+                    class="h-7 w-32 shrink-0 text-xs"
+                    placeholder={t('settings.providerKeyAliasPlaceholder')}
+                    aria-label={t('settings.providerKeyAlias')}
+                    value={aliasDrafts[aliasDraftKey(index)] ?? preview.alias ?? ''}
+                    oninput={(event) =>
+                      (aliasDrafts[aliasDraftKey(index)] = event.currentTarget.value)}
+                    onblur={() => void commitAlias(index)}
+                    onkeydown={onAliasKeydown}
+                    autofocus
+                    data-testid={`provider-key-alias-${instance.id}-${index}`}
+                  />
+                {:else}
+                  <!-- 列表态：别名以文字展示（未设置时显示占位），点笔图标进入编辑。 -->
+                  <button
+                    type="button"
+                    class="group flex max-w-44 min-w-0 cursor-pointer items-center gap-1 rounded text-left text-xs {preview.alias
+                      ? ''
+                      : 'text-muted-foreground/60'}"
+                    onclick={() => startEditAlias(index)}
+                    title={t(
+                      preview.alias
+                        ? 'settings.providerKeyAliasEdit'
+                        : 'settings.providerKeyAliasAdd',
+                    )}
+                    data-testid={`provider-key-alias-${instance.id}-${index}`}
+                  >
+                    <span class="truncate">
+                      {preview.alias ?? t('settings.providerKeyAliasAdd')}
+                    </span>
+                    <Pencil
+                      class="size-3 shrink-0 text-muted-foreground {preview.alias
+                        ? 'opacity-60 group-hover:opacity-100'
+                        : 'opacity-40 group-hover:opacity-100'}"
+                    />
+                  </button>
+                {/if}
+                <code class="min-w-0 flex-1 truncate text-xs">{preview.mask}</code>
+                <span
+                  class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+                  title={t('settings.providerKeyToggle')}
+                >
+                  <Switch
+                    checked={preview.enabled}
+                    onCheckedChange={(checked) => void toggleKeyAt(index, checked)}
+                    aria-label={t('settings.providerKeyToggle')}
+                    data-testid={`provider-key-toggle-${instance.id}-${index}`}
+                  />
+                  <!-- button 不是 labelable 元素，文字点击显式转发为启停。 -->
+                  <button
+                    type="button"
+                    class="cursor-pointer"
+                    onclick={() => void toggleKeyAt(index, !preview.enabled)}
+                  >
+                    {t('settings.providerKeyEnabled')}
+                  </button>
+                </span>
                 <Button
                   size="icon"
                   variant="ghost"

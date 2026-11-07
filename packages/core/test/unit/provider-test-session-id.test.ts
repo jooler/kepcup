@@ -81,6 +81,7 @@ describe('ProvidersService.test without a session key', () => {
         getValue: () => 'sk-test',
         hasValue: () => true,
         names: () => [],
+        registerRedactValue: () => {},
         redact: (text: string) => text,
         modelSessionKey,
       } as unknown as SecretsService,

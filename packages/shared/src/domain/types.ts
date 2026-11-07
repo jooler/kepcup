@@ -445,6 +445,16 @@ export function createInstanceFromTemplate(
   };
 }
 
+/** 已存 Key 的单条预览（设置页渲染 + 标注）：掩码与元数据，明文永不出 core。 */
+export interface ProviderKeyPreview {
+  /** 掩码（maskApiKey：前缀 + ....... + 后四位）。 */
+  mask: string;
+  /** 用户标注的别名；未设置时缺省。 */
+  alias?: string;
+  /** 停用的 Key 在调用时跳过。 */
+  enabled: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   name: string;
@@ -462,10 +472,10 @@ export interface ProviderInfo {
     /** 能力声明；对话下拉只取含 `chat` 的模型，其余能力按槽位路由。 */
     capabilities: ModelCapability[];
   }>;
-  /** Whether an API key is stored. Never the key itself. */
+  /** 存在启用中的 Key（全部停用视为无可用 Key）。明文永不出 core。 */
   hasKey: boolean;
-  /** 已存 Key 的掩码预览（与存储顺序一致）；明文永不出 core。 */
-  keyPreviews: string[];
+  /** 已存 Key 的掩码与标注（与存储顺序一致，含停用条目）。 */
+  keyPreviews: ProviderKeyPreview[];
 }
 
 /** One choice of the bot model dropdown: `{provider}/{model}` ref + display label. */

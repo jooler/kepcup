@@ -827,6 +827,12 @@ export const providersAddKeyInputSchema = providersSetKeyInputSchema;
 export const providersRemoveKeyAtInputSchema = providerNameInputSchema.extend({
   index: z.number().int().min(0),
 });
+/** 更新单个 Key 的标注：别名（空串清除）与启停；下标非法时报 INVALID_INPUT。 */
+export const providersSetKeyMetaInputSchema = providerNameInputSchema.extend({
+  index: z.number().int().min(0),
+  alias: z.string().max(100).optional(),
+  enabled: z.boolean().optional(),
+});
 export const providersTestInputSchema = providerNameInputSchema.extend({
   /** Optional model id override; defaults to the provider's first model. */
   model: z.string().min(1).optional(),
@@ -2506,6 +2512,7 @@ export const rpcMethodSchemas = {
   'providers.setKey': { input: providersSetKeyInputSchema, output: okOutput },
   'providers.addKey': { input: providersAddKeyInputSchema, output: okOutput },
   'providers.removeKeyAt': { input: providersRemoveKeyAtInputSchema, output: okOutput },
+  'providers.setKeyMeta': { input: providersSetKeyMetaInputSchema, output: okOutput },
   'providers.removeKey': { input: providerNameInputSchema, output: okOutput },
   'providers.test': { input: providersTestInputSchema, output: okOutput },
   /** MCP（D65）：设置页连接测试——连接 server 并列出工具名（不落缓存）。 */
@@ -3364,6 +3371,7 @@ const APP_METHODS = [
   'providers.setKey',
   'providers.addKey',
   'providers.removeKeyAt',
+  'providers.setKeyMeta',
   'providers.removeKey',
   'providers.test',
   'media.generateImage',

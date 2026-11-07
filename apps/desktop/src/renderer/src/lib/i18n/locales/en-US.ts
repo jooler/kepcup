@@ -342,6 +342,13 @@ export const enUS = {
   'settings.providerKeyAddPlaceholder': 'Paste a new API key and press Enter',
   'settings.providerKeyCount': 'Keys configured: {count} (used in rotation)',
   'settings.providerKeyRemove': 'Remove this key',
+  'settings.providerKeyAlias': 'Alias',
+  'settings.providerKeyAliasPlaceholder': 'Alias (optional)',
+  'settings.providerKeyAliasAdd': 'Add alias',
+  'settings.providerKeyAliasEdit': 'Edit alias',
+  'settings.providerKeyEnabled': 'Enabled',
+  'settings.providerKeyToggle': 'Enable or disable this key; disabled keys are skipped',
+  'settings.providerKeyDisabledCount': '{count} more key(s) disabled and skipped',
   'settings.save': 'Save',
   'settings.remove': 'Remove',
   // --- Models section two-pane rework (v0.5.6: "Model config" + provider instances)

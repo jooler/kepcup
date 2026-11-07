@@ -202,4 +202,13 @@ export class SecretsService {
     }
     return result;
   }
+
+  /**
+   * Registers a value that must stay masked by `redact` although it is not the
+   * literal stored secret: 供应商 Key 的槽位值是 JSON envelope（标注随 Key 落盘），
+   * 读侧解析出的内层明文 Key 靠这里补登记，维持「明文落日志 / 落库即被打码」。
+   */
+  registerRedactValue(value: string): void {
+    this.#retireValue(value);
+  }
 }

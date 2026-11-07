@@ -320,6 +320,13 @@ export const zhCN = {
   'settings.providerKeyAddPlaceholder': '粘贴新的 API Key，回车添加',
   'settings.providerKeyCount': '已配置 {count} 个 Key，调用时轮流使用',
   'settings.providerKeyRemove': '删除该 Key',
+  'settings.providerKeyAlias': '别名',
+  'settings.providerKeyAliasPlaceholder': '别名（可选）',
+  'settings.providerKeyAliasAdd': '添加别名',
+  'settings.providerKeyAliasEdit': '编辑别名',
+  'settings.providerKeyEnabled': '启用',
+  'settings.providerKeyToggle': '启用或停用该 Key，停用后调用时跳过',
+  'settings.providerKeyDisabledCount': '另有 {count} 个 Key 已停用，调用时跳过',
   'settings.save': '保存',
   'settings.remove': '移除',
   // --- 模型分区两栏重构（v0.5.6：左栏「模型配置」+ 供应商实例）--------------

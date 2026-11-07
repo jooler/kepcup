@@ -5,17 +5,21 @@ import {
   buildModelRegistry,
   nextProviderApiKey,
   providerKeySecretNames,
+  readProviderEntries,
   readProviderKeys,
   removeProviderKeyAt,
   replaceProviderKeys,
+  updateProviderKeyMeta,
 } from '../../src/agent/models.js';
 import type { SecretsService } from '../../src/domain/secrets.js';
 
 /** 只实现 Key 存取助手用到的方法，避免为单测拉起完整 SQLite / 加密栈。 */
 function fakeSecrets(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial));
+  const redactValues = new Set<string>();
   const service = {
     store,
+    redactValues,
     hasValue: (name: string): boolean => store.has(name),
     getValue: (name: string): string | null => store.get(name) ?? null,
     names: (): string[] => [...store.keys()].sort(),
@@ -24,6 +28,9 @@ function fakeSecrets(initial: Record<string, string> = {}) {
     },
     removeValue: (name: string): void => {
       store.delete(name);
+    },
+    registerRedactValue: (value: string): void => {
+      redactValues.add(value);
     },
   };
   return service as unknown as SecretsService & typeof service;
@@ -51,8 +58,98 @@ describe('provider keys', () => {
     addProviderKey(secrets, 'p-dup', 'sk-same-1234');
     expect(readProviderKeys(secrets, 'p-dup')).toEqual(['sk-same-1234']);
 
-    replaceProviderKeys(secrets, 'p-dup', ['sk-new-5678']);
+    replaceProviderKeys(secrets, 'p-dup', [{ key: 'sk-new-5678', enabled: true }]);
     expect(readProviderKeys(secrets, 'p-dup')).toEqual(['sk-new-5678']);
+  });
+
+  it('标注随 Key 落盘：别名 / 启停 roundtrip，旧格式纯文本按启用读取', () => {
+    const secrets = fakeSecrets();
+    // 旧格式：多 Key 功能引入前的纯文本 Key。
+    secrets.store.set('provider:p-legacy', 'sk-legacy-9999');
+
+    addProviderKey(secrets, 'p-legacy', 'sk-second-0000');
+    updateProviderKeyMeta(secrets, 'p-legacy', 0, { alias: '主力', enabled: false });
+    updateProviderKeyMeta(secrets, 'p-legacy', 1, { alias: ' 备用 ' });
+
+    expect(readProviderEntries(secrets, 'p-legacy')).toEqual([
+      { key: 'sk-legacy-9999', alias: '主力', enabled: false },
+      { key: 'sk-second-0000', alias: '备用', enabled: true },
+    ]);
+    // 落盘为 JSON envelope（含标注），不再是纯文本。
+    expect(secrets.store.get('provider:p-legacy')).toContain('"alias"');
+
+    // 内层明文 Key 补登记进 redact 集合：envelope 槽位的存储值是整串 JSON，
+    // secrets.redact 的精确匹配盖不到内层，不登记就会从防泄漏防线漏走。
+    expect([...secrets.redactValues]).toEqual(
+      expect.arrayContaining(['sk-legacy-9999', 'sk-second-0000']),
+    );
+
+    // 只改启停：别名原样保留（部分更新语义，两个方向都要成立）。
+    updateProviderKeyMeta(secrets, 'p-legacy', 1, { enabled: false });
+    expect(readProviderEntries(secrets, 'p-legacy')[1]).toEqual({
+      key: 'sk-second-0000',
+      alias: '备用',
+      enabled: false,
+    });
+
+    // 空串别名 = 清除；enabled 缺省保持原值。
+    updateProviderKeyMeta(secrets, 'p-legacy', 0, { alias: '' });
+    expect(readProviderEntries(secrets, 'p-legacy')[0]).toEqual({
+      key: 'sk-legacy-9999',
+      enabled: false,
+    });
+
+    // 非法下标报 INVALID_INPUT。
+    expect(() =>
+      updateProviderKeyMeta(secrets, 'p-legacy', 9, { enabled: true }),
+    ).toThrow(/不存在/);
+  });
+
+  it('损坏槽位的兜底：合法 JSON 但缺 key 字段时整串按旧格式明文 Key 处理', () => {
+    const secrets = fakeSecrets({
+      'provider:p-corrupt': '{"alias":"只有标注"}',
+    });
+    // 槽位里的一切都按「可能是 Key」兜底（放进 Authorization 头 + 掩码预览），
+    // 固定该行为：解析不抛错、不静默丢条目。
+    expect(readProviderEntries(secrets, 'p-corrupt')).toEqual([
+      { key: '{"alias":"只有标注"}', enabled: true },
+    ]);
+    expect(readProviderKeys(secrets, 'p-corrupt')).toEqual(['{"alias":"只有标注"}']);
+  });
+
+  it('按下标删除保留其余条目的标注；整体替换重置标注', () => {
+    const secrets = fakeSecrets();
+    addProviderKey(secrets, 'p-meta', 'sk-a-1111');
+    addProviderKey(secrets, 'p-meta', 'sk-b-2222');
+    addProviderKey(secrets, 'p-meta', 'sk-c-3333');
+    updateProviderKeyMeta(secrets, 'p-meta', 1, { alias: '备份', enabled: false });
+
+    removeProviderKeyAt(secrets, 'p-meta', 0);
+    expect(readProviderEntries(secrets, 'p-meta')).toEqual([
+      { key: 'sk-b-2222', alias: '备份', enabled: false },
+      { key: 'sk-c-3333', enabled: true },
+    ]);
+
+    // setKey（整体替换）语义：换成新 Key，标注一并重置。
+    replaceProviderKeys(secrets, 'p-meta', [{ key: 'sk-fresh-4444', enabled: true }]);
+    expect(readProviderEntries(secrets, 'p-meta')).toEqual([{ key: 'sk-fresh-4444', enabled: true }]);
+  });
+
+  it('nextProviderApiKey 跳过停用的 Key，全部停用时返回 null', () => {
+    const secrets = fakeSecrets();
+    addProviderKey(secrets, 'p-skip', 'sk-a-1111');
+    addProviderKey(secrets, 'p-skip', 'sk-b-2222');
+    addProviderKey(secrets, 'p-skip', 'sk-c-3333');
+    updateProviderKeyMeta(secrets, 'p-skip', 1, { enabled: false });
+
+    // 只在启用中的 a / c 之间轮换，b 被跳过。
+    expect(nextProviderApiKey(secrets, 'p-skip')).toBe('sk-a-1111');
+    expect(nextProviderApiKey(secrets, 'p-skip')).toBe('sk-c-3333');
+    expect(nextProviderApiKey(secrets, 'p-skip')).toBe('sk-a-1111');
+
+    updateProviderKeyMeta(secrets, 'p-skip', 0, { enabled: false });
+    updateProviderKeyMeta(secrets, 'p-skip', 2, { enabled: false });
+    expect(nextProviderApiKey(secrets, 'p-skip')).toBeNull();
   });
 
   it('按下标删除后重新编号，游标按剩余 Key 轮询', () => {

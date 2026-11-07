@@ -273,7 +273,7 @@ describe('models', () => {
         enabled: true,
         models: [{ id: 'gpt', name: 'GPT', contextWindow: 1, capabilities: ['chat'] }],
         hasKey: true,
-        keyPreviews: ['sk-.......1234'],
+        keyPreviews: [{ mask: 'sk-.......1234', enabled: true }],
       },
       {
         id: 'anthropic',
@@ -300,7 +300,7 @@ describe('models', () => {
           },
         ],
         hasKey: true,
-        keyPreviews: ['sk-.......5678'],
+        keyPreviews: [{ mask: 'sk-.......5678', enabled: true }],
       },
     ];
     expect(chatModelOptions(providers)).toEqual([{ ref: 'openai/gpt', label: 'OpenAI · GPT' }]);

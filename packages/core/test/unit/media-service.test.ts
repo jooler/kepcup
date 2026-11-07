@@ -21,6 +21,7 @@ function fakeSecrets(keys: Record<string, string>): SecretsService {
     names: () => Object.keys(keys),
     setValue: () => {},
     removeValue: () => {},
+    registerRedactValue: () => {},
     redact: (text: string) => text,
     modelSessionKey: () => Buffer.alloc(32, 1),
   } as unknown as SecretsService;

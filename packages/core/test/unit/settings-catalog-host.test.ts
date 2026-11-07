@@ -176,7 +176,9 @@ function makeRig(
         { id: 'mock-x', name: 'Mock X', contextWindow: 1000, capabilities: ['chat'] },
       ],
       hasKey: secrets.has('provider:custom:mock'),
-      keyPreviews: secrets.has('provider:custom:mock') ? ['sk-.......1234'] : [],
+      keyPreviews: secrets.has('provider:custom:mock')
+        ? [{ mask: 'sk-.......1234', enabled: true }]
+        : [],
     },
     {
       id: 'dashscope',
@@ -188,7 +190,9 @@ function makeRig(
         { id: 'qwen-image', name: 'qwen-image', contextWindow: 128000, capabilities: ['image'] },
       ],
       hasKey: secrets.has('provider:dashscope'),
-      keyPreviews: secrets.has('provider:dashscope') ? ['sk-.......5678'] : [],
+      keyPreviews: secrets.has('provider:dashscope')
+        ? [{ mask: 'sk-.......5678', enabled: true }]
+        : [],
     },
     {
       id: 'openai',
@@ -197,7 +201,9 @@ function makeRig(
       enabled: true,
       models: [{ id: 'gpt-x', name: 'GPT X', contextWindow: 1000, capabilities: ['chat'] }],
       hasKey: secrets.has('provider:openai'),
-      keyPreviews: secrets.has('provider:openai') ? ['sk-.......9012'] : [],
+      keyPreviews: secrets.has('provider:openai')
+        ? [{ mask: 'sk-.......9012', enabled: true }]
+        : [],
     },
   ];
   const bots = new Map<string, Bot>([
